@@ -1,0 +1,12 @@
+[package]
+name = "studiolo"
+description = "Self-hosted knowledge and project workbench with a governed multi-agent loop."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+readme = "README.md"
+keywords = ["markdown", "knowledge-base", "notes", "workbench"]
+categories = ["command-line-utilities"]
+
+[dependencies]
