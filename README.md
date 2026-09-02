@@ -14,7 +14,8 @@ crates/
   studiolo/        # 占位 crate，用于 crates.io 名称保留；后续为二进制入口
   vault-broker/    # 路径约束、CAS、历史、原子落盘、审计
   task-engine/     # 任务命令、attempt、fencing、取消、对账
-  gateway/         # web.fetch、db.*、模型中继、策略求交、审计
+  gateway/         # web.fetch、db.*、模型中继、策略求交
+  audit-ledger/    # 权威审计唯一写入口，事件幂等与完整性链
   runner-adapter/  # Adapter Interface 与 stub / claude-code / codex 实现
 web/               # Vite + TypeScript + CodeMirror 6 前端
 deploy/            # Docker Compose、cloudflared、restic、恢复脚本
