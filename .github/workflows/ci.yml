@@ -1,0 +1,43 @@
+# ADR-008：CI 在 Linux x86_64 上跑 fmt / clippy / test；路径安全负向测试只在 Linux 有真实语义。
+# PRD 12.8：第三方 action 一律按 commit SHA 钉死，注释里写对应 tag；升级时同时改 SHA 与注释。
+# toolchain 版本与 rust-toolchain.toml 保持一致（两处同改）。
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  rust:
+    name: fmt / clippy / test (Linux x86_64)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: 安装固定 toolchain（与 rust-toolchain.toml 同版本）
+        run: |
+          rustup toolchain install 1.97.1 --profile minimal --component rustfmt,clippy
+          rustup default 1.97.1
+          rustc --version
+          cargo --version
+
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+
+      - name: 格式检查
+        run: cargo --locked fmt --all -- --check
+
+      - name: Clippy（警告即失败）
+        run: cargo --locked clippy --workspace --all-targets -- -D warnings
+
+      - name: Workspace 测试
+        run: cargo --locked test --workspace
+
+      - name: Linux 路径安全负向测试（显式验收）
+        run: cargo --locked test -p studiolo-vault-broker --test linux_path_security

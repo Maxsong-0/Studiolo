@@ -1,0 +1,28 @@
+[package]
+name = "studiolo-task-engine"
+description = "Studiolo TaskEngine: task commands, claim/attempt/fence, cancel, projection outbox, reconcile."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+jiff.workspace = true
+studiolo-core.workspace = true
+studiolo-control-db.workspace = true
+studiolo-vault-broker.workspace = true
+studiolo-audit-ledger.workspace = true
+studiolo-runner-adapter.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+serde-saphyr.workspace = true
+thiserror.workspace = true
+ulid.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

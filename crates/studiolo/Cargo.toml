@@ -5,8 +5,24 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
+rust-version.workspace = true
 readme = "README.md"
 keywords = ["markdown", "knowledge-base", "notes", "workbench"]
 categories = ["command-line-utilities"]
 
+[lints]
+workspace = true
+
 [dependencies]
+studiolo-core.workspace = true
+studiolo-vault-broker.workspace = true
+studiolo-vault-index.workspace = true
+studiolo-control-db.workspace = true
+studiolo-audit-ledger.workspace = true
+studiolo-runner-adapter.workspace = true
+studiolo-gateway.workspace = true
+studiolo-task-engine.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

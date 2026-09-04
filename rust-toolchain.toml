@@ -1,0 +1,4 @@
+# ADR-001：M0 锁定 stable toolchain。本机 Homebrew Rust 1.97.1 与此一致；rustup 用户与 CI 按此安装。
+[toolchain]
+channel = "1.97.1"
+components = ["rustfmt", "clippy"]

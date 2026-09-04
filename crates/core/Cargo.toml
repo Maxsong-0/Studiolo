@@ -1,0 +1,22 @@
+[package]
+name = "studiolo-core"
+description = "Studiolo shared types: ids, revision, capability, fence, classification, base errors."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+serde.workspace = true
+thiserror.workspace = true
+ulid.workspace = true
+uuid.workspace = true
+sha2.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true

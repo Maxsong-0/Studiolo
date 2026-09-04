@@ -1,0 +1,23 @@
+[package]
+name = "studiolo-control-db"
+description = "Studiolo Control DB: SQLite WAL schema, migrations, single-writer connection."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+jiff.workspace = true
+studiolo-core.workspace = true
+rusqlite.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

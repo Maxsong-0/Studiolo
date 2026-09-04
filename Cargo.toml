@@ -1,9 +1,59 @@
 [workspace]
 resolver = "3"
-members = ["crates/studiolo"]
+members = [
+    "crates/core",
+    "crates/vault-broker",
+    "crates/vault-index",
+    "crates/control-db",
+    "crates/audit-ledger",
+    "crates/runner-adapter",
+    "crates/gateway",
+    "crates/task-engine",
+    "crates/studiolo",
+]
 
 [workspace.package]
 version = "0.0.1"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/Maxsong-0/studiolo"
+rust-version = "1.97"
+
+# 依赖版本在此统一声明（ADR-001：M0 逐个评估后写死版本；精确解析结果以 Cargo.lock 为准，
+# 并同步登记到 vault `01-框架/技术栈.md`）。成员 crate 一律 `xxx.workspace = true`。
+[workspace.dependencies]
+studiolo-core = { path = "crates/core" }
+studiolo-vault-broker = { path = "crates/vault-broker" }
+studiolo-vault-index = { path = "crates/vault-index" }
+studiolo-control-db = { path = "crates/control-db" }
+studiolo-audit-ledger = { path = "crates/audit-ledger" }
+studiolo-runner-adapter = { path = "crates/runner-adapter" }
+studiolo-gateway = { path = "crates/gateway" }
+studiolo-task-engine = { path = "crates/task-engine" }
+
+# 路径安全：目录句柄级操作（PRD 12.7、ADR-001）
+cap-std = "4.0.3"
+cap-tempfile = "4.0.3"
+rustix = { version = "1.1.4", features = ["fs"] }
+# 运行平面：SQLite WAL，捆绑 SQLite 以固定版本（PRD 0.4、技术栈表）
+rusqlite = { version = "0.40.2", features = ["bundled"] }
+# 序列化与标识
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
+ulid = { version = "3.0.0", features = ["serde"] }
+uuid = { version = "1.26.0", features = ["v4", "serde"] }
+sha2 = "0.11.0"
+thiserror = "2.0.20"
+# 时间戳：PRD 6.5 与 9.5 要求 RFC 3339；jiff 处理 Zoned/Timestamp 且 serde 直出
+jiff = { version = "0.2.35", features = ["serde"] }
+# YAML 读侧（frontmatter 解析与校验）：serde-saphyr（saphyr-parser 之上，活跃维护、panic-free）；yaml-rust2 已进入仅基本维护
+serde-saphyr = "1.2.0"
+# Stub 私有临时目录及测试夹具
+tempfile = "3.27.0"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+missing_docs = "warn"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }

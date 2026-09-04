@@ -1,0 +1,189 @@
+# M0 契约与实现验证记录
+
+> 本页只记录实际执行过的验证。计划、代码存在或“应当通过”不等于通过；每次运行必须写
+> 日期、环境、代码状态、完整命令和结论。worktree 中的未提交改动会变化，验证时需记录
+> `git status --short` 与 HEAD。
+
+## 0. 最终本地验收（2026-09-04）
+
+M0 实现与本地验收完成。以下为主线在最后一轮代码冻结后的实际执行结果，
+不是依据 workflow 文件或测试源码推断。验收当时远端 GitHub Actions 未触发，代码未提交、未推送；此节保留该时点快照。
+
+代码位置：`.claude/worktrees/m0-phase-start-b1fa23`，分支
+`claude/m0-phase-start-b1fa23`，HEAD `6774dac59d21405f3f80f2b0366e212819c691ae`。
+验收时工作树为未提交 M0 改动：Cargo/README 已修改，各 Module、测试、docs/contracts、CI 与脚本
+为本轮新增/修改；不声称 clean 或用 HEAD 代表全部已验证代码。
+
+| 检查 | 环境与结果 |
+|---|---|
+| 格式与 Clippy | macOS arm64、Rust 1.97.1；全部 exit 0，无 warning |
+| Workspace 测试 | macOS arm64；102 项通过，Linux 专属文件在此平台不编译执行 |
+| Linux 完整快速回路 | Docker 29.3.1，`rust:1.97.1-bookworm`，Linux `7.0.12-linuxkit` aarch64；fmt、Clippy、110 项测试全部通过 |
+| Linux 显式路径验收 | 同一脚本额外执行 8 项 Linux 路径负向测试，8/8 通过 |
+| Rust 文档 | `cargo doc` exit 0 |
+| 文档结构 | 13 份 contracts；相对 Markdown 链接 0 断链、0 尾随空白；`git diff --check` 通过 |
+| 权威档案 | 主线已回写技术栈/使用方式/目录/图/敏感表/ADR 与协调状态；M0 计划已同文件归档，见 `vault-update-notes.md` |
+| 远端 CI | 未运行；workflow 已配置 Linux x86_64，不能用本地 aarch64 结果替代远端运行证据 |
+
+实际命令（工作目录均为上述 worktree）：
+
+```bash
+cargo fmt --all && cargo fmt --all -- --check && cargo clippy --workspace --all-targets --locked -- -D warnings && cargo test --workspace --locked --quiet
+scripts/test-linux.sh
+cargo doc --workspace --no-deps --locked
+```
+
+Linux 脚本直接运行，无 `STUDIOLO_*` 环境覆盖；脚本内执行固定 toolchain 的 fmt、Clippy、
+完整 workspace test，再显式执行 `studiolo-vault-broker --test linux_path_security`。
+
+macOS 102 项分布：studiolo unit 1、架构 7、真实垂直链/重启 3、AuditLedger 7、ControlDb 11、
+core 10、Gateway 14、Runner 5、投影 6、TaskEngine 18、Broker 16、VaultIndex 4。Linux 在此
+基础上增加 8 项路径测试，总计 110；显式第二次运行的 8 项不重复计入总数。
+
+行为证据覆盖：Run 冻结输入与 NeedsReconfirm、四字段投影保留人写字节、取消竞态与
+同 DB 重启、无/部分/完整 manifest 的前滚、T2 后 audit outbox 故障恢复、旧 receipt 重验、
+Vault-bound snapshot/manifest 完整性、路径竞态与唯一写入口。真实网络/数据库/模型工具、
+CLI Runner、审计文件耐久性、常驻服务与远端发布不属于本轮结果。
+
+Linux Adapter 要求 openat2；不支持该调用时失败关闭，没有未验证的 Linux 路径回退。
+本轮 Linux 证据来自上述支持 openat2 的内核，不声称已运行旧内核 ENOSYS 注入测试。
+
+## 1. 2026-09-03 局部记录（不是最终验收）
+
+2026-09-04 恢复工作时重新核验：`task-engine.md` 缺失，本轮已补齐；并新增
+`vault-update-notes.md`。因此下表的历史 12/12 记录不能证明恢复时或最终工作树的文件状态。
+本轮 TaskEngine/ControlDb 的输入冻结、取消、审计 outbox 与投影仍以最终全量验证为准。
+
+| 检查 | 状态 | 证据/待办 |
+|---|---|---|
+| 12 份契约文件存在 | 已通过结构检查 | 2026-09-03：expected=12、actual=12、missing=0；只证明文件结构 |
+| README/契约相对 Markdown 链接有效 | 已通过结构检查 | 2026-09-03：broken=0；不证明链接内容正确 |
+| 权威范围映射 | 已完成文档审阅 | 对照 roadmap、M0 实施计划、PRD 入口覆盖表、ADR-001/003/005/007/008/010/012；不代表代码通过 |
+| Rust Interface 与契约逐项一致 | 待实现完成后核对 | VaultIndex 与 Gateway 已按本轮裁决收敛文档；仍须核 Committing、manifest 路径、字段归属和全部错误 enum |
+| VaultIndex 与权威别名表一致 | 局部验证通过 | 实现线 2026-09-03 10:27 PDT 跑该 crate 4/4 契约测试、clippy/fmt 均 exit 0；完整 workspace 仍未验证 |
+| AuditLedger / Gateway M0 契约 | 局部验证通过 | 实现线 2026-09-03 10:28 PDT 跑 21/21 契约测试、clippy/fmt 均 exit 0；仅内存 Adapter |
+| `cargo fmt --all -- --check` | 未运行 | 由实现/验证线在代码稳定后执行 |
+| `cargo clippy --workspace --all-targets -- -D warnings` | 未运行 | 同上 |
+| `cargo test --workspace` | 未运行 | 同上 |
+| `scripts/test-linux.sh` | 未运行 | Linux 路径语义的最终依据 |
+| 写入口架构测试 | 未运行 | 必须结合 Cargo 依赖图与源码扫描 |
+| 最小垂直链 | 未运行 | 需验证 manifest 最后写与 needs_review 投影 |
+| 同 DB 重启 reconcile | 未运行 | spy Runner 必须证明 start 次数不增加 |
+| T-005 三表与最终代码名一致 | 待核对 | 审计事件名仍以本仓库契约/实现为准 |
+
+### 已执行：文档结构（2026-09-03，macOS arm64）
+
+HEAD：`6774dac`；docs 状态：`M docs/README.md`、`?? docs/contracts/`。
+
+```zsh
+expected_files=(00-overview.md core-types.md vault-broker.md vault-index.md control-db.md task-engine.md runner-adapter.md gateway.md audit-ledger.md vertical-chain.md decisions.md verify-log.md)
+for expected_file in "${expected_files[@]}"; do test -f "docs/contracts/$expected_file"; done
+test "$(find docs/contracts -maxdepth 1 -type f -name '*.md' | wc -l | tr -d ' ')" -eq 12
+for markdown_file in docs/README.md docs/contracts/*.md; do
+  while IFS= read -r link_target; do
+    link_base=${markdown_file:h}
+    test -f "$link_base/$link_target"
+  done < <(perl -ne 'while (/\]\(([^)#]+\.md)(?:#[^)]*)?\)/g) { print "$1\n" }' "$markdown_file")
+done
+if rg -n '[[:blank:]]+$' docs/README.md docs/contracts; then exit 1; fi
+```
+
+结果：12/12 文件存在；相对 `.md` 链接逐一按所在目录检查，0 个断链；0 行尾随空白。
+未运行 Rust 构建、测试或 Linux 检查。
+
+### 已执行：VaultIndex 局部验证（实现线报告）
+
+时间/环境：2026-09-03 10:27:43 PDT；Darwin arm64；Rust/Cargo 1.97.1 Homebrew。
+HEAD：`6774dac59d21405f3f80f2b0366e212819c691ae`；分支：`claude/m0-phase-start-b1fa23`；
+`git status --short -- crates/vault-index` 为 `?? crates/vault-index/`，未声称全工作树 clean。
+
+```bash
+cargo fmt -p studiolo-vault-index && cargo test -p studiolo-vault-index && cargo clippy -p studiolo-vault-index --all-targets -- -D warnings && cargo fmt -p studiolo-vault-index -- --check
+rg -n 'std::fs|File::create|OpenOptions|remove_file|remove_dir|rename\(|write_all|fs::write|tokio::fs' crates/vault-index
+```
+
+结果：组合命令 exit 0；integration 4/4（frontmatter 2、link 1、source profile 1），unit/doctest
+均 0/0；clippy 无 warning；fmt check exit 0。只读写 API 扫描无命中。此记录来自实现线实际
+运行，不等于完整 workspace 或独立复核，也不覆盖 Linux。
+
+### 已执行：AuditLedger / Gateway 局部验证（实现线报告）
+
+时间/环境：2026-09-03 10:28 PDT；aarch64-apple-darwin；Rust/Cargo 1.97.1。
+HEAD：`6774dac59d21405f3f80f2b0366e212819c691ae`；分支：`claude/m0-phase-start-b1fa23`；
+局部状态为 `?? crates/audit-ledger/`、`?? crates/gateway/`，未声称全工作树 clean。
+
+```bash
+cargo fmt -p studiolo-audit-ledger -p studiolo-gateway -- --check
+cargo test -p studiolo-audit-ledger -p studiolo-gateway --locked
+cargo clippy -p studiolo-audit-ledger -p studiolo-gateway --all-targets --locked -- -D warnings
+```
+
+三条命令均 exit 0；Audit integration 7/7、Gateway integration 14/14，合计 21 项；两 crate
+unit/doctest 均 0；clippy 无 warning。此证据仅覆盖同步 Interface 与内存 Adapter，不覆盖
+真实外部 I/O、完整 workspace、Linux 或独立复核。
+
+## 2. 必跑命令
+
+工作目录：仓库根目录。
+
+```bash
+cargo fmt --all -- --check
+cargo clippy --workspace --all-targets --locked -- --deny warnings
+cargo test --workspace --locked
+scripts/test-linux.sh
+```
+
+若 `scripts/test-linux.sh` 未运行或 Linux 专属用例被 skip，必须把路径安全结论写成未验证。
+GitHub Actions 只有在用户决定推送后才产生证据，不得用 workflow 文件存在代替运行结果。
+
+## 3. 行为验收清单
+
+### 六 Module
+
+- [x] 每个 Module 有可编译 Interface、结构化错误、生产/内存 Adapter 或明确的 M0 替身。
+- [x] fake 通过公开 Seam 的契约测试，保留拒绝、幂等与故障注入，不是无条件成功。
+- [x] Gateway 不依赖 TaskEngine；core 不依赖 workspace 成员。
+- [x] VaultIndex 的主/BUG 日期 alias 常量覆盖权威别名表全部行；局部契约测试见上。
+
+### VaultBroker
+
+- [x] CAS、history、原子落盘、幂等、Vault UUID-bound revision。
+- [x] manifest 固定路径、最后写、重复同内容成功、异内容拒绝。
+- [x] Linux 用例覆盖 symlink/magic link、hardlink、FIFO/socket、编码分隔符、大小写/Unicode
+  碰撞、文件/父目录竞态替换与并发 create-only；8/8 通过。
+
+### Control DB / TaskEngine
+
+- [x] 空库迁移、错 Vault、唯一 active attempt、单调 fence、v1 真补列升级。
+- [x] 状态与 projection outbox 同 transaction；T2 同时保存 terminal audit outbox。
+- [x] `running -> committing -> needs_review` 两阶段。
+- [x] 崩溃矩阵使用同一 DB 文件；reconcile 只前滚，不调用 Runner start。
+- [x] task 人写字段不被投影覆盖，直接改投影字段不产生授权。
+
+### Runner / Gateway / Audit
+
+- [x] Stub 输出仅在 attempt temp，且绑定 snapshot 输入。
+- [x] 旧 fence、取消、迟到报告全部拒绝。
+- [x] Gateway 内存 Adapter：默认拒绝、四层权限求交、call 幂等、intent-before-result。
+- [x] Audit 内存 Adapter：event+phase 幂等、SHA-256 前向链、递归秘密字段拒绝；Gateway
+  intent 故障失败关闭。
+
+### 垂直链
+
+- [x] 结构化任务到 Stub、artifact、manifest、needs_review、投影和审计 outcome 全链通过。
+- [x] 已定义的 Run/report/commit 重放不增加 attempt/artifact/manifest；create_task 没有
+  Dispatch 幂等身份，不把重复新建草稿说成幂等。
+- [x] orphan 无 manifest 不进入可信结论。
+
+## 4. 运行记录模板
+
+```text
+日期/时区：
+环境：macOS arm64 | Linux x86_64（内核/容器版本）
+HEAD 与 worktree 状态：
+命令：
+退出码：
+通过/失败/跳过数量：
+关键证据：
+未验证项：
+```
