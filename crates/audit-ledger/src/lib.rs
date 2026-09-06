@@ -599,14 +599,79 @@ fn reject_secret_fields(value: &Value, parent: &str) -> Result<(), AuditError> {
     Ok(())
 }
 
+/// 把字段名切成小写词：`-`、`_`、`.`、空白与驼峰边界都算词界，
+/// 让 `apiKey`、`x-api-key`、`API_KEY` 归一到同一组词。
+fn key_words(key: &str) -> Vec<String> {
+    let mut words = Vec::new();
+    let mut current = String::new();
+    let mut previous_was_lower = false;
+    for ch in key.chars() {
+        if matches!(ch, '-' | '_' | '.') || ch.is_whitespace() {
+            if !current.is_empty() {
+                words.push(std::mem::take(&mut current));
+            }
+            previous_was_lower = false;
+            continue;
+        }
+        if ch.is_uppercase() && previous_was_lower && !current.is_empty() {
+            words.push(std::mem::take(&mut current));
+        }
+        current.extend(ch.to_lowercase());
+        previous_was_lower = ch.is_lowercase() || ch.is_ascii_digit();
+    }
+    if !current.is_empty() {
+        words.push(current);
+    }
+    words
+}
+
+/// 单独一个词就足以判定为凭据的词汇；只看字段名的最后一个词，
+/// 因此 `token_count`、`session_id` 这类计数与标识不会被误伤。
+const SECRET_LAST_WORDS: &[&str] = &[
+    "token",
+    "secret",
+    "password",
+    "passwd",
+    "pwd",
+    "passphrase",
+    "cookie",
+    "authorization",
+    "bearer",
+    "credential",
+    "credentials",
+    "apikey",
+    "privatekey",
+    "secretkey",
+    "accesskey",
+    "otp",
+    "totp",
+    "seed",
+];
+
+/// 必须两个词连用才构成凭据的词组（`key`、`code` 单独出现不算）。
+const SECRET_LAST_PAIRS: &[(&str, &str)] = &[
+    ("api", "key"),
+    ("private", "key"),
+    ("secret", "key"),
+    ("access", "key"),
+    ("signing", "key"),
+    ("session", "key"),
+    ("recovery", "code"),
+    ("recovery", "codes"),
+];
+
 fn is_secret_field(key: &str) -> bool {
-    let normalized = key.to_ascii_lowercase().replace('-', "_");
-    matches!(
-        normalized.as_str(),
-        "token" | "secret" | "password" | "cookie" | "authorization" | "api_key"
-    ) || normalized.ends_with("_token")
-        || normalized.ends_with("_secret")
-        || normalized.ends_with("_password")
-        || normalized.ends_with("_cookie")
-        || normalized.ends_with("_authorization")
+    let words = key_words(key);
+    let Some(last) = words.last() else {
+        return false;
+    };
+    if SECRET_LAST_WORDS.contains(&last.as_str()) {
+        return true;
+    }
+    let Some(previous) = words.len().checked_sub(2).map(|index| &words[index]) else {
+        return false;
+    };
+    SECRET_LAST_PAIRS
+        .iter()
+        .any(|(first, second)| previous == first && last == second)
 }

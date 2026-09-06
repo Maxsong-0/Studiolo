@@ -40,6 +40,22 @@ pub enum DbError {
         /// Requested operation.
         operation: &'static str,
     },
+    /// 已有终态赢家（含已冻结提交计划的 committing）；属正常业务拒绝，调用方按变体而非状态名判断。
+    #[error("attempt already holds a terminal outcome ({phase:?}) for {operation}")]
+    AlreadyTerminal {
+        /// 持有终态结果的持久阶段。
+        phase: AttemptPhase,
+        /// 被拒绝的操作名。
+        operation: &'static str,
+    },
+    /// 数据库由更新版本的 schema 写入，本二进制不得静默降级运行。
+    #[error("control db schema version {found} is newer than supported version {supported}")]
+    UnsupportedSchema {
+        /// `schema_migrations` 中记录的最高版本。
+        found: i64,
+        /// 本二进制支持的最高版本。
+        supported: i64,
+    },
     /// Attempt identity or fence did not match.
     #[error("attempt fence mismatch")]
     FenceMismatch,
@@ -307,10 +323,24 @@ impl ControlDb {
         let tx = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        // 先只建迁移账本并核对版本：更新版 schema 写过的库不得被旧二进制静默改写。
         tx.execute_batch(
             "CREATE TABLE IF NOT EXISTS schema_migrations (
-                 version INTEGER PRIMARY KEY, applied_at_ms INTEGER NOT NULL);
-             CREATE TABLE IF NOT EXISTS vault_binding (
+                 version INTEGER PRIMARY KEY, applied_at_ms INTEGER NOT NULL);",
+        )?;
+        let recorded_version: i64 = tx.query_row(
+            "SELECT COALESCE(MAX(version), 0) FROM schema_migrations",
+            [],
+            |row| row.get(0),
+        )?;
+        if recorded_version > SCHEMA_VERSION {
+            return Err(DbError::UnsupportedSchema {
+                found: recorded_version,
+                supported: SCHEMA_VERSION,
+            });
+        }
+        tx.execute_batch(
+            "CREATE TABLE IF NOT EXISTS vault_binding (
                  singleton INTEGER PRIMARY KEY CHECK (singleton = 1), vault_uuid TEXT NOT NULL);
              CREATE TABLE IF NOT EXISTS fence_counter (
                  singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
@@ -833,18 +863,30 @@ impl ControlDb {
             .optional()?;
         match state {
             Some((_, stored)) if stored != fence_i64(fence)? => return Err(DbError::FenceMismatch),
-            Some((phase, _)) if phase == "cancelled" => {
-                tx.commit()?;
-                return Ok(());
-            }
-            Some((phase, _)) if phase != "cancel_requested" => {
-                return Err(DbError::InvalidTransition {
-                    from: phase,
-                    operation: "acknowledge_cancel",
-                });
-            }
+            Some((phase, _)) => match AttemptPhase::parse(&phase)? {
+                AttemptPhase::Cancelled => {
+                    tx.commit()?;
+                    return Ok(());
+                }
+                AttemptPhase::CancelRequested => {}
+                AttemptPhase::Claimed | AttemptPhase::Running => {
+                    return Err(DbError::InvalidTransition {
+                        from: phase,
+                        operation: "acknowledge_cancel",
+                    });
+                }
+                // 终态赢家已经产生：返回结构化变体，TaskEngine 不再解释状态名字符串。
+                winner @ (AttemptPhase::Committing
+                | AttemptPhase::Completed
+                | AttemptPhase::Failed
+                | AttemptPhase::Abandoned) => {
+                    return Err(DbError::AlreadyTerminal {
+                        phase: winner,
+                        operation: "acknowledge_cancel",
+                    });
+                }
+            },
             None => return Err(DbError::NotFound("attempt")),
-            _ => {}
         }
         tx.execute(
             "UPDATE attempts SET phase = 'cancelled', updated_at_ms = ?2 WHERE attempt_id = ?1",

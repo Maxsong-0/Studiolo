@@ -40,13 +40,20 @@ Adapter 无需访问私有字段。此 M0 Interface 是进程内测试缝，不�
 
 ## 3. 脱敏边界
 
-`SanitizedPayload` 只能通过受检查的构造路径取得。M0 递归检查 JSON object/array，并拒绝
-以下大小写不敏感、连字符归一为下划线后的字段名：
+`SanitizedPayload` 只能通过受检查的构造路径取得。M0 递归检查 JSON object/array，把字段名
+按 `-`、`_`、`.`、空白与驼峰边界切成小写词（`apiKey`、`x-api-key`、`API_KEY` 归一为同一组词），
+并拒绝**最后一个词**命中以下词汇、或**最后两个词**命中以下词组的字段名：
 
 ```text
-token, secret, password, cookie, authorization, api_key,
-*_token, *_secret, *_password, *_cookie, *_authorization
+词汇：token, secret, password, passwd, pwd, passphrase, cookie, authorization, bearer,
+      credential, credentials, apikey, privatekey, secretkey, accesskey, otp, totp, seed
+词组：api key, private key, secret key, access key, signing key, session key,
+      recovery code(s)
 ```
+
+只看末词，所以 `token_count`、`session_id`、`seed_ref`、单独的 `key` 或 `code` 不会被误伤；
+`refreshToken`、`user.pwd`、`PRIVATE_KEY` 会被拒绝。（2026-09-05 T-027 由前缀/后缀字符串
+规则改为词法规则；后续存储 Adapter 若把该函数迁到独立模块，规则必须原样保留。）
 
 命中时返回 `AuditError::SecretField { path }`，其中 path 保留对象层级和数组下标。M0 只对
 字段名实行 fail-closed 检查，不声称能从任意自由文本值中识别秘密；调用方仍必须只提交

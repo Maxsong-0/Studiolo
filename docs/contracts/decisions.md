@@ -25,6 +25,9 @@
 | M0-D17 | manifest 只冻结固定 commit path、身份/摘要/审计关联与 manifest-last；不冻结 private Rust struct 的 JSON 布局 | 让集成测试读取私有字段会把暂存格式误升为公共协议 | 父任务本轮裁决；M0 退出标准 5 |
 | M0-D18 | manifest 后的 T2 同时写 task 终态、projection outbox 与 terminal audit outbox，再补 outcome/ack | 若 outcome 在 T2 前声称 needs_review，DB 可能仍未提交；若 T2 后只靠内存补记，重启会丢失审计结果 | 2026-09-04 对抗核对；失败关闭与崩溃恢复不变量 |
 | M0-D19 | M0 的受信任进程内 Run 冻结 task 页面和显式 inputs，claim 只加载该 snapshot | 在 Run 后到 claim 之间重新读源会让实际运行输入偏离已确认任务 | PRD snapshot/Run 语义；2026-09-04 主线裁决 |
+| M0-D20 | 跨 Module 的终态拒绝只走结构化变体：Control DB 新增 `AlreadyTerminal { phase, operation }`，TaskEngine 按变体映射 | 原实现在 TaskEngine 里字符串匹配 `InvalidTransition.from` 的状态名，违反 00-overview §6，改任一字面量即静默退化 | 2026-09-05 T-027 复审修复 |
+| M0-D21 | Gateway 拒绝与冲突审计一律用独立事件 ID `{base}:deny:{reason}`；同键调用以 in-flight 占位串行化，审计 `IdempotencyConflict` 映射为 `CallConflict` | 原实现只在已有完成调用时换 ID，同一调用两次不同原因拒绝共用基础 ID 而幂等冲突，第二次拒绝丢账且被改写成 `AuditUnavailable`；缓存检查与写入两次加锁可让并发同键调用双执行 | 2026-09-05 T-027 复审修复 |
+| M0-D22 | 审计秘密字段过滤改为词法规则（分隔符/驼峰切词，末词或末两词命中凭据词汇即拒绝） | 原前缀/后缀字符串规则放过 `apiKey`、`passwd`、`private_key` 等常见命名；纯子串规则又会误伤 `token_count` 一类计数 | 2026-09-05 T-027 复审修复 |
 
 ## 明确后移
 

@@ -112,6 +112,16 @@ fn payload_rejects_secret_fields_at_any_depth() {
         (json!({"client_secret": "value"}), "client_secret"),
         (json!({"password": "value"}), "password"),
         (json!({"cookie": "value"}), "cookie"),
+        (json!({"apiKey": "value"}), "apiKey"),
+        (json!({"x-api-key": "value"}), "x-api-key"),
+        (json!({"PRIVATE_KEY": "value"}), "PRIVATE_KEY"),
+        (json!({"refreshToken": "value"}), "refreshToken"),
+        (json!({"passwd": "value"}), "passwd"),
+        (json!({"user": {"pwd": "value"}}), "user.pwd"),
+        (json!({"recovery_code": "value"}), "recovery_code"),
+        (json!({"totp_seed": "value"}), "totp_seed"),
+        (json!({"bearer": "value"}), "bearer"),
+        (json!({"credentials": {}}), "credentials"),
     ] {
         assert_eq!(
             SanitizedPayload::try_from(value).unwrap_err(),
@@ -121,6 +131,21 @@ fn payload_rejects_secret_fields_at_any_depth() {
         );
     }
 
+    // 计数、标识与单独的 key/code 不是凭据，不能因为词根相似被拒绝。
+    for value in [
+        json!({"token_count": 12}),
+        json!({"tokens_used": 12}),
+        json!({"session_id": "s-1"}),
+        json!({"key": "orders"}),
+        json!({"keys": ["a"]}),
+        json!({"kid": "k1"}),
+        json!({"status_code": 200}),
+        json!({"seed_ref": "slot-a"}),
+        json!({"recovery_candidate_available": true}),
+        json!({"tokenizer": "cl100k"}),
+    ] {
+        assert!(SanitizedPayload::try_from(value).is_ok());
+    }
     assert!(
         SanitizedPayload::try_from(json!({
             "task": "T-1",

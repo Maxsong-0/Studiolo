@@ -63,14 +63,17 @@ M0 capability 没有签名、audience、nonce、snapshot 或 policy hash，只�
 1. 在 `gateway.tool.v1` / `gateway.model.v1` 版本域中，以 task、attempt、fence 和长度分隔的
    call ID 构造稳定审计 ID；
 2. fresh guard → cancelled → fence → expiry → 四层权限求交；
-3. 检查 `(attempt_id, call_id)` 缓存：同请求返回第一次结果；异请求写独立 conflict outcome
-   后返回 `CallConflict`，审计失败仍失败关闭；
+3. 在同一把锁内检查并占用 `(attempt_id, call_id)` 幂等槽：已完成的同请求返回第一次结果；
+   同键调用正在执行时等待其完成后再判定重放或冲突（并发同键请求只执行一次）；异请求写
+   独立 conflict outcome 后返回 `CallConflict`，审计失败仍失败关闭；
 4. AuditLedger `Intent` 追加成功后，才读取配置的内存 tool/model 响应；
-5. 以同审计 ID 追加 `Outcome`；成功后保存幂等结果并返回。
+5. 以同审计 ID 追加 `Outcome`；成功后把占位替换为结果并返回，任何失败都释放占位。
 
-授权拒绝没有外部动作，因此直接追加带 `decision=deny` 与结构化 reason 的 `Outcome`；审计
-失败则返回 `AuditUnavailable`。已完成调用后来因取消/旧 fence/过期被拒绝时，使用独立的
-recheck 审计 ID，不能与原 outcome 发生幂等冲突。
+授权拒绝与冲突没有外部动作，因此直接追加带 `decision=deny` 与结构化 reason 的 `Outcome`，
+事件 ID 一律为独立的 `{基础 ID}:deny:{reason}`：同一调用因不同原因被多次拒绝时各留一条
+记录，且永不与基础 ID 上的 Intent/Outcome 发生幂等冲突。审计 `IdempotencyConflict`
+（同一事件 ID 被不同内容复用）在 Gateway 边界映射为 `CallConflict`，其余审计失败为
+`AuditUnavailable`。（2026-09-05 T-027 起；此前只在已有完成调用时才换 ID。）
 
 内存 Adapter 未配置响应时，在已写 Intent 后补失败 Outcome，再返回 Tool/ModelUnavailable。
 M0 没有真实外部副作用，因而不承诺 raw promotion、持久 call reservation 或
@@ -82,8 +85,8 @@ M0 没有真实外部副作用，因而不承诺 raw promotion、持久 call res
 - Intent 失败时不得读取/释放配置的 tool/model 结果。
 - 审计 subject 绑定 task、attempt、tool；payload 只含 call ID、逻辑 tool、fence、决策和
   必要的 provider/model，不写 arguments、prompt、output 或凭据。
-- `SanitizedPayload` 拒绝秘密字段；转换或 append 失败统一在 Gateway 边界表现为
-  `AuditUnavailable` 并失败关闭。
+- `SanitizedPayload` 拒绝秘密字段；转换失败与除幂等冲突外的 append 失败在 Gateway 边界
+  表现为 `AuditUnavailable` 并失败关闭，幂等冲突表现为 `CallConflict`。
 - Gateway 不依赖 TaskEngine crate；当前 attempt 状态只能经 `AttemptGuard` 注入。
 - `MemoryGateway` 不写 canonical Vault，也不持有长期 Web/DB/模型凭据。
 
@@ -110,6 +113,7 @@ M0 没有真实外部副作用，因而不承诺 raw promotion、持久 call res
 
 契约测试至少覆盖：对象安全、四层权限任一层缺失即拒绝、允许 tool 与本地 relay 的
 Intent/Outcome、拒绝 outcome、旧 fence/取消/过期、guard 与审计不可用时失败关闭、成功重放
-仍先 recheck、同 call ID 异请求冲突、未配置响应的失败 outcome，以及 Cargo 依赖中不存在
+仍先 recheck、同 call ID 异请求冲突、同一调用两次不同原因拒绝各留一条记录并返回真实原因、
+并发同键调用只执行一次且共享首次结果、未配置响应的失败 outcome，以及 Cargo 依赖中不存在
 TaskEngine。真实 SSRF/SQL/模型外发、秘密管理、raw promotion、预算与 indeterminate 恢复均
 延期，不能用这些内存测试宣称通过。

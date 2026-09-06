@@ -430,3 +430,83 @@ fn snapshot_identifier_cannot_be_reused_for_different_metadata() {
         Err(DbError::Corrupt(_))
     ));
 }
+
+#[test]
+fn acknowledge_cancel_after_a_terminal_winner_is_a_structured_rejection() {
+    let vault_uuid = VaultUuid::new();
+    let mut db = ControlDb::open_in_memory(vault_uuid).expect("open database");
+    let task_id = TaskId::new();
+    db.create_task(task_id, &json!({"title": "task"}), 1)
+        .expect("create");
+    db.queue_task(task_id, 2).expect("queue");
+    let attempt = db
+        .claim(task_id, "worker", snapshot("snapshot", vault_uuid), 3, 103)
+        .expect("claim");
+    let reservation = TerminalReservation {
+        report_json: json!({"outcome": "needs_review"}),
+        artifacts_json: json!([]),
+    };
+    db.reserve_terminal(task_id, attempt.attempt_id, attempt.fence, &reservation, 4)
+        .expect("reserve terminal");
+
+    // 已冻结提交计划：取消确认必须返回结构化终态拒绝，而不是携带状态名的通用拒绝。
+    assert!(matches!(
+        db.acknowledge_cancel(task_id, attempt.attempt_id, attempt.fence, 5),
+        Err(DbError::AlreadyTerminal {
+            phase: AttemptPhase::Committing,
+            operation: "acknowledge_cancel",
+        })
+    ));
+    db.finalize_terminal(
+        task_id,
+        attempt.attempt_id,
+        attempt.fence,
+        TaskStatus::NeedsReview,
+        Some(&json!({"manifest_path": "sources/attempts/x/y/manifest.json"})),
+        6,
+    )
+    .expect("finalize");
+    assert!(matches!(
+        db.acknowledge_cancel(task_id, attempt.attempt_id, attempt.fence, 7),
+        Err(DbError::AlreadyTerminal {
+            phase: AttemptPhase::Completed,
+            operation: "acknowledge_cancel",
+        })
+    ));
+    assert!(matches!(
+        db.acknowledge_cancel(task_id, attempt.attempt_id, Fence::new(999).unwrap(), 8),
+        Err(DbError::FenceMismatch)
+    ));
+}
+
+#[test]
+fn a_database_written_by_a_newer_schema_is_refused_without_modification() {
+    let temp = TempDir::new().expect("tempdir");
+    let path = database_path(&temp);
+    let vault_uuid = VaultUuid::new();
+    drop(ControlDb::open(&path, vault_uuid).expect("initial open"));
+    {
+        let raw = rusqlite::Connection::open(&path).expect("raw connection");
+        raw.execute(
+            "INSERT INTO schema_migrations(version, applied_at_ms) VALUES (99, 0)",
+            [],
+        )
+        .expect("record newer version");
+    }
+
+    assert!(matches!(
+        ControlDb::open(&path, vault_uuid),
+        Err(DbError::UnsupportedSchema {
+            found: 99,
+            supported: 2,
+        })
+    ));
+    // 拒绝不得留下任何写入：更新版记录原样保留，旧二进制没有降级它。
+    let raw = rusqlite::Connection::open(&path).expect("raw connection");
+    let recorded: i64 = raw
+        .query_row("SELECT MAX(version) FROM schema_migrations", [], |row| {
+            row.get(0)
+        })
+        .expect("query version");
+    assert_eq!(recorded, 99);
+}

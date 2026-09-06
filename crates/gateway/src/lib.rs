@@ -3,13 +3,13 @@
 use std::{
     collections::BTreeMap,
     fmt,
-    sync::{Arc, Mutex, MutexGuard},
+    sync::{Arc, Condvar, Mutex, MutexGuard},
 };
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use studiolo_audit_ledger::{
-    AuditEvent, AuditEventId, AuditLedger, AuditPhase, AuditSubject, SanitizedPayload,
+    AuditError, AuditEvent, AuditEventId, AuditLedger, AuditPhase, AuditSubject, SanitizedPayload,
 };
 use studiolo_core::{AttemptId, Fence, PermissionSet, TaskId, ToolId};
 
@@ -530,6 +530,102 @@ pub trait Gateway: Send + Sync {
     ) -> Result<ModelResponse, GatewayError>;
 }
 
+/// 调用幂等槽：`InFlight` 表示同键调用正在执行，`Done` 才携带可重放的结果。
+enum CallSlot<Request, Response> {
+    InFlight,
+    Done(Request, Response),
+}
+
+/// 同键调用的准入结论。
+enum CallAdmission<Response> {
+    /// 首次调用，已占位；调用方必须以 `complete` 或 `abandon` 收尾。
+    Proceed,
+    /// 与首次请求完全相同的重放：直接返回首次结果。
+    Replay(Response),
+}
+
+/// `admit` 在锁内做出的判定；先判定再动作，避免在 `BTreeMap` 借用存活时修改它。
+enum SlotDecision<Response> {
+    Vacant,
+    Replay(Response),
+    Conflict,
+    Wait,
+}
+
+/// 按 `(attempt, call)` 键串行化同一调用：并发同键请求只执行一次，其余等待首次结果后再判定
+/// 重放或冲突。检查与占位在同一把锁内完成，不存在「都通过检查、各执行一次」的窗口。
+struct CallTable<Request, Response> {
+    slots: Mutex<BTreeMap<(AttemptId, CallId), CallSlot<Request, Response>>>,
+    finished: Condvar,
+}
+
+impl<Request: PartialEq, Response: Clone> CallTable<Request, Response> {
+    fn new() -> Self {
+        Self {
+            slots: Mutex::new(BTreeMap::new()),
+            finished: Condvar::new(),
+        }
+    }
+
+    fn admit(
+        &self,
+        key: (AttemptId, CallId),
+        request: &Request,
+    ) -> Result<CallAdmission<Response>, GatewayError> {
+        let mut slots = self
+            .slots
+            .lock()
+            .map_err(|_| GatewayError::StateUnavailable)?;
+        loop {
+            let decision = match slots.get(&key) {
+                None => SlotDecision::Vacant,
+                Some(CallSlot::Done(prior, response)) if prior == request => {
+                    SlotDecision::Replay(response.clone())
+                }
+                Some(CallSlot::Done(..)) => SlotDecision::Conflict,
+                Some(CallSlot::InFlight) => SlotDecision::Wait,
+            };
+            match decision {
+                SlotDecision::Vacant => {
+                    slots.insert(key, CallSlot::InFlight);
+                    return Ok(CallAdmission::Proceed);
+                }
+                SlotDecision::Replay(response) => return Ok(CallAdmission::Replay(response)),
+                SlotDecision::Conflict => return Err(GatewayError::CallConflict),
+                SlotDecision::Wait => {
+                    slots = self
+                        .finished
+                        .wait(slots)
+                        .map_err(|_| GatewayError::StateUnavailable)?;
+                }
+            }
+        }
+    }
+
+    fn complete(
+        &self,
+        key: (AttemptId, CallId),
+        request: Request,
+        response: Response,
+    ) -> Result<(), GatewayError> {
+        self.slots
+            .lock()
+            .map_err(|_| GatewayError::StateUnavailable)?
+            .insert(key, CallSlot::Done(request, response));
+        self.finished.notify_all();
+        Ok(())
+    }
+
+    fn abandon(&self, key: &(AttemptId, CallId)) -> Result<(), GatewayError> {
+        self.slots
+            .lock()
+            .map_err(|_| GatewayError::StateUnavailable)?
+            .remove(key);
+        self.finished.notify_all();
+        Ok(())
+    }
+}
+
 /// In-memory Gateway adapter with configurable deterministic responses.
 pub struct MemoryGateway {
     guard: Arc<dyn AttemptGuard>,
@@ -538,8 +634,8 @@ pub struct MemoryGateway {
     permissions: PermissionLayers,
     tool_responses: Mutex<BTreeMap<ToolId, Value>>,
     model_responses: Mutex<BTreeMap<(String, String), String>>,
-    tool_calls: Mutex<BTreeMap<(AttemptId, CallId), (ToolCall, ToolResult)>>,
-    model_calls: Mutex<BTreeMap<(AttemptId, CallId), (ModelRequest, ModelResponse)>>,
+    tool_calls: CallTable<ToolCall, ToolResult>,
+    model_calls: CallTable<ModelRequest, ModelResponse>,
 }
 
 impl MemoryGateway {
@@ -558,8 +654,8 @@ impl MemoryGateway {
             permissions,
             tool_responses: Mutex::new(BTreeMap::new()),
             model_responses: Mutex::new(BTreeMap::new()),
-            tool_calls: Mutex::new(BTreeMap::new()),
-            model_calls: Mutex::new(BTreeMap::new()),
+            tool_calls: CallTable::new(),
+            model_calls: CallTable::new(),
         }
     }
 
@@ -602,12 +698,14 @@ impl MemoryGateway {
         .map_err(|_| GatewayError::InvalidCallId)
     }
 
-    fn recheck_audit_event_id(
+    /// 拒绝与冲突审计的独立事件 ID：`{base}:deny:{reason}`。
+    /// 同一调用因不同原因被多次拒绝时各留一条记录，且永不与基础 ID 上的 Intent/Outcome 冲突。
+    fn denial_audit_event_id(
         &self,
         base: &AuditEventId,
         error: &GatewayError,
     ) -> Result<AuditEventId, GatewayError> {
-        AuditEventId::parse(format!("{base}:recheck:{}", error.audit_reason()))
+        AuditEventId::parse(format!("{base}:deny:{}", error.audit_reason()))
             .map_err(|_| GatewayError::InvalidCallId)
     }
 
@@ -655,7 +753,11 @@ impl MemoryGateway {
         self.audit
             .append(AuditEvent::new(event_id, phase, action, payload).with_subject(subject))
             .map(|_| ())
-            .map_err(|_| GatewayError::AuditUnavailable)
+            .map_err(|error| match error {
+                // 同一事件 ID 被不同内容复用：这是调用方的 call ID 冲突，不是账本不可用。
+                AuditError::IdempotencyConflict { .. } => GatewayError::CallConflict,
+                _ => GatewayError::AuditUnavailable,
+            })
     }
 
     fn audit_denial(
@@ -683,49 +785,14 @@ impl MemoryGateway {
         );
         audit_result.err().unwrap_or(error)
     }
-}
 
-impl Gateway for MemoryGateway {
-    fn invoke(
+    /// 已占位的工具调用主体：Intent → 读取配置响应 → Outcome。失败时由调用方释放占位。
+    fn execute_tool(
         &self,
+        audit_id: &AuditEventId,
         capability: &JobCapability,
-        call: ToolCall,
+        call: &ToolCall,
     ) -> Result<ToolResult, GatewayError> {
-        let call_key = (capability.attempt_id(), call.call_id().clone());
-        let audit_id = self.audit_event_id("gateway.tool.v1", capability, call.call_id())?;
-        if let Err(error) = self.authorize(capability, call.tool()) {
-            let audit_id = if self.lock(&self.tool_calls)?.contains_key(&call_key) {
-                self.recheck_audit_event_id(&audit_id, &error)?
-            } else {
-                audit_id
-            };
-            return Err(self.audit_denial(
-                audit_id,
-                "gateway.tool_call",
-                capability,
-                call.tool().clone(),
-                call.call_id(),
-                error,
-            ));
-        }
-
-        if let Some((prior_call, result)) = self.lock(&self.tool_calls)?.get(&call_key) {
-            return if prior_call == &call {
-                Ok(result.clone())
-            } else {
-                let error = GatewayError::CallConflict;
-                let conflict_id = self.recheck_audit_event_id(&audit_id, &error)?;
-                Err(self.audit_denial(
-                    conflict_id,
-                    "gateway.tool_call",
-                    capability,
-                    call.tool().clone(),
-                    call.call_id(),
-                    error,
-                ))
-            };
-        }
-
         self.append_audit(
             audit_id.clone(),
             AuditPhase::Intent,
@@ -745,7 +812,7 @@ impl Gateway for MemoryGateway {
             None => {
                 let error = GatewayError::ToolUnavailable;
                 self.append_audit(
-                    audit_id,
+                    audit_id.clone(),
                     AuditPhase::Outcome,
                     "gateway.tool_call",
                     capability,
@@ -767,7 +834,7 @@ impl Gateway for MemoryGateway {
             output,
         };
         self.append_audit(
-            audit_id,
+            audit_id.clone(),
             AuditPhase::Outcome,
             "gateway.tool_call",
             capability,
@@ -779,52 +846,17 @@ impl Gateway for MemoryGateway {
                 "decision": "allow",
             }),
         )?;
-        self.lock(&self.tool_calls)?
-            .insert(call_key, (call, result.clone()));
         Ok(result)
     }
 
-    fn relay(
+    /// 已占位的模型中继主体：Intent → 读取配置响应 → Outcome。失败时由调用方释放占位。
+    fn execute_relay(
         &self,
+        audit_id: &AuditEventId,
         capability: &JobCapability,
-        request: ModelRequest,
+        relay_tool: &ToolId,
+        request: &ModelRequest,
     ) -> Result<ModelResponse, GatewayError> {
-        let relay_tool = ToolId::from_static("model.relay");
-        let call_key = (capability.attempt_id(), request.call_id.clone());
-        let audit_id = self.audit_event_id("gateway.model.v1", capability, &request.call_id)?;
-        if let Err(error) = self.authorize(capability, &relay_tool) {
-            let audit_id = if self.lock(&self.model_calls)?.contains_key(&call_key) {
-                self.recheck_audit_event_id(&audit_id, &error)?
-            } else {
-                audit_id
-            };
-            return Err(self.audit_denial(
-                audit_id,
-                "gateway.model_relay",
-                capability,
-                relay_tool,
-                &request.call_id,
-                error,
-            ));
-        }
-
-        if let Some((prior_request, response)) = self.lock(&self.model_calls)?.get(&call_key) {
-            return if prior_request == &request {
-                Ok(response.clone())
-            } else {
-                let error = GatewayError::CallConflict;
-                let conflict_id = self.recheck_audit_event_id(&audit_id, &error)?;
-                Err(self.audit_denial(
-                    conflict_id,
-                    "gateway.model_relay",
-                    capability,
-                    relay_tool,
-                    &request.call_id,
-                    error,
-                ))
-            };
-        }
-
         self.append_audit(
             audit_id.clone(),
             AuditPhase::Intent,
@@ -849,11 +881,11 @@ impl Gateway for MemoryGateway {
             None => {
                 let error = GatewayError::ModelUnavailable;
                 self.append_audit(
-                    audit_id,
+                    audit_id.clone(),
                     AuditPhase::Outcome,
                     "gateway.model_relay",
                     capability,
-                    relay_tool,
+                    relay_tool.clone(),
                     json!({
                         "call_id": request.call_id.as_str(),
                         "tool": "model.relay",
@@ -874,7 +906,7 @@ impl Gateway for MemoryGateway {
             text,
         };
         self.append_audit(
-            audit_id,
+            audit_id.clone(),
             AuditPhase::Outcome,
             "gateway.model_relay",
             capability,
@@ -888,8 +920,106 @@ impl Gateway for MemoryGateway {
                 "decision": "allow",
             }),
         )?;
-        self.lock(&self.model_calls)?
-            .insert(call_key, (request, response.clone()));
         Ok(response)
+    }
+}
+
+impl Gateway for MemoryGateway {
+    fn invoke(
+        &self,
+        capability: &JobCapability,
+        call: ToolCall,
+    ) -> Result<ToolResult, GatewayError> {
+        let call_key = (capability.attempt_id(), call.call_id().clone());
+        let audit_id = self.audit_event_id("gateway.tool.v1", capability, call.call_id())?;
+        if let Err(error) = self.authorize(capability, call.tool()) {
+            let denial_id = self.denial_audit_event_id(&audit_id, &error)?;
+            return Err(self.audit_denial(
+                denial_id,
+                "gateway.tool_call",
+                capability,
+                call.tool().clone(),
+                call.call_id(),
+                error,
+            ));
+        }
+
+        match self.tool_calls.admit(call_key.clone(), &call) {
+            Ok(CallAdmission::Replay(result)) => return Ok(result),
+            Ok(CallAdmission::Proceed) => {}
+            Err(error @ GatewayError::CallConflict) => {
+                let conflict_id = self.denial_audit_event_id(&audit_id, &error)?;
+                return Err(self.audit_denial(
+                    conflict_id,
+                    "gateway.tool_call",
+                    capability,
+                    call.tool().clone(),
+                    call.call_id(),
+                    error,
+                ));
+            }
+            Err(error) => return Err(error),
+        }
+
+        match self.execute_tool(&audit_id, capability, &call) {
+            Ok(result) => {
+                self.tool_calls.complete(call_key, call, result.clone())?;
+                Ok(result)
+            }
+            Err(error) => {
+                self.tool_calls.abandon(&call_key)?;
+                Err(error)
+            }
+        }
+    }
+
+    fn relay(
+        &self,
+        capability: &JobCapability,
+        request: ModelRequest,
+    ) -> Result<ModelResponse, GatewayError> {
+        let relay_tool = ToolId::from_static("model.relay");
+        let call_key = (capability.attempt_id(), request.call_id.clone());
+        let audit_id = self.audit_event_id("gateway.model.v1", capability, &request.call_id)?;
+        if let Err(error) = self.authorize(capability, &relay_tool) {
+            let denial_id = self.denial_audit_event_id(&audit_id, &error)?;
+            return Err(self.audit_denial(
+                denial_id,
+                "gateway.model_relay",
+                capability,
+                relay_tool,
+                &request.call_id,
+                error,
+            ));
+        }
+
+        match self.model_calls.admit(call_key.clone(), &request) {
+            Ok(CallAdmission::Replay(response)) => return Ok(response),
+            Ok(CallAdmission::Proceed) => {}
+            Err(error @ GatewayError::CallConflict) => {
+                let conflict_id = self.denial_audit_event_id(&audit_id, &error)?;
+                return Err(self.audit_denial(
+                    conflict_id,
+                    "gateway.model_relay",
+                    capability,
+                    relay_tool,
+                    &request.call_id,
+                    error,
+                ));
+            }
+            Err(error) => return Err(error),
+        }
+
+        match self.execute_relay(&audit_id, capability, &relay_tool, &request) {
+            Ok(response) => {
+                self.model_calls
+                    .complete(call_key, request, response.clone())?;
+                Ok(response)
+            }
+            Err(error) => {
+                self.model_calls.abandon(&call_key)?;
+                Err(error)
+            }
+        }
     }
 }

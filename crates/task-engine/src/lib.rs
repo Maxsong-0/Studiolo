@@ -642,7 +642,9 @@ where
                         );
                         Mutation::replace(page.clone(), content, current.revision, key)
                     }
-                    Err(BrokerError::NotFound(_)) if event.payload_json["status"] == "draft" => {
+                    Err(BrokerError::NotFound(_))
+                        if projected_status(&event.payload_json) == Some(TaskStatus::Draft) =>
+                    {
                         let task = self
                             .control_db
                             .task(event.task_id)
@@ -1014,18 +1016,17 @@ fn decode_spec(record: &TaskRecord) -> Result<TaskSpec, TaskEngineError> {
     Ok(spec)
 }
 
+/// 投影载荷里的 task 状态：载荷是 Control DB 写出的 JSON，按公开枚举解析而不比较状态名字符串。
+fn projected_status(payload: &serde_json::Value) -> Option<TaskStatus> {
+    serde_json::from_value(payload.get("status")?.clone()).ok()
+}
+
 fn map_db(error: DbError) -> TaskEngineError {
     match error {
         DbError::NotFound(record) => TaskEngineError::NotFound(record),
+        // 终态判断只认 Control DB 的结构化变体，不解释状态名字符串（契约 §6）。
+        DbError::AlreadyTerminal { .. } => TaskEngineError::AlreadyTerminal,
         DbError::InvalidTransition { from, operation } => {
-            if operation == "acknowledge_cancel"
-                && matches!(
-                    from.as_str(),
-                    "committing" | "completed" | "failed" | "abandoned"
-                )
-            {
-                return TaskEngineError::AlreadyTerminal;
-            }
             TaskEngineError::InvalidTransition { from, operation }
         }
         DbError::FenceMismatch => TaskEngineError::StaleFence,

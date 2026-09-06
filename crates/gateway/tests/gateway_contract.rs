@@ -1,6 +1,13 @@
 //! Public contract tests for the M0 in-memory Gateway adapter.
 
-use std::sync::Arc;
+use std::{
+    sync::{
+        Arc, Condvar, Mutex,
+        atomic::{AtomicUsize, Ordering},
+    },
+    thread,
+    time::{Duration, Instant},
+};
 
 use serde_json::json;
 use studiolo_audit_ledger::{
@@ -9,8 +16,9 @@ use studiolo_audit_ledger::{
 };
 use studiolo_core::{AttemptId, Fence, PermissionSet, TaskId, ToolId};
 use studiolo_gateway::{
-    AttemptSnapshot, CallId, Gateway, GatewayError, JobCapability, ManualClock, MemoryAttemptGuard,
-    MemoryGateway, ModelRequest, ModelResponse, PermissionLayers, ToolCall, ToolResult,
+    AttemptGuard, AttemptGuardError, AttemptSnapshot, CallId, Gateway, GatewayError, JobCapability,
+    ManualClock, MemoryAttemptGuard, MemoryGateway, ModelRequest, ModelResponse, PermissionLayers,
+    ToolCall, ToolResult,
 };
 
 struct UnavailableAuditLedger;
@@ -52,6 +60,11 @@ impl AuditLedger for UnavailableAuditLedger {
     fn query(&self, _filter: &AuditFilter) -> Result<Vec<AuditRecord>, AuditError> {
         Err(AuditError::Unavailable)
     }
+}
+
+/// 拒绝与冲突审计使用的独立事件 ID（契约 §3）。
+fn denial_audit_event_id(base: &AuditEventId, reason: &str) -> AuditEventId {
+    AuditEventId::parse(format!("{base}:deny:{reason}")).unwrap()
 }
 
 fn gateway_audit_event_id(
@@ -148,13 +161,10 @@ fn every_permission_layer_must_allow_the_tool_and_denial_is_audited() {
         Err(GatewayError::ToolNotAllowed)
     );
     let records = audit
-        .query(
-            &AuditFilter::default().with_event_id(gateway_audit_event_id(
-                "gateway.tool.v1",
-                &capability,
-                &call_id,
-            )),
-        )
+        .query(&AuditFilter::default().with_event_id(denial_audit_event_id(
+            &gateway_audit_event_id("gateway.tool.v1", &capability, &call_id),
+            "tool_not_allowed",
+        )))
         .unwrap();
     assert_eq!(records.len(), 1);
     assert_eq!(records[0].event().phase(), AuditPhase::Outcome);
@@ -325,13 +335,10 @@ fn a_stale_fence_is_rejected_before_a_tool_result_can_be_released() {
         Err(GatewayError::FenceMismatch)
     );
     let records = audit
-        .query(
-            &AuditFilter::default().with_event_id(gateway_audit_event_id(
-                "gateway.tool.v1",
-                &capability,
-                &call_id,
-            )),
-        )
+        .query(&AuditFilter::default().with_event_id(denial_audit_event_id(
+            &gateway_audit_event_id("gateway.tool.v1", &capability, &call_id),
+            "fence_mismatch",
+        )))
         .unwrap();
     assert_eq!(records.len(), 1);
     assert_eq!(records[0].event().phase(), AuditPhase::Outcome);
@@ -373,13 +380,10 @@ fn a_capability_expires_at_its_declared_deadline() {
         Err(GatewayError::CapabilityExpired)
     );
     let records = audit
-        .query(
-            &AuditFilter::default().with_event_id(gateway_audit_event_id(
-                "gateway.tool.v1",
-                &capability,
-                &call_id,
-            )),
-        )
+        .query(&AuditFilter::default().with_event_id(denial_audit_event_id(
+            &gateway_audit_event_id("gateway.tool.v1", &capability, &call_id),
+            "capability_expired",
+        )))
         .unwrap();
     assert_eq!(records.len(), 1);
     assert_eq!(
@@ -630,7 +634,7 @@ fn identical_call_replays_the_result_but_changed_content_conflicts() {
             .len(),
         2
     );
-    let conflict_id = AuditEventId::parse(format!("{base_id}:recheck:call_conflict")).unwrap();
+    let conflict_id = denial_audit_event_id(&base_id, "call_conflict");
     let conflicts = audit
         .query(&AuditFilter::default().with_event_id(conflict_id))
         .unwrap();
@@ -639,4 +643,182 @@ fn identical_call_replays_the_result_but_changed_content_conflicts() {
         conflicts[0].event().payload().as_value()["reason"],
         "call_conflict"
     );
+}
+
+#[test]
+fn repeated_denials_of_one_call_each_keep_their_own_audit_record_and_reason() {
+    let task = TaskId::new();
+    let attempt = AttemptId::new();
+    let fence = Fence::new(21).unwrap();
+    let tool = ToolId::from_static("web.fetch");
+    let granted = PermissionSet::new([tool.clone()]);
+    let guard = Arc::new(MemoryAttemptGuard::new());
+    guard
+        .set(task, attempt, AttemptSnapshot::active(fence))
+        .unwrap();
+    let audit = Arc::new(MemoryAuditLedger::new());
+    let gateway = MemoryGateway::new(
+        guard.clone(),
+        audit.clone(),
+        Arc::new(ManualClock::new(2_000)),
+        PermissionLayers::new(granted.clone(), granted.clone(), granted.clone()),
+    );
+    gateway
+        .set_tool_response(tool.clone(), json!({"should_not": "escape"}))
+        .unwrap();
+    let capability = JobCapability::new(task, attempt, fence, granted, 2_000);
+    let call_id = CallId::parse("denied-twice").unwrap();
+    let call = ToolCall::new(call_id.clone(), tool, json!({"path": "/pricing"}));
+
+    // 从未完成过的调用先因过期被拒，再因取消被拒：第二次必须返回真实原因并留下自己的记录。
+    assert_eq!(
+        gateway.invoke(&capability, call.clone()),
+        Err(GatewayError::CapabilityExpired)
+    );
+    guard
+        .set(task, attempt, AttemptSnapshot::cancelled(fence))
+        .unwrap();
+    assert_eq!(
+        gateway.invoke(&capability, call),
+        Err(GatewayError::Cancelled)
+    );
+
+    let base_id = gateway_audit_event_id("gateway.tool.v1", &capability, &call_id);
+    assert!(
+        audit
+            .query(&AuditFilter::default().with_event_id(base_id.clone()))
+            .unwrap()
+            .is_empty()
+    );
+    for reason in ["capability_expired", "cancelled"] {
+        let records = audit
+            .query(&AuditFilter::default().with_event_id(denial_audit_event_id(&base_id, reason)))
+            .unwrap();
+        assert_eq!(records.len(), 1, "{reason}");
+        assert_eq!(records[0].event().phase(), AuditPhase::Outcome);
+        assert_eq!(records[0].event().payload().as_value()["reason"], reason);
+    }
+}
+
+/// 第一次 append 进入后阻塞，直到测试放行；用于把并发调用钉在「首次调用正在执行」的时刻。
+struct GatedAuditLedger {
+    inner: MemoryAuditLedger,
+    appends: AtomicUsize,
+    entered: (Mutex<bool>, Condvar),
+    released: (Mutex<bool>, Condvar),
+}
+
+impl GatedAuditLedger {
+    fn new() -> Self {
+        Self {
+            inner: MemoryAuditLedger::new(),
+            appends: AtomicUsize::new(0),
+            entered: (Mutex::new(false), Condvar::new()),
+            released: (Mutex::new(false), Condvar::new()),
+        }
+    }
+}
+
+impl AuditLedger for GatedAuditLedger {
+    fn append(&self, event: AuditEvent) -> Result<AuditRecord, AuditError> {
+        if self.appends.fetch_add(1, Ordering::SeqCst) == 0 {
+            raise_flag(&self.entered);
+            wait_flag(&self.released, "release of the first append");
+        }
+        self.inner.append(event)
+    }
+
+    fn query(&self, filter: &AuditFilter) -> Result<Vec<AuditRecord>, AuditError> {
+        self.inner.query(filter)
+    }
+}
+
+/// 计数守卫：第二次 inspect 说明第二个调用已通过授权、即将进入幂等槽判定。
+struct CountingGuard {
+    inner: MemoryAttemptGuard,
+    inspections: AtomicUsize,
+    second_inspection: (Mutex<bool>, Condvar),
+}
+
+impl AttemptGuard for CountingGuard {
+    fn inspect(
+        &self,
+        task_id: TaskId,
+        attempt_id: AttemptId,
+    ) -> Result<AttemptSnapshot, AttemptGuardError> {
+        if self.inspections.fetch_add(1, Ordering::SeqCst) + 1 == 2 {
+            raise_flag(&self.second_inspection);
+        }
+        self.inner.inspect(task_id, attempt_id)
+    }
+}
+
+fn raise_flag((flag, condvar): &(Mutex<bool>, Condvar)) {
+    *flag.lock().unwrap() = true;
+    condvar.notify_all();
+}
+
+fn wait_flag((flag, condvar): &(Mutex<bool>, Condvar), what: &str) {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let mut raised = flag.lock().unwrap();
+    while !*raised {
+        let remaining = deadline
+            .checked_duration_since(Instant::now())
+            .unwrap_or_else(|| panic!("timed out waiting for {what}"));
+        raised = condvar.wait_timeout(raised, remaining).unwrap().0;
+    }
+}
+
+#[test]
+fn concurrent_identical_calls_execute_once_and_share_the_first_result() {
+    let task = TaskId::new();
+    let attempt = AttemptId::new();
+    let fence = Fence::new(22).unwrap();
+    let tool = ToolId::from_static("web.fetch");
+    let granted = PermissionSet::new([tool.clone()]);
+    let guard = Arc::new(CountingGuard {
+        inner: MemoryAttemptGuard::new(),
+        inspections: AtomicUsize::new(0),
+        second_inspection: (Mutex::new(false), Condvar::new()),
+    });
+    guard
+        .inner
+        .set(task, attempt, AttemptSnapshot::active(fence))
+        .unwrap();
+    let audit = Arc::new(GatedAuditLedger::new());
+    let gateway = Arc::new(MemoryGateway::new(
+        guard.clone(),
+        audit.clone(),
+        Arc::new(ManualClock::new(1_000)),
+        PermissionLayers::new(granted.clone(), granted.clone(), granted.clone()),
+    ));
+    gateway
+        .set_tool_response(tool.clone(), json!({"status": "ok"}))
+        .unwrap();
+    let capability = Arc::new(JobCapability::new(task, attempt, fence, granted, 2_000));
+    let call_id = CallId::parse("concurrent-call").unwrap();
+    let call = ToolCall::new(call_id.clone(), tool, json!({"path": "/pricing"}));
+
+    let spawn = |gateway: Arc<MemoryGateway>, capability: Arc<JobCapability>, call: ToolCall| {
+        thread::spawn(move || gateway.invoke(&capability, call))
+    };
+    let first = spawn(gateway.clone(), capability.clone(), call.clone());
+    // 首次调用已经占位并停在 Intent 追加里；此时第二个同键调用进入。
+    wait_flag(&audit.entered, "the first intent append");
+    let second = spawn(gateway.clone(), capability.clone(), call);
+    wait_flag(&guard.second_inspection, "the second authorization");
+    raise_flag(&audit.released);
+
+    let first = first.join().unwrap().unwrap();
+    let second = second.join().unwrap().unwrap();
+    assert_eq!(first, second);
+    // 整个过程只有一次 Intent 与一次 Outcome：第二个调用等待后复用结果，没有再执行。
+    assert_eq!(audit.appends.load(Ordering::SeqCst), 2);
+    let base_id = gateway_audit_event_id("gateway.tool.v1", &capability, &call_id);
+    let records = audit
+        .query(&AuditFilter::default().with_event_id(base_id))
+        .unwrap();
+    assert_eq!(records.len(), 2);
+    assert_eq!(records[0].event().phase(), AuditPhase::Intent);
+    assert_eq!(records[1].event().phase(), AuditPhase::Outcome);
 }

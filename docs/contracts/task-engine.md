@@ -132,7 +132,10 @@ outcome 故障以及重复 reconcile，spy Runner 的 start 次数不能增加�
 错误按公开 enum 返回，包括输入/状态拒绝、NotFound、StaleFence、AlreadyTerminal、
 IdempotencyMismatch、AuditUnavailable，以及带来源的 Audit、Broker、CommitFailed、
 ControlDb、Json、Integrity、InvalidRunnerRef、Projection 和 NeedsReconfirmation。调用方
-不得把任意底层错误吞成重放成功。
+不得把任意底层错误吞成重放成功。Control DB 错误到 TaskEngine 错误的映射只按变体进行：
+`DbError::AlreadyTerminal` → `AlreadyTerminal`、`FenceMismatch` → `StaleFence`、
+`InvalidTransition` 原样透传；TaskEngine 不解释 `from` 字符串里的状态名（2026-09-05 T-027
+起，00-overview §6）。
 
 快速契约使用内存 Broker/AuditLedger 与 SQLite 内存库；重启契约复用同一 SQLite 文件，
 真实垂直链使用 FsVaultBroker、文件 ControlDb 和 StubRunner。故障通过同一 trait 的
