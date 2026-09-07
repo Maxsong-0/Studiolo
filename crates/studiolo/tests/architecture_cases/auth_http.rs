@@ -49,11 +49,28 @@ fn session_composition_is_explicit_and_does_not_change_the_existing_binary_mode(
     assert!(routing.contains("if let Some(sessions) = &state.sessions"));
     // 分别检查旧入口，不能由新写者入口中偶然相同的参数片段代替。
     for (start, end, arguments) in [
-        ("pub fn router(", "pub fn router_with_access(", "Endpoint::Loopback(port),None,None,None)"),
-        ("pub fn router_with_access(", "pub fn router_with_sessions(", "Endpoint::Loopback(port),Some(access),None,None)"),
+        (
+            "pub fn router(",
+            "pub fn router_with_access(",
+            "Endpoint::Loopback(port),None,None,None)",
+        ),
+        (
+            "pub fn router_with_access(",
+            "pub fn router_with_sessions(",
+            "Endpoint::Loopback(port),Some(access),None,None)",
+        ),
     ] {
-        let function = routing.split_once(start).unwrap().1.split_once(end).unwrap().0;
-        let compact = function.split_whitespace().collect::<String>().replace(",)", ")");
+        let function = routing
+            .split_once(start)
+            .unwrap()
+            .1
+            .split_once(end)
+            .unwrap()
+            .0;
+        let compact = function
+            .split_whitespace()
+            .collect::<String>()
+            .replace(",)", ")");
         assert!(compact.contains("configured_router("));
         assert!(compact.contains(arguments));
         assert!(!compact.contains("CanonicalWorkbench"));

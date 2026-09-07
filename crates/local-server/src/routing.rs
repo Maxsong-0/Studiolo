@@ -184,7 +184,7 @@ fn validate(
         return Err(LocalError::Configuration);
     }
     match endpoint {
-        Endpoint::Loopback(0) => return Err(LocalError::Configuration),
+        Endpoint::Loopback(0) => Err(LocalError::Configuration),
         Endpoint::Loopback(port) => Ok(format!("127.0.0.1:{port}")),
         Endpoint::Unix => access
             .and_then(|value| value.origin().strip_prefix("https://"))

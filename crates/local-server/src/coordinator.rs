@@ -10,7 +10,7 @@ use studiolo_host_config::CanonicalServingRoots;
 use studiolo_vault_broker::{CanonicalRead, FsVaultBroker};
 use tokio::sync::watch;
 
-use crate::{LocalError, view::ViewStore, watcher};
+use crate::{LocalError, view::ViewStore};
 
 /// 显式写者模式的工作台生命周期；通过 Arc 共享句柄，始终只有一个 Broker 实例。
 pub struct CanonicalWorkbench {
@@ -283,7 +283,11 @@ impl Core {
                 | BrokerError::WriterBindingMismatch
                 | BrokerError::CorruptIdentity,
             ) => "binding_changed",
-            LocalError::Read(BrokerError::CorruptWriterState) => "writer_state_invalid",
+            LocalError::Read(
+                BrokerError::CorruptWriterState | BrokerError::WriterLimitExceeded,
+            ) => "writer_state_invalid",
+            // 私有写者目录或读取 I/O 故障都使新鲜度未知；保留原错误并安排重扫。
+            LocalError::Read(BrokerError::Io { .. }) => "capture_failed",
             LocalError::Read(BrokerError::CaptureChanged | BrokerError::UnstableRead(_)) => {
                 "changed"
             }
