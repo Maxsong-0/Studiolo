@@ -33,6 +33,12 @@ jobs:
       - name: 格式检查
         run: cargo --locked fmt --all -- --check
 
+      - name: M3 部署脚本回归
+        run: |
+          bash -n scripts/package-agent.sh scripts/run-agent-tests.sh scripts/sync-agent-vault.sh
+          python3 scripts/test-check-agent.py
+          python3 scripts/test-sync-agent-vault.py
+
       - name: Clippy（警告即失败）
         run: cargo --locked clippy --workspace --all-targets -- -D warnings
 

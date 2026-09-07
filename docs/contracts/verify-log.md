@@ -219,6 +219,22 @@ workspace 114 项通过（含 8 项 Linux 路径测试），另显式复跑 `lin
 
 主人接入（2026-09-07 02:32 UTC）：`claude mcp add --transport http studiolo http://127.0.0.1:4400/mcp --header …`（本地作用域，project `/Users/maxsong`）；在该目录下 `claude mcp list` 显示 `studiolo … ✔ Connected`，服务端 `agent_instance` 新增第三个实例 `01M1WVB2P3CQ6RG9FZ5WWWFXWA`（claude），即 Claude Code 自身完成了 initialize 握手。**「一个 URL 填进 Claude Code」首次成立。** 未做：Tunnel/Access 机器 token 部署；推模式与 HTTP 文本兜底；作用域为项目本地，跨目录使用需 `--scope user` 重加。
 
+## 3d. T-034 M3 部署整合与复验（2026-09-07）
+
+接手基线 `ad04c02`，在 `codex/m3-merge-deploy` 整合 Claude 未提交的服务器部署文件。服务器原发布已经运行，
+本轮复验并补齐脚本与 CI 门禁；详见 [服务器记录](../m3/server-agent.md#2026-09-07-codex-合并复验)。
+
+| 检查 | 结果 |
+|---|---|
+| 服务器原生发布包 | SHA256SUMS/二进制/服务单元摘要匹配，475 个源码文件匹配归档；47 个程序、278 项通过 |
+| 严格 MCP 验收 | 公网与回环的完整四工具链、白名单拒绝、无/错 token 的 401 均通过 |
+| 运维脚本回归 | MCP 检查器 8 项、同步脚本 5 项通过；bash 语法检查通过 |
+| 既有 T-030 修复 | 仅超限 writer journal 与读取 I/O 故障补标 stale；writer_http_contract 7/7、ordinary_read_rejections 1/1 |
+| fmt / Clippy | workspace 格式及 `--all-targets --locked -- -D warnings` 均通过 |
+
+未重启线上服务或部署 M2；M3 功能代码与原运行包相同，仅更正信号处理注释。Cloudflare Access、边缘兼容规则、
+副本自动同步、推模式与 HTTP 文本兜底仍属后续范围。
+
 ## 4. 运行记录模板
 
 ```text

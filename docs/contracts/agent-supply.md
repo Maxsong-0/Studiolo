@@ -80,3 +80,11 @@
 - 四维查询：两个类型两个实例各读若干路径 → `admin reads` 按类型/实例/时间/路径前缀过滤正确；重建索引与增量一致。
 - 真实 loopback：用 rmcp 客户端跑完整 initialize → handshake → list → read → search。
 - 真实验收（人）：`claude mcp add --transport http http://127.0.0.1:4400/mcp --header "Authorization: Bearer …"`，Claude Code 冷启动读到 Studiolo 路牌并按需读一篇；`admin reads` 查到该次读取。
+
+## 9. 部署形态（T-034，2026-09-07）
+
+- `serve` 只监听 `127.0.0.1:<port>`，不读 Host/Origin：公网入口由专用 Cloudflare Tunnel 的独立主机名转发到回环端口并把 Host 覆写为 `127.0.0.1:<port>`；应用不信任任何转发头，身份只来自 bearer 类型 token。
+- 优雅关停：SIGINT 与 SIGTERM 等价（systemd 默认 `KillSignal=SIGTERM`）；关停期间不再接受新会话，已开始的供给完成后退出。
+- 服务器副本：`--vault` 指向由 `scripts/sync-agent-vault.sh` 推送的白名单子树只读副本，副本陈旧只影响新鲜度（§6），不影响门禁、审计与预算；`--allow` 与 Mac 本机一致（`项目/Studiolo`、`_规则`）。
+- 未加 Cloudflare Access：服务 token 秘密不能经 agent 之手；主人在面板签发后可再挂 Access 应用（policy 为 Service Auth），届时客户端多带两条 `CF-Access-Client-*` 头即可，本契约不变。
+- 服务器安装、目录约定与实际部署记录见 `docs/m3/server-agent.md`。

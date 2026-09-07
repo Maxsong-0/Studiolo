@@ -62,7 +62,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .layer(middleware::from_fn_with_state(state, auth::require_bearer))
 }
 
-/// 启动服务直到 Ctrl-C。
+/// 启动服务直到 Ctrl-C 或 SIGTERM。
 pub async fn run(options: ServeOptions) -> Result<(), String> {
     let state = prepare(&options)?;
     let first = state.current();
@@ -75,13 +75,34 @@ pub async fn run(options: ServeOptions) -> Result<(), String> {
         .await
         .map_err(|_| format!("无法监听 127.0.0.1:{}", options.port))?;
     println!(
-        "studiolo-agent：http://127.0.0.1:{}/mcp（仅 loopback；首扫 {notes} 篇笔记，{diagnostics} 条诊断；Ctrl-C 停止）",
+        "studiolo-agent：http://127.0.0.1:{}/mcp（仅 loopback；首扫 {notes} 篇笔记，{diagnostics} 条诊断；Ctrl-C 或 SIGTERM 停止）",
         options.port
     );
     axum::serve(listener, app)
-        .with_graceful_shutdown(async {
-            let _ = tokio::signal::ctrl_c().await;
-        })
+        .with_graceful_shutdown(shutdown_signal())
         .await
         .map_err(|_| "服务异常退出".to_owned())
+}
+
+/// Ctrl-C（SIGINT）与 systemd 停止（SIGTERM）都触发优雅关停；SIGTERM 注册失败时只等待 Ctrl-C。
+async fn shutdown_signal() {
+    let interrupt = async {
+        let _ = tokio::signal::ctrl_c().await;
+    };
+    #[cfg(unix)]
+    let terminate = async {
+        use tokio::signal::unix::{SignalKind, signal};
+        match signal(SignalKind::terminate()) {
+            Ok(mut stream) => {
+                let _ = stream.recv().await;
+            }
+            Err(_) => std::future::pending::<()>().await,
+        }
+    };
+    #[cfg(not(unix))]
+    let terminate = std::future::pending::<()>();
+    tokio::select! {
+        () = interrupt => {}
+        () = terminate => {}
+    }
 }

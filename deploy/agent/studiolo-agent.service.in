@@ -1,0 +1,33 @@
+# Studiolo M3 供给面运行包（studiolo-agent）；@RELEASE@ 必须替换为已校验的发布目录名。
+# 只监听 127.0.0.1:4400；公网入口由专用 Tunnel 的独立主机名转发到此回环端口，门禁在应用内（bearer）。
+[Unit]
+Description=Studiolo M3 agent supply (MCP, loopback 4400)
+StartLimitIntervalSec=60
+StartLimitBurst=3
+
+[Service]
+Type=simple
+WorkingDirectory=%h/.local/share/studiolo-agent-releases/@RELEASE@
+# 白名单只读副本由 scripts/sync-agent-vault.sh 从主人 Mac 推送；私有库/账本目录由主人预建 0700。
+ExecStart=%h/.local/share/studiolo-agent-releases/@RELEASE@/bin/studiolo-agent serve --vault %h/.local/share/studiolo-agent-vault --allow 项目/Studiolo --allow _规则 --data %h/.local/share/studiolo-agent --port 4400
+Restart=on-failure
+RestartSec=3
+KillSignal=SIGTERM
+TimeoutStopSec=20
+UMask=0077
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=read-only
+# 唯一可写路径：私有库 agent.sqlite3 与审计账本；发布目录与库副本保持只读。
+ReadWritePaths=%h/.local/share/studiolo-agent
+PrivateTmp=yes
+# 此选项会拦截 openat2（只读 Broker 依赖它）；以只读文件系统和 NoNewPrivileges 维持写入/提权边界。
+RestrictSUIDSGID=no
+LockPersonality=yes
+RestrictAddressFamilies=AF_UNIX AF_INET
+SystemCallArchitectures=native
+MemoryMax=512M
+TasksMax=64
+
+[Install]
+WantedBy=default.target

@@ -23,6 +23,12 @@ lint、Prettier 与生产构建。本轮真实 HTTP 桌面/窄屏搜索导航验
 T-010历史验证：macOS222/Linux aarch64 230项Rust、前端39项及格式/生产构建通过；
 桌面与窄屏实际文件树交互通过。后续T-011界面与M2结果以各检查点为准，当前尚未提交推送或更新服务器。
 
+## m3/ — 供给面服务器常驻与公网入口
+
+[服务器常驻 `studiolo-agent`](m3/server-agent.md) 记录 T-034：白名单子树只读副本同步、amd64 运行包交叉构建与服务器原生测试、
+用户级 systemd 单元、专用隧道新增主机名 `studiolo-agent.maxsong.me`（应用内 bearer 门禁，未加 Access）与实际部署记录。
+供给面契约本身在 [`contracts/agent-supply.md`](contracts/agent-supply.md)。
+
 ## contracts/ — Module Interface 契约（M0）
 
 六个深 Module 的 Interface、不变量、错误模式、测试替身与契约测试清单。范围与关键裁决的
