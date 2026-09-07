@@ -202,6 +202,23 @@ workspace 114 项通过（含 8 项 Linux 路径测试），另显式复跑 `lin
 `VaultPath` 只接受 NFC 且 Broker 碰撞键先 NFC（新依赖 `unicode-normalization 0.1.25`）；审计词法
 复数形态与凭据本体后缀。未做：真实 Runner/外发、Linux 本机复跑。
 
+## 3c. T-033 M3 首片（2026-09-07）
+
+日期/时区：2026-09-07 UTC。环境：macOS arm64、Rust 1.97.1、Python 3.12（tiktoken 0.9.0 作独立复核）。代码位置：
+`.claude/worktrees/m3-cold-start-supply`，分支 `claude/m3-cold-start-supply`（基线＝WIP `4bdb5e0` + main `639b529`），
+提交 `d0dbd97`（supply 内核）、`540d591`（agent-server）及本次文档提交。
+
+| 检查 | 结果 |
+|---|---|
+| `cargo fmt --all -- --check` | 仅 T-030 在途的 `architecture_cases/{auth_http,canonical_owner}.rs` 有差异；本片文件全部通过 |
+| `cargo clippy --workspace --all-targets -- -D warnings` | 仅 T-030 在途的 `local-server`（未用导入、多余 return）报错；`supply`、`agent-server`、`studiolo` 通过 |
+| `cargo test --workspace --no-fail-fast` | **836 通过 / 2 失败**，失败均为 T-030 在途 `writer_http_contract::failures`；本片新增：supply 13（roots 3、signpost 3、agent_store 4、budget 2、audit 1）、agent-server 5（options 2、mcp_contract 3 真实 loopback）、architecture +1（supply_storage）|
+| `RUSTDOCFLAGS=-D warnings cargo doc --workspace --no-deps` | exit 0 |
+| 真实库验收（本机） | `studiolo-agent serve --vault "<原 vault>" --allow 项目/Studiolo --allow _规则`：首扫 92 篇笔记、0 诊断；`initialize` 返回路牌 1583 字符，**o200k 931 token**（cl100k 1105），裁剪等级 0；`tools/list` 4 项；`read_note` INDEX 返回 revision＋正文；`read_note School/README.md` → 拒绝并审计 `outside_allowlist`；`search 冷启动` 45 命中；`list_entries _规则` 18 条；`admin reads` 按类型/实例/路径查到全部读取 |
+| Linux | 未复跑（Docker 未运行）；分支已推送，远端 CI 因 T-030 在途 fmt/clippy 预期为红 |
+
+未做：`claude mcp add` 真实接入由主人执行（修改其 Claude Code 配置）；Tunnel/Access 机器 token 部署；推模式与 HTTP 文本兜底。
+
 ## 4. 运行记录模板
 
 ```text

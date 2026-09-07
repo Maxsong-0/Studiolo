@@ -11,7 +11,7 @@
 
 - 只读扫描复用 `vault-broker::ReadOnlyVault`：**每个白名单目录各开一个只读根**，未列入的目录从一开始不进入任何计算；不装配 `FsVaultBroker`，不获得 canonical 写能力。
 - 审计写入口唯一：`SqliteAuditLedger::open_existing(<agent 私有目录>/audit)`，与 Auth 账本分库（跨进程不共写一条哈希链）。
-- 私有目录 `<data>/`：`audit/`（账本）、`identity.sqlite3`（类型摘要与实例）、`read-index.sqlite3`（读取审计派生索引，可由账本重建）。目录与文件沿用审计存储同一套规则（绝对路径、0700/0600、逐层拒绝链接、同 owner）。
+- 私有目录 `<data>/`：`audit/audit.sqlite3`（权威账本，由 audit-ledger 打开）与 `agent.sqlite3`（类型摘要、实例登记、读取审计派生索引、outage 记录，由 supply 打开）。目录与文件沿用审计存储同一套规则（绝对路径、0700/0600、逐层拒绝链接、同 owner），架构守卫把 `agent.sqlite3` 登记为第三个固定文件名。
 - 配置只经命令行参数（本片不读配置文件，避免外壳 crate 获得通用文件读写能力）：`serve --vault <绝对路径> --allow <相对目录>…（可重复）--data <绝对私有目录> --port <端口>`；`--data` 与其下 `audit/` 须由主人预先 `mkdir -m 700` 创建，服务不创建目录。类型 token 明文永不进参数或文件。
 
 ## 2. 身份两级
@@ -21,8 +21,8 @@
 | 类型（`claude` / `codex` / `grok`…） | `studiolo-agent admin type-issue --config <agent.json> --type <名>`，32 字节随机 token 只在 TTY 打印一次 | `identity.sqlite3` 只存 sha256 与签发时间 | 只读 ＋ 配置白名单（M4 前固定） |
 | 实例 | 客户端带 `Authorization: Bearer <类型token>` 发 MCP `initialize`；服务端铸 ULID 实例 id，绑定类型与 MCP 会话 id | `identity.sqlite3`：实例 id、类型、会话 id、注册时间、最近活动 | 无独立权限，继承类型 |
 
-- 无 / 错 / 已吊销 token：HTTP 401，**不进入任何内容计算**，记 `agent.action_denied`（reason=`unauthenticated`）。
-- 同一 HTTP 会话内所有 tool 调用共享该实例；会话结束实例保留记录不删。三级吊销属 M4；本片只提供 `admin type-revoke`（把类型摘要标记为吊销，即刻拒绝新握手与后续调用）。
+- 无 / 错 / 已吊销 token：HTTP 401（`WWW-Authenticate: Bearer`，无正文），**不进入任何内容计算**，记 `agent.action_denied`（reason=`unauthenticated`，主体匿名）。
+- 同一 MCP 会话内所有 tool 调用共享该实例；实例注册记 `agent_instance.registered`；会话结束实例保留记录不删。本片服务端只协商带会话的协议版本（2025-11-25 / 2025-06-18 / 2025-03-26），SEP-2567 无会话模式下的实例身份另行设计。三级吊销属 M4；本片只提供 `admin type-revoke`：类型摘要标记吊销后，**同一会话的下一次调用在门禁处即 401**（记 `unauthenticated`），新握手同样 401；handler 内另有 `type_is_active` 复核作为纵深。
 
 ## 3. 冷启动路牌（二元验收）
 
@@ -32,9 +32,9 @@
   2. 白名单内每个项目：`00-总览/INDEX.md` 首表的「当前版本 / 状态 / 最近日志 / 未关闭 BUG」＋「当前重点」首条（截断 200 字）；骨架缺失的字段显示「不可用」；
   3. 能力摘要：只读；白名单清单；写与审批：无（M3）；
   4. 待我做的事：`04-协调/TASKS.md`「① 进行中」各行（ID / 任务截断 80 字 / 状态）＋「待认领」段落标题；
-  5. 硬约束：`_规则/通用工作规则.md`「核心行为准则」七条标题 ＋ Skill 路由中「一律叠加」硬绑定句；
+  5. 硬约束：白名单内 `通用工作规则.md`（母本）的 `## 准则…` 标题（母本缺失时退回项目 `CLAUDE.md` 快照「准则」节的编号加粗条目）＋ 两处文件里含「一律叠加 / 必叠」的硬绑定句；
   6. 继续拉：tool 清单 ＋ 入口文件（INDEX、TASKS、最新日志、规则母本）的路径与 revision。
-- 预算：以 `tiktoken-rs` o200k_base 计量序列化后的 instructions 文本；**> 2000 token 即 initialize 失败**（`budget_exceeded`），记 `handshake.budget_exceeded`；内部目标 ≤1500。**这是二元验收项**，不得降级为告警。
+- 预算：以 `tiktoken-rs` o200k_base 计量 instructions 文本；派生器先按四级裁剪（当前重点字数、进行中行数、待认领条数、入口条数）逼近内部目标 ≤1500，**裁剪后仍 > 2000 token 即 initialize 失败**（`budget_exceeded`），记 `handshake.budget_exceeded`。**这是二元验收项**，不得降级为告警。真实库首次验收（2026-09-07）：项目/Studiolo + _规则 的路牌 1583 字符、o200k 931 token（cl100k 参考 1105），裁剪等级 0（见 verify-log）。
 - 成功记 `handshake.served`（类型、实例、路牌版本＝生成代次、实际 token 数）。
 
 ## 4. tools（接入方动作，按「四附」矩阵）
@@ -53,12 +53,12 @@
 ## 5. 读取审计查询
 
 - 权威：账本 `content.read` / `handshake.*` / `agent.action_denied` 事件，payload 只含类型、实例、路径、revision、tool、token 数，不含正文与 token 秘密。
-- 派生索引 `read-index.sqlite3`：`(recorded_at, type, instance, path, revision, ledger_offset)`，账本追加成功后写入；`admin reads --type --instance --since --until --path-prefix` 由人查询；`admin rebuild-read-index` 从账本重放重建。索引损坏不影响供给，只影响查询。
+- 派生索引（`agent.sqlite3` 的 `reads` 表）：`(recorded_at_ms, recorded_at, type, instance, path, revision, tool, ledger_offset)`，账本追加成功后写入，同一账本偏移只记一次；`admin reads --type --instance --since --until --path-prefix --limit` 由人查询（时间按 Unix 毫秒比较）；`admin rebuild-read-index` 从账本 `content.read` 事件重放重建。索引损坏不影响供给，只影响查询。
 
 ## 6. 新鲜度与降级
 
 - 启动全扫白名单子树建代次；后台每 60 秒重扫；`read_note` 直接读当前文件并返回其 revision。扫描诊断只降级为路牌里的「诊断 n 条」，不拒绝启动。
-- 审计不可用（账本打开失败或追加失败）：initialize 仍应答，但 instructions 只含「审计不可用 ＋ outage id ＋ 本次读写全部拒绝」，不含任何 vault 内容；所有 tool 返回 `audit_unavailable`；outage 起始与拒绝计数落 `<data>/outage.json`（有界补记）。带外告警与健康页红属运维片，本片只留 outage 持久痕迹。
+- 审计不可用（账本追加失败，含存储复核失败）：initialize 仍应答，但 instructions 只含「审计不可用 ＋ outage id ＋ 本次读写全部拒绝」，不含任何 vault 内容；所有 tool 返回 `audit_unavailable`；outage 起始、拒绝计数与结束时间落 `agent.sqlite3` 的 `outage` 表（同一 outage 只记一行，计数有界），账本恢复后第一次成功追加即结束窗口。带外告警与健康页红属运维片，本片只留持久痕迹（`admin outages`）。
 
 ## 7. 错误模式
 

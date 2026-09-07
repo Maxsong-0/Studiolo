@@ -48,7 +48,11 @@ fn supply_private_storage_is_fixed_and_separate_from_audit_and_auth() {
             .contains(&AuthorityViolation::DatabaseOpen)
     );
     assert!(
-        source_violations("studiolo-supply", Path::new(CONNECTION), &format!("{source}\n{source}"))
-            .contains(&AuthorityViolation::DatabaseOpen)
+        source_violations(
+            "studiolo-supply",
+            Path::new(CONNECTION),
+            &format!("{source}\n{source}")
+        )
+        .contains(&AuthorityViolation::DatabaseOpen)
     );
 }

@@ -6,6 +6,7 @@
   （INDEX 仪表盘、PRD 分册、ADR、TASKS 协调板、日志）。
 - **本仓库**：实现代码、部署清单、面向实现者的技术方案（`docs/`）。
 - 状态：**T-006 总览、T-007 搜索 / 导航、T-010 文件树 / 附件信息及 T-011 界面重设计已实现，完整 M1 尚未完成**。当前提供项目总览、待我动作、原文行号、手动刷新、中文搜索、快速切换、大纲 / 双链，以及包含空目录与纯附件目录的文件树；范围和验证状态见 [M1 实现说明](docs/m1/README.md)。
+- **M3 首片已实现（分支 `claude/m3-cold-start-supply`，2026-09-06/07）**：`studiolo-agent` 以一个 URL 向 AI 接入方供给冷启动路牌（≤2000 token 二元）、白名单内只读内容与读取审计；契约见 [供给面与 MCP 外壳](docs/contracts/agent-supply.md)。真实库验收：路牌 931 token。
 - **当前优先 M2**：认证前后端、canonical单写者/永久配对/未决幂等及T-029新main整合已验收；当前macOS747/Linux758和两端生产通过，前端沿用T-025的125项。HEAD已d24e56a，继续新鲜度/CAS；编辑、同步、备份恢复和完整发布仍未完成，见[M2验证记录](docs/m2/README.md)与[发布缺口](docs/m2/release-readiness.md)。
 
 M1 使用独立的只读 Broker Adapter、纯派生 Workbench Module 与本机网页入口，不装配 M0
@@ -69,6 +70,8 @@ crates/
   studiolo/          # 组合根与集成测试（最小垂直链、reconcile、架构写入口）
   workbench/         # M1 纯派生视图、内存搜索、文档导航与有界文件树
   local-server/      # M1只读查询；M2显式会话、canonical读取及Unix因子HTTP
+  supply/            # M3 供给面内核：白名单只读根、冷启动路牌与 o200k 预算、类型/实例身份、读取审计索引
+  agent-server/      # M3 `studiolo-agent`：rmcp Streamable HTTP 主外壳（仅 loopback）与 admin 子命令
 docs/                # M0 契约与 M1/M2 分片实现和运行说明
 scripts/             # test-linux.sh：Docker 内跑与 CI 相同的 fmt / clippy / test
 .github/workflows/   # CI（Linux x86_64，action 按 SHA 钉死）
