@@ -217,7 +217,7 @@ workspace 114 项通过（含 8 项 Linux 路径测试），另显式复跑 `lin
 | 真实库验收（本机） | `studiolo-agent serve --vault "<原 vault>" --allow 项目/Studiolo --allow _规则`：首扫 92 篇笔记、0 诊断；`initialize` 返回路牌 1583 字符，**o200k 931 token**（cl100k 1105），裁剪等级 0；`tools/list` 4 项；`read_note` INDEX 返回 revision＋正文；`read_note School/README.md` → 拒绝并审计 `outside_allowlist`；`search 冷启动` 45 命中；`list_entries _规则` 18 条；`admin reads` 按类型/实例/路径查到全部读取 |
 | Linux | 未复跑（Docker 未运行）；分支已推送，远端 CI 因 T-030 在途 fmt/clippy 预期为红 |
 
-未做：`claude mcp add` 真实接入由主人执行（修改其 Claude Code 配置）；Tunnel/Access 机器 token 部署；推模式与 HTTP 文本兜底。
+主人接入（2026-09-07 02:32 UTC）：`claude mcp add --transport http studiolo http://127.0.0.1:4400/mcp --header …`（本地作用域，project `/Users/maxsong`）；在该目录下 `claude mcp list` 显示 `studiolo … ✔ Connected`，服务端 `agent_instance` 新增第三个实例 `01M1WVB2P3CQ6RG9FZ5WWWFXWA`（claude），即 Claude Code 自身完成了 initialize 握手。**「一个 URL 填进 Claude Code」首次成立。** 未做：Tunnel/Access 机器 token 部署；推模式与 HTTP 文本兜底；作用域为项目本地，跨目录使用需 `--scope user` 重加。
 
 ## 4. 运行记录模板
 
