@@ -94,8 +94,11 @@ def run_case(executable, name, sent=b"", expected=b"Ok(())", mode="read", redire
         assert status is not None, f"{name}: 子进程未及时退出; {diagnostic}"
         assert mode == "preflight" or action_sent, f"{name}: 未出现隐藏输入提示; {diagnostic}"
         if name == "hangup":
-            # macOS仍可恢复已打开的slave；Linux可能已不可恢复。两种情况均不返回验证码。
-            assert any(b"PROBE_RESULT=" + value in data for value in [b"Err(Cancelled)", b"Err(Restore)"]), diagnostic
+            # Linux先唤醒slave读者再发送HUP，read可能先报EIO，此时恢复仍可成功。
+            # 只额外接受已核对恢复的Io；取消/无法恢复仍按原契约处理，均不返回验证码。
+            interrupted = any(b"PROBE_RESULT=" + value in data for value in [b"Err(Cancelled)", b"Err(Restore)"])
+            restored_io = b"PROBE_RESULT=Err(Io);RESTORED=true" in data
+            assert interrupted or restored_io, diagnostic
         else:
             assert b"PROBE_RESULT=" + expected in data, f"{name}: 错误返回与契约不符; {diagnostic}"
         if name != "hangup":

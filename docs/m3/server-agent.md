@@ -134,6 +134,9 @@ claude mcp add --scope user --transport http studiolo https://studiolo-agent.max
   两组脚本回归纳入 CI；后续运行包携带严格验收脚本。
 - 修复 main 既有 T-030 的两处 CI 规范错误与两项读取故障漏标 stale；`writer_http_contract` 7/7，普通读取拒绝回归通过。
   此修复属于本地工作台，不在已部署的 `studiolo-agent` 依赖链内，不代表完整 M2 完成或部署。
+- 整合分支 CI 34148098748 全绿（Linux workspace 850 项）。main 复跑 34148811424 暴露既有 PTY hangup 测试遗漏：
+  终端断开时可以先报 Io，恢复成功后才收到 HUP。测试仅额外接受 `Err(Io);RESTORED=true`，
+  无验证码泄露、退出状态与挂断信号检查保留，生产代码不变。
 - M3 运行代码与原发布源码相同（仅 SIGTERM 注释更正）；本轮改进集中在运维脚本、CI 和非发布依赖。
   因此继续使用已校验的原不可变发布包，未重建二进制、重启服务、改动边缘保护或同步真实副本。
   构建快照不是最终合并提交的全仓库快照；以原发布包校验和和本节差异说明追溯。

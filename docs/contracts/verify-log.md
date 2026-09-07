@@ -231,6 +231,12 @@ workspace 114 项通过（含 8 项 Linux 路径测试），另显式复跑 `lin
 | 运维脚本回归 | MCP 检查器 8 项、同步脚本 5 项通过；bash 语法检查通过 |
 | 既有 T-030 修复 | 仅超限 writer journal 与读取 I/O 故障补标 stale；writer_http_contract 7/7、ordinary_read_rejections 1/1 |
 | fmt / Clippy | workspace 格式及 `--all-targets --locked -- -D warnings` 均通过 |
+| 整合分支 CI 34148098748 | 全绿；Linux workspace 850 项通过，路径安全显式检查与两组生产构建通过，前端作业通过 |
+
+main 首次复跑（34148811424）遇到既有 `auth-admin` PTY hangup 测试竞态：内核 I/O 失败可先于 HUP 取消标记，
+实际返回 `Err(Io);RESTORED=true`，随后正常按 SIGHUP 退出。仅将该测试场景的允许结果补上这个精确组合，
+仍拒绝成功返回、未恢复的 Io、非预期退出与验证码回显；生产终端处理与 M3 服务代码不变。
+修正后 macOS 真实 PTY 契约 16 情形通过，hangup 独立重复 20/20 通过；Linux 以随后 main CI 为准。
 
 未重启线上服务或部署 M2；M3 功能代码与原运行包相同，仅更正信号处理注释。Cloudflare Access、边缘兼容规则、
 副本自动同步、推模式与 HTTP 文本兜底仍属后续范围。
