@@ -14,8 +14,8 @@ use studiolo_audit_ledger::{
     AuditError, AuditEvent, AuditEventId, AuditLedger, AuditPhase, AuditSubject, SanitizedPayload,
 };
 use studiolo_control_db::{
-    AttemptPhase, AttemptRecord, ControlDb, DbError, PendingTerminalAudit, SnapshotEntryRecord,
-    SnapshotRecord, TaskRecord, TaskStatus, TerminalReservation,
+    AttemptPhase, AttemptRecord, ControlDb, DbError, OutboxRecord, PendingTerminalAudit,
+    SnapshotEntryRecord, SnapshotRecord, TaskRecord, TaskStatus, TerminalReservation,
 };
 use studiolo_core::{AttemptId, Fence, TaskId, VaultPath};
 use studiolo_runner_adapter::{RunInput, RunSpec, RunnerRef, RunnerReport};
@@ -216,12 +216,32 @@ pub enum TaskEngineError {
     /// A task page could not be updated without losing authored content.
     #[error("task projection failed: {0}")]
     Projection(String),
+    /// Some events stayed pending because their own task pages rejected them; every other
+    /// task's events in the same pass were still delivered.
+    #[error("task projection incomplete: {delivered} delivered, {} task(s) left pending", failures.len())]
+    ProjectionIncomplete {
+        /// Events delivered during this pass.
+        delivered: usize,
+        /// First rejected event per quarantined task; that task's later events were skipped.
+        failures: Vec<ProjectionFailure>,
+    },
     /// A confirmed input changed while the task was waiting to be claimed.
     #[error("task {0} requires input reconfirmation")]
     NeedsReconfirmation(TaskId),
     /// A runner reference lacked a stable identity or its required PID/start pair.
     #[error("invalid or mismatched runner reference")]
     InvalidRunnerRef,
+}
+
+/// One projection event left pending because its own task page rejected it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ProjectionFailure {
+    /// Task whose page rejected the projection.
+    pub task_id: TaskId,
+    /// Outbox sequence that stays pending.
+    pub sequence: i64,
+    /// Stable, human-readable rejection reason.
+    pub reason: String,
 }
 
 /// Synchronous, object-safe task lifecycle seam.
@@ -355,7 +375,8 @@ where
             .ok_or(TaskEngineError::NotFound("task"))?;
         match (command, current.status) {
             (TaskCommand::Run, TaskStatus::Draft) => {
-                self.project_pending()?;
+                // Run 只要求本任务自己的投影已交付；别的任务的坏页不能挡住这条命令。
+                self.project_task(task_id)?;
                 let snapshot = self.capture_inputs(task_id, &current.spec)?;
                 self.control_db
                     .queue_with_snapshot(task_id, &snapshot_record(&snapshot), now_ms)
@@ -620,8 +641,71 @@ where
     fn project_pending(&mut self) -> Result<usize, TaskEngineError> {
         self.verify_vault_binding()?;
         let pending = self.control_db.pending_outbox().map_err(map_db)?;
+        self.project_events(pending)
+    }
+
+    fn task(&self, task_id: TaskId) -> Result<Option<TaskView>, TaskEngineError> {
+        self.control_db
+            .task(task_id)
+            .map_err(map_db)?
+            .map(|record| task_view(&record))
+            .transpose()
+    }
+}
+
+impl<B, L> PersistentTaskEngine<B, L>
+where
+    B: VaultBroker,
+    L: AuditLedger,
+{
+    /// Delivers only the pending events of one task, in sequence order.
+    fn project_task(&mut self, task_id: TaskId) -> Result<usize, TaskEngineError> {
+        self.verify_vault_binding()?;
+        let pending = self
+            .control_db
+            .pending_outbox()
+            .map_err(map_db)?
+            .into_iter()
+            .filter(|event| event.task_id == task_id)
+            .collect();
+        self.project_events(pending)
+    }
+
+    /// Delivers events in sequence order. A page-level rejection quarantines that task for
+    /// the rest of the pass (its later events stay pending, preserving per-task order) without
+    /// blocking other tasks; storage and Broker failures still abort the whole pass.
+    fn project_events(&mut self, events: Vec<OutboxRecord>) -> Result<usize, TaskEngineError> {
         let mut delivered = 0;
-        for event in pending {
+        let mut failures: Vec<ProjectionFailure> = Vec::new();
+        for event in events {
+            if failures
+                .iter()
+                .any(|failure| failure.task_id == event.task_id)
+            {
+                continue;
+            }
+            match self.project_event(&event) {
+                Ok(()) => delivered += 1,
+                Err(error) if is_page_rejection(&error) => failures.push(ProjectionFailure {
+                    task_id: event.task_id,
+                    sequence: event.sequence,
+                    reason: error.to_string(),
+                }),
+                Err(error) => return Err(error),
+            }
+        }
+        if failures.is_empty() {
+            Ok(delivered)
+        } else {
+            Err(TaskEngineError::ProjectionIncomplete {
+                delivered,
+                failures,
+            })
+        }
+    }
+
+    fn project_event(&mut self, event: &OutboxRecord) -> Result<(), TaskEngineError> {
+        {
             let page = task_page_path(event.task_id)?;
             let mut succeeded = false;
             for _ in 0..3 {
@@ -698,18 +782,19 @@ where
             self.control_db
                 .mark_outbox_delivered(event.sequence, jiff::Timestamp::now().as_millisecond())
                 .map_err(map_db)?;
-            delivered += 1;
         }
-        Ok(delivered)
+        Ok(())
     }
+}
 
-    fn task(&self, task_id: TaskId) -> Result<Option<TaskView>, TaskEngineError> {
-        self.control_db
-            .task(task_id)
-            .map_err(map_db)?
-            .map(|record| task_view(&record))
-            .transpose()
-    }
+/// Failures caused by the content of one task's own page: they must not block other tasks.
+fn is_page_rejection(error: &TaskEngineError) -> bool {
+    matches!(
+        error,
+        TaskEngineError::Projection(_)
+            | TaskEngineError::NotFound("projection task")
+            | TaskEngineError::Json(_)
+    )
 }
 
 impl<B, L> PersistentTaskEngine<B, L>

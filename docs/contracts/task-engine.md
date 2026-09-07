@@ -114,6 +114,13 @@ M0 Stub 没有独立存活进程；restart 的旧 CancelRequested 可收敛为 C
 证明当前 revision 仍等于本次目标输出后才 acknowledge；若输出已被外改，保留 outbox 并
 重新基于最新页面补丁，不能把旧 receipt 当成当前已安装结果。
 
+**逐任务隔离（2026-09-06 T-032）**：一条事件因它自己的任务页被拒（缺 frontmatter、身份不
+匹配、非法 YAML、三次补丁都被外改、任务记录缺失）时，只把该任务隔离到本轮结束——它的
+后续事件保持待办并被跳过以保住任务内顺序，其他任务的事件继续交付。整轮结束后若有隔离，
+返回 `ProjectionIncomplete { delivered, failures }`，`failures` 每任务一条（首条被拒事件的
+序号与原因）；Control DB、Broker、审计等存储层失败仍立即中止整轮。`Run` 只交付本任务自己
+的待投影事件（同样按序、同样返回 `ProjectionIncomplete`），别的任务的坏页不能挡住这条命令。
+
 reconcile 只处理已持久事实：
 
 - 旧 Claimed/Running 变 Abandoned；旧 CancelRequested 变 Cancelled；绝不恢复运行。

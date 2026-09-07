@@ -175,6 +175,33 @@ GitHub Actions 只有在用户决定推送后才产生证据，不得用 workflo
   Dispatch 幂等身份，不把重复新建草稿说成幂等。
 - [x] orphan 无 manifest 不进入可信结论。
 
+## 3a. T-027 复审修复第一片（2026-09-05，补记）
+
+主线当时未回写本页，此处按 TASKS/INDEX 与远端 CI 记录补记：HEAD `d24e56a`（已快进合并并推送
+main）。macOS arm64：fmt / Clippy / test 106 项通过、`cargo doc` 通过；Docker Linux aarch64：
+workspace 114 项通过（含 8 项 Linux 路径测试），另显式复跑 `linux_path_security` 8/8——**不重复
+计入总数**，档案里的「122」是两次运行相加的口径。远端 CI run 34002573561 与 34004526486 通过。
+
+## 3b. T-032 复审修复第一片（2026-09-06）
+
+日期/时区：2026-09-06 UTC。环境：macOS arm64、Rust 1.97.1（Homebrew）。代码位置：
+`.claude/worktrees/m0-m2-code-review-test-8933fd`，分支 `claude/m0-m2-code-review-test-8933fd`，
+基线 `d24e56a`；验证时工作树含本片全部未提交改动（见下）。
+
+| 检查 | 结果 |
+|---|---|
+| `cargo fmt --all -- --check` | exit 0 |
+| `cargo clippy --workspace --all-targets --locked -- -D warnings` | exit 0，无 warning |
+| `cargo test --workspace --locked --no-fail-fast` | **127 项通过、0 失败**（含 T-029 回合的 gateway 等待后撤权 9 项、control-db schema 守卫 7 项，以及本片新增：gateway 3、task-engine 1、vault-broker 1、core/audit-ledger 用例扩充） |
+| `RUSTDOCFLAGS=-D warnings cargo doc --workspace --no-deps --locked` | exit 0 |
+| Linux | 本机 Docker 守护进程未运行，未复跑；以推送分支后的远端 CI 为准 |
+
+改动范围：回合脏树已验收的 T-029 `gateway/{admission,wait_probe,waiting_tests}`、`control-db/schema_guard`
+与两份契约；Gateway 失败终态封口/占位守卫/结果保留上限（`MAX_RETAINED_RESULTS`，新错误
+`CallResultEvicted`）；TaskEngine 投影逐任务隔离（`ProjectionIncomplete`，Run 只交付本任务）；
+`VaultPath` 只接受 NFC 且 Broker 碰撞键先 NFC（新依赖 `unicode-normalization 0.1.25`）；审计词法
+复数形态与凭据本体后缀。未做：真实 Runner/外发、Linux 本机复跑。
+
 ## 4. 运行记录模板
 
 ```text

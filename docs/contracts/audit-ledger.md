@@ -51,7 +51,10 @@ Adapter 无需访问私有字段。此 M0 Interface 是进程内测试缝，不�
       recovery code(s)
 ```
 
-只看末词，所以 `token_count`、`session_id`、`seed_ref`、单独的 `key` 或 `code` 不会被误伤；
+末词的常见英文复数按单数判定（`tokens`、`cookies`、`api_keys` 同样拒绝）；末词若是凭据本体后缀
+（hex / value / material / plain / plaintext / raw / b64 / base64 / bytes / text / str / string）
+则退一个词再判定，因此 `seed_hex`、`token_value`、`api_key_b64` 也拒绝（2026-09-06 T-032）。
+其余情况只看末词，所以 `token_count`、`session_id`、`seed_ref`、`token_digest`、单独的 `key` 或 `code` 不会被误伤；
 `refreshToken`、`user.pwd`、`PRIVATE_KEY` 会被拒绝。（2026-09-05 T-027 由前缀/后缀字符串
 规则改为词法规则；后续存储 Adapter 若把该函数迁到独立模块，规则必须原样保留。）
 

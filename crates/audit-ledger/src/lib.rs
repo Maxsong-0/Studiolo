@@ -660,12 +660,46 @@ const SECRET_LAST_PAIRS: &[(&str, &str)] = &[
     ("recovery", "codes"),
 ];
 
-fn is_secret_field(key: &str) -> bool {
-    let words = key_words(key);
+/// 跟在凭据词后面表示「凭据本体」的后缀：`seed_hex`、`token_value`、`secret_material` 都是
+/// 秘密本身，而 `token_count`、`seed_ref`、`session_id` 这类计数/引用/标识不在其中。
+const SECRET_VALUE_SUFFIXES: &[&str] = &[
+    "hex",
+    "value",
+    "material",
+    "plain",
+    "plaintext",
+    "raw",
+    "b64",
+    "base64",
+    "bytes",
+    "text",
+    "str",
+    "string",
+];
+
+/// 去掉常见英文复数：`tokens`→`token`、`cookies`→`cookie`、`api_keys`→`api_key`。
+fn singular(word: &str) -> &str {
+    word.strip_suffix("es")
+        .filter(|stem| {
+            stem.ends_with('s')
+                || stem.ends_with('x')
+                || stem.ends_with("sh")
+                || stem.ends_with("ch")
+        })
+        .or_else(|| word.strip_suffix('s'))
+        .unwrap_or(word)
+}
+
+/// 判定切词后的最后一个词（含复数形态）是否与其前一个词构成凭据。
+fn ends_with_secret(words: &[String]) -> bool {
     let Some(last) = words.last() else {
         return false;
     };
-    if SECRET_LAST_WORDS.contains(&last.as_str()) {
+    let candidates = [last.as_str(), singular(last)];
+    if candidates
+        .iter()
+        .any(|word| SECRET_LAST_WORDS.contains(word))
+    {
         return true;
     }
     let Some(previous) = words.len().checked_sub(2).map(|index| &words[index]) else {
@@ -673,5 +707,19 @@ fn is_secret_field(key: &str) -> bool {
     };
     SECRET_LAST_PAIRS
         .iter()
-        .any(|(first, second)| previous == first && last == second)
+        .any(|(first, second)| previous == first && candidates.iter().any(|word| word == second))
+}
+
+fn is_secret_field(key: &str) -> bool {
+    let words = key_words(key);
+    if ends_with_secret(&words) {
+        return true;
+    }
+    // `seed_hex` / `api_key_value`：末词是凭据本体后缀，且去掉它之后仍以凭据词结尾。
+    match words.last() {
+        Some(last) if SECRET_VALUE_SUFFIXES.contains(&last.as_str()) => {
+            ends_with_secret(&words[..words.len() - 1])
+        }
+        _ => false,
+    }
 }

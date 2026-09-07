@@ -3,7 +3,8 @@
 use std::{
     sync::{
         Arc, Condvar, Mutex,
-        atomic::{AtomicUsize, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
+        mpsc,
     },
     thread,
     time::{Duration, Instant},
@@ -17,8 +18,8 @@ use studiolo_audit_ledger::{
 use studiolo_core::{AttemptId, Fence, PermissionSet, TaskId, ToolId};
 use studiolo_gateway::{
     AttemptGuard, AttemptGuardError, AttemptSnapshot, CallId, Gateway, GatewayError, JobCapability,
-    ManualClock, MemoryAttemptGuard, MemoryGateway, ModelRequest, ModelResponse, PermissionLayers,
-    ToolCall, ToolResult,
+    MAX_RETAINED_RESULTS, ManualClock, MemoryAttemptGuard, MemoryGateway, ModelRequest,
+    ModelResponse, PermissionLayers, ToolCall, ToolResult,
 };
 
 struct UnavailableAuditLedger;
@@ -821,4 +822,248 @@ fn concurrent_identical_calls_execute_once_and_share_the_first_result() {
     assert_eq!(records.len(), 2);
     assert_eq!(records[0].event().phase(), AuditPhase::Intent);
     assert_eq!(records[1].event().phase(), AuditPhase::Outcome);
+}
+
+#[test]
+fn a_recorded_failure_seals_its_call_id_and_replays_without_executing() {
+    let task = TaskId::new();
+    let attempt = AttemptId::new();
+    let fence = Fence::new(23).unwrap();
+    let tool = ToolId::from_static("web.fetch");
+    let relay_tool = ToolId::from_static("model.relay");
+    let granted = PermissionSet::new([tool.clone(), relay_tool]);
+    let guard = Arc::new(MemoryAttemptGuard::new());
+    guard
+        .set(task, attempt, AttemptSnapshot::active(fence))
+        .unwrap();
+    let audit = Arc::new(MemoryAuditLedger::new());
+    let gateway = MemoryGateway::new(
+        guard.clone(),
+        audit.clone(),
+        Arc::new(ManualClock::new(1_000)),
+        PermissionLayers::new(granted.clone(), granted.clone(), granted.clone()),
+    );
+    let capability = JobCapability::new(task, attempt, fence, granted, 2_000);
+    let call_id = CallId::parse("sealed-failure").unwrap();
+    let call = ToolCall::new(call_id.clone(), tool.clone(), json!({"path": "/late"}));
+    let request = ModelRequest::new(call_id.clone(), "local", "late", "summarize");
+
+    assert_eq!(
+        gateway.invoke(&capability, call.clone()),
+        Err(GatewayError::ToolUnavailable)
+    );
+    assert_eq!(
+        gateway.relay(&capability, request.clone()),
+        Err(GatewayError::ModelUnavailable)
+    );
+    // 运维随后补上配置：同 call ID 的重试不再执行，账本里的失败终态被原样重放。
+    gateway
+        .set_tool_response(tool.clone(), json!({"status": "late"}))
+        .unwrap();
+    gateway.set_model_response("local", "late", "text").unwrap();
+    assert_eq!(
+        gateway.invoke(&capability, call.clone()),
+        Err(GatewayError::ToolUnavailable)
+    );
+    assert_eq!(
+        gateway.relay(&capability, request.clone()),
+        Err(GatewayError::ModelUnavailable)
+    );
+    for domain in ["gateway.tool.v1", "gateway.model.v1"] {
+        let records = audit
+            .query(
+                &AuditFilter::default().with_event_id(gateway_audit_event_id(
+                    domain,
+                    &capability,
+                    &call_id,
+                )),
+            )
+            .unwrap();
+        assert_eq!(
+            records.len(),
+            2,
+            "{domain}: replay must not append a new Intent/Outcome"
+        );
+    }
+    // 新的 call ID 才是一次新的逻辑调用。
+    let fresh = CallId::parse("sealed-failure-2").unwrap();
+    assert!(
+        gateway
+            .invoke(
+                &capability,
+                ToolCall::new(fresh.clone(), tool, json!({"path": "/late"}))
+            )
+            .is_ok()
+    );
+    assert!(
+        gateway
+            .relay(
+                &capability,
+                ModelRequest::new(fresh, "local", "late", "summarize")
+            )
+            .is_ok()
+    );
+    // 失败终态的重放同样先重验授权。
+    guard
+        .set(task, attempt, AttemptSnapshot::cancelled(fence))
+        .unwrap();
+    assert_eq!(
+        gateway.invoke(&capability, call),
+        Err(GatewayError::Cancelled)
+    );
+    assert_eq!(
+        gateway.relay(&capability, request),
+        Err(GatewayError::Cancelled)
+    );
+}
+
+struct PanickingLedger {
+    inner: MemoryAuditLedger,
+    panic_next_intent: AtomicBool,
+}
+
+impl AuditLedger for PanickingLedger {
+    fn append(&self, event: AuditEvent) -> Result<AuditRecord, AuditError> {
+        if event.phase() == AuditPhase::Intent
+            && self.panic_next_intent.swap(false, Ordering::SeqCst)
+        {
+            panic!("injected adapter panic during Intent append");
+        }
+        self.inner.append(event)
+    }
+
+    fn query(&self, filter: &AuditFilter) -> Result<Vec<AuditRecord>, AuditError> {
+        self.inner.query(filter)
+    }
+}
+
+#[test]
+fn a_panicking_adapter_releases_its_in_flight_slot_for_the_next_caller() {
+    let task = TaskId::new();
+    let attempt = AttemptId::new();
+    let fence = Fence::new(24).unwrap();
+    let tool = ToolId::from_static("web.fetch");
+    let granted = PermissionSet::new([tool.clone()]);
+    let guard = Arc::new(MemoryAttemptGuard::new());
+    guard
+        .set(task, attempt, AttemptSnapshot::active(fence))
+        .unwrap();
+    let gateway = Arc::new(MemoryGateway::new(
+        guard,
+        Arc::new(PanickingLedger {
+            inner: MemoryAuditLedger::new(),
+            panic_next_intent: AtomicBool::new(true),
+        }),
+        Arc::new(ManualClock::new(1_000)),
+        PermissionLayers::new(granted.clone(), granted.clone(), granted.clone()),
+    ));
+    gateway
+        .set_tool_response(tool.clone(), json!({"status": "ok"}))
+        .unwrap();
+    let capability = Arc::new(JobCapability::new(task, attempt, fence, granted, 2_000));
+    let call = ToolCall::new(
+        CallId::parse("panicking-call").unwrap(),
+        tool,
+        json!({"path": "/pricing"}),
+    );
+
+    let first = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        gateway.invoke(&capability, call.clone())
+    }));
+    assert!(
+        first.is_err(),
+        "the injected panic must unwind out of invoke"
+    );
+
+    // 同键的下一次调用必须能取得占位并执行，而不是在 Condvar 上永久等待。
+    let (sender, receiver) = mpsc::channel();
+    let worker = {
+        let gateway = gateway.clone();
+        let capability = capability.clone();
+        let call = call.clone();
+        thread::spawn(move || {
+            let _ = sender.send(gateway.invoke(&capability, call));
+        })
+    };
+    let second = receiver
+        .recv_timeout(Duration::from_secs(10))
+        .expect("second call hung on the leaked in-flight slot");
+    worker.join().unwrap();
+    assert_eq!(second.unwrap().output(), &json!({"status": "ok"}));
+}
+
+#[test]
+fn retained_results_are_bounded_and_evicted_replays_are_rejected_with_audit() {
+    let task = TaskId::new();
+    let attempt = AttemptId::new();
+    let fence = Fence::new(25).unwrap();
+    let tool = ToolId::from_static("web.fetch");
+    let granted = PermissionSet::new([tool.clone()]);
+    let guard = Arc::new(MemoryAttemptGuard::new());
+    guard
+        .set(task, attempt, AttemptSnapshot::active(fence))
+        .unwrap();
+    let audit = Arc::new(MemoryAuditLedger::new());
+    let gateway = MemoryGateway::new(
+        guard,
+        audit.clone(),
+        Arc::new(ManualClock::new(1_000)),
+        PermissionLayers::new(granted.clone(), granted.clone(), granted.clone()),
+    );
+    gateway
+        .set_tool_response(tool.clone(), json!({"status": "ok"}))
+        .unwrap();
+    let capability = JobCapability::new(task, attempt, fence, granted, 2_000);
+    let call = |index: usize| {
+        ToolCall::new(
+            CallId::parse(format!("bounded-{index}")).unwrap(),
+            tool.clone(),
+            json!({"index": index}),
+        )
+    };
+
+    for index in 0..=MAX_RETAINED_RESULTS {
+        gateway.invoke(&capability, call(index)).unwrap();
+    }
+    // 最早完成的结果已逐出：同请求重放得到独立审计的结构化拒绝，且不重新执行。
+    assert_eq!(
+        gateway.invoke(&capability, call(0)),
+        Err(GatewayError::CallResultEvicted)
+    );
+    let first_id = CallId::parse("bounded-0").unwrap();
+    let base_id = gateway_audit_event_id("gateway.tool.v1", &capability, &first_id);
+    assert_eq!(
+        audit
+            .query(&AuditFilter::default().with_event_id(base_id.clone()))
+            .unwrap()
+            .len(),
+        2
+    );
+    let evicted = audit
+        .query(
+            &AuditFilter::default()
+                .with_event_id(denial_audit_event_id(&base_id, "call_result_evicted")),
+        )
+        .unwrap();
+    assert_eq!(evicted.len(), 1);
+    assert_eq!(
+        evicted[0].event().payload().as_value()["reason"],
+        "call_result_evicted"
+    );
+    // 逐出槽仍保留请求身份：异请求是内容冲突而不是首次调用。
+    assert_eq!(
+        gateway.invoke(
+            &capability,
+            ToolCall::new(first_id, tool.clone(), json!({"index": "changed"})),
+        ),
+        Err(GatewayError::CallConflict)
+    );
+    // 最近完成的结果仍可重放。
+    assert_eq!(
+        gateway
+            .invoke(&capability, call(MAX_RETAINED_RESULTS))
+            .unwrap()
+            .output(),
+        &json!({"status": "ok"})
+    );
 }

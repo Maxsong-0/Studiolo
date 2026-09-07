@@ -170,7 +170,7 @@ fn restart_rolls_forward_no_partial_and_complete_manifest_without_runner_reexecu
         CrashPoint::AfterFirstArtifact,
         CrashPoint::AfterManifest,
     ] {
-        let temp = TempDir::new().unwrap();
+        let temp = TempDir::new_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
         let root = temp.path().join("vault");
         let data = temp.path().join("data");
         let db_path = data.join("control.sqlite3");
@@ -807,7 +807,7 @@ fn report_with_a_mismatched_fence_is_rejected_before_external_effects() {
 
 #[test]
 fn restart_reconcile_revokes_and_abandons_running_without_restarting_work() {
-    let temp = TempDir::new().expect("tempdir");
+    let temp = TempDir::new_in(std::env::temp_dir().canonicalize().unwrap()).expect("tempdir");
     let vault_root = temp.path().join("canonical");
     let data_root = temp.path().join("workbench-data");
     let database_path = data_root.join("control.sqlite3");
@@ -857,7 +857,7 @@ fn restart_reconcile_revokes_and_abandons_running_without_restarting_work() {
 
 #[test]
 fn restart_rolls_manifest_forward_after_outcome_audit_recovers_without_duplicate_artifacts() {
-    let temp = TempDir::new().expect("tempdir");
+    let temp = TempDir::new_in(std::env::temp_dir().canonicalize().unwrap()).expect("tempdir");
     let vault_root = temp.path().join("canonical");
     let data_root = temp.path().join("workbench-data");
     let database_path = data_root.join("control.sqlite3");
@@ -977,7 +977,7 @@ fn restart_rolls_manifest_forward_after_outcome_audit_recovers_without_duplicate
 
 #[test]
 fn restart_finishes_requested_cancellation_instead_of_overwriting_it_as_abandoned() {
-    let temp = TempDir::new().unwrap();
+    let temp = TempDir::new_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
     let root = temp.path().join("vault");
     let data = temp.path().join("data");
     let db_path = data.join("control.sqlite3");
@@ -1073,7 +1073,7 @@ impl AuditLedger for OutcomeStateObserver {
 
 #[test]
 fn audit_outcome_observes_the_already_committed_db_state_and_durable_obligation() {
-    let temp = TempDir::new().unwrap();
+    let temp = TempDir::new_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
     let db_path = temp.path().join("control.sqlite3");
     let vault = VaultUuid::new();
     let mut broker = MemoryVaultBroker::with_uuid(vault);
@@ -1206,9 +1206,11 @@ fn historical_projection_receipt_cannot_acknowledge_an_externally_reverted_page(
         ))
         .unwrap();
     let mut engine = PersistentTaskEngine::new(db, broker, ledger);
+    // 本任务的页面拒绝投影：事件保留待办并作为该任务的隔离失败报告，不是整轮失败。
     assert!(matches!(
         engine.project_pending(),
-        Err(TaskEngineError::Projection(_))
+        Err(TaskEngineError::ProjectionIncomplete { delivered: 0, ref failures })
+            if failures.len() == 1 && failures[0].task_id == task
     ));
     assert_eq!(
         engine.control_db().pending_outbox().unwrap().len(),
