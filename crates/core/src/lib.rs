@@ -158,7 +158,8 @@ pub enum PathSyntaxError {
     /// The path was absolute or contained `.` or `..` components.
     #[error("path is not a clean relative path")]
     NotRelative,
-    /// The path contained a backslash, encoded separator, NUL, or control character.
+    /// The path contained a backslash, encoded separator, NUL, control character, a
+    /// combining mark, or any spelling that is not Unicode NFC.
     #[error("path contains a forbidden encoding or character")]
     ForbiddenEncoding,
 }
@@ -181,9 +182,12 @@ impl VaultPath {
             && bytes[0].is_ascii_alphabetic()
             && bytes[1] == b':'
             && bytes[2] == b'/';
+        // 只接受 NFC 拼写：分解形式（含日文浊音符、Hangul jamo 等黑名单外的形态）与
+        // 组合形式在归一化不敏感的文件系统上指向同一物理文件，会造成两套逻辑身份。
         if raw.contains('\\')
             || raw.chars().any(char::is_control)
             || raw.chars().any(is_unicode_combining_mark)
+            || !unicode_normalization::is_nfc(raw)
             || has_windows_drive_prefix
             || lower.contains("%2f")
             || lower.contains("%5c")
@@ -226,7 +230,8 @@ impl VaultPath {
         matches!(first, ".git" | ".workbench" | ".obsidian") || folded == ".stignore"
     }
 
-    /// Returns a case-folded key used for conservative collision checks.
+    /// Returns a case-folded key used for conservative collision checks. Parsed paths are
+    /// already NFC, so folding alone makes keys comparable with NFC-normalized entry names.
     #[must_use]
     pub fn collision_key(&self) -> String {
         self.0.to_lowercase()

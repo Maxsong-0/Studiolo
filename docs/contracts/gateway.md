@@ -68,11 +68,20 @@ M0 capability 没有签名、audience、nonce、snapshot 或 policy hash，只�
 4. 释放槽锁后完整重做第2步，再返回首次结果、记录独立 conflict outcome 或继续执行。
    等待期间撤权、到期或 guard 故障均优先返回当前拒绝原因；guard 与审计不在槽锁内运行；
 5. 新执行者在 AuditLedger `Intent` 追加成功后，才读取配置的内存 tool/model 响应；
-6. 以同审计 ID 追加 `Outcome`；成功后把占位替换为结果并返回。取得占位后的授权、拒绝
-   事件 ID 或审计失败都会释放自己的占位；重放与冲突拒绝不删除其他调用的完成结果。
+6. 以同审计 ID 追加 `Outcome`。**账本一旦写入终局 `Outcome`（`allow` 或 `error`），该
+   call ID 即封口**：占位替换为可重放的结果（成功结果或 `ToolUnavailable` /
+   `ModelUnavailable` 失败终态），同请求重放经完整重验授权后返回同一结果而不再执行；
+   要重试须换新的 call ID。没有任何 `Outcome` 落账的失败（Intent 追加失败、Outcome 追加
+   失败、内部状态不可用）才归还占位允许重试。取得占位的执行者持有占位守卫，正常返回、
+   提前返回或 panic 展开都归还自己的占位并唤醒等待者，同键等待不会因为一次 panic 永久
+   挂起；重放与冲突拒绝不删除其他调用的完成结果。
+7. 已完成结果最多保留 `MAX_RETAINED_RESULTS`（4096）条，超出按完成顺序把最早的结果
+   逐出为只含请求身份的 `Evicted` 槽：同请求重放得到独立审计的 `CallResultEvicted`
+   拒绝（不重新执行），异请求仍是 `CallConflict`。结果正文随逐出释放。
 
 实际槽冲突与拒绝审计本身的 `IdempotencyConflict` 在内部区分；后者直接映射错误，
-不再追加一条虚构的槽冲突审计。完整复核覆盖 invoke 与 relay 的三种准入结果。
+不再追加一条虚构的槽冲突审计。完整复核覆盖 invoke 与 relay 的四种准入结果。
+（2026-09-06 T-032：失败终态封口、占位守卫与有界保留为复审修复新增。）
 
 授权拒绝与冲突没有外部动作，因此直接追加带 `decision=deny` 与结构化 reason 的 `Outcome`，
 事件 ID 一律为独立的 `{基础 ID}:deny:{reason}`：同一调用因不同原因被多次拒绝时各留一条
@@ -120,6 +129,7 @@ M0 没有真实外部副作用，因而不承诺 raw promotion、持久 call res
 Intent/Outcome、拒绝 outcome、旧 fence/取消/过期、guard 与审计不可用时失败关闭、成功重放
 仍先 recheck、同 call ID 异请求冲突、同一调用两次不同原因拒绝各留一条记录并返回真实原因、
 确定进入等待后取消/fence变化/精确到期/guard不可用或未知、拒绝审计失败下的占位归属、
-并发同键调用只执行一次且共享首次结果、未配置响应的失败 outcome，以及 Cargo 依赖中不存在
+并发同键调用只执行一次且共享首次结果、未配置响应的失败 outcome 且同 call ID 重试不再执行、
+执行中 panic 释放占位、保留上限逐出后的 `CallResultEvicted`，以及 Cargo 依赖中不存在
 TaskEngine。真实 SSRF/SQL/模型外发、秘密管理、raw promotion、预算与 indeterminate 恢复均
 延期，不能用这些内存测试宣称通过。

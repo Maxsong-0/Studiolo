@@ -9,7 +9,10 @@ mod waiting_tests;
 use std::{
     collections::BTreeMap,
     fmt,
-    sync::{Arc, Condvar, Mutex, MutexGuard},
+    sync::{
+        Arc, Condvar, Mutex, MutexGuard,
+        atomic::{AtomicU64, Ordering},
+    },
 };
 
 use serde::{Deserialize, Serialize};
@@ -495,6 +498,9 @@ pub enum GatewayError {
     /// A call identifier was reused with different request content.
     #[error("call id conflicts with a prior request")]
     CallConflict,
+    /// The identical call already completed, but its retained result was evicted.
+    #[error("call already completed and its result is no longer retained")]
+    CallResultEvicted,
     /// In-memory adapter state was poisoned.
     #[error("gateway state is unavailable")]
     StateUnavailable,
@@ -514,6 +520,7 @@ impl GatewayError {
             Self::ToolUnavailable => "tool_unavailable",
             Self::ModelUnavailable => "model_unavailable",
             Self::CallConflict => "call_conflict",
+            Self::CallResultEvicted => "call_result_evicted",
             Self::StateUnavailable => "state_unavailable",
         }
     }
@@ -536,20 +543,28 @@ pub trait Gateway: Send + Sync {
     ) -> Result<ModelResponse, GatewayError>;
 }
 
-/// 调用幂等槽：`InFlight` 表示同键调用正在执行，`Done` 才携带可重放的结果。
+/// 调用幂等槽：`InFlight` 表示同键调用正在执行，`Done` 才携带可重放的结果（成功或已记入
+/// 账本的失败终态）；`Evicted` 只保留请求身份，结果已按容量逐出，同请求重放得到结构化拒绝。
 enum CallSlot<Request, Response> {
     InFlight,
-    Done(Request, Response),
+    Done {
+        request: Request,
+        response: Response,
+        sequence: u64,
+    },
+    Evicted(Request),
 }
 
 /// 同键调用的准入结论。
 enum CallAdmission<Response> {
-    /// 首次调用，已占位；调用方必须以 `complete` 或 `abandon` 收尾。
+    /// 首次调用，已占位；调用方持有 [`SlotGuard`]，以 `complete` 或丢弃守卫收尾。
     Proceed,
     /// 与首次请求完全相同的重放：完整重验授权后才能返回首次结果。
     Replay(Response),
     /// 已完成的是不同请求；重新授权后才报告内容冲突。
     Conflict,
+    /// 同请求已完成但结果已逐出；重新授权后报告 `CallResultEvicted`。
+    Evicted,
 }
 
 /// `admit` 在锁内做出的判定；先判定再动作，避免在 `BTreeMap` 借用存活时修改它。
@@ -557,7 +572,19 @@ enum SlotDecision<Response> {
     Vacant,
     Replay(Response),
     Conflict,
+    Evicted,
     Wait,
+}
+
+/// 幂等表最多保留的已完成结果数；超出后按完成顺序把最早的结果逐出为 `Evicted`。
+/// 结果正文（arguments / output / prompt / text）随逐出释放，不随进程寿命无界驻留。
+pub const MAX_RETAINED_RESULTS: usize = 4096;
+
+/// 一次已占位执行的结局：`Recorded` 表示账本已写入终局 `Outcome`（成功或失败），该
+/// call ID 从此封口；`Unrecorded` 表示没有任何 `Outcome` 落账，占位应归还以允许重试。
+enum Execution<Response> {
+    Recorded(Result<Response, GatewayError>),
+    Unrecorded(GatewayError),
 }
 
 /// 按 `(attempt, call)` 键串行化同一调用：并发同键请求只执行一次，其余等待首次结果后再判定
@@ -565,8 +592,39 @@ enum SlotDecision<Response> {
 struct CallTable<Request, Response> {
     slots: Mutex<BTreeMap<(AttemptId, CallId), CallSlot<Request, Response>>>,
     finished: Condvar,
+    next_sequence: AtomicU64,
     #[cfg(test)]
     wait_probe: wait_probe::WaitProbe,
+}
+
+/// 占位守卫：取得 `Proceed` 的调用无论正常返回、提前返回还是 panic 展开，都归还自己的
+/// 占位并唤醒等待者；只有显式 `complete` 才把占位替换为可重放的结果。
+struct SlotGuard<'a, Request: PartialEq, Response: Clone> {
+    table: &'a CallTable<Request, Response>,
+    key: Option<(AttemptId, CallId)>,
+}
+
+impl<'a, Request: PartialEq, Response: Clone> SlotGuard<'a, Request, Response> {
+    fn new(table: &'a CallTable<Request, Response>, key: (AttemptId, CallId)) -> Self {
+        Self {
+            table,
+            key: Some(key),
+        }
+    }
+
+    fn complete(mut self, request: Request, response: Response) -> Result<(), GatewayError> {
+        let key = self.key.take().ok_or(GatewayError::StateUnavailable)?;
+        self.table.complete(key, request, response)
+    }
+}
+
+impl<Request: PartialEq, Response: Clone> Drop for SlotGuard<'_, Request, Response> {
+    fn drop(&mut self) {
+        if let Some(key) = self.key.take() {
+            // 展开或提前返回时锁不可用也无法再做别的；等待者由 abandon 内的 notify_all 唤醒。
+            let _ = self.table.abandon(&key);
+        }
+    }
 }
 
 impl<Request: PartialEq, Response: Clone> CallTable<Request, Response> {
@@ -574,6 +632,7 @@ impl<Request: PartialEq, Response: Clone> CallTable<Request, Response> {
         Self {
             slots: Mutex::new(BTreeMap::new()),
             finished: Condvar::new(),
+            next_sequence: AtomicU64::new(0),
             #[cfg(test)]
             wait_probe: wait_probe::WaitProbe::default(),
         }
@@ -591,10 +650,14 @@ impl<Request: PartialEq, Response: Clone> CallTable<Request, Response> {
         loop {
             let decision = match slots.get(&key) {
                 None => SlotDecision::Vacant,
-                Some(CallSlot::Done(prior, response)) if prior == request => {
-                    SlotDecision::Replay(response.clone())
-                }
-                Some(CallSlot::Done(..)) => SlotDecision::Conflict,
+                Some(CallSlot::Done {
+                    request: prior,
+                    response,
+                    ..
+                }) if prior == request => SlotDecision::Replay(response.clone()),
+                Some(CallSlot::Done { .. }) => SlotDecision::Conflict,
+                Some(CallSlot::Evicted(prior)) if prior == request => SlotDecision::Evicted,
+                Some(CallSlot::Evicted(_)) => SlotDecision::Conflict,
                 Some(CallSlot::InFlight) => SlotDecision::Wait,
             };
             match decision {
@@ -604,6 +667,7 @@ impl<Request: PartialEq, Response: Clone> CallTable<Request, Response> {
                 }
                 SlotDecision::Replay(response) => return Ok(CallAdmission::Replay(response)),
                 SlotDecision::Conflict => return Ok(CallAdmission::Conflict),
+                SlotDecision::Evicted => return Ok(CallAdmission::Evicted),
                 SlotDecision::Wait => {
                     #[cfg(test)]
                     self.wait_probe.entered();
@@ -622,10 +686,40 @@ impl<Request: PartialEq, Response: Clone> CallTable<Request, Response> {
         request: Request,
         response: Response,
     ) -> Result<(), GatewayError> {
-        self.slots
+        let mut slots = self
+            .slots
             .lock()
-            .map_err(|_| GatewayError::StateUnavailable)?
-            .insert(key, CallSlot::Done(request, response));
+            .map_err(|_| GatewayError::StateUnavailable)?;
+        let sequence = self.next_sequence.fetch_add(1, Ordering::Relaxed);
+        slots.insert(
+            key,
+            CallSlot::Done {
+                request,
+                response,
+                sequence,
+            },
+        );
+        let retained = slots
+            .values()
+            .filter(|slot| matches!(slot, CallSlot::Done { .. }))
+            .count();
+        if retained > MAX_RETAINED_RESULTS {
+            // 逐出最早完成的结果；保留请求身份，让「结果已逐出」与「从未调用」可区分。
+            let oldest = slots
+                .iter()
+                .filter_map(|(key, slot)| match slot {
+                    CallSlot::Done { sequence, .. } => Some((*sequence, key.clone())),
+                    _ => None,
+                })
+                .min_by_key(|(sequence, _)| *sequence)
+                .map(|(_, key)| key);
+            if let Some(key) = oldest
+                && let Some(CallSlot::Done { request, .. }) = slots.remove(&key)
+            {
+                slots.insert(key, CallSlot::Evicted(request));
+            }
+        }
+        drop(slots);
         self.finished.notify_all();
         Ok(())
     }
@@ -648,8 +742,8 @@ pub struct MemoryGateway {
     permissions: PermissionLayers,
     tool_responses: Mutex<BTreeMap<ToolId, Value>>,
     model_responses: Mutex<BTreeMap<(String, String), String>>,
-    tool_calls: CallTable<ToolCall, ToolResult>,
-    model_calls: CallTable<ModelRequest, ModelResponse>,
+    tool_calls: CallTable<ToolCall, Result<ToolResult, GatewayError>>,
+    model_calls: CallTable<ModelRequest, Result<ModelResponse, GatewayError>>,
 }
 
 impl MemoryGateway {
@@ -800,14 +894,31 @@ impl MemoryGateway {
         audit_result.err().unwrap_or(error)
     }
 
-    /// 已占位的工具调用主体：Intent → 读取配置响应 → Outcome。失败时由调用方释放占位。
+    /// 拒绝准入：为当前拒绝原因派生独立审计 ID 并追加 deny outcome；ID 派生失败按其错误返回。
+    fn deny_admission(
+        &self,
+        error: GatewayError,
+        audit_id: &AuditEventId,
+        action: &str,
+        capability: &JobCapability,
+        tool: ToolId,
+        call_id: &CallId,
+    ) -> GatewayError {
+        match self.denial_audit_event_id(audit_id, &error) {
+            Ok(denial_id) => self.audit_denial(denial_id, action, capability, tool, call_id, error),
+            Err(id_error) => id_error,
+        }
+    }
+
+    /// 已占位的工具调用主体：Intent → 读取配置响应 → Outcome。只有账本已写入终局
+    /// `Outcome` 的结局才是 `Recorded`，其余情况占位由调用方守卫归还。
     fn execute_tool(
         &self,
         audit_id: &AuditEventId,
         capability: &JobCapability,
         call: &ToolCall,
-    ) -> Result<ToolResult, GatewayError> {
-        self.append_audit(
+    ) -> Execution<ToolResult> {
+        if let Err(error) = self.append_audit(
             audit_id.clone(),
             AuditPhase::Intent,
             "gateway.tool_call",
@@ -819,13 +930,18 @@ impl MemoryGateway {
                 "fence": capability.fence().get(),
                 "decision": "pending",
             }),
-        )?;
+        ) {
+            return Execution::Unrecorded(error);
+        }
 
-        let output = match self.lock(&self.tool_responses)?.get(call.tool()).cloned() {
-            Some(output) => output,
-            None => {
+        let output = match self
+            .lock(&self.tool_responses)
+            .map(|responses| responses.get(call.tool()).cloned())
+        {
+            Ok(Some(output)) => output,
+            Ok(None) => {
                 let error = GatewayError::ToolUnavailable;
-                self.append_audit(
+                return match self.append_audit(
                     audit_id.clone(),
                     AuditPhase::Outcome,
                     "gateway.tool_call",
@@ -838,16 +954,19 @@ impl MemoryGateway {
                         "decision": "error",
                         "reason": error.audit_reason(),
                     }),
-                )?;
-                return Err(error);
+                ) {
+                    Ok(()) => Execution::Recorded(Err(error)),
+                    Err(audit_error) => Execution::Unrecorded(audit_error),
+                };
             }
+            Err(error) => return Execution::Unrecorded(error),
         };
         let result = ToolResult {
             call_id: call.call_id().clone(),
             tool: call.tool().clone(),
             output,
         };
-        self.append_audit(
+        match self.append_audit(
             audit_id.clone(),
             AuditPhase::Outcome,
             "gateway.tool_call",
@@ -859,19 +978,21 @@ impl MemoryGateway {
                 "fence": capability.fence().get(),
                 "decision": "allow",
             }),
-        )?;
-        Ok(result)
+        ) {
+            Ok(()) => Execution::Recorded(Ok(result)),
+            Err(error) => Execution::Unrecorded(error),
+        }
     }
 
-    /// 已占位的模型中继主体：Intent → 读取配置响应 → Outcome。失败时由调用方释放占位。
+    /// 已占位的模型中继主体：Intent → 读取配置响应 → Outcome。结局语义同 `execute_tool`。
     fn execute_relay(
         &self,
         audit_id: &AuditEventId,
         capability: &JobCapability,
         relay_tool: &ToolId,
         request: &ModelRequest,
-    ) -> Result<ModelResponse, GatewayError> {
-        self.append_audit(
+    ) -> Execution<ModelResponse> {
+        if let Err(error) = self.append_audit(
             audit_id.clone(),
             AuditPhase::Intent,
             "gateway.model_relay",
@@ -885,16 +1006,18 @@ impl MemoryGateway {
                 "fence": capability.fence().get(),
                 "decision": "pending",
             }),
-        )?;
-        let text = match self
-            .lock(&self.model_responses)?
-            .get(&(request.provider.clone(), request.model.clone()))
-            .cloned()
-        {
-            Some(text) => text,
-            None => {
+        ) {
+            return Execution::Unrecorded(error);
+        }
+        let text = match self.lock(&self.model_responses).map(|responses| {
+            responses
+                .get(&(request.provider.clone(), request.model.clone()))
+                .cloned()
+        }) {
+            Ok(Some(text)) => text,
+            Ok(None) => {
                 let error = GatewayError::ModelUnavailable;
-                self.append_audit(
+                return match self.append_audit(
                     audit_id.clone(),
                     AuditPhase::Outcome,
                     "gateway.model_relay",
@@ -909,9 +1032,12 @@ impl MemoryGateway {
                         "decision": "error",
                         "reason": error.audit_reason(),
                     }),
-                )?;
-                return Err(error);
+                ) {
+                    Ok(()) => Execution::Recorded(Err(error)),
+                    Err(audit_error) => Execution::Unrecorded(audit_error),
+                };
             }
+            Err(error) => return Execution::Unrecorded(error),
         };
         let response = ModelResponse {
             call_id: request.call_id.clone(),
@@ -919,7 +1045,7 @@ impl MemoryGateway {
             model: request.model.clone(),
             text,
         };
-        self.append_audit(
+        match self.append_audit(
             audit_id.clone(),
             AuditPhase::Outcome,
             "gateway.model_relay",
@@ -933,8 +1059,10 @@ impl MemoryGateway {
                 "fence": capability.fence().get(),
                 "decision": "allow",
             }),
-        )?;
-        Ok(response)
+        ) {
+            Ok(()) => Execution::Recorded(Ok(response)),
+            Err(error) => Execution::Unrecorded(error),
+        }
     }
 }
 
@@ -957,32 +1085,40 @@ impl Gateway for MemoryGateway {
 
         match self
             .tool_calls
-            .admit_checked(call_key.clone(), &call, || authorization.check(self))
+            .admit_checked(call_key.clone(), &call, || authorization.check(self))?
         {
-            Ok(CallAdmission::Replay(result)) => return Ok(result),
-            Ok(CallAdmission::Proceed) => {}
-            Ok(CallAdmission::Conflict) => {
-                let error = GatewayError::CallConflict;
-                let conflict_id = self.denial_audit_event_id(&audit_id, &error)?;
-                return Err(self.audit_denial(
-                    conflict_id,
+            CallAdmission::Replay(result) => return result,
+            CallAdmission::Proceed => {}
+            CallAdmission::Conflict => {
+                return Err(self.deny_admission(
+                    GatewayError::CallConflict,
+                    &audit_id,
                     "gateway.tool_call",
                     capability,
                     call.tool().clone(),
                     call.call_id(),
-                    error,
                 ));
             }
-            Err(error) => return Err(error),
+            CallAdmission::Evicted => {
+                return Err(self.deny_admission(
+                    GatewayError::CallResultEvicted,
+                    &audit_id,
+                    "gateway.tool_call",
+                    capability,
+                    call.tool().clone(),
+                    call.call_id(),
+                ));
+            }
         }
 
+        let guard = SlotGuard::new(&self.tool_calls, call_key);
         match self.execute_tool(&audit_id, capability, &call) {
-            Ok(result) => {
-                self.tool_calls.complete(call_key, call, result.clone())?;
-                Ok(result)
+            Execution::Recorded(result) => {
+                guard.complete(call, result.clone())?;
+                result
             }
-            Err(error) => {
-                self.tool_calls.abandon(&call_key)?;
+            Execution::Unrecorded(error) => {
+                drop(guard);
                 Err(error)
             }
         }
@@ -1007,33 +1143,40 @@ impl Gateway for MemoryGateway {
 
         match self
             .model_calls
-            .admit_checked(call_key.clone(), &request, || authorization.check(self))
+            .admit_checked(call_key.clone(), &request, || authorization.check(self))?
         {
-            Ok(CallAdmission::Replay(response)) => return Ok(response),
-            Ok(CallAdmission::Proceed) => {}
-            Ok(CallAdmission::Conflict) => {
-                let error = GatewayError::CallConflict;
-                let conflict_id = self.denial_audit_event_id(&audit_id, &error)?;
-                return Err(self.audit_denial(
-                    conflict_id,
+            CallAdmission::Replay(response) => return response,
+            CallAdmission::Proceed => {}
+            CallAdmission::Conflict => {
+                return Err(self.deny_admission(
+                    GatewayError::CallConflict,
+                    &audit_id,
                     "gateway.model_relay",
                     capability,
                     relay_tool,
                     &request.call_id,
-                    error,
                 ));
             }
-            Err(error) => return Err(error),
+            CallAdmission::Evicted => {
+                return Err(self.deny_admission(
+                    GatewayError::CallResultEvicted,
+                    &audit_id,
+                    "gateway.model_relay",
+                    capability,
+                    relay_tool,
+                    &request.call_id,
+                ));
+            }
         }
 
+        let guard = SlotGuard::new(&self.model_calls, call_key);
         match self.execute_relay(&audit_id, capability, &relay_tool, &request) {
-            Ok(response) => {
-                self.model_calls
-                    .complete(call_key, request, response.clone())?;
-                Ok(response)
+            Execution::Recorded(response) => {
+                guard.complete(request, response.clone())?;
+                response
             }
-            Err(error) => {
-                self.model_calls.abandon(&call_key)?;
+            Execution::Unrecorded(error) => {
+                drop(guard);
                 Err(error)
             }
         }

@@ -28,6 +28,9 @@
 
 - 非空、非绝对路径，不含 `.`、`..`、NUL、控制字符或反斜杠；
 - 拒绝大小写不敏感形式的 `%2f`、`%5c`、`%00` 与编码 dot segment；
+- 只接受 Unicode NFC 拼写：任何组合记号（拉丁、假名浊音符等）与分解形式（含 Hangul jamo）
+  一律 `ForbiddenEncoding`，因为归一化不敏感的文件系统会把分解/组合拼写解析成同一物理文件；
+  `collision_key` 在 NFC 之上再折叠大小写，Broker 对磁盘条目名先 NFC 再比较（2026-09-06 T-032）；
 - 不代表文件系统对象已经安全；symlink、magic link、hardlink、文件类型、根身份与
   竞态检查仍由 VaultBroker 在目录句柄上完成；
 - `.git/**`、`.workbench/**`、`.obsidian/**` 与 `.stignore` 是受保护路径，普通

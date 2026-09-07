@@ -1206,9 +1206,11 @@ fn historical_projection_receipt_cannot_acknowledge_an_externally_reverted_page(
         ))
         .unwrap();
     let mut engine = PersistentTaskEngine::new(db, broker, ledger);
+    // 本任务的页面拒绝投影：事件保留待办并作为该任务的隔离失败报告，不是整轮失败。
     assert!(matches!(
         engine.project_pending(),
-        Err(TaskEngineError::Projection(_))
+        Err(TaskEngineError::ProjectionIncomplete { delivered: 0, ref failures })
+            if failures.len() == 1 && failures[0].task_id == task
     ));
     assert_eq!(
         engine.control_db().pending_outbox().unwrap().len(),

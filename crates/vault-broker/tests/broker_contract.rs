@@ -203,6 +203,26 @@ fn protected_paths_and_collisions_are_rejected() {
     ));
 }
 
+#[test]
+fn decomposed_entry_names_on_disk_collide_with_their_nfc_spelling() {
+    let (vault, _data, mut broker) = broker();
+    // 外部写者（HFS+ 时代或别的工具）留下 NFD 拼写：か + U+3099，与 NFC 的 が 是同一逻辑名。
+    fs::create_dir_all(vault.path().join("notes")).unwrap();
+    fs::write(vault.path().join("notes/か\u{3099}.md"), b"decomposed").unwrap();
+    assert!(matches!(
+        broker.mutate(Mutation::create(
+            path("notes/が.md"),
+            b"composed".to_vec(),
+            "nfc-create"
+        )),
+        Err(BrokerError::PathCollision { .. })
+    ));
+    assert!(matches!(
+        broker.read(&path("notes/が.md")),
+        Err(BrokerError::PathCollision { .. })
+    ));
+}
+
 #[cfg(unix)]
 #[test]
 fn symlink_hardlink_and_special_files_fail_closed() {

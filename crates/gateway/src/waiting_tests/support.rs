@@ -198,14 +198,14 @@ impl Fixture {
                 let slots = self.gateway.tool_calls.slots.lock().unwrap();
                 (
                     slots.contains_key(&key),
-                    matches!(slots.get(&key), Some(CallSlot::Done(..))),
+                    matches!(slots.get(&key), Some(CallSlot::Done { .. })),
                 )
             }
             Branch::Relay => {
                 let slots = self.gateway.model_calls.slots.lock().unwrap();
                 (
                     slots.contains_key(&key),
-                    matches!(slots.get(&key), Some(CallSlot::Done(..))),
+                    matches!(slots.get(&key), Some(CallSlot::Done { .. })),
                 )
             }
         };

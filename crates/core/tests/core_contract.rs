@@ -30,6 +30,9 @@ fn vault_paths_reject_escape_and_encoded_separators() {
         "notes/secret.md/",
         "C:/secret.md",
         "notes/e\u{301}.md",
+        // 分解形式的日文浊音符与 Hangul jamo 不在组合记号黑名单内，只能靠 NFC 判定拒绝。
+        "notes/か\u{3099}.md",
+        "docs/\u{1100}\u{1161}.md",
         "",
     ] {
         assert!(
@@ -42,6 +45,10 @@ fn vault_paths_reject_escape_and_encoded_separators() {
         VaultPath::parse("项目/研究 笔记.md").unwrap().as_str(),
         "项目/研究 笔记.md"
     );
+    // 组合（NFC）拼写照常接受。
+    for raw in ["notes/が.md", "docs/가.md", "notes/é.md"] {
+        assert!(VaultPath::parse(raw).is_ok(), "rejected NFC path {raw:?}");
+    }
 }
 
 #[test]

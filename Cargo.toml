@@ -83,6 +83,8 @@ jiff = { version = "0.2.35", features = ["serde"] }
 serde-saphyr = "1.2.0"
 # Stub 私有临时目录及测试夹具
 tempfile = "3.27.0"
+# 路径 Unicode 归一（T-032）：VaultPath 只接受 NFC，碰撞键对磁盘条目名先 NFC 再折叠；unicode-rs 官方维护
+unicode-normalization = "0.1.25"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

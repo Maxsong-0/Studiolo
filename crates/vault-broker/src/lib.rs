@@ -1380,8 +1380,11 @@ fn hex(bytes: &[u8]) -> String {
     output
 }
 
+/// 磁盘条目名先归一到 NFC 再折叠大小写：VaultPath 只接受 NFC，而外部写者可能留下 NFD 拼写，
+/// 在归一化不敏感的卷上两者是同一物理文件。
 fn collision_component_key(component: &str) -> String {
-    component.to_lowercase()
+    use unicode_normalization::UnicodeNormalization as _;
+    component.nfc().collect::<String>().to_lowercase()
 }
 
 fn spelling_collision(existing: &VaultPath, requested: &VaultPath) -> bool {
