@@ -1,0 +1,41 @@
+[package]
+name = "studiolo-local-server"
+description = "M1 loopback-only, read-only workbench host"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+axum.workspace = true
+tokio = { workspace = true, features = ["time", "signal"] }
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+notify.workspace = true
+subtle.workspace = true
+zeroize.workspace = true
+rustix = { workspace = true, features = ["process"] }
+studiolo-auth.workspace = true
+studiolo-host-config.workspace = true
+studiolo-audit-ledger.workspace = true
+studiolo-core.workspace = true
+studiolo-vault-broker.workspace = true
+studiolo-vault-index.workspace = true
+studiolo-workbench.workspace = true
+
+[dev-dependencies]
+studiolo = { path = "../studiolo" }
+reqwest.workspace = true
+hmac.workspace = true
+sha1.workspace = true
+studiolo-auth = { workspace = true, features = ["test-support"] }
+jsonwebtoken.workspace = true
+tower.workspace = true
+tempfile.workspace = true
+tokio = { workspace = true, features = ["time", "test-util", "io-util"] }

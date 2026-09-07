@@ -1,0 +1,82 @@
+import { useEffect, useState, useSyncExternalStore } from 'react';
+import type { ReactNode } from 'react';
+import { SessionClient } from './sessionClient';
+import { installSessionReader } from './sessionHttp';
+import { watchSession } from './sessionLifecycle';
+import { SessionAccount } from './components/SessionAccount';
+import { Icon } from './components/Icon';
+
+export function SessionBoundary({
+  children,
+  client: supplied,
+}: {
+  children: (account: ReactNode) => ReactNode;
+  client?: SessionClient;
+}) {
+  const [client] = useState(() => supplied ?? new SessionClient());
+  const state = useSyncExternalStore(client.subscribe, client.getSnapshot);
+  useEffect(() => {
+    const uninstall = installSessionReader(client.read);
+    const unwatch = watchSession(client);
+    void client.check();
+    return () => {
+      unwatch();
+      client.stop();
+      uninstall();
+    };
+  }, [client]);
+  useEffect(() => {
+    if (state.phase !== 'ready' || !state.session) return;
+    // Client time is only a recheck hint; skew must not cause a tight request loop.
+    const delay = Math.max(
+      30_000,
+      state.session.absolute_expires_at_ms - Date.now(),
+    );
+    const timer = window.setTimeout(
+      client.resume,
+      Math.min(delay, 2_147_483_647),
+    );
+    return () => window.clearTimeout(timer);
+  }, [client, state.phase, state.session]);
+
+  if (state.phase === 'legacy' || state.phase === 'ready') {
+    return (
+      <div className="session-content" key={state.revision}>
+        {children(
+          state.phase === 'ready' ? (
+            <SessionAccount client={client} state={state} />
+          ) : null,
+        )}
+      </div>
+    );
+  }
+  const checking = state.phase === 'checking';
+  const signedOut = state.phase === 'signed-out';
+  return (
+    <main className="session-gate">
+      <section className="session-welcome" aria-labelledby="session-title">
+        <div className="session-emblem">
+          <Icon name="lock" />
+        </div>
+        <p className="session-brand">Studiolo</p>
+        <h1 id="session-title">
+          {signedOut
+            ? '进入你的工作台'
+            : checking
+              ? '核对登录状态'
+              : '暂时无法继续'}
+        </h1>
+        <p role={checking || signedOut ? 'status' : 'alert'}>{state.message}</p>
+        {checking ? null : (
+          <button
+            className="outline-button session-primary"
+            onClick={signedOut ? client.login : client.check}
+          >
+            <Icon name={signedOut ? 'arrow' : 'refresh'} />
+            {signedOut ? '登录工作台' : '核对登录状态'}
+          </button>
+        )}
+      </section>
+    </main>
+  );
+}

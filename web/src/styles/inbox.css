@@ -1,0 +1,119 @@
+.inbox {
+  margin: 0;
+}
+.section-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+.section-heading h2 {
+  margin: 0;
+  font-size: 1rem;
+  line-height: 1.5;
+  font-weight: 600;
+}
+.section-heading .text-button {
+  font-size: 0.75rem;
+}
+.action-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+.action-row {
+  border-bottom: 1px solid var(--border);
+}
+.action-open {
+  display: grid;
+  grid-template-columns: 100px minmax(0, 1fr) 120px auto;
+  align-items: center;
+  width: 100%;
+  gap: 8px 20px;
+  padding: 22px 14px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  text-align: left;
+}
+.action-open:hover {
+  background: var(--hover);
+}
+.action-kind {
+  color: var(--accent);
+  font-size: 0.75rem;
+  font-weight: 500;
+}
+.action-kind::before {
+  display: inline-block;
+  content: '';
+  width: 6px;
+  height: 6px;
+  margin-right: 7px;
+  border-radius: 50%;
+  background: currentColor;
+}
+.action-title {
+  font-size: 1rem;
+  font-weight: 550;
+  line-height: 1.7;
+  overflow-wrap: anywhere;
+}
+.action-project {
+  color: var(--muted);
+  font-size: 0.8125rem;
+  overflow-wrap: anywhere;
+}
+.action-source {
+  grid-column: 2 / 4;
+  grid-row: 2;
+  color: var(--muted);
+  font-size: 0.6875rem;
+  overflow-wrap: anywhere;
+}
+.action-link {
+  grid-column: 4;
+  grid-row: 1 / 3;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+  font-size: 0.8125rem;
+  color: var(--accent);
+}
+.action-link .icon {
+  width: 15px;
+  height: 15px;
+}
+.overview-context .action-open {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 9px;
+  padding: 24px 0;
+  border-radius: 0;
+}
+.overview-context .action-open:hover {
+  background: transparent;
+}
+.overview-context .action-open:hover .action-title {
+  color: var(--accent);
+}
+.overview-context .action-source {
+  display: none;
+}
+.overview-context .action-title {
+  font-size: 0.9375rem;
+}
+.overview-context .action-project {
+  font-size: 0.75rem;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .action-link .icon {
+    transition: transform 180ms ease;
+  }
+  .action-open:hover .action-link .icon {
+    transform: translateX(3px);
+  }
+}

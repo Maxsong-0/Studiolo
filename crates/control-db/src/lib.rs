@@ -10,6 +10,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use studiolo_core::{AttemptId, Fence, TaskId, VaultUuid};
 
+mod schema_guard;
+
 const SCHEMA_VERSION: i64 = 2;
 
 /// Control-plane persistence failures.
@@ -303,18 +305,20 @@ impl ControlDb {
     }
 
     fn from_connection(connection: Connection, vault_uuid: VaultUuid) -> Result<Self, DbError> {
+        // 这些设置只影响当前连接；新版库判定前不切换持久 journal mode。
         connection.execute_batch(
-            "PRAGMA journal_mode=WAL;
-             PRAGMA synchronous=FULL;
+            "PRAGMA synchronous=FULL;
              PRAGMA foreign_keys=ON;
              PRAGMA busy_timeout=5000;
              PRAGMA trusted_schema=OFF;",
         )?;
+        schema_guard::require_supported_version(&connection)?;
         let mut db = Self {
             connection,
             vault_uuid,
         };
         db.migrate()?;
+        db.connection.execute_batch("PRAGMA journal_mode=WAL;")?;
         db.bind_vault(vault_uuid)?;
         Ok(db)
     }
@@ -323,22 +327,12 @@ impl ControlDb {
         let tx = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
-        // 先只建迁移账本并核对版本：更新版 schema 写过的库不得被旧二进制静默改写。
+        // 在写事务取得后再次核对，不能以事务外的旧观察代替迁移准入。
+        schema_guard::require_supported_version(&tx)?;
         tx.execute_batch(
             "CREATE TABLE IF NOT EXISTS schema_migrations (
                  version INTEGER PRIMARY KEY, applied_at_ms INTEGER NOT NULL);",
         )?;
-        let recorded_version: i64 = tx.query_row(
-            "SELECT COALESCE(MAX(version), 0) FROM schema_migrations",
-            [],
-            |row| row.get(0),
-        )?;
-        if recorded_version > SCHEMA_VERSION {
-            return Err(DbError::UnsupportedSchema {
-                found: recorded_version,
-                supported: SCHEMA_VERSION,
-            });
-        }
         tx.execute_batch(
             "CREATE TABLE IF NOT EXISTS vault_binding (
                  singleton INTEGER PRIMARY KEY CHECK (singleton = 1), vault_uuid TEXT NOT NULL);

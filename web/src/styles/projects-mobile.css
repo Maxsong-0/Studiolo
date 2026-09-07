@@ -1,0 +1,123 @@
+@media (max-width: 760px) {
+  .table-scroll {
+    overflow: visible;
+    border: 0;
+    border-radius: 0;
+  }
+  .project-table,
+  .project-table tbody {
+    display: block;
+    width: 100%;
+  }
+  .project-table colgroup {
+    display: none;
+  }
+  .project-table thead {
+    position: absolute;
+    clip: rect(0, 0, 0, 0);
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+  }
+  .project-table tbody tr {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    height: auto;
+    padding: 12px 0 20px;
+    margin-bottom: 12px;
+    border-bottom: 1px solid var(--border);
+  }
+  .project-table th,
+  .project-table td {
+    display: block;
+    border: 0;
+    padding: 10px 4px;
+  }
+  .project-table .project-identity {
+    grid-column: 1 / -1;
+    padding: 8px 0 16px;
+  }
+  .project-name,
+  .project-name-text {
+    font-size: 1rem;
+  }
+  .project-name {
+    min-height: 44px;
+  }
+  .project-path {
+    font-size: 0.75rem;
+    margin-top: 2px;
+  }
+  .project-table td::before,
+  .project-table .lifecycle-cell::before {
+    display: block;
+    content: attr(data-label);
+    width: auto;
+    height: auto;
+    border-radius: 0;
+    background: none;
+    margin: 0 0 6px;
+    font-size: 0.625rem;
+    color: var(--muted);
+  }
+  .project-table td:not(.milestone-cell) {
+    text-align: center;
+  }
+  .project-table td:nth-child(3) {
+    grid-column: 1;
+    grid-row: 2;
+  }
+  .project-table td:nth-child(4) {
+    grid-column: 2;
+    grid-row: 2;
+  }
+  .project-table td:nth-child(5) {
+    grid-column: 3;
+    grid-row: 2;
+  }
+  .project-table .lifecycle-cell {
+    grid-column: 4;
+    grid-row: 2;
+  }
+  .source-value {
+    min-height: 44px;
+    font-size: 0.875rem;
+  }
+  .project-table .milestone-cell {
+    grid-column: 1 / -1;
+    padding: 12px 0 0;
+    margin-top: 6px;
+    border-top: 1px solid var(--border);
+  }
+  .project-table .milestone-cell::before {
+    font-size: 0.75rem;
+  }
+  .overview-context {
+    padding: 24px 20px;
+  }
+  .overview-context .action-list {
+    display: block;
+  }
+  .overview-context .action-row {
+    border-bottom: 1px solid var(--border);
+  }
+  .overview-context .action-open {
+    padding: 20px 0;
+  }
+  .action-open {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+    padding: 20px 0;
+  }
+  .action-source {
+    font-size: 0.6875rem;
+  }
+  .action-link {
+    min-height: 44px;
+  }
+  .pointer-surface {
+    overflow: visible;
+  }
+}

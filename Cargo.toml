@@ -6,10 +6,15 @@ members = [
     "crates/vault-index",
     "crates/control-db",
     "crates/audit-ledger",
+    "crates/auth",
+    "crates/auth-admin",
+    "crates/host-config",
     "crates/runner-adapter",
     "crates/gateway",
     "crates/task-engine",
     "crates/studiolo",
+    "crates/workbench",
+    "crates/local-server",
 ]
 
 [workspace.package]
@@ -27,9 +32,37 @@ studiolo-vault-broker = { path = "crates/vault-broker" }
 studiolo-vault-index = { path = "crates/vault-index" }
 studiolo-control-db = { path = "crates/control-db" }
 studiolo-audit-ledger = { path = "crates/audit-ledger" }
+studiolo-auth = { path = "crates/auth" }
+studiolo-host-config = { path = "crates/host-config" }
 studiolo-runner-adapter = { path = "crates/runner-adapter" }
 studiolo-gateway = { path = "crates/gateway" }
 studiolo-task-engine = { path = "crates/task-engine" }
+studiolo-workbench = { path = "crates/workbench" }
+
+# M1 本机只读 HTTP 入口；不装配远程写入、Runner 或同步。
+axum = "=0.8.9"
+tokio = { version = "=1.53.1", features = ["macros", "rt-multi-thread", "net", "sync"] }
+tower = { version = "0.5", features = ["util"] }
+
+# M2 身份验证与独立会话；复用已锁定的密码库和网络校验实现。
+jsonwebtoken = { version = "=10.3.0", features = ["rust_crypto"] }
+reqwest = { version = "=0.12.28", default-features = false, features = ["rustls-tls"] }
+getrandom = "=0.4.3"
+subtle = "=2.6.1"
+zeroize = "=1.9.0"
+signal-hook = { version = "=0.4.4", default-features = false }
+notify = "=8.2.0"
+hkdf = "=0.12.4"
+# TOTP 使用标准 HMAC-SHA1，不把 SHA1 用于密码存储或完整性签名。
+hmac = "=0.12.1"
+sha1 = "=0.10.6"
+# hkdf 0.12 使用 digest 0.10；复用已锁定版本，不替换其余模块的 sha2 0.11。
+sha2-legacy = { package = "sha2", version = "=0.10.9" }
+
+# M1 ripgrep 搜索核心：只搜索 Broker 提供的内存快照，不启动外部进程。
+grep-regex = "=0.1.14"
+grep-searcher = "=0.1.17"
+grep-matcher = "=0.1.9"
 
 # 路径安全：目录句柄级操作（PRD 12.7、ADR-001）
 cap-std = "4.0.3"

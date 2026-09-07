@@ -1,0 +1,70 @@
+.nav-symbol {
+  display: grid;
+  place-items: center;
+  width: 25px;
+  height: 25px;
+  flex-shrink: 0;
+  border-radius: 7px;
+  background: #e1ecff;
+  box-shadow: inset 0 1px 0 #ffffff85;
+}
+.nav-symbol .icon {
+  width: 16px;
+  height: 16px;
+  color: #246bd2;
+}
+.nav-symbol-inbox {
+  background: #f0e6ff;
+}
+.nav-symbol-inbox .icon {
+  color: #8552be;
+}
+.nav-symbol-documents {
+  background: #ffefdc;
+}
+.nav-symbol-documents .icon {
+  color: #a3631f;
+}
+.is-active .nav-symbol {
+  background: #ffffff28;
+  box-shadow: inset 0 1px 0 #ffffff40;
+}
+.is-active .nav-symbol .icon {
+  color: #fff;
+}
+.action-kind {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+.action-kind::before {
+  content: none;
+}
+.action-kind .icon {
+  width: 18px;
+  height: 18px;
+}
+.action-kind-decision {
+  color: #8250b8;
+}
+.action-kind-restart {
+  color: #a46622;
+}
+@media (max-width: 760px) {
+  .navigation-item > .nav-symbol {
+    flex-basis: auto;
+    order: 0;
+    width: 23px;
+    height: 23px;
+  }
+  .nav-symbol .icon {
+    width: 16px;
+    height: 16px;
+  }
+}
+@media (prefers-contrast: more) {
+  .nav-symbol {
+    border: 1px solid currentColor;
+    box-shadow: none;
+  }
+}

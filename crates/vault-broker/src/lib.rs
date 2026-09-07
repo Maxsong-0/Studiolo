@@ -3,9 +3,19 @@
 //! This crate is the only production crate allowed to mutate canonical Vault
 //! files. Callers provide logical [`VaultPath`] values, never ambient paths.
 
+mod canonical;
+mod capture;
+mod mutation;
+mod readonly;
+mod writer;
+
+pub use canonical::{CanonicalRead, CanonicalReadVault};
+pub use capture::{CanonicalCapture, CaptureStamp};
+pub use readonly::{ReadBatch, ReadEntry, ReadEntryKind, ReadNote, ReadOnlyVault, ScanLimits};
+pub use writer::WriterStatus;
+
 use std::{
     collections::BTreeSet,
-    fs,
     io::{Read, Write},
     path::{Path, PathBuf},
     sync::{
@@ -14,10 +24,7 @@ use std::{
     },
 };
 
-use cap_std::{
-    ambient_authority,
-    fs::{Dir, MetadataExt as _, OpenOptions},
-};
+use cap_std::fs::{Dir, MetadataExt as _, OpenOptions};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use studiolo_core::{AttemptId, Fence, Revision, TaskId, VaultPath, VaultUuid};
@@ -30,6 +37,27 @@ static TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 /// Failure modes exposed at the Vault boundary.
 #[derive(Debug, thiserror::Error)]
 pub enum BrokerError {
+    /// 同一 canonical 根已有存活写者。
+    #[error("canonical writer is busy")]
+    WriterBusy,
+    /// canonical、data 或不可变控制对象与已登记配对不符。
+    #[error("writer storage binding mismatch")]
+    WriterBindingMismatch,
+    /// 写者持久记录缺失、格式不合法或不满足协议不变量。
+    #[error("corrupt writer state")]
+    CorruptWriterState,
+    /// 未决安装或旧未知操作阻止新的 canonical 安装。
+    #[error("canonical mutation is unresolved")]
+    MutationUnresolved,
+    /// 写者协议触及的输入或持久记录超过固定预算。
+    #[error("writer storage or input limit exceeded")]
+    WriterLimitExceeded,
+    /// 捕获所属实例或已确认提交水位变化，候选视图不能发布。
+    #[error("canonical capture changed")]
+    CaptureChanged,
+    /// 扫描出现安全诊断，不能把部分结果当作完整捕获。
+    #[error("canonical capture is incomplete")]
+    IncompleteCapture,
     /// A protected control path was sent through the ordinary mutation API.
     #[error("protected Vault path: {0}")]
     ProtectedPath(VaultPath),
@@ -74,6 +102,17 @@ pub enum BrokerError {
     /// The persisted Vault identity was malformed.
     #[error("corrupt Vault identity")]
     CorruptIdentity,
+    /// The approved canonical root no longer resolves to its pinned directory.
+    #[error("canonical Vault root changed or is unavailable")]
+    RootChanged,
+    /// A bounded read exceeded its caller-supplied byte budget.
+    #[error("read limit of {max_bytes} bytes exceeded at {path}")]
+    ReadLimitExceeded {
+        /// Logical path whose bytes were refused.
+        path: VaultPath,
+        /// Maximum permitted content bytes, including growth during the read.
+        max_bytes: u64,
+    },
     /// Stored snapshot metadata or content failed integrity verification.
     #[error("corrupt snapshot record")]
     CorruptSnapshot,
@@ -317,7 +356,19 @@ struct VaultIdentity {
     vault_uuid: VaultUuid,
 }
 
+impl VaultIdentity {
+    fn decode(bytes: &[u8]) -> Result<VaultUuid, BrokerError> {
+        let identity: Self = serde_json::from_slice(bytes)
+            .map_err(|error| BrokerError::json("parse Vault identity", error))?;
+        if identity.format_version != 1 {
+            return Err(BrokerError::CorruptIdentity);
+        }
+        Ok(identity.vault_uuid)
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct MutationReplay {
     fingerprint: String,
     expected_revision: Revision,
@@ -367,95 +418,15 @@ pub struct FsVaultBroker {
     root: Dir,
     data: Dir,
     vault_uuid: VaultUuid,
+    writer: writer::Writer,
+    capture_instance: std::sync::Arc<()>,
     read_guard: Mutex<()>,
 }
 
 impl FsVaultBroker {
-    /// Opens approved roots and initializes `.workbench/vault.json` once.
+    /// 显式初始化或采用经过验证的旧存储；普通写者重开应使用 `open_existing`。
     pub fn open(vault_root: &Path, data_root: &Path) -> Result<Self, BrokerError> {
-        fs::create_dir_all(vault_root)
-            .map_err(|error| BrokerError::io("create vault root", error))?;
-        fs::create_dir_all(data_root)
-            .map_err(|error| BrokerError::io("create data root", error))?;
-        let root = Dir::open_ambient_dir(vault_root, ambient_authority())
-            .map_err(|error| BrokerError::io("open vault root", error))?;
-        let data = Dir::open_ambient_dir(data_root, ambient_authority())
-            .map_err(|error| BrokerError::io("open data root", error))?;
-        let vault_uuid = Self::load_or_initialize_identity(&root)?;
-        data.create_dir_all("history")
-            .map_err(|error| BrokerError::io("create history store", error))?;
-        data.create_dir_all("idempotency")
-            .map_err(|error| BrokerError::io("create idempotency store", error))?;
-        data.create_dir_all("snapshots")
-            .map_err(|error| BrokerError::io("create snapshot store", error))?;
-        Ok(Self {
-            root,
-            data,
-            vault_uuid,
-            read_guard: Mutex::new(()),
-        })
-    }
-
-    fn load_or_initialize_identity(root: &Dir) -> Result<VaultUuid, BrokerError> {
-        match root.symlink_metadata(".workbench") {
-            Ok(metadata) if !metadata.is_dir() || metadata.file_type().is_symlink() => {
-                return Err(BrokerError::CorruptIdentity);
-            }
-            Ok(_) => {}
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => root
-                .create_dir(".workbench")
-                .map_err(|source| BrokerError::io("create workbench control directory", source))?,
-            Err(error) => {
-                return Err(BrokerError::io(
-                    "inspect workbench control directory",
-                    error,
-                ));
-            }
-        }
-        let identity_path =
-            VaultPath::parse(".workbench/vault.json").map_err(|_| BrokerError::CorruptIdentity)?;
-        let control_dir = Self::open_directory(root, Path::new(".workbench"), &identity_path)?;
-        let identity_exists = match control_dir.symlink_metadata("vault.json") {
-            Ok(metadata) => {
-                if metadata.file_type().is_symlink() || !metadata.is_file() {
-                    return Err(BrokerError::CorruptIdentity);
-                }
-                #[cfg(unix)]
-                if metadata.nlink() > 1 {
-                    return Err(BrokerError::CorruptIdentity);
-                }
-                true
-            }
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,
-            Err(error) => return Err(BrokerError::io("inspect Vault identity", error)),
-        };
-        if identity_exists {
-            let mut file = Self::open_rooted_file(root, &identity_path)?;
-            Self::validate_file_metadata(
-                &identity_path,
-                &file
-                    .metadata()
-                    .map_err(|error| BrokerError::io("stat Vault identity", error))?,
-            )?;
-            let mut bytes = Vec::new();
-            file.read_to_end(&mut bytes)
-                .map_err(|error| BrokerError::io("read Vault identity", error))?;
-            let identity: VaultIdentity = serde_json::from_slice(&bytes)
-                .map_err(|error| BrokerError::json("parse Vault identity", error))?;
-            if identity.format_version != 1 {
-                return Err(BrokerError::CorruptIdentity);
-            }
-            Ok(identity.vault_uuid)
-        } else {
-            let identity = VaultIdentity {
-                format_version: 1,
-                vault_uuid: VaultUuid::new(),
-            };
-            let bytes = serde_json::to_vec_pretty(&identity)
-                .map_err(|source| BrokerError::json("serialize Vault identity", source))?;
-            Self::atomic_write_dir(&control_dir, Path::new("vault.json"), &bytes, true)?;
-            Ok(identity.vault_uuid)
-        }
+        Self::open_writer(vault_root, data_root, true)
     }
 
     fn fingerprint<T: Serialize>(value: &T) -> Result<String, BrokerError> {
@@ -464,34 +435,8 @@ impl FsVaultBroker {
         Ok(sha256(&bytes))
     }
 
-    fn mutation_replay_path(key: &str) -> PathBuf {
-        Path::new("idempotency").join(format!("{}.json", sha256(key.as_bytes())))
-    }
-
-    fn load_mutation_replay(&self, key: &str) -> Result<Option<MutationReplay>, BrokerError> {
-        let path = Self::mutation_replay_path(key);
-        match self.data.open(&path) {
-            Ok(mut file) => {
-                let mut bytes = Vec::new();
-                file.read_to_end(&mut bytes)
-                    .map_err(|error| BrokerError::io("read idempotency record", error))?;
-                serde_json::from_slice(&bytes)
-                    .map(Some)
-                    .map_err(|error| BrokerError::json("parse idempotency record", error))
-            }
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
-            Err(error) => Err(BrokerError::io("open idempotency record", error)),
-        }
-    }
-
-    fn save_mutation_replay(&self, key: &str, replay: &MutationReplay) -> Result<(), BrokerError> {
-        let bytes = serde_json::to_vec(replay)
-            .map_err(|error| BrokerError::json("serialize idempotency record", error))?;
-        Self::atomic_write_dir(&self.data, &Self::mutation_replay_path(key), &bytes, false)
-    }
-
     fn inspect_existing(&self, path: &VaultPath) -> Result<Option<VaultObject>, BrokerError> {
-        match self.read(path) {
+        match self.read_checked(path, Some(writer::disk::CONTENT_LIMIT)) {
             Ok(object) => Ok(Some(object)),
             Err(BrokerError::NotFound(_)) => Ok(None),
             Err(error) => Err(error),
@@ -610,7 +555,7 @@ impl FsVaultBroker {
                 }
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
                     match parent_dir.create_dir(component) {
-                        Ok(()) => {}
+                        Ok(()) => Self::sync_directory(&parent_dir, Path::new("."))?,
                         Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
                         Err(error) => return Err(BrokerError::io("create Vault directory", error)),
                     }
@@ -703,7 +648,7 @@ impl FsVaultBroker {
             ResolveFlags::BENEATH | ResolveFlags::NO_MAGICLINKS | ResolveFlags::NO_SYMLINKS,
         )
         .map_err(|error| BrokerError::io("open parent for sync", error.into()))?;
-        fs::File::from(handle)
+        std::fs::File::from(handle)
             .sync_all()
             .map_err(|error| BrokerError::io("sync parent directory", error))
     }
@@ -715,106 +660,6 @@ impl FsVaultBroker {
             .into_std_file()
             .sync_all()
             .map_err(|error| BrokerError::io("sync parent directory", error))
-    }
-
-    fn preserve_history(&self, object: &VaultObject) -> Result<(), BrokerError> {
-        let path = Path::new("history").join(object.revision.to_string());
-        match self.data.open(&path) {
-            Ok(mut file) => {
-                let mut existing = Vec::new();
-                file.read_to_end(&mut existing)
-                    .map_err(|error| BrokerError::io("read history object", error))?;
-                if existing == object.content {
-                    Ok(())
-                } else {
-                    Err(BrokerError::CorruptIdentity)
-                }
-            }
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                Self::atomic_write_dir(&self.data, &path, &object.content, true)
-            }
-            Err(error) => Err(BrokerError::io("open history object", error)),
-        }
-    }
-
-    fn write_canonical(
-        &self,
-        path: &VaultPath,
-        content: &[u8],
-        precondition: Precondition,
-    ) -> Result<(), BrokerError> {
-        self.validate_components(path, true)?;
-        self.ensure_parent_dirs(path)?;
-        self.atomic_write_canonical(path, content, precondition)?;
-        let installed = self.read(path)?;
-        let expected = Revision::compute(self.vault_uuid, path, content);
-        if installed.revision != expected {
-            return Err(BrokerError::UnstableRead(path.clone()));
-        }
-        Ok(())
-    }
-
-    fn atomic_write_canonical(
-        &self,
-        path: &VaultPath,
-        content: &[u8],
-        precondition: Precondition,
-    ) -> Result<(), BrokerError> {
-        let logical = Path::new(path.as_str());
-        let parent = match logical.parent() {
-            Some(parent) if !parent.as_os_str().is_empty() => parent,
-            _ => Path::new("."),
-        };
-        let file_name = logical.file_name().ok_or_else(|| BrokerError::UnsafeNode {
-            path: path.clone(),
-            reason: "missing file name",
-        })?;
-        let parent_dir = Self::open_directory(&self.root, parent, path)?;
-        match Self::atomic_write_dir_checked(
-            &parent_dir,
-            Path::new(file_name),
-            content,
-            matches!(precondition, Precondition::MustNotExist),
-            || {
-                let current_parent = Self::open_directory(&self.root, parent, path)?;
-                #[cfg(unix)]
-                {
-                    let expected = parent_dir
-                        .dir_metadata()
-                        .map_err(|error| BrokerError::io("stat pinned parent", error))?;
-                    let current = current_parent
-                        .dir_metadata()
-                        .map_err(|error| BrokerError::io("stat current parent", error))?;
-                    if expected.dev() != current.dev() || expected.ino() != current.ino() {
-                        return Err(BrokerError::UnstableRead(path.clone()));
-                    }
-                }
-                #[cfg(not(unix))]
-                drop(current_parent);
-                if let Precondition::Match(expected) = precondition {
-                    let current = self.read(path)?;
-                    if current.revision != expected {
-                        return Err(BrokerError::RevisionConflict {
-                            path: path.clone(),
-                            expected: expected.to_string(),
-                            actual: Some(current.revision),
-                        });
-                    }
-                }
-                Ok(())
-            },
-        ) {
-            Err(BrokerError::Io { source, .. })
-                if source.kind() == std::io::ErrorKind::AlreadyExists =>
-            {
-                Err(BrokerError::RevisionConflict {
-                    path: path.clone(),
-                    expected: "absence".to_owned(),
-                    actual: self.inspect_existing(path)?.map(|object| object.revision),
-                })
-            }
-            result => result,
-        }
     }
 
     #[cfg(target_os = "linux")]
@@ -920,6 +765,17 @@ impl VaultReader for FsVaultBroker {
     }
 
     fn read(&self, path: &VaultPath) -> Result<VaultObject, BrokerError> {
+        self.read_checked(path, None)
+    }
+}
+
+impl FsVaultBroker {
+    fn read_checked(
+        &self,
+        path: &VaultPath,
+        max_bytes: Option<usize>,
+    ) -> Result<VaultObject, BrokerError> {
+        self.writer.check(&self.root, &self.data)?;
         let _read_guard = self.read_guard.lock().map_err(|_| memory_state_error())?;
         self.validate_components(path, false)?;
         let mut file = Self::open_rooted_file(&self.root, path)?;
@@ -928,8 +784,21 @@ impl VaultReader for FsVaultBroker {
             .map_err(|error| BrokerError::io("stat Vault object before read", error))?;
         Self::validate_file_metadata(path, &before)?;
         let mut content = Vec::new();
-        file.read_to_end(&mut content)
-            .map_err(|error| BrokerError::io("read Vault object", error))?;
+        if let Some(max) = max_bytes {
+            if before.len() > max as u64 {
+                return Err(BrokerError::WriterLimitExceeded);
+            }
+            (&mut file)
+                .take(max as u64 + 1)
+                .read_to_end(&mut content)
+                .map_err(|error| BrokerError::io("read bounded Vault object", error))?;
+            if content.len() > max {
+                return Err(BrokerError::WriterLimitExceeded);
+            }
+        } else {
+            file.read_to_end(&mut content)
+                .map_err(|error| BrokerError::io("read Vault object", error))?;
+        }
         let after = file
             .metadata()
             .map_err(|error| BrokerError::io("stat Vault object after read", error))?;
@@ -955,6 +824,7 @@ impl VaultReader for FsVaultBroker {
         if after.len() != current.len() || after.modified().ok() != current.modified().ok() {
             return Err(BrokerError::UnstableRead(path.clone()));
         }
+        self.writer.check(&self.root, &self.data)?;
         Ok(VaultObject {
             revision: Revision::compute(self.vault_uuid, path, &content),
             path: path.clone(),
@@ -1047,97 +917,16 @@ impl SnapshotReader for FsVaultBroker {
 
 impl VaultWriter for FsVaultBroker {
     fn mutate(&mut self, mutation: Mutation) -> Result<MutationReceipt, BrokerError> {
-        if mutation.path.is_protected() {
-            return Err(BrokerError::ProtectedPath(mutation.path));
-        }
-        if mutation.idempotency_key.is_empty() {
-            return Err(BrokerError::IdempotencyConflict);
-        }
-        let fingerprint = Self::fingerprint(&mutation)?;
-        let expected_revision =
-            Revision::compute(self.vault_uuid, &mutation.path, &mutation.content);
-        if let Some(replay) = self.load_mutation_replay(&mutation.idempotency_key)? {
-            if replay.fingerprint != fingerprint || replay.expected_revision != expected_revision {
-                return Err(BrokerError::IdempotencyConflict);
-            }
-            if let Some(receipt) = replay.receipt {
-                return Ok(receipt);
-            }
-            if let Some(existing) = self.inspect_existing(&mutation.path)?
-                && existing.revision == expected_revision
-            {
-                let receipt = MutationReceipt {
-                    path: mutation.path.clone(),
-                    revision: existing.revision,
-                    previous_revision: match mutation.precondition {
-                        Precondition::MustNotExist => None,
-                        Precondition::Match(revision) => Some(revision),
-                    },
-                };
-                self.save_mutation_replay(
-                    &mutation.idempotency_key,
-                    &MutationReplay {
-                        fingerprint,
-                        expected_revision,
-                        receipt: Some(receipt.clone()),
-                    },
-                )?;
-                return Ok(receipt);
-            }
-        } else {
-            self.save_mutation_replay(
-                &mutation.idempotency_key,
-                &MutationReplay {
-                    fingerprint: fingerprint.clone(),
-                    expected_revision,
-                    receipt: None,
-                },
-            )?;
-        }
-
-        let current = self.inspect_existing(&mutation.path)?;
-        match (mutation.precondition, current.as_ref()) {
-            (Precondition::MustNotExist, None) => {}
-            (Precondition::MustNotExist, Some(object)) => {
-                return Err(BrokerError::RevisionConflict {
-                    path: mutation.path,
-                    expected: "absence".to_owned(),
-                    actual: Some(object.revision),
-                });
-            }
-            (Precondition::Match(expected), Some(object)) if object.revision == expected => {}
-            (Precondition::Match(expected), object) => {
-                return Err(BrokerError::RevisionConflict {
-                    path: mutation.path,
-                    expected: expected.to_string(),
-                    actual: object.map(|value| value.revision),
-                });
-            }
-        }
-        if let Some(object) = current.as_ref() {
-            self.preserve_history(object)?;
-        }
-        self.write_canonical(&mutation.path, &mutation.content, mutation.precondition)?;
-        let receipt = MutationReceipt {
-            path: mutation.path.clone(),
-            revision: expected_revision,
-            previous_revision: current.map(|object| object.revision),
-        };
-        self.save_mutation_replay(
-            &mutation.idempotency_key,
-            &MutationReplay {
-                fingerprint,
-                expected_revision,
-                receipt: Some(receipt.clone()),
-            },
-        )?;
-        Ok(receipt)
+        mutation::apply(self, mutation)
     }
 
     fn commit_attempt_artifacts(
         &mut self,
         mut commit: ArtifactCommit,
     ) -> Result<ArtifactCommitReceipt, BrokerError> {
+        if self.write_status()?.unresolved {
+            return Err(BrokerError::MutationUnresolved);
+        }
         if commit.audit_intent.is_empty() || commit.idempotency_key.is_empty() {
             return Err(BrokerError::InvalidArtifact(
                 "audit intent and idempotency key are required".to_owned(),

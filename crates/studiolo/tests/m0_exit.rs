@@ -37,7 +37,7 @@ fn spec() -> TaskSpec {
 }
 
 fn fixture() -> (TempDir, M0Workbench) {
-    let root = TempDir::new().unwrap();
+    let root = TempDir::new_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
     let vault = root.path().join("canonical");
     let data = root.path().join("data");
     let mut broker = FsVaultBroker::open(&vault, &data).unwrap();

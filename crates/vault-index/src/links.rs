@@ -1,8 +1,10 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
 use studiolo_core::VaultPath;
 
-use crate::{FrontmatterValue, IndexedDocument};
+use crate::IndexedDocument;
+
+pub(crate) use crate::{link_parse::parse_outgoing, link_resolve::resolve};
 
 /// Parsed target inside `[[target#heading|alias]]`.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -97,7 +99,8 @@ pub enum LinkResolution {
         /// Rule that selected the path.
         rule: ResolutionRule,
     },
-    /// Multiple candidates remained at the Vault-wide scope.
+    /// Multiple candidates matched a case-folded exact path or remained at the
+    /// Vault-wide scope.
     Ambiguous {
         /// Stable, path-sorted candidate list.
         candidates: Vec<VaultPath>,
@@ -169,210 +172,6 @@ pub struct LinkHealth {
     pub ambiguous: Vec<AmbiguousLink>,
     /// Count of successful resolutions by rule.
     pub rule_histogram: BTreeMap<ResolutionRule, usize>,
-}
-
-pub(crate) fn parse_outgoing(body: &str, first_line: u32) -> Vec<OutgoingLink> {
-    let mut links = Vec::new();
-    let mut in_fence = false;
-    for (offset, line) in body.lines().enumerate() {
-        let trimmed = line.trim_start();
-        if trimmed.starts_with("```") || trimmed.starts_with("~~~") {
-            in_fence = !in_fence;
-            continue;
-        }
-        if in_fence {
-            continue;
-        }
-        let mut cursor = 0;
-        while let Some(relative) = line[cursor..].find("[[") {
-            let brackets = cursor + relative;
-            if line[..brackets]
-                .chars()
-                .filter(|character| *character == '`')
-                .count()
-                % 2
-                == 1
-            {
-                cursor = brackets + 2;
-                continue;
-            }
-            let Some(close_relative) = line[brackets + 2..].find("]]") else {
-                break;
-            };
-            let close = brackets + 2 + close_relative + 2;
-            let token_start = if line[..brackets].ends_with('!') {
-                brackets - 1
-            } else {
-                brackets
-            };
-            if let Ok(target) = WikilinkTarget::parse(&line[token_start..close]) {
-                links.push(OutgoingLink {
-                    target,
-                    resolution: LinkResolution::Dangling,
-                    line: first_line + offset as u32,
-                    column: line[..token_start].chars().count() as u32 + 1,
-                    context: line.to_owned(),
-                });
-            }
-            cursor = close;
-        }
-    }
-    links
-}
-
-pub(crate) fn resolve(
-    documents: &BTreeMap<VaultPath, IndexedDocument>,
-    from: &VaultPath,
-    target: &WikilinkTarget,
-) -> LinkResolution {
-    if target.target.is_empty() && target.heading.is_some() {
-        return LinkResolution::Resolved {
-            path: from.clone(),
-            rule: ResolutionRule::ExactRelative,
-        };
-    }
-
-    if !target.target.starts_with('/')
-        && let Some(relative) = relative_candidate(from, &target.target)
-        && let Some(path) = exact_path(documents, &relative)
-    {
-        return LinkResolution::Resolved {
-            path,
-            rule: ResolutionRule::ExactRelative,
-        };
-    }
-
-    let root_candidate = target.target.trim_start_matches('/');
-    if let Some(path) = exact_path(documents, root_candidate) {
-        return LinkResolution::Resolved {
-            path,
-            rule: ResolutionRule::VaultRootPath,
-        };
-    }
-
-    if target.target.contains('/') {
-        return LinkResolution::Dangling;
-    }
-
-    let name = target
-        .target
-        .rsplit('/')
-        .next()
-        .unwrap_or(&target.target)
-        .strip_suffix(".md")
-        .unwrap_or_else(|| target.target.rsplit('/').next().unwrap_or(&target.target));
-    let name_key = comparison_key(name);
-    let mut ancestor = parent(from.as_str()).unwrap_or_default().to_owned();
-    let mut depth = 0_u16;
-    loop {
-        let mut candidates: Vec<_> = documents
-            .iter()
-            .filter(|(path, document)| {
-                is_in_subtree(path.as_str(), &ancestor)
-                    && document_names(document).contains(&name_key)
-            })
-            .map(|(path, _)| path.clone())
-            .collect();
-        candidates.sort();
-        candidates.dedup();
-        if candidates.len() == 1 {
-            return LinkResolution::Resolved {
-                path: candidates.remove(0),
-                rule: ResolutionRule::NearestUnique {
-                    ancestor_depth: depth,
-                },
-            };
-        }
-        if ancestor.is_empty() {
-            return if candidates.is_empty() {
-                LinkResolution::Dangling
-            } else {
-                LinkResolution::Ambiguous { candidates }
-            };
-        }
-        ancestor = parent(&ancestor).unwrap_or_default().to_owned();
-        depth = depth.saturating_add(1);
-    }
-}
-
-fn relative_candidate(from: &VaultPath, target: &str) -> Option<String> {
-    let mut components: Vec<&str> = from.as_str().split('/').collect();
-    components.pop();
-    for component in target.split('/') {
-        match component {
-            "" | "." => {}
-            ".." => {
-                components.pop()?;
-            }
-            value => components.push(value),
-        }
-    }
-    Some(components.join("/"))
-}
-
-fn exact_path(
-    documents: &BTreeMap<VaultPath, IndexedDocument>,
-    candidate: &str,
-) -> Option<VaultPath> {
-    let with_extension = if candidate.ends_with(".md") {
-        candidate.to_owned()
-    } else {
-        format!("{candidate}.md")
-    };
-    let key = comparison_key(&with_extension);
-    documents
-        .keys()
-        .find(|path| comparison_key(path.as_str()) == key)
-        .cloned()
-}
-
-fn comparison_key(value: &str) -> String {
-    value.trim().to_lowercase()
-}
-
-fn parent(path: &str) -> Option<&str> {
-    path.rsplit_once('/').map(|(parent, _)| parent)
-}
-
-fn is_in_subtree(path: &str, ancestor: &str) -> bool {
-    ancestor.is_empty()
-        || path == ancestor
-        || path
-            .strip_prefix(ancestor)
-            .is_some_and(|suffix| suffix.starts_with('/'))
-}
-
-fn document_names(document: &IndexedDocument) -> BTreeSet<String> {
-    let filename = document
-        .path
-        .as_str()
-        .rsplit('/')
-        .next()
-        .unwrap_or(document.path.as_str());
-    let mut names = BTreeSet::from([
-        comparison_key(filename.strip_suffix(".md").unwrap_or(filename)),
-        comparison_key(&document.title.text),
-    ]);
-    if let Some(value) = document.frontmatter.get("aliases") {
-        match value {
-            FrontmatterValue::Text(alias) => {
-                names.insert(comparison_key(alias));
-            }
-            FrontmatterValue::List(aliases) => {
-                for alias in aliases {
-                    if let FrontmatterValue::Text(alias) = alias {
-                        names.insert(comparison_key(alias));
-                    }
-                }
-            }
-            FrontmatterValue::Null
-            | FrontmatterValue::Bool(_)
-            | FrontmatterValue::Number(_)
-            | FrontmatterValue::Mapping(_)
-            | FrontmatterValue::Status(_) => {}
-        }
-    }
-    names
 }
 
 pub(crate) fn derive_links(

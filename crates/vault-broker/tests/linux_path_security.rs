@@ -250,36 +250,46 @@ fn raced_parent_symlink_replacement_cannot_redirect_mkdir_or_writes() {
 }
 
 #[test]
-fn concurrent_create_only_writers_have_exactly_one_winner() {
-    let (vault, _data, broker) = broker();
+fn concurrent_writer_admission_has_exactly_one_canonical_install() {
+    let (vault, data, broker) = broker();
     drop(broker);
     let barrier = Arc::new(Barrier::new(6));
+    let admitted = Arc::new(Barrier::new(6));
     let mut writers = Vec::new();
     for index in 0..6 {
-        let data = TempDir::new().unwrap();
-        let mut writer = FsVaultBroker::open(vault.path(), data.path()).unwrap();
+        let vault_root = vault.path().to_path_buf();
+        let data_root = data.path().to_path_buf();
         let start = Arc::clone(&barrier);
+        let opened = Arc::clone(&admitted);
         writers.push(thread::spawn(move || {
-            let _data = data;
             let content = vec![b'a' + index; 128 * 1024];
             start.wait();
+            let writer = FsVaultBroker::open_existing(&vault_root, &data_root);
+            // The winner keeps its lease until every competing open has returned.
+            opened.wait();
+            let mut writer = match writer {
+                Ok(writer) => writer,
+                Err(BrokerError::WriterBusy) => return None,
+                Err(error) => panic!("unexpected writer admission error: {error}"),
+            };
             writer
                 .mutate(Mutation::create(
                     path("winner.md"),
                     content.clone(),
                     format!("creator-{index}"),
                 ))
-                .map(|_| content)
+                .unwrap();
+            Some(content)
         }));
     }
     let successes = writers
         .into_iter()
-        .filter_map(|writer| writer.join().unwrap().ok())
+        .filter_map(|writer| writer.join().unwrap())
         .collect::<Vec<_>>();
     assert_eq!(
         successes.len(),
         1,
-        "create-only rename replaced a competing winner"
+        "the canonical root admitted more than one writer"
     );
     assert_eq!(
         fs::read(vault.path().join("winner.md")).unwrap(),

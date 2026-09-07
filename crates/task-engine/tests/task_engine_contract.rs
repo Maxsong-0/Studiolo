@@ -170,7 +170,7 @@ fn restart_rolls_forward_no_partial_and_complete_manifest_without_runner_reexecu
         CrashPoint::AfterFirstArtifact,
         CrashPoint::AfterManifest,
     ] {
-        let temp = TempDir::new().unwrap();
+        let temp = TempDir::new_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
         let root = temp.path().join("vault");
         let data = temp.path().join("data");
         let db_path = data.join("control.sqlite3");
@@ -807,7 +807,7 @@ fn report_with_a_mismatched_fence_is_rejected_before_external_effects() {
 
 #[test]
 fn restart_reconcile_revokes_and_abandons_running_without_restarting_work() {
-    let temp = TempDir::new().expect("tempdir");
+    let temp = TempDir::new_in(std::env::temp_dir().canonicalize().unwrap()).expect("tempdir");
     let vault_root = temp.path().join("canonical");
     let data_root = temp.path().join("workbench-data");
     let database_path = data_root.join("control.sqlite3");
@@ -857,7 +857,7 @@ fn restart_reconcile_revokes_and_abandons_running_without_restarting_work() {
 
 #[test]
 fn restart_rolls_manifest_forward_after_outcome_audit_recovers_without_duplicate_artifacts() {
-    let temp = TempDir::new().expect("tempdir");
+    let temp = TempDir::new_in(std::env::temp_dir().canonicalize().unwrap()).expect("tempdir");
     let vault_root = temp.path().join("canonical");
     let data_root = temp.path().join("workbench-data");
     let database_path = data_root.join("control.sqlite3");
@@ -977,7 +977,7 @@ fn restart_rolls_manifest_forward_after_outcome_audit_recovers_without_duplicate
 
 #[test]
 fn restart_finishes_requested_cancellation_instead_of_overwriting_it_as_abandoned() {
-    let temp = TempDir::new().unwrap();
+    let temp = TempDir::new_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
     let root = temp.path().join("vault");
     let data = temp.path().join("data");
     let db_path = data.join("control.sqlite3");
@@ -1073,7 +1073,7 @@ impl AuditLedger for OutcomeStateObserver {
 
 #[test]
 fn audit_outcome_observes_the_already_committed_db_state_and_durable_obligation() {
-    let temp = TempDir::new().unwrap();
+    let temp = TempDir::new_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
     let db_path = temp.path().join("control.sqlite3");
     let vault = VaultUuid::new();
     let mut broker = MemoryVaultBroker::with_uuid(vault);

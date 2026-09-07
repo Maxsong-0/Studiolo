@@ -76,6 +76,9 @@ fn existing_v1_database_upgrades_without_losing_runtime_records() {
     }
     let db = ControlDb::open(&path, vault).unwrap();
     assert_eq!(db.schema_version().unwrap(), 2);
+    assert_eq!(db.pragma("journal_mode").unwrap(), "wal");
+    assert_eq!(db.pragma("synchronous").unwrap(), "2");
+    assert_eq!(db.pragma("foreign_keys").unwrap(), "1");
     let record = db.task(task).unwrap().unwrap();
     assert_eq!(record.definition_json["title"], "v1 task");
     assert_eq!(record.created_at_ms, 42);
@@ -480,7 +483,7 @@ fn acknowledge_cancel_after_a_terminal_winner_is_a_structured_rejection() {
 }
 
 #[test]
-fn a_database_written_by_a_newer_schema_is_refused_without_modification() {
+fn a_recorded_newer_schema_version_is_rejected() {
     let temp = TempDir::new().expect("tempdir");
     let path = database_path(&temp);
     let vault_uuid = VaultUuid::new();
@@ -501,7 +504,7 @@ fn a_database_written_by_a_newer_schema_is_refused_without_modification() {
             supported: 2,
         })
     ));
-    // 拒绝不得留下任何写入：更新版记录原样保留，旧二进制没有降级它。
+    // 这里只验证版本不降级；物理副作用由原始 SQLite 夹具另行覆盖。
     let raw = rusqlite::Connection::open(&path).expect("raw connection");
     let recorded: i64 = raw
         .query_row("SELECT MAX(version) FROM schema_migrations", [], |row| {

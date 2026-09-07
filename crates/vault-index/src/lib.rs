@@ -6,8 +6,11 @@
 #![forbid(unsafe_code)]
 
 mod frontmatter;
+mod link_parse;
+mod link_resolve;
 mod links;
 mod markdown;
+mod markdown_scan;
 mod source;
 
 use std::collections::BTreeMap;

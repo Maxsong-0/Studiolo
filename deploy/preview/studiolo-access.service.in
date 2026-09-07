@@ -1,0 +1,31 @@
+# 独立的 4319 Access 示例实例；不替换或重启现有 4318 预览服务。
+# @RELEASE@ 必须替换为已校验的发布目录名。
+[Unit]
+Description=Studiolo M1 Access-protected read-only example preview
+StartLimitIntervalSec=60
+StartLimitBurst=3
+
+[Service]
+Type=simple
+WorkingDirectory=%h/.local/share/studiolo-preview/releases/@RELEASE@
+# 此文件仅保存非秘密的 Access audience 和授权邮箱，不保存 Tunnel token 或密钥。
+EnvironmentFile=%h/.config/studiolo-access/access.env
+ExecStart=%h/.local/share/studiolo-preview/releases/@RELEASE@/bin/studiolo-local-server --vault %h/.local/share/studiolo-preview/releases/@RELEASE@/example-vault --assets %h/.local/share/studiolo-preview/releases/@RELEASE@/web --label 服务器示例库 --port 4319 --public-origin https://studiolo.maxsong.me --access-team https://tengqing.cloudflareaccess.com --access-audience ${STUDIOLO_ACCESS_AUDIENCE} --access-email ${STUDIOLO_ACCESS_EMAIL}
+Restart=on-failure
+RestartSec=3
+UMask=0077
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=yes
+# 此选项会拦截 openat2；以只读文件系统和 NoNewPrivileges 维持写入/提权边界。
+RestrictSUIDSGID=no
+LockPersonality=yes
+# Access 公钥校验的 TLS 客户端需要 IPv4 / IPv6；监听地址仍由应用固定为 loopback。
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+SystemCallArchitectures=native
+MemoryMax=512M
+TasksMax=64
+
+[Install]
+WantedBy=default.target

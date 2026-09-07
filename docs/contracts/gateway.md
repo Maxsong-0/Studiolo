@@ -63,11 +63,16 @@ M0 capability 没有签名、audience、nonce、snapshot 或 policy hash，只�
 1. 在 `gateway.tool.v1` / `gateway.model.v1` 版本域中，以 task、attempt、fence 和长度分隔的
    call ID 构造稳定审计 ID；
 2. fresh guard → cancelled → fence → expiry → 四层权限求交；
-3. 在同一把锁内检查并占用 `(attempt_id, call_id)` 幂等槽：已完成的同请求返回第一次结果；
-   同键调用正在执行时等待其完成后再判定重放或冲突（并发同键请求只执行一次）；异请求写
-   独立 conflict outcome 后返回 `CallConflict`，审计失败仍失败关闭；
-4. AuditLedger `Intent` 追加成功后，才读取配置的内存 tool/model 响应；
-5. 以同审计 ID 追加 `Outcome`；成功后把占位替换为结果并返回，任何失败都释放占位。
+3. 在同一把锁内检查并占用 `(attempt_id, call_id)` 幂等槽；同键调用正在执行时等待其
+   完成，再判定同请求重放、异请求冲突或取得已释放的占位；
+4. 释放槽锁后完整重做第2步，再返回首次结果、记录独立 conflict outcome 或继续执行。
+   等待期间撤权、到期或 guard 故障均优先返回当前拒绝原因；guard 与审计不在槽锁内运行；
+5. 新执行者在 AuditLedger `Intent` 追加成功后，才读取配置的内存 tool/model 响应；
+6. 以同审计 ID 追加 `Outcome`；成功后把占位替换为结果并返回。取得占位后的授权、拒绝
+   事件 ID 或审计失败都会释放自己的占位；重放与冲突拒绝不删除其他调用的完成结果。
+
+实际槽冲突与拒绝审计本身的 `IdempotencyConflict` 在内部区分；后者直接映射错误，
+不再追加一条虚构的槽冲突审计。完整复核覆盖 invoke 与 relay 的三种准入结果。
 
 授权拒绝与冲突没有外部动作，因此直接追加带 `decision=deny` 与结构化 reason 的 `Outcome`，
 事件 ID 一律为独立的 `{基础 ID}:deny:{reason}`：同一调用因不同原因被多次拒绝时各留一条
@@ -114,6 +119,7 @@ M0 没有真实外部副作用，因而不承诺 raw promotion、持久 call res
 契约测试至少覆盖：对象安全、四层权限任一层缺失即拒绝、允许 tool 与本地 relay 的
 Intent/Outcome、拒绝 outcome、旧 fence/取消/过期、guard 与审计不可用时失败关闭、成功重放
 仍先 recheck、同 call ID 异请求冲突、同一调用两次不同原因拒绝各留一条记录并返回真实原因、
+确定进入等待后取消/fence变化/精确到期/guard不可用或未知、拒绝审计失败下的占位归属、
 并发同键调用只执行一次且共享首次结果、未配置响应的失败 outcome，以及 Cargo 依赖中不存在
 TaskEngine。真实 SSRF/SQL/模型外发、秘密管理、raw promotion、预算与 indeterminate 恢复均
 延期，不能用这些内存测试宣称通过。

@@ -1,0 +1,52 @@
+.file-type-icon {
+  --file-color: #68717e;
+  --file-tint: #f0f2f6;
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  color: var(--file-color);
+}
+.file-type-folder,
+.file-type-book {
+  --file-color: #0068dc;
+  --file-tint: #eaf3ff;
+}
+.file-type-image {
+  --file-color: #986227;
+  --file-tint: #fff3e1;
+}
+.file-type-table {
+  --file-color: #28745e;
+  --file-tint: #e8f5ef;
+}
+.file-type-canvas {
+  --file-color: #8052b6;
+  --file-tint: #f3edfc;
+}
+.file-type-code {
+  --file-color: #4a65a6;
+  --file-tint: #edf1fb;
+}
+.file-type-badge {
+  width: 36px;
+  height: 36px;
+  border-radius: 11px;
+  background: var(--file-tint);
+}
+.attachment-title-group {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+@media (prefers-contrast: more) {
+  .file-type-icon {
+    color: var(--text);
+  }
+  .file-type-badge {
+    border: 1px solid currentColor;
+  }
+}

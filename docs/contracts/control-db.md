@@ -127,13 +127,17 @@ TaskEngine 根据已存在 manifest 或保存的 plan 继续 T2/提交；该路�
 
 `AlreadyTerminal` 携带结构化 `AttemptPhase`：`acknowledge_cancel` 遇到 committing /
 completed / failed / abandoned 时返回它，调用方（TaskEngine）只按变体映射，不得解释
-`InvalidTransition.from` 里的状态名字符串（00-overview §6）。`UnsupportedSchema` 在任何
-DDL 之前判定：`schema_migrations` 记录的版本高于本二进制的 `SCHEMA_VERSION` 即拒绝打开且
-不写入任何内容，旧二进制不能静默降级运行新库。（2026-09-05 T-027 新增。）
+`InvalidTransition.from` 里的状态名字符串（00-overview §6）。`UnsupportedSchema` 在持久
+PRAGMA和DDL前判定：迁移账本版本高于`SCHEMA_VERSION`即拒绝，迁移事务内还须独立复核。
+T-029将WAL设置移至迁移成功之后；静止、干净关闭的DELETE/WAL新版库须保持主数据库
+字节、schema/数据和journal配置，不自动降级或重建。此证据不承诺SQLite侧文件完全无写，
+也不覆盖热journal恢复或外部并发修改。账本名称按SQLite大小写规则识别，view不能冒充表。
+（2026-09-05 T-027新增错误；T-029补副作用边界。）
 
 `open_in_memory` 是快速替身，但重启验收必须复用同一临时文件。契约测试至少覆盖：空库 v2
 迁移与 pragma、错 Vault 拒绝、claim 唯一/fence 单调、claim 写入独立 input snapshot、snapshot
 不含正文、T1/T2 重放只产生一个且恰含四个系统投影字段的 outbox、取消撤权、重启 abandon
 Running 且保留 Committing/CancelRequested、v1→v2 审计 outbox 修复、outbox acknowledge、终态
-赢家之后的取消确认返回结构化 `AlreadyTerminal`、更新版 schema 拒绝打开且零写入，以及
+赢家之后的取消确认返回结构化`AlreadyTerminal`、新版schema拒绝的主库/配置保持、
+预检后版本推进时事务内再次拒绝、空账本/大小写/内存初始化，以及
 非 TaskEngine crate 无 Control DB 写连接的架构扫描。

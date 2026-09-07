@@ -86,17 +86,9 @@ pub(crate) fn split_frontmatter(contents: &str) -> MarkdownParts<'_> {
 
 pub(crate) fn parse_headings(body: &str, first_line: u32) -> Vec<Heading> {
     let mut headings = Vec::new();
-    let mut in_fence = false;
     let mut anchors = BTreeMap::<String, usize>::new();
-    for (offset, line) in body.lines().enumerate() {
+    for (number, line) in crate::markdown_scan::visible_lines(body, first_line) {
         let trimmed = line.trim_start();
-        if trimmed.starts_with("```") || trimmed.starts_with("~~~") {
-            in_fence = !in_fence;
-            continue;
-        }
-        if in_fence {
-            continue;
-        }
         let hashes = trimmed.bytes().take_while(|byte| *byte == b'#').count();
         if !(1..=6).contains(&hashes)
             || !trimmed
@@ -126,7 +118,7 @@ pub(crate) fn parse_headings(body: &str, first_line: u32) -> Vec<Heading> {
             level: hashes as u8,
             text,
             anchor,
-            line: first_line + offset as u32,
+            line: number,
         });
     }
     headings

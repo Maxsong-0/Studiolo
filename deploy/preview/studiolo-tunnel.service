@@ -1,0 +1,26 @@
+# 仅负责 Studiolo 专用远程管理隧道；连接凭据位于用户私有目录，不进入发布包。
+[Unit]
+Description=Studiolo Cloudflare Tunnel
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+[Service]
+Type=simple
+ExecStart=%h/.local/share/studiolo-tunnel/cloudflared-2026.8.3 tunnel --no-autoupdate --metrics 127.0.0.1:49319 run --token-file %h/.config/studiolo-tunnel/token
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+UMask=0077
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+SystemCallArchitectures=native
+MemoryMax=256M
+TasksMax=64
+
+[Install]
+WantedBy=default.target

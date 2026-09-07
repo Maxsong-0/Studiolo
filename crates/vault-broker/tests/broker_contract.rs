@@ -11,8 +11,9 @@ use studiolo_vault_broker::{
 use tempfile::TempDir;
 
 fn broker() -> (TempDir, TempDir, FsVaultBroker) {
-    let vault = TempDir::new().expect("vault tempdir");
-    let data = TempDir::new().expect("data tempdir");
+    let vault =
+        TempDir::new_in(std::env::temp_dir().canonicalize().unwrap()).expect("vault tempdir");
+    let data = TempDir::new_in(std::env::temp_dir().canonicalize().unwrap()).expect("data tempdir");
     let broker = FsVaultBroker::open(vault.path(), data.path()).expect("open broker");
     (vault, data, broker)
 }
@@ -208,7 +209,8 @@ fn symlink_hardlink_and_special_files_fail_closed() {
     use std::os::unix::{fs::symlink, net::UnixListener};
 
     let (vault, _data, mut broker) = broker();
-    let outside = TempDir::new().expect("outside tempdir");
+    let outside =
+        TempDir::new_in(std::env::temp_dir().canonicalize().unwrap()).expect("outside tempdir");
     fs::write(outside.path().join("secret.md"), b"outside").expect("outside file");
     symlink(outside.path(), vault.path().join("escape")).expect("create symlink");
     assert!(matches!(
@@ -252,9 +254,9 @@ fn symlink_hardlink_and_special_files_fail_closed() {
 fn vault_identity_cannot_be_redirected_through_a_symlink() {
     use std::os::unix::fs::symlink;
 
-    let vault = TempDir::new().unwrap();
-    let data = TempDir::new().unwrap();
-    let outside = TempDir::new().unwrap();
+    let vault = TempDir::new_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
+    let data = TempDir::new_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
+    let outside = TempDir::new_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
     fs::create_dir(vault.path().join(".workbench")).unwrap();
     fs::write(outside.path().join("vault.json"), b"{}").unwrap();
     symlink(

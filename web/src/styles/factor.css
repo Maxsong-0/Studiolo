@@ -1,0 +1,87 @@
+.factor-panel {
+  margin-top: 24px;
+  padding-top: 24px;
+  border-top: 1px solid var(--border);
+}
+.factor-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 12px;
+}
+.factor-heading h3 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.factor-heading .icon {
+  color: var(--accent);
+}
+.factor-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 16px;
+}
+.factor-form,
+.recovery-delivery {
+  margin-top: 20px;
+  padding: 20px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--surface-solid);
+}
+.factor-form label {
+  display: grid;
+  gap: 6px;
+  margin-top: 16px;
+  font-size: 0.8125rem;
+}
+.factor-form input {
+  width: 100%;
+  min-width: 0;
+  min-height: 44px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  color: var(--text);
+  background: var(--surface);
+  font: inherit;
+}
+.factor-form input[name='code'] {
+  width: min(100%, 200px);
+  font-size: 1.125rem;
+  letter-spacing: 0.18em;
+}
+.session-dialog .factor-warning {
+  color: var(--error);
+}
+.recovery-codes {
+  margin: 20px 0;
+  padding-left: 24px;
+  font-size: 0.75rem;
+}
+.recovery-codes li {
+  padding: 7px 0 7px 4px;
+}
+.recovery-codes code {
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+@media (max-width: 760px) {
+  .factor-form,
+  .recovery-delivery {
+    padding: 16px;
+  }
+  .factor-heading {
+    gap: 8px;
+  }
+  .factor-form input {
+    font-size: 1rem;
+  }
+  .factor-actions > button {
+    min-height: 44px;
+  }
+}

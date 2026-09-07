@@ -62,8 +62,9 @@ M0 不暴露 `changes(cursor)`：没有 watcher/cursor 时伪造变更流会制�
   校验后竞态替换；
 - 普通 mutation 拒绝 `.git/**`、`.workbench/**`、`.obsidian/**` 与 `.stignore`。
 
-`.workbench/vault.json` 仅由 `FsVaultBroker::open` 的初始化路径创建或读取；至少绑定格式
-版本与 Vault UUID。存在但损坏时失败关闭，普通 mutation 永远不能修改它。
+`.workbench/vault.json` 仅由 `FsVaultBroker::open` 的显式初始化路径创建；既有打开及
+canonical窄读只验证已有身份。至少绑定格式版本与Vault UUID；损坏时失败关闭，
+普通mutation永远不能修改它。写者的不可变配对和根身份约束见[T-028契约](canonical-writer.md)。
 
 ## 4. revision、snapshot 与普通 mutation
 
@@ -78,11 +79,12 @@ M0 不暴露 `changes(cursor)`：没有 watcher/cursor 时伪造变更流会制�
   + rename 形成原子可见提交；失败不能留下半截 canonical 文件。
 - Fs Adapter 串行读取并检查打开前后文件身份、类型、nlink 与时间/大小；Linux 以
   NONBLOCK 打开避免竞态替换成 FIFO 后挂起。rename 前再核 expected revision 和 pinned
-  parent 身份；create-only 在 Linux 使用 `RENAME_NOREPLACE`，macOS 使用原子 link 安装。
-- 幂等键与规范化请求指纹绑定：同请求返回第一次 receipt，同 key 异请求
-  `IdempotencyConflict`，不能覆盖旧结果。
+  parent 身份；当前mutation的create-only在Linux/macOS使用无覆盖rename安装。
+- 幂等键与规范化请求指纹绑定：已完成同请求返回第一次receipt；明确CAS拒绝保持拒绝，
+  同key异请求返回`IdempotencyConflict`。Installing未知结果保持未决，不借当前相同内容补成功。
 
-进程内只允许一个 Broker 写者。替换式 CAS 的 revision 检查与操作系统 rename 仍是两个
+Fs写者持有canonical根目录FD的跨进程独占租约；永久root/data配对防止换数据目录绕过。
+替换式 CAS 的 revision 检查与操作系统 rename 仍是两个
 调用，不能对完全不遵守 Broker 锁的外部进程声称严格线性化 CAS；实现拒绝已观察到的变化
 并校验提交后结果。正式 bridge 必须继续遵循 ADR-005，经 Broker 摄入 canonical Vault。
 
@@ -106,7 +108,7 @@ manifest 前的文件是 orphan，不构成成功；manifest 出现后内容不�
 重放已有 manifest 时仍验证格式、task/attempt/fence/审计关联、artifact 数量、全部派生目标、
 hash/revision 和当前文件内容。manifest 存在但证明不成立时拒绝，不以文件存在替代完整性。
 
-## 6. M0 错误模式
+## 6. 错误模式（含M1/M2读写扩展）
 
 | `BrokerError` | 含义 |
 |---|---|
@@ -119,12 +121,25 @@ hash/revision 和当前文件内容。manifest 存在但证明不成立时拒绝
 | `InvalidArtifact(reason)` | commit 身份、目标或内容计划非法 |
 | `ArtifactConflict(path)` | orphan/既有产物与重放内容不同 |
 | `CorruptIdentity` | Vault identity 损坏 |
+| `WriterBusy` | canonical根已有存活独占写者 |
+| `WriterBindingMismatch` | 根、data或不可变控制对象与配对不符 |
+| `CorruptWriterState` | 持久日志/回执非法或违反阶段不变量 |
+| `MutationUnresolved` | 安装或legacy旧操作未决，不能开始其他canonical写入 |
+| `WriterLimitExceeded` | 输入或写协议存储超过固定预算 |
+| `RootChanged` | 所选canonical根已改变或不可用，不能继续用旧路径身份 |
+| `ReadLimitExceeded { path, max_bytes }` | 超过调用者指定的有界读取预算，包含读取期间增长 |
 | `CorruptSnapshot` | snapshot ID、Vault 绑定、排序或内容证明不一致 |
 | `UnstableRead(path)` | snapshot/read 期间内容变化 |
 | `Io { operation, source }` | 不泄漏环境路径的文件系统失败 |
 | `Json { operation, source }` | 内部 durable record 无法解析 |
 
 语法非法的 `VaultPath` 在进入 Broker 前由 `PathSyntaxError` 拒绝。
+
+M1 `ReadOnlyVault`及M2 `CanonicalReadVault`复用安全只读内核，不授予M0写能力；
+后者只接受已有Vault身份并返回真实revision，见[canonical读取契约](canonical-read.md)。
+T-028单写者与未决幂等已通过两端全量与生产检查，旧失败CAS已真实复现并作为回归修复，见
+[写者契约](canonical-writer.md)与[设计输入](../m2/canonical-write-design.md)。
+索引新鲜度、HTTP保存、流式附件和显式未决协调不由本片状态水位代替。
 
 ## 7. Adapter 与验收
 

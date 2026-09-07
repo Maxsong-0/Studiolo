@@ -122,6 +122,18 @@ fn payload_rejects_secret_fields_at_any_depth() {
         (json!({"totp_seed": "value"}), "totp_seed"),
         (json!({"bearer": "value"}), "bearer"),
         (json!({"credentials": {}}), "credentials"),
+        // 复数形态与「凭据本体」后缀（2026-09-06 T-032）。
+        (json!({"tokens": ["a"]}), "tokens"),
+        (json!({"api_keys": {"cf": "v"}}), "api_keys"),
+        (json!({"secrets": {}}), "secrets"),
+        (json!({"passwords": []}), "passwords"),
+        (json!({"cookies": "a=b"}), "cookies"),
+        (json!({"access_keys": []}), "access_keys"),
+        (json!({"seed_hex": "00"}), "seed_hex"),
+        (json!({"token_value": "v"}), "token_value"),
+        (json!({"secret_material": "v"}), "secret_material"),
+        (json!({"api_key_b64": "v"}), "api_key_b64"),
+        (json!({"passwordPlaintext": "v"}), "passwordPlaintext"),
     ] {
         assert_eq!(
             SanitizedPayload::try_from(value).unwrap_err(),
@@ -143,6 +155,11 @@ fn payload_rejects_secret_fields_at_any_depth() {
         json!({"seed_ref": "slot-a"}),
         json!({"recovery_candidate_available": true}),
         json!({"tokenizer": "cl100k"}),
+        json!({"token_digest": "ab"}),
+        json!({"status": "pass"}),
+        json!({"addresses": ["a"]}),
+        json!({"value": 1}),
+        json!({"hex": "ff"}),
     ] {
         assert!(SanitizedPayload::try_from(value).is_ok());
     }

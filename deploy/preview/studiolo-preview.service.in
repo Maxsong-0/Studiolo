@@ -1,0 +1,27 @@
+# Studiolo 示例运行包；@RELEASE@ 必须替换为已校验的发布目录名。
+[Unit]
+Description=Studiolo M1 read-only example preview
+StartLimitIntervalSec=60
+StartLimitBurst=3
+
+[Service]
+Type=simple
+WorkingDirectory=%h/.local/share/studiolo-preview/releases/@RELEASE@
+ExecStart=%h/.local/share/studiolo-preview/releases/@RELEASE@/bin/studiolo-local-server --vault %h/.local/share/studiolo-preview/releases/@RELEASE@/example-vault --assets %h/.local/share/studiolo-preview/releases/@RELEASE@/web --label 服务器示例库 --port 4318
+Restart=on-failure
+RestartSec=3
+UMask=0077
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=yes
+# 此选项会拦截 openat2；以只读文件系统和 NoNewPrivileges 维持写入/提权边界。
+RestrictSUIDSGID=no
+LockPersonality=yes
+RestrictAddressFamilies=AF_UNIX AF_INET
+SystemCallArchitectures=native
+MemoryMax=512M
+TasksMax=64
+
+[Install]
+WantedBy=default.target

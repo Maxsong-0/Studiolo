@@ -1,0 +1,28 @@
+[package]
+name = "studiolo-auth-admin"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[features]
+default = []
+production = ["studiolo-auth/production"]
+
+[dependencies]
+studiolo-auth.workspace = true
+studiolo-host-config.workspace = true
+studiolo-audit-ledger.workspace = true
+zeroize.workspace = true
+thiserror.workspace = true
+rustix = { workspace = true, features = ["termios", "process"] }
+signal-hook.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
+tempfile.workspace = true
+hmac.workspace = true
+sha1.workspace = true
+
+[lints]
+workspace = true

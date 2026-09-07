@@ -11,10 +11,14 @@ TARGET="${STUDIOLO_TARGET_VOLUME:-studiolo-target-linux}"
 if [ "$#" -eq 0 ]; then
   set -- bash -euo pipefail -c '
     rustup component add rustfmt clippy
+    python3 --version
     cargo --locked fmt --all -- --check
     cargo --locked clippy --workspace --all-targets -- -D warnings
     cargo --locked test --workspace
     cargo --locked test -p studiolo-vault-broker --test linux_path_security
+    cargo --locked build -p studiolo-local-server --features studiolo-auth/production
+    cargo --locked build -p studiolo-auth-admin --features production
+    python3 crates/auth-admin/tests/support/cli_process.py target/debug/studiolo-auth-admin
   '
 fi
 exec docker run --rm \
