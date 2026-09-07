@@ -1,0 +1,31 @@
+[package]
+name = "studiolo-supply"
+description = "Studiolo 供给面内核（M3）：白名单只读扫描、冷启动路牌、token 预算、AI 类型/实例身份、读取审计事件与派生索引。"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+studiolo-core.workspace = true
+studiolo-vault-broker.workspace = true
+studiolo-vault-index.workspace = true
+studiolo-workbench.workspace = true
+studiolo-audit-ledger.workspace = true
+rusqlite.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+jiff.workspace = true
+ulid.workspace = true
+sha2.workspace = true
+uuid.workspace = true
+tiktoken-rs.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

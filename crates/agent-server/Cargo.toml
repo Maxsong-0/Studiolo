@@ -1,0 +1,32 @@
+[package]
+name = "studiolo-agent-server"
+description = "studiolo-agent：面向 AI 接入方的 MCP 主外壳（Streamable HTTP，仅 loopback）与可信本地管理子命令（M3）。"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "studiolo-agent"
+path = "src/main.rs"
+
+[dependencies]
+studiolo-supply.workspace = true
+studiolo-audit-ledger.workspace = true
+studiolo-core.workspace = true
+axum.workspace = true
+http.workspace = true
+rmcp.workspace = true
+tokio = { workspace = true, features = ["time", "signal"] }
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+reqwest.workspace = true

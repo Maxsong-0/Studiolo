@@ -41,6 +41,16 @@ pub(crate) fn allowed_workspace_dependencies(crate_name: &str) -> &'static [&'st
             "studiolo-gateway",
             "studiolo-task-engine",
         ],
+        // M3 供给面：只读 Broker 能力 + 索引/搜索 + 审计追加；不得依赖 control-db / auth / task-engine。
+        "studiolo-supply" => &[
+            "studiolo-core",
+            "studiolo-vault-broker",
+            "studiolo-vault-index",
+            "studiolo-workbench",
+            "studiolo-audit-ledger",
+        ],
+        // MCP 主外壳：只经 supply 取内容；不直接依赖 vault-broker / control-db / auth。
+        "studiolo-agent-server" => &["studiolo-supply", "studiolo-audit-ledger", "studiolo-core"],
         other => panic!("new workspace crate {other} needs an explicit dependency policy"),
     }
 }

@@ -107,6 +107,11 @@ fn private_storage_policy(crate_name: &str) -> Option<(&str, &str, &str)> {
             "crates/auth/src/session/database.rs",
             "auth.sqlite3",
         )),
+        "studiolo-supply" => Some((
+            "crates/supply/src/storage.rs",
+            "crates/supply/src/database.rs",
+            "agent.sqlite3",
+        )),
         _ => None,
     }
 }

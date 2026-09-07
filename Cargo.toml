@@ -15,6 +15,8 @@ members = [
     "crates/studiolo",
     "crates/workbench",
     "crates/local-server",
+    "crates/supply",
+    "crates/agent-server",
 ]
 
 [workspace.package]
@@ -38,6 +40,7 @@ studiolo-runner-adapter = { path = "crates/runner-adapter" }
 studiolo-gateway = { path = "crates/gateway" }
 studiolo-task-engine = { path = "crates/task-engine" }
 studiolo-workbench = { path = "crates/workbench" }
+studiolo-supply = { path = "crates/supply" }
 
 # M1 本机只读 HTTP 入口；不装配远程写入、Runner 或同步。
 axum = "=0.8.9"
@@ -83,6 +86,10 @@ jiff = { version = "0.2.35", features = ["serde"] }
 serde-saphyr = "1.2.0"
 # Stub 私有临时目录及测试夹具
 tempfile = "3.27.0"
+# M3 供给面与 MCP 主外壳（T-033）：官方 MCP Rust SDK，只启用服务端 Streamable HTTP；o200k 计量冷启动路牌预算
+rmcp = { version = "=3.2.0", default-features = false, features = ["server", "macros", "transport-streamable-http-server"] }
+tiktoken-rs = "=0.12.0"
+http = "=1.5.0"
 # 路径 Unicode 归一（T-032）：VaultPath 只接受 NFC，碰撞键对磁盘条目名先 NFC 再折叠；unicode-rs 官方维护
 unicode-normalization = "0.1.25"
 

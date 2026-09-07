@@ -59,7 +59,7 @@ fn dependency_scanner_includes_renamed_target_and_table_dependencies() {
 #[test]
 fn workspace_dependencies_follow_the_acyclic_module_direction() {
     let manifests = workspace_manifests(&workspace_root());
-    assert_eq!(manifests.len(), 14, "workspace crate inventory changed");
+    assert_eq!(manifests.len(), 16, "workspace crate inventory changed");
     assert!(
         dependency_cycle(&manifests).is_none(),
         "workspace dependency cycle: {:?}",
@@ -94,6 +94,7 @@ fn workspace_dependencies_follow_the_acyclic_module_direction() {
         "studiolo-auth-admin",
         "studiolo-host-config",
         "studiolo-runner-adapter",
+        "studiolo-agent-server",
     ] {
         assert!(
             !manifests[read_side]
@@ -153,7 +154,10 @@ fn filesystem_authority_dependencies_have_explicit_owners() {
             manifest.dependencies.contains("rusqlite"),
             matches!(
                 manifest.name.as_str(),
-                "studiolo-control-db" | "studiolo-audit-ledger" | "studiolo-auth"
+                "studiolo-control-db"
+                    | "studiolo-audit-ledger"
+                    | "studiolo-auth"
+                    | "studiolo-supply"
             ),
             "{} must declare its SQLite ownership explicitly",
             manifest.name
