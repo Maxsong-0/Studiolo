@@ -35,7 +35,9 @@ jobs:
 
       - name: M3 部署脚本回归
         run: |
-          bash -n scripts/package-agent.sh scripts/run-agent-tests.sh scripts/sync-agent-vault.sh
+          for script in scripts/package-agent.sh scripts/run-agent-tests.sh scripts/sync-agent-vault.sh; do
+            bash -n "$script"
+          done
           python3 scripts/test-check-agent.py
           python3 scripts/test-sync-agent-vault.py
 
