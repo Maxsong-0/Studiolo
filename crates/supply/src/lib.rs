@@ -20,3 +20,6 @@ pub use error::SupplyError;
 pub use roots::{Entry, EntryKind, Note, Snapshot, SupplyRoots};
 pub use signpost::{Principal, Signpost, SignpostInput};
 pub use studiolo_vault_broker::ScanLimits;
+pub use studiolo_workbench::{
+    SearchHit, SearchMode, SearchQuery, SearchResults, WorkbenchReadModel,
+};

@@ -11,6 +11,10 @@ publish = false
 [lints]
 workspace = true
 
+[lib]
+name = "studiolo_agent_server"
+path = "src/lib.rs"
+
 [[bin]]
 name = "studiolo-agent"
 path = "src/main.rs"
@@ -22,10 +26,12 @@ studiolo-core.workspace = true
 axum.workspace = true
 http.workspace = true
 rmcp.workspace = true
-tokio = { workspace = true, features = ["time", "signal"] }
+tokio = { workspace = true, features = ["time", "signal", "rt-multi-thread", "macros"] }
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
+jiff.workspace = true
+ulid.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

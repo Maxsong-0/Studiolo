@@ -12,7 +12,7 @@
 - 只读扫描复用 `vault-broker::ReadOnlyVault`：**每个白名单目录各开一个只读根**，未列入的目录从一开始不进入任何计算；不装配 `FsVaultBroker`，不获得 canonical 写能力。
 - 审计写入口唯一：`SqliteAuditLedger::open_existing(<agent 私有目录>/audit)`，与 Auth 账本分库（跨进程不共写一条哈希链）。
 - 私有目录 `<data>/`：`audit/`（账本）、`identity.sqlite3`（类型摘要与实例）、`read-index.sqlite3`（读取审计派生索引，可由账本重建）。目录与文件沿用审计存储同一套规则（绝对路径、0700/0600、逐层拒绝链接、同 owner）。
-- 配置 `agent.json`（非秘密，主人维护）：`vault`（绝对路径）、`allow`（白名单目录相对路径列表，例 `项目/Studiolo`、`_规则`）、`data`、`listen`（仅 `127.0.0.1:<port>`）、`types`（允许的类型名列表）。类型 token 明文永不进配置。
+- 配置只经命令行参数（本片不读配置文件，避免外壳 crate 获得通用文件读写能力）：`serve --vault <绝对路径> --allow <相对目录>…（可重复）--data <绝对私有目录> --port <端口>`；`--data` 与其下 `audit/` 须由主人预先 `mkdir -m 700` 创建，服务不创建目录。类型 token 明文永不进参数或文件。
 
 ## 2. 身份两级
 

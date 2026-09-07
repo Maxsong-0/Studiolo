@@ -13,7 +13,6 @@ pub(crate) enum CreatePolicy {
 
 pub(crate) struct Storage {
     pub(crate) database: PathBuf,
-    pub(crate) created: bool,
     #[cfg(unix)]
     root: PathBuf,
     #[cfg(unix)]
@@ -67,7 +66,6 @@ impl Storage {
         }
         let storage = Self {
             database,
-            created,
             root: root.to_owned(),
             owner,
             root_identity: (metadata.dev(), metadata.ino()),
