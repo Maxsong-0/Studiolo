@@ -172,7 +172,7 @@
   scrollbar-gutter: stable;
 }
 @media (max-width: 760px) {
-  .document-search-input {
+  .document-search-controls .document-search-input {
     min-width: 0;
     flex-basis: 100%;
   }
@@ -180,7 +180,7 @@
   .project-search-select {
     min-height: 44px;
   }
-  .project-search-select {
+  .document-search-controls .project-search-select {
     width: 100%;
   }
   .query-result-open {

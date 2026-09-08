@@ -17,10 +17,11 @@ pub(super) const ORIGIN: &str = "https://studiolo.example.com";
 pub(super) const SEARCH: &str = "/api/search?q=reading&mode=full_text&generation=1";
 pub(super) const DOCUMENT: &str = "/api/document?path=a.md&generation=1";
 pub(super) const TREE: &str = "/api/tree?path=&generation=1&offset=0";
-pub(super) const ROUTES: [&str; 7] = [
+pub(super) const ROUTES: [&str; 8] = [
     "/",
     "/assets/app.js",
     "/assets/app.css",
+    "/assets/favicon-fixture.svg",
     "/api/workbench",
     SEARCH,
     DOCUMENT,
@@ -39,6 +40,10 @@ pub(super) async fn fixture(public: bool) -> (TempDir, Router) {
         ("index.html", "<!doctype html><title>虚构示例</title>"),
         ("assets/app.js", "console.log('fixture')"),
         ("assets/app.css", "body { color: black; }"),
+        (
+            "assets/favicon-fixture.svg",
+            "<svg xmlns=\"http://www.w3.org/2000/svg\"/>",
+        ),
     ] {
         fs::write(assets.join(path), content).unwrap();
     }
@@ -110,6 +115,9 @@ async fn valid_signed_identity_reads_static_snapshot_search_and_navigation() {
     for uri in ROUTES {
         let request = request(uri, Some(&token)).header("origin", ORIGIN);
         let response = reply(&app, request, 200).await;
+        if uri.ends_with(".svg") {
+            assert_eq!(response.headers()["content-type"], "image/svg+xml");
+        }
         if uri == DOCUMENT {
             let document = json(response).await;
             assert_eq!(document["path"], "a.md");

@@ -13,6 +13,7 @@ use tempfile::TempDir;
 use tower::ServiceExt;
 
 const NOTE: &str = "---\nlifecycle: 活跃\n---\n# 测试项目\n\n| 项 | 当前值 |\n|---|---|\n| 当前版本 | M0 |\n\n## 用户侧待办\n\n- 待验收：确认只读工作台\n";
+const ICON: &str = "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 32 32\"/>";
 
 fn fixture() -> (TempDir, TempDir, Router) {
     let vault = TempDir::new().unwrap();
@@ -26,6 +27,9 @@ fn fixture() -> (TempDir, TempDir, Router) {
     )
     .unwrap();
     fs::write(assets.path().join("assets/app.js"), "console.log('local')").unwrap();
+    fs::write(assets.path().join("assets/favicon-fixture.svg"), ICON).unwrap();
+    fs::create_dir(vault.path().join("assets")).unwrap();
+    fs::write(vault.path().join("assets/private.svg"), "private-vault-svg").unwrap();
     let app = router(
         ReadOnlyVault::open(vault.path()).unwrap(),
         ReadOnlyVault::open(assets.path()).unwrap(),
@@ -187,6 +191,12 @@ async fn static_allowlist_and_security_headers_are_enforced() {
         "/.env",
         "/assets/../index.html",
         "/assets/%2e%2e/secret.js",
+        "/assets/../favicon-fixture.svg",
+        "/assets/%2e%2e/favicon-fixture.svg",
+        "/favicon-fixture.svg",
+        "/assets/private.svg",
+        "/api/attachment?path=assets/private.svg&generation=1",
+        "/api/document?path=assets/private.svg&generation=1",
         "/api/missing",
         "/README.md",
     ] {
@@ -198,8 +208,25 @@ async fn static_allowlist_and_security_headers_are_enforced() {
         assert_eq!(response.status(), StatusCode::NOT_FOUND, "{path}");
     }
     let response = app
+        .clone()
         .oneshot(request("/assets/app.js").body(Body::empty()).unwrap())
         .await
         .unwrap();
     assert_eq!(response.status(), StatusCode::OK);
+    let response = app
+        .oneshot(
+            request("/assets/favicon-fixture.svg")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(response.headers()["content-type"], "image/svg+xml");
+    assert_eq!(response.headers()["x-content-type-options"], "nosniff");
+    assert_eq!(response.headers()["cache-control"], "no-store");
+    assert_eq!(
+        to_bytes(response.into_body(), 1024).await.unwrap(),
+        ICON.as_bytes()
+    );
 }

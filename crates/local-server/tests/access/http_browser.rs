@@ -18,7 +18,14 @@ async fn public_origin_is_exact_and_api_never_accepts_cross_site_metadata() {
         reply(&app, request, 403).await;
     }
     for site in ["cross-site", "same-site"] {
-        for uri in ["/api/workbench", SEARCH, DOCUMENT, TREE, "/assets/app.js"] {
+        for uri in [
+            "/api/workbench",
+            SEARCH,
+            DOCUMENT,
+            TREE,
+            "/assets/app.js",
+            "/assets/favicon-fixture.svg",
+        ] {
             let request = request(uri, Some(&token)).header("sec-fetch-site", site);
             reply(&app, request, 403).await;
         }

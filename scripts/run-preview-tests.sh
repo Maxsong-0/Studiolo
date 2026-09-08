@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 在发布包记录的真实源码目录运行 Linux x86_64 测试；不需要 Rust、Node 或 Docker。
+# 在发布包记录的真实源码目录运行 Linux x86_64 测试；需要 Python3，不需要 Rust、Node 或 Docker。
 # 用法：cd /home/maxsong/.local/share/studiolo-preview/releases/<发布名>/source
 #       bash ../run-preview-tests.sh
 set -euo pipefail
@@ -22,6 +22,18 @@ if [[ ! "$STUDIOLO_EXPECTED" =~ ^/home/maxsong/\.local/share/studiolo-preview/re
 fi
 # 校验的是整个发布包，不把尚未运行的测试误写为通过。
 (cd "$STUDIOLO_PAYLOAD" && sha256sum --check SHA256SUMS)
+# 进程契约使用随包校验的生产程序，不依赖构建机的 /build-target 绝对路径。
+for STUDIOLO_BINARY in studiolo-local-server studiolo-auth-admin; do
+  if [[ ! -f "$STUDIOLO_PAYLOAD/bin/$STUDIOLO_BINARY" \
+    || ! -x "$STUDIOLO_PAYLOAD/bin/$STUDIOLO_BINARY" \
+    || -L "$STUDIOLO_PAYLOAD/bin/$STUDIOLO_BINARY" ]]; then
+    printf '%s\n' '运行包缺少可执行的生产产品程序。' >&2
+    exit 1
+  fi
+done
+export STUDIOLO_TEST_SERVER_BIN="$STUDIOLO_PAYLOAD/bin/studiolo-local-server"
+export STUDIOLO_TEST_AUTH_ADMIN_BIN="$STUDIOLO_PAYLOAD/bin/studiolo-auth-admin"
+python3 --version
 STUDIOLO_TEST_COUNT=0
 while IFS= read -r STUDIOLO_TEST || [[ -n "$STUDIOLO_TEST" ]]; do
   if [[ ! "$STUDIOLO_TEST" =~ ^tests/[A-Za-z0-9][A-Za-z0-9._-]*$ \

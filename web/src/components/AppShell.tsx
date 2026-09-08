@@ -1,7 +1,8 @@
 import type { ReactNode } from 'react';
 import type { OpenSource, Project, View } from '../types';
 import { Icon } from './Icon';
-import { motion, useReducedMotion } from 'motion/react';
+import { motion } from 'motion/react';
+import { useReducedMotionPreference } from '../useReducedMotionPreference';
 
 const navigation = [
   { id: 'overview', label: '项目总览', icon: 'overview' },
@@ -30,7 +31,7 @@ export function AppShell({
   toolbar: ReactNode;
   children: ReactNode;
 }) {
-  const reducedMotion = useReducedMotion();
+  const reducedMotion = useReducedMotionPreference();
   return (
     <div className="app-shell">
       <a className="skip-link" href="#main-content">
@@ -53,6 +54,7 @@ export function AppShell({
             >
               {view === item.id ? (
                 <motion.span
+                  key={reducedMotion ? 'reduced' : 'animated'}
                   className="navigation-highlight"
                   layoutId={reducedMotion ? undefined : 'workspace-navigation'}
                   transition={{ type: 'spring', stiffness: 420, damping: 42 }}

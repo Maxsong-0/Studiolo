@@ -65,10 +65,15 @@ export function App({ account }: { account?: ReactNode }) {
     refresh();
   }
 
+  function navigate(next: View) {
+    setView(next);
+    window.scrollTo({ top: 0, left: 0, behavior: 'instant' });
+  }
+
   return (
     <AppShell
       view={view}
-      onNavigate={setView}
+      onNavigate={navigate}
       sourceLabel={data?.source_label ?? (loading ? '读取中' : '未连接')}
       projects={projects}
       onOpen={setSource}
@@ -160,7 +165,7 @@ export function App({ account }: { account?: ReactNode }) {
             <Inbox
               actions={actions.slice(0, 3)}
               onOpen={setSource}
-              onViewAll={() => setView('inbox')}
+              onViewAll={() => navigate('inbox')}
             />
             <Diagnostics messages={diagnostics} />
           </aside>

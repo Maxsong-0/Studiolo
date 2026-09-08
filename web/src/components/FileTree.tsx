@@ -1,5 +1,6 @@
 import { useId, useState } from 'react';
-import { motion, useReducedMotion } from 'motion/react';
+import { motion } from 'motion/react';
+import { useReducedMotionPreference } from '../useReducedMotionPreference';
 import type { OpenSource } from '../types';
 import { TREE_PAGE_SIZE, type TreeEntry } from '../treeTypes';
 import { useDirectory } from '../useDirectory';
@@ -21,7 +22,7 @@ export function FileTree({
   onRefresh,
 }: Omit<TreeActions, 'onAttachment' | 'reduceMotion'>) {
   const [attachment, setAttachment] = useState<TreeEntry | null>(null);
-  const reduceMotion = Boolean(useReducedMotion());
+  const reduceMotion = useReducedMotionPreference();
   return (
     <section className="file-tree" aria-label="文件树">
       <div className="file-tree-heading">
@@ -175,6 +176,7 @@ function Entry({ entry, ...actions }: TreeActions & { entry: TreeEntry }) {
           id={childrenId}
           initial={{ opacity: 0, y: actions.reduceMotion ? 0 : -3 }}
           animate={{ opacity: 1, y: 0 }}
+          transformTemplate={actions.reduceMotion ? () => 'none' : undefined}
           transition={
             actions.reduceMotion
               ? { duration: 0.12 }

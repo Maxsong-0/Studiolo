@@ -23,8 +23,8 @@ cd "$STUDIOLO_ROOT"
 STUDIOLO_INPUTS=(
   Cargo.toml Cargo.lock rust-toolchain.toml crates
   web/src web/package.json web/package-lock.json web/index.html
-  web/tsconfig.json web/vite.config.ts web/eslint.config.js
-  examples/m1-vault scripts/package-preview.sh scripts/check-preview.py
+  web/tsconfig.json web/vite.config.ts web/eslint.config.js web/.prettierrc.json web/.prettierignore
+  examples/m1-vault scripts/package-preview.sh scripts/check-preview.py scripts/test-check-preview.py
   scripts/test-linux.sh scripts/run-preview-tests.sh .github/workflows/ci.yml
   deploy/preview/studiolo-preview.service.in
   deploy/preview/studiolo-access.service.in deploy/preview/studiolo-tunnel.service
@@ -39,8 +39,11 @@ COPYFILE_DISABLE=1 tar -czf "$STUDIOLO_OUT/payload/source.tar.gz" \
   -C "$STUDIOLO_OUT/source" .
 
 # 在独立源码快照构建，避免产物与已归档源码发生偏差。
+python3 "$STUDIOLO_OUT/source/scripts/test-check-preview.py"
 npm --prefix "$STUDIOLO_OUT/source/web" ci --ignore-scripts
 npm --prefix "$STUDIOLO_OUT/source/web" test
+npm --prefix "$STUDIOLO_OUT/source/web" run lint
+npm --prefix "$STUDIOLO_OUT/source/web" run format
 npm --prefix "$STUDIOLO_OUT/source/web" run build
 cp -R "$STUDIOLO_OUT/source/web/dist" "$STUDIOLO_OUT/payload/web"
 cp -R "$STUDIOLO_OUT/source/examples/m1-vault" "$STUDIOLO_OUT/payload/example-vault"
@@ -78,10 +81,13 @@ docker run --rm --platform linux/amd64 \
   "$STUDIOLO_IMAGE_REF" bash -euo pipefail -c '
     cargo test --workspace --all-targets --release --locked --no-run --message-format=json > /build-meta/tests.jsonl
     cargo build --release --locked -p studiolo-local-server --features studiolo-auth/production
+    cargo build --release --locked -p studiolo-auth-admin --features production
     mkdir /out/bin
     install -m 755 /build-target/release/studiolo-local-server /out/bin/
+    install -m 755 /build-target/release/studiolo-auth-admin /out/bin/
     rustc --version > /out/rust-version.txt
     ldd /out/bin/studiolo-local-server > /out/runtime-libraries.txt
+    ldd /out/bin/studiolo-auth-admin > /out/auth-admin-runtime-libraries.txt
   '
 
 # Cargo JSON 是可执行程序的唯一来源；只在本机解析，不向服务器引入 Node 或构建日志。
@@ -108,7 +114,8 @@ for (const line of fs.readFileSync(path.join(out, 'build-meta/tests.jsonl'), 'ut
   artifacts.set(name, relative);
   targets.add(item.target.name);
 }
-if (!complete || artifacts.size === 0 || !targets.has('architecture') || !targets.has('linux_path_security')) {
+if (!complete || artifacts.size === 0 || !targets.has('architecture') || !targets.has('linux_path_security')
+    || !targets.has('startup_contract') || !targets.has('cli_process')) {
   throw new Error('incomplete test build or missing required safety tests');
 }
 const names = [...artifacts.keys()].sort();

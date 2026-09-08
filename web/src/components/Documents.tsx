@@ -1,5 +1,6 @@
 import { useId, useState } from 'react';
-import { motion, useReducedMotion } from 'motion/react';
+import { motion } from 'motion/react';
+import { useReducedMotionPreference } from '../useReducedMotionPreference';
 import type { OpenSource, Project } from '../types';
 import { useSearch } from '../useSearch';
 import { QueryResults } from './QueryResults';
@@ -20,7 +21,7 @@ export function Documents({
   const [mode, setMode] = useState<'search' | 'tree'>('search');
   const [treeVisited, setTreeVisited] = useState(false);
   const selectionId = useId();
-  const reduceMotion = useReducedMotion();
+  const reduceMotion = useReducedMotionPreference();
   return (
     <>
       <div className="document-modes" role="group" aria-label="文档浏览方式">
@@ -30,6 +31,7 @@ export function Documents({
         >
           {mode === 'search' ? (
             <motion.span
+              key={reduceMotion ? 'reduced' : 'animated'}
               className="document-mode-selected"
               aria-hidden="true"
               layoutId={reduceMotion ? undefined : selectionId}
@@ -48,6 +50,7 @@ export function Documents({
         >
           {mode === 'tree' ? (
             <motion.span
+              key={reduceMotion ? 'reduced' : 'animated'}
               className="document-mode-selected"
               aria-hidden="true"
               layoutId={reduceMotion ? undefined : selectionId}
