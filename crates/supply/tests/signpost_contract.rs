@@ -77,6 +77,7 @@ fn signpost_has_six_sections_and_is_derived_from_index_tasks_and_rules() {
         principal: &principal(),
         generation: 7,
         generated_at: "2026-09-07T01:00:00Z",
+        freshness: None,
         tools: TOOLS,
     })
     .unwrap();
@@ -151,6 +152,7 @@ fn missing_skeleton_shows_unavailable_and_rules_absent_is_stated() {
         principal: &principal(),
         generation: 1,
         generated_at: "2026-09-07T01:00:00Z",
+        freshness: None,
         tools: TOOLS,
     })
     .unwrap()
@@ -204,9 +206,28 @@ fn oversized_material_is_trimmed_then_fails_closed_past_the_hard_budget() {
         principal: &principal(),
         generation: 1,
         generated_at: "2026-09-07T01:00:00Z",
+        freshness: None,
         tools: TOOLS,
     };
     let error = signpost::derive(&input).unwrap_err();
     assert!(error.tokens > HARD_BUDGET_TOKENS);
     assert_eq!(error.limit, HARD_BUDGET_TOKENS);
+}
+
+#[test]
+fn freshness_is_never_trimmed_out_of_the_hard_handshake_budget() {
+    let snapshot = studiolo_supply::Snapshot::default();
+    let principal = principal();
+    let freshness = "required replica freshness ".repeat(3000);
+    let error = signpost::derive(&SignpostInput {
+        snapshot: &snapshot,
+        allow: &[],
+        principal: &principal,
+        generation: 1,
+        generated_at: "2026-09-09T00:00:00Z",
+        freshness: Some(&freshness),
+        tools: TOOLS,
+    })
+    .unwrap_err();
+    assert!(error.tokens > HARD_BUDGET_TOKENS);
 }

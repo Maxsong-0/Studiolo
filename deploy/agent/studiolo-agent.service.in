@@ -8,8 +8,9 @@ StartLimitBurst=3
 [Service]
 Type=simple
 WorkingDirectory=%h/.local/share/studiolo-agent-releases/@RELEASE@
-# 白名单只读副本由 scripts/sync-agent-vault.sh 从主人 Mac 推送；私有库/账本目录由主人预建 0700。
-ExecStart=%h/.local/share/studiolo-agent-releases/@RELEASE@/bin/studiolo-agent serve --vault %h/.local/share/studiolo-agent-vault --allow 项目/Studiolo --allow _规则 --data %h/.local/share/studiolo-agent --port 4400
+# 白名单完整批次由 scripts/sync-agent-vault.sh 推送；先完成首批同步再启用本单元。
+# 私有库/账本沿用既有目录；副本每次读取完整验证，超过 300 秒不再声称新鲜。
+ExecStart=%h/.local/share/studiolo-agent-releases/@RELEASE@/bin/studiolo-agent serve --replica-root %h/.local/share/studiolo-agent-replica --replica-max-age-secs 300 --allow 项目/Studiolo --allow _规则 --data %h/.local/share/studiolo-agent --port 4400
 Restart=on-failure
 RestartSec=3
 KillSignal=SIGTERM

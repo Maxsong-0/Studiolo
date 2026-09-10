@@ -34,5 +34,6 @@ jiff.workspace = true
 ulid.workspace = true
 
 [dev-dependencies]
+sha2.workspace = true
 tempfile.workspace = true
 reqwest.workspace = true

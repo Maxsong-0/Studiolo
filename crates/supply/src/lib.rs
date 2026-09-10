@@ -8,6 +8,7 @@ pub mod audit;
 pub mod budget;
 pub mod database;
 mod error;
+pub mod replica;
 pub mod roots;
 pub mod signpost;
 mod storage;

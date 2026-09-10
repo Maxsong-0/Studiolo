@@ -7,7 +7,7 @@ use studiolo_core::VaultPath;
 
 #[cfg(not(unix))]
 use super::limit;
-use super::unsafe_node;
+use super::{private, unsafe_node};
 use crate::BrokerError;
 
 #[cfg(all(unix, not(target_os = "linux")))]
@@ -44,10 +44,56 @@ pub(super) fn open_root(_root: &Path) -> Result<Dir, BrokerError> {
     ))
 }
 
-pub(super) fn open_file(root: &Dir, path: &VaultPath) -> Result<File, BrokerError> {
-    let (parent, name) = parent(root, path)?;
+#[cfg(unix)]
+pub(super) fn open_private_root(root: &Path) -> Result<Dir, BrokerError> {
+    use std::path::Component;
+    if !root.is_absolute()
+        || root
+            .components()
+            .any(|component| matches!(component, Component::ParentDir))
+    {
+        return Err(super::limit(
+            "private read-only root requires a clean absolute path",
+        ));
+    }
+    let mut directory = open_root(Path::new("/"))?;
+    private::ancestor(&directory)?;
+    for component in root.components() {
+        let Component::Normal(name) = component else {
+            continue;
+        };
+        let handle = rustix::fs::openat(
+            &directory,
+            name,
+            OFlags::RDONLY | OFlags::DIRECTORY | OFlags::CLOEXEC | OFlags::NOFOLLOW,
+            Mode::empty(),
+        )
+        .map_err(|error| BrokerError::io("open private read-only ancestor", error.into()))?;
+        directory = Dir::from_std_file(std::fs::File::from(handle));
+        private::ancestor(&directory)?;
+    }
+    private::directory(&directory, true)?;
+    Ok(directory)
+}
+
+#[cfg(not(unix))]
+pub(super) fn open_private_root(_root: &Path) -> Result<Dir, BrokerError> {
+    Err(limit("private read-only access requires Unix"))
+}
+
+pub(super) fn open_directory(
+    root: &Dir,
+    path: &VaultPath,
+    private: bool,
+) -> Result<Dir, BrokerError> {
+    let (parent, name) = parent(root, path, private)?;
+    child_directory(root, &parent, &name, path, private)
+}
+
+pub(super) fn open_file(root: &Dir, path: &VaultPath, private: bool) -> Result<File, BrokerError> {
+    let (parent, name) = parent(root, path, private)?;
     collision(&parent, &name, path)?;
-    scanned_file(root, &parent, &name, path)
+    scanned_file(root, &parent, &name, path, private)
 }
 
 // 调用方必须已完整枚举并检查同层名称；扫描器仍须执行路径重开与目录身份复核。
@@ -56,7 +102,10 @@ pub(super) fn scanned_file(
     _parent: &Dir,
     _name: &str,
     path: &VaultPath,
+    private: bool,
 ) -> Result<File, BrokerError> {
+    private::directory(root, private)?;
+    private::directory(_parent, private)?;
     #[cfg(target_os = "linux")]
     let handle = rustix::fs::openat2(
         root,
@@ -83,7 +132,10 @@ pub(super) fn scanned_file(
             .metadata()
             .map_err(|error| BrokerError::io("stat opened read-only file", error))?;
         regular(path, &metadata)?;
+        private::file(&metadata, private)?;
         same_device(root, &metadata, path)?;
+        private::directory(root, private)?;
+        private::directory(_parent, private)?;
         Ok(file)
     }
     #[cfg(not(unix))]
@@ -92,7 +144,8 @@ pub(super) fn scanned_file(
     ))
 }
 
-fn parent(root: &Dir, path: &VaultPath) -> Result<(Dir, String), BrokerError> {
+fn parent(root: &Dir, path: &VaultPath, private: bool) -> Result<(Dir, String), BrokerError> {
+    private::directory(root, private)?;
     let mut directory = root
         .try_clone()
         .map_err(|error| BrokerError::io("clone read-only root", error))?;
@@ -108,7 +161,7 @@ fn parent(root: &Dir, path: &VaultPath) -> Result<(Dir, String), BrokerError> {
         partial.push_str(component);
         let logical =
             VaultPath::parse(&partial).map_err(|_| unsafe_node(path, "invalid parent path"))?;
-        directory = child_directory(root, &directory, component, &logical)?;
+        directory = child_directory(root, &directory, component, &logical, private)?;
     }
     Err(unsafe_node(path, "missing file name"))
 }
@@ -118,9 +171,10 @@ fn child_directory(
     parent: &Dir,
     name: &str,
     path: &VaultPath,
+    private: bool,
 ) -> Result<Dir, BrokerError> {
     collision(parent, name, path)?;
-    scanned_directory(root, parent, name, path)
+    scanned_directory(root, parent, name, path, private)
 }
 
 // 跳过重复名称枚举，不跳过 rooted/no-follow/no-xdev 与设备验证。
@@ -129,7 +183,10 @@ pub(super) fn scanned_directory(
     _parent: &Dir,
     _name: &str,
     path: &VaultPath,
+    private: bool,
 ) -> Result<Dir, BrokerError> {
+    private::directory(root, private)?;
+    private::directory(_parent, private)?;
     #[cfg(target_os = "linux")]
     let handle = rustix::fs::openat2(
         root,
@@ -156,6 +213,9 @@ pub(super) fn scanned_directory(
             .dir_metadata()
             .map_err(|error| BrokerError::io("stat read-only directory", error))?;
         same_device(root, &metadata, path)?;
+        private::directory(&directory, private)?;
+        private::directory(root, private)?;
+        private::directory(_parent, private)?;
         Ok(directory)
     }
     #[cfg(not(unix))]
