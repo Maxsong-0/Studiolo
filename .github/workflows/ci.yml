@@ -13,6 +13,7 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
+  PYTHONDONTWRITEBYTECODE: "1"
 
 jobs:
   rust:
@@ -40,6 +41,9 @@ jobs:
           done
           python3 scripts/test-check-agent.py
           python3 scripts/test-sync-agent-vault.py
+          python3 scripts/test-prepare-agent-sync.py
+          python3 scripts/test-replica-receiver.py
+          python3 scripts/test-replica-boundaries.py
           python3 scripts/test-check-preview.py
 
       - name: Clippy（警告即失败）
@@ -49,6 +53,11 @@ jobs:
         run: |
           python3 --version
           cargo --locked test --workspace
+
+      - name: Python 副本发布与真实 MCP 管线
+        run: |
+          cargo --locked build -p studiolo-agent-server
+          python3 scripts/check-replica-pipeline.py target/debug/studiolo-agent
 
       - name: Linux 路径安全负向测试（显式验收）
         run: cargo --locked test -p studiolo-vault-broker --test linux_path_security

@@ -11,21 +11,30 @@ use rmcp::transport::streamable_http_server::{
 };
 use studiolo_audit_ledger::SqliteAuditLedger;
 use studiolo_core::VaultPath;
-use studiolo_supply::{AgentStore, ScanLimits, SupplyRoots};
+use studiolo_supply::{AgentStore, ScanLimits, SupplyRoots, replica::ReplicaRoot};
 
 use crate::{
     auth,
     options::ServeOptions,
     refresh,
     server::AgentSession,
-    state::{AppState, build_generation},
+    state::{AppState, SupplySource, build_generation, replica_generation},
 };
 
 /// 装配共享状态：白名单只读根、既有私有库与账本（no-create）、首扫代次。
 pub fn prepare(options: &ServeOptions) -> Result<Arc<AppState>, String> {
     let allow_refs = options.allow.iter().map(String::as_str).collect::<Vec<_>>();
-    let roots = SupplyRoots::open(&options.vault, &allow_refs)
-        .map_err(|error| format!("白名单只读根打开失败：{error}"))?;
+    let source = match (&options.vault, &options.replica_root) {
+        (Some(vault), None) => SupplySource::Direct(
+            SupplyRoots::open(vault, &allow_refs)
+                .map_err(|error| format!("白名单只读根打开失败：{error}"))?,
+        ),
+        (None, Some(replica)) => SupplySource::Replica(
+            ReplicaRoot::open(replica, &options.allow, options.replica_max_age_secs)
+                .map_err(|error| error.to_string())?,
+        ),
+        _ => return Err("必须且只能指定一种供给源".to_owned()),
+    };
     let allow = options
         .allow
         .iter()
@@ -37,9 +46,13 @@ pub fn prepare(options: &ServeOptions) -> Result<Arc<AppState>, String> {
     let ledger = SqliteAuditLedger::open_existing(&options.data.join("audit"))
         .map_err(|_| "审计账本不可用或未初始化；请先运行 admin init".to_owned())?;
     let limits = ScanLimits::default();
-    let first = build_generation(&roots, limits, 1)?;
+    let first = match &source {
+        SupplySource::Direct(roots) => build_generation(roots, limits, 1)?,
+        SupplySource::Replica(root) => replica_generation(root, None, 1)?,
+    };
     Ok(Arc::new(AppState {
-        roots,
+        source,
+        scan_lock: Mutex::new(()),
         allow,
         store,
         ledger,

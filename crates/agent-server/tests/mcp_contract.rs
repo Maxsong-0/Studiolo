@@ -67,7 +67,9 @@ async fn fixture() -> Fixture {
     drop(SqliteAuditLedger::open(&data.join("audit")).unwrap());
 
     let state = serve::prepare(&ServeOptions {
-        vault: vault.clone(),
+        vault: Some(vault.clone()),
+        replica_root: None,
+        replica_max_age_secs: 300,
         allow: vec!["项目/Alpha".into(), "_规则".into()],
         data: data.clone(),
         port: 0,

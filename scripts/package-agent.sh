@@ -32,6 +32,9 @@ STUDIOLO_INPUTS=(
   scripts/package-preview.sh scripts/package-agent.sh scripts/run-agent-tests.sh
   scripts/check-agent.py scripts/test-check-agent.py scripts/test-sync-agent-vault.py
   scripts/sync-agent-vault.sh scripts/test-linux.sh .github/workflows/ci.yml
+  scripts/replica_*.py scripts/test-replica-*.py
+  scripts/prepare-agent-sync.py scripts/test-prepare-agent-sync.py
+  scripts/check-replica-pipeline.py
   deploy/agent/studiolo-agent.service.in
 )
 COPYFILE_DISABLE=1 tar -cf - "${STUDIOLO_INPUTS[@]}" |

@@ -5,7 +5,8 @@ use std::collections::BTreeMap;
 use studiolo_core::{VaultPath, VaultUuid};
 
 use super::{
-    ReadBatch, ReadEntry, ReadEntryKind, ReadOnlyVault, ScanLimits, limit, metadata, rooted,
+    ReadBatch, ReadEntry, ReadEntryKind, ReadOnlyVault, ScanLimits, limit, metadata, private,
+    rooted,
 };
 use crate::BrokerError;
 
@@ -35,6 +36,7 @@ impl ReadOnlyVault {
             bytes: 0,
             path_bytes: 0,
             batch: ReadBatch::default(),
+            private: self.private,
         };
         self.scan_directory(&self.root, "", 0, &mut scan)?;
         scan.batch
@@ -60,6 +62,8 @@ impl ReadOnlyVault {
         depth: usize,
         scan: &mut ScanState,
     ) -> Result<(), BrokerError> {
+        private::directory(&self.root, self.private)?;
+        private::directory(directory, self.private)?;
         let before = directory
             .dir_metadata()
             .map_err(|error| BrokerError::io("stat scan directory", error))?;
@@ -73,7 +77,13 @@ impl ReadOnlyVault {
                 if depth >= scan.limits.max_depth {
                     return Err(limit("scan depth limit exceeded"));
                 }
-                let child = match rooted::scanned_directory(&self.root, directory, &name, &path) {
+                let child = match rooted::scanned_directory(
+                    &self.root,
+                    directory,
+                    &name,
+                    &path,
+                    self.private,
+                ) {
                     Ok(child) => child,
                     Err(_) => {
                         scan.diagnostic(&path, "unsafe or unreadable directory skipped");
@@ -85,9 +95,12 @@ impl ReadOnlyVault {
                     .map_err(|error| BrokerError::io("stat opened scan directory", error))?;
                 self.scan_directory(&child, path.as_str(), depth + 1, scan)?;
                 // 重新从选定根解析该名称，不能只检查已经被移出原位置的旧句柄。
-                let current = rooted::scanned_directory(&self.root, directory, &name, &path)?
-                    .dir_metadata()
-                    .map_err(|error| BrokerError::io("recheck scan directory identity", error))?;
+                let current =
+                    rooted::scanned_directory(&self.root, directory, &name, &path, self.private)?
+                        .dir_metadata()
+                        .map_err(|error| {
+                            BrokerError::io("recheck scan directory identity", error)
+                        })?;
                 if !rooted::unchanged(&opened, &current) {
                     return Err(BrokerError::UnstableRead(path));
                 }
@@ -129,7 +142,7 @@ impl ReadOnlyVault {
                     ),
                 }
             } else {
-                match metadata::stable_file(&self.root, directory, &name, &path) {
+                match metadata::stable_file(&self.root, directory, &name, &path, self.private) {
                     Ok(size) => scan.batch.entries.push(ReadEntry {
                         path,
                         kind: ReadEntryKind::Attachment,
@@ -147,6 +160,8 @@ impl ReadOnlyVault {
         if !rooted::unchanged(&before, &after) {
             return Err(limit("source directory changed during scan"));
         }
+        private::directory(&self.root, self.private)?;
+        private::directory(directory, self.private)?;
         Ok(())
     }
 }
@@ -173,6 +188,9 @@ fn enumerate(
             .ok_or_else(|| limit("scan entry limit exceeded"))?;
         let name = entry.file_name();
         if name.as_encoded_bytes().starts_with(b".") {
+            if scan.private {
+                return Err(limit("private read-only scan rejects hidden entries"));
+            }
             continue;
         }
         let raw_len = prefix
@@ -220,6 +238,7 @@ struct ScanState {
     bytes: u64,
     path_bytes: usize,
     batch: ReadBatch,
+    private: bool,
 }
 
 impl ScanState {

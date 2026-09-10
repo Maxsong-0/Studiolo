@@ -4,7 +4,10 @@ use std::sync::{Arc, Mutex, RwLock};
 
 use studiolo_audit_ledger::{AuditEvent, AuditLedger, SqliteAuditLedger};
 use studiolo_core::VaultPath;
-use studiolo_supply::{AgentStore, ScanLimits, Snapshot, SupplyRoots, WorkbenchReadModel};
+use studiolo_supply::{
+    AgentStore, ScanLimits, Snapshot, SupplyRoots, WorkbenchReadModel,
+    replica::{Freshness, ReplicaRoot},
+};
 
 /// 一次完整扫描得到的不可变代次。
 pub struct Generation {
@@ -16,6 +19,8 @@ pub struct Generation {
     pub model: WorkbenchReadModel,
     /// 生成时间（RFC 3339）。
     pub generated_at: String,
+    /// 副本来源状态；直接 Vault 模式没有可声明的同步回执。
+    pub freshness: Option<Freshness>,
 }
 
 /// 审计不可用窗口。
@@ -43,10 +48,20 @@ pub struct AuditUnavailable {
     pub outage_id: String,
 }
 
+/// 供给源；两种模式都只持有只读能力。
+pub enum SupplySource {
+    /// 直接读取本地白名单目录。
+    Direct(SupplyRoots),
+    /// 读取完整验证的不可变服务器副本。
+    Replica(ReplicaRoot),
+}
+
 /// 服务共享状态。
 pub struct AppState {
     /// 白名单只读根。
-    pub roots: SupplyRoots,
+    pub source: SupplySource,
+    /// 序列化重扫，避免慢旧批次覆盖较新的已验证代次。
+    pub scan_lock: Mutex<()>,
     /// 白名单前缀（配置顺序）。
     pub allow: Vec<VaultPath>,
     /// agent 私有库。
@@ -87,19 +102,67 @@ pub fn build_generation(
         snapshot,
         model,
         generated_at: now(),
+        freshness: None,
+    })
+}
+
+/// 从一个完整校验的来源回执构建读模型。
+pub fn replica_generation(
+    root: &ReplicaRoot,
+    previous: Option<&Freshness>,
+    number: u64,
+) -> Result<Generation, String> {
+    let replica = root
+        .verify(now_ms(), previous)
+        .map_err(|error| error.to_string())?;
+    let model = WorkbenchReadModel::build(&replica.snapshot.documents())
+        .map_err(|_| "副本读模型构建失败".to_owned())?;
+    Ok(Generation {
+        number,
+        snapshot: replica.snapshot,
+        model,
+        generated_at: now(),
+        freshness: Some(replica.freshness),
     })
 }
 
 impl AppState {
     /// 重扫并替换当前代次。
     pub fn rescan(&self) -> Result<u64, String> {
-        let next = self.current().number + 1;
-        let generation = Arc::new(build_generation(&self.roots, self.limits, next)?);
+        let _scan = self
+            .scan_lock
+            .lock()
+            .map_err(|_| "重扫锁不可用".to_owned())?;
+        let previous = self.current();
+        let next = previous
+            .number
+            .checked_add(1)
+            .ok_or_else(|| "代次溢出".to_owned())?;
+        let generation = Arc::new(match &self.source {
+            SupplySource::Direct(roots) => build_generation(roots, self.limits, next)?,
+            SupplySource::Replica(root) => {
+                replica_generation(root, previous.freshness.as_ref(), next)?
+            }
+        });
         *self
             .current
             .write()
             .map_err(|_| "代次锁不可用".to_owned())? = generation;
         Ok(next)
+    }
+
+    /// 请求供给时取完整验证的同一代次；副本全量校验在阻塞线程完成。
+    pub async fn verified(self: &Arc<Self>) -> Result<Arc<Generation>, String> {
+        if matches!(&self.source, SupplySource::Replica(_)) {
+            let state = self.clone();
+            return tokio::task::spawn_blocking(move || {
+                state.rescan()?;
+                Ok(state.current())
+            })
+            .await
+            .map_err(|_| "副本验证任务失败".to_owned())?;
+        }
+        Ok(self.current())
     }
 
     /// 当前代次（克隆 Arc）。

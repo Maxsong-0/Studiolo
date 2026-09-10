@@ -1,6 +1,7 @@
 //! Zero-write access to an explicitly selected local replica or asset directory.
 
 mod metadata;
+mod private;
 mod read;
 mod rooted;
 mod scan;
@@ -88,6 +89,7 @@ impl Default for ScanLimits {
 /// create control files, caches, directories, snapshots or persistent identities.
 pub struct ReadOnlyVault {
     root: Dir,
+    private: bool,
 }
 
 impl ReadOnlyVault {
@@ -96,6 +98,25 @@ impl ReadOnlyVault {
     pub fn open(root: &Path) -> Result<Self, BrokerError> {
         Ok(Self {
             root: rooted::open_root(root)?,
+            private: false,
+        })
+    }
+
+    /// 打开私有只读根：绝对路径逐分量拒绝链接，祖先属主仅允许 root 或当前用户。
+    /// 选定根及后续访问的目录须为当前用户的 0700，文件须为 0600；不创建任何内容。
+    pub fn open_private(root: &Path) -> Result<Self, BrokerError> {
+        Ok(Self {
+            root: rooted::open_private_root(root)?,
+            private: true,
+        })
+    }
+
+    /// 从已固定根句柄打开可见子目录，继承私有模式；不重新解析宿主绝对路径。
+    pub fn open_directory(&self, path: &VaultPath) -> Result<Self, BrokerError> {
+        visible(path)?;
+        Ok(Self {
+            root: rooted::open_directory(&self.root, path, self.private)?,
+            private: self.private,
         })
     }
 
@@ -127,7 +148,7 @@ impl ReadOnlyVault {
     ) -> Result<ReadNote, BrokerError> {
         visible(path)?;
         read::read_with(path, max_bytes, namespace, || {
-            rooted::open_file(&self.root, path)
+            rooted::open_file(&self.root, path, self.private)
         })
     }
 
@@ -136,7 +157,7 @@ impl ReadOnlyVault {
         let path =
             VaultPath::parse(".workbench/vault.json").map_err(|_| BrokerError::CorruptIdentity)?;
         let note = read::read_with(&path, 4096, read::replica_namespace(), || {
-            rooted::open_file(&self.root, &path)
+            rooted::open_file(&self.root, &path, self.private)
         })?;
         Ok(note.content)
     }
@@ -150,7 +171,7 @@ impl ReadOnlyVault {
         namespace: VaultUuid,
     ) -> Result<ReadNote, BrokerError> {
         read::read_with(path, max_bytes, namespace, || {
-            rooted::scanned_file(&self.root, parent, name, path)
+            rooted::scanned_file(&self.root, parent, name, path, self.private)
         })
     }
 }
@@ -178,6 +199,7 @@ fn bound(root: &Dir) -> Result<ReadOnlyVault, BrokerError> {
         root: root
             .try_clone()
             .map_err(|e| BrokerError::io("retain canonical read root", e))?,
+        private: false,
     })
 }
 

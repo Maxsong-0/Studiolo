@@ -2494,6 +2494,7 @@ dependencies = [
  "rmcp",
  "serde",
  "serde_json",
+ "sha2 0.11.0",
  "studiolo-audit-ledger",
  "studiolo-core",
  "studiolo-supply",

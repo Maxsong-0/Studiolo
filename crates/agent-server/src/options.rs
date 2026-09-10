@@ -5,7 +5,7 @@ use std::path::PathBuf;
 /// 用法说明。
 pub const USAGE: &str = "studiolo-agent：Studiolo 供给面 MCP 主外壳（M3）\n\n\
 用法：\n  \
-studiolo-agent serve --vault </绝对路径/vault> --allow <相对目录> [--allow …] --data </绝对路径/私有目录> [--port 4400]\n  \
+studiolo-agent serve (--vault </绝对路径/vault> | --replica-root </绝对路径/副本>) [--replica-max-age-secs 300] --allow <相对目录> [--allow …] --data </绝对路径/私有目录> [--port 4400]\n  \
 studiolo-agent admin init --data </绝对路径/私有目录>\n  \
 studiolo-agent admin type-issue --data <私有目录> --type <claude|codex|grok|…>\n  \
 studiolo-agent admin type-revoke --data <私有目录> --type <类型名>\n  \
@@ -19,7 +19,11 @@ studiolo-agent admin outages --data <私有目录>\n\n\
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ServeOptions {
     /// vault 根（绝对路径）。
-    pub vault: PathBuf,
+    pub vault: Option<PathBuf>,
+    /// 不可变副本根；与 vault 二选一。
+    pub replica_root: Option<PathBuf>,
+    /// 副本新鲜度阈值，60..=86400 秒。
+    pub replica_max_age_secs: u64,
     /// 白名单目录（相对 vault 根）。
     pub allow: Vec<String>,
     /// 私有数据目录（绝对路径）。
@@ -132,7 +136,15 @@ pub fn parse(args: &[String]) -> Result<Command, String> {
         "serve" => {
             let pairs = take_values(&args[1..])?;
             for (key, _) in &pairs {
-                if !matches!(key.as_str(), "--vault" | "--allow" | "--data" | "--port") {
+                if !matches!(
+                    key.as_str(),
+                    "--vault"
+                        | "--replica-root"
+                        | "--replica-max-age-secs"
+                        | "--allow"
+                        | "--data"
+                        | "--port"
+                ) {
                     return Err(format!("serve 不接受参数 {key}"));
                 }
             }
@@ -152,8 +164,30 @@ pub fn parse(args: &[String]) -> Result<Command, String> {
                     .filter(|port| *port >= 1024)
                     .ok_or_else(|| "--port 必须是 1024..=65535 的整数".to_owned())?,
             };
+            let vault = optional(&pairs, "--vault")?
+                .map(|value| absolute(value, "--vault"))
+                .transpose()?;
+            let replica_root = optional(&pairs, "--replica-root")?
+                .map(|value| absolute(value, "--replica-root"))
+                .transpose()?;
+            if vault.is_some() == replica_root.is_some() {
+                return Err("--vault 与 --replica-root 必须且只能指定一个".into());
+            }
+            let max_age = optional(&pairs, "--replica-max-age-secs")?;
+            if max_age.is_some() && replica_root.is_none() {
+                return Err("--replica-max-age-secs 只适用于 --replica-root".into());
+            }
+            let replica_max_age_secs = max_age.map_or(Ok(300), |value| {
+                value
+                    .parse::<u64>()
+                    .ok()
+                    .filter(|age| (60..=86_400).contains(age))
+                    .ok_or_else(|| "--replica-max-age-secs 必须是 60..=86400".to_owned())
+            })?;
             Ok(Command::Serve(ServeOptions {
-                vault: absolute(required(&pairs, "--vault")?, "--vault")?,
+                vault,
+                replica_root,
+                replica_max_age_secs,
                 allow,
                 data: absolute(required(&pairs, "--data")?, "--data")?,
                 port,
@@ -221,84 +255,4 @@ pub fn parse(args: &[String]) -> Result<Command, String> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn strings(values: &[&str]) -> Vec<String> {
-        values.iter().map(|value| (*value).to_owned()).collect()
-    }
-
-    #[test]
-    fn serve_requires_absolute_paths_and_at_least_one_allow() {
-        let parsed = parse(&strings(&[
-            "serve",
-            "--vault",
-            "/v",
-            "--allow",
-            "项目/Studiolo",
-            "--allow",
-            "_规则",
-            "--data",
-            "/d",
-        ]))
-        .unwrap();
-        assert_eq!(
-            parsed,
-            Command::Serve(ServeOptions {
-                vault: PathBuf::from("/v"),
-                allow: vec!["项目/Studiolo".into(), "_规则".into()],
-                data: PathBuf::from("/d"),
-                port: 4400,
-            })
-        );
-        assert!(
-            parse(&strings(&[
-                "serve", "--vault", "v", "--allow", "a", "--data", "/d"
-            ]))
-            .is_err()
-        );
-        assert!(parse(&strings(&["serve", "--vault", "/v", "--data", "/d"])).is_err());
-        assert!(
-            parse(&strings(&[
-                "serve", "--vault", "/v", "--allow", "a", "--data", "/d", "--port", "80"
-            ]))
-            .is_err()
-        );
-        assert!(
-            parse(&strings(&[
-                "serve", "--vault", "/v", "--allow", "a", "--data", "/d", "--extra", "x"
-            ]))
-            .is_err()
-        );
-    }
-
-    #[test]
-    fn admin_subcommands_are_closed() {
-        assert_eq!(
-            parse(&strings(&[
-                "admin",
-                "type-issue",
-                "--data",
-                "/d",
-                "--type",
-                "claude"
-            ]))
-            .unwrap(),
-            Command::Admin(AdminCommand::TypeIssue {
-                data: PathBuf::from("/d"),
-                agent_type: "claude".into()
-            })
-        );
-        assert!(parse(&strings(&["admin", "type-issue", "--data", "/d"])).is_err());
-        assert!(parse(&strings(&["admin", "init", "--data", "/d", "--type", "x"])).is_err());
-        assert!(parse(&strings(&["admin", "nuke", "--data", "/d"])).is_err());
-        assert!(matches!(parse(&strings(&[])).unwrap(), Command::Help));
-        assert!(matches!(
-            parse(&strings(&[
-                "admin", "reads", "--data", "/d", "--limit", "5"
-            ]))
-            .unwrap(),
-            Command::Admin(AdminCommand::Reads { limit: 5, .. })
-        ));
-    }
-}
+mod tests;
