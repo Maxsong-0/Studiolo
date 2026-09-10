@@ -4,6 +4,7 @@
 
 > T-037增加HTTP只读文本外壳，四供给操作共用原实现、身份/白名单/审计/新鲜度与预算。
 > 短命HTTP会话、路由及发布状态以 [HTTP文本供给](../m3/http-text.md) 为准；首片历史说明保留。
+> T-038增加显式客户端资料投影，导出复用HTTP鉴权及审计；本地读取/吊销限制、配置格式与验收见 [客户端投影](../m3/client-projection.md)。
 
 ## 1. Module 与装配
 
@@ -63,7 +64,7 @@
 - 直接 `--vault` 模式沿用首片契约：启动全扫白名单子树建代次；后台每 60 秒重扫；`read_note` 直接读当前文件并返回其 revision。扫描诊断降级为路牌里的「诊断 n 条」。此模式没有远端同步回执，不声称资料已从来源同步。
 - T-036 增加显式 `--replica-root` 托管模式，与 `--vault` 互斥。每次内容请求在阻塞线程串行验证完整批次与 SHA-256 清单，四工具使用该次完整内存快照；附件同样验证字节但只供给元信息。控制文件无效、内容漂移、任意扫描诊断都拒绝内容；不静默退回直接模式。
 - 托管模式每个结果包含 generation、source_digest、source_observed_at_ms、received_at_ms、age_secs、状态。默认超过 300 秒为 stale；最近同步失败为 sync_failed，同时保留 stale 布尔值。旧完整副本可在明确标记后只读使用，不能据此开展实时协作。只重扫服务器目录不能刷新来源确认时间。新鲜度是路牌强制字段，同样受 ≤2000 token 硬门槛约束。
-- 完整协议、边界与启用状态见 [资料同步与新鲜度](../m3/replica-freshness.md)，操作步骤见 [自动同步运维](../m3/replica-operations.md)。本片是服务器副本同步；ADR-015 向客户端下发 CLAUDE.md / skills 的推模式仍未完成。
+- 完整协议、边界与启用状态见 [资料同步与新鲜度](../m3/replica-freshness.md)，操作步骤见 [自动同步运维](../m3/replica-operations.md)。本片是服务器副本同步；ADR-015客户端独立投影由T-038实现，实际客户端安装仍另验。
 - 审计不可用（账本追加失败，含存储复核失败）：initialize 仍应答，但 instructions 只含「审计不可用 ＋ outage id ＋ 本次读写全部拒绝」，不含任何 vault 内容；所有 tool 返回 `audit_unavailable`；outage 起始、拒绝计数与结束时间落 `agent.sqlite3` 的 `outage` 表（同一 outage 只记一行，计数有界），账本恢复后第一次成功追加即结束窗口。带外告警与健康页红属运维片，本片只留持久痕迹（`admin outages`）。
 
 ## 7. 错误模式

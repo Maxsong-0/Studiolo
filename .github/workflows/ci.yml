@@ -46,6 +46,9 @@ jobs:
           python3 scripts/test-replica-receiver.py
           python3 scripts/test-replica-boundaries.py
           python3 scripts/test-check-preview.py
+          python3 scripts/test-client-projection-schema.py
+          python3 scripts/test-client-projection-fetch.py
+          python3 scripts/test-client-projection-store.py
 
       - name: Clippy（警告即失败）
         run: cargo --locked clippy --workspace --all-targets -- -D warnings
@@ -59,6 +62,7 @@ jobs:
         run: |
           cargo --locked build -p studiolo-agent-server
           python3 scripts/check-replica-pipeline.py target/debug/studiolo-agent
+          python3 scripts/check-client-projection-pipeline.py target/debug/studiolo-agent
 
       - name: Linux 路径安全负向测试（显式验收）
         run: cargo --locked test -p studiolo-vault-broker --test linux_path_security

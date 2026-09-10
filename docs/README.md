@@ -30,6 +30,7 @@ T-010历史验证：macOS222/Linux aarch64 230项Rust、前端39项及格式/生
 供给面契约本身在 [`contracts/agent-supply.md`](contracts/agent-supply.md)。
 T-036托管副本与系统级部署见 [同步运维](m3/replica-operations.md)；
 T-037 HTTP四个只读入口、短命会话及验收状态见 [HTTP文本供给](m3/http-text.md)。
+T-038 Claude/Codex独立资料目录、显式更新及离线/在线漂移检查见 [客户端投影](m3/client-projection.md)。
 
 ## contracts/ — Module Interface 契约（M0）
 
