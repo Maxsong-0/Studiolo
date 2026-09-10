@@ -32,6 +32,7 @@ T-036托管副本与系统级部署见 [同步运维](m3/replica-operations.md)�
 T-037 HTTP四个只读入口、短命会话及验收状态见 [HTTP文本供给](m3/http-text.md)。
 T-038 Claude/Codex独立资料目录、显式更新及离线/在线漂移检查见 [客户端投影](m3/client-projection.md)。
 T-039 单篇解析持久缓存、未变模型共享与隔离边界见 [持久派生索引](m3/persistent-index.md)。
+T-040 三片合并、完整运行包、系统服务升级与回滚见 [读取供给发布](m3/read-supply-release.md)。
 
 ## contracts/ — Module Interface 契约（M0）
 

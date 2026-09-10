@@ -1,0 +1,237 @@
+#!/usr/bin/env bash
+# T-040：将已知 T-036 系统服务升级到已验收运行包；不迁移用户服务、不重新初始化身份。
+# @RELEASE@ / @BINARY_SHA@ / @UNIT_SHA@ 由发布主线填入并校验，用户在服务器 sudo bash 执行。
+set -Eeuo pipefail
+umask 077
+export PATH=/usr/sbin:/usr/bin:/sbin:/bin
+unset CDPATH ENV BASH_ENV PYTHONPATH PYTHONHOME
+release=/home/maxsong/.local/share/studiolo-agent-releases/@RELEASE@
+binary=$release/bin/studiolo-agent
+binary_sha=@BINARY_SHA@
+unit_sha=@UNIT_SHA@
+source_sha=@SOURCE_SHA@
+files_sha=@FILES_SHA@
+old_release=/home/maxsong/.local/share/studiolo-agent-releases/m3-t036-20260910-replica01
+old_binary=$old_release/bin/studiolo-agent
+old_binary_sha=6c574ea719cde129549354b44b015e144c1ffb9b581adf65aa51d5c8f9979a08
+old_unit_sha=217bdceda8b1e4cbc166973e0c14bc0fe7c7f8aee9493a1d11b3798bd086b565
+unit=studiolo-agent.service
+installed=/etc/systemd/system/$unit
+data=/home/maxsong/.local/share/studiolo-agent
+replica=/home/maxsong/.local/share/studiolo-agent-replica
+cache=/home/maxsong/.local/share/studiolo-agent-index
+token=/home/maxsong/.config/studiolo-agent/claude.token
+lock=/run/studiolo-t040-deploy.lock
+lock_binding='' scratch='' stage='' stage_binding='' new_binding='' old_binding=''
+switched=0 committed=0
+fail() { printf '%s\n' "$1" >&2; exit 1; }
+digest() { sha256sum -- "$1" | cut -d ' ' -f 1; }
+identity() { stat -c '%d:%i' -- "$1"; }
+is_unit() { [[ -f "$installed" && ! -L "$installed" && $(identity "$installed") == "$1" && $(digest "$installed") == "$2" ]]; }
+
+stop_stage() {
+    [[ -n "$stage" ]] || return 0
+    local fragment=/run/systemd/transient/$stage
+    if [[ -f "$fragment" && ! -L "$fragment" ]]; then
+        if [[ -z "$stage_binding" ]]; then
+            [[ $(systemctl show "$stage" -p FragmentPath --value) == "$fragment" &&
+               $(systemctl show "$stage" -p User --value) == maxsong &&
+               $(systemctl show "$stage" -p Group --value) == maxsong &&
+               $(systemctl show "$stage" -p WorkingDirectory --value) == "$release" &&
+               $(systemctl show "$stage" -p ExecStart --value) == *"path=$binary ;"* ]] || return 1
+            stage_binding=$(identity "$fragment")
+        fi
+        [[ $(identity "$fragment") == "$stage_binding" ]] || return 1
+        systemctl stop "$stage" || return 1
+    fi
+    stage='' stage_binding=''
+}
+
+cleanup() {
+    local result=$? failed=0
+    trap - EXIT INT TERM HUP
+    set +e
+    stop_stage || { printf '%s\n' '阶段单元绑定变化或停止失败，请人工检查。' >&2; failed=1; }
+    if [[ "$switched" == 1 && "$committed" != 1 ]]; then
+        if is_unit "$new_binding" "$unit_sha"; then
+            systemctl stop "$unit" || failed=1
+            if is_unit "$new_binding" "$unit_sha" && [[ $(digest "$scratch/previous.service") == "$old_unit_sha" ]]; then
+                cp -- "$scratch/previous.service" "$scratch/restore.service" &&
+                    chmod 0644 "$scratch/restore.service" &&
+                    mv -T -- "$scratch/restore.service" "$installed" || failed=1
+                systemctl daemon-reload || failed=1
+                systemctl restart "$unit" || failed=1
+                wait_ready 4400 && check_process "$unit" "$old_binary" "$old_binary_sha" || failed=1
+                systemctl is-enabled --quiet "$unit" || failed=1
+                [[ "$failed" != 0 ]] || printf '%s\n' '升级未完成，已恢复原 T-036 系统服务。' >&2
+            else
+                failed=1
+            fi
+        elif is_unit "$old_binding" "$old_unit_sha"; then
+            # 原子替换尚未发生；旧系统单元从未停止。
+            systemctl is-active --quiet "$unit" || failed=1
+        else
+            printf '%s\n' '系统单元已被其他操作替换，未覆盖第三方文件；请人工恢复。' >&2
+            failed=1
+        fi
+    fi
+    if [[ -n "$lock_binding" && -d "$lock" && ! -L "$lock" && $(identity "$lock") == "$lock_binding" ]]; then
+        rmdir -- "$lock" || failed=1
+    fi
+    [[ -z "$scratch" ]] || printf '本次 root 私有备份/验收目录：%s\n' "$scratch"
+    if [[ "$failed" != 0 ]]; then printf '%s\n' '自动清理/恢复未完全成功，请检查系统服务。' >&2; result=1; fi
+    exit "$result"
+}
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+trap 'exit 129' HUP
+
+wait_ready() {
+    local port=$1 attempt code
+    for ((attempt=0; attempt<40; attempt++)); do
+        code=$(curl --silent --output /dev/null --write-out '%{http_code}' --max-time 2 "http://127.0.0.1:$port/mcp") || code=000
+        [[ "$code" == 401 ]] && return 0
+        sleep 0.5
+    done
+    return 1
+}
+check_process() {
+    local service=$1 expected=$2 sha=$3 pid
+    systemctl is-active --quiet "$service" || return 1
+    pid=$(systemctl show "$service" -p MainPID --value)
+    [[ "$pid" =~ ^[0-9]+$ && "$pid" -gt 1 ]] || return 1
+    [[ $(readlink -f "/proc/$pid/exe") == "$expected" && $(digest "/proc/$pid/exe") == "$sha" ]] || return 1
+    [[ $(awk '/^Uid:/ {print $2, $3, $4, $5}' "/proc/$pid/status") == '1000 1000 1000 1000' ]] || return 1
+    awk '{ if ($1 <= 0 && 0 < $1 + $3 && $2 - $1 == 0) root_ok=1;
+           if ($1 <= 1000 && 1000 < $1 + $3 && $2 + 1000 - $1 == 1000) user_ok=1 }
+         END { exit !(root_ok && user_ok) }' "/proc/$pid/uid_map" || return 1
+    [[ $(systemctl show "$service" -p User --value) == maxsong &&
+       $(systemctl show "$service" -p Group --value) == maxsong &&
+       $(systemctl show "$service" -p PrivateUsers --value) == no ]]
+}
+check_sources() {
+    [[ -f "$release/SOURCE_SHA256SUMS" && ! -L "$release/SOURCE_SHA256SUMS" &&
+       -f "$release/source-files" && ! -L "$release/source-files" &&
+       $(digest "$release/SOURCE_SHA256SUMS") == "$source_sha" &&
+       $(digest "$release/source-files") == "$files_sha" ]] || return 1
+    (cd "$release/source" && runuser -u maxsong -- /usr/bin/sha256sum --check --status "$release/SOURCE_SHA256SUMS") || return 1
+    # 只运行本安装器内的标准库校验代码；不以 root 解释用户发布目录内的程序。
+    runuser -u maxsong -- /usr/bin/python3 -I -B - "$release/source" "$release/source-files" <<'PY_SOURCE'
+import os, stat, sys
+root, manifest = sys.argv[1:]
+with open(manifest, 'rb') as stream:
+    raw = stream.read()
+assert raw.endswith(b'\0')
+expected = set(raw[:-1].decode().split('\0'))
+actual = set()
+for directory, directories, files in os.walk(root, followlinks=False):
+    for name in directories + files:
+        entry = os.path.join(directory, name)
+        mode = os.lstat(entry).st_mode
+        if name in directories:
+            assert stat.S_ISDIR(mode)
+        else:
+            assert stat.S_ISREG(mode)
+            actual.add(os.path.relpath(entry, root))
+assert actual == expected
+PY_SOURCE
+}
+check_supply() {
+    local port=$1
+    check_sources
+    runuser -u maxsong -- /usr/bin/python3 -I -B "$release/source/scripts/check-agent.py" "http://127.0.0.1:$port/mcp" "$token"
+    runuser -u maxsong -- /usr/bin/python3 -I -B "$release/source/scripts/check-agent.py" "http://127.0.0.1:$port/mcp" "$token" --no-token
+    runuser -u maxsong -- /usr/bin/python3 -I -B "$release/source/scripts/check-agent.py" "http://127.0.0.1:$port/mcp" "$token" --bad-token
+    retry_receipt "$release/source/scripts/check-agent-replica.py" "http://127.0.0.1:$port/mcp" "$token" --expected ready
+    retry_receipt "$release/source/scripts/check-agent-http.py" "http://127.0.0.1:$port" "$token"
+}
+retry_receipt() {
+    local retry result
+    for retry in {1..3}; do
+        if runuser -u maxsong -- /usr/bin/python3 -I -B "$@"; then return 0; else result=$?; fi
+        [[ "$result" == 2 ]] || return "$result"
+        printf '来源恰逢换批，连续回执验收重试 %s/3。\n' "$retry"
+        sleep 1
+    done
+    return 1
+}
+check_cache() {
+    [[ -f "$cache/index.sqlite3" && ! -L "$cache/index.sqlite3" &&
+       $(stat -c '%u:%g:%a:%h' "$cache/index.sqlite3") == 1000:1000:600:1 ]] || return 1
+    local invocation
+    invocation=$(systemctl show "$1" -p InvocationID --value)
+    [[ "$invocation" =~ ^[0-9a-f]{32}$ ]] || return 1
+    journalctl --no-pager --output=cat "_SYSTEMD_INVOCATION_ID=$invocation" > "$scratch/index-start.log" || return 1
+    grep -Eq '派生索引：IndexStatus \{ source: Disk, parsed: 0, reused: [1-9][0-9]*, persistence: Ready \}' "$scratch/index-start.log"
+}
+
+[[ "$EUID" == 0 && $# == 0 ]] || fail '请在服务器以 sudo bash 执行本脚本，不接受额外参数。'
+[[ "$binary_sha" =~ ^[0-9a-f]{64}$ && "$unit_sha" =~ ^[0-9a-f]{64}$ && "$source_sha" =~ ^[0-9a-f]{64}$ && "$files_sha" =~ ^[0-9a-f]{64}$ ]] || fail '安装器未完成发布摘要绑定。'
+[[ $(id -u maxsong) == 1000 && $(id -g maxsong) == 1000 ]] || fail '服务用户身份不符。'
+[[ -d /etc/systemd/system && ! -L /etc/systemd/system && $(stat -c '%u' /etc/systemd/system) == 0 ]] || fail '系统单元目录不安全。'
+mkdir -- "$lock" || fail '另一安装器正在执行或留下锁，请先确认状态。'
+lock_binding=$(identity "$lock")
+[[ -f "$installed" && ! -L "$installed" && $(stat -c '%u:%g:%a:%h' "$installed") == 0:0:644:1 && $(digest "$installed") == "$old_unit_sha" ]] || fail '既有系统单元与已验收 T-036 不同，拒绝覆盖。'
+old_binding=$(identity "$installed")
+[[ $(systemctl show "$unit" -p FragmentPath --value) == "$installed" && -z $(systemctl show "$unit" -p DropInPaths --value) ]] || fail '系统单元加载位置或覆盖配置不同。'
+systemctl is-enabled --quiet "$unit"
+check_process "$unit" "$old_binary" "$old_binary_sha"
+[[ -f "$binary" && ! -L "$binary" && $(digest "$binary") == "$binary_sha" ]] || fail '发布二进制摘要不符。'
+[[ -d "$cache" && ! -L "$cache" && $(stat -c '%u:%g:%a' "$cache") == 1000:1000:700 ]] || fail '须先准备 maxsong 所有的独立 0700 缓存目录。'
+[[ -f "$replica/control/state.json" && -f "$token" ]] || fail '缺少副本回执或既有凭据文件。'
+[[ $(ss -H -ltn 'sport = :4401' | wc -l) == 0 ]] || fail '4401 已占用。'
+source_unit=$release/studiolo-agent-system.service
+[[ -f "$source_unit" && ! -L "$source_unit" && $(stat -c '%u:%h' "$source_unit") == 1000:1 ]] || fail '新单元不是预期普通文件。'
+source_identity=$(stat -c '%d:%i:%f:%s:%u:%h:%Y:%Z' "$source_unit")
+scratch=$(mktemp -d /etc/systemd/system/.studiolo-t040.XXXXXXXX)
+cp --no-dereference -- "$installed" "$scratch/previous.service"
+cp --no-dereference -- "$source_unit" "$scratch/studiolo-agent.service"
+[[ -f "$scratch/studiolo-agent.service" && ! -L "$scratch/studiolo-agent.service" &&
+   $(stat -c '%u:%h' "$scratch/studiolo-agent.service") == 0:1 &&
+   $(stat -c '%d:%i:%f:%s:%u:%h:%Y:%Z' "$source_unit") == "$source_identity" &&
+   $(digest "$scratch/studiolo-agent.service") == "$unit_sha" &&
+   $(digest "$scratch/previous.service") == "$old_unit_sha" ]] || fail '私有单元副本校验失败。'
+chmod 0644 "$scratch/studiolo-agent.service"
+systemd-analyze verify "$scratch/studiolo-agent.service"
+stage=studiolo-t040-stage-${scratch##*.}.service
+[[ $(systemctl show "$stage" -p LoadState --value 2>/dev/null || true) == not-found ]] || fail '阶段单元已存在。'
+printf '%s\n' '开始系统管理器 4401 阶段：MCP、HTTP、新鲜度与缓存重启命中。'
+systemd-run --unit="$stage" --collect --service-type=simple \
+    --property=StartLimitIntervalSec=60 --property=StartLimitBurst=3 \
+    --property=User=maxsong --property=Group=maxsong --property=PrivateUsers=no \
+    --property="WorkingDirectory=$release" --property=Restart=on-failure --property=RestartSec=3 \
+    --property=KillSignal=SIGTERM --property=TimeoutStopSec=20 --property=UMask=0077 \
+    --property=NoNewPrivileges=yes --property=ProtectSystem=strict --property=ProtectHome=read-only \
+    --property="ReadWritePaths=$data $cache" --property=PrivateTmp=yes --property=RestrictSUIDSGID=no \
+    --property=LockPersonality=yes --property='RestrictAddressFamilies=AF_UNIX AF_INET' \
+    --property=SystemCallArchitectures=native --property=MemoryMax=512M --property=TasksMax=64 \
+    -- "$binary" serve --replica-root "$replica" --replica-max-age-secs 300 \
+    --allow 项目/Studiolo --allow _规则 --data "$data" --index-cache "$cache" --port 4401
+stage_binding=$(identity "/run/systemd/transient/$stage")
+wait_ready 4401
+check_process "$stage" "$binary" "$binary_sha"
+check_supply 4401
+systemctl restart "$stage"
+wait_ready 4401
+check_process "$stage" "$binary" "$binary_sha"
+check_cache "$stage" || fail '阶段重启未验证 Disk/parsed=0/Ready；正式服务未切换。'
+check_supply 4401
+stop_stage
+is_unit "$old_binding" "$old_unit_sha" || fail '验收期间原系统单元已变化。'
+check_process "$unit" "$old_binary" "$old_binary_sha"
+new_binding=$(identity "$scratch/studiolo-agent.service")
+switched=1
+mv -T -- "$scratch/studiolo-agent.service" "$installed"
+systemctl daemon-reload
+[[ $(systemctl show "$unit" -p FragmentPath --value) == "$installed" && -z $(systemctl show "$unit" -p DropInPaths --value) ]] || fail '升级后单元加载位置变化。'
+is_unit "$new_binding" "$unit_sha" || fail '新系统单元绑定变化。'
+systemctl restart "$unit"
+wait_ready 4400
+check_process "$unit" "$binary" "$binary_sha"
+check_supply 4400
+check_cache "$unit" || fail '正式服务持久缓存未命中。'
+is_unit "$new_binding" "$unit_sha" || fail '最终系统单元绑定变化。'
+systemctl is-enabled --quiet "$unit"
+committed=1
+printf '%s\n' 'T-040 系统服务升级完成：MCP/HTTP、身份拒绝、新鲜度和磁盘缓存命中均通过。'

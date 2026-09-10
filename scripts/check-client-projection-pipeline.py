@@ -81,6 +81,15 @@ def run(binary):
             PIPE.write(p.source / "_规则/skills/demo/references/index.md", "# 静态技能目录\n")
             p.push()
             p.start()
+            # 发布探针在真实隔离 HTTP 服务上验收，避免只验证自己构造的协议样例。
+            token_path = root / "http-probe.token"
+            PIPE.write(token_path, p.token)
+            probe = subprocess.run([sys.executable, "-B", str(SCRIPTS / "check-agent-http.py"),
+                                    p.url.removesuffix("/mcp"), str(token_path)],
+                                   capture_output=True, text=True, timeout=60)
+            require(p.token not in probe.stdout + probe.stderr, "HTTP探针泄露凭据")
+            require(probe.returncode == 0, "真实 HTTP 发布探针失败：" + probe.stderr.strip())
+            token_path.unlink()
             cfg = fixture_config(url=p.url.replace("/mcp", "/read"))
             cfg["rules"].append("项目/Studiolo/CLAUDE.md")
             cfg["skills"] = ["_规则/skills/demo"]

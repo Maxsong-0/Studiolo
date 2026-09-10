@@ -94,7 +94,7 @@ class ReplicaProbeTests(unittest.TestCase):
                     batch = replies()
                     status, headers, body = batch[index]
                     batch[index] = (status, headers, body.replace(fresh(), fresh(**changes)))
-                    self.assertEqual(self.run_probe(batch)[0], 1)
+                    self.assertEqual(self.run_probe(batch)[0], 2)
         self.assertEqual(self.run_probe(replies("stale"))[0], 1)
 
     def test_elapsed_age_can_advance_without_changing_receipt(self):
