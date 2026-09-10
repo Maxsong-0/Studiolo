@@ -60,3 +60,21 @@ macOS 首次全工作区运行中，既有 Auth 并发测试 `revoked_pending_pi
 Linux 使用固定镜像 `rust@sha256:0e2bcaef56d041a486784e54104a81aebe0da44bd03019bd70bc0401e42e4a97`。本轮未执行服务器 x86_64 原生验收，也未触发远端 CI、生成发布包、合并推送、安装自动任务或更换线上服务。启用与回滚按 [操作说明](replica-operations.md) 执行，T-036 的实际启用验收仍待完成；完整 M3、客户端推模式及 M2 canonical 同步均不在本次完成范围。
 
 本机日志保存在 `/private/tmp/studiolo-t036-macos-tests.log`、`/private/tmp/studiolo-t036-macos-remaining.log` 与 `/private/tmp/studiolo-t036-linux.log`；这些临时文件可能被系统清理，CI 已登记相同回归入口，供后续复验。
+
+## 2026-09-10 合并与实际部署进展
+
+- 用户明确授权合并上线，并单独明确授权白名单两目录向指定服务器传输及每 60 秒持续同步。PR #1 已合并为 `66dc7e3`，main CI `34498561740` 通过。
+- 运行包 `m3-t036-20260910-replica01` 来自干净提交 `c9cc85b`；后续 `327b188` 仅修正权限负测的 umask 依赖，运行代码与合并 main 相同。包内原始 Python 夹具在 umask022 下通过，修正版在 Mac 与服务器 umask077 下通过；未修改不可变包内源码。
+- Linux x86_64 服务器实际通过 50 个 Rust 测试程序共 302 项，44 项同步回归、8 项上线探针及 6 阶段 Python→Rust 联调；4401 直接进程验证四工具先 ready、等待 62 秒后 stale，来源时间不变。
+- 首次正式用户级 systemd 切换未通过：`ProtectSystem/ProtectHome` 隔离隐式创建仅映射 UID1000 的用户命名空间，宿主 root 显示为 65534，私有读取拒绝 `unsafe_root`。旧用户服务已恢复 active/running。直接回环进程验收不能替代实际 systemd 沙箱验收。
+- 托管模式改用系统管理器建立相同只读隔离，`User=maxsong` / `Group=maxsong` / `PrivateUsers=no`。不接受 overflow UID、不放宽 Rust 校验。系统级安装仍需服务器交互 sudo，未完成前不记为新 MCP 已上线。
+- Mac 独立任务 `me.studiolo.agent-sync` 已加载，目录 `~/.local/share/studiolo-agent-sync/t036-c9cc85b`；已实证两个自动轮次均 ready、来源确认时间递增、stderr 为空。自动同步目标是新的 `studiolo-agent-replica`，当前旧线上服务仍读旧目录。
+- 服务器 `.local` / `.local/share` 的组写权限已由 0775 收紧为 0755；最终副本目录与文件仍为 0700/0600。网页 4318/4319 和 Tunnel 未改。
+
+| 校验对象 | SHA-256 |
+|---|---|
+| 完整运行包 tar.gz | `a30c2d5611a47fb49ed6ca24e7891da42fb4c32ce147e78b3edc047cc9c1b744` |
+| 服务二进制 | `6c574ea719cde129549354b44b015e144c1ffb9b581adf65aa51d5c8f9979a08` |
+| 包内 SHA256SUMS | `bca1260f6af7bdcff6c27b0e04c1ce6313c55c37aa5e396b146fdf83e1a017b4` |
+
+本轮详细日志在 `/private/tmp/studiolo-t036-release/`；服务器不可变包保留 `native-tests.log` 与原用户单元 `rollback.service` / `rollback.service.content`。最终系统级切换证据另行追加。

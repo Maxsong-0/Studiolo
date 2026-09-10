@@ -36,7 +36,7 @@ jobs:
 
       - name: 部署脚本回归
         run: |
-          for script in scripts/package-agent.sh scripts/run-agent-tests.sh scripts/sync-agent-vault.sh scripts/package-preview.sh scripts/run-preview-tests.sh; do
+          for script in scripts/package-agent.sh scripts/run-agent-tests.sh scripts/sync-agent-vault.sh scripts/package-preview.sh scripts/run-preview-tests.sh deploy/agent/install-t036-system.sh; do
             bash -n "$script"
           done
           python3 scripts/test-check-agent.py

@@ -8,9 +8,9 @@ StartLimitBurst=3
 [Service]
 Type=simple
 WorkingDirectory=%h/.local/share/studiolo-agent-releases/@RELEASE@
-# 白名单完整批次由 scripts/sync-agent-vault.sh 推送；先完成首批同步再启用本单元。
-# 私有库/账本沿用既有目录；副本每次读取完整验证，超过 300 秒不再声称新鲜。
-ExecStart=%h/.local/share/studiolo-agent-releases/@RELEASE@/bin/studiolo-agent serve --replica-root %h/.local/share/studiolo-agent-replica --replica-max-age-secs 300 --allow 项目/Studiolo --allow _规则 --data %h/.local/share/studiolo-agent --port 4400
+# 仅供历史直接副本模式/回滚使用；托管副本须用 studiolo-agent-system.service.in。
+# 用户管理器的挂载隔离会折叠宿主 UID，无法满足托管副本的祖先属主检查。
+ExecStart=%h/.local/share/studiolo-agent-releases/@RELEASE@/bin/studiolo-agent serve --vault %h/.local/share/studiolo-agent-vault --allow 项目/Studiolo --allow _规则 --data %h/.local/share/studiolo-agent --port 4400
 Restart=on-failure
 RestartSec=3
 KillSignal=SIGTERM

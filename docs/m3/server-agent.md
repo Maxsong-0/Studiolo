@@ -58,7 +58,9 @@ bash scripts/package-agent.sh "$PWD/target/agent-packages/<唯一发布名>"
 解析步骤要求 `architecture`、`linux_path_security`、`mcp_contract`、`roots_contract`、`signpost_contract`、`agent_store_contract` 六个目标齐全。
 local-server 等未随包发布的 crate 测试由 CI 与各自运行包负责。
 
-## 服务器安装
+## 历史用户服务安装（T-034，直接副本模式）
+
+以下保留为旧 `--vault` 服务的安装记录。T-036 托管副本须使用系统级单元，见 [自动同步运维](replica-operations.md)；不得按以下用户级步骤切换 `--replica-root`。
 
 ```bash
 # 1. 预建目录（一次性）

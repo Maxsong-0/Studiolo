@@ -21,21 +21,30 @@ bash scripts/sync-agent-vault.sh
 ## 2. 更新 MCP 服务（服务器）
 
 先构建并校验新的 `studiolo-agent` 运行包，执行随包原生测试；打包方法沿用 [服务器部署](server-agent.md)。
-新包单元已经使用：
+托管副本使用系统级 `studiolo-agent-system.service`，进程仍以 `User=maxsong` / `Group=maxsong` 运行。
+保留 `ProtectSystem=strict`、`ProtectHome=read-only`、私有库唯一可写、`NoNewPrivileges` 与资源上限，并显式 `PrivateUsers=no`。其参数为：
 
 ```text
 serve --replica-root /home/maxsong/.local/share/studiolo-agent-replica --replica-max-age-secs 300 --allow 项目/Studiolo --allow _规则 --data /home/maxsong/.local/share/studiolo-agent --port 4400
 ```
 
-第一次切换前，在独立回环端口（例如 4401）启动新程序，使用既有类型身份验证 initialize、四工具与匿名 401；
-确认新鲜度、版本和读取审计后，再备份原 `studiolo-agent.service` 的文件或链接并更换单元。只重启 MCP 服务，网页和 Tunnel 无需调整。
+必须先由系统管理器使用相同隔离参数，在独立回环端口（例如 4401）启动新程序，验证实际 PID/UID/二进制、initialize、四工具与匿名 401；
+确认新鲜度、版本和读取审计后，再安装 `/etc/systemd/system/studiolo-agent.service`，停止并禁用旧用户级 MCP 单元，启用系统级单元。网页和 Tunnel 无需调整。
 私有身份库/审计账本沿用，不重复初始化、不重新签发 token。真实凭据不放进聊天、命令参数或日志。
+
+2026-09-10 实测：Ubuntu 26.04 的用户 systemd 在挂载隔离下只映射当前用户，宿主 root 显示为 UID 65534。
+因此托管副本会正确拒绝该环境中的未知祖先属主；仅在用户单元写 `PrivateUsers=no` 不能解除这个隐式映射。
+不能把 65534 或观测到的根 UID 一律当作可信 root，因为其他未映射宿主用户也会折叠成同一个值。使用系统管理器创建隔离，不修改 Rust 的属主验证。
+
+本次发布的一次性安装器在 `deploy/agent/install-t036-system.sh`；它只接受已校验的 `m3-t036-20260910-replica01` 二进制和系统单元摘要，不是任意版本的通用安装入口。
+上传后的执行方式为 `ssh -t maxsong@192.168.100.169 'sudo bash /home/maxsong/studiolo-t036-deploy-system.sh'`。
+安装器先在系统管理器的 4401 单元检查实际二进制、UID、用户命名空间及完整供给链，通过后才停旧用户服务并切到系统 4400；错误或中断通过退出守卫恢复旧用户服务，不覆盖既有或被第三方替换的系统单元。
 
 可使用 `python3 -B scripts/check-agent-replica.py <mcp_url> <token文件> --expected ready` 验证握手及四工具回执一致；
 停更超过阈值后改用 `--expected stale`。探针只输出已验证的版本与确认时间，不输出凭据或正文。
 同步器及 Rust 私有读取要求副本祖先目录不可被组或其他用户写入；既有目录不满足时先核对所有者，再收紧对应写权限，不能放宽接收校验。
 
-回滚时先恢复备份的单元绑定，再执行 `systemctl --user daemon-reload` 和 `systemctl --user restart studiolo-agent.service`。
+回滚时停止并禁用本次系统级单元，再恢复旧用户级单元绑定，执行 `systemctl --user daemon-reload` 和 `systemctl --user enable --now studiolo-agent.service`；两种管理器不能同时占用 4400。
 旧单元仍可读取保留的旧副本；该旧副本不会被新同步脚本更新，因此回滚后的内容可能陈旧。
 
 ## 3. 生成并启用自动任务（Mac）
