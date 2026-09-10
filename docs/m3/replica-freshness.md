@@ -77,4 +77,14 @@ Linux 使用固定镜像 `rust@sha256:0e2bcaef56d041a486784e54104a81aebe0da44bd0
 | 服务二进制 | `6c574ea719cde129549354b44b015e144c1ffb9b581adf65aa51d5c8f9979a08` |
 | 包内 SHA256SUMS | `bca1260f6af7bdcff6c27b0e04c1ce6313c55c37aa5e396b146fdf83e1a017b4` |
 
-本轮详细日志在 `/private/tmp/studiolo-t036-release/`；服务器不可变包保留 `native-tests.log` 与原用户单元 `rollback.service` / `rollback.service.content`。最终系统级切换证据另行追加。
+本轮详细日志在 `/private/tmp/studiolo-t036-release/`；服务器不可变包保留 `native-tests.log` 与原用户单元 `rollback.service` / `rollback.service.content`。
+
+### 系统级切换与公网验收完成（16:10–16:12 UTC）
+
+用户在自己的终端完成 sudo 认证并运行固定版本安装器。首次系统阶段仅因安装器错误要求命名空间编号相同而退出，未触碰正式用户服务；修正为分别验证 UID0/1000 映射保持不变，六种正负输入通过后重跑成功。系统管理器可以创建身份映射不变的新命名空间，不能用编号不同推断 UID 已折叠。
+
+- 系统服务 `/etc/systemd/system/studiolo-agent.service` 已 enabled、active/running；MainPID 40172，启动 16:10:31 UTC，NRestarts=0。实际二进制摘要、UID1000、root/maxsong 映射均由安装器检查。
+- 系统单元 SHA-256 为 `217bdceda8b1e4cbc166973e0c14bc0fe7c7f8aee9493a1d11b3798bd086b565`。保持只读保护、私有库唯一可写、512 MiB 内存上限；复核时使用约 63 MiB。旧用户服务 inactive/disabled，旧单元与旧副本保留。
+- 公网 `https://studiolo-agent.maxsong.me/mcp` 实测 initialize → 四工具同一来源回执且 ready，完整内容链与白名单拒绝通过；匿名/坏 token 分别返回401。首轮检查碰到自动同步更新回执而拒绝跨确认窗口，稳定窗口重跑通过，未放宽检查。
+- Mac 自动任务已连续成功，来源确认时间推进；确认 16:11:42 UTC 的副本在公网年龄36～40秒、阈值300秒。网页4318/4319与Tunnel的PID分别仍为8400/32159/9087，启动时间与发布前相同；4401临时服务已停止。
+- 这关闭 T-036 的实际启用门槛，不把 ADR-015 客户端推模式、完整 M3 或 M2 canonical 同步算完成。后续运维使用系统管理器的 `systemctl status studiolo-agent.service`，不能误查已禁用的同名用户单元。
