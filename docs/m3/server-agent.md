@@ -5,6 +5,8 @@ T-034：用户于 2026-09-07 指定部署到 `maxsong@192.168.100.169`，把 M3 
 真实 vault 仍在 Mac：服务器只持有**白名单子树的只读副本**（`项目/Studiolo`、`_规则`），
 不复制 vault 其他内容，不提供写入，不改变 M2 未完成的事实。副本会陈旧，见「副本同步」。
 
+**2026-09-10 更新（T-036）**：已上线 `m3-t036-20260910-replica01`，系统级 `studiolo-agent.service` 以 maxsong 运行并读取托管副本；旧用户单元已禁用。Mac 每 60 秒自动同步已启用，原生302项与公网正反验收通过。当前状态和切换证据见 [资料同步验收](replica-freshness.md)，运维与回滚见 [系统级操作说明](replica-operations.md)。以下 T-034 段落保留为历史。
+
 ## 边界与已核实环境
 
 - 服务器与 [T-008](../m1/server-preview.md) 相同：Ubuntu 26.04 x86_64、用户级 systemd 259、Linger=yes；无 Rust/Node/Docker。
@@ -58,7 +60,9 @@ bash scripts/package-agent.sh "$PWD/target/agent-packages/<唯一发布名>"
 解析步骤要求 `architecture`、`linux_path_security`、`mcp_contract`、`roots_contract`、`signpost_contract`、`agent_store_contract` 六个目标齐全。
 local-server 等未随包发布的 crate 测试由 CI 与各自运行包负责。
 
-## 服务器安装
+## 历史用户服务安装（T-034，直接副本模式）
+
+以下保留为旧 `--vault` 服务的安装记录。T-036 托管副本须使用系统级单元，见 [自动同步运维](replica-operations.md)；不得按以下用户级步骤切换 `--replica-root`。
 
 ```bash
 # 1. 预建目录（一次性）

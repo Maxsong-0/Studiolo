@@ -37,6 +37,7 @@ STUDIOLO_INPUTS=(
   scripts/prepare-agent-sync.py scripts/test-prepare-agent-sync.py
   scripts/check-replica-pipeline.py
   deploy/agent/studiolo-agent.service.in
+  deploy/agent/studiolo-agent-system.service.in
 )
 COPYFILE_DISABLE=1 tar -cf - "${STUDIOLO_INPUTS[@]}" |
   tar -xf - -C "$STUDIOLO_OUT/source"
@@ -56,6 +57,8 @@ cp "$STUDIOLO_OUT/source/scripts/check-agent.py" "$STUDIOLO_OUT/payload/"
 cp "$STUDIOLO_OUT/source/deploy/agent/studiolo-agent.service.in" "$STUDIOLO_OUT/payload/"
 sed "s/@RELEASE@/$STUDIOLO_RELEASE/g" \
   "$STUDIOLO_OUT/payload/studiolo-agent.service.in" > "$STUDIOLO_OUT/payload/studiolo-agent.service"
+sed "s/@RELEASE@/$STUDIOLO_RELEASE/g" \
+  "$STUDIOLO_OUT/source/deploy/agent/studiolo-agent-system.service.in" > "$STUDIOLO_OUT/payload/studiolo-agent-system.service"
 
 docker pull --platform linux/amd64 "$STUDIOLO_IMAGE"
 # Cargo 缓存可能保留编译时的绝对源码路径；每个发布包使用全新目标卷，注册表缓存卷与预览包共用。
