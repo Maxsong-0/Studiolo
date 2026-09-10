@@ -118,7 +118,11 @@ check_process() {
     [[ $(digest "/proc/$pid/exe") == "$binary_sha" ]] || fail '运行中二进制摘要不符。'
     [[ $(awk '/^Uid:/ {print $2, $3, $4, $5}' "/proc/$pid/status") == '1000 1000 1000 1000' ]] ||
         fail '运行中服务 UID 不符合 maxsong。'
-    [[ $(readlink "/proc/$pid/ns/user") == $(readlink /proc/1/ns/user) ]] || fail '服务仍处于用户 UID 映射命名空间。'
+    # systemd 可以创建保持身份映射的新命名空间；比较 inode 会误拒绝这种安全配置。
+    # 必须同时保留 root 和 maxsong 的 UID，拒绝仅映射当前用户或改写任一身份。
+    awk '''{ if ($1 <= 0 && 0 < $1 + $3 && $2 - $1 == 0) root_ok=1;
+             if ($1 <= 1000 && 1000 < $1 + $3 && $2 + 1000 - $1 == 1000) user_ok=1 }
+         END { exit !(root_ok && user_ok) }''' "/proc/$pid/uid_map" || fail '服务 UID 映射未保留 root 与 maxsong 身份。'
     [[ $(systemctl show "$service" -p User --value) == maxsong &&
        $(systemctl show "$service" -p Group --value) == maxsong &&
        $(systemctl show "$service" -p PrivateUsers --value) == no ]] || fail '服务身份或用户命名空间不符。'
