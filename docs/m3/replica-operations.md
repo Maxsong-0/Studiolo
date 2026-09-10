@@ -31,6 +31,10 @@ serve --replica-root /home/maxsong/.local/share/studiolo-agent-replica --replica
 确认新鲜度、版本和读取审计后，再备份原 `studiolo-agent.service` 的文件或链接并更换单元。只重启 MCP 服务，网页和 Tunnel 无需调整。
 私有身份库/审计账本沿用，不重复初始化、不重新签发 token。真实凭据不放进聊天、命令参数或日志。
 
+可使用 `python3 -B scripts/check-agent-replica.py <mcp_url> <token文件> --expected ready` 验证握手及四工具回执一致；
+停更超过阈值后改用 `--expected stale`。探针只输出已验证的版本与确认时间，不输出凭据或正文。
+同步器及 Rust 私有读取要求副本祖先目录不可被组或其他用户写入；既有目录不满足时先核对所有者，再收紧对应写权限，不能放宽接收校验。
+
 回滚时先恢复备份的单元绑定，再执行 `systemctl --user daemon-reload` 和 `systemctl --user restart studiolo-agent.service`。
 旧单元仍可读取保留的旧副本；该旧副本不会被新同步脚本更新，因此回滚后的内容可能陈旧。
 

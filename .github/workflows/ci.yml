@@ -40,6 +40,7 @@ jobs:
             bash -n "$script"
           done
           python3 scripts/test-check-agent.py
+          python3 scripts/test-check-agent-replica.py
           python3 scripts/test-sync-agent-vault.py
           python3 scripts/test-prepare-agent-sync.py
           python3 scripts/test-replica-receiver.py
