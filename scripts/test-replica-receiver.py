@@ -159,6 +159,8 @@ class ReceiverTests(unittest.TestCase):
 
     def test_existing_managed_permissions_and_link_rejected(self):
         self.server.mkdir(mode=0o755)
+        # mkdir 的 mode 会被部署环境 umask 077 收紧；负测须显式制造 0755。
+        self.server.chmod(0o755)
         self.run_receive(code=1)
         self.assertFalse((self.server / "control").exists())
         self.server.chmod(0o700)
