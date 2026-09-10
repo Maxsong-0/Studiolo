@@ -22,6 +22,7 @@ fn serve_requires_absolute_paths_and_at_least_one_allow() {
     assert_eq!(
         parsed,
         Command::Serve(ServeOptions {
+            index_cache: None,
             vault: Some(PathBuf::from("/v")),
             replica_root: None,
             replica_max_age_secs: 300,
@@ -79,4 +80,24 @@ fn admin_subcommands_are_closed() {
         .unwrap(),
         Command::Admin(AdminCommand::Reads { limit: 5, .. })
     ));
+}
+
+#[test]
+fn index_cache_is_an_optional_single_absolute_path() {
+    let base = ["serve", "--vault", "/v", "--allow", "a", "--data", "/d"];
+    let mut args = strings(&base);
+    args.extend(strings(&["--index-cache", "/cache"]));
+    let Command::Serve(options) = parse(&args).unwrap() else {
+        panic!("serve")
+    };
+    assert_eq!(options.index_cache, Some(PathBuf::from("/cache")));
+    for suffix in [
+        vec!["--index-cache", "relative"],
+        vec!["--index-cache"],
+        vec!["--index-cache", "/one", "--index-cache", "/two"],
+    ] {
+        let mut args = strings(&base);
+        args.extend(strings(&suffix));
+        assert!(parse(&args).is_err());
+    }
 }

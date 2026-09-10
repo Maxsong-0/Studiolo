@@ -81,7 +81,7 @@ pub(crate) fn source_violations(
     if (has_generic_write && !runner_writes_only_its_temp_result) || imports_filesystem_authority {
         violations.push(AuthorityViolation::GenericWrite);
     }
-    if let Some((_, connection_path, _)) = private_storage_policy(crate_name)
+    if let Some((_, connection_path, _)) = private_storage_policy(crate_name, source_path)
         && source.contains("Connection::open")
     {
         let compact = source.split_whitespace().collect::<String>();
@@ -95,7 +95,10 @@ pub(crate) fn source_violations(
     violations
 }
 
-fn private_storage_policy(crate_name: &str) -> Option<(&str, &str, &str)> {
+fn private_storage_policy(
+    crate_name: &str,
+    path: &Path,
+) -> Option<(&'static str, &'static str, &'static str)> {
     match crate_name {
         "studiolo-audit-ledger" => Some((
             "crates/audit-ledger/src/sqlite/storage.rs",
@@ -107,6 +110,16 @@ fn private_storage_policy(crate_name: &str) -> Option<(&str, &str, &str)> {
             "crates/auth/src/session/database.rs",
             "auth.sqlite3",
         )),
+        "studiolo-supply"
+            if path.ends_with("crates/supply/src/index_cache/paths.rs")
+                || path.ends_with("crates/supply/src/index_cache/mod.rs") =>
+        {
+            Some((
+                "crates/supply/src/index_cache/paths.rs",
+                "crates/supply/src/index_cache/mod.rs",
+                "index.sqlite3",
+            ))
+        }
         "studiolo-supply" => Some((
             "crates/supply/src/storage.rs",
             "crates/supply/src/database.rs",
@@ -117,7 +130,7 @@ fn private_storage_policy(crate_name: &str) -> Option<(&str, &str, &str)> {
 }
 
 fn private_storage_remainder(crate_name: &str, path: &Path, source: &str) -> String {
-    let Some((storage_path, _, database_name)) = private_storage_policy(crate_name) else {
+    let Some((storage_path, _, database_name)) = private_storage_policy(crate_name, path) else {
         return source.to_owned();
     };
     if !path.ends_with(storage_path) {
@@ -140,6 +153,9 @@ fn private_storage_remainder(crate_name: &str, path: &Path, source: &str) -> Str
         "file.sync_all()",
     ] {
         remainder = remainder.replace(allowed, "");
+    }
+    if path.ends_with("crates/supply/src/index_cache/paths.rs") {
+        remainder = remainder.replace("fs::canonicalize(", "");
     }
     remainder
 }

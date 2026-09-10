@@ -7,7 +7,8 @@ use crate::IndexedDocument;
 pub(crate) use crate::{link_parse::parse_outgoing, link_resolve::resolve};
 
 /// Parsed target inside `[[target#heading|alias]]`.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct WikilinkTarget {
     /// Exact text between the square brackets.
     pub raw: String,

@@ -108,3 +108,12 @@ warning/结果表达，不用字符串错误控制流程。`InMemoryVaultIndex` 
 fallback、Unicode 标题树、权威中英文别名/规范键优先/raw/未知键、全部 status 闭合集、
 相对/根/就近/歧义/悬空链接、只对 resolved link 建反链、health 计数、四种 source profile
 及 Restricted 默认，并以源码扫描证明 crate 没有 canonical 文件写 API。
+
+## 7. M3 单篇解析缓存（T-039）
+
+`InMemoryVaultIndex::rebuild_cached` 接收本次 `MarkdownDocument` 和可选 `ParseCache`，
+返回代次、下一批缓存与 `ParseCacheStats { reused, parsed }`。原 `rebuild` 保持兼容。
+匹配路径、精确内容摘要与长度后只复用单篇解析；全局链接、反链和来源 profile 均重新派生。
+`ParseCache::encode/decode` 是纯有界编码，不读取或写入任何路径；正文始终由本次输入提供。
+格式/解析版本不匹配应丢弃缓存；预算超限只停止持久化，不阻止有效文档构建内存视图。
+缓存信任边界、私有 SQLite 和完整副本验证见 [M3 持久派生索引](../m3/persistent-index.md)。

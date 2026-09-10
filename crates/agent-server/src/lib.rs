@@ -5,6 +5,7 @@
 pub mod admin;
 pub mod auth;
 mod http_text;
+pub mod index;
 pub mod options;
 pub mod refresh;
 pub mod serve;

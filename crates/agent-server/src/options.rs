@@ -5,7 +5,7 @@ use std::path::PathBuf;
 /// 用法说明。
 pub const USAGE: &str = "studiolo-agent：Studiolo 供给面 MCP 主外壳（M3）\n\n\
 用法：\n  \
-studiolo-agent serve (--vault </绝对路径/vault> | --replica-root </绝对路径/副本>) [--replica-max-age-secs 300] --allow <相对目录> [--allow …] --data </绝对路径/私有目录> [--port 4400]\n  \
+studiolo-agent serve (--vault </绝对路径/vault> | --replica-root </绝对路径/副本>) [--replica-max-age-secs 300] --allow <相对目录> [--allow …] --data </绝对路径/私有目录> [--index-cache </独立700目录>] [--port 4400]\n  \
 studiolo-agent admin init --data </绝对路径/私有目录>\n  \
 studiolo-agent admin type-issue --data <私有目录> --type <claude|codex|grok|…>\n  \
 studiolo-agent admin type-revoke --data <私有目录> --type <类型名>\n  \
@@ -28,6 +28,8 @@ pub struct ServeOptions {
     pub allow: Vec<String>,
     /// 私有数据目录（绝对路径）。
     pub data: PathBuf,
+    /// 可丢弃的派生索引缓存；显式独立私有目录，不能与源或身份目录重叠。
+    pub index_cache: Option<PathBuf>,
     /// loopback 端口。
     pub port: u16,
 }
@@ -144,6 +146,7 @@ pub fn parse(args: &[String]) -> Result<Command, String> {
                         | "--allow"
                         | "--data"
                         | "--port"
+                        | "--index-cache"
                 ) {
                     return Err(format!("serve 不接受参数 {key}"));
                 }
@@ -190,6 +193,9 @@ pub fn parse(args: &[String]) -> Result<Command, String> {
                 replica_max_age_secs,
                 allow,
                 data: absolute(required(&pairs, "--data")?, "--data")?,
+                index_cache: optional(&pairs, "--index-cache")?
+                    .map(|value| absolute(value, "--index-cache"))
+                    .transpose()?,
                 port,
             }))
         }

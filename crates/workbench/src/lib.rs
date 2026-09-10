@@ -22,7 +22,9 @@ mod tree_validate;
 use std::collections::BTreeMap;
 
 use studiolo_core::VaultPath;
-use studiolo_vault_index::{InMemoryVaultIndex, MarkdownDocument, VaultIndex};
+use studiolo_vault_index::{
+    InMemoryVaultIndex, MarkdownDocument, ParseCache, ParseCacheStats, VaultIndex,
+};
 
 pub use dto::*;
 pub use navigation_dto::*;
@@ -45,6 +47,23 @@ impl WorkbenchReadModel {
     pub fn build(documents: &[MarkdownDocument]) -> Result<Self, IndexError> {
         let mut index = InMemoryVaultIndex::new();
         index.rebuild(documents)?;
+        Self::from_index(documents, index)
+    }
+
+    /// 复用单文解析；内容来自本次输入，全局链接与项目视图重新派生。
+    pub fn build_cached(
+        documents: &[MarkdownDocument],
+        previous: Option<&ParseCache>,
+    ) -> Result<(Self, ParseCache, ParseCacheStats), IndexError> {
+        let mut index = InMemoryVaultIndex::new();
+        let (_, cache, stats) = index.rebuild_cached(documents, previous)?;
+        Ok((Self::from_index(documents, index)?, cache, stats))
+    }
+
+    fn from_index(
+        documents: &[MarkdownDocument],
+        index: InMemoryVaultIndex,
+    ) -> Result<Self, IndexError> {
         let mut views = BTreeMap::new();
         let mut inputs = BTreeMap::new();
         let mut diagnostics = Vec::new();

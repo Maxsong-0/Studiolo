@@ -90,6 +90,7 @@ pub async fn fixture() -> (TempDir, HttpServer) {
         "# Beta 不在白名单\n",
     );
     let server = spawn(ServeOptions {
+        index_cache: None,
         vault: Some(vault),
         replica_root: None,
         replica_max_age_secs: 300,

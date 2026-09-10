@@ -18,6 +18,7 @@ async fn fixture(age_ms: i64) -> (ReplicaFixture, HttpServer) {
     replica.observed = jiff::Timestamp::now().as_millisecond() - age_ms;
     replica.publish(FIRST, "oldmarker", replica.observed);
     let server = support::spawn(ServeOptions {
+        index_cache: None,
         vault: None,
         replica_root: Some(replica.root.clone()),
         replica_max_age_secs: 300,
