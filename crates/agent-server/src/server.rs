@@ -7,12 +7,7 @@ mod session;
 use std::sync::{Arc, OnceLock};
 
 use crate::state::{AppState, SupplySource};
-use rmcp::{
-    ErrorData as McpError,
-    handler::server::wrapper::Parameters,
-    model::{CallToolResult, ContentBlock, ProtocolVersion},
-    tool, tool_router,
-};
+use rmcp::{ErrorData as McpError, model::ProtocolVersion};
 use studiolo_core::VaultPath;
 use studiolo_supply::{Instance, SearchMode, SearchQuery, SupplyError, audit::Actor};
 
@@ -34,6 +29,21 @@ pub const TOOLS: &[(&str, &str)] = &[
     ),
 ];
 
+/// HTTP 续读说明放在入口名内，使各裁剪等级均保留并纳入预算。
+const HTTP_TOOLS: &[(&str, &str)] = &[
+    (
+        "所有 GET 均带 Authorization: Bearer <类型令牌>；续读带 Studiolo-Session-Id: <握手响应头值>",
+        "会话过期后重新握手",
+    ),
+    ("GET /read/handshake", "首次握手或重取冷启动路牌"),
+    ("GET /read/entries?project=…", "列出白名单项目条目"),
+    ("GET /read/note?path=…", "读取白名单笔记"),
+    (
+        "GET /read/search?project=…&text=…&mode=full_text|path",
+        "查询参数需 URL 编码",
+    ),
+];
+
 const MAX_NOTE_BYTES: u64 = 4 * 1024 * 1024;
 
 /// 一个 MCP 会话。
@@ -41,6 +51,7 @@ pub struct AgentSession {
     state: Arc<AppState>,
     session_ref: String,
     instance: OnceLock<Instance>,
+    http: bool,
 }
 
 /// `list_entries` 参数。
@@ -72,27 +83,18 @@ pub struct SearchArgs {
     pub mode: Option<String>,
 }
 
-fn text_result(text: String) -> CallToolResult {
-    CallToolResult::success(vec![ContentBlock::text(text)])
-}
-
-#[tool_router]
 impl AgentSession {
-    #[tool(
-        description = "重取冷启动路牌：我是谁、项目状态、能力、待我做的事、硬约束、继续拉的入口；≤2000 token"
-    )]
-    async fn handshake(&self) -> Result<CallToolResult, McpError> {
+    /// 共用只读握手；由外壳选择已计入预算的续读入口。
+    pub(crate) async fn text_handshake(&self) -> Result<String, McpError> {
         let instance = self.authorize("handshake")?;
-        Ok(text_result(self.signpost(&instance).await?))
+        self.signpost(&instance).await
     }
 
-    #[tool(
-        description = "列出一个白名单项目的全部条目（路径、类型、字节数）；每行：kind<TAB>path<TAB>bytes"
-    )]
-    async fn list_entries(
+    /// 共用目录供给；返回前完成该项目读取审计。
+    pub(crate) async fn text_list_entries(
         &self,
-        Parameters(args): Parameters<ListEntriesArgs>,
-    ) -> Result<CallToolResult, McpError> {
+        args: ListEntriesArgs,
+    ) -> Result<String, McpError> {
         let instance = self.authorize("list_entries")?;
         let prefix = self.allowed_project(&instance, "list_entries", &args.project)?;
         let generation = self.generation(&instance, "list_entries").await?;
@@ -116,22 +118,17 @@ impl AgentSession {
             ));
         }
         self.audit_read(&instance, prefix.as_str(), "-", "list_entries")?;
-        Ok(text_result(format!(
+        Ok(format!(
             "{}# 代次 {} · {} 条\n{}",
             Self::freshness(&generation)?,
             generation.number,
             lines.len(),
             lines.join("\n")
-        )))
+        ))
     }
 
-    #[tool(
-        description = "读一篇白名单内笔记的当前正文；返回首行 `revision <hex>` 后接正文；越白名单一律拒绝"
-    )]
-    async fn read_note(
-        &self,
-        Parameters(args): Parameters<ReadNoteArgs>,
-    ) -> Result<CallToolResult, McpError> {
+    /// 共用笔记供给；白名单、版本和审计不依赖传输外壳。
+    pub(crate) async fn text_read_note(&self, args: ReadNoteArgs) -> Result<String, McpError> {
         let instance = self.authorize("read_note")?;
         let actor = Actor::instance(&instance.agent_type, &instance.id);
         let path = match VaultPath::parse(&args.path) {
@@ -176,20 +173,15 @@ impl AgentSession {
         };
         let revision = note.revision.to_string();
         self.audit_read(&instance, path.as_str(), &revision, "read_note")?;
-        Ok(text_result(format!(
+        Ok(format!(
             "revision {revision}\n{}{}",
             Self::freshness(&generation)?,
             note.content
-        )))
+        ))
     }
 
-    #[tool(
-        description = "在一个白名单项目内做字面搜索；mode=full_text（默认）或 path；每行：path:line<TAB>snippet；最多 100 条"
-    )]
-    async fn search(
-        &self,
-        Parameters(args): Parameters<SearchArgs>,
-    ) -> Result<CallToolResult, McpError> {
+    /// 共用搜索供给；全部命中审计成功后才返回任何文本。
+    pub(crate) async fn text_search(&self, args: SearchArgs) -> Result<String, McpError> {
         let instance = self.authorize("search")?;
         let prefix = self.allowed_project(&instance, "search", &args.project)?;
         let mode = match args.mode.as_deref() {
@@ -242,7 +234,7 @@ impl AgentSession {
             .iter()
             .map(|hit| format!("{}:{}\t{}", hit.path, hit.line, hit.snippet))
             .collect::<Vec<_>>();
-        Ok(text_result(format!(
+        Ok(format!(
             "{}# 代次 {} · {} 条{}\n{}",
             Self::freshness(&generation)?,
             generation.number,
@@ -253,6 +245,6 @@ impl AgentSession {
                 ""
             },
             lines.join("\n")
-        )))
+        ))
     }
 }

@@ -30,6 +30,14 @@ pub async fn require_bearer(
         .and_then(|value| value.strip_prefix("Bearer "))
         .map(str::trim)
         .filter(|value| !value.is_empty());
+    let token = token.filter(|_| {
+        request
+            .headers()
+            .get_all(header::AUTHORIZATION)
+            .iter()
+            .count()
+            == 1
+    });
     let authenticated = match token {
         Some(token) => state.store.authenticate(token).unwrap_or(None),
         None => None,
@@ -41,9 +49,15 @@ pub async fn require_bearer(
         }
         None => {
             // 拒绝本身也进审计；账本不可用时进入降级窗口，但 401 照常返回。
-            if let Ok(event) =
-                audit::action_denied(Actor::anonymous(), "mcp.request", "unauthenticated")
-            {
+            if let Ok(event) = audit::action_denied(
+                Actor::anonymous(),
+                if request.uri().path() == "/mcp" {
+                    "mcp.request"
+                } else {
+                    "http.request"
+                },
+                "unauthenticated",
+            ) {
                 let _ = state.audit(event);
             }
             (

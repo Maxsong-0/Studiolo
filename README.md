@@ -8,6 +8,7 @@
 - 状态：**T-006 总览、T-007 搜索 / 导航、T-010 文件树 / 附件信息及 T-011 界面重设计已实现，完整 M1 尚未完成**。当前提供项目总览、待我动作、原文行号、手动刷新、中文搜索、快速切换、大纲 / 双链，以及包含空目录与纯附件目录的文件树；范围和验证状态见 [M1 实现说明](docs/m1/README.md)。
 - **M3 首片已合并 main 并常驻服务器（2026-09-07，T-033/T-034）**：`studiolo-agent` 以一个 URL 向 AI 接入方供给冷启动路牌（≤2000 token 二元）、白名单内只读内容与读取审计；契约见 [供给面与 MCP 外壳](docs/contracts/agent-supply.md)。公网入口 `https://studiolo-agent.maxsong.me/mcp`（专用隧道 → 服务器回环 4400，应用内 bearer 门禁），部署与验收记录见 [服务器常驻](docs/m3/server-agent.md)。真实库验收：路牌 931 token；真实 Claude Code 经公网握手成功。
 - **M3 资料同步与新鲜度已合并上线（2026-09-10，T-036，功能 main `66dc7e3`，CI 通过）**：Mac 每 60 秒自动发布白名单完整副本，MCP 四工具同代读取并提示过期/漂移。系统级服务以 `maxsong` 运行，原生 302 项及公网正反检查通过，NRestarts=0；详见 [验收记录](docs/m3/replica-freshness.md) 与 [系统级运维](docs/m3/replica-operations.md)。ADR-015 客户端配置推模式及完整 M3 仍待实现。
+- **M3 HTTP只读文本入口（T-037，开发分支已验收）**：`/read/handshake`、目录、笔记与搜索复用MCP供给逻辑，有界短命会话及同一授权/审计/新鲜度；macOS与Linux各78项、严格Clippy及release构建通过，接口见 [HTTP文本供给](docs/m3/http-text.md)。尚未更新线上服务。
 - **当前优先 M2**：认证前后端、canonical单写者/永久配对/未决幂等及T-029新main整合已验收；当前macOS747/Linux758和两端生产通过，前端沿用T-025的125项。HEAD已d24e56a，继续新鲜度/CAS；编辑、同步、备份恢复和完整发布仍未完成，见[M2验证记录](docs/m2/README.md)与[发布缺口](docs/m2/release-readiness.md)。
 
 M1 使用独立的只读 Broker Adapter、纯派生 Workbench Module 与本机网页入口，不装配 M0

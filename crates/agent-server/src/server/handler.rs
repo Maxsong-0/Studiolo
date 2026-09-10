@@ -1,17 +1,61 @@
 //! MCP initialize：实例登记与初次只读路牌。
-use super::{AgentSession, SESSION_VERSIONS};
-use crate::{auth::AgentType, state::now};
+use super::{AgentSession, ListEntriesArgs, ReadNoteArgs, SESSION_VERSIONS, SearchArgs};
+use crate::auth::AgentType;
 use rmcp::{
     ErrorData as McpError, ServerHandler,
+    handler::server::wrapper::Parameters,
     model::{
-        Implementation, InitializeRequestParams, InitializeResult, ProtocolVersion,
-        ServerCapabilities, ServerInfo,
+        CallToolResult, ContentBlock, Implementation, InitializeRequestParams, InitializeResult,
+        ProtocolVersion, ServerCapabilities, ServerInfo,
     },
     service::{RequestContext, RoleServer},
-    tool_handler,
+    tool, tool_handler, tool_router,
 };
 use std::{borrow::Cow, future::Future};
-use studiolo_supply::audit::{self, Actor};
+
+fn text_result(text: String) -> CallToolResult {
+    CallToolResult::success(vec![ContentBlock::text(text)])
+}
+
+#[tool_router]
+impl AgentSession {
+    #[tool(
+        description = "重取冷启动路牌：我是谁、项目状态、能力、待我做的事、硬约束、继续拉的入口；≤2000 token"
+    )]
+    async fn handshake(&self) -> Result<CallToolResult, McpError> {
+        Ok(text_result(self.text_handshake().await?))
+    }
+
+    #[tool(
+        description = "列出一个白名单项目的全部条目（路径、类型、字节数）；每行：kind<TAB>path<TAB>bytes"
+    )]
+    async fn list_entries(
+        &self,
+        Parameters(args): Parameters<ListEntriesArgs>,
+    ) -> Result<CallToolResult, McpError> {
+        Ok(text_result(self.text_list_entries(args).await?))
+    }
+
+    #[tool(
+        description = "读一篇白名单内笔记的当前正文；返回首行 `revision <hex>` 后接正文；越白名单一律拒绝"
+    )]
+    async fn read_note(
+        &self,
+        Parameters(args): Parameters<ReadNoteArgs>,
+    ) -> Result<CallToolResult, McpError> {
+        Ok(text_result(self.text_read_note(args).await?))
+    }
+
+    #[tool(
+        description = "在一个白名单项目内做字面搜索；mode=full_text（默认）或 path；每行：path:line<TAB>snippet；最多 100 条"
+    )]
+    async fn search(
+        &self,
+        Parameters(args): Parameters<SearchArgs>,
+    ) -> Result<CallToolResult, McpError> {
+        Ok(text_result(self.text_search(args).await?))
+    }
+}
 
 #[tool_handler]
 impl ServerHandler for AgentSession {
@@ -43,28 +87,13 @@ impl ServerHandler for AgentSession {
                 // 门禁中间件缺失时失败关闭，不给任何路牌。
                 return Err(McpError::invalid_request("未认证", None));
             };
-            let instance = self
-                .state
-                .store
-                .register_instance(&agent_type, &self.session_ref, &now())
-                .map_err(|_| McpError::internal_error("实例注册失败", None))?;
-            let actor = Actor::instance(&instance.agent_type, &instance.id);
-            let registered = audit::instance_registered(actor)
-                .map_err(|_| McpError::internal_error("审计事件构造失败", None))?;
-            let instructions = match self.state.audit(registered) {
-                Err(outage) => format!(
-                    "审计不可用：outage {}。本次会话所有读取与写入全部拒绝，不提供路牌；请稍后重试。",
-                    outage.outage_id
-                ),
-                Ok(_) => match self.signpost(&instance).await {
-                    Ok(text) => text,
-                    Err(error) if error.message.contains("审计不可用") => {
-                        error.message.to_string()
-                    }
-                    Err(error) => return Err(error),
-                },
+            let instructions = match self.initialize_text(&agent_type).await {
+                Ok(text) => text,
+                Err(error) if error.message.contains("审计不可用") => {
+                    error.message.to_string()
+                }
+                Err(error) => return Err(error),
             };
-            let _ = self.instance.set(instance);
             Ok(self.get_info().with_instructions(instructions))
         }
     }

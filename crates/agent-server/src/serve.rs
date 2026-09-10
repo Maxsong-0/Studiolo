@@ -62,7 +62,7 @@ pub fn prepare(options: &ServeOptions) -> Result<Arc<AppState>, String> {
     }))
 }
 
-/// 路由：`/mcp` 挂 rmcp Streamable HTTP，整个路由树前置类型 token 门禁。
+/// `/mcp` 与 `/read/*` 使用同一类型门禁；各自负责协议会话，供给操作共用。
 pub fn router(state: Arc<AppState>) -> Router {
     let service_state = state.clone();
     let service = StreamableHttpService::new(
@@ -72,7 +72,11 @@ pub fn router(state: Arc<AppState>) -> Router {
     );
     Router::new()
         .route_service("/mcp", service)
-        .layer(middleware::from_fn_with_state(state, auth::require_bearer))
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            auth::require_bearer,
+        ))
+        .merge(crate::http_text::router(state))
 }
 
 /// 启动服务直到 Ctrl-C 或 SIGTERM。
