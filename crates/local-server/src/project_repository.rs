@@ -1,4 +1,4 @@
-//! 显式绑定的只读仓库能力；HTTP只能观测声明中的目录，不接受宿主路径。
+//! 显式绑定的只读仓库能力；默认仅目录，固定清单须另行授权，不接受宿主路径查询。
 
 use std::{
     path::{Path, PathBuf},
@@ -17,11 +17,12 @@ use crate::LocalError;
 const MAX_OBSERVED_DIRECTORIES: usize = 1024;
 const MAX_OBSERVED_PATH_BYTES: usize = 256 * 1024;
 
-/// 启动者明确指定的一个项目及源码根；只保留Broker目录枚举能力。
+/// 启动者明确指定的一个项目及源码根；默认只允许目录枚举。
 pub struct ProjectRepository {
     project: String,
     root: ReadOnlyVault,
     root_path: PathBuf,
+    cargo_dependencies: bool,
 }
 
 impl ProjectRepository {
@@ -41,7 +42,24 @@ impl ProjectRepository {
             project: project.to_owned(),
             root: ReadOnlyVault::open(root)?,
             root_path: root.to_owned(),
+            cargo_dependencies: false,
         })
+    }
+
+    /// 显式启用固定 Cargo 清单读取；不在启用时读取文件或扩大目录观测范围。
+    #[must_use]
+    pub fn with_cargo_dependencies(mut self) -> Self {
+        self.cargo_dependencies = true;
+        self
+    }
+
+    pub(crate) fn observe_cargo_dependencies(
+        &self,
+    ) -> crate::project_cargo::CargoDependencyObservation {
+        if !self.cargo_dependencies {
+            return crate::project_cargo::CargoDependencyObservation::disabled();
+        }
+        crate::project_cargo::observe(&self.root, || self.revalidate())
     }
 
     /// 监听前和请求前复核根绑定；替换后的路径不能获得原绑定的读取权限。

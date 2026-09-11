@@ -5,6 +5,7 @@ mod auth_http;
 mod bootstrap;
 mod canonical;
 mod coordinator;
+mod project_cargo;
 mod project_operations;
 mod project_repository;
 mod queries;

@@ -14,6 +14,7 @@ pub(crate) struct Options {
     pub(crate) writer_data: Option<PathBuf>,
     pub(crate) factor: Option<FactorOptions>,
     pub(crate) project_repository: Option<(String, PathBuf)>,
+    pub(crate) cargo_dependencies: bool,
 }
 
 pub(crate) struct SessionOptions {
@@ -36,6 +37,7 @@ pub(crate) fn parse(mut args: impl Iterator<Item = String>) -> Result<Option<Opt
     let mut factor_socket = None;
     let mut replacement_seed_ref = None;
     let mut project_repository = None;
+    let mut cargo_dependencies = false;
     let mut assets = PathBuf::from("web/dist");
     let mut label = "只读副本".to_owned();
     let mut port = 4317;
@@ -62,6 +64,7 @@ pub(crate) fn parse(mut args: impl Iterator<Item = String>) -> Result<Option<Opt
                 | "--factor-socket"
                 | "--replacement-seed-ref"
                 | "--project-repository"
+                | "--cargo-dependencies"
                 | "--help"
         ) {
             return Err("未知参数；仅接受 --help 中的非秘密参数".into());
@@ -75,6 +78,10 @@ pub(crate) fn parse(mut args: impl Iterator<Item = String>) -> Result<Option<Opt
         }
         if key == "--canonical" {
             canonical = true;
+            continue;
+        }
+        if key == "--cargo-dependencies" {
+            cargo_dependencies = true;
             continue;
         }
         let value = args
@@ -155,6 +162,9 @@ pub(crate) fn parse(mut args: impl Iterator<Item = String>) -> Result<Option<Opt
             "仓库目录绑定首片仅用于本机或旧Access只读模式，不能混用会话/canonical/因子模式".into(),
         );
     }
+    if cargo_dependencies && project_repository.is_none() {
+        return Err("Cargo清单读取必须配合显式 --project-repository".into());
+    }
     if canonical && session.is_none() {
         return Err("canonical读取必须配合显式 --session-config 及公共Origin".into());
     }
@@ -174,6 +184,7 @@ pub(crate) fn parse(mut args: impl Iterator<Item = String>) -> Result<Option<Opt
         writer_data,
         factor,
         project_repository,
+        cargo_dependencies,
     }))
 }
 
@@ -208,3 +219,7 @@ mod writer_tests;
 #[cfg(test)]
 #[path = "../tests/options/repository.rs"]
 mod repository_tests;
+
+#[cfg(test)]
+#[path = "../tests/options/cargo_dependencies.rs"]
+mod cargo_dependency_tests;

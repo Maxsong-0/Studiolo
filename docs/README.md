@@ -35,6 +35,7 @@ T-039 单篇解析持久缓存、未变模型共享与隔离边界见 [持久派
 T-040 三片合并、完整运行包、系统服务升级与回滚见 [读取供给发布](m3/read-supply-release.md)。
 T-041 显式本地仓库绑定、目录职责图与双向漂移开发见 [项目运作图首片](m3/project-operations.md)。
 T-042 有来源的模块关系、数据流与逐步设计路径见 [架构关系与任务路径](m3/architecture-flow.md)。
+T-043 显式启用的 Cargo 包关系、依赖条件与清单来源见 [Cargo 清单依赖](m3/cargo-dependencies.md)。
 
 ## contracts/ — Module Interface 契约（M0）
 

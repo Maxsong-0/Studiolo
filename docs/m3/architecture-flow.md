@@ -110,4 +110,5 @@ macOS 的 workbench/local-server 330 项、Linux aarch64 Docker 331 项 Rust 测
 ## 后续边界
 
 本片不包含源码/manifest 依赖派生、真实运行事件、生产仓库隔离接入、真实客户端
-安装或上线。完整图 2、M2/M3 仍按各自发布条件验收。
+安装或上线。后续显式 Cargo 成员清单证据见 [T-043 清单派生](cargo-dependencies.md)；
+完整图 2、M2/M3 仍按各自发布条件验收。

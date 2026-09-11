@@ -48,7 +48,8 @@ async fn run() -> Result<(), String> {
         );
         println!(
             "\n图2首片可选：--project-repository <项目/名称=/绝对仓库路径>\n\
-             仅本机/旧Access只读模式支持一个显式绑定；只枚举目录，不读取源码。\n\
+             仅本机/旧Access只读模式支持一个显式绑定；默认只枚举目录。\n\
+             可加 --cargo-dependencies 显式读取根及成员Cargo.toml，派生清单依赖；不执行Cargo或读取源码。\n\
              文档代次与仓库观测时间分别标识；未绑定项目显示未核验。"
         );
         return Ok(());

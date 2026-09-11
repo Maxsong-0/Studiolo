@@ -16,6 +16,8 @@
 
 **T-042 图2第二片（2026-09-11，本地开发验收）**：新增有来源的模块关系、声明依赖/数据流与逐步设计路径，并关联已有目录证据；见[架构关系与任务路径](docs/m3/architecture-flow.md)。本轮Mac330/Linux331项相关Rust、两端各26项架构、前端221项与桌面/窄屏浏览器通过；基于T-041继续本地分支 `codex/m3-architecture-flow`。源码依赖派生、真实运行全链路与生产隔离接入仍待后续，未合并部署。
 
+**T-043 图2第三片（2026-09-11，本地开发验收）**：显式启用 Cargo 清单读取，派生成员包依赖并保留种类、条件、可选标记和来源行，按目录关联设计节点；见[Cargo 清单依赖](docs/m3/cargo-dependencies.md)。Mac377/Linux378 项相关 Rust、两端各26项架构、前端299项及桌面/窄屏浏览器通过；Studiolo 自身16包/44条内部依赖亦逐项核验。基于T-042继续本地分支 `codex/m3-cargo-dependencies`，未合并部署；源码调用、真实运行全链路与生产隔离接入仍待后续。
+
 M1 使用独立的只读 Broker Adapter、纯派生 Workbench Module 与本机网页入口，不装配 M0
 写引擎。搜索、摘要、原文与导航共享同一不可变 generation，详见
 [搜索与导航契约](docs/m1/search-navigation.md) 与 [文件树契约](docs/m1/file-tree.md)。

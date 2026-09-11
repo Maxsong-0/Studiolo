@@ -4,6 +4,7 @@ import { OperationDiagram } from './OperationDiagram';
 import { OperationDiagramBoundary } from './OperationDiagramBoundary';
 import { OperationDrift } from './OperationDrift';
 import { ArchitecturePanel } from './ArchitecturePanel';
+import { CargoDependencyPanel } from './CargoDependencyPanel';
 import { Icon } from './Icon';
 
 export function OperationResult({
@@ -78,6 +79,7 @@ export function OperationResult({
       </section>
       <OperationDrift data={data} onOpen={onOpen} />
       <ArchitecturePanel data={data} onOpen={onOpen} />
+      <CargoDependencyPanel data={data} onOpen={onOpen} />
     </>
   );
 }

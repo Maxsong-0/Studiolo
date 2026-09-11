@@ -36,3 +36,19 @@ async fn manually_composed_session_cannot_bypass_repository_mode_restriction() {
     assert!(matches!(result, Err(StartupError::Configuration)));
     f.unbound();
 }
+
+#[tokio::test]
+async fn manually_enabled_cargo_without_binding_fails_before_opening_inputs() {
+    let f = Fixture::new(true);
+    let mut options = f.options();
+    options.session = None;
+    options.cargo_dependencies = true;
+    options.vault = f.root.join("must-not-open");
+    let result = prepare_with(options, |_| async {
+        panic!("无效组合不得取外部密钥")
+    })
+    .await;
+    assert!(matches!(result, Err(StartupError::Configuration)));
+    assert!(!f.root.join("must-not-open").exists());
+    f.unbound();
+}

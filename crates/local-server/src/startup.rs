@@ -64,6 +64,7 @@ where
         || (options.canonical && options.session.is_none())
         || (options.factor.is_some() && options.session.is_none())
         || (options.project_repository.is_some() && options.session.is_some())
+        || (options.cargo_dependencies && options.project_repository.is_none())
         || (options.writer_data.is_some() && (options.canonical || options.session.is_none()))
         || options
             .writer_data
@@ -77,6 +78,13 @@ where
         .as_ref()
         .map(|(project, root)| {
             ProjectRepository::open(project, root)
+                .map(|repository| {
+                    if options.cargo_dependencies {
+                        repository.with_cargo_dependencies()
+                    } else {
+                        repository
+                    }
+                })
                 .map(Arc::new)
                 .map_err(|_| StartupError::ReadRoots)
         })

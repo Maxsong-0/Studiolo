@@ -10,7 +10,10 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use studiolo_workbench::{DirectoryDrift, ProjectArchitecture, ProjectOperations};
 
-use crate::{ApiError, AppState, ProjectRepository, project_repository::RepositoryCheck, queries};
+use crate::{
+    ApiError, AppState, ProjectRepository, project_cargo::CargoDependencyObservation,
+    project_repository::RepositoryCheck, queries,
+};
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -27,6 +30,7 @@ pub(crate) struct OperationResponse {
     repository: RepositoryCheck,
     drift: Vec<DirectoryDrift>,
     architecture: ProjectArchitecture,
+    cargo_dependencies: CargoDependencyObservation,
 }
 
 pub(crate) async fn get(
@@ -44,6 +48,12 @@ pub(crate) async fn get(
             .model
             .project_architecture(&query.project)
             .ok_or_else(|| ApiError(StatusCode::NOT_FOUND, "项目不在当前只读快照中。".into()))?;
+        let cargo_dependencies = match &repository {
+            Some(Extension(repository)) if repository.matches(&query.project) => {
+                repository.observe_cargo_dependencies()
+            }
+            _ => CargoDependencyObservation::unbound(),
+        };
         let repository = match repository {
             Some(Extension(repository)) if repository.matches(&query.project) => {
                 if operations.declaration_status == "ready" {
@@ -66,6 +76,7 @@ pub(crate) async fn get(
             repository,
             drift,
             architecture,
+            cargo_dependencies,
         }))
     })
     .await

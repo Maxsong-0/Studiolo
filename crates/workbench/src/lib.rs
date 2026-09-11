@@ -1,6 +1,6 @@
 //! Pure, rebuildable M1 project views. This Module performs no filesystem,
 //! network, process, or clock operations: every displayed fact comes from the
-//! supplied Markdown generation and retains its source location.
+//! supplied documents or explicit Cargo manifest inputs and retains its source location.
 
 #![forbid(unsafe_code)]
 
@@ -10,6 +10,11 @@ mod architecture_dto;
 mod architecture_parse;
 mod architecture_scan;
 mod bugs;
+mod cargo_dependencies;
+mod cargo_dto;
+mod cargo_manifest;
+mod cargo_plan;
+mod cargo_spec;
 mod derive;
 mod dto;
 mod markdown;
@@ -36,6 +41,9 @@ use studiolo_vault_index::{
 };
 
 pub use architecture_dto::*;
+pub use cargo_dependencies::derive_cargo_dependencies;
+pub use cargo_dto::*;
+pub use cargo_plan::cargo_manifest_paths;
 pub use dto::*;
 pub use navigation_dto::*;
 pub use operations_dto::*;

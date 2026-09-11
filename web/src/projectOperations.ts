@@ -1,6 +1,8 @@
 import type { SourceLocation } from './types';
 import { validateArchitecture } from './architecture';
 import type { ArchitectureData } from './architecture';
+import { validateCargoDependencies } from './cargoDependencies';
+import type { CargoDependenciesData } from './cargoDependencies';
 
 export interface OperationDirectory {
   path: string;
@@ -28,6 +30,7 @@ export interface ProjectOperationsData {
   };
   drift: DirectoryDrift[];
   architecture?: ArchitectureData;
+  cargo_dependencies?: CargoDependenciesData;
 }
 
 const record = (value: unknown): value is Record<string, unknown> =>
@@ -98,5 +101,7 @@ export function validateProjectOperations(
   if (!valid) throw new Error('项目运作数据格式不完整，请重试或检查服务。');
   if (record(value) && 'architecture' in value)
     validateArchitecture(value.architecture, String(value.project));
+  if (record(value) && 'cargo_dependencies' in value)
+    validateCargoDependencies(value.cargo_dependencies);
   return value as unknown as ProjectOperationsData;
 }
