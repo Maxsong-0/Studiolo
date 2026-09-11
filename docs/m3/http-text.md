@@ -116,5 +116,6 @@ with opener.open(urllib.request.Request(base + "/note?" + query, headers=headers
 - 验收日志：`/private/tmp/studiolo-t037-macos-tests.log`、`studiolo-t037-clippy.log`、
   `studiolo-t037-release-build.log`及`studiolo-t037-linux.log`。
 
-线上仍为T-036 `m3-t036-20260910-replica01`，本片尚未更新线上二进制；
-不能把既有公网MCP验收作为HTTP入口已部署的证据。
+2026-09-11 已随 T-040 合并 main `cbfb5df` 并部署 `m3-t040-20260910-read01`。
+系统阶段/正式服务与独立 HTTPS 公网复验均通过，包含四入口成功及 14 个拒绝场景；
+上述开发测试记录保留，服务器原生、系统切换和公网证据见 [T-040 发布记录](read-supply-release.md)。

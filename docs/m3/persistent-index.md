@@ -75,5 +75,8 @@ SHA-256 绑定输入与检测意外损坏，不认证派生语义；私有目录
 `studiolo-t039-clippy.log`、`studiolo-t039-release.log`、`studiolo-t039-macos-pipeline.log`、
 `studiolo-t039-linux.log`。
 
-本片尚未部署。T-037/T-038/T-039 的本地完成不能作为公网运行证据；
-未修改线上单元、真实客户端配置、类型凭据或同步范围。
+2026-09-11 已随 T-040 合并 main `cbfb5df` 并部署 `m3-t040-20260910-read01`。
+正式系统单元显式启用独立 `studiolo-agent-index` 缓存根；目录 0700、数据库 0600，
+正式启动日志为 `source: Disk, parsed: 0, reused: 100, persistence: Ready`。
+系统阶段/重启/正式切换与公网 MCP/HTTP 复验通过，原生和上线证据见 [T-040 发布记录](read-supply-release.md)。
+上述开发测试口径保留；完整 M3、图 2 与目录结构漂移仍未完成。
