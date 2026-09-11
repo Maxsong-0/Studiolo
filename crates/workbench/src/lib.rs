@@ -5,6 +5,10 @@
 #![forbid(unsafe_code)]
 
 mod actions;
+mod architecture;
+mod architecture_dto;
+mod architecture_parse;
+mod architecture_scan;
 mod bugs;
 mod derive;
 mod dto;
@@ -31,6 +35,7 @@ use studiolo_vault_index::{
     InMemoryVaultIndex, MarkdownDocument, ParseCache, ParseCacheStats, VaultIndex,
 };
 
+pub use architecture_dto::*;
 pub use dto::*;
 pub use navigation_dto::*;
 pub use operations_dto::*;
@@ -144,5 +149,15 @@ impl WorkbenchReadModel {
             .iter()
             .find(|known| known.id == project)?;
         Some(operations::derive(&self.documents, project))
+    }
+
+    /// 从本代可选表格派生设计声明；不表示实际依赖或正在执行的任务。
+    #[must_use]
+    pub fn project_architecture(&self, project: &str) -> Option<ProjectArchitecture> {
+        self.snapshot
+            .projects
+            .iter()
+            .find(|known| known.id == project)?;
+        Some(architecture::derive(&self.documents, project))
     }
 }

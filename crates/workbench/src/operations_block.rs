@@ -75,7 +75,7 @@ pub(crate) fn extract(content: &str) -> Result<Option<DeclarationBlock<'_>>, Str
 }
 
 /// 注释替换为空格以保留缩进；行内代码中的注释标记同样只是文本。
-fn visible_text(mut raw: &str, comment: &mut bool) -> String {
+pub(crate) fn visible_text(mut raw: &str, comment: &mut bool) -> String {
     let mut result = String::new();
     while !raw.is_empty() {
         if *comment {
@@ -119,7 +119,7 @@ fn inline_code_end(mut raw: &str, length: usize) -> Option<usize> {
     None
 }
 
-fn fence_marker(raw: &str) -> Option<(u8, usize, &str)> {
+pub(crate) fn fence_marker(raw: &str) -> Option<(u8, usize, &str)> {
     let text = raw.trim_start_matches(' ');
     if raw.len() - text.len() > 3 {
         return None;

@@ -1,4 +1,6 @@
 import type { SourceLocation } from './types';
+import { validateArchitecture } from './architecture';
+import type { ArchitectureData } from './architecture';
 
 export interface OperationDirectory {
   path: string;
@@ -25,6 +27,7 @@ export interface ProjectOperationsData {
     observed_at: string | null;
   };
   drift: DirectoryDrift[];
+  architecture?: ArchitectureData;
 }
 
 const record = (value: unknown): value is Record<string, unknown> =>
@@ -93,5 +96,7 @@ export function validateProjectOperations(
     ) &&
     new Set(value.drift.map((item) => item.path)).size === value.drift.length;
   if (!valid) throw new Error('项目运作数据格式不完整，请重试或检查服务。');
+  if (record(value) && 'architecture' in value)
+    validateArchitecture(value.architecture, String(value.project));
   return value as unknown as ProjectOperationsData;
 }

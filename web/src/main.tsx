@@ -20,6 +20,7 @@ import './styles/file-icons.css';
 import './styles/session.css';
 import './styles/factor.css';
 import './styles/operations.css';
+import './styles/architecture.css';
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>

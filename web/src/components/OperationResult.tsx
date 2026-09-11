@@ -3,6 +3,7 @@ import type { OpenSource } from '../types';
 import { OperationDiagram } from './OperationDiagram';
 import { OperationDiagramBoundary } from './OperationDiagramBoundary';
 import { OperationDrift } from './OperationDrift';
+import { ArchitecturePanel } from './ArchitecturePanel';
 import { Icon } from './Icon';
 
 export function OperationResult({
@@ -76,6 +77,7 @@ export function OperationResult({
         ) : null}
       </section>
       <OperationDrift data={data} onOpen={onOpen} />
+      <ArchitecturePanel data={data} onOpen={onOpen} />
     </>
   );
 }

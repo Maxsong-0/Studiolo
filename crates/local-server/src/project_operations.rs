@@ -8,7 +8,7 @@ use axum::{
     http::StatusCode,
 };
 use serde::{Deserialize, Serialize};
-use studiolo_workbench::{DirectoryDrift, ProjectOperations};
+use studiolo_workbench::{DirectoryDrift, ProjectArchitecture, ProjectOperations};
 
 use crate::{ApiError, AppState, ProjectRepository, project_repository::RepositoryCheck, queries};
 
@@ -26,6 +26,7 @@ pub(crate) struct OperationResponse {
     operations: ProjectOperations,
     repository: RepositoryCheck,
     drift: Vec<DirectoryDrift>,
+    architecture: ProjectArchitecture,
 }
 
 pub(crate) async fn get(
@@ -38,6 +39,10 @@ pub(crate) async fn get(
         let mut operations = generation
             .model
             .project_operations(&query.project)
+            .ok_or_else(|| ApiError(StatusCode::NOT_FOUND, "项目不在当前只读快照中。".into()))?;
+        let architecture = generation
+            .model
+            .project_architecture(&query.project)
             .ok_or_else(|| ApiError(StatusCode::NOT_FOUND, "项目不在当前只读快照中。".into()))?;
         let repository = match repository {
             Some(Extension(repository)) if repository.matches(&query.project) => {
@@ -60,6 +65,7 @@ pub(crate) async fn get(
             operations,
             repository,
             drift,
+            architecture,
         }))
     })
     .await

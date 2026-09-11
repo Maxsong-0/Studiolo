@@ -1,0 +1,225 @@
+.architecture-panel {
+  min-width: 0;
+}
+.architecture-modes {
+  margin: 20px 0;
+}
+.architecture-relations-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(200px, 28%);
+  gap: 24px;
+}
+.architecture-relations-main,
+.architecture-node-detail,
+.architecture-step-detail {
+  min-width: 0;
+}
+.architecture-node-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 11rem), 1fr));
+  gap: 10px;
+}
+.architecture-node {
+  min-width: 0;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface-solid);
+  text-align: left;
+  overflow-wrap: anywhere;
+}
+.architecture-node strong {
+  display: block;
+  margin-top: 6px;
+  font-size: 0.875rem;
+  font-weight: 600;
+}
+.architecture-node[aria-pressed='true'] {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+.architecture-filter {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 12px;
+  margin: 22px 0 16px;
+}
+.architecture-filter label {
+  font-size: 0.8125rem;
+}
+.architecture-filter select {
+  min-width: 0;
+  max-width: 100%;
+  min-height: 38px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 8px 12px;
+  background: var(--surface);
+  color: var(--text);
+}
+.architecture-edge-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+.architecture-edge-list > li {
+  border-top: 1px solid var(--border);
+  padding: 16px 0;
+  overflow-wrap: anywhere;
+}
+.architecture-edge-endpoints {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 18px minmax(0, 1fr);
+  gap: 12px;
+  align-items: center;
+}
+.architecture-edge-endpoints > button {
+  min-width: 0;
+  min-height: 44px;
+  background: var(--surface-solid);
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 0.8125rem;
+  text-align: left;
+  overflow-wrap: anywhere;
+}
+.architecture-edge-endpoints > button:hover,
+.architecture-node:hover {
+  background: var(--accent-soft);
+}
+.architecture-edge-list p {
+  margin: 12px 0 4px;
+  font-size: 0.8125rem;
+  white-space: pre-wrap;
+}
+.architecture-relation-kind {
+  margin-right: 10px;
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+.architecture-node-detail {
+  padding: 18px;
+  border-radius: 12px;
+  background: var(--surface-solid);
+  align-self: start;
+  overflow-wrap: anywhere;
+}
+.architecture-node-detail h3,
+.architecture-step-detail h3 {
+  margin: 8px 0 14px;
+  font-size: 1rem;
+}
+.architecture-node-detail p,
+.architecture-step-detail p {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.architecture-node-detail dl {
+  margin: 20px 0;
+}
+.architecture-node-detail dt {
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+.architecture-node-detail dd {
+  margin: 3px 0 12px;
+}
+.architecture-design-note {
+  padding: 12px 16px;
+  background: var(--surface-solid);
+  border-radius: 10px;
+  color: var(--muted);
+  font-size: 0.8125rem;
+}
+.architecture-steps-layout {
+  display: grid;
+  grid-template-columns: minmax(180px, 32%) minmax(0, 1fr);
+  gap: 24px;
+}
+.architecture-steps {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+.architecture-steps li + li {
+  margin-top: 8px;
+}
+.architecture-steps button {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  width: 100%;
+  min-height: 44px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  text-align: left;
+  background: var(--surface-solid);
+}
+.architecture-steps strong {
+  min-width: 0;
+  font-size: 0.8125rem;
+  font-weight: 550;
+  overflow-wrap: anywhere;
+}
+.architecture-steps button[aria-current='step'] {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+}
+.architecture-step-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 24px;
+}
+.architecture-step-controls button[aria-disabled='true'] {
+  cursor: default;
+  opacity: 0.48;
+}
+.architecture-step-controls button[aria-disabled='true']:active {
+  transform: none;
+}
+.architecture-panel .text-button {
+  min-height: 44px;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.architecture-text-data {
+  overflow-wrap: anywhere;
+}
+.architecture-text-data h4 {
+  margin: 24px 0 12px;
+}
+.architecture-text-data h5 {
+  font-size: 0.875rem;
+}
+.architecture-text-data ul,
+.architecture-text-data ol {
+  padding-left: 20px;
+}
+.architecture-text-data li {
+  margin: 12px 0;
+}
+@media (max-width: 1080px) {
+  .architecture-relations-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+@media (max-width: 760px) {
+  .architecture-steps-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .architecture-filter select {
+    min-height: 44px;
+    font-size: 1rem;
+  }
+  .architecture-node-detail {
+    padding: 16px;
+  }
+  .architecture-edge-endpoints {
+    gap: 8px;
+  }
+}
