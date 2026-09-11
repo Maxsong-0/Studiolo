@@ -36,9 +36,11 @@ jobs:
 
       - name: 部署脚本回归
         run: |
-          for script in scripts/package-agent.sh scripts/run-agent-tests.sh scripts/sync-agent-vault.sh scripts/package-preview.sh scripts/run-preview-tests.sh deploy/agent/install-t036-system.sh; do
+          for script in scripts/package-agent.sh scripts/run-agent-tests.sh scripts/sync-agent-vault.sh scripts/package-preview.sh scripts/run-preview-tests.sh deploy/agent/install-t036-system.sh deploy/agent/upgrade-read-supply.sh.in; do
             bash -n "$script"
           done
+          python3 scripts/test-agent-package.py
+          python3 scripts/test-check-agent-http.py
           python3 scripts/test-check-agent.py
           python3 scripts/test-check-agent-replica.py
           python3 scripts/test-sync-agent-vault.py
@@ -46,6 +48,9 @@ jobs:
           python3 scripts/test-replica-receiver.py
           python3 scripts/test-replica-boundaries.py
           python3 scripts/test-check-preview.py
+          python3 scripts/test-client-projection-schema.py
+          python3 scripts/test-client-projection-fetch.py
+          python3 scripts/test-client-projection-store.py
 
       - name: Clippy（警告即失败）
         run: cargo --locked clippy --workspace --all-targets -- -D warnings
@@ -59,6 +64,7 @@ jobs:
         run: |
           cargo --locked build -p studiolo-agent-server
           python3 scripts/check-replica-pipeline.py target/debug/studiolo-agent
+          python3 scripts/check-client-projection-pipeline.py target/debug/studiolo-agent
 
       - name: Linux 路径安全负向测试（显式验收）
         run: cargo --locked test -p studiolo-vault-broker --test linux_path_security

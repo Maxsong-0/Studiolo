@@ -1,9 +1,11 @@
-//! `studiolo-agent` 的库部分：装配、门禁、MCP 会话 handler、管理子命令；二进制只做参数分发。
+//! `studiolo-agent` 的库部分：装配、门禁、MCP/HTTP 只读外壳与管理子命令；二进制只做参数分发。
 //!
 //! 只服务接入方的只读供给（M3 首片）；不持有 canonical 写能力，不读配置文件，不创建目录。
 
 pub mod admin;
 pub mod auth;
+mod http_text;
+pub mod index;
 pub mod options;
 pub mod refresh;
 pub mod serve;

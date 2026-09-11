@@ -1,0 +1,9 @@
+{
+  "schema_version": 1,
+  "client": "claude",
+  "project": "项目/Studiolo",
+  "source_url": "https://studiolo-agent.maxsong.me/read",
+  "token_env": "STUDIOLO_CLAUDE_TOKEN",
+  "rules": ["_规则/通用工作规则.md", "项目/Studiolo/CLAUDE.md"],
+  "skills": []
+}

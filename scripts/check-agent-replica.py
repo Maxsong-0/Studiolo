@@ -32,6 +32,10 @@ FRESHNESS = re.compile(
 )
 
 
+class ReceiptChanged(CHECK.CheckFailed):
+    """已有效的来源回执在连续读取中切换；只允许对这一类错误有限重试。"""
+
+
 def freshness(text, name, expected):
     """只认协议规定位置的元数据，正文中仿造的新鲜度不能充当回执。"""
     require(isinstance(text, str), f"{name} 缺少文本")
@@ -130,8 +134,8 @@ def check(url, token, expected):
     ):
         text = client.call(name, arguments)
         value = freshness(text, name, expected)
-        require(all(value[key] == reference[key] for key in reference if key != "age_secs"),
-                f"{name} 与 initialize 的副本回执不一致；若恰逢同步发布，请重新验收")
+        if not all(value[key] == reference[key] for key in reference if key != "age_secs"):
+            raise ReceiptChanged("验收期间来源换批，请重新验收")
         ages.append(value["age_secs"])
         if name == "read_note":
             require("Studiolo · 总览" in text, "read_note 未返回预期 INDEX")
@@ -158,6 +162,9 @@ def main(argv=None):
         require(bool(token) and len(token) <= 4096 and not any(char.isspace() for char in token),
                 "token 文件为空、过长或格式无效")
         check(args.base_url, token, args.expected)
+    except ReceiptChanged:
+        print("副本验收中来源换批，请重试。", file=sys.stderr)
+        return 2
     except CHECK.CheckFailed as error:
         print(f"副本验收失败：{error}", file=sys.stderr)
         return 1

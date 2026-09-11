@@ -15,10 +15,11 @@ use studiolo_supply::{AgentStore, ScanLimits, SupplyRoots, replica::ReplicaRoot}
 
 use crate::{
     auth,
+    index::IndexRuntime,
     options::ServeOptions,
     refresh,
     server::AgentSession,
-    state::{AppState, SupplySource, build_generation, replica_generation},
+    state::{AppState, Generation, SupplySource, now},
 };
 
 /// 装配共享状态：白名单只读根、既有私有库与账本（no-create）、首扫代次。
@@ -46,9 +47,16 @@ pub fn prepare(options: &ServeOptions) -> Result<Arc<AppState>, String> {
     let ledger = SqliteAuditLedger::open_existing(&options.data.join("audit"))
         .map_err(|_| "审计账本不可用或未初始化；请先运行 admin init".to_owned())?;
     let limits = ScanLimits::default();
-    let first = match &source {
-        SupplySource::Direct(roots) => build_generation(roots, limits, 1)?,
-        SupplySource::Replica(root) => replica_generation(root, None, 1)?,
+    let (snapshot, freshness) = source.scan(limits, None)?;
+    let index = IndexRuntime::open(options)?;
+    let (model, index_status) = index.build(&snapshot, None)?;
+    let first = Generation {
+        number: 1,
+        snapshot,
+        model,
+        index_status,
+        generated_at: now(),
+        freshness,
     };
     Ok(Arc::new(AppState {
         source,
@@ -59,10 +67,11 @@ pub fn prepare(options: &ServeOptions) -> Result<Arc<AppState>, String> {
         current: RwLock::new(Arc::new(first)),
         outage: Mutex::new(None),
         limits,
+        index,
     }))
 }
 
-/// 路由：`/mcp` 挂 rmcp Streamable HTTP，整个路由树前置类型 token 门禁。
+/// `/mcp` 与 `/read/*` 使用同一类型门禁；各自负责协议会话，供给操作共用。
 pub fn router(state: Arc<AppState>) -> Router {
     let service_state = state.clone();
     let service = StreamableHttpService::new(
@@ -72,7 +81,11 @@ pub fn router(state: Arc<AppState>) -> Router {
     );
     Router::new()
         .route_service("/mcp", service)
-        .layer(middleware::from_fn_with_state(state, auth::require_bearer))
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            auth::require_bearer,
+        ))
+        .merge(crate::http_text::router(state))
 }
 
 /// 启动服务直到 Ctrl-C 或 SIGTERM。
@@ -81,6 +94,7 @@ pub async fn run(options: ServeOptions) -> Result<(), String> {
     let first = state.current();
     let notes = first.snapshot.notes.len();
     let diagnostics = first.snapshot.diagnostics.len();
+    let index_status = first.index_status;
     drop(first);
     tokio::spawn(refresh::run(state.clone(), Duration::from_secs(60)));
     let app = router(state);
@@ -91,6 +105,7 @@ pub async fn run(options: ServeOptions) -> Result<(), String> {
         "studiolo-agent：http://127.0.0.1:{}/mcp（仅 loopback；首扫 {notes} 篇笔记，{diagnostics} 条诊断；Ctrl-C 或 SIGTERM 停止）",
         options.port
     );
+    println!("派生索引：{index_status:?}");
     axum::serve(listener, app)
         .with_graceful_shutdown(shutdown_signal())
         .await

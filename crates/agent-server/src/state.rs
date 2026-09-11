@@ -1,5 +1,7 @@
 //! 服务共享状态：白名单只读根、当前代次、私有库、审计账本与降级窗口。
 
+use crate::index::{IndexRuntime, IndexStatus, ModelSource, Persistence};
+
 use std::sync::{Arc, Mutex, RwLock};
 
 use studiolo_audit_ledger::{AuditEvent, AuditLedger, SqliteAuditLedger};
@@ -16,7 +18,9 @@ pub struct Generation {
     /// 白名单快照。
     pub snapshot: Snapshot,
     /// 搜索/导航读模型。
-    pub model: WorkbenchReadModel,
+    pub model: Arc<WorkbenchReadModel>,
+    /// 本次派生索引的复用与持久化结果。
+    pub index_status: IndexStatus,
     /// 生成时间（RFC 3339）。
     pub generated_at: String,
     /// 副本来源状态；直接 Vault 模式没有可声明的同步回执。
@@ -56,6 +60,26 @@ pub enum SupplySource {
     Replica(ReplicaRoot),
 }
 
+impl SupplySource {
+    /// 每次先完整读取并验证来源；缓存只能接收成功后的快照。
+    pub(crate) fn scan(
+        &self,
+        limits: ScanLimits,
+        previous: Option<&Freshness>,
+    ) -> Result<(Snapshot, Option<Freshness>), String> {
+        match self {
+            Self::Direct(roots) => roots
+                .scan(limits)
+                .map(|snapshot| (snapshot, None))
+                .map_err(|error| format!("白名单扫描失败：{error}")),
+            Self::Replica(root) => root
+                .verify(now_ms(), previous)
+                .map(|batch| (batch.snapshot, Some(batch.freshness)))
+                .map_err(|error| error.to_string()),
+        }
+    }
+}
+
 /// 服务共享状态。
 pub struct AppState {
     /// 白名单只读根。
@@ -74,6 +98,8 @@ pub struct AppState {
     pub outage: Mutex<Option<Outage>>,
     /// 扫描预算。
     pub limits: ScanLimits,
+    /// 已验证源的派生缓存。
+    pub(crate) index: IndexRuntime,
 }
 
 /// 当前时间（RFC 3339，UTC）。
@@ -99,8 +125,14 @@ pub fn build_generation(
         .map_err(|error| format!("读模型构建失败：{error}"))?;
     Ok(Generation {
         number,
+        index_status: IndexStatus {
+            source: ModelSource::Rebuilt,
+            parsed: snapshot.notes.len(),
+            reused: 0,
+            persistence: Persistence::Disabled,
+        },
         snapshot,
-        model,
+        model: Arc::new(model),
         generated_at: now(),
         freshness: None,
     })
@@ -119,8 +151,14 @@ pub fn replica_generation(
         .map_err(|_| "副本读模型构建失败".to_owned())?;
     Ok(Generation {
         number,
+        index_status: IndexStatus {
+            source: ModelSource::Rebuilt,
+            parsed: replica.snapshot.notes.len(),
+            reused: 0,
+            persistence: Persistence::Disabled,
+        },
         snapshot: replica.snapshot,
-        model,
+        model: Arc::new(model),
         generated_at: now(),
         freshness: Some(replica.freshness),
     })
@@ -138,11 +176,15 @@ impl AppState {
             .number
             .checked_add(1)
             .ok_or_else(|| "代次溢出".to_owned())?;
-        let generation = Arc::new(match &self.source {
-            SupplySource::Direct(roots) => build_generation(roots, self.limits, next)?,
-            SupplySource::Replica(root) => {
-                replica_generation(root, previous.freshness.as_ref(), next)?
-            }
+        let (snapshot, freshness) = self.source.scan(self.limits, previous.freshness.as_ref())?;
+        let (model, index_status) = self.index.build(&snapshot, Some(&previous))?;
+        let generation = Arc::new(Generation {
+            number: next,
+            snapshot,
+            model,
+            index_status,
+            generated_at: now(),
+            freshness,
         });
         *self
             .current

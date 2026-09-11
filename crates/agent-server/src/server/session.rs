@@ -1,5 +1,5 @@
 //! 会话认证、先审计后供给及带新鲜度的预算路牌。
-use super::{AgentSession, TOOLS};
+use super::{AgentSession, HTTP_TOOLS, TOOLS};
 use crate::state::{AppState, AuditUnavailable, Generation, now, now_ms};
 use rmcp::ErrorData as McpError;
 use std::sync::{Arc, OnceLock};
@@ -27,7 +27,59 @@ impl AgentSession {
             state,
             session_ref: ulid::Ulid::generate().to_string(),
             instance: OnceLock::new(),
+            http: false,
         }
+    }
+
+    /// HTTP 会话共用供给逻辑，只替换预算内的续读入口。
+    pub(crate) fn new_http(state: Arc<AppState>) -> Self {
+        Self {
+            http: true,
+            ..Self::new(state)
+        }
+    }
+
+    /// 会话登记后绑定的类型，供 HTTP 外壳匹配每次请求的认证身份。
+    pub(crate) fn bound_type(&self) -> Option<&str> {
+        self.instance
+            .get()
+            .map(|instance| instance.agent_type.as_str())
+    }
+
+    /// 已登记的实例；外壳可回传身份头，不包含会话句柄或类型令牌。
+    pub(crate) fn bound_instance(&self) -> Option<&Instance> {
+        self.instance.get()
+    }
+
+    /// 由外壳在新会话发布前调用一次；注册和路牌均先审计后交付。
+    pub(crate) async fn initialize_text(&self, agent_type: &str) -> Result<String, McpError> {
+        let instance = self
+            .state
+            .store
+            .register_instance(agent_type, &self.session_ref, &now())
+            .map_err(|_| McpError::internal_error("实例注册失败", None))?;
+        let actor = Actor::instance(&instance.agent_type, &instance.id);
+        let registered = audit::instance_registered(actor)
+            .map_err(|_| McpError::internal_error("审计事件构造失败", None))?;
+        let instructions = match self.state.audit(registered) {
+            Err(outage) => Err(McpError::internal_error(
+                format!(
+                    "审计不可用：outage {}。本次会话所有读取与写入全部拒绝，不提供路牌；请稍后重试。",
+                    outage.outage_id
+                ),
+                None,
+            )),
+            Ok(_) => self.signpost(&instance).await,
+        };
+        // MCP 仍保留降级实例，使初始化返回原有无内容 instructions；HTTP 将错误映射为 503。
+        if instructions.is_ok()
+            || instructions
+                .as_ref()
+                .is_err_and(|error| error.message.contains("审计不可用"))
+        {
+            let _ = self.instance.set(instance);
+        }
+        instructions
     }
 
     /// 每次调用都重验：实例已注册且类型未吊销。
@@ -157,15 +209,20 @@ impl AgentSession {
             registered_at: instance.registered_at.clone(),
         };
         let actor = Actor::instance(&instance.agent_type, &instance.id);
-        let derived = signpost::derive(&SignpostInput {
+        let input = SignpostInput {
             snapshot: &generation.snapshot,
             allow: &self.state.allow,
             principal: &principal,
             generation: generation.number,
             generated_at: &generation.generated_at,
             freshness: (!freshness.is_empty()).then_some(freshness.as_str()),
-            tools: TOOLS,
-        });
+            tools: if self.http { HTTP_TOOLS } else { TOOLS },
+        };
+        let derived = if self.http {
+            signpost::derive_http(&input)
+        } else {
+            signpost::derive(&input)
+        };
         match derived {
             Ok(signpost) => {
                 let event = audit::handshake_served(actor, generation.number, signpost.tokens)

@@ -1,7 +1,8 @@
 use std::collections::BTreeMap;
 
 /// One parsed Markdown heading.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct Heading {
     /// Heading level in the inclusive range 1 through 6.
     pub level: u8,

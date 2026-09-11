@@ -68,6 +68,18 @@ const STATUS_KEYS: [&str; 4] = ["当前版本", "状态", "最近日志", "未�
 
 /// 派生并计量路牌；超过硬预算返回错误（二元验收）。
 pub fn derive(input: &SignpostInput<'_>) -> Result<Signpost, BudgetExceeded> {
+    derive_with_label(input, "tools")
+}
+
+/// HTTP 外壳复用同一路牌、裁剪与硬预算，续读部分明确标记 HTTP 入口。
+pub fn derive_http(input: &SignpostInput<'_>) -> Result<Signpost, BudgetExceeded> {
+    derive_with_label(input, "HTTP 入口")
+}
+
+fn derive_with_label(
+    input: &SignpostInput<'_>,
+    entry_label: &str,
+) -> Result<Signpost, BudgetExceeded> {
     let projects = input
         .allow
         .iter()
@@ -76,7 +88,7 @@ pub fn derive(input: &SignpostInput<'_>) -> Result<Signpost, BudgetExceeded> {
     let rules = rules_summary(input.snapshot, input.allow);
     let mut last = None;
     for level in 0..=3u8 {
-        let text = render(input, &projects, &rules, level);
+        let text = render(input, &projects, &rules, level, entry_label);
         match check_budget(&text) {
             Ok(tokens) if tokens <= TARGET_BUDGET_TOKENS => {
                 return Ok(Signpost {

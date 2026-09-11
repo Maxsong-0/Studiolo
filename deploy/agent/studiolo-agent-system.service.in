@@ -1,7 +1,7 @@
 # Studiolo M3 系统服务（进程仍以 maxsong 运行）；@RELEASE@ 必须替换为已校验的发布目录名。
 # 只监听 127.0.0.1:4400；公网入口由专用 Tunnel 的独立主机名转发到此回环端口，门禁在应用内（bearer）。
 [Unit]
-Description=Studiolo M3 agent supply (MCP, loopback 4400)
+Description=Studiolo M3 agent supply (MCP/HTTP, loopback 4400)
 StartLimitIntervalSec=60
 StartLimitBurst=3
 
@@ -14,7 +14,7 @@ PrivateUsers=no
 WorkingDirectory=/home/maxsong/.local/share/studiolo-agent-releases/@RELEASE@
 # 白名单完整批次由 scripts/sync-agent-vault.sh 推送；先完成首批同步再启用本单元。
 # 私有库/账本沿用既有目录；副本每次读取完整验证，超过 300 秒不再声称新鲜。
-ExecStart=/home/maxsong/.local/share/studiolo-agent-releases/@RELEASE@/bin/studiolo-agent serve --replica-root /home/maxsong/.local/share/studiolo-agent-replica --replica-max-age-secs 300 --allow 项目/Studiolo --allow _规则 --data /home/maxsong/.local/share/studiolo-agent --port 4400
+ExecStart=/home/maxsong/.local/share/studiolo-agent-releases/@RELEASE@/bin/studiolo-agent serve --replica-root /home/maxsong/.local/share/studiolo-agent-replica --replica-max-age-secs 300 --allow 项目/Studiolo --allow _规则 --data /home/maxsong/.local/share/studiolo-agent --index-cache /home/maxsong/.local/share/studiolo-agent-index --port 4400
 Restart=on-failure
 RestartSec=3
 KillSignal=SIGTERM
@@ -23,8 +23,8 @@ UMask=0077
 NoNewPrivileges=yes
 ProtectSystem=strict
 ProtectHome=read-only
-# 唯一可写路径：私有库 agent.sqlite3 与审计账本；发布目录与库副本保持只读。
-ReadWritePaths=/home/maxsong/.local/share/studiolo-agent
+# 可写路径仅既有身份/审计库与独立派生缓存；发布目录与资料副本保持只读。
+ReadWritePaths=/home/maxsong/.local/share/studiolo-agent /home/maxsong/.local/share/studiolo-agent-index
 PrivateTmp=yes
 # 此选项会拦截 openat2（只读 Broker 依赖它）；以只读文件系统和 NoNewPrivileges 维持写入/提权边界。
 RestrictSUIDSGID=no

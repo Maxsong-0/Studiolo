@@ -10,6 +10,7 @@ pub(super) fn render(
     projects: &[ProjectStatus],
     rules: &RulesSummary,
     level: u8,
+    entry_label: &str,
 ) -> String {
     let focus_chars = [200usize, 140, 100, 60][usize::from(level)];
     let task_chars = [80usize, 60, 40, 30][usize::from(level)];
@@ -110,7 +111,7 @@ pub(super) fn render(
     out.push_str("## 6 继续拉\n");
     let _ = writeln!(
         out,
-        "tools：{}",
+        "{entry_label}：{}",
         input
             .tools
             .iter()

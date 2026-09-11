@@ -26,20 +26,55 @@ STUDIOLO_TEST_PACKAGES=(
 mkdir "$STUDIOLO_OUT"
 mkdir "$STUDIOLO_OUT/source" "$STUDIOLO_OUT/payload" "$STUDIOLO_OUT/build-meta"
 cd "$STUDIOLO_ROOT"
-# 显式白名单：不归档 .git、凭据、缓存或用户笔记。架构守卫要读 package-preview.sh / test-linux.sh / ci.yml，一并携带。
+# 只复制白名单内的已跟踪普通文件；目录入口不递归收集未跟踪文件、缓存或用户资料。
+# 架构守卫要读 package-preview.sh / test-linux.sh / ci.yml，一并携带。
 STUDIOLO_INPUTS=(
   Cargo.toml Cargo.lock rust-toolchain.toml crates
   scripts/package-preview.sh scripts/package-agent.sh scripts/run-agent-tests.sh
   scripts/check-agent.py scripts/test-check-agent.py scripts/test-sync-agent-vault.py
   scripts/check-agent-replica.py scripts/test-check-agent-replica.py
+  scripts/check-agent-http.py scripts/test-check-agent-http.py
   scripts/sync-agent-vault.sh scripts/test-linux.sh .github/workflows/ci.yml
-  scripts/replica_*.py scripts/test-replica-*.py
+  scripts/replica_archive.py scripts/replica_capture.py scripts/replica_cleanup.py
+  scripts/replica_client.py scripts/replica_common.py scripts/replica_receiver.py scripts/replica_store.py
+  scripts/test-replica-receiver.py scripts/test-replica-boundaries.py
   scripts/prepare-agent-sync.py scripts/test-prepare-agent-sync.py
-  scripts/check-replica-pipeline.py
-  deploy/agent/studiolo-agent.service.in
-  deploy/agent/studiolo-agent-system.service.in
+  scripts/check-replica-pipeline.py scripts/check-client-projection-pipeline.py
+  scripts/client_projection_fetch.py scripts/client_projection_fs.py scripts/client_projection_io.py
+  scripts/client_projection_render.py scripts/client_projection_schema.py scripts/client_projection_store.py
+  scripts/client_projection_test_support.py scripts/sync-agent-client.py
+  scripts/test-client-projection-schema.py scripts/test-client-projection-fetch.py scripts/test-client-projection-store.py
+  scripts/test-agent-package.py
+  deploy/agent deploy/agent/upgrade-read-supply.sh.in docs/m3
 )
-COPYFILE_DISABLE=1 tar -cf - "${STUDIOLO_INPUTS[@]}" |
+git ls-files -z -- "${STUDIOLO_INPUTS[@]}" > "$STUDIOLO_OUT/payload/source-files"
+node - "$STUDIOLO_ROOT" "$STUDIOLO_OUT/payload/source-files" "${STUDIOLO_INPUTS[@]}" <<'NODE_SOURCE'
+const fs = require('node:fs');
+const path = require('node:path');
+const [root, list, ...inputs] = process.argv.slice(2);
+const names = fs.readFileSync(list, 'utf8').split('\0');
+if (names.pop() !== '' || names.length === 0 || new Set(names).size !== names.length) {
+  throw new Error('源码清单为空、不完整或包含重复项');
+}
+const directories = new Set(['crates', 'deploy/agent', 'docs/m3']);
+for (const input of inputs) {
+  if (directories.has(input) ? !names.some(name => name.startsWith(input + '/')) : !names.includes(input)) {
+    throw new Error('白名单文件尚未跟踪或目录为空：' + input);
+  }
+}
+for (const name of names) {
+  const parts = name.split('/');
+  if (/[\x00-\x1f\x7f\\]/.test(name) || parts.some(part => !part || ['.', '..', '.git', '__pycache__'].includes(part))
+      || /\.py[co]$/.test(name)) throw new Error('源码清单包含非法路径或缓存');
+  for (let count = 1; count <= parts.length; count++) {
+    const stat = fs.lstatSync(path.join(root, ...parts.slice(0, count)));
+    if (count === parts.length ? !stat.isFile() : !stat.isDirectory()) {
+      throw new Error('源码路径必须由普通目录和文件组成');
+    }
+  }
+}
+NODE_SOURCE
+COPYFILE_DISABLE=1 tar --no-recursion --null -T "$STUDIOLO_OUT/payload/source-files" -cf - |
   tar -xf - -C "$STUDIOLO_OUT/source"
 git rev-parse HEAD > "$STUDIOLO_OUT/payload/base-commit.txt"
 if [[ -n "$(git status --porcelain -- "${STUDIOLO_INPUTS[@]}")" ]]; then
@@ -90,15 +125,21 @@ docker run --rm --platform linux/amd64 \
     install -m 755 /build-target/release/studiolo-agent /out/bin/
     rustc --version > /out/rust-version.txt
     ldd /out/bin/studiolo-agent > /out/runtime-libraries.txt
+    # 解压后的源码也逐文件验签；只校验 source.tar.gz 无法发现解压树被改写。
+    xargs -0 sha256sum -- < /out/source-files > /out/SOURCE_SHA256SUMS
   '
 
 # Cargo JSON 是可执行程序的唯一来源；只在本机解析，不向服务器引入 Node 或构建日志。
-node - "$STUDIOLO_OUT" "$STUDIOLO_SOURCE_ROOT" <<'NODE'
+node - "$STUDIOLO_OUT" "$STUDIOLO_SOURCE_ROOT" <<'NODE_TESTS'
 const fs = require('node:fs');
 const path = require('node:path');
 const [out, expectedRoot] = process.argv.slice(2);
 const artifacts = new Map();
+const artifactOwners = new Map();
 const targets = new Set();
+const packageIds = new Map();
+const identities = new Map();
+const packages = new Set(['studiolo', 'supply', 'agent-server', 'vault-broker', 'core', 'audit-ledger', 'vault-index', 'workbench']);
 let complete = false;
 for (const line of fs.readFileSync(path.join(out, 'build-meta/tests.jsonl'), 'utf8').split('\n')) {
   if (!line.trim()) continue;
@@ -107,16 +148,41 @@ for (const line of fs.readFileSync(path.join(out, 'build-meta/tests.jsonl'), 'ut
   if (item.reason !== 'compiler-artifact' || item.profile?.test !== true || !item.executable) continue;
   if (typeof item.executable !== 'string' || typeof item.manifest_path !== 'string'
       || !item.manifest_path.startsWith(expectedRoot + '/')) throw new Error('unexpected test source root');
+  const manifest = path.posix.relative(expectedRoot, item.manifest_path);
+  const crate = /^crates\/([^/]+)\/Cargo\.toml$/.exec(manifest)?.[1];
+  if (!packages.has(crate) || typeof item.package_id !== 'string' || !item.package_id
+      || typeof item.target?.name !== 'string' || !Array.isArray(item.target.kind)) {
+    throw new Error('测试程序不属于选定的工作区包');
+  }
+  if ((packageIds.has(crate) && packageIds.get(crate) !== item.package_id)
+      || (identities.has(item.package_id) && identities.get(item.package_id) !== crate)) {
+    throw new Error('Cargo 包身份与源码 manifest 不一致');
+  }
+  packageIds.set(crate, item.package_id);
+  identities.set(item.package_id, crate);
   const relative = path.posix.relative('/build-target', item.executable);
   if (!/^release\/(?:deps\/|examples\/)?[A-Za-z0-9][A-Za-z0-9._-]*$/.test(relative)) {
     throw new Error('unsafe test executable path');
   }
   const name = path.posix.basename(relative);
-  if (artifacts.has(name) && artifacts.get(name) !== relative) throw new Error('duplicate test basename');
+  const owner = JSON.stringify([crate, item.target.name, item.target.kind]);
+  if (artifacts.has(name) && (artifacts.get(name) !== relative || artifactOwners.get(name) !== owner)) {
+    throw new Error('同一测试程序不能充当多个包或测试目标');
+  }
   artifacts.set(name, relative);
-  targets.add(item.target.name);
+  artifactOwners.set(name, owner);
+  if (item.target.kind.includes('test')) targets.add(`${crate}/${item.target.name}`);
 }
-const required = ['architecture', 'linux_path_security', 'mcp_contract', 'roots_contract', 'signpost_contract', 'agent_store_contract'];
+// 按具体包及测试目标验收，避免供给/服务两个同名缓存测试互相充数。
+const required = [
+  'studiolo/architecture', 'vault-broker/linux_path_security',
+  'agent-server/mcp_contract', 'agent-server/replica_mcp_contract',
+  'agent-server/http_text_contract', 'agent-server/http_replica_contract', 'agent-server/index_cache_contract',
+  'supply/roots_contract', 'supply/signpost_contract', 'supply/http_signpost_contract',
+  'supply/agent_store_contract', 'supply/replica_contract', 'supply/index_cache_contract',
+  'vault-index/parse_cache_contract', 'vault-index/parse_cache_codec_contract', 'vault-index/parse_cache_links_contract',
+  'workbench/parse_cache_contract',
+];
 if (!complete || artifacts.size === 0 || required.some(name => !targets.has(name))) {
   throw new Error('incomplete test build or missing required agent/safety tests');
 }
@@ -124,7 +190,7 @@ const names = [...artifacts.keys()].sort();
 fs.writeFileSync(path.join(out, 'build-meta/test-copy-list'), names.map(name => `${artifacts.get(name)}\t${name}\n`).join(''));
 fs.writeFileSync(path.join(out, 'payload/test-list'), names.map(name => `tests/${name}\n`).join(''));
 console.log(`已编译 ${names.length} 个 Rust 测试程序；尚未执行。`);
-NODE
+NODE_TESTS
 
 docker run --rm --platform linux/amd64 \
   -v "$STUDIOLO_OUT/payload":/out \
