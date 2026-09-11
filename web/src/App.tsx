@@ -13,11 +13,16 @@ import { sortProjects } from './projectOrder';
 import { QuickSwitcher } from './components/QuickSwitcher';
 import { useQuickSwitcher } from './useQuickSwitcher';
 import { Diagnostics } from './components/Diagnostics';
+import { ProjectOperations } from './components/ProjectOperations';
 
 const headings = {
   overview: ['项目总览', '项目状态与待办，回到原文核对。'],
   inbox: ['待我动作', '待你验收、拍板与重启的事项，回到原文核对。'],
   documents: ['文档', '搜索笔记或浏览目录与附件，所有内容只读。'],
+  operations: [
+    '项目运作',
+    '对照结构声明与实际目录，理解模块职责并回到原文核对。',
+  ],
 } satisfies Record<View, [string, string]>;
 
 export function App({ account }: { account?: ReactNode }) {
@@ -128,7 +133,7 @@ export function App({ account }: { account?: ReactNode }) {
           <div className="view-content" key={view}>
             {data ? (
               <>
-                {view !== 'documents' ? (
+                {view === 'overview' || view === 'inbox' ? (
                   <Filters
                     query={query}
                     lifecycle={lifecycle}
@@ -147,6 +152,14 @@ export function App({ account }: { account?: ReactNode }) {
                 {view === 'documents' ? (
                   <Documents
                     key={data.generation}
+                    projects={projects}
+                    generation={data.generation}
+                    onOpen={setSource}
+                    onRefresh={refreshSnapshot}
+                  />
+                ) : null}
+                {view === 'operations' ? (
+                  <ProjectOperations
                     projects={projects}
                     generation={data.generation}
                     onOpen={setSource}

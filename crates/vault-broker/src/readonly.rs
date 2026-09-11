@@ -1,5 +1,6 @@
 //! Zero-write access to an explicitly selected local replica or asset directory.
 
+mod directory;
 mod metadata;
 mod private;
 mod read;

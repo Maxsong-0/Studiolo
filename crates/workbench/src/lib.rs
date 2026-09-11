@@ -12,6 +12,11 @@ mod markdown;
 mod metadata;
 mod navigation;
 mod navigation_dto;
+mod operations;
+mod operations_block;
+mod operations_compare;
+mod operations_dto;
+mod operations_parse;
 mod search;
 mod search_dto;
 mod table;
@@ -28,6 +33,7 @@ use studiolo_vault_index::{
 
 pub use dto::*;
 pub use navigation_dto::*;
+pub use operations_dto::*;
 pub use search_dto::*;
 pub use studiolo_vault_index::IndexError;
 pub use tree::FileTree;
@@ -128,5 +134,15 @@ impl WorkbenchReadModel {
     #[must_use]
     pub fn navigation(&self, path: &VaultPath) -> Option<DocumentNavigation> {
         navigation::navigation(&self.index, path)
+    }
+
+    /// 从本代目录声明派生项目运作图首片；未知项目不产生视图。
+    #[must_use]
+    pub fn project_operations(&self, project: &str) -> Option<ProjectOperations> {
+        self.snapshot
+            .projects
+            .iter()
+            .find(|known| known.id == project)?;
+        Some(operations::derive(&self.documents, project))
     }
 }

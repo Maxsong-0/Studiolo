@@ -6,6 +6,7 @@ import { useReducedMotionPreference } from '../useReducedMotionPreference';
 
 const navigation = [
   { id: 'overview', label: '项目总览', icon: 'overview' },
+  { id: 'operations', label: '项目运作', icon: 'canvas' },
   { id: 'inbox', label: '待我动作', icon: 'inbox' },
   { id: 'documents', label: '文档', icon: 'document' },
 ] as const;
@@ -65,7 +66,7 @@ export function AppShell({
                 <Icon name={item.icon} />
               </span>
               <span>{item.label}</span>
-              {item.id !== 'overview' ? (
+              {item.id === 'inbox' || item.id === 'documents' ? (
                 <span className="nav-count" aria-hidden="true">
                   {item.id === 'inbox' ? actionCount : documentCount}
                 </span>

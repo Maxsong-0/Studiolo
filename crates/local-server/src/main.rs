@@ -46,6 +46,11 @@ async fn run() -> Result<(), String> {
             因子模式要求已登记v4及私有Unix入口；其余只监听127.0.0.1。初始化失败直接退出，不回退。\n\
             请先构建web，再显式指定副本；不会自动打开真实Obsidian库。"
         );
+        println!(
+            "\n图2首片可选：--project-repository <项目/名称=/绝对仓库路径>\n\
+             仅本机/旧Access只读模式支持一个显式绑定；只枚举目录，不读取源码。\n\
+             文档代次与仓库观测时间分别标识；未绑定项目显示未核验。"
+        );
         return Ok(());
     };
     startup::PreparedServer::prepare(options)

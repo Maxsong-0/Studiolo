@@ -225,6 +225,10 @@ fn assemble(
         .route("/api/workbench", get(snapshot))
         .route("/api/document", get(queries::document))
         .route("/api/search", get(queries::search))
+        .route(
+            "/api/project-operations",
+            get(crate::project_operations::get),
+        )
         .route("/api/tree", get(tree::page));
     if let Some(sessions) = &state.sessions {
         routes = routes.merge(auth_http::routes(sessions.has_factors()));

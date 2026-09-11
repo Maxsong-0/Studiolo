@@ -13,6 +13,7 @@ use studiolo_auth::{
     AccessConfig, AccessError, AccessVerifier, OsSessionRandom, SessionManager, SystemSessionClock,
 };
 use studiolo_host_config::{Config, ServingRoots};
+use studiolo_local_server::ProjectRepository;
 use studiolo_local_server::{CanonicalWorkbench, PreparedUnixIngress};
 use studiolo_vault_broker::{CanonicalReadVault, ReadOnlyVault};
 
@@ -26,6 +27,7 @@ pub(crate) struct PreparedServer {
     canonical: Option<Arc<CanonicalReadVault>>,
     ingress: Option<PreparedUnixIngress>,
     workbench: Option<Arc<CanonicalWorkbench>>,
+    repository: Option<Arc<ProjectRepository>>,
 }
 
 impl PreparedServer {
@@ -61,6 +63,7 @@ where
         || (options.session.is_some() && options.access.is_some())
         || (options.canonical && options.session.is_none())
         || (options.factor.is_some() && options.session.is_none())
+        || (options.project_repository.is_some() && options.session.is_some())
         || (options.writer_data.is_some() && (options.canonical || options.session.is_none()))
         || options
             .writer_data
@@ -69,6 +72,15 @@ where
     {
         return Err(StartupError::Configuration);
     }
+    let repository = options
+        .project_repository
+        .as_ref()
+        .map(|(project, root)| {
+            ProjectRepository::open(project, root)
+                .map(Arc::new)
+                .map_err(|_| StartupError::ReadRoots)
+        })
+        .transpose()?;
     let (sessions, roots, access_config, factors, writer_roots) =
         if let Some(session) = &options.session {
             let config = Config::load(&session.config).map_err(|_| StartupError::Configuration)?;
@@ -240,13 +252,18 @@ where
         }
     };
     let prepared = PreparedServer {
-        app,
+        app: if let Some(repository) = &repository {
+            studiolo_local_server::with_project_repository(app, Arc::clone(repository))
+        } else {
+            app
+        },
         port: options.port,
         mode,
         roots,
         canonical,
         ingress,
         workbench,
+        repository,
     };
     if let Err(error) = prepared.revalidate() {
         canonical_input::shutdown(prepared.workbench.as_ref()).await?;

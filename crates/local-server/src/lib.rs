@@ -5,6 +5,8 @@ mod auth_http;
 mod bootstrap;
 mod canonical;
 mod coordinator;
+mod project_operations;
+mod project_repository;
 mod queries;
 mod refresh;
 mod routing;
@@ -14,6 +16,7 @@ mod unix_ingress;
 mod view;
 mod watcher;
 pub use coordinator::CanonicalWorkbench;
+pub use project_repository::{ProjectRepository, with_project_repository};
 pub use unix_ingress::{BoundUnixIngress, IngressError, PreparedUnixIngress};
 
 pub use routing::{

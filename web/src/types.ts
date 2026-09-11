@@ -94,5 +94,5 @@ export interface SearchResponse {
   truncated: boolean;
 }
 
-export type View = 'overview' | 'inbox' | 'documents';
+export type View = 'overview' | 'inbox' | 'documents' | 'operations';
 export type OpenSource = (source: SourceLocation) => void;
