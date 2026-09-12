@@ -3,6 +3,7 @@
 mod canonical_input;
 mod error;
 mod factor_input;
+mod repository_input;
 mod serving;
 
 pub(crate) use error::StartupError;
@@ -65,6 +66,7 @@ where
         || (options.factor.is_some() && options.session.is_none())
         || (options.project_repository.is_some() && options.session.is_some())
         || (options.cargo_dependencies && options.project_repository.is_none())
+        || (options.rust_call_sites.is_some() && options.project_repository.is_none())
         || (options.writer_data.is_some() && (options.canonical || options.session.is_none()))
         || options
             .writer_data
@@ -73,22 +75,7 @@ where
     {
         return Err(StartupError::Configuration);
     }
-    let repository = options
-        .project_repository
-        .as_ref()
-        .map(|(project, root)| {
-            ProjectRepository::open(project, root)
-                .map(|repository| {
-                    if options.cargo_dependencies {
-                        repository.with_cargo_dependencies()
-                    } else {
-                        repository
-                    }
-                })
-                .map(Arc::new)
-                .map_err(|_| StartupError::ReadRoots)
-        })
-        .transpose()?;
+    let repository = repository_input::open(&options)?;
     let (sessions, roots, access_config, factors, writer_roots) =
         if let Some(session) = &options.session {
             let config = Config::load(&session.config).map_err(|_| StartupError::Configuration)?;

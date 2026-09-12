@@ -1,4 +1,4 @@
-//! 显式绑定的只读仓库能力；默认仅目录，固定清单须另行授权，不接受宿主路径查询。
+//! 显式绑定的只读仓库能力；默认仅目录，清单和源码须另行授权，不接受宿主路径查询。
 
 use std::{
     path::{Path, PathBuf},
@@ -23,6 +23,7 @@ pub struct ProjectRepository {
     root: ReadOnlyVault,
     root_path: PathBuf,
     cargo_dependencies: bool,
+    rust_call_sites: Option<Vec<String>>,
 }
 
 impl ProjectRepository {
@@ -43,6 +44,7 @@ impl ProjectRepository {
             root: ReadOnlyVault::open(root)?,
             root_path: root.to_owned(),
             cargo_dependencies: false,
+            rust_call_sites: None,
         })
     }
 
@@ -60,6 +62,21 @@ impl ProjectRepository {
             return crate::project_cargo::CargoDependencyObservation::disabled();
         }
         crate::project_cargo::observe(&self.root, || self.revalidate())
+    }
+
+    /// 完整验证源码白名单；启用时不读取正文，不跟随模块或宏发现其他文件。
+    pub fn with_rust_call_sites(mut self, paths: Vec<String>) -> Result<Self, LocalError> {
+        let paths = studiolo_workbench::validate_rust_source_paths(&paths)
+            .map_err(|_| LocalError::Configuration)?;
+        self.rust_call_sites = Some(paths);
+        Ok(self)
+    }
+
+    pub(crate) fn observe_rust_call_sites(&self) -> crate::project_rust::RustCallObservation {
+        let Some(paths) = &self.rust_call_sites else {
+            return crate::project_rust::RustCallObservation::disabled();
+        };
+        crate::project_rust::observe(&self.root, paths, || self.revalidate())
     }
 
     /// 监听前和请求前复核根绑定；替换后的路径不能获得原绑定的读取权限。

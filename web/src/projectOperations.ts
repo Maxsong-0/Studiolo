@@ -3,6 +3,8 @@ import { validateArchitecture } from './architecture';
 import type { ArchitectureData } from './architecture';
 import { validateCargoDependencies } from './cargoDependencies';
 import type { CargoDependenciesData } from './cargoDependencies';
+import { validateRustCallSites } from './validateRustCallSites';
+import type { RustCallSitesData } from './rustCallSites';
 
 export interface OperationDirectory {
   path: string;
@@ -31,6 +33,7 @@ export interface ProjectOperationsData {
   drift: DirectoryDrift[];
   architecture?: ArchitectureData;
   cargo_dependencies?: CargoDependenciesData;
+  rust_call_sites?: RustCallSitesData;
 }
 
 const record = (value: unknown): value is Record<string, unknown> =>
@@ -103,5 +106,7 @@ export function validateProjectOperations(
     validateArchitecture(value.architecture, String(value.project));
   if (record(value) && 'cargo_dependencies' in value)
     validateCargoDependencies(value.cargo_dependencies);
+  if (record(value) && 'rust_call_sites' in value)
+    validateRustCallSites(value.rust_call_sites);
   return value as unknown as ProjectOperationsData;
 }

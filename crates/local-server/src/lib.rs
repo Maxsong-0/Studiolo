@@ -8,6 +8,7 @@ mod coordinator;
 mod project_cargo;
 mod project_operations;
 mod project_repository;
+mod project_rust;
 mod queries;
 mod refresh;
 mod routing;

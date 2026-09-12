@@ -22,6 +22,7 @@ import './styles/factor.css';
 import './styles/operations.css';
 import './styles/architecture.css';
 import './styles/cargo-dependencies.css';
+import './styles/rust-call-sites.css';
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>

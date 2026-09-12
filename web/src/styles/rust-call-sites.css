@@ -1,0 +1,163 @@
+.rust-panel,
+.rust-file-content,
+.rust-file-view {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.rust-call-layout {
+  display: grid;
+  grid-template-columns: minmax(160px, 25%) minmax(0, 1fr);
+  align-items: start;
+  gap: 24px;
+}
+.rust-files,
+.rust-contexts {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+.rust-contexts {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 12rem), 1fr));
+}
+.rust-files button,
+.rust-contexts button {
+  min-width: 0;
+  min-height: 44px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface-solid);
+  text-align: left;
+  overflow-wrap: anywhere;
+}
+.rust-files button:hover,
+.rust-contexts button:hover {
+  background: var(--accent-soft);
+}
+.rust-files button[aria-pressed='true'],
+.rust-contexts button[aria-pressed='true'] {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+.rust-files code,
+.rust-contexts strong,
+.rust-files span,
+.rust-contexts span {
+  display: block;
+}
+.rust-files span,
+.rust-contexts span {
+  margin-top: 6px;
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+.rust-contexts strong {
+  font-size: 0.8125rem;
+  font-weight: 600;
+}
+.rust-selected-file {
+  margin-top: 0;
+  font-size: 1rem;
+}
+.rust-coverage,
+.rust-declarations {
+  padding: 16px;
+  border-radius: 12px;
+  background: var(--surface-solid);
+}
+.rust-coverage h3,
+.rust-declarations h3 {
+  margin: 0 0 12px;
+  font-size: 0.875rem;
+}
+.rust-coverage dl {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 8rem), 1fr));
+  gap: 14px;
+  margin: 0;
+}
+.rust-coverage dt {
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+.rust-coverage dd {
+  margin: 4px 0 0;
+  font-size: 0.875rem;
+}
+.rust-call-filter {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin: 24px 0 16px;
+  font-size: 0.8125rem;
+}
+.rust-call-filter select {
+  min-width: 0;
+  max-width: 100%;
+  min-height: 44px;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--text);
+}
+.rust-call-list {
+  padding-left: 24px;
+}
+.rust-call-list > li {
+  padding: 16px 0;
+  border-top: 1px solid var(--border);
+}
+.rust-call-list p {
+  margin: 8px 0 0;
+  font-size: 0.8125rem;
+}
+.rust-source-position,
+.rust-observation {
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+.rust-declarations {
+  margin-top: 24px;
+}
+.rust-declarations ul,
+.rust-text-data ul {
+  padding-left: 20px;
+}
+.rust-declarations li,
+.rust-text-data li {
+  margin: 12px 0;
+}
+.rust-declarations code {
+  display: block;
+  font-size: 0.8125rem;
+}
+.rust-panel .text-button {
+  min-height: 44px;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.rust-text-data {
+  overflow-wrap: anywhere;
+}
+.rust-text-data section + section {
+  margin-top: 32px;
+}
+.rust-text-data h4 {
+  margin: 24px 0 12px;
+}
+@media (max-width: 1080px) {
+  .rust-call-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .rust-files {
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 12rem), 1fr));
+  }
+}
+@media (max-width: 760px) {
+  .rust-call-filter select {
+    font-size: 1rem;
+  }
+}

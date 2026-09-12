@@ -52,3 +52,30 @@ async fn manually_enabled_cargo_without_binding_fails_before_opening_inputs() {
     assert!(!f.root.join("must-not-open").exists());
     f.unbound();
 }
+
+#[tokio::test]
+async fn manually_composed_rust_capability_is_validated_before_opening_inputs() {
+    for paths in [
+        vec!["a.rs".to_owned()],
+        vec!["../private.rs".to_owned()],
+        Vec::new(),
+    ] {
+        let f = Fixture::new(true);
+        let mut options = f.options();
+        options.session = None;
+        options.vault = f.root.join("must-not-open");
+        if paths != ["a.rs"] {
+            options.project_repository =
+                Some(("项目/虚构".into(), f.root.join("must-not-open-repo")));
+        }
+        options.rust_call_sites = Some(paths);
+        let result = prepare_with(options, |_| async {
+            panic!("无效白名单不得取外部密钥")
+        })
+        .await;
+        assert!(matches!(result, Err(StartupError::Configuration)));
+        assert!(!f.root.join("must-not-open").exists());
+        assert!(!f.root.join("must-not-open-repo").exists());
+        f.unbound();
+    }
+}

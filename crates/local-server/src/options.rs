@@ -15,6 +15,7 @@ pub(crate) struct Options {
     pub(crate) factor: Option<FactorOptions>,
     pub(crate) project_repository: Option<(String, PathBuf)>,
     pub(crate) cargo_dependencies: bool,
+    pub(crate) rust_call_sites: Option<Vec<String>>,
 }
 
 pub(crate) struct SessionOptions {
@@ -38,6 +39,7 @@ pub(crate) fn parse(mut args: impl Iterator<Item = String>) -> Result<Option<Opt
     let mut replacement_seed_ref = None;
     let mut project_repository = None;
     let mut cargo_dependencies = false;
+    let mut rust_call_sites = None;
     let mut assets = PathBuf::from("web/dist");
     let mut label = "只读副本".to_owned();
     let mut port = 4317;
@@ -65,6 +67,7 @@ pub(crate) fn parse(mut args: impl Iterator<Item = String>) -> Result<Option<Opt
                 | "--replacement-seed-ref"
                 | "--project-repository"
                 | "--cargo-dependencies"
+                | "--rust-call-sites"
                 | "--help"
         ) {
             return Err("未知参数；仅接受 --help 中的非秘密参数".into());
@@ -97,6 +100,7 @@ pub(crate) fn parse(mut args: impl Iterator<Item = String>) -> Result<Option<Opt
             "--project-repository" => {
                 project_repository = Some(parse_repository(&value)?);
             }
+            "--rust-call-sites" => rust_call_sites = Some(parse_rust_sources(&value)?),
             "--assets" => assets = PathBuf::from(value),
             "--label" => label = value,
             "--port" => {
@@ -165,6 +169,9 @@ pub(crate) fn parse(mut args: impl Iterator<Item = String>) -> Result<Option<Opt
     if cargo_dependencies && project_repository.is_none() {
         return Err("Cargo清单读取必须配合显式 --project-repository".into());
     }
+    if rust_call_sites.is_some() && project_repository.is_none() {
+        return Err("Rust源码读取必须配合显式 --project-repository".into());
+    }
     if canonical && session.is_none() {
         return Err("canonical读取必须配合显式 --session-config 及公共Origin".into());
     }
@@ -185,7 +192,17 @@ pub(crate) fn parse(mut args: impl Iterator<Item = String>) -> Result<Option<Opt
         factor,
         project_repository,
         cargo_dependencies,
+        rust_call_sites,
     }))
+}
+
+fn parse_rust_sources(value: &str) -> Result<Vec<String>, String> {
+    if value.len() > 32 * 1024 {
+        return Err("Rust源码白名单参数超过32KiB预算".into());
+    }
+    let paths: Vec<String> = serde_json::from_str(value)
+        .map_err(|_| "Rust源码白名单必须是JSON字符串数组；不回显输入".to_owned())?;
+    studiolo_workbench::validate_rust_source_paths(&paths).map_err(|error| error.message)
 }
 
 fn parse_repository(value: &str) -> Result<(String, PathBuf), String> {
@@ -223,3 +240,7 @@ mod repository_tests;
 #[cfg(test)]
 #[path = "../tests/options/cargo_dependencies.rs"]
 mod cargo_dependency_tests;
+
+#[cfg(test)]
+#[path = "../tests/options/rust_call_sites.rs"]
+mod rust_call_tests;

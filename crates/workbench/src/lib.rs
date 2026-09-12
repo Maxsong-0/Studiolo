@@ -1,6 +1,6 @@
 //! Pure, rebuildable M1 project views. This Module performs no filesystem,
 //! network, process, or clock operations: every displayed fact comes from the
-//! supplied documents or explicit Cargo manifest inputs and retains its source location.
+//! supplied documents or explicit repository inputs and retains its source location.
 
 #![forbid(unsafe_code)]
 
@@ -26,6 +26,12 @@ mod operations_block;
 mod operations_compare;
 mod operations_dto;
 mod operations_parse;
+mod rust_call_sites;
+mod rust_dto;
+mod rust_extract;
+mod rust_names;
+mod rust_paths;
+mod rust_walk;
 mod search;
 mod search_dto;
 mod table;
@@ -47,6 +53,9 @@ pub use cargo_plan::cargo_manifest_paths;
 pub use dto::*;
 pub use navigation_dto::*;
 pub use operations_dto::*;
+pub use rust_call_sites::derive_rust_call_sites;
+pub use rust_dto::*;
+pub use rust_paths::validate_rust_source_paths;
 pub use search_dto::*;
 pub use studiolo_vault_index::IndexError;
 pub use tree::FileTree;

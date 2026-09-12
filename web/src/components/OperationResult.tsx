@@ -5,6 +5,7 @@ import { OperationDiagramBoundary } from './OperationDiagramBoundary';
 import { OperationDrift } from './OperationDrift';
 import { ArchitecturePanel } from './ArchitecturePanel';
 import { CargoDependencyPanel } from './CargoDependencyPanel';
+import { RustCallSitesPanel } from './RustCallSitesPanel';
 import { Icon } from './Icon';
 
 export function OperationResult({
@@ -80,6 +81,7 @@ export function OperationResult({
       <OperationDrift data={data} onOpen={onOpen} />
       <ArchitecturePanel data={data} onOpen={onOpen} />
       <CargoDependencyPanel data={data} onOpen={onOpen} />
+      <RustCallSitesPanel data={data} onOpen={onOpen} />
     </>
   );
 }

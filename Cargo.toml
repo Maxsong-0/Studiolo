@@ -29,6 +29,8 @@ rust-version = "1.97"
 # 依赖版本在此统一声明（ADR-001：M0 逐个评估后写死版本；精确解析结果以 Cargo.lock 为准，
 # 并同步登记到 vault `01-框架/技术栈.md`）。成员 crate 一律 `xxx.workspace = true`。
 [workspace.dependencies]
+tree-sitter = "=0.26.13"
+tree-sitter-rust = "=0.24.2"
 studiolo-core = { path = "crates/core" }
 studiolo-vault-broker = { path = "crates/vault-broker" }
 studiolo-vault-index = { path = "crates/vault-index" }

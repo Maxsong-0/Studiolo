@@ -162,6 +162,7 @@ export function App({ account }: { account?: ReactNode }) {
                   <ProjectOperations
                     projects={projects}
                     generation={data.generation}
+                    refreshing={loading}
                     onOpen={setSource}
                     onRefresh={refreshSnapshot}
                   />

@@ -7,6 +7,7 @@ import { Icon } from './Icon';
 interface OperationsProps {
   projects: Project[];
   generation: number;
+  refreshing?: boolean;
   onOpen: OpenSource;
   onRefresh: () => void;
 }
@@ -14,6 +15,7 @@ interface OperationsProps {
 export function ProjectOperations({
   projects,
   generation,
+  refreshing = false,
   onOpen,
   onRefresh,
 }: OperationsProps) {
@@ -46,13 +48,19 @@ export function ProjectOperations({
         </div>
         <span className="operation-muted">{project.root}</span>
       </div>
-      <ProjectOperationContent
-        key={`${project.root}:${generation}`}
-        project={project.root}
-        generation={generation}
-        onOpen={onOpen}
-        onRefresh={onRefresh}
-      />
+      {refreshing ? (
+        <p className="empty-state" role="status">
+          正在刷新工作台，项目运作证据将在刷新后重新读取…
+        </p>
+      ) : (
+        <ProjectOperationContent
+          key={`${project.root}:${generation}`}
+          project={project.root}
+          generation={generation}
+          onOpen={onOpen}
+          onRefresh={onRefresh}
+        />
+      )}
     </div>
   );
 }

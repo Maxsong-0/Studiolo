@@ -50,6 +50,8 @@ async fn run() -> Result<(), String> {
             "\n图2首片可选：--project-repository <项目/名称=/绝对仓库路径>\n\
              仅本机/旧Access只读模式支持一个显式绑定；默认只枚举目录。\n\
              可加 --cargo-dependencies 显式读取根及成员Cargo.toml，派生清单依赖；不执行Cargo或读取源码。\n\
+             或加 --rust-call-sites '[\"src/lib.rs\"]' 显式读取Rust文件白名单，展示调用语法位置；与Cargo能力独立。\n\
+             源码白名单不自动跟随mod/include，不执行代码或宏，不解析调用目标。\n\
              文档代次与仓库观测时间分别标识；未绑定项目显示未核验。"
         );
         return Ok(());

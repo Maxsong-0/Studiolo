@@ -36,6 +36,7 @@ T-040 三片合并、完整运行包、系统服务升级与回滚见 [读取供
 T-041 显式本地仓库绑定、目录职责图与双向漂移开发见 [项目运作图首片](m3/project-operations.md)。
 T-042 有来源的模块关系、数据流与逐步设计路径见 [架构关系与任务路径](m3/architecture-flow.md)。
 T-043 显式启用的 Cargo 包关系、依赖条件与清单来源见 [Cargo 清单依赖](m3/cargo-dependencies.md)。
+T-044 显式 Rust 文件白名单、词法上下文与未解析目标的调用位置见 [Rust 调用位置证据](m3/rust-call-sites.md)。
 
 ## contracts/ — Module Interface 契约（M0）
 

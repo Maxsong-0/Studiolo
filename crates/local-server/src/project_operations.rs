@@ -12,7 +12,7 @@ use studiolo_workbench::{DirectoryDrift, ProjectArchitecture, ProjectOperations}
 
 use crate::{
     ApiError, AppState, ProjectRepository, project_cargo::CargoDependencyObservation,
-    project_repository::RepositoryCheck, queries,
+    project_repository::RepositoryCheck, project_rust::RustCallObservation, queries,
 };
 
 #[derive(Deserialize)]
@@ -31,6 +31,7 @@ pub(crate) struct OperationResponse {
     drift: Vec<DirectoryDrift>,
     architecture: ProjectArchitecture,
     cargo_dependencies: CargoDependencyObservation,
+    rust_call_sites: RustCallObservation,
 }
 
 pub(crate) async fn get(
@@ -53,6 +54,12 @@ pub(crate) async fn get(
                 repository.observe_cargo_dependencies()
             }
             _ => CargoDependencyObservation::unbound(),
+        };
+        let rust_call_sites = match &repository {
+            Some(Extension(repository)) if repository.matches(&query.project) => {
+                repository.observe_rust_call_sites()
+            }
+            _ => RustCallObservation::unbound(),
         };
         let repository = match repository {
             Some(Extension(repository)) if repository.matches(&query.project) => {
@@ -77,6 +84,7 @@ pub(crate) async fn get(
             drift,
             architecture,
             cargo_dependencies,
+            rust_call_sites,
         }))
     })
     .await
