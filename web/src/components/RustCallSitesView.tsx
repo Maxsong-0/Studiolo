@@ -36,7 +36,12 @@ export function RustCallSitesView({
         <h3 className="rust-selected-file">
           <code>{selected.path}</code>
         </h3>
-        <RustCallFileView key={selected.path} graph={graph} file={selected} />
+        <RustCallFileView
+          key={`${selected.path}:${data.rust_call_sites?.links?.batch_id ?? 'legacy'}`}
+          graph={graph}
+          file={selected}
+          links={data.rust_call_sites?.links ?? undefined}
+        />
         <RustFileDeclarations
           path={selected.path}
           data={data}

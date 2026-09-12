@@ -23,6 +23,7 @@ import './styles/operations.css';
 import './styles/architecture.css';
 import './styles/cargo-dependencies.css';
 import './styles/rust-call-sites.css';
+import './styles/rust-call-links.css';
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>

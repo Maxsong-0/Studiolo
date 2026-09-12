@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { rustCallKinds, rustContextKinds } from '../rustCallSites';
 import type {
   RustCallGraph,
@@ -6,17 +6,26 @@ import type {
   RustSourceCoverage,
 } from '../rustCallSites';
 import { RustFileCoverage } from './RustFileCoverage';
-import { RustSourcePosition } from './RustSourcePosition';
+import type { RustCallLinks, RustLinkSelection } from '../rustCallLinks';
+import { RustCallLinkDetails } from './RustCallLinkDetails';
+import { RustCallList } from './RustCallList';
 
 export function RustCallFileView({
   graph,
   file,
+  links,
 }: {
   graph: RustCallGraph;
   file: RustSourceCoverage;
+  links?: RustCallLinks;
 }) {
   const [contextId, setContextId] = useState('all');
   const [kind, setKind] = useState<'all' | RustCallKind>('all');
+  const [selection, setSelection] = useState<RustLinkSelection>(null);
+  const detailRef = useRef<HTMLElement>(null);
+  const associations = links
+    ? new Map(links.associations.map((item) => [item.call_id, item]))
+    : undefined;
   const contexts = graph.contexts.filter(
     (item) => item.source.path === file.path,
   );
@@ -39,7 +48,10 @@ export function RustCallFileView({
       <div className="rust-contexts" role="group" aria-label="Rust 词法上下文">
         <button
           aria-pressed={contextId === 'all'}
-          onClick={() => setContextId('all')}
+          onClick={() => {
+            setContextId('all');
+            setSelection(null);
+          }}
         >
           全部上下文
         </button>
@@ -49,7 +61,10 @@ export function RustCallFileView({
             <button
               key={context.id}
               aria-pressed={contextId === context.id}
-              onClick={() => setContextId(context.id)}
+              onClick={() => {
+                setContextId(context.id);
+                setSelection(null);
+              }}
             >
               <strong>
                 {rustContextKinds[context.kind]}
@@ -73,7 +88,10 @@ export function RustCallFileView({
         <select
           id="rust-call-kind"
           value={kind}
-          onChange={(event) => setKind(event.target.value as typeof kind)}
+          onChange={(event) => {
+            setKind(event.target.value as typeof kind);
+            setSelection(null);
+          }}
         >
           <option value="all">全部种类</option>
           {Object.entries(rustCallKinds).map(([value, label]) => (
@@ -84,23 +102,27 @@ export function RustCallFileView({
         </select>
         <span className="operation-muted">当前 {calls.length} 处</span>
       </div>
+      {links ? (
+        <RustCallLinkDetails
+          graph={graph}
+          path={file.path}
+          links={links}
+          selection={selection}
+          onSelect={setSelection}
+          focusRef={detailRef}
+        />
+      ) : null}
       {calls.length ? (
-        <ol className="rust-call-list" aria-label="Rust 调用位置">
-          {calls.map((call) => {
-            const context = contextMap.get(call.context)!;
-            return (
-              <li key={call.id}>
-                <strong>{call.name ?? '表达式目标未提取'}</strong>
-                <p>{rustCallKinds[call.kind]} · 目标未解析</p>
-                <p>
-                  最近词法上下文：
-                  {context.name ?? rustContextKinds[context.kind]}
-                </p>
-                <RustSourcePosition source={call.source} />
-              </li>
-            );
-          })}
-        </ol>
+        <RustCallList
+          calls={calls}
+          contexts={contextMap}
+          associations={associations}
+          selection={selection}
+          onSelect={(next) => {
+            setSelection(next);
+            detailRef.current?.focus();
+          }}
+        />
       ) : (
         <p className="operation-unavailable" role="status">
           {fileCalls.length === 0

@@ -37,6 +37,7 @@ T-041 显式本地仓库绑定、目录职责图与双向漂移开发见 [项目
 T-042 有来源的模块关系、数据流与逐步设计路径见 [架构关系与任务路径](m3/architecture-flow.md)。
 T-043 显式启用的 Cargo 包关系、依赖条件与清单来源见 [Cargo 清单依赖](m3/cargo-dependencies.md)。
 T-044 显式 Rust 文件白名单、词法上下文与未解析目标的调用位置见 [Rust 调用位置证据](m3/rust-call-sites.md)。
+T-045 同文件自由函数的受限词法关联、同批标识和反向引用见 [函数词法关联](m3/rust-call-links.md)。
 
 ## contracts/ — Module Interface 契约（M0）
 

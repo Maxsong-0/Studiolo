@@ -54,7 +54,7 @@ export function RustCallSitesPanel({
         </div>
       </header>
       <p className="operation-muted">
-        白名单文件 → 词法上下文 → 调用语法位置。目标未解析，未做类型检查；
+        白名单文件 → 词法上下文 → 调用语法位置。未做编译器名字解析或类型检查；
         同名方法不能视为同一目标，调用语法也可能调用函数指针或闭包。
         这些位置不表示实际执行轨迹。
       </p>
@@ -67,6 +67,21 @@ export function RustCallSitesPanel({
             </time>
             ；文档声明使用快照 {data.generation}，各类证据没有共同事务观测时间。
           </p>
+          {rust?.links ? (
+            <details className="rust-link-batch">
+              <summary>词法关联 · 输入批标识</summary>
+              <code>{rust.links.batch_id}</code>
+              <p>
+                该标识说明输入内容身份，不是文件系统快照或新鲜度证明。
+                前端没有源码正文，无法独立重算内容哈希；它与文档代次和 Cargo
+                观测独立。
+              </p>
+            </details>
+          ) : (
+            <p className="operation-muted">
+              当前服务未提供词法关联；保留调用位置，目标未解析。
+            </p>
+          )}
           <p className="operation-muted">
             仅覆盖下列 {graph.files.length} 个显式白名单文件，共{' '}
             {graph.calls.length} 处调用位置。
@@ -78,7 +93,7 @@ export function RustCallSitesPanel({
             </p>
           ) : null}
           <RustCallSitesBoundary
-            key={`${data.project}:${data.generation}:${observed}`}
+            key={`${data.project}:${data.generation}:${observed}:${rust?.links?.batch_id ?? 'legacy'}`}
             graph={graph}
             data={data}
             onOpen={onOpen}

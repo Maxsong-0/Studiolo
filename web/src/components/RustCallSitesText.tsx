@@ -5,6 +5,8 @@ import type { OpenSource } from '../types';
 import { RustFileCoverage } from './RustFileCoverage';
 import { RustFileDeclarations } from './RustFileDeclarations';
 import { RustSourcePosition } from './RustSourcePosition';
+import { RustCallAssociationText } from './RustCallAssociationText';
+import { RustCallReferencesText } from './RustCallReferencesText';
 
 export function RustCallSitesText({
   graph,
@@ -15,6 +17,11 @@ export function RustCallSitesText({
   data: ProjectOperationsData;
   onOpen: OpenSource;
 }) {
+  const links = data.rust_call_sites?.links;
+  const associations = new Map(
+    links?.associations.map((item) => [item.call_id, item]),
+  );
+  const contexts = new Map(graph.contexts.map((item) => [item.id, item]));
   return (
     <div
       className="rust-text-data"
@@ -36,20 +43,39 @@ export function RustCallSitesText({
                     ID：{context.id}；所属：{context.parent ?? '无（文件根）'}
                   </p>
                   <RustSourcePosition source={context.source} />
+                  {links && context.kind === 'function' ? (
+                    <RustCallReferencesText
+                      target={context.id}
+                      graph={graph}
+                      links={links}
+                    />
+                  ) : null}
                 </li>
               ))}
           </ul>
-          <h4>调用语法位置（目标未解析）</h4>
+          <h4>调用语法位置（词法关联不表示编译器名字解析）</h4>
           <ul>
             {graph.calls
               .filter((item) => item.source.path === file.path)
-              .map((call) => (
-                <li key={call.id}>
-                  {rustCallKinds[call.kind]} · {call.name ?? '表达式目标未提取'}
-                  <p>最近词法上下文：{call.context}</p>
-                  <RustSourcePosition source={call.source} />
-                </li>
-              ))}
+              .map((call) => {
+                const association = associations.get(call.id);
+                return (
+                  <li key={call.id}>
+                    {rustCallKinds[call.kind]} ·{' '}
+                    {call.name ?? '表达式目标未提取'}
+                    <p>最近词法上下文：{call.context}</p>
+                    <RustSourcePosition source={call.source} />
+                    <RustCallAssociationText
+                      association={association}
+                      target={
+                        association?.target
+                          ? contexts.get(association.target)
+                          : undefined
+                      }
+                    />
+                  </li>
+                );
+              })}
           </ul>
           {!graph.calls.some((item) => item.source.path === file.path) ? (
             <p>

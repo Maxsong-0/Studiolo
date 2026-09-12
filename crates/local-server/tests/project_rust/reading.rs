@@ -5,7 +5,7 @@ use studiolo_core::{Revision, VaultPath, VaultUuid};
 
 use super::{
     observe_with,
-    test_support::{API, Fixture, empty, paths},
+    test_support::{API, Fixture, empty, paths, ready},
 };
 
 #[test]
@@ -39,7 +39,7 @@ fn exactly_the_sorted_whitelist_is_read_twice_without_discovery_or_writes() {
             repository.revalidate()
         },
     );
-    assert_eq!(result.status, "ready");
+    ready(&result);
     assert_eq!(reads, [paths(), paths()].concat());
     assert_eq!(checks, 2);
     let graph = result.graph.as_ref().unwrap();
@@ -113,7 +113,11 @@ fn changed_body_revision_and_second_round_utf8_are_unavailable() {
                 let mut note = reader.read_file(path, limit)?;
                 if reads == 3 {
                     match change {
-                        0 => note.content.extend_from_slice(b"\n// changed\n"),
+                        0 => {
+                            let changed = API.replace("helper", "worker").into_bytes();
+                            assert_eq!(changed.len(), note.content.len());
+                            note.content = changed;
+                        }
                         1 => {
                             let namespace: VaultUuid =
                                 "d67f1358-fd5f-43ca-82a4-704805a83ed2".parse().unwrap();
@@ -196,7 +200,7 @@ fn empty_unicode_files_and_controlled_parse_failures_have_distinct_results() {
         .with_rust_call_sites(vec!["src/中文.rs".into()])
         .unwrap()
         .observe_rust_call_sites();
-    assert_eq!(result.status, "ready");
+    ready(&result);
     let graph = result.graph.unwrap();
     assert_eq!(graph.files[0].path, "src/中文.rs");
     assert!(graph.calls.is_empty());

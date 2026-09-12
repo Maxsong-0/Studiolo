@@ -205,7 +205,7 @@ impl Extraction<'_> {
     }
 }
 
-fn context_kind(node: Node<'_>) -> Option<&'static str> {
+pub(crate) fn context_kind(node: Node<'_>) -> Option<&'static str> {
     match node.kind() {
         "mod_item" if node.child_by_field_name("body").is_some() => Some("module"),
         "impl_item" => Some("impl"),

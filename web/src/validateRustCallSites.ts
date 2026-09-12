@@ -4,6 +4,7 @@ import type {
   RustCallContext,
 } from './rustCallSites';
 import { rustCallKinds, rustContextKinds } from './rustCallSites';
+import { validateRustCallLinks } from './rustCallLinks';
 import {
   collisionFree,
   containsEvidence,
@@ -156,5 +157,11 @@ export function validateRustCallSites(value: unknown): RustCallSitesData {
     throw new Error(
       'Rust 调用位置数据格式、来源或覆盖范围不完整，请重试或检查服务。',
     );
+  if (record(value) && 'links' in value) {
+    if (value.status === 'ready')
+      validateRustCallLinks(value.links, value.graph as RustCallGraph);
+    else if (value.links !== null)
+      throw new Error('Rust 词法关联失败状态必须清空本次关联证据。');
+  }
   return value as unknown as RustCallSitesData;
 }

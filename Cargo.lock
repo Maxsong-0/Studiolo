@@ -2732,12 +2732,14 @@ dependencies = [
  "grep-regex",
  "grep-searcher",
  "serde",
+ "sha2 0.11.0",
  "studiolo-core",
  "studiolo-vault-index",
  "thiserror",
  "toml_edit",
  "tree-sitter",
  "tree-sitter-rust",
+ "unicode-normalization",
 ]
 
 [[package]]

@@ -8,7 +8,7 @@ use serde::Serialize;
 use studiolo_core::VaultPath;
 use studiolo_vault_broker::{BrokerError, ReadNote, ReadOnlyVault};
 use studiolo_workbench::{
-    RustCallGraph, RustSourceError, RustSourceErrorKind, derive_rust_call_sites,
+    RustCallGraph, RustCallLinks, RustSourceError, RustSourceErrorKind, derive_rust_call_analysis,
     validate_rust_source_paths,
 };
 
@@ -19,6 +19,7 @@ pub(crate) struct RustCallObservation {
     pub status: &'static str,
     pub observed_at: Option<String>,
     pub graph: Option<RustCallGraph>,
+    pub links: Option<RustCallLinks>,
     pub diagnostics: Vec<String>,
 }
 
@@ -36,6 +37,7 @@ impl RustCallObservation {
             status,
             observed_at: None,
             graph: None,
+            links: None,
             diagnostics: vec![message.to_owned()],
         }
     }
@@ -78,20 +80,22 @@ fn observe_with(
             ));
         }
         let inputs = first.into_iter().map(|item| item.input).collect::<Vec<_>>();
-        let graph = derive_rust_call_sites(&inputs).map_err(Failure::from)?;
+        // 同一不可变正文只分析一次；图与关联经过最终根复核后才同时发布。
+        let analysis = derive_rust_call_analysis(&inputs).map_err(Failure::from)?;
         revalidate().map_err(|_| Failure::unavailable("仓库根绑定已变化或不可读。"))?;
         let observed_at = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map_err(|_| Failure::unavailable("无法记录本次 Rust 源码观测时间。"))?
             .as_secs()
             .to_string();
-        Ok((graph, observed_at))
+        Ok((analysis, observed_at))
     })();
     match result {
-        Ok((graph, observed_at)) => RustCallObservation {
+        Ok((analysis, observed_at)) => RustCallObservation {
             status: "ready",
             observed_at: Some(observed_at),
-            graph: Some(graph),
+            graph: Some(analysis.graph),
+            links: Some(analysis.links),
             diagnostics: Vec::new(),
         },
         Err(error) => RustCallObservation::empty(error.status, &error.message),
@@ -135,6 +139,9 @@ impl From<RustSourceError> for Failure {
 #[cfg(test)]
 #[path = "../tests/project_rust/budgets.rs"]
 mod budget_tests;
+#[cfg(test)]
+#[path = "../tests/project_rust/links.rs"]
+mod link_tests;
 #[cfg(test)]
 #[path = "../tests/project_rust/reading.rs"]
 mod reading_tests;

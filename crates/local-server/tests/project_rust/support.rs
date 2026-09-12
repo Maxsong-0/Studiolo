@@ -54,6 +54,41 @@ impl Fixture {
 pub fn empty(value: &RustCallObservation, status: &str) {
     assert_eq!(value.status, status);
     assert!(value.graph.is_none());
+    assert!(value.links.is_none());
     assert!(value.observed_at.is_none());
     assert!(!value.diagnostics.is_empty());
+}
+
+pub fn ready(value: &RustCallObservation) {
+    assert_eq!(value.status, "ready");
+    assert!(value.observed_at.as_ref().unwrap().parse::<u64>().unwrap() > 0);
+    assert!(value.diagnostics.is_empty());
+    let graph = value.graph.as_ref().unwrap();
+    let links = value.links.as_ref().unwrap();
+    assert_eq!(links.version, 1);
+    assert_eq!(links.batch_id.len(), 64);
+    assert!(
+        links
+            .batch_id
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    );
+    assert_eq!(links.associations.len(), graph.calls.len());
+    for (call, association) in graph.calls.iter().zip(&links.associations) {
+        assert_eq!(association.call_id, call.id);
+        if association.status == "linked" {
+            assert!(association.reason.is_none());
+            let target = graph
+                .contexts
+                .iter()
+                .find(|context| Some(&context.id) == association.target.as_ref())
+                .unwrap();
+            assert_eq!(target.kind, "function");
+            assert_eq!(target.source.path, call.source.path);
+        } else {
+            assert_eq!(association.status, "unresolved");
+            assert!(association.target.is_none());
+            assert!(association.reason.is_some());
+        }
+    }
 }

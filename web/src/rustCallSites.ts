@@ -1,3 +1,5 @@
+import type { RustCallLinks } from './rustCallLinks';
+
 export interface RustSourceLocation {
   path: string;
   line: number;
@@ -59,6 +61,7 @@ export interface RustCallSitesData {
     | 'ready';
   observed_at: string | null;
   graph: RustCallGraph | null;
+  links?: RustCallLinks | null;
   diagnostics: string[];
 }
 
