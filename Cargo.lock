@@ -2495,6 +2495,7 @@ name = "studiolo-agent-server"
 version = "0.0.1"
 dependencies = [
  "axum",
+ "futures-core",
  "http",
  "jiff",
  "reqwest",
@@ -2609,7 +2610,9 @@ dependencies = [
  "rustix",
  "serde",
  "serde_json",
+ "sha2 0.11.0",
  "studiolo-auth",
+ "studiolo-core",
  "tempfile",
  "thiserror",
 ]
@@ -2619,6 +2622,7 @@ name = "studiolo-local-server"
 version = "0.0.1"
 dependencies = [
  "axum",
+ "getrandom 0.4.3",
  "hmac",
  "jsonwebtoken",
  "notify",
@@ -2627,6 +2631,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha1",
+ "sha2 0.11.0",
  "studiolo",
  "studiolo-audit-ledger",
  "studiolo-auth",
@@ -2673,6 +2678,21 @@ dependencies = [
  "tiktoken-rs",
  "ulid",
  "uuid",
+]
+
+[[package]]
+name = "studiolo-sync-bridge"
+version = "0.0.1"
+dependencies = [
+ "getrandom 0.4.3",
+ "rusqlite",
+ "rustix",
+ "serde",
+ "serde_json",
+ "sha2 0.11.0",
+ "studiolo-audit-ledger",
+ "studiolo-core",
+ "tempfile",
 ]
 
 [[package]]

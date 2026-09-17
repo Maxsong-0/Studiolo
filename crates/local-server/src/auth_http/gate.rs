@@ -69,23 +69,43 @@ pub(super) fn headers(request: &Request, origin: &str, factors: bool) -> Result<
     }
     let path = request.uri().path();
     let allowed = match path {
-        SELF | FACTOR_STATE | crate::canonical::PATH => request.method() == Method::GET,
+        SELF
+        | FACTOR_STATE
+        | crate::canonical::PATH
+        | crate::history::PATH
+        | crate::history::FILE
+        | crate::file_operations::TOMBSTONES => request.method() == Method::GET,
         SESSIONS => matches!(*request.method(), Method::GET | Method::POST),
         REVOKE => request.method() == Method::POST,
+        crate::editing::PATH => request.method() == Method::POST,
+        crate::file_operations::PATH => matches!(*request.method(), Method::GET | Method::POST),
         value if factors && is_factor_path(value) => request.method() == Method::POST,
         _ => matches!(*request.method(), Method::GET | Method::HEAD),
     };
     if !allowed {
         return Err(Failure::method(match path {
-            SELF | FACTOR_STATE | crate::canonical::PATH => "GET",
+            SELF
+            | FACTOR_STATE
+            | crate::canonical::PATH
+            | crate::history::PATH
+            | crate::history::FILE
+            | crate::file_operations::TOMBSTONES => "GET",
             SESSIONS => "GET, POST",
             REVOKE => "POST",
+            crate::editing::PATH => "POST",
+            crate::file_operations::PATH => "GET, POST",
             value if factors && is_factor_path(value) => "POST",
             _ => "GET, HEAD",
         }));
     }
-    if (matches!(path, SELF | SESSIONS | REVOKE | FACTOR_STATE)
-        || (factors && is_factor_path(path)))
+    if (matches!(
+        path,
+        SELF | SESSIONS
+            | REVOKE
+            | FACTOR_STATE
+            | crate::editing::PATH
+            | crate::file_operations::PATH
+    ) || (factors && is_factor_path(path)))
         && request.uri().query().is_some()
     {
         return Err(Failure::bad_request());

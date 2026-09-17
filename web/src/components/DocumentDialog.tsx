@@ -12,11 +12,13 @@ export function DocumentDialog({
   generation,
   onClose,
   onRefresh,
+  onEdit,
 }: {
   source: SourceLocation;
   generation: number;
   onClose: () => void;
   onRefresh: () => void;
+  onEdit?: (path: string) => void;
 }) {
   const dialog = useRef<HTMLDialogElement>(null);
   const { dismiss } = useDialogSurface(dialog, onClose);
@@ -98,6 +100,14 @@ export function DocumentDialog({
         <p className="document-readonly" id="source-readonly">
           原文只读 · 内容按纯文本显示
         </p>
+        {document && onEdit ? (
+          <button
+            className="outline-button"
+            onClick={() => onEdit(location.path)}
+          >
+            编辑与预览
+          </button>
+        ) : null}
       </div>
       <div
         className={`document-body${navigationOpen ? ' is-navigation-open' : ''}`}

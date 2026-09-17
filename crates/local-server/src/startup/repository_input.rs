@@ -30,3 +30,27 @@ pub(super) fn open(options: &Options) -> Result<Option<Arc<ProjectRepository>>, 
     }
     Ok(Some(Arc::new(repository)))
 }
+
+/// 在双库、秘密槽和外部取钥前批准真实服务根；环境值不提供可推断的来源文件。
+pub(super) fn approved(
+    options: &Options,
+    config: &studiolo_host_config::Config,
+) -> Result<Option<Arc<ProjectRepository>>, StartupError> {
+    config
+        .repository_serving_roots(
+            &options.vault,
+            &options.assets,
+            options.writer_data.as_deref(),
+            options
+                .factor
+                .as_ref()
+                .map(|factor| factor.socket.as_path()),
+        )
+        .map_err(|_| StartupError::Configuration)?
+        .map(|approval| {
+            ProjectRepository::open_approved(Arc::new(approval))
+                .map(Arc::new)
+                .map_err(|_| StartupError::ReadRoots)
+        })
+        .transpose()
+}

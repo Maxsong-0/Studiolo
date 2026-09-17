@@ -1,5 +1,6 @@
 //! 私有故障夹具定位阶段中断，不把它描述成断电或磁盘固件持久性证明。
 
+mod post_install;
 mod prepared;
 mod stages;
 
@@ -98,10 +99,11 @@ fn installing_never_borrows_external_bytes_or_a_missing_stage_as_proof() {
             Err(BrokerError::MutationUnresolved)
         ));
         assert_blocked(&mut reopened);
-        assert_eq!(
-            reopened.read(&path("note.md")).unwrap().content,
-            b"intended"
-        );
+        assert!(matches!(
+            reopened.read(&path("note.md")),
+            Err(BrokerError::MutationUnresolved)
+        ));
+        assert_eq!(fs::read(fixture.root.join("note.md")).unwrap(), b"intended");
     }
 }
 

@@ -25,7 +25,7 @@ STUDIOLO_INPUTS=(
   web/src web/package.json web/package-lock.json web/index.html
   web/tsconfig.json web/vite.config.ts web/eslint.config.js web/.prettierrc.json web/.prettierignore
   examples/m1-vault scripts/package-preview.sh scripts/check-preview.py scripts/test-check-preview.py
-  scripts/test-linux.sh scripts/run-preview-tests.sh .github/workflows/ci.yml
+  scripts/test-linux.sh scripts/run-preview-tests.sh scripts/test-preview-package.py .github/workflows/ci.yml
   deploy/preview/studiolo-preview.service.in
   deploy/preview/studiolo-access.service.in deploy/preview/studiolo-tunnel.service
 )
@@ -40,6 +40,7 @@ COPYFILE_DISABLE=1 tar -czf "$STUDIOLO_OUT/payload/source.tar.gz" \
 
 # 在独立源码快照构建，避免产物与已归档源码发生偏差。
 python3 "$STUDIOLO_OUT/source/scripts/test-check-preview.py"
+python3 "$STUDIOLO_OUT/source/scripts/test-preview-package.py"
 npm --prefix "$STUDIOLO_OUT/source/web" ci --ignore-scripts
 npm --prefix "$STUDIOLO_OUT/source/web" test
 npm --prefix "$STUDIOLO_OUT/source/web" run lint
@@ -80,14 +81,21 @@ docker run --rm --platform linux/amd64 \
   -e CARGO_TARGET_DIR=/build-target \
   "$STUDIOLO_IMAGE_REF" bash -euo pipefail -c '
     cargo test --workspace --all-targets --release --locked --no-run --message-format=json > /build-meta/tests.jsonl
-    cargo build --release --locked -p studiolo-local-server --features studiolo-auth/production
+    cargo build --release --locked -p studiolo-local-server --features studiolo-auth/production --bin studiolo-local-server
+    cargo build --release --locked -p studiolo-local-server --features studiolo-auth/production --bin studiolo-maintain
     cargo build --release --locked -p studiolo-auth-admin --features production
     mkdir /out/bin
     install -m 755 /build-target/release/studiolo-local-server /out/bin/
     install -m 755 /build-target/release/studiolo-auth-admin /out/bin/
+    install -m 755 /build-target/release/studiolo-maintain /out/bin/
     rustc --version > /out/rust-version.txt
     ldd /out/bin/studiolo-local-server > /out/runtime-libraries.txt
     ldd /out/bin/studiolo-auth-admin > /out/auth-admin-runtime-libraries.txt
+    ldd /out/bin/studiolo-maintain > /out/maintain-runtime-libraries.txt
+    if grep -Fq "not found" /out/runtime-libraries.txt /out/auth-admin-runtime-libraries.txt /out/maintain-runtime-libraries.txt; then
+      printf "%s\n" "生产程序缺少运行库，拒绝打包。" >&2
+      exit 1
+    fi
   '
 
 # Cargo JSON 是可执行程序的唯一来源；只在本机解析，不向服务器引入 Node 或构建日志。
@@ -96,6 +104,9 @@ const fs = require('node:fs');
 const path = require('node:path');
 const [out, expectedRoot] = process.argv.slice(2);
 const artifacts = new Map();
+const artifactOwners = new Map();
+const packageIds = new Map();
+const identities = new Map();
 const targets = new Set();
 let complete = false;
 for (const line of fs.readFileSync(path.join(out, 'build-meta/tests.jsonl'), 'utf8').split('\n')) {
@@ -105,17 +116,34 @@ for (const line of fs.readFileSync(path.join(out, 'build-meta/tests.jsonl'), 'ut
   if (item.reason !== 'compiler-artifact' || item.profile?.test !== true || !item.executable) continue;
   if (typeof item.executable !== 'string' || typeof item.manifest_path !== 'string'
       || !item.manifest_path.startsWith(expectedRoot + '/')) throw new Error('unexpected test source root');
+  const manifest = path.posix.relative(expectedRoot, item.manifest_path);
+  const crate = /^crates\/([A-Za-z0-9_-]+)\/Cargo\.toml$/.exec(manifest)?.[1];
+  if (!crate || typeof item.package_id !== 'string' || !item.package_id
+      || typeof item.target?.name !== 'string' || !Array.isArray(item.target.kind)) {
+    throw new Error('测试程序缺少工作区包身份');
+  }
+  if ((packageIds.has(crate) && packageIds.get(crate) !== item.package_id)
+      || (identities.has(item.package_id) && identities.get(item.package_id) !== crate)) {
+    throw new Error('Cargo 包身份与源码 manifest 不一致');
+  }
+  packageIds.set(crate, item.package_id);
+  identities.set(item.package_id, crate);
   const relative = path.posix.relative('/build-target', item.executable);
   if (!/^release\/(?:deps\/|examples\/)?[A-Za-z0-9][A-Za-z0-9._-]*$/.test(relative)) {
     throw new Error('unsafe test executable path');
   }
   const name = path.posix.basename(relative);
-  if (artifacts.has(name) && artifacts.get(name) !== relative) throw new Error('duplicate test basename');
+  const owner = JSON.stringify([crate, item.target.name, item.target.kind]);
+  if (artifacts.has(name) && (artifacts.get(name) !== relative || artifactOwners.get(name) !== owner)) {
+    throw new Error('同一测试程序不能充当多个包或测试目标');
+  }
   artifacts.set(name, relative);
-  targets.add(item.target.name);
+  artifactOwners.set(name, owner);
+  if (item.target.kind.includes('test')) targets.add(`${crate}/${item.target.name}`);
 }
-if (!complete || artifacts.size === 0 || !targets.has('architecture') || !targets.has('linux_path_security')
-    || !targets.has('startup_contract') || !targets.has('cli_process')) {
+const required = ['studiolo/architecture', 'vault-broker/linux_path_security',
+  'local-server/startup_contract', 'auth-admin/cli_process', 'local-server/maintenance_contract'];
+if (!complete || artifacts.size === 0 || required.some(name => !targets.has(name))) {
   throw new Error('incomplete test build or missing required safety tests');
 }
 const names = [...artifacts.keys()].sort();

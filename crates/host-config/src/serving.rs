@@ -5,6 +5,9 @@ use std::path::{Path, PathBuf};
 
 mod canonical;
 pub use canonical::CanonicalServingRoots;
+mod repository;
+pub use repository::RepositoryServingRoots;
+pub(crate) use repository::{RepositoryScope, decode_repository};
 
 struct Root {
     path: PathBuf,

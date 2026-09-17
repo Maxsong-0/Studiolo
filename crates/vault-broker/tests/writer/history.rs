@@ -19,6 +19,9 @@ fn existing_history_must_be_exact_unlinked_bytes_before_replacement() {
             .join("history")
             .join(first.revision.to_string());
         let outside = fixture.directory.path().join("outside-original");
+        // 当前版本也已作为L0对象保存；先明确替换它，再制造各类损坏。
+        assert_eq!(fs::read(&history).unwrap(), b"original");
+        fs::remove_file(&history).unwrap();
         match damage {
             "different-bytes" => fs::write(&history, b"forged").unwrap(),
             "directory" => fs::create_dir(&history).unwrap(),

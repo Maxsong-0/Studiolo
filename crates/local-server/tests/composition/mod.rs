@@ -4,6 +4,7 @@ mod canonical;
 mod factors;
 mod fixture;
 mod repository;
+mod repository_approved;
 #[path = "../access/test_support.rs"]
 mod test_support;
 mod writer;

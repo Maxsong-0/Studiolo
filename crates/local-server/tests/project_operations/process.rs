@@ -26,7 +26,16 @@ fn port() -> u16 {
 }
 
 fn command(f: &Fixture, port: u16, binding: &str) -> Command {
-    let mut command = Command::new(env!("CARGO_BIN_EXE_studiolo-local-server"));
+    // 仅测试选择随发布包验证的生产程序，不依赖构建机绝对路径。
+    let binary = std::env::var_os("STUDIOLO_TEST_SERVER_BIN")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| std::path::PathBuf::from(env!("CARGO_BIN_EXE_studiolo-local-server")));
+    assert!(
+        binary.is_absolute() && binary.is_file(),
+        "测试产品二进制必须为已存在的绝对文件路径"
+    );
+    let mut command = Command::new(binary);
+    command.env_remove("STUDIOLO_TEST_SERVER_BIN");
     command.args([
         "--vault",
         f.vault.path().to_str().unwrap(),

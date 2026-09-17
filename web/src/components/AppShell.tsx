@@ -102,9 +102,9 @@ export function AppShell({
         <div className="sidebar-footer">
           <div>
             <Icon name="lock" />
-            <span>只读副本</span>
+            <span>索引与原文</span>
           </div>
-          <p>不修改源文件</p>
+          <p>编辑前逐页核验</p>
         </div>
       </aside>
       <div className="workspace">
@@ -123,7 +123,7 @@ export function AppShell({
       </div>
       <footer className="page-footer">
         <Icon name="lock" />
-        所有内容来自只读副本；不会修改笔记。
+        可编辑文档会单独核验权限与版本。
       </footer>
     </div>
   );

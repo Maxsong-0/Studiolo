@@ -48,7 +48,18 @@ async fn real_binary_only_reads_manifests_with_explicit_cargo_opt_in() {
             .local_addr()
             .unwrap()
             .port();
-        let mut command = Command::new(env!("CARGO_BIN_EXE_studiolo-local-server"));
+        // 覆盖只供原生测试选取随包产品，不传入产品环境。
+        let binary = std::env::var_os("STUDIOLO_TEST_SERVER_BIN")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| {
+                std::path::PathBuf::from(env!("CARGO_BIN_EXE_studiolo-local-server"))
+            });
+        assert!(
+            binary.is_absolute() && binary.is_file(),
+            "测试产品二进制必须为已存在的绝对文件路径"
+        );
+        let mut command = Command::new(binary);
+        command.env_remove("STUDIOLO_TEST_SERVER_BIN");
         command.args([
             "--vault",
             f.vault.path().to_str().unwrap(),

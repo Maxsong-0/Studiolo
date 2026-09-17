@@ -52,6 +52,7 @@ pub struct AgentSession {
     session_ref: String,
     instance: OnceLock<Instance>,
     http: bool,
+    mcp: Option<Arc<crate::mcp_transport::Binding>>,
 }
 
 /// `list_entries` 参数。

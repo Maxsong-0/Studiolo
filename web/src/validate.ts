@@ -1,5 +1,6 @@
 import type { SourceDocument, Workbench } from './types';
 import { validNavigation } from './validateNavigation';
+import { validFreshness } from './freshness';
 
 type RecordValue = Record<string, unknown>;
 const record = (value: unknown): value is RecordValue =>
@@ -29,6 +30,7 @@ export function validateWorkbench(value: unknown): Workbench {
     Number.isSafeInteger(value.generation) &&
     Number(value.generation) >= 0 &&
     typeof value.source_label === 'string' &&
+    (!Object.hasOwn(value, 'freshness') || validFreshness(value.freshness)) &&
     strings(value.diagnostics) &&
     Array.isArray(value.projects) &&
     value.projects.every(

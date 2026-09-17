@@ -1,13 +1,23 @@
 //! 主人配置 Module：管理命令与服务器共享安全文件知识，不读取种子或创建存储。
 
 mod config_file;
+mod file_operations;
+mod human_content;
 mod serving;
+mod sync_scope;
 
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
 use studiolo_auth::{AccessConfig, OwnerBinding, SessionConfig, SessionPolicy};
 
-pub use serving::{CanonicalServingRoots, ServingRoots};
+pub use file_operations::{ApprovedRenamePair, FileOperationPolicy, FileRenamePolicy};
+pub use human_content::HumanContentScope;
+pub use serving::{CanonicalServingRoots, RepositoryServingRoots, ServingRoots};
+pub use sync_scope::{
+    ApprovedSyncUnion, SyncAttachmentType, SyncBinding, SyncContentMetadata, SyncDirectoryDecision,
+    SyncFileKind, SyncFilePolicy, SyncObservationSelection, SyncPathEvidence, SyncScope,
+    SyncScopeError, SyncTraversalRule,
+};
 
 /// 固定脱敏错误，不包含配置正文、路径或底层文件系统诊断。
 #[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
@@ -36,6 +46,14 @@ struct Document {
     idle_seconds: u64,
     absolute_seconds: u64,
     seed_ref: String,
+    #[serde(default, deserialize_with = "human_content::decode")]
+    human_content: Option<HumanContentScope>,
+    #[serde(default, deserialize_with = "serving::decode_repository")]
+    project_repository: Option<serving::RepositoryScope>,
+    #[serde(default, deserialize_with = "sync_scope::decode")]
+    sync_scope: Option<sync_scope::Document>,
+    #[serde(default, deserialize_with = "file_operations::decode")]
+    file_operations: Option<file_operations::Document>,
 }
 
 #[derive(Deserialize)]
@@ -137,6 +155,42 @@ impl Config {
         CanonicalServingRoots::new(self, vault, assets, writer_data)
     }
 
+    /// 私有配置显式批准的单仓库；缺省不读取仓库路径。只批准目录和可选 Cargo。
+    /// 环境种子没有可推断的文件来源；这里只隔离真实配置目录及明确的服务根。
+    pub fn repository_serving_roots(
+        &self,
+        vault: &Path,
+        assets: &Path,
+        writer_data: Option<&Path>,
+        ingress_socket: Option<&Path>,
+    ) -> Result<Option<RepositoryServingRoots>, ConfigError> {
+        self.document
+            .project_repository
+            .as_ref()
+            .map(|scope| {
+                RepositoryServingRoots::new(self, scope, vault, assets, writer_data, ingress_socket)
+            })
+            .transpose()
+    }
+
+    /// 私有配置显式批准双向整文件范围；缺省关闭，不授予文件系统根或写者能力。
+    pub fn sync_scope(&self) -> Result<Option<SyncScope>, ConfigError> {
+        self.document
+            .sync_scope
+            .as_ref()
+            .map(|document| SyncScope::new(self, document))
+            .transpose()
+    }
+
+    /// 人侧删除/最近删除恢复的显式批准；缺省不启用。
+    pub fn file_operation_policy(&self) -> Result<Option<FileOperationPolicy>, ConfigError> {
+        self.document
+            .file_operations
+            .as_ref()
+            .map(|document| FileOperationPolicy::new(self, document))
+            .transpose()
+    }
+
     fn validate(&self) -> Result<(), ConfigError> {
         let document = &self.document;
         if document.version != 1
@@ -154,6 +208,21 @@ impl Config {
             return Err(ConfigError);
         }
         self.sessions()?;
+        if let Some(scope) = &document.human_content {
+            scope.validate()?;
+        }
+        if let Some(scope) = &document.project_repository {
+            scope.validate()?;
+        }
+        if let Some(scope) = &document.sync_scope {
+            scope.validate(document.human_content.as_ref())?;
+        }
+        if let Some(policy) = &document.file_operations {
+            policy.validate(
+                document.human_content.as_ref(),
+                document.sync_scope.as_ref(),
+            )?;
+        }
         config_file::private_directory(self.auth_directory())?;
         config_file::private_directory(self.audit_directory())?;
         config_file::disjoint(self.auth_directory(), self.audit_directory())

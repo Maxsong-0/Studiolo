@@ -9,6 +9,7 @@ members = [
     "crates/auth",
     "crates/auth-admin",
     "crates/host-config",
+    "crates/sync-bridge",
     "crates/runner-adapter",
     "crates/gateway",
     "crates/task-engine",
@@ -38,6 +39,7 @@ studiolo-control-db = { path = "crates/control-db" }
 studiolo-audit-ledger = { path = "crates/audit-ledger" }
 studiolo-auth = { path = "crates/auth" }
 studiolo-host-config = { path = "crates/host-config" }
+studiolo-sync-bridge = { path = "crates/sync-bridge" }
 studiolo-runner-adapter = { path = "crates/runner-adapter" }
 studiolo-gateway = { path = "crates/gateway" }
 studiolo-task-engine = { path = "crates/task-engine" }
@@ -94,6 +96,7 @@ tempfile = "3.27.0"
 rmcp = { version = "=3.2.0", default-features = false, features = ["server", "macros", "transport-streamable-http-server"] }
 tiktoken-rs = "=0.12.0"
 http = "=1.5.0"
+futures-core = "=0.3.34"
 # 路径 Unicode 归一（T-032）：VaultPath 只接受 NFC，碰撞键对磁盘条目名先 NFC 再折叠；unicode-rs 官方维护
 unicode-normalization = "0.1.25"
 

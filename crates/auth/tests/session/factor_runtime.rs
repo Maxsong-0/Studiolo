@@ -5,6 +5,9 @@ use super::*;
 use std::sync::{Arc, atomic::Ordering};
 use studiolo_audit_ledger::AuditPhase;
 
+#[path = "factor_maintenance.rs"]
+mod maintenance;
+
 fn attach(manager: Arc<SessionManager>) -> FactorRuntime {
     FactorRuntime::attach(manager, seed(OLD), Some(seed(NEW))).unwrap()
 }
@@ -24,6 +27,7 @@ fn fixed_slots_reopen_before_and_after_recovery_without_reversing_the_candidate(
             otp(&NEW, CHANGE),
         )
         .unwrap();
+    runtime.flush_audit().unwrap();
     drop(runtime);
     let h = h.reopen();
     let runtime = attach(h.manager.clone());
@@ -228,10 +232,10 @@ fn failed_audit_and_flush_do_not_switch_the_runtime_or_replay_consumed_inputs() 
     );
     *h.h.audit.hook.lock().unwrap() = None;
     h.h.audit.fail_outcome.store(false, Ordering::SeqCst);
-    h.recovery.flush_audit().unwrap();
+    runtime.flush_audit().unwrap();
     h.h.manager.check(&owner, &issued.token).unwrap();
     h.h.clock.set(CHANGE + 300_000);
-    h.recovery.flush_audit().unwrap();
+    runtime.flush_audit().unwrap();
     runtime.step_up(&req, otp(&OLD, CHANGE + 300_000)).unwrap();
     assert_eq!(
         runtime.recover(&req, copy_code(&codes, 0), otp(&NEW, CHANGE + 300_000)),

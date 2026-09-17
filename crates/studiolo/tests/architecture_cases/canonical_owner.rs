@@ -4,6 +4,7 @@ use crate::support::{rust_sources, source_violations, workspace_root};
 use std::{fs, path::Path};
 
 const INPUT: &str = "startup/canonical_input.rs";
+const MAINTENANCE_INPUT: &str = "maintenance/inputs.rs";
 
 fn compact(source: &str) -> String {
     source
@@ -18,15 +19,24 @@ fn boundary_violations(path: &Path, source: &str) -> Vec<&'static str> {
     let mut remaining = compact(source);
     let owner = path.ends_with("coordinator.rs")
         || path
-            .parent()
-            .is_some_and(|parent| parent.ends_with("coordinator"));
-    let input = path.ends_with(INPUT);
-    if remaining.contains("FsVaultBroker") && !input && !path.ends_with("coordinator.rs") {
+            .ancestors()
+            .skip(1)
+            .any(|parent| parent.ends_with("coordinator"));
+    let maintenance_input = path.ends_with(MAINTENANCE_INPUT);
+    let input = path.ends_with(INPUT) || maintenance_input;
+    if remaining.contains("FsVaultBroker") && !input && !owner {
         violations.push("writer_type");
     }
     if input {
         // 仅此固定的既有绑定工厂获准；再次调用或改用初始化工厂仍留在余串。
         remaining = remaining.replacen("FsVaultBroker::open_existing(", "", 1);
+    }
+    if maintenance_input {
+        remaining = remaining.replacen(
+            "SqliteAuditLedger::open_existing(config.audit_directory())",
+            "",
+            1,
+        );
     }
     if remaining.contains("FsVaultBroker::")
         || ((owner || input)
@@ -39,12 +49,38 @@ fn boundary_violations(path: &Path, source: &str) -> Vec<&'static str> {
     if !owner && remaining.contains(".owner") {
         violations.push("owner_escape");
     }
+    if path.ends_with("coordinator/content.rs") {
+        // 唯一人写正文入口；只放行固定元数据写入及CAS拒绝，不授予任意写回调。
+        for allowed in [
+            "Mutation::replace(",
+            "broker.mutate_recorded(mutation,metadata)",
+            "broker.check_precondition_recorded(mutation,metadata)",
+        ] {
+            remaining = remaining.replacen(allowed, "", 1);
+        }
+    }
+    if path.ends_with("coordinator/content/restore.rs") {
+        for allowed in [
+            "broker.prepare_recorded_restore(mutation,metadata)",
+            "broker.confirm_recorded_restore_intent(&ticket,offset,&hash)",
+            "broker.commit_recorded_restore(ticket)",
+            "broker.cancel_recorded_restore(ticket)",
+        ] {
+            remaining = remaining.replacen(allowed, "", 1);
+        }
+    }
     for forbidden in [
         "VaultWriter",
         "VaultSnapshotter",
         "Mutation::",
         ".mutate(",
         "::mutate(",
+        ".mutate_recorded(",
+        ".check_precondition_recorded(",
+        ".prepare_recorded_restore(",
+        ".confirm_recorded_restore_intent(",
+        ".commit_recorded_restore(",
+        ".cancel_recorded_restore(",
         "commit_attempt_artifacts(",
         "M0Workbench",
         "PersistentTaskEngine",
@@ -57,7 +93,7 @@ fn boundary_violations(path: &Path, source: &str) -> Vec<&'static str> {
 }
 
 #[test]
-fn only_the_trusted_canonical_input_opens_the_existing_writer() {
+fn only_trusted_startup_and_offline_maintenance_open_the_existing_writer() {
     let root = workspace_root().join("crates/local-server/src");
     for path in rust_sources(&root) {
         let source = fs::read_to_string(&path).unwrap();
@@ -75,7 +111,7 @@ fn only_the_trusted_canonical_input_opens_the_existing_writer() {
     assert!(input.contains(
         "broker.validate_root_identities(roots.vault_identity(),roots.writer_data_identity())"
     ));
-    assert!(input.contains("CanonicalWorkbench::prepare(self.broker,self.roots)"));
+    assert!(input.contains("CanonicalWorkbench::prepare_with_audit(self.broker,self.roots,audit)"));
     assert!(!input.contains("PathBuf"));
 }
 
@@ -91,6 +127,8 @@ fn boundary_regression_detects_second_owner_alias_and_write_capabilities() {
         "use studiolo_vault_broker::FsVaultBroker as Other; Other::open_existing(root, data);",
         "use studiolo_vault_broker::VaultWriter; broker.mutate(mutation);",
         "broker.commit_attempt_artifacts(task, attempt, artifacts);",
+        "broker.mutate_recorded(mutation, metadata);",
+        "broker.commit_recorded_restore(ticket);",
     ] {
         assert!(
             !boundary_violations(&path, &format!("{source}\n{extra}")).is_empty(),
@@ -188,9 +226,13 @@ fn canonical_router_receives_a_completed_owner_and_keeps_legacy_sources_distinct
     assert!(refresh.contains("Source::Writer(workbench)=>workbench.refresh().await"));
     assert!(refresh.contains("Source::Replica(vault)=>"));
     let owner = compact(&fs::read_to_string(root.join("coordinator.rs")).unwrap());
+    let preparation =
+        compact(&fs::read_to_string(root.join("coordinator/preparation.rs")).unwrap());
     assert!(
-        owner.contains("pubasyncfnprepare(broker:FsVaultBroker,roots:Arc<CanonicalServingRoots>")
+        preparation
+            .contains("pubasyncfnprepare(broker:FsVaultBroker,roots:Arc<CanonicalServingRoots>")
     );
+    assert!(preparation.contains("owner:Mutex::new(Some(broker))"));
     assert!(owner.contains("owner:Mutex<Option<FsVaultBroker>>"));
     assert!(!owner.contains("pubstructCore"));
 }

@@ -24,6 +24,7 @@ pub struct ProjectRepository {
     root_path: PathBuf,
     cargo_dependencies: bool,
     rust_call_sites: Option<Vec<String>>,
+    approval: Option<Arc<studiolo_host_config::RepositoryServingRoots>>,
 }
 
 impl ProjectRepository {
@@ -45,13 +46,33 @@ impl ProjectRepository {
             root_path: root.to_owned(),
             cargo_dependencies: false,
             rust_call_sites: None,
+            approval: None,
         })
+    }
+
+    /// 生产入口只接受私有配置产生的批准对象；不读取清单，不执行源码解析器。
+    pub fn open_approved(
+        approval: Arc<studiolo_host_config::RepositoryServingRoots>,
+    ) -> Result<Self, LocalError> {
+        approval
+            .revalidate()
+            .map_err(|_| LocalError::Configuration)?;
+        let mut repository = Self::open(approval.project(), approval.directory())?;
+        if repository.root.root_identity()? != approval.root_identity() {
+            return Err(LocalError::Unavailable);
+        }
+        repository.cargo_dependencies = approval.cargo_dependencies();
+        repository.approval = Some(approval);
+        repository.revalidate()?;
+        Ok(repository)
     }
 
     /// 显式启用固定 Cargo 清单读取；不在启用时读取文件或扩大目录观测范围。
     #[must_use]
     pub fn with_cargo_dependencies(mut self) -> Self {
-        self.cargo_dependencies = true;
+        if self.approval.is_none() {
+            self.cargo_dependencies = true;
+        }
         self
     }
 
@@ -66,6 +87,10 @@ impl ProjectRepository {
 
     /// 完整验证源码白名单；启用时不读取正文，不跟随模块或宏发现其他文件。
     pub fn with_rust_call_sites(mut self, paths: Vec<String>) -> Result<Self, LocalError> {
+        // 白名单和合作式预算不替代第三方解析器的生产进程隔离前置。
+        if self.approval.is_some() {
+            return Err(LocalError::Configuration);
+        }
         let paths = studiolo_workbench::validate_rust_source_paths(&paths)
             .map_err(|_| LocalError::Configuration)?;
         self.rust_call_sites = Some(paths);
@@ -81,11 +106,25 @@ impl ProjectRepository {
 
     /// 监听前和请求前复核根绑定；替换后的路径不能获得原绑定的读取权限。
     pub fn revalidate(&self) -> Result<(), LocalError> {
+        if let Some(approval) = &self.approval {
+            approval.revalidate().map_err(|_| LocalError::Unavailable)?;
+        }
         let current = ReadOnlyVault::open(&self.root_path)?;
         if current.root_identity()? != self.root.root_identity()? {
             return Err(LocalError::Unavailable);
         }
+        if let Some(approval) = &self.approval {
+            approval.revalidate().map_err(|_| LocalError::Unavailable)?;
+        }
         Ok(())
+    }
+
+    pub(crate) fn approval_is_current(&self) -> bool {
+        self.approval.is_none() || self.revalidate().is_ok()
+    }
+
+    pub(crate) fn approved_for_sessions(&self) -> bool {
+        self.approval.is_some()
     }
 
     pub(crate) fn matches(&self, project: &str) -> bool {
@@ -165,7 +204,7 @@ fn missing_parent(requested: Option<&VaultPath>, missing: &VaultPath) -> bool {
 
 /// 将已打开的仓库能力加到只读工作台；既有路由认证/来源门禁仍逐请求执行。
 ///
-/// 可信装配方负责根隔离；生产CLI首片仅允许旧本机/Access只读模式使用此能力。
+/// 旧 CLI 仍仅供本机/Access只读模式；生产会话只装配 open_approved 的固定批准。
 pub fn with_project_repository(app: Router, repository: Arc<ProjectRepository>) -> Router {
     app.layer(Extension(repository))
 }

@@ -75,10 +75,12 @@ where
     {
         return Err(StartupError::Configuration);
     }
-    let repository = repository_input::open(&options)?;
+    let mut repository = repository_input::open(&options)?;
+    let mut content_audit: Option<Arc<dyn studiolo_audit_ledger::AuditLedger>> = None;
     let (sessions, roots, access_config, factors, writer_roots) =
         if let Some(session) = &options.session {
             let config = Config::load(&session.config).map_err(|_| StartupError::Configuration)?;
+            repository = repository_input::approved(&options, &config)?;
             let access = config
                 .access(&session.origin)
                 .map_err(|_| StartupError::Configuration)?;
@@ -117,7 +119,10 @@ where
             let manager = Arc::new(SessionManager::open_existing(
                 config.auth_directory(),
                 config.sessions().map_err(|_| StartupError::Configuration)?,
-                audit,
+                {
+                    content_audit = Some(audit.clone());
+                    audit
+                },
                 Arc::new(SystemSessionClock),
                 Arc::new(OsSessionRandom),
             )?);
@@ -168,7 +173,7 @@ where
     let (app, mode) = if let Some(config) = access_config {
         let access = connect(config).await.map_err(|_| StartupError::Access)?;
         if let Some(writer) = writer {
-            workbench = Some(writer.prepare().await?);
+            workbench = Some(writer.prepare(content_audit).await?);
         }
         if let Some(sessions) = sessions {
             if let Some(workbench) = &workbench {

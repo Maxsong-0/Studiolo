@@ -41,6 +41,7 @@ pub(super) async fn current(request: Request) -> Response {
             info,
             credentials.csrf.expose_secret(),
             StatusCode::OK,
+            &responses::owner_scope(&context.identity),
         ))
     })();
     result.unwrap_or_else(Failure::response)
@@ -78,6 +79,7 @@ pub(super) async fn issue(State(state): State<AppState>, request: Request) -> Re
         if !matches!(context.action, Some(Action::Issue)) || context.credentials.is_some() {
             return Err(Failure::unavailable());
         }
+        let owner_scope = responses::owner_scope(&context.identity);
         let issued = auth(&state)?
             .run(move |sessions| sessions.issue_enrolled(&context.identity))
             .await?;
@@ -86,6 +88,7 @@ pub(super) async fn issue(State(state): State<AppState>, request: Request) -> Re
             &issued.session,
             issued.csrf.expose_secret(),
             StatusCode::CREATED,
+            &owner_scope,
         );
         response.headers_mut().insert(header::SET_COOKIE, cookie);
         Ok(response)

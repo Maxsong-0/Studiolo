@@ -122,3 +122,21 @@ fn changed_seed_binding_is_rejected_before_requesting_any_otp() {
     assert_eq!(f.state().unwrap(), TotpEnrollmentState::Enrolled);
     assert_eq!(f.events("totp.enrolled").len(), 2);
 }
+
+#[test]
+fn audit_maintenance_preserves_legacy_schema_and_does_not_enroll_or_issue() {
+    let f = Fixture::new();
+    f.run(Command::Migrate(1), never_prompt).unwrap();
+    for version in [2, 3] {
+        f.run(Command::Migrate(version), never_prompt).unwrap();
+        for _ in 0..2 {
+            let report = f.run(Command::AuditFlush, never_prompt).unwrap();
+            assert!(report.contains("恢复（v4）"));
+            assert_eq!(f.state().unwrap(), TotpEnrollmentState::Ready);
+            assert!(f.events("totp.enrolled").is_empty());
+            assert!(f.events("totp.recovered").is_empty());
+            assert!(f.events("recovery.codes_rotated").is_empty());
+            assert!(f.events("session.issue").is_empty());
+        }
+    }
+}

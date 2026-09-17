@@ -3,6 +3,9 @@
 mod fixture;
 mod lifecycle;
 mod publication;
+mod staging;
+mod staging_notify;
+mod staging_rejections;
 mod watcher;
 
 use std::{

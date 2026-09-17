@@ -160,7 +160,14 @@ impl Fixture {
         assert_eq!(body["csrf_token"], csrf);
         assert_eq!(body["session"]["state"], "active");
         assert!(!body.to_string().contains(&token));
-        assert_eq!(body.as_object().unwrap().len(), 2);
+        assert_eq!(body.as_object().unwrap().len(), 3);
+        let owner_scope = body["owner_scope"].as_str().unwrap();
+        assert_eq!(owner_scope.len(), 64);
+        assert!(
+            owner_scope
+                .bytes()
+                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+        );
         assert_eq!(body["session"].as_object().unwrap().len(), 5);
         Issued {
             cookie,

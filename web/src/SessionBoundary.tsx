@@ -5,8 +5,31 @@ import { installSessionReader } from './sessionHttp';
 import { watchSession } from './sessionLifecycle';
 import { SessionAccount } from './components/SessionAccount';
 import { Icon } from './components/Icon';
+import {
+  installCanonicalRestorer,
+  installCanonicalWriter,
+} from './canonicalApi';
+import { DraftBoundary, DraftScopeBoundary } from './DraftBoundary';
+import {
+  FileOperationBoundary,
+  FileOperationScopeBoundary,
+} from './FileOperationBoundary';
+import { installFileOperationWriter } from './fileOperationApi';
 
-export function SessionBoundary({
+export function SessionBoundary(props: {
+  children: (account: ReactNode) => ReactNode;
+  client?: SessionClient;
+}) {
+  return (
+    <FileOperationBoundary>
+      <DraftBoundary>
+        <SessionBoundaryContent {...props} />
+      </DraftBoundary>
+    </FileOperationBoundary>
+  );
+}
+
+function SessionBoundaryContent({
   children,
   client: supplied,
 }: {
@@ -17,12 +40,20 @@ export function SessionBoundary({
   const state = useSyncExternalStore(client.subscribe, client.getSnapshot);
   useEffect(() => {
     const uninstall = installSessionReader(client.read);
+    const uninstallWriter = installCanonicalWriter(client.replace);
+    const uninstallRestorer = installCanonicalRestorer(client.restore);
+    const uninstallFileOperations = installFileOperationWriter(
+      client.fileOperation,
+    );
     const unwatch = watchSession(client);
     void client.check();
     return () => {
       unwatch();
       client.stop();
       uninstall();
+      uninstallWriter();
+      uninstallRestorer();
+      uninstallFileOperations();
     };
   }, [client]);
   useEffect(() => {
@@ -41,13 +72,21 @@ export function SessionBoundary({
 
   if (state.phase === 'legacy' || state.phase === 'ready') {
     return (
-      <div className="session-content" key={state.revision}>
-        {children(
-          state.phase === 'ready' ? (
-            <SessionAccount client={client} state={state} />
-          ) : null,
-        )}
-      </div>
+      <DraftScopeBoundary
+        scope={state.phase === 'ready' ? (state.ownerScope ?? null) : null}
+      >
+        <FileOperationScopeBoundary
+          scope={state.phase === 'ready' ? (state.ownerScope ?? null) : null}
+        >
+          <div className="session-content" key={state.revision}>
+            {children(
+              state.phase === 'ready' ? (
+                <SessionAccount client={client} state={state} />
+              ) : null,
+            )}
+          </div>
+        </FileOperationScopeBoundary>
+      </DraftScopeBoundary>
     );
   }
   const checking = state.phase === 'checking';

@@ -15,6 +15,7 @@ pub(super) struct Failure {
     message: &'static str,
     clear_cookie: bool,
     allow: Option<&'static str>,
+    code: Option<&'static str>,
 }
 
 impl Failure {
@@ -24,6 +25,7 @@ impl Failure {
             message,
             clear_cookie: false,
             allow: None,
+            code: None,
         }
     }
     pub fn bad_request() -> Self {
@@ -38,6 +40,7 @@ impl Failure {
             message: "需要有效的应用会话。",
             clear_cookie: true,
             allow: None,
+            code: None,
         }
     }
     pub fn unavailable() -> Self {
@@ -91,8 +94,20 @@ impl Failure {
             _ => Self::unavailable(),
         }
     }
+    pub fn with_code(mut self, code: &'static str) -> Self {
+        self.code = Some(code);
+        self
+    }
     pub fn response(self) -> Response {
-        let mut response = ApiError(self.status, self.message.into()).into_response();
+        let mut response = if let Some(code) = self.code {
+            (
+                self.status,
+                Json(serde_json::json!({"code":code,"error":self.message})),
+            )
+                .into_response()
+        } else {
+            ApiError(self.status, self.message.into()).into_response()
+        };
         if let Some(allow) = self.allow {
             response
                 .headers_mut()
@@ -138,17 +153,36 @@ impl<'a> From<&'a SessionInfo> for PublicSession<'a> {
     }
 }
 
-pub(super) fn session(info: &SessionInfo, csrf: &str, status: StatusCode) -> Response {
+pub(super) fn owner_scope(identity: &studiolo_auth::AccessIdentity) -> String {
+    let bytes = serde_json::to_vec(&(
+        "studiolo-owner-scope-v1",
+        identity.issuer(),
+        identity.audience(),
+        identity.subject(),
+        identity.email(),
+    ))
+    .expect("身份字符串可以编码");
+    crate::editing::digest(&bytes)
+}
+
+pub(super) fn session(
+    info: &SessionInfo,
+    csrf: &str,
+    status: StatusCode,
+    owner_scope: &str,
+) -> Response {
     #[derive(Serialize)]
     struct Body<'a> {
         session: PublicSession<'a>,
         csrf_token: &'a str,
+        owner_scope: &'a str,
     }
     (
         status,
         Json(Body {
             session: info.into(),
             csrf_token: csrf,
+            owner_scope,
         }),
     )
         .into_response()

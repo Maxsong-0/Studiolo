@@ -118,6 +118,7 @@ fn legacy_unknown_blocks_every_new_install_and_cannot_borrow_matching_current_by
         }
         let status = broker.write_status().unwrap();
         assert!(status.unresolved);
+        assert!(status.read_blocked);
         assert_eq!(status.committed_through, 0);
         let before = inventory(&legacy.fixture.vault);
         assert!(matches!(
@@ -137,7 +138,15 @@ fn legacy_unknown_blocks_every_new_install_and_cannot_borrow_matching_current_by
             Err(BrokerError::MutationUnresolved)
         ));
         assert_eq!(inventory(&legacy.fixture.vault), before);
-        assert_eq!(broker.read(&path("legacy.md")).unwrap().content, b"legacy");
+        assert!(matches!(
+            broker.read(&path("legacy.md")),
+            Err(BrokerError::MutationUnresolved)
+        ));
+        // 临时夹具直接核对原文保全；不能用公开读取绕过未知状态门禁。
+        assert_eq!(
+            fs::read(legacy.fixture.vault.join("legacy.md")).unwrap(),
+            b"legacy"
+        );
         assert_eq!(fs::read(&legacy.record).unwrap(), original_record);
     }
     drop(broker);

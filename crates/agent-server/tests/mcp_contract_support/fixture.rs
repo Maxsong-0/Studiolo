@@ -18,7 +18,11 @@ fn private_dir(path: &Path) {
 }
 
 async fn fixture() -> Fixture {
-    let temp = TempDir::new_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
+    fixture_with_router(serve::router).await
+}
+
+async fn fixture_with_router(make_router: impl FnOnce(Arc<AppState>) -> axum::Router) -> Fixture {
+    let temp = TempDir::new_in(fs::canonicalize("/tmp").unwrap()).unwrap();
     let vault = temp.path().join("vault");
     write(
         &vault.join("项目/Alpha/00-总览/INDEX.md"),
@@ -66,7 +70,7 @@ async fn fixture() -> Fixture {
         .await
         .unwrap();
     let addr: SocketAddr = listener.local_addr().unwrap();
-    let app = serve::router(state.clone());
+    let app = make_router(state.clone());
     tokio::spawn(async move {
         axum::serve(listener, app).await.unwrap();
     });
@@ -226,4 +230,3 @@ fn tool_text(response: &Value) -> String {
 fn is_error(response: &Value) -> bool {
     response.get("error").is_some() || response["result"]["isError"] == json!(true)
 }
-

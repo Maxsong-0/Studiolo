@@ -8,7 +8,7 @@ use crate::{AdminError, options::Command, terminal::TerminalError};
 use std::sync::Arc;
 use studiolo_audit_ledger::{AuditError, SqliteAuditLedger};
 use studiolo_auth::{
-    OsSessionRandom, SessionError, SessionManager, SystemSessionClock, Totp, TotpCode,
+    OsSessionRandom, Recovery, SessionError, SessionManager, SystemSessionClock, Totp, TotpCode,
     TotpEnrollmentState, TotpSeed,
 };
 use studiolo_host_config::Config;
@@ -77,10 +77,19 @@ pub(crate) fn execute(
     let (totp, enrollment) = Totp::attach(sessions.clone(), seed.ok_or(AdminError::Environment)?)?;
     match command {
         Command::AuditFlush => {
+            // Totp::attach 已确认是 v3/v4；v3 无恢复表，维护不隐式迁移。
+            let recovery = match Recovery::attach(sessions.clone()) {
+                Ok(recovery) => Some(recovery),
+                Err(SessionError::MigrationRequired) => None,
+                Err(error) => return Err(error.into()),
+            };
             totp.flush_audit()?;
+            if let Some(recovery) = recovery {
+                recovery.flush_audit()?;
+            }
             sessions.flush_audit(256)?;
             Ok(
-                "本批原事件补记完成（最多256条会话事件）；补记不激活登记。未失效的待定操作仍须等待，可能还有后续批次。",
+                "本批TOTP、恢复（v4）及会话原事件补记完成（最多256条会话事件）；不激活登记、换码、恢复或提权。未失效的待定操作仍须等待，可能还有后续批次。",
             )
         }
         Command::Enroll => {

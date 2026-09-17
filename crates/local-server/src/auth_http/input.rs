@@ -20,6 +20,8 @@ pub(super) enum Action {
     Issue,
     Revoke(Revoke),
     Factor(factor_input::Action),
+    Content(crate::editing::Replace),
+    FileOperation(crate::file_operations::Input),
 }
 pub(super) enum Revoke {
     Current,
@@ -50,6 +52,9 @@ pub(super) async fn action(request: &mut Request) -> Result<Option<Action>, Fail
         RECOVERY_CODES => RECOVERY_CODES,
         RECOVER => RECOVER,
         FACTOR_STATE => FACTOR_STATE,
+        crate::editing::PATH => crate::editing::PATH,
+        crate::file_operations::PATH => crate::file_operations::PATH,
+        crate::file_operations::TOMBSTONES => crate::file_operations::TOMBSTONES,
         _ => return Ok(None),
     };
     let posting = request.method() == Method::POST;
@@ -83,7 +88,15 @@ pub(super) async fn action(request: &mut Request) -> Result<Option<Action>, Fail
     {
         return Err(Failure::bad_request());
     }
-    let limit = if posting { 1024 } else { 0 };
+    let limit = if posting && path == crate::editing::PATH {
+        crate::editing::JSON_LIMIT
+    } else if posting && path == crate::file_operations::PATH {
+        crate::file_operations::JSON_LIMIT
+    } else if posting {
+        1024
+    } else {
+        0
+    };
     if length.is_some_and(|length| length > limit) {
         return Err(too_large());
     }
@@ -99,10 +112,24 @@ pub(super) async fn action(request: &mut Request) -> Result<Option<Action>, Fail
     }
     // serde 的空 struct 也可能接受序列表示；HTTP 明确只接受 JSON 对象。
     if bytes.iter().find(|byte| !byte.is_ascii_whitespace()) != Some(&b'{') {
-        return Err(Failure::bad_request());
+        return Err(if path == crate::file_operations::PATH {
+            Failure::bad_request().with_code("invalid_file_operation")
+        } else {
+            Failure::bad_request()
+        });
     }
     if is_factor_path(path) {
         return factor_input::parse(path, &bytes).map(|action| Some(Action::Factor(action)));
+    }
+    if path == crate::editing::PATH {
+        return crate::editing::parse(&bytes)
+            .map(|input| Some(Action::Content(input)))
+            .map_err(|_| Failure::bad_request());
+    }
+    if path == crate::file_operations::PATH {
+        return crate::file_operations::parse(&bytes)
+            .map(|input| Some(Action::FileOperation(input)))
+            .map_err(|_| Failure::bad_request().with_code("invalid_file_operation"));
     }
     if issuing {
         serde_json::from_slice::<Empty>(&bytes).map_err(|_| Failure::bad_request())?;

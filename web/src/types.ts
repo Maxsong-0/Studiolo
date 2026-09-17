@@ -1,3 +1,5 @@
+import type { Freshness } from './freshness';
+
 export interface SourceLocation {
   path: string;
   line: number;
@@ -43,6 +45,7 @@ export interface Workbench {
   inbox: Action[];
   documents: DocumentSummary[];
   diagnostics: string[];
+  freshness?: Freshness | null;
 }
 
 export interface SourceDocument {

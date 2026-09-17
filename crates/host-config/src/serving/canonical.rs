@@ -9,6 +9,8 @@ use super::{Config, ConfigError, Path, Root, ServingRoots, config_file};
 pub struct CanonicalServingRoots {
     base: ServingRoots,
     writer_data: Root,
+    content: Option<crate::HumanContentScope>,
+    file_operations: Option<crate::FileOperationPolicy>,
 }
 
 impl CanonicalServingRoots {
@@ -21,6 +23,8 @@ impl CanonicalServingRoots {
         let snapshot = Self {
             base: ServingRoots::new(config, vault, assets)?,
             writer_data: Root::new(writer_data, true)?,
+            content: config.document.human_content.clone(),
+            file_operations: config.file_operation_policy()?,
         };
         snapshot.revalidate()?;
         Ok(snapshot)
@@ -54,6 +58,18 @@ impl CanonicalServingRoots {
     #[must_use]
     pub fn assets_identity(&self) -> (u64, u64) {
         self.base.assets_identity()
+    }
+
+    /// 只由同一私有主人配置授予的正文范围；缺省保持只读。
+    #[must_use]
+    pub fn human_content(&self) -> Option<&crate::HumanContentScope> {
+        self.content.as_ref()
+    }
+
+    /// 同一私有文件的显式整文件操作批准；默认关闭。
+    #[must_use]
+    pub fn file_operation_policy(&self) -> Option<&crate::FileOperationPolicy> {
+        self.file_operations.as_ref()
     }
 
     /// 复核配置字节/身份、五根身份与全部分离关系，不接受替换后的新基准。

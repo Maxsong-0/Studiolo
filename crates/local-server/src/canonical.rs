@@ -25,6 +25,8 @@ pub(crate) struct FileResponse {
     path: String,
     content: String,
     revision: String,
+    editing: crate::editing::Editing,
+    freshness: Option<crate::view::Freshness>,
 }
 
 pub(crate) async fn file(
@@ -42,9 +44,10 @@ pub(crate) async fn file(
     }
     let path = VaultPath::parse(query.path).map_err(|_| bad_query())?;
     let vault = state.canonical.clone().ok_or_else(ApiError::unavailable)?;
+    let view = state.current.clone();
     run_query(&state.queries, move || {
         let note =
-            match vault {
+            match &vault {
                 CanonicalSource::Reader(vault) => {
                     vault.read_file(&path, MAX_BYTES).map_err(read_error)?
                 }
@@ -61,11 +64,20 @@ pub(crate) async fn file(
                 "文档不是有效 UTF-8。".into(),
             )
         })?;
+        let editing = match &vault {
+            CanonicalSource::Writer(workbench) => {
+                workbench.editing(note.vault_uuid, &note.path, &content)
+            }
+            CanonicalSource::Reader(_) => crate::editing::read_only(),
+        };
+        let freshness = view.snapshot().ok().and_then(|snapshot| snapshot.freshness);
         Ok(Json(FileResponse {
             vault_uuid: note.vault_uuid.to_string(),
             path: note.path.to_string(),
             content,
             revision: note.revision.to_hex(),
+            editing,
+            freshness,
         }))
     })
     .await

@@ -1,5 +1,11 @@
 //! 封闭的 canonical 拥有者；公开控制句柄不导出 Broker 或任意写回调。
 
+mod content;
+mod content_audit;
+mod file_operations;
+mod history;
+mod observation;
+mod preparation;
 mod scheduler;
 mod worker;
 
@@ -25,6 +31,10 @@ pub(crate) struct Core {
     pub watcher: Mutex<Option<notify::RecommendedWatcher>>,
     pub completion: watch::Sender<Completion>,
     pub executor: tokio::runtime::Handle,
+    pub content_audit: Option<Arc<dyn studiolo_audit_ledger::AuditLedger>>,
+    pub content_audit_healthy: std::sync::atomic::AtomicBool,
+    pub content_restore_pending: std::sync::atomic::AtomicBool,
+    pub file_operation_pending: std::sync::atomic::AtomicBool,
     #[cfg(test)]
     pub probe: crate::coordinator_tests::Probe,
 }
@@ -87,49 +97,6 @@ impl Failure {
 }
 
 impl CanonicalWorkbench {
-    /// 消费已打开的唯一 Broker；先注册监视，再完成首个完整视图，失败不提供路由能力。
-    pub async fn prepare(
-        broker: FsVaultBroker,
-        roots: Arc<CanonicalServingRoots>,
-    ) -> Result<Arc<Self>, LocalError> {
-        let (completion, _) = watch::channel(Completion {
-            finished: 0,
-            running: false,
-            closed: false,
-            result: None,
-        });
-        let workbench = Arc::new(Self {
-            core: Arc::new(Core {
-                owner: Mutex::new(Some(broker)),
-                roots,
-                view: ViewStore::canonical(),
-                control: Mutex::new(Control {
-                    closing: false,
-                    running: false,
-                    pending: false,
-                    requested: 0,
-                    finished: 0,
-                    epoch: 0,
-                    watch_generation: 0,
-                    health: WatchHealth::Starting,
-                    result: None,
-                }),
-                watcher: Mutex::new(None),
-                completion,
-                executor: tokio::runtime::Handle::current(),
-                #[cfg(test)]
-                probe: crate::coordinator_tests::Probe::default(),
-            }),
-        });
-        let ticket = workbench.core.request("initializing")?;
-        if workbench.core.wait(ticket).await.is_err() || workbench.revalidate().is_err() {
-            workbench.shutdown().await?;
-            return Err(LocalError::Unavailable);
-        }
-        scheduler::periodic(&workbench.core);
-        Ok(workbench)
-    }
-
     /// 监听前检查批准的根、现持 Broker 身份与已知未决状态；不签发编辑权限。
     pub fn revalidate(&self) -> Result<(), LocalError> {
         if self
@@ -269,39 +236,5 @@ impl CanonicalWorkbench {
 impl Drop for CanonicalWorkbench {
     fn drop(&mut self) {
         self.stop();
-    }
-}
-
-impl Core {
-    fn observe_error(self: &Arc<Self>, error: &LocalError) {
-        use studiolo_vault_broker::BrokerError;
-        let reason = match error {
-            LocalError::Configuration => "binding_changed",
-            LocalError::Read(BrokerError::MutationUnresolved) => "unresolved",
-            LocalError::Read(
-                BrokerError::RootChanged
-                | BrokerError::WriterBindingMismatch
-                | BrokerError::CorruptIdentity,
-            ) => "binding_changed",
-            LocalError::Read(
-                BrokerError::CorruptWriterState | BrokerError::WriterLimitExceeded,
-            ) => "writer_state_invalid",
-            // 私有写者目录或读取 I/O 故障都使新鲜度未知；保留原错误并安排重扫。
-            LocalError::Read(BrokerError::Io { .. }) => "capture_failed",
-            LocalError::Read(BrokerError::CaptureChanged | BrokerError::UnstableRead(_)) => {
-                "changed"
-            }
-            LocalError::Read(BrokerError::NotFound(path))
-                if self
-                    .view
-                    .snapshot()
-                    .ok()
-                    .is_some_and(|view| view.generation.model.document(path).is_some()) =>
-            {
-                "changed"
-            }
-            _ => return,
-        };
-        let _ = self.request(reason);
     }
 }

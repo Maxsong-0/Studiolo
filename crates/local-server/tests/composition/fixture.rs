@@ -23,6 +23,15 @@ pub(super) struct Fixture {
 impl Fixture {
     pub fn new(enrolled: bool) -> Self {
         let temp = tempfile::tempdir().unwrap();
+        Self::from_directory(enrolled, temp)
+    }
+
+    pub fn in_tmp(enrolled: bool) -> Self {
+        let temp = tempfile::tempdir_in(fs::canonicalize("/tmp").unwrap()).unwrap();
+        Self::from_directory(enrolled, temp)
+    }
+
+    fn from_directory(enrolled: bool, temp: tempfile::TempDir) -> Self {
         let root = temp.path().canonicalize().unwrap();
         for path in [
             &root,

@@ -176,7 +176,7 @@ for (const line of fs.readFileSync(path.join(out, 'build-meta/tests.jsonl'), 'ut
 // 按具体包及测试目标验收，避免供给/服务两个同名缓存测试互相充数。
 const required = [
   'studiolo/architecture', 'vault-broker/linux_path_security',
-  'agent-server/mcp_contract', 'agent-server/replica_mcp_contract',
+  'agent-server/mcp_contract', 'agent-server/mcp_transport_contract', 'agent-server/replica_mcp_contract',
   'agent-server/http_text_contract', 'agent-server/http_replica_contract', 'agent-server/index_cache_contract',
   'supply/roots_contract', 'supply/signpost_contract', 'supply/http_signpost_contract',
   'supply/agent_store_contract', 'supply/replica_contract', 'supply/index_cache_contract',

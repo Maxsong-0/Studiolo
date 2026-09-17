@@ -1,0 +1,209 @@
+/* Word-lighting and media handoff, ported from getdroppy.app's wordscroll.
+   Same pin, same thresholds, same responsive behavior; only the palette
+   changed: the slab is the site's deepest ink and every glow is the blue
+   of the Droppy Code icon. The static base is readable without JavaScript;
+   .ws-ready opts a section into the scroll-scrubbed treatment. */
+.wordscroll {
+  position: relative;
+  /* The bloom is a 140vmax circle centered on the stage; in the static
+     (no-JS, reduced-motion) layout the stage's overflow is visible, so
+     without this the glow widens the page sideways on phones and the
+     fully pinned stage would inherit the hammer. Clipping at the section
+     edge keeps the glow inside the dark slab it paints. */
+  overflow-x: clip;
+  /* The deepest ink, fading into the page canvas at both ends. */
+  background: linear-gradient(180deg, rgba(5,7,11,0) 0%, var(--ink) 12%, var(--ink) 88%, rgba(5,7,11,0) 100%);
+}
+.wordscroll__stage {
+  position: static;
+  min-height: 100vh;
+  min-height: 100dvh;
+  overflow: visible;
+  --ws-enter: 1;
+  --ws-glow: 0.6;
+  --ws-copy: 1;
+  --ws-demo: 1;
+  --ws-bloom: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 48px;
+  padding: 96px 0;
+}
+.wordscroll.ws-ready { height: 500vh; }
+.wordscroll.ws-ready .wordscroll__stage {
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  height: 100dvh;
+  min-height: 0;
+  overflow: hidden;
+  --ws-enter: 0;
+  --ws-glow: 0;
+  --ws-copy: 1;
+  --ws-demo: 0;
+  --ws-bloom: 0;
+  display: block;
+  padding: 0;
+}
+/* Gated fully on the enter ramp: the ramp only runs while the stage is
+   pinned, so the gradient's hard cutoff at the stage boundary stays hidden. */
+.wordscroll__glow {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: radial-gradient(46% 36% at 50% 8%, rgba(79,156,255,0.16), rgba(79,156,255,0) 70%);
+  opacity: var(--ws-enter, 0);
+}
+.wordscroll__bloom {
+  position: absolute;
+  left: 50%;
+  top: 52%;
+  width: 140vmax;
+  height: 140vmax;
+  transform: translate(-50%, -50%) scale(calc(0.62 + 0.38 * var(--ws-bloom, 0)));
+  border-radius: 50%;
+  pointer-events: none;
+  background: radial-gradient(closest-side, rgba(79,156,255,0.12), rgba(79,156,255,0) 62%);
+  opacity: var(--ws-bloom, 0);
+}
+.wordscroll__copy {
+  position: static;
+  padding: 0 24px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: clamp(24px, 3.4vh, 36px);
+  opacity: 1;
+}
+.wordscroll.ws-ready .wordscroll__copy {
+  position: absolute;
+  inset: 0;
+  opacity: var(--ws-copy);
+  transform: scale(calc(0.96 + 0.04 * var(--ws-copy)));
+}
+.wordscroll__icon-wrap { position: relative; }
+.wordscroll__icon {
+  position: relative;
+  z-index: 1;
+  display: block;
+  width: 96px;
+  height: 96px;
+  opacity: calc(0.3 + 0.7 * var(--ws-enter, 0));
+  transform: scale(calc(0.94 + 0.06 * var(--ws-enter, 0)));
+}
+.wordscroll__demo {
+  position: static;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: clamp(16px, 4vw, 48px);
+  opacity: 1;
+  pointer-events: auto;
+}
+.wordscroll.ws-ready .wordscroll__demo {
+  position: absolute;
+  inset: 0;
+  opacity: var(--ws-demo);
+  transform: scale(calc(0.955 + 0.045 * var(--ws-demo)));
+  pointer-events: none;
+}
+.wordscroll.ws-ready .wordscroll__stage.ws-demo-active .wordscroll__demo { pointer-events: auto; }
+.wordscroll__demo-video,
+.wordscroll__demo-frame {
+  width: min(1040px, 86vw, calc(76vh * 2400 / 1646));
+  height: auto;
+  max-height: 76vh;
+  aspect-ratio: 2400 / 1646;
+  object-fit: contain;
+  border: 0;
+  border-radius: clamp(14px, 1.8vw, 24px);
+  background: var(--ink);
+}
+.wordscroll__demo-frame {
+  position: relative;
+  overflow: hidden;
+  border: 1px solid var(--border-subtle);
+  box-shadow: 0 40px 120px -40px rgba(0, 0, 0, 0.9);
+}
+.wordscroll__icon { border-radius: 24px; }
+.wordscroll__text {
+  position: relative;
+  z-index: 1;
+  margin: 0;
+  max-width: 20ch;
+  text-align: center;
+  font-family: "Inter Tight", var(--font-display);
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  font-size: clamp(30px, 4.7vw, 58px);
+  line-height: 1.16;
+  color: var(--text-primary);
+}
+.wordscroll.ws-ready .wordscroll__text { color: rgba(140, 196, 255, 0.16); }
+.wordscroll__ask { font-size: clamp(24px, 3.4vw, 42px); max-width: 24ch; }
+.wordscroll__text .w { position: relative; display: inline-block; white-space: pre; }
+.wordscroll__text .w-lit { position: absolute; inset: 0; color: var(--text-primary); opacity: 0; }
+.wordscroll__text .w-glo {
+  position: absolute;
+  inset: 0;
+  color: transparent;
+  opacity: 0;
+  pointer-events: none;
+  text-shadow: 0 0 10px rgba(140, 196, 255, 0.75), 0 0 26px rgba(79, 156, 255, 0.5);
+}
+.wordscroll__sparks { position: absolute; inset: 0 0 55% 0; pointer-events: none; }
+.wordscroll__sparks span {
+  position: absolute;
+  width: 2px;
+  height: 2px;
+  border-radius: 50%;
+  background: #fff;
+  opacity: 0;
+  animation: ws-twinkle 4.5s ease-in-out infinite;
+}
+.wordscroll__sparks span:nth-child(1) { top: 12%; left: 22%; animation-delay: 0.1s; }
+.wordscroll__sparks span:nth-child(2) { top: 28%; left: 68%; width: 3px; height: 3px; animation-delay: 0.6s; }
+.wordscroll__sparks span:nth-child(3) { top: 8%; left: 52%; animation-delay: 1.1s; }
+.wordscroll__sparks span:nth-child(4) { top: 34%; left: 40%; animation-delay: 1.6s; }
+.wordscroll__sparks span:nth-child(5) { top: 18%; left: 78%; width: 3px; height: 3px; animation-delay: 2.1s; }
+.wordscroll__sparks span:nth-child(6) { top: 40%; left: 16%; animation-delay: 2.6s; }
+.wordscroll__sparks span:nth-child(7) { top: 6%; left: 34%; animation-delay: 3.1s; }
+.wordscroll__sparks span:nth-child(8) { top: 24%; left: 88%; animation-delay: 3.6s; }
+.wordscroll__sparks span:nth-child(9) { top: 44%; left: 60%; width: 3px; height: 3px; animation-delay: 4s; }
+.wordscroll__sparks span:nth-child(10) { top: 15%; left: 8%; animation-delay: 0.9s; }
+@keyframes ws-twinkle {
+  0%, 100% { opacity: 0; transform: scale(0.8); }
+  50% { opacity: 0.5; transform: scale(1.15); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .wordscroll__sparks span { animation: none; opacity: 0; }
+  .wordscroll.ws-reduced-motion .w-lit { opacity: 1 !important; }
+}
+.wordscroll.ws-reduced-motion { height: auto; }
+.wordscroll.ws-reduced-motion .wordscroll__stage {
+  position: static;
+  height: auto;
+  min-height: 0;
+  --ws-enter: 1;
+  --ws-copy: 1;
+  --ws-demo: 1;
+  --ws-glow: 0.6;
+  display: flex;
+  flex-direction: column;
+  gap: 48px;
+  padding: 96px 0;
+  overflow: visible;
+}
+.wordscroll.ws-reduced-motion .wordscroll__copy,
+.wordscroll.ws-reduced-motion .wordscroll__demo { position: static; }
+.wordscroll.ws-reduced-motion .wordscroll__copy { transform: none; }
+.wordscroll.ws-reduced-motion .wordscroll__demo { pointer-events: auto; transform: none; }
+.wordscroll.ws-reduced-motion .wordscroll__text { color: rgba(140, 196, 255, 0.16); }
+.wordscroll.ws-reduced-motion .w-lit { opacity: 1 !important; }
+@media (max-width: 720px) {
+  .wordscroll.ws-ready { height: 420vh; }
+  .wordscroll__icon { width: 72px; height: 72px; }
+  .wordscroll__demo-video,
+  .wordscroll__demo-frame { width: min(92vw, calc(76vh * 16 / 9)); }
+}

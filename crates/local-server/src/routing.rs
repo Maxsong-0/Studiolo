@@ -236,6 +236,16 @@ fn assemble(
     if state.canonical.is_some() {
         routes = routes.route(crate::canonical::PATH, get(crate::canonical::file));
     }
+    if crate::editing::enabled(&state) {
+        routes = routes
+            .route(crate::history::PATH, get(crate::history::page))
+            .route(crate::history::FILE, get(crate::history::file));
+        routes = routes.route(
+            crate::editing::PATH,
+            axum::routing::post(crate::editing::handle),
+        );
+    }
+    routes = crate::file_operations::routes(routes, &state);
     Ok(routes
         .fallback(assets::asset)
         .layer(middleware::from_fn_with_state(

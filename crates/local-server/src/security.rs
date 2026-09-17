@@ -18,9 +18,14 @@ pub(crate) async fn guard(
         crate::auth_http::SELF
         | crate::auth_http::FACTOR_STATE
         | crate::bootstrap::PATH
-        | crate::canonical::PATH => "GET",
+        | crate::canonical::PATH
+        | crate::history::PATH
+        | crate::history::FILE
+        | crate::file_operations::TOMBSTONES => "GET",
         crate::auth_http::SESSIONS => "GET, POST",
         crate::auth_http::REVOKE => "POST",
+        crate::editing::PATH if crate::editing::enabled(&state) => "POST",
+        crate::file_operations::PATH if crate::file_operations::available(&state) => "GET, POST",
         path if factors_enabled(&state) && crate::auth_http::is_factor_path(path) => "POST",
         _ => "GET, HEAD",
     };
@@ -50,6 +55,13 @@ pub(crate) async fn guard(
     if head && (state.sessions.is_some() || bootstrap) {
         *response.body_mut() = axum::body::Body::empty();
     }
+    let nonce = response
+        .extensions_mut()
+        .remove::<crate::assets::StyleNonce>();
+    let style = nonce.map_or_else(
+        || "style-src 'self'".to_owned(),
+        |nonce| format!("style-src 'self' 'nonce-{}'", nonce.0),
+    );
     let headers = response.headers_mut();
     if state.sessions.is_some() {
         headers.insert(header::VARY, "Origin, Sec-Fetch-Site".parse().unwrap());
@@ -61,7 +73,7 @@ pub(crate) async fn guard(
     headers.insert(header::X_CONTENT_TYPE_OPTIONS, "nosniff".parse().unwrap());
     headers.insert(header::REFERRER_POLICY, "no-referrer".parse().unwrap());
     headers.insert(header::CONTENT_SECURITY_POLICY,
-        "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self'; font-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; object-src 'none'".parse().unwrap());
+        format!("default-src 'none'; script-src 'self'; {style}; connect-src 'self'; img-src 'self'; font-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; object-src 'none'").parse().unwrap());
     headers.insert(
         "cross-origin-resource-policy",
         "same-origin".parse().unwrap(),
@@ -136,7 +148,10 @@ async fn authorize(state: &AppState, request: &mut Request) -> Result<(), ApiErr
             request.uri().path(),
             "/api/v1/sessions" | "/api/v1/sessions/revoke"
         ) || (factors_enabled(state)
-            && crate::auth_http::is_factor_path(request.uri().path())));
+            && crate::auth_http::is_factor_path(request.uri().path()))
+            || (crate::editing::enabled(state) && request.uri().path() == crate::editing::PATH)
+            || (crate::file_operations::available(state)
+                && request.uri().path() == crate::file_operations::PATH));
     if !matches!(*request.method(), Method::GET | Method::HEAD) && !session_command {
         return Err(ApiError(
             StatusCode::METHOD_NOT_ALLOWED,

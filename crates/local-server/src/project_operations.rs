@@ -40,6 +40,7 @@ pub(crate) async fn get(
     Query(query): Query<OperationQuery>,
 ) -> Result<Json<OperationResponse>, ApiError> {
     let generation = queries::at_generation(&state, query.generation)?;
+    let session_mode = state.sessions.is_some();
     queries::run_query(&state.queries, move || {
         let mut operations = generation
             .model
@@ -49,20 +50,23 @@ pub(crate) async fn get(
             .model
             .project_architecture(&query.project)
             .ok_or_else(|| ApiError(StatusCode::NOT_FOUND, "项目不在当前只读快照中。".into()))?;
-        let cargo_dependencies = match &repository {
-            Some(Extension(repository)) if repository.matches(&query.project) => {
-                repository.observe_cargo_dependencies()
-            }
+        let binding = repository
+            .as_ref()
+            .map(|Extension(repository)| repository)
+            .filter(|repository| {
+                repository.matches(&query.project)
+                    && (!session_mode || repository.approved_for_sessions())
+            });
+        let mut cargo_dependencies = match binding {
+            Some(repository) => repository.observe_cargo_dependencies(),
             _ => CargoDependencyObservation::unbound(),
         };
-        let rust_call_sites = match &repository {
-            Some(Extension(repository)) if repository.matches(&query.project) => {
-                repository.observe_rust_call_sites()
-            }
+        let mut rust_call_sites = match binding {
+            Some(repository) => repository.observe_rust_call_sites(),
             _ => RustCallObservation::unbound(),
         };
-        let repository = match repository {
-            Some(Extension(repository)) if repository.matches(&query.project) => {
+        let mut repository = match binding {
+            Some(repository) => {
                 if operations.declaration_status == "ready" {
                     repository.observe(&operations.comparison_parents)
                 } else {
@@ -71,6 +75,14 @@ pub(crate) async fn get(
             }
             _ => RepositoryCheck::unbound(),
         };
+        if let Some(binding) = binding {
+            finalize_approval(
+                binding,
+                &mut repository,
+                &mut cargo_dependencies,
+                &mut rust_call_sites,
+            );
+        }
         if repository.status == "unavailable" && operations.declaration_status == "ready" {
             operations.diagnostics.push(
                 "仓库观测不完整、超出预算或发生变化；本次不判定目录漂移，请重新读取。".into(),
@@ -89,3 +101,35 @@ pub(crate) async fn get(
     })
     .await
 }
+
+/// 批准对象是整组证据的共同前提；后续目录检查失败不能留下先前成功的 Cargo 图。
+fn finalize_approval(
+    binding: &ProjectRepository,
+    repository: &mut RepositoryCheck,
+    cargo: &mut CargoDependencyObservation,
+    rust: &mut RustCallObservation,
+) {
+    if binding.approval_is_current() {
+        return;
+    }
+    *repository = RepositoryCheck::unavailable();
+    cargo.graph = None;
+    cargo.observed_at = None;
+    rust.graph = None;
+    rust.links = None;
+    rust.observed_at = None;
+    // 未授权能力仍为 disabled；授权漂移不会反向变成启用状态。
+    for (status, diagnostics) in [
+        (&mut cargo.status, &mut cargo.diagnostics),
+        (&mut rust.status, &mut rust.diagnostics),
+    ] {
+        if *status != "disabled" {
+            *status = "unavailable";
+            *diagnostics = vec!["私有仓库批准或服务根已变化，本次仓库证据全部不可用。".into()];
+        }
+    }
+}
+
+#[cfg(test)]
+#[path = "../tests/repository_approval/mod.rs"]
+mod approval_contract;

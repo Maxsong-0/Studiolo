@@ -4,9 +4,8 @@ use super::{
     legacy::Legacy,
     support::{Fixture, inventory, path},
 };
-use std::fs;
-use studiolo_core::Revision;
-use studiolo_vault_broker::{BrokerError, FsVaultBroker, Mutation, VaultReader, VaultWriter};
+use std::{fs, io::Read};
+use studiolo_vault_broker::{BrokerError, FsVaultBroker, Mutation, VaultWriter};
 
 const CONTENT_LIMIT: usize = 4 * 1024 * 1024;
 
@@ -98,22 +97,25 @@ fn oversized_actual_old_content_or_history_blocks_replacement() {
                 "first",
             ))
             .unwrap();
-        let bytes = vec![b'x'; CONTENT_LIMIT + 1];
-        let expected = if source == "canonical" {
-            fs::write(fixture.vault.join("note.md"), &bytes).unwrap();
-            Revision::compute(broker.vault_uuid(), &path("note.md"), &bytes)
+        // 旧对象已由流式保全支持到256MiB；此项只验证新工程上限加一的先验拒绝。
+        // 稀疏长度用于预算，真实大字节/哈希由独立流式契约覆盖。
+        let target = if source == "canonical" {
+            fixture.vault.join("note.md")
         } else {
-            fs::write(
-                fixture
-                    .data
-                    .join("history")
-                    .join(first.revision.to_string()),
-                &bytes,
-            )
-            .unwrap();
-            first.revision
+            fixture
+                .data
+                .join("history")
+                .join(first.revision.to_string())
         };
-        let before = fs::read(fixture.vault.join("note.md")).unwrap();
+        fs::OpenOptions::new()
+            .write(true)
+            .open(&target)
+            .unwrap()
+            .set_len(256 * 1024 * 1024 + 1)
+            .unwrap();
+        let canonical = fixture.vault.join("note.md");
+        let before = fs::metadata(&canonical).unwrap();
+        let expected = first.revision;
         assert!(
             matches!(
                 broker.mutate(Mutation::replace(
@@ -126,7 +128,16 @@ fn oversized_actual_old_content_or_history_blocks_replacement() {
             ),
             "accepted oversized {source}"
         );
-        assert_eq!(fs::read(fixture.vault.join("note.md")).unwrap(), before);
+        let after = fs::metadata(&canonical).unwrap();
+        assert_eq!(after.len(), before.len());
+        assert_eq!(after.modified().unwrap(), before.modified().unwrap());
+        let mut prefix = [0; 8];
+        fs::File::open(canonical)
+            .unwrap()
+            .read_exact(&mut prefix)
+            .unwrap();
+        assert_eq!(&prefix, b"original");
+        assert_eq!(fs::metadata(target).unwrap().len(), 256 * 1024 * 1024 + 1);
         assert_eq!(broker.write_status().unwrap().committed_through, 1);
     }
 }

@@ -4,6 +4,8 @@ import type { RevokeScope, SessionInfo } from '../sessionModel';
 import { useDialogSurface } from '../useDialogSurface';
 import { Icon } from './Icon';
 import { FactorPanel } from './FactorPanel';
+import { useDraftCount } from '../draftContext';
+import { exportDrafts } from '../draftExport';
 
 const states = {
   pending: '建立中',
@@ -41,6 +43,8 @@ export function SessionDialog({
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
   const [notice, setNotice] = useState('');
+  const { store: drafts, count: draftCount } = useDraftCount();
+  const [pendingExit, setPendingExit] = useState<RevokeScope | null>(null);
   const request = useRef<AbortController | null>(null);
   const load = useCallback(async () => {
     request.current?.abort();
@@ -62,7 +66,14 @@ export function SessionDialog({
     void load();
     return () => request.current?.abort();
   }, [load]);
-  async function revoke(scope: RevokeScope) {
+  async function revoke(scope: RevokeScope, discard = false) {
+    const own = scope.scope !== 'session' || scope.session_id === current.id;
+    if (own && draftCount && !discard) {
+      setPendingExit(scope);
+      return;
+    }
+    if (own && discard) drafts.clear();
+    setPendingExit(null);
     setNotice('');
     if (await client.revoke(scope)) {
       if (!ref.current?.isConnected) return;
@@ -97,6 +108,34 @@ export function SessionDialog({
         </button>
       </header>
       <div className="session-dialog-body">
+        {pendingExit ? (
+          <section
+            className="editor-leave"
+            role="alertdialog"
+            aria-label="退出前处理草稿"
+          >
+            <h3>退出前处理内存草稿</h3>
+            <p>共有 {draftCount} 篇草稿。请先导出，或明确放弃后退出。</p>
+            <button
+              className="outline-button"
+              onClick={() => exportDrafts(drafts.list())}
+            >
+              导出全部草稿与恢复信息
+            </button>
+            <button
+              className="outline-button"
+              onClick={() => setPendingExit(null)}
+            >
+              返回并保留草稿
+            </button>
+            <button
+              className="text-button"
+              onClick={() => void revoke(pendingExit, true)}
+            >
+              放弃内存草稿并退出
+            </button>
+          </section>
+        ) : null}
         <section className="session-current" aria-label="当前登录">
           <Icon name="account" />
           <div>
