@@ -25,6 +25,7 @@ studiolo-audit-ledger.workspace = true
 studiolo-core.workspace = true
 axum.workspace = true
 http.workspace = true
+futures-core.workspace = true
 rmcp.workspace = true
 tokio = { workspace = true, features = ["time", "signal", "rt-multi-thread", "macros"] }
 serde.workspace = true

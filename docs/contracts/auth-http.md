@@ -23,8 +23,8 @@ HTTP 输入中的 identity/owner/role、转发邮箱、IP 或来源布尔均不�
 
 | 请求 | 正文 / 结果 |
 |---|---|
-| `POST /api/v1/sessions` | 严格 `{}`；无应用 Cookie 才签发；201 返回自身元信息和 `csrf_token`，Cookie 单次交付 |
-| `GET /api/v1/session` | 200 返回 `{session, csrf_token}`，不返回 session token |
+| `POST /api/v1/sessions` | 严格 `{}`；无应用 Cookie 才签发；201 返回自身元信息、`csrf_token` 和 `owner_scope`，Cookie 单次交付 |
+| `GET /api/v1/session` | 200 返回 `{session, csrf_token, owner_scope}`，不返回 session token |
 | `GET /api/v1/sessions` | 200 返回 `{sessions:[...]}`，最多原 Auth 的1024条非秘密元信息 |
 | `POST /api/v1/sessions/revoke` | `{"scope":"current"}`、`{"scope":"all"}` 或 `{"scope":"session","session_id":"..."}`；200 返回 `{revoked:N}` |
 

@@ -1,7 +1,9 @@
 mod admin;
+mod maintenance;
 mod manifest;
 mod policy;
 mod source;
+mod sync_bridge;
 mod unix_ingress;
 
 pub(crate) use manifest::{dependency_cycle, parse_manifest, workspace_manifests};

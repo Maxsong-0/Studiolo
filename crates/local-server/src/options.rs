@@ -13,6 +13,9 @@ pub(crate) struct Options {
     pub(crate) canonical: bool,
     pub(crate) writer_data: Option<PathBuf>,
     pub(crate) factor: Option<FactorOptions>,
+    pub(crate) project_repository: Option<(String, PathBuf)>,
+    pub(crate) cargo_dependencies: bool,
+    pub(crate) rust_call_sites: Option<Vec<String>>,
 }
 
 pub(crate) struct SessionOptions {
@@ -34,6 +37,9 @@ pub(crate) fn parse(mut args: impl Iterator<Item = String>) -> Result<Option<Opt
     let mut session_config = None;
     let mut factor_socket = None;
     let mut replacement_seed_ref = None;
+    let mut project_repository = None;
+    let mut cargo_dependencies = false;
+    let mut rust_call_sites = None;
     let mut assets = PathBuf::from("web/dist");
     let mut label = "只读副本".to_owned();
     let mut port = 4317;
@@ -59,6 +65,9 @@ pub(crate) fn parse(mut args: impl Iterator<Item = String>) -> Result<Option<Opt
                 | "--canonical-writer-data"
                 | "--factor-socket"
                 | "--replacement-seed-ref"
+                | "--project-repository"
+                | "--cargo-dependencies"
+                | "--rust-call-sites"
                 | "--help"
         ) {
             return Err("未知参数；仅接受 --help 中的非秘密参数".into());
@@ -74,6 +83,10 @@ pub(crate) fn parse(mut args: impl Iterator<Item = String>) -> Result<Option<Opt
             canonical = true;
             continue;
         }
+        if key == "--cargo-dependencies" {
+            cargo_dependencies = true;
+            continue;
+        }
         let value = args
             .next()
             .filter(|value| !value.is_empty() && !value.starts_with("--") && value != "-h")
@@ -84,6 +97,10 @@ pub(crate) fn parse(mut args: impl Iterator<Item = String>) -> Result<Option<Opt
             "--session-config" => session_config = Some(PathBuf::from(value)),
             "--factor-socket" => factor_socket = Some(PathBuf::from(value)),
             "--replacement-seed-ref" => replacement_seed_ref = Some(value),
+            "--project-repository" => {
+                project_repository = Some(parse_repository(&value)?);
+            }
+            "--rust-call-sites" => rust_call_sites = Some(parse_rust_sources(&value)?),
             "--assets" => assets = PathBuf::from(value),
             "--label" => label = value,
             "--port" => {
@@ -144,6 +161,17 @@ pub(crate) fn parse(mut args: impl Iterator<Item = String>) -> Result<Option<Opt
     if help {
         return Ok(None);
     }
+    if project_repository.is_some() && session.is_some() {
+        return Err(
+            "仓库目录绑定首片仅用于本机或旧Access只读模式，不能混用会话/canonical/因子模式".into(),
+        );
+    }
+    if cargo_dependencies && project_repository.is_none() {
+        return Err("Cargo清单读取必须配合显式 --project-repository".into());
+    }
+    if rust_call_sites.is_some() && project_repository.is_none() {
+        return Err("Rust源码读取必须配合显式 --project-repository".into());
+    }
     if canonical && session.is_none() {
         return Err("canonical读取必须配合显式 --session-config 及公共Origin".into());
     }
@@ -162,7 +190,35 @@ pub(crate) fn parse(mut args: impl Iterator<Item = String>) -> Result<Option<Opt
         canonical,
         writer_data,
         factor,
+        project_repository,
+        cargo_dependencies,
+        rust_call_sites,
     }))
+}
+
+fn parse_rust_sources(value: &str) -> Result<Vec<String>, String> {
+    if value.len() > 32 * 1024 {
+        return Err("Rust源码白名单参数超过32KiB预算".into());
+    }
+    let paths: Vec<String> = serde_json::from_str(value)
+        .map_err(|_| "Rust源码白名单必须是JSON字符串数组；不回显输入".to_owned())?;
+    studiolo_workbench::validate_rust_source_paths(&paths).map_err(|error| error.message)
+}
+
+fn parse_repository(value: &str) -> Result<(String, PathBuf), String> {
+    let invalid = || "仓库绑定须为 项目/名称=/绝对仓库路径；不回显输入".to_owned();
+    let (project, root) = value.split_once('=').ok_or_else(invalid)?;
+    let path = studiolo_core::VaultPath::parse(project).map_err(|_| invalid())?;
+    let parts: Vec<_> = path.as_str().split('/').collect();
+    if parts.len() != 2
+        || parts[0] != "项目"
+        || parts[1].starts_with('.')
+        || !PathBuf::from(root).is_absolute()
+        || root.chars().any(char::is_control)
+    {
+        return Err(invalid());
+    }
+    Ok((project.to_owned(), PathBuf::from(root)))
 }
 
 #[cfg(test)]
@@ -176,3 +232,15 @@ mod session_tests;
 #[cfg(test)]
 #[path = "../tests/options/writer.rs"]
 mod writer_tests;
+
+#[cfg(test)]
+#[path = "../tests/options/repository.rs"]
+mod repository_tests;
+
+#[cfg(test)]
+#[path = "../tests/options/cargo_dependencies.rs"]
+mod cargo_dependency_tests;
+
+#[cfg(test)]
+#[path = "../tests/options/rust_call_sites.rs"]
+mod rust_call_tests;

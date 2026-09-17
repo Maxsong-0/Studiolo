@@ -16,6 +16,12 @@
 .nav-symbol-inbox {
   background: #f0e6ff;
 }
+.nav-symbol-operations {
+  background: #e3eff1;
+}
+.nav-symbol-operations .icon {
+  color: #32717d;
+}
 .nav-symbol-inbox .icon {
   color: #8552be;
 }

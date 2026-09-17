@@ -5,20 +5,15 @@ use std::{
     time::Duration,
 };
 
-use axum::{Router, middleware};
-use rmcp::transport::streamable_http_server::{
-    StreamableHttpServerConfig, StreamableHttpService, session::local::LocalSessionManager,
-};
+use axum::Router;
 use studiolo_audit_ledger::SqliteAuditLedger;
 use studiolo_core::VaultPath;
 use studiolo_supply::{AgentStore, ScanLimits, SupplyRoots, replica::ReplicaRoot};
 
 use crate::{
-    auth,
     index::IndexRuntime,
     options::ServeOptions,
     refresh,
-    server::AgentSession,
     state::{AppState, Generation, SupplySource, now},
 };
 
@@ -73,19 +68,7 @@ pub fn prepare(options: &ServeOptions) -> Result<Arc<AppState>, String> {
 
 /// `/mcp` 与 `/read/*` 使用同一类型门禁；各自负责协议会话，供给操作共用。
 pub fn router(state: Arc<AppState>) -> Router {
-    let service_state = state.clone();
-    let service = StreamableHttpService::new(
-        move || Ok(AgentSession::new(service_state.clone())),
-        Arc::new(LocalSessionManager::default()),
-        StreamableHttpServerConfig::default(),
-    );
-    Router::new()
-        .route_service("/mcp", service)
-        .layer(middleware::from_fn_with_state(
-            state.clone(),
-            auth::require_bearer,
-        ))
-        .merge(crate::http_text::router(state))
+    crate::mcp_transport::router(state.clone()).merge(crate::http_text::router(state))
 }
 
 /// 启动服务直到 Ctrl-C 或 SIGTERM。

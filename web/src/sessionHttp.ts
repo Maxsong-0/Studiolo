@@ -2,6 +2,7 @@ export class ApiError extends Error {
   constructor(
     message: string,
     readonly status: number,
+    readonly details?: unknown,
   ) {
     super(message);
     this.name = 'ApiError';
@@ -43,7 +44,7 @@ export async function requestJson(
       value && typeof value === 'object' && 'error' in value
         ? String(value.error)
         : `请求失败（${response.status}）`;
-    throw new ApiError(message, response.status);
+    throw new ApiError(message, response.status, value);
   }
   if (success === 'empty-204') {
     if (response.status !== 204) throw new Error('安全操作的响应格式无效。');

@@ -1,5 +1,6 @@
 //! 封闭的应用会话 HTTP Module；不创建存储、不装配因子秘密或内容写权限。
 
+mod content;
 mod cookie;
 mod factor_handlers;
 mod factor_input;
@@ -8,6 +9,7 @@ mod gate;
 mod handlers;
 mod input;
 mod responses;
+pub(crate) use content::ContentPrincipal;
 
 use std::sync::Arc;
 
@@ -42,6 +44,7 @@ pub(crate) struct AuthHttp {
     sessions: Arc<SessionManager>,
     factors: Option<Arc<FactorRuntime>>,
     permits: Arc<Semaphore>,
+    content_permits: Arc<Semaphore>,
 }
 
 /// 仅活在本次请求内，不能向其他请求传递成可缓存的授权证明。
@@ -51,6 +54,7 @@ struct Context {
     session: Option<SessionInfo>,
     action: Option<input::Action>,
     source: Option<crate::unix_ingress::TrustedNetworkSource>,
+    content_permit: Option<tokio::sync::OwnedSemaphorePermit>,
 }
 
 pub(crate) fn routes(factors: bool) -> Router<AppState> {
@@ -75,6 +79,7 @@ impl AuthHttp {
             sessions,
             factors: None,
             permits: Arc::new(Semaphore::new(2)),
+            content_permits: Arc::new(Semaphore::new(2)),
         }
     }
 
@@ -113,6 +118,24 @@ impl AuthHttp {
         if request.uri().path() == crate::bootstrap::PATH {
             return Ok(());
         }
+        let content_permit = if matches!(
+            request.uri().path(),
+            crate::editing::PATH | crate::file_operations::PATH
+        ) {
+            Some(
+                self.content_permits
+                    .clone()
+                    .try_acquire_owned()
+                    .map_err(|_| {
+                        Failure::new(
+                            axum::http::StatusCode::TOO_MANY_REQUESTS,
+                            "保存请求已达并发限制。",
+                        )
+                    })?,
+            )
+        } else {
+            None
+        };
         let source = if self.has_factors() && is_factor_path(request.uri().path()) {
             Some(crate::unix_ingress::source(request).map_err(|_| Failure::forbidden())?)
         } else {
@@ -160,6 +183,7 @@ impl AuthHttp {
             session,
             action,
             source,
+            content_permit,
         }));
         Ok(())
     }

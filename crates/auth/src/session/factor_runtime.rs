@@ -130,6 +130,18 @@ impl FactorRuntime {
         self.recovery.rotate_codes(request)
     }
 
+    /// 可信维护补记 TOTP、恢复和最多 256 条会话事件，不重放动作或授予权限。
+    ///
+    /// 不依赖请求会话或重新选择秘密槽；替换后的旧句柄也只交付存储中的原事件。
+    /// 返回本批新增 ACK 总数，不保证清空全部待办；失败前可能已有部分事件提交。
+    pub fn flush_audit(&self) -> Result<usize, SessionError> {
+        let totp = Totp {
+            context: Arc::clone(&self.current),
+        };
+        let delivered = totp.flush_audit()? + self.recovery.flush_audit()?;
+        Ok(delivered + self.sessions.flush_audit(256)?)
+    }
+
     /// 只向预配置替换槽前滚；成功吊销全部旧会话，不返回新会话或通用 L3。
     ///
     /// 失败可能已消费输入或已提交切换。此方法从不自动重放；下一次调用重新选择

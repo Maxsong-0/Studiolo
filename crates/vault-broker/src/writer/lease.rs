@@ -91,7 +91,18 @@ pub(crate) fn walk(path: &Path, create: bool) -> Result<Dir, BrokerError> {
     Ok(dir)
 }
 
-pub(crate) fn acquire(root: &Dir) -> Result<File, BrokerError> {
+/// 只在成功取得独立根的锁后构造；不允许复制租约所有权。
+pub(crate) struct LeaseGuard(File);
+
+impl Drop for LeaseGuard {
+    fn drop(&mut self) {
+        // root 的副本或继承 FD 可能仍存活，不能仅等最后一个 FD 关闭。
+        // Drop 不能报告错误；仍关闭自身 FD，不重试或伪造释放成功回执。
+        let _ = flock(&self.0, FlockOperation::Unlock);
+    }
+}
+
+pub(crate) fn acquire(root: &Dir) -> Result<LeaseGuard, BrokerError> {
     // dup 仅用于把同一次独立 open 的所有权交给租约；不会获取第二把锁。
     let file = root
         .try_clone()
@@ -104,7 +115,7 @@ pub(crate) fn acquire(root: &Dir) -> Result<File, BrokerError> {
             BrokerError::io("acquire canonical writer lease", e.into())
         }
     })?;
-    Ok(file)
+    Ok(LeaseGuard(file))
 }
 
 pub(crate) fn has_ancestor(path: &Path, identity: Identity) -> Result<bool, BrokerError> {
@@ -153,3 +164,7 @@ pub(crate) fn child(root: &Dir, path: &str) -> Result<Dir, BrokerError> {
     }
     Ok(dir)
 }
+
+#[cfg(test)]
+#[path = "../../tests/writer_private/lease.rs"]
+mod tests;

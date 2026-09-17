@@ -4,47 +4,8 @@ use crate::writer::{Identity, disk};
 use crate::{BrokerError, Mutation, MutationReceipt, Precondition, Revision, VaultPath, VaultUuid};
 use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct State {
-    pub(crate) format_version: u32,
-    pub(crate) pair_id: VaultUuid,
-    pub(crate) committed_through: u64,
-    pub(crate) next_sequence: u64,
-    pub(crate) legacy_unresolved: bool,
-    pub(crate) operation: Option<Operation>,
-}
-
-impl State {
-    pub(crate) fn initial(pair_id: VaultUuid, legacy_unresolved: bool) -> Self {
-        Self {
-            format_version: 1,
-            pair_id,
-            committed_through: 0,
-            next_sequence: 1,
-            legacy_unresolved,
-            operation: None,
-        }
-    }
-    pub(crate) fn validate(&self, pair: VaultUuid) -> Result<(), BrokerError> {
-        if self.format_version != 1
-            || self.pair_id != pair
-            || self.next_sequence <= self.committed_through
-        {
-            return Err(BrokerError::CorruptWriterState);
-        }
-        if let Some(op) = &self.operation {
-            op.validate()?;
-            if self.legacy_unresolved
-                || op.sequence <= self.committed_through
-                || op.sequence.checked_add(1) != Some(self.next_sequence)
-            {
-                return Err(BrokerError::CorruptWriterState);
-            }
-        }
-        Ok(())
-    }
-}
+mod state;
+pub(crate) use state::State;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -66,6 +27,8 @@ pub(crate) struct Stage {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Operation {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) recording: Option<crate::recorded::store::RecordingRef>,
     pub(crate) sequence: u64,
     pub(crate) key_hash: String,
     pub(crate) fingerprint: String,
@@ -79,13 +42,22 @@ pub(crate) struct Operation {
 }
 
 impl Operation {
-    fn validate(&self) -> Result<(), BrokerError> {
+    fn validate(&self, streaming: bool) -> Result<(), BrokerError> {
         if self.sequence == 0
+            || self
+                .recording
+                .as_ref()
+                .is_some_and(|r| !disk::hex(&r.id) || !disk::hex(&r.digest))
             || !disk::hex(&self.key_hash)
             || !disk::hex(&self.fingerprint)
             || self.path.is_protected()
             || !disk::hex(&self.stage.digest)
-            || self.stage.size > disk::CONTENT_LIMIT as u64
+            || self.stage.size
+                > (if streaming {
+                    crate::blob::OBJECT_LIMIT
+                } else {
+                    disk::CONTENT_LIMIT as u64
+                })
             || !disk::hex(self.stage.name.strip_suffix(".stage").unwrap_or(""))
             || self.previous_revision
                 != match self.precondition {
@@ -122,6 +94,8 @@ impl Operation {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Terminal {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) recording: Option<crate::recorded::store::RecordingRef>,
     pub(crate) format_version: u32,
     pub(crate) pair_id: VaultUuid,
     pub(crate) sequence: Option<u64>,
@@ -141,16 +115,35 @@ pub(crate) enum Outcome {
         precondition: Precondition,
         actual: Option<Revision>,
     },
+    Cancelled {
+        path: VaultPath,
+        precondition: Precondition,
+    },
+    Indeterminate {
+        path: VaultPath,
+        precondition: Precondition,
+        evidence_id: String,
+        current_revision: Option<Revision>,
+    },
 }
 
 impl Terminal {
     pub(crate) fn validate(&self, pair: VaultUuid) -> Result<(), BrokerError> {
-        if self.format_version != 2 || self.pair_id != pair || !disk::hex(&self.fingerprint) {
+        if !matches!(self.format_version, 2..=4)
+            || (self.format_version == 4) != self.recording.is_some()
+            || self
+                .recording
+                .as_ref()
+                .is_some_and(|r| !disk::hex(&r.id) || !disk::hex(&r.digest))
+            || self.pair_id != pair
+            || !disk::hex(&self.fingerprint)
+        {
             return Err(BrokerError::CorruptWriterState);
         }
         let valid = match &self.outcome {
             Outcome::Committed { receipt } => {
-                self.sequence.is_some_and(|s| s > 0)
+                matches!(self.format_version, 2 | 4)
+                    && self.sequence.is_some_and(|s| s > 0)
                     && receipt.revision == self.expected_revision
                     && !receipt.path.is_protected()
             }
@@ -159,9 +152,23 @@ impl Terminal {
                 precondition,
                 actual,
             } => {
-                self.sequence.is_none()
+                matches!(self.format_version, 2 | 4)
+                    && self.sequence.is_none()
                     && !path.is_protected()
                     && !cas_matches(*precondition, *actual)
+            }
+            Outcome::Cancelled { path, .. } => {
+                matches!(self.format_version, 3 | 4)
+                    && self.sequence.is_none()
+                    && !path.is_protected()
+            }
+            Outcome::Indeterminate {
+                path, evidence_id, ..
+            } => {
+                matches!(self.format_version, 3 | 4)
+                    && self.sequence.is_none()
+                    && !path.is_protected()
+                    && disk::hex(evidence_id)
             }
         };
         if valid {
@@ -171,13 +178,23 @@ impl Terminal {
         }
     }
     pub(crate) fn result(self) -> Result<MutationReceipt, BrokerError> {
-        match self.outcome {
+        self.outcome.result()
+    }
+}
+
+impl Outcome {
+    pub(crate) fn result(self) -> Result<MutationReceipt, BrokerError> {
+        match self {
             Outcome::Committed { receipt } => Ok(receipt),
             Outcome::Rejected {
                 path,
                 precondition,
                 actual,
             } => Err(conflict(path, precondition, actual)),
+            Outcome::Cancelled { .. } => Err(BrokerError::MutationCancelled),
+            Outcome::Indeterminate { evidence_id, .. } => {
+                Err(BrokerError::MutationIndeterminate { evidence_id })
+            }
         }
     }
 }

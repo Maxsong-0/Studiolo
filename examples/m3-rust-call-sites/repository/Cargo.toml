@@ -1,0 +1,8 @@
+# 虚构Cargo清单，只供只读图形验收。
+[workspace]
+resolver = "3"
+members = ["src/catalog", "src/search", "tools"]
+
+[workspace.dependencies]
+catalog = { package = "fictional-catalog", path = "src/catalog" }
+serde = "1.0"

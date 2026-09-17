@@ -7,6 +7,11 @@ use tokio::signal::unix::{Signal, SignalKind, signal};
 
 impl PreparedServer {
     pub(super) fn revalidate(&self) -> Result<(), StartupError> {
+        if let Some(repository) = &self.repository {
+            repository
+                .revalidate()
+                .map_err(|_| StartupError::ReadRoots)?;
+        }
         if let Some(roots) = &self.roots {
             roots
                 .revalidate()

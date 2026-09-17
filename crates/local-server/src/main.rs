@@ -39,12 +39,24 @@ async fn run() -> Result<(), String> {
             可加 --canonical 读取已初始化的canonical及权威revision；仅会话模式可用，仍不开放写入。\n\n\
             或使用 --canonical-writer-data </绝对路径/既有Broker数据目录> 启用完整捕获与监视新鲜度；与--canonical互斥。\n\
             新模式持canonical独占租约，不得同时启动M0写者；仅open_existing，不初始化或猜用Auth/Audit目录。\n\
-            HTTP仍只读，Broker可能补已确定的完成回执和水位，因此不承诺进程零写。\n\n\
+            默认仍只读；私有owner配置显式human_content范围及权威Audit接线后，开放人侧L2正文保存与页历史恢复。\n\
+            保存实际核对会话、范围、生成区、新鲜度与CAS；单页恢复另需权威审计，不能按普通写入降级。\n\
+            Broker可能补已确定的完成回执和水位，因此不承诺进程零写。\n\n\
             显式因子入口：--factor-socket </绝对路径/私有代理目录/http.sock>\n\
             可选 --replacement-seed-ref <预配置候选引用>；必须配合会话配置/公共Origin，不得指定--port。\n\
             仅因子模式读取固定STUDIOLO_TOTP_SEED_HEX与可选STUDIOLO_TOTP_REPLACEMENT_SEED_HEX环境槽；不得把秘密写进参数或配置。\n\
             因子模式要求已登记v4及私有Unix入口；其余只监听127.0.0.1。初始化失败直接退出，不回退。\n\
             请先构建web，再显式指定副本；不会自动打开真实Obsidian库。"
+        );
+        println!(
+            "\n图2首片可选：--project-repository <项目/名称=/绝对仓库路径>\n\
+             仅本机/旧Access只读模式支持一个显式绑定；默认只枚举目录。\n\
+             会话模式通过私有owner配置的project_repository明确批准目录与可选Cargo，不能用上述CLI参数混入。\n\
+             生产批准模式始终拒绝Rust源码解析，进程隔离前置仍需满足。\n\
+             可加 --cargo-dependencies 显式读取根及成员Cargo.toml，派生清单依赖；不执行Cargo或读取源码。\n\
+             或加 --rust-call-sites '[\"src/lib.rs\"]' 显式读取Rust文件白名单，展示调用语法位置；与Cargo能力独立。\n\
+             源码白名单不自动跟随mod/include，不执行代码或宏，不解析调用目标。\n\
+             文档代次与仓库观测时间分别标识；未绑定项目显示未核验。"
         );
         return Ok(());
     };

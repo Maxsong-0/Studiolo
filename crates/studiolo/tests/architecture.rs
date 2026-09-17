@@ -17,7 +17,11 @@ mod ci;
 mod dependencies;
 #[path = "architecture_cases/factor_http.rs"]
 mod factor_http;
+#[path = "architecture_cases/maintenance.rs"]
+mod maintenance;
 #[path = "architecture_cases/supply_storage.rs"]
 mod supply_storage;
 #[path = "architecture_support/mod.rs"]
 mod support;
+#[path = "architecture_cases/sync_bridge.rs"]
+mod sync_bridge;

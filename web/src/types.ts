@@ -1,3 +1,5 @@
+import type { Freshness } from './freshness';
+
 export interface SourceLocation {
   path: string;
   line: number;
@@ -43,6 +45,7 @@ export interface Workbench {
   inbox: Action[];
   documents: DocumentSummary[];
   diagnostics: string[];
+  freshness?: Freshness | null;
 }
 
 export interface SourceDocument {
@@ -94,5 +97,5 @@ export interface SearchResponse {
   truncated: boolean;
 }
 
-export type View = 'overview' | 'inbox' | 'documents';
+export type View = 'overview' | 'inbox' | 'documents' | 'operations';
 export type OpenSource = (source: SourceLocation) => void;

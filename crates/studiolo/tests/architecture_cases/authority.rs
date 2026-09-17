@@ -99,3 +99,29 @@ fn only_vault_broker_source_owns_canonical_vault_authority() {
     assert!(broker_source.contains(".workbench/vault.json"));
     assert!(broker_source.contains("sources/attempts/"));
 }
+
+#[test]
+fn fixed_agent_database_creation_pin_does_not_allow_another_file_or_write() {
+    let path = Path::new("crates/supply/src/storage.rs");
+    let source = fs::read_to_string(workspace_root().join(path)).unwrap();
+    assert!(source_violations("studiolo-supply", path, &source).is_empty());
+    for extra in [
+        "std::fs::File::create(other)?;",
+        "pin.write_all(body)?;",
+        "std::fs::File::open(other)?;",
+    ] {
+        let injected = format!("{source}\n{extra}");
+        assert!(
+            source_violations("studiolo-supply", path, &injected)
+                .contains(&AuthorityViolation::GenericWrite)
+        );
+    }
+    assert!(
+        source_violations(
+            "studiolo-supply",
+            Path::new("crates/supply/src/extra.rs"),
+            "struct Unexpected { created_pin: Option<std::fs::File>, }",
+        )
+        .contains(&AuthorityViolation::GenericWrite)
+    );
+}

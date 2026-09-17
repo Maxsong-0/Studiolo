@@ -3,6 +3,7 @@ import { queryError, validateSearch } from './searchQuery';
 import type { SearchMode } from './types';
 import { validateTree } from './treeQuery';
 import { ApiError, getJson } from './sessionHttp';
+import { validateProjectOperations } from './projectOperations';
 export { ApiError } from './sessionHttp';
 
 export function getWorkbench(signal: AbortSignal, refresh = false) {
@@ -72,4 +73,25 @@ export function getTree(
       throw new Error('文件树位置与请求不一致，请重试。');
     return response;
   });
+}
+
+export function getProjectOperations(
+  project: string,
+  generation: number,
+  signal: AbortSignal,
+) {
+  const params = new URLSearchParams({
+    project,
+    generation: String(generation),
+  });
+  return getJson<unknown>(`/api/project-operations?${params}`, signal).then(
+    (value) => {
+      const response = validateProjectOperations(value);
+      if (response.generation !== generation)
+        throw new ApiError('项目声明来自不同快照，请刷新工作台。', 409);
+      if (response.project !== project)
+        throw new Error('项目运作数据与所选项目不一致，请重试。');
+      return response;
+    },
+  );
 }

@@ -2,7 +2,7 @@ use super::*;
 
 #[test]
 fn every_unresolved_stage_blocks_capture_revalidation_and_page_read_without_finishing() {
-    for point in [1, 2, 3, 4, 5] {
+    for point in [2, 3, 4, 5] {
         let fixture = Fixture::new();
         let mut broker = fixture.initialize();
         let stamp = capture(&mut broker).stamp;

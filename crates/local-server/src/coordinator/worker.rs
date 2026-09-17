@@ -58,6 +58,12 @@ impl Core {
                     self.roots.writer_data_identity(),
                 )
                 .map_err(classify)?;
+            self.enable_approved_file_operations(broker)?;
+            if self.content_audit.is_some() {
+                // 普通正文审计降级不阻止读取派生；恢复未闭合的写入门禁由持久状态决定。
+                let _ = self.flush_content_audit(broker);
+                let _ = self.flush_file_operation_audit(broker);
+            }
             let state = self.control.lock().map_err(|_| Failure::Internal)?;
             if state.closing {
                 return Err(Failure::Stopped);
@@ -100,6 +106,10 @@ impl Core {
         let broker = owner.as_ref().ok_or(Failure::Stopped)?;
         self.roots.revalidate().map_err(|_| Failure::Binding)?;
         broker.revalidate_capture(&stamp).map_err(classify)?;
+        let writer_status = broker.write_status().map_err(classify)?;
+        if writer_status.read_blocked {
+            return Err(Failure::Unresolved);
+        }
         let state = self.control.lock().map_err(|_| Failure::Internal)?;
         if state.closing {
             return Err(Failure::Stopped);
@@ -112,12 +122,12 @@ impl Core {
         let mut published = self.view.0.write().map_err(|_| Failure::Internal)?;
         let previous = published.generation.replace(Arc::new(candidate));
         published.freshness = Some(Freshness {
-            stale: false,
+            stale: writer_status.unresolved,
             indexed_through: Some(stamp.committed_through().to_string()),
             committed_through: Some(stamp.committed_through().to_string()),
-            unresolved: Some(false),
+            unresolved: Some(writer_status.unresolved),
             watcher_healthy: true,
-            reason: None,
+            reason: writer_status.unresolved.then_some("unresolved"),
         });
         drop(published);
         drop(state);

@@ -2,7 +2,7 @@
 
 use super::record::{Operation, Phase, Stage, cas_matches, conflict};
 use crate::writer::{Identity, directory, disk};
-use crate::{BrokerError, FsVaultBroker, Mutation, Precondition, Revision, VaultObject, sha256};
+use crate::{BrokerError, FsVaultBroker, Mutation, Precondition, VaultObject, sha256};
 use cap_std::fs::OpenOptions;
 use std::{io::Write, path::Path};
 
@@ -45,32 +45,7 @@ pub(super) fn prepare(
     broker.ensure_parent_dirs(&mutation.path)?;
     broker.writer.check(&broker.root, &broker.data)?;
     let dir = directory(&broker.root, ".workbench/staging")?;
-    // 崩溃于 Prepared 之前可以留下孤立 stage，但不能无限增加目录项。
-    for (index, entry) in dir
-        .entries()
-        .map_err(|e| BrokerError::io("enumerate mutation stages", e))?
-        .enumerate()
-    {
-        if index >= 63 {
-            return Err(BrokerError::WriterLimitExceeded);
-        }
-        let entry = entry.map_err(|e| BrokerError::io("inspect mutation stage", e))?;
-        let name = entry
-            .file_name()
-            .into_string()
-            .map_err(|_| BrokerError::CorruptWriterState)?;
-        if !disk::hex(name.strip_suffix(".stage").unwrap_or("")) {
-            return Err(BrokerError::CorruptWriterState);
-        }
-        let path = crate::VaultPath::parse(&name).map_err(|_| BrokerError::CorruptWriterState)?;
-        let metadata = entry
-            .metadata()
-            .map_err(|e| BrokerError::io("stat retained mutation stage", e))?;
-        FsVaultBroker::validate_file_metadata(&path, &metadata)?;
-        if metadata.len() > disk::CONTENT_LIMIT as u64 {
-            return Err(BrokerError::WriterLimitExceeded);
-        }
-    }
+    crate::blob::quota::reserve(broker, mutation.content.len() as u64)?;
     let nonce = format!(
         "{}:{sequence}:{}",
         broker.writer.binding.pair_id,
@@ -102,18 +77,24 @@ pub(super) fn prepare(
     Ok(stage)
 }
 
-pub(super) fn verify_stage(broker: &FsVaultBroker, op: &Operation) -> Result<(), BrokerError> {
+pub(crate) fn verify_stage(broker: &FsVaultBroker, op: &Operation) -> Result<(), BrokerError> {
+    stage_proof(broker, op).map(|_| ())
+}
+
+fn stage_proof(
+    broker: &FsVaultBroker,
+    op: &Operation,
+) -> Result<crate::blob::file::ContentProof, BrokerError> {
     let dir = directory(&broker.root, ".workbench/staging")?;
-    let (bytes, identity) = disk::read_identified(&dir, &op.stage.name, disk::CONTENT_LIMIT)?
-        .ok_or(BrokerError::CorruptWriterState)?;
-    if identity != op.stage.identity
-        || bytes.len() as u64 != op.stage.size
-        || sha256(&bytes) != op.stage.digest
-        || Revision::compute(broker.vault_uuid, &op.path, &bytes) != op.target_revision
+    let proof =
+        crate::blob::store::verify(broker, &dir, &op.stage.name, &op.path, op.target_revision)?;
+    if proof.node.file.identity != op.stage.identity
+        || proof.identity.bytes != op.stage.size
+        || proof.identity.sha256 != op.stage.digest
     {
         return Err(BrokerError::CorruptWriterState);
     }
-    Ok(())
+    Ok(proof)
 }
 
 pub(super) fn discard_prepared(broker: &FsVaultBroker, op: &Operation) -> Result<(), BrokerError> {
@@ -122,7 +103,7 @@ pub(super) fn discard_prepared(broker: &FsVaultBroker, op: &Operation) -> Result
     }
     broker.writer.check(&broker.root, &broker.data)?;
     let dir = directory(&broker.root, ".workbench/staging")?;
-    if disk::read(&dir, &op.stage.name, disk::CONTENT_LIMIT)?.is_some() {
+    if crate::blob::store::exists(&dir, &op.stage.name)? {
         verify_stage(broker, op)?;
         dir.remove_file(&op.stage.name)
             .map_err(|e| BrokerError::io("remove cancelled mutation stage", e))?;
@@ -131,25 +112,55 @@ pub(super) fn discard_prepared(broker: &FsVaultBroker, op: &Operation) -> Result
     broker.writer.check(&broker.root, &broker.data)
 }
 
+pub(super) struct PreparedInstall {
+    current: crate::blob::current::Current,
+    stage: crate::blob::file::ContentProof,
+    history: crate::blob::install::HistoryPins,
+}
+
+impl PreparedInstall {
+    fn check(&self, broker: &FsVaultBroker, op: &Operation) -> Result<(), BrokerError> {
+        crate::blob::current::check(broker, &op.path, &self.current)?;
+        let stages = directory(&broker.root, ".workbench/staging")?;
+        crate::blob::file::check(
+            &stages,
+            &crate::blob::store::logical(&op.stage.name)?,
+            &self.stage.node,
+        )?;
+        self.history.check(broker, op)
+    }
+}
+
 pub(super) fn check_before_install(
     broker: &FsVaultBroker,
     op: &Operation,
-) -> Result<(), BrokerError> {
+) -> Result<PreparedInstall, BrokerError> {
     broker.writer.check(&broker.root, &broker.data)?;
     broker.validate_components(&op.path, true)?;
-    verify_stage(broker, op)?;
-    let actual = match broker.read_checked(&op.path, Some(disk::CONTENT_LIMIT)) {
-        Ok(object) => Some(object.revision),
-        Err(BrokerError::NotFound(_)) => None,
-        Err(e) => return Err(e),
-    };
+    let stage = stage_proof(broker, op)?;
+    let current = crate::blob::current::observe(broker, &op.path)?;
+    let actual = current.revision();
     if !cas_matches(op.precondition, actual) {
         return Err(conflict(op.path.clone(), op.precondition, actual));
     }
-    Ok(())
+    // Prepared 重试也重新核验已保全正文；返回以后只重验节点，不在 Installing 中再次大读。
+    let history = crate::blob::install::HistoryPins::capture(broker, op)?;
+    let sealed = PreparedInstall {
+        current,
+        stage,
+        history,
+    };
+    #[cfg(test)]
+    crate::blob::install::before_history_check_test(broker, op, false)?;
+    sealed.check(broker, op)?;
+    Ok(sealed)
 }
 
-pub(super) fn install(broker: &FsVaultBroker, op: &Operation) -> Result<(), BrokerError> {
+pub(super) fn install(
+    broker: &FsVaultBroker,
+    op: &Operation,
+    sealed: &PreparedInstall,
+) -> Result<(), BrokerError> {
     if op.phase != Phase::Installing {
         return Err(BrokerError::CorruptWriterState);
     }
@@ -163,10 +174,13 @@ pub(super) fn install(broker: &FsVaultBroker, op: &Operation) -> Result<(), Brok
     let parent_identity = Identity::directory(&target)?;
     let stages = directory(&broker.root, ".workbench/staging")?;
     let name = path.file_name().ok_or(BrokerError::CorruptWriterState)?;
-    check_before_install(broker, op)?;
+    sealed.check(broker, op)?;
     if Identity::directory(&directory(&broker.root, parent_name)?)? != parent_identity {
         return Err(BrokerError::RootChanged);
     }
+    #[cfg(test)]
+    crate::blob::install::before_history_check_test(broker, op, true)?;
+    sealed.history.check(broker, op)?;
     match op.precondition {
         Precondition::MustNotExist => {
             #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -194,14 +208,42 @@ pub(super) fn install(broker: &FsVaultBroker, op: &Operation) -> Result<(), Brok
     }
     FsVaultBroker::sync_directory(&stages, Path::new("."))?;
     FsVaultBroker::sync_directory(&target, Path::new("."))?;
-    let installed = broker.read_checked(&op.path, Some(disk::CONTENT_LIMIT))?;
-    let (_, identity) = disk::read_identified(&broker.root, op.path.as_str(), disk::CONTENT_LIMIT)?
-        .ok_or(BrokerError::CorruptWriterState)?;
-    if installed.revision != op.target_revision
-        || identity != op.stage.identity
+    #[cfg(test)]
+    after_rename_test(broker, &target, name)?;
+    let installed = crate::blob::store::verify(
+        broker,
+        &broker.root,
+        op.path.as_str(),
+        &op.path,
+        op.target_revision,
+    )?;
+    if installed.node.file.identity != op.stage.identity
+        || installed.identity.bytes != op.stage.size
+        || installed.identity.sha256 != op.stage.digest
         || Identity::directory(&directory(&broker.root, parent_name)?)? != parent_identity
     {
         return Err(BrokerError::UnstableRead(op.path.clone()));
     }
     broker.writer.check(&broker.root, &broker.data)
+}
+
+// 仅单元测试的一次性安装后反例；生产构建没有回调、feature 或环境变量入口。
+#[cfg(test)]
+pub(crate) fn after_rename_test(
+    broker: &FsVaultBroker,
+    target: &cap_std::fs::Dir,
+    name: &std::ffi::OsStr,
+) -> Result<(), BrokerError> {
+    use std::sync::atomic::Ordering;
+    if broker
+        .writer
+        .fault
+        .compare_exchange(17, 0, Ordering::AcqRel, Ordering::Acquire)
+        .is_ok()
+    {
+        target
+            .hard_link(name, target, ".studiolo-t046-after-rename-hardlink")
+            .map_err(|e| BrokerError::io("inject post-install hardlink", e))?;
+    }
+    Ok(())
 }

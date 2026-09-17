@@ -3,6 +3,7 @@
 mod canonical_input;
 mod error;
 mod factor_input;
+mod repository_input;
 mod serving;
 
 pub(crate) use error::StartupError;
@@ -13,6 +14,7 @@ use studiolo_auth::{
     AccessConfig, AccessError, AccessVerifier, OsSessionRandom, SessionManager, SystemSessionClock,
 };
 use studiolo_host_config::{Config, ServingRoots};
+use studiolo_local_server::ProjectRepository;
 use studiolo_local_server::{CanonicalWorkbench, PreparedUnixIngress};
 use studiolo_vault_broker::{CanonicalReadVault, ReadOnlyVault};
 
@@ -26,6 +28,7 @@ pub(crate) struct PreparedServer {
     canonical: Option<Arc<CanonicalReadVault>>,
     ingress: Option<PreparedUnixIngress>,
     workbench: Option<Arc<CanonicalWorkbench>>,
+    repository: Option<Arc<ProjectRepository>>,
 }
 
 impl PreparedServer {
@@ -61,6 +64,9 @@ where
         || (options.session.is_some() && options.access.is_some())
         || (options.canonical && options.session.is_none())
         || (options.factor.is_some() && options.session.is_none())
+        || (options.project_repository.is_some() && options.session.is_some())
+        || (options.cargo_dependencies && options.project_repository.is_none())
+        || (options.rust_call_sites.is_some() && options.project_repository.is_none())
         || (options.writer_data.is_some() && (options.canonical || options.session.is_none()))
         || options
             .writer_data
@@ -69,9 +75,12 @@ where
     {
         return Err(StartupError::Configuration);
     }
+    let mut repository = repository_input::open(&options)?;
+    let mut content_audit: Option<Arc<dyn studiolo_audit_ledger::AuditLedger>> = None;
     let (sessions, roots, access_config, factors, writer_roots) =
         if let Some(session) = &options.session {
             let config = Config::load(&session.config).map_err(|_| StartupError::Configuration)?;
+            repository = repository_input::approved(&options, &config)?;
             let access = config
                 .access(&session.origin)
                 .map_err(|_| StartupError::Configuration)?;
@@ -110,7 +119,10 @@ where
             let manager = Arc::new(SessionManager::open_existing(
                 config.auth_directory(),
                 config.sessions().map_err(|_| StartupError::Configuration)?,
-                audit,
+                {
+                    content_audit = Some(audit.clone());
+                    audit
+                },
                 Arc::new(SystemSessionClock),
                 Arc::new(OsSessionRandom),
             )?);
@@ -161,7 +173,7 @@ where
     let (app, mode) = if let Some(config) = access_config {
         let access = connect(config).await.map_err(|_| StartupError::Access)?;
         if let Some(writer) = writer {
-            workbench = Some(writer.prepare().await?);
+            workbench = Some(writer.prepare(content_audit).await?);
         }
         if let Some(sessions) = sessions {
             if let Some(workbench) = &workbench {
@@ -240,13 +252,18 @@ where
         }
     };
     let prepared = PreparedServer {
-        app,
+        app: if let Some(repository) = &repository {
+            studiolo_local_server::with_project_repository(app, Arc::clone(repository))
+        } else {
+            app
+        },
         port: options.port,
         mode,
         roots,
         canonical,
         ingress,
         workbench,
+        repository,
     };
     if let Err(error) = prepared.revalidate() {
         canonical_input::shutdown(prepared.workbench.as_ref()).await?;

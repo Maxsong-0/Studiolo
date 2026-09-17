@@ -8,16 +8,27 @@ import { Icon } from './components/Icon';
 import { Inbox } from './components/Inbox';
 import { ProjectTable } from './components/ProjectTable';
 import type { SourceLocation, View } from './types';
+import { useEditorNavigation } from './useEditorNavigation';
 import { useWorkbench } from './useWorkbench';
 import { sortProjects } from './projectOrder';
 import { QuickSwitcher } from './components/QuickSwitcher';
 import { useQuickSwitcher } from './useQuickSwitcher';
 import { Diagnostics } from './components/Diagnostics';
+import { ProjectOperations } from './components/ProjectOperations';
+import { FreshnessNotice } from './components/FreshnessNotice';
+import { CanonicalEditor } from './components/CanonicalEditor';
+import { DraftShelf } from './components/DraftShelf';
+import { useDraftCount } from './draftContext';
+import { FileOperationsAccess } from './components/FileOperationsAccess';
 
 const headings = {
   overview: ['项目总览', '项目状态与待办，回到原文核对。'],
   inbox: ['待我动作', '待你验收、拍板与重启的事项，回到原文核对。'],
-  documents: ['文档', '搜索笔记或浏览目录与附件，所有内容只读。'],
+  documents: ['文档', '搜索笔记或浏览目录与附件，从原文进入授权编辑。'],
+  operations: [
+    '项目运作',
+    '对照结构声明与实际目录，理解模块职责并回到原文核对。',
+  ],
 } satisfies Record<View, [string, string]>;
 
 export function App({ account }: { account?: ReactNode }) {
@@ -25,8 +36,15 @@ export function App({ account }: { account?: ReactNode }) {
   const [query, setQuery] = useState('');
   const [lifecycle, setLifecycle] = useState('');
   const [source, setSource] = useState<SourceLocation | null>(null);
-  const { data, loading, error, refresh } = useWorkbench();
-  const quick = useQuickSwitcher(Boolean(data) && !source && !loading);
+  const [draftsOpen, setDraftsOpen] = useState(false);
+  const { count: draftCount } = useDraftCount();
+  const { data, loading, error, refresh, refreshLatest } = useWorkbench();
+  const editor = useEditorNavigation(refreshLatest);
+  const editorPath = editor.current?.path ?? null;
+  const setEditorPath = editor.open;
+  const quick = useQuickSwitcher(
+    Boolean(data) && !source && !editorPath && !draftsOpen && !loading,
+  );
   const projects = useMemo(() => sortProjects(data?.projects ?? []), [data]);
   const normalizedQuery = query.trim().toLocaleLowerCase();
   const filtered = projects.filter(
@@ -60,6 +78,7 @@ export function App({ account }: { account?: ReactNode }) {
   ];
 
   function refreshSnapshot() {
+    if (loading) return;
     setSource(null);
     quick.close();
     refresh();
@@ -94,12 +113,21 @@ export function App({ account }: { account?: ReactNode }) {
           <button
             className="outline-button refresh-button"
             onClick={refreshSnapshot}
-            disabled={loading}
+            aria-disabled={loading}
           >
             <Icon name="refresh" />
             {loading && data ? '刷新中' : '刷新'}
           </button>
           {account}
+          <FileOperationsAccess onChanged={refreshSnapshot} />
+          {draftCount ? (
+            <button
+              className="outline-button draft-button"
+              onClick={() => setDraftsOpen(true)}
+            >
+              内存草稿 {draftCount}
+            </button>
+          ) : null}
         </div>
       }
     >
@@ -116,8 +144,16 @@ export function App({ account }: { account?: ReactNode }) {
       ) : null}
       {!data && loading ? (
         <p className="empty-state" role="status">
-          正在读取只读副本…
+          正在读取工作台…
         </p>
+      ) : null}
+      {data ? (
+        <FreshnessNotice
+          freshness={data.freshness}
+          refreshing={loading}
+          failed={Boolean(error)}
+          onRefresh={refreshSnapshot}
+        />
       ) : null}
       <div className={`view-layout view-${view}`}>
         <section className="view-primary" aria-label={headings[view][0]}>
@@ -128,7 +164,7 @@ export function App({ account }: { account?: ReactNode }) {
           <div className="view-content" key={view}>
             {data ? (
               <>
-                {view !== 'documents' ? (
+                {view === 'overview' || view === 'inbox' ? (
                   <Filters
                     query={query}
                     lifecycle={lifecycle}
@@ -149,6 +185,15 @@ export function App({ account }: { account?: ReactNode }) {
                     key={data.generation}
                     projects={projects}
                     generation={data.generation}
+                    onOpen={setSource}
+                    onRefresh={refreshSnapshot}
+                  />
+                ) : null}
+                {view === 'operations' ? (
+                  <ProjectOperations
+                    projects={projects}
+                    generation={data.generation}
+                    refreshing={loading}
                     onOpen={setSource}
                     onRefresh={refreshSnapshot}
                   />
@@ -178,6 +223,10 @@ export function App({ account }: { account?: ReactNode }) {
           generation={data.generation}
           onClose={() => setSource(null)}
           onRefresh={refreshSnapshot}
+          onEdit={(path) => {
+            setSource(null);
+            setEditorPath(path);
+          }}
         />
       ) : null}
       {quick.open && data ? (
@@ -191,6 +240,27 @@ export function App({ account }: { account?: ReactNode }) {
           }}
           onClose={quick.close}
           onRefresh={refreshSnapshot}
+        />
+      ) : null}
+      {editorPath ? (
+        <CanonicalEditor
+          key={editor.current?.id}
+          path={editorPath}
+          expectedVault={editor.current?.vault}
+          onRenamed={editor.onRenamed}
+          onClose={() => {
+            setEditorPath(null);
+            refreshSnapshot();
+          }}
+        />
+      ) : null}
+      {draftsOpen ? (
+        <DraftShelf
+          onClose={() => setDraftsOpen(false)}
+          onOpen={(path) => {
+            setDraftsOpen(false);
+            setEditorPath(path);
+          }}
         />
       ) : null}
     </AppShell>

@@ -13,6 +13,9 @@ pub(crate) enum CreatePolicy {
 
 pub(crate) struct Storage {
     pub(crate) database: PathBuf,
+    pub(crate) created: bool,
+    #[cfg(unix)]
+    created_pin: Option<std::fs::File>,
     #[cfg(unix)]
     root: PathBuf,
     #[cfg(unix)]
@@ -36,8 +39,8 @@ impl Storage {
             inspect_file(&root.join(format!("agent.sqlite3{suffix}")), owner, true)?;
         }
         let database = root.join("agent.sqlite3");
-        let created = match policy {
-            CreatePolicy::ExistingOnly => false,
+        let created_pin = match policy {
+            CreatePolicy::ExistingOnly => None,
             CreatePolicy::AllowNew => match OpenOptions::new()
                 .read(true)
                 .write(true)
@@ -50,9 +53,9 @@ impl Storage {
                     fs::File::open(root)
                         .and_then(|file| file.sync_all())
                         .map_err(|_| SupplyError::StoreUnavailable)?;
-                    true
+                    Some(file)
                 }
-                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => false,
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => None,
                 Err(_) => return Err(SupplyError::StoreUnavailable),
             },
         };
@@ -61,11 +64,13 @@ impl Storage {
             CreatePolicy::ExistingOnly => SupplyError::MissingStore,
         };
         let db = inspect_file(&database, owner, true)?.ok_or(missing)?;
-        if !created && db.len() == 0 {
+        if created_pin.is_none() && db.len() == 0 {
             return Err(SupplyError::CorruptStore);
         }
         let storage = Self {
             database,
+            created: created_pin.is_some(),
+            created_pin,
             root: root.to_owned(),
             owner,
             root_identity: (metadata.dev(), metadata.ino()),
@@ -85,6 +90,13 @@ impl Storage {
             || (db.dev(), db.ino()) != self.database_identity
         {
             return Err(SupplyError::UnsafeStorage);
+        }
+        // create_new 的证明必须来自仍持有的原 FD，不能在打开 SQLite 前收养替换文件。
+        if let Some(pin) = &self.created_pin {
+            let created = pin.metadata().map_err(|_| SupplyError::UnsafeStorage)?;
+            if (created.dev(), created.ino()) != self.database_identity || created.nlink() != 1 {
+                return Err(SupplyError::UnsafeStorage);
+            }
         }
         for suffix in ["-wal", "-shm", "-journal"] {
             inspect_file(

@@ -52,6 +52,8 @@ pub(crate) fn source_violations(
     let checked_source = private_storage_remainder(crate_name, source_path, source);
     let checked_source = super::admin::remainder(crate_name, source_path, &checked_source);
     let checked_source = super::unix_ingress::remainder(crate_name, source_path, &checked_source);
+    let checked_source = super::maintenance::remainder(crate_name, source_path, &checked_source);
+    let checked_source = super::sync_bridge::remainder(crate_name, source_path, &checked_source);
     let has_generic_write = generic_write_patterns
         .iter()
         .any(|pattern| checked_source.contains(pattern))
@@ -100,6 +102,11 @@ fn private_storage_policy(
     path: &Path,
 ) -> Option<(&'static str, &'static str, &'static str)> {
     match crate_name {
+        "studiolo-sync-bridge" => Some((
+            "crates/sync-bridge/src/sqlite/storage.rs",
+            "crates/sync-bridge/src/sqlite/opening.rs",
+            "bridge.sqlite3",
+        )),
         "studiolo-audit-ledger" => Some((
             "crates/audit-ledger/src/sqlite/storage.rs",
             "crates/audit-ledger/src/sqlite.rs",
@@ -156,6 +163,10 @@ fn private_storage_remainder(crate_name: &str, path: &Path, source: &str) -> Str
     }
     if path.ends_with("crates/supply/src/index_cache/paths.rs") {
         remainder = remainder.replace("fs::canonicalize(", "");
+    }
+    if path.ends_with("crates/supply/src/storage.rs") {
+        // 只保留固定 agent.sqlite3 新建句柄，不能借此新增打开或通用写入。
+        remainder = remainder.replace("created_pin:Option<std::fs::File>,", "");
     }
     remainder
 }

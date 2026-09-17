@@ -107,7 +107,8 @@ impl FsVaultBroker {
         Ok(())
     }
 
-    /// 在原写者内有界读取可见文件；未决、绑定变化或已观察倒退均失败关闭。
+    /// 在原写者内有界读取可见文件；未知安装、绑定变化或已观察倒退均失败关闭。
+    /// Prepared 尚未安装，可以读取，但不能借此启动另一笔写入。
     /// 预算直接约束读取缓冲，不先按协议写入上限读满再截断。
     pub fn read_file(
         &self,
@@ -147,9 +148,9 @@ impl FsVaultBroker {
     }
 }
 
-fn ready(broker: &FsVaultBroker) -> Result<u64, BrokerError> {
+pub(crate) fn ready(broker: &FsVaultBroker) -> Result<u64, BrokerError> {
     let state = broker.write_status()?;
-    if state.unresolved {
+    if state.read_blocked {
         return Err(BrokerError::MutationUnresolved);
     }
     Ok(state.committed_through)

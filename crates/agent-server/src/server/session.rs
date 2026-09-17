@@ -28,7 +28,28 @@ impl AgentSession {
             session_ref: ulid::Ulid::generate().to_string(),
             instance: OnceLock::new(),
             http: false,
+            mcp: None,
         }
+    }
+
+    /// MCP 外壳在预占后构造，绑定实际传输会话的身份与期限。
+    pub(crate) fn new_mcp(
+        state: Arc<AppState>,
+        binding: Arc<crate::mcp_transport::Binding>,
+    ) -> Self {
+        Self {
+            mcp: Some(binding),
+            ..Self::new(state)
+        }
+    }
+
+    pub(super) fn finish_mcp(&self, text: String) -> Result<String, McpError> {
+        if let Some(binding) = &self.mcp
+            && (!binding.current(&self.state.store) || !binding.touch(std::time::Instant::now()))
+        {
+            return Err(McpError::invalid_request("会话无效，请重新握手", None));
+        }
+        Ok(text)
     }
 
     /// HTTP 会话共用供给逻辑，只替换预算内的续读入口。
@@ -84,6 +105,11 @@ impl AgentSession {
 
     /// 每次调用都重验：实例已注册且类型未吊销。
     pub(super) fn authorize(&self, action: &str) -> Result<Instance, McpError> {
+        if self.mcp.as_ref().is_some_and(|binding| {
+            !binding.live(std::time::Instant::now()) || !binding.current(&self.state.store)
+        }) {
+            return Err(McpError::invalid_request("会话无效，请重新握手", None));
+        }
         let Some(instance) = self.instance.get() else {
             return Err(McpError::invalid_request("会话尚未完成 initialize", None));
         };

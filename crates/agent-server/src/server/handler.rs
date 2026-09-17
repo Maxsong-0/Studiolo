@@ -19,11 +19,23 @@ fn text_result(text: String) -> CallToolResult {
 
 #[tool_router]
 impl AgentSession {
+    fn enter_mcp_work(&self) -> Result<Option<tokio::sync::OwnedSemaphorePermit>, McpError> {
+        self.mcp
+            .as_ref()
+            .map(|binding| {
+                binding
+                    .enter_work()
+                    .ok_or_else(|| McpError::internal_error("供给请求名额已满，请稍后重试", None))
+            })
+            .transpose()
+    }
+
     #[tool(
         description = "重取冷启动路牌：我是谁、项目状态、能力、待我做的事、硬约束、继续拉的入口；≤2000 token"
     )]
     async fn handshake(&self) -> Result<CallToolResult, McpError> {
-        Ok(text_result(self.text_handshake().await?))
+        let _work = self.enter_mcp_work()?;
+        Ok(text_result(self.finish_mcp(self.text_handshake().await?)?))
     }
 
     #[tool(
@@ -33,7 +45,10 @@ impl AgentSession {
         &self,
         Parameters(args): Parameters<ListEntriesArgs>,
     ) -> Result<CallToolResult, McpError> {
-        Ok(text_result(self.text_list_entries(args).await?))
+        let _work = self.enter_mcp_work()?;
+        Ok(text_result(
+            self.finish_mcp(self.text_list_entries(args).await?)?,
+        ))
     }
 
     #[tool(
@@ -43,7 +58,10 @@ impl AgentSession {
         &self,
         Parameters(args): Parameters<ReadNoteArgs>,
     ) -> Result<CallToolResult, McpError> {
-        Ok(text_result(self.text_read_note(args).await?))
+        let _work = self.enter_mcp_work()?;
+        Ok(text_result(
+            self.finish_mcp(self.text_read_note(args).await?)?,
+        ))
     }
 
     #[tool(
@@ -53,7 +71,8 @@ impl AgentSession {
         &self,
         Parameters(args): Parameters<SearchArgs>,
     ) -> Result<CallToolResult, McpError> {
-        Ok(text_result(self.text_search(args).await?))
+        let _work = self.enter_mcp_work()?;
+        Ok(text_result(self.finish_mcp(self.text_search(args).await?)?))
     }
 }
 
@@ -83,10 +102,18 @@ impl ServerHandler for AgentSession {
             .and_then(|parts| parts.extensions.get::<AgentType>())
             .map(|agent_type| agent_type.0.clone());
         async move {
+            let _work = self.enter_mcp_work()?;
             let Some(agent_type) = agent_type else {
                 // 门禁中间件缺失时失败关闭，不给任何路牌。
                 return Err(McpError::invalid_request("未认证", None));
             };
+            if self
+                .mcp
+                .as_ref()
+                .is_some_and(|binding| binding.owner != agent_type)
+            {
+                return Err(McpError::invalid_request("会话身份不匹配", None));
+            }
             let instructions = match self.initialize_text(&agent_type).await {
                 Ok(text) => text,
                 Err(error) if error.message.contains("审计不可用") => {

@@ -20,6 +20,7 @@ export function useWorkbench() {
       const next = await getWorkbench(controller.signal, refresh);
       if (current === sequence.current && !controller.signal.aborted) {
         setData(next);
+        return next;
       }
     } catch (cause) {
       if (current === sequence.current && !controller.signal.aborted) {
@@ -30,6 +31,7 @@ export function useWorkbench() {
         setLoading(false);
       }
     }
+    return null;
   }, []);
 
   useEffect(() => {
@@ -37,5 +39,12 @@ export function useWorkbench() {
     return () => request.current?.abort();
   }, [load]);
 
-  return { data, loading, error, refresh: () => void load(true) };
+  const refreshLatest = useCallback(() => load(true), [load]);
+  return {
+    data,
+    loading,
+    error,
+    refresh: () => void load(true),
+    refreshLatest,
+  };
 }

@@ -9,7 +9,8 @@ use std::{
 };
 
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
+mod revision_hasher;
+pub use revision_hasher::RevisionHasher;
 use ulid::Ulid;
 use uuid::Uuid;
 
@@ -279,14 +280,9 @@ impl Revision {
     /// Computes the SHA-256 revision for content at a path in a Vault.
     #[must_use]
     pub fn compute(vault: VaultUuid, path: &VaultPath, content: &[u8]) -> Self {
-        let mut hasher = Sha256::new();
-        hasher.update(b"studiolo-revision-v1\0");
-        hasher.update(vault.to_string().as_bytes());
-        hasher.update(b"\0");
-        hasher.update(path.as_str().as_bytes());
-        hasher.update(b"\0");
+        let mut hasher = RevisionHasher::new(vault, path);
         hasher.update(content);
-        Self(hasher.finalize().into())
+        hasher.finish()
     }
 
     /// Returns the lower-case hexadecimal digest.

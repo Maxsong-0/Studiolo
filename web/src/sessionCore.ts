@@ -21,6 +21,7 @@ export class SessionCore {
   protected csrf: string | null = null;
   protected lifetime = new AbortController();
   protected operation: 'check' | 'post' | null = null;
+  protected contentPending = false;
   protected pendingMessage = uncertain;
   protected pendingFactor = false;
   protected factors: FactorState | null | undefined;
@@ -58,6 +59,7 @@ export class SessionCore {
       message,
       factorNotice,
       session: null,
+      ownerScope: null,
       busy: false,
       revision: this.state.revision + 1,
     });
@@ -66,9 +68,15 @@ export class SessionCore {
     if (revision !== this.state.revision) cancelled();
   }
   protected accept(value: unknown) {
-    const { session, csrf } = sessionPair(value);
+    const { session, csrf, ownerScope } = sessionPair(value);
     this.csrf = csrf;
-    this.update({ phase: 'ready', session, message: '', busy: false });
+    this.update({
+      phase: 'ready',
+      session,
+      ownerScope,
+      message: '',
+      busy: false,
+    });
   }
   stop() {
     this.announce = null;
@@ -82,6 +90,7 @@ export class SessionCore {
     const login = action.kind === 'login';
     if (
       this.operation ||
+      this.contentPending ||
       signal?.aborted ||
       (login
         ? this.state.phase !== 'signed-out'

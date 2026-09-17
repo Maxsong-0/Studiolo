@@ -1,0 +1,76 @@
+.rust-link-batch {
+  margin: 16px 0;
+  font-size: 0.8125rem;
+  overflow-wrap: anywhere;
+}
+.rust-link-batch summary {
+  cursor: pointer;
+  padding: 8px 0;
+}
+.rust-link-batch code {
+  display: block;
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+.rust-link-details {
+  min-width: 0;
+  padding: 18px;
+  margin: 20px 0;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface-solid);
+  overflow-wrap: anywhere;
+}
+.rust-link-details h3 {
+  margin: 0 0 12px;
+  font-size: 0.9375rem;
+}
+.rust-link-details h4 {
+  margin: 20px 0 12px;
+  font-size: 0.875rem;
+}
+.rust-link-details label {
+  display: block;
+  margin: 16px 0 8px;
+  font-size: 0.8125rem;
+}
+.rust-link-details select {
+  width: 100%;
+  min-width: 0;
+  min-height: 44px;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--text);
+}
+.rust-link-details p,
+.rust-link-unresolved {
+  font-size: 0.8125rem;
+}
+.rust-link-unresolved {
+  color: var(--muted);
+}
+.rust-linked-definition {
+  padding-left: 12px;
+  border-left: 2px solid var(--accent);
+}
+.rust-definition-references ul {
+  padding-left: 20px;
+}
+.rust-definition-references li {
+  padding: 8px 0;
+}
+.rust-call-list .text-button[aria-pressed='true'] {
+  color: var(--accent);
+  text-decoration: underline;
+  text-underline-offset: 4px;
+}
+@media (max-width: 760px) {
+  .rust-link-details {
+    padding: 14px;
+  }
+  .rust-link-details select {
+    font-size: 1rem;
+  }
+}

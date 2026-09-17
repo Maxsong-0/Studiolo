@@ -12,6 +12,11 @@ mod canonical;
 #[path = "support/access_tests.rs"]
 mod access;
 
+#[path = "support/file_operations_tests.rs"]
+mod file_operations;
+#[path = "support/human_content_tests.rs"]
+mod human_content;
+
 use serde_json::{Value, json};
 use std::{
     fs,

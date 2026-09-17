@@ -15,7 +15,8 @@ async fn writer_snapshot_preserves_decimal_watermark_and_real_canonical_revision
         assert_eq!(fresh[field], watermark.to_string());
     }
     let file = f.get("/api/v1/file?path=a.md", &issued.cookie, 200).await;
-    assert_eq!(file.as_object().unwrap().len(), 4);
+    assert_eq!(file.as_object().unwrap().len(), 6);
+    assert_eq!(file["editing"]["allowed"], false);
     assert_eq!(file["vault_uuid"], f.expected.vault_uuid.to_string());
     assert_eq!(file["path"], "a.md");
     assert_eq!(

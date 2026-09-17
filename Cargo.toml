@@ -9,6 +9,7 @@ members = [
     "crates/auth",
     "crates/auth-admin",
     "crates/host-config",
+    "crates/sync-bridge",
     "crates/runner-adapter",
     "crates/gateway",
     "crates/task-engine",
@@ -29,6 +30,8 @@ rust-version = "1.97"
 # 依赖版本在此统一声明（ADR-001：M0 逐个评估后写死版本；精确解析结果以 Cargo.lock 为准，
 # 并同步登记到 vault `01-框架/技术栈.md`）。成员 crate 一律 `xxx.workspace = true`。
 [workspace.dependencies]
+tree-sitter = "=0.26.13"
+tree-sitter-rust = "=0.24.2"
 studiolo-core = { path = "crates/core" }
 studiolo-vault-broker = { path = "crates/vault-broker" }
 studiolo-vault-index = { path = "crates/vault-index" }
@@ -36,6 +39,7 @@ studiolo-control-db = { path = "crates/control-db" }
 studiolo-audit-ledger = { path = "crates/audit-ledger" }
 studiolo-auth = { path = "crates/auth" }
 studiolo-host-config = { path = "crates/host-config" }
+studiolo-sync-bridge = { path = "crates/sync-bridge" }
 studiolo-runner-adapter = { path = "crates/runner-adapter" }
 studiolo-gateway = { path = "crates/gateway" }
 studiolo-task-engine = { path = "crates/task-engine" }
@@ -76,6 +80,8 @@ rusqlite = { version = "0.40.2", features = ["bundled"] }
 # 序列化与标识
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
+# T-043 仅解析 Cargo 清单并保留 span，不启用写出或无界解析特性。
+toml_edit = { version = "=0.25.12", default-features = false, features = ["parse"] }
 ulid = { version = "3.0.0", features = ["serde"] }
 uuid = { version = "1.26.0", features = ["v4", "serde"] }
 sha2 = "0.11.0"
@@ -90,6 +96,7 @@ tempfile = "3.27.0"
 rmcp = { version = "=3.2.0", default-features = false, features = ["server", "macros", "transport-streamable-http-server"] }
 tiktoken-rs = "=0.12.0"
 http = "=1.5.0"
+futures-core = "=0.3.34"
 # 路径 Unicode 归一（T-032）：VaultPath 只接受 NFC，碰撞键对磁盘条目名先 NFC 再折叠；unicode-rs 官方维护
 unicode-normalization = "0.1.25"
 

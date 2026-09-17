@@ -14,6 +14,7 @@ export type SessionView = {
   message: string;
   busy: boolean;
   factorNotice?: string;
+  ownerScope?: string | null;
 };
 export type RevokeScope =
   { scope: 'current' | 'all' } | { scope: 'session'; session_id: string };
@@ -70,7 +71,18 @@ export function sessionInfo(value: unknown): SessionInfo {
 }
 
 export function sessionPair(value: unknown) {
-  const pair = exact(value, ['session', 'csrf_token']);
+  const hasScope = Object.hasOwn(record(value), 'owner_scope');
+  const pair = exact(value, [
+    'session',
+    'csrf_token',
+    ...(hasScope ? ['owner_scope'] : []),
+  ]);
+  if (
+    hasScope &&
+    (typeof pair.owner_scope !== 'string' ||
+      !/^[0-9a-f]{64}$/.test(pair.owner_scope))
+  )
+    invalid();
   const session = sessionInfo(pair.session);
   if (
     session.state !== 'active' ||
@@ -78,7 +90,11 @@ export function sessionPair(value: unknown) {
     !/^(?:[0-9a-f]{64}|c2\.[0-9a-f]{16}\.[0-9a-f]{64})$/.test(pair.csrf_token)
   )
     invalid();
-  return { session, csrf: pair.csrf_token };
+  return {
+    session,
+    csrf: pair.csrf_token,
+    ownerScope: hasScope ? (pair.owner_scope as string) : null,
+  };
 }
 
 export function sessionList(value: unknown): SessionInfo[] {

@@ -1,17 +1,42 @@
 //! Pure, rebuildable M1 project views. This Module performs no filesystem,
 //! network, process, or clock operations: every displayed fact comes from the
-//! supplied Markdown generation and retains its source location.
+//! supplied documents or explicit repository inputs and retains its source location.
 
 #![forbid(unsafe_code)]
 
 mod actions;
+mod architecture;
+mod architecture_dto;
+mod architecture_parse;
+mod architecture_scan;
 mod bugs;
+mod cargo_dependencies;
+mod cargo_dto;
+mod cargo_manifest;
+mod cargo_plan;
+mod cargo_spec;
 mod derive;
 mod dto;
 mod markdown;
 mod metadata;
 mod navigation;
 mod navigation_dto;
+mod operations;
+mod operations_block;
+mod operations_compare;
+mod operations_dto;
+mod operations_parse;
+mod rust_batch;
+mod rust_bindings;
+mod rust_call_sites;
+mod rust_dto;
+mod rust_extract;
+mod rust_links;
+mod rust_links_dto;
+mod rust_names;
+mod rust_paths;
+mod rust_scopes;
+mod rust_walk;
 mod search;
 mod search_dto;
 mod table;
@@ -26,8 +51,17 @@ use studiolo_vault_index::{
     InMemoryVaultIndex, MarkdownDocument, ParseCache, ParseCacheStats, VaultIndex,
 };
 
+pub use architecture_dto::*;
+pub use cargo_dependencies::derive_cargo_dependencies;
+pub use cargo_dto::*;
+pub use cargo_plan::cargo_manifest_paths;
 pub use dto::*;
 pub use navigation_dto::*;
+pub use operations_dto::*;
+pub use rust_call_sites::{derive_rust_call_analysis, derive_rust_call_sites};
+pub use rust_dto::*;
+pub use rust_links_dto::*;
+pub use rust_paths::validate_rust_source_paths;
 pub use search_dto::*;
 pub use studiolo_vault_index::IndexError;
 pub use tree::FileTree;
@@ -128,5 +162,25 @@ impl WorkbenchReadModel {
     #[must_use]
     pub fn navigation(&self, path: &VaultPath) -> Option<DocumentNavigation> {
         navigation::navigation(&self.index, path)
+    }
+
+    /// 从本代目录声明派生项目运作图首片；未知项目不产生视图。
+    #[must_use]
+    pub fn project_operations(&self, project: &str) -> Option<ProjectOperations> {
+        self.snapshot
+            .projects
+            .iter()
+            .find(|known| known.id == project)?;
+        Some(operations::derive(&self.documents, project))
+    }
+
+    /// 从本代可选表格派生设计声明；不表示实际依赖或正在执行的任务。
+    #[must_use]
+    pub fn project_architecture(&self, project: &str) -> Option<ProjectArchitecture> {
+        self.snapshot
+            .projects
+            .iter()
+            .find(|known| known.id == project)?;
+        Some(architecture::derive(&self.documents, project))
     }
 }

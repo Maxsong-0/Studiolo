@@ -1,12 +1,15 @@
 //! Zero-write access to an explicitly selected local replica or asset directory.
 
+mod directory;
 mod metadata;
 mod private;
 mod read;
 mod rooted;
 mod scan;
+pub(crate) mod sync;
+pub use sync::{LocalReadFile, LocalReadObservation, LocalReadPresence, LocalReadSurvey};
 
-use std::path::Path;
+use std::{path::Path, sync::Arc};
 
 use cap_std::fs::Dir;
 use studiolo_core::{Revision, VaultPath, VaultUuid};
@@ -90,6 +93,7 @@ impl Default for ScanLimits {
 pub struct ReadOnlyVault {
     root: Dir,
     private: bool,
+    instance: Arc<()>,
 }
 
 impl ReadOnlyVault {
@@ -99,6 +103,7 @@ impl ReadOnlyVault {
         Ok(Self {
             root: rooted::open_root(root)?,
             private: false,
+            instance: Arc::new(()),
         })
     }
 
@@ -108,6 +113,7 @@ impl ReadOnlyVault {
         Ok(Self {
             root: rooted::open_private_root(root)?,
             private: true,
+            instance: Arc::new(()),
         })
     }
 
@@ -117,6 +123,7 @@ impl ReadOnlyVault {
         Ok(Self {
             root: rooted::open_directory(&self.root, path, self.private)?,
             private: self.private,
+            instance: Arc::new(()),
         })
     }
 
@@ -200,6 +207,7 @@ fn bound(root: &Dir) -> Result<ReadOnlyVault, BrokerError> {
             .try_clone()
             .map_err(|e| BrokerError::io("retain canonical read root", e))?,
         private: false,
+        instance: Arc::new(()),
     })
 }
 

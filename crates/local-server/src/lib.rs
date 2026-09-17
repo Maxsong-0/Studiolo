@@ -1,19 +1,31 @@
-//! 只读工作台与显式应用会话入口；不装配内容写引擎。
+//! 工作台、显式人侧正文会话与本机事务维护；canonical 写入始终交给唯一 Broker。
 
 mod assets;
 mod auth_http;
 mod bootstrap;
 mod canonical;
 mod coordinator;
+mod editing;
+mod file_operation_audit;
+mod file_operations;
+mod history;
+pub mod maintenance;
+mod project_cargo;
+mod project_operations;
+mod project_repository;
+mod project_rust;
 mod queries;
 mod refresh;
 mod routing;
 mod security;
+#[cfg(test)]
+mod sync_transport_config;
 mod tree;
 mod unix_ingress;
 mod view;
 mod watcher;
 pub use coordinator::CanonicalWorkbench;
+pub use project_repository::{ProjectRepository, with_project_repository};
 pub use unix_ingress::{BoundUnixIngress, IngressError, PreparedUnixIngress};
 
 pub use routing::{

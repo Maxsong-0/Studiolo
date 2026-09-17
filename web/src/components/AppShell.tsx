@@ -6,6 +6,7 @@ import { useReducedMotionPreference } from '../useReducedMotionPreference';
 
 const navigation = [
   { id: 'overview', label: '项目总览', icon: 'overview' },
+  { id: 'operations', label: '项目运作', icon: 'canvas' },
   { id: 'inbox', label: '待我动作', icon: 'inbox' },
   { id: 'documents', label: '文档', icon: 'document' },
 ] as const;
@@ -65,7 +66,7 @@ export function AppShell({
                 <Icon name={item.icon} />
               </span>
               <span>{item.label}</span>
-              {item.id !== 'overview' ? (
+              {item.id === 'inbox' || item.id === 'documents' ? (
                 <span className="nav-count" aria-hidden="true">
                   {item.id === 'inbox' ? actionCount : documentCount}
                 </span>
@@ -101,9 +102,9 @@ export function AppShell({
         <div className="sidebar-footer">
           <div>
             <Icon name="lock" />
-            <span>只读副本</span>
+            <span>索引与原文</span>
           </div>
-          <p>不修改源文件</p>
+          <p>编辑前逐页核验</p>
         </div>
       </aside>
       <div className="workspace">
@@ -122,7 +123,7 @@ export function AppShell({
       </div>
       <footer className="page-footer">
         <Icon name="lock" />
-        所有内容来自只读副本；不会修改笔记。
+        可编辑文档会单独核验权限与版本。
       </footer>
     </div>
   );

@@ -64,7 +64,7 @@ pub(crate) fn tables(lines: &[Line<'_>]) -> Vec<Table> {
     result
 }
 
-fn is_separator(cells: &[String]) -> bool {
+pub(crate) fn is_separator(cells: &[String]) -> bool {
     cells.iter().all(|cell| {
         let cell = cell.trim_matches(':');
         cell.len() >= 3 && cell.bytes().all(|byte| byte == b'-')
@@ -72,6 +72,11 @@ fn is_separator(cells: &[String]) -> bool {
 }
 
 fn cells(text: &str) -> Option<Vec<String>> {
+    literal_cells(text).map(|cells| cells.iter().map(|cell| clean(cell)).collect())
+}
+
+/// 新声明保留字面值；原 tables 入口仍逐格 clean，不改变既有解析语义。
+pub(crate) fn literal_cells(text: &str) -> Option<Vec<String>> {
     if text.len() < 2 || !text.starts_with('|') || !text.ends_with('|') {
         return None;
     }
@@ -105,12 +110,12 @@ fn cells(text: &str) -> Option<Vec<String>> {
                 current.push(character);
             }
             '|' if brackets == 0 && !code => {
-                result.push(clean(&current));
+                result.push(current.trim().to_owned());
                 current.clear();
             }
             _ => current.push(character),
         }
     }
-    result.push(clean(&current));
+    result.push(current.trim().to_owned());
     Some(result)
 }

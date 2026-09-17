@@ -1,0 +1,52 @@
+# Droppy Code marketing site. Static, no build step: Netlify publishes the
+# website/ folder as-is. Deploy with `netlify deploy --prod --dir website`
+# from the repository root so this file's redirects and headers ride along.
+[build]
+  publish = "website"
+
+# The download button everywhere on the page points here. GitLab's permalink
+# resolves to the newest release's disk image (every release links its image
+# as /Droppy-Code.dmg; scripts/publish_release.sh sees to that), so a new
+# release changes nothing here or in the HTML.
+[[redirects]]
+  from = "/download/latest"
+  to = "https://gitlab.com/droppyformac1/droppy-code/-/releases/permalink/latest/downloads/Droppy-Code.dmg"
+  status = 302
+  force = true
+
+# www is an alias; Netlify sends it to the primary domain, and this covers
+# any deploy preview that reaches the rule first.
+[[redirects]]
+  from = "https://www.getdroppycode.app/*"
+  to = "https://getdroppycode.app/:splat"
+  status = 301
+  force = true
+
+[[redirects]]
+  from = "/download"
+  to = "/download/latest"
+  status = 301
+
+[[redirects]]
+  from = "/releases"
+  to = "https://gitlab.com/droppyformac1/droppy-code/-/releases"
+  status = 302
+
+[[headers]]
+  for = "/*"
+  [headers.values]
+    X-Content-Type-Options = "nosniff"
+    X-Frame-Options = "DENY"
+    Referrer-Policy = "strict-origin-when-cross-origin"
+    Permissions-Policy = "camera=(), microphone=(), geolocation=()"
+
+# Assets are cached for a week (CSS/JS carry ?v= for instant busting); the HTML must not be.
+[[headers]]
+  for = "/assets/*"
+  [headers.values]
+    Cache-Control = "public, max-age=604800"
+
+[[headers]]
+  for = "/*.html"
+  [headers.values]
+    Cache-Control = "public, max-age=0, must-revalidate"

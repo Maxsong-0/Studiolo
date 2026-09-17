@@ -19,6 +19,15 @@ import './styles/symbols.css';
 import './styles/file-icons.css';
 import './styles/session.css';
 import './styles/factor.css';
+import './styles/operations.css';
+import './styles/architecture.css';
+import './styles/cargo-dependencies.css';
+import './styles/rust-call-sites.css';
+import './styles/rust-call-links.css';
+import './styles/freshness.css';
+import './styles/editor.css';
+import './styles/history.css';
+import './styles/file-operations.css';
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>

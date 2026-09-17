@@ -11,7 +11,7 @@
 新增 [T-010 文件树与只读附件信息](m1/file-tree.md)：空目录、纯附件目录、按目录分页与同代次元信息。
 **这些切片已实现不代表完整 M1 完成**；变更流、规则漂移、持久索引和 watcher 仍属后续范围。
 
-当前 M1 工作位于 `codex/m1-readonly-workbench`，尚未提交推送；远端 CI 尚未触发。
+T-007 当时的 M1 工作位于 `codex/m1-readonly-workbench`，尚未提交推送；远端 CI 尚未触发。
 T-007 当时通过 macOS 158 项、Linux 166 项 Rust 测试及格式 / Clippy 检查，前端 28 项测试、
 lint、Prettier 与生产构建。本轮真实 HTTP 桌面/窄屏搜索导航验收通过，控制台无 warn/error；
 第一片测试数量和视觉差异账单独标为 T-006 历史记录，见 [M1 实现说明](m1/README.md)。
@@ -21,7 +21,7 @@ lint、Prettier 与生产构建。本轮真实 HTTP 桌面/窄屏搜索导航验
 [T-009 Cloudflare 入口](m1/cloudflare-preview.md) 记录已部署的域名门禁与独立鉴权服务；真实邮箱登录及公网功能待验收。
 
 T-010历史验证：macOS222/Linux aarch64 230项Rust、前端39项及格式/生产构建通过；
-桌面与窄屏实际文件树交互通过。后续T-011界面与M2结果以各检查点为准，当前尚未提交推送或更新服务器。
+桌面与窄屏实际文件树交互通过。T-010当时尚未提交推送或更新服务器；后续界面与M2结果以各检查点为准。
 
 ## m3/ — 供给面服务器常驻与公网入口
 
@@ -33,6 +33,11 @@ T-037 HTTP四个只读入口、短命会话及验收状态见 [HTTP文本供给]
 T-038 Claude/Codex独立资料目录、显式更新及离线/在线漂移检查见 [客户端投影](m3/client-projection.md)。
 T-039 单篇解析持久缓存、未变模型共享与隔离边界见 [持久派生索引](m3/persistent-index.md)。
 T-040 三片合并、完整运行包、系统服务升级与回滚见 [读取供给发布](m3/read-supply-release.md)。
+T-041 显式本地仓库绑定、目录职责图与双向漂移开发见 [项目运作图首片](m3/project-operations.md)。
+T-042 有来源的模块关系、数据流与逐步设计路径见 [架构关系与任务路径](m3/architecture-flow.md)。
+T-043 显式启用的 Cargo 包关系、依赖条件与清单来源见 [Cargo 清单依赖](m3/cargo-dependencies.md)。
+T-044 显式 Rust 文件白名单、词法上下文与未解析目标的调用位置见 [Rust 调用位置证据](m3/rust-call-sites.md)。
+T-045 同文件自由函数的受限词法关联、同批标识和反向引用见 [函数词法关联](m3/rust-call-links.md)。
 
 ## contracts/ — Module Interface 契约（M0）
 
@@ -63,7 +68,7 @@ T-040 三片合并、完整运行包、系统服务升级与回滚见 [读取供
 
 ## m2/ — 远程与可恢复
 
-[M2 开发状态](m2/README.md)已验收T-029新main整合、审计词法兼容、等待后撤权及schema拒绝副作用（macOS747/Linux758；前端沿用T-025的125项）。HEAD已d24e56a，继续新鲜度/CAS；保留M1未提交成果及旧服务。
+[M2 开发状态](m2/README.md)记录T-029新main整合、审计词法兼容、等待后撤权及schema拒绝副作用（macOS747/Linux758；前端沿用T-025的125项）。当时HEAD为d24e56a，待继续新鲜度/CAS；该段为历史检查点。
 应用会话/TOTP、同步、编辑、备份和恢复逐片验收；不把切片完成宣称为完整 M2 发布。
 [持久应用会话契约](contracts/auth-session.md) 定义封闭 Access 身份、独立认证存储、
 双期限与吊销补记；T-013当时没有HTTP，后续显式会话路由见T-018、TOTP库接口见v3契约。

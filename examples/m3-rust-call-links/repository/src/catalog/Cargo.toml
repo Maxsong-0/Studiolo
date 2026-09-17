@@ -1,0 +1,10 @@
+[package]
+name = "fictional-catalog"
+version = "0.0.1"
+edition = "2024"
+
+[dependencies]
+serde = { workspace = true }
+
+[dev-dependencies]
+query = { package = "fictional-search", path = "../search" }

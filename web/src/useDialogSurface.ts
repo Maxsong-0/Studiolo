@@ -6,7 +6,8 @@ import { animate, motionValue } from 'motion';
 export function useDialogSurface(
   ref: RefObject<HTMLDialogElement | null>,
   onClose: () => void,
-): { dismiss: () => void } {
+): { dismiss: () => void; captureInteraction: () => () => boolean } {
+  const interaction = useRef({ revision: 0, active: false });
   const closeCallback = useRef(onClose);
   const controller = useRef<(() => void) | null>(null);
   useLayoutEffect(() => {
@@ -16,6 +17,8 @@ export function useDialogSurface(
   useLayoutEffect(() => {
     const element = ref.current;
     if (!element) return;
+    const currentInteraction = interaction.current;
+    currentInteraction.active = true;
     const previous = document.activeElement;
     const original = {
       opacity: element.style.opacity,
@@ -95,6 +98,8 @@ export function useDialogSurface(
     function dismiss() {
       if (disposed || phase === 'exiting' || phase === 'closed') return;
       phase = 'exiting';
+      currentInteraction.revision += 1;
+      currentInteraction.active = false;
       transition(0);
     }
 
@@ -124,6 +129,7 @@ export function useDialogSurface(
       )
         return;
       phase = 'entering';
+      currentInteraction.active = true;
       transition(1);
     }
 
@@ -146,6 +152,8 @@ export function useDialogSurface(
 
     return () => {
       disposed = true;
+      currentInteraction.revision += 1;
+      currentInteraction.active = false;
       revision += 1;
       controller.current = null;
       preference?.removeEventListener('change', changePreference);
@@ -160,5 +168,15 @@ export function useDialogSurface(
     };
   }, [ref]);
 
-  return { dismiss: useCallback(() => controller.current?.(), []) };
+  return {
+    dismiss: useCallback(() => controller.current?.(), []),
+    // 关闭永久使此前异步读取失效；反向继续后，仅新发起的交互可以导航。
+    captureInteraction: useCallback(() => {
+      const { revision, active } = interaction.current;
+      return () =>
+        active &&
+        interaction.current.active &&
+        interaction.current.revision === revision;
+    }, []),
+  };
 }

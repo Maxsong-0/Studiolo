@@ -28,8 +28,12 @@ impl Inputs {
         Ok(Self { broker, roots })
     }
 
-    pub(super) async fn prepare(self) -> Result<Arc<CanonicalWorkbench>, StartupError> {
-        CanonicalWorkbench::prepare(self.broker, self.roots)
+    pub(super) async fn prepare(
+        self,
+        audit: Option<Arc<dyn studiolo_audit_ledger::AuditLedger>>,
+    ) -> Result<Arc<CanonicalWorkbench>, StartupError> {
+        let audit = audit.ok_or(StartupError::Configuration)?;
+        CanonicalWorkbench::prepare_with_audit(self.broker, self.roots, audit)
             .await
             .map_err(|_| StartupError::Writer)
     }

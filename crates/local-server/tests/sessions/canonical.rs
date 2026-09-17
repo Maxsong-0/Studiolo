@@ -45,7 +45,8 @@ async fn canonical_file_returns_same_bytes_and_revision_as_broker_and_survives_r
         .await,
     )
     .await;
-    assert_eq!(body.as_object().unwrap().len(), 4);
+    assert_eq!(body.as_object().unwrap().len(), 6);
+    assert_eq!(body["editing"]["allowed"], false);
     assert_eq!(body["content"], String::from_utf8(note.content).unwrap());
     assert_eq!(body["path"], "a.md");
     assert_eq!(body["vault_uuid"], note.vault_uuid.to_string());

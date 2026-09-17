@@ -3,6 +3,9 @@
 # 用法：cd /home/maxsong/.local/share/studiolo-preview/releases/<发布名>/source
 #       bash ../run-preview-tests.sh
 set -euo pipefail
+export PATH=/usr/sbin:/usr/bin:/sbin:/bin
+export PYTHONDONTWRITEBYTECODE=1 PYTHONNOUSERSITE=1
+unset PYTHONPATH PYTHONHOME
 STUDIOLO_PAYLOAD="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 if [[ $# != 0 || "$(uname -s)" != Linux || "$(uname -m)" != x86_64 ]]; then
   printf '%s\n' '只支持在原生 Linux x86_64 服务器上无参数运行。' >&2
@@ -23,16 +26,34 @@ fi
 # 校验的是整个发布包，不把尚未运行的测试误写为通过。
 (cd "$STUDIOLO_PAYLOAD" && sha256sum --check SHA256SUMS)
 # 进程契约使用随包校验的生产程序，不依赖构建机的 /build-target 绝对路径。
-for STUDIOLO_BINARY in studiolo-local-server studiolo-auth-admin; do
+# BEGIN_NATIVE_PRODUCTS
+for STUDIOLO_BINARY in studiolo-local-server studiolo-auth-admin studiolo-maintain; do
   if [[ ! -f "$STUDIOLO_PAYLOAD/bin/$STUDIOLO_BINARY" \
     || ! -x "$STUDIOLO_PAYLOAD/bin/$STUDIOLO_BINARY" \
     || -L "$STUDIOLO_PAYLOAD/bin/$STUDIOLO_BINARY" ]]; then
     printf '%s\n' '运行包缺少可执行的生产产品程序。' >&2
     exit 1
   fi
+  case "$STUDIOLO_BINARY" in
+    studiolo-local-server) STUDIOLO_RUNTIME_FILE=runtime-libraries.txt ;;
+    studiolo-auth-admin) STUDIOLO_RUNTIME_FILE=auth-admin-runtime-libraries.txt ;;
+    studiolo-maintain) STUDIOLO_RUNTIME_FILE=maintain-runtime-libraries.txt ;;
+  esac
+  if [[ ! -f "$STUDIOLO_PAYLOAD/$STUDIOLO_RUNTIME_FILE" \
+    || ! -s "$STUDIOLO_PAYLOAD/$STUDIOLO_RUNTIME_FILE" || -L "$STUDIOLO_PAYLOAD/$STUDIOLO_RUNTIME_FILE" ]]; then
+    printf '%s\n' '运行包缺少已校验的生产程序运行库清单。' >&2
+    exit 1
+  fi
+  if ! STUDIOLO_RUNTIME="$(ldd "$STUDIOLO_PAYLOAD/bin/$STUDIOLO_BINARY")" \
+    || [[ "$STUDIOLO_RUNTIME" == *'not found'* ]]; then
+    printf '%s\n' '当前服务器无法加载生产程序的运行库。' >&2
+    exit 1
+  fi
 done
 export STUDIOLO_TEST_SERVER_BIN="$STUDIOLO_PAYLOAD/bin/studiolo-local-server"
 export STUDIOLO_TEST_AUTH_ADMIN_BIN="$STUDIOLO_PAYLOAD/bin/studiolo-auth-admin"
+export STUDIOLO_TEST_MAINTAIN_BIN="$STUDIOLO_PAYLOAD/bin/studiolo-maintain"
+# END_NATIVE_PRODUCTS
 python3 --version
 STUDIOLO_TEST_COUNT=0
 while IFS= read -r STUDIOLO_TEST || [[ -n "$STUDIOLO_TEST" ]]; do

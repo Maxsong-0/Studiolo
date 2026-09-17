@@ -14,6 +14,13 @@ permissions:
 env:
   CARGO_TERM_COLOR: always
   PYTHONDONTWRITEBYTECODE: "1"
+  # 仓库已有 145+ 个测试目标，每个都静态链接整棵依赖树。带完整 DWARF 时 target/ 超过
+  # 7 GiB，会把 ubuntu-24.04 runner 的磁盘写满，链接器随即以 SIGBUS 失败
+  # （collect2: ld terminated with signal 7 [Bus error]）。line-tables-only 保留 panic
+  # 回溯的文件与行号，只丢弃完整调试信息，不改变任何测试结果。
+  CARGO_PROFILE_DEV_DEBUG: line-tables-only
+  # CI 每次都是全新构建，增量产物只占磁盘不省时间。
+  CARGO_INCREMENTAL: "0"
 
 jobs:
   rust:
@@ -21,6 +28,13 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: 腾出 runner 磁盘（预装 SDK 与本仓库无关）
+        run: |
+          df -h /
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+                      /usr/local/.ghcup /opt/hostedtoolcache/CodeQL
+          df -h /
 
       - name: 安装固定 toolchain（与 rust-toolchain.toml 同版本）
         run: |
@@ -40,6 +54,7 @@ jobs:
             bash -n "$script"
           done
           python3 scripts/test-agent-package.py
+          python3 scripts/test-preview-package.py
           python3 scripts/test-check-agent-http.py
           python3 scripts/test-check-agent.py
           python3 scripts/test-check-agent-replica.py

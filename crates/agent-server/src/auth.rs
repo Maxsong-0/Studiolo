@@ -9,6 +9,7 @@ use axum::{
     middleware::Next,
     response::{IntoResponse, Response},
 };
+use sha2::{Digest as _, Sha256};
 use studiolo_supply::audit::{self, Actor};
 
 use crate::state::AppState;
@@ -16,6 +17,10 @@ use crate::state::AppState;
 /// 已认证的类型；由中间件注入，handler 在 `http::request::Parts` 的 extensions 里读取。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AgentType(pub String);
+
+/// 只在进程内传递的当前凭据摘要；不实现 Debug 或序列化。
+#[derive(Clone)]
+pub(crate) struct CredentialDigest(pub String);
 
 /// 认证中间件。
 pub async fn require_bearer(
@@ -39,12 +44,27 @@ pub async fn require_bearer(
             == 1
     });
     let authenticated = match token {
-        Some(token) => state.store.authenticate(token).unwrap_or(None),
+        Some(token) => state
+            .store
+            .authenticate(token)
+            .unwrap_or(None)
+            .map(|agent_type| {
+                (
+                    agent_type,
+                    CredentialDigest(
+                        Sha256::digest(token.as_bytes())
+                            .iter()
+                            .map(|byte| format!("{byte:02x}"))
+                            .collect(),
+                    ),
+                )
+            }),
         None => None,
     };
     match authenticated {
-        Some(agent_type) => {
+        Some((agent_type, digest)) => {
             request.extensions_mut().insert(AgentType(agent_type));
+            request.extensions_mut().insert(digest);
             next.run(request).await
         }
         None => {

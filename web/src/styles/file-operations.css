@@ -1,0 +1,72 @@
+.file-delete {
+  padding: 0.6rem 1.2rem;
+  border-bottom: 1px solid var(--border);
+}
+.file-delete label,
+.recent-deleted label {
+  display: flex;
+  gap: 0.6rem;
+  align-items: start;
+  margin: 0.8rem 0;
+}
+.file-delete input,
+.recent-deleted input {
+  flex: none;
+  margin-top: 0.25rem;
+}
+.recent-deleted {
+  max-height: 90dvh;
+}
+.deleted-scroll {
+  overflow: auto;
+  padding: 1rem 1.2rem;
+}
+.recent-deleted .source-location,
+.file-delete .source-location {
+  overflow-wrap: anywhere;
+}
+.file-operation-fallback {
+  position: absolute;
+  z-index: 10;
+  top: 4.5rem;
+  right: 1rem;
+  max-width: min(30rem, calc(100vw - 2rem));
+  padding: 1rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 0.8rem;
+}
+
+.recent-deleted .document-header > button {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+/* 目标路径原样显示；中文长路径在窄屏内折行，输入不制造页面横滚。 */
+.file-rename .rename-target {
+  display: grid;
+  min-width: 0;
+  gap: 0.4rem;
+}
+.file-rename .rename-target input {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  padding: 0.65rem;
+  background: var(--surface);
+  color: inherit;
+  font: inherit;
+}
+.file-rename .rename-target input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.file-rename {
+  min-width: 0;
+  flex-shrink: 0;
+}
+.file-rename .editor-notice {
+  overflow-wrap: anywhere;
+}

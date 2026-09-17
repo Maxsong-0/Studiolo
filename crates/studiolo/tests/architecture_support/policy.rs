@@ -1,6 +1,7 @@
 pub(crate) fn allowed_workspace_dependencies(crate_name: &str) -> &'static [&'static str] {
     match crate_name {
         "studiolo-core" => &[],
+        "studiolo-sync-bridge" => &["studiolo-core", "studiolo-audit-ledger"],
         "studiolo-vault-broker"
         | "studiolo-vault-index"
         | "studiolo-control-db"
@@ -8,7 +9,7 @@ pub(crate) fn allowed_workspace_dependencies(crate_name: &str) -> &'static [&'st
         | "studiolo-runner-adapter" => &["studiolo-core"],
         "studiolo-gateway" => &["studiolo-core", "studiolo-audit-ledger"],
         "studiolo-auth" => &["studiolo-audit-ledger"],
-        "studiolo-host-config" => &["studiolo-auth"],
+        "studiolo-host-config" => &["studiolo-auth", "studiolo-core"],
         "studiolo-auth-admin" => &[
             "studiolo-auth",
             "studiolo-audit-ledger",

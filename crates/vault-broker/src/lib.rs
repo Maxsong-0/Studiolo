@@ -3,15 +3,64 @@
 //! This crate is the only production crate allowed to mutate canonical Vault
 //! files. Callers provide logical [`VaultPath`] values, never ambient paths.
 
+mod blob;
+mod stream;
+mod sync_observation;
+pub use stream::{PreparedStream, StreamMutation};
+pub use sync_observation::{
+    CanonicalSyncFile, CanonicalSyncObservation, CanonicalSyncPresence, CanonicalSyncSurvey,
+    SyncReadRule, SyncReadSelection,
+};
 mod canonical;
 mod capture;
+mod check_precondition;
+mod content_audit;
+pub(crate) mod file_operation;
+mod history;
+#[cfg(test)]
+mod l0_tests;
+mod maintenance;
+pub use file_operation::{
+    FileEffect, FileOperationAuditCandidate, FileOperationAuditEvent, FileOperationKind,
+    FileOperationLimits, FileOperationMetadata, FileOperationOutcome, FileOperationPhase,
+    FileOperationPreview, FileOperationReceipt, FileOperationRequest, FileOperationScopeHash,
+    FileOperationStatus, FileOperationTicket, FilePresence, TombstoneEntry, TombstonePage,
+};
+mod memory_mutation;
 mod mutation;
 mod readonly;
+mod recorded;
+mod recovery;
+mod replay_read;
 mod writer;
 
+pub use blob::{BlobIdentity, BlobPruneReport, BlobSource, StreamLimits};
 pub use canonical::{CanonicalRead, CanonicalReadVault};
 pub use capture::{CanonicalCapture, CaptureStamp};
-pub use readonly::{ReadBatch, ReadEntry, ReadEntryKind, ReadNote, ReadOnlyVault, ScanLimits};
+pub use content_audit::{
+    ContentAuditCandidate, ContentAuditEvent, ContentAuditOutcome, ContentAuditPhase,
+    ContentAuditStatus,
+};
+pub use history::{
+    HistoryContent, HistoryEntry, HistoryPage, HistoryPruneReport, HistoryRetention,
+};
+pub use maintenance::{
+    MaintenanceActor, MaintenanceAuditCandidate, MaintenanceAuditEvent, MaintenanceCurrent,
+    MaintenanceDecision, MaintenanceFileOperation, MaintenanceOutcome, MaintenancePending,
+    MaintenanceReceipt, MaintenanceSecondaryTarget, MaintenanceStatus, MaintenanceTarget,
+    MaintenanceTargetKind, MaintenanceTicket, MaintenanceUnavailableReason,
+};
+pub use readonly::{
+    LocalReadFile, LocalReadObservation, LocalReadPresence, LocalReadSurvey, ReadBatch, ReadEntry,
+    ReadEntryKind, ReadNote, ReadOnlyVault, ScanLimits,
+};
+pub use recorded::{
+    MutationActor, MutationKind, MutationMetadata, PendingRecordedRestore, RecordedRestore,
+};
+pub use recovery::{
+    PendingDecision, PendingMutation, ReconciliationOutcome, ReconciliationReceipt,
+    StagePruneReport, WriterPhase,
+};
 pub use writer::WriterStatus;
 
 use std::{
@@ -49,6 +98,15 @@ pub enum BrokerError {
     /// 未决安装或旧未知操作阻止新的 canonical 安装。
     #[error("canonical mutation is unresolved")]
     MutationUnresolved,
+    /// 原请求已明确取消，重放不会再次尝试安装。
+    #[error("canonical mutation was cancelled")]
+    MutationCancelled,
+    /// 未知安装已封存证据并终止重放，不代表原请求曾成功或失败。
+    #[error("canonical mutation remains indeterminate: {evidence_id}")]
+    MutationIndeterminate {
+        /// 私有协调证据 ID，不包含正文或主机路径。
+        evidence_id: String,
+    },
     /// 写者协议触及的输入或持久记录超过固定预算。
     #[error("writer storage or input limit exceeded")]
     WriterLimitExceeded,
@@ -61,6 +119,12 @@ pub enum BrokerError {
     /// A protected control path was sent through the ordinary mutation API.
     #[error("protected Vault path: {0}")]
     ProtectedPath(VaultPath),
+    /// 历史游标语法错误或不属于本路径。
+    #[error("invalid history cursor")]
+    InvalidHistoryCursor,
+    /// 历史目录已变化，调用方须重新从第一页开始。
+    #[error("history changed")]
+    HistoryChanged,
     /// The requested object does not exist.
     #[error("Vault object not found: {0}")]
     NotFound(VaultPath),
@@ -420,6 +484,10 @@ pub struct FsVaultBroker {
     vault_uuid: VaultUuid,
     writer: writer::Writer,
     capture_instance: std::sync::Arc<()>,
+    recovery_review: AtomicU64,
+    history_pin: Mutex<Option<history::store::Pin>>,
+    maintenance_pin: Mutex<Option<maintenance::store::Pin>>,
+    file_operation_pin: std::sync::Mutex<Option<file_operation::binding::Pin>>,
     read_guard: Mutex<()>,
 }
 
@@ -568,15 +636,6 @@ impl FsVaultBroker {
             Self::open_directory(&self.root, &current, path)?;
         }
         Ok(())
-    }
-
-    fn atomic_write_dir(
-        dir: &Dir,
-        path: &Path,
-        content: &[u8],
-        create_new: bool,
-    ) -> Result<(), BrokerError> {
-        Self::atomic_write_dir_checked(dir, path, content, create_new, || Ok(()))
     }
 
     fn atomic_write_dir_checked(
@@ -765,11 +824,22 @@ impl VaultReader for FsVaultBroker {
     }
 
     fn read(&self, path: &VaultPath) -> Result<VaultObject, BrokerError> {
-        self.read_checked(path, None)
+        let committed = capture::ready(self)?;
+        let object = self.read_checked(path, None)?;
+        self.check_read_watermark(committed)?;
+        Ok(object)
     }
 }
 
 impl FsVaultBroker {
+    // 仅公开当前读取使用此门禁；安装与证据保全必须仍可私下观察未知对象。
+    fn check_read_watermark(&self, committed: u64) -> Result<(), BrokerError> {
+        if capture::ready(self)? != committed {
+            return Err(BrokerError::CaptureChanged);
+        }
+        Ok(())
+    }
+
     fn read_checked(
         &self,
         path: &VaultPath,
@@ -835,6 +905,8 @@ impl FsVaultBroker {
 
 impl VaultSnapshotter for FsVaultBroker {
     fn snapshot(&self, inputs: &[SnapshotInput]) -> Result<Snapshot, BrokerError> {
+        // 空输入也必须先过门禁，不能在未知安装期间发布一个成功快照。
+        let committed = capture::ready(self)?;
         let mut inputs = inputs.to_vec();
         inputs.sort_by(|left, right| left.path.cmp(&right.path));
         if inputs.windows(2).any(|pair| pair[0].path == pair[1].path) {
@@ -872,6 +944,7 @@ impl VaultSnapshotter for FsVaultBroker {
         let bytes = serde_json::to_vec(&snapshot)
             .map_err(|error| BrokerError::json("serialize snapshot", error))?;
         let storage_path = Self::snapshot_storage_path(&id);
+        self.check_read_watermark(committed)?;
         match self.data.open(&storage_path) {
             Ok(_) => {
                 if self.load_snapshot(&id)? != snapshot {
@@ -879,10 +952,13 @@ impl VaultSnapshotter for FsVaultBroker {
                 }
             }
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                Self::atomic_write_dir(&self.data, &storage_path, &bytes, true)?
+                Self::atomic_write_dir_checked(&self.data, &storage_path, &bytes, true, || {
+                    self.check_read_watermark(committed)
+                })?
             }
             Err(error) => return Err(BrokerError::io("open snapshot record", error)),
         }
+        self.check_read_watermark(committed)?;
         Ok(snapshot)
     }
 }
@@ -1024,7 +1100,7 @@ pub struct MemoryVaultBroker {
     objects: std::collections::BTreeMap<VaultPath, Vec<u8>>,
     history: std::collections::BTreeMap<Revision, Vec<u8>>,
     snapshots: Mutex<std::collections::BTreeMap<SnapshotId, Snapshot>>,
-    replays: std::collections::BTreeMap<String, (String, MutationReceipt)>,
+    replays: std::collections::BTreeMap<String, (String, mutation::record::Outcome)>,
 }
 
 impl Default for MemoryVaultBroker {
@@ -1138,66 +1214,7 @@ impl SnapshotReader for MemoryVaultBroker {
 
 impl VaultWriter for MemoryVaultBroker {
     fn mutate(&mut self, mutation: Mutation) -> Result<MutationReceipt, BrokerError> {
-        if mutation.path.is_protected() {
-            return Err(BrokerError::ProtectedPath(mutation.path));
-        }
-        let fingerprint = FsVaultBroker::fingerprint(&mutation)?;
-        if let Some((prior_fingerprint, receipt)) = self.replays.get(&mutation.idempotency_key) {
-            return if prior_fingerprint == &fingerprint {
-                Ok(receipt.clone())
-            } else {
-                Err(BrokerError::IdempotencyConflict)
-            };
-        }
-        if mutation.idempotency_key.is_empty() {
-            return Err(BrokerError::IdempotencyConflict);
-        }
-        if let Some(existing) = self.objects.keys().find(|existing| {
-            *existing != &mutation.path && spelling_collision(existing, &mutation.path)
-        }) {
-            return Err(BrokerError::PathCollision {
-                requested: mutation.path,
-                existing: existing.to_string(),
-            });
-        }
-        let current = self.objects.get(&mutation.path).map(|content| VaultObject {
-            path: mutation.path.clone(),
-            revision: Revision::compute(self.vault_uuid, &mutation.path, content),
-            content: content.clone(),
-        });
-        match (mutation.precondition, current.as_ref()) {
-            (Precondition::MustNotExist, None) => {}
-            (Precondition::MustNotExist, Some(object)) => {
-                return Err(BrokerError::RevisionConflict {
-                    path: mutation.path,
-                    expected: "absence".to_owned(),
-                    actual: Some(object.revision),
-                });
-            }
-            (Precondition::Match(expected), Some(object)) if object.revision == expected => {}
-            (Precondition::Match(expected), object) => {
-                return Err(BrokerError::RevisionConflict {
-                    path: mutation.path,
-                    expected: expected.to_string(),
-                    actual: object.map(|value| value.revision),
-                });
-            }
-        }
-        if let Some(object) = &current {
-            self.history
-                .entry(object.revision)
-                .or_insert_with(|| object.content.clone());
-        }
-        let revision = Revision::compute(self.vault_uuid, &mutation.path, &mutation.content);
-        self.objects.insert(mutation.path.clone(), mutation.content);
-        let receipt = MutationReceipt {
-            path: mutation.path,
-            revision,
-            previous_revision: current.map(|object| object.revision),
-        };
-        self.replays
-            .insert(mutation.idempotency_key, (fingerprint, receipt.clone()));
-        Ok(receipt)
+        memory_mutation::apply(self, mutation)
     }
 
     fn commit_attempt_artifacts(

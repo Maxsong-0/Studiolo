@@ -1,0 +1,122 @@
+<!doctype html>
+<!--
+  Source of website/assets/og/og-home.png, the social card behind every share of
+  getdroppycode.app. Same palette, fonts and binary field as the hero, with the app
+  icon read straight from website/assets/brand so it can never drop out of the render.
+
+  Render from the repository root (1200x630, fonts get a few seconds to arrive):
+
+    /Applications/Chromium.app/Contents/MacOS/Chromium --headless=new --hide-scrollbars \
+      --window-size=1200,630 --virtual-time-budget=6000 \
+      --screenshot=website/assets/og/og-home.png "file://$PWD/scripts/og-home.html"
+-->
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500&family=Inter+Tight:wght@500;600&display=block" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #0b0e14;
+      --text-primary: #e8edf5;
+      --accent-text: #8cc4ff;
+    }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body { width: 1200px; height: 630px; overflow: hidden; }
+    body {
+      position: relative;
+      background: var(--bg);
+      color: var(--text-primary);
+      font-family: "Inter", ui-sans-serif, system-ui, sans-serif;
+      -webkit-font-smoothing: antialiased;
+    }
+    canvas {
+      position: absolute;
+      inset: 0;
+      -webkit-mask-image: linear-gradient(180deg, #000 0%, #000 55%, transparent 100%);
+      mask-image: linear-gradient(180deg, #000 0%, #000 55%, transparent 100%);
+    }
+    .card {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+      padding-top: 6px;
+    }
+    .icon {
+      width: 164px;
+      height: 164px;
+      margin-bottom: 6px;
+    }
+    .title {
+      font-family: "Inter Tight", "Inter", sans-serif;
+      font-weight: 600;
+      font-size: 76px;
+      letter-spacing: -0.045em;
+      line-height: 1.02em;
+      margin-bottom: 26px;
+    }
+    .charged { color: var(--accent-text); }
+    .apple {
+      display: inline-block;
+      width: 0.72em;
+      height: 0.88em;
+      vertical-align: -0.06em;
+      margin-right: 0.08em;
+      fill: currentColor;
+    }
+    .subtitle {
+      font-size: 26px;
+      letter-spacing: -0.01em;
+      line-height: 1.45;
+      opacity: 0.62;
+      margin-bottom: 34px;
+    }
+    .kicker {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      font-family: "Inter Tight", "Inter", sans-serif;
+      font-size: 22px;
+      font-weight: 500;
+      letter-spacing: -0.02em;
+      line-height: 1;
+    }
+    .kicker img { width: 24px; height: 24px; border-radius: 6px; }
+  </style>
+</head>
+<body>
+  <canvas id="field" width="1200" height="630"></canvas>
+  <div class="card">
+    <img class="icon" src="../website/assets/brand/droppy-code-icon-180.png" alt="">
+    <h1 class="title">All your <span class="charged">coding agents</span>,<br>one native <svg class="apple" viewBox="0 0 16 19.81" aria-hidden="true"><path d="M 15.489 6.754 C 15.375 6.843 13.362 7.986 13.362 10.528 C 13.362 13.468 15.923 14.508 16 14.534 C 15.988 14.597 15.593 15.958 14.65 17.345 C 13.809 18.565 12.93 19.784 11.594 19.784 C 10.257 19.784 9.913 19.001 8.37 19.001 C 6.867 19.001 6.332 19.81 5.11 19.81 C 3.887 19.81 3.035 18.68 2.054 17.293 C 0.918 15.665 0 13.135 0 10.734 C 0 6.883 2.484 4.84 4.929 4.84 C 6.228 4.84 7.311 5.7 8.127 5.7 C 8.903 5.7 10.114 4.788 11.592 4.788 C 12.152 4.788 14.164 4.84 15.489 6.754 Z M 10.89 3.158 C 11.501 2.427 11.934 1.413 11.934 0.398 C 11.934 0.258 11.922 0.115 11.896 0 C 10.902 0.038 9.719 0.668 9.005 1.502 C 8.445 2.144 7.922 3.158 7.922 4.186 C 7.922 4.341 7.948 4.495 7.96 4.545 C 8.023 4.557 8.125 4.571 8.227 4.571 C 9.119 4.571 10.241 3.968 10.89 3.158 Z"/></svg>Mac app</h1>
+    <p class="subtitle">Streaming replies, inline approvals, a diff for every turn. Free and open source.</p>
+    <div class="kicker">
+      <img src="../website/assets/brand/droppy-icon-64.png" alt="">
+      <span>The coding app by Droppy</span>
+    </div>
+  </div>
+  <script>
+    // The hero's binary field at rest (assets/js/code.js, progress 0): every cell at
+    // its base alpha, no trails. Seeded, so a re-render gives the same picture.
+    var canvas = document.getElementById("field");
+    var ctx = canvas.getContext("2d");
+    var CELL = 22, cols = Math.ceil(1200 / CELL) + 1, rows = Math.ceil(630 / CELL) + 1;
+    var seed = 20260914;
+    function random() { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 4294967296; }
+    ctx.font = "500 13px ui-monospace, 'SF Mono', Menlo, monospace";
+    ctx.textBaseline = "top";
+    for (var c = 0; c < cols; c++) {
+      for (var r = 0; r < rows; r++) {
+        var alpha = 0.045 + 0.035 * (((c * 7 + r * 3) % 11) / 10);
+        ctx.fillStyle = "rgba(120, 165, 230, " + alpha.toFixed(3) + ")";
+        ctx.fillText(random() < 0.5 ? "0" : "1", c * CELL + 4, r * CELL + 3);
+      }
+    }
+  </script>
+</body>
+</html>

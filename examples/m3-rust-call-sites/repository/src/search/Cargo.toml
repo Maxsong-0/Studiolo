@@ -1,0 +1,14 @@
+[package]
+name = "fictional-search"
+version = "0.0.1"
+edition = "2024"
+
+[dependencies]
+catalog = { workspace = true, optional = true }
+serde.workspace = true
+
+[target.'cfg(unix)'.build-dependencies]
+catalog = { workspace = true }
+
+[dev-dependencies]
+export = { package = "fictional-export", path = "../../tools" }
