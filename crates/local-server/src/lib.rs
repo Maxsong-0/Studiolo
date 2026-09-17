@@ -1,5 +1,8 @@
 //! 工作台、显式人侧正文会话与本机事务维护；canonical 写入始终交给唯一 Broker。
 
+pub mod backup;
+pub mod health;
+pub mod sync_transport_owner;
 mod assets;
 mod auth_http;
 mod bootstrap;

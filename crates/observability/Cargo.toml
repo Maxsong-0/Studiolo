@@ -1,0 +1,23 @@
+[package]
+name = "studiolo-observability"
+description = "健康聚合、磁盘与同步配额、带外告警与死人开关；不新增无鉴权对外入口"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+studiolo-core.workspace = true
+studiolo-audit-ledger.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+rustix = { workspace = true, features = ["fs"] }
+
+[dev-dependencies]
+tempfile.workspace = true
