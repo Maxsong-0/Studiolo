@@ -142,6 +142,12 @@ claude mcp add --scope user --transport http studiolo https://studiolo-agent.max
 | 服务二进制 `bin/studiolo-agent` | `73012d856f48a7d90b94c85ae88d3507528887419e0e34b955ff39e166dca94c` |
 | 已安装单元 `studiolo-agent.service` | `e3390a5536003772a22482b2153663228755f871fc388c7e7bd2cf71f208660f` |
 
+上述单元摘要是 2026-09-07 当时那一版的记录，**早于 2026-09-17 的 `LimitMEMLOCK` 补丁**
+（`5ff4985`）：两个单元模板与两处 `systemd-run` 阶段实例都加了 `LimitMEMLOCK=infinity`，
+这是秘密驻留面加固的部署前置，见 [秘密驻留面](../m2/secret-residency.md) §5
+与 [副本运维](replica-operations.md) §2。因此下次发布安装的单元摘要必然与此不同。
+这里保留原值作历史记录，不回改。
+
 ## 2026-09-07 Codex 合并复验
 
 接手时远端 `main` 与 Claude 分支都为 `ad04c02`：T-033 已合并；T-034 的部署文件仍在 Claude 工作区未提交，

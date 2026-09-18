@@ -131,6 +131,11 @@
   **并实际读回被改接的那个文件或管道断言其中没有 token**，且一枚都没签发；
   被拒绝的一次调用不改变既有类型的签发时间与有效状态，终端恢复后照常轮换出新 token，
   不复显上一枚；`IssuedToken` 的 `Debug` 不复述明文。
+- 秘密驻留面（真实二进制，`crates/agent-server/tests/process_residency.rs`）：`--help` 与一条
+  注定失败的管理命令各跑一次实际 `studiolo-agent`，逐项分类**恰好记录一次**且排在参数解析之前，
+  证明收紧挂在入口而不是挂在某条命令上；Linux 上另起一个真实 `serve`，由父进程从
+  `/proc/<pid>/` 回读锁定页数、核心转储限额与环境块可读性。契约见
+  [秘密驻留面](../m2/secret-residency.md)。
 - 白名单：读 `School/...` 或 `../` → 拒绝＋审计；`list_entries` 只列白名单项目。
 - 审计先于返回：注入失败账本 → `read_note` 拒绝且无正文返回；降级握手不含 vault 内容。
 - 四维查询：两个类型两个实例各读若干路径 → `admin reads` 按类型/实例/时间/路径前缀过滤正确；重建索引与增量一致。
@@ -143,4 +148,9 @@
 - 优雅关停：SIGINT 与 SIGTERM 等价（systemd 默认 `KillSignal=SIGTERM`）；关停期间不再接受新会话，已开始的供给完成后退出。
 - T-034 已部署服务器使用 `--vault` 读取原只读副本。T-036 新发布模板使用 `--replica-root`；先完成首批完整同步，再按运维步骤更换 MCP 单元。两种形态白名单均为 `项目/Studiolo`、`_规则`，身份、审计与预算要求相同。
 - 未加 Cloudflare Access：服务 token 秘密不能经 agent 之手；主人在面板签发后可再挂 Access 应用（policy 为 Service Auth），届时客户端多带两条 `CF-Access-Client-*` 头即可，本契约不变。
+- **部署前置（T-065，2026-09-17）**：`studiolo-agent` 自本次起与另外三个持明文秘密的程序
+  共用秘密驻留面加固（`studiolo-process-safety`），Linux 上 `mlockall` 锁住持有类型 token 与
+  bearer 的页，`RLIMIT_MEMLOCK` 不足时**拒绝启动**。两个单元模板都已加 `LimitMEMLOCK=infinity`，
+  升级时必须连同新单元一起安装，只换二进制会起不来。见
+  [秘密驻留面](../m2/secret-residency.md) §5 与 `docs/m3/replica-operations.md` §2。
 - 服务器安装、目录约定与实际部署记录见 `docs/m3/server-agent.md`。

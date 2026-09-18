@@ -66,7 +66,7 @@ where
     // 逐项分类随即记录到标准错误：只含措施名与固定分类，永不含种子或任何环境值；
     // 只返回不记录等于把本平台的「不支持」藏起来。本平台声明支持却没能生效时整体
     // 拒绝启动，此时尚未读取任何秘密、也尚未打开任何存储，不降级成「没成功也照跑」。
-    let residency = studiolo_host_config::process_safety::harden()?;
+    let residency = studiolo_process_safety::harden()?;
     writeln!(std::io::stderr(), "秘密驻留面：{residency}")
         .map_err(|_| StartupError::ResidencyReport)?;
     if options.port == 0

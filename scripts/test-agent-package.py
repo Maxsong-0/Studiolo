@@ -15,7 +15,7 @@ REQUIRED = {
     "studiolo": ["architecture"],
     "vault-broker": ["linux_path_security"],
     "agent-server": ["mcp_contract", "mcp_transport_contract", "replica_mcp_contract", "http_text_contract",
-                     "http_replica_contract", "index_cache_contract"],
+                     "http_replica_contract", "index_cache_contract", "process_residency"],
     "supply": ["roots_contract", "signpost_contract", "http_signpost_contract",
                "agent_store_contract", "replica_contract", "index_cache_contract"],
     "vault-index": ["parse_cache_contract", "parse_cache_codec_contract", "parse_cache_links_contract"],
@@ -59,8 +59,8 @@ class CargoManifestTests(unittest.TestCase):
         items = self.complete()
         code, names = self.collect(items + [items[0]])
         self.assertEqual(code, 0)
-        self.assertEqual(len(names), 18)
-        self.assertEqual(len(set(names)), 18)
+        self.assertEqual(len(names), 19)
+        self.assertEqual(len(set(names)), 19)
 
     def test_transport_gate_cannot_be_missing_or_satisfied_by_another_crate(self):
         items = [item for item in self.complete() if item["target"]["name"] != "mcp_transport_contract"]

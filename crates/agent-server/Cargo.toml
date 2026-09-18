@@ -21,6 +21,9 @@ path = "src/main.rs"
 
 [dependencies]
 studiolo-supply.workspace = true
+# 秘密驻留面加固：与另外三个持明文秘密的程序共用同一份实现。该 crate 的依赖只有
+# rustix，不会把认证栈拉进供给面，因此不触碰「agent-server 不得依赖 auth」这条边界。
+studiolo-process-safety.workspace = true
 studiolo-audit-ledger.workspace = true
 studiolo-core.workspace = true
 axum.workspace = true

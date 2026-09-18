@@ -24,7 +24,7 @@ pub(crate) enum StartupError {
     FactorEnvironment,
     /// 本平台声明支持的收紧没能生效；与是否启用因子模式无关，一律不开始服务。
     #[error("{0}")]
-    Residency(#[from] studiolo_host_config::process_safety::Refusal),
+    Residency(#[from] studiolo_process_safety::Refusal),
     /// 逐项分类必须被操作者看见；记录不下来就等于静默跳过，同样不开始服务。
     #[error("无法记录秘密驻留面逐项分类；未开始服务")]
     ResidencyReport,

@@ -174,7 +174,7 @@ fn a_real_child_process_confirms_each_measure_it_claims() {
     let mut child = Command::new(std::env::current_exe().expect("取得本测试二进制路径"))
         .args([
             "--exact",
-            "process_safety::tests::process_safety_probe",
+            "tests::process_safety_probe",
             "--nocapture",
             "--test-threads=1",
         ])

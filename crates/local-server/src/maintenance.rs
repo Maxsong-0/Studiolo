@@ -23,7 +23,7 @@ pub fn run() -> Result<(), MaintenanceError> {
     // 并回读确认，否则整体拒绝且不打开任何存储；本平台不提供的能力记为明确的
     // 「不支持」，并随逐项分类一起记录到标准错误（JSON 结果仍独占标准输出）。
     // 位置在参数解析之前：原 proposal 与维护票据都可能被 Broker 读进本进程内存。
-    let residency = studiolo_host_config::process_safety::harden()?;
+    let residency = studiolo_process_safety::harden()?;
     writeln!(std::io::stderr(), "秘密驻留面：{residency}")
         .map_err(|_| MaintenanceError::ProcessReport)?;
     let Some(options) = options::parse(std::env::args_os().skip(1).take(13).collect())? else {
@@ -70,9 +70,9 @@ pub enum MaintenanceError {
     /// 原 proposal 可能由 Broker 读进内存，当前短命进程须先收紧秘密驻留面。
     ///
     /// 四项措施与失败语义同登记工具与服务器，实现只有
-    /// `studiolo_host_config::process_safety` 一份，这里不自持部分收紧。
+    /// `studiolo_process_safety` 一份，这里不自持部分收紧。
     #[error("{0}；未打开写者存储")]
-    Process(#[from] studiolo_host_config::process_safety::Refusal),
+    Process(#[from] studiolo_process_safety::Refusal),
     /// 逐项分类必须被操作者看见；记录不下来就等于静默跳过，同样不打开存储。
     #[error("无法记录秘密驻留面逐项分类；未打开写者存储")]
     ProcessReport,
