@@ -118,6 +118,13 @@ fn a_removed_directory_stays_recognisable_through_the_descriptor_that_pinned_it(
 
     let link_count_cleared = removed.nlink() == 0;
     let inode_not_recycled = (fresh.dev(), fresh.ino()) != (pinned_dev, pinned_ino);
+    // 分支自证：这条断言写成「或」，任一条信号成立就通过；日志不写清本平台
+    // 实际靠的是哪一条，另一条是否早已失效就无从发现。
+    eprintln!(
+        "已删目录可识别性·分支自证：nlink 归零={link_count_cleared}（nlink={}）、\
+         inode 未复用={inode_not_recycled}",
+        removed.nlink()
+    );
     assert!(
         link_count_cleared || inode_not_recycled,
         "本平台两条信号同时失效：nlink={} 复用={:?}",

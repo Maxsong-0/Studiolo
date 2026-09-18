@@ -122,7 +122,20 @@ fn long_reader_prevents_further_writes_until_old_wal_can_be_truncated() {
     let candidate = input(&store, 1, Presence::Missing, present(9));
     // 可能在写前因旧 reader 拒绝，也可能完成首次 commit 后的 checkpoint 拒绝。
     assert!(store.reserve(0, candidate).is_err());
-    assert!(store.view().is_err() || store.view().unwrap().version == 0);
+    // 分支自证：两种结果都算通过，日志不写清本次是哪一种，
+    // 就说不出另一种有没有被跑到。
+    let view = store.view();
+    eprintln!(
+        "旧 reader 拒绝点·分支自证：store.view() = {}",
+        match &view {
+            Err(_) => "Err（写入前就被旧 reader 拒绝）".to_owned(),
+            Ok(state) => format!(
+                "Ok(version={})（首次 commit 已落，拒绝发生在其后的 checkpoint）",
+                state.version
+            ),
+        }
+    );
+    assert!(view.is_err() || view.unwrap().version == 0);
     drop(store);
     if std::fs::metadata(f.root.join("bridge.sqlite3-wal")).is_ok_and(|m| m.len() > 0) {
         assert!(BridgeState::open_existing(&f.root, binding()).is_err());

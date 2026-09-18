@@ -306,7 +306,14 @@ fn assert_inspection_flag(observations: &BTreeMap<String, String>) {
     // VFS 权限检查在 ptrace 检查之前，所以**非 root 进程连自己的环境块都打不开**。
     // 2026-09-17 实测：以 root 跑的容器读到标记，GitHub runner 的非 root 用户 EACCES。
     // 两种结果都必须有断言，不得跳过，也不得把两者塌缩成同一个布尔值。
-    match observed(observations, "SELF_ENVIRON") {
+    let self_environ = observed(observations, "SELF_ENVIRON");
+    // 分支自证：下面两种读数都算通过，日志不写清本次是哪一种，
+    // 就说不出另一种有没有被真正跑到 —— 那等于两支都没验证。
+    eprintln!(
+        "秘密驻留面·分支自证：dumpable=0 后自读 /proc/self/environ = {self_environ}\
+         （「读到标记」＝ 本次身份能绕过文件权限；「PermissionDenied」＝ 不能绕过）"
+    );
+    match self_environ {
         // 能绕过文件权限（root / CAP_DAC_OVERRIDE）：读得到，说明内核那份环境块副本
         // 确实仍在 —— 与「环境槽位未清除」的固定分类一致。
         "读到标记" => {}
@@ -374,24 +381,43 @@ fn external_observations(_pid: u32, _effective_user: u32) -> BTreeMap<String, St
 /// 两者平时一起出现，所以容易被误当成同一件事；但容器默认的 capability 集合
 /// 通常**丢掉** `CAP_SYS_PTRACE`，此时容器内的 root 同样读不到。
 /// 按 uid 判断会在容器里给出错误结论（2026-09-17 Linux 回归实测撞到）。
+///
+/// 返回**原始掩码**而不是只返回布尔：分支断言必须能在日志里自证走的是哪一支，
+/// 只留一个布尔就说不出「凭什么是这一支」，也就无从判断另一支是否根本没被跑到。
 #[cfg(target_os = "linux")]
-fn has_ptrace_capability() -> bool {
+fn ptrace_capability() -> (String, bool) {
     const CAP_SYS_PTRACE: u32 = 19;
-    let Ok(status) = std::fs::read_to_string("/proc/self/status") else {
-        return false;
-    };
-    status
-        .lines()
-        .find_map(|line| line.strip_prefix("CapEff:"))
-        .and_then(|value| u64::from_str_radix(value.trim(), 16).ok())
-        .is_some_and(|mask| mask & (1u64 << CAP_SYS_PTRACE) != 0)
+    let raw = std::fs::read_to_string("/proc/self/status")
+        .ok()
+        .and_then(|status| {
+            status
+                .lines()
+                .find_map(|line| line.strip_prefix("CapEff:"))
+                .map(|value| value.trim().to_owned())
+        })
+        .unwrap_or_else(|| "读不到".to_owned());
+    let held = u64::from_str_radix(&raw, 16).is_ok_and(|mask| mask & (1u64 << CAP_SYS_PTRACE) != 0);
+    (raw, held)
 }
 
 #[cfg(target_os = "linux")]
-fn assert_external_reads(external: &BTreeMap<String, String>, _effective_user: u32) {
+fn assert_external_reads(external: &BTreeMap<String, String>, effective_user: u32) {
     let environ = observed(external, "environ");
     let owner = observed(external, "proc_owner");
-    if has_ptrace_capability() {
+    // 分支自证：两种身份下这条断言都会「通过」，日志不写清走的是哪一支，
+    // 就等于两支都没被验证过。原始 `CapEff` 与选中的分支一并进日志。
+    let (capabilities, ptrace) = ptrace_capability();
+    eprintln!(
+        "秘密驻留面·分支自证：euid={effective_user} CapEff={capabilities} \
+         CAP_SYS_PTRACE={} → 走「{}」支；外部实读 environ={environ}，/proc/<pid> 属主={owner}",
+        if ptrace { "持有" } else { "未持有" },
+        if ptrace {
+            "必须读到标记"
+        } else {
+            "必须 PermissionDenied"
+        },
+    );
+    if ptrace {
         // 持有 CAP_SYS_PTRACE 时这项保护按设计就不成立；本模块从不宣称挡得住它。
         // 断言「确实读得到」而不是跳过，避免空跑成假绿。
         assert_eq!(
