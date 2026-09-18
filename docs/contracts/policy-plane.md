@@ -90,6 +90,9 @@
   与 skills 计数。仍受 ≤2000 token 硬预算。
 - `policy_read{kind=rules|skills[,subject]}`／`GET /read/policy`：读 effective 规则母本或 skill；每次先追加 `content.read`
   （路径 `policy://…`，revision `v<n>`，tool `policy_read`）并进四维读取索引。
+- **skill 硬绑定与索引分家**：硬绑定＝能力集 `hard_bound_skills[{trigger, must_use}]`，策略强制，进路牌第 5 项并标「（策略强制）」；
+  索引＝`policy_read{kind=skills}` 不带 `subject` 时返回全部已发布 skill 的「名称／版本／摘要／触发词」清单，只是候选、由 AI 自选，
+  带 `subject` 才取正文。**Studiolo 不做语义路由**：不替 AI 判断该用哪个 skill，只保证硬绑定那几条一定出现在路牌里。
 - `propose_desired{kind,subject,body}`：需能力集 `policy.propose_desired`；入库 `pending`，记 `policy.desired_submitted`；
   返回 id／状态／扩大项计数／逐条问题；**不改变 effective**。
 
