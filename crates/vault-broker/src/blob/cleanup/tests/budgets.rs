@@ -29,7 +29,7 @@ fn each_directory_may_reach_its_producer_count_limit_and_cleanup_restores_capaci
 
 #[test]
 fn full_512_mib_per_directory_is_legal_as_a_single_batch() {
-    let _guard = LARGE_IO.lock().unwrap();
+    let _guard = LARGE_IO.enter();
     let f = Fixture::new();
     let mut b = f.open();
     for domain in ["history", "snapshots"] {
@@ -54,7 +54,7 @@ fn full_512_mib_per_directory_is_legal_as_a_single_batch() {
 
 #[test]
 fn any_directory_over_count_object_or_total_budget_refuses_the_entire_batch() {
-    let _guard = LARGE_IO.lock().unwrap();
+    let _guard = LARGE_IO.enter();
     for budget in [0, 1, 2] {
         let f = Fixture::new();
         let mut b = f.open();
@@ -86,7 +86,7 @@ fn any_directory_over_count_object_or_total_budget_refuses_the_entire_batch() {
 
 #[test]
 fn non_sparse_body_over_old_four_mib_limit_is_fully_verified_and_removed() {
-    let _guard = LARGE_IO.lock().unwrap();
+    let _guard = LARGE_IO.enter();
     let f = Fixture::new();
     let mut b = f.open();
     let filename = f.temporary("history", b"");

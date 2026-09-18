@@ -1,7 +1,7 @@
 use super::*;
 #[test]
 fn true_large_content_small_replacement_and_strict_restore_keep_exact_history() {
-    let _guard = LARGE.lock().unwrap();
+    let _guard = LARGE.enter();
     let f = Fixture::new();
     let mut b = f.open();
     let source = f.pattern(LARGE_BYTES);

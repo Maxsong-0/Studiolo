@@ -10,7 +10,7 @@ const CHILD: &str = "file_operation::tests::rename::large::large_child";
 #[test]
 fn large_rename_projection_is_measured_in_an_isolated_process() {
     // 与既有附件/删除恢复测试共用父进程锁，避免同时堆叠多份大对象。
-    let _guard = crate::blob::LARGE_IO.lock().unwrap();
+    let _guard = crate::blob::LARGE_IO.enter();
     let mut command = std::process::Command::new("/usr/bin/time");
     #[cfg(target_os = "macos")]
     command.arg("-l");
@@ -63,7 +63,7 @@ fn large_child() {
         std::env::var("STUDIOLO_PRIVATE_RENAME_MEMORY_CHILD").unwrap(),
         "1"
     );
-    let _guard = crate::blob::LARGE_IO.lock().unwrap();
+    let _guard = crate::blob::LARGE_IO.enter();
     let fixture = Fixture::new();
     let mut broker = fixture.open();
     let from = path();

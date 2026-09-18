@@ -67,7 +67,7 @@ fn old_fingerprints_remain_byte_for_byte_after_stream_and_legacy_writes() {
 }
 #[test]
 fn effective_limit_downshift_does_not_reduce_old_object_preservation_limit() {
-    let _guard = LARGE.lock().unwrap();
+    let _guard = LARGE.enter();
     let f = Fixture::new();
     let mut b = f.open();
     let source = f.pattern(5 * 1024 * 1024 + 1);
@@ -89,7 +89,7 @@ fn effective_limit_downshift_does_not_reduce_old_object_preservation_limit() {
 }
 #[test]
 fn first_legacy_write_over_an_external_large_file_activates_large_history_before_install() {
-    let _guard = LARGE.lock().unwrap();
+    let _guard = LARGE.enter();
     let f = Fixture::new();
     let mut b = f.open();
     f.pattern(5 * 1024 * 1024 + 1);

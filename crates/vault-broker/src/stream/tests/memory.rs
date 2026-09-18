@@ -1,7 +1,7 @@
 use super::*;
 #[test]
 fn full_large_pipeline_is_measured_in_an_isolated_process() {
-    let _guard = LARGE.lock().unwrap();
+    let _guard = LARGE.enter();
     let executable = std::env::current_exe().unwrap();
     let mut command = std::process::Command::new("/usr/bin/time");
     #[cfg(target_os = "macos")]
