@@ -2,12 +2,10 @@
 //! 路牌第 3／5 项改自策略平面、policy_read 进读取审计、propose_desired 永不生效、
 //! 三级吊销即刻生效与恢复方向、handshake.served 记 effective 哈希、HTTP 外壳同一授权。
 
-use std::{
-    fs, net::SocketAddr, os::unix::fs::PermissionsExt, path::Path, sync::Arc, time::Duration,
-};
+use std::{fs, net::SocketAddr, os::unix::fs::PermissionsExt, path::Path, time::Duration};
 
 use serde_json::{Value, json};
-use studiolo_agent_server::{options::ServeOptions, serve, state::AppState};
+use studiolo_agent_server::{options::ServeOptions, serve};
 use studiolo_audit_ledger::{AuditFilter, AuditLedger, SqliteAuditLedger};
 use studiolo_policy::{
     DesiredInput, DesiredStatus, PolicyKind, PolicyStore, RevocationLevel, Submitter,
@@ -25,7 +23,6 @@ struct Fixture {
     base: String,
     read_base: String,
     client: reqwest::Client,
-    state: Arc<AppState>,
 }
 
 fn write(path: &Path, body: &str) {
@@ -135,7 +132,6 @@ async fn fixture() -> Fixture {
             .timeout(Duration::from_secs(20))
             .build()
             .unwrap(),
-        state,
     }
 }
 

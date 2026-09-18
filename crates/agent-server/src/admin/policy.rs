@@ -43,29 +43,25 @@ pub(super) fn bootstrap(
     let ledger = SqliteAuditLedger::open_existing(&data.join("audit"))
         .map_err(|_| "审计账本不可用或未初始化；请先运行 admin init".to_owned())?;
     let store = PolicyStore::open_existing(policy).map_err(|error| error.to_string())?;
+    let input = DesiredInput {
+        kind,
+        subject: subject.to_owned(),
+        body: Some(body),
+    };
+    // 先校验再发布：校验不过就把逐条问题打到标准输出（不含正文），不写任何版本。
+    let report = store.preview(&input).map_err(|error| error.to_string())?;
+    if !report.ok {
+        let problems = report
+            .problems
+            .iter()
+            .map(|problem| format!("  - {}：{}", problem.path, problem.message))
+            .collect::<Vec<_>>()
+            .join("\n");
+        return Err(format!("校验未通过，未写入任何版本：\n{problems}"));
+    }
     let activation = store
-        .bootstrap(
-            DesiredInput {
-                kind,
-                subject: subject.to_owned(),
-                body: Some(body),
-            },
-            &now(),
-        )
-        .map_err(|error| match error {
-            studiolo_policy::PolicyError::ValidationFailed => {
-                let preview = store
-                    .preview(&DesiredInput {
-                        kind,
-                        subject: subject.to_owned(),
-                        body: None,
-                    })
-                    .ok();
-                let _ = preview;
-                "校验未通过；用 admin policy-status 与人侧校验端点查看逐条问题".to_owned()
-            }
-            other => other.to_string(),
-        })?;
+        .bootstrap(input, &now())
+        .map_err(|error| error.to_string())?;
     ledger
         .append(audit::bootstrapped(&activation).map_err(|_| "审计事件构造失败".to_owned())?)
         .map_err(|_| {
