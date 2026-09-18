@@ -20,6 +20,12 @@ RestartSec=3
 KillSignal=SIGTERM
 TimeoutStopSec=20
 UMask=0077
+# T-050/T-059/T-066：秘密驻留面加固在 Linux 用 mlockall 把持有明文秘密的页锁在内存，
+# 防止被换出到交换区。systemd 默认 LimitMEMLOCK 常为 8M，不足时 harden() **失败关闭
+# 并终止进程**（这是正确行为，不得改成尽力而为），服务将无法启动。
+# studiolo-agent 持有类型 token 与每次请求的 bearer 明文，加固接入后本项即为必需；
+# 现在先行加上，使加固落地时不需要再动部署单元。见 docs/m2/secret-residency.md。
+LimitMEMLOCK=infinity
 NoNewPrivileges=yes
 ProtectSystem=strict
 ProtectHome=read-only
