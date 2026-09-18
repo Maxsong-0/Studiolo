@@ -15,15 +15,58 @@
 
 - 只读扫描复用 `vault-broker::ReadOnlyVault`：**每个白名单目录各开一个只读根**，未列入的目录从一开始不进入任何计算；不装配 `FsVaultBroker`，不获得 canonical 写能力。
 - 审计写入口唯一：`SqliteAuditLedger::open_existing(<agent 私有目录>/audit)`，与 Auth 账本分库（跨进程不共写一条哈希链）。
-- 私有目录 `<data>/`：`audit/audit.sqlite3`（权威账本，由 audit-ledger 打开）与 `agent.sqlite3`（类型摘要、实例登记、读取审计派生索引、outage 记录，由 supply 打开）。目录与文件沿用审计存储同一套规则（绝对路径、0700/0600、逐层拒绝链接、同 owner），架构守卫把 `agent.sqlite3` 登记为第三个固定文件名。
+- 私有目录 `<data>/`：`audit/audit.sqlite3`（权威账本，由 audit-ledger 打开）与 `agent.sqlite3`（类型摘要、实例登记、读取审计派生索引、outage 记录，由 supply 打开）。目录与文件沿用审计存储同一套规则（绝对路径、0700/0600、逐层拒绝链接、同 owner）。
+  **2026-09-17 核实**：T-039 之后另有可选的 `index.sqlite3`（单槽解析缓存，由 `--index-cache` 显式给定的目录持有，见 `crates/supply/src/index_cache/paths.rs:30-36`）。
+  架构守卫 `crates/studiolo/tests/architecture_support/source.rs:107-140` 现登记五个固定私有库文件名：`bridge.sqlite3`、`audit.sqlite3`、`auth.sqlite3`、`index.sqlite3`、`agent.sqlite3`；原文「第三个固定文件名」已过时。
 - 配置只经命令行参数（本片不读配置文件，避免外壳 crate 获得通用文件读写能力）：`serve --vault <绝对路径> --allow <相对目录>…（可重复）--data <绝对私有目录> --port <端口>`；`--data` 与其下 `audit/` 须由主人预先 `mkdir -m 700` 创建，服务不创建目录。类型 token 明文永不进参数或文件。
+  **2026-09-17 核实**：`serve` 现另接受 `--replica-root`（与 `--vault` 互斥，见 §6）、`--replica-max-age-secs` 与 `--index-cache`；解析见 `crates/agent-server/src/options.rs:138-200`。
 
 ## 2. 身份两级
 
 | 级 | 签发 | 存储 | 权限 |
 |---|---|---|---|
-| 类型（`claude` / `codex` / `grok`…） | `studiolo-agent admin type-issue --config <agent.json> --type <名>`，32 字节随机 token 只在 TTY 打印一次 | `identity.sqlite3` 只存 sha256 与签发时间 | 只读 ＋ 配置白名单（M4 前固定） |
-| 实例 | 客户端带 `Authorization: Bearer <类型token>` 发 MCP `initialize`；服务端铸 ULID 实例 id，绑定类型与 MCP 会话 id | `identity.sqlite3`：实例 id、类型、会话 id、注册时间、最近活动 | 无独立权限，继承类型 |
+| 类型（`claude` / `codex` / `grok`…） | `studiolo-agent admin type-issue --data <绝对私有目录> --type <名>`，32 字节随机 token 只在真实前台控制终端显示一次（门禁见下） | `agent.sqlite3` 的 `agent_type` 表只存 sha256 与签发时间 | 只读 ＋ 配置白名单（M4 前固定） |
+| 实例 | 客户端带 `Authorization: Bearer <类型token>` 发 MCP `initialize`；服务端铸 ULID 实例 id，绑定类型与 MCP 会话 id | `agent.sqlite3`：实例 id、类型、会话 id、注册时间、最近活动 | 无独立权限，继承类型 |
+
+**2026-09-17 T-056 文档漂移审计更正**：
+
+- 本仓库从来没有 `identity.sqlite3`；两级身份都存在 §1 的 `agent.sqlite3`
+  （`crates/supply/src/database.rs:1`、`crates/supply/src/storage.rs:39-41`，签发见
+  `crates/supply/src/database/identity.rs:10-27`）。
+- `admin` 子命令一律用 `--data <绝对私有目录>` 定位私有库，**没有** `--config <agent.json>`
+  参数；`type-issue` / `type-revoke` 的允许参数恰为 `--data`、`--type`
+  （`crates/agent-server/src/options.rs:202-256`）。同名类型再次 `type-issue` 会轮换 token 并使旧 token 立即失效。
+- **2026-09-17 T-060 已修复并收紧**：T-056 登记的「实现只用 `println!` 写 stdout、
+  两个 crate 都没有 TTY 判定」已修。原文「只在 TTY 打印一次」现由实现兑现，且比原文更严。
+  门禁在 `crates/agent-server/src/admin/terminal.rs`，做法照搬
+  `crates/local-server/src/maintenance/terminal.rs` 与 `studiolo-auth-admin`（见
+  [auth-admin.md](auth-admin.md)），未自创第二套：
+
+  - **身份核验**：固定只打开 `/dev/tty`（`RDWR|CLOEXEC|NOCTTY|NONBLOCK`），要求 **stdin、
+    stdout、stderr 三者与 `/dev/tty` 同为当前前台控制终端**——`isatty`、
+    `tcgetsid == getsid(None)`、`tcgetpgrp == getpgrp`，再比对三个标准流的 `st_rdev` 一致。
+    `/dev/tty` 是控制终端别名、设备号不等于实际 PTY，因此它只参与会话／前台组核验，
+    不参与设备号比对（这个坑 auth-admin 与维护 CLI 已经踩过）。
+  - **交付通道**：明文只写进那个 `/dev/tty` 句柄，带 30 秒绝对期限与 `EAGAIN` 短写重试，
+    写入前后各复核一次身份；标准输出只留一行不含秘密的确认。
+  - **拒绝语义**：非 TTY、管道、`> file`、改接 stderr、stdin 来自 `/dev/null`、
+    以及根本没有控制终端（CI、systemd、nohup、setsid）一律**拒绝且不签发**。
+    门禁排在打开私有库之前，因此拒绝路径上不产生任何明文、库中状态不变、
+    既有 token 既不轮换也不吊销。**没有降级到 stdout 的分支。**
+  - **顺序与回滚**：门禁 → 探写非秘密抬头 → 签发 → 显示明文 → 非秘密确认。
+    显示失败立刻 `revoke_type` 回滚，绝不留下一枚主人没拿到的活 token；
+    同名再次 `type-issue` 会轮换并解除吊销，所以回滚后无需人工清理。
+    回滚本身失败时明确报「可能存在未交付的有效 token」并要求立即 `type-revoke`。
+  - **同类出口**：`studiolo_supply::IssuedToken` 不再派生 `Debug`；手写实现只报类型名与
+    明文长度，避免 `{:?}`、日志或 panic 消息成为第二个「只显示一次」的出口。
+  - **不要求终端的子命令**：`init` / `type-revoke` / `types` / `reads` /
+    `rebuild-read-index` / `outages` 只输出非秘密结果，可照常重定向与管道。
+  - **比 auth-admin 多要求一条 stdout**：那边秘密是入向（读 OTP），stdout 只承载固定非秘密
+    结果所以允许重定向；这里秘密是出向，而 `> token.txt` 恰是主人最自然的手势，
+    放行只会让人以为文件里有 token。
+  - **待 root 接线**：运维手册 `docs/m3/server-agent.md` 第 86 行
+    `… type-issue … | tail -1 > ~/.config/studiolo-agent/claude.token` 在本门禁下会被拒绝，
+    须改为在交互终端显示后由主人手工抄进 0600 文件；该文件不在本片写域。
 
 - 无 / 错 / 已吊销 token：HTTP 401（`WWW-Authenticate: Bearer`，无正文），**不进入任何内容计算**，记 `agent.action_denied`（reason=`unauthenticated`，主体匿名）。
 - 同一 MCP 会话内所有 tool 调用共享该实例；实例注册记 `agent_instance.registered`；会话结束实例保留记录不删。本片服务端只协商带会话的协议版本（2025-11-25 / 2025-06-18 / 2025-03-26），SEP-2567 无会话模式下的实例身份另行设计。三级吊销属 M4；本片只提供 `admin type-revoke`：类型摘要标记吊销后，**同一会话的下一次调用在门禁处即 401**（记 `unauthenticated`），新握手同样 401；handler 内另有 `type_is_active` 复核作为纵深。
@@ -82,6 +125,12 @@
 - 对象安全与依赖方向：supply 不依赖 axum/rmcp；agent-server 不依赖 FsVaultBroker、ControlDb、auth。
 - 预算二元：构造超预算 INDEX 夹具 → initialize 失败且账本有 `handshake.budget_exceeded`；正常夹具 → instructions ≤2000 且六项齐全。
 - 身份：无 token 401；错 token 401 且 `agent.action_denied`；正确 token → 实例落库并绑定会话；吊销类型后立即 401。
+- 类型 token 显示门禁（真实 PTY 驱动实际二进制，`crates/agent-server/tests/admin_terminal_contract.rs`
+  ＋ `tests/support/admin_terminal.py`）：真实控制终端上恰好显示一次；无控制终端 / 全管道 /
+  `> file` / 管道接 stdout / 改接 stderr / stdin 来自 `/dev/null` 六种形状各自被拒绝，
+  **并实际读回被改接的那个文件或管道断言其中没有 token**，且一枚都没签发；
+  被拒绝的一次调用不改变既有类型的签发时间与有效状态，终端恢复后照常轮换出新 token，
+  不复显上一枚；`IssuedToken` 的 `Debug` 不复述明文。
 - 白名单：读 `School/...` 或 `../` → 拒绝＋审计；`list_entries` 只列白名单项目。
 - 审计先于返回：注入失败账本 → `read_note` 拒绝且无正文返回；降级握手不含 vault 内容。
 - 四维查询：两个类型两个实例各读若干路径 → `admin reads` 按类型/实例/时间/路径前缀过滤正确；重建索引与增量一致。

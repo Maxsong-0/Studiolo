@@ -1,5 +1,15 @@
 # T-046：OwnedRun 实施候选与 Linux 静止证明
 
+> **状态更正（2026-09-17 T-056 文档漂移审计）**：本页写于 2026-09-13，当时是设计候选。
+> 此后 T-048 已按本页边界把代码实现到 `crates/sync-transport`：
+> 最小封闭 API 见 `owned_run/owner.rs:27-153`，持久 schema v1 见 `owned_run/state.rs:16-18`，
+> 唯一真实 IO 见 `store/publish.rs`，Linux adapter 见 `linux/`。
+> **下文「尚未实现」只适用于写作当日**；当前实施记录与三处已登记的 API 差异见
+> [`owned-run.md`](owned-run.md)，它才是本片的现行权威。
+> 仍然成立的是：**平台「受支持」状态尚未取得** —— `linux::verify_backend`
+> （`crates/sync-transport/src/linux.rs:198-214`）在所有平台都返回缺口，
+> 因此 `SyncTransportOwner` 今天在任何机器上都装配不起来，也从未启动过第三方程序。
+
 2026-09-13；实施候选，尚未实现或启用。承接 `headless-execution-contract.md`；本片不实现 MirrorCAS、不打开 Headless state.db、不推进 Bridge baseline。平台已只读核对：指定服务器为 systemd 259.5、cgroup v2，尚无 Node/Headless/restic；这不等于具备全部隔离条件。
 
 ## 结论与可验收切片
@@ -8,7 +18,7 @@
 
 第一片生产平台只支持 Linux。建议选 **管理员预置的专用 systemd launcher service + cgroup v2 payload 子组 + 固定可信启动屏障**，不同时实现第二套 PID/PGID 后端。systemd 只管理可信 launcher；payload 子组由可信 launcher 管理，Headless 不能取得其写权限。具体 service、内核能力和 IPC 必须在真实 Linux 上验证后才能声明受支持。没有这些权限的普通 user service 只能返回不支持，不削弱隔离。
 
-这不是复用一套仓库已有隔离器：`runner-adapter/src/lib.rs` 当前只有 Stub、临时结果以及 PID/start-time DTO；`auth-admin/src/process_safety.rs` 只禁 core dump。两者均不证明后代退出。可复用的是 host-config 的私有配置快照、逐段 NOFOLLOW/根身份核验，以及 Broker/Bridge 的排他租约和明确 Unlock 模式；不向新 crate 导出 Broker 原始目录写能力。
+这不是复用一套仓库已有隔离器：`runner-adapter/src/lib.rs` 当前只有 Stub、临时结果以及 PID/start-time DTO；`auth-admin/src/process_safety.rs` 只禁 core dump（**2026-09-17 T-056 核实**：该模块此后已扩为四项封闭措施——`CoreDumpLimit`、`ProcessInspection`、`MemoryResidency`、`EnvironmentSlot`；**2026-09-17 T-059** 又把它搬到 `crates/host-config/src/process_safety/`，由三个持秘密程序共用，见 `crates/host-config/src/process_safety/report.rs`；但它收紧的仍只是调用进程自身的秘密驻留面，本段结论不变）。两者均不证明后代退出。可复用的是 host-config 的私有配置快照、逐段 NOFOLLOW/根身份核验，以及 Broker/Bridge 的排他租约和明确 Unlock 模式；不向新 crate 导出 Broker 原始目录写能力。
 
 ## 最小封闭 API（建议冻结）
 

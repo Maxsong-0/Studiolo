@@ -1,0 +1,23 @@
+[package]
+name = "studiolo-backup"
+description = "跨 owner 一致 checkpoint、独立 BackupWorker 与新目录恢复；不持有任何 owner 的数据库句柄"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+studiolo-core.workspace = true
+studiolo-audit-ledger.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+rustix = { workspace = true, features = ["fs", "process"] }
+
+[dev-dependencies]
+tempfile.workspace = true

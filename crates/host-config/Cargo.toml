@@ -13,7 +13,9 @@ serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
 thiserror.workspace = true
-rustix = { workspace = true, features = ["fs", "process"] }
+# mm 仅供 process_safety 的 Linux 分支调用 mlockall；rustix 把它单列为特性，
+# 不启用时 rustix::mm 整个模块不存在，Linux 构建会直接失败。
+rustix = { workspace = true, features = ["fs", "process", "mm"] }
 
 [dev-dependencies]
 tempfile.workspace = true

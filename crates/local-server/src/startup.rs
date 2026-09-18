@@ -3,12 +3,13 @@
 mod canonical_input;
 mod error;
 mod factor_input;
+mod health_input;
 mod repository_input;
 mod serving;
 
 pub(crate) use error::StartupError;
 
-use std::{future::Future, sync::Arc};
+use std::{future::Future, io::Write, sync::Arc};
 use studiolo_audit_ledger::SqliteAuditLedger;
 use studiolo_auth::{
     AccessConfig, AccessError, AccessVerifier, OsSessionRandom, SessionManager, SystemSessionClock,
@@ -57,6 +58,17 @@ where
     Fut: Future<Output = Result<AccessVerifier, AccessError>>,
     E: FnOnce() -> factor_input::Environment,
 {
+    // 秘密驻留面在这里收紧，位置是本进程组合根的第一条语句，**与 options.factor 无关**：
+    // 非因子模式同样在内存里持有 SessionToken / CsrfToken 明文，崩溃转储、在线检视与
+    // 换出这三条路径对它们一视同仁；把收紧埋在因子输入里，非因子模式就一项也没有。
+    // 必须早于任何秘密读取、任何存储打开，也早于任何可能派生的子进程（本 crate 由
+    // 架构守卫禁用 `Command::new`，因此这里就是全进程最早的可用位置）。
+    // 逐项分类随即记录到标准错误：只含措施名与固定分类，永不含种子或任何环境值；
+    // 只返回不记录等于把本平台的「不支持」藏起来。本平台声明支持却没能生效时整体
+    // 拒绝启动，此时尚未读取任何秘密、也尚未打开任何存储，不降级成「没成功也照跑」。
+    let residency = studiolo_host_config::process_safety::harden()?;
+    writeln!(std::io::stderr(), "秘密驻留面：{residency}")
+        .map_err(|_| StartupError::ResidencyReport)?;
     if options.port == 0
         || options.label.trim().is_empty()
         || options.label.chars().count() > 80
@@ -251,12 +263,16 @@ where
             return Err(StartupError::Router);
         }
     };
+    let app = if let Some(repository) = &repository {
+        studiolo_local_server::with_project_repository(app, Arc::clone(repository))
+    } else {
+        app
+    };
+    // 健康页的路由已在 router 装配期挂好（且在鉴权那一层之内）；这里只把证据来源
+    // 装上去。不装则健康页一律回 404，因此这一行是"健康页可用"的唯一开关。
+    let app = studiolo_local_server::health::with_health_evidence(app, health_input::source());
     let prepared = PreparedServer {
-        app: if let Some(repository) = &repository {
-            studiolo_local_server::with_project_repository(app, Arc::clone(repository))
-        } else {
-            app
-        },
+        app,
         port: options.port,
         mode,
         roots,

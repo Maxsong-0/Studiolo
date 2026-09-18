@@ -2,12 +2,14 @@
 
 mod assets;
 mod auth_http;
+pub mod backup;
 mod bootstrap;
 mod canonical;
 mod coordinator;
 mod editing;
 mod file_operation_audit;
 mod file_operations;
+pub mod health;
 mod history;
 pub mod maintenance;
 mod project_cargo;
@@ -20,6 +22,7 @@ mod routing;
 mod security;
 #[cfg(test)]
 mod sync_transport_config;
+pub mod sync_transport_owner;
 mod tree;
 mod unix_ingress;
 mod view;
@@ -45,7 +48,7 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use studiolo_vault_broker::{BrokerError, CanonicalReadVault, ReadOnlyVault};
 use studiolo_vault_index::IndexError;
-use studiolo_workbench::{TreeError, WorkbenchSnapshot};
+use studiolo_workbench::TreeError;
 use view::{Generation, ViewStore, load};
 
 /// 本机入口初始化失败；调用者应修正副本或路径后重试。
@@ -91,7 +94,7 @@ struct AppState {
     source: Source,
     assets: Arc<ReadOnlyVault>,
     current: ViewStore,
-    refresh: Arc<tokio::sync::Mutex<()>>,
+    refresh: Arc<refresh::RefreshCoalescer>,
     queries: Arc<tokio::sync::Semaphore>,
     source_label: String,
     authority: String,
@@ -103,16 +106,6 @@ struct AppState {
     refresh_probe: Arc<refresh_tests::Probe>,
 }
 
-#[derive(Serialize)]
-struct SnapshotResponse {
-    generation: u64,
-    source_label: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    freshness: Option<view::Freshness>,
-    #[serde(flatten)]
-    snapshot: WorkbenchSnapshot,
-}
-
 #[derive(Default, Deserialize)]
 struct SnapshotQuery {
     #[serde(default)]
@@ -122,21 +115,11 @@ struct SnapshotQuery {
 async fn snapshot(
     State(state): State<AppState>,
     Query(query): Query<SnapshotQuery>,
-) -> Result<Json<SnapshotResponse>, ApiError> {
+) -> Result<Json<queries::OverviewResponse>, ApiError> {
     if query.refresh {
         refresh::run(&state).await?;
     }
-    let view = state
-        .current
-        .snapshot()
-        .map_err(|_| ApiError::unavailable())?;
-    let current = view.generation;
-    Ok(Json(SnapshotResponse {
-        generation: current.number,
-        source_label: state.source_label,
-        freshness: view.freshness,
-        snapshot: current.model.snapshot(),
-    }))
+    queries::overview(state).await
 }
 
 fn current(state: &AppState) -> Result<Arc<Generation>, ApiError> {

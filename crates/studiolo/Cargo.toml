@@ -20,6 +20,11 @@ studiolo-vault-index.workspace = true
 studiolo-control-db.workspace = true
 studiolo-audit-ledger.workspace = true
 studiolo-runner-adapter.workspace = true
+# 2026-09-17 T-052 裁决：Gateway 目前只被架构守卫按名引用，生产代码零使用。
+# 不在本轮接进组合根 —— 它是工具调用网关，接线等于提前开放 M5（AI/黑板写入）与
+# M6（真实执行与回放）的能力，而 M2/M3 收尾计划明确「本轮不提前开放」。
+# 接线方案已备好（ControlDbAttemptGuard，见 T-052 REPORT §3.3），前置是 ControlDb
+# 提供可共享的只读取用方式。到 M5/M6 再落地；在此之前这条依赖是**显式预留**，不是遗漏。
 studiolo-gateway.workspace = true
 studiolo-task-engine.workspace = true
 thiserror.workspace = true

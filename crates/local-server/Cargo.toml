@@ -31,6 +31,9 @@ studiolo-core.workspace = true
 studiolo-vault-broker.workspace = true
 studiolo-vault-index.workspace = true
 studiolo-workbench.workspace = true
+studiolo-backup.workspace = true
+studiolo-observability.workspace = true
+studiolo-sync-transport.workspace = true
 
 [dev-dependencies]
 rustix = { workspace = true, features = ["stdio"] }

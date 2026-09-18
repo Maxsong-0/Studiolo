@@ -1,7 +1,6 @@
 #![cfg(unix)]
 
-#[path = "mod.rs"]
-mod support;
+use super::support_tests as support;
 
 use super::SqliteAuditLedger;
 use crate::{
@@ -22,7 +21,8 @@ fn owned_connection_uses_the_required_durability_configuration() {
     let directory = support::private_dir();
     let ledger = SqliteAuditLedger::open(&directory.path().canonicalize().unwrap()).unwrap();
     // 只检查 Adapter 私有实现，不为断言向生产调用者暴露连接或写 SQL 的入口。
-    let connection = ledger.connection.lock().unwrap();
+    let session = ledger.connection.lock().unwrap();
+    let connection = &session.connection;
     let mode: String = connection
         .query_row("PRAGMA journal_mode", [], |row| row.get(0))
         .unwrap();
@@ -52,7 +52,8 @@ fn sqlite_full_rolls_back_head_and_retry_appends_only_once() {
     let first = ledger.append(event("before-full", "small")).unwrap();
     let summary = "x".repeat(256 * 1024);
     {
-        let connection = ledger.connection.lock().unwrap();
+        let session = ledger.connection.lock().unwrap();
+        let connection = &session.connection;
         let pages: i64 = connection
             .query_row("PRAGMA page_count", [], |row| row.get(0))
             .unwrap();
@@ -79,7 +80,8 @@ fn sqlite_full_rolls_back_head_and_retry_appends_only_once() {
         vec![first.clone()]
     );
     {
-        let connection = ledger.connection.lock().unwrap();
+        let session = ledger.connection.lock().unwrap();
+        let connection = &session.connection;
         let maximum: i64 = connection
             .query_row("PRAGMA max_page_count=2147483646", [], |row| row.get(0))
             .unwrap();

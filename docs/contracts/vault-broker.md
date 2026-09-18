@@ -125,7 +125,13 @@ hash/revision 和当前文件内容。manifest 存在但证明不成立时拒绝
 | `WriterBindingMismatch` | 根、data或不可变控制对象与配对不符 |
 | `CorruptWriterState` | 持久日志/回执非法或违反阶段不变量 |
 | `MutationUnresolved` | 安装或legacy旧操作未决，不能开始其他canonical写入 |
+| `MutationCancelled` | 原请求已明确取消；重放不会再次尝试安装 |
+| `MutationIndeterminate { evidence_id }` | 未知安装已封存证据并终止重放；既不证明原请求成功也不证明失败，`evidence_id` 只是私有协调证据 ID |
 | `WriterLimitExceeded` | 输入或写协议存储超过固定预算 |
+| `CaptureChanged` | 捕获所属实例或已确认提交水位变化，候选视图不能发布 |
+| `IncompleteCapture` | 扫描出现安全诊断，部分结果不得当作完整捕获 |
+| `InvalidHistoryCursor` | 历史游标语法错误或不属于本路径 |
+| `HistoryChanged` | 历史目录已变化，调用方须重新从第一页开始 |
 | `RootChanged` | 所选canonical根已改变或不可用，不能继续用旧路径身份 |
 | `ReadLimitExceeded { path, max_bytes }` | 超过调用者指定的有界读取预算，包含读取期间增长 |
 | `CorruptSnapshot` | snapshot ID、Vault 绑定、排序或内容证明不一致 |
@@ -134,6 +140,9 @@ hash/revision 和当前文件内容。manifest 存在但证明不成立时拒绝
 | `Json { operation, source }` | 内部 durable record 无法解析 |
 
 语法非法的 `VaultPath` 在进入 Broker 前由 `PathSyntaxError` 拒绝。
+2026-09-17 T-056 按 `crates/vault-broker/src/lib.rs:94-200` 逐项核对：上表 26 行即当前
+`BrokerError` 的全部变体，`MutationCancelled` / `MutationIndeterminate` / `CaptureChanged` /
+`IncompleteCapture` / `InvalidHistoryCursor` / `HistoryChanged` 六项是本轮补齐的既有变体。
 
 M1 `ReadOnlyVault`及M2 `CanonicalReadVault`复用安全只读内核，不授予M0写能力；
 后者只接受已有Vault身份并返回真实revision，见[canonical读取契约](canonical-read.md)。

@@ -1,8 +1,12 @@
 //! 唯一服务器秘密装配边界；固定环境槽、纯共用解码和自有缓冲零化。
+//!
+//! 秘密驻留面的收紧**不在这里**：它已提到 `startup::prepare_composed` 的第一条语句，
+//! 与是否启用因子模式无关（见那里的注释）。本文件从前只禁 core，而且埋在这条
+//! 只有因子模式才会走的路径上，非因子模式因此一项也没有；现在这里只负责读槽位、
+//! 解码与零化，绝不再自持任何一份部分收紧，否则就成了「加固两次只记录一次」。
 
 use super::StartupError;
 use crate::options::FactorOptions;
-use rustix::process::{Resource, Rlimit, getrlimit, setrlimit};
 use std::{ffi::OsString, os::unix::ffi::OsStringExt, path::Path, sync::Arc};
 use studiolo_auth::{FactorRuntime, SessionError, SessionManager, TotpSeed};
 use studiolo_host_config::Config;
@@ -50,7 +54,7 @@ impl Inputs {
         isolated_roots.extend(writer_data);
         let ingress = PreparedUnixIngress::prepare(&options.socket, &isolated_roots)
             .map_err(|_| StartupError::Ingress)?;
-        disable_core_dumps()?;
+        // 组合根已经在读取任何秘密之前收紧过本进程，这里直接读槽位。
         let (current, replacement) = environment();
         let (current, replacement) = slots(
             config.seed_ref(),
@@ -109,19 +113,6 @@ fn seed_error(error: SessionError) -> StartupError {
         SessionError::Rejected => StartupError::FactorEnvironment,
         _ => StartupError::Configuration,
     }
-}
-
-fn disable_core_dumps() -> Result<(), StartupError> {
-    let disabled = Rlimit {
-        current: Some(0),
-        maximum: Some(0),
-    };
-    setrlimit(Resource::Core, disabled).map_err(|_| StartupError::Process)?;
-    let actual = getrlimit(Resource::Core);
-    if actual.current != Some(0) || actual.maximum != Some(0) {
-        return Err(StartupError::Process);
-    }
-    Ok(())
 }
 
 #[cfg(test)]

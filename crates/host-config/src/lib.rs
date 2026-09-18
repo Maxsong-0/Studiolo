@@ -10,6 +10,11 @@ use serde::Deserialize;
 use std::path::{Path, PathBuf};
 use studiolo_auth::{AccessConfig, OwnerBinding, SessionConfig, SessionPolicy};
 
+pub mod alerting;
+pub mod backup;
+pub mod process_safety;
+pub mod sync_transport;
+
 pub use file_operations::{ApprovedRenamePair, FileOperationPolicy, FileRenamePolicy};
 pub use human_content::HumanContentScope;
 pub use serving::{CanonicalServingRoots, RepositoryServingRoots, ServingRoots};

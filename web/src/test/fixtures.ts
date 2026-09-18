@@ -1,8 +1,11 @@
 import type {
+  CountRollup,
   DocumentNavigationData,
+  DocumentSummary,
   Project,
   Sourced,
   Workbench,
+  WorkbenchCounts,
 } from '../types';
 
 export const emptyNavigation: DocumentNavigationData = {
@@ -28,6 +31,24 @@ export const project: Project = {
   source,
   diagnostics: [],
 };
+
+/** 首屏只报计数，逐篇清单由文件树与搜索各自的入口给出；这里保留一份供那些入口取用。 */
+export const documents: DocumentSummary[] = [
+  { path: source.path, title: '星舟总览' },
+];
+
+const known = (value: number): CountRollup => ({ value, unavailable: [] });
+
+function counts(documentCount: number): WorkbenchCounts {
+  return {
+    documents: known(documentCount),
+    projects: known(3),
+    inbox: known(1),
+    diagnostics: known(0),
+    active_tasks: { value: null, unavailable: ['灵感盒'] },
+    open_bugs: { value: null, unavailable: ['灵感盒'] },
+  };
+}
 
 export const fixture: Workbench = {
   generation: 7,
@@ -66,7 +87,7 @@ export const fixture: Workbench = {
       source,
     },
   ],
-  documents: [{ path: source.path, title: '星舟总览' }],
+  counts: counts(documents.length),
   diagnostics: [],
 };
 
@@ -80,11 +101,12 @@ export function jsonResponse(body: unknown, status = 200) {
 export function defaultApiResponse(
   input: RequestInfo | URL,
   snapshot = fixture,
+  hits = documents,
 ) {
   return String(input).startsWith('/api/search')
     ? jsonResponse({
         generation: snapshot.generation,
-        hits: snapshot.documents.map((document) => ({
+        hits: hits.map((document) => ({
           ...document,
           line: 1,
           snippet: '',

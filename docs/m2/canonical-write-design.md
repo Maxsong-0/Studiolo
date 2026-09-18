@@ -1,5 +1,17 @@
 # canonical写入的下一步设计输入
 
+> **状态更正（2026-09-17 T-056 文档漂移审计）**：本页写于 2026-09-05，是 T-028 的设计输入。
+> 此后 T-028 已按本页边界实现并验收：跨进程独占租约见
+> `crates/vault-broker/src/writer/lease.rs`（占用返回 `BrokerError::WriterBusy`，
+> `crates/vault-broker/src/lib.rs:97`），永久 root/data 配对返回 `WriterBindingMismatch`，
+> 未决安装返回 `MutationUnresolved`，`open_existing` 与 `write_status()` 见 `writer/opening.rs`。
+> 本页复现的那条误补成功缺口，其正向拒绝回归留在
+> `crates/vault-broker/tests/mutation_rejection_contract.rs`。
+> **下文「现在分域实施」「尚未宣称修复验收完成」「独立实现边界」只反映写作当日**；
+> 现行权威是 [canonical 单写者与幂等契约](../contracts/canonical-writer.md)，
+> 新鲜度另见 [canonical 捕获与刷新新鲜度契约](../contracts/canonical-freshness.md)。
+> 仍然成立的是：真实 Vault 接入、生产发布与断电/提交 I/O 故障未验收。
+
 2026-09-05，T-028已查重认领；旧实现已用真实磁盘复现：同进程及重开后两条
 错误CAS重放测试失败，Memory对照通过。现在分域实施单写者与未决幂等，
 再进入新鲜度、HTTP保存及历史界面；尚未宣称修复验收完成。

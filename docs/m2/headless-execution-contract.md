@@ -11,6 +11,15 @@
 [systemd官方停止规则](https://github.com/systemd/systemd/blob/main/man/systemd.kill.xml)。这些是下一实现约束，尚未动态验收。
 持久运行槽、受控启动和静止能力的实施候选见 `owned-run-design.md`；尚未实施、配置或启用该服务。
 
+**2026-09-17 T-056 文档漂移审计更正**：上一行「尚未实施」只适用于 2026-09-13。
+T-048 已把该运行槽实现到 `crates/sync-transport`（状态机、持久 schema v1、Linux adapter、
+装配层），现行实施记录见 [`owned-run.md`](owned-run.md)。仍然成立的是「尚未配置或启用」：
+`linux::verify_backend`（`crates/sync-transport/src/linux.rs:198-215`）在所有平台都返回缺口，
+所以本仓库至今没有真正跑起来的受控 Headless 进程 owner，也没有隔离运行环境或真实 Sync 接入。
+另注：下文 §5 的 `start_once` / `wait -> Reaped | ExitUnconfirmed` 是本核查当日的**设计建议**，
+最终冻结的形状不同（`prepare_once` + `start` 两步、`wait` 返回把 `phase` / `quiescence` /
+`exit` / `stop_reason` 分开报告的 `RunObservation`），以 `owned-run.md` §1、§3 为准。
+
 ## 1. 可固定的版本与来源
 
 本次可以固定 **npm `obsidian-headless@0.0.14`**，不必用浮动 master 代替发布物。

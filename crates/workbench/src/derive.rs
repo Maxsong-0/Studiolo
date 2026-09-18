@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use studiolo_vault_index::{IndexedDocument, MarkdownDocument};
 
-use crate::{ActionItem, ProjectSummary, Sourced, actions, bugs, markdown, metadata};
+use crate::{ActionItem, ProjectSummary, Sourced, actions, bugs, markdown, metadata, scan};
 
 pub(crate) type Inputs<'a> = BTreeMap<String, (&'a MarkdownDocument, IndexedDocument)>;
 
@@ -100,8 +100,9 @@ pub(crate) fn build(inputs: &Inputs<'_>) -> (Vec<ProjectSummary>, Vec<ActionItem
         }
         project.open_bugs =
             bugs::open_bugs(&root, &name, inputs, &mut project.diagnostics, &mut inbox);
-        for (path, (input, parsed)) in inputs {
-            if direct_child(path, &format!("{root}/03-记忆/"))
+        let memory_prefix = format!("{root}/03-记忆/");
+        for (path, (input, parsed)) in scan::under(inputs, &memory_prefix) {
+            if direct_child(path, &memory_prefix)
                 && path
                     .rsplit('/')
                     .next()

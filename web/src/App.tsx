@@ -20,6 +20,7 @@ import { CanonicalEditor } from './components/CanonicalEditor';
 import { DraftShelf } from './components/DraftShelf';
 import { useDraftCount } from './draftContext';
 import { FileOperationsAccess } from './components/FileOperationsAccess';
+import { HealthBoundary } from './HealthBoundary';
 
 const headings = {
   overview: ['项目总览', '项目状态与待办，回到原文核对。'],
@@ -97,7 +98,7 @@ export function App({ account }: { account?: ReactNode }) {
       projects={projects}
       onOpen={setSource}
       actionCount={data?.inbox.length ?? 0}
-      documentCount={data?.documents.length ?? 0}
+      documentCount={data?.counts.documents.value ?? null}
       toolbar={
         <div className="page-actions">
           <button
@@ -200,6 +201,9 @@ export function App({ account }: { account?: ReactNode }) {
                 ) : null}
               </>
             ) : null}
+            {/* 本机健康属于"待你验收/拍板/重启"的事项，放在待我动作视图；
+                它不依赖工作台快照，快照读不出来时照样要能看见。 */}
+            {view === 'inbox' ? <HealthBoundary /> : null}
             {view !== 'overview' ? (
               <Diagnostics messages={diagnostics} />
             ) : null}

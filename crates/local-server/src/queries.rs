@@ -1,4 +1,23 @@
-//! 同代次的搜索与导航；CPU 工作受并发上限控制，不占用 HTTP 运行线程。
+//! 同代次的首屏、搜索与导航；CPU 工作受并发上限控制，不占用 HTTP 运行线程。
+//!
+//! 本机入口有两道互不替代的准入，刻意不合并成一道：
+//!
+//! - **查询许可**（本文件的 `queries` 信号量）限制同时占用的后台工作槽。它管的是
+//!   「同时有多少读侧 CPU 工作在跑」，因此首屏、搜索、原文、文件树、项目运作一律
+//!   走它，读侧不再有绕开计数的路径。
+//! - **刷新闸门**（`crate::refresh`）限制的是「同一批并发刷新最多换来几次派生」，
+//!   靠合流而不是拒绝：并发刷新排到同一张票上等同一次派生，没有请求因为别人正在
+//!   刷新而被拒。派生本身不占查询许可——它已经被闸门硬限制成至多一次在途，再去挤
+//!   工作槽只会把搜索饿死；反过来把首屏放出查询许可，读侧计数就出现缺口。
+//!
+//! 两者的交接点在首屏：刷新合流之后，同一批请求会同时来投影同一代次。实测九个并发
+//! `?refresh=true` 在 `try_acquire` 下只有两个拿到工作槽，其余七个拿到 429——一次共享
+//! 派生被合流省下来，却在最后一步变成随机失败。所以首屏改用 [`run_entry_query`]：
+//! 满额时排队等待而不是快速失败。搜索、原文、文件树这些页内查询仍旧快速失败，它们
+//! 有明确的重试位置；首屏是整个界面的入口，没有可退回的上一屏。
+//!
+//! 静态资源（`crate::assets`）两者都不占：它既不读代次，也不做随文档量增长的 CPU
+//! 工作，只是有上限的单文件读取，占用工作槽只会把前端外壳和真实查询互相拖住。
 
 use std::sync::Arc;
 
@@ -11,9 +30,41 @@ use serde::{Deserialize, Serialize};
 use studiolo_core::VaultPath;
 use studiolo_workbench::{
     DocumentNavigation, DocumentView, SearchError, SearchMode, SearchQuery, SearchResults,
+    WorkbenchOverview,
 };
 
-use crate::{ApiError, AppState, Generation, current};
+use crate::{ApiError, AppState, Generation, current, view::Freshness};
+
+/// 首屏响应：项目、收件箱、诊断与计数；逐篇文档走文件树分页与搜索，不在此整份下发。
+#[derive(Serialize)]
+pub(crate) struct OverviewResponse {
+    generation: u64,
+    source_label: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    freshness: Option<Freshness>,
+    #[serde(flatten)]
+    overview: WorkbenchOverview,
+}
+
+/// 读取当前代次并投影首屏；投影与序列化都在查询许可内的后台线程上完成。
+pub(crate) async fn overview(state: AppState) -> Result<Json<OverviewResponse>, ApiError> {
+    let view = state
+        .current
+        .snapshot()
+        .map_err(|_| ApiError::unavailable())?;
+    let generation = view.generation;
+    let freshness = view.freshness;
+    let source_label = state.source_label.clone();
+    run_entry_query(&state.queries, move || {
+        Ok(Json(OverviewResponse {
+            generation: generation.number,
+            source_label,
+            freshness,
+            overview: generation.model.overview(),
+        }))
+    })
+    .await
+}
 
 #[derive(Deserialize)]
 pub(crate) struct QueryParameters {
@@ -99,7 +150,29 @@ pub(crate) async fn run_query<T: Send + 'static>(
     queries: &Arc<tokio::sync::Semaphore>,
     work: impl FnOnce() -> Result<T, ApiError> + Send + 'static,
 ) -> Result<T, ApiError> {
-    let permit = query_permit(queries)?;
+    on_worker(query_permit(queries)?, work).await
+}
+
+/// 首屏专用：满额时排队等待工作槽，而不是把入口请求快速失败掉。
+///
+/// 等待者是一个廉价 future，客户端断开就直接消失，不会占住工作槽；真正占住工作槽的
+/// 始终只有已经开始跑的那两个查询。
+pub(crate) async fn run_entry_query<T: Send + 'static>(
+    queries: &Arc<tokio::sync::Semaphore>,
+    work: impl FnOnce() -> Result<T, ApiError> + Send + 'static,
+) -> Result<T, ApiError> {
+    let permit = queries
+        .clone()
+        .acquire_owned()
+        .await
+        .map_err(|_| ApiError::unavailable())?;
+    on_worker(permit, work).await
+}
+
+async fn on_worker<T: Send + 'static>(
+    permit: tokio::sync::OwnedSemaphorePermit,
+    work: impl FnOnce() -> Result<T, ApiError> + Send + 'static,
+) -> Result<T, ApiError> {
     tokio::task::spawn_blocking(move || {
         // 客户端取消也不会提早释放额度；此工作真正结束后才释放。
         let _permit = permit;
@@ -153,6 +226,23 @@ mod tests {
         assert_eq!(budget.available_permits(), 0);
         drop((next, second));
         assert_eq!(budget.available_permits(), 2);
+    }
+
+    #[tokio::test]
+    async fn the_first_screen_waits_for_a_work_slot_while_page_queries_still_fail_fast() {
+        let budget = Arc::new(tokio::sync::Semaphore::new(1));
+        let held = budget.clone().acquire_owned().await.ok().unwrap();
+        let entry_budget = Arc::clone(&budget);
+        let entry = tokio::spawn(async move { run_entry_query(&entry_budget, || Ok(7)).await });
+        tokio::task::yield_now().await;
+        assert!(matches!(
+            query_permit(&budget),
+            Err(ApiError(StatusCode::TOO_MANY_REQUESTS, _))
+        ));
+        assert!(!entry.is_finished(), "首屏在额度满时排队等待而不是失败");
+        drop(held);
+        assert!(matches!(entry.await, Ok(Ok(7))));
+        assert_eq!(budget.available_permits(), 1);
     }
 
     #[tokio::test]

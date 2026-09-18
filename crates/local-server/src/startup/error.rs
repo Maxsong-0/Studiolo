@@ -22,6 +22,12 @@ pub(crate) enum StartupError {
     Serve,
     #[error("因子秘密环境缺失或不规范；只接受固定槽的40位小写十六进制")]
     FactorEnvironment,
+    /// 本平台声明支持的收紧没能生效；与是否启用因子模式无关，一律不开始服务。
+    #[error("{0}")]
+    Residency(#[from] studiolo_host_config::process_safety::Refusal),
+    /// 逐项分类必须被操作者看见；记录不下来就等于静默跳过，同样不开始服务。
+    #[error("无法记录秘密驻留面逐项分类；未开始服务")]
+    ResidencyReport,
     #[error("当前进程保护或退出信号设置失败；未开始服务")]
     Process,
     #[error("可信Unix入口配置或监听失败；不覆盖既有路径")]

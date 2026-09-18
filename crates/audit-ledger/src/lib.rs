@@ -1,5 +1,6 @@
 //! 权威审计 Interface：精确幂等、追加顺序与完整性链。
-//! 内存 Adapter 用于契约；SQLite Adapter 提供私有本地目录上的持久存储。
+//! 内存 Adapter 用于契约；SQLite Adapter 提供私有本地目录上的持久存储，并按固定边界分段，
+//! 使重启验链与常规查询只付「段链 + 实际读到的段」的代价，而不是每次重扫整个账本。
 
 mod codec;
 mod event;
@@ -8,13 +9,15 @@ mod memory;
 mod payload;
 mod record;
 mod sqlite;
+mod verification;
 
 pub use event::{AuditEvent, AuditEventId, AuditPhase, AuditSubject};
 pub use filter::AuditFilter;
 pub use memory::MemoryAuditLedger;
 pub use payload::SanitizedPayload;
 pub use record::{AuditRecord, IntegrityHash};
-pub use sqlite::SqliteAuditLedger;
+pub use sqlite::{AUDIT_SEGMENT_RECORDS, SqliteAuditLedger};
+pub use verification::{AuditSegmentSummary, AuditVerificationCost};
 
 /// Errors at the authoritative audit seam.
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]

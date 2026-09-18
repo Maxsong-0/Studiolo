@@ -100,3 +100,7 @@ Linux 首次并行链接被容器以 signal 9 终止，改为 `CARGO_BUILD_JOBS=
 上述 production 是特征验证，构建 profile 为 dev；未生成 release 运行包，未执行
 远端 CI 或 Linux x86_64 服务器原生验收。虚构预览启动见上方命令。
 本片未合并、部署或修改共享服务；线上 T-040 和完整 M2/M3 状态沿用发布记录。
+
+**2026-09-17 更正**：上句是 T-041 当时的记录。本片提交 `94801ef` 此后已随 PR #5 进入
+`origin/main`（`297f126`），用 `git merge-base --is-ancestor` 核实。**但仍未部署、
+未整体验收**，服务器上跑的依旧是 T-040 版本。

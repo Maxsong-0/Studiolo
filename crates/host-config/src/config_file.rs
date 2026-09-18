@@ -30,14 +30,7 @@ impl Snapshot {
         private_directory(path.parent().ok_or(ConfigError)?)?;
         let before = fs::symlink_metadata(path).map_err(|_| ConfigError)?;
         private_file(&before)?;
-        // 不跟随末级链接；检查后若换成FIFO也不会在打开时无限等待。
-        let descriptor = open(
-            path,
-            OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::NONBLOCK | OFlags::CLOEXEC,
-            Mode::empty(),
-        )
-        .map_err(|_| ConfigError)?;
-        let file = File::from(descriptor);
+        let file = hold(path)?;
         let opened = file.metadata().map_err(|_| ConfigError)?;
         private_file(&opened)?;
         same_file(&before, &opened)?;
@@ -66,6 +59,82 @@ impl Snapshot {
     pub fn revalidate(&self) -> Result<(), ConfigError> {
         let current = Self::read(&self.path)?;
         if self.stamp != current.stamp || self.bytes != current.bytes {
+            return Err(ConfigError);
+        }
+        Ok(())
+    }
+}
+
+/// 唯一打开入口：只读、不跟随末级链接、非阻塞、CLOEXEC；目录与普通文件共用。
+///
+/// 不跟随末级链接；检查后若换成FIFO也不会在打开时无限等待。目录也按同一组标志打开：
+/// 打开后立刻用 `fstat` 判定类型，比 `O_DIRECTORY` 少一个标志但结论相同。
+fn hold(path: &Path) -> Result<File, ConfigError> {
+    let descriptor = open(
+        path,
+        OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::NONBLOCK | OFlags::CLOEXEC,
+        Mode::empty(),
+    )
+    .map_err(|_| ConfigError)?;
+    Ok(File::from(descriptor))
+}
+
+/// 持有 FD 的私有根身份钉；即使 inode 号被复用也能认出「批准的那个对象已经没了」。
+///
+/// 只存 `(dev, ino)` 再按路径复比在 Linux 上挡不住替换：把目录 rmdir 后同名 mkdir，
+/// 内核会把同一个 inode 号立刻发还（overlayfs on ext4 实测 20/20 命中），
+/// 于是新目录与被批准的旧目录取值完全相同。持有 FD 之后有两条互相独立的信号：
+///
+/// 1. 对**持有的 FD** `fstat`：目录被 rmdir 后该 inode 的链接数归零，
+///    inode 号随后被谁复用都改不了这一点（Linux 实测 20/20；APFS 不归零，见下）。
+/// 2. FD 活着时内核不会把这个 inode 号发还给新对象（旧 inode 的引用没清零就不释放），
+///    于是**按路径**取到的 `(dev, ino)` 与钉住的值不再相同（Linux、macOS 实测均成立）。
+///
+/// macOS/APFS 从不复用 inode 号、也不把链接数归零，由信号 2 独自覆盖；
+/// Linux 两条同时成立。两条任一命中即判为漂移。
+pub(crate) struct PinnedDirectory {
+    path: PathBuf,
+    descriptor: File,
+    identity: (u64, u64),
+}
+
+impl PinnedDirectory {
+    /// 先逐段核验路径是 0700、本人所有的真实目录，再持有它的 FD 并与路径身份互证。
+    pub fn pin(path: &Path) -> Result<Self, ConfigError> {
+        let expected = private_directory(path)?;
+        let descriptor = hold(path)?;
+        let pinned = descriptor.metadata().map_err(|_| ConfigError)?;
+        private_node(&pinned)?;
+        if identity(&pinned) != expected {
+            return Err(ConfigError);
+        }
+        Ok(Self {
+            path: path.to_path_buf(),
+            descriptor,
+            identity: expected,
+        })
+    }
+
+    /// 批准时刻的 `(dev, ino)`；单独拿这个值比较不足以发现替换，复验必须走 `revalidate`。
+    pub fn identity(&self) -> (u64, u64) {
+        self.identity
+    }
+
+    /// 复验被钉住的对象仍然在，且这条路径仍然指向它。
+    ///
+    /// 成功只代表检查时刻一致；不能证明与后续 IO 的系统级原子性。
+    pub fn revalidate(&self) -> Result<(), ConfigError> {
+        let pinned = self.descriptor.metadata().map_err(|_| ConfigError)?;
+        // 信号 1：被删掉的目录，其 inode 链接数归零；inode 号被新目录复用也盖不住。
+        if pinned.nlink() == 0 {
+            return Err(ConfigError);
+        }
+        private_node(&pinned)?;
+        if identity(&pinned) != self.identity {
+            return Err(ConfigError);
+        }
+        // 信号 2：这条路径现在指向的对象，必须仍是批准时钉住的那一个。
+        if private_directory(&self.path)? != self.identity {
             return Err(ConfigError);
         }
         Ok(())
@@ -141,6 +210,18 @@ pub(crate) fn outside(file: &Path, public_root: (u64, u64)) -> Result<(), Config
 
 fn identity(metadata: &Metadata) -> (u64, u64) {
     (metadata.dev(), metadata.ino())
+}
+
+/// 已持有 FD 的对象本身必须仍是 0700、本人所有的真实目录。
+fn private_node(metadata: &Metadata) -> Result<(), ConfigError> {
+    if !metadata.is_dir()
+        || metadata.file_type().is_symlink()
+        || metadata.mode() & 0o7777 != 0o700
+        || metadata.uid() != getuid().as_raw()
+    {
+        return Err(ConfigError);
+    }
+    Ok(())
 }
 
 fn private_file(metadata: &Metadata) -> Result<(), ConfigError> {

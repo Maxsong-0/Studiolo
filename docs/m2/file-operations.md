@@ -1,11 +1,27 @@
 # 整文件删除与最近删除恢复
 
 2026-09-13，T-046。本文记录已接入代码的整文件操作；最终发布与真实身份验收仍未完成。
-初始决策和未实现的 Rename 方案保留在 `file-operations-design.md`。
+初始决策保留在 `file-operations-design.md`。
+
+> **状态更正（2026-09-17 T-056 文档漂移审计）**：本页写于 Rename 落地之前，
+> 原文称「未实现的 Rename 方案」并把人侧操作限定为 Delete 与 RestoreTombstone。
+> 2026-09-14 起 Rename 已实现并接线：Broker 的显式开关
+> `enable_file_rename` 见 `crates/vault-broker/src/file_operation/rename_enable.rs:12`，
+> `FileOperationRequest::Rename` 见 `file_operation/model.rs:37`；
+> HTTP 的 `{"kind":"rename", …}` 分支见
+> `crates/local-server/src/file_operations/request.rs:14,20-26,48-67`；
+> 能力查询已多返回 `rename_enabled` 字段（`file_operations.rs:53-55`）；
+> 主人键域 `human.file.rename.v1` 见 `coordinator/file_operations.rs:76`。
+> **下文凡以「只有 Delete / RestoreTombstone」「没有 Rename」为前提的句子只适用于写作当日**，
+> 已在相应位置逐条标注。Rename 的现行权威是
+> [`file-rename-contract.md`](file-rename-contract.md)（Broker 与审计/维护）与
+> [`human-rename-contract.md`](human-rename-contract.md)（人侧配置、HTTP 与界面）。
 
 ## 产品行为
 
 - 人侧只支持精确版本 Delete 与墓碑原路径 RestoreTombstone。恢复要求原路径不存在，零字节文件仍是存在，不覆盖任何同名文件。
+  （**2026-09-17 更正**：Rename 已于其后加入，是第三种人侧操作，其目标条件同样固定为 MustNotExist；见
+  [`human-rename-contract.md`](human-rename-contract.md)。本行其余关于 Delete / RestoreTombstone 的约束不变。）
 - 删除前明确审阅并勾选当前已保存版本。任一次编辑/保存状态改变都会使原勾选失效，不能将 R1 的确认用到 R2。
 - 编辑器、自动保存、页面历史恢复与文件操作共用未决门禁。发送中或结果未知时暂停后续写入。
 - 最近删除需要真实会话与能力发现，分页每次请求32条；允许范围过滤后的空页继续下一页。恢复前重新明确确认。

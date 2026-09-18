@@ -71,8 +71,14 @@ jobs:
         run: cargo --locked clippy --workspace --all-targets -- -D warnings
 
       - name: Workspace 测试
+        # T-050/T-059 的秘密驻留面加固在 Linux 上用 mlockall 把持有明文秘密的页锁住。
+        # RLIMIT_MEMLOCK 不足时加固失败关闭并终止进程（正确行为，不得改成尽力而为），
+        # 约 40 个 composition 用例会集体红。必须在**同一个 shell** 里先抬高硬上限再跑 cargo：
+        # GitHub Actions 每个 run 步骤是独立 shell，上一步抬高不会传到下一步。
         run: |
           python3 --version
+          sudo prlimit --pid $$ --memlock=unlimited:unlimited
+          ulimit -l
           cargo --locked test --workspace
 
       - name: Python 副本发布与真实 MCP 管线
@@ -88,8 +94,10 @@ jobs:
         run: cargo --locked build -p studiolo-local-server --features studiolo-auth/production
 
       - name: 本地登记工具生产特征构建
+        # 该 CLI 启动时会跑秘密驻留面加固（mlockall），同样需要在本 shell 内抬高 RLIMIT_MEMLOCK。
         run: |
           cargo --locked build -p studiolo-auth-admin --features production
+          sudo prlimit --pid $$ --memlock=unlimited:unlimited
           python3 crates/auth-admin/tests/support/cli_process.py target/debug/studiolo-auth-admin
 
   frontend:

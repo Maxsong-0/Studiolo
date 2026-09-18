@@ -1,4 +1,4 @@
-//! v1 schema 只允许精确的两张表及 SQLite 生成的唯一索引，不自动接纳迁移。
+//! 精确 schema：v1 两张表，v2 增加段摘要表，只允许 SQLite 生成的唯一索引，不自动接纳迁移。
 
 use super::unavailable;
 use crate::{AuditError, IntegrityHash, codec::CODEC};
@@ -6,6 +6,10 @@ use rusqlite::{Connection, params};
 
 const APPLICATION_ID: i64 = 0x5354_4155;
 const MAX_SCHEMA_SQL_BYTES: i64 = 1024;
+/// T-012 的两表格式；只在显式升级入口读，不再由 open 接受。
+pub(super) const VERSION_LEGACY: i64 = 1;
+/// T-051 的分段格式：表定义与 v1 逐字一致，只多出 `audit_segments` 与版本号。
+pub(super) const VERSION: i64 = 2;
 const META: &str = "CREATE TABLE audit_meta (
     id INTEGER PRIMARY KEY CHECK(id = 1),
     schema_version INTEGER NOT NULL,
@@ -20,6 +24,12 @@ const EVENTS: &str = "CREATE TABLE audit_events (
     record_json TEXT NOT NULL,
     UNIQUE(event_id, phase)
 ) STRICT";
+pub(super) const SEGMENTS: &str = "CREATE TABLE audit_segments (
+    segment_index INTEGER PRIMARY KEY CHECK(segment_index >= 0),
+    last_offset INTEGER NOT NULL CHECK(last_offset > 0),
+    last_hash TEXT NOT NULL,
+    segment_hash TEXT NOT NULL
+) STRICT";
 
 pub(super) fn initialize(connection: &Connection, created: bool) -> Result<(), AuditError> {
     let objects: i64 = connection
@@ -28,35 +38,61 @@ pub(super) fn initialize(connection: &Connection, created: bool) -> Result<(), A
     if objects == 0 && created {
         connection
             .execute_batch(&format!(
-                "{META}; {EVENTS}; PRAGMA user_version=1; PRAGMA application_id={APPLICATION_ID};"
+                "{META}; {EVENTS}; {SEGMENTS};
+                PRAGMA user_version={VERSION}; PRAGMA application_id={APPLICATION_ID};"
             ))
             .map_err(unavailable)?;
         connection
             .execute(
-                "INSERT INTO audit_meta VALUES(1, 1, ?1, 0, ?2)",
-                params![CODEC, IntegrityHash::genesis().to_hex()],
+                "INSERT INTO audit_meta VALUES(1, ?1, ?2, 0, ?3)",
+                params![VERSION, CODEC, IntegrityHash::genesis().to_hex()],
             )
             .map_err(unavailable)?;
     }
-    validate(connection)
+    validate(connection, VERSION)
 }
 
-pub(super) fn validate(connection: &Connection) -> Result<(), AuditError> {
-    let version: i64 = connection
+/// 校验磁盘结构与给定版本逐字一致；不做 quick_check，因此成本与账本总量无关。
+pub(super) fn validate(connection: &Connection, version: i64) -> Result<(), AuditError> {
+    let actual_version: i64 = connection
         .query_row("PRAGMA user_version", [], |row| row.get(0))
         .map_err(unavailable)?;
     let application: i64 = connection
         .query_row("PRAGMA application_id", [], |row| row.get(0))
         .map_err(unavailable)?;
-    if version != 1 || application != APPLICATION_ID {
+    if actual_version != version || application != APPLICATION_ID {
         return Err(AuditError::UnsupportedSchema);
     }
-    // 先拒绝额外对象及超长声明，再在同一事务快照内读取最多三条有界文本。
+    let mut expected = vec![
+        (
+            "table".to_owned(),
+            "audit_meta".to_owned(),
+            Some(META.to_owned()),
+        ),
+        (
+            "table".to_owned(),
+            "audit_events".to_owned(),
+            Some(EVENTS.to_owned()),
+        ),
+        (
+            "index".to_owned(),
+            "sqlite_autoindex_audit_events_1".to_owned(),
+            None,
+        ),
+    ];
+    if version >= VERSION {
+        expected.push((
+            "table".to_owned(),
+            "audit_segments".to_owned(),
+            Some(SEGMENTS.to_owned()),
+        ));
+    }
+    // 先拒绝额外对象及超长声明，再在同一事务快照内读取有界文本。
     // SQLite 自身加载 schema 所需的内存不属于这里的应用结果集预算。
     let count: i64 = connection
         .query_row("SELECT count(*) FROM sqlite_schema", [], |row| row.get(0))
         .map_err(unavailable)?;
-    if count != 3 {
+    if count != i64::try_from(expected.len()).map_err(|_| AuditError::CorruptStore)? {
         return Err(AuditError::CorruptStore);
     }
     let oversized: i64 = connection
@@ -86,27 +122,15 @@ pub(super) fn validate(connection: &Connection) -> Result<(), AuditError> {
         })
         .map_err(unavailable)?;
     let actual = rows.collect::<Result<Vec<_>, _>>().map_err(unavailable)?;
-    let mut expected = vec![
-        (
-            "table".to_owned(),
-            "audit_meta".to_owned(),
-            Some(META.to_owned()),
-        ),
-        (
-            "table".to_owned(),
-            "audit_events".to_owned(),
-            Some(EVENTS.to_owned()),
-        ),
-        (
-            "index".to_owned(),
-            "sqlite_autoindex_audit_events_1".to_owned(),
-            None,
-        ),
-    ];
     expected.sort_by(|left, right| left.1.cmp(&right.1));
     if actual != expected {
         return Err(AuditError::CorruptStore);
     }
+    Ok(())
+}
+
+/// 物理页结构检查；成本与数据库总量成正比，只由全量验证与显式升级调用。
+pub(super) fn integrity_check(connection: &Connection) -> Result<(), AuditError> {
     // 任一错误即失败，不收集与损坏行数一起增长的诊断列表。
     let mut check = connection
         .prepare("PRAGMA quick_check(1)")
@@ -122,14 +146,14 @@ pub(super) fn validate(connection: &Connection) -> Result<(), AuditError> {
     Ok(())
 }
 
-pub(super) fn head(connection: &Connection) -> Result<(u64, String), AuditError> {
+pub(super) fn head(connection: &Connection, version: i64) -> Result<(u64, String), AuditError> {
     let count: i64 = connection
         .query_row("SELECT count(*) FROM audit_meta", [], |row| row.get(0))
         .map_err(unavailable)?;
     if count != 1 {
         return Err(AuditError::CorruptStore);
     }
-    let (version, codec, offset, hash): (i64, Option<String>, i64, Option<String>) = connection
+    let (stored, codec, offset, hash): (i64, Option<String>, i64, Option<String>) = connection
         .query_row(
             "SELECT schema_version,
             CASE WHEN octet_length(codec) = ?1 THEN codec END,
@@ -140,7 +164,7 @@ pub(super) fn head(connection: &Connection) -> Result<(u64, String), AuditError>
             |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
         )
         .map_err(unavailable)?;
-    if version != 1 || codec.as_deref() != Some(CODEC) {
+    if stored != version || codec.as_deref() != Some(CODEC) {
         return Err(AuditError::UnsupportedSchema);
     }
     let hash = hash.ok_or(AuditError::CorruptStore)?;

@@ -4,7 +4,7 @@ use crate::session::SessionError;
 use sha2::{Digest, Sha256};
 use std::fmt;
 use subtle::ConstantTimeEq;
-use zeroize::Zeroizing;
+use zeroize::{Zeroize, Zeroizing};
 
 /// 可信装配提供的 160 位 TOTP 种子；不序列化、克隆或输出种子及引用。
 pub struct TotpSeed {
@@ -36,14 +36,26 @@ impl TotpSeed {
         for (byte, pair) in bytes.iter_mut().zip(encoded.chunks_exact(2)) {
             *byte = nibble(pair[0]) * 16 + nibble(pair[1]);
         }
-        Self::new(reference, *bytes)
+        // 直接把零化容器交给内部构造，不走 `*bytes` 这条按值复制的路：那样会在
+        // 本栈帧与 `new` 的参数槽各留一份不受零化覆盖的解码结果。
+        Self::bind(reference, bytes)
     }
 
     /// 绑定 1～64 位 ASCII 字母、数字、点、下划线或短横线组成的非路径引用。
     ///
     /// 只保护本实例拥有的缓冲区，不替调用方清除其自行保留的种子副本。
+    ///
+    /// 按值参数是调用方交来的一份拷贝：封装进零化容器后，本函数栈帧上的这份
+    /// 立即就地清零，调用方自己那份仍由调用方负责。
     pub fn new(reference: String, bytes: [u8; 20]) -> Result<Self, SessionError> {
-        let secret = Zeroizing::new(bytes);
+        let mut bytes = bytes;
+        let bound = Self::bind(reference, Zeroizing::new(bytes));
+        bytes.zeroize();
+        bound
+    }
+
+    /// 唯一的内部构造点；引用无效时秘密随零化容器一并释放并清零。
+    fn bind(reference: String, secret: Zeroizing<[u8; 20]>) -> Result<Self, SessionError> {
         if reference.is_empty()
             || reference.len() > 64
             || !reference

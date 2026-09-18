@@ -15,6 +15,11 @@ Markdown 没有可证明唯一身份的文件魔数，普通文本也是合法 M
 ## 2. 实施前可复用代码与待补接口
 
 下表保留本片实施前的接口拆分依据；表中列出的 Rename 适配现已按本契约整合，实际验证状态见整体收尾台账。下列路径均相对 `/Users/maxsong/All-Project/studiolo`。
+**读法提醒（2026-09-17 T-056）**：右栏「不能冒称已有的能力」是**实施前**的现状，用的是当时的现在时，
+不要当成当前代码的缺口。已经补上的两条是：`coordinator/file_operations.rs` 的请求 Kind 现含
+`Rename`（主人键域 `human.file.rename.v1`，`:76`），双路径类别许可与实际字节绑定由
+`host-config` 的 `FileRenamePolicy::approve_pair` 加 local-server 的 `RenameAdmission`
+（`coordinator/file_operations/rename.rs:14-81`）共同提供。
 
 | 现有落点 | 已有证明与应复用行为 | 不能冒称已有的能力 |
 |---|---|---|
@@ -67,7 +72,10 @@ Markdown 没有可证明唯一身份的文件魔数，普通文本也是合法 M
 1. 取得并保留同一 owner lock；真正核验 principal、roots 和 both-path `ApprovedRenamePair` 后，才读源正文。任一侧未批准时零正文 I/O、零 prepare/日志/审计副作用。
 2. `broker.read_file(from, min(pair.max_bytes, 4 MiB))` 完整读取；核 vault/path/revision 必须等于输入 expected。正文已完成全部读取才可判定，不能只检前 512 字节。
 3. `markdown_text_v1` 的字节语言固定为完整有效 UTF-8，拒 NUL、除 TAB/CR/LF 外 C0 控制符以及 DEL/C1 控制符；不转码、不替换错误字节、不规范化换行或正文 Unicode。空文本与纯文字明文明确允许；允许 UTF-8 BOM（U+FEFF）并保留原字节；不将它删除或转码，也不把它作为权限或类型证明。该类别是文本表示约束，不承诺去除 Markdown 的 HTML/链接，继续由既有安全渲染处理。
-4. 根据这一份完整 bytes 计算原始 SHA/bytes、source canonical Revision 及 `Revision::compute(vault,to,bytes)`；后者必须不同于 source revision。封闭的 `RenameContentAdmission` 仅保存这些小元数据、类别版本和 pair binding，不输出正文到 HTTP、日志或审计；大 Vec 在 prepare 前释放。
+4. 根据这一份完整 bytes 计算原始 SHA/bytes、source canonical Revision 及 `Revision::compute(vault,to,bytes)`；后者必须不同于 source revision。封闭的 admission 仅保存这些小元数据、类别版本和 pair binding，不输出正文到 HTTP、日志或审计；大 Vec 在 prepare 前释放。
+（**2026-09-17 T-056 更正**：实施后的类型名是 `RenameAdmission`，不是初稿写的 `RenameContentAdmission`；
+见 `crates/local-server/src/coordinator/file_operations/rename.rs:14-19`，字段为 `pair`／`expected`／
+`content: Option<Content>`，`content` 为 `None` 表示源缺失或 expected 不匹配，只能接受 Broker 固定的 Rejected。）
 5. 构造 Rename 请求；Broker `prepare_file_operation` 重新固定源 Present(expected)＋目标 MustNotExist，完整源 L0/目标 stage/目标 L0 均在准备阶段完成。ticket.preview.observed_before 的 revision/raw/bytes 必须与 admission 完全一致，固定 path/kind/to/expected 也必须相同；Rejected 只能走原固定拒绝回执，不能当成已验证提案执行。
 6. 目标不存在，不能“读取目标来验 MIME”。证明来自 Broker 冻结契约的跨路径投影不变量：目标 stage/L0 的 raw 与字节数等于已经分类的源，目标 revision 用目标路径计算，prepare/commit 均核对封闭 ContentProof。因此目标实际拟写 bytes 与 admission 是同一内容、同类别、同 MIME 表示；不是根据目标名猜测。此传递证明须由 Broker 实际 stage 篡改/源替换/跨路径 revision 契约支持，不增加一个自报 `verified:true` 字段。
 7. 沿现有真实原 Intent ACK → 最终 file_gate → commit → Outcome ACK。最终 principal.verify 返回后仍在同一 control lock 内，重验原 roots/配置 Snapshot/pair binding、实际 Broker roots；任何漂移走既有 cancel＋ACK 路径，不能把未闭合取消误报为安全拒绝。此时不再做正文分类或 stage/L0 大制作；Broker 自身必须完成的最终双路径 CAS 不得削弱。

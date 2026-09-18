@@ -67,6 +67,11 @@ except (OSError, UnicodeError, ValueError):
 PY_SOURCE
 sha256sum --check --status "$STUDIOLO_PAYLOAD/SOURCE_SHA256SUMS"
 printf '%s\n' '解压源码集合与逐文件 SHA256 校验通过。'
+# 类型 token 的 TTY 门禁契约要在真实 PTY 下驱动实际产品二进制。运行包里二进制在 bin/ 下，
+# 而测试程序内置的回退路径是构建机的 target/release/，在服务器源码目录下不存在——
+# 不显式给出绝对路径，该契约会以「找不到二进制」失败（设计如此，不允许据此跳过）。
+export STUDIOLO_TEST_AGENT_BIN="$STUDIOLO_PAYLOAD/bin/studiolo-agent"
+export STUDIOLO_TEST_AGENT_TERMINAL_SCRIPT="$STUDIOLO_EXPECTED/crates/agent-server/tests/support/admin_terminal.py"
 STUDIOLO_TEST_COUNT=0
 declare -A STUDIOLO_SEEN_TESTS=()
 while IFS= read -r STUDIOLO_TEST || [[ -n "$STUDIOLO_TEST" ]]; do

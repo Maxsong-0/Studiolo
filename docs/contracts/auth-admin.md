@@ -62,6 +62,18 @@ Owner/TTL使用原Auth构造约束，重开必须与持久配置相同。seed_re
   不自动加载`.env`或读种子文件；本片不自主创建secret mount。手机预配置和真实种子交付仍属外部安全流程。
 - 自有环境副本/解码缓冲进入零化封装，不宣称擦除OS/父进程环境、调用方副本或第三方所有内部缓冲。
   在读取秘密之前把当前短命进程的核心转储软/硬限额均降为0并核读，不改父进程或服务；不冒称抵御管理员内存读取。
+  （**2026-09-17 T-056 核实**：该收紧现已是四项封闭措施，不止核心转储——`CoreDumpLimit`、
+  `ProcessInspection`（关可转储属性，挡 ptrace 与同 UID 读 `/proc/<pid>/{environ,mem,maps}`）、
+  `MemoryResidency`（锁定页不换出交换区）、`EnvironmentSlot`；见
+  `crates/host-config/src/process_safety/report.rs`，入口
+  `studiolo_host_config::process_safety::harden()` 由 `main.rs` 的 `run()` 第一条语句调用。
+  （**2026-09-17 T-059**：该实现已从 `crates/auth-admin/src/process_safety*` 搬到
+  `studiolo-host-config`，由登记工具、`studiolo-local-server` 与 `studiolo-maintain` 共用
+  同一份；本 crate 不再自持任何一份部分收紧，守卫见
+  `crates/auth-admin/tests/process_discipline.rs`。）规则是两分的：本平台**提供**的能力必须真正
+  生效并回读确认，否则整体拒绝且不读取秘密；本平台**不提供**的能力记为明确的「不支持」分类，
+  由调用方（`main::run`）负责记录下来——只返回不记录等同于静默跳过，同样不允许。
+  本条只收紧本短命进程自身，仍不抵御 root、调试授权持有者或已能读本进程内存的一方。）
   产品不派生子进程，不提供任意环境变量名配置；不在运行中修改环境来伪称彻底清除。
 - OTP从控制TTY隐藏读取固定6位ASCII数字；逐字节有界缓冲，支持退格，拒绝第7位、非ASCII、EOF与取消。
   隐藏模式设置后才提示输入；退出前丢弃多余输入，显式恢复并核读属性。

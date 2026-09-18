@@ -20,6 +20,13 @@ M1 的只读 namespace revision 保持原语义。共享读取内核将超限错
 
 新 `router_with_canonical_sessions` 同时接收同根只读视图和 canonical 句柄，
 目录身份不相等就拒绝装配。旧三个组合入口均不注册新路由。
+（**2026-09-17 T-056 核实**：`crates/local-server/src/routing.rs` 现有五个公开组合入口
+——`router:20`、`router_with_access:40`、`router_with_sessions:64`、
+`router_with_canonical_sessions:87`、`router_with_factors:114`。本段说的「旧三个」仍然成立：
+前三个都传 `canonical = None`，不挂 `/api/v1/file`。但 T-024 后加的 `router_with_factors`
+同样可以接收一个 `Option<Arc<CanonicalReadVault>>` 并在其为 `Some` 时挂上本路由，
+装配前做同一条根身份相等检查（`routing.rs:114-133`、`:236-238`），不是「只有
+`router_with_canonical_sessions` 能挂」。）
 生产 CLI 仅显式 `--canonical` 且已有 `--session-config` 才启用；
 缺失/损坏身份在外部取钥前失败，不初始化真实根。
 

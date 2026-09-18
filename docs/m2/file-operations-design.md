@@ -5,6 +5,27 @@
 2026-09-13。已完成设计复核与权威动作登记，产品实现仍待推进，未启用 HTTP、Bridge 或真实 Sync。
 本稿基于现有 Broker、流式通路及权威 Vault；API 名称为建议，实施时冻结具体类型与版本兼容。
 
+> **状态更正（2026-09-17 T-056 文档漂移审计）**：上面两行只反映 2026-09-13。此后三种人侧
+> 文件操作均已实现并接线（`FileOperationRequest::{Rename, Delete, RestoreTombstone}` 见
+> `crates/vault-broker/src/file_operation/model.rs:36-66`，HTTP 入口 `/api/v1/file-operations`
+> 见 `crates/local-server/src/file_operations.rs:15`）。现行权威：Broker 与审计/维护 →
+> [`file-rename-contract.md`](file-rename-contract.md)；人侧配置/HTTP/界面 →
+> [`human-rename-contract.md`](human-rename-contract.md)；Delete 与最近删除 →
+> [`file-operations.md`](file-operations.md)；私有批准 →
+> [`file-operations-config.md`](file-operations-config.md)。三处差异已核实：
+>
+> - §2 的结论**是靠另起类型命名空间落实的，不是改旧类型**，所以表中前四行至今仍准确，
+>   别误读成「已经改掉」：`MutationKind` 仍只有 `Replace`/`Restore`（`recorded.rs:36-44`）、
+>   `ContentAuditEvent.new_revision` 仍必填（`content_audit/event.rs:58`）。
+> - 确已改动两处：`maintenance/model.rs` 的 `target_revision` 放宽为 `Option<Revision>`
+>   并加 `file_operation_id`/`secondary` 双路径字段（`:99-114`）；`history/prune.rs` 在原
+>   「50 版 / 30 天」之上加了墓碑引用保护（`:17`、`:34`）。
+> - §3 草案的 `Rename { …, target: MustNotExist, … }` 带 `target` 字段；最终冻结的
+>   `FileOperationRequest::Rename` **没有**该字段，目标条件由类型本身固定（`model.rs:37-47`）。
+>
+> 仍然成立、不得据此放宽：默认关闭、7 天最近删除、未知状态不得补成功，以及真实 Vault
+> 启用、Bridge/真实 Sync 与生产发布均未验收。
+
 ## 1. 权威要求与本片边界
 
 权威根：`/Users/maxsong/Documents/Max's Secret Place/项目/Studiolo/`。

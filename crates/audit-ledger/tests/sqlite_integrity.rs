@@ -25,7 +25,10 @@ fn restart_rejects_schema_head_offset_and_record_tampering() {
         "PRAGMA user_version=99",
         "PRAGMA application_id=0",
         "UPDATE audit_meta SET codec='unknown'",
-        "UPDATE audit_meta SET schema_version=2",
+        // 2 是当前版本；改成任何别的值、或退回 T-012 的 v1，都必须拒绝而不是自动迁移。
+        "UPDATE audit_meta SET schema_version=3",
+        "UPDATE audit_meta SET schema_version=1",
+        "PRAGMA user_version=1",
         "UPDATE audit_meta SET last_offset=0",
         "UPDATE audit_meta SET last_hash='invalid'",
         "DELETE FROM audit_meta",
@@ -36,6 +39,9 @@ fn restart_rejects_schema_head_offset_and_record_tampering() {
         "UPDATE audit_events SET record_json=replace(record_json,'allow','deny')",
         "UPDATE audit_events SET record_json=record_json || ' '",
         "CREATE TABLE unexpected(value TEXT)",
+        "DROP TABLE audit_segments",
+        // 账本只有一条记录，还不该有任何封存段；凭空出现的摘要必须被拒绝。
+        "INSERT INTO audit_segments VALUES(0, 128, '00', '00')",
         "CREATE TRIGGER unexpected AFTER INSERT ON audit_events BEGIN DELETE FROM audit_events; END",
     ] {
         let dir = support::private_dir();

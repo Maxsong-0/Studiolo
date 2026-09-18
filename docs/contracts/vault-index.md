@@ -22,12 +22,14 @@ pub trait VaultIndex: Send + Sync {
     fn link_health(&self) -> Result<LinkHealth, IndexError>;
     fn source_profile(&self, path: &VaultPath) -> Result<SourceProfile, IndexError>;
     fn generation(&self) -> IndexGeneration;
+    fn diagnostics(&self) -> Vec<IndexDiagnostic>;
 }
 ```
 
 `MarkdownDocument::new(VaultPath, contents)` 要求调用方显式供给 UTF-8 文本；索引没有环境
-路径或 Vault 文件句柄。`IndexedDocument` 统一返回 path、标题及来源、归一 frontmatter、
-平面/树形标题、出链、来源 profile 与非致命 warnings。
+路径或 Vault 文件句柄。读不进来的笔记走 `MarkdownDocument::unavailable(VaultPath,
+DocumentUnavailable)`（见 §8）。`IndexedDocument` 统一返回 path、标题及来源、归一
+frontmatter、平面/树形标题、出链、来源 profile、非致命 warnings 与 `unavailable`。
 
 ## 2. rebuild 与 generation
 
@@ -60,6 +62,20 @@ alias 和 embed；缺分隔符或空目标分别为 `WikilinkParseError::Missing
 成功结果携带 `ResolutionRule::{ExactRelative, VaultRootPath, NearestUnique { ancestor_depth }}`。
 候选按 `VaultPath` 稳定排序；歧义/悬空是 `LinkResolution`，不是 `IndexError`，不得猜选。
 `backlinks` 只含成功解析到目标的入链；`link_health` 汇总 dangling、ambiguous 与按规则计数。
+
+解析走预聚合的 wikilink 索引，不再逐条链接遍历全库：每篇笔记贡献一个「整条逻辑路径」键
+和一组「名称」键（文件名去 `.md`、展示标题、frontmatter `aliases`），两侧都经同一个折叠
+函数（去首尾空白 + Unicode 小写）产生比较键。单条链接的解析代价只与同键候选数和源文档的
+目录层数有关，与 Vault 规模无关；就近唯一等价于「取候选首次落入的最小祖先层级，该层唯一
+即命中，该层已有多个则各层都不可能唯一，直接按 Vault 全域报歧义」。
+
+索引是可丢弃的派生物，内容态仍然只在文件里。每代 rebuild 只推进差异：本轮消失的文档立即
+退出候选集合，比较键未变的文档不重新索引。**逐代增量维护的结果必须与只拿本代文件从零重建
+的结果完全一致**，索引丢失时由当前文档集合完整重建即可恢复。
+
+`VaultPath` 只接受 NFC，因此路径、文件名与标题侧的比较键天然是 NFC；正文里手写成分解拼写
+的链接文本目前折不成同一个键，会判为 `Dangling`（已登记缺口，修法见 `link_index.rs` 中
+`comparison_key` 的说明）。
 
 ## 4. frontmatter 归一
 
@@ -109,6 +125,10 @@ fallback、Unicode 标题树、权威中英文别名/规范键优先/raw/未知�
 相对/根/就近/歧义/悬空链接、只对 resolved link 建反链、health 计数、四种 source profile
 及 Restricted 默认，并以源码扫描证明 crate 没有 canonical 文件写 API。
 
+T-054 另加三类：逐代增量索引与从零重建的公开查询结果逐项一致（含删除、改名、别名反复
+变更与空代次）；降级诊断不影响正常项且渲染文案不含物理前缀；单条链接解析的候选访问量在
+500 / 4000 / 16000 篇三种库规模下逐例相等。
+
 ## 7. M3 单篇解析缓存（T-039）
 
 `InMemoryVaultIndex::rebuild_cached` 接收本次 `MarkdownDocument` 和可选 `ParseCache`，
@@ -117,3 +137,21 @@ fallback、Unicode 标题树、权威中英文别名/规范键优先/raw/未知�
 `ParseCache::encode/decode` 是纯有界编码，不读取或写入任何路径；正文始终由本次输入提供。
 格式/解析版本不匹配应丢弃缓存；预算超限只停止持久化，不阻止有效文档构建内存视图。
 缓存信任边界、私有 SQLite 和完整副本验证见 [M3 持久派生索引](../m3/persistent-index.md)。
+
+## 8. 降级诊断（T-054）
+
+符号链接、超大笔记与读不出 UTF-8 的笔记**不得让整批 rebuild 失败**。调用方用
+`MarkdownDocument::unavailable(path, reason)` 把它们登记成逻辑路径，`reason` 取自闭合枚举
+`DocumentUnavailable::{Symlink, TooLarge, Unreadable}`。
+
+- 降级笔记仍是本代次里的一条 `IndexedDocument`，`unavailable` 为 `Some(reason)`；正文缺席，
+  因此没有标题树、出链或 frontmatter warning，标题只能退回文件名。
+- 它仍然占住自己的逻辑名，指向它的入链照常建立——降级只说明本轮读不到正文，不代表这条
+  路径不存在。
+- `diagnostics()` 返回本代次全部降级项，按逻辑路径稳定排序；诊断属于当代次派生状态，
+  上一代的结论绝不沿用。笔记恢复可读后诊断随之消失。
+- `DocumentUnavailable` 故意是不带自由字符串的闭合枚举：诊断会渲染给用户，携带 `io::Error`
+  文案就可能把 Vault 之外的物理路径漏出去。`IndexDiagnostic` 只携带 `VaultPath`，其
+  `Display` 输出只含逻辑路径与固定原因文案。
+- `rebuild_cached` 同样透传 `unavailable`。它是**本轮输入事实**而不是解析结果，因此不进
+  `ParseCache`，上一轮的缓存行不能把本轮的降级盖过去。

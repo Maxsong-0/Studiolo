@@ -3,7 +3,7 @@ use studiolo_vault_index::{FrontmatterValue, NormalizedStatus};
 use crate::{
     ActionItem, Sourced, actions,
     derive::{Inputs, direct_child},
-    markdown, metadata,
+    markdown, metadata, scan,
 };
 
 pub(crate) fn open_bugs(
@@ -17,9 +17,8 @@ pub(crate) fn open_bugs(
     let mut count = 0;
     let mut source = None;
     let mut unknown = false;
-    for (path, (input, parsed)) in inputs
-        .iter()
-        .filter(|(path, _)| direct_child(path, &prefix))
+    for (path, (input, parsed)) in
+        scan::under(inputs, &prefix).filter(|(path, _)| direct_child(path, &prefix))
     {
         if let Some(action) = actions::frontmatter(root, name, input, parsed) {
             inbox.push(action);

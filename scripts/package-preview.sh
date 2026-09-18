@@ -25,9 +25,11 @@ STUDIOLO_INPUTS=(
   web/src web/package.json web/package-lock.json web/index.html
   web/tsconfig.json web/vite.config.ts web/eslint.config.js web/.prettierrc.json web/.prettierignore
   examples/m1-vault scripts/package-preview.sh scripts/check-preview.py scripts/test-check-preview.py
-  scripts/test-linux.sh scripts/run-preview-tests.sh scripts/test-preview-package.py .github/workflows/ci.yml
+  scripts/test-linux.sh scripts/run-preview-tests.sh scripts/test-preview-package.py
+  scripts/test-release-package.py scripts/test-install-package.py .github/workflows/ci.yml
   deploy/preview/studiolo-preview.service.in
   deploy/preview/studiolo-access.service.in deploy/preview/studiolo-tunnel.service
+  deploy/preview/install-runtime-package.sh docs/m3/release-packaging.md
 )
 COPYFILE_DISABLE=1 tar -cf - "${STUDIOLO_INPUTS[@]}" |
   tar -xf - -C "$STUDIOLO_OUT/source"
@@ -41,6 +43,8 @@ COPYFILE_DISABLE=1 tar -czf "$STUDIOLO_OUT/payload/source.tar.gz" \
 # 在独立源码快照构建，避免产物与已归档源码发生偏差。
 python3 "$STUDIOLO_OUT/source/scripts/test-check-preview.py"
 python3 "$STUDIOLO_OUT/source/scripts/test-preview-package.py"
+python3 "$STUDIOLO_OUT/source/scripts/test-release-package.py"
+python3 "$STUDIOLO_OUT/source/scripts/test-install-package.py"
 npm --prefix "$STUDIOLO_OUT/source/web" ci --ignore-scripts
 npm --prefix "$STUDIOLO_OUT/source/web" test
 npm --prefix "$STUDIOLO_OUT/source/web" run lint
@@ -57,6 +61,7 @@ cp "$STUDIOLO_OUT/source/deploy/preview/studiolo-access.service.in" "$STUDIOLO_O
 sed "s/@RELEASE@/$STUDIOLO_RELEASE/g" \
   "$STUDIOLO_OUT/payload/studiolo-access.service.in" > "$STUDIOLO_OUT/payload/studiolo-access.service"
 cp "$STUDIOLO_OUT/source/deploy/preview/studiolo-tunnel.service" "$STUDIOLO_OUT/payload/"
+cp "$STUDIOLO_OUT/source/deploy/preview/install-runtime-package.sh" "$STUDIOLO_OUT/payload/"
 
 docker pull --platform linux/amd64 "$STUDIOLO_IMAGE"
 # Cargo 缓存可能保留编译时的绝对源码路径；每个发布包使用全新目标卷。
@@ -81,9 +86,10 @@ docker run --rm --platform linux/amd64 \
   -e CARGO_TARGET_DIR=/build-target \
   "$STUDIOLO_IMAGE_REF" bash -euo pipefail -c '
     cargo test --workspace --all-targets --release --locked --no-run --message-format=json > /build-meta/tests.jsonl
-    cargo build --release --locked -p studiolo-local-server --features studiolo-auth/production --bin studiolo-local-server
-    cargo build --release --locked -p studiolo-local-server --features studiolo-auth/production --bin studiolo-maintain
-    cargo build --release --locked -p studiolo-auth-admin --features production
+    # 生产程序构建的 Cargo JSON 是特征与链接结果的唯一凭据；三次构建追加到同一份台账。
+    cargo build --release --locked -p studiolo-local-server --features studiolo-auth/production --bin studiolo-local-server --message-format=json > /build-meta/products.jsonl
+    cargo build --release --locked -p studiolo-local-server --features studiolo-auth/production --bin studiolo-maintain --message-format=json >> /build-meta/products.jsonl
+    cargo build --release --locked -p studiolo-auth-admin --features production --message-format=json >> /build-meta/products.jsonl
     mkdir /out/bin
     install -m 755 /build-target/release/studiolo-local-server /out/bin/
     install -m 755 /build-target/release/studiolo-auth-admin /out/bin/
@@ -108,6 +114,7 @@ const artifactOwners = new Map();
 const packageIds = new Map();
 const identities = new Map();
 const targets = new Set();
+const libraries = new Set();
 let complete = false;
 for (const line of fs.readFileSync(path.join(out, 'build-meta/tests.jsonl'), 'utf8').split('\n')) {
   if (!line.trim()) continue;
@@ -140,10 +147,20 @@ for (const line of fs.readFileSync(path.join(out, 'build-meta/tests.jsonl'), 'ut
   artifacts.set(name, relative);
   artifactOwners.set(name, owner);
   if (item.target.kind.includes('test')) targets.add(`${crate}/${item.target.name}`);
+  if (item.target.kind.includes('lib')) libraries.add(crate);
 }
+// 按具体包及测试目标验收；T-046～T-048 新增的 crate 一并纳入，缺一即拒绝出包。
 const required = ['studiolo/architecture', 'vault-broker/linux_path_security',
-  'local-server/startup_contract', 'auth-admin/cli_process', 'local-server/maintenance_contract'];
-if (!complete || artifacts.size === 0 || required.some(name => !targets.has(name))) {
+  'local-server/startup_contract', 'auth-admin/cli_process', 'local-server/maintenance_contract',
+  'backup/contract',
+  'observability/health_contract', 'observability/quota_contract', 'observability/alert_contract',
+  'observability/deadman_contract', 'observability/store_contract', 'observability/whitelist_contract',
+  'host-config/sync_transport_contract', 'host-config/alerting_contract'];
+// sync-transport 的一次一运行契约写在 lib 目标内（`#[path] tests/owned_run_private`），
+// 没有独立集成测试目标；按 lib 测试程序验收，不用其他 crate 的同名目标充数。
+const requiredLibraries = ['sync-transport'];
+if (!complete || artifacts.size === 0 || required.some(name => !targets.has(name))
+    || requiredLibraries.some(crate => !libraries.has(crate))) {
   throw new Error('incomplete test build or missing required safety tests');
 }
 const names = [...artifacts.keys()].sort();
@@ -151,6 +168,76 @@ fs.writeFileSync(path.join(out, 'build-meta/test-copy-list'), names.map(name => 
 fs.writeFileSync(path.join(out, 'payload/test-list'), names.map(name => `tests/${name}\n`).join(''));
 console.log(`已编译 ${names.length} 个 Rust 测试程序；尚未执行。`);
 NODE
+
+# 生产程序的特征与链接结果同样只以 Cargo JSON 为准；回执随包发布，供服务器原生验收复核。
+node - "$STUDIOLO_OUT" "$STUDIOLO_SOURCE_ROOT" <<'NODE_PRODUCTS'
+const fs = require('node:fs');
+const path = require('node:path');
+const [out, expectedRoot] = process.argv.slice(2);
+// 运行包应发布的生产程序，及其所属的工作区 crate 目录。
+const products = new Map([
+  ['studiolo-local-server', 'local-server'],
+  ['studiolo-maintain', 'local-server'],
+  ['studiolo-auth-admin', 'auth-admin'],
+]);
+// T-046～T-048 新增的运行时 crate 与既有安全边界 crate 必须真实参与生产构建；
+// 只被工作区声明而没有进入链接结果，等同于没有发布这些程序。
+const linked = ['backup', 'observability', 'sync-transport', 'host-config',
+  'core', 'vault-broker', 'auth'];
+const features = new Map();
+const executables = new Map();
+let finished = 0;
+for (const line of fs.readFileSync(path.join(out, 'build-meta/products.jsonl'), 'utf8').split('\n')) {
+  if (!line.trim()) continue;
+  const item = JSON.parse(line);
+  if (item.reason === 'build-finished') {
+    if (item.success !== true) throw new Error('生产程序构建未成功，拒绝出包');
+    finished += 1;
+    continue;
+  }
+  if (item.reason !== 'compiler-artifact') continue;
+  if (item.profile?.test === true) throw new Error('生产构建混入了测试产物，拒绝出包');
+  if (typeof item.manifest_path !== 'string') throw new Error('生产构建产物缺少 manifest 路径');
+  // 第三方依赖来自注册表缓存，不在源码快照内；只对工作区内的包判定身份与特征。
+  if (!item.manifest_path.startsWith(expectedRoot + '/')) continue;
+  const manifest = path.posix.relative(expectedRoot, item.manifest_path);
+  const crate = /^crates\/([A-Za-z0-9_-]+)\/Cargo\.toml$/.exec(manifest)?.[1];
+  if (!crate || typeof item.target?.name !== 'string' || !Array.isArray(item.target.kind)
+      || !Array.isArray(item.features)) {
+    throw new Error('工作区生产产物缺少包身份或特征清单');
+  }
+  const enabled = [...item.features].sort().join(',');
+  if (features.has(crate) && features.get(crate) !== enabled) {
+    throw new Error('同一工作区包在三次生产构建中启用了不同特征');
+  }
+  features.set(crate, enabled);
+  if (!item.target.kind.includes('bin')) continue;
+  if (typeof item.executable !== 'string' || !item.executable) continue;
+  if (products.has(item.target.name) && products.get(item.target.name) !== crate) {
+    throw new Error('生产程序不属于预期的工作区包');
+  }
+  executables.set(item.target.name, crate);
+}
+if (finished !== products.size) throw new Error('生产构建次数与应发布的程序数不符');
+for (const [product, crate] of products) {
+  if (executables.get(product) !== crate) throw new Error('运行包缺少应发布的生产程序：' + product);
+}
+for (const crate of linked) {
+  if (!features.has(crate)) throw new Error('生产程序未链接必须随包发布的 crate：' + crate);
+}
+for (const [crate, enabled] of features) {
+  if (enabled.split(',').includes('test-support')) {
+    throw new Error('生产构建启用了测试验证器特征：' + crate);
+  }
+}
+if (!features.get('auth').split(',').includes('production')) {
+  throw new Error('身份模块未以生产特征构建，拒绝出包');
+}
+const receipt = [...products].map(([product, crate]) => `product:${product} crate:${crate}\n`)
+  .concat([...features.keys()].sort().map(crate => `crate:${crate} features:${features.get(crate)}\n`));
+fs.writeFileSync(path.join(out, 'payload/product-features.txt'), receipt.join(''));
+console.log(`已核对 ${products.size} 个生产程序与 ${features.size} 个工作区包的特征；回执已随包。`);
+NODE_PRODUCTS
 
 docker run --rm --platform linux/amd64 \
   -v "$STUDIOLO_OUT/payload":/out \

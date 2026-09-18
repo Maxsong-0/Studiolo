@@ -21,6 +21,7 @@ pub(crate) async fn guard(
         | crate::canonical::PATH
         | crate::history::PATH
         | crate::history::FILE
+        | crate::health::PATH
         | crate::file_operations::TOMBSTONES => "GET",
         crate::auth_http::SESSIONS => "GET, POST",
         crate::auth_http::REVOKE => "POST",

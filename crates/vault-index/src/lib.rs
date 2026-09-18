@@ -10,6 +10,7 @@ mod cache;
 mod frontmatter;
 mod frontmatter_types;
 mod frontmatter_yaml;
+mod link_index;
 mod link_parse;
 mod link_resolve;
 mod links;
@@ -36,8 +37,8 @@ pub use source::{SourceProfile, SourceProvenance};
 
 pub use cache::{CacheError, MAX_CACHE_BYTES, PARSE_CACHE_VERSION, ParseCache, ParseCacheStats};
 pub use types::{
-    DocumentTitle, IndexError, IndexGeneration, IndexedDocument, MarkdownDocument, ParseWarning,
-    TitleSource,
+    DocumentTitle, DocumentUnavailable, IndexDiagnostic, IndexError, IndexGeneration,
+    IndexedDocument, MarkdownDocument, ParseWarning, TitleSource,
 };
 
 /// Public query seam for the read-only, derived Vault index.
@@ -74,6 +75,11 @@ pub trait VaultIndex: Send + Sync {
 
     /// Returns counters for the current generation.
     fn generation(&self) -> IndexGeneration;
+
+    /// 返回本代次全部降级诊断，按逻辑路径排序。
+    ///
+    /// 符号链接与超大笔记只在这里出现，不会让 rebuild 失败；结果只含逻辑路径。
+    fn diagnostics(&self) -> Vec<IndexDiagnostic>;
 }
 /// In-memory M0 adapter for [`VaultIndex`].
 #[derive(Debug, Default)]
@@ -82,6 +88,8 @@ pub struct InMemoryVaultIndex {
     backlinks: BTreeMap<VaultPath, Vec<Backlink>>,
     link_health: LinkHealth,
     generation: IndexGeneration,
+    diagnostics: Vec<IndexDiagnostic>,
+    pub(crate) link_index: link_index::LinkIndex,
 }
 
 impl InMemoryVaultIndex {
@@ -101,7 +109,8 @@ impl VaultIndex for InMemoryVaultIndex {
             }
             replacement.insert(
                 input.path().clone(),
-                parse::ParsedDocument::parse(input).finish(input.path()),
+                parse::ParsedDocument::parse(input)
+                    .finish(input.path(), input.unavailable_reason()),
             );
         }
         Ok(self.publish(replacement))
@@ -126,7 +135,7 @@ impl VaultIndex for InMemoryVaultIndex {
         if !self.documents.contains_key(from) {
             return Err(IndexError::NotIndexed(from.clone()));
         }
-        Ok(links::resolve(&self.documents, from, target))
+        Ok(links::resolve(&self.link_index, from, target))
     }
 
     fn backlinks(&self, to: &VaultPath) -> Result<Vec<Backlink>, IndexError> {
@@ -146,5 +155,9 @@ impl VaultIndex for InMemoryVaultIndex {
 
     fn generation(&self) -> IndexGeneration {
         self.generation
+    }
+
+    fn diagnostics(&self) -> Vec<IndexDiagnostic> {
+        self.diagnostics.clone()
     }
 }

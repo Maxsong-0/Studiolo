@@ -1,9 +1,12 @@
 mod admin;
+mod backup;
 mod maintenance;
 mod manifest;
+mod observability;
 mod policy;
 mod source;
 mod sync_bridge;
+mod sync_transport;
 mod unix_ingress;
 
 pub(crate) use manifest::{dependency_cycle, parse_manifest, workspace_manifests};

@@ -182,7 +182,12 @@ impl InMemoryVaultIndex {
                         parsed.clone()
                     },
                 );
-            replacement.insert(input.path().clone(), parsed.clone().finish(input.path()));
+            replacement.insert(
+                input.path().clone(),
+                parsed
+                    .clone()
+                    .finish(input.path(), input.unavailable_reason()),
+            );
             entries.push(CachedDocument {
                 path: input.path().clone(),
                 content_sha256: hash,

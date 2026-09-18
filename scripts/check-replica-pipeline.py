@@ -5,6 +5,9 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import pty
+import re
+import select
 import socket
 import subprocess
 import sys
@@ -48,7 +51,7 @@ class Pipeline:
         (self.data / "audit").mkdir(mode=0o700, parents=True)
         self.data.chmod(0o700)
         self.admin("init")
-        self.token = self.admin("type-issue", "--type", "fixture").splitlines()[-1]
+        self.token = self.issue_type_token("fixture")
         self.id = 0
         self.session = None
 
@@ -57,6 +60,39 @@ class Pipeline:
                                 capture_output=True, text=True, timeout=20)
         require(result.returncode == 0, "隔离身份库初始化失败")
         return result.stdout
+
+    def issue_type_token(self, kind):
+        """在真实 PTY 里签发类型 token。
+
+        类型 token 是 MCP 供给面的全部身份，产品只把它写真实前台控制终端
+        （见 docs/contracts/agent-supply.md §2）：无控制终端、或任一标准流被重定向，
+        都会被拒绝且不铸出 token。本验收脚本因此给它一个真实 PTY，
+        **不是**给产品开非 TTY 后门——那等于把门禁本身废掉。
+        """
+        pid, master = pty.fork()
+        if pid == 0:                       # 子进程：三个标准流都是这个 PTY
+            os.execve(self.binary,
+                      [self.binary, "admin", "type-issue", "--data", str(self.data),
+                       "--type", kind],
+                      {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "LANG": "C.UTF-8"})
+        seen = bytearray()
+        deadline = time.monotonic() + 20
+        while time.monotonic() < deadline:
+            if not select.select([master], [], [], 0.5)[0]:
+                continue
+            try:
+                chunk = os.read(master, 4096)
+            except OSError:
+                break
+            if not chunk:
+                break
+            seen.extend(chunk)
+        os.close(master)
+        code = os.waitpid(pid, 0)[1]
+        require(code == 0, "类型 token 签发失败（真实 PTY 下）")
+        found = re.search(rb"sag1_[0-9a-f]{64}", bytes(seen))
+        require(found is not None, "控制终端上没有出现类型 token")
+        return found.group(0).decode()
 
     def push(self, truncated=False):
         with archive(capture(str(self.source))) as stream:

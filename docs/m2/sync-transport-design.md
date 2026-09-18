@@ -1,5 +1,20 @@
 # 双向 Sync 与镜像写入协调设计输入
 
+> **状态更正（2026-09-17 T-056 文档漂移审计）**：下文「实际 SyncTransport 尚待实现及实机验收」
+> 与小节标题「已登记、待实现验证的写者协调」只反映 2026-09-13 的写作当日。
+> 此后 T-048 已把 `SyncTransportOwner` 实现到 `crates/sync-transport`：
+> 封闭 API 见 `owned_run/owner.rs:17-153`（`open_existing`/`inspect`/`prepare_once`/
+> `pending_audit`/`confirm_audit`/`start`/`cancel_prepared`/`request_stop`/`wait`/`recover`/
+> `stop_recovered`/`quiescent`/`verify_quiescent`），持久 schema v1 见 `owned_run/state.rs`，
+> 唯一真实 IO 见 `store/publish.rs`，Linux adapter 见 `linux/`，纯逻辑契约 64 项。
+> 实施记录与三处已登记的 API 差异以 [`owned-run.md`](owned-run.md) 为现行权威。
+>
+> **仍然成立、不得据此放宽的部分**：平台「受支持」状态尚未取得 ——
+> `linux::verify_backend`（`crates/sync-transport/src/linux.rs:198-215`）在所有平台都返回缺口
+> （非 Linux `UnsupportedPlatform`，Linux `TrustedLauncherNotProvisioned`），
+> 因此今天任何机器都装配不出 `SyncTransportOwner`，也从未启动过 headless 或任何第三方程序；
+> 真实双向搬运、受控 headless、实机往返与两周试跑同样未验收。
+
 2026-09-05 核查，2026-09-13 T-046接续实施；尚未接入真实 Sync。现行权威为 Vault 的 ADR-005、
 ADR-010 和 PRD 主入口修订表；本文件不代替正式分片计划或已采纳 ADR。
 

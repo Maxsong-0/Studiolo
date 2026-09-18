@@ -10,8 +10,10 @@ ControlDb::open(path, vault_uuid) -> Result<ControlDb, DbError>
 ControlDb::open_in_memory(vault_uuid) -> Result<ControlDb, DbError>
 ```
 
-打开时依次配置/迁移/绑定：`journal_mode=WAL`（内存库使用 SQLite 可支持模式）、
-`synchronous=FULL`、`foreign_keys=ON`、`busy_timeout=5000`、`trusted_schema=OFF`。文件默认由
+打开的固定次序是：先设只作用于本连接、不落盘的 `synchronous=FULL`、`foreign_keys=ON`、
+`busy_timeout=5000`、`trusted_schema=OFF`；再做迁移准入的只读版本复核；复核通过后迁移；
+迁移成功之后才设持久的 `journal_mode=WAL`（内存库落到 SQLite 可支持的 `memory`）；最后绑定
+Vault。持久 journal 配置排在准入之后是 T-029 定下的边界，副作用范围见 §7。文件默认由
 组合根放在 `WORKBENCH_DATA/control.db`，必须位于 Vault 外。
 
 `vault_binding` 首次写入 `.workbench/vault.json` 对应的 Vault UUID；后续以不同 UUID 打开返回
@@ -130,8 +132,9 @@ completed / failed / abandoned 时返回它，调用方（TaskEngine）只按变
 `InvalidTransition.from` 里的状态名字符串（00-overview §6）。`UnsupportedSchema` 在持久
 PRAGMA和DDL前判定：迁移账本版本高于`SCHEMA_VERSION`即拒绝，迁移事务内还须独立复核。
 T-029将WAL设置移至迁移成功之后；静止、干净关闭的DELETE/WAL新版库须保持主数据库
-字节、schema/数据和journal配置，不自动降级或重建。此证据不承诺SQLite侧文件完全无写，
-也不覆盖热journal恢复或外部并发修改。账本名称按SQLite大小写规则识别，view不能冒充表。
+字节、schema/数据和journal配置，不自动降级或重建。该断言只覆盖主数据库文件本身，不覆盖
+`-wal`/`-shm`边车文件，也不承诺SQLite在拒绝路径上对文件系统零系统调用；热journal恢复与
+外部并发修改同样不在证据范围内。账本名称按SQLite大小写规则识别，view不能冒充表。
 （2026-09-05 T-027新增错误；T-029补副作用边界。）
 
 `open_in_memory` 是快速替身，但重启验收必须复用同一临时文件。契约测试至少覆盖：空库 v2

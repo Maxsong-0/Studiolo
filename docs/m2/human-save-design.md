@@ -1,5 +1,15 @@
 # 人侧保存的后续设计输入
 
+> **状态更正（2026-09-17 T-056 文档漂移审计）**：本页写于 2026-09-05，是设计输入。
+> 此后 T-046 已把它实现：可信可编辑范围 `HumanContentScope`（含 `allows`、
+> `preserves_generated`）见 `crates/host-config/src/human_content.rs:10,99,168`，
+> `POST /api/v1/mutations` 的 replace 分支见 `crates/local-server/src/editing.rs:19`
+> 并在 `routing.rs:243-246` 装配。**下文「尚未实现」「host-config 尚无可编辑范围」
+> 只反映写作当日**；现行权威是[人侧正文编辑契约](human-content-contract.md)，
+> 整文件删除/恢复/重命名另见 [`file-operations.md`](file-operations.md)、
+> [`file-rename-contract.md`](file-rename-contract.md)、[`human-rename-contract.md`](human-rename-contract.md)。
+> 仍然成立的是：真实身份与生产发布未验收。
+
 2026-09-05，只读核查；T-028及新鲜度之后另行认领，尚未实现。
 普通内容保存沿矩阵L2，规则母本/skills/能力集归M3的L3 policy/activate。
 有效L3也不能让普通保存端点兼任策略发布；AI整页替换不属于此入口。
