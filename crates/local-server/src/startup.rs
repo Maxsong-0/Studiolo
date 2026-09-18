@@ -84,6 +84,10 @@ where
             .writer_data
             .as_ref()
             .is_some_and(|path| !path.is_absolute())
+        || options
+            .policy_data
+            .as_ref()
+            .is_some_and(|path| !path.is_absolute() || options.session.is_none())
     {
         return Err(StartupError::Configuration);
     }
@@ -185,7 +189,7 @@ where
     let (app, mode) = if let Some(config) = access_config {
         let access = connect(config).await.map_err(|_| StartupError::Access)?;
         if let Some(writer) = writer {
-            workbench = Some(writer.prepare(content_audit).await?);
+            workbench = Some(writer.prepare(content_audit.clone()).await?);
         }
         if let Some(sessions) = sessions {
             if let Some(workbench) = &workbench {
@@ -271,6 +275,23 @@ where
     // 健康页的路由已在 router 装配期挂好（且在鉴权那一层之内）；这里只把证据来源
     // 装上去。不装则健康页一律回 404，因此这一行是"健康页可用"的唯一开关。
     let app = studiolo_local_server::health::with_health_evidence(app, health_input::source());
+    // 策略平面同一形态：会话模式下显式给了 --policy-data 才打开主人发布者句柄并装上；
+    // 事件进人侧权威账本。缺这一步策略路由一律回 404。
+    let app = match (&options.policy_data, &content_audit) {
+        (Some(directory), Some(ledger)) => {
+            let store = studiolo_policy::PolicyStore::open(directory)
+                .map_err(|_| StartupError::Configuration)?;
+            studiolo_local_server::with_policy_plane(
+                app,
+                Arc::new(studiolo_local_server::PolicyPlane::new(
+                    store,
+                    Arc::clone(ledger),
+                )),
+            )
+        }
+        (Some(_), None) => return Err(StartupError::Configuration),
+        (None, _) => app,
+    };
     let prepared = PreparedServer {
         app,
         port: options.port,

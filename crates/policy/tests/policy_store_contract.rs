@@ -241,6 +241,13 @@ fn constant_constraints_cannot_be_relaxed_by_configuration() {
         assert_eq!(record.status, DesiredStatus::Rejected);
         let rendered = format!("{:?}", record.report.unwrap().problems);
         assert!(!rendered.contains("SECRET_CANARY"));
+        // 原文原样保留：重新校验得到同样的拒绝，发布只能是 ValidationFailed，绝不退化成撤销。
+        assert_eq!(record.body.as_deref(), Some(body));
+        let hash = store.effective().unwrap().effective_hash;
+        assert!(matches!(
+            store.activate(&record.id, &hash, "owner", NOW),
+            Err(PolicyError::ValidationFailed)
+        ));
     }
     assert!(store.effective().unwrap().entries.is_empty());
 }
@@ -664,7 +671,7 @@ fn agent_proposals_are_bounded_pending_and_never_change_effective() {
         .unwrap();
     assert_eq!(bad.status, DesiredStatus::Rejected);
     // 每实例上限。
-    for _ in 0..(MAX_PENDING_PER_INSTANCE - 0) {
+    for _ in 0..MAX_PENDING_PER_INSTANCE {
         let _ = agent.propose(
             "claude",
             "01INSTANCE",

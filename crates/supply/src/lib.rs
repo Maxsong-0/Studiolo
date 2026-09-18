@@ -20,7 +20,7 @@ pub use budget::{
 pub use database::{AgentStore, Instance, IssuedToken, ReadQuery, ReadRecord, validate_type_name};
 pub use error::SupplyError;
 pub use roots::{Entry, EntryKind, Note, Snapshot, SupplyRoots};
-pub use signpost::{Principal, Signpost, SignpostInput};
+pub use signpost::{PolicyRule, PolicySignpost, Principal, Signpost, SignpostInput};
 pub use studiolo_vault_broker::ScanLimits;
 pub use studiolo_vault_index::{ParseCache, ParseCacheStats};
 pub use studiolo_workbench::{

@@ -28,6 +28,9 @@ pub(crate) async fn guard(
         crate::editing::PATH if crate::editing::enabled(&state) => "POST",
         crate::file_operations::PATH if crate::file_operations::available(&state) => "GET, POST",
         path if factors_enabled(&state) && crate::auth_http::is_factor_path(path) => "POST",
+        path if state.sessions.is_some() && crate::auth_http::policy::is_policy_path(path) => {
+            crate::auth_http::policy::method_for(path).unwrap_or("GET")
+        }
         _ => "GET, HEAD",
     };
     let mut response = match authorize(&state, &mut request).await {
@@ -152,7 +155,8 @@ async fn authorize(state: &AppState, request: &mut Request) -> Result<(), ApiErr
             && crate::auth_http::is_factor_path(request.uri().path()))
             || (crate::editing::enabled(state) && request.uri().path() == crate::editing::PATH)
             || (crate::file_operations::available(state)
-                && request.uri().path() == crate::file_operations::PATH));
+                && request.uri().path() == crate::file_operations::PATH)
+            || crate::auth_http::policy::is_policy_post(request.uri().path()));
     if !matches!(*request.method(), Method::GET | Method::HEAD) && !session_command {
         return Err(ApiError(
             StatusCode::METHOD_NOT_ALLOWED,

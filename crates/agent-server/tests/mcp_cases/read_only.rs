@@ -32,7 +32,17 @@ async fn initialize_serves_a_budgeted_signpost_and_tools_read_only_inside_the_al
         .map(|tool| tool["name"].as_str().unwrap().to_owned())
         .collect::<Vec<_>>();
     names.sort();
-    assert_eq!(names, ["handshake", "list_entries", "read_note", "search"]);
+    assert_eq!(
+        names,
+        [
+            "handshake",
+            "list_entries",
+            "policy_read",
+            "propose_desired",
+            "read_note",
+            "search"
+        ]
+    );
 
     let read = f
         .call(

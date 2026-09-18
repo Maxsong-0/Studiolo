@@ -8,7 +8,8 @@ use studiolo_auth::CsrfToken;
 use subtle::ConstantTimeEq;
 
 use super::{
-    FACTOR_STATE, REVOKE, SELF, SESSIONS, cookie::Credentials, is_factor_path, responses::Failure,
+    FACTOR_STATE, REVOKE, SELF, SESSIONS, cookie::Credentials, is_factor_path, policy,
+    responses::Failure,
 };
 
 pub(super) fn one<'a>(headers: &'a HeaderMap, name: &str) -> Result<Option<&'a str>, Failure> {
@@ -80,6 +81,8 @@ pub(super) fn headers(request: &Request, origin: &str, factors: bool) -> Result<
         crate::editing::PATH => request.method() == Method::POST,
         crate::file_operations::PATH => matches!(*request.method(), Method::GET | Method::POST),
         value if factors && is_factor_path(value) => request.method() == Method::POST,
+        value if policy::is_policy_path(value) => policy::method_for(value)
+            .is_some_and(|allowed| allowed.split(", ").any(|method| method == request.method())),
         _ => matches!(*request.method(), Method::GET | Method::HEAD),
     };
     if !allowed {
@@ -95,6 +98,7 @@ pub(super) fn headers(request: &Request, origin: &str, factors: bool) -> Result<
             crate::editing::PATH => "POST",
             crate::file_operations::PATH => "GET, POST",
             value if factors && is_factor_path(value) => "POST",
+            value if policy::is_policy_path(value) => policy::method_for(value).unwrap_or("GET"),
             _ => "GET, HEAD",
         }));
     }
@@ -105,7 +109,8 @@ pub(super) fn headers(request: &Request, origin: &str, factors: bool) -> Result<
             | FACTOR_STATE
             | crate::editing::PATH
             | crate::file_operations::PATH
-    ) || (factors && is_factor_path(path)))
+    ) || (factors && is_factor_path(path))
+        || policy::is_policy_path(path))
         && request.uri().query().is_some()
     {
         return Err(Failure::bad_request());

@@ -3,6 +3,7 @@
 //! 秘密只有一条出口：`type-issue` 的类型 token 只写真实前台控制终端（见 `terminal`），
 //! 标准输出永远只承载非秘密的固定结果，因此重定向、管道与日志采集都拿不到明文。
 
+mod policy;
 mod terminal;
 
 use std::{io::Write as _, path::Path};
@@ -119,6 +120,27 @@ pub fn run(command: AdminCommand) -> Result<(), String> {
             println!("已从账本重建读取索引：{count} 条");
             Ok(())
         }
+        AdminCommand::Instances { data, limit } => {
+            let store = AgentStore::open_existing(&data).map_err(|error| error.to_string())?;
+            for (instance, last_seen) in
+                store.instances(limit).map_err(|error| error.to_string())?
+            {
+                println!(
+                    "{}\t{}\t{}\t{last_seen}",
+                    instance.id, instance.agent_type, instance.registered_at
+                );
+            }
+            Ok(())
+        }
+        AdminCommand::PolicyInit { policy } => policy::init(&policy),
+        AdminCommand::PolicyBootstrap {
+            policy,
+            data,
+            kind,
+            subject,
+            file,
+        } => policy::bootstrap(&policy, &data, &kind, &subject, &file),
+        AdminCommand::PolicyStatus { policy } => policy::status(&policy),
         AdminCommand::Outages { data } => {
             let store = AgentStore::open_existing(&data).map_err(|error| error.to_string())?;
             for (id, started, ended, denied, reason) in

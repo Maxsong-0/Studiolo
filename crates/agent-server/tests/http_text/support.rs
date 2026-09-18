@@ -96,6 +96,7 @@ pub async fn fixture() -> (TempDir, HttpServer) {
         replica_max_age_secs: 300,
         allow: vec!["项目/Alpha".into(), "_规则".into()],
         data: temp.path().join("data"),
+        policy: None,
         port: 0,
     })
     .await;

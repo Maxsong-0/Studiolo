@@ -135,6 +135,12 @@ fn private_storage_policy(
             "crates/supply/src/database.rs",
             "agent.sqlite3",
         )),
+        // M4 策略平面：第六个固定私有库文件名；主人与接入方句柄共用同一个打开点。
+        "studiolo-policy" => Some((
+            "crates/policy/src/storage.rs",
+            "crates/policy/src/database.rs",
+            "policy.sqlite3",
+        )),
         _ => None,
     }
 }
@@ -167,8 +173,10 @@ fn private_storage_remainder(crate_name: &str, path: &Path, source: &str) -> Str
     if path.ends_with("crates/supply/src/index_cache/paths.rs") {
         remainder = remainder.replace("fs::canonicalize(", "");
     }
-    if path.ends_with("crates/supply/src/storage.rs") {
-        // 只保留固定 agent.sqlite3 新建句柄，不能借此新增打开或通用写入。
+    if path.ends_with("crates/supply/src/storage.rs")
+        || path.ends_with("crates/policy/src/storage.rs")
+    {
+        // 只保留固定私有库新建句柄，不能借此新增打开或通用写入。
         remainder = remainder.replace("created_pin:Option<std::fs::File>,", "");
     }
     remainder

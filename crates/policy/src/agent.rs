@@ -156,7 +156,7 @@ impl PolicyAgentStore {
                 tx,
                 &id,
                 &report,
-                report.canonical.as_deref(),
+                Some(&input.body),
                 "agent",
                 Some(agent_type),
                 Some(instance_id),

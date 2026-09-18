@@ -47,7 +47,10 @@ pub(super) fn project_status(snapshot: &Snapshot, prefix: &VaultPath) -> Option<
 #[derive(Default)]
 pub(super) struct RulesSummary {
     pub(super) principles: Vec<String>,
+    /// 从 vault 规则文件里扫出的「一律叠加／必叠」句子（策略平面未接入时使用）。
     pub(super) hard_bindings: Vec<String>,
+    /// 策略平面能力集里的硬绑定（策略强制），接入后取代上一项。
+    pub(super) enforced: Vec<String>,
     pub(super) entries: Vec<(String, String)>,
 }
 
@@ -178,7 +181,7 @@ fn unclaimed_titles(content: &str) -> Vec<String> {
 
 /// 准则标题：母本形态 `## 准则① 永远说中文` 直接取标题；CLAUDE.md 形态取「准则」标题下的
 /// 编号加粗条目；两者都没有时退回文件里前 8 条编号加粗条目。
-fn principle_titles(content: &str) -> Vec<String> {
+pub(super) fn principle_titles(content: &str) -> Vec<String> {
     let headings =
         content
             .lines()

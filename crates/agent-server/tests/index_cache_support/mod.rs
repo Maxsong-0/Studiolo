@@ -36,6 +36,7 @@ impl Fixture {
             replica_max_age_secs: 300,
             allow: vec!["project".into()],
             data,
+            policy: None,
             index_cache: Some(cache.clone()),
             port: 0,
         };
@@ -63,6 +64,7 @@ pub fn replica_options(replica: &crate::replica_support::ReplicaFixture) -> Serv
         replica_max_age_secs: 300,
         allow: vec!["project".into()],
         data,
+        policy: None,
         index_cache: Some(cache),
         port: 0,
     }

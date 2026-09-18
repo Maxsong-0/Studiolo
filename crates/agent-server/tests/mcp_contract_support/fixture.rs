@@ -63,6 +63,7 @@ async fn fixture_with_router(make_router: impl FnOnce(Arc<AppState>) -> axum::Ro
         replica_max_age_secs: 300,
         allow: vec!["项目/Alpha".into(), "_规则".into()],
         data: data.clone(),
+        policy: None,
         port: 0,
     })
     .unwrap();

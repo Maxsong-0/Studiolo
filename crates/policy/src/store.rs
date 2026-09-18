@@ -344,11 +344,13 @@ impl PolicyStore {
                 (Submitter::Owner, true) => DesiredStatus::Validated,
                 (Submitter::Agent { .. }, true) => DesiredStatus::Pending,
             };
+            // 入库的是提交原文而不是规范化正文：结构无效的 desired 必须原样保留，
+            // 重新校验才会得到同样的拒绝，绝不能因为规范化失败而退化成「撤销」。
             sql::insert_desired(
                 tx,
                 &id,
                 &report,
-                report.canonical.as_deref(),
+                input.body.as_deref(),
                 submitter_kind,
                 agent_type,
                 instance,

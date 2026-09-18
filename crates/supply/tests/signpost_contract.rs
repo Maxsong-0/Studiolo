@@ -79,6 +79,7 @@ fn signpost_has_six_sections_and_is_derived_from_index_tasks_and_rules() {
         generated_at: "2026-09-07T01:00:00Z",
         freshness: None,
         tools: TOOLS,
+        policy: None,
     })
     .unwrap();
     let text = &signpost.text;
@@ -154,6 +155,7 @@ fn missing_skeleton_shows_unavailable_and_rules_absent_is_stated() {
         generated_at: "2026-09-07T01:00:00Z",
         freshness: None,
         tools: TOOLS,
+        policy: None,
     })
     .unwrap()
     .text;
@@ -208,6 +210,7 @@ fn oversized_material_is_trimmed_then_fails_closed_past_the_hard_budget() {
         generated_at: "2026-09-07T01:00:00Z",
         freshness: None,
         tools: TOOLS,
+        policy: None,
     };
     let error = signpost::derive(&input).unwrap_err();
     assert!(error.tokens > HARD_BUDGET_TOKENS);
@@ -227,6 +230,7 @@ fn freshness_is_never_trimmed_out_of_the_hard_handshake_budget() {
         generated_at: "2026-09-09T00:00:00Z",
         freshness: Some(&freshness),
         tools: TOOLS,
+        policy: None,
     })
     .unwrap_err();
     assert!(error.tokens > HARD_BUDGET_TOKENS);

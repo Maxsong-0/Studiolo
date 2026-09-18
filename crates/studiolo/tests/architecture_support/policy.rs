@@ -10,6 +10,8 @@ pub(crate) fn allowed_workspace_dependencies(crate_name: &str) -> &'static [&'st
         | "studiolo-audit-ledger"
         | "studiolo-runner-adapter" => &["studiolo-core"],
         "studiolo-gateway" => &["studiolo-core", "studiolo-audit-ledger"],
+        // M4 策略平面：只依赖值类型与审计事件类型；不得依赖 control-db / auth / vault-broker。
+        "studiolo-policy" => &["studiolo-core", "studiolo-audit-ledger"],
         "studiolo-auth" => &["studiolo-audit-ledger"],
         "studiolo-host-config" => &["studiolo-auth", "studiolo-core"],
         "studiolo-auth-admin" => &[
@@ -29,6 +31,8 @@ pub(crate) fn allowed_workspace_dependencies(crate_name: &str) -> &'static [&'st
             "studiolo-backup",
             "studiolo-observability",
             "studiolo-sync-transport",
+            // M4：人侧发布者句柄（L3 之后写 effective）与三级吊销入口。
+            "studiolo-policy",
         ],
         "studiolo-task-engine" => &[
             "studiolo-core",
@@ -56,7 +60,13 @@ pub(crate) fn allowed_workspace_dependencies(crate_name: &str) -> &'static [&'st
             "studiolo-audit-ledger",
         ],
         // MCP 主外壳：只经 supply 取内容；不直接依赖 vault-broker / control-db / auth。
-        "studiolo-agent-server" => &["studiolo-supply", "studiolo-audit-ledger", "studiolo-core"],
+        // M4 加 policy：接入方句柄（读 effective 与吊销状态、只插 pending 提案）。
+        "studiolo-agent-server" => &[
+            "studiolo-supply",
+            "studiolo-audit-ledger",
+            "studiolo-core",
+            "studiolo-policy",
+        ],
         other => panic!("new workspace crate {other} needs an explicit dependency policy"),
     }
 }

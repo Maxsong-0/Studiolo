@@ -4,7 +4,7 @@ mod sessions;
 
 use crate::{
     auth::{self, AgentType},
-    server::{AgentSession, ListEntriesArgs, ReadNoteArgs, SearchArgs},
+    server::{AgentSession, ListEntriesArgs, PolicyReadArgs, ReadNoteArgs, SearchArgs},
     state::AppState,
 };
 use axum::{
@@ -40,6 +40,7 @@ pub(crate) fn router(app: Arc<AppState>) -> Router {
         .route("/entries", any(dispatch))
         .route("/note", any(dispatch))
         .route("/search", any(dispatch))
+        .route("/policy", any(dispatch))
         .fallback(dispatch)
         .with_state(state)
         .layer(middleware::from_fn_with_state(app, auth::require_bearer))
@@ -106,9 +107,19 @@ fn supply_error(state: &HttpState, error: ErrorData) -> Response {
             ),
         };
     }
+    // 策略平面的拒绝（吊销、零权限、未接入）是授权拒绝而不是会话失效：403 且不提示重新握手。
+    if error.code == ErrorCode::INVALID_REQUEST
+        && (error
+            .message
+            .starts_with(crate::server::POLICY_DENIED_PREFIX)
+            || error.message.contains("能力集未授予")
+            || error.message.contains("策略平面未接入"))
+    {
+        return (StatusCode::FORBIDDEN, error.message.to_string()).into_response();
+    }
     let (status, message) = match error.code {
         ErrorCode::INVALID_PARAMS => (StatusCode::BAD_REQUEST, "请求参数或白名单路径无效"),
-        ErrorCode::RESOURCE_NOT_FOUND => (StatusCode::NOT_FOUND, "笔记不存在"),
+        ErrorCode::RESOURCE_NOT_FOUND => (StatusCode::NOT_FOUND, "笔记或策略母本不存在"),
         ErrorCode::INVALID_REQUEST => (StatusCode::UNAUTHORIZED, "会话无效，请重新握手"),
         _ => (
             StatusCode::SERVICE_UNAVAILABLE,
@@ -146,6 +157,7 @@ async fn dispatch(State(state): State<Arc<HttpState>>, request: Request<Body>) -
         "/entries" => (&["project"], &["project"]),
         "/note" => (&["path"], &["path"]),
         "/search" => (&["project", "text", "mode"], &["project", "text"]),
+        "/policy" => (&["kind", "subject"], &["kind"]),
         _ => return failure(StatusCode::NOT_FOUND, "入口不存在"),
     };
     let Ok(mut query) = input::query(request.uri().query(), allowed, required) else {
@@ -180,6 +192,14 @@ async fn dispatch(State(state): State<Arc<HttpState>>, request: Request<Body>) -
                 session
                     .text_read_note(ReadNoteArgs {
                         path: query.remove("path").unwrap_or_default(),
+                    })
+                    .await
+            }
+            "/policy" => {
+                session
+                    .text_policy_read(PolicyReadArgs {
+                        kind: query.remove("kind").unwrap_or_default(),
+                        subject: query.remove("subject"),
                     })
                     .await
             }

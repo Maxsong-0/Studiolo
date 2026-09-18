@@ -47,6 +47,7 @@ pub async fn fixture_with_age(age_ms: i64) -> Fixture {
         replica_max_age_secs: 300,
         allow: vec!["project".into()],
         data: data.clone(),
+        policy: None,
         port: 0,
     })
     .unwrap();

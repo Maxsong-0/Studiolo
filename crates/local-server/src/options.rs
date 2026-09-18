@@ -16,6 +16,7 @@ pub(crate) struct Options {
     pub(crate) project_repository: Option<(String, PathBuf)>,
     pub(crate) cargo_dependencies: bool,
     pub(crate) rust_call_sites: Option<Vec<String>>,
+    pub(crate) policy_data: Option<PathBuf>,
 }
 
 pub(crate) struct SessionOptions {
@@ -40,6 +41,7 @@ pub(crate) fn parse(mut args: impl Iterator<Item = String>) -> Result<Option<Opt
     let mut project_repository = None;
     let mut cargo_dependencies = false;
     let mut rust_call_sites = None;
+    let mut policy_data = None;
     let mut assets = PathBuf::from("web/dist");
     let mut label = "只读副本".to_owned();
     let mut port = 4317;
@@ -68,6 +70,7 @@ pub(crate) fn parse(mut args: impl Iterator<Item = String>) -> Result<Option<Opt
                 | "--project-repository"
                 | "--cargo-dependencies"
                 | "--rust-call-sites"
+                | "--policy-data"
                 | "--help"
         ) {
             return Err("未知参数；仅接受 --help 中的非秘密参数".into());
@@ -101,6 +104,7 @@ pub(crate) fn parse(mut args: impl Iterator<Item = String>) -> Result<Option<Opt
                 project_repository = Some(parse_repository(&value)?);
             }
             "--rust-call-sites" => rust_call_sites = Some(parse_rust_sources(&value)?),
+            "--policy-data" => policy_data = Some(PathBuf::from(value)),
             "--assets" => assets = PathBuf::from(value),
             "--label" => label = value,
             "--port" => {
@@ -175,6 +179,12 @@ pub(crate) fn parse(mut args: impl Iterator<Item = String>) -> Result<Option<Opt
     if canonical && session.is_none() {
         return Err("canonical读取必须配合显式 --session-config 及公共Origin".into());
     }
+    if policy_data
+        .as_ref()
+        .is_some_and(|path| !path.is_absolute() || session.is_none())
+    {
+        return Err("策略平面私有目录必须为绝对路径并配合会话配置".into());
+    }
     if writer_data.as_ref().is_some_and(|path| !path.is_absolute())
         || (writer_data.is_some() && (canonical || session.is_none()))
     {
@@ -193,6 +203,7 @@ pub(crate) fn parse(mut args: impl Iterator<Item = String>) -> Result<Option<Opt
         project_repository,
         cargo_dependencies,
         rust_call_sites,
+        policy_data,
     }))
 }
 

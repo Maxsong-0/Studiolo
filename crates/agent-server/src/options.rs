@@ -5,14 +5,18 @@ use std::path::PathBuf;
 /// 用法说明。
 pub const USAGE: &str = "studiolo-agent：Studiolo 供给面 MCP 主外壳（M3）\n\n\
 用法：\n  \
-studiolo-agent serve (--vault </绝对路径/vault> | --replica-root </绝对路径/副本>) [--replica-max-age-secs 300] --allow <相对目录> [--allow …] --data </绝对路径/私有目录> [--index-cache </独立700目录>] [--port 4400]\n  \
+studiolo-agent serve (--vault </绝对路径/vault> | --replica-root </绝对路径/副本>) [--replica-max-age-secs 300] --allow <相对目录> [--allow …] --data </绝对路径/私有目录> [--policy </绝对路径/策略私有目录>] [--index-cache </独立700目录>] [--port 4400]\n  \
 studiolo-agent admin init --data </绝对路径/私有目录>\n  \
 studiolo-agent admin type-issue --data <私有目录> --type <claude|codex|grok|…>\n  \
 studiolo-agent admin type-revoke --data <私有目录> --type <类型名>\n  \
 studiolo-agent admin types --data <私有目录>\n  \
 studiolo-agent admin reads --data <私有目录> [--type T] [--instance I] [--since RFC3339] [--until RFC3339] [--path-prefix P] [--limit N]\n  \
 studiolo-agent admin rebuild-read-index --data <私有目录>\n  \
-studiolo-agent admin outages --data <私有目录>\n\n\
+studiolo-agent admin outages --data <私有目录>\n  \
+studiolo-agent admin instances --data <私有目录> [--limit N]\n  \
+studiolo-agent admin policy-init --policy <策略私有目录>\n  \
+studiolo-agent admin policy-bootstrap --policy <策略私有目录> --data <私有目录> --kind <rules|skills|capability_set> --subject <名> --file </绝对路径/正文>（只能写首版；须在真实前台控制终端运行）\n  \
+studiolo-agent admin policy-status --policy <策略私有目录>\n\n\
 私有目录及其 audit/ 子目录须预先以 0700 创建；服务只监听 127.0.0.1，客户端须带 Authorization: Bearer <类型 token>。";
 
 /// `serve` 参数。
@@ -28,6 +32,8 @@ pub struct ServeOptions {
     pub allow: Vec<String>,
     /// 私有数据目录（绝对路径）。
     pub data: PathBuf,
+    /// 策略平面私有目录（绝对路径）；缺省为 M3 兼容模式（无能力集、无吊销表）。
+    pub policy: Option<PathBuf>,
     /// 可丢弃的派生索引缓存；显式独立私有目录，不能与源或身份目录重叠。
     pub index_cache: Option<PathBuf>,
     /// loopback 端口。
@@ -60,6 +66,20 @@ pub enum AdminCommand {
     RebuildReadIndex { data: PathBuf },
     /// 列出审计不可用窗口。
     Outages { data: PathBuf },
+    /// 列出已注册实例。
+    Instances { data: PathBuf, limit: usize },
+    /// 初始化策略平面私有库。
+    PolicyInit { policy: PathBuf },
+    /// 首版 bootstrap（真实控制终端门禁；只允许从未有过版本的 subject）。
+    PolicyBootstrap {
+        policy: PathBuf,
+        data: PathBuf,
+        kind: String,
+        subject: String,
+        file: PathBuf,
+    },
+    /// 打印 effective 摘要、现行各项与生效中的吊销。
+    PolicyStatus { policy: PathBuf },
 }
 
 /// 顶层命令。
@@ -145,6 +165,7 @@ pub fn parse(args: &[String]) -> Result<Command, String> {
                         | "--replica-max-age-secs"
                         | "--allow"
                         | "--data"
+                        | "--policy"
                         | "--port"
                         | "--index-cache"
                 ) {
@@ -193,6 +214,9 @@ pub fn parse(args: &[String]) -> Result<Command, String> {
                 replica_max_age_secs,
                 allow,
                 data: absolute(required(&pairs, "--data")?, "--data")?,
+                policy: optional(&pairs, "--policy")?
+                    .map(|value| absolute(value, "--policy"))
+                    .transpose()?,
                 index_cache: optional(&pairs, "--index-cache")?
                     .map(|value| absolute(value, "--index-cache"))
                     .transpose()?,
@@ -234,6 +258,30 @@ pub fn parse(args: &[String]) -> Result<Command, String> {
                 },
                 "rebuild-read-index" => AdminCommand::RebuildReadIndex { data: data()? },
                 "outages" => AdminCommand::Outages { data: data()? },
+                "instances" => AdminCommand::Instances {
+                    data: data()?,
+                    limit: match optional(&pairs, "--limit")? {
+                        None => 200,
+                        Some(value) => value
+                            .parse::<usize>()
+                            .ok()
+                            .filter(|limit| (1..=10_000).contains(limit))
+                            .ok_or_else(|| "--limit 必须是 1..=10000".to_owned())?,
+                    },
+                },
+                "policy-init" => AdminCommand::PolicyInit {
+                    policy: absolute(required(&pairs, "--policy")?, "--policy")?,
+                },
+                "policy-bootstrap" => AdminCommand::PolicyBootstrap {
+                    policy: absolute(required(&pairs, "--policy")?, "--policy")?,
+                    data: data()?,
+                    kind: required(&pairs, "--kind")?.to_owned(),
+                    subject: required(&pairs, "--subject")?.to_owned(),
+                    file: absolute(required(&pairs, "--file")?, "--file")?,
+                },
+                "policy-status" => AdminCommand::PolicyStatus {
+                    policy: absolute(required(&pairs, "--policy")?, "--policy")?,
+                },
                 other => return Err(format!("未知 admin 子命令 {other}")),
             };
             let allowed: &[&str] = match sub.as_str() {
@@ -247,6 +295,9 @@ pub fn parse(args: &[String]) -> Result<Command, String> {
                     "--limit",
                 ],
                 "type-issue" | "type-revoke" => &["--data", "--type"],
+                "instances" => &["--data", "--limit"],
+                "policy-init" | "policy-status" => &["--policy"],
+                "policy-bootstrap" => &["--policy", "--data", "--kind", "--subject", "--file"],
                 _ => &["--data"],
             };
             for (key, _) in &pairs {

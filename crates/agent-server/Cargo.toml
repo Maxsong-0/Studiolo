@@ -21,6 +21,7 @@ path = "src/main.rs"
 
 [dependencies]
 studiolo-supply.workspace = true
+studiolo-policy.workspace = true
 studiolo-audit-ledger.workspace = true
 studiolo-core.workspace = true
 axum.workspace = true
