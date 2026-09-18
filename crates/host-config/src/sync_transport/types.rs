@@ -6,6 +6,10 @@ use std::path::{Path, PathBuf};
 ///
 /// `identity` 是观察时刻的 `(dev, ino)`；每次读取前后都必须重新比较，
 /// 单次比较不能证明与后续 IO 的系统级原子性。
+///
+/// 这里的取值只是**可持久化的投影**，不是复验依据：Linux 把目录 rmdir 后同名 mkdir
+/// 会发还同一个 inode 号，仅比较这两个数看不出根对象已被替换。真正的复验在
+/// `ApprovedTransport::revalidate`，它对批准时持有的目录 FD 复查链接数与身份。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TransportRoots {
     private_root: PathBuf,

@@ -4,6 +4,7 @@
 
 use super::document::SyncTransportApproval;
 use super::types::{TransportBackend, TransportBudget, TransportRoots, TransportRuntime};
+use crate::config_file::PinnedDirectory;
 use crate::{ConfigError, SyncBinding, SyncScope, config_file};
 use std::path::Path;
 
@@ -11,6 +12,10 @@ use std::path::Path;
 ///
 /// 借用已批准的 `SyncScope`：每次使用前后都复验同一份私有配置快照，
 /// 配置换内容、换对象或范围代次变化都会让本能力立即失效。
+///
+/// 两个根各持有一个打开的目录 FD。只记 `(dev, ino)` 不够：Linux 把目录 rmdir 后
+/// 同名 mkdir 会立刻发还同一个 inode 号，取值比较看不出替换；持有 FD 后既能看到
+/// 旧 inode 的链接数归零，也让那个 inode 号在 FD 释放前发不出去，两条都指向漂移。
 ///
 /// ```compile_fail
 /// let approved: studiolo_host_config::sync_transport::ApprovedTransport =
@@ -21,6 +26,8 @@ pub struct ApprovedTransport<'scope> {
     approval: SyncTransportApproval,
     binding: SyncBinding,
     roots: TransportRoots,
+    private_pin: PinnedDirectory,
+    mirror_pin: PinnedDirectory,
 }
 
 impl<'scope> ApprovedTransport<'scope> {
@@ -35,12 +42,14 @@ impl<'scope> ApprovedTransport<'scope> {
         reserved_roots: &[&Path],
     ) -> Result<Self, ConfigError> {
         scope.revalidate()?;
-        let roots = pin_roots(&approval, reserved_roots)?;
+        let (roots, private_pin, mirror_pin) = pin_roots(&approval, reserved_roots)?;
         let approved = Self {
             scope,
             binding: scope.binding().clone(),
             approval,
             roots,
+            private_pin,
+            mirror_pin,
         };
         approved.revalidate()?;
         Ok(approved)
@@ -48,15 +57,21 @@ impl<'scope> ApprovedTransport<'scope> {
 
     /// 复验私有配置快照、绑定事实与两个根的真实对象身份。
     ///
+    /// 根身份走持有的 FD 复验：目录被删掉重建时，即使 inode 号原样发还，
+    /// 持有的那个旧 inode 的链接数也已经归零，替换藏不住。
+    ///
     /// 成功只代表检查时刻一致；不能证明与后续 IO 的系统级原子性。
     pub fn revalidate(&self) -> Result<(), ConfigError> {
         self.scope.revalidate()?;
         if self.scope.binding() != &self.binding {
             return Err(ConfigError);
         }
-        let private = config_file::private_directory(self.approval.private_root())?;
-        let mirror = config_file::private_directory(self.approval.mirror_root())?;
-        if private != self.roots.private_identity() || mirror != self.roots.mirror_identity() {
+        self.private_pin.revalidate()?;
+        self.mirror_pin.revalidate()?;
+        // 对外报告的取值必须始终等于钉住的对象，别让投影和真实钉悄悄分家。
+        if self.private_pin.identity() != self.roots.private_identity()
+            || self.mirror_pin.identity() != self.roots.mirror_identity()
+        {
             return Err(ConfigError);
         }
         Ok(())
@@ -99,16 +114,19 @@ impl<'scope> ApprovedTransport<'scope> {
     }
 }
 
+type PinnedRoots = (TransportRoots, PinnedDirectory, PinnedDirectory);
+
 fn pin_roots(
     approval: &SyncTransportApproval,
     reserved_roots: &[&Path],
-) -> Result<TransportRoots, ConfigError> {
+) -> Result<PinnedRoots, ConfigError> {
     let private_path = approval.private_root();
     let mirror_path = approval.mirror_root();
     // 私有根必须是 0700、本人所有的真实目录；逐段拒绝链接与非目录。
-    let private = config_file::private_directory(private_path)?;
-    let mirror = config_file::private_directory(mirror_path)?;
-    if private == mirror {
+    // 核验通过后立刻持有它的 FD：整条能力的生命期内都不松手，替换才藏不住。
+    let private = PinnedDirectory::pin(private_path)?;
+    let mirror = PinnedDirectory::pin(mirror_path)?;
+    if private.identity() == mirror.identity() {
         return Err(ConfigError);
     }
     config_file::disjoint(private_path, mirror_path)?;
@@ -116,10 +134,11 @@ fn pin_roots(
         config_file::disjoint(private_path, reserved)?;
         config_file::disjoint(mirror_path, reserved)?;
     }
-    Ok(TransportRoots::new(
+    let roots = TransportRoots::new(
         private_path.to_path_buf(),
-        private,
+        private.identity(),
         mirror_path.to_path_buf(),
-        mirror,
-    ))
+        mirror.identity(),
+    );
+    Ok((roots, private, mirror))
 }

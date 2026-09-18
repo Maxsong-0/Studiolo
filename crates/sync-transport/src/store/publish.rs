@@ -252,6 +252,8 @@ impl super::StatePublisher for FilePublisher {
         if caller()? != self.owner {
             return Err(TransportError::UnsafeStorage);
         }
+        // 先查持有的根 FD 本身还在不在，再查这条路径现在指向的是不是同一个对象。
+        directory(&self.root, self.owner.0)?;
         let current = walk(&self.root_path)?;
         directory(&current, self.owner.0)?;
         same(&current, &self.root)?;
@@ -298,7 +300,13 @@ fn walk(path: &Path) -> Result<File> {
 fn directory(file: &File, owner: u32) -> Result<()> {
     use std::os::unix::fs::MetadataExt;
     let metadata = file.metadata().map_err(|_| TransportError::UnsafeStorage)?;
-    if !metadata.is_dir() || metadata.uid() != owner || metadata.mode() & 0o7777 != 0o700 {
+    // 链接数归零＝这个目录已被删掉。对持有的根 FD 检查它，是唯一能穿透
+    // 「inode 号被同名新目录原样复用」的信号；只比 (dev, ino) 在 Linux 上看不出替换。
+    if !metadata.is_dir()
+        || metadata.nlink() == 0
+        || metadata.uid() != owner
+        || metadata.mode() & 0o7777 != 0o700
+    {
         return Err(TransportError::UnsafeStorage);
     }
     Ok(())

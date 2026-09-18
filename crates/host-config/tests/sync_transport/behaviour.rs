@@ -22,6 +22,29 @@ fn explicit_enabled_approval_yields_a_closed_capability_with_pinned_roots_and_di
     assert_eq!(approved.revalidate(), Ok(()));
 }
 
+/// 能力活着期间一直攥着两个根的 FD：反复复验必须稳定通过，报告的取值也不漂。
+#[test]
+fn approved_roots_stay_pinned_to_the_same_objects_across_revalidation() {
+    let fixture = Fixture::new();
+    let scope = fixture.scope();
+    let approved = fixture.approve(&scope).unwrap();
+    let private = approved.roots().private_identity();
+    let mirror = approved.roots().mirror_identity();
+
+    for _ in 0..3 {
+        assert_eq!(approved.revalidate(), Ok(()));
+        assert_eq!(approved.roots().private_identity(), private);
+        assert_eq!(approved.roots().mirror_identity(), mirror);
+    }
+
+    // 同一份配置可以并存第二份批准；两份钉的是同一批对象。
+    let second = fixture.approve(&scope).unwrap();
+    assert_eq!(second.roots().private_identity(), private);
+    assert_eq!(second.roots().mirror_identity(), mirror);
+    assert_eq!(second.revalidate(), Ok(()));
+    assert_eq!(approved.revalidate(), Ok(()));
+}
+
 #[test]
 fn approved_transport_reports_runtime_backend_and_budget_exactly_as_approved() {
     let fixture = Fixture::new();

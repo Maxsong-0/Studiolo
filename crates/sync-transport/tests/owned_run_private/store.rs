@@ -229,3 +229,27 @@ fn a_replaced_root_object_is_detected_before_anything_else_is_written() {
     );
     assert!(names(&root.path).is_empty());
 }
+
+/// 原地删掉再建同名根：Linux 会把同一个 inode 号立刻发还，光比 `(dev, ino)` 看不出替换。
+/// 持有的根 FD 必须认出「批准的那个目录已经没了」，读写都不得落到新目录上。
+#[test]
+fn a_root_deleted_and_recreated_in_place_is_detected_even_when_the_inode_is_recycled() {
+    let records = records();
+    let root = Root::new();
+    let mut publisher =
+        FilePublisher::initialize(&root.path, &records.first).expect("可以显式初始化");
+    for name in names(&root.path) {
+        fs::remove_file(root.path.join(name)).expect("可以清空原根");
+    }
+    fs::remove_dir(&root.path).expect("可以删掉原根");
+    fs::create_dir(&root.path).expect("可以建同名新根");
+    fs::set_permissions(&root.path, fs::Permissions::from_mode(0o700)).expect("可以设私有权限");
+
+    assert_eq!(publisher.check().err(), Some(TransportError::UnsafeStorage));
+    assert_eq!(publisher.read().err(), Some(TransportError::UnsafeStorage));
+    assert_eq!(
+        publisher.replace(&records.second).err(),
+        Some(TransportError::UnsafeStorage)
+    );
+    assert!(names(&root.path).is_empty());
+}
