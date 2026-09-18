@@ -26,6 +26,7 @@ zeroize.workspace = true
 rustix = { workspace = true, features = ["process", "termios"] }
 studiolo-auth.workspace = true
 studiolo-host-config.workspace = true
+studiolo-process-safety.workspace = true
 studiolo-audit-ledger.workspace = true
 studiolo-core.workspace = true
 studiolo-vault-broker.workspace = true

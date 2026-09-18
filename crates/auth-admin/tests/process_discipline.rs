@@ -1,7 +1,7 @@
 //! 登记程序自身的秘密驻留纪律：唯一环境读取点、加固最先发生、不派生子进程。
 //!
-//! 加固实现本身（四项措施、固定分类、真实子进程内核回读）住在
-//! `studiolo-host-config` 的 `process_safety`，测试也在那里；本文件只钉住
+//! 加固实现本身（四项措施、固定分类、真实子进程内核回读）住在独立的
+//! `studiolo-process-safety`，测试也在那里；本文件只钉住
 //! **本程序**与那份共享实现的接线方式，以及本程序自有缓冲的零化。
 //!
 //! 夹具里只有固定的非秘密标记，绝不含任何真实种子、验证码或口令。
@@ -115,14 +115,14 @@ fn the_registration_program_owns_no_private_copy_of_the_hardening() {
         ] {
             assert!(
                 !code.contains(syscall),
-                "{} 自行调用了 {syscall}：收紧必须只经 studiolo_host_config::process_safety::harden()",
+                "{} 自行调用了 {syscall}：收紧必须只经 studiolo_process_safety::harden()",
                 file_name(&path)
             );
         }
     }
     let code = without_comments(&read_admin_source("main.rs"));
     assert!(
-        code.contains("studiolo_host_config::process_safety::harden()"),
+        code.contains("studiolo_process_safety::harden()"),
         "main.rs 必须调用共享实现，而不是本地同名函数"
     );
 }

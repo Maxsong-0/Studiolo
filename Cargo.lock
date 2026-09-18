@@ -2507,6 +2507,7 @@ dependencies = [
  "studiolo-audit-ledger",
  "studiolo-core",
  "studiolo-policy",
+ "studiolo-process-safety",
  "studiolo-supply",
  "tempfile",
  "thiserror",
@@ -2563,6 +2564,7 @@ dependencies = [
  "studiolo-audit-ledger",
  "studiolo-auth",
  "studiolo-host-config",
+ "studiolo-process-safety",
  "tempfile",
  "thiserror",
  "zeroize",
@@ -2656,6 +2658,7 @@ dependencies = [
  "studiolo-host-config",
  "studiolo-observability",
  "studiolo-policy",
+ "studiolo-process-safety",
  "studiolo-sync-transport",
  "studiolo-vault-broker",
  "studiolo-vault-index",
@@ -2695,6 +2698,13 @@ dependencies = [
  "tempfile",
  "thiserror",
  "ulid",
+]
+
+[[package]]
+name = "studiolo-process-safety"
+version = "0.0.1"
+dependencies = [
+ "rustix",
 ]
 
 [[package]]

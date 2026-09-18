@@ -117,7 +117,7 @@ T-041～T-045 的图 2 能力；运行命令写在**各自子目录**的 `README
 ## 结构
 
 ```text
-Cargo.toml           # workspace：21 个成员、统一依赖版本、统一 lints
+Cargo.toml           # workspace：22 个成员、统一依赖版本、统一 lints
 rust-toolchain.toml  # 1.97.1 + rustfmt + clippy
 crates/
   core/              # studiolo-core：跨模块共享值类型（ID、Revision、Fence、权限集合、分级）
@@ -128,6 +128,7 @@ crates/
   auth/              # M2 Access、独立持久会话、TOTP / 恢复码与固定槽因子
   auth-admin/        # 可信本地登记 CLI：固定秘密环境、隐藏 TTY 与明确迁移
   host-config/       # 管理 CLI 与服务器共用的私有非秘密配置 / 目录边界
+  process-safety/    # 秘密驻留面一次性收紧（核心转储 / 进程检视 / 换出 / 环境槽）：只依赖 rustix，四个持秘密程序共用（T-065）
   sync-bridge/       # M2 双向 Bridge：三方规划、私有持久状态与 MirrorCAS 执行顺序核（未接真实同步）
   sync-transport/    # M2 SyncTransportOwner：固定 link、一次一个 OwnedRun；无受控隔离即拒绝
   backup/            # M2 一致 checkpoint、独立 BackupWorker 与新目录恢复（T-048 实施中）

@@ -23,6 +23,15 @@ if [[ ! "$STUDIOLO_EXPECTED" =~ ^/home/maxsong/\.local/share/studiolo-agent-rele
   printf '%s\n' '请先将 source.tar.gz 解压到记录的实体 source 目录，并从该目录执行测试；不得绕过架构测试。' >&2
   exit 1
 fi
+# T-065：studiolo-agent 与本包内的 process_residency 测试都会起真实进程跑 mlockall，
+# RLIMIT_MEMLOCK 不足时它们按设计失败关闭并终止（不得改成尽力而为）。这里先拦一道，
+# 免得整片红被误读成代码坏了；systemd 常见默认 8M，远不够长驻服务的常驻集。
+STUDIOLO_MEMLOCK="$(ulimit -l)"
+if [[ "$STUDIOLO_MEMLOCK" != unlimited && ( ! "$STUDIOLO_MEMLOCK" =~ ^[0-9]+$ || "$STUDIOLO_MEMLOCK" -le 65536 ) ]]; then
+  printf '可锁定内存上限过低（ulimit -l = %s KB）：秘密驻留面加固会失败关闭，测试无法判定。\n' "$STUDIOLO_MEMLOCK" >&2
+  printf '请由管理员抬高该上限后重跑，例如 sudo prlimit --pid $$ --memlock=unlimited:unlimited。\n' >&2
+  exit 1
+fi
 # 校验的是整个发布包，不把尚未运行的测试误写为通过。
 (cd "$STUDIOLO_PAYLOAD" && sha256sum --check SHA256SUMS)
 if [[ ! -x /usr/bin/python3 || ! -s "$STUDIOLO_PAYLOAD/source-files" \

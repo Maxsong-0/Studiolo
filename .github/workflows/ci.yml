@@ -82,8 +82,14 @@ jobs:
           cargo --locked test --workspace
 
       - name: Python 副本发布与真实 MCP 管线
+        # 这两条管线各起一个真实 studiolo-agent serve；T-065 起该程序同样跑秘密驻留面
+        # 加固（mlockall），RLIMIT_MEMLOCK 不足时它会失败关闭并终止（正确行为，不得改成
+        # 尽力而为），管线会连一个请求都发不出去。每个 run 步骤是独立 shell，上一步抬高
+        # 的上限不会传到这里，必须在本步骤内再抬一次。
         run: |
           cargo --locked build -p studiolo-agent-server
+          sudo prlimit --pid $$ --memlock=unlimited:unlimited
+          ulimit -l
           python3 scripts/check-replica-pipeline.py target/debug/studiolo-agent
           python3 scripts/check-client-projection-pipeline.py target/debug/studiolo-agent
 

@@ -1,0 +1,19 @@
+[package]
+name = "studiolo-process-safety"
+description = "读取秘密前一次性收紧本进程的驻留面（核心转储 / 可检视属性 / 页锁定 / 环境槽位），逐项给出封闭分类"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+# 本 crate 只做这一件事，因此依赖也只有内核接口这一项：不依赖任何工作区 crate，
+# 四个持有明文秘密的程序（含不得依赖认证栈的 studiolo-agent）才都能共用同一份实现。
+# process：setrlimit/getrlimit 与 Linux 的 PR_SET_DUMPABLE/PR_GET_DUMPABLE。
+# mm：Linux 的 mlockall；rustix 把它单列为特性，不启用时 rustix::mm 整个模块不存在。
+rustix = { workspace = true, features = ["process", "mm"] }

@@ -11,7 +11,7 @@ use studiolo_host_config::Config;
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum AdminError {
     #[error("{0}")]
-    Process(#[from] studiolo_host_config::process_safety::Refusal),
+    Process(#[from] studiolo_process_safety::Refusal),
     #[error("无法记录秘密驻留面逐项分类；未读取秘密")]
     ProcessReport,
     #[error("参数无效；仅接受 --help 中的非秘密参数")]
@@ -42,7 +42,7 @@ fn run() -> Result<(), AdminError> {
     // 先收紧秘密驻留面，再把逐项分类记录到标准错误：本平台不提供的能力必须被
     // 操作者看见，只在内部返回而不记录等于静默跳过。摘要只含措施名与固定分类，
     // 永不含种子、验证码或任何环境值；记录失败即终止，且此时尚未读取任何秘密。
-    let residency = studiolo_host_config::process_safety::harden()?;
+    let residency = studiolo_process_safety::harden()?;
     writeln!(std::io::stderr(), "秘密驻留面：{residency}")
         .map_err(|_| AdminError::ProcessReport)?;
     // 限制参数数量；拒绝时绝不回显任何未知参数原文。

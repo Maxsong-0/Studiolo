@@ -22,6 +22,7 @@ STUDIOLO_IMAGE='rust:1.97.1-bookworm'
 STUDIOLO_TEST_PACKAGES=(
   -p studiolo -p studiolo-supply -p studiolo-agent-server -p studiolo-vault-broker
   -p studiolo-core -p studiolo-audit-ledger -p studiolo-vault-index -p studiolo-workbench
+  -p studiolo-process-safety
 )
 mkdir "$STUDIOLO_OUT"
 mkdir "$STUDIOLO_OUT/source" "$STUDIOLO_OUT/payload" "$STUDIOLO_OUT/build-meta"
@@ -178,6 +179,7 @@ const required = [
   'studiolo/architecture', 'vault-broker/linux_path_security',
   'agent-server/mcp_contract', 'agent-server/mcp_transport_contract', 'agent-server/replica_mcp_contract',
   'agent-server/http_text_contract', 'agent-server/http_replica_contract', 'agent-server/index_cache_contract',
+  'agent-server/process_residency',
   'supply/roots_contract', 'supply/signpost_contract', 'supply/http_signpost_contract',
   'supply/agent_store_contract', 'supply/replica_contract', 'supply/index_cache_contract',
   'vault-index/parse_cache_contract', 'vault-index/parse_cache_codec_contract', 'vault-index/parse_cache_links_contract',
