@@ -8,6 +8,7 @@ from pathlib import Path
 import pty
 import re
 import select
+import signal
 import socket
 import subprocess
 import sys
@@ -58,7 +59,9 @@ class Pipeline:
     def admin(self, sub, *args):
         result = subprocess.run([self.binary, "admin", sub, "--data", str(self.data), *args],
                                 capture_output=True, text=True, timeout=20)
-        require(result.returncode == 0, "隔离身份库初始化失败")
+        # 带上子命令名：这条消息为所有 admin 子命令共用，只写「初始化失败」会把
+        # 后续子命令的失败误报成 init 的失败（2026-09-17 实际误导过一条排查线）。
+        require(result.returncode == 0, f"隔离身份库 admin {sub} 失败")
         return result.stdout
 
     def issue_type_token(self, kind):
@@ -71,10 +74,17 @@ class Pipeline:
         """
         pid, master = pty.fork()
         if pid == 0:                       # 子进程：三个标准流都是这个 PTY
-            os.execve(self.binary,
-                      [self.binary, "admin", "type-issue", "--data", str(self.data),
-                       "--type", kind],
-                      {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "LANG": "C.UTF-8"})
+            try:
+                os.execve(self.binary,
+                          [self.binary, "admin", "type-issue", "--data", str(self.data),
+                           "--type", kind],
+                          {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "LANG": "C.UTF-8"})
+            finally:
+                # execve 成功不返回。失败时子进程**绝不能**掉回父进程的 Python 栈：
+                # 它会沿 run() 的 `with tempfile.TemporaryDirectory()` 一路 unwind，
+                # 在父进程仍在使用时把夹具目录整个删掉，而父进程不抛任何异常、
+                # 毫不知情地继续跑（2026-09-18 同构复现实测）。
+                os._exit(127)
         seen = bytearray()
         deadline = time.monotonic() + 20
         while time.monotonic() < deadline:
@@ -88,11 +98,26 @@ class Pipeline:
                 break
             seen.extend(chunk)
         os.close(master)
-        code = os.waitpid(pid, 0)[1]
-        require(code == 0, "类型 token 签发失败（真实 PTY 下）")
+        require(self.reap(pid) == 0, "类型 token 签发失败（真实 PTY 下）")
         found = re.search(rb"sag1_[0-9a-f]{64}", bytes(seen))
         require(found is not None, "控制终端上没有出现类型 token")
         return found.group(0).decode()
+
+    @staticmethod
+    def reap(pid, limit=10):
+        """带期限地收走子进程，未按期退出者判为失败。
+
+        关掉主设备端通常会让子进程收到 SIGHUP 而退出，但不能把验收押在这上面：
+        裸 `waitpid(pid, 0)` 在子进程挂住时会无限阻塞，管线会**卡死而不是失败**。
+        """
+        deadline = time.monotonic() + limit
+        while time.monotonic() < deadline:
+            done, status = os.waitpid(pid, os.WNOHANG)
+            if done == pid:
+                return status
+            time.sleep(0.05)
+        os.kill(pid, signal.SIGKILL)
+        return os.waitpid(pid, 0)[1]       # 非零，由调用方判失败
 
     def push(self, truncated=False):
         with archive(capture(str(self.source))) as stream:
