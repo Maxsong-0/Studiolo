@@ -40,9 +40,9 @@
   display: flex;
   align-items: baseline;
   gap: 20px;
-  border: 1px solid #ba3d3530;
+  border: 1px solid var(--error-border);
   border-radius: 12px;
-  background: #fff6f5;
+  background: var(--error-soft);
   padding: 14px 20px;
   margin: 24px 32px;
   color: var(--error);

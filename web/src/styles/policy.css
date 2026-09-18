@@ -1,8 +1,8 @@
 /* 策略平面视图。扩大项固定用警示色标红，收窄项与其它信息用中性色；不给任何「通过」用绿。 */
 .policy-panel {
-  --policy-expansion: #b3452f;
-  --policy-narrowing: #68717e;
-  --policy-ok: #1f7a4d;
+  --policy-expansion: var(--signal-alert);
+  --policy-narrowing: var(--signal-neutral);
+  --policy-ok: var(--signal-ok);
   display: grid;
   gap: 18px;
 }
@@ -215,12 +215,5 @@
   .policy-table td {
     border: 0;
     padding: 2px 0;
-  }
-}
-@media (prefers-contrast: more) {
-  .policy-panel {
-    --policy-expansion: #8a2f1f;
-    --policy-narrowing: #394452;
-    --policy-ok: #145635;
   }
 }

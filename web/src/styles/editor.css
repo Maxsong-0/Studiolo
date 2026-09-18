@@ -155,8 +155,8 @@
   display: block;
 }
 .comparison-line mark {
-  color: var(--text);
-  background: #f7e6b5;
+  color: var(--mark-text);
+  background: var(--mark);
 }
 .draft-shelf li {
   overflow-wrap: anywhere;
