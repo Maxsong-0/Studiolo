@@ -297,13 +297,27 @@ fn assert_measure_classification(summary: &str) {
 
 #[cfg(target_os = "linux")]
 fn assert_inspection_flag(observations: &BTreeMap<String, String>) {
-    // PR_GET_DUMPABLE 的真实回读；同时记录内核环境块副本仍在这一事实。
+    // PR_GET_DUMPABLE 的真实回读。
     assert_eq!(observed(observations, "DUMPABLE"), "Ok(NotDumpable)");
-    assert_eq!(
-        observed(observations, "SELF_ENVIRON_MARKER"),
-        "true",
-        "进程自读 /proc/self/environ 的结果必须与「未清除」的分类一致"
-    );
+
+    // 自读 `/proc/self/environ` 的结果取决于读者能不能绕过文件权限，**不取决于**
+    // `ptrace_may_access`（后者对自己恒放行）：
+    // `PR_SET_DUMPABLE(0)` 之后该 proc 文件的 inode 改归 root、模式 0400，
+    // VFS 权限检查在 ptrace 检查之前，所以**非 root 进程连自己的环境块都打不开**。
+    // 2026-09-17 实测：以 root 跑的容器读到标记，GitHub runner 的非 root 用户 EACCES。
+    // 两种结果都必须有断言，不得跳过，也不得把两者塌缩成同一个布尔值。
+    match observed(observations, "SELF_ENVIRON") {
+        // 能绕过文件权限（root / CAP_DAC_OVERRIDE）：读得到，说明内核那份环境块副本
+        // 确实仍在 —— 与「环境槽位未清除」的固定分类一致。
+        "读到标记" => {}
+        // 不能绕过：连自读都被挡住。这比 `docs/m2/secret-residency.md` 记载的保护更强，
+        // 但它来自文件权限而不是本模块的能力，所以分类仍然是「未清除」。
+        "PermissionDenied" => {}
+        other => panic!(
+            "自读 /proc/self/environ 只应是「读到标记」或 PermissionDenied，实际是 {other}；\
+             「读到但没有标记」意味着有人清了环境块，与固定分类「未清除」矛盾"
+        ),
+    }
 }
 
 #[cfg(not(target_os = "linux"))]
@@ -385,9 +399,19 @@ fn assert_external_reads(external: &BTreeMap<String, String>, _effective_user: u
             "持有 CAP_SYS_PTRACE 时的读取行为与文档记载不符"
         );
     } else {
-        // 无论 uid 是不是 0：没有 CAP_SYS_PTRACE 就读不到。
+        // 真正的不变量：没有 CAP_SYS_PTRACE 就读不到别的进程的环境块。
+        // 内核这里走的是 `ptrace_may_access` 的 PTRACE_MODE_READ_FSCREDS，
+        // 所以连持有 CAP_DAC_OVERRIDE 的容器 root 也一样被拒。
         assert_eq!(environ, "PermissionDenied", "仍读得到子进程环境块");
-        assert_eq!(owner, "0", "不可转储进程的 /proc 目录应改归 root");
+
+        // `/proc/<pid>` 目录属主**不是**可移植判据，不能拿来断言。
+        // 2026-09-17 同一内核、同一 dumpable=0 子进程实测：
+        //   以 root 跑  → 属主 uid=0    外部读 environ EACCES
+        //   以 1000 跑  → 属主 uid=1000 外部读 environ EACCES
+        // 两种身份下保护都成立，但属主只在前者变成 0。原断言把它当必然结果，
+        // 会在非 root 环境（GitHub runner 即是）给出错误结论。
+        // 这里只记录读数供排障，不据此判定成败。
+        assert!(!owner.is_empty(), "探针应给出 /proc/<pid> 属主读数供排障");
     }
 }
 
@@ -468,9 +492,15 @@ fn kernel_observations() -> Vec<String> {
             "VMLCK_KB={}",
             status_kilobytes("VmLck").map_or_else(|| "未知".to_owned(), |value| value.to_string())
         ),
+        // 三态，不能塌缩：「读不到」与「读得到但没有标记」是两个完全不同的事实，
+        // 前者说明 dumpable=0 连自读都挡住了，后者说明有人把环境块清了。
         format!(
-            "SELF_ENVIRON_MARKER={}",
-            std::fs::read("/proc/self/environ").is_ok_and(|bytes| contains_marker(&bytes))
+            "SELF_ENVIRON={}",
+            match std::fs::read("/proc/self/environ") {
+                Ok(bytes) if contains_marker(&bytes) => "读到标记".to_owned(),
+                Ok(_) => "读到但没有标记".to_owned(),
+                Err(error) => format!("{:?}", error.kind()),
+            }
         ),
     ]
 }
