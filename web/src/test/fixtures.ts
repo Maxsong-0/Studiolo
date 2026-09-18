@@ -103,6 +103,14 @@ export function defaultApiResponse(
   snapshot = fixture,
   hits = documents,
 ) {
+  if (
+    String(input).startsWith('/api/v1/policy') ||
+    String(input).startsWith('/api/v1/agents')
+  )
+    return jsonResponse(
+      { code: 'policy_plane_absent', error: '本入口未装配策略平面。' },
+      404,
+    );
   return String(input).startsWith('/api/search')
     ? jsonResponse({
         generation: snapshot.generation,

@@ -29,6 +29,7 @@ import './styles/editor.css';
 import './styles/history.css';
 import './styles/file-operations.css';
 import './styles/health.css';
+import './styles/policy.css';
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>

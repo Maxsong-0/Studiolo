@@ -62,6 +62,12 @@ sha `5854f91`）。
 | T-048 | 一致 checkpoint 与 BackupWorker、健康 / 配额 / 告警、SyncTransportOwner、MirrorCAS 与 Bridge 执行器 | 实施中，见下方「未实现或未验收」 |
 | T-063 | local-server 运行包内容、本机出包与自检、服务器安装与回滚 | [运行包与部署脚本](docs/m3/release-packaging.md)；本机 / 容器内自检已过，**真实服务器部署与公网复验未做** |
 
+### M4 策略平面：只在开发分支，未合并、未部署（2026-09-17 T-069）
+
+| 分片 | 内容 | 文档 |
+|---|---|---|
+| T-069 | 规则母本／skills／能力集升入策略平面：`policy.sqlite3`、desired → 校验 → diff（扩大项标红）→ L3 One-time Code → effective、版本与回滚、实例／类型／全局三级吊销；接入方每次调用复核、供给视图＝部署上限∩能力集；人侧端点与「策略平面」视图 | [M4 说明](docs/m4/README.md)、[策略平面契约](docs/contracts/policy-plane.md)；**线上未启用**：agent 未给 `--policy`，人侧因子模式未部署 |
+
 ### 明确未实现或未验收（不得据本仓库宣称具备）
 
 | 能力 | 当前事实 |
@@ -74,6 +80,7 @@ sha `5854f91`）。
 | 真实客户端安装 | T-038 的 CLI 已发布，但**没有安装到任何真实 Claude / Codex 工作区**，既有客户端配置未修改 |
 | 公网发布验收 | 线上仍是 T-040 的 M3 读取供给版本；**本轮收尾版本未打包、未发布、未做公网验收** |
 | 实际两周 headless 试跑 | **未进行**，也没有任何等价的长期运行证据 |
+| 策略平面线上启用 | `crates/policy` 与两端接线已实现并本地验收；服务器 `studiolo-agent` 仍是 M3 兼容模式（无能力集、无吊销表），真实 One-time Code 发布未在生产验证 |
 
 ## 运行本机只读示例
 
@@ -110,7 +117,7 @@ T-041～T-045 的图 2 能力；运行命令写在**各自子目录**的 `README
 ## 结构
 
 ```text
-Cargo.toml           # workspace：20 个成员、统一依赖版本、统一 lints
+Cargo.toml           # workspace：21 个成员、统一依赖版本、统一 lints
 rust-toolchain.toml  # 1.97.1 + rustfmt + clippy
 crates/
   core/              # studiolo-core：跨模块共享值类型（ID、Revision、Fence、权限集合、分级）
@@ -132,7 +139,8 @@ crates/
   workbench/         # M1 纯派生视图、内存搜索、文档导航与有界文件树
   local-server/      # M1 只读查询；M2 显式会话、canonical 读写、人侧编辑 / 文件操作、健康与 Unix 因子 HTTP
   supply/            # M3 供给面内核：白名单只读根、冷启动路牌与 o200k 预算、类型 / 实例身份、读取审计索引
-  agent-server/      # M3 `studiolo-agent`：rmcp Streamable HTTP 主外壳（仅 loopback）与 admin 子命令
+  policy/            # M4 策略平面：policy.sqlite3、三类母本 desired→校验→diff→L3 发布→effective、版本 / 回滚、三级吊销（T-069）
+  agent-server/      # M3 `studiolo-agent`：rmcp Streamable HTTP 主外壳（仅 loopback）与 admin 子命令；M4 起 `--policy` 复核能力集与吊销
 docs/                # M0 契约与 M1/M2/M3 分片实现、运行与验收说明
 scripts/             # test-linux.sh（Docker 内跑与 CI 相同的检查）、打包与 Python 管线检查
 .github/workflows/   # CI（Linux x86_64，action 按 SHA 钉死）：Rust 作业 + 前端作业

@@ -24,7 +24,7 @@ function shell(documentCount: number | null) {
 it('侧栏文档计数已知时显示数字，不可得时显示占位而不是假装是 0', () => {
   const { rerender, container } = render(shell(12));
   const count = () =>
-    container.querySelector('.navigation-item:last-of-type .nav-count')
+    container.querySelector('.navigation-item[aria-label="文档"] .nav-count')
       ?.textContent;
   expect(count()).toBe('12');
   rerender(shell(null));
