@@ -353,16 +353,40 @@ fn external_observations(_pid: u32, _effective_user: u32) -> BTreeMap<String, St
     BTreeMap::new()
 }
 
+/// 本进程是否持有 `CAP_SYS_PTRACE`（capability 编号 19）。
+///
+/// 读取 `dumpable=0` 进程的 `/proc/<pid>/environ`，内核走的是 `ptrace_may_access`
+/// 的 `PTRACE_MODE_READ`，要求的是这项 capability **而不是** uid 0。
+/// 两者平时一起出现，所以容易被误当成同一件事；但容器默认的 capability 集合
+/// 通常**丢掉** `CAP_SYS_PTRACE`，此时容器内的 root 同样读不到。
+/// 按 uid 判断会在容器里给出错误结论（2026-09-17 Linux 回归实测撞到）。
 #[cfg(target_os = "linux")]
-fn assert_external_reads(external: &BTreeMap<String, String>, effective_user: u32) {
+fn has_ptrace_capability() -> bool {
+    const CAP_SYS_PTRACE: u32 = 19;
+    let Ok(status) = std::fs::read_to_string("/proc/self/status") else {
+        return false;
+    };
+    status
+        .lines()
+        .find_map(|line| line.strip_prefix("CapEff:"))
+        .and_then(|value| u64::from_str_radix(value.trim(), 16).ok())
+        .is_some_and(|mask| mask & (1u64 << CAP_SYS_PTRACE) != 0)
+}
+
+#[cfg(target_os = "linux")]
+fn assert_external_reads(external: &BTreeMap<String, String>, _effective_user: u32) {
     let environ = observed(external, "environ");
     let owner = observed(external, "proc_owner");
-    if effective_user == 0 {
-        // 以 root 跑时这项保护按设计就不成立；本模块从不宣称挡得住 root。
-        // 断言「root 确实读得到」而不是跳过，避免在容器里空跑成假绿。
-        assert_eq!(environ, "读到标记", "root 读取行为与文档记载不符");
+    if has_ptrace_capability() {
+        // 持有 CAP_SYS_PTRACE 时这项保护按设计就不成立；本模块从不宣称挡得住它。
+        // 断言「确实读得到」而不是跳过，避免空跑成假绿。
+        assert_eq!(
+            environ, "读到标记",
+            "持有 CAP_SYS_PTRACE 时的读取行为与文档记载不符"
+        );
     } else {
-        assert_eq!(environ, "PermissionDenied", "同用户仍读得到子进程环境块");
+        // 无论 uid 是不是 0：没有 CAP_SYS_PTRACE 就读不到。
+        assert_eq!(environ, "PermissionDenied", "仍读得到子进程环境块");
         assert_eq!(owner, "0", "不可转储进程的 /proc 目录应改归 root");
     }
 }
