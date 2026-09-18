@@ -46,7 +46,7 @@ fn every_persisted_stage_reopens_without_guessing_installation() {
 }
 #[test]
 fn large_installing_maintenance_preserves_three_objects_and_never_returns_original_success() {
-    let _guard = LARGE.lock().unwrap();
+    let _guard = LARGE.enter();
     let f = Fixture::new();
     let mut b = f.open();
     let source = f.pattern(5 * 1024 * 1024 + 1);

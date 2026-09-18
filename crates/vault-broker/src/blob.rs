@@ -2,7 +2,12 @@
 mod cleanup;
 pub use cleanup::BlobPruneReport;
 #[cfg(test)]
-pub(crate) static LARGE_IO: std::sync::Mutex<()> = std::sync::Mutex::new(());
+mod serial_gate;
+#[cfg(test)]
+pub(crate) use serial_gate::SerialGate;
+/// 大文件 IO 用例的串行闸门；只排他，持有者 panic 后由下一位接管，不毒化级联。
+#[cfg(test)]
+pub(crate) static LARGE_IO: SerialGate = SerialGate::new();
 pub(crate) mod current;
 mod digest;
 pub(crate) mod file;

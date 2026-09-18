@@ -11,7 +11,7 @@ fn orphan(f: &Fixture, digit: char, size: u64) {
 }
 #[test]
 fn source_growth_near_total_limit_never_writes_more_than_the_reservation() {
-    let _guard = LARGE.lock().unwrap();
+    let _guard = LARGE.enter();
     let f = Fixture::new();
     let mut b = f.open();
     let source = f.bytes(b"one-byte");
@@ -42,7 +42,7 @@ fn source_growth_near_total_limit_never_writes_more_than_the_reservation() {
 }
 #[test]
 fn over_total_and_count_fail_before_creating_another_stage() {
-    let _guard = LARGE.lock().unwrap();
+    let _guard = LARGE.enter();
     for count in [false, true] {
         let f = Fixture::new();
         let mut b = f.open();
@@ -100,7 +100,7 @@ fn tampered_hash_and_effective_limit_refuse_atomic_prepare() {
 }
 #[test]
 fn all_orphan_bytes_are_validated_before_pruning() {
-    let _guard = LARGE.lock().unwrap();
+    let _guard = LARGE.enter();
     let f = Fixture::new();
     let mut b = f.open();
     orphan(&f, 'a', 5 * 1024 * 1024);

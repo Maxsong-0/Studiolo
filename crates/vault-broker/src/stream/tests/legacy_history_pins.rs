@@ -82,7 +82,7 @@ fn legacy_prepared_retry_can_represerve_missing_l0_only_from_exact_original_byte
 
 #[test]
 fn legacy_vec_keeps_large_previous_canonical_when_its_l0_drifts_after_installing() {
-    let _guard = LARGE.lock().unwrap();
+    let _guard = LARGE.enter();
     let f = Fixture::new();
     let mut b = f.open();
     let source = f.pattern(5 * 1024 * 1024 + 1);

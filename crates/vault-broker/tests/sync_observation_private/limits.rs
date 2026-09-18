@@ -23,7 +23,7 @@ fn per_rule_limit_and_whole_batch_limit_fail_before_first_body() {
 
 #[test]
 fn exact_256_mib_sparse_object_is_streamed_and_one_extra_byte_is_rejected() {
-    let _serial = crate::blob::LARGE_IO.lock().unwrap();
+    let _serial = crate::blob::LARGE_IO.enter();
     let f = Fixture::new();
     let mut broker = f.broker();
     fs::create_dir(f.root.join("notes")).unwrap();

@@ -6,7 +6,7 @@ use signal_hook::{
     flag,
 };
 use std::sync::{
-    Arc, Mutex, MutexGuard, OnceLock,
+    Arc, Mutex, MutexGuard, OnceLock, TryLockError,
     atomic::{AtomicBool, Ordering},
 };
 
@@ -16,6 +16,7 @@ struct State {
 }
 
 static STATE: OnceLock<Result<State, TerminalError>> = OnceLock::new();
+// 进程级读入闸门：只排他，守卫是 `()`，不保护任何共享可变状态。
 static READER: Mutex<()> = Mutex::new(());
 
 fn state() -> Result<&'static State, TerminalError> {
@@ -49,7 +50,14 @@ pub(super) struct Capture {
 
 impl Capture {
     pub fn begin() -> Result<Self, TerminalError> {
-        let reader = READER.try_lock().map_err(|_| TerminalError::Busy)?;
+        let reader = match READER.try_lock() {
+            Ok(reader) => reader,
+            // 闸门无不变量可破坏：上一位持有者 panic 留下的毒化必须可接管，否则一次
+            // panic 会让本进程此后每次读入都永久返回 Busy。Capture 的 Drop 在展开时
+            // 已恢复默认信号行为，接管时状态是一致的。
+            Err(TryLockError::Poisoned(poisoned)) => poisoned.into_inner(),
+            Err(TryLockError::WouldBlock) => return Err(TerminalError::Busy),
+        };
         let state = state()?;
         state.cancelled.store(false, Ordering::SeqCst);
         state.defaults.store(false, Ordering::SeqCst);

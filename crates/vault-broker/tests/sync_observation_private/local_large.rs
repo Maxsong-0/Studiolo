@@ -9,7 +9,7 @@ const CHILD: &str = "sync_observation::tests::local_large::large_child";
 
 #[test]
 fn canonical_and_local_large_facts_have_measured_bounded_rss() {
-    let _serial = crate::blob::LARGE_IO.lock().unwrap();
+    let _serial = crate::blob::LARGE_IO.enter();
     let mut command = std::process::Command::new("/usr/bin/time");
     #[cfg(target_os = "macos")]
     command.arg("-l");
@@ -62,7 +62,7 @@ fn large_child() {
         std::env::var("STUDIOLO_PRIVATE_LOCAL_OBSERVATION_CHILD").unwrap(),
         "1"
     );
-    let _serial = crate::blob::LARGE_IO.lock().unwrap();
+    let _serial = crate::blob::LARGE_IO.enter();
     let f = Fixture::new();
     let mut broker = f.broker();
     fs::create_dir(f.root.join("notes")).unwrap();

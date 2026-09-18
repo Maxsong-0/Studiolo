@@ -2,7 +2,7 @@ use super::*;
 use std::io::Write;
 #[test]
 fn large_delete_restore_is_measured_in_an_isolated_process() {
-    let _guard = crate::blob::LARGE_IO.lock().unwrap();
+    let _guard = crate::blob::LARGE_IO.enter();
     let mut command = std::process::Command::new("/usr/bin/time");
     #[cfg(target_os = "macos")]
     command.arg("-l");

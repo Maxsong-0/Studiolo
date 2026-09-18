@@ -2,7 +2,7 @@ use super::*;
 
 #[test]
 fn last_temporary_after_a_full_producer_scan_can_still_be_cleaned() {
-    let _guard = LARGE_IO.lock().unwrap();
+    let _guard = LARGE_IO.enter();
     let f = Fixture::new();
     let mut b = f.open();
     for index in 0..50_000 {
