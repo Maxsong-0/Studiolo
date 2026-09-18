@@ -1,5 +1,8 @@
 //! MCP initialize：实例登记与初次只读路牌。
-use super::{AgentSession, ListEntriesArgs, ReadNoteArgs, SESSION_VERSIONS, SearchArgs};
+use super::{
+    AgentSession, ListEntriesArgs, PolicyReadArgs, ProposeArgs, ReadNoteArgs, SESSION_VERSIONS,
+    SearchArgs,
+};
 use crate::auth::AgentType;
 use rmcp::{
     ErrorData as McpError, ServerHandler,
@@ -74,6 +77,32 @@ impl AgentSession {
         let _work = self.enter_mcp_work()?;
         Ok(text_result(self.finish_mcp(self.text_search(args).await?)?))
     }
+
+    #[tool(
+        description = "读策略平面 effective：kind=rules|skills；不带 subject 列清单，带 subject 读该规则母本或 skill 的正文；每次读取进读取审计"
+    )]
+    async fn policy_read(
+        &self,
+        Parameters(args): Parameters<PolicyReadArgs>,
+    ) -> Result<CallToolResult, McpError> {
+        let _work = self.enter_mcp_work()?;
+        Ok(text_result(
+            self.finish_mcp(self.text_policy_read(args).await?)?,
+        ))
+    }
+
+    #[tool(
+        description = "提交 desired 提案（kind=rules|skills|capability_set、subject、body）：只入库为待处理，永不自动生效，须主人经 One-time Code 发布；需能力集 policy.propose_desired"
+    )]
+    async fn propose_desired(
+        &self,
+        Parameters(args): Parameters<ProposeArgs>,
+    ) -> Result<CallToolResult, McpError> {
+        let _work = self.enter_mcp_work()?;
+        Ok(text_result(
+            self.finish_mcp(self.text_propose(args).await?)?,
+        ))
+    }
 }
 
 #[tool_handler]
@@ -116,7 +145,13 @@ impl ServerHandler for AgentSession {
             }
             let instructions = match self.initialize_text(&agent_type).await {
                 Ok(text) => text,
-                Err(error) if error.message.contains("审计不可用") => {
+                // 降级握手与策略拒绝都「应答但一项不给」：客户端拿到原因而不是无解释的传输错误。
+                Err(error)
+                    if error.message.contains("审计不可用")
+                        || error
+                            .message
+                            .starts_with(super::session::POLICY_DENIED_PREFIX) =>
+                {
                     error.message.to_string()
                 }
                 Err(error) => return Err(error),

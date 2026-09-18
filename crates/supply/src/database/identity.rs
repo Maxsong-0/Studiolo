@@ -111,6 +111,30 @@ impl AgentStore {
         })
     }
 
+    /// 已注册实例（新到旧）：实例、最近活动时间；不返回会话摘要。
+    pub fn instances(&self, limit: usize) -> Result<Vec<(Instance, String)>, SupplyError> {
+        let connection = self.lock()?;
+        let mut statement = connection
+            .prepare(
+                "SELECT id, type_name, registered_at, last_seen_at FROM agent_instance
+                 ORDER BY registered_at DESC, id DESC LIMIT ?1",
+            )
+            .map_err(unavailable)?;
+        let rows = statement
+            .query_map(params![limit.clamp(1, 10_000) as i64], |row| {
+                Ok((
+                    Instance {
+                        id: row.get(0)?,
+                        agent_type: row.get(1)?,
+                        registered_at: row.get(2)?,
+                    },
+                    row.get::<_, String>(3)?,
+                ))
+            })
+            .map_err(unavailable)?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(unavailable)
+    }
+
     /// 更新实例最近活动时间。
     pub fn touch_instance(&self, instance_id: &str, now: &str) -> Result<(), SupplyError> {
         let connection = self.lock()?;

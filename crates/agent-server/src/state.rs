@@ -6,6 +6,7 @@ use std::sync::{Arc, Mutex, RwLock};
 
 use studiolo_audit_ledger::{AuditEvent, AuditLedger, SqliteAuditLedger};
 use studiolo_core::VaultPath;
+use studiolo_policy::PolicyAgentStore;
 use studiolo_supply::{
     AgentStore, ScanLimits, Snapshot, SupplyRoots, WorkbenchReadModel,
     replica::{Freshness, ReplicaRoot},
@@ -90,6 +91,8 @@ pub struct AppState {
     pub allow: Vec<VaultPath>,
     /// agent 私有库。
     pub store: AgentStore,
+    /// 策略平面（接入方视角）；`None` ＝ 未接入（M3 兼容模式：白名单只来自 `--allow`，无能力集、无吊销表）。
+    pub policy: Option<PolicyAgentStore>,
     /// 权威审计账本。
     pub ledger: SqliteAuditLedger,
     /// 当前代次。

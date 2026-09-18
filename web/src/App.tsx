@@ -21,6 +21,7 @@ import { DraftShelf } from './components/DraftShelf';
 import { useDraftCount } from './draftContext';
 import { FileOperationsAccess } from './components/FileOperationsAccess';
 import { HealthBoundary } from './HealthBoundary';
+import { PolicyBoundary } from './PolicyBoundary';
 
 const headings = {
   overview: ['项目总览', '项目状态与待办，回到原文核对。'],
@@ -29,6 +30,10 @@ const headings = {
   operations: [
     '项目运作',
     '对照结构声明与实际目录，理解模块职责并回到原文核对。',
+  ],
+  policy: [
+    '策略平面',
+    '规则母本、skills 与各 AI 能力集：提交 desired、校验 diff、经 One-time Code 发布，三级吊销。',
   ],
 } satisfies Record<View, [string, string]>;
 
@@ -204,6 +209,8 @@ export function App({ account }: { account?: ReactNode }) {
             {/* 本机健康属于"待你验收/拍板/重启"的事项，放在待我动作视图；
                 它不依赖工作台快照，快照读不出来时照样要能看见。 */}
             {view === 'inbox' ? <HealthBoundary /> : null}
+            {/* 策略平面不依赖工作台快照：快照读不出来时也要能发布或吊销。 */}
+            {view === 'policy' ? <PolicyBoundary /> : null}
             {view !== 'overview' ? (
               <Diagnostics messages={diagnostics} />
             ) : null}

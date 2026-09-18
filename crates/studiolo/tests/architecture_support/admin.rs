@@ -64,6 +64,15 @@ pub(super) fn remainder(crate_name: &str, path: &Path, source: &str) -> String {
         for allowed in ["fs::File,", expected, "fs::fstat(&input)", "fs::fstat(fd)"] {
             remainder = remainder.replace(allowed, "");
         }
+    } else if crate_name == "studiolo-agent-server"
+        && path.ends_with("crates/agent-server/src/admin/policy.rs")
+    {
+        // 策略 bootstrap 的唯一文件读取：主人显式指定的正文文件，读一次、有界；不得扩成通用读写。
+        let expected = "std::fs::read(file)";
+        if remainder.matches("fs::").count() != 1 || !remainder.contains(expected) {
+            return remainder;
+        }
+        remainder = remainder.replace(expected, "");
     }
     remainder
 }

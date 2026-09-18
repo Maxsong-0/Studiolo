@@ -56,16 +56,49 @@ pub(super) fn render(
             );
         }
     }
-    let _ = writeln!(
-        out,
-        "## 3 能力\n只读；白名单：{}；写与审批：无（M3）",
-        input
-            .allow
-            .iter()
-            .map(|prefix| prefix.as_str())
-            .collect::<Vec<_>>()
-            .join("、")
-    );
+    match input.policy {
+        Some(policy) => {
+            let prefixes = policy
+                .read_prefixes
+                .iter()
+                .map(|prefix| prefix.as_str())
+                .collect::<Vec<_>>()
+                .join("、");
+            let _ = writeln!(
+                out,
+                "## 3 能力\n读：{}（能力集 v{} ∩ 部署上限）；写：黑板 无（M5）、正文 {}；策略：{}；策略版本 {}",
+                if prefixes.is_empty() {
+                    "无"
+                } else {
+                    &prefixes
+                },
+                policy.capability_version,
+                if policy.content_patch_only {
+                    "仅 patch（M5 起）"
+                } else {
+                    "无"
+                },
+                if policy.propose_desired {
+                    "可提 desired（永不自动生效）"
+                } else {
+                    "不可提 desired"
+                },
+                &policy.effective_hash[..12.min(policy.effective_hash.len())]
+            );
+        }
+        None => {
+            let _ = writeln!(
+                out,
+                "## 3 能力\n只读；白名单：{}；写与审批：无（M3）；策略平面：未接入",
+                input
+                    .allow
+                    .iter()
+                    .map(|prefix| prefix.as_str())
+                    .collect::<Vec<_>>()
+                    .join("、")
+            );
+        }
+    }
     out.push_str("## 4 待我做的事\n");
     let mut any = false;
     for project in projects {
@@ -95,6 +128,13 @@ pub(super) fn render(
                 .map(|(index, title)| format!("{} {}", index + 1, truncate(title, 24)))
                 .collect::<Vec<_>>()
                 .join("；")
+        );
+    }
+    for binding in rules.enforced.iter().take(if level >= 2 { 1 } else { 3 }) {
+        let _ = writeln!(
+            out,
+            "硬绑定（策略强制）：{}",
+            truncate(binding, if level >= 2 { 80 } else { 160 })
         );
     }
     for binding in rules
@@ -130,6 +170,15 @@ pub(super) fn render(
     }
     for (path, revision) in &rules.entries {
         let _ = writeln!(out, "入口：{path}@{}", &revision[..12.min(revision.len())]);
+    }
+    if let Some(policy) = input.policy
+        && !policy.skills.is_empty()
+    {
+        let _ = writeln!(
+            out,
+            "skills：{} 个（policy_read kind=skills 取索引）",
+            policy.skills.len()
+        );
     }
     if !input.snapshot.diagnostics.is_empty() {
         let _ = writeln!(

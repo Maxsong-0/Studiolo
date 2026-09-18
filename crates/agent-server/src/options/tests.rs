@@ -28,6 +28,7 @@ fn serve_requires_absolute_paths_and_at_least_one_allow() {
             replica_max_age_secs: 300,
             allow: vec!["项目/Studiolo".into(), "_规则".into()],
             data: PathBuf::from("/d"),
+            policy: None,
             port: 4400,
         })
     );

@@ -13,7 +13,7 @@ use zeroize::Zeroizing;
 
 use super::{
     FACTOR_STATE, RECOVER, RECOVERY_CODES, REVOKE, SELF, SESSIONS, STEP_UP, factor_input,
-    gate::one, is_factor_path, responses::Failure,
+    gate::one, is_factor_path, policy, responses::Failure,
 };
 
 pub(super) enum Action {
@@ -22,6 +22,7 @@ pub(super) enum Action {
     Factor(factor_input::Action),
     Content(crate::editing::Replace),
     FileOperation(crate::file_operations::Input),
+    Policy(policy::Input),
 }
 pub(super) enum Revoke {
     Current,
@@ -55,6 +56,13 @@ pub(super) async fn action(request: &mut Request) -> Result<Option<Action>, Fail
         crate::editing::PATH => crate::editing::PATH,
         crate::file_operations::PATH => crate::file_operations::PATH,
         crate::file_operations::TOMBSTONES => crate::file_operations::TOMBSTONES,
+        policy::STATUS => policy::STATUS,
+        policy::DESIRED => policy::DESIRED,
+        policy::VALIDATE => policy::VALIDATE,
+        policy::WITHDRAW => policy::WITHDRAW,
+        policy::ACTIVATE => policy::ACTIVATE,
+        policy::VERSIONS => policy::VERSIONS,
+        policy::REVOKE => policy::REVOKE,
         _ => return Ok(None),
     };
     let posting = request.method() == Method::POST;
@@ -90,6 +98,8 @@ pub(super) async fn action(request: &mut Request) -> Result<Option<Action>, Fail
     }
     let limit = if posting && path == crate::editing::PATH {
         crate::editing::JSON_LIMIT
+    } else if posting && policy::is_policy_post(path) {
+        policy::JSON_LIMIT
     } else if posting && path == crate::file_operations::PATH {
         crate::file_operations::JSON_LIMIT
     } else if posting {
@@ -120,6 +130,9 @@ pub(super) async fn action(request: &mut Request) -> Result<Option<Action>, Fail
     }
     if is_factor_path(path) {
         return factor_input::parse(path, &bytes).map(|action| Some(Action::Factor(action)));
+    }
+    if policy::is_policy_post(path) {
+        return policy::parse(path, &bytes).map(|input| Some(Action::Policy(input)));
     }
     if path == crate::editing::PATH {
         return crate::editing::parse(&bytes)

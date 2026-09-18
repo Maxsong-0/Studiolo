@@ -7,7 +7,7 @@ mod render;
 mod source;
 
 use render::render;
-use source::{project_status, rules_summary};
+use source::{principle_titles, project_status, rules_summary};
 
 use studiolo_core::VaultPath;
 
@@ -22,6 +22,40 @@ pub struct Principal {
     pub instance_id: String,
     /// 实例注册时间（RFC 3339）。
     pub registered_at: String,
+}
+
+/// 策略平面接入后，路牌第 3／5／6 项改从 effective 派生的输入（M4）。
+///
+/// 没有策略平面（`serve` 未给 `--policy`，M3 兼容模式）时为 `None`，路牌明写「策略平面：未接入」。
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct PolicySignpost {
+    /// 复核时的 effective 哈希。
+    pub effective_hash: String,
+    /// 该类型现行能力集版本。
+    pub capability_version: u64,
+    /// 供给视图（部署上限 ∩ 能力集白名单）。
+    pub read_prefixes: Vec<VaultPath>,
+    /// 能力集是否允许以 patch 形式写正文（M5 起才有落地面）。
+    pub content_patch_only: bool,
+    /// 能力集是否允许提交 desired 提案。
+    pub propose_desired: bool,
+    /// 硬绑定（触发条件 → 必须叠加的 skill），策略强制。
+    pub hard_bindings: Vec<(String, String)>,
+    /// 现行规则母本。
+    pub rules: Vec<PolicyRule>,
+    /// 现行 skill 名。
+    pub skills: Vec<String>,
+}
+
+/// 一份现行规则母本。
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct PolicyRule {
+    /// subject（文件名）。
+    pub subject: String,
+    /// 版本号。
+    pub version: u64,
+    /// 正文（Markdown）。
+    pub body: String,
 }
 
 /// 路牌派生输入。
@@ -40,6 +74,8 @@ pub struct SignpostInput<'a> {
     pub freshness: Option<&'a str>,
     /// 本外壳暴露的 tool 名与一句说明。
     pub tools: &'a [(&'a str, &'a str)],
+    /// 策略平面派生项；`None` ＝ 未接入。
+    pub policy: Option<&'a PolicySignpost>,
 }
 
 /// 派生结果：文本、计量与用于审计的摘要。
@@ -85,7 +121,32 @@ fn derive_with_label(
         .iter()
         .filter_map(|prefix| project_status(input.snapshot, prefix))
         .collect::<Vec<_>>();
-    let rules = rules_summary(input.snapshot, input.allow);
+    let mut rules = rules_summary(input.snapshot, input.allow);
+    if let Some(policy) = input.policy {
+        // 策略平面的规则母本优先于 vault 里的文件：effective 才是权威，文件只是 desired 文本。
+        if let Some(principles) = policy
+            .rules
+            .iter()
+            .map(|rule| principle_titles(&rule.body))
+            .find(|titles| !titles.is_empty())
+        {
+            rules.principles = principles;
+        }
+        rules.enforced = policy
+            .hard_bindings
+            .iter()
+            .map(|(when, skill)| format!("{when} → {skill}"))
+            .collect();
+        if !rules.enforced.is_empty() {
+            rules.hard_bindings.clear();
+        }
+        for rule in &policy.rules {
+            rules.entries.push((
+                format!("policy://rules/{}", rule.subject),
+                format!("v{}", rule.version),
+            ));
+        }
+    }
     let mut last = None;
     for level in 0..=3u8 {
         let text = render(input, &projects, &rules, level, entry_label);

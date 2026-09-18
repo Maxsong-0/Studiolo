@@ -24,6 +24,7 @@ async fn fixture(age_ms: i64) -> (ReplicaFixture, HttpServer) {
         replica_max_age_secs: 300,
         allow: vec!["project".into()],
         data: replica.temp.path().join("agent-data"),
+        policy: None,
         port: 0,
     })
     .await;

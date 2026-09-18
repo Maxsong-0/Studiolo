@@ -134,6 +134,16 @@ T-033～T-040 已合并 main 并上线；**T-041～T-046 已随 PR #5 合并 `or
 供给面契约本身在 [`contracts/agent-supply.md`](contracts/agent-supply.md)。
 `m3/client-projection.example.json` 是投影输出的示例，不含真实资料。
 
+## m4/ — 策略平面与权限中枢
+
+M4 把规则母本、skills 与各 AI 类型的能力集升入策略平面：desired → 校验 → diff（扩大项标红）→ L3 One-time Code → effective，
+版本与回滚，实例／类型／全局三级吊销。**代码已实现；macOS 全工作区 182 目标 2293 项通过，Linux 以 PR #10 的 CI（x86_64）为准；线上未启用**（agent 未给 `--policy`，人侧因子模式未部署）。
+
+| 文件 | 内容 | 发布状态 |
+|---|---|---|
+| [`m4/README.md`](m4/README.md) | T-069 实现范围、本机运行方式、二元验收证据、明确未做与启用前置 | 已在开发分支，未部署 |
+| [`contracts/policy-plane.md`](contracts/policy-plane.md) | 策略平面契约：私有库、三类母本形状与恒定约束、发布链路与审计顺序、三级吊销、接入方视角、错误模式、契约测试清单 | 同上 |
+
 ## contracts/ — Module Interface 契约（M0）
 
 六个深 Module 的 Interface、不变量、错误模式、测试替身与契约测试清单。范围与关键裁决的

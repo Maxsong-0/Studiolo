@@ -9,6 +9,7 @@ const navigation = [
   { id: 'operations', label: '项目运作', icon: 'canvas' },
   { id: 'inbox', label: '待我动作', icon: 'inbox' },
   { id: 'documents', label: '文档', icon: 'document' },
+  { id: 'policy', label: '策略平面', icon: 'shield' },
 ] as const;
 
 export function AppShell({

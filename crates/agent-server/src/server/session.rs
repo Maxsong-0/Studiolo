@@ -1,16 +1,21 @@
-//! 会话认证、先审计后供给及带新鲜度的预算路牌。
+//! 会话认证、策略平面复核（三级吊销与能力集）、先审计后供给，及带新鲜度与策略版本的预算路牌。
 use super::{AgentSession, HTTP_TOOLS, TOOLS};
 use crate::state::{AppState, AuditUnavailable, Generation, now, now_ms};
 use rmcp::ErrorData as McpError;
 use std::sync::{Arc, OnceLock};
 use studiolo_core::VaultPath;
+use studiolo_policy::{CapabilitySet, Denial, view::intersect_prefixes};
 use studiolo_supply::{
     HARD_BUDGET_TOKENS, Instance, ReadRecord,
     audit::{self, Actor},
-    signpost::{self, Principal, SignpostInput},
+    signpost::{self, PolicyRule, PolicySignpost, Principal, SignpostInput},
 };
 
-fn degraded(outage: &AuditUnavailable) -> McpError {
+/// 策略平面拒绝（吊销／零权限）的固定前缀：握手时像降级握手一样「应答但一项不给」，
+/// 外壳据此把它当授权拒绝而不是会话失效。
+pub(crate) const POLICY_DENIED_PREFIX: &str = "策略拒绝：";
+
+pub(super) fn degraded(outage: &AuditUnavailable) -> McpError {
     McpError::internal_error(
         format!(
             "审计不可用（outage {}）：本次读写全部拒绝",
@@ -18,6 +23,40 @@ fn degraded(outage: &AuditUnavailable) -> McpError {
         ),
         None,
     )
+}
+
+/// 策略平面复核通过后拿到的能力集（每次调用重新读取，不缓存）。
+pub(crate) struct GrantPolicy {
+    /// 复核时的 effective 哈希。
+    pub effective_hash: String,
+    /// 能力集版本。
+    pub version: u64,
+    /// 能力集本身。
+    pub set: CapabilitySet,
+}
+
+/// 一次调用的授权结果：实例、供给视图与（接入策略平面时的）能力集。
+pub(crate) struct Grant {
+    /// 已登记实例。
+    pub instance: Instance,
+    /// 供给视图：部署上限 ∩ 能力集白名单；M3 兼容模式下就是部署上限。
+    pub allowed: Vec<VaultPath>,
+    /// 策略平面派生项；`None` ＝ 未接入。
+    pub policy: Option<GrantPolicy>,
+}
+
+impl Grant {
+    /// 路径是否在供给视图内。
+    pub(crate) fn allows(&self, path: &VaultPath) -> bool {
+        self.allowed
+            .iter()
+            .any(|prefix| path == prefix || path.as_str().starts_with(&format!("{prefix}/")))
+    }
+
+    /// 审计主体。
+    pub(crate) fn actor(&self) -> Actor<'_> {
+        Actor::instance(&self.instance.agent_type, &self.instance.id)
+    }
 }
 
 impl AgentSession {
@@ -72,7 +111,7 @@ impl AgentSession {
         self.instance.get()
     }
 
-    /// 由外壳在新会话发布前调用一次；注册和路牌均先审计后交付。
+    /// 由外壳在新会话发布前调用一次；注册、策略复核和路牌均先审计后交付。
     pub(crate) async fn initialize_text(&self, agent_type: &str) -> Result<String, McpError> {
         let instance = self
             .state
@@ -90,21 +129,26 @@ impl AgentSession {
                 ),
                 None,
             )),
-            Ok(_) => self.signpost(&instance).await,
+            Ok(_) => match self.grant_for(&instance, "handshake") {
+                Ok(grant) => self.signpost(&grant).await,
+                Err(error) => Err(error),
+            },
         };
-        // MCP 仍保留降级实例，使初始化返回原有无内容 instructions；HTTP 将错误映射为 503。
+        // MCP 仍保留降级实例与被策略拒绝的实例，使初始化返回原有无内容 instructions
+        // （后续每次调用都会再次复核并再次拒绝）；HTTP 分别映射为 503 与 403。
         if instructions.is_ok()
-            || instructions
-                .as_ref()
-                .is_err_and(|error| error.message.contains("审计不可用"))
+            || instructions.as_ref().is_err_and(|error| {
+                error.message.contains("审计不可用")
+                    || error.message.starts_with(POLICY_DENIED_PREFIX)
+            })
         {
             let _ = self.instance.set(instance);
         }
         instructions
     }
 
-    /// 每次调用都重验：实例已注册且类型未吊销。
-    pub(super) fn authorize(&self, action: &str) -> Result<Instance, McpError> {
+    /// 每次调用都重验：实例已注册、类型未吊销（身份库）、策略平面三级吊销与能力集（策略库）。
+    pub(super) fn authorize(&self, action: &str) -> Result<Grant, McpError> {
         if self.mcp.as_ref().is_some_and(|binding| {
             !binding.live(std::time::Instant::now()) || !binding.current(&self.state.store)
         }) {
@@ -126,8 +170,64 @@ impl AgentSession {
             );
             return Err(McpError::invalid_request("类型已吊销", None));
         }
+        let grant = self.grant_for(instance, action)?;
         let _ = self.state.store.touch_instance(&instance.id, &now());
-        Ok(instance.clone())
+        Ok(grant)
+    }
+
+    /// 策略平面复核：全局吊销 → 类型吊销 → 实例吊销 → 能力集；被拒即审计并失败关闭。
+    ///
+    /// 未接入策略平面时（M3 兼容模式）供给视图就是部署上限。
+    pub(super) fn grant_for(&self, instance: &Instance, action: &str) -> Result<Grant, McpError> {
+        let Some(policy) = &self.state.policy else {
+            return Ok(Grant {
+                instance: instance.clone(),
+                allowed: self.state.allow.clone(),
+                policy: None,
+            });
+        };
+        let authorization = policy
+            .authorization(&instance.agent_type, Some(&instance.id))
+            .map_err(|_| McpError::internal_error("策略库不可用，本次拒绝供给", None))?;
+        if let Some(denial) = authorization.denial {
+            self.deny(
+                Actor::instance(&instance.agent_type, &instance.id),
+                action,
+                denial.as_str(),
+            );
+            return Err(McpError::invalid_request(
+                format!(
+                    "{POLICY_DENIED_PREFIX}{}；本次会话所有读取与写入全部拒绝",
+                    match denial {
+                        Denial::GlobalRevoked => "全局吊销生效中",
+                        Denial::TypeRevoked => "类型已被吊销",
+                        Denial::InstanceRevoked => "实例已被吊销",
+                        Denial::NoCapabilitySet => "该类型没有生效的能力集（零权限）",
+                    }
+                ),
+                None,
+            ));
+        }
+        let grant = authorization
+            .grant
+            .ok_or_else(|| McpError::internal_error("策略库返回不一致", None))?;
+        let whitelist = grant
+            .set
+            .read
+            .project_whitelist
+            .iter()
+            .filter_map(|prefix| VaultPath::parse(prefix).ok())
+            .collect::<Vec<_>>();
+        let allowed = intersect_prefixes(&self.state.allow, &whitelist);
+        Ok(Grant {
+            instance: instance.clone(),
+            allowed,
+            policy: Some(GrantPolicy {
+                effective_hash: authorization.effective_hash,
+                version: grant.meta.version,
+                set: grant.set,
+            }),
+        })
     }
 
     pub(super) fn deny(&self, actor: Actor<'_>, action: &str, reason: &str) {
@@ -166,23 +266,18 @@ impl AgentSession {
 
     pub(super) fn allowed_project(
         &self,
-        instance: &Instance,
+        grant: &Grant,
         action: &str,
         project: &str,
     ) -> Result<VaultPath, McpError> {
-        match self
-            .state
-            .allow
+        match grant
+            .allowed
             .iter()
             .find(|prefix| prefix.as_str() == project)
         {
             Some(prefix) => Ok(prefix.clone()),
             None => {
-                self.deny(
-                    Actor::instance(&instance.agent_type, &instance.id),
-                    action,
-                    "outside_allowlist",
-                );
+                self.deny(grant.actor(), action, "outside_allowlist");
                 Err(McpError::invalid_params("项目不在供给白名单内", None))
             }
         }
@@ -226,9 +321,47 @@ impl AgentSession {
             })
     }
 
-    pub(super) async fn signpost(&self, instance: &Instance) -> Result<String, McpError> {
+    fn policy_signpost(&self, grant: &Grant) -> Result<Option<PolicySignpost>, McpError> {
+        let (Some(policy), Some(store)) = (&grant.policy, &self.state.policy) else {
+            return Ok(None);
+        };
+        let unavailable = |_| McpError::internal_error("策略库不可用，本次拒绝供给", None);
+        Ok(Some(PolicySignpost {
+            effective_hash: policy.effective_hash.clone(),
+            capability_version: policy.version,
+            read_prefixes: grant.allowed.clone(),
+            content_patch_only: policy.set.write.content_patch_only,
+            propose_desired: policy.set.policy.propose_desired,
+            hard_bindings: policy
+                .set
+                .hard_bound_skills
+                .iter()
+                .map(|binding| (binding.when.clone(), binding.must_use.clone()))
+                .collect(),
+            rules: store
+                .rules()
+                .map_err(unavailable)?
+                .into_iter()
+                .map(|record| PolicyRule {
+                    subject: record.meta.subject,
+                    version: record.meta.version,
+                    body: record.body.unwrap_or_default(),
+                })
+                .collect(),
+            skills: store
+                .skills()
+                .map_err(unavailable)?
+                .into_iter()
+                .map(|(skill, _)| skill.name)
+                .collect(),
+        }))
+    }
+
+    pub(super) async fn signpost(&self, grant: &Grant) -> Result<String, McpError> {
+        let instance = &grant.instance;
         let generation = self.generation(instance, "handshake").await?;
         let freshness = Self::freshness(&generation)?;
+        let policy = self.policy_signpost(grant)?;
         let principal = Principal {
             agent_type: instance.agent_type.clone(),
             instance_id: instance.id.clone(),
@@ -237,12 +370,13 @@ impl AgentSession {
         let actor = Actor::instance(&instance.agent_type, &instance.id);
         let input = SignpostInput {
             snapshot: &generation.snapshot,
-            allow: &self.state.allow,
+            allow: &grant.allowed,
             principal: &principal,
             generation: generation.number,
             generated_at: &generation.generated_at,
             freshness: (!freshness.is_empty()).then_some(freshness.as_str()),
             tools: if self.http { HTTP_TOOLS } else { TOOLS },
+            policy: policy.as_ref(),
         };
         let derived = if self.http {
             signpost::derive_http(&input)
@@ -251,8 +385,13 @@ impl AgentSession {
         };
         match derived {
             Ok(signpost) => {
-                let event = audit::handshake_served(actor, generation.number, signpost.tokens)
-                    .map_err(|_| McpError::internal_error("审计事件构造失败", None))?;
+                let event = audit::handshake_served(
+                    actor,
+                    generation.number,
+                    signpost.tokens,
+                    policy.as_ref().map(|policy| policy.effective_hash.as_str()),
+                )
+                .map_err(|_| McpError::internal_error("审计事件构造失败", None))?;
                 self.state
                     .audit(event)
                     .map_err(|outage| degraded(&outage))?;

@@ -41,6 +41,14 @@ pub fn prepare(options: &ServeOptions) -> Result<Arc<AppState>, String> {
         .map_err(|error| format!("agent 私有库：{error}；请先运行 admin init"))?;
     let ledger = SqliteAuditLedger::open_existing(&options.data.join("audit"))
         .map_err(|_| "审计账本不可用或未初始化；请先运行 admin init".to_owned())?;
+    let policy = options
+        .policy
+        .as_ref()
+        .map(|directory| {
+            studiolo_policy::PolicyAgentStore::open_existing(directory)
+                .map_err(|error| format!("策略平面私有库：{error}；请先运行 admin policy-init"))
+        })
+        .transpose()?;
     let limits = ScanLimits::default();
     let (snapshot, freshness) = source.scan(limits, None)?;
     let index = IndexRuntime::open(options)?;
@@ -58,6 +66,7 @@ pub fn prepare(options: &ServeOptions) -> Result<Arc<AppState>, String> {
         scan_lock: Mutex::new(()),
         allow,
         store,
+        policy,
         ledger,
         current: RwLock::new(Arc::new(first)),
         outage: Mutex::new(None),
@@ -74,6 +83,7 @@ pub fn router(state: Arc<AppState>) -> Router {
 /// 启动服务直到 Ctrl-C 或 SIGTERM。
 pub async fn run(options: ServeOptions) -> Result<(), String> {
     let state = prepare(&options)?;
+    let policy_present = state.policy.is_some();
     let first = state.current();
     let notes = first.snapshot.notes.len();
     let diagnostics = first.snapshot.diagnostics.len();
@@ -89,6 +99,14 @@ pub async fn run(options: ServeOptions) -> Result<(), String> {
         options.port
     );
     println!("派生索引：{index_status:?}");
+    println!(
+        "策略平面：{}",
+        if policy_present {
+            "已接入（能力集∩部署上限、三级吊销复核、policy_read／propose_desired）"
+        } else {
+            "未接入（M3 兼容模式：白名单只来自 --allow，无能力集与吊销表）"
+        }
+    );
     axum::serve(listener, app)
         .with_graceful_shutdown(shutdown_signal())
         .await

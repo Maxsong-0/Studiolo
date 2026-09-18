@@ -246,6 +246,10 @@ fn assemble(
         );
     }
     routes = crate::file_operations::routes(routes, &state);
+    // 策略平面路由与健康页同一形态：只在会话门禁之内挂载，句柄由启动层经 Extension 装上。
+    if state.sessions.is_some() {
+        routes = crate::policy_http::routes(routes);
+    }
     // 健康页只在已装会话门禁时挂载，且必须挂在下面 security::guard 那一层之前，
     // 这样它和其它内容 API 走的是同一条鉴权；证据来源由可信启动层随后装上。
     routes = crate::health::routes(routes, state.sessions.is_some());

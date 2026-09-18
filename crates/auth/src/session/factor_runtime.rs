@@ -6,8 +6,8 @@ pub use projection::FactorState;
 
 use super::{
     CsrfToken, PreparedTotpFactor, RecentAuthentication, Recovery, RecoveryCode, RecoveryCodes,
-    SessionError, SessionInfo, SessionManager, SessionToken, Totp, TotpCode, TotpRequest, TotpSeed,
-    denials::Denial, schema, state, totp,
+    SensitiveAction, SessionError, SessionInfo, SessionManager, SessionToken, Totp, TotpCode,
+    TotpRequest, TotpSeed, denials::Denial, schema, state, totp,
 };
 use crate::AccessIdentity;
 use rusqlite::Connection;
@@ -128,6 +128,31 @@ impl FactorRuntime {
     pub fn rotate_codes(&self, request: &TotpRequest<'_>) -> Result<RecoveryCodes, SessionError> {
         self.select(request)?;
         self.recovery.rotate_codes(request)
+    }
+
+    /// 封闭 L3 动作的执行前即时检查（T-026 复审 #19 登记的 M4 前置）。
+    ///
+    /// 每次重验 Access 身份、会话／epoch、CSRF、当前活动因子槽与本会话未过期的近期认证；
+    /// 结果只对本次调用有效，不发可缓存或跨系统的 capability。调用方仍须先写具体动作的
+    /// intent，并在排队／最终切换前再次调用本方法。缺近期认证返回
+    /// `ReauthenticationRequired`，未登记因子返回 `FactorUnavailable`。
+    pub fn require_l3(
+        &self,
+        request: &TotpRequest<'_>,
+        action: SensitiveAction,
+    ) -> Result<(), SessionError> {
+        let active = self.select(request)?;
+        let context = match active {
+            Active::Current => &self.current,
+            Active::Replacement => self
+                .replacement
+                .as_ref()
+                .ok_or(SessionError::Configuration)?,
+        };
+        Totp {
+            context: Arc::clone(context),
+        }
+        .require_l3(request, action)
     }
 
     /// 可信维护补记 TOTP、恢复和最多 256 条会话事件，不重放动作或授予权限。

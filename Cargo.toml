@@ -14,6 +14,7 @@ members = [
     "crates/sync-transport",
     "crates/backup",
     "crates/observability",
+    "crates/policy",
     "crates/runner-adapter",
     "crates/gateway",
     "crates/task-engine",
@@ -49,6 +50,7 @@ studiolo-sync-bridge = { path = "crates/sync-bridge" }
 studiolo-sync-transport = { path = "crates/sync-transport" }
 studiolo-backup = { path = "crates/backup" }
 studiolo-observability = { path = "crates/observability" }
+studiolo-policy = { path = "crates/policy" }
 studiolo-runner-adapter = { path = "crates/runner-adapter" }
 studiolo-gateway = { path = "crates/gateway" }
 studiolo-task-engine = { path = "crates/task-engine" }

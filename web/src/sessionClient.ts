@@ -16,11 +16,19 @@ export class SessionClient extends SessionCore {
     this.writeContent(request, signal);
   fileOperation = (request: FileOperationRequest, signal: AbortSignal) =>
     this.writeContent(request, signal, '/api/v1/file-operations');
-  private writeContent = async (
+  /** 策略平面写入（desired／校验／发布／吊销）：同一条会话链与 CSRF，路径由 policyApi 固定。 */
+  policyPost = (path: string, body: unknown, signal: AbortSignal) =>
+    this.postJson(path, body, signal);
+  private writeContent = (
     request: Replacement | Restoration | FileOperationRequest,
     signal: AbortSignal,
     endpoint:
       '/api/v1/mutations' | '/api/v1/file-operations' = '/api/v1/mutations',
+  ): Promise<unknown> => this.postJson(endpoint, request, signal);
+  private postJson = async (
+    endpoint: string,
+    request: unknown,
+    signal: AbortSignal,
   ): Promise<unknown> => {
     if (this.state.phase !== 'ready' || !this.csrf || !this.state.ownerScope)
       throw new ApiError('需要带主人范围的有效应用会话才能保存。', 403);

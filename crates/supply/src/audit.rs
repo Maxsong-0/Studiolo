@@ -79,16 +79,23 @@ fn map(value: serde_json::Value) -> serde_json::Map<String, serde_json::Value> {
     }
 }
 
-/// `handshake.served`：路牌版本＝快照代次，含实际 token 数。
+/// `handshake.served`：路牌版本＝快照代次，含实际 token 数；接入策略平面时附 effective 哈希，
+/// 使每一次握手都能与 `policy.activated` 链对账（PRD-v2-01 2.4 第 7 条）。
 pub fn handshake_served(
     actor: Actor<'_>,
     generation: u64,
     token_count: usize,
+    effective_hash: Option<&str>,
 ) -> Result<AuditEvent, AuditError> {
     event(
         actor,
         HANDSHAKE_SERVED,
-        map(json!({"generation": generation, "token_count": token_count})),
+        map(json!({
+            "generation": generation,
+            "token_count": token_count,
+            "policy_plane": if effective_hash.is_some() { "present" } else { "absent" },
+            "effective_hash": effective_hash,
+        })),
     )
 }
 
@@ -156,7 +163,7 @@ mod tests {
         let ledger = MemoryAuditLedger::new();
         let actor = Actor::instance("claude", "01JT3");
         ledger
-            .append(handshake_served(actor, 7, 1234).unwrap())
+            .append(handshake_served(actor, 7, 1234, None).unwrap())
             .unwrap();
         ledger
             .append(
@@ -194,8 +201,8 @@ mod tests {
                 .contains(":anonymous:")
         );
         // 两次同类事件 ID 不同，不会撞幂等键。
-        let a = handshake_served(actor, 7, 1).unwrap();
-        let b = handshake_served(actor, 7, 1).unwrap();
+        let a = handshake_served(actor, 7, 1, Some("ab")).unwrap();
+        let b = handshake_served(actor, 7, 1, Some("ab")).unwrap();
         assert_ne!(a.event_id(), b.event_id());
     }
 }

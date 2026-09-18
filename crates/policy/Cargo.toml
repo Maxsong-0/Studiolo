@@ -1,0 +1,25 @@
+[package]
+name = "studiolo-policy"
+description = "Studiolo 策略平面（M4）：规则母本／skills／能力集的 desired → 校验 → diff → L3 发布 → effective，版本与回滚，实例／类型／全局三级吊销；私有 policy.sqlite3。"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+studiolo-core.workspace = true
+studiolo-audit-ledger.workspace = true
+rusqlite.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+ulid.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
