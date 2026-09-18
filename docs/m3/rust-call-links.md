@@ -105,6 +105,10 @@ graph 和 links 由同一 RustCallAnalysis 生成；前端没有正文，不能�
 
 本片基于 T-044 `82a620d`，本地分支 `codex/m3-rust-call-links`，未推送、合并或部署。
 
+**2026-09-17 更正**：上句是 T-045 当时的记录。本片提交 `4f6f348` 此后已随 PR #5 进入
+`origin/main`（`297f126`），用 `git merge-base --is-ancestor` 核实。**但仍未部署、
+未整体验收**。
+
 - macOS：workbench/local-server 472 项相关 Rust、另 26 项架构守卫通过。
 - Linux aarch64 Docker 单作业：对应 473 项相关 Rust、另 26 项架构守卫通过。
 - 两平台：fmt、workspace all-targets 严格 Clippy、Auth production 特性 dev 构建通过；

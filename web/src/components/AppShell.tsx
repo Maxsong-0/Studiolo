@@ -28,7 +28,8 @@ export function AppShell({
   projects: Project[];
   onOpen: OpenSource;
   actionCount: number;
-  documentCount: number;
+  /** 文档总数；null 表示当前快照给不出这个计数，界面显示「—」而不是假装是 0。 */
+  documentCount: number | null;
   toolbar: ReactNode;
   children: ReactNode;
 }) {
@@ -68,7 +69,7 @@ export function AppShell({
               <span>{item.label}</span>
               {item.id === 'inbox' || item.id === 'documents' ? (
                 <span className="nav-count" aria-hidden="true">
-                  {item.id === 'inbox' ? actionCount : documentCount}
+                  {item.id === 'inbox' ? actionCount : (documentCount ?? '—')}
                 </span>
               ) : null}
             </button>

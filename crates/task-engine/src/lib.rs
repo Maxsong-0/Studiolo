@@ -20,9 +20,12 @@ use studiolo_control_db::{
 use studiolo_core::{AttemptId, Fence, TaskId, VaultPath};
 use studiolo_runner_adapter::{RunInput, RunSpec, RunnerRef, RunnerReport};
 use studiolo_vault_broker::{
-    ArtifactCandidate, ArtifactCommit, ArtifactCommitReceipt, BrokerError, Mutation, Snapshot,
-    SnapshotId, SnapshotInput, VaultBroker,
+    ArtifactCandidate, ArtifactCommit, ArtifactCommitReceipt, BrokerError, Mutation, Precondition,
+    Snapshot, SnapshotId, SnapshotInput, VaultBroker,
 };
+
+/// 一条投影事件在单轮里最多尝试的写入次数（契约 §6「每条事件最多尝试三次」）。
+const MAX_PROJECTION_ATTEMPTS: usize = 3;
 
 /// Human-authored retry declaration. M0 records this but never automatically retries.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -707,8 +710,12 @@ where
     fn project_event(&mut self, event: &OutboxRecord) -> Result<(), TaskEngineError> {
         {
             let page = task_page_path(event.task_id)?;
+            let vault_uuid = self.broker.vault_uuid();
             let mut succeeded = false;
-            for _ in 0..3 {
+            // 幂等键的判别位：只在「前提当下仍然成立、拒绝只可能是旧键终态的重放」时推进，
+            // 详见 `projection::key`。
+            let mut generation: u32 = 0;
+            for _ in 0..MAX_PROJECTION_ATTEMPTS {
                 let mutation = match self.broker.read(&page) {
                     Ok(current) => {
                         projection::validate_task_page(&current.content, event.task_id)
@@ -720,9 +727,14 @@ where
                             succeeded = true;
                             break;
                         }
-                        let key = format!(
-                            "task-projection:{}:{}:{}",
-                            event.task_id, event.sequence, current.revision
+                        let key = projection::key::mutation_key(
+                            vault_uuid,
+                            event.task_id,
+                            event.sequence,
+                            &page,
+                            Precondition::Match(current.revision),
+                            &content,
+                            generation,
                         );
                         Mutation::replace(page.clone(), content, current.revision, key)
                     }
@@ -745,17 +757,20 @@ where
                         .map_err(TaskEngineError::Projection)?;
                         let content = projection::apply_projection(&content, &event.payload_json)
                             .map_err(TaskEngineError::Projection)?;
-                        Mutation::create(
-                            page.clone(),
-                            content,
-                            format!(
-                                "task-projection:{}:{}:create",
-                                event.task_id, event.sequence
-                            ),
-                        )
+                        let key = projection::key::mutation_key(
+                            vault_uuid,
+                            event.task_id,
+                            event.sequence,
+                            &page,
+                            Precondition::MustNotExist,
+                            &content,
+                            generation,
+                        );
+                        Mutation::create(page.clone(), content, key)
                     }
                     Err(error) => return Err(TaskEngineError::Broker(error)),
                 };
+                let precondition = mutation.precondition;
                 let expected_content = mutation.content.clone();
                 match self.broker.mutate(mutation) {
                     Ok(receipt) => {
@@ -769,13 +784,30 @@ where
                             break;
                         }
                     }
-                    Err(BrokerError::RevisionConflict { .. }) => continue,
+                    Err(BrokerError::RevisionConflict { .. }) => {
+                        // 拒绝要么是对当前状态的判定，要么是 Broker 为这把键封存的拒绝终态的
+                        // 重放。前提当下仍然成立 ⇒ 只可能是重放：推进判别位换一把没被封死的
+                        // 键，否则这条事件会永远撞在同一个终态上（T-028 起 CAS 拒绝按键终态）。
+                        // 前提确实已变时不推进：新前提本身就会派生出新键。
+                        if self.premise_still_holds(&page, precondition)? {
+                            generation = generation.saturating_add(1);
+                        }
+                        continue;
+                    }
+                    Err(BrokerError::IdempotencyConflict) => {
+                        // 同一把键被另一个请求占用：明确拒绝，绝不静默继承它的终态。
+                        // 只隔离本任务，别的任务的投影照常交付。
+                        return Err(TaskEngineError::Projection(format!(
+                            "task {} projection idempotency key is already bound to a different request",
+                            event.task_id
+                        )));
+                    }
                     Err(error) => return Err(TaskEngineError::Broker(error)),
                 }
             }
             if !succeeded {
                 return Err(TaskEngineError::Projection(format!(
-                    "task {} changed during three projection attempts",
+                    "task {} changed during {MAX_PROJECTION_ATTEMPTS} projection attempts",
                     event.task_id
                 )));
             }
@@ -784,6 +816,24 @@ where
                 .map_err(map_db)?;
         }
         Ok(())
+    }
+
+    /// 本次写入的前提（不存在 / 指定 revision）当下是否仍然成立。
+    ///
+    /// 只用来解释一次 CAS 拒绝：前提仍成立时，这次拒绝不可能是对当前状态的判定，
+    /// 只能是 Broker 重放同一把幂等键上的旧拒绝终态。
+    fn premise_still_holds(
+        &self,
+        page: &VaultPath,
+        precondition: Precondition,
+    ) -> Result<bool, TaskEngineError> {
+        match (self.broker.read(page), precondition) {
+            (Ok(current), Precondition::Match(expected)) => Ok(current.revision == expected),
+            (Ok(_), Precondition::MustNotExist) => Ok(false),
+            (Err(BrokerError::NotFound(_)), Precondition::MustNotExist) => Ok(true),
+            (Err(BrokerError::NotFound(_)), Precondition::Match(_)) => Ok(false),
+            (Err(error), _) => Err(TaskEngineError::Broker(error)),
+        }
     }
 }
 

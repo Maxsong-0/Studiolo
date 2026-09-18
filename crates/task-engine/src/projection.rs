@@ -1,5 +1,7 @@
 //! 任务页投影只替换四个顶层标量，其他字节归作者所有。
 
+pub(crate) mod key;
+
 use std::collections::BTreeSet;
 
 use serde_json::{Value, json};

@@ -1,5 +1,6 @@
 //! 内存替身沿用磁盘请求指纹与 CAS 拒绝终态，后续 ABA 不会复活旧请求。
 
+use crate::memory_namespace;
 use crate::mutation::record::{Outcome, cas_matches};
 use crate::{BrokerError, FsVaultBroker, MemoryVaultBroker, Mutation, MutationReceipt, Revision};
 
@@ -15,14 +16,8 @@ pub(crate) fn apply(
         }
         return outcome.clone().result();
     }
-    if let Some(existing) = broker.objects.keys().find(|existing| {
-        *existing != &mutation.path && crate::spelling_collision(existing, &mutation.path)
-    }) {
-        return Err(BrokerError::PathCollision {
-            requested: mutation.path,
-            existing: existing.to_string(),
-        });
-    }
+    // 与磁盘同序：重放命中之后、CAS 之前观察命名空间，对应 `blob::current::observe`。
+    memory_namespace::guard_write(broker, &mutation.path)?;
     let current = broker.objects.get(&mutation.path);
     let actual = current.map(|bytes| Revision::compute(broker.vault_uuid, &mutation.path, bytes));
     if !cas_matches(mutation.precondition, actual) {

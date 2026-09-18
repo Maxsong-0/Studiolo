@@ -70,6 +70,52 @@ impl Fixture {
     }
 }
 
+/// 真实维护二进制在处理任何参数之前收紧秘密驻留面，并记录逐项分类。
+///
+/// 用真实 PTY 把子进程的标准输出与标准错误按真实顺序合到一条流上，才看得出
+/// 「收紧与记录排在参数处理之前」。分类不是「调用过某个函数」的自述：
+/// 「已生效」只在 `getrlimit` / `PR_GET_DUMPABLE` / `VmLck` 回读确认后才给得出，
+/// 本平台不提供的能力必须如实写成「不支持」，不得被抹成已生效。
+#[test]
+fn real_maintain_binary_hardens_and_records_before_it_handles_any_argument() {
+    let (status, output) = process_support::output(
+        process_support::script(binary(), &[OsString::from("--help")]),
+        None,
+    );
+    assert!(status.success(), "{output}");
+    assert_eq!(
+        output.matches("秘密驻留面：").count(),
+        1,
+        "逐项分类记录条数不是 1：{output}"
+    );
+    for measure in ["核心转储限额", "进程可检视属性", "秘密页驻留", "环境槽位"]
+    {
+        assert!(output.contains(measure), "摘要漏掉 {measure}：{output}");
+    }
+    assert!(
+        output.contains("已生效：软硬限额已降为 0 并回读确认"),
+        "核心转储限额没有回读确认：{output}"
+    );
+    let recorded = output.find("秘密驻留面：").expect("已断言存在");
+    let usage = output.find("cancel-maintenance").expect("帮助正文存在");
+    assert!(recorded < usage, "参数处理排在了收紧与记录之前：{output}");
+    assert_platform_classification(&output);
+}
+
+/// Linux 提供前三项，只有环境槽位一项不提供。
+#[cfg(target_os = "linux")]
+fn assert_platform_classification(output: &str) {
+    assert_eq!(output.matches("已生效：").count(), 3, "{output}");
+    assert_eq!(output.matches("不支持：").count(), 1, "{output}");
+}
+
+/// macOS 没有可转储开关、没有可用的地址空间锁定，连同环境槽位共三项不提供。
+#[cfg(not(target_os = "linux"))]
+fn assert_platform_classification(output: &str) {
+    assert_eq!(output.matches("已生效：").count(), 1, "{output}");
+    assert_eq!(output.matches("不支持：").count(), 3, "{output}");
+}
+
 #[test]
 fn real_cli_help_is_safe_but_pipe_and_unknown_flags_cannot_open_stores() {
     let mut help = Command::new(binary());

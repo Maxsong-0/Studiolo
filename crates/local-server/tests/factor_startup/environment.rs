@@ -1,4 +1,8 @@
 //! 固定双槽的纯输入测试，不修改进程环境，不读取真实秘密。
+//!
+//! 本文件从前还测过一份只禁 core 的私有收紧；那份实现已删除，收紧统一由
+//! `studiolo_host_config::process_safety::harden()` 在组合根无条件完成，
+//! 证据在 `tests/composition/residency.rs`（真实子进程内核回读）。
 
 use super::*;
 
@@ -50,13 +54,4 @@ fn missing_or_invalid_either_slot_fails_without_echoing_material() {
             .is_err()
         );
     }
-}
-
-#[test]
-fn factor_process_core_limits_are_closed_and_can_only_be_tightened() {
-    disable_core_dumps().unwrap();
-    disable_core_dumps().unwrap();
-    let limits = getrlimit(Resource::Core);
-    assert_eq!(limits.current, Some(0));
-    assert_eq!(limits.maximum, Some(0));
 }

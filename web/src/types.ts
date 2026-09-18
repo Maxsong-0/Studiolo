@@ -38,12 +38,28 @@ export interface DocumentSummary {
   title: string;
 }
 
+/** 一个计数及其不可得的原因；`value` 为 null 表示不可得，绝不退化成 0。 */
+export interface CountRollup {
+  value: number | null;
+  unavailable: string[];
+}
+
+/** 首屏计数；文档只报总数，逐篇清单走文件树分页与搜索。 */
+export interface WorkbenchCounts {
+  documents: CountRollup;
+  projects: CountRollup;
+  inbox: CountRollup;
+  diagnostics: CountRollup;
+  active_tasks: CountRollup;
+  open_bugs: CountRollup;
+}
+
 export interface Workbench {
   generation: number;
   source_label: string;
   projects: Project[];
   inbox: Action[];
-  documents: DocumentSummary[];
+  counts: WorkbenchCounts;
   diagnostics: string[];
   freshness?: Freshness | null;
 }

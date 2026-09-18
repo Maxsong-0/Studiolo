@@ -224,6 +224,24 @@ fn seed_reference_is_an_opaque_ascii_identifier_and_binding_changes_fingerprint(
 }
 
 #[test]
+fn binding_a_seed_wipes_only_the_copy_it_took_and_never_the_caller_buffer() {
+    // 固定虚构字节；构造函数按值收下一份拷贝，清的只能是它自己那一份。
+    let source = [3_u8; 20];
+    let bound = TotpSeed::new("fixture.seed-3".to_owned(), source).unwrap();
+    assert_eq!(source, [3_u8; 20], "调用方自己的缓冲区不得被构造函数改写");
+    assert_eq!(bound.bytes(), &[3_u8; 20], "绑定的秘密必须与输入一致");
+    // 解码路径与按值路径必须绑定同一个秘密，改写复制方式不改变行为。
+    let decoded = TotpSeed::from_hex("fixture.seed-3".to_owned(), &[b'3'; 40]).unwrap();
+    assert_eq!(decoded.bytes(), &[0x33_u8; 20]);
+    assert_eq!(
+        TotpSeed::new("fixture.seed-3".to_owned(), [0x33_u8; 20])
+            .unwrap()
+            .fingerprint(),
+        decoded.fingerprint()
+    );
+}
+
+#[test]
 fn secret_debug_never_displays_reference_seed_or_otp() {
     assert_eq!(format!("{:?}", seed()), "TotpSeed([REDACTED])");
     let code = TotpCode::parse("000042".to_owned()).unwrap();

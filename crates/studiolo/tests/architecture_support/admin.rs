@@ -3,7 +3,10 @@
 use std::path::Path;
 
 pub(super) fn remainder(crate_name: &str, path: &Path, source: &str) -> String {
-    if !matches!(crate_name, "studiolo-auth-admin" | "studiolo-host-config") {
+    if !matches!(
+        crate_name,
+        "studiolo-auth-admin" | "studiolo-host-config" | "studiolo-agent-server"
+    ) {
         return source.to_owned();
     }
     let mut remainder = source
@@ -50,6 +53,17 @@ pub(super) fn remainder(crate_name: &str, path: &Path, source: &str) -> String {
         && path.ends_with("crates/auth-admin/src/terminal_mode.rs")
     {
         remainder = remainder.replace("usestd::fs::File;", "");
+    } else if crate_name == "studiolo-agent-server"
+        && path.ends_with("crates/agent-server/src/admin/terminal.rs")
+    {
+        // 类型 token 只写固定控制终端；与离线维护 CLI 同一套调用点，不得扩到别的文件或子进程。
+        let expected = "fs::open(\"/dev/tty\",fs::OFlags::RDWR|fs::OFlags::CLOEXEC|fs::OFlags::NOCTTY|fs::OFlags::NONBLOCK,fs::Mode::empty())";
+        if remainder.matches("fs::open(").count() != 1 || !remainder.contains(expected) {
+            return remainder;
+        }
+        for allowed in ["fs::File,", expected, "fs::fstat(&input)", "fs::fstat(fd)"] {
+            remainder = remainder.replace(allowed, "");
+        }
     }
     remainder
 }

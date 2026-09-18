@@ -2,6 +2,13 @@
 
 基线为已验收的 M0 `0bd066d`。本目录只记录实现约定，完整里程碑计划在 Obsidian 的 `项目/Studiolo/04-协调/2026-09-04-M1-实施计划.md`。
 
+**读之前先知道边界（2026-09-17 核实）**：`studiolo-local-server` 这个二进制早已不只承担 M1。
+它按启动参数分别装配 M1 只读派生视图、M2 会话认证 / canonical 读取 / canonical 写者 / 人侧编辑与
+文件操作 / 健康页，以及 M3 图 2 的仓库绑定。**本文件只描述 M1 的只读入口**（只给 `--vault`、
+`--assets`、`--label`、`--port` 时的形态）；其余模式的契约、状态与未完项在 `docs/m2/`、`docs/m3/`，
+当前总验收台账是 [M2、M3 整体收尾](../m2/m2-m3-closeout.md)。参数全集以
+`studiolo-local-server --help` 的实际输出为准。
+
 ## 已实现切片与后续
 
 **T-006 + T-007 + T-010 + T-011 已实现，完整 M1 尚未完成。** 基础链路为：本地显式副本 → Broker 独立
@@ -14,6 +21,9 @@
   入口「文档 → 文件树」；详见 [文件树契约与验收](file-tree.md)。
 - T-011：Apple 浅色材质、统一语义图标、可打断动效和双尺寸布局；保留全部只读能力。
   当前视觉规范以 [T-011 设计系统](design/t011-design-system.md) 为准，替代下方历史 T-006 视觉约束。
+- T-035：在 T-011 基础上完善界面与动效并合并 main（`49a9f1a`），由用户手动把服务器 4319
+  网页服务切到该运行包；范围、证据与限制见 [T-035 发布记录](ui-release.md)。
+  **该记录里的公网登录后交互验收仍是未完项**，不能拿「已切换」当 M1 验收。
 
 尚未包含：附件预览/下载、变更流、规则漂移、持久索引与 watcher。源目录始终零写入，
 不观察或自动刷新源目录，前端不调用 M0 写引擎。
@@ -41,7 +51,10 @@ Vault，也不自动创建副本。真实内容只能由用户明确选择一个
 传入；`--label` 仅控制界面显示名称，不能改变读取权限。`--assets` 应指向构建后的
 `web/dist`，不能用笔记目录代替。原文只显示转义文本，没有编辑、任务执行或真实 Runner。
 
-## T-011 当前前端验证
+## T-011 前端验证（2026-09-04 历史记录）
+
+**这是 T-011 当时的数字，不是当前前端状态**：此后 M2 的会话、因子、编辑、历史、文件操作与
+Rename 界面又新增了大量文件与用例，当前口径见 [收尾台账](../m2/m2-m3-closeout.md)。
 
 60 项测试、lint/format/类型检查/生产构建通过。CUA IAB 在独立 [4321 预览](http://127.0.0.1:4321/)
 验证1536×1024和390×844的筛选、搜索、目录与附件、原文导航/历史、快速切换/键盘/焦点和刷新。
@@ -126,15 +139,52 @@ T-006 当时完成生产构建经 Rust 同源真实 HTTP 的浏览器验收，�
 - 首片使用整批只读扫描，显式刷新时原子替换 generation；出现不可读文件、非法 UTF-8 或预算超限时不发布部分视图。
 - 搜索和原文 / 导航请求必须携带当前 generation；刷新之后旧位置返回 409，避免拿新内容解释旧行号。
 - 搜索与原文 / 导航共用两个后台工作槽；满时返回 429，客户端取消不提前释放仍在运行的工作槽。
+  首屏 `/api/workbench` 同样占这两个工作槽，但满额时**排队等待**而不是 429：它是整个界面的
+  入口，没有可退回的上一屏（T-061，2026-09-17）。
+- 并发 `?refresh=true` 合流：任一时刻至多一次派生在途、至多一次排队，因此任意数量的并发刷新
+  最多换来两次重扫，而不是每个请求各跑一遍；合流进同一张票的请求读到同一个结论。派生自己
+  负责结算，客户端取消不会留下无人结算的在途刷新；运行者死亡（panic 或任务被取消）时闸门被
+  显式释放，覆盖到的请求收到 503 并说明原因，排队中的那次刷新由等待者接手重跑（T-061）。
 - Host 仅接受 `127.0.0.1:<端口>`；同源 Origin 与 Fetch Metadata 检查；无 CORS。应用只绑定 IPv4 loopback。默认本机模式不适用于公网；T-009 显式 Access 模式的鉴权与隧道要求见域名入口说明。
 - 内容只显示为转义纯文本，不执行 Markdown 中 HTML、脚本或远程资源。
 - 静态文件来自显式 `web/dist` 只读根；仅 `/` 与 `assets/` 下 js/css/woff2 可读。笔记不通过静态路径暴露。
-- 启动入口不装配 FsVaultBroker / M0Workbench / TaskEngine；源目录不会被初始化为 canonical Vault。
+- **M1 只读入口**（只给 `--vault` / `--assets` / `--label` / `--port`）不装配 FsVaultBroker、
+  M0Workbench 或 TaskEngine；源目录不会被初始化为 canonical Vault，源目录始终零写入。
+  2026-09-17 核实：`FsVaultBroker` 只在显式的 `--canonical-writer-data` 写者模式下装配，
+  `--canonical` 只读模式另走窄能力读取，两者都要求会话配置，不能从 M1 模式隐式升级；
+  其边界见 [canonical 读取契约](../contracts/canonical-read.md) 与
+  [canonical 单写者契约](../contracts/canonical-writer.md)。M0Workbench 与 TaskEngine
+  在任何 local-server 模式下都不装配。
 
 ## Interface
 
-- `GET /api/workbench`：`{generation,source_label,projects,inbox,documents,diagnostics}`。
+以下是 M1 只读入口的四个端点；2026-09-17 按 `crates/local-server` 源码核实，并用上面那条启动
+命令实跑 `127.0.0.1:4317` 逐个请求过：五条路由均 200，旧代次实测 409，`/api/v1/health` 在 M1
+模式下实测 404（未挂载）。**同日 T-061 改掉了首屏形状**：`/api/workbench` 顶层字段现为
+`generation / source_label / projects / inbox / counts / diagnostics`（M1 模式确实不产生
+`freshness`），逐篇 `documents` 清单已去掉，改由 `counts` 给计数——这一条不是上面那次实跑的
+结论，而是由 `crates/local-server/tests/workbench_overview_contract.rs` 按响应体逐字段断言。
+同一路由表在其它模式下还会挂上会话（`/api/v1/sessions` 等）、canonical（`/api/v1/file`）、
+编辑（`/api/v1/mutations`）、历史（`/api/v1/history`）、文件操作（`/api/v1/file-operations`）、
+健康（`/api/v1/health`）端点，它们不属于 M1，契约分别在 `docs/contracts/` 与 `docs/m2/`、`docs/m3/`。
+
+**两条例外（2026-09-17 T-056 按 `crates/local-server/src/routing.rs:223-232` 核实）**：
+`GET /api/v1/bootstrap`（`bootstrap.rs:8`）与 M3 图 2 的 `GET /api/project-operations`
+（`project_operations.rs:38`）挂在**任何模式检查之前**，因此 M1 只读入口同样可达，
+不是「只在其它模式下才挂上」。bootstrap 只回 `{"authentication":"local|access|session"}`，
+M1 模式固定为 `local`，不含身份、Cookie、CSRF 或配置；project-operations 在未用
+`--project-repository` 绑定仓库时只投影当前只读快照内的项目结构，`repository` 段显示未核验，
+不读取任何仓库目录。二者契约见 [浏览器会话入口](../contracts/frontend-session.md)
+与 `docs/m3/project-operations.md`。
+
+- `GET /api/workbench`：`{generation,source_label,projects,inbox,counts,diagnostics}`；
+  canonical 模式下额外带可选 `freshness`，M1 只读模式不产生该字段。
+  `counts` 为 `{documents,projects,inbox,diagnostics,active_tasks,open_bugs}`，每项都是
+  `{value,unavailable}`：`value` 为 null 表示该计数不可得，`unavailable` 逐条说明是哪个来源
+  让它不可得，绝不退化成 0。响应规模只随项目数与收件箱条目数增长，不随文档数增长；逐篇文档
+  走 `GET /api/tree` 的分页与 `GET /api/search`，首屏不再整份下发。
 - `GET /api/workbench?refresh=true`：重扫只读副本并发布完整代次；不写源文件。
+  并发刷新合流（见上「运行契约」），刷新失败返回 422 并保留上一代完整视图。
 - `GET /api/search?q=<字面查询>&mode=full_text|path&project=<可选项目ID>&generation=<代次>`：`{generation,hits:[{path,title,line,snippet,kind}],truncated}`。
 - `GET /api/document?path=<URL encoded logical path>&generation=<number>`：`{path,title,content,navigation:{outline,outgoing,backlinks,truncated}}`。
 - `GET /api/tree?path=<URL encoded directory or empty root>&offset=0&generation=<number>`：每目录最多 200 项；详见 [文件树 Interface](file-tree.md)。

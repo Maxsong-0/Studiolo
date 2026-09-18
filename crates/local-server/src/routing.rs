@@ -206,7 +206,7 @@ fn assemble(
         source: prepared.source,
         assets: Arc::new(assets),
         current: prepared.current,
-        refresh: Arc::new(tokio::sync::Mutex::new(())),
+        refresh: Arc::new(crate::refresh::RefreshCoalescer::new()),
         queries: Arc::new(tokio::sync::Semaphore::new(2)),
         source_label,
         origin: access.as_ref().map_or_else(
@@ -246,6 +246,9 @@ fn assemble(
         );
     }
     routes = crate::file_operations::routes(routes, &state);
+    // 健康页只在已装会话门禁时挂载，且必须挂在下面 security::guard 那一层之前，
+    // 这样它和其它内容 API 走的是同一条鉴权；证据来源由可信启动层随后装上。
+    routes = crate::health::routes(routes, state.sessions.is_some());
     Ok(routes
         .fallback(assets::asset)
         .layer(middleware::from_fn_with_state(

@@ -10,6 +10,8 @@ mod canonical;
 mod concurrency;
 #[path = "sessions/durable.rs"]
 mod durable;
+#[path = "sessions/health.rs"]
+mod health;
 #[path = "sessions/lifecycle.rs"]
 mod lifecycle;
 #[path = "sessions/revocation.rs"]

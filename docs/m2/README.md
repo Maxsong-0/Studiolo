@@ -20,6 +20,48 @@
 - 不将本地夹具、旧版本测试或模拟时间算作真实公网登录、NAS 恢复、两周同步试跑通过。
 - [发布缺口](release-readiness.md)列出代码、用户输入与真实运行门槛；HEAD已合新main，继续新鲜度/CAS与余下M2，不自动发布部分成果。
 
+## 文档索引
+
+本目录 31 份文档此前从未在本页登记过（2026-09-17 T-047 收尾补齐）。
+本页其余部分是按任务编号追加的**验证记录日志**，不是索引；新增文档请同时更新本节。
+
+| 文档 | 内容 |
+|---|---|
+| [auth-design.md](auth-design.md) | M2 应用认证：分片实施设计 |
+| [backup-worker.md](backup-worker.md) | 一致 checkpoint、独立 BackupWorker 与新目录恢复（实施记录） |
+| [bridge-executor.md](bridge-executor.md) | MirrorCAS 与双向 Bridge 执行器 |
+| [bridge-planner.md](bridge-planner.md) | 双向 Bridge 三方规划契约 |
+| [bridge-state.md](bridge-state.md) | Bridge 持久状态契约 |
+| [canonical-freshness-design.md](canonical-freshness-design.md) | canonical新鲜度的后续设计输入 |
+| [canonical-write-design.md](canonical-write-design.md) | canonical写入的下一步设计输入 |
+| [checkpoint-recovery-contract.md](checkpoint-recovery-contract.md) | 一致 checkpoint 与新目录恢复契约 |
+| [connection-setup.md](connection-setup.md) | M2 接入信息怎么找 |
+| [factor-browser-qa.md](factor-browser-qa.md) | 因子界面浏览器验收（2026-09-05） |
+| [file-operations-config.md](file-operations-config.md) | 文件操作的私有批准 |
+| [file-operations-design.md](file-operations-design.md) | T-046：CAS 删除、最近删除与安全重命名设计 |
+| [file-operations.md](file-operations.md) | 整文件删除与最近删除恢复 |
+| [file-rename-contract.md](file-rename-contract.md) | T-046：复合 Rename 实施契约 |
+| [headless-execution-contract.md](headless-execution-contract.md) | Obsidian Headless 0.0.14：SyncTransport 执行契约核查 |
+| [health-and-alerting.md](health-and-alerting.md) | 健康页、配额、白名单诊断、带外告警与死人开关（T-048 · B2） |
+| [human-content-contract.md](human-content-contract.md) | 人侧正文编辑契约 |
+| [human-rename-contract.md](human-rename-contract.md) | T-046 人侧 Rename 实施契约 |
+| [human-save-design.md](human-save-design.md) | 人侧保存的后续设计输入 |
+| [local-observation-contract.md](local-observation-contract.md) | 完整本地观察内核（T-046） |
+| [m0-review-integration.md](m0-review-integration.md) | M0 main 更新整合与增量验收（2026-09-05） |
+| [m2-m3-closeout.md](m2-m3-closeout.md) | M2、M3 整体收尾 |
+| [owned-run-design.md](owned-run-design.md) | T-046：OwnedRun 实施候选与 Linux 静止证明 |
+| [owned-run.md](owned-run.md) | T-048 B3：SyncTransportOwner（OwnedRun）实施记录 |
+| [release-readiness.md](release-readiness.md) | M2 发布缺口（2026-09-05交互续开发） |
+| [secret-residency.md](secret-residency.md) | 秘密驻留面契约（T-050） |
+| [session-browser-qa.md](session-browser-qa.md) | 会话界面浏览器验收（2026-09-05） |
+| [streamed-content.md](streamed-content.md) | 流式附件、L0与恢复 |
+| [sync-scope.md](sync-scope.md) | 整文件同步范围 |
+| [sync-transport-design.md](sync-transport-design.md) | 双向 Sync 与镜像写入协调设计输入 |
+| [writer-maintenance.md](writer-maintenance.md) | 本机事务维护 |
+
+> 当前事实以 [m2-m3-closeout.md](m2-m3-closeout.md) 的验收台账为准；
+> 单条记录通过不代表整个里程碑完成。
+
 ## 开发顺序
 
 持久审计 → 应用会话与安全历史回收 → TOTP与恢复码基础 → 可信本地CLI/安全启动 → 前端会话与因子HTTP → canonical CAS 与新鲜度 → 双目录同步 →

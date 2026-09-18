@@ -11,6 +11,7 @@ mod database;
 mod dbload;
 mod dbwrite;
 mod dispatch;
+mod executor_port;
 mod input_codec;
 mod lookup;
 mod model;
@@ -27,6 +28,7 @@ mod state_codec;
 mod storage;
 mod validate;
 
+pub use executor_port::StateJournal;
 pub use model::{
     ActionStatus, AuditDelivery, BridgeError, CommonObservation, EffectReceipt, ExecutionCheck,
     NoEffectReason, PendingAction, ProgressView, ReceiptBackend, ReceiptOutcome, Reservation,

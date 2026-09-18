@@ -26,6 +26,23 @@ impl IntegrityHash {
         Self::sha256(b"studiolo-audit-genesis-v1")
     }
 
+    /// 解析恰好 64 个小写十六进制字符；长度、大小写或字符不符一律返回 `None`。
+    ///
+    /// 仅供持久 Adapter 还原自己写下的摘要；宽松形式不接受，避免同一摘要有多种文本表示。
+    pub(crate) fn from_hex(text: &str) -> Option<Self> {
+        if text.len() != 64 {
+            return None;
+        }
+        let mut bytes = [0_u8; 32];
+        let source = text.as_bytes();
+        for (index, byte) in bytes.iter_mut().enumerate() {
+            let high = digit(source[index * 2])?;
+            let low = digit(source[index * 2 + 1])?;
+            *byte = high * 16 + low;
+        }
+        Some(Self(bytes))
+    }
+
     /// Returns the lower-case hexadecimal representation.
     #[must_use]
     pub fn to_hex(self) -> String {
@@ -35,6 +52,15 @@ impl IntegrityHash {
             write!(&mut output, "{byte:02x}").expect("writing to String cannot fail");
         }
         output
+    }
+}
+
+/// 只接受 `0-9` 与小写 `a-f`；大写或其它字符返回 `None`。
+fn digit(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'a'..=b'f' => Some(byte - b'a' + 10),
+        _ => None,
     }
 }
 

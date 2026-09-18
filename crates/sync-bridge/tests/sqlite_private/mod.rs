@@ -2,6 +2,9 @@
 
 mod corruption;
 mod deadlines;
+mod executor_port;
+mod executor_port_failure;
+mod executor_port_recovery;
 mod lifecycle;
 mod limits;
 mod opening;

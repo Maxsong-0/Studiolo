@@ -1,9 +1,9 @@
 //! 可复用的单文解析。持久形式不含正文、身份或跨文档解析结果。
 
 use crate::{
-    DocumentTitle, FrontmatterValue, Heading, IndexedDocument, LinkResolution, MarkdownDocument,
-    NormalizedFrontmatter, OutgoingLink, ParseWarning, TitleSource, WikilinkTarget, frontmatter,
-    links, markdown, source,
+    DocumentTitle, DocumentUnavailable, FrontmatterValue, Heading, IndexedDocument, LinkResolution,
+    MarkdownDocument, NormalizedFrontmatter, OutgoingLink, ParseWarning, TitleSource,
+    WikilinkTarget, frontmatter, links, markdown, source,
 };
 use serde::{Deserialize, Serialize};
 use studiolo_core::VaultPath;
@@ -43,9 +43,15 @@ impl ParsedDocument {
         }
     }
 
-    pub(crate) fn finish(self, path: &VaultPath) -> IndexedDocument {
+    /// `unavailable` 是本轮输入事实（符号链接、超大笔记等），不是解析结果，所以不进缓存行。
+    pub(crate) fn finish(
+        self,
+        path: &VaultPath,
+        unavailable: Option<DocumentUnavailable>,
+    ) -> IndexedDocument {
         IndexedDocument {
             path: path.clone(),
+            unavailable,
             title: select_title(path, &self.frontmatter, &self.headings),
             heading_tree: markdown::build_heading_tree(&self.headings),
             source_profile: source::profile(path, &self.frontmatter),

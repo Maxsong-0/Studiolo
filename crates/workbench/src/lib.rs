@@ -15,6 +15,8 @@ mod cargo_dto;
 mod cargo_manifest;
 mod cargo_plan;
 mod cargo_spec;
+mod counts;
+mod counts_dto;
 mod derive;
 mod dto;
 mod markdown;
@@ -26,6 +28,8 @@ mod operations_block;
 mod operations_compare;
 mod operations_dto;
 mod operations_parse;
+mod refresh;
+mod refresh_dto;
 mod rust_batch;
 mod rust_bindings;
 mod rust_call_sites;
@@ -37,6 +41,7 @@ mod rust_names;
 mod rust_paths;
 mod rust_scopes;
 mod rust_walk;
+mod scan;
 mod search;
 mod search_dto;
 mod table;
@@ -55,9 +60,12 @@ pub use architecture_dto::*;
 pub use cargo_dependencies::derive_cargo_dependencies;
 pub use cargo_dto::*;
 pub use cargo_plan::cargo_manifest_paths;
+pub use counts_dto::*;
 pub use dto::*;
 pub use navigation_dto::*;
 pub use operations_dto::*;
+pub use refresh::RefreshGate;
+pub use refresh_dto::*;
 pub use rust_call_sites::{derive_rust_call_analysis, derive_rust_call_sites};
 pub use rust_dto::*;
 pub use rust_links_dto::*;
@@ -69,9 +77,13 @@ pub use tree_dto::*;
 
 /// One immutable derived generation, built through the same Interface used by
 /// callers and contract tests. Duplicate input paths reject the whole build.
+///
+/// 本代只保存一份文档表；逐篇摘要在 `snapshot` 时按需派生，不在代次里长驻第二份。
 #[derive(Debug)]
 pub struct WorkbenchReadModel {
-    snapshot: WorkbenchSnapshot,
+    projects: Vec<ProjectSummary>,
+    inbox: Vec<ActionItem>,
+    diagnostics: Vec<String>,
     documents: BTreeMap<VaultPath, DocumentView>,
     index: InMemoryVaultIndex,
 }
@@ -120,29 +132,65 @@ impl WorkbenchReadModel {
         }
         diagnostics.sort();
         let (projects, inbox) = derive::build(&inputs);
-        let summaries = views
-            .values()
-            .map(|view| DocumentSummary {
-                path: view.path.clone(),
-                title: view.title.clone(),
-            })
-            .collect();
         Ok(Self {
-            snapshot: WorkbenchSnapshot {
-                projects,
-                inbox,
-                documents: summaries,
-                diagnostics,
-            },
+            projects,
+            inbox,
+            diagnostics,
             documents: views,
             index,
         })
     }
 
     /// Returns an owned copy; caller changes cannot mutate this generation.
+    ///
+    /// 逐篇文档摘要在此按需派生，规模随本代文档数增长。只需要数量的调用方改用
+    /// [`WorkbenchReadModel::overview`] 或 [`WorkbenchReadModel::counts`]。
     #[must_use]
     pub fn snapshot(&self) -> WorkbenchSnapshot {
-        self.snapshot.clone()
+        WorkbenchSnapshot {
+            projects: self.projects.clone(),
+            inbox: self.inbox.clone(),
+            documents: self
+                .documents
+                .values()
+                .map(|view| DocumentSummary {
+                    path: view.path.clone(),
+                    title: view.title.clone(),
+                })
+                .collect(),
+            diagnostics: self.diagnostics.clone(),
+        }
+    }
+
+    /// 首屏投影：项目、收件箱、诊断与计数，不含逐篇文档清单。
+    ///
+    /// 返回值的规模只随项目数与收件箱条目数增长，不随本代文档数增长；构造过程
+    /// 不遍历文档表，也不读取任何文档正文。
+    #[must_use]
+    pub fn overview(&self) -> WorkbenchOverview {
+        WorkbenchOverview {
+            projects: self.projects.clone(),
+            inbox: self.inbox.clone(),
+            diagnostics: self.diagnostics.clone(),
+            counts: self.counts(),
+        }
+    }
+
+    /// 只给计数的投影；任一项目的任务数或 BUG 数不可得时，对应汇总显式不可得。
+    #[must_use]
+    pub fn counts(&self) -> WorkbenchCounts {
+        counts::counts(
+            &self.projects,
+            self.inbox.len(),
+            self.diagnostics.len(),
+            self.documents.len(),
+        )
+    }
+
+    /// 本代文档总数，不构造任何文档清单。
+    #[must_use]
+    pub fn document_count(&self) -> usize {
+        self.documents.len()
     }
 
     /// Returns exact input text, or `None` for a path outside this generation.
@@ -154,7 +202,7 @@ impl WorkbenchReadModel {
     /// Searches only this immutable generation. Full text and path switching
     /// share the same document set, query limits, and exact project scope.
     pub fn search(&self, query: &SearchQuery) -> Result<SearchResults, SearchError> {
-        search::search(&self.documents, &self.snapshot.projects, query)
+        search::search(&self.documents, &self.projects, query)
     }
 
     /// Derives outline, wikilink targets, and backlinks from the same M0 index.
@@ -167,20 +215,14 @@ impl WorkbenchReadModel {
     /// 从本代目录声明派生项目运作图首片；未知项目不产生视图。
     #[must_use]
     pub fn project_operations(&self, project: &str) -> Option<ProjectOperations> {
-        self.snapshot
-            .projects
-            .iter()
-            .find(|known| known.id == project)?;
+        self.projects.iter().find(|known| known.id == project)?;
         Some(operations::derive(&self.documents, project))
     }
 
     /// 从本代可选表格派生设计声明；不表示实际依赖或正在执行的任务。
     #[must_use]
     pub fn project_architecture(&self, project: &str) -> Option<ProjectArchitecture> {
-        self.snapshot
-            .projects
-            .iter()
-            .find(|known| known.id == project)?;
+        self.projects.iter().find(|known| known.id == project)?;
         Some(architecture::derive(&self.documents, project))
     }
 }

@@ -28,6 +28,7 @@ import './styles/freshness.css';
 import './styles/editor.css';
 import './styles/history.css';
 import './styles/file-operations.css';
+import './styles/health.css';
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>

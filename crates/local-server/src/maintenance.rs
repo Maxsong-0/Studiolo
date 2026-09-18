@@ -13,7 +13,19 @@ mod workflow;
 use std::io::Write;
 
 /// 本机显式入口；不读取任何秘密环境，不开启监听或停止已有服务。
+///
+/// # Errors
+///
+/// 秘密驻留面收紧或其记录失败即 [`MaintenanceError::Process`] /
+/// [`MaintenanceError::ProcessReport`]，此时未打开任何写者存储；其余失败见各变体。
 pub fn run() -> Result<(), MaintenanceError> {
+    // 与登记工具、服务器同一份实现、同一套失败语义：本平台提供的能力必须真正生效
+    // 并回读确认，否则整体拒绝且不打开任何存储；本平台不提供的能力记为明确的
+    // 「不支持」，并随逐项分类一起记录到标准错误（JSON 结果仍独占标准输出）。
+    // 位置在参数解析之前：原 proposal 与维护票据都可能被 Broker 读进本进程内存。
+    let residency = studiolo_host_config::process_safety::harden()?;
+    writeln!(std::io::stderr(), "秘密驻留面：{residency}")
+        .map_err(|_| MaintenanceError::ProcessReport)?;
     let Some(options) = options::parse(std::env::args_os().skip(1).take(13).collect())? else {
         return output(&serde_json::json!({"usage":[
             "studiolo-maintain inspect --config /owner.json --vault /vault --assets /assets --writer-data /writer",
@@ -22,16 +34,6 @@ pub fn run() -> Result<(), MaintenanceError> {
             "studiolo-maintain audit-flush [相同根参数]"
         ],"boundary":"仅本机 OS 权限与既有 Broker owner 租约；不是应用身份认证，不自动初始化、取消或停服务。"}));
     };
-    let disabled = rustix::process::Rlimit {
-        current: Some(0),
-        maximum: Some(0),
-    };
-    rustix::process::setrlimit(rustix::process::Resource::Core, disabled)
-        .map_err(|_| MaintenanceError::Process)?;
-    let actual = rustix::process::getrlimit(rustix::process::Resource::Core);
-    if actual.current != Some(0) || actual.maximum != Some(0) {
-        return Err(MaintenanceError::Process);
-    }
     let terminal = terminal::Terminal::open()?;
     let operator = terminal.operator();
     let actor = studiolo_vault_broker::MaintenanceActor::LocalOs {
@@ -65,9 +67,15 @@ fn output(value: &serde_json::Value) -> Result<(), MaintenanceError> {
 /// 固定脱敏错误；不输出路径、数据库诊断、配置正文或恢复材料。
 #[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum MaintenanceError {
-    /// 原 proposal 可能由 Broker 读取，当前短命进程须先关闭核心转储。
-    #[error("无法关闭当前维护进程的核心转储；未打开写者存储")]
-    Process,
+    /// 原 proposal 可能由 Broker 读进内存，当前短命进程须先收紧秘密驻留面。
+    ///
+    /// 四项措施与失败语义同登记工具与服务器，实现只有
+    /// `studiolo_host_config::process_safety` 一份，这里不自持部分收紧。
+    #[error("{0}；未打开写者存储")]
+    Process(#[from] studiolo_host_config::process_safety::Refusal),
+    /// 逐项分类必须被操作者看见；记录不下来就等于静默跳过，同样不打开存储。
+    #[error("无法记录秘密驻留面逐项分类；未打开写者存储")]
+    ProcessReport,
     /// 参数闭集不匹配。
     #[error("维护参数无效；使用 --help 查看固定命令")]
     Arguments,

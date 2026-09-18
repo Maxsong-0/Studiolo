@@ -2,6 +2,7 @@
 
 > Module：`studiolo-audit-ledger`。它是权威审计的唯一写入口。M0 交付同步 Interface 与
 > `MemoryAuditLedger`。T-012 在相同追加/查询 Interface 下新增 `SqliteAuditLedger`；
+> T-051 在同一 Interface 下把持久账本按固定边界分段（磁盘格式 v2，见第 8 节）。
 > 此文描述实现契约，不代表完整 M2、真实断电演练、轮换或用户授权查询已完成。
 
 ## 1. M0 Interface
@@ -116,7 +117,7 @@ Memory/SQLite 新记录共享 v1 编码；事件、精确重放、filter 和 pub
 | `Serialization` | 事件无法编码入链 | 失败关闭并保留 correlation |
 | `Unavailable` | 权威账本/锁不可用 | 受保护动作不得释放 |
 | `UnsafeStorage` | 目录、权限、链接或对象身份不安全 | 修正部署目标，不自动修复权限 |
-| `UnsupportedSchema` | schema/application ID/codec 未知 | 不迁移、不覆盖或重建 |
+| `UnsupportedSchema` | schema/application ID/codec 未知，或库仍是 v1 | 不迁移、不覆盖或重建；v1 须显式升级 |
 | `CorruptStore` | schema、记录、offset、head 或链校验失配 | 隔离并走人工恢复 |
 | `UnsupportedPlatform` | 非 Unix 平台 | 不放宽文件约束 |
 | `RecordTooLarge` | 规范记录超过 1 MiB | 调用者缩减允许的结构化摘要 |
@@ -167,22 +168,25 @@ SqliteAuditLedger::open(private_directory: &Path) -> Result<Self, AuditError>
 
 ### 磁盘格式与完整性
 
-`application_id=0x53544155`、`user_version=1`。仅允许精确的 STRICT schema：
+`application_id=0x53544155`；`user_version` 与 `audit_meta.schema_version` 同为磁盘格式版本，
+T-012 为 1，T-051 分段格式为 2。仅允许精确的 STRICT schema：
 
-| 对象 | 内容 |
-|---|---|
-| `audit_meta` | 单行 id=1；schema_version、codec、last_offset、last_hash |
-| `audit_events` | 连续正 offset 主键、event_id、phase、规范 record_json |
-| 唯一索引 | `(event_id, phase)`；仅允许 SQLite 生成的对应索引 |
+| 对象 | 内容 | 版本 |
+|---|---|---|
+| `audit_meta` | 单行 id=1；schema_version、codec、last_offset、last_hash | v1/v2 建表语句逐字相同 |
+| `audit_events` | 连续正 offset 主键、event_id、phase、规范 record_json | v1/v2 逐字相同 |
+| 唯一索引 | `(event_id, phase)`；仅允许 SQLite 生成的对应索引 | v1/v2 |
+| `audit_segments` | 每封存段一行：segment_index、last_offset、last_hash、segment_hash | 仅 v2 |
 
-启动与每次 append/query 都在同一数据库事务中执行精确 schema 校验、quick_check、元信息
-校验及按 offset 的全链扫描。逐条核对行键与记录、连续 offset、previous_hash、重算 hash、
-规范编码和最后 head；即使 query limit=0 或幂等重放，也不能跳过链上其它损坏。
-不接受外加 table/trigger/view、未知版本、head/记录失配，不自动修复或截短。
+启动与每次 append/query 都在同一数据库事务中执行精确 schema 校验、元信息校验与第 8 节
+规定的分段验证：逐条核对行键与记录、连续 offset、previous_hash、重算 hash 与规范编码，
+即使 query limit=0 或幂等重放，也不跳过所读范围内的损坏。不接受外加 table/trigger/view、
+未知版本、head/记录失配，不自动修复或截短。`quick_check` 与整表行数统计移入显式的
+`verify_all()`，不再摊到每次操作上——代价见第 8 节"分段换来的成本"。
 
-首版每次操作为 O(完整账本字节数)，扫描流式处理，查询仅保留符合 filter/limit 的记录；
-不设 limit 时会返回全部匹配项，未来 HTTP 查询仍须独立鉴权并限制结果规模。单条规范
-record_json 最大 1 MiB；Memory 为兼容既有契约，不新增此磁盘预算。
+查询仅保留符合 filter/limit 的记录；不设 limit 时会返回全部匹配项，未来 HTTP 查询仍须
+独立鉴权并限制结果规模。单条规范 record_json 最大 1 MiB；Memory 为兼容既有契约，
+不新增此磁盘预算，也不分段。
 
 SQLite 提交前将整条 record 通过实际磁盘解码路径往返，比较记录等值及重新规范编码后的
 字节完全一致；无法精确回放则返回 `Serialization`，不插入记录。当前 serde_json 未启用
@@ -192,8 +196,8 @@ float_roundtrip，部分普通 f64（例如 `51.248178375505404`）因此会被�
 
 ### 提交与耐久性
 
-append 使用 BEGIN IMMEDIATE，先完整验证，再在一个 transaction 中检查精确重放、插入
-记录并更新 head；多实例依靠 SQLite 写事务串行分配 offset。相同 key 异内容冲突，不产生
+append 使用 BEGIN IMMEDIATE，先做第 8 节的分段验证，再在同一 transaction 中检查精确重放、
+插入记录、必要时封存写满的段并更新 head；多实例依靠 SQLite 写事务串行分配 offset。相同 key 异内容冲突，不产生
 第二条记录；commit 成功后才返回新 receipt。query 使用同一读事务的完整快照，不混合新旧代。
 
 配置并核读 `journal_mode=WAL`、`synchronous=FULL`、`foreign_keys=ON`、`trusted_schema=OFF`、
@@ -218,3 +222,106 @@ WAL+FULL 的同步承诺依赖 SQLite、操作系统与存储设备正确执行�
 首轮沙箱阻止Unix socket夹具，升级授权后完整复跑成功，未跳过测试。
 本次Linux为固定Docker原生aarch64，不是部署服务器x86_64验收；未做真实断电或恢复演练。
 完整分项与前端回归见 [M2状态](../m2/README.md)，后续接线不得把本片通过误称完整M2完成。
+
+## 8. T-051 固定分段与可伸缩性（磁盘格式 v2）
+
+### 段边界与段摘要
+
+账本按 offset 固定分段，每段 `AUDIT_SEGMENT_RECORDS = 128` 条：段号为 `(offset-1)/128`，
+第 `i` 段覆盖 `[128i+1, 128(i+1)]`。段大小是磁盘格式的一部分，改动必须升版本。只有写满的
+段才封存，并在写入段内最后一条记录的**同一事务**里写下一行 `audit_segments`；尾部未写满
+的段称为**打开段**，没有摘要行。
+
+```text
+段链创世        = SHA256("studiolo-audit-segment-genesis-v1")
+segment_hash(i) = SHA256( "studiolo-audit-segment-v1\0"
+                          ‖ segment_hash(i-1) 的原始 32 字节
+                          ‖ canonical([i, first_offset, last_offset,
+                                       previous_hash, last_hash]) )
+```
+
+`previous_hash` 是段内第一条记录的前驱哈希（即上一段的 `last_hash`，首段为记录链创世），
+`last_hash` 是段内最后一条记录的 `record_hash`。磁盘上只存 `last_hash` 与 `segment_hash`，
+段边界与 `previous_hash` 全部由段号、固定段大小和前一行重算，**没有可以单独改写而不破链的
+冗余字段**。`canonical` 沿用第 4 节的 `studiolo-audit-json-v1`；段 domain 与记录 domain
+不同，两类哈希不可互换。
+
+### 每次操作验什么
+
+`open`/`open_existing`/`append`/`query` 在同一事务快照内一律执行：
+
+1. 精确 schema 校验与 `audit_meta` 元信息校验；
+2. **整条段链从创世重算**：段号必须自 0 连续、段边界必须落在固定倍数上、每行
+   `segment_hash` 必须由前一行重算得到，最后一行必须与打开段首尾相接；
+3. `min(offset)` / `max(offset)` 必须正好是 `1` 与 `last_offset`（rowid 主键，O(1)）；
+4. **走读整个打开段**并重算记录链，链尾必须等于 `audit_meta.last_hash`。
+
+在此之上，`append` 命中幂等键时连带走读该记录所在的整段；`query` 对每个出现候选行的段
+走读整段，再在已验证记录上应用完整过滤。**任何返回给调用方的记录都被其所在段的记录链
+重算过，并经段链锚定到 head**，不存在取出来直接返回的路径。
+
+### 分段换来的成本，以及换掉的是什么
+
+每次操作的验证量是 `O(段数 + 打开段记录数 + 读到的段 × 段大小)`，不再是 `O(账本总字节)`。
+把话说准：
+
+- **这不是渐进意义上的常数或对数。** 段数仍与总量成正比（`N/128`），只是每段一行定长摘要
+  （约 160 字节、一次 SHA-256），而不是一整段记录的解码与重算。要在渐进上去掉这一项需要
+  多层塔式摘要，本片不做，也不声称。
+- 段大小取舍是 `S × 记录成本 + (N/S) × 摘要成本`，在 `S ≈ √N` 附近最优；目标区间
+  `N = 10^4 ~ 10^6` 内 `S ∈ [128, 512]` 的总成本差不到两倍，取 128 同时让"读到一段"的查询
+  代价更小。
+- **换掉的是检测时机，不是可验证性。** 已封存段**内部**的改写（改段内记录、删段内记录）
+  不会被一次与该段无关的 append 发现，因为那次操作根本没读它——**读不到的数据无法被检测，
+  这是信息论下界，不是实现缺陷**；要每次操作都发现任意位置的篡改，就必须每次读完整个账本，
+  那正是本片要去掉的成本。段链保证这类改写一定破坏该段的 `last_hash` 与 `segment_hash`，
+  因此只要该段被读到（`verify_all`、`verify_segment` 或任何命中该段的查询）就必然暴露。
+- 下列情形仍**每次操作当场失败关闭**：摘要行被删或重排、段号不连续、段边界被挪、摘要被
+  替换、`head` 与段链或打开段不符、账本首尾 offset 越界、打开段内任何增删改。
+- 未做「只验最近 N 条」「抽样验证」这类削弱：段链每次全查，读到的段全段重算，全链随时
+  可由 `verify_all()` 完整重放。
+
+### 全量与按段验证
+
+| 入口 | 覆盖 | 成本 |
+|---|---|---|
+| `verify_all()` | `quick_check`、整表行数、段链、**每一段**的记录链与打开段 | O(账本总量) |
+| `verify_segment(i)` | 段链 + 打开段 + 第 `i` 段记录链；`i` 超出封存范围返回 `Ok(None)` | O(段数 + 段大小) |
+| `segments()` | 段链（不走读段内记录） | O(段数) |
+| `last_verification_cost()` | 最近一次成功操作实际读入并重算的摘要行数与记录条数 | O(1) |
+
+`verify_all()` 是本 Adapter 对"账本完整"的完整定义，也是已封存段内部改写的兜底。
+**它不由 Adapter 自行调度**：部署方必须把它接成定期巡检或恢复前置步骤；没有接线之前不得
+声称账本被定期完整验证过。`verify_segment` 支持中断后按段续验，重启后可从任意段号继续。
+`last_verification_cost()` 只是成本证据，数值小不代表未读部分正确。
+
+### 查询的索引使用
+
+候选行查询只把落在真实列上的条件下推：`offset` 走 rowid 主键（`offset > ?` 恒成立，计划恒为
+`SEARCH ... USING INTEGER PRIMARY KEY`），`event_id`（可再带 `phase`）走 `UNIQUE(event_id, phase)`
+自动索引。`task`/`attempt`/`tool`/`action` 只存在于规范 JSON 正文里，**没有索引**，这类过滤仍要
+遍历候选区间，`limit` 也不下推；这是明确代价，不假称全部条件都走索引。幂等重放同样用唯一
+索引定位，不随账本增长。测试用被测连接上的 `EXPLAIN QUERY PLAN` 核对上述计划。
+
+### v1 → v2 显式迁移
+
+`open`/`open_existing` 只接受 v2：v1 库返回 `UnsupportedSchema`，**不补表、不改版本、不重写
+任何记录**。`SqliteAuditLedger::upgrade_existing(dir)` 是唯一升级入口，只接受恰好是 v1 的既有库
+（已是 v2 同样拒绝），在一个 IMMEDIATE 事务里先 `quick_check`、整表统计与全链验证，再建
+`audit_segments`、回填摘要、置版本为 2；任一步不过即整体回滚，磁盘保持原状。**记录
+`record_json` 一个字节都不改**：段摘要是由已验证记录链重算出的派生数据，因此升级前后重算
+结果逐字节一致。升级成本与账本总量成正比，是一次性人工运维动作。
+
+### 新增测试覆盖
+
+段边界前后各一条的验链与段间链接；封存段中间记录被改写后 `verify_all`、`verify_segment` 与
+任何读到该段的查询都失败关闭；摘要行被删/重排/改写/凭空插入时每次操作当场拒绝；摘要与内容
+不符（段尾记录被删）在走读该段时失败关闭；重启后逐段续验并单独指出坏段；重启、追加与尾部
+查询的验证规模有界，而 `verify_all` 确实逐条读完全部记录（数值由 `last_verification_cost()` 与
+`verify_all()` 返回值当场断言）；全部 filter 形态的 `EXPLAIN QUERY PLAN` 不出现整表 `SCAN`；
+v1 被拒、显式升级、升级失败整体回滚、升级后回执与段摘要同原追加回执一致。
+
+**未覆盖，不得当作已完成**：真实断电与恢复演练；`verify_all()` 的定期巡检接线（属组合根/
+可观测性，本片只提供入口）；多层塔式摘要；`task`/`attempt`/`tool`/`action` 的索引化；
+本片仅在 macOS 上跑过 `cargo test -p studiolo-audit-ledger`，Linux 原生与全 workspace 回归
+由主线统一验收。

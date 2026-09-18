@@ -54,6 +54,9 @@ pub(crate) fn source_violations(
     let checked_source = super::unix_ingress::remainder(crate_name, source_path, &checked_source);
     let checked_source = super::maintenance::remainder(crate_name, source_path, &checked_source);
     let checked_source = super::sync_bridge::remainder(crate_name, source_path, &checked_source);
+    let checked_source = super::backup::remainder(crate_name, source_path, &checked_source);
+    let checked_source = super::observability::remainder(crate_name, source_path, &checked_source);
+    let checked_source = super::sync_transport::remainder(crate_name, source_path, &checked_source);
     let has_generic_write = generic_write_patterns
         .iter()
         .any(|pattern| checked_source.contains(pattern))

@@ -2,42 +2,137 @@
 
 面向实现者的技术方案。产品需求与决策以 vault `项目/Studiolo/` 为权威（PRD 分册、ADR、功能清单、roadmap），本目录不重复它们；与 vault 冲突时以 vault 为准并回写本目录。
 
+**看状态先看这两处**：仓库总口径在根 [README](../README.md)「当前状态」，
+逐工作域的验收台账在 [M2、M3 整体收尾](m2/m2-m3-closeout.md)。本目录里的分片文档
+大多保留**写作当时**的测试数字与结论，是历史检查点，不代表今天的状态。
+台账本身也是快照——它写于 **2026-09-12（T-046）**，**不覆盖 T-047～T-063**；
+这三项看根 README 与各自文档，其余工作域以台账为准。
+**没有实跑证据的一律写「未验证 / 未验收」**，不用「构建成功」代替发布证据。
+
+本页是索引：每行一句话说明该文件是什么，不复制其中的结论。
+
 ## m1/ — 本机只读工作台、搜索、导航与文件树
 
-[M1 实现说明](m1/README.md) 记录已实现的 T-006 + T-007：显式只读副本、项目总览、待我
-动作、文档原文与行号来源、手动全量刷新，以及全文字面搜索、快速路径切换、大纲 / 出链 /
-反链导航；包含纯虚构示例库的启动命令、HTTP Interface、只读约束和当前验证状态。
-[搜索与文档导航契约](m1/search-navigation.md) 细列查询语义、同代次定位、截断与错误规则。
-新增 [T-010 文件树与只读附件信息](m1/file-tree.md)：空目录、纯附件目录、按目录分页与同代次元信息。
-**这些切片已实现不代表完整 M1 完成**；变更流、规则漂移、持久索引和 watcher 仍属后续范围。
+已实现 T-006 总览、T-007 搜索导航、T-010 文件树、T-011 界面重设计；
+**这些切片已实现不代表完整 M1 完成**，变更流、规则漂移、持久索引和 watcher 仍属后续范围。
+`studiolo-local-server` 现已同时承担 M2/M3 的模式，M1 文档只描述其只读入口。
 
-T-007 当时的 M1 工作位于 `codex/m1-readonly-workbench`，尚未提交推送；远端 CI 尚未触发。
-T-007 当时通过 macOS 158 项、Linux 166 项 Rust 测试及格式 / Clippy 检查，前端 28 项测试、
-lint、Prettier 与生产构建。本轮真实 HTTP 桌面/窄屏搜索导航验收通过，控制台无 warn/error；
-第一片测试数量和视觉差异账单独标为 T-006 历史记录，见 [M1 实现说明](m1/README.md)。
+| 文件 | 内容 |
+|---|---|
+| [`m1/README.md`](m1/README.md) | M1 实现约定、只读入口启动方式、运行契约、四个只读 Interface，以及 T-006～T-011 的历史验证记录 |
+| [`m1/search-navigation.md`](m1/search-navigation.md) | T-007 查询语义、同代次定位、截断与错误规则 |
+| [`m1/file-tree.md`](m1/file-tree.md) | T-010 空目录、纯附件目录、按目录分页与同代次元信息 |
+| [`m1/design/t011-design-system.md`](m1/design/t011-design-system.md) | T-011 Apple 通透工作台视觉规范；取代旧 `overview-concept.png` 的历史视觉约束 |
+| [`m1/server-preview.md`](m1/server-preview.md) | T-008 服务器示例的运行边界、可校验源码包、原生路径测试与同端口 SSH 转发 |
+| [`m1/cloudflare-preview.md`](m1/cloudflare-preview.md) | T-009 域名门禁与独立鉴权服务；已部署生效，真实邮箱登录与公网功能**仍待验收** |
+| [`m1/ui-release.md`](m1/ui-release.md) | T-035 界面与动效的完善、合并与服务器 4319 网页切换记录 |
 
-[服务器示例运行](m1/server-preview.md) 记录用户指定服务器的运行边界、可校验源码包、
-原生路径测试与同端口 SSH 转发；不把提前迁移运行位置视为 M2 远程服务验收完成。
-[T-009 Cloudflare 入口](m1/cloudflare-preview.md) 记录已部署的域名门禁与独立鉴权服务；真实邮箱登录及公网功能待验收。
+「服务器已运行」不等于 M2 远程服务验收完成；该目录里的测试数字都是各分片当时的历史结果。
 
-T-010历史验证：macOS222/Linux aarch64 230项Rust、前端39项及格式/生产构建通过；
-桌面与窄屏实际文件树交互通过。T-010当时尚未提交推送或更新服务器；后续界面与M2结果以各检查点为准。
+## m2/ — 远程与可恢复
 
-## m3/ — 供给面服务器常驻与公网入口
+M2 包含真实人侧身份、CAS 编辑与 L0、双向 Obsidian Sync、附件 / 冲突 / 删除保护、
+一致备份恢复、健康告警和实际两周 headless 试跑。**完整 M2 未完成、未发布**；
+分片通过不等于里程碑通过。下表标「T-048 实施中」的是本轮收尾正在写的代码，**尚未验收**。
 
-[服务器常驻 `studiolo-agent`](m3/server-agent.md) 记录 T-034：白名单子树只读副本同步、amd64 运行包交叉构建与服务器原生测试、
-用户级 systemd 单元、专用隧道新增主机名 `studiolo-agent.maxsong.me`（应用内 bearer 门禁，未加 Access）与实际部署记录。
+### 状态与缺口
+
+| 文件 | 内容 |
+|---|---|
+| [`m2/m2-m3-closeout.md`](m2/m2-m3-closeout.md) | 逐工作域的事实与收口条件、验证证据、外部接入准备；**T-046 之前各域的权威台账，写于 2026-09-12，未覆盖 T-047～T-063** |
+| [`m2/README.md`](m2/README.md) | M2 分片开发顺序与 T-012～T-029 的逐片验证记录（历史检查点） |
+| [`m2/release-readiness.md`](m2/release-readiness.md) | 2026-09-05 的发布缺口快照；其中的「尚未实现」已被台账取代，不作当前状态 |
+| [`m2/connection-setup.md`](m2/connection-setup.md) | 外部接入信息（远端 Vault、NAS、告警邮箱）现在各自核实到哪一步 |
+| [`m2/m0-review-integration.md`](m2/m0-review-integration.md) | M0 复审修复合入 main 的整合记录与兼容边界 |
+| [`m2/auth-design.md`](m2/auth-design.md) | 会话 / TOTP / 恢复码的分片实施设计与授权矩阵 |
+
+### canonical 写入、新鲜度与人侧正文
+
+| 文件 | 内容 |
+|---|---|
+| [`m2/canonical-write-design.md`](m2/canonical-write-design.md) | 单写者与未决幂等的设计输入（含旧实现错误 CAS 的真实复现） |
+| [`m2/canonical-freshness-design.md`](m2/canonical-freshness-design.md) | 新鲜度的后续设计输入；复用完整扫描与读模型，不另造索引系统 |
+| [`m2/local-observation-contract.md`](m2/local-observation-contract.md) | 完整本地观察内核：已实现的观察单元与接口边界 |
+| [`m2/human-save-design.md`](m2/human-save-design.md) | 人侧保存的设计输入：L2 正文与 M3 的 L3 policy 分界 |
+| [`m2/human-content-contract.md`](m2/human-content-contract.md) | 人侧正文编辑契约（范围、生成区、新鲜度与 CAS） |
+| [`m2/streamed-content.md`](m2/streamed-content.md) | 流式附件、L0 与恢复；不证明真实 Sync 额度或设备往返已接通 |
+| [`m2/writer-maintenance.md`](m2/writer-maintenance.md) | `studiolo-maintain`：只处理一项未决事务及其固定审计，不做全库恢复 |
+
+### 整文件操作与重命名
+
+| 文件 | 内容 |
+|---|---|
+| [`m2/file-operations-design.md`](m2/file-operations-design.md) | CAS 删除、最近删除与安全重命名的原始设计 |
+| [`m2/file-operations.md`](m2/file-operations.md) | 已接入代码的整文件删除与最近删除恢复 |
+| [`m2/file-operations-config.md`](m2/file-operations-config.md) | 文件操作的私有批准配置；配置存在不代表服务已启用 |
+| [`m2/file-rename-contract.md`](m2/file-rename-contract.md) | 复合 Rename 的实施契约与版本 / API 登记 |
+| [`m2/human-rename-contract.md`](m2/human-rename-contract.md) | 人侧 Rename 的封闭配置与共享生成区保护 |
+
+### 同步、隔离与 Bridge
+
+| 文件 | 内容 |
+|---|---|
+| [`m2/sync-transport-design.md`](m2/sync-transport-design.md) | 双向 Sync 与镜像写入协调的设计输入；**尚未接入真实 Sync** |
+| [`m2/sync-scope.md`](m2/sync-scope.md) | 整文件同步范围的私有配置与范围核对；不是实际 SyncTransport |
+| [`m2/headless-execution-contract.md`](m2/headless-execution-contract.md) | Obsidian Headless 0.0.14 的静态核查；**未安装、未运行、未登录、未同步真实 Vault** |
+| [`m2/owned-run-design.md`](m2/owned-run-design.md) | OwnedRun 的实施候选与 Linux 静止证明要求 |
+| [`m2/owned-run.md`](m2/owned-run.md) | T-048 SyncTransportOwner 实施记录；**T-048 实施中，无受控隔离即 `UnsupportedContainment`** |
+| [`m2/bridge-planner.md`](m2/bridge-planner.md) | 双向 Bridge 三方规划契约；仅元数据规划，未持久化、未接真实同步 |
+| [`m2/bridge-state.md`](m2/bridge-state.md) | Bridge 持久状态契约 |
+| [`m2/bridge-executor.md`](m2/bridge-executor.md) | MirrorCAS 与双向 Bridge 执行器顺序核；不做任何 IO，**生产未接线** |
+
+### 备份、恢复与运维
+
+| 文件 | 内容 |
+|---|---|
+| [`m2/checkpoint-recovery-contract.md`](m2/checkpoint-recovery-contract.md) | 一致 checkpoint 与新目录恢复契约（冻结实现边界） |
+| [`m2/backup-worker.md`](m2/backup-worker.md) | checkpoint 协调器、独立 BackupWorker 与恢复 kit 的实施记录；**T-048 实施中，未验收** |
+| [`m2/health-and-alerting.md`](m2/health-and-alerting.md) | 健康页、配额、白名单诊断、带外告警与死人开关；**T-048 实施中，生产未启用** |
+
+### 浏览器验收（均使用虚构夹具）
+
+| 文件 | 内容 |
+|---|---|
+| [`m2/session-browser-qa.md`](m2/session-browser-qa.md) | T-021 会话界面；无真实身份、Cookie 秘密、Vault 或公网接入 |
+| [`m2/factor-browser-qa.md`](m2/factor-browser-qa.md) | T-025 因子界面；无真实 Access 或 HTTPS Cookie |
+
+配套契约在 `contracts/`：[会话](contracts/auth-session.md)、[v2 保留与迁移](contracts/auth-retention.md)、
+[v3 TOTP](contracts/auth-totp.md)、[v4 恢复码](contracts/auth-recovery.md)、
+[登记 CLI](contracts/auth-admin.md)、[会话 HTTP](contracts/auth-http.md)、
+[安全启动](contracts/auth-startup.md)、[因子 HTTP 与 Unix 入口](contracts/auth-factor-http.md)、
+[因子运行装配](contracts/auth-factor-runtime.md)、[因子显示状态](contracts/auth-factor-state.md)、
+[前端会话](contracts/frontend-session.md)、[账户内因子操作](contracts/frontend-factor.md)、
+[canonical 单页读取](contracts/canonical-read.md)、[canonical 单写者](contracts/canonical-writer.md)、
+[canonical 新鲜度](contracts/canonical-freshness.md)。
+
+## m3/ — 供给面、资料同步与图 2
+
+M3 包含有界冷启动读取、MCP / HTTP 类型与实例身份、白名单及读取审计、资料同步 / 新鲜度、
+客户端投影实装、持久派生索引，以及图 2 的目录职责 / 漂移、声明架构、依赖与人工设计路径。
+T-033～T-040 已合并 main 并上线；**T-041～T-046 已随 PR #5 合并 `origin/main`（`297f126`）
+但没有部署、没有整体验收**，线上跑的仍是 T-040 版本；**T-048、T-063 只在收尾分支上，
+未合并、未部署**；**真实客户端安装与图 2 生产绑定未完成**。
+
+| 文件 | 内容 | 发布状态 |
+|---|---|---|
+| [`m3/server-agent.md`](m3/server-agent.md) | T-034 `studiolo-agent` 常驻：只读副本同步、amd64 运行包、systemd 单元与专用隧道主机名 | 已上线 |
+| [`m3/replica-freshness.md`](m3/replica-freshness.md) | T-036 资料副本同步协议与 MCP 新鲜度 | 已上线 |
+| [`m3/replica-operations.md`](m3/replica-operations.md) | T-036 启用与回滚的操作步骤（步骤本身不是已启用的证据） | 已上线 |
+| [`m3/http-text.md`](m3/http-text.md) | T-037 四个 HTTP 只读入口、短命会话与同一授权 / 审计 / 新鲜度 | 随 T-040 上线 |
+| [`m3/client-projection.md`](m3/client-projection.md) | T-038 Claude/Codex 独立资料目录、显式更新与漂移检查 | CLI 已发布，**未安装到真实客户端** |
+| [`m3/persistent-index.md`](m3/persistent-index.md) | T-039 单篇解析持久缓存、未变模型共享与隔离边界 | 随 T-040 上线 |
+| [`m3/read-supply-release.md`](m3/read-supply-release.md) | T-040 三片合并、完整运行包、系统服务升级与回滚 | 已上线 |
+| [`m3/project-operations.md`](m3/project-operations.md) | T-041 显式本地仓库绑定、目录职责图与双向漂移 | 已合并 main，未部署 |
+| [`m3/architecture-flow.md`](m3/architecture-flow.md) | T-042 有来源的模块关系、数据流与逐步设计路径 | 已合并 main，未部署 |
+| [`m3/cargo-dependencies.md`](m3/cargo-dependencies.md) | T-043 显式启用的 Cargo 包关系、依赖条件与清单来源 | 已合并 main，未部署 |
+| [`m3/rust-call-sites.md`](m3/rust-call-sites.md) | T-044 显式 Rust 文件白名单、词法上下文与未解析目标的调用位置 | 已合并 main，未部署 |
+| [`m3/rust-call-links.md`](m3/rust-call-links.md) | T-045 同文件自由函数的受限词法关联与反向引用 | 已合并 main，未部署 |
+| [`m3/mcp-session-boundaries.md`](m3/mcp-session-boundaries.md) | T-046 MCP 会话身份连续性、凭据轮换与资源边界 | 已合并 main，未部署 |
+| [`m3/repository-approval.md`](m3/repository-approval.md) | T-046 图 2 生产仓库的私有配置批准契约 | 已合并 main，未部署；**真实生产配置未验收** |
+| [`m3/release-packaging.md`](m3/release-packaging.md) | T-063 local-server 运行包内容、本机出包与自检、服务器安装与回滚步骤 | 仅开发分支（文件尚未提交）；**真实服务器部署与公网复验未做**，以该文件「已验证与未验证」一节为准 |
+
 供给面契约本身在 [`contracts/agent-supply.md`](contracts/agent-supply.md)。
-T-036托管副本与系统级部署见 [同步运维](m3/replica-operations.md)；
-T-037 HTTP四个只读入口、短命会话及验收状态见 [HTTP文本供给](m3/http-text.md)。
-T-038 Claude/Codex独立资料目录、显式更新及离线/在线漂移检查见 [客户端投影](m3/client-projection.md)。
-T-039 单篇解析持久缓存、未变模型共享与隔离边界见 [持久派生索引](m3/persistent-index.md)。
-T-040 三片合并、完整运行包、系统服务升级与回滚见 [读取供给发布](m3/read-supply-release.md)。
-T-041 显式本地仓库绑定、目录职责图与双向漂移开发见 [项目运作图首片](m3/project-operations.md)。
-T-042 有来源的模块关系、数据流与逐步设计路径见 [架构关系与任务路径](m3/architecture-flow.md)。
-T-043 显式启用的 Cargo 包关系、依赖条件与清单来源见 [Cargo 清单依赖](m3/cargo-dependencies.md)。
-T-044 显式 Rust 文件白名单、词法上下文与未解析目标的调用位置见 [Rust 调用位置证据](m3/rust-call-sites.md)。
-T-045 同文件自由函数的受限词法关联、同批标识和反向引用见 [函数词法关联](m3/rust-call-links.md)。
+`m3/client-projection.example.json` 是投影输出的示例，不含真实资料。
 
 ## contracts/ — Module Interface 契约（M0）
 
@@ -64,28 +159,9 @@ T-045 同文件自由函数的受限词法关联、同批标识和反向引用�
 设计工作流在 2026-09-02 完成候选与评委阶段，但综合稿未落盘。M0 接续将已拍板项收口到
 [`contracts/decisions.md`](contracts/decisions.md)，M0 当时的代码与 Linux 验证状态以
 [`contracts/verify-log.md`](contracts/verify-log.md) 为准。该目录保留历史 M0 契约和验收语义，
-不将本轮 M1 的实现与测试结果追写成 M0 当时已具备的能力。
-
-## m2/ — 远程与可恢复
-
-[M2 开发状态](m2/README.md)记录T-029新main整合、审计词法兼容、等待后撤权及schema拒绝副作用（macOS747/Linux758；前端沿用T-025的125项）。当时HEAD为d24e56a，待继续新鲜度/CAS；该段为历史检查点。
-应用会话/TOTP、同步、编辑、备份和恢复逐片验收；不把切片完成宣称为完整 M2 发布。
-[持久应用会话契约](contracts/auth-session.md) 定义封闭 Access 身份、独立认证存储、
-双期限与吊销补记；T-013当时没有HTTP，后续显式会话路由见T-018、TOTP库接口见v3契约。
-[v2保留与迁移](contracts/auth-retention.md) 提供显式维护、固定计划/检查点与旧凭证拒重；本片验证状态见M2记录，不等于生产已接线。
-[v3 TOTP因子基础](contracts/auth-totp.md)定义可信预配置登记、会话近期认证、持久防重放/限流与故障发布边界；T-015库接口已验收，后续HTTP见T-024，真实登记仍另验。
-[v4恢复码与实际替换](contracts/auth-recovery.md)定义换发、单次消费、新因子确认与全会话吊销；T-016库接口已验收，后续HTTP见T-024，真实秘密交付仍另验。
-[可信本地登记工具](contracts/auth-admin.md) 定义严格非秘密配置、环境注入、真实隐藏TTY、no-create打开及显式迁移；T-017已双平台验收，不替主人实际登记或开放HTTP。
-[应用会话HTTP](contracts/auth-http.md) 定义显式新组合入口、配对Cookie、严格请求校验和已登记签发；T-018最终验证记录见M2，旧启动模式与线上服务不变。
-[安全启动](contracts/auth-startup.md) 定义T-019共享主人配置、既有双库/审计锚点检查和监听前失败关闭；当前验证进度见M2，不自动切换线上入口。
-[浏览器会话](contracts/frontend-session.md)、[canonical单页读取](contracts/canonical-read.md)及[固定槽因子运行装配](contracts/auth-factor-runtime.md)分别定义T-021～T-023；[生产界面浏览器记录](m2/session-browser-qa.md)仅使用虚构会话夹具。
-[因子HTTP与Unix入口](contracts/auth-factor-http.md)定义T-024固定秘密装配、逐请求来源证明、三条动作及Tunnel接入条件；真实部署验收另计。
-[因子显示状态](contracts/auth-factor-state.md)与[账户内因子操作](contracts/frontend-factor.md)定义T-025的快照读取、一次性交付和前端不确定结果处理；[因子浏览器验收](m2/factor-browser-qa.md)记录虚构夹具上的桌面、窄屏和失败场景，整体状态见M2。
-[M2发布缺口](m2/release-readiness.md) 区分代码、外部输入与真实运行门槛；不是已经批准的缩减发布范围。
-[canonical单写者契约](contracts/canonical-writer.md)定义已验收的T-028根租约、持久配对、水位与未决边界；显式未决协调、流式大附件和HTTP编辑仍属后续。
+不将后续里程碑的实现与测试结果追写成 M0 当时已具备的能力。
 
 ## 后续在此建立
 
-- 部署清单（M2）
-- 恢复手册（M2）
+- M2 部署清单与恢复手册（`deploy/` 目前只有 M3 agent 单元与 M1 示例模板）
 - Control DB 迁移沿革（随 schema 版本变化追加）

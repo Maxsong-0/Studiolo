@@ -1,7 +1,15 @@
 # canonical 捕获与刷新新鲜度契约
 
-T-030，2026-09-05。实施中；Broker 和配置定向测试已过，服务装配及双平台整合尚待验证。
-完整 M2 仍包含持久索引、保存、同步、编辑、备份恢复及真实运行门槛。
+T-030，2026-09-05。
+**状态更新（2026-09-17 T-056 文档漂移审计）**：原状态行写的「实施中……服务装配及双平台整合
+尚待验证」已过时。服务装配确实存在：`CanonicalWorkbench` 见
+`crates/local-server/src/coordinator.rs`，watcher 见 `crates/local-server/src/watcher.rs`
+（`notify = "=8.2.0"`，`Cargo.toml:67`），Broker 侧 `capture` / `revalidate_capture` /
+`read_file` / `validate_root_identities` 见 `crates/vault-broker/src/capture.rs:66,98,113,134`。
+双平台整合的验收数字与边界统一以 [M2、M3 整体收尾台账](../m2/m2-m3-closeout.md) 为准，
+本页不再自行维护一份计数。下文的协议内容 2026-09-17 已逐条对照代码核实，仍然有效。
+完整 M2 仍包含保存、同步、编辑、备份恢复及真实运行门槛；持久派生索引已在 M3 实现，
+见 `docs/m3/persistent-index.md`。
 
 ## Broker 的完整捕获
 

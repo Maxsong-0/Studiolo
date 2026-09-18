@@ -27,11 +27,13 @@ pub use file_operation::{
     FileOperationStatus, FileOperationTicket, FilePresence, TombstoneEntry, TombstonePage,
 };
 mod memory_mutation;
+mod memory_namespace;
 mod mutation;
 mod readonly;
 mod recorded;
 mod recovery;
 mod replay_read;
+mod restore;
 mod writer;
 
 pub use blob::{BlobIdentity, BlobPruneReport, BlobSource, StreamLimits};
@@ -60,6 +62,10 @@ pub use recorded::{
 pub use recovery::{
     PendingDecision, PendingMutation, ReconciliationOutcome, ReconciliationReceipt,
     StagePruneReport, WriterPhase,
+};
+pub use restore::{
+    LineageState, MaintenanceCoverage, NewRootRebind, PhysicalId, RebindCoverage, RestoreError,
+    RestoreLineage, RestoreReceipt, read_restore_lineage, rebind_new_roots,
 };
 pub use writer::WriterStatus;
 
@@ -1137,6 +1143,16 @@ impl MemoryVaultBroker {
     fn memory_snapshot_id(&self, files: &[SnapshotFile]) -> Result<SnapshotId, BrokerError> {
         snapshot_identity(self.vault_uuid, files)
     }
+
+    /// 与 `FsVaultBroker::inspect_existing` 同形：缺失是 `None`，其余失败一律上抛，
+    /// 不把 `PathCollision` / `UnsafeNode` 静默当成「还不存在」。
+    fn inspect_existing(&self, path: &VaultPath) -> Result<Option<VaultObject>, BrokerError> {
+        match self.read(path) {
+            Ok(object) => Ok(Some(object)),
+            Err(BrokerError::NotFound(_)) => Ok(None),
+            Err(error) => Err(error),
+        }
+    }
 }
 
 impl VaultReader for MemoryVaultBroker {
@@ -1145,11 +1161,15 @@ impl VaultReader for MemoryVaultBroker {
     }
 
     fn read(&self, path: &VaultPath) -> Result<VaultObject, BrokerError> {
-        let content = self
-            .objects
-            .get(path)
-            .cloned()
-            .ok_or_else(|| BrokerError::NotFound(path.clone()))?;
+        memory_namespace::guard_read(self, path)?;
+        let content = if path.as_str() == memory_namespace::IDENTITY_MARKER {
+            memory_namespace::identity_bytes(self.vault_uuid)?
+        } else {
+            self.objects
+                .get(path)
+                .cloned()
+                .ok_or_else(|| BrokerError::NotFound(path.clone()))?
+        };
         Ok(VaultObject {
             revision: Revision::compute(self.vault_uuid, path, &content),
             path: path.clone(),
@@ -1229,9 +1249,24 @@ impl VaultWriter for MemoryVaultBroker {
         commit
             .artifacts
             .sort_by(|left, right| left.name.cmp(&right.name));
+        // 与磁盘同序：保留名与撞名必须在任何产物落盘之前判完，被拒绝的请求零副作用。
+        let mut seen = BTreeSet::new();
+        for artifact in &commit.artifacts {
+            if artifact.name.as_str() == "manifest.json" || artifact.name.is_protected() {
+                return Err(BrokerError::InvalidArtifact(format!(
+                    "reserved artifact name: {}",
+                    artifact.name
+                )));
+            }
+            if !seen.insert(artifact.name.collision_key()) {
+                return Err(BrokerError::InvalidArtifact(
+                    "artifact names collide".to_owned(),
+                ));
+            }
+        }
         let request_fingerprint = FsVaultBroker::fingerprint(&commit)?;
         let manifest_path = FsVaultBroker::manifest_path(commit.task_id, commit.attempt_id)?;
-        if let Ok(existing) = self.read(&manifest_path) {
+        if let Some(existing) = self.inspect_existing(&manifest_path)? {
             let manifest: AttemptManifest = serde_json::from_slice(&existing.content)
                 .map_err(|error| BrokerError::json("parse attempt manifest", error))?;
             if manifest.idempotency_key != commit.idempotency_key
@@ -1246,25 +1281,16 @@ impl VaultWriter for MemoryVaultBroker {
                 artifacts: manifest.artifacts,
             });
         }
-        let mut seen = BTreeSet::new();
         let base = format!("sources/attempts/{}/{}", commit.task_id, commit.attempt_id);
         let mut artifacts = Vec::new();
         for candidate in &commit.artifacts {
-            if candidate.name.as_str() == "manifest.json"
-                || candidate.name.is_protected()
-                || !seen.insert(candidate.name.collision_key())
-            {
-                return Err(BrokerError::InvalidArtifact(
-                    "reserved or colliding artifact name".to_owned(),
-                ));
-            }
             let path = VaultPath::parse(format!("{base}/{}", candidate.name.as_str()))
-                .map_err(|_| BrokerError::InvalidArtifact("invalid artifact target".to_owned()))?;
+                .map_err(|_| BrokerError::InvalidArtifact("invalid derived target".to_owned()))?;
             let expected = Revision::compute(self.vault_uuid, &path, &candidate.content);
-            let revision = match self.read(&path) {
-                Ok(object) if object.revision == expected => object.revision,
-                Ok(_) => return Err(BrokerError::ArtifactConflict(path)),
-                Err(BrokerError::NotFound(_)) => {
+            let revision = match self.inspect_existing(&path)? {
+                Some(object) if object.revision == expected => object.revision,
+                Some(_) => return Err(BrokerError::ArtifactConflict(path)),
+                None => {
                     self.mutate(Mutation::create(
                         path.clone(),
                         candidate.content.clone(),
@@ -1272,7 +1298,6 @@ impl VaultWriter for MemoryVaultBroker {
                     ))?
                     .revision
                 }
-                Err(error) => return Err(error),
             };
             artifacts.push(CommittedArtifact {
                 path,
@@ -1402,20 +1427,4 @@ fn hex(bytes: &[u8]) -> String {
 fn collision_component_key(component: &str) -> String {
     use unicode_normalization::UnicodeNormalization as _;
     component.nfc().collect::<String>().to_lowercase()
-}
-
-fn spelling_collision(existing: &VaultPath, requested: &VaultPath) -> bool {
-    for (existing, requested) in existing
-        .as_str()
-        .split('/')
-        .zip(requested.as_str().split('/'))
-    {
-        if collision_component_key(existing) != collision_component_key(requested) {
-            return false;
-        }
-        if existing != requested {
-            return true;
-        }
-    }
-    false
 }

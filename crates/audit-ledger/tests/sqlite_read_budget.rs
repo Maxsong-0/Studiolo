@@ -78,7 +78,7 @@ fn metadata_text_is_restricted_to_its_fixed_byte_lengths() {
 }
 
 #[test]
-fn oversized_schema_declaration_is_rejected_with_only_three_objects() {
+fn oversized_schema_declaration_is_rejected_with_only_the_four_expected_objects() {
     let directory = support::private_dir();
     let root = directory.path().canonicalize().unwrap();
     let ledger = SqliteAuditLedger::open(&root).unwrap();
@@ -108,7 +108,8 @@ fn oversized_schema_declaration_is_rejected_with_only_three_objects() {
             |row| row.get(0),
         )
         .unwrap();
-    assert_eq!(count, 3);
+    // v2 精确 schema：audit_meta、audit_events、audit_segments 与唯一索引，共四个对象。
+    assert_eq!(count, 4);
     assert!(bytes > 1024);
     drop(connection);
     assert_eq!(

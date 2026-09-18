@@ -10,6 +10,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { App } from '../App';
 import {
   defaultApiResponse,
+  documents,
   emptyNavigation,
   fixture,
   jsonResponse,
@@ -53,7 +54,7 @@ describe('只读工作台', () => {
     fetchMock.mockImplementation(async (input) =>
       String(input).startsWith('/api/document')
         ? jsonResponse({
-            path: fixture.documents[0].path,
+            path: documents[0].path,
             title: '星舟总览',
             navigation: emptyNavigation,
             content:
@@ -79,13 +80,13 @@ describe('只读工作台', () => {
       '<script>alert(2)</script>',
     );
     expect(
-      within(dialog).getByText(`${fixture.documents[0].path} · 第 3 行`),
+      within(dialog).getByText(`${documents[0].path} · 第 3 行`),
     ).toBeInTheDocument();
     const request = fetchMock.mock.calls.find(([input]) =>
       String(input).startsWith('/api/document'),
     )!;
     const url = new URL(String(request[0]), 'http://localhost');
-    expect(url.searchParams.get('path')).toBe(fixture.documents[0].path);
+    expect(url.searchParams.get('path')).toBe(documents[0].path);
     expect(url.searchParams.get('generation')).toBe('7');
     fireEvent(dialog, new Event('cancel', { cancelable: true }));
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
@@ -96,7 +97,7 @@ describe('只读工作台', () => {
     fetchMock.mockImplementation(async (input) =>
       String(input).startsWith('/api/document')
         ? jsonResponse({
-            path: fixture.documents[0].path,
+            path: documents[0].path,
             title: '星舟总览',
             content: '# 星舟',
             navigation: emptyNavigation,
@@ -165,12 +166,21 @@ describe('只读工作台', () => {
 
   it('空快照、筛选空态和空文档有明确反馈', async () => {
     fetchMock.mockImplementation(async (input) =>
-      defaultApiResponse(input, {
-        ...fixture,
-        projects: [],
-        inbox: [],
-        documents: [],
-      }),
+      defaultApiResponse(
+        input,
+        {
+          ...fixture,
+          projects: [],
+          inbox: [],
+          counts: {
+            ...fixture.counts,
+            documents: { value: 0, unavailable: [] },
+            projects: { value: 0, unavailable: [] },
+            inbox: { value: 0, unavailable: [] },
+          },
+        },
+        [],
+      ),
     );
     const user = userEvent.setup();
     render(<App />);
@@ -201,7 +211,7 @@ describe('只读工作台', () => {
     fetchMock.mockImplementation(async (input) =>
       String(input).startsWith('/api/document')
         ? jsonResponse({
-            path: fixture.documents[0].path,
+            path: documents[0].path,
             title: '大文档',
             navigation: emptyNavigation,
             content,

@@ -57,12 +57,30 @@ pub struct ReadQuery {
 }
 
 /// 类型签发结果：明文只出现在这里一次。
-#[derive(Clone, Debug, PartialEq, Eq)]
+///
+/// 明文只能由调用方经受控通道交付一次（当前唯一出口是 `studiolo-agent` 的控制终端门禁）。
+/// 因此本类型**不派生** `Debug`：派生实现会让任何 `{:?}`、日志或 panic 消息复述明文，
+/// 那是与「只显示一次」等价的泄漏面。
+#[derive(Clone, PartialEq, Eq)]
 pub struct IssuedToken {
     /// 类型名。
     pub agent_type: String,
     /// 明文 token（`sag1_` + 64 位十六进制）。
     pub token: String,
+}
+
+impl std::fmt::Debug for IssuedToken {
+    /// 只报类型名与明文长度；绝不复述明文本身。
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("IssuedToken")
+            .field("agent_type", &self.agent_type)
+            .field(
+                "token",
+                &format_args!("<{} 字节明文，已隐去>", self.token.len()),
+            )
+            .finish()
+    }
 }
 
 /// 已注册的实例。

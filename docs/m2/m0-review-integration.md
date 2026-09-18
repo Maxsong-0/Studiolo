@@ -14,6 +14,10 @@ main/origin/main也均为d24e56a。T-029已认领并fresh fetch后实际快进�
   旧数据若含新增禁字段会拒读，不能只描述为未来append校验。当前Auth自产字段未见冲突。
 - 新版schema拒绝的“任何DDL前、零写入”表述强于实现和证据；目前先设置WAL，迁移
   也先CREATE IF NOT EXISTS。测试只确认MAX(version)=99保持，需收紧表述或补真正检查。
+  > **2026-09-17 状态更正（T-053 核实、T-047 收尾回写）**：本条所述现象已不成立。
+  > `crates/control-db/src/lib.rs:320-321` 现在是先 `db.migrate()?` 再
+  > `PRAGMA journal_mode=WAL;`，WAL 已在迁移之后；`docs/contracts/control-db.md`
+  > 的对应表述也已改写为与实现一致。**原文按档案纪律保留，不改写历史记录。**
 - .gitignore的.claude/与当前*.tsbuildinfo可共存，其余未改契约仍需按最终行为核对。
 
 T-029首个真实复现：原始DELETE日志的新版schema99库被拒绝后已变WAL，WAL对照通过；

@@ -20,7 +20,9 @@ fn original_local_binary_still_serves_read_only_without_auth_or_secret() {
     assert!(page.contains("启动夹具"));
     let snapshot = request(server.address, "GET", "/api/workbench");
     assert!(snapshot.starts_with("HTTP/1.1 200"));
-    assert!(snapshot.contains("fixture.md"));
+    // 首屏只报计数；逐篇清单改走文件树与搜索各自的分页入口，不再整份随首屏下发。
+    assert!(snapshot.contains(r#""documents":{"value":1"#));
+    assert!(!snapshot.contains(r#""documents":["#));
     let script = request(server.address, "GET", "/assets/app.js");
     assert!(script.starts_with("HTTP/1.1 200"));
     assert!(script.contains("const fixture = true;"));

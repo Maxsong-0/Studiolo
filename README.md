@@ -5,32 +5,75 @@
 - **产品需求与决策**：不在本仓库。权威档案在 Obsidian vault 的 `项目/Studiolo/`
   （INDEX 仪表盘、PRD 分册、ADR、TASKS 协调板、日志）。
 - **本仓库**：实现代码、部署清单、面向实现者的技术方案（`docs/`）。
-- 状态：**T-006 总览、T-007 搜索 / 导航、T-010 文件树 / 附件信息及 T-011 界面重设计已实现，完整 M1 尚未完成**。当前提供项目总览、待我动作、原文行号、手动刷新、中文搜索、快速切换、大纲 / 双链，以及包含空目录与纯附件目录的文件树；范围和验证状态见 [M1 实现说明](docs/m1/README.md)。
-- **M3 首片已合并 main 并常驻服务器（2026-09-07，T-033/T-034）**：`studiolo-agent` 以一个 URL 向 AI 接入方供给冷启动路牌（≤2000 token 二元）、白名单内只读内容与读取审计；契约见 [供给面与 MCP 外壳](docs/contracts/agent-supply.md)。公网入口 `https://studiolo-agent.maxsong.me/mcp`（专用隧道 → 服务器回环 4400，应用内 bearer 门禁），部署与验收记录见 [服务器常驻](docs/m3/server-agent.md)。真实库验收：路牌 931 token；真实 Claude Code 经公网握手成功。
-- **M3 资料同步与新鲜度已合并上线（2026-09-10，T-036，功能 main `66dc7e3`，CI 通过）**：Mac 每 60 秒自动发布白名单完整副本，MCP 四工具同代读取并提示过期/漂移。系统级服务以 `maxsong` 运行，原生 302 项及公网正反检查通过，NRestarts=0；详见 [验收记录](docs/m3/replica-freshness.md) 与 [系统级运维](docs/m3/replica-operations.md)。完整 M3 仍未完成。
-- **M3 HTTP只读文本入口（T-037，已随T-040合并上线）**：`/read/handshake`、目录、笔记与搜索复用MCP供给逻辑，有界短命会话及同一授权/审计/新鲜度；接口见 [HTTP文本供给](docs/m3/http-text.md)。2026-09-11 发布状态见 [T-040发布记录](docs/m3/read-supply-release.md)。
-- **M3 客户端投影（T-038，CLI已随T-040合并发布）**：Claude/Codex独立资料目录、配置与技能参考，支持鉴权导出、只读预览、显式应用、原子换批和离线/在线漂移检查；说明与验证状态见 [客户端投影](docs/m3/client-projection.md)。尚未安装到真实客户端。
-- **当前优先 M2**：认证前后端、canonical单写者/永久配对/未决幂等及T-029新main整合已验收；当前macOS747/Linux758和两端生产通过，前端沿用T-025的125项。HEAD已d24e56a，继续新鲜度/CAS；编辑、同步、备份恢复和完整发布仍未完成，见[M2验证记录](docs/m2/README.md)与[发布缺口](docs/m2/release-readiness.md)。
+- **本页口径**：每条状态只分四档——**已在 main 且线上运行 / 已在 main 未部署 / 只在开发分支 / 未实现或未验收**，
+  并给出可核对的依据。各切片的测试数字与验收证据留在 `docs/` 对应文件，本页不复制、不汇总。
 
-**T-041 图2首片（2026-09-11，本地开发验收）**：现有工作台新增项目运作入口，显式绑定本地仓库，核对目录职责与双向目录漂移；见[项目运作图首片](docs/m3/project-operations.md)。当时Mac432/Linux444及两端各26项架构、前端167项与浏览器验收通过。开发基线main `41fa1b2`，本地提交 `94801ef`，未合并部署。
+## 当前状态（2026-09-17）
 
-**T-042 图2第二片（2026-09-11，本地开发验收）**：新增有来源的模块关系、声明依赖/数据流与逐步设计路径，并关联已有目录证据；见[架构关系与任务路径](docs/m3/architecture-flow.md)。本轮Mac330/Linux331项相关Rust、两端各26项架构、前端221项与桌面/窄屏浏览器通过；基于T-041继续本地分支 `codex/m3-architecture-flow`。源码依赖派生、真实运行全链路与生产隔离接入仍待后续，未合并部署。
+参考点：`origin/main` = `297f126`（2026-09-17 合并 PR #5），本收尾分支
+`claude/m0-3-wrap-up-a8db6d` = `b97475b`。**本地 `main` 分支引用停在 `41fa1b2` 未快进，
+别拿它当权威**；用 `git fetch origin main` 后看 `origin/main`。本分支相对 `origin/main`
+**领先 2、落后 2**（领先 `7770ac3`、`b97475b`；落后 `5854f91`、`297f126`），还没有对齐。
+**M1、M2、M3 三个里程碑都没有完成，也都没有整体验收。**当前收尾工作为 T-047（回归与合并）、
+T-048（备份 / 告警 / OwnedRun / Bridge 执行器）与 T-063（local-server 运行包），都在进行中。
+逐工作域的细账在 [M2、M3 整体收尾台账](docs/m2/m2-m3-closeout.md)，但要注意**它是
+2026-09-12 T-046 当时的快照，没有覆盖 T-047～T-063**；那三项的当前事实以本页与
+各自文档为准。
 
-**T-043 图2第三片（2026-09-11，本地开发验收）**：显式启用 Cargo 清单读取，派生成员包依赖并保留种类、条件、可选标记和来源行，按目录关联设计节点；见[Cargo 清单依赖](docs/m3/cargo-dependencies.md)。Mac377/Linux378 项相关 Rust、两端各26项架构、前端299项及桌面/窄屏浏览器通过；Studiolo 自身16包/44条内部依赖亦逐项核验。基于T-042继续本地分支 `codex/m3-cargo-dependencies`，未合并部署；源码调用、真实运行全链路与生产隔离接入仍待后续。
+### 已在 main 且线上实际运行
 
-**T-044 图2第四片（2026-09-12，本地开发验收）**：显式 Rust 文件白名单派生“文件 → 词法上下文 → 调用语法位置”，展示覆盖范围与来源行/字节列，目标未解析；见 [Rust 调用位置证据](docs/m3/rust-call-sites.md)。Mac427/Linux428 项相关 Rust、两端各26项架构、前端416项及桌面/窄屏浏览器通过；自身三文件50上下文/197调用位置的来源逐项核对。基于T-043继续本地分支 `codex/m3-rust-call-sites`，未合并部署；完整符号调用图、真实运行全链路及生产隔离接入仍待后续。
+| 范围 | 事实 | 说明 |
+|---|---|---|
+| M0 基线 | Rust 库与 `M0Workbench`：真实文件系统 VaultBroker、SQLite TaskEngine、隔离 Stub Runner，以及索引、Gateway、审计的契约实现 | 历史证据见 [M0 验证记录](docs/contracts/verify-log.md)，不作为 M1/M2/M3 的验收记录 |
+| M1 只读工作台 | T-006 总览 / T-007 搜索导航 / T-010 文件树 / T-011 界面重设计已实现，T-035 界面发布已合并 main `49a9f1a` 并由用户手动切换服务器 4319 网页服务 | 范围与验证状态见 [M1 实现说明](docs/m1/README.md)、[发布记录](docs/m1/ui-release.md)；**完整 M1 未完成**，公网登录后的交互验收待用户配合 |
+| M3 供给面 | T-033/T-034 `studiolo-agent` 常驻服务器，一个 URL 供给冷启动路牌、白名单只读内容与读取审计 | 契约见 [供给面与 MCP 外壳](docs/contracts/agent-supply.md)，部署记录见 [服务器常驻](docs/m3/server-agent.md) |
+| M3 资料同步 | T-036 Mac 每 60 秒发布白名单完整副本，MCP 四工具同代读取并提示过期 / 漂移；系统级服务以 `maxsong` 运行 | [新鲜度契约](docs/m3/replica-freshness.md)、[系统级运维](docs/m3/replica-operations.md) |
+| M3 读取供给 | T-037 HTTP 只读文本入口、T-038 客户端投影 CLI、T-039 持久派生索引随 T-040 合并上线并通过公网复验 | [HTTP 文本供给](docs/m3/http-text.md)、[客户端投影](docs/m3/client-projection.md)、[持久派生索引](docs/m3/persistent-index.md)、[发布记录](docs/m3/read-supply-release.md) |
 
-**T-045 图2第五片（2026-09-12，本地开发验收）**：同一批显式源码增加同文件自由函数的受限词法关联，支持调用到定义与反查全部引用；见[函数词法关联](docs/m3/rust-call-links.md)。Mac472/Linux473项相关Rust、两端各26架构、前端482项与桌面/窄屏浏览器通过；虚构三文件15处关联，自身助手函数2处关联的批哈希及来源逐项核验。本地分支 `codex/m3-rust-call-links`，未合并部署；完整符号图、运行链与生产隔离仍待后续。
+M1 的域名入口（T-009）Access、独立鉴权服务与 `studiolo.maxsong.me` 路由已部署生效，
+**真实邮箱登录后的公网功能验收仍未完成**，见 [Cloudflare 域名部署](docs/m1/cloudflare-preview.md)。
 
-M1 使用独立的只读 Broker Adapter、纯派生 Workbench Module 与本机网页入口，不装配 M0
-写引擎。搜索、摘要、原文与导航共享同一不可变 generation，详见
-[搜索与导航契约](docs/m1/search-navigation.md) 与 [文件树契约](docs/m1/file-tree.md)。
-附件仅显示路径、后缀与大小，不读取内容。变更流、规则漂移、持久索引和 watcher 仍属后续范围；当前不提供编辑能力。
+### 已合并 origin/main，但**没有部署、没有整体验收**
 
-M0 基线仍保留 Rust 库与 `M0Workbench`：真实文件系统 VaultBroker、SQLite TaskEngine、
-隔离 Stub Runner，以及索引、Gateway 和审计的契约实现；审计仍使用内存 Adapter。
-M0 当时通过 macOS 102 项、Linux 110 项测试，以及格式、Clippy 和文档构建；历史证据见
-[M0 验证记录](docs/contracts/verify-log.md)，不作为本轮 M1 的验收记录。
+2026-09-17 的 PR #5 把 T-041～T-046 的成果与 CI 修复合进了 `origin/main`（`297f126`）。
+**合并不等于验收，更不等于上线**：服务器上跑的仍然是 T-040 的 M3 读取供给版本，
+下面这些分片没有一个进入过生产。本轮未核对该次 main CI 的运行结果。
+
+| 分片 | 内容 | 文档 |
+|---|---|---|
+| T-041 | 项目运作入口：显式绑定本地仓库、目录职责与双向目录漂移 | [项目运作图首片](docs/m3/project-operations.md) |
+| T-042 | 有来源的模块关系、声明依赖 / 数据流与逐步设计路径 | [架构关系与任务路径](docs/m3/architecture-flow.md) |
+| T-043 | 显式启用 Cargo 清单读取，派生成员包依赖并保留种类 / 条件 / 来源行 | [Cargo 清单依赖](docs/m3/cargo-dependencies.md) |
+| T-044 | 显式 Rust 文件白名单派生「文件 → 词法上下文 → 调用语法位置」，目标未解析 | [Rust 调用位置证据](docs/m3/rust-call-sites.md) |
+| T-045 | 同文件自由函数的受限词法关联，调用到定义并反查全部引用 | [函数词法关联](docs/m3/rust-call-links.md) |
+| T-046 | MCP 会话与凭据边界、图 2 生产仓库批准、人侧正文 / Rename / 删除、流式附件、Bridge 规划与持久状态 | [收尾台账](docs/m2/m2-m3-closeout.md) 与 `docs/m2/` 各契约 |
+
+T-041～T-045 曾在各自的 `codex/m3-*` 分支上开发验收，提交
+`94801ef`、`7fe714c`、`c1c2171`、`82a620d`、`4f6f348` 与保全 T-046 未提交成果的 `ec19093`
+**都已经是 `origin/main` 的祖先**（2026-09-17 用 `git merge-base --is-ancestor` 逐个核实）。
+仍**没有进过 main** 的只有本分支领先的两个提交：`7770ac3`（接线 backup / observability /
+sync-transport 三个新 crate 骨架）与 `b97475b`（本地那份 CI 磁盘修复；main 上是另一个
+sha `5854f91`）。
+
+### 只在本收尾分支，未合并、未部署、未验收
+
+| 分片 | 内容 | 文档 |
+|---|---|---|
+| T-048 | 一致 checkpoint 与 BackupWorker、健康 / 配额 / 告警、SyncTransportOwner、MirrorCAS 与 Bridge 执行器 | 实施中，见下方「未实现或未验收」 |
+| T-063 | local-server 运行包内容、本机出包与自检、服务器安装与回滚 | [运行包与部署脚本](docs/m3/release-packaging.md)；本机 / 容器内自检已过，**真实服务器部署与公网复验未做** |
+
+### 明确未实现或未验收（不得据本仓库宣称具备）
+
+| 能力 | 当前事实 |
+|---|---|
+| 一致 checkpoint 与独立 BackupWorker | `crates/backup` 在 T-048 实施中，未验收、未合并、未在真实环境跑过；边界见 [checkpoint 与恢复契约](docs/m2/checkpoint-recovery-contract.md) |
+| NAS 干净机恢复 | **未进行**。无 DSM 登录与专用备份目录，未做新机恢复演练；接入信息状态见 [接入信息](docs/m2/connection-setup.md) |
+| 健康页与带外告警的生产启用 | `crates/observability` 与 `local-server` 健康模块在 T-048 实施中；生产未启用，告警邮箱已确认但**发送端与实际送达未验收** |
+| 真实 OwnedRun | `crates/sync-transport` 在没有受控 Linux 隔离能力与管理员预置 launcher 特权时**一律返回 `UnsupportedContainment`**，绝不降级为 PID/PGID 观察冒充隔离；真实隔离运行未验收 |
+| MirrorCAS 与 Bridge 执行器的生产接线 | `crates/sync-bridge` 的规划器与执行器是纯顺序核，不开文件、不连数据库、不发网络；**未接入真实同步，生产未接线** |
+| 真实客户端安装 | T-038 的 CLI 已发布，但**没有安装到任何真实 Claude / Codex 工作区**，既有客户端配置未修改 |
+| 公网发布验收 | 线上仍是 T-040 的 M3 读取供给版本；**本轮收尾版本未打包、未发布、未做公网验收** |
+| 实际两周 headless 试跑 | **未进行**，也没有任何等价的长期运行证据 |
 
 ## 运行本机只读示例
 
@@ -43,30 +86,31 @@ cargo run --locked -p studiolo-local-server -- --vault examples/m1-vault --asset
 ```
 
 然后打开 [http://127.0.0.1:4317/](http://127.0.0.1:4317/)。入口固定使用 IPv4 loopback，
-不要替换为 `localhost`；按 Ctrl-C 停止。
+不要替换为 `localhost`；按 Ctrl-C 停止。完整参数（会话模式、canonical 只读 / 写者、
+因子 Unix 入口、图 2 的仓库绑定与 Rust 白名单）以
+`studiolo-local-server --help` 的实际输出为准，本页不复制那份清单。
+
+上面三条命令 2026-09-17 在本收尾分支（`web/dist` 为既有构建产物）实跑过：服务器正常启动并打印
+`Studiolo：http://127.0.0.1:4317（本机只读；按 Ctrl-C 停止）`，`/`、`/api/workbench`、
+`/api/search`、`/api/document`、`/api/tree` 均返回 200，旧代次返回 409，`Host: localhost:4317`
+被拒为 403。这是**本机示例入口可用**的证据，不是 M1 里程碑、公网入口或任何发布的验收证据。
 
 `examples/m1-vault` 是纯虚构示例库。应用不会自动读取或复制真实 Vault，不修改源文件、
 不创建 Vault 身份、数据库或缓存。查看真实内容时，只能由用户明确选择一个**只读副本**，
 再将其路径传给 `--vault`；本仓库没有默认的真实笔记路径。
 
-T-007 当时通过 macOS 158 项、Linux 166 项 Rust 测试及格式 / Clippy 检查，前端 28 项测试、
-lint、Prettier 与生产构建。本轮真实 HTTP 桌面与窄屏搜索/导航操作通过，控制台无警告或错误；
-T-006 当时的测试与视觉验收保留为历史，详见 [M1 验收与差异记录](docs/m1/README.md)。当前分支
-`codex/m1-readonly-workbench` 尚未提交推送，M1 远端 CI 尚未触发。
+`examples/` 下另有四个虚构示例库（`m3-project-operations`、`m3-cargo-dependencies`、
+`m3-rust-call-sites`、`m3-rust-call-links`），配合 `--project-repository` 等开关演示
+T-041～T-045 的图 2 能力；运行命令写在**各自子目录**的 `README.md` 里（`examples/`
+根目录没有汇总 README）。
 
-用户指定的服务器示例部署与 SSH 访问方式见 [服务器运行说明](docs/m1/server-preview.md)。
+服务器示例部署与 SSH 访问方式见 [服务器运行说明](docs/m1/server-preview.md)；
 服务器运行不等于开放网络 HTTP，仍保持回环监听与虚构示例库范围。
-后续 [Cloudflare 域名部署](docs/m1/cloudflare-preview.md) 的 Access、独立鉴权服务和
-`studiolo.maxsong.me` 路由已生效；服务器原生测试通过，仍待真实邮箱登录及公网功能验收。
-T-009 新版验证为 macOS 189 / 服务器原生 197 项 Rust、前端 28 项及 17 项 HTTP 检查。
-
-T-010历史验证：macOS222/Linux aarch64 230项Rust、前端39项与生产构建、格式检查通过；
-桌面与窄屏文件树操作通过。入口为「文档 → 文件树」。后续结果以M1/M2各检查点为准，当前成果尚未提交推送或更新服务器发布。
 
 ## 结构
 
 ```text
-Cargo.toml           # workspace：成员、统一依赖版本、统一 lints
+Cargo.toml           # workspace：20 个成员、统一依赖版本、统一 lints
 rust-toolchain.toml  # 1.97.1 + rustfmt + clippy
 crates/
   core/              # studiolo-core：跨模块共享值类型（ID、Revision、Fence、权限集合、分级）
@@ -74,42 +118,81 @@ crates/
   vault-index/       # 解析、就近 wikilink、反链、标题树、frontmatter 归一
   control-db/        # 运行平面 SQLite WAL：schema、迁移、单写者连接
   audit-ledger/      # 权威审计唯一写入口，事件幂等与完整性链
-  auth/              # M2 Access、独立持久会话、TOTP/恢复码与固定槽因子
-  auth-admin/        # 可信本地登记CLI：固定秘密环境、隐藏TTY与明确迁移
-  host-config/       # 管理CLI与服务器共用的私有非秘密配置/目录边界
+  auth/              # M2 Access、独立持久会话、TOTP / 恢复码与固定槽因子
+  auth-admin/        # 可信本地登记 CLI：固定秘密环境、隐藏 TTY 与明确迁移
+  host-config/       # 管理 CLI 与服务器共用的私有非秘密配置 / 目录边界
+  sync-bridge/       # M2 双向 Bridge：三方规划、私有持久状态与 MirrorCAS 执行顺序核（未接真实同步）
+  sync-transport/    # M2 SyncTransportOwner：固定 link、一次一个 OwnedRun；无受控隔离即拒绝
+  backup/            # M2 一致 checkpoint、独立 BackupWorker 与新目录恢复（T-048 实施中）
+  observability/     # M2 健康聚合、磁盘 / 同步配额、带外告警与死人开关（T-048 实施中）
   runner-adapter/    # Adapter Interface 与 M0 Stub；真实 CLI Adapter 属于后续里程碑
   gateway/           # capability 校验后的工具调用与模型中继 Seam
   task-engine/       # 任务命令、claim/attempt/fence、取消、projection outbox、对账
   studiolo/          # 组合根与集成测试（最小垂直链、reconcile、架构写入口）
   workbench/         # M1 纯派生视图、内存搜索、文档导航与有界文件树
-  local-server/      # M1只读查询；M2显式会话、canonical读取及Unix因子HTTP
-  supply/            # M3 供给面内核：白名单只读根、冷启动路牌与 o200k 预算、类型/实例身份、读取审计索引
+  local-server/      # M1 只读查询；M2 显式会话、canonical 读写、人侧编辑 / 文件操作、健康与 Unix 因子 HTTP
+  supply/            # M3 供给面内核：白名单只读根、冷启动路牌与 o200k 预算、类型 / 实例身份、读取审计索引
   agent-server/      # M3 `studiolo-agent`：rmcp Streamable HTTP 主外壳（仅 loopback）与 admin 子命令
-docs/                # M0 契约与 M1/M2 分片实现和运行说明
-scripts/             # test-linux.sh：Docker 内跑与 CI 相同的 fmt / clippy / test
-.github/workflows/   # CI（Linux x86_64，action 按 SHA 钉死）
-web/                 # Vite + TypeScript + React只读工作台与M2会话入口；尚无编辑器
-examples/m1-vault/   # 纯虚构示例库，不含真实用户笔记
-deploy/preview/      # M1 服务器示例的用户服务模板；完整 M2 部署设施尚未提供
+docs/                # M0 契约与 M1/M2/M3 分片实现、运行与验收说明
+scripts/             # test-linux.sh（Docker 内跑与 CI 相同的检查）、打包与 Python 管线检查
+.github/workflows/   # CI（Linux x86_64，action 按 SHA 钉死）：Rust 作业 + 前端作业
+web/                 # Vite + TypeScript + React 工作台：只读视图、M2 会话入口与人侧 Markdown 编辑器（未发布）
+examples/            # 纯虚构示例库（M1 只读工作台与 M3 图 2 四组），不含真实用户笔记
+deploy/              # agent/：M3 服务器单元与升级脚本；preview/：M1 示例的用户服务模板
 ```
 
 依赖方向无环：`core` 不依赖任何成员；M0 的 `task-engine` 面向各 Module Interface 与
 Control DB 编排，具体 Adapter 在 `studiolo` 组合根装配；`gateway` 不依赖 `task-engine`。
-M1 的 `workbench` 只消费内存文档与 M0 索引，`local-server` 单独装配只读 Adapter 和派生视图。
-M2 `auth` 独占认证存储，不持有ControlDb或Vault能力；`host-config`共用私有配置检查，
-CLI和服务器分别装配可信登记与运行接口。会话、TOTP及恢复码已接入显式HTTP组合；当前进展见[M2开发状态](docs/m2/README.md)。
-v2已通过显式迁移和安全历史回收契约，保留旧活跃凭证，防回收后旧秘密复用；v3预配置TOTP/会话近期认证也已通过双平台契约验收。
-v4恢复码换发与真实内部因子替换已通过双平台契约验收，见[恢复契约](docs/contracts/auth-recovery.md)。
-CLI及固定秘密启动已经实现并用虚构夹具验收；真实主人登记、手机配对、恢复码保管和HTTPS接入仍需实操，完整M2未合并部署。
-已有[会话启动](docs/contracts/auth-startup.md)和[Unix因子模式](docs/contracts/auth-factor-http.md)契约；不要用示例路径/秘密替代经批准的生产配置。
+M1 的 `workbench` 只消费内存文档与 M0 索引；`local-server` 按启动参数分别装配只读派生视图、
+会话认证、canonical 读取或写者。M2 `auth` 独占认证存储，不持有 ControlDb 或 Vault 能力；
+`host-config` 共用私有配置检查。`backup` 不持有任何 owner 的数据库连接，只消费封存票据
+指向的只读传输源；`sync-bridge` 纯规划 / 顺序核不做 IO；除 `vault-broker` 外的真实文件 IO
+都必须收敛到架构守卫登记的固定文件（见 `crates/studiolo/tests/architecture*`）。
+
 生产构建显式使用 `--features studiolo-auth/production`；该特征与虚构身份测试夹具互斥。
+不要用示例路径或示例秘密替代经批准的生产配置。
 
 ## 开发
 
+下面这组命令覆盖 CI `rust` 作业里的编译类检查，**不是它的全集**（权威始终是
+`.github/workflows/ci.yml`，缺的部分列在本节末尾）：
+
 ```bash
-cargo fmt --all -- --check && cargo clippy --workspace --all-targets --locked -- -D warnings && cargo test --workspace --locked
-scripts/test-linux.sh   # 同一套在 Linux 容器内跑（路径安全负向测试只在 Linux 有真实语义）
+cargo --locked fmt --all -- --check
+cargo --locked clippy --workspace --all-targets -- -D warnings
+cargo --locked test --workspace
+cargo --locked test -p studiolo-vault-broker --test linux_path_security   # 只在 Linux 有真实语义
+cargo --locked build -p studiolo-local-server --features studiolo-auth/production
+cargo --locked build -p studiolo-auth-admin --features production
 ```
+
+前端（CI 在 `node:22.17.0` 容器内、工作目录 `web`）：
+
+```bash
+npm --prefix web ci --ignore-scripts && npm --prefix web run build
+npm --prefix web test && npm --prefix web run lint && npm --prefix web run format
+```
+
+上面那组之外，CI `rust` 作业还会做四件事（2026-09-17 按 `ci.yml` 逐条核对）：
+
+- 对**七个显式列名**的脚本跑 `bash -n`：`scripts/` 下的 `package-agent.sh`、
+  `run-agent-tests.sh`、`sync-agent-vault.sh`、`package-preview.sh`、`run-preview-tests.sh`，
+  以及 `deploy/agent/install-t036-system.sh`、`deploy/agent/upgrade-read-supply.sh.in`。
+  **这不是 `bash -n` 全部部署脚本**：`deploy/preview/install-runtime-package.sh` 不在清单里。
+- 跑**十三个逐条列名**的 `scripts/test-*.py`（不是 `test-*.py` 通配）。
+- `cargo --locked build -p studiolo-agent-server` 后跑
+  `scripts/check-replica-pipeline.py`、`scripts/check-client-projection-pipeline.py` 两条真实管线。
+- 生产 `studiolo-auth-admin` 构建之后再跑
+  `python3 crates/auth-admin/tests/support/cli_process.py target/debug/studiolo-auth-admin`。
+
+在 Linux 容器里跑 Rust 那一半：
+
+```bash
+scripts/test-linux.sh   # fmt / clippy / workspace 测试 / 路径安全 / 两个生产构建 / 登记工具进程检查
+```
+
+`scripts/test-linux.sh` **不包含**上面的 `bash -n`、十三个 Python 契约脚本、两条管线检查，
+也不含前端作业；要复跑那些得自己按 `ci.yml` 逐条执行。
 
 ## 纪律
 
@@ -117,3 +200,4 @@ scripts/test-linux.sh   # 同一套在 Linux 容器内跑（路径安全负向�
 - 提交信息中文，带 Conventional Commits 前缀。
 - CI 在 Linux 上跑路径安全测试；macOS 只作快速回路。
 - 进程内只有 VaultBroker 可写 canonical Vault；架构测试枚举全部写入口。
+- 文档不得冒称完成度：没有实跑证据的一律写「未验证 / 未验收」，不用「构建成功」代替发布证据。

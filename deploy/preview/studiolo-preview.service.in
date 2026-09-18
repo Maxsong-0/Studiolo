@@ -5,6 +5,10 @@ StartLimitIntervalSec=60
 StartLimitBurst=3
 
 [Service]
+# T-050/T-059：进程启动时用 mlockall 把持有明文秘密的页锁在内存，防被换出到交换区。
+# systemd 默认 LimitMEMLOCK 常为 8M，不足时加固会**失败关闭并终止进程**（这是正确行为，
+# 不得改成尽力而为），服务将无法启动。见 docs/m2/secret-residency.md。
+LimitMEMLOCK=infinity
 Type=simple
 WorkingDirectory=%h/.local/share/studiolo-preview/releases/@RELEASE@
 ExecStart=%h/.local/share/studiolo-preview/releases/@RELEASE@/bin/studiolo-local-server --vault %h/.local/share/studiolo-preview/releases/@RELEASE@/example-vault --assets %h/.local/share/studiolo-preview/releases/@RELEASE@/web --label 服务器示例库 --port 4318

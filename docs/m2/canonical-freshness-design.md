@@ -1,5 +1,14 @@
 # canonical新鲜度的后续设计输入
 
+> **状态更正（2026-09-17 T-056 文档漂移审计）**：本页写于 2026-09-05，是设计输入。
+> 此后 T-030 已把它实现：`FsVaultBroker::capture` / `revalidate_capture` /
+> `validate_root_identities` 见 `crates/vault-broker/src/capture.rs:66,98,134`，
+> `CaptureStamp` 见同文件 `:38`，`CaptureChanged` / `IncompleteCapture` 见
+> `crates/vault-broker/src/lib.rs:120,123`，`CanonicalWorkbench` 与 watcher 装配见
+> `crates/local-server/src/coordinator.rs`、`watcher.rs`，`notify = "=8.2.0"` 见 `Cargo.toml:67`。
+> **下文「尚未实现」「当前缺口」「最小接口候选」只反映写作当日**；现行权威是
+> [canonical 捕获与刷新新鲜度契约](../contracts/canonical-freshness.md)。
+
 2026-09-05，T-028之后另行认领；只读核查，尚未实现。复用现有完整扫描、
 WorkbenchReadModel与FileTree构建，不新造索引系统。持久搜索与增量更新不并入首片。
 

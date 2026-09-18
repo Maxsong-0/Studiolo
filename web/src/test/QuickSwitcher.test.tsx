@@ -10,8 +10,8 @@ import { beforeEach, expect, it, vi } from 'vitest';
 import { App } from '../App';
 import {
   defaultApiResponse,
+  documents,
   emptyNavigation,
-  fixture,
   jsonResponse,
 } from './fixtures';
 
@@ -21,7 +21,7 @@ beforeEach(() => {
   fetchMock.mockImplementation(async (input) =>
     String(input).startsWith('/api/document')
       ? jsonResponse({
-          path: fixture.documents[0].path,
+          path: documents[0].path,
           title: '星舟总览',
           content: '只读文档',
           navigation: emptyNavigation,

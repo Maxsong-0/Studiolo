@@ -2500,6 +2500,7 @@ dependencies = [
  "jiff",
  "reqwest",
  "rmcp",
+ "rustix",
  "serde",
  "serde_json",
  "sha2 0.11.0",
@@ -2675,6 +2676,7 @@ dependencies = [
  "studiolo-audit-ledger",
  "studiolo-core",
  "tempfile",
+ "thiserror",
 ]
 
 [[package]]
@@ -2785,6 +2787,7 @@ dependencies = [
  "studiolo-core",
  "tempfile",
  "thiserror",
+ "unicode-normalization",
 ]
 
 [[package]]

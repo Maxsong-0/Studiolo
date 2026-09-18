@@ -13,6 +13,32 @@ const source = (value: unknown): boolean =>
   Number.isSafeInteger(value.line) &&
   Number(value.line) > 0;
 
+/** 计数要么是非负整数，要么显式为 null 并附不可得说明，不接受缺省成 0。 */
+function rollup(value: unknown): boolean {
+  return (
+    record(value) &&
+    (value.value === null ||
+      (Number.isSafeInteger(value.value) && Number(value.value) >= 0)) &&
+    strings(value.unavailable)
+  );
+}
+
+function counts(value: unknown): boolean {
+  return (
+    record(value) &&
+    (
+      [
+        'documents',
+        'projects',
+        'inbox',
+        'diagnostics',
+        'active_tasks',
+        'open_bugs',
+      ] as const
+    ).every((field) => rollup(value[field]))
+  );
+}
+
 function sourced(value: unknown, kind: 'string' | 'number'): boolean {
   return (
     record(value) &&
@@ -56,13 +82,7 @@ export function validateWorkbench(value: unknown): Workbench {
         ) &&
         source(action.source),
     ) &&
-    Array.isArray(value.documents) &&
-    value.documents.every(
-      (document: unknown) =>
-        record(document) &&
-        typeof document.path === 'string' &&
-        typeof document.title === 'string',
-    );
+    counts(value.counts);
   if (!valid) throw new Error('工作台数据格式不完整，请刷新或检查服务。');
   return value as unknown as Workbench;
 }

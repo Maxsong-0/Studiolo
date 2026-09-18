@@ -9,6 +9,7 @@ use std::{
 };
 
 use serde::{Deserialize, Serialize};
+pub mod checkpoint;
 mod revision_hasher;
 pub use revision_hasher::RevisionHasher;
 use ulid::Ulid;
