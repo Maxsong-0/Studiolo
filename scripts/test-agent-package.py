@@ -168,5 +168,39 @@ class SourceManifestTests(unittest.TestCase):
         self.assertNotEqual(self.package_check("scripts/probe.py"), 0)
 
 
+
+class CompileTimeInputsTests(unittest.TestCase):
+    """随包测试在编译期读的文件必须在源码白名单里。
+
+    运行包只携带 `STUDIOLO_INPUTS` 点名的路径；随包 crate 的测试若 `include_str!` 了白名单外的文件，
+    CI（整仓检出）一路全绿，而 `package-agent.sh` 在 `cargo test --no-run` 处编译失败——只有真打包那天才发现
+    （2026-09-18 T-076：workbench 两份契约测试读 `examples/`，自 T-041 起打包一直是坏的）。
+    """
+
+    def test_every_include_macro_of_packaged_crates_is_covered_by_the_whitelist(self):
+        import re
+        root = SCRIPTS.parent
+        block = lambda name: PACKAGE.split(name + "=(\n", 1)[1].split("\n)", 1)[0]
+        inputs = [word for line in block("STUDIOLO_INPUTS").splitlines()
+                  if not line.strip().startswith("#") for word in line.split()]
+        crates = ["crates/" + (name.removeprefix("studiolo-") if name != "studiolo" else name)
+                  for name in re.findall(r"-p (studiolo(?:-[a-z-]+)?)", block("STUDIOLO_TEST_PACKAGES"))]
+        self.assertGreaterEqual(len(crates), 9)
+        macro = re.compile(r'include_(?:str|bytes)!\(\s*"([^"]+)"\s*,?\s*\)')
+        checked, uncovered = 0, []
+        for crate in crates:
+            self.assertTrue((root / crate).is_dir(), crate)
+            for source in sorted((root / crate).rglob("*.rs")):
+                for literal in macro.findall(source.read_text(encoding="utf-8")):
+                    target = (source.parent / literal).resolve()
+                    relative = target.relative_to(root.resolve()).as_posix()
+                    checked += 1
+                    covered = any(relative == entry or relative.startswith(entry + "/") for entry in inputs)
+                    if not covered or not target.is_file():
+                        uncovered.append(f"{source.relative_to(root).as_posix()} -> {relative}")
+        self.assertGreaterEqual(checked, 5, "守卫没有扫到任何 include 宏，正则或目录推导失效")
+        self.assertEqual(uncovered, [], "随包测试编译期依赖的文件不在 package-agent.sh 的源码白名单内")
+
+
 if __name__ == "__main__":
     unittest.main()
