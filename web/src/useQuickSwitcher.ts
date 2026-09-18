@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 
 function otherDialogOpen() {
   return Boolean(
@@ -8,10 +8,16 @@ function otherDialogOpen() {
 
 export function useQuickSwitcher(enabled: boolean) {
   const [open, setOpen] = useState(false);
+  const available = useRef(enabled);
+  // 快捷键按「已提交」的可用状态判定：提交与被动效果是两个调度任务，
+  // 若把监听挂在 [enabled] 上，这段间隙里的按键会按上一轮的旧值被挡掉。
+  useLayoutEffect(() => {
+    available.current = enabled;
+  }, [enabled]);
   useEffect(() => {
     function shortcut(event: KeyboardEvent) {
       if (
-        !enabled ||
+        !available.current ||
         event.isComposing ||
         event.altKey ||
         !(event.metaKey || event.ctrlKey) ||
@@ -29,7 +35,7 @@ export function useQuickSwitcher(enabled: boolean) {
     }
     window.addEventListener('keydown', shortcut);
     return () => window.removeEventListener('keydown', shortcut);
-  }, [enabled]);
+  }, []);
   return {
     open: open && enabled,
     show: () => {
