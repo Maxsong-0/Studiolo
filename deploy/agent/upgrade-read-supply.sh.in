@@ -202,6 +202,8 @@ systemd-run --unit="$stage" --collect --service-type=simple \
     --property=User=maxsong --property=Group=maxsong --property=PrivateUsers=no \
     --property="WorkingDirectory=$release" --property=Restart=on-failure --property=RestartSec=3 \
     --property=KillSignal=SIGTERM --property=TimeoutStopSec=20 --property=UMask=0077 \
+    `# 秘密驻留面加固用 mlockall；默认 8M 不足时 harden() 失败关闭并终止进程，阶段实例会起不来` \
+    --property=LimitMEMLOCK=infinity \
     --property=NoNewPrivileges=yes --property=ProtectSystem=strict --property=ProtectHome=read-only \
     --property="ReadWritePaths=$data $cache" --property=PrivateTmp=yes --property=RestrictSUIDSGID=no \
     --property=LockPersonality=yes --property='RestrictAddressFamilies=AF_UNIX AF_INET' \
