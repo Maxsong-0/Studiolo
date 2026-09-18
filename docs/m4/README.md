@@ -56,6 +56,16 @@ cargo run --locked -p studiolo-agent-server -- serve --vault /path/to/readonly-c
 - 策略库未纳入一致 checkpoint／备份清单。
 - M5 的规则版本钉定只暴露 `effective_hash`，未实现钉定本身。
 
+## 上线验收探针（T-073，2026-09-18）
+
+M4 之后**任何**从 main 打出的运行包，`tools/list` 都是六个工具——即使部署时不启用策略平面。`deploy/agent/upgrade-read-supply.sh.in` 在 4401 阶段实例上跑的
+`scripts/check-agent.py`／`check-agent-replica.py` 原先写死 M3 的四个只读工具，会把新二进制判为「有额外工具」而中止升级（失败关闭，不会带病上线，但也上不了线）。
+现在探针期望恰为六个，并按路牌做一次**只读**的策略平面探测：路牌写「策略平面：未接入」→ `policy_read` 必须以固定码与文案拒绝；否则必须读得到带「# 策略版本」头的 skills 索引。
+探针永不调用 `propose_desired`。握手被策略拒绝（类型被吊销或没有能力集）时单独报错，不再误报成审计降级。
+
+根因是这组探针此前只在单测里面对假服务器，从未在 CI 里遇到真实二进制。`scripts/check-replica-pipeline.py` 现在对它自己拉起的真实 `studiolo-agent` 加跑同一组探针
+（check-agent 三种凭据、副本回执、HTTP 外壳），CI 与运行包自检（`run-agent-tests.sh`）都会经过这一步。
+
 ## 启用前置（部署动作，登记在 vault TASKS ③）
 
 1. 服务器 `mkdir -m 700 …/policy`，`admin policy-init`，交互终端 `admin policy-bootstrap` 写各类型首版能力集（至少 `claude`）。

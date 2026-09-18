@@ -209,6 +209,26 @@ class Pipeline:
         return texts
 
 
+def deployed_probes(pipeline):
+    """对同一个真实二进制跑一遍上线脚本在 4401 阶段实例上用的那组探针
+    （deploy/agent/upgrade-read-supply.sh.in：check-agent 三种凭据、副本回执、HTTP 文本外壳）。
+    探针单测只面对假服务器；不在这里与真实二进制相遇，工具清单一变，上线当天才会发现。"""
+    token_file = pipeline.root / "probe-token"
+    write(token_file, pipeline.token + "\n")
+    origin = pipeline.url[:-len("/mcp")]
+    for script, extra in (("check-agent.py", []), ("check-agent.py", ["--no-token"]),
+                          ("check-agent.py", ["--bad-token"]),
+                          ("check-agent-replica.py", ["--expected", "ready"]),
+                          ("check-agent-http.py", [])):
+        target = origin if script == "check-agent-http.py" else pipeline.url
+        result = subprocess.run([sys.executable, "-B", str(SCRIPTS / script), target, str(token_file), *extra],
+                                capture_output=True, text=True, timeout=120)
+        # 探针的 stderr 只含它自己预定义的诊断，不含 token、会话 id 或正文，可以原样带出。
+        detail = (result.stderr.strip().splitlines() or ["无诊断输出"])[-1]
+        require(result.returncode == 0, f"上线探针 {script} {' '.join(extra)}对真实二进制失败：{detail}")
+    token_file.unlink()
+
+
 def run(binary):
     with tempfile.TemporaryDirectory(prefix="studiolo-replica-pipeline-") as directory:
         root = Path(directory).resolve()
@@ -220,6 +240,8 @@ def run(binary):
             first_texts = pipeline.four(first["receipt"], "FIRST_CONTENT")
             require("remove.md" in first_texts[2] and "empty" in first_texts[2], "目录同步不完整")
             print("通过：Python 捕获/接收 → Rust 初始化 → 四工具同批读取及匿名拒绝")
+            deployed_probes(pipeline)
+            print("通过：上线探针（check-agent 三种凭据、副本回执、HTTP 外壳）对真实二进制全过")
 
             write(pipeline.source / INDEX, "# Studiolo · 总览\n\nSECOND_CONTENT\n")
             (pipeline.source / "项目/Studiolo/remove.md").unlink()
