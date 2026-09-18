@@ -81,9 +81,15 @@ cd ~/.local/share/studiolo-agent-releases/<发布名> && sha256sum --check SHA25
 mkdir source && tar -xzf source.tar.gz -C source
 # 3. 原生测试（任一失败即停止，不安装）
 cd source && bash ../run-agent-tests.sh
-# 4. 私有库初始化与类型 token（token 只打印一次，落到 0600 文件，不进聊天）
+# 4. 私有库初始化与类型 token
+#    token 只在真实前台控制终端显示一次：无控制终端、或任一标准流被重定向/接管道，
+#    都会被拒绝且**一枚 token 都不铸出**（见 docs/contracts/agent-supply.md §2）。
+#    所以这一步必须在交互式 SSH 会话里手敲，**不能**用管道或重定向把它落盘。
 ../bin/studiolo-agent admin init --data ~/.local/share/studiolo-agent
-../bin/studiolo-agent admin type-issue --data ~/.local/share/studiolo-agent --type claude | tail -1 > ~/.config/studiolo-agent/claude.token
+../bin/studiolo-agent admin type-issue --data ~/.local/share/studiolo-agent --type claude
+# 终端上读到 token 后，自己新建 0600 文件并粘进去（别用 shell 历史里会留痕的方式）：
+install -m 600 /dev/null ~/.config/studiolo-agent/claude.token
+cat > ~/.config/studiolo-agent/claude.token   # 粘贴后按 Ctrl-D；不进聊天、不进日志
 # 5. 安装并启动用户服务
 install -m 644 ../studiolo-agent.service ~/.config/systemd/user/studiolo-agent.service
 systemctl --user daemon-reload && systemctl --user enable --now studiolo-agent.service
@@ -93,7 +99,7 @@ systemctl --user daemon-reload && systemctl --user enable --now studiolo-agent.s
 读取审计查询在服务器上执行 `bin/studiolo-agent admin reads --data ~/.local/share/studiolo-agent …`（数据库只在服务器）。
 更新发布：新发布名重跑打包与第 2–3 步，替换单元里的发布名后 `systemctl --user restart studiolo-agent.service`；
 `agent.sqlite3` 与账本跨发布沿用。停止：`systemctl --user disable --now studiolo-agent.service`。
-吊销/轮换 `claude` 类型：`admin type-revoke --type claude` 后重新 `type-issue` 并更新两端 token 文件。
+吊销/轮换 `claude` 类型：`admin type-revoke --type claude` 后在交互式终端重新 `type-issue`（同样不能重定向），再按第 4 步的办法更新两端 token 文件。
 
 ## 接入（Mac 上的 Claude Code）
 
