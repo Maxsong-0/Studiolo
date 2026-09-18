@@ -870,11 +870,57 @@ async fn serve_without_policy_keeps_m3_behaviour_and_marks_the_plane_absent() {
         .await
         .unwrap();
     assert_eq!(policy.status(), 403);
+
+    // MCP 侧同一语义。上线探针 `scripts/check-agent.py` 逐字依赖这里钉住的三点：
+    // 路牌里的「策略平面：未接入」、tools/list 恒为六个、`policy_read` 的固定拒绝码与文案。
+    // 改动其中任何一处都必须同步改探针，否则 4401 阶段验收会在上线当天失败（BUG-010）。
+    let mcp = Fixture {
+        _temp: temp,
+        data: data.clone(),
+        policy: data.join("absent"),
+        token: token.clone(),
+        base: format!("http://127.0.0.1:{}/mcp", addr.port()),
+        read_base: format!("http://127.0.0.1:{}/read", addr.port()),
+        client: client.clone(),
+    };
+    let (mcp_session, signpost) = mcp.initialize().await.unwrap();
+    assert!(signpost.contains("策略平面：未接入"));
+    let (_, listed) = mcp
+        .rpc(Some(&mcp_session), 2, "tools/list", json!({}))
+        .await;
+    let mut names = listed["result"]["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|tool| tool["name"].as_str().unwrap().to_owned())
+        .collect::<Vec<_>>();
+    names.sort();
+    assert_eq!(
+        names,
+        [
+            "handshake",
+            "list_entries",
+            "policy_read",
+            "propose_desired",
+            "read_note",
+            "search"
+        ]
+    );
+    let refused = mcp
+        .call(&mcp_session, 3, "policy_read", json!({"kind": "skills"}))
+        .await;
+    assert!(refused.get("result").is_none());
+    assert_eq!(refused["error"]["code"], -32600);
+    assert_eq!(refused["error"]["message"], "策略平面未接入（M3 兼容模式）");
+
     let served = SqliteAuditLedger::open_existing(&data.join("audit"))
         .unwrap()
         .query(&AuditFilter::default().with_action("handshake.served"))
         .unwrap();
-    let payload = served[0].event().payload().as_value();
-    assert_eq!(payload["policy_plane"], "absent");
-    assert!(payload["effective_hash"].is_null());
+    assert_eq!(served.len(), 2, "HTTP 与 MCP 各握手一次");
+    for record in &served {
+        let payload = record.event().payload().as_value();
+        assert_eq!(payload["policy_plane"], "absent");
+        assert!(payload["effective_hash"].is_null());
+    }
 }

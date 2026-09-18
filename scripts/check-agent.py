@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
-"""验收 studiolo-agent：初始化、四个只读 tools 与白名单拒绝，任一步不符即失败。
+"""验收 studiolo-agent：初始化、六个 tools（四个只读＋两个策略平面）与白名单拒绝，任一步不符即失败。
+策略平面只做只读探测：按路牌区分「未接入必须拒绝」与「已接入必须读得到 skills 索引」；
+永不调用 propose_desired——探针不得在被验收的服务里留下任何提案。
 用法：python3 scripts/check-agent.py <mcp_url> <token 文件> [--no-token|--bad-token]
 服务器上无仓库时：ssh 主机 python3 - <url> <token 文件> < scripts/check-agent.py。
 只打印状态、长度与校验结论，不打印 token、会话 id、笔记正文或服务错误正文。
@@ -13,7 +15,14 @@ import urllib.request
 
 PROTOCOL = "2025-11-25"
 INDEX_PATH = "项目/Studiolo/00-总览/INDEX.md"
-EXPECTED_TOOLS = {"handshake", "list_entries", "read_note", "search"}
+READ_TOOLS = {"handshake", "list_entries", "read_note", "search"}
+# M4（T-069）起 tools/list 恒为六个，与 serve 是否给了 --policy 无关；清单必须恰好相等，多一个少一个都失败。
+POLICY_TOOLS = {"policy_read", "propose_desired"}
+EXPECTED_TOOLS = READ_TOOLS | POLICY_TOOLS
+# 与 crates/supply/src/signpost/render.rs、crates/agent-server/src/server.rs 的固定文案逐字一致。
+POLICY_ABSENT_MARK = "策略平面：未接入"
+POLICY_ABSENT_ERROR = "策略平面未接入（M3 兼容模式）"
+POLICY_DENIED_PREFIX = "策略拒绝："
 
 
 class CheckFailed(Exception):
@@ -104,6 +113,10 @@ def check(base, token, mode):
             "服务身份不符合 studiolo-agent")
 
     def signpost(text):
+        # 策略拒绝是「应答但一项不给」：握手成功、路牌换成固定前缀的拒绝说明。单列出来，
+        # 否则会被误报成审计降级；原因文本是服务端内容，不回显。
+        require(not (isinstance(text, str) and text.startswith(POLICY_DENIED_PREFIX)),
+                "握手被策略平面拒绝：探针所用类型已被吊销，或该类型尚未发布能力集")
         require(isinstance(text, str) and text.startswith("# Studiolo 路牌")
                 and "审计不可用" not in text, "路牌缺失或处于审计降级状态")
 
@@ -118,8 +131,8 @@ def check(base, token, mode):
     require(isinstance(tools, list) and len(tools) == len(EXPECTED_TOOLS)
             and all(isinstance(tool, dict) and isinstance(tool.get("name"), str) for tool in tools)
             and {tool["name"] for tool in tools} == EXPECTED_TOOLS,
-            "四个只读 tools 清单不完整或有额外工具")
-    print("tools/list: 四个只读工具齐全")
+            "tools 清单不符合预期：应恰为四个只读工具加两个策略平面工具")
+    print("tools/list: 四个只读工具与两个策略平面工具齐全")
 
     def call(request_id, name, arguments):
         _, value = rpc(request_id, "tools/call", {"name": name, "arguments": arguments}, session)
@@ -147,7 +160,19 @@ def check(base, token, mode):
     error = denied.get("error")
     require("result" not in denied and isinstance(error, dict) and error.get("code") == -32602
             and error.get("message") == "路径不在供给白名单内", "白名单外读取未按预期拒绝")
-    print("完整供给链与白名单拒绝验收通过。")
+    if POLICY_ABSENT_MARK in instructions:
+        _, refused = rpc(8, "tools/call", {"name": "policy_read", "arguments": {"kind": "skills"}},
+                         session, allow_error=True)
+        error = refused.get("error")
+        require("result" not in refused and isinstance(error, dict) and error.get("code") == -32600
+                and error.get("message") == POLICY_ABSENT_ERROR,
+                "策略平面未接入时 policy_read 未按预期拒绝")
+        print("policy_read: 策略平面未接入（M3 兼容模式），按预期拒绝")
+    else:
+        index = call(8, "policy_read", {"kind": "skills"})
+        require(index.startswith("# 策略版本 "), "policy_read 未返回带策略版本的 skills 索引")
+        print("policy_read: 策略平面已接入，skills 索引可读")
+    print("完整供给链、白名单拒绝与策略平面探测验收通过。")
 
 
 def main(argv=None):

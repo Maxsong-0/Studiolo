@@ -40,12 +40,17 @@ def tool_result(request_id, text):
     return result(request_id, {"content": [{"type": "text", "text": text}]})
 
 
-def happy_responses():
+def happy_responses(policy="absent"):
+    """policy="absent"：serve 未给 --policy（线上现状）；"attached"：已接入策略平面。"""
+    mark = ("\n## 3 能力\n只读；" + agent.POLICY_ABSENT_MARK) if policy == "absent" else "\n## 3 能力\n读：…；策略版本 0123456789ab"
     initial = result(1, {
         "protocolVersion": agent.PROTOCOL, "serverInfo": {"name": "studiolo-agent"},
-        "instructions": "# Studiolo 路牌\n" + PRIVATE_TEXT,
+        "instructions": "# Studiolo 路牌\n" + PRIVATE_TEXT + mark,
     })
     initial[1]["mcp-session-id"] = SESSION
+    probe = (response(200, {"jsonrpc": "2.0", "id": 8,
+                            "error": {"code": -32600, "message": agent.POLICY_ABSENT_ERROR}})
+             if policy == "absent" else tool_result(8, "# 策略版本 0123456789ab\n0 个 skill\n" + PRIVATE_TEXT))
     return [
         initial, response(202, raw=""),
         result(2, {"tools": [{"name": name} for name in sorted(agent.EXPECTED_TOOLS)]}),
@@ -55,6 +60,7 @@ def happy_responses():
         tool_result(6, f"{agent.INDEX_PATH}:1\t" + PRIVATE_TEXT),
         response(200, {"jsonrpc": "2.0", "id": 7,
                        "error": {"code": -32602, "message": "路径不在供给白名单内"}}),
+        probe,
     ]
 
 
@@ -108,7 +114,7 @@ class CheckAgentTests(unittest.TestCase):
                             responses[index] = (status, headers, unrelated + encoded + "\n\n")
                 code, requests = self.run_check(responses)
                 self.assertEqual(code, 0)
-                self.assertEqual(len(requests), 8)
+                self.assertEqual(len(requests), 9)
                 self.assertTrue(all(request.get_header("Authorization") == "Bearer " + TOKEN
                                     for request in requests))
                 self.assertTrue(all(request.get_header("Mcp-session-id") == SESSION
@@ -129,7 +135,7 @@ class CheckAgentTests(unittest.TestCase):
             self.assertEqual(code, 1)
 
     def test_unexpected_http_and_rpc_failures_cannot_pass(self):
-        for index in range(8):
+        for index in range(9):
             for status in (403, 502):
                 with self.subTest(index=index, status=status):
                     replies = happy_responses()
@@ -161,8 +167,50 @@ class CheckAgentTests(unittest.TestCase):
                       response(200, {"jsonrpc": "2.0", "id": 7,
                                      "error": {"code": -32602, "message": PRIVATE_TEXT}})):
             replies = happy_responses()
-            replies[-1] = reply
+            replies[7] = reply
             self.assertEqual(self.run_check(replies)[0], 1)
+
+    def test_tool_inventory_must_be_exactly_the_six_m4_tools(self):
+        self.assertEqual(agent.EXPECTED_TOOLS, agent.READ_TOOLS | agent.POLICY_TOOLS)
+        self.assertEqual(len(agent.EXPECTED_TOOLS), 6)
+        for names in (sorted(agent.READ_TOOLS),                       # M4 之前的二进制
+                      sorted(agent.EXPECTED_TOOLS) + ["write_note"],  # 多出一个未登记工具
+                      sorted(agent.EXPECTED_TOOLS - {"propose_desired"}) + ["handshake"]):
+            with self.subTest(names=names):
+                replies = happy_responses()
+                replies[2] = result(2, {"tools": [{"name": name} for name in names]})
+                self.assertEqual(self.run_check(replies)[0], 1)
+
+    def test_attached_policy_plane_must_serve_the_skills_index(self):
+        code, requests = self.run_check(happy_responses("attached"))
+        self.assertEqual(code, 0)
+        body = json.loads(requests[-1].data)
+        self.assertEqual(body["params"], {"name": "policy_read", "arguments": {"kind": "skills"}})
+        self.assertNotIn("propose_desired", [json.loads(request.data).get("params", {}).get("name")
+                                             for request in requests])
+        for reply in (response(200, {"jsonrpc": "2.0", "id": 8,
+                                     "error": {"code": -32600, "message": agent.POLICY_ABSENT_ERROR}}),
+                      tool_result(8, PRIVATE_TEXT)):
+            replies = happy_responses("attached")
+            replies[8] = reply
+            self.assertEqual(self.run_check(replies)[0], 1)
+
+    def test_absent_policy_plane_must_refuse_policy_read(self):
+        for reply in (tool_result(8, "# 策略版本 0123456789ab\n" + PRIVATE_TEXT),
+                      response(200, {"jsonrpc": "2.0", "id": 8,
+                                     "error": {"code": -32603, "message": agent.POLICY_ABSENT_ERROR}}),
+                      response(200, {"jsonrpc": "2.0", "id": 8,
+                                     "error": {"code": -32600, "message": PRIVATE_TEXT}})):
+            replies = happy_responses()
+            replies[8] = reply
+            self.assertEqual(self.run_check(replies)[0], 1)
+
+    def test_policy_denied_handshake_fails_without_echoing_the_reason(self):
+        replies = happy_responses("attached")
+        value = json.loads(replies[0][2])
+        value["result"]["instructions"] = agent.POLICY_DENIED_PREFIX + PRIVATE_TEXT
+        replies[0] = (200, replies[0][1], json.dumps(value))
+        self.assertEqual(self.run_check(replies)[0], 1)
 
     def test_missing_session_invalid_json_wrong_id_and_degraded_signpost_fail(self):
         for mutation in ("session", "json", "id", "degraded", "initialized"):

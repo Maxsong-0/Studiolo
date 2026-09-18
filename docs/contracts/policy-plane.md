@@ -22,7 +22,10 @@
 - 两个句柄打开同一个文件：`PolicyStore`（主人发布者：唯一能写版本表与吊销表）与 `PolicyAgentStore`
   （接入方视角：读 effective／吊销状态，只能向 `policy_desired` 插入 `pending` 提案）。提案永不产生授权。
 - `serve` 未给 `--policy` ＝ **M3 兼容模式**：供给视图只来自 `--allow`，路牌第 3 项明写「策略平面：未接入」，
-  `handshake.served` 记 `policy_plane=absent`。
+  `handshake.served` 记 `policy_plane=absent`。**`tools/list` 与是否给 `--policy` 无关，恒为六个**（四个只读 ＋ `policy_read`／`propose_desired`）；
+  兼容模式下这两个策略工具一律以 JSON-RPC `-32600`、固定文案「策略平面未接入（M3 兼容模式）」拒绝并记 `agent.action_denied{policy_plane_absent}`。
+  上线探针 `scripts/check-agent.py` 逐字依赖这三点（路牌标记、六工具清单、拒绝码与文案），三处由
+  `crates/agent-server/tests/policy_contract.rs` 的兼容模式用例钉住；改任何一处必须同步改探针。
 
 ## 2. 三类母本
 
