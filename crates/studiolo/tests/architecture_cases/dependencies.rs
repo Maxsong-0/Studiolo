@@ -59,7 +59,7 @@ fn dependency_scanner_includes_renamed_target_and_table_dependencies() {
 #[test]
 fn workspace_dependencies_follow_the_acyclic_module_direction() {
     let manifests = workspace_manifests(&workspace_root());
-    assert_eq!(manifests.len(), 20, "workspace crate inventory changed");
+    assert_eq!(manifests.len(), 21, "workspace crate inventory changed");
     assert!(
         dependency_cycle(&manifests).is_none(),
         "workspace dependency cycle: {:?}",
@@ -96,6 +96,7 @@ fn workspace_dependencies_follow_the_acyclic_module_direction() {
         "studiolo-runner-adapter",
         "studiolo-agent-server",
         "studiolo-sync-bridge",
+        "studiolo-process-safety",
     ] {
         assert!(
             !manifests[read_side]
@@ -129,6 +130,7 @@ fn filesystem_authority_dependencies_have_explicit_owners() {
                 | "studiolo-observability"
                 | "studiolo-sync-transport"
                 | "studiolo-agent-server"
+                | "studiolo-process-safety"
         ) {
             // 仅本地配置/TTY、进程保护及Unix入口；源码门禁另限具体调用点和操作。
             assert_eq!(owned, ["rustix"]);

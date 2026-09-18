@@ -12,7 +12,6 @@ use studiolo_auth::{AccessConfig, OwnerBinding, SessionConfig, SessionPolicy};
 
 pub mod alerting;
 pub mod backup;
-pub mod process_safety;
 pub mod sync_transport;
 
 pub use file_operations::{ApprovedRenamePair, FileOperationPolicy, FileRenamePolicy};

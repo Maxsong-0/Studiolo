@@ -1,7 +1,7 @@
 //! 固定双槽的纯输入测试，不修改进程环境，不读取真实秘密。
 //!
 //! 本文件从前还测过一份只禁 core 的私有收紧；那份实现已删除，收紧统一由
-//! `studiolo_host_config::process_safety::harden()` 在组合根无条件完成，
+//! `studiolo_process_safety::harden()` 在组合根无条件完成，
 //! 证据在 `tests/composition/residency.rs`（真实子进程内核回读）。
 
 use super::*;

@@ -10,11 +10,19 @@
 //! 调用方必须把返回的分类记录下来——只返回不记录，等于把「不支持」藏起来，
 //! 与静默跳过没有区别。
 //!
-//! 三个持有秘密的可执行程序共用这一份实现，各自在最早的无条件路径上调用：
+//! 四个持有秘密的可执行程序共用这一份实现，各自在最早的无条件路径上调用：
 //! `studiolo-auth-admin`（`main::run`）、`studiolo-local-server`
 //! （`startup::prepare_composed`，与是否启用因子模式无关）、
-//! `studiolo-maintain`（`maintenance::run`）。
-//! 本模块住在 host-config，是因为管理命令与服务器共享的安全知识都归这里；
+//! `studiolo-maintain`（`maintenance::run`）、
+//! `studiolo-agent`（`main`，早于参数解析）。
+//!
+//! 本 crate 单列出来，正是为了让第四个程序也能用上：实现原先住在
+//! `studiolo-host-config`，而 host-config 会把 `studiolo-auth` 整条认证栈拉进来，
+//! 依赖策略（`crates/studiolo/tests/architecture_support/policy.rs`）不允许
+//! `studiolo-agent-server` 依赖它——于是线上跑着的 `studiolo-agent` 一项收紧都没有，
+//! 尽管它内存里同样持有类型 token 与每次请求的 bearer 明文。
+//! 因此本 crate 的依赖被压到只剩 rustix：不依赖任何工作区 crate，
+//! 任何持有秘密的程序都能无条件依赖它。
 //! 任何新的持秘密程序必须调用它，不得另写一份部分实现。
 //!
 //! 本模块不宣称抵御 root、调试授权持有者或已经能读本进程内存的一方。

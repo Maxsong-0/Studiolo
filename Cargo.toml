@@ -2,6 +2,7 @@
 resolver = "3"
 members = [
     "crates/core",
+    "crates/process-safety",
     "crates/vault-broker",
     "crates/vault-index",
     "crates/control-db",
@@ -36,6 +37,8 @@ rust-version = "1.97"
 tree-sitter = "=0.26.13"
 tree-sitter-rust = "=0.24.2"
 studiolo-core = { path = "crates/core" }
+# 秘密驻留面加固：依赖只有 rustix，四个持明文秘密的程序都能无条件依赖（见 crates/process-safety/src/lib.rs）。
+studiolo-process-safety = { path = "crates/process-safety" }
 studiolo-vault-broker = { path = "crates/vault-broker" }
 studiolo-vault-index = { path = "crates/vault-index" }
 studiolo-control-db = { path = "crates/control-db" }

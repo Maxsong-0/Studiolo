@@ -20,6 +20,18 @@ bash scripts/sync-agent-vault.sh
 
 ## 2. 更新 MCP 服务（服务器）
 
+> **部署前置（T-065，2026-09-17）：新单元必须先生效，否则服务起不来。**
+> `studiolo-agent` 自 T-065 起与另外三个持明文秘密的程序共用秘密驻留面加固，
+> Linux 上会 `mlockall` 锁住持有类型 token 与 bearer 的页。`RLIMIT_MEMLOCK` 不足时
+> 加固**失败关闭并终止进程**（这是正确行为，不得改成尽力而为），单元会反复启动失败。
+> `deploy/agent/studiolo-agent-system.service.in`、`deploy/agent/studiolo-agent.service.in`，
+> 以及 `install-t036-system.sh` 与 `upgrade-read-supply.sh.in` 里 `systemd-run` 起的 4401
+> 阶段验收临时实例，都已加上 `LimitMEMLOCK=infinity`（`5ff4985`）；
+> 升级时**必须连同新单元一起安装**，只换二进制会挂。
+> 在 4401 预检时用 `systemctl show -p LimitMEMLOCK <单元>` 确认该值已生效，
+> 并在 `journalctl` 里核对启动时那条 `秘密驻留面：…` 记录的四项分类。
+> 契约见 [秘密驻留面](../m2/secret-residency.md) §5。
+
 先构建并校验新的 `studiolo-agent` 运行包，执行随包原生测试；打包方法沿用 [服务器部署](server-agent.md)。
 托管副本使用系统级 `studiolo-agent-system.service`，进程仍以 `User=maxsong` / `Group=maxsong` 运行。
 保留 `ProtectSystem=strict`、`ProtectHome=read-only`、私有库唯一可写、`NoNewPrivileges` 与资源上限，并显式 `PrivateUsers=no`。其参数为：

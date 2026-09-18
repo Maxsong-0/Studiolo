@@ -335,7 +335,7 @@ fn no_source_file_keeps_a_private_copy_of_the_hardening() {
             assert!(
                 !code.contains(syscall),
                 "{} 自行调用了 {syscall}：收紧必须只经 \
-                 studiolo_host_config::process_safety::harden()",
+                 studiolo_process_safety::harden()",
                 path.display()
             );
         }
@@ -343,8 +343,7 @@ fn no_source_file_keeps_a_private_copy_of_the_hardening() {
     assert!(scanned >= 40, "源码目录读取不完整，守卫会漏扫");
     for entry in ["startup.rs", "maintenance.rs"] {
         assert!(
-            without_comments(&read_source(entry))
-                .contains("studiolo_host_config::process_safety::harden()"),
+            without_comments(&read_source(entry)).contains("studiolo_process_safety::harden()"),
             "{entry} 必须调用共享实现，而不是本地同名函数"
         );
     }
