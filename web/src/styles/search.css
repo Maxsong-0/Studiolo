@@ -131,16 +131,14 @@
   border-radius: 20px;
   background: var(--surface);
   color: var(--text);
-  box-shadow:
-    0 24px 80px rgb(40 65 105 / 16%),
-    0 4px 16px rgb(40 65 105 / 8%);
+  box-shadow: var(--shadow-dialog);
 }
 .quick-switcher[open] {
   display: flex;
   flex-direction: column;
 }
 .quick-switcher::backdrop {
-  background: rgb(28 40 60 / 22%);
+  background: var(--scrim-soft);
 }
 .quick-header {
   display: flex;

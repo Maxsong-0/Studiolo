@@ -5,38 +5,38 @@
   height: 25px;
   flex-shrink: 0;
   border-radius: 7px;
-  background: #e1ecff;
-  box-shadow: inset 0 1px 0 #ffffff85;
+  background: var(--symbol-default-tint);
+  box-shadow: inset 0 1px 0 var(--symbol-inset);
 }
 .nav-symbol .icon {
   width: 16px;
   height: 16px;
-  color: #246bd2;
+  color: var(--symbol-default);
 }
 .nav-symbol-inbox {
-  background: #f0e6ff;
+  background: var(--symbol-inbox-tint);
 }
 .nav-symbol-operations {
-  background: #e3eff1;
+  background: var(--symbol-operations-tint);
 }
 .nav-symbol-operations .icon {
-  color: #32717d;
+  color: var(--symbol-operations);
 }
 .nav-symbol-inbox .icon {
-  color: #8552be;
+  color: var(--symbol-inbox);
 }
 .nav-symbol-documents {
-  background: #ffefdc;
+  background: var(--symbol-documents-tint);
 }
 .nav-symbol-documents .icon {
-  color: #a3631f;
+  color: var(--symbol-documents);
 }
 .is-active .nav-symbol {
-  background: #ffffff28;
-  box-shadow: inset 0 1px 0 #ffffff40;
+  background: var(--symbol-on-accent-tint);
+  box-shadow: inset 0 1px 0 var(--symbol-on-accent-inset);
 }
 .is-active .nav-symbol .icon {
-  color: #fff;
+  color: var(--on-accent);
 }
 .action-kind {
   display: inline-flex;
@@ -51,10 +51,10 @@
   height: 18px;
 }
 .action-kind-decision {
-  color: #8250b8;
+  color: var(--action-decision);
 }
 .action-kind-restart {
-  color: #a46622;
+  color: var(--action-restart);
 }
 @media (max-width: 760px) {
   .navigation-item > .nav-symbol {

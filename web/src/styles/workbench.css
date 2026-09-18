@@ -36,7 +36,7 @@
   align-items: center;
   gap: 10px;
   margin: 26px 12px 16px;
-  color: #475363;
+  color: var(--text-soft);
   font-size: 0.8125rem;
 }
 .workspace-source span {
@@ -71,31 +71,35 @@
   z-index: 1;
 }
 .navigation-item .icon {
-  color: #697483;
+  color: var(--muted);
 }
 .navigation-item:hover {
-  background: #e5ebf480;
+  background: var(--nav-hover);
 }
 .navigation-item.is-active,
 .navigation-item.is-active .icon {
-  color: #fff;
+  color: var(--on-accent);
 }
 .navigation-highlight {
   position: absolute;
   inset: 0;
   border-radius: 10px;
-  background: linear-gradient(110deg, #0068dc, #146bd0);
+  background: linear-gradient(
+    110deg,
+    var(--accent-gradient-start),
+    var(--accent-gradient-end)
+  );
   box-shadow:
-    0 3px 9px #1879ee25,
-    inset 0 1px 0 #ffffff45;
-  border: 1px solid #1677ef;
+    var(--shadow-nav-active),
+    inset 0 1px 0 var(--highlight-inset-soft);
+  border: 1px solid var(--accent-border);
 }
 .nav-count {
   margin-left: auto;
   min-width: 20px;
   padding: 0 5px;
   border-radius: 5px;
-  background: #7783990c;
+  background: var(--well);
   color: var(--muted);
   font-size: 0.6875rem;
   line-height: 20px;
@@ -103,8 +107,8 @@
   font-variant-numeric: tabular-nums;
 }
 .is-active .nav-count {
-  color: #fff;
-  background: #00000014;
+  color: var(--on-accent);
+  background: var(--on-accent-well);
 }
 .sidebar-projects {
   margin: 22px 4px 0;
@@ -139,13 +143,13 @@
   overflow-wrap: anywhere;
 }
 .sidebar-projects button:hover {
-  background: #e6ecf5;
+  background: var(--sidebar-item-hover);
   color: var(--accent);
 }
 .sidebar-projects .icon {
   width: 16px;
   height: 16px;
-  color: #748096;
+  color: var(--muted);
 }
 .unfiled-shortcut {
   color: var(--muted);
@@ -153,7 +157,7 @@
 .sidebar-footer {
   margin: auto 12px 0;
   padding-top: 24px;
-  color: #475363;
+  color: var(--text-soft);
 }
 .sidebar-footer > div {
   display: flex;

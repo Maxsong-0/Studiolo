@@ -1,8 +1,8 @@
 /* 本机健康页。三态一律用同一套局部变量着色，绝不给"未知"用绿。 */
 .health-panel {
-  --health-normal: #1f7a4d;
-  --health-degraded: #b3452f;
-  --health-unknown: #68717e;
+  --health-normal: var(--signal-ok);
+  --health-degraded: var(--signal-alert);
+  --health-unknown: var(--signal-neutral);
   --health-accent: var(--health-unknown);
 
   margin: 0;
@@ -100,20 +100,10 @@
   }
 }
 
-/* 本页刻意不写 `prefers-color-scheme: dark`。
-   `tokens.css` 用 `color-scheme: light` 把整个工作台钉死为浅色，全仓没有第二处
-   深色分支，`--surface` / `--surface-solid` / `--border` / `--muted` 在系统深色偏好
-   下一个都不变。若本页单独把三态色换成深底配色，它们会落在**依旧是白**的
-   `--surface`(#fff) 与 `--surface-solid`(#f5f7fb) 上，对比度从 4.6–5.5:1 掉到
-   1.9–2.5:1，远低于 WCAG AA 的 4.5:1——那是把可读性换成"看起来支持深色"。
-   真要上深色，属于 `tokens.css` 的整站改动，不该由一个页面自创一套。 */
+/* 三态色来自 tokens.css 的 --signal-*：浅色、深色与高对比度三套值都在那里成对定义，
+   本页不自带任何颜色字面值，也不写局部的深色或高对比度配色分支（T-062 令牌纪律）。 */
 
 @media (prefers-contrast: more) {
-  .health-panel {
-    --health-normal: #145635;
-    --health-degraded: #8a2f1f;
-    --health-unknown: #394452;
-  }
   .health-sections > li {
     border-color: var(--border);
     border-left-color: var(--health-accent);

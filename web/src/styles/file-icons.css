@@ -1,6 +1,6 @@
 .file-type-icon {
-  --file-color: #68717e;
-  --file-tint: #f0f2f6;
+  --file-color: var(--file-default);
+  --file-tint: var(--file-default-tint);
   display: inline-flex;
   flex-shrink: 0;
   align-items: center;
@@ -11,24 +11,24 @@
 }
 .file-type-folder,
 .file-type-book {
-  --file-color: #0068dc;
-  --file-tint: #eaf3ff;
+  --file-color: var(--file-book);
+  --file-tint: var(--file-book-tint);
 }
 .file-type-image {
-  --file-color: #986227;
-  --file-tint: #fff3e1;
+  --file-color: var(--file-image);
+  --file-tint: var(--file-image-tint);
 }
 .file-type-table {
-  --file-color: #28745e;
-  --file-tint: #e8f5ef;
+  --file-color: var(--file-table);
+  --file-tint: var(--file-table-tint);
 }
 .file-type-canvas {
-  --file-color: #8052b6;
-  --file-tint: #f3edfc;
+  --file-color: var(--file-canvas);
+  --file-tint: var(--file-canvas-tint);
 }
 .file-type-code {
-  --file-color: #4a65a6;
-  --file-tint: #edf1fb;
+  --file-color: var(--file-code);
+  --file-tint: var(--file-code-tint);
 }
 .file-type-badge {
   width: 36px;

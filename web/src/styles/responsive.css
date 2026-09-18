@@ -99,9 +99,9 @@
     padding: 6px;
     border: 1px solid var(--glass-border);
     border-radius: 22px;
-    background: rgb(244 247 252 / 92%);
+    background: var(--navbar-mobile);
     backdrop-filter: blur(24px) saturate(150%);
-    box-shadow: 0 4px 30px #23416b20;
+    box-shadow: var(--shadow-navbar);
   }
   .navigation-item {
     flex-wrap: wrap;
@@ -137,7 +137,7 @@
     min-height: 60px;
     padding: 8px 20px 14px;
     border-radius: 0;
-    background: rgb(244 246 250 / 92%);
+    background: var(--toolbar-mobile);
   }
   .workspace-breadcrumb {
     display: none;

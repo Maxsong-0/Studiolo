@@ -12,16 +12,14 @@
   border-radius: 20px;
   background: var(--surface);
   color: var(--text);
-  box-shadow:
-    0 24px 80px #14264326,
-    0 4px 16px #1426430d;
+  box-shadow: var(--shadow-dialog);
 }
 .document-dialog[open] {
   display: flex;
   flex-direction: column;
 }
 .document-dialog::backdrop {
-  background: #16223733;
+  background: var(--scrim-soft);
   backdrop-filter: blur(3px);
 }
 .document-header,

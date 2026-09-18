@@ -23,7 +23,7 @@
   inset: 0;
   border-radius: 9px;
   background: var(--surface);
-  box-shadow: 0 2px 6px rgb(35 55 85 / 9%);
+  box-shadow: var(--shadow-raised);
   z-index: -1;
 }
 .document-modes button[aria-pressed='true'] {
@@ -171,12 +171,10 @@
   border-radius: 20px;
   background: var(--surface);
   color: var(--text);
-  box-shadow:
-    0 24px 80px rgb(40 65 105 / 16%),
-    0 4px 16px rgb(40 65 105 / 8%);
+  box-shadow: var(--shadow-dialog);
 }
 .attachment-dialog::backdrop {
-  background: rgb(28 40 60 / 22%);
+  background: var(--scrim-soft);
 }
 .attachment-header {
   display: flex;
