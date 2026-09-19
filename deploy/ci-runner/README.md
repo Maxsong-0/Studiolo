@@ -3,8 +3,8 @@
 私有仓库的 GitHub Actions 免费分钟数有限（2026-09 两天烧掉约 1,400 分钟后全部停摆）。自托管 runner 不消耗分钟数。
 本目录是一台**专用** CI 机器的搭建脚本；同一台机器可以给多个私有仓库各跑一个实例。
 
-**安全边界**：只挂私有仓库（公开仓库的外部 PR 能在机器上执行任意代码）；runner 用户 `ghrunner` 无 sudo、无口令；
-它在 `docker` 组里（容器作业所必需，在本机等同 root），所以这台机器不放任何生产凭据，也不当生产机用。只需出站 HTTPS。
+**安全边界**：只挂私有仓库（公开仓库的外部 PR 能在机器上执行任意代码）；runner 用户 `ghrunner` 无 sudo、无口令、
+**不在 `docker` 组里**（T-081 起工作流没有容器作业；docker 组在本机等同 root）。这台机器不放任何生产凭据，也不当生产机用。只需出站 HTTPS。
 
 ## 首次搭建（两条命令由人执行，其余可由 agent 完成）
 
@@ -39,4 +39,5 @@ ssh <运维用户>@<CI机器> 'sudo /usr/local/sbin/ci-runner-service enable-now
 | `~ghrunner/runners/<实例>/.env` | runner 启动时自己读：作业开始钩子（把容器作业留下的 root 属主文件改回来）、`CARGO_TARGET_DIR`（常驻在工作区之外，不随 checkout 清掉） |
 | `~ghrunner/runners/<实例>/.path` | 作业的 `PATH`（含 `~/.cargo/bin`）。只有官方服务入口 `runsvc.sh` 会读它，所以单元的 `ExecStart` 是 `runsvc.sh`；注册会覆盖它，故在 `register.sh` 末尾写。实测 `.env` 里写 `PATH` 对作业步骤不生效；用 rustup 的工作流另用 `GITHUB_PATH` 兜底 |
 | `/usr/local/sbin/ci-runner-service` ＋ sudoers | 运维用户只能免密启停／查看 runner 单元 |
-| `ci-runner-cleanup.timer` | 每天清一次过期镜像；根分区超过 80% 才删可重建的构建目录 |
+| `/etc/security/limits.d/90-studiolo-memlock.conf` | SSH 会话的 `memlock` 上限。runner 作业由单元里的 `LimitMEMLOCK` 覆盖，而 `scripts/test-linux.sh` 的原生回路走 PAM，需要这份 limits（秘密驻留面加固上限不足时按设计失败关闭） |
+| `ci-runner-cleanup.timer` | 每天一次；根分区超过 80% 才删可重建的构建目录，并清 7 天没动过的原生回路同步树 |

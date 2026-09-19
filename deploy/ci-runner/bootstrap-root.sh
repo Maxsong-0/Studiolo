@@ -11,15 +11,15 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 OPERATOR="${SUDO_USER:-}"
 [[ -n "$OPERATOR" && "$OPERATOR" != root ]] || { echo '需要经 sudo 由普通运维用户执行，以便把其 SSH 公钥授给 ghrunner。' >&2; exit 2; }
 
-# 1. 系统包。time：大文件用例用 /usr/bin/time 量峰值 RSS；docker.io：前端作业是容器作业。
+# 1. 系统包。time：大文件用例用 /usr/bin/time 量峰值 RSS。
+# T-081 起不装 docker：CI 的前端作业改成原生跑，本机 Linux 回路也改成在本机原生跑。
 apt-get update -qq
-apt-get install -y -qq build-essential pkg-config git curl ca-certificates python3 time jq docker.io
-systemctl enable --now docker
+apt-get install -y -qq build-essential pkg-config git curl ca-certificates python3 time jq rsync
 
-# 2. 专用用户：无 sudo、无口令登录；docker 组是跑容器作业所必需（在本机等同 root，所以这台机器只跑自己私有仓库的 CI）。
+# 2. 专用用户：无 sudo、无口令登录。T-081 起没有容器作业，因此**不**加入 docker 组（docker 组在本机等同 root）。
 id ghrunner >/dev/null 2>&1 || useradd --create-home --shell /bin/bash --comment 'GitHub Actions runner' ghrunner
 passwd -l ghrunner >/dev/null
-usermod -aG docker ghrunner
+getent group docker >/dev/null && gpasswd -d ghrunner docker >/dev/null 2>&1 || true
 install -d -m 700 -o ghrunner -g ghrunner /home/ghrunner/.ssh /home/ghrunner/runners /home/ghrunner/hooks
 # 运维用户已有的 SSH 公钥同样授给 ghrunner，之后的无特权步骤直接以 ghrunner 登录完成。
 OPERATOR_KEYS="$(getent passwd "$OPERATOR" | cut -d: -f6)/.ssh/authorized_keys"
@@ -76,18 +76,28 @@ printf '%s ALL=(root) NOPASSWD: /usr/local/sbin/ci-runner-service\n' "$OPERATOR"
 chmod 440 /etc/sudoers.d/90-ci-runner-service
 visudo -cf /etc/sudoers.d/90-ci-runner-service >/dev/null
 
+# 4b. 可锁定内存：秘密驻留面加固用 mlockall，上限不足时按设计失败关闭并终止进程。
+# runner 的作业由单元里的 LimitMEMLOCK 覆盖；**SSH 会话**（scripts/test-linux.sh 的原生回路）走 PAM，需要这份 limits。
+cat > /etc/security/limits.d/90-studiolo-memlock.conf <<LIMITS
+ghrunner  -  memlock  unlimited
+$OPERATOR  -  memlock  unlimited
+LIMITS
+chmod 644 /etc/security/limits.d/90-studiolo-memlock.conf
+grep -q pam_limits /etc/pam.d/sshd || printf '警告：/etc/pam.d/sshd 未启用 pam_limits，memlock 限额可能不生效。\n' >&2
+
 # 5. 磁盘清理：构建目录会把盘写满（2026-09-17 本机就出过一次）。每天一次；超过 80% 才动手。
 cat > /usr/local/sbin/ci-runner-cleanup <<'CLEAN'
 #!/usr/bin/env bash
 set -euo pipefail
 export PATH=/usr/sbin:/usr/bin:/sbin:/bin
 used=$(df --output=pcent / | tail -1 | tr -dc 0-9)
-docker image prune -af --filter 'until=168h' >/dev/null 2>&1 || true
-docker builder prune -af --filter 'until=168h' >/dev/null 2>&1 || true
+command -v docker >/dev/null && { docker image prune -af --filter 'until=168h' >/dev/null 2>&1 || true; }
 if (( used >= 80 )); then
   # 只删可重建的构建产物；runner 空闲时才会有人来取这些目录。
   find /home/ghrunner/runners -maxdepth 5 -type d \( -name target -o -name node_modules \) -path '*/_work/*' -prune -exec rm -rf {} + 2>/dev/null || true
   find /home/ghrunner/cache -mindepth 2 -maxdepth 2 -type d -name target -prune -exec rm -rf {} + 2>/dev/null || true
+  # scripts/test-linux.sh 的原生回路：每个工作树一份同步树与构建目录，7 天没动过就清。
+  find /home/*/.cache/studiolo-target /home/*/.cache/studiolo-tests -mindepth 1 -maxdepth 1 -type d -atime +7 -exec rm -rf {} + 2>/dev/null || true
 fi
 CLEAN
 chmod 755 /usr/local/sbin/ci-runner-cleanup

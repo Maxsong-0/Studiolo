@@ -143,7 +143,7 @@ crates/
   policy/            # M4 策略平面：policy.sqlite3、三类母本 desired→校验→diff→L3 发布→effective、版本 / 回滚、三级吊销（T-069）
   agent-server/      # M3 `studiolo-agent`：rmcp Streamable HTTP 主外壳（仅 loopback）与 admin 子命令；M4 起 `--policy` 复核能力集与吊销
 docs/                # M0 契约与 M1/M2/M3 分片实现、运行与验收说明
-scripts/             # test-linux.sh（Docker 内跑与 CI 相同的检查）、打包与 Python 管线检查
+scripts/             # test-linux.sh（同步到 CI 服务器原生跑与 CI 相同的检查）、打包与 Python 管线检查
 .github/workflows/   # CI（Linux x86_64，action 按 SHA 钉死）：Rust 作业 + 前端作业
 web/                 # Vite + TypeScript + React 工作台：只读视图、M2 会话入口与人侧 Markdown 编辑器（未发布）
 examples/            # 纯虚构示例库（M1 只读工作台与 M3 图 2 四组），不含真实用户笔记
@@ -194,7 +194,7 @@ npm --prefix web test && npm --prefix web run lint && npm --prefix web run forma
 - 生产 `studiolo-auth-admin` 构建之后再跑
   `python3 crates/auth-admin/tests/support/cli_process.py target/debug/studiolo-auth-admin`。
 
-在 Linux 容器里跑 Rust 那一半：
+在 Linux 服务器上原生跑 Rust 那一半（把工作树同步到 `githubci` 后在那里跑；2026-09-19 起不再用 Docker）：
 
 ```bash
 scripts/test-linux.sh   # fmt / clippy / workspace 测试 / 路径安全 / 两个生产构建 / 登记工具进程检查

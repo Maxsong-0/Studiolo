@@ -139,12 +139,16 @@ jobs:
   frontend:
     name: 前端类型 / 构建 / 测试 / 规范
     runs-on: ${{ vars.CI_RUNNER_LABELS && fromJSON(vars.CI_RUNNER_LABELS) || 'ubuntu-24.04' }}
-    container: node:22.17.0-bookworm-slim
+    # T-081：原先是 `container: node:22.17.0-bookworm-slim` 的容器作业。改为原生 ＋ setup-node
+    # 固定同一版本：自托管机器因此不需要 Docker，runner 用户也不必留在 docker 组（docker 组在本机等同 root）。
     defaults:
       run:
         working-directory: web
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22.17.0
       - name: 安装固定依赖（不运行安装脚本）
         run: npm ci --ignore-scripts
       - name: 生产构建与类型检查
