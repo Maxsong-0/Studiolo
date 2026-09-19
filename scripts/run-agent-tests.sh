@@ -6,6 +6,10 @@ set -euo pipefail
 export PATH=/usr/sbin:/usr/bin:/sbin:/bin
 export PYTHONDONTWRITEBYTECODE=1 PYTHONNOUSERSITE=1
 unset PYTHONPATH PYTHONHOME
+# 与 CI 同一 umask。随包测试的夹具按默认权限建目录，而同步捕获端与接收器按设计拒绝组／其他可写的节点；
+# Ubuntu 普通用户默认 umask 002 会让夹具目录变成 0775 而被拒（2026-09-18 首次服务器原生自检时撞上）。
+# 原生自检的结论不该取决于操作者登录 shell 的 umask。
+umask 022
 STUDIOLO_PAYLOAD="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 if [[ $# != 0 || "$EUID" == 0 || "$(uname -s)" != Linux || "$(uname -m)" != x86_64 ]]; then
   printf '%s\n' '只支持由普通用户在原生 Linux x86_64 服务器上无参数运行。' >&2

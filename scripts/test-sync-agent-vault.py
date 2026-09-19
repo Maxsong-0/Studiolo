@@ -20,6 +20,9 @@ SCRIPT = Path(__file__).absolute().with_name("sync-agent-vault.sh")
 
 class SyncAgentVaultTests(unittest.TestCase):
     def setUp(self):
+        # 夹具按默认权限建目录，而被测的捕获端与接收器按设计拒绝组／其他可写的节点。
+        # Ubuntu 普通用户默认 umask 002 会让夹具目录变成 0775 而被拒；测试自己钉住前提，不依赖环境。
+        self.addCleanup(os.umask, os.umask(0o022))
         self.temp = tempfile.TemporaryDirectory(dir="/private/tmp" if sys.platform == "darwin" else None)
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)

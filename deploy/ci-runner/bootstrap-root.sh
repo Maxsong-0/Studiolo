@@ -83,6 +83,7 @@ docker builder prune -af --filter 'until=168h' >/dev/null 2>&1 || true
 if (( used >= 80 )); then
   # 只删可重建的构建产物；runner 空闲时才会有人来取这些目录。
   find /home/ghrunner/runners -maxdepth 5 -type d \( -name target -o -name node_modules \) -path '*/_work/*' -prune -exec rm -rf {} + 2>/dev/null || true
+  find /home/ghrunner/cache -mindepth 2 -maxdepth 2 -type d -name target -prune -exec rm -rf {} + 2>/dev/null || true
 fi
 CLEAN
 chmod 755 /usr/local/sbin/ci-runner-cleanup

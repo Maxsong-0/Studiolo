@@ -230,6 +230,8 @@ def deployed_probes(pipeline):
 
 
 def run(binary):
+    # 夹具的中间目录按默认权限创建；umask 002 下它们是 0775，会被捕获端按设计拒绝。与 CI 同一 umask。
+    os.umask(0o022)
     with tempfile.TemporaryDirectory(prefix="studiolo-replica-pipeline-") as directory:
         root = Path(directory).resolve()
         pipeline = Pipeline(binary, root)

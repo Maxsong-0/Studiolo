@@ -28,7 +28,9 @@ if find "$work" -xdev ! -user "$(id -u)" -print -quit | grep -q .; then
 fi
 HOOK
 chmod 700 "$HOME/hooks/job-started.sh"
-printf 'ACTIONS_RUNNER_HOOK_JOB_STARTED=%s\n' "$HOME/hooks/job-started.sh" > "$dir/.env"
+# 构建目录常驻在工作区之外：checkout 每次都会清工作区，放里面等于每次全量重编。
+mkdir -p "$HOME/cache/$name"
+printf 'ACTIONS_RUNNER_HOOK_JOB_STARTED=%s\nCARGO_TARGET_DIR=%s\n' "$HOME/hooks/job-started.sh" "$HOME/cache/$name/target" > "$dir/.env"
 docker pull -q busybox:stable >/dev/null
 
 # Rust：工作流自己会 rustup toolchain install 固定版本，这里只需要 rustup 本体在 PATH 上。
