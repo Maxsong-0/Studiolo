@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
-# 自托管 CI 服务器的一次性 root 初始化。只在**专用** CI 机器上执行：sudo bash bootstrap-root.sh
-# 做且只做需要 root 的事；runner 本体、Rust 工具链、注册都由无特权的 ghrunner 用户完成。
-# 幂等：可重复执行。不接受参数，不联网下载 apt 官方源以外的任何东西。
+# 自托管 CI 服务器的一次性 root 初始化。只在**专用** CI 机器上执行：
+#   sudo bash bootstrap-root.sh [<实例名> <runner 版本> <linux-x64 包 sha256>]
+# root 只做需要 root 的事（apt 官方源的系统包、用户、systemd 单元、窄 sudo、清理定时器）；
+# 给了三个参数时，最后以**无特权的 ghrunner** 身份调用同目录的 install-runner.sh 装好该实例（下载官方 runner 并验签）。幂等。
 set -Eeuo pipefail
 umask 022
 export PATH=/usr/sbin:/usr/bin:/sbin:/bin DEBIAN_FRONTEND=noninteractive
-[[ "$EUID" == 0 && $# == 0 ]] || { echo '请用 sudo bash 执行，不接受参数。' >&2; exit 2; }
+[[ "$EUID" == 0 && ( $# == 0 || $# == 3 ) ]] || { echo '请用 sudo bash 执行；参数要么不给，要么给 <实例名> <版本> <sha256>。' >&2; exit 2; }
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 OPERATOR="${SUDO_USER:-}"
 [[ -n "$OPERATOR" && "$OPERATOR" != root ]] || { echo '需要经 sudo 由普通运维用户执行，以便把其 SSH 公钥授给 ghrunner。' >&2; exit 2; }
 
@@ -108,4 +110,10 @@ systemctl daemon-reload
 systemctl enable --now ci-runner-cleanup.timer >/dev/null
 
 echo '初始化完成：ghrunner 用户、Docker、actions-runner@.service、ci-runner-service 助手与清理定时器已就位。'
-echo '下一步由无特权的 ghrunner 完成：ssh ghrunner@本机 后运行 install-runner.sh。'
+install -m 700 -o ghrunner -g ghrunner "$HERE/install-runner.sh" /home/ghrunner/install-runner.sh
+if [[ $# == 3 ]]; then
+  # 新加入 docker 组要在新会话里才生效；runuser 起的是新会话。
+  runuser -l ghrunner -c "bash /home/ghrunner/install-runner.sh $(printf '%q %q %q' "$1" "$2" "$3")"
+else
+  echo '未给实例参数：之后以 ghrunner 登录运行 ~/install-runner.sh <实例名> <版本> <sha256>。'
+fi
