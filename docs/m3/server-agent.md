@@ -97,6 +97,11 @@ install -m 644 ../studiolo-agent.service ~/.config/systemd/user/studiolo-agent.s
 systemctl --user daemon-reload && systemctl --user enable --now studiolo-agent.service
 ```
 
+**所有 admin 子命令都需要足够的 `RLIMIT_MEMLOCK`**：T-065 起本程序在解析参数之前就跑秘密驻留面加固（`mlockall`），
+上限不足时按设计失败关闭并终止（连 `--help` 都不例外）。交互 shell 里先 `sudo prlimit --pid $$ --memlock=unlimited:unlimited` 再跑命令。
+**注意**：`prlimit … runuser …` 这种写法在本机不成立——`/etc/pam.d/runuser` 有 `pam_limits`，会按目标用户的 limits 把上限重置回去。
+要在脚本里降权执行，用 `systemd-run --uid=maxsong --property=LimitMEMLOCK=infinity`（升级安装器就是这么做的，与 4401 阶段单元同一机制）。
+
 审计账本升级（一次性、单向；v2 或校验不过一律拒绝并回滚，不改写任何既有记录）：
 `bin/studiolo-agent admin audit-upgrade --data ~/.local/share/studiolo-agent`。
 系统服务的升级安装器会自己做这一步，无须手工执行；手工执行只用于人工排查。
