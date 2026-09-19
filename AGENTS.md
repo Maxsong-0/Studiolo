@@ -54,4 +54,7 @@
 - runner 离线或作业一直排队：先 `gh api repos/Maxsong-0/studiolo/actions/runners` 看状态并报告用户。它是共享服务，
   只有确认空闲时才可用窄 sudo 助手重启：`ssh maxsong@192.168.100.107 'sudo /usr/local/sbin/ci-runner-service restart studiolo'`。
 - 这台机器只挂私有仓库、不放任何生产凭据。runner 注册令牌只由用户本人经 stdin 送入，agent 不经手、不打印。
+- **本机 Linux 回路也在这台服务器上原生跑，不用 Docker**（2026-09-19，T-081）：`scripts/test-linux.sh` 把当前工作树 rsync 到服务器后原生执行同一组检查，
+  每个工作树一份远端同步树与构建目录、flock 排队；它**不占 runner 队列**，推 PR 前先用它把 Linux 那一半验完。
+  别再往仓库里加容器作业或 `docker run`（发布打包除外）。
 - 给别的仓库接入同一台机器：`deploy/ci-runner/README.md`。决定与取舍：vault `03-记忆/ADR-020-CI迁到自托管runner.md`。

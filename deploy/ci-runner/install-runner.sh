@@ -17,23 +17,12 @@ curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 \
 printf '%s  %s\n' "$sha" "$tarball" | sha256sum --check --status || { echo 'runner 包摘要不符，拒绝解包。' >&2; exit 1; }
 tar -xzf "$tarball" -C "$dir"
 
-# 容器作业以 root 写工作区（node_modules、dist），下一个宿主作业的 checkout 清不掉它们。作业开始前把属主改回来。
-cat > "$HOME/hooks/job-started.sh" <<'HOOK'
-#!/usr/bin/env bash
-set -euo pipefail
-work="${GITHUB_WORKSPACE:-}"
-[[ -n "$work" && -d "$work" ]] || exit 0
-if find "$work" -xdev ! -user "$(id -u)" -print -quit | grep -q .; then
-  docker run --rm -v "$work":/w busybox:stable chown -R "$(id -u):$(id -g)" /w
-fi
-HOOK
-chmod 700 "$HOME/hooks/job-started.sh"
+# T-081 起工作流没有容器作业，工作区不会出现 root 属主文件，因此不再需要作业开始钩子。
 # 构建目录常驻在工作区之外：checkout 每次都会清工作区，放里面等于每次全量重编。
 mkdir -p "$HOME/cache/$name"
-printf 'ACTIONS_RUNNER_HOOK_JOB_STARTED=%s\nCARGO_TARGET_DIR=%s\n' "$HOME/hooks/job-started.sh" "$HOME/cache/$name/target" > "$dir/.env"
+printf 'CARGO_TARGET_DIR=%s\n' "$HOME/cache/$name/target" > "$dir/.env"
 # systemd 单元走官方服务入口 runsvc.sh（svc.sh 也是这样从 bin/ 拷出来用的）。
 install -m 700 "$dir/bin/runsvc.sh" "$dir/runsvc.sh"
-docker pull -q busybox:stable >/dev/null
 
 # Rust：工作流自己会 rustup toolchain install 固定版本，这里只需要 rustup 本体在 PATH 上。
 if [[ ! -x "$HOME/.cargo/bin/rustup" ]]; then
