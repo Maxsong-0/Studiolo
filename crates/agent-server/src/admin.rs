@@ -94,6 +94,20 @@ pub fn run(command: AdminCommand) -> Result<(), String> {
             }
             Ok(())
         }
+        AdminCommand::AuditUpgrade { data } => {
+            // T-051 把账本磁盘格式升到 v2（分段摘要）。v1 账本 `open` 一律拒绝，必须先显式升级：
+            // 升级先全链验证旧账本，再由已验证的记录链重算段摘要，不改写任何既有记录；
+            // v2、未知版本或校验不过一律拒绝并回滚。成本与账本总量成正比，是人工运维动作。
+            let directory = data.join("audit");
+            let cost = SqliteAuditLedger::upgrade_existing(&directory)
+                .map_err(|error| format!("升级审计账本失败（未改动任何记录）：{error}"))?;
+            println!(
+                "审计账本已升级为分段格式：全链验证 {} 条记录、{} 个段摘要",
+                cost.records(),
+                cost.summaries()
+            );
+            Ok(())
+        }
         AdminCommand::RebuildReadIndex { data } => {
             let store = AgentStore::open_existing(&data).map_err(|error| error.to_string())?;
             let ledger = SqliteAuditLedger::open_existing(&data.join("audit"))
