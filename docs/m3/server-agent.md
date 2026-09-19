@@ -97,6 +97,10 @@ install -m 644 ../studiolo-agent.service ~/.config/systemd/user/studiolo-agent.s
 systemctl --user daemon-reload && systemctl --user enable --now studiolo-agent.service
 ```
 
+审计账本升级（一次性、单向；v2 或校验不过一律拒绝并回滚，不改写任何既有记录）：
+`bin/studiolo-agent admin audit-upgrade --data ~/.local/share/studiolo-agent`。
+系统服务的升级安装器会自己做这一步，无须手工执行；手工执行只用于人工排查。
+
 运维：`systemctl --user status studiolo-agent.service --no-pager`、`journalctl --user -u studiolo-agent.service -n 30 --no-pager`；
 读取审计查询在服务器上执行 `bin/studiolo-agent admin reads --data ~/.local/share/studiolo-agent …`（数据库只在服务器）。
 更新发布：新发布名重跑打包与第 2–3 步，替换单元里的发布名后 `systemctl --user restart studiolo-agent.service`；

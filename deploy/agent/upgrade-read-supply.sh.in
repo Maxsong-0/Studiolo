@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 # 把线上已验收的上一发布（@OLD_RELEASE@）的系统服务升级到新运行包（@RELEASE@）；不迁移用户服务、不重新初始化身份。
 # 七个占位符（新发布四个摘要 ＋ 旧基线的发布名与两个摘要）由 scripts/render-agent-upgrade.py 填入并校验，
+# 审计账本：T-051 起磁盘格式为 v2，旧发布写的是 v1，新二进制**打不开 v1**（BUG-014）。因此本安装器：
+#   ① 阶段验收跑在生产数据的**副本**上（先在副本上升级账本，等于带真实数据的彩排，线上零风险）；
+#   ② 切换时停机就地升级：停 4400 → 备份 → 升级 → 换单元 → 启动 → 验收，窗口只有这一段；
+#   ③ 回滚连账本一起还原到备份的 v1，期间新写的 v2 账本改名留档不丢弃（审计是权威证据）。
 # 用户在服务器 sudo bash 执行。旧基线不再写死某一次升级（原为 T-036→T-040 专用）：线上是哪个发布，就绑定哪个。
 set -Eeuo pipefail
 umask 077
@@ -24,8 +28,9 @@ replica=/home/maxsong/.local/share/studiolo-agent-replica
 cache=/home/maxsong/.local/share/studiolo-agent-index
 token=/home/maxsong/.config/studiolo-agent/claude.token
 lock=/run/studiolo-agent-upgrade.lock
+stage_data='' stage_cache='' audit_backup='' ledger_upgraded=0
 lock_binding='' scratch='' stage='' stage_binding='' new_binding='' old_binding=''
-switched=0 committed=0
+stopped=0 committed=0
 fail() { printf '%s\n' "$1" >&2; exit 1; }
 digest() { sha256sum -- "$1" | cut -d ' ' -f 1; }
 identity() { stat -c '%d:%i' -- "$1"; }
@@ -54,29 +59,47 @@ cleanup() {
     trap - EXIT INT TERM HUP
     set +e
     stop_stage || { printf '%s\n' '阶段单元绑定变化或停止失败，请人工检查。' >&2; failed=1; }
-    if [[ "$switched" == 1 && "$committed" != 1 ]]; then
+    # 从「停掉生产」那一刻起就要能回滚：账本一旦升级，旧二进制打不开 v2，
+    # 所以顺序固定为 账本还原 → 单元还原 → 起回旧服务，缺一步服务都起不来。
+    if [[ "$stopped" == 1 && "$committed" != 1 ]]; then
+        systemctl stop "$unit"
+        if [[ "$ledger_upgraded" == 1 && -n "$audit_backup" && -d "$audit_backup" ]]; then
+            stamp=$(date -u +%Y%m%dT%H%M%SZ)
+            if mv -T -- "$data/audit" "$scratch/audit-v2-failed-$stamp" &&
+               cp -a -- "$audit_backup" "$data/audit" &&
+               chown -R maxsong:maxsong "$data/audit"; then
+                ledger_upgraded=0
+                printf '审计账本已还原为升级前的 v1；期间写入的 v2 账本留档在 %s（不丢弃）。\n' \
+                    "$scratch/audit-v2-failed-$stamp" >&2
+            else
+                printf '审计账本还原失败：备份在 %s，请人工恢复后再启动服务。\n' "$audit_backup" >&2
+                failed=1
+            fi
+        fi
         if is_unit "$new_binding" "$unit_sha"; then
-            systemctl stop "$unit" || failed=1
-            if is_unit "$new_binding" "$unit_sha" && [[ $(digest "$scratch/previous.service") == "$old_unit_sha" ]]; then
+            # 装着的正是本次写进去的新单元：只在备份摘要对得上时换回去。
+            if [[ $(digest "$scratch/previous.service") == "$old_unit_sha" ]]; then
                 cp -- "$scratch/previous.service" "$scratch/restore.service" &&
                     chmod 0644 "$scratch/restore.service" &&
                     mv -T -- "$scratch/restore.service" "$installed" || failed=1
                 systemctl daemon-reload || failed=1
-                systemctl restart "$unit" || failed=1
-                wait_ready 4400 && check_process "$unit" "$old_binary" "$old_binary_sha" || failed=1
-                systemctl is-enabled --quiet "$unit" || failed=1
-                [[ "$failed" != 0 ]] || printf '升级未完成，已恢复原系统服务（%s）。\n' "$old_name" >&2
             else
                 failed=1
             fi
-        elif is_unit "$old_binding" "$old_unit_sha"; then
-            # 原子替换尚未发生；旧系统单元从未停止。
-            systemctl is-active --quiet "$unit" || failed=1
-        else
+        elif ! is_unit "$old_binding" "$old_unit_sha"; then
             printf '%s\n' '系统单元已被其他操作替换，未覆盖第三方文件；请人工恢复。' >&2
             failed=1
         fi
+        if [[ "$failed" == 0 ]]; then
+            systemctl start "$unit" || failed=1
+            wait_ready 4400 && check_process "$unit" "$old_binary" "$old_binary_sha" || failed=1
+            systemctl is-enabled --quiet "$unit" || failed=1
+            [[ "$failed" != 0 ]] || printf '升级未完成，已回滚到原发布（%s）并恢复服务。\n' "$old_name" >&2
+        fi
     fi
+    # 阶段副本含审计历史与身份库，验收完即删；备份留在 root 私有 scratch 目录里备查。
+    [[ -z "$stage_data" || ! -d "$stage_data" ]] || rm -rf -- "$stage_data"
+    [[ -z "$stage_cache" || ! -d "$stage_cache" ]] || rm -rf -- "$stage_cache"
     if [[ -n "$lock_binding" && -d "$lock" && ! -L "$lock" && $(identity "$lock") == "$lock_binding" ]]; then
         rmdir -- "$lock" || failed=1
     fi
@@ -184,6 +207,11 @@ check_process "$unit" "$old_binary" "$old_binary_sha"
 [[ -f "$binary" && ! -L "$binary" && $(digest "$binary") == "$binary_sha" ]] || fail '发布二进制摘要不符。'
 [[ -d "$cache" && ! -L "$cache" && $(stat -c '%u:%g:%a' "$cache") == 1000:1000:700 ]] || fail '须先准备 maxsong 所有的独立 0700 缓存目录。'
 [[ -f "$replica/control/state.json" && -f "$token" ]] || fail '缺少副本回执或既有凭据文件。'
+# 账本必须恰好是旧发布写的 v1：已是 v2（上一次升级到一半）或未知版本，都停下来人工判断。
+ledger_version=$(runuser -u maxsong -- /usr/bin/python3 -I -B -c \
+  "import sqlite3,sys;c=sqlite3.connect('file:'+sys.argv[1]+'?mode=ro',uri=True,timeout=3);print(c.execute('PRAGMA user_version').fetchone()[0])" \
+  "$data/audit/audit.sqlite3") || fail '读不到审计账本版本。'
+[[ "$ledger_version" == 1 ]] || fail "审计账本版本为 $ledger_version，不是本安装器预期的 v1；停下来人工判断。"
 [[ $(ss -H -ltn 'sport = :4401' | wc -l) == 0 ]] || fail '4401 已占用。'
 source_unit=$release/studiolo-agent-system.service
 [[ -f "$source_unit" && ! -L "$source_unit" && $(stat -c '%u:%h' "$source_unit") == 1000:1 ]] || fail '新单元不是预期普通文件。'
@@ -198,6 +226,18 @@ cp --no-dereference -- "$source_unit" "$scratch/studiolo-agent.service"
    $(digest "$scratch/previous.service") == "$old_unit_sha" ]] || fail '私有单元副本校验失败。'
 chmod 0644 "$scratch/studiolo-agent.service"
 systemd-analyze verify "$scratch/studiolo-agent.service"
+# 阶段验收跑在生产数据的副本上：先把数据与索引缓存拷进 root 私有 scratch，再用**新二进制**
+# 在副本上升级账本。这一步等于带真实数据的彩排——账本真有完整性问题，在这里就会暴露，
+# 而线上 4400 全程没被碰过。副本属 maxsong，阶段单元才写得进去；用完由 cleanup 删除。
+stage_data=$scratch/stage-data
+stage_cache=$scratch/stage-cache
+cp -a -- "$data" "$stage_data"
+cp -a -- "$cache" "$stage_cache"
+chown -R maxsong:maxsong "$stage_data" "$stage_cache"
+printf '%s\n' '阶段彩排：在生产数据副本上升级审计账本（线上账本未改动）。'
+runuser -u maxsong -- "$binary" admin audit-upgrade --data "$stage_data" ||
+    fail '副本上的账本升级失败：线上账本与服务均未改动，请据输出人工判断。'
+
 stage=studiolo-upgrade-stage-${scratch##*.}.service
 [[ $(systemctl show "$stage" -p LoadState --value 2>/dev/null || true) == not-found ]] || fail '阶段单元已存在。'
 printf '%s\n' '开始系统管理器 4401 阶段：MCP、HTTP、新鲜度与缓存重启命中。'
@@ -209,11 +249,11 @@ systemd-run --unit="$stage" --collect --service-type=simple \
     `# 秘密驻留面加固用 mlockall；默认 8M 不足时 harden() 失败关闭并终止进程，阶段实例会起不来` \
     --property=LimitMEMLOCK=infinity \
     --property=NoNewPrivileges=yes --property=ProtectSystem=strict --property=ProtectHome=read-only \
-    --property="ReadWritePaths=$data $cache" --property=PrivateTmp=yes --property=RestrictSUIDSGID=no \
+    --property="ReadWritePaths=$stage_data $stage_cache" --property=PrivateTmp=yes --property=RestrictSUIDSGID=no \
     --property=LockPersonality=yes --property='RestrictAddressFamilies=AF_UNIX AF_INET' \
     --property=SystemCallArchitectures=native --property=MemoryMax=512M --property=TasksMax=64 \
     -- "$binary" serve --replica-root "$replica" --replica-max-age-secs 300 \
-    --allow 项目/Studiolo --allow _规则 --data "$data" --index-cache "$cache" --port 4401
+    --allow 项目/Studiolo --allow _规则 --data "$stage_data" --index-cache "$stage_cache" --port 4401
 stage_binding=$(identity "/run/systemd/transient/$stage")
 wait_ready 4401
 check_process "$stage" "$binary" "$binary_sha"
@@ -227,12 +267,25 @@ stop_stage
 is_unit "$old_binding" "$old_unit_sha" || fail '验收期间原系统单元已变化。'
 check_process "$unit" "$old_binary" "$old_binary_sha"
 new_binding=$(identity "$scratch/studiolo-agent.service")
-switched=1
+
+# 停机窗口从这里开始：账本升级是单向的，必须在没有进程持有它的时候做。
+# 356 条记录的升级是毫秒级，窗口实际由服务停启决定。任一步失败由 cleanup 按
+# 「账本还原 → 单元还原 → 起回旧服务」回滚。
+stopped=1
+printf '%s\n' '停机窗口开始：停 4400 → 备份账本 → 就地升级 → 换单元 → 启动。'
+systemctl stop "$unit"
+audit_backup=$scratch/audit-v1-backup
+cp -a -- "$data/audit" "$audit_backup"
+[[ -f "$audit_backup/audit.sqlite3" ]] || fail '账本备份未生成；未升级、未换单元。'
+runuser -u maxsong -- "$binary" admin audit-upgrade --data "$data" ||
+    fail '就地升级账本失败：账本未被改动（升级整体回滚），服务将由 cleanup 起回旧发布。'
+ledger_upgraded=1
+
 mv -T -- "$scratch/studiolo-agent.service" "$installed"
 systemctl daemon-reload
 [[ $(systemctl show "$unit" -p FragmentPath --value) == "$installed" && -z $(systemctl show "$unit" -p DropInPaths --value) ]] || fail '升级后单元加载位置变化。'
 is_unit "$new_binding" "$unit_sha" || fail '新系统单元绑定变化。'
-systemctl restart "$unit"
+systemctl start "$unit"
 wait_ready 4400
 check_process "$unit" "$binary" "$binary_sha"
 check_supply 4400
@@ -240,4 +293,5 @@ check_cache "$unit" || fail '正式服务持久缓存未命中。'
 is_unit "$new_binding" "$unit_sha" || fail '最终系统单元绑定变化。'
 systemctl is-enabled --quiet "$unit"
 committed=1
-printf '系统服务升级完成（%s → %s）：MCP/HTTP、身份拒绝、新鲜度和磁盘缓存命中均通过。\n' "$old_name" "${release##*/}"
+printf '系统服务升级完成（%s → %s）：审计账本已升为分段格式，MCP/HTTP、身份拒绝、新鲜度和磁盘缓存命中均通过。\n' "$old_name" "${release##*/}"
+printf '升级前的 v1 账本备份保留在 %s（root 私有），确认无误后可自行删除。\n' "$audit_backup"

@@ -44,4 +44,6 @@ rustix = { workspace = true, features = ["process", "termios"] }
 
 [dev-dependencies]
 tempfile.workspace = true
+# 只给 admin audit-upgrade 的契约测试用：把 v2 账本还原成 T-012 的 v1 形态造夹具。
+rusqlite.workspace = true
 reqwest.workspace = true

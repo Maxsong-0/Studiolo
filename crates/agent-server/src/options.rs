@@ -12,6 +12,7 @@ studiolo-agent admin type-revoke --data <私有目录> --type <类型名>\n  \
 studiolo-agent admin types --data <私有目录>\n  \
 studiolo-agent admin reads --data <私有目录> [--type T] [--instance I] [--since RFC3339] [--until RFC3339] [--path-prefix P] [--limit N]\n  \
 studiolo-agent admin rebuild-read-index --data <私有目录>\n  \
+studiolo-agent admin audit-upgrade --data <私有目录>   # T-012 v1 账本 → 分段格式，一次性、单向\n  \
 studiolo-agent admin outages --data <私有目录>\n  \
 studiolo-agent admin instances --data <私有目录> [--limit N]\n  \
 studiolo-agent admin policy-init --policy <策略私有目录>\n  \
@@ -64,6 +65,8 @@ pub enum AdminCommand {
     },
     /// 从账本重建读取索引。
     RebuildReadIndex { data: PathBuf },
+    /// 把 T-012 的 v1 审计账本显式升级为分段格式（一次性、单向；v2 或校验不过一律拒绝）。
+    AuditUpgrade { data: PathBuf },
     /// 列出审计不可用窗口。
     Outages { data: PathBuf },
     /// 列出已注册实例。
@@ -257,6 +260,7 @@ pub fn parse(args: &[String]) -> Result<Command, String> {
                     },
                 },
                 "rebuild-read-index" => AdminCommand::RebuildReadIndex { data: data()? },
+                "audit-upgrade" => AdminCommand::AuditUpgrade { data: data()? },
                 "outages" => AdminCommand::Outages { data: data()? },
                 "instances" => AdminCommand::Instances {
                     data: data()?,
