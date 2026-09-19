@@ -47,6 +47,12 @@ jobs:
                       /usr/local/.ghcup /opt/hostedtoolcache/CodeQL
           df -h /
 
+      # 打包契约测试（test-agent-package.py／test-preview-package.py）要调 node 解析 cargo 的 JSON 输出：
+      # GitHub 托管镜像预装了它，自建机器没有。版本与前端作业的容器一致。
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22.17.0
+
       - name: 自托管 runner：rustup 的 bin 目录进 PATH
         # GitHub 托管镜像预装 rustup 且已在 PATH；自托管机器上它装在 runner 用户的 ~/.cargo/bin。
         # 用 GITHUB_PATH 而不是依赖机器上的 .path／.env：头三轮自托管 CI 都死在 `rustup: command not found`。
