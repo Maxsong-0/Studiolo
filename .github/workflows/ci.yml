@@ -54,6 +54,7 @@ jobs:
             bash -n "$script"
           done
           python3 scripts/test-agent-package.py
+          python3 scripts/test-render-agent-upgrade.py
           python3 scripts/test-preview-package.py
           python3 scripts/test-check-agent-http.py
           python3 scripts/test-check-agent.py
