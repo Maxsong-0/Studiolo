@@ -32,9 +32,12 @@ T-039 持久派生索引已于 2026-09-11 随 T-040 发布，系统切换与公�
 
 ## 系统服务升级与回滚
 
-`deploy/agent/upgrade-read-supply.sh.in` 是专用 T-036→T-040 系统升级模板，
-填入发布目录、新二进制、单元及源码清单 SHA-256 后生成一次性安装器；执行探针前重新核对源文件集合及摘要。
-它固定核对已验收 T-036 旧二进制与旧系统单元摘要，拒绝其他版本、drop-in 或第三方替换。
+`deploy/agent/upgrade-read-supply.sh.in` 是系统升级模板。它最初是 T-036→T-040 专用、把旧基线写死在模板里；
+2026-09-18（T-076）起旧基线改为占位符：`scripts/render-agent-upgrade.py <payload> --old-release … --old-binary-sha … --old-unit-sha … --output …`
+从运行包算出新发布的四个摘要、填入线上**实际在跑的**那个发布的名字与两个摘要，生成一次性安装器；模板必须与运行包内的同名文件摘要一致，否则拒绝渲染。
+旧基线的两个摘要在服务器上只读取得：`sha256sum <旧发布>/bin/studiolo-agent /etc/systemd/system/studiolo-agent.service`。
+安装器执行探针前重新核对源文件集合及摘要；它固定核对所绑定的旧二进制与旧系统单元摘要，拒绝其他版本、drop-in 或第三方替换。
+**它一次跑完阶段验收与生产切换**（4401 阶段通过后原子替换单元并重启 4400，失败自动回滚），不是只做阶段验收。
 旧 `install-t036-system.sh` 仅用于历史用户服务迁移，不能用于这次系统升级。
 
 1. 检查旧服务 enabled/active、实际 PID/二进制/UID 映射，保存 root 私有旧单元副本。

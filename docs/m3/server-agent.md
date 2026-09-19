@@ -65,7 +65,9 @@ bash scripts/package-agent.sh "$PWD/target/agent-packages/<唯一发布名>"
 与 `package-preview.sh` 同一套约束：显式源码白名单（含架构守卫要读的 `package-preview.sh`/`test-linux.sh`/`ci.yml`）、
 固定 `rust:1.97.1-bookworm` amd64 镜像 digest、每个发布名独立目标卷、`SHA256SUMS` 覆盖整包；
 `provenance.txt` 记录快照是否与 `base-commit` 一致。随包携带的测试程序只包含 `studiolo-agent` 实际链接的 crate
-（supply、agent-server、vault-broker、core、audit-ledger、vault-index、workbench）加 `studiolo` 架构守卫；
+（supply、agent-server、vault-broker、core、audit-ledger、vault-index、workbench、process-safety、policy）加 `studiolo` 架构守卫；
+随包测试在编译期 `include_str!` 的虚构夹具（`examples/m3-cargo-dependencies`、`examples/m3-project-operations`）一并进白名单；
+「cargo 包列表 ＝ Node 段接受的包集合 ⊇ agent 的工作区依赖闭包」与「include 宏目标都在白名单内」由 `scripts/test-agent-package.py` 守卫；
 解析步骤要求 `architecture`、`linux_path_security`、`mcp_contract`、`roots_contract`、`signpost_contract`、`agent_store_contract` 六个目标齐全。
 local-server 等未随包发布的 crate 测试由 CI 与各自运行包负责。
 

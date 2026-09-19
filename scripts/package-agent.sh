@@ -22,7 +22,7 @@ STUDIOLO_IMAGE='rust:1.97.1-bookworm'
 STUDIOLO_TEST_PACKAGES=(
   -p studiolo -p studiolo-supply -p studiolo-agent-server -p studiolo-vault-broker
   -p studiolo-core -p studiolo-audit-ledger -p studiolo-vault-index -p studiolo-workbench
-  -p studiolo-process-safety
+  -p studiolo-process-safety -p studiolo-policy
 )
 mkdir "$STUDIOLO_OUT"
 mkdir "$STUDIOLO_OUT/source" "$STUDIOLO_OUT/payload" "$STUDIOLO_OUT/build-meta"
@@ -47,6 +47,9 @@ STUDIOLO_INPUTS=(
   scripts/test-client-projection-schema.py scripts/test-client-projection-fetch.py scripts/test-client-projection-store.py
   scripts/test-agent-package.py
   deploy/agent deploy/agent/upgrade-read-supply.sh.in docs/m3
+  # 随包测试在**编译期** `include_str!` 的虚构夹具（workbench 的 Cargo 依赖与项目运作图契约）。
+  # 缺了它们 `cargo test --no-run` 直接编译失败；新增同类引用由 test-agent-package.py 的守卫拦住。
+  examples/m3-cargo-dependencies examples/m3-project-operations
 )
 git ls-files -z -- "${STUDIOLO_INPUTS[@]}" > "$STUDIOLO_OUT/payload/source-files"
 node - "$STUDIOLO_ROOT" "$STUDIOLO_OUT/payload/source-files" "${STUDIOLO_INPUTS[@]}" <<'NODE_SOURCE'
@@ -57,7 +60,8 @@ const names = fs.readFileSync(list, 'utf8').split('\0');
 if (names.pop() !== '' || names.length === 0 || new Set(names).size !== names.length) {
   throw new Error('源码清单为空、不完整或包含重复项');
 }
-const directories = new Set(['crates', 'deploy/agent', 'docs/m3']);
+const directories = new Set(['crates', 'deploy/agent', 'docs/m3',
+  'examples/m3-cargo-dependencies', 'examples/m3-project-operations']);
 for (const input of inputs) {
   if (directories.has(input) ? !names.some(name => name.startsWith(input + '/')) : !names.includes(input)) {
     throw new Error('白名单文件尚未跟踪或目录为空：' + input);
@@ -140,7 +144,9 @@ const artifactOwners = new Map();
 const targets = new Set();
 const packageIds = new Map();
 const identities = new Map();
-const packages = new Set(['studiolo', 'supply', 'agent-server', 'vault-broker', 'core', 'audit-ledger', 'vault-index', 'workbench']);
+// 必须与上面 STUDIOLO_TEST_PACKAGES 推出的 crate 目录集合逐项一致（test-agent-package.py 有守卫）。
+const packages = new Set(['studiolo', 'supply', 'agent-server', 'vault-broker', 'core', 'audit-ledger', 'vault-index', 'workbench',
+  'process-safety', 'policy']);
 let complete = false;
 for (const line of fs.readFileSync(path.join(out, 'build-meta/tests.jsonl'), 'utf8').split('\n')) {
   if (!line.trim()) continue;
@@ -179,7 +185,8 @@ const required = [
   'studiolo/architecture', 'vault-broker/linux_path_security',
   'agent-server/mcp_contract', 'agent-server/mcp_transport_contract', 'agent-server/replica_mcp_contract',
   'agent-server/http_text_contract', 'agent-server/http_replica_contract', 'agent-server/index_cache_contract',
-  'agent-server/process_residency',
+  'agent-server/process_residency', 'agent-server/policy_contract',
+  'policy/policy_store_contract', 'policy/view_contract', 'policy/audit_contract',
   'supply/roots_contract', 'supply/signpost_contract', 'supply/http_signpost_contract',
   'supply/agent_store_contract', 'supply/replica_contract', 'supply/index_cache_contract',
   'vault-index/parse_cache_contract', 'vault-index/parse_cache_codec_contract', 'vault-index/parse_cache_links_contract',

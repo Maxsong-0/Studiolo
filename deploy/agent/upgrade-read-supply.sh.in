@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# T-040：将已知 T-036 系统服务升级到已验收运行包；不迁移用户服务、不重新初始化身份。
-# @RELEASE@ / @BINARY_SHA@ / @UNIT_SHA@ 由发布主线填入并校验，用户在服务器 sudo bash 执行。
+# 把线上已验收的上一发布（@OLD_RELEASE@）的系统服务升级到新运行包（@RELEASE@）；不迁移用户服务、不重新初始化身份。
+# 七个占位符（新发布四个摘要 ＋ 旧基线的发布名与两个摘要）由 scripts/render-agent-upgrade.py 填入并校验，
+# 用户在服务器 sudo bash 执行。旧基线不再写死某一次升级（原为 T-036→T-040 专用）：线上是哪个发布，就绑定哪个。
 set -Eeuo pipefail
 umask 077
 export PATH=/usr/sbin:/usr/bin:/sbin:/bin
@@ -11,17 +12,18 @@ binary_sha=@BINARY_SHA@
 unit_sha=@UNIT_SHA@
 source_sha=@SOURCE_SHA@
 files_sha=@FILES_SHA@
-old_release=/home/maxsong/.local/share/studiolo-agent-releases/m3-t036-20260910-replica01
+old_name=@OLD_RELEASE@
+old_release=/home/maxsong/.local/share/studiolo-agent-releases/$old_name
 old_binary=$old_release/bin/studiolo-agent
-old_binary_sha=6c574ea719cde129549354b44b015e144c1ffb9b581adf65aa51d5c8f9979a08
-old_unit_sha=217bdceda8b1e4cbc166973e0c14bc0fe7c7f8aee9493a1d11b3798bd086b565
+old_binary_sha=@OLD_BINARY_SHA@
+old_unit_sha=@OLD_UNIT_SHA@
 unit=studiolo-agent.service
 installed=/etc/systemd/system/$unit
 data=/home/maxsong/.local/share/studiolo-agent
 replica=/home/maxsong/.local/share/studiolo-agent-replica
 cache=/home/maxsong/.local/share/studiolo-agent-index
 token=/home/maxsong/.config/studiolo-agent/claude.token
-lock=/run/studiolo-t040-deploy.lock
+lock=/run/studiolo-agent-upgrade.lock
 lock_binding='' scratch='' stage='' stage_binding='' new_binding='' old_binding=''
 switched=0 committed=0
 fail() { printf '%s\n' "$1" >&2; exit 1; }
@@ -63,7 +65,7 @@ cleanup() {
                 systemctl restart "$unit" || failed=1
                 wait_ready 4400 && check_process "$unit" "$old_binary" "$old_binary_sha" || failed=1
                 systemctl is-enabled --quiet "$unit" || failed=1
-                [[ "$failed" != 0 ]] || printf '%s\n' '升级未完成，已恢复原 T-036 系统服务。' >&2
+                [[ "$failed" != 0 ]] || printf '升级未完成，已恢复原系统服务（%s）。\n' "$old_name" >&2
             else
                 failed=1
             fi
@@ -168,11 +170,13 @@ check_cache() {
 
 [[ "$EUID" == 0 && $# == 0 ]] || fail '请在服务器以 sudo bash 执行本脚本，不接受额外参数。'
 [[ "$binary_sha" =~ ^[0-9a-f]{64}$ && "$unit_sha" =~ ^[0-9a-f]{64}$ && "$source_sha" =~ ^[0-9a-f]{64}$ && "$files_sha" =~ ^[0-9a-f]{64}$ ]] || fail '安装器未完成发布摘要绑定。'
+[[ "$old_name" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$ && "$old_binary_sha" =~ ^[0-9a-f]{64}$ && "$old_unit_sha" =~ ^[0-9a-f]{64}$ ]] || fail '安装器未完成旧基线绑定。'
+[[ "$old_release" != "$release" && "$old_binary_sha" != "$binary_sha" ]] || fail '旧基线与新发布相同，无可升级。'
 [[ $(id -u maxsong) == 1000 && $(id -g maxsong) == 1000 ]] || fail '服务用户身份不符。'
 [[ -d /etc/systemd/system && ! -L /etc/systemd/system && $(stat -c '%u' /etc/systemd/system) == 0 ]] || fail '系统单元目录不安全。'
 mkdir -- "$lock" || fail '另一安装器正在执行或留下锁，请先确认状态。'
 lock_binding=$(identity "$lock")
-[[ -f "$installed" && ! -L "$installed" && $(stat -c '%u:%g:%a:%h' "$installed") == 0:0:644:1 && $(digest "$installed") == "$old_unit_sha" ]] || fail '既有系统单元与已验收 T-036 不同，拒绝覆盖。'
+[[ -f "$installed" && ! -L "$installed" && $(stat -c '%u:%g:%a:%h' "$installed") == 0:0:644:1 && $(digest "$installed") == "$old_unit_sha" ]] || fail "既有系统单元与已验收的上一发布（$old_name）不同，拒绝覆盖。"
 old_binding=$(identity "$installed")
 [[ $(systemctl show "$unit" -p FragmentPath --value) == "$installed" && -z $(systemctl show "$unit" -p DropInPaths --value) ]] || fail '系统单元加载位置或覆盖配置不同。'
 systemctl is-enabled --quiet "$unit"
@@ -184,7 +188,7 @@ check_process "$unit" "$old_binary" "$old_binary_sha"
 source_unit=$release/studiolo-agent-system.service
 [[ -f "$source_unit" && ! -L "$source_unit" && $(stat -c '%u:%h' "$source_unit") == 1000:1 ]] || fail '新单元不是预期普通文件。'
 source_identity=$(stat -c '%d:%i:%f:%s:%u:%h:%Y:%Z' "$source_unit")
-scratch=$(mktemp -d /etc/systemd/system/.studiolo-t040.XXXXXXXX)
+scratch=$(mktemp -d /etc/systemd/system/.studiolo-upgrade.XXXXXXXX)
 cp --no-dereference -- "$installed" "$scratch/previous.service"
 cp --no-dereference -- "$source_unit" "$scratch/studiolo-agent.service"
 [[ -f "$scratch/studiolo-agent.service" && ! -L "$scratch/studiolo-agent.service" &&
@@ -194,7 +198,7 @@ cp --no-dereference -- "$source_unit" "$scratch/studiolo-agent.service"
    $(digest "$scratch/previous.service") == "$old_unit_sha" ]] || fail '私有单元副本校验失败。'
 chmod 0644 "$scratch/studiolo-agent.service"
 systemd-analyze verify "$scratch/studiolo-agent.service"
-stage=studiolo-t040-stage-${scratch##*.}.service
+stage=studiolo-upgrade-stage-${scratch##*.}.service
 [[ $(systemctl show "$stage" -p LoadState --value 2>/dev/null || true) == not-found ]] || fail '阶段单元已存在。'
 printf '%s\n' '开始系统管理器 4401 阶段：MCP、HTTP、新鲜度与缓存重启命中。'
 systemd-run --unit="$stage" --collect --service-type=simple \
@@ -236,4 +240,4 @@ check_cache "$unit" || fail '正式服务持久缓存未命中。'
 is_unit "$new_binding" "$unit_sha" || fail '最终系统单元绑定变化。'
 systemctl is-enabled --quiet "$unit"
 committed=1
-printf '%s\n' 'T-040 系统服务升级完成：MCP/HTTP、身份拒绝、新鲜度和磁盘缓存命中均通过。'
+printf '系统服务升级完成（%s → %s）：MCP/HTTP、身份拒绝、新鲜度和磁盘缓存命中均通过。\n' "$old_name" "${release##*/}"
