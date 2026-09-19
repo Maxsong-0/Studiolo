@@ -33,6 +33,16 @@ lock_binding='' scratch='' stage='' stage_binding='' new_binding='' old_binding=
 stopped=0 committed=0
 fail() { printf '%s\n' "$1" >&2; exit 1; }
 digest() { sha256sum -- "$1" | cut -d ' ' -f 1; }
+# T-065 起 studiolo-agent **在解析参数之前**就跑秘密驻留面加固（mlockall），上限不足时按设计
+# 失败关闭——连 admin 子命令也需要足够的 RLIMIT_MEMLOCK，而本机 SSH 会话只有 8 MiB。
+# 用 systemd-run 显式给这一条命令设上限并降权：不经 PAM（/etc/pam.d/runuser 有 pam_limits，
+# 会按目标用户的 limits 重置掉先前 prlimit 抬高的值），且这正是下面 4401 阶段单元用的同一机制
+# ——2026-09-18 那次阶段实例就是这样起来的，加固四项在日志里逐项打出。
+as_agent() {
+    systemd-run --quiet --wait --pipe --collect --service-type=exec \
+        --uid=maxsong --gid=maxsong --property=LimitMEMLOCK=infinity --property=UMask=0077 \
+        -- "$@"
+}
 identity() { stat -c '%d:%i' -- "$1"; }
 is_unit() { [[ -f "$installed" && ! -L "$installed" && $(identity "$installed") == "$1" && $(digest "$installed") == "$2" ]]; }
 
@@ -235,7 +245,7 @@ cp -a -- "$data" "$stage_data"
 cp -a -- "$cache" "$stage_cache"
 chown -R maxsong:maxsong "$stage_data" "$stage_cache"
 printf '%s\n' '阶段彩排：在生产数据副本上升级审计账本（线上账本未改动）。'
-runuser -u maxsong -- "$binary" admin audit-upgrade --data "$stage_data" ||
+as_agent "$binary" admin audit-upgrade --data "$stage_data" ||
     fail '副本上的账本升级失败：线上账本与服务均未改动，请据输出人工判断。'
 
 stage=studiolo-upgrade-stage-${scratch##*.}.service
@@ -277,7 +287,7 @@ systemctl stop "$unit"
 audit_backup=$scratch/audit-v1-backup
 cp -a -- "$data/audit" "$audit_backup"
 [[ -f "$audit_backup/audit.sqlite3" ]] || fail '账本备份未生成；未升级、未换单元。'
-runuser -u maxsong -- "$binary" admin audit-upgrade --data "$data" ||
+as_agent "$binary" admin audit-upgrade --data "$data" ||
     fail '就地升级账本失败：账本未被改动（升级整体回滚），服务将由 cleanup 起回旧发布。'
 ledger_upgraded=1
 
