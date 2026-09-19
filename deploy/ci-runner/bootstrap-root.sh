@@ -34,12 +34,14 @@ Description=GitHub Actions runner (%i)
 After=network-online.target docker.service
 Wants=network-online.target
 ConditionPathExists=/home/ghrunner/runners/%i/.runner
+ConditionPathExists=/home/ghrunner/runners/%i/runsvc.sh
 
 [Service]
 User=ghrunner
 Group=ghrunner
 WorkingDirectory=/home/ghrunner/runners/%i
-ExecStart=/home/ghrunner/runners/%i/run.sh
+# 官方服务入口：只有 runsvc.sh 会读 .path 并导出为作业的 PATH（run.sh 不会）。install-runner.sh 把它从 bin/ 拷到实例根目录。
+ExecStart=/home/ghrunner/runners/%i/runsvc.sh
 Restart=always
 RestartSec=10
 KillMode=process

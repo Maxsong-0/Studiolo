@@ -47,6 +47,12 @@ jobs:
                       /usr/local/.ghcup /opt/hostedtoolcache/CodeQL
           df -h /
 
+      - name: 自托管 runner：rustup 的 bin 目录进 PATH
+        # GitHub 托管镜像预装 rustup 且已在 PATH；自托管机器上它装在 runner 用户的 ~/.cargo/bin。
+        # 用 GITHUB_PATH 而不是依赖机器上的 .path／.env：头三轮自托管 CI 都死在 `rustup: command not found`。
+        if: runner.environment == 'self-hosted'
+        run: echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+
       - name: 安装固定 toolchain（与 rust-toolchain.toml 同版本）
         run: |
           rustup toolchain install 1.97.1 --profile minimal --component rustfmt,clippy

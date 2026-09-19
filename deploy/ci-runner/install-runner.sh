@@ -30,10 +30,9 @@ HOOK
 chmod 700 "$HOME/hooks/job-started.sh"
 # 构建目录常驻在工作区之外：checkout 每次都会清工作区，放里面等于每次全量重编。
 mkdir -p "$HOME/cache/$name"
-# 作业的 PATH 也写在 .env 里：runner 进程启动时自己读 .env 并设进环境。官方的 .path 文件只有 bin/runsvc.sh 会读，
-# 而本机的 systemd 单元直接起 run.sh（2026-09-19 头两轮 CI 因此 `rustup: command not found`）。
-printf 'ACTIONS_RUNNER_HOOK_JOB_STARTED=%s\nCARGO_TARGET_DIR=%s\nPATH=%s\n' "$HOME/hooks/job-started.sh" "$HOME/cache/$name/target" \
-  "$HOME/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" > "$dir/.env"
+printf 'ACTIONS_RUNNER_HOOK_JOB_STARTED=%s\nCARGO_TARGET_DIR=%s\n' "$HOME/hooks/job-started.sh" "$HOME/cache/$name/target" > "$dir/.env"
+# systemd 单元走官方服务入口 runsvc.sh（svc.sh 也是这样从 bin/ 拷出来用的）。
+install -m 700 "$dir/bin/runsvc.sh" "$dir/runsvc.sh"
 docker pull -q busybox:stable >/dev/null
 
 # Rust：工作流自己会 rustup toolchain install 固定版本，这里只需要 rustup 本体在 PATH 上。
@@ -55,6 +54,9 @@ name=$(basename "$PWD")
 ./config.sh --unattended --url "https://github.com/$1" --token "$token" \
   --name "$(hostname)-$name" --labels "self-hosted,linux,x64,$name" --work _work --replace >/dev/null
 unset token
+# 作业的 PATH：只有 runsvc.sh 会读 .path；而 config.sh 里的 env.sh 会无条件 `echo $PATH>.path` 覆盖它，所以必须在注册**之后**写。
+# （实测 2026-09-19：.env 里写 PATH 对作业步骤不生效。工作流自己另用 GITHUB_PATH 兜底。）
+printf '%s\n' "$HOME/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" > .path
 echo "已注册：$(hostname)-$name → $1（标签 self-hosted,linux,x64,$name）"
 REG
 chmod 700 "$dir/register.sh"
