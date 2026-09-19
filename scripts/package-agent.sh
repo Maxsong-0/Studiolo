@@ -22,7 +22,7 @@ STUDIOLO_IMAGE='rust:1.97.1-bookworm'
 STUDIOLO_TEST_PACKAGES=(
   -p studiolo -p studiolo-supply -p studiolo-agent-server -p studiolo-vault-broker
   -p studiolo-core -p studiolo-audit-ledger -p studiolo-vault-index -p studiolo-workbench
-  -p studiolo-process-safety
+  -p studiolo-process-safety -p studiolo-policy
 )
 mkdir "$STUDIOLO_OUT"
 mkdir "$STUDIOLO_OUT/source" "$STUDIOLO_OUT/payload" "$STUDIOLO_OUT/build-meta"
@@ -144,7 +144,9 @@ const artifactOwners = new Map();
 const targets = new Set();
 const packageIds = new Map();
 const identities = new Map();
-const packages = new Set(['studiolo', 'supply', 'agent-server', 'vault-broker', 'core', 'audit-ledger', 'vault-index', 'workbench']);
+// 必须与上面 STUDIOLO_TEST_PACKAGES 推出的 crate 目录集合逐项一致（test-agent-package.py 有守卫）。
+const packages = new Set(['studiolo', 'supply', 'agent-server', 'vault-broker', 'core', 'audit-ledger', 'vault-index', 'workbench',
+  'process-safety', 'policy']);
 let complete = false;
 for (const line of fs.readFileSync(path.join(out, 'build-meta/tests.jsonl'), 'utf8').split('\n')) {
   if (!line.trim()) continue;
@@ -183,7 +185,8 @@ const required = [
   'studiolo/architecture', 'vault-broker/linux_path_security',
   'agent-server/mcp_contract', 'agent-server/mcp_transport_contract', 'agent-server/replica_mcp_contract',
   'agent-server/http_text_contract', 'agent-server/http_replica_contract', 'agent-server/index_cache_contract',
-  'agent-server/process_residency',
+  'agent-server/process_residency', 'agent-server/policy_contract',
+  'policy/policy_store_contract', 'policy/view_contract', 'policy/audit_contract',
   'supply/roots_contract', 'supply/signpost_contract', 'supply/http_signpost_contract',
   'supply/agent_store_contract', 'supply/replica_contract', 'supply/index_cache_contract',
   'vault-index/parse_cache_contract', 'vault-index/parse_cache_codec_contract', 'vault-index/parse_cache_links_contract',

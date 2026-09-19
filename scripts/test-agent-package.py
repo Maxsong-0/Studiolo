@@ -15,7 +15,8 @@ REQUIRED = {
     "studiolo": ["architecture"],
     "vault-broker": ["linux_path_security"],
     "agent-server": ["mcp_contract", "mcp_transport_contract", "replica_mcp_contract", "http_text_contract",
-                     "http_replica_contract", "index_cache_contract", "process_residency"],
+                     "http_replica_contract", "index_cache_contract", "process_residency", "policy_contract"],
+    "policy": ["policy_store_contract", "view_contract", "audit_contract"],
     "supply": ["roots_contract", "signpost_contract", "http_signpost_contract",
                "agent_store_contract", "replica_contract", "index_cache_contract"],
     "vault-index": ["parse_cache_contract", "parse_cache_codec_contract", "parse_cache_links_contract"],
@@ -59,8 +60,8 @@ class CargoManifestTests(unittest.TestCase):
         items = self.complete()
         code, names = self.collect(items + [items[0]])
         self.assertEqual(code, 0)
-        self.assertEqual(len(names), 19)
-        self.assertEqual(len(set(names)), 19)
+        self.assertEqual(len(names), 23)
+        self.assertEqual(len(set(names)), 23)
 
     def test_transport_gate_cannot_be_missing_or_satisfied_by_another_crate(self):
         items = [item for item in self.complete() if item["target"]["name"] != "mcp_transport_contract"]
@@ -200,6 +201,41 @@ class CompileTimeInputsTests(unittest.TestCase):
                         uncovered.append(f"{source.relative_to(root).as_posix()} -> {relative}")
         self.assertGreaterEqual(checked, 5, "守卫没有扫到任何 include 宏，正则或目录推导失效")
         self.assertEqual(uncovered, [], "随包测试编译期依赖的文件不在 package-agent.sh 的源码白名单内")
+
+    def packaged_crates(self):
+        import re
+        block = PACKAGE.split("STUDIOLO_TEST_PACKAGES=(\n", 1)[1].split("\n)", 1)[0]
+        return {name.removeprefix("studiolo-") if name != "studiolo" else name
+                for name in re.findall(r"-p (studiolo(?:-[a-z-]+)?)", block)}
+
+    def test_node_package_set_matches_the_cargo_package_list(self):
+        """cargo 编译哪些包的测试、Node 段就必须接受哪些包；两份清单各写一处，
+        T-065 加 process-safety 时只改了前者，真打包到最后一步才报「测试程序不属于选定的工作区包」。"""
+        import re
+        literal = re.search(r"const packages = new Set\(\[(.*?)\]\);", embedded(PACKAGE, "NODE_TESTS"), re.S).group(1)
+        accepted = set(re.findall(r"'([a-z-]+)'", literal))
+        self.assertEqual(accepted, self.packaged_crates())
+        self.assertLessEqual(set(REQUIRED), accepted)
+
+    def test_every_workspace_crate_linked_by_the_agent_ships_its_tests(self):
+        """运行包的口径是「studiolo-agent 实际链接的 crate 都随包带测试」。T-069 让 agent 依赖了
+        studiolo-policy 却没进打包列表；从 agent-server 的 Cargo.toml 出发求工作区依赖闭包来核对。"""
+        import re
+        root = SCRIPTS.parent
+        def workspace_dependencies(crate):
+            text = (root / "crates" / crate / "Cargo.toml").read_text(encoding="utf-8")
+            section = text.split("[dependencies]", 1)[1].split("\n[", 1)[0] if "[dependencies]" in text else ""
+            return {name for name in re.findall(r"^studiolo-([a-z-]+)\.workspace\s*=", section, re.M)}
+        closure, pending = set(), ["agent-server"]
+        while pending:
+            crate = pending.pop()
+            if crate in closure:
+                continue
+            closure.add(crate)
+            pending.extend(workspace_dependencies(crate))
+        self.assertIn("policy", closure)
+        self.assertLessEqual(closure, self.packaged_crates(),
+                             "agent 链接了这些工作区 crate，但 package-agent.sh 没有随包携带它们的测试")
 
 
 if __name__ == "__main__":
