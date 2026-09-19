@@ -1,0 +1,110 @@
+#!/usr/bin/env bash
+# 自托管 CI 服务器的一次性 root 初始化。只在**专用** CI 机器上执行：sudo bash bootstrap-root.sh
+# 做且只做需要 root 的事；runner 本体、Rust 工具链、注册都由无特权的 ghrunner 用户完成。
+# 幂等：可重复执行。不接受参数，不联网下载 apt 官方源以外的任何东西。
+set -Eeuo pipefail
+umask 022
+export PATH=/usr/sbin:/usr/bin:/sbin:/bin DEBIAN_FRONTEND=noninteractive
+[[ "$EUID" == 0 && $# == 0 ]] || { echo '请用 sudo bash 执行，不接受参数。' >&2; exit 2; }
+OPERATOR="${SUDO_USER:-}"
+[[ -n "$OPERATOR" && "$OPERATOR" != root ]] || { echo '需要经 sudo 由普通运维用户执行，以便把其 SSH 公钥授给 ghrunner。' >&2; exit 2; }
+
+# 1. 系统包。time：大文件用例用 /usr/bin/time 量峰值 RSS；docker.io：前端作业是容器作业。
+apt-get update -qq
+apt-get install -y -qq build-essential pkg-config git curl ca-certificates python3 time jq docker.io
+systemctl enable --now docker
+
+# 2. 专用用户：无 sudo、无口令登录；docker 组是跑容器作业所必需（在本机等同 root，所以这台机器只跑自己私有仓库的 CI）。
+id ghrunner >/dev/null 2>&1 || useradd --create-home --shell /bin/bash --comment 'GitHub Actions runner' ghrunner
+passwd -l ghrunner >/dev/null
+usermod -aG docker ghrunner
+install -d -m 700 -o ghrunner -g ghrunner /home/ghrunner/.ssh /home/ghrunner/runners /home/ghrunner/hooks
+# 运维用户已有的 SSH 公钥同样授给 ghrunner，之后的无特权步骤直接以 ghrunner 登录完成。
+OPERATOR_KEYS="$(getent passwd "$OPERATOR" | cut -d: -f6)/.ssh/authorized_keys"
+[[ -s "$OPERATOR_KEYS" ]] || { echo "找不到 $OPERATOR 的 authorized_keys。" >&2; exit 1; }
+install -m 600 -o ghrunner -g ghrunner "$OPERATOR_KEYS" /home/ghrunner/.ssh/authorized_keys
+
+# 3. runner 的 systemd 模板单元：每个仓库一个实例 actions-runner@<名字>，目录 /home/ghrunner/runners/<名字>。
+#    LimitMEMLOCK：Studiolo 的秘密驻留面加固用 mlockall，上限不足时按设计失败关闭；在单元里给足，作业就不需要 sudo prlimit。
+cat > /etc/systemd/system/actions-runner@.service <<'UNIT'
+[Unit]
+Description=GitHub Actions runner (%i)
+After=network-online.target docker.service
+Wants=network-online.target
+ConditionPathExists=/home/ghrunner/runners/%i/.runner
+
+[Service]
+User=ghrunner
+Group=ghrunner
+WorkingDirectory=/home/ghrunner/runners/%i
+ExecStart=/home/ghrunner/runners/%i/run.sh
+Restart=always
+RestartSec=10
+KillMode=process
+KillSignal=SIGTERM
+TimeoutStopSec=5min
+LimitMEMLOCK=infinity
+LimitNOFILE=65536
+UMask=0022
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+
+# 4. 窄 sudo：运维用户只能免密启停/查看 runner 单元，别的什么都不行。
+cat > /usr/local/sbin/ci-runner-service <<'HELPER'
+#!/usr/bin/env bash
+set -euo pipefail
+export PATH=/usr/sbin:/usr/bin:/sbin:/bin
+[[ $# == 2 && "$2" =~ ^[a-z0-9][a-z0-9-]{0,39}$ ]] || { echo '用法：ci-runner-service <enable-now|restart|stop|disable|status> <实例名>' >&2; exit 2; }
+unit="actions-runner@$2.service"
+case "$1" in
+  enable-now) systemctl daemon-reload; exec systemctl enable --now "$unit" ;;
+  restart)    exec systemctl restart "$unit" ;;
+  stop)       exec systemctl stop "$unit" ;;
+  disable)    exec systemctl disable --now "$unit" ;;
+  status)     exec systemctl status --no-pager "$unit" ;;
+  *) echo '未知动作' >&2; exit 2 ;;
+esac
+HELPER
+chmod 755 /usr/local/sbin/ci-runner-service
+printf '%s ALL=(root) NOPASSWD: /usr/local/sbin/ci-runner-service\n' "$OPERATOR" > /etc/sudoers.d/90-ci-runner-service
+chmod 440 /etc/sudoers.d/90-ci-runner-service
+visudo -cf /etc/sudoers.d/90-ci-runner-service >/dev/null
+
+# 5. 磁盘清理：构建目录会把盘写满（2026-09-17 本机就出过一次）。每天一次；超过 80% 才动手。
+cat > /usr/local/sbin/ci-runner-cleanup <<'CLEAN'
+#!/usr/bin/env bash
+set -euo pipefail
+export PATH=/usr/sbin:/usr/bin:/sbin:/bin
+used=$(df --output=pcent / | tail -1 | tr -dc 0-9)
+docker image prune -af --filter 'until=168h' >/dev/null 2>&1 || true
+docker builder prune -af --filter 'until=168h' >/dev/null 2>&1 || true
+if (( used >= 80 )); then
+  # 只删可重建的构建产物；runner 空闲时才会有人来取这些目录。
+  find /home/ghrunner/runners -maxdepth 5 -type d \( -name target -o -name node_modules \) -path '*/_work/*' -prune -exec rm -rf {} + 2>/dev/null || true
+fi
+CLEAN
+chmod 755 /usr/local/sbin/ci-runner-cleanup
+cat > /etc/systemd/system/ci-runner-cleanup.service <<'UNIT'
+[Unit]
+Description=CI runner disk cleanup
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/ci-runner-cleanup
+UNIT
+cat > /etc/systemd/system/ci-runner-cleanup.timer <<'UNIT'
+[Unit]
+Description=Daily CI runner disk cleanup
+[Timer]
+OnCalendar=daily
+RandomizedDelaySec=1h
+Persistent=true
+[Install]
+WantedBy=timers.target
+UNIT
+systemctl daemon-reload
+systemctl enable --now ci-runner-cleanup.timer >/dev/null
+
+echo '初始化完成：ghrunner 用户、Docker、actions-runner@.service、ci-runner-service 助手与清理定时器已就位。'
+echo '下一步由无特权的 ghrunner 完成：ssh ghrunner@本机 后运行 install-runner.sh。'

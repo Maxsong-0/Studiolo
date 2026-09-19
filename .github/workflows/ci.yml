@@ -3,10 +3,17 @@
 # toolchain 版本与 rust-toolchain.toml 保持一致（两处同改）。
 name: CI
 
+# T-080：push 只对 main 触发。原先 `branches: ["**"]` 加 `pull_request` 会让每次向 PR 分支推送把整套检查跑两遍，
+# 私有仓库的免费分钟数两天就烧光了。PR 走 pull_request，合并后的 main 走 push，各一遍。
 on:
   push:
-    branches: ["**"]
+    branches: [main]
   pull_request:
+
+# 同一个 PR 上被新推送顶替的旧运行自动取消；main 上每个合并点都要有结论，不取消。
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
@@ -25,11 +32,15 @@ env:
 jobs:
   rust:
     name: fmt / clippy / test (Linux x86_64)
-    runs-on: ubuntu-24.04
+    # T-080：仓库变量 CI_RUNNER_LABELS（JSON 数组，如 ["self-hosted","linux","x64","studiolo"]）存在就走自托管 runner，
+    # 删掉变量即回退 GitHub 托管。自托管机器的搭建见 deploy/ci-runner/README.md。
+    runs-on: ${{ vars.CI_RUNNER_LABELS && fromJSON(vars.CI_RUNNER_LABELS) || 'ubuntu-24.04' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: 腾出 runner 磁盘（预装 SDK 与本仓库无关）
+        # 只对 GitHub 托管机器有意义；自托管 runner 无 sudo，磁盘由机器上的清理定时器管。
+        if: runner.environment == 'github-hosted'
         run: |
           df -h /
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
@@ -43,7 +54,9 @@ jobs:
           rustc --version
           cargo --version
 
+      # 自托管 runner 的 CARGO_TARGET_DIR 常驻在机器上（runner 的 .env 里设），不需要把几个 GB 的缓存经家用上行传到 GitHub 再取回。
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        if: runner.environment == 'github-hosted'
 
       - name: 格式检查
         run: cargo --locked fmt --all -- --check
@@ -78,7 +91,7 @@ jobs:
         # GitHub Actions 每个 run 步骤是独立 shell，上一步抬高不会传到下一步。
         run: |
           python3 --version
-          sudo prlimit --pid $$ --memlock=unlimited:unlimited
+          [ "$(ulimit -l)" = unlimited ] || sudo prlimit --pid $$ --memlock=unlimited:unlimited
           ulimit -l
           cargo --locked test --workspace
 
@@ -89,10 +102,10 @@ jobs:
         # 的上限不会传到这里，必须在本步骤内再抬一次。
         run: |
           cargo --locked build -p studiolo-agent-server
-          sudo prlimit --pid $$ --memlock=unlimited:unlimited
+          [ "$(ulimit -l)" = unlimited ] || sudo prlimit --pid $$ --memlock=unlimited:unlimited
           ulimit -l
-          python3 scripts/check-replica-pipeline.py target/debug/studiolo-agent
-          python3 scripts/check-client-projection-pipeline.py target/debug/studiolo-agent
+          python3 scripts/check-replica-pipeline.py "${CARGO_TARGET_DIR:-target}/debug/studiolo-agent"
+          python3 scripts/check-client-projection-pipeline.py "${CARGO_TARGET_DIR:-target}/debug/studiolo-agent"
 
       - name: Linux 路径安全负向测试（显式验收）
         run: cargo --locked test -p studiolo-vault-broker --test linux_path_security
@@ -104,12 +117,12 @@ jobs:
         # 该 CLI 启动时会跑秘密驻留面加固（mlockall），同样需要在本 shell 内抬高 RLIMIT_MEMLOCK。
         run: |
           cargo --locked build -p studiolo-auth-admin --features production
-          sudo prlimit --pid $$ --memlock=unlimited:unlimited
-          python3 crates/auth-admin/tests/support/cli_process.py target/debug/studiolo-auth-admin
+          [ "$(ulimit -l)" = unlimited ] || sudo prlimit --pid $$ --memlock=unlimited:unlimited
+          python3 crates/auth-admin/tests/support/cli_process.py "${CARGO_TARGET_DIR:-target}/debug/studiolo-auth-admin"
 
   frontend:
     name: 前端类型 / 构建 / 测试 / 规范
-    runs-on: ubuntu-24.04
+    runs-on: ${{ vars.CI_RUNNER_LABELS && fromJSON(vars.CI_RUNNER_LABELS) || 'ubuntu-24.04' }}
     container: node:22.17.0-bookworm-slim
     defaults:
       run:
