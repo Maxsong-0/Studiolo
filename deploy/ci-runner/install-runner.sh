@@ -39,9 +39,6 @@ if [[ ! -x "$HOME/.cargo/bin/rustup" ]]; then
   sh "$HOME/rustup-init.sh" -y --no-modify-path --profile minimal --default-toolchain none >/dev/null
   rm -f "$HOME/rustup-init.sh"
 fi
-# runner 启动时读 .path 作为作业的 PATH。
-printf '%s\n' "$HOME/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" > "$dir/.path"
-
 cat > "$dir/register.sh" <<'REG'
 #!/usr/bin/env bash
 # 注册令牌只从 stdin 读、不回显、不落盘：
@@ -55,6 +52,9 @@ name=$(basename "$PWD")
 ./config.sh --unattended --url "https://github.com/$1" --token "$token" \
   --name "$(hostname)-$name" --labels "self-hosted,linux,x64,$name" --work _work --replace >/dev/null
 unset token
+# runner 启动时读 .path 作为作业的 PATH。官方 env.sh 在 config.sh 里会无条件 `echo $PATH>.path` 覆盖它，
+# 所以必须在注册**之后**写（2026-09-19 首轮 CI 因此 `rustup: command not found`）。
+printf '%s\n' "$HOME/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" > .path
 echo "已注册：$(hostname)-$name → $1（标签 self-hosted,linux,x64,$name）"
 REG
 chmod 700 "$dir/register.sh"
