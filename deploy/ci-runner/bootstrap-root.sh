@@ -121,7 +121,7 @@ UNIT
 systemctl daemon-reload
 systemctl enable --now ci-runner-cleanup.timer >/dev/null
 
-echo '初始化完成：ghrunner 用户、Docker、actions-runner@.service、ci-runner-service 助手与清理定时器已就位。'
+echo '初始化完成：ghrunner 用户、actions-runner@.service、ci-runner-service 助手、memlock 限额与清理定时器已就位（不含 Docker）。'
 install -m 700 -o ghrunner -g ghrunner "$HERE/install-runner.sh" /home/ghrunner/install-runner.sh
 if [[ $# == 3 ]]; then
   # 新加入 docker 组要在新会话里才生效；runuser 起的是新会话。
