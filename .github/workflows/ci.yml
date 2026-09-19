@@ -67,6 +67,9 @@ jobs:
           python3 scripts/test-client-projection-schema.py
           python3 scripts/test-client-projection-fetch.py
           python3 scripts/test-client-projection-store.py
+          # 这三份的夹具曾依赖环境 umask：Ubuntu 普通用户默认 002，服务器原生自检因此红过（T-079）。
+          # 在敌对 umask 下再跑一遍，测试必须自己钉住前提。
+          ( umask 002; python3 scripts/test-sync-agent-vault.py; python3 scripts/test-replica-receiver.py; python3 scripts/test-replica-boundaries.py )
 
       - name: Clippy（警告即失败）
         run: cargo --locked clippy --workspace --all-targets -- -D warnings
@@ -93,6 +96,7 @@ jobs:
           ulimit -l
           python3 scripts/check-replica-pipeline.py target/debug/studiolo-agent
           python3 scripts/check-client-projection-pipeline.py target/debug/studiolo-agent
+          ( umask 002; python3 scripts/check-replica-pipeline.py target/debug/studiolo-agent; python3 scripts/check-client-projection-pipeline.py target/debug/studiolo-agent )
 
       - name: Linux 路径安全负向测试（显式验收）
         run: cargo --locked test -p studiolo-vault-broker --test linux_path_security
