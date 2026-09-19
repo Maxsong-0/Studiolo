@@ -22,7 +22,7 @@ NAME="$(basename "$ROOT")-$KEY"
 REMOTE=".cache/studiolo-tests/$NAME"
 
 if [ "$#" -eq 0 ]; then
-  set -- bash -euo pipefail -c '
+  RUN='
     cargo --locked fmt --all -- --check
     cargo --locked clippy --workspace --all-targets -- -D warnings
     cargo --locked test --workspace
@@ -31,6 +31,9 @@ if [ "$#" -eq 0 ]; then
     cargo --locked build -p studiolo-auth-admin --features production
     python3 crates/auth-admin/tests/support/cli_process.py "$CARGO_TARGET_DIR/debug/studiolo-auth-admin"
   '
+else
+  # ssh 把多个参数拼成一条远端命令再由远端 shell 重新分词，所以这里先逐个加引号。
+  RUN="$(printf '%q ' "$@")"
 fi
 
 # rsync 不会建多级父目录，先建好（-p 幂等）。
@@ -45,8 +48,11 @@ rsync -a --delete --delete-excluded \
 
 # flock：同一工作树的两次调用排队，不并发糟蹋同一个构建目录。
 # 构建目录放在同步树之外，--delete 不会清掉它。
-exec ssh -o BatchMode=yes -o ConnectTimeout=15 -t "$HOST" \
-  "STUDIOLO_REMOTE='$REMOTE' STUDIOLO_NAME='$NAME' STUDIOLO_DEV_DEBUG='${STUDIOLO_DEV_DEBUG:-line-tables-only}' bash -euo pipefail -s" <<'REMOTE_SCRIPT' "$@"
+# 命令经 %q 整体转成一个安全的 token 传给远端 shell；远端只 bash -c 一次，不做二次求值。
+exec ssh -o BatchMode=yes -o ConnectTimeout=15 "$HOST" \
+  "STUDIOLO_REMOTE=$(printf '%q' "$REMOTE") STUDIOLO_NAME=$(printf '%q' "$NAME") \
+   STUDIOLO_DEV_DEBUG=$(printf '%q' "${STUDIOLO_DEV_DEBUG:-line-tables-only}") \
+   STUDIOLO_RUN=$(printf '%q' "$RUN") bash -euo pipefail -s" <<'REMOTE_SCRIPT'
 umask 022
 export PATH="$HOME/.cargo/bin:$PATH"
 export CARGO_TERM_COLOR=always
@@ -61,5 +67,5 @@ if [ "$limit" != unlimited ] && { ! [ "$limit" -gt 65536 ] 2>/dev/null; }; then
 fi
 command -v rustup >/dev/null || { printf '服务器上没有 rustup；先 curl https://sh.rustup.rs | sh -s -- -y --profile minimal\n' >&2; exit 1; }
 cd "$STUDIOLO_REMOTE"
-exec flock "$HOME/.cache/studiolo-locks/$STUDIOLO_NAME.lock" "$@"
+exec flock "$HOME/.cache/studiolo-locks/$STUDIOLO_NAME.lock" bash -euo pipefail -c "$STUDIOLO_RUN"
 REMOTE_SCRIPT
