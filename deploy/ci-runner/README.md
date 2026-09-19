@@ -36,6 +36,6 @@ ssh <运维用户>@<CI机器> 'sudo /usr/local/sbin/ci-runner-service enable-now
 | 位置 | 作用 |
 |---|---|
 | `actions-runner@<实例>.service` | `User=ghrunner`，`LimitMEMLOCK=infinity`（Studiolo 的秘密驻留面加固用 `mlockall`，给足后作业不需要 `sudo prlimit`） |
-| `~ghrunner/runners/<实例>/.env` | 作业开始钩子（把容器作业留下的 root 属主文件改回来）与 `CARGO_TARGET_DIR`（常驻在工作区之外，不随 checkout 清掉） |
+| `~ghrunner/runners/<实例>/.env` | runner 启动时自己读：作业开始钩子（把容器作业留下的 root 属主文件改回来）、`CARGO_TARGET_DIR`（常驻在工作区之外，不随 checkout 清掉）、作业的 `PATH`（含 `~/.cargo/bin`；官方 `.path` 文件只有 `runsvc.sh` 会读，本机单元不走它） |
 | `/usr/local/sbin/ci-runner-service` ＋ sudoers | 运维用户只能免密启停／查看 runner 单元 |
 | `ci-runner-cleanup.timer` | 每天清一次过期镜像；根分区超过 80% 才删可重建的构建目录 |
