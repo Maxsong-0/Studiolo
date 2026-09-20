@@ -35,6 +35,7 @@ impl Totp {
         // 显式封闭匹配：未来新增动作必须先经过权威矩阵裁决。
         match action {
             SensitiveAction::ActivatePolicy
+            | SensitiveAction::ApproveCandidate
             | SensitiveAction::ChangeVault
             | SensitiveAction::ChangeBackup
             | SensitiveAction::ChangeSync

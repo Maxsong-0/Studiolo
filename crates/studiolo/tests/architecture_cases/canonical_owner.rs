@@ -22,9 +22,11 @@ fn boundary_violations(path: &Path, source: &str) -> Vec<&'static str> {
             .ancestors()
             .skip(1)
             .any(|parent| parent.ends_with("coordinator"));
+    let board_owner = path.ends_with("board/owner.rs");
+    let board_root = path.ends_with("board/mod.rs");
     let maintenance_input = path.ends_with(MAINTENANCE_INPUT);
     let input = path.ends_with(INPUT) || maintenance_input;
-    if remaining.contains("FsVaultBroker") && !input && !owner {
+    if remaining.contains("FsVaultBroker") && !input && !owner && !board_owner {
         violations.push("writer_type");
     }
     if input {
@@ -46,7 +48,7 @@ fn boundary_violations(path: &Path, source: &str) -> Vec<&'static str> {
     {
         violations.push("writer_factory");
     }
-    if !owner && remaining.contains(".owner") {
+    if !owner && !board_owner && remaining.contains(".owner") {
         violations.push("owner_escape");
     }
     if path.ends_with("coordinator/content.rs") {
@@ -65,6 +67,27 @@ fn boundary_violations(path: &Path, source: &str) -> Vec<&'static str> {
             "broker.confirm_recorded_restore_intent(&ticket,offset,&hash)",
             "broker.commit_recorded_restore(ticket)",
             "broker.cancel_recorded_restore(ticket)",
+        ] {
+            remaining = remaining.replacen(allowed, "", 1);
+        }
+    }
+    if board_owner {
+        // 黑板仅借用原writer；此精确代理不授予任何工厂或环境文件访问。
+        for allowed in [
+            "implVaultWriterforSharedBroker{",
+            "implVaultSnapshotterforSharedBroker{",
+            "self.access(|b|b.mutate(mutation))",
+            "fncommit_attempt_artifacts(&mutself,commit:ArtifactCommit)->Result<ArtifactCommitReceipt,BrokerError>",
+            "self.access(|b|b.commit_attempt_artifacts(commit))",
+        ] {
+            remaining = remaining.replacen(allowed, "", 1);
+        }
+    }
+    if board_root {
+        for allowed in [
+            "usestudiolo_task_engine::PersistentTaskEngine;",
+            "typeEngine=PersistentTaskEngine<owner::SharedBroker,SharedAudit>;",
+            "PersistentTaskEngine::new(control,broker,SharedAudit(audit.clone()))",
         ] {
             remaining = remaining.replacen(allowed, "", 1);
         }
@@ -235,4 +258,26 @@ fn canonical_router_receives_a_completed_owner_and_keeps_legacy_sources_distinct
     assert!(preparation.contains("owner:Mutex::new(Some(broker))"));
     assert!(owner.contains("owner:Mutex<Option<FsVaultBroker>>"));
     assert!(!owner.contains("pubstructCore"));
+}
+
+#[test]
+fn blackboard_proxy_and_executor_do_not_gain_extra_writer_factories() {
+    let root = workspace_root().join("crates/local-server/src");
+    for name in ["board/owner.rs", "board/mod.rs", "board/executor/mod.rs"] {
+        let path = root.join(name);
+        let source = fs::read_to_string(&path).unwrap();
+        assert!(boundary_violations(&path, &source).is_empty(), "{name}");
+        for extra in [
+            "broker.mutate(arbitrary);",
+            "broker.commit_attempt_artifacts(other);",
+            "FsVaultBroker::open(root, data);",
+            "use studiolo_vault_broker::VaultSnapshotter;",
+            "PersistentTaskEngine::new(control,broker,SharedAudit(audit.clone()));",
+        ] {
+            assert!(
+                !boundary_violations(&path, &format!("{source}\n{extra}")).is_empty(),
+                "{name}: {extra}"
+            );
+        }
+    }
 }

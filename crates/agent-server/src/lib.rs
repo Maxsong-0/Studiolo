@@ -4,6 +4,7 @@
 
 pub mod admin;
 pub mod auth;
+pub mod board_client;
 mod http_text;
 pub mod index;
 mod mcp_transport;

@@ -22,6 +22,8 @@ pub struct TotpRequest<'a> {
 pub enum SensitiveAction {
     /// 发布策略、回滚策略以及通过策略启用 Adapter。
     ActivatePolicy,
+    /// 审阅已保留的执行体候选并确认逐项验收。
+    ApproveCandidate,
     /// 改变预批准范围内的 canonical Vault 目标。
     ChangeVault,
     /// 改变备份目标及故障域声明。

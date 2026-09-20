@@ -22,6 +22,7 @@ fn serve_requires_absolute_paths_and_at_least_one_allow() {
     assert_eq!(
         parsed,
         Command::Serve(ServeOptions {
+            board_socket: None,
             index_cache: None,
             vault: Some(PathBuf::from("/v")),
             replica_root: None,

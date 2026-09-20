@@ -31,7 +31,8 @@ impl FsVaultBroker {
             .checked_sub(age)
             .ok_or(BrokerError::WriterLimitExceeded)?;
         let current = crate::blob::current::observe(self, path)?.revision();
-        let protected = crate::file_operation::tombstone::protected(self, path)?;
+        let mut protected = crate::file_operation::tombstone::protected(self, path)?;
+        protected.extend(crate::batch::record::protected(self, path)?);
         if catalog
             .garbage
             .iter()

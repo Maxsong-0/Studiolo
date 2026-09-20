@@ -35,6 +35,7 @@ async fn initialize_serves_a_budgeted_signpost_and_tools_read_only_inside_the_al
     assert_eq!(
         names,
         [
+            "board",
             "handshake",
             "list_entries",
             "policy_read",
@@ -220,4 +221,3 @@ async fn initialize_serves_a_budgeted_signpost_and_tools_read_only_inside_the_al
         .status();
     assert_eq!(status, 401);
 }
-

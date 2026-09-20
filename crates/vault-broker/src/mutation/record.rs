@@ -42,7 +42,7 @@ pub(crate) struct Operation {
 }
 
 impl Operation {
-    fn validate(&self, streaming: bool) -> Result<(), BrokerError> {
+    pub(crate) fn validate(&self, streaming: bool) -> Result<(), BrokerError> {
         if self.sequence == 0
             || self
                 .recording

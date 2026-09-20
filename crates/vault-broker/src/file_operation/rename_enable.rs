@@ -20,7 +20,7 @@ impl FsVaultBroker {
             return Ok(());
         }
         state.rename_enabled = true;
-        state.format_version = 6;
+        state.format_version = state.format_version.max(6);
         mutation::fault(self, 84)?;
         mutation::save(self, &state)?;
         mutation::fault(self, 85)

@@ -29,6 +29,8 @@ pub struct Principal {
 /// 没有策略平面（`serve` 未给 `--policy`，M3 兼容模式）时为 `None`，路牌明写「策略平面：未接入」。
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct PolicySignpost {
+    /// 当前入口具有实时黑板写能力（HTTP兜底固定false）。
+    pub board_write: bool,
     /// 复核时的 effective 哈希。
     pub effective_hash: String,
     /// 该类型现行能力集版本。

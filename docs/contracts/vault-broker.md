@@ -158,3 +158,34 @@ Linux 路径攻击必须通过临时目录上的真实 Adapter 验证，不能�
 验收至少覆盖：create/replace/CAS、history、幂等冲突、snapshot 稳定性、Vault UUID 初始化、
 manifest 最后写与重放，以及 symlink、magic link、encoded separator、大小写/Unicode
 碰撞、竞态替换、hardlink、设备/FIFO/socket。Linux 专属测试未实际运行时只能标“未验证”。
+
+## 8. M5 批量写回与私有候选
+
+新增独立 `BatchWriter` 能力：`preview_batch` 返回绑定请求和全部 before/after diff 的
+`BatchPreview`；`commit_batch` 重验完整预览与全批 CAS，通过同一唯一写者和 v7 writer journal
+完成单事务提交；`rollback_batch` 以全批 CAS 恢复全部原文/原缺失状态，也可将同批未决安装
+转入回滚。批次在途时公开 canonical 读写全部失败关闭，独立 `CanonicalReadVault` 通过持久
+读屏障遵守同一边界。重开先验证全部 stage/目标/L0 证据，再继续前滚或回滚。任一后来的人侧
+修改都阻止整批回滚，不能以旧正文覆盖。现有正文只接受精确 patch，不提供批量全文替换入口。
+
+`ArtifactStager` 与 canonical 写权限分开；`stage_artifact_commit` 把候选保存在 Broker 私有
+存储，返回只有逻辑 `id` 和 `sha256` 的 `StagedArtifactCommit`。TaskEngine 数据库只保存
+这个指针，`load_staged_artifact_commit` 重验 Vault 绑定和内容摘要后装载正文。既有
+`ArtifactCommit`/manifest-last 接口保持可用。
+
+`NumberingScanner` 从完整可信文件名扫描返回范围内最大编号，控制面仍须通过数据库事务
+串行预留。以上三个 trait 均由 Fs/Memory 实现，没有扩大原 `VaultBroker` supertrait。
+完整限制、恢复状态与验收边界见 [M5 批量写回](../m5/batch-write.md)。
+
+## 9. M6 独立 Gateway 调用封存
+
+`GatewayPublisher::seal_gateway_call(GatewayCallSeal)` 在私有
+`.workbench/gateway/<task>/<attempt>/<sha256(call_id)>/manifest.json` 封存调用元数据。
+它不接受 raw 正文或环境路径，不复制 raw 到 canonical/L0，不占最终 attempt artifacts 的
+manifest。固定请求绑定 Vault、task/attempt/fence、审计 intent、raw/source 摘要和大小、
+模型、保留期限、snapshot 与 effective policy；同 call 同元数据重放原回执，不同元数据
+返回 `IdempotencyConflict`。
+
+Fs 沿既有 writer 身份与未决门禁，通过逐级安全目录句柄执行元数据 manifest-last 的原子
+安装与 fsync；Memory 提供相同幂等契约。回执只有逻辑 manifest 路径和 SHA-256，不能代表
+Gateway 私有 raw 的实际保留状态。完整字段与验收边界见 [Gateway 调用封存](../m6/gateway-seal.md)。

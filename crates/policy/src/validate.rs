@@ -192,11 +192,34 @@ fn capability_set(report: &mut Report, canonical: &str, context: &Context) {
             "永久为 false：AI 不整页覆盖人写正文",
         ));
     }
-    if set.write.board {
+    if set.write.board && (set.write.board_projects.is_empty() || !set.write.content_patch_only) {
         report.problems.push(Problem::new(
             "write.board",
-            "M5 黑板写入尚未开放，此项恒为 false",
+            "黑板写入必须有显式 write.board_projects 且保留 patch-only 内容边界",
         ));
+    }
+    if !set.write.board && !set.write.board_projects.is_empty() {
+        report.problems.push(Problem::new(
+            "write.board_projects",
+            "黑板只读时写项目必须为空",
+        ));
+    }
+    let mut write_seen = BTreeSet::new();
+    for prefix in &set.write.board_projects {
+        let valid = VaultPath::parse(prefix).is_ok_and(|p| {
+            !p.is_protected()
+                && p.as_str().starts_with("项目/")
+                && p.as_str().split('/').count() == 2
+        });
+        if !valid
+            || !covered(prefix, &set.read.project_whitelist)
+            || !write_seen.insert(prefix.clone())
+        {
+            report.problems.push(Problem::new(
+                "write.board_projects",
+                "必须为唯一、合法且位于读取白名单内的完整项目路径",
+            ));
+        }
     }
     if set.policy.activate {
         report.problems.push(Problem::new(
@@ -280,7 +303,37 @@ fn capability_set(report: &mut Report, canonical: &str, context: &Context) {
             });
         }
     }
+    let old_board = previous
+        .as_ref()
+        .map(|s| s.write.board_projects.clone())
+        .unwrap_or_default();
+    for prefix in &set.write.board_projects {
+        if !old_board.contains(prefix) {
+            report.expansions.push(Expansion {
+                path: "write.board_projects".into(),
+                before: None,
+                after: Some(prefix.clone()),
+                note: "获得该项目黑板写权限".into(),
+            });
+        }
+    }
+    for prefix in &old_board {
+        if !set.write.board_projects.contains(prefix) {
+            report.narrowings.push(Expansion {
+                path: "write.board_projects".into(),
+                before: Some(prefix.clone()),
+                after: None,
+                note: "收回该项目黑板写权限".into(),
+            });
+        }
+    }
     let flags = [
+        (
+            "write.board",
+            previous.as_ref().is_some_and(|s| s.write.board),
+            set.write.board,
+            "获得黑板写权限",
+        ),
         (
             "write.content_patch_only",
             previous

@@ -5,6 +5,7 @@ mod error;
 mod factor_input;
 mod health_input;
 mod repository_input;
+mod runner_input;
 mod serving;
 
 pub(crate) use error::StartupError;
@@ -30,6 +31,9 @@ pub(crate) struct PreparedServer {
     ingress: Option<PreparedUnixIngress>,
     workbench: Option<Arc<CanonicalWorkbench>>,
     repository: Option<Arc<ProjectRepository>>,
+    runner_plane: Option<Arc<studiolo_local_server::board::RunnerPlane>>,
+    board_ingress: Option<PreparedUnixIngress>,
+    board_plane: Option<Arc<studiolo_local_server::board::BoardPlane>>,
 }
 
 impl PreparedServer {
@@ -88,14 +92,32 @@ where
             .policy_data
             .as_ref()
             .is_some_and(|path| !path.is_absolute() || options.session.is_none())
+        || options.runner_config.as_ref().is_some_and(|path| {
+            !path.is_absolute() || options.board.is_none() || options.factor.is_none()
+        })
     {
         return Err(StartupError::Configuration);
     }
+    let runner_config = options
+        .runner_config
+        .as_deref()
+        .map(runner_input::load)
+        .transpose()?;
     let mut repository = repository_input::open(&options)?;
     let mut content_audit: Option<Arc<dyn studiolo_audit_ledger::AuditLedger>> = None;
+    let mut board_protected = Vec::new();
     let (sessions, roots, access_config, factors, writer_roots) =
         if let Some(session) = &options.session {
             let config = Config::load(&session.config).map_err(|_| StartupError::Configuration)?;
+            board_protected.extend([
+                config.auth_directory().to_owned(),
+                config.audit_directory().to_owned(),
+                session
+                    .config
+                    .parent()
+                    .ok_or(StartupError::Configuration)?
+                    .to_owned(),
+            ]);
             repository = repository_input::approved(&options, &config)?;
             let access = config
                 .access(&session.origin)
@@ -277,20 +299,99 @@ where
     let app = studiolo_local_server::health::with_health_evidence(app, health_input::source());
     // 策略平面同一形态：会话模式下显式给了 --policy-data 才打开主人发布者句柄并装上；
     // 事件进人侧权威账本。缺这一步策略路由一律回 404。
-    let app = match (&options.policy_data, &content_audit) {
-        (Some(directory), Some(ledger)) => {
-            let store = studiolo_policy::PolicyStore::open(directory)
-                .map_err(|_| StartupError::Configuration)?;
-            studiolo_local_server::with_policy_plane(
-                app,
-                Arc::new(studiolo_local_server::PolicyPlane::new(
-                    store,
-                    Arc::clone(ledger),
-                )),
-            )
+    let policy_preparation = match (&options.policy_data, &content_audit) {
+        (Some(directory), Some(ledger)) => studiolo_policy::PolicyStore::open(directory)
+            .map_err(|_| StartupError::Configuration)
+            .map(|store| {
+                studiolo_local_server::with_policy_plane(
+                    app,
+                    Arc::new(studiolo_local_server::PolicyPlane::new(
+                        store,
+                        Arc::clone(ledger),
+                    )),
+                )
+            }),
+        (Some(_), None) => Err(StartupError::Configuration),
+        (None, _) => Ok(app),
+    };
+    let app = match policy_preparation {
+        Ok(app) => app,
+        Err(error) => {
+            canonical_input::shutdown(workbench.as_ref()).await?;
+            return Err(error);
         }
-        (Some(_), None) => return Err(StartupError::Configuration),
-        (None, _) => app,
+    };
+    let board_preparation = (|| -> Result<_, StartupError> {
+        match (
+            &options.board,
+            &workbench,
+            &content_audit,
+            &options.policy_data,
+        ) {
+            (Some(board), Some(writer), Some(audit), Some(policy)) => {
+                let mut isolated = vec![
+                    options.vault.as_path(),
+                    options.assets.as_path(),
+                    board.agent_data.as_path(),
+                    policy.as_path(),
+                    options
+                        .writer_data
+                        .as_ref()
+                        .ok_or(StartupError::Configuration)?
+                        .as_path(),
+                ];
+                isolated.extend(board_protected.iter().map(|p| p.as_path()));
+                let plane = studiolo_local_server::board::BoardPlane::open_with_runner(
+                    writer.clone(),
+                    &board.data,
+                    &board.agent_data,
+                    policy,
+                    &isolated,
+                    audit.clone(),
+                    runner_config.as_ref(),
+                )
+                .map_err(|_| StartupError::Configuration)?;
+                isolated.push(board.data.as_path());
+                let ingress = PreparedUnixIngress::prepare(&board.socket, &isolated)
+                    .map_err(|_| StartupError::Ingress)?;
+                Ok((Some(ingress), Some(plane)))
+            }
+            (None, _, _, _) => Ok((None, None)),
+            _ => Err(StartupError::Configuration),
+        }
+    })();
+    let (board_ingress, board_plane) = match board_preparation {
+        Ok(prepared) => prepared,
+        Err(error) => {
+            canonical_input::shutdown(workbench.as_ref()).await?;
+            return Err(error);
+        }
+    };
+    let app = if let Some(plane) = &board_plane {
+        studiolo_local_server::board::with_board_plane(app, plane.clone())
+    } else {
+        app
+    };
+    let runner_plane = match (&board_plane, runner_config) {
+        (Some(board), Some(config)) => {
+            match studiolo_local_server::board::RunnerPlane::open(board.clone(), config) {
+                Ok(plane) => Some(plane),
+                Err(_) => {
+                    canonical_input::shutdown(workbench.as_ref()).await?;
+                    return Err(StartupError::Configuration);
+                }
+            }
+        }
+        (_, None) => None,
+        _ => {
+            canonical_input::shutdown(workbench.as_ref()).await?;
+            return Err(StartupError::Configuration);
+        }
+    };
+    let app = if let Some(runner) = &runner_plane {
+        app.layer(axum::Extension(runner.clone()))
+    } else {
+        app
     };
     let prepared = PreparedServer {
         app,
@@ -301,6 +402,9 @@ where
         ingress,
         workbench,
         repository,
+        board_ingress,
+        board_plane,
+        runner_plane,
     };
     if let Err(error) = prepared.revalidate() {
         canonical_input::shutdown(prepared.workbench.as_ref()).await?;

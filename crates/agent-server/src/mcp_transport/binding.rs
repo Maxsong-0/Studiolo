@@ -197,7 +197,7 @@ impl Binding {
             .is_ok_and(|phase| phase.initialized && !phase.closing && !self.expired(&phase, now))
     }
 
-    pub(super) fn stale(&self, now: Instant) -> bool {
+    pub(crate) fn stale(&self, now: Instant) -> bool {
         self.phase
             .lock()
             .map_or(true, |phase| phase.closing || self.expired(&phase, now))

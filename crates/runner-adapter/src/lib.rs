@@ -1,5 +1,22 @@
 //! Isolated-runner lifecycle seam and deterministic M0 Stub adapter.
 
+mod budget;
+mod cli;
+mod isolation;
+mod landing;
+mod real;
+mod snapshot;
+
+pub use budget::{BudgetPhase, RunBudget, RunnerProgress};
+pub use cli::{CliProvider, ExecutionSpec, SourceEgress};
+pub use isolation::LinuxIsolation;
+pub use landing::{CodeLandingPlan, CodeLandingResult, advance_code_ref, apply_code_patch};
+pub use real::{RealRunner, RunnerLaunchConfig};
+pub use snapshot::{
+    CodeSnapshot, PatchMetadata, SnapshotCleanupReport, SnapshotCleanupRequest,
+    cleanup_orphan_snapshots,
+};
+
 use std::{
     collections::BTreeMap,
     fs::File,
@@ -23,6 +40,19 @@ pub enum AdapterAvailability {
         /// Non-sensitive diagnostic.
         reason: String,
     },
+}
+
+/// Live diagnostic receipt; unavailable prerequisites never imply a usable adapter.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AdapterProbe {
+    /// Actual availability after the current probe.
+    pub availability: AdapterAvailability,
+    /// Version read from the pinned binary inside the isolation profile.
+    pub binary_version: Option<String>,
+    /// Protocol flags verified against the installed binary's help output.
+    pub protocol_capabilities: Vec<String>,
+    /// Concrete missing or failed boundary, never personal login discovery.
+    pub missing_prerequisites: Vec<String>,
 }
 
 /// One immutable input supplied without an ambient Vault path.
@@ -49,6 +79,12 @@ pub struct RunSpec {
     pub instruction: String,
     /// Immutable snapshot contents.
     pub inputs: Vec<RunInput>,
+    /// Resource and work budget; defaults preserve old persisted specs.
+    #[serde(default)]
+    pub budget: RunBudget,
+    /// Cloud execution binding; absent means real adapters must refuse.
+    #[serde(default)]
+    pub execution: Option<ExecutionSpec>,
 }
 
 /// Opaque run handle meaningful only to its adapter.
@@ -146,13 +182,60 @@ pub enum RunnerObservation {
     Running,
     /// Work completed and returned candidates.
     Completed(RunnerReport),
-    /// Capability was revoked and the run was isolated.
+    /// A cancelled CLI supplied an explicit, untrusted stopped receipt plus retained candidates.
+    /// The trusted engine must validate the receipt and cancellation deadline before accepting it.
+    Stopped {
+        /// Actual retained patch and metadata, including the original stopped JSON.
+        report: RunnerReport,
+        /// CLI-provided wire receipt; never treated as a passing owner assessment.
+        receipt: serde_json::Value,
+    },
+    /// Capability was revoked; no valid stopped receipt has been received.
     Cancelled,
+}
+
+/// Stable failure points before execution begins.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LaunchStage {
+    /// Input snapshot could not be prepared.
+    Snapshot,
+    /// Isolation service could not be launched.
+    Isolation,
+    /// CLI did not reach a valid protocol event.
+    Handshake,
 }
 
 /// Runner lifecycle failures.
 #[derive(Debug, thiserror::Error)]
 pub enum RunnerError {
+    /// A real adapter lacks verified isolation or deployment prerequisites.
+    #[error("runner isolation is unavailable")]
+    Unavailable,
+    /// Failure before a first tool call, eligible for launch_failure retry.
+    #[error("runner launch failed at {stage:?}")]
+    LaunchFailed {
+        /// Stable, non-sensitive failure boundary.
+        stage: LaunchStage,
+    },
+    /// Invalid or incompatible immutable execution request.
+    #[error("runner execution specification rejected")]
+    InvalidExecution,
+    /// Rejected candidates were retained for review before any scratch reclamation.
+    #[error("runner candidate rejected; unlanded patch retained at {retained}")]
+    CandidateRejected {
+        /// Durable candidate pointer; no content is included in this error.
+        retained: PathBuf,
+    },
+    /// Work or time ceiling was exhausted.
+    #[error("runner budget exhausted")]
+    BudgetExceeded,
+    /// Output exceeded the bounded retention ceiling.
+    #[error("runner output exceeded limit")]
+    OutputLimit,
+    /// CLI exited or emitted an invalid event stream after launch.
+    #[error("runner protocol failed")]
+    Protocol,
     /// A handle is unknown to this adapter instance.
     #[error("unknown runner handle")]
     UnknownHandle,
@@ -187,6 +270,21 @@ pub trait RunnerAdapter: Send + Sync {
     /// Reports whether the adapter is usable.
     fn probe(&self) -> Result<AdapterAvailability, RunnerError>;
 
+    /// Reports the current binary/protocol diagnostics, when the adapter has a binary.
+    fn probe_report(&self) -> Result<AdapterProbe, RunnerError> {
+        let availability = self.probe()?;
+        let missing_prerequisites = match &availability {
+            AdapterAvailability::Unavailable { reason } => vec![reason.clone()],
+            AdapterAvailability::Ready => Vec::new(),
+        };
+        Ok(AdapterProbe {
+            availability,
+            binary_version: None,
+            protocol_capabilities: Vec::new(),
+            missing_prerequisites,
+        })
+    }
+
     /// Starts or idempotently recovers one immutable attempt.
     fn start(&self, spec: &RunSpec) -> Result<StartedRun, RunnerError>;
 
@@ -195,6 +293,11 @@ pub trait RunnerAdapter: Send + Sync {
 
     /// Idempotently revokes and isolates a run.
     fn cancel(&self, handle: &RunHandle) -> Result<(), RunnerError>;
+
+    /// Returns monotonic progress counters without extending the lease.
+    fn progress(&self, _handle: &RunHandle) -> Result<RunnerProgress, RunnerError> {
+        Ok(RunnerProgress::default())
+    }
 }
 
 struct StubRun {

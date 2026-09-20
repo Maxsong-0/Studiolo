@@ -91,6 +91,11 @@ pub(super) fn initialize(db: &Connection, created: bool) -> Result<(), SupplyErr
     validate(db)
 }
 
+pub(super) fn version(db: &Connection) -> Result<i64, SupplyError> {
+    db.pragma_query_value(None, "user_version", |r| r.get(0))
+        .map_err(unavailable)
+}
+
 fn header(db: &Connection) -> Result<(), SupplyError> {
     let version: i64 = db
         .pragma_query_value(None, "user_version", |r| r.get(0))
@@ -99,7 +104,7 @@ fn header(db: &Connection) -> Result<(), SupplyError> {
         .pragma_query_value(None, "application_id", |r| r.get(0))
         .map_err(unavailable)?;
     // 现行发布格式从未设置这两个字段；不静默改写真实格式 0 的数据库头。
-    if version != 0 || application != 0 {
+    if !(0..=1).contains(&version) || application != 0 {
         return Err(SupplyError::CorruptStore);
     }
     Ok(())
@@ -110,7 +115,10 @@ fn validate(db: &Connection) -> Result<(), SupplyError> {
     let count: i64 = db
         .query_row("SELECT count(*) FROM sqlite_schema", [], |r| r.get(0))
         .map_err(unavailable)?;
-    if count != (TABLES.len() + INDEXES.len() + AUTO_INDEXES.len()) as i64 {
+    let children = version(db)? == 1;
+    if count
+        != (TABLES.len() + INDEXES.len() + AUTO_INDEXES.len() + if children { 3 } else { 0 }) as i64
+    {
         return Err(SupplyError::CorruptStore);
     }
     // 先限制每条 schema 文本，应用层不会按损坏声明的任意长度分配字符串。
@@ -168,6 +176,26 @@ fn validate(db: &Connection) -> Result<(), SupplyError> {
     for (name, table) in AUTO_INDEXES {
         expected.push(("index".into(), (*name).into(), (*table).into(), None));
     }
+    if children {
+        expected.push((
+            "table".into(),
+            "instance_parent".into(),
+            "instance_parent".into(),
+            Some(normalize(PARENT_TABLE)),
+        ));
+        expected.push((
+            "index".into(),
+            "instance_parent_by_parent".into(),
+            "instance_parent".into(),
+            Some(normalize(PARENT_INDEX)),
+        ));
+        expected.push((
+            "index".into(),
+            "sqlite_autoindex_instance_parent_1".into(),
+            "instance_parent".into(),
+            None,
+        ));
+    }
     expected.sort_by(|left, right| left.1.cmp(&right.1));
     if actual != expected {
         return Err(SupplyError::CorruptStore);
@@ -201,4 +229,23 @@ fn validate(db: &Connection) -> Result<(), SupplyError> {
 fn normalize(sql: &str) -> String {
     // 已冻结 SQL 不含字符串字面量；只兼容旧 DDL 的缩进，不接受改写后的约束或对象。
     sql.split_ascii_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+const PARENT_TABLE: &str = "CREATE TABLE instance_parent (
+    child_id TEXT PRIMARY KEY REFERENCES agent_instance(id),
+    parent_id TEXT NOT NULL REFERENCES agent_instance(id),
+    CHECK (child_id != parent_id))";
+const PARENT_INDEX: &str = "CREATE INDEX instance_parent_by_parent ON instance_parent(parent_id)";
+
+/// 仅由显式管理命令调用；先验证完整旧格式，再在调用方事务内迁移。
+pub(super) fn upgrade_children(db: &Connection) -> Result<(), SupplyError> {
+    validate(db)?;
+    if version(db)? != 0 {
+        return Err(SupplyError::CorruptStore);
+    }
+    db.execute_batch(PARENT_TABLE).map_err(unavailable)?;
+    db.execute_batch(PARENT_INDEX).map_err(unavailable)?;
+    db.pragma_update(None, "user_version", 1)
+        .map_err(unavailable)?;
+    validate(db)
 }

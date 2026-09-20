@@ -21,9 +21,16 @@ import { DraftShelf } from './components/DraftShelf';
 import { useDraftCount } from './draftContext';
 import { FileOperationsAccess } from './components/FileOperationsAccess';
 import { HealthBoundary } from './HealthBoundary';
+import { BoardBoundary } from './BoardBoundary';
+import { ExecutionBoundary } from './ExecutionBoundary';
 import { PolicyBoundary } from './PolicyBoundary';
 
 const headings = {
+  board: ['协作黑板', '查看任务归属、路径占用与收尾回执。'],
+  execution: [
+    '执行与回放',
+    '冻结执行、查看进度，并逐项审阅候选产物与脱敏审计记录。',
+  ],
   overview: ['项目总览', '项目状态与待办，回到原文核对。'],
   inbox: ['待我动作', '待你验收、拍板与重启的事项，回到原文核对。'],
   documents: ['文档', '搜索笔记或浏览目录与附件，从原文进入授权编辑。'],
@@ -211,6 +218,10 @@ export function App({ account }: { account?: ReactNode }) {
             {view === 'inbox' ? <HealthBoundary /> : null}
             {/* 策略平面不依赖工作台快照：快照读不出来时也要能发布或吊销。 */}
             {view === 'policy' ? <PolicyBoundary /> : null}
+            {view === 'board' ? <BoardBoundary projects={projects} /> : null}
+            {view === 'execution' ? (
+              <ExecutionBoundary projects={projects} />
+            ) : null}
             {view !== 'overview' ? (
               <Diagnostics messages={diagnostics} />
             ) : null}

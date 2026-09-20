@@ -23,6 +23,7 @@ pub(super) enum Action {
     Content(crate::editing::Replace),
     FileOperation(crate::file_operations::Input),
     Policy(policy::Input),
+    Execution(super::execution::Input),
 }
 pub(super) enum Revoke {
     Current,
@@ -56,6 +57,7 @@ pub(super) async fn action(request: &mut Request) -> Result<Option<Action>, Fail
         crate::editing::PATH => crate::editing::PATH,
         crate::file_operations::PATH => crate::file_operations::PATH,
         crate::file_operations::TOMBSTONES => crate::file_operations::TOMBSTONES,
+        super::execution::COMMAND => super::execution::COMMAND,
         policy::STATUS => policy::STATUS,
         policy::DESIRED => policy::DESIRED,
         policy::VALIDATE => policy::VALIDATE,
@@ -98,6 +100,8 @@ pub(super) async fn action(request: &mut Request) -> Result<Option<Action>, Fail
     }
     let limit = if posting && path == crate::editing::PATH {
         crate::editing::JSON_LIMIT
+    } else if posting && path == super::execution::COMMAND {
+        super::execution::JSON_LIMIT
     } else if posting && policy::is_policy_post(path) {
         policy::JSON_LIMIT
     } else if posting && path == crate::file_operations::PATH {
@@ -127,6 +131,9 @@ pub(super) async fn action(request: &mut Request) -> Result<Option<Action>, Fail
         } else {
             Failure::bad_request()
         });
+    }
+    if path == super::execution::COMMAND {
+        return super::execution::parse(&bytes).map(|v| Some(Action::Execution(v)));
     }
     if is_factor_path(path) {
         return factor_input::parse(path, &bytes).map(|action| Some(Action::Factor(action)));

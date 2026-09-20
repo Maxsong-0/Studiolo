@@ -41,6 +41,7 @@ pub async fn fixture_with_age(age_ms: i64) -> Fixture {
     drop(store);
     drop(SqliteAuditLedger::open(&data.join("audit")).unwrap());
     let state = serve::prepare(&ServeOptions {
+        board_socket: None,
         index_cache: None,
         vault: None,
         replica_root: Some(replica.root.clone()),

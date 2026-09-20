@@ -30,6 +30,9 @@ impl Review {
 pub(super) fn reviews(broker: &FsVaultBroker, limit: usize) -> Result<Vec<Review>, BrokerError> {
     super::limit(limit)?;
     let mut result = Vec::new();
+    if mutation::load(broker)?.batch.is_some() {
+        return Err(BrokerError::MutationUnresolved);
+    }
     if mutation::load(broker)?.file_operation.is_some() {
         if let Some(review) = crate::file_operation::maintenance::capture(broker)? {
             result.push(Review::FileOperation(Box::new(review)));
@@ -85,7 +88,8 @@ fn restore_target(
     e: &requests::Envelope,
 ) -> Result<MaintenanceTarget, BrokerError> {
     let state = mutation::load(broker)?;
-    if state.operation.is_some()
+    if state.batch.is_some()
+        || state.operation.is_some()
         || state.file_operation.is_some()
         || events::terminal(broker, e)?.is_some()
     {

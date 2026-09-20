@@ -27,8 +27,8 @@ HASH = "0123456789ab"
 def signpost(hash_prefix=HASH, version=1):
     return ("# Studiolo 路牌（代次 1，2026-09-20）\n## 1 我是谁\n" + SESSION
             + "\n## 2 项目状态\n" + PRIVATE + "\n## 3 能力\n"
-            + f"读：项目/Studiolo（能力集 v{version} ∩ 部署上限）；写：黑板 无（M5）、"
-            + f"正文 仅 patch（M5 起）；策略：可提 desired（永不自动生效）；策略版本 {hash_prefix}\n"
+            + f"读：项目/Studiolo（能力集 v{version} ∩ 部署上限）；写：黑板 只读、"
+            + f"正文 仅经预览的 patch；策略：可提 desired（永不自动生效）；策略版本 {hash_prefix}\n"
             + "## 4 待我做的事\n无\n## 5 硬约束\n无\n## 6 继续拉的入口\npolicy_read\n")
 
 
@@ -147,7 +147,7 @@ class PolicyProbeTests(unittest.TestCase):
                 code, requests, output = self.run_probe(replies)
                 self.assertEqual(code, 0)
                 summary = json.loads(output)
-                self.assertEqual(summary, {"responses_checked": 6, "tools_checked": 6,
+                self.assertEqual(summary, {"responses_checked": 6, "tools_checked": 7,
                                           "forbidden_reads_rejected": 1, "capability_version": 1,
                                           "skills_count": 1, "effective_hash_prefix": HASH})
                 self.assertEqual(len(requests), 6)
@@ -160,6 +160,12 @@ class PolicyProbeTests(unittest.TestCase):
                     self.assertEqual(headers.get("Mcp-Session-Id"), SESSION if index else None)
                 self.assertEqual(requests[-1][2]["params"],
                                  {"name": "read_note", "arguments": {"path": "School/x.md"}})
+
+    def test_read_only_probe_rejects_unexpected_board_write_grant(self):
+        replies = happy_replies()
+        change_result(replies, 0, lambda value: value.update(
+            instructions=signpost().replace("黑板 只读", "黑板 可写")))
+        self.assertEqual(self.run_probe(replies)[0], 1)
 
     def test_empty_skills_index_is_valid(self):
         replies = happy_replies()

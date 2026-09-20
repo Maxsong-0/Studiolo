@@ -1,0 +1,94 @@
+{
+  "task": {
+    "active_attempt": null,
+    "input_snapshot": "43838caed6da49b16979a246c4f21dfa3f9d5d98c2dcb4c3f52b9c11a7651729",
+    "last_attempt": "A-01M2YR0QVP5KZR64JWEBB8AGFH",
+    "spec": {
+      "adapter": "consumer",
+      "allow_db": [],
+      "allow_web": [],
+      "input_paths": [],
+      "instruction": "这是一项只读验收。通过Studiolo MCP读取当前任务并认领，然后heartbeat一次，最后return完整completed回执。禁止文件修改、shell和其他外部动作。宿主当前UTC毫秒1789885692409，lease_until_ms可用1789886292409。身份必须从claim结果复制到identity对象。验收证据为实际工具调用和本项状态；不产生文件，artifacts/evidence/conflicts/unlanded/remaining/learned均可为空，closeout需完整显式填写。",
+      "parent": null,
+      "project": "项目/Studiolo",
+      "retry_policy": {
+        "backoff_seconds": 0,
+        "max_attempts": 1,
+        "retry_on": []
+      },
+      "role": "author",
+      "timeout": 900,
+      "title": "原生 Claude Channel 本机派发闭环"
+    },
+    "status": "succeeded",
+    "task_id": "01M2YR0EGSH1Q660GE4V371T0G"
+  },
+  "attempt": {
+    "attempt_id": "A-01M2YR0QVP5KZR64JWEBB8AGFH",
+    "fence": 3,
+    "lease_until_ms": 1789886292409,
+    "phase": "completed",
+    "runner_ref_json": null,
+    "snapshot_id": "43838caed6da49b16979a246c4f21dfa3f9d5d98c2dcb4c3f52b9c11a7651729",
+    "task_id": "01M2YR0EGSH1Q660GE4V371T0G",
+    "terminal": null,
+    "worker_id": "01M2YQS3WXD0Q4XFD6M6NGSPEG"
+  },
+  "board": {
+    "created_by_instance": "01M2YQS3WXD0Q4XFD6M6NGSPEG",
+    "definition": {
+      "acceptance_criteria": [
+        "已收到Studiolo Channel通知并读取认领本任务",
+        "已通过MCP心跳与完整结构化回执回写"
+      ],
+      "artifact_target": null,
+      "files_owned": [],
+      "max_children": 0,
+      "parent": null,
+      "policy_hash": "7c50c1e2e79f51d0128dc9ed167ed03aa2d574ff08a48db52548452bd724ae28"
+    },
+    "depth": 0,
+    "handoff": null,
+    "receipt": {
+      "acceptance": [
+        {
+          "criterion": "已收到Studiolo Channel通知并读取认领本任务",
+          "evidence": [],
+          "result": "pass"
+        },
+        {
+          "criterion": "已通过MCP心跳与完整结构化回执回写",
+          "evidence": [],
+          "result": "pass"
+        }
+      ],
+      "artifacts": [],
+      "closeout": {
+        "adr_required": false,
+        "destinations": [],
+        "learned": [
+          "原生 Claude Channel 本机派发闭环（通知→get→claim→heartbeat→return）在只读模式下可完整走通，无需文件写入或 shell。"
+        ],
+        "rule_change_required": false
+      },
+      "conflicts": [],
+      "elapsed_ms": 30000,
+      "learned": [
+        "Channel 通知仅作路由：board get 读到的权威任务书才是执行依据，claim 前任务为 draft 且 holder 为空。",
+        "heartbeat 的 identity 必须嵌套为对象，task_id/attempt_id/fence 需从 claim 结果原样复制。"
+      ],
+      "remaining": [],
+      "status": "completed",
+      "tool_calls": 5,
+      "unlanded": []
+    },
+    "task_id": "01M2YR0EGSH1Q660GE4V371T0G"
+  },
+  "holder": "01M2YQS3WXD0Q4XFD6M6NGSPEG",
+  "progress": {
+    "edits": 0,
+    "last_progress_ms": 1789885706298,
+    "tool_calls": 4
+  },
+  "uses_old_policy": false
+}

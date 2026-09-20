@@ -5,7 +5,8 @@ use std::path::PathBuf;
 /// 用法说明。
 pub const USAGE: &str = "studiolo-agent：Studiolo 供给面 MCP 主外壳（M3）\n\n\
 用法：\n  \
-studiolo-agent serve (--vault </绝对路径/vault> | --replica-root </绝对路径/副本>) [--replica-max-age-secs 300] --allow <相对目录> [--allow …] --data </绝对路径/私有目录> [--policy </绝对路径/策略私有目录>] [--index-cache </独立700目录>] [--port 4400]\n  \
+studiolo-agent serve (--vault </绝对路径/vault> | --replica-root </绝对路径/副本>) [--replica-max-age-secs 300] --allow <相对目录> [--allow …] --data </绝对路径/私有目录> [--policy </绝对路径/策略私有目录>] [--board-socket </绝对路径/黑板socket>] [--index-cache </独立700目录>] [--port 4400]\n  \
+studiolo-agent admin identity-upgrade --data <私有目录>（启用子实例；离线显式升级）\n  \
 studiolo-agent admin init --data </绝对路径/私有目录>\n  \
 studiolo-agent admin type-issue --data <私有目录> --type <claude|codex|grok|…>\n  \
 studiolo-agent admin type-revoke --data <私有目录> --type <类型名>\n  \
@@ -35,6 +36,8 @@ pub struct ServeOptions {
     pub data: PathBuf,
     /// 策略平面私有目录（绝对路径）；缺省为 M3 兼容模式（无能力集、无吊销表）。
     pub policy: Option<PathBuf>,
+    /// canonical 单写者的私有黑板 Unix 入口；必须同时配置策略。
+    pub board_socket: Option<PathBuf>,
     /// 可丢弃的派生索引缓存；显式独立私有目录，不能与源或身份目录重叠。
     pub index_cache: Option<PathBuf>,
     /// loopback 端口。
@@ -67,6 +70,8 @@ pub enum AdminCommand {
     RebuildReadIndex { data: PathBuf },
     /// 把 T-012 的 v1 审计账本显式升级为分段格式（一次性、单向；v2 或校验不过一律拒绝）。
     AuditUpgrade { data: PathBuf },
+    /// 显式升级子实例身份关系。
+    IdentityUpgrade { data: PathBuf },
     /// 列出审计不可用窗口。
     Outages { data: PathBuf },
     /// 列出已注册实例。
@@ -169,6 +174,7 @@ pub fn parse(args: &[String]) -> Result<Command, String> {
                         | "--allow"
                         | "--data"
                         | "--policy"
+                        | "--board-socket"
                         | "--port"
                         | "--index-cache"
                 ) {
@@ -220,6 +226,9 @@ pub fn parse(args: &[String]) -> Result<Command, String> {
                 policy: optional(&pairs, "--policy")?
                     .map(|value| absolute(value, "--policy"))
                     .transpose()?,
+                board_socket: optional(&pairs, "--board-socket")?
+                    .map(|value| absolute(value, "--board-socket"))
+                    .transpose()?,
                 index_cache: optional(&pairs, "--index-cache")?
                     .map(|value| absolute(value, "--index-cache"))
                     .transpose()?,
@@ -261,6 +270,7 @@ pub fn parse(args: &[String]) -> Result<Command, String> {
                 },
                 "rebuild-read-index" => AdminCommand::RebuildReadIndex { data: data()? },
                 "audit-upgrade" => AdminCommand::AuditUpgrade { data: data()? },
+                "identity-upgrade" => AdminCommand::IdentityUpgrade { data: data()? },
                 "outages" => AdminCommand::Outages { data: data()? },
                 "instances" => AdminCommand::Instances {
                     data: data()?,

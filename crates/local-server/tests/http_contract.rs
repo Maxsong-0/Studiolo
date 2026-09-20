@@ -187,6 +187,12 @@ async fn static_allowlist_and_security_headers_are_enforced() {
             .unwrap()
             .contains("frame-ancestors 'none'")
     );
+    assert!(
+        response.headers()["content-security-policy"]
+            .to_str()
+            .unwrap()
+            .contains("connect-src 'self' http://127.0.0.1:*;")
+    );
     for path in [
         "/.env",
         "/assets/../index.html",

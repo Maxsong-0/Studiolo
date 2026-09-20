@@ -12,6 +12,8 @@ fn spec() -> RunSpec {
         attempt_id: AttemptId::new(),
         fence: Fence::new(1).unwrap(),
         instruction: "summarize the supplied note".to_owned(),
+        budget: Default::default(),
+        execution: None,
         inputs: vec![RunInput {
             path: VaultPath::parse("notes/input.md").unwrap(),
             revision: "revision-1".to_owned(),

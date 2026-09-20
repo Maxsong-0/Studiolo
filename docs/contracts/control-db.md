@@ -20,11 +20,11 @@ Vault。持久 journal 配置排在准入之后是 T-029 定下的边界，副�
 `VaultBindingMismatch`。`pragma(name)` 只允许 journal_mode/synchronous/foreign_keys 三项，
 不允许调用方拼任意 PRAGMA。
 
-## 2. v2 schema
+## 2. v3 schema
 
 | 表 | M0 持久语义 |
 |---|---|
-| `schema_migrations` | 已应用整数 version 与时间字段；当前 `SCHEMA_VERSION=2`，M0 applied_at_ms 记 0 |
+| `schema_migrations` | 已应用整数 version 与时间字段；当前 `SCHEMA_VERSION=3`，M0 applied_at_ms 记 0 |
 | `vault_binding` | 单行 Vault UUID |
 | `fence_counter` | 全库单调、非零 next fence；在 claim transaction 内分配 |
 | `tasks` | task ID、原样人写 definition JSON、status、active/last attempt、input snapshot、时间 |
@@ -34,6 +34,10 @@ Vault。持久 journal 配置排在准入之后是 T-029 定下的边界，副�
 | `projection_outbox` | 唯一 event key、task、projection JSON、delivery 时间 |
 | `artifact_commits` | attempt 唯一的 Broker receipt JSON |
 | `terminal_audit_outbox` | T2 同事务写入的唯一 attempt/status 与审计交付时间 |
+| `board_tasks` / `board_requests` | 必填约束、parent/depth/creator、结构化交接/回执及创建幂等 |
+| `board_artifact_winners` / `board_numbers` | 项目内目标赢家与命名空间原子编号占用 |
+| `attempt_progress` / `task_launch_retries` | 单调进度、取消时间、终态原因与有界启动重试退避 |
+| `runtime_audit_outbox` | 与运行权威事务一起持久的 metadata-only 审计事实 |
 
 部分唯一索引保证每个 task 最多一个 `claimed/running/cancel_requested/committing` attempt；
 fence 本身全表唯一。外键由 SQLite 强制，snapshot entries 可随 snapshot 级联，attempt/
@@ -76,13 +80,13 @@ sequence 返回。
   metadata、分配 fence、创建唯一 attempt，并原子设置 task Running/active attempt/input
   snapshot，并写 projection outbox。已绑定 snapshot 时，新请求必须完全一致。后者是本次
   attempt 的冻结输入投影，不能从人写 definition 反推覆盖。
-- `attach_runner` / `heartbeat`：只有 task/attempt/fence 匹配且 attempt Running 才更新；否则
+- `attach_runner` / `heartbeat`：只有 task/attempt/fence 匹配且 attempt Running、现有租约未过期才更新；否则
   `FenceMismatch`。
 - `cancel_task`：Draft/Queued 直接 Cancelled；Running 原子把 task/attempt 置 CancelRequested
   并使 task 不再通过 active guard，同时写投影。Runner 隔离由组合根完成，随后
   `acknowledge_cancel` 在匹配 fence 下收敛 Cancelled、清 active、写 last attempt 和投影。
-- `is_attempt_active`：只有 task 与 attempt 都是 Running、active attempt/fence 精确匹配才真；
-  Gateway guard Adapter 可据此实现 fresh 查询。
+- `is_attempt_active_at(..., now_ms)`：task/attempt 均 Running、active/fence 匹配且 lease 尚未到期才真。
+  `is_attempt_active` 使用当前 wall clock 调用同一检查；确定性测试应显式传 now_ms。
 
 读取方法 `task`、`snapshot`、`pending_outbox` 与 `committing_attempts` 只返回 plain DTO，不
 泄漏 `rusqlite::Connection`/transaction。
@@ -90,7 +94,7 @@ sequence 返回。
 ## 5. Committing 两阶段终态
 
 T1 `reserve_terminal(task, attempt, fence, reservation, now)` 只接受 Running：在同一 transaction
-把 attempt/task 设为 Committing，写投影，并保存不可变 runner report + artifact plan。同 fence、同
+把 attempt/task 设为 Committing，写投影，并保存 metadata + Broker staging 指针；新候选正文被拒。同 fence、同
 reservation 重放成功；不同内容或其他 phase 返回结构化拒绝。
 
 T1 提交后，TaskEngine 才写 Audit intent 并调用 VaultBroker。manifest 是跨文件/DB 平面的
@@ -144,3 +148,32 @@ Running 且保留 Committing/CancelRequested、v1→v2 审计 outbox 修复、ou
 赢家之后的取消确认返回结构化`AlreadyTerminal`、新版schema拒绝的主库/配置保持、
 预检后版本推进时事务内再次拒绝、空账本/大小写/内存初始化，以及
 非 TaskEngine crate 无 Control DB 写连接的架构扫描。
+
+
+## 8. M5/M6 增量
+
+`BoardDefinition` / `BoardRecord` 是元数据 DTO，结构化正文、批量落地与可信文件扫描由
+TaskEngine/Broker 完成。`create_board_task_by_instance`、原 `claim` 路径冲突校验、
+`complete_board_task` 目标仲裁、`reserve_board_number` 取号均在 Immediate 事务内。
+`PathsHeld {by_instance,paths}` 明确冲突持有人；`BoardRejected` 说明机器门槛；
+`IdempotencyMismatch` 不可吞为成功。
+
+父子采用保守语义：父 claim 前创建子项，子路径为父子集，兄弟不相交，父有非终态子项时
+不能 claim 或终态；不存在父子免锁。层级与路径检查和创建/claim 同事务，防止并发 TOCTOU。
+
+周期 `reconcile_leases(now,false)` 不撤销健康租约；启动 `true` 要求组合根已隔离旧运行体。
+`heartbeat_progress` 强制单调、未过期租约；执行体十分钟零进度且 edits=0 判 stalled。
+取消仅 stopped 回执可在三分钟内结束，超时 system abandoned。`launch_failed` 在零工具调用、
+显式 retry_on、max_attempts 与最多两次重试约束下排入退避队列。
+
+历史 v1/v2 inline reservation 不在 SQLite migration 中删除。`legacy_terminal_attempts`
+供 Engine 耐久 staging，成功后 `migrate_terminal_pointer` CAS 替换；失败保留原恢复计划。
+新 `reserve_terminal` 拒绝 inline 字节数组。历史磁盘页/WAL/备份不是逻辑迁移的擦除承诺。
+更多输入与投影边界见 [M5 黑板](../m5/blackboard.md)。
+
+Runner 候选继续复用 `reserve_board_runner_candidates` → `finalize_terminal(NeedsReview)`
+的原 T1/T2；board 的普通 reserve/report 与直接 Succeeded 被拒。NeedsReview 不算子项终态，
+不能重新 claim。仅 `review_board_candidates` 能接受已提交候选的可信主人收尾决定。
+`runner_candidate_stages` 是拒绝/取消产物的指针证据索引，不是第二套运行状态机；存储
+`{attempt_id,fence,pointer:{id,sha256},reason}`，无候选正文。runtime audit 交付时把合法 task_id /
+attempt_id 绑定 AuditSubject，支持按任务/尝试检索。

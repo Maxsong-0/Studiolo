@@ -91,8 +91,8 @@ M0 Stub 没有独立存活进程；restart 的旧 CancelRequested 可收敛为 C
 
 正常顺序：
 
-1. T1 在同一 DB transaction 将 task/attempt 置 Committing，保存不可变 report 与 artifact
-   plan。保存的是 Runner 候选字节，不是 Vault 原文快照。
+1. T1 在同一 DB transaction 将 task/attempt 置 Committing，保存不可变 report identity metadata 与 Broker staging
+   pointer；候选字节先耐久保存在 Broker，不进入新的 DB reservation。
 2. 以 action `task_engine.report` 追加 AuditLedger Intent；不可用则停止 canonical 提交。
 3. Broker 按 task/attempt/fence/审计关联幂等写 artifact，最后写唯一 manifest，返回可验证
    `ArtifactCommitReceipt`。
@@ -167,3 +167,33 @@ ControlDb、Json、Integrity、InvalidRunnerRef、Projection 和 NeedsReconfirma
 failing wrapper 注入，不能为了测试暴露底层 SQLite connection 或文件句柄。
 
 最终通过情况与确切命令只记录在 [verify-log.md](verify-log.md)。
+
+
+## 8. M5/M6 必填黑板入口
+
+`BoardTaskSpec {task,acceptance_criteria,files_owned,max_children,artifact_target}` 包装既有 M0
+定义；所有 AI 创建只能使用 `create_board_task_by_instance(request_id,spec,trusted_hash,instance,now)`。
+`trusted_hash` 不属于客户端 schema，必须由授权外壳取得当前 effective policy。M0 `create_task`
+仍只接受 Stub，不能用来绕过必填约束。
+
+`claim_board_task(task,instance,lease_until,now)` 显式选择工作项，Draft 自动冻结快照；
+`put_handoff`、`return_board_receipt` 接收严格 typed JSON；`reserve_number` 内部调用可信 Broker
+scanner，外部不能填最大号。`board_detail/board_list` 返回可序列化 `BoardView`，含 creator、
+状态、冻结规则、当前规则差异、路径、持有人、attempt 期限/fence 与进度。
+
+`heartbeat_progress` 和 `is_attempt_active_at` 将当前 lease 校验置于写入/工具授权边界。
+`reconcile_startup` 专用于隔离后的启动恢复；`reconcile_periodic` 专用于常驻循环，不能把
+旧 M0 `reconcile` 当周期 sweep 使用。前者撤销旧工作，后者只处理过期、执行体 stalled
+或取消宽限到期；两者都前滚 Broker staging 与耐久审计 outbox，不重启 Runner。
+
+完整 schema、保守父子串行约束、终态仲裁、收尾、真实内容指针验证、历史正文迁移与受控
+Markdown 投影见 [M5 黑板](../m5/blackboard.md)。已有 M0 验收不等于真实 M6 运行体验收。
+
+`stage_board_runner_candidates(report,now)` 只接受非 consumer 黑板项的已知 attempt/fence，
+成功前必须仍 Running 且租约有效。候选只允许 `candidate.patch` 与 `patch.json`，校验树标识、
+patch 哈希和冲突标记；经 Broker staging、既有 T1、manifest-last 与 T2 进入 NeedsReview，
+释放活跃占用并保留末次 attempt。恢复只能前滚候选，不能重跑 CLI。
+`review_board_candidates(task,receipt,now)` 是组合根仅向 L3 人侧开放的审阅口，AI return 对
+NeedsReview 及 Runner completed 回执拒绝。人工审阅必须引用完整、精确且仍匹配真实内容的
+候选收据，附 closeout 与逐标准结论；成功才进入 Succeeded 并参与首个有效赢家仲裁。
+候选的拒绝、取消与失败保留 staging 指针；它们不表示发布成功或已经验收。

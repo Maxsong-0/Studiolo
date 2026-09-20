@@ -9,6 +9,8 @@ const navigation = [
   { id: 'operations', label: '项目运作', icon: 'canvas' },
   { id: 'inbox', label: '待我动作', icon: 'inbox' },
   { id: 'documents', label: '文档', icon: 'document' },
+  { id: 'board', label: '协作黑板', icon: 'canvas' },
+  { id: 'execution', label: '执行与回放', icon: 'canvas' },
   { id: 'policy', label: '策略平面', icon: 'shield' },
 ] as const;
 

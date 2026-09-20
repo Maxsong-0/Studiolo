@@ -93,6 +93,8 @@ pub struct AppState {
     pub store: AgentStore,
     /// 策略平面（接入方视角）；`None` ＝ 未接入（M3 兼容模式：白名单只来自 `--allow`，无能力集、无吊销表）。
     pub policy: Option<PolicyAgentStore>,
+    /// 私有 Unix 黑板连接；不持 canonical 文件能力。
+    pub board: Option<crate::board_client::BoardClient>,
     /// 权威审计账本。
     pub ledger: SqliteAuditLedger,
     /// 当前代次。

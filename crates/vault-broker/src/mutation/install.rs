@@ -6,7 +6,7 @@ use crate::{BrokerError, FsVaultBroker, Mutation, Precondition, VaultObject, sha
 use cap_std::fs::OpenOptions;
 use std::{io::Write, path::Path};
 
-pub(super) fn history(broker: &FsVaultBroker, object: &VaultObject) -> Result<(), BrokerError> {
+pub(crate) fn history(broker: &FsVaultBroker, object: &VaultObject) -> Result<(), BrokerError> {
     if object.content.len() > disk::CONTENT_LIMIT {
         return Err(BrokerError::WriterLimitExceeded);
     }
@@ -36,7 +36,7 @@ pub(super) fn history(broker: &FsVaultBroker, object: &VaultObject) -> Result<()
     broker.writer.check(&broker.root, &broker.data)
 }
 
-pub(super) fn prepare(
+pub(crate) fn prepare(
     broker: &FsVaultBroker,
     mutation: &Mutation,
     sequence: u64,
@@ -97,7 +97,7 @@ fn stage_proof(
     Ok(proof)
 }
 
-pub(super) fn discard_prepared(broker: &FsVaultBroker, op: &Operation) -> Result<(), BrokerError> {
+pub(crate) fn discard_prepared(broker: &FsVaultBroker, op: &Operation) -> Result<(), BrokerError> {
     if op.phase != Phase::Prepared {
         return Err(BrokerError::MutationUnresolved);
     }
@@ -112,7 +112,7 @@ pub(super) fn discard_prepared(broker: &FsVaultBroker, op: &Operation) -> Result
     broker.writer.check(&broker.root, &broker.data)
 }
 
-pub(super) struct PreparedInstall {
+pub(crate) struct PreparedInstall {
     current: crate::blob::current::Current,
     stage: crate::blob::file::ContentProof,
     history: crate::blob::install::HistoryPins,
@@ -131,7 +131,7 @@ impl PreparedInstall {
     }
 }
 
-pub(super) fn check_before_install(
+pub(crate) fn check_before_install(
     broker: &FsVaultBroker,
     op: &Operation,
 ) -> Result<PreparedInstall, BrokerError> {
@@ -156,7 +156,7 @@ pub(super) fn check_before_install(
     Ok(sealed)
 }
 
-pub(super) fn install(
+pub(crate) fn install(
     broker: &FsVaultBroker,
     op: &Operation,
     sealed: &PreparedInstall,
