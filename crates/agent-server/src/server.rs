@@ -4,6 +4,7 @@
 //! M4 起每次调用都复核策略平面：全局／类型／实例三级吊销与该类型的能力集；供给视图 ＝
 //! 部署上限 `--allow` ∩ 能力集白名单。`serve` 未给 `--policy` 时退回 M3 兼容模式（只有部署上限）。
 
+mod board;
 mod handler;
 mod session;
 
@@ -27,6 +28,10 @@ const SESSION_VERSIONS: &[ProtocolVersion] = &[
 /// tool 清单与一句说明（进入路牌第 6 项）。
 pub const TOOLS: &[(&str, &str)] = &[
     ("handshake", "重取冷启动路牌"),
+    (
+        "board",
+        "读写黑板：project、operation、request；写入需有效能力集",
+    ),
     ("list_entries", "列出一个白名单项目的条目：project"),
     ("read_note", "读一篇笔记：path"),
     (

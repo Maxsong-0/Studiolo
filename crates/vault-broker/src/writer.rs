@@ -142,6 +142,7 @@ impl FsVaultBroker {
         crate::maintenance::blocked(&broker)?;
         crate::mutation::reopen(&broker)?;
         crate::maintenance::reopen(&broker)?;
+        crate::batch::barrier::clear_if_idle(&broker)?;
         Ok(broker)
     }
 
@@ -153,6 +154,8 @@ impl FsVaultBroker {
             WriterPhase::Uncertain
         } else if state.legacy_unresolved {
             WriterPhase::LegacyUnknown
+        } else if state.batch.is_some() || crate::batch::barrier::blocked(&self.root)? {
+            WriterPhase::Installing
         } else if let Some(op) = &state.file_operation {
             crate::file_operation::phase(op.phase)
         } else {
@@ -168,6 +171,8 @@ impl FsVaultBroker {
             unresolved: state.legacy_unresolved
                 || state.operation.is_some()
                 || state.file_operation.is_some()
+                || state.batch.is_some()
+                || crate::batch::barrier::blocked(&self.root)?
                 || self.writer.uncertain()
                 || crate::maintenance::blocked(self)?,
             phase,

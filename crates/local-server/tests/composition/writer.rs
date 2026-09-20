@@ -153,3 +153,16 @@ async fn factor_socket_cannot_use_writer_data_before_secrets_are_read() {
     assert!(!data.join("http.sock").exists());
     f.unbound();
 }
+
+#[tokio::test]
+async fn invalid_policy_after_writer_capture_releases_the_writer() {
+    let f = Fixture::new(true);
+    let (mut options, data) = writer_options(&f);
+    options.policy_data = Some(f.root.join("missing-policy"));
+    assert!(matches!(
+        prepare_with(options, |_| async { Ok(test_support::verifier().await) }).await,
+        Err(StartupError::Configuration)
+    ));
+    f.unbound();
+    drop(FsVaultBroker::open_existing(&f.root.join("vault"), &data).unwrap());
+}

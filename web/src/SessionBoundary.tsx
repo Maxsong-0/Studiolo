@@ -16,6 +16,7 @@ import {
 } from './FileOperationBoundary';
 import { installFileOperationWriter } from './fileOperationApi';
 import { installPolicyWriter } from './policyApi';
+import { installExecutionWriter } from './executionApi';
 
 export function SessionBoundary(props: {
   children: (account: ReactNode) => ReactNode;
@@ -47,6 +48,7 @@ function SessionBoundaryContent({
       client.fileOperation,
     );
     const uninstallPolicy = installPolicyWriter(client.policyPost);
+    const uninstallExecution = installExecutionWriter(client.executionCommand);
     const unwatch = watchSession(client);
     void client.check();
     return () => {
@@ -57,6 +59,7 @@ function SessionBoundaryContent({
       uninstallRestorer();
       uninstallFileOperations();
       uninstallPolicy();
+      uninstallExecution();
     };
   }, [client]);
   useEffect(() => {

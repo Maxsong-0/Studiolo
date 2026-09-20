@@ -1222,3 +1222,140 @@ fn historical_projection_receipt_cannot_acknowledge_an_externally_reverted_page(
         original.content
     );
 }
+
+impl studiolo_vault_broker::ArtifactStager for InterruptingBroker {
+    fn stage_artifact_commit(
+        &self,
+        plan: &ArtifactCommit,
+    ) -> Result<studiolo_vault_broker::StagedArtifactCommit, BrokerError> {
+        studiolo_vault_broker::ArtifactStager::stage_artifact_commit(&self.inner, plan)
+    }
+    fn load_staged_artifact_commit(
+        &self,
+        pointer: &studiolo_vault_broker::StagedArtifactCommit,
+    ) -> Result<ArtifactCommit, BrokerError> {
+        studiolo_vault_broker::ArtifactStager::load_staged_artifact_commit(&self.inner, pointer)
+    }
+}
+
+impl studiolo_vault_broker::ArtifactStager for LostMutationAck {
+    fn stage_artifact_commit(
+        &self,
+        plan: &ArtifactCommit,
+    ) -> Result<studiolo_vault_broker::StagedArtifactCommit, BrokerError> {
+        studiolo_vault_broker::ArtifactStager::stage_artifact_commit(&self.inner, plan)
+    }
+    fn load_staged_artifact_commit(
+        &self,
+        pointer: &studiolo_vault_broker::StagedArtifactCommit,
+    ) -> Result<ArtifactCommit, BrokerError> {
+        studiolo_vault_broker::ArtifactStager::load_staged_artifact_commit(&self.inner, pointer)
+    }
+}
+
+#[test]
+fn terminal_reservation_contains_only_identity_and_content_plane_pointer() {
+    let (mut engine, claimed) = claimed_memory_engine();
+    engine
+        .report(
+            "body-free-db",
+            report_for(&claimed, b"CANDIDATE_BYTES_STAY_IN_BROKER"),
+            10,
+        )
+        .unwrap();
+    let terminal = engine
+        .control_db()
+        .attempt(claimed.run_spec.task_id, claimed.run_spec.attempt_id)
+        .unwrap()
+        .unwrap()
+        .terminal
+        .unwrap();
+    assert_eq!(terminal.report_json["format"], 3);
+    assert!(terminal.report_json.get("report").is_none());
+    assert_eq!(terminal.artifacts_json.as_object().unwrap().len(), 2);
+    assert!(terminal.artifacts_json["id"].as_str().is_some());
+    assert!(terminal.artifacts_json["sha256"].as_str().is_some());
+}
+
+#[test]
+fn historical_inline_reservation_migrates_after_durable_staging_and_replays() {
+    let temp = TempDir::new_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
+    let mut broker =
+        FsVaultBroker::open(&temp.path().join("vault"), &temp.path().join("broker")).unwrap();
+    let vault = broker.vault_uuid();
+    broker
+        .mutate(Mutation::create(
+            path("input.md"),
+            b"input".to_vec(),
+            "fixture",
+        ))
+        .unwrap();
+    let database = temp.path().join("control.sqlite3");
+    let mut engine = PersistentTaskEngine::new(
+        ControlDb::open(&database, vault).unwrap(),
+        broker,
+        MemoryAuditLedger::new(),
+    );
+    let task = engine.create_task(spec(path("input.md")), 1).unwrap();
+    engine.command(task, TaskCommand::Run, 2).unwrap();
+    let claimed = engine
+        .claim(ClaimRequest {
+            worker_id: "worker".into(),
+            now_ms: 3,
+            lease_until_ms: 1000,
+        })
+        .unwrap()
+        .unwrap();
+    let report = report_for(&claimed, b"historical candidate");
+    let first = engine.report("legacy-body", report.clone(), 4).unwrap();
+    let legacy = studiolo_control_db::TerminalReservation {
+        report_json: serde_json::json!({"event_id":"legacy-body","report":report}),
+        artifacts_json: serde_json::json!(
+            report
+                .artifacts
+                .iter()
+                .map(|a| studiolo_vault_broker::ArtifactCandidate {
+                    name: a.name.clone(),
+                    content: a.content.clone()
+                })
+                .collect::<Vec<_>>()
+        ),
+    };
+    let (db, broker, ledger) = engine.into_parts();
+    drop(db);
+    {
+        let raw = rusqlite::Connection::open(&database).unwrap();
+        raw.execute(
+            "UPDATE attempts SET terminal_json=?2 WHERE attempt_id=?1",
+            rusqlite::params![
+                claimed.run_spec.attempt_id.to_string(),
+                serde_json::to_string(&legacy).unwrap()
+            ],
+        )
+        .unwrap();
+        raw.execute("DELETE FROM schema_migrations WHERE version=3", [])
+            .unwrap();
+    }
+    let mut engine =
+        PersistentTaskEngine::new(ControlDb::open(&database, vault).unwrap(), broker, ledger);
+    assert_eq!(
+        engine
+            .control_db()
+            .legacy_terminal_attempts()
+            .unwrap()
+            .len(),
+        1
+    );
+    assert_eq!(engine.migrate_terminal_bodies().unwrap(), 1);
+    assert_eq!(engine.migrate_terminal_bodies().unwrap(), 0);
+    assert!(
+        engine
+            .control_db()
+            .legacy_terminal_attempts()
+            .unwrap()
+            .is_empty()
+    );
+    let replay = engine.report("legacy-body", report, 5).unwrap();
+    assert!(replay.replayed);
+    assert_eq!(replay.receipt, first.receipt);
+}

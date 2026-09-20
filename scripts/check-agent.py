@@ -18,7 +18,8 @@ INDEX_PATH = "项目/Studiolo/00-总览/INDEX.md"
 READ_TOOLS = {"handshake", "list_entries", "read_note", "search"}
 # M4（T-069）起 tools/list 恒为六个，与 serve 是否给了 --policy 无关；清单必须恰好相等，多一个少一个都失败。
 POLICY_TOOLS = {"policy_read", "propose_desired"}
-EXPECTED_TOOLS = READ_TOOLS | POLICY_TOOLS
+BOARD_TOOLS = {"board"}
+EXPECTED_TOOLS = READ_TOOLS | POLICY_TOOLS | BOARD_TOOLS
 # 与 crates/supply/src/signpost/render.rs、crates/agent-server/src/server.rs 的固定文案逐字一致。
 POLICY_ABSENT_MARK = "策略平面：未接入"
 POLICY_ABSENT_ERROR = "策略平面未接入（M3 兼容模式）"

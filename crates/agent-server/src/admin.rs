@@ -94,6 +94,14 @@ pub fn run(command: AdminCommand) -> Result<(), String> {
             }
             Ok(())
         }
+        AdminCommand::IdentityUpgrade { data } => {
+            let store = AgentStore::open_existing(&data).map_err(|error| error.to_string())?;
+            store
+                .upgrade_child_instances()
+                .map_err(|error| error.to_string())?;
+            println!("身份库已显式升级；子实例权限逐次与祖先求交");
+            Ok(())
+        }
         AdminCommand::AuditUpgrade { data } => {
             // T-051 把账本磁盘格式升到 v2（分段摘要）。v1 账本 `open` 一律拒绝，必须先显式升级：
             // 升级先全链验证旧账本，再由已验证的记录链重算段摘要，不改写任何既有记录；

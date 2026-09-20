@@ -15,6 +15,8 @@ pub(crate) struct State {
     pub(crate) rename_enabled: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) file_operation: Option<crate::file_operation::record::Active>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) batch: Option<crate::batch::record::Active>,
     pub(crate) pair_id: VaultUuid,
     pub(crate) committed_through: u64,
     pub(crate) next_sequence: u64,
@@ -30,6 +32,7 @@ impl State {
             file_operations_enabled: false,
             rename_enabled: false,
             file_operation: None,
+            batch: None,
             pair_id,
             committed_through: 0,
             next_sequence: 1,
@@ -38,10 +41,12 @@ impl State {
         }
     }
     pub(crate) fn validate(&self, pair: VaultUuid) -> Result<(), BrokerError> {
-        if !matches!(self.format_version, 1..=6)
+        if !matches!(self.format_version, 1..=7)
             || (self.format_version < 4 && (self.format_version == 3) != self.maintenance_enabled)
-            || (self.format_version >= 5) != self.file_operations_enabled
-            || (self.format_version == 6) != self.rename_enabled
+            || (self.format_version < 7
+                && (self.format_version >= 5) != self.file_operations_enabled)
+            || (self.format_version < 7 && (self.format_version == 6) != self.rename_enabled)
+            || (self.rename_enabled && !self.file_operations_enabled)
             || (!self.file_operations_enabled && self.file_operation.is_some())
             || (self.file_operation.is_some()
                 && (self.operation.is_some() || self.legacy_unresolved))
@@ -49,6 +54,18 @@ impl State {
             || self.next_sequence <= self.committed_through
         {
             return Err(BrokerError::CorruptWriterState);
+        }
+        if let Some(batch) = &self.batch {
+            batch.validate()?;
+            if self.format_version != 7
+                || self.operation.is_some()
+                || self.file_operation.is_some()
+                || self.legacy_unresolved
+                || batch.sequence <= self.committed_through
+                || batch.sequence.checked_add(1) != Some(self.next_sequence)
+            {
+                return Err(BrokerError::CorruptWriterState);
+            }
         }
         if let Some(op) = &self.operation {
             op.validate(self.format_version >= 4 && op.recording.is_some())?;

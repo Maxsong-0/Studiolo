@@ -14,6 +14,18 @@ workspace = true
 [dependencies]
 studiolo-core.workspace = true
 studiolo-audit-ledger.workspace = true
+studiolo-process-safety.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
+
+rustix = { workspace = true, features = ["net", "process"] }
+rusqlite.workspace = true
+sha2.workspace = true
+getrandom.workspace = true
+zeroize.workspace = true
+reqwest.workspace = true
+tokio.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

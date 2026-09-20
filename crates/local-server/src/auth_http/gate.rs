@@ -77,7 +77,7 @@ pub(super) fn headers(request: &Request, origin: &str, factors: bool) -> Result<
         | crate::history::FILE
         | crate::file_operations::TOMBSTONES => request.method() == Method::GET,
         SESSIONS => matches!(*request.method(), Method::GET | Method::POST),
-        REVOKE => request.method() == Method::POST,
+        REVOKE | super::execution::COMMAND => request.method() == Method::POST,
         crate::editing::PATH => request.method() == Method::POST,
         crate::file_operations::PATH => matches!(*request.method(), Method::GET | Method::POST),
         value if factors && is_factor_path(value) => request.method() == Method::POST,
@@ -94,7 +94,7 @@ pub(super) fn headers(request: &Request, origin: &str, factors: bool) -> Result<
             | crate::history::FILE
             | crate::file_operations::TOMBSTONES => "GET",
             SESSIONS => "GET, POST",
-            REVOKE => "POST",
+            REVOKE | super::execution::COMMAND => "POST",
             crate::editing::PATH => "POST",
             crate::file_operations::PATH => "GET, POST",
             value if factors && is_factor_path(value) => "POST",
@@ -110,7 +110,8 @@ pub(super) fn headers(request: &Request, origin: &str, factors: bool) -> Result<
             | crate::editing::PATH
             | crate::file_operations::PATH
     ) || (factors && is_factor_path(path))
-        || policy::is_policy_path(path))
+        || policy::is_policy_path(path)
+        || path == super::execution::COMMAND)
         && request.uri().query().is_some()
     {
         return Err(Failure::bad_request());

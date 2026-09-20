@@ -57,6 +57,7 @@ async fn fixture_with_router(make_router: impl FnOnce(Arc<AppState>) -> axum::Ro
     drop(SqliteAuditLedger::open(&data.join("audit")).unwrap());
 
     let state = serve::prepare(&ServeOptions {
+        board_socket: None,
         index_cache: None,
         vault: Some(vault.clone()),
         replica_root: None,

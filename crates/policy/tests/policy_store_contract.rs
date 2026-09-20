@@ -49,6 +49,55 @@ fn desired(kind: PolicyKind, subject: &str, body: Option<&str>) -> DesiredInput 
 }
 
 #[test]
+fn board_writes_require_an_explicit_project_subset_and_are_reported_as_expansion() {
+    let (_temp, dir) = private_dir();
+    let store = PolicyStore::open(&dir).unwrap();
+    let mut body: serde_json::Value =
+        serde_json::from_str(&capability(&["项目/Studiolo", "项目/Other"], &[], true)).unwrap();
+    body["write"]["board"] = true.into();
+    body["write"]["board_projects"] = serde_json::json!(["项目/Studiolo"]);
+    let record = store
+        .submit_desired(
+            desired(PolicyKind::CapabilitySet, "claude", Some(&body.to_string())),
+            Submitter::Owner,
+            NOW,
+        )
+        .unwrap();
+    assert_eq!(record.status, DesiredStatus::Validated);
+    assert!(
+        record.report.as_ref().unwrap().expansions.iter().any(
+            |e| e.path == "write.board_projects" && e.after.as_deref() == Some("项目/Studiolo")
+        )
+    );
+    store
+        .activate(
+            &record.id,
+            &store.effective().unwrap().effective_hash,
+            "owner",
+            NOW,
+        )
+        .unwrap();
+    let (set, _) = store.capability_set("claude").unwrap().unwrap();
+    assert_eq!(set.write.board_projects, vec!["项目/Studiolo"]);
+    for projects in [
+        serde_json::json!([]),
+        serde_json::json!(["项目"]),
+        serde_json::json!(["项目/Outside"]),
+        serde_json::json!(["项目/Studiolo", "项目/Studiolo"]),
+    ] {
+        body["write"]["board_projects"] = projects;
+        let record = store
+            .submit_desired(
+                desired(PolicyKind::CapabilitySet, "claude", Some(&body.to_string())),
+                Submitter::Owner,
+                NOW,
+            )
+            .unwrap();
+        assert_ne!(record.status, DesiredStatus::Validated);
+    }
+}
+
+#[test]
 fn capability_set_goes_through_validate_diff_and_cas_activation() {
     let (_temp, dir) = private_dir();
     assert!(matches!(

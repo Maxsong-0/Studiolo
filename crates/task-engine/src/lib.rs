@@ -6,7 +6,15 @@
 
 #![forbid(unsafe_code)]
 
+mod board;
+mod board_audit;
+mod board_projection;
+mod board_types;
+mod lifecycle;
+mod numbering;
 mod projection;
+mod terminal_staging;
+pub use board_types::*;
 
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -20,8 +28,8 @@ use studiolo_control_db::{
 use studiolo_core::{AttemptId, Fence, TaskId, VaultPath};
 use studiolo_runner_adapter::{RunInput, RunSpec, RunnerRef, RunnerReport};
 use studiolo_vault_broker::{
-    ArtifactCandidate, ArtifactCommit, ArtifactCommitReceipt, BrokerError, Mutation, Precondition,
-    Snapshot, SnapshotId, SnapshotInput, VaultBroker,
+    ArtifactCandidate, ArtifactCommit, ArtifactCommitReceipt, ArtifactStager, BrokerError,
+    Mutation, Precondition, Snapshot, SnapshotId, SnapshotInput, VaultBroker,
 };
 
 /// 一条投影事件在单轮里最多尝试的写入次数（契约 §6「每条事件最多尝试三次」）。
@@ -69,12 +77,24 @@ pub struct TaskSpec {
 
 impl TaskSpec {
     fn validate(&self) -> Result<(), TaskEngineError> {
-        if self.role.trim().is_empty() {
-            return Err(TaskEngineError::InvalidTaskSpec("role is empty"));
-        }
         if self.adapter != "stub" {
             return Err(TaskEngineError::InvalidTaskSpec(
                 "M0 only enables the in-process stub adapter",
+            ));
+        }
+        self.validate_board()
+    }
+
+    fn validate_board(&self) -> Result<(), TaskEngineError> {
+        if self.role.trim().is_empty() {
+            return Err(TaskEngineError::InvalidTaskSpec("role is empty"));
+        }
+        if !matches!(
+            self.adapter.as_str(),
+            "stub" | "consumer" | "claude" | "codex"
+        ) {
+            return Err(TaskEngineError::InvalidTaskSpec(
+                "unsupported board adapter",
             ));
         }
         if self.project.trim().is_empty() {
@@ -129,7 +149,7 @@ pub struct ClaimedTask {
 }
 
 /// Task definition and Control DB projection kept in separate fields.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TaskView {
     /// Stable task identity.
     pub task_id: TaskId,
@@ -213,6 +233,14 @@ pub enum TaskEngineError {
     /// JSON persistence failed.
     #[error("task engine JSON operation failed: {0}")]
     Json(#[from] serde_json::Error),
+    /// Another active claim owns requested paths.
+    #[error("paths held by {by_instance}: {paths:?}")]
+    PathsHeld {
+        #[doc = "Instance owning the conflicting claim."]
+        by_instance: String,
+        #[doc = "Requested paths intersecting the active claim."]
+        paths: Vec<String>,
+    },
     /// A durable terminal reservation did not match its attempt.
     #[error("task engine integrity failure: {0}")]
     Integrity(String),
@@ -354,7 +382,7 @@ impl<B, L> PersistentTaskEngine<B, L> {
 
 impl<B, L> TaskEngine for PersistentTaskEngine<B, L>
 where
-    B: VaultBroker,
+    B: VaultBroker + ArtifactStager,
     L: AuditLedger,
 {
     fn create_task(&mut self, spec: TaskSpec, now_ms: i64) -> Result<TaskId, TaskEngineError> {
@@ -378,6 +406,16 @@ where
             .ok_or(TaskEngineError::NotFound("task"))?;
         match (command, current.status) {
             (TaskCommand::Run, TaskStatus::Draft) => {
+                if self
+                    .control_db
+                    .board_task(task_id)
+                    .map_err(map_db)?
+                    .is_some()
+                {
+                    return Err(TaskEngineError::InvalidTaskSpec(
+                        "board tasks queue through claim_board_task",
+                    ));
+                }
                 // Run 只要求本任务自己的投影已交付；别的任务的坏页不能挡住这条命令。
                 self.project_task(task_id)?;
                 let snapshot = self.capture_inputs(task_id, &current.spec)?;
@@ -471,6 +509,8 @@ where
             task_id: task.task_id,
             attempt_id: attempt.attempt_id,
             fence: attempt.fence,
+            budget: Default::default(),
+            execution: None,
             instruction: spec
                 .instruction
                 .clone()
@@ -543,7 +583,7 @@ where
     ) -> Result<ReportResult, TaskEngineError> {
         self.verify_vault_binding()?;
         let event_id = AuditEventId::parse(event_id.to_owned()).map_err(map_audit)?;
-        let reservation = reservation_for(&event_id, &report)?;
+        self.migrate_terminal_bodies()?;
         let prior = self
             .control_db
             .attempt(report.task_id, report.attempt_id)
@@ -552,6 +592,31 @@ where
         if prior.fence != report.fence {
             return Err(TaskEngineError::StaleFence);
         }
+        if self
+            .control_db
+            .board_task(report.task_id)
+            .map_err(map_db)?
+            .is_some()
+        {
+            return Err(TaskEngineError::InvalidTaskSpec(
+                "board tasks require structured board receipt",
+            ));
+        }
+        if prior.phase == AttemptPhase::Running
+            && !self
+                .control_db
+                .is_attempt_active_at(report.task_id, report.attempt_id, report.fence, now_ms)
+                .map_err(map_db)?
+        {
+            return Err(TaskEngineError::StaleFence);
+        }
+        if !matches!(
+            prior.phase,
+            AttemptPhase::Running | AttemptPhase::Committing | AttemptPhase::Completed
+        ) {
+            return Err(TaskEngineError::AlreadyTerminal);
+        }
+        let reservation = self.stage_reservation(&event_id, &report)?;
         let replayed = match prior.phase {
             AttemptPhase::Running => {
                 self.control_db
@@ -599,6 +664,12 @@ where
 
     fn reconcile(&mut self, now_ms: i64) -> Result<ReconcileReport, TaskEngineError> {
         self.verify_vault_binding()?;
+        if !self.control_db.board_tasks().map_err(map_db)?.is_empty() {
+            return Err(TaskEngineError::InvalidTaskSpec(
+                "board recovery requires explicit reconcile_startup or reconcile_periodic",
+            ));
+        }
+        self.migrate_terminal_bodies()?;
         let abandoned_attempts = self.control_db.abandon_inflight(now_ms).map_err(map_db)?;
         // M0 only runs the in-process Stub. A process restart has already isolated its work.
         let cancelling = self.control_db.cancelling_attempts().map_err(map_db)?;
@@ -658,7 +729,7 @@ where
 
 impl<B, L> PersistentTaskEngine<B, L>
 where
-    B: VaultBroker,
+    B: VaultBroker + ArtifactStager,
     L: AuditLedger,
 {
     /// Delivers only the pending events of one task, in sequence order.
@@ -708,6 +779,16 @@ where
     }
 
     fn project_event(&mut self, event: &OutboxRecord) -> Result<(), TaskEngineError> {
+        if self
+            .control_db
+            .board_task(event.task_id)
+            .map_err(map_db)?
+            .is_some()
+        {
+            return Err(TaskEngineError::Projection(
+                "board task events require project_board batch publication".into(),
+            ));
+        }
         {
             let page = task_page_path(event.task_id)?;
             let vault_uuid = self.broker.vault_uuid();
@@ -849,7 +930,7 @@ fn is_page_rejection(error: &TaskEngineError) -> bool {
 
 impl<B, L> PersistentTaskEngine<B, L>
 where
-    B: VaultBroker,
+    B: VaultBroker + ArtifactStager,
     L: AuditLedger,
 {
     fn verify_vault_binding(&self) -> Result<(), TaskEngineError> {
@@ -928,7 +1009,17 @@ where
         reservation: &TerminalReservation,
         now_ms: i64,
     ) -> Result<ArtifactCommitReceipt, TaskEngineError> {
-        let plan = decode_plan(attempt, reservation)?;
+        let plan = self.staged_plan(attempt, reservation)?;
+        let stopped = if reservation
+            .report_json
+            .get("outcome")
+            .and_then(serde_json::Value::as_str)
+            == Some("stopped")
+        {
+            Some(self.stopped_receipt_from_plan(attempt, &plan)?)
+        } else {
+            None
+        };
         let subject = AuditSubject::default()
             .with_task(attempt.task_id)
             .with_attempt(attempt.attempt_id);
@@ -963,16 +1054,20 @@ where
             .map_err(TaskEngineError::CommitFailed)?;
 
         let encoded_receipt = serde_json::to_value(&receipt)?;
-        self.control_db
-            .finalize_terminal(
-                attempt.task_id,
-                attempt.attempt_id,
-                attempt.fence,
-                TaskStatus::NeedsReview,
-                Some(&encoded_receipt),
-                now_ms,
-            )
-            .map_err(map_db)?;
+        if let Some(stopped) = stopped {
+            self.finish_stopped_candidates(attempt, stopped, &receipt, now_ms)?;
+        } else {
+            self.control_db
+                .finalize_terminal(
+                    attempt.task_id,
+                    attempt.attempt_id,
+                    attempt.fence,
+                    TaskStatus::NeedsReview,
+                    Some(&encoded_receipt),
+                    now_ms,
+                )
+                .map_err(map_db)?;
+        }
         // Audit may only claim a workflow status after the authoritative T2 commit.
         // T2's outbox survives a crash or unavailable ledger at this exact boundary.
         self.deliver_pending_outcomes(Some(attempt.attempt_id), now_ms)?;
@@ -1003,7 +1098,7 @@ where
         let reservation = outcome.attempt.terminal.as_ref().ok_or_else(|| {
             TaskEngineError::Integrity("pending audit has no report reservation".to_owned())
         })?;
-        let plan = decode_plan(&prior_identity(&outcome.attempt), reservation)?;
+        let plan = self.staged_plan(&prior_identity(&outcome.attempt), reservation)?;
         let receipt: ArtifactCommitReceipt = serde_json::from_value(outcome.receipt_json.clone())?;
         let payload = SanitizedPayload::try_from(json!({
             "status": outcome.status,
@@ -1078,27 +1173,6 @@ fn prior_identity(attempt: &AttemptRecord) -> AttemptIdentity {
     }
 }
 
-fn reservation_for(
-    event_id: &AuditEventId,
-    report: &RunnerReport,
-) -> Result<TerminalReservation, TaskEngineError> {
-    let artifacts: Vec<_> = report
-        .artifacts
-        .iter()
-        .map(|artifact| ArtifactCandidate {
-            name: artifact.name.clone(),
-            content: artifact.content.clone(),
-        })
-        .collect();
-    Ok(TerminalReservation {
-        report_json: serde_json::to_value(PersistedReport {
-            event_id: event_id.clone(),
-            report: report.clone(),
-        })?,
-        artifacts_json: serde_json::to_value(artifacts)?,
-    })
-}
-
 fn decode_plan(
     attempt: &AttemptIdentity,
     reservation: &TerminalReservation,
@@ -1147,7 +1221,7 @@ fn task_view(record: &TaskRecord) -> Result<TaskView, TaskEngineError> {
 
 fn decode_spec(record: &TaskRecord) -> Result<TaskSpec, TaskEngineError> {
     let spec: TaskSpec = serde_json::from_value(record.definition_json.clone())?;
-    spec.validate()?;
+    spec.validate_board()?;
     Ok(spec)
 }
 
@@ -1165,6 +1239,10 @@ fn map_db(error: DbError) -> TaskEngineError {
             TaskEngineError::InvalidTransition { from, operation }
         }
         DbError::FenceMismatch => TaskEngineError::StaleFence,
+        DbError::IdempotencyMismatch => TaskEngineError::IdempotencyMismatch,
+        DbError::PathsHeld { by_instance, paths } => {
+            TaskEngineError::PathsHeld { by_instance, paths }
+        }
         other => TaskEngineError::ControlDb(other),
     }
 }

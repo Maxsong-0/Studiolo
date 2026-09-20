@@ -54,7 +54,11 @@ pub(crate) fn ensure_no_maintenance(broker: &FsVaultBroker) -> Result<(), Broker
 }
 pub(crate) fn ensure_idle(broker: &FsVaultBroker) -> Result<(), BrokerError> {
     ensure_no_maintenance(broker)?;
-    if crate::mutation::load(broker)?.file_operation.is_some() {
+    let state = crate::mutation::load(broker)?;
+    if state.file_operation.is_some()
+        || state.batch.is_some()
+        || crate::batch::barrier::blocked(&broker.root)?
+    {
         return Err(BrokerError::MutationUnresolved);
     }
     Ok(())

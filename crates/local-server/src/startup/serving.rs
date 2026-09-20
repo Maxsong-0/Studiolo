@@ -22,6 +22,9 @@ impl PreparedServer {
                 .root_identity()
                 .map_err(|_| StartupError::ReadRoots)?;
         }
+        if let Some(ingress) = &self.board_ingress {
+            ingress.revalidate().map_err(|_| StartupError::Ingress)?;
+        }
         if let Some(ingress) = &self.ingress {
             ingress.revalidate().map_err(|_| StartupError::Ingress)?;
         }
@@ -93,10 +96,49 @@ impl PreparedServer {
         result
     }
 
-    async fn serve_bound_until<F>(self, shutdown: F) -> Result<(), StartupError>
+    async fn serve_bound_until<F>(mut self, shutdown: F) -> Result<(), StartupError>
     where
         F: Future<Output = ()> + Send + 'static,
     {
+        if let (Some(board), Some(plane)) = (self.board_ingress.take(), self.board_plane.take()) {
+            let runner = self.runner_plane.take();
+            let listener = board.bind().map_err(|_| StartupError::Ingress)?;
+            if let Some(runner) = &runner {
+                runner.serve().map_err(|_| StartupError::Serve)?;
+            }
+            let app = studiolo_local_server::board::private_board_router(plane.clone());
+            let (stop, mut stopped) = tokio::sync::watch::channel(false);
+            let mut maintenance =
+                tokio::spawn(plane.maintain_until_with_runner(stopped.clone(), runner.clone()));
+            let mut worker = tokio::spawn(async move {
+                listener
+                    .serve_shutdown(app, async move {
+                        let _ = stopped.changed().await;
+                    })
+                    .await
+            });
+            let mut result = tokio::select! {
+                result=Box::pin(self.serve_bound_until(shutdown))=>result,
+                _=&mut maintenance=>Err(StartupError::Serve),
+                _=&mut worker=>Err(StartupError::Serve),
+            };
+            let _ = stop.send(true);
+            if !worker.is_finished() && !matches!(worker.await, Ok(Ok(()))) {
+                result = Err(StartupError::Serve);
+            }
+            if !maintenance.is_finished() && !matches!(maintenance.await, Ok(Ok(()))) {
+                result = Err(StartupError::Serve);
+            }
+            if let Some(runner) = runner
+                && !matches!(
+                    tokio::task::spawn_blocking(move || runner.shutdown()).await,
+                    Ok(Ok(()))
+                )
+            {
+                result = Err(StartupError::Serve);
+            }
+            return result;
+        }
         if self.ingress.is_some() {
             let (listener, app) = self.bind_unix()?;
             println!("Studiolo：可信Unix入口（Access、应用会话及二次认证；按 Ctrl-C 停止）");

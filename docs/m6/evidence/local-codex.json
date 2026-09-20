@@ -1,0 +1,89 @@
+{
+  "task": {
+    "active_attempt": null,
+    "input_snapshot": "43838caed6da49b16979a246c4f21dfa3f9d5d98c2dcb4c3f52b9c11a7651729",
+    "last_attempt": "A-01M2YQVV8NF15AR6DC0C3RY1JN",
+    "spec": {
+      "adapter": "consumer",
+      "allow_db": [],
+      "allow_web": [],
+      "input_paths": [],
+      "instruction": "这是一项只读验收：通过本会话 Studiolo MCP 读取本任务、认领、heartbeat一次，并提交完整 completed 回执。不修改任何文件，不创建子任务。宿主当前UTC毫秒 1789885513003；claim及heartbeat lease_until_ms可用 1789886113003。只核实自身task状态与标题即可。",
+      "parent": null,
+      "project": "项目/Studiolo",
+      "retry_policy": {
+        "backoff_seconds": 0,
+        "max_attempts": 1,
+        "retry_on": []
+      },
+      "role": "author",
+      "timeout": 900,
+      "title": "原生 Codex 本机派发闭环"
+    },
+    "status": "succeeded",
+    "task_id": "01M2YQTZATXPVSWGMZGKNHDM75"
+  },
+  "attempt": {
+    "attempt_id": "A-01M2YQVV8NF15AR6DC0C3RY1JN",
+    "fence": 2,
+    "lease_until_ms": 1789886113003,
+    "phase": "completed",
+    "runner_ref_json": null,
+    "snapshot_id": "43838caed6da49b16979a246c4f21dfa3f9d5d98c2dcb4c3f52b9c11a7651729",
+    "task_id": "01M2YQTZATXPVSWGMZGKNHDM75",
+    "terminal": null,
+    "worker_id": "01M2YQTX8BHZB5JB4A0BG2CWZX"
+  },
+  "board": {
+    "created_by_instance": "01M2YQTX8BHZB5JB4A0BG2CWZX",
+    "definition": {
+      "acceptance_criteria": [
+        "已通过本机会话通知读取并认领本工作项",
+        "已通过 MCP heartbeat 和 return 回写结构化回执"
+      ],
+      "artifact_target": null,
+      "files_owned": [],
+      "max_children": 0,
+      "parent": null,
+      "policy_hash": "7c50c1e2e79f51d0128dc9ed167ed03aa2d574ff08a48db52548452bd724ae28"
+    },
+    "depth": 0,
+    "handoff": null,
+    "receipt": {
+      "acceptance": [
+        {
+          "criterion": "已通过本机会话通知读取并认领本工作项",
+          "evidence": [],
+          "result": "pass"
+        },
+        {
+          "criterion": "已通过 MCP heartbeat 和 return 回写结构化回执",
+          "evidence": [],
+          "result": "pass"
+        }
+      ],
+      "artifacts": [],
+      "closeout": {
+        "adr_required": false,
+        "destinations": [],
+        "learned": [],
+        "rule_change_required": false
+      },
+      "conflicts": [],
+      "elapsed_ms": 42179,
+      "learned": [],
+      "remaining": [],
+      "status": "completed",
+      "tool_calls": 5,
+      "unlanded": []
+    },
+    "task_id": "01M2YQTZATXPVSWGMZGKNHDM75"
+  },
+  "holder": "01M2YQTX8BHZB5JB4A0BG2CWZX",
+  "progress": {
+    "edits": 0,
+    "last_progress_ms": 1789885552739,
+    "tool_calls": 4
+  },
+  "uses_old_policy": false
+}

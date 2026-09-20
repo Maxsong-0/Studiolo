@@ -1,0 +1,133 @@
+.board-panel {
+  display: grid;
+  gap: 1.25rem;
+}
+.board-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 1rem;
+  align-items: center;
+}
+.board-toolbar label {
+  display: flex;
+  gap: 0.75rem;
+  align-items: center;
+}
+.board-toolbar select {
+  max-width: 100%;
+  padding: 0.6rem 0.8rem;
+  border: 1px solid var(--border);
+  border-radius: 0.7rem;
+  font: inherit;
+  color: inherit;
+  background: var(--surface-solid);
+}
+.board-freshness,
+.board-hint,
+.board-toolbar > span {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.8125rem;
+}
+.board-tree,
+.board-children {
+  display: grid;
+  gap: 1rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.board-children {
+  margin: 1rem 0 0 1.25rem;
+  padding-left: 1rem;
+  border-left: 2px solid var(--border);
+}
+.board-item,
+.board-empty,
+.board-unavailable {
+  min-width: 0;
+  padding: 1.25rem;
+  border: 1px solid var(--border);
+  border-radius: 1rem;
+  background: var(--surface-solid);
+  overflow-wrap: anywhere;
+}
+.board-item header {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 1rem;
+  font-size: 0.8rem;
+}
+.board-status {
+  font-weight: 600;
+}
+.board-item h3 {
+  margin: 1rem 0 0.5rem;
+}
+.board-item code {
+  overflow-wrap: anywhere;
+  font-size: 0.85em;
+}
+.board-item details {
+  border-top: 1px solid var(--border);
+  margin-top: 1rem;
+  padding-top: 0.8rem;
+}
+.board-item summary {
+  cursor: pointer;
+  min-height: 2rem;
+}
+.board-item small {
+  display: block;
+  overflow-wrap: anywhere;
+  color: var(--muted);
+}
+.board-attempt {
+  display: grid;
+  gap: 0.5rem;
+  font-size: 0.8125rem;
+}
+.board-attempt > div {
+  display: grid;
+  grid-template-columns: minmax(7rem, 1fr) minmax(0, 3fr);
+  gap: 0.5rem;
+}
+.board-attempt dt {
+  color: var(--muted);
+}
+.board-attempt dd {
+  margin: 0;
+}
+.board-warning {
+  color: var(--signal-alert);
+}
+.board-empty h3,
+.board-unavailable h3 {
+  margin-top: 0;
+}
+.board-toolbar select:focus-visible,
+.board-item summary:focus-visible,
+.board-unavailable button:focus-visible {
+  outline: 2px solid var(--focus, currentColor);
+  outline-offset: 3px;
+}
+@media (max-width: 600px) {
+  .board-item,
+  .board-empty,
+  .board-unavailable {
+    padding: 1rem;
+  }
+  .board-toolbar {
+    align-items: stretch;
+  }
+  .board-children {
+    margin-left: 0.25rem;
+    padding-left: 0.5rem;
+  }
+  .board-attempt > div {
+    grid-template-columns: 1fr;
+    gap: 0.15rem;
+  }
+}

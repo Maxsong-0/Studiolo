@@ -49,6 +49,11 @@ pub fn prepare(options: &ServeOptions) -> Result<Arc<AppState>, String> {
                 .map_err(|error| format!("策略平面私有库：{error}；请先运行 admin policy-init"))
         })
         .transpose()?;
+    let board = match (&options.board_socket, &policy) {
+        (Some(path), Some(_)) => Some(crate::board_client::BoardClient::new(path)?),
+        (Some(_), None) => return Err("黑板入口必须配置有效策略平面".into()),
+        (None, _) => None,
+    };
     let limits = ScanLimits::default();
     let (snapshot, freshness) = source.scan(limits, None)?;
     let index = IndexRuntime::open(options)?;
@@ -67,6 +72,7 @@ pub fn prepare(options: &ServeOptions) -> Result<Arc<AppState>, String> {
         allow,
         store,
         policy,
+        board,
         ledger,
         current: RwLock::new(Arc::new(first)),
         outage: Mutex::new(None),

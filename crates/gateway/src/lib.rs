@@ -1,6 +1,27 @@
 //! Capability-checked tool and model-relay seam with in-memory M0 adapters.
 
 mod admission;
+mod durable_relay;
+#[cfg(unix)]
+mod relay_remote;
+mod relay_request;
+mod relay_retention;
+mod relay_store;
+mod relay_tools;
+mod relay_transport;
+mod relay_types;
+mod relay_unix;
+#[cfg(unix)]
+pub use relay_remote::{RemoteRelayTransport, serve_key_holder_connection};
+
+pub use durable_relay::{DurableRelay, RelayServices};
+pub use relay_transport::{HttpsRelayTransport, RelayTransport};
+pub use relay_types::{
+    ModelEgress, ProviderCredential, RelayError, RelayGrant, RelayLimits, RelayPolicyGuard,
+    RelayProvider, RelayPublisher, RelayResponse, RelaySource, RelayTicket,
+};
+#[cfg(unix)]
+pub use relay_unix::serve_relay_connection;
 #[cfg(test)]
 mod wait_probe;
 #[cfg(test)]

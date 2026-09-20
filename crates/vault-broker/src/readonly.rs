@@ -97,6 +97,12 @@ pub struct ReadOnlyVault {
 }
 
 impl ReadOnlyVault {
+    pub(crate) fn check_batch_barrier(&self) -> Result<(), BrokerError> {
+        if crate::batch::barrier::blocked(&self.root)? {
+            return Err(BrokerError::MutationUnresolved);
+        }
+        Ok(())
+    }
     /// Pins an existing directory, rejecting a symlink at the selected root.
     /// No directory is created, including when opening fails.
     pub fn open(root: &Path) -> Result<Self, BrokerError> {

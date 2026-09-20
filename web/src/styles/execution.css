@@ -1,0 +1,111 @@
+.execution-panel {
+  display: grid;
+  gap: 1.25rem;
+}
+.execution-control,
+.execution-task,
+.execution-review,
+.execution-replay {
+  border: 1px solid var(--border, #dedbd4);
+  border-radius: 12px;
+  padding: 1rem;
+}
+.execution-panel h3,
+.execution-panel h4 {
+  margin-top: 0;
+}
+.execution-panel p {
+  line-height: 1.65;
+}
+.execution-panel code {
+  overflow-wrap: anywhere;
+  font-size: 0.84em;
+}
+.execution-panel label {
+  display: block;
+}
+.execution-panel select {
+  max-width: 100%;
+  padding: 0.45rem;
+}
+.execution-tasks {
+  display: grid;
+  gap: 1rem;
+}
+.execution-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin: 1rem 0;
+}
+.execution-review textarea {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 0.85rem;
+  margin: 0.5rem 0 1rem;
+  border: 1px solid var(--border, #dedbd4);
+  border-radius: 8px;
+  background: var(--surface-solid, #fff);
+  color: inherit;
+  font:
+    0.82rem/1.6 ui-monospace,
+    SFMono-Regular,
+    monospace;
+  resize: vertical;
+}
+.execution-confirm {
+  display: flex !important;
+  align-items: flex-start;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+}
+.execution-runs,
+.execution-events {
+  display: grid;
+  gap: 0.85rem;
+  padding-left: 1.3rem;
+}
+.execution-runs li,
+.execution-events li {
+  padding: 0.6rem;
+  border-bottom: 1px solid var(--border, #dedbd4);
+}
+.execution-events dl {
+  margin: 0.5rem 0;
+}
+.execution-events dl > div {
+  display: grid;
+  grid-template-columns: minmax(6rem, 10rem) minmax(0, 1fr);
+  gap: 0.5rem;
+}
+.execution-events dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.execution-panel button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.execution-candidates ul {
+  display: grid;
+  gap: 0.85rem;
+}
+@media (max-width: 600px) {
+  .execution-control,
+  .execution-task,
+  .execution-review,
+  .execution-replay {
+    padding: 0.75rem;
+  }
+  .execution-events dl > div {
+    grid-template-columns: 1fr;
+    gap: 0.2rem;
+    margin-bottom: 0.6rem;
+  }
+}
+
+.execution-panel :is(button, select, textarea, input, summary):focus-visible {
+  outline: 2px solid var(--focus, currentColor);
+  outline-offset: 3px;
+}

@@ -38,6 +38,7 @@ thiserror.workspace = true
 jiff.workspace = true
 ulid.workspace = true
 sha2.workspace = true
+reqwest.workspace = true
 # 仅供 admin::terminal 核验并写入固定的 /dev/tty：类型 token 只在真实前台控制终端
 # 显示一次。架构守卫另限具体调用点，不得借此获得任意文件或子进程能力。
 rustix = { workspace = true, features = ["process", "termios"] }
@@ -46,4 +47,3 @@ rustix = { workspace = true, features = ["process", "termios"] }
 tempfile.workspace = true
 # 只给 admin audit-upgrade 的契约测试用：把 v2 账本还原成 T-012 的 v1 形态造夹具。
 rusqlite.workspace = true
-reqwest.workspace = true

@@ -365,3 +365,33 @@ fn projected_status_survives_the_recovered_key() {
         "换键只影响写入身份，不改变被投影的事实"
     );
 }
+
+impl studiolo_vault_broker::ArtifactStager for SealingBroker {
+    fn stage_artifact_commit(
+        &self,
+        plan: &ArtifactCommit,
+    ) -> Result<studiolo_vault_broker::StagedArtifactCommit, BrokerError> {
+        studiolo_vault_broker::ArtifactStager::stage_artifact_commit(&self.inner, plan)
+    }
+    fn load_staged_artifact_commit(
+        &self,
+        pointer: &studiolo_vault_broker::StagedArtifactCommit,
+    ) -> Result<ArtifactCommit, BrokerError> {
+        studiolo_vault_broker::ArtifactStager::load_staged_artifact_commit(&self.inner, pointer)
+    }
+}
+
+impl studiolo_vault_broker::ArtifactStager for KeySquattingBroker {
+    fn stage_artifact_commit(
+        &self,
+        plan: &ArtifactCommit,
+    ) -> Result<studiolo_vault_broker::StagedArtifactCommit, BrokerError> {
+        studiolo_vault_broker::ArtifactStager::stage_artifact_commit(&self.inner, plan)
+    }
+    fn load_staged_artifact_commit(
+        &self,
+        pointer: &studiolo_vault_broker::StagedArtifactCommit,
+    ) -> Result<ArtifactCommit, BrokerError> {
+        studiolo_vault_broker::ArtifactStager::load_staged_artifact_commit(&self.inner, pointer)
+    }
+}

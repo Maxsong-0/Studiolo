@@ -3,6 +3,7 @@
 mod assets;
 mod auth_http;
 pub mod backup;
+pub mod board;
 mod bootstrap;
 mod canonical;
 mod coordinator;

@@ -31,6 +31,7 @@ impl Fixture {
         let data = temp.path().join("data");
         initialize(&data);
         let options = ServeOptions {
+            board_socket: None,
             vault: Some(vault.clone()),
             replica_root: None,
             replica_max_age_secs: 300,
@@ -59,6 +60,7 @@ pub fn replica_options(replica: &crate::replica_support::ReplicaFixture) -> Serv
     let data = replica.temp.path().join("agent-data");
     initialize(&data);
     ServeOptions {
+        board_socket: None,
         vault: None,
         replica_root: Some(replica.root.clone()),
         replica_max_age_secs: 300,

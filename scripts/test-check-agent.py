@@ -170,9 +170,9 @@ class CheckAgentTests(unittest.TestCase):
             replies[7] = reply
             self.assertEqual(self.run_check(replies)[0], 1)
 
-    def test_tool_inventory_must_be_exactly_the_six_m4_tools(self):
-        self.assertEqual(agent.EXPECTED_TOOLS, agent.READ_TOOLS | agent.POLICY_TOOLS)
-        self.assertEqual(len(agent.EXPECTED_TOOLS), 6)
+    def test_tool_inventory_must_be_exactly_the_seven_m5_tools(self):
+        self.assertEqual(agent.EXPECTED_TOOLS, agent.READ_TOOLS | agent.POLICY_TOOLS | agent.BOARD_TOOLS)
+        self.assertEqual(len(agent.EXPECTED_TOOLS), 7)
         for names in (sorted(agent.READ_TOOLS),                       # M4 之前的二进制
                       sorted(agent.EXPECTED_TOOLS) + ["write_note"],  # 多出一个未登记工具
                       sorted(agent.EXPECTED_TOOLS - {"propose_desired"}) + ["handshake"]):

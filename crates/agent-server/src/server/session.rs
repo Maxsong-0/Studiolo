@@ -113,11 +113,37 @@ impl AgentSession {
 
     /// 由外壳在新会话发布前调用一次；注册、策略复核和路牌均先审计后交付。
     pub(crate) async fn initialize_text(&self, agent_type: &str) -> Result<String, McpError> {
-        let instance = self
-            .state
-            .store
-            .register_instance(agent_type, &self.session_ref, &now())
-            .map_err(|_| McpError::internal_error("实例注册失败", None))?;
+        self.initialize_with_parent(agent_type, None).await
+    }
+
+    pub(crate) async fn initialize_with_parent(
+        &self,
+        agent_type: &str,
+        parent: Option<&str>,
+    ) -> Result<String, McpError> {
+        let instance = if let Some(parent) = parent {
+            if self.state.policy.is_none() {
+                return Err(McpError::invalid_request("子实例需要有效策略平面", None));
+            }
+            let ancestors = self
+                .state
+                .store
+                .instance_lineage(parent)
+                .map_err(|_| McpError::invalid_params("父实例无效", None))?;
+            let parent_instance = ancestors
+                .first()
+                .filter(|instance| instance.agent_type == agent_type)
+                .ok_or_else(|| McpError::invalid_params("父实例类型不匹配", None))?;
+            self.grant_for(parent_instance, "instance.register_child")?;
+            self.state
+                .store
+                .register_child_instance(agent_type, parent, &self.session_ref, &now())
+        } else {
+            self.state
+                .store
+                .register_instance(agent_type, &self.session_ref, &now())
+        }
+        .map_err(|_| McpError::internal_error("实例注册失败", None))?;
         let actor = Actor::instance(&instance.agent_type, &instance.id);
         let registered = audit::instance_registered(actor)
             .map_err(|_| McpError::internal_error("审计事件构造失败", None))?;
@@ -186,6 +212,30 @@ impl AgentSession {
                 policy: None,
             });
         };
+        let lineage = self
+            .state
+            .store
+            .instance_lineage(&instance.id)
+            .map_err(|_| McpError::internal_error("实例关系不可用，本次拒绝供给", None))?;
+        for ancestor in lineage.iter().skip(1) {
+            if ancestor.agent_type != instance.agent_type {
+                return Err(McpError::invalid_request("实例关系无效", None));
+            }
+            let check = policy
+                .authorization(&ancestor.agent_type, Some(&ancestor.id))
+                .map_err(|_| McpError::internal_error("策略库不可用，本次拒绝供给", None))?;
+            if check.denial.is_some() || check.grant.is_none() {
+                self.deny(
+                    Actor::instance(&instance.agent_type, &instance.id),
+                    action,
+                    "ancestor_revoked",
+                );
+                return Err(McpError::invalid_request(
+                    format!("{POLICY_DENIED_PREFIX}父实例已失效"),
+                    None,
+                ));
+            }
+        }
         let authorization = policy
             .authorization(&instance.agent_type, Some(&instance.id))
             .map_err(|_| McpError::internal_error("策略库不可用，本次拒绝供给", None))?;
@@ -327,6 +377,7 @@ impl AgentSession {
         };
         let unavailable = |_| McpError::internal_error("策略库不可用，本次拒绝供给", None);
         Ok(Some(PolicySignpost {
+            board_write: !self.http && self.state.board.is_some() && policy.set.write.board,
             effective_hash: policy.effective_hash.clone(),
             capability_version: policy.version,
             read_prefixes: grant.allowed.clone(),
@@ -384,7 +435,29 @@ impl AgentSession {
             signpost::derive(&input)
         };
         match derived {
-            Ok(signpost) => {
+            Ok(mut signpost) => {
+                let board = self.board_signpost(grant).await?;
+                let at = signpost
+                    .text
+                    .find("## 5 硬约束")
+                    .ok_or_else(|| McpError::internal_error("路牌格式无效", None))?;
+                signpost.text.insert_str(at, &board);
+                signpost.tokens = studiolo_supply::count_tokens(&signpost.text);
+                if signpost.tokens > HARD_BUDGET_TOKENS {
+                    let event = audit::handshake_budget_exceeded(
+                        actor,
+                        signpost.tokens,
+                        HARD_BUDGET_TOKENS,
+                    )
+                    .map_err(|_| McpError::internal_error("审计事件构造失败", None))?;
+                    self.state
+                        .audit(event)
+                        .map_err(|outage| degraded(&outage))?;
+                    return Err(McpError::internal_error(
+                        "路牌超过2000 token硬预算，拒绝供给",
+                        None,
+                    ));
+                }
                 let event = audit::handshake_served(
                     actor,
                     generation.number,

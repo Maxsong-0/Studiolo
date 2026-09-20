@@ -34,6 +34,12 @@ pub enum SupplyError {
     /// SQLite 操作失败；不回显底层路径。
     #[error("agent 私有库不可用")]
     StoreUnavailable,
+    /// 子实例需要显式升级后的身份库。
+    #[error("子实例功能需要显式升级身份库")]
+    IdentityUpgradeRequired,
+    /// 父实例不存在、类型不符或树深度越界。
+    #[error("子实例关系无效")]
+    InvalidParent,
     /// 类型名不合法。
     #[error("类型名只允许 1..=32 位小写字母、数字与连字符")]
     InvalidTypeName,

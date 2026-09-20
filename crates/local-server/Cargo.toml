@@ -13,11 +13,18 @@ publish = false
 workspace = true
 
 [dependencies]
+studiolo-control-db.workspace = true
+studiolo-runner-adapter.workspace = true
+studiolo-gateway.workspace = true
+studiolo-task-engine.workspace = true
+studiolo-supply.workspace = true
+
 axum.workspace = true
 tokio = { workspace = true, features = ["time", "signal"] }
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
+ulid.workspace = true
 getrandom.workspace = true
 thiserror.workspace = true
 notify.workspace = true
