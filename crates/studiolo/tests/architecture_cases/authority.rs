@@ -128,3 +128,43 @@ fn fixed_agent_database_creation_pin_does_not_allow_another_file_or_write() {
 
 #[path = "m5_m6_authority.rs"]
 mod m5_m6_authority;
+
+#[test]
+fn offline_restore_descriptor_pins_remain_read_only_and_layout_bound() {
+    let path = Path::new("crates/auth-admin/src/restore_guard.rs");
+    let source = fs::read_to_string(workspace_root().join(path)).unwrap();
+    assert!(source_violations("studiolo-auth-admin", path, &source).is_empty());
+    for (before, after) in [
+        ("OFlags::RDONLY", "OFlags::RDWR"),
+        (".union(OFlags::NOFOLLOW)", ""),
+        ("/var/lib/studiolo-dr-tests", "/srv/canonical-vault"),
+        ("layout(root, config)?;", ""),
+        ("real != 0", "false"),
+        ("!separate", "false"),
+    ] {
+        assert!(source.contains(before));
+        let changed = source.replacen(before, after, 1);
+        assert!(
+            source_violations("studiolo-auth-admin", path, &changed)
+                .contains(&AuthorityViolation::GenericWrite),
+            "{before}"
+        );
+    }
+    for extra in [
+        "File::create(other)?;",
+        "File::open(other)?;",
+        "file.write_all(body)?;",
+        "openat(&pinned.file, other, FLAGS, Mode::empty())?;",
+    ] {
+        let changed = format!("{source}\n{extra}");
+        assert!(
+            source_violations("studiolo-auth-admin", path, &changed)
+                .contains(&AuthorityViolation::GenericWrite),
+            "{extra}"
+        );
+    }
+    assert!(
+        source_violations("studiolo-auth-admin", Path::new("src/other.rs"), &source)
+            .contains(&AuthorityViolation::GenericWrite)
+    );
+}

@@ -104,4 +104,3 @@ def pairing_screen(seed, finish, label='Studiolo'):
         finish()
     finally:
         os.write(1, b'\x1b[2J\x1b[H\x1b[?1049l')
-

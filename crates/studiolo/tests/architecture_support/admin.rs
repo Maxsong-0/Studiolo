@@ -9,6 +9,11 @@ pub(super) fn remainder(crate_name: &str, path: &Path, source: &str) -> String {
     ) {
         return source.to_owned();
     }
+    if crate_name == "studiolo-auth-admin"
+        && path.ends_with("crates/auth-admin/src/restore_guard.rs")
+    {
+        return super::restore_authority::remainder(source);
+    }
     let mut remainder = source
         .split_whitespace()
         .collect::<String>()

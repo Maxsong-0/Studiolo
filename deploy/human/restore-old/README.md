@@ -27,3 +27,5 @@ ssh -t maxsong@192.168.100.169 'sudo python3 -I -B -S /home/maxsong/.local/share
 运行合成测试：将 test-restore-pty.py 上传到 `/home/maxsong/t092-r6-test-restore-pty.py`，再在 Mac 执行 `python3 run-pty-tests.py`。控制器只能运行合成夹具；不得经 agent 的真实 PTY 调用 restore-old-factor.py 主入口。
 
 源码未提交/推送；尚未收到主人替换成功，不把 helper 测试当作真实 L3/因子替换验收。
+
+源码收口仅移除文件末尾多余空行；当前`SHA256SUMS`对应提交源码。上述r6历史发行字节与回执保持原样，不据当前源码摘要重写旧包。

@@ -11,6 +11,7 @@ mod manifest;
 mod observability;
 mod policy;
 mod real_fixture_authority;
+mod restore_authority;
 mod runner_authority;
 mod runner_fixture_authority;
 mod snapshot_authority;

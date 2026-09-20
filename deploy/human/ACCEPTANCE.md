@@ -1,5 +1,7 @@
 # T-092 部署回执（2026-09-20，人侧上线验收完成）
 
+> 本文保留 T-092～T-094 初次验收时的部署/提交状态。后续生产程序发布使用人侧 release 工具；历史恢复回执不会因发布而变成完整灾备验收。
+
 - 产品来源：main `50b33cfba226bae07cc7d527f474cbd46f680d20`；生产 release 构建含 auth/production、不含 test-support。CLI 合成前台/拒绝测试通过。
 - 107 原生：factor_contract 14、policy_http_contract 3、unix_ingress_contract 15，共32项通过；web npm ci、tsc、vite 构建通过。
 - 169：systemd 259.5；r2 包 manifest SHA-256 `b0a73612a95f38478b4c190df2bbd0c43af166d3d775ecff4b75fa565a99860a`。运行依赖齐全，systemd-analyze verify通过（只有系统已有xfs CPUAccounting警告）。
@@ -93,4 +95,3 @@ r7新包41文件全验，manifest `6b30030657a0807ed50abac5a106b38fa3b03602b6ff2
 三次policy.activated都已持久Outcome且同event_id各有一条Intent；Outcome版本、rollback_of、retired与前后effective哈希链逐项匹配PolicyStore。事件ID分别policy.v1:policy.activated:01M303YTG2Y1TC7PX364DG0GWG（v2）、policy.v1:policy.activated:01M303Z20E4GPPY4EDBD03N5DP（v3）、policy.v1:policy.activated:01M30440K0NP4H1K9PWGER6J72（v4）。未截获真实发布HTTP回包的audit_confirmed字段，以权威持久成对记录为审计落盘证据；不冒称做过全账本哈希重放验证。
 
 T-092人侧上线验收完成；r7产品代码/部署材料仍在独立工作树，未提交推送。T-093仍独立未完成，现有agent-only加密包不包含最终人侧Auth/新因子，也不是canonical全库备份。NAS首次管理员配置与获准现代Linux恢复目标仍需主人配合。
-

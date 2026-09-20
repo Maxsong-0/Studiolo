@@ -106,4 +106,3 @@ def manifest_valid(value):
         total += item["size"]
     require(total <= MAX_TOTAL)
     require(all(safe(name) and type(item) is dict and set(item) == {"mode"} and type(item["mode"]) is int and item["mode"] == 0o700 for name, item in dirs.items()))
-

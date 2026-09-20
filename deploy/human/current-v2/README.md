@@ -1,5 +1,7 @@
 # T-092 原生替换后的唯一 v2 装配
 
+> 本文保留 T-092～T-094 初次验收时的部署/提交状态。后续生产程序发布使用人侧 release 工具；历史恢复回执不会因发布而变成完整灾备验收。
+
 **最新状态（19:19 UTC）：T-092人侧上线验收完成：真实v2、最终10枚恢复码、发布v2/回滚v3/撤销v4及配对审计已核验；测试项已移出现行策略，Claude v1及原effective摘要恢复。r7服务已启用；源码/部署材料仍未提交推送。**
 
 当前（19:12 UTC）：r7已上线，真实v2已生效，新因子L3与最终10枚恢复码已核验，主人已确认保存；r7策略页并发读取修复已部署并通过公网加载/重新校验刷新；等待主人零权限测试项发布，再验收回滚。 下文r5为首次切换历史；activate.py是已执行的r3→r5操作，禁止重跑。当前launch-human.py和service指向r7；activate-web-r7.py是已执行的r5→r7限定部署，旧单元摘要门禁阻止重跑。
@@ -47,4 +49,3 @@ r7新包41文件全验，manifest `6b30030657a0807ed50abac5a106b38fa3b03602b6ff2
 三次policy.activated都已持久Outcome且同event_id各有一条Intent；Outcome版本、rollback_of、retired与前后effective哈希链逐项匹配PolicyStore。事件ID分别policy.v1:policy.activated:01M303YTG2Y1TC7PX364DG0GWG（v2）、policy.v1:policy.activated:01M303Z20E4GPPY4EDBD03N5DP（v3）、policy.v1:policy.activated:01M30440K0NP4H1K9PWGER6J72（v4）。未截获真实发布HTTP回包的audit_confirmed字段，以权威持久成对记录为审计落盘证据；不冒称做过全账本哈希重放验证。
 
 T-092人侧上线验收完成；r7产品代码/部署材料仍在独立工作树，未提交推送。T-093仍独立未完成，现有agent-only加密包不包含最终人侧Auth/新因子，也不是canonical全库备份。NAS首次管理员配置与获准现代Linux恢复目标仍需主人配合。
-

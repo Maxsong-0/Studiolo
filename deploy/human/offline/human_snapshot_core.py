@@ -156,4 +156,3 @@ def create(args, between_scans=None):
             output.write("INCOMPLETE", b"incomplete\n")
             raise
     return value
-
