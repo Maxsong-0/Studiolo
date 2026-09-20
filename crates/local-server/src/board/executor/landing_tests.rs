@@ -112,7 +112,12 @@ fn repository_lease_excludes_snapshot_and_landing_and_keeps_immutable_intent() {
             .as_deref(),
         Some("first")
     );
+    let inherited = lease.duplicate_descriptor_for_test().unwrap();
     drop(lease);
+    let next = Lease::acquire(&state, &repo).unwrap();
+    drop(inherited);
+    assert!(Lease::acquire(&state, &repo).is_err());
+    drop(next);
     assert!(Lease::acquire(&state, &repo).is_ok());
 }
 

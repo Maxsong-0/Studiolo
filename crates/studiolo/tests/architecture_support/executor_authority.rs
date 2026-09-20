@@ -50,6 +50,7 @@ pub(super) fn remainder(crate_name: &str, path: &Path, source: &str) -> String {
                 "letpath=root.join(format!(\"landing-{identity}.lock\"));",
                 "self.root.join(format!(\"landing-{key}-{phase}.json\"))",
                 "FlockOperation::NonBlockingLockExclusive",
+                "implDropforLease",
                 "if(current.dev(),current.ino())!=(held.dev(),held.ino())",
                 "m.nlink()!=1",
                 "m.mode()&0o777!=0o600",
@@ -67,6 +68,7 @@ pub(super) fn remainder(crate_name: &str, path: &Path, source: &str) -> String {
                 ("os::unix::fs::{MetadataExt,OpenOptionsExt}", 1),
                 ("rustix::fs::{FlockOperation,Mode,OFlags,flock,open}", 1),
                 ("flock(&file,FlockOperation::NonBlockingLockExclusive)", 1),
+                ("flock(&self._file,FlockOperation::Unlock)", 1),
                 (
                     "OpenOptions::new().create_new(true).write(true).mode(0o600).open(self.path(key,phase))",
                     1,

@@ -15,7 +15,18 @@ pub(super) struct Lease {
     pub identity: String,
     root: PathBuf,
 }
+impl Drop for Lease {
+    fn drop(&mut self) {
+        // A concurrent fork may retain this open file description until exec.
+        // End our lease now instead of waiting for every inherited descriptor to close.
+        let _ = flock(&self._file, FlockOperation::Unlock);
+    }
+}
 impl Lease {
+    #[cfg(test)]
+    pub(super) fn duplicate_descriptor_for_test(&self) -> std::io::Result<File> {
+        self._file.try_clone()
+    }
     pub fn acquire(root: &Path, repository: &Path) -> Result<Self, String> {
         super::config::private_directory(root)?;
         if fs::canonicalize(repository).map_err(|_| "仓库不可用")? != repository {
@@ -45,17 +56,18 @@ impl Lease {
         );
         private(&file)?;
         flock(&file, FlockOperation::NonBlockingLockExclusive).map_err(|_| "仓库正在快照或落地")?;
-        let current = fs::symlink_metadata(&path).map_err(|_| "仓库锁身份不可用")?;
-        let held = file.metadata().map_err(|_| "仓库锁身份不可用")?;
-        if (current.dev(), current.ino()) != (held.dev(), held.ino()) {
-            return Err("仓库锁身份变化".into());
-        }
-        Ok(Self {
+        let lease = Self {
             _file: file,
             _repository: directory,
             identity,
             root: root.to_owned(),
-        })
+        };
+        let current = fs::symlink_metadata(&path).map_err(|_| "仓库锁身份不可用")?;
+        let held = lease._file.metadata().map_err(|_| "仓库锁身份不可用")?;
+        if (current.dev(), current.ino()) != (held.dev(), held.ino()) {
+            return Err("仓库锁身份变化".into());
+        }
+        Ok(lease)
     }
     fn path(&self, key: &str, phase: &str) -> PathBuf {
         // Attempt identity stays globally unique even if an administrator replaces its repository.
