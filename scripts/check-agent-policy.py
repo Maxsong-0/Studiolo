@@ -30,7 +30,7 @@ MAX_TOKEN_BYTES = 4096
 # crates/supply/src/signpost/render.rs：第 3 项固定格式，不能仅凭 tools 清单判定 present。
 CAPABILITY = re.compile(
     r"^## 3 能力\n读：([^\n]+)（能力集 v([1-9][0-9]{0,19}) ∩ 部署上限）；"
-    r"写：黑板 无（M5）、正文 (?:仅 patch（M5 起）|无)；"
+    r"写：黑板 (?:无（M5）|只读)、正文 (?:仅 patch（M5 起）|仅经预览的 patch|无)；"
     r"策略：(?:可提 desired（永不自动生效）|不可提 desired)；"
     r"策略版本 ([0-9a-f]{12})\n(?=## 4 待我做的事(?:\n|$))", re.MULTILINE)
 SKILLS_HEADER = re.compile(
