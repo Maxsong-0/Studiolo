@@ -27,7 +27,7 @@ require = agent.require
 TIMEOUT_SECONDS = 15
 MAX_RESPONSE_BYTES = 4 * 1024 * 1024 + 2048
 MAX_TOKEN_BYTES = 4096
-# crates/supply/src/signpost/render.rs：第 3 项固定格式，不能仅凭六个 tools 判定 present。
+# crates/supply/src/signpost/render.rs：第 3 项固定格式，不能仅凭 tools 清单判定 present。
 CAPABILITY = re.compile(
     r"^## 3 能力\n读：([^\n]+)（能力集 v([1-9][0-9]{0,19}) ∩ 部署上限）；"
     r"写：黑板 无（M5）、正文 (?:仅 patch（M5 起）|无)；"
@@ -138,7 +138,7 @@ def check(base, token):
     require(isinstance(tools, list) and len(tools) == len(agent.EXPECTED_TOOLS)
             and all(isinstance(tool, dict) and isinstance(tool.get("name"), str) for tool in tools)
             and {tool["name"] for tool in tools} == agent.EXPECTED_TOOLS,
-            "工具清单不符合六个 M4 工具的约定")
+            "工具清单不符合当前 MCP 工具约定")
     current = signpost(client.call(3, "handshake", {}))
     require(initial == current, "两次握手的权限或可观测策略版本不一致")
     index = client.call(4, "policy_read", {"kind": "skills"})

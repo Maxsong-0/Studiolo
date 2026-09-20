@@ -96,4 +96,3 @@ def run(cfg, name, channel=False):
                     emit({"jsonrpc": "2.0", "id": request_id, "error": {"code": -32603, "message": "Studiolo 连接或权限不可确认；刷新权威状态后再操作"}})
     finally:
         stop.set()
-

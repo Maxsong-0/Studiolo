@@ -147,7 +147,7 @@ class PolicyProbeTests(unittest.TestCase):
                 code, requests, output = self.run_probe(replies)
                 self.assertEqual(code, 0)
                 summary = json.loads(output)
-                self.assertEqual(summary, {"responses_checked": 6, "tools_checked": 6,
+                self.assertEqual(summary, {"responses_checked": 6, "tools_checked": 7,
                                           "forbidden_reads_rejected": 1, "capability_version": 1,
                                           "skills_count": 1, "effective_hash_prefix": HASH})
                 self.assertEqual(len(requests), 6)

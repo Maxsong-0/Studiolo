@@ -1,6 +1,6 @@
 # 本机 Codex / Claude Code 派发
 
-当前实现位于 `codex/m5-m6-blackboard-runner` 开发工作树，未提交、合并或部署。用户最新约束是调用自己的本机原生客户端，只用订阅额度；此前服务器 API Gateway 的认证路线已停用。
+实现已提交到 `codex/m5-m6-blackboard-runner`，正在进行主线整合与发布；正式部署结果单独记录。用户最新约束是调用自己的本机原生客户端，只用订阅额度；此前服务器 API Gateway 的认证路线已停用。
 
 ## 已实现的链路
 

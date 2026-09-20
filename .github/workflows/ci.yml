@@ -100,6 +100,7 @@ jobs:
           python3 scripts/test-local-client-native.py
           python3 scripts/test-local-client-server.py
           python3 scripts/test-local-client-contract.py
+          python3 scripts/tests/test_runner_launch.py
           # 这三份的夹具曾依赖环境 umask：Ubuntu 普通用户默认 002，服务器原生自检因此红过（T-079）。
           # 在敌对 umask 下再跑一遍，测试必须自己钉住前提。
           ( umask 002; python3 scripts/test-sync-agent-vault.py; python3 scripts/test-replica-receiver.py; python3 scripts/test-replica-boundaries.py )
