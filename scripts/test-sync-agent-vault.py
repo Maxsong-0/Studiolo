@@ -4,9 +4,12 @@ import fcntl
 import json
 import os
 from pathlib import Path
+import signal
 import subprocess
 import sys
 import tempfile
+import textwrap
+import time
 import unittest
 from unittest.mock import patch
 
@@ -49,10 +52,15 @@ class SyncAgentVaultTests(unittest.TestCase):
 
     def run_sync(self, args=(), code=0):
         result = subprocess.run(["bash", str(SCRIPT), *args], env=self.env,
-                                capture_output=True, text=True, timeout=20)
+                                capture_output=True, text=True, timeout=10)
         self.assertEqual(result.returncode, code, result.stderr)
         self.assertNotIn("private fixture text", result.stdout + result.stderr)
         return result
+
+    def write_ssh_stub(self, source):
+        stub = self.root / "bin/ssh"
+        stub.write_text("#!/usr/bin/env python3\n" + textwrap.dedent(source), encoding="utf-8")
+        stub.chmod(0o755)
 
     def test_dry_run_is_entirely_local_and_content_free(self):
         value = json.loads(self.run_sync(["--dry-run"]).stdout)
@@ -71,6 +79,149 @@ class SyncAgentVaultTests(unittest.TestCase):
         path = self.server / "releases" / result["receipt"]["generation"] / "vault/项目/Studiolo/note.md"
         self.assertEqual(path.read_text(), "private fixture text")
         self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+
+    def test_ssh_is_started_directly_by_bash(self):
+        parent_log = self.root / "ssh-parent"
+        self.env["STUDIOLO_TEST_PARENT"] = str(parent_log)
+        self.write_ssh_stub("""
+            import os, subprocess, sys
+            from pathlib import Path
+            parent = subprocess.check_output(
+                ['ps', '-p', str(os.getppid()), '-o', 'comm='], text=True, timeout=2)
+            Path(os.environ['STUDIOLO_TEST_PARENT']).write_text(parent.strip())
+            sys.exit(subprocess.run(['/bin/sh', '-c', sys.argv[-1]], timeout=8).returncode)
+        """)
+        self.assertEqual(json.loads(self.run_sync().stdout)["status"], "ready")
+        self.assertEqual(Path(parent_log.read_text().strip()).name, "bash")
+
+    def test_source_lock_is_held_while_ssh_waits_for_receipt(self):
+        started = self.root / "ssh-started"
+        release = self.root / "ssh-release"
+        self.env.update(STUDIOLO_TEST_STARTED=str(started), STUDIOLO_TEST_RELEASE=str(release))
+        self.write_ssh_stub("""
+            import os, subprocess, sys, time
+            from pathlib import Path
+            Path(os.environ['STUDIOLO_TEST_STARTED']).touch()
+            release = Path(os.environ['STUDIOLO_TEST_RELEASE'])
+            deadline = time.monotonic() + 10
+            while not release.exists():
+                if time.monotonic() >= deadline:
+                    sys.exit(124)
+                time.sleep(0.01)
+            sys.exit(subprocess.run(['/bin/sh', '-c', sys.argv[-1]], timeout=8).returncode)
+        """)
+        first = subprocess.Popen(["bash", str(SCRIPT)], env=self.env, stdout=subprocess.PIPE,
+                                 stderr=subprocess.PIPE, text=True, start_new_session=True)
+        deadline = time.monotonic() + 10
+        try:
+            while not started.exists() and first.poll() is None and time.monotonic() < deadline:
+                time.sleep(0.01)
+            self.assertTrue(started.exists(), "SSH 未在 10 秒内进入文件屏障")
+            self.assertIsNone(first.poll(), "第一批同步在收到回执之前退出")
+            rejected = self.run_sync(["--dry-run"], code=1)
+            self.assertEqual(json.loads(rejected.stderr)["status"], "failed")
+            self.assertIsNone(first.poll(), "第二批检查结束前第一批已退出，未证明锁重叠")
+            release.touch()
+            stdout, stderr = first.communicate(timeout=max(0.1, deadline - time.monotonic()))
+            self.assertEqual(first.returncode, 0, stderr)
+            self.assertNotIn("private fixture text", stdout + stderr)
+            self.assertEqual(json.loads(stdout)["status"], "ready")
+        finally:
+            release.touch()
+            # 子会话只含此用例的同步进程；失败也必须回收 SSH 与接收器后代。
+            try:
+                os.killpg(first.pid, signal.SIGTERM)
+            except ProcessLookupError:
+                pass
+            try:
+                first.communicate(timeout=2)
+            except subprocess.TimeoutExpired:
+                try:
+                    os.killpg(first.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+                first.communicate(timeout=2)
+        self.assertEqual(json.loads(self.run_sync(["--dry-run"]).stdout)["status"], "dry_run")
+
+    def test_ssh_failure_does_not_reflect_either_output_stream(self):
+        self.write_ssh_stub("""
+            import sys
+            print('private fixture text')
+            print('private fixture text', file=sys.stderr)
+            sys.exit(17)
+        """)
+        result = self.run_sync(code=1)
+        self.assertEqual(result.stdout, "")
+        self.assertEqual(json.loads(result.stderr)["status"], "failed")
+
+    @unittest.skipUnless(Path("/proc/self/fd/0").exists(), "需要 Linux /proc 文件描述符路径")
+    def test_transfer_timeout_reaps_ssh_and_removes_private_archive(self):
+        self.write_ssh_stub("""
+            import json, os, time
+            from pathlib import Path
+            Path(os.environ['STUDIOLO_TEST_LOG']).write_text(json.dumps({
+                'pid': os.getpid(), 'archive': os.readlink('/proc/self/fd/0')}))
+            time.sleep(10)
+        """)
+        sleep = self.root / "bin/sleep"
+        sleep.write_text("#!/usr/bin/env python3\n" + textwrap.dedent("""
+            import os, sys, time
+            from pathlib import Path
+            if sys.argv[1:] != ['120']:
+                os.execv('/bin/sleep', ['sleep', *sys.argv[1:]])
+            # 确定 SSH 已开始再压缩 watchdog 时间，避免只测到准备阶段超时。
+            deadline = time.monotonic() + 8
+            while not Path(os.environ['STUDIOLO_TEST_LOG']).exists():
+                if time.monotonic() >= deadline:
+                    sys.exit(124)
+                time.sleep(0.01)
+            time.sleep(0.8)
+        """), encoding="utf-8")
+        sleep.chmod(0o755)
+        process = subprocess.Popen(["bash", str(SCRIPT)], env=self.env, stdout=subprocess.PIPE,
+                                   stderr=subprocess.PIPE, text=True, start_new_session=True)
+        try:
+            stdout, stderr = process.communicate(timeout=5)
+            self.assertEqual(process.returncode, 1, stderr)
+            self.assertEqual(stdout, "")
+            self.assertNotIn("private fixture text", stderr)
+            self.assertEqual(json.loads(stderr), {"status": "failed", "last_error": "transfer_timeout"})
+            child = json.loads(self.log.read_text())
+            # 此处必须在用例自身 finally 清理之前检查，证明清理来自同步入口。
+            self.assertFalse(Path("/proc", str(child["pid"])).exists(), "超时后 SSH 进程仍存在")
+            self.assertFalse(Path(child["archive"]).parent.exists(), "超时后私有归档目录仍存在")
+        finally:
+            try:
+                os.killpg(process.pid, signal.SIGTERM)
+            except ProcessLookupError:
+                pass
+            try:
+                process.communicate(timeout=2)
+            except subprocess.TimeoutExpired:
+                try:
+                    os.killpg(process.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+                process.communicate(timeout=2)
+
+    def test_malformed_and_oversized_ssh_receipts_cannot_report_ready(self):
+        replies = {
+            "malformed": "import sys\nsys.stdout.write('{\"status\":\"ready\",private fixture text')\n",
+            # 有效回执后加空白仍是合法 JSON；必须按完整字节数拒绝，不能只截读前缀。
+            "oversized": """
+                import subprocess, sys
+                result = subprocess.run(['/bin/sh', '-c', sys.argv[-1]],
+                                        stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=8)
+                sys.stdout.buffer.write(result.stdout + b' ' * 8193)
+                sys.exit(result.returncode)
+            """,
+        }
+        for name, source in replies.items():
+            with self.subTest(reply=name):
+                self.write_ssh_stub(source)
+                result = self.run_sync(code=1)
+                self.assertEqual(result.stdout, "")
+                self.assertEqual(json.loads(result.stderr)["status"], "failed")
 
     def test_shell_metacharacters_in_remote_path_are_quoted(self):
         marker = self.root / "injected"
@@ -182,9 +333,12 @@ class SyncAgentVaultTests(unittest.TestCase):
         for change in (
             lambda v: v.update(unexpected="private fixture text"),
             lambda v: v.update(reused="yes"),
+            lambda v: v["receipt"].update(unexpected="private fixture text"),
+            lambda v: v["receipt"].update(source_digest="c" * 64),
             lambda v: v["receipt"].update(source_observed_at_ms=99),
             lambda v: v["receipt"].update(generation="../../escape"),
             lambda v: v["receipt"].update(received_at_ms=True),
+            lambda v: v["receipt"].update(received_at_ms=99),
         ):
             value = json.loads(json.dumps(good))
             change(value)
