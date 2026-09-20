@@ -1,0 +1,22 @@
+{
+  "ai_type": "claude",
+  "read": {
+    "project_whitelist": [
+      "项目/Studiolo"
+    ],
+    "deny_by_default": true
+  },
+  "write": {
+    "board": true,
+    "board_projects": [
+      "项目/Studiolo"
+    ],
+    "content_patch_only": true,
+    "content_direct": false
+  },
+  "policy": {
+    "propose_desired": true,
+    "activate": false
+  },
+  "hard_bound_skills": []
+}

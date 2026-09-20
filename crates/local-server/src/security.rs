@@ -24,7 +24,7 @@ pub(crate) async fn guard(
         | crate::health::PATH
         | crate::file_operations::TOMBSTONES => "GET",
         crate::auth_http::SESSIONS => "GET, POST",
-        crate::auth_http::REVOKE => "POST",
+        crate::auth_http::REVOKE | crate::auth_http::execution::COMMAND => "POST",
         crate::editing::PATH if crate::editing::enabled(&state) => "POST",
         crate::file_operations::PATH if crate::file_operations::available(&state) => "GET, POST",
         path if factors_enabled(&state) && crate::auth_http::is_factor_path(path) => "POST",
@@ -76,8 +76,11 @@ pub(crate) async fn guard(
     headers.insert(header::CACHE_CONTROL, "no-store".parse().unwrap());
     headers.insert(header::X_CONTENT_TYPE_OPTIONS, "nosniff".parse().unwrap());
     headers.insert(header::REFERRER_POLICY, "no-referrer".parse().unwrap());
+    // The opt-in local Consumer companion is bound to literal IPv4 loopback and
+    // authenticates both the configured Studiolo origin and a local pairing token.
+    // Do not allow arbitrary hosts, localhost DNS aliases, or insecure LAN URLs.
     headers.insert(header::CONTENT_SECURITY_POLICY,
-        format!("default-src 'none'; script-src 'self'; {style}; connect-src 'self'; img-src 'self'; font-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; object-src 'none'").parse().unwrap());
+        format!("default-src 'none'; script-src 'self'; {style}; connect-src 'self' http://127.0.0.1:*; img-src 'self'; font-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; object-src 'none'").parse().unwrap());
     headers.insert(
         "cross-origin-resource-policy",
         "same-origin".parse().unwrap(),
@@ -156,7 +159,8 @@ async fn authorize(state: &AppState, request: &mut Request) -> Result<(), ApiErr
             || (crate::editing::enabled(state) && request.uri().path() == crate::editing::PATH)
             || (crate::file_operations::available(state)
                 && request.uri().path() == crate::file_operations::PATH)
-            || crate::auth_http::policy::is_policy_post(request.uri().path()));
+            || crate::auth_http::policy::is_policy_post(request.uri().path())
+            || request.uri().path() == crate::auth_http::execution::COMMAND);
     if !matches!(*request.method(), Method::GET | Method::HEAD) && !session_command {
         return Err(ApiError(
             StatusCode::METHOD_NOT_ALLOWED,

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """验收线上副本：initialize 与四个只读 MCP 工具必须报告同一来源回执和预期新鲜度。
-tools/list 须恰为 check-agent.py 的 EXPECTED_TOOLS（M4 起六个）；两个策略平面工具不带副本回执，不在此比对。
+tools/list 须恰为 check-agent.py 的 EXPECTED_TOOLS（M5 起七个）；两个策略平面工具不带副本回执，不在此比对。
 用法：python3 scripts/check-agent-replica.py <mcp_url> <token 文件> [--expected ready|stale]
 只打印已验证的新鲜度字段，不打印凭据、会话 id、笔记正文或服务错误正文。
 同目录需要 check-agent.py；本脚本不会同步、修改副本或重启服务。

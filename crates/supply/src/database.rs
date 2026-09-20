@@ -7,6 +7,7 @@ use std::{path::Path, sync::Mutex, time::Duration};
 
 use rusqlite::{Connection, OpenFlags, TransactionBehavior, params};
 
+mod children;
 mod identity;
 mod outage;
 mod schema;

@@ -133,3 +133,13 @@ Intent/Outcome、拒绝 outcome、旧 fence/取消/过期、guard 与审计不�
 执行中 panic 释放占位、保留上限逐出后的 `CallResultEvicted`，以及 Cargo 依赖中不存在
 TaskEngine。真实 SSRF/SQL/模型外发、秘密管理、raw promotion、预算与 indeterminate 恢复均
 延期，不能用这些内存测试宣称通过。
+
+## 7. M6 real relay (T-091)
+
+`DurableRelay` is a separate real-I/O implementation, not a modification of `MemoryGateway` cache semantics. Its required `RelayServices` bind fresh attempt and policy/lease/source guards, authoritative audit, four-layer permissions, a fixed HTTPS transport, and a mandatory Broker publication gate. New instances start frozen. An authenticated scheduler issues opaque nonce tickets; the Runner cannot submit its own role, snapshot, policy, provider, model or price ceiling.
+
+SQLite WAL/FULL persists the budget reservation and call intent before I/O, then marks the uncertainty boundary before handing control to the provider transport. Unknown outcomes block the entire attempt from further real calls, including new call IDs; they are never retried automatically. Completed replays still check current authority. Upstream credentials are redacted non-serializable types held only by `HttpsRelayTransport`; incoming CLI authentication/target headers are never forwarded.
+
+Both Anthropic Messages and OpenAI Responses use bounded SSE ingestion. Responses are released only after a complete terminal event, fresh egress, tool-count reservation, raw retention, Broker seal, audit outcome and durable completion. A raw HTTP request cannot choose a base URL, background/stored conversation or hosted/native subagent tool. Both request and result are checked against the same authenticated source/provider binding. `local_only`/`deny` permit no real provider.
+
+The Unix HTTP entry is `serve_relay_connection`; listener permissions, bounded acceptance and lifecycle belong to the trusted composition root. The exact APIs, retention/spend model, deployment prerequisites and unverified release gates are documented in [M6 implementation boundary](../m6/runner-gateway.md). A permissive test guard/publisher cannot be installed as a production implementation.

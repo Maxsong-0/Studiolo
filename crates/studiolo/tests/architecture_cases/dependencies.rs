@@ -132,6 +132,7 @@ fn filesystem_authority_dependencies_have_explicit_owners() {
                 | "studiolo-sync-transport"
                 | "studiolo-agent-server"
                 | "studiolo-process-safety"
+                | "studiolo-gateway"
         ) {
             // 仅本地配置/TTY、进程保护及Unix入口；源码门禁另限具体调用点和操作。
             assert_eq!(owned, ["rustix"]);
@@ -171,6 +172,8 @@ fn filesystem_authority_dependencies_have_explicit_owners() {
                     | "studiolo-supply"
                     | "studiolo-sync-bridge"
                     | "studiolo-policy"
+                    | "studiolo-gateway"
+                    | "studiolo"
             ),
             "{} must declare its SQLite ownership explicitly",
             manifest.name

@@ -66,15 +66,20 @@ pub(super) fn render(
                 .join("、");
             let _ = writeln!(
                 out,
-                "## 3 能力\n读：{}（能力集 v{} ∩ 部署上限）；写：黑板 无（M5）、正文 {}；策略：{}；策略版本 {}",
+                "## 3 能力\n读：{}（能力集 v{} ∩ 部署上限）；写：黑板 {}、正文 {}；策略：{}；策略版本 {}",
                 if prefixes.is_empty() {
                     "无"
                 } else {
                     &prefixes
                 },
                 policy.capability_version,
+                if policy.board_write {
+                    "可写"
+                } else {
+                    "只读"
+                },
                 if policy.content_patch_only {
-                    "仅 patch（M5 起）"
+                    "仅经预览的 patch"
                 } else {
                     "无"
                 },

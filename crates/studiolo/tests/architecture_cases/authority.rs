@@ -125,3 +125,6 @@ fn fixed_agent_database_creation_pin_does_not_allow_another_file_or_write() {
         .contains(&AuthorityViolation::GenericWrite)
     );
 }
+
+#[path = "m5_m6_authority.rs"]
+mod m5_m6_authority;

@@ -13,7 +13,11 @@ pub(crate) fn allowed_workspace_dependencies(crate_name: &str) -> &'static [&'st
         | "studiolo-control-db"
         | "studiolo-audit-ledger"
         | "studiolo-runner-adapter" => &["studiolo-core"],
-        "studiolo-gateway" => &["studiolo-core", "studiolo-audit-ledger"],
+        "studiolo-gateway" => &[
+            "studiolo-core",
+            "studiolo-audit-ledger",
+            "studiolo-process-safety",
+        ],
         // M4 策略平面：只依赖值类型与审计事件类型；不得依赖 control-db / auth / vault-broker。
         "studiolo-policy" => &["studiolo-core", "studiolo-audit-ledger"],
         "studiolo-auth" => &["studiolo-audit-ledger"],
@@ -26,6 +30,11 @@ pub(crate) fn allowed_workspace_dependencies(crate_name: &str) -> &'static [&'st
         ],
         "studiolo-workbench" => &["studiolo-core", "studiolo-vault-index"],
         "studiolo-local-server" => &[
+            "studiolo-runner-adapter",
+            "studiolo-gateway",
+            "studiolo-control-db",
+            "studiolo-task-engine",
+            "studiolo-supply",
             "studiolo-auth",
             "studiolo-audit-ledger",
             "studiolo-host-config",

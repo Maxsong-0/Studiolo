@@ -3,6 +3,15 @@
 //! This crate is the only production crate allowed to mutate canonical Vault
 //! files. Callers provide logical [`VaultPath`] values, never ambient paths.
 
+mod numbering;
+pub use numbering::NumberingScanner;
+mod artifact_stage;
+pub use artifact_stage::{ArtifactStager, StagedArtifactCommit};
+mod batch;
+pub use batch::{
+    BatchChange, BatchDiff, BatchEdit, BatchPreview, BatchReceipt, BatchRequest, BatchWriter,
+    TextPatch,
+};
 mod blob;
 mod stream;
 mod sync_observation;
@@ -16,6 +25,8 @@ mod capture;
 mod check_precondition;
 mod content_audit;
 pub(crate) mod file_operation;
+mod gateway_seal;
+pub use gateway_seal::{GatewayCallReceipt, GatewayCallSeal, GatewayPublisher};
 mod history;
 #[cfg(test)]
 mod l0_tests;
@@ -26,6 +37,8 @@ pub use file_operation::{
     FileOperationPreview, FileOperationReceipt, FileOperationRequest, FileOperationScopeHash,
     FileOperationStatus, FileOperationTicket, FilePresence, TombstoneEntry, TombstonePage,
 };
+mod memory_write;
+pub use memory_write::{MemoryEntryRequest, MemoryPreview, MemoryWriter};
 mod memory_mutation;
 mod memory_namespace;
 mod mutation;
@@ -1107,6 +1120,9 @@ pub struct MemoryVaultBroker {
     history: std::collections::BTreeMap<Revision, Vec<u8>>,
     snapshots: Mutex<std::collections::BTreeMap<SnapshotId, Snapshot>>,
     replays: std::collections::BTreeMap<String, (String, mutation::record::Outcome)>,
+    artifact_stages: Mutex<std::collections::BTreeMap<String, Vec<u8>>>,
+    batch_replays: std::collections::BTreeMap<String, batch::memory::MemoryBatch>,
+    gateway_seals: std::collections::BTreeMap<VaultPath, Vec<u8>>,
 }
 
 impl Default for MemoryVaultBroker {
@@ -1131,6 +1147,9 @@ impl MemoryVaultBroker {
             history: std::collections::BTreeMap::new(),
             snapshots: Mutex::new(std::collections::BTreeMap::new()),
             replays: std::collections::BTreeMap::new(),
+            artifact_stages: Mutex::new(std::collections::BTreeMap::new()),
+            batch_replays: std::collections::BTreeMap::new(),
+            gateway_seals: std::collections::BTreeMap::new(),
         }
     }
 

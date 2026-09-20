@@ -18,12 +18,6 @@ pub(crate) fn source_violations(
     }
 
     let mut violations = Vec::new();
-    if [".workbench/vault.json", "sources/attempts/"]
-        .iter()
-        .any(|pattern| source.contains(pattern))
-    {
-        violations.push(AuthorityViolation::CanonicalPath);
-    }
     if [
         "cap_std::ambient_authority",
         "ambient_authority()",
@@ -38,6 +32,7 @@ pub(crate) fn source_violations(
         "std::fs::write(",
         "fs::write(",
         "File::create(",
+        "File::options(",
         "OpenOptions::new(",
         ".write_all(",
         ".sync_all(",
@@ -47,6 +42,7 @@ pub(crate) fn source_violations(
         ".remove_file(",
         ".remove_dir(",
         "Command::new(",
+        "TcpStream::connect",
     ];
     // 每个私有 Adapter 只创建自己登记的固定文件；运行时还须检查路径与身份。
     let checked_source = private_storage_remainder(crate_name, source_path, source);
@@ -57,13 +53,43 @@ pub(crate) fn source_violations(
     let checked_source = super::backup::remainder(crate_name, source_path, &checked_source);
     let checked_source = super::observability::remainder(crate_name, source_path, &checked_source);
     let checked_source = super::sync_transport::remainder(crate_name, source_path, &checked_source);
+    let checked_source =
+        super::board_authority::remainder(crate_name, source_path, &checked_source);
+    let checked_source =
+        super::gateway_authority::remainder(crate_name, source_path, &checked_source);
+    let checked_source =
+        super::runner_authority::remainder(crate_name, source_path, &checked_source);
+    let checked_source =
+        super::executor_authority::remainder(crate_name, source_path, &checked_source);
+    let checked_source =
+        super::cleanup_authority::remainder(crate_name, source_path, &checked_source);
+    let checked_source =
+        super::real_fixture_authority::remainder(crate_name, source_path, &checked_source);
+    let checked_source =
+        super::snapshot_authority::remainder(crate_name, source_path, &checked_source);
+    let checked_source = super::demo_authority::remainder(crate_name, source_path, &checked_source);
+    let checked_source =
+        super::runner_fixture_authority::remainder(crate_name, source_path, &checked_source);
+    if [".workbench/vault.json", "sources/attempts/"]
+        .iter()
+        .any(|pattern| checked_source.contains(pattern))
+    {
+        violations.push(AuthorityViolation::CanonicalPath);
+    }
+    if matches!(crate_name, "studiolo-gateway" | "studiolo")
+        && checked_source.contains("Connection::open")
+    {
+        violations.push(AuthorityViolation::DatabaseOpen);
+    }
     let has_generic_write = generic_write_patterns
         .iter()
         .any(|pattern| checked_source.contains(pattern))
         || (matches!(crate_name, "studiolo-auth-admin" | "studiolo-host-config")
             && checked_source.contains("File::open("));
-    let runner_writes_only_its_temp_result = if crate_name == "studiolo-runner-adapter" {
-        let mut remainder = source.to_owned();
+    let runner_writes_only_its_temp_result = if crate_name == "studiolo-runner-adapter"
+        && source_path.ends_with("crates/runner-adapter/src/lib.rs")
+    {
+        let mut remainder = checked_source.to_owned();
         for allowed in [
             "File::create(&result_path)",
             "file.write_all(",
@@ -71,7 +97,14 @@ pub(crate) fn source_violations(
         ] {
             remainder = remainder.replace(allowed, "");
         }
-        source.contains("temp_dir.path().join(\"result.md\")")
+        checked_source.contains("temp_dir.path().join(\"result.md\")")
+            && [
+                "File::create(&result_path)",
+                "file.write_all(",
+                "file.sync_all(",
+            ]
+            .iter()
+            .all(|call| checked_source.matches(call).count() == 1)
             && !generic_write_patterns
                 .iter()
                 .any(|pattern| remainder.contains(pattern))
@@ -79,7 +112,11 @@ pub(crate) fn source_violations(
         false
     };
     let imports_filesystem_authority = if crate_name == "studiolo-runner-adapter" {
-        source.replace("fs::File,", "").contains("fs::")
+        if source_path.ends_with("crates/runner-adapter/src/lib.rs") {
+            checked_source.replacen("fs::File,", "", 1).contains("fs::")
+        } else {
+            checked_source.contains("fs::")
+        }
     } else {
         checked_source.contains("fs::")
     };

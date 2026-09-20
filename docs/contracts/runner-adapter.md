@@ -68,3 +68,11 @@ process ref 防 PID 复用，以及源码/架构测试证明本 crate 没有 can
 
 重启 reconcile 另用 spy Adapter 统计 `start` 调用次数：销毁并重建 TaskEngine 后计数不得增加。
 这项通过不要求 Stub 恢复其内存 handle，而是要求 TaskEngine 只前滚旧运行事实。
+
+## 6. M6 typed implementation (T-091)
+
+`RunSpec` now adds serde-defaulted `RunBudget` and optional `ExecutionSpec`; missing execution remains Stub-only. Real execution binds the complete repository tree and authenticated egress classification as well as each supplied input. `RunnerAdapter::progress` has a backwards-compatible default and returns monotonic tool/edit counters plus budget phase. `LaunchFailed { stage }` is separate from task failure; `Unavailable`, `BudgetExceeded`, `OutputLimit`, `Protocol`, `InvalidExecution` and `CandidateRejected { retained }` preserve failure meaning.
+
+`RealRunner` shares a Linux containment backend and lifecycle between Claude Code and Codex. It requires a pinned CLI digest, immutable rootfs, live negative probe, per-attempt Gateway-only Unix route, and a private short-lived capability file. Its opaque RunnerRef is the exact attempt/fence systemd scope, never a reusable process ID. Both profiles disable native agent fanout. Candidate artifacts are `candidate.patch` and `patch.json`, with base/after tree IDs and SHA-256; unlanded bytes are retained outside scratch.
+
+Trusted host-side `apply_code_patch`/`advance_code_ref` are separate APIs, never Runner actions. Full isolation, provider protocol, cancellation/receipt and restart acceptance are recorded independently in [M6 implementation boundary](../m6/runner-gateway.md). Existing M0 claims above apply to Stub; the new source code alone is not a deployed RG-RUNNER receipt.

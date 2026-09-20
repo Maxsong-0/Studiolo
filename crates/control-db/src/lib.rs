@@ -10,9 +10,39 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use studiolo_core::{AttemptId, Fence, TaskId, VaultUuid};
 
+mod board;
+mod board_completion;
+mod board_projection;
+mod runner_candidates;
 mod schema_guard;
+mod stopped_candidates;
+pub use runner_candidates::RunnerCandidateStage;
+mod lifecycle;
+mod runtime_audit;
+pub use board::{BoardDefinition, BoardRecord};
+pub use lifecycle::{AttemptProgress, LeaseReconciliation};
+pub use runtime_audit::RuntimeAuditRecord;
 
-const SCHEMA_VERSION: i64 = 2;
+const SCHEMA_VERSION: i64 = 3;
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum TerminalKind {
+    Legacy,
+    BoardReview,
+    BoardStopped,
+}
+impl TerminalKind {
+    fn outcome(self) -> Option<Value> {
+        (self == Self::BoardStopped).then(|| Value::String("stopped".into()))
+    }
+    fn required_phase(self) -> &'static str {
+        if self == Self::BoardStopped {
+            "cancel_requested"
+        } else {
+            "running"
+        }
+    }
+}
 
 /// Control-plane persistence failures.
 #[derive(Debug, thiserror::Error)]
@@ -61,6 +91,20 @@ pub enum DbError {
     /// Attempt identity or fence did not match.
     #[error("attempt fence mismatch")]
     FenceMismatch,
+    /// Active work owns one or more requested paths.
+    #[error("paths held by {by_instance}: {paths:?}")]
+    PathsHeld {
+        #[doc = "Instance owning the conflicting claim."]
+        by_instance: String,
+        #[doc = "Requested paths intersecting the active claim."]
+        paths: Vec<String>,
+    },
+    /// A machine-checkable blackboard rule rejected the operation.
+    #[error("blackboard rejected: {0}")]
+    BoardRejected(&'static str),
+    /// A stable request id was used with different inputs.
+    #[error("idempotency request mismatch")]
+    IdempotencyMismatch,
     /// A durable value was malformed.
     #[error("corrupt control record: {0}")]
     Corrupt(String),
@@ -236,9 +280,9 @@ pub struct SnapshotRecord {
 /// Data durably reserved before terminal side effects.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct TerminalReservation {
-    /// Structured runner report.
+    /// Event and attempt identity only. Historical v1/v2 records may still require staging migration.
     pub report_json: Value,
-    /// Artifact candidates for idempotent roll-forward.
+    /// Content-plane staging pointer {id, sha256}; new inline candidates are rejected.
     pub artifacts_json: Value,
 }
 
@@ -408,6 +452,11 @@ impl ControlDb {
                 [],
             )?;
         }
+        board::migrate(&tx)?;
+        tx.execute(
+            "INSERT OR IGNORE INTO schema_migrations(version, applied_at_ms) VALUES (2, 0)",
+            [],
+        )?;
         tx.execute(
             "INSERT OR IGNORE INTO schema_migrations(version, applied_at_ms) VALUES (?1, 0)",
             [SCHEMA_VERSION],
@@ -682,6 +731,8 @@ impl ControlDb {
             }
             None => return Err(DbError::NotFound("task")),
         }
+        board::require_paths_free(&tx, task_id)?;
+        lifecycle::require_retry_ready(&tx, task_id, now_ms)?;
         persist_snapshot(&tx, &snapshot)?;
         let fence_value: i64 = tx.query_row(
             "SELECT next_fence FROM fence_counter WHERE singleton = 1",
@@ -724,6 +775,29 @@ impl ControlDb {
                 now_ms
             ],
         )?;
+        tx.execute(
+            "INSERT INTO attempt_progress(attempt_id,last_progress_ms) VALUES(?1,?2)",
+            params![attempt_id.to_string(), now_ms],
+        )?;
+        runtime_audit::enqueue(
+            &tx,
+            &format!("claim:{attempt_id}"),
+            "task.claim",
+            serde_json::json!({"task_id":task_id,"attempt_id":attempt_id,"fence":fence.get(),"by_instance":worker_id}),
+        )?;
+        if tx.query_row(
+            "SELECT COUNT(*) FROM board_tasks WHERE task_id=?1 AND handoff_json IS NOT NULL",
+            [task_id.to_string()],
+            |r| r.get::<_, i64>(0),
+        )? != 0
+        {
+            runtime_audit::enqueue(
+                &tx,
+                &format!("handoff-accepted:{attempt_id}"),
+                "handoff.accepted",
+                serde_json::json!({"task_id":task_id,"attempt_id":attempt_id,"by_instance":worker_id}),
+            )?;
+        }
         enqueue_projection(&tx, task_id, &format!("claim:{attempt_id}"))?;
         tx.commit()?;
         Ok(AttemptRecord {
@@ -750,7 +824,7 @@ impl ControlDb {
     ) -> Result<(), DbError> {
         let changed = self.connection.execute(
             "UPDATE attempts SET runner_ref_json = ?4, updated_at_ms = ?5
-             WHERE task_id = ?1 AND attempt_id = ?2 AND fence = ?3 AND phase = 'running'",
+             WHERE task_id = ?1 AND attempt_id = ?2 AND fence = ?3 AND phase = 'running' AND lease_until_ms > ?5",
             params![
                 task_id.to_string(),
                 attempt_id.to_string(),
@@ -775,9 +849,12 @@ impl ControlDb {
         lease_until_ms: i64,
         now_ms: i64,
     ) -> Result<(), DbError> {
+        if lease_until_ms <= now_ms {
+            return Err(DbError::FenceMismatch);
+        }
         let changed = self.connection.execute(
             "UPDATE attempts SET lease_until_ms = ?4, updated_at_ms = ?5
-             WHERE task_id = ?1 AND attempt_id = ?2 AND fence = ?3 AND phase = 'running'",
+             WHERE task_id = ?1 AND attempt_id = ?2 AND fence = ?3 AND phase = 'running' AND lease_until_ms > ?5",
             params![
                 task_id.to_string(),
                 attempt_id.to_string(),
@@ -807,6 +884,17 @@ impl ControlDb {
             .optional()?;
         match state {
             Some((status, _)) if status == "draft" || status == "queued" => {
+                board::require_children_terminal(&tx, task_id)?;
+                if tx.query_row(
+                    "SELECT COUNT(*) FROM board_tasks WHERE task_id=?1",
+                    [task_id.to_string()],
+                    |r| r.get::<_, i64>(0),
+                )? != 0
+                {
+                    return Err(DbError::BoardRejected(
+                        "unclaimed board cancellation requires a structured stopped receipt after claim",
+                    ));
+                }
                 tx.execute(
                     "UPDATE tasks SET status = 'cancelled', active_attempt = NULL,
                          updated_at_ms = ?2 WHERE task_id = ?1",
@@ -832,6 +920,13 @@ impl ControlDb {
             }
             None => return Err(DbError::NotFound("task")),
         }
+        tx.execute("UPDATE attempt_progress SET cancel_requested_ms=?2 WHERE attempt_id=(SELECT active_attempt FROM tasks WHERE task_id=?1)",params![task_id.to_string(),now_ms])?;
+        runtime_audit::enqueue(
+            &tx,
+            &format!("cancel:{task_id}:{now_ms}"),
+            "task.cancel_requested",
+            serde_json::json!({"task_id":task_id}),
+        )?;
         enqueue_projection(&tx, task_id, &format!("cancel-request:{task_id}"))?;
         tx.commit()?;
         Ok(())
@@ -882,6 +977,17 @@ impl ControlDb {
             },
             None => return Err(DbError::NotFound("attempt")),
         }
+        board::require_children_terminal(&tx, task_id)?;
+        if tx.query_row(
+            "SELECT COUNT(*) FROM board_tasks WHERE task_id=?1",
+            [task_id.to_string()],
+            |r| r.get::<_, i64>(0),
+        )? != 0
+        {
+            return Err(DbError::BoardRejected(
+                "board cancellation requires a structured stopped receipt",
+            ));
+        }
         tx.execute(
             "UPDATE attempts SET phase = 'cancelled', updated_at_ms = ?2 WHERE attempt_id = ?1",
             params![attempt_id.to_string(), now_ms],
@@ -910,6 +1016,51 @@ impl ControlDb {
         reservation: &TerminalReservation,
         now_ms: i64,
     ) -> Result<(), DbError> {
+        self.reserve_terminal_kind(
+            task_id,
+            attempt_id,
+            fence,
+            reservation,
+            now_ms,
+            TerminalKind::Legacy,
+        )
+    }
+
+    /// Reserves the existing T1 protocol for runner candidates requiring owner review.
+    pub fn reserve_board_runner_candidates(
+        &mut self,
+        task_id: TaskId,
+        attempt_id: AttemptId,
+        fence: Fence,
+        reservation: &TerminalReservation,
+        now_ms: i64,
+    ) -> Result<(), DbError> {
+        self.reserve_terminal_kind(
+            task_id,
+            attempt_id,
+            fence,
+            reservation,
+            now_ms,
+            TerminalKind::BoardReview,
+        )
+    }
+
+    fn reserve_terminal_kind(
+        &mut self,
+        task_id: TaskId,
+        attempt_id: AttemptId,
+        fence: Fence,
+        reservation: &TerminalReservation,
+        now_ms: i64,
+        kind: TerminalKind,
+    ) -> Result<(), DbError> {
+        if !board_completion::is_pointer_reservation(reservation)
+            || reservation.report_json.get("outcome") != kind.outcome().as_ref()
+        {
+            return Err(DbError::BoardRejected(
+                "new terminal reservations must contain metadata and staging pointers only",
+            ));
+        }
         let tx = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
@@ -932,7 +1083,7 @@ impl ControlDb {
                 tx.commit()?;
                 return Ok(());
             }
-            Some((phase, _, _)) if phase != "running" => {
+            Some((phase, _, _)) if phase != kind.required_phase() => {
                 return Err(DbError::InvalidTransition {
                     from: phase,
                     operation: "reserve_terminal",
@@ -940,6 +1091,34 @@ impl ControlDb {
             }
             None => return Err(DbError::NotFound("attempt")),
             _ => {}
+        }
+        if kind == TerminalKind::BoardStopped {
+            stopped_candidates::require_cancel_window(&tx, task_id, attempt_id, fence, now_ms)?;
+        } else {
+            lifecycle::require_live(&tx, task_id, attempt_id, fence, now_ms)?;
+        }
+        board::require_children_terminal(&tx, task_id)?;
+        let is_board = tx.query_row(
+            "SELECT COUNT(*) FROM board_tasks WHERE task_id=?1",
+            [task_id.to_string()],
+            |r| r.get::<_, i64>(0),
+        )? != 0;
+        if is_board != (kind != TerminalKind::Legacy) {
+            return Err(DbError::BoardRejected(
+                "board candidates require the runner review protocol",
+            ));
+        }
+        if kind != TerminalKind::Legacy {
+            let adapter: String = tx.query_row(
+                "SELECT json_extract(definition_json,'$.adapter') FROM tasks WHERE task_id=?1",
+                [task_id.to_string()],
+                |r| r.get(0),
+            )?;
+            if adapter == "consumer" {
+                return Err(DbError::BoardRejected(
+                    "consumer task cannot stage runner candidates",
+                ));
+            }
         }
         tx.execute(
             "UPDATE attempts SET phase = 'committing', terminal_json = ?4,
@@ -971,6 +1150,28 @@ impl ControlDb {
         artifact_receipt: Option<&Value>,
         now_ms: i64,
     ) -> Result<(), DbError> {
+        self.finalize_terminal_kind(
+            task_id,
+            attempt_id,
+            fence,
+            status,
+            artifact_receipt,
+            None,
+            now_ms,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn finalize_terminal_kind(
+        &mut self,
+        task_id: TaskId,
+        attempt_id: AttemptId,
+        fence: Fence,
+        status: TaskStatus,
+        artifact_receipt: Option<&Value>,
+        stopped_receipt: Option<&Value>,
+        now_ms: i64,
+    ) -> Result<(), DbError> {
         if !matches!(
             status,
             TaskStatus::NeedsReview
@@ -986,6 +1187,24 @@ impl ControlDb {
         let tx = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let is_board = tx.query_row(
+            "SELECT COUNT(*) FROM board_tasks WHERE task_id=?1",
+            [task_id.to_string()],
+            |r| r.get::<_, i64>(0),
+        )? != 0;
+        stopped_candidates::validate_finalization(
+            &tx,
+            task_id,
+            attempt_id,
+            status,
+            artifact_receipt,
+            stopped_receipt,
+        )?;
+        if is_board && status != TaskStatus::NeedsReview && stopped_receipt.is_none() {
+            return Err(DbError::BoardRejected(
+                "runner candidates must await owner review",
+            ));
+        }
         let state: Option<(String, i64, String)> = tx
             .query_row(
                 "SELECT a.phase, a.fence, t.status
@@ -1032,6 +1251,18 @@ impl ControlDb {
             }
             None => return Err(DbError::NotFound("attempt")),
             _ => {}
+        }
+        if let Some(receipt) = stopped_receipt {
+            tx.execute(
+                "UPDATE board_tasks SET receipt_json=?2 WHERE task_id=?1",
+                params![task_id.to_string(), serde_json::to_string(receipt)?],
+            )?;
+            runtime_audit::enqueue(
+                &tx,
+                &format!("stopped-candidates:{attempt_id}"),
+                "task.stopped_candidates_committed",
+                serde_json::json!({"task_id":task_id,"attempt_id":attempt_id,"fence":fence.get()}),
+            )?;
         }
         if let Some(receipt) = artifact_receipt {
             tx.execute(
@@ -1081,19 +1312,12 @@ impl ControlDb {
         attempt_id: AttemptId,
         fence: Fence,
     ) -> Result<bool, DbError> {
-        let count: i64 = self.connection.query_row(
-            "SELECT COUNT(*) FROM attempts a JOIN tasks t ON t.task_id = a.task_id
-             WHERE a.task_id = ?1 AND a.attempt_id = ?2 AND a.fence = ?3
-               AND a.phase = 'running' AND t.status = 'running'
-               AND t.active_attempt = a.attempt_id",
-            params![
-                task_id.to_string(),
-                attempt_id.to_string(),
-                fence_i64(fence)?
-            ],
-            |row| row.get(0),
-        )?;
-        Ok(count == 1)
+        self.is_attempt_active_at(
+            task_id,
+            attempt_id,
+            fence,
+            jiff::Timestamp::now().as_millisecond(),
+        )
     }
 
     /// Marks old in-flight work abandoned; `committing` remains for roll-forward.
@@ -1202,6 +1426,26 @@ impl ControlDb {
     /// Lists reservations that reconciliation must roll forward without a runner.
     pub fn committing_attempts(&self) -> Result<Vec<AttemptRecord>, DbError> {
         self.attempts_with_phase(AttemptPhase::Committing)
+    }
+
+    /// Lists every historical attempt in creation/id order for trusted isolation maintenance.
+    /// Terminal reservations are omitted, so historical inline report bodies never escape this view.
+    pub fn attempts_for_task(&self, task: TaskId) -> Result<Vec<AttemptRecord>, DbError> {
+        let mut statement = self.connection.prepare(
+            "SELECT attempt_id FROM attempts WHERE task_id=?1 ORDER BY created_at_ms,attempt_id",
+        )?;
+        let ids = statement
+            .query_map([task.to_string()], |row| row.get::<_, String>(0))?
+            .collect::<Result<Vec<_>, _>>()?;
+        ids.into_iter()
+            .map(|id| {
+                let mut attempt = self
+                    .attempt(task, parse_attempt_id(&id)?)?
+                    .ok_or(DbError::NotFound("historical attempt"))?;
+                attempt.terminal = None;
+                Ok(attempt)
+            })
+            .collect()
     }
 
     /// Looks up one attempt, including its terminal roll-forward reservation.

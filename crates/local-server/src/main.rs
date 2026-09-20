@@ -18,14 +18,14 @@ async fn run() -> Result<(), String> {
     // Unix非UTF8参数不能触发默认panic诊断并回显原字节；参数数量也有固定预算。
     let args = std::env::args_os()
         .skip(1)
-        .take(24)
+        .take(42)
         .map(|value| {
             value
                 .into_string()
                 .map_err(|_| "参数必须是规范UTF8；不回显原值".to_owned())
         })
         .collect::<Result<Vec<_>, _>>()?;
-    if args.len() > 22 {
+    if args.len() > 40 {
         return Err("启动参数超过固定预算".into());
     }
     let Some(options) = options::parse(args.into_iter())? else {

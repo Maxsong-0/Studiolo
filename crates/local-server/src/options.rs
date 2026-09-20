@@ -17,6 +17,14 @@ pub(crate) struct Options {
     pub(crate) cargo_dependencies: bool,
     pub(crate) rust_call_sites: Option<Vec<String>>,
     pub(crate) policy_data: Option<PathBuf>,
+    pub(crate) board: Option<BoardOptions>,
+    pub(crate) runner_config: Option<PathBuf>,
+}
+
+pub(crate) struct BoardOptions {
+    pub(crate) socket: PathBuf,
+    pub(crate) data: PathBuf,
+    pub(crate) agent_data: PathBuf,
 }
 
 pub(crate) struct SessionOptions {
@@ -42,6 +50,10 @@ pub(crate) fn parse(mut args: impl Iterator<Item = String>) -> Result<Option<Opt
     let mut cargo_dependencies = false;
     let mut rust_call_sites = None;
     let mut policy_data = None;
+    let mut board_socket = None;
+    let mut runner_config = None;
+    let mut board_data = None;
+    let mut board_agent_data = None;
     let mut assets = PathBuf::from("web/dist");
     let mut label = "只读副本".to_owned();
     let mut port = 4317;
@@ -71,6 +83,10 @@ pub(crate) fn parse(mut args: impl Iterator<Item = String>) -> Result<Option<Opt
                 | "--cargo-dependencies"
                 | "--rust-call-sites"
                 | "--policy-data"
+                | "--runner-config"
+                | "--board-socket"
+                | "--board-data"
+                | "--board-agent-data"
                 | "--help"
         ) {
             return Err("未知参数；仅接受 --help 中的非秘密参数".into());
@@ -105,6 +121,10 @@ pub(crate) fn parse(mut args: impl Iterator<Item = String>) -> Result<Option<Opt
             }
             "--rust-call-sites" => rust_call_sites = Some(parse_rust_sources(&value)?),
             "--policy-data" => policy_data = Some(PathBuf::from(value)),
+            "--runner-config" => runner_config = Some(PathBuf::from(value)),
+            "--board-socket" => board_socket = Some(PathBuf::from(value)),
+            "--board-data" => board_data = Some(PathBuf::from(value)),
+            "--board-agent-data" => board_agent_data = Some(PathBuf::from(value)),
             "--assets" => assets = PathBuf::from(value),
             "--label" => label = value,
             "--port" => {
@@ -190,6 +210,29 @@ pub(crate) fn parse(mut args: impl Iterator<Item = String>) -> Result<Option<Opt
     {
         return Err("canonical写者数据必须为绝对路径并配合会话配置，不得混用 --canonical".into());
     }
+    let board = match (board_socket, board_data, board_agent_data) {
+        (None, None, None) => None,
+        (Some(socket), Some(data), Some(agent_data))
+            if writer_data.is_some()
+                && policy_data.is_some()
+                && socket.is_absolute()
+                && data.is_absolute()
+                && agent_data.is_absolute() =>
+        {
+            Some(BoardOptions {
+                socket,
+                data,
+                agent_data,
+            })
+        }
+        _ => return Err("黑板必须同时指定三个绝对路径、canonical写者及策略目录".into()),
+    };
+    if runner_config
+        .as_ref()
+        .is_some_and(|p| !p.is_absolute() || board.is_none() || factor.is_none())
+    {
+        return Err("执行体需规范绝对配置路径、黑板和可信二次认证入口".into());
+    }
     Ok(Some(Options {
         vault: vault.ok_or("必须显式提供 --vault <副本目录>，不会默认访问真实笔记库")?,
         assets,
@@ -204,6 +247,8 @@ pub(crate) fn parse(mut args: impl Iterator<Item = String>) -> Result<Option<Opt
         cargo_dependencies,
         rust_call_sites,
         policy_data,
+        board,
+        runner_config,
     }))
 }
 

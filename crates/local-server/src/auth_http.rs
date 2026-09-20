@@ -2,6 +2,7 @@
 
 mod content;
 mod cookie;
+pub(crate) mod execution;
 mod factor_handlers;
 mod factor_input;
 mod factor_state;
@@ -139,7 +140,9 @@ impl AuthHttp {
         };
         // 因子动作与策略发布（L3）都要求可信 Unix 来源证明；其它策略端点只要会话链。
         let source = if self.has_factors()
-            && (is_factor_path(request.uri().path()) || policy::requires_l3(request.uri().path()))
+            && (is_factor_path(request.uri().path())
+                || policy::requires_l3(request.uri().path())
+                || request.uri().path() == execution::COMMAND)
         {
             Some(crate::unix_ingress::source(request).map_err(|_| Failure::forbidden())?)
         } else {

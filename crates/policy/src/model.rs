@@ -66,12 +66,15 @@ pub struct ReadCaps {
     pub deny_by_default: bool,
 }
 
-/// 写权限；M5 前 `board` 恒为 false，`content_direct` 永久为 false。
+/// 写权限；`board` 由主人显式发布，`content_direct` 永久为 false。
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct WriteCaps {
-    /// 黑板写入（M5 才开放）。
+    /// 黑板写入（M5，仅限能力集项目白名单）。
     pub board: bool,
+    /// 黑板可写项目，必须显式给出且包含于读取白名单；旧能力集缺省为空。
+    #[serde(default)]
+    pub board_projects: Vec<String>,
     /// 改人写正文一律 base revision ＋ patch。
     pub content_patch_only: bool,
     /// 永久为 false：AI 不整页覆盖人写正文。

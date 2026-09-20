@@ -30,7 +30,7 @@ fn empty_database_migrates_and_enforces_runtime_pragmas() {
     let vault_uuid = VaultUuid::new();
     let db = ControlDb::open(database_path(&temp), vault_uuid).expect("open database");
 
-    assert_eq!(db.schema_version().expect("schema version"), 2);
+    assert_eq!(db.schema_version().expect("schema version"), 3);
     assert_eq!(db.bound_vault_uuid().expect("vault binding"), vault_uuid);
     assert_eq!(db.pragma("journal_mode").expect("journal mode"), "wal");
     assert_eq!(db.pragma("synchronous").expect("sync mode"), "2");
@@ -75,7 +75,7 @@ fn existing_v1_database_upgrades_without_losing_runtime_records() {
             .unwrap();
     }
     let db = ControlDb::open(&path, vault).unwrap();
-    assert_eq!(db.schema_version().unwrap(), 2);
+    assert_eq!(db.schema_version().unwrap(), 3);
     assert_eq!(db.pragma("journal_mode").unwrap(), "wal");
     assert_eq!(db.pragma("synchronous").unwrap(), "2");
     assert_eq!(db.pragma("foreign_keys").unwrap(), "1");
@@ -160,8 +160,8 @@ fn terminal_flow_is_two_phase_idempotent_and_emits_one_projection() {
         .claim(task_id, "worker", snapshot("snapshot", vault_uuid), 3, 103)
         .expect("claim");
     let reservation = TerminalReservation {
-        report_json: json!({"outcome": "needs_review"}),
-        artifacts_json: json!([{"name": "result.md"}]),
+        report_json: json!({"format": "artifact_stage_v1"}),
+        artifacts_json: json!({"id":"a".repeat(64),"sha256":"b".repeat(64)}),
     };
 
     db.reserve_terminal(task_id, attempt.attempt_id, attempt.fence, &reservation, 4)
@@ -369,8 +369,8 @@ fn restart_abandons_running_but_preserves_committing_for_roll_forward() {
             committing.attempt_id,
             committing.fence,
             &TerminalReservation {
-                report_json: json!({"outcome": "needs_review"}),
-                artifacts_json: json!([]),
+                report_json: json!({"format": "artifact_stage_v1"}),
+                artifacts_json: json!({"id":"a".repeat(64),"sha256":"b".repeat(64)}),
             },
             5,
         )
@@ -446,8 +446,8 @@ fn acknowledge_cancel_after_a_terminal_winner_is_a_structured_rejection() {
         .claim(task_id, "worker", snapshot("snapshot", vault_uuid), 3, 103)
         .expect("claim");
     let reservation = TerminalReservation {
-        report_json: json!({"outcome": "needs_review"}),
-        artifacts_json: json!([]),
+        report_json: json!({"format": "artifact_stage_v1"}),
+        artifacts_json: json!({"id":"a".repeat(64),"sha256":"b".repeat(64)}),
     };
     db.reserve_terminal(task_id, attempt.attempt_id, attempt.fence, &reservation, 4)
         .expect("reserve terminal");
@@ -501,7 +501,7 @@ fn a_recorded_newer_schema_version_is_rejected() {
         ControlDb::open(&path, vault_uuid),
         Err(DbError::UnsupportedSchema {
             found: 99,
-            supported: 2,
+            supported: 3,
         })
     ));
     // 这里只验证版本不降级；物理副作用由原始 SQLite 夹具另行覆盖。

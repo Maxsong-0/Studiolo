@@ -3,6 +3,11 @@
 //! M0 组合根装配文件系统 Broker、SQLite TaskEngine 和隔离 Stub。
 //! 尚不启动常驻服务、网络入口或真实外部工具。
 
+mod demo_gateway;
+mod stub_gateway;
+pub use demo_gateway::{DemoGateway, DemoGatewayConfig};
+pub use stub_gateway::GatewayStubRunner;
+
 use std::path::Path;
 
 use studiolo_audit_ledger::MemoryAuditLedger;

@@ -72,6 +72,9 @@ fn publish(store: &PolicyStore, kind: PolicyKind, subject: &str, body: Option<&s
 }
 
 async fn fixture() -> Fixture {
+    fixture_with_board(None).await
+}
+async fn fixture_with_board(board_socket: Option<std::path::PathBuf>) -> Fixture {
     let temp = TempDir::new_in(fs::canonicalize("/tmp").unwrap()).unwrap();
     let vault = temp.path().join("vault");
     write(
@@ -102,6 +105,7 @@ async fn fixture() -> Fixture {
     drop(PolicyStore::open(&policy).unwrap());
 
     let state = serve::prepare(&ServeOptions {
+        board_socket,
         index_cache: None,
         vault: Some(vault.clone()),
         replica_root: None,
@@ -133,6 +137,67 @@ async fn fixture() -> Fixture {
             .build()
             .unwrap(),
     }
+}
+
+#[tokio::test]
+async fn board_response_is_withheld_when_its_project_is_removed_while_waiting() {
+    use std::sync::Arc;
+    let temp = TempDir::new_in(fs::canonicalize("/tmp").unwrap()).unwrap();
+    let socket = temp.path().join("board.sock");
+    let listener = tokio::net::UnixListener::bind(&socket).unwrap();
+    let reached = Arc::new(tokio::sync::Notify::new());
+    let release = Arc::new(tokio::sync::Notify::new());
+    let (entered, allowed) = (reached.clone(), release.clone());
+    let app = axum::Router::new().route(
+        "/internal/board",
+        axum::routing::post(move |axum::Json(request): axum::Json<Value>| {
+            let (entered, allowed) = (entered.clone(), allowed.clone());
+            async move {
+                if request["operation"] == "list" {
+                    return axum::Json(json!([]));
+                }
+                entered.notify_one();
+                allowed.notified().await;
+                axum::Json(json!({"private":"WITHDRAWN_BOARD_CANARY"}))
+            }
+        }),
+    );
+    let server = tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+    let f = Arc::new(fixture_with_board(Some(socket)).await);
+    publish(
+        &f.policy(),
+        PolicyKind::CapabilitySet,
+        "claude",
+        Some(&capability(&["项目/Alpha"], &[], true)),
+    );
+    let (session, _) = f.initialize().await.unwrap();
+    let caller = f.clone();
+    let pending = tokio::spawn(async move {
+        caller
+            .call(
+                &session,
+                2,
+                "board",
+                json!({"project":"项目/Alpha","operation":"get","request":{"task_id":"fixture"}}),
+            )
+            .await
+    });
+    tokio::time::timeout(Duration::from_secs(10), reached.notified())
+        .await
+        .unwrap();
+    publish(
+        &f.policy(),
+        PolicyKind::CapabilitySet,
+        "claude",
+        Some(&capability(&["项目/Beta"], &[], true)),
+    );
+    release.notify_one();
+    let response = pending.await.unwrap();
+    assert!(response.get("error").is_some(), "{response}");
+    assert!(!response.to_string().contains("WITHDRAWN_BOARD_CANARY"));
+    server.abort();
 }
 
 impl Fixture {
@@ -178,7 +243,11 @@ impl Fixture {
             .send()
             .await
             .unwrap();
-        assert_eq!(response.status(), 200, "{method}");
+        if response.status() != 200 {
+            let status = response.status();
+            let body = response.text().await.unwrap();
+            panic!("{method}: HTTP {status}: {body}");
+        }
         let session_id = response
             .headers()
             .get("mcp-session-id")
@@ -219,14 +288,17 @@ impl Fixture {
 
     /// 握手；成功返回 (会话, 路牌)，失败返回错误对象。
     async fn initialize(&self) -> Result<(String, String), Value> {
-        let (session, response) = self
-            .rpc(
-                None,
-                1,
-                "initialize",
-                json!({"protocolVersion": "2025-11-25", "capabilities": {}, "clientInfo": {"name": "contract", "version": "0"}}),
-            )
-            .await;
+        self.initialize_with_parent(None).await
+    }
+    async fn initialize_with_parent(
+        &self,
+        parent: Option<&str>,
+    ) -> Result<(String, String), Value> {
+        let mut params = json!({"protocolVersion": "2025-11-25", "capabilities": {}, "clientInfo": {"name": "contract", "version": "0"}});
+        if let Some(parent) = parent {
+            params["_meta"] = json!({"studiolo.parent_instance":parent});
+        }
+        let (session, response) = self.rpc(None, 1, "initialize", params).await;
         if response.get("error").is_some() {
             return Err(response);
         }
@@ -283,6 +355,46 @@ impl Fixture {
             .unwrap()
             .to_owned()
     }
+}
+
+#[tokio::test]
+async fn registered_child_metadata_and_ancestor_revocation_are_enforced_in_mcp() {
+    let f = fixture().await;
+    f.store().upgrade_child_instances().unwrap();
+    let policy = f.policy();
+    publish(
+        &policy,
+        PolicyKind::CapabilitySet,
+        "claude",
+        Some(&capability(&["项目/Alpha"], &[], true)),
+    );
+    let (_, parent) = f.initialize().await.unwrap();
+    let parent_id = Fixture::instance_of(&parent);
+    let (child_session, child) = f.initialize_with_parent(Some(&parent_id)).await.unwrap();
+    let child_id = Fixture::instance_of(&child);
+    let chain = f.store().instance_lineage(&child_id).unwrap();
+    assert_eq!(chain.len(), 2);
+    assert_eq!(chain[1].id, parent_id);
+    policy
+        .revoke(
+            RevocationLevel::Instance,
+            &parent_id,
+            "fixture revoke",
+            "owner",
+            NOW,
+        )
+        .unwrap();
+    let denied = f
+        .call(
+            &child_session,
+            2,
+            "list_entries",
+            json!({"project":"项目/Alpha"}),
+        )
+        .await;
+    assert!(denied.get("error").is_some(), "{denied}");
+    let forbidden = f.initialize_with_parent(Some(&parent_id)).await;
+    assert!(forbidden.is_err() || forbidden.is_ok_and(|(_, text)| text.starts_with("策略拒绝：")));
 }
 
 fn tool_text(response: &Value) -> String {
@@ -367,7 +479,7 @@ async fn a_type_without_a_capability_set_has_zero_rights_until_one_is_published(
     // 第 3 项：供给视图＝部署上限∩能力集，且带策略版本。
     assert!(
         instructions.contains(&format!(
-            "读：项目/Alpha（能力集 v{version} ∩ 部署上限）；写：黑板 无（M5）、正文 仅 patch（M5 起）；策略：可提 desired（永不自动生效）；策略版本 {}",
+            "读：项目/Alpha（能力集 v{version} ∩ 部署上限）；写：黑板 只读、正文 仅经预览的 patch；策略：可提 desired（永不自动生效）；策略版本 {}",
             &effective[..12]
         )),
         "{instructions}"
@@ -443,6 +555,7 @@ async fn a_type_without_a_capability_set_has_zero_rights_until_one_is_published(
     assert_eq!(
         names,
         [
+            "board",
             "handshake",
             "list_entries",
             "policy_read",
@@ -823,6 +936,7 @@ async fn serve_without_policy_keeps_m3_behaviour_and_marks_the_plane_absent() {
         .token;
     drop(SqliteAuditLedger::open(&data.join("audit")).unwrap());
     let state = serve::prepare(&ServeOptions {
+        board_socket: None,
         index_cache: None,
         vault: Some(vault),
         replica_root: None,
@@ -898,6 +1012,7 @@ async fn serve_without_policy_keeps_m3_behaviour_and_marks_the_plane_absent() {
     assert_eq!(
         names,
         [
+            "board",
             "handshake",
             "list_entries",
             "policy_read",

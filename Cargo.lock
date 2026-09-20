@@ -2478,6 +2478,8 @@ checksum = "7da8b5736845d9f2fcb837ea5d9e2628564b3b043a70948a3f0b778838c5fb4f"
 name = "studiolo"
 version = "0.0.1"
 dependencies = [
+ "rusqlite",
+ "serde_json",
  "studiolo-audit-ledger",
  "studiolo-control-db",
  "studiolo-core",
@@ -2614,11 +2616,20 @@ dependencies = [
 name = "studiolo-gateway"
 version = "0.0.1"
 dependencies = [
+ "getrandom 0.4.3",
+ "reqwest",
+ "rusqlite",
+ "rustix",
  "serde",
  "serde_json",
+ "sha2 0.11.0",
  "studiolo-audit-ledger",
  "studiolo-core",
+ "studiolo-process-safety",
+ "tempfile",
  "thiserror",
+ "tokio",
+ "zeroize",
 ]
 
 [[package]]
@@ -2655,12 +2666,17 @@ dependencies = [
  "studiolo-audit-ledger",
  "studiolo-auth",
  "studiolo-backup",
+ "studiolo-control-db",
  "studiolo-core",
+ "studiolo-gateway",
  "studiolo-host-config",
  "studiolo-observability",
  "studiolo-policy",
  "studiolo-process-safety",
+ "studiolo-runner-adapter",
+ "studiolo-supply",
  "studiolo-sync-transport",
+ "studiolo-task-engine",
  "studiolo-vault-broker",
  "studiolo-vault-index",
  "studiolo-workbench",
@@ -2669,6 +2685,7 @@ dependencies = [
  "thiserror",
  "tokio",
  "tower",
+ "ulid",
  "zeroize",
 ]
 
@@ -2714,6 +2731,7 @@ version = "0.0.1"
 dependencies = [
  "serde",
  "serde_json",
+ "sha2 0.11.0",
  "studiolo-core",
  "tempfile",
  "thiserror",
@@ -2774,9 +2792,11 @@ name = "studiolo-task-engine"
 version = "0.0.1"
 dependencies = [
  "jiff",
+ "rusqlite",
  "serde",
  "serde-saphyr",
  "serde_json",
+ "sha2 0.11.0",
  "studiolo-audit-ledger",
  "studiolo-control-db",
  "studiolo-core",

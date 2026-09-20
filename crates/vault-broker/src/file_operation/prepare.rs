@@ -33,7 +33,7 @@ impl FsVaultBroker {
         }
         schema::initialize(self, limits)?;
         state.file_operations_enabled = true;
-        state.format_version = 5;
+        state.format_version = state.format_version.max(5);
         mutation::save(self, &state)
     }
     /// 固定请求、实际旧状态与审计意图；返回票据可能已经固定为 Rejected，不能视为执行许可。

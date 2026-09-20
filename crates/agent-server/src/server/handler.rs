@@ -34,6 +34,17 @@ impl AgentSession {
     }
 
     #[tool(
+        description = "黑板：按 project 读取 list/get，或经有效权限 create/claim/heartbeat/handoff/return/number；request 必须是结构化对象，身份与规则版本由服务端绑定"
+    )]
+    async fn board(
+        &self,
+        Parameters(args): Parameters<super::board::BoardArgs>,
+    ) -> Result<CallToolResult, McpError> {
+        let _work = self.enter_mcp_work()?;
+        Ok(text_result(self.finish_mcp(self.text_board(args).await?)?))
+    }
+
+    #[tool(
         description = "重取冷启动路牌：我是谁、项目状态、能力、待我做的事、硬约束、继续拉的入口；≤2000 token"
     )]
     async fn handshake(&self) -> Result<CallToolResult, McpError> {
@@ -125,6 +136,19 @@ impl ServerHandler for AgentSession {
         _request: InitializeRequestParams,
         context: RequestContext<RoleServer>,
     ) -> impl Future<Output = Result<InitializeResult, McpError>> + Send + '_ {
+        // rmcp moves request metadata into RequestContext before invoking this handler.
+        let parent = serde_json::to_value(&context.meta)
+            .map_err(|_| McpError::invalid_params("initialize元数据无效", None))
+            .and_then(|value| match value.get("studiolo.parent_instance") {
+                None => Ok(None),
+                Some(serde_json::Value::String(id)) if !id.is_empty() && id.len() <= 128 => {
+                    Ok(Some(id.clone()))
+                }
+                Some(_) => Err(McpError::invalid_params(
+                    "parent_instance必须为有效实例ID",
+                    None,
+                )),
+            });
         let agent_type = context
             .extensions
             .get::<http::request::Parts>()
@@ -132,6 +156,7 @@ impl ServerHandler for AgentSession {
             .map(|agent_type| agent_type.0.clone());
         async move {
             let _work = self.enter_mcp_work()?;
+            let parent = parent?;
             let Some(agent_type) = agent_type else {
                 // 门禁中间件缺失时失败关闭，不给任何路牌。
                 return Err(McpError::invalid_request("未认证", None));
@@ -143,7 +168,10 @@ impl ServerHandler for AgentSession {
             {
                 return Err(McpError::invalid_request("会话身份不匹配", None));
             }
-            let instructions = match self.initialize_text(&agent_type).await {
+            let instructions = match self
+                .initialize_with_parent(&agent_type, parent.as_deref())
+                .await
+            {
                 Ok(text) => text,
                 // 降级握手与策略拒绝都「应答但一项不给」：客户端拿到原因而不是无解释的传输错误。
                 Err(error)

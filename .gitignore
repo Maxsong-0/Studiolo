@@ -17,3 +17,7 @@ dist/
 
 # Claude Code 嵌套工作树与本地会话数据；主检出目前只靠 .git/info/exclude 排除，换机克隆后同样需要
 .claude/
+
+# Python local connector bytecode
+__pycache__/
+*.py[cod]

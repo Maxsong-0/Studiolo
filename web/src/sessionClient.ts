@@ -19,6 +19,8 @@ export class SessionClient extends SessionCore {
   /** 策略平面写入（desired／校验／发布／吊销）：同一条会话链与 CSRF，路径由 policyApi 固定。 */
   policyPost = (path: string, body: unknown, signal: AbortSignal) =>
     this.postJson(path, body, signal);
+  executionCommand = (body: unknown, signal: AbortSignal) =>
+    this.postJson('/api/v1/execution/command', body, signal);
   private writeContent = (
     request: Replacement | Restoration | FileOperationRequest,
     signal: AbortSignal,

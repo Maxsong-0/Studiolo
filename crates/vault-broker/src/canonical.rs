@@ -94,6 +94,7 @@ impl CanonicalReadVault {
 
     fn check_binding(&self) -> Result<(), BrokerError> {
         self.check_root()?;
+        self.reader.check_batch_barrier()?;
         if identity(&self.reader)? != self.vault_uuid {
             return Err(BrokerError::CorruptIdentity);
         }

@@ -8,6 +8,8 @@ pub(super) fn readable(broker: &FsVaultBroker) -> Result<mutation::State, Broker
     let state = mutation::load(broker)?;
     if broker.writer.uncertain()
         || state.legacy_unresolved
+        || state.batch.is_some()
+        || crate::batch::barrier::blocked(&broker.root)?
         || state
             .file_operation
             .as_ref()
