@@ -2,10 +2,8 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   activateFailure,
   activatePolicy,
-  readDesired,
-  readPolicyStatus,
+  readPolicySnapshot,
   readVersion,
-  readVersions,
   revokeAgent,
   submitDesired,
   validateDesired,
@@ -57,12 +55,8 @@ export function PolicyPanel({ initial }: { initial: Loaded }) {
 
   const reload = useCallback(async () => {
     const signal = lifetime.current.signal;
-    const [status, desired, versions] = await Promise.all([
-      readPolicyStatus(signal),
-      readDesired(signal),
-      readVersions(signal),
-    ]);
-    if (!signal.aborted) setData({ status, desired, versions });
+    const snapshot = await readPolicySnapshot(signal);
+    if (!signal.aborted) setData(snapshot);
   }, []);
 
   async function act(operation: () => Promise<string>) {

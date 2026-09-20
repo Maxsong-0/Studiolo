@@ -129,7 +129,8 @@ fn acknowledge(db: &Connection, pending: &Pending, receipt: &str) -> Result<(), 
         // 聚合拒绝或安全回收可能先被另一个实例确认；事务已验证完整引用与锚点。
         // 安全事件仅允许落在已提交回收屏障之前，且绝不补写已删除的会话。
         return if pending.bucket.is_some()
-            || pending.sequence <= super::retention::event_sequence_barrier(db)?
+            || (!pending.event.event_id().as_str().contains(":restore:")
+                && pending.sequence <= super::retention::event_sequence_barrier(db)?)
         {
             Ok(())
         } else {

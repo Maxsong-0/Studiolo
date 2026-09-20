@@ -1,0 +1,50 @@
+# T-092 candidate: install only after owner enrollment, credentials and release acceptance.
+[Unit]
+Description=Studiolo human factor replacement (private Unix socket, policy disabled)
+Wants=network-online.target
+After=network-online.target
+StartLimitIntervalSec=60
+StartLimitBurst=3
+
+[Service]
+Type=exec
+User=maxsong
+Group=maxsong
+PrivateUsers=no
+WorkingDirectory=/home/maxsong/.local/share/studiolo-human-releases/m4-t092-20260920-r3
+ExecStart=/usr/bin/python3 -I -B -S /home/maxsong/.local/share/studiolo-human-releases/m4-t092-20260920-r3/launch-human.py
+LoadCredentialEncrypted=totp-seed:/var/lib/studiolo-human-quarantine/t092-exposed-enrollment-yaghjdqh/retired-totp.cred
+LoadCredentialEncrypted=totp-next:/etc/credstore.encrypted/studiolo-human-totp-v2
+RuntimeDirectory=studiolo-human
+RuntimeDirectoryMode=0700
+# Keep crash leftovers for explicit diagnosis; only the product removes its own socket.
+RuntimeDirectoryPreserve=yes
+Restart=on-failure
+RestartSec=3
+KillSignal=SIGTERM
+TimeoutStopSec=90
+UMask=0077
+LimitCORE=0
+LimitMEMLOCK=infinity
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/maxsong/.local/share/studiolo-human-auth
+ReadWritePaths=/home/maxsong/.local/share/studiolo-human-audit
+ReadWritePaths=/run/studiolo-human
+PrivateTmp=yes
+# Existing Broker uses openat2, which RestrictSUIDSGID may block.
+RestrictSUIDSGID=no
+LockPersonality=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+SystemCallArchitectures=native
+MemoryMax=512M
+TasksMax=64
+StandardInput=null
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=studiolo-human
+UnsetEnvironment=STUDIOLO_TOTP_SEED_HEX STUDIOLO_TOTP_REPLACEMENT_SEED_HEX PYTHONPATH PYTHONHOME LD_PRELOAD LD_LIBRARY_PATH
+
+[Install]
+WantedBy=multi-user.target

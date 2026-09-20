@@ -63,11 +63,10 @@ pub(super) fn prefix(
     if maximum - base > BATCH as i64 {
         return Err(SessionError::CorruptStore);
     }
-    let store = schema::store_id(db)?;
     let mut target = base;
     let mut proofs = Vec::new();
     for epoch in base + 1..=maximum {
-        let id = format!("{store}:revoke-all:{epoch}");
+        let id = crate::session::revocation::epoch_event(db, epoch)?;
         let Some(intent) = proof::for_event(db, &id, "intent")? else {
             break;
         };

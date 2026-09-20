@@ -38,6 +38,8 @@ mod pending;
 mod privacy;
 #[path = "recovery_receipts.rs"]
 mod receipts;
+#[path = "restore_contract.rs"]
+mod restore;
 #[path = "recovery_support.rs"]
 mod support;
 #[path = "recovery_time.rs"]

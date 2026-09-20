@@ -55,3 +55,11 @@ pub(super) fn blocks_retention(db: &rusqlite::Connection, id: &str) -> Result<bo
     }
     Ok(store::pending(db)?.is_some_and(|p| p.operation.session_id == id))
 }
+
+/// 只取既有恢复/因子/L3 原证明；由恢复装配在 Auth 锁外逐一重确认。
+pub(super) fn restore_proofs(
+    db: &rusqlite::Connection,
+    store_id: &str,
+) -> Result<Vec<(studiolo_audit_ledger::AuditEvent, String)>, SessionError> {
+    originals::restore_snapshot(db, store_id)
+}

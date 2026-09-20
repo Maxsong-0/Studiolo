@@ -21,7 +21,7 @@ pub(crate) fn execute(
 ) -> Result<&'static str, AdminError> {
     match command {
         Command::Migrate(1..=3) => {}
-        Command::Migrate(_) => return Err(AdminError::Arguments),
+        Command::Migrate(_) | Command::RestoreInvalidate => return Err(AdminError::Arguments),
         _ if seed.is_none() => return Err(AdminError::Environment),
         _ => {}
     }
@@ -101,6 +101,6 @@ pub(crate) fn execute(
             enrollment.enroll(read_code()?)?;
             Ok("首次TOTP登记已提交；未签发会话或L3。请按后续受控登录流程继续。")
         }
-        Command::Migrate(_) => Err(AdminError::Arguments),
+        Command::Migrate(_) | Command::RestoreInvalidate => Err(AdminError::Arguments),
     }
 }

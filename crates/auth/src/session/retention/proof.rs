@@ -77,7 +77,11 @@ pub(super) fn load(db: &Connection, expected: &Proof) -> Result<Original, Sessio
     Ok(Original { event, receipt })
 }
 
-pub(super) fn seal_row(row: &Row<'_>, count: usize, domain: &[u8]) -> rusqlite::Result<String> {
+pub(in crate::session) fn seal_row(
+    row: &Row<'_>,
+    count: usize,
+    domain: &[u8],
+) -> rusqlite::Result<String> {
     let mut hash = Sha256::new();
     hash.update(domain);
     for index in 0..count {

@@ -29,6 +29,7 @@ pub(super) fn payload(
                     .as_str()
                     .is_some_and(|session| id == format!("{namespace}issue:{session}"))
         }
+        "revoke" if value["scope"] == "restore" => super::restore::valid_payload(event, namespace),
         "revoke" => {
             event.action() == "session.revoked"
                 && object.len() == 5

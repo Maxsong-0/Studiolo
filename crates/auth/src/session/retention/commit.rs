@@ -37,7 +37,9 @@ pub(super) fn apply(
                 )
                 .map_err(unavailable)?;
             // all-revoke 同时是其他行和连续 epoch 后缀的证据，仅允许按冻结前缀删除。
-            if kind != "revoke" || !event_id.contains(":revoke-all:") {
+            if kind != "revoke"
+                || (!event_id.contains(":revoke-all:") && !event_id.contains(":restore:"))
+            {
                 removed_events.insert(proof.sequence);
             }
         }
@@ -56,6 +58,17 @@ pub(super) fn apply(
     }
     removed_events.extend(expected.prefix.iter().map(|proof| proof.sequence));
     for sequence in removed_events {
+        let event_id: String = db
+            .query_row(
+                "SELECT event_id FROM audit_outbox WHERE sequence=?1",
+                [sequence],
+                |row| row.get(0),
+            )
+            .map_err(unavailable)?;
+        // restore 两条事件是永久幂等锚；prefix 可以证明它，回收不能删除它。
+        if event_id.contains(":restore:") {
+            continue;
+        }
         if db.execute("DELETE FROM audit_outbox WHERE sequence=?1 AND receipt_json IS NOT NULL AND bucket IS NULL",[sequence]).map_err(unavailable)?!=1 {
             return Err(SessionError::CorruptStore);
         }
