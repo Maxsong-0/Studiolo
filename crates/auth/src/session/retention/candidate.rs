@@ -49,10 +49,10 @@ pub(super) fn capture(db: &Connection, id: &str) -> Result<Option<Candidate>, Se
         let terminal = if exists {
             one
         } else {
-            format!(
-                "{store}:revoke-all:{}",
-                epoch.checked_add(1).ok_or(SessionError::CorruptStore)?
-            )
+            crate::session::revocation::epoch_event(
+                db,
+                epoch.checked_add(1).ok_or(SessionError::CorruptStore)?,
+            )?
         };
         for phase in ["intent", "outcome"] {
             let Some(proof) = proof::for_event(db, &terminal, phase)? else {

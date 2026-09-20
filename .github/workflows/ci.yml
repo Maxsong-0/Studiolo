@@ -82,6 +82,7 @@ jobs:
           python3 scripts/test-render-agent-upgrade.py
           python3 scripts/test-prepare-m4-policy.py
           python3 scripts/test-m4-recovery.py
+          python3 -I -B scripts/test-human-offline.py
           python3 scripts/test-check-agent-policy.py
           python3 scripts/test-check-policy-revocation.py
           python3 scripts/test-preview-package.py

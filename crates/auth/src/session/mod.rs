@@ -16,6 +16,7 @@ mod opening;
 mod outbox;
 mod recent;
 mod recovery;
+mod restore;
 mod retention;
 mod retention_schema;
 mod revocation;
@@ -36,6 +37,7 @@ pub use config::{OwnerBinding, SessionConfig, SessionPolicy};
 pub use dependencies::{OsSessionRandom, SessionClock, SessionRandom, SystemSessionClock};
 pub use factor_runtime::{FactorRuntime, FactorState};
 pub use recovery::{PreparedTotpFactor, Recovery, RecoveryCode, RecoveryCodes};
+pub use restore::RestoreInvalidation;
 pub use retention::{RetentionReport, RetentionWork};
 pub use secrets::{CsrfToken, SessionToken};
 pub use totp::{

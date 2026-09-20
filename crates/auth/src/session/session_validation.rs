@@ -24,7 +24,7 @@ pub(super) fn sessions(db: &Connection, config: &str) -> Result<(), SessionError
     let epoch: i64 = db
         .query_row("SELECT epoch FROM auth_meta", [], |r| r.get(0))
         .map_err(unavailable)?;
-    epochs(db, &store_id, epoch)?;
+    epochs(db, epoch)?;
     for row in rows::all(db)? {
         let access: i64 = db
             .query_row(
@@ -130,7 +130,7 @@ fn terminal(
     Ok(())
 }
 
-fn epochs(db: &Connection, store_id: &str, epoch: i64) -> Result<(), SessionError> {
+fn epochs(db: &Connection, epoch: i64) -> Result<(), SessionError> {
     let base = super::retention::epoch_base(db)?;
     if base < 1 || epoch < base || (schema::version(db)? == 1 && epoch > schema::MAX_SESSIONS + 1) {
         return Err(SessionError::CorruptStore);
@@ -141,24 +141,15 @@ fn epochs(db: &Connection, store_id: &str, epoch: i64) -> Result<(), SessionErro
     if minimum.is_some_and(|minimum| base > minimum) {
         return Err(SessionError::CorruptStore);
     }
-    let prefix = format!("{store_id}:revoke-all:");
-    let mut statement = db
-        .prepare("SELECT event_id FROM audit_outbox WHERE event_id LIKE ?1 AND phase='outcome'")
-        .map_err(unavailable)?;
-    let values = statement
-        .query_map([format!("{prefix}%")], |r| r.get::<_, String>(0))
-        .map_err(unavailable)?;
+    let mut seen = std::collections::BTreeSet::new();
     let mut count = 0;
-    for value in values {
-        let value = value.map_err(unavailable)?;
-        let value = value
-            .strip_prefix(&prefix)
-            .and_then(|v| v.parse::<i64>().ok())
-            .ok_or(SessionError::CorruptStore)?;
-        if value <= base || value > epoch {
+    for (value, _, restored) in super::revocation::epoch_events(db)? {
+        if value <= 1 || value > epoch || !seen.insert(value) || (!restored && value <= base) {
             return Err(SessionError::CorruptStore);
         }
-        count += 1;
+        if value > base {
+            count += 1;
+        }
     }
     if count != epoch - base {
         return Err(SessionError::CorruptStore);

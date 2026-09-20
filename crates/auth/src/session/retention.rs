@@ -5,6 +5,7 @@ mod checkpoint;
 mod commit;
 mod plan;
 mod proof;
+pub(super) use proof::seal_row;
 mod selection;
 
 use super::{SessionError, SessionManager, database::unavailable, schema};

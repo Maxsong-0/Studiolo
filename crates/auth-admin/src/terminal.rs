@@ -46,7 +46,7 @@ impl fmt::Display for TerminalError {
 
 impl std::error::Error for TerminalError {}
 
-/// 所有命令先调用；不改变终端属性。必须在创建其他线程之前初始化信号处理。
+/// 三个交互命令先调用；不改变终端属性。必须在创建其他线程之前初始化信号处理。
 pub(crate) fn preflight() -> Result<(), TerminalError> {
     controlling_terminal()?;
     signals::initialize()

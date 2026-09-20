@@ -1,7 +1,9 @@
 //! 可信本地首次登记装配；不启动HTTP、子进程，不签发人类身份或会话。
 
 mod environment;
+mod offline_restore;
 mod options;
+mod restore_guard;
 mod terminal;
 mod workflow;
 
@@ -30,6 +32,12 @@ pub(crate) enum AdminError {
     Terminal(#[from] terminal::TerminalError),
     #[error("结果输出失败；操作可能已提交，请修复输出后核对现状，勿自动重试")]
     Output,
+    #[error("离线恢复门禁失败；需要获准的隔离复制目录、root权限与独立网络命名空间")]
+    RestoreGate,
+    #[error("离线种子输入无效；需要非终端stdin恰40位小写十六进制并结束输入")]
+    RestoreInput,
+    #[error("恢复撤权已提交但审计未确认；保持离线并先核对原恢复ID，禁止自动重试")]
+    RestoreAuditPending,
 }
 
 impl From<studiolo_host_config::ConfigError> for AdminError {
@@ -46,7 +54,7 @@ fn run() -> Result<(), AdminError> {
     writeln!(std::io::stderr(), "秘密驻留面：{residency}")
         .map_err(|_| AdminError::ProcessReport)?;
     // 限制参数数量；拒绝时绝不回显任何未知参数原文。
-    let args = std::env::args_os().skip(1).take(7).collect();
+    let args = std::env::args_os().skip(1).take(8).collect();
     let Some(options) = options::parse(args)? else {
         writeln!(
             std::io::stdout(),
@@ -54,12 +62,17 @@ fn run() -> Result<(), AdminError> {
             studiolo-auth-admin enroll --config /绝对路径/owner.json\n\
             studiolo-auth-admin audit-flush --config /绝对路径/owner.json\n\
             studiolo-auth-admin migrate --config /绝对路径/owner.json --from 1|2|3\n\
+            studiolo-auth-admin restore-invalidate --config ABS --restore-root ABS --restore-id ID\n\
+            restore-invalidate仅接受/var/lib/studiolo-dr-tests/<run-id>/human-work，种子仅经私有stdin。\n\
             配置及存储目录须预先批准；迁移才允许初始化固定库，普通登记不创建库。\n\
-            种子仅由获批机制注入 STUDIOLO_TOTP_SEED_HEX；不要放在参数、配置或日志中。"
+            原交互命令的种子由获批机制注入 STUDIOLO_TOTP_SEED_HEX；不要放在参数、配置或日志中。"
         )
         .map_err(|_| AdminError::Output)?;
         return Ok(());
     };
+    if let Some(restore) = options.restore {
+        return offline_restore::execute(&options.config, &restore);
+    }
     let config = Config::load(&options.config)?;
     terminal::preflight()?;
     let seed = match options.command {

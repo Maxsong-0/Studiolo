@@ -18,22 +18,7 @@ pub(super) fn snapshot(
     operation: &Operation,
     store_id: &str,
 ) -> Result<Vec<Original>, SessionError> {
-    let control = store::control(db)?;
-    let mut originals = Originals::new();
-    for proof in [control.current, control.changed].into_iter().flatten() {
-        recovery_proof(&mut originals, proof, store_id)?;
-    }
-    for code in store::codes(db)? {
-        if let Some(consumed) = code.consumption {
-            if consumed.operation == *operation {
-                continue;
-            }
-            consumed_proof(&mut originals, consumed, store_id)?;
-        }
-    }
-    if let Some(proof) = factor_store::factor(db)?.and_then(|factor| factor.enrollment) {
-        factor_proof(&mut originals, proof, store_id)?;
-    }
+    let mut originals = base(db, Some(operation), store_id)?;
     let grants = match operation.kind {
         Kind::Rotate => factor_store::grant(db, &operation.session_id)?
             .into_iter()
@@ -114,4 +99,40 @@ fn insert(
     }
     originals.insert(key, (event, receipt));
     Ok(())
+}
+
+// 离线恢复没有候选 Operation，不伪造 Replace 决定来取得所有原证明。
+pub(super) fn restore_snapshot(
+    db: &Connection,
+    store_id: &str,
+) -> Result<Vec<Original>, SessionError> {
+    let mut originals = base(db, None, store_id)?;
+    for proof in factor_store::grants(db)? {
+        factor_proof(&mut originals, proof, store_id)?;
+    }
+    Ok(originals.into_values().collect())
+}
+
+fn base(
+    db: &Connection,
+    skip: Option<&Operation>,
+    store_id: &str,
+) -> Result<Originals, SessionError> {
+    let control = store::control(db)?;
+    let mut originals = Originals::new();
+    for proof in [control.current, control.changed].into_iter().flatten() {
+        recovery_proof(&mut originals, proof, store_id)?;
+    }
+    for code in store::codes(db)? {
+        if let Some(consumed) = code.consumption {
+            if skip.is_some_and(|operation| consumed.operation == *operation) {
+                continue;
+            }
+            consumed_proof(&mut originals, consumed, store_id)?;
+        }
+    }
+    if let Some(proof) = factor_store::factor(db)?.and_then(|factor| factor.enrollment) {
+        factor_proof(&mut originals, proof, store_id)?;
+    }
+    Ok(originals)
 }

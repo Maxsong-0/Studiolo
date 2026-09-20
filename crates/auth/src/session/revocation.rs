@@ -129,3 +129,48 @@ fn record(
     }
     Ok(())
 }
+
+/// 所有 epoch 推进证据共用的封闭解析；restore 幂等锚可以早于回收基线。
+pub(super) fn epoch_events(db: &Connection) -> Result<Vec<(i64, String, bool)>, SessionError> {
+    let namespace = format!("{}:", schema::store_id(db)?);
+    let mut statement = db
+        .prepare("SELECT event_json FROM audit_outbox WHERE kind='revoke' AND phase='outcome'")
+        .map_err(unavailable)?;
+    let encoded = statement
+        .query_map([], |row| row.get::<_, String>(0))
+        .map_err(unavailable)?;
+    let mut result = Vec::new();
+    for encoded in encoded {
+        let event: studiolo_audit_ledger::AuditEvent =
+            serde_json::from_str(&encoded.map_err(unavailable)?)
+                .map_err(|_| SessionError::CorruptStore)?;
+        super::event_validation::payload(&event, "revoke", None, None, &namespace)?;
+        let value = event.payload().as_value();
+        let restored = value["scope"] == "restore";
+        if restored && schema::version(db)? != 4 {
+            return Err(SessionError::CorruptStore);
+        }
+        if restored || value["scope"] == "all" {
+            result.push((
+                value["identity_version"]
+                    .as_i64()
+                    .ok_or(SessionError::CorruptStore)?,
+                event.event_id().as_str().to_owned(),
+                restored,
+            ));
+        }
+    }
+    Ok(result)
+}
+
+/// 返回该 epoch 唯一真实存在的推进事件，供会话终态与回收前缀使用。
+pub(super) fn epoch_event(db: &Connection, epoch: i64) -> Result<String, SessionError> {
+    let mut matches = epoch_events(db)?
+        .into_iter()
+        .filter(|(value, _, _)| *value == epoch);
+    let (_, id, _) = matches.next().ok_or(SessionError::CorruptStore)?;
+    if matches.next().is_some() {
+        return Err(SessionError::CorruptStore);
+    }
+    Ok(id)
+}

@@ -1,11 +1,6 @@
 import { useEffect, useState } from 'react';
 import { PolicyPanel } from './components/PolicyPanel';
-import {
-  isAbsent,
-  readDesired,
-  readPolicyStatus,
-  readVersions,
-} from './policyApi';
+import { isAbsent, readPolicySnapshot } from './policyApi';
 import type { DesiredRecord, PolicyStatus, VersionMeta } from './policyModel';
 
 type Status =
@@ -24,12 +19,8 @@ export function PolicyBoundary() {
   const [status, setStatus] = useState<Status>({ kind: 'loading' });
   useEffect(() => {
     const controller = new AbortController();
-    Promise.all([
-      readPolicyStatus(controller.signal),
-      readDesired(controller.signal),
-      readVersions(controller.signal),
-    ])
-      .then(([status, desired, versions]) => {
+    readPolicySnapshot(controller.signal)
+      .then(({ status, desired, versions }) => {
         if (!controller.signal.aborted)
           setStatus({ kind: 'ready', status, desired, versions });
       })

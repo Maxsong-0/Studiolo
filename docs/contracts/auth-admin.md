@@ -1,6 +1,12 @@
-# 可信本地首次TOTP登记命令（T-017）
+# 可信本地因子管理与离线撤权命令（T-017 / T-094）
 
-2026-09-05已完成双平台契约验收；完整M2、真实主人登记与线上发布尚未完成。
+> 本文保留 T-092～T-094 初次验收时的部署/提交状态。后续生产程序发布使用人侧 release 工具；历史恢复回执不会因发布而变成完整灾备验收。
+
+T-017在2026-09-05完成双平台契约验收；下文历史结果不代表当前部署状态。
+T-094离线撤权在2026-09-20修复后107原生CLI测试34项、108 root未来时钟夹具1项通过；
+真实108副本已验证v2绑定、epoch推进、旧L3/10枚恢复码清除、原时钟/预算保留与幂等审计。
+新能力未部署生产；恢复副本真人重新登录/L3未验。详见[实际回执](../../deploy/human/offline/ACCEPTANCE.md)。
+API与程序兼容边界见[离线恢复契约](auth-restore.md)。
 
 ## 入口与信任边界
 
@@ -16,7 +22,7 @@ studiolo-auth-admin enroll --config /approved/private/owner.json
 studiolo-auth-admin audit-flush --config /approved/private/owner.json
 ```
 
-- 所有命令要求stdin/stderr同一前台控制TTY；stdout可重定向，只输出非秘密固定结果。
+- 上述三个交互命令要求stdin/stderr同一前台控制TTY；stdout可重定向，只输出非秘密固定结果。
 - 普通登记/补记真正no-create打开已有Auth/Audit主库；缺失时拒绝，不悄悄建立空库。
 - 明确`migrate --from 1|2|3`调用既有显式步骤；新库可用3直接建v4，已有v1/v2按原步骤升级。
   不创建目录、修权限、清坏库、改主人或改变旧有效期。迁移不登记、不撤销已有因子。
@@ -55,7 +61,7 @@ JSON结构与登记流程保留，字段改为封闭getter；[启动契约](auth
 
 Owner/TTL使用原Auth构造约束，重开必须与持久配置相同。seed_ref只是1～64位规范ASCII标识，不是路径。
 
-## 秘密与终端
+## 交互命令的秘密与终端
 
 - 种子只读固定`STUDIOLO_TOTP_SEED_HEX`：恰好40位小写hex，解码为20字节；无默认值/回退生成。
   由已批准的环境注入机制提供，不能放在命令参数、普通配置、shell历史、聊天、日志或审计。
@@ -81,7 +87,7 @@ Owner/TTL使用原Auth构造约束，重开必须与持久配置相同。seed_re
   SIGKILL/SIGSTOP、终端实际断开与不可恢复系统故障无法承诺恢复；不得把Drop尽力清理当作成功。
   断开后可能先返回取消、I/O或恢复错误，再被迟到SIGHUP按已恢复的默认行为终止；非零退出不代表返回过验证码。
 
-## 失败与重试
+## 交互命令的失败与重试
 
 配置/TTY/种子预检在数据库装配前；进入合法数据库后，即使OTP错误或取消，也可能推进时间地板/到期状态并产生SQLite侧文件。
 `open_existing`不是只读句柄，只保证不创建缺失主库，不绕过原权限/格式/绑定/审计回执检查。
@@ -97,6 +103,51 @@ v3没有恢复表，继续补原TOTP与会话事件而不隐式迁移；完整�
 
 提交后存储复核失败或stdout输出失败可能“非零退出但操作已提交”。须修复外部条件并核对状态，不能自动重放/清库。
 再次登记若已完成，会在索取OTP前明确AlreadyEnrolled；这不是再次执行成功。
+
+## 隔离副本的离线撤权（T-094）
+
+这是独立的可信本地装配入口，保留当前已登记因子，使副本内旧会话、L3与恢复码失效。
+不提供HTTP入口、因子丢失救援、重新登记、自动恢复服务或生产撤权流程。
+外层可信包装器须先校验完整备份清单、复制到新目录、冻结全部副本写者并阻止服务监听；
+CLI不证明数据来自合法备份，也不防御有权改动这些root私有目录的管理员。
+
+```text
+studiolo-auth-admin restore-invalidate --config /var/lib/studiolo-dr-tests/RUN-ID/human-work/owner.json --restore-root /var/lib/studiolo-dr-tests/RUN-ID/human-work --restore-id RESTORE-ID
+```
+
+参数按上述固定顺序提供。`RUN-ID`为1～64位、`RESTORE-ID`为1～55位ASCII字母数字或连字符；
+均为非秘密标识，未知/重复/缺失参数拒绝且不回显。stdin由获准的私有管道提供，不把种子填进此命令。
+
+- 仅Linux，真实与有效UID均为0；stdin必须非TTY，当前网络命名空间必须不同于`/proc/1/ns/net`。
+  `studiolo_process_safety::harden()`仍在参数、配置及秘密读取之前执行并输出固定分类到stderr。
+- restore-root必须逐字匹配固定绝对布局，拒绝别名、`..`、额外层级及生产路径。
+  从`/`起全部祖先要求root所有、无符号链接和组/其他可写位、同一设备；固定布局不允许sticky放宽。
+  `/var/lib/studiolo-dr-tests`、run目录、human-work、auth与audit均须root0700且预先存在。
+- human-work仅含`owner.json`、`auth`、`audit`。配置必须精确为该owner.json；
+  `auth_directory`/`audit_directory`必须逐字等于其下auth/audit，`seed_ref`必须为`studiolo-human-totp-v2`。
+  owner.json、auth/auth.sqlite3、audit/audit.sqlite3均须root0600普通单链接文件，主文件非空。
+  两库只额外允许固定同名`-wal`/`-shm`/`-journal`普通单链接root0600侧文件；不接受其他条目或跨设备。
+  目录与主文件持有打开的FD，并在装配、撤权前后重验身份及权限；配置还校验大小和修改/变更时间。
+- stdin恰40字节小写hex后立即EOF；拒绝换行、空白、大小写变体、超长及短输入。
+  输入最多读取41字节并由`Zeroizing<[u8;41]>`持有；本分支不读取`STUDIOLO_TOTP_SEED_HEX`。
+  不使用TTY验证码，不输出种子、OTP、恢复码、token、身份或配置正文。
+- 使用原`Config`、`SqliteAuditLedger::open_existing`与`SessionManager::open_existing_for_restore`；
+  不创建/迁移主库。`Totp::attach`核对v2种子绑定，`Recovery::attach`确认v4；
+  `SessionManager::invalidate_restored_credentials(&restore_id)`直接检查已有登记证明并重核原审计。
+  离线路径不调用`TotpEnrollment::state()`，因为它会观察运行时钟并推进时钟地板/到期状态。
+  专用Auth打开入口仅ExistingOnly/MigrationNone/v4，不执行`SessionManager::run`，不观察或推进时钟/到期状态。
+  普通`open_existing`仍保持原运行检查，不能用于此离线装配；SQLite侧文件或撤权事务本身仍可能写入。
+
+stdout成功返回一行固定非秘密JSON；示例数字仅为结构示意：
+
+```json
+{"epoch":2,"revoked_sessions":1,"cleared_l3":1,"invalidated_recovery_codes":10,"audit_confirmed":true}
+```
+
+只有`audit_confirmed=true`且输出/最终复核成功才退出0。`audit_confirmed=false`时仍输出上述五字段JSON，
+随后以非零退出；撤权可能已提交，必须保持离线，先核对原恢复ID及账本，不能生成新ID盲重试。
+同ID会复用原epoch和计数并重核证明/原审计事件，详见[恢复API语义](auth-restore.md)。
+本命令成功不等于新会话、L3、恢复码签发或服务可上线授权；原三个命令的TTY行为不变。
 
 ## 构建与验证边界
 

@@ -1,0 +1,20 @@
+{
+  "checked_at": "2026-09-20T20:08:04Z",
+  "files": {
+    "deploy/agent/offline/check-restored-agent.py": "9aa285e50844cf6a4f36712ef0c0a679ef77d0571799bab13d2b473fd3b8b3e6",
+    "deploy/agent/offline/pack_offline.py": "2d2282bfc6edb349bd9e77f25105ad9f3398fbebc681b617eee31097b1e7c56f",
+    "deploy/agent/offline/pack_offline_helpers.py": "45dc8347044c80461212d2f02857d67738aec9b8b28109bc1d2c8dd8cdc8b413",
+    "deploy/agent/offline/run_snapshot_tests.py": "7f1e860b1c335ea1d0e1a699da3b6e655ba2ab0aa46af885e9a994fe3fe671b9",
+    "deploy/agent/offline/test_pack_human.py": "d21523b78e27a5952244d4f1fccdc9125599e121aeb12a2edc83e90f75fcea36",
+    "deploy/agent/offline/test_pack_offline.py": "cc5dbefce55ef811aa03f2765d7d967387976fd21a9f65567f817a8464f5333f",
+    "deploy/human/offline/human_snapshot.py": "c0d63a24dbab6792277c1b9cf1cc6802a22b364112be2699ede12e2d9222bdef",
+    "deploy/human/offline/human_snapshot_core.py": "f38b814207fa1aa3440578eddbd7f13df9911192a0421312e7e6e74c56a2bd28",
+    "deploy/human/offline/human_snapshot_format.py": "03a1f82453f2a8a133569f37eac13d8569b129ed56e8bc8e70b9240effb76b69",
+    "deploy/human/offline/human_snapshot_io.py": "f280bbe3c49cc681238b6989d8651f9865ef8e8a73de2faef8a8a6baec81b832",
+    "deploy/human/offline/test_human_snapshot.py": "3b73d5c39749e82e14a76681df4748190d30013f346464200c19909a2b91c647",
+    "deploy/human/offline/test_human_snapshot_fixture.py": "eda88514433b6f19dfc9dfec6efb401e5f47d02f1a06be56df7dce6cb59c42ec",
+    "deploy/human/offline/test_human_snapshot_sources.py": "4389d318ee7c84fbe6f8cd09f24dffce60bfec092ce01ca1368509481104399b",
+    "deploy/human/offline/test_human_snapshot_verify.py": "d13a54f169b664dcf5da5592cd6478f65b8817c07670c24f2b81e96e46174e4b"
+  },
+  "scope": "snapshot-and-pack-python"
+}

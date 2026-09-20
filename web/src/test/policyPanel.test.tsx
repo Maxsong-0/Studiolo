@@ -183,3 +183,66 @@ it('吊销即刻提交，未接入策略平面时显示未接入而不是空白'
   render(<PolicyBoundary />);
   await screen.findByText(/本入口未装配策略平面/);
 });
+
+// 让同批请求先全部进入，再结束鉴权；稳定模拟服务端的两个并发许可。
+function authLimitedReads() {
+  const respond = fetchMock.getMockImplementation()!;
+  let active = 0;
+  let denied = 0;
+  fetchMock.mockImplementation(async (input, init) => {
+    const overloaded = ++active > 2;
+    try {
+      await Promise.resolve();
+      await Promise.resolve();
+      if (overloaded) {
+        denied += 1;
+        return jsonResponse({ error: '认证并发预算已满' }, 503);
+      }
+      return await respond(input, init);
+    } finally {
+      active -= 1;
+    }
+  });
+  return () => denied;
+}
+
+it('首次加载在两个认证并发许可下读完整策略，不自触发503', async () => {
+  const denied = authLimitedReads();
+  render(<PolicyBoundary />);
+  await screen.findByRole('table', { name: '现行各项' });
+  expect(
+    screen.getByRole('form', { name: '提交 desired' }),
+  ).toBeInTheDocument();
+  expect(denied()).toBe(0);
+  expect(posts).toHaveLength(0);
+});
+
+it('提交后的刷新也遵守认证预算，读完后保留成功提示且不重放提交', async () => {
+  const user = userEvent.setup();
+  render(<PolicyBoundary />);
+  const form = await screen.findByRole('form', { name: '提交 desired' });
+  const denied = authLimitedReads();
+  await user.type(
+    within(form).getByRole('textbox', { name: 'subject' }),
+    'claude',
+  );
+  const submit = within(form).getByRole('button', {
+    name: '提交并校验（不发布）',
+  });
+  await user.click(submit);
+  await waitFor(() => expect(submit).toBeEnabled());
+  expect(screen.getByRole('status')).toHaveTextContent('已提交并校验通过');
+  expect(screen.queryByText('认证并发预算已满')).not.toBeInTheDocument();
+  expect(denied()).toBe(0);
+  expect(posts.map((post) => post.path)).toEqual(['/api/v1/policy/desired']);
+});
+
+it('首项读取失败就显示错误，不继续读取其余列表或自动重试', async () => {
+  fetchMock.mockImplementation(async () =>
+    jsonResponse({ error: '读取不可用' }, 503),
+  );
+  render(<PolicyBoundary />);
+  expect(await screen.findByRole('alert')).toHaveTextContent('读取不可用');
+  expect(fetchMock.mock.calls.map(([path]) => path)).toEqual([STATUS]);
+  expect(posts).toHaveLength(0);
+});

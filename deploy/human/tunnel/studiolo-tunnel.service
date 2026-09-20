@@ -1,0 +1,32 @@
+# 系统manager建立挂载隔离；进程仍以原账户运行，不进入unprivileged_userns。
+[Unit]
+Description=Studiolo Cloudflare Tunnel (same-UID Unix origin)
+Wants=network-online.target
+After=network-online.target
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=maxsong
+Group=maxsong
+PrivateUsers=no
+WorkingDirectory=/home/maxsong
+ExecStart=/home/maxsong/.local/share/studiolo-tunnel/cloudflared-2026.8.3 tunnel --no-autoupdate --metrics 127.0.0.1:49319 run --token-file /home/maxsong/.config/studiolo-tunnel/token
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+UMask=0077
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+SystemCallArchitectures=native
+MemoryMax=256M
+TasksMax=64
+
+[Install]
+WantedBy=multi-user.target

@@ -52,6 +52,37 @@ impl SessionManager {
         )
     }
 
+    /// 仅为已冻结、禁止监听的离线恢复副本打开已有 v4 Auth，不采样时钟或推进到期。
+    ///
+    /// 保留原私有路径、配置、结构及回执完整性门禁，不创建或迁移主库；
+    /// SQLite 仍可创建侧文件，故这不是只读句柄。不能代替 HTTP 就绪检查或 OS 隔离。
+    /// 后续普通会话动作仍经原 run 检查时钟；调用方只应接可信离线恢复操作。
+    pub fn open_existing_for_restore(
+        root: &Path,
+        config: SessionConfig,
+        audit: Arc<dyn AuditLedger>,
+        clock: Arc<dyn SessionClock>,
+        random: Arc<dyn SessionRandom>,
+    ) -> Result<Self, SessionError> {
+        let database = Database::open(
+            root,
+            &config,
+            random.as_ref(),
+            Migration::None,
+            CreatePolicy::ExistingOnly,
+        )?;
+        if database.transaction(super::schema::version)? != 4 {
+            return Err(SessionError::MigrationRequired);
+        }
+        Ok(Self {
+            database,
+            config,
+            audit,
+            clock,
+            random,
+        })
+    }
+
     /// 显式验证并原子升级 v1 存储；已有 v2 可幂等打开，不改绑主人或重新授权。
     ///
     /// 迁移后旧二进制必须停止写入；旧活跃凭证及原有效期保持不变。

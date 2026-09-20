@@ -62,6 +62,15 @@ export async function readDesired(signal: AbortSignal) {
 export async function readVersions(signal: AbortSignal) {
   return versionList(await getJson(VERSIONS, signal));
 }
+// 共用认证入口只有两个阻塞许可；整页读取顺序执行，避免三请求自触发503。
+// 任一步失败或取消都停止，不重放发布，也不继续发送剩余读取。
+export async function readPolicySnapshot(signal: AbortSignal) {
+  const status = await readPolicyStatus(signal);
+  const desired = await readDesired(signal);
+  const versions = await readVersions(signal);
+  return { status, desired, versions };
+}
+
 export async function readVersion(version: number, signal: AbortSignal) {
   return versionRecord(await getJson(`${VERSIONS}/${version}`, signal));
 }
