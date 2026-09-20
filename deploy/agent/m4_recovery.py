@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Linux M4 恢复包：调用者必须先停止全部写者，跨库一致性不由 backup API 提供。
+"""Linux M4 恢复包：create 须先停止全部写者，跨库一致性不由 backup API 提供。
 
-处理既有身份库、v2 审计库、token、二进制及单元，可选 v1 策略库；不启停服务。
+处理身份库、v2 审计、token、程序与单元，可选 v1 策略；preflight 可在线只读核元数据。
 失败保留 INCOMPLETE 和已生成文件；manifest 的摘要不构成抵抗包所有者的数字签名。
 """
 import argparse
@@ -23,6 +23,7 @@ VERSIONS = {"data/agent.sqlite3": 0, "data/audit/audit.sqlite3": 2}
 POLICY = {"policy/policy.sqlite3": 1}
 FIXED = set(VERSIONS) | {"bin/studiolo-agent", "previous.service"}
 DIRECTORIES = {"data", "data/audit", "config", "bin"}
+SOURCE_STAGES = {"source_data", "source_config", "source_binary", "source_unit", "source_policy"}
 
 
 def require(ok):
@@ -221,35 +222,62 @@ def verify(tree, incomplete=False):
     return value
 
 
+def sources(args, stack):
+    """在线预检只核元数据；sidecar 可消失，不打开 SQLite、不读任何文件正文。"""
+    items, stage = {}, "source_data"
+    def add(tree, name, target, version=None):
+        tree.file(name, private=version is not None or target.startswith("config/"))
+        if version is not None:
+            for suffix in ("-wal", "-shm", "-journal"):
+                try:
+                    tree.file(name + suffix)
+                except FileNotFoundError:
+                    pass
+        items[target] = (tree, name, version)
+    try:
+        data = Tree(args.data, stack)
+        for target, version in VERSIONS.items():
+            add(data, target[5:], target, version)
+        stage = "source_config"
+        config = Tree(args.config, stack, owner=data.owner)
+        names = set(os.listdir(config.fd))
+        require(0 < len(names) <= 64 and all(TOKEN.fullmatch(name) for name in names))
+        for name in sorted(names):
+            add(config, name, "config/" + name)
+        for path, target, stage in [(args.binary, "bin/studiolo-agent", "source_binary"), (args.unit, "previous.service", "source_unit")]:
+            parent, leaf = os.path.split(path)
+            source = Tree(parent, stack, private=False)
+            require(source.owner in {0, data.owner})
+            add(source, leaf, target)
+        if args.policy:
+            stage = "source_policy"
+            add(Tree(args.policy, stack, owner=data.owner), "policy.sqlite3", "policy/policy.sqlite3", 1)
+    except (OSError, ValueError):
+        raise ValueError(stage) from None
+    return items
+
+
 def populate(args, output, stack):
-    data, config = Tree(args.data, stack), Tree(args.config, stack)
-    require(data.owner == config.owner)
-    names = set(os.listdir(config.fd))
-    require(0 < len(names) <= 64 and all(TOKEN.fullmatch(name) for name in names))
+    items = sources(args, stack)
     versions = VERSIONS | (POLICY if args.policy else {})
-    for name, version in VERSIONS.items():
-        snapshot(data, name[5:], output, name, version)
-    if args.policy:
-        snapshot(Tree(args.policy, stack, owner=data.owner), "policy.sqlite3", output, "policy/policy.sqlite3", 1)
-    for name in sorted(names):
-        output.copy(config, name, "config/" + name)
-    for path, target in [(args.binary, "bin/studiolo-agent"), (args.unit, "previous.service")]:
-        parent, leaf = os.path.split(path)
-        source = Tree(parent, stack, private=False)
-        require(source.owner in {0, data.owner})
-        output.copy(source, leaf, target, private=False)
+    for target, (tree, name, version) in items.items():
+        if version is None:
+            output.copy(tree, name, target, private=target.startswith("config/"))
+        else:
+            snapshot(tree, name, output, target, version)
     return {"schema_version": 1, "state": "complete", "database_versions": versions,
             "created_at": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-            "files": metadata(output, FIXED | set(versions) | {"config/" + name for name in names})}
+            "files": metadata(output, items)}
 
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
-    create = commands.add_parser("create", help="外层先停全部写者，再创建跨库恢复点")
-    for name in ("data", "config", "binary", "unit", "output"):
-        create.add_argument("--" + name, required=True)
-    create.add_argument("--policy")
+    for command in ("create", "preflight"):
+        source_parser = commands.add_parser(command)
+        for name in ("data", "config", "binary", "unit") + (("output",) if command == "create" else ()):
+            source_parser.add_argument("--" + name, required=True)
+        source_parser.add_argument("--policy")
     commands.add_parser("verify").add_argument("bundle")
     restore = commands.add_parser("restore-copy")
     restore.add_argument("bundle")
@@ -257,6 +285,10 @@ def main(argv=None):
     args = parser.parse_args(argv)
     os.umask(0o077)
     with contextlib.ExitStack() as stack:
+        if args.command == "preflight":
+            sources(args, stack)
+            print("来源元数据预检通过；跨库一致性仍须停写后验证。")
+            return
         if args.command != "create":
             source = Tree(args.bundle, stack, owner=os.geteuid())
             manifest = verify(source)
@@ -291,6 +323,8 @@ def main(argv=None):
 if __name__ == "__main__":
     try:
         main()
-    except (OSError, ValueError, sqlite3.Error):
-        print("操作失败；已创建的不完整目录保留供检查，未覆盖既有路径。", file=sys.stderr)
+    except (OSError, ValueError, sqlite3.Error) as error:
+        if str(error) in SOURCE_STAGES:
+            print("来源元数据检查失败：" + str(error), file=sys.stderr)
+        print("操作失败；未覆盖既有路径；若已生成不完整目录，将保留供检查。", file=sys.stderr)
         sys.exit(1)

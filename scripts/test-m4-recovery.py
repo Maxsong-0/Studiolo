@@ -1,16 +1,20 @@
 #!/usr/bin/env python3
 """只使用虚构 SQLite/token 夹具，在 Linux 原生验证 M4 恢复包边界。"""
 import hashlib
+import contextlib
 import json
 import os
 from pathlib import Path
 import shutil
+import runpy
 import sqlite3
 import stat
 import subprocess
 import sys
 import tempfile
+import types
 import unittest
+from unittest.mock import patch
 
 TOOL = Path(__file__).resolve().parents[1] / "deploy/agent/m4_recovery.py"
 
@@ -58,20 +62,65 @@ class RecoveryTests(unittest.TestCase):
         self.assertNotIn("committed-in-wal", result.stdout + result.stderr)
         return result
 
-    def create(self, output="bundle", policy=False, ok=True, **overrides):
+    def create(self, output="bundle", policy=False, ok=True, preflight=False, **overrides):
         options = {"data": self.root / "data", "config": self.root / "config",
                    "binary": self.root / "bin/studiolo-agent", "unit": self.root / "agent.service",
                    "output": self.root / output}
         if policy:
             options["policy"] = self.root / "policy" if policy is True else policy
         options.update(overrides)
+        if preflight:
+            options.pop("output")
         args = [part for key, value in options.items() for part in ("--" + key, value)]
+        if preflight:
+            return self.call("preflight", *args, ok=ok)
         self.call("create", *args, ok=ok)
         return options["output"]
 
     def query(self, path):
         with sqlite3.connect("file:" + str(path) + "?mode=ro&immutable=1", uri=True) as conn:
             return conn.execute("SELECT body FROM fixture").fetchone()[0]
+
+    def source_state(self):
+        return {str(path.relative_to(self.root)): (path.stat().st_mode, path.stat().st_uid,
+                path.stat().st_ino, path.stat().st_mtime_ns, path.stat().st_ctime_ns,
+                None if path.is_dir() else path.read_bytes()) for path in self.root.rglob("*")}
+
+    def test_preflight_rejects_0775_config_ancestor_and_0755_is_readonly(self):
+        ancestor = self.root / ".config"
+        ancestor.mkdir(mode=0o700)
+        config = ancestor / "studiolo-agent"
+        (self.root / "config").rename(config)
+        ancestor.chmod(0o775)
+        before = self.source_state()
+        result = self.create(preflight=True, config=config, ok=False)
+        self.assertIn("source_config", result.stderr)
+        self.assertEqual(self.source_state(), before)
+        ancestor.chmod(0o755)
+        before = self.source_state()
+        self.create(preflight=True, config=config, policy=True)
+        self.assertEqual(self.source_state(), before)
+
+    def test_preflight_never_opens_database_or_reads_body_or_checks_wal_stability(self):
+        module = runpy.run_path(str(TOOL))
+        args = types.SimpleNamespace(**{key: str(self.root / name) for key, name in {
+            "data": "data", "config": "config", "binary": "bin/studiolo-agent",
+            "unit": "agent.service", "policy": "policy"}.items()})
+        with patch("sqlite3.connect", side_effect=AssertionError("禁止打开数据库")), \
+                patch("os.read", side_effect=AssertionError("禁止读取正文")), \
+                patch.object(module["Tree"], "bound", side_effect=AssertionError("在线不要求稳定")):
+            for index in range(2):
+                self.connections[0].execute("INSERT INTO fixture VALUES(?, 'online')", (index + 2,))
+                self.connections[0].commit()
+                with contextlib.ExitStack() as stack:
+                    self.assertEqual(len(module["sources"](args, stack)), 6)
+
+    def test_preflight_rejects_sidecar_metadata(self):
+        for name in ("data/agent.sqlite3-wal", "data/agent.sqlite3-shm", "policy/policy.sqlite3-wal"):
+            path = self.root / name
+            path.chmod(0o640)
+            self.create(preflight=True, policy=True, ok=False)
+            path.chmod(0o600)
 
     def test_wal_snapshot_and_restore_to_new_directory(self):
         before = {name + suffix: hashlib.sha256((self.root / (name + suffix)).read_bytes()).hexdigest()
@@ -141,6 +190,7 @@ class RecoveryTests(unittest.TestCase):
     def test_symlink_ancestor_and_parent_traversal_rejected(self):
         alias = self.root / "alias"
         alias.symlink_to(self.root, target_is_directory=True)
+        self.create(preflight=True, data=alias / "data", ok=False)
         self.create(output="bad-source", data=alias / "data", ok=False)
         self.create(output="alias/new-output", ok=False)
         self.create(output="missing/../escape", ok=False)
@@ -154,6 +204,7 @@ class RecoveryTests(unittest.TestCase):
                 moved = self.root / ("saved-source-" + str(index))
                 original.rename(moved)
                 original.symlink_to(moved)
+                self.create(preflight=True, ok=False)
                 self.create(output="bad-symlink-" + str(index), ok=False)
                 original.unlink()
                 moved.rename(original)
@@ -164,6 +215,7 @@ class RecoveryTests(unittest.TestCase):
             with self.subTest(source=name):
                 extra = self.root / "extra-link"
                 os.link(self.root / name, extra)
+                self.create(preflight=True, ok=False)
                 self.create(output="bad-hardlink-" + str(index), ok=False)
                 extra.unlink()
 
@@ -173,9 +225,11 @@ class RecoveryTests(unittest.TestCase):
                 path = self.root / name
                 mode = stat.S_IMODE(path.stat().st_mode)
                 path.chmod(mode | 0o020)
+                self.create(preflight=True, ok=False)
                 self.create(output="bad-mode-" + str(index), ok=False)
                 path.chmod(mode)
         self.write("config/unexpected.json", b"{}")
+        self.create(preflight=True, ok=False)
         self.create(output="bad-config", ok=False)
 
     def test_bundle_tampering_missing_and_extra_files_rejected(self):

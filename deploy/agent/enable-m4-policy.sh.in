@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 主人在真实终端 sudo bash 执行；绑定一个已验收的 M4 发布，不升级二进制或数据库。
+# 主人授权后在前台交互终端 sudo bash 执行；绑定已验收的 M4 发布。
 set -Eeuo pipefail
 umask 077
 export PATH=/usr/sbin:/usr/bin:/sbin:/bin
@@ -163,6 +163,8 @@ done
 as_user test -r "$ops/check-agent.py" || fail '服务用户不能读取操作材料，拒绝停机。'
 [[ $(sha "$ops/previous.service") == "$old_unit_sha" && $(sha "$ops/policy.service") == "$new_unit_sha" ]] || fail '单元材料摘要不符。'
 systemd-analyze verify "$ops/policy.service"
+# 与恢复器共用逐级元数据校验，在线只读完成；create 会在停写后再次校验。
+python3 -I -B "$ops/m4_recovery.py" preflight --data "$data" --config "$config" --binary "$binary" --unit "$installed"
 # 仅查询类型名称与吊销状态；不输出 token 或 token 摘要。
 as_user python3 -I -B - "$data" <<'PY_TYPES'
 import pathlib,sqlite3,sys
@@ -188,7 +190,7 @@ printf '%s\n' '恢复副本在 4401 完整供给验收通过。首次能力集�
 cat "$ops/claude.json"
 as_user mkdir -m 0700 "$policy"
 as_user "$binary" admin policy-init --policy "$policy"
-# 直接继承主人的前台控制终端；不制造 PTY、不重定向三个标准流。
+# 继承已授权的前台交互终端；三个标准流保持同一终端，CLI 门禁保持不变。
 as_user "$binary" admin policy-bootstrap --policy "$policy" --data "$data" --kind capability_set --subject claude --file "$ops/claude.json"
 as_user "$binary" admin policy-status --policy "$policy"
 # 先在副本验证已启用分支。此副本仅预检用，不冒充跨库恢复点。
@@ -203,6 +205,7 @@ unit_is "$old_unit_sha" || fail '预检期间正式单元变化，拒绝切换�
 check_process "$unit" "$binary"
 # 最终停机时再保存包含策略库与 bootstrap 审计的完整点；清理不会删除任何恢复点。
 final_recovery="/var/lib/studiolo-recovery/$(date -u +%Y%m%dT%H%M%SZ)-${ops##*/}-with-policy"
+python3 -I -B "$ops/m4_recovery.py" preflight --data "$data" --config "$config" --binary "$binary" --unit "$ops/policy.service" --policy "$policy"
 stopped=1; systemctl stop "$unit"
 python3 -I -B "$ops/m4_recovery.py" create --data "$data" --config "$config" --binary "$binary" --unit "$ops/policy.service" --policy "$policy" --output "$final_recovery"
 python3 -I -B "$ops/m4_recovery.py" verify "$final_recovery"
