@@ -1,0 +1,231 @@
+#!/usr/bin/env bash
+# 主人授权后在前台交互终端 sudo bash 执行；绑定已验收的 M4 发布。
+set -Eeuo pipefail
+umask 077
+export PATH=/usr/sbin:/usr/bin:/sbin:/bin
+unset CDPATH ENV BASH_ENV PYTHONPATH PYTHONHOME
+release=@RELEASE@
+binary=$release/bin/studiolo-agent
+binary_sha=@BINARY_SHA@
+old_unit_sha=@OLD_UNIT_SHA@
+new_unit_sha=@NEW_UNIT_SHA@
+manifest_sha=@MANIFEST_SHA@
+unit=studiolo-agent.service
+installed=/etc/systemd/system/$unit
+data=/home/maxsong/.local/share/studiolo-agent
+config=/home/maxsong/.config/studiolo-agent
+policy=/home/maxsong/.local/share/studiolo-agent-policy
+replica=/home/maxsong/.local/share/studiolo-agent-replica
+cache=/home/maxsong/.local/share/studiolo-agent-index
+source_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
+ops='' recovery='' stage_root='' stage_unit='' stopped=0 changed=0 committed=0
+fail() { printf '%s\n' "$1" >&2; exit 1; }
+sha() { sha256sum -- "$1" | cut -d ' ' -f 1; }
+as_user() { setpriv --reuid=1000 --regid=1000 --init-groups -- "$@"; }
+unit_is() { [[ -f "$installed" && ! -L "$installed" && $(sha "$installed") == "$1" ]]; }
+wait_ready() {
+  local port=$1 code attempt
+  for ((attempt=0; attempt<40; attempt++)); do
+    code=$(curl --silent --output /dev/null --write-out '%{http_code}' --max-time 2 "http://127.0.0.1:$port/mcp") || code=000
+    [[ "$code" == 401 ]] && return 0
+    sleep 0.5
+  done
+  return 1
+}
+check_process() {
+  local service=$1 expected=$2 pid
+  systemctl is-active --quiet "$service"
+  pid=$(systemctl show "$service" -p MainPID --value)
+  [[ "$pid" =~ ^[0-9]+$ && "$pid" -gt 1 && $(readlink -f "/proc/$pid/exe") == "$expected" && $(sha "/proc/$pid/exe") == "$binary_sha" ]]
+  [[ $(systemctl show "$service" -p User --value) == maxsong && $(systemctl show "$service" -p LimitMEMLOCK --value) == infinity ]]
+}
+stop_stage() {
+  [[ -n "$stage_unit" ]] || return 0
+  if [[ $(systemctl show "$stage_unit" -p LoadState --value 2>/dev/null) != not-found ]]; then
+    [[ $(systemctl show "$stage_unit" -p ExecStart --value) == *"path=$stage_root/bin/studiolo-agent ;"* ]] || return 1
+    systemctl stop "$stage_unit"
+  fi
+  local attempt
+  for ((attempt=0; attempt<40; attempt++)); do
+    [[ $(systemctl show "$stage_unit" -p LoadState --value 2>/dev/null) == not-found ]] && break
+    sleep 0.1
+  done
+  [[ $(ss -H -ltn 'sport = :4401' | wc -l) == 0 ]] || return 1
+  stage_unit=''
+}
+cleanup() {
+  local result=$? failed=0
+  trap - EXIT INT TERM HUP
+  set +e
+  stop_stage || failed=1
+  if [[ "$committed" != 1 && "$changed" == 1 ]]; then
+    if unit_is "$new_unit_sha" && [[ $(sha "$ops/previous.service") == "$old_unit_sha" ]]; then
+      systemctl stop "$unit" || failed=1
+      install -m 0644 "$ops/previous.service" "$installed" || failed=1
+      systemctl daemon-reload || failed=1
+      stopped=1
+      printf '%s\n' '策略切换失败，已恢复原单元；身份、v2 审计和已 bootstrap 的策略库全部保留。' >&2
+    elif unit_is "$old_unit_sha"; then
+      stopped=1
+    else
+      printf '%s\n' '单元已被其他操作改变，拒绝覆盖；请人工检查。' >&2
+      failed=1
+    fi
+  fi
+  if [[ "$committed" != 1 && "$stopped" == 1 && "$failed" == 0 ]]; then
+    systemctl start "$unit" && wait_ready 4400 && check_process "$unit" "$binary" || failed=1
+  fi
+  # 只移除本次可再生的预检副本；恢复包和操作记录永不在清理中删除。
+  if [[ -n "$stage_root" && "$stage_root" == /home/maxsong/.local/share/studiolo-m4-stage-* ]]; then
+    [[ "$failed" != 0 ]] || rm -rf -- "$stage_root"
+  fi
+  [[ -z "$ops" ]] || printf '持久操作记录：%s\n' "$ops"
+  [[ -z "$recovery" ]] || printf '持久恢复包：%s\n' "$recovery"
+  [[ "$failed" == 0 ]] || { printf '%s\n' '自动恢复未完全成功，请检查服务。' >&2; result=1; }
+  exit "$result"
+}
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+trap 'exit 129' HUP
+check_supply() {
+  local port=$1 token=$2 mode=${3:-compatible}
+  as_user python3 -I -B "$ops/check-agent.py" "http://127.0.0.1:$port/mcp" "$token"
+  as_user python3 -I -B "$ops/check-agent.py" "http://127.0.0.1:$port/mcp" "$token" --no-token
+  as_user python3 -I -B "$ops/check-agent.py" "http://127.0.0.1:$port/mcp" "$token" --bad-token
+  local probe attempt code
+  for probe in check-agent-replica.py check-agent-http.py; do
+    for attempt in 1 2 3; do
+      if [[ "$probe" == check-agent-replica.py ]]; then
+        if as_user python3 -I -B "$ops/$probe" "http://127.0.0.1:$port/mcp" "$token" --expected ready; then code=0; else code=$?; fi
+      else
+        if as_user python3 -I -B "$ops/$probe" "http://127.0.0.1:$port" "$token"; then code=0; else code=$?; fi
+      fi
+      [[ "$code" != 2 ]] && break
+      sleep 1
+    done
+    [[ "$code" == 0 ]] || return "$code"
+  done
+  if [[ "$mode" == policy ]]; then
+    as_user python3 -I -B "$ops/check-agent-policy.py" "http://127.0.0.1:$port/mcp" "$token"
+  fi
+}
+start_stage() {
+  local mode=$1 args=() writable="$stage_root/data $stage_root/cache"
+  if [[ "$mode" == policy ]]; then args=(--policy "$stage_root/policy"); writable+=" $stage_root/policy"; fi
+  stage_unit="studiolo-m4-stage-${ops##*/}.service"
+  [[ $(ss -H -ltn 'sport = :4401' | wc -l) == 0 ]] || fail '4401 已占用。'
+  systemd-run --quiet --collect --unit="$stage_unit" --service-type=simple \
+    --property=User=maxsong --property=Group=maxsong --property=PrivateUsers=no \
+    --property="WorkingDirectory=$stage_root" --property=UMask=0077 --property=LimitMEMLOCK=infinity \
+    --property=NoNewPrivileges=yes --property=ProtectSystem=strict --property=ProtectHome=read-only \
+    --property="ReadWritePaths=$writable" --property=PrivateTmp=yes --property=RestrictSUIDSGID=no \
+    --property=LockPersonality=yes --property='RestrictAddressFamilies=AF_UNIX AF_INET' \
+    --property=SystemCallArchitectures=native --property=MemoryMax=512M --property=TasksMax=64 \
+    --property=TimeoutStopSec=20 -- "$stage_root/bin/studiolo-agent" serve \
+    --replica-root "$replica" --replica-max-age-secs 300 --allow 项目/Studiolo --allow _规则 \
+    --data "$stage_root/data" --index-cache "$stage_root/cache" "${args[@]}" --port 4401
+  wait_ready 4401
+  check_process "$stage_unit" "$stage_root/bin/studiolo-agent"
+}
+[[ $(id -u) == 0 && ${SUDO_UID:-} == 1000 ]] || fail '请由 maxsong 在真实终端用 sudo bash 执行。'
+[[ -t 0 && -t 1 && -t 2 ]] || fail '标准输入、输出、错误必须都保持真实终端；不要管道、重定向或后台运行。'
+[[ $(id -u maxsong) == 1000 && $(id -g maxsong) == 1000 ]] || fail '服务身份不同。'
+ulimit -l unlimited
+[[ ! -L /run/studiolo-agent-policy.lock ]] || fail '部署锁不安全。'
+exec 9>/run/studiolo-agent-policy.lock
+flock -n 9 || fail '另一个策略部署正在执行。'
+[[ ! -e /run/studiolo-agent-upgrade.lock ]] || fail '旧升级器仍占用部署锁。'
+unit_is "$old_unit_sha" || fail '当前单元已变动，请重新准备操作包。'
+[[ -z $(systemctl show "$unit" -p DropInPaths --value) && $(systemctl show "$unit" -p FragmentPath --value) == "$installed" ]] || fail '发现未预期的单元覆盖配置。'
+[[ -f "$binary" && ! -L "$binary" && $(sha "$binary") == "$binary_sha" ]] || fail '运行程序摘要变化。'
+check_process "$unit" "$binary"
+[[ ! -e "$policy" && ! -L "$policy" ]] || fail '策略目录已存在：不覆盖、不重复 bootstrap；请保留并检查前次结果。'
+[[ $(ss -H -ltn 'sport = :4401' | wc -l) == 0 ]] || fail '4401 已占用。'
+# 先固定操作材料，root 不执行可被服务用户改写的 Python 文件。
+# 操作包只有非敏感脚本/单元，服务用户须能穿过祖先目录读取；备份含凭据，仅 root 可读。
+base=/var/lib/studiolo-deployments
+if [[ ! -e "$base" ]]; then install -d -m 0750 -o root -g maxsong "$base"; fi
+[[ -d "$base" && ! -L "$base" && $(stat -c '%u:%g:%a' "$base") == 0:1000:750 ]] || fail '持久操作根不安全。'
+base=/var/lib/studiolo-recovery
+if [[ ! -e "$base" ]]; then install -d -m 0700 -o root -g root "$base"; fi
+[[ -d "$base" && ! -L "$base" && $(stat -c '%u:%g:%a' "$base") == 0:0:700 ]] || fail '持久备份根不安全。'
+ops=$(mktemp -d /var/lib/studiolo-deployments/t087-XXXXXXXX)
+chown root:maxsong "$ops"; chmod 0750 "$ops"
+for file in previous.service policy.service claude.json m4_recovery.py check-agent.py check-agent-policy.py check-agent-http.py check-agent-replica.py check-policy-revocation.py FILES.sha256; do
+  [[ -f "$source_dir/$file" && ! -L "$source_dir/$file" ]] || fail '操作包缺少普通文件。'
+  cp --no-dereference -- "$source_dir/$file" "$ops/$file"
+  [[ -f "$ops/$file" && ! -L "$ops/$file" ]] || fail '操作材料复制异常。'
+  chown root:root "$ops/$file"; chmod 0644 "$ops/$file"
+done
+[[ $(sha "$ops/FILES.sha256") == "$manifest_sha" ]] || fail '操作包清单摘要变化。'
+(cd "$ops" && sha256sum --check --strict --status FILES.sha256) || fail '操作包内容摘要变化。'
+as_user test -r "$ops/check-agent.py" || fail '服务用户不能读取操作材料，拒绝停机。'
+[[ $(sha "$ops/previous.service") == "$old_unit_sha" && $(sha "$ops/policy.service") == "$new_unit_sha" ]] || fail '单元材料摘要不符。'
+systemd-analyze verify "$ops/policy.service"
+# 与恢复器共用逐级元数据校验，在线只读完成；create 会在停写后再次校验。
+python3 -I -B "$ops/m4_recovery.py" preflight --data "$data" --config "$config" --binary "$binary" --unit "$installed"
+# 仅查询类型名称与吊销状态；不输出 token 或 token 摘要。
+as_user python3 -I -B - "$data" <<'PY_TYPES'
+import pathlib,sqlite3,sys
+p=pathlib.Path(sys.argv[1])/'agent.sqlite3'
+c=sqlite3.connect('file:'+str(p)+'?mode=ro',uri=True)
+assert c.execute('select name from agent_type where revoked_at is null order by name').fetchall()==[('claude',)], '有效类型已变化，须重新准备能力集'
+PY_TYPES
+check_supply 4400 "$config/claude.token"
+recovery="/var/lib/studiolo-recovery/$(date -u +%Y%m%dT%H%M%SZ)-${ops##*/}-before-policy"
+printf '%s\n' '短暂停机：建立身份、v2 审计、凭据、程序和单元的一致恢复包。'
+stopped=1; systemctl stop "$unit"
+python3 -I -B "$ops/m4_recovery.py" create --data "$data" --config "$config" --binary "$binary" --unit "$installed" --output "$recovery"
+python3 -I -B "$ops/m4_recovery.py" verify "$recovery"
+systemctl start "$unit"; wait_ready 4400; check_process "$unit" "$binary"; stopped=0
+stage_root="/home/maxsong/.local/share/studiolo-m4-stage-${ops##*/}"
+python3 -I -B "$ops/m4_recovery.py" restore-copy "$recovery" "$stage_root"
+chown -R maxsong:maxsong "$stage_root"
+as_user mkdir -m 0700 "$stage_root/cache"
+start_stage compatible
+check_supply 4401 "$stage_root/config/claude.token"
+stop_stage
+printf '%s\n' '恢复副本在 4401 完整供给验收通过。首次能力集如下：'
+cat "$ops/claude.json"
+as_user mkdir -m 0700 "$policy"
+as_user "$binary" admin policy-init --policy "$policy"
+# 继承已授权的前台交互终端；三个标准流保持同一终端，CLI 门禁保持不变。
+as_user "$binary" admin policy-bootstrap --policy "$policy" --data "$data" --kind capability_set --subject claude --file "$ops/claude.json"
+as_user "$binary" admin policy-status --policy "$policy"
+# 先在副本验证已启用分支。此副本仅预检用，不冒充跨库恢复点。
+cp -a -- "$policy" "$stage_root/policy"
+chown -R maxsong:maxsong "$stage_root/policy"
+start_stage policy
+check_supply 4401 "$stage_root/config/claude.token" policy
+as_user python3 -I -B "$ops/check-policy-revocation.py" "$stage_root"
+check_supply 4401 "$stage_root/config/claude.token" policy
+stop_stage
+unit_is "$old_unit_sha" || fail '预检期间正式单元变化，拒绝切换。'
+check_process "$unit" "$binary"
+# 最终停机时再保存包含策略库与 bootstrap 审计的完整点；清理不会删除任何恢复点。
+final_recovery="/var/lib/studiolo-recovery/$(date -u +%Y%m%dT%H%M%SZ)-${ops##*/}-with-policy"
+python3 -I -B "$ops/m4_recovery.py" preflight --data "$data" --config "$config" --binary "$binary" --unit "$ops/policy.service" --policy "$policy"
+stopped=1; systemctl stop "$unit"
+python3 -I -B "$ops/m4_recovery.py" create --data "$data" --config "$config" --binary "$binary" --unit "$ops/policy.service" --policy "$policy" --output "$final_recovery"
+python3 -I -B "$ops/m4_recovery.py" verify "$final_recovery"
+# 同目录原子替换；失败仅回退单元，保留新产生的审计与策略历史。
+install -m 0644 "$ops/policy.service" "/etc/systemd/system/.studiolo-policy-${ops##*/}"
+changed=1
+mv -T "/etc/systemd/system/.studiolo-policy-${ops##*/}" "$installed"
+systemctl daemon-reload
+unit_is "$new_unit_sha"
+systemctl start "$unit"; wait_ready 4400; check_process "$unit" "$binary"
+check_supply 4400 "$config/claude.token" policy
+systemctl is-enabled --quiet "$unit"
+[[ $(ss -H -ltn 'sport = :4401' | wc -l) == 0 ]] || fail '预检端口未释放。'
+committed=1; stopped=0
+{
+  printf 'status=accepted\nrelease=%s\nbinary_sha256=%s\nunit_sha256=%s\n' "$release" "$binary_sha" "$new_unit_sha"
+  printf 'baseline_recovery=%s\npolicy_recovery=%s\n' "$recovery" "$final_recovery"
+  printf 'baseline_restore_4401=passed\npolicy_4401=passed\nrevocation_instance_type_global=passed\npolicy_4400=passed\n'
+  printf 'accepted_at=%s\n' "$(date -u +%FT%TZ)"
+} > "$ops/RESULT.txt"
+chmod 0644 "$ops/RESULT.txt"
+printf 'M4 接入方策略已启用且验收通过。启用前恢复副本已验证；含策略的恢复包完整性已验证：%s\n' "$final_recovery"
+printf '%s\n' '该恢复点在同一服务器上，不等于 NAS/异机灾难恢复；人侧 L3 发布链路仍待因子模式部署。'
