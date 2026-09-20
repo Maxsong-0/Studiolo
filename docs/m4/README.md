@@ -48,12 +48,20 @@ cargo run --locked -p studiolo-agent-server -- serve --vault /path/to/readonly-c
 | RG-CONSUMER 5／6：能力集与 skills 走 L3；实例不能自我提权、三级吊销即刻 | 同上两条 ＋ `policy_store_contract.rs` |
 | PRD-v2-01 2.4 第 7 条：effective 哈希与各 AI 拿到的能力集哈希不一致次数恒为 0 | `handshake.served.effective_hash` 与策略库当前值逐条相等（`policy_contract.rs` 断言） |
 
+## 接入方线上验收（2026-09-20，T-086 / T-087）
+
+正式 4400 已给 `serve --policy`，`claude` 首版能力集生效；公网 MCP/HTTP、策略版本一致、白名单拒绝、
+匿名/坏凭据 401 与副本 ready 通过。实例/类型/全局吊销在 4401 隔离副本中逐项验证，未吊销生产身份。
+启用前与含策略的两个一致恢复包均已保存，分别在独立系统服务中恢复并通过供给验收；恢复包保留在生产服务器私有目录。
+详见 [操作包与恢复边界](policy-operations.md)。程序仍为 `m4-t084-20260919-audit03`，本次没有升级二进制。
+
 ## 明确未做（不得据本目录宣称）
 
-- **线上启用**：`deploy/agent/*.service.in` 未加 `--policy`；服务器无 `policy.sqlite3`；人侧因子模式未部署，因此真实 One-time Code 发布未在生产验证。
+- **人侧发布链路**：因子模式未部署，因此真实 One-time Code 发布未在生产验证。默认发布模板仍是兼容模式；
+  未来升级必须保留正式单元现有 `--policy` 和对应可写目录，不能直接覆盖。
 - 推模式（T-038 客户端投影）仍导出 vault 规则文件，未改从 effective 导出。
 - 人侧界面没有实例列表（吊销按 id）；`admin instances` 提供列表。
-- 策略库未纳入一致 checkpoint／备份清单。
+- 策略库尚未纳入常态 checkpoint／异机备份；T-086 的同机恢复点不替代异机灾备。
 - M5 的规则版本钉定只暴露 `effective_hash`，未实现钉定本身。
 
 ## 上线验收探针（T-073，2026-09-18）
