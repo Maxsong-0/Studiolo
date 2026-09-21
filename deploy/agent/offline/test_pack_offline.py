@@ -58,7 +58,7 @@ class OfflineTests(unittest.TestCase):
         encoded = json.dumps(manifest, ensure_ascii=False).encode()
         for generation in ("a" * 32, "b" * 32):
             release = self.replica / "releases" / generation
-            for suffix in ("", "vault", "vault/_规则", "vault/项目", "vault/项目/Studiolo"):
+            for suffix in ("", "vault", "vault/_规则", "vault/项目", "vault/项目/Studiolo", "vault/项目/Tillerwright"):
                 (release / suffix).mkdir(mode=0o700)
             self.write(release / "manifest.json", encoded)
             self.write(release / "vault/项目/Studiolo/note.md", raw)
