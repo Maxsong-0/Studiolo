@@ -12,6 +12,9 @@ import signal
 import socket
 import subprocess
 import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from replica_common import ALLOW  # noqa: E402
 import tempfile
 import time
 import urllib.error
@@ -46,7 +49,9 @@ class Pipeline:
         write(self.source / INDEX, "# Studiolo · 总览\n\nFIRST_CONTENT\n")
         write(self.source / "项目/Studiolo/remove.md", "# 待删除\n")
         write(self.source / "_规则/rules.md", "# 规则\n")
-        write(self.source / "项目/Tillerwright/note.md", "# Tillerwright 夹具\n")
+        # 捕获端对 ALLOW 里每个目录都 open_dir，缺一个即整批失败；从 ALLOW 派生避免漏建。
+        for allow in ALLOW:
+            (self.source / allow).mkdir(mode=0o700, parents=True, exist_ok=True)
         (self.source / "项目/Studiolo/empty").mkdir(mode=0o700)
         write(self.source / "School/private.md", "DO_NOT_SEND\n")
         write(self.source / "项目/Studiolo/.hidden", "DO_NOT_SEND\n")
@@ -137,8 +142,8 @@ class Pipeline:
         self.url = f"http://127.0.0.1:{port}/mcp"
         self.log = tempfile.TemporaryFile()
         self.proc = subprocess.Popen([self.binary, "serve", "--replica-root", str(self.remote),
-                                      "--replica-max-age-secs", "300", "--allow", "项目/Studiolo",
-                                      "--allow", "项目/Tillerwright", "--allow", "_规则", "--data", str(self.data), "--port", str(port)],
+                                      "--replica-max-age-secs", "300",
+                                      *[arg for allow in ALLOW for arg in ("--allow", allow)], "--data", str(self.data), "--port", str(port)],
                                      stdout=self.log, stderr=self.log)
         for _ in range(100):
             require(self.proc.poll() is None, "隔离 MCP 服务启动失败")

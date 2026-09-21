@@ -6,7 +6,32 @@ import re
 import stat
 import unicodedata
 
-ALLOW = sorted(["项目/Studiolo", "项目/Tillerwright", "_规则"])
+ALLOW = sorted([
+    "_规则",
+    "项目/AI Quota Flow",
+    "项目/AI 网关门户",
+    "项目/Brief 简报站",
+    "项目/Codex源码分析",
+    "项目/DocReader",
+    "项目/Echo",
+    "项目/HR系统",
+    "项目/MindGarden",
+    "项目/NAS 网关",
+    "项目/Perplexity",
+    "项目/Semiment",
+    "项目/Semiment-Docs",
+    "项目/Studiolo",
+    "项目/Tillerwright",
+    "项目/brian-web",
+    "项目/hermes",
+    "项目/max-personal-web",
+    "项目/培训 App",
+    "项目/盖章",
+    "项目/研究项目",
+    "项目/绩效",
+    "项目/远程桌面网关",
+    "项目/销售报表",
+])
 MAX_ENTRIES = 25_000
 MAX_MANIFEST = 4 * 1024 * 1024
 MAX_FILE = 16 * 1024 * 1024

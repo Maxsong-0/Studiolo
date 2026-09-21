@@ -31,7 +31,9 @@ def render_unit(raw):
     pattern = (r'ExecStart=(/home/maxsong/\.local/share/studiolo-agent-releases/'
                r'[A-Za-z0-9][A-Za-z0-9._-]{0,79})/bin/studiolo-agent serve '
                r'--replica-root /home/maxsong/\.local/share/studiolo-agent-replica '
-               r'--replica-max-age-secs 300 --allow 项目/Studiolo --allow 项目/Tillerwright --allow _规则 '
+               # 白名单随项目增减而变；正则不再钉死具体条目——钉死的话每次扩容都要跟着改这里
+               # （T-095 已被迫改过一次）。只校验「至少一个 --allow」，条目内容由部署模板决定。
+               r'--replica-max-age-secs 300 (?:--allow (?:"[^"]+"|\S+) )+'
                r'--data /home/maxsong/\.local/share/studiolo-agent '
                r'--index-cache /home/maxsong/\.local/share/studiolo-agent-index --port 4400\n')
     match = re.fullmatch(pattern, lines[index])

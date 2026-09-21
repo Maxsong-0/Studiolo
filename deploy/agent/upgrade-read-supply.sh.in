@@ -272,7 +272,7 @@ systemd-run --unit="$stage" --collect --service-type=simple \
     --property=LockPersonality=yes --property='RestrictAddressFamilies=AF_UNIX AF_INET' \
     --property=SystemCallArchitectures=native --property=MemoryMax=512M --property=TasksMax=64 \
     -- "$binary" serve --replica-root "$replica" --replica-max-age-secs 300 \
-    --allow 项目/Studiolo --allow 项目/Tillerwright --allow _规则 --data "$stage_data" --index-cache "$stage_cache" --port 4401
+    --allow "_规则" --allow "项目/AI Quota Flow" --allow "项目/AI 网关门户" --allow "项目/Brief 简报站" --allow "项目/Codex源码分析" --allow "项目/DocReader" --allow "项目/Echo" --allow "项目/HR系统" --allow "项目/MindGarden" --allow "项目/NAS 网关" --allow "项目/Perplexity" --allow "项目/Semiment" --allow "项目/Semiment-Docs" --allow "项目/Studiolo" --allow "项目/Tillerwright" --allow "项目/brian-web" --allow "项目/hermes" --allow "项目/max-personal-web" --allow "项目/培训 App" --allow "项目/盖章" --allow "项目/研究项目" --allow "项目/绩效" --allow "项目/远程桌面网关" --allow "项目/销售报表" --data "$stage_data" --index-cache "$stage_cache" --port 4401
 stage_binding=$(identity "/run/systemd/transient/$stage")
 wait_ready 4401
 check_process "$stage" "$binary" "$binary_sha"
