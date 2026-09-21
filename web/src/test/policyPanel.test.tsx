@@ -140,12 +140,18 @@ it('提交 desired 后把扩大项标红，发布被挡在二次认证后且永�
     subject: 'claude',
   });
 
+  // 403 不再把人打发去「账户」：就地弹认证窗口，且在没有受控会话时直说不能认证。
   await user.click(screen.getByRole('button', { name: '发布（需二次认证）' }));
-  await waitFor(() =>
-    expect(
-      screen.getByText(/需要先在「账户」里完成二次认证/),
-    ).toBeInTheDocument(),
-  );
+  const dialog = await screen.findByRole('dialog', { name: '二次认证后继续' });
+  expect(
+    within(dialog).getByText(/本次动作：发布 能力集 claude/),
+  ).toBeInTheDocument();
+  expect(
+    within(dialog).getByText(/本页没有可用的受控会话/),
+  ).toBeInTheDocument();
+  expect(
+    screen.queryByText(/在「账户」里完成二次认证/),
+  ).not.toBeInTheDocument();
   expect(posts.at(-1)).toMatchObject({
     path: '/api/v1/policy/activate',
     body: {
@@ -153,6 +159,9 @@ it('提交 desired 后把扩大项标红，发布被挡在二次认证后且永�
       expected_effective_hash: HASH,
     },
   });
+  expect(
+    posts.filter((post) => post.path === '/api/v1/policy/activate'),
+  ).toHaveLength(1);
 });
 
 it('吊销即刻提交，未接入策略平面时显示未接入而不是空白', async () => {

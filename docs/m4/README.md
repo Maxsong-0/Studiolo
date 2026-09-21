@@ -14,7 +14,7 @@
 | `crates/policy` | 私有库 `policy.sqlite3`；三类母本（规则母本 Markdown、skill JSON、能力集 JSON）；desired 校验、diff 与权限扩大项；CAS 发布、回滚、首版 bootstrap；实例／类型／全局三级吊销；主人句柄与接入方句柄；审计事件 |
 | `studiolo-agent`（接入方） | `serve --policy <目录>`：每次调用复核吊销与能力集；供给视图 ＝ `--allow` ∩ 能力集白名单；路牌第 3／5／6 项改自 effective；tools `policy_read`、`propose_desired`；`GET /read/policy`；admin `policy-init` / `policy-bootstrap` / `policy-status` / `instances` |
 | `studiolo-local-server`（人侧） | `--policy-data <目录>`（会话模式）：`/api/v1/policy`（状态）、`/policy/desired`（GET 列、POST 提交）、`/policy/validate`、`/policy/withdraw`、`/policy/activate`（**L3**：发布／回滚／解除全局吊销）、`/policy/versions[/{n}]`、`/api/v1/agents/revoke`（L2 三级吊销） |
-| `web/` | 「策略平面」视图：effective 与现行各项、提交 desired 并看报告（扩大项标红）、发布（需先在账户里完成二次认证）、待处理 desired（含 AI 提案）、版本列表与回滚、三级吊销 |
+| `web/` | 「策略平面」视图：effective 与现行各项、提交 desired 并看报告（扩大项标红）、发布（就地弹 One-time Code 窗口，认证通过后自动继续这一次发布，不必去账户页再回来重来）、待处理 desired（含 AI 提案）、版本列表与回滚、三级吊销 |
 | `auth` | `FactorRuntime::require_l3` 门面透出（T-026 复审 #19 的 M4 前置） |
 
 ## 本机跑一遍（全部虚构材料）

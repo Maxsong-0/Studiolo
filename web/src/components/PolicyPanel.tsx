@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   activateFailure,
   activatePolicy,
+  needsReauthentication,
   readPolicySnapshot,
   readVersion,
   revokeAgent,
@@ -26,6 +27,7 @@ import {
 } from '../policyModel';
 import { DesiredForm, RevokeForm } from './PolicyForms';
 import { PolicyReport } from './PolicyReport';
+import { PolicyStepUp } from './PolicyStepUp';
 import { Icon } from './Icon';
 
 type Loaded = {
@@ -33,6 +35,12 @@ type Loaded = {
   desired: DesiredRecord[];
   versions: VersionMeta[];
 };
+/** 一次 L3 动作：请求本体、成功提示里的名字、给人看的动作说明。 */
+type Activation = { request: ActivateRequest; label: string; action: string };
+/** 被二次认证挡下、等人就地认证后原样重试的那一个动作；`attempt` 只用于措辞。 */
+type Pending = Activation & { attempt: number };
+/** 收场时服务端状态没变，不必刷新列表。 */
+type Unchanged = { notice: string; reload: false };
 
 function when(value: string) {
   const parsed = new Date(value);
@@ -47,10 +55,14 @@ export function PolicyPanel({ initial }: { initial: Loaded }) {
   const [error, setError] = useState('');
   const [selected, setSelected] = useState<DesiredRecord | null>(null);
   const [version, setVersion] = useState<VersionRecord | null>(null);
+  const [pending, setPending] = useState<Pending | null>(null);
+  // 控制器必须在挂载时重建：StrictMode 的装载—卸载—再装载会先 abort 一次，沿用同一个
+  // 已中止的控制器会让此后每个动作在发请求前就被取消，界面表现为点了毫无反应（与其余
+  // 四处 useRef(new AbortController()) 的写法对齐）。
   const lifetime = useRef(new AbortController());
   useEffect(() => {
-    const controller = lifetime.current;
-    return () => controller.abort();
+    lifetime.current = new AbortController();
+    return () => lifetime.current.abort();
   }, []);
 
   const reload = useCallback(async () => {
@@ -59,16 +71,18 @@ export function PolicyPanel({ initial }: { initial: Loaded }) {
     if (!signal.aborted) setData(snapshot);
   }, []);
 
-  async function act(operation: () => Promise<string>) {
+  // 动作的返回值＝要显示的一句话；`reload: false` 用于服务端明确没有改动状态的收场
+  // （被 L3 挡下），那时再拉三个列表只会让 busy 多挂一会儿，把人认证完的重试吞掉。
+  async function act(operation: () => Promise<string | Unchanged>) {
     if (busy) return;
     setBusy(true);
     setError('');
     setNotice('');
     try {
-      const message = await operation();
+      const result = await operation();
       if (lifetime.current.signal.aborted) return;
-      setNotice(message);
-      await reload();
+      setNotice(typeof result === 'string' ? result : result.notice);
+      if (typeof result === 'string') await reload();
     } catch (cause) {
       if (lifetime.current.signal.aborted) return;
       setError(
@@ -103,7 +117,9 @@ export function PolicyPanel({ initial }: { initial: Loaded }) {
       return '已撤回。';
     });
   }
-  function activate(request: ActivateRequest, label: string) {
+  // 认证后重试沿用同一个 request：人审过哪一份 effective 就按哪一份发布，
+  // 期间 effective 变了由服务端以 hash_mismatch 挡下，绝不悄悄改用新的。
+  function activate({ request, label, action }: Activation, attempt = 0) {
     void act(async () => {
       try {
         const outcome = await activatePolicy(request, lifetime.current.signal);
@@ -117,9 +133,22 @@ export function PolicyPanel({ initial }: { initial: Loaded }) {
           outcome.audit_confirmed ? '' : '（审计未确认，请核对账本）'
         }。`;
       } catch (cause) {
+        // 403「需要二次认证」不是终点：发布没有发生，只差一次 One-time Code。
+        if (needsReauthentication(cause)) {
+          setPending({ request, label, action, attempt });
+          return {
+            notice: `${action} 需要二次认证：请在弹出的窗口完成 One-time Code，通过后会自动继续这一次动作。`,
+            reload: false,
+          };
+        }
         throw new Error(activateFailure(cause));
       }
     });
+  }
+  function retryAfterStepUp() {
+    const next = pending;
+    setPending(null);
+    if (next) activate(next, next.attempt + 1);
   }
   function revoke(request: RevokeRequest) {
     void act(async () => {
@@ -218,13 +247,14 @@ export function PolicyPanel({ initial }: { initial: Loaded }) {
             className="outline-button"
             disabled={busy || !status.l3_available}
             onClick={() =>
-              activate(
-                {
+              activate({
+                request: {
                   release_global_revocation: true,
                   expected_effective_hash: status.effective_hash,
                 },
-                '解除全局吊销',
-              )
+                label: '解除全局吊销',
+                action: '解除全局吊销',
+              })
             }
           >
             解除全局吊销（需二次认证）
@@ -248,13 +278,14 @@ export function PolicyPanel({ initial }: { initial: Loaded }) {
                   className="outline-button"
                   disabled={busy || !selected.report.ok || !status.l3_available}
                   onClick={() =>
-                    activate(
-                      {
+                    activate({
+                      request: {
                         desired_id: selected.id,
                         expected_effective_hash: status.effective_hash,
                       },
-                      `${KIND_LABEL[selected.kind]} ${selected.subject}`,
-                    )
+                      label: `${KIND_LABEL[selected.kind]} ${selected.subject}`,
+                      action: `发布 ${KIND_LABEL[selected.kind]} ${selected.subject}`,
+                    })
                   }
                 >
                   发布（需二次认证）
@@ -335,13 +366,14 @@ export function PolicyPanel({ initial }: { initial: Loaded }) {
                   className="text-button"
                   disabled={busy || !status.l3_available}
                   onClick={() =>
-                    activate(
-                      {
+                    activate({
+                      request: {
                         rollback_to: meta.version,
                         expected_effective_hash: status.effective_hash,
                       },
-                      `回滚到 v${meta.version}`,
-                    )
+                      label: `回滚到 v${meta.version}`,
+                      action: `回滚到 v${meta.version}`,
+                    })
                   }
                 >
                   回滚到此版本（需二次认证）
@@ -373,6 +405,15 @@ export function PolicyPanel({ initial }: { initial: Loaded }) {
         <h2 id="policy-revoke">三级吊销</h2>
         <RevokeForm busy={busy} onSubmit={revoke} />
       </section>
+
+      {pending ? (
+        <PolicyStepUp
+          action={pending.action}
+          attempt={pending.attempt}
+          onAuthenticated={retryAfterStepUp}
+          onClose={() => setPending(null)}
+        />
+      ) : null}
     </div>
   );
 }

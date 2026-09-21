@@ -119,4 +119,4 @@
   `propose_desired` 永不生效与能力否决、三级吊销即刻生效与恢复、HTTP 外壳同一授权、M3 兼容模式。
 - `crates/local-server/tests/policy_http_contract.rs`：真实 Unix 入口＋TOTP：发布挡在 L3 后（用例 36 人侧）、Intent/Outcome
   同 id、CAS 409、回滚、版本读取、三级吊销 L2 与全局解除 L3、方法与查询封闭、未装配策略平面 404。
-- 前端 `web/src/test/policy*`：模型封闭解析、扩大项标红、发布 403 提示、吊销提交、未接入显示。
+- 前端 `web/src/test/policy*`：模型封闭解析、扩大项标红、吊销提交、未接入显示；发布遇 403 `reauthentication_required` 就地弹二次认证窗口，认证通过后**按原 `expected_effective_hash`** 自动重试同一次动作（取消或认证失败都不重试；期间 effective 变了仍按原 hash 提交、由服务端 `hash_mismatch` 挡下；本入口无 One-time Code 路径时窗口直说不能发布）。

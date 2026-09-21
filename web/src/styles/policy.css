@@ -217,3 +217,19 @@
     padding: 2px 0;
   }
 }
+
+/* 发布被二次认证挡下时的就地认证窗口：沿用账户弹窗外壳与因子表单，只收窄宽度。 */
+.policy-stepup {
+  width: min(460px, calc(100vw - 32px));
+}
+.policy-stepup h2 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.policy-stepup h2 .icon {
+  color: var(--accent);
+}
+.policy-stepup .factor-form {
+  margin-top: 0;
+}
