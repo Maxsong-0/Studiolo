@@ -42,7 +42,7 @@ bash scripts/sync-agent-vault.sh
 保留 `ProtectSystem=strict`、`ProtectHome=read-only`、私有库唯一可写、`NoNewPrivileges` 与资源上限，并显式 `PrivateUsers=no`。其参数为：
 
 ```text
-serve --replica-root /home/maxsong/.local/share/studiolo-agent-replica --replica-max-age-secs 300 --allow 项目/Studiolo --allow _规则 --data /home/maxsong/.local/share/studiolo-agent --port 4400
+serve --replica-root /home/maxsong/.local/share/studiolo-agent-replica --replica-max-age-secs 300 --allow 项目/Studiolo --allow 项目/Tillerwright --allow _规则 --data /home/maxsong/.local/share/studiolo-agent --port 4400
 ```
 
 必须先由系统管理器使用相同隔离参数，在独立回环端口（例如 4401）启动新程序，验证实际 PID/UID/二进制、initialize、四工具与匿名 401；
