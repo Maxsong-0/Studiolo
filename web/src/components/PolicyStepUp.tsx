@@ -141,6 +141,9 @@ export function PolicyStepUp({
             。认证通过后只继续这一个动作，并且按你刚才看过的 effective
             提交；期间 effective 变了会被服务端挡下，不会改用新的。
           </p>
+          {/* 会话重新核对会按 revision 重挂整棵工作台（T-021 的安全契约），本窗口与
+              待重试的动作随之作废。那是失败关闭，但得先说清楚，别让人以为回来还接着发。 */}
+          <p>切走或刷新本页会关掉这个窗口，回来后要重新点一次发布。</p>
         </div>
         <button
           className="icon-button"

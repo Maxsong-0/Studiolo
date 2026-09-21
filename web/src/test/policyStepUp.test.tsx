@@ -1,5 +1,5 @@
 import { StrictMode } from 'react';
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, expect, it, vi } from 'vitest';
 import { PolicyBoundary } from '../PolicyBoundary';
@@ -314,4 +314,35 @@ it('本入口没有 One-time Code 路径时，窗口直说不能发布，不给�
   expect(within(dialog).queryByLabelText('验证码')).not.toBeInTheDocument();
   expect(stepUps).toHaveLength(0);
   expect(activations).toHaveLength(1);
+});
+
+/** 真实的切走再回来：页面隐藏触发 suspend，恢复可见触发 resume → 重新核对 → 整棵工作台重挂。 */
+async function leaveAndReturn() {
+  for (const state of ['hidden', 'visible'] as const) {
+    Object.defineProperty(document, 'visibilityState', {
+      configurable: true,
+      get: () => state,
+    });
+    await act(async () => {
+      document.dispatchEvent(new Event('visibilitychange'));
+    });
+  }
+}
+
+it('认证窗口开着时切走再回来：窗口和待重试的发布一起作废，绝不在没人输码时发布', async () => {
+  const user = await openPolicy();
+  activateReply = () => denied();
+  await publish(user);
+
+  // 会话重新核对会按 revision 重挂整棵工作台（T-021 的安全契约，不在本任务里改）。
+  await leaveAndReturn();
+
+  await screen.findByRole('table', { name: '现行各项' });
+  expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  // 重挂丢掉待重试的动作是**失败关闭**：人要重新点发布、重新认证，绝不会自己发出去。
+  expect(stepUps).toHaveLength(0);
+  expect(activations).toHaveLength(1);
+  expect(
+    screen.getByRole('button', { name: '能力集 claude' }),
+  ).toBeInTheDocument();
 });
