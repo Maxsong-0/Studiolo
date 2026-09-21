@@ -23,7 +23,7 @@ UID1000 运行 `prepare.py --source-commit <已验证提交> --vault-admin <二�
 
 1. 保留现有 Vault→agent 只读副本同步。UID1000 运行 `python3 -I -B -S …/freeze_replica.py`；它在原同步锁内核验 ready、300 秒新鲜度、三个批准范围和所有字节，写入全新私有快照。共享锁竞争、陈旧副本或不完整内容均拒绝。
 2. 事先建立 `assembly.VAULT`、`assembly.WRITER`、`assembly.BOARD` 三个 UID1000/0700 空目录。禁止将轮换副本原地升级成写者。
-3. 用新 `studiolo-vault-admin plan` 指向现有 owner 配置、candidate web、冻结快照和两个首建目录；批准范围为 `项目/Studiolo`、`项目/Tillerwright`、`_规则`。审阅文件数、字节数及 plan 摘要后，以完全相同参数加 `--expected-plan` 执行 `initialize`。两个命令都要求原生 Linux 进程加固成功，包括 unlimited MEMLOCK。
+3. 用新 `studiolo-vault-admin plan` 指向现有 owner 配置、candidate web、冻结快照中的 **`vault/` 子目录**和两个首建目录；快照外层含同步清单，不是 Vault 根。两个项目使用 `--allow 项目/Studiolo --allow 项目/Tillerwright`；`_规则` 含 ZIP/TXT 附件，必须逐一指定其 10 份 Markdown 的精确路径，不得批准整个 `_规则` 前缀。这次共 12 个范围、207 份 Markdown；四份附件仍保存在原冻结快照和原只读副本中，不导入 canonical。审阅文件数、字节数及 plan 摘要后，以完全相同参数加 `--expected-plan` 执行 `initialize`。两个命令都要求原生 Linux 进程加固成功，包括 unlimited MEMLOCK。
 4. 首建通过 Broker 写入 Markdown，并记录 `local_os_bootstrap` 审计；不冒充人类 L3 或 Sync 证据。部分首建失败原样保留，禁止盲目再次初始化。
 
 来源只被冻结一次。原 Obsidian 的后续变化仍进入旧只读副本，不会自动进入新的 canonical。网页标签明确显示“初始快照（持续同步未接通）”；新库不提供正文编辑所需的同步新鲜度证明。
