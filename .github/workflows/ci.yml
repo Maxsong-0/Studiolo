@@ -146,7 +146,7 @@ jobs:
         # 该 CLI 启动时会跑秘密驻留面加固（mlockall），同样需要在本 shell 内抬高 RLIMIT_MEMLOCK。
         run: |
           cargo --locked build -p studiolo-auth-admin --features production
-          cargo --locked build -p studiolo-vault-admin --features studiolo-auth/production
+          cargo --locked build -p studiolo-vault-admin
           [ "$(ulimit -l)" = unlimited ] || sudo prlimit --pid $$ --memlock=unlimited:unlimited
           python3 crates/auth-admin/tests/support/cli_process.py "${CARGO_TARGET_DIR:-target}/debug/studiolo-auth-admin"
 

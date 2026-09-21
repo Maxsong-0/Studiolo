@@ -7,11 +7,13 @@
 在 GithubCI 原生 Linux 完成 workspace fmt、严格 Clippy、全量测试、路径安全及生产特征构建：
 
 ```sh
-cargo build --locked --release -p studiolo-vault-admin --features studiolo-auth/production
+cargo build --locked --release -p studiolo-vault-admin
 python3 deploy/blackboard/test_assembly.py
 python3 deploy/blackboard/test_freeze.py
 python3 deploy/blackboard/test_activation.py
 ```
+
+初始化工具不依赖 Auth，不具备测试因子验证器或 Auth 的 `production` feature；不要给它附加 `studiolo-auth/production`。人侧与 Auth 管理程序仍沿用已验证的 r8 生产构建。
 
 生产工具目录保持仓库相对布局：本目录、`deploy/human/release/{release_common,runtime_checks,activation_ops,snapshot_worker}.py` 和 `scripts/{replica_common,replica_store,replica_cleanup}.py`。目录及祖先必须真实、root 或 UID1000 所有、不可组/其他写；文件单链接。部署到专用路径，不从 `/tmp` 或另一个项目的工具目录运行。
 
