@@ -46,6 +46,7 @@ class Pipeline:
         write(self.source / INDEX, "# Studiolo · 总览\n\nFIRST_CONTENT\n")
         write(self.source / "项目/Studiolo/remove.md", "# 待删除\n")
         write(self.source / "_规则/rules.md", "# 规则\n")
+        write(self.source / "项目/Tillerwright/note.md", "# Tillerwright 夹具\n")
         (self.source / "项目/Studiolo/empty").mkdir(mode=0o700)
         write(self.source / "School/private.md", "DO_NOT_SEND\n")
         write(self.source / "项目/Studiolo/.hidden", "DO_NOT_SEND\n")
@@ -137,7 +138,7 @@ class Pipeline:
         self.log = tempfile.TemporaryFile()
         self.proc = subprocess.Popen([self.binary, "serve", "--replica-root", str(self.remote),
                                       "--replica-max-age-secs", "300", "--allow", "项目/Studiolo",
-                                      "--allow", "_规则", "--data", str(self.data), "--port", str(port)],
+                                      "--allow", "项目/Tillerwright", "--allow", "_规则", "--data", str(self.data), "--port", str(port)],
                                      stdout=self.log, stderr=self.log)
         for _ in range(100):
             require(self.proc.poll() is None, "隔离 MCP 服务启动失败")
