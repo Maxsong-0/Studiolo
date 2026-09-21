@@ -130,6 +130,29 @@ fn fixed_agent_database_creation_pin_does_not_allow_another_file_or_write() {
 mod m5_m6_authority;
 
 #[test]
+fn vault_initializer_source_can_only_inspect_approved_roots_and_read_config() {
+    let path = Path::new("crates/vault-admin/src/source.rs");
+    let source = fs::read_to_string(workspace_root().join(path)).unwrap();
+    assert!(source_violations("studiolo-vault-admin", path, &source).is_empty());
+    for changed in [
+        source.replacen("OFlags::RDONLY", "OFlags::RDWR", 1),
+        source.replacen("OFlags::NOFOLLOW |", "", 1),
+        format!("{source}\nfs::write(path, bytes)?;"),
+        format!("{source}\nFile::create(path)?;"),
+        format!("{source}\nopen(other, OFlags::RDWR, Mode::empty())?;"),
+    ] {
+        assert!(
+            source_violations("studiolo-vault-admin", path, &changed)
+                .contains(&AuthorityViolation::GenericWrite)
+        );
+    }
+    assert!(
+        source_violations("studiolo-vault-admin", Path::new("src/other.rs"), &source)
+            .contains(&AuthorityViolation::GenericWrite)
+    );
+}
+
+#[test]
 fn offline_restore_descriptor_pins_remain_read_only_and_layout_bound() {
     let path = Path::new("crates/auth-admin/src/restore_guard.rs");
     let source = fs::read_to_string(workspace_root().join(path)).unwrap();

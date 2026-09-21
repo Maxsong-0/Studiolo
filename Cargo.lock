@@ -2808,6 +2808,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "studiolo-vault-admin"
+version = "0.0.1"
+dependencies = [
+ "rustix",
+ "serde",
+ "serde_json",
+ "sha2 0.11.0",
+ "studiolo-audit-ledger",
+ "studiolo-core",
+ "studiolo-host-config",
+ "studiolo-process-safety",
+ "studiolo-vault-broker",
+ "subtle",
+ "tempfile",
+ "thiserror",
+]
+
+[[package]]
 name = "studiolo-vault-broker"
 version = "0.0.1"
 dependencies = [

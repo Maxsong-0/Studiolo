@@ -1,0 +1,27 @@
+[package]
+name = "studiolo-vault-admin"
+description = "冻结私有快照的一次性 canonical 首建管理命令"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish = false
+
+[dependencies]
+studiolo-core.workspace = true
+studiolo-vault-broker.workspace = true
+studiolo-host-config.workspace = true
+studiolo-audit-ledger.workspace = true
+studiolo-process-safety.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+subtle.workspace = true
+thiserror.workspace = true
+rustix = { workspace = true, features = ["fs", "process"] }
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true

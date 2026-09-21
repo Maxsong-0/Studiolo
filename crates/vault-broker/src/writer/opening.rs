@@ -9,19 +9,36 @@ pub(super) fn open(
     vault_path: &Path,
     data_path: &Path,
     initialize: bool,
+    fresh: bool,
 ) -> Result<(Dir, Dir, VaultUuid, Writer), BrokerError> {
     let vault_path = lease::absolute(vault_path)?;
     let data_path = lease::absolute(data_path)?;
     if vault_path.starts_with(&data_path) || data_path.starts_with(&vault_path) {
         return Err(BrokerError::WriterBindingMismatch);
     }
-    let root = lease::walk(&vault_path, initialize)?;
+    let root = lease::walk(&vault_path, initialize && !fresh)?;
     let lease = lease::acquire(&root)?;
     let root_pin = DirectoryPin::new(vault_path.clone(), &root)?;
     root_pin.check()?;
     if lease::has_ancestor(&data_path, Identity::directory(&root)?)? {
         return Err(BrokerError::WriterBindingMismatch);
     }
+    // 首建入口不收养任意旧目录。先打开并核验两个既有根，再产生任何布局。
+    let fresh_data = if fresh {
+        let data = lease::walk(&data_path, false)?;
+        let pin = DirectoryPin::new(data_path.clone(), &data)?;
+        pin.check()?;
+        if lease::has_ancestor(&vault_path, Identity::directory(&data)?)? {
+            return Err(BrokerError::WriterBindingMismatch);
+        }
+        require_empty(&root)?;
+        require_empty(&data)?;
+        root_pin.check()?;
+        pin.check()?;
+        Some((data, pin))
+    } else {
+        None
+    };
     // 获取 canonical 租约后才接触 data，争用失败不能初始化另一份存储。
     ensure(&root, ".workbench", initialize)?;
     let control = lease::child(&root, ".workbench")?;
@@ -30,8 +47,14 @@ pub(super) fn open(
     let left_pin = left
         .as_ref()
         .map(|(bytes, id)| disk::FilePin::from_read(bytes, *id));
-    let data = lease::walk(&data_path, initialize && left.is_none())?;
-    let data_pin = DirectoryPin::new(data_path, &data)?;
+    let (data, data_pin) = match fresh_data {
+        Some(pair) => pair,
+        None => {
+            let data = lease::walk(&data_path, initialize && left.is_none())?;
+            let pin = DirectoryPin::new(data_path, &data)?;
+            (data, pin)
+        }
+    };
     if lease::has_ancestor(&vault_path, Identity::directory(&data)?)? {
         return Err(BrokerError::WriterBindingMismatch);
     }
@@ -129,6 +152,17 @@ pub(super) fn open(
     };
     writer.check(&root, &data)?;
     Ok((root, data, uuid, writer))
+}
+
+fn require_empty(directory: &Dir) -> Result<(), BrokerError> {
+    let mut entries = directory
+        .entries()
+        .map_err(|e| BrokerError::io("inspect initial writer root", e))?;
+    if let Some(entry) = entries.next() {
+        entry.map_err(|e| BrokerError::io("inspect initial writer root", e))?;
+        return Err(BrokerError::WriterBindingMismatch);
+    }
+    Ok(())
 }
 
 fn ensure(parent: &Dir, name: &str, create: bool) -> Result<(), BrokerError> {

@@ -28,6 +28,14 @@ pub(crate) fn allowed_workspace_dependencies(crate_name: &str) -> &'static [&'st
             "studiolo-host-config",
             "studiolo-process-safety",
         ],
+        // 离线首建只组合既有配置、只读源、Broker 与审计，不获得身份签发/策略发布。
+        "studiolo-vault-admin" => &[
+            "studiolo-core",
+            "studiolo-vault-broker",
+            "studiolo-host-config",
+            "studiolo-audit-ledger",
+            "studiolo-process-safety",
+        ],
         "studiolo-workbench" => &["studiolo-core", "studiolo-vault-index"],
         "studiolo-local-server" => &[
             "studiolo-runner-adapter",

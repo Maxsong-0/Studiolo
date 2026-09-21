@@ -62,9 +62,15 @@ M0 不暴露 `changes(cursor)`：没有 watcher/cursor 时伪造变更流会制�
   校验后竞态替换；
 - 普通 mutation 拒绝 `.git/**`、`.workbench/**`、`.obsidian/**` 与 `.stignore`。
 
-`.workbench/vault.json` 仅由 `FsVaultBroker::open` 的显式初始化路径创建；既有打开及
+`.workbench/vault.json` 仅由 `FsVaultBroker::open` / `initialize_empty` 的显式初始化路径创建；既有打开及
 canonical窄读只验证已有身份。至少绑定格式版本与Vault UUID；损坏时失败关闭，
 普通mutation永远不能修改它。写者的不可变配对和根身份约束见[T-028契约](canonical-writer.md)。
+
+生产首建工具使用 `initialize_empty`：两个批准根必须已存在且完全为空，空检查发生在
+canonical 写租约内、任何持久写入之前。缺根、非空根、重复初始化、链接或重叠均拒绝；
+部分失败现场不被重跑自动收养。独立 `studiolo-vault-admin` 先用只读计划绑定配置、根身份、
+冻结快照、允许范围与内容摘要，再经 Broker 导入并追加本地 OS 操作者审计；不冒充人侧 L3
+或认证 Bridge。普通 local-server 仍只能 `open_existing`，不能初始化或修复缺失存储。
 
 ## 4. revision、snapshot 与普通 mutation
 

@@ -1,0 +1,42 @@
+# 正式 canonical 与黑板首次接线
+
+这是绑定既有 `m4-t094-20260920-r8` 的一次部署，不是通用安装器。只为已有生产 Auth、Audit、Policy 和 agent 身份库增加 canonical/Broker/BoardPlane；不签发身份、不发布权限、不启用 Runner 或模型 API。任何已绑定文件、目录、单元或摘要变化都先停在预检，不覆盖其他发布。
+
+## 构建与候选包
+
+在 GithubCI 原生 Linux 完成 workspace fmt、严格 Clippy、全量测试、路径安全及生产特征构建：
+
+```sh
+cargo build --locked --release -p studiolo-vault-admin --features studiolo-auth/production
+python3 deploy/blackboard/test_assembly.py
+python3 deploy/blackboard/test_freeze.py
+python3 deploy/blackboard/test_activation.py
+```
+
+生产工具目录保持仓库相对布局：本目录、`deploy/human/release/{release_common,runtime_checks,activation_ops,snapshot_worker}.py` 和 `scripts/{replica_common,replica_store,replica_cleanup}.py`。目录及祖先必须真实、root 或 UID1000 所有、不可组/其他写；文件单链接。部署到专用路径，不从 `/tmp` 或另一个项目的工具目录运行。
+
+UID1000 运行 `prepare.py --source-commit <已验证提交> --vault-admin <二进制绝对路径> --vault-admin-sha256 <摘要>`，生成固定 `assembly.RELEASE` 的全新私有候选包。它复用 r8 人侧程序、Auth 管理程序及网页，只派生启动参数和两个服务单元，并加入新的初始化程序。manifest 分别记录初始化程序与人侧程序来源，不能将复用程序冒称为新提交构建。未完成候选保留 `INCOMPLETE`，不自动清理或重试覆盖。
+
+## 冻结与首建
+
+1. 保留现有 Vault→agent 只读副本同步。UID1000 运行 `python3 -I -B -S …/freeze_replica.py`；它在原同步锁内核验 ready、300 秒新鲜度、三个批准范围和所有字节，写入全新私有快照。共享锁竞争、陈旧副本或不完整内容均拒绝。
+2. 事先建立 `assembly.VAULT`、`assembly.WRITER`、`assembly.BOARD` 三个 UID1000/0700 空目录。禁止将轮换副本原地升级成写者。
+3. 用新 `studiolo-vault-admin plan` 指向现有 owner 配置、candidate web、冻结快照和两个首建目录；批准范围为 `项目/Studiolo`、`项目/Tillerwright`、`_规则`。审阅文件数、字节数及 plan 摘要后，以完全相同参数加 `--expected-plan` 执行 `initialize`。两个命令都要求原生 Linux 进程加固成功，包括 unlimited MEMLOCK。
+4. 首建通过 Broker 写入 Markdown，并记录 `local_os_bootstrap` 审计；不冒充人类 L3 或 Sync 证据。部分首建失败原样保留，禁止盲目再次初始化。
+
+来源只被冻结一次。原 Obsidian 的后续变化仍进入旧只读副本，不会自动进入新的 canonical。网页标签明确显示“初始快照（持续同步未接通）”；新库不提供正文编辑所需的同步新鲜度证明。
+
+## 双服务切换与验收
+
+使用 root 执行固定工具：
+
+```sh
+sudo /usr/bin/python3 -I -B -S /可信工具目录/deploy/blackboard/activate.py \
+  --manifest-sha256 <候选 manifest 的实际摘要>
+```
+
+预检要求两个原单元摘要、enabled/无 drop-in、实际旧进程、v2 认证绑定、完整候选文件集合及 Broker 配对均准确。`/var/lib/studiolo-deployments` 必须 root/0700。顺序为停止 agent→停止 human→验证 PID 和 socket 均已退出→三库一致快照→替换单元→启动 human 并验证两个私有 socket→启动 agent。绝不删除存量 socket。
+
+认证、恢复码计数、会话 epoch、owner 配置以及既有 agent 程序和三个读取范围不变。回执明确区分服务切换成功和尚未验收的权限/本机客户端。停止后故障仅在状态仍属于本次已知配置时恢复旧程序，不回滚数据库；未知认证/单元变化保留现场，标为 `blocked_requires_operator`。断电、SIGKILL 或恢复过程失败须依据私有发布记录人工处理。
+
+切换后还须验证真实 MCP 黑板读取、未授权写入拒绝、原有读取新鲜度、人侧权限草稿与实际 executable。主人亲自完成 Claude/Codex 的 L3 发布后，才能验证授权写入、项目越权拒绝、持久化、撤权，以及两个本机 Consumer 的 claim/heartbeat/return 完整回执。工具测试、候选包、服务启动都不能代替这些生产验收。

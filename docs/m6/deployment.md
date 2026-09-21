@@ -15,6 +15,8 @@ agent 的七个 MCP 工具随二进制发布；缺少 board socket 时，黑板�
 3. 将 BoardPlane 装配进唯一 canonical local-server，agent 以同 UID 私有 Unix socket 转发；完成持久状态、服务重启、项目越权与撤权检查。
 4. 登记本机原生会话及每个客户端的 Studiolo 类型身份；保留 CLI 审批，确认原生额外 credits 关闭，再启用本机连接。
 
+首次建库与双服务接线现有独立工具，见 [正式接线流程](../../deploy/blackboard/README.md) 和 [canonical 首建命令](../../crates/vault-admin/README.md)。普通服务仍只打开已有 Broker；新工具通过冻结副本、明确范围和绑定摘要建立一次初始快照。它不提供持续 Obsidian 同步，不修改 Auth/Policy 权限，不代替主人发布 L3。部署与本机验收状态须以实际发布回执记录，不能从工具存在推定完成。
+
 人侧 Auth/因子恢复与异机灾备由 T-092/T-093 持有。本发布不得重建其认证库、替换因子、恢复已隔离的旧单元，或把新二进制发布宣称为人侧 L3/整库灾备验收。前端与生产 local-server 可先生成不可变候选包，实际人侧切换需对齐恢复状态。
 
 ## 验证顺序

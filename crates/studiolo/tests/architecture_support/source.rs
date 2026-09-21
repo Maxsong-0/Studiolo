@@ -47,6 +47,7 @@ pub(crate) fn source_violations(
     // 每个私有 Adapter 只创建自己登记的固定文件；运行时还须检查路径与身份。
     let checked_source = private_storage_remainder(crate_name, source_path, source);
     let checked_source = super::admin::remainder(crate_name, source_path, &checked_source);
+    let checked_source = vault_admin_remainder(crate_name, source_path, &checked_source);
     let checked_source = super::unix_ingress::remainder(crate_name, source_path, &checked_source);
     let checked_source = super::maintenance::remainder(crate_name, source_path, &checked_source);
     let checked_source = super::sync_bridge::remainder(crate_name, source_path, &checked_source);
@@ -135,6 +136,53 @@ pub(crate) fn source_violations(
         }
     }
     violations
+}
+
+fn vault_admin_remainder(crate_name: &str, path: &Path, source: &str) -> String {
+    if crate_name == "studiolo-vault-admin" && path.ends_with("crates/vault-admin/src/main.rs") {
+        return source.replace(
+            "rustix::process::umask(rustix::fs::Mode::from_raw_mode(0o077));",
+            "",
+        );
+    }
+    if crate_name != "studiolo-vault-admin" || !path.ends_with("crates/vault-admin/src/source.rs") {
+        return source.to_owned();
+    }
+    let mut remainder = source.split_whitespace().collect::<String>();
+    let descriptor = "open(path,OFlags::RDONLY|OFlags::NOFOLLOW|OFlags::NONBLOCK|OFlags::CLOEXEC,Mode::empty(),)";
+    if remainder.matches(descriptor).count() != 1
+        || !remainder.contains(
+            ".canonical_serving_roots(&options.vault,&options.assets,&options.writer_data)",
+        )
+        || !remainder.contains("ReadOnlyVault::open_private(path)")
+        || !remainder.contains("prepared.empty_targets()?;")
+        || !remainder.contains("ConfigRevision::read(&self.options.config)?!=self.revision")
+    {
+        return remainder;
+    }
+    // 只允许路径/权限复核与配置的只读 nofollow FD；正文始终来自 ReadOnlyVault。
+    for pattern in [
+        "rustix::fs::{Mode,OFlags,open}",
+        "fs::{self,File}",
+        "os::unix::fs::MetadataExt",
+        "fs::Metadata",
+        "fs::symlink_metadata(",
+        "fs::read_dir(",
+        descriptor,
+    ] {
+        remainder = remainder.replace(pattern, "");
+    }
+    if remainder.contains("open(") || remainder.contains("OFlags::") {
+        // Pin::open 是固定只读适配器，不允许添第二个环境 FD 打开点。
+        remainder = remainder
+            .replace("Self::open(", "")
+            .replace("fnopen(", "")
+            .replace("ReadOnlyVault::open(", "");
+        if remainder.contains("open(") || remainder.contains("OFlags::") {
+            return format!("fs::unexpected {remainder}");
+        }
+    }
+    remainder
 }
 
 fn private_storage_policy(
