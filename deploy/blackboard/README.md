@@ -8,16 +8,19 @@
 
 ```sh
 cargo build --locked --release -p studiolo-vault-admin
+cargo build --locked --release -p studiolo-local-server --features studiolo-auth/production
 python3 deploy/blackboard/test_assembly.py
 python3 deploy/blackboard/test_freeze.py
 python3 deploy/blackboard/test_activation.py
 ```
 
-初始化工具不依赖 Auth，不具备测试因子验证器或 Auth 的 `production` feature；不要给它附加 `studiolo-auth/production`。人侧与 Auth 管理程序仍沿用已验证的 r8 生产构建。
+初始化工具不依赖 Auth，不具备测试因子验证器或 Auth 的 `production` feature；不要给它附加 `studiolo-auth/production`。人侧使用包含纯黑板能力集修复的新 production 构建；Auth 管理程序与网页仍复用已验证的 r8 文件。
 
 生产工具目录保持仓库相对布局：本目录、`deploy/human/release/{release_common,runtime_checks,activation_ops,snapshot_worker}.py` 和 `scripts/{replica_common,replica_store,replica_cleanup}.py`。目录及祖先必须真实、root 或 UID1000 所有、不可组/其他写；文件单链接。部署到专用路径，不从 `/tmp` 或另一个项目的工具目录运行。
 
-UID1000 运行 `prepare.py --source-commit <已验证提交> --vault-admin <二进制绝对路径> --vault-admin-sha256 <摘要>`，生成固定 `assembly.RELEASE` 的全新私有候选包。它复用 r8 人侧程序、Auth 管理程序及网页，只派生启动参数和两个服务单元，并加入新的初始化程序。manifest 分别记录初始化程序与人侧程序来源，不能将复用程序冒称为新提交构建。未完成候选保留 `INCOMPLETE`，不自动清理或重试覆盖。
+UID1000 运行 `prepare.py --source-commit <初始化程序来源提交> --vault-admin <初始化程序绝对路径> --vault-admin-sha256 <摘要> --human-source-commit <人侧程序来源提交> --local-server <人侧程序绝对路径> --local-server-sha256 <摘要>`，生成固定 `assembly.RELEASE` 的全新私有 r2 候选包。它替换人侧程序、派生启动参数和两个服务单元，并加入初始化程序；Auth 管理程序与网页必须仍逐字节匹配 r8。manifest 分别记录两份程序的来源，不能将复用程序冒称为新提交构建。未完成候选保留 `INCOMPLETE`，不自动清理或重试覆盖。
+
+r1 候选从未激活；它已完成一次 canonical 首建。r2 沿用同一已初始化的 canonical/Broker 绑定，不再次执行冻结或初始化。旧 r1 候选、冻结快照和首建审计原样保留。旧 agent 是 root:maxsong 的 0550 冻结程序；预检核验这一既有模式，不修改它的权限。
 
 ## 冻结与首建
 

@@ -29,6 +29,7 @@ legacy = load('test_board_legacy', HERE.parent / 'human/release/activation_ops.p
 assembly = load('test_board_assembly', HERE / 'assembly.py')
 activation = load('test_board_activate', HERE / 'activate.py')
 ops_module = load('test_board_ops', HERE / 'activation_ops.py')
+prepare = load('test_board_prepare', HERE / 'prepare.py')
 Operations = ops_module.Operations
 
 
@@ -148,11 +149,12 @@ class Files(unittest.TestCase):
         a = types.SimpleNamespace(OLD_RELEASE=str(old), RELEASE=str(new), BUILD=assembly.BUILD,
             R8_MANIFEST_SHA=c.sha(raw), HUMAN_SHA=c.sha(b'old human'), AGENT_SHA=c.sha(b'old agent'))
         content.update({'launch-human.py': b'new launcher', 'studiolo-human.service': b'new human',
-                        'studiolo-agent.service': b'new agent', 'bin/studiolo-vault-admin': b'\x7fELFfictional'})
+                        'studiolo-agent.service': b'new agent', 'bin/studiolo-vault-admin': b'\x7fELFfictional',
+                        'bin/studiolo-local-server': b'\x7fELFnew human'})
         for name, raw in content.items():
             self.write(new / name, raw, 0o755 if name in c.BINARIES | {'bin/studiolo-vault-admin'} else 0o600)
         files, _ = c.scan(new, self.uid)
-        doc = dict(build=a.BUILD, bootstrap_source_commit='2' * 40, human_program_source_commit='1' * 40,
+        doc = dict(build=a.BUILD, bootstrap_source_commit='2' * 40, human_program_source_commit='3' * 40,
             r8_manifest_sha256=a.R8_MANIFEST_SHA, assembly='canonical-board-consumer-only',
             before_units={'studiolo-human': a.HUMAN_SHA, 'studiolo-agent': a.AGENT_SHA}, files=files)
         raw = json.dumps(doc).encode()
@@ -164,11 +166,17 @@ class Files(unittest.TestCase):
         with patch.object(c, 'verify', side_effect=lambda root, sha: verify(root, sha, self.uid)):
             return ops_module.verify_candidate(a, c, digest)
 
-    def test_exact_package_reuses_both_old_binaries(self):
+    def test_exact_package_replaces_human_and_reuses_auth_and_web(self):
         a, digest = self.candidate()
         doc = self.check(a, digest)
         self.assertEqual(doc['build'], assembly.BUILD)
         self.assertEqual(set(doc['before_units']), set(ops_module.NAMES))
+        self.assertEqual(doc['bootstrap_source_commit'], '2' * 40)
+        self.assertEqual(doc['human_program_source_commit'], '3' * 40)
+        self.assertNotEqual((Path(a.OLD_RELEASE) / 'bin/studiolo-local-server').read_bytes(),
+                            (Path(a.RELEASE) / 'bin/studiolo-local-server').read_bytes())
+        for name in ('bin/studiolo-auth-admin', 'web/index.html'):
+            self.assertEqual((Path(a.OLD_RELEASE) / name).read_bytes(), (Path(a.RELEASE) / name).read_bytes())
 
     def test_tamper_extra_file_directory_missing_file_and_link_rejected(self):
         a, digest = self.candidate()
@@ -205,18 +213,158 @@ class Files(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.check(a, c.sha(raw))
 
-    def test_new_manifest_cannot_replace_reused_binary(self):
+    def test_new_manifest_cannot_replace_auth_or_web(self):
         a, digest = self.candidate()
         root = Path(a.RELEASE)
-        raw = b'changed binary'
-        (root / 'bin/studiolo-local-server').write_bytes(raw)
         path = root / 'manifest.json'
-        doc = json.loads(path.read_bytes())
-        doc['files']['bin/studiolo-local-server'] = {'bytes': len(raw), 'sha256': c.sha(raw)}
+        original = path.read_bytes()
+        for name in ('bin/studiolo-auth-admin', 'web/index.html'):
+            with self.subTest(name=name):
+                prior = (root / name).read_bytes()
+                raw = b'changed file'
+                (root / name).write_bytes(raw)
+                doc = json.loads(original)
+                doc['files'][name] = {'bytes': len(raw), 'sha256': c.sha(raw)}
+                raw = json.dumps(doc).encode()
+                path.write_bytes(raw)
+                with self.assertRaises(ValueError):
+                    self.check(a, c.sha(raw))
+                (root / name).write_bytes(prior)
+                path.write_bytes(original)
+                self.check(a, digest)
+
+    def test_new_human_nonelf_invalid_source_or_digest_rejected(self):
+        a, digest = self.candidate()
+        root = Path(a.RELEASE)
+        path = root / 'manifest.json'
+        original = path.read_bytes()
+        human = root / 'bin/studiolo-local-server'
+        human.write_bytes(b'not ELF')
+        doc = json.loads(original)
+        doc['files']['bin/studiolo-local-server'] = {'bytes': 7, 'sha256': c.sha(b'not ELF')}
         raw = json.dumps(doc).encode()
         path.write_bytes(raw)
         with self.assertRaises(ValueError):
             self.check(a, c.sha(raw))
+        path.write_bytes(original)
+        human.write_bytes(b'\x7fELFtampered human')
+        with self.assertRaises(ValueError):
+            self.check(a, digest)
+        human.write_bytes(b'\x7fELFnew human')
+        for source in ('3' * 39, 'z' * 40, None):
+            doc = json.loads(original)
+            doc['human_program_source_commit'] = source
+            raw = json.dumps(doc).encode()
+            path.write_bytes(raw)
+            with self.assertRaises(ValueError):
+                self.check(a, c.sha(raw))
+
+    def test_agent_read_accepts_only_approved_0550_mode(self):
+        binary = self.root / 'studiolo-agent'
+        self.write(binary, b'fictional immutable agent', 0o550)
+        ops = Operations('0' * 64, assembly, c, Mock(), legacy)
+        ops.agent_binary = binary
+        self.assertEqual(ops.read_agent(), b'fictional immutable agent')
+        for mode in (0o755, 0o750, 0o555, 0o500, 0o440, 0o570):
+            with self.subTest(mode=oct(mode)):
+                binary.chmod(mode)
+                with self.assertRaises(ValueError):
+                    ops.read_agent()
+
+    def preparation(self):
+        a, _ = self.candidate()
+        a.RELEASE = str(self.root / 'prepared')
+        a.launcher = lambda text: text.replace('old', 'new')
+        a.human_unit = lambda text: text.replace('old', 'new')
+        a.agent_unit = lambda text: text.replace('old', 'new')
+        for name, raw in (('studiolo-human', b'old human'), ('studiolo-agent', b'old agent')):
+            self.write(self.root / 'units' / (name + '.service'), raw, 0o644)
+        self.write(self.root / 'vault-admin', b'\x7fELFbootstrap')
+        self.write(self.root / 'local-server', b'\x7fELFprepared human')
+        args = types.SimpleNamespace(source_commit='2' * 40, human_source_commit='4' * 40,
+            vault_admin=str(self.root / 'vault-admin'), vault_admin_sha256=c.sha(b'\x7fELFbootstrap'),
+            local_server=str(self.root / 'local-server'), local_server_sha256=c.sha(b'\x7fELFprepared human'))
+        return a, args
+
+    def run_prepare(self, a, args):
+        read, verify = c.read, c.verify
+        def fixture_read(path, uid, mode=None):
+            if path.parent == Path('/etc/systemd/system'):
+                self.assertEqual(uid, 0)
+                return read(self.root / 'units' / path.name, self.uid, mode)
+            return read(path, uid, mode)
+        with patch.object(c, 'read', side_effect=fixture_read), \
+                patch.object(c, 'verify', side_effect=lambda root, sha: verify(root, sha, self.uid)):
+            return prepare.prepare(args, a, c)
+
+    def test_prepare_records_distinct_sources_and_replaces_only_human(self):
+        a, args = self.preparation()
+        result = self.run_prepare(a, args)
+        doc = self.check(a, result['manifest_sha256'])
+        self.assertFalse(result['human_binary_reused'])
+        self.assertEqual(doc['bootstrap_source_commit'], args.source_commit)
+        self.assertEqual(doc['human_program_source_commit'], args.human_source_commit)
+        self.assertEqual((Path(a.RELEASE) / 'bin/studiolo-local-server').read_bytes(), b'\x7fELFprepared human')
+        self.assertEqual((Path(a.RELEASE) / 'bin/studiolo-auth-admin').read_bytes(), b'fictional admin')
+        self.assertEqual((Path(a.RELEASE) / 'web/index.html').read_bytes(), b'fictional web')
+        self.assertTrue((self.root / 'new/manifest.json').is_file())
+        with self.assertRaises(ValueError):
+            self.run_prepare(a, args)
+
+    def test_prepare_rejects_human_source_digest_and_nonelf_before_creating_output(self):
+        a, args = self.preparation()
+        for name, bad in (('human_source_commit', 'a0acdde'), ('human_source_commit', 'z' * 40),
+                          ('local_server_sha256', '0' * 64), ('local_server_sha256', 'z' * 64)):
+            prior = getattr(args, name)
+            setattr(args, name, bad)
+            with self.subTest(name=name, bad=bad), self.assertRaises(ValueError):
+                self.run_prepare(a, args)
+            self.assertFalse(Path(a.RELEASE).exists())
+            setattr(args, name, prior)
+        Path(args.local_server).write_bytes(b'not ELF')
+        args.local_server_sha256 = c.sha(b'not ELF')
+        with self.assertRaises(ValueError):
+            self.run_prepare(a, args)
+        self.assertFalse(Path(a.RELEASE).exists())
+
+    def test_failed_new_human_start_restores_old_binary_with_its_actual_file_digest(self):
+        a, _ = self.candidate()
+        ops = Operations('0' * 64, a, c, Mock(), legacy)
+        old_binary = Path(a.OLD_RELEASE) / 'bin/studiolo-local-server'
+        new_binary = Path(a.RELEASE) / 'bin/studiolo-local-server'
+        ops.old_human_sha = c.sha(old_binary.read_bytes())
+        ops.human_sha = c.sha(new_binary.read_bytes())
+        self.assertNotEqual(ops.old_human_sha, ops.human_sha)
+        ops.old_units = {'studiolo-human': b'old human', 'studiolo-agent': b'old agent'}
+        ops.new_units = {'studiolo-human': b'new human', 'studiolo-agent': b'new agent'}
+        ops.old_shas = {name: c.sha(raw) for name, raw in ops.old_units.items()}
+        ops.new_shas = {name: c.sha(raw) for name, raw in ops.new_units.items()}
+        current = dict(ops.new_units)
+        verified = []
+        def ready(binary, digest):
+            # 只替身服务状态；摘要必须与真实临时二进制逐字节匹配。
+            c.require(c.sha(c.read(binary, self.uid, 0o755)) == digest)
+            verified.append(binary)
+            if binary == new_binary:
+                raise ValueError('fictional new human startup failure')
+            return 123
+        def replace(path, raw, expected):
+            name = path.stem
+            c.require(c.sha(current[name]) == expected)
+            current[name] = raw
+        ops.record = self.root
+        ops.runtime.ready.side_effect = ready
+        with patch.object(ops, 'begin'), patch.object(ops, 'preflight'), patch.object(ops, 'stop'), \
+                patch.object(ops, 'backup'), patch.object(ops, 'install'), patch.object(ops, 'unchanged'), \
+                patch.object(ops, 'properties'), patch.object(ops, 'units', side_effect=lambda: dict(current)), \
+                patch.object(c, 'atomic_unit', side_effect=replace), patch.object(ops, 'agent_ready'), \
+                patch.object(ops, 'receipt'), patch.object(signal, 'signal'):
+            code, result = activation.deploy(ops)
+        self.assertEqual(code, 1)
+        self.assertEqual(result['stage'], 'start-human')
+        self.assertEqual(result['program_recovery'], 'old_programs_restored')
+        self.assertEqual(verified, [new_binary, old_binary])
+        self.assertEqual(current, ops.old_units)
 
     def broker(self):
         a = types.SimpleNamespace(VAULT=str(self.root / 'vault'), WRITER=str(self.root / 'writer'),
@@ -394,6 +542,7 @@ class OperationTests(unittest.TestCase):
         result.old_shas = {n: c.sha(v) for n, v in result.old_units.items()}
         result.new_shas = {n: c.sha(v) for n, v in result.new_units.items()}
         result.human_sha = '2' * 64
+        result.old_human_sha = '3' * 64
         return result
 
     def test_agent_probe_is_fixed_anonymous_head_without_proxy_redirect_or_body(self):

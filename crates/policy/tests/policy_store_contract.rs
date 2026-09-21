@@ -98,6 +98,79 @@ fn board_writes_require_an_explicit_project_subset_and_are_reported_as_expansion
 }
 
 #[test]
+fn board_only_capability_publishes_without_content_expansion_and_still_rejects_direct() {
+    let (_temp, dir) = private_dir();
+    let store = PolicyStore::open(&dir).unwrap();
+    let mut body: serde_json::Value =
+        serde_json::from_str(&capability(&["项目/Studiolo"], &[], false)).unwrap();
+    body["ai_type"] = "codex".into();
+    body["write"]["board"] = true.into();
+    body["write"]["board_projects"] = serde_json::json!(["项目/Studiolo"]);
+    body["write"]["content_patch_only"] = false.into();
+    let before = store.effective().unwrap().effective_hash;
+    let record = store
+        .submit_desired(
+            desired(PolicyKind::CapabilitySet, "codex", Some(&body.to_string())),
+            Submitter::Owner,
+            NOW,
+        )
+        .unwrap();
+    assert_eq!(
+        record.status,
+        DesiredStatus::Validated,
+        "{:?}",
+        record.report
+    );
+    let report = record.report.as_ref().unwrap();
+    assert!(report.ok && report.problems.is_empty());
+    assert_eq!(
+        report
+            .expansions
+            .iter()
+            .map(|item| item.path.as_str())
+            .collect::<Vec<_>>(),
+        [
+            "read.project_whitelist",
+            "write.board_projects",
+            "write.board"
+        ]
+    );
+    assert!(store.capability_set("codex").unwrap().is_none());
+    let activation = store.activate(&record.id, &before, "owner", NOW).unwrap();
+    assert_eq!(activation.expansions, report.expansions);
+    let (set, _) = store.capability_set("codex").unwrap().unwrap();
+    assert!(set.write.board);
+    assert_eq!(set.write.board_projects, ["项目/Studiolo"]);
+    assert!(!set.write.content_patch_only && !set.write.content_direct);
+
+    body["write"]["content_direct"] = true.into();
+    let invalid = store
+        .submit_desired(
+            desired(PolicyKind::CapabilitySet, "codex", Some(&body.to_string())),
+            Submitter::Owner,
+            NOW,
+        )
+        .unwrap();
+    assert_eq!(invalid.status, DesiredStatus::Rejected);
+    assert!(
+        invalid
+            .report
+            .unwrap()
+            .problems
+            .iter()
+            .any(|problem| problem.path == "write.content_direct")
+    );
+    assert!(matches!(
+        store.activate(&invalid.id, &activation.effective_hash, "owner", NOW),
+        Err(PolicyError::ValidationFailed)
+    ));
+    assert_eq!(
+        store.effective().unwrap().effective_hash,
+        activation.effective_hash
+    );
+}
+
+#[test]
 fn capability_set_goes_through_validate_diff_and_cas_activation() {
     let (_temp, dir) = private_dir();
     assert!(matches!(

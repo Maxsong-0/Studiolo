@@ -34,12 +34,13 @@ def verify_candidate(a, c, expected_sha):
                                'r8_manifest_sha256', 'assembly', 'before_units', 'files'})
     c.require(manifest['build'] == a.BUILD and manifest['assembly'] == 'canonical-board-consumer-only')
     c.require(re.fullmatch('[0-9a-f]{40}', manifest['bootstrap_source_commit']))
-    c.require(manifest['human_program_source_commit'] == old['source_commit'])
+    c.require(isinstance(manifest['human_program_source_commit'], str)
+              and re.fullmatch('[0-9a-f]{40}', manifest['human_program_source_commit']))
     c.require(manifest['r8_manifest_sha256'] == a.R8_MANIFEST_SHA)
     c.require(manifest['before_units'] == dict(zip(NAMES, (a.HUMAN_SHA, a.AGENT_SHA))))
     files = manifest['files']
     additions = {'studiolo-agent.service', 'bin/studiolo-vault-admin'}
-    changed = {'launch-human.py', 'studiolo-human.service'}
+    changed = {'launch-human.py', 'studiolo-human.service', 'bin/studiolo-local-server'}
     c.require(isinstance(files, dict) and set(files) == set(old['files']) | additions)
     directories = set()
     for name, item in files.items():
@@ -59,6 +60,7 @@ def verify_candidate(a, c, expected_sha):
     for name in actual:
         c.inspect(root / name, c.UID, 0o755 if name in c.BINARIES | {'bin/studiolo-vault-admin'} else 0o600)
     c.require(c.read(root / 'bin/studiolo-vault-admin', c.UID, 0o755).startswith(b'\x7fELF'))
+    c.require(c.read(root / 'bin/studiolo-local-server', c.UID, 0o755).startswith(b'\x7fELF'))
     c.require(c.read(root / 'manifest.json', c.UID, 0o600) == raw)
     return manifest
 
@@ -114,7 +116,7 @@ class Operations:
         before = c.inspect(path, 0, 0o600)
         c.require(c.mark(os.fstat(self.lock)) == c.mark(before))
         fcntl.flock(self.lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        self.record = Path(tempfile.mkdtemp(prefix='board-r1-', dir=RECORDS))
+        self.record = Path(tempfile.mkdtemp(prefix='board-r2-', dir=RECORDS))
         c.inspect(self.record, 0, 0o700, True)
 
     def worker(self, mode, descriptors=()):
@@ -173,7 +175,7 @@ class Operations:
 
     def read_agent(self):
         # 既有 agent 发行包可由 root 冻结；不改变其所有权或文件。
-        return self.trusted_read(self.agent_binary, 0o755)
+        return self.trusted_read(self.agent_binary, 0o550)
 
     def agent_http_ready(self, deadline):
         """固定 loopback、无凭据 HEAD：不下载正文，不跟随跳转或读取代理配置。"""
@@ -252,7 +254,10 @@ class Operations:
         self.runtime.command(['systemd-analyze', 'verify',
             Path(a.RELEASE) / 'studiolo-human.service', Path(a.RELEASE) / 'studiolo-agent.service'])
         self.human_sha = self.manifest['files']['bin/studiolo-local-server']['sha256']
-        self.runtime.ready(Path(a.OLD_RELEASE) / 'bin/studiolo-local-server', self.human_sha)
+        old_manifest = c.read(Path(a.OLD_RELEASE) / 'manifest.json', c.UID, 0o600)
+        c.require(c.sha(old_manifest) == a.R8_MANIFEST_SHA)
+        self.old_human_sha = c.document(old_manifest)['files']['bin/studiolo-local-server']['sha256']
+        self.runtime.ready(Path(a.OLD_RELEASE) / 'bin/studiolo-local-server', self.old_human_sha)
         self.agent_ready()
         self.receipt('preflight', {'before': self.before, 'manifest_sha256': self.manifest_sha,
             'old_units': self.old_shas, 'new_units': self.new_shas,
@@ -361,7 +366,7 @@ class Operations:
                 self.c.atomic_unit(UNIT_ROOT / (name + '.service'), self.old_units[name], current[name])
         self.runtime.command(['systemctl', 'daemon-reload'])
         self.runtime.command(['systemctl', 'start', 'studiolo-human.service'], 30)
-        self.runtime.ready(Path(self.a.OLD_RELEASE) / 'bin/studiolo-local-server', self.human_sha)
+        self.runtime.ready(Path(self.a.OLD_RELEASE) / 'bin/studiolo-local-server', self.old_human_sha)
         self.runtime.command(['systemctl', 'start', 'studiolo-agent.service'], 30)
         self.agent_ready()
         self.runtime.denials()

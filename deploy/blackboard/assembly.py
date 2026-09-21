@@ -2,7 +2,7 @@
 from pathlib import Path
 
 OLD_RELEASE = '/home/maxsong/.local/share/studiolo-human-releases/m4-t094-20260920-r8'
-BUILD = 'm5m6-board-20260920-r1'
+BUILD = 'm5m6-board-20260920-r2'
 RELEASE = '/home/maxsong/.local/share/studiolo-human-releases/' + BUILD
 BASE = '/home/maxsong/.local/share/'
 VAULT = BASE + 'studiolo-canonical'

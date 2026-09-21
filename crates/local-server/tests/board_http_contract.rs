@@ -22,8 +22,12 @@ const PROJECT: &str = "项目/Studiolo";
 const NOW: &str = "2026-09-20T00:00:00Z";
 
 fn publish(policy: &PolicyStore, kind: &str, writable: bool) {
+    publish_with_content(policy, kind, writable, true);
+}
+
+fn publish_with_content(policy: &PolicyStore, kind: &str, writable: bool, patch_only: bool) {
     let body=json!({"ai_type":kind,"read":{"project_whitelist":[PROJECT,"项目/Other"],"deny_by_default":true},
-        "write":{"board":writable,"board_projects":if writable{vec![PROJECT]}else{vec![]},"content_patch_only":true,"content_direct":false},
+        "write":{"board":writable,"board_projects":if writable{vec![PROJECT]}else{vec![]},"content_patch_only":patch_only,"content_direct":false},
         "policy":{"propose_desired":true,"activate":false},"hard_bound_skills":[]}).to_string();
     let desired = policy
         .submit_desired(
@@ -374,6 +378,160 @@ async fn claim_batch_preview_commit_receipt_and_projection_are_one_authenticated
         409,
     )
     .await;
+    f.stop().await;
+}
+
+#[tokio::test]
+async fn board_only_policy_allows_create_claim_heartbeat_and_return() {
+    let f = TestBoard::new().await;
+    publish_with_content(&f.policy, "claude", true, false);
+    let mut spec = f.spec();
+    spec["task"]["title"] = "验证纯黑板生命周期".into();
+    spec["acceptance_criteria"] = json!(["黑板生命周期已验证"]);
+    spec["files_owned"] = json!([]);
+    let task = f
+        .call(
+            "create",
+            json!({"request_id":"board-only","spec":spec}),
+            200,
+        )
+        .await;
+    let lease = jiff::Timestamp::now().as_millisecond() + 60_000;
+    let claim = f
+        .call("claim", json!({"task_id":task,"lease_until_ms":lease}), 200)
+        .await;
+    let identity = json!({"task_id":task,"attempt_id":claim["attempt"]["attempt_id"],
+        "fence":claim["attempt"]["fence"]});
+    f.call(
+        "heartbeat",
+        json!({"identity":identity,"lease_until_ms":lease+1_000,"tool_calls":1,"edits":0}),
+        200,
+    )
+    .await;
+    let receipt = json!({"status":"completed","artifacts":[],"conflicts":[],"unlanded":[],
+        "acceptance":[{"criterion":"黑板生命周期已验证","result":"pass","evidence":[]}],
+        "remaining":[],"elapsed_ms":100,"tool_calls":1,"learned":[],
+        "closeout":{"learned":[],"adr_required":false,"rule_change_required":false,"destinations":[]}});
+    f.call(
+        "return",
+        json!({"identity":identity,"receipt":receipt}),
+        200,
+    )
+    .await;
+    let view = f.call("get", json!({"task_id":task}), 200).await;
+    assert_eq!(view["task"]["status"], "succeeded");
+    let (set, _) = f.policy.capability_set("claude").unwrap().unwrap();
+    assert!(set.write.board);
+    assert!(!set.write.content_patch_only && !set.write.content_direct);
+    f.stop().await;
+}
+
+#[tokio::test]
+async fn board_only_policy_rejects_valid_content_requests_without_content_or_batch_writes() {
+    // First obtain real previews and an existing rollback target using a valid
+    // patch grant. Then remove only that grant while preserving the live claim.
+    let f = TestBoard::new().await;
+    let (_, identity) = f.create_claim("content-capability-boundary").await;
+    let path = format!("{PROJECT}/src/retained.md");
+    let original = "# 合成正文\n\n人工保留正文。\n";
+    let seed = json!({"batch_id":"seed","changes":[{"path":path,
+        "edit":{"kind":"create","content":original}}]});
+    let seed_plan = f
+        .call(
+            "batch.preview",
+            json!({"identity":identity,"batch":seed}),
+            200,
+        )
+        .await;
+    let committed = f
+        .call(
+            "batch.commit",
+            json!({"identity":identity,"batch":seed,"preview":seed_plan["preview"]}),
+            200,
+        )
+        .await;
+    assert_eq!(committed["receipt"]["rolled_back"], false);
+    let patch = json!({"batch_id":"blocked-patch","changes":[{"path":path,
+        "edit":{"kind":"patch","expected":committed["receipt"]["mutations"][0]["revision"],
+        "patches":[{"before":"人工保留正文。","after":"未授权替换。"}]}}]});
+    let preview = f
+        .call(
+            "batch.preview",
+            json!({"identity":identity,"batch":patch}),
+            200,
+        )
+        .await;
+    let memory = json!({"batch_id":"blocked-memory","scope":format!("{PROJECT}/03-记忆"),
+        "kind":"reference","summary":"仅合成内容边界","date":"2026-09-20",
+        "body":"# 仅合成内容边界\n\n这个合法请求不应在撤去正文能力后获准。\n"});
+    let memory_plan = f
+        .call(
+            "memory.preview",
+            json!({"identity":identity,"entry":memory}),
+            200,
+        )
+        .await;
+    assert_eq!(memory_plan["kind"], "create");
+    publish_with_content(&f.policy, "claude", true, false);
+    f.call(
+        "heartbeat",
+        json!({"identity":identity,"lease_until_ms":jiff::Timestamp::now().as_millisecond()+60_000,
+            "tool_calls":4,"edits":1}),
+        200,
+    )
+    .await;
+
+    fn inventory(
+        root: &std::path::Path,
+    ) -> std::collections::BTreeMap<std::path::PathBuf, Option<Vec<u8>>> {
+        fn visit(
+            root: &std::path::Path,
+            directory: &std::path::Path,
+            entries: &mut std::collections::BTreeMap<std::path::PathBuf, Option<Vec<u8>>>,
+        ) {
+            for entry in fs::read_dir(directory).unwrap() {
+                let path = entry.unwrap().path();
+                let kind = fs::symlink_metadata(&path).unwrap().file_type();
+                let relative = path.strip_prefix(root).unwrap().to_owned();
+                if kind.is_dir() {
+                    entries.insert(relative, None);
+                    visit(root, &path, entries);
+                } else {
+                    assert!(kind.is_file());
+                    entries.insert(relative, Some(fs::read(&path).unwrap()));
+                }
+            }
+        }
+        let mut entries = std::collections::BTreeMap::new();
+        visit(root, root, &mut entries);
+        entries
+    }
+    let vault = f.writer.http.root.join("vault");
+    let before = (inventory(&vault), inventory(&f.writer.data));
+    for (operation, request) in [
+        ("batch.preview", json!({"identity":identity,"batch":patch})),
+        (
+            "batch.commit",
+            json!({"identity":identity,"batch":patch,"preview":preview["preview"]}),
+        ),
+        (
+            "batch.rollback",
+            json!({"identity":identity,"batch_id":"seed"}),
+        ),
+        (
+            "memory.preview",
+            json!({"identity":identity,"entry":memory}),
+        ),
+    ] {
+        let denied = f.call(operation, request, 409).await;
+        assert_eq!(denied["error"], "内容写回需要patch-only能力", "{operation}");
+        assert_eq!(
+            (inventory(&vault), inventory(&f.writer.data)),
+            before,
+            "{operation}"
+        );
+    }
+    assert_eq!(fs::read_to_string(vault.join(path)).unwrap(), original);
     f.stop().await;
 }
 

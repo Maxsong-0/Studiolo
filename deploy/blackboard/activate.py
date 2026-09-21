@@ -1,5 +1,5 @@
 #!/usr/bin/python3
-"""固定 r8 → board-r1 双服务切换；失败只恢复程序，不回滚数据库。"""
+"""固定 r8 → board-r2 双服务切换；失败只恢复程序，不回滚数据库。"""
 import datetime
 import json
 import os

@@ -8,6 +8,11 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 class AssemblyTests(unittest.TestCase):
+    def test_r2_is_separate_and_still_upgrades_fixed_r8(self):
+        self.assertEqual(a.BUILD, 'm5m6-board-20260920-r2')
+        self.assertEqual(a.RELEASE.rsplit('/', 1)[1], a.BUILD)
+        self.assertTrue(a.OLD_RELEASE.endswith('/m4-t094-20260920-r8'))
+
     def test_launcher_keeps_factor_reader_and_environment_exact(self):
         old = (ROOT / 'deploy/human/current-v2/launch-human.py').read_text().replace(
             'm4-t092-20260920-r7', 'm4-t094-20260920-r8')
