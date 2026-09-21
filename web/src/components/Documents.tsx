@@ -1,4 +1,5 @@
 import { useId, useState } from 'react';
+import { useViewLocation } from '../useViewLocation';
 import { motion } from 'motion/react';
 import { useReducedMotionPreference } from '../useReducedMotionPreference';
 import type { OpenSource, Project } from '../types';
@@ -18,8 +19,10 @@ export function Documents({
   onOpen: OpenSource;
   onRefresh: () => void;
 }) {
-  const [mode, setMode] = useState<'search' | 'tree'>('search');
-  const [treeVisited, setTreeVisited] = useState(false);
+  const { location, select } = useViewLocation();
+  const mode = location.panel === 'tree' ? 'tree' : 'search';
+  // 从 URL 恢复到文件树时，树也要跟着一起挂上来，否则回来只剩一个空面板。
+  const [treeVisited, setTreeVisited] = useState(mode === 'tree');
   const selectionId = useId();
   const reduceMotion = useReducedMotionPreference();
   return (
@@ -27,7 +30,7 @@ export function Documents({
       <div className="document-modes" role="group" aria-label="文档浏览方式">
         <button
           aria-pressed={mode === 'search'}
-          onClick={() => setMode('search')}
+          onClick={() => select({ panel: null })}
         >
           {mode === 'search' ? (
             <motion.span
@@ -45,7 +48,7 @@ export function Documents({
           aria-pressed={mode === 'tree'}
           onClick={() => {
             setTreeVisited(true);
-            setMode('tree');
+            select({ panel: 'tree' });
           }}
         >
           {mode === 'tree' ? (
