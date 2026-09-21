@@ -10,7 +10,7 @@ Type=simple
 WorkingDirectory=%h/.local/share/studiolo-agent-releases/@RELEASE@
 # 仅供历史直接副本模式/回滚使用；托管副本须用 studiolo-agent-system.service.in。
 # 用户管理器的挂载隔离会折叠宿主 UID，无法满足托管副本的祖先属主检查。
-ExecStart=%h/.local/share/studiolo-agent-releases/@RELEASE@/bin/studiolo-agent serve --vault %h/.local/share/studiolo-agent-vault --allow 项目/Studiolo --allow _规则 --data %h/.local/share/studiolo-agent --port 4400
+ExecStart=%h/.local/share/studiolo-agent-releases/@RELEASE@/bin/studiolo-agent serve --vault %h/.local/share/studiolo-agent-vault --allow 项目/Studiolo --allow 项目/Tillerwright --allow _规则 --data %h/.local/share/studiolo-agent --port 4400
 Restart=on-failure
 RestartSec=3
 KillSignal=SIGTERM

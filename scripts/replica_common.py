@@ -6,7 +6,7 @@ import re
 import stat
 import unicodedata
 
-ALLOW = sorted(["项目/Studiolo", "_规则"])
+ALLOW = sorted(["项目/Studiolo", "项目/Tillerwright", "_规则"])
 MAX_ENTRIES = 25_000
 MAX_MANIFEST = 4 * 1024 * 1024
 MAX_FILE = 16 * 1024 * 1024

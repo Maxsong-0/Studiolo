@@ -53,7 +53,7 @@ class OfflineTests(unittest.TestCase):
             directory.mkdir(mode=0o700)
         self.write(self.replica / "sync.lock", b"")
         raw = b"fictional note\n"
-        manifest = {"schema_version": 1, "allow": ["_规则", "项目/Studiolo"], "entries": [
+        manifest = {"schema_version": 1, "allow": ["_规则", "项目/Studiolo", "项目/Tillerwright"], "entries": [
             {"path": "项目/Studiolo/note.md", "kind": "file", "bytes": len(raw), "sha256": hashlib.sha256(raw).hexdigest()}]}
         encoded = json.dumps(manifest, ensure_ascii=False).encode()
         for generation in ("a" * 32, "b" * 32):
