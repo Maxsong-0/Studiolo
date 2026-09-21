@@ -37,7 +37,7 @@ sudo /usr/bin/python3 -I -B -S /可信工具目录/deploy/blackboard/activate.py
   --manifest-sha256 <候选 manifest 的实际摘要>
 ```
 
-预检要求两个原单元摘要、enabled/无 drop-in、实际旧进程、v2 认证绑定、完整候选文件集合及 Broker 配对均准确。`/var/lib/studiolo-deployments` 必须 root/0700。顺序为停止 agent→停止 human→验证 PID 和 socket 均已退出→三库一致快照→替换单元→启动 human 并验证两个私有 socket→启动 agent。绝不删除存量 socket。
+预检要求两个原单元摘要、enabled/无 drop-in、实际旧进程、v2 认证绑定、完整候选文件集合及 Broker 配对均准确。`/var/lib/studiolo-deployments` 必须为 root 所有、无组/其他写权限的真实目录；保留既有 0750 总目录和历史记录的访问设置，本次子记录仍为 root/0700、锁及快照文件为 root/0600。顺序为停止 agent→停止 human→验证 PID 和 socket 均已退出→三库一致快照→替换单元→启动 human 并验证两个私有 socket→启动 agent。绝不删除存量 socket。
 
 认证、恢复码计数、会话 epoch、owner 配置以及既有 agent 程序和三个读取范围不变。回执明确区分服务切换成功和尚未验收的权限/本机客户端。停止后故障仅在状态仍属于本次已知配置时恢复旧程序，不回滚数据库；未知认证/单元变化保留现场，标为 `blocked_requires_operator`。断电、SIGKILL 或恢复过程失败须依据私有发布记录人工处理。
 

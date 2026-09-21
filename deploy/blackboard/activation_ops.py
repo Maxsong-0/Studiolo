@@ -108,7 +108,7 @@ class Operations:
         c = self.c
         c.require(sys.platform == 'linux' and os.getuid() == os.geteuid() == 0)
         c.require(pwd.getpwnam('maxsong').pw_uid == c.UID == 1000)
-        c.inspect(RECORDS, 0, 0o700, True)
+        c.inspect(RECORDS, 0, directory=True)
         path = RECORDS / '.board-r1.lock'
         self.lock = os.open(path, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600)
         before = c.inspect(path, 0, 0o600)

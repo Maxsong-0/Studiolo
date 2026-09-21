@@ -62,6 +62,77 @@ class Files(unittest.TestCase):
         path.parent.mkdir(parents=True, mode=0o700, exist_ok=True)
         c.new_file(path, raw, mode)
 
+    def begin_record(self, directory):
+        ops = Operations('0' * 64, assembly, c, Mock(), legacy)
+        inspect = c.inspect
+        # 不需要 root 跑单测：只将预期 root UID 映射为临时文件的真实主人。
+        # 原 inspect 对真实 lstat 的类型、mode、链接和所有权检查全部保留。
+        def inspect_fixture(path, uid, *args, **kwargs):
+            self.assertEqual(uid, 0)
+            return inspect(path, self.uid, *args, **kwargs)
+        try:
+            with patch.object(ops_module, 'RECORDS', directory), patch.object(c, 'UID', 1000), \
+                    patch.object(c, 'inspect', side_effect=inspect_fixture), \
+                    patch.object(ops_module.sys, 'platform', 'linux'), \
+                    patch.object(os, 'getuid', return_value=0), patch.object(os, 'geteuid', return_value=0), \
+                    patch.object(ops_module.pwd, 'getpwnam', return_value=types.SimpleNamespace(pw_uid=1000)):
+                ops.begin()
+        except BaseException:
+            ops.close()
+            raise
+        return ops
+
+    def test_record_parent_0750_keeps_private_record_and_lock(self):
+        directory = self.root / 'records'
+        directory.mkdir(mode=0o700)
+        directory.chmod(0o750)
+        prior = directory / 'prior-group-visible'
+        prior.mkdir(mode=0o700)
+        prior.chmod(0o750)
+        self.write(prior / 'receipt', b'preserve previous deployment')
+        before = (prior.stat().st_mode, (prior / 'receipt').read_bytes())
+        ops = self.begin_record(directory)
+        try:
+            self.assertEqual(directory.stat().st_mode & 0o7777, 0o750)
+            self.assertEqual(ops.record.stat().st_mode & 0o7777, 0o700)
+            self.assertEqual((directory / '.board-r1.lock').stat().st_mode & 0o7777, 0o600)
+            self.assertEqual(ops.record.stat().st_uid, self.uid)
+            self.assertEqual((prior.stat().st_mode, (prior / 'receipt').read_bytes()), before)
+        finally:
+            ops.close()
+
+    def test_record_parent_group_or_other_write_refused_before_creation(self):
+        for mode in (0o770, 0o752):
+            with self.subTest(mode=oct(mode)):
+                directory = self.root / ('records-' + oct(mode))
+                directory.mkdir(mode=0o700)
+                directory.chmod(mode)
+                with self.assertRaises(ValueError):
+                    self.begin_record(directory)
+                self.assertEqual(list(directory.iterdir()), [])
+                self.assertEqual(directory.stat().st_mode & 0o7777, mode)
+
+    def test_record_parent_link_refused_without_touching_target(self):
+        target = self.root / 'records-target'
+        target.mkdir(mode=0o700)
+        link = self.root / 'records-link'
+        link.symlink_to(target, target_is_directory=True)
+        with self.assertRaises(ValueError):
+            self.begin_record(link)
+        self.assertEqual(list(target.iterdir()), [])
+        self.assertTrue(link.is_symlink())
+
+    def test_existing_group_readable_lock_remains_rejected(self):
+        directory = self.root / 'records'
+        directory.mkdir(mode=0o700)
+        directory.chmod(0o750)
+        lock = directory / '.board-r1.lock'
+        self.write(lock, b'', 0o640)
+        with self.assertRaises(ValueError):
+            self.begin_record(directory)
+        self.assertEqual(list(directory.iterdir()), [lock])
+        self.assertEqual(lock.stat().st_mode & 0o7777, 0o640)
+
     def candidate(self):
         old, new = self.root / 'old', self.root / 'new'
         content = {'bin/studiolo-local-server': b'fictional human',
