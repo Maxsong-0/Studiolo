@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useViewLocation } from './useViewLocation';
 import type { ReactNode } from 'react';
 import { CandidateDetails } from './ExecutionCandidates';
 import { ProjectTimeline } from './ProjectTimeline';
@@ -52,8 +53,9 @@ export function BoardBoundary({
 }: {
   projects: { root: string; name: string }[];
 }) {
-  const [selected, setSelected] = useState('');
-  const [replay, setReplay] = useState(false);
+  const { location, select } = useViewLocation();
+  const selected = location.project ?? '';
+  const replay = location.panel === 'replay';
   const project = projects.some((p) => p.root === selected)
     ? selected
     : (projects[0]?.root ?? '');
@@ -64,7 +66,7 @@ export function BoardBoundary({
           项目{' '}
           <select
             value={project}
-            onChange={(event) => setSelected(event.target.value)}
+            onChange={(event) => select({ project: event.target.value })}
           >
             {projects.map((p) => (
               <option key={p.root} value={p.root}>
@@ -74,7 +76,7 @@ export function BoardBoundary({
           </select>
         </label>
         <span>状态核对 · 每 15 秒刷新</span>
-        <button onClick={() => setReplay((v) => !v)}>
+        <button onClick={() => select({ panel: replay ? null : 'replay' })}>
           {replay ? '返回实时黑板' : '项目时间回放'}
         </button>
       </div>

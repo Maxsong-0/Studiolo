@@ -5,6 +5,12 @@ import { afterEach, vi } from 'vitest';
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
+  // 视图位置活在 URL 里：每例跑完清回干净地址，免得上一例的位置漏给下一例。
+  window.history.replaceState(
+    null,
+    '',
+    `${window.location.pathname}${window.location.search}`,
+  );
 });
 
 Object.defineProperty(HTMLDialogElement.prototype, 'showModal', {

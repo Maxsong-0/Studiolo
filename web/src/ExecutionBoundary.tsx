@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { useViewLocation } from './useViewLocation';
 import {
   commandExecution,
   executionFailure,
@@ -39,7 +40,8 @@ export function ExecutionBoundary({
 }: {
   projects: { root: string; name: string }[];
 }) {
-  const [selected, setSelected] = useState('');
+  const { location, select } = useViewLocation();
+  const selected = location.project ?? '';
   const [revision, setRevision] = useState(0);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
@@ -123,7 +125,9 @@ export function ExecutionBoundary({
           <select
             value={project}
             disabled={busy}
-            onChange={(event) => setSelected(event.target.value)}
+            onChange={(event) =>
+              select({ project: event.target.value, item: null })
+            }
           >
             {projects.map((p) => (
               <option key={p.root} value={p.root}>
@@ -239,7 +243,8 @@ function ExecutionTasks({
   landing: LandingResult | null;
   submit: (command: ExecutionCommand) => Promise<boolean>;
 }) {
-  const [selected, setSelected] = useState('');
+  const { location, select } = useViewLocation();
+  const selected = location.item ?? '';
   const load = useCallback(
     (signal: AbortSignal) => readExecutionTasks(project, signal),
     [project],
@@ -266,7 +271,7 @@ function ExecutionTasks({
             <select
               value={task.id}
               disabled={busy}
-              onChange={(event) => setSelected(event.target.value)}
+              onChange={(event) => select({ item: event.target.value })}
             >
               {tasks.data?.map((row) => (
                 <option key={row.id} value={row.id}>

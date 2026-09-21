@@ -102,6 +102,7 @@ M2 包含真实人侧身份、CAS 编辑与 L0、双向 Obsidian Sync、附件 /
 [安全启动](contracts/auth-startup.md)、[因子 HTTP 与 Unix 入口](contracts/auth-factor-http.md)、
 [因子运行装配](contracts/auth-factor-runtime.md)、[因子显示状态](contracts/auth-factor-state.md)、
 [前端会话](contracts/frontend-session.md)、[账户内因子操作](contracts/frontend-factor.md)、
+[前端视图位置](contracts/frontend-navigation.md)、
 [canonical 单页读取](contracts/canonical-read.md)、[canonical 单写者](contracts/canonical-writer.md)、
 [canonical 新鲜度](contracts/canonical-freshness.md)。
 

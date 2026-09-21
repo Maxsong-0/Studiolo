@@ -1,5 +1,5 @@
-import { useState } from 'react';
 import type { OpenSource, Project } from '../types';
+import { useViewLocation } from '../useViewLocation';
 import { useProjectOperations } from '../useProjectOperations';
 import { OperationResult } from './OperationResult';
 import { Icon } from './Icon';
@@ -19,7 +19,8 @@ export function ProjectOperations({
   onOpen,
   onRefresh,
 }: OperationsProps) {
-  const [selection, setSelection] = useState('');
+  const { location, select } = useViewLocation();
+  const selection = location.project ?? '';
   const project =
     projects.find((item) => item.root === selection) ?? projects[0];
   if (!project)
@@ -36,7 +37,7 @@ export function ProjectOperations({
           <select
             id="operations-project"
             value={project.root}
-            onChange={(event) => setSelection(event.target.value)}
+            onChange={(event) => select({ project: event.target.value })}
           >
             {projects.map((item) => (
               <option key={item.id} value={item.root}>

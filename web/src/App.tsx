@@ -9,6 +9,7 @@ import { Inbox } from './components/Inbox';
 import { ProjectTable } from './components/ProjectTable';
 import type { SourceLocation, View } from './types';
 import { useEditorNavigation } from './useEditorNavigation';
+import { useViewLocation } from './useViewLocation';
 import { useWorkbench } from './useWorkbench';
 import { sortProjects } from './projectOrder';
 import { QuickSwitcher } from './components/QuickSwitcher';
@@ -45,7 +46,8 @@ const headings = {
 } satisfies Record<View, [string, string]>;
 
 export function App({ account }: { account?: ReactNode }) {
-  const [view, setView] = useState<View>('overview');
+  const { location, selectView } = useViewLocation();
+  const view = location.view;
   const [query, setQuery] = useState('');
   const [lifecycle, setLifecycle] = useState('');
   const [source, setSource] = useState<SourceLocation | null>(null);
@@ -98,7 +100,7 @@ export function App({ account }: { account?: ReactNode }) {
   }
 
   function navigate(next: View) {
-    setView(next);
+    selectView(next);
     window.scrollTo({ top: 0, left: 0, behavior: 'instant' });
   }
 
