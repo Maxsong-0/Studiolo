@@ -42,14 +42,35 @@ function post(path: string, body: unknown, signal: AbortSignal) {
   return writer(path, body, signal);
 }
 
+function codeOf(error: unknown): string | undefined {
+  if (
+    !(error instanceof ApiError) ||
+    !error.details ||
+    typeof error.details !== 'object'
+  )
+    return undefined;
+  const code = (error.details as { code?: unknown }).code;
+  return typeof code === 'string' ? code : undefined;
+}
+
 /** 404 `policy_plane_absent` 表示本入口没装策略平面，界面按「未接入」显示而不是报错。 */
 export function isAbsent(error: unknown): boolean {
   return (
     error instanceof ApiError &&
     error.status === 404 &&
-    !!error.details &&
-    typeof error.details === 'object' &&
-    (error.details as { code?: unknown }).code === 'policy_plane_absent'
+    codeOf(error) === 'policy_plane_absent'
+  );
+}
+
+/**
+ * 403 `reauthentication_required`：服务端已记下 intent 并拒绝，发布**没有**发生，只差一次
+ * One-time Code。界面据此就地弹认证窗口；认证由人完成、窗口由服务端裁定，前端不缓存结果。
+ */
+export function needsReauthentication(error: unknown): boolean {
+  return (
+    error instanceof ApiError &&
+    error.status === 403 &&
+    codeOf(error) === 'reauthentication_required'
   );
 }
 
@@ -96,12 +117,9 @@ export async function revokeAgent(request: RevokeRequest, signal: AbortSignal) {
 /** 把发布失败翻译成人能行动的一句话；403 需要二次认证，409 需要重新校验。 */
 export function activateFailure(error: unknown): string {
   if (!(error instanceof ApiError)) return '发布未完成，请核对当前 effective。';
-  const code =
-    error.details && typeof error.details === 'object'
-      ? (error.details as { code?: unknown }).code
-      : undefined;
-  if (error.status === 403 && code === 'reauthentication_required')
-    return '发布需要先在「账户」里完成二次认证（One-time Code），认证有效期内再发布。';
+  const code = codeOf(error);
+  if (code === 'reauthentication_required')
+    return '发布需要完成二次认证（One-time Code）后才会生效。';
   if (error.status === 403)
     return '发布只接受可信入口的请求；当前入口不能发布。';
   if (error.status === 409 && code === 'hash_mismatch')

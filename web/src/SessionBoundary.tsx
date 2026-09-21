@@ -16,6 +16,7 @@ import {
 } from './FileOperationBoundary';
 import { installFileOperationWriter } from './fileOperationApi';
 import { installPolicyWriter } from './policyApi';
+import { installFactorRuntime } from './factorApi';
 import { installExecutionWriter } from './executionApi';
 
 export function SessionBoundary(props: {
@@ -48,6 +49,10 @@ function SessionBoundaryContent({
       client.fileOperation,
     );
     const uninstallPolicy = installPolicyWriter(client.policyPost);
+    const uninstallFactor = installFactorRuntime({
+      state: client.factorState,
+      submit: client.factor,
+    });
     const uninstallExecution = installExecutionWriter(client.executionCommand);
     const unwatch = watchSession(client);
     void client.check();
@@ -59,6 +64,7 @@ function SessionBoundaryContent({
       uninstallRestorer();
       uninstallFileOperations();
       uninstallPolicy();
+      uninstallFactor();
       uninstallExecution();
     };
   }, [client]);
