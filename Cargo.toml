@@ -4,6 +4,7 @@ members = [
     "crates/core",
     "crates/process-safety",
     "crates/vault-broker",
+    "crates/vault-admin",
     "crates/vault-index",
     "crates/control-db",
     "crates/audit-ledger",

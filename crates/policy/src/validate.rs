@@ -192,10 +192,10 @@ fn capability_set(report: &mut Report, canonical: &str, context: &Context) {
             "永久为 false：AI 不整页覆盖人写正文",
         ));
     }
-    if set.write.board && (set.write.board_projects.is_empty() || !set.write.content_patch_only) {
+    if set.write.board && set.write.board_projects.is_empty() {
         report.problems.push(Problem::new(
             "write.board",
-            "黑板写入必须有显式 write.board_projects 且保留 patch-only 内容边界",
+            "黑板写入必须有非空显式 write.board_projects",
         ));
     }
     if !set.write.board && !set.write.board_projects.is_empty() {

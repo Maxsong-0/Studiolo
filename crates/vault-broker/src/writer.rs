@@ -52,8 +52,9 @@ impl Writer {
         vault: &Path,
         data: &Path,
         initialize: bool,
+        fresh: bool,
     ) -> Result<(Dir, Dir, VaultUuid, Self), BrokerError> {
-        opening::open(vault, data, initialize)
+        opening::open(vault, data, initialize, fresh)
     }
 
     pub(crate) fn check(&self, root: &Dir, data: &Dir) -> Result<(), BrokerError> {
@@ -121,12 +122,29 @@ impl FsVaultBroker {
         Self::open_writer(vault_root, data_root, false)
     }
 
+    /// 首次建立配对存储；两个根必须已存在且完全为空。
+    ///
+    /// 空检查在 canonical 写租约内、任何持久写入前进行；失败或部分初始化
+    /// 不能通过再次调用此入口自动收养。调用者仍须先核准目录与导入来源。
+    pub fn initialize_empty(vault_root: &Path, data_root: &Path) -> Result<Self, BrokerError> {
+        Self::open_writer_mode(vault_root, data_root, true, true)
+    }
+
     pub(crate) fn open_writer(
         vault: &Path,
         data: &Path,
         initialize: bool,
     ) -> Result<Self, BrokerError> {
-        let (root, data, vault_uuid, writer) = Writer::open(vault, data, initialize)?;
+        Self::open_writer_mode(vault, data, initialize, false)
+    }
+
+    fn open_writer_mode(
+        vault: &Path,
+        data: &Path,
+        initialize: bool,
+        fresh: bool,
+    ) -> Result<Self, BrokerError> {
+        let (root, data, vault_uuid, writer) = Writer::open(vault, data, initialize, fresh)?;
         let broker = Self {
             root,
             data,

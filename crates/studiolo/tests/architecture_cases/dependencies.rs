@@ -59,7 +59,7 @@ fn dependency_scanner_includes_renamed_target_and_table_dependencies() {
 #[test]
 fn workspace_dependencies_follow_the_acyclic_module_direction() {
     let manifests = workspace_manifests(&workspace_root());
-    assert_eq!(manifests.len(), 22, "workspace crate inventory changed");
+    assert_eq!(manifests.len(), 23, "workspace crate inventory changed");
     assert!(
         dependency_cycle(&manifests).is_none(),
         "workspace dependency cycle: {:?}",
@@ -124,6 +124,7 @@ fn filesystem_authority_dependencies_have_explicit_owners() {
         } else if matches!(
             manifest.name.as_str(),
             "studiolo-auth-admin"
+                | "studiolo-vault-admin"
                 | "studiolo-host-config"
                 | "studiolo-local-server"
                 | "studiolo-sync-bridge"

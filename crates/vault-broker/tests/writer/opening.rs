@@ -3,6 +3,74 @@ use std::{fs, os::unix::fs::symlink};
 use studiolo_vault_broker::{BrokerError, FsVaultBroker, VaultReader};
 
 #[test]
+fn explicit_initialization_requires_two_existing_empty_roots() {
+    let fixture = Fixture::empty();
+    assert!(FsVaultBroker::initialize_empty(&fixture.vault, &fixture.data).is_err());
+    assert!(!fixture.vault.exists());
+    assert!(!fixture.data.exists());
+    fs::create_dir(&fixture.vault).unwrap();
+    assert!(FsVaultBroker::initialize_empty(&fixture.vault, &fixture.data).is_err());
+    assert!(inventory(&fixture.vault).is_empty());
+    assert!(!fixture.data.exists());
+    fs::create_dir(&fixture.data).unwrap();
+    let writer = FsVaultBroker::initialize_empty(&fixture.vault, &fixture.data).unwrap();
+    let uuid = writer.vault_uuid();
+    drop(writer);
+    assert_eq!(fixture.open().vault_uuid(), uuid);
+    let before = inventory(fixture.directory.path());
+    assert!(FsVaultBroker::initialize_empty(&fixture.vault, &fixture.data).is_err());
+    assert_eq!(inventory(fixture.directory.path()), before);
+}
+
+#[test]
+fn explicit_initialization_rejects_nonempty_roots_before_any_write() {
+    for node in ["vault", "data"] {
+        for name in ["note.md", ".hidden"] {
+            let fixture = Fixture::empty();
+            fs::create_dir(&fixture.vault).unwrap();
+            fs::create_dir(&fixture.data).unwrap();
+            let directory = if node == "vault" {
+                &fixture.vault
+            } else {
+                &fixture.data
+            };
+            fs::write(directory.join(name), b"preserve original bytes").unwrap();
+            let before = inventory(fixture.directory.path());
+            assert!(FsVaultBroker::initialize_empty(&fixture.vault, &fixture.data).is_err());
+            assert_eq!(inventory(fixture.directory.path()), before);
+        }
+    }
+}
+
+#[test]
+fn explicit_initialization_obeys_existing_lease_and_path_boundaries() {
+    let fixture = Fixture::initialized();
+    let writer = fixture.open();
+    assert!(matches!(
+        FsVaultBroker::initialize_empty(&fixture.vault, &fixture.data),
+        Err(BrokerError::WriterBusy)
+    ));
+    drop(writer);
+    let fixture = Fixture::empty();
+    fs::create_dir(&fixture.vault).unwrap();
+    fs::create_dir(&fixture.data).unwrap();
+    let link = fixture
+        .directory
+        .path()
+        .canonicalize()
+        .unwrap()
+        .join("linked-data");
+    symlink(&fixture.data, &link).unwrap();
+    let before = inventory(fixture.directory.path());
+    assert!(FsVaultBroker::initialize_empty(&fixture.vault, &link).is_err());
+    assert!(FsVaultBroker::initialize_empty(&fixture.vault, &fixture.vault).is_err());
+    assert!(
+        FsVaultBroker::initialize_empty(&fixture.vault, &fixture.vault.join("nested")).is_err()
+    );
+    assert_eq!(inventory(fixture.directory.path()), before);
+}
+
+#[test]
 fn existing_open_creates_neither_roots_nor_missing_identity() {
     let fixture = Fixture::empty();
     assert!(FsVaultBroker::open_existing(&fixture.vault, &fixture.data).is_err());
