@@ -46,6 +46,7 @@ class ReceiverTests(unittest.TestCase):
         self.project = self.vault / "项目/Studiolo"
         self.project.mkdir(parents=True)
         (self.vault / "_规则").mkdir()
+        (self.vault / "项目/Tillerwright").mkdir()
         (self.project / "note.md").write_text("private fixture text")
         (self.project / "empty").mkdir()
         self.server = self.root / "server"

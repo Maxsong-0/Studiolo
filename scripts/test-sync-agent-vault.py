@@ -33,6 +33,7 @@ class SyncAgentVaultTests(unittest.TestCase):
         self.project = self.vault / "项目/Studiolo"
         self.project.mkdir(parents=True)
         (self.vault / "_规则").mkdir()
+        (self.vault / "项目/Tillerwright").mkdir()
         (self.project / "note.md").write_text("private fixture text", encoding="utf-8")
         self.server = self.root / "server's copy"
         self.state = self.root / "client-state"

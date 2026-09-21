@@ -192,7 +192,7 @@ systemd-run --unit="$stage" --collect --service-type=simple \
     --property=LockPersonality=yes --property='RestrictAddressFamilies=AF_UNIX AF_INET' \
     --property=SystemCallArchitectures=native --property=MemoryMax=512M --property=TasksMax=64 \
     -- "$binary" serve --replica-root "$replica" --replica-max-age-secs 300 \
-    --allow 项目/Studiolo --allow _规则 --data "$data" --port 4401
+    --allow 项目/Studiolo --allow 项目/Tillerwright --allow _规则 --data "$data" --port 4401
 stage_binding=$(identity "/run/systemd/transient/$stage")
 wait_ready 4401
 check_process "$stage"
