@@ -76,7 +76,11 @@ impl ReplicaFixture {
     pub fn publish(&self, generation: &str, marker: &str, observed: i64) {
         let release = self.release(generation);
         let note = format!("# {marker}\n\n{marker} content\n");
-        let index = format!("# Project\n\n| 项 | 当前值 |\n|---|---|\n| 当前版本 | {marker} |\n");
+        // 标记同时写进「状态」：路牌清单化后只摘状态与未关闭 BUG，
+        // 仅放「当前版本」的话标记不会出现在路牌里，跟随性断言就失去观察点。
+        let index = format!(
+            "# Project\n\n| 项 | 当前值 |\n|---|---|\n| 当前版本 | {marker} |\n| 状态 | {marker} |\n"
+        );
         let entries = [
             ("project/00-总览", None),
             ("project/00-总览/INDEX.md", Some(index.as_bytes())),

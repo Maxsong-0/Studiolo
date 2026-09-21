@@ -94,10 +94,12 @@ fn signpost_has_six_sections_and_is_derived_from_index_tasks_and_rules() {
         assert!(text.contains(heading), "missing {heading}:\n{text}");
     }
     assert!(text.contains("类型 claude · 实例 01JT3STUDIOLO0000000000001"));
-    assert!(text.contains("### 项目/Alpha\n当前版本：v0.3\n状态：🟡 进行中\n最近日志：2026-09-06\n未关闭 BUG：无\n当前重点：T-033 冷启动：说明文字。"));
+    assert!(
+        text.contains("- 项目/Alpha：🟡 进行中 · 未关闭 BUG 无 · 重点：T-033 冷启动：说明文字。")
+    );
     assert!(!text.contains("第二条不该出现"));
-    assert!(text.contains("进行中：T-033 M3 首片（进行中：按计划）"));
-    assert!(text.contains("待认领：T-031 复审登记，2026-09-06"));
+    assert!(text.contains("进行中：项目/Alpha · T-033 M3 首片（进行中：按计划）"));
+    assert!(text.contains("待认领：项目/Alpha · T-031 复审登记，2026-09-06"));
     assert!(!text.contains("T-999"));
     assert!(text.contains("1 永远说中文；2 最严谨修复"));
     assert!(!text.contains("不属于准则"));
@@ -122,12 +124,14 @@ fn signpost_has_six_sections_and_is_derived_from_index_tasks_and_rules() {
     assert!(!text.contains("2026-09-05.md"));
     assert!(text.contains("入口：_规则/通用工作规则.md@"));
     assert!(
-        !text.contains("### 项目/Bare\n当前版本：不可用"),
+        !text.contains("- 项目/Bare：不可用"),
         "Bare has an INDEX table"
     );
-    assert!(text.contains("### 项目/Bare"));
+    assert!(text.contains("- 项目/Bare："));
     assert!(
-        !text.contains("# 旧日志") && !text.contains("说明文字。\n- "),
+        !text.contains("# 旧日志")
+            && !text.contains("| 当前版本 |")
+            && !text.contains("第二条不该出现"),
         "no bodies leak"
     );
     assert_eq!(signpost.trim_level, 0);
@@ -159,18 +163,24 @@ fn missing_skeleton_shows_unavailable_and_rules_absent_is_stated() {
     })
     .unwrap()
     .text;
-    assert!(text.contains("当前版本：不可用"));
-    assert!(text.contains("当前重点：不可用"));
+    // 骨架缺失时状态字段仍须可见为「不可用」；focus 缺失不再占一行（清单化后省 token）
+    assert!(text.contains("：不可用 · 未关闭 BUG 不可用"));
+    assert!(!text.contains("· 重点："));
     assert!(text.contains("无（协调板无进行中或待认领项，或不可用）"));
     assert!(text.contains("不可用（白名单内无规则母本）"));
 }
 
+/// 触发硬预算的夹具：清单化后每项目只贡献一行摘要，纯靠数量在三级裁剪下增长过慢，
+/// 改用「多项目 ＋ 长项目名」——项目名同时出现在项目清单与能力段白名单里，且两处都不可裁剪。
+const OVERSIZED_PROJECTS: usize = 180;
+const OVERSIZED_NAME_PAD: usize = 150;
+
 #[test]
 fn oversized_material_is_trimmed_then_fails_closed_past_the_hard_budget() {
     let temp = TempDir::new_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
-    // 四十个项目、每个协调板再加 40 行进行中：三级裁剪后仍远超 2000 token，必须失败关闭。
-    for index in 0..40 {
-        let name = format!("P{index}");
+    // 清单化 + 预算上调到 8000 后，须显著更多项目才触到硬预算；本例验证的是「超出即失败关闭」本身。
+    for index in 0..OVERSIZED_PROJECTS {
+        let name = format!("P{index}{}", "x".repeat(OVERSIZED_NAME_PAD));
         write_project(temp.path(), &name, &"重点".repeat(100), true);
         let tasks = temp
             .path()
@@ -192,8 +202,8 @@ fn oversized_material_is_trimmed_then_fails_closed_past_the_hard_budget() {
         )
         .unwrap();
     }
-    let allow = (0..40)
-        .map(|index| format!("项目/P{index}"))
+    let allow = (0..OVERSIZED_PROJECTS)
+        .map(|index| format!("项目/P{index}{}", "x".repeat(OVERSIZED_NAME_PAD)))
         .collect::<Vec<_>>();
     let allow_refs = allow.iter().map(String::as_str).collect::<Vec<_>>();
     let roots = SupplyRoots::open(temp.path(), &allow_refs).unwrap();

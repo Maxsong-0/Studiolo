@@ -9,7 +9,7 @@ async fn four_http_operations_are_budgeted_scoped_and_audited_under_one_instance
     let (session, instance, signpost) = f.handshake().await;
     assert!(signpost.starts_with("# Studiolo 路牌"));
     assert!(signpost.contains(&format!("类型 claude · 实例 {instance}")));
-    assert!(signpost.contains("### 项目/Alpha\n当前版本：v0.3"));
+    assert!(signpost.contains("- 项目/Alpha："));
     assert!(signpost.contains("T-037 HTTP 兜底"));
     assert!(signpost.contains("永远说中文"));
     for route in [

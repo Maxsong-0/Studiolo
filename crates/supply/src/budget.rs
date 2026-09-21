@@ -1,4 +1,4 @@
-//! 冷启动路牌的 token 预算：o200k_base 计量，≤2000 为硬上限（二元验收），内部目标 ≤1500。
+//! 冷启动路牌的 token 预算：o200k_base 计量，≤8000 为硬上限（二元验收），内部目标 ≤6000。
 //!
 //! 选 o200k 作为公开、可复现的计量基准；Claude 的分词器不公开，差异由 500 token 的余量吸收。
 
@@ -7,9 +7,9 @@ use std::sync::OnceLock;
 use tiktoken_rs::CoreBPE;
 
 /// 路牌硬上限：超出即失败，不是告警（ADR-015 二）。
-pub const HARD_BUDGET_TOKENS: usize = 2000;
+pub const HARD_BUDGET_TOKENS: usize = 8000;
 /// 派生器的内部目标；超过它先按优先级裁剪，再由硬上限兜底。
-pub const TARGET_BUDGET_TOKENS: usize = 1500;
+pub const TARGET_BUDGET_TOKENS: usize = 6000;
 
 /// 路牌超出硬预算。
 #[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]

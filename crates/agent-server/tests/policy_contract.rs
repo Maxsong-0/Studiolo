@@ -485,7 +485,7 @@ async fn a_type_without_a_capability_set_has_zero_rights_until_one_is_published(
         "{instructions}"
     );
     // 第 2 项只列供给视图内的项目。
-    assert!(instructions.contains("### 项目/Alpha") && !instructions.contains("Beta"));
+    assert!(instructions.contains("- 项目/Alpha：") && !instructions.contains("Beta"));
     // 第 5 项：准则来自策略平面而不是 vault 文件；硬绑定标「策略强制」；vault 里的句子不再出现。
     assert!(
         instructions.contains("1 策略平面里的准则"),

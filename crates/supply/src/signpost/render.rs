@@ -12,11 +12,11 @@ pub(super) fn render(
     level: u8,
     entry_label: &str,
 ) -> String {
-    let focus_chars = [200usize, 140, 100, 60][usize::from(level)];
+    let focus_chars = 60usize;
     let task_chars = [80usize, 60, 40, 30][usize::from(level)];
     let max_tasks = [8usize, 5, 3, 2][usize::from(level)];
     let max_unclaimed = [3usize, 2, 1, 0][usize::from(level)];
-    let field_chars = [120usize, 90, 60, 40][usize::from(level)];
+    let digest_chars = [40usize, 30, 20, 0][usize::from(level)];
     let mut out = String::new();
     let _ = writeln!(
         out,
@@ -35,26 +35,38 @@ pub(super) fn render(
     if projects.is_empty() {
         out.push_str("白名单内没有带 00-总览/INDEX.md 的项目。\n");
     }
+    if !projects.is_empty() {
+        let _ = writeln!(
+            out,
+            "{} 个可读项目；每行＝状态 · 未关闭 BUG，详情读 <项目前缀>/00-总览/INDEX.md",
+            projects.len()
+        );
+    }
     for project in projects {
-        let _ = writeln!(out, "### {}", project.prefix);
-        for key in STATUS_KEYS {
-            let value = project
+        if level >= 3 {
+            let _ = writeln!(out, "- {}", project.prefix);
+            continue;
+        }
+        let field = |key: &str| {
+            project
                 .fields
                 .iter()
                 .find(|(name, _)| name == key)
-                .map_or("不可用", |(_, value)| value.as_str());
-            let _ = writeln!(out, "{key}：{}", truncate(value, field_chars));
+                .map_or("不可用", |(_, value)| value.as_str())
+        };
+        let _ = write!(
+            out,
+            "- {}：{} · 未关闭 BUG {}",
+            project.prefix,
+            truncate(field(STATUS_KEYS[1]), digest_chars),
+            truncate(field(STATUS_KEYS[3]), 24)
+        );
+        if level == 0
+            && let Some(focus) = project.focus.as_deref()
+        {
+            let _ = write!(out, " · 重点：{}", truncate(focus, focus_chars));
         }
-        if level < 3 {
-            let _ = writeln!(
-                out,
-                "当前重点：{}",
-                project
-                    .focus
-                    .as_deref()
-                    .map_or_else(|| "不可用".to_owned(), |focus| truncate(focus, focus_chars))
-            );
-        }
+        let _ = writeln!(out);
     }
     match input.policy {
         Some(policy) => {
@@ -106,17 +118,41 @@ pub(super) fn render(
     }
     out.push_str("## 4 待我做的事\n");
     let mut any = false;
+    let mut in_progress = 0usize;
+    let mut unclaimed = 0usize;
     for project in projects {
-        for row in project.in_progress.iter().take(max_tasks) {
-            let _ = writeln!(out, "进行中：{}", truncate(row, task_chars + 40));
-            any = true;
-        }
-        for title in project.unclaimed.iter().take(max_unclaimed) {
-            let _ = writeln!(out, "待认领：{}", truncate(title, task_chars));
+        for row in &project.in_progress {
+            if in_progress >= max_tasks {
+                break;
+            }
+            let _ = writeln!(
+                out,
+                "进行中：{} · {}",
+                project.prefix,
+                truncate(row, task_chars + 40)
+            );
+            in_progress += 1;
             any = true;
         }
     }
-    if !any {
+    for project in projects {
+        for title in &project.unclaimed {
+            if unclaimed >= max_unclaimed {
+                break;
+            }
+            let _ = writeln!(
+                out,
+                "待认领：{} · {}",
+                project.prefix,
+                truncate(title, task_chars)
+            );
+            unclaimed += 1;
+            any = true;
+        }
+    }
+    if any {
+        out.push_str("（仅列前若干条；完整见各项目 04-协调/TASKS.md）\n");
+    } else {
         out.push_str("无（协调板无进行中或待认领项，或不可用）\n");
     }
     out.push_str("## 5 硬约束\n");
@@ -168,10 +204,21 @@ pub(super) fn render(
             .collect::<Vec<_>>()
             .join("、")
     );
+    let max_entries = [12usize, 8, 4, 2][usize::from(level)];
+    let mut entries = 0usize;
     for project in projects {
-        for (path, revision) in project.entries.iter().take(if level >= 2 { 1 } else { 3 }) {
+        for (path, revision) in &project.entries {
+            if entries >= max_entries {
+                break;
+            }
             let _ = writeln!(out, "入口：{path}@{}", &revision[..12.min(revision.len())]);
+            entries += 1;
         }
+    }
+    if projects.len() > 1 {
+        out.push_str(
+            "入口规律：任一可读项目的 <项目前缀>/00-总览/INDEX.md、04-协调/TASKS.md、02-日志/<日期>.md\n",
+        );
     }
     for (path, revision) in &rules.entries {
         let _ = writeln!(out, "入口：{path}@{}", &revision[..12.min(revision.len())]);
