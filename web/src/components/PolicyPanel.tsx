@@ -25,6 +25,7 @@ import {
   STATUS_LABEL,
   shortHash,
 } from '../policyModel';
+import { useViewLocation } from '../useViewLocation';
 import { DesiredForm, RevokeForm } from './PolicyForms';
 import { PolicyReport } from './PolicyReport';
 import { PolicyStepUp } from './PolicyStepUp';
@@ -56,6 +57,10 @@ export function PolicyPanel({ initial }: { initial: Loaded }) {
   const [selected, setSelected] = useState<DesiredRecord | null>(null);
   const [version, setVersion] = useState<VersionRecord | null>(null);
   const [pending, setPending] = useState<Pending | null>(null);
+  // 在看哪一版的正文属于「位置」：只记版本号，重挂/刷新/分享链接后回读；
+  // 版本正文与 desired 正文绝不进 URL。
+  const { location, select } = useViewLocation();
+  const restored = useRef<string | null>(null);
   // 控制器必须在挂载时重建：StrictMode 的装载—卸载—再装载会先 abort 一次，沿用同一个
   // 已中止的控制器会让此后每个动作在发请求前就被取消，界面表现为点了毫无反应（与其余
   // 四处 useRef(new AbortController()) 的写法对齐）。
@@ -64,6 +69,22 @@ export function PolicyPanel({ initial }: { initial: Loaded }) {
     lifetime.current = new AbortController();
     return () => lifetime.current.abort();
   }, []);
+
+  // 位置里带着版本号就把那一份正文读回来（会话重新核对导致整页重挂、刷新、
+  // 或别人打开同一个链接）。读失败就停在列表：不弹通知、不动 URL、不猜别的版本。
+  useEffect(() => {
+    const wanted = location.item;
+    if (!wanted || restored.current === wanted) return;
+    const meta = data.versions.find((row) => String(row.version) === wanted);
+    if (!meta) return;
+    restored.current = wanted;
+    const signal = lifetime.current.signal;
+    readVersion(meta.version, signal)
+      .then((record) => {
+        if (!signal.aborted) setVersion(record);
+      })
+      .catch(() => undefined);
+  }, [location.item, data.versions]);
 
   const reload = useCallback(async () => {
     const signal = lifetime.current.signal;
@@ -125,6 +146,9 @@ export function PolicyPanel({ initial }: { initial: Loaded }) {
         const outcome = await activatePolicy(request, lifetime.current.signal);
         setSelected(null);
         setVersion(null);
+        // 版本列表已经变了，位置里那个版本号不再是「刚才在看的那一份」。
+        restored.current = null;
+        select({ item: null });
         if (outcome.kind === 'released')
           return `已解除全局吊销${outcome.audit_confirmed ? '' : '（审计未确认，请核对账本）'}。`;
         return `${label}：已发布为 v${outcome.activation.version}，effective ${shortHash(
@@ -161,6 +185,9 @@ export function PolicyPanel({ initial }: { initial: Loaded }) {
   function open(meta: VersionMeta) {
     void act(async () => {
       setVersion(await readVersion(meta.version, lifetime.current.signal));
+      // 先记下再写位置：回读 effect 据此认出这一份已经在手，不重复请求。
+      restored.current = String(meta.version);
+      select({ item: restored.current });
       return `已读取 v${meta.version}。`;
     });
   }
