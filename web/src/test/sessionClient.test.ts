@@ -6,6 +6,7 @@ import {
   currentSession,
   deferred,
   mockSessions,
+  otherSession,
   pair,
   sessionResponse,
 } from './sessionFixtures';
@@ -162,6 +163,75 @@ describe('内存会话生命周期', () => {
     pending.resolve(jsonResponse(pair, 201));
     await login;
     expect(client.getSnapshot().phase).toBe('ready');
+    client.stop();
+  });
+});
+
+describe('服务端明说请求没有执行（auth_busy）', () => {
+  const busy = () =>
+    jsonResponse(
+      {
+        error: '认证服务正忙，本次请求没有执行；请稍后重试。',
+        code: 'auth_busy',
+      },
+      503,
+    );
+
+  it('登录没执行：回到可登录状态并提示重试，不进「可能已生效」', async () => {
+    const fetchMock = mockSessions();
+    fetchMock.mockImplementation(async (input, init) => {
+      if (input === '/api/v1/session') return jsonResponse({}, 401);
+      if (init?.method === 'POST') return busy();
+      return sessionResponse(input, init);
+    });
+    const client = new SessionClient();
+    await client.check();
+    await client.login();
+    expect(client.getSnapshot().phase).toBe('signed-out');
+    expect(client.getSnapshot().message).toContain('没有执行');
+    client.stop();
+  });
+
+  it('退出本会话没执行：不称「可能已生效」，请人核对后重试', async () => {
+    const fetchMock = mockSessions();
+    const client = new SessionClient();
+    await client.check();
+    fetchMock.mockImplementation(async (input, init) =>
+      init?.method === 'POST' ? busy() : sessionResponse(input, init),
+    );
+    expect(await client.revoke({ scope: 'current' })).toBe(false);
+    expect(client.getSnapshot().phase).toBe('problem');
+    expect(client.getSnapshot().message).toContain('退出没有执行');
+    expect(client.getSnapshot().message).not.toContain('可能已生效');
+    client.stop();
+  });
+
+  it('吊销别的会话没执行：本会话照常可用，不进入不确定状态', async () => {
+    const fetchMock = mockSessions();
+    const client = new SessionClient();
+    await client.check();
+    fetchMock.mockImplementation(async (input, init) =>
+      init?.method === 'POST' ? busy() : sessionResponse(input, init),
+    );
+    expect(
+      await client.revoke({ scope: 'session', session_id: otherSession.id }),
+    ).toBe(false);
+    expect(client.getSnapshot().phase).toBe('ready');
+    expect(client.getSnapshot().busy).toBe(false);
+    client.stop();
+  });
+
+  it('其它 503（没有 auth_busy）仍按「可能已生效」处理，不被误放宽', async () => {
+    const fetchMock = mockSessions();
+    const client = new SessionClient();
+    await client.check();
+    fetchMock.mockImplementation(async (input, init) =>
+      init?.method === 'POST'
+        ? jsonResponse({ error: '存储不可用' }, 503)
+        : sessionResponse(input, init),
+    );
+    await client.revoke({ scope: 'session', session_id: otherSession.id });
+    expect(client.getSnapshot().phase).toBe('uncertain');
     client.stop();
   });
 });

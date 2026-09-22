@@ -59,7 +59,8 @@ pub(super) async fn list(State(state): State<AppState>, request: Request) -> Res
         let auth = auth(&state)?;
         let rows = auth
             .run(move |sessions| sessions.sessions(&context.identity, &credentials.token))
-            .await?;
+            .await
+            .map_err(Failure::for_read)?;
         #[derive(Serialize)]
         struct Body<'a> {
             sessions: Vec<PublicSession<'a>>,

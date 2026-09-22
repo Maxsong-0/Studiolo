@@ -1,8 +1,9 @@
 import { act, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { App } from '../App';
 import { SessionBoundary } from '../SessionBoundary';
+import { REVISIT_INTERVAL_MS } from '../sessionClient';
 import { mockSessions } from './sessionFixtures';
 
 function boundary() {
@@ -15,8 +16,15 @@ function heading(name: string) {
   return screen.queryByRole('heading', { level: 1, name });
 }
 
-/** 真实的切走再回来：页面隐藏触发 suspend，恢复可见触发 resume→重新核对→整棵工作台重挂。 */
-async function leaveAndReturn() {
+/**
+ * 真实的切走再回来。一天内回来不再核对（ADR-022）；要走到「重新核对→整页重挂」
+ * 这条路，先把时钟拨过一天。
+ */
+async function leaveAndReturn({ afterADay = false } = {}) {
+  if (afterADay)
+    vi.spyOn(Date, 'now').mockReturnValue(
+      Date.now() + REVISIT_INTERVAL_MS + 1000,
+    );
   for (const state of ['hidden', 'visible'] as const) {
     Object.defineProperty(document, 'visibilityState', {
       configurable: true,
@@ -43,9 +51,12 @@ describe('离开再回来的位置', () => {
     );
     expect(window.location.hash).toContain('view=board');
 
+    // 一天内切回：什么都不发生，位置自然还在。
     await leaveAndReturn();
+    expect(heading('协作黑板')).toBeInTheDocument();
 
-    // 重新核对期间内容照约定关掉，核对完成后位置原样回来。
+    // 超过一天切回：重新核对、整棵重挂，位置从 URL 读回。
+    await leaveAndReturn({ afterADay: true });
     await waitFor(() => expect(heading('协作黑板')).toBeInTheDocument());
     expect(heading('项目总览')).not.toBeInTheDocument();
     expect(screen.getByRole('combobox', { name: '项目' })).toHaveValue(
@@ -72,7 +83,7 @@ describe('离开再回来的位置', () => {
     expect(window.location.hash).toContain('panel=tree');
 
     signedOut = true;
-    await leaveAndReturn();
+    await leaveAndReturn({ afterADay: true });
 
     const login = await screen.findByRole('button', { name: '登录工作台' });
     expect(heading('文档')).not.toBeInTheDocument();

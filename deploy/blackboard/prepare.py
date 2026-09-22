@@ -1,10 +1,11 @@
 #!/usr/bin/python3
-"""核验已激活的 r2 与两个现场单元，生成只换网页的 r3 候选包；不切换服务。
+"""核验已激活的上一发行与两个现场单元，生成新的候选包；不切换服务。
 
-与上一轮（r8→r2）的区别：那一次换的是程序并加装黑板接线，这一次**只换 `web/`**。
-二进制、示例库、Auth 管理程序、agent 单元全部逐字节沿用 r2，因此爆炸半径只剩静态资源。
-manifest 新增 `web_source_commit`：网页必须能追到构建它的提交——r8→r2 那条链路没有这一项，
+每次都换 `web/`；人侧程序可选：给了 `--local-server/--local-server-sha256/--human-source-commit`
+三件套就换成新构建，否则逐字节沿用上一发行。示例库、Auth 管理程序、初始化程序、agent 单元一律沿用。
+manifest 记 `web_source_commit`：网页必须能追到构建它的提交——r8→r2 那条链路没有这一项，
 网页因此在三个发行里悄悄沿用了 T-097 之前的旧构建（BUG-015 线上一直没修好的根因）。
+程序来源同理：换了就记新提交，没换就照抄上一发行，绝不把沿用的程序冒称为新构建。
 """
 import argparse
 import importlib.util
@@ -40,6 +41,14 @@ def mode_for(c, name):
 def prepare(args, a, c, ops):
     c.require(os.geteuid() == c.UID)
     c.require(re.fullmatch('[0-9a-f]{40}', args.web_source_commit))
+    program = (args.local_server, args.local_server_sha256, args.human_source_commit)
+    c.require(all(v is None for v in program) or all(v is not None for v in program))
+    human = None
+    if args.local_server is not None:
+        c.require(re.fullmatch('[0-9a-f]{64}', args.local_server_sha256))
+        c.require(re.fullmatch('[0-9a-f]{40}', args.human_source_commit))
+        human = c.read(c.absolute(args.local_server), c.UID)
+        c.require(human.startswith(b'\x7fELF') and c.sha(human) == args.local_server_sha256)
     old = Path(a.OLD_RELEASE)
     # 上一发行是黑板形状的 manifest，用同一套闭集核验，而不是 r8 时代的 verifier。
     old_manifest = ops.verify_previous(a, c)
@@ -62,7 +71,9 @@ def prepare(args, a, c, ops):
         target = output / c.relative(name)
         target.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
         content = c.read(old / name, c.UID, mode_for(c, name))
-        if name == 'launch-human.py':
+        if name == 'bin/studiolo-local-server' and human is not None:
+            content = human
+        elif name == 'launch-human.py':
             content = a.launcher(content.decode()).encode()
         elif name == 'studiolo-human.service':
             content = a.human_unit(units['studiolo-human'].decode()).encode()
@@ -79,7 +90,8 @@ def prepare(args, a, c, ops):
     files, _ = c.scan(output, c.UID)
     del files['INCOMPLETE']
     manifest = {'build': a.BUILD, 'bootstrap_source_commit': old_manifest['bootstrap_source_commit'],
-                'human_program_source_commit': old_manifest['human_program_source_commit'],
+                'human_program_source_commit': (args.human_source_commit if human is not None
+                                                else old_manifest['human_program_source_commit']),
                 'web_source_commit': args.web_source_commit,
                 'r8_manifest_sha256': a.R8_MANIFEST_SHA, 'assembly': a.ASSEMBLY,
                 'before_units': {name: c.sha(raw) for name, raw in units.items()}, 'files': files}
@@ -88,7 +100,8 @@ def prepare(args, a, c, ops):
     (output / 'INCOMPLETE').unlink()
     replaced = sorted(name for name in files if name.startswith(a.WEB_PREFIX))
     return {'build': a.BUILD, 'manifest_sha256': c.sha(raw), 'files': len(files),
-            'web_files': len(replaced), 'human_binary_reused': True, 'services_changed': False}
+            'web_files': len(replaced), 'human_binary_reused': human is None,
+            'services_changed': False}
 
 
 def main():
@@ -99,6 +112,9 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__, allow_abbrev=False)
     for name in ('web', 'web-source-commit'):
         parser.add_argument('--' + name, required=True)
+    # 换人侧程序时三件套一起给；都不给则沿用上一发行的程序。
+    for name in ('local-server', 'local-server-sha256', 'human-source-commit'):
+        parser.add_argument('--' + name)
     args = parser.parse_args()
     print(json.dumps(prepare(args, a, c, ops), sort_keys=True))
 

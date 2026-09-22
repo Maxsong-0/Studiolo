@@ -1,4 +1,4 @@
-"""r2→r3 只换网页的固定变更面；夹具不接触生产或凭据。"""
+"""黑板形状发行（当前 r4→r5）的固定变更面；夹具不接触生产或凭据。"""
 import ast
 from pathlib import Path
 import unittest
@@ -8,9 +8,9 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 def board_launcher():
-    """把 r7/r8 那份启动器补成 r2 形状：带黑板常量与参数、RELEASE 指向 r2。"""
+    """把 r7/r8 那份启动器补成黑板形状：带黑板常量与参数、RELEASE 指向上一发行。"""
     text = (ROOT / 'deploy/human/current-v2/launch-human.py').read_text().replace(
-        'm4-t092-20260920-r7', 'm5m6-board-20260920-r2')
+        'm4-t092-20260920-r7', a.OLD_RELEASE.rsplit('/', 1)[1])
     text = text.replace(
         'SOCKET = "/run/studiolo-human/http.sock"',
         'SOCKET = "/run/studiolo-human/http.sock"\n'
@@ -24,9 +24,9 @@ def board_launcher():
 
 
 def board_unit():
-    """把 r7/r8 那份人侧单元补成 r2 形状：带黑板 RuntimeDirectory 与五个写根。"""
+    """把 r7/r8 那份人侧单元补成黑板形状：带黑板 RuntimeDirectory 与五个写根。"""
     text = (ROOT / 'deploy/human/current-v2/studiolo-human.service').read_text().replace(
-        'm4-t092-20260920-r7', 'm5m6-board-20260920-r2')
+        'm4-t092-20260920-r7', a.OLD_RELEASE.rsplit('/', 1)[1])
     text = text.replace('RuntimeDirectory=studiolo-human\n',
                         'RuntimeDirectory=studiolo-human studiolo-board\n')
     return text.replace('ReadWritePaths=/run/studiolo-human\n',
@@ -36,10 +36,10 @@ def board_unit():
 
 
 class AssemblyTests(unittest.TestCase):
-    def test_r3_upgrades_the_activated_r2_and_only_swaps_web(self):
-        self.assertEqual(a.BUILD, 'm5m6-board-20260920-r3')
+    def test_r5_upgrades_the_activated_r4(self):
+        self.assertEqual(a.BUILD, 'm5m6-board-20260920-r5')
         self.assertEqual(a.RELEASE.rsplit('/', 1)[1], a.BUILD)
-        self.assertTrue(a.OLD_RELEASE.endswith('/m5m6-board-20260920-r2'))
+        self.assertTrue(a.OLD_RELEASE.endswith('/m5m6-board-20260920-r4'))
         self.assertEqual(a.WEB_PREFIX, 'web/')
 
     def test_launcher_only_repoints_the_release_path(self):

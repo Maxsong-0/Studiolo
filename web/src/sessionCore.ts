@@ -9,6 +9,19 @@ import type { FactorOutcome, FactorState } from './factorModel';
 const uncertain =
   '操作可能已生效，但结果暂时无法确认。请先核对登录状态，再决定下一步。';
 
+/** 服务端明说这次请求没有执行（认证许可排队超时，`auth_busy`）：不能当成「可能已生效」。 */
+function notExecuted(error: unknown) {
+  if (!(error instanceof ApiError) || error.status !== 503) return false;
+  const details = error.details;
+  return (
+    typeof details === 'object' &&
+    details !== null &&
+    'code' in details &&
+    details.code === 'auth_busy'
+  );
+}
+const busyRetry = '认证服务正忙，本次操作没有执行；请稍后重试。';
+
 // SessionClient 的私有实现：仅认证状态与事务寿命，绝不保存业务内容或因子输入。
 export class SessionCore {
   protected state: SessionView = {
@@ -26,6 +39,8 @@ export class SessionCore {
   protected pendingFactor = false;
   protected factors: FactorState | null | undefined;
   protected factorSequence = 0;
+  /** 最近一次确认会话有效的时刻；切回页面时据此判断要不要再核对。 */
+  protected checkedAt = 0;
   protected listeners = new Set<() => void>();
   protected announce: (() => void) | null = null;
 
@@ -70,6 +85,7 @@ export class SessionCore {
   protected accept(value: unknown) {
     const { session, csrf, ownerScope } = sessionPair(value);
     this.csrf = csrf;
+    this.checkedAt = Date.now();
     this.update({
       phase: 'ready',
       session,
@@ -135,6 +151,26 @@ export class SessionCore {
       return result;
     } catch (error) {
       if (revision !== this.state.revision) return { kind: 'stopped' };
+      if (notExecuted(error)) {
+        // 请求根本没进认证存储：按没发生处理，不进「可能已生效」、不要求先核对。
+        if (login)
+          this.clear('signed-out', '认证服务正忙，登录没有执行；请稍后重试。');
+        else if (own)
+          // 退出开始时已按约定清掉本页会话；服务端会话其实仍有效，核对一次即可恢复。
+          this.clear(
+            'problem',
+            '认证服务正忙，退出没有执行；请核对登录状态后重试。',
+          );
+        else {
+          this.update({ busy: false });
+          if (isFactor) {
+            this.pendingFactor = false;
+            this.update({ factorNotice: undefined });
+            return { kind: 'failed', status: 503, message: busyRetry };
+          }
+        }
+        return { kind: 'stopped' };
+      }
       if (
         isFactor &&
         error instanceof ApiError &&

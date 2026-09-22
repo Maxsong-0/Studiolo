@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 import { App } from '../App';
 import { SessionBoundary } from '../SessionBoundary';
+import { REVISIT_INTERVAL_MS } from '../sessionClient';
 import { jsonResponse } from './fixtures';
 import {
   deferred,
@@ -171,7 +172,27 @@ describe('会话入口', () => {
     ).toHaveLength(1);
   });
 
-  it('恢复焦点重新核对，过期会话清除已展示内容', async () => {
+  it('一天内切回页面不再核对：不清内容、不重挂、不发核对请求（ADR-022）', async () => {
+    const fetchMock = mockSessions();
+    render(boundary());
+    const table = await screen.findByRole('table');
+    const before = fetchMock.mock.calls.length;
+    for (const state of ['hidden', 'visible'] as const) {
+      Object.defineProperty(document, 'visibilityState', {
+        configurable: true,
+        get: () => state,
+      });
+      await act(async () =>
+        document.dispatchEvent(new Event('visibilitychange')),
+      );
+    }
+    await act(async () => window.dispatchEvent(new Event('focus')));
+    // 同一个表格节点还在：没有卸载重挂，也没有任何新的请求。
+    expect(screen.getByRole('table')).toBe(table);
+    expect(fetchMock.mock.calls.length).toBe(before);
+  });
+
+  it('超过一天再切回页面才核对，过期会话清除已展示内容', async () => {
     const fetchMock = mockSessions();
     render(boundary());
     await screen.findByRole('table');
@@ -180,6 +201,11 @@ describe('会话入口', () => {
         ? jsonResponse({}, 401)
         : sessionResponse(input, init),
     );
+    const start = Date.now();
+    vi.spyOn(Date, 'now').mockReturnValue(start + REVISIT_INTERVAL_MS - 1000);
+    await act(async () => window.dispatchEvent(new Event('focus')));
+    expect(screen.getByRole('table')).toBeInTheDocument();
+    vi.spyOn(Date, 'now').mockReturnValue(start + REVISIT_INTERVAL_MS + 1000);
     await act(async () => window.dispatchEvent(new Event('focus')));
     await screen.findByRole('button', { name: '登录工作台' });
     expect(screen.queryByRole('table')).not.toBeInTheDocument();
