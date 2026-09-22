@@ -180,7 +180,8 @@ fn append(
     let path = protocol::visible(&entry.path)?;
     let kind = if entry.kind == "dir" {
         EntryKind::Directory
-    } else {
+    } else if markdown(&entry.path) {
+        // 笔记正文会对外供给：每次请求都整读并核 SHA-256，同大小字节漂移立即阻断。
         let data = vault
             .read_file(&path, protocol::FILE_LIMIT)
             .map_err(|_| ReplicaError::Drift("file_read_failed"))?;
@@ -189,25 +190,35 @@ fn append(
         {
             return Err(ReplicaError::Drift("file_digest"));
         }
-        if markdown(&entry.path) {
-            let index = batch
-                .notes
-                .binary_search_by(|note| note.path.cmp(&path))
-                .map_err(|_| ReplicaError::Drift("missing_note"))?;
-            let scanned = &batch.notes[index];
-            if scanned.content != data.content {
-                return Err(ReplicaError::Drift("note_changed_during_scan"));
-            }
-            snapshot.notes.push(Note {
-                path: path.clone(),
-                revision: data.revision,
-                content: String::from_utf8(data.content)
-                    .map_err(|_| ReplicaError::Drift("non_utf8_note"))?,
-            });
-            EntryKind::Markdown
-        } else {
-            EntryKind::Attachment
+        let index = batch
+            .notes
+            .binary_search_by(|note| note.path.cmp(&path))
+            .map_err(|_| ReplicaError::Drift("missing_note"))?;
+        let scanned = &batch.notes[index];
+        if scanned.content != data.content {
+            return Err(ReplicaError::Drift("note_changed_during_scan"));
         }
+        snapshot.notes.push(Note {
+            path: path.clone(),
+            revision: data.revision,
+            content: String::from_utf8(data.content)
+                .map_err(|_| ReplicaError::Drift("non_utf8_note"))?,
+        });
+        EntryKind::Markdown
+    } else {
+        // 附件从不对外供给正文，只供给路径与大小（ADR-023）：每次请求只核同一次安全扫描
+        // 得到的类型与字节长度，不整读、不算哈希。附件字节的完整性由接收端在副本到达时
+        // 逐文件核 SHA-256 保证（scripts/replica_store.py）。整读附件曾让纳入 199 MB 的
+        // 项目后每次请求多出约 1.5 秒。
+        let index = batch
+            .entries
+            .binary_search_by(|scanned| scanned.path.cmp(&path))
+            .map_err(|_| ReplicaError::Drift("missing_attachment"))?;
+        let scanned = &batch.entries[index];
+        if scanned.kind != ReadEntryKind::Attachment || scanned.size_bytes != Some(entry.bytes) {
+            return Err(ReplicaError::Drift("attachment_size"));
+        }
+        EntryKind::Attachment
     };
     snapshot.entries.push(Entry {
         path,

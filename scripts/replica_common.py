@@ -7,8 +7,6 @@ import stat
 import unicodedata
 
 ALLOW = sorted([
-    # 不含 项目/Semiment-Docs：该项目 199 MB（产品规格书等附件），单独就超过 MAX_TOTAL(128 MB)。
-    # 其余 22 个项目 ＋ _规则 合计约 10 MB。要纳入它需先分离附件或提高 MAX_TOTAL，另行拍板。
     "_规则",
     "项目/AI Quota Flow",
     "项目/AI 网关门户",
@@ -21,6 +19,7 @@ ALLOW = sorted([
     "项目/NAS 网关",
     "项目/Perplexity",
     "项目/Semiment",
+    "项目/Semiment-Docs",
     "项目/Studiolo",
     "项目/Tillerwright",
     "项目/brian-web",
@@ -36,7 +35,9 @@ ALLOW = sorted([
 MAX_ENTRIES = 25_000
 MAX_MANIFEST = 4 * 1024 * 1024
 MAX_FILE = 16 * 1024 * 1024
-MAX_TOTAL = 128 * 1024 * 1024
+# 总量上限 512 MiB（2026-09-22 T-108 由 128 MiB 上调以纳入 项目/Semiment-Docs 的 199 MB 附件）。
+# 与 crates/supply/src/replica/protocol.rs 的 TOTAL_LIMIT 逐项相等，由 test-replica-boundaries.py 守卫。
+MAX_TOTAL = 512 * 1024 * 1024
 MAX_NOTES_TOTAL = 16 * 1024 * 1024
 DIR_FLAGS = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
 FILE_FLAGS = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK

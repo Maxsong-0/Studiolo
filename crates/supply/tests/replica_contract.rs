@@ -14,7 +14,7 @@ fn root(f: &ReplicaFixture) -> ReplicaRoot {
 }
 
 #[test]
-fn complete_snapshot_includes_empty_directories_and_verifies_binary_bytes() {
+fn complete_snapshot_includes_empty_directories_and_checks_binary_sizes() {
     let f = ReplicaFixture::new();
     let replica = root(&f).verify(f.observed + 1000, None).unwrap();
     assert_eq!(replica.snapshot.entries.len(), 5);
@@ -80,7 +80,8 @@ fn files_attachments_missing_directories_and_extra_items_are_all_drift() {
         let f = ReplicaFixture::new();
         match action {
             0 => write(&f.file("project/note.md"), b"# changed note"),
-            1 => write(&f.file("project/image.bin"), &[2, 1, 255]),
+            // 附件大小变化仍是漂移；同大小改字节见下一条测试（ADR-023）。
+            1 => write(&f.file("project/image.bin"), &[2, 1, 255, 7]),
             2 => fs::remove_dir(f.file("project/empty")).unwrap(),
             3 => write(&f.file("project/extra.md"), b"# unexpected"),
             _ => write(&f.file("project/.hidden"), b"hidden"),
@@ -93,6 +94,24 @@ fn files_attachments_missing_directories_and_extra_items_are_all_drift() {
             "action {action}"
         );
     }
+}
+
+#[test]
+fn same_size_attachment_bytes_are_left_to_arrival_verification() {
+    // ADR-023：附件从不对外供给正文，只供给路径与大小。每次请求不再整读附件算哈希
+    // （纳入 199 MB 附件后每请求要多约 1.5 秒），附件字节完整性由接收端在副本到达时
+    // 逐文件核 SHA-256 保证。所以同大小改字节在这里明确不判漂移——而笔记同样的改动必须判。
+    let f = ReplicaFixture::new();
+    write(&f.file("project/image.bin"), &[2, 1, 255]);
+    let replica = root(&f).verify(f.observed + 1000, None).unwrap();
+    let attachment = replica
+        .snapshot
+        .entries
+        .iter()
+        .find(|entry| entry.path.as_str() == "project/image.bin")
+        .unwrap();
+    assert_eq!(attachment.kind, EntryKind::Attachment);
+    assert_eq!(attachment.size_bytes, Some(3));
 }
 
 #[test]

@@ -9,7 +9,9 @@ pub(super) const MANIFEST_LIMIT: u64 = 4 * 1024 * 1024;
 pub(super) const FILE_LIMIT: u64 = 16 * 1024 * 1024;
 pub(super) const NOTE_LIMIT: u64 = 4 * 1024 * 1024;
 pub(super) const NOTES_TOTAL_LIMIT: u64 = 16 * 1024 * 1024;
-pub(super) const TOTAL_LIMIT: u64 = 128 * 1024 * 1024;
+/// 与 scripts/replica_common.py 的 MAX_TOTAL 逐项相等（test-replica-boundaries.py 守卫）；
+/// 2026-09-22 T-108 由 128 MiB 上调。附件每次请求只核大小（ADR-023），所以总量上调不增加每请求的哈希开销。
+pub(super) const TOTAL_LIMIT: u64 = 512 * 1024 * 1024;
 pub(super) const ENTRY_LIMIT: usize = 25_000;
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]

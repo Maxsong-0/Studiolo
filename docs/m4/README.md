@@ -29,9 +29,9 @@ cargo run --locked -p studiolo-agent-server -- admin type-issue --data /private/
 cargo run --locked -p studiolo-agent-server -- admin policy-bootstrap --policy /private/tmp/sa/policy \
   --data /private/tmp/sa/data --kind capability_set --subject claude --file /private/tmp/sa/claude.json
 cargo run --locked -p studiolo-agent-server -- admin policy-status --policy /private/tmp/sa/policy
-# 3. 接入方服务：能力集之外的目录从一开始不进入计算
+# 3. 接入方服务：能力集之外的目录从一开始不进入计算（本机 --vault 示例；生产白名单见 scripts/replica_common.py 的 ALLOW）
 cargo run --locked -p studiolo-agent-server -- serve --vault /path/to/readonly-copy \
-  --allow 项目/Studiolo --allow 项目/Tillerwright --allow _规则 --data /private/tmp/sa/data --policy /private/tmp/sa/policy --port 4400
+  --allow 项目/<示例项目> --allow _规则 --data /private/tmp/sa/data --policy /private/tmp/sa/policy --port 4400
 ```
 
 人侧发布链路需要会话模式与因子模式（`--session-config` ＋ `--factor-socket` ＋ `--policy-data`），

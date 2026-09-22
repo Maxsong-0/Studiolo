@@ -163,6 +163,32 @@ class BoundaryTests(unittest.TestCase):
         self.run_receive(fixtures.rewrite(self.payload(), invalid_utf8), 1)
         self.assertIsNone(self.state()["receipt"])
 
+    def test_python_and_rust_replica_limits_agree(self):
+        """捕获／接收端（Python）与 agent 验证端（Rust）的副本上限必须逐项相等。
+
+        两端各有一份常量；只改一端，Mac 能推上去的副本会在服务器上被拒（或反之），
+        而各自的测试都是绿的。2026-09-22 T-108 抬总量上限时补上这条对账。
+        """
+        import re
+        import replica_common
+        source = (Path(__file__).resolve().parent.parent
+                  / "crates/supply/src/replica/protocol.rs").read_text(encoding="utf-8")
+
+        def rust(name):
+            match = re.search(rf"const {name}: \w+ = ([0-9_* ]+);", source)
+            self.assertIsNotNone(match, name)
+            value = 1
+            for factor in match.group(1).split("*"):
+                value *= int(factor.strip().replace("_", ""))
+            return value
+
+        pairs = {"MANIFEST_LIMIT": "MAX_MANIFEST", "FILE_LIMIT": "MAX_FILE",
+                 "NOTES_TOTAL_LIMIT": "MAX_NOTES_TOTAL", "TOTAL_LIMIT": "MAX_TOTAL",
+                 "ENTRY_LIMIT": "MAX_ENTRIES"}
+        mismatched = {r: (rust(r), getattr(replica_common, p)) for r, p in pairs.items()
+                      if rust(r) != getattr(replica_common, p)}
+        self.assertEqual(mismatched, {}, "Rust 与 Python 的副本上限不一致（Rust 值, Python 值）")
+
 
 if __name__ == "__main__":
     suite = unittest.TestSuite(BoundaryTests(name) for name in BoundaryTests.__dict__ if name.startswith("test_"))

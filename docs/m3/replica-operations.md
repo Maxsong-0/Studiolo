@@ -41,9 +41,7 @@ bash scripts/sync-agent-vault.sh
 托管副本使用系统级 `studiolo-agent-system.service`，进程仍以 `User=maxsong` / `Group=maxsong` 运行。
 保留 `ProtectSystem=strict`、`ProtectHome=read-only`、私有库唯一可写、`NoNewPrivileges` 与资源上限，并显式 `PrivateUsers=no`。其参数为：
 
-```text
-serve --replica-root /home/maxsong/.local/share/studiolo-agent-replica --replica-max-age-secs 300 --allow 项目/Studiolo --allow 项目/Tillerwright --allow _规则 --data /home/maxsong/.local/share/studiolo-agent --port 4400
-```
+`--allow` 不在文档里抄列（抄过两次都过时了）：以 `deploy/agent/studiolo-agent-system.service.in` 为准，它与 `scripts/replica_common.py` 的 `ALLOW` 逐项相等，由 `DeployAllowlistTests` 守卫。
 
 必须先由系统管理器使用相同隔离参数，在独立回环端口（例如 4401）启动新程序，验证实际 PID/UID/二进制、initialize、四工具与匿名 401；
 确认新鲜度、版本和读取审计后，再安装 `/etc/systemd/system/studiolo-agent.service`，停止并禁用旧用户级 MCP 单元，启用系统级单元。网页和 Tunnel 无需调整。
