@@ -135,27 +135,43 @@ class Files(unittest.TestCase):
         self.assertEqual(lock.stat().st_mode & 0o7777, 0o640)
 
     def candidate(self):
+        """上一发行（r2 形状）与候选（r3）：只有 web/ 与启动器、人侧单元不同。"""
         old, new = self.root / 'old', self.root / 'new'
-        content = {'bin/studiolo-local-server': b'fictional human',
-                   'bin/studiolo-auth-admin': b'fictional admin', 'launch-human.py': b'old launcher',
-                   'studiolo-human.service': b'old human', 'web/index.html': b'fictional web',
-                   'example-vault/note.md': b'fictional note'}
-        for name, raw in content.items():
-            self.write(old / name, raw, c.mode_for(name))
+        def mode(name):
+            return 0o755 if name in c.BINARIES | {'bin/studiolo-vault-admin'} else 0o600
+        shared = {'bin/studiolo-local-server': b'\x7fELFfictional human',
+                  'bin/studiolo-auth-admin': b'fictional admin',
+                  'bin/studiolo-vault-admin': b'\x7fELFfictional bootstrap',
+                  'studiolo-agent.service': b'old agent',
+                  'example-vault/note.md': b'fictional note'}
+        old_content = dict(shared, **{'launch-human.py': b'old launcher',
+                                      'studiolo-human.service': b'old human',
+                                      'web/index.html': b'stale web',
+                                      'web/assets/stale.js': b'stale bundle'})
+        for name, raw in old_content.items():
+            self.write(old / name, raw, mode(name))
         files, _ = c.scan(old, self.uid)
-        old_doc = dict(build=c.BUILD, source_commit='1' * 40, assembly='human-v2-r8', files=files)
+        old_doc = dict(build='m5m6-board-20260920-r2', bootstrap_source_commit='2' * 40,
+            human_program_source_commit='3' * 40, r8_manifest_sha256='0' * 64,
+            assembly=assembly.ASSEMBLY,
+            before_units={'studiolo-human': c.sha(b'older human'), 'studiolo-agent': c.sha(b'old agent')},
+            files=files)
         raw = json.dumps(old_doc).encode()
         self.write(old / 'manifest.json', raw)
         a = types.SimpleNamespace(OLD_RELEASE=str(old), RELEASE=str(new), BUILD=assembly.BUILD,
-            R8_MANIFEST_SHA=c.sha(raw), HUMAN_SHA=c.sha(b'old human'), AGENT_SHA=c.sha(b'old agent'))
-        content.update({'launch-human.py': b'new launcher', 'studiolo-human.service': b'new human',
-                        'studiolo-agent.service': b'new agent', 'bin/studiolo-vault-admin': b'\x7fELFfictional',
-                        'bin/studiolo-local-server': b'\x7fELFnew human'})
-        for name, raw in content.items():
-            self.write(new / name, raw, 0o755 if name in c.BINARIES | {'bin/studiolo-vault-admin'} else 0o600)
+            R8_MANIFEST_SHA=c.sha(raw), HUMAN_SHA=c.sha(b'old human'), AGENT_SHA=c.sha(b'old agent'),
+            WEB_PREFIX=assembly.WEB_PREFIX, ASSEMBLY=assembly.ASSEMBLY)
+        new_content = dict(shared, **{'launch-human.py': b'new launcher',
+                                      'studiolo-human.service': b'new human',
+                                      # agent 单元以现场为准：两次发行之间读取范围可能被改过。
+                                      'studiolo-agent.service': b'current agent',
+                                      'web/index.html': b'fresh web',
+                                      'web/assets/fresh.js': b'fresh bundle'})
+        for name, raw in new_content.items():
+            self.write(new / name, raw, mode(name))
         files, _ = c.scan(new, self.uid)
         doc = dict(build=a.BUILD, bootstrap_source_commit='2' * 40, human_program_source_commit='3' * 40,
-            r8_manifest_sha256=a.R8_MANIFEST_SHA, assembly='canonical-board-consumer-only',
+            web_source_commit='4' * 40, r8_manifest_sha256=a.R8_MANIFEST_SHA, assembly=assembly.ASSEMBLY,
             before_units={'studiolo-human': a.HUMAN_SHA, 'studiolo-agent': a.AGENT_SHA}, files=files)
         raw = json.dumps(doc).encode()
         self.write(new / 'manifest.json', raw)
@@ -166,17 +182,24 @@ class Files(unittest.TestCase):
         with patch.object(c, 'verify', side_effect=lambda root, sha: verify(root, sha, self.uid)):
             return ops_module.verify_candidate(a, c, digest)
 
-    def test_exact_package_replaces_human_and_reuses_auth_and_web(self):
+    def test_exact_package_swaps_web_and_reuses_everything_else(self):
         a, digest = self.candidate()
         doc = self.check(a, digest)
         self.assertEqual(doc['build'], assembly.BUILD)
         self.assertEqual(set(doc['before_units']), set(ops_module.NAMES))
         self.assertEqual(doc['bootstrap_source_commit'], '2' * 40)
         self.assertEqual(doc['human_program_source_commit'], '3' * 40)
-        self.assertNotEqual((Path(a.OLD_RELEASE) / 'bin/studiolo-local-server').read_bytes(),
-                            (Path(a.RELEASE) / 'bin/studiolo-local-server').read_bytes())
-        for name in ('bin/studiolo-auth-admin', 'web/index.html'):
-            self.assertEqual((Path(a.OLD_RELEASE) / name).read_bytes(), (Path(a.RELEASE) / name).read_bytes())
+        self.assertEqual(doc['web_source_commit'], '4' * 40)
+        # 网页整块换掉：旧资源不再出现，新资源必须在。
+        self.assertEqual({name for name in doc['files'] if name.startswith('web/')},
+                         {'web/index.html', 'web/assets/fresh.js'})
+        self.assertEqual((Path(a.RELEASE) / 'studiolo-agent.service').read_bytes(), b'current agent')
+        for name in ('bin/studiolo-local-server', 'bin/studiolo-auth-admin',
+                     'bin/studiolo-vault-admin', 'example-vault/note.md'):
+            self.assertEqual((Path(a.OLD_RELEASE) / name).read_bytes(),
+                             (Path(a.RELEASE) / name).read_bytes())
+        self.assertNotEqual((Path(a.OLD_RELEASE) / 'web/index.html').read_bytes(),
+                            (Path(a.RELEASE) / 'web/index.html').read_bytes())
 
     def test_tamper_extra_file_directory_missing_file_and_link_rejected(self):
         a, digest = self.candidate()
@@ -213,12 +236,12 @@ class Files(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.check(a, c.sha(raw))
 
-    def test_new_manifest_cannot_replace_auth_or_web(self):
+    def test_new_manifest_cannot_replace_binaries_or_example_vault(self):
         a, digest = self.candidate()
         root = Path(a.RELEASE)
         path = root / 'manifest.json'
         original = path.read_bytes()
-        for name in ('bin/studiolo-auth-admin', 'web/index.html'):
+        for name in ('bin/studiolo-auth-admin', 'bin/studiolo-local-server', 'example-vault/note.md'):
             with self.subTest(name=name):
                 prior = (root / name).read_bytes()
                 raw = b'changed file'
@@ -232,6 +255,24 @@ class Files(unittest.TestCase):
                 (root / name).write_bytes(prior)
                 path.write_bytes(original)
                 self.check(a, digest)
+        # 网页可以整块换，但首页必须在，来源提交也必须是规范的 40 位十六进制。
+        (root / 'web/index.html').unlink()
+        doc = json.loads(original)
+        del doc['files']['web/index.html']
+        raw = json.dumps(doc).encode()
+        path.write_bytes(raw)
+        with self.assertRaises(ValueError):
+            self.check(a, c.sha(raw))
+        self.write(root / 'web/index.html', b'fresh web')
+        path.write_bytes(original)
+        for bad in ('4' * 39, 'z' * 40, None):
+            doc = json.loads(original)
+            doc['web_source_commit'] = bad
+            raw = json.dumps(doc).encode()
+            path.write_bytes(raw)
+            with self.subTest(bad=bad), self.assertRaises(ValueError):
+                self.check(a, c.sha(raw))
+        path.write_bytes(original)
 
     def test_new_human_nonelf_invalid_source_or_digest_rejected(self):
         a, digest = self.candidate()
@@ -276,14 +317,13 @@ class Files(unittest.TestCase):
         a.RELEASE = str(self.root / 'prepared')
         a.launcher = lambda text: text.replace('old', 'new')
         a.human_unit = lambda text: text.replace('old', 'new')
-        a.agent_unit = lambda text: text.replace('old', 'new')
+        a.agent_unit = lambda text: text
         for name, raw in (('studiolo-human', b'old human'), ('studiolo-agent', b'old agent')):
             self.write(self.root / 'units' / (name + '.service'), raw, 0o644)
-        self.write(self.root / 'vault-admin', b'\x7fELFbootstrap')
-        self.write(self.root / 'local-server', b'\x7fELFprepared human')
-        args = types.SimpleNamespace(source_commit='2' * 40, human_source_commit='4' * 40,
-            vault_admin=str(self.root / 'vault-admin'), vault_admin_sha256=c.sha(b'\x7fELFbootstrap'),
-            local_server=str(self.root / 'local-server'), local_server_sha256=c.sha(b'\x7fELFprepared human'))
+        web = self.root / 'web-dist'
+        self.write(web / 'index.html', b'brand new web')
+        self.write(web / 'assets' / 'brand-new.js', b'brand new bundle')
+        args = types.SimpleNamespace(web=str(web), web_source_commit='5' * 40)
         return a, args
 
     def run_prepare(self, a, args):
@@ -295,34 +335,44 @@ class Files(unittest.TestCase):
             return read(path, uid, mode)
         with patch.object(c, 'read', side_effect=fixture_read), \
                 patch.object(c, 'verify', side_effect=lambda root, sha: verify(root, sha, self.uid)):
-            return prepare.prepare(args, a, c)
+            return prepare.prepare(args, a, c, ops_module)
 
-    def test_prepare_records_distinct_sources_and_replaces_only_human(self):
+    def test_prepare_swaps_web_and_carries_the_previous_program_sources(self):
         a, args = self.preparation()
         result = self.run_prepare(a, args)
         doc = self.check(a, result['manifest_sha256'])
-        self.assertFalse(result['human_binary_reused'])
-        self.assertEqual(doc['bootstrap_source_commit'], args.source_commit)
-        self.assertEqual(doc['human_program_source_commit'], args.human_source_commit)
-        self.assertEqual((Path(a.RELEASE) / 'bin/studiolo-local-server').read_bytes(), b'\x7fELFprepared human')
-        self.assertEqual((Path(a.RELEASE) / 'bin/studiolo-auth-admin').read_bytes(), b'fictional admin')
-        self.assertEqual((Path(a.RELEASE) / 'web/index.html').read_bytes(), b'fictional web')
-        self.assertTrue((self.root / 'new/manifest.json').is_file())
+        self.assertTrue(result['human_binary_reused'])
+        self.assertEqual(result['web_files'], 2)
+        # 程序来源照抄上一发行，不冒称新构建；网页来源来自本次参数。
+        self.assertEqual(doc['bootstrap_source_commit'], '2' * 40)
+        self.assertEqual(doc['human_program_source_commit'], '3' * 40)
+        self.assertEqual(doc['web_source_commit'], args.web_source_commit)
+        root = Path(a.RELEASE)
+        self.assertEqual((root / 'bin/studiolo-local-server').read_bytes(), b'\x7fELFfictional human')
+        self.assertEqual((root / 'bin/studiolo-auth-admin').read_bytes(), b'fictional admin')
+        self.assertEqual((root / 'web/index.html').read_bytes(), b'brand new web')
+        self.assertEqual((root / 'web/assets/brand-new.js').read_bytes(), b'brand new bundle')
+        self.assertFalse((root / 'web/assets/stale.js').exists())
         with self.assertRaises(ValueError):
             self.run_prepare(a, args)
 
-    def test_prepare_rejects_human_source_digest_and_nonelf_before_creating_output(self):
+    def test_prepare_rejects_bad_web_source_or_missing_index_before_creating_output(self):
         a, args = self.preparation()
-        for name, bad in (('human_source_commit', 'a0acdde'), ('human_source_commit', 'z' * 40),
-                          ('local_server_sha256', '0' * 64), ('local_server_sha256', 'z' * 64)):
-            prior = getattr(args, name)
-            setattr(args, name, bad)
-            with self.subTest(name=name, bad=bad), self.assertRaises(ValueError):
+        for bad in ('a0acdde', 'z' * 40, '5' * 39):
+            prior = args.web_source_commit
+            args.web_source_commit = bad
+            with self.subTest(bad=bad), self.assertRaises(ValueError):
                 self.run_prepare(a, args)
             self.assertFalse(Path(a.RELEASE).exists())
-            setattr(args, name, prior)
-        Path(args.local_server).write_bytes(b'not ELF')
-        args.local_server_sha256 = c.sha(b'not ELF')
+            args.web_source_commit = prior
+        (Path(args.web) / 'index.html').unlink()
+        with self.assertRaises(ValueError):
+            self.run_prepare(a, args)
+        self.assertFalse(Path(a.RELEASE).exists())
+        self.write(Path(args.web) / 'index.html', b'brand new web')
+        # 现场单元与预期摘要不符时，同样在建目录之前就停。
+        self.write(self.root / 'units' / 'studiolo-human.service.tmp', b'x')
+        (self.root / 'units' / 'studiolo-human.service').write_bytes(b'drifted human')
         with self.assertRaises(ValueError):
             self.run_prepare(a, args)
         self.assertFalse(Path(a.RELEASE).exists())
@@ -334,7 +384,8 @@ class Files(unittest.TestCase):
         new_binary = Path(a.RELEASE) / 'bin/studiolo-local-server'
         ops.old_human_sha = c.sha(old_binary.read_bytes())
         ops.human_sha = c.sha(new_binary.read_bytes())
-        self.assertNotEqual(ops.old_human_sha, ops.human_sha)
+        # r3 沿用 r2 的程序，两份摘要相同；回滚路径仍须按实际文件摘要恢复。
+        self.assertEqual(ops.old_human_sha, ops.human_sha)
         ops.old_units = {'studiolo-human': b'old human', 'studiolo-agent': b'old agent'}
         ops.new_units = {'studiolo-human': b'new human', 'studiolo-agent': b'new agent'}
         ops.old_shas = {name: c.sha(raw) for name, raw in ops.old_units.items()}
