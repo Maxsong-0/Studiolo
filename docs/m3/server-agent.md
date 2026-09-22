@@ -55,12 +55,25 @@ T-036 将此入口升级为完整批次发布：源端双次稳定捕获，SSH �
 [自动同步运维](replica-operations.md)，完整协议见 [资料同步与新鲜度](replica-freshness.md)。
 它仍不是 ADR-005 的 canonical 同步桥，也不是 ADR-015 向客户端下发规则的推模式。
 
-## 构建匹配源码的运行包（Mac）
+## 构建匹配源码的运行包（打包机 192.168.100.108）
+
+> 2026-09-22 起在打包机 `maxsong@192.168.100.108`（x86_64 原生、Docker、node）上构建，**不在 Mac 本机起 Docker**
+> （本机 Docker 曾拖死守护进程、写满磁盘，见全局纪律 6⑥）。原生 x86_64 也省掉 `--platform linux/amd64` 模拟。
+
+`package-agent.sh` 依赖**真 git 仓库**（`git ls-files` 定源码白名单、`git rev-parse HEAD` 记 base commit、
+`git status --porcelain` 验工作树干净）与 **node**（校验源码清单），所以用 `git bundle` 送整段历史过去，不要只 tar 源码：
 
 ```bash
-mkdir -p target/agent-packages
-bash scripts/package-agent.sh "$PWD/target/agent-packages/<唯一发布名>"
+# Mac：打出要发布的分支
+git bundle create /private/tmp/agent.bundle <分支>
+scp /private/tmp/agent.bundle maxsong@192.168.100.108:~/agent.bundle
+# 108：clone 后打包；发布名必须全新（构建卷按发布名独立，复用会被脚本拒绝）
+ssh maxsong@192.168.100.108 'git clone -q --branch <分支> ~/agent.bundle ~/agent-src && cd ~/agent-src && \
+  mkdir -p target/agent-packages && bash scripts/package-agent.sh "$HOME/agent-src/target/agent-packages/<唯一发布名>"'
 ```
+
+容器以 root 写构建产物，清理 `~/agent-src` 要 `sudo rm -rf`；构建卷 `studiolo-agent-target-amd64-<发布名>` 用 `docker volume rm` 删。
+打包失败时 `cargo test --no-run` 的错误详情写在 `<输出>/build-meta/tests.jsonl`（`--message-format=json`），日志里只有汇总行。
 
 与 `package-preview.sh` 同一套约束：显式源码白名单（含架构守卫要读的 `package-preview.sh`/`test-linux.sh`/`ci.yml`）、
 固定 `rust:1.97.1-bookworm` amd64 镜像 digest、每个发布名独立目标卷、`SHA256SUMS` 覆盖整包；
@@ -70,6 +83,43 @@ bash scripts/package-agent.sh "$PWD/target/agent-packages/<唯一发布名>"
 「cargo 包列表 ＝ Node 段接受的包集合 ⊇ agent 的工作区依赖闭包」与「include 宏目标都在白名单内」由 `scripts/test-agent-package.py` 守卫；
 解析步骤要求 `architecture`、`linux_path_security`、`mcp_contract`、`roots_contract`、`signpost_contract`、`agent_store_contract` 六个目标齐全。
 local-server 等未随包发布的 crate 测试由 CI 与各自运行包负责。
+
+## 安装到生产（系统级单元，当前流程）
+
+T-101（2026-09-22）实际走通的顺序。前提：169 上 `maxsong` 有免密 sudo，108 与 169 之间**不**互信，经 Mac 流式转送（不落 Mac 磁盘）。
+
+```bash
+R=<唯一发布名>
+# 1. 建发布目录并转送整包
+ssh maxsong@192.168.100.169 "umask 077; mkdir ~/.local/share/studiolo-agent-releases/$R"
+ssh maxsong@192.168.100.108 "tar -C \$HOME/agent-src/target/agent-packages/$R/payload -cf - ." | \
+  ssh maxsong@192.168.100.169 "tar -C ~/.local/share/studiolo-agent-releases/$R -xf -"
+# 2. 整包与源码逐文件验签，然后原生测试（任一失败即停止，不安装）
+ssh maxsong@192.168.100.169 "cd ~/.local/share/studiolo-agent-releases/$R && sha256sum --check --quiet SHA256SUMS && \
+  mkdir source && tar -xzf source.tar.gz -C source && cd source && sha256sum --check --quiet ../SOURCE_SHA256SUMS && \
+  bash -c 'sudo prlimit --pid \$\$ --memlock=unlimited:unlimited && bash ../run-agent-tests.sh'"
+# 3. 冻结：测试通过后必须做，否则 agent 用户能改写自己的程序
+ssh maxsong@192.168.100.169 "D=~/.local/share/studiolo-agent-releases/$R; sudo chown -R root:maxsong \$D && \
+  sudo find \$D -type d -exec chmod 0550 {} + && sudo find \$D -type f -exec chmod 0440 {} + && \
+  sudo chmod 0550 \$D/bin/studiolo-agent"
+```
+
+**冻结形态**（与历次发布一致）：全部 `root:maxsong`，目录 550，文件 440，只有 `bin/` 下的程序 550。
+以 maxsong 身份解包后不冻结，得到的是 `maxsong` 属主、可写的运行包——2026-09-22 T-101 就漏过这一步，
+agent 能改写自己的二进制，属加固倒退。
+
+**切换单元**：单元里版本名出现**两处**（`WorkingDirectory` 与 `ExecStart`），用全局替换，先备份：
+`sudo cp <单元> ~/studiolo-agent.service.bak-<旧版>-<日期> && sudo sed -i "s#<旧发布名>#<新发布名>#g" <单元>`，
+再 `daemon-reload`、`restart`，核对 `active` 与 `NRestarts=0`。
+
+**同时改 `--allow` 时分两阶段**：先只换程序（白名单不动）验证新程序；再换白名单时，
+**必须让副本先变新、agent 最后重启一次**——运行中的 agent 遇到清单失配只拒绝内容，
+启动时失配会直接退出，几秒内连撞 systemd 启动限流而 `failed`（T-095 踩过）。
+`--allow` 必须与 `scripts/replica_common.py` 的 `ALLOW` 逐项相等（`scripts/test-agent-package.py` 的
+`DeployAllowlistTests` 守卫模板）；含空格的项目名一律加引号。
+
+**换程序或单元之后**：人侧发行门禁里的 `AGENT_SHA` 与程序权限按现场计算，下一次人侧发行前须重算
+（见 `deploy/blackboard/`，2026-09-22 T-103/T-104）。
 
 ## 历史用户服务安装（T-034，直接副本模式）
 
