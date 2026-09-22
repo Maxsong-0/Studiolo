@@ -7,7 +7,8 @@ import tarfile
 from replica_common import (MAX_ENTRIES, MAX_MANIFEST, MAX_TOTAL, descend, digest,
                             integer, load_json, manifest, path_ok, require, write_file)
 
-MAX_WIRE = 256 * 1024 * 1024
+# 传输包上限随总量上限派生（tar 头、填充与清单的余量），不再单独写死一个会被忘改的数。
+MAX_WIRE = 2 * MAX_TOTAL
 MAX_HEADERS = 2 * (MAX_ENTRIES + 16)
 
 
