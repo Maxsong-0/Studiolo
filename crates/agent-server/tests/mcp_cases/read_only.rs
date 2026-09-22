@@ -5,8 +5,8 @@ async fn initialize_serves_a_budgeted_signpost_and_tools_read_only_inside_the_al
     let instructions = init["result"]["instructions"].as_str().unwrap();
     assert!(instructions.starts_with("# Studiolo 路牌（代次 1"));
     assert!(instructions.contains("类型 claude · 实例 "));
-    assert!(instructions.contains("### 项目/Alpha\n当前版本：v0.3"));
-    assert!(instructions.contains("进行中：T-033 M3 首片（进行中）"));
+    assert!(instructions.contains("- 项目/Alpha："));
+    assert!(instructions.contains("进行中：项目/Alpha · T-033 M3 首片（进行中）"));
     assert!(instructions.contains("1 永远说中文"));
     assert!(instructions.contains("tools：handshake"));
     assert!(!instructions.contains("秘密") && !instructions.contains("Beta"));

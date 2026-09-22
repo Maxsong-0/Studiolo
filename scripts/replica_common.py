@@ -6,7 +6,33 @@ import re
 import stat
 import unicodedata
 
-ALLOW = sorted(["项目/Studiolo", "项目/Tillerwright", "_规则"])
+ALLOW = sorted([
+    # 不含 项目/Semiment-Docs：该项目 199 MB（产品规格书等附件），单独就超过 MAX_TOTAL(128 MB)。
+    # 其余 22 个项目 ＋ _规则 合计约 10 MB。要纳入它需先分离附件或提高 MAX_TOTAL，另行拍板。
+    "_规则",
+    "项目/AI Quota Flow",
+    "项目/AI 网关门户",
+    "项目/Brief 简报站",
+    "项目/Codex源码分析",
+    "项目/DocReader",
+    "项目/Echo",
+    "项目/HR系统",
+    "项目/MindGarden",
+    "项目/NAS 网关",
+    "项目/Perplexity",
+    "项目/Semiment",
+    "项目/Studiolo",
+    "项目/Tillerwright",
+    "项目/brian-web",
+    "项目/hermes",
+    "项目/max-personal-web",
+    "项目/培训 App",
+    "项目/盖章",
+    "项目/研究项目",
+    "项目/绩效",
+    "项目/远程桌面网关",
+    "项目/销售报表",
+])
 MAX_ENTRIES = 25_000
 MAX_MANIFEST = 4 * 1024 * 1024
 MAX_FILE = 16 * 1024 * 1024

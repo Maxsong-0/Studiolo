@@ -16,7 +16,7 @@ from unittest.mock import patch
 sys.dont_write_bytecode = True
 from replica_capture import capture
 from replica_client import accept_response
-from replica_common import Invalid, digest, encode
+from replica_common import ALLOW, Invalid, digest, encode
 
 SCRIPT = Path(__file__).absolute().with_name("sync-agent-vault.sh")
 
@@ -31,9 +31,9 @@ class SyncAgentVaultTests(unittest.TestCase):
         self.root = Path(self.temp.name)
         self.vault = self.root / "Owner's Vault"
         self.project = self.vault / "项目/Studiolo"
-        self.project.mkdir(parents=True)
-        (self.vault / "_规则").mkdir()
-        (self.vault / "项目/Tillerwright").mkdir()
+        # 同 test-replica-receiver：目录清单从 ALLOW 派生，扩白名单时无需改夹具。
+        for allow in ALLOW:
+            (self.vault / allow).mkdir(parents=True, exist_ok=True)
         (self.project / "note.md").write_text("private fixture text", encoding="utf-8")
         self.server = self.root / "server's copy"
         self.state = self.root / "client-state"

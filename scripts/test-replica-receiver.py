@@ -15,7 +15,7 @@ import unittest
 
 sys.dont_write_bytecode = True
 from replica_capture import archive, capture
-from replica_common import encode
+from replica_common import ALLOW, encode
 from replica_store import Store
 
 RECEIVER = Path(__file__).absolute().with_name("replica_receiver.py")
@@ -44,9 +44,10 @@ class ReceiverTests(unittest.TestCase):
         self.root = Path(self.temp.name)
         self.vault = self.root / "vault"
         self.project = self.vault / "项目/Studiolo"
-        self.project.mkdir(parents=True)
-        (self.vault / "_规则").mkdir()
-        (self.vault / "项目/Tillerwright").mkdir()
+        # 捕获端对 ALLOW 里每个目录都 open_dir，缺一个即整批失败；
+        # 从 ALLOW 派生而不是逐个硬编码，避免扩白名单时漏建。
+        for allow in ALLOW:
+            (self.vault / allow).mkdir(parents=True, exist_ok=True)
         (self.project / "note.md").write_text("private fixture text")
         (self.project / "empty").mkdir()
         self.server = self.root / "server"

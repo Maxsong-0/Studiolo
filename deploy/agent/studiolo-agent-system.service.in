@@ -14,7 +14,7 @@ PrivateUsers=no
 WorkingDirectory=/home/maxsong/.local/share/studiolo-agent-releases/@RELEASE@
 # 白名单完整批次由 scripts/sync-agent-vault.sh 推送；先完成首批同步再启用本单元。
 # 私有库/账本沿用既有目录；副本每次读取完整验证，超过 300 秒不再声称新鲜。
-ExecStart=/home/maxsong/.local/share/studiolo-agent-releases/@RELEASE@/bin/studiolo-agent serve --replica-root /home/maxsong/.local/share/studiolo-agent-replica --replica-max-age-secs 300 --allow 项目/Studiolo --allow 项目/Tillerwright --allow _规则 --data /home/maxsong/.local/share/studiolo-agent --index-cache /home/maxsong/.local/share/studiolo-agent-index --port 4400
+ExecStart=/home/maxsong/.local/share/studiolo-agent-releases/@RELEASE@/bin/studiolo-agent serve --replica-root /home/maxsong/.local/share/studiolo-agent-replica --replica-max-age-secs 300 --allow "_规则" --allow "项目/AI Quota Flow" --allow "项目/AI 网关门户" --allow "项目/Brief 简报站" --allow "项目/Codex源码分析" --allow "项目/DocReader" --allow "项目/Echo" --allow "项目/HR系统" --allow "项目/MindGarden" --allow "项目/NAS 网关" --allow "项目/Perplexity" --allow "项目/Semiment" --allow "项目/Studiolo" --allow "项目/Tillerwright" --allow "项目/brian-web" --allow "项目/hermes" --allow "项目/max-personal-web" --allow "项目/培训 App" --allow "项目/盖章" --allow "项目/研究项目" --allow "项目/绩效" --allow "项目/远程桌面网关" --allow "项目/销售报表" --data /home/maxsong/.local/share/studiolo-agent --index-cache /home/maxsong/.local/share/studiolo-agent-index --port 4400
 Restart=on-failure
 RestartSec=3
 KillSignal=SIGTERM

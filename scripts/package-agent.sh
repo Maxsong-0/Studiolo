@@ -50,6 +50,9 @@ STUDIOLO_INPUTS=(
   # 随包测试在**编译期** `include_str!` 的虚构夹具（workbench 的 Cargo 依赖与项目运作图契约）。
   # 缺了它们 `cargo test --no-run` 直接编译失败；新增同类引用由 test-agent-package.py 的守卫拦住。
   examples/m3-cargo-dependencies examples/m3-project-operations
+  # runner-adapter 用 include_bytes! 嵌入 deploy/runner/{launch,rg_probe}.py 做完整性校验；
+  # 不在白名单里，导出的源码子集就缺这两个文件，整包构建必然失败。
+  deploy/runner
 )
 git ls-files -z -- "${STUDIOLO_INPUTS[@]}" > "$STUDIOLO_OUT/payload/source-files"
 node - "$STUDIOLO_ROOT" "$STUDIOLO_OUT/payload/source-files" "${STUDIOLO_INPUTS[@]}" <<'NODE_SOURCE'
@@ -60,7 +63,7 @@ const names = fs.readFileSync(list, 'utf8').split('\0');
 if (names.pop() !== '' || names.length === 0 || new Set(names).size !== names.length) {
   throw new Error('源码清单为空、不完整或包含重复项');
 }
-const directories = new Set(['crates', 'deploy/agent', 'docs/m3',
+const directories = new Set(['crates', 'deploy/agent', 'deploy/runner', 'docs/m3',
   'examples/m3-cargo-dependencies', 'examples/m3-project-operations']);
 for (const input of inputs) {
   if (directories.has(input) ? !names.some(name => name.startsWith(input + '/')) : !names.includes(input)) {

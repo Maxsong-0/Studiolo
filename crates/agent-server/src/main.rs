@@ -34,9 +34,12 @@ async fn main() -> std::process::ExitCode {
         return std::process::ExitCode::FAILURE;
     }
     // Unix 非 UTF-8 参数不回显原值；参数数量有固定预算。
+    // 预算随白名单规模上调（T-101）：每个白名单项占两个参数（--allow 与值），
+    // 24 项即 48 个，加上 replica-root/max-age/data/index-cache/port/policy 等约 13 个。
+    // 80 可容纳约 33 个白名单项；上限本身保留，用于挡住异常长的参数表。
     let args = match std::env::args_os()
         .skip(1)
-        .take(40)
+        .take(82)
         .map(|value| {
             value
                 .into_string()
@@ -44,7 +47,7 @@ async fn main() -> std::process::ExitCode {
         })
         .collect::<Result<Vec<_>, _>>()
     {
-        Ok(args) if args.len() <= 38 => args,
+        Ok(args) if args.len() <= 80 => args,
         Ok(_) => {
             eprintln!("参数数量超过固定预算");
             return std::process::ExitCode::FAILURE;

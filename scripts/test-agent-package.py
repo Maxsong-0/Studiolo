@@ -170,6 +170,36 @@ class SourceManifestTests(unittest.TestCase):
 
 
 
+class DeployAllowlistTests(unittest.TestCase):
+    """部署模板里的 --allow 集合必须与 replica_common.ALLOW 逐项相等。
+
+    Mac 捕获端按 ALLOW 生成清单，agent 启动时要求清单的 allow 与 --allow 严格相等
+    （crates/supply/src/replica/verify.rs 的 manifest_allowlist）；两边任一不同，服务即拒绝全部内容。
+    2026-09-22 T-101 排除 项目/Semiment-Docs 时只改了 ALLOW，五份模板仍是 24 项——
+    按模板部署就会启动失败。模板清单自动发现，不硬编码：硬编码的文件清单正是反复漏改的根源。
+    """
+
+    def test_every_deploy_template_allows_exactly_the_replica_allowlist(self):
+        import re
+        root = SCRIPTS.parent
+        sys.path.insert(0, str(SCRIPTS))
+        from replica_common import ALLOW
+        token = re.compile(r'--allow (?:"([^"]+)"|(\S+))')
+        checked, mismatched = 0, []
+        for path in sorted((root / "deploy").rglob("*")):
+            if not path.is_file() or path.suffix in {".py", ".md"}:
+                continue
+            text = path.read_text(encoding="utf-8", errors="replace")
+            found = [quoted or bare for quoted, bare in token.findall(text)]
+            if not found:
+                continue
+            checked += 1
+            if sorted(found) != sorted(ALLOW):
+                mismatched.append(f"{path.relative_to(root).as_posix()}: {len(found)} 项")
+        self.assertGreaterEqual(checked, 5, "没扫到任何带 --allow 的部署模板，发现逻辑失效")
+        self.assertEqual(mismatched, [], f"部署模板的 --allow 与 ALLOW（{len(ALLOW)} 项）不一致")
+
+
 class CompileTimeInputsTests(unittest.TestCase):
     """随包测试在编译期读的文件必须在源码白名单里。
 
@@ -184,8 +214,12 @@ class CompileTimeInputsTests(unittest.TestCase):
         block = lambda name: PACKAGE.split(name + "=(\n", 1)[1].split("\n)", 1)[0]
         inputs = [word for line in block("STUDIOLO_INPUTS").splitlines()
                   if not line.strip().startswith("#") for word in line.split()]
-        crates = ["crates/" + (name.removeprefix("studiolo-") if name != "studiolo" else name)
-                  for name in re.findall(r"-p (studiolo(?:-[a-z-]+)?)", block("STUDIOLO_TEST_PACKAGES"))]
+        # 扫全部 crate，不只 STUDIOLO_TEST_PACKAGES 点名的那几个：被点名的包会把**依赖**一起编译，
+        # 依赖里的 include 宏同样决定整包能否构建。2026-09-22 T-101 打包失败即此——
+        # runner-adapter 只是 studiolo 的依赖、不在测试包列表里，它 include_bytes! 的
+        # deploy/runner/{launch,rg_probe}.py 不在白名单内，守卫却扫不到。
+        crates = sorted("crates/" + d.name for d in (root / "crates").iterdir()
+                        if (d / "Cargo.toml").is_file())
         self.assertGreaterEqual(len(crates), 9)
         macro = re.compile(r'include_(?:str|bytes)!\(\s*"([^"]+)"\s*,?\s*\)')
         checked, uncovered = 0, []
@@ -201,6 +235,24 @@ class CompileTimeInputsTests(unittest.TestCase):
                         uncovered.append(f"{source.relative_to(root).as_posix()} -> {relative}")
         self.assertGreaterEqual(checked, 5, "守卫没有扫到任何 include 宏，正则或目录推导失效")
         self.assertEqual(uncovered, [], "随包测试编译期依赖的文件不在 package-agent.sh 的源码白名单内")
+
+    def test_directory_entries_of_the_whitelist_are_known_to_the_node_check(self):
+        """`STUDIOLO_INPUTS` 里的目录条目必须同时登记进 node 校验的 directories 集合。
+
+        脚本有两份清单：INPUTS 决定导出什么，node 的 directories 决定某条目按目录还是按单文件校验。
+        只改前者，node 会把新目录当成文件而报「白名单文件尚未跟踪或目录为空」——
+        2026-09-22 T-101 补 deploy/runner 时就先后踩了这两半。
+        """
+        import re
+        root = SCRIPTS.parent
+        block = lambda name: PACKAGE.split(name + "=(\n", 1)[1].split("\n)", 1)[0]
+        inputs = [word for line in block("STUDIOLO_INPUTS").splitlines()
+                  if not line.strip().startswith("#") for word in line.split()]
+        literal = re.search(r"const directories = new Set\(\[(.*?)\]\);", PACKAGE, re.S).group(1)
+        known = set(re.findall(r"'([^']+)'", literal))
+        missing = [entry for entry in inputs
+                   if (root / entry).is_dir() and entry not in known]
+        self.assertEqual(missing, [], "白名单里的目录未登记进 node 的 directories 集合")
 
     def packaged_crates(self):
         import re

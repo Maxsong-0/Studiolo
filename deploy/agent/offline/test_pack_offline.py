@@ -12,6 +12,9 @@ import sqlite3
 import stat
 import subprocess
 import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "scripts"))
+from replica_common import ALLOW  # noqa: E402
 import tempfile
 import time
 import types
@@ -53,13 +56,16 @@ class OfflineTests(unittest.TestCase):
             directory.mkdir(mode=0o700)
         self.write(self.replica / "sync.lock", b"")
         raw = b"fictional note\n"
-        manifest = {"schema_version": 1, "allow": ["_规则", "项目/Studiolo", "项目/Tillerwright"], "entries": [
+        manifest = {"schema_version": 1, "allow": list(ALLOW), "entries": [
             {"path": "项目/Studiolo/note.md", "kind": "file", "bytes": len(raw), "sha256": hashlib.sha256(raw).hexdigest()}]}
         encoded = json.dumps(manifest, ensure_ascii=False).encode()
         for generation in ("a" * 32, "b" * 32):
             release = self.replica / "releases" / generation
-            for suffix in ("", "vault", "vault/_规则", "vault/项目", "vault/项目/Studiolo", "vault/项目/Tillerwright"):
+            for suffix in ("", "vault"):
                 (release / suffix).mkdir(mode=0o700)
+            # ALLOW 里每个目录都要真实存在，否则校验整批失败；从同一来源派生避免漏建。
+            for allow in ALLOW:
+                (release / "vault" / allow).mkdir(mode=0o700, parents=True, exist_ok=True)
             self.write(release / "manifest.json", encoded)
             self.write(release / "vault/项目/Studiolo/note.md", raw)
         now = time.time_ns() // 1_000_000
