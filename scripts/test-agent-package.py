@@ -170,6 +170,36 @@ class SourceManifestTests(unittest.TestCase):
 
 
 
+class DeployAllowlistTests(unittest.TestCase):
+    """部署模板里的 --allow 集合必须与 replica_common.ALLOW 逐项相等。
+
+    Mac 捕获端按 ALLOW 生成清单，agent 启动时要求清单的 allow 与 --allow 严格相等
+    （crates/supply/src/replica/verify.rs 的 manifest_allowlist）；两边任一不同，服务即拒绝全部内容。
+    2026-09-22 T-101 排除 项目/Semiment-Docs 时只改了 ALLOW，五份模板仍是 24 项——
+    按模板部署就会启动失败。模板清单自动发现，不硬编码：硬编码的文件清单正是反复漏改的根源。
+    """
+
+    def test_every_deploy_template_allows_exactly_the_replica_allowlist(self):
+        import re
+        root = SCRIPTS.parent
+        sys.path.insert(0, str(SCRIPTS))
+        from replica_common import ALLOW
+        token = re.compile(r'--allow (?:"([^"]+)"|(\S+))')
+        checked, mismatched = 0, []
+        for path in sorted((root / "deploy").rglob("*")):
+            if not path.is_file() or path.suffix in {".py", ".md"}:
+                continue
+            text = path.read_text(encoding="utf-8", errors="replace")
+            found = [quoted or bare for quoted, bare in token.findall(text)]
+            if not found:
+                continue
+            checked += 1
+            if sorted(found) != sorted(ALLOW):
+                mismatched.append(f"{path.relative_to(root).as_posix()}: {len(found)} 项")
+        self.assertGreaterEqual(checked, 5, "没扫到任何带 --allow 的部署模板，发现逻辑失效")
+        self.assertEqual(mismatched, [], f"部署模板的 --allow 与 ALLOW（{len(ALLOW)} 项）不一致")
+
+
 class CompileTimeInputsTests(unittest.TestCase):
     """随包测试在编译期读的文件必须在源码白名单里。
 
