@@ -22,33 +22,75 @@ UNIT_ROOT = Path('/etc/systemd/system')
 NAMES = ('studiolo-human', 'studiolo-agent')
 
 
+# manifest 的闭集：r2 那一版没有 web_source_commit，r3 起必须有。
+MANIFEST_KEYS = {'build', 'bootstrap_source_commit', 'human_program_source_commit',
+                 'web_source_commit', 'r8_manifest_sha256', 'assembly', 'before_units', 'files'}
+
+
+def verify_previous(a, c):
+    """上一发行也是黑板形状的 manifest，用同一闭集逐项核验；不沿用 r8 时代的 verifier。"""
+    root = Path(a.OLD_RELEASE)
+    raw = c.read(root / 'manifest.json', c.UID, 0o600)
+    c.require(c.sha(raw) == a.R8_MANIFEST_SHA)
+    manifest = c.document(raw)
+    c.require(MANIFEST_KEYS - {'web_source_commit'} <= set(manifest) <= MANIFEST_KEYS)
+    c.require(manifest['assembly'] == a.ASSEMBLY and isinstance(manifest['build'], str))
+    for key in ('bootstrap_source_commit', 'human_program_source_commit'):
+        c.require(isinstance(manifest[key], str) and re.fullmatch('[0-9a-f]{40}', manifest[key]))
+    files = manifest['files']
+    c.require(isinstance(files, dict) and files)
+    c.require(any(name.startswith(a.WEB_PREFIX) for name in files))
+    directories = set()
+    for name, item in files.items():
+        path = c.relative(name)
+        c.require(name != 'manifest.json')
+        c.require(isinstance(item, dict) and set(item) == {'bytes', 'sha256'})
+        c.require(type(item['bytes']) is int and 0 <= item['bytes'] <= c.MAX_FILE)
+        c.require(isinstance(item['sha256'], str) and re.fullmatch('[0-9a-f]{64}', item['sha256']))
+        directories.update(p.as_posix() for p in path.parents if str(p) != '.')
+    actual, dirs = c.scan(root, c.UID)
+    c.require(dirs == directories and set(actual) == set(files) | {'manifest.json'})
+    c.require(all(actual[name] == item for name, item in files.items()))
+    c.require(c.read(root / 'manifest.json', c.UID, 0o600) == raw)
+    return manifest
+
+
 def verify_candidate(a, c, expected_sha):
-    """新 manifest 使用独立闭集，保留 r8 verifier 的全部原约束。"""
+    """候选包＝上一发行换掉整个 web/；其余逐字节相同，程序来源必须照抄不得冒称新构建。"""
     c.require(isinstance(expected_sha, str) and re.fullmatch('[0-9a-f]{64}', expected_sha))
     root = Path(a.RELEASE)
-    old = c.verify(Path(a.OLD_RELEASE), a.R8_MANIFEST_SHA)
+    old = verify_previous(a, c)
     raw = c.read(root / 'manifest.json', c.UID, 0o600)
     c.require(c.sha(raw) == expected_sha)
     manifest = c.document(raw)
-    c.require(set(manifest) == {'build', 'bootstrap_source_commit', 'human_program_source_commit',
-                               'r8_manifest_sha256', 'assembly', 'before_units', 'files'})
-    c.require(manifest['build'] == a.BUILD and manifest['assembly'] == 'canonical-board-consumer-only')
+    c.require(set(manifest) == MANIFEST_KEYS)
+    c.require(manifest['build'] == a.BUILD and manifest['assembly'] == a.ASSEMBLY)
     c.require(re.fullmatch('[0-9a-f]{40}', manifest['bootstrap_source_commit']))
     c.require(isinstance(manifest['human_program_source_commit'], str)
               and re.fullmatch('[0-9a-f]{40}', manifest['human_program_source_commit']))
+    # 网页必须能追到构建它的提交；程序沿用上一发行，照抄其来源，不冒称新构建。
+    c.require(isinstance(manifest['web_source_commit'], str)
+              and re.fullmatch('[0-9a-f]{40}', manifest['web_source_commit']))
+    c.require(manifest['bootstrap_source_commit'] == old['bootstrap_source_commit'])
+    c.require(manifest['human_program_source_commit'] == old['human_program_source_commit'])
     c.require(manifest['r8_manifest_sha256'] == a.R8_MANIFEST_SHA)
     c.require(manifest['before_units'] == dict(zip(NAMES, (a.HUMAN_SHA, a.AGENT_SHA))))
     files = manifest['files']
-    additions = {'studiolo-agent.service', 'bin/studiolo-vault-admin'}
-    changed = {'launch-human.py', 'studiolo-human.service', 'bin/studiolo-local-server'}
-    c.require(isinstance(files, dict) and set(files) == set(old['files']) | additions)
+    c.require(isinstance(files, dict))
+    # 这三份按现场重新派生：启动器与人侧单元改发行路径，agent 单元照抄现场
+    # （读取范围可能在两次发行之间被 L3 改过，必须以现场为准而不是上一发行的存档）。
+    changed = {'launch-human.py', 'studiolo-human.service', 'studiolo-agent.service'}
+    old_web = {name for name in old['files'] if name.startswith(a.WEB_PREFIX)}
+    new_web = {name for name in files if name.startswith(a.WEB_PREFIX)}
+    c.require(new_web and a.WEB_PREFIX + 'index.html' in new_web)
+    c.require(set(files) == (set(old['files']) - old_web) | new_web)
     directories = set()
     for name, item in files.items():
         path = c.relative(name)
         c.require(isinstance(item, dict) and set(item) == {'bytes', 'sha256'})
         c.require(type(item['bytes']) is int and 0 <= item['bytes'] <= c.MAX_FILE)
         c.require(isinstance(item['sha256'], str) and re.fullmatch('[0-9a-f]{64}', item['sha256']))
-        if name not in additions | changed:
+        if name not in changed and name not in new_web:
             c.require(item == old['files'][name])
         directories.update(p.as_posix() for p in path.parents if str(p) != '.')
     c.inspect(root, c.UID, 0o700, True)
@@ -65,6 +107,23 @@ def verify_candidate(a, c, expected_sha):
     return manifest
 
 
+# 黑板数据目录只允许出现控制库本体及其 WAL/SHM；停服时 SQLite 可能收掉后两个。
+BOARD_FILES = {'control.sqlite3', 'control.sqlite3-wal', 'control.sqlite3-shm'}
+
+
+def board_files(c, board):
+    """起点是已在跑黑板的发行：目录里必须有控制库、不得有别的东西，每个文件私有且单链接。
+
+    r8→r2 那一次是首建，当时要求这个目录为空；r2 起黑板已接单，库里是真实的认领与回执，
+    因此「为空」会把每一次后续发行挡在预检，而「随便有什么都行」又会放过被篡改的目录。
+    本函数在预检与装单元前各跑一次（binding 被调用两次），停服后 WAL/SHM 消失同样通过。
+    """
+    names = {path.name for path in board.iterdir()}
+    c.require('control.sqlite3' in names and names <= BOARD_FILES)
+    for name in sorted(names):
+        c.inspect(board / name, c.UID, 0o600)
+
+
 def binding(c, a):
     """逐项核验 Broker 的不可变配对；不打开写者，不补写任何目录。"""
     vault, writer, board = [Path(p) for p in (a.VAULT, a.WRITER, a.BOARD)]
@@ -75,7 +134,7 @@ def binding(c, a):
     for left in (vault, writer, board):
         for right in (vault, writer, board):
             c.require(left == right or not left.is_relative_to(right))
-    c.require(not any(board.iterdir()))
+    board_files(c, board)
     control = vault / '.workbench'
     left = c.document(c.read(control / 'broker-binding.json', c.UID, 0o600))
     right = c.document(c.read(writer / 'broker-binding.json', c.UID, 0o600))
@@ -116,7 +175,7 @@ class Operations:
         before = c.inspect(path, 0, 0o600)
         c.require(c.mark(os.fstat(self.lock)) == c.mark(before))
         fcntl.flock(self.lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        self.record = Path(tempfile.mkdtemp(prefix='board-r2-', dir=RECORDS))
+        self.record = Path(tempfile.mkdtemp(prefix='board-' + self.build.rsplit('-', 1)[1] + '-', dir=RECORDS))
         c.inspect(self.record, 0, 0o700, True)
 
     def worker(self, mode, descriptors=()):
@@ -240,7 +299,9 @@ class Operations:
         c.inspect(Path('/etc/credstore.encrypted/studiolo-human-totp-v2'), 0, 0o600)
         self.before = self.worker('binding')
         self.broker_binding = binding(c, a)
-        c.require(not os.path.lexists(a.BOARD_SOCKET))
+        # 起点是已经在跑黑板的 r2：socket 此刻必须是活的那一个（类型/属主/权限/链接数都核）。
+        # 「必须不存在」的那一条留在停服之后，见 stopped()——那才是切换前的真正保证。
+        self.board_ready()
         starts = [line[len('ExecStart='):] for line in self.old_units['studiolo-agent'].decode().splitlines()
                   if line.startswith('ExecStart=')]
         c.require(len(starts) == 1)
