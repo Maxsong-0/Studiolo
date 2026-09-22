@@ -184,8 +184,12 @@ class CompileTimeInputsTests(unittest.TestCase):
         block = lambda name: PACKAGE.split(name + "=(\n", 1)[1].split("\n)", 1)[0]
         inputs = [word for line in block("STUDIOLO_INPUTS").splitlines()
                   if not line.strip().startswith("#") for word in line.split()]
-        crates = ["crates/" + (name.removeprefix("studiolo-") if name != "studiolo" else name)
-                  for name in re.findall(r"-p (studiolo(?:-[a-z-]+)?)", block("STUDIOLO_TEST_PACKAGES"))]
+        # 扫全部 crate，不只 STUDIOLO_TEST_PACKAGES 点名的那几个：被点名的包会把**依赖**一起编译，
+        # 依赖里的 include 宏同样决定整包能否构建。2026-09-22 T-101 打包失败即此——
+        # runner-adapter 只是 studiolo 的依赖、不在测试包列表里，它 include_bytes! 的
+        # deploy/runner/{launch,rg_probe}.py 不在白名单内，守卫却扫不到。
+        crates = sorted("crates/" + d.name for d in (root / "crates").iterdir()
+                        if (d / "Cargo.toml").is_file())
         self.assertGreaterEqual(len(crates), 9)
         macro = re.compile(r'include_(?:str|bytes)!\(\s*"([^"]+)"\s*,?\s*\)')
         checked, uncovered = 0, []

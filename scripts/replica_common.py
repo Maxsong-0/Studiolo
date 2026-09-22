@@ -7,6 +7,8 @@ import stat
 import unicodedata
 
 ALLOW = sorted([
+    # 不含 项目/Semiment-Docs：该项目 199 MB（产品规格书等附件），单独就超过 MAX_TOTAL(128 MB)。
+    # 其余 22 个项目 ＋ _规则 合计约 10 MB。要纳入它需先分离附件或提高 MAX_TOTAL，另行拍板。
     "_规则",
     "项目/AI Quota Flow",
     "项目/AI 网关门户",
@@ -19,7 +21,6 @@ ALLOW = sorted([
     "项目/NAS 网关",
     "项目/Perplexity",
     "项目/Semiment",
-    "项目/Semiment-Docs",
     "项目/Studiolo",
     "项目/Tillerwright",
     "项目/brian-web",
