@@ -428,6 +428,8 @@ class Files(unittest.TestCase):
             if key != 'marker':
                 path.mkdir(mode=0o700, parents=True, exist_ok=True)
         board.mkdir(mode=0o700)
+        # 起点是已在跑的黑板：目录里有控制库（r2 起的现场样子）。
+        self.write(board / 'control.sqlite3', b'fictional board')
         identifier = 'f0a2d4b6-5588-4411-9922-66778899aabb'
         self.write(paths['marker'], json.dumps({'format_version': 1, 'vault_uuid': identifier}).encode())
         doc = dict(format_version=1, pair_id=identifier, vault_uuid=identifier)
@@ -439,9 +441,29 @@ class Files(unittest.TestCase):
         self.write(writer / 'writer-state.json', b'fictional journal')
         return a
 
-    def test_initialized_binding_and_empty_board_accepted(self):
+    def test_running_board_with_only_its_control_database_accepted(self):
         a = self.broker()
+        board = Path(a.BOARD)
         self.assertEqual(ops_module.binding(c, a)['format_version'], 1)
+        # 在跑时带 WAL/SHM，停服后 SQLite 可能把它们收掉：两种样子都得认。
+        for name in ('control.sqlite3-wal', 'control.sqlite3-shm'):
+            self.write(board / name, b'fictional journal')
+        self.assertEqual(ops_module.binding(c, a)['format_version'], 1)
+
+    def test_board_without_control_database_or_with_strangers_rejected(self):
+        a = self.broker()
+        board = Path(a.BOARD)
+        (board / 'control.sqlite3').unlink()
+        with self.subTest(case='空目录（首建的样子，已不是本次起点）'), self.assertRaises(ValueError):
+            ops_module.binding(c, a)
+        self.write(board / 'control.sqlite3', b'fictional board')
+        self.write(board / 'existing', b'preserve')
+        with self.subTest(case='多出陌生文件'), self.assertRaises(ValueError):
+            ops_module.binding(c, a)
+        (board / 'existing').unlink()
+        (board / 'control.sqlite3').chmod(0o644)
+        with self.subTest(case='控制库权限变宽'), self.assertRaises(ValueError):
+            ops_module.binding(c, a)
 
     def test_missing_writer_binding_rejected_without_creating_it(self):
         a = self.broker()
@@ -451,12 +473,8 @@ class Files(unittest.TestCase):
             ops_module.binding(c, a)
         self.assertFalse(path.exists())
 
-    def test_wrong_inode_or_nonempty_board_rejected(self):
+    def test_wrong_inode_rejected(self):
         a = self.broker()
-        self.write(Path(a.BOARD) / 'existing', b'preserve')
-        with self.assertRaises(ValueError):
-            ops_module.binding(c, a)
-        (Path(a.BOARD) / 'existing').unlink()
         for path in (Path(a.VAULT) / '.workbench/broker-binding.json', Path(a.WRITER) / 'broker-binding.json'):
             doc = json.loads(path.read_bytes())
             doc['canonical']['ino'] += 1
