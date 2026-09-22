@@ -10,9 +10,10 @@ export function watchSession(client: SessionClient) {
   const storage = (event: StorageEvent) => {
     if (event.key === channelName) client.changed();
   };
+  // 切标签、切应用只触发「够一天了再核对」；隐藏时不再清内容（用户 2026-09-22 拍板，ADR-022）。
+  // 页面真正离开（pagehide）与从往返缓存恢复（pageshow persisted）仍按原契约暂停与重新核对。
   const visibility = () => {
-    if (document.visibilityState === 'hidden') client.suspend();
-    else client.resume();
+    if (document.visibilityState === 'visible') client.revisit();
   };
   const pageshow = (event: PageTransitionEvent) => {
     if (event.persisted) client.resume();
@@ -29,7 +30,7 @@ export function watchSession(client: SessionClient) {
   });
   if (channel) channel.onmessage = () => client.changed();
   else window.addEventListener('storage', storage);
-  window.addEventListener('focus', client.resume);
+  window.addEventListener('focus', client.revisit);
   window.addEventListener('pageshow', pageshow);
   window.addEventListener('pagehide', client.suspend);
   document.addEventListener('visibilitychange', visibility);
@@ -37,7 +38,7 @@ export function watchSession(client: SessionClient) {
     channel?.close();
     client.onChange(null);
     window.removeEventListener('storage', storage);
-    window.removeEventListener('focus', client.resume);
+    window.removeEventListener('focus', client.revisit);
     window.removeEventListener('pageshow', pageshow);
     window.removeEventListener('pagehide', client.suspend);
     document.removeEventListener('visibilitychange', visibility);

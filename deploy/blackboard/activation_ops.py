@@ -20,6 +20,8 @@ AUTH = '/home/maxsong/.local/share/studiolo-human-auth'
 AUDIT = '/home/maxsong/.local/share/studiolo-human-audit'
 UNIT_ROOT = Path('/etc/systemd/system')
 NAMES = ('studiolo-human', 'studiolo-agent')
+# 已批准的 agent 程序权限：r2 时代的 root 冻结形态，与 T-101 起的 UID1000 私有形态。
+AGENT_MODES = (0o550, 0o700)
 
 
 # manifest 的闭集：r2 那一版没有 web_source_commit，r3 起必须有。
@@ -233,8 +235,12 @@ class Operations:
             os.close(fd)
 
     def read_agent(self):
-        # 既有 agent 发行包可由 root 冻结；不改变其所有权或文件。
-        return self.trusted_read(self.agent_binary, 0o550)
+        # 只认已批准的两种 agent 程序形态，不改变其所有权或文件：r2 时代 root 冻结的
+        # root:maxsong 0550，以及 T-101（2026-09-22）起 agent 发布线装的 UID1000 私有 0700。
+        # 属主、无组/他人写、单链接仍由 trusted_read 逐项核验。
+        mode = stat.S_IMODE(self.agent_binary.lstat().st_mode)
+        self.c.require(mode in AGENT_MODES)
+        return self.trusted_read(self.agent_binary, mode)
 
     def agent_http_ready(self, deadline):
         """固定 loopback、无凭据 HEAD：不下载正文，不跟随跳转或读取代理配置。"""

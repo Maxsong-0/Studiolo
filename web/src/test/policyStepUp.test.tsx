@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { beforeEach, expect, it, vi } from 'vitest';
 import { PolicyBoundary } from '../PolicyBoundary';
 import { SessionBoundary } from '../SessionBoundary';
+import { REVISIT_INTERVAL_MS } from '../sessionClient';
 import { ownerScope } from './canonicalFixtures';
 import { jsonResponse } from './fixtures';
 import { csrf, pair, sessionResponse } from './sessionFixtures';
@@ -316,8 +317,15 @@ it('本入口没有 One-time Code 路径时，窗口直说不能发布，不给�
   expect(activations).toHaveLength(1);
 });
 
-/** 真实的切走再回来：页面隐藏触发 suspend，恢复可见触发 resume → 重新核对 → 整棵工作台重挂。 */
-async function leaveAndReturn() {
+/**
+ * 真实的切走再回来。一天内回来不再核对（ADR-022）；要走到「重新核对→整页重挂」
+ * 这条路，先把时钟拨过一天。
+ */
+async function leaveAndReturn({ afterADay = false } = {}) {
+  if (afterADay)
+    vi.spyOn(Date, 'now').mockReturnValue(
+      Date.now() + REVISIT_INTERVAL_MS + 1000,
+    );
   for (const state of ['hidden', 'visible'] as const) {
     Object.defineProperty(document, 'visibilityState', {
       configurable: true,
@@ -329,13 +337,26 @@ async function leaveAndReturn() {
   }
 }
 
-it('认证窗口开着时切走再回来：窗口和待重试的发布一起作废，绝不在没人输码时发布', async () => {
+it('认证窗口开着时切到验证器读码再回来：一天内窗口原样留着，没人输码就不发布', async () => {
+  const user = await openPolicy();
+  activateReply = () => denied();
+  const dialog = await publish(user);
+
+  await leaveAndReturn();
+
+  // 不再核对、不重挂：还是同一个窗口，待重试的发布仍等人输码。
+  expect(screen.getByRole('dialog')).toBe(dialog);
+  expect(within(dialog).getByLabelText('验证码')).toBeInTheDocument();
+  expect(stepUps).toHaveLength(0);
+  expect(activations).toHaveLength(1);
+});
+
+it('超过一天才回来：会话重新核对、整页重挂，窗口和待重试的发布一起作废，绝不自己发布', async () => {
   const user = await openPolicy();
   activateReply = () => denied();
   await publish(user);
 
-  // 会话重新核对会按 revision 重挂整棵工作台（T-021 的安全契约，不在本任务里改）。
-  await leaveAndReturn();
+  await leaveAndReturn({ afterADay: true });
 
   await screen.findByRole('table', { name: '现行各项' });
   expect(screen.queryByRole('dialog')).not.toBeInTheDocument();

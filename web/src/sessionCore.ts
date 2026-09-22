@@ -26,6 +26,8 @@ export class SessionCore {
   protected pendingFactor = false;
   protected factors: FactorState | null | undefined;
   protected factorSequence = 0;
+  /** 最近一次确认会话有效的时刻；切回页面时据此判断要不要再核对。 */
+  protected checkedAt = 0;
   protected listeners = new Set<() => void>();
   protected announce: (() => void) | null = null;
 
@@ -70,6 +72,7 @@ export class SessionCore {
   protected accept(value: unknown) {
     const { session, csrf, ownerScope } = sessionPair(value);
     this.csrf = csrf;
+    this.checkedAt = Date.now();
     this.update({
       phase: 'ready',
       session,

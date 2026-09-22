@@ -300,13 +300,17 @@ class Files(unittest.TestCase):
             with self.assertRaises(ValueError):
                 self.check(a, c.sha(raw))
 
-    def test_agent_read_accepts_only_approved_0550_mode(self):
+    def test_agent_read_accepts_only_approved_modes(self):
         binary = self.root / 'studiolo-agent'
         self.write(binary, b'fictional immutable agent', 0o550)
         ops = Operations('0' * 64, assembly, c, Mock(), legacy)
         ops.agent_binary = binary
-        self.assertEqual(ops.read_agent(), b'fictional immutable agent')
-        for mode in (0o755, 0o750, 0o555, 0o500, 0o440, 0o570):
+        # r2 时代 root 冻结的 0550，与 T-101 起 UID1000 私有的 0700。
+        for mode in (0o550, 0o700):
+            with self.subTest(mode=oct(mode)):
+                binary.chmod(mode)
+                self.assertEqual(ops.read_agent(), b'fictional immutable agent')
+        for mode in (0o755, 0o750, 0o555, 0o500, 0o440, 0o570, 0o770, 0o707, 0o600):
             with self.subTest(mode=oct(mode)):
                 binary.chmod(mode)
                 with self.assertRaises(ValueError):

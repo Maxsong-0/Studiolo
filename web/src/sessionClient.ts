@@ -8,6 +8,12 @@ import { SessionCore } from './sessionCore';
 import type { Replacement, Restoration } from './canonicalModel';
 import type { FileOperationRequest } from './fileOperationModel';
 
+/**
+ * 切回页面时再核对会话的最短间隔：一天（用户 2026-09-22 拍板，见 vault ADR-022）。
+ * 服务端对每个请求照旧逐个授权，任何 401 立即清内容；这里只决定「切回来要不要主动再问一次」。
+ */
+export const REVISIT_INTERVAL_MS = 24 * 60 * 60 * 1000;
+
 /** 会话的公开Interface；协议与状态实现共享同一个拥有者，不增加独立授权入口。 */
 export class SessionClient extends SessionCore {
   replace = (request: Replacement, signal: AbortSignal) =>
@@ -76,7 +82,10 @@ export class SessionClient extends SessionCore {
       const result = await discoverSession(this.lifetime.signal);
       this.current(revision);
       if (result.phase === 'ready') this.accept(result.value);
-      else
+      else if (result.phase === 'legacy') {
+        this.checkedAt = Date.now();
+        this.update({ phase: 'legacy', message: '' });
+      } else
         this.update({
           phase: result.phase,
           message:
@@ -153,6 +162,17 @@ export class SessionClient extends SessionCore {
       : result;
   };
 
+  /**
+   * 切回标签页或应用时调用：会话一天内确认过就什么都不做——不清内容、不重挂、不打断
+   * 进行中的保存。超过一天、或当前根本没有可用会话，才走一次完整核对。
+   */
+  revisit = () => {
+    if (this.operation) return;
+    const settled =
+      this.state.phase === 'ready' || this.state.phase === 'legacy';
+    if (settled && Date.now() - this.checkedAt < REVISIT_INTERVAL_MS) return;
+    this.resume();
+  };
   resume = () => {
     if (this.operation === 'post') this.interrupted();
     else if (this.state.phase !== 'uncertain' && this.state.phase !== 'problem')

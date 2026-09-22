@@ -1,16 +1,17 @@
-"""从已激活的 r2 派生 r3：只换网页，其余逐字节沿用；不读取凭据、不操作服务或数据库。
+"""从已激活的上一发行派生下一发行：只换网页，其余逐字节沿用；不读取凭据、不操作服务或数据库。
 
 r2 已经把黑板接线（单元的 RuntimeDirectory／ReadWritePaths、启动器的 board 参数）装好了，
-本次发行**不再做任何装配改造**，只做两件事：把发行路径从 r2 指到 r3，把 `web/` 换成新构建。
+此后的发行**不再做任何装配改造**，只做两件事：把发行路径从上一发行指到本发行，把 `web/` 换成新构建。
 因此三个变换函数都是「路径替换 ＋ 现状核验」，多出来的差异一律拒绝。
 
-沿革：r8→r2 的装配逻辑见本文件在 main `40fdf8d` 及更早的版本（一次性迁移，已激活）。
+沿革：r8→r2 的装配逻辑见本文件在 main `40fdf8d` 及更早的版本（一次性迁移，已激活）；
+r2→r3（2026-09-22 T-102，已激活）；本版 r3→r4（2026-09-22 T-103/T-104：认证请求并发闸门＋会话每日复核）。
 """
 import shlex
 from pathlib import Path
 
-OLD_RELEASE = '/home/maxsong/.local/share/studiolo-human-releases/m5m6-board-20260920-r2'
-BUILD = 'm5m6-board-20260920-r3'
+OLD_RELEASE = '/home/maxsong/.local/share/studiolo-human-releases/m5m6-board-20260920-r3'
+BUILD = 'm5m6-board-20260920-r4'
 RELEASE = '/home/maxsong/.local/share/studiolo-human-releases/' + BUILD
 BASE = '/home/maxsong/.local/share/'
 VAULT = BASE + 'studiolo-canonical'
@@ -19,11 +20,12 @@ BOARD = BASE + 'studiolo-board'
 AGENT = BASE + 'studiolo-agent'
 BOARD_RUNTIME = '/run/studiolo-board'
 BOARD_SOCKET = BOARD_RUNTIME + '/board.sock'
-# 现场两个单元的摘要（r2 激活时装上的那一版）：预检以此确认起点就是 r2，而不是别的发行。
-HUMAN_SHA = 'd3125e15be711a86dbe9a577af48e1b83b0cf440e8aaebfe43a1505ce4c38d4f'
-AGENT_SHA = '3179387c08a03a3f2f22bc2a08009c621453b96e284cbb18e3559f96837aa935'
-# 上一发行（r2）manifest 的摘要。键名沿用 r8 时代的写法，manifest 的线格式因此保持不变。
-R8_MANIFEST_SHA = '8bf7b6ea412fceebc89d8d5368810db66198ac321573d27b766d894f8aebb353'
+# 现场两个单元的摘要：人侧是 r3 激活时装上的那一版；agent 是 T-101 于 2026-09-22 17:36 UTC
+# 换装的那一版（读取范围扩到 23 项、程序换成 t101-f234145）。预检以此确认起点没被别人改过。
+HUMAN_SHA = '324f4371ee98b18581577528962df0e2f1e7789bb8df83380b9a8d98d6e90d73'
+AGENT_SHA = 'f0a3a7166626646dc2ae63a5c0e9a8baf8bdb6a64cf8a1a1de1cffe85bafe763'
+# 上一发行（r3）manifest 的摘要。键名沿用 r8 时代的写法，manifest 的线格式因此保持不变。
+R8_MANIFEST_SHA = 'e99656f096b67e360b26c007224738b0f411b2ce746a5121738aa377c7385728'
 # 发行目录里属于网页的前缀：本次唯一允许整体更换的部分。
 WEB_PREFIX = 'web/'
 # 上一发行的装配名；候选包沿用同一装配，只是换了网页。
@@ -37,7 +39,7 @@ def replace_once(text, old, new):
 
 
 def human_unit(text):
-    """r2 的人侧单元已带黑板接线；只把发行路径指到 r3，其余必须逐字不变。"""
+    """上一发行的人侧单元已带黑板接线；只把发行路径指到本发行，其余必须逐字不变。"""
     if text.count(OLD_RELEASE) != 2 or RELEASE in text:
         raise ValueError('unrecognized human unit')
     if 'RuntimeDirectory=studiolo-human studiolo-board\n' not in text:
@@ -69,7 +71,7 @@ def agent_unit(text):
 
 
 def launcher(text):
-    """r2 的启动器已带黑板参数；只把发行路径换成 r3，其余逐字不变，并要求仍能编译。"""
+    """上一发行的启动器已带黑板参数；只把发行路径换成本发行，其余逐字不变，并要求仍能编译。"""
     if RELEASE in text:
         raise ValueError('unrecognized launcher')
     for fragment in ('"--canonical-writer-data", WRITER', '"--board-socket", BOARD_SOCKET',
