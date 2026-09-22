@@ -206,6 +206,24 @@ class CompileTimeInputsTests(unittest.TestCase):
         self.assertGreaterEqual(checked, 5, "守卫没有扫到任何 include 宏，正则或目录推导失效")
         self.assertEqual(uncovered, [], "随包测试编译期依赖的文件不在 package-agent.sh 的源码白名单内")
 
+    def test_directory_entries_of_the_whitelist_are_known_to_the_node_check(self):
+        """`STUDIOLO_INPUTS` 里的目录条目必须同时登记进 node 校验的 directories 集合。
+
+        脚本有两份清单：INPUTS 决定导出什么，node 的 directories 决定某条目按目录还是按单文件校验。
+        只改前者，node 会把新目录当成文件而报「白名单文件尚未跟踪或目录为空」——
+        2026-09-22 T-101 补 deploy/runner 时就先后踩了这两半。
+        """
+        import re
+        root = SCRIPTS.parent
+        block = lambda name: PACKAGE.split(name + "=(\n", 1)[1].split("\n)", 1)[0]
+        inputs = [word for line in block("STUDIOLO_INPUTS").splitlines()
+                  if not line.strip().startswith("#") for word in line.split()]
+        literal = re.search(r"const directories = new Set\(\[(.*?)\]\);", PACKAGE, re.S).group(1)
+        known = set(re.findall(r"'([^']+)'", literal))
+        missing = [entry for entry in inputs
+                   if (root / entry).is_dir() and entry not in known]
+        self.assertEqual(missing, [], "白名单里的目录未登记进 node 的 directories 集合")
+
     def packaged_crates(self):
         import re
         block = PACKAGE.split("STUDIOLO_TEST_PACKAGES=(\n", 1)[1].split("\n)", 1)[0]

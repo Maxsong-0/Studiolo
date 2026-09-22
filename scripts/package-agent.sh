@@ -63,7 +63,7 @@ const names = fs.readFileSync(list, 'utf8').split('\0');
 if (names.pop() !== '' || names.length === 0 || new Set(names).size !== names.length) {
   throw new Error('源码清单为空、不完整或包含重复项');
 }
-const directories = new Set(['crates', 'deploy/agent', 'docs/m3',
+const directories = new Set(['crates', 'deploy/agent', 'deploy/runner', 'docs/m3',
   'examples/m3-cargo-dependencies', 'examples/m3-project-operations']);
 for (const input of inputs) {
   if (directories.has(input) ? !names.some(name => name.startsWith(input + '/')) : !names.includes(input)) {
