@@ -58,7 +58,7 @@ def verify_previous(a, c):
 
 
 def verify_candidate(a, c, expected_sha):
-    """候选包＝上一发行换掉整个 web/；其余逐字节相同，程序来源必须照抄不得冒称新构建。"""
+    """候选包＝上一发行换掉整个 web/（可选换人侧程序）；其余逐字节相同，程序来源不得冒称新构建。"""
     c.require(isinstance(expected_sha, str) and re.fullmatch('[0-9a-f]{64}', expected_sha))
     root = Path(a.RELEASE)
     old = verify_previous(a, c)
@@ -74,7 +74,8 @@ def verify_candidate(a, c, expected_sha):
     c.require(isinstance(manifest['web_source_commit'], str)
               and re.fullmatch('[0-9a-f]{40}', manifest['web_source_commit']))
     c.require(manifest['bootstrap_source_commit'] == old['bootstrap_source_commit'])
-    c.require(manifest['human_program_source_commit'] == old['human_program_source_commit'])
+    # 人侧程序：来源提交没变就必须逐字节沿用；来源变了才允许换（仍须是 ELF，见下）。
+    program_changed = manifest['human_program_source_commit'] != old['human_program_source_commit']
     c.require(manifest['r8_manifest_sha256'] == a.R8_MANIFEST_SHA)
     c.require(manifest['before_units'] == dict(zip(NAMES, (a.HUMAN_SHA, a.AGENT_SHA))))
     files = manifest['files']
@@ -82,6 +83,8 @@ def verify_candidate(a, c, expected_sha):
     # 这三份按现场重新派生：启动器与人侧单元改发行路径，agent 单元照抄现场
     # （读取范围可能在两次发行之间被 L3 改过，必须以现场为准而不是上一发行的存档）。
     changed = {'launch-human.py', 'studiolo-human.service', 'studiolo-agent.service'}
+    if program_changed:
+        changed.add('bin/studiolo-local-server')
     old_web = {name for name in old['files'] if name.startswith(a.WEB_PREFIX)}
     new_web = {name for name in files if name.startswith(a.WEB_PREFIX)}
     c.require(new_web and a.WEB_PREFIX + 'index.html' in new_web)

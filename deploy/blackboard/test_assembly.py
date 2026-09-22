@@ -1,4 +1,4 @@
-"""只换网页的发行（当前 r3→r4）的固定变更面；夹具不接触生产或凭据。"""
+"""黑板形状发行（当前 r4→r5）的固定变更面；夹具不接触生产或凭据。"""
 import ast
 from pathlib import Path
 import unittest
@@ -36,10 +36,10 @@ def board_unit():
 
 
 class AssemblyTests(unittest.TestCase):
-    def test_r4_upgrades_the_activated_r3_and_only_swaps_web(self):
-        self.assertEqual(a.BUILD, 'm5m6-board-20260920-r4')
+    def test_r5_upgrades_the_activated_r4(self):
+        self.assertEqual(a.BUILD, 'm5m6-board-20260920-r5')
         self.assertEqual(a.RELEASE.rsplit('/', 1)[1], a.BUILD)
-        self.assertTrue(a.OLD_RELEASE.endswith('/m5m6-board-20260920-r3'))
+        self.assertTrue(a.OLD_RELEASE.endswith('/m5m6-board-20260920-r4'))
         self.assertEqual(a.WEB_PREFIX, 'web/')
 
     def test_launcher_only_repoints_the_release_path(self):

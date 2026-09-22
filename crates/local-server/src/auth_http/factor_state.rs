@@ -28,7 +28,7 @@ pub(super) async fn handle(State(state): State<AppState>, mut request: Request) 
                     factors.state(&context.identity, &credentials.token, &credentials.csrf)
                 })
                 .await
-                .map_err(Failure::session)?
+                .map_err(|blocked| blocked.session().for_read())?
                 .into(),
             )
         } else {

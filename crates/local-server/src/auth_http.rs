@@ -13,7 +13,7 @@ pub(crate) mod policy;
 mod responses;
 pub(crate) use content::ContentPrincipal;
 
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 
 use axum::{
     Router,
@@ -27,6 +27,31 @@ use tokio::sync::Semaphore;
 use crate::AppState;
 use cookie::Credentials;
 use responses::Failure;
+
+/// 会话许可的排队上限。AuthDB 操作都是毫秒级：两个许可都被占时先等，而不是像原来那样
+/// 立刻拒绝——浏览器挂载页面时同时发三个读请求是常态（BUG-017）。等满仍排不上才回 503。
+const PERMIT_WAIT: Duration = Duration::from_secs(5);
+
+/// 取不到许可（本次请求根本没执行）与执行中出错（写操作可能已生效）是两回事，分开报。
+enum Blocked {
+    Busy,
+    Session(SessionError),
+}
+
+impl Blocked {
+    fn session(self) -> Failure {
+        match self {
+            Blocked::Busy => Failure::busy(),
+            Blocked::Session(error) => Failure::session(error),
+        }
+    }
+    fn factor(self) -> Failure {
+        match self {
+            Blocked::Busy => Failure::busy(),
+            Blocked::Session(error) => Failure::factor(error),
+        }
+    }
+}
 
 pub(crate) const SELF: &str = "/api/v1/session";
 pub(crate) const SESSIONS: &str = "/api/v1/sessions";
@@ -172,6 +197,11 @@ impl AuthHttp {
         }
         // 解析体先于任何 Auth 调用；未知字段、超限和慢体均不能触发签发/吊销。
         let action = input::action(request).await?;
+        // 读请求没有副作用：会话核对出错时不能套用「操作可能已生效」。
+        let read_only = matches!(
+            *request.method(),
+            axum::http::Method::GET | axum::http::Method::HEAD
+        );
         let session = if let Some(credentials) = &credentials {
             let credentials = Arc::clone(credentials);
             let identity = identity.clone();
@@ -179,7 +209,14 @@ impl AuthHttp {
                 self.run(move |sessions| {
                     sessions.check_with_csrf(&identity, &credentials.token, &credentials.csrf)
                 })
-                .await?,
+                .await
+                .map_err(|failure| {
+                    if read_only {
+                        failure.for_read()
+                    } else {
+                        failure
+                    }
+                })?,
             )
         } else {
             None
@@ -202,7 +239,7 @@ impl AuthHttp {
         let sessions = Arc::clone(&self.sessions);
         self.blocking(move || operation(&sessions))
             .await
-            .map_err(Failure::session)
+            .map_err(Blocked::session)
     }
 
     async fn run_factor<T: Send + 'static>(
@@ -212,21 +249,25 @@ impl AuthHttp {
         let factors = Arc::clone(self.factors.as_ref().ok_or_else(Failure::unavailable)?);
         self.blocking(move || operation(&factors))
             .await
-            .map_err(Failure::factor)
+            .map_err(Blocked::factor)
     }
 
     async fn blocking<T: Send + 'static>(
         &self,
         operation: impl FnOnce() -> Result<T, SessionError> + Send + 'static,
-    ) -> Result<T, SessionError> {
-        let permit = Arc::clone(&self.permits)
-            .try_acquire_owned()
-            .map_err(|_| SessionError::StorageUnavailable)?;
+    ) -> Result<T, Blocked> {
+        // 许可只在阻塞工作真正结束时归还（客户端取消不提前释放），所以并发上限仍是硬的两个；
+        // 变的只是第三个请求先排队，而不是当场被拒。
+        let permit = tokio::time::timeout(PERMIT_WAIT, Arc::clone(&self.permits).acquire_owned())
+            .await
+            .map_err(|_| Blocked::Busy)?
+            .map_err(|_| Blocked::Busy)?;
         tokio::task::spawn_blocking(move || {
             let _permit = permit;
             operation()
         })
         .await
-        .map_err(|_| SessionError::StorageUnavailable)?
+        .map_err(|_| Blocked::Session(SessionError::StorageUnavailable))?
+        .map_err(Blocked::Session)
     }
 }

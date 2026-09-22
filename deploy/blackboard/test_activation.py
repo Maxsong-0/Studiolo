@@ -327,7 +327,9 @@ class Files(unittest.TestCase):
         web = self.root / 'web-dist'
         self.write(web / 'index.html', b'brand new web')
         self.write(web / 'assets' / 'brand-new.js', b'brand new bundle')
-        args = types.SimpleNamespace(web=str(web), web_source_commit='5' * 40)
+        args = types.SimpleNamespace(web=str(web), web_source_commit='5' * 40,
+                                     local_server=None, local_server_sha256=None,
+                                     human_source_commit=None)
         return a, args
 
     def run_prepare(self, a, args):
@@ -359,6 +361,63 @@ class Files(unittest.TestCase):
         self.assertFalse((root / 'web/assets/stale.js').exists())
         with self.assertRaises(ValueError):
             self.run_prepare(a, args)
+
+    def test_prepare_can_replace_the_human_program_and_records_its_new_source(self):
+        a, args = self.preparation()
+        program = b'\x7fELFnew human build'
+        self.write(self.root / 'local-server', program)
+        args.local_server = str(self.root / 'local-server')
+        args.local_server_sha256 = c.sha(program)
+        args.human_source_commit = '6' * 40
+        result = self.run_prepare(a, args)
+        self.assertFalse(result['human_binary_reused'])
+        doc = self.check(a, result['manifest_sha256'])
+        self.assertEqual(doc['human_program_source_commit'], '6' * 40)
+        self.assertEqual(doc['bootstrap_source_commit'], '2' * 40)
+        root = Path(a.RELEASE)
+        self.assertEqual((root / 'bin/studiolo-local-server').read_bytes(), program)
+        # 其余程序照旧逐字节沿用。
+        self.assertEqual((root / 'bin/studiolo-auth-admin').read_bytes(), b'fictional admin')
+
+    def test_prepare_rejects_partial_program_arguments_and_bad_program(self):
+        a, args = self.preparation()
+        program = b'\x7fELFnew human build'
+        self.write(self.root / 'local-server', program)
+        for patch_args in ({'local_server': str(self.root / 'local-server')},
+                           {'local_server': str(self.root / 'local-server'),
+                            'local_server_sha256': '0' * 64, 'human_source_commit': '6' * 40},
+                           {'local_server': str(self.root / 'local-server'),
+                            'local_server_sha256': c.sha(program), 'human_source_commit': 'z' * 40}):
+            with self.subTest(args=sorted(patch_args)):
+                trial = types.SimpleNamespace(**{**vars(args), **patch_args})
+                with self.assertRaises(ValueError):
+                    self.run_prepare(a, trial)
+                self.assertFalse(Path(a.RELEASE).exists())
+        (self.root / 'local-server').write_bytes(b'not ELF')
+        trial = types.SimpleNamespace(**{**vars(args), 'local_server': str(self.root / 'local-server'),
+                                         'local_server_sha256': c.sha(b'not ELF'),
+                                         'human_source_commit': '6' * 40})
+        with self.assertRaises(ValueError):
+            self.run_prepare(a, trial)
+        self.assertFalse(Path(a.RELEASE).exists())
+
+    def test_candidate_cannot_swap_the_program_without_declaring_a_new_source(self):
+        a, digest = self.candidate()
+        root = Path(a.RELEASE)
+        path = root / 'manifest.json'
+        doc = json.loads(path.read_bytes())
+        swapped = b'\x7fELFsneaky human'
+        (root / 'bin/studiolo-local-server').write_bytes(swapped)
+        doc['files']['bin/studiolo-local-server'] = {'bytes': len(swapped), 'sha256': c.sha(swapped)}
+        raw = json.dumps(doc).encode()
+        path.write_bytes(raw)
+        with self.assertRaises(ValueError):
+            self.check(a, c.sha(raw))
+        # 声明了新的来源提交才允许换。
+        doc['human_program_source_commit'] = '7' * 40
+        raw = json.dumps(doc).encode()
+        path.write_bytes(raw)
+        self.assertEqual(self.check(a, c.sha(raw))['human_program_source_commit'], '7' * 40)
 
     def test_prepare_rejects_bad_web_source_or_missing_index_before_creating_output(self):
         a, args = self.preparation()

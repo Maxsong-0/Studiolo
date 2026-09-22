@@ -10,6 +10,9 @@ use studiolo_auth::{SessionError, SessionInfo, SessionState};
 
 use crate::ApiError;
 
+/// 写操作执行中出错时的措辞：结果可能已经落库，只能请人先核对。
+const UNCONFIRMED: &str = "认证结果暂不能确认；操作可能已生效，请先核对状态。";
+
 pub(super) struct Failure {
     status: StatusCode,
     message: &'static str,
@@ -44,10 +47,26 @@ impl Failure {
         }
     }
     pub fn unavailable() -> Self {
+        Self::new(StatusCode::SERVICE_UNAVAILABLE, UNCONFIRMED)
+    }
+    /// 许可排队超时：请求根本没有进入认证存储，一定没有生效。
+    pub fn busy() -> Self {
         Self::new(
             StatusCode::SERVICE_UNAVAILABLE,
-            "认证结果暂不能确认；操作可能已生效，请先核对状态。",
+            "认证服务正忙，本次请求没有执行；请稍后重试。",
         )
+        .with_code("auth_busy")
+    }
+    /// 读请求没有副作用：把「写操作可能已生效」的措辞换成读取的实情，其余失败原样保留。
+    pub fn for_read(self) -> Self {
+        if self.status == StatusCode::SERVICE_UNAVAILABLE && self.message == UNCONFIRMED {
+            Self::new(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "暂时无法确认登录状态；本次读取没有改动任何内容，请稍后重试。",
+            )
+        } else {
+            self
+        }
     }
     pub fn conflict() -> Self {
         Self::new(StatusCode::CONFLICT, "已有应用 Cookie，不能隐式换发会话。")
