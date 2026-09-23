@@ -128,6 +128,42 @@ class PreviewTests(unittest.TestCase):
         self.assertNotIn("private-content-never-print", output.getvalue())
         return checks, transport.requests
 
+    def run_operation(self, value):
+        """直接调用 Checks.run，返回计数、是否抛出 CheckFailed 以及标准输出。"""
+        checks = preview.Checks(4322)
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            try:
+                checks.run("显式结果", lambda: value)
+            except preview.CheckFailed:
+                return checks, True, output.getvalue()
+        return checks, False, output.getvalue()
+
+    def test_run_counts_only_explicit_true_as_pass(self):
+        # None、0、空串、False 以及非 True 的真值（含请求响应本身）都不能被当成通过。
+        for value in (None, 0, "", False, 1, "通过", RawResponse("text/html", b"<html>"),
+                      {"authentication": "local"}):
+            with self.subTest(value=value):
+                checks, raised, output = self.run_operation(value)
+                self.assertTrue(raised)
+                self.assertEqual((checks.total, checks.failed), (1, 1))
+                self.assertEqual(output, "显式结果：失败\n")
+        checks, raised, output = self.run_operation(True)
+        self.assertFalse(raised)
+        self.assertEqual((checks.total, checks.failed), (1, 0))
+        self.assertEqual(output, "显式结果：通过\n")
+
+    def test_fetch_hands_back_response_only_after_explicit_pass(self):
+        responses = []
+        checks, _ = self.run_check(lambda checks: responses.append(
+            checks.fetch("前端认证引导", preview.api("v1/bootstrap"), as_json=True)))
+        self.assertEqual((checks.total, checks.failed), (1, 0))
+        self.assertEqual(responses, [{"authentication": "local"}])
+        checks, _ = self.run_check(lambda checks: responses.append(
+            checks.fetch("应用会话未开放", preview.api("v1/session"))))
+        self.assertEqual((checks.total, checks.failed), (1, 1))
+        self.assertEqual(len(responses), 1)
+
     def test_static_entry_fetches_svg_icon_and_checks_mime(self):
         checks, requests = self.run_check(lambda checks: preview.check_assets(checks, HTML))
         self.assertEqual(checks.failed, 0)
@@ -163,9 +199,11 @@ class PreviewTests(unittest.TestCase):
         ])
 
     def test_old_or_nonlocal_bootstrap_stops_before_content(self):
+        # 假值正文（null、0、空串、false、空数组）同样不能让引导检查通过。
         for status, value in [(404, {}), (401, {}), (200, {"authentication": "session"}),
                               (200, {"authentication": "access"}),
-                              (200, {"authentication": "local", "extra": True})]:
+                              (200, {"authentication": "local", "extra": True}),
+                              (200, None), (200, 0), (200, ""), (200, False), (200, [])]:
             with self.subTest(status=status, value=value):
                 checks, requests = self.run_check(
                     preview.check_bootstrap, lambda *args: (status, value))
