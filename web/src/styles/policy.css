@@ -1,235 +1,1006 @@
-/* 策略平面视图。扩大项固定用警示色标红，收窄项与其它信息用中性色；不给任何「通过」用绿。 */
-.policy-panel {
-  --policy-expansion: var(--signal-alert);
-  --policy-narrowing: var(--signal-neutral);
-  --policy-ok: var(--signal-ok);
-  display: grid;
-  gap: 18px;
+/*
+ * 策略平面（T-130 设计规范第 3、9 节）：12 列网格，格内细线分行；原术语等宽小字跟在人话后面；
+ * 不可逆动作的执行预览是红色虚线框；二次认证是 ui/Surface 浮层。
+ * 网格、格子、按钮、状态方块与浮层框的骨架在 web/src/ui/ui.css，这里只排格子内部。
+ * 只引用 tokens.css 的新令牌；14px 及以下的红字用 --signal-text，红色形状与边框用 --signal。
+ * 红色只给扩大项、校验问题、全局撤销与出错；收窄与未知一律中性色，差异不分红绿。
+ */
+
+/* ---------- 共用：等宽代码、原术语、说明文字 ---------- */
+
+.policy {
+  min-width: 0;
 }
-.policy-section {
-  padding: 16px 20px;
-  border: 1px solid var(--border);
-  border-radius: 14px;
-  background: var(--surface-solid);
+/* :where 不加权重：后面各处给 code 的专门样式（原术语、表头摘要）照样生效 */
+.policy :where(code) {
+  font-family: var(--font-mono);
+  font-size: 0.92em;
+  overflow-wrap: anywhere;
 }
-.policy-section h2 {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin: 0 0 12px;
-  font-size: 1rem;
-  font-weight: 600;
+/* 原术语：人话在前，等宽小字跟在后面（「规则草案 desired」） */
+.policy-term {
+  font-family: var(--font-mono);
+  font-size: var(--type-label);
+  font-weight: 500;
+  line-height: 1.3;
+  letter-spacing: 0.02em;
+  color: var(--ink-2);
+  white-space: nowrap;
 }
-.policy-summary,
+.policy-note,
 .policy-hint {
+  max-width: 72ch;
   margin: 0;
-  color: var(--muted);
-  font-size: 0.8125rem;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--ink-2);
   overflow-wrap: anywhere;
 }
-.policy-warning {
-  margin: 8px 0 0;
-  color: var(--policy-expansion);
-  font-size: 0.8125rem;
-  overflow-wrap: anywhere;
+.policy-hint {
+  font-size: 12.5px;
 }
-.policy-table {
-  width: 100%;
-  margin-top: 12px;
-  border-collapse: collapse;
-  font-size: 0.8125rem;
-}
-.policy-table th,
-.policy-table td {
-  padding: 8px 10px;
-  border-bottom: 1px solid var(--border);
-  text-align: left;
-  overflow-wrap: anywhere;
-}
-.policy-revocations,
-.policy-queue,
-.policy-versions,
-.policy-expansions,
-.policy-narrowings,
-.policy-problems,
-.policy-diff ul {
-  list-style: none;
-  display: grid;
-  gap: 8px;
-  margin: 12px 0 0;
-  padding: 0;
-  font-size: 0.8125rem;
-}
-.policy-queue li,
-.policy-versions li {
+.policy-subhead {
   display: flex;
   flex-wrap: wrap;
   align-items: baseline;
-  gap: 6px 12px;
-  padding: 8px 10px;
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  background: var(--surface);
+  gap: 0 var(--space-2);
+  margin: 0;
+  font-size: var(--type-body);
+  line-height: 1.4;
+  font-weight: 800;
+  overflow-wrap: anywhere;
 }
-.policy-form {
-  display: grid;
-  gap: 12px;
-}
-.policy-form-row {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-  gap: 12px;
-  align-items: end;
-}
-.policy-form label {
-  display: grid;
-  gap: 4px;
-  font-size: 0.8125rem;
-  color: var(--muted);
-}
-.policy-form input,
-.policy-form select,
-.policy-form textarea {
-  min-width: 0;
-  padding: 8px 10px;
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  background: var(--surface);
-  color: var(--text);
-  font: inherit;
-}
-.policy-form textarea {
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 0.8125rem;
-  resize: vertical;
-}
-.policy-checkbox {
-  display: flex !important;
-  align-items: center;
-  gap: 8px;
+.policy-subhead__count {
+  font-family: var(--font-mono);
+  font-size: var(--type-label);
+  font-weight: 500;
+  color: var(--ink-2);
 }
 .policy-actions {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 8px 14px;
-  margin-top: 12px;
+  gap: var(--space-2) var(--space-3);
 }
-.policy-report {
-  margin-top: 12px;
-  padding: 12px 14px;
-  border: 1px solid var(--border);
-  border-left: 4px solid var(--policy-narrowing);
-  border-radius: 12px;
-  background: var(--surface);
-  font-size: 0.8125rem;
+/* 一个短语整体换行（如「发布时扩大 4 项」），不把量词单独甩到下一行 */
+.policy-nowrap {
+  white-space: nowrap;
 }
-.policy-report.is-rejected {
-  border-left-color: var(--policy-expansion);
+
+/* ---------- 格子 ---------- */
+
+.ui-cell.policy-cell {
+  gap: var(--space-3);
+  /* ⌘K 带路与 item=desired 把格子滚进视野时，格子顶不被吸顶顶栏（46px＋底线）压住 */
+  scroll-margin-top: calc(46px + var(--rule-thick) + var(--space-4));
 }
-.policy-report-summary {
+/* 带路聚焦的整格：焦点环画在格子里侧，不压到相邻格子的分区线 */
+.ui-cell.policy-cell:focus-visible {
+  outline: 2px solid var(--ink);
+  outline-offset: -4px;
+}
+/* 表头右侧的生效中摘要：等宽、墨色，完整值在悬停标题里 */
+.policy .policy-hash {
+  font-size: inherit;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+/* ---------- 动作反馈：落在发起动作的格子里 ---------- */
+
+.policy-feedback {
   display: flex;
-  flex-wrap: wrap;
-  gap: 6px 12px;
+  align-items: flex-start;
+  gap: var(--space-2);
+  max-width: 72ch;
   margin: 0;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--ink);
+  overflow-wrap: anywhere;
 }
-.policy-expansion-heading {
-  margin: 12px 0 0;
-  color: var(--policy-expansion);
+.policy-feedback::before,
+.policy-form__error::before,
+.policy-global__alert::before,
+.policy-stepup__alert::before {
+  content: '';
+  flex-shrink: 0;
+  width: 9px;
+  height: 9px;
+  margin-top: calc((1.6em - 9px) / 2);
+  background: var(--ink);
+}
+.policy-feedback--error::before,
+.policy-form__error::before,
+.policy-global__alert::before,
+.policy-stepup__alert::before {
+  background: var(--signal);
+}
+
+/* ---------- 第一行：生效中各项＋生效中的撤销接入 ---------- */
+
+/* 全局撤销：出问题的红项，红框红底（与冲突路径框同一语法） */
+.policy-global {
+  display: grid;
+  gap: var(--space-2);
+  justify-items: start;
+  padding: 10px var(--space-3) var(--space-3);
+  border: 1.5px solid var(--signal);
+  background: var(--signal-wash);
+}
+.policy-global__alert {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  margin: 0;
+  font-size: var(--type-body);
+  line-height: 1.6;
+  font-weight: 700;
+  color: var(--ink);
+}
+.policy-global > .policy-preview {
+  justify-self: stretch;
+}
+.policy-effective__body {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  align-items: start;
+  gap: var(--space-5) var(--space-8);
+}
+
+.policy-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+  line-height: 1.45;
+}
+.policy-table th,
+.policy-table td {
+  padding: 7px var(--space-3) 7px 0;
+  text-align: left;
+  vertical-align: baseline;
+  overflow-wrap: anywhere;
+}
+.policy-table th:last-child,
+.policy-table td:last-child {
+  padding-right: 0;
+}
+.policy-table thead th {
+  padding-top: 0;
+  border-bottom: 1.5px solid var(--ink);
+  font-size: 12px;
+  line-height: 1.3;
+  font-weight: 700;
+  color: var(--ink-2);
+  white-space: nowrap;
+}
+.policy-table tbody td {
+  border-bottom: 1px solid var(--hairline);
+}
+.policy-table tbody tr:last-child td {
+  border-bottom: 0;
+}
+.policy-table tbody tr:hover {
+  background: var(--paper-raised);
+}
+/* 数值与哈希等宽右对齐（表头同样右对齐） */
+.policy-table .is-number {
+  text-align: right;
+}
+/* 版本号与摘要不从中间折断（窄屏时列宽让给对象列）；发布时间只在日期与时刻之间换行 */
+.policy-table td.is-number {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  overflow-wrap: normal;
+}
+/* 类别是两到四个字的名词，不拆成两行 */
+.policy-table .policy-table__kind {
+  white-space: nowrap;
+}
+.policy-table td.is-number code {
+  font-size: inherit;
+  white-space: nowrap;
+}
+.policy-table__subject {
+  font-weight: 700;
+}
+.policy-table .policy-table__empty {
+  color: var(--ink-2);
+  text-align: left;
+}
+
+.policy-revocations {
+  display: grid;
+  gap: var(--space-2);
+  min-width: 0;
+}
+.policy-revocations ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border-top: 1.5px solid var(--ink);
+}
+.policy-revocations li {
+  display: grid;
+  grid-template-columns: 48px minmax(0, 1fr);
+  column-gap: var(--space-3);
+  row-gap: 2px;
+  padding: 7px 0;
+  border-bottom: 1px solid var(--hairline);
+  font-size: 13px;
+  line-height: 1.5;
+}
+.policy-revocations li:last-child {
+  border-bottom: 0;
+}
+.policy-revocations__level {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-family: var(--font-mono);
+  font-size: var(--type-label);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+}
+.policy-revocations li.is-global .policy-revocations__level {
+  color: var(--signal-text);
+}
+.policy-revocations__what {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.policy-revocations__what code {
   font-weight: 600;
 }
-.policy-no-expansion {
-  margin: 12px 0 0;
-  color: var(--muted);
+.policy-revocations__reason {
+  color: var(--ink-2);
 }
-.policy-expansions li {
-  padding: 8px 10px;
-  border-left: 4px solid var(--policy-expansion);
-  background: var(--surface-solid);
-  color: var(--policy-expansion);
+.policy-revocations__when {
+  grid-column: 2;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--ink-2);
 }
-.policy-narrowings li {
-  padding: 8px 10px;
-  border-left: 4px solid var(--policy-narrowing);
-  background: var(--surface-solid);
-  color: var(--muted);
+
+/* ---------- 表单：提交规则草案、撤销接入 ---------- */
+
+.policy-form {
+  display: grid;
+  gap: var(--space-3);
+  min-width: 0;
 }
-.policy-problems li {
-  color: var(--policy-expansion);
+.policy-form__row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 150px), 1fr));
+  align-items: end;
+  gap: var(--space-3);
 }
-.policy-expansions em,
-.policy-narrowings em {
+.policy-field {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+.policy-field__label {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 6px;
+  font-family: var(--font-mono);
+  font-size: var(--type-label);
+  line-height: 1.3;
+  letter-spacing: 0.04em;
+  color: var(--ink-2);
+}
+/* 描边输入：1.5px 墨线、直角、--paper-raised 底 */
+.policy-input,
+.policy-select select {
+  width: 100%;
+  min-width: 0;
+  height: 38px;
+  margin: 0;
+  padding: 0 var(--space-3);
+  border: 1.5px solid var(--ink);
+  border-radius: 0;
+  background: var(--paper-raised);
+  color: var(--ink);
+  font-family: var(--font-sans);
+  font-size: var(--type-body);
+  line-height: 1.3;
+}
+.policy-input--mono {
+  font-family: var(--font-mono);
+  font-size: 13px;
+}
+.policy-textarea {
+  height: auto;
+  padding: 10px var(--space-3);
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  line-height: 1.6;
+  resize: vertical;
+}
+.policy-input::placeholder {
+  color: var(--ink-2);
+  opacity: 1;
+}
+.policy-input:focus-visible,
+.policy-select select:focus-visible {
+  outline: 2px solid var(--ink);
+  outline-offset: 2px;
+}
+.policy-input:disabled,
+.policy-select select:disabled {
+  border-color: var(--ink-3);
+  background: transparent;
+  color: var(--ink-3);
+  cursor: default;
+}
+/* 原生 select 铺满整框，右侧箭头只是记号，不接事件 */
+.policy-select {
+  position: relative;
   display: block;
+  min-width: 0;
+}
+.policy-select select {
+  padding-right: 34px;
+  appearance: none;
+  cursor: pointer;
+}
+.policy-select::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  right: 13px;
+  width: 6px;
+  height: 6px;
+  border-right: 1.5px solid var(--ink);
+  border-bottom: 1.5px solid var(--ink);
+  transform: translateY(-70%) rotate(45deg);
+  pointer-events: none;
+}
+.policy-check {
+  display: inline-flex;
+  align-items: center;
+  justify-self: start;
+  gap: var(--space-2);
+  font-size: 13px;
+  line-height: 1.4;
+  cursor: pointer;
+}
+.policy-check input {
+  flex-shrink: 0;
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  border: 1.5px solid var(--ink);
+  border-radius: 0;
+  background: transparent;
+  appearance: none;
+  cursor: pointer;
+}
+.policy-check input:checked {
+  background: var(--ink);
+}
+.policy-check input:focus-visible {
+  outline: 2px solid var(--ink);
+  outline-offset: 2px;
+}
+.policy-form__error {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--ink);
+}
+
+/* ---------- 第二行右：待处理草案队列与选中的草案 ---------- */
+
+.policy-queue {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border-top: 1.5px solid var(--ink);
+}
+.policy-queue > li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: baseline;
+  gap: 3px var(--space-3);
+  padding: 8px 0;
+  border-bottom: 1px solid var(--hairline);
+}
+.policy-queue > li:last-child {
+  border-bottom: 0;
+}
+.policy-queue__pick {
+  justify-self: start;
+  max-width: 100%;
+  margin: 0 0 0 -6px;
+  padding: 1px 6px;
+  border: 0;
+  border-radius: 0;
+  background: none;
+  color: var(--ink);
+  font: inherit;
+  font-size: var(--type-item);
+  font-weight: 700;
+  line-height: 1.4;
+  text-align: left;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+.policy-queue__pick:hover:not(:disabled) {
+  background: var(--paper-raised);
+}
+/* 选中＝黑底反白 */
+.policy-queue__pick[aria-current='true'],
+.policy-queue__pick[aria-current='true']:hover:not(:disabled) {
+  background: var(--ink);
+  color: var(--on-ink);
+}
+.policy-queue__meta {
+  grid-column: 1;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.5;
+  letter-spacing: 0.02em;
+  color: var(--ink-2);
+  overflow-wrap: anywhere;
+}
+.policy-queue__marks {
+  grid-column: 2;
+  grid-row: 1;
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.policy-selected {
+  display: grid;
+  gap: var(--space-3);
+  min-width: 0;
+  padding-top: var(--space-3);
+  border-top: 1.5px solid var(--ink);
+}
+.policy-selected__head {
+  display: grid;
+  gap: 2px;
+}
+.policy-selected__title {
+  margin: 0;
+  font-size: var(--type-item);
+  line-height: 1.4;
+  font-weight: 800;
+  overflow-wrap: anywhere;
+}
+.policy-selected__meta {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--ink-2);
+  overflow-wrap: anywhere;
+}
+
+/* ---------- 校验报告 ---------- */
+
+.policy-report {
+  display: grid;
+  gap: var(--space-2);
+  min-width: 0;
+  font-size: 13px;
+  line-height: 1.6;
+}
+.policy-report__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-1) var(--space-3);
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--hairline);
+}
+.policy-report__title {
+  margin: 0;
+  font-size: var(--type-body);
+  line-height: 1.4;
+  font-weight: 800;
+}
+.policy-report__verdict {
+  font-size: 12.5px;
+  font-weight: 700;
+}
+/* 报告标题右侧的等宽计数：扩大 N · 收窄 N · 未知 — */
+.policy-report__counts {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  margin: 0 0 0 auto;
+  font-family: var(--font-mono);
+  font-size: var(--type-label);
+  line-height: 1.3;
+  letter-spacing: 0.04em;
+  color: var(--ink-2);
+  white-space: pre;
+}
+.policy-report__counts .is-signal {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-weight: 600;
+  color: var(--signal-text);
+}
+.policy-report__counts [title] {
+  text-decoration: underline dotted;
+  text-underline-offset: 3px;
+  cursor: help;
+}
+.policy-report__base {
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--ink-2);
+  overflow-wrap: anywhere;
+}
+.policy-report__alert {
+  margin: 0;
+  font-weight: 700;
+  color: var(--signal-text);
+}
+.policy-report__none {
+  margin: 0;
+  color: var(--ink-2);
+}
+.policy-problems,
+.policy-changes {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.policy-problems > li,
+.policy-changes > li {
+  display: grid;
+  grid-template-columns: 52px minmax(0, 1fr);
+  align-items: baseline;
+  column-gap: var(--space-2);
+  padding: 5px 0;
+  border-bottom: 1px solid var(--hairline);
+  overflow-wrap: anywhere;
+}
+.policy-problems > li:last-child,
+.policy-changes > li:last-child {
+  border-bottom: 0;
+}
+.policy-problems__tag,
+.policy-changes__tag {
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+/* 待确认的扩大项：行首红色实心方块＋红字；收窄项与已发布版本记下的扩大项：空心方块＋中性色 */
+.policy-changes--expansion > li {
+  color: var(--signal-text);
+}
+.policy-changes--narrowing > li,
+.policy-changes--history > li {
+  color: var(--ink-2);
+}
+.policy-changes__path {
+  font-weight: 600;
+}
+.policy-changes__note {
+  display: block;
+  font-size: 12px;
   font-style: normal;
-  font-size: 0.75rem;
+}
+
+/* 差异：只是改动清单，符号区分增删改，不分红绿 */
+.policy-diff {
+  min-width: 0;
 }
 .policy-diff summary {
+  font-family: var(--font-mono);
+  font-size: var(--type-label);
+  line-height: 1.6;
+  letter-spacing: 0.02em;
+  color: var(--ink-2);
   cursor: pointer;
-  margin-top: 12px;
-  color: var(--muted);
+}
+.policy-diff summary:hover {
+  color: var(--ink);
+}
+.policy-diff summary:focus-visible {
+  outline: 2px solid var(--ink);
+  outline-offset: 2px;
+}
+.policy-diff ul {
+  margin: 6px 0 0;
+  padding: 0;
+  list-style: none;
+  border-top: 1px solid var(--hairline);
 }
 .policy-diff li {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px 10px;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 0.75rem;
+  align-items: baseline;
+  gap: 2px var(--space-2);
+  padding: 3px 0;
+  border-bottom: 1px solid var(--hairline);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.5;
   overflow-wrap: anywhere;
 }
-.policy-diff li[data-op='added'] .policy-diff-op {
-  color: var(--policy-ok);
+.policy-diff li code {
+  font-size: inherit;
+  font-weight: 600;
 }
-.policy-diff li[data-op='removed'] .policy-diff-op {
-  color: var(--policy-expansion);
+.policy-diff__op {
+  flex-shrink: 0;
+  width: 1.2em;
+  font-weight: 700;
+  color: var(--ink);
 }
-.policy-diff-before {
+.policy-diff__before {
+  color: var(--ink-2);
   text-decoration: line-through;
-  color: var(--muted);
+}
+.policy-diff__after {
+  color: var(--ink);
+}
+.policy-diff > .policy-hint {
+  margin-top: 6px;
+}
+
+/* ---------- 执行预览：红色虚线框，出现在触发按钮上方 ---------- */
+
+.policy-preview {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  padding: 10px var(--space-3) var(--space-3);
+  border: 1.5px dashed var(--signal);
+  background: var(--paper);
+  font-size: 13px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+.policy-preview:focus-visible {
+  outline: 2px solid var(--ink);
+  outline-offset: 2px;
+}
+.policy-preview p {
+  max-width: 72ch;
+  margin: 0;
+}
+.policy-preview__label {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.3;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--signal-text);
+}
+.policy-preview .policy-preview__title {
+  font-size: var(--type-item);
+  line-height: 1.4;
+  font-weight: 800;
+}
+.policy-preview__facts {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 3px var(--space-3);
+  margin: 0;
+}
+.policy-preview__facts > div {
+  display: contents;
+}
+.policy-preview__facts dt {
+  font-family: var(--font-mono);
+  font-size: var(--type-label);
+  line-height: 1.8;
+  letter-spacing: 0.04em;
+  color: var(--ink-2);
+}
+.policy-preview__facts dd {
+  min-width: 0;
+  margin: 0;
+}
+.policy-preview__facts dd.is-signal {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 700;
+  color: var(--signal-text);
+}
+.policy-preview__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-top: var(--space-1);
+}
+
+/* ---------- 第三行左：版本与回滚 ---------- */
+
+.policy-version-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border-top: 1.5px solid var(--ink);
+}
+/* 一行一版；展开回滚预览时框独占一行，回滚按钮落到框下方（预览在按钮上方） */
+.policy-version {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px var(--space-3);
+  padding: 7px 0;
+  border-bottom: 1px solid var(--hairline);
+}
+.policy-version:last-child {
+  border-bottom: 0;
+}
+.policy-version__open {
+  flex-shrink: 0;
+  min-width: 40px;
+  padding: 1px 6px;
+  border: 1.5px solid var(--ink);
+  border-radius: 0;
+  background: none;
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  line-height: 1.4;
+  font-weight: 600;
+  cursor: pointer;
+}
+.policy-version__open:hover:not(:disabled) {
+  background: var(--paper-raised);
+}
+/* 正在看的那一版＝黑底反白 */
+.policy-version__open[aria-current='true'],
+.policy-version__open[aria-current='true']:hover:not(:disabled) {
+  background: var(--ink);
+  color: var(--on-ink);
+}
+.policy-version__what {
+  display: flex;
+  flex: 1 1 12rem;
+  flex-direction: column;
+  min-width: 0;
+}
+.policy-version__subject {
+  font-size: 13.5px;
+  line-height: 1.4;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+.policy-version__meta {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--ink-2);
+  overflow-wrap: anywhere;
+}
+.policy-version > .policy-preview {
+  flex: 1 1 100%;
+}
+.ui-button.policy-version__rollback {
+  margin-left: auto;
+}
+
+.policy-version-body {
+  display: grid;
+  gap: var(--space-2);
+  min-width: 0;
+  padding-top: var(--space-3);
+  border-top: 1.5px solid var(--ink);
+}
+.policy-version-body__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 2px var(--space-3);
+}
+.policy-version-body__hash,
+.policy-version-body__label {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: var(--type-label);
+  line-height: 1.4;
+  letter-spacing: 0.04em;
+  color: var(--ink-2);
+}
+.policy-version-body__hash code {
+  font-size: inherit;
+  font-weight: 600;
+  color: var(--ink);
 }
 .policy-version-body pre {
   max-height: 320px;
-  overflow: auto;
   margin: 0;
-  padding: 12px;
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  background: var(--surface);
-  font-size: 0.75rem;
+  padding: 10px var(--space-3);
+  overflow: auto;
+  border: 1px solid var(--hairline);
+  background: var(--paper-raised);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.6;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
-.policy-panel code {
+
+/* ---------- 二次认证浮层（Surface：2px 墨框、10px 硬偏移阴影） ---------- */
+
+.policy-stepup {
+  width: min(480px, calc(100vw - 32px));
+  max-width: none;
+  max-height: min(720px, calc(100dvh - 48px));
+  margin: auto;
+  padding: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+/* 底下的页面蒙一层八成纸色：看得出还在原处，又不抢浮层的注意力（与 ⌘K 面板同一做法） */
+.policy-stepup::backdrop {
+  background: color-mix(in srgb, var(--paper) 80%, transparent);
+}
+.policy-stepup__head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-4);
+  padding: 14px var(--space-3) var(--space-3) var(--space-5);
+  border-bottom: 2px solid var(--ink);
+}
+.policy-stepup__heading {
+  min-width: 0;
+}
+.policy-stepup__kicker {
+  margin: 0 0 var(--space-1);
+  font-family: var(--font-mono);
+  font-size: var(--type-label);
+  line-height: 1.3;
+  letter-spacing: 0.04em;
+  color: var(--ink-2);
+}
+.policy-stepup h2 {
+  margin: 0;
+  font-size: 24px;
+  line-height: 1.2;
+  font-weight: 800;
+  letter-spacing: -0.01em;
+}
+.policy-stepup__body {
+  display: grid;
+  gap: var(--space-3);
+  padding: 14px var(--space-5) var(--space-5);
+  font-size: var(--type-body);
+  line-height: 1.6;
   overflow-wrap: anywhere;
 }
-@media (max-width: 600px) {
-  .policy-section {
-    padding: 14px;
-  }
-  .policy-table thead {
-    display: none;
-  }
-  .policy-table tr {
-    display: grid;
-    padding: 6px 0;
-  }
-  .policy-table td {
-    border: 0;
-    padding: 2px 0;
+.policy-stepup__body p {
+  max-width: 65ch;
+  margin: 0;
+}
+.policy-stepup .policy-stepup__note {
+  font-size: 13px;
+  color: var(--ink-2);
+}
+.policy-stepup__alert {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  color: var(--ink);
+}
+.policy-stepup__form {
+  display: grid;
+  gap: var(--space-3);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--hairline);
+}
+.policy-stepup__field {
+  display: grid;
+  justify-items: start;
+  gap: 5px;
+}
+.policy-stepup__label {
+  font-family: var(--font-mono);
+  font-size: var(--type-label);
+  line-height: 1.3;
+  letter-spacing: 0.04em;
+  color: var(--ink-2);
+}
+/* 验证码：描边等宽，字距拉开便于逐位核对 */
+.policy-stepup__code {
+  width: min(100%, 220px);
+  height: 44px;
+  margin: 0;
+  padding: 0 var(--space-3);
+  border: 1.5px solid var(--ink);
+  border-radius: 0;
+  background: var(--paper-raised);
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-size: 18px;
+  font-weight: 600;
+  letter-spacing: 0.24em;
+}
+.policy-stepup__code:focus-visible {
+  outline: 2px solid var(--ink);
+  outline-offset: 2px;
+}
+.policy-stepup__code:disabled {
+  border-color: var(--ink-3);
+  color: var(--ink-3);
+}
+.policy-stepup__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+}
+
+/* ---------- 宽屏：生效中各项与撤销接入并排 ---------- */
+
+@media (width >= 1024px) {
+  .policy-effective__body {
+    grid-template-columns: minmax(0, 5fr) minmax(0, 3fr);
   }
 }
 
-/* 发布被二次认证挡下时的就地认证窗口：沿用账户弹窗外壳与因子表单，只收窄宽度。 */
-.policy-stepup {
-  width: min(460px, calc(100vw - 32px));
-}
-.policy-stepup h2 {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-.policy-stepup h2 .icon {
-  color: var(--accent);
-}
-.policy-stepup .factor-form {
-  margin-top: 0;
+/* ---------- 窄屏（<760px）：网格已收成单列；控件给足 44px 触控高度，输入 16px 免得放大 ---------- */
+
+@media (width < 760px) {
+  .ui-cell.policy-cell {
+    padding: var(--space-3) 14px;
+  }
+  .policy-input,
+  .policy-select select {
+    height: 44px;
+    font-size: 16px;
+  }
+  .policy-textarea {
+    height: auto;
+    font-size: 16px;
+  }
+  .policy-stepup__code {
+    font-size: 20px;
+  }
+  .policy .ui-button {
+    min-height: 44px;
+  }
+  .policy-queue__pick,
+  .policy-version__open {
+    min-height: 44px;
+  }
+  .policy-queue > li {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .policy-queue__marks {
+    grid-column: 1;
+    grid-row: auto;
+  }
+  .policy-revocations li {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .policy-revocations__when {
+    grid-column: 1;
+  }
+  .policy-table th,
+  .policy-table td {
+    padding-right: var(--space-2);
+  }
+  .policy-preview__facts {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0;
+  }
+  .policy-preview__facts dd {
+    margin-bottom: var(--space-1);
+  }
 }

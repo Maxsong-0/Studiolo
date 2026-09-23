@@ -1,6 +1,7 @@
 import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { expect, it, vi } from 'vitest';
+import type { ArchitectureData } from '../architecture';
 import { ArchitecturePanel } from '../components/ArchitecturePanel';
 import {
   architectureData,
@@ -197,4 +198,234 @@ it('设计步骤沿用节点的精确目录证据，缺失与未观测目录不�
   expect(screen.getByLabelText('当前设计步骤')).toHaveTextContent(
     '目录：crates/core/internal · 未核验',
   );
+});
+
+/* ---------- 关系图几何：黑线工程图的连线只走正交线，不穿过任何节点框，箭头顶在终点框边上 ---------- */
+
+type Point = [number, number];
+interface Box {
+  label: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+const pointsOf = (path: string): Point[] =>
+  [...path.matchAll(/[ML](-?[\d.]+) (-?[\d.]+)/g)].map((match) => [
+    Number(match[1]),
+    Number(match[2]),
+  ]);
+
+function readDrawing() {
+  const canvas = screen.getByRole('group', { name: '架构节点' });
+  const width = parseFloat(
+    canvas.style.getPropertyValue('--architecture-node-width'),
+  );
+  const height = parseFloat(
+    canvas.style.getPropertyValue('--architecture-node-height'),
+  );
+  const boxes: Box[] = within(canvas)
+    .getAllByRole('button')
+    .map((button) => ({
+      label: button.getAttribute('aria-label')!.replace('选择架构节点 ', ''),
+      x: parseFloat(button.style.left),
+      y: parseFloat(button.style.top),
+      width,
+      height,
+    }));
+  const wires = [...canvas.querySelectorAll('.architecture-wire')].map(
+    (wire) => ({
+      className: wire.getAttribute('class')!,
+      line: pointsOf(
+        wire.querySelector('.architecture-wire__line')!.getAttribute('d')!,
+      ),
+      head: pointsOf(
+        wire.querySelector('.architecture-wire__head')!.getAttribute('d')!,
+      ),
+    }),
+  );
+  return { boxes, wires };
+}
+
+/** 线段是否穿进框内（压在框边上不算）。 */
+function crossesBox([x0, y0]: Point, [x1, y1]: Point, box: Box) {
+  const [left, right] = [box.x + 0.5, box.x + box.width - 0.5];
+  const [top, bottom] = [box.y + 0.5, box.y + box.height - 0.5];
+  if (Math.abs(y0 - y1) < 1)
+    return (
+      y0 > top &&
+      y0 < bottom &&
+      Math.max(x0, x1) > left &&
+      Math.min(x0, x1) < right
+    );
+  return (
+    x0 > left &&
+    x0 < right &&
+    Math.max(y0, y1) > top &&
+    Math.min(y0, y1) < bottom
+  );
+}
+
+function expectCleanDrawing(architecture: ArchitectureData) {
+  const { boxes, wires } = readDrawing();
+  const labels = new Map(
+    architecture.nodes.map((node) => [node.id, node.label]),
+  );
+  const boxOf = (id: string) =>
+    boxes.find((box) => box.label === labels.get(id))!;
+  expect(boxes).toHaveLength(architecture.nodes.length);
+  expect(boxes.every((box) => box.width > 0 && box.height > 0)).toBe(true);
+  boxes.forEach((box, index) =>
+    boxes
+      .slice(index + 1)
+      .forEach((other) =>
+        expect(
+          box.x + box.width <= other.x ||
+            other.x + other.width <= box.x ||
+            box.y + box.height <= other.y ||
+            other.y + other.height <= box.y,
+        ).toBe(true),
+      ),
+  );
+  expect(wires).toHaveLength(architecture.relations.length);
+  architecture.relations.forEach((relation, index) => {
+    const { line, head, className } = wires[index];
+    const [from, to] = [boxOf(relation.from), boxOf(relation.to)];
+    expect(className).toContain(
+      relation.kind === 'data_flow' ? 'is-data-flow' : 'is-dependency',
+    );
+    expect(
+      [...line, ...head].every(
+        ([x, y]) => Number.isFinite(x) && Number.isFinite(y),
+      ),
+    ).toBe(true);
+    for (let step = 1; step < line.length; step += 1) {
+      const [[x0, y0], [x1, y1]] = [line[step - 1], line[step]];
+      expect(x0 === x1 || Math.abs(y0 - y1) < 1).toBe(true);
+      for (const box of boxes)
+        expect(crossesBox(line[step - 1], line[step], box)).toBe(false);
+    }
+    const [tipX, tipY] = head[0];
+    const [endX, endY] = line[line.length - 1];
+    if (relation.from === relation.to) {
+      expect(tipY).toBe(to.y);
+      expect(tipX > to.x && tipX < to.x + to.width).toBe(true);
+      expect(endX).toBe(tipX);
+      expect(tipY - endY).toBeCloseTo(7, 5);
+      return;
+    }
+    expect([to.x, to.x + to.width]).toContain(tipX);
+    expect(tipY > to.y && tipY < to.y + to.height).toBe(true);
+    expect(Math.abs(endX - tipX)).toBeCloseTo(7, 5);
+    expect(endY).toBeCloseTo(tipY, 5);
+    const [startX, startY] = line[0];
+    expect([from.x, from.x + from.width]).toContain(startX);
+    expect(startY > from.y && startY < from.y + from.height).toBe(true);
+  });
+  return { boxes, wires, boxOf };
+}
+
+it('关系图按原方向画出依赖与数据流：环里的回边箭头朝左，自环在框上沿，筛选只减线不挪节点', async () => {
+  const user = userEvent.setup();
+  const architecture = architectureData();
+  mount(operationsData({ architecture }));
+  const { boxes, wires, boxOf } = expectCleanDrawing(architecture);
+  // web → core 是依赖；core → web 与之成环，箭头回到 web 的右边
+  expect(wires[0].head[0][0]).toBe(boxOf('core').x);
+  expect(wires[1].head[0][0]).toBe(boxOf('web').x + boxOf('web').width);
+  expect(boxOf('core').x).toBeGreaterThan(boxOf('web').x);
+  expect(boxOf('export').x).toBeGreaterThan(boxOf('core').x);
+  // 默认选中第一个节点：与它相连的两条线加粗，其余不加粗
+  expect(wires.map((wire) => wire.className.includes('is-active'))).toEqual([
+    true,
+    true,
+    false,
+    false,
+  ]);
+  await user.selectOptions(
+    screen.getByRole('combobox', { name: '关系类型' }),
+    'data_flow',
+  );
+  const filtered = readDrawing();
+  expect(filtered.boxes).toEqual(boxes);
+  expect(filtered.wires.map((wire) => wire.className)).toEqual([
+    'architecture-wire is-data-flow is-active',
+    'architecture-wire is-data-flow',
+  ]);
+});
+
+it('没有关系声明时节点按声明顺序铺成几列，不堆成一整列', () => {
+  const architecture = architectureData({ relations: [], flows: [] });
+  mount(operationsData({ architecture }));
+  const { boxes } = expectCleanDrawing(architecture);
+  const columns = [...new Set(boxes.map((box) => box.x))];
+  expect(columns.length).toBeGreaterThan(1);
+  // 节点框按声明顺序读出：同一列里从上到下仍是声明顺序
+  for (const x of columns) {
+    const heights = boxes.filter((box) => box.x === x).map((box) => box.y);
+    expect(heights).toEqual([...heights].sort((left, right) => left - right));
+  }
+});
+
+it('稠密的声明（环、长跨层、双向、同对两类、自环）照样画成干净的正交图', () => {
+  // mulberry32：固定种子，每次跑出同一张图
+  let seed = 20260922;
+  const random = () => {
+    seed = (seed + 0x6d2b79f5) | 0;
+    let value = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+    value = (value + Math.imul(value ^ (value >>> 7), 61 | value)) ^ value;
+    return ((value ^ (value >>> 14)) >>> 0) / 4294967296;
+  };
+  const nodes = Array.from({ length: 14 }, (_, index) => ({
+    id: `n${index}`,
+    label: `节点${index}`,
+    kind: 'module' as const,
+    directory: null,
+    description: '说明',
+    source: architectureLocation(10 + index),
+  }));
+  const relations: ArchitectureData['relations'] = [];
+  const seen = new Set<string>();
+  const add = (from: string, to: string, kind: 'dependency' | 'data_flow') => {
+    if (seen.has(`${from}:${to}:${kind}`)) return;
+    seen.add(`${from}:${to}:${kind}`);
+    relations.push({
+      from,
+      to,
+      kind,
+      label: `${from}到${to}`,
+      source: architectureLocation(40 + relations.length),
+    });
+  };
+  // 先放必有的难点：长链与跨四层的直达、双向、同一对的两类关系、两个自环、三角环
+  ['n0', 'n1', 'n2', 'n3', 'n4'].forEach((id, index, chain) => {
+    if (index) add(chain[index - 1], id, 'dependency');
+  });
+  add('n0', 'n4', 'dependency');
+  add('n4', 'n0', 'data_flow');
+  add('n5', 'n6', 'dependency');
+  add('n5', 'n6', 'data_flow');
+  add('n6', 'n6', 'data_flow');
+  add('n6', 'n6', 'dependency');
+  add('n7', 'n8', 'dependency');
+  add('n8', 'n9', 'dependency');
+  add('n9', 'n7', 'data_flow');
+  while (relations.length < 40)
+    add(
+      `n${Math.floor(random() * nodes.length)}`,
+      `n${Math.floor(random() * nodes.length)}`,
+      random() < 0.5 ? 'dependency' : 'data_flow',
+    );
+  const architecture = architectureData({ nodes, relations, flows: [] });
+  mount(operationsData({ architecture }));
+  const { boxOf } = expectCleanDrawing(architecture);
+  // 链上的节点从左到右依次排开
+  for (const [left, right] of [
+    ['n0', 'n1'],
+    ['n1', 'n2'],
+    ['n2', 'n3'],
+    ['n3', 'n4'],
+  ])
+    expect(boxOf(right).x).toBeGreaterThan(boxOf(left).x);
 });

@@ -1,76 +1,194 @@
+/*
+ * Rust 同文件函数词法关联（T-130 规范第 1–3、11 节；语义见 docs/m3/rust-call-links.md）。
+ * 输入批标识是读数条里的一段展开说明；关联与反查是 Surface 侧栏（2px 墨线框、10px 硬阴影），
+ * 在调用位置表右边（摆放见 rust-call-sites.css）。关联结果与未解析原因都是中性文字，不用红色；
+ * 同一文件里的位置只给眼睛省掉重复的路径，读屏照读整句。只引用 tokens.css 的新令牌。
+ */
+
+/* ---------- 输入批标识：读数条里的一段，展开后是 64 位十六进制与说明 ---------- */
+
 .rust-link-batch {
-  margin: 16px 0;
-  font-size: 0.8125rem;
+  min-width: 0;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.6;
   overflow-wrap: anywhere;
 }
 .rust-link-batch summary {
+  color: var(--ink-2);
   cursor: pointer;
-  padding: 8px 0;
 }
 .rust-link-batch code {
   display: block;
-  font-size: 0.75rem;
-  color: var(--muted);
+  margin-top: var(--space-1);
+  color: var(--ink);
+  font-size: var(--type-label);
+  word-break: break-all;
 }
+.rust-link-batch p {
+  max-width: 72ch;
+  margin: var(--space-1) 0 0;
+  color: var(--ink-2);
+  font-family: var(--font-sans);
+  font-size: 12.5px;
+  line-height: 1.6;
+}
+
+/* ---------- 关联与反查侧栏（Surface） ---------- */
+
 .rust-link-details {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
   min-width: 0;
-  padding: 18px;
-  margin: 20px 0;
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  background: var(--surface-solid);
+  /* 右、下各留出 10px 硬阴影的位置，阴影不压到格子的分区线上 */
+  margin: 0 10px 10px 0;
+  padding: var(--space-4) 18px 18px;
   overflow-wrap: anywhere;
 }
 .rust-link-details h3 {
-  margin: 0 0 12px;
-  font-size: 0.9375rem;
+  margin: 0;
+  font-size: var(--type-item);
+  font-weight: 800;
+  line-height: 1.35;
 }
 .rust-link-details h4 {
-  margin: 20px 0 12px;
-  font-size: 0.875rem;
+  margin: 0;
+  font-size: var(--type-body);
+  font-weight: 800;
+  line-height: 1.4;
 }
-.rust-link-details label {
-  display: block;
-  margin: 16px 0 8px;
-  font-size: 0.8125rem;
+/* 只管没有类名的正文段落；来源句、计数与说明各有自己的类，不被这里放大 */
+.rust-link-details p:not([class]),
+.rust-reference-count {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.55;
 }
-.rust-link-details select {
-  width: 100%;
+.rust-link-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
   min-width: 0;
-  min-height: 44px;
-  padding: 8px 12px;
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  background: var(--surface);
-  color: var(--text);
 }
-.rust-link-details p,
-.rust-link-unresolved {
-  font-size: 0.8125rem;
+.rust-link-field label {
+  font-size: 13px;
+  font-weight: 700;
 }
-.rust-link-unresolved {
-  color: var(--muted);
+.rust-link-field .rust-select {
+  width: 100%;
 }
-.rust-linked-definition {
-  padding-left: 12px;
-  border-left: 2px solid var(--accent);
+/* 所选调用、函数定义与引用：各段顶上一道 1.5px 墨线 */
+.rust-selected-call,
+.rust-definition-references {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-1);
+  min-width: 0;
+  padding-top: var(--space-2);
+  border-top: 1.5px solid var(--ink);
 }
 .rust-definition-references ul {
-  padding-left: 20px;
+  align-self: stretch;
+  margin: 0;
+  padding: 0;
+  list-style: none;
 }
 .rust-definition-references li {
-  padding: 8px 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0 var(--space-2);
+  padding: var(--space-1) 0;
+  border-bottom: 1px solid var(--hairline);
 }
-.rust-call-list .text-button[aria-pressed='true'] {
-  color: var(--accent);
-  text-decoration: underline;
-  text-underline-offset: 4px;
+.rust-definition-references li:last-child {
+  border-bottom: 0;
 }
-@media (max-width: 760px) {
+.rust-definition-references .ui-button {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  font-weight: 600;
+}
+.rust-link-details .rust-source-position__file {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+}
+
+/* ---------- 一处调用的关联结果：关联到定义时左侧一道墨线接定义位置；未解析只写原因 ---------- */
+
+.rust-link-unresolved {
+  margin: 0;
+  color: var(--ink-2);
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+.rust-linked-definition {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  padding-left: var(--space-2);
+  border-left: 1.5px solid var(--ink);
+}
+.rust-linked-definition p:not([class]) {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+.rust-linked-definition strong {
+  font-family: var(--font-mono);
+  font-weight: 600;
+}
+.rust-call__link {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+/* ---------- 「查看关联与引用」：正在侧栏里查看的那一处黑底反白 ---------- */
+
+.rust-call .rust-call__inspect {
+  justify-self: start;
+}
+.rust-call .rust-call__inspect[aria-pressed='true'],
+.rust-call .rust-call__inspect[aria-pressed='true']:hover {
+  background: var(--ink);
+  color: var(--on-ink);
+  text-decoration: none;
+}
+
+/* ---------- 文本降级里的反查 ---------- */
+
+.rust-references-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.rust-references-text p {
+  margin: 0;
+}
+.rust-references-text ul {
+  margin: 0;
+  padding: 0 0 0 var(--space-3);
+  border-left: 1px solid var(--hairline);
+  list-style: none;
+}
+.rust-text-data .rust-references-text li {
+  padding: var(--space-1) 0;
+  border-bottom: 0;
+}
+
+/* 窄屏（<760px）：侧栏收窄内边距，select 用 projects-mobile.css 的 44px 高 */
+@media (width < 760px) {
   .rust-link-details {
-    padding: 14px;
-  }
-  .rust-link-details select {
-    font-size: 1rem;
+    padding: 14px 14px 16px;
   }
 }

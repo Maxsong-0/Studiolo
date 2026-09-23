@@ -111,6 +111,10 @@ export function defaultApiResponse(
       { code: 'policy_plane_absent', error: '本入口未装配策略平面。' },
       404,
     );
+  // 跨项目黑板汇总（驾驶舱首屏就读）：与真实服务端未装配黑板时一样回空正文 404，
+  // 免得落到下面的「一律回工作台快照」被封闭解码器判成格式无效。
+  if (String(input).startsWith('/api/v1/board/overview'))
+    return new Response(null, { status: 404 });
   return String(input).startsWith('/api/search')
     ? jsonResponse({
         generation: snapshot.generation,

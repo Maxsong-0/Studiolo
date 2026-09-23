@@ -4,6 +4,7 @@ import type {
   OutgoingLink,
 } from '../types';
 import { Icon } from './Icon';
+import '../styles/navigation.css';
 
 const unresolvedLabels = {
   ambiguous: '存在同名文档，请选择完整路径',
@@ -67,6 +68,10 @@ function OutgoingEntry({
   );
 }
 
+/**
+ * 阅读器左栏（256px）：大纲、本页链接、反链三段各自可折叠，大纲默认展开；
+ * 当前位置所属的标题黑底反白（aria-current=location）。
+ */
 export function DocumentNavigation({
   navigation,
   onNavigate,

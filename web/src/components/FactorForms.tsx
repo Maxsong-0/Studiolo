@@ -2,9 +2,16 @@ import { useLayoutEffect, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
 import type { FactorAction, FactorState } from '../factorModel';
 import { validOtp, validRecoveryCode } from '../factorModel';
+import { Button } from '../ui';
 import { Icon } from './Icon';
+import '../styles/factor.css';
 
 type Mode = FactorAction['kind'] | null;
+
+/**
+ * 三种安全操作的入口与表单。标签在上、输入等宽描边、错误在下；
+ * 提交即清空输入（无论是否发得出去），验证码不留在 DOM 里。
+ */
 export function FactorForms({
   state,
   busy,
@@ -60,36 +67,33 @@ export function FactorForms({
   const recent = state.recent_authentication;
   return (
     <>
-      <p>
+      <p className="factor-lead">
         {recent
           ? `已完成二次认证，有效至 ${new Date(recent.expires_at_ms).toLocaleTimeString()}。`
           : '生成恢复码等敏感操作需要先完成二次认证。'}
       </p>
       <div className="factor-actions">
-        <button
-          className="outline-button"
-          disabled={busy}
-          onClick={() => choose('step-up')}
-        >
+        <Button size="sm" disabled={busy} onClick={() => choose('step-up')}>
           <Icon name="lock" />
           二次认证
-        </button>
-        <button
-          className="outline-button"
+        </Button>
+        <Button
+          size="sm"
           disabled={busy || !recent}
           onClick={() => choose('codes')}
         >
           <Icon name="key" />
           生成恢复码
-        </button>
+        </Button>
         {state.recovery_candidate_available ? (
-          <button
-            className="text-button"
+          <Button
+            variant="text"
+            size="sm"
             disabled={busy}
             onClick={() => choose('recover')}
           >
             恢复验证器
-          </button>
+          </Button>
         ) : null}
       </div>
       {mode ? (
@@ -102,11 +106,13 @@ export function FactorForms({
                 : '恢复到准备好的新验证器'}
           </h4>
           {mode === 'codes' ? (
-            <p>生成后，之前所有恢复码立即失效。新码仅本次显示，请及时保存。</p>
+            <p className="factor-warning">
+              生成后，之前所有恢复码立即失效。新码仅本次显示，请及时保存。
+            </p>
           ) : null}
           {mode === 'recover' ? (
             <>
-              <p>
+              <p className="factor-warning">
                 请使用准备好的新验证器。确认后会替换旧验证器，并退出全部会话。
               </p>
               <label>
@@ -137,26 +143,40 @@ export function FactorForms({
               />
             </label>
           ) : null}
-          {error ? <p role="alert">{error}</p> : null}
-          {busy ? <p role="status">正在提交…停止等待不代表撤回操作。</p> : null}
+          {error ? (
+            <p className="factor-error" role="alert">
+              {error}
+            </p>
+          ) : null}
+          {busy ? (
+            <p className="factor-note" role="status">
+              正在提交…停止等待不代表撤回操作。
+            </p>
+          ) : null}
           <div className="factor-actions">
-            <button className="outline-button" type="submit" disabled={busy}>
+            {/* 换发恢复码、恢复验证器不可撤回（旧码作废、全部会话退出）：确认按钮用 danger，与删除文件同一语法。 */}
+            <Button
+              variant={mode === 'step-up' ? 'primary' : 'danger'}
+              size="sm"
+              type="submit"
+              disabled={busy}
+            >
               {mode === 'step-up'
                 ? '确认二次认证'
                 : mode === 'codes'
                   ? '确认生成新恢复码'
                   : '确认恢复验证器'}
-            </button>
-            <button
-              className="text-button"
-              type="button"
+            </Button>
+            <Button
+              variant="text"
+              size="sm"
               onClick={() => {
                 choose(null);
                 onCancel();
               }}
             >
               关闭此操作
-            </button>
+            </Button>
           </div>
         </form>
       ) : null}

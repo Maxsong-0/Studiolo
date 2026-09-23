@@ -2,15 +2,29 @@ import {
   lazy,
   useDeferredValue,
   useEffect,
+  useLayoutEffect,
   useRef,
   useState,
   useSyncExternalStore,
+  type ReactNode,
 } from 'react';
 import { EditorController } from '../EditorController';
+import type { EditorSnapshot } from '../EditorController';
 import { byteLength, canEdit, EDIT_LIMIT } from '../canonicalModel';
+import type { CanonicalDocument } from '../canonicalModel';
+import { freshnessReason } from '../freshness';
 import { useDraftStore } from '../draftContext';
 import { exportDrafts } from '../draftExport';
 import { useDialogSurface } from '../useDialogSurface';
+import {
+  Button,
+  Cell,
+  EmptyState,
+  GridFrame,
+  StatusMark,
+  Surface,
+  type StatusState,
+} from '../ui';
 import { Icon } from './Icon';
 import { EditorPane } from './EditorPane';
 import { EditorComparison } from './EditorComparison';
@@ -20,6 +34,7 @@ import type { RenameNavigation } from '../renameNavigation';
 import { RenameFile } from './RenameFile';
 import { DeleteFile } from './DeleteFile';
 import { useFileOperationStore } from '../fileOperationContext';
+import '../styles/editor.css';
 
 // 重型输入与解析器只在打开可预览的原文后载入，状态控制器始终只有一份。
 const MarkdownEditor = lazy(() =>
@@ -32,6 +47,98 @@ const MarkdownPreview = lazy(() =>
     default: module.MarkdownPreview,
   })),
 );
+
+interface Mark {
+  state: StatusState;
+  label: string;
+}
+
+/**
+ * 状态行「保存」一格：把编辑状态机的阶段换成等宽短标签与方块（规范第 1 节）。
+ * ■ 与基线一致、□ 待定、黑 ■ 在跑、红 ■ 出问题或等你选择、灰虚线 只读；文字始终写出来。
+ */
+function saveMark(phase: EditorSnapshot['phase'], readOnly: boolean): Mark {
+  switch (phase) {
+    case 'loading':
+      return { state: 'pending', label: '读取中' };
+    case 'clean':
+      return readOnly
+        ? { state: 'dormant', label: '只读' }
+        : { state: 'ok', label: '无改动' };
+    case 'dirty':
+      return { state: 'pending', label: '未保存' };
+    case 'saving':
+      return { state: 'active', label: '保存中' };
+    case 'verifying':
+      return { state: 'active', label: '核对磁盘' };
+    case 'conflict':
+      return { state: 'alert', label: '版本冲突' };
+    case 'unknown':
+      return { state: 'alert', label: '结果未知' };
+    case 'blocked':
+      return { state: 'alert', label: '已阻断' };
+    case 'restore':
+      return { state: 'alert', label: '草稿待处理' };
+    case 'review':
+      return { state: 'alert', label: '待比较' };
+    case 'file-operation':
+      return { state: 'pending', label: '已暂停' };
+  }
+}
+
+/**
+ * 状态行「新鲜度」一格：沿用新鲜度提示的原话；陈旧的原因进 title。
+ * 没有证据与陈旧一样按出问题标红：未知不等于正常，编辑也因此保持只读（与状态胶囊同一口径）。
+ */
+function freshnessMark(
+  document: CanonicalDocument,
+): Mark & { reason?: string } {
+  const { freshness } = document;
+  if (!freshness)
+    return {
+      state: 'alert',
+      label: '新鲜度未知',
+      reason: '当前服务未提供 canonical 新鲜度证据。',
+    };
+  if (freshness.stale)
+    return {
+      state: 'alert',
+      label: '快照已陈旧',
+      reason: freshnessReason(freshness),
+    };
+  return { state: 'ok', label: '已追平已知提交' };
+}
+
+/** 读数格：拿不到时显示「—」，原因写进 title 并给读屏一份，绝不补一个值。 */
+function Reading({
+  label,
+  value,
+  reason = '',
+  title,
+}: {
+  label: string;
+  value: ReactNode | null;
+  /** value 为 null 时必须给：为什么拿不到。 */
+  reason?: string;
+  /** 值完整的说法（如版本全长），显示被截短时给。 */
+  title?: string;
+}) {
+  const missing = value === null;
+  return (
+    <div>
+      <dt>{label}</dt>
+      <dd title={missing ? reason : title}>
+        {missing ? (
+          <>
+            —<span className="sr-only">{reason}</span>
+          </>
+        ) : (
+          value
+        )}
+      </dd>
+    </div>
+  );
+}
 
 interface Props {
   path: string;
@@ -108,60 +215,115 @@ function CanonicalEditorContent({
     const record = state.base && store.get(state.base);
     if (record) exportDrafts([record]);
   };
+  // Esc 走 dialog 的 cancel：拦下浏览器的直接关闭，改走同一个 close（有草稿或保存在途时先问）。
+  // Surface 的属性类型只收通用 HTML 属性，所以用原生监听；监听只挂一次，调用时总用最新一轮的 close。
+  const latestClose = useRef(close);
+  useLayoutEffect(() => {
+    latestClose.current = close;
+  });
+  useLayoutEffect(() => {
+    const element = ref.current;
+    if (!element) return;
+    function cancel(event: Event) {
+      event.preventDefault();
+      latestClose.current();
+    }
+    element.addEventListener('cancel', cancel);
+    return () => element.removeEventListener('cancel', cancel);
+  }, []);
+  const save = saveMark(state.phase, Boolean(locked || fileLocked));
+  const freshness = state.base ? freshnessMark(state.base) : null;
+  const watermark = state.base?.freshness?.committed_through ?? null;
   return (
-    <dialog
+    <Surface
+      as="dialog"
       ref={ref}
-      className="document-dialog canonical-editor"
+      appear={false}
+      className="editor-overlay"
       aria-labelledby="editor-title"
-      onCancel={(event) => {
-        event.preventDefault();
-        close();
-      }}
     >
-      <header className="document-header">
-        <div>
+      <header className="editor-titlebar">
+        <div className="editor-titlebar__row">
           <h2 id="editor-title">编辑与预览</h2>
-          <p className="source-location">{path}</p>
+          <button
+            className="icon-button"
+            onClick={close}
+            aria-label="关闭编辑器"
+            data-dialog-dismiss
+            data-editor-no-save
+          >
+            <Icon name="close" />
+          </button>
         </div>
-        <button
-          className="icon-button"
-          onClick={close}
-          aria-label="关闭编辑器"
-          data-dialog-dismiss
-          data-editor-no-save
-        >
-          <Icon name="close" />
-        </button>
+        <dl className="editor-status">
+          <Reading label="路径" value={path} />
+          <Reading
+            label="版本"
+            value={state.base ? `${state.base.revision.slice(0, 12)}…` : null}
+            title={state.base?.revision}
+            reason="尚未取得权威文档，没有编辑基线版本。"
+          />
+          <Reading
+            label="提交水位"
+            value={watermark}
+            reason={
+              !state.base
+                ? '尚未取得权威文档。'
+                : !state.base.freshness
+                  ? '当前服务未提供 canonical 新鲜度证据。'
+                  : '服务未报告提交水位。'
+            }
+          />
+          <Reading
+            label="新鲜度"
+            value={
+              freshness ? (
+                <StatusMark state={freshness.state}>
+                  {freshness.label}
+                </StatusMark>
+              ) : null
+            }
+            title={freshness?.reason}
+            reason="尚未取得权威文档。"
+          />
+          <Reading
+            label="保存"
+            value={<StatusMark state={save.state}>{save.label}</StatusMark>}
+          />
+        </dl>
       </header>
       <div className="editor-controls">
-        <button
-          className="outline-button"
+        <Button
+          size="sm"
           aria-pressed={preview}
           onClick={() => setPreview((value) => !value)}
         >
           {preview ? '隐藏预览' : '显示预览'}
-        </button>
-        <button
-          className="outline-button"
+        </Button>
+        <Button
+          size="sm"
+          variant="primary"
           disabled={state.phase !== 'dirty' || locked || fileLocked}
           onClick={() => void controller.save()}
         >
           立即保存
-        </button>
-        <button className="outline-button" disabled={!dirty} onClick={download}>
+        </Button>
+        <Button size="sm" disabled={!dirty} onClick={download}>
           导出草稿与恢复信息
-        </button>
-        <button
+        </Button>
+        <Button
           ref={historyToggle}
-          className="outline-button"
+          size="sm"
           data-editor-no-save
           disabled={!state.base || state.scopeChanged}
           aria-expanded={historyOpen && !state.scopeChanged}
           onClick={() => setHistoryOpen((open) => !open)}
         >
           {historyOpen && !state.scopeChanged ? '隐藏页面历史' : '页面历史'}
-        </button>
-        <span>默认软换行 · 停止输入 1.5 秒或失焦后自动保存</span>
+        </Button>
+        <span className="editor-controls__hint">
+          默认软换行 · 停止输入 1.5 秒或失焦后自动保存
+        </span>
       </div>
       <EditorNotices
         controller={controller}
@@ -177,24 +339,26 @@ function CanonicalEditorContent({
           ref.current?.querySelector<HTMLElement>('.cm-content')?.focus();
         }}
       />
-      <DeleteFile controller={controller} state={state} />
-      <RenameFile
-        controller={controller}
-        state={state}
-        onRenamed={
-          onRenamed
-            ? (request, receipt, signal, isCurrent) => {
-                const interactionCurrent = captureInteraction();
-                return onRenamed(
-                  request,
-                  receipt,
-                  signal,
-                  () => interactionCurrent() && isCurrent(),
-                );
-              }
-            : undefined
-        }
-      />
+      <div className="editor-file-ops">
+        <DeleteFile controller={controller} state={state} />
+        <RenameFile
+          controller={controller}
+          state={state}
+          onRenamed={
+            onRenamed
+              ? (request, receipt, signal, isCurrent) => {
+                  const interactionCurrent = captureInteraction();
+                  return onRenamed(
+                    request,
+                    receipt,
+                    signal,
+                    () => interactionCurrent() && isCurrent(),
+                  );
+                }
+              : undefined
+          }
+        />
+      </div>
       {historyOpen && state.base && !state.scopeChanged ? (
         <PageHistory
           key={JSON.stringify([
@@ -215,14 +379,18 @@ function CanonicalEditorContent({
       {state.base ? (
         <div className="editor-scroll">
           {large ? (
-            <section className="editor-notice" aria-label="大文档只读原文">
+            <section className="editor-large" aria-label="大文档只读原文">
               <pre>{state.draft}</pre>
             </section>
           ) : (
-            <div
-              className={`editor-panes${preview ? '' : ' editor-source-only'}`}
-            >
-              <section aria-label="源码编辑区域">
+            <GridFrame columns={preview ? 2 : 1} className="editor-panes">
+              <Cell
+                as="section"
+                span={1}
+                flush
+                className="editor-pane--source"
+                aria-label="源码编辑区域"
+              >
                 <EditorPane content={state.draft} label="源码编辑器">
                   <MarkdownEditor
                     value={state.draft}
@@ -234,36 +402,38 @@ function CanonicalEditorContent({
                     onComposition={controller.composition}
                   />
                 </EditorPane>
-              </section>
+              </Cell>
               {preview ? (
-                <EditorPane content={state.draft} label="Markdown 预览">
-                  <MarkdownPreview
-                    content={previewContent}
-                    updating={previewContent !== state.draft}
-                  />
-                </EditorPane>
+                <Cell as="div" span={1} className="editor-pane--preview">
+                  <EditorPane content={state.draft} label="Markdown 预览">
+                    <MarkdownPreview
+                      content={previewContent}
+                      updating={previewContent !== state.draft}
+                    />
+                  </EditorPane>
+                </Cell>
               ) : null}
-            </div>
+            </GridFrame>
           )}
           {comparison ? <EditorComparison state={state} /> : null}
         </div>
       ) : (
-        <div className="editor-notice">
-          <p>
-            {state.phase === 'loading'
+        <EmptyState
+          className="editor-placeholder"
+          title={
+            state.phase === 'loading'
               ? '正在读取权威文档…'
-              : '未取得权威文档，不能启用编辑。'}
-          </p>
-          {state.phase !== 'loading' ? (
-            <button
-              className="outline-button"
-              onClick={() => void controller.load()}
-            >
-              重新读取权威文档
-            </button>
-          ) : null}
-        </div>
+              : '未取得权威文档，不能启用编辑。'
+          }
+          action={
+            state.phase !== 'loading' ? (
+              <Button size="sm" onClick={() => void controller.load()}>
+                重新读取权威文档
+              </Button>
+            ) : null
+          }
+        />
       )}
-    </dialog>
+    </Surface>
   );
 }

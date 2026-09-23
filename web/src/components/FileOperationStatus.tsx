@@ -1,5 +1,8 @@
 import { useEffect, useRef } from 'react';
 import { useFileOperationStore } from '../fileOperationContext';
+import { Button } from '../ui';
+import { cx } from '../ui/dom';
+import '../styles/file-operations.css';
 
 export function FileOperationStatus({ onSettled }: { onSettled?: () => void }) {
   const { store, record } = useFileOperationStore();
@@ -33,26 +36,35 @@ export function FileOperationStatus({ onSettled }: { onSettled?: () => void }) {
     link.click();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   };
+  // 结果未知与明确未执行都算出了问题：红色虚线框＋红色方块；等回执是空心方块，已提交是实心方块。
+  const trouble = record.phase === 'uncertain' || record.phase === 'rejected';
   return (
-    <section className="editor-notice" aria-label="文件操作回执">
-      <p role={record.phase === 'uncertain' ? 'alert' : 'status'}>
+    <section
+      className={cx('file-receipt', trouble && 'file-receipt--trouble')}
+      aria-label="文件操作回执"
+    >
+      <p
+        className="file-receipt__message"
+        data-phase={record.phase}
+        role={record.phase === 'uncertain' ? 'alert' : 'status'}
+      >
         {record.message}
       </p>
       {record.request.kind === 'rename' ? (
-        <div className="source-location">
+        <div className="file-receipt__paths">
           <p>源：{record.request.from}</p>
           <p>目标：{record.request.to}</p>
         </div>
       ) : (
-        <p className="source-location">{record.request.path}</p>
+        <p className="file-receipt__paths">{record.request.path}</p>
       )}
       {record.phase === 'uncertain' ? (
         <p>请求仅留在本页内存。刷新或关闭页面前，请导出请求信息。</p>
       ) : null}
-      <div className="history-pagination">
+      <div className="file-receipt__actions">
         {record.phase === 'uncertain' ? (
-          <button
-            className="outline-button"
+          <Button
+            size="sm"
             onClick={() => {
               const signal = lifetime.current.signal;
               void store.submit(record.request, signal).then(() => {
@@ -61,21 +73,21 @@ export function FileOperationStatus({ onSettled }: { onSettled?: () => void }) {
             }}
           >
             核对原请求
-          </button>
+          </Button>
         ) : null}
-        <button className="outline-button" onClick={exportRequest}>
+        <Button size="sm" onClick={exportRequest}>
           导出请求信息
-        </button>
+        </Button>
         {['committed', 'rejected'].includes(record.phase) ? (
-          <button
-            className="outline-button"
+          <Button
+            size="sm"
             onClick={() => {
               store.dismiss();
               onSettled?.();
             }}
           >
             收起回执
-          </button>
+          </Button>
         ) : null}
       </div>
     </section>

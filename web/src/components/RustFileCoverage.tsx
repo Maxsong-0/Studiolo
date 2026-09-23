@@ -1,5 +1,8 @@
 import type { RustSourceCoverage } from '../rustCallSites';
+import '../styles/operations.css';
+import '../styles/rust-call-sites.css';
 
+/** 文件覆盖读数：等宽小标签＋等宽值（同图纸标题栏的读数格），下附遗漏边界说明。 */
 export function RustFileCoverage({ file }: { file: RustSourceCoverage }) {
   return (
     <div className="rust-coverage">

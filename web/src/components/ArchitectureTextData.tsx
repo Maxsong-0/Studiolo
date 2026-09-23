@@ -1,7 +1,11 @@
 import { nodeKinds, relationKinds } from '../architecture';
 import type { ArchitectureData } from '../architecture';
 import type { OpenSource } from '../types';
+import { Button } from '../ui';
+import '../styles/operations.css';
+import '../styles/architecture.css';
 
+/** 架构声明的纯文本（图形回退用）：节点、关系、设计路径逐条列出，每条带原文入口；不放任何图形。 */
 export function ArchitectureTextData({
   data,
   onOpen,
@@ -26,13 +30,14 @@ export function ArchitectureTextData({
               声明目录：{node.directory ?? '未声明目录'} ·
               文本视图未展示目录核验结果
             </p>
-            <button
-              className="text-button"
+            <Button
+              variant="text"
+              size="sm"
               onClick={() => onOpen(node.source)}
               aria-label={`${node.label}，从文本查看节点来源`}
             >
               查看节点原文
-            </button>
+            </Button>
           </li>
         ))}
       </ul>
@@ -46,12 +51,13 @@ export function ArchitectureTextData({
             <p>
               {relationKinds[relation.kind]} · {relation.label}
             </p>
-            <button
-              className="text-button"
+            <Button
+              variant="text"
+              size="sm"
               onClick={() => onOpen(relation.source)}
             >
               查看关系原文
-            </button>
+            </Button>
           </li>
         ))}
       </ul>
@@ -67,12 +73,13 @@ export function ArchitectureTextData({
               <li key={step.order}>
                 <strong>{labels.get(step.node)}</strong>
                 <p>{step.description}</p>
-                <button
-                  className="text-button"
+                <Button
+                  variant="text"
+                  size="sm"
                   onClick={() => onOpen(step.source)}
                 >
                   查看步骤原文
-                </button>
+                </Button>
               </li>
             ))}
           </ol>

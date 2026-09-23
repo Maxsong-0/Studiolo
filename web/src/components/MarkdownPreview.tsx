@@ -4,6 +4,7 @@ import { unified } from 'unified';
 import remarkParse from 'remark-parse';
 import remarkGfm from 'remark-gfm';
 import remarkFrontmatter from 'remark-frontmatter';
+import '../styles/document.css';
 
 interface Node {
   type: string;
@@ -46,7 +47,11 @@ function renderNode(node: Node, key: number): ReactNode {
   const children = node.children?.map(renderNode);
   switch (node.type) {
     case 'root':
-      return <div key={key}>{children}</div>;
+      return (
+        <div key={key} className="markdown-body">
+          {children}
+        </div>
+      );
     case 'text':
       return node.value;
     case 'paragraph':
@@ -151,6 +156,10 @@ function renderNode(node: Node, key: number): ReactNode {
       return <span key={key}>{node.value ?? children}</span>;
   }
 }
+/**
+ * Markdown 预览（编辑器右栏）：标题层级靠字重与上边线区分，代码等宽，表格 1px 线，
+ * 链接常驻下划线；正文列不超过 72ch。HTML 按文本显示，不加载图片，不执行图表或脚本。
+ */
 export function MarkdownPreview({
   content,
   updating = false,
@@ -183,10 +192,10 @@ export function MarkdownPreview({
       {result.tree ? (
         renderNode(result.tree, 0)
       ) : (
-        <>
+        <div className="markdown-body">
           <p role="alert">{result.error}</p>
           <pre>{content}</pre>
-        </>
+        </div>
       )}
     </section>
   );

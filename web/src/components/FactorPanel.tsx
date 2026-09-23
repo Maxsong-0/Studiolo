@@ -2,10 +2,16 @@ import { useEffect } from 'react';
 import type { RefObject } from 'react';
 import type { SessionClient } from '../sessionClient';
 import { useFactorPanel } from '../useFactorPanel';
+import { Button } from '../ui';
 import { FactorForms } from './FactorForms';
 import { RecoveryDelivery } from './RecoveryDelivery';
 import { Icon } from './Icon';
+import '../styles/factor.css';
 
+/**
+ * 账户对话框里的「安全验证」：二次认证、换发恢复码、恢复验证器。
+ * 警告与读取失败是红色虚线框（规范第 1 节：红色只给「等你」与「出问题」，并且带形状）。
+ */
 export function FactorPanel({
   client,
   busy,
@@ -30,28 +36,37 @@ export function FactorPanel({
           <Icon name="shield" />
           安全验证
         </h3>
-        <button
-          className="text-button"
+        <Button
+          variant="text"
+          size="sm"
           disabled={busy || panel.loading || !!panel.codes}
           onClick={() => void panel.load()}
         >
           核对安全状态
-        </button>
+        </Button>
       </div>
       {warning ? (
         <p className="factor-warning" role="status">
           {warning}
         </p>
       ) : null}
-      {panel.loading ? <p role="status">正在核对安全操作…</p> : null}
+      {panel.loading ? (
+        <p className="factor-note" role="status">
+          正在核对安全操作…
+        </p>
+      ) : null}
       {panel.error ? (
         <p className="factor-warning" role="alert">
           {panel.error}
         </p>
       ) : null}
-      {panel.notice ? <p role="status">{panel.notice}</p> : null}
+      {panel.notice ? (
+        <p className="factor-note" role="status">
+          {panel.notice}
+        </p>
+      ) : null}
       {panel.state === null ? (
-        <p>当前入口未启用二次认证和验证器恢复操作。</p>
+        <p className="factor-note">当前入口未启用二次认证和验证器恢复操作。</p>
       ) : null}
       {panel.codes ? (
         <RecoveryDelivery codes={panel.codes} onClose={panel.dismissCodes} />

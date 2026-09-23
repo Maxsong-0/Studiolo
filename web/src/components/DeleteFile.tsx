@@ -2,7 +2,9 @@ import { useEffect, useRef, useState } from 'react';
 import type { EditorController, EditorSnapshot } from '../EditorController';
 import { useFileOperationStore } from '../fileOperationContext';
 import { useFileOperations } from '../useFileOperations';
+import { Button, Surface } from '../ui';
 import { FileOperationStatus } from './FileOperationStatus';
+import '../styles/file-operations.css';
 
 export function DeleteFile({
   controller,
@@ -35,12 +37,14 @@ export function DeleteFile({
   // 任一次编辑状态变化都会使已勾选的审阅失效，即使之后又回到相同版本。
   const confirmed = confirmedState === state;
   return (
-    <section className="file-delete" data-editor-no-save aria-label="删除文件">
+    <section className="file-op" data-editor-no-save aria-label="删除文件">
       {!record && !store.canStart() ? (
-        <p role="status">本页文件操作记录已满，请先处理已有记录。</p>
+        <p role="status" className="file-op__note">
+          本页文件操作记录已满，请先处理已有记录。
+        </p>
       ) : null}
-      <button
-        className="outline-button"
+      <Button
+        size="sm"
         disabled={!allowed}
         aria-expanded={reviewing}
         onClick={() => {
@@ -50,20 +54,22 @@ export function DeleteFile({
         }}
       >
         删除文件
-      </button>
+      </Button>
       {reviewing ? (
-        <div className="editor-notice">
+        <Surface className="file-op__review">
           <p>
             将删除当前已保存版本：
-            <strong className="source-location">{base.path}</strong>
+            <strong className="file-op__path">{base.path}</strong>
           </p>
           <p>
             需要先保存或处理草稿。删除后可在「最近删除」恢复原路径；若原路径已被占用，恢复会停止。
           </p>
           {!matchesReview ? (
-            <p>已保存版本发生变化，请重新展开删除确认。</p>
+            <p className="file-op__warning">
+              已保存版本发生变化，请重新展开删除确认。
+            </p>
           ) : null}
-          <label>
+          <label className="file-op__confirm">
             <input
               type="checkbox"
               checked={confirmed && matchesReview && allowed}
@@ -74,29 +80,32 @@ export function DeleteFile({
             />
             我确认删除这个已保存版本
           </label>
-          <button
-            className="outline-button"
-            disabled={!allowed || !confirmed || !matchesReview}
-            onClick={() => {
-              if (!reviewedRevision) return;
-              const current = controller.beginFileOperation(reviewedRevision);
-              if (!current) return;
-              setConfirmedState(null);
-              void store.submit(
-                {
-                  kind: 'delete',
-                  vault_uuid: current.vault_uuid,
-                  path: current.path,
-                  expected_revision: current.revision,
-                  idempotency_key: crypto.randomUUID(),
-                },
-                lifetime.current.signal,
-              );
-            }}
-          >
-            确认删除
-          </button>
-        </div>
+          <div className="file-op__actions">
+            <Button
+              size="sm"
+              variant="danger"
+              disabled={!allowed || !confirmed || !matchesReview}
+              onClick={() => {
+                if (!reviewedRevision) return;
+                const current = controller.beginFileOperation(reviewedRevision);
+                if (!current) return;
+                setConfirmedState(null);
+                void store.submit(
+                  {
+                    kind: 'delete',
+                    vault_uuid: current.vault_uuid,
+                    path: current.path,
+                    expected_revision: current.revision,
+                    idempotency_key: crypto.randomUUID(),
+                  },
+                  lifetime.current.signal,
+                );
+              }}
+            >
+              确认删除
+            </Button>
+          </div>
+        </Surface>
       ) : null}
       {record &&
       record.request.kind !== 'rename' &&

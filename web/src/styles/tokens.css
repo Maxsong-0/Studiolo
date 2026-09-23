@@ -1,273 +1,108 @@
 /*
- * 设计令牌单一来源。
- * 浅色值写在 :root，深色值只在 @media (prefers-color-scheme: dark) 里重定义同名令牌，
- * 任何页面样式一律只引用令牌，不得自带 @media (prefers-color-scheme: dark) 局部补丁：
- * 局部补丁会让深色文字落在仍为浅色的 surface 上，对比度反而更差。
- * 实测对比度见 docs/m2/theming-and-contrast.md。
+ * 设计令牌单一来源（T-130 瑞士网格＋工程图纸，规范 docs/design/t130-design-system.md 第 1、2、3、11 节）。
+ * 浅色值写在 :root，深色值只在唯一的 @media (prefers-color-scheme: dark) 里重定义同名令牌。
+ * 任何页面样式一律只引用令牌，不得自带深色补丁或颜色字面量：
+ * 局部补丁会让深色文字落在仍为浅色的底上，对比度反而更差。
  */
 :root {
-  font-family:
-    -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC',
-    'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
-  font-synthesis: none;
-  text-rendering: optimizeLegibility;
-  -webkit-font-smoothing: antialiased;
-  font-optical-sizing: auto;
   color-scheme: light dark;
 
-  /* 面：由深到浅的层级，body 最外、hover 最内 */
-  --body-base: #eef1f7;
-  --body-tint-a: #dce5ff;
-  --body-tint-b: #e6e1fa;
-  --background: #fff;
-  --surface: #fff;
-  --surface-solid: #f5f7fb;
-  --surface-sunken: #f7f9fc;
-  --surface-header: #f9fafc;
-  --hover: #f0f5fc;
-  --row-hover: #edf4fc75;
-  --nav-hover: #e5ebf480;
-  --sidebar-item-hover: #e6ecf5;
-  --surface-context: #f9fbfe75;
-  --button-face: rgb(255 255 255 / 86%);
-  --sidebar: rgb(244 246 250 / 82%);
-  --sidebar-opaque: #f4f6fa;
-  --toolbar: rgb(255 255 255 / 82%);
-  --toolbar-mobile: rgb(244 246 250 / 92%);
-  --navbar-mobile: rgb(244 247 252 / 92%);
-  --scrim: rgb(21 34 53 / 28%);
-  --scrim-strong: rgb(21 34 53 / 45%);
-  --scrim-soft: rgb(28 40 60 / 22%);
+  /* 颜色：纸、墨、线、唯一的红 */
+  --paper: #f1f1ec;
+  --paper-raised: #f7f7f3;
+  --ink: #0e0e0e;
+  --ink-2: #55554f;
+  --ink-3: #8a8a83;
+  --hairline: #cfcfc8;
+  --grid: #e3e3dc;
+  --signal: #e61919;
+  /* 小号红字（≤14px）用更深的红，纸色上 5.2:1；形状、大字与底色仍用 --signal */
+  --signal-text: #c81414;
+  --signal-wash: #fbe3e1;
+  --on-ink: #f1f1ec;
 
-  /* 文字 */
-  --text: #1d1d1f;
-  --text-soft: #475363;
-  --muted: #68717e;
-  --muted-contrast: #394452;
-  --muted-soft: #828b99;
-  --on-accent: #fff;
+  /* z 轴只有四档 */
+  --z-sticky: 10;
+  --z-popover: 20;
+  --z-dialog: 30;
+  --z-toast: 40;
 
-  /* 线与高光 */
-  --border: #e2e6ee;
-  --border-contrast: #778396;
-  --border-strong: #b8c7dc;
-  --border-hover: #b9c9df;
-  --glass-border: rgb(255 255 255 / 85%);
-  --highlight-inset: rgb(255 255 255 / 100%);
-  --highlight-inset-soft: rgb(255 255 255 / 27%);
+  /* 字体：拉丁与数字 Archivo、等宽 IBM Plex Mono，均自托管（main.tsx 引入）；中文走系统字体 */
+  --font-sans:
+    'Archivo', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+  --font-mono: 'IBM Plex Mono', ui-monospace, monospace;
 
-  /* 强调 */
-  --accent: #0068dc;
-  --accent-soft: #eaf3ff;
-  --accent-gradient-start: #0068dc;
-  --accent-gradient-end: #146bd0;
-  --accent-border: #1677ef;
-  --accent-ring: rgb(0 104 220 / 15%);
-  --accent-focus-border: #3283df;
-  --accent-glow: rgb(57 141 244 / 13%);
-  --on-accent-well: rgb(0 0 0 / 8%);
-  --well: rgb(119 131 153 / 5%);
+  /* 字号：巨号、大号读数、图名、格子标题、条目标题、正文、等宽标签 */
+  --type-giant: 196px;
+  --type-large: 72px;
+  --type-plate: 34px;
+  --type-cell: 18px;
+  --type-item: 15.5px;
+  --type-body: 14px;
+  --type-label: 11.5px;
 
-  /* 语义状态：正常 / 降级 / 未知 / 错误 */
-  --status-ok: #1a7f5a;
-  --status-warn: #8f5e10;
-  --status-unknown: #68717e;
-  --status-mark: #828b99;
-  --error: #ba3d35;
-  --error-soft: #fff6f5;
-  --error-border: rgb(186 61 53 / 19%);
-
-  /* 三态信号：健康页（正常／降级／未知）与策略平面（通过／扩大项／收窄项）共用。
-     「未知」「收窄」永远是中性色，绝不用绿。-contrast 供 prefers-contrast: more 切换 */
-  --signal-ok: #1f7a4d;
-  --signal-ok-contrast: #145635;
-  --signal-alert: #b3452f;
-  --signal-alert-contrast: #8a2f1f;
-  --signal-neutral: #68717e;
-  --signal-neutral-contrast: #394452;
-
-  /* 文本比对高亮 */
-  --mark: #f7e6b5;
-  --mark-text: #1d1d1f;
-
-  /* 导航符号色板：前景 + 底色成对 */
-  --symbol-default: #246bd2;
-  --symbol-default-tint: #e1ecff;
-  --symbol-inbox: #8552be;
-  --symbol-inbox-tint: #f0e6ff;
-  --symbol-operations: #32717d;
-  --symbol-operations-tint: #e3eff1;
-  --symbol-documents: #a3631f;
-  --symbol-documents-tint: #ffefdc;
-  --symbol-on-accent-tint: rgb(255 255 255 / 16%);
-  --symbol-on-accent-inset: rgb(255 255 255 / 25%);
-  --symbol-inset: rgb(255 255 255 / 52%);
-  --action-decision: #8250b8;
-  --action-restart: #a46622;
-
-  /* 文件类型色板：前景 + 底色成对 */
-  --file-default: #68717e;
-  --file-default-tint: #f0f2f6;
-  --file-book: #0068dc;
-  --file-book-tint: #eaf3ff;
-  --file-image: #986227;
-  --file-image-tint: #fff3e1;
-  --file-table: #28745e;
-  --file-table-tint: #e8f5ef;
-  --file-canvas: #8052b6;
-  --file-canvas-tint: #f3edfc;
-  --file-code: #4a65a6;
-  --file-code-tint: #edf1fb;
-
-  /* 阴影 */
-  --shadow: 0 18px 70px #253c6420, 0 2px 8px #253c6408;
-  --shadow-dialog: 0 24px 80px #14264326, 0 4px 16px #1426430d;
-  --shadow-toolbar: 0 4px 14px #273c5707;
-  --shadow-navbar: 0 4px 30px #23416b20;
-  --shadow-panel: 0 2px 8px #253c6405;
-  --shadow-node: 0 2px 4px #253c6407;
-  --shadow-raised: 0 2px 6px rgb(35 55 85 / 9%);
-  --shadow-control: 0 1px 2px #182b4605;
-  --shadow-button: 0 1px 2px #182b4610;
-  --shadow-button-hover: 0 3px 10px #1b3b6610;
-  --shadow-nav-active: 0 3px 9px #1879ee25;
-
+  /* 间距 */
   --space-1: 4px;
   --space-2: 8px;
   --space-3: 12px;
   --space-4: 16px;
-  --space-5: 24px;
-  --space-6: 32px;
-  --space-7: 48px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-7: 28px;
+  --space-8: 32px;
 
-  color: var(--text);
-  background: var(--body-base);
+  /* 动效只有一档；阴影只有浮层这一种（硬偏移、无模糊）；粗线用于顶栏底边与当前子标签 */
+  --motion-fast: 120ms;
+  --overlay-shadow: 10px 10px 0 var(--ink);
+  --rule-thick: 3px;
+
+  font-family: var(--font-sans);
+  font-variant-numeric: tabular-nums;
+  /* 只许合成斜体：自托管字体没带斜体字形，<em> 仍要看得出强调；不合成粗体 */
+  font-synthesis: style;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  font-optical-sizing: auto;
+  color: var(--ink);
+  background: var(--paper);
 }
+
 @media (prefers-color-scheme: dark) {
   :root {
-    --body-base: #0e1014;
-    --body-tint-a: #17203a;
-    --body-tint-b: #1d1a30;
-    --background: #14171d;
-    --surface: #1b1f26;
-    --surface-solid: #232830;
-    --surface-sunken: #191d24;
-    --surface-header: #1f242c;
-    --hover: #2a3039;
-    --row-hover: #262d3899;
-    --nav-hover: rgb(255 255 255 / 6%);
-    --sidebar-item-hover: rgb(255 255 255 / 8%);
-    --surface-context: #191d2499;
-    --button-face: rgb(255 255 255 / 5%);
-    --sidebar: rgb(24 28 35 / 82%);
-    --sidebar-opaque: #181c23;
-    --toolbar: rgb(24 28 35 / 82%);
-    --toolbar-mobile: rgb(22 26 32 / 92%);
-    --navbar-mobile: rgb(24 28 35 / 92%);
-    --scrim: rgb(0 0 0 / 55%);
-    --scrim-strong: rgb(0 0 0 / 72%);
-    --scrim-soft: rgb(0 0 0 / 50%);
-
-    --text: #e6e9ef;
-    --text-soft: #c3cad6;
-    --muted: #9aa3b0;
-    --muted-contrast: #c9d1dc;
-    --muted-soft: #79828f;
-    --on-accent: #fff;
-
-    --border: #333a45;
-    --border-contrast: #6b7684;
-    --border-strong: #3d4653;
-    --border-hover: #4a5361;
-    --glass-border: rgb(255 255 255 / 10%);
-    --highlight-inset: rgb(255 255 255 / 8%);
-    --highlight-inset-soft: rgb(255 255 255 / 6%);
-
-    --accent: #6cb2ff;
-    --accent-soft: #17304f;
-    --accent-gradient-start: #1c66dc;
-    --accent-gradient-end: #1758c4;
-    --accent-border: #2b7cf3;
-    --accent-ring: rgb(108 178 255 / 28%);
-    --accent-focus-border: #4b95e8;
-    --accent-glow: rgb(108 178 255 / 12%);
-    --on-accent-well: rgb(0 0 0 / 22%);
-    --well: rgb(255 255 255 / 7%);
-
-    --status-ok: #56c294;
-    --status-warn: #e8ac4a;
-    --status-unknown: #9aa3b0;
-    --status-mark: #79828f;
-    --error: #ff8b82;
-    --error-soft: #3a1d1b;
-    --error-border: rgb(255 139 130 / 30%);
-
-    --signal-ok: #56c294;
-    --signal-ok-contrast: #7fdcb0;
-    --signal-alert: #f0907a;
-    --signal-alert-contrast: #ffb3a8;
-    --signal-neutral: #9aa3b0;
-    --signal-neutral-contrast: #c9d1dc;
-
-    --mark: #5c4a12;
-    --mark-text: #e6e9ef;
-
-    --symbol-default: #7fb8ff;
-    --symbol-default-tint: #17293f;
-    --symbol-inbox: #c49bf0;
-    --symbol-inbox-tint: #2a2140;
-    --symbol-operations: #6fc3d2;
-    --symbol-operations-tint: #173036;
-    --symbol-documents: #e8a860;
-    --symbol-documents-tint: #33261a;
-    --symbol-on-accent-tint: rgb(255 255 255 / 18%);
-    --symbol-on-accent-inset: rgb(255 255 255 / 22%);
-    --symbol-inset: rgb(255 255 255 / 8%);
-    --action-decision: #b48ce4;
-    --action-restart: #d69a5a;
-
-    --file-default: #9aa3b0;
-    --file-default-tint: #242830;
-    --file-book: #6cb2ff;
-    --file-book-tint: #17304f;
-    --file-image: #d69a5a;
-    --file-image-tint: #33261a;
-    --file-table: #57b894;
-    --file-table-tint: #16302a;
-    --file-canvas: #b48ce4;
-    --file-canvas-tint: #2a2140;
-    --file-code: #8ea6e8;
-    --file-code-tint: #1e2742;
-
-    --shadow: 0 18px 70px rgb(0 0 0 / 55%), 0 2px 8px rgb(0 0 0 / 38%);
-    --shadow-dialog: 0 24px 80px rgb(0 0 0 / 62%), 0 4px 16px rgb(0 0 0 / 40%);
-    --shadow-toolbar: 0 4px 14px rgb(0 0 0 / 34%);
-    --shadow-navbar: 0 4px 30px rgb(0 0 0 / 52%);
-    --shadow-panel: 0 2px 8px rgb(0 0 0 / 30%);
-    --shadow-node: 0 2px 4px rgb(0 0 0 / 28%);
-    --shadow-raised: 0 2px 6px rgb(0 0 0 / 38%);
-    --shadow-control: 0 1px 2px rgb(0 0 0 / 26%);
-    --shadow-button: 0 1px 2px rgb(0 0 0 / 30%);
-    --shadow-button-hover: 0 3px 10px rgb(0 0 0 / 40%);
-    --shadow-nav-active: 0 3px 9px rgb(0 0 0 / 40%);
+    --paper: #121211;
+    --paper-raised: #1a1a18;
+    --ink: #ecece6;
+    --ink-2: #a6a69e;
+    --ink-3: #75756e;
+    --hairline: #34342f;
+    --grid: #1e1e1b;
+    --signal: #ff4a3d;
+    --signal-text: #ff6a5f;
+    --signal-wash: #3a1714;
+    --on-ink: #121211;
   }
 }
+
+/*
+ * 高对比度偏好：只做令牌重指向，深浅两套值同时生效。
+ * 休眠灰与格内细线在浅色下只有 3.07:1 与 1.38:1，这里一并提到 --ink-2。
+ */
+@media (prefers-contrast: more) {
+  :root {
+    --ink-3: var(--ink-2);
+    --hairline: var(--ink-2);
+  }
+}
+
 * {
   box-sizing: border-box;
 }
+/* 页面底色由 :root 的 --paper 兜住；外壳（body 与顶栏）的样式归外壳自己的样式文件 */
 body {
   margin: 0;
   min-width: 320px;
-  background:
-    radial-gradient(ellipse at 0 0, var(--body-tint-a) 0, transparent 45%),
-    radial-gradient(
-      ellipse at 100% 100%,
-      var(--body-tint-b) 0,
-      transparent 40%
-    ),
-    var(--body-base);
-  color: var(--text);
-  font-size: 0.875rem;
+  color: var(--ink);
+  font-size: var(--type-body);
   line-height: 1.6;
 }
 button,
@@ -292,9 +127,15 @@ summary,
 [tabindex] {
   -webkit-tap-highlight-color: transparent;
 }
+/* 链接随正文用墨色、靠下划线识别，不再是浏览器默认的蓝与紫 */
+a {
+  color: inherit;
+  text-underline-offset: 3px;
+}
+/* 焦点环：2px 墨色实线外偏 2px；黑底块里的控件用 .ui-on-ink 换成 --on-ink（见 web/src/ui/ui.css） */
 :focus-visible {
-  outline: 3px solid var(--accent);
-  outline-offset: 3px;
+  outline: 2px solid var(--ink);
+  outline-offset: 2px;
 }
 .icon {
   width: 18px;
@@ -315,56 +156,49 @@ summary,
   position: fixed;
   left: 24px;
   top: -80px;
-  z-index: 10;
+  z-index: var(--z-popover);
   padding: 12px 20px;
-  border-radius: 10px;
-  background: var(--surface);
-  color: var(--accent);
+  border: 2px solid var(--ink);
+  background: var(--paper);
+  color: var(--ink);
 }
 .skip-link:focus {
   top: 16px;
 }
-.text-button,
-.source-value,
-.project-name {
+.text-button {
   background: none;
   border: 0;
   padding: 0;
   text-align: left;
   line-height: 1.5;
 }
+/* 蓝色强调取消后，文字按钮靠下划线而不是颜色和正文区分 */
 .text-button {
-  color: var(--accent);
-  font-size: 0.875rem;
+  color: var(--ink);
+  font-size: var(--type-body);
   white-space: nowrap;
-}
-.text-button:hover,
-.source-value:hover,
-.project-name:hover {
-  color: var(--accent);
   text-decoration: underline;
-  text-underline-offset: 4px;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
+}
+.text-button:hover {
+  text-decoration-thickness: 2px;
 }
 .outline-button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: 8px;
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  background: var(--button-face);
+  border: 1.5px solid var(--ink);
+  border-radius: 0;
+  background: transparent;
   min-height: 36px;
   padding: 7px 12px;
-  font-size: 0.875rem;
+  font-size: var(--type-body);
   line-height: 1.4;
-  box-shadow:
-    var(--shadow-button),
-    inset 0 1px 0 var(--highlight-inset);
 }
 .outline-button:hover:not(:disabled) {
-  background: var(--surface);
-  border-color: var(--border-hover);
-  box-shadow: var(--shadow-button-hover);
+  background: var(--paper-raised);
 }
 .icon-button {
   display: grid;
@@ -374,64 +208,28 @@ summary,
   height: 36px;
   padding: 8px;
   border: 0;
-  border-radius: 50%;
-  background: var(--surface-solid);
+  border-radius: 0;
+  background: transparent;
 }
 .icon-button:hover {
-  background: var(--accent-soft);
-  color: var(--accent);
+  background: var(--paper-raised);
 }
 .is-unknown {
-  color: var(--status-unknown);
+  color: var(--ink-2);
 }
+/* 动效只用于反馈：120ms 的底色、线色、字色与 1px 下移；减少动态时取消位移 */
 @media (prefers-reduced-motion: no-preference) {
   button,
   input,
   select {
     transition:
-      background-color 160ms ease,
-      border-color 160ms ease,
-      color 160ms ease,
-      box-shadow 160ms ease,
-      transform 160ms ease;
+      background-color var(--motion-fast) ease,
+      border-color var(--motion-fast) ease,
+      color var(--motion-fast) ease,
+      transform var(--motion-fast) ease;
   }
   .outline-button:active:not(:disabled),
   .icon-button:active {
-    transform: scale(0.97);
-    transition-duration: 60ms;
-  }
-}
-@media (prefers-reduced-transparency: reduce) {
-  :root {
-    --sidebar: var(--sidebar-opaque);
-    --button-face: var(--surface);
-    --toolbar: var(--surface);
-    --toolbar-mobile: var(--sidebar-opaque);
-    --navbar-mobile: var(--sidebar-opaque);
-  }
-  .outline-button {
-    background: var(--surface);
-  }
-}
-@media (prefers-contrast: more) {
-  :root {
-    --muted: var(--muted-contrast);
-    --border: var(--border-contrast);
-    --border-hover: var(--border-contrast);
-    --sidebar: var(--sidebar-opaque);
-    --button-face: var(--surface);
-    --toolbar: var(--surface);
-    --toolbar-mobile: var(--sidebar-opaque);
-    --navbar-mobile: var(--sidebar-opaque);
-    --muted-soft: var(--muted);
-    --status-mark: var(--muted);
-    --border-strong: var(--border-contrast);
-    --signal-ok: var(--signal-ok-contrast);
-    --signal-alert: var(--signal-alert-contrast);
-    --signal-neutral: var(--signal-neutral-contrast);
-  }
-  .outline-button {
-    background: var(--surface);
-    border-color: var(--border);
+    transform: translateY(1px);
   }
 }

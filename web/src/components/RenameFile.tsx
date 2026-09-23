@@ -6,7 +6,9 @@ import { useFileOperationStore } from '../fileOperationContext';
 import { useFileOperations } from '../useFileOperations';
 import { renameTargetError } from '../renameValidation';
 import { useRenameCompletion } from '../useRenameCompletion';
+import { Button, Surface } from '../ui';
 import { FileOperationStatus } from './FileOperationStatus';
+import '../styles/file-operations.css';
 
 export function RenameFile({
   controller,
@@ -65,12 +67,12 @@ export function RenameFile({
   };
   return (
     <section
-      className="file-delete file-rename"
+      className="file-op file-rename"
       data-editor-no-save
       aria-label="重命名文件"
     >
-      <button
-        className="outline-button"
+      <Button
+        size="sm"
         disabled={!allowed}
         aria-expanded={reviewing}
         onClick={() => {
@@ -79,14 +81,14 @@ export function RenameFile({
         }}
       >
         重命名文件
-      </button>
+      </Button>
       {reviewing && !matchesRecord ? (
-        <div className="editor-notice">
+        <Surface className="file-op__review">
           <p>
             源已保存版本：
-            <strong className="source-location">{base.path}</strong>
+            <strong className="file-op__path">{base.path}</strong>
           </p>
-          <p className="source-location">版本：{base.revision}</p>
+          <p className="file-op__revision">版本：{base.revision}</p>
           <label className="rename-target">
             目标完整路径
             <input
@@ -107,7 +109,7 @@ export function RenameFile({
           </p>
           <p>修改正文、保存、输入法状态或目标路径变化后，都必须重新确认。</p>
           {to && targetError ? <p role="alert">{targetError}</p> : null}
-          <label>
+          <label className="file-op__confirm">
             <input
               type="checkbox"
               checked={confirmed && allowed && !targetError}
@@ -118,24 +120,28 @@ export function RenameFile({
             />
             我确认重命名这个已保存版本到上述目标
           </label>
-          <button
-            className="outline-button"
-            disabled={!allowed || !confirmed || Boolean(targetError)}
-            onClick={submit}
-          >
-            确认重命名
-          </button>
-          <button
-            className="text-button"
-            onClick={() => {
-              setReviewing(false);
-              setConfirmation(null);
-              setTo('');
-            }}
-          >
-            取消重命名审阅
-          </button>
-        </div>
+          <div className="file-op__actions">
+            <Button
+              size="sm"
+              variant="danger"
+              disabled={!allowed || !confirmed || Boolean(targetError)}
+              onClick={submit}
+            >
+              确认重命名
+            </Button>
+            <Button
+              size="sm"
+              variant="text"
+              onClick={() => {
+                setReviewing(false);
+                setConfirmation(null);
+                setTo('');
+              }}
+            >
+              取消重命名审阅
+            </Button>
+          </div>
+        </Surface>
       ) : null}
       {matchesRecord ? (
         <>
@@ -143,20 +149,20 @@ export function RenameFile({
           {record.phase === 'committed' &&
           record.request.kind === 'rename' &&
           record.request.from === base.path ? (
-            <section className="editor-notice" aria-label="重新读取重命名目标">
+            <section className="file-receipt" aria-label="重新读取重命名目标">
               <p role="status">
                 {completion.message ||
                   '回执已保存。目标文档需要独立读取并重新核对权限。'}
               </p>
-              <button
-                className="outline-button"
+              <Button
+                size="sm"
                 aria-disabled={completion.busy}
                 onClick={() => {
                   if (!completion.busy) void completion.readTarget();
                 }}
               >
                 {completion.busy ? '正在核验目标…' : '重新读取目标'}
-              </button>
+              </Button>
             </section>
           ) : null}
         </>

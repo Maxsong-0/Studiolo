@@ -1,0 +1,534 @@
+/*
+ * 外壳（T-130 设计规范第 5、11 节）：46px 顶栏，底边 3px 黑线；左字标、当前库名与五导航，右状态胶囊、⌘K 与工具。
+ * 只引用 tokens.css 的令牌；深色值由 tokens.css 在 prefers-color-scheme 里重定义，这里不写深色分支。
+ * 断点一律写区间语法（width < 760px 这类）：相邻两档首尾相接，缩放出小数宽度时不会两档都不命中。
+ */
+.shell {
+  min-height: 100dvh;
+  padding: 20px 28px 24px;
+  background: var(--paper);
+  color: var(--ink);
+}
+/* 「跳到主要内容」聚焦时必须压在吸顶顶栏之上；与顶栏同层会被后绘制的顶栏盖住。 */
+.shell > .skip-link {
+  z-index: var(--z-toast);
+}
+
+.shell-top {
+  position: sticky;
+  top: 0;
+  z-index: var(--z-sticky);
+  display: flex;
+  align-items: stretch;
+  gap: 18px;
+  box-sizing: content-box;
+  height: 46px;
+  /* 背景铺满左右页边，滚动时正文不会从页边露出来；3px 黑线仍只画在内容宽度内（::after）。 */
+  margin: 0 -28px;
+  padding: 0 28px var(--rule-thick);
+  background: var(--paper);
+}
+.shell-top::after {
+  content: '';
+  position: absolute;
+  left: 28px;
+  right: 28px;
+  bottom: 0;
+  height: var(--rule-thick);
+  background: var(--ink);
+}
+
+.shell-brand {
+  display: flex;
+  align-items: center;
+  font-size: 21px;
+  font-weight: 900;
+  line-height: 1;
+  letter-spacing: -0.03em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.shell-brand-dot {
+  color: var(--signal);
+}
+
+/*
+ * 当前库名（规范第 5 节，承接 T-117）：紧跟字标，等宽 11.5px 次要墨色；最宽 20 个字符，超长省略，
+ * 全名在 title 里。任何宽度都显示：顶栏挤的时候它先让位（最小宽度 0），别的项不被挤出横向滚动。
+ */
+.shell-library {
+  flex: 0 1 auto;
+  align-self: center;
+  min-width: 0;
+  max-width: 20ch;
+  margin: 0 14px 0 0;
+  overflow: hidden;
+  font-family: var(--font-mono);
+  font-size: var(--type-label);
+  font-weight: 500;
+  line-height: 1.3;
+  letter-spacing: 0.04em;
+  color: var(--ink-2);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.shell-nav {
+  display: flex;
+  align-items: stretch;
+}
+.shell-nav-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 16px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--ink);
+  font-size: var(--type-body);
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.shell-nav-item:hover {
+  background: var(--paper-raised);
+}
+.shell-nav-item[aria-current='page'] {
+  background: var(--ink);
+  color: var(--on-ink);
+  font-weight: 700;
+}
+/*
+ * 焦点环画在格子里面：导航格首尾相接、下沿压着 3px 黑线、窄屏贴着屏幕底边，外偏的环会被邻格、黑线或屏幕边吃掉。
+ * 当前项是黑底块，环换成 --on-ink（规范第 11 节）。
+ */
+.shell-nav-item:focus-visible {
+  outline: 2px solid var(--ink);
+  outline-offset: -4px;
+}
+.shell-nav-item[aria-current='page']:focus-visible {
+  outline-color: var(--on-ink);
+}
+.shell-nav-count {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  color: var(--ink-2);
+  font-variant-numeric: tabular-nums;
+}
+.shell-nav-item[aria-current='page'] .shell-nav-count {
+  color: var(--on-ink);
+}
+
+/* 状态胶囊：正常 ■ 墨色，在途 □ 次要色，出问题红色方括号。浮层以它为定位基准。 */
+.shell-status {
+  position: relative;
+  display: flex;
+  align-items: center;
+  margin-left: auto;
+}
+.status-capsule {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 30px;
+  padding: 4px 8px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.3;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.status-capsule[data-level='pending'] {
+  color: var(--ink-2);
+}
+/* 12px 的红字用 --signal-text（纸色上 5.2:1）；--signal 在纸色上只有 4.1:1，只给形状与大字 */
+.status-capsule[data-level='problem'] {
+  color: var(--signal-text);
+}
+.status-capsule:hover {
+  background: var(--paper-raised);
+}
+.status-capsule[aria-expanded='true'] {
+  box-shadow: inset 0 0 0 1.5px currentColor;
+}
+
+.status-popover {
+  position: absolute;
+  z-index: var(--z-popover);
+  top: calc(100% + 9px);
+  right: 0;
+  width: min(440px, calc(100vw - 66px));
+  max-height: calc(100dvh - 96px);
+  overflow: auto;
+  overscroll-behavior: contain;
+  padding: 16px 20px 20px;
+  border: 2px solid var(--ink);
+  border-radius: 0;
+  background: var(--paper);
+  box-shadow: var(--overlay-shadow);
+  color: var(--ink);
+  font-size: var(--type-body);
+  line-height: 1.6;
+  letter-spacing: normal;
+  text-align: left;
+}
+.status-popover:focus {
+  outline: none;
+}
+.status-popover-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding-bottom: 12px;
+  border-bottom: 1.5px solid var(--ink);
+}
+.status-popover-head h2 {
+  margin: 0;
+  font-size: var(--type-cell);
+  font-weight: 800;
+  line-height: 1.3;
+}
+.status-popover .refresh-button[aria-disabled='true'] {
+  cursor: progress;
+  opacity: 0.6;
+}
+.status-block {
+  padding: 14px 0;
+  border-bottom: 1px solid var(--hairline);
+}
+.status-block:last-child {
+  padding-bottom: 0;
+  border-bottom: 0;
+}
+.status-block-title {
+  margin: 0 0 8px;
+  font-family: var(--font-mono);
+  font-size: var(--type-label);
+  font-weight: 600;
+  line-height: 1.3;
+  letter-spacing: 0.08em;
+  color: var(--ink-2);
+}
+.status-source {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 10px;
+  margin: 0 0 8px;
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+.status-source > span {
+  font-family: var(--font-mono);
+  font-size: var(--type-label);
+  letter-spacing: 0.04em;
+  color: var(--ink-2);
+  font-variant-numeric: tabular-nums;
+}
+.status-source > strong {
+  font-weight: 700;
+}
+
+/* ⌘K 入口：250px 等宽描边框。 */
+.shell-command {
+  display: flex;
+  align-self: center;
+  align-items: center;
+  gap: 10px;
+  box-sizing: border-box;
+  width: 250px;
+  min-height: 30px;
+  padding: 6px 10px;
+  border: 1.5px solid var(--ink);
+  border-radius: 0;
+  background: transparent;
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.3;
+  letter-spacing: 0.04em;
+  text-align: left;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.shell-command:hover:not(:disabled) {
+  background: var(--paper-raised);
+}
+.shell-command:disabled {
+  border-color: var(--ink-3);
+  color: var(--ink-3);
+  cursor: not-allowed;
+}
+.shell-command kbd {
+  font: inherit;
+  font-weight: 600;
+}
+.shell-command-hint {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--ink-2);
+}
+.shell-command:disabled .shell-command-hint {
+  color: inherit;
+}
+.shell-command .icon {
+  display: none;
+}
+
+.shell-tools {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.shell-tools:empty {
+  display: none;
+}
+/* 顶栏挤的时候工具按钮不折字：折成两行会把按钮撑到 55px、压过 3px 黑线；让位的是当前库名 */
+.shell-tools .outline-button {
+  white-space: nowrap;
+}
+
+.shell-main {
+  display: block;
+  min-width: 0;
+  padding-top: 18px;
+}
+.shell-main:focus {
+  outline: none;
+}
+
+/* ---------- 动效：只做 120ms 的底色反馈与浮层出现；减少动态时取消位移只留透明度 ---------- */
+
+@keyframes status-popover-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes status-popover-fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@media (prefers-reduced-motion: no-preference) {
+  .shell-nav-item,
+  .status-capsule,
+  .shell-command {
+    transition: background-color var(--motion-fast) ease;
+  }
+  .status-popover {
+    animation: status-popover-in var(--motion-fast) ease-out;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .status-popover {
+    animation: status-popover-fade var(--motion-fast) ease-out;
+  }
+}
+
+/* ---------- 中等宽度：⌘K 只留键位，导航与工具收紧，免得顶栏挤出横向滚动 ---------- */
+
+@media (width < 1280px) {
+  .shell-command {
+    width: auto;
+  }
+  .shell-command-hint {
+    display: none;
+  }
+}
+/*
+ * 1200px 以下：账户、最近删除、内存草稿三个工具都在时一行放不下（按钮会折字、撑破顶栏），
+ * 先收间距与导航内边距，账户只留图标（可访问名仍是「账户与会话」）；1024px 以下再收掉导航计数。
+ */
+@media (width < 1200px) {
+  .shell-top {
+    gap: 12px;
+  }
+  .shell-library {
+    margin-right: 4px;
+  }
+  .shell-nav-item {
+    padding: 0 12px;
+  }
+  .shell-tools .account-button > span {
+    display: none;
+  }
+}
+@media (width < 1024px) {
+  .shell-nav-count {
+    display: none;
+  }
+}
+/*
+ * 760–959px：导航仍在顶栏，工具（账户、文件操作、草稿）收到黑线下方一行，三个都在时也不挤出横向滚动。
+ * 库名那一列最小 0、最大取内容宽：放不下时它先缩；导航之后是一条弹性空列（没有内容，最小即 0），把胶囊与 ⌘K 推到右边。
+ */
+@media (760px <= width < 960px) {
+  .shell-top {
+    display: grid;
+    grid-template-columns: auto minmax(0, max-content) auto 1fr auto auto;
+    grid-template-rows: 46px auto;
+    grid-template-areas:
+      'brand library nav . status command'
+      'tools tools tools tools tools tools';
+    row-gap: var(--rule-thick);
+    column-gap: 12px;
+    height: auto;
+  }
+  .shell-top::after {
+    top: 46px;
+    bottom: auto;
+  }
+  .shell-brand {
+    grid-area: brand;
+  }
+  .shell-library {
+    grid-area: library;
+    margin-right: 0;
+  }
+  .shell-nav {
+    grid-area: nav;
+  }
+  .shell-status {
+    grid-area: status;
+    justify-content: flex-end;
+    margin-left: 0;
+  }
+  .shell-command {
+    grid-area: command;
+  }
+  .shell-tools {
+    grid-area: tools;
+    justify-content: flex-end;
+    flex-wrap: wrap;
+    padding: 8px 0;
+  }
+}
+
+/*
+ * 窄屏（<760px，规范第 5 节）：顶栏只留字标、当前库名、胶囊与 ⌘K 图标；工具收到黑线下方一行；
+ * 导航固定到底部成五格。可点的东西一律至少 44px 高。
+ */
+@media (width < 760px) {
+  .shell {
+    padding: 0 16px calc(47px + env(safe-area-inset-bottom) + 24px);
+  }
+  .shell-top {
+    position: relative;
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto auto;
+    grid-template-rows: 46px auto;
+    grid-template-areas:
+      'brand library status command'
+      'tools tools tools tools';
+    row-gap: var(--rule-thick);
+    column-gap: 8px;
+    height: auto;
+    margin: 0 -16px;
+    padding: 0 16px;
+  }
+  .shell-top::after {
+    left: 16px;
+    right: 16px;
+    top: 46px;
+    bottom: auto;
+  }
+  .shell-brand {
+    grid-area: brand;
+  }
+  .shell-library {
+    grid-area: library;
+    margin-right: 0;
+  }
+  .shell-status {
+    grid-area: status;
+    position: static;
+    justify-content: flex-end;
+    margin-left: 0;
+  }
+  .status-capsule {
+    min-height: 44px;
+  }
+  /* 浮层宽度 calc(100vw - 24px)：以铺满视口的顶栏为定位基准，左右各留 12px，硬阴影也不出屏 */
+  .status-popover {
+    top: 55px;
+    left: 12px;
+    right: 12px;
+    width: auto;
+    max-height: calc(100dvh - 55px - 47px - 24px - env(safe-area-inset-bottom));
+  }
+  .status-popover .refresh-button {
+    min-height: 44px;
+  }
+  .shell-command {
+    grid-area: command;
+    justify-content: center;
+    width: 44px;
+    height: 44px;
+    padding: 0;
+  }
+  .shell-command .icon {
+    display: block;
+  }
+  .shell-command kbd {
+    display: none;
+  }
+  .shell-tools {
+    grid-area: tools;
+    justify-content: flex-end;
+    flex-wrap: wrap;
+    padding: 8px 0;
+  }
+  .shell-tools .outline-button {
+    min-height: 44px;
+  }
+  .shell-nav {
+    position: fixed;
+    z-index: var(--z-sticky);
+    left: 0;
+    right: 0;
+    bottom: 0;
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    padding-bottom: env(safe-area-inset-bottom);
+    border-top: var(--rule-thick) solid var(--ink);
+    background: var(--paper);
+  }
+  .shell-nav-item {
+    justify-content: center;
+    min-height: 44px;
+    padding: 0 4px;
+    font-size: 13px;
+  }
+  .shell-main {
+    padding-top: 16px;
+  }
+}
+/*
+ * 360px 以下（最窄的手机）：字标、胶囊与 ⌘K 占满第一行后，库名那一格只剩几个像素、连省略号都画不出来。
+ * 库名挪到黑线下那一行的左端（工具仍靠右）：位置让一步，保证任何宽度都看得到在看哪个库。
+ */
+@media (width < 360px) {
+  .shell-top {
+    grid-template-areas:
+      'brand . status command'
+      'library library tools tools';
+  }
+}

@@ -1,89 +1,229 @@
-.page-history {
-  padding: 16px 20px;
-  border-block: 1px solid var(--border);
-  background: var(--surface-solid);
-  flex-shrink: 0;
-  min-width: 0;
-  overflow-wrap: anywhere;
-}
-.history-heading,
+/*
+ * 页面历史与历史版本比较（T-130 设计规范第 1、2、3 节），在编辑器覆盖层里作为一段出现。
+ * 版本行之间 --hairline 细线；时间、主体与字节数是等宽读数；选中的版本黑底反白；
+ * 左右比较是两格（墨色底＋1px 间隙＝1px 墨线），变化行黑底反白。只引用 tokens.css 的新令牌。
+ *
+ * 共用类 .history-entries、.history-pagination 也被「最近删除」与文件操作状态使用：这里只给通用的
+ * 列表与翻页行排版，页面历史自己的样式都挂在 .page-history 之下。
+ * 本文件由组件自己 import，可能排在 editor.css、ui.css 之后或之前：压过 .ui-button 的地方一律写足选择器。
+ */
+
+/* ---------- 共用：版本列表与翻页行（几何与改版前一致，只换新令牌） ---------- */
+
 .history-pagination {
   display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  gap: 12px;
   flex-wrap: wrap;
-}
-.history-heading > div {
-  flex: 1 1 260px;
-  min-width: 0;
-}
-.history-heading h3 {
-  margin: 0;
-}
-.page-history button {
-  min-height: 44px;
-}
-.history-pagination {
+  align-items: flex-start;
   justify-content: flex-start;
-  margin: 12px 0;
+  gap: var(--space-3);
+  margin: var(--space-3) 0;
 }
 .history-entries {
   padding: 0;
   list-style: none;
 }
 .history-entries > li {
-  border-top: 1px solid var(--border);
-  padding: 16px 0;
+  padding: var(--space-4) 0;
+  border-top: 1px solid var(--hairline);
 }
-.history-select {
-  max-width: 100%;
-  text-align: left;
-  flex-wrap: wrap;
-}
-.history-select code {
+
+/* ---------- 页面历史 ---------- */
+
+.page-history {
+  flex-shrink: 0;
+  min-width: 0;
+  padding: 14px var(--space-5) var(--space-4);
+  border-block: 1px solid var(--ink);
+  background: var(--paper);
   overflow-wrap: anywhere;
+}
+.page-history .history-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-3) var(--space-6);
+}
+.page-history .history-heading > div {
+  flex: 1 1 260px;
+  min-width: 0;
+}
+.page-history .history-heading h3 {
+  margin: 0;
+  font-size: var(--type-cell);
+  line-height: 1.3;
+  font-weight: 800;
+}
+.page-history .history-heading p {
+  max-width: 65ch;
+  margin: var(--space-1) 0 0;
+  color: var(--ink-2);
+  font-size: 13px;
+  line-height: 1.6;
+}
+.page-history .history-pagination {
+  align-items: center;
+}
+.page-history .history-entries {
+  margin: 0;
+  border-bottom: 1px solid var(--hairline);
+}
+.page-history .history-entries > li {
+  padding: var(--space-3) 0;
+}
+.history-status {
+  margin: var(--space-2) 0;
+  font-family: var(--font-mono);
+  font-size: var(--type-label);
+  line-height: 1.5;
+  letter-spacing: 0.02em;
+  color: var(--ink-2);
+}
+.page-history .ui-state--error {
+  margin: var(--space-2) 0;
+}
+.page-history .history-select {
+  max-width: 100%;
+  flex-wrap: wrap;
+  justify-content: flex-start;
+  text-align: left;
   white-space: normal;
 }
-.history-select[aria-pressed='true'] {
-  background: var(--accent-soft);
+.history-select code {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 500;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
+/* 选中的版本：黑底反白（写足选择器，压过按钮悬停的抬高底色） */
+.page-history .history-entries .history-select[aria-pressed='true'],
+.page-history .history-entries .history-select[aria-pressed='true']:hover {
+  border-color: var(--ink);
+  background: var(--ink);
+  color: var(--on-ink);
+}
+.history-oversize {
+  margin: var(--space-2) 0 0;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+/* 元数据：等宽小标签＋等宽读数两列 */
 .history-metadata {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  gap: 6px 16px;
-  font-size: 0.8125rem;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 2px var(--space-4);
+  margin: var(--space-2) 0 0;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.5;
+  font-variant-numeric: tabular-nums;
 }
 .history-metadata dt {
-  color: var(--muted);
+  color: var(--ink-2);
+  letter-spacing: 0.04em;
 }
 .history-metadata dd {
   margin: 0;
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+
+/* ---------- 历史版本比较 ---------- */
+
+.history-comparison {
+  margin-top: var(--space-4);
+}
+.history-comparison > p {
+  max-width: 65ch;
+  margin: var(--space-2) 0;
+  color: var(--ink-2);
+  font-size: 13px;
+  line-height: 1.6;
+}
+.history-comparison code {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  overflow-wrap: anywhere;
 }
 .history-versions {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 16px;
+  gap: 1px;
+  border: 1px solid var(--ink);
+  background: var(--ink);
 }
 .history-versions > section {
   min-width: 0;
-  padding: 12px;
-  border: 1px solid var(--border);
-  border-radius: 10px;
+  padding: var(--space-3) var(--space-4);
+  background: var(--paper);
 }
 .history-versions h4 {
-  margin: 0 0 8px;
+  margin: 0 0 var(--space-2);
+  font-family: var(--font-mono);
+  font-size: var(--type-label);
+  line-height: 1.3;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  color: var(--ink-2);
 }
-.history-comparison > p {
-  color: var(--muted);
-  font-size: 0.8125rem;
-}
-.history-comparison code {
+.history-versions pre {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  line-height: 1.7;
+  white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
-@media (max-width: 760px) {
+.history-versions .comparison-line {
+  display: block;
+}
+.history-versions .comparison-line mark {
+  background: var(--ink);
+  color: var(--on-ink);
+}
+.history-comparison .history-blocked {
+  color: var(--ink-2);
+}
+/* 原位二次确认：1.5px 墨框的一块，抬高底色；按钮一主一文字 */
+.history-comparison .history-confirm {
+  margin-top: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border: 1.5px solid var(--ink);
+  background: var(--paper-raised);
+}
+.history-comparison .history-confirm:focus-visible {
+  outline-offset: 2px;
+}
+.history-confirm h4 {
+  margin: 0;
+  font-size: var(--type-item);
+  line-height: 1.4;
+  font-weight: 700;
+}
+.history-confirm p {
+  max-width: 65ch;
+  margin: var(--space-1) 0 var(--space-3);
+  color: var(--ink-2);
+  font-size: 13px;
+  line-height: 1.6;
+}
+.history-confirm__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+}
+
+/* ---------- 窄屏（<760px）：比较改上下两格，按钮给足 44px 触控高度 ---------- */
+
+@media (width < 760px) {
   .page-history {
-    padding: 12px;
+    padding: var(--space-3) 14px;
+  }
+  .page-history .ui-button {
+    min-height: 44px;
   }
   .history-versions {
     grid-template-columns: minmax(0, 1fr);

@@ -17,10 +17,11 @@ use std::sync::Arc;
 pub(super) fn routes(routes: Router<crate::AppState>) -> Router<crate::AppState> {
     routes
         .route("/api/v1/board", get(view))
+        .route("/api/v1/board/overview", get(super::overview::overview))
         .route("/api/v1/board/replay", get(super::replay::replay))
         .route("/api/v1/board/timeline", get(super::timeline::timeline))
 }
-/// 未装配黑板平面：仍是 404，正文是固定中文 JSON；三条只读监督路由共用。
+/// 未装配黑板平面：仍是 404，正文是固定中文 JSON；只读监督路由（含跨项目汇总 overview）共用。
 pub(super) fn unconfigured() -> Response {
     Problem::new(StatusCode::NOT_FOUND, "board_unconfigured", "黑板未配置。").into_response()
 }

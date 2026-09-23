@@ -1,7 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
 import type { HistoryFile } from '../historyModel';
 import { changedLines } from '../textComparison';
+import { Button, StatusMark } from '../ui';
+import '../styles/history.css';
 
+/**
+ * 历史版本比较：左右两格（1px 墨线分隔），等宽正文，变化行黑底反白。
+ * 恢复要在原位二次确认；不满足条件时按钮禁用并写明原因。
+ */
 export function HistoryComparison({
   file,
   draft,
@@ -56,26 +62,27 @@ export function HistoryComparison({
       </div>
       <p>差异仅标记共同首尾之间的变化，不自动合并。</p>
       {!allowed ? (
-        <p>
-          请先处理草稿、在途请求及编辑权限；当前版本与所选版本相同也无需恢复。
+        <p className="history-blocked">
+          <StatusMark state="pending">
+            请先处理草稿、在途请求及编辑权限；当前版本与所选版本相同也无需恢复。
+          </StatusMark>
         </p>
       ) : null}
-      <button
+      <Button
         ref={trigger}
-        className="outline-button"
         disabled={!allowed}
         aria-expanded={confirming && allowed}
         onClick={() => setConfirming(true)}
       >
         恢复此历史版本…
-      </button>
+      </Button>
       {confirming && allowed ? (
         <section
           ref={confirmation}
           tabIndex={-1}
           role="alertdialog"
           aria-label="确认恢复历史版本"
-          className="editor-leave"
+          className="history-confirm"
           onKeyDown={(event) => {
             if (event.key === 'Escape') {
               event.preventDefault();
@@ -88,18 +95,20 @@ export function HistoryComparison({
           <p>
             只恢复当前已有页面，以当前核验版本作为冲突检查条件。必须取得恢复审计回执，随后还会另行核对磁盘。
           </p>
-          <button
-            className="outline-button"
-            onClick={() => {
-              setConfirming(false);
-              onRestore();
-            }}
-          >
-            确认恢复此版本
-          </button>
-          <button className="text-button" onClick={cancel}>
-            取消恢复
-          </button>
+          <div className="history-confirm__actions">
+            <Button
+              variant="primary"
+              onClick={() => {
+                setConfirming(false);
+                onRestore();
+              }}
+            >
+              确认恢复此版本
+            </Button>
+            <Button variant="text" onClick={cancel}>
+              取消恢复
+            </Button>
+          </div>
         </section>
       ) : null}
     </section>

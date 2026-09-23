@@ -1,111 +1,599 @@
+/*
+ * 协作 › 执行（ExecutionBoundary、ExecutionLanding、ExecutionReview、ExecutionReplay、
+ * ExecutionCandidates）：T-130 网格语法（设计规范第 3、7 节）。
+ * 只引用 tokens.css 的新令牌；14px 及以下的红字用 --signal-text，红色形状与边框用 --signal。
+ * 候选证据也出现在「任务与回执」里（BoardBoundary 用 .board-receipt 包着），改它时一并看那边。
+ */
+
+/* ---------- 面板与网格 ---------- */
+
 .execution-panel {
+  min-width: 0;
+}
+/* 「任务执行控制」里的一组格子：内层网格不描外框，分区线由外层网格与内层 1px 间隙给出 */
+.execution-panel .execution-subgrid {
+  border: 0;
+}
+.execution-head {
+  gap: var(--space-3);
+}
+.execution-run-id code {
+  font-family: var(--font-mono);
+  font-weight: 600;
+  color: var(--ink);
+}
+.execution-toolbar {
+  gap: var(--space-3) var(--space-4);
+}
+
+/* ---------- 共用文字：说明、错误、小标题、事实清单 ---------- */
+
+.execution-hint {
+  max-width: 65ch;
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--ink-2);
+}
+.execution-subhead {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: var(--type-label);
+  line-height: 1.3;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--ink-2);
+}
+/* 告警不只靠红：前面有红色方块，文字说清楚 */
+.execution-error,
+.execution-message--failed {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  color: var(--signal-text);
+}
+.execution-error::before,
+.execution-message--failed::before {
+  content: '';
+  flex-shrink: 0;
+  width: 9px;
+  height: 9px;
+  background: var(--signal);
+}
+.execution-error {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.6;
+}
+.execution-message {
+  max-width: 65ch;
+  margin: 0;
+  padding-top: var(--space-2);
+  border-top: 1px solid var(--hairline);
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--ink-2);
+}
+.execution-message--failed {
+  color: var(--signal-text);
+}
+.execution-facts {
   display: grid;
-  gap: 1.25rem;
+  gap: var(--space-1);
+  min-width: 0;
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.6;
 }
-.execution-control,
-.execution-task,
-.execution-review,
-.execution-replay {
-  border: 1px solid var(--border, #dedbd4);
-  border-radius: 12px;
-  padding: 1rem;
+.execution-facts > div {
+  display: grid;
+  grid-template-columns: minmax(6.5rem, 9rem) minmax(0, 1fr);
+  gap: var(--space-3);
+  padding: 2px 0;
+  border-bottom: 1px solid var(--hairline);
 }
-.execution-panel h3,
-.execution-panel h4 {
-  margin-top: 0;
+.execution-facts dt {
+  font-family: var(--font-mono);
+  font-size: var(--type-label);
+  line-height: 1.9;
+  letter-spacing: 0.04em;
+  color: var(--ink-2);
 }
-.execution-panel p {
-  line-height: 1.65;
-}
-.execution-panel code {
+.execution-facts dd {
+  min-width: 0;
+  margin: 0;
   overflow-wrap: anywhere;
-  font-size: 0.84em;
 }
-.execution-panel label {
-  display: block;
-}
-.execution-panel select {
-  max-width: 100%;
-  padding: 0.45rem;
-}
-.execution-tasks {
-  display: grid;
-  gap: 1rem;
+.execution-panel code,
+.execution-candidates code {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  overflow-wrap: anywhere;
 }
 .execution-actions {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.75rem;
-  margin: 1rem 0;
+  align-items: center;
+  gap: var(--space-3);
 }
-.execution-review textarea {
+
+/* ---------- 执行服务 ---------- */
+
+.execution-service__state {
+  font-size: var(--type-item);
+  line-height: 1.4;
+  font-weight: 700;
+}
+.execution-service__toggle {
+  align-self: flex-start;
+}
+
+/*
+ * ---------- 九段进度：已经过的黑、当前这段空心墨框、没到的灰框 ----------
+ * 红色只给「等你」或「出问题」（规范第 1 节）：停在等人启动/等人落地与审阅的段上、或 halted 时，
+ * 当前段与段名才标红（.execution-steps--attention，判定见 executionView.ts 的 needsAttention）。
+ */
+
+.execution-steps {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+.execution-steps__bar,
+.execution-steps__names {
+  display: grid;
+  grid-template-columns: repeat(9, minmax(0, 1fr));
+  gap: 3px;
+}
+.execution-steps__bar {
+  height: 10px;
+}
+.execution-steps__segment {
+  border: 1px solid var(--ink-3);
+  background: transparent;
+}
+.execution-steps__segment[data-state='done'] {
+  border-color: var(--ink);
+  background: var(--ink);
+}
+.execution-steps__segment[data-state='current'] {
+  border: 2px solid var(--ink);
+}
+.execution-steps--attention .execution-steps__segment[data-state='current'] {
+  border-color: var(--signal);
+  background: var(--signal);
+}
+.execution-steps__names {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  line-height: 1.3;
+  color: var(--ink-2);
+}
+.execution-steps__names li {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.execution-steps__names [data-state='done'] {
+  color: var(--ink);
+}
+.execution-steps__names [data-state='current'] {
+  font-weight: 600;
+  color: var(--ink);
+}
+.execution-steps--attention .execution-steps__names [data-state='current'] {
+  color: var(--signal-text);
+}
+.execution-steps__text {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.4;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.execution-steps__note {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--ink-2);
+}
+.execution-steps--halted .execution-steps__note {
+  color: var(--signal-text);
+}
+.execution-steps--unknown .execution-steps__text {
+  color: var(--ink-2);
+}
+
+/* ---------- 执行体进度：左身份、右九段 ---------- */
+
+.execution-runs {
+  display: grid;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border-top: 1.5px solid var(--ink);
+}
+.execution-run {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.35fr);
+  gap: var(--space-2) var(--space-5);
+  padding: var(--space-3) 0;
+  border-bottom: 1px solid var(--hairline);
+}
+.execution-run__who,
+.execution-run__progress {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-1);
+  min-width: 0;
+}
+.execution-run__line,
+.execution-run__attempt,
+.execution-run__counts {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.execution-run__line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px var(--space-3);
+}
+.execution-run__task {
+  font-weight: 600;
+}
+.execution-run__adapter,
+.execution-run__attempt,
+.execution-run__counts {
+  font-family: var(--font-mono);
+  font-size: var(--type-label);
+  color: var(--ink-2);
+}
+.execution-run__state {
+  font-size: 13px;
+  font-weight: 700;
+}
+.execution-run__progress .execution-steps {
+  width: 100%;
+}
+
+/* ---------- 任务执行：标题行、九段、事实、动作 ---------- */
+
+.execution-tasks {
+  min-width: 0;
+}
+.execution-task-cell {
+  gap: var(--space-3);
+}
+.execution-panel .execution-task-select .collab-select__control {
+  max-width: min(100%, 560px);
+}
+/* 标签在格子的纵向 flex 里不拉满整行：折角箭头要贴着下拉框右缘 */
+.execution-task-select {
+  align-self: flex-start;
+  max-width: 100%;
+}
+.execution-task {
+  display: grid;
+  gap: var(--space-3);
+  min-width: 0;
+  padding-top: var(--space-3);
+  border-top: 1.5px solid var(--ink);
+}
+.execution-task__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-1) var(--space-4);
+}
+.execution-task__title {
+  margin: 0;
+  font-size: var(--type-item);
+  line-height: 1.4;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+.execution-task .execution-facts {
+  max-width: 72ch;
+}
+
+/* ---------- 表单：标签在上、错误在下；勾选框是方块 ---------- */
+
+.execution-form {
+  display: grid;
+  gap: var(--space-3);
+  max-width: 72ch;
+}
+.execution-field {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+.execution-field label {
+  font-family: var(--font-mono);
+  font-size: var(--type-label);
+  line-height: 1.3;
+  letter-spacing: 0.04em;
+  color: var(--ink-2);
+}
+.execution-field textarea {
   display: block;
   width: 100%;
-  box-sizing: border-box;
-  padding: 0.85rem;
-  margin: 0.5rem 0 1rem;
-  border: 1px solid var(--border, #dedbd4);
-  border-radius: 8px;
-  background: var(--surface-solid, #fff);
-  color: inherit;
-  font:
-    0.82rem/1.6 ui-monospace,
-    SFMono-Regular,
-    monospace;
+  min-width: 0;
+  padding: var(--space-2) 10px;
+  border: 1.5px solid var(--ink);
+  border-radius: 0;
+  background: var(--paper-raised);
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  line-height: 1.6;
   resize: vertical;
 }
-.execution-confirm {
-  display: flex !important;
-  align-items: flex-start;
-  gap: 0.5rem;
-  margin-bottom: 1rem;
+.execution-field textarea:disabled {
+  border-color: var(--ink-3);
+  color: var(--ink-2);
+  cursor: default;
 }
-.execution-runs,
+.execution-field textarea:focus-visible {
+  outline: 2px solid var(--ink);
+  outline-offset: 2px;
+}
+.execution-check {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  font-size: 13px;
+  line-height: 1.6;
+  cursor: pointer;
+}
+.execution-check input {
+  flex-shrink: 0;
+  width: 14px;
+  height: 14px;
+  margin: 4px 0 0;
+  border: 1.5px solid var(--ink);
+  border-radius: 0;
+  background: transparent;
+  appearance: none;
+  cursor: pointer;
+}
+.execution-check input:checked {
+  background: var(--ink);
+}
+.execution-check input:disabled {
+  border-color: var(--ink-3);
+  cursor: default;
+}
+.execution-check input:disabled:checked {
+  background: var(--ink-3);
+}
+.execution-check input:focus-visible {
+  outline: 2px solid var(--ink);
+  outline-offset: 2px;
+}
+.execution-check:has(input:disabled) {
+  color: var(--ink-2);
+  cursor: default;
+}
+
+/* ---------- 代码候选落地：执行预览是红色虚线框，在危险按钮之前 ---------- */
+
+.execution-landing {
+  gap: var(--space-3);
+}
+.execution-landing .execution-facts {
+  max-width: 72ch;
+}
+.execution-preview {
+  display: grid;
+  gap: var(--space-1);
+  padding: 10px var(--space-3);
+  border: 1.5px dashed var(--signal);
+  font-size: 13px;
+  line-height: 1.6;
+}
+.execution-preview p {
+  margin: 0;
+}
+.execution-preview__label {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.3;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--signal-text);
+}
+.execution-landing-receipt {
+  display: grid;
+  gap: var(--space-2);
+  max-width: 72ch;
+  padding-top: var(--space-3);
+  border-top: 1.5px solid var(--ink);
+}
+.execution-landing-receipt .ui-status {
+  font-size: 13px;
+  font-weight: 700;
+}
+/* 冲突路径：红底红框（设计规范第 1 节 --signal-wash） */
+.execution-conflicts {
+  display: grid;
+  gap: var(--space-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.execution-conflicts li {
+  padding: 3px var(--space-2);
+  border: 1.5px solid var(--signal);
+  background: var(--signal-wash);
+  color: var(--signal-text);
+}
+/* ⌘K 带路聚焦的整格：焦点环画在格子里侧，不压到相邻格子的分区线 */
+.execution-landing:focus-visible,
+.execution-review:focus-visible {
+  outline: 2px solid var(--ink);
+  outline-offset: -4px;
+}
+
+/* ---------- 逐项审阅：一张审阅单 ---------- */
+
+.execution-review-cell {
+  padding-bottom: var(--space-6);
+}
+.execution-review {
+  display: grid;
+  gap: var(--space-3);
+  max-width: 88ch;
+}
+.execution-review .execution-field textarea {
+  font-size: 12px;
+}
+
+/* ---------- 审计回放：等宽时间在左的逐条清单 ---------- */
+
+.execution-replay {
+  gap: var(--space-3);
+}
+.execution-replay__snapshot {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.6;
+  font-weight: 600;
+}
 .execution-events {
   display: grid;
-  gap: 0.85rem;
-  padding-left: 1.3rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border-top: 1.5px solid var(--ink);
 }
-.execution-runs li,
-.execution-events li {
-  padding: 0.6rem;
-  border-bottom: 1px solid var(--border, #dedbd4);
+.execution-event {
+  display: grid;
+  grid-template-columns: 11.5rem minmax(0, 1fr) 4.5rem minmax(0, 17rem);
+  align-items: baseline;
+  gap: 2px var(--space-3);
+  padding: 7px 0;
+  border-bottom: 1px solid var(--hairline);
+  font-size: 13px;
+  line-height: 1.5;
 }
-.execution-events dl {
-  margin: 0.5rem 0;
+.execution-event__time {
+  font-family: var(--font-mono);
+  font-size: var(--type-label);
+  color: var(--ink-2);
+  font-variant-numeric: tabular-nums;
 }
-.execution-events dl > div {
+.execution-event__action {
+  min-width: 0;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.execution-event__phase {
+  font-size: 12px;
+  color: var(--ink-2);
+}
+.execution-event__offset {
+  min-width: 0;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--ink-2);
+  overflow-wrap: anywhere;
+}
+.execution-event__details {
+  display: grid;
+  grid-column: 2 / -1;
+  gap: 0;
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.6;
+}
+.execution-event__details > div {
   display: grid;
   grid-template-columns: minmax(6rem, 10rem) minmax(0, 1fr);
-  gap: 0.5rem;
+  gap: var(--space-3);
 }
-.execution-events dd {
+.execution-event__details dt {
+  color: var(--ink-2);
+}
+.execution-event__details dd {
+  min-width: 0;
   margin: 0;
   overflow-wrap: anywhere;
 }
-.execution-panel button:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-.execution-candidates ul {
+
+/* ---------- 候选证据：状态方块＋等宽摘要前 8 位＋大小 ---------- */
+
+.execution-candidates .execution-artifacts {
   display: grid;
-  gap: 0.85rem;
+  margin: 0 0 var(--space-2);
+  padding: 0;
+  list-style: none;
+  border-top: 1px solid var(--hairline);
 }
-@media (max-width: 600px) {
-  .execution-control,
-  .execution-task,
-  .execution-review,
-  .execution-replay {
-    padding: 0.75rem;
-  }
-  .execution-events dl > div {
-    grid-template-columns: 1fr;
-    gap: 0.2rem;
-    margin-bottom: 0.6rem;
-  }
+.execution-artifact {
+  display: grid;
+  grid-template-columns: 5.5rem minmax(0, 1fr);
+  align-items: baseline;
+  gap: 2px var(--space-3);
+  padding: 6px 0;
+  border-bottom: 1px solid var(--hairline);
+  font-size: 13px;
+  line-height: 1.5;
+}
+.execution-artifact__state {
+  font-size: 12px;
+  font-weight: 700;
+}
+.execution-artifact__main {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.execution-artifact__meta {
+  grid-column: 2;
+  min-width: 0;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--ink-2);
+  overflow-wrap: anywhere;
+}
+.execution-manifest {
+  margin: var(--space-2) 0;
 }
 
-.execution-panel :is(button, select, textarea, input, summary):focus-visible {
-  outline: 2px solid var(--focus, currentColor);
-  outline-offset: 3px;
+/* ---------- 窄屏（<760px）：网格已由 ui.css 收成单列，这里把行内的多列也收起 ---------- */
+
+@media (width < 760px) {
+  .execution-run {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .execution-steps__names {
+    display: none;
+  }
+  .execution-facts > div {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0;
+  }
+  .execution-event {
+    grid-template-columns: minmax(0, 1fr) max-content;
+    gap: 2px var(--space-3);
+  }
+  .execution-event__time,
+  .execution-event__offset,
+  .execution-event__details {
+    grid-column: 1 / -1;
+  }
+  .execution-event__details > div {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0;
+  }
 }

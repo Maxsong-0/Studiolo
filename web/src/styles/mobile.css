@@ -1,0 +1,143 @@
+/*
+ * 视图内部的收口覆盖（T-130 C3，规范第 5、9、11 节）。各视图的样式文件各有主人，这里只用它们已有的类名补三件事：
+ *   一、窄屏（<760px）：触控目标至少 44px；输入控件 16px 字（iOS 聚焦字号小于 16px 会整页放大）；
+ *       ⌘K 面板与浮层框宽 calc(100vw - 24px)（10px 硬阴影不出屏），编辑器与阅读器一样铺满；驾驶舱两处排版。
+ *   二、黑底块上的焦点环：选中项是黑底反白时，环画在块里、用 --on-ink（外偏的墨色环贴着黑块看不出是焦点）。
+ *   三、减少动效：视图内部 CSS 的位移过渡与关键帧都写在 prefers-reduced-motion: no-preference 里，
+ *       减少动效时只剩瞬时的状态变化；目录树展开由 FileTree 按偏好去掉位移、只留透明度。这里无需再盖。
+ * 本文件由 main.tsx 最后引入，在层叠里排在所有视图样式之后：同特异度时以这里为准。
+ * 每条注明来源视图与问题，视图主人改版时可以把对应一条收回自己的文件。
+ * 断点写区间语法，与 ui.css、shell.css 同一写法：缩放出小数宽度时不会两档都不命中。
+ */
+
+/* ---------- 一、窄屏 ---------- */
+
+@media (width < 760px) {
+  /* ⌘K 面板（palette.css）：宽度 calc(100vw - 24px)，结果行 44px；范围下拉原是 11.5px 等宽小字、16px 高 */
+  .palette {
+    width: calc(100vw - 24px);
+  }
+  .palette-option {
+    min-height: 44px;
+  }
+  .palette-scope select {
+    min-height: 44px;
+    font-size: 16px;
+  }
+
+  /*
+   * 编辑器覆盖层（editor.css）：规范第 9 节阅读器与编辑器都是全屏覆盖层。窄屏原是四边各留 8px，
+   * 10px 硬阴影在右缘、下缘出屏 2px；改成与阅读器（document.css）一样铺满，外框与阴影去掉。
+   */
+  dialog.editor-overlay {
+    width: 100vw;
+    height: 100dvh;
+    margin: 0;
+    border: 0;
+    box-shadow: none;
+  }
+  /* 最近删除与内存草稿（file-operations.css）：四边各留 8px 时硬阴影同样出屏；与 ⌘K、胶囊浮层一样各留 12px */
+  .file-dialog {
+    width: calc(100vw - 24px);
+    max-height: calc(100dvh - 24px);
+  }
+
+  /*
+   * 驾驶舱（cockpit.css）：拓扑缩略在窄屏应只剩 TopologyDiagram 自带的清单。collab.css 在窄屏隐藏
+   * .topology__svg，但 .cockpit-topology__canvas svg 的 display: block 特异度更高，缩成一指宽的图仍画在清单上方。
+   */
+  .cockpit-topology__canvas .topology__svg {
+    display: none;
+  }
+  /* 驾驶舱（cockpit.css）：格子标题行的文字链接写死 24px 触控高度 */
+  .ui-button.cockpit-link {
+    min-height: 44px;
+  }
+  /*
+   * 驾驶舱 › 待我动作（cockpit.css）：一行 32px 高，且桌面的四列在 390 宽下标题只剩八九个字。
+   * 窄屏每行至少 44px，项目挪到标题下一行，圈号与类型跨两行居中，标题拿到整行剩余宽度。
+   */
+  .cockpit-pending__row {
+    grid-template-columns: 30px max-content minmax(0, 1fr);
+    column-gap: var(--space-2);
+    min-height: 44px;
+    padding-block: var(--space-1);
+  }
+  .cockpit-pending__row > .ui-circled,
+  .cockpit-pending__kind {
+    grid-row: span 2;
+  }
+  .cockpit-pending__project {
+    grid-column: 3;
+    text-align: left;
+  }
+
+  /* 文档 › 搜索（search.css）：框已是 44px 高，框里的输入与下拉仍是 14px、13px 字 */
+  .document-search-controls .document-search-input input,
+  .document-search-controls .project-search-select select {
+    font-size: 16px;
+  }
+
+  /* 协作（collab.css）：两个开关的复选框只有 12px，整个标签作触控目标；项目选择 32px 高、13px 字 */
+  .collab-toggle {
+    min-height: 44px;
+  }
+  .collab-select__control {
+    height: 44px;
+    font-size: 16px;
+  }
+
+  /* 协作 › 任务与回执（board.css）：「独占路径 · 验收标准 · 候选证据」等展开标题 32px 高 */
+  .board-details > summary,
+  .board-receipt > summary {
+    min-height: 44px;
+    padding-block: 12px;
+  }
+
+  /* 协作 › 本机派发（localDispatch.css）：展开标题 32px，表单输入 36px 高、14px 字 */
+  .local-dispatch > summary {
+    min-height: 44px;
+  }
+  .local-dispatch-form input,
+  .local-dispatch-form textarea,
+  .local-dispatch-form select {
+    min-height: 44px;
+    font-size: 16px;
+  }
+
+  /* 协作 › 时间线（board.css）：回放时间轴滑块只有 16px 高，拇指难按 */
+  .timeline__scrub input {
+    height: 44px;
+  }
+
+  /* 策略（policy.css）：表单下拉 34px、输入 39px、正文 13px 字，复选框标签只有字高。按视图根限定，不依赖内部类名 */
+  .view-policy :is(select, input:not([type='checkbox'], [type='radio'])) {
+    min-height: 44px;
+  }
+  .view-policy
+    :is(select, textarea, input:not([type='checkbox'], [type='radio'])) {
+    font-size: 16px;
+  }
+  .view-policy label:has(> input[type='checkbox']) {
+    min-height: 44px;
+  }
+}
+
+/* ---------- 二、黑底块上的焦点环 ---------- */
+
+/* 协作拓扑清单（collab.css）选中的任务 */
+.topology__entry-select[aria-pressed='true']:focus-visible,
+/* 项目运作：架构视图切换、架构节点、设计步骤（architecture.css），目录图节点（operations.css） */
+.architecture-mode[aria-pressed='true']:focus-visible,
+.architecture-node[aria-pressed='true']:focus-visible,
+.architecture-steps button[aria-current='step']:focus-visible,
+.operation-node[aria-pressed='true']:focus-visible,
+/* Cargo 依赖表里选中的起点/终点包（cargo-dependencies.css）、Rust 调用正在侧栏查看的那一处（rust-call-links.css） */
+.cargo-endpoint[data-selected='true']:focus-visible,
+.rust-call .rust-call__inspect[aria-pressed='true']:focus-visible,
+/* 页面历史选中的版本（history.css）、最近删除选中的那一条（file-operations.css） */
+.page-history .history-entries .history-select[aria-pressed='true']:focus-visible,
+.deleted-entry .ui-button[aria-pressed='true']:focus-visible {
+  outline: 2px solid var(--on-ink);
+  outline-offset: -4px;
+}

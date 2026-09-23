@@ -36,7 +36,9 @@ it('源码选择不读取Vault，目录关联声明仍按文档代次打开并�
   const user = userEvent.setup();
   render(<App />);
   await screen.findByRole('table');
-  await user.click(screen.getByRole('button', { name: '项目运作' }));
+  // 项目运作并进了「项目」：从明细表点项目名进入它的运作。
+  await user.click(screen.getByRole('button', { name: '项目' }));
+  await user.click(screen.getByRole('button', { name: '星舟，进入项目运作' }));
   await user.click(
     await screen.findByRole('button', {
       name: '选择 Rust 文件 crates/core/internal/lib.rs',
@@ -113,7 +115,9 @@ it('顶栏同代刷新保留所选项目，卸载旧证据并清理文件与种�
   const user = userEvent.setup();
   render(<App />);
   await screen.findByRole('table');
-  await user.click(screen.getByRole('button', { name: '项目运作' }));
+  // 项目运作并进了「项目」：从明细表点项目名进入它的运作。
+  await user.click(screen.getByRole('button', { name: '项目' }));
+  await user.click(screen.getByRole('button', { name: '星舟，进入项目运作' }));
   await screen.findByRole('group', { name: 'Rust 白名单文件' });
   await user.selectOptions(
     screen.getByRole('combobox', { name: '项目' }),
@@ -126,7 +130,9 @@ it('顶栏同代刷新保留所选项目，卸载旧证据并清理文件与种�
     screen.getByRole('combobox', { name: '调用语法种类' }),
     'macro',
   );
-  await user.click(screen.getByRole('button', { name: '刷新' }));
+  // 刷新按钮挪进了顶栏状态浮层。
+  await user.click(screen.getByRole('button', { name: /^工作台状态/ }));
+  await user.click(screen.getByRole('button', { name: '刷新快照' }));
   expect(
     screen.queryByRole('group', { name: 'Rust 白名单文件' }),
   ).not.toBeInTheDocument();

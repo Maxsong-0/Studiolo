@@ -1,0 +1,704 @@
+/*
+ * T-130 基础组件（web/src/ui）的样式。
+ * 只引用 tokens.css 的新令牌，不写颜色字面量；圆角一律 0，唯一例外是圈号。
+ * 规范：docs/design/t130-design-system.md 第 1、2、3、11 节；画布主稿「第三轮 融合」。
+ */
+
+/* ---------- 共用 ---------- */
+
+/* 红色方块：标红的读数同时带形状，颜色不单独表意 */
+.ui-signal-mark {
+  display: inline-block;
+  flex-shrink: 0;
+  width: 9px;
+  height: 9px;
+  background: var(--signal);
+}
+
+/* 黑底块：里面的控件焦点环换成 --on-ink */
+.ui-on-ink {
+  background: var(--ink);
+  color: var(--on-ink);
+}
+.ui-on-ink :focus-visible {
+  outline-color: var(--on-ink);
+}
+
+/* ---------- 网格：容器墨色底＋1px 间隙＝分区线，格子纸色底 ---------- */
+
+.ui-grid {
+  display: grid;
+  grid-template-columns: repeat(var(--ui-grid-columns, 12), minmax(0, 1fr));
+  grid-template-rows: var(--ui-grid-rows, none);
+  gap: 1px;
+  min-width: 0;
+  border: 1px solid var(--ink);
+  background: var(--ink);
+}
+.ui-cell {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  grid-column: var(--ui-cell-column, 1 / -1);
+  grid-row: var(--ui-cell-row, auto);
+  min-width: 0;
+  min-height: 0;
+  padding: 14px var(--space-5);
+  background: var(--paper);
+  color: var(--ink);
+}
+.ui-cell--flush {
+  padding: 0;
+}
+/* 网格纸只用于「图」：两层 1px 细线、间距 20px */
+.ui-cell--grid {
+  background-color: var(--paper);
+  background-image:
+    linear-gradient(var(--grid) 1px, transparent 1px),
+    linear-gradient(90deg, var(--grid) 1px, transparent 1px);
+  background-size: 20px 20px;
+}
+/*
+ * 标题与右侧说明放不下一行时，说明整段换到下一行（说明自己也可折行），
+ * 不把标题挤成一字一行；放得下时与画布一样同在一行、说明靠右。
+ */
+.ui-cell-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-1) var(--space-4);
+  min-width: 0;
+}
+.ui-cell-header__title {
+  min-width: 0;
+  margin: 0;
+  font-size: var(--type-cell);
+  line-height: 1.3;
+  font-weight: 800;
+}
+.ui-cell-header__aside {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  min-width: 0;
+  gap: var(--space-1) var(--space-3);
+  font-family: var(--font-mono);
+  font-size: var(--type-label);
+  line-height: 1.3;
+  color: var(--ink-2);
+}
+
+/* ---------- 巨号与大号读数 ---------- */
+
+.ui-big-number {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+  /* 巨号按格宽收缩：760–1279px 时 3 列格只有 130–270px，196px 的两位数（约 1.2em 宽）会越过分区线 */
+  container-type: inline-size;
+}
+.ui-big-number__value {
+  margin-left: -0.04em;
+  font-size: min(var(--type-giant), 80cqi);
+  line-height: 0.78;
+  font-weight: 900;
+  letter-spacing: -0.07em;
+}
+.ui-big-number__label {
+  font-size: 22px;
+  line-height: 1.3;
+  font-weight: 800;
+}
+.ui-big-number__note {
+  font-family: var(--font-mono);
+  font-size: var(--type-label);
+  line-height: 1.3;
+  color: var(--ink-2);
+}
+.ui-stat {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+}
+.ui-stat__label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--font-mono);
+  font-size: var(--type-label);
+  line-height: 1.3;
+  letter-spacing: 0.08em;
+  color: var(--ink-2);
+}
+.ui-stat__value {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  font-size: var(--type-large);
+  line-height: 0.85;
+  font-weight: 900;
+  letter-spacing: -0.05em;
+}
+.ui-stat__unit {
+  font-size: var(--type-cell);
+  font-weight: 800;
+  letter-spacing: 0;
+}
+.ui-stat--signal .ui-stat__value {
+  color: var(--signal);
+}
+.ui-stat--muted .ui-stat__value {
+  color: var(--ink-2);
+}
+
+/* ---------- 状态方块与圈号 ---------- */
+
+.ui-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+.ui-status__mark {
+  flex-shrink: 0;
+  width: 9px;
+  height: 9px;
+  border: 1.5px solid var(--ink);
+  background: var(--ink);
+}
+.ui-status[data-state='pending'] {
+  color: var(--ink-2);
+}
+.ui-status[data-state='pending'] .ui-status__mark {
+  background: transparent;
+}
+/* 状态字最大 14px：红字用 --signal-text（纸色上 5.2:1），方块仍是 --signal（规范第 1 节） */
+.ui-status[data-state='alert'] {
+  color: var(--signal-text);
+}
+.ui-status[data-state='alert'] .ui-status__mark {
+  border-color: var(--signal);
+  background: var(--signal);
+}
+/* 休眠的字仍要读得清（正文 ≥ 4.5:1，--ink-3 在纸色上只有 3.07:1）；虚线框仍是 --ink-3 */
+.ui-status[data-state='dormant'] {
+  color: var(--ink-2);
+}
+.ui-status[data-state='dormant'] .ui-status__mark {
+  border: 1px dashed var(--ink-3);
+  background: transparent;
+}
+.ui-circled {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: 1.5px solid var(--ink);
+  border-radius: 50%;
+  background: transparent;
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-size: var(--type-label);
+  line-height: 1;
+  font-weight: 600;
+}
+.ui-circled--filled {
+  border-color: var(--signal);
+  background: var(--signal);
+  color: var(--on-ink);
+}
+
+/* ---------- 按钮 ---------- */
+
+.ui-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  min-height: 40px;
+  padding: 0 var(--space-4);
+  border: 1.5px solid transparent;
+  border-radius: 0;
+  background: transparent;
+  color: var(--ink);
+  font-family: var(--font-sans);
+  font-size: var(--type-body);
+  line-height: 1.2;
+  font-weight: 700;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.ui-button--sm {
+  min-height: 32px;
+  padding: 0 var(--space-3);
+}
+.ui-button--primary {
+  border-color: var(--ink);
+  background: var(--ink);
+  color: var(--on-ink);
+}
+.ui-button--primary:hover:not(:disabled) {
+  border-color: var(--ink-2);
+  background: var(--ink-2);
+}
+.ui-button--secondary {
+  border-color: var(--ink);
+}
+/* 按钮字 14px：红字用 --signal-text，红框仍是 --signal */
+.ui-button--danger {
+  border-color: var(--signal);
+  color: var(--signal-text);
+}
+.ui-button--text {
+  padding: 0 var(--space-1);
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
+}
+.ui-button--secondary:hover:not(:disabled),
+.ui-button--danger:hover:not(:disabled),
+.ui-button--text:hover:not(:disabled) {
+  background: var(--paper-raised);
+}
+.ui-button:disabled {
+  cursor: default;
+  opacity: 1;
+}
+.ui-button--primary:disabled {
+  border-color: var(--ink-3);
+  background: var(--ink-3);
+}
+.ui-button--secondary:disabled,
+.ui-button--danger:disabled {
+  border-color: var(--ink-3);
+  color: var(--ink-3);
+}
+.ui-button--text:disabled {
+  color: var(--ink-3);
+}
+.ui-button:focus-visible {
+  outline: 2px solid var(--ink);
+  outline-offset: 2px;
+}
+.ui-on-ink .ui-button:focus-visible {
+  outline-color: var(--on-ink);
+}
+/* 主按钮是黑底块：环画在块里面、用 --on-ink（规范第 11 节）；外偏的墨色环贴着黑块看不出是焦点 */
+.ui-button--primary:focus-visible {
+  outline-color: var(--on-ink);
+  outline-offset: -4px;
+}
+
+/* ---------- 子标签：当前项红色 3px 下划线 ---------- */
+
+.ui-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: stretch;
+  column-gap: 26px;
+  min-height: 50px;
+}
+.ui-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0;
+  border: 0;
+  border-top: var(--rule-thick) solid transparent;
+  border-bottom: var(--rule-thick) solid transparent;
+  border-radius: 0;
+  background: none;
+  color: var(--ink-2);
+  font-size: 15px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+.ui-tab:hover {
+  color: var(--ink);
+}
+.ui-tab[aria-selected='true'] {
+  border-bottom-color: var(--signal);
+  color: var(--ink);
+  font-weight: 800;
+}
+/* 预留加粗后的宽度：切换当前项时相邻标签不左右跳 */
+.ui-tab__label {
+  display: inline-flex;
+  flex-direction: column;
+}
+.ui-tab__label::after {
+  content: attr(data-text);
+  /* 空的替代文字：这份占位副本不进可访问名字 */
+  content: attr(data-text) / '';
+  height: 0;
+  overflow: hidden;
+  visibility: hidden;
+  font-weight: 800;
+  pointer-events: none;
+  user-select: none;
+}
+.ui-tab__count {
+  font-family: var(--font-mono);
+  font-size: var(--type-label);
+  font-weight: 500;
+  color: var(--ink-2);
+}
+
+/* ---------- 键帽 ---------- */
+
+.ui-keyhint {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 2px;
+  font-family: var(--font-mono);
+  font-size: var(--type-label);
+  line-height: 1.3;
+  font-weight: 600;
+  color: var(--ink);
+}
+.ui-keyhint kbd {
+  font: inherit;
+}
+
+/* ---------- 图纸标题栏 ---------- */
+
+.ui-title-block {
+  display: flex;
+  gap: 1px;
+  height: 100%;
+  min-height: 0;
+  background: var(--ink);
+}
+.ui-title-block__name {
+  display: flex;
+  flex: 1.25 1 0;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: var(--space-2);
+  min-width: 0;
+  padding: var(--space-3) var(--space-4);
+  background: var(--paper);
+}
+.ui-title-block__kicker,
+.ui-title-block__subtitle,
+.ui-title-block__label {
+  font-family: var(--font-mono);
+  font-size: var(--type-label);
+  line-height: 1.3;
+  color: var(--ink-2);
+}
+.ui-title-block__subtitle {
+  white-space: pre-line;
+}
+.ui-title-block__title {
+  margin: 0;
+  font-size: var(--type-plate);
+  line-height: 1;
+  font-weight: 900;
+  letter-spacing: -0.03em;
+  overflow-wrap: anywhere;
+}
+.ui-title-block__cells {
+  display: grid;
+  flex: var(--ui-title-columns, 4) 1 0;
+  grid-template-columns: repeat(var(--ui-title-columns, 4), minmax(0, 1fr));
+  grid-template-rows: repeat(3, minmax(0, 1fr));
+  gap: 1px;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.ui-title-block__cell,
+.ui-title-block__filler {
+  background: var(--paper);
+}
+.ui-title-block__cell {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 2px;
+  min-width: 0;
+  padding: 7px var(--space-3);
+}
+.ui-title-block__value {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  font-family: var(--font-mono);
+  font-size: 15px;
+  line-height: 1.3;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+/* 读数是 15px 的字，够不上大字（18.66px 粗体）：红字用 --signal-text 才过 4.5:1 */
+.ui-title-block__cell--signal .ui-title-block__value {
+  color: var(--signal-text);
+}
+
+/* ---------- 空态、错误态、读取中 ---------- */
+
+.ui-state {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-2);
+  max-width: 65ch;
+}
+.ui-state__title {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0;
+  font-size: var(--type-item);
+  line-height: 1.4;
+  font-weight: 700;
+}
+.ui-state--error .ui-state__title::before {
+  content: '';
+  flex-shrink: 0;
+  width: 9px;
+  height: 9px;
+  background: var(--signal);
+}
+.ui-state__body {
+  font-size: var(--type-body);
+  line-height: 1.6;
+  color: var(--ink-2);
+}
+.ui-state__body > :first-child {
+  margin-top: 0;
+}
+.ui-state__body > :last-child {
+  margin-bottom: 0;
+}
+.ui-state__action {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-top: var(--space-1);
+}
+.ui-skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.ui-skeleton__label {
+  font-family: var(--font-mono);
+  font-size: var(--type-label);
+  line-height: 1.3;
+  color: var(--ink-2);
+}
+.ui-skeleton__lines {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.ui-skeleton__line {
+  display: block;
+  height: 12px;
+  border: 1px solid var(--hairline);
+  background-image: repeating-linear-gradient(
+    135deg,
+    var(--hairline) 0 1px,
+    transparent 1px 6px
+  );
+}
+.ui-skeleton__line:nth-child(3n + 2) {
+  width: 82%;
+}
+.ui-skeleton__line:nth-child(3n) {
+  width: 64%;
+}
+
+/* ---------- 细竖条柱图 ---------- */
+
+.ui-sparkbars {
+  display: block;
+  width: 100%;
+  overflow: visible;
+  border-bottom: 1px solid var(--ink);
+}
+.ui-sparkbars__bar {
+  stroke: var(--ink);
+  stroke-width: 3px;
+}
+.ui-sparkbars__limit {
+  stroke: var(--signal);
+  stroke-width: 1.5px;
+  stroke-dasharray: 4 3;
+}
+
+/* ---------- 时间泳道 ---------- */
+
+.ui-lanes {
+  --ui-lanes-track: 22px;
+  --ui-lanes-block: 16px;
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  align-items: center;
+  column-gap: var(--space-3);
+  row-gap: var(--space-2);
+  min-width: 0;
+}
+.ui-lanes__name {
+  font-family: var(--font-mono);
+  font-size: var(--type-label);
+  line-height: 1.3;
+  font-weight: 600;
+}
+.ui-lanes__track {
+  display: flex;
+  align-items: flex-end;
+  height: var(--ui-lanes-track);
+  border-bottom: 1px solid var(--ink);
+}
+.ui-lanes__svg {
+  display: block;
+  width: 100%;
+  height: var(--ui-lanes-block);
+}
+.ui-lanes__block {
+  fill: var(--ink);
+  shape-rendering: crispEdges;
+}
+.ui-lanes__block--owner {
+  fill: var(--signal);
+}
+.ui-lanes__ticks {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-2);
+  container-type: inline-size;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  line-height: 1.3;
+  color: var(--ink-2);
+}
+/*
+ * 轴比五个「HH:MM」刻度还窄时（360px 以下的手机）只留首尾两个：刻度挤出格子会撑出整页横向滚动。
+ * 首尾始终对准 from/to，只留它们不会把刻度标错位置。
+ */
+@container (width < 200px) {
+  .ui-lanes__ticks > :not(:first-child, :last-child) {
+    display: none;
+  }
+}
+
+/* ---------- 浮层框 ---------- */
+
+.ui-surface {
+  border: 2px solid var(--ink);
+  border-radius: 0;
+  background: var(--paper);
+  color: var(--ink);
+  box-shadow: var(--overlay-shadow);
+}
+
+/* ---------- 动效：只用于反馈，120ms；减少动态时取消位移只留透明度 ---------- */
+
+@keyframes ui-surface-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+}
+@keyframes ui-fade-in {
+  from {
+    opacity: 0;
+  }
+}
+@media (prefers-reduced-motion: no-preference) {
+  .ui-button,
+  .ui-tab {
+    transition:
+      background-color var(--motion-fast) ease,
+      border-color var(--motion-fast) ease,
+      color var(--motion-fast) ease,
+      transform var(--motion-fast) ease;
+  }
+  .ui-button:active:not(:disabled) {
+    transform: translateY(1px);
+  }
+  .ui-surface--appear {
+    animation: ui-surface-in var(--motion-fast) ease-out;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ui-surface--appear {
+    animation: ui-fade-in var(--motion-fast) ease-out;
+  }
+}
+
+/*
+ * ---------- 窄屏（<760px）：网格收成单列，巨号降为 72px，标题栏改单列清单；
+ * 按钮与子标签至少 44px 见方（规范第 5 节）；子标签放不下时在自己的行里横向滚动，页面不横向滚动 ----------
+ */
+
+@media (width < 760px) {
+  .ui-button,
+  .ui-button--sm {
+    min-height: 44px;
+  }
+  .ui-button {
+    min-width: 44px;
+  }
+  /* 横向滚动的行会裁掉外偏的焦点环：四周留 4px 内边距给环，负外边距抵掉，版面不动 */
+  .ui-tabs {
+    flex-wrap: nowrap;
+    column-gap: var(--space-5);
+    margin: calc(-1 * var(--space-1));
+    padding: var(--space-1);
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    scrollbar-width: none;
+  }
+  .ui-tabs::-webkit-scrollbar {
+    display: none;
+  }
+  .ui-tab {
+    flex-shrink: 0;
+    justify-content: center;
+    min-width: 44px;
+  }
+  .ui-grid {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: none;
+  }
+  .ui-cell {
+    grid-column: auto;
+    grid-row: auto;
+  }
+  .ui-big-number__value {
+    font-size: var(--type-large);
+    line-height: 0.85;
+    letter-spacing: -0.05em;
+  }
+  .ui-title-block {
+    flex-direction: column;
+    height: auto;
+  }
+  .ui-title-block__name,
+  .ui-title-block__cells {
+    flex: none;
+  }
+  .ui-title-block__cells {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: none;
+  }
+  .ui-title-block__cell {
+    flex-direction: row;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: var(--space-3);
+  }
+  .ui-title-block__filler {
+    display: none;
+  }
+}

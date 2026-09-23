@@ -29,7 +29,9 @@ it('从主导航进入项目运作，来源由现有原文弹窗按代次读取�
   const user = userEvent.setup();
   render(<App />);
   await screen.findByRole('table');
-  await user.click(screen.getByRole('button', { name: '项目运作' }));
+  // 项目运作并进了「项目」：从明细表点项目名进入它的运作。
+  await user.click(screen.getByRole('button', { name: '项目' }));
+  await user.click(screen.getByRole('button', { name: '星舟，进入项目运作' }));
   expect(
     screen.getByRole('heading', { level: 1, name: '项目运作' }),
   ).toBeInTheDocument();

@@ -1,12 +1,19 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { SourceLocation } from '../types';
 import { sourceWindow } from '../sourceWindow';
+import { Button, Skeleton, Surface } from '../ui';
 import { Icon } from './Icon';
 import { DocumentNavigation } from './DocumentNavigation';
 import { useDocumentHistory } from '../useDocumentHistory';
 import { useSourceDocument } from '../useSourceDocument';
 import { useDialogSurface } from '../useDialogSurface';
+import '../styles/document.css';
 
+/**
+ * 原文阅读器：全屏覆盖层（2px 墨框、硬阴影，设计规范第 9 节）。
+ * 顶部紧凑的标题、路径与关闭；左 256px 导航（大纲、本页链接、反链，各自可折叠）；
+ * 右侧原文按纯文本逐行显示，正文列不超过 72ch。只在同一快照代次内前进后退。
+ */
 export function DocumentDialog({
   source,
   generation,
@@ -36,6 +43,19 @@ export function DocumentDialog({
     [document, location.line],
   );
 
+  // Esc 走 dialog 的 cancel：拦下浏览器的直接关闭，改走可中断的收起并归还焦点。
+  // Surface 的属性类型只收通用 HTML 属性（没有 onCancel），所以挂原生监听；紧跟 showModal，不留空档。
+  useLayoutEffect(() => {
+    const element = dialog.current;
+    if (!element) return;
+    function cancel(event: Event) {
+      event.preventDefault();
+      dismiss();
+    }
+    element.addEventListener('cancel', cancel);
+    return () => element.removeEventListener('cancel', cancel);
+  }, [dismiss]);
+
   useEffect(() => {
     if (document) targetLine.current?.scrollIntoView({ block: 'center' });
   }, [document, location.line]);
@@ -47,24 +67,23 @@ export function DocumentDialog({
   }
 
   return (
-    <dialog
+    <Surface
+      as="dialog"
       ref={dialog}
-      className="document-dialog"
+      appear={false}
+      className="document-dialog document-reader"
       aria-labelledby="source-title"
       aria-describedby="source-location source-readonly"
-      onCancel={(event) => {
-        event.preventDefault();
-        dismiss();
-      }}
     >
       <header className="document-header">
-        <div>
+        <div className="document-heading">
           <h2 id="source-title">{document?.title ?? '原文'}</h2>
           <p className="source-location" id="source-location">
             {location.path} · 第 {location.line} 行
           </p>
         </div>
         <button
+          type="button"
           className="icon-button"
           onClick={dismiss}
           data-dialog-dismiss
@@ -75,7 +94,8 @@ export function DocumentDialog({
       </header>
       <div className="document-toolbar">
         <div className="document-history">
-          <button
+          <Button
+            size="sm"
             className="document-back"
             onClick={history.back}
             disabled={!history.canGoBack}
@@ -83,10 +103,11 @@ export function DocumentDialog({
           >
             <Icon name="arrow" />
             后退
-          </button>
+          </Button>
           {document ? (
-            <button
+            <Button
               ref={navigationToggle}
+              size="sm"
               className="document-navigation-toggle"
               aria-expanded={navigationOpen}
               aria-controls="document-navigation-panel"
@@ -94,19 +115,21 @@ export function DocumentDialog({
             >
               <Icon name="document" />
               {navigationOpen ? '隐藏导航' : '显示导航'}
-            </button>
+            </Button>
           ) : null}
         </div>
         <p className="document-readonly" id="source-readonly">
           原文只读 · 内容按纯文本显示
         </p>
         {document && onEdit ? (
-          <button
-            className="outline-button"
+          <Button
+            size="sm"
+            variant="primary"
+            className="document-edit"
             onClick={() => onEdit(location.path)}
           >
             编辑与预览
-          </button>
+          </Button>
         ) : null}
       </div>
       <div
@@ -136,12 +159,9 @@ export function DocumentDialog({
             <div className="document-feedback" role="alert">
               <h3>{stale ? '快照已更新，请刷新工作台' : '无法读取原文'}</h3>
               <p>{error}</p>
-              <button
-                className="outline-button"
-                onClick={stale ? onRefresh : retry}
-              >
+              <Button size="sm" onClick={stale ? onRefresh : retry}>
                 {stale ? '刷新工作台' : '重试'}
-              </button>
+              </Button>
             </div>
           ) : document ? (
             <div
@@ -172,12 +192,12 @@ export function DocumentDialog({
               </ol>
             </div>
           ) : (
-            <p className="document-feedback" role="status">
-              正在读取原文…
-            </p>
+            <div className="document-feedback">
+              <Skeleton label="正在读取原文…" lines={6} />
+            </div>
           )}
         </div>
       </div>
-    </dialog>
+    </Surface>
   );
 }

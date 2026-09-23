@@ -55,7 +55,7 @@ it('默认搜索不请求文件树；展开才读子目录，附件只显示文�
       String(url).startsWith('/api/search?'),
     ),
   ).toBe(true);
-  await user.click(screen.getByRole('button', { name: '文件树' }));
+  await user.click(screen.getByRole('tab', { name: '文件树' }));
   const directory = await screen.findByRole('button', {
     name: '展开目录 纯附件',
   });
@@ -236,7 +236,7 @@ it('切换代次立即卸载旧附件信息并丢弃旧请求', async () => {
     />
   );
   const { rerender } = render(documents(7));
-  await user.click(screen.getByRole('button', { name: '文件树' }));
+  await user.click(screen.getByRole('tab', { name: '文件树' }));
   await user.click(
     await screen.findByRole('button', { name: '旧附件.pdf，查看附件信息' }),
   );

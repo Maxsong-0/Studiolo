@@ -1,5 +1,7 @@
 import { Icon } from './Icon';
+import '../styles/projects.css';
 
+/** 项目筛选：描边搜索框、原生 select 的生命周期，右侧等宽计数（规范第 9 节）。 */
 export function Filters({
   query,
   lifecycle,
@@ -16,8 +18,8 @@ export function Filters({
   count: number;
 }) {
   return (
-    <div className="filters" role="search" aria-label="项目筛选">
-      <label className="search-control">
+    <div className="project-filters" role="search" aria-label="项目筛选">
+      <label className="project-field project-field--search">
         <span className="sr-only">筛选项目</span>
         <Icon name="search" />
         <input
@@ -27,10 +29,7 @@ export function Filters({
           onChange={(event) => onQueryChange(event.target.value)}
         />
       </label>
-      <span className="filter-count" role="status">
-        {count} 个项目
-      </span>
-      <label className="select-control">
+      <label className="project-field project-field--select">
         <span className="sr-only">生命周期</span>
         <select
           value={lifecycle}
@@ -46,6 +45,9 @@ export function Filters({
         </select>
         <Icon name="chevron" />
       </label>
+      <span className="project-filters__count" role="status">
+        {count} 个项目
+      </span>
     </div>
   );
 }

@@ -1,223 +1,44 @@
-@media (max-width: 1399px) {
-  .view-overview {
-    grid-template-columns: minmax(0, 1fr);
+/*
+ * 全局窄屏规则（<760px，规范第 5 节）：视图共用的全局类（图名行、错误条、三种全局按钮）与没写尺寸的原生控件。
+ * 外壳（底部五格导航、顶栏）在 shell/shell.css；ui 组件在 ui/ui.css；视图内部类名的覆盖在 mobile.css。
+ * 断点写区间语法，与 ui.css、shell.css 同一写法，缩放出小数宽度时不会两档都不命中。
+ */
+@media (width < 760px) {
+  .view-header {
+    margin-bottom: 14px;
   }
-  .overview-context {
-    border-left: 0;
-    border-top: 1px solid var(--border);
-    padding: 24px 32px;
+  .view-header h1 {
+    font-size: 28px;
   }
-  .overview-context .action-list {
-    display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: 24px;
-  }
-  .overview-context .action-row {
-    border-bottom: 0;
-  }
-  .overview-context .action-open {
-    padding-bottom: 0;
-  }
-}
-@media (min-width: 761px) and (max-width: 1080px) {
-  .app-shell {
-    grid-template-columns: 188px minmax(0, 1fr);
-  }
-  .view-primary {
-    padding: 26px 20px;
-  }
-  .project-table {
-    min-width: 700px;
-  }
-  .workspace-toolbar {
-    padding-inline: 20px;
-  }
-  .workspace-breadcrumb {
-    font-size: 0.75rem;
-    gap: 8px;
-  }
-  .quick-button kbd {
-    display: none;
-  }
-}
-@media (max-width: 760px) {
-  .app-shell {
-    display: block;
-    margin: 0;
-    border: 0;
-    border-radius: 0;
-    min-height: 100dvh;
-    box-shadow: none;
-    padding-bottom: calc(76px + env(safe-area-inset-bottom));
-  }
-  .sidebar {
-    position: relative;
-    top: 0;
-    height: auto;
-    min-height: 0;
-    padding: 20px 20px 12px;
-    border: 0;
-    border-radius: 0;
-    overflow: visible;
-    backdrop-filter: none;
-  }
-  .brand {
-    padding: 0;
-    font-size: 1.375rem;
-  }
-  .workspace-source,
-  .sidebar-projects {
-    display: none;
-  }
-  .sidebar-footer {
-    position: absolute;
-    right: 20px;
-    top: 24px;
-    margin: 0;
-    padding: 0;
-  }
-  .sidebar-footer > div {
-    gap: 5px;
-    font-size: 0.75rem;
-  }
-  .sidebar-footer .icon {
-    width: 14px;
-    height: 14px;
-  }
-  .sidebar-footer p {
-    display: none;
-  }
-  .sidebar nav {
-    position: fixed;
-    z-index: 5;
-    bottom: max(10px, env(safe-area-inset-bottom));
-    left: 12px;
-    right: 12px;
-    display: grid;
-    grid-template-columns: repeat(4, minmax(0, 1fr));
-    gap: 4px;
-    padding: 6px;
-    border: 1px solid var(--glass-border);
-    border-radius: 22px;
-    background: var(--navbar-mobile);
-    backdrop-filter: blur(24px) saturate(150%);
-    box-shadow: var(--shadow-navbar);
-  }
-  .navigation-item {
-    flex-wrap: wrap;
-    justify-content: center;
-    column-gap: 5px;
-    row-gap: 3px;
-    padding: 7px 4px;
-    min-height: 52px;
-    font-size: 0.6875rem;
-    border-radius: 16px;
-  }
-  .navigation-item > .icon {
-    width: 20px;
-    height: 20px;
-  }
-  .navigation-item > span:not(.navigation-highlight, .nav-count, .nav-symbol) {
-    flex-basis: 100%;
-    text-align: center;
-    order: 3;
-  }
-  .navigation-highlight {
-    border-radius: 16px;
-  }
-  .nav-count {
-    margin: 0;
-    min-width: 17px;
-    padding: 0 3px;
-    font-size: 0.625rem;
-    line-height: 17px;
-  }
-  .workspace-toolbar {
-    top: 0;
-    min-height: 60px;
-    padding: 8px 20px 14px;
-    border-radius: 0;
-    background: var(--toolbar-mobile);
-  }
-  .workspace-breadcrumb {
-    display: none;
-  }
-  .page-actions {
-    width: 100%;
-    gap: 10px;
-  }
-  .page-actions > button {
-    flex: 1;
-    min-height: 44px;
-  }
-  .quick-button kbd {
-    display: none;
-  }
-  .view-layout {
-    display: block;
-    min-height: 0;
-  }
-  .view-primary {
-    padding: 24px 20px 28px;
-  }
-  .page-header h1 {
-    font-size: 1.5rem;
-  }
-  .page-header p {
-    font-size: 0.8125rem;
+  .view-header p {
     margin-top: 8px;
-  }
-  .view-content {
-    margin-top: 24px;
-  }
-  .filters {
-    gap: 10px;
-    margin-bottom: 18px;
-  }
-  .search-control {
-    flex: 1;
-    min-width: 0;
-    height: 44px;
-  }
-  .search-control input {
-    font-size: 1rem;
-  }
-  .select-control {
-    width: 120px;
-    height: 44px;
-  }
-  .select-control select {
-    font-size: 1rem;
-  }
-  .select-control .icon {
-    top: 15px;
-  }
-  .filter-count {
-    flex-basis: 100%;
-    margin: 2px 0 0;
-  }
-  .page-footer {
-    min-height: 40px;
-    padding: 16px 20px;
-    border-radius: 0;
-    font-size: 0.625rem;
+    font-size: 13px;
   }
   .error-feedback {
-    margin: 16px 20px;
     align-items: flex-start;
   }
+
+  /* 触控目标至少 44px 见方：tokens.css 的三种全局按钮 */
   .icon-button {
     width: 44px;
     height: 44px;
   }
-  .text-button {
+  .text-button,
+  .outline-button {
     min-height: 44px;
   }
-}
-@media (prefers-reduced-transparency: reduce), (prefers-contrast: more) {
-  .sidebar nav,
-  .workspace-toolbar {
-    background: var(--surface-solid);
-    backdrop-filter: none;
+
+  /*
+   * 没写尺寸的按钮与展开标题兜底到 44px（零特异度，写了尺寸的类规则压得过它；写了更小尺寸的由各自的
+   * 窄屏规则或 mobile.css 抬高）。输入框与 select 多半套在描边框里、由框给触控高度，不在这里一刀切；
+   * 正文里的链接不算控件，也不在此列。
+   */
+  :where(button, [role='button'], [role='tab']) {
+    min-width: 44px;
+    min-height: 44px;
+  }
+  :where(summary) {
+    min-height: 44px;
+    padding-block: 12px;
   }
 }

@@ -1,225 +1,461 @@
-.architecture-panel {
-  min-width: 0;
-}
+/*
+ * 架构关系与流程（T-130 规范第 3、9、11 节）：黑线工程图——节点黑框、关系线 1.3px、流向箭头；
+ * 依赖声明实线、数据流声明虚线，颜色不参与区分。设计路径画成自上而下的步骤链。
+ * 块内的格子由运作页的嵌套网格给出（operations.css）；只引用 tokens.css 的新令牌。
+ */
+
+/* ---------- 浏览方式：两段式切换，当前项黑底反白 ---------- */
+
 .architecture-modes {
-  margin: 20px 0;
+  display: inline-flex;
+  align-self: flex-start;
+  border: 1.5px solid var(--ink);
 }
-.architecture-relations-layout {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(200px, 28%);
-  gap: 24px;
+.architecture-mode {
+  min-height: 34px;
+  padding: 0 var(--space-4);
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--ink);
+  font-size: var(--type-body);
+  font-weight: 600;
+  line-height: 1.2;
+  cursor: pointer;
 }
-.architecture-relations-main,
-.architecture-node-detail,
-.architecture-step-detail {
+.architecture-mode + .architecture-mode {
+  border-left: 1.5px solid var(--ink);
+}
+.architecture-mode:hover {
+  background: var(--paper-raised);
+}
+.architecture-mode[aria-pressed='true'] {
+  background: var(--ink);
+  color: var(--on-ink);
+}
+
+/* 两个面板各自铺进块网格：面板容器不占格子；被 hidden 时整面板隐藏 */
+.architecture-pane {
+  display: contents;
+}
+.architecture-pane[hidden] {
+  display: none;
+}
+
+/* ---------- 模块关系图：网格纸底，DOM 节点框压在 SVG 连线上 ---------- */
+
+.architecture-drawing {
   min-width: 0;
+  max-width: 100%;
+  overflow-x: auto;
+  overscroll-behavior-inline: contain;
 }
-.architecture-node-list {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 11rem), 1fr));
-  gap: 10px;
+.architecture-canvas {
+  position: relative;
+}
+.architecture-wires {
+  position: absolute;
+  inset: 0;
+  display: block;
+  overflow: visible;
+  pointer-events: none;
+}
+.architecture-wire__line {
+  fill: none;
+  stroke: var(--ink);
+  stroke-width: 1.3px;
+  stroke-linejoin: miter;
+}
+.architecture-wire.is-data-flow .architecture-wire__line {
+  stroke-dasharray: 5 4;
+}
+.architecture-wire__head {
+  fill: var(--ink);
+  stroke: none;
+}
+/* 与所选节点相连的关系加粗（画布协作拓扑的选中线宽） */
+.architecture-wire.is-active .architecture-wire__line {
+  stroke-width: 2.4px;
 }
 .architecture-node {
-  min-width: 0;
-  padding: 14px 16px;
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  background: var(--surface-solid);
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: var(--architecture-node-width);
+  height: var(--architecture-node-height);
+  padding: 7px 10px;
+  border: 1.5px solid var(--ink);
+  border-radius: 0;
+  background: var(--paper);
+  color: var(--ink);
+  font: inherit;
   text-align: left;
-  overflow-wrap: anywhere;
+  overflow: hidden;
+  cursor: pointer;
 }
-.architecture-node strong {
-  display: block;
-  margin-top: 6px;
-  font-size: 0.875rem;
-  font-weight: 600;
+.architecture-node:hover {
+  background: var(--paper-raised);
 }
 .architecture-node[aria-pressed='true'] {
-  background: var(--accent-soft);
-  border-color: var(--accent);
-  box-shadow: 0 0 0 1px var(--accent);
+  background: var(--ink);
+  color: var(--on-ink);
 }
+.architecture-node__kind {
+  color: var(--ink-2);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  line-height: 13px;
+  letter-spacing: 0.06em;
+}
+.architecture-node[aria-pressed='true'] .architecture-node__kind {
+  color: var(--on-ink);
+}
+.architecture-node__label {
+  display: -webkit-box;
+  overflow: hidden;
+  font-size: 13.5px;
+  font-weight: 700;
+  line-height: 1.3;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+}
+/* 图例：线型说明，等宽小字 */
+.architecture-legend {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1) var(--space-5);
+  margin: 0;
+  color: var(--ink-2);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.4;
+}
+.architecture-legend > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+.architecture-legend__line {
+  display: inline-block;
+  width: 26px;
+  border-top: 1.3px solid var(--ink);
+}
+.architecture-legend__line.is-data-flow {
+  border-top-style: dashed;
+}
+.architecture-legend__box {
+  display: inline-block;
+  width: 12px;
+  height: 9px;
+  background: var(--ink);
+}
+
+/* ---------- 关系明细：筛选、逐条关系（起点 → 终点、类型与说明、原文） ---------- */
+
 .architecture-filter {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 10px 12px;
-  margin: 22px 0 16px;
+  gap: var(--space-2) var(--space-3);
 }
 .architecture-filter label {
-  font-size: 0.8125rem;
+  font-size: 13px;
+  font-weight: 700;
 }
-.architecture-filter select {
-  min-width: 0;
+.architecture-filter .project-field--select {
+  width: 176px;
   max-width: 100%;
-  min-height: 38px;
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  padding: 8px 12px;
-  background: var(--surface);
-  color: var(--text);
+}
+.architecture-filter .operation-muted {
+  font-family: var(--font-mono);
+  font-size: var(--type-label);
 }
 .architecture-edge-list {
-  list-style: none;
-  padding: 0;
   margin: 0;
+  padding: 0;
+  list-style: none;
+  border-top: 1.5px solid var(--ink);
 }
 .architecture-edge-list > li {
-  border-top: 1px solid var(--border);
-  padding: 16px 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1.25fr) minmax(0, 1.35fr) auto;
+  align-items: center;
+  gap: var(--space-2) var(--space-4);
+  padding: var(--space-2) 0;
+  border-bottom: 1px solid var(--hairline);
   overflow-wrap: anywhere;
+}
+.architecture-edge-list > li:last-child {
+  border-bottom: 0;
 }
 .architecture-edge-endpoints {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 18px minmax(0, 1fr);
-  gap: 12px;
+  grid-template-columns: minmax(0, 1fr) 30px minmax(0, 1fr);
   align-items: center;
-}
-.architecture-edge-endpoints > button {
+  gap: 6px;
   min-width: 0;
-  min-height: 44px;
-  background: var(--surface-solid);
-  padding: 10px 12px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  font-size: 0.8125rem;
+}
+.architecture-endpoint {
+  min-width: 0;
+  min-height: 32px;
+  padding: 4px 8px;
+  border: 1.5px solid var(--ink);
+  border-radius: 0;
+  background: var(--paper);
+  color: var(--ink);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.3;
   text-align: left;
   overflow-wrap: anywhere;
+  cursor: pointer;
 }
-.architecture-edge-endpoints > button:hover,
-.architecture-node:hover {
-  background: var(--accent-soft);
+.architecture-endpoint:hover {
+  background: var(--paper-raised);
+}
+/* 起点到终点的一小段线＋箭头，线型同关系图 */
+.architecture-edge-arrow {
+  position: relative;
+  display: block;
+  height: 0;
+  margin-right: 6px;
+  border-top: 1.3px solid var(--ink);
+}
+.architecture-edge-arrow.is-data-flow {
+  border-top-style: dashed;
+}
+.architecture-edge-arrow::after {
+  position: absolute;
+  top: -4.5px;
+  right: -7px;
+  border-top: 4px solid transparent;
+  border-bottom: 4px solid transparent;
+  border-left: 7px solid var(--ink);
+  content: '';
 }
 .architecture-edge-list p {
-  margin: 12px 0 4px;
-  font-size: 0.8125rem;
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.55;
   white-space: pre-wrap;
 }
 .architecture-relation-kind {
-  margin-right: 10px;
-  color: var(--muted);
-  font-size: 0.75rem;
+  margin-right: var(--space-2);
+  color: var(--ink-2);
+  font-family: var(--font-mono);
+  font-size: var(--type-label);
 }
-.architecture-node-detail {
-  padding: 18px;
-  border-radius: 12px;
-  background: var(--surface-solid);
-  align-self: start;
-  overflow-wrap: anywhere;
-}
-.architecture-node-detail h3,
-.architecture-step-detail h3 {
-  margin: 8px 0 14px;
-  font-size: 1rem;
-}
-.architecture-node-detail p,
-.architecture-step-detail p {
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-}
+
+/* ---------- 所选节点 ---------- */
+
 .architecture-node-detail dl {
-  margin: 20px 0;
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 6px var(--space-3);
+  margin: 0;
+  padding: var(--space-2) 0;
+  border-top: 1px solid var(--hairline);
+  border-bottom: 1px solid var(--hairline);
 }
 .architecture-node-detail dt {
-  font-size: 0.75rem;
-  color: var(--muted);
+  color: var(--ink-2);
+  font-family: var(--font-mono);
+  font-size: var(--type-label);
+  line-height: 1.6;
 }
 .architecture-node-detail dd {
-  margin: 3px 0 12px;
-}
-.architecture-design-note {
-  padding: 12px 16px;
-  background: var(--surface-solid);
-  border-radius: 10px;
-  color: var(--muted);
-  font-size: 0.8125rem;
-}
-.architecture-steps-layout {
-  display: grid;
-  grid-template-columns: minmax(180px, 32%) minmax(0, 1fr);
-  gap: 24px;
-}
-.architecture-steps {
-  list-style: none;
-  padding: 0;
+  min-width: 0;
   margin: 0;
+  font-size: 13px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
 }
-.architecture-steps li + li {
-  margin-top: 8px;
+/* 节点名是文字不是路径：盖过所选目录那套等宽标题 */
+.operation-selection.architecture-node-detail h3 {
+  font-family: var(--font-sans);
+  font-size: var(--type-item);
+  font-weight: 800;
+}
+
+/* ---------- 设计路径：自上而下的步骤链（圈号＋节点框，框间 1.3px 线与箭头） ---------- */
+
+.architecture-steps {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.architecture-steps > li + li {
+  position: relative;
+  padding-top: 26px;
+}
+.architecture-steps > li + li::before {
+  position: absolute;
+  top: 0;
+  left: 22px;
+  height: 19px;
+  border-left: 1.3px solid var(--ink);
+  content: '';
+}
+.architecture-steps > li + li::after {
+  position: absolute;
+  top: 19px;
+  left: 18.5px;
+  border-top: 7px solid var(--ink);
+  border-right: 4px solid transparent;
+  border-left: 4px solid transparent;
+  content: '';
 }
 .architecture-steps button {
   display: flex;
-  align-items: baseline;
-  gap: 12px;
+  align-items: center;
+  gap: var(--space-3);
   width: 100%;
   min-height: 44px;
-  padding: 12px;
-  border: 1px solid var(--border);
-  border-radius: 10px;
+  padding: 7px 12px 7px 11px;
+  border: 1.5px solid var(--ink);
+  border-radius: 0;
+  background: var(--paper);
+  color: var(--ink);
+  font: inherit;
   text-align: left;
-  background: var(--surface-solid);
+  cursor: pointer;
+}
+.architecture-steps button:hover {
+  background: var(--paper-raised);
+}
+.architecture-steps button[aria-current='step'] {
+  background: var(--ink);
+  color: var(--on-ink);
+}
+.architecture-steps button[aria-current='step'] .ui-circled {
+  border-color: var(--on-ink);
+  color: var(--on-ink);
 }
 .architecture-steps strong {
   min-width: 0;
-  font-size: 0.8125rem;
-  font-weight: 550;
+  font-size: 13.5px;
+  font-weight: 700;
+  line-height: 1.35;
   overflow-wrap: anywhere;
 }
-.architecture-steps button[aria-current='step'] {
-  background: var(--accent-soft);
-  border-color: var(--accent);
+.architecture-step-detail p {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.architecture-step-detail h3 {
+  margin: 0;
+  font-size: var(--type-cell);
+  font-weight: 800;
+  line-height: 1.3;
+}
+.architecture-step-current {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.architecture-step-current > p:not([class]) {
+  font-size: var(--type-body);
+  line-height: 1.6;
+}
+.architecture-step-current .ui-button {
+  align-self: flex-start;
+}
+.architecture-evidence--step {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px var(--space-2);
+  font-size: 13px;
+  line-height: 1.6;
 }
 .architecture-step-controls {
   display: flex;
   flex-wrap: wrap;
-  gap: 12px;
-  margin-top: 24px;
+  gap: var(--space-3);
+  margin-top: var(--space-2);
 }
-.architecture-step-controls button[aria-disabled='true'] {
+.architecture-step-controls .ui-button[aria-disabled='true'] {
+  border-color: var(--ink-3);
+  color: var(--ink-3);
   cursor: default;
-  opacity: 0.48;
 }
-.architecture-step-controls button[aria-disabled='true']:active {
+.architecture-step-controls .ui-button[aria-disabled='true']:hover {
+  background: transparent;
+}
+.architecture-step-controls .ui-button[aria-disabled='true']:active {
   transform: none;
 }
-.architecture-panel .text-button {
-  min-height: 44px;
-  white-space: normal;
-  overflow-wrap: anywhere;
+.architecture-design-note {
+  max-width: 72ch;
+  margin: 0;
+  color: var(--ink-2);
+  font-size: 13px;
+  line-height: 1.6;
 }
+
+/* ---------- 纯文本回退：三类声明逐条列出 ---------- */
+
 .architecture-text-data {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
   overflow-wrap: anywhere;
 }
 .architecture-text-data h4 {
-  margin: 24px 0 12px;
+  margin: var(--space-3) 0 0;
+  padding-bottom: 6px;
+  border-bottom: 1.5px solid var(--ink);
+  font-size: var(--type-body);
+  font-weight: 800;
 }
 .architecture-text-data h5 {
-  font-size: 0.875rem;
+  margin: var(--space-2) 0 0;
+  font-size: 13px;
+  font-weight: 700;
 }
 .architecture-text-data ul,
 .architecture-text-data ol {
-  padding-left: 20px;
+  margin: 0;
+  padding: 0 0 0 var(--space-5);
 }
 .architecture-text-data li {
-  margin: 12px 0;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--hairline);
+  font-size: 13px;
+  line-height: 1.6;
 }
-@media (max-width: 1080px) {
-  .architecture-relations-layout {
-    grid-template-columns: minmax(0, 1fr);
+.architecture-text-data li p {
+  margin: 2px 0;
+  white-space: pre-wrap;
+}
+
+@media (prefers-contrast: more) {
+  .architecture-node__kind,
+  .architecture-legend {
+    color: var(--ink);
   }
 }
-@media (max-width: 760px) {
-  .architecture-steps-layout {
-    grid-template-columns: minmax(0, 1fr);
+
+/* 窄屏（<760px）：关系图在自己的框里横向滚动；关系明细每条改成上下排，按钮给足 44px */
+@media (width < 760px) {
+  .architecture-edge-list > li {
+    grid-template-columns: minmax(0, 1fr) auto;
   }
-  .architecture-filter select {
+  .architecture-edge-list > li > .architecture-edge-endpoints {
+    grid-column: 1 / -1;
+  }
+  .architecture-endpoint,
+  .architecture-mode {
     min-height: 44px;
-    font-size: 1rem;
   }
-  .architecture-node-detail {
-    padding: 16px;
-  }
-  .architecture-edge-endpoints {
-    gap: 8px;
+  .architecture-filter .project-field--select {
+    flex: 1;
+    width: auto;
   }
 }

@@ -2,6 +2,8 @@ import { Component } from 'react';
 import type { ReactNode } from 'react';
 import type { OperationDirectory } from '../projectOperations';
 import type { OpenSource } from '../types';
+import { Button, Cell } from '../ui';
+import '../styles/operations.css';
 
 interface DiagramBoundaryProps {
   directories: OperationDirectory[];
@@ -9,6 +11,10 @@ interface DiagramBoundaryProps {
   children: ReactNode;
 }
 
+/**
+ * 目录图意外渲染失败时，整行换成有来源的纯文本（原因、每个目录的职责与原文入口）。
+ * 回退里不放任何图形，职责与原因都按纯文本显示。
+ */
 export class OperationDiagramBoundary extends Component<
   DiagramBoundaryProps,
   { error: string | null }
@@ -24,8 +30,10 @@ export class OperationDiagramBoundary extends Component<
   render() {
     if (this.state.error === null) return this.props.children;
     return (
-      <section
-        className="operation-unavailable"
+      <Cell
+        span={12}
+        as="section"
+        className="operation-fallback"
         aria-label="目录与模块职责文本数据"
       >
         <h3>图形暂时无法显示，已切换为文本</h3>
@@ -41,16 +49,17 @@ export class OperationDiagramBoundary extends Component<
               </p>
               {directory.source ? (
                 <>
-                  <p>
+                  <p className="operation-source-location">
                     {directory.source.path} · 第 {directory.source.line} 行
                   </p>
-                  <button
-                    className="text-button"
+                  <Button
+                    variant="text"
+                    size="sm"
                     aria-label={`${directory.path}，从文本查看职责声明来源`}
                     onClick={() => this.props.onOpen(directory.source!)}
                   >
                     查看职责声明原文
-                  </button>
+                  </Button>
                 </>
               ) : (
                 <p className="operation-muted">没有可定位的职责声明来源。</p>
@@ -58,7 +67,7 @@ export class OperationDiagramBoundary extends Component<
             </li>
           ))}
         </ul>
-      </section>
+      </Cell>
     );
   }
 }

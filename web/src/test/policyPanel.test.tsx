@@ -114,16 +114,16 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-it('提交 desired 后把扩大项标红，发布被挡在二次认证后且永不自动生效', async () => {
+it('提交规则草案后把扩大项标红，发布被挡在二次认证后且永不自动生效', async () => {
   const user = userEvent.setup();
   render(<PolicyBoundary />);
-  await screen.findByRole('table', { name: '现行各项' });
+  await screen.findByRole('table', { name: '生效中的各项' });
   expect(screen.getAllByText(HASH.slice(0, 12)).length).toBeGreaterThan(0);
 
-  const form = screen.getByRole('form', { name: '提交 desired' });
-  await user.clear(within(form).getByRole('textbox', { name: 'subject' }));
+  const form = screen.getByRole('form', { name: '提交规则草案' });
+  await user.clear(within(form).getByRole('textbox', { name: '对象' }));
   await user.type(
-    within(form).getByRole('textbox', { name: 'subject' }),
+    within(form).getByRole('textbox', { name: '对象' }),
     'claude',
   );
   await user.click(
@@ -141,7 +141,15 @@ it('提交 desired 后把扩大项标红，发布被挡在二次认证后且永�
   });
 
   // 403 不再把人打发去「账户」：就地弹认证窗口，且在没有受控会话时直说不能认证。
+  // 发布先展开执行预览，预览里确认才发请求。
   await user.click(screen.getByRole('button', { name: '发布（需二次认证）' }));
+  expect(posts.map((post) => post.path)).toEqual(['/api/v1/policy/desired']);
+  await user.click(
+    within(screen.getByRole('group', { name: /^执行预览/ })).getByRole(
+      'button',
+      { name: '确认发布' },
+    ),
+  );
   const dialog = await screen.findByRole('dialog', { name: '二次认证后继续' });
   expect(
     within(dialog).getByText(/本次动作：发布 能力集 claude/),
@@ -164,10 +172,10 @@ it('提交 desired 后把扩大项标红，发布被挡在二次认证后且永�
   ).toHaveLength(1);
 });
 
-it('吊销即刻提交，未接入策略平面时显示未接入而不是空白', async () => {
+it('撤销接入经执行预览确认后即刻提交，未接入策略平面时显示未接入而不是空白', async () => {
   const user = userEvent.setup();
   render(<PolicyBoundary />);
-  const form = await screen.findByRole('form', { name: '吊销' });
+  const form = await screen.findByRole('form', { name: '撤销接入' });
   await user.selectOptions(
     within(form).getByRole('combobox', { name: '级别' }),
     'type',
@@ -178,9 +186,16 @@ it('吊销即刻提交，未接入策略平面时显示未接入而不是空白'
   );
   await user.type(within(form).getByRole('textbox', { name: '理由' }), '测试');
   await user.click(
-    within(form).getByRole('button', { name: '吊销（即刻生效）' }),
+    within(form).getByRole('button', { name: '撤销接入（即刻生效）' }),
   );
-  await screen.findByText(/已吊销 类型 claude/);
+  expect(posts).toHaveLength(0);
+  await user.click(
+    within(within(form).getByRole('group', { name: /^执行预览/ })).getByRole(
+      'button',
+      { name: '确认撤销接入' },
+    ),
+  );
+  await screen.findByText(/已撤销接入：类型 claude/);
   expect(posts.at(-1)).toMatchObject({
     path: '/api/v1/agents/revoke',
     body: { level: 'type', target: 'claude', reason: '测试' },
@@ -218,9 +233,9 @@ function authLimitedReads() {
 it('首次加载在两个认证并发许可下读完整策略，不自触发503', async () => {
   const denied = authLimitedReads();
   render(<PolicyBoundary />);
-  await screen.findByRole('table', { name: '现行各项' });
+  await screen.findByRole('table', { name: '生效中的各项' });
   expect(
-    screen.getByRole('form', { name: '提交 desired' }),
+    screen.getByRole('form', { name: '提交规则草案' }),
   ).toBeInTheDocument();
   expect(denied()).toBe(0);
   expect(posts).toHaveLength(0);
@@ -229,10 +244,10 @@ it('首次加载在两个认证并发许可下读完整策略，不自触发503'
 it('提交后的刷新也遵守认证预算，读完后保留成功提示且不重放提交', async () => {
   const user = userEvent.setup();
   render(<PolicyBoundary />);
-  const form = await screen.findByRole('form', { name: '提交 desired' });
+  const form = await screen.findByRole('form', { name: '提交规则草案' });
   const denied = authLimitedReads();
   await user.type(
-    within(form).getByRole('textbox', { name: 'subject' }),
+    within(form).getByRole('textbox', { name: '对象' }),
     'claude',
   );
   const submit = within(form).getByRole('button', {

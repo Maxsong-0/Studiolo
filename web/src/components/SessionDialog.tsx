@@ -1,24 +1,58 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from 'react';
 import type { SessionClient } from '../sessionClient';
 import type { RevokeScope, SessionInfo } from '../sessionModel';
+import { sessionTime } from '../sessionStatus';
 import { useDialogSurface } from '../useDialogSurface';
+import { Button, StatusMark, Surface } from '../ui';
+import type { StatusState } from '../ui';
 import { Icon } from './Icon';
 import { FactorPanel } from './FactorPanel';
 import { useDraftCount } from '../draftContext';
 import { exportDrafts } from '../draftExport';
+import '../styles/session.css';
+// 「退出前处理内存草稿」借用编辑器的不可逆确认框（.editor-leave，红色虚线框）。
+import '../styles/editor.css';
 
-const states = {
+const states: Record<SessionInfo['state'], string> = {
   pending: '建立中',
   active: '有效',
   revoked: '已退出',
   expired: '已过期',
   abandoned: '未启用',
 };
-function date(value: number) {
-  const formatted = new Date(value);
-  return Number.isNaN(formatted.getTime())
-    ? '时间不可用'
-    : formatted.toLocaleString();
+
+/** 会话状态的方块：有效实心、建立中空心，已结束的一律休眠虚线框——结束不是故障，不用红。 */
+const marks: Record<SessionInfo['state'], StatusState> = {
+  pending: 'pending',
+  active: 'ok',
+  revoked: 'dormant',
+  expired: 'dormant',
+  abandoned: 'dormant',
+};
+
+/**
+ * 等宽会话时间（本机时区 YYYY-MM-DD HH:mm）。超出 Date 范围的毫秒值显示「—」，
+ * 原因写进 title 并给读屏一份，绝不补一个时间。
+ */
+export function SessionTime({ ms }: { ms: number }) {
+  const time = sessionTime(ms);
+  if (!time)
+    return (
+      <span className="session-time" title="时间不可用">
+        —<span className="sr-only">时间不可用</span>
+      </span>
+    );
+  return (
+    <time className="session-time" dateTime={time.iso}>
+      {time.text}
+    </time>
+  );
 }
 
 export function SessionDialog({
@@ -35,10 +69,22 @@ export function SessionDialog({
   const ref = useRef<HTMLDialogElement>(null);
   const { dismiss } = useDialogSurface(ref, onClose);
   const secretCleanup = useRef<(() => void) | null>(null);
-  function dismissAccount() {
+  const dismissAccount = useCallback(() => {
     secretCleanup.current?.();
     dismiss();
-  }
+  }, [dismiss]);
+  // Esc 走 dialog 的 cancel：拦下浏览器的直接关闭，先清掉未提交的因子输入再收起。
+  // 用原生监听而不是 onCancel 属性：Surface 的属性类型只收通用 HTML 属性；紧跟 showModal 挂上。
+  useLayoutEffect(() => {
+    const element = ref.current;
+    if (!element) return;
+    function cancel(event: Event) {
+      event.preventDefault();
+      dismissAccount();
+    }
+    element.addEventListener('cancel', cancel);
+    return () => element.removeEventListener('cancel', cancel);
+  }, [dismissAccount]);
   const [sessions, setSessions] = useState<SessionInfo[] | null>(null);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
@@ -84,14 +130,12 @@ export function SessionDialog({
     }
   }
   return (
-    <dialog
-      className="session-dialog"
+    <Surface
+      as="dialog"
       ref={ref}
+      appear={false}
+      className="session-dialog"
       aria-labelledby="account-title"
-      onCancel={(event) => {
-        event.preventDefault();
-        dismissAccount();
-      }}
     >
       <header className="session-dialog-header">
         <div>
@@ -99,6 +143,7 @@ export function SessionDialog({
           <p>查看登录记录，退出不再使用的会话。</p>
         </div>
         <button
+          type="button"
           className="icon-button"
           onClick={dismissAccount}
           data-dialog-dismiss
@@ -116,104 +161,151 @@ export function SessionDialog({
           >
             <h3>退出前处理内存草稿</h3>
             <p>共有 {draftCount} 篇草稿。请先导出，或明确放弃后退出。</p>
-            <button
-              className="outline-button"
-              onClick={() => exportDrafts(drafts.list())}
-            >
+            <Button size="sm" onClick={() => exportDrafts(drafts.list())}>
               导出全部草稿与恢复信息
-            </button>
-            <button
-              className="outline-button"
-              onClick={() => setPendingExit(null)}
-            >
+            </Button>
+            <Button size="sm" onClick={() => setPendingExit(null)}>
               返回并保留草稿
-            </button>
-            <button
-              className="text-button"
+            </Button>
+            <Button
+              variant="danger"
+              size="sm"
               onClick={() => void revoke(pendingExit, true)}
             >
               放弃内存草稿并退出
-            </button>
+            </Button>
           </section>
         ) : null}
         <section className="session-current" aria-label="当前登录">
-          <Icon name="account" />
-          <div>
+          <div className="session-section-head">
             <h3>当前登录</h3>
-            <p>到期时间 {date(current.absolute_expires_at_ms)}</p>
+            <Button
+              size="sm"
+              disabled={busy}
+              onClick={() => void revoke({ scope: 'current' })}
+            >
+              <Icon name="logout" />
+              退出登录
+            </Button>
           </div>
-          <button
-            className="outline-button"
-            disabled={busy}
-            onClick={() => void revoke({ scope: 'current' })}
-          >
-            <Icon name="logout" />
-            退出登录
-          </button>
+          {/* 图纸标题栏的小表：等宽标签在上、读数在下，格子之间 1px 墨线。 */}
+          <dl className="session-facts">
+            <div>
+              <dt>状态</dt>
+              <dd>
+                <StatusMark state={marks[current.state]}>
+                  {states[current.state]}
+                </StatusMark>
+              </dd>
+            </div>
+            <div>
+              <dt>登录于</dt>
+              <dd>
+                <SessionTime ms={current.created_at_ms} />
+              </dd>
+            </div>
+            <div>
+              <dt>到期时间</dt>
+              <dd>
+                <SessionTime ms={current.absolute_expires_at_ms} />
+              </dd>
+            </div>
+          </dl>
         </section>
         <FactorPanel client={client} busy={busy} cleanup={secretCleanup} />
-        <div className="session-list-heading">
-          <h3>会话记录</h3>
-          <button
-            className="text-button"
-            disabled={loading || busy}
-            onClick={() => void load()}
-          >
-            核对列表
-          </button>
-        </div>
-        {notice ? <p role="status">{notice}</p> : null}
-        {loading ? <p role="status">正在读取会话记录…</p> : null}
-        {error ? <p role="alert">{error}</p> : null}
-        {sessions ? (
-          <ul className="session-list" aria-label="会话记录">
-            {sessions.map((session, index) => (
-              <li key={session.id}>
-                <div>
-                  <h4>
-                    {session.id === current.id
-                      ? '此浏览器'
-                      : `会话 ${index + 1}`}
-                    <span className="session-state">
+        <section className="session-records">
+          <div className="session-section-head">
+            <h3>会话记录</h3>
+            <Button
+              variant="text"
+              size="sm"
+              disabled={loading || busy}
+              onClick={() => void load()}
+            >
+              核对列表
+            </Button>
+          </div>
+          {notice ? (
+            <p className="session-note" role="status">
+              {notice}
+            </p>
+          ) : null}
+          {loading ? (
+            <p className="session-note" role="status">
+              正在读取会话记录…
+            </p>
+          ) : null}
+          {error ? (
+            <p className="session-error" role="alert">
+              {error}
+            </p>
+          ) : null}
+          {sessions ? (
+            <ul className="session-list" aria-label="会话记录">
+              {sessions.map((session, index) => (
+                <li key={session.id}>
+                  <div className="session-row">
+                    <h4>
+                      {session.id === current.id
+                        ? '此浏览器'
+                        : `会话 ${index + 1}`}
+                    </h4>
+                    <StatusMark
+                      state={marks[session.state]}
+                      className="session-state"
+                    >
                       {states[session.state]}
+                    </StatusMark>
+                  </div>
+                  <p className="session-row-times">
+                    <span>
+                      建立于 <SessionTime ms={session.created_at_ms} />
                     </span>
-                  </h4>
-                  <p>建立于 {date(session.created_at_ms)}</p>
-                  <p>最近活动 {date(session.last_seen_at_ms)}</p>
-                </div>
-                {session.state === 'active' || session.state === 'pending' ? (
-                  <button
-                    className="outline-button"
-                    disabled={busy || loading}
-                    aria-label={
-                      session.id === current.id
-                        ? '退出此浏览器'
-                        : `退出会话 ${index + 1}`
-                    }
-                    onClick={() =>
-                      void revoke({ scope: 'session', session_id: session.id })
-                    }
-                  >
-                    <Icon name="logout" />
-                    退出
-                  </button>
-                ) : null}
-              </li>
-            ))}
-          </ul>
-        ) : null}
-        {sessions?.length === 0 ? <p>没有会话记录。</p> : null}
+                    <span>
+                      最近活动 <SessionTime ms={session.last_seen_at_ms} />
+                    </span>
+                  </p>
+                  {session.state === 'active' || session.state === 'pending' ? (
+                    <Button
+                      variant="danger"
+                      size="sm"
+                      className="session-revoke"
+                      disabled={busy || loading}
+                      aria-label={
+                        session.id === current.id
+                          ? '退出此浏览器'
+                          : `退出会话 ${index + 1}`
+                      }
+                      onClick={() =>
+                        void revoke({
+                          scope: 'session',
+                          session_id: session.id,
+                        })
+                      }
+                    >
+                      <Icon name="logout" />
+                      退出
+                    </Button>
+                  ) : null}
+                </li>
+              ))}
+            </ul>
+          ) : null}
+          {sessions?.length === 0 ? (
+            <p className="session-note">没有会话记录。</p>
+          ) : null}
+        </section>
       </div>
       <footer className="session-dialog-footer">
         <p>退出全部会话后，需要重新登录。</p>
-        <button
-          className="outline-button session-danger"
+        <Button
+          variant="danger"
           disabled={busy}
           onClick={() => void revoke({ scope: 'all' })}
         >
           退出全部会话
-        </button>
+        </Button>
       </footer>
-    </dialog>
+    </Surface>
   );
 }

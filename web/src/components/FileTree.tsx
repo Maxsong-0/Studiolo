@@ -4,9 +4,11 @@ import { useReducedMotionPreference } from '../useReducedMotionPreference';
 import type { OpenSource } from '../types';
 import { TREE_PAGE_SIZE, type TreeEntry } from '../treeTypes';
 import { useDirectory } from '../useDirectory';
+import { Button, Cell, CellHeader, ErrorState, GridFrame } from '../ui';
 import { AttachmentInfo } from './AttachmentInfo';
 import { Icon } from './Icon';
 import { FileTypeIcon } from './FileTypeIcon';
+import '../styles/tree.css';
 
 interface TreeActions {
   generation: number;
@@ -16,6 +18,10 @@ interface TreeActions {
   reduceMotion: boolean;
 }
 
+/**
+ * 文件树（只读副本）：目录按需读取、每页至多 200 项；缩进是 1px 竖线，类型图标单色。
+ * 附件只看元数据（AttachmentInfo 浮层），笔记打开阅读器第 1 行。
+ */
 export function FileTree({
   generation,
   onOpen,
@@ -25,21 +31,24 @@ export function FileTree({
   const reduceMotion = useReducedMotionPreference();
   return (
     <section className="file-tree" aria-label="文件树">
-      <div className="file-tree-heading">
-        <h2>只读副本</h2>
-        <span>目录 · 笔记 · 附件</span>
-      </div>
-      <p className="file-tree-note">
-        展开目录按需读取，每页最多 200 项。附件仅展示路径、后缀与大小。
-      </p>
-      <Directory
-        path=""
-        generation={generation}
-        onOpen={onOpen}
-        onRefresh={onRefresh}
-        onAttachment={setAttachment}
-        reduceMotion={reduceMotion}
-      />
+      <GridFrame className="file-tree-sheet">
+        <Cell as="div" className="file-tree-intro">
+          <CellHeader title="只读副本" meta="目录 · 笔记 · 附件" />
+          <p className="file-tree-note">
+            展开目录按需读取，每页最多 200 项。附件仅展示路径、后缀与大小。
+          </p>
+        </Cell>
+        <Cell as="div" flush className="file-tree-body">
+          <Directory
+            path=""
+            generation={generation}
+            onOpen={onOpen}
+            onRefresh={onRefresh}
+            onAttachment={setAttachment}
+            reduceMotion={reduceMotion}
+          />
+        </Cell>
+      </GridFrame>
       {attachment ? (
         <AttachmentInfo
           entry={attachment}
@@ -61,26 +70,25 @@ function Directory({ path, ...actions }: TreeActions & { path: string }) {
     <div className="tree-directory">
       <div aria-live="polite">
         {directory.error ? (
-          <div className="tree-feedback" role="alert">
-            <p>
-              {directory.stale
-                ? '快照已更新，请刷新工作台。'
-                : '无法读取目录。'}
-            </p>
-            <p>{directory.error}</p>
-            <button
-              className="text-button"
-              onClick={directory.stale ? actions.onRefresh : directory.retry}
+          <div className="tree-feedback">
+            <ErrorState
+              title={
+                directory.stale
+                  ? '快照已更新，请刷新工作台。'
+                  : '无法读取目录。'
+              }
+              onRetry={directory.stale ? actions.onRefresh : directory.retry}
+              retryLabel={directory.stale ? '刷新工作台' : '重试目录'}
             >
-              {directory.stale ? '刷新工作台' : '重试目录'}
-            </button>
+              <p>{directory.error}</p>
+            </ErrorState>
           </div>
         ) : directory.loading ? (
-          <p className="tree-feedback" role="status">
+          <p className="tree-feedback tree-feedback--quiet" role="status">
             正在读取目录…
           </p>
         ) : page?.total === 0 ? (
-          <p className="tree-feedback">
+          <p className="tree-feedback tree-feedback--quiet">
             {path ? '此目录为空。' : '当前快照没有可显示的文件或目录。'}
           </p>
         ) : null}
@@ -95,8 +103,9 @@ function Directory({ path, ...actions }: TreeActions & { path: string }) {
       {/* 翻页控件不随页面卸载，键盘焦点仍停留在触发按钮。 */}
       {showPagination ? (
         <div className="tree-pagination" aria-label={`${label}分页`}>
-          <button
-            className="text-button"
+          <Button
+            variant="text"
+            size="sm"
             aria-disabled={offset === 0 || directory.loading}
             onClick={() => {
               if (offset > 0 && !directory.loading)
@@ -104,14 +113,15 @@ function Directory({ path, ...actions }: TreeActions & { path: string }) {
             }}
           >
             上一页
-          </button>
-          <span aria-live="polite">
+          </Button>
+          <span className="tree-pagination__range" aria-live="polite">
             {page
               ? `${page.total === 0 ? 0 : offset + 1}–${offset + page.entries.length} / ${page.total} 项`
               : `第 ${offset / TREE_PAGE_SIZE + 1} 页`}
           </span>
-          <button
-            className="text-button"
+          <Button
+            variant="text"
+            size="sm"
             aria-disabled={!page || page.next_offset === null}
             onClick={() => {
               if (
@@ -124,7 +134,7 @@ function Directory({ path, ...actions }: TreeActions & { path: string }) {
             }}
           >
             下一页
-          </button>
+          </Button>
         </div>
       ) : null}
     </div>
@@ -141,6 +151,7 @@ function Entry({ entry, ...actions }: TreeActions & { entry: TreeEntry }) {
   return (
     <li className="tree-entry">
       <button
+        type="button"
         className="tree-entry-button"
         aria-label={label}
         aria-expanded={directory ? expanded : undefined}
@@ -171,17 +182,14 @@ function Entry({ entry, ...actions }: TreeActions & { entry: TreeEntry }) {
         </span>
       </button>
       {directory && expanded ? (
+        // 展开只做状态变化的轻反馈：120ms 透明度＋3px 位移，不用弹簧；减少动态时只留透明度。
         <motion.div
           className="tree-children"
           id={childrenId}
           initial={{ opacity: 0, y: actions.reduceMotion ? 0 : -3 }}
           animate={{ opacity: 1, y: 0 }}
           transformTemplate={actions.reduceMotion ? () => 'none' : undefined}
-          transition={
-            actions.reduceMotion
-              ? { duration: 0.12 }
-              : { type: 'spring', stiffness: 450, damping: 42 }
-          }
+          transition={{ duration: 0.12, ease: 'easeOut' }}
         >
           <Directory path={entry.path} {...actions} />
         </motion.div>

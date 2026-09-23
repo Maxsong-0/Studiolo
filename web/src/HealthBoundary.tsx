@@ -1,46 +1,28 @@
-import { useEffect, useState } from 'react';
-import { HealthPanel } from './HealthPanel';
-import { readHealth } from './healthApi';
-import type { HealthReport } from './healthApi';
-
-type Status =
-  | { kind: 'loading' }
-  | { kind: 'ready'; report: HealthReport }
-  | { kind: 'error'; message: string };
+import { HealthOverall, HealthPanel } from './HealthPanel';
+import { StatusMark } from './ui';
+import { useHealthStatus } from './shell/useHealthStatus';
+import type { HealthStatus } from './shell/useHealthStatus';
+import './styles/health.css';
 
 /**
- * 健康页边界：读取失败时显示"未知"而不是空白，更不会显示成正常。
+ * 健康页三态展示：读取失败时显示"未知"而不是空白，更不会显示成正常。
+ * 取数由调用方负责（顶栏状态胶囊在外壳里读一次），这里只管怎么显示。
+ * 读取中只给眼睛看：状态浮层里别处还有播报，这里不再加 role=status。
  */
-export function HealthBoundary() {
-  const [status, setStatus] = useState<Status>({ kind: 'loading' });
-  useEffect(() => {
-    const controller = new AbortController();
-    readHealth(controller.signal)
-      .then((report) => {
-        if (!controller.signal.aborted) setStatus({ kind: 'ready', report });
-      })
-      .catch((error: unknown) => {
-        if (controller.signal.aborted) return;
-        const message =
-          error instanceof Error ? error.message : '健康页读取失败。';
-        setStatus({ kind: 'error', message });
-      });
-    return () => controller.abort();
-  }, []);
+export function HealthView({ status }: { status: HealthStatus }) {
   if (status.kind === 'loading') {
     return (
       <section className="health-panel" aria-label="本机健康">
-        <p>正在读取本机健康证据…</p>
+        <p className="health-loading">
+          <StatusMark state="pending">正在读取本机健康证据…</StatusMark>
+        </p>
       </section>
     );
   }
   if (status.kind === 'error') {
     return (
       <section className="health-panel" aria-label="本机健康">
-        <p className="health-overall health-unknown">
-          <span>整体状态</span>
-          <strong data-state="unknown">未知</strong>
-        </p>
+        <HealthOverall state="unknown" />
         <p className="health-incomplete">
           读取健康证据失败：{status.message}。未知不等于正常。
         </p>
@@ -48,4 +30,10 @@ export function HealthBoundary() {
     );
   }
   return <HealthPanel report={status.report} />;
+}
+
+/** 自己取数的健康页边界：挂载时读取一次。 */
+export function HealthBoundary() {
+  const { status } = useHealthStatus();
+  return <HealthView status={status} />;
 }

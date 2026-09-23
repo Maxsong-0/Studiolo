@@ -1,123 +1,126 @@
-@media (max-width: 760px) {
-  .table-scroll {
-    overflow: visible;
-    border: 0;
-    border-radius: 0;
+/*
+ * 项目明细的窄屏（<760px，规范第 5、9 节）：表格按项目分组，每个事实带原列名。
+ * 表格元素改了 display，表格语义靠 ProjectTable 里显式的 role（table/row/rowheader/cell）保住。
+ * 只引用 tokens.css 的新令牌；页面级的窄屏收口（底部导航、页边距等）归外壳。
+ */
+@media (width < 760px) {
+  /* 描边输入与原生 select：44px 触控高度，16px 字免得 iOS 聚焦时整页放大 */
+  .project-field {
+    height: 44px;
   }
-  .project-table,
-  .project-table tbody {
+  .project-field input,
+  .project-field select {
+    font-size: 16px;
+  }
+  .project-filters {
+    gap: 10px;
+  }
+  .project-filters .project-field--search {
+    flex: 1;
+    width: auto;
+    min-width: 0;
+  }
+  .project-filters .project-field--select {
+    width: 128px;
+  }
+  .project-filters__count {
+    flex-basis: 100%;
+    margin-left: 0;
+  }
+  .projects-table-scroll {
+    overflow: visible;
+  }
+  .projects-table,
+  .projects-table tbody {
     display: block;
     width: 100%;
+    min-width: 0;
   }
-  .project-table colgroup {
+  .projects-table colgroup {
     display: none;
   }
-  .project-table thead {
+  /* 列名改由每个事实自己带（::before），表头只留给读屏 */
+  .projects-table thead {
     position: absolute;
-    clip: rect(0, 0, 0, 0);
     width: 1px;
     height: 1px;
     overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
   }
-  .project-table tbody tr {
+  .projects-table tbody tr {
     display: grid;
-    grid-template-columns: repeat(4, minmax(0, 1fr));
-    height: auto;
-    padding: 12px 0 20px;
-    margin-bottom: 12px;
-    border-bottom: 1px solid var(--border);
+    grid-template-columns: 36px repeat(2, minmax(0, 1fr));
+    column-gap: var(--space-3);
+    row-gap: var(--space-2);
+    padding: var(--space-3) var(--space-4) var(--space-4);
+    border-bottom: 1px solid var(--hairline);
   }
-  .project-table th,
-  .project-table td {
+  .projects-table tbody tr:last-child {
+    border-bottom: 0;
+  }
+  .projects-table th,
+  .projects-table td,
+  .projects-table th:first-child,
+  .projects-table td:first-child,
+  .projects-table th:last-child,
+  .projects-table td:last-child {
     display: block;
+    padding: 0;
     border: 0;
-    padding: 10px 4px;
   }
-  .project-table .project-identity {
-    grid-column: 1 / -1;
-    padding: 8px 0 16px;
+  .projects-table .projects-table__number {
+    text-align: left;
   }
-  .project-name,
-  .project-name-text {
-    font-size: 1rem;
-  }
-  .project-name {
-    min-height: 44px;
-  }
-  .project-path {
-    font-size: 0.75rem;
-    margin-top: 2px;
-  }
-  .project-table td::before,
-  .project-table .lifecycle-cell::before {
-    display: block;
-    content: attr(data-label);
-    width: auto;
-    height: auto;
-    border-radius: 0;
-    background: none;
-    margin: 0 0 6px;
-    font-size: 0.625rem;
-    color: var(--muted);
-  }
-  .project-table td:not(.milestone-cell) {
-    text-align: center;
-  }
-  .project-table td:nth-child(3) {
+  .projects-table__index {
     grid-column: 1;
-    grid-row: 2;
+    grid-row: 1;
+    padding-top: 4px;
   }
-  .project-table td:nth-child(4) {
+  .projects-table__identity {
+    grid-column: 2 / -1;
+    grid-row: 1;
+  }
+  .projects-table__lifecycle {
     grid-column: 2;
     grid-row: 2;
   }
-  .project-table td:nth-child(5) {
+  .projects-table__version {
     grid-column: 3;
     grid-row: 2;
   }
-  .project-table .lifecycle-cell {
-    grid-column: 4;
-    grid-row: 2;
+  .projects-table__active {
+    grid-column: 2;
+    grid-row: 3;
   }
-  .source-value {
-    min-height: 44px;
-    font-size: 0.875rem;
+  .projects-table__bugs {
+    grid-column: 3;
+    grid-row: 3;
   }
-  .project-table .milestone-cell {
-    grid-column: 1 / -1;
-    padding: 12px 0 0;
-    margin-top: 6px;
-    border-top: 1px solid var(--border);
+  .projects-table__milestone {
+    grid-column: 2 / -1;
+    grid-row: 4;
+    padding-top: var(--space-2);
+    border-top: 1px solid var(--hairline);
   }
-  .project-table .milestone-cell::before {
-    font-size: 0.75rem;
-  }
-  .overview-context {
-    padding: 24px 20px;
-  }
-  .overview-context .action-list {
+  .projects-table td[data-label]::before {
     display: block;
+    margin-bottom: 2px;
+    color: var(--ink-2);
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    font-weight: 500;
+    line-height: 1.3;
+    letter-spacing: 0.04em;
+    content: attr(data-label);
   }
-  .overview-context .action-row {
-    border-bottom: 1px solid var(--border);
-  }
-  .overview-context .action-open {
-    padding: 20px 0;
-  }
-  .action-open {
-    display: flex;
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 8px;
-    padding: 20px 0;
-  }
-  .action-source {
-    font-size: 0.6875rem;
-  }
-  .action-link {
+  /* 44px 触控高度：名字、来源与每个可点的值 */
+  .projects-table__name,
+  .projects-table__source,
+  button.projects-table__value {
     min-height: 44px;
   }
-  .pointer-surface {
-    overflow: visible;
+  .projects-table__meta {
+    font-size: var(--type-label);
   }
 }

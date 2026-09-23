@@ -1,7 +1,9 @@
 import type { RustCallGraph } from '../rustCallSites';
 import type { RustCallLinks } from '../rustCallLinks';
 import { RustSourcePosition } from './RustSourcePosition';
+import '../styles/rust-call-links.css';
 
+/** 文本降级里的反查：一个函数定义的同批词法关联引用，只读，不含按钮。 */
 export function RustCallReferencesText({
   target,
   graph,
@@ -16,7 +18,7 @@ export function RustCallReferencesText({
     (item) => item.target === target,
   );
   return (
-    <div>
+    <div className="rust-references-text">
       <p>
         同批词法关联引用：{references.length} 处。零引用不表示该函数未被使用。
       </p>

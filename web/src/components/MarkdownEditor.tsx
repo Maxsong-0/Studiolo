@@ -3,6 +3,7 @@ import { Compartment, EditorState, Transaction } from '@codemirror/state';
 import { EditorView, keymap } from '@codemirror/view';
 import { defaultKeymap, history, historyKeymap } from '@codemirror/commands';
 import { markdown } from '@codemirror/lang-markdown';
+import '../styles/editor.css';
 
 interface Props {
   value: string;
@@ -126,9 +127,12 @@ export function MarkdownEditor(props: Props) {
         annotations: Transaction.addToHistory.of(false),
       });
   }, [props.value, props.readOnly, editable]);
+  // 外观全在 editor.css 里按 CodeMirror 的类名换令牌；这里不传主题扩展，编辑行为不受影响。
   return failure ? (
-    <div>
-      <p role="alert">{failure}</p>
+    <div className="editor-fallback">
+      <p role="alert" className="editor-notice-error">
+        {failure}
+      </p>
       <pre>{props.value}</pre>
     </div>
   ) : (
