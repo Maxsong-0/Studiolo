@@ -1,7 +1,10 @@
 //! 有界记录之间的关联检查；哈希只能检测不一致损坏，不抵御同权限全库重写。
 
 use super::{
-    SessionError, database::unavailable, event_validation::payload, events, schema, secrets,
+    SessionError,
+    database::{required_row, unavailable},
+    event_validation::payload,
+    events, schema, secrets,
 };
 use rusqlite::Connection;
 use sha2::{Digest, Sha256};
@@ -37,13 +40,14 @@ pub(super) fn outbox(db: &Connection) -> Result<(), SessionError> {
             } else {
                 "intent"
             };
+            // 吊销两阶段同事务成对写入、成对回收；另一半缺失即库损坏。
             let other: String = db
                 .query_row(
                     "SELECT event_json FROM audit_outbox WHERE event_id=?1 AND phase=?2",
                     rusqlite::params![&id, opposite],
                     |r| r.get(0),
                 )
-                .map_err(unavailable)?;
+                .map_err(required_row)?;
             let other: AuditEvent =
                 serde_json::from_str(&other).map_err(|_| SessionError::CorruptStore)?;
             if other.payload() != event.payload() || other.action() != event.action() {
@@ -51,13 +55,14 @@ pub(super) fn outbox(db: &Connection) -> Result<(), SessionError> {
             }
         }
         if let Some(bucket) = bucket {
+            // 八种拒绝计数行建库即写入且从不删除，分区快照必有对应计数行。
             let (total, delivered): (i64, i64) = db
                 .query_row(
                     "SELECT total,delivered FROM auth_denials WHERE kind=?1",
                     [bucket],
                     |r| Ok((r.get(0)?, r.get(1)?)),
                 )
-                .map_err(unavailable)?;
+                .map_err(required_row)?;
             if through.is_none_or(|value| value > total)
                 || event.payload().as_value()["after_count"].as_i64() != Some(delivered)
                 || receipt.is_some()

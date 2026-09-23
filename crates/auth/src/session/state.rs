@@ -2,7 +2,7 @@
 
 use super::{
     CsrfToken, SessionError, SessionManager, SessionState, SessionToken,
-    database::unavailable,
+    database::{required_row, unavailable},
     denials::{self, Denial},
     events, outbox,
     rows::{self, SessionRow},
@@ -30,7 +30,7 @@ impl SessionManager {
                     [],
                     |r| Ok((r.get(0)?, r.get(1)?)),
                 )
-                .map_err(unavailable)?;
+                .map_err(required_row)?;
             let sampled = self.clock.now_unix_ms();
             let Ok(now) = sampled else {
                 return deny(db, Denial::Clock, SessionError::ClockRollback);

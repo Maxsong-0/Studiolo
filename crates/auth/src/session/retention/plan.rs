@@ -8,7 +8,7 @@ use super::{
     proof::{self, Proof},
     selection,
 };
-use crate::session::database::unavailable;
+use crate::session::database::{required_row, unavailable};
 use rusqlite::{Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
@@ -92,7 +92,9 @@ pub(super) fn completed(db: &Connection, plan: &Plan) -> Result<bool, SessionErr
 
 pub(super) fn check_current(db: &Connection, plan: &Plan) -> Result<(), SessionError> {
     let checkpoint = checkpoint::read(db)?;
-    let (next,issuance):(i64,i64)=db.query_row("SELECT next_sequence,(SELECT next_issuance FROM credential_state WHERE id=1) FROM auth_meta WHERE id=1",[],|row|Ok((row.get(0)?,row.get(1)?))).map_err(unavailable)?;
+    // 两个单例行缺一即库损坏：auth_meta 缺行由 required_row 判定，credential_state 缺行使子查询得 NULL。
+    let (next,issuance):(i64,Option<i64>)=db.query_row("SELECT next_sequence,(SELECT next_issuance FROM credential_state WHERE id=1) FROM auth_meta WHERE id=1",[],|row|Ok((row.get(0)?,row.get(1)?))).map_err(required_row)?;
+    let issuance = issuance.ok_or(SessionError::CorruptStore)?;
     if plan.previous_sequence != checkpoint.sequence
         || plan.previous_manifest != checkpoint.manifest_hash
         || plan.sequence <= checkpoint.sequence

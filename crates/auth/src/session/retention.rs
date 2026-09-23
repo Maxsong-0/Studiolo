@@ -8,7 +8,7 @@ mod proof;
 pub(super) use proof::seal_row;
 mod selection;
 
-use super::{SessionError, SessionManager, database::unavailable, schema};
+use super::{SessionError, SessionManager, database::required_row, schema};
 use rusqlite::Connection;
 use serde::{Serialize, de::DeserializeOwned};
 use sha2::{Digest, Sha256};
@@ -155,5 +155,5 @@ fn current_epoch(db: &Connection) -> Result<i64, SessionError> {
     db.query_row("SELECT epoch FROM auth_meta WHERE id=1", [], |row| {
         row.get(0)
     })
-    .map_err(unavailable)
+    .map_err(required_row)
 }

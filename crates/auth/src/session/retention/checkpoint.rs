@@ -1,7 +1,10 @@
 //! 已提交的清理许可锚点；每次覆盖，不在 Auth 中累计历史检查点。
 
 use super::{SessionError, current_epoch, decode, encode, valid_hash};
-use crate::session::{database::unavailable, events, schema, validation};
+use crate::session::{
+    database::{required_row, unavailable},
+    events, schema, validation,
+};
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -54,9 +57,10 @@ pub(super) fn read(db: &Connection) -> Result<Checkpoint, SessionError> {
     if schema::version(db)? == 1 {
         return Ok(Checkpoint::genesis());
     }
+    // v2 起锚点是建表即写入的单例行，只替换不删除；缺行即库损坏。
     let encoded: Option<String> = db.query_row(
         "SELECT CASE WHEN octet_length(checkpoint_json) BETWEEN 1 AND 4096 THEN checkpoint_json END FROM auth_retention_checkpoint WHERE id=1",
-        [], |row| row.get(0)).map_err(unavailable)?;
+        [], |row| row.get(0)).map_err(required_row)?;
     decode(&encoded.ok_or(SessionError::CorruptStore)?)
 }
 
@@ -64,7 +68,7 @@ pub(super) fn validate(db: &Connection) -> Result<(), SessionError> {
     let value = read(db)?;
     let receipt: Option<String> = db.query_row(
         "SELECT CASE WHEN receipt_json IS NULL OR octet_length(receipt_json) BETWEEN 1 AND 8192 THEN receipt_json ELSE '' END FROM auth_retention_checkpoint WHERE id=1",
-        [], |row| row.get(0)).map_err(unavailable)?;
+        [], |row| row.get(0)).map_err(required_row)?;
     if value.sequence == 0 {
         if value != Checkpoint::genesis() || receipt.is_some() {
             return Err(SessionError::CorruptStore);
@@ -75,14 +79,14 @@ pub(super) fn validate(db: &Connection) -> Result<(), SessionError> {
         .query_row("SELECT next_sequence FROM auth_meta WHERE id=1", [], |r| {
             r.get(0)
         })
-        .map_err(unavailable)?;
+        .map_err(required_row)?;
     let next_issuance: i64 = db
         .query_row(
             "SELECT next_issuance FROM credential_state WHERE id=1",
             [],
             |r| r.get(0),
         )
-        .map_err(unavailable)?;
+        .map_err(required_row)?;
     let minimum: Option<i64> = db
         .query_row("SELECT min(epoch) FROM sessions", [], |r| r.get(0))
         .map_err(unavailable)?;

@@ -143,3 +143,72 @@ fn persisted_plan_single_field_or_manifest_damage_cannot_authorize_deletion() {
         );
     }
 }
+
+fn reopen_error(h: &Harness) -> Option<SessionError> {
+    SessionManager::open(
+        &h.root,
+        config(10, 100),
+        h.audit.clone(),
+        h.clock.clone(),
+        h.random.clone(),
+    )
+    .err()
+}
+
+#[test]
+fn missing_checkpoint_anchor_row_is_corrupt_store_not_storage_unavailable() {
+    // 单例锚点按不变量必然存在；缺行是库损坏，不能被误报成可重试的存储不可用。
+    let h = Harness::new(10, 100);
+    let controller = h.manager.issue(&identity()).unwrap();
+    let deleted = h
+        .manager
+        .database
+        .connection
+        .lock()
+        .unwrap()
+        .execute("DELETE FROM auth_retention_checkpoint WHERE id=1", [])
+        .unwrap();
+    assert_eq!(deleted, 1);
+    assert_eq!(
+        h.manager.check(&identity(), &controller.token).unwrap_err(),
+        SessionError::CorruptStore
+    );
+    assert_eq!(
+        h.manager.maintain_retention().unwrap_err(),
+        SessionError::CorruptStore
+    );
+    assert_eq!(scalar(&h.manager, "SELECT count(*) FROM sessions"), 1);
+    assert_eq!(reopen_error(&h), Some(SessionError::CorruptStore));
+}
+
+#[test]
+fn missing_paired_revoke_outbox_row_is_corrupt_store_not_storage_unavailable() {
+    // 吊销的 intent 与 outcome 同事务成对写入；删掉任一关联行都只能判为库损坏。
+    for phase in ["intent", "outcome"] {
+        let h = Harness::new(10, 100);
+        let controller = h.manager.issue(&identity()).unwrap();
+        let target = h.manager.issue(&identity()).unwrap();
+        h.manager
+            .revoke(
+                &identity(),
+                &controller.token,
+                &controller.csrf,
+                &target.session.id,
+            )
+            .unwrap();
+        let deleted = h
+            .manager
+            .database
+            .connection
+            .lock()
+            .unwrap()
+            .execute(
+                "DELETE FROM audit_outbox WHERE kind='revoke' AND phase=?1",
+                [phase],
+            )
+            .unwrap();
+        assert_eq!(deleted, 1);
+        assert_rejected_before_any_deletion(&h, &controller, 2);
+        assert_eq!(reopen_error(&h), Some(SessionError::CorruptStore));
+    }
+}
