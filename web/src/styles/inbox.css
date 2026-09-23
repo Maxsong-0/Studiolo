@@ -1,5 +1,0 @@
-/*
- * 旧「待我动作」列表的样式随 web/src/components/Inbox.tsx 一并退役（T-130 B1）；
- * 驾驶舱的待我动作样式在 web/src/styles/cockpit.css。
- * 本文件仍被 main.tsx 引入，暂留为空，由 C 轮清理空 CSS 导入时一并删除。
- */

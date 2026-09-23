@@ -1,6 +1,7 @@
 /*
- * 视图版面：标题行（图名）、子标签、筛选与选择控件。只引用 tokens.css 的令牌。
- * 旧工具栏、面包屑与页脚随外壳重做移除。
+ * 视图版面的全局部分：视图根（.view）、标题行（图名，ViewHeader）、描边搜索框与原生 select（文档搜索），
+ * 以及全站搜索框统一的清除钮。只引用 tokens.css 的令牌。旧工具栏、面包屑、页脚、子标签（ViewTabs）
+ * 与筛选行（.filters）已随各视图重做移除；子标签用 ui/Tabs，项目筛选在 projects.css。
  */
 .view {
   min-width: 0;
@@ -20,7 +21,7 @@
 }
 .view-header h1 {
   margin: 0;
-  font-size: 34px;
+  font-size: var(--type-plate);
   font-weight: 900;
   line-height: 1;
   letter-spacing: -0.03em;
@@ -29,7 +30,7 @@
   max-width: 65ch;
   margin: 10px 0 0;
   color: var(--ink-2);
-  font-size: 14px;
+  font-size: var(--type-body);
   line-height: 1.6;
 }
 .view-header-actions {
@@ -37,69 +38,8 @@
   align-items: center;
   gap: 12px;
 }
-.view-header-actions .text-button {
-  font-family: var(--font-mono, 'IBM Plex Mono', ui-monospace, monospace);
-  font-size: 12px;
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  color: var(--ink);
-}
 
-/* 子标签（规范第 7 节）：当前项红色 3px 下划线，其余次要色。 */
-.view-tabs {
-  display: flex;
-  align-items: stretch;
-  gap: 26px;
-  min-height: 50px;
-  margin-bottom: 14px;
-  border-bottom: 1px solid var(--hairline);
-}
-.view-tabs [role='tab'] {
-  display: flex;
-  align-items: center;
-  flex-shrink: 0;
-  padding: 0;
-  border: 0;
-  border-bottom: 3px solid transparent;
-  border-radius: 0;
-  background: transparent;
-  color: var(--ink-2);
-  font-size: 15px;
-  font-weight: 500;
-  white-space: nowrap;
-  cursor: pointer;
-  transition: color 120ms ease;
-}
-.view-tabs [role='tab']:hover {
-  color: var(--ink);
-}
-.view-tabs [role='tab'][aria-selected='true'] {
-  border-bottom-color: var(--signal);
-  color: var(--ink);
-  font-weight: 800;
-}
-.view-tabpanel {
-  min-width: 0;
-}
-
-/* 筛选行与控件：直角、1.5px 墨线，输入底用 --paper-raised。 */
-.filters {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 12px;
-  margin: 0 0 16px;
-}
-.filter-count {
-  order: 3;
-  margin-left: auto;
-  color: var(--ink-2);
-  font-family: var(--font-mono, 'IBM Plex Mono', ui-monospace, monospace);
-  font-size: 11.5px;
-  letter-spacing: 0.04em;
-  white-space: nowrap;
-  font-variant-numeric: tabular-nums;
-}
+/* 描边搜索框与原生 select：直角、1.5px 墨线，输入底用 --paper-raised。 */
 .search-control {
   display: flex;
   align-items: center;
@@ -125,7 +65,7 @@
   outline: 0;
   background: transparent;
   color: var(--ink);
-  font-size: 14px;
+  font-size: var(--type-body);
 }
 .search-control input::placeholder {
   color: var(--ink-2);
@@ -157,8 +97,28 @@
   pointer-events: none;
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .view-tabs [role='tab'] {
-    transition: none;
-  }
+/*
+ * 全站搜索框（项目筛选、文档搜索）统一的原生清除钮：WebKit 默认是蓝色的叉，换成次要墨色的两道 1.5px 斜线；
+ * 纯渐变，不引外部或 data: 图片（CSP）。文档搜索在 search.css 里有一条同样声明、特异度更高的规则，
+ * 两条落在同一个伪元素上，层叠后只画一个叉。
+ */
+input[type='search']::-webkit-search-cancel-button {
+  width: 12px;
+  height: 12px;
+  margin: 0 0 0 var(--space-2);
+  background:
+    linear-gradient(
+      45deg,
+      transparent calc(50% - 0.75px),
+      var(--ink-2) calc(50% - 0.75px) calc(50% + 0.75px),
+      transparent calc(50% + 0.75px)
+    ),
+    linear-gradient(
+      -45deg,
+      transparent calc(50% - 0.75px),
+      var(--ink-2) calc(50% - 0.75px) calc(50% + 0.75px),
+      transparent calc(50% + 0.75px)
+    );
+  cursor: pointer;
+  appearance: none;
 }

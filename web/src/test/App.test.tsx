@@ -35,9 +35,14 @@ describe('只读工作台', () => {
   it('从 API 读取真实快照，筛选项目和生命周期，并保留未知值', async () => {
     const user = userEvent.setup();
     render(<App />);
-    // 数据来源标签收进了顶栏状态浮层：先打开胶囊再核对。
-    await user.click(screen.getByRole('button', { name: /^工作台状态/ }));
-    expect(await screen.findByText('测试只读库')).toBeInTheDocument();
+    // 数据来源标签在顶栏状态浮层里逐字列出：先打开胶囊再核对；顶栏字标旁另有当前库名（T-117）。
+    const capsule = screen.getByRole('button', { name: /^工作台状态/ });
+    await user.click(capsule);
+    const popover = document.getElementById(
+      capsule.getAttribute('aria-controls')!,
+    )!;
+    expect(await within(popover).findByText('测试只读库')).toBeInTheDocument();
+    expect(screen.getByTitle('测试只读库')).toHaveClass('shell-library');
     expect(fetchMock.mock.calls[0][0]).toBe('/api/workbench');
     // 项目明细全表与筛选在「项目」视图（T-130 规范第 4、9 节）；驾驶舱只摆前五行摘要。
     await user.click(screen.getByRole('button', { name: '项目' }));
@@ -142,6 +147,37 @@ describe('只读工作台', () => {
     await user.click(screen.getByRole('button', { name: '关闭原文' }));
     await user.click(screen.getByRole('button', { name: '驾驶舱' }));
     expect(screen.getByRole('table')).toBeInTheDocument();
+  });
+
+  it('驾驶舱「全部 N 个项目」先清掉项目视图留下的筛选，打开后行数等于总数（T-117）', async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await screen.findByRole('table');
+    await user.click(screen.getByRole('button', { name: '项目' }));
+    await user.type(
+      screen.getByRole('searchbox', { name: '筛选项目' }),
+      '星舟',
+    );
+    await user.selectOptions(
+      screen.getByRole('combobox', { name: '生命周期' }),
+      '活跃',
+    );
+    expect(
+      within(screen.getByRole('table')).getAllByRole('rowheader'),
+    ).toHaveLength(1);
+    await user.click(screen.getByRole('button', { name: '驾驶舱' }));
+    await user.click(
+      await screen.findByRole('button', { name: '全部 3 个项目，打开项目' }),
+    );
+    expect(
+      screen.getByRole('heading', { level: 1, name: '项目' }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole('searchbox', { name: '筛选项目' })).toHaveValue('');
+    expect(screen.getByRole('combobox', { name: '生命周期' })).toHaveValue('');
+    expect(
+      within(screen.getByRole('table')).getAllByRole('rowheader'),
+    ).toHaveLength(3);
+    expect(screen.getByText('3 个项目')).toHaveAttribute('role', 'status');
   });
 
   it('失败可重试，刷新失败继续显示旧快照但明确提示', async () => {

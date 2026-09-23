@@ -350,16 +350,6 @@
 .operation-drift-list .ui-status {
   font-size: 13px;
 }
-/* 14px 及以下的红字用 --signal-text；方块仍是 --signal */
-.operation-drift-list .ui-status[data-state='alert'],
-.architecture-evidence .ui-status[data-state='alert'] {
-  color: var(--signal-text);
-}
-/* 未核验是休眠框，文字仍要读得清 */
-.operation-drift-list .ui-status[data-state='dormant'],
-.architecture-evidence .ui-status[data-state='dormant'] {
-  color: var(--ink-2);
-}
 .operation-drift-list .operation-muted {
   font-size: 12px;
 }

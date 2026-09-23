@@ -65,7 +65,7 @@
 
 .document-title {
   display: block;
-  font-size: 15.5px;
+  font-size: var(--type-item);
   font-weight: 700;
   line-height: 1.4;
 }
@@ -73,21 +73,8 @@
   display: block;
   margin-top: 4px;
   color: var(--ink-2);
-  font-family: var(--font-mono, 'IBM Plex Mono', ui-monospace, monospace);
-  font-size: 11.5px;
+  font-family: var(--font-mono);
+  font-size: var(--type-label);
   letter-spacing: 0.02em;
   overflow-wrap: anywhere;
-}
-
-/* 项目明细里名字旁的「来源」：点项目名进入运作，来源改由这里打开。 */
-.project-table .project-source {
-  display: inline-block;
-  margin-top: 2px;
-  color: var(--ink-2);
-  font-family: var(--font-mono, 'IBM Plex Mono', ui-monospace, monospace);
-  font-size: 11px;
-  letter-spacing: 0.04em;
-}
-.project-table .project-source:hover {
-  color: var(--ink);
 }

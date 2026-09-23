@@ -1,21 +1,9 @@
 /*
- * 视图的窄屏规则（<760px，规范第 5 节）：12 列网格收成单列，图名缩小，筛选控件拉满并给足 44px 触控高度。
- * 外壳自己的窄屏规则（底部五格导航等）在 shell/shell.css。
+ * 全局窄屏规则（<760px，规范第 5 节）：视图共用的全局类（图名行、错误条、三种全局按钮）与没写尺寸的原生控件。
+ * 外壳（底部五格导航、顶栏）在 shell/shell.css；ui 组件在 ui/ui.css；视图内部类名的覆盖在 mobile.css。
+ * 断点写区间语法，与 ui.css、shell.css 同一写法，缩放出小数宽度时不会两档都不命中。
  */
-@media (max-width: 1023px) {
-  .sheet-span-4,
-  .sheet-span-8 {
-    grid-column: span 12;
-  }
-}
-@media (max-width: 759px) {
-  .sheet {
-    grid-template-columns: minmax(0, 1fr);
-  }
-  .sheet-cell {
-    grid-column: 1 / -1;
-    padding: 12px 14px;
-  }
+@media (width < 760px) {
   .view-header {
     margin-bottom: 14px;
   }
@@ -23,47 +11,34 @@
     font-size: 28px;
   }
   .view-header p {
-    font-size: 13px;
     margin-top: 8px;
-  }
-  .view-tabs {
-    gap: 18px;
-    min-height: 44px;
-  }
-  .filters {
-    gap: 10px;
-    margin-bottom: 14px;
-  }
-  .search-control {
-    flex: 1;
-    min-width: 0;
-    height: 44px;
-  }
-  .search-control input {
-    font-size: 16px;
-  }
-  .select-control {
-    width: 120px;
-    height: 44px;
-  }
-  .select-control select {
-    font-size: 16px;
-  }
-  .select-control .icon {
-    top: 15px;
-  }
-  .filter-count {
-    flex-basis: 100%;
-    margin: 2px 0 0;
+    font-size: 13px;
   }
   .error-feedback {
     align-items: flex-start;
   }
+
+  /* 触控目标至少 44px 见方：tokens.css 的三种全局按钮 */
   .icon-button {
     width: 44px;
     height: 44px;
   }
-  .text-button {
+  .text-button,
+  .outline-button {
     min-height: 44px;
+  }
+
+  /*
+   * 没写尺寸的按钮与展开标题兜底到 44px（零特异度，写了尺寸的类规则压得过它；写了更小尺寸的由各自的
+   * 窄屏规则或 mobile.css 抬高）。输入框与 select 多半套在描边框里、由框给触控高度，不在这里一刀切；
+   * 正文里的链接不算控件，也不在此列。
+   */
+  :where(button, [role='button'], [role='tab']) {
+    min-width: 44px;
+    min-height: 44px;
+  }
+  :where(summary) {
+    min-height: 44px;
+    padding-block: 12px;
   }
 }

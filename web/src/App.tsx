@@ -104,6 +104,13 @@ export function App({ account }: { account?: ReactNode }) {
     window.scrollTo({ top: 0, left: 0, behavior: 'instant' });
   }
 
+  // 驾驶舱「全部 N 个项目」：先清掉项目视图上次留下的筛选，入口写的总数与打开后看到的行数才对得上（T-117）。
+  function viewAllProjects() {
+    setQuery('');
+    setLifecycle('');
+    navigate('projects');
+  }
+
   // ⌘K 面板执行命令用的动作：跳转与顶栏导航一样回到页首；其余沿用本页已有的入口。
   const paletteContext: CommandPaletteContext = {
     location,
@@ -139,6 +146,7 @@ export function App({ account }: { account?: ReactNode }) {
     <AppShell
       view={view}
       onNavigate={navigate}
+      sourceLabel={data?.source_label ?? null}
       actionCount={data ? data.inbox.length : null}
       documentCount={data?.counts.documents.value ?? null}
       status={
@@ -210,7 +218,7 @@ export function App({ account }: { account?: ReactNode }) {
           diagnostics={diagnostics.length}
           onOpen={setSource}
           onEnterProject={enterProject}
-          onViewProjects={() => navigate('projects')}
+          onViewProjects={viewAllProjects}
           onShowDiagnostics={() => setStatusOpen(true)}
         />
       ) : null}
