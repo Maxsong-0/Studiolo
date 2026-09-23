@@ -1,4 +1,4 @@
-//! A deliberately small HTTP/1.1 Unix socket boundary; no TCP listener or user-selected target.
+//! 刻意保持极小的 HTTP/1.1 Unix socket 边界：没有 TCP 监听，也没有用户自选的目标。
 #[cfg(unix)]
 use crate::{CallId, DurableRelay, RelayError};
 #[cfg(unix)]
@@ -8,8 +8,8 @@ use std::{
     time::Duration,
 };
 
-/// Serves one bounded request on an already accepted, protected Unix connection.
-/// The owner must bind the listener in a Gateway-owned 0700 directory and bound concurrency.
+/// 在一条已接受、受保护的 Unix 连接上服务一个有界请求。
+/// 监听器的持有方须把它绑定在 Gateway 自有的 0700 目录中，并限制并发。
 #[cfg(unix)]
 pub fn serve_relay_connection(
     relay: &DurableRelay,
@@ -51,7 +51,7 @@ fn read_request(stream: &mut UnixStream) -> Result<(String, CallId, String, Vec<
     let mut reader = BufReader::new(stream);
     let mut header = Vec::new();
     loop {
-        // BufRead::read_until alone is unbounded; take caps each read and the whole header.
+        // 单用 BufRead::read_until 没有上限；由 take 给每次读取和整个请求头封顶。
         let read = reader
             .by_ref()
             .take((16385 - header.len()) as u64)

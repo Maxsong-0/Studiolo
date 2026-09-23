@@ -1,4 +1,4 @@
-//! Credential-free front transport and separate-UID key-holder framing.
+//! 不持凭据的前端传输，以及与独立 UID 持钥进程之间的分帧协议。
 use crate::{HttpsRelayTransport, RelayError, RelayGrant, RelayTransport};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -58,13 +58,13 @@ fn write_frame(stream: &mut UnixStream, bytes: &[u8]) -> Result<(), RelayError> 
         .and_then(|()| stream.flush())
         .map_err(|_| RelayError::Upstream)
 }
-/// Front-process transport which has no API keys and never reads their files.
+/// 前端进程的传输：不持有 API 密钥，也从不读取密钥文件。
 pub struct RemoteRelayTransport {
     socket: PathBuf,
     gateway_uid: u32,
 }
 impl RemoteRelayTransport {
-    /// Pins the key-holder's independent OS identity and private Unix endpoint.
+    /// 钉死持钥进程独立的操作系统身份（UID）与私有 Unix 端点。
     #[must_use]
     pub fn new(socket: PathBuf, gateway_uid: u32) -> Self {
         Self {
@@ -72,7 +72,7 @@ impl RemoteRelayTransport {
             gateway_uid,
         }
     }
-    /// Verifies the live key-holder peer UID without loading or requesting any credential.
+    /// 校验在线持钥进程的对端 UID；不加载也不请求任何凭据。
     pub fn probe(&self) -> Result<(), RelayError> {
         let stream = UnixStream::connect(&self.socket).map_err(|_| RelayError::Upstream)?;
         peer(&stream, self.gateway_uid)
@@ -120,8 +120,8 @@ impl RelayTransport for RemoteRelayTransport {
         Ok(output)
     }
 }
-/// Serves one request only from the pinned independent front-process UID.
-/// Frames remain internal; the front rechecks authority before consuming every chunk.
+/// 只为钉死的独立前端进程 UID 服务一个请求。
+/// 帧只在内部流转；前端在消费每个分块之前都会重新校验权限。
 pub fn serve_key_holder_connection(
     transport: &HttpsRelayTransport,
     mut stream: UnixStream,
@@ -142,7 +142,7 @@ pub fn serve_key_holder_connection(
     {
         return Err(RelayError::Request);
     }
-    // Defence in depth: even the trusted front cannot redirect the key-holder to an arbitrary URL.
+    // 纵深防御：即使是可信前端，也不能把持钥进程引向任意 URL。
     let request = crate::relay_request::normalize(&envelope.grant, &envelope.request)?;
     transport.forward(&envelope.grant, &request, &|| Ok(()), &mut |chunk| {
         write_frame(&mut stream, chunk)

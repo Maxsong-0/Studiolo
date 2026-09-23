@@ -1,4 +1,4 @@
-//! Durable real-call protocol, distinct from MemoryGateway's response cache.
+//! 持久化的真实调用协议，与 MemoryGateway 的响应缓存相互独立。
 use crate::{
     AttemptGuard, CallId, Clock, PermissionLayers, relay_request,
     relay_store::{Admission, Store, hash},
@@ -17,7 +17,7 @@ use studiolo_audit_ledger::{
 };
 use studiolo_core::ToolId;
 
-/// Gateway-only durable relay. New instances always start frozen.
+/// 仅 Gateway 使用的持久化中继。新实例总是以冻结状态启动。
 pub struct DurableRelay {
     store: Store,
     operation: Mutex<()>,
@@ -31,25 +31,25 @@ pub struct DurableRelay {
     publisher: Arc<dyn RelayPublisher>,
     _retention: crate::relay_retention::Retention,
 }
-/// Trusted assembly dependencies; no default permits a live network request.
+/// 可信的装配依赖；不存在任何能放行真实网络请求的默认值。
 pub struct RelayServices {
-    /// Live attempt/fence/cancellation authority.
+    /// 实时的 attempt／fence／取消状态权威来源。
     pub guard: Arc<dyn AttemptGuard>,
-    /// Live lease, source classification and effective-policy authority.
+    /// 实时的租约、来源分级与生效策略权威来源。
     pub policy: Arc<dyn RelayPolicyGuard>,
-    /// Server clock.
+    /// 服务端时钟。
     pub clock: Arc<dyn Clock>,
-    /// Authoritative append-only ledger.
+    /// 权威的只追加审计账本。
     pub audit: Arc<dyn AuditLedger>,
-    /// Deployment, policy and role ceilings; capability supplies the fourth set.
+    /// 部署、策略与角色三层上限；第四层由 capability 提供。
     pub permissions: PermissionLayers,
-    /// Fixed provider network transport.
+    /// 固定供应商的网络传输。
     pub transport: Arc<dyn RelayTransport>,
-    /// Broker manifest publication gate.
+    /// Broker 清单发布闸门。
     pub publisher: Arc<dyn RelayPublisher>,
 }
 impl DurableRelay {
-    /// Opens Gateway-only state and an ephemeral raw area excluded from backup/sync.
+    /// 打开仅 Gateway 使用的状态库，以及不参与备份／同步的临时原始数据区。
     pub fn open(
         database: &std::path::Path,
         raw_root: PathBuf,
@@ -82,11 +82,11 @@ impl DurableRelay {
             publisher: services.publisher,
         })
     }
-    /// Trusted freeze control; freeze also interrupts ongoing stream ingestion at its next chunk.
+    /// 可信的冻结开关；冻结还会在下一个分块处中断正在进行的流式接收。
     pub fn set_frozen(&self, frozen: bool) -> Result<(), RelayError> {
         self.store.freeze(frozen)
     }
-    /// Issues an opaque random nonce bound to an immutable authenticated grant.
+    /// 签发一个不透明的随机 nonce，并绑定到一份不可变、已认证的授权（grant）。
     pub fn issue(&self, grant: RelayGrant) -> Result<RelayTicket, RelayError> {
         self.authorize(&grant)?;
         let limits = &grant.limits;
@@ -196,7 +196,7 @@ impl DurableRelay {
             .map_err(|_| RelayError::Audit)?;
         Ok(())
     }
-    /// Relays a pinned protocol request. Unknown calls retain their charge and are never resent.
+    /// 中继一个协议已钉死的请求。结果未知的调用保留已扣费用，且永不重发。
     pub fn relay(
         &self,
         ticket: &str,
@@ -254,7 +254,7 @@ impl DurableRelay {
         let request = crate::relay_tools::inject_notice(grant, &request, self.store.tools(grant)?)?;
         self.audit(grant, call, AuditPhase::Intent, "pending")?;
         self.authorize(grant)?;
-        // Persist the uncertainty boundary BEFORE handing control to the real transport.
+        // 在把控制权交给真实传输「之前」，先持久化「结果不确定」边界。
         self.store.mark(grant, call, "indeterminate")?;
         let output = self
             .transport
@@ -280,7 +280,7 @@ impl DurableRelay {
             .map(|s| s.retain_until_unix_seconds)
             .min()
             .ok_or(RelayError::Egress)?;
-        // Cleanup runs every 30 s, therefore target 60 s before the hard one-hour bound.
+        // 清理每 30 秒跑一次，故到期时间再提前 30 秒：文件最迟在一小时硬上限前 60 秒被删除。
         let expires = self
             .clock
             .now_unix_seconds()
@@ -305,7 +305,7 @@ impl DurableRelay {
         File::open(&self.raw_root)
             .and_then(|f| f.sync_all())
             .map_err(|_| RelayError::Storage)?;
-        // Publication is mandatory. Failed publication leaves a non-replayable unknown call.
+        // 发布是强制的；发布失败会留下一个不可重放、结果未知的调用。
         self.authorize(grant)?;
         self.publisher.seal(grant, call, &path, &digest)?;
         self.audit(grant, call, AuditPhase::Outcome, "allow")?;

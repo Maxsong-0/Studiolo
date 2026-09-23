@@ -1,4 +1,4 @@
-//! Linux user-namespace and cgroup backend; availability is earned by a live probe.
+//! Linux user namespace 与 cgroup 隔离后端；可用性必须由实时探针证明。
 use crate::{AdapterAvailability, AdapterProbe, RunnerError};
 use std::{
     path::{Path, PathBuf},
@@ -7,23 +7,23 @@ use std::{
     time::{Duration, Instant},
 };
 
-/// Immutable deployment inputs for the Linux backend. Paths are administrator-owned.
+/// Linux 后端不可变的部署输入；各路径归管理员所有。
 #[derive(Clone, Debug)]
 pub struct LinuxIsolation {
-    /// Minimal read-only runtime root containing pinned CLIs, Python and probe scripts.
+    /// 最小的只读运行时根目录，内含钉死版本的 CLI、Python 与探针脚本。
     pub runtime_root: PathBuf,
-    /// Bubblewrap binary installed by the administrator.
+    /// 由管理员安装的 Bubblewrap 可执行文件。
     pub bubblewrap: PathBuf,
-    /// User systemd client; the service account must have an active user manager.
+    /// 用户级 systemd 客户端；服务账号必须有处于活动状态的用户管理器。
     pub systemd_run: PathBuf,
-    /// Only externally reachable transport; a local Gateway Unix socket.
+    /// 唯一可向外通达的传输：本机 Gateway 的 Unix socket。
     pub gateway_socket: PathBuf,
 }
 impl LinuxIsolation {
     pub(crate) fn command(&self, unit: &str, work: &Path, inputs: &Path, seconds: u64) -> Command {
         let mut command = Command::new(&self.systemd_run);
         command.env_clear().env("PATH", "/usr/bin:/bin");
-        // Addressing the service account's user manager is the sole inherited environment.
+        // 除定位服务账号用户管理器所需的变量外，不继承任何环境变量。
         if let Some(value) = std::env::var_os("XDG_RUNTIME_DIR") {
             command.env("XDG_RUNTIME_DIR", value);
         }
@@ -68,8 +68,8 @@ impl LinuxIsolation {
             .args(["--ro-bind"])
             .arg(inputs)
             .arg("/inputs")
-            // The immutable rootfs need not contain a socket placeholder. Create
-            // its mount target inside a private, bounded /run before binding it.
+            // 不可变的 rootfs 无需预置 socket 占位文件：先在私有、有容量上限的
+            // /run 中创建挂载点，再把 socket 绑定进去。
             .args(["--size", "1048576", "--tmpfs", "/run"])
             .args(["--ro-bind"])
             .arg(&self.gateway_socket)
@@ -103,12 +103,12 @@ impl LinuxIsolation {
             ]);
         command
     }
-    /// Runs the fixed deployed negative probe in the same sandbox used by both adapters.
-    /// A caller-controlled boolean or an old receipt can never make this return Ready.
+    /// 在两个适配器共用的同一沙箱中，运行随部署固定的反向探针（验证越权操作确实被拦住）。
+    /// 调用方可控的布尔值或旧回执，都无法让它返回 Ready。
     pub fn probe(&self) -> Result<AdapterAvailability, RunnerError> {
         self.probe_at(&std::env::temp_dir())
     }
-    /// Runs the live probe on the exact bounded filesystem used for attempts.
+    /// 在 attempt 实际使用的同一个有界文件系统上运行实时探针。
     pub fn probe_at(&self, scratch_root: &Path) -> Result<AdapterAvailability, RunnerError> {
         self.probe_profile(scratch_root, None)
             .map(|r| r.availability)
@@ -232,7 +232,7 @@ impl LinuxIsolation {
         }
     }
     pub(crate) fn stop_unit(&self, unit: &str, signal: &str) -> Result<(), RunnerError> {
-        // Unit names are constructed exclusively from opaque attempt ids by RealRunner.
+        // unit 名只由 RealRunner 依据不透明的 attempt id 与 fence 构造。
         let mut child = Command::new("systemctl")
             .args([
                 "--user",

@@ -1,4 +1,4 @@
-//! Strict protocol admission prevents hosted tools and caller-selected external targets.
+//! 严格的协议准入：拒绝托管工具（hosted tools）与调用方自选的外部目标。
 use crate::relay_types::{RelayError, RelayGrant, RelayProvider};
 use serde_json::{Value, json};
 

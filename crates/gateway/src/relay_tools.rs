@@ -1,4 +1,4 @@
-//! Counts model-emitted actions before any action reaches the isolated CLI.
+//! 在模型发出的任何动作到达隔离 CLI 之前先对其计数；并按已用工具数注入预算提示。
 use crate::relay_types::{RelayError, RelayGrant, RelayProvider};
 use serde_json::Value;
 use std::collections::BTreeSet;

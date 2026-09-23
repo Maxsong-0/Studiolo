@@ -1,4 +1,4 @@
-//! Linux-only dedicated-credential key-holder; no Vault or control database is opened.
+//! 仅限 Linux 的专用凭据持钥进程：不打开 Vault，也不打开控制库。
 #[cfg(target_os = "linux")]
 mod linux {
     use serde::Deserialize;
@@ -53,7 +53,7 @@ mod linux {
         if !m.is_dir() || m.uid() != rustix::process::geteuid().as_raw() || m.mode() & 0o027 != 0 {
             return Err(());
         }
-        // A stale socket is an operator recovery action, not an automatic unlink.
+        // 残留的旧 socket 由运维人工恢复处理，这里不会自动 unlink。
         let listener = UnixListener::bind(&config.socket).map_err(|_| ())?;
         fs::set_permissions(&config.socket, fs::Permissions::from_mode(0o660)).map_err(|_| ())?;
         let load = |path: &Path| -> Result<ProviderCredential, ()> {
@@ -69,7 +69,7 @@ mod linux {
             let Ok(stream) = stream else {
                 return Err(());
             };
-            // Single upstream operation at a time; no unbounded worker/thread creation.
+            // 同一时刻只进行一次上游操作；不无界地创建 worker／线程。
             let _ = serve_key_holder_connection(&transport, stream, config.client_uid);
         }
         Ok(())

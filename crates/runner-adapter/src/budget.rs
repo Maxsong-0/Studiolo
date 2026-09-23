@@ -1,19 +1,19 @@
-//! Bounded attempt budgets and monotonic progress.
+//! 有界的 attempt 预算与单调递增的进度。
 use serde::{Deserialize, Serialize};
 
-/// ADR-018 work and elapsed-time thresholds.
+/// ADR-018 规定的工作量与耗时阈值。
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct RunBudget {
-    /// First pacing reminder threshold.
+    /// 第一档节奏提醒（pacing）的阈值。
     pub pacing_tools: u64,
-    /// Begin preparing a receipt at this threshold.
+    /// 工具调用数达到此阈值即开始准备回执。
     pub wrapup_tools: u64,
-    /// No additional tools after this ceiling.
+    /// 达到此上限后不再允许调用任何工具。
     pub max_tools: u64,
-    /// Begin preparing a receipt after this many seconds.
+    /// 运行满这么多秒后开始准备回执。
     pub wrapup_seconds: u64,
-    /// Request cancellation after this many seconds.
+    /// 运行满这么多秒后请求取消。
     pub max_seconds: u64,
 }
 impl Default for RunBudget {
@@ -27,32 +27,32 @@ impl Default for RunBudget {
         }
     }
 }
-/// Budget state sent to lifecycle owners.
+/// 发给生命周期持有方的预算状态。
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum BudgetPhase {
-    /// Normal execution.
+    /// 正常执行。
     #[default]
     Working,
-    /// Pacing reminder is due.
+    /// 应发出节奏提醒。
     Pacing,
-    /// Receipt preparation is due.
+    /// 应开始准备回执。
     Wrapup,
-    /// Further tool calls must be rejected.
+    /// 必须拒绝后续的工具调用。
     Exhausted,
 }
-/// Monotonic observations derived from CLI protocol events.
+/// 由 CLI 协议事件推导出的单调观测值。
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RunnerProgress {
-    /// Completed or started tool calls observed once per event identity.
+    /// 已开始或已完成的工具调用数；同一事件身份只计一次。
     pub tool_calls: u64,
-    /// File-change events observed once per event identity.
+    /// 文件变更事件数；同一事件身份只计一次。
     pub edits: u64,
-    /// Budget phase at observation time.
+    /// 观测时刻的预算阶段。
     pub phase: BudgetPhase,
 }
 impl RunBudget {
-    /// Rejects inverted thresholds and unbounded duration.
+    /// 校验预算：阈值顺序倒置或时长无上限即判为无效。
     #[must_use]
     pub fn valid(&self) -> bool {
         self.pacing_tools > 0
@@ -63,7 +63,7 @@ impl RunBudget {
             && self.wrapup_seconds < self.max_seconds
             && self.max_seconds <= 86400
     }
-    /// Computes a monotonic phase from the two enforced dimensions.
+    /// 由强制执行的两个维度（工具调用数、已用秒数）计算单调的预算阶段。
     #[must_use]
     pub fn phase(&self, tools: u64, seconds: u64) -> BudgetPhase {
         if tools >= self.max_tools || seconds >= self.max_seconds {

@@ -1,4 +1,4 @@
-//! SQLite reservations precede any real external I/O; unknown outcomes never replay.
+//! 任何真实的外部 I/O 之前，先在 SQLite 中完成预留；结果未知的调用永不重放。
 use crate::{
     CallId,
     relay_types::{RelayError, RelayGrant},
@@ -65,7 +65,7 @@ impl Store {
             CREATE TABLE IF NOT EXISTS relay_calls(attempt TEXT NOT NULL, call_id TEXT NOT NULL,
                 request_hash TEXT NOT NULL, state TEXT NOT NULL, raw TEXT, digest TEXT, expires INTEGER,
                 PRIMARY KEY(attempt,call_id));").map_err(|_| RelayError::Storage)?;
-        // Fail closed across process startup; an explicit trusted operation unfreezes admissions.
+        // 每次进程启动都失败关闭（置为冻结）；只有显式的可信操作才能解冻准入。
         connection
             .execute("UPDATE relay_settings SET frozen=1 WHERE id=1", [])
             .map_err(|_| RelayError::Storage)?;
