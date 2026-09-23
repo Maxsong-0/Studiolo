@@ -12,7 +12,12 @@ import { boardItem } from './boardModel';
 import { COMMAND_TARGETS } from './commands/focusTarget';
 import { installExecutionWriter } from './executionApi';
 import { runSummary } from './executionModel';
-import { EXECUTION_STEPS, runStep, taskStep } from './executionView';
+import {
+  EXECUTION_STEPS,
+  needsAttention,
+  runStep,
+  taskStep,
+} from './executionView';
 import { ApiError } from './sessionHttp';
 import {
   executionBoard,
@@ -313,6 +318,8 @@ it('draws execution progress as nine segments with progressbar values and the cu
       segment.getAttribute('data-state'),
     ),
   ).toEqual([...Array<string>(7).fill('done'), 'current', 'todo']);
+  // 第 8 段「落地与审阅」等你：当前段标红（规范第 1 节：红色只给等你或出问题）
+  expect(run.parentElement).toHaveClass('execution-steps--attention');
   const task = screen.getByRole('progressbar', {
     name: '执行进度：Runner 契约任务',
   });
@@ -379,6 +386,24 @@ describe('执行九步的阶段表', () => {
     });
   const where = (value: ReturnType<typeof runStep>) =>
     value.known ? [value.step, value.name, value.halted] : ['—'];
+
+  it('only waiting-on-you steps (1 and 8) and halted runs are marked red', () => {
+    expect(needsAttention(runStep(run('running', 'working')))).toBe(false);
+    expect(needsAttention(runStep(run('running', 'wrapup')))).toBe(false);
+    expect(needsAttention(runStep(run('candidate_review')))).toBe(true);
+    expect(needsAttention(runStep(run('running', 'exhausted')))).toBe(true);
+    expect(needsAttention({ known: false, reason: '无' })).toBe(false);
+    expect(
+      needsAttention({
+        known: true,
+        step: 9,
+        name: '结案',
+        finished: true,
+        halted: false,
+        note: '',
+      }),
+    ).toBe(false);
+  });
 
   it('maps every run state and budget phase onto the nine steps', () => {
     expect(EXECUTION_STEPS).toHaveLength(9);

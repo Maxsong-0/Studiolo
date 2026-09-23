@@ -40,6 +40,21 @@ export const EXECUTION_STEPS = [
   '结案',
 ] as const;
 
+/**
+ * 「等你」的两段（设计规范第 1 节：红色只表示等你或出问题）：第 1 段停着等人启动，
+ * 第 8 段等人落地与审阅。其余各段正常进行时不标红；任何一段出了问题（halted）另行标红。
+ */
+export const OWNER_STEPS: ReadonlySet<number> = new Set([1, 8]);
+
+/** 这条进度是否要标红：没走完，且停在等你的段上或出了问题。 */
+export function needsAttention(progress: ExecutionStep): boolean {
+  return (
+    progress.known &&
+    !progress.finished &&
+    (progress.halted || OWNER_STEPS.has(progress.step))
+  );
+}
+
 export type ExecutionStep =
   | {
       known: true;

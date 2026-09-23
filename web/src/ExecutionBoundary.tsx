@@ -22,6 +22,7 @@ import { statusLabels, statusMark } from './collab/boardLabels';
 import { ProjectSelect } from './collab/ProjectSelect';
 import {
   EXECUTION_STEPS,
+  needsAttention,
   runStep,
   stamp,
   taskStep,
@@ -380,6 +381,7 @@ function StepBar({
       className={cx(
         'execution-steps',
         progress.halted && 'execution-steps--halted',
+        needsAttention(progress) && 'execution-steps--attention',
       )}
     >
       <div

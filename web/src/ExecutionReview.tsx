@@ -7,11 +7,11 @@ import {
   reviewTemplate,
 } from './executionModel';
 import type { ExecutionCommand } from './executionModel';
-import { Button, Cell, CellHeader, Surface } from './ui';
+import { Button, Cell, CellHeader } from './ui';
 import './styles/execution.css';
 
 /**
- * 逐项审阅候选：一张审阅单（Surface 表单，标签在上、错误在下）。
+ * 逐项审阅候选：格子里的一张审阅单（普通表单，不套卡片与阴影——规范第 3 节；标签在上、错误在下）。
  * 整张表单可被 ⌘K 带路聚焦（data-command-target，tabIndex=-1，不进 Tab 序列）；
  * 只校验回执结构，提交与二次认证流程原样。
  */
@@ -32,9 +32,7 @@ export function ExecutionReview({
     return null;
   return (
     <Cell as="div" className="execution-review-cell">
-      <Surface
-        as="form"
-        appear={false}
+      <form
         className="execution-review"
         aria-label="逐项审阅候选"
         tabIndex={-1}
@@ -114,7 +112,7 @@ export function ExecutionReview({
             提交审阅回执
           </Button>
         </div>
-      </Surface>
+      </form>
     </Cell>
   );
 }

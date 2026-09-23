@@ -128,7 +128,11 @@
   align-self: flex-start;
 }
 
-/* ---------- 九段进度：已经过的黑、当前这段红、没到的灰框 ---------- */
+/*
+ * ---------- 九段进度：已经过的黑、当前这段空心墨框、没到的灰框 ----------
+ * 红色只给「等你」或「出问题」（规范第 1 节）：停在等人启动/等人落地与审阅的段上、或 halted 时，
+ * 当前段与段名才标红（.execution-steps--attention，判定见 executionView.ts 的 needsAttention）。
+ */
 
 .execution-steps {
   display: grid;
@@ -153,6 +157,9 @@
   background: var(--ink);
 }
 .execution-steps__segment[data-state='current'] {
+  border: 2px solid var(--ink);
+}
+.execution-steps--attention .execution-steps__segment[data-state='current'] {
   border-color: var(--signal);
   background: var(--signal);
 }
@@ -174,6 +181,9 @@
 }
 .execution-steps__names [data-state='current'] {
   font-weight: 600;
+  color: var(--ink);
+}
+.execution-steps--attention .execution-steps__names [data-state='current'] {
   color: var(--signal-text);
 }
 .execution-steps__text {
@@ -441,7 +451,6 @@
   display: grid;
   gap: var(--space-3);
   max-width: 88ch;
-  padding: var(--space-4) var(--space-5) var(--space-5);
 }
 .execution-review .execution-field textarea {
   font-size: 12px;
@@ -573,9 +582,6 @@
   .execution-facts > div {
     grid-template-columns: minmax(0, 1fr);
     gap: 0;
-  }
-  .execution-review {
-    padding: var(--space-3) var(--space-4) var(--space-4);
   }
   .execution-event {
     grid-template-columns: minmax(0, 1fr) max-content;
