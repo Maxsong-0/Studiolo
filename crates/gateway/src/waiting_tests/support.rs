@@ -1,12 +1,17 @@
 //! 两个真实 Gateway 调用与私有等待观测；不使用初检计数或 sleep 判断时序。
 
 use super::audit::GatedAudit;
-use crate::*;
+use crate::{
+    AttemptGuard, AttemptGuardError, AttemptSnapshot, CallId, Gateway, GatewayError, JobCapability,
+    ManualClock, MemoryGateway, ModelRequest, PermissionLayers, ToolCall, call_table::CallSlot,
+};
+use serde_json::json;
 use std::{
-    sync::{Weak, mpsc},
+    sync::{Arc, Mutex, Weak, mpsc},
     thread,
     time::Duration,
 };
+use studiolo_core::{AttemptId, Fence, PermissionSet, TaskId, ToolId};
 
 pub(super) const TIMEOUT: Duration = Duration::from_secs(10);
 

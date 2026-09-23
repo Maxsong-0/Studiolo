@@ -1,4 +1,4 @@
-//! Public-Interface contracts for the pure, source-linked M1 read model.
+//! M1 读模型的公开接口契约：纯派生，且各项都链接到源位置。
 
 use studiolo_core::VaultPath;
 use studiolo_vault_index::{IndexError, MarkdownDocument};

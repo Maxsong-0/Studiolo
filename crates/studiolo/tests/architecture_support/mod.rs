@@ -14,6 +14,7 @@ mod real_fixture_authority;
 mod restore_authority;
 mod runner_authority;
 mod runner_fixture_authority;
+pub(crate) mod rust_lexer;
 mod snapshot_authority;
 mod source;
 mod sync_bridge;
@@ -25,6 +26,7 @@ pub(crate) use policy::allowed_workspace_dependencies;
 pub(crate) use source::{AuthorityViolation, source_violations};
 
 use std::{
+    collections::{BTreeMap, BTreeSet},
     fs,
     path::{Path, PathBuf},
 };
@@ -45,6 +47,40 @@ pub(crate) fn crate_directories(root: &Path) -> Vec<PathBuf> {
         .collect::<Vec<_>>();
     directories.sort();
     directories
+}
+
+/// `package` 连同它经 `[dependencies]`／`[build-dependencies]`（含目标平台限定表与改名依赖）
+/// 传递可达的全部工作区 crate 目录，按路径排序；`[dev-dependencies]` 不进产物，不算。
+/// 依赖表沿用依赖方向守卫的同一份清单解析（`parse_manifest`），不另起一套。
+pub(crate) fn workspace_dependency_closure(root: &Path, package: &str) -> Vec<PathBuf> {
+    let manifests = workspace_manifests(root);
+    assert!(manifests.contains_key(package), "{package} 不是工作区成员");
+    let directories = crate_directories(root)
+        .into_iter()
+        .map(|directory| {
+            let manifest = fs::read_to_string(directory.join("Cargo.toml"))
+                .expect("read workspace crate manifest");
+            (package_name(&manifest), directory)
+        })
+        .collect::<BTreeMap<_, _>>();
+    let (mut pending, mut reached) = (vec![package], BTreeSet::new());
+    while let Some(name) = pending.pop() {
+        if reached.insert(name) {
+            pending.extend(
+                manifests[name]
+                    .dependencies
+                    .iter()
+                    .map(String::as_str)
+                    .filter(|dependency| manifests.contains_key(*dependency)),
+            );
+        }
+    }
+    let mut closure = reached
+        .into_iter()
+        .map(|name| directories[name].clone())
+        .collect::<Vec<_>>();
+    closure.sort();
+    closure
 }
 
 pub(crate) fn rust_sources(root: &Path) -> Vec<PathBuf> {

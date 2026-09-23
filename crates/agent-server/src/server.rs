@@ -313,13 +313,14 @@ impl AgentSession {
                 ));
             }
         };
-        let effective = store.effective().map_err(unavailable)?;
-        let header = format!("# 策略版本 {}\n", &effective.effective_hash[..12]);
+        // 版本行与条目取自同一读事务：人侧进程在两次读取之间发布，也不会让二者各属一版。
+        let header = |hash: &str| format!("# 策略版本 {}\n", &hash[..12]);
         match (kind, args.subject) {
             (PolicyKind::Rules, None) => {
                 let rules = store.rules().map_err(unavailable)?;
                 self.audit_read(&grant.instance, "policy://rules", "-", "policy_read")?;
                 let lines = rules
+                    .value
                     .iter()
                     .map(|record| {
                         format!(
@@ -331,14 +332,17 @@ impl AgentSession {
                     })
                     .collect::<Vec<_>>();
                 Ok(format!(
-                    "{header}{} 份规则母本\n{}",
+                    "{}{} 份规则母本\n{}",
+                    header(&rules.effective_hash),
                     lines.len(),
                     lines.join("\n")
                 ))
             }
             (PolicyKind::Rules, Some(subject)) => {
                 let rules = store.rules().map_err(unavailable)?;
+                let header = header(&rules.effective_hash);
                 let Some(record) = rules
+                    .value
                     .into_iter()
                     .find(|record| record.meta.subject == subject)
                 else {
@@ -358,6 +362,7 @@ impl AgentSession {
                 let skills = store.skills().map_err(unavailable)?;
                 self.audit_read(&grant.instance, "policy://skills", "-", "policy_read")?;
                 let lines = skills
+                    .value
                     .iter()
                     .map(|(skill, meta)| {
                         format!(
@@ -370,14 +375,19 @@ impl AgentSession {
                     })
                     .collect::<Vec<_>>();
                 Ok(format!(
-                    "{header}{} 个 skill（索引式候选；硬绑定见路牌第 5 项）\n{}",
+                    "{}{} 个 skill（索引式候选；硬绑定见路牌第 5 项）\n{}",
+                    header(&skills.effective_hash),
                     lines.len(),
                     lines.join("\n")
                 ))
             }
             (PolicyKind::Skills, Some(name)) => {
                 let skills = store.skills().map_err(unavailable)?;
-                let Some((skill, meta)) = skills.into_iter().find(|(skill, _)| skill.name == name)
+                let header = header(&skills.effective_hash);
+                let Some((skill, meta)) = skills
+                    .value
+                    .into_iter()
+                    .find(|(skill, _)| skill.name == name)
                 else {
                     self.deny(actor, "policy_read", "not_found");
                     return Err(McpError::resource_not_found("skill 不存在", None));

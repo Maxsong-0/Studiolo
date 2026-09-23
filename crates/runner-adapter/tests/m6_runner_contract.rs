@@ -1,4 +1,4 @@
-//! Contract checks that require neither an installed CLI nor a privileged Linux backend.
+//! 既不需要已安装的 `CLI`，也不需要特权 `Linux` 后端的契约检查。
 use studiolo_core::{AttemptId, Fence, TaskId};
 use studiolo_runner_adapter::{
     AdapterAvailability, BudgetPhase, CliProvider, LinuxIsolation, RealRunner, RunBudget, RunSpec,

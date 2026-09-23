@@ -146,7 +146,10 @@ effective），不再读 Vault 文件。起点见 [策略模式示例配置](cli
 含换行也会让计数不符而拒绝。契约：schema 12、抓取 25、存储 21 项全部通过；另用本仓库构建的
 agent 加隔离策略平面（`policy-init`、`policy-bootstrap`）做过一次真实联调：含特殊字符的 skill
 摘要与服务端逐位一致，读取全部入审计，新增规则后 `check --online` 报出策略版本变化；
-该联调脚本是临时产物，未入库。
+该联调已于 T-139（2026-09-22）入库为 `scripts/check-client-projection-pipeline.py` 的策略模式段
+（实现见 `scripts/client_projection_policy_pipeline.py`），CI 与 umask 002 下同样执行。它经真实 PTY
+bootstrap 能力集、规则与含特殊字符的 skill，逐字节核对落盘与 manifest，要求每次导出的读取恰为
+`policy_read`，并在新增未选规则后要求 `check --online` 报 `source_changed`（退出码 2）。
 
 ## 客户端格式与验收边界
 

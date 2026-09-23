@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use axum::{
     Extension, Json, Router,
-    extract::{Path, Request, State},
+    extract::{Path, Request, State, rejection::PathRejection},
     http::StatusCode,
     response::{IntoResponse, Response},
     routing::{get, post},
@@ -612,9 +612,22 @@ struct VersionBody {
 
 async fn version(
     State(state): State<AppState>,
-    Path(number): Path<u64>,
+    number: Result<Path<u64>, PathRejection>,
     mut request: Request,
 ) -> Response {
+    // 版本号拒绝仍先于平面与主体检查，状态码沿用原提取器；axum 默认拒绝是英文纯文本，
+    // 还会回显原始路径段，这里一律换成固定中文 JSON。
+    let Path(number) = match number {
+        Ok(value) => value,
+        Err(rejection) => {
+            return Problem::new(
+                rejection.status(),
+                "invalid_policy_version",
+                "策略版本号不合法。",
+            )
+            .into_response();
+        }
+    };
     let plane = match plane(&request) {
         Ok(plane) => plane,
         Err(problem) => return problem.into_response(),

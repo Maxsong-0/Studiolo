@@ -1,4 +1,4 @@
-//! Deployment diagnostics fail closed without starting any system service or provider CLI.
+//! 部署诊断失败关闭，全程不启动任何系统服务或供应商 `CLI`。
 use studiolo_core::{AttemptId, Fence, TaskId};
 use studiolo_runner_adapter::{
     AdapterAvailability, CliProvider, ExecutionSpec, LinuxIsolation, RealRunner, RunBudget,

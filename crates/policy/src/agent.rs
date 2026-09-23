@@ -51,6 +51,26 @@ pub struct CapabilityGrant {
     pub meta: VersionMeta,
 }
 
+/// 与读取时 effective 哈希绑在一起的读取结果。
+///
+/// 二者取自同一个读事务：人侧进程在读取途中发布新版本，也不会让「策略版本」与条目各属一版。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AtEffective<T> {
+    /// 读取时的 effective 哈希。
+    pub effective_hash: String,
+    /// 该哈希下的读取结果。
+    pub value: T,
+}
+
+/// 路牌要的现行规则母本与 skills。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CurrentEntries {
+    /// 现行规则母本（按 subject 排序）。
+    pub rules: Vec<VersionRecord>,
+    /// 现行 skills。
+    pub skills: Vec<(Skill, VersionMeta)>,
+}
+
 /// 一次授权复核的结果：要么拿到能力集，要么带结构化拒绝原因。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Authorization {
@@ -172,16 +192,37 @@ impl PolicyAgentStore {
         self.db.read(store::effective_summary)
     }
 
-    /// 现行规则母本。
-    pub fn rules(&self) -> Result<Vec<VersionRecord>, PolicyError> {
-        self.db
-            .read(|tx| sql::current_records(tx, PolicyKind::Rules))
+    /// 现行规则母本（按 subject 排序），连同同一读事务里的 effective 哈希。
+    pub fn rules(&self) -> Result<AtEffective<Vec<VersionRecord>>, PolicyError> {
+        self.db.read(|tx| {
+            Ok(AtEffective {
+                effective_hash: sql::effective_hash(tx)?,
+                value: sql::current_records(tx, PolicyKind::Rules)?,
+            })
+        })
     }
 
-    /// 现行 skills。
-    pub fn skills(&self) -> Result<Vec<(Skill, VersionMeta)>, PolicyError> {
-        self.db
-            .read(|tx| store::parse_skills(sql::current_records(tx, PolicyKind::Skills)?))
+    /// 现行 skills，连同同一读事务里的 effective 哈希。
+    pub fn skills(&self) -> Result<AtEffective<Vec<(Skill, VersionMeta)>>, PolicyError> {
+        self.db.read(|tx| {
+            Ok(AtEffective {
+                effective_hash: sql::effective_hash(tx)?,
+                value: store::parse_skills(sql::current_records(tx, PolicyKind::Skills)?)?,
+            })
+        })
+    }
+
+    /// 路牌用：现行规则母本与 skills 一并取出，三者同属一个读事务。
+    pub fn rules_and_skills(&self) -> Result<AtEffective<CurrentEntries>, PolicyError> {
+        self.db.read(|tx| {
+            Ok(AtEffective {
+                effective_hash: sql::effective_hash(tx)?,
+                value: CurrentEntries {
+                    rules: sql::current_records(tx, PolicyKind::Rules)?,
+                    skills: store::parse_skills(sql::current_records(tx, PolicyKind::Skills)?)?,
+                },
+            })
+        })
     }
 
     /// 某个版本（含正文）。

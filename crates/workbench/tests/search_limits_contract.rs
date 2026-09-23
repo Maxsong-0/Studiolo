@@ -1,4 +1,4 @@
-//! Query, snippet and result budgets through the public search Interface.
+//! 经公开搜索接口验证查询、摘录与结果条数的预算。
 
 use studiolo_core::VaultPath;
 use studiolo_vault_index::MarkdownDocument;

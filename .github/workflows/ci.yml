@@ -94,6 +94,7 @@ jobs:
           python3 scripts/test-replica-receiver.py
           python3 scripts/test-replica-boundaries.py
           python3 scripts/test-check-preview.py
+          python3 scripts/test-check-preview-exercise.py
           python3 scripts/test-client-projection-schema.py
           python3 scripts/test-client-projection-fetch.py
           python3 scripts/test-client-projection-store.py

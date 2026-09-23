@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""虚构托管副本 → 真实 HTTP/审计 → 客户端投影的端到端验收。"""
+"""虚构托管副本 → 真实 HTTP/审计 → 客户端投影的端到端验收；vault 流程之后另跑策略模式（隔离策略平面）。"""
 import argparse
 import importlib.util
 import json
@@ -15,6 +15,7 @@ sys.dont_write_bytecode = True
 
 from client_projection_fetch import Client, fetch
 from client_projection_io import read_bundle
+from client_projection_policy_pipeline import run_policy
 from client_projection_render import render
 from client_projection_schema import config, make_bundle
 from client_projection_store import apply, check, plan
@@ -184,7 +185,10 @@ if __name__ == "__main__":
     parser.add_argument("binary")
     args = parser.parse_args()
     try:
-        run(str(Path(args.binary).resolve(strict=True)))
+        binary = str(Path(args.binary).resolve(strict=True))
+        run(binary)
+        # 策略模式另起一套隔离夹具与 agent（serve --policy）；上面 vault 流程的夹具与断言保持原样。
+        run_policy(binary, PIPE, cli)
     except Exception as error:
         print("客户端投影管线失败：" + (str(error) if isinstance(error, RuntimeError)
                                   else type(error).__name__), file=sys.stderr)

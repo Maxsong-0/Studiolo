@@ -1,4 +1,4 @@
-//! Contract tests for the M0 runner seam and Stub adapter.
+//! M0 `runner` 接缝与 `Stub` 适配器的契约测试。
 
 use studiolo_core::{AttemptId, Fence, TaskId, VaultPath};
 use studiolo_runner_adapter::{

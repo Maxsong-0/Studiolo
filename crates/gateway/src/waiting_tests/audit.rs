@@ -1,13 +1,15 @@
 //! 首调用停在 Intent；释放结果由测试选择，拒绝审计可单独失败。
 
 use super::support::{TIMEOUT, assert_slots_unlocked};
-use crate::*;
+use crate::{GatewayError, MemoryGateway};
 use std::sync::{
-    Weak,
+    Mutex, Weak,
     atomic::{AtomicBool, AtomicUsize, Ordering},
     mpsc,
 };
-use studiolo_audit_ledger::{AuditFilter, AuditRecord, MemoryAuditLedger};
+use studiolo_audit_ledger::{
+    AuditError, AuditEvent, AuditFilter, AuditLedger, AuditPhase, AuditRecord, MemoryAuditLedger,
+};
 
 pub(super) struct GatedAudit {
     inner: MemoryAuditLedger,

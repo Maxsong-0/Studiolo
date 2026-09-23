@@ -1,4 +1,4 @@
-//! Real-call sequencing without network or provider credentials.
+//! 真实调用的执行次序；不联网，也不需要供应商凭据。
 use std::{
     path::Path,
     sync::{
@@ -72,8 +72,8 @@ impl Fixture {
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            // tempfile's directory mode follows the platform/umask; the production store
-            // intentionally refuses a database parent with any group/other permissions.
+            // `tempfile` 建出的目录权限随平台与 `umask` 而定；生产存储刻意拒绝
+            // 带有任何 `group`/`other` 权限的数据库父目录。
             for path in [directory.path(), raw.as_path()] {
                 std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700)).unwrap();
             }

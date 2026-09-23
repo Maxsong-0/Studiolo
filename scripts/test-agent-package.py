@@ -221,12 +221,18 @@ class CompileTimeInputsTests(unittest.TestCase):
         crates = sorted("crates/" + d.name for d in (root / "crates").iterdir()
                         if (d / "Cargo.toml").is_file())
         self.assertGreaterEqual(len(crates), 9)
-        macro = re.compile(r'include_(?:str|bytes)!\(\s*"([^"]+)"\s*,?\s*\)')
+        # 从左到右一次扫：注释、原始字符串、字符串、字符字面量整段吞掉，只有落在代码位置的
+        # include 宏才算。架构守卫的用例把 `include_str!("secret.txt")` 写在字符串里，不是真依赖。
+        token = re.compile(r'//[^\n]*|/\*[\s\S]*?\*/|r(#*)"[\s\S]*?"\1|b?"(?:\\.|[^"\\])*"'
+                           r"|b?'(?:\\.|[^'\\])'|include_(?:str|bytes)!\(\s*\"([^\"]+)\"\s*,?\s*\)")
+        targets = lambda text: [m[2] for m in token.finditer(text) if m[2] is not None]
+        self.assertEqual(targets('a(); include_str!("x") // include_str!("y")\n"include_str!(\\"z\\")"'), ["x"])
+        self.assertEqual(targets('r#"include_bytes!("k")"#; let c = \'"\'; include_bytes!("w")'), ["w"])
         checked, uncovered = 0, []
         for crate in crates:
             self.assertTrue((root / crate).is_dir(), crate)
             for source in sorted((root / crate).rglob("*.rs")):
-                for literal in macro.findall(source.read_text(encoding="utf-8")):
+                for literal in targets(source.read_text(encoding="utf-8")):
                     target = (source.parent / literal).resolve()
                     relative = target.relative_to(root.resolve()).as_posix()
                     checked += 1
