@@ -29,12 +29,8 @@ it('真实 MotionConfig 缓存随偏好刷新，保留焦点、输入与展开�
       <AppShell
         view="documents"
         onNavigate={vi.fn()}
-        sourceLabel="测试库"
-        projects={[]}
-        onOpen={vi.fn()}
         actionCount={0}
         documentCount={1}
-        toolbar={null}
       >
         <Documents
           projects={[]}
@@ -49,17 +45,17 @@ it('真实 MotionConfig 缓存随偏好刷新，保留焦点、输入与展开�
 
   const searchButton = screen.getByRole('button', { name: '搜索' });
   const searchInput = screen.getByRole('searchbox');
+  // T-130 外壳切视图直接切、不做过场（设计规范第 11 节）：顶栏当前项是黑底块，没有随偏好切换的弹簧高亮。
+  expect(container.querySelector('.navigation-highlight')).toBeNull();
+  expect(screen.getByRole('button', { name: '文档' })).toHaveAttribute(
+    'aria-current',
+    'page',
+  );
   searchButton.focus();
   for (const reduced of [false, true, false]) {
-    const previous = [
-      container.querySelector('.navigation-highlight')!,
-      container.querySelector('.document-mode-selected')!,
-    ];
+    const previous = [container.querySelector('.document-mode-selected')!];
     preference.change(reduced);
-    const current = [
-      container.querySelector('.navigation-highlight')!,
-      container.querySelector('.document-mode-selected')!,
-    ];
+    const current = [container.querySelector('.document-mode-selected')!];
     current.forEach((element, index) => {
       expect(element).not.toBe(previous[index]);
       // 验证 Motion 实际用来禁用动画的缓存，不只检查 React 的 layoutId 属性。

@@ -1,178 +1,38 @@
-@media (max-width: 1399px) {
-  .view-overview {
+/*
+ * 视图的窄屏规则（<760px，规范第 5 节）：12 列网格收成单列，图名缩小，筛选控件拉满并给足 44px 触控高度。
+ * 外壳自己的窄屏规则（底部五格导航等）在 shell/shell.css。
+ */
+@media (max-width: 1023px) {
+  .sheet-span-4,
+  .sheet-span-8 {
+    grid-column: span 12;
+  }
+}
+@media (max-width: 759px) {
+  .sheet {
     grid-template-columns: minmax(0, 1fr);
   }
-  .overview-context {
-    border-left: 0;
-    border-top: 1px solid var(--border);
-    padding: 24px 32px;
+  .sheet-cell {
+    grid-column: 1 / -1;
+    padding: 12px 14px;
   }
-  .overview-context .action-list {
-    display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: 24px;
+  .view-header {
+    margin-bottom: 14px;
   }
-  .overview-context .action-row {
-    border-bottom: 0;
+  .view-header h1 {
+    font-size: 28px;
   }
-  .overview-context .action-open {
-    padding-bottom: 0;
-  }
-}
-@media (min-width: 761px) and (max-width: 1080px) {
-  .app-shell {
-    grid-template-columns: 188px minmax(0, 1fr);
-  }
-  .view-primary {
-    padding: 26px 20px;
-  }
-  .project-table {
-    min-width: 700px;
-  }
-  .workspace-toolbar {
-    padding-inline: 20px;
-  }
-  .workspace-breadcrumb {
-    font-size: 0.75rem;
-    gap: 8px;
-  }
-  .quick-button kbd {
-    display: none;
-  }
-}
-@media (max-width: 760px) {
-  .app-shell {
-    display: block;
-    margin: 0;
-    border: 0;
-    border-radius: 0;
-    min-height: 100dvh;
-    box-shadow: none;
-    padding-bottom: calc(76px + env(safe-area-inset-bottom));
-  }
-  .sidebar {
-    position: relative;
-    top: 0;
-    height: auto;
-    min-height: 0;
-    padding: 20px 20px 12px;
-    border: 0;
-    border-radius: 0;
-    overflow: visible;
-    backdrop-filter: none;
-  }
-  .brand {
-    padding: 0;
-    font-size: 1.375rem;
-  }
-  .workspace-source,
-  .sidebar-projects {
-    display: none;
-  }
-  .sidebar-footer {
-    position: absolute;
-    right: 20px;
-    top: 24px;
-    margin: 0;
-    padding: 0;
-  }
-  .sidebar-footer > div {
-    gap: 5px;
-    font-size: 0.75rem;
-  }
-  .sidebar-footer .icon {
-    width: 14px;
-    height: 14px;
-  }
-  .sidebar-footer p {
-    display: none;
-  }
-  .sidebar nav {
-    position: fixed;
-    z-index: 5;
-    bottom: max(10px, env(safe-area-inset-bottom));
-    left: 12px;
-    right: 12px;
-    display: grid;
-    grid-template-columns: repeat(4, minmax(0, 1fr));
-    gap: 4px;
-    padding: 6px;
-    border: 1px solid var(--glass-border);
-    border-radius: 22px;
-    background: var(--navbar-mobile);
-    backdrop-filter: blur(24px) saturate(150%);
-    box-shadow: var(--shadow-navbar);
-  }
-  .navigation-item {
-    flex-wrap: wrap;
-    justify-content: center;
-    column-gap: 5px;
-    row-gap: 3px;
-    padding: 7px 4px;
-    min-height: 52px;
-    font-size: 0.6875rem;
-    border-radius: 16px;
-  }
-  .navigation-item > .icon {
-    width: 20px;
-    height: 20px;
-  }
-  .navigation-item > span:not(.navigation-highlight, .nav-count, .nav-symbol) {
-    flex-basis: 100%;
-    text-align: center;
-    order: 3;
-  }
-  .navigation-highlight {
-    border-radius: 16px;
-  }
-  .nav-count {
-    margin: 0;
-    min-width: 17px;
-    padding: 0 3px;
-    font-size: 0.625rem;
-    line-height: 17px;
-  }
-  .workspace-toolbar {
-    top: 0;
-    min-height: 60px;
-    padding: 8px 20px 14px;
-    border-radius: 0;
-    background: var(--toolbar-mobile);
-  }
-  .workspace-breadcrumb {
-    display: none;
-  }
-  .page-actions {
-    width: 100%;
-    gap: 10px;
-  }
-  .page-actions > button {
-    flex: 1;
-    min-height: 44px;
-  }
-  .quick-button kbd {
-    display: none;
-  }
-  .view-layout {
-    display: block;
-    min-height: 0;
-  }
-  .view-primary {
-    padding: 24px 20px 28px;
-  }
-  .page-header h1 {
-    font-size: 1.5rem;
-  }
-  .page-header p {
-    font-size: 0.8125rem;
+  .view-header p {
+    font-size: 13px;
     margin-top: 8px;
   }
-  .view-content {
-    margin-top: 24px;
+  .view-tabs {
+    gap: 18px;
+    min-height: 44px;
   }
   .filters {
     gap: 10px;
-    margin-bottom: 18px;
+    margin-bottom: 14px;
   }
   .search-control {
     flex: 1;
@@ -180,14 +40,14 @@
     height: 44px;
   }
   .search-control input {
-    font-size: 1rem;
+    font-size: 16px;
   }
   .select-control {
     width: 120px;
     height: 44px;
   }
   .select-control select {
-    font-size: 1rem;
+    font-size: 16px;
   }
   .select-control .icon {
     top: 15px;
@@ -196,14 +56,7 @@
     flex-basis: 100%;
     margin: 2px 0 0;
   }
-  .page-footer {
-    min-height: 40px;
-    padding: 16px 20px;
-    border-radius: 0;
-    font-size: 0.625rem;
-  }
   .error-feedback {
-    margin: 16px 20px;
     align-items: flex-start;
   }
   .icon-button {
@@ -212,12 +65,5 @@
   }
   .text-button {
     min-height: 44px;
-  }
-}
-@media (prefers-reduced-transparency: reduce), (prefers-contrast: more) {
-  .sidebar nav,
-  .workspace-toolbar {
-    background: var(--surface-solid);
-    backdrop-filter: none;
   }
 }

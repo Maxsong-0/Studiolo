@@ -192,15 +192,137 @@ impl<B: VaultBroker + ArtifactStager, L: AuditLedger> PersistentTaskEngine<B, L>
         project: &str,
         current_policy_hash: &str,
     ) -> Result<Vec<BoardView>, TaskEngineError> {
-        let mut views = Vec::new();
-        for board in self.control_db.board_tasks().map_err(map_db)? {
-            let view = self
-                .board_detail(board.task_id, current_policy_hash)?
-                .ok_or(TaskEngineError::NotFound("board task"))?;
-            if view.task.spec.project == project {
-                views.push(view);
-            }
-        }
+        let mut views = self.board_list_all(current_policy_hash)?;
+        views.retain(|view| view.task.spec.project == project);
         Ok(views)
+    }
+
+    /// 只读的跨项目清单，按任务 id 稳定排序；每条与 [`Self::board_detail`] 同一投影，
+    /// 项目可见性仍由调用方（已鉴权的组合根）负责。
+    pub fn board_list_all(
+        &self,
+        current_policy_hash: &str,
+    ) -> Result<Vec<BoardView>, TaskEngineError> {
+        self.control_db
+            .board_tasks()
+            .map_err(map_db)?
+            .into_iter()
+            .map(|board| {
+                self.board_detail(board.task_id, current_policy_hash)?
+                    .ok_or(TaskEngineError::NotFound("board task"))
+            })
+            .collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use studiolo_audit_ledger::MemoryAuditLedger;
+    use studiolo_core::VaultUuid;
+    use studiolo_vault_broker::MemoryVaultBroker;
+
+    const HASH: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    type Engine = PersistentTaskEngine<MemoryVaultBroker, MemoryAuditLedger>;
+
+    fn engine() -> Engine {
+        let vault = VaultUuid::new();
+        Engine::new(
+            ControlDb::open_in_memory(vault).unwrap(),
+            MemoryVaultBroker::with_uuid(vault),
+            MemoryAuditLedger::new(),
+        )
+    }
+
+    fn spec(project: &str, title: &str) -> BoardTaskSpec {
+        BoardTaskSpec {
+            task: TaskSpec {
+                role: "implementer".into(),
+                adapter: "consumer".into(),
+                input_paths: vec![],
+                allow_web: vec![],
+                allow_db: vec![],
+                retry_policy: RetryPolicy {
+                    max_attempts: 1,
+                    backoff_seconds: 0,
+                    retry_on: vec![],
+                },
+                timeout: 300,
+                project: project.into(),
+                parent: None,
+                title: Some(title.into()),
+                instruction: None,
+            },
+            acceptance_criteria: vec!["清单完整".into()],
+            files_owned: vec![],
+            max_children: 8,
+            artifact_target: None,
+        }
+    }
+
+    #[test]
+    fn empty_board_lists_nothing_across_projects() {
+        assert!(engine().board_list_all(HASH).unwrap().is_empty());
+    }
+
+    #[test]
+    fn cross_project_listing_matches_details_and_project_listing() {
+        let mut engine = engine();
+        let mut created = Vec::new();
+        for (key, project) in [
+            ("a1", "项目/A"),
+            ("b1", "项目/B"),
+            ("a2", "项目/A"),
+            ("c1", "项目/C"),
+        ] {
+            let id = engine
+                .create_board_task(key, spec(project, key), HASH, 1)
+                .unwrap();
+            created.push((id, project));
+        }
+        let claimed = created[1].0;
+        engine
+            .claim_board_task(claimed, "holder", 10_000, 2)
+            .unwrap();
+
+        let all = engine.board_list_all(HASH).unwrap();
+        let ids: Vec<_> = all.iter().map(|view| view.task.task_id).collect();
+        let mut expected: Vec<_> = created.iter().map(|(id, _)| *id).collect();
+        expected.sort();
+        assert_eq!(ids, expected, "覆盖全部项目，按任务 id 稳定排序");
+        for view in &all {
+            assert_eq!(
+                Some(view),
+                engine
+                    .board_detail(view.task.task_id, HASH)
+                    .unwrap()
+                    .as_ref(),
+                "与 board_detail 同一投影"
+            );
+            assert!(!view.uses_old_policy);
+        }
+        let held = all
+            .iter()
+            .find(|view| view.task.task_id == claimed)
+            .unwrap();
+        assert_eq!(held.holder.as_deref(), Some("holder"));
+        assert_eq!(held.task.status, TaskStatus::Running);
+
+        for project in ["项目/A", "项目/B", "项目/C", "项目/无"] {
+            let filtered: Vec<_> = all
+                .iter()
+                .filter(|view| view.task.spec.project == project)
+                .cloned()
+                .collect();
+            assert_eq!(engine.board_list(project, HASH).unwrap(), filtered);
+        }
+        assert!(
+            engine
+                .board_list_all(&"b".repeat(64))
+                .unwrap()
+                .iter()
+                .all(|view| view.uses_old_policy),
+            "是否旧策略按每次调用的当前哈希比较"
+        );
     }
 }

@@ -18,6 +18,13 @@ import {
 
 const fetchMock = vi.fn<typeof fetch>();
 
+/** 工作台请求的先后。状态胶囊在外壳里另读本机健康，那条请求不在这里数。 */
+function workbenchRequests() {
+  return fetchMock.mock.calls
+    .map(([input]) => String(input))
+    .filter((path) => path.startsWith('/api/workbench'));
+}
+
 beforeEach(() => {
   fetchMock.mockReset();
   fetchMock.mockImplementation(async (input) => defaultApiResponse(input));
@@ -28,6 +35,8 @@ describe('只读工作台', () => {
   it('从 API 读取真实快照，筛选项目和生命周期，并保留未知值', async () => {
     const user = userEvent.setup();
     render(<App />);
+    // 数据来源标签收进了顶栏状态浮层：先打开胶囊再核对。
+    await user.click(screen.getByRole('button', { name: /^工作台状态/ }));
     expect(await screen.findByText('测试只读库')).toBeInTheDocument();
     expect(fetchMock.mock.calls[0][0]).toBe('/api/workbench');
     const unknownRow = screen.getByRole('row', { name: /灵感盒/ });
@@ -106,9 +115,11 @@ describe('只读工作台', () => {
     );
     const user = userEvent.setup();
     render(<App />);
-    await user.click(await screen.findByRole('button', { name: '查看全部' }));
+    await user.click(
+      await screen.findByRole('button', { name: '查看全部项目' }),
+    );
     expect(
-      screen.getByRole('heading', { level: 1, name: '待我动作' }),
+      screen.getByRole('heading', { level: 1, name: '项目' }),
     ).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: '文档' }));
     expect(
@@ -119,7 +130,7 @@ describe('只读工作台', () => {
     );
     expect(await screen.findByText('# 星舟')).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: '关闭原文' }));
-    await user.click(screen.getByRole('button', { name: '项目总览' }));
+    await user.click(screen.getByRole('button', { name: '驾驶舱' }));
     expect(screen.getByRole('table')).toBeInTheDocument();
   });
 
@@ -130,9 +141,14 @@ describe('只读工作台', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent('副本不可用');
     await user.click(screen.getByRole('button', { name: '重试' }));
     expect(await screen.findByRole('table')).toBeInTheDocument();
-    expect(fetchMock.mock.calls[1][0]).toBe('/api/workbench?refresh=true');
+    expect(workbenchRequests()).toEqual([
+      '/api/workbench',
+      '/api/workbench?refresh=true',
+    ]);
     fetchMock.mockResolvedValueOnce(jsonResponse({ error: '读取中断' }, 422));
-    await user.click(screen.getByRole('button', { name: '刷新' }));
+    // 刷新按钮挪进了顶栏状态浮层。
+    await user.click(screen.getByRole('button', { name: /^工作台状态/ }));
+    await user.click(screen.getByRole('button', { name: '刷新快照' }));
     expect(await screen.findByRole('alert')).toHaveTextContent(
       '刷新失败，仍显示上次快照。',
     );
@@ -232,5 +248,55 @@ describe('只读工作台', () => {
       '原始第3行',
     );
     expect(within(dialog).queryByText(/^原始第104行 /)).not.toBeInTheDocument();
+  });
+
+  it('数据提示不再挂在页面底部：驾驶舱只报条数，条目在状态浮层里逐条列出', async () => {
+    fetchMock.mockImplementation(async (input) =>
+      defaultApiResponse(input, {
+        ...fixture,
+        diagnostics: ['副本里有两条同名笔记'],
+        projects: fixture.projects.map((project) =>
+          project.id === 'inbox'
+            ? { ...project, diagnostics: ['缺少 INDEX.md'] }
+            : project,
+        ),
+      }),
+    );
+    const user = userEvent.setup();
+    render(<App />);
+    await screen.findByRole('table');
+    const main = screen.getByRole('main');
+    expect(
+      within(main).getByText('当前快照有 2 条数据提示：缺失信息保持未知。'),
+    ).toBeInTheDocument();
+    expect(
+      within(main).queryByText('副本里有两条同名笔记'),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole('region', { name: '内容新鲜度' }),
+    ).not.toBeInTheDocument();
+    for (const view of ['项目', '文档', '协作', '策略', '驾驶舱']) {
+      await user.click(screen.getByRole('button', { name: view }));
+      expect(
+        within(screen.getByRole('main')).queryByText('副本里有两条同名笔记'),
+      ).not.toBeInTheDocument();
+    }
+    await user.click(screen.getByRole('button', { name: '查看数据提示' }));
+    const capsule = screen.getByRole('button', { name: /^工作台状态/ });
+    expect(capsule).toHaveAttribute('aria-expanded', 'true');
+    const popover = document.getElementById(
+      capsule.getAttribute('aria-controls')!,
+    )!;
+    expect(popover).toHaveFocus();
+    expect(within(popover).getByText('数据提示（2）')).toBeInTheDocument();
+    expect(
+      within(popover).getByText('副本里有两条同名笔记'),
+    ).toBeInTheDocument();
+    expect(
+      within(popover).getByText('灵感盒：缺少 INDEX.md'),
+    ).toBeInTheDocument();
+    await user.keyboard('{Escape}');
+    expect(capsule).toHaveAttribute('aria-expanded', 'false');
+    expect(capsule).toHaveFocus();
   });
 });

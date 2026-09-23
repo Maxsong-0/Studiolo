@@ -1,36 +1,44 @@
-import { render } from '@testing-library/react';
+import { render, screen } from '@testing-library/react';
 import { expect, it, vi } from 'vitest';
 import { AppShell } from '../components/AppShell';
 import { validateWorkbench } from '../validate';
 import { fixture } from './fixtures';
 
-function shell(documentCount: number | null) {
+function shell(documentCount: number | null, actionCount: number | null = 0) {
   return (
     <AppShell
-      view="overview"
+      view="cockpit"
       onNavigate={vi.fn()}
-      sourceLabel="测试库"
-      projects={[]}
-      onOpen={vi.fn()}
-      actionCount={0}
+      actionCount={actionCount}
       documentCount={documentCount}
-      toolbar={null}
     >
       <p>正文</p>
     </AppShell>
   );
 }
 
-it('侧栏文档计数已知时显示数字，不可得时显示占位而不是假装是 0', () => {
-  const { rerender, container } = render(shell(12));
-  const count = () =>
-    container.querySelector('.navigation-item[aria-label="文档"] .nav-count')
-      ?.textContent;
-  expect(count()).toBe('12');
+/** 导航按钮的可访问名只是视图名；计数是旁边的等宽小字，对读屏隐藏。 */
+function navCount(view: string) {
+  return screen
+    .getByRole('button', { name: view })
+    .querySelector('.shell-nav-count')?.textContent;
+}
+
+it('顶栏文档计数已知时显示数字，不可得时显示占位而不是假装是 0', () => {
+  const { rerender } = render(shell(12));
+  expect(navCount('文档')).toBe('12');
   rerender(shell(null));
-  expect(count()).toBe('—');
+  expect(navCount('文档')).toBe('—');
   rerender(shell(0));
-  expect(count()).toBe('0');
+  expect(navCount('文档')).toBe('0');
+});
+
+it('驾驶舱旁的待我动作计数在还没有快照时同样显示占位', () => {
+  const { rerender } = render(shell(1, 3));
+  expect(navCount('驾驶舱')).toBe('3');
+  rerender(shell(1, null));
+  expect(navCount('驾驶舱')).toBe('—');
+  expect(navCount('项目')).toBeUndefined();
 });
 
 it('首屏响应带计数即可通过校验，逐篇清单不再是必需字段', () => {

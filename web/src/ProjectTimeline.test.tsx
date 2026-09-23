@@ -6,8 +6,8 @@ import {
   screen,
 } from '@testing-library/react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-import { BoardBoundary } from './BoardBoundary';
 import { ProjectTimeline } from './ProjectTimeline';
+import { CollabView } from './views/CollabView';
 
 const project = '项目/Studiolo';
 const other = '项目/另一个';
@@ -68,6 +68,19 @@ async function click(name: string) {
     fireEvent.click(screen.getByRole('button', { name }));
   });
 }
+/** 回放是协作页的「时间线」子标签，实时黑板在「任务与回执」子标签。 */
+async function clickTab(name: string) {
+  await act(async () => {
+    fireEvent.click(screen.getByRole('tab', { name }));
+  });
+}
+async function mountBoard() {
+  window.location.hash = '#view=collab';
+  await act(async () => {
+    render(<CollabView projects={projects} />);
+  });
+  await clickTab('任务与回执');
+}
 async function change(element: HTMLElement, value: string) {
   await act(async () => {
     fireEvent.change(element, { target: { value } });
@@ -85,9 +98,7 @@ afterEach(() => {
 
 it('switches between the live board and replay without making execution requests or polling inactive modes', async () => {
   const fetch = mockReads();
-  await act(async () => {
-    render(<BoardBoundary projects={projects} />);
-  });
+  await mountBoard();
   expect(screen.getByText('无活动')).toBeInTheDocument();
   expect(fetch.mock.calls).toHaveLength(1);
   await click('项目时间回放');
@@ -99,7 +110,7 @@ it('switches between the live board and replay without making execution requests
     await vi.advanceTimersByTimeAsync(45_000);
   });
   expect(fetch.mock.calls).toHaveLength(2);
-  await click('返回实时黑板');
+  await clickTab('任务与回执');
   expect(screen.getByText('无活动')).toBeInTheDocument();
   expect(
     screen.queryByRole('region', { name: '项目时间回放' }),
@@ -239,9 +250,7 @@ it('project changes abort and discard a late response from the old project', asy
     }
     return response(page(input));
   });
-  await act(async () => {
-    render(<BoardBoundary projects={projects} />);
-  });
+  await mountBoard();
   await click('项目时间回放');
   const first = fetch.mock.calls.find(([input]) =>
     String(input).startsWith('/api/v1/board/timeline?'),

@@ -1,3 +1,4 @@
+/* 待我动作：一行一件，类型＋标题＋项目，下一行是原文位置。只引用 tokens.css 的令牌。 */
 .inbox {
   margin: 0;
 }
@@ -6,114 +7,133 @@
   align-items: baseline;
   justify-content: space-between;
   gap: 12px;
-  margin-bottom: 14px;
+  margin-bottom: 10px;
 }
 .section-heading h2 {
   margin: 0;
-  font-size: 1rem;
-  line-height: 1.5;
-  font-weight: 600;
+  font-size: 18px;
+  font-weight: 800;
+  line-height: 1.3;
 }
 .section-heading .text-button {
-  font-size: 0.75rem;
+  color: var(--ink-2);
+  font-family: var(--font-mono, 'IBM Plex Mono', ui-monospace, monospace);
+  font-size: 11.5px;
+  letter-spacing: 0.04em;
 }
 .action-list {
-  list-style: none;
-  padding: 0;
   margin: 0;
+  padding: 0;
+  list-style: none;
+  border-top: 1.5px solid var(--ink);
 }
 .action-row {
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid var(--hairline);
 }
 .action-open {
   display: grid;
-  grid-template-columns: 100px minmax(0, 1fr) 120px auto;
-  align-items: center;
+  grid-template-columns: 64px minmax(0, 1fr) auto;
+  align-items: baseline;
+  gap: 4px 14px;
   width: 100%;
-  gap: 8px 20px;
-  padding: 22px 14px;
+  padding: 12px 8px;
   border: 0;
-  border-radius: 10px;
+  border-radius: 0;
   background: transparent;
+  color: var(--ink);
   text-align: left;
+  cursor: pointer;
+  transition: background-color 120ms ease;
 }
 .action-open:hover {
-  background: var(--hover);
+  background: var(--paper-raised);
 }
 .action-kind {
-  color: var(--accent);
-  font-size: 0.75rem;
-  font-weight: 500;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 13.5px;
+  font-weight: 800;
+  white-space: nowrap;
 }
-.action-kind::before {
-  display: inline-block;
-  content: '';
-  width: 6px;
-  height: 6px;
-  margin-right: 7px;
-  border-radius: 50%;
-  background: currentColor;
+.action-kind .icon {
+  width: 14px;
+  height: 14px;
 }
 .action-title {
-  font-size: 1rem;
-  font-weight: 550;
-  line-height: 1.7;
+  font-size: 15.5px;
+  font-weight: 700;
+  line-height: 1.4;
   overflow-wrap: anywhere;
 }
 .action-project {
-  color: var(--muted);
-  font-size: 0.8125rem;
+  color: var(--ink-2);
+  font-family: var(--font-mono, 'IBM Plex Mono', ui-monospace, monospace);
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-align: right;
   overflow-wrap: anywhere;
 }
 .action-source {
-  grid-column: 2 / 4;
+  grid-column: 2;
   grid-row: 2;
-  color: var(--muted);
-  font-size: 0.6875rem;
+  color: var(--ink-2);
+  font-family: var(--font-mono, 'IBM Plex Mono', ui-monospace, monospace);
+  font-size: 11px;
   overflow-wrap: anywhere;
 }
 .action-link {
-  grid-column: 4;
-  grid-row: 1 / 3;
+  grid-column: 3;
+  grid-row: 2;
   display: flex;
   align-items: center;
+  justify-content: flex-end;
   gap: 6px;
+  font-size: 12px;
+  font-weight: 700;
   white-space: nowrap;
-  font-size: 0.8125rem;
-  color: var(--accent);
 }
 .action-link .icon {
-  width: 15px;
-  height: 15px;
-}
-.overview-context .action-open {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 9px;
-  padding: 24px 0;
-  border-radius: 0;
-}
-.overview-context .action-open:hover {
-  background: transparent;
-}
-.overview-context .action-open:hover .action-title {
-  color: var(--accent);
-}
-.overview-context .action-source {
-  display: none;
-}
-.overview-context .action-title {
-  font-size: 0.9375rem;
-}
-.overview-context .action-project {
-  font-size: 0.75rem;
+  width: 14px;
+  height: 14px;
 }
 @media (prefers-reduced-motion: no-preference) {
   .action-link .icon {
-    transition: transform 180ms ease;
+    transition: transform 120ms ease;
   }
   .action-open:hover .action-link .icon {
-    transform: translateX(3px);
+    transform: translateX(1px);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .action-open {
+    transition: none;
+  }
+}
+@media (max-width: 759px) {
+  .action-open {
+    grid-template-columns: minmax(0, 1fr) auto;
+    padding: 12px 0;
+  }
+  .action-kind {
+    grid-column: 1;
+    grid-row: 1;
+  }
+  .action-project {
+    grid-column: 2;
+    grid-row: 1;
+  }
+  .action-title {
+    grid-column: 1 / -1;
+    grid-row: 2;
+  }
+  .action-source {
+    grid-column: 1;
+    grid-row: 3;
+  }
+  .action-link {
+    grid-column: 2;
+    grid-row: 3;
+    min-height: 44px;
   }
 }

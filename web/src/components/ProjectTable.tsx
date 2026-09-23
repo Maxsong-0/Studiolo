@@ -30,9 +30,12 @@ function SourceValue({
 export function ProjectTable({
   projects,
   onOpen,
+  onEnter,
 }: {
   projects: Project[];
   onOpen: OpenSource;
+  /** 点项目名进入该项目的运作；项目来源改由名字旁的「来源」打开。 */
+  onEnter: (project: Project) => void;
 }) {
   if (projects.length === 0) {
     return (
@@ -74,22 +77,27 @@ export function ProjectTable({
                 <th scope="row" className="project-identity" role="rowheader">
                   <Icon name="folder" />
                   <div>
-                    {project.source ? (
-                      <button
-                        className="project-name"
-                        onClick={() => onOpen(project.source!)}
-                        title={`${project.source.path}:${project.source.line}`}
-                      >
-                        {project.name}
-                        <span className="sr-only">，查看项目来源</span>
-                      </button>
-                    ) : (
-                      <span className="project-name-text">{project.name}</span>
-                    )}
+                    <button
+                      className="project-name"
+                      onClick={() => onEnter(project)}
+                      aria-label={`${project.name}，进入项目运作`}
+                    >
+                      {project.name}
+                    </button>
                     {project.profile === 'unfiled' ? (
                       <span className="project-profile">未建档</span>
                     ) : null}
                     <span className="project-path">{project.root}</span>
+                    {project.source ? (
+                      <button
+                        className="text-button project-source"
+                        onClick={() => onOpen(project.source!)}
+                        aria-label={`${project.name}，查看项目来源`}
+                        title={`${project.source.path}:${project.source.line}`}
+                      >
+                        来源
+                      </button>
+                    ) : null}
                     {project.diagnostics.length > 0 ? (
                       <span className="sr-only">
                         {project.diagnostics.join('；')}

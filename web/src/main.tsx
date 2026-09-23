@@ -3,6 +3,14 @@ import { createRoot } from 'react-dom/client';
 import { App } from './App';
 import { MotionConfig } from 'motion/react';
 import { SessionBoundary } from './SessionBoundary';
+// 自托管字体（CSP 只许 font-src 'self'）：只取拉丁子集与规范用到的字重，中文走系统字体。
+import '@fontsource/archivo/latin-500.css';
+import '@fontsource/archivo/latin-700.css';
+import '@fontsource/archivo/latin-800.css';
+import '@fontsource/archivo/latin-900.css';
+import '@fontsource/ibm-plex-mono/latin-400.css';
+import '@fontsource/ibm-plex-mono/latin-500.css';
+import '@fontsource/ibm-plex-mono/latin-600.css';
 import './styles/tokens.css';
 import './styles/workbench.css';
 import './styles/workspace.css';

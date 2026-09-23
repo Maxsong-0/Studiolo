@@ -6,29 +6,27 @@ import type { View } from './types';
  */
 export interface ViewLocation {
   view: View;
-  /** 项目 root：黑板、执行与运作三个视图的项目选择。 */
+  /** 项目 root：项目运作与协作各标签的项目选择。 */
   project: string | null;
-  /** 视图内的面板：如黑板的 `replay`、文档的 `tree`。 */
+  /** 视图内的面板：如项目的 `operations`、协作的 `timeline`、文档的 `tree`；默认面板记作 null。 */
   panel: string | null;
-  /** 面板内选中的条目：如执行任务 id。 */
+  /** 面板内选中的条目：如执行任务 id、策略版本号。 */
   item: string | null;
 }
 
 export type ViewSlot = 'project' | 'panel' | 'item';
 
 const views: readonly View[] = [
-  'overview',
-  'inbox',
+  'cockpit',
+  'projects',
   'documents',
-  'operations',
+  'collab',
   'policy',
-  'board',
-  'execution',
 ];
 const slots: readonly ViewSlot[] = ['project', 'panel', 'item'];
 
 export const defaultViewLocation: ViewLocation = {
-  view: 'overview',
+  view: 'cockpit',
   project: null,
   panel: null,
   item: null,
@@ -37,6 +35,37 @@ export const defaultViewLocation: ViewLocation = {
 /** 单格上限：位置只存短标识，长内容一律当作不是位置。 */
 const slotLimit = 512;
 const control = /[\p{Cc}]/u;
+
+type Slots = Omit<ViewLocation, 'view'>;
+
+/**
+ * 旧七视图（T-130 之前）的链接照样能打开：按设计规范第 4 节「旧链接迁移」表换算成新位置。
+ * 只在解析时迁移，写回 URL 一律用新名；旧视图没用过的格子不带过去，免得被新视图读成别的意思。
+ */
+const legacyViews: Record<string, (slots: Slots) => ViewLocation> = {
+  overview: () => defaultViewLocation,
+  // 待我动作并进驾驶舱：驾驶舱首格就是待我动作。
+  inbox: () => defaultViewLocation,
+  // 旧运作视图的 panel 值原样放进 item，留给运作页内部细分用。
+  operations: ({ project, panel }) => ({
+    view: 'projects',
+    project,
+    panel: 'operations',
+    item: panel,
+  }),
+  board: ({ project, panel }) => ({
+    view: 'collab',
+    project,
+    panel: panel === 'replay' ? 'timeline' : 'board',
+    item: null,
+  }),
+  execution: ({ project, item }) => ({
+    view: 'collab',
+    project,
+    panel: 'execution',
+    item,
+  }),
+};
 
 function isView(value: string | null): value is View {
   return value !== null && (views as readonly string[]).includes(value);
@@ -50,21 +79,25 @@ function slotValue(value: string | null): string | null {
   return control.test(trimmed) ? null : trimmed;
 }
 
-/** 解析 hash 中的视图位置；未知视图或损坏内容回落默认视图，绝不抛错。 */
+/** 解析 hash 中的视图位置；旧视图名先迁移，未知视图或损坏内容回落默认视图，绝不抛错。 */
 export function parseViewLocation(hash: string): ViewLocation {
   const params = new URLSearchParams(hash.replace(/^#/, ''));
   const view = params.get('view');
-  if (!isView(view)) return defaultViewLocation;
-  return {
-    view,
+  const location: Slots = {
     project: slotValue(params.get('project')),
     panel: slotValue(params.get('panel')),
     item: slotValue(params.get('item')),
   };
+  // hasOwn 而不是 in：`view=constructor` 这类原型链上的名字不能被当成旧视图。
+  if (view !== null && Object.hasOwn(legacyViews, view))
+    return legacyViews[view](location);
+  if (!isView(view)) return defaultViewLocation;
+  return { view, ...location };
 }
 
-/** 序列化为 hash（不含 `#`）；默认位置序列化成空串，首屏不给 URL 添噪。 */
+/** 序列化为 hash（不含 `#`），只写新视图名；默认位置序列化成空串，首屏不给 URL 添噪。 */
 export function formatViewLocation(location: ViewLocation): string {
+  if (!isView(location.view)) return '';
   const params = new URLSearchParams();
   params.set('view', location.view);
   for (const slot of slots) {

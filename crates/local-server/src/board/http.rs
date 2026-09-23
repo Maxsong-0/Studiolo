@@ -17,6 +17,7 @@ use std::sync::Arc;
 pub(super) fn routes(routes: Router<crate::AppState>) -> Router<crate::AppState> {
     routes
         .route("/api/v1/board", get(view))
+        .route("/api/v1/board/overview", get(super::overview::overview))
         .route("/api/v1/board/replay", get(super::replay::replay))
         .route("/api/v1/board/timeline", get(super::timeline::timeline))
 }

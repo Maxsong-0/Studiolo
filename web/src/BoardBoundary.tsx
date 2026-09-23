@@ -2,7 +2,6 @@ import { useEffect, useState } from 'react';
 import { useViewLocation } from './useViewLocation';
 import type { ReactNode } from 'react';
 import { CandidateDetails } from './ExecutionCandidates';
-import { ProjectTimeline } from './ProjectTimeline';
 import { LocalDispatch } from './LocalDispatch';
 import { ApiError, getJson } from './sessionHttp';
 import { boardItems, boardLease, boardTree } from './boardModel';
@@ -55,7 +54,6 @@ export function BoardBoundary({
 }) {
   const { location, select } = useViewLocation();
   const selected = location.project ?? '';
-  const replay = location.panel === 'replay';
   const project = projects.some((p) => p.root === selected)
     ? selected
     : (projects[0]?.root ?? '');
@@ -76,17 +74,14 @@ export function BoardBoundary({
           </select>
         </label>
         <span>状态核对 · 每 15 秒刷新</span>
-        <button onClick={() => select({ panel: replay ? null : 'replay' })}>
-          {replay ? '返回实时黑板' : '项目时间回放'}
+        {/* 回放是协作页的「时间线」子标签：切过去，项目格原样带着。 */}
+        <button onClick={() => select({ panel: 'timeline' })}>
+          项目时间回放
         </button>
       </div>
       {project && <LocalDispatch key={project} project={project} />}
       {project ? (
-        replay ? (
-          <ProjectTimeline key={project} project={project} />
-        ) : (
-          <BoardProject key={project} project={project} />
-        )
+        <BoardProject key={project} project={project} />
       ) : (
         <p>当前没有可查看的项目。</p>
       )}

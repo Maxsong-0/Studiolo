@@ -34,7 +34,8 @@ beforeEach(() => {
 it('快速切换使用path接口传完整路径片段，Enter打开第一项', async () => {
   const user = userEvent.setup();
   render(<App />);
-  await screen.findByText('测试只读库');
+  // 数据来源标签收进了状态浮层；等驾驶舱的项目表出来即工作台已读到。
+  await screen.findByRole('table');
   await user.click(screen.getByRole('button', { name: /快速切换/ }));
   const dialog = screen.getByRole('dialog', { name: '快速切换' });
   const input = within(dialog).getByRole('searchbox');
@@ -58,7 +59,8 @@ it('快速切换使用path接口传完整路径片段，Enter打开第一项', a
 it('⌘K与CtrlK可在三页面打开，Esc关闭并还原启动按钮焦点', async () => {
   const user = userEvent.setup();
   render(<App />);
-  await screen.findByText('测试只读库');
+  // 数据来源标签收进了状态浮层；等驾驶舱的项目表出来即工作台已读到。
+  await screen.findByRole('table');
   const trigger = screen.getByRole('button', { name: /快速切换/ });
   trigger.focus();
   fireEvent.keyDown(window, { key: 'k', metaKey: true });
@@ -67,7 +69,7 @@ it('⌘K与CtrlK可在三页面打开，Esc关闭并还原启动按钮焦点', a
     new Event('cancel', { cancelable: true }),
   );
   expect(trigger).toHaveFocus();
-  for (const page of ['待我动作', '文档']) {
+  for (const page of ['项目', '文档']) {
     await user.click(screen.getByRole('button', { name: page }));
     fireEvent.keyDown(window, { key: 'k', ctrlKey: true });
     expect(
@@ -81,7 +83,8 @@ it('⌘K与CtrlK可在三页面打开，Esc关闭并还原启动按钮焦点', a
 it('方向键选择结果，快照刷新关闭快速切换并取消其请求', async () => {
   const user = userEvent.setup();
   render(<App />);
-  await screen.findByText('测试只读库');
+  // 数据来源标签收进了状态浮层；等驾驶舱的项目表出来即工作台已读到。
+  await screen.findByRole('table');
   await user.click(screen.getByRole('button', { name: /快速切换/ }));
   const result = await screen.findByRole('button', {
     name: '星舟总览，查看原文',
@@ -93,7 +96,9 @@ it('方向键选择结果，快照刷新关闭快速切换并取消其请求', a
     String(input).startsWith('/api/search'),
   )!;
   expect(searchCall[1]?.signal?.aborted).toBe(true);
-  await user.click(screen.getByRole('button', { name: '刷新' }));
+  // 刷新按钮挪进了顶栏状态浮层。
+  await user.click(screen.getByRole('button', { name: /^工作台状态/ }));
+  await user.click(screen.getByRole('button', { name: '刷新快照' }));
   await waitFor(() =>
     expect(
       fetchMock.mock.calls.some(([input]) =>

@@ -5,6 +5,7 @@ mod execute;
 mod execution_http;
 mod executor;
 mod http;
+mod overview;
 mod owner;
 mod replay;
 mod requests;
@@ -47,6 +48,8 @@ pub struct BoardPlane {
     storage: storage::Storage,
     isolated_roots: Vec<std::path::PathBuf>,
     permits: Arc<tokio::sync::Semaphore>,
+    /// 跨项目汇总上次看到的审计末条偏移；只是倒扫起点的提示，每次使用前都重新核实。
+    overview_tail: std::sync::atomic::AtomicU64,
 }
 impl BoardPlane {
     /// 已有 canonical 写者、身份库、策略与审计全部就绪后，才打开独立控制目录。
@@ -121,6 +124,7 @@ impl BoardPlane {
             storage,
             isolated_roots,
             permits: Arc::new(tokio::sync::Semaphore::new(4)),
+            overview_tail: std::sync::atomic::AtomicU64::new(0),
         }))
     }
     /// 独立租约巡检；关闭时等待本轮控制事务结束，不留下后台写者。

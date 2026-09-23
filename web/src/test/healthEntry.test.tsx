@@ -38,15 +38,17 @@ beforeEach(() => {
   vi.stubGlobal('fetch', fetchMock);
 });
 
-async function openInbox() {
+/** 本机健康从「待我动作」视图挪进了顶栏状态浮层：等工作台读到后点开胶囊。 */
+async function openStatus() {
   const user = userEvent.setup();
   render(<App />);
-  await screen.findByText('测试只读库');
-  await user.click(screen.getByRole('button', { name: '待我动作' }));
+  await screen.findByRole('table');
+  await user.click(screen.getByRole('button', { name: /^工作台状态/ }));
+  return user;
 }
 
-it('待我动作视图挂上了健康页并走既有内容 API 的同一个前缀', async () => {
-  await openInbox();
+it('状态浮层挂上了健康页并走既有内容 API 的同一个前缀', async () => {
+  await openStatus();
 
   await screen.findByRole('region', { name: '本机健康' });
   const requested = fetchMock.mock.calls.map((call) => String(call[0]));
@@ -55,7 +57,7 @@ it('待我动作视图挂上了健康页并走既有内容 API 的同一个前�
 });
 
 it('后端如实回全部未知时健康页显示未知且明说证据不完整', async () => {
-  await openInbox();
+  await openStatus();
 
   const panel = await screen.findByRole('region', { name: '本机健康' });
   await waitFor(() =>
@@ -89,7 +91,7 @@ it('恢复点尚未建立时显示既定中文并且整体不显示绿', async (
       : defaultApiResponse(input),
   );
 
-  await openInbox();
+  await openStatus();
 
   const panel = await screen.findByRole('region', { name: '本机健康' });
   await waitFor(() =>
@@ -105,7 +107,7 @@ it('健康页请求失败时只影响健康页本身其余视图照常', async (
       : defaultApiResponse(input),
   );
 
-  await openInbox();
+  await openStatus();
 
   const panel = await screen.findByRole('region', { name: '本机健康' });
   await waitFor(() =>
@@ -113,16 +115,15 @@ it('健康页请求失败时只影响健康页本身其余视图照常', async (
   );
   expect(within(panel).queryByText('正常')).not.toBeInTheDocument();
   expect(
-    screen.getByRole('heading', { level: 1, name: '待我动作' }),
+    screen.getByRole('heading', { level: 1, name: '驾驶舱' }),
   ).toBeInTheDocument();
 });
 
-it('离开待我动作视图后不再保留健康页', async () => {
-  const user = userEvent.setup();
-  await openInbox();
+it('离开状态浮层（去别的视图）后不再保留健康页', async () => {
+  const user = await openStatus();
   await screen.findByRole('region', { name: '本机健康' });
 
-  await user.click(screen.getByRole('button', { name: '项目总览' }));
+  await user.click(screen.getByRole('button', { name: '项目' }));
 
   expect(screen.queryByRole('region', { name: '本机健康' })).toBeNull();
 });

@@ -43,22 +43,27 @@ describe('离开再回来的位置', () => {
     render(boundary());
     await screen.findByRole('table');
 
-    await user.click(screen.getByRole('button', { name: /协作黑板/ }));
-    expect(heading('协作黑板')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: '协作' }));
+    await user.click(screen.getByRole('tab', { name: '任务与回执' }));
+    expect(heading('协作')).toBeInTheDocument();
     await user.selectOptions(
       screen.getByRole('combobox', { name: '项目' }),
       '项目/资料夹',
     );
-    expect(window.location.hash).toContain('view=board');
+    expect(window.location.hash).toContain('view=collab');
 
     // 一天内切回：什么都不发生，位置自然还在。
     await leaveAndReturn();
-    expect(heading('协作黑板')).toBeInTheDocument();
+    expect(heading('协作')).toBeInTheDocument();
 
     // 超过一天切回：重新核对、整棵重挂，位置从 URL 读回。
     await leaveAndReturn({ afterADay: true });
-    await waitFor(() => expect(heading('协作黑板')).toBeInTheDocument());
-    expect(heading('项目总览')).not.toBeInTheDocument();
+    await waitFor(() => expect(heading('协作')).toBeInTheDocument());
+    expect(heading('驾驶舱')).not.toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: '任务与回执' })).toHaveAttribute(
+      'aria-selected',
+      'true',
+    );
     expect(screen.getByRole('combobox', { name: '项目' })).toHaveValue(
       '项目/资料夹',
     );
@@ -78,7 +83,7 @@ describe('离开再回来的位置', () => {
     const user = userEvent.setup();
     render(boundary());
     await screen.findByRole('table');
-    await user.click(screen.getByRole('button', { name: /文档/ }));
+    await user.click(screen.getByRole('button', { name: '文档' }));
     await user.click(screen.getByRole('button', { name: '文件树' }));
     expect(window.location.hash).toContain('panel=tree');
 
@@ -96,15 +101,47 @@ describe('离开再回来的位置', () => {
     );
   });
 
-  it('直接打开带位置的链接就落在该位置，损坏的位置回落总览', async () => {
+  it('直接打开带位置的链接就落在该位置，损坏的位置回落驾驶舱', async () => {
     mockSessions();
     window.location.hash = '#view=policy';
     const first = render(boundary());
-    await waitFor(() => expect(heading('策略平面')).toBeInTheDocument());
+    await waitFor(() => expect(heading('策略')).toBeInTheDocument());
     first.unmount();
 
     window.location.hash = '#view=%E4%B8%8D%E5%AD%98%E5%9C%A8';
     render(boundary());
-    await waitFor(() => expect(heading('项目总览')).toBeInTheDocument());
+    await waitFor(() => expect(heading('驾驶舱')).toBeInTheDocument());
+  });
+
+  it('旧七视图的链接照样打开，落到新结构里的对应位置（设计规范第 4 节）', async () => {
+    mockSessions();
+    const project = encodeURIComponent('项目/资料夹');
+
+    window.location.hash = `#view=board&panel=replay&project=${project}`;
+    let view = render(boundary());
+    await waitFor(() => expect(heading('协作')).toBeInTheDocument());
+    expect(screen.getByRole('tab', { name: '时间线' })).toHaveAttribute(
+      'aria-selected',
+      'true',
+    );
+    expect(screen.getByRole('combobox', { name: '项目' })).toHaveValue(
+      '项目/资料夹',
+    );
+    view.unmount();
+
+    window.location.hash = `#view=operations&project=${project}`;
+    view = render(boundary());
+    await waitFor(() => expect(heading('项目运作')).toBeInTheDocument());
+    expect(screen.getByRole('combobox', { name: '项目' })).toHaveValue(
+      '项目/资料夹',
+    );
+    view.unmount();
+
+    window.location.hash = '#view=inbox';
+    render(boundary());
+    await waitFor(() => expect(heading('驾驶舱')).toBeInTheDocument());
+    expect(
+      screen.getByRole('region', { name: '待我动作' }),
+    ).toBeInTheDocument();
   });
 });

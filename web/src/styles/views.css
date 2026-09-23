@@ -1,64 +1,93 @@
-.data-notes {
-  margin-top: 28px;
-  padding-top: 22px;
-  border-top: 1px solid var(--border);
-}
-.data-notes > p {
-  margin: 14px 0 0;
-  color: var(--muted);
-  font-size: 0.6875rem;
-}
-.diagnostics {
-  color: var(--muted);
-  font-size: 0.75rem;
-  line-height: 1.8;
-}
-.diagnostics summary {
-  cursor: pointer;
-  width: fit-content;
-  color: var(--text);
-  font-size: 0.8125rem;
-}
-.diagnostics ul {
-  padding-left: 18px;
-  margin: 16px 0 0;
-  overflow-wrap: anywhere;
-}
-.diagnostics li {
-  margin: 8px 0;
-}
+/* 视图共用的状态块：空态、错误、数据提示与搜索结果标题。只引用 tokens.css 的令牌。 */
 .empty-state {
-  padding: 48px 24px;
-  border: 1px dashed var(--border);
-  border-radius: 14px;
-  color: var(--muted);
-  font-size: 0.875rem;
-  line-height: 1.8;
+  margin: 0;
+  padding: 40px 24px;
+  border: 1px dashed var(--ink-3);
+  border-radius: 0;
+  color: var(--ink-2);
+  font-size: 14px;
+  line-height: 1.6;
   text-align: center;
 }
+
+/* 错误不只靠红色：红框之外还有原文说明与重试按钮。 */
 .error-feedback {
   display: flex;
   align-items: baseline;
-  gap: 20px;
-  border: 1px solid var(--error-border);
-  border-radius: 12px;
-  background: var(--error-soft);
-  padding: 14px 20px;
-  margin: 24px 32px;
-  color: var(--error);
-  font-size: 0.875rem;
+  flex-wrap: wrap;
+  gap: 8px 20px;
+  margin: 0 0 18px;
+  padding: 12px 16px;
+  border: 1.5px solid var(--signal);
+  border-radius: 0;
+  background: var(--signal-wash);
+  color: var(--ink);
+  font-size: 14px;
+  line-height: 1.6;
 }
 .error-feedback p {
   margin: 0;
+  overflow-wrap: anywhere;
 }
+.error-feedback .text-button {
+  color: var(--ink);
+  font-weight: 700;
+  text-decoration: underline;
+  text-underline-offset: 4px;
+}
+
+/* 数据提示：只在顶栏状态浮层里逐条列出。 */
+.data-notes > p,
+.data-notes-empty {
+  margin: 10px 0 0;
+  color: var(--ink-2);
+  font-size: 12px;
+  line-height: 1.6;
+}
+.data-notes-empty {
+  margin: 0;
+}
+.diagnostics {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 13px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+.diagnostics li {
+  padding: 6px 0;
+  border-bottom: 1px solid var(--hairline);
+}
+.diagnostics li:first-child {
+  padding-top: 0;
+}
+
 .document-title {
   display: block;
-  font-size: 1rem;
+  font-size: 15.5px;
+  font-weight: 700;
+  line-height: 1.4;
 }
 .document-path {
   display: block;
-  font-size: 0.75rem;
-  color: var(--muted);
-  margin-top: 5px;
+  margin-top: 4px;
+  color: var(--ink-2);
+  font-family: var(--font-mono, 'IBM Plex Mono', ui-monospace, monospace);
+  font-size: 11.5px;
+  letter-spacing: 0.02em;
   overflow-wrap: anywhere;
+}
+
+/* 项目明细里名字旁的「来源」：点项目名进入运作，来源改由这里打开。 */
+.project-table .project-source {
+  display: inline-block;
+  margin-top: 2px;
+  color: var(--ink-2);
+  font-family: var(--font-mono, 'IBM Plex Mono', ui-monospace, monospace);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+}
+.project-table .project-source:hover {
+  color: var(--ink);
 }

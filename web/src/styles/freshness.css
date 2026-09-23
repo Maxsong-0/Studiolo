@@ -1,39 +1,44 @@
+/*
+ * 内容新鲜度：T-130 起不再是每页顶部的横幅，只在顶栏状态浮层的「新鲜度」一栏里出现。
+ * 只引用 tokens.css 的令牌。
+ */
 .freshness-notice {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
   flex-wrap: wrap;
-  gap: 16px;
-  margin: 24px 32px 0;
-  padding: 16px 20px;
-  border: 1px solid var(--border);
-  border-radius: 14px;
-  background: var(--surface-solid);
+  gap: 12px;
+  margin: 0;
 }
 .freshness-notice-copy {
-  flex: 1 1 280px;
+  flex: 1 1 240px;
   min-width: 0;
   overflow-wrap: anywhere;
 }
+.freshness-notice-copy strong {
+  font-size: 15.5px;
+  font-weight: 700;
+  line-height: 1.4;
+}
 .freshness-notice-copy p {
   margin: 4px 0 0;
+  font-size: 14px;
+  line-height: 1.6;
 }
 .freshness-watermarks,
 .freshness-scope {
-  color: var(--muted);
-  font-size: 0.75rem;
+  color: var(--ink-2);
+  font-size: 12px;
+}
+.freshness-watermarks {
+  font-family: var(--font-mono, 'IBM Plex Mono', ui-monospace, monospace);
+  letter-spacing: 0.02em;
+  font-variant-numeric: tabular-nums;
 }
 .freshness-notice .outline-button {
   min-height: 44px;
 }
-.freshness-notice [aria-disabled='true'],
-.refresh-button[aria-disabled='true'] {
+.freshness-notice [aria-disabled='true'] {
   cursor: progress;
   opacity: 0.6;
-}
-@media (max-width: 600px) {
-  .freshness-notice {
-    margin: 16px 16px 0;
-    padding: 14px;
-  }
 }

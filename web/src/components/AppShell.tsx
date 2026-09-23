@@ -1,134 +1,61 @@
 import type { ReactNode } from 'react';
-import type { OpenSource, Project, View } from '../types';
-import { Icon } from './Icon';
-import { motion } from 'motion/react';
-import { useReducedMotionPreference } from '../useReducedMotionPreference';
+import type { View } from '../types';
+import { TopNav } from '../shell/TopNav';
+import '../shell/shell.css';
 
-const navigation = [
-  { id: 'overview', label: '项目总览', icon: 'overview' },
-  { id: 'operations', label: '项目运作', icon: 'canvas' },
-  { id: 'inbox', label: '待我动作', icon: 'inbox' },
-  { id: 'documents', label: '文档', icon: 'document' },
-  { id: 'board', label: '协作黑板', icon: 'canvas' },
-  { id: 'execution', label: '执行与回放', icon: 'canvas' },
-  { id: 'policy', label: '策略平面', icon: 'shield' },
-] as const;
-
+/**
+ * 外壳（T-130 设计规范第 5 节）：46px 顶栏，底边 3px 黑线。左边字标＋五个导航；
+ * 右边状态胶囊、⌘K 入口与账户等工具。窄屏顶栏只留字标、胶囊与 ⌘K 图标，
+ * 工具收到黑线下方一行，导航固定到底部。
+ */
 export function AppShell({
   view,
   onNavigate,
-  sourceLabel,
-  projects,
-  onOpen,
   actionCount,
   documentCount,
-  toolbar,
+  status,
+  command,
+  tools,
   children,
 }: {
   view: View;
   onNavigate: (view: View) => void;
-  sourceLabel: string;
-  projects: Project[];
-  onOpen: OpenSource;
-  actionCount: number;
+  /** 待我动作条数，标在驾驶舱旁；null 表示还没有快照，显示「—」而不是假装是 0。 */
+  actionCount: number | null;
   /** 文档总数；null 表示当前快照给不出这个计数，界面显示「—」而不是假装是 0。 */
   documentCount: number | null;
-  toolbar: ReactNode;
+  /** 状态胶囊。 */
+  status?: ReactNode;
+  /** ⌘K 入口。 */
+  command?: ReactNode;
+  /** 账户、文件操作、内存草稿等工具入口。 */
+  tools?: ReactNode;
   children: ReactNode;
 }) {
-  const reducedMotion = useReducedMotionPreference();
   return (
-    <div className="app-shell">
+    <div className="shell">
       <a className="skip-link" href="#main-content">
         跳到主要内容
       </a>
-      <aside className="sidebar" aria-label="工作台">
-        <div className="brand">Studiolo</div>
-        <div className="workspace-source" title={sourceLabel}>
-          <Icon name="folder" />
-          <span>{sourceLabel}</span>
+      <header className="shell-top">
+        <div className="shell-brand">
+          Studiolo
+          <span className="shell-brand-dot" aria-hidden="true">
+            .
+          </span>
         </div>
-        <nav aria-label="主导航">
-          {navigation.map((item) => (
-            <button
-              key={item.id}
-              className={`navigation-item ${view === item.id ? 'is-active' : ''}`}
-              aria-current={view === item.id ? 'page' : undefined}
-              aria-label={item.label}
-              onClick={() => onNavigate(item.id)}
-            >
-              {view === item.id ? (
-                <motion.span
-                  key={reducedMotion ? 'reduced' : 'animated'}
-                  className="navigation-highlight"
-                  layoutId={reducedMotion ? undefined : 'workspace-navigation'}
-                  transition={{ type: 'spring', stiffness: 420, damping: 42 }}
-                  aria-hidden="true"
-                />
-              ) : null}
-              <span className={`nav-symbol nav-symbol-${item.id}`}>
-                <Icon name={item.icon} />
-              </span>
-              <span>{item.label}</span>
-              {item.id === 'inbox' || item.id === 'documents' ? (
-                <span className="nav-count" aria-hidden="true">
-                  {item.id === 'inbox' ? actionCount : (documentCount ?? '—')}
-                </span>
-              ) : null}
-            </button>
-          ))}
-        </nav>
-        {projects.length ? (
-          <section className="sidebar-projects" aria-label="项目快捷入口">
-            <h2>项目</h2>
-            <ul>
-              {projects.slice(0, 8).map((project) => (
-                <li key={project.id}>
-                  {project.source ? (
-                    <button
-                      onClick={() => onOpen(project.source!)}
-                      aria-label={`${project.name}，打开项目来源`}
-                    >
-                      <Icon name="folder" />
-                      <span>{project.name}</span>
-                    </button>
-                  ) : (
-                    <span className="unfiled-shortcut">
-                      <Icon name="folder" />
-                      {project.name}
-                    </span>
-                  )}
-                </li>
-              ))}
-            </ul>
-          </section>
-        ) : null}
-        <div className="sidebar-footer">
-          <div>
-            <Icon name="lock" />
-            <span>索引与原文</span>
-          </div>
-          <p>编辑前逐页核验</p>
-        </div>
-      </aside>
-      <div className="workspace">
-        <header className="workspace-toolbar">
-          <p className="workspace-breadcrumb">
-            工作台 <span>/</span>{' '}
-            <strong>
-              {navigation.find((item) => item.id === view)?.label}
-            </strong>
-          </p>
-          {toolbar}
-        </header>
-        <main id="main-content" className="main-content" tabIndex={-1}>
-          {children}
-        </main>
-      </div>
-      <footer className="page-footer">
-        <Icon name="lock" />
-        可编辑文档会单独核验权限与版本。
-      </footer>
+        <TopNav
+          view={view}
+          onNavigate={onNavigate}
+          counts={{ cockpit: actionCount, documents: documentCount }}
+        />
+        {status}
+        {command}
+        <div className="shell-tools">{tools}</div>
+      </header>
+      <main id="main-content" className="shell-main" tabIndex={-1}>
+        {children}
+      </main>
     </div>
   );
 }

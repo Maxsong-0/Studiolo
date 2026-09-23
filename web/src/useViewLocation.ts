@@ -77,5 +77,13 @@ export function useViewLocation() {
     },
     [],
   );
-  return { location, selectView, select };
+  // 跨视图直达某一格（如从驾驶舱点项目直接进它的运作）：视图与格子一次写好，
+  // 不先切视图再补格子，也不带上一视图的格子。
+  const goTo = useCallback(
+    (target: { view: View } & Partial<Record<ViewSlot, string | null>>) => {
+      write({ ...defaultViewLocation, ...target });
+    },
+    [],
+  );
+  return { location, selectView, select, goTo };
 }

@@ -2,58 +2,40 @@ import { useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
 import { AppShell } from './components/AppShell';
 import { DocumentDialog } from './components/DocumentDialog';
-import { Documents } from './components/Documents';
 import { Filters } from './components/Filters';
-import { Icon } from './components/Icon';
-import { Inbox } from './components/Inbox';
-import { ProjectTable } from './components/ProjectTable';
-import type { SourceLocation, View } from './types';
+import type { Project, SourceLocation, View } from './types';
 import { useEditorNavigation } from './useEditorNavigation';
 import { useViewLocation } from './useViewLocation';
 import { useWorkbench } from './useWorkbench';
 import { sortProjects } from './projectOrder';
 import { QuickSwitcher } from './components/QuickSwitcher';
 import { useQuickSwitcher } from './useQuickSwitcher';
-import { Diagnostics } from './components/Diagnostics';
-import { ProjectOperations } from './components/ProjectOperations';
-import { FreshnessNotice } from './components/FreshnessNotice';
 import { CanonicalEditor } from './components/CanonicalEditor';
 import { DraftShelf } from './components/DraftShelf';
 import { useDraftCount } from './draftContext';
 import { FileOperationsAccess } from './components/FileOperationsAccess';
-import { HealthBoundary } from './HealthBoundary';
-import { BoardBoundary } from './BoardBoundary';
-import { ExecutionBoundary } from './ExecutionBoundary';
-import { PolicyBoundary } from './PolicyBoundary';
-
-const headings = {
-  board: ['协作黑板', '查看任务归属、路径占用与收尾回执。'],
-  execution: [
-    '执行与回放',
-    '冻结执行、查看进度，并逐项审阅候选产物与脱敏审计记录。',
-  ],
-  overview: ['项目总览', '项目状态与待办，回到原文核对。'],
-  inbox: ['待我动作', '待你验收、拍板与重启的事项，回到原文核对。'],
-  documents: ['文档', '搜索笔记或浏览目录与附件，从原文进入授权编辑。'],
-  operations: [
-    '项目运作',
-    '对照结构声明与实际目录，理解模块职责并回到原文核对。',
-  ],
-  policy: [
-    '策略平面',
-    '规则母本、skills 与各 AI 能力集：提交 desired、校验 diff、经 One-time Code 发布，三级吊销。',
-  ],
-} satisfies Record<View, [string, string]>;
+import { CommandEntry } from './shell/CommandEntry';
+import { StatusCapsule } from './shell/StatusCapsule';
+import { useHealthStatus } from './shell/useHealthStatus';
+import { CockpitView } from './views/CockpitView';
+import { ProjectsView } from './views/ProjectsView';
+import { DocumentsView } from './views/DocumentsView';
+import { CollabView } from './views/CollabView';
+import { PolicyView } from './views/PolicyView';
 
 export function App({ account }: { account?: ReactNode }) {
-  const { location, selectView } = useViewLocation();
+  const { location, selectView, goTo } = useViewLocation();
   const view = location.view;
   const [query, setQuery] = useState('');
   const [lifecycle, setLifecycle] = useState('');
   const [source, setSource] = useState<SourceLocation | null>(null);
   const [draftsOpen, setDraftsOpen] = useState(false);
+  const [statusOpen, setStatusOpen] = useState(false);
   const { count: draftCount } = useDraftCount();
+  // 工作台先于本机健康发请求：认证名额只有两个（ADR-022），主内容排在前面。
+  // 本机健康不依赖工作台快照：快照读不出来时，状态胶囊照样要能报出健康。
   const { data, loading, error, refresh, refreshLatest } = useWorkbench();
+  const health = useHealthStatus();
   const editor = useEditorNavigation(refreshLatest);
   const editorPath = editor.current?.path ?? null;
   const setEditorPath = editor.open;
@@ -99,40 +81,64 @@ export function App({ account }: { account?: ReactNode }) {
     refresh();
   }
 
+  // 状态浮层的「刷新快照」：重读工作台快照，也重读本机健康；工作台先发。
+  function refreshStatus() {
+    if (loading) return;
+    refreshSnapshot();
+    health.reload();
+  }
+
   function navigate(next: View) {
     selectView(next);
     window.scrollTo({ top: 0, left: 0, behavior: 'instant' });
   }
 
+  function enterProject(project: Project) {
+    goTo({ view: 'projects', panel: 'operations', project: project.root });
+    window.scrollTo({ top: 0, left: 0, behavior: 'instant' });
+  }
+
+  const filters = (
+    <Filters
+      query={query}
+      lifecycle={lifecycle}
+      lifecycles={lifecycles}
+      onQueryChange={setQuery}
+      onLifecycleChange={setLifecycle}
+      count={filtered.length}
+    />
+  );
+
   return (
     <AppShell
       view={view}
       onNavigate={navigate}
-      sourceLabel={data?.source_label ?? (loading ? '读取中' : '未连接')}
-      projects={projects}
-      onOpen={setSource}
-      actionCount={data?.inbox.length ?? 0}
+      actionCount={data ? data.inbox.length : null}
       documentCount={data?.counts.documents.value ?? null}
-      toolbar={
-        <div className="page-actions">
-          <button
-            className="outline-button quick-button"
-            onClick={quick.show}
-            disabled={!data || loading}
-            aria-keyshortcuts="Meta+K Control+K"
-          >
-            <Icon name="search" />
-            <span>快速切换</span>
-            <kbd>⌘K</kbd>
-          </button>
-          <button
-            className="outline-button refresh-button"
-            onClick={refreshSnapshot}
-            aria-disabled={loading}
-          >
-            <Icon name="refresh" />
-            {loading && data ? '刷新中' : '刷新'}
-          </button>
+      status={
+        <StatusCapsule
+          open={statusOpen}
+          onOpenChange={setStatusOpen}
+          snapshot={
+            data
+              ? {
+                  sourceLabel: data.source_label,
+                  generation: data.generation,
+                  freshness: data.freshness,
+                }
+              : null
+          }
+          refreshing={loading}
+          failed={Boolean(error)}
+          onVerify={refreshSnapshot}
+          onRefresh={refreshStatus}
+          health={health.status}
+          diagnostics={diagnostics}
+        />
+      }
+      command={<CommandEntry onOpen={quick.show} disabled={!data || loading} />}
+      tools={
+        <>
           {account}
           <FileOperationsAccess onChanged={refreshSnapshot} />
           {draftCount ? (
@@ -143,7 +149,7 @@ export function App({ account }: { account?: ReactNode }) {
               内存草稿 {draftCount}
             </button>
           ) : null}
-        </div>
+        </>
       }
     >
       {error ? (
@@ -162,84 +168,40 @@ export function App({ account }: { account?: ReactNode }) {
           正在读取工作台…
         </p>
       ) : null}
-      {data ? (
-        <FreshnessNotice
-          freshness={data.freshness}
+      {view === 'cockpit' && data ? (
+        <CockpitView
+          filters={filters}
+          actions={actions}
+          projects={filtered}
+          diagnostics={diagnostics.length}
+          onOpen={setSource}
+          onEnterProject={enterProject}
+          onViewProjects={() => navigate('projects')}
+          onShowDiagnostics={() => setStatusOpen(true)}
+        />
+      ) : null}
+      {view === 'projects' && data ? (
+        <ProjectsView
+          filters={filters}
+          projects={filtered}
+          allProjects={projects}
+          generation={data.generation}
           refreshing={loading}
-          failed={Boolean(error)}
+          onOpen={setSource}
           onRefresh={refreshSnapshot}
         />
       ) : null}
-      <div className={`view-layout view-${view}`}>
-        <section className="view-primary" aria-label={headings[view][0]}>
-          <header className="page-header">
-            <h1>{headings[view][0]}</h1>
-            <p>{headings[view][1]}</p>
-          </header>
-          <div className="view-content" key={view}>
-            {data ? (
-              <>
-                {view === 'overview' || view === 'inbox' ? (
-                  <Filters
-                    query={query}
-                    lifecycle={lifecycle}
-                    lifecycles={lifecycles}
-                    onQueryChange={setQuery}
-                    onLifecycleChange={setLifecycle}
-                    count={filtered.length}
-                  />
-                ) : null}
-                {view === 'overview' ? (
-                  <ProjectTable projects={filtered} onOpen={setSource} />
-                ) : null}
-                {view === 'inbox' ? (
-                  <Inbox actions={actions} onOpen={setSource} heading={false} />
-                ) : null}
-                {view === 'documents' ? (
-                  <Documents
-                    key={data.generation}
-                    projects={projects}
-                    generation={data.generation}
-                    onOpen={setSource}
-                    onRefresh={refreshSnapshot}
-                  />
-                ) : null}
-                {view === 'operations' ? (
-                  <ProjectOperations
-                    projects={projects}
-                    generation={data.generation}
-                    refreshing={loading}
-                    onOpen={setSource}
-                    onRefresh={refreshSnapshot}
-                  />
-                ) : null}
-              </>
-            ) : null}
-            {/* 本机健康属于"待你验收/拍板/重启"的事项，放在待我动作视图；
-                它不依赖工作台快照，快照读不出来时照样要能看见。 */}
-            {view === 'inbox' ? <HealthBoundary /> : null}
-            {/* 策略平面不依赖工作台快照：快照读不出来时也要能发布或吊销。 */}
-            {view === 'policy' ? <PolicyBoundary /> : null}
-            {view === 'board' ? <BoardBoundary projects={projects} /> : null}
-            {view === 'execution' ? (
-              <ExecutionBoundary projects={projects} />
-            ) : null}
-            {view !== 'overview' ? (
-              <Diagnostics messages={diagnostics} />
-            ) : null}
-          </div>
-        </section>
-        {view === 'overview' && data ? (
-          <aside className="overview-context" aria-label="项目上下文">
-            <Inbox
-              actions={actions.slice(0, 3)}
-              onOpen={setSource}
-              onViewAll={() => navigate('inbox')}
-            />
-            <Diagnostics messages={diagnostics} />
-          </aside>
-        ) : null}
-      </div>
+      {view === 'documents' && data ? (
+        <DocumentsView
+          projects={projects}
+          generation={data.generation}
+          onOpen={setSource}
+          onRefresh={refreshSnapshot}
+        />
+      ) : null}
+      {/* 协作与策略不依赖工作台快照：快照读不出来时也要能看黑板、发布或吊销。 */}
+      {view === 'collab' ? <CollabView projects={projects} /> : null}
+      {view === 'policy' ? <PolicyView /> : null}
       {source && data ? (
         <DocumentDialog
           key={`${source.path}:${data.generation}`}

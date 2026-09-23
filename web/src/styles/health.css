@@ -1,111 +1,104 @@
-/* 本机健康页。三态一律用同一套局部变量着色，绝不给"未知"用绿。 */
+/*
+ * 本机健康页：T-130 起放在顶栏状态浮层的「本机健康」一栏。三态不靠颜色单独表达——
+ * 状态字本身就写着正常／降级／未知；颜色只是加强：正常墨色实心，降级红色，未知次要色虚线。
+ * 绝不给"未知"用正常的颜色，也不再有绿色。只引用 tokens.css 的令牌，不写局部深色分支（T-062）。
+ */
 .health-panel {
-  --health-normal: var(--signal-ok);
-  --health-degraded: var(--signal-alert);
-  --health-unknown: var(--signal-neutral);
-  --health-accent: var(--health-unknown);
+  --health-accent: var(--ink-2);
+  --health-edge: dashed;
 
   margin: 0;
-  padding: 16px 20px;
-  border: 1px solid var(--border);
-  border-radius: 14px;
-  background: var(--surface-solid);
+  padding: 0;
 }
 .health-panel > p {
   margin: 0;
 }
 .health-normal {
-  --health-accent: var(--health-normal);
+  --health-accent: var(--ink);
+  --health-edge: solid;
 }
 .health-degraded {
-  --health-accent: var(--health-degraded);
+  --health-accent: var(--signal);
+  --health-edge: solid;
 }
 .health-unknown {
-  --health-accent: var(--health-unknown);
+  --health-accent: var(--ink-2);
+  --health-edge: dashed;
 }
 .health-overall {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
   gap: 12px;
-  font-size: 1rem;
-  font-weight: 600;
+  font-size: 15.5px;
+  font-weight: 700;
 }
 .health-overall strong {
   flex-shrink: 0;
-  padding: 2px 10px;
-  border: 1px solid var(--health-accent);
-  border-radius: 999px;
+  padding: 1px 8px;
+  border: 1.5px var(--health-edge) var(--health-accent);
+  border-radius: 0;
   color: var(--health-accent);
-  font-size: 0.75rem;
+  font-family: var(--font-mono, 'IBM Plex Mono', ui-monospace, monospace);
+  font-size: 12px;
+  font-weight: 600;
   line-height: 1.5;
+  letter-spacing: 0.04em;
 }
 .health-incomplete {
-  margin-top: 8px;
-  color: var(--muted);
-  font-size: 0.75rem;
+  margin-top: 6px;
+  color: var(--ink-2);
+  font-size: 12px;
   overflow-wrap: anywhere;
 }
 .health-sections {
-  list-style: none;
   display: grid;
-  gap: 10px;
-  margin: 14px 0 0;
+  margin: 10px 0 0;
   padding: 0;
+  list-style: none;
+  border-top: 1px solid var(--hairline);
 }
 .health-sections > li {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 2px 12px;
   min-width: 0;
-  padding: 10px 14px;
-  border: 1px solid var(--border);
-  border-left: 4px solid var(--health-accent);
-  border-radius: 12px;
-  background: var(--surface);
+  padding: 8px 0 8px 10px;
+  border-bottom: 1px solid var(--hairline);
+  border-left: 3px var(--health-edge) var(--health-accent);
 }
 .health-sections h3 {
   margin: 0;
   min-width: 0;
-  font-size: 0.875rem;
-  font-weight: 600;
+  font-size: 14px;
+  font-weight: 700;
   overflow-wrap: anywhere;
 }
 .health-sections .health-state {
-  margin: 0;
   justify-self: end;
+  margin: 0;
   color: var(--health-accent);
-  font-size: 0.75rem;
+  font-family: var(--font-mono, 'IBM Plex Mono', ui-monospace, monospace);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
   white-space: nowrap;
 }
 .health-sections .health-detail {
   grid-column: 1 / -1;
-  margin: 0;
   min-width: 0;
-  color: var(--muted);
-  font-size: 0.8125rem;
+  margin: 0;
+  color: var(--ink-2);
+  font-size: 13px;
   overflow-wrap: anywhere;
 }
 
 /* 窄屏（含 390×844）：标题与状态改为上下排，避免任何横向溢出。 */
 @media (max-width: 600px) {
-  .health-panel {
-    padding: 14px;
-  }
   .health-sections > li {
     grid-template-columns: minmax(0, 1fr);
   }
   .health-sections .health-state {
     justify-self: start;
-  }
-}
-
-/* 三态色来自 tokens.css 的 --signal-*：浅色、深色与高对比度三套值都在那里成对定义，
-   本页不自带任何颜色字面值，也不写局部的深色或高对比度配色分支（T-062 令牌纪律）。 */
-
-@media (prefers-contrast: more) {
-  .health-sections > li {
-    border-color: var(--border);
-    border-left-color: var(--health-accent);
   }
 }
