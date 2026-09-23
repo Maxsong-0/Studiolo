@@ -170,6 +170,9 @@ export function App({ account }: { account?: ReactNode }) {
       ) : null}
       {view === 'cockpit' && data ? (
         <CockpitView
+          workbench={data}
+          refreshing={loading}
+          onRefresh={refreshSnapshot}
           filters={filters}
           actions={actions}
           projects={filtered}

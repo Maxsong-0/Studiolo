@@ -2,7 +2,7 @@ import { useId } from 'react';
 import type { ReactNode } from 'react';
 import { Inbox } from '../components/Inbox';
 import { ProjectTable } from '../components/ProjectTable';
-import type { Action, OpenSource, Project } from '../types';
+import type { Action, OpenSource, Project, Workbench } from '../types';
 import { ViewHeader } from './ViewHeader';
 import '../styles/workbench.css';
 import '../styles/views.css';
@@ -24,6 +24,11 @@ export function CockpitView({
   onViewProjects,
   onShowDiagnostics,
 }: {
+  /** 整份工作台快照（新鲜度、计数、来源、代次）；B 轮驾驶舱的标题栏读数从这里取。 */
+  workbench: Workbench;
+  /** 快照正在刷新；标题栏据此显示读数是否可能过期。 */
+  refreshing: boolean;
+  onRefresh: () => void;
   filters: ReactNode;
   actions: Action[];
   projects: Project[];
