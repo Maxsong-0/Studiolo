@@ -1,6 +1,9 @@
 //! 固定表与有界投影，不允许调用者传递 SQL、目录或连接。
 
-use super::super::{SessionError, database::unavailable};
+use super::super::{
+    SessionError,
+    database::{required_row, unavailable},
+};
 use super::model::{Factor, Operation, Pending, Proof};
 use rusqlite::{Connection, OptionalExtension, params};
 
@@ -19,7 +22,7 @@ pub(in crate::session) fn next(db: &Connection) -> Result<i64, SessionError> {
         [],
         |r| r.get(0),
     )
-    .map_err(unavailable)
+    .map_err(required_row)
 }
 
 pub(in crate::session) fn reserve(db: &Connection) -> Result<i64, SessionError> {

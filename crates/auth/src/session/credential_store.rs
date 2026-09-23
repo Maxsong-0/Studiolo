@@ -1,6 +1,10 @@
 //! 持久签发序号、保留会话的种子摘要与迁移时冻结的旧凭证摘要集合。
 
-use super::{SessionError, SessionId, database::unavailable, retention, schema, secrets};
+use super::{
+    SessionError, SessionId,
+    database::{required_row, unavailable},
+    retention, schema, secrets,
+};
 use rusqlite::{Connection, params};
 use sha2::{Digest, Sha256};
 
@@ -41,7 +45,7 @@ pub(super) fn next_issuance(db: &Connection) -> Result<i64, SessionError> {
         [],
         |r| r.get(0),
     )
-    .map_err(unavailable)
+    .map_err(required_row)
 }
 
 /// 与 pending 行在同一事务写入；维护高水位之前的迟到签发不得重新进入数据库。
@@ -111,7 +115,7 @@ pub(super) fn validate(db: &Connection) -> Result<(), SessionError> {
             [],
             |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
         )
-        .map_err(unavailable)?;
+        .map_err(required_row)?;
     let (actual_count, actual_hash) = legacy_seal(db)?;
     if count != actual_count
         || !secrets::equal(&hash, &actual_hash)

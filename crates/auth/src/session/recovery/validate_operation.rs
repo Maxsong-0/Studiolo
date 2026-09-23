@@ -2,7 +2,7 @@
 
 use crate::session::{
     SessionError, SessionId,
-    database::unavailable,
+    database::{required_row, unavailable},
     recovery::model::{Kind, Operation, Proof},
     schema, secrets,
     totp::{
@@ -31,7 +31,7 @@ impl Bounds {
                 [],
                 |r| Ok((r.get(0)?, r.get(1)?)),
             )
-            .map_err(unavailable)?;
+            .map_err(required_row)?;
         Ok(Self {
             floor,
             epoch,

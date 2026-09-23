@@ -5,7 +5,7 @@ mod check;
 
 use crate::session::{
     SessionError,
-    database::unavailable,
+    database::required_row,
     schema,
     totp::{
         model::{Factor, Kind, Operation},
@@ -22,7 +22,7 @@ pub(super) fn all(db: &Connection) -> Result<(), SessionError> {
             [],
             |r| Ok((r.get(0)?, r.get(1)?)),
         )
-        .map_err(unavailable)?;
+        .map_err(required_row)?;
     let bounds = check::Bounds {
         version: schema::version(db)?,
         floor,
@@ -104,7 +104,7 @@ pub(super) fn all(db: &Connection) -> Result<(), SessionError> {
                     .ok_or(SessionError::CorruptStore)?],
                 |r| r.get(0),
             )
-            .map_err(unavailable)?;
+            .map_err(required_row)?;
         if stored != operation.encoded()? {
             return Err(SessionError::CorruptStore);
         }

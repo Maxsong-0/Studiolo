@@ -2,7 +2,7 @@
 
 use super::{
     SessionError,
-    database::{Migration, unavailable},
+    database::{Migration, required_row, unavailable},
     schema_v1, schema_v2,
 };
 use rusqlite::{Connection, params};
@@ -139,7 +139,7 @@ pub(super) fn store_id(db: &Connection) -> Result<String, SessionError> {
     db.query_row("SELECT store_id FROM auth_meta WHERE id=1", [], |r| {
         r.get(0)
     })
-    .map_err(unavailable)
+    .map_err(required_row)
 }
 
 fn validate_rows(db: &Connection, version: i64) -> Result<(), SessionError> {
@@ -204,7 +204,7 @@ pub(super) fn next_sequence(db: &Connection) -> Result<i64, SessionError> {
         .query_row("SELECT next_sequence FROM auth_meta WHERE id=1", [], |r| {
             r.get(0)
         })
-        .map_err(unavailable)?;
+        .map_err(required_row)?;
     let following = next.checked_add(1).ok_or(SessionError::Capacity)?;
     db.execute(
         "UPDATE auth_meta SET next_sequence=?1 WHERE id=1",

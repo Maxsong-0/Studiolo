@@ -1,7 +1,11 @@
 //! 静止恢复副本的有界快照、证明集合和原子撤权；不观察或重置安全时钟。
 
 use super::{RestoreInvalidation, audit};
-use crate::session::{SessionError, database::unavailable, recovery, retention, schema, totp};
+use crate::session::{
+    SessionError,
+    database::{required_row, unavailable},
+    recovery, retention, schema, totp,
+};
 use rusqlite::Connection;
 use sha2::{Digest, Sha256};
 use studiolo_audit_ledger::AuditEvent;
@@ -31,7 +35,7 @@ pub(super) fn capture(db: &Connection) -> Result<Snapshot, SessionError> {
             [],
             |row| Ok((row.get(0)?, row.get(1)?)),
         )
-        .map_err(unavailable)?;
+        .map_err(required_row)?;
     epoch.checked_add(1).ok_or(SessionError::Capacity)?;
     next.checked_add(2).ok_or(SessionError::Capacity)?;
     let count: i64 = db
@@ -126,7 +130,7 @@ pub(super) fn commit(
         .query_row("SELECT config FROM auth_meta WHERE id=1", [], |row| {
             row.get(0)
         })
-        .map_err(unavailable)?;
+        .map_err(required_row)?;
     schema::validate(db, &config)?;
     Ok(report)
 }

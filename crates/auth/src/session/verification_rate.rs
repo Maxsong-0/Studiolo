@@ -1,6 +1,10 @@
 //! 验证预算共用固定窗口算法；封闭域只选择固定表和哈希域，不接受任意 SQL。
 
-use crate::session::{SessionError, database::unavailable, secrets};
+use crate::session::{
+    SessionError,
+    database::{required_row, unavailable},
+    secrets,
+};
 use rusqlite::{Connection, OptionalExtension, params};
 use sha2::{Digest, Sha256};
 use std::net::IpAddr;
@@ -44,7 +48,7 @@ pub(super) fn reserve(
         .query_row("SELECT clock_floor FROM auth_meta WHERE id=1", [], |r| {
             r.get(0)
         })
-        .map_err(unavailable)?;
+        .map_err(required_row)?;
     if now < 0 || now < floor {
         return Ok(Err(SessionError::ClockRollback));
     }
