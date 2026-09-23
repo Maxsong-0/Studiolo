@@ -376,6 +376,16 @@ impl AgentSession {
             return Ok(None);
         };
         let unavailable = |_| McpError::internal_error("策略库不可用，本次拒绝供给", None);
+        // 规则与 skills 同属一个读事务；它的 effective 哈希还须等于本次授权复核时的哈希，
+        // 否则人侧恰在两次读取之间发布了新版本，能力集与条目会各属一版，失败关闭让调用方重试。
+        let current = store.rules_and_skills().map_err(unavailable)?;
+        if current.effective_hash != policy.effective_hash {
+            return Err(McpError::internal_error(
+                "策略在本次调用途中发布了新版本，本次拒绝供给，请重试",
+                None,
+            ));
+        }
+        let studiolo_policy::CurrentEntries { rules, skills } = current.value;
         Ok(Some(PolicySignpost {
             board_write: !self.http && self.state.board.is_some() && policy.set.write.board,
             effective_hash: policy.effective_hash.clone(),
@@ -389,9 +399,7 @@ impl AgentSession {
                 .iter()
                 .map(|binding| (binding.when.clone(), binding.must_use.clone()))
                 .collect(),
-            rules: store
-                .rules()
-                .map_err(unavailable)?
+            rules: rules
                 .into_iter()
                 .map(|record| PolicyRule {
                     subject: record.meta.subject,
@@ -399,12 +407,7 @@ impl AgentSession {
                     body: record.body.unwrap_or_default(),
                 })
                 .collect(),
-            skills: store
-                .skills()
-                .map_err(unavailable)?
-                .into_iter()
-                .map(|(skill, _)| skill.name)
-                .collect(),
+            skills: skills.into_iter().map(|(skill, _)| skill.name).collect(),
         }))
     }
 

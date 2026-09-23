@@ -22,7 +22,10 @@ mod store;
 mod validate;
 pub mod view;
 
-pub use agent::{Authorization, CapabilityGrant, Denial, PolicyAgentStore, ProposalInput};
+pub use agent::{
+    AtEffective, Authorization, CapabilityGrant, CurrentEntries, Denial, PolicyAgentStore,
+    ProposalInput,
+};
 pub use diff::{Diff, DiffEntry, DiffOp};
 pub use error::PolicyError;
 pub use model::{

@@ -93,6 +93,9 @@
   与 skills 计数。仍受 ≤2000 token 硬预算。
 - `policy_read{kind=rules|skills[,subject]}`／`GET /read/policy`：读 effective 规则母本或 skill；每次先追加 `content.read`
   （路径 `policy://…`，revision `v<n>`，tool `policy_read`）并进四维读取索引。
+  首行 `# 策略版本 <12 位>` 与清单／正文取自同一个 SQLite 读事务（`PolicyAgentStore::rules()`／`skills()` 返回
+  `AtEffective`），人侧恰在读取途中发布也不会让版本行与条目各属一版（T-134）。路牌第 3／5／6 项同理用
+  `rules_and_skills()` 一次读出，且其哈希须等于本次授权复核时的哈希，不等即失败关闭让调用方重试。
 - **skill 硬绑定与索引分家**：硬绑定＝能力集 `hard_bound_skills[{trigger, must_use}]`，策略强制，进路牌第 5 项并标「（策略强制）」；
   索引＝`policy_read{kind=skills}` 不带 `subject` 时返回全部已发布 skill 的「名称／版本／摘要／触发词」清单，只是候选、由 AI 自选，
   带 `subject` 才取正文。**Studiolo 不做语义路由**：不替 AI 判断该用哪个 skill，只保证硬绑定那几条一定出现在路牌里。
@@ -110,11 +113,13 @@
 | `DesiredNotActivatable` / `NotRevoked` / `AlreadyBootstrapped` | 状态不允许 | 409 |
 | `TooManyProposals` | 接入方提案超界 | MCP 错误「待处理提案已达上限」 |
 | `UnsafeStorage` / `MissingStore` / `CorruptStore` / `StoreUnavailable` | 私有库 | 503；启动期直接拒绝启动 |
+| （路牌）授权复核与条目读取之间 effective 变了 | 人侧恰在一次调用途中发布 | MCP 错误「策略在本次调用途中发布了新版本，本次拒绝供给，请重试」 |
 
 ## 7. 契约测试清单
 
 - `crates/policy/tests`：校验／diff／扩大项、CAS 发布、恒定约束不可放宽、硬绑定阻止撤销、规则约束行删除标红、回滚、
-  bootstrap 首版限制、三级吊销与恢复方向、接入方提案有界且永不生效、原文原样保留、多表／错头即损坏、视图求交、审计事件形状。
+  bootstrap 首版限制、三级吊销与恢复方向、接入方提案有界且永不生效、原文原样保留、多表／错头即损坏、视图求交、审计事件形状；
+  `agent_read_snapshot_contract.rs`：接入方读取与策略版本同一读事务，并发发布 40 版下无一撕裂（改回两个事务即红）。
 - `crates/agent-server/tests/policy_contract.rs`：零权限握手、供给视图求交、路牌 3／5／6 项、`policy_read` 审计与索引、
   `propose_desired` 永不生效与能力否决、三级吊销即刻生效与恢复、HTTP 外壳同一授权、M3 兼容模式。
 - `crates/local-server/tests/policy_http_contract.rs`：真实 Unix 入口＋TOTP：发布挡在 L3 后（用例 36 人侧）、Intent/Outcome
