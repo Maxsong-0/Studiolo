@@ -40,7 +40,7 @@ function overflowCommand(
       ...base,
       id: 'more:project',
       label: `全部 ${total} 个项目`,
-      target: () => ({ view: 'projects' }),
+      run: (ctx) => ctx.viewAllProjects(),
     };
   if (family === 'source')
     return {
@@ -48,7 +48,7 @@ function overflowCommand(
       id: 'more:source',
       label: `全部 ${total} 个项目来源`,
       hint: `${shown}；项目视图逐个列出来源`,
-      target: () => ({ view: 'projects' }),
+      run: (ctx) => ctx.viewAllProjects(),
     };
   return {
     ...base,

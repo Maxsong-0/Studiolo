@@ -36,33 +36,6 @@
   text-underline-offset: 4px;
 }
 
-/* 数据提示：只在顶栏状态浮层里逐条列出。 */
-.data-notes > p,
-.data-notes-empty {
-  margin: 10px 0 0;
-  color: var(--ink-2);
-  font-size: 12px;
-  line-height: 1.6;
-}
-.data-notes-empty {
-  margin: 0;
-}
-.diagnostics {
-  margin: 0;
-  padding: 0;
-  list-style: none;
-  font-size: 13px;
-  line-height: 1.6;
-  overflow-wrap: anywhere;
-}
-.diagnostics li {
-  padding: 6px 0;
-  border-bottom: 1px solid var(--hairline);
-}
-.diagnostics li:first-child {
-  padding-top: 0;
-}
-
 .document-title {
   display: block;
   font-size: var(--type-item);

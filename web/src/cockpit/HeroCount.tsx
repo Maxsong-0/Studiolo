@@ -42,7 +42,7 @@ export function HeroCount({
     const parts: ReactNode[] = [];
     if (oldestWaitMs !== null)
       parts.push(<Waited key="oldest" ms={oldestWaitMs} />);
-    if (marked > 0) parts.push(`${marked} 件标在右图`);
+    if (marked > 0) parts.push(`${marked} 件标在拓扑图上`);
     if (truncated) parts.push('黑板汇总已截断，可能还有更多');
     note = parts.length
       ? parts.flatMap((part, index) => (index === 0 ? [part] : ['，', part]))

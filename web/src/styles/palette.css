@@ -194,9 +194,6 @@
   align-items: baseline;
   gap: 4px 12px;
 }
-.palette-note-error .ui-status {
-  color: var(--signal-text);
-}
 .palette-note-action {
   min-height: 28px;
   padding: 0 var(--space-1);

@@ -96,10 +96,12 @@
   flex-direction: column;
   gap: 10px;
   min-width: 0;
+  /* 巨号按格宽收缩：760–1279px 时 3 列格只有 130–270px，196px 的两位数（约 1.2em 宽）会越过分区线 */
+  container-type: inline-size;
 }
 .ui-big-number__value {
   margin-left: -0.04em;
-  font-size: var(--type-giant);
+  font-size: min(var(--type-giant), 80cqi);
   line-height: 0.78;
   font-weight: 900;
   letter-spacing: -0.07em;

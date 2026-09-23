@@ -56,10 +56,6 @@
   font-weight: 500;
   color: var(--ink-2);
 }
-/* 状态方块的红字都是小字：换成 --signal-text（方块本身仍是 --signal） */
-.policy .ui-status[data-state='alert'] {
-  color: var(--signal-text);
-}
 .policy-actions {
   display: flex;
   flex-wrap: wrap;

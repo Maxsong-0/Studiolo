@@ -34,6 +34,7 @@ function effects(command: Command, context: CommandContext) {
   const calls: Record<string, unknown[][]> = {};
   for (const name of [
     'goTo',
+    'viewAllProjects',
     'refreshSnapshot',
     'openSource',
     'openDrafts',
@@ -349,9 +350,13 @@ describe('排列：分组、匹配与截断', () => {
     const all = byId(rows, 'more:project');
     expect(all.label).toBe('全部 10 个项目');
     expect(all.hint).toBe('这里列前 8 条');
+    // 「全部」行清掉项目视图的筛选再打开，总数与行数对得上（T-117）。
     expect(effects(all, paletteContext().context)).toEqual({
-      goTo: [[{ view: 'projects' }]],
+      viewAllProjects: [[]],
     });
+    expect(
+      effects(byId(rows, 'more:source'), paletteContext().context),
+    ).toEqual({ viewAllProjects: [[]] });
     const sourceRows = rows.filter((command) =>
       command.id.startsWith('source:'),
     );

@@ -40,6 +40,8 @@ export interface CommandContext {
   /** 文件操作入口：顶栏「最近删除」在不在，以及文件操作是否可用（可用才能删文件）。 */
   fileOperations: { deletable: boolean } | null;
   goTo(target: CommandLocation): void;
+  /** 打开项目视图并先清掉上次留下的筛选：「全部 N 个项目」写的总数与打开后看到的行数才对得上（T-117）。 */
+  viewAllProjects(): void;
   refreshSnapshot(): void;
   openSource(source: SourceLocation): void;
   openDrafts(): void;

@@ -134,6 +134,35 @@ describe('动作面板接进外壳', () => {
     expect(location().view).toBe('projects');
   });
 
+  it('「全部 N 个项目」先清掉项目视图的筛选，打开后行数等于总数（T-117）', async () => {
+    const projects = manyProjects(10);
+    route = (path) =>
+      path.startsWith('/api/workbench')
+        ? jsonResponse({ ...fixture, projects })
+        : undefined;
+    const user = userEvent.setup();
+    render(<App />);
+    await screen.findByRole('table');
+    await user.click(screen.getByRole('button', { name: '项目' }));
+    await user.type(
+      screen.getByRole('searchbox', { name: '筛选项目' }),
+      '项目09',
+    );
+    expect(screen.getByText('1 个项目')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: /^动作面板/ }));
+    const dialog = screen.getByRole('dialog', { name: '动作面板' });
+    const group = within(within(dialog).getByRole('listbox')).getByRole(
+      'group',
+      { name: '跳转' },
+    );
+    await user.click(
+      within(group).getByRole('option', { name: '全部 10 个项目' }),
+    );
+    expect(location().view).toBe('projects');
+    expect(screen.getByRole('searchbox', { name: '筛选项目' })).toHaveValue('');
+    expect(screen.getByText('10 个项目')).toBeInTheDocument();
+  });
+
   it('打开状态详情：展开顶栏胶囊并把焦点交给浮层', async () => {
     const { user, input } = await openPalette();
     await user.type(input, '状态详情');

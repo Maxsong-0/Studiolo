@@ -67,135 +67,6 @@
   background: var(--paper);
 }
 
-/*
- * 兼容别名（T-130 迁移期，全部视图迁移后由主进程删除）
- * 旧视图的样式仍引用下列旧令牌名，这里一律改指新令牌，让全站立即换成新配色。
- * 别名只引用新令牌，深色值随新令牌自动切换，深色块里不再重复。
- * 旧的 --space-1…7 与新间距阶梯同名，由上面的新令牌直接承接。
- */
-:root {
-  /* 面：页面与格子底一律 --paper，行、输入框、悬停一律 --paper-raised；玻璃与彩光改为纯色 */
-  --body-base: var(--paper);
-  --body-tint-a: var(--paper);
-  --body-tint-b: var(--paper);
-  --background: var(--paper);
-  --surface: var(--paper);
-  --surface-solid: var(--paper-raised);
-  --surface-sunken: var(--paper-raised);
-  --surface-header: var(--paper-raised);
-  --surface-context: var(--paper);
-  --hover: var(--paper-raised);
-  --row-hover: var(--paper-raised);
-  --nav-hover: var(--paper-raised);
-  --sidebar-item-hover: var(--paper-raised);
-  --button-face: var(--paper);
-  --sidebar: var(--paper);
-  --sidebar-opaque: var(--paper);
-  --toolbar: var(--paper);
-  --toolbar-mobile: var(--paper);
-  --navbar-mobile: var(--paper);
-  --well: var(--paper-raised);
-
-  /* 遮罩：不再半透明压暗，改为纯纸色衬底，模态内容单独立在纸上 */
-  --scrim: var(--paper);
-  --scrim-strong: var(--paper);
-  --scrim-soft: var(--paper);
-
-  /* 文字 */
-  --text: var(--ink);
-  --text-soft: var(--ink-2);
-  --muted: var(--ink-2);
-  --muted-contrast: var(--ink);
-  --muted-soft: var(--ink-3);
-  --on-accent: var(--on-ink);
-
-  /* 线与高光：普通边框走细线，强边框与悬停边框走墨色，高光取消 */
-  --border: var(--hairline);
-  --border-contrast: var(--ink);
-  --border-strong: var(--ink);
-  --border-hover: var(--ink);
-  --glass-border: var(--hairline);
-  --highlight-inset: transparent;
-  --highlight-inset-soft: transparent;
-
-  /* 强调：选中＝黑底反白，强调底＝--paper-raised；渐变两端同为墨色，彩光取消 */
-  --accent: var(--ink);
-  --accent-soft: var(--paper-raised);
-  --accent-gradient-start: var(--ink);
-  --accent-gradient-end: var(--ink);
-  --accent-border: var(--ink);
-  --accent-ring: var(--ink);
-  --accent-focus-border: var(--ink);
-  --accent-glow: transparent;
-  --on-accent-well: transparent;
-
-  /* 语义状态：错误与降级走唯一的红；正常走墨色，未知走次要墨色，非活跃标记走休眠灰；绝不用绿 */
-  --status-ok: var(--ink);
-  --status-warn: var(--signal);
-  --status-unknown: var(--ink-2);
-  --status-mark: var(--ink-3);
-  --error: var(--signal);
-  --error-soft: var(--signal-wash);
-  --error-border: var(--signal);
-
-  /* 三态信号（健康页、策略平面）：扩大项与降级走红，通过走墨色，收窄与未知走中性色 */
-  --signal-ok: var(--ink);
-  --signal-ok-contrast: var(--ink);
-  --signal-alert: var(--signal);
-  --signal-alert-contrast: var(--signal);
-  --signal-neutral: var(--ink-2);
-  --signal-neutral-contrast: var(--ink);
-
-  /* 文本比对高亮：黑底反白，不随高对比度偏好里被加深的细线变色 */
-  --mark: var(--ink);
-  --mark-text: var(--on-ink);
-
-  /* 导航符号色板：一律单色 */
-  --symbol-default: var(--ink-2);
-  --symbol-default-tint: var(--paper-raised);
-  --symbol-inbox: var(--ink-2);
-  --symbol-inbox-tint: var(--paper-raised);
-  --symbol-operations: var(--ink-2);
-  --symbol-operations-tint: var(--paper-raised);
-  --symbol-documents: var(--ink-2);
-  --symbol-documents-tint: var(--paper-raised);
-  --symbol-on-accent-tint: transparent;
-  --symbol-on-accent-inset: transparent;
-  --symbol-inset: transparent;
-  --action-decision: var(--ink-2);
-  --action-restart: var(--ink-2);
-
-  /* 文件类型色板：一律单色 */
-  --file-default: var(--ink-2);
-  --file-default-tint: var(--paper-raised);
-  --file-book: var(--ink-2);
-  --file-book-tint: var(--paper-raised);
-  --file-image: var(--ink-2);
-  --file-image-tint: var(--paper-raised);
-  --file-table: var(--ink-2);
-  --file-table-tint: var(--paper-raised);
-  --file-canvas: var(--ink-2);
-  --file-canvas-tint: var(--paper-raised);
-  --file-code: var(--ink-2);
-  --file-code-tint: var(--paper-raised);
-
-  /*
-   * 阴影：一律取消。写成零尺寸透明阴影而不是 none：旧样式里有
-   * 「var(--shadow-x), inset 0 1px 0 …」这种逗号列表，none 放进列表整条声明会失效。
-   */
-  --shadow: 0 0 0 transparent;
-  --shadow-dialog: 0 0 0 transparent;
-  --shadow-toolbar: 0 0 0 transparent;
-  --shadow-navbar: 0 0 0 transparent;
-  --shadow-panel: 0 0 0 transparent;
-  --shadow-node: 0 0 0 transparent;
-  --shadow-raised: 0 0 0 transparent;
-  --shadow-control: 0 0 0 transparent;
-  --shadow-button: 0 0 0 transparent;
-  --shadow-button-hover: 0 0 0 transparent;
-  --shadow-nav-active: 0 0 0 transparent;
-}
-
 @media (prefers-color-scheme: dark) {
   :root {
     --paper: #121211;
@@ -294,9 +165,7 @@ a {
 .skip-link:focus {
   top: 16px;
 }
-.text-button,
-.source-value,
-.project-name {
+.text-button {
   background: none;
   border: 0;
   padding: 0;
@@ -314,12 +183,6 @@ a {
 }
 .text-button:hover {
   text-decoration-thickness: 2px;
-}
-.source-value:hover,
-.project-name:hover {
-  color: var(--ink);
-  text-decoration: underline;
-  text-underline-offset: 4px;
 }
 .outline-button {
   display: inline-flex;

@@ -33,13 +33,6 @@
   font-weight: 600;
   letter-spacing: 0.04em;
 }
-.health-overall-state .ui-status[data-state='alert'] {
-  color: var(--signal-text);
-}
-/* 未知是休眠虚线框，字仍要读得清（正文 ≥ 4.5:1，--ink-3 只有 3.07:1） */
-.health-overall-state .ui-status[data-state='dormant'] {
-  color: var(--ink-2);
-}
 .health-panel .health-loading {
   font-family: var(--font-mono);
   font-size: 12px;

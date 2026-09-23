@@ -8,6 +8,7 @@ import { project } from '../fixtures';
 export function paletteContext(overrides: Partial<CommandContext> = {}) {
   const actions = {
     goTo: vi.fn<CommandContext['goTo']>(),
+    viewAllProjects: vi.fn<CommandContext['viewAllProjects']>(),
     refreshSnapshot: vi.fn<CommandContext['refreshSnapshot']>(),
     openSource: vi.fn<CommandContext['openSource']>(),
     openDrafts: vi.fn<CommandContext['openDrafts']>(),

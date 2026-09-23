@@ -117,7 +117,7 @@ describe('驾驶舱：待我动作与拓扑联动', () => {
       'true',
     );
     expect(within(hero()).getByText('8')).toHaveClass('sr-only');
-    expect(heroNote()).toHaveTextContent('最久不到 1 天，3 件标在右图');
+    expect(heroNote()).toHaveTextContent('最久不到 1 天，3 件标在拓扑图上');
   });
 
   it('交给拓扑缩略的标记只来自黑板条目，编号与待我动作一致；缩略图至多 6 条', async () => {

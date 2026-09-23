@@ -33,14 +33,6 @@
   line-height: 1.4;
   font-weight: 700;
 }
-/* 15.5px 粗体仍不到大字门槛：红字取 --signal-text 保住 4.5:1，方块照旧是 --signal。 */
-.freshness-state .ui-status[data-state='alert'] {
-  color: var(--signal-text);
-}
-/* 没有新鲜度证据是休眠虚线框，字仍要读得清（正文 ≥ 4.5:1，--ink-3 只有 3.07:1） */
-.freshness-state .ui-status[data-state='dormant'] {
-  color: var(--ink-2);
-}
 .freshness-notice .freshness-description {
   font-size: var(--type-body);
   line-height: 1.6;

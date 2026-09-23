@@ -121,6 +121,10 @@ export function App({ account }: { account?: ReactNode }) {
       goTo(target);
       window.scrollTo({ top: 0, left: 0, behavior: 'instant' });
     },
+    viewAllProjects: () => {
+      viewAllProjects();
+      window.scrollTo({ top: 0, left: 0, behavior: 'instant' });
+    },
     refreshSnapshot,
     openSource: setSource,
     openDrafts: () => setDraftsOpen(true),
