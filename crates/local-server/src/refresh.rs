@@ -12,7 +12,10 @@
 //! 「跑得久」和「已经死了」，绝不能拿它当超时用。收尸放在独立任务里而不是请求
 //! future 里，是因为发起请求的那一方随时可能被取消，而在途派生必须有人收尾。
 
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::{
+    io::Write,
+    sync::{Arc, Mutex, MutexGuard},
+};
 
 use axum::http::StatusCode;
 use studiolo_vault_broker::ReadOnlyVault;
@@ -21,7 +24,11 @@ use tokio::sync::Notify;
 
 use crate::{ApiError, AppState, LocalError, Source, ViewStore, load};
 
-/// 闸门只携带静态理由；真实原因与状态码留在这里，和失败位在同一把锁下更新。
+/// 派生失败时答复给客户端的固定说明。底层错误可能带库内相对路径与英文诊断，
+/// 只写服务端日志（标准错误），不进 HTTP 正文。
+pub(crate) const REFRESH_FAILED: &str = "刷新派生失败，请查看服务端日志。";
+
+/// 闸门只携带静态理由；对外答复与状态码留在这里，和失败位在同一把锁下更新。
 struct Failure {
     status: StatusCode,
     message: String,
@@ -117,7 +124,7 @@ impl RefreshCoalescer {
         let ignored = shared.gate.stats().settles_ignored;
         let failure = outcome.err().map(|error| Failure {
             status: StatusCode::UNPROCESSABLE_ENTITY,
-            message: error.to_string(),
+            message: public_message(&error),
         });
         let verdict = if failure.is_some() {
             Err("刷新派生失败")
@@ -159,6 +166,26 @@ impl RefreshCoalescer {
     }
 }
 
+/// 对外答复：固定句子；副本扫描不完整时只追加诊断条数，绝不带路径或底层英文原因。
+fn public_message(error: &LocalError) -> String {
+    match error {
+        LocalError::Incomplete { total, .. } => {
+            format!("{REFRESH_FAILED}副本扫描共有 {total} 条诊断。")
+        }
+        _ => REFRESH_FAILED.to_owned(),
+    }
+}
+
+/// 完整原因只进服务端日志；诊断已在派生处收成有界摘录，这里再转义控制字符，
+/// 免得库内文件名伪造日志行。写日志失败不改变答复。
+fn log_failure(error: &LocalError) {
+    let _ = writeln!(
+        std::io::stderr(),
+        "刷新派生失败：{}",
+        error.to_string().escape_debug()
+    );
+}
+
 pub(crate) async fn run(state: &AppState) -> Result<(), ApiError> {
     match &state.source {
         Source::Writer(workbench) => workbench
@@ -197,6 +224,10 @@ fn start(state: &AppState, vault: &Arc<ReadOnlyVault>, run: RefreshRun) {
         #[cfg(test)]
         probe.enter();
         let outcome = derive(&vault, &view);
+        if let Err(error) = &outcome {
+            // 完整原因在阻塞线程上写服务端日志；闸门自身仍不做 I/O，答复只给固定说明。
+            log_failure(error);
+        }
         // 派生自己结算：HTTP 请求被取消也不会留下无人结算的在途派生。
         runner.settle(run, outcome);
     });

@@ -4,8 +4,9 @@ use std::sync::Arc;
 
 use axum::{
     Extension, Json,
-    extract::{Query, State},
+    extract::{Query, State, rejection::QueryRejection},
     http::StatusCode,
+    response::{IntoResponse, Response},
 };
 use serde::{Deserialize, Serialize};
 use studiolo_workbench::{DirectoryDrift, ProjectArchitecture, ProjectOperations};
@@ -37,7 +38,20 @@ pub(crate) struct OperationResponse {
 pub(crate) async fn get(
     State(state): State<AppState>,
     repository: Option<Extension<Arc<ProjectRepository>>>,
-    Query(query): Query<OperationQuery>,
+    query: Result<Query<OperationQuery>, QueryRejection>,
+) -> Response {
+    let Ok(Query(query)) = query else {
+        return crate::invalid_query("invalid_operations_query");
+    };
+    operations_at(state, repository, query)
+        .await
+        .into_response()
+}
+
+async fn operations_at(
+    state: AppState,
+    repository: Option<Extension<Arc<ProjectRepository>>>,
+    query: OperationQuery,
 ) -> Result<Json<OperationResponse>, ApiError> {
     let generation = queries::at_generation(&state, query.generation)?;
     let session_mode = state.sessions.is_some();

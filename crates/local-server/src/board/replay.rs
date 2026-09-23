@@ -2,7 +2,7 @@
 use super::BoardPlane;
 use axum::{
     Extension, Json,
-    extract::Query,
+    extract::{Query, rejection::QueryRejection},
     http::StatusCode,
     response::{IntoResponse, Response},
 };
@@ -19,8 +19,12 @@ pub(super) struct ReplayQuery {
 }
 pub(super) async fn replay(
     plane: Option<Extension<Arc<BoardPlane>>>,
-    Query(query): Query<ReplayQuery>,
+    query: Result<Query<ReplayQuery>, QueryRejection>,
 ) -> Response {
+    // 查询串拒绝仍先于平面检查，状态码与原提取器一致，只把正文换成固定中文 JSON。
+    let Ok(Query(query)) = query else {
+        return crate::invalid_query("invalid_replay_query");
+    };
     let Some(Extension(plane)) = plane else {
         return StatusCode::NOT_FOUND.into_response();
     };

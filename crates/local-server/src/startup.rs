@@ -4,7 +4,9 @@ mod canonical_input;
 mod error;
 mod factor_input;
 mod health_input;
+mod plane_input;
 mod repository_input;
+mod router_input;
 mod runner_input;
 mod serving;
 
@@ -176,7 +178,8 @@ where
                 writer_roots,
             )
         } else {
-            (None, None, options.access, None, None)
+            // 复制而非移走：后面的可选平面装配还要整体借用 options。
+            (None, None, options.access.clone(), None, None)
         };
     let writer = writer_roots
         .map(canonical_input::Inputs::open)
@@ -208,87 +211,28 @@ where
         (Some(prepared.runtime), Some(prepared.ingress))
     });
     let mut workbench = None;
-    let (app, mode) = if let Some(config) = access_config {
+    let access = if let Some(config) = access_config {
         let access = connect(config).await.map_err(|_| StartupError::Access)?;
         if let Some(writer) = writer {
             workbench = Some(writer.prepare(content_audit.clone()).await?);
         }
-        if let Some(sessions) = sessions {
-            if let Some(workbench) = &workbench {
-                (
-                    studiolo_local_server::router_with_canonical_writer(
-                        Arc::clone(workbench),
-                        assets,
-                        options.label,
-                        options.port,
-                        access,
-                        sessions,
-                        factors,
-                    ),
-                    "Access及应用会话；canonical完整监视只读",
-                )
-            } else if let Some(factors) = factors {
-                (
-                    studiolo_local_server::router_with_factors(
-                        (vault, canonical.as_ref().map(Arc::clone)),
-                        assets,
-                        options.label,
-                        access,
-                        sessions,
-                        factors,
-                    ),
-                    "Access、应用会话及二次认证；可信Unix入口",
-                )
-            } else if let Some(canonical) = &canonical {
-                (
-                    studiolo_local_server::router_with_canonical_sessions(
-                        (vault, Arc::clone(canonical)),
-                        assets,
-                        options.label,
-                        options.port,
-                        access,
-                        sessions,
-                    ),
-                    "Access及已登记应用会话；canonical只读",
-                )
-            } else {
-                (
-                    studiolo_local_server::router_with_sessions(
-                        vault,
-                        assets,
-                        options.label,
-                        options.port,
-                        access,
-                        sessions,
-                    ),
-                    "Access及已登记应用会话；只读",
-                )
-            }
-        } else {
-            (
-                studiolo_local_server::router_with_access(
-                    vault,
-                    assets,
-                    options.label,
-                    options.port,
-                    access,
-                ),
-                "公共示例入口已启用Access鉴权；只读",
-            )
-        }
+        Some(access)
     } else {
-        (
-            studiolo_local_server::router(vault, assets, options.label, options.port),
-            "本机只读",
-        )
+        None
     };
-    let app = match app {
-        Ok(app) => app,
-        Err(_) => {
-            canonical_input::shutdown(workbench.as_ref()).await?;
-            return Err(StartupError::Router);
-        }
-    };
+    // 装配失败时 compose 先关停写者，再带着不含秘密的原因类别返回。
+    let (app, mode) = router_input::compose(router_input::Inputs {
+        vault,
+        assets,
+        label: options.label.clone(),
+        port: options.port,
+        access,
+        sessions,
+        factors,
+        canonical: canonical.clone(),
+        workbench: workbench.clone(),
+    })
+    .await?;
     let app = if let Some(repository) = &repository {
         studiolo_local_server::with_project_repository(app, Arc::clone(repository))
     } else {
@@ -297,97 +241,23 @@ where
     // 健康页的路由已在 router 装配期挂好（且在鉴权那一层之内）；这里只把证据来源
     // 装上去。不装则健康页一律回 404，因此这一行是"健康页可用"的唯一开关。
     let app = studiolo_local_server::health::with_health_evidence(app, health_input::source());
-    // 策略平面同一形态：会话模式下显式给了 --policy-data 才打开主人发布者句柄并装上；
-    // 事件进人侧权威账本。缺这一步策略路由一律回 404。
-    let policy_preparation = match (&options.policy_data, &content_audit) {
-        (Some(directory), Some(ledger)) => studiolo_policy::PolicyStore::open(directory)
-            .map_err(|_| StartupError::Configuration)
-            .map(|store| {
-                studiolo_local_server::with_policy_plane(
-                    app,
-                    Arc::new(studiolo_local_server::PolicyPlane::new(
-                        store,
-                        Arc::clone(ledger),
-                    )),
-                )
-            }),
-        (Some(_), None) => Err(StartupError::Configuration),
-        (None, _) => Ok(app),
-    };
-    let app = match policy_preparation {
-        Ok(app) => app,
-        Err(error) => {
-            canonical_input::shutdown(workbench.as_ref()).await?;
-            return Err(error);
-        }
-    };
-    let board_preparation = (|| -> Result<_, StartupError> {
-        match (
-            &options.board,
-            &workbench,
-            &content_audit,
-            &options.policy_data,
-        ) {
-            (Some(board), Some(writer), Some(audit), Some(policy)) => {
-                let mut isolated = vec![
-                    options.vault.as_path(),
-                    options.assets.as_path(),
-                    board.agent_data.as_path(),
-                    policy.as_path(),
-                    options
-                        .writer_data
-                        .as_ref()
-                        .ok_or(StartupError::Configuration)?
-                        .as_path(),
-                ];
-                isolated.extend(board_protected.iter().map(|p| p.as_path()));
-                let plane = studiolo_local_server::board::BoardPlane::open_with_runner(
-                    writer.clone(),
-                    &board.data,
-                    &board.agent_data,
-                    policy,
-                    &isolated,
-                    audit.clone(),
-                    runner_config.as_ref(),
-                )
-                .map_err(|_| StartupError::Configuration)?;
-                isolated.push(board.data.as_path());
-                let ingress = PreparedUnixIngress::prepare(&board.socket, &isolated)
-                    .map_err(|_| StartupError::Ingress)?;
-                Ok((Some(ingress), Some(plane)))
-            }
-            (None, _, _, _) => Ok((None, None)),
-            _ => Err(StartupError::Configuration),
-        }
-    })();
-    let (board_ingress, board_plane) = match board_preparation {
-        Ok(prepared) => prepared,
-        Err(error) => {
-            canonical_input::shutdown(workbench.as_ref()).await?;
-            return Err(error);
-        }
-    };
+    let policy = plane_input::policy(app, &options, content_audit.as_ref());
+    let app = or_shutdown(policy, workbench.as_ref()).await?;
+    let board = plane_input::board(
+        &options,
+        workbench.as_ref(),
+        content_audit.as_ref(),
+        &board_protected,
+        runner_config.as_ref(),
+    );
+    let (board_ingress, board_plane) = or_shutdown(board, workbench.as_ref()).await?;
     let app = if let Some(plane) = &board_plane {
         studiolo_local_server::board::with_board_plane(app, plane.clone())
     } else {
         app
     };
-    let runner_plane = match (&board_plane, runner_config) {
-        (Some(board), Some(config)) => {
-            match studiolo_local_server::board::RunnerPlane::open(board.clone(), config) {
-                Ok(plane) => Some(plane),
-                Err(_) => {
-                    canonical_input::shutdown(workbench.as_ref()).await?;
-                    return Err(StartupError::Configuration);
-                }
-            }
-        }
-        (_, None) => None,
-        _ => {
-            canonical_input::shutdown(workbench.as_ref()).await?;
-            return Err(StartupError::Configuration);
-        }
-    };
+    let runner = plane_input::runner(board_plane.as_ref(), runner_config);
+    let runner_plane = or_shutdown(runner, workbench.as_ref()).await?;
     let app = if let Some(runner) = &runner_plane {
         app.layer(axum::Extension(runner.clone()))
     } else {
@@ -411,6 +281,17 @@ where
         return Err(error);
     }
     Ok(prepared)
+}
+
+/// 写者就绪之后的装配步骤：失败时先关停已启动的写者，再原样返回该步骤的错误。
+async fn or_shutdown<T>(
+    step: Result<T, StartupError>,
+    workbench: Option<&Arc<CanonicalWorkbench>>,
+) -> Result<T, StartupError> {
+    if step.is_err() {
+        canonical_input::shutdown(workbench).await?;
+    }
+    step
 }
 
 #[cfg(test)]

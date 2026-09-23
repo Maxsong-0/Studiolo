@@ -23,8 +23,9 @@ use std::sync::Arc;
 
 use axum::{
     Json,
-    extract::{Query, State},
+    extract::{Query, State, rejection::QueryRejection},
     http::StatusCode,
+    response::{IntoResponse, Response},
 };
 use serde::{Deserialize, Serialize};
 use studiolo_core::VaultPath;
@@ -33,7 +34,7 @@ use studiolo_workbench::{
     WorkbenchOverview,
 };
 
-use crate::{ApiError, AppState, Generation, current, view::Freshness};
+use crate::{ApiError, AppState, Generation, current, invalid_query, view::Freshness};
 
 /// 首屏响应：项目、收件箱、诊断与计数；逐篇文档走文件树分页与搜索，不在此整份下发。
 #[derive(Serialize)]
@@ -83,7 +84,17 @@ pub(crate) struct SearchResponse {
 
 pub(crate) async fn search(
     State(state): State<AppState>,
-    Query(query): Query<QueryParameters>,
+    query: Result<Query<QueryParameters>, QueryRejection>,
+) -> Response {
+    let Ok(Query(query)) = query else {
+        return invalid_query("invalid_search_query");
+    };
+    search_at(state, query).await.into_response()
+}
+
+async fn search_at(
+    state: AppState,
+    query: QueryParameters,
 ) -> Result<Json<SearchResponse>, ApiError> {
     let generation = at_generation(&state, query.generation)?;
     run_query(&state.queries, move || {
@@ -130,7 +141,17 @@ pub(crate) struct DocumentResponse {
 
 pub(crate) async fn document(
     State(state): State<AppState>,
-    Query(query): Query<DocumentQuery>,
+    query: Result<Query<DocumentQuery>, QueryRejection>,
+) -> Response {
+    let Ok(Query(query)) = query else {
+        return invalid_query("invalid_document_query");
+    };
+    document_at(state, query).await.into_response()
+}
+
+async fn document_at(
+    state: AppState,
+    query: DocumentQuery,
 ) -> Result<Json<DocumentResponse>, ApiError> {
     let generation = at_generation(&state, query.generation)?;
     let path = VaultPath::parse(&query.path)

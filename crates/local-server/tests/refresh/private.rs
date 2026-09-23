@@ -1,7 +1,8 @@
 //! 只读副本刷新的合流、失败与恢复契约：派生次数一律来自真实调用计数，不靠计时。
 //!
-//! 这里直接驱动 `snapshot` 处理函数，因此断言的是真实的 HTTP 入口行为：受理、合流、
-//! 结算、答复全在被测代码里发生，测试只提供一个记录调用次数并可按需卡住的探针。
+//! 这里直接驱动 `snapshot` 解析查询串之后的主体 `refreshed_overview`，因此断言的是真实的
+//! HTTP 入口行为：受理、合流、结算、答复全在被测代码里发生，测试只提供一个记录调用次数
+//! 并可按需卡住的探针。
 
 use std::{
     fs,
@@ -131,11 +132,8 @@ fn vault_root(temp: &TempDir) -> std::path::PathBuf {
 
 fn refresh_request(state: &AppState) -> tokio::task::JoinHandle<Result<(), ApiError>> {
     let state = state.clone();
-    tokio::spawn(async move {
-        snapshot(State(state), Query(SnapshotQuery { refresh: true }))
-            .await
-            .map(|_| ())
-    })
+    // 查询串已解析为 `refresh=true` 之后的 `snapshot` 主体：受理、合流、结算与答复全在这里。
+    tokio::spawn(async move { refreshed_overview(state, true).await.map(|_| ()) })
 }
 
 /// 只用于把契约回归变成失败而不是永久挂起；没有任何断言依赖这个时长。
@@ -236,10 +234,8 @@ async fn a_failed_derivation_is_reported_to_every_joined_request_and_the_next_on
     for request in [first, joined] {
         let (status, message) = failed(request).await;
         assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
-        assert!(
-            message.contains("不是有效 UTF-8"),
-            "失败详情要说明真实原因，实际为 {message}"
-        );
+        // 真实原因只进服务端日志；答复是固定说明，不回显库内路径。
+        assert_eq!(message, crate::refresh::REFRESH_FAILED);
     }
     assert_eq!(generation_of(&state).await, 1, "失败不发布半成品代次");
 
