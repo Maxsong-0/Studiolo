@@ -1,7 +1,11 @@
 use super::{BoardPlane, requests};
+use crate::editing::Problem;
 use axum::{
     Extension, Json, Router,
-    extract::{DefaultBodyLimit, Query, Request, rejection::QueryRejection},
+    extract::{
+        DefaultBodyLimit, Query, Request,
+        rejection::{JsonRejection, QueryRejection},
+    },
     http::StatusCode,
     middleware,
     response::{IntoResponse, Response},
@@ -15,6 +19,28 @@ pub(super) fn routes(routes: Router<crate::AppState>) -> Router<crate::AppState>
         .route("/api/v1/board", get(view))
         .route("/api/v1/board/replay", get(super::replay::replay))
         .route("/api/v1/board/timeline", get(super::timeline::timeline))
+}
+/// 未装配黑板平面：仍是 404，正文是固定中文 JSON；三条只读监督路由共用。
+pub(super) fn unconfigured() -> Response {
+    Problem::new(StatusCode::NOT_FOUND, "board_unconfigured", "黑板未配置。").into_response()
+}
+/// 黑板许可已满：仍是 429，本次请求没有进入控制库；人侧与私有入口共用。
+pub(super) fn busy() -> Response {
+    Problem::new(
+        StatusCode::TOO_MANY_REQUESTS,
+        "board_busy",
+        "黑板繁忙，请稍后重试。",
+    )
+    .into_response()
+}
+/// 控制存储、策略、审计或阻塞任务失败：仍是 503，只给固定句子，不回显内部原因。
+pub(super) fn unavailable() -> Response {
+    Problem::new(
+        StatusCode::SERVICE_UNAVAILABLE,
+        "board_unavailable",
+        "黑板暂不可用，请重试。",
+    )
+    .into_response()
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -30,7 +56,7 @@ async fn view(
         return crate::invalid_query("invalid_board_query");
     };
     let Some(Extension(plane)) = plane else {
-        return StatusCode::NOT_FOUND.into_response();
+        return unconfigured();
     };
     // 项目路径不合法同属畸形查询串：同一答复，不回显字段名。
     if studiolo_core::VaultPath::parse(&q.project).is_err() {
@@ -38,7 +64,7 @@ async fn view(
     }
     let permit = match plane.permits.clone().try_acquire_owned() {
         Ok(p) => p,
-        Err(_) => return StatusCode::TOO_MANY_REQUESTS.into_response(),
+        Err(_) => return busy(),
     };
     let result = tokio::task::spawn_blocking(move || {
         let _permit = permit;
@@ -89,7 +115,7 @@ async fn view(
     .await;
     match result {
         Ok(Ok(items)) => Json(items).into_response(),
-        _ => StatusCode::SERVICE_UNAVAILABLE.into_response(),
+        _ => unavailable(),
     }
 }
 pub(super) fn private_router(plane: Arc<BoardPlane>) -> Router {
@@ -101,17 +127,35 @@ pub(super) fn private_router(plane: Arc<BoardPlane>) -> Router {
 }
 async fn peer(request: Request, next: middleware::Next) -> Response {
     if crate::unix_ingress::source(&request).is_err() {
-        return StatusCode::FORBIDDEN.into_response();
+        return Problem::new(
+            StatusCode::FORBIDDEN,
+            "board_peer_forbidden",
+            "只接受本机受信连接。",
+        )
+        .into_response();
     }
     next.run(request).await
 }
 async fn command(
     Extension(plane): Extension<Arc<BoardPlane>>,
-    Json(request): Json<requests::Request>,
+    request: Result<Json<requests::Request>, JsonRejection>,
 ) -> Response {
+    // 正文拒绝沿用原提取器的状态码（语法错 400、缺 JSON 类型 415、字段或取值不符 422、
+    // 超长 413），正文换成固定中文 JSON：agent 侧按 JSON 取 error，不再退化成「黑板响应无效」。
+    let request = match request {
+        Ok(Json(request)) => request,
+        Err(rejection) => {
+            return Problem::new(
+                rejection.status(),
+                "invalid_board_request",
+                "黑板请求不合法。",
+            )
+            .into_response();
+        }
+    };
     let permit = match plane.permits.clone().try_acquire_owned() {
         Ok(p) => p,
-        Err(_) => return StatusCode::TOO_MANY_REQUESTS.into_response(),
+        Err(_) => return busy(),
     };
     let result = tokio::task::spawn_blocking(move || {
         let _permit = permit;
@@ -125,7 +169,7 @@ async fn command(
             Json(serde_json::json!({"error":reason})),
         )
             .into_response(),
-        Err(_) => StatusCode::SERVICE_UNAVAILABLE.into_response(),
+        Err(_) => unavailable(),
     }
 }
 
@@ -135,8 +179,10 @@ mod tests {
         Router,
         body::{Body, to_bytes},
         http::{Request, StatusCode, header::CONTENT_TYPE},
+        response::Response,
         routing::get,
     };
+    use serde_json::{Value, json};
     use tower::ServiceExt;
 
     /// 不装黑板平面也能核对查询串拒绝：拒绝先于平面检查，与原提取器的状态码一致。
@@ -150,9 +196,7 @@ mod tests {
             )
     }
 
-    async fn reply(uri: &str) -> (StatusCode, String, String) {
-        let request = Request::builder().uri(uri).body(Body::empty()).unwrap();
-        let response = app().oneshot(request).await.unwrap();
+    async fn parts(response: Response) -> (StatusCode, String, String) {
         let status = response.status();
         let content_type = response
             .headers()
@@ -166,6 +210,11 @@ mod tests {
             content_type,
             String::from_utf8(body.to_vec()).unwrap(),
         )
+    }
+
+    async fn reply(uri: &str) -> (StatusCode, String, String) {
+        let request = Request::builder().uri(uri).body(Body::empty()).unwrap();
+        parts(app().oneshot(request).await.unwrap()).await
     }
 
     #[tokio::test]
@@ -186,7 +235,7 @@ mod tests {
             let (status, content_type, body) = reply(uri).await;
             assert_eq!(status, StatusCode::BAD_REQUEST, "{uri}");
             assert_eq!(content_type, "application/json", "{uri}");
-            let value: serde_json::Value = serde_json::from_str(&body).unwrap();
+            let value: Value = serde_json::from_str(&body).unwrap();
             assert_eq!(value["code"], code);
             assert_eq!(value["error"], "查询参数不合法。");
             for leaked in [
@@ -195,10 +244,48 @@ mod tests {
                 assert!(!body.contains(leaked), "{uri} 回显了 {leaked}：{body}");
             }
         }
-        // 查询合法而平面未装：仍是 404，不因拒绝改造而变。
-        assert_eq!(
-            reply("/api/v1/board?project=a").await.0,
-            StatusCode::NOT_FOUND
-        );
+        // 查询合法而平面未装：仍是 404，正文从空换成固定中文 JSON。
+        for uri in [
+            "/api/v1/board?project=a",
+            "/api/v1/board/replay?task_id=01ARZ3NDEKTSV4RRFFQ69G5FAV",
+            "/api/v1/board/timeline?project=a&from=2026-09-01T00:00:00Z&to=2026-09-02T00:00:00Z",
+        ] {
+            let (status, content_type, body) = reply(uri).await;
+            assert_eq!(status, StatusCode::NOT_FOUND, "{uri}");
+            assert_eq!(content_type, "application/json", "{uri}");
+            assert_eq!(
+                serde_json::from_str::<Value>(&body).unwrap(),
+                json!({"code": "board_unconfigured", "error": "黑板未配置。"}),
+                "{uri}"
+            );
+        }
+    }
+
+    /// 429 要占满真实黑板平面的许可，而平面只能由带文件夹具的集成测试构造；这里钉住 429 与
+    /// 503 答复本身的线上形态（404／403／503 的真实触发见 tests/rejection_bodies_contract.rs）。
+    #[tokio::test]
+    async fn busy_and_unavailable_keep_their_status_with_fixed_chinese_json() {
+        for (response, status, code, error) in [
+            (
+                super::busy(),
+                StatusCode::TOO_MANY_REQUESTS,
+                "board_busy",
+                "黑板繁忙，请稍后重试。",
+            ),
+            (
+                super::unavailable(),
+                StatusCode::SERVICE_UNAVAILABLE,
+                "board_unavailable",
+                "黑板暂不可用，请重试。",
+            ),
+        ] {
+            let (got, content_type, body) = parts(response).await;
+            assert_eq!(got, status, "{code}");
+            assert_eq!(content_type, "application/json", "{code}");
+            assert_eq!(
+                serde_json::from_str::<Value>(&body).unwrap(),
+                json!({"code": code, "error": error})
+            );
+        }
     }
 }

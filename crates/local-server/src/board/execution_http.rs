@@ -3,6 +3,7 @@ use super::{BoardPlane, RunnerPlane, StartRequest};
 use crate::{
     AppState,
     auth_http::execution::{self as input, Input, Principal},
+    editing::Problem,
 };
 use axum::{
     Json, Router,
@@ -26,6 +27,15 @@ pub(super) fn routes(routes: Router<AppState>) -> Router<AppState> {
 fn problem(status: StatusCode, reason: impl Into<String>) -> Response {
     (status, Json(json!({"error":reason.into()}))).into_response()
 }
+/// 未装配黑板平面或会话门禁：仍是 404，正文从空换成固定中文 JSON。
+fn unconfigured() -> Response {
+    Problem::new(
+        StatusCode::NOT_FOUND,
+        "execution_unconfigured",
+        "执行控制未配置。",
+    )
+    .into_response()
+}
 async fn status(request: Request) -> Response {
     let Some(runner) = request.extensions().get::<Arc<RunnerPlane>>().cloned() else {
         return Json(json!({"configured":false,"frozen":true,"runs":[]})).into_response();
@@ -43,22 +53,27 @@ async fn status(request: Request) -> Response {
 }
 async fn command(State(state): State<AppState>, mut request: Request) -> Response {
     let Some(board) = request.extensions().get::<Arc<BoardPlane>>().cloned() else {
-        return StatusCode::NOT_FOUND.into_response();
+        return unconfigured();
     };
     let runner = request.extensions().get::<Arc<RunnerPlane>>().cloned();
     let Some(auth) = &state.sessions else {
-        return StatusCode::NOT_FOUND.into_response();
+        return unconfigured();
     };
     let (principal, input) = match auth.execution(&mut request) {
         Ok(v) => v,
         Err(r) => return *r,
     };
     let Some(input) = input else {
-        return StatusCode::BAD_REQUEST.into_response();
+        return Problem::new(
+            StatusCode::BAD_REQUEST,
+            "invalid_execution_request",
+            "执行请求不合法。",
+        )
+        .into_response();
     };
     let permit = match board.permits.clone().try_acquire_owned() {
         Ok(p) => p,
-        Err(_) => return StatusCode::TOO_MANY_REQUESTS.into_response(),
+        Err(_) => return super::http::busy(),
     };
     match tokio::task::spawn_blocking(move || {
         let _permit = permit;

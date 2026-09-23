@@ -1,9 +1,11 @@
 //! Project replay joins bounded authoritative event pages with fresh dated log pointers.
-use super::BoardPlane;
+use super::{
+    BoardPlane,
+    http::{busy, unavailable, unconfigured},
+};
 use axum::{
     Extension, Json,
     extract::{Query, rejection::QueryRejection},
-    http::StatusCode,
     response::{IntoResponse, Response},
 };
 use serde::Deserialize;
@@ -32,7 +34,7 @@ pub(super) async fn timeline(
         return invalid();
     };
     let Some(Extension(plane)) = plane else {
-        return StatusCode::NOT_FOUND.into_response();
+        return unconfigured();
     };
     let Ok(from) = query.from.parse::<jiff::Timestamp>() else {
         return invalid();
@@ -50,7 +52,7 @@ pub(super) async fn timeline(
     }
     let permit = match plane.permits.clone().try_acquire_owned() {
         Ok(p) => p,
-        Err(_) => return StatusCode::TOO_MANY_REQUESTS.into_response(),
+        Err(_) => return busy(),
     };
     let result = tokio::task::spawn_blocking(move || {
         let _permit = permit;
@@ -152,6 +154,6 @@ pub(super) async fn timeline(
     .await;
     match result {
         Ok(Ok(value)) => Json(value).into_response(),
-        _ => StatusCode::SERVICE_UNAVAILABLE.into_response(),
+        _ => unavailable(),
     }
 }
