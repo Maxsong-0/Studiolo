@@ -6,7 +6,7 @@
 use super::BoardPlane;
 use axum::{
     Extension, Json,
-    extract::Query,
+    extract::{Query, rejection::QueryRejection},
     http::StatusCode,
     response::{IntoResponse, Response},
 };
@@ -58,14 +58,20 @@ pub(super) struct OverviewQuery {
 
 pub(super) async fn overview(
     plane: Option<Extension<Arc<BoardPlane>>>,
-    Query(query): Query<OverviewQuery>,
+    query: Result<Query<OverviewQuery>, QueryRejection>,
 ) -> Response {
+    // 反序列化失败与窗口越界都是畸形查询串：同一固定中文 JSON，不回显字段名（与 T-113 横向一致）。
+    let invalid = || crate::invalid_query("invalid_board_overview_query");
+    // 查询串拒绝仍先于平面检查，与 `/api/v1/board` 的顺序一致。
+    let Ok(Query(query)) = query else {
+        return invalid();
+    };
     let Some(Extension(plane)) = plane else {
         return StatusCode::NOT_FOUND.into_response();
     };
     let hours = query.window_hours.unwrap_or(DEFAULT_WINDOW_HOURS);
     if !(1..=MAX_WINDOW_HOURS).contains(&hours) {
-        return StatusCode::BAD_REQUEST.into_response();
+        return invalid();
     }
     let permit = match plane.permits.clone().try_acquire_owned() {
         Ok(p) => p,

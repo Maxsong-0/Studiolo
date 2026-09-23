@@ -363,11 +363,15 @@ impl Harness {
 
     async fn status(&self, query: &str, expected: u16) {
         let http = &self.writer.http;
-        http.send(
-            http.request("GET", &format!("{OVERVIEW}{query}"), Some(&self.cookie), ""),
-            expected,
-        )
-        .await;
+        let response = http
+            .send(
+                http.request("GET", &format!("{OVERVIEW}{query}"), Some(&self.cookie), ""),
+                expected,
+            )
+            .await;
+        if expected == 400 {
+            invalid_query(response, query).await;
+        }
     }
 
     async fn stop(self) {
@@ -427,16 +431,20 @@ async fn overview_is_session_gated_and_absent_without_a_board_plane() {
         ("?window_hours=abc", 400),
         ("?project=x", 400),
     ] {
-        http.send(
-            http.request(
-                "GET",
-                &format!("{OVERVIEW}{query}"),
-                Some(&login.cookie),
-                "",
-            ),
-            status,
-        )
-        .await;
+        let response = http
+            .send(
+                http.request(
+                    "GET",
+                    &format!("{OVERVIEW}{query}"),
+                    Some(&login.cookie),
+                    "",
+                ),
+                status,
+            )
+            .await;
+        if status == 400 {
+            invalid_query(response, query).await;
+        }
     }
     writer.close().await;
 }
@@ -806,4 +814,14 @@ async fn caps_keep_items_in_project_then_id_order_and_the_newest_events() {
             .all(|event| event["task_id"] == target.to_string() && event["project"] == OTHER)
     );
     h.stop().await;
+}
+
+/// 畸形或越界的查询串：固定中文 JSON Problem，不回显字段名与解析器细节（T-113 横向写法）。
+async fn invalid_query(response: axum::response::Response, query: &str) {
+    let body = support::json(response).await;
+    assert_eq!(
+        body,
+        json!({ "code": "invalid_board_overview_query", "error": "查询参数不合法。" }),
+        "{query}"
+    );
 }
