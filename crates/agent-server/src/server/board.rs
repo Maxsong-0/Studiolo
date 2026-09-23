@@ -112,8 +112,8 @@ impl AgentSession {
                 }))
                 .await
                 .map_err(|_| McpError::internal_error("黑板权威服务不可用，A2A 协作暂停", None))?;
-            // During initialize the instance is registered but not yet published into
-            // self.instance. Revalidate that explicit identity without accepting a request ID.
+            // initialize 期间实例已登记、但还没发布到 `self.instance`：这里对这份显式身份
+            // 重新核验，且不接受请求自带的 ID。
             if !self
                 .state
                 .store

@@ -136,7 +136,7 @@ impl ServerHandler for AgentSession {
         _request: InitializeRequestParams,
         context: RequestContext<RoleServer>,
     ) -> impl Future<Output = Result<InitializeResult, McpError>> + Send + '_ {
-        // rmcp moves request metadata into RequestContext before invoking this handler.
+        // rmcp 在调用本处理器之前，已把请求元数据移进 `RequestContext`。
         let parent = serde_json::to_value(&context.meta)
             .map_err(|_| McpError::invalid_params("initialize元数据无效", None))
             .and_then(|value| match value.get("studiolo.parent_instance") {
