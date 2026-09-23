@@ -43,7 +43,7 @@ STUDIOLO_INPUTS=(
   scripts/check-replica-pipeline.py scripts/check-client-projection-pipeline.py
   scripts/client_projection_fetch.py scripts/client_projection_fs.py scripts/client_projection_io.py
   scripts/client_projection_render.py scripts/client_projection_schema.py scripts/client_projection_store.py
-  scripts/client_projection_test_support.py scripts/sync-agent-client.py
+  scripts/client_projection_test_support.py scripts/client_projection_policy_pipeline.py scripts/sync-agent-client.py
   scripts/test-client-projection-schema.py scripts/test-client-projection-fetch.py scripts/test-client-projection-store.py
   scripts/test-agent-package.py
   deploy/agent deploy/agent/upgrade-read-supply.sh.in docs/m3

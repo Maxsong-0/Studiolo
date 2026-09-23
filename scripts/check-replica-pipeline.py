@@ -62,28 +62,27 @@ class Pipeline:
         self.id = 0
         self.session = None
 
-    def admin(self, sub, *args):
-        result = subprocess.run([self.binary, "admin", sub, "--data", str(self.data), *args],
+    def admin(self, sub, *args, data=True):
+        # 策略库子命令（policy-init、policy-status）只接受 --policy：调用方传 data=False，不附 --data。
+        extra = ("--data", str(self.data)) if data else ()
+        result = subprocess.run([self.binary, "admin", sub, *extra, *args],
                                 capture_output=True, text=True, timeout=20)
         # 带上子命令名：这条消息为所有 admin 子命令共用，只写「初始化失败」会把
         # 后续子命令的失败误报成 init 的失败（2026-09-17 实际误导过一条排查线）。
         require(result.returncode == 0, f"隔离身份库 admin {sub} 失败")
         return result.stdout
 
-    def issue_type_token(self, kind):
-        """在真实 PTY 里签发类型 token。
+    def admin_tty(self, sub, *args):
+        """在真实 PTY 里跑 admin 子命令（附 --data），返回 (退出码, 终端输出)。
 
-        类型 token 是 MCP 供给面的全部身份，产品只把它写真实前台控制终端
-        （见 docs/contracts/agent-supply.md §2）：无控制终端、或任一标准流被重定向，
-        都会被拒绝且不铸出 token。本验收脚本因此给它一个真实 PTY，
-        **不是**给产品开非 TTY 后门——那等于把门禁本身废掉。
+        `type-issue`（docs/contracts/agent-supply.md §2）与 `policy-bootstrap`（crates/agent-server/src/admin/policy.rs）
+        只在真实前台控制终端运行：无控制终端、或任一标准流被重定向，都会被拒绝且什么都不做。
+        本验收脚本因此给它一个真实 PTY，**不是**给产品开非 TTY 后门——那等于把门禁本身废掉。
         """
         pid, master = pty.fork()
         if pid == 0:                       # 子进程：三个标准流都是这个 PTY
             try:
-                os.execve(self.binary,
-                          [self.binary, "admin", "type-issue", "--data", str(self.data),
-                           "--type", kind],
+                os.execve(self.binary, [self.binary, "admin", sub, "--data", str(self.data), *args],
                           {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "LANG": "C.UTF-8"})
             finally:
                 # execve 成功不返回。失败时子进程**绝不能**掉回父进程的 Python 栈：
@@ -104,10 +103,20 @@ class Pipeline:
                 break
             seen.extend(chunk)
         os.close(master)
-        require(self.reap(pid) == 0, "类型 token 签发失败（真实 PTY 下）")
-        found = re.search(rb"sag1_[0-9a-f]{64}", bytes(seen))
+        code = os.waitstatus_to_exitcode(self.reap(pid))
+        output = bytes(seen).decode("utf-8", "replace")
+        # 已持有的类型 token 不得出现在任何 admin 子命令的终端输出里；__init__ 签发之前尚无该属性，不检。
+        held = getattr(self, "token", None)
+        require(held is None or held not in output, f"admin {sub} 的终端输出含类型 token")
+        return code, output
+
+    def issue_type_token(self, kind):
+        """在真实 PTY 里签发类型 token：它是 MCP 供给面的全部身份，产品只把它写真实前台控制终端。"""
+        code, output = self.admin_tty("type-issue", "--type", kind)
+        require(code == 0, "类型 token 签发失败（真实 PTY 下）")
+        found = re.search(r"sag1_[0-9a-f]{64}", output)
         require(found is not None, "控制终端上没有出现类型 token")
-        return found.group(0).decode()
+        return found.group(0)
 
     @staticmethod
     def reap(pid, limit=10):
@@ -136,15 +145,18 @@ class Pipeline:
                 "截断传输未拒绝" if truncated else "捕获与接收协议不兼容")
         return json.loads((self.remote / "control/state.json").read_text())
 
-    def start(self):
+    def start(self, policy_dir=None):
         with socket.socket() as sock:
             sock.bind(("127.0.0.1", 0))
             port = sock.getsockname()[1]
         self.url = f"http://127.0.0.1:{port}/mcp"
         self.log = tempfile.TemporaryFile()
+        # 缺省不接策略平面（M3 兼容模式），参数与改前逐字相同；给目录即追加 --policy。
+        policy = () if policy_dir is None else ("--policy", str(policy_dir))
         self.proc = subprocess.Popen([self.binary, "serve", "--replica-root", str(self.remote),
                                       "--replica-max-age-secs", "300",
-                                      *[arg for allow in ALLOW for arg in ("--allow", allow)], "--data", str(self.data), "--port", str(port)],
+                                      *[arg for allow in ALLOW for arg in ("--allow", allow)], "--data", str(self.data),
+                                      *policy, "--port", str(port)],
                                      stdout=self.log, stderr=self.log)
         for _ in range(100):
             require(self.proc.poll() is None, "隔离 MCP 服务启动失败")
