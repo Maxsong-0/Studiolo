@@ -40,7 +40,7 @@
 
 - 只做任务书里的这一件，不扩范围；任务书没点名的文件非改不可时，最小改动并在回执里说明。
 - 工作树里有别人的未提交改动是正常的：不 stash、不 checkout、不 reset、不 restore、不 clean；不用 `git status`／`git diff` 判断「谁改了什么」。
-- 用**最窄的证明**自检（定向编译、单测、单包 clippy），全量回归留给派发方；全量命令见 `README.md`「开发」段。
+- 用**最窄的证明**自检，但**所有测试一律不在本机（Mac）跑**（2026-09-23 用户硬约束）：定向测试用 `scripts/test-linux.sh cargo --locked test -p <包> --test <目标>` 在服务器上跑，全量回归留给派发方；全量命令见 `README.md`「开发」段。
 - 被卡就在回执里写明阻塞，不猜、不绕、不伪造闭环。
 - 临时产物放会话 scratchpad，用完清理自己产生的。
 
@@ -48,7 +48,7 @@
 
 - **CI 跑在专用服务器 `githubci`（192.168.100.107，Ubuntu x86_64）上的自托管 runner**，不再消耗 GitHub 托管分钟数。
   开关是仓库变量 `CI_RUNNER_LABELS`：存在即走自托管，删掉即回退 GitHub 托管。**不要自行改动或删除这个变量**——私有仓库的免费额度两天就能烧光。
-- **CI 是门槛，不是调试器**。推送前先在本机把能验的验完（`README.md`「开发」段；Linux 语义用 `scripts/test-linux.sh`）。
+- **CI 是门槛，不是调试器**。推送前先用 `scripts/test-linux.sh` 在服务器上把能验的验完；**本机不跑任何测试**（`cargo test`、Python 契约、前端 vitest、真实管线都算，2026-09-23 用户硬约束）。
   一个 runner 一次只跑一个作业，所有会话共用一条队列：反复小步推送等于让别人排队。攒成一次推送；不为 WIP 开 PR。
 - `push` 只对 `main` 触发，PR 走 `pull_request`，同一 PR 上被顶替的旧运行会自动取消。不要把触发改回 `branches: ["**"]`。
 - runner 离线或作业一直排队：先 `gh api repos/Maxsong-0/studiolo/actions/runners` 看状态并报告用户。它是共享服务，
