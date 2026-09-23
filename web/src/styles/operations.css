@@ -1,286 +1,546 @@
-.project-operations {
-  min-width: 0;
-}
-.operation-project-control,
-.operation-panel-heading,
-.operation-refresh {
+/*
+ * 项目运作页（T-130 规范第 3、9 节）：工具行、12 列网格里的各块（头格、目录与模块职责、目录漂移、
+ * 架构、Cargo 与 Rust 证据、重新核验），以及块内共用的说明、来源行、诊断与不可用样式。
+ * 分区只靠网格的 1px 墨线：每块是一个整行格子，块里再嵌一层去掉外框的 12 列网格，
+ * 块内的线仍是 1px 墨线；格子里的行分隔用 --hairline（规范第 3 节）。只引用 tokens.css 的新令牌。
+ */
+
+/* ---------- 工具行：项目选择与根路径（网格上方，与协作页子标签行同层级） ---------- */
+
+.operation-toolbar {
   display: flex;
-  align-items: center;
   flex-wrap: wrap;
-  gap: 12px;
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+  margin: 0 0 var(--space-4);
 }
-.operation-project-control {
-  margin-bottom: 24px;
+.operation-toolbar__label {
+  font-size: var(--type-body);
+  font-weight: 700;
 }
-.operation-project-control label {
-  font-weight: 550;
+.operation-toolbar .project-field--select {
+  width: 240px;
+  max-width: 100%;
 }
-.operation-project-control .select-control {
-  width: min(18rem, 100%);
-}
-.operation-project-control > span {
+.operation-toolbar__root {
   min-width: 0;
+  color: var(--ink-2);
+  font-family: var(--font-mono);
+  font-size: var(--type-label);
+  letter-spacing: 0.02em;
   overflow-wrap: anywhere;
 }
-.operation-panel {
-  min-width: 0;
-  margin: 0 0 24px;
-  padding: 24px;
-  border: 1px solid var(--border);
-  border-radius: 16px;
-  background: var(--surface);
-  box-shadow: var(--shadow-panel);
+
+/* ---------- 网格：块内嵌套的网格不再画外框，外框由上一层网格的墨线给出 ---------- */
+
+.operation-subgrid.ui-grid {
+  border: 0;
 }
-.operation-panel-heading {
-  justify-content: space-between;
+
+/* ---------- 头格：项目名、结构声明来源；读取中与错误也落在这一格 ---------- */
+
+.operation-heading__source {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px var(--space-3);
+  margin: 0;
+  color: var(--ink-2);
+  font-family: var(--font-mono);
+  font-size: var(--type-label);
+  line-height: 1.5;
+  letter-spacing: 0.02em;
+  overflow-wrap: anywhere;
 }
-.operation-panel h2 {
-  margin: 4px 0 0;
-  font-size: 1.125rem;
+.operation-heading__source-label {
+  color: var(--ink);
   font-weight: 600;
-  letter-spacing: -0.015em;
 }
-.operation-eyebrow {
-  color: var(--muted);
-  font-size: 0.6875rem;
+.operation-heading .ui-state {
+  margin-top: var(--space-2);
+}
+
+/* ---------- 块标题格里的一句说明；块内通用的等宽小标签 ---------- */
+
+.operation-note {
+  max-width: 72ch;
+  margin: 0;
+  color: var(--ink-2);
+  font-size: 13px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+.operation-label {
+  color: var(--ink-2);
+  font-family: var(--font-mono);
+  font-size: var(--type-label);
+  line-height: 1.3;
   letter-spacing: 0.04em;
 }
-.operation-muted,
-.operation-observed {
-  color: var(--muted);
-  font-size: 0.8125rem;
-  line-height: 1.7;
+.operation-source-location {
+  margin: 0;
+  color: var(--ink-2);
+  font-family: var(--font-mono);
+  font-size: var(--type-label);
+  line-height: 1.5;
   overflow-wrap: anywhere;
 }
-.operation-panel > .operation-muted {
-  margin: 16px 0 20px;
+.operation-muted {
+  margin: 0;
+  color: var(--ink-2);
+  font-size: 13px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
 }
-.operation-diagram-layout {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(200px, 28%);
-  gap: 20px;
-  min-width: 0;
-}
-.operation-diagram-scroll {
+
+/* ---------- 目录与模块职责：黑线框节点、正交连线（竖线接横线），职责文字在框里 ---------- */
+
+.operation-tree-scroll {
   min-width: 0;
   max-width: 100%;
-  overflow: auto;
+  overflow-x: auto;
   overscroll-behavior-inline: contain;
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  background: var(--surface-solid);
 }
-.operation-diagram {
+.operation-tree {
+  --operation-tree-indent: 28px;
+  --operation-tree-rail: 16px;
+  --operation-tree-gap: 10px;
+  /* 横线落在节点首行（路径）的中线：li 上留白＋框线＋框内上边距＋半个行高 */
+  --operation-tree-elbow: 28px;
   width: max-content;
   min-width: 100%;
-  padding: 24px;
+  padding: var(--space-1) var(--space-1) var(--space-3);
 }
-.operation-graph-root {
-  display: flex;
+.operation-tree__root {
+  display: inline-flex;
   align-items: center;
-  gap: 8px;
-  margin: 0 0 16px;
-  font-size: 0.8125rem;
+  margin: 0;
+  padding: 4px 10px;
+  background: var(--ink);
+  color: var(--on-ink);
+  font-family: var(--font-mono);
+  font-size: var(--type-label);
   font-weight: 600;
+  line-height: 1.3;
+  letter-spacing: 0.04em;
 }
 .operation-branches {
+  margin: 0;
+  padding: 0 0 0 var(--operation-tree-indent);
   list-style: none;
-  padding: 0 0 0 24px;
-  margin: 0 0 0 8px;
-  border-left: 1px solid var(--border-strong);
 }
 .operation-branches > li {
   position: relative;
-  padding: 0 0 12px;
+  padding-top: var(--operation-tree-gap);
 }
-.operation-branches > li:last-child {
-  padding-bottom: 0;
-}
+/* 竖线：从上方的父框一路接到下一个兄弟；最后一个兄弟只画到自己的横线 */
 .operation-branches > li::before {
   position: absolute;
+  top: 0;
+  bottom: 0;
+  left: calc(0px - var(--operation-tree-rail));
+  border-left: 1px solid var(--ink);
   content: '';
-  left: -24px;
-  top: 24px;
-  width: 24px;
-  border-top: 1px solid var(--border-strong);
 }
-.operation-branches .operation-branches {
-  margin: 12px 0 0 22px;
+.operation-branches > li:last-child::before {
+  bottom: auto;
+  height: var(--operation-tree-elbow);
+}
+/* 横线：接到节点框的左缘 */
+.operation-branches > li::after {
+  position: absolute;
+  top: var(--operation-tree-elbow);
+  left: calc(0px - var(--operation-tree-rail));
+  width: var(--operation-tree-rail);
+  border-top: 1px solid var(--ink);
+  content: '';
 }
 .operation-node {
-  display: flex;
-  align-items: flex-start;
-  gap: 12px;
+  display: block;
   width: max-content;
-  min-width: 13rem;
+  min-width: 12rem;
   max-width: 30rem;
-  padding: 14px 16px;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 10px;
+  padding: 8px 12px 9px;
+  border: 1.5px solid var(--ink);
+  border-radius: 0;
+  background: var(--paper);
+  color: var(--ink);
+  font: inherit;
   text-align: left;
-  box-shadow: var(--shadow-node);
+  cursor: pointer;
 }
-.operation-node > span {
-  min-width: 0;
+/* 路径推导的父目录没有人工声明的职责：虚线框 */
+.operation-node.is-derived {
+  border-style: dashed;
+}
+.operation-node__path {
+  display: block;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 18px;
+  letter-spacing: 0.02em;
   overflow-wrap: anywhere;
 }
-.operation-node > .icon {
-  margin-top: 2px;
-  color: var(--accent);
-}
-.operation-node strong {
-  display: block;
-  font-size: 0.8125rem;
-  font-weight: 600;
-}
-.operation-node-label {
+.operation-node__label {
   display: block;
   max-width: 26rem;
-  margin-top: 4px;
-  color: var(--muted);
-  font-size: 0.8125rem;
-  line-height: 1.7;
+  margin-top: 2px;
+  color: var(--ink-2);
+  font-size: 13px;
+  line-height: 1.55;
   white-space: pre-wrap;
-}
-.operation-node:hover,
-.operation-node:active {
-  background: var(--hover);
-}
-.operation-node[aria-pressed='true'] {
-  border-color: var(--accent);
-  background: var(--accent-soft);
-  box-shadow: 0 0 0 1px var(--accent);
-}
-.operation-selection {
-  min-width: 0;
-  padding: 8px 0;
   overflow-wrap: anywhere;
 }
+.operation-node:hover {
+  background: var(--paper-raised);
+}
+/* 选中＝黑底反白 */
+.operation-node[aria-pressed='true'] {
+  background: var(--ink);
+  color: var(--on-ink);
+}
+.operation-node[aria-pressed='true'] .operation-node__label {
+  color: var(--on-ink);
+}
+
+/* 所选目录 / 所选节点：格子里的等宽标题与原文入口 */
 .operation-selection h3 {
-  margin: 8px 0 12px;
-  font-size: 1rem;
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
 }
 .operation-selection p {
-  font-size: 0.8125rem;
+  margin: 0;
+  font-size: var(--type-body);
+  line-height: 1.6;
   white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
-.operation-selection .text-button {
-  display: inline-flex;
+/* 来源行与补充说明比正文小一档（盖过上面的 .operation-selection p） */
+.operation-selection .operation-source-location {
+  font-size: var(--type-label);
+}
+.operation-selection .operation-muted {
+  font-size: 13px;
+}
+.operation-selection .ui-button {
+  align-self: flex-start;
+}
+
+/* ---------- 目录漂移：左格比较范围与观测，右格比对结果；红色只给缺失与未声明 ---------- */
+
+.operation-facts {
+  gap: var(--space-4);
+}
+.operation-fact {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+.operation-fact > strong {
+  color: var(--ink-2);
+  font-family: var(--font-mono);
+  font-size: var(--type-label);
+  font-weight: 500;
+  line-height: 1.3;
+  letter-spacing: 0.04em;
+}
+.operation-fact time {
+  font-family: var(--font-mono);
+  font-size: 13px;
+}
+.operation-fact > span {
+  color: var(--ink-2);
+}
+.operation-scope-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.operation-scope-list code {
+  display: inline-block;
+  padding: 1px 7px;
+  border: 1px solid var(--ink);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+/* 比对结果计数：等宽小标签＋等宽值（标题栏的读法） */
+.operation-tally {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  margin: 0;
+  border-top: 1px solid var(--hairline);
+}
+.operation-tally > div {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-top: var(--space-2);
+}
+.operation-tally dt {
+  color: var(--ink-2);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  line-height: 1.3;
+  letter-spacing: 0.04em;
+}
+.operation-tally dd {
+  display: flex;
   align-items: center;
   gap: 6px;
-  min-height: 44px;
-  white-space: normal;
-}
-.operation-source-location {
-  color: var(--muted);
-}
-.operation-status {
-  padding: 5px 10px;
-  border-radius: 8px;
-  color: var(--muted);
-  background: var(--surface-solid);
-  font-size: 0.75rem;
-}
-.operation-scope {
-  display: flex;
-  align-items: baseline;
-  flex-wrap: wrap;
-  gap: 8px 16px;
-  padding: 12px 0;
-  font-size: 0.75rem;
-}
-.operation-scope ul {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  list-style: none;
-  padding: 0;
   margin: 0;
-  min-width: 0;
+  font-family: var(--font-mono);
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.3;
 }
-.operation-scope code {
-  background: var(--surface-solid);
-  border-radius: 5px;
-  padding: 3px 6px;
-  overflow-wrap: anywhere;
+.operation-tally .is-signal {
+  color: var(--signal);
 }
-.operation-observed span {
-  display: block;
+.operation-drift-head,
+.operation-drift-list > li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(9rem, 13rem) 5.5rem;
+  align-items: center;
+  gap: var(--space-3);
+}
+.operation-drift-head {
+  padding-bottom: 6px;
+  border-bottom: 1.5px solid var(--ink);
+  color: var(--ink-2);
+  font-family: var(--font-mono);
+  font-size: var(--type-label);
+  line-height: 1.3;
+  letter-spacing: 0.04em;
+}
+.operation-drift-head > :last-child,
+.operation-drift-list > li > :last-child {
+  justify-self: end;
 }
 .operation-drift-list {
-  list-style: none;
+  margin: 0;
   padding: 0;
-  margin: 20px 0 0;
+  list-style: none;
 }
-.operation-drift-list li {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto 5rem;
-  align-items: center;
-  gap: 12px;
-  padding: 12px 0;
-  border-top: 1px solid var(--border);
+.operation-drift-list > li {
+  min-height: 36px;
+  padding: 4px 0;
+  border-bottom: 1px solid var(--hairline);
+}
+.operation-drift-list > li:last-child {
+  border-bottom: 0;
 }
 .operation-drift-list code {
-  overflow-wrap: anywhere;
-  font-size: 0.8125rem;
-}
-.operation-drift-status {
-  font-size: 0.75rem;
-  color: var(--muted);
-}
-.operation-drift-status.is-missing,
-.operation-drift-status.is-undocumented {
-  color: var(--error);
-}
-.operation-diagnostics,
-.operation-unavailable {
-  margin-top: 20px;
-}
-.operation-feedback,
-.operation-unavailable {
-  padding: 20px;
-  background: var(--surface-solid);
-  border-radius: 10px;
+  font-family: var(--font-mono);
+  font-size: 12.5px;
   overflow-wrap: anywhere;
 }
-.operation-feedback h2,
+.operation-drift-list .ui-status {
+  font-size: 13px;
+}
+/* 14px 及以下的红字用 --signal-text；方块仍是 --signal */
+.operation-drift-list .ui-status[data-state='alert'],
+.architecture-evidence .ui-status[data-state='alert'] {
+  color: var(--signal-text);
+}
+/* 未核验是休眠框，文字仍要读得清 */
+.operation-drift-list .ui-status[data-state='dormant'],
+.architecture-evidence .ui-status[data-state='dormant'] {
+  color: var(--ink-2);
+}
+.operation-drift-list .operation-muted {
+  font-size: 12px;
+}
+
+/* ---------- 图形失败时的纯文本回退 ---------- */
+
+.operation-fallback h3 {
+  margin: 0;
+  font-size: var(--type-item);
+  font-weight: 700;
+  line-height: 1.4;
+}
+.operation-fallback [role='alert'] {
+  margin: 0;
+  color: var(--ink-2);
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+/* 只管目录图回退自己的清单；架构回退里的清单归 architecture.css */
+.operation-fallback > ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.operation-fallback > ul > li {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  padding: var(--space-2) 0;
+  border-top: 1px solid var(--hairline);
+  overflow-wrap: anywhere;
+}
+.operation-fallback > ul > li > strong {
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+}
+.operation-fallback > ul > li > p:not([class]) {
+  margin: 0;
+  font-size: 13px;
+  white-space: pre-wrap;
+}
+
+/* ---------- 诊断：展开的说明列表，行间 --hairline ---------- */
+
+.operation-diagnostics {
+  min-width: 0;
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+.operation-diagnostics summary {
+  color: var(--ink-2);
+  font-family: var(--font-mono);
+  font-size: var(--type-label);
+  letter-spacing: 0.04em;
+  cursor: pointer;
+}
+.operation-diagnostics ul {
+  margin: var(--space-2) 0 0;
+  padding: 0;
+  list-style: none;
+}
+.operation-diagnostics li {
+  padding: 6px 0;
+  border-top: 1px solid var(--hairline);
+  white-space: pre-wrap;
+}
+
+/* ---------- 不可用、空态：朴素文字，不套框 ---------- */
+
+.operation-unavailable {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  margin: 0;
+  overflow-wrap: anywhere;
+}
 .operation-unavailable h3 {
-  margin-top: 0;
-  font-size: 1rem;
+  margin: 0;
+  font-size: var(--type-item);
+  font-weight: 700;
+  line-height: 1.4;
 }
-.operation-refresh {
+.operation-unavailable p {
+  max-width: 65ch;
+  margin: 0;
+  color: var(--ink-2);
+  font-size: var(--type-body);
+  line-height: 1.6;
+}
+.operation-empty {
+  padding: var(--space-6) 0;
+}
+
+/* ---------- 证据格：Cargo 与 Rust 面板（组件归代码证据线）在格子里铺开，不再套框 ---------- */
+
+.operation-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: none;
+}
+.operation-panel-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
   justify-content: space-between;
+  gap: var(--space-2) var(--space-4);
 }
-.operation-refresh button[aria-disabled='true'] {
+.operation-panel-heading h2 {
+  margin: 0;
+  font-size: var(--type-cell);
+  font-weight: 800;
+  line-height: 1.3;
+}
+.operation-eyebrow {
+  color: var(--ink-2);
+  font-family: var(--font-mono);
+  font-size: var(--type-label);
+  line-height: 1.3;
+  letter-spacing: 0.04em;
+}
+
+/* ---------- 重新核验：最后一格；按钮在等待与 409 时 aria-disabled，焦点不丢 ---------- */
+
+.operation-refresh.ui-cell {
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3) var(--space-5);
+}
+.operation-refresh__note {
+  margin: 0;
+  color: var(--ink-2);
+  font-size: 13px;
+  line-height: 1.6;
+}
+.operation-refresh .ui-button[aria-disabled='true'] {
+  border-color: var(--ink-3);
+  color: var(--ink-3);
   cursor: default;
-  opacity: 0.48;
 }
-.operation-refresh button[aria-disabled='true']:active {
+.operation-refresh .ui-button[aria-disabled='true']:hover {
+  background: transparent;
+}
+.operation-refresh .ui-button[aria-disabled='true']:active {
   transform: none;
 }
-@media (max-width: 1080px) {
-  .operation-diagram-layout {
-    grid-template-columns: minmax(0, 1fr);
+
+/* ---------- 窄屏（<760px）：网格已由 ui 收成单列；这里只把块内的横排行改成上下排 ---------- */
+
+@media (width < 760px) {
+  .operation-toolbar .project-field--select {
+    flex: 1;
+    width: auto;
   }
-}
-@media (max-width: 760px) {
-  .operation-panel {
-    padding: 18px 14px;
-  }
-  .operation-project-control > span {
+  .operation-toolbar__root {
     flex-basis: 100%;
   }
-  .operation-drift-list li {
-    grid-template-columns: minmax(0, 1fr) auto;
+  .operation-drift-head {
+    display: none;
   }
-  .operation-drift-list li > code {
+  .operation-drift-list > li {
+    grid-template-columns: minmax(0, 1fr) auto;
+    padding: var(--space-2) 0;
+  }
+  .operation-drift-list > li > code {
     grid-column: 1 / -1;
   }
-  .operation-drift-list .text-button {
+  .operation-drift-list .ui-button {
     min-height: 44px;
   }
-  .operation-diagram {
-    padding: 20px 16px;
+  .operation-node {
+    max-width: 18rem;
   }
 }

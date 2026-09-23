@@ -1,7 +1,9 @@
 import { useMemo, useState } from 'react';
 import type { OperationDirectory } from '../projectOperations';
 import type { OpenSource } from '../types';
+import { Button, Cell } from '../ui';
 import { Icon } from './Icon';
+import '../styles/operations.css';
 
 interface DirectoryNode {
   directory: OperationDirectory;
@@ -30,6 +32,7 @@ function directoryTree(directories: OperationDirectory[]): DirectoryNode[] {
   return roots;
 }
 
+/** 目录树：每个目录是一个黑线框按钮，父子之间是正交连线（竖线接横线，见 operations.css）。 */
 function DirectoryBranches({
   nodes,
   selected,
@@ -44,19 +47,19 @@ function DirectoryBranches({
       {nodes.map(({ directory, children }) => (
         <li key={directory.path}>
           <button
-            className="operation-node"
+            type="button"
+            className={
+              directory.source ? 'operation-node' : 'operation-node is-derived'
+            }
             aria-pressed={selected === directory.path}
             aria-label={`选择目录 ${directory.path}`}
             onClick={() => onSelect(directory.path)}
           >
-            <Icon name="folder" />
-            <span>
-              <strong>{directory.path}</strong>
-              <span className="operation-node-label">
-                {directory.source
-                  ? directory.label
-                  : '路径推导的父目录 · 未声明职责'}
-              </span>
+            <span className="operation-node__path">{directory.path}</span>
+            <span className="operation-node__label">
+              {directory.source
+                ? directory.label
+                : '路径推导的父目录 · 未声明职责'}
             </span>
           </button>
           {children.length ? (
@@ -72,6 +75,10 @@ function DirectoryBranches({
   );
 }
 
+/**
+ * 目录与模块职责：左 8 列网格纸上的目录树，右 4 列所选目录（职责与声明原文入口）。
+ * 两格都由这里渲染，选中状态只有一份。
+ */
 export function OperationDiagram({
   directories,
   onOpen,
@@ -87,31 +94,32 @@ export function OperationDiagram({
     directories[0];
 
   return (
-    <div className="operation-diagram-layout">
-      <div
-        className="operation-diagram-scroll"
-        role="region"
-        aria-label="目录与模块职责图"
-        tabIndex={0}
-      >
-        <div className="operation-diagram">
-          <p className="operation-graph-root">
-            <Icon name="folder" />
-            仓库目录
-          </p>
-          <DirectoryBranches
-            nodes={tree}
-            selected={selected.path}
-            onSelect={setSelection}
-          />
+    <>
+      <Cell span={8} surface="grid" as="div">
+        <div
+          className="operation-tree-scroll"
+          role="region"
+          aria-label="目录与模块职责图"
+          tabIndex={0}
+        >
+          <div className="operation-tree">
+            <p className="operation-tree__root">仓库目录</p>
+            <DirectoryBranches
+              nodes={tree}
+              selected={selected.path}
+              onSelect={setSelection}
+            />
+          </div>
         </div>
-      </div>
-      <aside
+      </Cell>
+      <Cell
+        span={4}
+        as="aside"
         className="operation-selection"
         aria-label="所选目录详情"
         aria-live="polite"
       >
-        <span className="operation-eyebrow">所选目录</span>
+        <span className="operation-label">所选目录</span>
         <h3>{selected.path}</h3>
         <p>
           {selected.source
@@ -123,18 +131,19 @@ export function OperationDiagram({
             <p className="operation-source-location">
               {selected.source.path} · 第 {selected.source.line} 行
             </p>
-            <button
-              className="text-button"
+            <Button
+              variant="text"
+              size="sm"
               onClick={() => onOpen(selected.source!)}
             >
               查看职责声明原文
               <Icon name="arrow" />
-            </button>
+            </Button>
           </>
         ) : (
           <p className="operation-muted">没有可定位的职责声明来源。</p>
         )}
-      </aside>
-    </div>
+      </Cell>
+    </>
   );
 }
