@@ -118,5 +118,5 @@ pub(in crate::session) fn seal_row(
 }
 
 #[cfg(test)]
-#[path = "proof_tests.rs"]
+#[path = "../../../tests/session/retention_proof.rs"]
 mod tests;
