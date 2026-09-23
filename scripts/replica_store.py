@@ -15,6 +15,17 @@ def now_ms():
     return time.time_ns() // 1_000_000
 
 
+class BaseMismatch(Exception):
+    """增量／确认请求所依据的基线不是本端现代次，或现代次已损坏：不发布，请源端改发整份。
+
+    corrupt=True 表示现代次内容与其清单不符，须如实记为 validation_failed。
+    """
+
+    def __init__(self, corrupt):
+        super().__init__("base_mismatch")
+        self.corrupt = corrupt
+
+
 def receipt_valid(receipt, attempt):
     require(isinstance(receipt, dict) and set(receipt) == {
         "generation", "source_digest", "source_observed_at_ms", "received_at_ms"})
@@ -158,6 +169,68 @@ class Store:
 
     def failed(self, reason):
         self.state("failed", self.previous["receipt"] if self.previous else None, reason)
+
+    def base(self, base_digest):
+        """打开请求所依据的现代次，返回 (目录 fd, 基线 expected)；此处只核清单，正文由调用方按需核对。"""
+        old = self.previous["receipt"] if self.previous else None
+        if old is None or old["source_digest"] != base_digest:
+            raise BaseMismatch(corrupt=False)
+        try:
+            prior = open_dir(self.releases, old["generation"])
+        except (FileNotFoundError, Invalid):
+            raise BaseMismatch(corrupt=True)
+        try:
+            raw, _ = read_file(prior, "manifest.json", MAX_MANIFEST)
+            if digest(raw) != base_digest:
+                raise BaseMismatch(corrupt=True)
+            _, expected = manifest(raw)
+            return prior, expected
+        except (FileNotFoundError, Invalid):
+            os.close(prior)
+            raise BaseMismatch(corrupt=True)
+        except BaseException:
+            os.close(prior)
+            raise
+
+    def confirm(self, prior, sha, observed, expected):
+        """内容未变：核对现代次完好后只刷新回执时间，不建新代次、不写正文。"""
+        received = now_ms()
+        require(0 < observed <= received)
+        old = self.previous["receipt"]
+        require(old["source_digest"] == sha)
+        require(observed >= old["source_observed_at_ms"] and received >= old["received_at_ms"])
+        try:
+            intact = verify_tree(prior, expected) == sha
+        except (FileNotFoundError, Invalid):
+            intact = False
+        if not intact:
+            raise BaseMismatch(corrupt=True)
+        receipt = {"generation": old["generation"], "source_digest": sha,
+                   "source_observed_at_ms": observed, "received_at_ms": received}
+        self.state("ready", receipt)
+        return receipt
+
+    def copy(self, prior, stage, path, entry):
+        """把与基线相同的文件从现代次复制进 stage；读到的与清单不符即视为现代次损坏。"""
+        kind, size, sha = entry
+        require(kind == "file")
+        parent, name = path.rsplit("/", 1)
+        try:
+            source = descend(prior, parent)
+            try:
+                raw, _ = read_file(source, name, MAX_FILE)
+            finally:
+                os.close(source)
+        except (FileNotFoundError, Invalid):
+            raise BaseMismatch(corrupt=True)
+        if len(raw) != size or digest(raw) != sha:
+            raise BaseMismatch(corrupt=True)
+        target = descend(stage, parent)
+        try:
+            write_file(target, name, raw)
+            os.fsync(target)
+        finally:
+            os.close(target)
 
     def publish(self, stage_name, stage_fd, sha, observed, expected):
         received = now_ms()

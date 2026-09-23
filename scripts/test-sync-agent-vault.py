@@ -14,6 +14,7 @@ import unittest
 from unittest.mock import patch
 
 sys.dont_write_bytecode = True
+from replica_archive import transfer_deadline
 from replica_capture import capture
 from replica_client import accept_response
 from replica_common import ALLOW, Invalid, digest, encode
@@ -80,6 +81,112 @@ class SyncAgentVaultTests(unittest.TestCase):
         path = self.server / "releases" / result["receipt"]["generation"] / "vault/项目/Studiolo/note.md"
         self.assertEqual(path.read_text(), "private fixture text")
         self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+
+    def base_file(self):
+        host = self.env.get("STUDIOLO_HOST", "maxsong@192.168.100.169")
+        key = digest(encode([str(self.vault), host, str(self.server)]))[:32]
+        return self.state / ("base-" + key + ".json")
+
+    # SSH 替身在本机跑接收器，会继承入口给 SSH 子进程设的 ulimit -f 16（防回执填盘），
+    # 所以经替身落盘的单个文件须小于 16 KiB；真实部署里接收器在远端，不受此限。
+    ATTACHMENT = 12 * 1024
+    # tarfile 把整包补齐到一个 10240 字节的记录；只有清单与请求的确认包正好一个记录。
+    RECORD = 10240
+
+    def record_members(self):
+        """替身在内存里解析本次收到的 tar，只把成员名记下（小文件，不受 ulimit 影响）再交给接收器。"""
+        members = self.root / "members.json"
+        self.env["STUDIOLO_TEST_MEMBERS"] = str(members)
+        self.write_ssh_stub("""
+            import io, json, os, subprocess, sys, tarfile
+            from pathlib import Path
+            data = sys.stdin.buffer.read()
+            with tarfile.open(fileobj=io.BytesIO(data)) as tar:
+                names = [m.name for m in tar if m.isfile()]
+            Path(os.environ['STUDIOLO_TEST_MEMBERS']).write_text(json.dumps(names, ensure_ascii=False))
+            sys.exit(subprocess.run(['/bin/sh', '-c', sys.argv[-1]], input=data, timeout=8).returncode)
+        """)
+        return lambda: json.loads(members.read_text())
+
+    def test_unchanged_second_run_confirms_with_manifest_only(self):
+        members = self.record_members()
+        (self.project / "attachment.bin").write_bytes(os.urandom(self.ATTACHMENT))
+        first = json.loads(self.run_sync().stdout)
+        self.assertEqual(first["mode"], "full")
+        self.assertIn("vault/项目/Studiolo/attachment.bin", members())
+        self.assertEqual(self.base_file().stat().st_mode & 0o777, 0o600)
+        second = json.loads(self.run_sync().stdout)
+        self.assertEqual(second["mode"], "confirm")
+        self.assertEqual(members(), ["manifest.json", "request.json"])
+        self.assertTrue(second["reused"])
+        self.assertEqual(second["receipt"]["generation"], first["receipt"]["generation"])
+        self.assertGreaterEqual(second["receipt"]["source_observed_at_ms"], first["receipt"]["source_observed_at_ms"])
+        self.assertEqual(second["sent_bytes"], self.RECORD)
+
+    def test_edit_sends_only_the_changed_file(self):
+        members = self.record_members()
+        (self.project / "attachment.bin").write_bytes(os.urandom(self.ATTACHMENT))
+        self.run_sync()
+        (self.project / "note.md").write_text("private fixture edit", encoding="utf-8")
+        value = json.loads(self.run_sync().stdout)
+        self.assertEqual(value["mode"], "delta")
+        self.assertEqual(members(), ["manifest.json", "request.json", "vault/项目/Studiolo/note.md"])
+        current = self.server / "releases" / value["receipt"]["generation"] / "vault/项目/Studiolo"
+        self.assertEqual((current / "note.md").read_text(), "private fixture edit")
+        self.assertEqual((current / "attachment.bin").read_bytes(),
+                         (self.project / "attachment.bin").read_bytes())
+        self.assertEqual(json.loads(self.run_sync().stdout)["mode"], "confirm")
+
+    def test_base_mismatch_clears_base_and_next_run_sends_everything(self):
+        self.run_sync()
+        # 服务器被重置（或上一轮回执丢失）：本端基线已不是服务器的现代次。
+        (self.server / "control/state.json").unlink()
+        rejected = self.run_sync(code=1)
+        self.assertEqual(json.loads(rejected.stderr), {"status": "failed", "last_error": "base_mismatch"})
+        self.assertFalse(self.base_file().exists())
+        value = json.loads(self.run_sync().stdout)
+        self.assertEqual((value["status"], value["mode"]), ("ready", "full"))
+        self.assertEqual(json.loads(self.run_sync().stdout)["mode"], "confirm")
+
+    def test_base_from_another_allowlist_is_discarded_for_a_full_send(self):
+        self.run_sync()
+        stale = json.loads(self.base_file().read_bytes())
+        stale["allow"] = ["_规则"]
+        self.base_file().write_bytes(encode(stale))
+        value = json.loads(self.run_sync().stdout)
+        self.assertEqual((value["status"], value["mode"], value["reused"]), ("ready", "full", True))
+
+    def test_unsafe_base_file_fails_closed(self):
+        self.run_sync()
+        self.base_file().chmod(0o644)
+        self.run_sync(code=1)
+        self.assertTrue(self.base_file().exists())
+
+    def test_transfer_deadline_follows_bytes_sent(self):
+        self.run_sync()
+        # 替身只记下远端命令里的截止与实际收到的字节数，不落盘（避开 ulimit），回失败让基线保持不变。
+        captured = self.root / "deadline.json"
+        self.env["STUDIOLO_TEST_DEADLINE"] = str(captured)
+        self.write_ssh_stub("""
+            import json, os, shlex, sys
+            from pathlib import Path
+            words = shlex.split(sys.argv[-1])
+            size = len(sys.stdin.buffer.read())
+            Path(os.environ['STUDIOLO_TEST_DEADLINE']).write_text(json.dumps(
+                [int(words[words.index('--deadline') + 1]), size]))
+            sys.exit(1)
+        """)
+        (self.project / "attachment.bin").write_bytes(os.urandom(3 * 1024 * 1024))
+        self.run_sync(code=1)
+        deadline, size = json.loads(captured.read_text())
+        self.assertGreater(size, 3 * 1024 * 1024)
+        self.assertEqual(deadline, transfer_deadline(size))
+        self.assertEqual(deadline, 124)
+        (self.project / "attachment.bin").unlink()
+        self.run_sync(code=1)
+        deadline, size = json.loads(captured.read_text())
+        self.assertEqual(size, self.RECORD)
+        self.assertEqual(deadline, 121)
 
     def test_ssh_is_started_directly_by_bash(self):
         parent_log = self.root / "ssh-parent"
@@ -168,7 +275,8 @@ class SyncAgentVaultTests(unittest.TestCase):
         sleep.write_text("#!/usr/bin/env python3\n" + textwrap.dedent("""
             import os, sys, time
             from pathlib import Path
-            if sys.argv[1:] != ['120']:
+            # 看门狗有两段（120 秒捕获段、按字节数给的传输段），都是 ≥120 的整数秒；其余 sleep 照常。
+            if not (len(sys.argv) == 2 and sys.argv[1].isdigit() and int(sys.argv[1]) >= 120):
                 os.execv('/bin/sleep', ['sleep', *sys.argv[1:]])
             # 确定 SSH 已开始再压缩 watchdog 时间，避免只测到准备阶段超时。
             deadline = time.monotonic() + 8

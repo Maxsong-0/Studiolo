@@ -18,11 +18,12 @@
 - manifest 为 UTF-8 JSON：`{"schema_version":1,"allow":[...],"entries":[...]}`。allow 与 entries 按路径排序，entries 包括白名单根以下所有可见文件/目录，不含白名单根本身；中间目录（如 `项目`）仅用于容纳白名单。条目为 `{"path":"...","kind":"file|dir","bytes":整数,"sha256":"64位小写hex"或null}`，目录 bytes=0、sha256=null。文件摘要覆盖原始字节，`source_digest` 覆盖 manifest 文件原始字节。
 - state 为 `{"schema_version":1,"status":"ready|failed","last_attempt_at_ms":整数,"last_error":null或"transfer_failed|validation_failed","receipt":回执或null}`；回执为 `{"generation":"...","source_digest":"...","source_observed_at_ms":整数,"received_at_ms":整数}`。时间均 Unix 毫秒；不得把服务器重复扫描时间作为资料确认时间。
 - ready 必须有回执且 last_error=null；failed 必须有固定错误原因。last_attempt 不早于成功回执时间，成功确认不允许回退。扫描失败后如指针已更换，按被新代次替代处理并有界重试，不把正常清理误报为内容漂移。
-- 传输为 tar 流：根 `manifest.json`、`request.json`（`{"schema_version":1,"source_observed_at_ms":整数}`）、`vault/<路径>` 文件及目录；接收端逐项校验类型、路径、唯一性、长度及摘要，全部成功才发布。不直接调用 tar 解包到生产目录。
-- 上限：manifest 4 MiB、25,000 条目、单文件 16 MiB（UTF-8 Markdown 限 4 MiB）、Markdown 合计 16 MiB、总文件内容 128 MiB。Markdown 单独限制，以容纳 512 MiB 服务中刷新时共存的新旧快照和读模型；附件只在验证时逐文件读取。所有扫描/传输有界。同步超时 120 秒，源端/接收端都不允许并发发布；默认每 60 秒重试。
+- 传输为 tar 流：根 `manifest.json`、`request.json`（`{"schema_version":2,"source_observed_at_ms":整数,"base_digest":null或64位hex}`）、`vault/<路径>` 文件及目录；接收端逐项校验类型、路径、唯一性、长度及摘要，全部成功才发布。不直接调用 tar 解包到生产目录。
+- 三种请求（T-131，vault ADR-024）：`base_digest` 为 null 是**整份**，包内须恰为清单全集；等于本次清单摘要是**确认**，包内只许有清单与请求；其余是**增量**，包内须有全部目录，缺席的文件必须在基线清单里路径、大小、摘要都相同，由接收端从现代次复制后与整份同样全量核对再发布。基线必须等于现回执的 `source_digest`，否则回 `{"status":"base_mismatch"}` 且不改回执；现代次内容与清单不符时同样拒绝，并记 `validation_failed`。
+- 上限：manifest 4 MiB、25,000 条目、单文件 16 MiB（UTF-8 Markdown 限 4 MiB）、Markdown 合计 16 MiB、总文件内容 512 MiB（T-108 由 128 MiB 上调）。Markdown 单独限制，以容纳 512 MiB 服务中刷新时共存的新旧快照和读模型；附件只在验证时逐文件读取。所有扫描/传输有界。同步截止分两段：取锁＋捕获 120 秒；SSH＋回执为 `120 + ceil(发送字节/1 MiB)` 秒，上限由 `MAX_WIRE` 推出（T-131）。源端/接收端都不允许并发发布；默认每 60 秒重试。
 - tar 原始字节流及头部同样有界，不能通过 PAX/GNU 扩展头绕过限额。接收器只识别协议明确允许的成员，不将归档路径直接交给解包器。
 - 新鲜度阈值默认 300 秒，可用 `--replica-max-age-secs` 显式配置 60..=86400。source_observed 与 received 两者取较老的时间计算 age；超过当前时间 30 秒、逆序或不合法时间拒绝。失败状态保留上次成功回执。断网/崩溃由 age 过期暴露，不伪造远端已收到失败通知。
-- 源端每轮重新校验，未变内容仍产生可信确认；接收端可在验证上一代完整内容后复用相同 digest 的代次，仅刷新回执。旧代次有界保留（当前及上一代），消费端已经持有的内存内容不受清理影响。
+- 源端每轮重新校验，未变内容仍产生可信确认；未变时只发清单（确认请求），接收端验证现代次完整内容后复用该代次，仅刷新回执。旧代次有界保留（当前及上一代），消费端已经持有的内存内容不受清理影响。
 
 ## 验收要求
 
