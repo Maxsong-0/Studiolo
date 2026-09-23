@@ -1,4 +1,4 @@
-//! Public contract tests for the in-memory AuditLedger adapter.
+//! 内存 `AuditLedger` 适配器的公开契约测试。
 
 use serde_json::json;
 use studiolo_audit_ledger::{

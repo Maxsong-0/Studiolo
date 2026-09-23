@@ -1,4 +1,4 @@
-//! Read-only deployment probe; does not start a model or read a provider credential.
+//! 只读的部署探针：不启动模型，也不读取供应商凭据。
 use studiolo_runner_adapter::{
     CliProvider, LinuxIsolation, RealRunner, RunnerAdapter, RunnerLaunchConfig,
 };

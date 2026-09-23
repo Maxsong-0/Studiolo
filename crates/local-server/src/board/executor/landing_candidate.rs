@@ -1,4 +1,4 @@
-//! Resolve candidates from Control DB/Broker authority, never from request-supplied host paths.
+//! 候选只按 `Control DB`／`Broker` 的权威记录解析，绝不采用请求提供的宿主机路径。
 use super::{ProjectConfig, RunnerPlane, hash};
 use crate::board::requests::Request;
 use studiolo_control_db::{AttemptPhase, TaskStatus};

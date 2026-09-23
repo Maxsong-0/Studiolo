@@ -1,4 +1,4 @@
-//! Canonical revision compatibility and visible-file security through the public handle.
+//! 经公开句柄验证 `canonical` 修订的兼容性与可见文件的安全性。
 
 use std::{
     fs,

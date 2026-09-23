@@ -14,7 +14,7 @@ MAX_NOTE = 4 * 1024 * 1024
 MAX_TOTAL = 16 * 1024 * 1024
 MAX_SOURCES = 128
 ULID = r"[0-7][0-9A-HJKMNP-TV-Z]{25}"
-# 策略平面文本格式唯一来源：crates/agent-server/src/server.rs `text_policy_read`。
+# 策略平面文本格式唯一来源：crates/agent-server/src/server/policy.rs `text_policy_read`。
 POLICY_HEAD = re.compile(r"# 策略版本 ([a-f0-9]{12})")
 POLICY_COUNT = {"rules": re.compile(r"([0-9]{1,10}) 份规则母本"),
                 "skills": re.compile(r"([0-9]{1,10}) 个 skill(?:（[^\t]*）)?")}

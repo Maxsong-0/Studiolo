@@ -1,4 +1,4 @@
-//! Startup cleanup is based only on durable, validated attempt-specific scope references.
+//! 启动清理只依据持久、经校验且专属于单次尝试的 `scope` 引用。
 use super::RunnerConfig;
 use std::{
     process::{Command, Stdio},
@@ -8,8 +8,8 @@ use std::{
 use studiolo_control_db::ControlDb;
 use studiolo_runner_adapter::RunnerRef;
 
-/// Isolates every persisted real Runner before BoardPlane startup reconciliation.
-/// This must run after ControlDb opens and before any claim, relay or lease is enabled.
+/// 在 `BoardPlane` 启动对账之前，隔离每个已持久化的真实 `Runner`。
+/// 必须在 `ControlDb` 打开之后、任何认领／`relay`／租约启用之前运行。
 pub fn isolate_persisted(
     control: &ControlDb,
     config: &RunnerConfig,

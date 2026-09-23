@@ -93,8 +93,8 @@ fn only_vault_broker_source_owns_canonical_vault_authority() {
         "canonical Vault authority escaped vault-broker:\n{}",
         findings.join("\n")
     );
-    // Broker now opens a nofollow directory walk from a fixed OS anchor. The
-    // ownership rule covers all its sources without requiring the old helper.
+    // `Broker` 现在从固定的操作系统锚点出发，以 `nofollow` 方式逐级遍历目录；
+    // 归属规则覆盖它的全部源文件，不再依赖旧的辅助函数。
     assert!(!broker_source.is_empty());
     assert!(broker_source.contains(".workbench/vault.json"));
     assert!(broker_source.contains("sources/attempts/"));

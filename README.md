@@ -170,6 +170,10 @@ M1 的 `workbench` 只消费内存文档与 M0 索引；`local-server` 按启动
 
 ## 开发
 
+**所有测试与编译检查一律不在本机跑**（2026-09-23 用户硬约束）：`cargo test`／`fmt`／`clippy`／`build`、Python 契约、
+前端检查、真实管线都经 `scripts/test-linux.sh <命令>`（在服务器上原生跑，可带参数跑任意定向命令）或 CI。
+下面列出的命令是 CI 执行的内容，供对照与在服务器上复现，不是让你在本机跑。
+
 下面这组命令覆盖 CI `rust` 作业里的编译类检查，**不是它的全集**（权威始终是
 `.github/workflows/ci.yml`，缺的部分列在本节末尾）：
 
@@ -206,7 +210,7 @@ npm --prefix web test && npm --prefix web run lint && npm --prefix web run forma
   以及 `deploy/agent/install-t036-system.sh`、`deploy/agent/upgrade-read-supply.sh.in`、
   `deploy/agent/enable-m4-policy.sh.in`。
   **这不是 `bash -n` 全部部署脚本**：`deploy/preview/install-runtime-package.sh` 不在清单里。
-- 跑**逐条列名**的 `scripts/test-*.py`（不是 `test-*.py` 通配；2026-09-22 为 24 个，其中
+- 跑**逐条列名**的 `scripts/test-*.py`（不是 `test-*.py` 通配；2026-09-23 为 25 个，其中
   `test-human-offline.py` 以 `python3 -I -B` 跑），另跑 `deploy/blackboard/test_{assembly,freeze,activation}.py`
   与 `scripts/tests/test_runner_launch.py`，再在 `umask 002` 下复跑副本同步三份（T-079）。
 - `cargo --locked build -p studiolo-agent-server` 后跑

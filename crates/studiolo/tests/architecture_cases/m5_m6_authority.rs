@@ -1,4 +1,4 @@
-//! New private adapters retain the original lexical authority boundary.
+//! 新增的私有适配器沿用原有的词法权限边界。
 use crate::support::{AuthorityViolation, source_violations, workspace_root};
 use std::{fs, path::Path};
 const SITES: &[(&str, &str)] = &[

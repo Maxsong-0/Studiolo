@@ -1,4 +1,4 @@
-//! Per-attempt maintenance: a failed candidate never interrupts other supervised runs.
+//! 按尝试逐个维护：一个候选失败绝不打断其他受监管的运行。
 use super::{ActiveRun, RunnerPlane};
 use std::sync::atomic::Ordering;
 use studiolo_control_db::AttemptPhase;
@@ -6,8 +6,8 @@ use studiolo_runner_adapter::{RunnerAdapter, RunnerObservation};
 use studiolo_task_engine::{TaskCommand, TaskEngine};
 
 impl RunnerPlane {
-    /// Rechecks leases/fences/revocation and stages candidates independently per attempt.
-    /// Call in spawn_blocking at most once per maintenance tick, outside the engine lock.
+    /// 按尝试各自独立地复核租约／`fence`／撤销状态，并暂存候选。
+    /// 须在 `spawn_blocking` 中、引擎锁之外调用，每个维护周期至多一次。
     pub fn tick(&self) -> Result<(), String> {
         let mut runs = self.runs.lock().map_err(|_| "Runner状态不可用")?;
         let now = jiff::Timestamp::now().as_millisecond();
@@ -23,8 +23,8 @@ impl RunnerPlane {
                 if run.summary.state == "running" {
                     run.summary.state = "failed".into();
                 }
-                // A retained patch and any engine reservation remain available for recovery.
-                // No error here restarts a CLI or prevents the next attempt being supervised.
+                // 已保留的补丁与引擎的任何预留仍可供恢复使用。
+                // 这里的任何错误都不会重启 `CLI`，也不妨碍下一个尝试接受监管。
                 run.cleanup_pending = self.stop_and_close(run, now).is_err();
             }
         }
@@ -86,7 +86,7 @@ impl RunnerPlane {
                         .command(run.spec.task_id, TaskCommand::Cancel, now);
                     return Ok(());
                 }
-                // Cancellation and revocation are never extended by a heartbeat.
+                // 心跳绝不为已取消或已撤销的尝试续期。
                 if !stopping && !self.authority.frozen.load(Ordering::SeqCst) {
                     self.authority
                         .board
@@ -106,7 +106,7 @@ impl RunnerPlane {
                 }
             }
             Ok(RunnerObservation::Completed(report)) => {
-                // RealRunner preserved the candidate outside scratch before returning this report.
+                // `RealRunner` 返回这份报告之前，已把候选保存到 `scratch` 之外。
                 run.summary.state = "candidate_retained".into();
                 self.revoke_ticket(run.spec.attempt_id, &run.ticket)?;
                 super::recovery::isolate_unit(&unit(run))?;
@@ -128,7 +128,7 @@ impl RunnerPlane {
                     .engine
                     .lock()
                     .map_err(|_| "黑板不可用")?;
-                // Budget-triggered cancellation can be first observed together with process exit.
+                // 预算触发的取消可能与进程退出同时被首次观察到。
                 let _ = engine.command(run.spec.task_id, TaskCommand::Cancel, now);
                 run.summary.state = "candidate_retained".into();
                 if let Ok(receipt) = serde_json::from_value(receipt)
@@ -138,8 +138,8 @@ impl RunnerPlane {
                 {
                     run.summary.state = "stopped".into();
                 }
-                // Invalid or late packages remain retained; only T1 recovery or the original
-                // cancellation deadline may close the claim, never an invented receipt.
+                // 无效或迟到的停止包仍予保留；只有 T1 恢复或原定的取消期限
+                // 才能关闭该认领，绝不凭编造的回执关闭。
             }
             Ok(RunnerObservation::Cancelled) => {
                 run.summary.state = "stopped".into();
@@ -172,8 +172,8 @@ impl RunnerPlane {
         Ok(())
     }
 
-    /// Removes the live grant before unlinking its short-lived ticket. Attempts remain revoked
-    /// even if unlink fails; the maintenance retry never treats a leftover file as authority.
+    /// 先移除生效中的授权，再删除它的短期票据。即使删除失败，尝试也保持
+    /// 已撤权；维护重试绝不把残留文件当作授权依据。
     pub(super) fn revoke_ticket(
         &self,
         attempt: studiolo_core::AttemptId,
@@ -200,7 +200,7 @@ impl RunnerPlane {
     }
 
     pub(super) fn stop_and_close(&self, run: &ActiveRun, now: i64) -> Result<(), String> {
-        // Execute all independent cleanup steps even if one fails.
+        // 即使某一步失败，也执行完全部相互独立的清理步骤。
         let revoked = self.revoke_ticket(run.spec.attempt_id, &run.ticket);
         let cancelled = if run.launch_failed {
             Ok(())
@@ -238,7 +238,7 @@ impl RunnerPlane {
         if attempt.fence != run.spec.fence {
             return Err("attempt围栏不匹配".into());
         }
-        // T1 reservations can only roll forward. Keep that claim fenced while the engine recovers.
+        // T1 预留只能前滚；引擎恢复期间让该认领继续受 `fence` 约束。
         if matches!(
             attempt.phase,
             AttemptPhase::Committing | AttemptPhase::Completed
@@ -252,8 +252,8 @@ impl RunnerPlane {
             if !isolated {
                 return Ok(());
             }
-            // The engine owns durable audit, retry_on, backoff and the three-attempt ceiling.
-            // It independently refuses any attempt with persisted tool calls.
+            // 持久审计、`retry_on`、退避与三次尝试上限都归引擎负责。
+            // 引擎也会独立拒绝任何已有持久化工具调用的尝试。
             return engine
                 .launch_failed(run.spec.task_id, run.spec.attempt_id, run.spec.fence, now)
                 .map(|_| ())
@@ -264,12 +264,12 @@ impl RunnerPlane {
                 .command(run.spec.task_id, TaskCommand::Cancel, now)
                 .map_err(|_| "取消封闭待恢复")?;
         }
-        // Isolation without a valid CLI receipt is not a stopped receipt. Preserve the
-        // original 180-second window; periodic reconciliation records abandoned on expiry.
+        // 只有隔离而没有有效的 `CLI` 回执，不算停止回执。保留原定的
+        // 180 秒窗口；到期后由周期对账记为 `abandoned`。
         Ok(())
     }
 
-    /// Cancels one owned task before signalling the isolated process.
+    /// 先取消一个自有任务，再向已隔离的进程发信号。
     pub fn cancel(&self, task: studiolo_core::TaskId) -> Result<(), String> {
         let now = jiff::Timestamp::now().as_millisecond();
         self.authority

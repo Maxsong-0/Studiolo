@@ -1,4 +1,4 @@
-//! Frozen-startup maintenance: only durable terminal attempts with confirmed isolation qualify.
+//! 冻结状态下的启动维护：只有已持久为终态且隔离已确认的尝试才符合条件。
 use super::{RunnerConfig, landing_store::Lease, recovery::isolate_unit};
 use crate::board::BoardPlane;
 use std::{collections::BTreeSet, fs};
@@ -44,8 +44,8 @@ fn audit(
     Ok(())
 }
 pub(super) fn startup(board: &BoardPlane, config: &RunnerConfig) -> Result<(), String> {
-    // Called before socket bind, relay creation, admission and serving. Unknown objects remain
-    // protected; age alone never authorizes deleting an attempt or terminating a process.
+    // 在绑定 `socket`、创建 `relay`、开放准入与对外服务之前调用。未知对象一律保持受保护；
+    // 仅凭存在时长，绝不足以授权删除尝试或终止进程。
     let engine = board.engine.lock().map_err(|_| "清理期间黑板不可用")?;
     let control = engine.control_db();
     let boards = control.board_tasks().map_err(|_| "清理任务列表不可用")?;

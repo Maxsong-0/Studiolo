@@ -1,4 +1,4 @@
-//! Human execution control: current session, durable audit and L3 before sensitive effects.
+//! 人侧执行控制：敏感副作用发生之前，先核当前会话、落持久审计、过 L3。
 use super::{BoardPlane, RunnerPlane, StartRequest};
 use crate::{
     AppState,
@@ -167,7 +167,7 @@ fn execute(
             )?)
         }
         Input::Review { task_id, receipt } => {
-            // Hold repository landing authority through the terminal review transaction.
+            // 整个终态审阅事务期间都持有仓库落地权。
             let code = {
                 let engine = board.engine.lock().map_err(|_| "黑板不可用")?;
                 engine

@@ -1,4 +1,4 @@
-//! Exact call inventories and boundary anchors for the final M6 implementation.
+//! M6 最终实现的精确调用清单与边界锚点。
 use std::path::Path;
 pub(super) fn remainder(crate_name: &str, path: &Path, source: &str) -> String {
     if crate_name != "studiolo-local-server" {

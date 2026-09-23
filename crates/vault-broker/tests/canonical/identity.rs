@@ -1,4 +1,4 @@
-//! Existing identity, zero creation, and rejection of changed canonical bindings.
+//! 既有身份、零创建，以及拒绝已变更的 `canonical` 绑定。
 
 use std::{fs, io::ErrorKind, os::unix::fs::symlink, path::Path};
 use studiolo_core::VaultUuid;

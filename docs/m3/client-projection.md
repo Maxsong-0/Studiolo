@@ -126,7 +126,7 @@ effective），不再读 Vault 文件。起点见 [策略模式示例配置](cli
 - 读取：握手 → `kind=rules` 清单 → 逐项 `kind=rules&subject=…` → 选了 skills 时再取 `kind=skills`
   清单与逐项 → 末次握手。每次读取都经能力集授权并审计为 `policy_read`
   （路径 `policy://rules/<subject>`、revision `v<版本>`）。格式唯一来源是
-  `crates/agent-server/src/server.rs` 的 `text_policy_read`。
+  `crates/agent-server/src/server/policy.rs` 的 `text_policy_read`。
 - 一致性：两份清单与每份正文首行 `# 策略版本 <12 位>` 必须相同，否则视为导出途中 effective
   变化，整批拒绝；所选名字不在清单直接拒绝，不发正文请求；逐项 `@v<版本>` 须与清单相同；
   规则正文 SHA256 须等于服务端声明，skill 按服务端规范 JSON（serde 字段序）复算后须相同。

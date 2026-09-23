@@ -1,4 +1,4 @@
-//! A writer lease does not weaken create-only installation against outside changes.
+//! 写者租约不会削弱仅创建（`create-only`）式安装对外部改动的防护。
 
 #![cfg(target_os = "linux")]
 

@@ -1,4 +1,4 @@
-//! Exact M5/M6 private authority sites; unmatched or duplicated calls remain forbidden.
+//! M5/M6 私有权限位置的精确清单；未匹配或重复的调用仍然禁止。
 use std::path::Path;
 pub(super) fn remainder(crate_name: &str, path: &Path, source: &str) -> String {
     if crate_name != "studiolo-gateway" {

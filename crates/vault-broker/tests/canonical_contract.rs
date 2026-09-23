@@ -1,4 +1,4 @@
-//! T-022: the canonical read handle has no creation or mutation authority.
+//! T-022：`canonical` 读句柄没有创建或修改的权限。
 #![cfg(unix)]
 
 #[path = "canonical/identity.rs"]

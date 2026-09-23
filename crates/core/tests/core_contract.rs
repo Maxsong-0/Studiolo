@@ -1,4 +1,4 @@
-//! Contract tests for Studiolo's shared value types.
+//! `Studiolo` 共享值类型的契约测试。
 
 use std::str::FromStr;
 

@@ -1,4 +1,4 @@
-//! Final M6 authority exceptions remain closed under extra calls, weaker guards and relocation.
+//! M6 最终的权限例外保持封闭：追加调用、削弱守卫或挪动位置都不能借用这些例外。
 use crate::support::{AuthorityViolation, source_violations, workspace_root};
 use std::{fs, path::Path};
 

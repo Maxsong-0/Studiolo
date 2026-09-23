@@ -89,7 +89,7 @@ async fn drift_and_invalid_control_refuse_all_tools_and_audit_failure_takes_prec
     write(&f.replica.root.join("control/state.json"), b"{}");
     let response = f.call(&f.token, &session, 8, "handshake", json!({})).await;
     assert!(is_error(&response) && response.to_string().contains("replica_invalid"));
-    // Existing ledger stores the root binding and detects replacement, even when its directory handle survives.
+    // 既有账本保存了根绑定：即使它持有的目录句柄仍然有效，也能识别出目录已被替换。
     fs::rename(f.data.join("audit"), f.data.join("audit-away")).unwrap();
     fs::create_dir(f.data.join("audit")).unwrap();
     let response = f.call(&f.token, &session, 9, "handshake", json!({})).await;

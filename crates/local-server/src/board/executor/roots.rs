@@ -1,9 +1,9 @@
-//! Path admission runs before recovery signals and before any Runner listener is created.
+//! 路径准入先于恢复信号执行，也先于任何 `Runner` 监听的创建。
 use super::RunnerConfig;
 use std::path::{Path, PathBuf};
 
-/// Validates trusted Runner mappings against every canonical, credential and control root.
-/// The caller supplies its already-verified host roots; none come from an AI request.
+/// 用每个 `canonical` 根、凭据根与控制根校验受信任的 `Runner` 映射。
+/// 宿主机根由调用方提供且已核验；没有一个来自 `AI` 请求。
 pub fn validate_isolated_roots(config: &RunnerConfig, forbidden: &[PathBuf]) -> Result<(), String> {
     config.validate()?;
     if forbidden.is_empty() {
@@ -28,7 +28,7 @@ pub fn validate_isolated_roots(config: &RunnerConfig, forbidden: &[PathBuf]) -> 
             return Err("Runner映射根必须相互分离".into());
         }
     }
-    // Read-only runtimes may be shared by providers, but never contain mutable or secret roots.
+    // 只读运行时可由多个提供方共用，但绝不能包含可变根或秘密根。
     for provider in &config.providers {
         validate_path(&provider.runtime_root, forbidden)?;
         if mounts

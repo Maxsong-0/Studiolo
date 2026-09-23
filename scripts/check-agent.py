@@ -20,7 +20,7 @@ READ_TOOLS = {"handshake", "list_entries", "read_note", "search"}
 POLICY_TOOLS = {"policy_read", "propose_desired"}
 BOARD_TOOLS = {"board"}
 EXPECTED_TOOLS = READ_TOOLS | POLICY_TOOLS | BOARD_TOOLS
-# 与 crates/supply/src/signpost/render.rs、crates/agent-server/src/server.rs 的固定文案逐字一致。
+# 与 crates/supply/src/signpost/render.rs、crates/agent-server/src/server/policy.rs（「策略平面未接入」）与 server/session.rs（「策略拒绝：」）的固定文案逐字一致。
 POLICY_ABSENT_MARK = "策略平面：未接入"
 POLICY_ABSENT_ERROR = "策略平面未接入（M3 兼容模式）"
 POLICY_DENIED_PREFIX = "策略拒绝："

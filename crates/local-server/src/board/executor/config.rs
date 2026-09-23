@@ -1,4 +1,4 @@
-//! Strict, private host configuration. No long-lived credential is loaded by local-server.
+//! 严格的私有宿主机配置。`local-server` 不加载任何长期凭据。
 use serde::{Deserialize, Serialize};
 use std::{
     fs,
@@ -8,107 +8,107 @@ use studiolo_core::VaultPath;
 use studiolo_gateway::{ModelEgress, RelayLimits};
 use studiolo_runner_adapter::{CliProvider, RunBudget};
 
-/// Dedicated Runner plane configuration; omitted configuration keeps all real execution closed.
+/// 专用的 `Runner` 平面配置；省略该配置时，所有真实执行都保持关闭。
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct RunnerConfig {
-    /// Configuration version.
+    /// 配置版本。
     pub schema: u32,
-    /// Private state directory, separate from Vault and credential/key-holder roots.
+    /// 私有状态目录，与 `Vault` 及凭据／密钥持有方的根目录相互独立。
     pub state_root: PathBuf,
-    /// Private bounded ephemeral raw directory excluded from backup/sync.
+    /// 私有、有界的临时 `raw` 目录，不纳入备份与同步。
     pub raw_root: PathBuf,
-    /// Independent Gateway key-holder socket, never mounted into a Runner.
+    /// 独立的 `Gateway` 密钥持有方 `socket`，绝不挂载进 `Runner`。
     pub upstream_socket: PathBuf,
-    /// Expected distinct Gateway OS identity.
+    /// 期望的、独立的 `Gateway` 操作系统身份。
     pub upstream_uid: u32,
-    /// Runtime profiles which must each pass a live probe before unfreeze.
+    /// 运行时配置档；解冻前每一个都必须通过实时探针。
     pub providers: Vec<ProviderConfig>,
-    /// Explicit project/repository and classification allowlist.
+    /// 显式的项目／仓库与分级白名单。
     pub projects: Vec<ProjectConfig>,
-    /// Deployment ceiling for logical Gateway tools.
+    /// 逻辑 `Gateway` 工具的部署上限。
     pub deployment_tools: Vec<String>,
-    /// Owner-approved model relay ceiling tied to the effective policy hash.
+    /// 主人批准的模型 `relay` 上限，与生效策略哈希绑定。
     pub policies: Vec<PolicyConfig>,
 }
-/// Exact effective-policy and role ceiling selected by trusted configuration.
+/// 由受信任配置选定的精确生效策略与角色上限。
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct PolicyConfig {
-    /// Effective policy digest; any activation change requires explicit reconfiguration.
+    /// 生效策略摘要；任何激活变更都需要显式重新配置。
     pub hash: String,
-    /// Role name from the work item.
+    /// 取自工作项的角色名。
     pub role: String,
-    /// Policy tool ceiling.
+    /// 策略层的工具上限。
     pub policy_tools: Vec<String>,
-    /// Role tool ceiling.
+    /// 角色层的工具上限。
     pub role_tools: Vec<String>,
 }
-/// Immutable provider/runtime identity and hard limits.
+/// 不可变的提供方／运行时身份与硬性上限。
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ProviderConfig {
-    /// Pinned provider.
+    /// 钉死的提供方。
     pub provider: CliProvider,
-    /// Exact allowed model.
+    /// 允许使用的精确模型。
     pub model: String,
-    /// Administrator-owned immutable minimal runtime root.
+    /// 归管理员所有、不可变的最小运行时根目录。
     pub runtime_root: PathBuf,
-    /// Pinned native CLI digest.
+    /// 钉死的原生 `CLI` 摘要。
     pub cli_sha256: String,
-    /// Root-owned bubblewrap executable.
+    /// 属主为 `root` 的 `bubblewrap` 可执行文件。
     pub bubblewrap: PathBuf,
-    /// Root-owned systemd-run executable.
+    /// 属主为 `root` 的 `systemd-run` 可执行文件。
     pub systemd_run: PathBuf,
-    /// Private bounded scratch filesystem at most 512 MiB.
+    /// 私有、有界的 `scratch` 文件系统，至多 512 MiB。
     pub attempt_root: PathBuf,
-    /// Durable retained-patch root, outside scratch and canonical Vault.
+    /// 持久的保留补丁根目录，位于 `scratch` 与 `canonical Vault` 之外。
     pub retained_root: PathBuf,
-    /// Work/time thresholds.
+    /// 工作量／时间阈值。
     pub budget: RunBudget,
-    /// Monetary, token, request and tool ceilings.
+    /// 金额、`token`、请求数与工具调用数上限。
     pub relay_limits: RelayLimits,
 }
-/// Authenticated classification of one exact canonical source revision.
+/// 对某一精确 `canonical` 来源修订的已认证分级。
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct SourceConfig {
-    /// Logical path inside the explicitly allowed project.
+    /// 位于显式允许项目内的逻辑路径。
     pub path: VaultPath,
-    /// Exact classified revision.
+    /// 经分级的精确修订。
     pub revision: String,
-    /// SHA-256 of the classified bytes.
+    /// 被分级字节的 `SHA-256`。
     pub sha256: String,
-    /// Explicit provider permission; absent never means cloud-allowed.
+    /// 显式的提供方许可；缺省绝不等于允许上云。
     pub egress: ModelEgress,
-    /// Retention ceiling.
+    /// 留存期限上限。
     pub retain_until_unix_seconds: i64,
 }
-/// Administrator-approved project mapping; API callers never supply host paths.
+/// 管理员批准的项目映射；`API` 调用方绝不提供宿主机路径。
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ProjectConfig {
-    /// Exact project root.
+    /// 精确的项目根。
     pub project: VaultPath,
-    /// Trusted code checkout.
+    /// 受信任的代码检出目录。
     pub repository: PathBuf,
-    /// Full snapshot tree including staged/unstaged/untracked nonignored bytes.
+    /// 完整快照 `tree`，含已暂存、未暂存与未跟踪且未被忽略的字节。
     pub repository_tree: String,
-    /// SHA-256 of the approved code snapshot manifest.
+    /// 已批准代码快照清单的 `SHA-256`。
     pub repository_sha256: String,
-    /// Authenticated code snapshot external-provider classification.
+    /// 代码快照面向外部提供方的已认证分级。
     pub repository_egress: ModelEgress,
-    /// Owner-classified exact instruction digests; arbitrary new task prose stays denied.
+    /// 经主人分级的精确指令摘要；任意新的任务文字一律拒绝。
     pub approved_instruction_sha256: Vec<String>,
-    /// Authenticated classification for those explicitly approved instructions.
+    /// 对上述显式批准指令的已认证分级。
     pub instruction_egress: ModelEgress,
-    /// Explicit owner approval for full generated-code artifacts in canonical backup history.
+    /// 主人显式批准：生成代码的完整产物可进入 `canonical` 备份历史。
     pub allow_full_artifact_backup: bool,
-    /// Explicit owner approval for generated-code artifacts in the desktop sync scope.
+    /// 主人显式批准：生成代码产物可进入桌面同步范围。
     pub allow_artifact_desktop_sync: bool,
-    /// Code source retention bound.
+    /// 代码来源的留存期限。
     pub retain_until_unix_seconds: i64,
-    /// Each canonical file available to this execution scope.
+    /// 本执行范围可用的每个 `canonical` 文件。
     pub sources: Vec<SourceConfig>,
 }
 pub(super) fn private_directory(path: &Path) -> Result<(), String> {

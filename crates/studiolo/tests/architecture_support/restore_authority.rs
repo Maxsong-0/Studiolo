@@ -1,4 +1,4 @@
-//! Offline restore only pins read-only descriptors in its fixed private layout.
+//! 离线恢复只在其固定的私有布局内钉住只读描述符。
 use super::authority_tokens::{checked_closed, compact};
 
 pub(super) fn remainder(source: &str) -> String {

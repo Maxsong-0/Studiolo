@@ -1,4 +1,4 @@
-//! Linux-only kernel path and nonblocking race checks; not macOS evidence.
+//! 仅限 `Linux` 的内核路径与非阻塞竞态检查；不能当作 `macOS` 上的证据。
 
 use rustix::fs::{CWD, Mode, RenameFlags, mkfifoat, renameat_with};
 use std::{

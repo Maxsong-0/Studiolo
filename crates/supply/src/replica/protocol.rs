@@ -132,7 +132,7 @@ fn valid_time(value: i64, now_ms: i64) -> bool {
     value > 0 && value <= now_ms.saturating_add(30_000)
 }
 
-// deserialize_with makes field presence mandatory while preserving explicit JSON null.
+// 供 `deserialize_with` 使用：字段必须出现，同时保留显式给出的 `JSON null`。
 fn required_option<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
 where
     D: serde::Deserializer<'de>,

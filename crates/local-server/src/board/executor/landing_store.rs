@@ -1,4 +1,4 @@
-//! Private repository-identity leases and immutable landing intent/outcome records.
+//! 以仓库身份为键的私有租约，以及不可变的落地意图／结果记录。
 use super::hash;
 use rustix::fs::{FlockOperation, Mode, OFlags, flock, open};
 use serde::{Serialize, de::DeserializeOwned};
@@ -17,8 +17,8 @@ pub(super) struct Lease {
 }
 impl Drop for Lease {
     fn drop(&mut self) {
-        // A concurrent fork may retain this open file description until exec.
-        // End our lease now instead of waiting for every inherited descriptor to close.
+        // 并发的 `fork` 可能一直持有这个打开文件描述，直到 `exec`。
+        // 此处立即结束本租约，不等每个继承下去的描述符都关闭。
         let _ = flock(&self._file, FlockOperation::Unlock);
     }
 }
@@ -70,8 +70,8 @@ impl Lease {
         Ok(lease)
     }
     fn path(&self, key: &str, phase: &str) -> PathBuf {
-        // Attempt identity stays globally unique even if an administrator replaces its repository.
-        // The record itself pins repository_identity, so replacement cannot make a prior intent vanish.
+        // 即使管理员替换了仓库，尝试身份仍全局唯一。
+        // 记录本身钉住 `repository_identity`，替换仓库无法让先前的意图消失。
         self.root.join(format!("landing-{key}-{phase}.json"))
     }
     pub fn verify_repository(&self, repository: &Path) -> Result<(), String> {

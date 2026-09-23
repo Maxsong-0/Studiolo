@@ -1,4 +1,4 @@
-//! Synthetic M6 baseline: candidate bytes come from authorized Demo tool responses.
+//! 合成的 M6 基线：候选字节来自经授权的 `Demo` 工具响应。
 use serde_json::{Value, json};
 use std::sync::{Arc, Mutex};
 use studiolo_core::{ToolId, VaultPath};
@@ -16,9 +16,9 @@ struct State {
     cancelled: bool,
 }
 
-/// A one-attempt Demo runner using the same Gateway trait as other adapters.
-/// Construct only with a trusted Gateway and a capability validated by the composition root.
-/// The Gateway rechecks permission, expiry, cancellation and fence on every observation/replay.
+/// 只跑一次尝试的 `Demo` 版 `runner`，与其他适配器共用同一个 `Gateway` trait。
+/// 只能用受信任的 `Gateway` 与经组合根校验过的能力来构造。
+/// 每次观察或重放时，`Gateway` 都会重新检查权限、过期、取消与 `fence`。
 pub struct GatewayStubRunner {
     gateway: Arc<dyn Gateway>,
     capability: JobCapability,
@@ -26,7 +26,7 @@ pub struct GatewayStubRunner {
     state: Mutex<State>,
 }
 impl GatewayStubRunner {
-    /// Binds this synthetic adapter to one already validated attempt capability.
+    /// 把这个合成适配器绑定到一份已校验过的 `attempt` 能力上。
     #[must_use]
     pub fn new(gateway: Arc<dyn Gateway>, capability: JobCapability) -> Self {
         Self {

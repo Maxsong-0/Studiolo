@@ -1,4 +1,4 @@
-//! Constructs immutable execution inputs exclusively from an authenticated claim and private config.
+//! 只依据经认证的认领与私有配置构造不可变的执行输入。
 use super::{ProjectConfig, ProviderConfig, RunnerPlane, StartRequest, hash};
 use studiolo_core::{PermissionSet, ToolId, VaultPath};
 use studiolo_gateway::{JobCapability, ModelEgress, RelayGrant, RelayProvider, RelaySource};
@@ -232,7 +232,7 @@ impl RunnerPlane {
                 repository_egress: egress(&project.repository_egress),
             }),
         };
-        // Initiating Consumer identity remains separate from the attempt-scoped Runner capability.
+        // 发起方 `Consumer` 的身份与限定于本次尝试的 `Runner` 能力保持分离。
         if r.instance_id != claim.attempt.worker_id {
             return Err("claim不属于触发实例".into());
         }

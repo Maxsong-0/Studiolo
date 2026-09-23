@@ -1,4 +1,4 @@
-//! One admission barrier orders process creation, freeze and shutdown.
+//! 进程创建、冻结与关停由同一道准入屏障排定先后。
 use std::sync::{
     Mutex, MutexGuard,
     atomic::{AtomicBool, AtomicU64, Ordering},
@@ -48,7 +48,7 @@ impl Admission {
             return Err("解冻期间发生新的冻结或关闭".into());
         }
         commit()?;
-        // An emergency freeze may invalidate a pending start without waiting for this lock.
+        // 紧急冻结可能不等这把锁，就作废尚未完成的启动。
         if !valid() {
             rollback()?;
             return Err("解冻被新的冻结或关闭撤销".into());
