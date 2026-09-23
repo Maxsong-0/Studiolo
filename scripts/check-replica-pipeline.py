@@ -128,7 +128,8 @@ class Pipeline:
     def push(self, truncated=False):
         with archive(capture(str(self.source))) as stream:
             data = stream.read()
-        result = subprocess.run([sys.executable, "-B", str(SCRIPTS / "replica_receiver.py"), "--root", str(self.remote)],
+        result = subprocess.run([sys.executable, "-B", str(SCRIPTS / "replica_receiver.py"), "--root", str(self.remote),
+                                 "--deadline", "120"],
                                 input=data[:700] if truncated else data,
                                 capture_output=True, timeout=20)
         require(result.returncode != 0 if truncated else result.returncode == 0,

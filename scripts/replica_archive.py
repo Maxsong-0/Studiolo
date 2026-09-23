@@ -2,6 +2,7 @@
 import codecs
 import hashlib
 import os
+import re
 import tarfile
 
 from replica_common import (MAX_ENTRIES, MAX_MANIFEST, MAX_TOTAL, descend, digest,
@@ -10,6 +11,16 @@ from replica_common import (MAX_ENTRIES, MAX_MANIFEST, MAX_TOTAL, descend, diges
 # 传输包上限随总量上限派生（tar 头、填充与清单的余量），不再单独写死一个会被忘改的数。
 MAX_WIRE = 2 * MAX_TOTAL
 MAX_HEADERS = 2 * (MAX_ENTRIES + 16)
+# SSH＋回执段的截止按本次实际要发的字节数给：基础 120 秒，再按最低 1 MiB/s 追加（ADR-024）。
+# 确认与增量几乎不发正文，仍约 120 秒；整份 219 MB 约 330 秒，不再被固定的 120 秒掐断。
+DEADLINE_BASE = 120
+MIN_RATE = 1024 * 1024
+MAX_DEADLINE = DEADLINE_BASE + -(-MAX_WIRE // MIN_RATE)
+
+
+def transfer_deadline(size):
+    require(integer(size) and 0 <= size <= MAX_WIRE)
+    return DEADLINE_BASE + -(-size // MIN_RATE)
 
 
 class Reader:
@@ -57,6 +68,10 @@ def pax_path(raw):
 
 
 def receive(stream, stage):
+    """读入整份、增量或确认请求，返回 (清单摘要, 源观测时间, expected, 基线摘要, 本包提供的路径)。
+
+    基线摘要为 None 时必须是整份：包内恰为 expected 全集。否则缺席项由调用方对照基线补齐或拒绝。
+    """
     reader, seen = Reader(stream), set()
     pending = None
     raw_manifest = request = expected = None
@@ -90,9 +105,12 @@ def receive(stream, stage):
         elif path == "request.json":
             require(request is None and len(seen) == 2 and info.isfile() and info.size <= 4096)
             request = load_json(reader.read(info.size))
-            require(isinstance(request, dict) and set(request) == {"schema_version", "source_observed_at_ms"})
-            require(type(request["schema_version"]) is int and request["schema_version"] == 1)
+            require(isinstance(request, dict) and set(request) == {
+                "schema_version", "source_observed_at_ms", "base_digest"})
+            require(type(request["schema_version"]) is int and request["schema_version"] == 2)
             require(integer(request["source_observed_at_ms"]) and request["source_observed_at_ms"] > 0)
+            base = request["base_digest"]
+            require(base is None or (isinstance(base, str) and re.fullmatch("[a-f0-9]{64}", base)))
         else:
             require(expected is not None and request is not None and path in expected)
             kind, size, sha = expected[path]
@@ -134,6 +152,8 @@ def receive(stream, stage):
     else:
         require(False)
     require(expected is not None and request is not None)
-    require(seen == set(expected) | {"manifest.json", "request.json"})
+    provided = seen - {"manifest.json", "request.json"}
+    if request["base_digest"] is None:
+        require(provided == set(expected))
     os.fsync(stage)
-    return digest(raw_manifest), request["source_observed_at_ms"], expected
+    return digest(raw_manifest), request["source_observed_at_ms"], expected, request["base_digest"], provided

@@ -14,8 +14,9 @@ import time
 import unittest
 
 sys.dont_write_bytecode = True
+from replica_archive import MAX_DEADLINE, MIN_RATE, transfer_deadline
 from replica_capture import archive, capture
-from replica_common import ALLOW, encode
+from replica_common import ALLOW, digest, encode
 from replica_store import Store
 
 RECEIVER = Path(__file__).absolute().with_name("replica_receiver.py")
@@ -52,14 +53,15 @@ class ReceiverTests(unittest.TestCase):
         (self.project / "empty").mkdir()
         self.server = self.root / "server"
 
-    def payload(self):
-        with archive(capture(str(self.vault))) as stream:
+    def payload(self, base=None):
+        with archive(capture(str(self.vault)), base) as stream:
             return stream.read()
 
-    def run_receive(self, payload=None, code=0, root=None):
+    def run_receive(self, payload=None, code=0, root=None, deadline="120"):
         if payload is None:
             payload = self.payload()
-        result = subprocess.run([sys.executable, "-B", str(RECEIVER), "--root", str(root or self.server)],
+        result = subprocess.run([sys.executable, "-B", str(RECEIVER), "--root", str(root or self.server),
+                                 "--deadline", deadline],
                                 input=payload, capture_output=True, timeout=20)
         self.assertEqual(result.returncode, code, result.stderr.decode())
         self.assertNotIn(b"private fixture text", result.stdout + result.stderr)
@@ -98,6 +100,130 @@ class ReceiverTests(unittest.TestCase):
         self.assertEqual(first["receipt"]["generation"], second["receipt"]["generation"])
         self.assertGreaterEqual(second["receipt"]["source_observed_at_ms"], first["receipt"]["source_observed_at_ms"])
         self.assertEqual(len(list((self.server / "releases").iterdir())), 1)
+
+    def base_of(self):
+        """源端基线：上一轮被服务器确认的清单摘要与 expected。"""
+        raw, _, expected, _ = capture(str(self.vault))
+        return digest(raw), expected
+
+    @staticmethod
+    def members(payload):
+        with tarfile.open(fileobj=io.BytesIO(payload)) as tar:
+            return [member.name for member in tar]
+
+    def request_rewrite(self, payload, **fields):
+        def edit(member, body):
+            if member.name == "request.json":
+                value = json.loads(body)
+                value.update(fields)
+                body = encode(value)
+            return member, body
+        return rewrite(payload, edit)
+
+    def releases(self):
+        return sorted(p.name for p in (self.server / "releases").iterdir())
+
+    def test_confirm_sends_only_manifest_and_refreshes_receipt_without_new_generation(self):
+        first = self.run_receive()
+        releases = self.releases()
+        payload = self.payload(self.base_of())
+        self.assertEqual(self.members(payload), ["manifest.json", "request.json"])
+        second = self.run_receive(payload)
+        self.assertTrue(second["reused"])
+        self.assertEqual(second["receipt"]["generation"], first["receipt"]["generation"])
+        self.assertGreaterEqual(second["receipt"]["source_observed_at_ms"], first["receipt"]["source_observed_at_ms"])
+        self.assertEqual(self.state()["status"], "ready")
+        self.assertEqual(self.releases(), releases)
+        self.assertFalse(list(self.server.glob(".stage-*")))
+
+    def test_delta_sends_only_changed_files_and_copies_the_rest_from_current_generation(self):
+        attachment = b"\x00attachment" * 100
+        (self.project / "keep.bin").write_bytes(attachment)
+        self.run_receive()
+        base = self.base_of()
+        (self.project / "note.md").write_text("second version")
+        (self.project / "added.md").write_text("added")
+        (self.project / "empty").rmdir()
+        payload = self.payload(base)
+        names = self.members(payload)
+        self.assertIn("vault/项目/Studiolo/note.md", names)
+        self.assertIn("vault/项目/Studiolo/added.md", names)
+        self.assertNotIn("vault/项目/Studiolo/keep.bin", names)
+        self.assertNotIn(b"attachment", payload)
+        second = self.run_receive(payload)
+        self.assertFalse(second["reused"])
+        new = self.current_vault() / "项目/Studiolo"
+        self.assertEqual((new / "keep.bin").read_bytes(), attachment)
+        self.assertEqual((new / "keep.bin").stat().st_mode & 0o777, 0o600)
+        self.assertEqual((new / "note.md").read_text(), "second version")
+        self.assertEqual((new / "added.md").read_text(), "added")
+        self.assertFalse((new / "empty").exists())
+        self.assertEqual(len(self.releases()), 2)
+
+    def test_base_that_is_not_the_current_generation_is_refused_without_touching_state(self):
+        empty = self.payload(self.base_of())
+        self.assertEqual(self.run_receive(empty), {"status": "base_mismatch"})
+        self.assertFalse((self.server / "control/state.json").exists())
+        self.run_receive()
+        before = self.state()
+        base = self.base_of()
+        (self.project / "note.md").write_text("changed")
+        self.assertEqual(self.run_receive(self.payload(("0" * 64, base[1]))), {"status": "base_mismatch"})
+        self.assertEqual(self.state(), before)
+        self.assertEqual(len(self.releases()), 1)
+
+    def test_corrupt_current_generation_fails_confirm_and_is_recorded_until_full_repair(self):
+        first = self.run_receive()
+        (self.current_vault() / "项目/Studiolo/note.md").write_text("private fixture edit")
+        self.assertEqual(self.run_receive(self.payload(self.base_of())), {"status": "base_mismatch"})
+        self.assertEqual(self.state()["status"], "failed")
+        self.assertEqual(self.state()["last_error"], "validation_failed")
+        self.assertEqual(self.state()["receipt"], first["receipt"])
+        self.run_receive()
+        self.assertEqual(self.state()["status"], "ready")
+        self.assertEqual((self.current_vault() / "项目/Studiolo/note.md").read_text(), "private fixture text")
+
+    def test_corrupt_unchanged_file_fails_delta_copy_and_is_recorded(self):
+        (self.project / "keep.md").write_text("keep this")
+        first = self.run_receive()
+        base = self.base_of()
+        (self.current_vault() / "项目/Studiolo/keep.md").write_text("keep that")
+        (self.project / "note.md").write_text("second version")
+        self.assertEqual(self.run_receive(self.payload(base)), {"status": "base_mismatch"})
+        self.assertEqual(self.state()["last_error"], "validation_failed")
+        self.assertEqual(self.state()["receipt"], first["receipt"])
+        self.assertEqual(len(self.releases()), 1)
+        self.assertFalse(list(self.server.glob(".stage-*")))
+
+    def test_delta_and_confirm_cannot_bend_their_shape(self):
+        self.run_receive()
+        old = self.state()["receipt"]
+        base = self.base_of()
+        unchanged = self.payload()
+        (self.project / "note.md").write_text("second version")
+        delta = self.payload(base)
+        full = self.payload()
+        cases = {
+            "增量漏发变化文件": rewrite(delta, lambda m, b: (None, None) if m.name.endswith("note.md") else (m, b)),
+            "增量漏发目录": rewrite(delta, lambda m, b: (None, None) if m.name.endswith("/empty") else (m, b)),
+            # 基线确为现代次、清单也未变，却夹带正文：确认请求只许有清单与请求两项。
+            "确认夹带正文": self.request_rewrite(unchanged, base_digest=base[0]),
+            "旧版请求": self.request_rewrite(full, schema_version=1),
+            "基线摘要非法": self.request_rewrite(full, base_digest="A" * 64),
+        }
+        for name, payload in cases.items():
+            with self.subTest(case=name):
+                self.run_receive(payload, 1)
+                self.assertEqual(self.state()["receipt"], old)
+
+    def test_deadline_is_bounded_before_touching_the_store(self):
+        for deadline in ("119", "0", str(MAX_DEADLINE + 1)):
+            with self.subTest(deadline=deadline):
+                self.run_receive(code=1, deadline=deadline)
+                self.assertFalse(self.server.exists())
+        self.run_receive(deadline=str(MAX_DEADLINE))
+        self.assertEqual([transfer_deadline(n) for n in (0, 1, MIN_RATE, MIN_RATE + 1)], [120, 121, 121, 122])
+        self.assertEqual(transfer_deadline(219_321_960), 120 + 210)
 
     def test_same_source_repairs_same_size_drift_using_new_generation(self):
         first = self.run_receive()
@@ -142,8 +268,9 @@ class ReceiverTests(unittest.TestCase):
         old = self.state()["receipt"]
         for when in (1, old["received_at_ms"] + 120000):
             with self.subTest(when=when):
-                raw = rewrite(self.payload(), lambda m, b: (m, encode({"schema_version": 1,
-                              "source_observed_at_ms": when})) if m.name == "request.json" else (m, b))
+                raw = rewrite(self.payload(), lambda m, b: (m, encode({"schema_version": 2,
+                              "source_observed_at_ms": when, "base_digest": None}))
+                              if m.name == "request.json" else (m, b))
                 self.run_receive(raw, 1)
                 self.assertEqual(self.state()["receipt"], old)
 
@@ -174,7 +301,7 @@ class ReceiverTests(unittest.TestCase):
         self.assertFalse((self.root / "state.json").exists())
 
     def test_sigkill_stage_is_reclaimed_by_next_locked_receiver(self):
-        command = [sys.executable, "-B", str(RECEIVER), "--root", str(self.server)]
+        command = [sys.executable, "-B", str(RECEIVER), "--root", str(self.server), "--deadline", "120"]
         process = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         try:
             deadline = time.monotonic() + 5
