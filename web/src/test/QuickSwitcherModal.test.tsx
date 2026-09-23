@@ -16,6 +16,7 @@ const context: CommandPaletteContext = {
   draftCount: 0,
   fileOperations: null,
   goTo: () => {},
+  viewAllProjects: () => {},
   refreshSnapshot: () => {},
   openSource: () => {},
   openDrafts: () => {},
