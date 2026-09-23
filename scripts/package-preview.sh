@@ -25,6 +25,7 @@ STUDIOLO_INPUTS=(
   web/src web/package.json web/package-lock.json web/index.html
   web/tsconfig.json web/vite.config.ts web/eslint.config.js web/.prettierrc.json web/.prettierignore
   examples/m1-vault scripts/package-preview.sh scripts/check-preview.py scripts/test-check-preview.py
+  scripts/test-check-preview-exercise.py
   scripts/test-linux.sh scripts/run-preview-tests.sh scripts/test-preview-package.py
   scripts/test-release-package.py scripts/test-install-package.py .github/workflows/ci.yml
   deploy/preview/studiolo-preview.service.in
@@ -42,6 +43,7 @@ COPYFILE_DISABLE=1 tar -czf "$STUDIOLO_OUT/payload/source.tar.gz" \
 
 # 在独立源码快照构建，避免产物与已归档源码发生偏差。
 python3 "$STUDIOLO_OUT/source/scripts/test-check-preview.py"
+python3 "$STUDIOLO_OUT/source/scripts/test-check-preview-exercise.py"
 python3 "$STUDIOLO_OUT/source/scripts/test-preview-package.py"
 python3 "$STUDIOLO_OUT/source/scripts/test-release-package.py"
 python3 "$STUDIOLO_OUT/source/scripts/test-install-package.py"

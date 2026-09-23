@@ -57,8 +57,8 @@
 bash scripts/package-preview.sh /绝对路径/m3-t049-20260917-runtime01
 ```
 
-脚本会先在源码快照里跑四组 Python 契约（`test-check-preview.py`、`test-preview-package.py`、
-`test-release-package.py`、`test-install-package.py`）与前端全套检查，再进容器交叉构建。
+脚本会先在源码快照里跑五组 Python 契约（`test-check-preview.py`、`test-check-preview-exercise.py`、
+`test-preview-package.py`、`test-release-package.py`、`test-install-package.py`）与前端全套检查，再进容器交叉构建。
 不出包只想自检时，单独跑：
 
 ```bash

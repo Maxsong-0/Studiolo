@@ -196,13 +196,16 @@ npm --prefix web ci --ignore-scripts && npm --prefix web run build
 npm --prefix web test && npm --prefix web run lint && npm --prefix web run format
 ```
 
-上面那组之外，CI `rust` 作业还会做四件事（2026-09-17 按 `ci.yml` 逐条核对）：
+上面那组之外，CI `rust` 作业还会做四件事（2026-09-22 按 `ci.yml` 逐条核对）：
 
-- 对**七个显式列名**的脚本跑 `bash -n`：`scripts/` 下的 `package-agent.sh`、
+- 对**八个显式列名**的脚本跑 `bash -n`：`scripts/` 下的 `package-agent.sh`、
   `run-agent-tests.sh`、`sync-agent-vault.sh`、`package-preview.sh`、`run-preview-tests.sh`，
-  以及 `deploy/agent/install-t036-system.sh`、`deploy/agent/upgrade-read-supply.sh.in`。
+  以及 `deploy/agent/install-t036-system.sh`、`deploy/agent/upgrade-read-supply.sh.in`、
+  `deploy/agent/enable-m4-policy.sh.in`。
   **这不是 `bash -n` 全部部署脚本**：`deploy/preview/install-runtime-package.sh` 不在清单里。
-- 跑**十三个逐条列名**的 `scripts/test-*.py`（不是 `test-*.py` 通配）。
+- 跑**逐条列名**的 `scripts/test-*.py`（不是 `test-*.py` 通配；2026-09-22 为 24 个，其中
+  `test-human-offline.py` 以 `python3 -I -B` 跑），另跑 `deploy/blackboard/test_{assembly,freeze,activation}.py`
+  与 `scripts/tests/test_runner_launch.py`，再在 `umask 002` 下复跑副本同步三份（T-079）。
 - `cargo --locked build -p studiolo-agent-server` 后跑
   `scripts/check-replica-pipeline.py`、`scripts/check-client-projection-pipeline.py` 两条真实管线。
 - 生产 `studiolo-auth-admin` 构建之后再跑
@@ -214,7 +217,7 @@ npm --prefix web test && npm --prefix web run lint && npm --prefix web run forma
 scripts/test-linux.sh   # fmt / clippy / workspace 测试 / 路径安全 / 两个生产构建 / 登记工具进程检查
 ```
 
-`scripts/test-linux.sh` **不包含**上面的 `bash -n`、十三个 Python 契约脚本、两条管线检查，
+`scripts/test-linux.sh` **不包含**上面的 `bash -n`、逐条列名的 Python 契约脚本、两条管线检查，
 也不含前端作业；要复跑那些得自己按 `ci.yml` 逐条执行。
 
 ## 纪律
