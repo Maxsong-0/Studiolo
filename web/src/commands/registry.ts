@@ -258,7 +258,7 @@ function actionCommands(ctx: CommandContext): Command[] {
       id: 'action:policy-queue',
       group: 'action',
       label: '打开策略待处理队列',
-      hint: '策略 › 待处理 desired',
+      hint: '策略 › 待处理草案',
       keywords: ['策略', '待处理', '规则草案', '队列', 'desired', 'policy'],
       target: () => ({
         view: 'policy',

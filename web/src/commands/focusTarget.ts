@@ -9,7 +9,7 @@
 export const COMMAND_TARGET_ATTRIBUTE = 'data-command-target';
 
 export const COMMAND_TARGETS = {
-  /** 策略页「待处理 desired」队列：发布前要在这里选定草案。 */
+  /** 策略页「待处理草案」队列（desired）：发布前要在这里选定草案。 */
   policyQueue: 'policy-desired-queue',
   /** 策略页「版本与回滚」列表：回滚在这里逐版确认。 */
   policyVersions: 'policy-versions',

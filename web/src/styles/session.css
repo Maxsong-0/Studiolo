@@ -9,10 +9,7 @@
  * 凡是要压过别处单类规则（.outline-button、.icon-button、.ui-button、.ui-status …）的地方
  * 一律写两级以上的选择器；只想兜底的重置用 :where() 压到最低，谁的类规则都能盖过它。
  *
- * .session-dialog / -header / -body 目前也是策略页二次认证窗口（PolicyStepUp，见 policy.css
- * 「沿用账户弹窗外壳」）的外壳：那边的 <dialog> 没有 .ui-surface，所以浮层框（2px 墨线、
- * 硬偏移阴影、纸色底）在 .session-dialog 上再写一遍，两处长得一样。
- * PolicyStepUp 改用自己的外壳后，这份双写与本段说明一并删掉，浮层框只留 ui/Surface 一处。
+ * 账户与会话对话框的浮层框（2px 墨线、硬偏移阴影、纸色底）由 ui/Surface 画，这里只管尺寸与内部排版。
  */
 
 /* ---------- 登录闸门：纸色底上居中一个 2px 墨框格子 ---------- */
@@ -108,7 +105,7 @@
   }
 }
 
-/* ---------- 账户与会话对话框（PolicyStepUp 共用外壳） ---------- */
+/* ---------- 账户与会话对话框（浮层框由 ui/Surface 画） ---------- */
 
 .session-dialog {
   width: min(640px, calc(100vw - 32px));
@@ -117,11 +114,6 @@
   margin: auto;
   padding: 0;
   overflow: hidden;
-  border: 2px solid var(--ink);
-  border-radius: 0;
-  background: var(--paper);
-  color: var(--ink);
-  box-shadow: var(--overlay-shadow);
 }
 /* 只在打开时改排版：关着的 dialog 仍由浏览器的 display: none 藏住。标题栏与页脚不动，中间滚。 */
 .session-dialog[open] {
