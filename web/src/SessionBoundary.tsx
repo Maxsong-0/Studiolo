@@ -103,6 +103,11 @@ function SessionBoundaryContent({
   }
   const checking = state.phase === 'checking';
   const signedOut = state.phase === 'signed-out';
+  // login 与 check 都在内部接住失败，并把结果写进 state.message 由下方提示展示，不会拒绝；
+  // 点击处理器只负责发起，显式丢弃返回的 Promise，保持 React 事件处理器的 void 约定。
+  const proceed = () => {
+    void (signedOut ? client.login() : client.check());
+  };
   return (
     <main className="session-gate">
       <section className="session-welcome" aria-labelledby="session-title">
@@ -119,10 +124,7 @@ function SessionBoundaryContent({
         </h1>
         <p role={checking || signedOut ? 'status' : 'alert'}>{state.message}</p>
         {checking ? null : (
-          <button
-            className="outline-button session-primary"
-            onClick={signedOut ? client.login : client.check}
-          >
+          <button className="outline-button session-primary" onClick={proceed}>
             <Icon name={signedOut ? 'arrow' : 'refresh'} />
             {signedOut ? '登录工作台' : '核对登录状态'}
           </button>
