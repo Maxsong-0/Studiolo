@@ -11,21 +11,66 @@ import shutil
 import signal
 import sys
 import tempfile
+import uuid
 
-from replica_capture import archive, capture
-from replica_common import check_node, digest, encode, integer, load_json, open_root, require
+from replica_archive import transfer_deadline
+from replica_capture import archive, capture, transfer_mode
+from replica_common import (MAX_MANIFEST, Invalid, check_node, digest, encode, integer, load_json,
+                            manifest, open_root, read_file, require)
 
 MODULES = ("replica_common", "replica_archive", "replica_cleanup", "replica_store", "replica_receiver")
 
 
-def remote_command(root):
+def remote_command(root, deadline):
     directory = Path(__file__).absolute().parent
     code = "import sys,types\n"
     for name in MODULES:
         source = (directory / (name + ".py")).read_text(encoding="utf-8")
         code += "m=types.ModuleType(%r);sys.modules[%r]=m;exec(%r,m.__dict__)\n" % (name, name, source)
     code += "sys.exit(m.main())\n"
-    return shlex.join(["python3", "-B", "-c", code, "--root", root])
+    return shlex.join(["python3", "-B", "-c", code, "--root", root, "--deadline", str(deadline)])
+
+
+def load_base(state_fd, name):
+    """读上一轮已被服务器确认的清单，返回 (摘要, expected)；没有或已不合现行白名单则为 None。
+
+    文件本身不安全（链接、权限、大小）照常报错；只有「清单按现行规则不再成立」才静默作废，
+    例如白名单变了——此时改发整份，服务器也会拒绝用旧基线的请求。
+    """
+    try:
+        raw, _ = read_file(state_fd, name, MAX_MANIFEST)
+    except FileNotFoundError:
+        return None
+    try:
+        _, expected = manifest(raw)
+    except Invalid:
+        drop_base(state_fd, name)
+        return None
+    return digest(raw), expected
+
+
+def save_base(state_fd, name, raw):
+    temp = ".base-" + uuid.uuid4().hex
+    try:
+        with private_file(state_fd, temp, "wb") as output:
+            output.write(raw)
+            output.flush()
+            os.fsync(output.fileno())
+        os.replace(temp, name, src_dir_fd=state_fd, dst_dir_fd=state_fd)
+        os.fsync(state_fd)
+    finally:
+        try:
+            os.unlink(temp, dir_fd=state_fd)
+        except FileNotFoundError:
+            pass
+
+
+def drop_base(state_fd, name):
+    try:
+        os.unlink(name, dir_fd=state_fd)
+        os.fsync(state_fd)
+    except FileNotFoundError:
+        pass
 
 
 def expired(_signal, _frame):
@@ -84,6 +129,7 @@ def main(argv=None):
         state_fd = open_root(state_path, create=True, private=True)
         key = digest(encode([source, host, remote]))[:32]
         name = "sync-" + key + ".lock"
+        base_name = "base-" + key + ".json"
         lock_fd = os.open(name, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK,
                           0o600, dir_fd=state_fd)
         check_node(os.fstat(lock_fd), False, private=True)
@@ -112,8 +158,18 @@ def main(argv=None):
             with private_file(work_fd, "response.json", "rb") as output:
                 raw = output.read(8193)
             require(len(raw) <= 8192)
-            response = accept_response(load_json(raw), summary["source_digest"],
-                                       summary["source_observed_at_ms"])
+            value = load_json(raw)
+            if value == {"status": "base_mismatch"}:
+                # 服务器现代次不是本端基线（被重置、上一轮回执丢失或现代次损坏）：清基线，下一轮整份自愈。
+                drop_base(state_fd, base_name)
+                status = {"status": "failed", "last_error": "base_mismatch"}
+                print(json.dumps(status, separators=(",", ":")), file=sys.stderr)
+                return 1
+            response = accept_response(value, summary["source_digest"], summary["source_observed_at_ms"])
+            with private_file(work_fd, "manifest.json", "rb") as saved:
+                manifest_raw = saved.read(MAX_MANIFEST + 1)
+            require(len(manifest_raw) <= MAX_MANIFEST and digest(manifest_raw) == summary["source_digest"])
+            save_base(state_fd, base_name, manifest_raw)
             status = {**response, **summary}
         else:
             captured = capture(source)
@@ -127,12 +183,18 @@ def main(argv=None):
             if args.dry_run:
                 status = {"status": "dry_run", **summary}
             else:
-                with archive(captured) as stream, private_file(work_fd, "archive.tar", "wb") as output:
+                base = load_base(state_fd, base_name)
+                with archive(captured, base) as stream, private_file(work_fd, "archive.tar", "wb") as output:
                     shutil.copyfileobj(stream, output)
-                for filename, raw in (("host", host.encode()), ("command", remote_command(remote).encode()),
-                                      ("summary.json", encode(summary))):
+                    sent = output.tell()
+                deadline = transfer_deadline(sent)
+                summary.update(mode=transfer_mode(captured, base), sent_bytes=sent)
+                for filename, raw_value in (("host", host.encode()), ("manifest.json", raw),
+                                            ("command", remote_command(remote, deadline).encode()),
+                                            ("deadline", str(deadline).encode()),
+                                            ("summary.json", encode(summary))):
                     with private_file(work_fd, filename, "wb") as output:
-                        output.write(raw)
+                        output.write(raw_value)
                 return 0
         print(json.dumps(status, ensure_ascii=False, separators=(",", ":")))
         return 0

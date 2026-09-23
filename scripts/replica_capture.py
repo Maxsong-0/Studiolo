@@ -92,8 +92,18 @@ def capture(path, between_scans=None):
         os.close(root)
 
 
-def archive(captured):
+def transfer_mode(captured, base):
+    """base 为 (基线清单摘要, 基线 expected) 或 None。"""
+    if base is None:
+        return "full"
+    return "confirm" if base[0] == digest(captured[0]) else "delta"
+
+
+def archive(captured, base=None):
+    """整份：全部条目；确认：只有清单与请求；增量：全部目录＋与基线不同的文件（ADR-024）。"""
     raw, bodies, expected, observed = captured
+    mode = transfer_mode(captured, base)
+    base_digest, base_expected = base if base is not None else (None, None)
     output = tempfile.TemporaryFile()
     try:
         with tarfile.open(fileobj=output, mode="w", format=tarfile.PAX_FORMAT) as tar:
@@ -104,9 +114,14 @@ def archive(captured):
                 info.size = 0 if body is None else len(body)
                 tar.addfile(info, None if body is None else io.BytesIO(body))
             put("manifest.json", raw)
-            put("request.json", encode({"schema_version": 1, "source_observed_at_ms": observed}))
-            for path, (kind, _, _) in sorted(expected.items()):
-                put(path, None if kind == "dir" else bodies[path[len("vault/"):]])
+            put("request.json", encode({"schema_version": 2, "source_observed_at_ms": observed,
+                                        "base_digest": base_digest}))
+            if mode != "confirm":
+                for path, entry in sorted(expected.items()):
+                    if entry[0] == "dir":
+                        put(path)
+                    elif mode == "full" or base_expected.get(path) != entry:
+                        put(path, bodies[path[len("vault/"):]])
         output.seek(0)
         return output
     except BaseException:
