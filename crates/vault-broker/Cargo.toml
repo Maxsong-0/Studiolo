@@ -16,7 +16,6 @@ jiff.workspace = true
 serde-saphyr.workspace = true
 studiolo-core.workspace = true
 cap-std.workspace = true
-cap-tempfile.workspace = true
 rustix = { workspace = true, features = ["process"] }
 serde.workspace = true
 serde_json.workspace = true
