@@ -203,7 +203,7 @@ npm --prefix web test && npm --prefix web run lint && npm --prefix web run forma
   以及 `deploy/agent/install-t036-system.sh`、`deploy/agent/upgrade-read-supply.sh.in`、
   `deploy/agent/enable-m4-policy.sh.in`。
   **这不是 `bash -n` 全部部署脚本**：`deploy/preview/install-runtime-package.sh` 不在清单里。
-- 跑**逐条列名**的 `scripts/test-*.py`（不是 `test-*.py` 通配；2026-09-22 为 24 个，其中
+- 跑**逐条列名**的 `scripts/test-*.py`（不是 `test-*.py` 通配；2026-09-23 为 25 个，其中
   `test-human-offline.py` 以 `python3 -I -B` 跑），另跑 `deploy/blackboard/test_{assembly,freeze,activation}.py`
   与 `scripts/tests/test_runner_launch.py`，再在 `umask 002` 下复跑副本同步三份（T-079）。
 - `cargo --locked build -p studiolo-agent-server` 后跑
