@@ -1,4 +1,4 @@
-//! Public-seam contract tests for frontmatter and heading outlines.
+//! `frontmatter` 与标题大纲的公开接缝契约测试。
 
 use studiolo_core::VaultPath;
 use studiolo_vault_index::{

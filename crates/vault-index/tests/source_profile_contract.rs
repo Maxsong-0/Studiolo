@@ -1,4 +1,4 @@
-//! Public-seam contract tests for advisory source classification.
+//! 参考性来源分级的公开接缝契约测试。
 
 use studiolo_core::{Classification, VaultPath};
 use studiolo_vault_index::{InMemoryVaultIndex, MarkdownDocument, SourceProvenance, VaultIndex};

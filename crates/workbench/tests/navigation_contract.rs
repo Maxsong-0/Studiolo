@@ -1,4 +1,4 @@
-//! Public-Interface contracts for bounded, source-linked M1 navigation.
+//! M1 导航的公开接口契约：有界，且各项都链接到源位置。
 
 use studiolo_core::VaultPath;
 use studiolo_vault_index::MarkdownDocument;

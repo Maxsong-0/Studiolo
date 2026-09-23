@@ -1,4 +1,4 @@
-//! Public contract tests for the M0 in-memory Gateway adapter.
+//! M0 内存 `Gateway` 适配器的公开契约测试。
 
 use std::{
     sync::{

@@ -1,4 +1,4 @@
-//! Public-seam contract tests for wikilink resolution and backlinks.
+//! `wikilink` 解析与反链的公开接缝契约测试。
 
 use studiolo_core::VaultPath;
 use studiolo_vault_index::{
