@@ -1,6 +1,7 @@
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, expect, it, vi } from 'vitest';
+import { COMMAND_TARGETS, focusCommandTarget } from '../commands/focusTarget';
 import { Documents } from '../components/Documents';
 import { fixture, jsonResponse } from './fixtures';
 
@@ -140,4 +141,30 @@ it('超长搜索词不联网，允许恢复为合法查询', async () => {
   expect(fetchMock).toHaveBeenCalledTimes(calls);
   await user.clear(screen.getByRole('searchbox'));
   await waitFor(() => expect(screen.getByText('说明')).toBeInTheDocument());
+});
+
+it('搜索框挂 ⌘K 的带路标记：「删除文件」带到文档页后焦点落在这个框上', async () => {
+  render(
+    <Documents
+      projects={fixture.projects}
+      generation={7}
+      onOpen={onOpen}
+      onRefresh={onRefresh}
+    />,
+  );
+  await screen.findByText('说明');
+  const input = screen.getByRole('searchbox', {
+    name: '搜索文档正文、文件名或路径',
+  });
+  expect(input).toHaveAttribute(
+    'data-command-target',
+    COMMAND_TARGETS.documentsSearch,
+  );
+  expect(input).not.toHaveFocus();
+  const cancel = focusCommandTarget(COMMAND_TARGETS.documentsSearch);
+  try {
+    await waitFor(() => expect(input).toHaveFocus());
+  } finally {
+    cancel();
+  }
 });

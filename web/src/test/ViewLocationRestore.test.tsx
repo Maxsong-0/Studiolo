@@ -84,7 +84,7 @@ describe('离开再回来的位置', () => {
     render(boundary());
     await screen.findByRole('table');
     await user.click(screen.getByRole('button', { name: '文档' }));
-    await user.click(screen.getByRole('button', { name: '文件树' }));
+    await user.click(screen.getByRole('tab', { name: '文件树' }));
     expect(window.location.hash).toContain('panel=tree');
 
     signedOut = true;
@@ -95,8 +95,8 @@ describe('离开再回来的位置', () => {
     await user.click(login);
 
     await waitFor(() => expect(heading('文档')).toBeInTheDocument());
-    expect(screen.getByRole('button', { name: '文件树' })).toHaveAttribute(
-      'aria-pressed',
+    expect(screen.getByRole('tab', { name: '文件树' })).toHaveAttribute(
+      'aria-selected',
       'true',
     );
   });

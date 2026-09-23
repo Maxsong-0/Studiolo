@@ -1,14 +1,18 @@
-/* 原文阅读器的文档导航（大纲、出链、反链）。T-130：只换成新令牌与直角，结构不动；阅读器本身在 B 轮重做。 */
+/*
+ * 原文阅读器左栏（T-130 设计规范第 9 节）：256px 宽，右缘 1px 墨线与原文分开。
+ * 大纲、本页链接、反链三段各自可折叠，段标题 14px/800＋右侧箭头，段间 --hairline 细线；
+ * 条目标题正文字，出处与行号等宽小字；当前位置所属的标题黑底反白。只引用 tokens.css 的新令牌。
+ */
 .document-navigation-panel {
   flex: 0 0 256px;
   min-width: 0;
   overflow: auto;
   overscroll-behavior: contain;
-  border-right: 1px solid var(--hairline);
+  border-right: 1px solid var(--ink);
   background: var(--paper);
 }
 .document-navigation {
-  padding-bottom: 24px;
+  padding-bottom: var(--space-6);
 }
 .document-navigation details {
   border-bottom: 1px solid var(--hairline);
@@ -17,16 +21,15 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
-  min-height: 56px;
-  padding: 16px 20px;
+  gap: var(--space-3);
+  min-height: 44px;
+  padding: 10px var(--space-4) 10px var(--space-5);
   cursor: pointer;
   list-style: none;
   color: var(--ink);
-  font-size: 14px;
-  font-weight: 700;
-  line-height: 1.5;
-  transition: background-color 120ms ease;
+  font-size: var(--type-body);
+  font-weight: 800;
+  line-height: 1.4;
 }
 .document-navigation summary::-webkit-details-marker {
   display: none;
@@ -34,112 +37,148 @@
 .document-navigation summary:hover {
   background: var(--paper-raised);
 }
+.document-navigation summary:focus-visible {
+  outline-offset: -2px;
+}
 .document-navigation summary .icon {
-  width: 16px;
-  height: 16px;
+  width: 14px;
+  height: 14px;
   color: var(--ink-2);
   transform: rotate(-90deg);
-  transition: transform 120ms ease;
 }
 .document-navigation details[open] > summary .icon {
-  transform: rotate(0);
+  color: var(--ink);
+  transform: rotate(0deg);
 }
 .navigation-list {
-  list-style: none;
   margin: 0;
-  padding: 0 12px 12px;
+  padding: 0 var(--space-2) var(--space-3);
+  list-style: none;
 }
 .navigation-list > li {
-  padding: 4px 0;
-  font-size: 14px;
-  line-height: 1.6;
+  padding: 2px 0;
+  font-size: var(--type-body);
+  line-height: 1.5;
 }
-.navigation-target {
+.document-navigation .navigation-target {
   display: block;
   width: 100%;
+  padding: 6px var(--space-3);
   border: 0;
   border-radius: 0;
-  padding: 8px 10px;
   background: none;
   color: var(--ink);
-  font-size: 14px;
-  line-height: 1.6;
+  font-size: 13.5px;
+  line-height: 1.5;
   text-align: left;
   overflow-wrap: anywhere;
   text-decoration: underline;
   text-decoration-color: var(--hairline);
+  text-decoration-thickness: 1px;
   text-underline-offset: 4px;
-  transition: background-color 120ms ease;
 }
-.navigation-target:hover {
+.document-navigation .navigation-target:hover {
   background: var(--paper-raised);
   text-decoration-color: currentColor;
 }
-.navigation-target:active {
-  transform: translateY(1px);
+/* 大纲（ol）是标题清单，靠悬停底色识别即可；本页链接与反链（ul）保留下划线，表示跳到别处 */
+.document-navigation ol.navigation-list .navigation-target {
+  text-decoration: none;
 }
-.navigation-target[aria-current='location'] {
+.document-navigation .navigation-target:focus-visible {
+  outline-offset: -2px;
+}
+.document-navigation .navigation-target[aria-current='location'] {
   background: var(--ink);
   color: var(--on-ink);
   font-weight: 700;
   text-decoration: none;
 }
+/* 黑底块上的焦点环换成 --on-ink */
+.document-navigation .navigation-target[aria-current='location']:focus-visible {
+  outline-color: var(--on-ink);
+}
 .navigation-context {
   display: block;
-  margin: 0;
+  margin: 2px 0 0;
   color: var(--ink-2);
-  font-size: 12px;
+  font-family: var(--font-mono);
+  font-size: 11px;
   font-weight: 400;
-  line-height: 1.6;
+  line-height: 1.5;
+  letter-spacing: 0.02em;
   overflow-wrap: anywhere;
 }
+.document-navigation
+  .navigation-target[aria-current='location']
+  .navigation-context {
+  color: var(--on-ink);
+}
 .navigation-link-label {
-  padding: 0 10px;
+  padding: 4px var(--space-3) 0;
   font-weight: 700;
   overflow-wrap: anywhere;
 }
 .navigation-list > li > .navigation-context {
-  padding: 0 10px;
+  padding: 0 var(--space-3);
 }
 .navigation-unresolved {
   display: block;
-  padding: 4px 10px;
+  padding: 4px var(--space-3);
   color: var(--ink-2);
   font-size: 12px;
+  line-height: 1.5;
   overflow-wrap: anywhere;
 }
 .navigation-candidates {
-  list-style: none;
-  margin: 8px 10px;
-  padding-left: 8px;
+  margin: var(--space-1) var(--space-3) var(--space-2);
+  padding-left: var(--space-2);
   border-left: 1px solid var(--hairline);
+  list-style: none;
 }
 .navigation-empty,
 .navigation-limit {
   margin: 0;
-  padding: 4px 20px 16px;
+  padding: 2px var(--space-5) var(--space-4);
   color: var(--ink-2);
   font-size: 12px;
   line-height: 1.6;
   overflow-wrap: anywhere;
 }
 .navigation-limit {
-  padding-top: 16px;
+  padding-top: var(--space-3);
+  padding-bottom: var(--space-3);
+  border-bottom: 1px solid var(--hairline);
   background: var(--paper-raised);
+  font-family: var(--font-mono);
+  font-size: var(--type-label);
+  letter-spacing: 0.02em;
   color: var(--ink);
 }
 .outline-level-2 {
-  margin-left: 8px;
+  margin-left: var(--space-2);
 }
 .outline-level-3 {
-  margin-left: 16px;
+  margin-left: var(--space-4);
 }
 .outline-level-4,
 .outline-level-5,
 .outline-level-6 {
-  margin-left: 24px;
+  margin-left: var(--space-6);
 }
-@media (max-width: 759px) {
+
+@media (prefers-reduced-motion: no-preference) {
+  .document-navigation summary,
+  .document-navigation .navigation-target {
+    transition: background-color var(--motion-fast) ease;
+  }
+  .document-navigation summary .icon {
+    transition: transform var(--motion-fast) ease;
+  }
+}
+
+/* 窄屏（<760px）：左栏收起，经工具行的「显示导航」与原文二选一 */
+@media (width < 760px) {
   .document-navigation-panel {
     display: none;
     flex: 1;
@@ -149,31 +188,9 @@
     display: block;
   }
   .document-navigation {
-    padding-bottom: max(24px, env(safe-area-inset-bottom));
+    padding-bottom: max(var(--space-6), env(safe-area-inset-bottom));
   }
-  .navigation-target {
+  .document-navigation .navigation-target {
     min-height: 44px;
-  }
-}
-@media (prefers-reduced-motion: reduce) {
-  .document-navigation summary,
-  .document-navigation summary .icon,
-  .navigation-target {
-    transition: none;
-  }
-  .navigation-target:active {
-    transform: none;
-  }
-}
-@media (prefers-contrast: more) {
-  .document-navigation-panel,
-  .document-navigation details,
-  .navigation-candidates {
-    border-color: var(--ink);
-  }
-  .navigation-context,
-  .navigation-unresolved,
-  .navigation-empty {
-    color: var(--ink);
   }
 }

@@ -1,119 +1,122 @@
+/*
+ * 原文阅读器与 Markdown 预览（T-130 设计规范第 1、2、9、11 节）。只引用 tokens.css 的新令牌。
+ *
+ * 共用类（.document-dialog、.document-header、.source-location）也被编辑器、最近删除与文件操作各块使用：
+ * 这里只给通用的全屏覆盖层外框、紧凑标题行与等宽路径，不写只适合阅读器的布局；阅读器自己的排版挂在
+ * .document-reader 与 .document-toolbar / .document-body 等只在阅读器出现的类上。
+ * 本文件由组件自己 import，在层叠里可能排在 tokens.css、editor.css 之前：凡是要压过全局单类规则
+ * （.icon、.icon-button、.ui-button、:focus-visible、.markdown-preview h1 …）的地方一律写两级以上的选择器。
+ */
+
+/* ---------- 全屏覆盖层（共用）：纸色底、2px 墨框、10px 硬偏移阴影，四周留出与页面相同的边距 ---------- */
+
 .document-dialog {
   position: fixed;
   inset: 0;
-  width: min(1180px, 92vw);
-  max-width: 100vw;
-  height: min(850px, 90dvh);
-  max-height: 100dvh;
+  width: calc(100vw - 2 * var(--space-7));
+  max-width: none;
+  height: calc(100dvh - 2 * var(--space-6));
+  max-height: none;
   margin: auto;
   padding: 0;
   overflow: hidden;
-  border: 1px solid var(--border);
-  border-radius: 20px;
-  background: var(--surface);
-  color: var(--text);
-  box-shadow: var(--shadow-dialog);
+  border: 2px solid var(--ink);
+  border-radius: 0;
+  background: var(--paper);
+  color: var(--ink);
+  box-shadow: var(--overlay-shadow);
 }
+/* 只在打开时改排版：关着的 dialog 仍由浏览器的 display: none 藏住 */
 .document-dialog[open] {
   display: flex;
   flex-direction: column;
 }
+/* 底下的页面蒙一层八成纸色：看得出还在原处，又不抢覆盖层的注意力（与 ⌘K 面板同一做法） */
 .document-dialog::backdrop {
-  background: var(--scrim-soft);
-  backdrop-filter: blur(3px);
+  background: color-mix(in srgb, var(--paper) 80%, transparent);
 }
-.document-header,
-.document-toolbar {
-  flex-shrink: 0;
-  background: var(--sidebar);
-  backdrop-filter: blur(20px) saturate(1.2);
-}
+
+/* 紧凑标题行：左标题与等宽路径，右关闭；底边 2px 墨线 */
 .document-header {
   display: flex;
+  flex-shrink: 0;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 16px;
-  padding: 20px 24px 16px;
+  gap: var(--space-4);
+  padding: var(--space-3) var(--space-3) var(--space-3) var(--space-5);
+  border-bottom: 2px solid var(--ink);
+  background: var(--paper);
 }
 .document-header > div {
   min-width: 0;
 }
 .document-header h2 {
-  max-height: 2.7em;
+  max-height: 2.6em;
+  margin: 0;
   overflow: auto;
-  margin: 0 0 4px;
-  font-size: 22px;
-  font-weight: 600;
-  line-height: 1.35;
-  letter-spacing: -0.02em;
+  font-size: var(--type-cell);
+  line-height: 1.3;
+  font-weight: 800;
   overflow-wrap: anywhere;
+}
+.document-header .source-location {
+  max-height: 4.5em;
+  margin-top: 2px;
+  overflow: auto;
 }
 .source-location {
-  max-height: 4.8em;
-  overflow: auto;
-  font-size: 12px;
-  color: var(--muted);
-  line-height: 1.6;
-  overflow-wrap: anywhere;
   margin: 0;
+  font-family: var(--font-mono);
+  font-size: var(--type-label);
+  line-height: 1.5;
+  letter-spacing: 0.02em;
+  color: var(--ink-2);
+  overflow-wrap: anywhere;
 }
+
+/* ---------- 阅读器：工具行 ---------- */
+
 .document-toolbar {
   display: flex;
+  flex-shrink: 0;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
-  min-height: 52px;
-  padding: 8px 24px;
-  border-top: 1px solid var(--border);
-  border-bottom: 1px solid var(--border);
+  gap: var(--space-2) var(--space-4);
+  min-height: 48px;
+  padding: var(--space-2) var(--space-5);
+  border-bottom: 1px solid var(--ink);
 }
 .document-history {
   display: flex;
-  gap: 8px;
-  align-items: center;
   flex-shrink: 0;
-}
-.document-back,
-.document-navigation-toggle {
-  display: inline-flex;
   align-items: center;
-  justify-content: center;
-  gap: 8px;
-  min-height: 34px;
-  padding: 6px 10px;
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  background: var(--surface);
-  color: var(--text);
-  font-size: 14px;
-  line-height: 1.4;
-  transition:
-    background-color 140ms ease,
-    transform 140ms ease;
+  gap: var(--space-2);
 }
-.document-back .icon {
+.document-toolbar .document-back .icon {
+  width: 16px;
+  height: 16px;
   transform: rotate(180deg);
 }
-.document-back:disabled {
-  cursor: default;
+.document-toolbar .document-navigation-toggle .icon {
+  width: 16px;
+  height: 16px;
 }
-.document-back:hover:not(:disabled),
-.document-navigation-toggle:hover {
-  background: var(--hover);
-}
-.document-back:active:not(:disabled),
-.document-navigation-toggle:active {
-  transform: scale(0.97);
-}
-.document-navigation-toggle {
+/* 宽屏导航常驻左栏，开关只在窄屏出现 */
+.document-toolbar .document-navigation-toggle {
   display: none;
 }
 .document-readonly {
-  margin: 0;
-  color: var(--muted);
-  font-size: 12px;
-  line-height: 1.6;
+  margin: 0 auto 0 0;
+  font-family: var(--font-mono);
+  font-size: var(--type-label);
+  line-height: 1.3;
+  letter-spacing: 0.04em;
+  color: var(--ink-2);
 }
+
+/* ---------- 阅读器：左 256px 导航（navigation.css）＋右原文 ---------- */
+
 .document-body {
   display: flex;
   flex: 1;
@@ -126,155 +129,307 @@
   flex-direction: column;
   min-width: 0;
   min-height: 0;
-  background: var(--surface);
+  background: var(--paper);
 }
 .large-document-note {
   flex-shrink: 0;
   margin: 0;
-  padding: 10px 20px;
-  font-size: 12px;
-  line-height: 1.6;
-  background: var(--accent-soft);
-  color: var(--accent);
+  padding: var(--space-2) var(--space-5);
+  border-bottom: 1px solid var(--hairline);
+  background: var(--paper-raised);
+  font-family: var(--font-mono);
+  font-size: var(--type-label);
+  line-height: 1.5;
+  letter-spacing: 0.02em;
+  color: var(--ink);
 }
 .document-feedback {
-  overflow: auto;
+  max-width: 65ch;
   margin: 0;
-  padding: 24px;
-  font-size: 14px;
+  padding: var(--space-6) var(--space-5);
+  overflow: auto;
+  font-size: var(--type-body);
   line-height: 1.6;
   overflow-wrap: anywhere;
 }
+/* 出错：红色方块＋条目标题，原文说明与重试/刷新在下（与 ui/ErrorState 同一外观，标题仍是 h3） */
 .document-feedback h3 {
-  font-size: 16px;
-  margin: 0 0 8px;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0 0 var(--space-2);
+  font-size: var(--type-item);
+  line-height: 1.4;
+  font-weight: 700;
 }
+.document-feedback[role='alert'] h3::before {
+  content: '';
+  flex-shrink: 0;
+  width: 9px;
+  height: 9px;
+  background: var(--signal);
+}
+.document-feedback p {
+  margin: 0 0 var(--space-3);
+  color: var(--ink-2);
+}
+
+/* 原文：等宽逐行，行号是坐标刻度；正文列不超过 72ch，在右栏里居中 */
 .source-lines-scroll {
   flex: 1;
   min-height: 0;
   overflow: auto;
   overscroll-behavior: contain;
-  padding: 24px 12px 32px;
-  scroll-padding-block: 24px;
+  padding: var(--space-6) var(--space-5) var(--space-8);
+  scroll-padding-block: var(--space-6);
 }
-.source-lines-scroll:focus-visible {
+.document-content .source-lines-scroll:focus-visible {
   outline-offset: -3px;
 }
 .source-lines {
-  list-style: none;
+  --line-number-width: 56px;
+  max-width: calc(var(--line-number-width) + 72ch);
+  margin: 0 auto;
   padding: 0;
-  margin: 0;
-  font-family:
-    ui-monospace, 'SFMono-Regular', Consolas, 'PingFang SC', monospace;
-  font-size: 14px;
-  line-height: 1.8;
+  list-style: none;
+  font-family: var(--font-mono);
+  font-size: var(--type-body);
+  line-height: 1.75;
 }
 .source-lines li {
   display: flex;
   align-items: baseline;
-  padding: 4px 12px 4px 4px;
-  min-height: 33px;
-  border-left: 2px solid transparent;
-  border-radius: 4px;
 }
+/* 行号字小一号，但行高与正文同为一行（14px × 1.75），定位行的黑底块与正文行齐高 */
 .line-number {
-  flex: 0 0 48px;
-  padding-right: 20px;
+  flex: 0 0 var(--line-number-width);
+  padding-right: var(--space-3);
+  color: var(--ink-2);
+  font-size: var(--type-label);
+  line-height: calc(var(--type-body) * 1.75);
   text-align: right;
-  color: var(--muted);
-  user-select: none;
   font-variant-numeric: tabular-nums;
+  user-select: none;
 }
 .line-content {
-  flex: 1;
+  flex: 1 1 auto;
   min-width: 0;
+  max-width: 72ch;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   tab-size: 2;
 }
+/* 定位行：整行抬高，行号黑底反白（选中＝黑底反白，不靠颜色单独表意） */
 .source-lines .target-line {
-  background: var(--accent-soft);
-  border-left-color: var(--accent);
+  background: var(--paper-raised);
 }
-.target-line .line-number {
-  color: var(--accent);
+.source-lines .target-line .line-number {
+  background: var(--ink);
+  color: var(--on-ink);
+  font-weight: 600;
 }
-@media (max-width: 759px) {
+
+/* ---------- 窄屏（<760px）：覆盖层铺满，导航与原文二选一（导航开关出现），触控高度 44px ---------- */
+
+@media (width < 760px) {
   .document-dialog {
     width: 100vw;
     height: 100dvh;
     margin: 0;
+  }
+  /* .ui-surface 也给外框与阴影：铺满时用「元素＋类」压过它，宽高仍留给各覆盖层自己的规则调整 */
+  dialog.document-dialog {
     border: 0;
-    border-radius: 0;
+    box-shadow: none;
   }
   .document-header {
-    padding: max(16px, env(safe-area-inset-top)) 16px 12px;
+    padding: max(var(--space-3), env(safe-area-inset-top)) var(--space-2)
+      var(--space-3) 14px;
   }
   .document-header .icon-button {
     width: 44px;
     height: 44px;
   }
   .document-toolbar {
-    flex-wrap: wrap;
-    gap: 4px 12px;
-    padding: 8px 16px;
+    gap: var(--space-1) var(--space-3);
+    padding: var(--space-2) 14px;
   }
-  .document-back,
-  .document-navigation-toggle {
+  .document-toolbar .ui-button {
     min-height: 44px;
   }
-  .document-navigation-toggle {
+  .document-toolbar .document-navigation-toggle {
     display: inline-flex;
+  }
+  .document-readonly {
+    flex-basis: 100%;
+    order: 3;
   }
   .document-body.is-navigation-open .document-content {
     display: none;
   }
   .source-lines-scroll {
-    padding: 16px 4px max(24px, env(safe-area-inset-bottom));
+    padding: var(--space-4) var(--space-2)
+      max(var(--space-6), env(safe-area-inset-bottom));
   }
-  .source-lines li {
-    padding-right: 12px;
+  .source-lines {
+    --line-number-width: 44px;
   }
   .line-number {
-    flex-basis: 40px;
-    padding-right: 12px;
+    padding-right: var(--space-2);
   }
 }
-@media (prefers-reduced-motion: reduce) {
-  .document-back,
-  .document-navigation-toggle {
-    transition: none;
-  }
-  .document-back:active:not(:disabled),
-  .document-navigation-toggle:active {
-    transform: none;
-  }
+
+/* ---------- Markdown 预览（编辑器右栏）：MarkdownPreview 的正文排版 ---------- */
+
+/* 顶部说明：等宽小字 */
+.markdown-preview .preview-note {
+  margin: 0 0 var(--space-3);
+  font-family: var(--font-mono);
+  font-size: var(--type-label);
+  line-height: 1.5;
+  letter-spacing: 0.02em;
+  color: var(--ink-2);
 }
-@media (prefers-reduced-transparency: reduce) {
-  .document-header,
-  .document-toolbar {
-    background: var(--surface-solid);
-    backdrop-filter: none;
-  }
-  .document-dialog::backdrop {
-    backdrop-filter: none;
-  }
+.markdown-preview .markdown-body {
+  max-width: 72ch;
+  color: var(--ink);
+  font-size: var(--type-body);
+  line-height: 1.7;
+  overflow-wrap: anywhere;
 }
-@media (prefers-contrast: more) {
-  .document-header,
-  .document-toolbar {
-    background: var(--surface-solid);
-    backdrop-filter: none;
-  }
-  .document-dialog,
-  .document-toolbar,
-  .document-back,
-  .document-navigation-toggle {
-    border-color: var(--text);
-  }
-  .source-location,
-  .document-readonly,
-  .line-number {
-    color: var(--text);
-  }
+.markdown-preview .markdown-body > :first-child {
+  margin-top: 0;
+}
+/* 标题层级靠字重与上边线区分：一级 2px 墨线/900，二级 1px 墨线/800，三级细线/800，其余 700 无线 */
+.markdown-preview .markdown-body :is(h1, h2, h3, h4, h5, h6) {
+  margin: 1.6em 0 0.5em;
+  color: var(--ink);
+  line-height: 1.3;
+  letter-spacing: -0.01em;
+}
+.markdown-preview .markdown-body h1 {
+  padding-top: 10px;
+  border-top: 2px solid var(--ink);
+  font-size: 24px;
+  font-weight: 900;
+  letter-spacing: -0.02em;
+}
+.markdown-preview .markdown-body h2 {
+  padding-top: 8px;
+  border-top: 1px solid var(--ink);
+  font-size: 19px;
+  font-weight: 800;
+}
+.markdown-preview .markdown-body h3 {
+  padding-top: 6px;
+  border-top: 1px solid var(--hairline);
+  font-size: 16px;
+  font-weight: 800;
+}
+.markdown-preview .markdown-body :is(h4, h5, h6) {
+  font-size: var(--type-body);
+  font-weight: 700;
+}
+.markdown-preview .markdown-body p {
+  margin: 0.75em 0;
+}
+.markdown-preview .markdown-body :is(ul, ol) {
+  margin: 0.75em 0;
+  padding-left: 1.5em;
+}
+.markdown-preview .markdown-body li + li {
+  margin-top: 0.25em;
+}
+.markdown-preview .markdown-body .preview-task {
+  list-style: none;
+}
+.markdown-preview .markdown-body .preview-task > span:first-child + p {
+  display: inline;
+  margin: 0;
+}
+/* 链接常驻下划线：去掉浏览器默认的蓝紫，靠下划线识别 */
+.markdown-preview .markdown-body a {
+  color: var(--ink);
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
+}
+.markdown-preview .markdown-body a:hover {
+  text-decoration-thickness: 2px;
+}
+/* 代码等宽：行内码细线框，代码块抬高底色、1px 细线 */
+.markdown-preview .markdown-body :is(code, pre) {
+  font-family: var(--font-mono);
+}
+.markdown-preview .markdown-body code {
+  padding: 0 0.25em;
+  border: 1px solid var(--hairline);
+  background: var(--paper-raised);
+  font-size: 0.9em;
+}
+.markdown-preview .markdown-body pre {
+  margin: 1em 0;
+  padding: var(--space-3) 14px;
+  overflow-x: auto;
+  border: 1px solid var(--hairline);
+  border-radius: 0;
+  background: var(--paper-raised);
+  font-size: 12.5px;
+  line-height: 1.7;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.markdown-preview .markdown-body pre code {
+  padding: 0;
+  border: 0;
+  background: none;
+  font-size: inherit;
+}
+.markdown-preview .markdown-body blockquote {
+  margin: 1em 0;
+  padding: 0 0 0 14px;
+  border-left: 3px solid var(--ink);
+  color: var(--ink-2);
+}
+.markdown-preview .markdown-body hr {
+  height: 0;
+  margin: 1.5em 0;
+  border: 0;
+  border-top: 1px solid var(--ink);
+}
+.markdown-preview .markdown-body .preview-inert {
+  color: var(--ink-2);
+}
+.markdown-preview .markdown-body details {
+  margin: 0 0 1em;
+  border: 1px solid var(--hairline);
+}
+.markdown-preview .markdown-body summary {
+  padding: 6px var(--space-3);
+  cursor: pointer;
+  font-family: var(--font-mono);
+  font-size: var(--type-label);
+  line-height: 1.5;
+  letter-spacing: 0.04em;
+  color: var(--ink-2);
+}
+.markdown-preview .markdown-body details pre {
+  margin: 0;
+  border-width: 1px 0 0;
+}
+/* 表格：1px 墨线 */
+.markdown-preview .markdown-body .preview-table {
+  max-width: 100%;
+  margin: 1em 0;
+  overflow-x: auto;
+}
+.markdown-preview .markdown-body table {
+  border-collapse: collapse;
+  font-size: 13px;
+  line-height: 1.5;
+}
+.markdown-preview .markdown-body td {
+  padding: 6px 10px;
+  border: 1px solid var(--ink);
+  vertical-align: top;
 }

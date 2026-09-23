@@ -1,5 +1,6 @@
 import type { TreeEntry } from '../treeTypes';
 import { Icon } from './Icon';
+import '../styles/file-icons.css';
 
 type FileIconName =
   'folder' | 'book' | 'image' | 'table' | 'canvas' | 'code' | 'attachment';
@@ -71,6 +72,7 @@ function iconFor(entry: Pick<TreeEntry, 'kind' | 'name'>): FileIconName {
   return 'attachment';
 }
 
+/** 文件类型图标：单色线条，只按形状区分；badge 是附件信息浮层里的 36px 描边方框。 */
 export function FileTypeIcon({
   entry,
   badge = false,

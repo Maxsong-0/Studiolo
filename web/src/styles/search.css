@@ -1,201 +1,222 @@
+/*
+ * 文档 › 搜索（T-130 设计规范第 3、9 节）：子标签行、搜索控件格、结果格。
+ * 只引用 tokens.css 的新令牌，不写颜色字面量；格子之间 1px 墨线（ui/Grid），格内行分隔用 --hairline。
+ * 本文件由组件自己 import，在层叠里可能排在 tokens.css、workspace.css、views.css 之前：
+ * 凡是要压过这些全局单类规则（.search-control、.select-control、.document-title、.icon …）的地方，
+ * 一律写两级以上的选择器，不靠加载顺序。
+ */
+
+/* ---------- 子标签行：搜索 · 文件树（ui/Tabs，当前项红色 3px 下划线） ---------- */
+
+.documents {
+  min-width: 0;
+}
+.documents-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: stretch;
+  justify-content: space-between;
+  gap: var(--space-2) var(--space-6);
+  min-height: 50px;
+  margin-bottom: var(--space-3);
+}
+/* 面板里是网格（display: grid）：hidden 放在外层这个普通 div 上，这里再兜一次底 */
 .document-panel[hidden] {
   display: none;
 }
+.document-panel {
+  min-width: 0;
+}
+
+/* ---------- 搜索控件：描边输入框＋原生 select ---------- */
+
 .document-search-controls {
   display: flex;
   flex-wrap: wrap;
-  gap: 12px;
-  margin: 24px 0 20px;
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 0;
 }
-.document-search-input {
-  flex: 1;
-  min-width: 240px;
+.document-search-controls .document-search-input {
+  flex: 1 1 320px;
   width: auto;
+  min-width: 0;
+  height: 40px;
 }
-.document-search-input input,
-.project-search-select select {
-  font-size: 14px;
+.document-search-controls .document-search-input input {
+  font-size: var(--type-body);
   line-height: 1.4;
 }
-.project-search-select {
-  width: 200px;
+/* 原生清除钮（WebKit）默认是蓝色的叉：换成次要墨色的两道 1.5px 斜线，不引外部图片（CSP） */
+.document-search-controls input[type='search']::-webkit-search-cancel-button {
+  width: 12px;
+  height: 12px;
+  margin: 0 0 0 var(--space-2);
+  background:
+    linear-gradient(
+      45deg,
+      transparent calc(50% - 0.75px),
+      var(--ink-2) calc(50% - 0.75px) calc(50% + 0.75px),
+      transparent calc(50% + 0.75px)
+    ),
+    linear-gradient(
+      -45deg,
+      transparent calc(50% - 0.75px),
+      var(--ink-2) calc(50% - 0.75px) calc(50% + 0.75px),
+      transparent calc(50% + 0.75px)
+    );
+  cursor: pointer;
+  appearance: none;
+}
+.document-search-controls .project-search-select {
+  flex: 0 0 auto;
+  width: 220px;
   max-width: 100%;
+  height: 40px;
+}
+.document-search-controls .project-search-select select {
+  font-size: 13px;
+  line-height: 1.4;
+}
+.document-search-controls .project-search-select .icon {
+  top: 13px;
+}
+
+/* ---------- 结果格：标题行、说明行、结果行 ---------- */
+
+.document-results__head {
+  padding: 14px var(--space-5) var(--space-2);
 }
 .search-feedback {
-  padding: 24px 0;
-  margin: 0;
-  font-size: 14px;
-  color: var(--muted);
-  line-height: 1.6;
-}
-.search-feedback[role='alert'] {
-  color: var(--error);
-}
-.search-feedback p {
-  margin: 0 0 12px;
+  padding: var(--space-3) var(--space-5) var(--space-5);
 }
 .search-limit {
-  margin: 16px 0;
-  font-size: 12px;
-  line-height: 1.6;
-  color: var(--muted);
+  margin: 0;
+  padding: var(--space-2) var(--space-5);
+  border-top: 1px solid var(--hairline);
+  background: var(--paper-raised);
+  font-family: var(--font-mono);
+  font-size: var(--type-label);
+  line-height: 1.5;
+  letter-spacing: 0.02em;
+  color: var(--ink);
 }
 .query-results {
-  list-style: none;
-  padding: 0;
   margin: 0;
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  overflow: hidden;
-  background: var(--surface);
+  padding: 0;
+  list-style: none;
+  border-top: 1.5px solid var(--ink);
 }
 .query-results > li + li {
-  border-top: 1px solid var(--border);
+  border-top: 1px solid var(--hairline);
 }
-.query-result-open {
-  display: flex;
-  align-items: flex-start;
-  gap: 12px;
+.query-results .query-result-open {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  column-gap: var(--space-5);
   width: 100%;
-  min-height: 82px;
-  padding: 16px;
-  text-align: left;
+  padding: var(--space-3) var(--space-5);
   border: 0;
-  background: transparent;
-  color: var(--text);
   border-radius: 0;
+  background: transparent;
+  color: var(--ink);
+  text-align: left;
 }
-.query-result-open > .icon {
-  color: var(--muted);
-  margin-top: 2px;
+.query-results .query-result-open:hover {
+  background: var(--paper-raised);
 }
-.query-result-open:hover {
-  background: var(--hover);
-}
-.query-result-open:active {
-  background: var(--accent-soft);
-}
-.query-result-open:focus-visible {
+.query-results .query-result-open:focus-visible {
   outline-offset: -3px;
 }
 .query-result-content {
   display: block;
   min-width: 0;
-  flex: 1;
 }
+/* 标题 15.5/700、路径与行号等宽：共用 views.css 的 .document-title / .document-path，这里只补行内排版 */
 .query-results .document-title {
   display: block;
-  font-size: 14px;
-  font-weight: 600;
-  line-height: 1.6;
-  color: var(--accent);
+  font-size: var(--type-item);
+  line-height: 1.4;
+  font-weight: 700;
+  color: var(--ink);
   overflow-wrap: anywhere;
 }
 .query-results .document-path {
   display: block;
   margin-top: 3px;
-  color: var(--muted);
-  font-size: 12px;
-  line-height: 1.6;
+  font-family: var(--font-mono);
+  font-size: var(--type-label);
+  line-height: 1.5;
+  letter-spacing: 0.02em;
+  color: var(--ink-2);
   overflow-wrap: anywhere;
 }
-.query-open-hint {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  flex-shrink: 0;
-  color: var(--accent);
-  font-size: 12px;
-  line-height: 1.8;
-}
-.query-open-hint .icon {
-  width: 14px;
-  height: 14px;
-  transform: rotate(-90deg);
-}
-.query-snippet {
+.query-results .query-snippet {
   display: block;
-  margin-top: 8px;
-  color: var(--text);
+  max-width: 65ch;
+  margin-top: 6px;
+  color: var(--ink);
   font-size: 13px;
+  line-height: 1.6;
   font-weight: 400;
-  line-height: 1.7;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
-.quick-switcher {
-  width: min(680px, calc(100vw - 32px));
-  max-height: min(760px, 88dvh);
-  padding: 24px;
-  border: 1px solid var(--border);
-  border-radius: 20px;
-  background: var(--surface);
-  color: var(--text);
-  box-shadow: var(--shadow-dialog);
-}
-.quick-switcher[open] {
-  display: flex;
-  flex-direction: column;
-}
-.quick-switcher::backdrop {
-  background: var(--scrim-soft);
-}
-.quick-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 16px;
-}
-.quick-header h2 {
-  margin: 0;
-  font-size: 16px;
-  font-weight: 600;
-  line-height: 1.5;
-  letter-spacing: -0.01em;
-}
-.quick-hint {
-  margin: 8px 0 0;
-  color: var(--muted);
-  font-size: 12px;
-  line-height: 1.6;
-}
-.quick-switcher .document-search-controls {
-  margin: 20px 0 16px;
+/* 右侧「查看原文」：只是按钮外观，整行才是那个按钮 */
+.query-results .query-open-hint {
+  display: inline-flex;
   flex-shrink: 0;
+  align-items: center;
+  gap: 6px;
+  min-height: 32px;
+  padding: 0 var(--space-3);
+  border: 1.5px solid var(--ink);
+  font-size: 13px;
+  line-height: 1.2;
+  font-weight: 700;
+  white-space: nowrap;
 }
-.quick-results {
-  min-height: 0;
-  overflow: auto;
-  overscroll-behavior: contain;
-  scrollbar-gutter: stable;
+.query-open-arrow {
+  font-family: var(--font-mono);
+  font-weight: 600;
 }
-@media (max-width: 760px) {
-  .document-search-controls .document-search-input {
-    min-width: 0;
-    flex-basis: 100%;
+.query-results .query-result-open:hover .query-open-hint {
+  background: var(--ink);
+  color: var(--on-ink);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .query-results .query-result-open,
+  .query-results .query-open-hint {
+    transition:
+      background-color var(--motion-fast) ease,
+      color var(--motion-fast) ease;
   }
-  .document-search-input,
-  .project-search-select {
-    min-height: 44px;
-  }
+}
+
+/* ---------- 窄屏（<760px）：控件拉满、44px 触控高度，「查看原文」提示收起（整行仍可点） ---------- */
+
+@media (width < 760px) {
+  .document-search-controls .document-search-input,
   .document-search-controls .project-search-select {
+    flex: 1 1 100%;
     width: 100%;
+    height: 44px;
   }
-  .query-result-open {
-    gap: 10px;
-    padding: 14px 12px;
+  .document-search-controls .project-search-select .icon {
+    top: 15px;
   }
-  .query-open-hint {
+  .query-results .query-result-open {
+    grid-template-columns: minmax(0, 1fr);
+    padding: var(--space-3) 14px;
+  }
+  .query-results .query-open-hint {
     display: none;
   }
-  .quick-switcher {
-    padding: 20px;
-    max-height: 92dvh;
-  }
-}
-@media (prefers-contrast: more) {
-  .query-results,
-  .quick-switcher {
-    border-color: var(--text);
+  .document-results__head,
+  .search-limit,
+  .search-feedback {
+    padding-inline: 14px;
   }
 }

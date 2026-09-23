@@ -43,7 +43,7 @@ it('真实 MotionConfig 缓存随偏好刷新，保留焦点、输入与展开�
   );
   await screen.findByText('当前快照没有可读取的文档。');
 
-  const searchButton = screen.getByRole('button', { name: '搜索' });
+  const searchTab = screen.getByRole('tab', { name: '搜索' });
   const searchInput = screen.getByRole('searchbox');
   // T-130 外壳切视图直接切、不做过场（设计规范第 11 节）：顶栏当前项是黑底块，没有随偏好切换的弹簧高亮。
   expect(container.querySelector('.navigation-highlight')).toBeNull();
@@ -51,24 +51,16 @@ it('真实 MotionConfig 缓存随偏好刷新，保留焦点、输入与展开�
     'aria-current',
     'page',
   );
-  searchButton.focus();
+  searchTab.focus();
   for (const reduced of [false, true, false]) {
-    const previous = [container.querySelector('.document-mode-selected')!];
     preference.change(reduced);
-    const current = [container.querySelector('.document-mode-selected')!];
-    current.forEach((element, index) => {
-      expect(element).not.toBe(previous[index]);
-      // 验证 Motion 实际用来禁用动画的缓存，不只检查 React 的 layoutId 属性。
-      const visual = visualElementStore.get(element)!;
-      expect(visual.shouldReduceMotion).toBe(reduced);
-      if (reduced) expect(visual.projection?.options.layoutId).toBeUndefined();
-      else expect(visual.projection?.options.layoutId).toBeTruthy();
-    });
-    expect(searchButton).toHaveFocus();
+    // T-130 文档子标签换成 ui/Tabs：当前项是红色下划线，不再有随偏好切换 Motion 缓存的弹簧高亮块。
+    expect(container.querySelector('.document-mode-selected')).toBeNull();
+    expect(searchTab).toHaveFocus();
     expect(screen.getByRole('searchbox')).toBe(searchInput);
   }
 
-  fireEvent.click(screen.getByRole('button', { name: '文件树' }));
+  fireEvent.click(screen.getByRole('tab', { name: '文件树' }));
   const directory = await screen.findByRole('button', {
     name: '展开目录 资料',
   });

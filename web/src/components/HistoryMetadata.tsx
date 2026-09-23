@@ -1,4 +1,5 @@
 import type { HistoryActor, HistoryEntry } from '../historyModel';
+import '../styles/history.css';
 
 function actor(value: HistoryActor | null) {
   if (value === null) return '未知';
@@ -13,7 +14,10 @@ function time(value: number | null) {
     ? '超出浏览器可显示的时间范围'
     : date.toLocaleString();
 }
-/** 提交与归档是两件事，旧作者未知时不从归档者或时间补推。 */
+/**
+ * 提交与归档是两件事，旧作者未知时不从归档者或时间补推。
+ * 排成等宽小标签＋等宽读数的两列（时间、主体、字节数都按原值显示）。
+ */
 export function HistoryMetadata({ entry }: { entry: HistoryEntry }) {
   return (
     <dl className="history-metadata">

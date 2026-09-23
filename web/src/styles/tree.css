@@ -1,260 +1,261 @@
-.document-modes {
-  display: inline-flex;
-  gap: 4px;
-  padding: 4px;
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  background: var(--surface-solid);
-  isolation: isolate;
-}
-.document-modes button {
-  position: relative;
-  padding: 8px 20px;
-  min-height: 34px;
-  border: 0;
-  border-radius: 9px;
-  background: transparent;
-  color: var(--muted);
-  font-size: 14px;
-  line-height: 1.4;
-}
-.document-mode-selected {
-  position: absolute;
-  inset: 0;
-  border-radius: 9px;
-  background: var(--surface);
-  box-shadow: var(--shadow-raised);
-  z-index: -1;
-}
-.document-modes button[aria-pressed='true'] {
-  color: var(--accent);
-  font-weight: 600;
-}
+/*
+ * 文档 › 文件树与附件信息浮层（T-130 设计规范第 3、9 节）。
+ * 树：格内行分隔 --hairline，下级目录缩进用 1px 竖线；类型图标单色（file-icons.css）。
+ * 附件信息：2px 墨框、硬阴影的浮层（.ui-surface），元数据排成图纸标题栏式的小表。
+ * 只引用 tokens.css 的新令牌；组件自己 import 本文件，压过全局单类规则（.icon、.icon-button）处一律写两级选择器。
+ */
+
+/* ---------- 文件树 ---------- */
+
 .file-tree {
-  margin-top: 24px;
+  min-width: 0;
 }
-.file-tree-heading {
-  display: flex;
-  align-items: baseline;
-  flex-wrap: wrap;
-  gap: 16px;
-}
-.file-tree-heading h2 {
-  margin: 0;
-  font-size: 16px;
-  font-weight: 600;
-  line-height: 1.5;
-}
-.file-tree-heading span,
 .file-tree-note {
-  color: var(--muted);
-  font-size: 12px;
+  max-width: 65ch;
+  margin: 0;
+  color: var(--ink-2);
+  font-size: 13px;
   line-height: 1.6;
 }
-.file-tree-note {
-  margin: 8px 0 16px;
+.file-tree-body {
+  padding: var(--space-1) var(--space-3) var(--space-3);
+}
+.tree-directory {
+  min-width: 0;
 }
 .tree-entries {
-  list-style: none;
   margin: 0;
   padding: 0;
-}
-.file-tree > .tree-directory {
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  padding: 4px 8px;
-  background: var(--surface);
+  list-style: none;
 }
 .tree-entry {
   min-width: 0;
 }
-.tree-entry-button {
-  width: 100%;
-  min-height: 42px;
+.tree-entries > .tree-entry + .tree-entry {
+  border-top: 1px solid var(--hairline);
+}
+.file-tree .tree-entry-button {
   display: flex;
-  gap: 10px;
   align-items: center;
-  padding: 8px;
-  text-align: left;
+  gap: 10px;
+  width: 100%;
+  min-height: 40px;
+  padding: 7px var(--space-2);
   border: 0;
+  border-radius: 0;
   background: transparent;
-  border-radius: 8px;
+  color: var(--ink);
+  text-align: left;
 }
-.tree-entry-button:hover {
-  background: var(--hover);
+.file-tree .tree-entry-button:hover {
+  background: var(--paper-raised);
 }
-.tree-entry-button:active,
-.tree-entry-button[aria-expanded='true'] {
-  background: var(--accent-soft);
+.file-tree .tree-entry-button:focus-visible {
+  outline-offset: -2px;
 }
-.tree-entry-button > .icon {
-  color: var(--muted);
-}
-.tree-entry-button[aria-expanded='true'] > .icon {
-  color: var(--accent);
+.file-tree .tree-entry-button[aria-expanded='true'] .tree-entry-name {
+  font-weight: 700;
 }
 .tree-entry-button .tree-chevron,
-.tree-chevron-placeholder {
+.tree-entry-button .tree-chevron-placeholder {
+  flex-shrink: 0;
   width: 12px;
   height: 12px;
-  flex-shrink: 0;
 }
-.tree-chevron {
+.tree-entry-button .tree-chevron {
+  color: var(--ink-2);
   transform: rotate(-90deg);
-  transition: transform 180ms ease;
 }
-.tree-chevron.expanded {
+.tree-entry-button .tree-chevron.expanded {
+  color: var(--ink);
   transform: rotate(0deg);
 }
 .tree-entry-name {
   flex: 1;
   min-width: 0;
+  font-size: var(--type-body);
+  line-height: 1.5;
   overflow-wrap: anywhere;
-  font-size: 14px;
-  line-height: 1.6;
 }
 .tree-entry-meta {
   flex-shrink: 0;
-  font-size: 12px;
-  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: var(--type-label);
+  line-height: 1.3;
+  letter-spacing: 0.04em;
+  color: var(--ink-2);
+  white-space: nowrap;
 }
+/* 下级目录：竖线落在展开箭头的中线下方 */
 .tree-children {
-  margin: 4px 0 4px 18px;
-  padding-left: 10px;
-  border-left: 1px solid var(--border);
+  margin: 0 0 var(--space-1) 13px;
+  padding-left: var(--space-2);
+  border-left: 1px solid var(--hairline);
 }
+/* 深层目录不再继续右移，免得窄格子里名字被挤没 */
 .tree-children .tree-children .tree-children .tree-children .tree-children {
   margin-left: 0;
   padding-left: 0;
 }
 .tree-feedback {
-  font-size: 14px;
-  line-height: 1.6;
-  color: var(--muted);
-  padding: 16px 8px;
   margin: 0;
+  padding: var(--space-3) var(--space-2);
   overflow-wrap: anywhere;
 }
-.tree-feedback p {
-  margin: 0 0 8px;
-}
-.tree-feedback[role='alert'] {
-  color: var(--error);
+.tree-feedback--quiet {
+  padding-block: var(--space-2);
+  color: var(--ink-2);
+  font-family: var(--font-mono);
+  font-size: var(--type-label);
+  line-height: 1.5;
+  letter-spacing: 0.02em;
 }
 .tree-pagination {
   display: flex;
   flex-wrap: wrap;
-  gap: 16px;
-  justify-content: flex-end;
   align-items: center;
-  padding: 12px 8px;
-  color: var(--muted);
-  font-size: 12px;
+  justify-content: flex-end;
+  gap: var(--space-1) var(--space-4);
+  padding: var(--space-1) var(--space-2);
+  border-top: 1px solid var(--hairline);
 }
-.tree-pagination .text-button,
-.tree-feedback .text-button {
-  font-size: 12px;
-  min-height: 32px;
+.tree-pagination__range {
+  font-family: var(--font-mono);
+  font-size: var(--type-label);
+  line-height: 1.3;
+  color: var(--ink-2);
+  font-variant-numeric: tabular-nums;
 }
-.tree-pagination button[aria-disabled='true'] {
-  cursor: default;
-  color: var(--muted);
-  opacity: 0.55;
+/* aria-disabled（不是 disabled）：到头的翻页按钮仍能拿焦点，只是不再下划线、改休眠灰 */
+.tree-pagination .ui-button[aria-disabled='true'] {
+  color: var(--ink-3);
   text-decoration: none;
+  cursor: default;
 }
+.tree-pagination .ui-button[aria-disabled='true']:hover {
+  background: transparent;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .tree-entry-button .tree-chevron {
+    transition: transform var(--motion-fast) ease;
+  }
+  .file-tree .tree-entry-button {
+    transition: background-color var(--motion-fast) ease;
+  }
+}
+
+/* ---------- 附件信息浮层 ---------- */
+
 .attachment-dialog {
-  width: min(480px, calc(100vw - 32px));
-  max-height: 88dvh;
+  width: min(520px, calc(100vw - 32px));
+  max-width: none;
+  max-height: calc(100dvh - 48px);
+  margin: auto;
+  padding: 0;
   overflow: auto;
-  padding: 24px;
-  border: 1px solid var(--border);
-  border-radius: 20px;
-  background: var(--surface);
-  color: var(--text);
-  box-shadow: var(--shadow-dialog);
+  border: 2px solid var(--ink);
+  border-radius: 0;
+  background: var(--paper);
+  color: var(--ink);
+  box-shadow: var(--overlay-shadow);
 }
 .attachment-dialog::backdrop {
-  background: var(--scrim-soft);
+  background: color-mix(in srgb, var(--paper) 80%, transparent);
 }
 .attachment-header {
   display: flex;
-  justify-content: space-between;
   align-items: center;
-  gap: 16px;
+  justify-content: space-between;
+  gap: var(--space-4);
+  padding: var(--space-3) var(--space-3) var(--space-3) var(--space-5);
+  border-bottom: 2px solid var(--ink);
 }
 .attachment-dialog h2 {
-  font-size: 16px;
-  font-weight: 600;
-  line-height: 1.5;
   margin: 0;
+  font-size: var(--type-cell);
+  line-height: 1.3;
+  font-weight: 800;
 }
 .attachment-name {
-  font-size: 14px;
-  font-weight: 600;
-  line-height: 1.6;
+  margin: 0;
+  padding: 14px var(--space-5) var(--space-3);
+  font-size: var(--type-item);
+  line-height: 1.4;
+  font-weight: 700;
   overflow-wrap: anywhere;
-  margin: 20px 0;
 }
+/* 标题栏式小表：外框与格间 1px 墨线（墨色底＋1px 间隙），格内等宽小标签在上、等宽读数在下 */
 .attachment-details {
-  font-size: 13px;
-  line-height: 1.6;
-}
-.attachment-details > div {
   display: grid;
-  grid-template-columns: 64px minmax(0, 1fr);
-  gap: 16px;
-  padding: 12px 0;
-  border-top: 1px solid var(--border);
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1px;
+  margin: 0 var(--space-5);
+  border: 1px solid var(--ink);
+  background: var(--ink);
 }
-.attachment-details dt,
-.attachment-note {
-  color: var(--muted);
+.attachment-details > .attachment-detail {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 2px;
+  min-width: 0;
+  padding: 7px var(--space-3);
+  background: var(--paper);
+}
+.attachment-details > .attachment-detail--wide {
+  grid-column: 1 / -1;
+}
+.attachment-details dt {
+  font-family: var(--font-mono);
+  font-size: var(--type-label);
+  line-height: 1.3;
+  letter-spacing: 0.04em;
+  color: var(--ink-2);
 }
 .attachment-details dd {
   margin: 0;
+  font-family: var(--font-mono);
+  font-size: 14px;
+  line-height: 1.45;
+  font-weight: 600;
   overflow-wrap: anywhere;
+  font-variant-numeric: tabular-nums;
 }
 .attachment-note {
-  font-size: 12px;
+  max-width: 65ch;
+  margin: 0;
+  padding: var(--space-3) var(--space-5) var(--space-5);
+  color: var(--ink-2);
+  font-size: 13px;
   line-height: 1.6;
-  margin: 16px 0 0;
 }
-@media (max-width: 760px) {
-  .document-modes button,
-  .tree-entry-button,
-  .tree-pagination .text-button,
-  .tree-feedback .text-button {
+
+/* ---------- 窄屏（<760px）：触控高度 44px，缩进收窄，小表改单列 ---------- */
+
+@media (width < 760px) {
+  .file-tree .tree-entry-button {
+    gap: var(--space-2);
     min-height: 44px;
   }
-  .tree-entry-button {
-    gap: 8px;
+  .tree-pagination .ui-button {
+    min-height: 44px;
   }
   .tree-children {
-    margin-left: 4px;
-    padding-left: 4px;
+    margin-left: 9px;
+    padding-left: var(--space-1);
   }
-  .tree-pagination {
-    gap: 12px;
-  }
-  .attachment-dialog {
-    padding: 20px;
-  }
-  .attachment-details > div {
+  .attachment-details {
     grid-template-columns: minmax(0, 1fr);
-    gap: 4px;
   }
-}
-@media (prefers-reduced-motion: reduce) {
-  .tree-chevron {
-    transition: none;
+  .attachment-header {
+    padding-left: 14px;
   }
-}
-@media (prefers-contrast: more) {
-  .file-tree > .tree-directory,
-  .attachment-dialog {
-    border-color: var(--text);
+  .attachment-name,
+  .attachment-note {
+    padding-inline: 14px;
   }
-  .document-mode-selected {
-    border: 1px solid var(--text);
+  .attachment-details {
+    margin-inline: 14px;
   }
 }

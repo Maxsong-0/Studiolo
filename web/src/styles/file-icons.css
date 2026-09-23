@@ -1,52 +1,28 @@
+/*
+ * 文件类型图标（T-130 设计规范第 1、11 节）：单色线条，只按形状区分目录、笔记、图片、表格、画布、代码与其他附件；
+ * 类名 file-type-<类型> 保留给测试与读屏无关的样式钩子，不再按类型换颜色。
+ * badge 是附件信息浮层标题旁的 36px 描边方框（直角，无底色）。只引用 tokens.css 的新令牌。
+ */
 .file-type-icon {
-  --file-color: var(--file-default);
-  --file-tint: var(--file-default-tint);
   display: inline-flex;
   flex-shrink: 0;
   align-items: center;
   justify-content: center;
   width: 18px;
   height: 18px;
-  color: var(--file-color);
+  color: var(--ink-2);
 }
-.file-type-folder,
-.file-type-book {
-  --file-color: var(--file-book);
-  --file-tint: var(--file-book-tint);
-}
-.file-type-image {
-  --file-color: var(--file-image);
-  --file-tint: var(--file-image-tint);
-}
-.file-type-table {
-  --file-color: var(--file-table);
-  --file-tint: var(--file-table-tint);
-}
-.file-type-canvas {
-  --file-color: var(--file-canvas);
-  --file-tint: var(--file-canvas-tint);
-}
-.file-type-code {
-  --file-color: var(--file-code);
-  --file-tint: var(--file-code-tint);
-}
-.file-type-badge {
+.file-type-icon.file-type-badge {
   width: 36px;
   height: 36px;
-  border-radius: 11px;
-  background: var(--file-tint);
+  border: 1.5px solid var(--ink);
+  border-radius: 0;
+  background: transparent;
+  color: var(--ink);
 }
 .attachment-title-group {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: var(--space-3);
   min-width: 0;
-}
-@media (prefers-contrast: more) {
-  .file-type-icon {
-    color: var(--text);
-  }
-  .file-type-badge {
-    border: 1px solid currentColor;
-  }
 }
