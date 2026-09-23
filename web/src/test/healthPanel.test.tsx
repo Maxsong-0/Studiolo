@@ -129,7 +129,11 @@ it('降级状态使用降级语义而不是被渲染成正常', () => {
 it('检查项为空时页面仍然显示整体未知而不是空白的正常', () => {
   render(<HealthPanel report={report([], 'normal', true)} />);
 
-  expect(screen.getByText('未知')).toHaveAttribute('data-state', 'unknown');
+  // 整体状态一行换成 StatusMark：健康原值在「整体状态」后面紧跟的元素上，状态字「未知」在它里面。
+  const overall = screen.getByText('整体状态')
+    .nextElementSibling as HTMLElement;
+  expect(overall).toHaveAttribute('data-state', 'unknown');
+  expect(within(overall).getByText('未知')).toBeInTheDocument();
   expect(
     screen.getByRole('list', { name: '健康检查项' }),
   ).toBeEmptyDOMElement();

@@ -1,176 +1,483 @@
+/*
+ * 会话：登录闸门、顶栏账户入口、账户与会话对话框、状态浮层里的「会话」一栏
+ * （T-130 设计规范第 1、2、3、5、9、11 节）。
+ *
+ * 只引用 tokens.css 的新令牌；深色值由令牌在 prefers-color-scheme 里重定义，这里不写深色分支。
+ * 红色只标「出问题」与「等你」，并且同时带方块或虚线框；14px 及以下的红字用 --signal-text。
+ *
+ * 本文件由组件自己 import，在层叠里可能排在 tokens.css、ui.css、editor.css 之前或之后：
+ * 凡是要压过别处单类规则（.outline-button、.icon-button、.ui-button、.ui-status …）的地方
+ * 一律写两级以上的选择器；只想兜底的重置用 :where() 压到最低，谁的类规则都能盖过它。
+ *
+ * .session-dialog / -header / -body 目前也是策略页二次认证窗口（PolicyStepUp，见 policy.css
+ * 「沿用账户弹窗外壳」）的外壳：那边的 <dialog> 没有 .ui-surface，所以浮层框（2px 墨线、
+ * 硬偏移阴影、纸色底）在 .session-dialog 上再写一遍，两处长得一样。
+ * PolicyStepUp 改用自己的外壳后，这份双写与本段说明一并删掉，浮层框只留 ui/Surface 一处。
+ */
+
+/* ---------- 登录闸门：纸色底上居中一个 2px 墨框格子 ---------- */
+
 .session-gate {
-  min-height: 100dvh;
   display: grid;
   place-items: center;
-  padding: 24px;
+  min-height: 100dvh;
+  padding: var(--space-6) var(--space-4);
+  background: var(--paper);
+  color: var(--ink);
 }
 .session-welcome {
-  width: min(100%, 430px);
-  padding: 40px 32px;
-  border: 1px solid var(--glass-border);
-  border-radius: 22px;
-  background: var(--surface);
-  box-shadow: var(--shadow);
-  text-align: center;
+  width: min(100%, 520px);
+  border: 2px solid var(--ink);
+  background: var(--paper);
 }
-.session-emblem {
-  display: grid;
-  place-items: center;
-  width: 56px;
-  height: 56px;
-  margin: 0 auto 24px;
-  border-radius: 16px;
-  color: var(--accent);
-  background: var(--accent-soft);
-}
-.session-emblem .icon {
-  width: 26px;
-  height: 26px;
-}
+/* 字标：与顶栏同一个 STUDIOLO＋红色句点；和下面的正文格子之间一道 1px 墨线。 */
 .session-brand {
-  font-size: 14px;
-  font-weight: 650;
+  margin: 0;
+  padding: var(--space-4) var(--space-5);
+  border-bottom: 1px solid var(--ink);
+  font-size: 21px;
+  line-height: 1;
+  font-weight: 900;
+  letter-spacing: -0.03em;
+  text-transform: uppercase;
 }
-.session-welcome h1 {
-  font-size: 1.75rem;
-  line-height: 1.3;
-  letter-spacing: -0.025em;
+.session-brand-dot {
+  color: var(--signal);
 }
-.session-welcome > p:last-of-type {
-  color: var(--muted);
-  margin: 16px 0 24px;
+.session-welcome-body {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-3);
+  padding: var(--space-6) var(--space-5) var(--space-5);
 }
-.session-primary {
-  width: 100%;
+.session-title {
+  margin: 0;
+  font-size: var(--type-plate);
+  line-height: 1;
+  font-weight: 900;
+  letter-spacing: -0.03em;
+}
+.session-message {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  max-width: 65ch;
+  margin: 0;
+  font-size: var(--type-body);
+  line-height: 1.6;
+  color: var(--ink-2);
+  overflow-wrap: anywhere;
+}
+.session-message:empty {
+  display: none;
+}
+/* 核对中＝空心方块，出问题＝红色实心方块（原文仍是墨色，红只落在形状上）。 */
+.session-message[data-tone='pending']::before,
+.session-message[data-tone='alert']::before {
+  content: '';
+  flex-shrink: 0;
+  box-sizing: border-box;
+  width: 9px;
+  height: 9px;
+  margin-top: calc((1.6em - 9px) / 2);
+  border: 1.5px solid var(--ink);
+}
+.session-message[data-tone='alert'] {
+  color: var(--ink);
+}
+.session-message[data-tone='alert']::before {
+  border-color: var(--signal);
+  background: var(--signal);
+}
+.ui-button.session-primary {
   min-height: 44px;
-  color: var(--accent);
+  margin-top: var(--space-2);
 }
-.session-dialog {
-  width: min(640px, calc(100vw - 32px));
-  max-height: min(800px, calc(100dvh - 48px));
-  padding: 0;
-  border: 1px solid var(--glass-border);
-  border-radius: 20px;
-  color: var(--text);
-  background: var(--surface);
-  box-shadow: var(--shadow);
-}
-.session-dialog::backdrop {
-  background: var(--scrim);
-  backdrop-filter: blur(5px);
-}
-.session-dialog-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  padding: 24px;
-  background: var(--surface-solid);
-}
-.session-dialog h2 {
-  margin: 0;
-  font-size: 1.125rem;
-  letter-spacing: -0.015em;
-}
-.session-dialog h3,
-.session-dialog h4 {
-  margin: 0;
-  font-size: 0.875rem;
-  font-weight: 600;
-}
-.session-dialog p {
-  margin: 4px 0 0;
-  font-size: 0.8125rem;
-  color: var(--muted);
-}
-.session-dialog-body {
-  padding: 24px;
-}
-.session-current {
-  display: flex;
-  gap: 12px;
-  align-items: center;
-  flex-wrap: wrap;
-}
-.session-current > .icon {
-  color: var(--accent);
-}
-.session-current > div {
-  flex: 1;
-}
-.session-list-heading {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin: 32px 0 8px;
-}
-.session-list {
-  padding: 0;
-  margin: 0;
-  list-style: none;
-}
-.session-list li {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  padding: 16px 0;
-  border-bottom: 1px solid var(--border);
-}
-.session-state {
-  font-weight: 400;
-  font-size: 0.75rem;
-  color: var(--muted);
-  margin-left: 12px;
-}
-.session-dialog-footer {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  padding: 20px 24px;
-  background: var(--surface-solid);
-}
-.session-danger {
-  color: var(--error);
-}
-@media (max-width: 760px) {
-  .account-button {
+
+/* ---------- 顶栏账户入口：窄屏只留图标，保住 44px 触控 ---------- */
+
+@media (width < 760px) {
+  .outline-button.account-button {
     min-width: 44px;
     min-height: 44px;
-    padding: 8px;
+    padding: var(--space-2);
   }
-  .page-actions > .account-button {
-    flex: 0 0 44px;
-  }
-  .account-button > span {
+  .outline-button.account-button > span {
     display: none;
   }
-  .session-dialog-header,
-  .session-dialog-body {
-    padding: 20px;
-  }
-  .session-current > div {
-    min-width: 180px;
-  }
-  .session-current > button {
-    margin-left: 30px;
-  }
-  .session-dialog-footer {
-    align-items: flex-start;
-    flex-direction: column;
-    padding: 20px;
-  }
-  .session-dialog button {
-    min-height: 44px;
-  }
-  .session-welcome {
-    padding: 32px 24px;
-  }
+}
+
+/* ---------- 账户与会话对话框（PolicyStepUp 共用外壳） ---------- */
+
+.session-dialog {
+  width: min(640px, calc(100vw - 32px));
+  max-width: none;
+  max-height: min(820px, calc(100dvh - 48px));
+  margin: auto;
+  padding: 0;
+  overflow: hidden;
+  border: 2px solid var(--ink);
+  border-radius: 0;
+  background: var(--paper);
+  color: var(--ink);
+  box-shadow: var(--overlay-shadow);
+}
+/* 只在打开时改排版：关着的 dialog 仍由浏览器的 display: none 藏住。标题栏与页脚不动，中间滚。 */
+.session-dialog[open] {
+  display: flex;
+  flex-direction: column;
+}
+.session-dialog::backdrop {
+  background: color-mix(in srgb, var(--paper) 80%, transparent);
 }
 @media (prefers-reduced-transparency: reduce), (prefers-contrast: more) {
   .session-dialog::backdrop {
-    backdrop-filter: none;
-    background: var(--scrim-strong);
+    background: var(--paper);
+  }
+}
+.session-dialog-header {
+  display: flex;
+  flex-shrink: 0;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-4);
+  min-height: 60px;
+  padding: 14px var(--space-5) var(--space-3);
+  border-bottom: 2px solid var(--ink);
+}
+.session-dialog-header > div {
+  min-width: 0;
+}
+.session-dialog-header h2 {
+  margin: 0;
+  font-size: 24px;
+  line-height: 1.2;
+  font-weight: 800;
+  letter-spacing: -0.01em;
+  overflow-wrap: anywhere;
+}
+.session-dialog-header p {
+  max-width: 65ch;
+  margin: var(--space-1) 0 0;
+  font-size: var(--type-body);
+  line-height: 1.6;
+  color: var(--ink-2);
+}
+.session-dialog-header .icon-button {
+  margin: -6px -8px 0 0;
+}
+.session-dialog-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: 14px var(--space-5) var(--space-4);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  font-size: var(--type-body);
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+:where(.session-dialog-body) p {
+  margin: 0;
+}
+/* 正文里的几块（当前登录、安全验证、会话记录）之间一道格内细线；第一块贴着标题栏的墨线。 */
+.session-dialog-body > section {
+  padding: 14px 0;
+  border-top: 1px solid var(--hairline);
+}
+.session-dialog-body > section:first-child {
+  padding-top: 0;
+  border-top: 0;
+}
+.session-dialog-body > section:last-child {
+  padding-bottom: 0;
+}
+/* 退出前处理草稿：借用编辑器的不可逆确认框（红色虚线框），在这里只补外边距并挡掉上面的细线规则。 */
+.session-dialog-body > section.editor-leave {
+  margin: 0 0 var(--space-1);
+  padding: var(--space-3) 14px var(--space-1);
+  border: 1.5px dashed var(--signal);
+}
+.session-dialog-body > section.editor-leave + section {
+  border-top: 0;
+}
+.session-section-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2) var(--space-4);
+}
+.session-section-head h3 {
+  margin: 0;
+  font-size: var(--type-cell);
+  line-height: 1.3;
+  font-weight: 800;
+}
+
+/* 当前登录：图纸标题栏的小表——等宽小标签在上、15px 等宽读数在下，格子之间 1px 墨线。 */
+.session-facts {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 1px;
+  margin: var(--space-3) 0 0;
+  border: 1px solid var(--ink);
+  background: var(--ink);
+}
+.session-facts > div {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 2px;
+  min-width: 0;
+  padding: 7px var(--space-3);
+  background: var(--paper);
+}
+.session-facts dt {
+  font-family: var(--font-mono);
+  font-size: var(--type-label);
+  line-height: 1.3;
+  letter-spacing: 0.04em;
+  color: var(--ink-2);
+}
+.session-facts dd {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 15px;
+  line-height: 1.3;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+/* 会话记录：顶上 1.5px 墨线，行间格内细线；名字与状态一行，等宽时间一行，撤销按钮在右。 */
+.session-dialog-body .session-note,
+.session-dialog-body .session-error {
+  margin-top: var(--space-2);
+  font-size: 13px;
+  line-height: 1.6;
+}
+.session-dialog-body .session-note {
+  color: var(--ink-2);
+}
+.session-dialog-body .session-error {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  color: var(--signal-text);
+}
+.session-error::before {
+  content: '';
+  flex-shrink: 0;
+  width: 9px;
+  height: 9px;
+  margin-top: calc((1.6em - 9px) / 2);
+  background: var(--signal);
+}
+.session-list {
+  margin: var(--space-3) 0 0;
+  padding: 0;
+  list-style: none;
+  border-top: 1.5px solid var(--ink);
+}
+.session-list > li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-areas:
+    'row action'
+    'times action';
+  align-items: center;
+  gap: 2px var(--space-4);
+  padding: 10px 0;
+  border-bottom: 1px solid var(--hairline);
+}
+.session-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px var(--space-3);
+  grid-area: row;
+  min-width: 0;
+}
+.session-row h4 {
+  margin: 0;
+  font-size: var(--type-item);
+  line-height: 1.4;
+  font-weight: 700;
+}
+.session-row .ui-status.session-state {
+  font-family: var(--font-mono);
+  font-size: var(--type-label);
+  line-height: 1.3;
+  letter-spacing: 0.04em;
+}
+/* 已结束的会话是休眠虚线框，但「已退出／已过期／未启用」要读得清（正文 ≥ 4.5:1，--ink-3 只有 3.07:1） */
+.session-dialog .ui-status[data-state='dormant'] {
+  color: var(--ink-2);
+}
+.session-dialog-body .session-row-times {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 var(--space-4);
+  grid-area: times;
+  font-family: var(--font-mono);
+  font-size: var(--type-label);
+  line-height: 1.5;
+  letter-spacing: 0.02em;
+  color: var(--ink-2);
+}
+.ui-button.session-revoke {
+  grid-area: action;
+}
+.session-time {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.session-dialog-footer {
+  display: flex;
+  flex-shrink: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2) var(--space-4);
+  padding: var(--space-3) var(--space-5);
+  border-top: 1.5px solid var(--ink);
+}
+.session-dialog-footer p {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--ink-2);
+}
+
+/* ---------- 状态浮层的「会话」一栏（布局沿用外壳的 .status-block） ---------- */
+
+.status-session {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-2);
+}
+:where(.status-session) p {
+  margin: 0;
+}
+.status-session .status-session-phase {
+  font-size: var(--type-body);
+  line-height: 1.4;
+  font-weight: 700;
+}
+.status-session-phase .ui-status[data-state='alert'] {
+  color: var(--signal-text);
+}
+.status-session-phase .ui-status[data-state='dormant'] {
+  color: var(--ink-2);
+}
+.status-session .status-session-hint {
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--ink-2);
+}
+.status-session-facts {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 2px var(--space-3);
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.5;
+  letter-spacing: 0.02em;
+}
+/* 每行一个 div：拆开交给外层网格排成两列，标签列对齐。 */
+.status-session-facts > div {
+  display: contents;
+}
+.status-session-facts dt {
+  color: var(--ink-2);
+}
+.status-session-facts dd {
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+/* 安全验证提示原文：红色虚线框＋红色方块，字仍是墨色。 */
+.status-session .status-session-notice {
+  display: flex;
+  align-items: flex-start;
+  align-self: stretch;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border: 1.5px dashed var(--signal);
+  font-size: 13px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+.status-session-notice::before {
+  content: '';
+  flex-shrink: 0;
+  width: 9px;
+  height: 9px;
+  margin-top: calc((1.6em - 9px) / 2);
+  background: var(--signal);
+}
+.status-session .status-session-entry {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px var(--space-3);
+  font-family: var(--font-mono);
+  font-size: var(--type-label);
+  line-height: 1.3;
+  color: var(--ink-2);
+}
+.ui-button.status-session-link {
+  min-height: 32px;
+  padding: 0;
+}
+
+/* ---------- 窄屏：小表收成单列清单，按钮保住 44px 触控 ---------- */
+
+@media (width < 760px) {
+  .session-dialog-header,
+  .session-dialog-footer {
+    padding-left: var(--space-4);
+    padding-right: var(--space-4);
+  }
+  .session-dialog-body {
+    padding: var(--space-3) var(--space-4) var(--space-4);
+  }
+  .session-dialog-header .icon-button {
+    width: 44px;
+    height: 44px;
+  }
+  .session-dialog .ui-button,
+  .session-welcome .ui-button,
+  .status-session .ui-button.status-session-link {
+    min-height: 44px;
+  }
+  .session-facts {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .session-facts > div {
+    flex-direction: row;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: var(--space-3);
+  }
+  .session-list > li {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas:
+      'row'
+      'times'
+      'action';
+  }
+  .ui-button.session-revoke {
+    justify-self: start;
+    margin-top: var(--space-1);
+  }
+  .session-welcome-body {
+    padding: var(--space-5) var(--space-4) var(--space-4);
+  }
+  .session-brand {
+    padding: 14px var(--space-4);
   }
 }

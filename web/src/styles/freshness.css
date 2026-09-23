@@ -1,44 +1,132 @@
 /*
- * 内容新鲜度：T-130 起不再是每页顶部的横幅，只在顶栏状态浮层的「新鲜度」一栏里出现。
- * 只引用 tokens.css 的令牌。
+ * 顶栏状态浮层里的「新鲜度」与「数据提示」两栏（T-130 设计规范第 1、2、5 节）。
+ * 新鲜度：状态行（StatusMark）＋说明＋等宽水位清单＋「重新核验」（Button secondary）。
+ * 数据提示：等宽列表，一条一行，每条前一个红色方块；没有提示时一行实心方块「没有数据提示。」。
+ * 两栏都只出现在状态浮层里，不再是每页顶部的横幅或底部的提示条。
+ * 只引用 tokens.css 的新令牌；14px 及以下的红字用 --signal-text。
+ * 本文件由组件自己 import，层叠位置不定：压过 ui.css 的地方写两级以上的选择器。
  */
+
+/* ---------- 新鲜度 ---------- */
+
 .freshness-notice {
   display: flex;
+  flex-wrap: wrap;
   align-items: flex-start;
   justify-content: space-between;
-  flex-wrap: wrap;
-  gap: 12px;
+  gap: var(--space-3);
   margin: 0;
 }
 .freshness-notice-copy {
+  display: flex;
   flex: 1 1 240px;
+  flex-direction: column;
+  gap: 6px;
   min-width: 0;
   overflow-wrap: anywhere;
 }
-.freshness-notice-copy strong {
-  font-size: 15.5px;
-  font-weight: 700;
-  line-height: 1.4;
+:where(.freshness-notice-copy) p {
+  margin: 0;
 }
-.freshness-notice-copy p {
-  margin: 4px 0 0;
-  font-size: 14px;
+.freshness-notice .freshness-state {
+  font-size: var(--type-item);
+  line-height: 1.4;
+  font-weight: 700;
+}
+/* 15.5px 粗体仍不到大字门槛：红字取 --signal-text 保住 4.5:1，方块照旧是 --signal。 */
+.freshness-state .ui-status[data-state='alert'] {
+  color: var(--signal-text);
+}
+/* 没有新鲜度证据是休眠虚线框，字仍要读得清（正文 ≥ 4.5:1，--ink-3 只有 3.07:1） */
+.freshness-state .ui-status[data-state='dormant'] {
+  color: var(--ink-2);
+}
+.freshness-notice .freshness-description {
+  font-size: var(--type-body);
   line-height: 1.6;
 }
-.freshness-watermarks,
-.freshness-scope {
+/* 水位清单：等宽小字，标签次要色、读数墨色，三项一行放不下就折行。 */
+.freshness-watermarks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px var(--space-4);
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.5;
+  letter-spacing: 0.02em;
+}
+.freshness-watermarks > div {
+  display: flex;
+  gap: 6px;
+  min-width: 0;
+}
+.freshness-watermarks dt {
+  color: var(--ink-2);
+}
+.freshness-watermarks dd {
+  margin: 0;
+  font-weight: 600;
+}
+.freshness-notice .freshness-scope {
   color: var(--ink-2);
   font-size: 12px;
+  line-height: 1.6;
 }
-.freshness-watermarks {
-  font-family: var(--font-mono, 'IBM Plex Mono', ui-monospace, monospace);
-  letter-spacing: 0.02em;
-  font-variant-numeric: tabular-nums;
+.ui-button.freshness-verify {
+  flex-shrink: 0;
 }
-.freshness-notice .outline-button {
-  min-height: 44px;
-}
-.freshness-notice [aria-disabled='true'] {
+/* 核验在途：留在焦点序列里（aria-disabled），外观按禁用画。 */
+.ui-button.freshness-verify[aria-disabled='true'] {
+  border-color: var(--ink-3);
+  color: var(--ink-3);
   cursor: progress;
-  opacity: 0.6;
+}
+
+/* ---------- 数据提示 ---------- */
+
+.status-notes-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.6;
+  letter-spacing: 0.02em;
+  overflow-wrap: anywhere;
+}
+.status-notes-list > li {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  padding: 5px 0;
+  border-bottom: 1px solid var(--hairline);
+}
+.status-notes-list > li:first-child {
+  padding-top: 0;
+}
+.status-notes-list > li::before {
+  content: '';
+  flex-shrink: 0;
+  width: 9px;
+  height: 9px;
+  margin-top: calc((1.6em - 9px) / 2);
+  background: var(--signal);
+}
+.status-notes .status-notes-hint,
+.status-notes-empty {
+  margin: 0;
+  color: var(--ink-2);
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  line-height: 1.6;
+}
+.status-notes .status-notes-hint {
+  margin-top: var(--space-2);
+}
+
+@media (width < 760px) {
+  .ui-button.freshness-verify {
+    min-height: 44px;
+  }
 }

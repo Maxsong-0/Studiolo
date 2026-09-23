@@ -1,4 +1,5 @@
 import type { Freshness } from '../freshness';
+import type { SessionStatus } from '../sessionStatus';
 import type { HealthStatus } from './useHealthStatus';
 
 /** normal＝实心方块「正常」；pending＝空心方块（读取或核验在途）；problem＝红色方括号。 */
@@ -19,13 +20,15 @@ export interface StatusInputs {
   /** 最近一次读取工作台失败。 */
   failed: boolean;
   health: HealthStatus;
+  /** 会话读数（SessionBoundary 经 context 发下）；null＝没有会话信息，按「会话未知」处理。 */
+  session: SessionStatus | null;
   /** 数据提示条数。 */
   diagnostics: number;
 }
 
-interface Signal {
+export interface Signal {
   level: StatusLevel;
-  /** 越大越严重；同级取先列出的一项（新鲜度 → 健康 → 数据提示）。 */
+  /** 越大越严重；同级取先列出的一项（新鲜度 → 健康 → 会话 → 数据提示）。 */
   rank: number;
   label: string;
 }
@@ -100,15 +103,56 @@ function healthSignal(health: HealthStatus): Signal {
   return normal;
 }
 
+/**
+ * 会话一项（规范第 5 节「新鲜度、本机健康、会话」）。rank 与另外三项放在一起比，越大越严重：
+ *
+ * | 条件                                              | 结果                      |
+ * |---------------------------------------------------|---------------------------|
+ * | 没有会话信息（null，上面没有 SessionBoundary）    | problem 35「会话未知」    |
+ * | phase = legacy（本入口不启用会话登录）            | normal                    |
+ * | phase = uncertain / problem                       | problem 65「会话未确认」  |
+ * | phase = ready，会话为空或 state ≠ active          | problem 65「会话失效」    |
+ * | phase = ready，factorNotice 非空                  | problem 45「安全验证待处理」 |
+ * | phase = ready，busy                               | pending 15「会话核对中」  |
+ * | 其余（ready 且以上都不成立；checking、signed-out） | normal                    |
+ *
+ * 同一会话同时满足几条时取最严重的一条，与四项之间的取舍同一个规矩：busy 在途不能盖住
+ * 「会话失效」或「安全验证待处理」。checking / signed-out 时 SessionBoundary 根本不放行内容，
+ * 胶囊不会出现，这里按表归入 normal，只为让函数对每个 phase 都有答案。
+ */
+export function sessionSignal(session: SessionStatus | null): Signal {
+  if (session === null) return problem(35, '会话未知');
+  switch (session.phase) {
+    case 'legacy':
+      return normal;
+    case 'uncertain':
+    case 'problem':
+      return problem(65, '会话未确认');
+    case 'ready':
+      if (!session.session || session.session.state !== 'active')
+        return problem(65, '会话失效');
+      if (session.factorNotice) return problem(45, '安全验证待处理');
+      if (session.busy) return pending(15, '会话核对中');
+      return normal;
+    case 'checking':
+    case 'signed-out':
+      return normal;
+  }
+}
+
 function diagnosticsSignal(count: number): Signal {
   return count > 0 ? problem(40, `数据提示 ${count}`) : normal;
 }
 
-/** 把新鲜度、本机健康与数据提示收成胶囊上的一句：全部正常才说正常，否则报最严重的一项。 */
+/**
+ * 把新鲜度、本机健康、会话与数据提示收成胶囊上的一句：全部正常才说正常，否则报最严重的一项；
+ * 同级按新鲜度 → 健康 → 会话 → 数据提示的顺序取先列出的一项。
+ */
 export function summarizeStatus(inputs: StatusInputs): StatusSummary {
   const signals = [
     freshnessSignal(inputs),
     healthSignal(inputs.health),
+    sessionSignal(inputs.session),
     diagnosticsSignal(inputs.diagnostics),
   ];
   const worst = signals.reduce((current, next) =>

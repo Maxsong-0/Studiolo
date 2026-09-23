@@ -1,6 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
+import { Button } from '../ui';
 import { Icon } from './Icon';
+import '../styles/factor.css';
 
+/**
+ * 新恢复码只交付这一次：等宽网格，每码一格、1px 墨线分隔，可以直接选中；
+ * 只有点「复制恢复码」才写剪贴板。收起即清除，不能重读。
+ */
 export function RecoveryDelivery({
   codes,
   onClose,
@@ -29,25 +35,30 @@ export function RecoveryDelivery({
     <section className="recovery-delivery" aria-labelledby="delivery-title">
       <h4 id="delivery-title">请保存新的恢复码</h4>
       <p>之前的恢复码已失效。这十枚新码仅本次显示；每枚只能使用一次。</p>
-      <p>
+      <p className="factor-warning">
         关闭账户、切换页面或离开当前标签页后，这里会清除恢复码，无法重新读取。
       </p>
-      <ol className="recovery-codes" aria-label="新恢复码">
+      {/* role=list：去掉列表符号后 Safari 会丢掉列表语义，显式补回。 */}
+      <ol className="recovery-codes" role="list" aria-label="新恢复码">
         {codes.map((code, index) => (
           <li key={index}>
             <code>{code}</code>
           </li>
         ))}
       </ol>
-      {message ? <p role="status">{message}</p> : null}
+      {message ? (
+        <p className="factor-note" role="status">
+          {message}
+        </p>
+      ) : null}
       <div className="factor-actions">
-        <button className="outline-button" onClick={() => void copy()}>
+        <Button size="sm" onClick={() => void copy()}>
           <Icon name="copy" />
           复制恢复码
-        </button>
-        <button className="outline-button" onClick={onClose}>
+        </Button>
+        <Button variant="primary" size="sm" onClick={onClose}>
           我已保存，收起恢复码
-        </button>
+        </Button>
       </div>
     </section>
   );
