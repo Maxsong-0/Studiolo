@@ -1,4 +1,4 @@
-//! Shared bounded stable reads; the caller chooses only the revision namespace.
+//! 共享的有界稳定读取；调用方只能选择 revision 命名空间。
 
 use cap_std::fs::{File, Metadata};
 use std::io::Read as _;
