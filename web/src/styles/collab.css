@@ -1,0 +1,690 @@
+/*
+ * 协作视图（T-130 设计规范第 7 节，画布「第三轮 融合」协作页）：子标签行、汇总与开关、项目选择、
+ * 拓扑图（SVG 与文字清单）、任务详情、今天的时间线。只引用 tokens.css 的新令牌，不写颜色字面量；
+ * 14px 及以下的红字一律 --signal-text，红色形状与边框用 --signal。
+ */
+
+/* ---------- 子标签行：左标签，右等宽汇总与两个开关 ---------- */
+
+.collab {
+  min-width: 0;
+}
+.collab-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: stretch;
+  justify-content: space-between;
+  gap: var(--space-2) var(--space-6);
+  min-height: 50px;
+  margin-bottom: var(--space-3);
+}
+.collab-bar__tabs {
+  flex: 0 1 auto;
+}
+.collab-bar__aside {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-2) 22px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.3;
+}
+.collab-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1) 22px;
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+}
+.collab-summary .is-signal {
+  color: var(--signal-text);
+  font-weight: 600;
+}
+.collab-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  cursor: pointer;
+}
+.collab-toggle input {
+  flex-shrink: 0;
+  width: 12px;
+  height: 12px;
+  margin: 0;
+  border: 1.5px solid var(--ink);
+  border-radius: 0;
+  background: transparent;
+  appearance: none;
+  cursor: pointer;
+}
+.collab-toggle input:checked {
+  background: var(--ink);
+}
+.collab-toggle input:focus-visible {
+  outline: 2px solid var(--ink);
+  outline-offset: 2px;
+}
+
+/* ---------- 项目选择（协作各标签共用） ---------- */
+
+.collab-select {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  font-family: var(--font-mono);
+  font-size: var(--type-label);
+  line-height: 1.3;
+  letter-spacing: 0.04em;
+  color: var(--ink-2);
+  white-space: nowrap;
+}
+/* 下拉箭头：select 是标签的最后一个子元素，箭头贴它的右缘 */
+.collab-select::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  right: 11px;
+  width: 6px;
+  height: 6px;
+  border-right: 1.5px solid var(--ink);
+  border-bottom: 1.5px solid var(--ink);
+  transform: translateY(-70%) rotate(45deg);
+  pointer-events: none;
+}
+.collab-select__control {
+  min-width: 0;
+  max-width: 260px;
+  height: 32px;
+  padding: 0 30px 0 10px;
+  border: 1.5px solid var(--ink);
+  border-radius: 0;
+  background: var(--paper-raised);
+  color: var(--ink);
+  font-family: var(--font-sans);
+  font-size: 13px;
+  letter-spacing: 0;
+  text-overflow: ellipsis;
+  appearance: none;
+  cursor: pointer;
+}
+.collab-select__control:focus-visible {
+  outline: 2px solid var(--ink);
+  outline-offset: 2px;
+}
+.collab-select__control:disabled {
+  border-color: var(--ink-3);
+  color: var(--ink-3);
+  cursor: default;
+}
+
+/* ---------- 拓扑页三格：9 列图、3 列详情、12 列时间线 ---------- */
+
+.collab-topology__diagram {
+  gap: var(--space-2);
+}
+.collab-topology__actions {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-2) var(--space-3);
+}
+.collab-topology__detail {
+  padding: var(--space-4) 18px;
+}
+.collab-topology__timeline {
+  gap: 6px;
+  padding: 10px var(--space-5) 14px;
+}
+.collab-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1) 22px;
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--ink-2);
+}
+.collab-lanes-legend {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: var(--space-1) 14px;
+}
+.collab-legend .is-signal,
+.collab-lanes-legend .is-signal {
+  color: var(--signal-text);
+}
+.collab-note {
+  max-width: 65ch;
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--ink-2);
+}
+
+/* ---------- 拓扑图：SVG 几何在属性里，颜色与线型全在这里 ---------- */
+
+.topology {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+}
+.topology__svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  overflow: visible;
+  font-family: var(--font-sans);
+}
+.topology__heads text {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  fill: var(--ink-2);
+}
+.topology__edge {
+  fill: none;
+  stroke: var(--ink);
+  stroke-width: 1.3px;
+}
+.topology__edge--emphasis {
+  stroke-width: 2.4px;
+}
+.topology__edge--dormant {
+  stroke: var(--ink-3);
+  stroke-width: 1.2px;
+  stroke-dasharray: 4 4;
+}
+.topology__arrow {
+  fill: var(--ink);
+}
+
+.topology__executor-box {
+  fill: var(--paper);
+  stroke: var(--ink);
+  stroke-width: 1.5px;
+}
+.topology__executor-name {
+  font-size: 14px;
+  font-weight: 800;
+  fill: var(--ink);
+}
+.topology__executor-detail {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  fill: var(--ink-2);
+}
+.topology__executor--dormant .topology__executor-box {
+  stroke: var(--ink-3);
+  stroke-width: 1.2px;
+  stroke-dasharray: 4 4;
+}
+.topology__executor--dormant text {
+  fill: var(--ink-3);
+}
+
+.topology__task-box {
+  fill: var(--paper);
+  stroke: var(--ink);
+  stroke-width: 1.2px;
+}
+.topology__task-caption {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  fill: var(--ink-2);
+}
+.topology__task-status {
+  font-size: 10.5px;
+  font-weight: 700;
+  fill: var(--ink);
+}
+.topology__task-title {
+  font-size: 13.5px;
+  font-weight: 700;
+  fill: var(--ink);
+}
+.topology__task--muted .topology__task-status {
+  fill: var(--ink-2);
+}
+.topology__task--waiting .topology__task-box,
+.topology__task--alert .topology__task-box {
+  stroke: var(--signal);
+  stroke-width: 1.5px;
+}
+.topology__task--waiting .topology__task-status,
+.topology__task--alert .topology__task-status {
+  fill: var(--signal-text);
+}
+.topology__task--dormant .topology__task-box {
+  stroke: var(--ink-3);
+  stroke-dasharray: 4 4;
+}
+.topology__task--dormant text {
+  fill: var(--ink-3);
+}
+.topology__task--clickable {
+  cursor: pointer;
+}
+.topology__task--clickable:hover .topology__task-box {
+  fill: var(--paper-raised);
+}
+/* 选中＝黑底反白；等你/出问题的红框保留，字一律反白 */
+.topology__task--selected .topology__task-box,
+.topology__task--selected.topology__task--clickable:hover .topology__task-box {
+  fill: var(--ink);
+}
+.topology__task--selected .topology__task-caption,
+.topology__task--selected .topology__task-status,
+.topology__task--selected .topology__task-title {
+  fill: var(--on-ink);
+}
+
+.topology__path-box {
+  fill: none;
+  stroke: var(--ink);
+  stroke-width: 1px;
+  stroke-dasharray: 3 3;
+}
+.topology__path-text {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  fill: var(--ink);
+}
+.topology__path--dormant .topology__path-box {
+  stroke: var(--ink-3);
+}
+.topology__path--dormant .topology__path-text {
+  fill: var(--ink-3);
+}
+/* 写域重叠：红底红框，框下一行说明，右侧红括号连起重叠的两端 */
+.topology__path--overlap .topology__path-box {
+  fill: var(--signal-wash);
+  stroke: var(--signal);
+  stroke-width: 1.6px;
+  stroke-dasharray: none;
+}
+.topology__path--overlap .topology__path-text {
+  font-weight: 600;
+  fill: var(--signal-text);
+}
+.topology__path-note {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  fill: var(--signal-text);
+}
+.topology__bracket {
+  fill: none;
+  stroke: var(--signal);
+  stroke-width: 1.6px;
+}
+.topology__marker-leader {
+  stroke: var(--signal);
+  stroke-width: 1px;
+}
+.topology__marker-dot {
+  fill: var(--signal);
+}
+.topology__marker-n {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 600;
+  fill: var(--on-ink);
+}
+
+/* ---------- 拓扑清单：宽屏视觉隐藏、读屏可达，键盘聚焦进来时展开；窄屏是唯一呈现 ---------- */
+
+.topology__outline {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  border: 0;
+  white-space: nowrap;
+}
+.topology__outline:focus-within {
+  position: static;
+  width: auto;
+  height: auto;
+  margin: 0;
+  padding-top: var(--space-3);
+  overflow: visible;
+  clip: auto;
+  clip-path: none;
+  border-top: 1px solid var(--hairline);
+  white-space: normal;
+}
+.topology__groups {
+  display: grid;
+  gap: var(--space-3);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.topology__group-name {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-1) 10px;
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.4;
+  font-weight: 800;
+}
+.topology__group-name--dormant {
+  color: var(--ink-2);
+}
+.topology__group-detail {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--ink-2);
+}
+.topology__entries {
+  display: grid;
+  gap: var(--space-2);
+  margin: 6px 0 0;
+  padding: 0 0 0 var(--space-3);
+  border-left: 1px solid var(--ink);
+  list-style: none;
+}
+.topology__entry {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-1) 10px;
+  font-size: 13px;
+  line-height: 1.5;
+}
+.topology__entry--dormant {
+  color: var(--ink-2);
+}
+.topology__entry-select {
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 700;
+  text-align: left;
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+.topology__entry-select[aria-pressed='true'] {
+  padding: 0 var(--space-1);
+  background: var(--ink);
+  color: var(--on-ink);
+  text-decoration: none;
+}
+.topology__entry-select:focus-visible {
+  outline: 2px solid var(--ink);
+  outline-offset: 2px;
+}
+.topology__entry-title {
+  font-size: 14px;
+  font-weight: 700;
+}
+.topology__entry-status {
+  font-size: 12px;
+}
+.topology__entry-markers {
+  display: inline-flex;
+  gap: 6px;
+}
+.topology__entry-marker {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--signal-text);
+}
+.topology__entry-paths {
+  display: grid;
+  flex-basis: 100%;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.topology__entry-paths li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px var(--space-2);
+}
+.topology__entry-paths code {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.topology__entry-overlap {
+  flex-basis: 100%;
+  font-size: 12px;
+  color: var(--signal-text);
+}
+.topology__entry-none {
+  font-size: 12px;
+  color: var(--ink-2);
+}
+.topology__more {
+  margin: 0;
+}
+.topology__more-link {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--ink-2);
+  font-family: var(--font-mono);
+  font-size: var(--type-label);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+.topology__more-link:hover {
+  color: var(--ink);
+}
+
+/* ---------- 任务详情（拓扑右侧 3 列） ---------- */
+
+.task-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-width: 0;
+  min-height: 100%;
+}
+.task-detail__head {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+.task-detail__caption {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--ink-2);
+  overflow-wrap: anywhere;
+}
+.task-detail__title {
+  margin: 0;
+  font-size: 26px;
+  line-height: 1.15;
+  font-weight: 900;
+  letter-spacing: -0.02em;
+  overflow-wrap: anywhere;
+}
+.task-detail__facts,
+.task-detail__fields {
+  margin: 0;
+}
+.task-detail__facts {
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr);
+  gap: 9px 10px;
+  padding-top: var(--space-3);
+  border-top: 1.5px solid var(--ink);
+  font-size: 13px;
+  line-height: 1.5;
+}
+.task-detail__facts > div {
+  display: contents;
+}
+.task-detail__facts dt {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.8;
+  color: var(--ink-2);
+}
+.task-detail__facts dd {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.task-detail__facts code,
+.task-detail__fields code {
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+.task-detail__progress {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--ink-2);
+}
+.task-detail__overlaps {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.task-detail__overlaps li {
+  display: flex;
+  flex-direction: column;
+}
+.task-detail--signal dt,
+.task-detail--signal dd {
+  color: var(--signal-text);
+}
+.task-detail__receipt {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-top: 10px;
+  border-top: 1.5px solid var(--ink);
+}
+.task-detail__receipt h3 {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.4;
+  font-weight: 800;
+}
+.task-detail__fields {
+  display: flex;
+  flex-direction: column;
+}
+.task-detail__fields > div {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: 5px 0;
+  border-bottom: 1px solid var(--hairline);
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+.task-detail__fields dt {
+  flex-shrink: 0;
+  color: var(--ink-2);
+}
+.task-detail__fields dd {
+  min-width: 0;
+  margin: 0;
+  font-family: var(--font-mono);
+  font-weight: 600;
+  text-align: right;
+  overflow-wrap: anywhere;
+}
+.task-detail__reason {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--ink-2);
+}
+.task-detail__actions {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin-top: auto;
+}
+.task-detail__actions .ui-button {
+  width: 100%;
+}
+
+/* ---------- 动效：只做悬停反馈，120ms；减少动态时不动 ---------- */
+
+@media (prefers-reduced-motion: no-preference) {
+  .topology__task-box {
+    transition: fill var(--motion-fast) ease;
+  }
+}
+
+/* ---------- 窄屏（<760px）：不画 SVG，只给清单；子标签行上下排 ---------- */
+
+@media (width < 760px) {
+  .collab-bar {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .collab-bar__aside {
+    justify-content: flex-start;
+    padding-bottom: var(--space-2);
+  }
+  .collab-topology__diagram .ui-cell-header,
+  .collab-topology__diagram .ui-cell-header__aside {
+    flex-wrap: wrap;
+  }
+  .collab-topology__diagram .ui-cell-header__aside {
+    flex-shrink: 1;
+    min-width: 0;
+  }
+  .collab-topology__actions {
+    justify-content: flex-start;
+  }
+  /* 窄屏这里是文字清单，不是图：不铺网格纸 */
+  .collab-topology__diagram.ui-cell--grid {
+    background-image: none;
+  }
+  .topology__svg {
+    display: none;
+  }
+  .topology__outline,
+  .topology__outline:focus-within {
+    position: static;
+    width: auto;
+    height: auto;
+    margin: 0;
+    padding-top: 0;
+    overflow: visible;
+    clip: auto;
+    clip-path: none;
+    border-top: 0;
+    white-space: normal;
+  }
+}

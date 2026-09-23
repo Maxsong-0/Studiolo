@@ -1,133 +1,353 @@
+/*
+ * 协作「任务与回执」与「时间线」（项目时间回放）的版面：T-130 网格语法（设计规范第 3、7 节）。
+ * 执行面板（ExecutionBoundary、ExecutionReplay、ExecutionCandidates）也借用 .board-panel、
+ * .board-toolbar、.board-receipt 三个类，改它们时一并看执行面板。只引用 tokens.css 的新令牌。
+ */
+
+/* ---------- 共用：面板、工具行、提示与告警 ---------- */
+
 .board-panel {
   display: grid;
-  gap: 1.25rem;
+  gap: var(--space-4);
+  min-width: 0;
 }
 .board-toolbar {
   display: flex;
   flex-wrap: wrap;
-  justify-content: space-between;
-  gap: 1rem;
   align-items: center;
+  gap: var(--space-3) var(--space-5);
+  min-width: 0;
+}
+.board-toolbar > span {
+  font-family: var(--font-mono);
+  font-size: var(--type-label);
+  letter-spacing: 0.04em;
+  color: var(--ink-2);
 }
 .board-toolbar label {
-  display: flex;
-  gap: 0.75rem;
+  display: inline-flex;
   align-items: center;
+  gap: var(--space-2);
 }
-.board-toolbar select {
+/* 还没换成 ProjectSelect 的下拉（执行面板）：同一套直角墨线 */
+.board-toolbar select:not(.collab-select__control) {
   max-width: 100%;
-  padding: 0.6rem 0.8rem;
-  border: 1px solid var(--border);
-  border-radius: 0.7rem;
+  height: 32px;
+  padding: 0 10px;
+  border: 1.5px solid var(--ink);
+  border-radius: 0;
+  background: var(--paper-raised);
+  color: var(--ink);
   font: inherit;
-  color: inherit;
-  background: var(--surface-solid);
+  font-size: 13px;
 }
-.board-freshness,
-.board-hint,
-.board-toolbar > span {
+.board-toolbar select:focus-visible {
+  outline: 2px solid var(--ink);
+  outline-offset: 2px;
+}
+.board-hint {
   margin: 0;
-  color: var(--muted);
-  font-size: 0.8125rem;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--ink-2);
+}
+.board-freshness {
+  font-variant-numeric: tabular-nums;
+}
+/* 告警不只靠红：前面有红色方块，文字说清楚 */
+.board-warning {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--signal-text);
+}
+.board-warning::before {
+  content: '';
+  flex-shrink: 0;
+  width: 9px;
+  height: 9px;
+  background: var(--signal);
+}
+
+/* ---------- 任务与回执：工具行、本机派发、工作项树 ---------- */
+
+.board-bar,
+.board-dispatch {
+  padding-top: 10px;
+  padding-bottom: 10px;
+}
+.board-items {
+  gap: var(--space-3);
 }
 .board-tree,
 .board-children {
   display: grid;
-  gap: 1rem;
   margin: 0;
   padding: 0;
   list-style: none;
 }
+.board-tree {
+  border-top: 1.5px solid var(--ink);
+}
 .board-children {
-  margin: 1rem 0 0 1.25rem;
-  padding-left: 1rem;
-  border-left: 2px solid var(--border);
+  margin-left: var(--space-6);
+  padding-left: var(--space-4);
+  border-left: 1px solid var(--ink);
 }
-.board-item,
-.board-empty,
-.board-unavailable {
-  min-width: 0;
-  padding: 1.25rem;
-  border: 1px solid var(--border);
-  border-radius: 1rem;
-  background: var(--surface-solid);
+.board-item {
+  display: grid;
+  grid-template-columns: minmax(150px, 200px) minmax(0, 1fr);
+  gap: var(--space-2) var(--space-5);
+  padding: 14px 0;
+  border-bottom: 1px solid var(--hairline);
   overflow-wrap: anywhere;
+  scroll-margin: var(--space-8);
 }
-.board-item header {
+/* 从拓扑「在任务与回执中查看」过来的那一条：左侧 3px 墨线＋抬起底色 */
+.board-item--current {
+  padding-left: var(--space-3);
+  border-left: var(--rule-thick) solid var(--ink);
+  background: var(--paper-raised);
+}
+.board-item__head {
   display: flex;
-  flex-wrap: wrap;
-  justify-content: space-between;
-  gap: 1rem;
-  font-size: 0.8rem;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-1);
+  font-size: 13px;
+  line-height: 1.5;
 }
 .board-status {
-  font-weight: 600;
+  font-weight: 700;
 }
-.board-item h3 {
-  margin: 1rem 0 0.5rem;
+.board-item__depth {
+  font-family: var(--font-mono);
+  font-size: var(--type-label);
+  color: var(--ink-2);
+}
+.board-item__body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+.board-item__title {
+  margin: 0;
+  font-size: var(--type-item);
+  line-height: 1.4;
+  font-weight: 700;
 }
 .board-item code {
+  font-family: var(--font-mono);
+  font-size: 12px;
   overflow-wrap: anywhere;
-  font-size: 0.85em;
 }
-.board-item details {
-  border-top: 1px solid var(--border);
-  margin-top: 1rem;
-  padding-top: 0.8rem;
+.board-item__id {
+  color: var(--ink-2);
 }
-.board-item summary {
-  cursor: pointer;
-  min-height: 2rem;
-}
-.board-item small {
-  display: block;
-  overflow-wrap: anywhere;
-  color: var(--muted);
+.board-item__holder,
+.board-item__progress {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.6;
 }
 .board-attempt {
   display: grid;
-  gap: 0.5rem;
-  font-size: 0.8125rem;
+  gap: var(--space-1);
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.6;
 }
 .board-attempt > div {
   display: grid;
-  grid-template-columns: minmax(7rem, 1fr) minmax(0, 3fr);
-  gap: 0.5rem;
+  grid-template-columns: minmax(7rem, 150px) minmax(0, 1fr);
+  gap: var(--space-3);
 }
 .board-attempt dt {
-  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: var(--type-label);
+  line-height: 1.9;
+  color: var(--ink-2);
 }
 .board-attempt dd {
   margin: 0;
 }
-.board-warning {
-  color: var(--signal-alert);
+.board-item small,
+.board-receipt small {
+  display: block;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--ink-2);
+  overflow-wrap: anywhere;
 }
-.board-empty h3,
-.board-unavailable h3 {
-  margin-top: 0;
+.board-instances {
+  margin: var(--space-1) 0 0;
+  padding-left: 1.25rem;
+  font-size: 13px;
+  line-height: 1.7;
 }
-.board-toolbar select:focus-visible,
-.board-item summary:focus-visible,
-.board-unavailable button:focus-visible {
-  outline: 2px solid var(--focus, currentColor);
-  outline-offset: 3px;
+
+/* ---------- 可展开块：独占路径、验收标准、实例树、候选证据、收尾回执 ---------- */
+
+.board-details,
+.board-receipt {
+  min-width: 0;
+  border-top: 1px solid var(--hairline);
 }
-@media (max-width: 600px) {
-  .board-item,
-  .board-empty,
-  .board-unavailable {
-    padding: 1rem;
-  }
-  .board-toolbar {
-    align-items: stretch;
+.board-details > summary,
+.board-receipt > summary {
+  min-height: 32px;
+  padding: 6px 0;
+  font-size: 13px;
+  line-height: 1.5;
+  font-weight: 700;
+  cursor: pointer;
+}
+.board-details > summary:focus-visible,
+.board-receipt > summary:focus-visible {
+  outline: 2px solid var(--ink);
+  outline-offset: 2px;
+}
+.board-details ul,
+.board-details ol,
+.board-receipt ul {
+  margin: 0 0 var(--space-2);
+  padding-left: 1.25rem;
+  font-size: 13px;
+  line-height: 1.6;
+}
+.board-details p,
+.board-receipt p {
+  margin: var(--space-1) 0;
+  font-size: 13px;
+  line-height: 1.6;
+}
+.board-receipt h4 {
+  margin: 10px 0 var(--space-1);
+  font-family: var(--font-mono);
+  font-size: var(--type-label);
+  line-height: 1.3;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--ink-2);
+}
+.board-paths code {
+  font-size: 12px;
+}
+
+/* ---------- 时间线（项目时间回放） ---------- */
+
+.timeline {
+  min-width: 0;
+}
+.timeline__controls {
+  gap: var(--space-3);
+}
+.timeline__scrub {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  align-items: center;
+  gap: var(--space-4);
+}
+.timeline__scrub-label {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--ink-2);
+}
+.timeline__scrub-label time {
+  font-weight: 600;
+  color: var(--ink);
+}
+.timeline__scrub input {
+  width: 100%;
+  margin: 0;
+  accent-color: var(--ink);
+}
+.timeline__list {
+  display: grid;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.timeline__event {
+  display: grid;
+  grid-template-columns: 11.5rem minmax(0, 1fr) 4.5rem minmax(0, 15rem);
+  align-items: baseline;
+  gap: var(--space-3);
+  padding: 7px 0;
+  border-bottom: 1px solid var(--hairline);
+  font-size: 13px;
+  line-height: 1.5;
+}
+.timeline__time {
+  font-family: var(--font-mono);
+  font-size: var(--type-label);
+  color: var(--ink-2);
+  font-variant-numeric: tabular-nums;
+}
+.timeline__action {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.timeline__phase {
+  font-size: 12px;
+}
+.timeline__task,
+.timeline__log-path {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--ink-2);
+  overflow-wrap: anywhere;
+}
+.timeline__log {
+  display: grid;
+  grid-template-columns: 6.5rem minmax(0, 1fr);
+  gap: 2px var(--space-3);
+  padding: 7px 0;
+  border-bottom: 1px solid var(--hairline);
+  font-size: 13px;
+  line-height: 1.5;
+}
+.timeline__log-title {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.timeline__log-path {
+  grid-column: 2;
+}
+.timeline__more {
+  padding-top: var(--space-2);
+}
+
+/* ---------- 窄屏（<760px） ---------- */
+
+@media (width < 760px) {
+  .board-item {
+    grid-template-columns: minmax(0, 1fr);
   }
   .board-children {
-    margin-left: 0.25rem;
-    padding-left: 0.5rem;
+    margin-left: var(--space-2);
+    padding-left: var(--space-3);
   }
   .board-attempt > div {
-    grid-template-columns: 1fr;
-    gap: 0.15rem;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0;
+  }
+  .timeline__scrub {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--space-2);
+  }
+  .timeline__event {
+    grid-template-columns: minmax(0, 1fr) max-content;
+    gap: 2px var(--space-3);
+  }
+  .timeline__time,
+  .timeline__task {
+    grid-column: 1 / -1;
   }
 }

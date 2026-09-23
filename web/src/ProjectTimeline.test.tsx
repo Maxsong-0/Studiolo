@@ -74,8 +74,12 @@ async function clickTab(name: string) {
     fireEvent.click(screen.getByRole('tab', { name }));
   });
 }
+/**
+ * 直接落在「任务与回执」且项目已选：这三个标签要先选具体项目（设计规范第 7 节），
+ * 缺省的拓扑标签会另读跨项目汇总，不在这里的请求计数之内。
+ */
 async function mountBoard() {
-  window.location.hash = '#view=collab';
+  window.location.hash = `#view=collab&panel=board&project=${encodeURIComponent(project)}`;
   await act(async () => {
     render(<CollabView projects={projects} />);
   });
