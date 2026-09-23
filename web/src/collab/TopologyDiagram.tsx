@@ -34,6 +34,11 @@ export interface TopologyDiagramProps {
   title: string;
   /** 判休眠与租约到期的「此刻」；缺省取挂载时刻。 */
   now?: number;
+  /**
+   * 执行者显示名表（整份汇总的 overviewLabels）；缺省按 items 自己算。
+   * items 只是汇总的一部分时要传，名字才与「今天的时间线」、另一张拓扑一致。
+   */
+  labels?: ReadonlyMap<string, string>;
 }
 
 /**
@@ -52,6 +57,7 @@ export function TopologyDiagram(props: TopologyDiagramProps): JSX.Element {
     onSelectTask,
     title,
     now,
+    labels,
   } = props;
   const [mountedAt] = useState(() => Date.now());
   const at = now ?? mountedAt;
@@ -66,6 +72,7 @@ export function TopologyDiagram(props: TopologyDiagramProps): JSX.Element {
         onlyConflicts,
         markers,
         selectedTaskId,
+        labels,
       }),
     [
       items,
@@ -76,6 +83,7 @@ export function TopologyDiagram(props: TopologyDiagramProps): JSX.Element {
       onlyConflicts,
       markers,
       selectedTaskId,
+      labels,
     ],
   );
   // useId 的值带冒号或书名号，放进 url(#…) 前只留安全字符。

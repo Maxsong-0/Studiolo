@@ -84,6 +84,11 @@ export interface TopologyLayoutOptions {
   onlyConflicts?: boolean;
   markers?: readonly LayoutMarker[];
   selectedTaskId?: string | null;
+  /**
+   * 执行者显示名表（executorGrouping 的 overviewLabels）；缺省按传入的条目自己算。
+   * 只画汇总的一部分（驾驶舱缩略、按项目筛选）时传整份汇总的表，名字才与泳道、另一张拓扑一致。
+   */
+  labels?: ReadonlyMap<string, string>;
 }
 
 export type TaskTone = 'normal' | 'muted' | 'waiting' | 'alert' | 'dormant';
@@ -511,7 +516,7 @@ export function topologyLayout(
       (!onlyConflicts || conflicted.has(item.id)),
   );
   const hidden = unfinished.length - shown.length;
-  const labels = executorLabels(items.map(executorOf));
+  const labels = options.labels ?? executorLabels(items.map(executorOf));
 
   let groups = orderGroups(shown, labels, dormant);
   let omitted = 0;

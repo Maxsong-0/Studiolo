@@ -16,12 +16,12 @@ import {
 } from '../ui';
 import { cx } from '../ui/dom';
 import { useViewLocation } from '../useViewLocation';
-import { executorLabels, executorOf } from '../collab/executorGrouping';
+import { executorOf, overviewLabels } from '../collab/executorGrouping';
 import { ProjectSelect } from '../collab/ProjectSelect';
 import type { ProjectChoice } from '../collab/ProjectSelect';
 import { TaskDetail } from '../collab/TaskDetail';
 import { TopologyDiagram } from '../collab/TopologyDiagram';
-import { todayLanes } from '../collab/todayLanes';
+import { todayLanes, type TodayLanes } from '../collab/todayLanes';
 import {
   projectName,
   topologySummary,
@@ -169,8 +169,10 @@ interface Topology {
   filter: string | null;
   options: ProjectChoice[];
   summary: TopologySummary;
-  labels: Map<string, string>;
-  lanes: ReturnType<typeof todayLanes>;
+  /** 执行者显示名：按整份汇总算，筛了项目也不变，与驾驶舱的拓扑缩略、泳道同名。 */
+  labels: ReadonlyMap<string, string>;
+  /** 今天的泳道：与驾驶舱同一个 todayLanes；筛了项目只画该项目的事件。 */
+  lanes: TodayLanes;
 }
 
 /** 拓扑页的派生数据：项目筛选、汇总数、执行者标签与今天的泳道，一份汇总算一次。 */
@@ -197,6 +199,7 @@ function useTopology(
         ? overview.events
         : overview.events.filter((event) => event.project === filter);
     const now = Date.parse(overview.generatedAt);
+    const labels = overviewLabels(overview);
     return {
       overview,
       now,
@@ -204,8 +207,11 @@ function useTopology(
       filter,
       options,
       summary: topologySummary(items, now),
-      labels: executorLabels(items.map(executorOf)),
-      lanes: todayLanes(items, events, now),
+      labels,
+      lanes: todayLanes(
+        filter === null ? overview : { ...overview, items, events },
+        { labels },
+      ),
     };
   }, [overview, projects, project]);
 }
@@ -325,6 +331,7 @@ function TopologyPanel({
           onSelectTask={onSelect}
           title={filter ? `协作拓扑：${projectName(filter)}` : '协作拓扑'}
           now={now}
+          labels={labels}
         />
         <p className="collab-legend">
           <span>实线 认领关系</span>
@@ -365,18 +372,22 @@ function TopologyPanel({
             </span>
           }
         />
-        {lanes ? (
-          <Lanes
-            from={lanes.from}
-            to={lanes.to}
-            lanes={lanes.lanes}
-            ticks={lanes.ticks}
-          />
-        ) : (
-          <EmptyState title="今天还没有黑板事件">
-            <p>今天零点以来，所选范围里没有任务事件。</p>
-          </EmptyState>
-        )}
+        <Lanes
+          from={lanes.range.from}
+          to={lanes.range.to}
+          lanes={lanes.lanes}
+          ticks={lanes.range.ticks}
+        />
+        {lanes.lanes.every((lane) => lane.blocks.length === 0) ? (
+          <p className="collab-note">
+            这段时间里所选范围没有执行者活动，也没有你的审批。
+          </p>
+        ) : null}
+        {lanes.hidden > 0 ? (
+          <p className="collab-note">
+            另 {lanes.hidden} 位执行者这段时间有活动，未画出。
+          </p>
+        ) : null}
         {overview.eventsTruncated ? (
           <p className="collab-note">
             窗口内事件超过 1000 条，接口只给了最新的 1000 条，更早的泳道块缺失。

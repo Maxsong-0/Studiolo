@@ -1,7 +1,7 @@
 import { memo, useId, type ReactNode } from 'react';
+import { recentActivity, todayLanes } from '../collab/todayLanes';
 import { Cell, CellHeader, EmptyState, Lanes, Skeleton } from '../ui';
 import type { OverviewState } from './model';
-import { overviewRange, recentActivity, timelineLanes } from './timeline';
 import '../styles/cockpit.css';
 
 function Legend() {
@@ -41,8 +41,7 @@ function TimelineBody({ state }: { state: OverviewState }): ReactNode {
       );
     case 'ready': {
       const { overview } = state;
-      const range = overviewRange(overview);
-      const { lanes, hidden } = timelineLanes(overview, range);
+      const { range, lanes, hidden } = todayLanes(overview);
       const feed = recentActivity(overview, range);
       return (
         <>
@@ -85,6 +84,7 @@ function TimelineBody({ state }: { state: OverviewState }): ReactNode {
 
 /**
  * 右中：今天的时间线。按执行者分泳道（黑块 AI 工作、红块你的审批），下接最近三条动态。
+ * 泳道与协作页底部同一个 todayLanes（collab/todayLanes.ts），同一份汇总两处画得一模一样。
  * 只随黑板汇总变化重画：悬停待我动作时驾驶舱会重渲染，泳道不必跟着从头推一遍。
  */
 export const TimelineCell = memo(function TimelineCell({

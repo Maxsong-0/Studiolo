@@ -1,9 +1,10 @@
 /*
- * 执行者分组（协作拓扑与「今天的时间线」共用，纯函数）。
+ * 执行者分组与显示名（唯一实现，纯函数）：协作页与驾驶舱的拓扑、「今天的时间线」、驾驶舱最近动态、
+ * 任务详情共用这一份。
  * 认领过的任务按持有者实例链的根节点归组：同一根派生出来的子实例算同一个执行者；
  * 从未认领的任务（没有持有者）按执行器 adapter 归组。
  */
-import type { BoardOverviewItem } from '../boardOverviewModel';
+import type { BoardOverview, BoardOverviewItem } from '../boardOverviewModel';
 
 export interface ExecutorIdentity {
   /** 分组键：`instance:<根实例 id>`，从未认领时 `adapter:<adapter>`。 */
@@ -94,6 +95,17 @@ export function executorLabels(
         : tag(identity, length),
     ]),
   );
+}
+
+/**
+ * 一份汇总里全部执行者的显示名。前缀位数按整份汇总的执行者定：只画其中一部分时（驾驶舱缩略图只画 6 条、
+ * 协作页按项目筛选、泳道只列有活动的执行者）也用这一套，同一执行者在各处才是同一个名字，
+ * 不会一处「Claude · 01M3」、另一处「Claude · 01M34」。
+ */
+export function overviewLabels(
+  overview: Pick<BoardOverview, 'items'>,
+): Map<string, string> {
+  return executorLabels(overview.items.map(executorOf));
 }
 
 /**

@@ -1,4 +1,5 @@
-import { useId, type ReactNode } from 'react';
+import { useId, useMemo, type ReactNode } from 'react';
+import { overviewLabels } from '../collab/executorGrouping';
 import { TopologyDiagram } from '../collab/TopologyDiagram';
 import {
   Button,
@@ -29,6 +30,11 @@ function TopologyBody({
   onSelectTask,
   onRetry,
 }: TopologyCellProps): ReactNode {
+  // 执行者名按整份汇总算：缩略图只画其中至多 6 条，自己算会与右中「今天的时间线」、协作页叫得不一样。
+  const labels = useMemo(
+    () => (state.kind === 'ready' ? overviewLabels(state.overview) : undefined),
+    [state],
+  );
   switch (state.kind) {
     case 'loading':
       return <Skeleton lines={4} label="正在读取黑板汇总…" />;
@@ -69,6 +75,7 @@ function TopologyBody({
               plan.omitted > 0 ? `，另 ${plan.omitted} 条在协作页` : ''
             }；红圈 ${plan.markers.length} 处等你`}
             now={overviewNow(state.overview)}
+            labels={labels}
           />
         </div>
       );
