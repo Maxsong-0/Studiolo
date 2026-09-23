@@ -1,35 +1,13 @@
-//! recovery kit 与 transcript 契约：只允许本机 TTY/localhost、一次性、有期限；
-//! 任何恢复写入之前先建立带完整性保护且不含秘密的 transcript；
-//! Auth 恢复必须让旧会话/L3/恢复码失效，并要求新的签发代次。
+//! 恢复检查契约：前置检查全过才恢复主人与密钥映射；Auth 恢复必须让旧会话/L3/恢复码失效
+//! 并要求新的签发代次；随同恢复的 AgentStore 旧凭据失效、策略库吊销核对后才可启用。
+//!
+//! 本文件管恢复检查与启用门禁；kit 兑换与 transcript 在 `bootstrap`。
 
-use super::support::DIGEST;
-use studiolo_backup::checkpoint::manifest::{SecretReference, SecretSource};
+mod bootstrap;
+
 use studiolo_backup::recovery::kit::{
-    AuthRestoreInvalidation, BidirectionalSyncGate, BootstrapChannel, CutoverState, KitError,
-    PreRestoreChecks, RecoveryIdentity, RecoveryKit,
+    AuthRestoreInvalidation, BidirectionalSyncGate, CutoverState, KitError, PreRestoreChecks,
 };
-use studiolo_backup::recovery::transcript::{RecoveryStep, RecoveryTranscript, TranscriptError};
-use studiolo_core::checkpoint::{CheckpointId, InstantMillis};
-
-fn kit() -> RecoveryKit {
-    RecoveryKit {
-        checkpoint_id: CheckpointId::parse("cp-0001").expect("checkpoint id"),
-        identity: RecoveryIdentity {
-            identity_id: "restore-identity-1".to_owned(),
-            expires_at: InstantMillis::from_millis(10_000),
-            redeemed: false,
-        },
-        package_digest: DIGEST.to_owned(),
-        secret_references: vec![SecretReference {
-            logical_name: "owner_key_mapping".to_owned(),
-            source: SecretSource::EnvironmentVariable {
-                variable: "STUDIOLO_OWNER_KEY_FILE".to_owned(),
-            },
-        }],
-        sync_recovery_material: true,
-        stored_outside_ordinary_checkpoint: true,
-    }
-}
 
 fn invalidation() -> AuthRestoreInvalidation {
     AuthRestoreInvalidation {
@@ -44,125 +22,21 @@ fn invalidation() -> AuthRestoreInvalidation {
         agent_store_included: true,
         agent_type_tokens_invalidated: true,
         agent_instances_invalidated: true,
+        policy_included: true,
+        policy_revocations_reconciled: true,
     }
 }
 
-#[test]
-fn a_local_tty_bootstrap_opens_the_kit_and_establishes_the_transcript_first() {
-    let mut kit = kit();
-
-    let grant = kit
-        .redeem(BootstrapChannel::LocalTty, InstantMillis::from_millis(1))
-        .expect("redeem");
-
-    assert_eq!(grant.transcript.entries.len(), 1);
-    assert_eq!(grant.transcript.entries[0].step, RecoveryStep::KitOpened);
-    grant.transcript.verify().expect("链自洽");
-    assert!(kit.identity.redeemed);
-}
-
-#[test]
-fn a_remote_bootstrap_is_refused_outright() {
-    let mut kit = kit();
-
-    assert_eq!(
-        kit.redeem(
-            BootstrapChannel::RemoteNetwork,
-            InstantMillis::from_millis(1)
-        )
-        .err(),
-        Some(KitError::RemoteBootstrapForbidden)
-    );
-    assert!(!kit.identity.redeemed, "被拒绝的兑换不能消耗身份");
-}
-
-#[test]
-fn the_recovery_identity_is_one_time_and_time_limited() {
-    let mut once = kit();
-    once.redeem(BootstrapChannel::Loopback, InstantMillis::from_millis(1))
-        .expect("first");
-    assert_eq!(
-        once.redeem(BootstrapChannel::Loopback, InstantMillis::from_millis(2))
-            .err(),
-        Some(KitError::IdentityAlreadyRedeemed)
-    );
-
-    let mut expired = kit();
-    assert_eq!(
-        expired
-            .redeem(
-                BootstrapChannel::LocalTty,
-                InstantMillis::from_millis(10_001)
-            )
-            .err(),
-        Some(KitError::IdentityExpired)
-    );
-}
-
-#[test]
-fn a_kit_stored_inside_the_ordinary_checkpoint_is_refused() {
-    let mut kit = kit();
-    kit.stored_outside_ordinary_checkpoint = false;
-
-    assert_eq!(
-        kit.redeem(BootstrapChannel::LocalTty, InstantMillis::from_millis(1))
-            .err(),
-        Some(KitError::KitInsideOrdinaryCheckpoint)
-    );
-}
-
-#[test]
-fn no_recovery_write_is_authorized_before_the_transcript_exists() {
-    let transcript =
-        RecoveryTranscript::begin(CheckpointId::parse("cp-0001").expect("checkpoint id"));
-
-    assert_eq!(
-        transcript.authorize_write().err(),
-        Some(TranscriptError::TranscriptNotEstablished)
-    );
-}
-
-#[test]
-fn the_transcript_refuses_anything_that_looks_like_a_secret() {
-    let mut kit = kit();
-    let mut grant = kit
-        .redeem(BootstrapChannel::LocalTty, InstantMillis::from_millis(1))
-        .expect("redeem");
-
-    assert_eq!(
-        grant
-            .transcript
-            .append(
-                RecoveryStep::OwnerAndKeyMappingRestored,
-                serde_json::json!({ "password": "hunter2" }),
-            )
-            .err(),
-        Some(TranscriptError::SecretInTranscript)
-    );
-    assert_eq!(grant.transcript.entries.len(), 1);
-}
-
-#[test]
-fn tampering_with_any_transcript_entry_breaks_the_integrity_chain() {
-    let mut kit = kit();
-    let mut grant = kit
-        .redeem(BootstrapChannel::LocalTty, InstantMillis::from_millis(1))
-        .expect("redeem");
-    grant
-        .transcript
-        .append(
-            RecoveryStep::PhysicalRebindIntent,
-            serde_json::json!({ "new_root": "/srv/restored/vault" }),
-        )
-        .expect("append");
-    grant.transcript.verify().expect("链自洽");
-
-    grant.transcript.entries[0].entry_hash = DIGEST.to_owned();
-
-    assert_eq!(
-        grant.transcript.verify().err(),
-        Some(TranscriptError::BrokenChain)
-    );
+fn open_gate() -> BidirectionalSyncGate {
+    BidirectionalSyncGate {
+        divergence_isolated: true,
+        manually_reconciled: true,
+        new_checkpoint_accepted: true,
+        write_and_backup_chain_reaccepted: true,
+        old_root_retained: true,
+        policy_included: true,
+        policy_revocations_reconciled: true,
+    }
 }
 
 #[test]
@@ -271,13 +145,7 @@ fn the_owner_binding_is_kept_and_only_a_reauthentication_allows_the_final_cutove
 
 #[test]
 fn bidirectional_sync_stays_off_until_every_gate_is_satisfied() {
-    let open = BidirectionalSyncGate {
-        divergence_isolated: true,
-        manually_reconciled: true,
-        new_checkpoint_accepted: true,
-        write_and_backup_chain_reaccepted: true,
-        old_root_retained: true,
-    };
+    let open = open_gate();
     assert!(open.may_enable());
 
     for mutate in [
@@ -286,9 +154,73 @@ fn bidirectional_sync_stays_off_until_every_gate_is_satisfied() {
         |gate: &mut BidirectionalSyncGate| gate.new_checkpoint_accepted = false,
         |gate: &mut BidirectionalSyncGate| gate.write_and_backup_chain_reaccepted = false,
         |gate: &mut BidirectionalSyncGate| gate.old_root_retained = false,
+        |gate: &mut BidirectionalSyncGate| gate.policy_revocations_reconciled = false,
     ] {
         let mut gate = open;
         mutate(&mut gate);
         assert!(!gate.may_enable());
+    }
+}
+
+#[test]
+fn an_included_policy_store_fails_the_restore_check_until_its_revocations_are_reconciled() {
+    invalidation().check(7).expect("吊销已核对");
+
+    let mut unreconciled = invalidation();
+    unreconciled.policy_revocations_reconciled = false;
+    assert_eq!(
+        unreconciled.check(7).err(),
+        Some(KitError::PolicyRevocationsNotReconciled)
+    );
+    assert_eq!(
+        KitError::PolicyRevocationsNotReconciled.to_string(),
+        "策略库恢复后未核对吊销：旧快照可能让已吊销的实例或类型复活"
+    );
+
+    let mut not_included = invalidation();
+    not_included.policy_included = false;
+    not_included.policy_revocations_reconciled = false;
+    assert!(not_included.check(7).is_ok(), "未纳入的策略库不作要求");
+}
+
+#[test]
+fn bidirectional_sync_stays_off_while_a_restored_policy_store_has_unreconciled_revocations() {
+    let mut gate = open_gate();
+    gate.policy_revocations_reconciled = false;
+    assert!(!gate.may_enable(), "纳入策略库而未核对吊销时不得启用");
+
+    gate.policy_included = false;
+    assert!(gate.may_enable(), "未纳入策略库时不作要求");
+}
+
+#[test]
+fn a_restore_record_that_omits_a_policy_fact_fails_closed_instead_of_defaulting() {
+    // 完整记录能往返，缺字段的失败才归因于缺字段本身。
+    let invalidation_record = serde_json::to_value(invalidation()).expect("encode");
+    let gate_record = serde_json::to_value(open_gate()).expect("encode");
+    assert_eq!(
+        serde_json::from_value::<AuthRestoreInvalidation>(invalidation_record.clone())
+            .expect("decode"),
+        invalidation()
+    );
+    assert_eq!(
+        serde_json::from_value::<BidirectionalSyncGate>(gate_record.clone()).expect("decode"),
+        open_gate()
+    );
+
+    for field in ["policy_included", "policy_revocations_reconciled"] {
+        let mut record = invalidation_record.clone();
+        record.as_object_mut().expect("object").remove(field);
+        assert!(
+            serde_json::from_value::<AuthRestoreInvalidation>(record).is_err(),
+            "恢复检查记录缺 {field} 不能被默认补齐"
+        );
+
+        let mut record = gate_record.clone();
+        record.as_object_mut().expect("object").remove(field);
+        assert!(
+            serde_json::from_value::<BidirectionalSyncGate>(record).is_err(),
+            "启用门禁记录缺 {field} 不能被默认补齐"
+        );
     }
 }

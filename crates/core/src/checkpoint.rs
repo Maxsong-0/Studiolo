@@ -3,11 +3,18 @@
 //! 本模块只有纯类型与纯判定，不做任何 IO，也不持有任何 owner 的数据库句柄。
 //! 协调器经 [`CheckpointParticipant`] 与每个存储 owner 对话：owner 自己导出
 //! 已验证的 checkpoint，协调器永远拿不到 `Connection`。
+//! 各 owner 的水位（`watermark` 子模块）与恢复点年龄（`age` 子模块）按职责拆出，
+//! 仍经本模块原路径导出。
 
-use crate::VaultUuid;
+mod age;
+mod watermark;
+
+pub use age::{AgeUnknownReason, InstantMillis, RecoveryPointAge, recovery_point_age};
+pub use watermark::OwnerWatermark;
+
 use serde::{Deserialize, Serialize};
 
-/// 参与协调窗口的存储 owner；数组顺序即屏障的固定进入顺序。
+/// 参与协调窗口的存储 owner；[`CheckpointOwner::FREEZE_ORDER`] 的数组顺序即屏障的固定进入顺序。
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CheckpointOwner {
@@ -23,19 +30,25 @@ pub enum CheckpointOwner {
     Bridge,
     /// M3 类型 token 摘要、撤权与实例登记。
     AgentStore,
+    /// M4 策略平面 `policy.sqlite3`：规则母本、skills 与能力集的 effective，以及实例／类型／全局三级吊销。
+    Policy,
 }
 
 impl CheckpointOwner {
     /// 屏障必须按此固定顺序逐个进入，任何实现都不得自行重排。
     ///
+    /// Policy 排在 AgentStore 之后、Audit 之前：接入方调用先经 AgentStore 核身份，
+    /// 再复核策略库的能力集与吊销，策略库的发布与吊销又要写 Audit；
+    /// 按调用方向先冻上游，下游保持可用到上游在途操作走完。
     /// Audit 排在最后：它要保持可用直到其余 owner 的在途操作实际结束
     /// （`Auth→Audit→Auth` 这类完整语义操作必须能走完），才最后进入存储冻结。
-    pub const FREEZE_ORDER: [Self; 6] = [
+    pub const FREEZE_ORDER: [Self; 7] = [
         Self::Broker,
         Self::Control,
         Self::Auth,
         Self::Bridge,
         Self::AgentStore,
+        Self::Policy,
         Self::Audit,
     ];
 
@@ -49,6 +62,7 @@ impl CheckpointOwner {
             Self::Audit => "audit",
             Self::Bridge => "bridge",
             Self::AgentStore => "agent_store",
+            Self::Policy => "policy",
         }
     }
 }
@@ -176,87 +190,6 @@ impl WalCheckpointProof {
     }
 }
 
-/// 各 owner 的水位。语义各不相同，任何一项都不能互相替代。
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "owner", rename_all = "snake_case")]
-pub enum OwnerWatermark {
-    /// Broker：Vault UUID、逻辑 pair_id、提交水位与无未决证明。
-    Broker {
-        /// 已验证的 Vault 身份。
-        vault_uuid: VaultUuid,
-        /// 逻辑配对标识；恢复到新目录时必须原样保留。
-        pair_id: VaultUuid,
-        /// 已完成并持久发布的最大提交序号。
-        committed_through: u64,
-        /// 是否仍有未决操作；true 不能封存。
-        unresolved: bool,
-    },
-    /// Control：schema、Vault UUID 与 outbox 状态。
-    Control {
-        /// 运行平面 schema 版本。
-        schema_version: u32,
-        /// 绑定的 Vault 身份。
-        vault_uuid: VaultUuid,
-        /// 仍未投递的 outbox 条目数。
-        outbox_pending: u64,
-        /// 已投递到的 outbox 水位。
-        outbox_delivered_through: u64,
-    },
-    /// Auth：schema、主人绑定与审计锚点。
-    Auth {
-        /// Auth schema 版本。
-        schema_version: u32,
-        /// 主人绑定的脱敏摘要（64 位十六进制），不含任何秘密。
-        owner_binding_digest: String,
-        /// Auth 写入所锚定的审计 offset。
-        audit_anchor_offset: u64,
-    },
-    /// Audit：最后 offset 与完整性链哈希。
-    Audit {
-        /// 截止点的最后 offset。
-        last_offset: u64,
-        /// 截止点的记录哈希（64 位十六进制）。
-        last_hash: String,
-    },
-    /// Bridge：link/scope/共同基线/观察序号与持久门禁。
-    Bridge {
-        /// 固定 link 标识。
-        link_id: String,
-        /// 已批准同步范围的摘要（64 位十六进制）。
-        scope_digest: String,
-        /// 共同基线摘要（64 位十六进制）；不能用索引 generation 替代。
-        common_base_digest: String,
-        /// 本地观察序号；不能用最后一次 Sync 退出时间替代。
-        observation_sequence: u64,
-        /// 持久门禁是否已关闭。
-        durable_gate_closed: bool,
-    },
-    /// AgentStore：schema、类型 token 摘要与实例登记。
-    AgentStore {
-        /// AgentStore schema 版本。
-        schema_version: u32,
-        /// 类型 token 摘要（64 位十六进制），不含 token 本体。
-        type_token_digest: String,
-        /// 已登记实例数。
-        instance_count: u64,
-    },
-}
-
-impl OwnerWatermark {
-    /// 返回该水位所属的 owner。
-    #[must_use]
-    pub fn owner(&self) -> CheckpointOwner {
-        match self {
-            Self::Broker { .. } => CheckpointOwner::Broker,
-            Self::Control { .. } => CheckpointOwner::Control,
-            Self::Auth { .. } => CheckpointOwner::Auth,
-            Self::Audit { .. } => CheckpointOwner::Audit,
-            Self::Bridge { .. } => CheckpointOwner::Bridge,
-            Self::AgentStore { .. } => CheckpointOwner::AgentStore,
-        }
-    }
-}
-
 /// owner 自己导出、且已重开核验过的 checkpoint 票据。
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SealedOwnerCheckpoint {
@@ -357,70 +290,4 @@ pub enum CheckpointError {
         /// 不可用的 owner。
         owner: CheckpointOwner,
     },
-}
-
-/// 毫秒时间戳；只用于计算恢复点年龄，不引入时区语义。
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-#[serde(transparent)]
-pub struct InstantMillis(i64);
-
-impl InstantMillis {
-    /// 从 Unix 毫秒构造。
-    #[must_use]
-    pub fn from_millis(value: i64) -> Self {
-        Self(value)
-    }
-
-    /// 返回 Unix 毫秒。
-    #[must_use]
-    pub fn millis(self) -> i64 {
-        self.0
-    }
-}
-
-/// 恢复点年龄。时钟回退或时间证据缺失一律显示未知。
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case", tag = "kind")]
-pub enum RecoveryPointAge {
-    /// 已知年龄，从内容截止时刻起算。
-    Known {
-        /// 年龄毫秒数。
-        millis: u64,
-    },
-    /// 未知年龄；不得显示为 0 或绿色。
-    Unknown {
-        /// 未知的具体原因。
-        reason: AgeUnknownReason,
-    },
-}
-
-/// 年龄未知的原因。
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum AgeUnknownReason {
-    /// 当前时刻早于内容截止时刻，本地时钟发生回退。
-    ClockWentBackwards,
-    /// 缺少内容截止时刻等时间证据。
-    MissingTimeEvidence,
-}
-
-/// 按内容截止时刻计算恢复点年龄；`now` 早于截止时刻即判为时钟回退。
-#[must_use]
-pub fn recovery_point_age(
-    content_cutoff: Option<InstantMillis>,
-    now: Option<InstantMillis>,
-) -> RecoveryPointAge {
-    let (Some(cutoff), Some(now)) = (content_cutoff, now) else {
-        return RecoveryPointAge::Unknown {
-            reason: AgeUnknownReason::MissingTimeEvidence,
-        };
-    };
-    match now.millis().checked_sub(cutoff.millis()) {
-        Some(delta) if delta >= 0 => RecoveryPointAge::Known {
-            millis: delta.unsigned_abs(),
-        },
-        _ => RecoveryPointAge::Unknown {
-            reason: AgeUnknownReason::ClockWentBackwards,
-        },
-    }
 }

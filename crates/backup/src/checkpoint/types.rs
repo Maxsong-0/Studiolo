@@ -9,10 +9,20 @@ use studiolo_core::checkpoint::{
     CheckpointId, CheckpointOwner, InstantMillis, OwnerAssembly, SealedOwnerCheckpoint,
 };
 
-/// 逐项标记 present/absent 的 owner 清单；六个 owner 一个都不能缺项。
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+/// 逐项标记 present/absent 的 owner 清单；`CheckpointOwner::FREEZE_ORDER` 里的 owner 一个都不能缺项。
+///
+/// 反序列化同样经 [`OwnerRoster::new`] 校验：持久清单缺项（例如 Policy 纳入之前写下的清单）、
+/// 乱序或重复一律失败关闭，缺的 owner 不会被静默当成 absent。
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 #[serde(transparent)]
 pub struct OwnerRoster(Vec<(CheckpointOwner, OwnerAssembly)>);
+
+impl<'de> Deserialize<'de> for OwnerRoster {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let entries = Vec::<(CheckpointOwner, OwnerAssembly)>::deserialize(deserializer)?;
+        Self::new(entries).map_err(serde::de::Error::custom)
+    }
+}
 
 impl OwnerRoster {
     /// 按固定顺序构造清单；缺项、乱序或重复一律拒绝。
@@ -146,7 +156,7 @@ impl TransferSource {
 pub struct SealTicket {
     /// 本次 checkpoint 标识。
     pub checkpoint_id: CheckpointId,
-    /// 六个 owner 的 present/absent 清单。
+    /// 全部 owner 的 present/absent 清单。
     pub roster: OwnerRoster,
     /// 已装配 owner 各自导出的已验证 checkpoint。
     pub owners: Vec<SealedOwnerCheckpoint>,
