@@ -1,76 +1,11 @@
-.nav-symbol {
-  display: grid;
-  place-items: center;
-  width: 25px;
-  height: 25px;
-  flex-shrink: 0;
-  border-radius: 7px;
-  background: var(--symbol-default-tint);
-  box-shadow: inset 0 1px 0 var(--symbol-inset);
-}
-.nav-symbol .icon {
-  width: 16px;
-  height: 16px;
-  color: var(--symbol-default);
-}
-.nav-symbol-inbox {
-  background: var(--symbol-inbox-tint);
-}
-.nav-symbol-operations {
-  background: var(--symbol-operations-tint);
-}
-.nav-symbol-operations .icon {
-  color: var(--symbol-operations);
-}
-.nav-symbol-inbox .icon {
-  color: var(--symbol-inbox);
-}
-.nav-symbol-documents {
-  background: var(--symbol-documents-tint);
-}
-.nav-symbol-documents .icon {
-  color: var(--symbol-documents);
-}
-.is-active .nav-symbol {
-  background: var(--symbol-on-accent-tint);
-  box-shadow: inset 0 1px 0 var(--symbol-on-accent-inset);
-}
-.is-active .nav-symbol .icon {
-  color: var(--on-accent);
-}
-.action-kind {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-}
-.action-kind::before {
-  content: none;
-}
-.action-kind .icon {
-  width: 18px;
-  height: 18px;
-}
-.action-kind-decision {
-  color: var(--action-decision);
-}
-.action-kind-restart {
-  color: var(--action-restart);
-}
-@media (max-width: 760px) {
-  .navigation-item > .nav-symbol {
-    flex-basis: auto;
-    order: 0;
-    width: 23px;
-    height: 23px;
-  }
-  .nav-symbol .icon {
-    width: 16px;
-    height: 16px;
-  }
-}
-@media (prefers-contrast: more) {
-  .nav-symbol {
-    border: 1px solid currentColor;
-    box-shadow: none;
-  }
-}
+/*
+ * 已清空（T-130 B6，2026-09-23）。
+ *
+ * 这里原是旧侧栏导航的彩色符号底（.nav-symbol 及其 inbox / operations / documents 变体）
+ * 与待办类型标记（.action-kind、.action-kind-decision、.action-kind-restart）。
+ * T-130 换成五个导航的顶栏、待办改为圈号后，web/src 里已没有任何组件或测试引用这些类名，
+ * 它们只剩对 tokens.css「兼容别名」块里旧令牌的引用。
+ *
+ * 文件先留着，因为 main.tsx 仍导入它（那一行归外壳，不在本线写域里）；
+ * 等主进程删掉兼容别名时，连同 main.tsx 里的导入一起删掉本文件即可。
+ */

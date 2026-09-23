@@ -1,8 +1,12 @@
 import type { RustCallSitesData } from '../rustCallSites';
 import type { ProjectOperationsData } from '../projectOperations';
 import type { OpenSource } from '../types';
+import { CellHeader } from '../ui';
 import { RustCallSitesBoundary } from './RustCallSitesBoundary';
 import { RustCallSitesView } from './RustCallSitesView';
+import '../styles/operations.css';
+import '../styles/rust-call-sites.css';
+import '../styles/rust-call-links.css';
 
 const unavailable: Record<
   Exclude<RustCallSitesData['status'], 'ready'>,
@@ -27,6 +31,20 @@ const unavailable: Record<
   ],
 };
 
+/**
+ * 读不到（含读取预算拒绝）、无效或超出支持范围（含预算超限）是「出问题」：标题前加红色方块，
+ * 这是本块唯一用红的地方；未启用与未绑定只是没有开这项能力，保持中性。
+ */
+const problems: ReadonlySet<RustCallSitesData['status']> = new Set([
+  'unavailable',
+  'invalid',
+  'unsupported',
+]);
+
+/**
+ * Rust 源码调用位置：运作页证据格里的一块（格子由运作页给出，这里不再套框）。
+ * 标题行用 CellHeader；只有 ready 才显示观测时间、批标识与证据，其余状态各自降级并说明原因。
+ */
 export function RustCallSitesPanel({
   data,
   onOpen,
@@ -41,18 +59,17 @@ export function RustCallSitesPanel({
     : rust.status === 'ready'
       ? null
       : unavailable[rust.status];
+  const problem = rust !== undefined && problems.has(rust.status);
   const observed = rust?.observed_at;
   return (
     <section
       className="operation-panel rust-panel"
       aria-labelledby="rust-call-sites-title"
     >
-      <header className="operation-panel-heading">
-        <div>
-          <span className="operation-eyebrow">仓库源码语法证据</span>
-          <h2 id="rust-call-sites-title">Rust 源码调用位置</h2>
-        </div>
-      </header>
+      <CellHeader
+        title={<span id="rust-call-sites-title">Rust 源码调用位置</span>}
+        meta="仓库源码语法证据"
+      />
       <p className="operation-muted">
         白名单文件 → 词法上下文 → 调用语法位置。未做编译器名字解析或类型检查；
         同名方法不能视为同一目标，调用语法也可能调用函数指针或闭包。
@@ -60,28 +77,31 @@ export function RustCallSitesPanel({
       </p>
       {graph && observed !== null && observed !== undefined ? (
         <>
-          <p className="rust-observation">
-            源码观测：
-            <time dateTime={new Date(Number(observed) * 1000).toISOString()}>
-              {new Date(Number(observed) * 1000).toLocaleString()}
-            </time>
-            ；文档声明使用快照 {data.generation}，各类证据没有共同事务观测时间。
-          </p>
-          {rust?.links ? (
-            <details className="rust-link-batch">
-              <summary>词法关联 · 输入批标识</summary>
-              <code>{rust.links.batch_id}</code>
-              <p>
-                该标识说明输入内容身份，不是文件系统快照或新鲜度证明。
-                前端没有源码正文，无法独立重算内容哈希；它与文档代次和 Cargo
-                观测独立。
-              </p>
-            </details>
-          ) : (
-            <p className="operation-muted">
-              当前服务未提供词法关联；保留调用位置，目标未解析。
+          <div className="rust-readout">
+            <p className="rust-observation">
+              源码观测：
+              <time dateTime={new Date(Number(observed) * 1000).toISOString()}>
+                {new Date(Number(observed) * 1000).toLocaleString()}
+              </time>
+              ；文档声明使用快照 {data.generation}
+              ，各类证据没有共同事务观测时间。
             </p>
-          )}
+            {rust?.links ? (
+              <details className="rust-link-batch">
+                <summary>词法关联 · 输入批标识</summary>
+                <code>{rust.links.batch_id}</code>
+                <p>
+                  该标识说明输入内容身份，不是文件系统快照或新鲜度证明。
+                  前端没有源码正文，无法独立重算内容哈希；它与文档代次和 Cargo
+                  观测独立。
+                </p>
+              </details>
+            ) : (
+              <p className="operation-muted">
+                当前服务未提供词法关联；保留调用位置，目标未解析。
+              </p>
+            )}
+          </div>
           <p className="operation-muted">
             仅覆盖下列 {graph.files.length} 个显式白名单文件，共{' '}
             {graph.calls.length} 处调用位置。
@@ -102,13 +122,20 @@ export function RustCallSitesPanel({
           </RustCallSitesBoundary>
         </>
       ) : (
-        <div className="operation-unavailable" role="status">
+        <div
+          className={
+            problem
+              ? 'operation-unavailable is-problem'
+              : 'operation-unavailable'
+          }
+          role="status"
+        >
           <h3>{reason?.[0]}</h3>
           <p>{reason?.[1]}</p>
         </div>
       )}
       {rust?.diagnostics.length ? (
-        <details className="diagnostics operation-diagnostics" open>
+        <details className="operation-diagnostics" open>
           <summary>源码观测说明（{rust.diagnostics.length}）</summary>
           <ul>
             {rust.diagnostics.map((message, index) => (

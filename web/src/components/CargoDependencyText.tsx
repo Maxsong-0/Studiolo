@@ -1,7 +1,9 @@
 import { cargoKinds } from '../cargoDependencies';
 import type { CargoDependencyGraph } from '../cargoDependencies';
 import { CargoManifestSource } from './CargoManifestSource';
+import '../styles/cargo-dependencies.css';
 
+/** 图形视图出错时的只读文本：全部包、方向、种类、条件、可选与来源，不含任何按钮或图形。 */
 export function CargoDependencyText({
   graph,
 }: {
@@ -31,10 +33,15 @@ export function CargoDependencyText({
               {packages.get(edge.from)} → {packages.get(edge.to)}
             </strong>
             <p>
-              {cargoKinds[edge.kind]} · alias：{edge.alias} ·{' '}
+              {cargoKinds[edge.kind]} · alias：<code>{edge.alias}</code> ·{' '}
               {edge.optional ? '可选依赖（optional）' : '非可选声明'}
             </p>
-            <p>目标条件：{edge.target ?? '无目标条件'}</p>
+            <p>
+              目标条件：
+              <span className="cargo-target">
+                {edge.target ?? '无目标条件'}
+              </span>
+            </p>
             <CargoManifestSource source={edge.source} label="依赖引用来源" />
             {edge.inherited_from ? (
               <CargoManifestSource

@@ -1,163 +1,642 @@
-.rust-panel,
-.rust-file-content,
-.rust-file-view {
+/*
+ * Rust 源码调用位置（T-130 规范第 1–3、11 节；语义见 docs/m3/rust-call-sites.md）。
+ * 面板铺在运作页的证据格里，不再套框：标题行是 ui 的 CellHeader；上面白名单文件表，下面所选文件的
+ * 覆盖读数（等宽小标签＋等宽值）、词法上下文（选择块）、种类筛选、调用位置表（等宽「行:字节列」坐标
+ * ＋语法种类文字）与右侧的词法关联侧栏（rust-call-links.css）。所选行黑底反白；表头下 1.5px 墨线、
+ * 行间 --hairline（同运作页的目录漂移表）。红色只留给读不到、无效或超出支持范围（含预算超限）的
+ * 状态提示。只引用 tokens.css 的新令牌。
+ */
+
+.rust-panel {
   min-width: 0;
   overflow-wrap: anywhere;
 }
-.rust-call-layout {
-  display: grid;
-  grid-template-columns: minmax(160px, 25%) minmax(0, 1fr);
-  align-items: start;
-  gap: 24px;
+.rust-panel code {
+  font-family: var(--font-mono);
 }
-.rust-files,
-.rust-contexts {
-  display: grid;
-  gap: 10px;
-  min-width: 0;
+
+/* ---------- 读数：源码观测时间（等宽小字，上下细线）；批标识的展开说明在 rust-call-links.css ---------- */
+
+.rust-readout {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-1) var(--space-6);
+  padding: 6px 0;
+  border-top: 1px solid var(--hairline);
+  border-bottom: 1px solid var(--hairline);
 }
-.rust-contexts {
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 12rem), 1fr));
+.rust-observation {
+  margin: 0;
+  color: var(--ink-2);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.6;
 }
-.rust-files button,
-.rust-contexts button {
-  min-width: 0;
-  min-height: 44px;
-  padding: 12px 14px;
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  background: var(--surface-solid);
-  text-align: left;
-  overflow-wrap: anywhere;
-}
-.rust-files button:hover,
-.rust-contexts button:hover {
-  background: var(--accent-soft);
-}
-.rust-files button[aria-pressed='true'],
-.rust-contexts button[aria-pressed='true'] {
-  background: var(--accent-soft);
-  border-color: var(--accent);
-  box-shadow: 0 0 0 1px var(--accent);
-}
-.rust-files code,
-.rust-contexts strong,
-.rust-files span,
-.rust-contexts span {
-  display: block;
-}
-.rust-files span,
-.rust-contexts span {
-  margin-top: 6px;
-  color: var(--muted);
-  font-size: 0.75rem;
-}
-.rust-contexts strong {
-  font-size: 0.8125rem;
+.rust-observation time {
+  color: var(--ink);
   font-weight: 600;
 }
-.rust-selected-file {
-  margin-top: 0;
-  font-size: 1rem;
+
+/* ---------- 布局：文件表在上，所选文件的证据在下占满整行 ---------- */
+
+.rust-call-layout,
+.rust-file-content,
+.rust-file-view {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
 }
-.rust-coverage,
-.rust-declarations {
-  padding: 16px;
-  border-radius: 12px;
-  background: var(--surface-solid);
+.rust-call-layout {
+  gap: var(--space-5);
+  margin-top: var(--space-2);
+}
+.rust-file-content,
+.rust-file-view {
+  gap: var(--space-4);
+}
+
+/* ---------- 白名单文件表：整行是选文件按钮，所选行黑底反白 ---------- */
+
+.rust-files {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.rust-files__head,
+.rust-file {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: baseline;
+  gap: var(--space-3);
+}
+.rust-files__head {
+  padding: 0 var(--space-2) 6px;
+  border-bottom: 1.5px solid var(--ink);
+  color: var(--ink-2);
+  font-family: var(--font-mono);
+  font-size: var(--type-label);
+  line-height: 1.3;
+  letter-spacing: 0.04em;
+}
+.rust-file {
+  width: 100%;
+  min-height: 36px;
+  padding: 6px var(--space-2);
+  border: 0;
+  border-bottom: 1px solid var(--hairline);
+  border-radius: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  line-height: 1.4;
+  text-align: left;
+  cursor: pointer;
+}
+.rust-file:last-child {
+  border-bottom: 0;
+}
+.rust-file code {
+  min-width: 0;
+  font-size: 12.5px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.rust-file span {
+  color: var(--ink-2);
+  font-family: var(--font-mono);
+  font-size: var(--type-label);
+}
+.rust-file:hover {
+  background: var(--paper-raised);
+}
+.rust-file[aria-pressed='true'] {
+  background: var(--ink);
+  color: var(--on-ink);
+}
+.rust-file[aria-pressed='true'] span {
+  color: var(--on-ink);
+}
+/* 焦点环收进按钮里：行与格贴在一起，外偏会被邻格盖住；黑底上换成 --on-ink */
+.rust-file:focus-visible,
+.rust-context:focus-visible {
+  outline-offset: -3px;
+}
+.rust-file[aria-pressed='true']:focus-visible,
+.rust-context[aria-pressed='true']:focus-visible {
+  outline-color: var(--on-ink);
+}
+.rust-selected-file {
+  margin: 0;
+  padding-bottom: var(--space-2);
+  border-bottom: 1px solid var(--hairline);
+  font-size: var(--type-item);
+  line-height: 1.4;
+}
+.rust-selected-file code {
+  font-size: 15px;
+  font-weight: 600;
+}
+
+/* ---------- 文件覆盖读数：等宽小标签＋等宽值（同图纸标题栏），格间 --hairline ---------- */
+
+.rust-coverage {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
 }
 .rust-coverage h3,
 .rust-declarations h3 {
-  margin: 0 0 12px;
-  font-size: 0.875rem;
+  margin: 0;
+  font-size: var(--type-body);
+  font-weight: 800;
+  line-height: 1.4;
 }
 .rust-coverage dl {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 8rem), 1fr));
-  gap: 14px;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
   margin: 0;
+  border-top: 1.5px solid var(--ink);
+  border-bottom: 1px solid var(--hairline);
+}
+.rust-coverage dl > div {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 2px;
+  min-width: 0;
+  padding: 7px var(--space-3);
+  border-left: 1px solid var(--hairline);
+}
+.rust-coverage dl > div:nth-child(6n + 1) {
+  padding-left: 0;
+  border-left: 0;
 }
 .rust-coverage dt {
-  color: var(--muted);
-  font-size: 0.75rem;
+  color: var(--ink-2);
+  font-family: var(--font-mono);
+  font-size: var(--type-label);
+  line-height: 1.3;
+  letter-spacing: 0.04em;
 }
 .rust-coverage dd {
-  margin: 4px 0 0;
-  font-size: 0.875rem;
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.3;
 }
+
+/* ---------- 词法上下文：选择块（顶 1.5px 墨线、块间 --hairline），所选块黑底反白 ---------- */
+
+.rust-contexts {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 190px), 1fr));
+  min-width: 0;
+  border-top: 1.5px solid var(--ink);
+  border-left: 1px solid var(--hairline);
+}
+.rust-context {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  min-width: 0;
+  min-height: 44px;
+  padding: 8px var(--space-3);
+  border: 0;
+  border-right: 1px solid var(--hairline);
+  border-bottom: 1px solid var(--hairline);
+  border-radius: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+.rust-context strong {
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.35;
+}
+.rust-context span {
+  color: var(--ink-2);
+  font-size: 12px;
+  line-height: 1.4;
+}
+.rust-context .rust-context__at {
+  font-family: var(--font-mono);
+  font-size: var(--type-label);
+}
+.rust-context:hover {
+  background: var(--paper-raised);
+}
+.rust-context[aria-pressed='true'] {
+  background: var(--ink);
+  color: var(--on-ink);
+}
+.rust-context[aria-pressed='true'] span {
+  color: var(--on-ink);
+}
+
+/* ---------- 种类筛选与函数定义选择：描边 select 同项目视图（projects.css），箭头是一段折线 ---------- */
+
 .rust-call-filter {
   display: flex;
-  align-items: center;
   flex-wrap: wrap;
-  gap: 12px;
-  margin: 24px 0 16px;
-  font-size: 0.8125rem;
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
 }
-.rust-call-filter select {
-  min-width: 0;
+.rust-call-filter label {
+  font-size: 13px;
+  font-weight: 700;
+}
+.rust-call-filter .rust-select {
+  width: 220px;
   max-width: 100%;
-  min-height: 44px;
-  padding: 8px 12px;
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  background: var(--surface);
-  color: var(--text);
+}
+.rust-select::after {
+  position: absolute;
+  top: 50%;
+  right: 15px;
+  width: 7px;
+  height: 7px;
+  border-right: 1.5px solid var(--ink-2);
+  border-bottom: 1.5px solid var(--ink-2);
+  transform: translateY(-70%) rotate(45deg);
+  content: '';
+  pointer-events: none;
+}
+.rust-call-filter__count {
+  color: var(--ink-2);
+  font-family: var(--font-mono);
+  font-size: var(--type-label);
+  line-height: 1.3;
+  letter-spacing: 0.04em;
+}
+
+/* ---------- 调用位置与关联侧栏：侧栏在 DOM 里排在表格前（键盘顺序不变），宽屏摆到右边 4 份 ---------- */
+
+.rust-call-area {
+  min-width: 0;
+}
+.rust-call-area.has-links {
+  display: grid;
+  grid-template-columns: minmax(0, 8fr) minmax(0, 4fr);
+  align-items: start;
+  gap: var(--space-6);
+}
+.rust-call-area.has-links > .rust-call-table,
+.rust-call-area.has-links > .rust-call-empty {
+  grid-column: 1;
+  grid-row: 1;
+}
+/*
+ * 侧栏贴在吸顶顶栏（规范第 3 节：46px 高、底边 --rule-thick）下面随表格滚动：
+ * 表格下部点「查看关联与引用」时焦点移过来，不会把页面拽回表格顶上。
+ */
+.rust-call-area.has-links > .rust-link-details {
+  --rust-link-top: calc(46px + var(--rule-thick) + var(--space-4));
+  position: sticky;
+  top: var(--rust-link-top);
+  grid-column: 2;
+  grid-row: 1;
+  max-height: calc(100vh - var(--rust-link-top) - var(--space-4));
+  overflow-y: auto;
+}
+
+/* ---------- 调用位置表：坐标、调用与语法种类、最近词法上下文，有关联时再加关联与动作 ---------- */
+
+/* 坐标列放得下表头「行:UTF-8 字节列」一行；动作列放得下「查看关联与引用」 */
+.rust-call-table {
+  --rust-call-columns: 6.5rem minmax(0, 1.3fr) minmax(0, 1fr);
+  min-width: 0;
+}
+.rust-call-table.has-links {
+  --rust-call-columns: 6.5rem minmax(0, 1.3fr) minmax(0, 0.8fr) minmax(0, 1.6fr)
+    8rem;
+}
+.rust-call-table__head,
+.rust-call {
+  display: grid;
+  grid-template-columns: var(--rust-call-columns);
+  gap: var(--space-1) var(--space-3);
+}
+.rust-call-table__head {
+  padding-bottom: 6px;
+  border-bottom: 1.5px solid var(--ink);
+  color: var(--ink-2);
+  font-family: var(--font-mono);
+  font-size: var(--type-label);
+  line-height: 1.3;
+  letter-spacing: 0.04em;
 }
 .rust-call-list {
-  padding-left: 24px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
 }
-.rust-call-list > li {
-  padding: 16px 0;
-  border-top: 1px solid var(--border);
+.rust-call {
+  align-items: start;
+  padding: var(--space-2) 0;
+  border-bottom: 1px solid var(--hairline);
 }
-.rust-call-list p {
-  margin: 8px 0 0;
-  font-size: 0.8125rem;
+.rust-call:last-child {
+  border-bottom: 0;
 }
-.rust-source-position,
-.rust-observation {
-  color: var(--muted);
-  font-size: 0.75rem;
+.rust-call__at {
+  justify-self: start;
+  max-width: 100%;
+  padding: 1px 6px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
 }
+/* 正在侧栏里查看关联的那一处：坐标块黑底反白 */
+.rust-call[data-selected='true'] .rust-call__at {
+  background: var(--ink);
+  color: var(--on-ink);
+}
+.rust-call__site {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.rust-call__name {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.rust-call__kind,
+.rust-call__context {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+.rust-call__kind {
+  font-weight: 600;
+}
+.rust-call__context {
+  color: var(--ink-2);
+}
+.rust-call-empty {
+  padding: var(--space-2) 0;
+}
+
+/* ---------- 仓库源码位置：等宽小字，路径与行、字节列都是文本 ---------- */
+
+.rust-source-position {
+  margin: 0;
+  color: var(--ink-2);
+  font-family: var(--font-mono);
+  font-size: var(--type-label);
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.rust-source-position code {
+  color: var(--ink);
+  font-size: inherit;
+}
+/*
+ * 只给读屏、不给眼睛：表头在场时每格的标签；调用位置表里每行自己的来源句（坐标列与表头已写明
+ * 行与 UTF-8 字节列）；同一文件的关联结果里重复的「仓库源码：路径 ·」。
+ */
+.rust-cell-label,
+.rust-call__site .rust-source-position,
+.rust-call__link .rust-source-position__file {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+}
+
+/* ---------- 所在目录的文档声明 ---------- */
+
 .rust-declarations {
-  margin-top: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--hairline);
 }
-.rust-declarations ul,
-.rust-text-data ul {
-  padding-left: 20px;
+.rust-declarations ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
 }
-.rust-declarations li,
-.rust-text-data li {
-  margin: 12px 0;
+.rust-declarations li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px var(--space-3);
+  padding: 6px 0;
+  border-bottom: 1px solid var(--hairline);
+}
+.rust-declarations li:last-child {
+  border-bottom: 0;
 }
 .rust-declarations code {
-  display: block;
-  font-size: 0.8125rem;
+  color: var(--ink-2);
+  font-size: 12px;
 }
-.rust-panel .text-button {
-  min-height: 44px;
+.rust-panel .rust-declarations .ui-button,
+.rust-panel .rust-call .ui-button {
+  max-width: 100%;
   white-space: normal;
-  overflow-wrap: anywhere;
+  text-align: left;
+}
+
+/* ---------- 状态提示：读不到、无效、超出支持范围时标题前一个红色方块（形状用 --signal） ---------- */
+
+.rust-panel .operation-unavailable h3 {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+.rust-panel .operation-unavailable.is-problem > h3::before {
+  flex-shrink: 0;
+  width: 9px;
+  height: 9px;
+  background: var(--signal);
+  content: '';
+}
+
+/* ---------- 图形降级后的只读文本（版式同运作页其他块的文本回退） ---------- */
+
+.rust-fallback {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+  margin-top: var(--space-2);
 }
 .rust-text-data {
-  overflow-wrap: anywhere;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+  min-width: 0;
 }
-.rust-text-data section + section {
-  margin-top: 32px;
+.rust-text-data section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+}
+.rust-text-data h3 {
+  margin: 0;
+  font-size: var(--type-item);
+  line-height: 1.4;
 }
 .rust-text-data h4 {
-  margin: 24px 0 12px;
+  margin: var(--space-2) 0 0;
+  padding-bottom: 6px;
+  border-bottom: 1.5px solid var(--ink);
+  font-size: var(--type-body);
+  font-weight: 800;
+  line-height: 1.4;
 }
-@media (max-width: 1080px) {
-  .rust-call-layout {
+.rust-text-data ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.rust-text-data li {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: var(--space-2) 0;
+  border-bottom: 1px solid var(--hairline);
+  font-size: 13px;
+  line-height: 1.5;
+}
+.rust-text-data li:last-child {
+  border-bottom: 0;
+}
+.rust-text-data li > p:not([class]),
+.rust-text-data section > p:not([class]) {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .rust-file,
+  .rust-context {
+    transition:
+      background-color var(--motion-fast) ease,
+      color var(--motion-fast) ease;
+  }
+}
+
+/* 中等宽度：关联侧栏落到表格上面（DOM 顺序），不再贴顶；覆盖读数改三列 */
+@media (width < 1080px) {
+  .rust-call-area.has-links {
     grid-template-columns: minmax(0, 1fr);
   }
-  .rust-files {
-    grid-template-columns: repeat(auto-fit, minmax(min(100%, 12rem), 1fr));
+  .rust-call-area.has-links > .rust-link-details,
+  .rust-call-area.has-links > .rust-call-table,
+  .rust-call-area.has-links > .rust-call-empty {
+    grid-column: auto;
+    grid-row: auto;
+  }
+  .rust-call-area.has-links > .rust-link-details {
+    position: static;
+    max-height: none;
+    overflow-y: visible;
+  }
+  .rust-coverage dl {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+  .rust-coverage dl > div:nth-child(6n + 1) {
+    padding-left: var(--space-3);
+    border-left: 1px solid var(--hairline);
+  }
+  .rust-coverage dl > div:nth-child(3n + 1) {
+    padding-left: 0;
+    border-left: 0;
+  }
+  .rust-coverage dl > div:nth-child(n + 4) {
+    border-top: 1px solid var(--hairline);
   }
 }
-@media (max-width: 760px) {
-  .rust-call-filter select {
-    font-size: 1rem;
+
+/*
+ * 窄屏（<760px）：调用位置表收起表头与坐标列，每行上下排、逐格显示原列名，来源句直接显示
+ * （省掉重复的路径）；覆盖读数两列；触控目标不低于 44px。
+ */
+@media (width < 760px) {
+  .rust-coverage dl {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .rust-coverage dl > div:nth-child(3n + 1) {
+    padding-left: var(--space-3);
+    border-left: 1px solid var(--hairline);
+  }
+  .rust-coverage dl > div:nth-child(2n + 1) {
+    padding-left: 0;
+    border-left: 0;
+  }
+  .rust-coverage dl > div:nth-child(n + 3) {
+    border-top: 1px solid var(--hairline);
+  }
+  .rust-call-table__head,
+  .rust-call__at {
+    display: none;
+  }
+  .rust-call,
+  .rust-call-table.has-links .rust-call {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .rust-cell-label,
+  .rust-call__site .rust-source-position {
+    position: static;
+    width: auto;
+    height: auto;
+    overflow: visible;
+    clip: auto;
+    white-space: normal;
+  }
+  .rust-call__site .rust-source-position__file {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+  }
+  /* 坐标列收起后，所选那一处改由调用名反白标出 */
+  .rust-call__name {
+    align-self: flex-start;
+    margin: 0 -4px;
+    padding: 0 4px;
+  }
+  .rust-call[data-selected='true'] .rust-call__name {
+    background: var(--ink);
+    color: var(--on-ink);
+  }
+  .rust-file {
+    min-height: 44px;
+  }
+  .rust-call-filter .rust-select {
+    flex: 1;
+    width: auto;
+  }
+  /* 计数另起一行，select 才有足够宽度显示「未展开宏调用」这类选项 */
+  .rust-call-filter__count {
+    flex-basis: 100%;
+  }
+  .rust-panel .rust-declarations .ui-button,
+  .rust-panel .rust-call .ui-button {
+    min-height: 44px;
   }
 }

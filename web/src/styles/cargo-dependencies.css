@@ -1,172 +1,612 @@
+/*
+ * Cargo 清单依赖（T-130 规范第 1–3、11 节；语义见 docs/m3/cargo-dependencies.md）。
+ * 面板铺在运作页的证据格里，不再套框：标题行是 ui 的 CellHeader；包表与所选包侧栏并排，
+ * 内部依赖表在下面占满整行。表头下 1.5px 墨线、行间 --hairline（同运作页的目录漂移表），
+ * 包目录、别名、条件与来源用等宽；所选包是 Surface 侧栏。两张表默认只铺前 12 行，其余点开。
+ * 表头只给眼睛看，读屏靠每格自带的标签（.cargo-cell-label），窄时这些标签直接显示。
+ * 种类只用文字；红色只留给读不到、无效或超出支持范围（含预算超限）的状态提示。
+ * 只引用 tokens.css 的新令牌。
+ */
+
 .cargo-panel {
   min-width: 0;
-}
-.cargo-dependency-layout {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(200px, 30%);
-  gap: 24px;
-}
-.cargo-dependency-main,
-.cargo-package-detail {
-  min-width: 0;
-}
-.cargo-packages {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 11rem), 1fr));
-  gap: 10px;
-}
-.cargo-package {
-  min-width: 0;
-  min-height: 44px;
-  padding: 14px;
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  background: var(--surface-solid);
-  text-align: left;
   overflow-wrap: anywhere;
 }
-.cargo-package strong,
-.cargo-package code {
-  display: block;
+.cargo-panel code {
+  font-family: var(--font-mono);
 }
-.cargo-package strong {
-  font-size: 0.875rem;
+
+/* ---------- 读数：清单观测时间、外部依赖声明计数（等宽小字，上下细线） ---------- */
+
+.cargo-readout {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-1) var(--space-6);
+  padding: 6px 0;
+  border-top: 1px solid var(--hairline);
+  border-bottom: 1px solid var(--hairline);
+}
+.cargo-observation,
+.cargo-external-count {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.6;
+}
+.cargo-observation {
+  color: var(--ink-2);
+}
+.cargo-observation time {
+  color: var(--ink);
   font-weight: 600;
 }
-.cargo-package code {
-  color: var(--muted);
-  font-size: 0.75rem;
-  margin-top: 6px;
+.cargo-external-count {
+  color: var(--ink);
 }
-.cargo-package[aria-pressed='true'] {
-  background: var(--accent-soft);
-  border-color: var(--accent);
-  box-shadow: 0 0 0 1px var(--accent);
+
+/* ---------- 布局：上排包表 8 份、所选包侧栏 4 份；下排内部依赖表占满 ---------- */
+
+.cargo-dependency-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 8fr) minmax(0, 4fr);
+  grid-template-areas:
+    'packages detail'
+    'edges edges';
+  align-items: start;
+  gap: var(--space-6);
+  margin-top: var(--space-2);
 }
-.cargo-filter {
+.cargo-packages-area,
+.cargo-edges-area {
   display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 12px;
-  margin: 22px 0 16px;
-}
-.cargo-filter label {
-  font-size: 0.8125rem;
-}
-.cargo-filter select {
+  flex-direction: column;
+  gap: var(--space-3);
   min-width: 0;
-  max-width: 100%;
-  min-height: 38px;
-  padding: 8px 12px;
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  background: var(--surface);
-  color: var(--text);
 }
-.cargo-edge-list {
-  list-style: none;
-  padding: 0;
+.cargo-packages-area {
+  grid-area: packages;
+}
+.cargo-edges-area {
+  grid-area: edges;
+}
+.cargo-dependency-layout > .cargo-package-detail {
+  grid-area: detail;
+}
+
+/* ---------- 表格：列宽由各表的 --cargo-columns 给出，表头与行共用 ---------- */
+
+.cargo-table {
+  min-width: 0;
+}
+.cargo-table__head {
+  display: grid;
+  grid-template-columns: var(--cargo-columns);
+  gap: var(--space-3);
+  padding-bottom: 6px;
+  border-bottom: 1.5px solid var(--ink);
+  color: var(--ink-2);
+  font-family: var(--font-mono);
+  font-size: var(--type-label);
+  line-height: 1.3;
+  letter-spacing: 0.04em;
+}
+.cargo-package-table {
+  --cargo-columns: minmax(0, 1.1fr) minmax(0, 1fr);
+}
+/* 来源列要放下「依赖引用来源：成员目录/Cargo.toml · 第 N 行」一整行，方向列放下两个最长的包名 */
+.cargo-edge-table {
+  --cargo-columns: minmax(0, 2.9fr) minmax(0, 0.6fr) minmax(0, 1.3fr)
+    minmax(0, 0.9fr) minmax(0, 2.8fr);
+}
+/* 表头在场时由它代替每格的标签：视觉上藏起来，读屏照读 */
+.cargo-cell-label,
+.cargo-package-table .cargo-manifest-source__label {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+}
+
+/* ---------- 包表：每行一个选包按钮加清单来源；所选行黑底反白 ---------- */
+
+.cargo-package-row {
+  display: grid;
+  grid-template-columns: var(--cargo-columns);
+  align-items: center;
+  gap: var(--space-3);
+  min-height: 36px;
+  padding-right: var(--space-2);
+  border-bottom: 1px solid var(--hairline);
+}
+.cargo-package-row:last-child {
+  border-bottom: 0;
+}
+.cargo-package {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px var(--space-2);
+  min-width: 0;
+  min-height: 36px;
+  padding: 6px var(--space-2);
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  line-height: 1.4;
+  text-align: left;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+.cargo-package strong {
+  font-size: var(--type-body);
+  font-weight: 700;
+}
+.cargo-package code {
+  color: var(--ink-2);
+  font-size: var(--type-label);
+}
+/* 焦点环收进按钮里：行与行贴在一起，外偏会被邻行盖住 */
+.cargo-package:focus-visible {
+  outline-offset: -3px;
+}
+.cargo-package-row:hover {
+  background: var(--paper-raised);
+}
+.cargo-package-row[data-selected='true'] {
+  background: var(--ink);
+  color: var(--on-ink);
+}
+.cargo-package-row[data-selected='true'] .cargo-package code,
+.cargo-package-row[data-selected='true'] .cargo-manifest-source,
+.cargo-package-row[data-selected='true'] .cargo-manifest-source code {
+  color: var(--on-ink);
+}
+.cargo-package-row[data-selected='true'] .cargo-package:focus-visible {
+  outline-color: var(--on-ink);
+}
+
+/* ---------- 清单来源：仓库相对路径＋一基行号，等宽小字；只是文本，不是按钮 ---------- */
+
+.cargo-manifest-source {
   margin: 0;
-}
-.cargo-edge-list > li {
-  padding: 16px 0;
-  border-top: 1px solid var(--border);
+  color: var(--ink-2);
+  font-family: var(--font-mono);
+  font-size: var(--type-label);
+  line-height: 1.5;
   overflow-wrap: anywhere;
 }
-.cargo-edge-list p {
-  font-size: 0.8125rem;
-  margin: 10px 0 0;
+.cargo-manifest-source code {
+  color: var(--ink);
+  font-size: inherit;
+}
+
+/* ---------- 折叠：前 12 行之后的行点开才铺出来 ---------- */
+
+.cargo-fold {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-4);
+  padding-top: var(--space-2);
+  border-top: 1px solid var(--hairline);
+}
+.cargo-fold__count,
+.cargo-filter__count {
+  color: var(--ink-2);
+  font-family: var(--font-mono);
+  font-size: var(--type-label);
+  line-height: 1.3;
+  letter-spacing: 0.04em;
+}
+
+/* ---------- 种类筛选：描边 select 同项目视图（projects.css），箭头是一段折线，不引图标 ---------- */
+
+.cargo-filter {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+}
+.cargo-filter label {
+  font-size: 13px;
+  font-weight: 700;
+}
+.cargo-select {
+  width: 220px;
+  max-width: 100%;
+}
+.cargo-select::after {
+  position: absolute;
+  top: 50%;
+  right: 15px;
+  width: 7px;
+  height: 7px;
+  border-right: 1.5px solid var(--ink-2);
+  border-bottom: 1.5px solid var(--ink-2);
+  transform: translateY(-70%) rotate(45deg);
+  content: '';
+  pointer-events: none;
+}
+
+/* ---------- 内部依赖表：起点 → 终点、种类、别名与可选、目标条件、来源 ---------- */
+
+.cargo-edge-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.cargo-edge-list > li {
+  display: grid;
+  grid-template-columns: var(--cargo-columns);
+  align-items: start;
+  gap: var(--space-1) var(--space-3);
+  padding: var(--space-2) 0;
+  border-bottom: 1px solid var(--hairline);
+}
+.cargo-edge-list > li:last-child {
+  border-bottom: 0;
+}
+.cargo-edge-kind,
+.cargo-edge-alias,
+.cargo-edge-target {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.5;
 }
 .cargo-edge-direction {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 18px minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr) 30px minmax(0, 1fr);
   align-items: center;
-  gap: 10px;
-}
-.cargo-edge-direction button {
+  gap: 6px;
   min-width: 0;
-  min-height: 44px;
-  padding: 10px 12px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--surface-solid);
+}
+/* 端点是黑线框，同运作页关系明细的端点框；所选包出现的地方黑底反白 */
+.cargo-endpoint {
+  min-width: 0;
+  min-height: 32px;
+  padding: 4px 8px;
+  border: 1.5px solid var(--ink);
+  border-radius: 0;
+  background: var(--paper);
+  color: var(--ink);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.3;
   text-align: left;
   overflow-wrap: anywhere;
+  cursor: pointer;
 }
-.cargo-package:hover,
-.cargo-edge-direction button:hover {
-  background: var(--accent-soft);
+.cargo-endpoint:hover {
+  background: var(--paper-raised);
 }
-.cargo-package-detail {
-  align-self: start;
-  padding: 18px;
-  border-radius: 12px;
-  background: var(--surface-solid);
-  overflow-wrap: anywhere;
+.cargo-endpoint[data-selected='true'] {
+  background: var(--ink);
+  color: var(--on-ink);
 }
-.cargo-package-detail h3 {
-  margin: 8px 0 14px;
-  font-size: 1rem;
+/* 起点到终点的一小段实线＋箭头，线型同关系图 */
+.cargo-edge-arrow {
+  position: relative;
+  display: block;
+  height: 0;
+  margin-right: 6px;
+  border-top: 1.3px solid var(--ink);
 }
-.cargo-package-detail h4 {
-  margin: 24px 0 14px;
-  font-size: 0.8125rem;
+.cargo-edge-arrow::after {
+  position: absolute;
+  top: -4.5px;
+  right: -7px;
+  border-top: 4px solid transparent;
+  border-bottom: 4px solid transparent;
+  border-left: 7px solid var(--ink);
+  content: '';
 }
-.cargo-package-detail p {
-  font-size: 0.8125rem;
-  white-space: pre-wrap;
+.cargo-edge-kind {
+  font-weight: 700;
 }
-.cargo-package-detail ul {
-  padding-left: 18px;
+.cargo-edge-alias code {
+  display: block;
+  font-size: 12.5px;
+  font-weight: 600;
 }
-.cargo-package-detail li {
-  margin: 12px 0;
+.cargo-optional {
+  display: block;
+  color: var(--ink-2);
+  font-size: 12px;
 }
-.cargo-panel code,
-.cargo-manifest-source,
-.cargo-observation,
-.cargo-external-count {
-  overflow-wrap: anywhere;
+.cargo-optional.is-optional {
+  color: var(--ink);
+  font-weight: 700;
 }
 .cargo-target {
+  font-family: var(--font-mono);
+  font-size: 12.5px;
   white-space: pre-wrap;
 }
-.cargo-manifest-source,
-.cargo-observation {
-  color: var(--muted);
-  font-size: 0.75rem;
+.cargo-target.is-empty {
+  color: var(--ink-2);
+  font-family: var(--font-sans);
+  font-size: 12px;
 }
-.cargo-external-count {
-  font-size: 0.8125rem;
+.cargo-edge-sources {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
 }
-.cargo-panel .text-button {
-  white-space: normal;
-  min-height: 44px;
+
+/* ---------- 所选包侧栏（Surface：2px 墨线框、硬偏移阴影） ---------- */
+
+.cargo-package-detail {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-width: 0;
+  /* 右、下各留出 10px 硬阴影的位置，阴影不压到格子的分区线上 */
+  margin: 0 10px 10px 0;
+  padding: var(--space-4) 18px 18px;
   overflow-wrap: anywhere;
+}
+.cargo-detail-eyebrow {
+  color: var(--ink-2);
+  font-family: var(--font-mono);
+  font-size: var(--type-label);
+  line-height: 1.3;
+  letter-spacing: 0.04em;
+}
+.cargo-package-detail h3 {
+  margin: 0;
+  font-size: var(--type-cell);
+  font-weight: 900;
+  line-height: 1.2;
+  letter-spacing: -0.01em;
+}
+.cargo-detail-facts {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-top: var(--space-2);
+  border-top: 1.5px solid var(--ink);
+}
+.cargo-detail-fact {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: var(--type-label);
+  line-height: 1.5;
+}
+.cargo-detail-label {
+  color: var(--ink-2);
+}
+.cargo-package-detail h4 {
+  margin: 0;
+  padding-top: var(--space-2);
+  border-top: 1.5px solid var(--ink);
+  font-size: var(--type-body);
+  font-weight: 800;
+  line-height: 1.4;
+}
+.cargo-detail-nodes {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.cargo-detail-nodes > li {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  padding: var(--space-2) 0;
+  border-bottom: 1px solid var(--hairline);
+}
+.cargo-detail-nodes > li:first-child {
+  padding-top: 0;
+}
+.cargo-detail-nodes strong {
+  font-size: var(--type-body);
+  font-weight: 700;
+}
+.cargo-detail-nodes p {
+  margin: 0;
+  color: var(--ink-2);
+  font-size: 13px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+}
+.cargo-package-detail .ui-button {
+  max-width: 100%;
+  white-space: normal;
+  text-align: left;
+}
+.cargo-detail-note {
+  padding-top: var(--space-2);
+  border-top: 1px solid var(--hairline);
+}
+
+/* ---------- 状态提示：读不到、无效、超出支持范围时标题前一个红色方块（形状用 --signal） ---------- */
+
+.cargo-panel .operation-unavailable h3 {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+.cargo-panel .operation-unavailable.is-problem > h3::before {
+  flex-shrink: 0;
+  width: 9px;
+  height: 9px;
+  background: var(--signal);
+  content: '';
+}
+
+/* ---------- 图形降级后的只读文本（版式同运作页其他块的文本回退） ---------- */
+
+.cargo-fallback {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+  margin-top: var(--space-2);
 }
 .cargo-text-data {
-  overflow-wrap: anywhere;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
 }
 .cargo-text-data h4 {
-  margin: 24px 0 12px;
+  margin: var(--space-2) 0 0;
+  padding-bottom: 6px;
+  border-bottom: 1.5px solid var(--ink);
+  font-size: var(--type-body);
+  font-weight: 800;
+  line-height: 1.4;
 }
 .cargo-text-data ul {
-  padding-left: 20px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
 }
 .cargo-text-data li {
-  margin: 12px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: var(--space-2) 0;
+  border-bottom: 1px solid var(--hairline);
 }
-@media (max-width: 1080px) {
+.cargo-text-data li:last-child {
+  border-bottom: 0;
+}
+.cargo-text-data li > p:not([class]) {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.5;
+}
+.cargo-text-data strong {
+  font-size: var(--type-body);
+  font-weight: 700;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .cargo-package-row,
+  .cargo-endpoint {
+    transition:
+      background-color var(--motion-fast) ease,
+      color var(--motion-fast) ease;
+  }
+}
+
+/*
+ * 中等宽度：侧栏落到包表下面；依赖表收起表头、逐格显示原列名，每条依赖排两行：
+ * 上行起点 → 终点，下行种类、别名与可选、目标条件；来源在右边跨两行。
+ */
+@media (width < 1080px) {
   .cargo-dependency-layout {
     grid-template-columns: minmax(0, 1fr);
+    grid-template-areas:
+      'packages'
+      'detail'
+      'edges';
+  }
+  .cargo-edge-table .cargo-table__head {
+    display: none;
+  }
+  .cargo-edge-list > li {
+    grid-template-columns: auto minmax(0, 1fr) minmax(0, 0.8fr) minmax(0, 1.4fr);
+    grid-template-areas:
+      'direction direction direction sources'
+      'kind alias target sources';
+    gap: var(--space-1) var(--space-3);
+  }
+  .cargo-edge-direction {
+    grid-area: direction;
+  }
+  .cargo-edge-kind {
+    grid-area: kind;
+  }
+  .cargo-edge-alias {
+    grid-area: alias;
+  }
+  .cargo-edge-target {
+    grid-area: target;
+  }
+  .cargo-edge-sources {
+    grid-area: sources;
+  }
+  .cargo-edge-table .cargo-cell-label {
+    position: static;
+    width: auto;
+    height: auto;
+    overflow: visible;
+    clip: auto;
+    white-space: normal;
+    color: var(--ink-2);
+    font-family: var(--font-mono);
+    font-size: var(--type-label);
+    font-weight: 400;
+  }
+  .cargo-edge-alias code,
+  .cargo-optional {
+    display: inline;
+  }
+  .cargo-optional {
+    margin-left: var(--space-2);
   }
 }
-@media (max-width: 760px) {
-  .cargo-filter select {
+
+/* 窄屏（<760px）：包表也逐格显示原列名、上下排；触控目标不低于 44px */
+@media (width < 760px) {
+  .cargo-package-table .cargo-table__head {
+    display: none;
+  }
+  .cargo-package-row,
+  .cargo-edge-list > li {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .cargo-edge-list > li {
+    grid-template-areas:
+      'direction'
+      'kind'
+      'alias'
+      'target'
+      'sources';
+  }
+  .cargo-package-row {
+    gap: 0;
+    padding: 0 var(--space-2) var(--space-2);
+  }
+  .cargo-package {
     min-height: 44px;
-    font-size: 1rem;
+    padding-inline: 0;
+  }
+  .cargo-package-table .cargo-manifest-source__label {
+    position: static;
+    width: auto;
+    height: auto;
+    overflow: visible;
+    clip: auto;
+    white-space: normal;
+  }
+  .cargo-edge-direction {
+    grid-template-columns: minmax(0, 1fr) 24px minmax(0, 1fr);
+  }
+  .cargo-endpoint,
+  .cargo-package-detail .ui-button,
+  .cargo-fold .ui-button {
+    min-height: 44px;
+  }
+  .cargo-select {
+    flex: 1;
+    width: auto;
+  }
+  /* 计数另起一行，select 才有足够宽度显示「普通依赖（normal）」 */
+  .cargo-filter__count {
+    flex-basis: 100%;
   }
   .cargo-package-detail {
-    padding: 16px;
+    padding: 14px 14px 16px;
   }
 }

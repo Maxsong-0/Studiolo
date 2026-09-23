@@ -1,6 +1,13 @@
 import type { ProjectOperationsData } from '../projectOperations';
 import type { OpenSource } from '../types';
+import { Button } from '../ui';
+import '../styles/operations.css';
+import '../styles/rust-call-sites.css';
 
+/**
+ * 文件所在目录的文档声明：规范目录加「/」的路径前缀命中才算包含，列出全部命中，各给 Vault 原文入口。
+ * 这只是目录包含关系，不代表符号或调用目标已经对齐。
+ */
 export function RustFileDeclarations({
   path,
   data,
@@ -28,13 +35,14 @@ export function RustFileDeclarations({
           {nodes.map((node) => (
             <li key={node.id}>
               <code>{node.directory}</code>
-              <button
-                className="text-button"
+              <Button
+                variant="text"
+                size="sm"
                 onClick={() => onOpen(node.source)}
                 aria-label={`${node.label}，查看所在目录的 Vault 声明`}
               >
                 {node.label}
-              </button>
+              </Button>
             </li>
           ))}
         </ul>

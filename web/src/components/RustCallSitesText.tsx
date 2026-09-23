@@ -7,7 +7,12 @@ import { RustFileDeclarations } from './RustFileDeclarations';
 import { RustSourcePosition } from './RustSourcePosition';
 import { RustCallAssociationText } from './RustCallAssociationText';
 import { RustCallReferencesText } from './RustCallReferencesText';
+import '../styles/rust-call-sites.css';
 
+/**
+ * 视图出错时的只读文本：逐个白名单文件列出覆盖、全部上下文（含 ID 与所属）、全部调用位置、
+ * 词法关联与反查，以及所在目录的文档声明。
+ */
 export function RustCallSitesText({
   graph,
   data,
@@ -30,7 +35,9 @@ export function RustCallSitesText({
     >
       {graph.files.map((file) => (
         <section key={file.path}>
-          <h3>{file.path}</h3>
+          <h3>
+            <code>{file.path}</code>
+          </h3>
           <RustFileCoverage file={file} />
           <h4>词法上下文（包含关系不表示执行顺序）</h4>
           <ul>

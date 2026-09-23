@@ -153,3 +153,67 @@ it('缺字段旧响应和空边有明确解释，时间使用独立仓库观测�
     new Date(1789140000 * 1000).toISOString(),
   );
 });
+
+it('包与依赖默认只铺前12行、展开后一条不少，折起时所选包仍接在后面可见', async () => {
+  const user = userEvent.setup();
+  const packages = Array.from({ length: 14 }, (_, index) => ({
+    id: `crates/p${index}`,
+    name: `p${index}`,
+    source: { path: `crates/p${index}/Cargo.toml`, line: 2 },
+  }));
+  const dependencies = Array.from({ length: 15 }, (_, index) => ({
+    from: packages[index % 14].id,
+    to: packages[(index + 1) % 14].id,
+    alias: `p${(index + 1) % 14}`,
+    kind: 'normal' as const,
+    target: null,
+    optional: false,
+    source: { path: `${packages[index % 14].id}/Cargo.toml`, line: 10 + index },
+    inherited_from: null,
+  }));
+  mount(
+    operationsData({
+      cargo_dependencies: cargoData({
+        graph: cargoGraph({ packages, dependencies }),
+      }),
+    }),
+  );
+  const group = screen.getByRole('group', { name: 'Cargo 包' });
+  const edges = screen.getByRole('list', { name: 'Cargo 内部依赖声明' });
+  expect(within(group).getAllByRole('button')).toHaveLength(12);
+  expect(within(edges).getAllByRole('listitem')).toHaveLength(12);
+  expect(screen.getByText('15 条内部依赖声明')).toBeInTheDocument();
+  await user.click(
+    within(edges).getByRole('button', { name: '选择依赖终点包 p12' }),
+  );
+  expect(within(group).getAllByRole('button')).toHaveLength(13);
+  expect(
+    within(group).getByRole('button', { name: '选择 Cargo 包 p12' }),
+  ).toHaveAttribute('aria-pressed', 'true');
+  expect(
+    screen.getByRole('complementary', { name: '所选 Cargo 包' }),
+  ).toHaveTextContent('crates/p12/Cargo.toml · 第 2 行');
+  const allPackages = screen.getByRole('button', { name: '显示全部 14 个包' });
+  expect(allPackages).toHaveAttribute('aria-expanded', 'false');
+  await user.click(allPackages);
+  expect(within(group).getAllByRole('button')).toHaveLength(14);
+  expect(allPackages).toHaveAttribute('aria-expanded', 'true');
+  expect(allPackages).toHaveAccessibleName('收起，只显示前 12 个包');
+  await user.click(
+    screen.getByRole('button', { name: '显示全部 15 条内部依赖声明' }),
+  );
+  expect(within(edges).getAllByRole('listitem')).toHaveLength(15);
+  expect(edges).toHaveTextContent(
+    '依赖引用来源：crates/p0/Cargo.toml · 第 24 行',
+  );
+  await user.selectOptions(
+    screen.getByRole('combobox', { name: '清单依赖种类' }),
+    'dev',
+  );
+  expect(screen.getByRole('status')).toHaveTextContent(
+    '当前种类没有内部依赖声明',
+  );
+  expect(
+    screen.queryByRole('button', { name: /条内部依赖声明|只显示前 12 条/ }),
+  ).not.toBeInTheDocument();
+});
