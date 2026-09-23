@@ -1,0 +1,320 @@
+/*
+ * ⌘K 动作面板（T-130 设计规范第 8 节；画布 R3_palette）。
+ * 640px 宽、2px 墨框、10px 硬偏移阴影（.ui-surface 给出）、纸色底；输入行 24px/800；
+ * 结果按「动作 · 跳转 · 文档」分组，等宽小标题；选中行黑底反白；匹配字下划红线；底部键位提示。
+ * 只引用 tokens.css 的新令牌；深色值由令牌在 prefers-color-scheme 里重定义，这里不写深色分支。
+ * 出现与收起由 useDialogSurface 驱动（Surface 传 appear={false}），这里不另写动画。
+ */
+
+.palette {
+  width: min(640px, calc(100vw - 32px));
+  max-width: none;
+  max-height: min(680px, calc(100dvh - 120px));
+  margin: min(100px, 10dvh) auto auto;
+  padding: 0;
+  overflow: hidden;
+}
+/* 只在打开时改排版：关着的 dialog 仍由浏览器的 display: none 藏住。 */
+.palette[open] {
+  display: flex;
+  flex-direction: column;
+}
+/* 画布：底下的页面蒙一层八成纸色，看得出还在原处，又不抢面板的注意力。 */
+.palette::backdrop {
+  background: color-mix(in srgb, var(--paper) 80%, transparent);
+}
+
+/* ---------- 输入行 ---------- */
+
+.palette-head {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 14px;
+  min-height: 64px;
+  padding: 0 var(--space-5);
+  border-bottom: 2px solid var(--ink);
+}
+.palette-head-key {
+  flex-shrink: 0;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 1;
+  font-weight: 600;
+}
+.palette-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 44px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--ink);
+  caret-color: var(--signal);
+  font-family: var(--font-sans);
+  font-size: 24px;
+  line-height: 1.2;
+  font-weight: 800;
+  letter-spacing: -0.01em;
+}
+.palette-input::placeholder {
+  color: var(--ink-3);
+  opacity: 1;
+}
+/* 输入框是面板里始终持有焦点的那一个：红色插入符就是它的焦点标记，不再套一圈框。 */
+.palette-input:focus-visible {
+  outline: none;
+}
+.palette-scope {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: baseline;
+  gap: 4px;
+  font-family: var(--font-mono);
+  font-size: var(--type-label);
+  line-height: 1.3;
+  color: var(--ink-2);
+}
+.palette-scope select {
+  max-width: 12ch;
+  padding: 0 2px;
+  border: 0;
+  border-bottom: 1px solid var(--ink-2);
+  border-radius: 0;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  text-overflow: ellipsis;
+  appearance: none;
+  cursor: pointer;
+}
+.palette-count {
+  flex-shrink: 0;
+  font-family: var(--font-mono);
+  font-size: var(--type-label);
+  line-height: 1.3;
+  color: var(--ink-2);
+  white-space: nowrap;
+}
+
+/* ---------- 结果 ---------- */
+
+.palette-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-bottom: var(--space-1);
+}
+.palette-group-title {
+  padding: 10px var(--space-5) 4px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.3;
+  letter-spacing: 0.08em;
+  color: var(--ink-2);
+}
+.palette-option {
+  display: grid;
+  grid-template-columns: 26px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  min-height: 46px;
+  padding: 0 var(--space-5);
+  color: var(--ink);
+  cursor: pointer;
+}
+.palette-option[aria-selected='true'] {
+  background: var(--ink);
+  color: var(--on-ink);
+}
+.palette-option-glyph {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 1;
+  font-weight: 600;
+}
+.palette-option-text {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 15px;
+  line-height: 1.4;
+  font-weight: 700;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.palette-option-hint {
+  margin-left: 1em;
+  font-size: 12.5px;
+  font-weight: 400;
+  color: var(--ink-2);
+}
+/* 黑底上的次要字：反白色压暗一些，仍远高于 4.5:1。 */
+.palette-option[aria-selected='true'] .palette-option-hint {
+  color: color-mix(in srgb, var(--on-ink) 72%, var(--ink));
+}
+.palette-match {
+  padding: 0;
+  border-bottom: 2px solid var(--signal);
+  background: none;
+  color: inherit;
+}
+.palette-option-key {
+  font-family: var(--font-mono);
+  font-size: var(--type-label);
+  line-height: 1;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.palette-option-tag {
+  color: var(--signal-text);
+}
+
+/* 读取中、失败、没有命中等说明：接在最后一组（文档）下面，等宽小字。 */
+.palette-notes {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: var(--space-2) var(--space-5) var(--space-1);
+  font-family: var(--font-mono);
+  font-size: var(--type-label);
+  line-height: 1.5;
+  color: var(--ink-2);
+}
+.palette-notes:empty {
+  display: none;
+}
+.palette-notes p {
+  margin: 0;
+}
+.palette-note-error {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 12px;
+}
+.palette-note-error .ui-status {
+  color: var(--signal-text);
+}
+.palette-note-action {
+  min-height: 28px;
+  padding: 0 var(--space-1);
+  border: 0;
+  border-radius: 0;
+  background: none;
+  color: var(--ink);
+  font: inherit;
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
+}
+.palette-note-action:hover {
+  background: var(--paper-raised);
+}
+
+/* ---------- 执行预览：不可逆动作只预览，红色虚线框 ---------- */
+
+.palette-preview {
+  flex-shrink: 0;
+  margin: var(--space-3) var(--space-5) 0;
+  padding: 10px var(--space-3);
+  border: 1.5px dashed var(--signal);
+  font-size: 13px;
+  line-height: 1.6;
+}
+.palette-preview p {
+  margin: 0;
+}
+.palette-preview-label {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--signal-text);
+}
+.palette-preview-route {
+  color: var(--ink-2);
+}
+
+/* ---------- 底部键位提示 ---------- */
+
+.palette-foot {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: var(--space-5);
+  min-height: 42px;
+  margin-top: var(--space-3);
+  padding: 0 var(--space-5);
+  border-top: 1.5px solid var(--ink);
+  font-family: var(--font-mono);
+  font-size: var(--type-label);
+  line-height: 1.3;
+  color: var(--ink-2);
+}
+/* 键帽与说明按行心对齐：关闭按钮有触控高度，按基线对齐会把字顶到按钮上沿。 */
+.palette-foot-keys {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+.palette-close {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 32px;
+  margin-left: auto;
+  padding: 0 var(--space-1);
+  border: 0;
+  border-radius: 0;
+  background: none;
+  color: var(--ink-2);
+  font: inherit;
+  white-space: nowrap;
+}
+.palette-close:hover {
+  background: var(--paper-raised);
+}
+
+/* ---------- 窄屏（<760px）：只保证不溢出，版式细节由 C 轮统一收口 ---------- */
+
+@media (width < 760px) {
+  .palette {
+    width: calc(100vw - 32px);
+    max-height: calc(100dvh - 32px);
+    margin-top: var(--space-4);
+  }
+  .palette-head {
+    flex-wrap: wrap;
+    row-gap: 4px;
+    min-height: 0;
+    padding: var(--space-2) var(--space-4);
+  }
+  .palette-head-key {
+    display: none;
+  }
+  .palette-input {
+    flex-basis: 100%;
+    font-size: 20px;
+  }
+  .palette-group-title,
+  .palette-option,
+  .palette-notes,
+  .palette-foot {
+    padding-left: var(--space-4);
+    padding-right: var(--space-4);
+  }
+  .palette-option {
+    min-height: 48px;
+  }
+  .palette-preview {
+    margin: var(--space-3) var(--space-4) 0;
+  }
+  .palette-foot-keys {
+    display: none;
+  }
+  .palette-close {
+    min-height: 44px;
+  }
+}

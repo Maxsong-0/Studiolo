@@ -8,12 +8,15 @@ import { useEditorNavigation } from './useEditorNavigation';
 import { useViewLocation } from './useViewLocation';
 import { useWorkbench } from './useWorkbench';
 import { sortProjects } from './projectOrder';
-import { QuickSwitcher } from './components/QuickSwitcher';
-import { useQuickSwitcher } from './useQuickSwitcher';
+import { CommandPalette } from './components/CommandPalette';
+import type { CommandPaletteContext } from './components/CommandPalette';
+import { focusCommandTarget } from './commands/focusTarget';
+import { useCommandPalette } from './commands/useCommandPalette';
 import { CanonicalEditor } from './components/CanonicalEditor';
 import { DraftShelf } from './components/DraftShelf';
 import { useDraftCount } from './draftContext';
 import { FileOperationsAccess } from './components/FileOperationsAccess';
+import type { FileOperationsEntry } from './components/FileOperationsAccess';
 import { CommandEntry } from './shell/CommandEntry';
 import { StatusCapsule } from './shell/StatusCapsule';
 import { useHealthStatus } from './shell/useHealthStatus';
@@ -31,6 +34,9 @@ export function App({ account }: { account?: ReactNode }) {
   const [source, setSource] = useState<SourceLocation | null>(null);
   const [draftsOpen, setDraftsOpen] = useState(false);
   const [statusOpen, setStatusOpen] = useState(false);
+  // 顶栏「最近删除」入口：出现与否由文件操作接口决定，⌘K 面板据此收录「打开最近删除」。
+  const [fileOperations, setFileOperations] =
+    useState<FileOperationsEntry | null>(null);
   const { count: draftCount } = useDraftCount();
   // 工作台先于本机健康发请求：认证名额只有两个（ADR-022），主内容排在前面。
   // 本机健康不依赖工作台快照：快照读不出来时，状态胶囊照样要能报出健康。
@@ -39,7 +45,7 @@ export function App({ account }: { account?: ReactNode }) {
   const editor = useEditorNavigation(refreshLatest);
   const editorPath = editor.current?.path ?? null;
   const setEditorPath = editor.open;
-  const quick = useQuickSwitcher(
+  const palette = useCommandPalette(
     Boolean(data) && !source && !editorPath && !draftsOpen && !loading,
   );
   const projects = useMemo(() => sortProjects(data?.projects ?? []), [data]);
@@ -77,7 +83,7 @@ export function App({ account }: { account?: ReactNode }) {
   function refreshSnapshot() {
     if (loading) return;
     setSource(null);
-    quick.close();
+    palette.close();
     refresh();
   }
 
@@ -97,6 +103,26 @@ export function App({ account }: { account?: ReactNode }) {
     goTo({ view: 'projects', panel: 'operations', project: project.root });
     window.scrollTo({ top: 0, left: 0, behavior: 'instant' });
   }
+
+  // ⌘K 面板执行命令用的动作：跳转与顶栏导航一样回到页首；其余沿用本页已有的入口。
+  const paletteContext: CommandPaletteContext = {
+    location,
+    projects,
+    draftCount,
+    fileOperations,
+    goTo: (target) => {
+      goTo(target);
+      window.scrollTo({ top: 0, left: 0, behavior: 'instant' });
+    },
+    refreshSnapshot,
+    openSource: setSource,
+    openDrafts: () => setDraftsOpen(true),
+    openRecentlyDeleted: () => fileOperations?.open(),
+    openStatus: () => setStatusOpen(true),
+    focusTarget: (target) => {
+      focusCommandTarget(target);
+    },
+  };
 
   const filters = (
     <Filters
@@ -136,11 +162,16 @@ export function App({ account }: { account?: ReactNode }) {
           diagnostics={diagnostics}
         />
       }
-      command={<CommandEntry onOpen={quick.show} disabled={!data || loading} />}
+      command={
+        <CommandEntry onOpen={palette.show} disabled={!data || loading} />
+      }
       tools={
         <>
           {account}
-          <FileOperationsAccess onChanged={refreshSnapshot} />
+          <FileOperationsAccess
+            onChanged={refreshSnapshot}
+            onEntryChange={setFileOperations}
+          />
           {draftCount ? (
             <button
               className="outline-button draft-button"
@@ -218,16 +249,12 @@ export function App({ account }: { account?: ReactNode }) {
           }}
         />
       ) : null}
-      {quick.open && data ? (
-        <QuickSwitcher
+      {palette.open && data ? (
+        <CommandPalette
           key={data.generation}
-          projects={projects}
+          context={paletteContext}
           generation={data.generation}
-          onOpen={(location) => {
-            quick.close();
-            setSource(location);
-          }}
-          onClose={quick.close}
+          onClose={palette.close}
           onRefresh={refreshSnapshot}
         />
       ) : null}

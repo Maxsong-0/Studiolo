@@ -1,4 +1,11 @@
-import { lazy, Suspense, useState } from 'react';
+import {
+  lazy,
+  Suspense,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from 'react';
 import { useFileOperationStore } from '../fileOperationContext';
 import { useFileOperations } from '../useFileOperations';
 import { FileOperationStatus } from './FileOperationStatus';
@@ -8,20 +15,49 @@ const RecentlyDeleted = lazy(() =>
   })),
 );
 
-export function FileOperationsAccess({ onChanged }: { onChanged: () => void }) {
+/** 交给 ⌘K 动作面板的入口：等同点一次顶栏「最近删除」，以及当前能不能删文件。 */
+export interface FileOperationsEntry {
+  open: () => void;
+  /** 文件操作可用（没被关闭）：能删才在面板里列「删除文件」预览。 */
+  deletable: boolean;
+}
+
+export function FileOperationsAccess({
+  onChanged,
+  onEntryChange,
+}: {
+  onChanged: () => void;
+  /** 顶栏入口出现、消失或可用性变化时回报（不显示时报 null），⌘K 据此只收录真实可用的动作。 */
+  onEntryChange?: (entry: FileOperationsEntry | null) => void;
+}) {
   const capability = useFileOperations();
   const { record } = useFileOperationStore();
   const [open, setOpen] = useState(false);
-  if (capability.phase === 'disabled' && !record) return null;
+  const hidden = capability.phase === 'disabled' && !record;
+  const deletable = capability.phase !== 'disabled';
+  function show() {
+    setOpen(true);
+    if (capability.phase === 'error') capability.retry();
+  }
+  // 交出去的入口只包一层：执行时总用最新一轮的 show（可用性与重试函数每轮都会换）。
+  const latestShow = useRef(show);
+  useLayoutEffect(() => {
+    latestShow.current = show;
+  });
+  useEffect(() => {
+    if (!onEntryChange) return;
+    onEntryChange(
+      hidden ? null : { open: () => latestShow.current(), deletable },
+    );
+    return () => onEntryChange(null);
+  }, [hidden, deletable, onEntryChange]);
+  if (hidden) return null;
   return (
     <>
       <button
         className="outline-button"
         disabled={capability.phase === 'loading'}
-        onClick={() => {
-          setOpen(true);
-          if (capability.phase === 'error') capability.retry();
-        }}
+        onClick={show}
       >
         {record && ['sending', 'uncertain'].includes(record.phase)
           ? '文件操作待核对'
