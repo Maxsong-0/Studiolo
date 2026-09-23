@@ -1,9 +1,28 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from 'react';
 import { readTombstones } from '../fileOperationApi';
 import { useFileOperationStore } from '../fileOperationContext';
 import type { TombstoneEntry, TombstonePage } from '../fileOperationModel';
 import { useDialogSurface } from '../useDialogSurface';
+import { Button, Surface } from '../ui';
 import { FileOperationStatus } from './FileOperationStatus';
+import '../styles/file-operations.css';
+
+/** 删除时间：本地时间原样（toLocaleString），机器可读的 ISO 放进 dateTime；超出 Date 范围时不造一个。 */
+function DeletedAt({ ms }: { ms: number }) {
+  const date = new Date(ms);
+  const valid = Number.isFinite(date.getTime());
+  return (
+    <time dateTime={valid ? date.toISOString() : undefined}>
+      {date.toLocaleString()}
+    </time>
+  );
+}
 
 export function RecentlyDeleted({
   vault,
@@ -60,42 +79,52 @@ export function RecentlyDeleted({
       operation.current.abort();
     };
   }, [load]);
+  // Esc 走 dialog 的 cancel：拦下浏览器的直接关闭，改走可中断的收起并归还焦点。
+  // Surface 的属性类型只收通用 HTML 属性，所以用原生监听，紧跟 showModal 挂上。
+  useLayoutEffect(() => {
+    const element = ref.current;
+    if (!element) return;
+    function cancel(event: Event) {
+      event.preventDefault();
+      dismiss();
+    }
+    element.addEventListener('cancel', cancel);
+    return () => element.removeEventListener('cancel', cancel);
+  }, [dismiss]);
   return (
-    <dialog
+    <Surface
+      as="dialog"
       ref={ref}
-      className="document-dialog recent-deleted"
+      appear={false}
+      className="file-dialog recent-deleted"
       aria-labelledby="deleted-title"
-      onCancel={(event) => {
-        event.preventDefault();
-        dismiss();
-      }}
     >
-      <header className="document-header">
+      <header className="file-dialog__head">
         <div>
           <h2 id="deleted-title">最近删除</h2>
           <p>恢复到原路径。若已有同名文件，恢复会停止。</p>
         </div>
-        <button className="outline-button" onClick={dismiss}>
+        <Button size="sm" onClick={dismiss}>
           关闭
-        </button>
+        </Button>
       </header>
-      <div className="deleted-scroll">
+      <div className="file-dialog__body">
         <FileOperationStatus
           onSettled={() => {
             onChanged();
             void load(null);
           }}
         />
-        <div className="history-pagination">
-          <button
-            className="outline-button"
+        <div className="deleted-pagination">
+          <Button
+            size="sm"
             disabled={loading || record?.phase === 'sending'}
             onClick={() => void load(null)}
           >
             重新读取第一页
-          </button>
-          <button
-            className="outline-button"
+          </Button>
+          <Button
+            size="sm"
             disabled={
               loading || !page?.next_cursor || record?.phase === 'sending'
             }
@@ -104,12 +133,22 @@ export function RecentlyDeleted({
             }}
           >
             下一页
-          </button>
+          </Button>
         </div>
-        {loading ? <p role="status">正在核对删除记录…</p> : null}
-        {error ? <p role="alert">{error} 请重新读取第一页。</p> : null}
+        {loading ? (
+          <p role="status" className="file-dialog__note">
+            正在核对删除记录…
+          </p>
+        ) : null}
+        {error ? (
+          <p role="alert" className="file-dialog__error">
+            {error} 请重新读取第一页。
+          </p>
+        ) : null}
         {!record && !store.canStart() ? (
-          <p role="status">本页文件操作记录已满，请先处理已有记录。</p>
+          <p role="status" className="file-dialog__note">
+            本页文件操作记录已满，请先处理已有记录。
+          </p>
         ) : null}
         {page?.entries.length === 0 ? (
           <p>
@@ -118,18 +157,20 @@ export function RecentlyDeleted({
               : '这一页没有可恢复的删除记录。'}
           </p>
         ) : null}
-        <ul className="history-entries">
+        <ul className="deleted-list">
           {page?.entries.map((entry) => (
-            <li key={entry.id}>
-              <strong className="source-location">{entry.path}</strong>
-              <p>
+            <li key={entry.id} className="deleted-entry">
+              <strong className="deleted-entry__path">{entry.path}</strong>
+              <p className="deleted-entry__meta">
                 {entry.bytes.toLocaleString()} 字节 ·{' '}
-                {entry.deleted_at_ms === null
-                  ? '删除时间未记录'
-                  : new Date(entry.deleted_at_ms).toLocaleString()}
+                {entry.deleted_at_ms === null ? (
+                  '删除时间未记录'
+                ) : (
+                  <DeletedAt ms={entry.deleted_at_ms} />
+                )}
               </p>
-              <button
-                className="outline-button"
+              <Button
+                size="sm"
                 disabled={loading || !store.canStart()}
                 aria-pressed={selected?.id === entry.id}
                 onClick={() => {
@@ -138,17 +179,21 @@ export function RecentlyDeleted({
                 }}
               >
                 恢复这个文件
-              </button>
+              </Button>
             </li>
           ))}
         </ul>
         {selected ? (
-          <section className="editor-notice" aria-label="确认恢复删除文件">
+          <Surface
+            as="section"
+            className="file-op__review"
+            aria-label="确认恢复删除文件"
+          >
             <p>
               恢复原路径：
-              <strong className="source-location">{selected.path}</strong>
+              <strong className="file-op__path">{selected.path}</strong>
             </p>
-            <label>
+            <label className="file-op__confirm">
               <input
                 type="checkbox"
                 checked={confirmed}
@@ -157,39 +202,42 @@ export function RecentlyDeleted({
               />
               我确认恢复所选删除版本
             </label>
-            <button
-              className="outline-button"
-              disabled={!confirmed || !store.canStart()}
-              onClick={() => {
-                setConfirmed(false);
-                const { id, path, revision, sha256, bytes } = selected;
-                const signal = operation.current.signal;
-                void store
-                  .submit(
-                    {
-                      kind: 'restore_tombstone',
-                      vault_uuid: vault,
-                      path,
-                      tombstone_id: id,
-                      idempotency_key: crypto.randomUUID(),
-                    },
-                    signal,
-                    { id, path, revision, sha256, bytes },
-                  )
-                  .then(() => {
-                    if (signal.aborted) return;
-                    if (store.getSnapshot()?.phase === 'committed') {
-                      onChanged();
-                      void load(null);
-                    }
-                  });
-              }}
-            >
-              确认恢复
-            </button>
-          </section>
+            <div className="file-op__actions">
+              <Button
+                size="sm"
+                variant="primary"
+                disabled={!confirmed || !store.canStart()}
+                onClick={() => {
+                  setConfirmed(false);
+                  const { id, path, revision, sha256, bytes } = selected;
+                  const signal = operation.current.signal;
+                  void store
+                    .submit(
+                      {
+                        kind: 'restore_tombstone',
+                        vault_uuid: vault,
+                        path,
+                        tombstone_id: id,
+                        idempotency_key: crypto.randomUUID(),
+                      },
+                      signal,
+                      { id, path, revision, sha256, bytes },
+                    )
+                    .then(() => {
+                      if (signal.aborted) return;
+                      if (store.getSnapshot()?.phase === 'committed') {
+                        onChanged();
+                        void load(null);
+                      }
+                    });
+                }}
+              >
+                确认恢复
+              </Button>
+            </div>
+          </Surface>
         ) : null}
       </div>
-    </dialog>
+    </Surface>
   );
 }

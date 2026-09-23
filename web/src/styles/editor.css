@@ -1,105 +1,389 @@
-.canonical-editor {
-  width: min(1440px, calc(100vw - 32px));
-  overflow-y: auto;
+/*
+ * 编辑器覆盖层与草稿架（T-130 设计规范第 1、2、3、9、11 节；浮层语法照画布 R3_palette）。
+ * 浮层框本身由 ui/Surface 给出（.ui-surface：纸色底、2px 墨框、10px 硬偏移阴影），这里只管尺寸、分区与内部排版。
+ * 出现与收起由 useDialogSurface 驱动（Surface 传 appear={false}），这里不另写动画。
+ * 只引用 tokens.css 的新令牌；深色值由令牌在 prefers-color-scheme 里重定义，这里不写深色分支。
+ * 红色只标「出问题」与「等你」，并且同时带方块或虚线框，不单靠颜色；14px 及以下的红字用 --signal-text。
+ */
+
+/* ---------- 覆盖层：接近全屏，整层纵向滚动，标题栏吸顶 ---------- */
+
+.editor-overlay {
+  width: min(1440px, calc(100vw - 48px));
+  max-width: none;
+  height: calc(100dvh - 48px);
+  max-height: none;
+  margin: auto;
+  padding: 0;
   overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
-.canonical-editor > .document-header {
+/* 只在打开时改排版：关着的 dialog 仍由浏览器的 display: none 藏住。 */
+.editor-overlay[open] {
+  display: flex;
+  flex-direction: column;
+}
+/* 底下的页面蒙一层八成纸色：看得出还在原处，又不抢浮层的注意力（与 ⌘K 面板同一做法）。 */
+.editor-overlay::backdrop {
+  background: color-mix(in srgb, var(--paper) 80%, transparent);
+}
+
+/* 浮层里的原文一律等宽、软换行：覆盖层不横滚，长行不能被裁掉。 */
+.editor-overlay pre {
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  line-height: 1.7;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* ---------- 标题栏：图名＋关闭，下接等宽状态行；2px 墨线收底 ---------- */
+
+.editor-titlebar {
   position: sticky;
   top: 0;
-  z-index: 1;
-}
-.editor-controls,
-.editor-notice,
-.editor-leave {
-  padding: 12px 20px;
-}
-.editor-controls,
-.editor-notice,
-.editor-leave,
-.editor-scroll {
+  z-index: var(--z-sticky);
   flex-shrink: 0;
+  border-bottom: 2px solid var(--ink);
+  background: var(--paper);
 }
-.editor-controls > button {
-  min-height: 44px;
+.editor-titlebar__row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  min-height: 60px;
+  padding: var(--space-2) var(--space-3) var(--space-2) var(--space-5);
 }
-.editor-controls {
+.editor-titlebar h2 {
+  margin: 0;
+  font-size: 24px;
+  line-height: 1.2;
+  font-weight: 800;
+  letter-spacing: -0.01em;
+}
+
+/* 等宽状态行：路径、版本、提交水位、新鲜度、保存。拿不到的值写「—」，原因进 title 并给读屏一份。 */
+.editor-status {
   display: flex;
   flex-wrap: wrap;
-  gap: 10px;
-  align-items: center;
-  border-bottom: 1px solid var(--border);
+  align-items: baseline;
+  gap: var(--space-1) var(--space-6);
+  margin: 0;
+  padding: var(--space-2) var(--space-5) 10px;
+  border-top: 1px solid var(--hairline);
+  font-family: var(--font-mono);
+  font-size: var(--type-label);
+  line-height: 1.3;
 }
-.editor-controls > span,
-.preview-note {
-  color: var(--muted);
-  font-size: 0.75rem;
+.editor-status > div {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  min-width: 0;
 }
-.editor-notice {
-  border-bottom: 1px solid var(--border);
+.editor-status dt {
+  flex-shrink: 0;
+  letter-spacing: 0.04em;
+  color: var(--ink-2);
+}
+.editor-status dd {
+  min-width: 0;
+  margin: 0;
+  font-weight: 600;
   overflow-wrap: anywhere;
 }
-.editor-notice p {
-  margin: 4px 0;
+/* 状态字只有 11.5px：红字换成 --signal-text（纸色上 5.2:1），方块仍是 --signal。 */
+.editor-status .ui-status[data-state='alert'] {
+  color: var(--signal-text);
 }
-.editor-notice button,
-.editor-leave button {
-  margin: 6px 10px 4px 0;
-  min-height: 44px;
+
+/* ---------- 工具行 ---------- */
+
+.editor-controls {
+  display: flex;
+  flex-shrink: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 10px var(--space-5);
+  border-bottom: 1px solid var(--hairline);
 }
+.editor-controls__hint {
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-size: var(--type-label);
+  line-height: 1.3;
+  color: var(--ink-2);
+}
+
+/* ---------- 通知区：平常只是文字；只有错误套红色虚线框 ---------- */
+
+.editor-notices {
+  flex-shrink: 0;
+  padding: 10px var(--space-5);
+  border-bottom: 1px solid var(--hairline);
+  font-size: var(--type-body);
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+/* 播报区始终挂着（先在无障碍树里才播报得出来）；没有内容时只收起留白，不用 display: none。 */
+.editor-notices:empty {
+  padding: 0;
+  border-bottom: 0;
+}
+.editor-notices > p {
+  max-width: 72ch;
+  margin: 2px 0;
+}
+.editor-notices > .editor-notice-error {
+  margin: 6px 0;
+}
+.editor-notice-error {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border: 1.5px dashed var(--signal);
+  color: var(--ink);
+}
+.editor-notice-error::before {
+  content: '';
+  flex-shrink: 0;
+  width: 9px;
+  height: 9px;
+  margin-top: calc((1.6em - 9px) / 2);
+  background: var(--signal);
+}
+.editor-notice-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-top: 6px;
+}
+
+/*
+ * 不可逆确认框：红色虚线框，与 ⌘K 面板的「执行预览」同一语法（规范第 8 节）。
+ * 账户对话框（退出前处理草稿）与页面历史（恢复历史版本）也借用这个类，所以这里只写通用排版：
+ * 标题与说明各占一行（说明限 72 字宽），按钮在下面一行排开、放不下就折行。
+ * 用普通块级流而不是 flex 折行：说明限宽后，flex 会把第一个按钮塞到说明右边的空档里。
+ */
 .editor-leave {
-  background: var(--accent-soft);
-  border: 1px solid var(--border);
-  border-radius: 12px;
+  display: block;
+  /* 下边距少 8px：最后一行按钮自带 8px 下外边距 */
+  padding: var(--space-3) 14px var(--space-1);
+  border: 1.5px dashed var(--signal);
+  background: var(--paper);
+  color: var(--ink);
+  font-size: var(--type-body);
+  line-height: 1.6;
 }
+.editor-leave > h3,
+.editor-leave > h4 {
+  margin: 0 0 var(--space-1);
+  font-size: var(--type-item);
+  line-height: 1.4;
+  font-weight: 700;
+}
+.editor-leave > p {
+  max-width: 72ch;
+  margin: 0 0 var(--space-2);
+}
+.editor-leave > button {
+  margin: 0 var(--space-2) var(--space-2) 0;
+  vertical-align: middle;
+}
+.editor-overlay > .editor-leave {
+  flex-shrink: 0;
+  margin: 10px var(--space-5);
+}
+
+/* 删除、重命名两块并排；各自的审阅框与回执在自己那一栏里展开，按钮不跳位。 */
+.editor-file-ops {
+  display: grid;
+  flex-shrink: 0;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 380px), 1fr));
+  align-items: start;
+  gap: var(--space-3) var(--space-6);
+  padding: 10px var(--space-5);
+  border-bottom: 1px solid var(--hairline);
+}
+.editor-file-ops:empty {
+  display: none;
+}
+
+/* ---------- 编辑区：源码与预览两栏，GridFrame 的 1px 墨线就是分栏线 ---------- */
+
 .editor-scroll {
+  display: flex;
+  flex: 1 0 auto;
+  flex-direction: column;
   min-height: 0;
 }
-.editor-panes {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-  min-height: 320px;
+/*
+ * 左右与底边交给浮层自己的 2px 墨框，只留顶上一道墨线把画面与上面的工具分开。
+ * 与 ui.css 的 .ui-grid/.ui-cell 同名覆盖时一律叠两个类，不靠样式表的先后顺序。
+ */
+.editor-panes.ui-grid {
+  flex: 1 0 auto;
+  min-height: 360px;
+  border-width: 1px 0 0;
 }
-.editor-panes.editor-source-only {
-  grid-template-columns: minmax(0, 1fr);
+.ui-cell.editor-pane--source {
+  gap: 0;
 }
-.editor-panes > section {
-  min-width: 0;
+.ui-cell.editor-pane--preview {
+  padding: var(--space-4) var(--space-6);
 }
+
+/* CodeMirror：只换颜色、字体与留白，编辑、撤销与输入法行为全部留给它自己。 */
 .markdown-editor {
+  display: flex;
+  flex: 1 0 auto;
+  flex-direction: column;
   min-width: 0;
-  min-height: 320px;
+  min-height: 360px;
+  background: var(--paper-raised);
 }
 .markdown-editor .cm-editor {
-  min-height: 320px;
-  font-size: 0.9375rem;
+  flex: 1 0 auto;
+  min-height: 360px;
+  background: var(--paper-raised);
+  color: var(--ink);
+  font-size: var(--type-body);
 }
 .markdown-editor .cm-scroller {
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--font-mono);
   line-height: 1.8;
 }
+/* 正文区不超过 72 个字宽（规范第 9 节）；内边距另算。 */
 .markdown-editor .cm-content {
-  padding: 18px 20px;
+  max-width: calc(72ch + 40px);
+  padding: 18px var(--space-5);
+  caret-color: var(--signal);
 }
-.markdown-editor .cm-focused {
-  outline: 2px solid var(--accent);
+.markdown-editor .cm-cursor,
+.markdown-editor .cm-dropCursor {
+  border-left: 2px solid var(--signal);
+}
+/* 选中＝黑底反白（规范第 1 节）。 */
+.markdown-editor .cm-content ::selection {
+  background: var(--ink);
+  color: var(--on-ink);
+}
+.markdown-editor .cm-editor.cm-focused {
+  outline: 2px solid var(--ink);
   outline-offset: -2px;
 }
+
+/* 大文档只读原文、组件载入中与载入失败的退路：都只显示同一份草稿的纯文本。 */
+.editor-large,
+.editor-fallback {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+}
+.editor-large {
+  flex: 1 0 auto;
+  padding: var(--space-4) var(--space-5);
+  border-top: 1px solid var(--ink);
+}
+.editor-fallback {
+  padding: var(--space-4) var(--space-5);
+}
+.editor-large > pre,
+.editor-fallback > pre {
+  max-width: calc(72ch + 40px);
+  margin: 0;
+}
+.editor-fallback > p[role='status'] {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: var(--type-label);
+  line-height: 1.3;
+  color: var(--ink-2);
+}
+.editor-fallback > .editor-notice-error {
+  margin: 0;
+  font-size: var(--type-body);
+  line-height: 1.6;
+}
+.editor-placeholder {
+  padding: var(--space-6) var(--space-5);
+}
+
+/* ---------- 版本比对：基线一行通栏，本页草稿与当前磁盘版本两栏并排，等宽 ---------- */
+
+.editor-comparison {
+  flex-shrink: 0;
+  padding: 14px var(--space-5) var(--space-5);
+  border-top: 2px solid var(--ink);
+}
+.editor-comparison > h3 {
+  margin: 0;
+  font-size: var(--type-cell);
+  line-height: 1.3;
+  font-weight: 800;
+}
+.editor-comparison > p {
+  max-width: 72ch;
+  margin: var(--space-1) 0 var(--space-3);
+  color: var(--ink-2);
+}
+.editor-version h4 {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: var(--type-label);
+  line-height: 1.3;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  color: var(--ink-2);
+}
+.editor-version > p {
+  margin: 0;
+  color: var(--ink-2);
+}
+.editor-version > pre {
+  margin: 0;
+}
+/* 比对标记：变更行黑底反白；页面历史的比对也用这两个类。 */
+.comparison-line {
+  display: block;
+}
+.comparison-line mark {
+  background: var(--ink);
+  color: var(--on-ink);
+}
+
+/* ---------- Markdown 预览（编辑器右栏）：正文排版只换令牌，版式随纸面 ---------- */
+
 .markdown-preview {
-  padding: 16px 24px;
-  border-left: 1px solid var(--border);
+  min-width: 0;
   overflow-wrap: anywhere;
 }
+.editor-pane--preview .markdown-preview > * {
+  max-width: 72ch;
+}
 .markdown-preview h1 {
-  font-size: 1.75rem;
+  font-size: 28px;
+  line-height: 1.25;
+  font-weight: 900;
+  letter-spacing: -0.02em;
 }
 .markdown-preview h2 {
-  font-size: 1.4rem;
+  font-size: 22px;
+  line-height: 1.3;
+  font-weight: 800;
 }
 .markdown-preview h3 {
-  font-size: 1.125rem;
+  font-size: var(--type-cell);
+  line-height: 1.3;
+  font-weight: 800;
 }
 .markdown-preview p {
-  margin: 12px 0;
+  margin: var(--space-3) 0;
 }
 .markdown-preview .preview-task {
   list-style: none;
@@ -108,83 +392,88 @@
   display: inline;
   margin: 0;
 }
-.markdown-preview pre,
-.canonical-editor pre {
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-  font-size: 0.8125rem;
-  line-height: 1.7;
-}
 .markdown-preview pre {
-  padding: 12px;
-  border-radius: 8px;
-  background: var(--surface-solid);
+  padding: var(--space-3);
+  border: 1px solid var(--hairline);
+  background: var(--paper-raised);
 }
 .markdown-preview blockquote {
-  margin: 16px 0;
-  padding-left: 16px;
-  border-left: 3px solid var(--border);
+  margin: var(--space-4) 0;
+  padding-left: var(--space-4);
+  border-left: 3px solid var(--ink-3);
+}
+.preview-note {
+  font-family: var(--font-mono);
+  font-size: var(--type-label);
+  line-height: 1.3;
+  color: var(--ink-2);
 }
 .preview-inert {
-  color: var(--muted);
+  color: var(--ink-2);
 }
 .preview-table {
   max-width: 100%;
   overflow-x: auto;
 }
+/* 表格 1px 线：相邻格子共用一条线，不画成双线。 */
+.preview-table table {
+  border-collapse: collapse;
+}
 .preview-table td {
   padding: 6px 10px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--hairline);
 }
-.editor-comparison {
-  padding: 16px 20px;
-  border-top: 1px solid var(--border);
+
+/* ---------- 草稿架：网格列表，一行一篇：路径、状态、打开 ---------- */
+
+.draft-list {
+  margin: var(--space-3) 0;
+  padding: 0;
+  list-style: none;
+  border-top: 1.5px solid var(--ink);
 }
-.editor-versions {
+.draft-entry {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 16px;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: var(--space-1) var(--space-4);
+  padding: var(--space-2) 0;
+  border-bottom: 1px solid var(--hairline);
 }
-.editor-versions > section {
-  min-width: 0;
-  background: var(--surface-solid);
-  padding: 12px;
-  border-radius: 10px;
+.draft-entry > p {
+  margin: 0;
 }
-.comparison-line {
-  display: block;
-}
-.comparison-line mark {
-  color: var(--mark-text);
-  background: var(--mark);
-}
-.draft-shelf li {
+.draft-entry__path {
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  line-height: 1.5;
+  font-weight: 600;
   overflow-wrap: anywhere;
-  margin-bottom: 16px;
 }
-@media (max-width: 760px) {
-  .page-actions {
-    flex-wrap: wrap;
-  }
-  .page-actions > .draft-button {
-    flex-basis: 100%;
-  }
-  .canonical-editor {
+.draft-entry__state {
+  font-family: var(--font-mono);
+  font-size: var(--type-label);
+  line-height: 1.3;
+}
+.draft-entry__state .ui-status[data-state='alert'] {
+  color: var(--signal-text);
+}
+.draft-shelf .editor-leave {
+  margin-top: var(--space-2);
+}
+
+/* ---------- 窄屏（<760px）：C 轮统一收口；这里只保证列表与状态行不撑出横向滚动 ---------- */
+
+@media (width < 760px) {
+  .editor-overlay {
     width: calc(100vw - 16px);
-    max-height: calc(100dvh - 16px);
+    height: calc(100dvh - 16px);
   }
-  .editor-panes,
-  .editor-versions {
+  .editor-controls__hint {
+    margin-left: 0;
+  }
+  .draft-entry {
     grid-template-columns: minmax(0, 1fr);
-  }
-  .markdown-preview {
-    border-left: 0;
-    border-top: 1px solid var(--border);
-    padding: 12px 16px;
-  }
-  .editor-controls,
-  .editor-notice,
-  .editor-leave {
-    padding: 12px;
+    justify-items: start;
   }
 }

@@ -9,6 +9,8 @@ import {
 import { useFileOperationStore } from '../fileOperationContext';
 import { useFileOperations } from '../useFileOperations';
 import { FileOperationStatus } from './FileOperationStatus';
+import { Button, Surface } from '../ui';
+import '../styles/file-operations.css';
 const RecentlyDeleted = lazy(() =>
   import('./RecentlyDeleted').then((module) => ({
     default: module.RecentlyDeleted,
@@ -64,7 +66,13 @@ export function FileOperationsAccess({
           : '最近删除'}
       </button>
       {open && capability.vault ? (
-        <Suspense fallback={<p role="status">正在打开最近删除…</p>}>
+        <Suspense
+          fallback={
+            <p role="status" className="file-operation-loading">
+              正在打开最近删除…
+            </p>
+          }
+        >
           <RecentlyDeleted
             key={capability.vault}
             vault={capability.vault}
@@ -74,22 +82,27 @@ export function FileOperationsAccess({
         </Suspense>
       ) : null}
       {open && !capability.vault ? (
-        <section className="file-operation-fallback" aria-label="文件操作状态">
+        // 顶栏下方的小浮层：Surface 的 2px 墨框与硬阴影，出现时 120ms 透明度＋4px 位移。
+        <Surface
+          as="section"
+          className="file-operation-fallback"
+          aria-label="文件操作状态"
+        >
           <p role="status">
             {capability.phase === 'disabled'
               ? '文件操作目前已关闭。'
               : '正在核对文件操作是否可用。'}
           </p>
           {capability.phase === 'error' ? (
-            <button className="outline-button" onClick={capability.retry}>
+            <Button size="sm" onClick={capability.retry}>
               重新核对可用性
-            </button>
+            </Button>
           ) : null}
           <FileOperationStatus onSettled={onChanged} />
-          <button className="outline-button" onClick={() => setOpen(false)}>
+          <Button size="sm" onClick={() => setOpen(false)}>
             收起
-          </button>
-        </section>
+          </Button>
+        </Surface>
       ) : null}
     </>
   );
