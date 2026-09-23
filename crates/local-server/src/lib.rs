@@ -22,7 +22,7 @@ mod queries;
 mod refresh;
 mod routing;
 mod security;
-#[cfg(test)]
+pub mod sync_plane;
 mod sync_transport_config;
 pub mod sync_transport_owner;
 mod tree;

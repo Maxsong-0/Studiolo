@@ -12,6 +12,8 @@ fn expected() -> Expected<'static> {
         device_name: "Studiolo 合成",
         config_dir: ".obsidian",
         file_types: &APPROVED,
+        sync_mode: "bidirectional",
+        excluded_folders: &[],
     }
 }
 

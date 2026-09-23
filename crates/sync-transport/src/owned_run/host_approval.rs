@@ -36,6 +36,7 @@ impl ApprovedTransport for HostApproved<'_> {
             private_identity: roots.private_identity(),
             mirror_root: roots.mirror_root().to_path_buf(),
             mirror_identity: roots.mirror_identity(),
+            mirror_view_root: roots.mirror_view_root().to_path_buf(),
         }
     }
 

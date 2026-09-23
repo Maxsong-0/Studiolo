@@ -1,8 +1,26 @@
 //! 健康页聚合的行为／失败／恢复三类契约。
 
 use studiolo_observability::health::{
-    HealthInputs, HealthSection, HealthState, Instant, NO_RECOVERY_POINT, OwnerLabel,
-    OwnerLiveness, RecoveryPointEvidence, aggregate, diagnose,
+    BatchStamp, BridgeEvidence, ExitClass, HealthInputs, HealthSection, HealthState, Instant,
+    ModeLabel, NO_RECOVERY_POINT, OwnerLabel, OwnerLiveness, RecoveryPointEvidence, RecoveryState,
+    ResidueGuard, aggregate, diagnose,
+};
+
+/// 全字段齐备且无异常的 Bridge 证据；`&NORMAL_BRIDGE` 可直接放进 `HealthInputs`。
+const NORMAL_BRIDGE: BridgeEvidence = BridgeEvidence {
+    last_batch: Some(BatchStamp {
+        sequence: 3,
+        unix_seconds: 9_990,
+    }),
+    fused: Some(false),
+    unknown_jobs: Some(0),
+    quiescence_valid: Some(true),
+    conflict_copies: Some(0),
+    mirror_bytes: Some(4_096),
+    last_exit: Some(ExitClass::Clean),
+    recovery: Some(RecoveryState::Idle),
+    residue_guard: Some(ResidueGuard::Clear),
+    mode: Some(ModeLabel::MirrorRemote),
 };
 use studiolo_observability::quota::QuotaVerdict;
 
@@ -25,6 +43,7 @@ fn healthy_inputs<'a>(owners: &'a [OwnerLiveness]) -> HealthInputs<'a> {
         disk: QuotaVerdict::Normal,
         sync: QuotaVerdict::Normal,
         whitelist: None,
+        bridge: Some(&NORMAL_BRIDGE),
     }
 }
 
@@ -46,7 +65,7 @@ fn 证据齐备且全部在预算内时健康页整体显示正常() {
     let report = aggregate(&inputs).expect("固定正文必须可构造");
 
     assert_eq!(report.overall(), HealthState::Normal);
-    assert_eq!(report.sections().len(), 5);
+    assert_eq!(report.sections().len(), 6);
 }
 
 #[test]
@@ -207,3 +226,8 @@ fn 证据从缺失恢复成齐备之后健康页可以重新显示正常() {
 
     assert_eq!(recovered.overall(), HealthState::Normal);
 }
+
+/// 第六节「双向 Bridge」的契约，独立成文件只为压住单文件行数上限。
+/// 集成测试根文件的子模块默认在同级目录找，这里显式指到子目录，免得 cargo 把它当独立测试目标。
+#[path = "health_contract/bridge.rs"]
+mod bridge;

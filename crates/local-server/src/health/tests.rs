@@ -14,10 +14,30 @@ use std::sync::{
     atomic::{AtomicBool, Ordering},
 };
 use studiolo_observability::health::{
-    Instant, OwnerLabel, OwnerLiveness, RecoveryPointEvidence, WhitelistSnapshot, diagnose,
+    BatchStamp, BridgeEvidence, ExitClass, Instant, ModeLabel, OwnerLabel, OwnerLiveness,
+    RecoveryPointEvidence, RecoveryState, ResidueGuard, WhitelistSnapshot, diagnose,
 };
 use studiolo_observability::quota::QuotaVerdict;
 use tower::ServiceExt;
+
+/// 全字段齐备、无异常的 Bridge 证据。
+fn normal_bridge(now: i64) -> BridgeEvidence {
+    BridgeEvidence {
+        last_batch: Some(BatchStamp {
+            sequence: 3,
+            unix_seconds: now - 30,
+        }),
+        fused: Some(false),
+        unknown_jobs: Some(0),
+        quiescence_valid: Some(true),
+        conflict_copies: Some(0),
+        mirror_bytes: Some(4_096),
+        last_exit: Some(ExitClass::Clean),
+        recovery: Some(RecoveryState::Idle),
+        residue_guard: Some(ResidueGuard::Clear),
+        mode: Some(ModeLabel::MirrorRemote),
+    }
+}
 
 fn complete(now: i64) -> EvidenceSnapshot {
     EvidenceSnapshot {
@@ -34,6 +54,7 @@ fn complete(now: i64) -> EvidenceSnapshot {
         disk: QuotaVerdict::Normal,
         sync: QuotaVerdict::Normal,
         whitelist: Some(diagnose(&WhitelistSnapshot::default()).expect("空白名单必须可诊断")),
+        bridge: Some(normal_bridge(now)),
     }
 }
 
@@ -131,7 +152,7 @@ fn 会话门禁具备时装配函数挂载健康页路由() {
 }
 
 #[tokio::test]
-async fn 装配了证据来源时健康页给出封闭json且五节齐全() {
+async fn 装配了证据来源时健康页给出封闭json且六节齐全() {
     let (status, body) = get(served(Some(source(FixedEvidence(10_000)))), PATH).await;
 
     assert_eq!(status, StatusCode::OK);
@@ -139,8 +160,8 @@ async fn 装配了证据来源时健康页给出封闭json且五节齐全() {
     assert_eq!(body["evidence_complete"], true);
     assert_eq!(
         body["sections"].as_array().map(Vec::len),
-        Some(5),
-        "五节必须齐全"
+        Some(6),
+        "六节必须齐全"
     );
 }
 
@@ -186,12 +207,12 @@ async fn 证据一度读不到之后重新可得时健康页自行恢复成正�
 }
 
 #[test]
-fn 证据齐备时响应标记证据完整并给出全部五节() {
+fn 证据齐备时响应标记证据完整并给出全部六节() {
     let body = HealthBody::from_report(&complete(10_000).report());
 
     assert_eq!(body.overall, "normal");
     assert!(body.evidence_complete);
-    assert_eq!(body.sections.len(), 5);
+    assert_eq!(body.sections.len(), 6);
 }
 
 #[test]

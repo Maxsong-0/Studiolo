@@ -1,0 +1,39 @@
+# T-132 P2 追加测试 20260923T035957Z
+   mirror 配置：{"vaultName": "studiolo-p2-test", "vaultPath": "/var/lib/studiolo-sync/p2/mirror", "syncMode": "bidirectional", "conflictStrategy": "conflict", "deviceName": "studiolo-169-p2", "configDir": ".obsidian", "fileTypes": ["image", "audio", "video", "pdf", "unsupported"], "configs": [], "excludedFolders": []}
+   observer 配置：{"vaultName": "studiolo-p2-test", "vaultPath": "/var/lib/studiolo-sync/p2/observer", "syncMode": "bidirectional", "conflictStrategy": "conflict", "deviceName": "studiolo-169-p2-observer", "configDir": ".obsidian", "fileTypes": ["image", "audio", "video", "pdf", "unsupported"], "configs": ["app", "appearance"], "excludedFolders": []}
+   [mirror] ob sync rc=0 0.4s | Fully synced / Disconnected from server
+   [observer] ob sync rc=0 0.4s | Fully synced / Disconnected from server
+## S7e 排除项的安全清除流程：排除期间先删镜像本地残留，再清排除项
+   [observer] ob sync rc=0 10.4s | Fully synced / Disconnected from server
+   [mirror] ob sync rc=0 0.3s | Fully synced / Disconnected from server
+   [mirror] ob sync rc=0 0.2s | Fully synced / Disconnected from server
+   [observer] ob sync rc=0 0.3s | Fully synced / Disconnected from server
+   [mirror] ob sync rc=0 0.3s | Fully synced / Disconnected from server
+   [observer] ob sync rc=0 0.4s | Fully synced / Disconnected from server
+   [observer] ob sync rc=0 0.4s | Fully synced / Disconnected from server
+>> S7e-1 排除期间删镜像本地残留不传播为远端删除: PASS — observer a.md=b'v2\n'
+   [mirror] ob sync rc=0 0.3s | Fully synced / Disconnected from server
+   [observer] ob sync rc=0 0.3s | Fully synced / Disconnected from server
+>> S7e-2 清排除项后镜像取回远端新版本、远端不被改写: PASS — mirror=b'v2\n' observer=b'v2\n'
+## S9d 下载中途 SIGKILL：最终路径上会不会出现半截文件
+   [observer] ob sync rc=0 28.5s | Fully synced / Disconnected from server
+>> S9d-1 下载中途最终路径是否可见半截内容: OBSERVED — 抓到中间态=16777216；杀掉时最终路径大小=17301504（完整 104857616）；最终路径半截=True；目录=['S9d/中途.pdf']
+## S9e SIGKILL 后锁多久恢复
+>> S9e SIGKILL 残留锁的恢复时间: OBSERVED — 尝试序列（秒, rc）=[(0.1, 1), (1.2, 1), (2.3, 1), (3.3, 1), (4.4, 1), (37.7, 0)]
+   [mirror] ob sync rc=0 0.3s | Fully synced / Disconnected from server
+   [mirror] ob sync rc=0 0.4s | Fully synced / Disconnected from server
+   [mirror] ob sync rc=0 0.4s | Fully synced / Disconnected from server
+   [mirror] ob sync rc=0 0.4s | Fully synced / Disconnected from server
+>> S9d-2 重开后补齐且不留多余文件: FAIL — 完整=False；多余文件=无
+   [observer] ob sync rc=0 0.8s | Fully synced / Disconnected from server
+   [observer] ob sync rc=0 0.2s | Fully synced / Disconnected from server
+>> S9d-3 半截文件没有被当成本地修改上传、远端未被损坏: FAIL — observer 副本完整=False；observer 目录=['S9d/中途.pdf']
+
+## 汇总
+   PASS     S7e-1 排除期间删镜像本地残留不传播为远端删除
+   PASS     S7e-2 清排除项后镜像取回远端新版本、远端不被改写
+   OBSERVED S9d-1 下载中途最终路径是否可见半截内容
+   OBSERVED S9e SIGKILL 残留锁的恢复时间
+   FAIL     S9d-2 重开后补齐且不留多余文件
+   FAIL     S9d-3 半截文件没有被当成本地修改上传、远端未被损坏
+报告已写入 /var/lib/studiolo-sync/p2/followup-20260923T035957Z.txt

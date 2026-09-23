@@ -18,6 +18,8 @@ pub(crate) mod rust_lexer;
 mod snapshot_authority;
 mod source;
 mod sync_bridge;
+mod sync_launcher;
+mod sync_plane;
 mod sync_transport;
 mod unix_ingress;
 

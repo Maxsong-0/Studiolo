@@ -36,6 +36,9 @@ pub(crate) enum StartupError {
     Ingress,
     #[error("既有canonical写者或完整监视视图不可用；不初始化、不修复、不回退")]
     Writer,
+    /// 双向 Bridge 平面只在显式 `--sync-transport` 且审批、launcher、私有存储全部就绪时装配。
+    #[error("双向 Bridge 平面装配失败；审批文档、受控 launcher 或私有存储未就绪，未监听")]
+    SyncPlane,
 }
 
 impl StartupError {

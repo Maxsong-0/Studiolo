@@ -5,12 +5,17 @@ mod error;
 mod factor_input;
 mod health_input;
 mod plane_input;
+mod prepared;
 mod repository_input;
 mod router_input;
 mod runner_input;
 mod serving;
+mod sync_input;
 
 pub(crate) use error::StartupError;
+pub(crate) use prepared::PreparedServer;
+#[cfg(test)]
+pub(crate) use prepared::prepare_with;
 
 use std::{future::Future, io::Write, sync::Arc};
 use studiolo_audit_ledger::SqliteAuditLedger;
@@ -18,41 +23,10 @@ use studiolo_auth::{
     AccessConfig, AccessError, AccessVerifier, OsSessionRandom, SessionManager, SystemSessionClock,
 };
 use studiolo_host_config::{Config, ServingRoots};
-use studiolo_local_server::ProjectRepository;
-use studiolo_local_server::{CanonicalWorkbench, PreparedUnixIngress};
+use studiolo_local_server::CanonicalWorkbench;
 use studiolo_vault_broker::{CanonicalReadVault, ReadOnlyVault};
 
 use crate::options::Options;
-
-pub(crate) struct PreparedServer {
-    app: axum::Router,
-    port: u16,
-    mode: &'static str,
-    roots: Option<ServingRoots>,
-    canonical: Option<Arc<CanonicalReadVault>>,
-    ingress: Option<PreparedUnixIngress>,
-    workbench: Option<Arc<CanonicalWorkbench>>,
-    repository: Option<Arc<ProjectRepository>>,
-    runner_plane: Option<Arc<studiolo_local_server::board::RunnerPlane>>,
-    board_ingress: Option<PreparedUnixIngress>,
-    board_plane: Option<Arc<studiolo_local_server::board::BoardPlane>>,
-}
-
-impl PreparedServer {
-    /// 生产唯一入口始终使用真实的固定Cloudflare取钥实现。
-    pub(crate) async fn prepare(options: Options) -> Result<Self, StartupError> {
-        prepare_with(options, AccessVerifier::connect).await
-    }
-}
-
-// 生产固定真实取钥和固定秘密槽；测试Seam不公开回调、URL覆盖或身份工厂。
-async fn prepare_with<F, Fut>(options: Options, connect: F) -> Result<PreparedServer, StartupError>
-where
-    F: FnOnce(AccessConfig) -> Fut,
-    Fut: Future<Output = Result<AccessVerifier, AccessError>>,
-{
-    prepare_composed(options, connect, factor_input::environment).await
-}
 
 async fn prepare_composed<F, Fut, E>(
     options: Options,
@@ -108,7 +82,7 @@ where
     let mut repository = repository_input::open(&options)?;
     let mut content_audit: Option<Arc<dyn studiolo_audit_ledger::AuditLedger>> = None;
     let mut board_protected = Vec::new();
-    let (sessions, roots, access_config, factors, writer_roots) =
+    let (sessions, roots, access_config, factors, writer_roots, sync_scope) =
         if let Some(session) = &options.session {
             let config = Config::load(&session.config).map_err(|_| StartupError::Configuration)?;
             board_protected.extend([
@@ -170,16 +144,21 @@ where
             let factors = factor_input
                 .map(|inputs| inputs.attach(Arc::clone(&manager)))
                 .transpose()?;
+            // 双向 Bridge 的范围批准也来自同一份私有配置；缺字段即平面关闭。
+            let sync_scope = config
+                .sync_scope()
+                .map_err(|_| StartupError::Configuration)?;
             (
                 Some(manager),
                 Some(roots),
                 Some(access),
                 factors,
                 writer_roots,
+                sync_scope,
             )
         } else {
             // 复制而非移走：后面的可选平面装配还要整体借用 options。
-            (None, None, options.access.clone(), None, None)
+            (None, None, options.access.clone(), None, None, None)
         };
     let writer = writer_roots
         .map(canonical_input::Inputs::open)
@@ -238,9 +217,6 @@ where
     } else {
         app
     };
-    // 健康页的路由已在 router 装配期挂好（且在鉴权那一层之内）；这里只把证据来源
-    // 装上去。不装则健康页一律回 404，因此这一行是"健康页可用"的唯一开关。
-    let app = studiolo_local_server::health::with_health_evidence(app, health_input::source());
     let policy = plane_input::policy(app, &options, content_audit.as_ref());
     let app = or_shutdown(policy, workbench.as_ref()).await?;
     let board = plane_input::board(
@@ -263,6 +239,22 @@ where
     } else {
         app
     };
+    // 双向 Bridge 平面（ADR-025 D1）：默认关闭，只有显式审批文档加范围批准才装配。
+    let sync = sync_input::assemble(
+        &options,
+        sync_scope,
+        roots.as_ref().map(ServingRoots::vault_identity),
+        workbench.as_ref(),
+        content_audit.as_ref(),
+        &board_protected,
+    );
+    let sync_plane = or_shutdown(sync, workbench.as_ref()).await?;
+    // 健康页的路由已在 router 装配期挂好（且在鉴权那一层之内）；这里只把证据来源
+    // 装上去。不装则健康页一律回 404，因此这一行是"健康页可用"的唯一开关。
+    let app = studiolo_local_server::health::with_health_evidence(
+        app,
+        health_input::source(sync_plane.as_ref().map(|plane| plane.health_probe())),
+    );
     let prepared = PreparedServer {
         app,
         port: options.port,
@@ -275,6 +267,7 @@ where
         board_ingress,
         board_plane,
         runner_plane,
+        sync_plane,
     };
     if let Err(error) = prepared.revalidate() {
         canonical_input::shutdown(prepared.workbench.as_ref()).await?;

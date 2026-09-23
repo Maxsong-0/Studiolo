@@ -61,6 +61,21 @@ fn boundary_violations(path: &Path, source: &str) -> Vec<&'static str> {
             remaining = remaining.replacen(allowed, "", 1);
         }
     }
+    if path.ends_with("coordinator/sync_bridge.rs") {
+        // 双向 Bridge 的唯一 canonical 接缝（T-132 P1，ADR-025 D8）：只放行固定的
+        // 「外部：Obsidian」条件写／流式写形态，主体与幂等键都由调用方按执行器原键给出。
+        for allowed in [
+            "Mutation::create(path.clone(),content,idempotency_key)",
+            "Mutation::replace(path.clone(),content,expected,idempotency_key)",
+            "broker.mutation_replay_recorded(&mutation,&metadata)",
+            "broker.mutate_recorded(mutation,metadata)",
+            "broker.prepare_stream_mutation(request,&source,limits,metadata)",
+            "broker.commit_stream_mutation(ticket)",
+            "broker.cancel_stream_mutation(ticket)",
+        ] {
+            remaining = remaining.replacen(allowed, "", 1);
+        }
+    }
     if path.ends_with("coordinator/content/restore.rs") {
         for allowed in [
             "broker.prepare_recorded_restore(mutation,metadata)",

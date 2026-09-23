@@ -13,6 +13,7 @@ pub mod types;
 mod host_approval;
 mod lifecycle;
 mod owner;
+mod quiescence;
 mod session;
 
 pub use approval::{
@@ -33,7 +34,8 @@ pub use state::{
 pub use tickets::{OwnedRun, PreparedRun, QuiescentMirror};
 pub use types::{
     ActiveSummary, ContainerIdentity, ExitObservation, Quiescence, ResourceCounts, RunDiagnostics,
-    RunId, RunObservation, RunOperation, RunPhase, RunStatus, StopReason, TerminalSummary,
+    RunId, RunObservation, RunOperation, RunPhase, RunStatus, StopReason, SyncMode,
+    TerminalSummary,
 };
 
 #[cfg(test)]

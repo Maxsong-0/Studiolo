@@ -91,6 +91,7 @@ fn a_transport_intent_event_carries_the_fixed_action_and_only_closed_digest_fiel
             "backend_digest",
             "binding_digest",
             "budget",
+            "mode",
             "operation",
             "outcome",
             "requester",

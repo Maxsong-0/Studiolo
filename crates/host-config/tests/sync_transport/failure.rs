@@ -130,13 +130,13 @@ fn overlapping_private_mirror_or_reserved_roots_never_yield_a_capability() {
     let fixture = Fixture::new();
     let scope = fixture.scope();
 
+    // 四个根两两同名在解析期就拒，不必等到批准。
     let mut same = fixture.approval();
     same["mirror_root"] = json!(fixture.root.join("transport"));
-    let approval = fixture.parse(&same).unwrap();
-    assert!(
-        studiolo_host_config::sync_transport::ApprovedTransport::approve(&scope, approval, &[])
-            .is_err()
-    );
+    assert_eq!(fixture.parse(&same).err(), Some(ConfigError));
+    same["mirror_root"] = json!(fixture.root.join("mirror"));
+    same["plane_root"] = json!(fixture.root.join("mirror-view"));
+    assert_eq!(fixture.parse(&same).err(), Some(ConfigError));
 
     directory(&fixture.root.join("transport/nested"));
     let mut nested = fixture.approval();
@@ -176,7 +176,12 @@ fn a_non_private_or_missing_root_directory_never_yields_a_capability() {
     .unwrap();
     assert!(fixture.approve(&scope).is_ok());
 
+    // 真实镜像根属 payload 身份、owner 无权遍历：它不存在不影响批准，只核对路径不与自有根同名。
     fs::remove_dir(fixture.root.join("mirror")).unwrap();
+    assert!(fixture.approve(&scope).is_ok());
+
+    // owner 视图根才是被钉的对象：缺了就不能批准。
+    fs::remove_dir(fixture.root.join("mirror-view")).unwrap();
     assert!(fixture.approve(&scope).is_err());
 }
 

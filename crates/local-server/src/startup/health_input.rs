@@ -15,12 +15,16 @@ use std::{
 };
 
 use studiolo_local_server::health::{EvidenceSnapshot, HealthEvidence};
+use studiolo_local_server::sync_plane::health::BridgeHealthProbe;
 
 /// 本次装配可得的健康证据。
 ///
-/// 结构体刻意是空的：只要哪天真有证据源接进组合根，就往这里加字段，
-/// 加一个字段就多一节能显示真实结论；没加的一律留在"未知"。
-pub(crate) struct AssembledEvidence;
+/// 只要哪天真有证据源接进组合根，就往这里加字段，加一个字段就多一节能显示真实结论；
+/// 没加的一律留在"未知"。目前只有双向 Bridge 平面（装配了才有）。
+pub(crate) struct AssembledEvidence {
+    /// 双向 Bridge 平面的健康探针；平面未装配即 `None`。
+    bridge: Option<Arc<dyn BridgeHealthProbe>>,
+}
 
 impl HealthEvidence for AssembledEvidence {
     /// 取一次证据快照。
@@ -42,14 +46,22 @@ impl HealthEvidence for AssembledEvidence {
     ///   `observation_selection`（保护前缀与生成区已被合并成一张 `excluded` 表），
     ///   没有公开人侧可写范围与 `human_content` 登记。用半份快照去诊断会凭空
     ///   造出"搬运范围覆盖保护前缀"这类假冲突，比报未知更坏，所以报未知。
+    /// - **双向 Bridge**：平面装配了才有探针；第六节、owner 活性与 Sync 配额读数都来自它。
+    ///   B 轮 W5 实现：把 `probe.liveness()` 进 `liveness`，`probe.sync_usage()` 配合
+    ///   `probe.manual_quota()` 算 `sync`（七成预警），`probe.bridge()` 进 `bridge`。
     fn snapshot(&self) -> EvidenceSnapshot {
-        EvidenceSnapshot::unknown(now_unix_seconds())
+        let mut snapshot = EvidenceSnapshot::unknown(now_unix_seconds());
+        if let Some(probe) = &self.bridge {
+            snapshot.bridge = Some(probe.bridge());
+            snapshot.liveness = vec![probe.liveness()];
+        }
+        snapshot
     }
 }
 
 /// 构造本次装配的证据来源。
-pub(crate) fn source() -> Arc<dyn HealthEvidence> {
-    Arc::new(AssembledEvidence)
+pub(crate) fn source(bridge: Option<Arc<dyn BridgeHealthProbe>>) -> Arc<dyn HealthEvidence> {
+    Arc::new(AssembledEvidence { bridge })
 }
 
 /// 本地墙钟的 Unix 秒。
@@ -71,17 +83,17 @@ mod tests {
 
     #[test]
     fn 组合根尚未接上任何证据源因而健康页整体判未知而不是判正常() {
-        let body = HealthBody::from_report(&AssembledEvidence.snapshot().report());
+        let body = HealthBody::from_report(&AssembledEvidence { bridge: None }.snapshot().report());
 
         assert_eq!(body.overall, "unknown");
         assert!(!body.evidence_complete);
     }
 
     #[test]
-    fn 五节结论一节不少且全部标为未知() {
-        let body = HealthBody::from_report(&AssembledEvidence.snapshot().report());
+    fn 六节结论一节不少且全部标为未知() {
+        let body = HealthBody::from_report(&AssembledEvidence { bridge: None }.snapshot().report());
 
-        assert_eq!(body.sections.len(), 5);
+        assert_eq!(body.sections.len(), 6);
         assert!(
             body.sections
                 .iter()
@@ -97,7 +109,7 @@ mod tests {
 
     #[test]
     fn 同一个证据来源连续取两次都给出同样的未知结论() {
-        let evidence = source();
+        let evidence = source(None);
 
         let first = HealthBody::from_report(&evidence.snapshot().report());
         let second = HealthBody::from_report(&evidence.snapshot().report());

@@ -100,6 +100,20 @@ impl PreparedServer {
     where
         F: Future<Output = ()> + Send + 'static,
     {
+        if let Some(plane) = self.sync_plane.take() {
+            // Bridge 驱动循环与 HTTP 同生死：关闭信号先停驱动，驱动异常退出即整体停服。
+            let (stop, stopped) = tokio::sync::watch::channel(false);
+            let mut driver = tokio::spawn(plane.drive_until(stopped));
+            let mut result = tokio::select! {
+                result=Box::pin(self.serve_bound_until(shutdown))=>result,
+                _=&mut driver=>Err(StartupError::Serve),
+            };
+            let _ = stop.send(true);
+            if !driver.is_finished() && !matches!(driver.await, Ok(Ok(()))) {
+                result = Err(StartupError::Serve);
+            }
+            return result;
+        }
         if let (Some(board), Some(plane)) = (self.board_ingress.take(), self.board_plane.take()) {
             let runner = self.runner_plane.take();
             let listener = board.bind().map_err(|_| StartupError::Ingress)?;

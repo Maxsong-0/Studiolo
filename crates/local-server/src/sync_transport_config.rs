@@ -1,5 +1,8 @@
 //! 只核对 Headless 0.0.14 的本地配置 JSON；不证明认证、文件存在或同步完成。
-//! 无 FS/进程/环境能力；实际根身份与本次输出来源由未来 owner 独立保证。
+//! 无 FS/进程/环境能力；实际根身份与本次输出来源由驱动器（`sync_plane::driver`）独立保证。
+
+// B 轮 W6 改签名（按审批核 syncMode／excludedFolders／五类）、W3 接线后删除本 allow。
+#![allow(dead_code)]
 
 use serde::{
     Deserialize, Deserializer,
@@ -37,13 +40,18 @@ impl TryFrom<String> for FileType {
     }
 }
 
-/// 未来 owner 给出的明确批准值；不含凭证，不自动补默认附件类型。
+/// 驱动器给出的明确批准值；不含凭证，不自动补默认附件类型。
+///
+/// `sync_mode` 是本轮应处的模式（`mirror-remote`／`bidirectional`），
+/// `excluded_folders` 是审批文档里的唯一母本（已排序；ADR-025 D10），两者都逐项相等才算一致。
 pub(crate) struct Expected<'a> {
     pub(crate) remote_vault_id: &'a str,
     pub(crate) mirror_path: &'a str,
     pub(crate) device_name: &'a str,
     pub(crate) config_dir: &'a str,
     pub(crate) file_types: &'a [FileType],
+    pub(crate) sync_mode: &'a str,
+    pub(crate) excluded_folders: &'a [String],
 }
 
 /// 仅代表本次 JSON 与批准配置相同；没有远端、账号或文件系统权限。
@@ -86,7 +94,7 @@ struct Config {
     #[serde(rename = "configs")]
     _configs: Limited<String, 0>,
     #[serde(rename = "excludedFolders")]
-    _excluded_folders: Limited<String, 0>,
+    excluded_folders: Limited<String, 64>,
 }
 
 // 不采用 JSON 的 size_hint 扩容；附件最多五项，禁止设置的数组不分配元素。
@@ -127,6 +135,12 @@ pub(crate) fn verify(
         || !text(expected.device_name, TEXT_BYTES)
         || !config_directory(expected.config_dir)
         || !types_valid(expected.file_types)
+        || !matches!(expected.sync_mode, "mirror-remote" | "bidirectional")
+        || expected.excluded_folders.len() > 64
+        || expected
+            .excluded_folders
+            .windows(2)
+            .any(|pair| pair[0] >= pair[1])
     {
         return Err(ConfigError::InvalidExpected);
     }
@@ -158,7 +172,7 @@ pub(crate) fn verify(
         || config.vault_path != expected.mirror_path
         || config.device_name != expected.device_name
         || config.config_dir != expected.config_dir
-        || config.sync_mode != "bidirectional"
+        || config.sync_mode != expected.sync_mode
         || config.conflict_strategy != "conflict"
         || config.file_types.0.len() != expected.file_types.len()
         || config
@@ -166,6 +180,7 @@ pub(crate) fn verify(
             .0
             .iter()
             .any(|kind| !expected.file_types.contains(kind))
+        || !excluded_match(&config.excluded_folders.0, expected.excluded_folders)
     {
         return Err(ConfigError::Mismatch);
     }
@@ -191,6 +206,17 @@ fn config_directory(value: &str) -> bool {
         && value != "."
         && value != ".."
         && !value.contains(['/', '\\'])
+}
+
+/// headless 报的排除项与审批母本必须是同一集合（去重后排序比较）；多一项少一项都不一致。
+fn excluded_match(reported: &[String], expected: &[String]) -> bool {
+    let mut reported: Vec<&str> = reported.iter().map(String::as_str).collect();
+    reported.sort_unstable();
+    reported.dedup();
+    reported
+        .iter()
+        .copied()
+        .eq(expected.iter().map(String::as_str))
 }
 
 fn types_valid(types: &[FileType]) -> bool {

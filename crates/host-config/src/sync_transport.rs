@@ -8,4 +8,7 @@ mod types;
 
 pub use capability::ApprovedTransport;
 pub use document::SyncTransportApproval;
-pub use types::{TransportBackend, TransportBudget, TransportRoots, TransportRuntime};
+pub use types::{
+    ManualQuota, TransportBackend, TransportBudget, TransportRoots, TransportRuntime,
+    TransportSyncMode,
+};

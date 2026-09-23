@@ -1,0 +1,32 @@
+[package]
+name = "studiolo-sync-launcher"
+description = "可信 launcher：root 系统服务在 systemd transient unit 内为 headless 建屏障、核对隔离、放行与回报；payload 垫片子命令"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[lib]
+name = "studiolo_sync_launcher"
+path = "src/lib.rs"
+
+[[bin]]
+name = "studiolo-sync-launcher"
+path = "src/main.rs"
+
+[dependencies]
+studiolo-core.workspace = true
+studiolo-sync-transport.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+getrandom.workspace = true
+rustix = { workspace = true, features = ["fs", "process", "net", "pipe"] }
+
+[dev-dependencies]
+tempfile.workspace = true

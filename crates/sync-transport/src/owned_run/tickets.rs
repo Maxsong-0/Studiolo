@@ -133,7 +133,7 @@ impl QuiescentMirror {
         self.binding.run_id
     }
 
-    /// 被证明静止的镜像根。
+    /// 被证明静止的镜像根；这是 owner 的 idmapped 视图路径，不是 payload 的真实路径。
     #[must_use]
     pub fn mirror_root(&self) -> &Path {
         &self.mirror_root

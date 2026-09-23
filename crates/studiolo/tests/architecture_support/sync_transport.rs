@@ -1,11 +1,26 @@
 //! SyncTransportOwner 只写固定的 transport-private 单槽；运行日志正文不落这里。
+//! `linux/client.rs`（T-132 P1，ADR-025 D3）是唯一的 launcher IPC 文件：只连固定 socket、
+//! 只收发有界帧；不开文件、不起子进程。
 
 use std::path::Path;
 
 pub(super) fn remainder(crate_name: &str, path: &Path, source: &str) -> String {
-    if crate_name != "studiolo-sync-transport"
-        || !path.ends_with("crates/sync-transport/src/store/publish.rs")
-    {
+    if crate_name != "studiolo-sync-transport" {
+        return source.to_owned();
+    }
+    if path.ends_with("crates/sync-transport/src/linux/client.rs") {
+        // 固定端点常量与 SO_PEERCRED 之外的连接形态一概不放行；W1 按精确调用清单收口。
+        return super::authority_tokens::checked_closed(
+            source,
+            &["protocol::LAUNCHER_SOCKET", "FRAME_MAX_BYTES"],
+            &[
+                ("UnixStream::connect(socket)", 1),
+                (".write_all(&frame)", 1),
+                ("std::os::unix::net::UnixStream", 1),
+            ],
+        );
+    }
+    if !path.ends_with("crates/sync-transport/src/store/publish.rs") {
         return source.to_owned();
     }
     let mut rest = source.split_whitespace().collect::<String>();

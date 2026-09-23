@@ -35,6 +35,8 @@ impl Fixture {
             "audit",
             "transport",
             "mirror",
+            "mirror-view",
+            "plane",
             "canonical",
         ] {
             directory(&root.join(name));
@@ -78,6 +80,12 @@ impl Fixture {
             "enabled": true,
             "private_root": self.root.join("transport"),
             "mirror_root": self.root.join("mirror"),
+            "owner_view_root": self.root.join("mirror-view"),
+            "plane_root": self.root.join("plane"),
+            "device_name": "studiolo-fixture",
+            "headless_mode": "mirror-remote",
+            "excluded_folders": ["School", "日记"],
+            "manual_quota": null,
             "runtime": {
                 "node_path": "/opt/studiolo/node/bin/node",
                 "cli_path": "/opt/studiolo/obsidian-headless/cli.js",

@@ -27,7 +27,9 @@ pub struct ApprovedTransport<'scope> {
     binding: SyncBinding,
     roots: TransportRoots,
     private_pin: PinnedDirectory,
-    mirror_pin: PinnedDirectory,
+    /// 钉的是 owner 视图（idmapped bind），不是 payload 身份的真实镜像根。
+    view_pin: PinnedDirectory,
+    plane_pin: PinnedDirectory,
 }
 
 impl<'scope> ApprovedTransport<'scope> {
@@ -42,14 +44,15 @@ impl<'scope> ApprovedTransport<'scope> {
         reserved_roots: &[&Path],
     ) -> Result<Self, ConfigError> {
         scope.revalidate()?;
-        let (roots, private_pin, mirror_pin) = pin_roots(&approval, reserved_roots)?;
+        let (roots, private_pin, view_pin, plane_pin) = pin_roots(&approval, reserved_roots)?;
         let approved = Self {
             scope,
             binding: scope.binding().clone(),
             approval,
             roots,
             private_pin,
-            mirror_pin,
+            view_pin,
+            plane_pin,
         };
         approved.revalidate()?;
         Ok(approved)
@@ -67,14 +70,40 @@ impl<'scope> ApprovedTransport<'scope> {
             return Err(ConfigError);
         }
         self.private_pin.revalidate()?;
-        self.mirror_pin.revalidate()?;
+        self.view_pin.revalidate()?;
+        self.plane_pin.revalidate()?;
         // 对外报告的取值必须始终等于钉住的对象，别让投影和真实钉悄悄分家。
         if self.private_pin.identity() != self.roots.private_identity()
-            || self.mirror_pin.identity() != self.roots.mirror_identity()
+            || self.view_pin.identity() != self.roots.mirror_identity()
+            || self.plane_pin.identity() != self.roots.plane_identity()
         {
             return Err(ConfigError);
         }
         Ok(())
+    }
+
+    /// 镜像节点设备名。
+    #[must_use]
+    pub fn device_name(&self) -> &str {
+        self.approval.device_name()
+    }
+
+    /// 审批的镜像同步模式。
+    #[must_use]
+    pub fn headless_mode(&self) -> super::TransportSyncMode {
+        self.approval.headless_mode()
+    }
+
+    /// 审批的排除文件夹（已排序、去重）。
+    #[must_use]
+    pub fn excluded_folders(&self) -> &[String] {
+        self.approval.excluded_folders()
+    }
+
+    /// 人工录入的账号配额。
+    #[must_use]
+    pub fn manual_quota(&self) -> Option<super::ManualQuota> {
+        self.approval.manual_quota()
     }
 
     /// 可公开比较的绑定事实；它是请求绑定，不是认证。
@@ -114,31 +143,51 @@ impl<'scope> ApprovedTransport<'scope> {
     }
 }
 
-type PinnedRoots = (TransportRoots, PinnedDirectory, PinnedDirectory);
+type PinnedRoots = (
+    TransportRoots,
+    PinnedDirectory,
+    PinnedDirectory,
+    PinnedDirectory,
+);
 
 fn pin_roots(
     approval: &SyncTransportApproval,
     reserved_roots: &[&Path],
 ) -> Result<PinnedRoots, ConfigError> {
     let private_path = approval.private_root();
+    let view_path = approval.mirror_view_root();
+    let plane_path = approval.plane_root();
     let mirror_path = approval.mirror_root();
-    // 私有根必须是 0700、本人所有的真实目录；逐段拒绝链接与非目录。
+    // 私有根、视图根、平面根都必须是 0700、本人所有的真实目录；逐段拒绝链接与非目录。
     // 核验通过后立刻持有它的 FD：整条能力的生命期内都不松手，替换才藏不住。
+    // 真实镜像根属 payload 身份，owner 无权遍历，这里只核对它不与任何自有根同名。
     let private = PinnedDirectory::pin(private_path)?;
-    let mirror = PinnedDirectory::pin(mirror_path)?;
-    if private.identity() == mirror.identity() {
+    let view = PinnedDirectory::pin(view_path)?;
+    let plane = PinnedDirectory::pin(plane_path)?;
+    let identities = [private.identity(), view.identity(), plane.identity()];
+    if (1..identities.len()).any(|i| identities[..i].contains(&identities[i])) {
         return Err(ConfigError);
     }
-    config_file::disjoint(private_path, mirror_path)?;
-    for reserved in reserved_roots {
-        config_file::disjoint(private_path, reserved)?;
-        config_file::disjoint(mirror_path, reserved)?;
+    let owned = [private_path, view_path, plane_path];
+    for (i, left) in owned.iter().enumerate() {
+        for right in &owned[i + 1..] {
+            config_file::disjoint(left, right)?;
+        }
+        if mirror_path.starts_with(left) || left.starts_with(mirror_path) {
+            return Err(ConfigError);
+        }
+        for reserved in reserved_roots {
+            config_file::disjoint(left, reserved)?;
+        }
     }
     let roots = TransportRoots::new(
         private_path.to_path_buf(),
         private.identity(),
         mirror_path.to_path_buf(),
-        mirror.identity(),
+        view.identity(),
+        view_path.to_path_buf(),
+        plane_path.to_path_buf(),
+        plane.identity(),
     );
-    Ok((roots, private, mirror))
+    Ok((roots, private, view, plane))
 }

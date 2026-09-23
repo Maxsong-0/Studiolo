@@ -16,11 +16,15 @@ pub struct PeerCredentials {
     pub pid: i32,
 }
 
-/// 帧载荷允许出现的全部顶层字段。
-const ALLOWED_KEYS: [&str; 10] = [
+/// 帧载荷允许出现的全部顶层字段；`protocol::ALL_KEYS` 必须是它的子集。
+///
+/// 这里刻意没有 `argv`、`mirror_path`、`node_path`、`auth_token`、`env`：
+/// 可执行、路径、正文与凭据都不过 IPC。
+pub const ALLOWED_KEYS: [&str; 44] = [
     "run_id",
     "sequence",
     "operation",
+    "mode",
     "nonce",
     "unit_name",
     "invocation_id",
@@ -28,6 +32,39 @@ const ALLOWED_KEYS: [&str; 10] = [
     "cgroup_identity",
     "launcher_session",
     "verdict",
+    "kind",
+    "argv_digest",
+    "budget",
+    "payload_uid",
+    "payload_gid",
+    "boot_id",
+    "container",
+    "grace_seconds",
+    "protocol_version",
+    "systemd_version",
+    "cgroup_v2",
+    "loop_quota",
+    "dedicated_identity",
+    "limits",
+    "isolation",
+    "diagnostics",
+    "running",
+    "populated",
+    "frozen",
+    "stdout_bytes",
+    "stderr_bytes",
+    "output_over_budget",
+    "exit_observed",
+    "exit_code",
+    "exit_signal",
+    "identity",
+    "output",
+    "mirror_identity",
+    "config_identity",
+    "node_identity",
+    "cli_identity",
+    "uid",
+    "gid",
 ];
 
 /// 编码一帧：4 字节大端长度前缀加载荷。

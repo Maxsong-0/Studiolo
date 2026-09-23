@@ -67,6 +67,8 @@ const SESSION: &[&str] = &[
     "/fixture/agents",
     "--runner-config",
     "/fixture/runner.json",
+    "--sync-transport",
+    "/fixture/sync-approval.json",
 ];
 
 const CANONICAL: &[&str] = &[

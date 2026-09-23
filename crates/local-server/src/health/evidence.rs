@@ -1,8 +1,8 @@
 //! 健康证据接口。本机 HTTP 层只消费证据，自己不去读磁盘、不查 Sync、不连远端。
 
 use studiolo_observability::health::{
-    HealthInputs, HealthReport, Instant, OwnerLiveness, RecoveryPointEvidence, WhitelistDiagnosis,
-    aggregate,
+    BridgeEvidence, HealthInputs, HealthReport, Instant, OwnerLiveness, RecoveryPointEvidence,
+    WhitelistDiagnosis, aggregate,
 };
 use studiolo_observability::quota::QuotaVerdict;
 
@@ -26,6 +26,8 @@ pub struct EvidenceSnapshot {
     pub sync: QuotaVerdict,
     /// 白名单诊断结论；`None` 表示诊断本身没跑成。
     pub whitelist: Option<WhitelistDiagnosis>,
+    /// 双向 Bridge 证据；`None` 表示驱动平面未装配。
+    pub bridge: Option<BridgeEvidence>,
 }
 
 impl EvidenceSnapshot {
@@ -40,6 +42,7 @@ impl EvidenceSnapshot {
             disk: QuotaVerdict::Unknown,
             sync: QuotaVerdict::Unknown,
             whitelist: None,
+            bridge: None,
         }
     }
 
@@ -54,6 +57,7 @@ impl EvidenceSnapshot {
             disk: self.disk,
             sync: self.sync,
             whitelist: self.whitelist.as_ref(),
+            bridge: self.bridge.as_ref(),
         };
         // 正文越界只可能是实现缺陷；退化成"证据全部未知"，绝不退化成绿。
         aggregate(&inputs).unwrap_or_else(|_| {
@@ -65,6 +69,7 @@ impl EvidenceSnapshot {
                 disk: QuotaVerdict::Unknown,
                 sync: QuotaVerdict::Unknown,
                 whitelist: None,
+                bridge: None,
             };
             aggregate(&fallback).unwrap_or_else(|_| HealthReport::new(Vec::new()))
         })

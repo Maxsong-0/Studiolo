@@ -30,7 +30,12 @@ pub struct TransportBindingFacts {
     pub approved_config_digest: [u8; 32],
 }
 
-/// 两个根的规范路径与观察时刻的真实对象身份。
+/// 根的规范路径与观察时刻的真实对象身份。
+///
+/// `mirror_root` 是 payload 在其 mount 视图里看到的真实镜像路径（进 argv）；owner 自己
+/// 只经 `mirror_view_root`（idmapped bind 视图，ADR-025 D7）读写镜像。bind 视图与真实根
+/// 是同一个 inode，因此 `mirror_identity` 就是经视图观察到的 `(dev, ino)`，launcher
+/// 在最终视图内 stat 真实根后必须报回同一个值。
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RootPins {
@@ -38,10 +43,12 @@ pub struct RootPins {
     pub private_root: PathBuf,
     /// 传输私有根的 `(dev, ino)`。
     pub private_identity: (u64, u64),
-    /// 专用镜像根。
+    /// 专用镜像根（payload 视图内的真实路径）。
     pub mirror_root: PathBuf,
-    /// 镜像根的 `(dev, ino)`。
+    /// 镜像根的 `(dev, ino)`；经 owner 视图观察，与真实根相同。
     pub mirror_identity: (u64, u64),
+    /// owner 读写镜像所经的 idmapped 视图路径；静止票据与出站安装都只用它。
+    pub mirror_view_root: PathBuf,
 }
 
 /// 固定运行时事实；不保存任何凭证正文。
@@ -120,7 +127,8 @@ impl RunBudget {
 /// 已批准传输能力的唯一来源。
 ///
 /// 实现者必须真实复验私有配置快照与根身份；本 crate 不自己打开配置文件。
-pub trait ApprovedTransport {
+/// 要求 `Sync`：owner 借用它的引用并会被放进跨线程的 `Mutex`。
+pub trait ApprovedTransport: Sync {
     /// 复验私有配置与根身份；任何漂移都必须报错。
     ///
     /// # 错误

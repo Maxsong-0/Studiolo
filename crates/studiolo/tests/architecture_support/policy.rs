@@ -8,6 +8,8 @@ pub(crate) fn allowed_workspace_dependencies(crate_name: &str) -> &'static [&'st
         "studiolo-sync-bridge" => &["studiolo-core", "studiolo-audit-ledger"],
         "studiolo-backup" | "studiolo-observability" => &["studiolo-core", "studiolo-audit-ledger"],
         "studiolo-sync-transport" => &["studiolo-core", "studiolo-host-config"],
+        // T-132 P1（ADR-025 D2）：可信 launcher 只认线上契约与值类型；不得依赖 host-config／vault-broker。
+        "studiolo-sync-launcher" => &["studiolo-sync-transport", "studiolo-core"],
         "studiolo-vault-broker"
         | "studiolo-vault-index"
         | "studiolo-control-db"
@@ -53,6 +55,8 @@ pub(crate) fn allowed_workspace_dependencies(crate_name: &str) -> &'static [&'st
             "studiolo-backup",
             "studiolo-observability",
             "studiolo-sync-transport",
+            // T-132 P1（ADR-025 D1）：Bridge 驱动平面装进本进程，纯执行器与持久状态由它组合。
+            "studiolo-sync-bridge",
             // M4：人侧发布者句柄（L3 之后写 effective）与三级吊销入口。
             "studiolo-policy",
             "studiolo-process-safety",

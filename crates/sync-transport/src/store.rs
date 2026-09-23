@@ -10,8 +10,9 @@ use crate::owned_run::Result;
 /// 完整原子替换的持久发布器。
 ///
 /// 实现者必须保证：`replace` 要么让权威记录整体变成新版本，要么完全保持旧版本；
-/// 临时文件在任何时候都不得被当作授权状态自动发布。
-pub trait StatePublisher {
+/// 临时文件在任何时候都不得被当作授权状态自动发布。要求 `Send`：owner 会被驱动平面
+/// 放进跨线程的 `Mutex`（ADR-025 D1）。
+pub trait StatePublisher: Send {
     /// 读取权威记录的完整字节。
     ///
     /// # 错误

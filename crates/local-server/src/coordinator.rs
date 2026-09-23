@@ -7,6 +7,7 @@ mod history;
 mod observation;
 mod preparation;
 mod scheduler;
+mod sync_bridge;
 mod worker;
 
 use std::sync::{Arc, Mutex};

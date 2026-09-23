@@ -1,0 +1,91 @@
+# T-132 P2 契约矩阵 20260923T033049Z
+## C0 身份与配置核对
+   mirror 配置：{"vaultName": "studiolo-p2-test", "vaultPath": "/var/lib/studiolo-sync/p2/mirror", "syncMode": "bidirectional", "conflictStrategy": "merge", "deviceName": "studiolo-169-p2", "configDir": ".obsidian", "fileTypes": ["image", "audio", "pdf", "video"], "configs": [], "excludedFolders": []}
+   observer 配置：{"vaultName": "studiolo-p2-test", "vaultPath": "/var/lib/studiolo-sync/p2/observer", "syncMode": "bidirectional", "conflictStrategy": "merge", "deviceName": "studiolo-169-p2-observer", "configDir": ".obsidian", "fileTypes": ["image", "audio", "pdf", "video"], "configs": [], "excludedFolders": []}
+>> C0 镜像配置（冲突文件／全附件类型／关闭配置同步）: PASS — mirror={"syncMode": "bidirectional", "conflictStrategy": "conflict", "fileTypes": ["image", "audio", "video", "pdf", "unsupported"], "configs": []}；observer={"syncMode": "bidirectional", "conflictStrategy": "conflict", "fileTypes": ["image", "audio", "video", "pdf", "unsupported"], "configs": ["app", "appearance"]}
+   [mirror] ob sync rc=0 0.3s | Fully synced / Disconnected from server
+   [observer] ob sync rc=0 0.2s | Fully synced / Disconnected from server
+## S1 observer→mirror：中文路径与各类附件
+   [observer] ob sync rc=0 10.5s | Fully synced / Disconnected from server
+   [mirror] ob sync rc=0 60.8s | Fully synced / Disconnected from server
+>> S1 中文路径＋png/pdf/mp3/zip/txt/json 下行: PASS — 全部逐字节一致
+## S2 mirror→observer：反向上行
+   [mirror] ob sync rc=0 10.5s | Fully synced / Disconnected from server
+   [observer] ob sync rc=0 0.4s | Fully synced / Disconnected from server
+>> S2 镜像上行到另一设备: PASS — 逐字节一致
+## S3 A→B→A
+   [observer] ob sync rc=0 10.5s | Fully synced / Disconnected from server
+   [observer] ob sync rc=0 0.3s | Fully synced / Disconnected from server
+   [observer] ob sync rc=0 10.0s | Fully synced / Disconnected from server
+   [mirror] ob sync rc=0 0.5s | Fully synced / Disconnected from server
+>> S3 A→B→A 终态: PASS — mirror 终态=b'A\n'
+## S4 下载写入方式（ADR-005 试跑项 1：原地截断还是替换）
+   [observer] ob sync rc=0 9.6s | Fully synced / Disconnected from server
+   [mirror] ob sync rc=0 0.5s | Fully synced / Disconnected from server
+>> S4 镜像下载更新的写入方式: OBSERVED — inode 不变＝原地写入；inode 2367176→2367176；mode 0o600；nlink 1
+## S5 冲突策略＝生成冲突文件
+   [observer] ob sync rc=0 10.5s | Fully synced / Disconnected from server
+   [mirror] ob sync rc=0 0.3s | Fully synced / Disconnected from server
+   [mirror] ob sync rc=0 0.5s | Fully synced / Disconnected from server
+   [observer] ob sync rc=0 10.3s | Fully synced / Disconnected from server
+   [mirror] ob sync rc=0 0.4s | Fully synced / Disconnected from server
+   [observer] ob sync rc=0 0.4s | Fully synced / Disconnected from server
+   [mirror] ob sync rc=0 0.2s | Fully synced / Disconnected from server
+   [observer] ob sync rc=0 0.4s | Fully synced / Disconnected from server
+>> S5 并发修改不丢任何一方: PASS — 冲突副本=['mirror:S5/conflict (Conflicted copy studiolo-169-p2-observer 202609230332).md', 'observer:S5/conflict (Conflicted copy studiolo-169-p2-observer 202609230332).md']；各处内容={"mirror:S5/conflict (Conflicted copy studiolo-169-p2-observer 202609230332).md": "OBSERVER 版本", "mirror:S5/conflict.md": "MIRROR 版本", "observer:S5/conflict (Conflicted copy studiolo-169-p2-observer 202609230332).md": "OBSERVER 版本", "observer:S5/conflict.md": "MIRROR 版本"}
+## S6 删除传播（Bridge 侧另有熔断，这里只观察 headless 行为）
+   [observer] ob sync rc=0 0.5s | Fully synced / Disconnected from server
+   [mirror] ob sync rc=0 0.2s | Fully synced / Disconnected from server
+>> S6 另一设备删除后镜像是否跟删: OBSERVED — 镜像已删除
+## S7 排除文件夹（D5：改排除项不得删远端）
+   [observer] ob sync rc=0 10.3s | Fully synced / Disconnected from server
+   [mirror] ob sync rc=0 0.4s | Fully synced / Disconnected from server
+   [mirror] ob sync rc=0 0.3s | Fully synced / Disconnected from server
+   [observer] ob sync rc=0 0.4s | Fully synced / Disconnected from server
+   [observer] ob sync rc=0 0.5s | Fully synced / Disconnected from server
+>> S7a 加排除项后远端文件仍在: PASS — observer 现有=['P2-Excluded/a.md', 'P2-Excluded/b.pdf']；镜像本地留存=['P2-Excluded/a.md', 'P2-Excluded/b.pdf']
+   [observer] ob sync rc=0 0.3s | Fully synced / Disconnected from server
+   [mirror] ob sync rc=0 0.5s | Fully synced / Disconnected from server
+   [mirror] ob sync rc=0 0.4s | Fully synced / Disconnected from server
+>> S7b 排除后镜像不再下载该目录变更: PASS — 镜像 a.md=b'v1\n'
+   [mirror] ob sync rc=0 0.5s | Fully synced / Disconnected from server
+   [observer] ob sync rc=0 0.5s | Fully synced / Disconnected from server
+   [observer] ob sync rc=0 0.4s | Fully synced / Disconnected from server
+>> S7c 排除后镜像不上传该目录: PASS — observer 未收到
+   [mirror] ob sync rc=0 10.4s | Fully synced / Disconnected from server
+   [observer] ob sync rc=0 0.4s | Fully synced / Disconnected from server
+   [mirror] ob sync rc=0 0.4s | Fully synced / Disconnected from server
+   [observer] ob sync rc=0 0.4s | Fully synced / Disconnected from server
+>> S7d 清除排除项后：远端新版本不被镜像旧副本覆盖、不删远端: FAIL — observer a.md=b'v1\n'；mirror a.md=b'v1\n'；b.pdf 在远端=True；目录=['P2-Excluded/a.md', 'P2-Excluded/b.pdf', 'P2-Excluded/from-mirror.md']
+## S8 镜像关闭配置同步
+   [observer] ob sync rc=0 0.5s | Fully synced / Disconnected from server
+   [mirror] ob sync rc=0 0.4s | Fully synced / Disconnected from server
+   [mirror] ob sync rc=0 0.2s | Fully synced / Disconnected from server
+>> S8 另一设备的配置文件不进镜像: PASS — 镜像未收到 appearance.json
+## S9 持续模式：常驻内存、子进程、SIGTERM 与中途终止
+   [observer] ob sync rc=0 10.4s | Fully synced / Disconnected from server
+>> S9a 持续模式收齐 21 个文件（含 20 MiB）: PASS — 用时 2.1s
+>> S9b 常驻内存峰值与进程树: OBSERVED — VmHWM 峰值 182.8 MiB；子进程=无；SIGTERM 后 20s 内退出=True rc=0；残留子进程=无
+   [observer] ob sync rc=0 6.0s | Fully synced / Disconnected from server
+   [mirror] ob sync rc=1 0.1s | Another sync instance is already running for this vault.
+>> S9c 下载中途 SIGKILL 后重开能补齐且不留半截文件: PASS — 杀掉时本地大小=52428816；重开后完整=True；多余文件=无
+## 未做项
+   断网（需 root 网络命名空间）、大附件阈值 200000000/208666624/209715200 字节（耗配额，另跑）
+
+## 汇总
+   PASS     C0 镜像配置（冲突文件／全附件类型／关闭配置同步）
+   PASS     S1 中文路径＋png/pdf/mp3/zip/txt/json 下行
+   PASS     S2 镜像上行到另一设备
+   PASS     S3 A→B→A 终态
+   OBSERVED S4 镜像下载更新的写入方式
+   PASS     S5 并发修改不丢任何一方
+   OBSERVED S6 另一设备删除后镜像是否跟删
+   PASS     S7a 加排除项后远端文件仍在
+   PASS     S7b 排除后镜像不再下载该目录变更
+   PASS     S7c 排除后镜像不上传该目录
+   FAIL     S7d 清除排除项后：远端新版本不被镜像旧副本覆盖、不删远端
+   PASS     S8 另一设备的配置文件不进镜像
+   PASS     S9a 持续模式收齐 21 个文件（含 20 MiB）
+   OBSERVED S9b 常驻内存峰值与进程树
+   PASS     S9c 下载中途 SIGKILL 后重开能补齐且不留半截文件
+报告已写入 /var/lib/studiolo-sync/p2/matrix-20260923T033049Z.txt

@@ -107,7 +107,8 @@ fn a_quiescent_capability_is_only_issued_after_confirmed_quiescence_and_outcome_
 
     let mirror = session.quiescent().expect("闭合后可取静止能力");
     assert_eq!(mirror.run_id(), owned.run_id());
-    assert_eq!(mirror.mirror_root(), std::path::Path::new(MIRROR_ROOT));
+    // 静止票据给 owner 的是 idmapped 视图路径，不是 payload 的真实镜像路径。
+    assert_eq!(mirror.mirror_root(), std::path::Path::new(MIRROR_VIEW_ROOT));
     assert!(mirror.remote_delivery_unknown());
     assert_eq!(session.verify_quiescent(&mirror), Ok(()));
 

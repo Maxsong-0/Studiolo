@@ -43,12 +43,15 @@ fn session_composition_is_explicit_and_does_not_change_the_existing_binary_mode(
     let root = workspace_root().join("crates/local-server/src");
     let routing = fs::read_to_string(root.join("routing.rs")).unwrap();
     let main = fs::read_to_string(root.join("main.rs")).unwrap();
-    // 启动组合层＝startup.rs 加上从它按职责拆出的路由与平面装配（T-113）；
+    // 启动组合层＝startup.rs 加上从它按职责拆出的路由与平面装配（T-113）、已装配服务器与
+    // 生产入口（T-132 P1 拆出 prepared.rs）、双向 Bridge 平面组合根（sync_input.rs）；
     // 下面的「必须出现」与「不得获得」两类断言都对整层生效，拆文件不能绕开守卫。
     let startup = [
         "startup.rs",
         "startup/router_input.rs",
         "startup/plane_input.rs",
+        "startup/prepared.rs",
+        "startup/sync_input.rs",
     ]
     .iter()
     .map(|path| fs::read_to_string(root.join(path)).unwrap())

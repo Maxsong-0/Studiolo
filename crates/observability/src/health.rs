@@ -5,10 +5,15 @@
 //! [`NO_RECOVERY_POINT`] 且不显示绿；对外公开摘要结构上装不下路径、主人身份或秘密。
 
 mod aggregate;
+mod bridge;
 mod diagnostics;
 mod model;
 
 pub use aggregate::{HealthInputs, NO_RECOVERY_POINT, aggregate};
+pub use bridge::{
+    BRIDGE_SECTION_CODE, BRIDGE_SECTION_TITLE, BatchStamp, BridgeEvidence, ExitClass, ModeLabel,
+    RESIDUE_BLOCKED, RecoveryState, ResidueGuard, bridge_section,
+};
 pub use diagnostics::{
     DiagnosticsError, WhitelistDiagnosis, WhitelistFinding, WhitelistFindingKind,
     WhitelistSnapshot, diagnose,

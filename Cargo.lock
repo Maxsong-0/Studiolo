@@ -2614,6 +2614,7 @@ dependencies = [
  "studiolo-process-safety",
  "studiolo-runner-adapter",
  "studiolo-supply",
+ "studiolo-sync-bridge",
  "studiolo-sync-transport",
  "studiolo-task-engine",
  "studiolo-vault-broker",
@@ -2709,6 +2710,20 @@ dependencies = [
  "sha2 0.11.0",
  "studiolo-audit-ledger",
  "studiolo-core",
+ "tempfile",
+]
+
+[[package]]
+name = "studiolo-sync-launcher"
+version = "0.0.1"
+dependencies = [
+ "getrandom 0.4.3",
+ "rustix",
+ "serde",
+ "serde_json",
+ "sha2 0.11.0",
+ "studiolo-core",
+ "studiolo-sync-transport",
  "tempfile",
 ]
 

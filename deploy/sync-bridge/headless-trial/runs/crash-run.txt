@@ -1,0 +1,68 @@
+# T-132 P2 第三轮 20260923T040503Z
+   mirror 配置：{"vaultName": "studiolo-p2-test", "vaultPath": "/var/lib/studiolo-sync/p2/mirror", "syncMode": "bidirectional", "conflictStrategy": "conflict", "deviceName": "studiolo-169-p2", "configDir": ".obsidian", "fileTypes": ["image", "audio", "video", "pdf", "unsupported"], "configs": [], "excludedFolders": []}
+   observer 配置：{"vaultName": "studiolo-p2-test", "vaultPath": "/var/lib/studiolo-sync/p2/observer", "syncMode": "bidirectional", "conflictStrategy": "conflict", "deviceName": "studiolo-169-p2-observer", "configDir": ".obsidian", "fileTypes": ["image", "audio", "video", "pdf", "unsupported"], "configs": ["app", "appearance"], "excludedFolders": []}
+## D0 S9d 的直接证据
+   mirror S9d/中途.pdf = (17301504, '068c902cf62536f1')
+   observer S9d/中途.pdf = (17301504, '068c902cf62536f1')
+   mirror sync.log | [2026-09-23T03:33:54.132Z] Push: S9/中途终止.pdf (updated)
+   mirror sync.log | [2026-09-23T03:33:54.132Z] Downloading S9/中途终止.pdf
+   mirror sync.log | [2026-09-23T03:33:55.352Z] Downloaded S9/中途终止.pdf
+   mirror sync.log | [2026-09-23T03:33:55.352Z] Accepted S9/中途终止.pdf
+   mirror sync.log | [2026-09-23T04:00:42.020Z] Push: S9d/中途.pdf (updated)
+   mirror sync.log | [2026-09-23T04:00:42.021Z] Downloading S9d/中途.pdf
+   mirror sync.log | [2026-09-23T04:00:49.646Z] Checking S9d/中途.pdf
+   mirror sync.log | [2026-09-23T04:00:49.681Z] Rejected server change S9d/中途.pdf
+   mirror sync.log | [2026-09-23T04:01:19.718Z] Uploading file S9d/中途.pdf
+   mirror sync.log | [2026-09-23T04:01:21.620Z] Upload complete S9d/中途.pdf
+   observer sync.log | [2026-09-23T03:33:48.251Z] Uploading file S9/中途终止.pdf
+   observer sync.log | [2026-09-23T03:33:53.733Z] Upload complete S9/中途终止.pdf
+   observer sync.log | [2026-09-23T04:00:12.852Z] Uploading file S9d/中途.pdf
+   observer sync.log | [2026-09-23T04:00:40.592Z] Upload complete S9d/中途.pdf
+   observer sync.log | [2026-09-23T04:01:32.453Z] Push: S9d/中途.pdf (updated)
+   observer sync.log | [2026-09-23T04:01:32.454Z] Downloading S9d/中途.pdf
+   observer sync.log | [2026-09-23T04:01:32.827Z] Downloaded S9d/中途.pdf
+   observer sync.log | [2026-09-23T04:01:32.827Z] Accepted S9d/中途.pdf
+## S9f mirror-remote 模式（只下载、回滚本地改动）
+   [observer] ob sync rc=0 15.0s | Fully synced / Disconnected from server
+   [mirror] ob sync rc=0 0.4s | Fully synced / Disconnected from server
+   [mirror] ob sync rc=0 0.4s | Fully synced / Disconnected from server
+   [mirror] ob sync rc=0 0.2s | Fully synced / Disconnected from server
+   [observer] ob sync rc=0 0.2s | Fully synced / Disconnected from server
+   [observer] ob sync rc=0 0.4s | Fully synced / Disconnected from server
+>> S9f-1 mirror-remote：强杀后镜像是否自愈: PASS — 抓到中间态=45088768；杀掉时大小=45613056（完整 104857616）；镜像现为 (104857616, '46d71ca2f575cb05')
+>> S9f-2 mirror-remote：远端未被半截文件覆盖: PASS — observer 现为 (104857616, '46d71ca2f575cb05')；重试序列（开始秒, rc, 耗时秒）=[(0.0, 1, 0.1), (1.1, 1, 0.1), (2.2, 1, 0.1), (3.3, 1, 0.1), (4.3, 1, 0.1), (5.4, 0, 62.7)]
+   mirror sync.log | [2026-09-23T04:05:20.734Z] Push: S9f/崩溃.pdf (updated)
+   mirror sync.log | [2026-09-23T04:05:20.734Z] Downloading S9f/崩溃.pdf
+   mirror sync.log | [2026-09-23T04:05:27.792Z] Checking S9f/崩溃.pdf
+   mirror sync.log | [2026-09-23T04:05:27.887Z] Downloading S9f/崩溃.pdf
+   mirror sync.log | [2026-09-23T04:05:29.490Z] Downloaded S9f/崩溃.pdf
+   mirror sync.log | [2026-09-23T04:05:29.490Z] Accepted S9f/崩溃.pdf
+## S9g pull-only 模式（只下载、忽略本地改动）
+   [observer] ob sync rc=0 12.1s | Fully synced / Disconnected from server
+   [mirror] ob sync rc=0 0.4s | Fully synced / Disconnected from server
+   [mirror] ob sync rc=0 0.2s | Fully synced / Disconnected from server
+   [mirror] ob sync rc=0 0.4s | Fully synced / Disconnected from server
+   [observer] ob sync rc=0 0.4s | Fully synced / Disconnected from server
+   [observer] ob sync rc=0 0.2s | Fully synced / Disconnected from server
+>> S9g-1 pull-only：强杀后镜像是否自愈: PASS — 抓到中间态=55050240；杀掉时大小=55574528（完整 104857616）；镜像现为 (104857616, '54fcb7c8260d50e5')
+>> S9g-2 pull-only：远端未被半截文件覆盖: PASS — observer 现为 (104857616, '54fcb7c8260d50e5')；重试序列（开始秒, rc, 耗时秒）=[(0.0, 1, 0.1), (1.1, 1, 0.1), (2.2, 1, 0.1), (3.3, 1, 0.1), (4.3, 0, 63.0)]
+   mirror sync.log | [2026-09-23T04:05:20.734Z] Push: S9f/崩溃.pdf (updated)
+   mirror sync.log | [2026-09-23T04:05:20.734Z] Downloading S9f/崩溃.pdf
+   mirror sync.log | [2026-09-23T04:05:27.792Z] Checking S9f/崩溃.pdf
+   mirror sync.log | [2026-09-23T04:05:27.887Z] Downloading S9f/崩溃.pdf
+   mirror sync.log | [2026-09-23T04:05:29.490Z] Downloaded S9f/崩溃.pdf
+   mirror sync.log | [2026-09-23T04:05:29.490Z] Accepted S9f/崩溃.pdf
+   mirror sync.log | [2026-09-23T04:06:46.181Z] Push: S9g/崩溃.pdf (updated)
+   mirror sync.log | [2026-09-23T04:06:46.181Z] Downloading S9g/崩溃.pdf
+   mirror sync.log | [2026-09-23T04:06:52.419Z] Checking S9g/崩溃.pdf
+   mirror sync.log | [2026-09-23T04:06:52.533Z] Downloading S9g/崩溃.pdf
+   mirror sync.log | [2026-09-23T04:06:54.370Z] Downloaded S9g/崩溃.pdf
+   mirror sync.log | [2026-09-23T04:06:54.371Z] Accepted S9g/崩溃.pdf
+   镜像模式已恢复为 bidirectional
+
+## 汇总
+   PASS     S9f-1 mirror-remote：强杀后镜像是否自愈
+   PASS     S9f-2 mirror-remote：远端未被半截文件覆盖
+   PASS     S9g-1 pull-only：强杀后镜像是否自愈
+   PASS     S9g-2 pull-only：远端未被半截文件覆盖
+报告已写入 /var/lib/studiolo-sync/p2/crash-20260923T040503Z.txt

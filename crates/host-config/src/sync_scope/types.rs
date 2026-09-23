@@ -26,6 +26,10 @@ pub enum SyncAttachmentType {
     Wav,
     /// ZIP 附件。
     Zip,
+    /// 纯文本（T-132 方案第 6 节第 1 条：`_规则/归档/` 的 txt；ADR-025 D12）。
+    Txt,
+    /// JSON 文本（同上；headless 侧归入 `unsupported` 类）。
+    Json,
 }
 
 impl TryFrom<String> for SyncAttachmentType {
@@ -41,6 +45,8 @@ impl TryFrom<String> for SyncAttachmentType {
             "mp4" => Ok(Self::Mp4),
             "wav" => Ok(Self::Wav),
             "zip" => Ok(Self::Zip),
+            "txt" => Ok(Self::Txt),
+            "json" => Ok(Self::Json),
             _ => Err(crate::ConfigError),
         }
     }

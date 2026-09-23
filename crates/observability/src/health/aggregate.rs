@@ -1,8 +1,8 @@
 //! 本地只读健康聚合。没有 IO、没有时钟、没有网络；证据全部由调用方注入。
 
 use super::{
-    AgeEvidence, HealthReport, HealthSection, HealthState, Instant, OwnerLiveness,
-    RecoveryPointEvidence, SectionDetailError, WhitelistDiagnosis,
+    AgeEvidence, BridgeEvidence, HealthReport, HealthSection, HealthState, Instant, OwnerLiveness,
+    RecoveryPointEvidence, SectionDetailError, WhitelistDiagnosis, bridge_section,
 };
 use crate::quota::QuotaVerdict;
 
@@ -26,6 +26,8 @@ pub struct HealthInputs<'a> {
     pub sync: QuotaVerdict,
     /// 白名单诊断结论；`None` 表示诊断本身没跑成。
     pub whitelist: Option<&'a WhitelistDiagnosis>,
+    /// 双向 Bridge 证据（第六节）；`None` 表示驱动平面未装配或读不到。
+    pub bridge: Option<&'a BridgeEvidence>,
 }
 
 /// 聚合成健康页报告。返回 `Err` 只可能是内部正文越界，属于实现缺陷。
@@ -36,6 +38,7 @@ pub fn aggregate(inputs: &HealthInputs<'_>) -> Result<HealthReport, SectionDetai
         quota_section("disk-quota", "磁盘配额", inputs.disk)?,
         quota_section("sync-quota", "Sync 配额", inputs.sync)?,
         whitelist_section(inputs.whitelist)?,
+        bridge_section(inputs.bridge)?,
     ]))
 }
 
