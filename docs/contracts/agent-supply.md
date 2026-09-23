@@ -22,7 +22,7 @@
   **2026-09-17 核实**：T-039 之后另有可选的 `index.sqlite3`（单槽解析缓存，由 `--index-cache` 显式给定的目录持有，见 `crates/supply/src/index_cache/paths.rs:30-36`）。
   架构守卫 `crates/studiolo/tests/architecture_support/source.rs:107-140` 现登记五个固定私有库文件名：`bridge.sqlite3`、`audit.sqlite3`、`auth.sqlite3`、`index.sqlite3`、`agent.sqlite3`；原文「第三个固定文件名」已过时。
 - 配置只经命令行参数（本片不读配置文件，避免外壳 crate 获得通用文件读写能力）：`serve --vault <绝对路径> --allow <相对目录>…（可重复）--data <绝对私有目录> --port <端口>`；`--data` 与其下 `audit/` 须由主人预先 `mkdir -m 700` 创建，服务不创建目录。类型 token 明文永不进参数或文件。
-  **2026-09-17 核实**：`serve` 现另接受 `--replica-root`（与 `--vault` 互斥，见 §6）、`--replica-max-age-secs` 与 `--index-cache`；解析见 `crates/agent-server/src/options.rs:138-200`。
+  **2026-09-17 核实**：`serve` 现另接受 `--replica-root`（与 `--vault` 互斥，见 §6）、`--replica-max-age-secs` 与 `--index-cache`；解析见 `crates/agent-server/src/options/parser.rs` 的 `"serve"` 分支（2026-09-23 T-154 拆分后位置，按分支名引用不写行号）。
 
 ## 2. 身份两级
 
@@ -38,7 +38,7 @@
   `crates/supply/src/database/identity.rs:10-27`）。
 - `admin` 子命令一律用 `--data <绝对私有目录>` 定位私有库，**没有** `--config <agent.json>`
   参数；`type-issue` / `type-revoke` 的允许参数恰为 `--data`、`--type`
-  （`crates/agent-server/src/options.rs:202-256`）。同名类型再次 `type-issue` 会轮换 token 并使旧 token 立即失效。
+  （`crates/agent-server/src/options/parser.rs` 的 `"admin"` 分支）。同名类型再次 `type-issue` 会轮换 token 并使旧 token 立即失效。
 - **2026-09-17 T-060 已修复并收紧**：T-056 登记的「实现只用 `println!` 写 stdout、
   两个 crate 都没有 TTY 判定」已修。原文「只在 TTY 打印一次」现由实现兑现，且比原文更严。
   门禁在 `crates/agent-server/src/admin/terminal.rs`，做法照搬
