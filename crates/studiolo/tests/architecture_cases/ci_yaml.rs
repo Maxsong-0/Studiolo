@@ -51,30 +51,43 @@ pub(super) fn logical_lines<'a>(physical: impl IntoIterator<Item = &'a str>) -> 
     lines
 }
 
-/// 这一行关掉了 errexit：去首尾空白后匹配 `^set\s+(\+[A-Za-z]*e[A-Za-z]*\b|\+o\s+errexit\b)`，
-/// 即 `set +e`、`set +eu`、`set +o errexit` 一类写法。此后失败的命令不再中止脚本，
-/// 退出码只看最后一条。
+/// 这一行关掉了 errexit：按 `;`、`&`、`|`、括号与花括号切成简单命令，任一段（可带 `then`／`do`／
+/// `else`／`builtin`／`command` 前缀）是 `set`，且参数里有含 `e` 的 `+` 开关或 `+o errexit`——
+/// `set +e`、`true; set +e`、`{ set +e; }`、`set -u +e`、`set +o errexit` 都算。此后失败的命令
+/// 不再中止脚本，退出码只看最后一条。不解析引号：引号里恰好出现「; set +e 词」会误判为红，宁严勿宽。
 pub(super) fn disables_errexit(line: &str) -> bool {
-    // `\s+`：至少吃掉一个空白。
-    fn spaced(text: &str) -> Option<&str> {
-        let rest = text.trim_start();
-        (rest.len() < text.len()).then_some(rest)
+    let separators = |c: char| matches!(c, ';' | '&' | '|' | '(' | ')' | '{' | '}');
+    line.split(separators).any(|segment| {
+        let mut words = segment
+            .split_whitespace()
+            .skip_while(|word| matches!(*word, "then" | "do" | "else" | "builtin" | "command"));
+        if words.next() != Some("set") {
+            return false;
+        }
+        let args = words.collect::<Vec<_>>();
+        args.iter()
+            .enumerate()
+            .any(|(at, arg)| match arg.strip_prefix('+') {
+                Some("o") => args.get(at + 1) == Some(&"errexit"),
+                Some(flags) => {
+                    flags.contains('e') && flags.chars().all(|c| c.is_ascii_alphabetic())
+                }
+                None => false,
+            })
+    })
+}
+
+#[test]
+fn errexit_switch_offs_follow_the_documented_pattern() {
+    let off = "set +e|  set +eu|set +xe;|set  +o\terrexit|set +o errexit;|true; set +e|{ set +e; }\
+               |set -u +e|if x; then set +e; fi|a && set +e|builtin set +e|set +eo pipefail";
+    let kept = "set -e|set -euo pipefail|set +x|set +o pipefail|set +o errexits|set+e|echo set +e\
+                |echo 'set +e'|grep -q x f || true|[ -n \"$x\" ] && set -e";
+    for (lines, expected) in [(off, true), (kept, false)] {
+        for line in lines.split('|').map(str::trim) {
+            assert_eq!(disables_errexit(line), expected, "{line}");
+        }
     }
-    // `\b`：后面紧跟的不是词字符（或已到行尾）。
-    fn boundary(rest: &str) -> bool {
-        !rest.starts_with(|c: char| c.is_alphanumeric() || c == '_')
-    }
-    let flags = line.trim().strip_prefix("set").and_then(spaced);
-    let Some(flags) = flags.and_then(|rest| rest.strip_prefix('+')) else {
-        return false;
-    };
-    let letters = flags.bytes().take_while(u8::is_ascii_alphabetic).count();
-    (flags[..letters].contains('e') && boundary(&flags[letters..]))
-        || flags
-            .strip_prefix('o')
-            .and_then(spaced)
-            .and_then(|rest| rest.strip_prefix("errexit"))
-            .is_some_and(boundary)
 }
 
 /// `defaults:` 块里的一行仍让 run 用 bash：只认 `run:`、`shell: bash` 与 `working-directory:`；

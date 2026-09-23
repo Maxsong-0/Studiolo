@@ -5,7 +5,8 @@
 //! - shell 语义：步骤、作业或全局 `defaults.run` 的 `shell` 不是恰好 `bash`（`sh`、`bash {0}`、
 //!   `pwsh` 都不保证 errexit），或 run 块里一行 `set +e` 之类关掉 errexit——门禁失败后照样
 //!   往下跑，步骤只看最后一条命令的退出码。test-linux.sh 同理：第一条门禁之前须有
-//!   `set -euo pipefail`，全文不许关 errexit。
+//!   `set -euo pipefail`，全文不许关 errexit，服务器上执行门禁的 `bash -euo pipefail -c` 那一行
+//!   也逐字钉住（换成 `bash -c` 本机照旧严格、远端门禁却全部失效）。
 //! - 触发条件：`on:` 里 pull_request 缺失或被分支／路径／事件类型过滤，PR 上根本不跑门禁；
 //!   push 不再恰只对 main，每次推 PR 分支都多跑一整套、挤占自托管 runner 那一条队列（ADR-020）。
 //!
@@ -23,8 +24,10 @@ const LINUX: &str = "scripts/test-linux.sh";
 const WORKSPACE_TEST: &str = "cargo --locked test --workspace";
 /// test-linux.sh 须在第一条门禁之前开启的严格模式。
 const STRICT: &str = "set -euo pipefail";
-/// test-linux.sh 里有一行关掉 errexit 时报的缺口。
-const ERREXIT_OFF: &str = "不许有 set +e、set +o errexit 一类关掉 errexit 的行";
+/// test-linux.sh 里有一处关掉 errexit 时报的缺口。
+const ERREXIT_OFF: &str = "不许有 set +e、set +o errexit 一类关掉 errexit 的写法";
+/// test-linux.sh 在服务器上真正执行门禁的那一行：远端 shell 也必须带 errexit。
+const REMOTE: &str = r#"exec flock "$HOME/.cache/studiolo-locks/$STUDIOLO_NAME.lock" bash -euo pipefail -c "$STUDIOLO_RUN""#;
 
 /// ci.yml 的 rust 作业与 test-linux.sh 默认回路都要逐字执行的 Rust 门禁。
 const SHARED: [&str; 4] = [
@@ -89,6 +92,9 @@ fn script_gaps(script: &str) -> Vec<&'static str> {
     }
     if script.lines().any(disables_errexit) {
         gaps.push(ERREXIT_OFF);
+    }
+    if !lines.iter().any(|line| line == REMOTE) {
+        gaps.push(REMOTE);
     }
     gaps
 }
@@ -281,15 +287,7 @@ fn errexit_and_trigger_weakenings_turn_red() {
     assert_eq!(off, [ERREXIT_OFF]);
     assert_eq!(strict(|lines, at| lines[at].clear()), [STRICT]);
     assert_eq!(strict(|lines, at| lines[at..].rotate_left(1)), [STRICT]);
-}
-
-#[test]
-fn errexit_switch_offs_follow_the_documented_pattern() {
-    let off = "set +e|  set +eu|set +xe;|set  +o\terrexit|set +o errexit;";
-    let kept = "set -e|set -euo pipefail|set +x|set +o pipefail|set +o errexits|set+e|echo set +e";
-    for (lines, expected) in [(off, true), (kept, false)] {
-        for line in lines.split('|') {
-            assert_eq!(disables_errexit(line), expected, "{line}");
-        }
-    }
+    // 远端那行换成不带 errexit 的 bash -c，本机脚本照旧严格，服务器上的门禁却全部失效。
+    let remote = script.replace("bash -euo pipefail -c", "bash -c");
+    assert_eq!(script_gaps(&remote), [REMOTE]);
 }
