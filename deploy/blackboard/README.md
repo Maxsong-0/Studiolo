@@ -18,7 +18,7 @@ python3 deploy/blackboard/test_activation.py
 
 生产工具目录保持仓库相对布局：本目录、`deploy/human/release/{release_common,runtime_checks,activation_ops,snapshot_worker}.py` 和 `scripts/{replica_common,replica_store,replica_cleanup}.py`。目录及祖先必须真实、root 或 UID1000 所有、不可组/其他写；文件单链接。部署到专用路径，不从 `/tmp` 或另一个项目的工具目录运行。
 
-UID1000 运行 `prepare.py --source-commit <初始化程序来源提交> --vault-admin <初始化程序绝对路径> --vault-admin-sha256 <摘要> --human-source-commit <人侧程序来源提交> --local-server <人侧程序绝对路径> --local-server-sha256 <摘要>`，生成固定 `assembly.RELEASE` 的全新私有 r2 候选包。它替换人侧程序、派生启动参数和两个服务单元，并加入初始化程序；Auth 管理程序与网页必须仍逐字节匹配 r8。manifest 分别记录两份程序的来源，不能将复用程序冒称为新提交构建。未完成候选保留 `INCOMPLETE`，不自动清理或重试覆盖。
+（历史：r2 首次接线时）UID1000 运行当时版本的 `prepare.py --source-commit <初始化程序来源提交> --vault-admin <初始化程序绝对路径> --vault-admin-sha256 <摘要> --human-source-commit <人侧程序来源提交> --local-server <人侧程序绝对路径> --local-server-sha256 <摘要>`，生成固定 `assembly.RELEASE` 的全新私有 r2 候选包。**这组参数已废弃**，现行用法见文末「现行发行（rN→rN+1）」。它替换人侧程序、派生启动参数和两个服务单元，并加入初始化程序；Auth 管理程序与网页必须仍逐字节匹配 r8。manifest 分别记录两份程序的来源，不能将复用程序冒称为新提交构建。未完成候选保留 `INCOMPLETE`，不自动清理或重试覆盖。
 
 r1 候选从未激活；它已完成一次 canonical 首建。r2 沿用同一已初始化的 canonical/Broker 绑定，不再次执行冻结或初始化。旧 r1 候选、冻结快照和首建审计原样保留。旧 agent 是 root:maxsong 的 0550 冻结程序；预检核验这一既有模式，不修改它的权限。
 
@@ -45,3 +45,23 @@ sudo /usr/bin/python3 -I -B -S /可信工具目录/deploy/blackboard/activate.py
 认证、恢复码计数、会话 epoch、owner 配置以及既有 agent 程序和三个读取范围不变。回执明确区分服务切换成功和尚未验收的权限/本机客户端。停止后故障仅在状态仍属于本次已知配置时恢复旧程序，不回滚数据库；未知认证/单元变化保留现场，标为 `blocked_requires_operator`。断电、SIGKILL 或恢复过程失败须依据私有发布记录人工处理。
 
 切换后还须验证真实 MCP 黑板读取、未授权写入拒绝、原有读取新鲜度、人侧权限草稿与实际 executable。主人亲自完成 Claude/Codex 的 L3 发布后，才能验证授权写入、项目越权拒绝、持久化、撤权，以及两个本机 Consumer 的 claim/heartbeat/return 完整回执。工具测试、候选包、服务启动都不能代替这些生产验收。
+
+## 现行发行（rN→rN+1）
+
+r2 之后每次发行只做「上一发行 → 本发行」：换网页，可选换人侧程序，其余逐字节沿用（`assembly.py` 文件头有沿革，r5→r6 见 T-159）。
+
+1. **改常量**（`assembly.py`）：`OLD_RELEASE`＝上一发行目录、`BUILD`＝新发行号；`HUMAN_SHA`／`AGENT_SHA` 取 169 现场 `/etc/systemd/system/studiolo-{human,agent}.service` 的 sha256；`R8_MANIFEST_SHA` 取上一发行 `manifest.json` 的 sha256。`test_assembly.py` 的发行号断言同步。三个变换函数不改。
+2. **服务器上验工具**：`scripts/test-linux.sh bash -c 'python3 deploy/blackboard/test_assembly.py && python3 deploy/blackboard/test_freeze.py && python3 deploy/blackboard/test_activation.py'`（本机不跑测试）。
+3. **构建**：人侧程序在 githubci 原生 `cargo --locked build --release -p studiolo-local-server --features studiolo-auth/production`；网页在 108 用同一提交 `npm ci && npm run build`。来源提交须已过 CI。
+4. **暂存**（169，UID1000，0700/0600，程序 0755，不用 `/tmp`）：`bin/studiolo-local-server`、`web-dist/`、本目录 `{activate,activation_ops,assembly,prepare}.py` 与 `deploy/human/release/{activation_ops,release_common,runtime_checks,snapshot_worker}.py`，保持仓库相对布局。
+5. **出候选**（UID1000）：
+
+```sh
+/usr/bin/python3 -I -B -S <暂存>/deploy/blackboard/prepare.py \
+  --web <暂存>/web-dist --web-source-commit <40 位提交> \
+  --local-server <暂存>/bin/studiolo-local-server --local-server-sha256 <64 位摘要> --human-source-commit <40 位提交>
+```
+
+   只换网页时省略后三个参数（三件套要么全给要么全不给），程序逐字节沿用上一发行、manifest 照抄其来源。输出 `manifest_sha256`、`human_binary_reused`、`services_changed: false`。
+6. **激活**（用户本人 root）：`sudo /usr/bin/python3 -I -B -S <暂存>/deploy/blackboard/activate.py --manifest-sha256 <上一步的摘要>`。已激活后重复执行会在预检被拒（现场已不是上一发行），无副作用。
+
