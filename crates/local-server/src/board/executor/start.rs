@@ -1,4 +1,4 @@
-//! Attach the restart-safe identity before any capability can reach a live process.
+//! 先挂接重启后仍可识别的身份，之后任何能力才能到达活进程。
 use super::{ActiveRun, Binding, RunSummary, RunnerPlane, StartRequest};
 use std::{
     fs::{File, OpenOptions},
@@ -11,7 +11,7 @@ use studiolo_runner_adapter::{RealRunner, RunnerAdapter, RunnerRef};
 use studiolo_task_engine::TaskEngine;
 
 impl RunnerPlane {
-    /// Starts one explicitly selected authenticated work item; HTTP must enforce owner approval.
+    /// 启动一个显式选定、经认证的工作项；主人批准须由 `HTTP` 层强制执行。
     pub fn start_task(&self, r: StartRequest) -> Result<RunSummary, String> {
         if self.authority.frozen.load(Ordering::SeqCst) {
             return Err("Runner全局冻结".into());
@@ -193,7 +193,7 @@ impl RunnerPlane {
             if let Ok(mut engine) = self.authority.board.engine.lock() {
                 let now = jiff::Timestamp::now().as_millisecond();
                 if isolated.is_ok() && retryable_launch {
-                    // Only a typed pre-tool launch failure can enter the engine retry policy.
+                    // 只有带类型、发生在任何工具调用之前的启动失败，才能进入引擎重试策略。
                     let _ = engine.launch_failed(spec.task_id, spec.attempt_id, spec.fence, now);
                 } else {
                     let _ = engine.command(
@@ -215,7 +215,7 @@ impl RunnerPlane {
                     }
                 }
             }
-            // Audit below is still attempted when isolation or ticket cleanup failed.
+            // 即使隔离或票据清理失败，下面仍会尝试写审计。
         }
         self.authority.board.event(
             &request,

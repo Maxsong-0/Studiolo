@@ -43,7 +43,7 @@ fn freeze_waits_for_entered_start_and_rejects_later_spawns() {
         finished.try_recv(),
         Err(mpsc::TryRecvError::Empty)
     ));
-    // This models the already-admitted spawn finishing before freeze can acknowledge completion.
+    // 模拟已获准入的派生先行结束，冻结随后才能确认完成。
     drop(start);
     finished.recv().unwrap();
     thread.join().unwrap();

@@ -1,4 +1,4 @@
-//! Fresh canonical claim, policy, lineage and classification checks for every relay boundary.
+//! 每个 `relay` 边界都重新核验 `canonical` 认领、策略、`lineage` 与分级。
 use super::{Binding, RunnerConfig};
 use crate::board::{BoardPlane, requests::Request};
 use std::{
@@ -98,7 +98,7 @@ impl RelayPolicyGuard for Authority {
         {
             return Err(RelayError::Denied);
         }
-        // The private configuration is immutable for this process; every revision/classification is exact.
+        // 私有配置在本进程内不可变；其中每个 `revision` 与分级都是精确值。
         let configured = self
             .config
             .projects

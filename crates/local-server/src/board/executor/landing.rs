@@ -1,4 +1,4 @@
-//! Owner-only code landing. No commit, push, ref update or synthetic candidate acceptance.
+//! 仅限主人的代码落地：不提交、不推送、不更新 `ref`，也不接受合成的候选。
 use super::{RunnerPlane, landing_candidate::Candidate, landing_store::Lease};
 use serde::{Deserialize, Serialize};
 use std::sync::{MutexGuard, atomic::Ordering};
@@ -6,25 +6,25 @@ use studiolo_audit_ledger::AuditPhase;
 use studiolo_core::{AttemptId, TaskId};
 use studiolo_runner_adapter::{CodeSnapshot, apply_code_patch};
 
-/// Safe human response with exact candidate binding; no host path or patch body.
+/// 面向人侧的安全响应，精确绑定候选；不含宿主机路径或补丁正文。
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CodeLandingResult {
-    /// Owning task.
+    /// 所属任务。
     pub task_id: TaskId,
-    /// Candidate attempt.
+    /// 产出候选的尝试。
     pub attempt_id: AttemptId,
-    /// Verified binary patch digest.
+    /// 已核验的二进制补丁摘要。
     pub patch_sha256: String,
-    /// Commit observed before and after application; never changed by landing.
+    /// 应用补丁前后观察到的提交；落地从不改动它。
     pub expected_head: String,
-    /// Exact worktree tree required for successful landing and later acceptance.
+    /// 落地成功与后续验收所要求的精确工作树 `tree`。
     pub after_tree: String,
-    /// True only after exact resulting tree and conflict checks.
+    /// 只有结果 `tree` 精确核对与冲突检查都通过后才为 `true`。
     pub applied: bool,
-    /// Whether this is a repeat of a previously persisted result.
+    /// 是否为此前已持久化结果的重放。
     pub replayed: bool,
-    /// Repository-relative conflict paths, if any.
+    /// 相对仓库根的冲突路径；无冲突则为空。
     pub conflicts: Vec<String>,
 }
 #[derive(Serialize, Deserialize)]
@@ -36,14 +36,14 @@ struct Intent {
     head: String,
     repository_identity: String,
 }
-/// Retain this guard through engine.review_board_candidates, without awaiting while holding it.
+/// 在 `engine.review_board_candidates` 全程持有此守卫，持有期间不得 `await`。
 pub struct CodeLandingReviewGuard<'a> {
     _admission: MutexGuard<'a, ()>,
     _lease: Lease,
 }
 impl RunnerPlane {
-    /// Caller must require the current human session and L3 before this trusted operation.
-    /// Global model freeze does not block human review; revoked project permission does.
+    /// 调用方须在执行这一受信任操作之前要求当前人侧会话与 L3。
+    /// 全局模型冻结不阻止人工审阅；项目权限被撤销则会阻止。
     pub fn land_candidate(
         &self,
         task: TaskId,
@@ -106,7 +106,7 @@ impl RunnerPlane {
             result.replayed = true;
             return Ok(result);
         }
-        // Denied CAS never writes an intent or touches the repository worktree.
+        // `CAS` 被拒时绝不写入意图，也不触碰仓库工作树。
         plan.verify_base()
             .map_err(|_| "HEAD或完整脏工作树与候选基线不匹配")?;
         self.authority
@@ -120,7 +120,7 @@ impl RunnerPlane {
             "code_landing_requested",
         )?;
         lease.write(&key, "intent", &intent)?;
-        // Invalidate shared metadata before effects; a crash must not reuse the old baseline.
+        // 产生副作用之前先作废共享元数据；崩溃后不得沿用旧基线。
         for profile in &self.authority.config.providers {
             CodeSnapshot::invalidate_cache(&profile.attempt_root)
                 .map_err(|_| "快照缓存失效未确认；落地保持未决")?;
@@ -151,7 +151,7 @@ impl RunnerPlane {
         )?;
         Ok(result)
     }
-    /// Human Completed review must hold this guard until the engine records its decision.
+    /// 人工 `Completed` 审阅须一直持有此守卫，直到引擎记下审阅结论。
     pub fn require_landed_candidate(
         &self,
         task: TaskId,

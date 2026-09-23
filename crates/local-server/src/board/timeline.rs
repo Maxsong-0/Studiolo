@@ -1,4 +1,4 @@
-//! Project replay joins bounded authoritative event pages with fresh dated log pointers.
+//! 项目回放把有界的权威事件分页与新鲜的带日期日志指针合并。
 use super::{
     BoardPlane,
     http::{busy, unavailable, unconfigured},
@@ -70,8 +70,8 @@ pub(super) async fn timeline(
             .iter()
             .map(|t| t.task.task_id)
             .collect::<BTreeSet<_>>();
-        // Scan at most 1001 global metadata records per page. The cursor advances even
-        // across unrelated projects; it is never an assertion that their events were absent.
+        // 每页至多扫描 1001 条全局元数据记录。即使跨过的是无关项目，游标也照样前进；
+        // 游标前进从不断言被跨过范围内的事件不存在。
         let records = plane
             .audit
             .query(

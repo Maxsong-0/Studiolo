@@ -1,4 +1,4 @@
-//! Trusted production Runner composition; omitted configuration leaves it unavailable.
+//! 受信任的生产 `Runner` 组装；未提供配置时它不可用。
 mod admission;
 mod authority;
 mod cleanup;
@@ -52,32 +52,32 @@ struct ActiveRun {
     cleanup_pending: bool,
     launch_failed: bool,
 }
-/// Safe read-only projection of a controlled execution; no prompt, response or credential.
+/// 受控执行的安全只读投影；不含提示词、响应或凭据。
 #[derive(Clone, Debug, Serialize)]
 pub struct RunSummary {
-    /// Owning task.
+    /// 所属任务。
     pub task_id: TaskId,
-    /// Attempt identity.
+    /// 尝试身份。
     pub attempt_id: AttemptId,
-    /// Pinned adapter kind.
+    /// 钉死的适配器类型。
     pub adapter: String,
-    /// Lifecycle projection: running, candidate_review, candidate_retained, stopped or failed.
+    /// 生命周期投影：`running`、`candidate_review`、`candidate_retained`、`stopped` 或 `failed`。
     pub state: String,
-    /// Observed monotonic counters.
+    /// 观察到的单调计数器。
     pub progress: RunnerProgress,
 }
-/// Authenticated caller chooses a work item and initiating identity, never execution paths/keys.
+/// 经认证的调用方只选择工作项与发起身份，绝不指定执行路径或密钥。
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct StartRequest {
-    /// Explicit work item to run.
+    /// 要运行的显式工作项。
     pub task_id: TaskId,
-    /// Registered initiating AI type, reauthorized by the plane.
+    /// 已登记的发起方 `AI` 类型，由平面重新授权。
     pub agent_type: String,
-    /// Registered initiating instance, including ancestor revocation checks.
+    /// 已登记的发起实例，含祖先撤销检查。
     pub instance_id: String,
 }
-/// Default-frozen Runner/Gateway plane, held by the main application.
+/// 默认冻结的 `Runner`／`Gateway` 平面，由主应用持有。
 pub struct RunnerPlane {
     authority: Arc<authority::Authority>,
     relay: Arc<DurableRelay>,
@@ -96,7 +96,7 @@ pub(super) fn hash(bytes: &[u8]) -> String {
         .collect()
 }
 fn permissions(mut values: impl Iterator<Item = String>) -> studiolo_core::PermissionSet {
-    // Unknown logical tools are not silently introduced through a deployment string.
+    // 未知的逻辑工具不会借部署字符串被悄悄引入。
     let allowed = values.any(|tool| tool == "model.relay");
     studiolo_core::PermissionSet::new(if allowed {
         vec![studiolo_core::ToolId::from_static("model.relay")]
@@ -105,7 +105,7 @@ fn permissions(mut values: impl Iterator<Item = String>) -> studiolo_core::Permi
     })
 }
 impl RunnerPlane {
-    /// Opens the plane without launching a process, reading a model key or permitting egress.
+    /// 打开平面，但不启动进程、不读取模型密钥，也不放行外发。
     pub fn open(board: Arc<BoardPlane>, config: RunnerConfig) -> Result<Arc<Self>, String> {
         {
             let engine = board.engine.lock().map_err(|_| "黑板不可用")?;
@@ -165,7 +165,7 @@ impl RunnerPlane {
             ingress_thread: Mutex::new(None),
         }))
     }
-    /// Starts a single bounded Unix ingress loop; call once after successful open.
+    /// 启动唯一一个有界的 `Unix` 入口循环；成功打开之后调用一次。
     pub fn serve(self: &Arc<Self>) -> Result<(), String> {
         let _admission = self.admission.lock()?;
         if self.stop.load(Ordering::SeqCst) {
@@ -195,19 +195,19 @@ impl RunnerPlane {
         *self.ingress_thread.lock().map_err(|_| "Runner监听不可用")? = Some(thread);
         Ok(())
     }
-    /// Reads the current admission gate without rerunning deployment probes.
+    /// 读取当前准入闸门，不重跑部署探针。
     #[must_use]
     pub fn is_frozen(&self) -> bool {
         self.authority.frozen.load(Ordering::SeqCst)
     }
-    /// Freezes immediately; unfreeze requires all configured runtime profiles to pass live probes.
+    /// 冻结立即生效；解冻要求所有已配置的运行时配置档都通过实时探针。
     pub fn freeze(&self, frozen: bool) -> Result<(), String> {
         if frozen {
             self.admission.invalidate();
             self.authority.frozen.store(true, Ordering::SeqCst);
-            // Wait for a previously admitted start to finish before acknowledging freeze.
+            // 确认冻结之前，先等此前已获准入的启动完成。
             let _admission = self.admission.lock()?;
-            // Also invalidate probes which entered while an older start held the barrier.
+            // 同时作废在旧启动持有屏障期间进入的探针。
             self.admission.invalidate();
             self.authority.frozen.store(true, Ordering::SeqCst);
             return self
@@ -248,7 +248,7 @@ impl RunnerPlane {
             },
         )
     }
-    /// Safe status projection for authenticated owner views.
+    /// 供经认证的主人视图使用的安全状态投影。
     pub fn replay(&self) -> Result<Vec<RunSummary>, String> {
         Ok(self
             .runs
@@ -258,7 +258,7 @@ impl RunnerPlane {
             .map(|r| r.summary.clone())
             .collect())
     }
-    /// Revokes admissions and isolates all current process scopes before host shutdown.
+    /// 宿主机关停之前撤销准入，并隔离当前全部进程 `scope`。
     pub fn shutdown(&self) -> Result<(), String> {
         self.admission.close();
         self.stop.store(true, Ordering::SeqCst);
@@ -288,8 +288,8 @@ impl RunnerPlane {
 
 impl Drop for RunnerPlane {
     fn drop(&mut self) {
-        // PreparedServer error paths can drop this plane before serve/shutdown is reached.
-        // Also stop a serving thread so its relay/Board/Writer ownership cannot outlive us.
+        // `PreparedServer` 的错误路径可能在走到 `serve`／`shutdown` 之前就析构本平面。
+        // 同时停掉服务线程，使它对 `relay`／`Board`／`Writer` 的所有权不会比本平面活得更久。
         let _ = self.shutdown();
     }
 }

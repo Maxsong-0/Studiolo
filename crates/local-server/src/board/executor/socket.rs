@@ -1,4 +1,4 @@
-//! Socket ownership is pinned to a parent FD and inode; cleanup cannot target a replacement.
+//! `socket` 的归属钉在父目录 `FD` 与 `inode` 上；清理不会误中替换进来的文件。
 use rustix::fs::{AtFlags, FileType, Mode, OFlags, Stat, chmodat, open, statat, unlinkat};
 use std::{
     fs::File,
@@ -67,7 +67,7 @@ impl SocketLease {
         Ok(())
     }
     pub fn cleanup(&self) -> Result<(), String> {
-        // Once released, never revisit this name: a later socket may reuse the inode number.
+        // 一旦释放就不再回头处理这个名字：之后的 `socket` 可能复用同一 `inode` 号。
         if self.released.swap(true, Ordering::SeqCst) {
             return Ok(());
         }

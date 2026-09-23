@@ -1,4 +1,4 @@
-//! Metadata-only Gateway seals preserve raw isolation and do not occupy final artifact manifests.
+//! 只含元数据的 `Gateway` 封存保持 `raw` 隔离，也不占用最终产物清单。
 use super::{authority::Authority, hash};
 use std::{fs, path::Path, sync::Arc};
 use studiolo_gateway::{
@@ -61,7 +61,7 @@ impl RelayPublisher for Publisher {
             .engine
             .lock()
             .map_err(|_| RelayError::Publication)?;
-        // Guard and commit share the engine lock, so cancellation cannot pass between them.
+        // 守卫检查与提交共用引擎锁，取消因此插不进二者之间。
         if !engine
             .control_db()
             .is_attempt_active_at(
