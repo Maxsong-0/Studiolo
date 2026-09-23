@@ -112,12 +112,20 @@ fn successful_create_and_replace_have_distinct_fingerprints() {
 #[test]
 fn request_budgets_match_before_memory_or_disk_can_write() {
     each(|broker| {
+        // 空幂等键无法绑定任何请求；两个适配器拒绝一致。
+        assert!(matches!(
+            broker.mutate(Mutation::create(path(), vec![], "")),
+            Err(BrokerError::IdempotencyConflict)
+        ));
+        // 超长键与超大正文超出固定预算，写入前即拒绝。
         for request in [
-            Mutation::create(path(), vec![], ""),
             Mutation::create(path(), vec![], "x".repeat(4097)),
             Mutation::create(path(), vec![0; 4 * 1024 * 1024 + 1], "large"),
         ] {
-            assert!(broker.mutate(request).is_err());
+            assert!(matches!(
+                broker.mutate(request),
+                Err(BrokerError::WriterLimitExceeded)
+            ));
         }
         assert!(matches!(
             broker.read(&path()),
@@ -178,7 +186,10 @@ fn replay_query_returns_original_rejection_and_rechecks_binding() {
         .mutate(Mutation::create(path(), b"A".to_vec(), "first"))
         .unwrap();
     let rejected = Mutation::create(path(), b"B".to_vec(), "rejected");
-    assert!(broker.mutate(rejected.clone()).is_err());
+    assert!(matches!(
+        broker.mutate(rejected.clone()),
+        Err(BrokerError::RevisionConflict { actual, .. }) if actual == Some(first.revision)
+    ));
     std::fs::remove_file(root.join("note.md")).unwrap();
     assert!(
         matches!(broker.mutation_replay(&rejected), Err(BrokerError::RevisionConflict { actual, .. }) if actual == Some(first.revision))
@@ -187,5 +198,9 @@ fn replay_query_returns_original_rejection_and_rechecks_binding() {
     let changed = root.join(".workbench/replacement.json");
     std::fs::write(&changed, std::fs::read(&marker).unwrap()).unwrap();
     std::fs::rename(changed, marker).unwrap();
-    assert!(broker.mutation_replay(&rejected).is_err());
+    // 同 UUID、同字节但换了文件身份的 marker 也不能通过配对复核。
+    assert!(matches!(
+        broker.mutation_replay(&rejected),
+        Err(BrokerError::WriterBindingMismatch)
+    ));
 }

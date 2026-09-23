@@ -41,6 +41,10 @@ impl Fixture {
         fs::write(target, body).unwrap();
     }
 }
+/// 选择或补充路径本身非法（排除、越界、文件/目录歧义等）时的稳定拒绝原因。
+const INVALID: &str = "invalid canonical sync observation selection";
+/// 私有模式属主或权限不符时的稳定操作标签。
+const UNSAFE_MODE: &str = "private read-only node has unsafe ownership or permissions";
 fn path(raw: &str) -> VaultPath {
     VaultPath::parse(raw).unwrap()
 }

@@ -6,7 +6,7 @@ use std::{
     path::{Path, PathBuf},
 };
 use studiolo_core::VaultPath;
-use studiolo_vault_broker::FsVaultBroker;
+use studiolo_vault_broker::{BrokerError, FsVaultBroker};
 use tempfile::TempDir;
 
 pub(super) struct Fixture {
@@ -44,6 +44,28 @@ impl Fixture {
 
 pub(super) fn path(value: &str) -> VaultPath {
     VaultPath::parse(value).unwrap()
+}
+
+/// 写者记录被换成指向外部的符号链接时的拒绝：Linux 由 openat2 的 no-link/beneath
+/// 解析拒绝，其他 Unix 由 cap-std 的根内解析拒绝越界；两者都在读取任何字节之前失败。
+pub(super) fn linked_record(error: &BrokerError) -> bool {
+    if cfg!(target_os = "linux") {
+        matches!(
+            error,
+            BrokerError::UnsafeNode {
+                reason: "file failed Linux beneath/no-link resolution",
+                ..
+            }
+        )
+    } else {
+        matches!(
+            error,
+            BrokerError::Io {
+                operation: "open Vault object",
+                ..
+            }
+        )
+    }
 }
 
 #[derive(Debug, PartialEq, Eq)]

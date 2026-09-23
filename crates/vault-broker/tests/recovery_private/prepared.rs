@@ -84,11 +84,13 @@ fn cancelled_terminal_reopens_after_terminal_or_cleanup_interruptions() {
         let (mut broker, request) = f.interrupted(1);
         let review = broker.pending_mutation().unwrap().unwrap();
         interrupt(&broker, point);
-        assert!(
-            broker
-                .reconcile_pending(&review, PendingDecision::CancelPrepared)
-                .is_err()
-        );
+        assert!(matches!(
+            broker.reconcile_pending(&review, PendingDecision::CancelPrepared),
+            Err(BrokerError::Io {
+                operation: "injected writer interruption",
+                ..
+            })
+        ));
         drop(broker);
         let mut reopened = f.open();
         assert_ready(&reopened);
@@ -113,7 +115,14 @@ fn wrong_decision_and_changed_original_input_consume_the_review_without_unlockin
                 original_content: b"wrong".to_vec(),
             }
         };
-        assert!(broker.reconcile_pending(&review, decision).is_err());
+        // 对仅 Prepared 的操作选择保全属于决定不适用；原始内容不符则与原请求冲突。
+        let result = broker.reconcile_pending(&review, decision);
+        let rejected = if point == 1 {
+            matches!(&result, Err(BrokerError::MutationUnresolved))
+        } else {
+            matches!(&result, Err(BrokerError::IdempotencyConflict))
+        };
+        assert!(rejected, "point {point}: {:?}", result.err());
         assert!(broker.write_status().unwrap().unresolved);
         assert!(matches!(
             broker.reconcile_pending(&review, PendingDecision::CancelPrepared),

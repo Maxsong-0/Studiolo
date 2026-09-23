@@ -60,15 +60,23 @@ fn readers_share_the_root_without_acquiring_writer_authority() {
     drop(readonly);
 }
 
+/// 子进程入口的精确测试名，父测试以 `--ignored --exact` 只运行这一项。
+const WRITER_CHILD: &str = "locks::writer_child";
+
+/// 子进程参数一律来自父测试自有夹具；缺失即说明不是父测试调起，必须失败而不是计为通过。
+fn child_argument(name: &str) -> std::ffi::OsString {
+    std::env::var_os(name)
+        .unwrap_or_else(|| panic!("{WRITER_CHILD} 只能由父测试以子进程方式调起：缺少 {name}"))
+}
+
 // 子进程只运行当前测试二进制中的这一入口，所有参数都是父测试自有夹具路径。
 #[test]
+#[ignore = "仅由父测试以子进程方式调起"]
 fn writer_child() {
-    let Some(vault) = std::env::var_os("STUDIOLO_WRITER_TEST_VAULT") else {
-        return;
-    };
-    let data = std::env::var_os("STUDIOLO_WRITER_TEST_DATA").unwrap();
-    let ready = std::env::var_os("STUDIOLO_WRITER_TEST_READY").unwrap();
-    let release = std::env::var_os("STUDIOLO_WRITER_TEST_RELEASE").unwrap();
+    let vault = child_argument("STUDIOLO_WRITER_TEST_VAULT");
+    let data = child_argument("STUDIOLO_WRITER_TEST_DATA");
+    let ready = child_argument("STUDIOLO_WRITER_TEST_READY");
+    let release = child_argument("STUDIOLO_WRITER_TEST_RELEASE");
     let writer = FsVaultBroker::open_existing(Path::new(&vault), Path::new(&data)).unwrap();
     fs::write(ready, b"locked").unwrap();
     let deadline = Instant::now() + Duration::from_secs(20);
@@ -130,7 +138,7 @@ fn real_child_holds_the_root_lock_until_drop_or_process_exit() {
         fs::create_dir(&other).unwrap();
         let mut child = OwnedChild(
             Command::new(std::env::current_exe().unwrap())
-                .args(["--exact", "locks::writer_child", "--nocapture"])
+                .args(["--ignored", "--exact", WRITER_CHILD, "--nocapture"])
                 .env("STUDIOLO_WRITER_TEST_VAULT", &fixture.vault)
                 .env("STUDIOLO_WRITER_TEST_DATA", &fixture.data)
                 .env("STUDIOLO_WRITER_TEST_READY", &ready)

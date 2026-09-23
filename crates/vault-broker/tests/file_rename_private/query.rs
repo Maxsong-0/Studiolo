@@ -24,7 +24,11 @@ fn query_is_read_only_before_enable_and_during_prepared_and_outcome_pending() {
         fs::read(fixture.data.join("writer-state.json")).unwrap(),
         prepared
     );
-    assert!(broker.enable_file_rename().is_err());
+    // 已有在途文件操作时不能改写启用标记。
+    assert!(matches!(
+        broker.enable_file_rename(),
+        Err(BrokerError::MutationUnresolved)
+    ));
     intent(&mut broker, &ticket);
     let committed = broker.commit_file_operation(&ticket).unwrap();
     drop(ticket);
@@ -40,7 +44,10 @@ fn query_is_read_only_before_enable_and_during_prepared_and_outcome_pending() {
         fs::read(fixture.data.join("writer-state.json")).unwrap(),
         awaiting
     );
-    assert!(broker.enable_file_rename().is_err());
+    assert!(matches!(
+        broker.enable_file_rename(),
+        Err(BrokerError::MutationUnresolved)
+    ));
     drop(broker);
     let mut broker = fixture.reopen();
     assert!(broker.file_rename_enabled().unwrap());

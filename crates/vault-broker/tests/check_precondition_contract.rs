@@ -163,27 +163,34 @@ fn budgets_and_storage_bindings_fail_before_new_terminal_is_created() {
     let f = Fixture::new();
     let mut broker = f.broker();
     let journal = f.journal();
+    // 空幂等键、超预算请求与保护路径都在建立新终态之前被拒绝。
+    assert!(matches!(
+        broker.check_precondition(&Mutation::create(path(), vec![], "")),
+        Err(BrokerError::IdempotencyConflict)
+    ));
     for request in [
-        Mutation::create(path(), vec![], ""),
         Mutation::create(path(), vec![], "x".repeat(4097)),
         Mutation::create(path(), vec![0; 4 * 1024 * 1024 + 1], "large"),
-        Mutation::create(
-            VaultPath::parse(".workbench/private.md").unwrap(),
-            vec![],
-            "protected",
-        ),
     ] {
-        assert!(broker.check_precondition(&request).is_err());
+        assert!(matches!(
+            broker.check_precondition(&request),
+            Err(BrokerError::WriterLimitExceeded)
+        ));
     }
+    let protected = VaultPath::parse(".workbench/private.md").unwrap();
+    assert!(matches!(
+        broker.check_precondition(&Mutation::create(protected.clone(), vec![], "protected")),
+        Err(BrokerError::ProtectedPath(rejected)) if rejected == protected
+    ));
     assert_eq!(f.journal(), journal);
     let binding = f.data.join("broker-binding.json");
     let replacement = f.data.join("replacement.json");
     fs::write(&replacement, fs::read(&binding).unwrap()).unwrap();
     fs::rename(replacement, binding).unwrap();
-    assert!(
-        broker
-            .check_precondition(&Mutation::create(path(), vec![], "bound"))
-            .is_err()
-    );
+    // data 侧绑定记录换了文件身份（字节不变）也必须拒绝。
+    assert!(matches!(
+        broker.check_precondition(&Mutation::create(path(), vec![], "bound")),
+        Err(BrokerError::WriterBindingMismatch)
+    ));
     assert_eq!(fs::read_dir(f.data.join("idempotency")).unwrap().count(), 0);
 }

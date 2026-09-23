@@ -1,6 +1,6 @@
 //! Existing identity, zero creation, and rejection of changed canonical bindings.
 
-use std::{fs, os::unix::fs::symlink, path::Path};
+use std::{fs, io::ErrorKind, os::unix::fs::symlink, path::Path};
 use studiolo_core::VaultUuid;
 use studiolo_vault_broker::{BrokerError, CanonicalReadVault};
 
@@ -24,7 +24,13 @@ fn opens_and_reads_without_creating_or_changing_any_source_or_data_file() {
 fn a_missing_root_or_identity_is_never_initialized() {
     let temp = tempfile::tempdir().unwrap();
     let root = temp.path().join("missing");
-    assert!(CanonicalReadVault::open_existing(&root).is_err());
+    assert!(matches!(
+        CanonicalReadVault::open_existing(&root),
+        Err(BrokerError::Io {
+            operation: "open read-only root",
+            source,
+        }) if source.kind() == ErrorKind::NotFound
+    ));
     assert!(!root.exists());
     fs::create_dir(&root).unwrap();
     let before = inventory(temp.path());
@@ -40,7 +46,13 @@ fn a_missing_root_or_identity_is_never_initialized() {
         Err(BrokerError::CorruptIdentity)
     ));
     assert_eq!(inventory(temp.path()), before);
-    assert!(CanonicalReadVault::open_existing(Path::new("relative-vault")).is_err());
+    assert!(matches!(
+        CanonicalReadVault::open_existing(Path::new("relative-vault")),
+        Err(BrokerError::Io {
+            operation: "open canonical root",
+            ..
+        })
+    ));
 }
 
 #[test]
@@ -137,7 +149,18 @@ fn symlink_roots_and_identity_links_are_never_followed() {
         alias.join("."),
         Path::new(&format!("{}/", alias.display())).to_owned(),
     ] {
-        assert!(CanonicalReadVault::open_existing(&root).is_err());
+        // 结尾 `.` 与斜杠被规整掉，最后一级链接仍按 NOFOLLOW 拒绝。
+        assert!(
+            matches!(
+                CanonicalReadVault::open_existing(&root),
+                Err(BrokerError::Io {
+                    operation: "open read-only root",
+                    ..
+                })
+            ),
+            "{}",
+            root.display()
+        );
     }
     let marker_copy = fixture.directory.path().join("identity-copy");
     fs::rename(fixture.marker(), &marker_copy).unwrap();

@@ -9,7 +9,13 @@ fn direct_v2_evidence_and_terminal_interruptions_keep_unknown_and_upgrade_only_o
         let (mut broker, request, op, original) = old_pending(&f, LARGE);
         let review = broker.pending_mutation().unwrap().unwrap();
         interrupt(&broker, point);
-        assert!(broker.reconcile_pending(&review, preserve()).is_err());
+        assert!(matches!(
+            broker.reconcile_pending(&review, preserve()),
+            Err(BrokerError::Io {
+                operation: "injected writer interruption",
+                ..
+            })
+        ));
         // 此时 v2 包已经完整，但 State 仍是旧 Installing，水位从未变成成功。
         let state = crate::mutation::load(&broker).unwrap();
         assert_eq!(state.format_version, 2);
@@ -61,7 +67,11 @@ fn maintenance_reopen_keeps_exact_intent_review_and_never_calls_unreferenced_evi
             .unwrap();
         let intent = ticket.intent().clone();
         interrupt(&broker, point);
-        assert!(broker.commit_maintenance(ticket).is_err());
+        // 维护提交在故障点中断后不报成功，也不报注入错误本身：写者进入未决。
+        assert!(matches!(
+            broker.commit_maintenance(ticket),
+            Err(BrokerError::MutationUnresolved)
+        ));
         let state = crate::mutation::load(&broker).unwrap();
         assert_eq!(state.format_version, 3);
         assert!(state.operation.is_some());

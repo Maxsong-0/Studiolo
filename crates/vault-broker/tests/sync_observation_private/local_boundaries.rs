@@ -26,9 +26,21 @@ fn private_modes_are_checked_at_begin_finish_and_final_revalidation() {
             if target == "notes/a" { 0o640 } else { 0o750 },
         );
         reset();
-        assert!(reader.finish_scoped_observation(survey, &[]).is_err());
+        assert!(matches!(
+            reader.finish_scoped_observation(survey, &[]),
+            Err(BrokerError::Io {
+                operation: UNSAFE_MODE,
+                ..
+            })
+        ));
         assert_eq!(count(1), 0);
-        assert!(reader.begin_scoped_observation(&selection(), &[]).is_err());
+        assert!(matches!(
+            reader.begin_scoped_observation(&selection(), &[]),
+            Err(BrokerError::Io {
+                operation: UNSAFE_MODE,
+                ..
+            })
+        ));
         mode(
             &f.root.join(target),
             if target == "notes/a" { 0o600 } else { 0o700 },
@@ -39,7 +51,13 @@ fn private_modes_are_checked_at_begin_finish_and_final_revalidation() {
             &f.root.join(target),
             if target == "notes/a" { 0o644 } else { 0o755 },
         );
-        assert!(reader.revalidate_scoped_observation(&result).is_err());
+        assert!(matches!(
+            reader.revalidate_scoped_observation(&result),
+            Err(BrokerError::Io {
+                operation: UNSAFE_MODE,
+                ..
+            })
+        ));
     }
 }
 
@@ -51,7 +69,13 @@ fn private_modes_remain_checked_during_body_and_inherited_child_reader() {
         let survey = reader.begin_scoped_observation(&selection(), &[]).unwrap();
         let target = f.root.join("notes/a");
         let _fault = fault(phase, move || mode(&target, 0o644));
-        assert!(reader.finish_scoped_observation(survey, &[]).is_err());
+        assert!(matches!(
+            reader.finish_scoped_observation(survey, &[]),
+            Err(BrokerError::Io {
+                operation: UNSAFE_MODE,
+                ..
+            })
+        ));
         assert!(count(phase) > 0);
     }
     let f = private_fixture();
@@ -67,7 +91,13 @@ fn private_modes_remain_checked_during_body_and_inherited_child_reader() {
     };
     let survey = child.begin_scoped_observation(&selection, &[]).unwrap();
     mode(&f.root.join("notes/a"), 0o644);
-    assert!(child.finish_scoped_observation(survey, &[]).is_err());
+    assert!(matches!(
+        child.finish_scoped_observation(survey, &[]),
+        Err(BrokerError::Io {
+            operation: UNSAFE_MODE,
+            ..
+        })
+    ));
 }
 
 #[test]
@@ -126,7 +156,19 @@ fn local_selected_symlink_hardlink_and_fifo_fail_before_body() {
         }
         let reader = ReadOnlyVault::open(&f.root).unwrap();
         reset();
-        assert!(reader.begin_scoped_observation(&selection(), &[]).is_err());
+        // 链接按链接拒绝；硬链接与 FIFO 都不是唯一普通文件。硬链接两个名字谁先被枚举
+        // 取决于目录顺序，只断言拒绝原因。
+        let expected = if attack == 0 {
+            "linked or cross-device sync object"
+        } else {
+            "sync observation requires unique regular file"
+        };
+        let result = reader.begin_scoped_observation(&selection(), &[]);
+        assert!(
+            matches!(&result, Err(BrokerError::UnsafeNode { reason, .. }) if *reason == expected),
+            "attack {attack}: {:?}",
+            result.err()
+        );
         assert_eq!(count(1), 0);
     }
 }
@@ -141,7 +183,10 @@ fn local_surveys_and_final_proofs_reject_other_reader_or_reopened_instance() {
         .begin_scoped_observation(&selection(), &[])
         .unwrap();
     reset();
-    assert!(different.finish_scoped_observation(survey, &[]).is_err());
+    assert!(matches!(
+        different.finish_scoped_observation(survey, &[]),
+        Err(BrokerError::CaptureChanged)
+    ));
     assert_eq!(count(1), 0);
     let survey = original
         .begin_scoped_observation(&selection(), &[])
@@ -152,9 +197,18 @@ fn local_surveys_and_final_proofs_reject_other_reader_or_reopened_instance() {
         .unwrap();
     drop(original);
     let reopened = ReadOnlyVault::open(&f.root).unwrap();
-    assert!(reopened.finish_scoped_observation(unfinished, &[]).is_err());
-    assert!(reopened.revalidate_scoped_observation(&proof).is_err());
-    assert!(different.revalidate_scoped_observation(&proof).is_err());
+    assert!(matches!(
+        reopened.finish_scoped_observation(unfinished, &[]),
+        Err(BrokerError::CaptureChanged)
+    ));
+    assert!(matches!(
+        reopened.revalidate_scoped_observation(&proof),
+        Err(BrokerError::CaptureChanged)
+    ));
+    assert!(matches!(
+        different.revalidate_scoped_observation(&proof),
+        Err(BrokerError::CaptureChanged)
+    ));
 }
 
 #[test]

@@ -59,11 +59,13 @@ fn changed_journal_and_binding_replacement_reject_before_coordination() {
         let replacement = changed.with_extension("replacement");
         fs::write(&replacement, fs::read(&changed).unwrap()).unwrap();
         fs::rename(replacement, changed).unwrap();
-        assert!(
-            broker
-                .reconcile_pending(&review, PendingDecision::CancelPrepared)
-                .is_err()
-        );
+        // 日志换了文件身份使审阅所依据的捕获失效；marker 与 data 绑定被换属于配对不符。
+        let result = broker.reconcile_pending(&review, PendingDecision::CancelPrepared);
+        let rejected = match damage {
+            "journal" => matches!(&result, Err(BrokerError::CaptureChanged)),
+            _ => matches!(&result, Err(BrokerError::WriterBindingMismatch)),
+        };
+        assert!(rejected, "{damage}: {:?}", result.err());
         assert_eq!(fs::read(f.root.join("note.md")).unwrap(), b"old");
         assert!(f.data.join("idempotency").read_dir().unwrap().all(|entry| {
             !String::from_utf8_lossy(&fs::read(entry.unwrap().path()).unwrap())
@@ -86,7 +88,13 @@ fn corrupted_stage_or_old_history_does_not_unlock_an_unknown_installation() {
                 .join(review.previous_revision().unwrap().to_string())
         };
         fs::write(file, b"forged").unwrap();
-        assert!(broker.reconcile_pending(&review, preserve()).is_err());
+        // 伪造的 stage 与审阅时的捕获不符；伪造的旧历史违反已记录的持久内容证明。
+        let result = broker.reconcile_pending(&review, preserve());
+        let rejected = match damaged {
+            "stage" => matches!(&result, Err(BrokerError::CaptureChanged)),
+            _ => matches!(&result, Err(BrokerError::CorruptWriterState)),
+        };
+        assert!(rejected, "{damaged}: {:?}", result.err());
         assert!(broker.write_status().unwrap().read_blocked);
         assert_eq!(broker.write_status().unwrap().committed_through, 1);
     }

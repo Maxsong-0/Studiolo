@@ -3,7 +3,10 @@ use super::*;
 fn checked_reservation_accounts_two_l0_stage_quarantine_and_six_roles() {
     let bytes = ops::rename_capacity::reservation(13, true).unwrap();
     assert_eq!(bytes, 39 + 7 * crate::blob::OBJECT_LIMIT + 16 * 64 * 1024);
-    assert!(ops::rename_capacity::reservation(u64::MAX, true).is_err());
+    assert!(matches!(
+        ops::rename_capacity::reservation(u64::MAX, true),
+        Err(BrokerError::WriterLimitExceeded)
+    ));
     let fixture = Fixture::new();
     let mut broker = fixture.open();
     fs::write(fixture.root.join("note.md"), b"x").unwrap();
@@ -45,11 +48,13 @@ fn staged_checkpoint_keeps_projected_revision_referenced_after_cancel() {
     let (fixture, mut broker, revision) = setup(b"staged");
     let r = request("note.md", "target.md", revision, "stage-ref");
     fault(&broker, 83);
-    assert!(
-        broker
-            .prepare_file_operation(r.clone(), metadata())
-            .is_err()
-    );
+    assert!(matches!(
+        broker.prepare_file_operation(r.clone(), metadata()),
+        Err(BrokerError::Io {
+            operation: "injected writer interruption",
+            ..
+        })
+    ));
     let a = crate::mutation::load(&broker)
         .unwrap()
         .file_operation

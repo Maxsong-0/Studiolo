@@ -101,7 +101,13 @@ fn additional_names_reuse_original_excluded_and_hidden_collision_index() {
     ] {
         let survey = reader.begin_scoped_observation(&selection(), &[]).unwrap();
         reset();
-        assert!(reader.finish_scoped_observation(survey, &names).is_err());
+        assert!(
+            matches!(
+                reader.finish_scoped_observation(survey, &names),
+                Err(BrokerError::InvalidArtifact(reason)) if reason == INVALID
+            ),
+            "{names:?}"
+        );
         assert_eq!(count(1), 0);
     }
 }
@@ -114,11 +120,11 @@ fn original_selection_is_owned_and_additional_missing_is_bounded_after_union() {
     let mut rules = selection();
     let survey = reader.begin_scoped_observation(&rules, &[]).unwrap();
     rules.excluded_prefixes.clear();
-    assert!(
-        reader
-            .finish_scoped_observation(survey, &[path("notes/generated.md")])
-            .is_err()
-    );
+    // 调查持有原选择的副本，事后清空排除项不能让被排除的路径混入补充集合。
+    assert!(matches!(
+        reader.finish_scoped_observation(survey, &[path("notes/generated.md")]),
+        Err(BrokerError::InvalidArtifact(reason)) if reason == INVALID
+    ));
     let original: Vec<_> = (0..2048)
         .map(|i| path(&format!("notes/missing-{i}")))
         .collect();

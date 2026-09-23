@@ -47,7 +47,13 @@ impl Fixture {
             .unwrap();
         let request = Mutation::replace(path(), b"proposed".to_vec(), first.revision, "pending");
         interrupt(&broker, point);
-        assert!(broker.mutate(request.clone()).is_err());
+        assert!(matches!(
+            broker.mutate(request.clone()),
+            Err(BrokerError::Io {
+                operation: "injected writer interruption",
+                ..
+            })
+        ));
         (broker, request)
     }
     fn stage(&self, broker: &FsVaultBroker) -> PathBuf {

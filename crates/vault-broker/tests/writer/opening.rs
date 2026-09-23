@@ -1,15 +1,28 @@
 use super::support::{Fixture, inventory};
-use std::{fs, os::unix::fs::symlink};
+use std::{fs, io::ErrorKind, os::unix::fs::symlink};
 use studiolo_vault_broker::{BrokerError, FsVaultBroker, VaultReader};
 
 #[test]
 fn explicit_initialization_requires_two_existing_empty_roots() {
     let fixture = Fixture::empty();
-    assert!(FsVaultBroker::initialize_empty(&fixture.vault, &fixture.data).is_err());
+    // 显式初始化不代建任何一侧根目录：缺哪一侧就在打开该侧时失败。
+    assert!(matches!(
+        FsVaultBroker::initialize_empty(&fixture.vault, &fixture.data),
+        Err(BrokerError::Io {
+            operation: "open writer directory",
+            source,
+        }) if source.kind() == ErrorKind::NotFound
+    ));
     assert!(!fixture.vault.exists());
     assert!(!fixture.data.exists());
     fs::create_dir(&fixture.vault).unwrap();
-    assert!(FsVaultBroker::initialize_empty(&fixture.vault, &fixture.data).is_err());
+    assert!(matches!(
+        FsVaultBroker::initialize_empty(&fixture.vault, &fixture.data),
+        Err(BrokerError::Io {
+            operation: "open writer directory",
+            source,
+        }) if source.kind() == ErrorKind::NotFound
+    ));
     assert!(inventory(&fixture.vault).is_empty());
     assert!(!fixture.data.exists());
     fs::create_dir(&fixture.data).unwrap();
@@ -18,7 +31,11 @@ fn explicit_initialization_requires_two_existing_empty_roots() {
     drop(writer);
     assert_eq!(fixture.open().vault_uuid(), uuid);
     let before = inventory(fixture.directory.path());
-    assert!(FsVaultBroker::initialize_empty(&fixture.vault, &fixture.data).is_err());
+    // 已初始化的根不再为空，重复初始化按配对不符拒绝。
+    assert!(matches!(
+        FsVaultBroker::initialize_empty(&fixture.vault, &fixture.data),
+        Err(BrokerError::WriterBindingMismatch)
+    ));
     assert_eq!(inventory(fixture.directory.path()), before);
 }
 
@@ -36,7 +53,13 @@ fn explicit_initialization_rejects_nonempty_roots_before_any_write() {
             };
             fs::write(directory.join(name), b"preserve original bytes").unwrap();
             let before = inventory(fixture.directory.path());
-            assert!(FsVaultBroker::initialize_empty(&fixture.vault, &fixture.data).is_err());
+            assert!(
+                matches!(
+                    FsVaultBroker::initialize_empty(&fixture.vault, &fixture.data),
+                    Err(BrokerError::WriterBindingMismatch)
+                ),
+                "accepted nonempty {node} with {name}"
+            );
             assert_eq!(inventory(fixture.directory.path()), before);
         }
     }
@@ -62,24 +85,50 @@ fn explicit_initialization_obeys_existing_lease_and_path_boundaries() {
         .join("linked-data");
     symlink(&fixture.data, &link).unwrap();
     let before = inventory(fixture.directory.path());
-    assert!(FsVaultBroker::initialize_empty(&fixture.vault, &link).is_err());
-    assert!(FsVaultBroker::initialize_empty(&fixture.vault, &fixture.vault).is_err());
-    assert!(
-        FsVaultBroker::initialize_empty(&fixture.vault, &fixture.vault.join("nested")).is_err()
-    );
+    // 链接的 data 根在逐级 NOFOLLOW 检查祖先时即失败；重叠的两根按配对不符拒绝。
+    assert!(matches!(
+        FsVaultBroker::initialize_empty(&fixture.vault, &link),
+        Err(BrokerError::Io {
+            operation: "inspect writer ancestry",
+            ..
+        })
+    ));
+    for data in [fixture.vault.clone(), fixture.vault.join("nested")] {
+        assert!(
+            matches!(
+                FsVaultBroker::initialize_empty(&fixture.vault, &data),
+                Err(BrokerError::WriterBindingMismatch)
+            ),
+            "{}",
+            data.display()
+        );
+    }
     assert_eq!(inventory(fixture.directory.path()), before);
 }
 
 #[test]
 fn existing_open_creates_neither_roots_nor_missing_identity() {
     let fixture = Fixture::empty();
-    assert!(FsVaultBroker::open_existing(&fixture.vault, &fixture.data).is_err());
+    assert!(matches!(
+        FsVaultBroker::open_existing(&fixture.vault, &fixture.data),
+        Err(BrokerError::Io {
+            operation: "open writer directory",
+            source,
+        }) if source.kind() == ErrorKind::NotFound
+    ));
     assert!(!fixture.vault.exists());
     assert!(!fixture.data.exists());
     fs::create_dir(&fixture.vault).unwrap();
     fs::create_dir(&fixture.data).unwrap();
     let before = inventory(fixture.directory.path());
-    assert!(FsVaultBroker::open_existing(&fixture.vault, &fixture.data).is_err());
+    // 空根缺少控制目录；普通重开不补建布局。
+    assert!(matches!(
+        FsVaultBroker::open_existing(&fixture.vault, &fixture.data),
+        Err(BrokerError::Io {
+            operation: "inspect writer layout",
+            source,
+        }) if source.kind() == ErrorKind::NotFound
+    ));
     assert_eq!(inventory(fixture.directory.path()), before);
 }
 
@@ -90,7 +139,13 @@ fn existing_open_does_not_repair_removed_data_layout() {
         fs::remove_dir(fixture.data.join(directory)).unwrap();
         let before = inventory(fixture.directory.path());
         assert!(
-            FsVaultBroker::open_existing(&fixture.vault, &fixture.data).is_err(),
+            matches!(
+                FsVaultBroker::open_existing(&fixture.vault, &fixture.data),
+                Err(BrokerError::Io {
+                    operation: "inspect writer layout",
+                    source,
+                }) if source.kind() == ErrorKind::NotFound
+            ),
             "repaired {directory}"
         );
         assert_eq!(inventory(fixture.directory.path()), before);
@@ -139,7 +194,10 @@ fn overlapping_canonical_and_data_roots_are_refused() {
         fs::create_dir_all(&data).unwrap();
         let before = inventory(fixture.directory.path());
         assert!(
-            FsVaultBroker::open(&vault, &data).is_err(),
+            matches!(
+                FsVaultBroker::open(&vault, &data),
+                Err(BrokerError::WriterBindingMismatch)
+            ),
             "accepted {arrangement}"
         );
         assert_eq!(inventory(fixture.directory.path()), before);
@@ -154,7 +212,16 @@ fn actual_case_aliases_cannot_create_a_nested_data_root() {
     fs::create_dir(&fixture.vault).unwrap();
     let alias = fixture.vault.with_file_name("VAULT");
     let original = fs::metadata(&fixture.vault).unwrap();
-    match fs::metadata(&alias) {
+    // 分支自证：卷是否区分大小写决定走哪一支；打印判据原始输入（别名的查询结果）。
+    let probe = fs::metadata(&alias);
+    eprintln!(
+        "大小写别名·分支自证：VAULT 查询 = {:?}（Ok 即别名指回原目录，验证嵌套 data 根被拒绝）",
+        probe
+            .as_ref()
+            .map(|metadata| (metadata.dev(), metadata.ino()))
+            .map_err(|error| error.kind())
+    );
+    match probe {
         Ok(metadata) => {
             assert_eq!(
                 (metadata.dev(), metadata.ino()),
@@ -163,7 +230,7 @@ fn actual_case_aliases_cannot_create_a_nested_data_root() {
             );
         }
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            eprintln!("跳过大小写别名嵌套场景：临时文件系统区分大小写；验证独立根正常配对。");
+            eprintln!("跳过：临时文件系统区分大小写，无法构造指回原目录的别名；改验独立根正常配对");
             fs::create_dir(&alias).unwrap();
             let independent = fs::metadata(&alias).unwrap();
             assert_ne!(
@@ -203,10 +270,28 @@ fn linked_roots_and_identity_nodes_cannot_gain_writer_authority() {
         fs::rename(&target, &moved).unwrap();
         symlink(&moved, &target).unwrap();
         let before = inventory(fixture.directory.path());
-        assert!(
-            FsVaultBroker::open_existing(&fixture.vault, &fixture.data).is_err(),
-            "accepted linked {node}"
-        );
+        let result = FsVaultBroker::open_existing(&fixture.vault, &fixture.data);
+        // 根被换成链接时在逐级 NOFOLLOW 打开处失败；控制目录与 marker 被换成链接时按
+        // 配对不符与身份损坏拒绝。
+        let rejected = match node {
+            "vault" => matches!(
+                &result,
+                Err(BrokerError::Io {
+                    operation: "open writer directory",
+                    ..
+                })
+            ),
+            "data" => matches!(
+                &result,
+                Err(BrokerError::Io {
+                    operation: "inspect writer ancestry",
+                    ..
+                })
+            ),
+            "control" => matches!(&result, Err(BrokerError::WriterBindingMismatch)),
+            _ => matches!(&result, Err(BrokerError::CorruptIdentity)),
+        };
+        assert!(rejected, "accepted linked {node}: {:?}", result.err());
         assert_eq!(inventory(fixture.directory.path()), before);
     }
 }

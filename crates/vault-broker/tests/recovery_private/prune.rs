@@ -54,7 +54,34 @@ fn malformed_linked_or_oversized_stage_makes_preflight_non_destructive() {
                     .unwrap();
             }
         }
-        assert!(broker.prune_stages().is_err());
+        let result = broker.prune_stages();
+        // 预检在删除任何 stage 之前失败；链接由平台的 rooted 打开实现拒绝。
+        let rejected = match damage {
+            "name" => matches!(&result, Err(BrokerError::CorruptWriterState)),
+            "symlink" if cfg!(target_os = "linux") => matches!(
+                &result,
+                Err(BrokerError::UnsafeNode {
+                    reason: "file failed Linux beneath/no-link resolution",
+                    ..
+                })
+            ),
+            "symlink" => matches!(
+                &result,
+                Err(BrokerError::Io {
+                    operation: "open Vault object",
+                    ..
+                })
+            ),
+            "hardlink" => matches!(
+                &result,
+                Err(BrokerError::UnsafeNode {
+                    reason: "hard-linked or unlinked file",
+                    ..
+                })
+            ),
+            _ => matches!(&result, Err(BrokerError::WriterLimitExceeded)),
+        };
+        assert!(rejected, "{damage}: {:?}", result.err());
         assert!(good.exists());
     }
 }
@@ -100,6 +127,9 @@ fn stage_directory_replacement_is_not_adopted() {
     fs::rename(&stages, f.root.join(".workbench/retained")).unwrap();
     fs::create_dir(&stages).unwrap();
     let file = orphan(&f, 1, b"foreign");
-    assert!(broker.prune_stages().is_err());
+    assert!(matches!(
+        broker.prune_stages(),
+        Err(BrokerError::WriterBindingMismatch)
+    ));
     assert_eq!(fs::read(file).unwrap(), b"foreign");
 }

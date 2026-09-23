@@ -90,11 +90,13 @@ fn every_preparation_checkpoint_can_be_cancelled_without_dropping_stage_referenc
         let (fixture, mut broker, revision) = setup(b"staged");
         let r = request("note.md", "target.md", revision, "preparing");
         fault(&broker, point);
-        assert!(
-            broker
-                .prepare_file_operation(r.clone(), metadata())
-                .is_err()
-        );
+        assert!(matches!(
+            broker.prepare_file_operation(r.clone(), metadata()),
+            Err(BrokerError::Io {
+                operation: "injected writer interruption",
+                ..
+            })
+        ));
         drop(broker);
         let mut broker = fixture.reopen();
         if point == 83 {
@@ -153,7 +155,13 @@ fn partial_move_maintenance_crashes_only_resume_original_fixed_decision() {
             .confirm_maintenance_intent(&ticket, 3, &"b".repeat(64))
             .unwrap();
         fault(&broker, point);
-        assert!(broker.commit_maintenance(ticket).is_err());
+        assert!(matches!(
+            broker.commit_maintenance(ticket),
+            Err(BrokerError::Io {
+                operation: "injected writer interruption",
+                ..
+            })
+        ));
         drop(broker);
         let mut broker = fixture.reopen();
         if point == 33 {

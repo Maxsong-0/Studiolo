@@ -24,7 +24,12 @@ fn metadata_to_body_changes_do_not_publish_partial_or_missing_results() {
                 fs::create_dir(&root).unwrap();
             }
         });
-        assert!(broker.capture_sync_observation(&selection(), &[]).is_err());
+        let result = broker.capture_sync_observation(&selection(), &[]);
+        assert!(
+            matches!(result, Err(BrokerError::CaptureChanged)),
+            "attack {attack}: {:?}",
+            result.err()
+        );
     }
 }
 
@@ -43,7 +48,13 @@ fn same_content_inode_replacement_and_new_missing_target_invalidate_old_proof() 
             f.write("notes/temporary", b"same");
             fs::rename(f.root.join("notes/temporary"), f.root.join("notes/a")).unwrap();
         }
-        assert!(broker.revalidate_sync_observation(&result).is_err());
+        assert!(
+            matches!(
+                broker.revalidate_sync_observation(&result),
+                Err(BrokerError::CaptureChanged)
+            ),
+            "missing {missing}"
+        );
     }
 }
 
@@ -58,7 +69,13 @@ fn mutation_during_first_chunk_or_final_publication_is_rejected() {
             let file = fs::OpenOptions::new().write(true).open(target).unwrap();
             file.set_len(9).unwrap();
         });
-        assert!(broker.capture_sync_observation(&selection(), &[]).is_err());
+        assert!(
+            matches!(
+                broker.capture_sync_observation(&selection(), &[]),
+                Err(BrokerError::CaptureChanged)
+            ),
+            "phase {phase}"
+        );
     }
 }
 
@@ -74,7 +91,10 @@ fn opened_directory_must_match_current_path_before_enumerating() {
         fs::write(root.join("notes/new"), b"new").unwrap();
     });
     reset();
-    assert!(broker.capture_sync_observation(&selection(), &[]).is_err());
+    assert!(matches!(
+        broker.capture_sync_observation(&selection(), &[]),
+        Err(BrokerError::CaptureChanged)
+    ));
     assert_eq!(count(1), 0);
 }
 
@@ -93,7 +113,10 @@ fn source_growth_never_extends_the_prevalidated_actual_body_budget() {
             .unwrap();
     });
     reset();
-    assert!(broker.capture_sync_observation(&selection(), &[]).is_err());
+    assert!(matches!(
+        broker.capture_sync_observation(&selection(), &[]),
+        Err(BrokerError::CaptureChanged)
+    ));
     assert_eq!(count(3), 1);
 }
 
@@ -105,7 +128,10 @@ fn proof_rejects_reopen_other_instance_and_committed_watermark_advance() {
     let proof = capture(&mut broker);
     drop(broker);
     let mut reopened = f.reopen();
-    assert!(reopened.revalidate_sync_observation(&proof).is_err());
+    assert!(matches!(
+        reopened.revalidate_sync_observation(&proof),
+        Err(BrokerError::CaptureChanged)
+    ));
     let fresh = capture(&mut reopened);
     reopened
         .mutate(Mutation::create(
@@ -114,10 +140,16 @@ fn proof_rejects_reopen_other_instance_and_committed_watermark_advance() {
             "sync-proof-watermark",
         ))
         .unwrap();
-    assert!(reopened.revalidate_sync_observation(&fresh).is_err());
+    assert!(matches!(
+        reopened.revalidate_sync_observation(&fresh),
+        Err(BrokerError::CaptureChanged)
+    ));
     let other = Fixture::new();
     let different = other.broker();
-    assert!(different.revalidate_sync_observation(&fresh).is_err());
+    assert!(matches!(
+        different.revalidate_sync_observation(&fresh),
+        Err(BrokerError::CaptureChanged)
+    ));
 }
 
 #[test]
@@ -128,25 +160,39 @@ fn read_blocked_installing_and_poisoned_writer_reject_both_capture_and_revalidat
         f.write("notes/a", b"readable");
         let proof = capture(&mut broker);
         broker.writer.fault.store(point, Ordering::Release);
-        assert!(
-            broker
-                .mutate(Mutation::create(
-                    path("notes/new"),
-                    b"new".to_vec(),
-                    format!("sync-unknown-{point}")
-                ))
-                .is_err()
-        );
+        assert!(matches!(
+            broker.mutate(Mutation::create(
+                path("notes/new"),
+                b"new".to_vec(),
+                format!("sync-unknown-{point}")
+            )),
+            Err(BrokerError::Io {
+                operation: "injected writer interruption",
+                ..
+            })
+        ));
         reset();
-        assert!(broker.capture_sync_observation(&selection(), &[]).is_err());
+        assert!(matches!(
+            broker.capture_sync_observation(&selection(), &[]),
+            Err(BrokerError::MutationUnresolved)
+        ));
         assert_eq!(count(1), 0);
-        assert!(broker.revalidate_sync_observation(&proof).is_err());
+        assert!(matches!(
+            broker.revalidate_sync_observation(&proof),
+            Err(BrokerError::MutationUnresolved)
+        ));
     }
     let f = Fixture::new();
     let mut broker = f.broker();
     f.write("notes/a", b"readable");
     let proof = capture(&mut broker);
     broker.writer.poison();
-    assert!(broker.revalidate_sync_observation(&proof).is_err());
-    assert!(broker.capture_sync_observation(&selection(), &[]).is_err());
+    assert!(matches!(
+        broker.revalidate_sync_observation(&proof),
+        Err(BrokerError::MutationUnresolved)
+    ));
+    assert!(matches!(
+        broker.capture_sync_observation(&selection(), &[]),
+        Err(BrokerError::MutationUnresolved)
+    ));
 }

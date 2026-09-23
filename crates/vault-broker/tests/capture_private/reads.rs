@@ -62,21 +62,35 @@ fn diagnostics_and_all_scan_limits_refuse_partial_capture() {
         Err(BrokerError::IncompleteCapture)
     ));
     fs::create_dir(fixture.root.join("empty")).unwrap();
-    for limits in [
-        ScanLimits {
-            max_total_bytes: 3,
-            ..Default::default()
-        },
-        ScanLimits {
-            max_entries: 1,
-            ..Default::default()
-        },
-        ScanLimits {
-            max_depth: 0,
-            ..Default::default()
-        },
+    // 总字节、枚举项与深度超限都使整次捕获失败，各自带稳定的操作标签。
+    for (limits, expected) in [
+        (
+            ScanLimits {
+                max_total_bytes: 3,
+                ..Default::default()
+            },
+            "scan total bytes limit exceeded",
+        ),
+        (
+            ScanLimits {
+                max_entries: 1,
+                ..Default::default()
+            },
+            "scan entry limit exceeded",
+        ),
+        (
+            ScanLimits {
+                max_depth: 0,
+                ..Default::default()
+            },
+            "scan depth limit exceeded",
+        ),
     ] {
-        assert!(broker.capture(limits).is_err());
+        let result = broker.capture(limits).map(|_| ());
+        assert!(
+            matches!(&result, Err(BrokerError::Io { operation, .. }) if *operation == expected),
+            "{expected}: {result:?}"
+        );
     }
     let captured = broker
         .capture(ScanLimits {

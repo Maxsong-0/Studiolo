@@ -7,7 +7,13 @@ fn every_unresolved_stage_blocks_capture_revalidation_and_page_read_without_fini
         let mut broker = fixture.initialize();
         let stamp = capture(&mut broker).stamp;
         interrupt(&broker, point);
-        assert!(broker.mutate(request()).is_err());
+        assert!(matches!(
+            broker.mutate(request()),
+            Err(BrokerError::Io {
+                operation: "injected writer interruption",
+                ..
+            })
+        ));
         let before = inventory(fixture.temp.path());
         assert!(matches!(
             broker.capture(ScanLimits::default()),
