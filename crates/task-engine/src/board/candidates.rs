@@ -1,10 +1,10 @@
-//! Runner candidates use the existing T1/T2 reservation, then wait for a separate owner decision.
+//! runner 候选沿用现有 T1/T2 预留，再等待主人单独决定。
 use super::*;
 use crate::board_types::{contains_conflict_markers, sha256_hex};
 use studiolo_runner_adapter::PatchMetadata;
 
 impl<B: VaultBroker + ArtifactStager, L: AuditLedger> PersistentTaskEngine<B, L> {
-    /// Publishes only a runner patch candidate and enters NeedsReview; never implies acceptance.
+    /// 只发布 runner 补丁候选并进入 NeedsReview；绝不意味着已被接受。
     pub fn stage_board_runner_candidates(
         &mut self,
         report: RunnerReport,
@@ -145,8 +145,8 @@ impl<B: VaultBroker + ArtifactStager, L: AuditLedger> PersistentTaskEngine<B, L>
         self.roll_forward(&prior_identity(prior), &reservation, now)
     }
 
-    /// Trusted L3 owner entrypoint: verify the exact published candidates and record an explicit review.
-    /// The composition root must never expose this method through the AI board-return endpoint.
+    /// 受信任的 L3 主人入口：核验确切发布的候选，并记录明确的审阅结论。
+    /// 组合根绝不能经由 AI 的黑板回执端点暴露此方法。
     pub fn review_board_candidates(
         &mut self,
         task: TaskId,

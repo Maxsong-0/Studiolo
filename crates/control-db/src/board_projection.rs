@@ -1,7 +1,7 @@
-//! Only projection hashes live in SQLite; generated and human text remains in the Broker.
+//! SQLite 只存投影哈希；生成文本与人写文本都留在 Broker。
 use super::*;
 impl ControlDb {
-    /// Reads the last successfully installed system block fingerprint.
+    /// 读取最近一次成功安装的系统块指纹。
     pub fn board_projection_hash(&self, path: &str) -> Result<Option<String>, DbError> {
         Ok(self
             .connection
@@ -12,7 +12,7 @@ impl ControlDb {
             )
             .optional()?)
     }
-    /// Returns the latest projection sequence covered by a point-in-time board view.
+    /// 返回时点黑板视图覆盖到的最新投影序号。
     pub fn board_projection_sequence(&self) -> Result<i64, DbError> {
         Ok(self.connection.query_row(
             "SELECT COALESCE(MAX(sequence),0) FROM projection_outbox",
@@ -20,7 +20,7 @@ impl ControlDb {
             |r| r.get(0),
         )?)
     }
-    /// Acknowledges only the observed events after successful Broker batch publication.
+    /// Broker 批量发布成功后，只确认本次观察到（序号不超过 `through`）的事件。
     pub fn record_board_projection(
         &mut self,
         path: &str,

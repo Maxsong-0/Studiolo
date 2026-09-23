@@ -1,8 +1,8 @@
-//! Board receipt fencing, terminal arbitration, and number reservations.
+//! 黑板回执的 fence 校验、终态仲裁与编号预留。
 use super::*;
 
 impl ControlDb {
-    /// Reads the accepted handoff for a matching task/attempt; this enables exact replay after release.
+    /// 读取与 task/attempt 匹配的已接受交接；据此可在释放后精确重放。
     pub fn board_handoff_for_attempt(
         &self,
         task: TaskId,
@@ -13,7 +13,7 @@ impl ControlDb {
             .transpose()
     }
 
-    /// Stores a validated structured handoff only while the current lease is live.
+    /// 仅在当前租约有效时保存已校验的结构化交接；同 fence、同内容的重放直接成功。
     pub fn set_board_handoff(
         &mut self,
         task_id: TaskId,
@@ -84,7 +84,7 @@ impl ControlDb {
         Ok(())
     }
 
-    /// Atomic receipt acceptance and first-valid-completion-wins artifact arbitration.
+    /// 原子地接受回执，并按「首个有效完成者胜出」仲裁产物目标。
     pub fn complete_board_task(
         &mut self,
         task_id: TaskId,
@@ -97,7 +97,7 @@ impl ControlDb {
         self.complete_board_task_kind(task_id, attempt_id, fence, receipt, status, now_ms, false)
     }
 
-    /// Trusted owner-only terminal decision for a candidate already in NeedsReview.
+    /// 仅限受信任的主人对已处于 NeedsReview 的候选作出终态决定。
     pub fn review_board_candidates(
         &mut self,
         task_id: TaskId,
@@ -253,8 +253,8 @@ impl ControlDb {
         Ok(())
     }
 
-    /// Takes max(trusted filename scan, durable reservations)+1 in one write transaction.
-    /// Only trusted TaskEngine callers may supply `file_max`; external clients never do.
+    /// 在一个写事务内取 max(受信任的文件名扫描结果, 已持久预留的最大号)+1。
+    /// 只有受信任的 TaskEngine 调用方可以提供 `file_max`，外部客户端永远不能。
     pub fn reserve_board_number(
         &mut self,
         request_id: &str,
@@ -304,7 +304,7 @@ impl ControlDb {
         Ok(number as u64)
     }
 
-    /// Lists legacy inline terminal bodies for one-time migration through Broker staging.
+    /// 列出旧版内联终态正文，供经 Broker staging 的一次性迁移使用。
     pub fn legacy_terminal_attempts(&self) -> Result<Vec<AttemptRecord>, DbError> {
         let mut stmt = self.connection.prepare("SELECT task_id,attempt_id FROM attempts WHERE terminal_json IS NOT NULL AND json_type(terminal_json,'$.artifacts_json')='array'")?;
         let rows = stmt
@@ -318,7 +318,7 @@ impl ControlDb {
             .collect()
     }
 
-    /// Replaces an unchanged historical body only after Broker durably staged it.
+    /// 只在 Broker 已持久 staging 之后，替换未变化的历史正文。
     pub fn migrate_terminal_pointer(
         &mut self,
         attempt_id: AttemptId,

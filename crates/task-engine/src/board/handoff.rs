@@ -1,7 +1,7 @@
-//! Structured outgoing handoff and verified terminal receipt acceptance.
+//! 结构化外发交接，以及已核验终态回执的接受。
 use super::*;
 impl<B: VaultBroker + ArtifactStager, L: AuditLedger> PersistentTaskEngine<B, L> {
-    /// Saves a structured handoff that cannot silently change criteria or frozen rule versions.
+    /// 保存结构化交接；它不能悄悄改动验收标准或冻结的规则版本。
     pub(super) fn put_handoff_inner(
         &mut self,
         task: TaskId,
@@ -65,7 +65,7 @@ impl<B: VaultBroker + ArtifactStager, L: AuditLedger> PersistentTaskEngine<B, L>
             .map_err(map_db)
     }
 
-    /// Accepts a complete per-criterion receipt, closeout, and conflict-free artifacts.
+    /// 接受完整的逐条验收回执、收尾决定与无冲突产物。
     pub(super) fn return_board_receipt_inner(
         &mut self,
         task: TaskId,

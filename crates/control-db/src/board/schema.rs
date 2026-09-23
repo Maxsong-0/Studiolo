@@ -1,4 +1,4 @@
-//! Incremental v3 metadata tables; legacy body reservations remain recoverable until staging.
+//! v3 增量元数据表；旧版正文预留在迁入 staging 之前仍可恢复。
 use super::super::*;
 pub(crate) fn migrate(tx: &Transaction<'_>) -> Result<(), DbError> {
     tx.execute_batch(

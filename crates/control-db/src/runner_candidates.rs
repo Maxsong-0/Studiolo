@@ -1,19 +1,19 @@
-//! Candidate retention is an evidence index; T1/T2 remains the only publication state machine.
+//! 候选保留只是证据索引；T1/T2 仍是唯一的发布状态机。
 use super::*;
-/// A retained content-plane staging pointer, including candidates rejected or cancelled before T1.
+/// 保留下来的内容面 staging 指针，含在 T1 之前被拒绝或取消的候选。
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct RunnerCandidateStage {
-    /// Attempt that produced the candidate.
+    /// 产生该候选的 attempt。
     pub attempt_id: AttemptId,
-    /// Fence supplied by that attempt.
+    /// 该 attempt 提供的 fence。
     pub fence: Fence,
-    /// Broker staging identity and digest only, never candidate bytes.
+    /// 只含 Broker staging 标识与摘要，绝不含候选字节。
     pub pointer: Value,
-    /// Why the candidate was retained without claiming successful task completion.
+    /// 保留该候选的原因；保留本身不代表任务已成功完成。
     pub reason: String,
 }
 impl ControlDb {
-    /// Preserves a verified attempt's staging pointer without granting it tool or completion rights.
+    /// 保存已核验 attempt 的 staging 指针，但不因此授予工具或完成权限。
     pub fn retain_runner_candidate(
         &mut self,
         task: TaskId,
@@ -48,7 +48,7 @@ impl ControlDb {
         tx.commit()?;
         Ok(())
     }
-    /// Lists durable metadata references for all candidates, including unsuccessful submissions.
+    /// 列出全部候选的持久元数据引用，含未成功的提交。
     pub fn runner_candidate_stages(
         &self,
         task: TaskId,

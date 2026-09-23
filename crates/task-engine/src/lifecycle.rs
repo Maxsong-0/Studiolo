@@ -1,9 +1,9 @@
-//! Explicit startup recovery and periodic lease reconciliation have different revocation rules.
+//! 显式启动恢复与周期租约对账的撤销规则不同。
 use super::*;
 use studiolo_control_db::LeaseReconciliation;
 
 impl<B: VaultBroker + ArtifactStager, L: AuditLedger> PersistentTaskEngine<B, L> {
-    /// Extends a lease while reporting monotonic progress.
+    /// 续期租约，同时上报单调进度。
     #[allow(clippy::too_many_arguments)]
     pub fn heartbeat_progress(
         &mut self,
@@ -30,7 +30,7 @@ impl<B: VaultBroker + ArtifactStager, L: AuditLedger> PersistentTaskEngine<B, L>
         result
     }
 
-    /// Periodic reconciliation never abandons a healthy, progressing live attempt.
+    /// 周期对账绝不放弃健康且有进展的活动 attempt。
     pub fn reconcile_periodic(&mut self, now: i64) -> Result<LeaseReconciliation, TaskEngineError> {
         self.verify_vault_binding()?;
         self.migrate_terminal_bodies()?;
@@ -53,8 +53,8 @@ impl<B: VaultBroker + ArtifactStager, L: AuditLedger> PersistentTaskEngine<B, L>
             match self.roll_forward(&prior_identity(&attempt), reservation, now) {
                 Ok(_) => {}
                 Err(TaskEngineError::CommitFailed(_)) => {
-                    // A single retained publication cannot stop other leases; its reservation
-                    // remains Committing, so neither a new holder nor successful receipt can win.
+                    // 单个被保留的发布不能挡住其他租约的处理；它的预留仍是
+                    // Committing，因此新持有者和成功回执都无法胜出。
                     self.audit_board(
                         "task.candidate_recovery_pending",
                         &(attempt.task_id, attempt.attempt_id, now),
@@ -68,7 +68,7 @@ impl<B: VaultBroker + ArtifactStager, L: AuditLedger> PersistentTaskEngine<B, L>
         Ok(report)
     }
 
-    /// Startup-only board revocation after the composition root has isolated old runners.
+    /// 仅用于启动的黑板撤销，须在组合根隔离旧 runner 之后调用。
     pub fn reconcile_startup(&mut self, now: i64) -> Result<LeaseReconciliation, TaskEngineError> {
         self.verify_vault_binding()?;
         self.migrate_terminal_bodies()?;
@@ -87,7 +87,7 @@ impl<B: VaultBroker + ArtifactStager, L: AuditLedger> PersistentTaskEngine<B, L>
         Ok(report)
     }
 
-    /// A structured pre-tool launch failure may retry; task failures never do.
+    /// 结构化的工具调用前启动失败可以重试；任务本身的失败从不重试。
     pub fn launch_failed(
         &mut self,
         task: TaskId,

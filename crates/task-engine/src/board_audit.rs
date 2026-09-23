@@ -1,4 +1,4 @@
-//! Audit is written before protected board effects. Replays share a stable request digest.
+//! 受保护的黑板效果发生之前先写审计。重放共用稳定的请求摘要。
 use super::*;
 use crate::board_types::{contains_conflict_markers, sha256_hex};
 
@@ -31,7 +31,7 @@ impl<B: VaultBroker + ArtifactStager, L: AuditLedger> PersistentTaskEngine<B, L>
         Ok(())
     }
 
-    /// Repairs metadata-only authority outcomes after ledger outages or process restarts.
+    /// 账本中断或进程重启后，补投只含元数据的权威结果。
     pub fn deliver_runtime_audits(&mut self) -> Result<usize, TaskEngineError> {
         let events = self.control_db.pending_runtime_audits().map_err(map_db)?;
         for event in &events {

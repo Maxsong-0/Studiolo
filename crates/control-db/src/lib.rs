@@ -1,7 +1,7 @@
-//! SQLite-backed runtime authority owned exclusively by TaskEngine.
+//! 由 TaskEngine 独占持有、以 SQLite 为底座的运行时权威。
 //!
-//! Writes require `&mut self`; a transaction only moves plain data and never
-//! calls another Studiolo module.
+//! 写操作要求 `&mut self`；事务只搬运普通数据，
+//! 从不调用其他 Studiolo 模块。
 
 use std::{path::Path, str::FromStr};
 
@@ -44,32 +44,32 @@ impl TerminalKind {
     }
 }
 
-/// Control-plane persistence failures.
+/// 控制面持久化失败。
 #[derive(Debug, thiserror::Error)]
 pub enum DbError {
-    /// SQLite rejected an operation.
+    /// SQLite 拒绝了某个操作。
     #[error("control database error: {0}")]
     Sqlite(#[from] rusqlite::Error),
-    /// JSON serialization or parsing failed.
+    /// JSON 序列化或解析失败。
     #[error("control database JSON error: {0}")]
     Json(#[from] serde_json::Error),
-    /// The database is already bound to another Vault.
+    /// Vault 绑定不一致：数据库已绑定到另一个 Vault，或输入快照属于另一个 Vault。
     #[error("control database is bound to {expected}, not {actual}")]
     VaultBindingMismatch {
-        /// Persisted binding.
+        /// 已持久化的绑定。
         expected: VaultUuid,
-        /// Requested binding.
+        /// 请求方（或输入快照）给出的 Vault。
         actual: VaultUuid,
     },
-    /// A referenced record does not exist.
+    /// 引用的记录不存在。
     #[error("control record not found: {0}")]
     NotFound(&'static str),
-    /// The transition is invalid from the current durable state.
+    /// 从当前持久状态出发不允许此迁移。
     #[error("invalid transition from {from} via {operation}")]
     InvalidTransition {
-        /// Current state.
+        /// 当前状态（入参不合法时为说明文字或被拒的目标状态）。
         from: String,
-        /// Requested operation.
+        /// 请求的操作。
         operation: &'static str,
     },
     /// 已有终态赢家（含已冻结提交计划的 committing）；属正常业务拒绝，调用方按变体而非状态名判断。
@@ -88,59 +88,59 @@ pub enum DbError {
         /// 本二进制支持的最高版本。
         supported: i64,
     },
-    /// Attempt identity or fence did not match.
+    /// attempt 身份或 fence 不匹配（含已不在 running 或租约已过期）。
     #[error("attempt fence mismatch")]
     FenceMismatch,
-    /// Active work owns one or more requested paths.
+    /// 活动工作已占有一个或多个请求的路径。
     #[error("paths held by {by_instance}: {paths:?}")]
     PathsHeld {
-        #[doc = "Instance owning the conflicting claim."]
+        #[doc = "持有冲突认领的实例。"]
         by_instance: String,
-        #[doc = "Requested paths intersecting the active claim."]
+        #[doc = "与活动认领相交的请求路径。"]
         paths: Vec<String>,
     },
-    /// A machine-checkable blackboard rule rejected the operation.
+    /// 可机器校验的黑板规则拒绝了该操作。
     #[error("blackboard rejected: {0}")]
     BoardRejected(&'static str),
-    /// A stable request id was used with different inputs.
+    /// 同一稳定请求 ID 被用于不同的输入。
     #[error("idempotency request mismatch")]
     IdempotencyMismatch,
-    /// A durable value was malformed.
+    /// 持久值损坏或不一致（个别入参拒绝也归此类，如非白名单的 pragma 查询）。
     #[error("corrupt control record: {0}")]
     Corrupt(String),
 }
 
-/// Authoritative task lifecycle state.
+/// 权威的任务生命周期状态。
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TaskStatus {
-    /// Human-authored definition not yet queued.
+    /// 人写定义，尚未入队。
     Draft,
-    /// Eligible for claim.
+    /// 可被认领。
     Queued,
-    /// Reserved by a worker while run preparation is completing.
+    /// 已被 worker 预留、运行准备尚未完成；现行 `claim` 直接写 `running`，本库不写出此状态。
     Claimed,
-    /// An attempt currently owns the task.
+    /// 当前有 attempt 持有该任务。
     Running,
-    /// Terminal effects are reserved and must roll forward.
+    /// 终态副作用已预留，必须前滚。
     Committing,
-    /// Cancellation is requested while runner isolation completes.
+    /// 已请求取消，等待 runner 完成隔离。
     CancelRequested,
-    /// Artifacts await human review.
+    /// 产物等待人工审阅。
     NeedsReview,
-    /// Human revision is required before another run.
+    /// 再次运行前需要人工修订。
     NeedsRevision,
-    /// Inputs or policy changed and require confirmation.
+    /// 已确认的输入发生变化，需要重新确认；策略变化不触发此状态（见 `uses_old_policy`）。
     NeedsReconfirm,
-    /// Human review approved the result.
+    /// 人工审阅已批准结果。
     Approved,
-    /// Successful terminal state.
+    /// 成功终态。
     Succeeded,
-    /// Failed terminal state.
+    /// 失败终态。
     Failed,
-    /// Cancelled terminal state.
+    /// 已取消终态。
     Cancelled,
-    /// Isolated after restart.
+    /// 已放弃：重启后隔离、租约巡检回收，或持有者回执声明放弃。
     Abandoned,
 }
 
@@ -185,25 +185,25 @@ impl TaskStatus {
     }
 }
 
-/// Durable attempt phase.
+/// 持久化的 attempt 阶段。
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AttemptPhase {
-    /// Claimed but not started.
+    /// 已认领但未启动；现行 `claim` 直接写 `running`，本库不写出此阶段。
     Claimed,
-    /// Runner work may be in flight.
+    /// runner 工作可能正在进行。
     Running,
-    /// Capability revoked; runner isolation pending.
+    /// 能力已撤销，等待 runner 隔离。
     CancelRequested,
-    /// Terminal effects must roll forward idempotently.
+    /// 终态副作用必须幂等前滚。
     Committing,
-    /// Successful terminal attempt.
+    /// 成功结束的 attempt。
     Completed,
-    /// Failed terminal attempt.
+    /// 失败结束的 attempt。
     Failed,
-    /// Cancelled terminal attempt.
+    /// 已取消的 attempt。
     Cancelled,
-    /// Restart-isolated attempt.
+    /// 已放弃的 attempt：重启隔离、租约巡检回收、交接后让出，或回执声明放弃。
     Abandoned,
 }
 
@@ -236,114 +236,114 @@ impl AttemptPhase {
     }
 }
 
-/// Persisted task projection and human-authored definition.
+/// 持久化的任务投影与人写定义。
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct TaskRecord {
-    /// Stable task identifier.
+    /// 稳定的任务标识。
     pub task_id: TaskId,
-    /// Human-authored definition; runtime fields live in columns.
+    /// 人写定义；运行时字段存于独立列。
     pub definition_json: Value,
-    /// Runtime status.
+    /// 运行时状态。
     pub status: TaskStatus,
-    /// Active attempt, if any.
+    /// 活动 attempt（若有）。
     pub active_attempt: Option<AttemptId>,
-    /// Most recent terminal attempt, if any.
+    /// 最近一次结束的 attempt（若有）。
     pub last_attempt: Option<AttemptId>,
-    /// Immutable input snapshot projected for the current or last attempt.
+    /// 不可变输入快照：带快照入队时写入，认领后即当前或上一次 attempt 所用的快照。
     pub input_snapshot: Option<String>,
-    /// Original creation time for deterministic task-page rendering.
+    /// 原始创建时间，用于确定性地渲染任务页。
     pub created_at_ms: i64,
 }
 
-/// Metadata retained for one snapshotted source.
+/// 为单个已快照源保留的元数据。
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct SnapshotEntryRecord {
-    /// Logical Vault path.
+    /// Vault 逻辑路径。
     pub path: String,
-    /// Exact source revision.
+    /// 精确的源修订号。
     pub revision: String,
-    /// Effective labels, never source content.
+    /// 生效标签，绝不含源内容。
     pub effective_label_json: Value,
 }
 
-/// Metadata-only immutable snapshot manifest.
+/// 只含元数据的不可变快照清单。
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct SnapshotRecord {
-    /// Content-addressed snapshot identifier.
+    /// 内容寻址的快照标识。
     pub snapshot_id: String,
-    /// Bound Vault identity.
+    /// 所绑定 Vault 的身份。
     pub vault_uuid: VaultUuid,
-    /// Source metadata.
+    /// 各源的元数据。
     pub entries: Vec<SnapshotEntryRecord>,
 }
 
-/// Data durably reserved before terminal side effects.
+/// 终态副作用发生前持久预留的数据。
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct TerminalReservation {
-    /// Event and attempt identity only. Historical v1/v2 records may still require staging migration.
+    /// 只含事件与 attempt 身份等元数据；历史 v1/v2 记录可能仍需迁入 staging。
     pub report_json: Value,
-    /// Content-plane staging pointer {id, sha256}; new inline candidates are rejected.
+    /// 内容面 staging 指针 {id, sha256}；新的内联候选一律拒绝。
     pub artifacts_json: Value,
 }
 
-/// Durable attempt record.
+/// 持久化的 attempt 记录。
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct AttemptRecord {
-    /// Attempt identifier.
+    /// attempt 标识。
     pub attempt_id: AttemptId,
-    /// Owning task.
+    /// 所属任务。
     pub task_id: TaskId,
-    /// Monotonic fencing token.
+    /// 单调递增的 fence 令牌。
     pub fence: Fence,
-    /// Current phase.
+    /// 当前阶段。
     pub phase: AttemptPhase,
-    /// Worker identity.
+    /// worker 身份。
     pub worker_id: String,
-    /// Immutable input snapshot.
+    /// 不可变输入快照。
     pub snapshot_id: String,
-    /// Lease deadline as Unix milliseconds.
+    /// 租约截止时间（Unix 毫秒）。
     pub lease_until_ms: i64,
-    /// PID-safe runner reference, if attached.
+    /// 防 PID 复用的 runner 引用（若已挂接）。
     pub runner_ref_json: Option<Value>,
-    /// Terminal roll-forward input, if reserved.
+    /// 终态前滚输入（若已预留）。
     pub terminal: Option<TerminalReservation>,
 }
 
-/// One pending task-page projection.
+/// 一条待投递的任务页投影。
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct OutboxRecord {
-    /// Monotonic outbox sequence.
+    /// 单调递增的 outbox 序号。
     pub sequence: i64,
-    /// Owning task.
+    /// 所属任务。
     pub task_id: TaskId,
-    /// Projection payload.
+    /// 投影载荷。
     pub payload_json: Value,
 }
 
-/// A finalized terminal transition whose authoritative audit outcome is pending.
+/// 已落定的终态迁移，其权威审计结果仍待投递。
 #[derive(Clone, Debug, PartialEq)]
 pub struct PendingTerminalAudit {
-    /// Immutable attempt and original report reservation.
+    /// 不可变的 attempt 及其原始报告预留。
     pub attempt: AttemptRecord,
-    /// Status committed by T2, independent of later task changes.
+    /// T2 提交的状态，不受之后任务变化影响。
     pub status: TaskStatus,
-    /// Broker receipt committed in the same transaction.
+    /// 同一事务中提交的 Broker 回执。
     pub receipt_json: Value,
 }
 
-/// Non-cloneable, single-writer runtime authority.
+/// 不可克隆、单写者的运行时权威。
 pub struct ControlDb {
     connection: Connection,
     vault_uuid: VaultUuid,
 }
 
 impl ControlDb {
-    /// Opens, migrates, configures, and binds a file database.
+    /// 打开文件数据库：配置连接、执行迁移并绑定 Vault。
     pub fn open(path: impl AsRef<Path>, vault_uuid: VaultUuid) -> Result<Self, DbError> {
         Self::from_connection(Connection::open(path)?, vault_uuid)
     }
 
-    /// Opens a faithful in-memory database for tests.
+    /// 打开测试用内存数据库，走与文件库相同的配置、迁移与绑定流程。
     pub fn open_in_memory(vault_uuid: VaultUuid) -> Result<Self, DbError> {
         Self::from_connection(Connection::open_in_memory()?, vault_uuid)
     }
@@ -442,8 +442,8 @@ impl ControlDb {
                 row.get(0)
             })?;
         if previous_version < 2 {
-            // v1 finalized before acknowledging audit durability. A one-time migration
-            // repair is safe because the ledger deduplicates the original event/phase.
+            // v1 在确认审计已持久之前就完成了终结。这次一次性迁移修复是安全的，
+            // 因为账本会按原 event/phase 去重。
             tx.execute(
                 "INSERT OR IGNORE INTO terminal_audit_outbox(attempt_id, status)
                  SELECT a.attempt_id, t.status FROM attempts a
@@ -497,7 +497,7 @@ impl ControlDb {
         Ok(())
     }
 
-    /// Returns the latest applied schema version.
+    /// 返回已应用的最新 schema 版本。
     pub fn schema_version(&self) -> Result<i64, DbError> {
         Ok(self.connection.query_row(
             "SELECT COALESCE(MAX(version), 0) FROM schema_migrations",
@@ -506,7 +506,7 @@ impl ControlDb {
         )?)
     }
 
-    /// Returns the durable Vault binding.
+    /// 返回持久化的 Vault 绑定。
     pub fn bound_vault_uuid(&self) -> Result<VaultUuid, DbError> {
         let value: String = self.connection.query_row(
             "SELECT vault_uuid FROM vault_binding WHERE singleton = 1",
@@ -516,7 +516,7 @@ impl ControlDb {
         parse_vault_uuid(&value)
     }
 
-    /// Reads an allow-listed runtime pragma for diagnostics.
+    /// 读取白名单内的运行时 pragma，用于诊断。
     pub fn pragma(&self, name: &str) -> Result<String, DbError> {
         if !matches!(name, "journal_mode" | "synchronous" | "foreign_keys") {
             return Err(DbError::Corrupt("unsupported pragma query".to_owned()));
@@ -531,7 +531,7 @@ impl ControlDb {
         }
     }
 
-    /// Inserts a human-authored task definition in `draft` state.
+    /// 以 `draft` 状态插入人写任务定义。
     pub fn create_task(
         &mut self,
         task_id: TaskId,
@@ -555,7 +555,7 @@ impl ControlDb {
         Ok(())
     }
 
-    /// Moves a draft task into the claim queue.
+    /// 把 draft 任务移入认领队列。
     pub fn queue_task(&mut self, task_id: TaskId, now_ms: i64) -> Result<(), DbError> {
         let tx = self
             .connection
@@ -575,7 +575,7 @@ impl ControlDb {
         }
     }
 
-    /// Queues a draft with the immutable snapshot confirmed by its Run command.
+    /// 以确认后的不可变快照把 draft 入队（M0 来自 Run 命令，黑板任务在认领前冻结）。
     pub fn queue_with_snapshot(
         &mut self,
         task_id: TaskId,
@@ -606,7 +606,7 @@ impl ControlDb {
         Ok(())
     }
 
-    /// Removes a queued task from claim eligibility after its confirmed inputs change.
+    /// 已确认的输入变化后，取消 queued 任务的认领资格。
     pub fn require_reconfirmation(&mut self, task_id: TaskId, now_ms: i64) -> Result<(), DbError> {
         let tx = self
             .connection
@@ -625,7 +625,7 @@ impl ControlDb {
         Ok(())
     }
 
-    /// Returns the oldest queued task without claiming it.
+    /// 返回最早入队的 queued 任务，但不认领它。
     pub fn next_queued(&self) -> Result<Option<TaskRecord>, DbError> {
         let id: Option<String> = self
             .connection
@@ -642,7 +642,7 @@ impl ControlDb {
         }
     }
 
-    /// Looks up one task.
+    /// 查询单个任务。
     pub fn task(&self, task_id: TaskId) -> Result<Option<TaskRecord>, DbError> {
         type TaskTuple = (
             String,
@@ -686,7 +686,7 @@ impl ControlDb {
         .transpose()
     }
 
-    /// Atomically creates the sole active attempt and stores snapshot metadata.
+    /// 原子地创建唯一的活动 attempt，并保存快照元数据。
     pub fn claim(
         &mut self,
         task_id: TaskId,
@@ -813,7 +813,7 @@ impl ControlDb {
         })
     }
 
-    /// Attaches a PID-safe runner reference after start.
+    /// 启动后挂接防 PID 复用的 runner 引用。
     pub fn attach_runner(
         &mut self,
         task_id: TaskId,
@@ -840,7 +840,7 @@ impl ControlDb {
         }
     }
 
-    /// Extends a live attempt lease after verifying its guard.
+    /// 核对守卫后续期活动 attempt 的租约。
     pub fn heartbeat(
         &mut self,
         task_id: TaskId,
@@ -870,7 +870,7 @@ impl ControlDb {
         }
     }
 
-    /// Immediately revokes a queued or running task's active capability.
+    /// 立即撤销活动能力：非黑板的 draft/queued 直接取消，running 转入 `cancel_requested`。
     pub fn cancel_task(&mut self, task_id: TaskId, now_ms: i64) -> Result<(), DbError> {
         let tx = self
             .connection
@@ -932,7 +932,7 @@ impl ControlDb {
         Ok(())
     }
 
-    /// Completes a previously requested cancellation after the runner is isolated.
+    /// runner 隔离后，完成先前请求的取消。
     pub fn acknowledge_cancel(
         &mut self,
         task_id: TaskId,
@@ -1002,12 +1002,12 @@ impl ControlDb {
         Ok(())
     }
 
-    /// Lists revoked attempts whose cancellation still awaits runner isolation.
+    /// 列出已撤销、取消仍在等待 runner 隔离的 attempt。
     pub fn cancelling_attempts(&self) -> Result<Vec<AttemptRecord>, DbError> {
         self.attempts_with_phase(AttemptPhase::CancelRequested)
     }
 
-    /// Performs T1: reserves the terminal winner and its roll-forward input.
+    /// 执行 T1：预留终态赢家及其前滚输入。
     pub fn reserve_terminal(
         &mut self,
         task_id: TaskId,
@@ -1026,7 +1026,7 @@ impl ControlDb {
         )
     }
 
-    /// Reserves the existing T1 protocol for runner candidates requiring owner review.
+    /// 沿用既有 T1 协议，为需主人审阅的 runner 候选预留终态。
     pub fn reserve_board_runner_candidates(
         &mut self,
         task_id: TaskId,
@@ -1140,7 +1140,7 @@ impl ControlDb {
         Ok(())
     }
 
-    /// Performs T2 after audit intent and Broker effects, reserving the audit outcome.
+    /// 在审计意图与 Broker 效果之后执行 T2；带 Broker 回执时同事务登记待投递的审计结果。
     pub fn finalize_terminal(
         &mut self,
         task_id: TaskId,
@@ -1305,7 +1305,7 @@ impl ControlDb {
         Ok(())
     }
 
-    /// Returns whether a Gateway capability is active at this instant.
+    /// 返回 Gateway 能力此刻是否有效。
     pub fn is_attempt_active(
         &self,
         task_id: TaskId,
@@ -1320,7 +1320,7 @@ impl ControlDb {
         )
     }
 
-    /// Marks old in-flight work abandoned; `committing` remains for roll-forward.
+    /// 只把遗留的 `claimed`/`running` attempt 标为 abandoned；`committing` 留待前滚。
     pub fn abandon_inflight(&mut self, now_ms: i64) -> Result<usize, DbError> {
         let tx = self
             .connection
@@ -1355,7 +1355,7 @@ impl ControlDb {
         Ok(changed)
     }
 
-    /// Reads a committed Broker receipt without touching canonical artifacts.
+    /// 读取已提交的 Broker 回执，不触碰规范产物。
     pub fn artifact_receipt(
         &self,
         task_id: TaskId,
@@ -1375,7 +1375,7 @@ impl ControlDb {
             .transpose()
     }
 
-    /// Reads only durable terminal outcomes not acknowledged by AuditLedger.
+    /// 只读取 AuditLedger 尚未确认的持久终态结果。
     pub fn pending_terminal_audits(&self) -> Result<Vec<PendingTerminalAudit>, DbError> {
         let mut statement = self.connection.prepare(
             "SELECT a.task_id, o.attempt_id, o.status, c.receipt_json
@@ -1406,7 +1406,7 @@ impl ControlDb {
         Ok(outcomes)
     }
 
-    /// Acknowledges an outcome only after AuditLedger append succeeded.
+    /// 只在 AuditLedger 追加成功后确认一条结果。
     pub fn mark_terminal_audit_delivered(
         &mut self,
         attempt_id: AttemptId,
@@ -1423,13 +1423,13 @@ impl ControlDb {
         Ok(())
     }
 
-    /// Lists reservations that reconciliation must roll forward without a runner.
+    /// 列出对账时须在没有 runner 的情况下前滚的预留。
     pub fn committing_attempts(&self) -> Result<Vec<AttemptRecord>, DbError> {
         self.attempts_with_phase(AttemptPhase::Committing)
     }
 
-    /// Lists every historical attempt in creation/id order for trusted isolation maintenance.
-    /// Terminal reservations are omitted, so historical inline report bodies never escape this view.
+    /// 按创建时间/ID 顺序列出某任务的全部历史 attempt，供受信任的隔离维护使用。
+    /// 省略终态预留，历史内联报告正文因此不会经此视图外泄。
     pub fn attempts_for_task(&self, task: TaskId) -> Result<Vec<AttemptRecord>, DbError> {
         let mut statement = self.connection.prepare(
             "SELECT attempt_id FROM attempts WHERE task_id=?1 ORDER BY created_at_ms,attempt_id",
@@ -1448,7 +1448,7 @@ impl ControlDb {
             .collect()
     }
 
-    /// Looks up one attempt, including its terminal roll-forward reservation.
+    /// 查询单个 attempt，含其终态前滚预留。
     pub fn attempt(
         &self,
         task_id: TaskId,
@@ -1509,7 +1509,7 @@ impl ControlDb {
         .transpose()
     }
 
-    /// Loads metadata for one snapshot.
+    /// 加载单个快照的元数据。
     pub fn snapshot(&self, snapshot_id: &str) -> Result<Option<SnapshotRecord>, DbError> {
         let vault: Option<String> = self
             .connection
@@ -1549,7 +1549,7 @@ impl ControlDb {
         }))
     }
 
-    /// Returns undelivered task-page projections.
+    /// 返回尚未投递的任务页投影。
     pub fn pending_outbox(&self) -> Result<Vec<OutboxRecord>, DbError> {
         let mut statement = self.connection.prepare(
             "SELECT sequence, task_id, payload_json FROM projection_outbox
@@ -1574,7 +1574,7 @@ impl ControlDb {
         Ok(records)
     }
 
-    /// Marks a projection delivered after Broker acknowledgement.
+    /// Broker 确认后把一条投影标记为已投递。
     pub fn mark_outbox_delivered(&mut self, sequence: i64, now_ms: i64) -> Result<(), DbError> {
         let changed = self.connection.execute(
             "UPDATE projection_outbox SET delivered_at_ms = ?2

@@ -1,10 +1,10 @@
-//! Namespace allocation always observes real Broker filenames, never client-supplied maxima.
+//! 命名空间编号分配始终以 Broker 中真实的文件名为准，从不采信客户端给出的最大值。
 use super::*;
 use studiolo_vault_broker::NumberingScanner;
 impl<B: VaultBroker + ArtifactStager + NumberingScanner, L: AuditLedger>
     PersistentTaskEngine<B, L>
 {
-    /// Scans canonical filenames then atomically reserves the next number with stable replay.
+    /// 先扫描规范文件名，再原子预留下一个编号，重放结果稳定。
     pub fn reserve_number(
         &mut self,
         request_id: &str,

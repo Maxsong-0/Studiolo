@@ -1,21 +1,21 @@
-//! Lease-time authority and progress-aware reconciliation, distinct from startup recovery.
+//! 租约时效权威与感知进度的对账；后者有别于启动恢复。
 use super::*;
 
-/// Monotonic progress counters for a live attempt.
+/// 活动 attempt 的单调进度计数。
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AttemptProgress {
-    #[doc = "Monotonic number of attempted tool invocations."]
+    #[doc = "已尝试的工具调用次数，单调递增。"]
     pub tool_calls: u64,
-    #[doc = "Monotonic number of edits."]
+    #[doc = "编辑次数，单调递增。"]
     pub edits: u64,
-    #[doc = "Time when either progress counter last increased."]
+    #[doc = "任一进度计数最近一次增长的时间。"]
     pub last_progress_ms: i64,
 }
 
-/// Changes made by a periodic lease sweep; entries provide durable audit subjects/reasons.
+/// 一次租约巡检造成的变更；每条记录都提供持久的审计主体与原因。
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LeaseReconciliation {
-    #[doc = "Revoked task and attempt identities with a machine-readable reason."]
+    #[doc = "被撤销的任务与 attempt 标识，附机器可读的原因。"]
     pub abandoned: Vec<(TaskId, AttemptId, String)>,
 }
 
@@ -52,7 +52,7 @@ pub(super) fn require_retry_ready(
 }
 
 impl ControlDb {
-    /// Authoritative Gateway guard: expired leases can never authorize a tool call.
+    /// Gateway 的权威守卫：过期租约永远不能授权工具调用。
     pub fn is_attempt_active_at(
         &self,
         task: TaskId,
@@ -64,7 +64,7 @@ impl ControlDb {
         Ok(active == 1)
     }
 
-    /// Extends only an unexpired lease and rejects decreasing counters.
+    /// 只续期未过期的租约，并拒绝回退的计数。
     #[allow(clippy::too_many_arguments)]
     pub fn heartbeat_progress(
         &mut self,
@@ -109,7 +109,7 @@ impl ControlDb {
         Ok(())
     }
 
-    /// Returns counters without body or runner output.
+    /// 只返回计数，不含正文或 runner 输出。
     pub fn attempt_progress(&self, attempt: AttemptId) -> Result<Option<AttemptProgress>, DbError> {
         let row:Option<(i64,i64,i64)>=self.connection.query_row("SELECT tool_calls,edits,last_progress_ms FROM attempt_progress WHERE attempt_id=?1",[attempt.to_string()],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).optional()?;
         row.map(|(tools, edits, last)| {
@@ -124,7 +124,7 @@ impl ControlDb {
         .transpose()
     }
 
-    /// Periodic sweep preserves healthy running attempts. Startup explicitly revokes them.
+    /// 周期巡检保留健康的 running attempt；启动巡检则显式撤销它们。
     pub fn reconcile_leases(
         &mut self,
         now: i64,
@@ -216,7 +216,7 @@ impl ControlDb {
         Ok(result)
     }
 
-    /// Retries only a launch failure before the first tool, at most twice with backoff.
+    /// 只重试首个工具调用前的启动失败：最多两次、带退避，并受 `allow_retry` 与 `max_attempts` 约束。
     #[allow(clippy::too_many_arguments)]
     pub fn launch_failed(
         &mut self,

@@ -1,11 +1,11 @@
-//! Cancellation preserves real candidates and the runner's stopped packet through the same T1/T2.
+//! 取消时经同一 T1/T2 保留真实候选与 runner 的停止包。
 use super::*;
 use crate::board_types::sha256_hex;
 use studiolo_runner_adapter::RunnerArtifact;
 
 impl<B: VaultBroker + ArtifactStager, L: AuditLedger> PersistentTaskEngine<B, L> {
-    /// Publishes real cancellation candidates with a stopped receipt during the 180-second grace.
-    /// A committed cancellation never claims acceptance and never resumes the external runner.
+    /// 在 180 秒宽限期内，随停止回执发布真实的取消候选。
+    /// 已提交的取消绝不宣称被接受，也绝不恢复外部 runner。
     pub fn stage_board_stopped_candidates(
         &mut self,
         mut report: RunnerReport,
