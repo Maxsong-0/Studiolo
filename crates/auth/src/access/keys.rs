@@ -1,6 +1,12 @@
 //! 有界 JWKS 获取与缓存，生产取钥仅使用固定 HTTPS 源。
 
-use std::{collections::BTreeMap, future::Future, pin::Pin, sync::Arc, time::Duration};
+use std::{
+    collections::BTreeMap,
+    future::Future,
+    pin::Pin,
+    sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard},
+    time::Duration,
+};
 
 use jsonwebtoken::DecodingKey;
 use serde::Deserialize;
@@ -77,15 +83,30 @@ impl KeySource for HttpsSource {
     }
 }
 
-struct Cached {
+/// 某次取钥的结果与冷却记账；读写锁只包同步查表和赋值，绝不跨 await。
+struct Snapshot {
     keys: BTreeMap<String, DecodingKey>,
     expires: Instant,
     last_attempt: Instant,
 }
 
+impl Snapshot {
+    /// 仅在未过期时交出密钥；过期快照里的旧密钥一律不可用。
+    fn fresh_key(&self, kid: &str, now: Instant) -> Option<DecodingKey> {
+        if now < self.expires {
+            self.keys.get(kid).cloned()
+        } else {
+            None
+        }
+    }
+}
+
 pub(super) struct KeyCache {
     source: Arc<dyn KeySource>,
-    cached: Mutex<Cached>,
+    /// 当前快照。只有持有 `refresh` 闸门者才会写它，所以装入新密钥时不会与另一次刷新交错。
+    snapshot: RwLock<Snapshot>,
+    /// 刷新单飞闸门：冷却判定、冷却记账与取钥都在持闸期间进行；唯有它跨取钥的 await。
+    refresh: Mutex<()>,
 }
 
 impl KeyCache {
@@ -94,34 +115,61 @@ impl KeyCache {
         let now = Instant::now();
         Ok(Self {
             source,
-            cached: Mutex::new(Cached {
+            snapshot: RwLock::new(Snapshot {
                 keys,
                 expires: now + CACHE_TTL,
                 last_attempt: now,
             }),
+            refresh: Mutex::new(()),
         })
     }
 
     pub(super) async fn key(&self, kid: &str) -> Result<DecodingKey, AccessError> {
-        // 持锁跨刷新：并发未知 kid 共用一次取钥；取消请求后冷却记录仍保留。
-        let mut cached = self.cached.lock().await;
-        let now = Instant::now();
-        let fresh = now < cached.expires;
-        if fresh && let Some(key) = cached.keys.get(kid) {
-            return Ok(key.clone());
+        // 锁序：先刷新闸门、后快照读写锁，绝不在持快照锁时等闸门；快照锁只在同步代码里
+        // 短暂持有、不跨任何 await，跨取钥 await 的只有闸门。
+        // 快路径只拿读锁：未过期的已缓存 kid 即使另一请求正在取钥也立即返回，不等网络。
+        let cached = self.read()?.fresh_key(kid, Instant::now());
+        if let Some(key) = cached {
+            return Ok(key);
         }
-        if now.duration_since(cached.last_attempt) < REFRESH_INTERVAL {
-            return Err(if fresh {
-                AccessError::Rejected
-            } else {
-                AccessError::Unavailable
-            });
+        // 慢路径持闸单飞：并发未知 kid 在闸门后排队，共用在途的那一次取钥。
+        let _gate = self.refresh.lock().await;
+        {
+            // 排队期间别人可能已刷新好或已记下冷却，所以持闸后在写锁内按当下时刻重读快照；
+            // 冷却判定与记账一次做完并在取钥前释放写锁，请求在取钥途中被取消，冷却记录也仍保留。
+            let mut snapshot = self.write()?;
+            let now = Instant::now();
+            if let Some(key) = snapshot.fresh_key(kid, now) {
+                return Ok(key);
+            }
+            if now.duration_since(snapshot.last_attempt) < REFRESH_INTERVAL {
+                return Err(if now < snapshot.expires {
+                    AccessError::Rejected
+                } else {
+                    AccessError::Unavailable
+                });
+            }
+            snapshot.last_attempt = now;
         }
-        cached.last_attempt = now;
+        // 取钥期间不持快照锁；失败时快照原样保留，过期密钥因此不会借失败复活。
         let keys = parse(&self.source.fetch().await?)?;
-        cached.keys = keys;
-        cached.expires = Instant::now() + CACHE_TTL;
-        cached.keys.get(kid).cloned().ok_or(AccessError::Rejected)
+        let key = keys.get(kid).cloned();
+        let expires = Instant::now() + CACHE_TTL;
+        {
+            let mut snapshot = self.write()?;
+            snapshot.keys = keys;
+            snapshot.expires = expires;
+        }
+        key.ok_or(AccessError::Rejected)
+    }
+
+    // 写锁内只做查表、时刻比较与字段赋值，均不会 panic，故不应中毒；万一中毒按失败关闭处理。
+    fn read(&self) -> Result<RwLockReadGuard<'_, Snapshot>, AccessError> {
+        self.snapshot.read().map_err(|_| AccessError::Unavailable)
+    }
+
+    fn write(&self) -> Result<RwLockWriteGuard<'_, Snapshot>, AccessError> {
+        self.snapshot.write().map_err(|_| AccessError::Unavailable)
     }
 }
 
