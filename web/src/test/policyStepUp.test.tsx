@@ -168,14 +168,14 @@ async function openPolicy() {
       </SessionBoundary>
     </StrictMode>,
   );
-  await screen.findByRole('table', { name: '现行各项' });
+  await screen.findByRole('table', { name: '生效中的各项' });
   return user;
 }
 
 /**
- * 选中待处理的那份 desired，点发布，等二次认证窗口出现。
+ * 选中待处理的那份规则草案，点发布，在执行预览里确认，等二次认证窗口出现。
  *
- * 每步都自证：按钮可点、发布请求确实发出，失败时一眼看出卡在哪一步，
+ * 每步都自证：按钮可点、预览先于请求出现、确认后发布请求确实发出，失败时一眼看出卡在哪一步，
  * 不必从整页 DOM 里猜（[[分支断言必须自证走了哪一支]]）。
  */
 async function publish(user: ReturnType<typeof userEvent.setup>) {
@@ -185,6 +185,9 @@ async function publish(user: ReturnType<typeof userEvent.setup>) {
   });
   expect(button).toBeEnabled();
   await user.click(button);
+  const preview = screen.getByRole('group', { name: /^执行预览/ });
+  expect(activations).toHaveLength(0);
+  await user.click(within(preview).getByRole('button', { name: '确认发布' }));
   await waitFor(() => expect(activations).toHaveLength(1));
   return screen.findByRole('dialog', { name: '二次认证后继续' });
 }
@@ -358,7 +361,7 @@ it('超过一天才回来：会话重新核对、整页重挂，窗口和待重�
 
   await leaveAndReturn({ afterADay: true });
 
-  await screen.findByRole('table', { name: '现行各项' });
+  await screen.findByRole('table', { name: '生效中的各项' });
   expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   // 重挂丢掉待重试的动作是**失败关闭**：人要重新点发布、重新认证，绝不会自己发出去。
   expect(stepUps).toHaveLength(0);
