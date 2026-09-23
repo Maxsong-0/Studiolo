@@ -19,30 +19,30 @@ pub use record::{AuditRecord, IntegrityHash};
 pub use sqlite::{AUDIT_SEGMENT_RECORDS, SqliteAuditLedger};
 pub use verification::{AuditSegmentSummary, AuditVerificationCost};
 
-/// Errors at the authoritative audit seam.
+/// 权威审计接缝上的错误。
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum AuditError {
-    /// An event identifier was empty or contained control characters.
+    /// 事件标识为空、仅含空白或含控制字符。
     #[error("audit event id is invalid")]
     InvalidEventId,
-    /// A payload key could carry a secret and therefore cannot be persisted.
+    /// payload 中某个键可能携带机密，因此不能持久化。
     #[error("audit payload contains forbidden secret field at {path}")]
     SecretField {
-        /// Dot-and-index path of the rejected field.
+        /// 被拒字段的路径：对象键以点号连接，数组元素记作 `[下标]`。
         path: String,
     },
-    /// An existing idempotency key was reused for different semantic content.
+    /// 既有幂等键（事件标识 + 阶段）被复用于不同的语义内容。
     #[error("audit event {event_id}/{phase:?} conflicts with an existing record")]
     IdempotencyConflict {
-        /// Conflicting stable identifier.
+        /// 发生冲突的稳定事件标识。
         event_id: AuditEventId,
-        /// Conflicting phase.
+        /// 发生冲突的阶段。
         phase: AuditPhase,
     },
-    /// The event could not be encoded for hashing and persistence.
+    /// 事件无法规范编码以供哈希与持久化，或编码结果不能无损回放。
     #[error("audit event serialization failed")]
     Serialization,
-    /// The authoritative audit store is unavailable.
+    /// 权威审计存储不可用。
     #[error("audit ledger is unavailable")]
     Unavailable,
     /// 只打开既有存储时，固定数据库文件不存在；须另行显式初始化。
@@ -68,11 +68,11 @@ pub enum AuditError {
     PayloadTooDeep,
 }
 
-/// Synchronous, object-safe boundary for authoritative audit persistence.
+/// 权威审计持久化的同步边界；对象安全，可作 `dyn AuditLedger` 使用。
 pub trait AuditLedger: Send + Sync {
-    /// Appends an event or returns the existing record for an identical retry.
+    /// 追加一条事件；完全相同的重试直接返回既有记录。
     fn append(&self, event: AuditEvent) -> Result<AuditRecord, AuditError>;
 
-    /// Queries records in append order.
+    /// 按追加顺序查询记录。
     fn query(&self, filter: &AuditFilter) -> Result<Vec<AuditRecord>, AuditError>;
 }

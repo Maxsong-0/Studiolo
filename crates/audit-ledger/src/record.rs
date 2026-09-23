@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::fmt;
 
-/// A SHA-256 digest used by the append-only integrity chain.
+/// 只追加完整性链使用的 SHA-256 摘要。
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct IntegrityHash([u8; 32]);
@@ -14,13 +14,13 @@ impl IntegrityHash {
         self.0
     }
 
-    /// Computes a SHA-256 digest.
+    /// 计算 SHA-256 摘要。
     #[must_use]
     pub fn sha256(bytes: &[u8]) -> Self {
         Self(Sha256::digest(bytes).into())
     }
 
-    /// Returns the fixed genesis digest for a new ledger.
+    /// 返回新账本使用的固定创世摘要。
     #[must_use]
     pub fn genesis() -> Self {
         Self::sha256(b"studiolo-audit-genesis-v1")
@@ -43,7 +43,7 @@ impl IntegrityHash {
         Some(Self(bytes))
     }
 
-    /// Returns the lower-case hexadecimal representation.
+    /// 返回小写十六进制表示。
     #[must_use]
     pub fn to_hex(self) -> String {
         let mut output = String::with_capacity(64);
@@ -70,7 +70,7 @@ impl fmt::Display for IntegrityHash {
     }
 }
 
-/// Durable result returned by an append operation.
+/// 追加操作返回的持久记录；查询结果也是这一类型。
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AuditRecord {
     offset: u64,
@@ -102,10 +102,10 @@ impl AuditRecord {
         Ok(())
     }
 
-    /// Reconstructs a record from authoritative adapter-owned storage parts.
+    /// 由各组成部分直接组装一条记录，本身不做任何校验；Adapter 用它还原自有权威存储中的记录。
     ///
-    /// The adapter is responsible for validating the offset and integrity hash
-    /// before exposing the record through [`AuditLedger`](crate::AuditLedger).
+    /// 经 [`AuditLedger`](crate::AuditLedger) 暴露记录之前，
+    /// 由 Adapter 负责校验 offset 与完整性哈希。
     #[must_use]
     pub fn from_parts(
         offset: u64,
@@ -123,31 +123,31 @@ impl AuditRecord {
         }
     }
 
-    /// Returns the one-based append offset.
+    /// 返回从 1 起算的追加 offset。
     #[must_use]
     pub fn offset(&self) -> u64 {
         self.offset
     }
 
-    /// Returns the server-side recording timestamp.
+    /// 返回账本追加时在服务端记下的时间戳，不来自事件提交方。
     #[must_use]
     pub fn recorded_at(&self) -> Timestamp {
         self.recorded_at
     }
 
-    /// Returns the preceding record hash, or the genesis hash for offset one.
+    /// 返回前一条记录的哈希；offset 为 1 时返回创世哈希。
     #[must_use]
     pub fn previous_hash(&self) -> IntegrityHash {
         self.previous_hash
     }
 
-    /// Returns this record's SHA-256 chain digest.
+    /// 返回本记录在完整性链上的 SHA-256 摘要。
     #[must_use]
     pub fn record_hash(&self) -> IntegrityHash {
         self.record_hash
     }
 
-    /// Returns the appended semantic event.
+    /// 返回被追加的语义事件。
     #[must_use]
     pub fn event(&self) -> &AuditEvent {
         &self.event

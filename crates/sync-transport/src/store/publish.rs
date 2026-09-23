@@ -59,7 +59,7 @@ pub struct FilePublisher {
 impl FilePublisher {
     /// 只打开既有存储：不创建目录、不补空 state、不认领临时残留。
     ///
-    /// # Errors
+    /// # 错误
     /// 固定文件缺失返回 `MissingStore`；残留临时文件返回 `TemporaryResidue`。
     pub fn open_existing(path: &Path) -> Result<Self> {
         let publisher = Self::attach(path, false)?;
@@ -79,7 +79,7 @@ impl FilePublisher {
 
     /// 管理员显式初始化：三个固定名字都不存在时才建库，并立即发布完整首条记录。
     ///
-    /// # Errors
+    /// # 错误
     /// 任一固定名字已存在返回 `AlreadyExists`。
     pub fn initialize(path: &Path, initial: &[u8]) -> Result<Self> {
         let mut publisher = Self::attach(path, true)?;
@@ -89,7 +89,7 @@ impl FilePublisher {
 
     /// 显式丢弃上次发布留下的临时文件；它从来不是授权状态。
     ///
-    /// # Errors
+    /// # 错误
     /// 根身份或权限不符返回 `UnsafeStorage`。
     pub fn discard_residue(path: &Path) -> Result<()> {
         use rustix::fs::{AtFlags, unlinkat};
@@ -210,7 +210,7 @@ impl FilePublisher {
 
     /// 仅测试：带故障注入的发布。
     ///
-    /// # Errors
+    /// # 错误
     /// 注入故障时返回 `Unavailable`，且权威记录必须保持旧版本。
     #[cfg(test)]
     pub fn replace_faulted(&mut self, bytes: &[u8], fault: PublishFault) -> Result<()> {

@@ -26,7 +26,7 @@ pub(crate) struct TicketBinding {
 impl TicketBinding {
     /// 复验票据是否仍然对应同一 owner 实例、同一租约与同一运行。
     ///
-    /// # Errors
+    /// # 错误
     /// 跨实例/跨租约返回 `TicketForeign`；配置或根变化返回 `TicketStale`/`RootsChanged`。
     pub(crate) fn check(
         &self,

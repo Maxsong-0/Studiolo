@@ -71,7 +71,7 @@ pub enum Transition {
 
 /// 准备一次运行；state/Intent 已可靠发布，但没有任何启动命令。
 ///
-/// # Errors
+/// # 错误
 /// 活动槽未空返回 `RunActive`；序号不符返回 `SequenceMismatch`；计数溢出返回 `CounterOverflow`。
 pub fn prepare(state: &TransportState, request: &PrepareRequest) -> Result<TransportState> {
     if state.active.is_some() {
@@ -112,7 +112,7 @@ pub fn prepare(state: &TransportState, request: &PrepareRequest) -> Result<Trans
 
 /// 应用一次转换；产出完整新记录，调用方负责原子发布。
 ///
-/// # Errors
+/// # 错误
 /// 阶段不允许返回 `PhaseConflict`；Intent 未 ACK 就启动返回 `AuditPending`。
 pub fn apply(state: &TransportState, transition: Transition) -> Result<TransportState> {
     let mut next = state.clone();

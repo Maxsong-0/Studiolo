@@ -14,7 +14,7 @@ pub struct CgroupEvents {
 
 /// 严格解析 `cgroup.events`：缺 `populated`、重复键或未知键一律拒绝。
 ///
-/// # Errors
+/// # 错误
 /// 格式不符返回 `ProtocolViolation`。
 pub fn parse_events(text: &str) -> Result<CgroupEvents, ContainmentGap> {
     let mut populated = None;
@@ -58,7 +58,7 @@ pub struct CgroupLimits {
 
 /// 解析 `memory.max`/`memory.swap.max`/`pids.max` 这类「数值或 max」的单值文件。
 ///
-/// # Errors
+/// # 错误
 /// 非十进制数值且非 `max` 时返回 `ProtocolViolation`。
 pub fn parse_scalar(text: &str) -> Result<Option<u64>, ContainmentGap> {
     let value = text.trim();
@@ -73,7 +73,7 @@ pub fn parse_scalar(text: &str) -> Result<Option<u64>, ContainmentGap> {
 
 /// 解析 `cpu.max` 的 `"<quota|max> <period>"`。
 ///
-/// # Errors
+/// # 错误
 /// 字段数不对、周期为零或数值非法时返回 `ProtocolViolation`。
 pub fn parse_cpu_max(text: &str) -> Result<Option<(u64, u64)>, ContainmentGap> {
     let mut parts = text.split_whitespace();
@@ -97,7 +97,7 @@ pub fn parse_cpu_max(text: &str) -> Result<Option<(u64, u64)>, ContainmentGap> {
 
 /// 实际限额必须逐项满足预算；「已请求」不算，任何一项是无限就拒绝启动。
 ///
-/// # Errors
+/// # 错误
 /// 任一项缺失或宽于预算返回 `BudgetUnsupported`。
 pub fn satisfies(limits: &CgroupLimits, budget: &RunBudget) -> Result<(), ContainmentGap> {
     let memory = limits
