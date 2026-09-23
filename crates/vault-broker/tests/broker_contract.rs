@@ -1,4 +1,4 @@
-//! Black-box contract tests for the filesystem VaultBroker.
+//! 文件系统版 `VaultBroker` 的黑盒契约测试。
 
 #[path = "broker/artifacts.rs"]
 mod artifacts;

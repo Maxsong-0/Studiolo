@@ -1,4 +1,4 @@
-//! Real Broker/SQLite candidate recovery and the separate owner approval boundary.
+//! 真实 `Broker`/`SQLite` 下的候选恢复，以及独立的主人批准边界。
 use sha2::{Digest, Sha256};
 use studiolo_audit_ledger::{AuditFilter, AuditLedger, MemoryAuditLedger};
 use studiolo_control_db::{ControlDb, TaskStatus};

@@ -1,4 +1,4 @@
-//! Explicit isolated Demo sources. No Runner-selected URL, SQL, headers or database path.
+//! 显式隔离的 `Demo` 数据源；`URL`、`SQL`、请求头与数据库路径一概不由 `Runner` 选择。
 use crate::stub_gateway::demo_arguments;
 use rusqlite::{Connection, OpenFlags};
 use serde_json::{Value, json};
@@ -19,19 +19,19 @@ use studiolo_gateway::{
     ModelResponse, PermissionLayers, ToolCall, ToolResult,
 };
 
-/// Administrator-supplied Demo source mapping, never deserialized from a Runner request.
+/// 由管理员提供的 `Demo` 数据源映射，绝不从 `Runner` 请求反序列化而来。
 pub struct DemoGatewayConfig {
-    /// Must be exactly `demo`; this adapter cannot become a production source by configuration.
+    /// 必须恰好是 `demo`；本适配器无法靠配置变成生产数据源。
     pub mode: String,
-    /// Fixed numeric loopback endpoint serving only `/demo.json`; redirects are refused.
+    /// 固定的数字地址回环端点，只提供 `/demo.json`；拒绝重定向。
     pub endpoint: SocketAddr,
-    /// Existing absolute path named `demo.sqlite3`, opened read-only.
+    /// 已存在的绝对路径，文件名为 `demo.sqlite3`，以只读方式打开。
     pub database: PathBuf,
 }
 type Cache = BTreeMap<String, (ToolCall, Result<ToolResult, GatewayError>)>;
-/// Synthetic local sources behind the existing Gateway authorization seam.
-/// The internal MemoryGateway audits admission; separate effect events bracket the actual I/O.
-/// Result slots are bounded and process-local; no restart persistence is claimed.
+/// 位于既有 `Gateway` 授权接缝之后的合成本地数据源。
+/// 内部的 `MemoryGateway` 审计准入；另有独立的 `effect` 事件在实际 `I/O` 前后各记一次。
+/// 结果槽有上限且只在本进程内有效；不承诺重启后仍然保留。
 pub struct DemoGateway {
     admission: MemoryGateway,
     audit: Arc<dyn AuditLedger>,
@@ -40,7 +40,7 @@ pub struct DemoGateway {
     calls: Mutex<Cache>,
 }
 impl DemoGateway {
-    /// Opens only explicit Demo mode and a fixed read-only SQLite source.
+    /// 只接受显式的 `Demo` 模式，且只打开固定的只读 `SQLite` 数据源。
     pub fn open(
         config: DemoGatewayConfig,
         guard: Arc<dyn AttemptGuard>,
@@ -240,7 +240,7 @@ impl Gateway for DemoGateway {
             .calls
             .lock()
             .map_err(|_| GatewayError::StateUnavailable)?;
-        // This reused gate checks all four permission layers, live fence, expiry and cancellation.
+        // 复用的这道闸门检查全部四层权限、当前 `fence`、过期与取消。
         self.admission.invoke(cap, call.clone())?;
         let key = format!(
             "{}:{}:{}:{}",
@@ -269,7 +269,7 @@ impl Gateway for DemoGateway {
                 _ => Err(GatewayError::ToolNotAllowed),
             }
         };
-        // A cancellation during I/O cannot release its response or create a successful candidate.
+        // `I/O` 期间发生的取消既不能放出这次响应，也不能产生成功的候选。
         let mut result = output.and_then(|output| {
             self.admission.invoke(cap, call.clone())?;
             Ok(ToolResult::new(

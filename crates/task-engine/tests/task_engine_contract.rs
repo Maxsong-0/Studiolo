@@ -1,4 +1,4 @@
-//! Public-seam contract tests for the persistent TaskEngine.
+//! 持久化 `TaskEngine` 的公开接缝契约测试。
 
 use std::sync::{
     Arc,

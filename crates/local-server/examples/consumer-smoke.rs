@@ -1,5 +1,5 @@
-//! Create-only, isolated M5 consumer acceptance host. The caller uses the real agent binary.
-//! No owner HTTP session, production policy, model key or Runner is fabricated or enabled.
+//! 仅创建（`create-only`）、独立隔离的 M5 接入方验收宿主；调用方使用真实的 `agent` 二进制。
+//! 不伪造也不启用任何主人 `HTTP` 会话、生产策略、模型密钥或 `Runner`。
 use serde_json::json;
 use std::{
     fs,

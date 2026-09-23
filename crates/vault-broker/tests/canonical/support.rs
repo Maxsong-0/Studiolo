@@ -1,4 +1,4 @@
-//! Shared synthetic roots initialized only by the existing trusted Fs constructor.
+//! 共用的合成根目录，只由既有的受信 `Fs` 构造函数初始化。
 
 use std::{
     collections::BTreeMap,
@@ -41,7 +41,7 @@ pub(super) fn path(value: &str) -> VaultPath {
 }
 
 pub(super) fn create_fifo(path: &Path) {
-    // rustix exposes mkfifoat on Linux, but not on the macOS target.
+    // `rustix` 在 `Linux` 上提供 `mkfifoat`，在 `macOS` 目标上则没有。
     assert!(
         std::process::Command::new("mkfifo")
             .arg(path)

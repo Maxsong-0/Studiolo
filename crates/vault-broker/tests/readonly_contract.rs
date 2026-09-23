@@ -1,4 +1,4 @@
-//! Public contract for the zero-write, explicitly rooted M1 reader.
+//! 零写入、显式指定根目录的 M1 读取器的公开契约。
 
 #![cfg(unix)]
 

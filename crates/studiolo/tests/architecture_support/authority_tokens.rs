@@ -1,4 +1,4 @@
-//! Token-local exceptions: exact count and safety anchors precede any removal.
+//! 按记号局部放行的例外：先核对精确次数与安全锚点，再做任何移除。
 pub(super) fn compact(source: &str) -> String {
     source
         .split_whitespace()
@@ -25,7 +25,7 @@ pub(super) fn checked(source: &str, anchors: &[&str], calls: &[(&str, usize)]) -
     remaining
 }
 
-/// These new sites also use imported rustix/socket calls: keep their complete call inventory closed.
+/// 这些新增位置还用到导入的 `rustix`/套接字调用：须让它们的完整调用清单保持封闭。
 pub(super) fn checked_closed(source: &str, anchors: &[&str], calls: &[(&str, usize)]) -> String {
     let remainder = checked(source, anchors, calls);
     let extra = [

@@ -1,4 +1,4 @@
-//! Linux filesystem attack cases that require real kernel path semantics.
+//! 需要真实内核路径语义的 `Linux` 文件系统攻击用例。
 
 #![cfg(target_os = "linux")]
 
@@ -190,8 +190,8 @@ fn raced_file_replacements_never_read_links_or_block_on_a_fifo() {
         let result = receiver.recv_timeout(Duration::from_secs(15));
         stop.store(true, Ordering::Relaxed);
         attacker.join().unwrap();
-        // Do not join a blocked reader on failure: the bounded assertion must
-        // report a FIFO regression instead of hanging the entire test process.
+        // 失败时不要 `join` 被阻塞的读者：有界断言必须报告 `FIFO` 回归，
+        // 而不是让整个测试进程挂起。
         assert!(result.is_ok(), "{attack} replacement blocked a public read");
         assert!(
             !result.unwrap(),
@@ -265,7 +265,7 @@ fn concurrent_writer_admission_has_exactly_one_canonical_install() {
             let content = vec![b'a' + index; 128 * 1024];
             start.wait();
             let writer = FsVaultBroker::open_existing(&vault_root, &data_root);
-            // The winner keeps its lease until every competing open has returned.
+            // 胜出者一直持有租约，直到每个竞争中的打开操作都已返回。
             opened.wait();
             let mut writer = match writer {
                 Ok(writer) => writer,

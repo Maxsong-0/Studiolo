@@ -1,5 +1,5 @@
-//! Create-only Demo setup and a real HTTP/SQLite -> Gateway -> Stub -> Broker round trip.
-//! No provider, personal login material or production source is involved.
+//! 仅创建（`create-only`）的 `Demo` 环境搭建，外加一次真实的 `HTTP`/`SQLite` -> `Gateway` -> `Stub` -> `Broker` 往返。
+//! 不涉及任何供应商、个人登录材料或生产数据源。
 use std::{
     fs,
     io::{Read, Write},
@@ -160,7 +160,7 @@ fn main() -> Result<()> {
             .file_name()
             .ok_or("Demo directory name missing")?,
     );
-    // Never overwrite or adopt an existing user directory. Errors preserve partial setup.
+    // 绝不覆盖或接管已有的用户目录；出错时保留已完成的部分搭建。
     use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
     fs::DirBuilder::new().mode(0o700).create(&root)?;
     for name in ["broker", "control", "audit", "sources"] {

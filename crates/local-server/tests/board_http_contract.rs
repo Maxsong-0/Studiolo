@@ -226,7 +226,7 @@ async fn human_execution_is_session_csrf_and_l3_guarded_and_default_frozen() {
         .await;
     assert_eq!(replay["task"]["task"]["task_id"], task);
     assert!(replay.get("events").unwrap().is_array());
-    // Project replay is a session-protected join of audit metadata and fresh log pointers.
+    // 项目回放受会话保护，由审计元数据与最新的日志指针联接而成。
     f.writer
         .get("/api/workbench?refresh=true", &login.cookie, 200)
         .await;
@@ -428,8 +428,8 @@ async fn board_only_policy_allows_create_claim_heartbeat_and_return() {
 
 #[tokio::test]
 async fn board_only_policy_rejects_valid_content_requests_without_content_or_batch_writes() {
-    // First obtain real previews and an existing rollback target using a valid
-    // patch grant. Then remove only that grant while preserving the live claim.
+    // 先凭有效的 `patch` 授权拿到真实预览与一个既有的回滚目标，
+    // 再只撤掉这项授权，同时保留仍然有效的 `claim`。
     let f = TestBoard::new().await;
     let (_, identity) = f.create_claim("content-capability-boundary").await;
     let path = format!("{PROJECT}/src/retained.md");

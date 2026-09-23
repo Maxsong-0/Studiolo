@@ -1,4 +1,4 @@
-//! Shared real candidate fixtures for cancellation recovery contracts.
+//! 取消恢复契约共用的真实候选夹具。
 use sha2::{Digest, Sha256};
 use studiolo_audit_ledger::MemoryAuditLedger;
 use studiolo_control_db::ControlDb;
