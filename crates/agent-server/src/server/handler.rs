@@ -1,7 +1,7 @@
 //! MCP initialize：实例登记与初次只读路牌。
 use super::{
-    AgentSession, ListEntriesArgs, PolicyReadArgs, ProposeArgs, ReadNoteArgs, SESSION_VERSIONS,
-    SearchArgs,
+    AgentSession, ListEntriesArgs, PolicyReadArgs, ProposeArgs, ReadNoteArgs, SearchArgs,
+    catalog::SESSION_VERSIONS,
 };
 use crate::auth::AgentType;
 use rmcp::{

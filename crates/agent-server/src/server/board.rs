@@ -1,5 +1,6 @@
 //! 黑板权限在转发前与 canonical 提交端各复核一次。
 use super::*;
+use rmcp::ErrorData as McpError;
 use studiolo_supply::audit::{self, Actor};
 
 #[derive(Debug, serde::Deserialize, rmcp::schemars::JsonSchema)]
@@ -93,7 +94,7 @@ impl AgentSession {
 impl AgentSession {
     pub(super) async fn board_signpost(
         &self,
-        grant: &super::session::Grant,
+        grant: &super::grant::Grant,
     ) -> Result<String, McpError> {
         let Some(client) = &self.state.board else {
             return Ok("黑板实时状态：未接入，A2A 协作暂停。\n".into());
