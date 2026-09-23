@@ -28,7 +28,6 @@ pub(super) fn hard(path: &VaultPath) -> bool {
                     | "ops"
                     | "workbench_data"
                     | "workbench_ephemeral"
-                    | "_规则"
                     | "skills"
                     | "policies"
                     | "capabilities"

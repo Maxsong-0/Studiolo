@@ -27,7 +27,8 @@ pub(super) fn within(path: &VaultPath, prefix: &VaultPath) -> bool {
 }
 
 pub(super) fn hard_excluded(path: &VaultPath) -> bool {
-    if crate::human_content::hard_protected(path) {
+    // `_规则/` 自 2026-09-23 起进同步范围（用户拍板，T-132 P1）；人侧保存的保护在 human_content 里另算。
+    if crate::human_content::reserved_for_agents(path) {
         return true;
     }
     let value = key(path);
@@ -41,7 +42,6 @@ pub(super) fn hard_excluded(path: &VaultPath) -> bool {
                     | "ops"
                     | "workbench_data"
                     | "workbench_ephemeral"
-                    | "_规则"
                     | "skills"
                     | "policies"
                     | "capabilities"
