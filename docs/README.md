@@ -133,7 +133,8 @@ T-033～T-040 已合并 main 并上线；**T-041～T-046 已随 PR #5 合并 `or
 | [`m3/release-packaging.md`](m3/release-packaging.md) | T-063 local-server 运行包内容、本机出包与自检、服务器安装与回滚步骤 | 仅开发分支（文件尚未提交）；**真实服务器部署与公网复验未做**，以该文件「已验证与未验证」一节为准 |
 
 供给面契约本身在 [`contracts/agent-supply.md`](contracts/agent-supply.md)。
-`m3/client-projection.example.json` 是投影输出的示例，不含真实资料。
+`m3/client-projection.example.json` 是投影输出的示例，不含真实资料；
+`m3/client-projection.policy.example.json` 是从策略平面 effective 导出的配置示例（T-111）。
 
 ## m4/ — 策略平面与权限中枢
 

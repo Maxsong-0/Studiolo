@@ -59,10 +59,13 @@ cargo run --locked -p studiolo-agent-server -- serve --vault /path/to/readonly-c
 
 - **人侧发布链路**：因子模式未部署，因此真实 One-time Code 发布未在生产验证。默认发布模板仍是兼容模式；
   未来升级必须保留正式单元现有 `--policy` 和对应可写目录，不能直接覆盖。
-- 推模式（T-038 客户端投影）仍导出 vault 规则文件，未改从 effective 导出。
+- 推模式（T-038 客户端投影）缺省仍导出 vault 规则文件；2026-09-22 T-111 起配置 `rules_source: "policy"`
+  可改从策略平面 effective 导出（见 `m3/client-projection.md`），真实客户端尚未切换。
 - 人侧界面没有实例列表（吊销按 id）；`admin instances` 提供列表。
-- 策略库尚未纳入常态 checkpoint／异机备份；T-086 的同机恢复点不替代异机灾备。
-- M5 的规则版本钉定只暴露 `effective_hash`，未实现钉定本身。
+- 策略库已在契约与类型层纳入一致 checkpoint 清单（2026-09-22 T-110：`CheckpointOwner::Policy`，
+  恢复含策略时须先核对吊销）；但策略库的真实 checkpoint 参与者与常态／异机备份仍未实施，
+  T-086 的同机恢复点不替代异机灾备。
+- M5 的规则版本钉定已由 T-089 在黑板工作项中实现（`task-engine/src/board_types.rs` 按 effective 版本钉定规则引用）。
 
 ## 上线验收探针（T-073，2026-09-18）
 
