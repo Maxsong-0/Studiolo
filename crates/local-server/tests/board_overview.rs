@@ -444,6 +444,13 @@ async fn overview_is_session_gated_and_absent_without_a_board_plane() {
             .await;
         if status == 400 {
             invalid_query(response, query).await;
+        } else {
+            // 未装配黑板：与其它黑板读路由同一固定中文 JSON（T-133）。
+            assert_eq!(
+                support::json(response).await,
+                json!({ "code": "board_unconfigured", "error": "黑板未配置。" }),
+                "{query}"
+            );
         }
     }
     writer.close().await;

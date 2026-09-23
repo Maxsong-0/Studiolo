@@ -7,7 +7,6 @@ use super::BoardPlane;
 use axum::{
     Extension, Json,
     extract::{Query, rejection::QueryRejection},
-    http::StatusCode,
     response::{IntoResponse, Response},
 };
 use jiff::{SignedDuration, Timestamp};
@@ -67,7 +66,7 @@ pub(super) async fn overview(
         return invalid();
     };
     let Some(Extension(plane)) = plane else {
-        return StatusCode::NOT_FOUND.into_response();
+        return super::http::unconfigured();
     };
     let hours = query.window_hours.unwrap_or(DEFAULT_WINDOW_HOURS);
     if !(1..=MAX_WINDOW_HOURS).contains(&hours) {
@@ -75,7 +74,7 @@ pub(super) async fn overview(
     }
     let permit = match plane.permits.clone().try_acquire_owned() {
         Ok(p) => p,
-        Err(_) => return StatusCode::TOO_MANY_REQUESTS.into_response(),
+        Err(_) => return super::http::busy(),
     };
     let result = tokio::task::spawn_blocking(move || {
         let _permit = permit;
@@ -84,7 +83,8 @@ pub(super) async fn overview(
     .await;
     match result {
         Ok(Ok(value)) => Json(value).into_response(),
-        _ => StatusCode::SERVICE_UNAVAILABLE.into_response(),
+        // 许可、控制库、审计或数据不自洽：与其它黑板读路由同一固定中文 JSON（T-133），不回显内部原因。
+        _ => super::http::unavailable(),
     }
 }
 
