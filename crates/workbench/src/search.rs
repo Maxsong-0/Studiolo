@@ -1,4 +1,4 @@
-//! Literal ripgrep matching over the existing in-memory Markdown generation.
+//! 在现有的内存 Markdown 代次上做 ripgrep 字面匹配。
 
 use std::collections::BTreeMap;
 
@@ -108,7 +108,7 @@ fn path_match(matchers: &[RegexMatcher], path: &str) -> Result<Option<usize>, Se
         };
         first = Some(first.map_or(found.start(), |position: usize| position.min(found.start())));
     }
-    // Empty path queries enumerate this same document set, without a second index.
+    // 空的路径查询直接列举这同一个文档集合，不另建第二份索引。
     Ok(Some(first.unwrap_or(0)))
 }
 
@@ -142,7 +142,7 @@ fn content_hits(
                         excerpt(line, found.start()),
                     ));
                 }
-                // Observe the 101st result before stopping; exactly 100 is not truncated.
+                // 先观察到第 101 条结果再停；恰好 100 条不算截断。
                 Ok(hits.len() <= MAX_HITS)
             }),
         )
@@ -170,9 +170,8 @@ fn bounded_title(title: &str) -> String {
 }
 
 fn excerpt(text: &str, first_match: usize) -> String {
-    // Keep 32 characters before the first match. The maximum 256-character
-    // literal still fits in the 320-character budget, including both ellipses.
-    // Only this small window is collected, never the whole long line.
+    // 保留首个匹配之前至多 32 个字符。最长 256 字符的字面量连同两端省略号，仍放得进
+    // 320 字符的预算。只收集这个小窗口，绝不收集整条长行。
     let start = text[..first_match]
         .char_indices()
         .rev()

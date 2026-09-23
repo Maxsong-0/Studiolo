@@ -1,7 +1,6 @@
-//! Read-only, rebuildable views over Markdown notes in a Studiolo Vault.
+//! Studiolo Vault 中 Markdown 笔记的只读、可重建视图。
 //!
-//! Callers supply note text explicitly. This crate never opens or writes the
-//! canonical Vault itself.
+//! 笔记文本一律由调用方显式提供；本 crate 从不自行打开或写入 canonical Vault。
 
 #![forbid(unsafe_code)]
 
@@ -41,39 +40,38 @@ pub use types::{
     IndexedDocument, MarkdownDocument, ParseWarning, TitleSource,
 };
 
-/// Public query seam for the read-only, derived Vault index.
+/// 只读派生 Vault 索引的公开查询接缝。
 pub trait VaultIndex: Send + Sync {
-    /// Replaces the derived generation with the supplied notes.
+    /// 用给定笔记整体替换当前派生代次。
     ///
-    /// This mutates only in-memory derived data and performs no Vault I/O.
+    /// 只改动内存中的派生数据，不做任何 Vault I/O。
     fn rebuild(&mut self, documents: &[MarkdownDocument]) -> Result<IndexGeneration, IndexError>;
 
-    /// Returns one parsed note, or `None` when it is not indexed.
+    /// 返回一篇已解析的笔记；未被索引时返回 `None`。
     fn document(&self, path: &VaultPath) -> Result<Option<IndexedDocument>, IndexError>;
 
-    /// Returns the nested page outline for one note.
+    /// 返回一篇笔记的嵌套页面大纲。
     fn heading_tree(&self, path: &VaultPath) -> Result<Vec<HeadingNode>, IndexError>;
 
-    /// Resolves one wikilink using exact-path rules followed by nearest-first lookup.
+    /// 解析一条 wikilink：先按精确路径规则匹配，再做就近优先查找。
     fn resolve_link(
         &self,
         from: &VaultPath,
         target: &WikilinkTarget,
     ) -> Result<LinkResolution, IndexError>;
 
-    /// Returns resolved links that point to `to`.
+    /// 返回指向 `to` 的全部已解析链接。
     fn backlinks(&self, to: &VaultPath) -> Result<Vec<Backlink>, IndexError>;
 
-    /// Returns all dangling and genuinely ambiguous links.
+    /// 返回全部悬空链接与确实存在歧义的链接。
     fn link_health(&self) -> Result<LinkHealth, IndexError>;
 
-    /// Returns advisory source facts for one note.
+    /// 返回一篇笔记的参考性来源事实。
     ///
-    /// The result is deliberately not `DataLabels` and must not be used for
-    /// authorization.
+    /// 结果刻意不是 `DataLabels`，不得用于授权判定。
     fn source_profile(&self, path: &VaultPath) -> Result<SourceProfile, IndexError>;
 
-    /// Returns counters for the current generation.
+    /// 返回当前代次的计数。
     fn generation(&self) -> IndexGeneration;
 
     /// 返回本代次全部降级诊断，按逻辑路径排序。
@@ -81,7 +79,7 @@ pub trait VaultIndex: Send + Sync {
     /// 符号链接与超大笔记只在这里出现，不会让 rebuild 失败；结果只含逻辑路径。
     fn diagnostics(&self) -> Vec<IndexDiagnostic>;
 }
-/// In-memory M0 adapter for [`VaultIndex`].
+/// [`VaultIndex`] 的 M0 内存适配器。
 #[derive(Debug, Default)]
 pub struct InMemoryVaultIndex {
     documents: BTreeMap<VaultPath, IndexedDocument>,
@@ -93,7 +91,7 @@ pub struct InMemoryVaultIndex {
 }
 
 impl InMemoryVaultIndex {
-    /// Creates an empty index.
+    /// 创建一个空索引。
     #[must_use]
     pub fn new() -> Self {
         Self::default()

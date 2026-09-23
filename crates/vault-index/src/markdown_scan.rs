@@ -44,8 +44,8 @@ fn fence_marker(line: &str) -> Option<(u8, usize, &str)> {
     (run >= 3).then_some((kind, run, &line[run..]))
 }
 
-/// Code spans are delimited by equal-length backtick runs, not by the parity of
-/// all backticks. An unmatched opening run remains ordinary literal text.
+/// 行内 code 由等长的反引号串界定，而不是看全部反引号的奇偶；找不到等长闭合串的起始串
+/// 仍是普通字面文本。返回的区间按起点升序且互不重叠，链接解析据此单调推进区间下标。
 pub(crate) fn code_spans(line: &str) -> Vec<Range<usize>> {
     let mut spans = Vec::new();
     let mut cursor = 0;

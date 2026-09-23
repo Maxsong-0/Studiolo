@@ -6,24 +6,24 @@ use crate::IndexedDocument;
 
 pub(crate) use crate::{link_parse::parse_outgoing, link_resolve::resolve};
 
-/// Parsed target inside `[[target#heading|alias]]`.
+/// 从 `[[target#heading|alias]]` 中解析出的目标。
 #[derive(Clone, Debug, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct WikilinkTarget {
-    /// Exact text between the square brackets.
+    /// 双方括号之间的原文。
     pub raw: String,
-    /// Path, title or alias before `#` and `|`.
+    /// `#` 与 `|` 之前的路径、标题或别名。
     pub target: String,
-    /// Optional heading fragment.
+    /// 可选的标题片段。
     pub heading: Option<String>,
-    /// Optional display alias.
+    /// 可选的显示别名。
     pub alias: Option<String>,
-    /// Whether the source form was an embed (`![[...]]`).
+    /// 源写法是否为嵌入（`![[...]]`）。
     pub embed: bool,
 }
 
 impl WikilinkTarget {
-    /// Parses one complete wikilink or embed token.
+    /// 解析一个完整的 wikilink 或嵌入记号。
     pub fn parse(value: &str) -> Result<Self, WikilinkParseError> {
         let (embed, value) = if let Some(value) = value.strip_prefix("![[") {
             (true, value)
@@ -65,113 +65,113 @@ fn nonempty(value: &str) -> Option<&str> {
     (!value.is_empty()).then_some(value)
 }
 
-/// Failure to parse a complete wikilink token.
+/// 完整 wikilink 记号的解析失败。
 #[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum WikilinkParseError {
-    /// Opening or closing square brackets were absent.
+    /// 缺少起始或结束的双方括号。
     #[error("wikilink delimiters are missing")]
     MissingDelimiters,
-    /// Both target and heading were empty.
+    /// 目标与标题片段都为空。
     #[error("wikilink target is empty")]
     Empty,
 }
 
-/// Rule that uniquely selected a note.
+/// 唯一选中一篇笔记所依据的规则。
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum ResolutionRule {
-    /// A path relative to the source note matched.
+    /// 相对源笔记的路径精确命中；纯锚点链接（`[[#小节]]`）指向源笔记自身，也记为此规则。
     ExactRelative,
-    /// A path relative to the Vault root matched.
+    /// 相对 Vault 根的路径精确命中。
     VaultRootPath,
-    /// A unique name or alias matched in the nearest ancestor subtree.
+    /// 在最近的祖先子树中按名称、标题或别名唯一命中。
     NearestUnique {
-        /// Number of parent levels traversed from the source directory.
+        /// 从源目录向上走过的父级层数。
         ancestor_depth: u16,
     },
 }
 
-/// Total result of wikilink resolution.
+/// wikilink 解析的完整结果：必定落在以下三者之一。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum LinkResolution {
-    /// Exactly one note was selected.
+    /// 恰好选中一篇笔记。
     Resolved {
-        /// Selected logical path.
+        /// 选中的逻辑路径。
         path: VaultPath,
-        /// Rule that selected the path.
+        /// 选中该路径所依据的规则。
         rule: ResolutionRule,
     },
-    /// Multiple candidates matched a case-folded exact path or remained at the
-    /// Vault-wide scope.
+    /// 多个候选在大小写折叠后精确命中同一路径，或就近查找在最近一层就不唯一（此时给出
+    /// Vault 全域按名称、标题或别名命中的候选）。
     Ambiguous {
-        /// Stable, path-sorted candidate list.
+        /// 按路径排序的稳定候选列表。
         candidates: Vec<VaultPath>,
     },
-    /// No note matched.
+    /// 没有任何笔记命中。
     Dangling,
 }
 
-/// Wikilink parsed from one indexed note.
+/// 从一篇已索引笔记中解析出的 wikilink。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct OutgoingLink {
-    /// Parsed target.
+    /// 解析出的目标。
     pub target: WikilinkTarget,
-    /// Resolution in the current index generation.
+    /// 在当前索引代次中的解析结果。
     pub resolution: LinkResolution,
-    /// One-based source line.
+    /// 源文件行号（从 1 起）。
     pub line: u32,
-    /// One-based Unicode-scalar column.
+    /// 以 Unicode 标量计的列号（从 1 起）。
     pub column: u32,
-    /// Original source line for display.
+    /// 供展示的源文件原行。
     pub context: String,
 }
 
-/// One resolved inbound link.
+/// 一条已解析的入链。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Backlink {
-    /// Source note.
+    /// 来源笔记。
     pub from: VaultPath,
-    /// One-based source line.
+    /// 来源行号（从 1 起）。
     pub line: u32,
-    /// One-based source column.
+    /// 来源列号（从 1 起）。
     pub column: u32,
-    /// Source line for display.
+    /// 供展示的来源行。
     pub context: String,
-    /// Display alias from the wikilink, if present.
+    /// wikilink 上的显示别名（如有）。
     pub alias: Option<String>,
 }
 
-/// One dangling link shown by health checks.
+/// 健康检查中列出的一条悬空链接。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LinkIssue {
-    /// Source note.
+    /// 来源笔记。
     pub from: VaultPath,
-    /// Parsed target.
+    /// 解析出的目标。
     pub target: WikilinkTarget,
-    /// One-based source line.
+    /// 来源行号（从 1 起）。
     pub line: u32,
 }
 
-/// One link whose candidates cannot be selected safely.
+/// 一条无法安全选定候选的链接。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AmbiguousLink {
-    /// Source note.
+    /// 来源笔记。
     pub from: VaultPath,
-    /// Parsed target.
+    /// 解析出的目标。
     pub target: WikilinkTarget,
-    /// Stable candidate list.
+    /// 稳定排序的候选列表。
     pub candidates: Vec<VaultPath>,
-    /// One-based source line.
+    /// 来源行号（从 1 起）。
     pub line: u32,
 }
 
-/// Derived health view for all indexed links.
+/// 覆盖全部已索引链接的派生健康视图。
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct LinkHealth {
-    /// Links with no candidates.
+    /// 没有任何候选的链接。
     pub dangling: Vec<LinkIssue>,
-    /// Links with more than one candidate.
+    /// 候选多于一个的链接。
     pub ambiguous: Vec<AmbiguousLink>,
-    /// Count of successful resolutions by rule.
+    /// 按规则统计的成功解析次数。
     pub rule_histogram: BTreeMap<ResolutionRule, usize>,
 }
 

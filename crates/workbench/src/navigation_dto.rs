@@ -2,63 +2,63 @@ use serde::Serialize;
 
 use crate::SourceLocation;
 
-/// Source-linked navigation for one immutable document generation.
+/// 某个不可变代次中一篇文档的导航视图，各项都链接到源位置。
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
 pub struct DocumentNavigation {
-    /// Flat source-order outline, limited to 200 entries.
+    /// 按源顺序排列的扁平大纲，至多 200 条。
     pub outline: Vec<OutlineEntry>,
-    /// Parsed links in source order, limited to 200 entries.
+    /// 按源顺序排列的已解析链接，至多 200 条。
     pub outgoing: Vec<NavigationLink>,
-    /// Resolved page-level inbound links from the entire Vault, limited to 200.
+    /// 来自整个 Vault、指向本页的已解析入链，至多 200 条。
     pub backlinks: Vec<BacklinkView>,
-    /// A list, candidate list, or display string reached its display limit.
+    /// 某个列表、候选列表或展示字符串达到了展示上限。
     pub truncated: bool,
 }
 
-/// One heading in the source document.
+/// 源文档中的一个标题。
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
 pub struct OutlineEntry {
-    /// Plain heading text, at most 320 Unicode scalars.
+    /// 纯标题文本，至多 320 个 Unicode 标量。
     pub title: String,
-    /// Markdown heading level from 1 through 6.
+    /// Markdown 标题级别，1 到 6。
     pub level: u8,
-    /// Exact source heading line.
+    /// 标题所在的确切源行。
     pub source: SourceLocation,
 }
 
-/// One parsed wikilink with an explicit, non-guessing resolution result.
+/// 一条已解析的 wikilink，附显式、不做猜测的解析结果。
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
 pub struct NavigationLink {
-    /// Display alias, or the target and optional heading.
+    /// 显示别名；没有别名时为目标加可选的标题片段。
     pub label: String,
-    /// Original text between `[[` and `]]`, display-limited to 320 scalars.
+    /// `[[` 与 `]]` 之间的原文，展示时截断到至多 320 个标量。
     pub raw: String,
-    /// Exact line containing the link.
+    /// 链接所在的确切行。
     pub source: SourceLocation,
-    /// `resolved`, `ambiguous`, `missing`, `missing_heading`, or `ambiguous_heading`.
+    /// `resolved`、`ambiguous`、`missing`、`missing_heading` 或 `ambiguous_heading`。
     pub status: String,
-    /// Only real destinations; limited to 50, with complete logical paths.
+    /// 只含真实存在的目的地；至多 50 条，逻辑路径完整。
     pub targets: Vec<LinkDestination>,
 }
 
-/// A real, selectable note or heading destination.
+/// 一个真实、可选中的笔记或标题目的地。
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
 pub struct LinkDestination {
-    /// Complete logical Vault path; never truncated or converted to a host path.
+    /// 完整的逻辑 Vault 路径；绝不截断，也不转换成宿主路径。
     pub path: String,
-    /// One-based target line, or 1 for a page-only link.
+    /// 目标行号（从 1 起）；只指向页面的链接为 1。
     pub line: u32,
-    /// Display title of the target document and optional heading.
+    /// 目标文档的展示标题，带可选的标题片段。
     pub title: String,
 }
 
-/// One real inbound page link, preserving its source context.
+/// 一条真实的页面入链，保留其源上下文。
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
 pub struct BacklinkView {
-    /// Display title of the source document.
+    /// 来源文档的展示标题。
     pub title: String,
-    /// Exact source line containing the inbound link.
+    /// 包含该入链的确切源行。
     pub source: SourceLocation,
-    /// Original source line, display-limited to 320 Unicode scalars.
+    /// 源行原文，展示时截断到至多 320 个 Unicode 标量。
     pub context: String,
 }

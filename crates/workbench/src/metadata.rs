@@ -2,7 +2,8 @@ use studiolo_vault_index::{FrontmatterValue, IndexedDocument, MarkdownDocument};
 
 use crate::markdown::clean;
 
-/// Ask M0 for semantic values; scan raw top-level keys only for source positions.
+/// 语义值向 M0 取；原始顶层键只为定位源码行而扫描。某个键有全局或本键的 frontmatter
+/// 警告时跳过它，改查下一个候选键。
 pub(crate) fn value<'a>(
     input: &MarkdownDocument,
     parsed: &'a IndexedDocument,
