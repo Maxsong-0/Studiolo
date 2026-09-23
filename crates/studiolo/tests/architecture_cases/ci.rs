@@ -1,13 +1,30 @@
 //! CI 入口逐行钉住门禁命令：整条逻辑命令行相等才算数，子串命中不算（旧写法的重言式：
 //! `cargo --locked test` 会被路径安全那一行满足）。ci.yml 里的命令还必须落在指定作业、
 //! 所在步骤与作业都不带 `if:`，也不 `continue-on-error`——否则门禁可以原样留着却不拦合并。
+//! 命令一字不改也能让门禁失效的另有两类（T-138），同样判红：
+//! - shell 语义：步骤、作业或全局 `defaults.run` 的 `shell` 不是恰好 `bash`（`sh`、`bash {0}`、
+//!   `pwsh` 都不保证 errexit），或 run 块里一行 `set +e` 之类关掉 errexit——门禁失败后照样
+//!   往下跑，步骤只看最后一条命令的退出码。test-linux.sh 同理：第一条门禁之前须有
+//!   `set -euo pipefail`，全文不许关 errexit。
+//! - 触发条件：`on:` 里 pull_request 缺失或被分支／路径／事件类型过滤，PR 上根本不跑门禁；
+//!   push 不再恰只对 main，每次推 PR 分支都多跑一整套、挤占自托管 runner 那一条队列（ADR-020）。
+//!
+//! YAML 子集的解析在 `ci_yaml.rs`。
 
 use crate::support::workspace_root;
+use ci_yaml::{JOB_INDENT, disables_errexit, indent, logical_lines, trigger_gaps, workflow_steps};
 use std::fs;
+
+#[path = "ci_yaml.rs"]
+mod ci_yaml;
 
 const WORKFLOW: &str = ".github/workflows/ci.yml";
 const LINUX: &str = "scripts/test-linux.sh";
 const WORKSPACE_TEST: &str = "cargo --locked test --workspace";
+/// test-linux.sh 须在第一条门禁之前开启的严格模式。
+const STRICT: &str = "set -euo pipefail";
+/// test-linux.sh 里有一行关掉 errexit 时报的缺口。
+const ERREXIT_OFF: &str = "不许有 set +e、set +o errexit 一类关掉 errexit 的行";
 
 /// ci.yml 的 rust 作业与 test-linux.sh 默认回路都要逐字执行的 Rust 门禁。
 const SHARED: [&str; 4] = [
@@ -32,21 +49,6 @@ const FRONTEND: [&str; 5] = [
     "npm run format",
 ];
 
-/// `jobs:` 下作业名的缩进，与作业自身键（`steps:`、`if:` 等）的缩进。
-const JOB_INDENT: usize = 2;
-const JOB_KEY_INDENT: usize = 4;
-
-/// ci.yml 的一个步骤。
-#[derive(Default)]
-struct Step {
-    job: String,
-    /// 步骤或所在作业带 `if:`、`continue-on-error:`（值不是 `false`），或 `<<` 合并键
-    /// （可能带进 `if:`，看不见内容就按带条件算）。
-    loose: bool,
-    /// `run` 的命令：解析时是物理行，收尾后拼成逻辑行；折叠块 `>` 不计入。
-    run: Vec<String>,
-}
-
 fn pinned() -> impl Iterator<Item = (&'static str, &'static str)> {
     let rust = SHARED
         .into_iter()
@@ -55,104 +57,8 @@ fn pinned() -> impl Iterator<Item = (&'static str, &'static str)> {
     rust.chain(FRONTEND.into_iter().map(|command| ("frontend", command)))
 }
 
-fn indent(line: &str) -> usize {
-    line.len() - line.trim_start().len()
-}
-
-/// 把以 `\` 续行的物理行（已去首尾空白）拼成 shell 实际执行的逻辑行。
-fn logical_lines<'a>(physical: impl IntoIterator<Item = &'a str>) -> Vec<String> {
-    let (mut lines, mut pending) = (Vec::new(), String::new());
-    for line in physical {
-        pending.push_str(line.strip_suffix('\\').unwrap_or(line));
-        if line.ends_with('\\') {
-            pending.push(' ');
-        } else {
-            lines.push(std::mem::take(&mut pending).trim().to_owned());
-        }
-    }
-    if !pending.trim().is_empty() {
-        lines.push(pending.trim().to_owned());
-    }
-    lines
-}
-
-/// 只解析本仓库 ci.yml 用到的块状 YAML 子集；读不懂的写法不产生命令，守卫因此报缺而不是放行。
-fn workflow_steps(yaml: &str) -> Vec<Step> {
-    let (mut steps, mut loose_jobs) = (Vec::<Step>::new(), Vec::<String>::new());
-    let (mut in_jobs, mut in_steps, mut job) = (false, false, String::new());
-    // 当前作业 steps 列表项的缩进；更深处的 `- ` 属于步骤内部，不是新步骤。
-    let mut item: Option<usize> = None;
-    // 正在跳过的块标量：（所属键的缩进，是否为步骤 run 的字面块）。
-    let mut block: Option<(usize, bool)> = None;
-    for raw in yaml.lines() {
-        let (text, depth) = (raw.trim(), indent(raw));
-        if let Some((owner, literal)) = block {
-            if text.is_empty() || depth > owner {
-                if let (true, Some(step)) = (literal, steps.last_mut()) {
-                    step.run.push(text.to_owned());
-                }
-                continue;
-            }
-            block = None;
-        }
-        if text.is_empty() || text.starts_with('#') {
-            continue;
-        }
-        if depth == 0 {
-            in_jobs = text == "jobs:";
-            continue;
-        }
-        if !in_jobs {
-            continue;
-        }
-        if depth == JOB_INDENT {
-            job = text.trim_end_matches(':').to_owned();
-            (in_steps, item) = (false, None);
-            continue;
-        }
-        let (key_depth, entry) = match text.strip_prefix("- ") {
-            Some(rest) if in_steps && item.is_none_or(|level| level == depth) => {
-                item = Some(depth);
-                steps.push(Step {
-                    job: job.clone(),
-                    ..Step::default()
-                });
-                (depth + 2, rest)
-            }
-            _ => (depth, text),
-        };
-        let Some((key, value)) = entry.split_once(':') else {
-            continue;
-        };
-        let (key, value) = (key.trim().trim_matches(['"', '\'']), value.trim());
-        let loose = matches!(key, "if" | "<<") || (key == "continue-on-error" && value != "false");
-        let step_key = item.is_some_and(|level| key_depth == level + 2);
-        if value.starts_with(['|', '>']) {
-            block = Some((
-                key_depth,
-                step_key && key == "run" && value.starts_with('|'),
-            ));
-        }
-        if key_depth == JOB_KEY_INDENT {
-            (in_steps, item) = (key == "steps", None);
-            if loose {
-                loose_jobs.push(job.clone());
-            }
-        } else if let (true, Some(step)) = (step_key, steps.last_mut()) {
-            step.loose |= loose;
-            if key == "run" && !value.starts_with(['|', '>']) {
-                step.run.push(value.to_owned());
-            }
-        }
-    }
-    for step in &mut steps {
-        step.loose |= loose_jobs.contains(&step.job);
-        step.run = logical_lines(step.run.iter().map(String::as_str));
-    }
-    steps
-}
-
-/// ci.yml 里没有在指定作业中被无条件、整行执行的门禁，形如 `作业: 命令`。
+/// ci.yml 的缺口：没有在指定作业中被无条件、整行执行的门禁（形如 `作业: 命令`），
+/// 以及 `on:` 触发条件的缺口。
 fn workflow_gaps(yaml: &str) -> Vec<String> {
     let steps = workflow_steps(yaml);
     pinned()
@@ -162,16 +68,29 @@ fn workflow_gaps(yaml: &str) -> Vec<String> {
             })
         })
         .map(|(job, command)| format!("{job}: {command}"))
+        .chain(trigger_gaps(yaml))
         .collect()
 }
 
-/// test-linux.sh 默认回路里缺少的共享 Rust 门禁（按整条逻辑命令行比对）。
+/// test-linux.sh 默认回路的缺口：缺少的共享 Rust 门禁（按整条逻辑命令行比对）；第一条门禁
+/// 之前没有 `set -euo pipefail`；或有哪一行关掉了 errexit。
 fn script_gaps(script: &str) -> Vec<&'static str> {
     let lines = logical_lines(script.lines().map(str::trim));
-    SHARED
+    let mut gaps = SHARED
         .into_iter()
         .filter(|command| !lines.iter().any(|line| line == command))
-        .collect()
+        .collect::<Vec<_>>();
+    let first = lines
+        .iter()
+        .position(|line| SHARED.contains(&line.as_str()))
+        .unwrap_or(lines.len());
+    if !lines[..first].iter().any(|line| line == STRICT) {
+        gaps.push(STRICT);
+    }
+    if script.lines().any(disables_errexit) {
+        gaps.push(ERREXIT_OFF);
+    }
+    gaps
 }
 
 fn entrypoints() -> (String, String) {
@@ -188,7 +107,7 @@ fn ci_entrypoints_run_every_gate_as_an_unconditional_whole_command_line() {
     assert_eq!(script_gaps(&script), Vec::<&str>::new(), "{LINUX}");
 }
 
-/// 红臂只改内存副本：定位命令所在行（行内 `run:` 与块内行都认）后交给 `edit` 改写。
+/// 红臂只改内存副本：定位目标行（整行相等；行内 `run:` 的命令也认）后交给 `edit` 改写。
 fn mutate(text: &str, command: &str, edit: impl FnOnce(&mut Vec<String>, usize)) -> String {
     let mut lines = text.lines().map(str::to_owned).collect::<Vec<_>>();
     let at = lines
@@ -214,8 +133,10 @@ fn step_start(lines: &[String], at: usize) -> usize {
     enclosing(lines, at, |line| line.trim().starts_with("- "))
 }
 
+/// 在 `owner` 行下插入更深一层的键；多行时后续行相对第一行缩进。
 fn with_key(lines: &mut Vec<String>, owner: usize, key: &str) {
     let pad = " ".repeat(indent(&lines[owner]) + 2);
+    let key = key.replace('\n', &format!("\n{pad}"));
     lines.insert(owner + 1, format!("{pad}{key}"));
 }
 
@@ -262,8 +183,15 @@ fn every_pinned_command_is_load_bearing_and_weakened_copies_turn_red() {
         let gaps = script_gaps(&mutate(&script, WORKSPACE_TEST, rewrite));
         assert_eq!(gaps, [WORKSPACE_TEST]);
     }
-    // 步骤带条件或容错：命令原样还在，但门禁可能不跑、跑挂了也不拦。
-    for key in ["if: false", "continue-on-error: true", "'if': ${{ false }}"] {
+    // 步骤带条件、容错或换成不保证 errexit 的 shell：命令原样还在，但门禁可能不跑、跑挂了也不拦。
+    for key in [
+        "if: false",
+        "continue-on-error: true",
+        "'if': ${{ false }}",
+        "shell: sh",
+        "shell: bash {0}",
+        "'shell': pwsh",
+    ] {
         let gated = mutate(&yaml, WORKSPACE_TEST, |lines, at| {
             let start = step_start(lines, at);
             with_key(lines, start, key);
@@ -277,4 +205,91 @@ fn every_pinned_command_is_load_bearing_and_weakened_copies_turn_red() {
     });
     let frontend = FRONTEND.map(|command| format!("frontend: {command}"));
     assert_eq!(workflow_gaps(&skipped), frontend);
+}
+
+#[test]
+fn errexit_and_trigger_weakenings_turn_red() {
+    let (yaml, script) = entrypoints();
+    let red = [format!("rust: {WORKSPACE_TEST}")];
+    let all = pinned()
+        .map(|(job, command)| format!("{job}: {command}"))
+        .collect::<Vec<_>>();
+    let rust = &all[..SHARED.len() + PRODUCTION.len()];
+    // run 块首行 `set +e`（行内 `run:` 先改写成字面块）：每条门禁都只让自己那一步报缺。
+    for (job, command) in pinned() {
+        let off = mutate(&yaml, command, |lines, at| {
+            let pad = " ".repeat(indent(&lines[at]));
+            if lines[at].trim().starts_with("run:") {
+                lines[at] = format!("{pad}run: |\n{pad}  set +e\n{pad}  {command}");
+            } else {
+                let run = enclosing(lines, at, |line| line.trim().starts_with("run:"));
+                lines.insert(run + 1, format!("{pad}set +e"));
+            }
+        });
+        assert_eq!(workflow_gaps(&off), [format!("{job}: {command}")]);
+    }
+    // 步骤、rust 作业或全局 defaults 换了 shell：该步／该作业／全部门禁都不算数；
+    // 显式写 `bash`（带不带引号）与省略时一样开着 errexit，照旧全绿。
+    for (shell, step_red, job_red, top_red) in [
+        ("bash {0}", &red[..], rust, &all[..]),
+        ("sh", &red[..], rust, &all[..]),
+        ("\"bash\"", &[][..], &[][..], &[][..]),
+        ("bash", &[][..], &[][..], &[][..]),
+    ] {
+        let block = format!("defaults:\n  run:\n    shell: {shell}");
+        let step = mutate(&yaml, WORKSPACE_TEST, |lines, at| {
+            let start = step_start(lines, at);
+            with_key(lines, start, &format!("shell: {shell}"));
+        });
+        let job = mutate(&yaml, "rust:", |lines, at| with_key(lines, at, &block));
+        let top = mutate(&yaml, "jobs:", |lines, at| lines.insert(at, block.clone()));
+        assert_eq!(workflow_gaps(&step), step_red, "步骤：{shell}");
+        assert_eq!(workflow_gaps(&job), job_red, "作业 defaults：{shell}");
+        assert_eq!(workflow_gaps(&top), top_red, "全局 defaults：{shell}");
+    }
+    // 把 `anchor` 那一行里的它换成 `new`（可含换行，空串即删掉这个键）后的 ci.yml 缺口。
+    let gaps_after = |anchor: &str, new: &str| {
+        let edit = |lines: &mut Vec<String>, at: usize| lines[at] = lines[at].replace(anchor, new);
+        workflow_gaps(&mutate(&yaml, anchor, edit))
+    };
+    // 触发条件：PR 被过滤或不触发、push 放宽到别的分支或被路径过滤，门禁原样都在也不算数。
+    for (anchor, new) in [
+        ("pull_request:", "pull_request:\n    paths: [docs/**]"),
+        ("pull_request:", ""),
+        ("pull_request:", "pull_request:\n    types: [opened]"),
+        ("branches: [main]", "branches: [\"**\"]"),
+        ("push:", "push:\n    paths-ignore: [web/**]"),
+        ("on:", "true:"),
+    ] {
+        let gaps = gaps_after(anchor, new);
+        let triggers = gaps.iter().all(|gap| gap.starts_with("on"));
+        assert!(!gaps.is_empty() && triggers, "{new}：{gaps:?}");
+    }
+    // 与现状等价的写法照旧全绿：带引号的 on、另两种写法的 [main]、含三种默认类型的 types。
+    let typed = "pull_request:\n    types: [opened, synchronize, reopened, edited]";
+    for (anchor, new) in [
+        ("on:", "\"on\":"),
+        ("branches: [main]", "branches: ['main']"),
+        ("branches: [main]", "branches:\n      - \"main\""),
+        ("pull_request:", typed),
+    ] {
+        assert_eq!(gaps_after(anchor, new), Vec::<String>::new(), "{new}");
+    }
+    // test-linux.sh：严格模式要在第一条门禁之前，全文不许关 errexit。
+    let strict = |edit: fn(&mut Vec<String>, usize)| script_gaps(&mutate(&script, STRICT, edit));
+    let off = strict(|lines, at| lines.insert(at + 1, "set +e".into()));
+    assert_eq!(off, [ERREXIT_OFF]);
+    assert_eq!(strict(|lines, at| lines[at].clear()), [STRICT]);
+    assert_eq!(strict(|lines, at| lines[at..].rotate_left(1)), [STRICT]);
+}
+
+#[test]
+fn errexit_switch_offs_follow_the_documented_pattern() {
+    let off = "set +e|  set +eu|set +xe;|set  +o\terrexit|set +o errexit;";
+    let kept = "set -e|set -euo pipefail|set +x|set +o pipefail|set +o errexits|set+e|echo set +e";
+    for (lines, expected) in [(off, true), (kept, false)] {
+        for line in lines.split('|') {
+            assert_eq!(disables_errexit(line), expected, "{line}");
+        }
+    }
 }
