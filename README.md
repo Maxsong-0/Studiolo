@@ -173,6 +173,13 @@ M1 的 `workbench` 只消费内存文档与 M0 索引；`local-server` 按启动
 下面这组命令覆盖 CI `rust` 作业里的编译类检查，**不是它的全集**（权威始终是
 `.github/workflows/ci.yml`，缺的部分列在本节末尾）：
 
+本机若装了 Homebrew Rust（2026-09-22 为 1.98.1），`/opt/homebrew/bin/cargo` 排在 PATH 前面时
+不认 `rust-toolchain.toml`，clippy 结果会与 CI 不一致。先把 rustup 的钉死版本放到最前：
+
+```bash
+export PATH="$HOME/.rustup/toolchains/1.97.1-$(rustc -vV | sed -n 's/^host: //p')/bin:$PATH"
+```
+
 ```bash
 cargo --locked fmt --all -- --check
 cargo --locked clippy --workspace --all-targets -- -D warnings
@@ -182,7 +189,7 @@ cargo --locked build -p studiolo-local-server --features studiolo-auth/productio
 cargo --locked build -p studiolo-auth-admin --features production
 ```
 
-前端（CI 在 `node:22.17.0` 容器内、工作目录 `web`）：
+前端（CI 原生运行，`setup-node` 钉死 Node 22.17.0，工作目录 `web`）：
 
 ```bash
 npm --prefix web ci --ignore-scripts && npm --prefix web run build
