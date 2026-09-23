@@ -659,9 +659,17 @@ export function createFixtureApi(options: { now?: () => number } = {}) {
       }
       case '/api/search': {
         const mode = query.get('mode');
-        const text = (query.get('q') ?? '').trim();
+        const text = query.get('q') ?? '';
         const project = query.get('project');
-        if ((mode !== 'full_text' && mode !== 'path') || !text)
+        // 与 crates/workbench/src/search.rs 的 validate 同一口径：空查询合法（路径模式列举、全文模式空结果），
+        // 只拒绝超长（256 字符或 1024 字节）与含控制字符的查询。
+        if (
+          (mode !== 'full_text' && mode !== 'path') ||
+          query.get('q') === null ||
+          [...text].length > 256 ||
+          new TextEncoder().encode(text).length > 1024 ||
+          /\p{Cc}/u.test(text)
+        )
           return error(400, '查询须为不含控制字符的短文本（最多 256 字符）。');
         if (project !== null && !PROJECT_ROOTS.includes(project))
           return error(400, '项目不在当前只读快照中。');

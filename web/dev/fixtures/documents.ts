@@ -98,7 +98,14 @@ export function search(
   project: string | null,
   generation: number,
 ) {
-  const needle = query.toLocaleLowerCase();
+  // 与 crates/workbench/src/search.rs 同一语义：全文模式空查询得空结果；路径模式按任意空白分片，
+  // 各片都要在路径里出现（不区分大小写），空的路径查询列举全部文档；全文模式另外逐行匹配正文。
+  const text = query.trim();
+  if (mode === 'full_text' && !text)
+    return { generation, hits: [], truncated: false };
+  const fragments = (
+    mode === 'path' ? text.split(/\s+/u).filter(Boolean) : [text]
+  ).map((part) => part.toLocaleLowerCase());
   const scoped = notes.filter(
     (note) => !project || note.path.startsWith(`${project}/`),
   );
@@ -111,19 +118,18 @@ export function search(
   }[] = [];
   for (const note of scoped) {
     const title = noteTitle(note);
-    if (mode === 'path') {
-      if (`${note.path} ${title}`.toLocaleLowerCase().includes(needle))
-        hits.push({
-          path: note.path,
-          title,
-          line: 1,
-          snippet: note.path,
-          kind: 'path',
-        });
-      continue;
-    }
+    const lowered = note.path.toLocaleLowerCase();
+    if (fragments.every((part) => lowered.includes(part)))
+      hits.push({
+        path: note.path,
+        title,
+        line: 1,
+        snippet: note.path,
+        kind: 'path',
+      });
+    if (mode === 'path') continue;
     note.content.split('\n').forEach((line, index) => {
-      if (line.toLocaleLowerCase().includes(needle))
+      if (line.toLocaleLowerCase().includes(fragments[0]))
         hits.push({
           path: note.path,
           title,

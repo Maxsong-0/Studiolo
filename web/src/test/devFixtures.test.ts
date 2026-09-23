@@ -445,6 +445,19 @@ describe('假数据：策略、健康、文档与项目运作', () => {
       ).toBeGreaterThan(0);
   });
 
+  it('搜索与服务端同一口径：空查询合法（路径列举全部、全文为空），只拒超长与控制字符', () => {
+    const { get, read } = setup();
+    const { generation } = workbench(read);
+    const search = (q: string, mode: string) =>
+      `/api/search?${query({ q, mode, generation: String(generation) })}`;
+    expect(
+      validateSearch(read(search('', 'path'))).hits.length,
+    ).toBeGreaterThan(0);
+    expect(validateSearch(read(search('   ', 'full_text'))).hits).toEqual([]);
+    expect(get(search('x'.repeat(257), 'path')).status).toBe(400);
+    expect(get(search('a\u0007b', 'full_text')).status).toBe(400);
+  });
+
   it('项目运作：Studiolo 声明、漂移、架构、Cargo 与 Rust 调用齐全，其余项目按「不可用」给出', () => {
     const { read } = setup();
     const data = workbench(read);
