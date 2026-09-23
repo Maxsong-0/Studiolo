@@ -18,6 +18,27 @@ import { ExecutionLanding } from './ExecutionLanding';
 import { ExecutionReplay } from './ExecutionReplay';
 import { CandidateDetails } from './ExecutionCandidates';
 import type { BoardItem } from './boardModel';
+import { statusLabels, statusMark } from './collab/boardLabels';
+import { ProjectSelect } from './collab/ProjectSelect';
+import {
+  EXECUTION_STEPS,
+  runStep,
+  stamp,
+  taskStep,
+  type ExecutionStep,
+} from './executionView';
+import {
+  Button,
+  Cell,
+  CellHeader,
+  EmptyState,
+  ErrorState,
+  GridFrame,
+  Skeleton,
+  StatusMark,
+  type StatusState,
+} from './ui';
+import { cx } from './ui/dom';
 import './styles/board.css';
 import './styles/execution.css';
 
@@ -28,6 +49,13 @@ const runLabels: Record<RunSummary['state'], string> = {
   stopped: '已停止',
   failed: '执行失败',
 };
+const runMarks: Record<RunSummary['state'], StatusState> = {
+  running: 'active',
+  candidate_review: 'alert',
+  candidate_retained: 'alert',
+  stopped: 'dormant',
+  failed: 'alert',
+};
 const phaseLabels: Record<RunSummary['progress']['phase'], string> = {
   working: '工作中',
   pacing: '节奏检查',
@@ -35,6 +63,11 @@ const phaseLabels: Record<RunSummary['progress']['phase'], string> = {
   exhausted: '预算耗尽',
 };
 
+/**
+ * 协作 › 执行（设计规范第 7 节，T-130 网格语法）：顶部「执行」与当前任务的 run id，
+ * 左侧执行服务的冻结开关，右侧各执行体的九步进度，下面是选中任务的控制、落地、审阅与审计回放。
+ * 请求、二次认证与错误文案沿用原样；这里只换版面。
+ */
 export function ExecutionBoundary({
   projects,
 }: {
@@ -47,6 +80,8 @@ export function ExecutionBoundary({
   const [message, setMessage] = useState('');
   const [failed, setFailed] = useState(false);
   const [landing, setLanding] = useState<LandingResult | null>(null);
+  // 任务区当前展示的任务 id：只用来在顶部标出它的 run id。
+  const [shown, setShown] = useState<string | null>(null);
   const pending = useRef<AbortController | null>(null);
   const mounted = useRef(true);
   const state = useExecutionResource(readExecution, revision);
@@ -117,113 +152,270 @@ export function ExecutionBoundary({
     return success;
   };
   const available = isFresh(state) && state.data?.configured === true;
+  const runs = state.data?.runs ?? [];
+  const runsCell = runs.length ? (
+    <Cell span={8} className="execution-runs-cell" aria-label="执行体进度">
+      <CellHeader title="执行体进度" level={3} meta={`${runs.length} 条`} />
+      <ul className="execution-runs">
+        {runs.map((run) => (
+          <li
+            key={`${run.task_id}-${run.attempt_id}`}
+            className="execution-run"
+          >
+            <div className="execution-run__who">
+              <p className="execution-run__line">
+                <code className="execution-run__task">{run.task_id}</code>
+                <span className="execution-run__adapter">{run.adapter}</span>
+              </p>
+              <StatusMark
+                state={runMarks[run.state]}
+                className="execution-run__state"
+              >
+                {runLabels[run.state]}
+              </StatusMark>
+              <p className="execution-run__attempt">
+                Attempt <code>{run.attempt_id}</code>
+              </p>
+            </div>
+            <div className="execution-run__progress">
+              <StepBar
+                progress={runStep(run)}
+                label={`执行进度 ${run.task_id}`}
+              />
+              <p className="execution-run__counts">
+                {phaseLabels[run.progress.phase]} · 工具调用{' '}
+                {run.progress.tool_calls} 次 · 编辑 {run.progress.edits} 次
+              </p>
+            </div>
+          </li>
+        ))}
+      </ul>
+    </Cell>
+  ) : state.data?.configured ? (
+    <Cell span={8} as="div" className="execution-runs-cell">
+      <CellHeader title="执行体进度" level={3} />
+      <EmptyState title="当前没有执行体记录。" />
+    </Cell>
+  ) : null;
+  const shownRun =
+    shown === null ? undefined : runs.find((run) => run.task_id === shown);
   return (
     <section className="board-panel execution-panel" aria-label="执行与回放">
-      <div className="board-toolbar">
-        <label>
-          执行项目{' '}
-          <select
-            value={project}
-            disabled={busy}
-            onChange={(event) =>
-              select({ project: event.target.value, item: null })
+      <GridFrame className="execution-grid">
+        <Cell as="div" className="execution-head">
+          <CellHeader
+            title="执行"
+            meta={
+              <RunId
+                run={shownRun}
+                reason={
+                  shown === null
+                    ? '尚未选定任务。'
+                    : !state.data
+                      ? '执行服务状态不可确认。'
+                      : '这条任务在执行服务里没有执行记录。'
+                }
+              />
             }
-          >
-            {projects.map((p) => (
-              <option key={p.root} value={p.root}>
-                {p.name}
-              </option>
-            ))}
-          </select>
-        </label>
-        <button
-          className="outline-button"
-          disabled={busy}
-          onClick={() => setRevision((n) => n + 1)}
+          />
+          <div className="board-toolbar execution-toolbar">
+            <ProjectSelect
+              label="执行项目"
+              value={project || null}
+              options={projects}
+              disabled={busy}
+              onChange={(root) => {
+                if (root) select({ project: root, item: null });
+              }}
+            />
+            <Button
+              size="sm"
+              disabled={busy}
+              onClick={() => setRevision((n) => n + 1)}
+            >
+              核对执行状态
+            </Button>
+          </div>
+        </Cell>
+        <Cell
+          as="div"
+          span={runsCell ? 4 : undefined}
+          className="execution-service"
         >
-          核对执行状态
-        </button>
-      </div>
-      <div className="execution-control">
-        {state.error ? (
-          <p role="alert">{state.error}</p>
-        ) : state.loading ? (
-          <p role="status">正在核对执行服务…</p>
-        ) : state.data ? (
-          <>
-            <p>
-              {!state.data.configured
-                ? '执行服务未配置 · 默认冻结'
-                : state.data.frozen
-                  ? '执行服务已冻结'
-                  : '执行服务已解冻'}
-            </p>
-            {state.data.configured ? (
-              <button
-                className="outline-button"
-                disabled={!available || busy}
-                onClick={() => {
-                  void submit({
-                    operation: 'freeze',
-                    frozen: !state.data!.frozen,
-                  });
-                }}
+          <CellHeader title="执行服务" level={3} />
+          {state.error ? (
+            <ErrorState title={state.error} />
+          ) : state.loading ? (
+            <Skeleton label="正在核对执行服务…" lines={2} />
+          ) : state.data ? (
+            <>
+              <StatusMark
+                className="execution-service__state"
+                state={
+                  !state.data.configured
+                    ? 'dormant'
+                    : state.data.frozen
+                      ? 'pending'
+                      : 'ok'
+                }
               >
-                {state.data.frozen ? '二次认证后解冻执行' : '冻结执行'}
-              </button>
-            ) : null}
-            <p>
-              解冻、代码落地与提交审阅需要在「账户」完成当前有效的二次认证。状态每
-              15 秒核对。
+                {!state.data.configured
+                  ? '执行服务未配置 · 默认冻结'
+                  : state.data.frozen
+                    ? '执行服务已冻结'
+                    : '执行服务已解冻'}
+              </StatusMark>
+              {state.data.configured ? (
+                <Button
+                  className="execution-service__toggle"
+                  disabled={!available || busy}
+                  onClick={() => {
+                    void submit({
+                      operation: 'freeze',
+                      frozen: !state.data!.frozen,
+                    });
+                  }}
+                >
+                  {state.data.frozen ? '二次认证后解冻执行' : '冻结执行'}
+                </Button>
+              ) : null}
+              <p className="execution-hint">
+                解冻、代码落地与提交审阅需要在「账户」完成当前有效的二次认证。状态每
+                15 秒核对。
+              </p>
+            </>
+          ) : (
+            <ErrorState title="执行服务状态不可确认。" />
+          )}
+          {message ? (
+            <p
+              role={failed ? 'alert' : 'status'}
+              className={cx(
+                'execution-message',
+                failed && 'execution-message--failed',
+              )}
+            >
+              {message}
             </p>
-          </>
+          ) : null}
+        </Cell>
+        {runsCell}
+        {project ? (
+          <ExecutionTasks
+            key={project}
+            project={project}
+            revision={revision}
+            busy={busy}
+            canStart={available && !state.data?.frozen}
+            canCommand={available}
+            runs={runs}
+            runsKnown={state.data !== null}
+            landing={landing}
+            submit={submit}
+            onShown={setShown}
+          />
         ) : (
-          <p role="alert">执行服务状态不可确认。</p>
+          <Cell as="div">
+            <EmptyState title="当前没有可查看的项目。" />
+          </Cell>
         )}
-        {message ? <p role={failed ? 'alert' : 'status'}>{message}</p> : null}
-      </div>
-      {state.data?.runs.length ? (
-        <section aria-label="执行体进度">
-          <h3>执行体进度</h3>
-          <ul className="execution-runs">
-            {state.data.runs.map((run) => (
-              <li key={`${run.task_id}-${run.attempt_id}`}>
-                <p>
-                  <code>{run.task_id}</code> · {run.adapter} ·{' '}
-                  {runLabels[run.state]}
-                </p>
-                <p>
-                  Attempt <code>{run.attempt_id}</code>
-                </p>
-                <p>
-                  {phaseLabels[run.progress.phase]} · 工具调用{' '}
-                  {run.progress.tool_calls} 次 · 编辑 {run.progress.edits} 次
-                </p>
-              </li>
-            ))}
-          </ul>
-        </section>
-      ) : state.data?.configured ? (
-        <p>当前没有执行体记录。</p>
-      ) : null}
-      {project ? (
-        <ExecutionTasks
-          key={project}
-          project={project}
-          revision={revision}
-          busy={busy}
-          canStart={available && !state.data?.frozen}
-          canCommand={available}
-          runs={state.data?.runs ?? []}
-          landing={landing}
-          submit={submit}
-        />
-      ) : (
-        <p>当前没有可查看的项目。</p>
-      )}
+      </GridFrame>
     </section>
   );
 }
+
+/** 顶部标题栏右侧：当前任务在执行服务里的 run（attempt）id；没有就写「—」并说明原因。 */
+function RunId({
+  run,
+  reason,
+}: {
+  run: RunSummary | undefined;
+  reason: string;
+}) {
+  if (run)
+    return (
+      <span className="execution-run-id">
+        run <code>{run.attempt_id}</code>
+      </span>
+    );
+  return (
+    <span className="execution-run-id" title={reason}>
+      run —<span className="sr-only">{reason}</span>
+    </span>
+  );
+}
+
+/**
+ * 九段进度条：已经过的黑、当前这段红、没到的灰框；回执写入后九段全黑。
+ * 读屏读 aria-valuetext（与下面那行字相同）；拿不到进度时不画条，写「—」和原因。
+ */
+function StepBar({
+  progress,
+  label,
+  named = false,
+}: {
+  progress: ExecutionStep;
+  label: string;
+  /** 条下逐段写出段名（选中任务那一条）；窄屏自动收起。 */
+  named?: boolean;
+}) {
+  if (!progress.known)
+    return (
+      <div className="execution-steps execution-steps--unknown">
+        <p className="execution-steps__text" title={progress.reason}>
+          九步进度 —
+        </p>
+        <p className="execution-steps__note">{progress.reason}</p>
+      </div>
+    );
+  const text = `第 ${progress.step} 步，共 ${EXECUTION_STEPS.length} 步。当前：${progress.name}`;
+  const segment = (index: number) =>
+    progress.finished || index + 1 < progress.step
+      ? 'done'
+      : index + 1 === progress.step
+        ? 'current'
+        : 'todo';
+  return (
+    <div
+      className={cx(
+        'execution-steps',
+        progress.halted && 'execution-steps--halted',
+      )}
+    >
+      <div
+        role="progressbar"
+        aria-label={label}
+        aria-valuemin={0}
+        aria-valuemax={EXECUTION_STEPS.length}
+        aria-valuenow={progress.step}
+        aria-valuetext={text}
+        className="execution-steps__bar"
+      >
+        {EXECUTION_STEPS.map((name, index) => (
+          <span
+            key={name}
+            className="execution-steps__segment"
+            data-state={segment(index)}
+          />
+        ))}
+      </div>
+      {named ? (
+        <ol className="execution-steps__names" aria-hidden="true">
+          {EXECUTION_STEPS.map((name, index) => (
+            <li key={name} data-state={segment(index)}>
+              {name}
+            </li>
+          ))}
+        </ol>
+      ) : null}
+      <p className="execution-steps__text">{text}</p>
+      {progress.note ? (
+        <p className="execution-steps__note">{progress.note}</p>
+      ) : null}
+    </div>
+  );
+}
+
 function ExecutionTasks({
   project,
   revision,
@@ -231,8 +423,10 @@ function ExecutionTasks({
   canStart,
   canCommand,
   runs,
+  runsKnown,
   landing,
   submit,
+  onShown,
 }: {
   project: string;
   revision: number;
@@ -240,8 +434,11 @@ function ExecutionTasks({
   canStart: boolean;
   canCommand: boolean;
   runs: RunSummary[];
+  /** 执行服务状态此刻可确认（九步进度据此区分「没有记录」与「不可确认」）。 */
+  runsKnown: boolean;
   landing: LandingResult | null;
   submit: (command: ExecutionCommand) => Promise<boolean>;
+  onShown: (taskId: string | null) => void;
 }) {
   const { location, select } = useViewLocation();
   const selected = location.item ?? '';
@@ -255,114 +452,189 @@ function ExecutionTasks({
   const current = isFresh(tasks);
   const command = (request: ExecutionCommand) =>
     current && isFresh(tasks) ? submit(request) : Promise.resolve(false);
+  const shownId = task?.id ?? null;
+  useEffect(() => {
+    onShown(shownId);
+  }, [onShown, shownId]);
+  useEffect(() => () => onShown(null), [onShown]);
   return (
-    <section className="execution-tasks" aria-label="任务执行控制">
-      <h3>任务执行</h3>
-      {tasks.error ? (
-        <p role="alert">{tasks.error}</p>
-      ) : tasks.loading ? (
-        <p role="status">正在读取任务登记…</p>
-      ) : !task ? (
-        <p>此项目没有已登记任务。</p>
-      ) : (
-        <>
-          <label>
-            执行任务{' '}
-            <select
-              value={task.id}
-              disabled={busy}
-              onChange={(event) => select({ item: event.target.value })}
-            >
-              {tasks.data?.map((row) => (
-                <option key={row.id} value={row.id}>
-                  {row.title} · {row.status}
-                </option>
-              ))}
-            </select>
-          </label>
-          <TaskControls
-            key={task.id}
-            task={task}
-            run={runs.find((run) => run.task_id === task.id)}
-            disabled={busy || !current || !canCommand}
-            canStart={canStart}
-            submit={command}
+    <Cell flush className="execution-tasks" aria-label="任务执行控制">
+      {/* 选中任务的一组格子：内层网格不再描外框，分区线由外层网格与内层间隙给出 */}
+      <GridFrame className="execution-subgrid">
+        <Cell as="div" className="execution-task-cell">
+          <CellHeader
+            title="任务执行"
+            level={3}
+            meta={tasks.data ? `${tasks.data.length} 项已登记` : undefined}
           />
-          <ExecutionLanding
-            key={`landing-${task.id}-${task.attempt?.id ?? 'none'}-${task.candidateReceipt?.manifestRevision ?? 'none'}`}
-            task={task}
-            run={runs.find((run) => run.task_id === task.id)}
-            disabled={busy || !current || !canCommand}
-            result={landing}
-            submit={command}
-          />
-          <ExecutionReview
-            key={`${task.id}-${task.attempt?.id ?? 'none'}-${task.candidateReceipt?.manifestRevision ?? 'none'}`}
-            task={task}
-            disabled={
-              busy ||
-              !current ||
-              !canCommand ||
-              runs.some(
-                (run) =>
-                  run.task_id === task.id && run.state === 'candidate_retained',
-              )
-            }
-            submit={command}
-          />
-          <ExecutionReplay
-            key={task.id}
-            taskId={task.id}
-            project={project}
-            revision={revision}
-          />
-        </>
-      )}
-    </section>
+          {tasks.error ? (
+            <ErrorState title={tasks.error} />
+          ) : tasks.loading ? (
+            <Skeleton label="正在读取任务登记…" lines={2} />
+          ) : !task ? (
+            <EmptyState title="此项目没有已登记任务。" />
+          ) : (
+            <>
+              <label className="collab-select execution-task-select">
+                执行任务{' '}
+                <select
+                  className="collab-select__control"
+                  value={task.id}
+                  disabled={busy}
+                  onChange={(event) => select({ item: event.target.value })}
+                >
+                  {tasks.data?.map((row) => (
+                    <option key={row.id} value={row.id}>
+                      {row.title} · {row.status}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <TaskControls
+                key={task.id}
+                task={task}
+                run={runs.find((run) => run.task_id === task.id)}
+                runsKnown={runsKnown}
+                landing={landing}
+                disabled={busy || !current || !canCommand}
+                canStart={canStart}
+                submit={command}
+              />
+            </>
+          )}
+        </Cell>
+        {task ? (
+          <>
+            <ExecutionLanding
+              key={`landing-${task.id}-${task.attempt?.id ?? 'none'}-${task.candidateReceipt?.manifestRevision ?? 'none'}`}
+              task={task}
+              run={runs.find((run) => run.task_id === task.id)}
+              disabled={busy || !current || !canCommand}
+              result={landing}
+              submit={command}
+            />
+            <ExecutionReview
+              key={`${task.id}-${task.attempt?.id ?? 'none'}-${task.candidateReceipt?.manifestRevision ?? 'none'}`}
+              task={task}
+              disabled={
+                busy ||
+                !current ||
+                !canCommand ||
+                runs.some(
+                  (run) =>
+                    run.task_id === task.id &&
+                    run.state === 'candidate_retained',
+                )
+              }
+              submit={command}
+            />
+            <ExecutionReplay
+              key={task.id}
+              taskId={task.id}
+              project={project}
+              revision={revision}
+            />
+          </>
+        ) : null}
+      </GridFrame>
+    </Cell>
   );
 }
 function TaskControls({
   task,
   run,
+  runsKnown,
+  landing,
   disabled,
   canStart,
   submit,
 }: {
   task: BoardItem;
   run: RunSummary | undefined;
+  runsKnown: boolean;
+  landing: LandingResult | null;
   disabled: boolean;
   canStart: boolean;
   submit: (command: ExecutionCommand) => Promise<boolean>;
 }) {
   const supported =
     (task.adapter === 'claude' || task.adapter === 'codex') && !!task.creator;
+  const lease = task.attempt ? stamp(task.attempt.leaseUntilMs) : null;
   return (
     <article className="execution-task" aria-label={`执行控制：${task.title}`}>
-      <h4>{task.title}</h4>
-      <p>
-        任务状态：{task.status} · 执行适配器：{task.adapter}
-      </p>
-      <p>
-        登记实例：{task.creator ?? '未登记'} ·{' '}
-        {task.attempt?.active ? '当前持有实例' : '上次持有实例'}：
-        {task.holder ?? '无'}
-      </p>
-      {task.attempt ? (
-        <p>
-          Attempt <code>{task.attempt.id}</code> · fence {task.attempt.fence} ·
-          租约至{' '}
-          <time dateTime={new Date(task.attempt.leaseUntilMs).toISOString()}>
-            {new Date(task.attempt.leaseUntilMs).toLocaleString()}
-          </time>
+      <header className="execution-task__head">
+        <h4 className="execution-task__title">{task.title}</h4>
+        <StatusMark state={statusMark(task.status)}>
+          {statusLabels[task.status]}
+        </StatusMark>
+      </header>
+      <StepBar
+        progress={taskStep(task, run, landing, runsKnown)}
+        label={`执行进度：${task.title}`}
+        named
+      />
+      <dl className="execution-facts">
+        <div>
+          <dt>任务状态</dt>
+          <dd>
+            <code>{task.status}</code>
+          </dd>
+        </div>
+        <div>
+          <dt>执行适配器</dt>
+          <dd>
+            <code>{task.adapter}</code>
+          </dd>
+        </div>
+        <div>
+          <dt>登记实例</dt>
+          <dd>
+            <code>{task.creator ?? '未登记'}</code>
+          </dd>
+        </div>
+        <div>
+          <dt>{task.attempt?.active ? '当前持有实例' : '上次持有实例'}</dt>
+          <dd>
+            <code>{task.holder ?? '无'}</code>
+          </dd>
+        </div>
+        {task.attempt ? (
+          <>
+            <div>
+              <dt>Attempt</dt>
+              <dd>
+                <code>{task.attempt.id}</code>
+              </dd>
+            </div>
+            <div>
+              <dt>fence</dt>
+              <dd>
+                <code>{task.attempt.fence}</code>
+              </dd>
+            </div>
+            <div>
+              <dt>租约至</dt>
+              <dd>
+                {lease ? <time dateTime={lease.iso}>{lease.text}</time> : '—'}
+              </dd>
+            </div>
+          </>
+        ) : null}
+        <div>
+          <dt>写入范围</dt>
+          <dd>
+            {task.paths.length ? <code>{task.paths.join('、')}</code> : '无'}
+          </dd>
+        </div>
+      </dl>
+      {task.oldPolicy ? (
+        <p className="execution-hint">
+          按旧版规则执行；启动仍需服务器核对冻结的规则快照。
         </p>
       ) : null}
-      {task.oldPolicy ? (
-        <p>按旧版规则执行；启动仍需服务器核对冻结的规则快照。</p>
-      ) : null}
-      <p>写入范围：{task.paths.join('、') || '无'}</p>
       <div className="execution-actions">
-        <button
-          className="outline-button"
+        <Button
+          variant="primary"
           disabled={
             disabled ||
             !canStart ||
@@ -374,19 +646,20 @@ function TaskControls({
           }}
         >
           启动登记执行体
-        </button>
-        <button
-          className="outline-button"
+        </Button>
+        <Button
           disabled={disabled || run?.state !== 'running'}
           onClick={() => {
             void submit({ operation: 'cancel', task_id: task.id });
           }}
         >
           取消执行
-        </button>
+        </Button>
       </div>
       {!supported ? (
-        <p>该任务没有可启动的 Claude / Codex 适配器与登记实例。</p>
+        <p className="execution-hint">
+          该任务没有可启动的 Claude / Codex 适配器与登记实例。
+        </p>
       ) : null}
       <CandidateDetails item={task} />
     </article>

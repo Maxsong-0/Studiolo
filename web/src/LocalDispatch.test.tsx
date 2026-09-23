@@ -4,6 +4,7 @@ import {
   fireEvent,
   render,
   screen,
+  within,
 } from '@testing-library/react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { LocalDispatch } from './LocalDispatch';
@@ -393,4 +394,39 @@ it('times out a stalled request and exposes only a safe error', async () => {
     'secret connection details',
   );
   expect(screen.getByRole('button', { name: '连接本机' })).toBeEnabled();
+});
+
+it('lists notification records with a machine-readable time first and — for a time it cannot show', async () => {
+  const updated = Date.UTC(2026, 8, 23, 1, 2, 3);
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async (input: RequestInfo | URL) =>
+      String(input).includes('/v1/clients')
+        ? response({ clients: [client] })
+        : response({
+            deliveries: [
+              { ...delivery, updated_ms: updated },
+              {
+                ...delivery,
+                id: 'delivery-2',
+                state: 'uncertain',
+                updated_ms: 8.64e15 + 1,
+              },
+            ],
+          }),
+    ),
+  );
+  await mount();
+  await connect();
+  const records = screen.getByRole('region', { name: '本机通知记录' });
+  const [first, second] = within(records).getAllByRole('listitem');
+  const time = first.querySelector('time');
+  expect(first.firstElementChild).toBe(time);
+  expect(time).toHaveAttribute('datetime', new Date(updated).toISOString());
+  expect(within(first).getByText('已通知（尚未证明执行）')).toBeInTheDocument();
+  expect(second.querySelector('time')).toBeNull();
+  expect(second.firstElementChild).toHaveTextContent('—');
+  expect(
+    within(second).getByText('投递结果不明，请核查本机任务'),
+  ).toBeInTheDocument();
 });

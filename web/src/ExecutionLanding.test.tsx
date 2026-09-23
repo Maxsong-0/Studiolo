@@ -4,10 +4,12 @@ import {
   fireEvent,
   render,
   screen,
+  within,
 } from '@testing-library/react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { ExecutionBoundary } from './ExecutionBoundary';
 import { ExecutionLanding } from './ExecutionLanding';
+import { COMMAND_TARGETS } from './commands/focusTarget';
 import { installExecutionWriter } from './executionApi';
 import { boardItem } from './boardModel';
 import { runSummary } from './executionModel';
@@ -321,4 +323,45 @@ it('late landing success after the shared command timeout is unknown and never a
     screen.queryByRole('region', { name: '本次代码落地回执' }),
   ).not.toBeInTheDocument();
   expect(writer).toHaveBeenCalledTimes(1);
+});
+it('shows the red execution preview — what landing does, that it cannot be undone, step-up — before the danger button is clicked', async () => {
+  reads();
+  const writer = vi.fn(async () => result());
+  uninstall = installExecutionWriter(writer);
+  await mount();
+  const preview = screen.getByText('执行预览').closest('.execution-preview');
+  expect(preview).not.toBeNull();
+  expect(preview).toHaveTextContent('candidate.patch');
+  expect(preview).toHaveTextContent('应用到目标仓库的工作区');
+  expect(preview).toHaveTextContent('不可撤回');
+  expect(preview).toHaveTextContent('二次认证');
+  expect(landingButton()).toHaveClass('ui-button--danger');
+  expect(landingButton()).toHaveAccessibleDescription(/不可撤回/);
+  expect(
+    preview!.compareDocumentPosition(landingButton()) &
+      Node.DOCUMENT_POSITION_FOLLOWING,
+  ).toBeTruthy();
+  fireEvent.change(screen.getByRole('textbox', { name: '目标仓库完整 HEAD' }), {
+    target: { value: head },
+  });
+  expect(preview).toHaveTextContent(head);
+  expect(writer).not.toHaveBeenCalled();
+  await click(confirm());
+  await click(landingButton());
+  expect(writer).toHaveBeenCalledTimes(1);
+});
+it('the landing cell is the ⌘K focus target for 代码候选落地', async () => {
+  reads();
+  await mount();
+  const region = screen.getByRole('region', { name: '代码候选落地' });
+  expect(region).toHaveAttribute(
+    'data-command-target',
+    COMMAND_TARGETS.executionLanding,
+  );
+  expect(region).toHaveAttribute('tabindex', '-1');
+  expect(
+    within(region).getByRole('button', { name: '二次认证后落地代码' }),
+  ).toBeInTheDocument();
+  act(() => region.focus());
+  expect(region).toHaveFocus();
 });

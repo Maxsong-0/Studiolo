@@ -1,5 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
+import { stamp } from './executionView';
+import {
+  Button,
+  Cell,
+  CellHeader,
+  GridFrame,
+  StatusMark,
+  type StatusState,
+} from './ui';
 import './styles/localDispatch.css';
 
 type Client = {
@@ -28,6 +37,15 @@ const deliveryLabels = {
   uncertain: '投递结果不明，请核查本机任务',
   cancelled: '已取消通知',
   completed: '已核对黑板终态',
+};
+/** 通知状态的方块：只有「结果不明」要你去核查，标红；已核对终态为实心，其余待定或休眠。 */
+const deliveryMarks: Record<keyof typeof deliveryLabels, StatusState> = {
+  pending: 'pending',
+  dispatching: 'active',
+  sent: 'pending',
+  uncertain: 'alert',
+  cancelled: 'dormant',
+  completed: 'ok',
 };
 class LocalError extends Error {
   constructor(readonly status: number) {
@@ -339,207 +357,262 @@ function LocalDispatchProject({ project }: { project: string }) {
     <details className="local-dispatch">
       <summary>本机 Codex / Claude Code</summary>
       <div className="local-dispatch-body">
-        <p>
+        <p className="local-dispatch-intro">
           把工作项通知给已登记的本机客户端，由客户端读取黑板、认领并回写执行结果。
         </p>
         {!connection ? (
-          <form
-            className="local-dispatch-form"
-            onSubmit={(event) => void connect(event)}
-          >
-            <label>
-              本机地址
-              <input
-                value={address}
-                onChange={(event) => setAddress(event.target.value)}
-                disabled={connecting}
-                autoComplete="off"
-                spellCheck={false}
-              />
-            </label>
-            <label>
-              配对码
-              <input
-                type="password"
-                value={pairingCode}
-                onChange={(event) => setPairingCode(event.target.value)}
-                disabled={connecting}
-                autoComplete="off"
-              />
-            </label>
-            <p className="local-dispatch-hint">
-              配对码由本机连接程序提供，不是模型 API
-              key；仅在本次页面连接期间保留。仅使用客户端自己的订阅登录。
-            </p>
-            <div className="local-dispatch-actions">
-              <button disabled={connecting} type="submit">
-                {connecting ? '正在连接…' : '连接本机'}
-              </button>
-              {connecting && (
-                <button type="button" onClick={disconnect}>
-                  取消连接
-                </button>
-              )}
-            </div>
-          </form>
-        ) : (
-          <>
-            <div className="local-dispatch-actions">
-              <span>已连接本机 · 每 5 秒核对</span>
-              <button
-                type="button"
-                onClick={() => void refresh()}
-                disabled={refreshing}
-              >
-                {refreshing ? '正在核对…' : '刷新本机状态'}
-              </button>
-              <button type="button" onClick={disconnect}>
-                断开本机
-              </button>
-            </div>
-            {clients.length ? (
+          <GridFrame className="local-dispatch-grid">
+            <Cell as="div" className="local-dispatch-cell">
+              <CellHeader title="配对" level={3} meta="未连接" />
               <form
                 className="local-dispatch-form"
-                onSubmit={(event) => void submit(event)}
+                onSubmit={(event) => void connect(event)}
               >
-                <fieldset disabled={sending}>
-                  <label>
-                    执行客户端
-                    <select
-                      value={clientId}
-                      onChange={(event) => setClientId(event.target.value)}
-                    >
-                      {clients.map((client) => (
-                        <option key={client.id} value={client.id}>
-                          {client.provider === 'codex'
-                            ? 'Codex'
-                            : ['claude', 'claude_code'].includes(
-                                  client.provider,
-                                )
-                              ? 'Claude Code'
-                              : client.provider}{' '}
-                          · {client.id}
-                          {client.ready ? '' : '（不可用）'}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  {selectedClient && (
-                    <div className="local-dispatch-client">
-                      <span>会话方式：{selectedClient.mode}</span>
-                      <span>工作目录：{selectedClient.cwd}</span>
-                      {!selectedClient.ready && (
-                        <p role="status">
-                          暂不可派发：
-                          {selectedClient.reason || '客户端尚未准备好。'}
-                        </p>
-                      )}
-                    </div>
-                  )}
-                  <label>
-                    派发内容
-                    <select
-                      value={mode}
-                      onChange={(event) =>
-                        setMode(
-                          event.target.value === 'existing'
-                            ? 'existing'
-                            : 'create',
-                        )
-                      }
-                    >
-                      <option value="create">创建只读工作项</option>
-                      <option value="existing">通知已有工作项</option>
-                    </select>
-                  </label>
-                  {mode === 'create' ? (
-                    <>
-                      <p className="local-dispatch-hint">
-                        新工作项仅做读取与分析；需要写入时，请使用黑板上已授权写域的工作项。
-                      </p>
-                      <label>
-                        标题
-                        <input
-                          value={title}
-                          onChange={(event) => setTitle(event.target.value)}
-                          maxLength={200}
-                          required
-                        />
-                      </label>
-                      <label>
-                        目标
-                        <textarea
-                          value={goal}
-                          onChange={(event) => setGoal(event.target.value)}
-                          rows={3}
-                          required
-                        />
-                      </label>
-                      <label>
-                        验收条件（每行一条）
-                        <textarea
-                          value={criteria}
-                          onChange={(event) => setCriteria(event.target.value)}
-                          rows={3}
-                          required
-                        />
-                      </label>
-                    </>
-                  ) : (
-                    <label>
-                      已有工作项 ID
-                      <input
-                        value={taskId}
-                        onChange={(event) => setTaskId(event.target.value)}
-                        required
-                        autoComplete="off"
-                        spellCheck={false}
-                      />
-                    </label>
-                  )}
-                  <button
-                    type="submit"
-                    disabled={!selectedClient?.ready || sending}
-                  >
-                    {sending
-                      ? '正在登记…'
-                      : mode === 'create'
-                        ? '创建并通知本机'
-                        : '通知本机'}
-                  </button>
-                </fieldset>
+                <label>
+                  本机地址
+                  <input
+                    value={address}
+                    onChange={(event) => setAddress(event.target.value)}
+                    disabled={connecting}
+                    autoComplete="off"
+                    spellCheck={false}
+                  />
+                </label>
+                <label>
+                  配对码
+                  <input
+                    type="password"
+                    value={pairingCode}
+                    onChange={(event) => setPairingCode(event.target.value)}
+                    disabled={connecting}
+                    autoComplete="off"
+                  />
+                </label>
+                <p className="local-dispatch-hint">
+                  配对码由本机连接程序提供，不是模型 API
+                  key；仅在本次页面连接期间保留。仅使用客户端自己的订阅登录。
+                </p>
+                <div className="local-dispatch-actions">
+                  <Button variant="primary" disabled={connecting} type="submit">
+                    {connecting ? '正在连接…' : '连接本机'}
+                  </Button>
+                  {connecting && <Button onClick={disconnect}>取消连接</Button>}
+                </div>
               </form>
-            ) : (
-              <p>当前项目没有可用的本机客户端，请在连接程序中登记后刷新。</p>
-            )}
-            <section aria-label="本机通知记录">
-              <h3>本机通知记录</h3>
+            </Cell>
+          </GridFrame>
+        ) : (
+          <GridFrame className="local-dispatch-grid">
+            <Cell as="div" span={7} className="local-dispatch-cell">
+              <CellHeader
+                title="派发"
+                level={3}
+                meta={<span>已连接本机 · 每 5 秒核对</span>}
+              />
+              <div className="local-dispatch-actions">
+                <Button
+                  size="sm"
+                  onClick={() => void refresh()}
+                  disabled={refreshing}
+                >
+                  {refreshing ? '正在核对…' : '刷新本机状态'}
+                </Button>
+                <Button size="sm" onClick={disconnect}>
+                  断开本机
+                </Button>
+              </div>
+              {clients.length ? (
+                <form
+                  className="local-dispatch-form"
+                  onSubmit={(event) => void submit(event)}
+                >
+                  <fieldset disabled={sending}>
+                    <label className="local-dispatch-choice">
+                      执行客户端
+                      <select
+                        value={clientId}
+                        onChange={(event) => setClientId(event.target.value)}
+                      >
+                        {clients.map((client) => (
+                          <option key={client.id} value={client.id}>
+                            {client.provider === 'codex'
+                              ? 'Codex'
+                              : ['claude', 'claude_code'].includes(
+                                    client.provider,
+                                  )
+                                ? 'Claude Code'
+                                : client.provider}{' '}
+                            · {client.id}
+                            {client.ready ? '' : '（不可用）'}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    {selectedClient && (
+                      <div className="local-dispatch-client">
+                        <span>会话方式：{selectedClient.mode}</span>
+                        <span>工作目录：{selectedClient.cwd}</span>
+                        {!selectedClient.ready && (
+                          <p role="status" className="local-dispatch-blocked">
+                            暂不可派发：
+                            {selectedClient.reason || '客户端尚未准备好。'}
+                          </p>
+                        )}
+                      </div>
+                    )}
+                    <label className="local-dispatch-choice">
+                      派发内容
+                      <select
+                        value={mode}
+                        onChange={(event) =>
+                          setMode(
+                            event.target.value === 'existing'
+                              ? 'existing'
+                              : 'create',
+                          )
+                        }
+                      >
+                        <option value="create">创建只读工作项</option>
+                        <option value="existing">通知已有工作项</option>
+                      </select>
+                    </label>
+                    {mode === 'create' ? (
+                      <>
+                        <p className="local-dispatch-hint">
+                          新工作项仅做读取与分析；需要写入时，请使用黑板上已授权写域的工作项。
+                        </p>
+                        <label>
+                          标题
+                          <input
+                            value={title}
+                            onChange={(event) => setTitle(event.target.value)}
+                            maxLength={200}
+                            required
+                          />
+                        </label>
+                        <label>
+                          目标
+                          <textarea
+                            value={goal}
+                            onChange={(event) => setGoal(event.target.value)}
+                            rows={3}
+                            required
+                          />
+                        </label>
+                        <label>
+                          验收条件（每行一条）
+                          <textarea
+                            value={criteria}
+                            onChange={(event) =>
+                              setCriteria(event.target.value)
+                            }
+                            rows={3}
+                            required
+                          />
+                        </label>
+                      </>
+                    ) : (
+                      <label>
+                        已有工作项 ID
+                        <input
+                          value={taskId}
+                          onChange={(event) => setTaskId(event.target.value)}
+                          required
+                          autoComplete="off"
+                          spellCheck={false}
+                        />
+                      </label>
+                    )}
+                    <div className="local-dispatch-actions">
+                      <Button
+                        variant="primary"
+                        type="submit"
+                        disabled={!selectedClient?.ready || sending}
+                      >
+                        {sending
+                          ? '正在登记…'
+                          : mode === 'create'
+                            ? '创建并通知本机'
+                            : '通知本机'}
+                      </Button>
+                    </div>
+                  </fieldset>
+                </form>
+              ) : (
+                <p className="local-dispatch-hint">
+                  当前项目没有可用的本机客户端，请在连接程序中登记后刷新。
+                </p>
+              )}
+            </Cell>
+            <Cell
+              span={5}
+              className="local-dispatch-cell"
+              aria-label="本机通知记录"
+            >
+              <CellHeader
+                title="本机通知记录"
+                level={3}
+                meta={`${deliveries.length} 条`}
+              />
               <p className="local-dispatch-hint">
                 “已通知”只表示通知已送出；认领、执行和完成状态以黑板为准。
               </p>
               {deliveries.length ? (
                 <ol className="local-dispatch-deliveries">
-                  {deliveries.map((delivery) => (
-                    <li key={delivery.id}>
-                      <strong>{deliveryLabels[delivery.state]}</strong>
-                      <span>
-                        工作项 <code>{delivery.task_id}</code>
-                      </span>
-                      <span>客户端 {delivery.client_id}</span>
-                      {delivery.task_status && (
-                        <span>黑板状态：{delivery.task_status}</span>
-                      )}
-                    </li>
-                  ))}
+                  {deliveries.map((delivery) => {
+                    const updated = stamp(delivery.updated_ms);
+                    const created = stamp(delivery.created_ms);
+                    return (
+                      <li key={delivery.id} className="local-dispatch-delivery">
+                        {updated ? (
+                          <time
+                            className="local-dispatch-time"
+                            dateTime={updated.iso}
+                            title={`更新于 ${updated.text}${created ? `，登记于 ${created.text}` : ''}`}
+                          >
+                            {updated.text}
+                          </time>
+                        ) : (
+                          <span
+                            className="local-dispatch-time"
+                            title="本机连接程序给出的时间超出可显示范围。"
+                          >
+                            —
+                          </span>
+                        )}
+                        <StatusMark
+                          state={deliveryMarks[delivery.state]}
+                          className="local-dispatch-state"
+                        >
+                          {deliveryLabels[delivery.state]}
+                        </StatusMark>
+                        <span>
+                          工作项 <code>{delivery.task_id}</code>
+                        </span>
+                        <span>客户端 {delivery.client_id}</span>
+                        {delivery.task_status && (
+                          <span>黑板状态：{delivery.task_status}</span>
+                        )}
+                      </li>
+                    );
+                  })}
                 </ol>
               ) : (
-                <p>暂无本机通知。</p>
+                <p className="local-dispatch-hint">暂无本机通知。</p>
               )}
-            </section>
-          </>
+            </Cell>
+          </GridFrame>
         )}
-        {error && <p role="alert">{error}</p>}
-        {notice && <p role="status">{notice}</p>}
+        {error && (
+          <p role="alert" className="local-dispatch-error">
+            {error}
+          </p>
+        )}
+        {notice && (
+          <p role="status" className="local-dispatch-notice">
+            {notice}
+          </p>
+        )}
       </div>
     </details>
   );
