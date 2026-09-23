@@ -82,7 +82,7 @@ fn hold(path: &Path) -> Result<File, ConfigError> {
 /// 持有 FD 的私有根身份钉；即使 inode 号被复用也能认出「批准的那个对象已经没了」。
 ///
 /// 只存 `(dev, ino)` 再按路径复比在 Linux 上挡不住替换：把目录 rmdir 后同名 mkdir，
-/// 内核会把同一个 inode 号立刻发还（overlayfs on ext4 实测 20/20 命中），
+/// 内核会把同一个 inode 号立刻发还（ext4 之上的 overlayfs 实测 20/20 命中），
 /// 于是新目录与被批准的旧目录取值完全相同。持有 FD 之后有两条互相独立的信号：
 ///
 /// 1. 对**持有的 FD** `fstat`：目录被 rmdir 后该 inode 的链接数归零，

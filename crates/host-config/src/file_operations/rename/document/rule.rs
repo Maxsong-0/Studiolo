@@ -12,7 +12,7 @@ pub(in crate::file_operations::rename) struct Rule {
 #[serde(deny_unknown_fields)]
 struct Object {
     path: VaultPath,
-    // String 精确解码；拒绝 serde unit enum 可接受的外部标记对象。
+    // 按 `String` 精确解码；拒绝 serde 单元枚举本会接受的外部标记对象。
     class: String,
     max_bytes: u64,
 }
