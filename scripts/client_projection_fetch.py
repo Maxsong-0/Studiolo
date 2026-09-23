@@ -1,17 +1,26 @@
 """从已认证的 HTTP 文本供给读取完整一批；不保留路牌或秘密句柄。"""
 import http.client
+import json
 import re
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
 
-from replica_common import Invalid, logical_path_ok, require
+from client_projection_schema import rules_source
+from replica_common import Invalid, digest, logical_path_ok, require
 
 MAX_NOTE = 4 * 1024 * 1024
 MAX_TOTAL = 16 * 1024 * 1024
 MAX_SOURCES = 128
 ULID = r"[0-7][0-9A-HJKMNP-TV-Z]{25}"
+# 策略平面文本格式唯一来源：crates/agent-server/src/server.rs `text_policy_read`。
+POLICY_HEAD = re.compile(r"# 策略版本 ([a-f0-9]{12})")
+POLICY_COUNT = {"rules": re.compile(r"([0-9]{1,10}) 份规则母本"),
+                "skills": re.compile(r"([0-9]{1,10}) 个 skill(?:（[^\t]*）)?")}
+POLICY_ROW = {"rules": re.compile(r"([^\t]+)\tv([1-9][0-9]{0,15})\t([a-f0-9]{12})"),
+              "skills": re.compile(r"([a-z0-9][a-z0-9-]{0,63})\tv([1-9][0-9]{0,15})\t.*")}
+POLICY_ITEM = re.compile(r"@v([1-9][0-9]{0,15}) sha256 ([a-f0-9]{64})")
 FRESHNESS = re.compile(
     r"副本状态 ready；stale=false；generation=(?P<generation>[a-f0-9]{32})；"
     r"source_digest=(?P<source_digest>[a-f0-9]{64})；"
@@ -68,7 +77,7 @@ class Client:
         if self.session:
             headers["Studiolo-Session-Id"] = self.session
         request = urllib.request.Request(target, headers=headers, method="GET")
-        limit = MAX_NOTE + 2048 if name == "note" else MAX_NOTE
+        limit = MAX_NOTE + 2048 if name in ("note", "policy") else MAX_NOTE
         with self.opener.open(request, timeout=15) as response:
             require(response.status == 200 and response.geturl() == target)
             require(_header(response.headers, "Content-Type").lower() == "text/plain; charset=utf-8")
@@ -95,6 +104,9 @@ class Client:
                 identity = {"type": match[1], "instance": instance}
                 require(self.identity is None or identity == self.identity)
                 self.identity = identity
+            if name == "policy":
+                # 策略平面响应不带副本新鲜度行；一致性改由策略版本行与逐项版本/摘要核对。
+                return text
             lines = text.split("\n", 2)
             index = 0 if name == "entries" else 1
             require(len(lines) > index)
@@ -132,6 +144,74 @@ def _entries(text, prefix):
     return result
 
 
+def _policy_listing(text, kind):
+    """策略清单：首行策略版本、次行计数，其后逐行 `名\\tv版本\\t…`；返回 (策略版本, {名: (版本, 规则短摘要)})。"""
+    lines = text.split("\n")
+    require(len(lines) >= 3)
+    head, count = POLICY_HEAD.fullmatch(lines[0]), POLICY_COUNT[kind].fullmatch(lines[1])
+    require(head is not None and count is not None)
+    # 零项时服务端在计数行后留一个换行；有项时逐行无尾随换行。
+    rows = [] if lines[2:] == [""] else lines[2:]
+    require(int(count[1]) == len(rows) <= 25_000)
+    listed = {}
+    for row in rows:
+        match = POLICY_ROW[kind].fullmatch(row)
+        require(match is not None and match[1] not in listed)
+        listed[match[1]] = (int(match[2]), match[3] if kind == "rules" else None)
+    return head[1], listed
+
+
+def _skill_digest(name, body):
+    """按服务端规范 JSON（serde 字段序、紧凑分隔、非 ASCII 原样）复算 skill 摘要。
+
+    摘要或触发含换行、触发含 ` | ` 时文本无法唯一还原，复算对不上即整批拒绝。
+    """
+    summary, _, rest = body.partition("\n")
+    triggers, _, markdown = rest.partition("\n")
+    require(summary.startswith("摘要：") and triggers.startswith("触发：") and markdown.startswith("\n"))
+    joined = triggers[len("触发："):]
+    value = {"name": name, "summary": summary[len("摘要："):],
+             "triggers": joined.split(" | ") if joined else [], "markdown": markdown[1:]}
+    return digest(json.dumps(value, ensure_ascii=False, separators=(",", ":")).encode("utf-8"))
+
+
+def _policy_item(client, kind, name, effective, listed, token):
+    """逐项正文：策略版本行与 `policy://种类/名@v版本 sha256 摘要` 行之后的余下部分原样落盘。"""
+    require(name in listed)
+    parts = client.get("policy", {"kind": kind, "subject": name}).split("\n", 2)
+    require(len(parts) == 3)
+    head, prefix = POLICY_HEAD.fullmatch(parts[0]), "policy://" + kind + "/" + name
+    item = POLICY_ITEM.fullmatch(parts[1][len(prefix):]) if parts[1].startswith(prefix) else None
+    # 与清单不同的策略版本说明导出途中 effective 变化；逐项版本/摘要再防单次响应内的撕裂读。
+    require(head is not None and head[1] == effective and item is not None)
+    version, full, body = int(item[1]), item[2], parts[2]
+    require(version == listed[name][0])
+    require(token not in body and client.session not in body)
+    require(len(body.encode("utf-8")) <= MAX_NOTE)
+    if kind == "rules":
+        require(full[:12] == listed[name][1] and digest(body.encode("utf-8")) == full)
+        path = "policy/rules/" + name
+    else:
+        require(_skill_digest(name, body) == full)
+        path = "policy/skills/" + name + "/SKILL.md"
+    return {"path": path, "body": body, "policy_version": version, "policy_sha12": full[:12]}
+
+
+def _policy_sources(client, config, token):
+    """先取清单再逐项取正文；规则、skills 两份清单与每份正文须同一策略版本。"""
+    effective, sources = None, []
+    for kind in ("rules", "skills"):
+        if not config[kind]:
+            continue
+        version, listed = _policy_listing(client.get("policy", {"kind": kind}), kind)
+        require(effective in (None, version))
+        effective = version
+        sources += [_policy_item(client, kind, name, effective, listed, token) for name in config[kind]]
+    require(effective is not None and 0 < len(sources) <= MAX_SOURCES)
+    require(sum(len(s["body"].encode("utf-8")) for s in sources) <= MAX_TOTAL)
+    return effective, sources
+
+
 def _selected(config, entries):
     selected = set(config["rules"])
     for root in config["skills"]:
@@ -149,33 +229,45 @@ def _selected(config, entries):
     return sorted(selected)
 
 
+def _vault_sources(client, config, token):
+    entries = {}
+    for prefix in ("_规则", config["project"]):
+        entries.update(_entries(client.get("entries", {"project": prefix}), prefix))
+    sources, total = [], 0
+    for path in _selected(config, entries):
+        text = client.get("note", {"path": path})
+        parts = text.split("\n", 2)
+        require(len(parts) == 3)
+        match = re.fullmatch(r"revision ([a-f0-9]{64})", parts[0])
+        require(match is not None)
+        body = parts[2]
+        require(token not in body and client.session not in body)
+        raw = body.encode("utf-8")
+        total += len(raw)
+        require(len(raw) == entries[path][1] and len(raw) <= MAX_NOTE and total <= MAX_TOTAL)
+        # Revision 绑定 Vault UUID/路径，不能冒充正文摘要；manifest 另记 digest(raw)。
+        sources.append({"path": path, "revision": match[1], "body": body})
+    return sources
+
+
 def fetch(config, token):
     """配置由调用方验证；失败只抛固定类别，不回显底层 URL、正文或凭据。"""
     try:
         client = Client(config, token)
         client.get("handshake")
-        entries = {}
-        for prefix in ("_规则", config["project"]):
-            entries.update(_entries(client.get("entries", {"project": prefix}), prefix))
-        sources, total = [], 0
-        for path in _selected(config, entries):
-            text = client.get("note", {"path": path})
-            parts = text.split("\n", 2)
-            require(len(parts) == 3)
-            match = re.fullmatch(r"revision ([a-f0-9]{64})", parts[0])
-            require(match is not None)
-            body = parts[2]
-            require(token not in body and client.session not in body)
-            raw = body.encode("utf-8")
-            total += len(raw)
-            require(len(raw) == entries[path][1] and len(raw) <= MAX_NOTE and total <= MAX_TOTAL)
-            # Revision 绑定 Vault UUID/路径，不能冒充正文摘要；manifest 另记 digest(raw)。
-            sources.append({"path": path, "revision": match[1], "body": body})
+        policy = rules_source(config) == "policy"
+        if policy:
+            effective, sources = _policy_sources(client, config, token)
+        else:
+            sources = _vault_sources(client, config, token)
         client.get("handshake")
-        return {"identity": client.identity,
-                "freshness": {key: client.receipt[key] for key in
-                              ("generation", "source_digest", "source_observed_at_ms", "received_at_ms")},
-                "sources": sources, "generated_at_ms": int(time.time() * 1000)}
+        snapshot = {"identity": client.identity,
+                    "freshness": {key: client.receipt[key] for key in
+                                  ("generation", "source_digest", "source_observed_at_ms", "received_at_ms")},
+                    "sources": sources, "generated_at_ms": int(time.time() * 1000)}
+        if policy:
+            snapshot.update(rules_source="policy", policy_effective=effective)
+        return snapshot
     except urllib.error.HTTPError as error:
         error.close()
         raise Invalid("projection_fetch_failed") from None

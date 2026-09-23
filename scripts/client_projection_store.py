@@ -41,11 +41,32 @@ def _diff(old, new):
             for path in sorted(previous.keys() | following.keys())]
 
 
+def policy_drift(old, new):
+    """策略模式漂移明细：策略版本及逐项版本/短摘要的新旧值；两侧都不是策略模式时返回 None。"""
+    sides = [m if m and m.get("rules_source") == "policy" else None for m in (old, new)]
+    if not any(sides):
+        return None
+    items = [{s["path"]: (s["policy_version"], s["policy_sha12"]) for s in m["sources"]} if m else {}
+             for m in sides]
+    rows = []
+    for path in sorted(items[0].keys() | items[1].keys()):
+        (old_version, old_sha), (new_version, new_sha) = (side.get(path, (None, None)) for side in items)
+        if (old_version, old_sha) != (new_version, new_sha):
+            rows.append({"path": path, "old_version": old_version, "new_version": new_version,
+                         "old_sha12": old_sha, "new_sha12": new_sha})
+    return {"old_effective": sides[0]["policy_effective"] if sides[0] else None,
+            "new_effective": sides[1]["policy_effective"] if sides[1] else None, "items": rows}
+
+
 def _plan(old, bundle):
     same = old and old["manifest"]["projection_key"] == bundle["manifest"]["projection_key"]
-    return {"status": "unchanged" if same else "changed" if old else "create",
-            "current_bundle_id": old["manifest"]["bundle_id"] if old else None,
-            "bundle_id": bundle["manifest"]["bundle_id"], "files": _diff(old, bundle)}
+    result = {"status": "unchanged" if same else "changed" if old else "create",
+              "current_bundle_id": old["manifest"]["bundle_id"] if old else None,
+              "bundle_id": bundle["manifest"]["bundle_id"], "files": _diff(old, bundle)}
+    drift = policy_drift(old["manifest"] if old else None, bundle["manifest"])
+    if drift is not None:
+        result["policy"] = drift
+    return result
 
 
 def check(target):

@@ -1,86 +1,18 @@
 #!/usr/bin/env python3
 """HTTP 投影采集协议及客户端输出边界；全用内存响应，不调用远端服务。"""
-import io
 import json
 import sys
 import unittest
 import urllib.error
 import urllib.parse
-from email.message import Message
 from unittest.mock import patch
 
 sys.dont_write_bytecode = True
 import client_projection_fetch as fetcher
 from client_projection_render import render
+from client_projection_schema import make_bundle
+from client_projection_test_support import EFFECTIVE, INSTANCE, NOW, SESSION, TOKEN, Fixture
 from replica_common import Invalid, digest
-
-NOW = 1_789_056_579_000
-INSTANCE = "01K00000000000000000000000"
-SESSION = "01K11111111111111111111111"
-TOKEN = "PUBLIC_TEST_ONLY_CANARY"
-
-
-class Response(io.BytesIO):
-    def __init__(self, target, body, headers):
-        super().__init__(body.encode("utf-8") if isinstance(body, str) else body)
-        self.status, self.target, self.headers = 200, target, headers
-
-    def geturl(self):
-        return self.target
-
-
-class Fixture:
-    def __init__(self):
-        self.config = {"schema_version": 1, "client": "claude", "project": "项目/Alpha",
-                       "source_url": "https://example.invalid/read", "token_env": "TEST_TOKEN",
-                       "rules": ["_规则/准则.md", "项目/Alpha/CLAUDE.md"],
-                       "skills": ["_规则/skills/explain"]}
-        self.notes = {"_规则/准则.md": "规则正文\n", "项目/Alpha/CLAUDE.md": "项目规则\n",
-                      "_规则/skills/explain/SKILL.md": "---\nname: explain\n---\n参考 [详情](resources/详情.md)\n",
-                      "_规则/skills/explain/resources/详情.md": "\ufeff原文\r\n保留字节\r\n"}
-        self.extra, self.calls, self.mutate = [], [], lambda route, text, headers: text
-        self.blank_line = True
-
-    def fresh(self):
-        return ("副本状态 ready；stale=false；generation=" + "a" * 32 + "；source_digest=" + "b" * 64
-                + f"；source_observed_at_ms={NOW - 1000}；received_at_ms={NOW - 500}；age_secs=1；max_age_secs=300")
-
-    def open(self, request, timeout):
-        self.calls.append(request)
-        if timeout != 15:
-            raise AssertionError("必须设置十五秒超时")
-        if request.get_header("Authorization") != "Bearer " + TOKEN:
-            raise AssertionError("所有读取必须认证")
-        if len(self.calls) > 1 and request.get_header("Studiolo-session-id") != SESSION:
-            raise AssertionError("续读必须复用同一会话")
-        parsed = urllib.parse.urlsplit(request.full_url)
-        route, query = parsed.path.rsplit("/", 1)[1], urllib.parse.parse_qs(parsed.query)
-        headers = Message()
-        headers["Content-Type"] = "text/plain; charset=utf-8"
-        if route == "handshake":
-            headers["Studiolo-Session-Id"], headers["Studiolo-Instance-Id"] = SESSION, INSTANCE
-            text = ("# Studiolo 路牌（代次 1，时间）\n" + self.fresh()
-                    + ("\n\n" if self.blank_line else "\n") + "## 1 我是谁\n"
-                    + f"类型 {self.config['client']} · 实例 {INSTANCE} · 注册 时间\n"
-                    + "其他项目绝密路牌，不得写入投影\n")
-        elif route == "entries":
-            prefix = query["project"][0]
-            rows = [f"note\t{p}\t{len(body.encode('utf-8'))}" for p, body in self.notes.items()
-                    if p.startswith(prefix + "/")]
-            if prefix == "_规则":
-                rows += ["dir\t_规则/skills\t", "dir\t_规则/skills/explain\t",
-                         "dir\t_规则/skills/explain/resources\t"] + self.extra
-            text = self.fresh() + f"\n# 代次 1 · {len(rows)} 条\n" + "\n".join(rows)
-        else:
-            body = self.notes[query["path"][0]]
-            # 故意使用不同于正文 SHA 的 revision，匹配实际 Vault 域分离协议。
-            text = "revision " + "c" * 64 + "\n" + self.fresh() + "\n" + body
-        return Response(request.full_url, self.mutate(route, text, headers), headers)
-
-    def fetch(self):
-        with patch.object(fetcher.urllib.request, "build_opener", return_value=self), \
-                patch.object(fetcher.time, "time", return_value=NOW / 1000):
-            return fetcher.fetch(self.config, TOKEN)
 
 
 class FetchTests(unittest.TestCase):
@@ -256,6 +188,90 @@ class FetchTests(unittest.TestCase):
             snapshot["generated_at_ms"] += 60_000
             snapshot["identity"]["instance"] = "01K22222222222222222222222"
             self.assertEqual(render(self.fixture.config, snapshot), files)
+
+    def test_vault_mode_bundle_bytes_match_pre_policy_release(self):
+        # main 959d473（策略模式之前）同一夹具的 bundle_id；它覆盖 manifest 与全部渲染文件的字节。
+        for client, expected in (("claude", "ed1de36da342b900a9ec4413873ac84c75c56ab037b63da6dbbe610002c4524d"),
+                                 ("codex", "a4f26369ae43fb7b8bcdca5c1c2aa7aa670e44d3830d137359832dc5ac1c6b5c")):
+            with self.subTest(client=client):
+                self.fixture = Fixture()
+                self.fixture.config["client"] = client
+                snapshot = self.fixture.fetch()
+                bundle = make_bundle(self.fixture.config, snapshot, render(self.fixture.config, snapshot))
+                self.assertEqual(bundle["manifest"]["bundle_id"], expected)
+
+    def test_policy_mode_exports_effective_items_as_raw_bytes(self):
+        snapshot = self.fixture.use_policy(skills=("demo", "other")).fetch()
+        urls = [urllib.parse.urlsplit(call.full_url) for call in self.fixture.calls]
+        self.assertEqual([u.path.rsplit("/", 1)[1] for u in urls], ["handshake"] + ["policy"] * 5 + ["handshake"])
+        self.assertEqual([urllib.parse.parse_qs(u.query) for u in urls[1:4]],
+                         [{"kind": ["rules"]}, {"kind": ["rules"], "subject": ["通用工作规则.md"]}, {"kind": ["skills"]}])
+        rule = self.fixture.rules["通用工作规则.md"][1]
+        demo = "摘要：演示技能\n触发：新功能 | 重构\n\n# 演示\n\t保留\"原样\"\\\r\n"
+        self.assertEqual((snapshot["rules_source"], snapshot["policy_effective"]), ("policy", EFFECTIVE))
+        self.assertEqual(snapshot["sources"], [
+            {"path": "policy/rules/通用工作规则.md", "body": rule, "policy_version": 3,
+             "policy_sha12": digest(rule.encode())[:12]},
+            {"path": "policy/skills/demo/SKILL.md", "body": demo, "policy_version": 4,
+             "policy_sha12": digest(self.fixture.skill_json("demo").encode())[:12]},
+            {"path": "policy/skills/other/SKILL.md", "body": "摘要：其他\n触发：\n\nx\n", "policy_version": 6,
+             "policy_sha12": digest(self.fixture.skill_json("other").encode())[:12]}])
+        bundle = make_bundle(self.fixture.config, snapshot, render(self.fixture.config, snapshot))
+        self.assertEqual(bundle["files"]["sources/policy/skills/demo/SKILL.md"], demo.encode())
+        self.assertEqual(bundle["manifest"]["policy_effective"], EFFECTIVE)
+        context = bundle["files"]["CONTEXT.md"].decode()
+        self.assertIn(f"策略版本 `{EFFECTIVE}`", context)
+        self.assertNotIn("a" * 32, context)
+        self.assertNotIn(TOKEN, json.dumps(snapshot))
+        self.assertNotIn(SESSION, json.dumps(snapshot))
+        self.fixture = Fixture()
+        self.fixture.use_policy(skills=()).fetch()
+        self.assertEqual(len(self.fixture.calls), 4, "只选规则时不读 skills 清单")
+
+    def test_skill_digest_matches_server_serde_json(self):
+        # 真实 studiolo-agent（main 959d473）bootstrap 后 `/read/policy` 回报的 sha256（serde 规范 JSON），
+        # 覆盖引号、反斜杠、制表、CRLF、控制符、DEL、emoji 与 U+2028；本地复算必须逐位一致。
+        body = ("摘要：演示\"引号\\反斜杠\t制表\n触发：新功能 | 写 React 时\n\n# 演示\n\t制表\r\n"
+                "CRLF\u0001控制\u007f删除 \U0001f600  段落 </script> \\ \"\n")
+        self.assertEqual(fetcher._skill_digest("demo", body),
+                         "12ae2c45a370f61ba8935874e49519b7d374f22be4e51bf5fbdcee28d472fe62")
+
+    def test_policy_listing_parses_empty_and_tabbed_rows(self):
+        self.assertEqual(fetcher._policy_listing(f"# 策略版本 {EFFECTIVE}\n0 份规则母本\n", "rules"), (EFFECTIVE, {}))
+        text = f"# 策略版本 {EFFECTIVE}\n1 个 skill（索引式候选；硬绑定见路牌第 5 项）\ndemo\tv4\t含\t制表\t触发"
+        self.assertEqual(fetcher._policy_listing(text, "skills"), (EFFECTIVE, {"demo": (4, None)}))
+
+    def test_policy_version_or_item_mismatch_rejects_whole_batch(self):
+        head, moved = f"# 策略版本 {EFFECTIVE}\n", "# 策略版本 fedcba987654\n"
+        sha12 = digest(self.fixture.rules["通用工作规则.md"][1].encode())[:12]
+        for old, new in ((head + "policy://rules/", moved + "policy://rules/"),
+                         (head + "2 个 skill", moved + "2 个 skill"),
+                         (head + "policy://skills/", moved + "policy://skills/"),
+                         ("通用工作规则.md@v3", "通用工作规则.md@v9"), ("demo@v4", "demo@v9"),
+                         ("禁止绕过式修复。", "已被替换。"), ("\t保留", "\t替换"),
+                         ("\tv3\t" + sha12, "\tv3\t" + "0" * 12),
+                         ("policy://rules/通用工作规则.md@", "policy://rules/其他.md@"),
+                         ("2 份规则母本", "3 份规则母本"), (head + "2 份", head + "\n2 份")):
+            with self.subTest(new=new):
+                self.fixture = Fixture().use_policy()
+                self.fixture.mutate = lambda route, text, h: text.replace(old, new) if route == "policy" else text
+                self.rejected()
+
+    def test_policy_unlisted_name_leaked_secret_or_ambiguous_skill_rejects_batch(self):
+        for rules, skills in ((("缺失.md",), ("demo",)), (("通用工作规则.md",), ("missing",))):
+            with self.subTest(rules=rules, skills=skills):
+                self.fixture = Fixture().use_policy(rules, skills)
+                self.rejected()
+                subjects = {urllib.parse.parse_qs(urllib.parse.urlsplit(c.full_url).query).get("subject", [""])[0]
+                            for c in self.fixture.calls}
+                self.assertFalse({"缺失.md", "missing"} & subjects, "不在清单的名字不得发出正文请求")
+        for name, value in (("rules", (3, "正文" + TOKEN)), ("skills", (4, "演示", [], "正文" + SESSION)),
+                            ("skills", (4, "演示\n技能", ["新功能"], "# 演示\n")),
+                            ("skills", (4, "演示", ["新功能 | 重构"], "# 演示\n"))):
+            with self.subTest(kind=name, value=value):
+                self.fixture = Fixture().use_policy()
+                getattr(self.fixture, name)["通用工作规则.md" if name == "rules" else "demo"] = value
+                self.rejected()
 
 
 if __name__ == "__main__":
