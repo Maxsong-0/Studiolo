@@ -28,7 +28,7 @@
 | [`m1/README.md`](m1/README.md) | M1 实现约定、只读入口启动方式、运行契约、四个只读 Interface，以及 T-006～T-011 的历史验证记录 |
 | [`m1/search-navigation.md`](m1/search-navigation.md) | T-007 查询语义、同代次定位、截断与错误规则 |
 | [`m1/file-tree.md`](m1/file-tree.md) | T-010 空目录、纯附件目录、按目录分页与同代次元信息 |
-| [`m1/design/t011-design-system.md`](m1/design/t011-design-system.md) | T-011 Apple 通透工作台视觉规范；取代旧 `overview-concept.png` 的历史视觉约束 |
+| [`m1/design/t011-design-system.md`](m1/design/t011-design-system.md) | T-011 Apple 通透工作台视觉规范（**已被 [T-130 规范](design/t130-design-system.md) 取代**，仅作历史参考）；曾取代旧 `overview-concept.png` 的历史视觉约束 |
 | [`m1/server-preview.md`](m1/server-preview.md) | T-008 服务器示例的运行边界、可校验源码包、原生路径测试与同端口 SSH 转发 |
 | [`m1/cloudflare-preview.md`](m1/cloudflare-preview.md) | T-009 域名门禁与独立鉴权服务；已部署生效，真实邮箱登录与公网功能**仍待验收** |
 | [`m1/ui-release.md`](m1/ui-release.md) | T-035 界面与动效的完善、合并与服务器 4319 网页切换记录 |
@@ -165,6 +165,7 @@ M4 把规则母本、skills 与各 AI 类型的能力集升入策略平面：des
 | [`contracts/vault-broker.md`](contracts/vault-broker.md) | VaultBroker：canonical Vault 唯一写者 |
 | [`contracts/vault-index.md`](contracts/vault-index.md) | VaultIndex：解析、就近 wikilink、反链、标题树、frontmatter 归一 |
 | [`contracts/task-engine.md`](contracts/task-engine.md) | TaskEngine：命令、claim / attempt / fence、取消、projection outbox、reconcile |
+| [`contracts/board-overview.md`](contracts/board-overview.md) | T-130 跨项目黑板只读汇总 `GET /api/v1/board/overview`：查询参数与 400 答复、鉴权与许可、字段与截断、一致性约束、前端封闭解码器 |
 | [`contracts/gateway.md`](contracts/gateway.md) | Gateway：capability 校验、权限求交、call 幂等、intent / outcome 顺序 |
 | [`contracts/audit-ledger.md`](contracts/audit-ledger.md) | AuditLedger：权威审计唯一写入口、完整性链 |
 | [`contracts/runner-adapter.md`](contracts/runner-adapter.md) | Runner Adapter：Stub 与真实 CLI 共用的执行器 Interface |

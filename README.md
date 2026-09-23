@@ -196,6 +196,9 @@ npm --prefix web ci --ignore-scripts && npm --prefix web run build
 npm --prefix web test && npm --prefix web run lint && npm --prefix web run format
 ```
 
+不连后端看界面：`STUDIOLO_FIXTURES=1 npm --prefix web run dev` 用 `web/dev/` 的假数据应答全部 `/api/*`
+（写操作只改内存，重启复原）。只在 `vite serve` 下生效，生产构建里不出现（T-130）。
+
 上面那组之外，CI `rust` 作业还会做四件事（2026-09-22 按 `ci.yml` 逐条核对）：
 
 - 对**八个显式列名**的脚本跑 `bash -n`：`scripts/` 下的 `package-agent.sh`、
