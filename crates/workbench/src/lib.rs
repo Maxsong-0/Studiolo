@@ -1,6 +1,5 @@
-//! Pure, rebuildable M1 project views. This Module performs no filesystem,
-//! network, process, or clock operations: every displayed fact comes from the
-//! supplied documents or explicit repository inputs and retains its source location.
+//! 无副作用、可重建的 M1 项目视图。本模块不做任何文件系统、网络、进程或时钟操作：
+//! 展示的每条事实都来自调用方提供的文档或显式的仓库输入，并保留其源位置。
 
 #![forbid(unsafe_code)]
 
@@ -75,8 +74,8 @@ pub use studiolo_vault_index::IndexError;
 pub use tree::FileTree;
 pub use tree_dto::*;
 
-/// One immutable derived generation, built through the same Interface used by
-/// callers and contract tests. Duplicate input paths reject the whole build.
+/// 一个不可变的派生代次，经由调用方与契约测试共用的同一接口构建；输入路径重复时
+/// 整个构建被拒绝。
 ///
 /// 本代只保存一份文档表；逐篇摘要在 `snapshot` 时按需派生，不在代次里长驻第二份。
 #[derive(Debug)]
@@ -89,7 +88,7 @@ pub struct WorkbenchReadModel {
 }
 
 impl WorkbenchReadModel {
-    /// Builds deterministic views and reuses M0 parsing without any I/O.
+    /// 构建确定性视图，复用 M0 解析，不做任何 I/O。
     pub fn build(documents: &[MarkdownDocument]) -> Result<Self, IndexError> {
         let mut index = InMemoryVaultIndex::new();
         index.rebuild(documents)?;
@@ -141,7 +140,7 @@ impl WorkbenchReadModel {
         })
     }
 
-    /// Returns an owned copy; caller changes cannot mutate this generation.
+    /// 返回一份独立副本；调用方改动副本不会影响本代次。
     ///
     /// 逐篇文档摘要在此按需派生，规模随本代文档数增长。只需要数量的调用方改用
     /// [`WorkbenchReadModel::overview`] 或 [`WorkbenchReadModel::counts`]。
@@ -193,20 +192,20 @@ impl WorkbenchReadModel {
         self.documents.len()
     }
 
-    /// Returns exact input text, or `None` for a path outside this generation.
+    /// 返回原样输入文本；路径不在本代次时返回 `None`。
     #[must_use]
     pub fn document(&self, path: &VaultPath) -> Option<DocumentView> {
         self.documents.get(path).cloned()
     }
 
-    /// Searches only this immutable generation. Full text and path switching
-    /// share the same document set, query limits, and exact project scope.
+    /// 只搜索本不可变代次。全文与路径两种模式共用同一文档集合、同一查询上限与
+    /// 同一精确项目范围。
     pub fn search(&self, query: &SearchQuery) -> Result<SearchResults, SearchError> {
         search::search(&self.documents, &self.projects, query)
     }
 
-    /// Derives outline, wikilink targets, and backlinks from the same M0 index.
-    /// Missing notes return `None`; navigation truncation is explicit.
+    /// 从同一个 M0 索引派生大纲、wikilink 目标与反链。笔记不存在时返回 `None`；
+    /// 导航截断会显式标出。
     #[must_use]
     pub fn navigation(&self, path: &VaultPath) -> Option<DocumentNavigation> {
         navigation::navigation(&self.index, path)

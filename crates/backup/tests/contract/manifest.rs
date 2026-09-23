@@ -1,9 +1,12 @@
 //! 清单契约：各 owner 水位各有含义，缺一项、被别的计数顶替或秘密泄漏都要拒绝。
+//!
+//! 本文件管各 owner 水位（含 M4 策略库）；固定事实与持久清单的 schema／往返在 `facts`。
+
+mod facts;
 
 use super::support::{DIGEST, manifest_inputs, ticket};
-use studiolo_backup::checkpoint::manifest::{
-    AuditCoverageProof, CheckpointManifest, ManifestError, SecretReference, SecretSource,
-};
+use studiolo_backup::checkpoint::manifest::{CheckpointManifest, ManifestError};
+use studiolo_backup::checkpoint::types::OwnerRoster;
 use studiolo_core::VaultUuid;
 use studiolo_core::checkpoint::{CheckpointOwner, OwnerAssembly, OwnerWatermark};
 use tempfile::TempDir;
@@ -21,7 +24,7 @@ fn build() -> CheckpointManifest {
 fn the_manifest_records_every_required_watermark_for_one_checkpoint_id() {
     let manifest = build();
 
-    assert_eq!(manifest.watermarks.len(), 6);
+    assert_eq!(manifest.watermarks.len(), 7);
     for owner in CheckpointOwner::FREEZE_ORDER {
         assert!(
             manifest
@@ -176,102 +179,116 @@ fn a_broker_watermark_with_unresolved_work_cannot_enter_the_manifest() {
 }
 
 #[test]
-fn comparing_offsets_is_not_proof_that_acked_events_match_the_original_ones() {
+fn a_policy_effective_hash_must_be_a_real_digest_and_a_bare_version_number_is_a_substitution() {
     let temporary = TempDir::new().expect("tempdir");
-    let seal = ticket(VaultUuid::new(), VaultUuid::new(), temporary.path());
-    let mut inputs = manifest_inputs();
-    inputs.audit_coverage = AuditCoverageProof {
-        acked_events_checked: 12,
-        acked_events_matched: 12,
-        offset_comparison_only: true,
-    };
-
-    assert!(matches!(
-        CheckpointManifest::build(&seal, inputs),
-        Err(ManifestError::AuditCoverageNotExact)
-    ));
-}
-
-#[test]
-fn a_partially_matched_acked_event_set_is_refused() {
-    let temporary = TempDir::new().expect("tempdir");
-    let seal = ticket(VaultUuid::new(), VaultUuid::new(), temporary.path());
-    let mut inputs = manifest_inputs();
-    inputs.audit_coverage.acked_events_matched = 11;
-
-    assert!(matches!(
-        CheckpointManifest::build(&seal, inputs),
-        Err(ManifestError::AuditCoverageNotExact)
-    ));
-}
-
-#[test]
-fn missing_package_digests_or_deployment_manifest_is_refused() {
-    let temporary = TempDir::new().expect("tempdir");
-    let seal = ticket(VaultUuid::new(), VaultUuid::new(), temporary.path());
-
-    let mut without_cli = manifest_inputs();
-    without_cli.cli_packages.clear();
-    assert!(matches!(
-        CheckpointManifest::build(&seal, without_cli),
-        Err(ManifestError::PackageDigestsMissing)
-    ));
-
-    let mut without_deployment = manifest_inputs();
-    without_deployment.deployment.clear();
-    assert!(matches!(
-        CheckpointManifest::build(&seal, without_deployment),
-        Err(ManifestError::DeploymentManifestMissing)
-    ));
-}
-
-#[test]
-fn a_secret_reference_only_names_where_to_fetch_it_never_the_value() {
-    let temporary = TempDir::new().expect("tempdir");
-    let seal = ticket(VaultUuid::new(), VaultUuid::new(), temporary.path());
-    let manifest = CheckpointManifest::build(&seal, manifest_inputs()).expect("manifest");
-    let encoded = serde_json::to_string(&manifest).expect("encode");
-    assert!(encoded.contains("RESTIC_PASSWORD_FILE"));
-    assert!(!encoded.contains("hunter2"));
-
-    for bad in ["restic password = hunter2", "RESTIC PASSWORD", "1BAD"] {
-        let mut inputs = manifest_inputs();
-        inputs.secret_references = vec![SecretReference {
-            logical_name: "restic_repository_password".to_owned(),
-            source: SecretSource::EnvironmentVariable {
-                variable: bad.to_owned(),
-            },
-        }];
-        assert!(
-            matches!(
-                CheckpointManifest::build(&seal, inputs),
-                Err(ManifestError::SecretReferenceMalformed)
-            ),
-            "{bad}"
+    let uppercase = DIGEST.to_ascii_uppercase();
+    // effective 版本号就是「一个数」；空串、截断、大写十六进制只是格式不合法。
+    for (broken, substituted) in [
+        ("5", true),
+        ("", false),
+        (&DIGEST[..63], false),
+        (uppercase.as_str(), false),
+    ] {
+        let mut seal = ticket(VaultUuid::new(), VaultUuid::new(), temporary.path());
+        for sealed in &mut seal.owners {
+            if let OwnerWatermark::Policy { effective_hash, .. } = &mut sealed.watermark {
+                *effective_hash = broken.to_owned();
+            }
+        }
+        let expected = if substituted {
+            ManifestError::WatermarkSubstituted {
+                owner: CheckpointOwner::Policy,
+                field: "effective_hash",
+            }
+        } else {
+            ManifestError::WatermarkMalformed {
+                owner: CheckpointOwner::Policy,
+                field: "effective_hash",
+            }
+        };
+        assert_eq!(
+            CheckpointManifest::build(&seal, manifest_inputs()).err(),
+            Some(expected),
+            "{broken:?}"
         );
     }
 }
 
 #[test]
-fn a_persisted_manifest_with_an_unknown_schema_version_fails_closed() {
+fn a_persisted_manifest_rechecks_the_policy_watermark_on_validation() {
     let mut manifest = build();
-    manifest.schema_version = 99;
+    assert!(
+        manifest
+            .watermarks
+            .iter()
+            .any(|watermark| watermark.owner() == CheckpointOwner::Policy),
+        "策略库水位必须进封存清单"
+    );
+    for watermark in &mut manifest.watermarks {
+        if let OwnerWatermark::Policy {
+            effective_version,
+            effective_hash,
+            ..
+        } = watermark
+        {
+            *effective_hash = effective_version.to_string();
+        }
+    }
 
-    assert!(matches!(
+    assert_eq!(
         manifest.validate(),
-        Err(ManifestError::UnsupportedSchema { found: 99 })
-    ));
+        Err(ManifestError::WatermarkSubstituted {
+            owner: CheckpointOwner::Policy,
+            field: "effective_hash"
+        })
+    );
 }
 
 #[test]
-fn the_manifest_round_trips_through_json_without_losing_a_watermark() {
-    let manifest = build();
-    let encoded = serde_json::to_vec(&manifest).expect("encode");
-    let decoded: CheckpointManifest = serde_json::from_slice(&encoded).expect("decode");
-    assert_eq!(decoded, manifest);
+fn a_present_policy_store_needs_its_own_watermark_and_an_absent_one_needs_none() {
+    let temporary = TempDir::new().expect("tempdir");
+    let mut seal = ticket(VaultUuid::new(), VaultUuid::new(), temporary.path());
+    seal.owners
+        .retain(|sealed| sealed.owner != CheckpointOwner::Policy);
+    assert_eq!(
+        CheckpointManifest::build(&seal, manifest_inputs()).err(),
+        Some(ManifestError::WatermarkMissing {
+            owner: CheckpointOwner::Policy
+        })
+    );
+
+    seal.roster = OwnerRoster::new(seal.roster.entries().map(|(owner, assembly)| {
+        if owner == CheckpointOwner::Policy {
+            (owner, OwnerAssembly::Absent)
+        } else {
+            (owner, assembly)
+        }
+    }))
+    .expect("roster");
+    let manifest =
+        CheckpointManifest::build(&seal, manifest_inputs()).expect("未装配的策略库不需要水位");
+    assert_eq!(
+        manifest.roster.assembly(CheckpointOwner::Policy),
+        OwnerAssembly::Absent
+    );
+    manifest.validate().expect("显式 absent 的清单可再次校验");
+}
+
+#[test]
+fn a_persisted_roster_that_predates_the_policy_store_fails_closed_instead_of_reading_as_absent() {
+    let mut encoded = serde_json::to_value(build()).expect("encode");
+    // 模拟策略库纳入之前写下的清单：roster 少一项，也没有策略库水位。
+    encoded["roster"]
+        .as_array_mut()
+        .expect("roster")
+        .retain(|entry| entry[0] != "policy");
+    encoded["watermarks"]
+        .as_array_mut()
+        .expect("watermarks")
+        .retain(|watermark| watermark["owner"] != "policy");
+
     assert!(
-        encoded
-            .windows(DIGEST.len())
-            .any(|w| w == DIGEST.as_bytes())
+        serde_json::from_value::<CheckpointManifest>(encoded).is_err(),
+        "缺项的 owner 清单不能被静默读成 absent"
     );
 }

@@ -73,10 +73,15 @@ impl ViewStore {
     }
 }
 
+/// 一次报告最多列出的诊断条数；其余只报条数，防止启动错误与刷新日志随副本规模无界增长。
+const MAX_REPORTED_DIAGNOSTICS: usize = 20;
+/// 每条诊断最多保留的字符数（按 Unicode 标量计），超出部分以省略号代替。
+const MAX_DIAGNOSTIC_CHARS: usize = 200;
+
 pub(crate) fn load(vault: &ReadOnlyVault, number: u64) -> Result<Generation, LocalError> {
     let batch = vault.scan(ScanLimits::default())?;
     if !batch.diagnostics.is_empty() {
-        return Err(LocalError::Incomplete(batch.diagnostics.join("；")));
+        return Err(incomplete(&batch.diagnostics));
     }
     build(
         batch.entries,
@@ -86,6 +91,31 @@ pub(crate) fn load(vault: &ReadOnlyVault, number: u64) -> Result<Generation, Loc
             .map(|note| (note.path, note.content)),
         number,
     )
+}
+
+/// 把扫描诊断收成有界摘录：前 [`MAX_REPORTED_DIAGNOSTICS`] 条逐条截断，其余只报条数。
+fn incomplete(diagnostics: &[String]) -> LocalError {
+    let mut listed = diagnostics
+        .iter()
+        .take(MAX_REPORTED_DIAGNOSTICS)
+        .map(|diagnostic| bounded(diagnostic))
+        .collect::<Vec<_>>();
+    let hidden = diagnostics.len().saturating_sub(MAX_REPORTED_DIAGNOSTICS);
+    if hidden > 0 {
+        listed.push(format!("另有 {hidden} 条诊断未列出"));
+    }
+    LocalError::Incomplete {
+        total: diagnostics.len(),
+        listed: listed.join("；"),
+    }
+}
+
+/// 单条诊断按字符边界截断，不会切开多字节字符。
+fn bounded(diagnostic: &str) -> String {
+    match diagnostic.char_indices().nth(MAX_DIAGNOSTIC_CHARS) {
+        Some((end, _)) => format!("{}…", &diagnostic[..end]),
+        None => diagnostic.to_owned(),
+    }
 }
 
 pub(crate) fn build(

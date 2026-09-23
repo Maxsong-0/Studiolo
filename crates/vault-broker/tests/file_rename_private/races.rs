@@ -99,7 +99,11 @@ fn replacement_target_parent_with_same_content_does_not_relax_identity_check() {
     fs::rename(fixture.root.join("sub"), fixture.root.join("retained-sub")).unwrap();
     fs::create_dir(fixture.root.join("sub")).unwrap();
     fs::write(fixture.root.join("sub/target.md"), b"source").unwrap();
-    assert!(ops::rename_source::prepare(&broker, &mut active).is_err());
+    // 父目录被换走后即使同名同字节，也按捕获已变拒绝。
+    assert!(matches!(
+        ops::rename_source::prepare(&broker, &mut active),
+        Err(BrokerError::CaptureChanged)
+    ));
     assert_eq!(
         broker.file_operation_status().unwrap().unwrap().phase,
         FileOperationPhase::TargetInstalled

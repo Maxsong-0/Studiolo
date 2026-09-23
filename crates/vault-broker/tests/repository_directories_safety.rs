@@ -6,7 +6,7 @@ use std::{
     os::unix::{fs::symlink, net::UnixListener},
 };
 use studiolo_core::VaultPath;
-use studiolo_vault_broker::ReadOnlyVault;
+use studiolo_vault_broker::{BrokerError, ReadOnlyVault};
 use tempfile::TempDir;
 
 fn temporary() -> TempDir {
@@ -25,14 +25,35 @@ fn links_in_the_selected_path_and_visible_listing_fail_without_partial_results()
     fs::create_dir(root.path().join("safe")).unwrap();
     symlink(outside.path(), root.path().join("linked")).unwrap();
     let reader = ReadOnlyVault::open(root.path()).unwrap();
-    for prefix in [
-        None,
-        Some(path("linked")),
-        Some(path("linked/outside-only")),
-    ] {
-        assert!(reader.list_directories(prefix.as_ref(), 8).is_err());
+    // 根列表遇到链接项整次失败；以链接为选定路径或其父分量时在链接分量上拒绝。
+    assert!(matches!(
+        reader.list_directories(None, 8),
+        Err(BrokerError::UnsafeNode {
+            reason: "directory listing rejects links and special entries",
+            ..
+        })
+    ));
+    for prefix in ["linked", "linked/outside-only"] {
+        let result = reader.list_directories(Some(&path(prefix)), 8);
+        assert!(
+            matches!(
+                &result,
+                Err(BrokerError::UnsafeNode {
+                    path: node,
+                    reason: "no-link rooted resolution failed",
+                }) if *node == path("linked")
+            ),
+            "{prefix}: {:?}",
+            result.err()
+        );
     }
-    assert!(ReadOnlyVault::open(&root.path().join("linked")).is_err());
+    assert!(matches!(
+        ReadOnlyVault::open(&root.path().join("linked")),
+        Err(BrokerError::Io {
+            operation: "open read-only root",
+            ..
+        })
+    ));
     fs::remove_file(root.path().join("linked")).unwrap();
     symlink(outside.path(), root.path().join(".hidden-link")).unwrap();
     assert_eq!(
@@ -77,12 +98,25 @@ fn special_types_and_hard_links_fail_the_complete_listing() {
     fs::create_dir(root.path().join("safe")).unwrap();
     let reader = ReadOnlyVault::open(root.path()).unwrap();
     let socket = UnixListener::bind(root.path().join("socket")).unwrap();
-    assert!(reader.list_directories(None, 8).is_err());
+    assert!(matches!(
+        reader.list_directories(None, 8),
+        Err(BrokerError::UnsafeNode {
+            reason: "directory listing rejects links and special entries",
+            ..
+        })
+    ));
     drop(socket);
     fs::remove_file(root.path().join("socket")).unwrap();
     fs::write(root.path().join("file.rs"), b"fixture").unwrap();
     fs::hard_link(root.path().join("file.rs"), root.path().join("other.rs")).unwrap();
-    assert!(reader.list_directories(None, 8).is_err());
+    // 两个名字谁先被枚举取决于目录顺序，只断言按硬链接拒绝。
+    assert!(matches!(
+        reader.list_directories(None, 8),
+        Err(BrokerError::UnsafeNode {
+            reason: "hard-linked or unlinked file",
+            ..
+        })
+    ));
 }
 
 #[test]
@@ -95,17 +129,58 @@ fn noncanonical_names_and_case_collisions_fail_closed() {
         use std::os::unix::ffi::OsStringExt;
         let non_utf8 = std::ffi::OsString::from_vec(vec![0xff]);
         fs::create_dir(root.path().join(&non_utf8)).unwrap();
-        assert!(reader.list_directories(None, 8).is_err());
+        assert!(matches!(
+            reader.list_directories(None, 8),
+            Err(BrokerError::Io {
+                operation: "directory listing contains a non-UTF-8 name",
+                ..
+            })
+        ));
         fs::remove_dir(root.path().join(non_utf8)).unwrap();
     }
     fs::create_dir(root.path().join("cafe\u{301}")).unwrap();
-    assert!(reader.list_directories(None, 8).is_err());
+    assert!(matches!(
+        reader.list_directories(None, 8),
+        Err(BrokerError::Io {
+            operation: "directory listing contains a noncanonical name",
+            ..
+        })
+    ));
     fs::remove_dir(root.path().join("cafe\u{301}")).unwrap();
     fs::create_dir_all(root.path().join("Folder")).unwrap();
     fs::create_dir_all(root.path().join("folder")).unwrap();
-    // macOS 默认卷可能不允许大小写同名共存；Linux 等区分大小写的卷验证冲突。
-    if fs::read_dir(root.path()).unwrap().count() == 2 {
-        assert!(reader.list_directories(None, 8).is_err());
+    let mut names = fs::read_dir(root.path())
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().into_string().unwrap())
+        .collect::<Vec<_>>();
+    names.sort();
+    let case_sensitive = names.len() == 2;
+    // 分支自证：macOS 默认卷不允许大小写同名共存，Linux 等区分大小写的卷验证冲突；
+    // 打印判据原始输入（实际目录项）与所选分支。
+    eprintln!(
+        "大小写目录·分支自证：目录项 = {names:?}，区分大小写 = {case_sensitive}（{}）",
+        if case_sensitive {
+            "两个拼写并存，整次列表失败"
+        } else {
+            "第二次创建落到同一目录，列表只含原拼写"
+        }
+    );
+    if case_sensitive {
+        // 两个拼写谁先被枚举取决于目录顺序，只断言按大小写冲突拒绝。
+        assert!(matches!(
+            reader.list_directories(None, 8),
+            Err(BrokerError::UnsafeNode {
+                reason: "case-colliding filesystem name",
+                ..
+            })
+        ));
+    } else {
+        eprintln!("跳过：临时卷不区分大小写，无法构造并存的两个拼写；改验列表只返回原拼写");
+        assert_eq!(names, ["Folder"]);
+        assert_eq!(
+            reader.list_directories(None, 8).unwrap(),
+            vec![path("Folder")]
+        );
     }
 }
 

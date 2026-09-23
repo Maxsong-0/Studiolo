@@ -55,17 +55,29 @@ class Checks:
         self.port, self.total, self.failed = port, 0, 0
 
     def run(self, name, operation):
+        """执行一项检查：只有 operation 显式返回 True 才计通过，None、0、空串、False 等其他任何返回值一律计失败。"""
         self.total += 1
         try:
             result = operation()
-            if result is False:
+            if result is not True:
                 raise CheckFailed()
         except Exception:
             self.failed += 1
             print(f"{name}：失败")
             raise CheckFailed() from None
         print(f"{name}：通过")
-        return result
+
+    def fetch(self, name, path, status=200, method="GET", headers=None, as_json=False):
+        """把一次请求记作一项检查：状态码与大小符合预期才显式返回 True，响应另行交回调用方继续判定。"""
+        response = None
+
+        def operation():
+            nonlocal response
+            response = self.request(path, status, method, headers, as_json)
+            return True
+
+        self.run(name, operation)
+        return response
 
     def request(self, path, status=200, method="GET", headers=None, as_json=False):
         connection = http.client.HTTPConnection("127.0.0.1", self.port, timeout=10)
@@ -96,16 +108,16 @@ def check_assets(checks, html):
                and len(assets.icons) == 1 and all(url.endswith(".svg") for url in assets.icons))
     types = {"js": "text/javascript", "css": "text/css", "svg": "image/svg+xml"}
     for number, url in enumerate(sorted(assets.urls), 1):
-        mime, body = checks.run(f"静态资源 {number}", lambda url=url: checks.request(url))
+        mime, body = checks.fetch(f"静态资源 {number}", url)
         expected = types[url.rsplit(".", 1)[1]]
         checks.run(f"静态资源类型 {number}", lambda: mime.partition(";")[0].strip() == expected and bool(body))
 
 
 def check_bootstrap(checks):
-    mode = checks.run("前端认证引导", lambda: checks.request(api("v1/bootstrap"), as_json=True))
+    mode = checks.fetch("前端认证引导", api("v1/bootstrap"), as_json=True)
     checks.run("明确本机只读模式", lambda: mode == {"authentication": "local"})
-    checks.run("应用会话未开放", lambda: checks.request(api("v1/session"), 404))
-    checks.run("应用会话签发未开放", lambda: checks.request(api("v1/sessions"), 405, method="POST"))
+    checks.fetch("应用会话未开放", api("v1/session"), 404)
+    checks.fetch("应用会话签发未开放", api("v1/sessions"), 405, method="POST")
 
 
 def tree_url(path, generation, offset=0):
@@ -113,7 +125,7 @@ def tree_url(path, generation, offset=0):
 
 
 def tree_page(checks, name, path, generation):
-    page = checks.run(name, lambda: checks.request(tree_url(path, generation), as_json=True))
+    page = checks.fetch(name, tree_url(path, generation), as_json=True)
     checks.run(name + "快照与分页", lambda: set(page) == {
         "generation", "path", "offset", "total", "entries", "next_offset"
     } and type(page["generation"]) is int and page["generation"] == generation
@@ -153,40 +165,39 @@ def check_tree(checks, generation):
         item["name"] for item in files["entries"]
     } == ATTACHMENT_NAMES and all(
         item["kind"] == "attachment" and int(item["size_bytes"]) > 0 for item in files["entries"]))
-    checks.run("树穿越路径拒绝 400", lambda: checks.request(tree_url("../外部", generation), 400))
-    checks.run("树越界分页拒绝 400", lambda: checks.request(tree_url("", generation, root["total"]), 400))
-    checks.run("旧代文件树拒绝 409", lambda: checks.request(tree_url("", generation - 1), 409))
-    checks.run("树写入拒绝 405", lambda: checks.request(tree_url("", generation), 405, method="POST"))
-    checks.run("树跨源拒绝 403", lambda: checks.request(tree_url("", generation), 403,
-               headers={"Origin": "http://invalid.example"}))
+    checks.fetch("树穿越路径拒绝 400", tree_url("../外部", generation), 400)
+    checks.fetch("树越界分页拒绝 400", tree_url("", generation, root["total"]), 400)
+    checks.fetch("旧代文件树拒绝 409", tree_url("", generation - 1), 409)
+    checks.fetch("树写入拒绝 405", tree_url("", generation), 405, method="POST")
+    checks.fetch("树跨源拒绝 403", tree_url("", generation), 403, headers={"Origin": "http://invalid.example"})
     attachment = ATTACHMENTS + "/不会执行的页面.html"
-    checks.run("附件无正文接口", lambda: checks.request(api("document", path=attachment, generation=generation), 404))
-    checks.run("附件无静态下载", lambda: checks.request("/" + quote(attachment, safe="/"), 404))
+    checks.fetch("附件无正文接口", api("document", path=attachment, generation=generation), 404)
+    checks.fetch("附件无静态下载", "/" + quote(attachment, safe="/"), 404)
 
 
 def exercise(checks):
-    page = checks.run("工作台页面", lambda: checks.request("/"))
+    page = checks.fetch("工作台页面", "/")
     checks.run("页面类型与标题", lambda: page[0].startswith("text/html") and b"Studiolo" in page[1])
     check_assets(checks, page[1])
     check_bootstrap(checks)
-    snapshot = checks.run("工作台接口", lambda: checks.request(api("workbench"), as_json=True))
+    snapshot = checks.fetch("工作台接口", api("workbench"), as_json=True)
     checks.run("四项目示例指纹", lambda: {item["id"] for item in snapshot["projects"]} == PROJECTS
                and type(snapshot["generation"]) is int and snapshot["generation"] > 0)
     generation = snapshot["generation"]
     document_url = lambda path=READING, gen=generation: api("document", path=path, generation=gen)
     search_url = lambda text, gen=generation, **extra: api("search", q=text, generation=gen, **extra)
-    readme = checks.run("示例说明原文", lambda: checks.request(document_url("README.md"), as_json=True))
+    readme = checks.fetch("示例说明原文", document_url("README.md"), as_json=True)
     checks.run("仅虚构示例库", lambda: "M1 虚构示例库" in readme["content"]
                and "人工测试夹具" in readme["content"] and "没有真实笔记或凭据" in readme["content"])
     check_tree(checks, generation)
-    all_hits = checks.run("中文全局搜索", lambda: checks.request(search_url("连续阅读", mode="full_text"), as_json=True))
+    all_hits = checks.fetch("中文全局搜索", search_url("连续阅读", mode="full_text"), as_json=True)
     checks.run("跨项目中文结果", lambda: all_hits["generation"] == generation
                and {READING, GUIDE}.issubset({hit["path"] for hit in all_hits["hits"]}))
-    scoped = checks.run("纸页项目收窄", lambda: checks.request(search_url("连续阅读", mode="full_text", project="项目/纸页"), as_json=True))
+    scoped = checks.fetch("纸页项目收窄", search_url("连续阅读", mode="full_text", project="项目/纸页"), as_json=True)
     checks.run("中文结果真实行 6", lambda: scoped["generation"] == generation and bool(scoped["hits"])
                and all(hit["path"].startswith("项目/纸页/") for hit in scoped["hits"])
                and any(hit["path"] == READING and hit["line"] == 6 and hit["kind"] == "content" for hit in scoped["hits"]))
-    document = checks.run("阅读体验原文与导航", lambda: checks.request(document_url(), as_json=True))
+    document = checks.fetch("阅读体验原文与导航", document_url(), as_json=True)
     checks.run("原文第 6 行一致", lambda: document["path"] == READING
                and document["content"].splitlines()[5].startswith("连续阅读，保持段落节奏。"))
     navigation = document["navigation"]
@@ -204,26 +215,26 @@ def exercise(checks):
         checks.run(name, lambda raw=raw, status=status: links[raw]["status"] == status and links[raw]["targets"] == [])
     checks.run("全库反链真实来源", lambda: any(item["source"] == {"path": GUIDE, "line": 10} for item in navigation["backlinks"]))
     checks.run("代码围栏无伪链接", lambda: all("代码示例而非链接" not in raw for raw in links))
-    quick = checks.run("路径片段快速切换", lambda: checks.request(search_url("纸页 框架 阅读", mode="path"), as_json=True))
+    quick = checks.fetch("路径片段快速切换", search_url("纸页 框架 阅读", mode="path"), as_json=True)
     checks.run("快速切换完整路径", lambda: quick["generation"] == generation and len(quick["hits"]) == 1
                and quick["hits"][0]["path"] == READING and quick["hits"][0]["line"] == 1 and quick["hits"][0]["kind"] == "path")
-    checks.run("非法项目拒绝 400", lambda: checks.request(search_url("连续阅读", mode="full_text", project="项目/纸页不存在"), 400))
-    checks.run("旧代搜索拒绝 409", lambda: checks.request(search_url("连续阅读", gen=generation - 1, mode="full_text"), 409))
-    checks.run("旧代原文拒绝 409", lambda: checks.request(document_url(gen=generation - 1), 409))
+    checks.fetch("非法项目拒绝 400", search_url("连续阅读", mode="full_text", project="项目/纸页不存在"), 400)
+    checks.fetch("旧代搜索拒绝 409", search_url("连续阅读", gen=generation - 1, mode="full_text"), 409)
+    checks.fetch("旧代原文拒绝 409", document_url(gen=generation - 1), 409)
     for name, headers in [("Host", {"Host": "invalid.example"}), ("Origin", {"Origin": "http://invalid.example"}),
                           ("FetchMetadata", {"Sec-Fetch-Site": "cross-site"})]:
-        checks.run(f"{name} 拒绝 403", lambda headers=headers: checks.request(api("workbench"), 403, headers=headers))
-    checks.run("POST 拒绝 405", lambda: checks.request(api("workbench"), 405, method="POST"))
-    checks.run("静态路径不能读取笔记", lambda: checks.request("/" + quote(READING, safe="/"), 404))
-    checks.run("静态路径不能读取说明", lambda: checks.request("/README.md", 404))
-    refreshed = checks.run("显式刷新示例端点", lambda: checks.request(api("workbench", refresh="true"), as_json=True))
+        checks.fetch(f"{name} 拒绝 403", api("workbench"), 403, headers=headers)
+    checks.fetch("POST 拒绝 405", api("workbench"), 405, method="POST")
+    checks.fetch("静态路径不能读取笔记", "/" + quote(READING, safe="/"), 404)
+    checks.fetch("静态路径不能读取说明", "/README.md", 404)
+    refreshed = checks.fetch("显式刷新示例端点", api("workbench", refresh="true"), as_json=True)
     checks.run("刷新代次加一", lambda: refreshed["generation"] == generation + 1
                and {item["id"] for item in refreshed["projects"]} == PROJECTS)
-    checks.run("刷新后旧搜索拒绝 409", lambda: checks.request(search_url("连续阅读", mode="full_text"), 409))
-    checks.run("刷新后旧原文拒绝 409", lambda: checks.request(document_url(), 409))
-    checks.run("刷新后旧文件树拒绝 409", lambda: checks.request(tree_url("", generation), 409))
+    checks.fetch("刷新后旧搜索拒绝 409", search_url("连续阅读", mode="full_text"), 409)
+    checks.fetch("刷新后旧原文拒绝 409", document_url(), 409)
+    checks.fetch("刷新后旧文件树拒绝 409", tree_url("", generation), 409)
     tree_page(checks, "刷新后新代文件树", "", generation + 1)
-    latest = checks.run("新代搜索可用", lambda: checks.request(search_url("连续阅读", gen=generation + 1, mode="full_text"), as_json=True))
+    latest = checks.fetch("新代搜索可用", search_url("连续阅读", gen=generation + 1, mode="full_text"), as_json=True)
     checks.run("新代搜索一致", lambda: latest["generation"] == generation + 1 and bool(latest["hits"]))
 
 

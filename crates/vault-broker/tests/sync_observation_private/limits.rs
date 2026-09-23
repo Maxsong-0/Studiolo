@@ -8,7 +8,10 @@ fn per_rule_limit_and_whole_batch_limit_fail_before_first_body() {
     let mut narrow = selection();
     narrow.folders[0].max_bytes = 1;
     reset();
-    assert!(broker.capture_sync_observation(&narrow, &[]).is_err());
+    assert!(matches!(
+        broker.capture_sync_observation(&narrow, &[]),
+        Err(BrokerError::WriterLimitExceeded)
+    ));
     assert_eq!(count(1), 0);
     for i in 0..17 {
         fs::File::create(f.root.join(format!("notes/large-{i}")))
@@ -17,7 +20,10 @@ fn per_rule_limit_and_whole_batch_limit_fail_before_first_body() {
             .unwrap();
     }
     reset();
-    assert!(broker.capture_sync_observation(&selection(), &[]).is_err());
+    assert!(matches!(
+        broker.capture_sync_observation(&selection(), &[]),
+        Err(BrokerError::WriterLimitExceeded)
+    ));
     assert_eq!(count(1), 0);
 }
 
@@ -33,7 +39,10 @@ fn exact_256_mib_sparse_object_is_streamed_and_one_extra_byte_is_rejected() {
         .set_len(256 * 1024 * 1024 + 1)
         .unwrap();
     reset();
-    assert!(broker.capture_sync_observation(&selection(), &[]).is_err());
+    assert!(matches!(
+        broker.capture_sync_observation(&selection(), &[]),
+        Err(BrokerError::WriterLimitExceeded)
+    ));
     assert_eq!(count(1), 0);
     fs::OpenOptions::new()
         .write(true)
@@ -60,17 +69,19 @@ fn object_and_required_path_caps_are_not_per_directory_budgets() {
         .map(|i| path(&format!("notes/missing-{i}")))
         .collect();
     reset();
-    assert!(
-        broker
-            .capture_sync_observation(&selection(), &required)
-            .is_err()
-    );
+    assert!(matches!(
+        broker.capture_sync_observation(&selection(), &required),
+        Err(BrokerError::WriterLimitExceeded)
+    ));
     assert_eq!(count(0), 0);
     for i in 0..4097 {
         fs::File::create(f.root.join(format!("notes/file-{i}"))).unwrap();
     }
     reset();
-    assert!(broker.capture_sync_observation(&selection(), &[]).is_err());
+    assert!(matches!(
+        broker.capture_sync_observation(&selection(), &[]),
+        Err(BrokerError::WriterLimitExceeded)
+    ));
     assert_eq!(count(1), 0);
 }
 
@@ -83,7 +94,10 @@ fn excluded_entries_still_consume_global_enumeration_budget() {
         fs::File::create(f.root.join(format!("notes/.excluded-{i}"))).unwrap();
     }
     reset();
-    assert!(broker.capture_sync_observation(&selection(), &[]).is_err());
+    assert!(matches!(
+        broker.capture_sync_observation(&selection(), &[]),
+        Err(BrokerError::WriterLimitExceeded)
+    ));
     assert_eq!(count(1), 0);
 }
 
@@ -95,7 +109,10 @@ fn directory_depth_and_full_name_bytes_are_independently_bounded() {
     for i in 0..4095 {
         fs::create_dir(f.root.join(format!("notes/dir-{i}"))).unwrap();
     }
-    assert!(broker.capture_sync_observation(&selection(), &[]).is_err());
+    assert!(matches!(
+        broker.capture_sync_observation(&selection(), &[]),
+        Err(BrokerError::WriterLimitExceeded)
+    ));
     let deep = Fixture::new();
     let mut broker = deep.broker();
     let mut target = deep.root.join("notes");
@@ -105,12 +122,18 @@ fn directory_depth_and_full_name_bytes_are_independently_bounded() {
     fs::create_dir_all(&target).unwrap();
     assert!(broker.capture_sync_observation(&selection(), &[]).is_ok());
     fs::create_dir(target.join("too-deep")).unwrap();
-    assert!(broker.capture_sync_observation(&selection(), &[]).is_err());
+    assert!(matches!(
+        broker.capture_sync_observation(&selection(), &[]),
+        Err(BrokerError::WriterLimitExceeded)
+    ));
     let names = Fixture::new();
     let mut broker = names.broker();
     fs::create_dir(names.root.join("notes")).unwrap();
     for i in 0..19_000 {
         fs::File::create(names.root.join(format!("notes/.{i}{}", "x".repeat(220)))).unwrap();
     }
-    assert!(broker.capture_sync_observation(&selection(), &[]).is_err());
+    assert!(matches!(
+        broker.capture_sync_observation(&selection(), &[]),
+        Err(BrokerError::WriterLimitExceeded)
+    ));
 }

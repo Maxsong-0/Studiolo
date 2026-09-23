@@ -9,10 +9,11 @@ use std::{
     },
     time::{SystemTime, UNIX_EPOCH},
 };
+use tokio::sync::watch;
 
 use super::{
     AccessConfig, AccessError, AccessVerifier,
-    keys::{KeyCache, KeySource},
+    keys::{Fetch, KeyCache, KeySource},
 };
 
 pub(super) const PRIVATE_KEY: &[u8] = b"-----BEGIN PRIVATE KEY-----
@@ -108,12 +109,66 @@ impl MemorySource {
 }
 
 impl KeySource for MemorySource {
-    fn fetch(&self) -> super::keys::Fetch {
+    fn fetch(&self) -> Fetch {
         self.calls.fetch_add(1, Ordering::SeqCst);
         let result = self.body.lock().unwrap().clone();
         Box::pin(async move {
             tokio::task::yield_now().await;
             result
+        })
+    }
+}
+
+/// 可挂起的取钥替身：启动时的首次取钥立即返回 `initial` 的 JWKS；之后每次取钥都挂起，
+/// 直到 [`GatedSource::release`] 放行才返回 `rotated` 的 JWKS，用来稳定制造「取钥在途」窗口。
+pub(super) struct GatedSource {
+    initial: Vec<u8>,
+    rotated: Vec<u8>,
+    calls: AtomicUsize,
+    open: watch::Sender<bool>,
+}
+
+impl GatedSource {
+    pub(super) fn new(initial: &str, rotated: &str) -> Arc<Self> {
+        Arc::new(Self {
+            initial: serde_json::to_vec(&jwks(initial)).unwrap(),
+            rotated: serde_json::to_vec(&jwks(rotated)).unwrap(),
+            calls: AtomicUsize::new(0),
+            open: watch::Sender::new(false),
+        })
+    }
+
+    pub(super) fn count(&self) -> usize {
+        self.calls.load(Ordering::SeqCst)
+    }
+
+    /// 放行在途与之后的全部取钥。
+    pub(super) fn release(&self) {
+        self.open.send_replace(true);
+    }
+
+    /// 让出调度，直到累计取钥次数达到 `calls`，即第 `calls` 次取钥已经在途。
+    pub(super) async fn wait_for_calls(&self, calls: usize) {
+        while self.count() < calls {
+            tokio::task::yield_now().await;
+        }
+    }
+}
+
+impl KeySource for GatedSource {
+    fn fetch(&self) -> Fetch {
+        let startup = self.calls.fetch_add(1, Ordering::SeqCst) == 0;
+        let body = if startup {
+            self.initial.clone()
+        } else {
+            self.rotated.clone()
+        };
+        let mut open = self.open.subscribe();
+        Box::pin(async move {
+            if !startup && open.wait_for(|open| *open).await.is_err() {
+                return Err(AccessError::Unavailable);
+            }
+            Ok(body)
         })
     }
 }

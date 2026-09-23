@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """客户端上下文存储边界：使用真实 schema、私有目录与故障注入。"""
+import argparse
 import copy
 import fcntl
 import json
@@ -14,6 +15,7 @@ sys.dont_write_bytecode = True
 import client_projection_store as store
 from client_projection_render import render
 from client_projection_schema import make_bundle
+from client_projection_test_support import EFFECTIVE, fixture_policy_projection as policy, load_sync_cli
 
 
 def bundle(body="规则原文", client="claude", timestamp=1000):
@@ -261,6 +263,37 @@ class ProjectionStoreTests(unittest.TestCase):
         self.assertEqual(os.readlink(self.target / "current"), next_link)
         self.assertTrue(previous.is_dir())
         self.assertEqual(store.check(self.target)["status"], "ok")
+
+    def test_vault_projection_bytes_match_pre_policy_release(self):
+        # main 959d473（策略模式之前）同一输入的 bundle_id；它覆盖 manifest 与全部渲染文件的字节。
+        self.assertEqual([bundle(client=c)["manifest"]["bundle_id"] for c in ("claude", "codex")], [
+            "d9f37d474f819e2dede0ea3bef9bf57aa37bc20446029c9d7b2726a49290fa8c",
+            "bfcdbdfd5054fe49ef4e263b250581a99f68177d1de3d379a63b6d285ef4fee6"])
+        self.assertNotIn("policy", store.plan(self.target, self.first))
+
+    def test_policy_projection_reports_effective_and_item_drift(self):
+        self.assertEqual(store.apply(self.target, policy())["status"], "create")
+        same = store.plan(self.target, policy(generation="d" * 32))
+        self.assertEqual((same["status"], same["policy"]["items"]), ("unchanged", []))
+        moved = store.plan(self.target, policy(effective="fedcba987654"))["policy"]
+        self.assertEqual((moved["old_effective"], moved["new_effective"], moved["items"]), (EFFECTIVE, "fedcba987654", []))
+        edited = policy(body="# 新规则\n")
+        items = store.plan(self.target, edited)["policy"]["items"]
+        self.assertEqual([(i["path"], i["old_sha12"] != i["new_sha12"]) for i in items],
+                         [("policy/rules/通用工作规则.md", True)])
+        self.assertEqual(store.apply(self.target, edited)["status"], "changed")
+        self.assertEqual(store.check(self.target)["manifest"], edited["manifest"])
+
+    def test_online_check_reports_policy_version_change(self):
+        cli, installed = load_sync_cli(), policy()
+        store.apply(self.target, installed)
+        args = argparse.Namespace(command="check", target=str(self.target), online=True)
+        for remote, status, code in ((policy(generation="d" * 32), "unchanged", 0),
+                                     (policy(effective="fedcba987654"), "source_changed", 2)):
+            with self.subTest(status=status), patch.object(cli, "export", return_value=remote):
+                result, exit_code = cli.run(args)
+                self.assertEqual((result["source_status"], exit_code, result["policy_effective"]), (status, code, EFFECTIVE))
+                self.assertEqual(result["policy"]["new_effective"], remote["manifest"]["policy_effective"])
 
 
 if __name__ == "__main__":

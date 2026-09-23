@@ -1,6 +1,7 @@
 //! 启动边界只返回固定脱敏说明，不回显根路径、配置或底层监视错误。
 
 use studiolo_auth::SessionError;
+use studiolo_local_server::LocalError;
 
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum StartupError {
@@ -14,8 +15,9 @@ pub(crate) enum StartupError {
     ReadRoots,
     #[error("Access公钥初始化失败；未监听，不回退为本机模式")]
     Access,
-    #[error("只读路由初始化失败；未监听")]
-    Router,
+    /// 只带固定中文类别：库内路径、诊断正文与底层英文错误都不进启动错误。
+    #[error("只读路由初始化失败：{reason}；未监听")]
+    Router { reason: &'static str },
     #[error("无法绑定指定loopback端口")]
     Listen,
     #[error("HTTP服务已停止：监听处理失败")]
@@ -34,4 +36,20 @@ pub(crate) enum StartupError {
     Ingress,
     #[error("既有canonical写者或完整监视视图不可用；不初始化、不修复、不回退")]
     Writer,
+}
+
+impl StartupError {
+    /// 路由装配失败按错误种类映射成固定类别；逐项匹配，新增种类时编译器会要求补上。
+    pub(crate) fn router(error: &LocalError) -> Self {
+        let reason = match error {
+            LocalError::Read(_) => "只读副本读取失败",
+            LocalError::Incomplete { .. } => "副本扫描不完整",
+            LocalError::Encoding(_) => "副本含非UTF-8文档",
+            LocalError::Index(_) => "索引构建失败",
+            LocalError::Tree(_) => "文件树构建失败",
+            LocalError::Configuration => "本机端口或副本名称无效",
+            LocalError::Unavailable => "完整视图暂不可用",
+        };
+        Self::Router { reason }
+    }
 }

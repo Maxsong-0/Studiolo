@@ -123,13 +123,13 @@ impl RunBudget {
 pub trait ApprovedTransport {
     /// 复验私有配置与根身份；任何漂移都必须报错。
     ///
-    /// # Errors
+    /// # 错误
     /// 配置正文、对象身份或根身份变化时返回 `ConfigurationChanged`/`RootsChanged`。
     fn revalidate(&self) -> Result<()>;
 
     /// 请求绑定事实。
     ///
-    /// # Errors
+    /// # 错误
     /// 范围代次为零时返回 `BindingMismatch`。
     fn binding(&self) -> Result<TransportBindingFacts>;
 
@@ -161,7 +161,7 @@ pub struct PinnedRuntime {
 impl PinnedRuntime {
     /// 只从已批准能力取已核验的运行时事实；本类型自己不打开任何文件。
     ///
-    /// # Errors
+    /// # 错误
     /// 版本不是精确发布版本、路径非绝对规范或两条路径相同时返回 `RuntimeChanged`。
     pub fn from_approval(approval: &dyn ApprovedTransport) -> Result<Self> {
         approval.revalidate()?;

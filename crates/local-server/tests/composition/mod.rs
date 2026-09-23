@@ -170,6 +170,11 @@ async fn incomplete_vault_scan_fails_before_any_listener() {
         Ok(test_support::verifier().await)
     })
     .await;
-    assert!(matches!(result, Err(StartupError::Router)));
+    assert!(matches!(
+        result,
+        Err(StartupError::Router {
+            reason: "副本扫描不完整"
+        })
+    ));
     f.unbound();
 }

@@ -46,7 +46,7 @@ pub fn same_invocation(probe: &ServiceProbe, unit_name: &str, invocation_id: [u8
 
 /// 封闭 argv：固定绝对路径的 Node 与 cli.js，禁 shell、禁 PATH 搜索、禁环境继承。
 ///
-/// # Errors
+/// # 错误
 /// 路径非绝对规范、镜像根非绝对规范时返回 `ProtocolViolation`。
 pub fn build_argv(
     runtime: &RuntimePins,

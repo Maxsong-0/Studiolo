@@ -72,22 +72,30 @@ fn replacing_any_pinned_root_or_control_object_rejects_all_capture_reads() {
             fs::create_dir(&target).unwrap();
         }
         let before = inventory(fixture.temp.path());
+        // canonical 根被换报根已变；控制目录、marker、data 与 history 被换报配对不符。
+        let replaced = |error: &BrokerError| match node {
+            "root" => matches!(error, BrokerError::RootChanged),
+            _ => matches!(error, BrokerError::WriterBindingMismatch),
+        };
+        let captured = broker.capture(ScanLimits::default()).map(|_| ());
         assert!(
-            broker.capture(ScanLimits::default()).is_err(),
-            "captured replaced {node}"
+            matches!(&captured, Err(error) if replaced(error)),
+            "captured replaced {node}: {captured:?}"
         );
+        let revalidated = broker.revalidate_capture(&stamp);
         assert!(
-            broker.revalidate_capture(&stamp).is_err(),
-            "revalidated replaced {node}"
+            matches!(&revalidated, Err(error) if replaced(error)),
+            "revalidated replaced {node}: {revalidated:?}"
         );
+        let read = broker.read_file(&path("note.md"), 64).map(|_| ());
         assert!(
-            broker.read_file(&path("note.md"), 64).is_err(),
-            "read replaced {node}"
+            matches!(&read, Err(error) if replaced(error)),
+            "read replaced {node}: {read:?}"
         );
+        let validated = broker.validate_root_identities(approved.0, approved.1);
         assert!(
-            broker
-                .validate_root_identities(approved.0, approved.1)
-                .is_err()
+            matches!(&validated, Err(error) if replaced(error)),
+            "validated replaced {node}: {validated:?}"
         );
         assert_eq!(inventory(fixture.temp.path()), before);
     }
@@ -123,7 +131,14 @@ fn replacement_after_actual_read_is_rejected_before_returning_content() {
                 broker.capture(ScanLimits::default()).map(|_| ())
             };
             assert!(observed.load(Ordering::Acquire));
-            assert!(result.is_err(), "returned content after replacing {node}");
+            let replaced = match node {
+                "root" => matches!(result, Err(BrokerError::RootChanged)),
+                _ => matches!(result, Err(BrokerError::WriterBindingMismatch)),
+            };
+            assert!(
+                replaced,
+                "returned content after replacing {node}: {result:?}"
+            );
         }
     }
 }

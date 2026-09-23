@@ -111,6 +111,8 @@ fn workspace_dependencies_follow_the_acyclic_module_direction() {
 #[test]
 fn filesystem_authority_dependencies_have_explicit_owners() {
     let manifests = workspace_manifests(&workspace_root());
+    // 受控的文件系统能力依赖：成员持有其中任何一项都必须在下面显式登记。
+    // cap-tempfile 已无成员使用，仍留在受控集合里，任何成员（含 VaultBroker）重新引入都会被拦下。
     let canonical_filesystem_dependencies = ["cap-std", "cap-tempfile", "rustix"];
 
     for manifest in manifests.values() {
@@ -120,7 +122,12 @@ fn filesystem_authority_dependencies_have_explicit_owners() {
             .copied()
             .collect::<Vec<_>>();
         if manifest.name == "studiolo-vault-broker" {
-            assert_eq!(owned, canonical_filesystem_dependencies);
+            // 目录句柄用 cap-std，openat2 与原子替换（renameat）用 rustix，不再需要 cap-tempfile。
+            assert_eq!(
+                owned,
+                ["cap-std", "rustix"],
+                "VaultBroker 的文件系统能力依赖变了，须先改本守卫"
+            );
         } else if matches!(
             manifest.name.as_str(),
             "studiolo-auth-admin"

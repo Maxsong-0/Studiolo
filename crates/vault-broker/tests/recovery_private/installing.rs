@@ -79,7 +79,13 @@ fn interruption_before_terminal_stays_pending_but_after_terminal_only_finishes_c
         let (mut broker, request) = f.interrupted(2);
         let review = broker.pending_mutation().unwrap().unwrap();
         interrupt(&broker, point);
-        assert!(broker.reconcile_pending(&review, preserve()).is_err());
+        assert!(matches!(
+            broker.reconcile_pending(&review, preserve()),
+            Err(BrokerError::Io {
+                operation: "injected writer interruption",
+                ..
+            })
+        ));
         drop(broker);
         let mut reopened = f.open();
         if point == 7 {
@@ -102,7 +108,13 @@ fn corrupted_or_missing_sealed_evidence_cannot_finish_unlocking_on_reopen() {
         let (mut broker, _) = f.interrupted(2);
         let review = broker.pending_mutation().unwrap().unwrap();
         interrupt(&broker, 8);
-        assert!(broker.reconcile_pending(&review, preserve()).is_err());
+        assert!(matches!(
+            broker.reconcile_pending(&review, preserve()),
+            Err(BrokerError::Io {
+                operation: "injected writer interruption",
+                ..
+            })
+        ));
         let entry = fs::read_dir(f.data.join("snapshots"))
             .unwrap()
             .map(Result::unwrap)
@@ -115,7 +127,16 @@ fn corrupted_or_missing_sealed_evidence_cannot_finish_unlocking_on_reopen() {
             fs::remove_file(entry).unwrap();
         }
         drop(broker);
-        assert!(FsVaultBroker::open_existing(&f.root, &f.data).is_err());
+        // 封存证据被篡改按状态损坏拒绝；被删除则按缺失的证据对象拒绝。重开都不能解锁。
+        let result = FsVaultBroker::open_existing(&f.root, &f.data);
+        let rejected = match damage {
+            "bytes" => matches!(&result, Err(BrokerError::CorruptWriterState)),
+            _ => matches!(
+                &result,
+                Err(BrokerError::NotFound(evidence)) if evidence.as_str().ends_with("-proposed.bin")
+            ),
+        };
+        assert!(rejected, "{damage}: {:?}", result.err());
     }
 }
 
@@ -128,16 +149,18 @@ fn reconciliation_invalidates_old_capture_even_without_advancing_committed_water
         .unwrap();
     let old = broker.capture(ScanLimits::default()).unwrap().stamp;
     interrupt(&broker, 3);
-    assert!(
-        broker
-            .mutate(Mutation::replace(
-                path(),
-                b"proposed".to_vec(),
-                first.revision,
-                "pending"
-            ))
-            .is_err()
-    );
+    assert!(matches!(
+        broker.mutate(Mutation::replace(
+            path(),
+            b"proposed".to_vec(),
+            first.revision,
+            "pending"
+        )),
+        Err(BrokerError::Io {
+            operation: "injected writer interruption",
+            ..
+        })
+    ));
     let review = broker.pending_mutation().unwrap().unwrap();
     broker.reconcile_pending(&review, preserve()).unwrap();
     assert!(matches!(

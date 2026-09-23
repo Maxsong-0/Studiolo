@@ -1,6 +1,10 @@
 //! 拒绝计数与安全事件分区；每种原因最多一个不可变待交付快照。
 
-use super::{SessionError, database::unavailable, events, outbox};
+use super::{
+    SessionError,
+    database::{required_row, unavailable},
+    events, outbox,
+};
 use rusqlite::{Connection, params};
 use serde_json::json;
 use studiolo_audit_ledger::AuditPhase;
@@ -55,7 +59,7 @@ pub(super) fn schedule(db: &Connection, denial: Denial) -> Result<(), SessionErr
             [kind],
             |r| Ok((r.get(0)?, r.get(1)?)),
         )
-        .map_err(unavailable)?;
+        .map_err(required_row)?;
     if total == delivered {
         return Ok(());
     }

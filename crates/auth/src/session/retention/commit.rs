@@ -5,7 +5,10 @@ use super::{
     plan::{self, Plan},
     selection,
 };
-use crate::session::{database::unavailable, schema, validation};
+use crate::session::{
+    database::{required_row, unavailable},
+    schema, validation,
+};
 use rusqlite::{Connection, params};
 use std::collections::BTreeSet;
 
@@ -27,6 +30,7 @@ pub(super) fn apply(
     let checkpoint = expected.checkpoint()?;
     validation::check_receipt(receipt, &checkpoint.event(&schema::store_id(db)?)?)?;
     let mut removed_events = BTreeSet::new();
+    // 冻结证据已由 check_current 在同一事务内逐条载入，按序号取行缺失即库损坏。
     for candidate in &expected.candidates {
         for proof in &candidate.proofs {
             let (kind, event_id): (String, String) = db
@@ -35,7 +39,7 @@ pub(super) fn apply(
                     [proof.sequence],
                     |row| Ok((row.get(0)?, row.get(1)?)),
                 )
-                .map_err(unavailable)?;
+                .map_err(required_row)?;
             // all-revoke 同时是其他行和连续 epoch 后缀的证据，仅允许按冻结前缀删除。
             if kind != "revoke"
                 || (!event_id.contains(":revoke-all:") && !event_id.contains(":restore:"))
@@ -64,7 +68,7 @@ pub(super) fn apply(
                 [sequence],
                 |row| row.get(0),
             )
-            .map_err(unavailable)?;
+            .map_err(required_row)?;
         // restore 两条事件是永久幂等锚；prefix 可以证明它，回收不能删除它。
         if event_id.contains(":restore:") {
             continue;
@@ -85,7 +89,7 @@ pub(super) fn apply(
         &db.query_row("SELECT config FROM auth_meta WHERE id=1", [], |row| {
             row.get::<_, String>(0)
         })
-        .map_err(unavailable)?,
+        .map_err(required_row)?,
     )?;
     Ok(RetentionReport {
         reclaimed_sessions: expected.candidates.len(),

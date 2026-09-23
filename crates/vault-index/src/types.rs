@@ -7,7 +7,7 @@ use crate::{
 };
 use studiolo_core::VaultPath;
 
-/// A Markdown note supplied to an index rebuild.
+/// 提交给一次索引重建的 Markdown 笔记。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MarkdownDocument {
     path: VaultPath,
@@ -16,7 +16,7 @@ pub struct MarkdownDocument {
 }
 
 impl MarkdownDocument {
-    /// Creates an input note without touching the file system.
+    /// 创建一篇输入笔记，不触碰文件系统。
     #[must_use]
     pub fn new(path: VaultPath, contents: impl Into<String>) -> Self {
         Self {
@@ -45,27 +45,27 @@ impl MarkdownDocument {
         self.unavailable
     }
 
-    /// Returns the logical Vault path.
+    /// 返回逻辑 Vault 路径。
     #[must_use]
     pub fn path(&self) -> &VaultPath {
         &self.path
     }
 
-    /// Returns the original Markdown text.
+    /// 返回原始 Markdown 文本。
     #[must_use]
     pub fn contents(&self) -> &str {
         &self.contents
     }
 }
 
-/// Counts attached to a completed in-memory rebuild.
+/// 一次完成的内存重建附带的计数。
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct IndexGeneration {
-    /// Monotonically increasing in-process generation number.
+    /// 进程内单调递增的代次号：每次发布加一，到上限后饱和。
     pub generation: u64,
-    /// Number of indexed notes.
+    /// 已索引的笔记数（正文缺席的降级项也计入）。
     pub documents: usize,
-    /// Number of parsed wikilinks.
+    /// 解析出的 wikilink 数。
     pub links: usize,
 }
 
@@ -109,63 +109,63 @@ impl fmt::Display for IndexDiagnostic {
     }
 }
 
-/// Error returned by the public index seam.
+/// 公开索引接缝返回的错误。
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum IndexError {
-    /// The same logical path appeared twice in one rebuild.
+    /// 同一逻辑路径在一次重建中出现了两次。
     #[error("duplicate document path: {0}")]
     DuplicatePath(VaultPath),
-    /// A query addressed a path absent from the current generation.
+    /// 查询的路径不在当前代次中。
     #[error("document is not indexed: {0}")]
     NotIndexed(VaultPath),
 }
 
-/// Parsed, derived view of one Markdown note.
+/// 一篇 Markdown 笔记解析后的派生视图。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct IndexedDocument {
-    /// Logical source path.
+    /// 逻辑源路径。
     pub path: VaultPath,
-    /// Display title selected from frontmatter, first H1, then filename.
+    /// 展示标题：依次取 frontmatter 标题、第一个一级标题、文件名。
     pub title: DocumentTitle,
-    /// Read-side normalized frontmatter with raw spellings retained.
+    /// 读侧正规化后的 frontmatter，保留原始拼写。
     pub frontmatter: NormalizedFrontmatter,
-    /// Flat headings in source order.
+    /// 按源顺序排列的扁平标题列表。
     pub headings: Vec<Heading>,
-    /// Nested heading outline.
+    /// 嵌套的标题大纲。
     pub heading_tree: Vec<HeadingNode>,
-    /// Wikilinks parsed from Markdown with their generation-local resolutions.
+    /// 从 Markdown 解析出的 wikilink，附各自在本代次内的解析结果。
     pub outgoing_links: Vec<OutgoingLink>,
-    /// Advisory origin and classification facts.
+    /// 参考性的来源与密级事实。
     pub source_profile: SourceProfile,
-    /// Non-fatal parsing diagnostics.
+    /// 非致命的解析诊断。
     pub warnings: Vec<ParseWarning>,
     /// 本篇正文缺席的原因；`Some` 表示这是降级诊断项而不是完整解析结果。
     pub unavailable: Option<DocumentUnavailable>,
 }
 
-/// A display title and the rule that selected it.
+/// 展示标题及选中它的规则。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DocumentTitle {
-    /// Unescaped title text.
+    /// 未经转义的标题文本。
     pub text: String,
-    /// Selection rule used for the title.
+    /// 选中该标题所用的规则。
     pub source: TitleSource,
 }
 
-/// Ordered fallback used to select a note title.
+/// 选择笔记标题时的有序回退链。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TitleSource {
-    /// The normalized `title` frontmatter value.
+    /// 正规化后 frontmatter 的 `title` 文本值。
     Frontmatter,
-    /// The first level-one Markdown heading.
+    /// 第一个一级 Markdown 标题。
     FirstHeading,
-    /// The filename without `.md`.
+    /// 去掉 `.md` 后缀的文件名。
     FileName,
 }
 
-/// Non-fatal document parsing diagnostic.
+/// 非致命的文档解析诊断。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ParseWarning {
-    /// A frontmatter parser or normalization warning.
+    /// frontmatter 解析或正规化警告。
     Frontmatter(FrontmatterWarning),
 }

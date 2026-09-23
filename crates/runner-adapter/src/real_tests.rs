@@ -1,4 +1,4 @@
-//! Focused private lifecycle fixtures; no provider CLI, namespace service or model request.
+//! 聚焦的私有生命周期夹具：不涉及供应商 CLI、namespace 服务或模型请求。
 use super::*;
 use std::{os::unix::fs::PermissionsExt, path::Path, process::Command};
 use studiolo_core::{AttemptId, Fence, TaskId};
@@ -132,7 +132,7 @@ fn exit_waits_for_final_drain_before_classifying_zero_tools() {
         .clone();
     let done = fixture.done.take().unwrap();
     let monitor = std::thread::spawn(move || {
-        // Child has already exited. Its independent reader publishes the last event later.
+        // 子进程已退出；它独立的输出读取线程稍后才发布最后一个事件。
         std::thread::sleep(Duration::from_millis(50));
         *observed.lock().unwrap() = RunnerProgress {
             tool_calls: 1,

@@ -1,8 +1,8 @@
-//! Stopped candidates share terminal T1/T2, with a frozen cancellation outcome.
+//! 停止候选与终态共用 T1/T2，其取消结果在预留时即冻结。
 use super::*;
 
 impl ControlDb {
-    /// T1 accepts a stopped staging pointer only during the authoritative cancellation grace period.
+    /// T1 只在权威取消宽限期内接受停止态 staging 指针。
     pub fn reserve_board_stopped_candidates(
         &mut self,
         task: TaskId,
@@ -21,7 +21,7 @@ impl ControlDb {
         )
     }
 
-    /// T2 atomically records a verified stopped receipt, its committed artifacts, and cancellation.
+    /// T2 原子记录已核验的停止回执、已提交的产物与取消结果。
     pub fn finalize_board_stopped_candidates(
         &mut self,
         task: TaskId,

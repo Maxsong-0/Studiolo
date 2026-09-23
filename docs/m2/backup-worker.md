@@ -8,10 +8,10 @@ T-048 B1，2026-09-17。权威边界仍是 `checkpoint-recovery-contract.md`；
 
 | 关注点 | 位置 |
 | --- | --- |
-| 跨 owner 屏障与封存票据 | `crates/backup/src/checkpoint/{types,barrier,manifest,inclusion}.rs` |
-| 跨 owner 共享类型与 Interface | `crates/core/src/checkpoint.rs`（纯类型，零 IO） |
+| 跨 owner 屏障与封存票据 | `crates/backup/src/checkpoint/{types,barrier,manifest,inclusion}.rs`（清单的固定事实与失败模式在 `manifest/{inputs,error}.rs`） |
+| 跨 owner 共享类型与 Interface | `crates/core/src/checkpoint.rs`，水位与恢复点年龄在 `checkpoint/{watermark,age}.rs`（纯类型，零 IO） |
 | 独立 Worker 状态机与固定 restic 参数 | `crates/backup/src/worker/{state,job,restic,recovery_point}.rs` |
-| 恢复 kit 与 transcript | `crates/backup/src/recovery/{kit,transcript}.rs` |
+| 恢复 kit 与 transcript | `crates/backup/src/recovery/{kit,transcript}.rs`（前置检查、失效与核对事实、启用门禁在 `kit/checks.rs`） |
 | 唯一真实 IO | `crates/backup/src/store/storage.rs` |
 | 新目录物理重绑定 | `crates/vault-broker/src/restore/**`（Broker 自己实现） |
 | 主人审批（默认关闭） | `crates/host-config/src/backup/**` |
@@ -23,13 +23,17 @@ T-048 B1，2026-09-17。权威边界仍是 `checkpoint-recovery-contract.md`；
 ## 跨 owner 屏障
 
 固定顺序写在 `CheckpointOwner::FREEZE_ORDER`：
-Broker → Control → Auth → Bridge → AgentStore → **Audit**。
+Broker → Control → Auth → Bridge → AgentStore → Policy → **Audit**。
 Audit 排最后，是因为其余 owner 的在途操作（`Auth→Audit→Auth` 这类完整语义操作）
 必须能走完，Audit 才进入存储冻结。
+Policy（M4 策略库 `policy.sqlite3`，T-110 纳入）紧跟 AgentStore：接入方调用先经
+AgentStore 核身份、再复核策略库的能力集与吊销，策略库的发布与吊销又要写 Audit，
+所以它在 AgentStore 之后、Audit 之前冻结。
 
-六个 owner 必须全部登记，未装配的也要登记为 `Absent`：
+七个 owner 必须全部登记，未装配的也要登记为 `Absent`：
 只登记 Broker 一个参与者会直接被 `OwnerMissing` 拒绝——
-「单独拿 canonical 的 Mutex」在这里连屏障都组装不起来。
+「单独拿 canonical 的 Mutex」在这里连屏障都组装不起来；漏登策略库同样是
+`OwnerMissing`，接入方未给 `--policy` 的 M3 兼容模式要显式登记为 `Absent`。
 排空判定看 `DrainProof` 的四项：在途操作为 0、后台补记队列为 0、
 本地维护写者已挡、Auth 的隐式读写已挡。
 「暂停 HTTP」只挡住 HTTP，本地维护写者仍然是写者，所以不算排空；
@@ -50,12 +54,17 @@ WAL checkpoint 的 `busy=0` 且已 checkpoint 帧数等于总帧数、
 `pair_id`／提交水位／无未决；Control 的 schema／Vault UUID／outbox；
 Auth 的 schema／主人绑定摘要／审计锚点；Audit 的最后 offset 与链哈希；
 Bridge 的 link／scope／共同基线／观察序号与持久门禁；
+AgentStore 的 schema／类型 token 摘要／实例数；
+Policy 的 schema／effective 版本／effective 哈希／是否全局吊销；
 以及固定应用与 CLI 包摘要、部署清单、脱敏秘密引用。
+owner 清单的反序列化同样走 `OwnerRoster::new`：持久清单缺项（例如策略库纳入之前
+写下的六项清单）、乱序或重复一律失败关闭，缺的 owner 不会被静默读成 absent。
 
 「不能用索引 generation 或最后一次 Sync 退出时间替代」是可执行的：
 摘要字段必须是 64 位小写十六进制，**纯十进制数字**会被单独判成
 `WatermarkSubstituted`（而不是笼统的格式错误），因为索引 generation
-和退出时间戳恰好就长这样。Bridge 的观察序号为 0 或门禁未关是 `BridgeGateOpen`。
+和退出时间戳恰好就长这样；策略库的 effective 哈希被换成 effective 版本号也是同一判定。
+Bridge 的观察序号为 0 或门禁未关是 `BridgeGateOpen`。
 
 已 ACK 事件的覆盖要逐条对应原事件：`AuditCoverageProof` 里
 `offset_comparison_only = true`（只比了 offset 小于最后 offset）直接判不成立。
@@ -158,9 +167,12 @@ lineage(`restore-v1/lineage.json`，先写 `Rebinding`) →
 审计连续性／空间六项全过，才允许恢复主人与密钥映射。
 Auth 恢复必须使旧会话与 L3 失效、阻断旧快照里的恢复码、
 保留已消费记录与审计锚点（不许删表绕过）、保持原主人绑定并重新认证、
-签发代次严格前进；纳入 AgentStore 时旧类型 token 与实例同样失效。
+签发代次严格前进；纳入 AgentStore 时旧类型 token 与实例同样失效；
+纳入策略库时必须先核对吊销（`policy_revocations_reconciled`），否则是
+`PolicyRevocationsNotReconciled`：旧快照可能让已吊销的实例或类型复活。
 双向同步在差异隔离、人工协调、新 checkpoint 验收、写入/备份链重新验收、
-旧目录仍在回滚窗口内这五条全满足之前不得启用。
+旧目录仍在回滚窗口内这五条全满足、且纳入的策略库已核对吊销之前不得启用。
+这些事实记录缺任一字段即反序列化失败，不会被默认成「未纳入」或「已核对」。
 
 ## 存储
 

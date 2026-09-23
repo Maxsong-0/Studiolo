@@ -1,4 +1,4 @@
-//! Zero-write access to an explicitly selected local replica or asset directory.
+//! 对显式选定的本地副本或资源目录做零写入访问。
 
 mod directory;
 mod metadata;
@@ -16,14 +16,14 @@ use studiolo_core::{Revision, VaultPath, VaultUuid};
 
 use crate::BrokerError;
 
-/// One bounded, stable read from an explicitly selected directory.
+/// 从显式选定目录做的一次有界、稳定读取。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ReadNote {
-    /// Logical path relative to the selected root.
+    /// 相对选定根的逻辑路径。
     pub path: VaultPath,
-    /// Exact bytes; callers decide whether UTF-8 is required.
+    /// 精确字节；是否要求 UTF-8 由调用方决定。
     pub content: Vec<u8>,
-    /// Path/content fingerprint in a fixed read-only namespace, not Vault identity.
+    /// 路径/内容指纹：对外读取用固定只读命名空间，不代表 Vault 身份；crate 内 canonical 复用改用 Vault UUID。
     pub revision: Revision,
 }
 
@@ -32,9 +32,9 @@ pub struct ReadNote {
 pub struct ReadBatch {
     /// 目录、Markdown 与附件元信息，按逻辑路径排序；不含虚拟根目录。
     pub entries: Vec<ReadEntry>,
-    /// Successfully read Markdown files in logical path order.
+    /// 已成功读取的 Markdown 文件，按逻辑路径排序。
     pub notes: Vec<ReadNote>,
-    /// Logical paths and fixed reasons only; never source bytes or host paths.
+    /// 仅含逻辑路径与固定原因，绝不含源字节或宿主路径。
     pub diagnostics: Vec<String>,
 }
 
@@ -60,16 +60,16 @@ pub enum ReadEntryKind {
     Attachment,
 }
 
-/// Resource budgets for one complete recursive scan.
+/// 一次完整递归扫描的资源预算。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ScanLimits {
-    /// Maximum bytes retained from one Markdown file; oversized Markdown is diagnostic.
+    /// 单个 Markdown 文件最多读取的字节数；超限的 Markdown 只记诊断、不中止扫描。
     pub max_file_bytes: u64,
-    /// Maximum aggregate Markdown bytes; exceeding it fails the whole scan.
+    /// Markdown 累计字节上限；超出即整次扫描失败。
     pub max_total_bytes: u64,
-    /// Maximum entries inspected, including hidden entries, directories and non-Markdown.
+    /// 最多检查的条目数，隐藏条目、目录与非 Markdown 文件都计入。
     pub max_entries: usize,
-    /// Maximum nested directory depth; files directly under the root have depth zero.
+    /// 目录嵌套深度上限；根目录下直接存放的文件深度为零。
     pub max_depth: usize,
 }
 
@@ -84,12 +84,11 @@ impl Default for ScanLimits {
     }
 }
 
-/// Directory-handle-rooted reader with no mutation, identity or database capability.
+/// 以目录句柄为根的读取器，不具备变更、身份或数据库能力。
 ///
-/// Unix opens every component without following links. Linux additionally uses
-/// kernel beneath/no-link resolution. Unsupported platforms fail closed. Reads
-/// may update operating-system access times, but never write source content or
-/// create control files, caches, directories, snapshots or persistent identities.
+/// Unix 上逐分量打开且不跟随链接；Linux 另外使用内核 beneath/no-link 解析；
+/// 不支持的平台一律失败关闭。读取可能更新操作系统访问时间，
+/// 但绝不写入源内容，也不创建控制文件、缓存、目录、快照或持久身份。
 pub struct ReadOnlyVault {
     root: Dir,
     private: bool,
@@ -103,8 +102,8 @@ impl ReadOnlyVault {
         }
         Ok(())
     }
-    /// Pins an existing directory, rejecting a symlink at the selected root.
-    /// No directory is created, including when opening fails.
+    /// 固定一个已存在的目录；选定根本身是符号链接时拒绝。
+    /// 不创建任何目录，打开失败时也一样。
     pub fn open(root: &Path) -> Result<Self, BrokerError> {
         Ok(Self {
             root: rooted::open_root(root)?,
@@ -145,10 +144,10 @@ impl ReadOnlyVault {
         Ok((metadata.dev(), metadata.ino()))
     }
 
-    /// Reads a visible regular file, rejecting links, collisions and concurrent changes.
-    /// The limit also applies if the file grows after it is opened. Asset files
-    /// such as JavaScript and CSS are supported; hidden components are not.
-    /// Each parent name check is capped at 50,000 entries, including hidden names.
+    /// 读取可见的普通文件，拒绝链接、名称冲突与并发修改。
+    /// 文件打开后继续增长同样受字节上限约束。
+    /// 支持 JavaScript、CSS 等资源文件；不支持隐藏分量。
+    /// 每次父目录名称检查最多遍历 50,000 个条目（含隐藏名称）。
     pub fn read_file(&self, path: &VaultPath, max_bytes: u64) -> Result<ReadNote, BrokerError> {
         self.read_in_namespace(path, max_bytes, read::replica_namespace())
     }
@@ -165,7 +164,7 @@ impl ReadOnlyVault {
         })
     }
 
-    // The only hidden-path read is this fixed, bounded identity record.
+    // 唯一允许的隐藏路径读取，就是这份固定且有界的身份记录。
     pub(super) fn read_identity(&self) -> Result<Vec<u8>, BrokerError> {
         let path =
             VaultPath::parse(".workbench/vault.json").map_err(|_| BrokerError::CorruptIdentity)?;

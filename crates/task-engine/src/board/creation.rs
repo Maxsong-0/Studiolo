@@ -1,7 +1,7 @@
-//! Required work-item validation, trusted creation, and explicit claim preparation.
+//! 必填工作项校验、受信任创建与显式认领准备。
 use super::*;
 impl<B: VaultBroker + ArtifactStager, L: AuditLedger> PersistentTaskEngine<B, L> {
-    /// Creates a required-schema work item and freezes a policy hash supplied by trusted policy code.
+    /// 创建符合必填 schema 的工作项，并冻结受信任策略代码提供的策略哈希。
     pub(super) fn create_board_task_inner(
         &mut self,
         request_id: &str,
@@ -56,7 +56,7 @@ impl<B: VaultBroker + ArtifactStager, L: AuditLedger> PersistentTaskEngine<B, L>
             .map_err(map_db)
     }
 
-    /// Claims a specific board item; draft inputs are frozen before the atomic claim.
+    /// 认领指定的黑板项；draft 的输入在原子认领之前冻结。
     pub(super) fn claim_board_task_inner(
         &mut self,
         task_id: TaskId,

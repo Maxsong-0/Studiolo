@@ -2,8 +2,9 @@
 
 use axum::{
     Json,
-    extract::{Query, State},
+    extract::{Query, State, rejection::QueryRejection},
     http::StatusCode,
+    response::{IntoResponse, Response},
 };
 use serde::{Deserialize, Serialize};
 use studiolo_workbench::{TreeError, TreePage};
@@ -27,8 +28,15 @@ pub(crate) struct TreeResponse {
 
 pub(crate) async fn page(
     State(state): State<AppState>,
-    Query(query): Query<TreeQuery>,
-) -> Result<Json<TreeResponse>, ApiError> {
+    query: Result<Query<TreeQuery>, QueryRejection>,
+) -> Response {
+    let Ok(Query(query)) = query else {
+        return crate::invalid_query("invalid_tree_query");
+    };
+    page_at(state, query).await.into_response()
+}
+
+async fn page_at(state: AppState, query: TreeQuery) -> Result<Json<TreeResponse>, ApiError> {
     let generation = queries::at_generation(&state, query.generation)?;
     queries::run_query(&state.queries, move || {
         let page =

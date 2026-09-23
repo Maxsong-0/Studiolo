@@ -6,7 +6,10 @@ use super::{
     plan::{self, Plan},
     proof::{self, Proof},
 };
-use crate::session::{database::unavailable, schema};
+use crate::session::{
+    database::{required_row, unavailable},
+    schema,
+};
 use rusqlite::{Connection, params};
 
 pub(super) fn obtain(db: &Connection) -> Result<Option<Plan>, SessionError> {
@@ -28,7 +31,7 @@ pub(super) fn obtain(db: &Connection) -> Result<Option<Plan>, SessionError> {
             [],
             |row| row.get(0),
         )
-        .map_err(unavailable)?;
+        .map_err(required_row)?;
     let plan = Plan {
         sequence,
         previous_sequence: checkpoint.sequence,

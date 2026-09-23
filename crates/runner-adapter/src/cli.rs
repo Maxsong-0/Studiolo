@@ -1,43 +1,43 @@
-//! Provider launch profiles. No personal config or provider credentials are read.
+//! 各供应商 CLI 的启动配置；不读取任何个人配置或供应商凭据。
 use crate::{RunSpec, RunnerError};
 use serde::{Deserialize, Serialize};
 
-/// Supported real CLI protocol.
+/// 支持的真实 CLI 协议。
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CliProvider {
-    /// Claude Code with the Anthropic Messages protocol.
+    /// 使用 Anthropic Messages 协议的 Claude Code。
     Claude,
-    /// Codex with the OpenAI Responses protocol.
+    /// 使用 OpenAI Responses 协议的 Codex。
     Codex,
 }
-/// Authoritative source classification, never inferred from Markdown metadata.
+/// 权威的来源分级，绝不从 Markdown 元数据推断。
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SourceEgress {
-    /// Undeclared or prohibited: Stub only.
+    /// 未声明或被禁止：仅限 Stub。
     Deny,
-    /// No local-model adapter exists: Stub only.
+    /// 尚无本地模型适配器：仅限 Stub。
     LocalOnly,
-    /// Exact provider allowlist from authenticated classification.
+    /// 来自已认证分级的精确供应商允许清单。
     Providers(Vec<CliProvider>),
 }
-/// Binding supplied by the trusted scheduler; contains no credential.
+/// 由可信调度器提供的执行绑定；不含任何凭据。
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ExecutionSpec {
-    /// Immutable source snapshot identity.
+    /// 不可变的来源快照身份。
     pub snapshot_id: String,
-    /// Active effective-policy digest.
+    /// 当前生效策略的摘要。
     pub policy_hash: String,
-    /// Pinned provider selected outside the Runner.
+    /// 在 Runner 之外选定并钉死的供应商。
     pub provider: CliProvider,
-    /// Exact model selected outside the Runner.
+    /// 在 Runner 之外选定的精确模型。
     pub model: String,
-    /// One authoritative classification per input, in the same order.
+    /// 每个输入对应一个权威分级，顺序与输入一致。
     pub input_egress: Vec<SourceEgress>,
-    /// Scheduler-captured tree of the complete source checkout, including dirty/untracked bytes.
+    /// 调度器捕获的完整源码检出的 tree，含未提交与未跟踪的内容。
     pub repository_tree: String,
-    /// Authenticated classification for the complete code snapshot.
+    /// 完整代码快照的已认证分级。
     pub repository_egress: SourceEgress,
 }
 impl ExecutionSpec {
@@ -74,7 +74,7 @@ impl ExecutionSpec {
     }
 }
 impl CliProvider {
-    /// Stable adapter name.
+    /// 稳定的适配器名。
     #[must_use]
     pub fn name(self) -> &'static str {
         match self {

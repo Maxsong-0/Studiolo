@@ -32,7 +32,7 @@ const ALLOWED_KEYS: [&str; 10] = [
 
 /// 编码一帧：4 字节大端长度前缀加载荷。
 ///
-/// # Errors
+/// # 错误
 /// 载荷超过 16 KiB 返回 `FrameTooLarge`。
 pub fn encode_frame(payload: &[u8]) -> Result<Vec<u8>, ContainmentGap> {
     if payload.len() > FRAME_MAX_BYTES || payload.is_empty() {
@@ -47,7 +47,7 @@ pub fn encode_frame(payload: &[u8]) -> Result<Vec<u8>, ContainmentGap> {
 
 /// 解码一帧；长度必须与实际字节数完全一致，不接受粘包或截断。
 ///
-/// # Errors
+/// # 错误
 /// 长度不符返回 `ProtocolViolation`；超限返回 `FrameTooLarge`。
 pub fn decode_frame(bytes: &[u8]) -> Result<&[u8], ContainmentGap> {
     let header: [u8; 4] = bytes
@@ -67,7 +67,7 @@ pub fn decode_frame(bytes: &[u8]) -> Result<&[u8], ContainmentGap> {
 
 /// 载荷必须是封闭字段的单个 JSON 对象；未知顶层键一律拒绝。
 ///
-/// # Errors
+/// # 错误
 /// 非对象、含未知键或嵌套过深时返回 `ProtocolViolation`。
 pub fn payload_acceptable(payload: &[u8]) -> Result<(), ContainmentGap> {
     let value: serde_json::Value =
@@ -86,7 +86,7 @@ pub fn payload_acceptable(payload: &[u8]) -> Result<(), ContainmentGap> {
 
 /// 对端必须正是批准的 payload 身份；只看自报字段不算。
 ///
-/// # Errors
+/// # 错误
 /// 身份不符返回 `PeerRejected`。
 pub fn peer_acceptable(
     peer: &PeerCredentials,

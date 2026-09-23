@@ -44,7 +44,7 @@ use std::sync::Arc;
 
 use axum::{
     Json,
-    extract::{Query, State},
+    extract::{Query, State, rejection::QueryRejection},
     http::StatusCode,
     response::{IntoResponse, Response},
 };
@@ -60,9 +60,14 @@ pub enum LocalError {
     /// 只读 Broker 拒绝读取。
     #[error("只读副本读取失败：{0}")]
     Read(#[from] BrokerError),
-    /// 不完整扫描不能成为新的完整代次。
-    #[error("副本扫描不完整：{0}")]
-    Incomplete(String),
+    /// 不完整扫描不能成为新的完整代次；诊断只保留有界摘录并注明总数。
+    #[error("副本扫描不完整（共 {total} 条诊断）：{listed}")]
+    Incomplete {
+        /// 本次扫描的诊断总条数。
+        total: usize,
+        /// 有界摘录：最多列前若干条、每条截断，其余只以条数提示。
+        listed: String,
+    },
     /// 非 UTF-8 文档不能静默从统计中消失。
     #[error("文档不是有效 UTF-8：{0}")]
     Encoding(String),
@@ -117,12 +122,32 @@ struct SnapshotQuery {
 
 async fn snapshot(
     State(state): State<AppState>,
-    Query(query): Query<SnapshotQuery>,
+    query: Result<Query<SnapshotQuery>, QueryRejection>,
+) -> Response {
+    let Ok(Query(query)) = query else {
+        return invalid_query("invalid_workbench_query");
+    };
+    refreshed_overview(state, query.refresh)
+        .await
+        .into_response()
+}
+
+/// 显式要求时先合流刷新再投影首屏；刷新失败直接答复，不拿旧代次冒充新结果。
+async fn refreshed_overview(
+    state: AppState,
+    refresh: bool,
 ) -> Result<Json<queries::OverviewResponse>, ApiError> {
-    if query.refresh {
+    if refresh {
         refresh::run(&state).await?;
     }
     queries::overview(state).await
+}
+
+/// 查询串反序列化失败的统一答复：固定中文 JSON Problem，错误码按路由区分。
+///
+/// axum 默认拒绝是英文纯文本 400，并把缺失或畸形的字段名写进正文；这里一律不回显。
+fn invalid_query(code: &'static str) -> Response {
+    editing::Problem::new(StatusCode::BAD_REQUEST, code, "查询参数不合法。").into_response()
 }
 
 fn current(state: &AppState) -> Result<Arc<Generation>, ApiError> {

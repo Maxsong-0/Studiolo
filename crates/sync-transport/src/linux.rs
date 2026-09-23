@@ -86,13 +86,13 @@ pub enum IdentityMatch {
 pub trait ContainmentBackend {
     /// 当前 boot 标识。
     ///
-    /// # Errors
+    /// # 错误
     /// manager 不可用时返回 `ManagerUnavailable`。
     fn boot_id(&mut self) -> Result<[u8; 16], ContainmentGap>;
 
     /// 请求可信 launcher 在屏障内建立 payload 子组并返回真实身份。
     ///
-    /// # Errors
+    /// # 错误
     /// 任何隔离、预算或协议缺口按其分类返回。
     fn issue_launch(
         &mut self,
@@ -101,25 +101,25 @@ pub trait ContainmentBackend {
 
     /// 消费一次放行；协议只接受一次，重复请求不得产生第二次执行。
     ///
-    /// # Errors
+    /// # 错误
     /// 身份不符返回 `IdentityMismatch`。
     fn release_once(&mut self, token: ReleaseToken) -> Result<(), ContainmentGap>;
 
     /// 观察执行是否真的开始。
     ///
-    /// # Errors
+    /// # 错误
     /// 身份不符返回 `IdentityMismatch`。
     fn observe_running(&mut self, container: &ContainerIdentity) -> Result<bool, ContainmentGap>;
 
     /// 关闭一切继续创建 payload 的入口。
     ///
-    /// # Errors
+    /// # 错误
     /// 无法确证入口已关闭时返回 `IdentityMismatch`。
     fn close_spawn_gate(&mut self, container: &ContainerIdentity) -> Result<(), ContainmentGap>;
 
     /// 读取同一受控 payload 子组的 `cgroup.events`。
     ///
-    /// # Errors
+    /// # 错误
     /// 身份不符返回 `IdentityMismatch`。
     fn read_events(
         &mut self,
@@ -128,13 +128,13 @@ pub trait ContainmentBackend {
 
     /// 取得当前有界排空计数。
     ///
-    /// # Errors
+    /// # 错误
     /// 身份不符返回 `IdentityMismatch`。
     fn drain(&mut self, container: &ContainerIdentity) -> Result<ResourceCounts, ContainmentGap>;
 
     /// 只停止绑定的子组：先 TERM 有界 grace，再对同一组执行覆盖全后代的强停。
     ///
-    /// # Errors
+    /// # 错误
     /// 身份不符返回 `IdentityMismatch`。
     fn stop(
         &mut self,
@@ -144,13 +144,13 @@ pub trait ContainmentBackend {
 
     /// 取得真实等待结果；取不到就是 `NotObserved`。
     ///
-    /// # Errors
+    /// # 错误
     /// 身份不符返回 `IdentityMismatch`。
     fn reap(&mut self, container: &ContainerIdentity) -> Result<ExitObservation, ContainmentGap>;
 
     /// 重开时核对旧容器身份。
     ///
-    /// # Errors
+    /// # 错误
     /// manager 不可用时返回 `ManagerUnavailable`。
     fn match_identity(
         &mut self,
@@ -193,7 +193,7 @@ impl VerifiedLinuxBackend {
 /// `TrustedLauncherNotProvisioned`。这不是占位符，而是如实报告本机确实没有该特权 ——
 /// 在管理员预置可信 launcher/service 并在隔离 Linux 上实测之前，这里不得返回 `Ok`。
 ///
-/// # Errors
+/// # 错误
 /// 永远返回缺口分类；平台「受支持」状态留待实测。
 pub fn verify_backend(
     approval: &dyn ApprovedTransport,

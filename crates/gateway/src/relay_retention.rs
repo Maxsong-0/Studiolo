@@ -1,4 +1,4 @@
-//! Independent hard-TTL cleanup for the Gateway-only raw spool.
+//! 对仅供 Gateway 使用的原始暂存区（raw spool）做独立的硬 TTL 清理。
 use crate::{Clock, relay_types::RelayError};
 use std::{
     fs,

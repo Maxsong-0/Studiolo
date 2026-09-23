@@ -106,6 +106,15 @@ pub(super) fn unavailable(_: rusqlite::Error) -> SessionError {
     SessionError::StorageUnavailable
 }
 
+/// 按不变量必然存在的行（单例行、成对或被引用的关联行）专用：查不到即库已损坏；
+/// 锁、IO 与其他读取错误仍是存储暂不可用。业务上可缺的行应走 `.optional()`。
+pub(super) fn required_row(error: rusqlite::Error) -> SessionError {
+    match error {
+        rusqlite::Error::QueryReturnedNoRows => SessionError::CorruptStore,
+        _ => SessionError::StorageUnavailable,
+    }
+}
+
 fn configuration(db: &Connection) -> Result<(), SessionError> {
     for (pragma, expected) in [
         ("PRAGMA synchronous", 2),

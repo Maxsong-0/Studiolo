@@ -1,4 +1,4 @@
-//! Isolated-runner lifecycle seam and deterministic M0 Stub adapter.
+//! 隔离 runner 的生命周期接缝与确定性 M0 Stub；另含真实 CLI 适配器、Linux 隔离、快照与落地。
 
 mod budget;
 mod cli;
@@ -29,92 +29,92 @@ use serde::{Deserialize, Serialize};
 use studiolo_core::{AttemptId, Fence, TaskId, VaultPath};
 use tempfile::TempDir;
 
-/// Runner adapter health.
+/// runner 适配器的健康状态。
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AdapterAvailability {
-    /// Adapter can accept a run.
+    /// 适配器可以接受运行。
     Ready,
-    /// Adapter is known but currently unavailable.
+    /// 适配器已知，但当前不可用。
     Unavailable {
-        /// Non-sensitive diagnostic.
+        /// 不含敏感信息的诊断说明。
         reason: String,
     },
 }
 
-/// Live diagnostic receipt; unavailable prerequisites never imply a usable adapter.
+/// 实时诊断回执；只要有前提不可用，就绝不表示适配器可用。
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AdapterProbe {
-    /// Actual availability after the current probe.
+    /// 本次探测后的实际可用性。
     pub availability: AdapterAvailability,
-    /// Version read from the pinned binary inside the isolation profile.
+    /// 在隔离环境内从版本钉死的二进制读取的版本号。
     pub binary_version: Option<String>,
-    /// Protocol flags verified against the installed binary's help output.
+    /// 已对照所装二进制的 help 输出验证过的协议参数。
     pub protocol_capabilities: Vec<String>,
-    /// Concrete missing or failed boundary, never personal login discovery.
+    /// 具体缺失或失败的边界；绝不探查个人登录信息。
     pub missing_prerequisites: Vec<String>,
 }
 
-/// One immutable input supplied without an ambient Vault path.
+/// 一份不可变输入；只提供内容，不提供可直接访问的 Vault 文件路径。
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RunInput {
-    /// Logical source path.
+    /// 逻辑来源路径。
     pub path: VaultPath,
-    /// Captured source revision.
+    /// 捕获时的来源修订版本。
     pub revision: String,
-    /// Snapshot bytes.
+    /// 快照字节。
     pub content: Vec<u8>,
 }
 
-/// Complete immutable request for one attempt.
+/// 一次 attempt 的完整不可变请求。
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RunSpec {
-    /// Owning task.
+    /// 所属任务。
     pub task_id: TaskId,
-    /// Owning attempt.
+    /// 所属 attempt。
     pub attempt_id: AttemptId,
-    /// Current fencing token.
+    /// 当前的 fencing token。
     pub fence: Fence,
-    /// Human-authored instruction.
+    /// 人工撰写的指令。
     pub instruction: String,
-    /// Immutable snapshot contents.
+    /// 不可变的快照内容。
     pub inputs: Vec<RunInput>,
-    /// Resource and work budget; defaults preserve old persisted specs.
+    /// 资源与工作量预算；缺省值保证旧的已持久化 spec 仍可读取。
     #[serde(default)]
     pub budget: RunBudget,
-    /// Cloud execution binding; absent means real adapters must refuse.
+    /// 云端执行绑定；缺失时真实适配器必须拒绝。
     #[serde(default)]
     pub execution: Option<ExecutionSpec>,
 }
 
-/// Opaque run handle meaningful only to its adapter.
+/// 不透明的运行句柄，只对其所属适配器有意义。
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct RunHandle(String);
 
 impl RunHandle {
-    /// Returns the opaque handle text for persistence.
+    /// 返回不透明句柄的文本，用于持久化。
     #[must_use]
     pub fn as_str(&self) -> &str {
         &self.0
     }
 }
 
-/// Persistable reference used for restart isolation.
+/// 可持久化的引用，供重启后隔离遗留运行使用。
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RunnerRef {
-    /// Adapter kind.
+    /// 适配器类型。
     pub adapter: String,
-    /// Adapter-owned stable reference.
+    /// 适配器自有的稳定引用。
     pub opaque_id: String,
-    /// Process ID for a process-backed adapter.
+    /// 进程型适配器的进程 ID。
     pub pid: Option<u32>,
-    /// OS process start identity; mandatory whenever `pid` is present.
+    /// 操作系统层面的进程启动身份；只要有 `pid` 就必须提供。
     pub start_time_ticks: Option<u64>,
 }
 
 impl RunnerRef {
-    /// Creates a non-process reference, as used by the Stub.
+    /// 创建非进程型引用（Stub 使用此种）。
     #[must_use]
     pub fn opaque(adapter: impl Into<String>, opaque_id: impl Into<String>) -> Self {
         Self {
@@ -125,7 +125,7 @@ impl RunnerRef {
         }
     }
 
-    /// Creates a process reference protected against PID reuse.
+    /// 创建能防御 PID 复用的进程引用。
     pub fn process(
         adapter: impl Into<String>,
         pid: u32,
@@ -143,117 +143,117 @@ impl RunnerRef {
     }
 }
 
-/// Result returned once a run has been accepted.
+/// 运行被接受后返回的结果。
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct StartedRun {
-    /// Adapter handle.
+    /// 适配器句柄。
     pub handle: RunHandle,
-    /// Durable restart reference.
+    /// 持久化的重启引用。
     pub runner_ref: RunnerRef,
 }
 
-/// Candidate copied from runner-owned temporary storage.
+/// 从 runner 自有临时存储中复制出的候选产物。
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RunnerArtifact {
-    /// Logical artifact name, not an ambient path.
+    /// 逻辑产物名，而不是可直接访问的文件系统路径。
     pub name: VaultPath,
-    /// Candidate bytes.
+    /// 候选字节。
     pub content: Vec<u8>,
 }
 
-/// Structured successful runner report.
+/// 结构化的 runner 成功报告。
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RunnerReport {
-    /// Owning task.
+    /// 所属任务。
     pub task_id: TaskId,
-    /// Owning attempt.
+    /// 所属 attempt。
     pub attempt_id: AttemptId,
-    /// Fence echoed from the immutable run spec.
+    /// 从不可变运行 spec 回显的 fence。
     pub fence: Fence,
-    /// Candidate artifacts.
+    /// 候选产物。
     pub artifacts: Vec<RunnerArtifact>,
 }
 
-/// Current state observed from a runner.
+/// 从 runner 观测到的当前状态。
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RunnerObservation {
-    /// Work remains in progress.
+    /// 工作仍在进行。
     Running,
-    /// Work completed and returned candidates.
+    /// 工作已完成并返回候选产物。
     Completed(RunnerReport),
-    /// A cancelled CLI supplied an explicit, untrusted stopped receipt plus retained candidates.
-    /// The trusted engine must validate the receipt and cancellation deadline before accepting it.
+    /// 被取消的 CLI 提交了显式但不可信的停止回执，以及已保留的候选产物。
+    /// 可信引擎必须先校验回执与取消期限，才能接受它。
     Stopped {
-        /// Actual retained patch and metadata, including the original stopped JSON.
+        /// 实际保留的补丁与元数据，含原始的停止回执 JSON。
         report: RunnerReport,
-        /// CLI-provided wire receipt; never treated as a passing owner assessment.
+        /// CLI 按协议原样提供的回执；绝不视为所有者评估已通过。
         receipt: serde_json::Value,
     },
-    /// Capability was revoked; no valid stopped receipt has been received.
+    /// capability 已被撤销；尚未收到有效的停止回执。
     Cancelled,
 }
 
-/// Stable failure points before execution begins.
+/// 执行开始之前的稳定失败点。
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum LaunchStage {
-    /// Input snapshot could not be prepared.
+    /// 无法准备输入快照。
     Snapshot,
-    /// Isolation service could not be launched.
+    /// 无法启动隔离服务。
     Isolation,
-    /// CLI did not reach a valid protocol event.
+    /// CLI 未能产生有效的协议事件。
     Handshake,
 }
 
-/// Runner lifecycle failures.
+/// runner 生命周期中的失败。
 #[derive(Debug, thiserror::Error)]
 pub enum RunnerError {
-    /// A real adapter lacks verified isolation or deployment prerequisites.
+    /// 隔离或部署前提不可用：真实适配器未通过验证、平台不支持，或无法停止隔离单元。
     #[error("runner isolation is unavailable")]
     Unavailable,
-    /// Failure before a first tool call, eligible for launch_failure retry.
+    /// 首次工具调用之前的失败，可按 launch_failure 重试。
     #[error("runner launch failed at {stage:?}")]
     LaunchFailed {
-        /// Stable, non-sensitive failure boundary.
+        /// 稳定、不含敏感信息的失败边界。
         stage: LaunchStage,
     },
-    /// Invalid or incompatible immutable execution request.
+    /// 不可变的执行请求无效或不兼容。
     #[error("runner execution specification rejected")]
     InvalidExecution,
-    /// Rejected candidates were retained for review before any scratch reclamation.
+    /// 候选被拒绝；在回收任何 scratch 之前已先保留下来供评审。
     #[error("runner candidate rejected; unlanded patch retained at {retained}")]
     CandidateRejected {
-        /// Durable candidate pointer; no content is included in this error.
+        /// 指向持久保留候选的路径；本错误不包含任何内容。
         retained: PathBuf,
     },
-    /// Work or time ceiling was exhausted.
+    /// 工作量或时间上限已耗尽。
     #[error("runner budget exhausted")]
     BudgetExceeded,
-    /// Output exceeded the bounded retention ceiling.
+    /// 超出有界上限：补丁大小、候选文件树规模、记录大小或清理扫描的条目数。
     #[error("runner output exceeded limit")]
     OutputLimit,
-    /// CLI exited or emitted an invalid event stream after launch.
+    /// 启动后 CLI 异常退出，或输出了无效的事件流。
     #[error("runner protocol failed")]
     Protocol,
-    /// A handle is unknown to this adapter instance.
+    /// 本适配器实例不认识该句柄。
     #[error("unknown runner handle")]
     UnknownHandle,
-    /// The same attempt/fence was started with different immutable input.
+    /// 幂等／CAS 校验不符：同一 attempt/fence 输入不同、保留内容不一致或落地基线不符。
     #[error("runner idempotency key reused with different input")]
     IdempotencyConflict,
-    /// A process reference omitted its start identity.
+    /// 进程引用的 pid 或启动身份为 0（缺失）。
     #[error("process runner reference requires non-zero pid and start identity")]
     InvalidRunnerRef,
-    /// Adapter state mutex was poisoned.
+    /// 适配器状态不可用：状态互斥锁中毒，或快照根锁已被他人持有等。
     #[error("runner state is unavailable")]
     StateUnavailable,
-    /// Temporary runner storage failed.
+    /// 文件系统操作失败（临时存储、快照记录、保留补丁等）。
     #[error("runner temporary storage failed during {operation}: {source}")]
     Io {
-        /// Stable operation label.
+        /// 稳定的操作标签。
         operation: &'static str,
-        /// Underlying error.
+        /// 底层错误。
         #[source]
         source: std::io::Error,
     },
@@ -265,12 +265,12 @@ impl RunnerError {
     }
 }
 
-/// Synchronous, object-safe lifecycle port for local and future VM runners.
+/// 同步、对象安全的生命周期端口，供本地 runner 与将来的 VM runner 使用。
 pub trait RunnerAdapter: Send + Sync {
-    /// Reports whether the adapter is usable.
+    /// 报告适配器是否可用。
     fn probe(&self) -> Result<AdapterAvailability, RunnerError>;
 
-    /// Reports the current binary/protocol diagnostics, when the adapter has a binary.
+    /// 报告当前的二进制／协议诊断信息（适配器有对应二进制时才有内容）。
     fn probe_report(&self) -> Result<AdapterProbe, RunnerError> {
         let availability = self.probe()?;
         let missing_prerequisites = match &availability {
@@ -285,16 +285,16 @@ pub trait RunnerAdapter: Send + Sync {
         })
     }
 
-    /// Starts or idempotently recovers one immutable attempt.
+    /// 启动一次不可变的 attempt，或幂等地恢复它。
     fn start(&self, spec: &RunSpec) -> Result<StartedRun, RunnerError>;
 
-    /// Observes state and copies candidates out of temporary storage.
+    /// 观测状态，并把候选产物从临时存储中复制出来。
     fn observe(&self, handle: &RunHandle) -> Result<RunnerObservation, RunnerError>;
 
-    /// Idempotently revokes and isolates a run.
+    /// 幂等地撤销并隔离一次运行。
     fn cancel(&self, handle: &RunHandle) -> Result<(), RunnerError>;
 
-    /// Returns monotonic progress counters without extending the lease.
+    /// 返回单调递增的进度计数，不延长租约。
     fn progress(&self, _handle: &RunHandle) -> Result<RunnerProgress, RunnerError> {
         Ok(RunnerProgress::default())
     }
@@ -313,14 +313,14 @@ struct StubState {
     runs: BTreeMap<RunHandle, StubRun>,
 }
 
-/// Deterministic M0 adapter that writes only to a private temporary directory.
+/// 确定性的 M0 适配器，只写入私有临时目录。
 #[derive(Default)]
 pub struct StubRunner {
     state: Mutex<StubState>,
 }
 
 impl StubRunner {
-    /// Creates an empty Stub adapter.
+    /// 创建一个空的 Stub 适配器。
     #[must_use]
     pub fn new() -> Self {
         Self::default()

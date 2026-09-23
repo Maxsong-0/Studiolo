@@ -40,18 +40,23 @@ fn precise_binary_identity_and_limit() {
 
 #[test]
 fn explicit_limits_do_not_invent_a_service_cap() {
-    assert!(StreamLimits::new(0).is_err());
+    assert!(matches!(
+        StreamLimits::new(0),
+        Err(BrokerError::WriterLimitExceeded)
+    ));
     assert!(StreamLimits::new(256 * 1024 * 1024).is_ok());
-    assert!(StreamLimits::new(256 * 1024 * 1024 + 1).is_err());
+    assert!(matches!(
+        StreamLimits::new(256 * 1024 * 1024 + 1),
+        Err(BrokerError::WriterLimitExceeded)
+    ));
     let root = temporary();
     fs::write(root.path().join("empty.bin"), []).unwrap();
     let source = BlobSource::open(root.path(), path("empty.bin")).unwrap();
     assert_eq!(source.identity(limit(1)).unwrap().bytes, 0);
-    assert!(
-        source
-            .identity(StreamLimits { effective_limit: 0 })
-            .is_err()
-    );
+    assert!(matches!(
+        source.identity(StreamLimits { effective_limit: 0 }),
+        Err(BrokerError::WriterLimitExceeded)
+    ));
 }
 
 #[test]
@@ -60,15 +65,30 @@ fn hidden_and_linked_sources_are_refused() {
     let root = temporary();
     fs::write(root.path().join("original.bin"), b"original").unwrap();
     fs::write(root.path().join(".hidden"), b"hidden").unwrap();
-    assert!(BlobSource::open(root.path(), path(".hidden")).is_err());
+    assert!(matches!(
+        BlobSource::open(root.path(), path(".hidden")),
+        Err(BrokerError::ProtectedPath(hidden)) if hidden == path(".hidden")
+    ));
     symlink("original.bin", root.path().join("link.bin")).unwrap();
-    assert!(BlobSource::open(root.path(), path("link.bin")).is_err());
+    assert!(matches!(
+        BlobSource::open(root.path(), path("link.bin")),
+        Err(BrokerError::UnsafeNode {
+            reason: "no-link blob open failed",
+            ..
+        })
+    ));
     fs::hard_link(
         root.path().join("original.bin"),
         root.path().join("alias.bin"),
     )
     .unwrap();
-    assert!(BlobSource::open(root.path(), path("original.bin")).is_err());
+    assert!(matches!(
+        BlobSource::open(root.path(), path("original.bin")),
+        Err(BrokerError::UnsafeNode {
+            reason: "hard-linked or unlinked file",
+            ..
+        })
+    ));
 }
 
 #[test]
@@ -81,7 +101,11 @@ fn root_path_rebinding_does_not_read_an_old_detached_root() {
     fs::rename(&root, parent.path().join("old")).unwrap();
     fs::create_dir(&root).unwrap();
     fs::write(root.join("payload.bin"), b"same").unwrap();
-    assert!(source.identity(limit(4)).is_err());
+    // 旧 FD 仍可读，但固定根的路径身份已变，必须拒绝而不是读取已脱离的旧根。
+    assert!(matches!(
+        source.identity(limit(4)),
+        Err(BrokerError::WriterBindingMismatch)
+    ));
 }
 
 #[test]
@@ -98,7 +122,14 @@ fn replacement_with_special_node_is_refused_without_blocking() {
             .unwrap()
             .success()
     );
-    assert!(source.identity(limit(64)).is_err());
+    // FIFO 以非阻塞方式打开后按元信息拒绝，不会卡在读端等待写者。
+    assert!(matches!(
+        source.identity(limit(64)),
+        Err(BrokerError::UnsafeNode {
+            reason: "not a regular file",
+            ..
+        })
+    ));
 }
 
 #[test]

@@ -1,11 +1,11 @@
-//! Fixed-host TLS transport with no redirects/proxies and bounded SSE ingestion.
+//! 固定主机的 TLS 传输：不跟随重定向、不走代理，SSE 接收有上限。
 use crate::relay_types::{ProviderCredential, RelayError, RelayGrant, RelayProvider};
 use serde_json::Value;
 use std::{sync::Arc, time::Duration};
 
-/// Network boundary injectable for deterministic failure/indeterminate contract tests.
+/// 可注入的网络边界，供确定性的失败／结果未定契约测试使用。
 pub trait RelayTransport: Send + Sync {
-    /// Sends one already-authorized request. Implementations must not retry an unknown outcome.
+    /// 发送一个已授权的请求。实现不得重试结果未知的请求。
     fn execute(
         &self,
         grant: &RelayGrant,
@@ -13,13 +13,13 @@ pub trait RelayTransport: Send + Sync {
         check: &dyn Fn() -> Result<(), RelayError>,
     ) -> Result<Vec<u8>, RelayError>;
 }
-/// The only component that holds both dedicated provider credentials.
+/// 唯一同时持有两份专用供应商凭据的组件。
 pub struct HttpsRelayTransport {
     anthropic: Arc<ProviderCredential>,
     openai: Arc<ProviderCredential>,
 }
 impl HttpsRelayTransport {
-    /// Credentials must originate from separate Gateway-only process secret mounts.
+    /// 凭据必须来自仅 Gateway 进程可见、彼此独立的密钥挂载。
     #[must_use]
     pub fn new(anthropic: ProviderCredential, openai: ProviderCredential) -> Self {
         Self {
@@ -29,7 +29,7 @@ impl HttpsRelayTransport {
     }
 }
 impl HttpsRelayTransport {
-    /// Streams chunks only to the trusted Gateway front process; this is not Runner publication.
+    /// 只把分块流式交给可信的 Gateway 前端进程；这不是向 Runner 发布。
     pub fn forward(
         &self,
         grant: &RelayGrant,
@@ -56,7 +56,7 @@ impl HttpsRelayTransport {
                 .header("content-type", "application/json")
                 .header("accept", "text/event-stream")
                 .body(request.to_vec());
-            // No incoming CLI headers are forwarded. Dedicated credentials are injected only here.
+            // 不转发任何来自 CLI 的请求头；专用凭据只在此处注入。
             let request = match grant.provider {
                 RelayProvider::Anthropic => request
                     .header("x-api-key", self.anthropic.expose())

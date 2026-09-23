@@ -85,13 +85,13 @@ impl BrokerPrecondition {
     }
 }
 
-/// 按固定顺序登记的六个参与者。
+/// 按固定顺序登记的全部参与者，与 `CheckpointOwner::FREEZE_ORDER` 逐项对应。
 pub struct CrossOwnerBarrier<'a> {
     participants: Vec<&'a dyn CheckpointParticipant>,
 }
 
 impl<'a> CrossOwnerBarrier<'a> {
-    /// 登记参与者。六个 owner 必须全部登记，未装配的也要登记为 Absent。
+    /// 登记参与者。`FREEZE_ORDER` 里的每个 owner 都必须登记，未装配的也要登记为 Absent。
     pub fn assemble(
         participants: impl IntoIterator<Item = &'a dyn CheckpointParticipant>,
     ) -> Result<Self, BarrierError> {

@@ -1,4 +1,4 @@
-//! Capability-checked tool and model-relay seam with in-memory M0 adapters.
+//! 经 capability 校验的工具与模型中继接缝：含 M0 内存适配器与持久化真实中继 `DurableRelay`。
 
 mod admission;
 mod durable_relay;
@@ -43,13 +43,13 @@ use studiolo_audit_ledger::{
 };
 use studiolo_core::{AttemptId, Fence, PermissionSet, TaskId, ToolId};
 
-/// Stable idempotency identity of a Gateway invocation.
+/// Gateway 调用的稳定幂等身份。
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
 #[serde(transparent)]
 pub struct CallId(String);
 
 impl CallId {
-    /// Parses a non-empty identifier without control characters.
+    /// 解析标识符：不能为空或全为空白，也不能含控制字符。
     pub fn parse(value: impl Into<String>) -> Result<Self, GatewayError> {
         let value = value.into();
         if value.trim().is_empty() || value.chars().any(char::is_control) {
@@ -58,7 +58,7 @@ impl CallId {
         Ok(Self(value))
     }
 
-    /// Returns the textual identifier.
+    /// 返回标识符文本。
     #[must_use]
     pub fn as_str(&self) -> &str {
         &self.0
@@ -81,7 +81,7 @@ impl<'de> Deserialize<'de> for CallId {
     }
 }
 
-/// Short-lived authority presented by a runner for one attempt.
+/// runner 为某一次 attempt 出示的短期授权凭证。
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct JobCapability {
     task_id: TaskId,
@@ -92,7 +92,7 @@ pub struct JobCapability {
 }
 
 impl JobCapability {
-    /// Constructs the M0 in-process representation of a validated capability.
+    /// 构造已校验 capability 在 M0 进程内的表示。
     #[must_use]
     pub fn new(
         task_id: TaskId,
@@ -110,38 +110,38 @@ impl JobCapability {
         }
     }
 
-    /// Returns the bound task.
+    /// 返回绑定的任务。
     #[must_use]
     pub fn task_id(&self) -> TaskId {
         self.task_id
     }
 
-    /// Returns the bound attempt.
+    /// 返回绑定的 attempt。
     #[must_use]
     pub fn attempt_id(&self) -> AttemptId {
         self.attempt_id
     }
 
-    /// Returns the bound fencing token.
+    /// 返回绑定的 fencing token。
     #[must_use]
     pub fn fence(&self) -> Fence {
         self.fence
     }
 
-    /// Returns the capability's tool ceiling.
+    /// 返回该 capability 的工具上限。
     #[must_use]
     pub fn allowed_tools(&self) -> &PermissionSet {
         &self.allowed_tools
     }
 
-    /// Returns the expiry as seconds from the Unix epoch.
+    /// 返回到期时间（自 Unix 纪元起的秒数）。
     #[must_use]
     pub fn expires_at_unix_seconds(&self) -> i64 {
         self.expires_at_unix_seconds
     }
 }
 
-/// Fresh state returned by [`AttemptGuard`] for an attempt.
+/// [`AttemptGuard`] 为某次 attempt 返回的最新状态。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct AttemptSnapshot {
     fence: Fence,
@@ -149,7 +149,7 @@ pub struct AttemptSnapshot {
 }
 
 impl AttemptSnapshot {
-    /// Creates a live attempt state.
+    /// 创建活动中的 attempt 状态。
     #[must_use]
     pub fn active(fence: Fence) -> Self {
         Self {
@@ -158,7 +158,7 @@ impl AttemptSnapshot {
         }
     }
 
-    /// Creates a cancelled attempt state.
+    /// 创建已取消的 attempt 状态。
     #[must_use]
     pub fn cancelled(fence: Fence) -> Self {
         Self {
@@ -167,33 +167,33 @@ impl AttemptSnapshot {
         }
     }
 
-    /// Returns the current fencing token.
+    /// 返回当前的 fencing token。
     #[must_use]
     pub fn fence(self) -> Fence {
         self.fence
     }
 
-    /// Returns whether capability use has been cancelled.
+    /// 返回 capability 的使用是否已被取消。
     #[must_use]
     pub fn is_cancelled(self) -> bool {
         self.cancelled
     }
 }
 
-/// Failure to load the live attempt state.
+/// 加载实时 attempt 状态失败。
 #[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum AttemptGuardError {
-    /// The task/attempt pair is not active or does not exist.
+    /// 该 task/attempt 组合未处于活动状态或不存在。
     #[error("attempt is not active")]
     UnknownAttempt,
-    /// The runtime-state authority cannot currently answer.
+    /// 运行时状态的权威来源当前无法应答。
     #[error("attempt guard is unavailable")]
     Unavailable,
 }
 
-/// Live, non-cached authority for fence and cancellation checks.
+/// 用于 fence 与取消检查的实时、无缓存权威来源。
 pub trait AttemptGuard: Send + Sync {
-    /// Loads current state for the exact task/attempt pair.
+    /// 加载精确 task/attempt 组合的当前状态。
     fn inspect(
         &self,
         task_id: TaskId,
@@ -201,20 +201,20 @@ pub trait AttemptGuard: Send + Sync {
     ) -> Result<AttemptSnapshot, AttemptGuardError>;
 }
 
-/// Mutable in-memory attempt authority for contract and restart tests.
+/// 可变的内存 attempt 权威来源，供契约测试与重启测试使用。
 #[derive(Debug, Default)]
 pub struct MemoryAttemptGuard {
     attempts: Mutex<BTreeMap<(TaskId, AttemptId), AttemptSnapshot>>,
 }
 
 impl MemoryAttemptGuard {
-    /// Creates an empty guard.
+    /// 创建一个空的 guard。
     #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// Inserts or updates the current state of an attempt.
+    /// 插入或更新某次 attempt 的当前状态。
     pub fn set(
         &self,
         task_id: TaskId,
@@ -244,20 +244,20 @@ impl AttemptGuard for MemoryAttemptGuard {
     }
 }
 
-/// Clock boundary used to evaluate capability expiry without sleeping in tests.
+/// 时钟边界：用于评估 capability 是否到期，使测试无需 sleep。
 pub trait Clock: Send + Sync {
-    /// Returns whole seconds from the Unix epoch.
+    /// 返回自 Unix 纪元起的整秒数。
     fn now_unix_seconds(&self) -> i64;
 }
 
-/// Deterministic clock for M0 contract tests.
+/// 供 M0 契约测试使用的确定性时钟。
 #[derive(Debug)]
 pub struct ManualClock {
     now: std::sync::atomic::AtomicI64,
 }
 
 impl ManualClock {
-    /// Creates a clock fixed at `now_unix_seconds`.
+    /// 创建固定在 `now_unix_seconds` 的时钟。
     #[must_use]
     pub fn new(now_unix_seconds: i64) -> Self {
         Self {
@@ -265,7 +265,7 @@ impl ManualClock {
         }
     }
 
-    /// Changes the current instant.
+    /// 修改当前时刻。
     pub fn set(&self, now_unix_seconds: i64) {
         self.now
             .store(now_unix_seconds, std::sync::atomic::Ordering::SeqCst);
@@ -278,7 +278,7 @@ impl Clock for ManualClock {
     }
 }
 
-/// Independently imposed deployment, policy, and role ceilings.
+/// 相互独立施加的部署、策略与角色三层上限。
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct PermissionLayers {
     deployment: PermissionSet,
@@ -287,7 +287,7 @@ pub struct PermissionLayers {
 }
 
 impl PermissionLayers {
-    /// Creates the three Gateway-owned permission ceilings.
+    /// 创建 Gateway 自有的三层权限上限。
     #[must_use]
     pub fn new(deployment: PermissionSet, policy: PermissionSet, role: PermissionSet) -> Self {
         Self {
@@ -305,7 +305,7 @@ impl PermissionLayers {
     }
 }
 
-/// Structured request for a logical Gateway tool.
+/// 调用 Gateway 逻辑工具的结构化请求。
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ToolCall {
     call_id: CallId,
@@ -314,7 +314,7 @@ pub struct ToolCall {
 }
 
 impl ToolCall {
-    /// Creates a tool call. Tool-specific argument validation belongs to its adapter.
+    /// 创建一次工具调用；各工具的参数校验由其适配器负责。
     #[must_use]
     pub fn new(call_id: CallId, tool: ToolId, arguments: Value) -> Self {
         Self {
@@ -324,26 +324,26 @@ impl ToolCall {
         }
     }
 
-    /// Returns the stable call identifier.
+    /// 返回稳定的调用标识符。
     #[must_use]
     pub fn call_id(&self) -> &CallId {
         &self.call_id
     }
 
-    /// Returns the requested logical tool.
+    /// 返回所请求的逻辑工具。
     #[must_use]
     pub fn tool(&self) -> &ToolId {
         &self.tool
     }
 
-    /// Returns the structured tool arguments.
+    /// 返回结构化的工具参数。
     #[must_use]
     pub fn arguments(&self) -> &Value {
         &self.arguments
     }
 }
 
-/// Structured result from a logical Gateway tool.
+/// Gateway 逻辑工具返回的结构化结果。
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ToolResult {
     call_id: CallId,
@@ -352,7 +352,7 @@ pub struct ToolResult {
 }
 
 impl ToolResult {
-    /// Creates a structured tool result in a Gateway adapter.
+    /// 在 Gateway 适配器中创建结构化的工具结果。
     #[must_use]
     pub fn new(call_id: CallId, tool: ToolId, output: Value) -> Self {
         Self {
@@ -362,26 +362,26 @@ impl ToolResult {
         }
     }
 
-    /// Returns the stable call identifier.
+    /// 返回稳定的调用标识符。
     #[must_use]
     pub fn call_id(&self) -> &CallId {
         &self.call_id
     }
 
-    /// Returns the logical tool.
+    /// 返回逻辑工具。
     #[must_use]
     pub fn tool(&self) -> &ToolId {
         &self.tool
     }
 
-    /// Returns the in-memory adapter output.
+    /// 返回内存适配器的输出。
     #[must_use]
     pub fn output(&self) -> &Value {
         &self.output
     }
 }
 
-/// Request for the model-relay branch of the Gateway seam.
+/// Gateway 接缝中模型中继分支的请求。
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ModelRequest {
     call_id: CallId,
@@ -391,7 +391,7 @@ pub struct ModelRequest {
 }
 
 impl ModelRequest {
-    /// Creates a relay request.
+    /// 创建一个中继请求。
     #[must_use]
     pub fn new(
         call_id: CallId,
@@ -407,32 +407,32 @@ impl ModelRequest {
         }
     }
 
-    /// Returns the stable call identifier.
+    /// 返回稳定的调用标识符。
     #[must_use]
     pub fn call_id(&self) -> &CallId {
         &self.call_id
     }
 
-    /// Returns the logical provider name.
+    /// 返回逻辑供应商名。
     #[must_use]
     pub fn provider(&self) -> &str {
         &self.provider
     }
 
-    /// Returns the logical model name.
+    /// 返回逻辑模型名。
     #[must_use]
     pub fn model(&self) -> &str {
         &self.model
     }
 
-    /// Returns the relay prompt supplied by the caller.
+    /// 返回调用方提供的中继提示词。
     #[must_use]
     pub fn prompt(&self) -> &str {
         &self.prompt
     }
 }
 
-/// Result from the model-relay branch of the Gateway seam.
+/// Gateway 接缝中模型中继分支的结果。
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ModelResponse {
     call_id: CallId,
@@ -442,7 +442,7 @@ pub struct ModelResponse {
 }
 
 impl ModelResponse {
-    /// Creates a structured model response in a Gateway adapter.
+    /// 在 Gateway 适配器中创建结构化的模型响应。
     #[must_use]
     pub fn new(
         call_id: CallId,
@@ -458,71 +458,71 @@ impl ModelResponse {
         }
     }
 
-    /// Returns the stable call identifier.
+    /// 返回稳定的调用标识符。
     #[must_use]
     pub fn call_id(&self) -> &CallId {
         &self.call_id
     }
 
-    /// Returns the configured provider.
+    /// 返回配置的供应商。
     #[must_use]
     pub fn provider(&self) -> &str {
         &self.provider
     }
 
-    /// Returns the configured model.
+    /// 返回配置的模型。
     #[must_use]
     pub fn model(&self) -> &str {
         &self.model
     }
 
-    /// Returns the relay response text.
+    /// 返回中继响应文本。
     #[must_use]
     pub fn text(&self) -> &str {
         &self.text
     }
 }
 
-/// Errors returned at the Gateway boundary.
+/// Gateway 边界返回的错误。
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum GatewayError {
-    /// A call identifier was empty or contained control characters.
+    /// 调用标识符无效：为空（或全为空白）、含控制字符，或无法据此构成审计事件 ID。
     #[error("gateway call id is invalid")]
     InvalidCallId,
-    /// The task/attempt pair is unknown.
+    /// 该 task/attempt 组合未处于活动状态或不存在。
     #[error("attempt is not active")]
     AttemptNotActive,
-    /// Runtime state could not be checked, so the request failed closed.
+    /// 无法检查运行时状态，请求按失败关闭处理。
     #[error("attempt guard is unavailable")]
     AttemptGuardUnavailable,
-    /// The attempt was cancelled and its capability is revoked.
+    /// 该 attempt 已取消，其 capability 已被撤销。
     #[error("attempt is cancelled")]
     Cancelled,
-    /// The presented fencing token is stale.
+    /// 出示的 fencing token 已过时。
     #[error("capability fence does not match the live attempt")]
     FenceMismatch,
-    /// The short-lived capability has expired.
+    /// 短期 capability 已过期。
     #[error("job capability is expired")]
     CapabilityExpired,
-    /// At least one permission layer denied the requested tool.
+    /// 至少有一层权限拒绝了所请求的工具。
     #[error("tool is not allowed")]
     ToolNotAllowed,
-    /// Authoritative audit persistence failed, so the call was not released.
+    /// 权威审计持久化失败，因此调用未被放行。
     #[error("authoritative audit is unavailable")]
     AuditUnavailable,
-    /// The in-memory tool adapter has no configured response.
+    /// 内存工具适配器没有配置响应。
     #[error("tool adapter is unavailable")]
     ToolUnavailable,
-    /// The in-memory model adapter has no configured response.
+    /// 内存模型适配器没有配置响应。
     #[error("model relay is unavailable")]
     ModelUnavailable,
-    /// A call identifier was reused with different request content.
+    /// 同一调用标识符被用于内容不同的请求。
     #[error("call id conflicts with a prior request")]
     CallConflict,
-    /// The identical call already completed, but its retained result was evicted.
+    /// 完全相同的调用已经完成，但保留的结果已被逐出。
     #[error("call already completed and its result is no longer retained")]
     CallResultEvicted,
-    /// In-memory adapter state was poisoned.
+    /// 内存适配器状态不可用（互斥锁中毒等）。
     #[error("gateway state is unavailable")]
     StateUnavailable,
 }
@@ -547,16 +547,16 @@ impl GatewayError {
     }
 }
 
-/// Synchronous, object-safe Gateway seam used by Stub and future real runners.
+/// 同步、对象安全的 Gateway 接缝，供 Stub 以及后续的真实 runner 使用。
 pub trait Gateway: Send + Sync {
-    /// Invokes one capability-checked logical tool.
+    /// 调用一个经 capability 校验的逻辑工具。
     fn invoke(
         &self,
         capability: &JobCapability,
         call: ToolCall,
     ) -> Result<ToolResult, GatewayError>;
 
-    /// Relays one capability-checked model request.
+    /// 中继一个经 capability 校验的模型请求。
     fn relay(
         &self,
         capability: &JobCapability,
@@ -755,7 +755,7 @@ impl<Request: PartialEq, Response: Clone> CallTable<Request, Response> {
     }
 }
 
-/// In-memory Gateway adapter with configurable deterministic responses.
+/// 内存 Gateway 适配器，响应可配置且确定。
 pub struct MemoryGateway {
     guard: Arc<dyn AttemptGuard>,
     audit: Arc<dyn AuditLedger>,
@@ -768,7 +768,7 @@ pub struct MemoryGateway {
 }
 
 impl MemoryGateway {
-    /// Creates an adapter from explicit runtime-state, audit, clock, and policy seams.
+    /// 由显式注入的运行时状态、审计、时钟与策略接缝创建适配器。
     #[must_use]
     pub fn new(
         guard: Arc<dyn AttemptGuard>,
@@ -788,13 +788,13 @@ impl MemoryGateway {
         }
     }
 
-    /// Configures the deterministic result for one logical tool.
+    /// 为某个逻辑工具配置确定的结果。
     pub fn set_tool_response(&self, tool: ToolId, output: Value) -> Result<(), GatewayError> {
         self.lock(&self.tool_responses)?.insert(tool, output);
         Ok(())
     }
 
-    /// Configures the deterministic result for one provider/model pair.
+    /// 为某个供应商／模型组合配置确定的结果。
     pub fn set_model_response(
         &self,
         provider: impl Into<String>,

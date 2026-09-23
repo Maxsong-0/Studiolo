@@ -74,7 +74,7 @@ impl OutputDrain {
 
 /// 配置查询输出必须完整落在预算内才允许解析。
 ///
-/// # Errors
+/// # 错误
 /// 超过 `config_json_bytes` 返回 `BudgetUnsupported`。
 pub fn config_output_acceptable(
     drain: &OutputDrain,

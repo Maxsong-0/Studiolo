@@ -20,6 +20,8 @@ T-037 HTTP 外壳的同一类型身份、白名单、完整副本验证和审计
 | `CONTEXT.md`、`sources/` | 项目标识、来源摘要、离线限制及保持原字节/相对目录的选定资料 |
 | `manifest.json` | schema、来源 URL/代次/摘要/确认时间、导出时间、读取身份、源 revision 及逐文件 SHA256 |
 
+以下是缺省的 vault 模式；规则与 skills 改从策略平面读取见
+[从策略平面 effective 导出](#从策略平面-effective-导出)。
 配置只允许显式规则 Markdown（`_规则/` 内，或所选项目的 `CLAUDE.md`），
 以及 `_规则/skills/<名称>` 下完整的 Markdown 技能参考目录。每个技能须有 `SKILL.md`；
 发现附件、脚本或其他非 Markdown 文件会拒绝整批，避免生成缺失执行资源的技能包。
@@ -110,6 +112,41 @@ HTTP 每次超时 15 秒，单次导出接收总量有上限；只接受 ready �
 
 离线只供规则和技能参考，不能据此认领任务、更新实时协调黑板或开展 A2A。
 线上导出读取可审计，本地后续读取不经过服务器；已经导出的字节无法被在线吊销即时收回。
+
+## 从策略平面 effective 导出
+
+T-111（2026-09-22）。配置加可选键 `rules_source`：缺省或 `vault` 即上文行为，manifest 与输出
+逐字节不变；`policy` 时规则与 skills 正文改取自 agent 的 `GET /read/policy`（策略平面现行
+effective），不再读 Vault 文件。起点见 [策略模式示例配置](client-projection.policy.example.json)，
+`schema_version` 仍为 1。
+
+- 名字：`rules` 是规则母本 subject（单段 `.md` 文件名，≤128 字符，不含 `/`、`..`、控制字符，
+  大小写不敏感去重），`skills` 是 skill 名（小写字母、数字、连字符，≤64）。未知取值或任一名字
+  不合规，整份配置拒绝。
+- 读取：握手 → `kind=rules` 清单 → 逐项 `kind=rules&subject=…` → 选了 skills 时再取 `kind=skills`
+  清单与逐项 → 末次握手。每次读取都经能力集授权并审计为 `policy_read`
+  （路径 `policy://rules/<subject>`、revision `v<版本>`）。格式唯一来源是
+  `crates/agent-server/src/server.rs` 的 `text_policy_read`。
+- 一致性：两份清单与每份正文首行 `# 策略版本 <12 位>` 必须相同，否则视为导出途中 effective
+  变化，整批拒绝；所选名字不在清单直接拒绝，不发正文请求；逐项 `@v<版本>` 须与清单相同；
+  规则正文 SHA256 须等于服务端声明，skill 按服务端规范 JSON（serde 字段序）复算后须相同。
+- 输出：规则母本原字节落 `sources/policy/rules/<subject>`；skill 落
+  `sources/policy/skills/<名>/SKILL.md`，内容是服务端返回的 `摘要：…`、`触发：…`、空行加
+  Markdown 正文，原样不改写。入口文件标明策略版本，不写 Vault generation。
+- manifest：顶层增 `rules_source: "policy"` 与 `policy_effective`（12 位）；每项以
+  `policy_version`、`policy_sha12` 取代 vault 的 `revision`。规则的 `policy_sha12` 必须等于
+  正文 SHA256 前 12 位；skill 的是规范 JSON 的摘要。
+- 漂移：`projection_key` 以 `policy_effective` 取代 Vault generation/摘要，副本换代不算来源变化。
+  策略版本或逐项版本/摘要一变，`plan` 为 `changed`，`check --online` 为 `source_changed`
+  （退出码 2）；两者都附 `policy` 字段列出新旧策略版本与变化项。effective 覆盖全部规则、
+  skills 与能力集，未选中的条目变化同样改变策略版本；此时 `items` 为空，表示所选资料本身未变。
+
+限制：导出仍要求握手时托管副本 ready 且新鲜（manifest 照旧记录确认时间）。skill 的摘要或触发
+含换行、触发含 ` | ` 时，文本协议无法唯一还原，复算对不上即整批拒绝；skills 清单里任一摘要
+含换行也会让计数不符而拒绝。契约：schema 12、抓取 25、存储 21 项全部通过；另用本仓库构建的
+agent 加隔离策略平面（`policy-init`、`policy-bootstrap`）做过一次真实联调：含特殊字符的 skill
+摘要与服务端逐位一致，读取全部入审计，新增规则后 `check --online` 报出策略版本变化；
+该联调脚本是临时产物，未入库。
 
 ## 客户端格式与验收边界
 

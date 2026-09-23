@@ -7,16 +7,28 @@ fn new_marker_and_private_terminal_fields_are_closed() {
     let state = crate::mutation::load(&broker).unwrap();
     let mut bad = state.clone();
     bad.rename_enabled = false;
-    assert!(bad.validate(bad.pair_id).is_err());
+    assert!(matches!(
+        bad.validate(bad.pair_id),
+        Err(BrokerError::CorruptWriterState)
+    ));
     let mut bad = state.clone();
     bad.format_version = 5;
-    assert!(bad.validate(bad.pair_id).is_err());
+    assert!(matches!(
+        bad.validate(bad.pair_id),
+        Err(BrokerError::CorruptWriterState)
+    ));
     let mut bad = state.clone();
     bad.file_operation.as_mut().unwrap().rename = None;
-    assert!(bad.validate(bad.pair_id).is_err());
+    assert!(matches!(
+        bad.validate(bad.pair_id),
+        Err(BrokerError::CorruptWriterState)
+    ));
     let mut bad = state.clone();
     bad.file_operation.as_mut().unwrap().phase = FileOperationPhase::TargetInstalled;
-    assert!(bad.validate(bad.pair_id).is_err());
+    assert!(matches!(
+        bad.validate(bad.pair_id),
+        Err(BrokerError::CorruptWriterState)
+    ));
     intent(&mut broker, &ticket);
     let result = broker.commit_file_operation(&ticket).unwrap();
     let request = ops::request::load(&broker, &result.operation_id)
@@ -27,16 +39,28 @@ fn new_marker_and_private_terminal_fields_are_closed() {
         .unwrap();
     let mut bad = terminal.clone();
     bad.receipt.effects.swap(0, 1);
-    assert!(bad.validate(state.pair_id).is_err());
+    assert!(matches!(
+        bad.validate(state.pair_id),
+        Err(BrokerError::CorruptWriterState)
+    ));
     let mut bad = terminal.clone();
     bad.receipt.effects[1] = bad.receipt.effects[0].clone();
-    assert!(bad.validate(state.pair_id).is_err());
+    assert!(matches!(
+        bad.validate(state.pair_id),
+        Err(BrokerError::CorruptWriterState)
+    ));
     let mut bad = terminal.clone();
     bad.rename = None;
-    assert!(bad.validate(state.pair_id).is_err());
+    assert!(matches!(
+        bad.validate(state.pair_id),
+        Err(BrokerError::CorruptWriterState)
+    ));
     let mut bad = terminal.clone();
     bad.format_version = 5;
-    assert!(bad.validate(state.pair_id).is_err());
+    assert!(matches!(
+        bad.validate(state.pair_id),
+        Err(BrokerError::CorruptWriterState)
+    ));
     let mut bad = terminal.clone();
     if let FileEffect::Confirmed {
         after: FilePresence::Present { revision: r, .. },
@@ -45,7 +69,10 @@ fn new_marker_and_private_terminal_fields_are_closed() {
     {
         *r = revision;
     }
-    assert!(bad.validate(state.pair_id).is_err());
+    assert!(matches!(
+        bad.validate(state.pair_id),
+        Err(BrokerError::CorruptWriterState)
+    ));
 }
 #[test]
 fn malformed_dual_review_fields_cannot_be_confirmed_as_a_different_intent() {
@@ -59,40 +86,42 @@ fn malformed_dual_review_fields_cannot_be_confirmed_as_a_different_intent() {
     let original = ops::maintenance::target(&review).unwrap();
     let mut wrong = original.clone();
     wrong.secondary = None;
-    assert!(
+    assert!(matches!(
         ops::maintenance::validate(
             &broker,
             &review,
             &wrong,
             MaintenanceDecision::PreserveInstalling
-        )
-        .is_err()
-    );
+        ),
+        Err(BrokerError::CorruptWriterState)
+    ));
     let mut wrong = original.clone();
     wrong.file_operation.as_mut().unwrap().effects.swap(0, 1);
-    assert!(
+    assert!(matches!(
         ops::maintenance::validate(
             &broker,
             &review,
             &wrong,
             MaintenanceDecision::PreserveInstalling
-        )
-        .is_err()
-    );
+        ),
+        Err(BrokerError::CorruptWriterState)
+    ));
     let mut wrong = original;
     wrong.secondary.as_mut().unwrap().current = MaintenanceCurrent::Missing;
-    assert!(
+    assert!(matches!(
         ops::maintenance::validate(
             &broker,
             &review,
             &wrong,
             MaintenanceDecision::PreserveInstalling
-        )
-        .is_err()
-    );
+        ),
+        Err(BrokerError::CorruptWriterState)
+    ));
 }
 #[test]
 fn unsafe_names_cross_extension_and_new_links_are_rejected_before_any_issued() {
+    // 别名/前缀交叠与跨扩展名按非法请求拒绝，隐藏目标命中保护域，缺失父目录在打开布局时失败。
+    const OVERLAP: &str = "重命名路径相同、别名或前缀交叠";
     for to in [
         "NOTE.md",
         "note.md/child.md",
@@ -101,41 +130,61 @@ fn unsafe_names_cross_extension_and_new_links_are_rejected_before_any_issued() {
         "missing/target.md",
     ] {
         let (fixture, mut broker, revision) = setup(b"old");
-        assert!(
-            broker
-                .prepare_file_operation(request("note.md", to, revision, "invalid"), metadata())
-                .is_err(),
-            "未拒绝非法目标：{to}"
-        );
+        let result =
+            broker.prepare_file_operation(request("note.md", to, revision, "invalid"), metadata());
+        let rejected = match to {
+            "NOTE.md" | "note.md/child.md" => {
+                matches!(&result, Err(BrokerError::InvalidArtifact(reason)) if reason == OVERLAP)
+            }
+            ".hidden/target.md" => {
+                matches!(&result, Err(BrokerError::ProtectedPath(path)) if *path == logical(to))
+            }
+            "target.pdf" => matches!(
+                &result,
+                Err(BrokerError::InvalidArtifact(reason)) if reason == "不允许跨扩展名类别重命名"
+            ),
+            _ => matches!(
+                &result,
+                Err(BrokerError::Io {
+                    operation: "open writer layout",
+                    source,
+                }) if source.kind() == std::io::ErrorKind::NotFound
+            ),
+        };
+        assert!(rejected, "未按预期拒绝非法目标 {to}：{:?}", result.err());
         assert_eq!(fs::read(fixture.root.join("note.md")).unwrap(), b"old");
         assert!(!broker.write_status().unwrap().unresolved);
         assert_eq!(crate::mutation::load(&broker).unwrap().next_sequence, 1);
     }
     let (fixture, mut broker, revision) = setup(b"old");
-    assert!(
-        broker
-            .prepare_file_operation(
-                request(
-                    "missing/note.md",
-                    "target.md",
-                    revision,
-                    "missing-source-parent"
-                ),
-                metadata(),
-            )
-            .is_err()
-    );
+    assert!(matches!(
+        broker.prepare_file_operation(
+            request(
+                "missing/note.md",
+                "target.md",
+                revision,
+                "missing-source-parent"
+            ),
+            metadata(),
+        ),
+        Err(BrokerError::Io {
+            operation: "open writer layout",
+            source,
+        }) if source.kind() == std::io::ErrorKind::NotFound
+    ));
     assert_eq!(crate::mutation::load(&broker).unwrap().next_sequence, 1);
     assert!(!broker.write_status().unwrap().unresolved);
     assert!(!fixture.root.join("target.md").exists());
     let (fixture, mut broker, revision) = setup(b"old");
     fs::hard_link(fixture.root.join("note.md"), fixture.root.join("alias.md")).unwrap();
-    assert!(
-        broker
-            .prepare_file_operation(
-                request("note.md", "target.md", revision, "link"),
-                metadata()
-            )
-            .is_err()
-    );
+    assert!(matches!(
+        broker.prepare_file_operation(
+            request("note.md", "target.md", revision, "link"),
+            metadata()
+        ),
+        Err(BrokerError::UnsafeNode {
+            reason: "hard-linked or unlinked file",
+            ..
+        })
+    ));
 }

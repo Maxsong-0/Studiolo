@@ -1,17 +1,19 @@
 //! 行为与失败契约：跨 owner 屏障必须固定顺序、有界等待、逐项 present/absent，
 //! 并且拒绝一切「看起来像冻结」的替代物。
+//!
+//! 本文件管登记与固定顺序（含 M4 策略库的位置）；排空与有界等待在 `drain`，
+//! 导出、封存与传输源在 `seal`。
 
-use super::support::{
-    StubParticipant, TestClock, drained, full_roster, request, transfer_source, verified_checkpoint,
-};
+mod drain;
+mod seal;
+
+use super::support::{StubParticipant, TestClock, request};
+use std::sync::atomic::Ordering;
 use studiolo_backup::checkpoint::barrier::{BarrierError, BrokerPrecondition, CrossOwnerBarrier};
-use studiolo_backup::checkpoint::types::SealError;
 use studiolo_core::VaultUuid;
 use studiolo_core::checkpoint::{
-    CheckpointError, CheckpointOwner, CheckpointParticipant, InstantMillis, OwnerAssembly,
-    OwnerWatermark,
+    CheckpointError, CheckpointOwner, CheckpointParticipant, OwnerAssembly,
 };
-use tempfile::TempDir;
 
 fn settled() -> BrokerPrecondition {
     BrokerPrecondition {
@@ -50,8 +52,16 @@ fn refs<'a>(participants: &'a [StubParticipant<'a>]) -> Vec<&'a dyn CheckpointPa
         .collect()
 }
 
+/// 某个 owner 在固定顺序里的下标；按 owner 取参与者，不写死下标。
+fn position(owner: CheckpointOwner) -> usize {
+    CheckpointOwner::FREEZE_ORDER
+        .iter()
+        .position(|candidate| *candidate == owner)
+        .expect("owner 必须在固定顺序里")
+}
+
 #[test]
-fn every_assembled_owner_freezes_in_the_fixed_order_and_the_roster_lists_all_six() {
+fn every_assembled_owner_freezes_in_the_fixed_order_and_the_roster_lists_all_seven() {
     let world = World::new();
     let participants = world.participants();
     let barrier = CrossOwnerBarrier::assemble(refs(&participants)).expect("assemble");
@@ -68,8 +78,8 @@ fn every_assembled_owner_freezes_in_the_fixed_order_and_the_roster_lists_all_six
     assert_eq!(observed, CheckpointOwner::FREEZE_ORDER.to_vec());
     assert_eq!(
         window.roster().expect("roster").entries().count(),
-        6,
-        "六个 owner 一个都不能缺项"
+        7,
+        "七个 owner 一个都不能缺项"
     );
     window.thaw();
 }
@@ -128,115 +138,6 @@ fn an_out_of_order_or_duplicated_participant_list_is_refused() {
 }
 
 #[test]
-fn pausing_http_without_blocking_local_maintenance_writers_is_not_drained() {
-    let world = World::new();
-    let mut participants = world.participants();
-    participants[1].drain.local_maintenance_writers_blocked = false;
-    let barrier = CrossOwnerBarrier::assemble(refs(&participants)).expect("assemble");
-
-    let error = barrier
-        .freeze(&request("cp-1", 1_000), settled(), &world.clock)
-        .err();
-
-    assert!(matches!(
-        error,
-        Some(BarrierError::Owner(CheckpointError::NotDrained {
-            owner: CheckpointOwner::Control
-        }))
-    ));
-}
-
-#[test]
-fn auth_implicit_read_writes_must_also_be_blocked() {
-    let world = World::new();
-    let mut participants = world.participants();
-    participants[2].drain.implicit_read_writes_blocked = false;
-
-    let barrier = CrossOwnerBarrier::assemble(refs(&participants)).expect("assemble");
-    assert!(matches!(
-        barrier.freeze(&request("cp-1", 1_000), settled(), &world.clock),
-        Err(BarrierError::Owner(CheckpointError::NotDrained {
-            owner: CheckpointOwner::Auth
-        }))
-    ));
-}
-
-#[test]
-fn a_readable_prepared_record_does_not_by_itself_block_the_freeze() {
-    let world = World::new();
-    let mut participants = world.participants();
-    participants[0].drain.prepared_readable = true;
-    let barrier = CrossOwnerBarrier::assemble(refs(&participants)).expect("assemble");
-
-    let mut window = barrier
-        .freeze(&request("cp-1", 1_000), settled(), &world.clock)
-        .expect("prepared 可读只是事实记录");
-    assert!(window.receipts()[0].drain.prepared_readable);
-    window.thaw();
-}
-
-#[test]
-fn one_successful_background_delivery_is_not_all_pending_delivered() {
-    let world = World::new();
-    let mut participants = world.participants();
-    participants[1].drain.background_delivery_pending = 3;
-    let barrier = CrossOwnerBarrier::assemble(refs(&participants)).expect("assemble");
-
-    assert!(matches!(
-        barrier.freeze(&request("cp-1", 1_000), settled(), &world.clock),
-        Err(BarrierError::Owner(CheckpointError::NotDrained {
-            owner: CheckpointOwner::Control
-        }))
-    ));
-}
-
-#[test]
-fn waiting_past_the_budget_is_a_timeout_even_when_the_owner_claims_it_drained() {
-    let world = World::new();
-    let mut participants = world.participants();
-    participants[3].freeze_cost = 5_000;
-    participants[3].drain = drained();
-    let barrier = CrossOwnerBarrier::assemble(refs(&participants)).expect("assemble");
-
-    assert!(matches!(
-        barrier.freeze(&request("cp-1", 1_000), settled(), &world.clock),
-        Err(BarrierError::Owner(CheckpointError::FreezeTimeout {
-            owner: CheckpointOwner::Bridge
-        }))
-    ));
-}
-
-#[test]
-fn a_failed_freeze_thaws_every_owner_that_was_already_frozen() {
-    let world = World::new();
-    let mut participants = world.participants();
-    participants[3].drain.in_flight_operations = 1;
-    let barrier = CrossOwnerBarrier::assemble(refs(&participants)).expect("assemble");
-
-    assert!(
-        barrier
-            .freeze(&request("cp-1", 1_000), settled(), &world.clock)
-            .is_err()
-    );
-
-    for participant in participants.iter().take(4) {
-        assert_eq!(
-            participant.thawed.load(std::sync::atomic::Ordering::SeqCst),
-            1,
-            "{:?} 必须被解冻",
-            participant.owner
-        );
-    }
-    assert_eq!(
-        participants[5]
-            .thawed
-            .load(std::sync::atomic::Ordering::SeqCst),
-        0,
-        "还没冻结的 owner 不该被解冻"
-    );
-}
-
-#[test]
 fn an_unassembled_owner_is_recorded_as_absent_and_is_never_frozen_by_the_backup() {
     let world = World::new();
     let mut participants = world.participants();
@@ -259,191 +160,114 @@ fn an_unassembled_owner_is_recorded_as_absent_and_is_never_frozen_by_the_backup(
         0,
         "备份器不得擅自停止或解冻未装配的独立服务"
     );
-    assert_eq!(window.receipts().len(), 5);
+    assert_eq!(
+        window.receipts().len(),
+        6,
+        "七个 owner 里只有未装配的那个没有回执"
+    );
     window.thaw();
 }
 
 #[test]
-fn the_broker_must_hold_the_sole_lease_and_have_no_unresolved_operation() {
-    let world = World::new();
-    let participants = world.participants();
-    let barrier = CrossOwnerBarrier::assemble(refs(&participants)).expect("assemble");
-
-    assert!(matches!(
-        barrier.freeze(
-            &request("cp-1", 1_000),
-            BrokerPrecondition {
-                sole_writer_lease: false,
-                unresolved: false
-            },
-            &world.clock,
-        ),
-        Err(BarrierError::BrokerLeaseNotSole)
-    ));
-    assert!(matches!(
-        barrier.freeze(
-            &request("cp-1", 1_000),
-            BrokerPrecondition {
-                sole_writer_lease: true,
-                unresolved: true
-            },
-            &world.clock,
-        ),
-        Err(BarrierError::BrokerUnresolved)
-    ));
+fn the_policy_store_freezes_right_after_the_agent_store_and_the_audit_still_goes_last() {
+    assert_eq!(
+        CheckpointOwner::FREEZE_ORDER,
+        [
+            CheckpointOwner::Broker,
+            CheckpointOwner::Control,
+            CheckpointOwner::Auth,
+            CheckpointOwner::Bridge,
+            CheckpointOwner::AgentStore,
+            CheckpointOwner::Policy,
+            CheckpointOwner::Audit,
+        ],
+        "策略库在 AgentStore 之后、Audit 之前进入冻结"
+    );
+    assert_eq!(
+        CheckpointOwner::FREEZE_ORDER.last(),
+        Some(&CheckpointOwner::Audit)
+    );
+    assert_eq!(CheckpointOwner::Policy.as_str(), "policy");
+    assert_eq!(
+        serde_json::to_value(CheckpointOwner::Policy).expect("encode"),
+        serde_json::json!("policy"),
+        "清单里的稳定名字与序列化名一致"
+    );
 }
 
 #[test]
-fn an_unverified_owner_export_cannot_become_a_seal_ticket() {
-    let temporary = TempDir::new().expect("tempdir");
+fn a_barrier_without_the_policy_store_is_refused_rather_than_silently_skipping_it() {
     let world = World::new();
     let mut participants = world.participants();
-    // WAL checkpoint 仍然 busy：复制在线主文件忽略 WAL 的典型形态。
-    participants[2].export.wal.busy = 5;
-    let barrier = CrossOwnerBarrier::assemble(refs(&participants)).expect("assemble");
-    let mut window = barrier
-        .freeze(&request("cp-1", 1_000), settled(), &world.clock)
-        .expect("freeze");
-
-    let error = window.seal(
-        &request("cp-1", 1_000),
-        transfer_source(temporary.path()),
-        InstantMillis::from_millis(10),
-    );
+    participants.retain(|participant| participant.owner != CheckpointOwner::Policy);
 
     assert!(matches!(
-        error.err(),
-        Some(BarrierError::Owner(CheckpointError::Unverified {
-            owner: CheckpointOwner::Auth
+        CrossOwnerBarrier::assemble(refs(&participants)).err(),
+        Some(BarrierError::Owner(CheckpointError::OwnerMissing {
+            owner: CheckpointOwner::Policy
         }))
     ));
 }
 
 #[test]
-fn an_export_that_was_never_reopened_or_synced_is_refused() {
-    let world = World::new();
-    for break_it in [0_u8, 1, 2, 3] {
-        let temporary = TempDir::new().expect("tempdir");
-        let mut participants = world.participants();
-        match break_it {
-            0 => participants[0].export.target_synced = false,
-            1 => participants[0].export.parent_directory_synced = false,
-            2 => participants[0].export.reopen_verified = false,
-            _ => participants[0].export.source_binding_stable = false,
-        }
-        let barrier = CrossOwnerBarrier::assemble(refs(&participants)).expect("assemble");
-        let mut window = barrier
-            .freeze(&request("cp-1", 1_000), settled(), &world.clock)
-            .expect("freeze");
-        assert!(
-            matches!(
-                window.seal(
-                    &request("cp-1", 1_000),
-                    transfer_source(temporary.path()),
-                    InstantMillis::from_millis(10),
-                ),
-                Err(BarrierError::Owner(CheckpointError::Unverified {
-                    owner: CheckpointOwner::Broker
-                }))
-            ),
-            "break_it={break_it}"
-        );
-    }
-}
-
-#[test]
-fn a_broker_watermark_that_still_reports_unresolved_blocks_the_seal() {
-    let temporary = TempDir::new().expect("tempdir");
+fn an_undrained_policy_store_stops_the_freeze_before_the_audit_is_frozen() {
     let world = World::new();
     let mut participants = world.participants();
-    participants[0].export = verified_checkpoint(CheckpointOwner::Broker, world.vault, world.pair);
-    if let OwnerWatermark::Broker { unresolved, .. } = &mut participants[0].export.watermark {
-        *unresolved = true;
-    }
+    let policy = position(CheckpointOwner::Policy);
+    participants[policy].drain.in_flight_operations = 1;
     let barrier = CrossOwnerBarrier::assemble(refs(&participants)).expect("assemble");
-    let mut window = barrier
-        .freeze(&request("cp-1", 1_000), settled(), &world.clock)
-        .expect("freeze");
 
     assert!(matches!(
-        window.seal(
-            &request("cp-1", 1_000),
-            transfer_source(temporary.path()),
-            InstantMillis::from_millis(10),
-        ),
-        Err(BarrierError::BrokerUnresolved)
+        barrier.freeze(&request("cp-1", 1_000), settled(), &world.clock),
+        Err(BarrierError::Owner(CheckpointError::NotDrained {
+            owner: CheckpointOwner::Policy
+        }))
     ));
+    for participant in &participants[..=policy] {
+        assert_eq!(
+            participant.thawed.load(Ordering::SeqCst),
+            1,
+            "{:?} 必须被解冻",
+            participant.owner
+        );
+    }
+    assert_eq!(
+        participants[position(CheckpointOwner::Audit)]
+            .thawed
+            .load(Ordering::SeqCst),
+        0,
+        "Audit 还没进入存储冻结，不该被解冻"
+    );
 }
 
 #[test]
-fn a_seal_ticket_carries_every_present_owner_and_the_full_roster() {
-    let temporary = TempDir::new().expect("tempdir");
+fn an_unassembled_policy_store_is_listed_as_absent_and_never_touched() {
+    // 接入方未给 `--policy` 的 M3 兼容模式：策略库未装配，清单必须显式标记 absent。
     let world = World::new();
-    let participants = world.participants();
+    let mut participants = world.participants();
+    let policy = position(CheckpointOwner::Policy);
+    participants[policy].assembly = OwnerAssembly::Absent;
     let barrier = CrossOwnerBarrier::assemble(refs(&participants)).expect("assemble");
     let mut window = barrier
         .freeze(&request("cp-1", 1_000), settled(), &world.clock)
         .expect("freeze");
 
-    let ticket = window
-        .seal(
-            &request("cp-1", 1_000),
-            transfer_source(temporary.path()),
-            InstantMillis::from_millis(10),
-        )
-        .expect("seal");
-
-    assert_eq!(ticket.owners.len(), 6);
-    assert_eq!(ticket.roster, full_roster());
-    for owner in CheckpointOwner::FREEZE_ORDER {
-        assert!(ticket.owner(owner).is_some(), "{owner:?}");
-    }
-}
-
-#[test]
-fn a_transfer_source_inside_the_vault_or_workbench_data_is_refused() {
-    let temporary = TempDir::new().expect("tempdir");
-    let vault = temporary.path().join("vault");
-    let inside = vault.join("staging");
-    let mut source = transfer_source(&inside);
-    source.expires_at = InstantMillis::from_millis(1);
-
-    let error = source.validate(
-        &vault,
-        &temporary.path().join("workbench"),
-        InstantMillis::from_millis(10),
-    );
-
-    assert_eq!(error, Err(SealError::TransferSourceInsideProtectedRoot));
-}
-
-#[test]
-fn a_hard_linked_active_file_is_not_an_immutable_view() {
-    let temporary = TempDir::new().expect("tempdir");
-    let mut source = transfer_source(temporary.path());
-    source.materialization = studiolo_backup::checkpoint::types::StagingMaterialization::HardLink;
-
+    let roster = window.roster().expect("roster");
+    assert_eq!(roster.entries().count(), 7);
     assert_eq!(
-        source.validate(
-            std::path::Path::new("/vault"),
-            std::path::Path::new("/workbench"),
-            InstantMillis::from_millis(99_999),
-        ),
-        Err(SealError::HardLinkIsNotImmutable)
+        roster.assembly(CheckpointOwner::Policy),
+        OwnerAssembly::Absent
     );
-}
-
-#[test]
-fn a_transfer_source_outliving_the_shortest_retention_would_be_a_hidden_recovery_point() {
-    let temporary = TempDir::new().expect("tempdir");
-    let source = transfer_source(temporary.path());
-
+    assert!(
+        window
+            .receipts()
+            .iter()
+            .all(|receipt| receipt.owner != CheckpointOwner::Policy)
+    );
+    window.thaw();
     assert_eq!(
-        source.validate(
-            std::path::Path::new("/vault"),
-            std::path::Path::new("/workbench"),
-            InstantMillis::from_millis(4_999),
-        ),
-        Err(SealError::TransferSourceOutlivesRetention)
+        participants[policy].thawed.load(Ordering::SeqCst),
+        0,
+        "备份器不得擅自停止或解冻未装配的策略库"
     );
 }

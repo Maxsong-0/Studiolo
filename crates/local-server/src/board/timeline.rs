@@ -2,7 +2,7 @@
 use super::BoardPlane;
 use axum::{
     Extension, Json,
-    extract::Query,
+    extract::{Query, rejection::QueryRejection},
     http::StatusCode,
     response::{IntoResponse, Response},
 };
@@ -23,16 +23,22 @@ pub(super) struct TimelineQuery {
 
 pub(super) async fn timeline(
     plane: Option<Extension<Arc<BoardPlane>>>,
-    Query(query): Query<TimelineQuery>,
+    query: Result<Query<TimelineQuery>, QueryRejection>,
 ) -> Response {
+    // 反序列化失败、时间戳不可解析、项目或区间越界都是畸形查询串：同一固定中文 JSON。
+    let invalid = || crate::invalid_query("invalid_timeline_query");
+    // 查询串拒绝仍先于平面检查，状态码与原提取器一致。
+    let Ok(Query(query)) = query else {
+        return invalid();
+    };
     let Some(Extension(plane)) = plane else {
         return StatusCode::NOT_FOUND.into_response();
     };
     let Ok(from) = query.from.parse::<jiff::Timestamp>() else {
-        return StatusCode::BAD_REQUEST.into_response();
+        return invalid();
     };
     let Ok(to) = query.to.parse::<jiff::Timestamp>() else {
-        return StatusCode::BAD_REQUEST.into_response();
+        return invalid();
     };
     if VaultPath::parse(&query.project).is_err()
         || !query.project.starts_with("项目/")
@@ -40,7 +46,7 @@ pub(super) async fn timeline(
         || from > to
         || to.as_second().saturating_sub(from.as_second()) > 31 * 86400
     {
-        return StatusCode::BAD_REQUEST.into_response();
+        return invalid();
     }
     let permit = match plane.permits.clone().try_acquire_owned() {
         Ok(p) => p,

@@ -1,4 +1,4 @@
-//! Host-owned git snapshot and durable candidate retention; never updates a branch.
+//! 宿主机持有的 git 快照，以及候选补丁的持久保留；绝不更新任何分支。
 use crate::{LaunchStage, RunnerError};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -11,26 +11,26 @@ use std::{
 };
 
 const MAX_PATCH: usize = 16 * 1024 * 1024;
-/// Immutable candidate metadata carried alongside the binary patch.
+/// 随二进制补丁一同携带的不可变候选元数据。
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PatchMetadata {
-    /// Base snapshot tree including staged, unstaged and untracked content.
+    /// 基线快照 tree，含已暂存、未暂存与未跟踪的内容。
     pub base_tree: String,
-    /// Result tree observed after the isolated process stops.
+    /// 隔离进程停止后观测到的结果 tree。
     pub after_tree: String,
-    /// SHA-256 of the binary patch.
+    /// 二进制补丁的 SHA-256。
     pub sha256: String,
-    /// Host-owned retained candidate, never a path inside a disposable worktree.
+    /// 宿主机持有的已保留候选补丁，绝不是可丢弃工作树内的路径。
     pub retained_path: PathBuf,
 }
-/// Trusted host snapshot. Only approved host paths may reach this API; never deserialize them
-/// from a Runner request. The source Git object store holds immutable shared baseline trees.
+/// 可信的宿主机快照。只有经批准的宿主机路径才能进入此 API，绝不从 Runner 请求中
+/// 反序列化这些路径。源仓库的 Git 对象库保存不可变、可共享的基线 tree。
 pub struct CodeSnapshot {
     repo: PathBuf,
-    /// Per-attempt writable copy; never shared with another attempt.
+    /// 每个 attempt 独有的可写副本；绝不与其他 attempt 共享。
     pub work: PathBuf,
     index: PathBuf,
-    /// Exact full dirty/untracked input tree.
+    /// 精确、完整的输入 tree，含未提交与未跟踪的内容。
     pub base: String,
 }
 fn git(repo: &Path, work: &Path, index: &Path, args: &[&str]) -> Result<Vec<u8>, RunnerError> {
@@ -84,8 +84,8 @@ fn oid(bytes: Vec<u8>) -> Result<String, RunnerError> {
 }
 pub(crate) type Snapshot = CodeSnapshot;
 impl CodeSnapshot {
-    /// Captures the complete approved checkout and creates one isolated writable copy.
-    /// The caller must hold the project source/landing lease while this runs.
+    /// 捕获经批准的完整检出，并创建一份隔离的可写副本。
+    /// 运行期间，调用方必须持有该项目的源码／落地租约。
     pub fn create(source: &Path, attempt: &Path) -> Result<Self, RunnerError> {
         let source = canonical_directory(source)?;
         let attempt = canonical_directory(attempt)?;
@@ -121,7 +121,7 @@ impl CodeSnapshot {
         );
         let repo = canonical_directory(&repo)?;
         let index = attempt.join("snapshot.index");
-        // Local includes and clean/smudge filters would execute host code during git add.
+        // 本地 include 与 clean/smudge 过滤器会在 git add 时执行宿主机代码，故一律拒绝。
         let config = git(&repo, &source, &index, &["config", "--local", "--list"])?;
         if String::from_utf8_lossy(&config).lines().any(|line| {
             line.starts_with("filter.")
@@ -143,7 +143,7 @@ impl CodeSnapshot {
             &index,
             &["worktree", "add", "--detach", work_text, &commit],
         )?;
-        // Removing the in-sandbox .git file must not make Git prune this live registration.
+        // 锁定工作树：删除沙箱内的 .git 文件后，Git 也不能 prune 掉这条仍在使用的登记。
         git(
             &repo,
             &source,
@@ -177,7 +177,7 @@ impl CodeSnapshot {
         if admin.parent() != Some(common.join("worktrees").as_path()) {
             return Err(RunnerError::InvalidExecution);
         }
-        // The sandbox sees the files but never any git control path or executable project config.
+        // 沙箱能看到文件，但绝看不到任何 git 控制路径或可执行的项目配置。
         for name in [".git", ".codex", ".claude", ".mcp.json"] {
             let path = work.join(name);
             if path.is_dir() {
@@ -212,9 +212,9 @@ impl CodeSnapshot {
             base,
         })
     }
-    /// Durably retains a binary patch; conflict-marked candidates remain preserved but rejected.
+    /// 持久保留二进制补丁；含冲突标记的候选同样会保留，但随后被拒绝。
     pub fn preserve(&self, retained: &Path) -> Result<(PatchMetadata, Vec<u8>), RunnerError> {
-        // Candidate enumeration rejects symlinks, hardlinks, control paths and conflict markers.
+        // 枚举候选时直接拒绝非普通文件、硬链接与控制路径；冲突标记只记下，先保留补丁再拒绝。
         let conflict_free = validate_tree(&self.work)?;
         git(
             &self.repo,
@@ -383,8 +383,8 @@ struct RootLock {
 }
 impl Drop for RootLock {
     fn drop(&mut self) {
-        // A concurrent fork can temporarily retain the open file description until exec.
-        // Explicit unlock ends our lease now rather than waiting for every copied FD to close.
+        // 并发的 fork 可能在 exec 之前暂时持有这个已打开的文件描述（open file description）。
+        // 显式 unlock 立即结束我们的租约，而不必等每个复制出的 FD 都关闭。
         let _ = self._file.unlock();
     }
 }
@@ -398,7 +398,7 @@ fn root_lock(root: &Path) -> Result<RootLock, RunnerError> {
         if meta.mode() & 0o077 != 0 {
             return Err(RunnerError::InvalidExecution);
         }
-        // A newly created private file proves the current effective UID without a process API.
+        // 新建一个私有文件即可证明当前的有效 UID，无需调用进程 API。
         let probe = tempfile::NamedTempFile::new_in(root)
             .map_err(|e| RunnerError::io("snapshot owner", e))?;
         if probe
@@ -676,8 +676,8 @@ struct SnapshotRecord {
     retained: Option<PatchMetadata>,
 }
 impl CodeSnapshot {
-    /// Invalidates short-lived baseline metadata after any trusted landing, even a no-op landing.
-    /// Immutable Git objects and already bound attempts are not removed or rewritten.
+    /// 任何可信落地之后（即使是空操作的落地），都要作废短期的基线缓存元数据。
+    /// 不可变的 Git 对象与已绑定的 attempt 不会被删除或改写。
     pub fn invalidate_cache(attempt_root: &Path) -> Result<(), RunnerError> {
         let lock = root_lock(attempt_root)?;
         let path = attempt_root.join(CACHE);
@@ -690,36 +690,36 @@ impl CodeSnapshot {
     }
 }
 
-/// Trusted maintenance inputs. Hold the exclusive admission/landing maintenance window and
-/// isolate old scopes before calling; this function does not infer liveness from directory age.
+/// 可信的维护输入。调用前须持有独占的准入／落地维护窗口，并先隔离旧的 scope；
+/// 本函数不会根据目录年龄推断进程是否存活。
 pub struct SnapshotCleanupRequest<'a> {
-    /// Canonical administrator-mapped source repository checkout.
+    /// 规范化的、由管理员映射的源仓库检出目录。
     pub source_checkout: &'a Path,
-    /// Canonical private root containing only separately registered attempt directories.
+    /// 规范化的私有根目录，只包含各自登记过的 attempt 目录。
     pub attempt_root: &'a Path,
-    /// Canonical private durable directory outside source and scratch roots.
+    /// 规范化的私有持久目录，位于源码根与 scratch 根之外。
     pub retained_root: &'a Path,
-    /// Current authoritative active attempt directory paths; these are always protected.
+    /// 当前权威的活动 attempt 目录路径；这些目录始终受保护。
     pub active_attempts: &'a [PathBuf],
-    /// Trusted host time in Unix seconds; future-dated records are retained.
+    /// 可信的宿主机时间（Unix 秒）；创建时间在未来的记录一律保留不清理。
     pub now_unix_seconds: u64,
-    /// Minimum age, at least five minutes. Young/in-progress creations are never removed.
+    /// 最小年龄，至少五分钟；过新或仍在创建中的条目绝不删除。
     pub minimum_age_seconds: u64,
 }
-/// Observable maintenance result. A blocked entry remains for explicit operator recovery.
+/// 可观测的维护结果；被阻断的条目留待运维显式恢复。
 #[derive(Debug, Default)]
 pub struct SnapshotCleanupReport {
-    /// Fully removed registered work copies and their exact Git worktree registrations.
+    /// 已完整删除的已登记工作副本，及其精确对应的 Git 工作树登记。
     pub removed: Vec<PathBuf>,
-    /// Durable retained patch evidence, including entries whose later cleanup was blocked.
+    /// 已持久保留的补丁证据，包括随后清理被阻断的条目。
     pub retained: Vec<PatchMetadata>,
-    /// Active, young or future-dated directories left untouched.
+    /// 因活动、过新或创建时间在未来而未被触碰的目录。
     pub protected: Vec<PathBuf>,
-    /// Unknown/changed identities, unsafe trees or preservation failures left untouched.
+    /// 被阻断的条目：身份未知或已变化、目录树不安全、补丁保留或删除失败；清理止步于出错处。
     pub blocked: Vec<PathBuf>,
 }
-/// Explicit, bounded orphan cleanup. It never deletes an unregistered object, follows a link,
-/// guesses whether a process is alive, or removes a work copy before retaining its patch.
+/// 显式、有界的孤儿快照清理。它绝不删除未登记的对象、不跟随链接、
+/// 不猜测进程是否存活，也不会在保留补丁之前删除工作副本。
 pub fn cleanup_orphan_snapshots(
     request: &SnapshotCleanupRequest<'_>,
 ) -> Result<SnapshotCleanupReport, RunnerError> {
@@ -846,7 +846,7 @@ fn cleanup_one(
     record.retained = Some(metadata.clone());
     write_record(&attempt.join(RECORD), record, lock.owner, true)?;
     report.retained.push(metadata);
-    // With admission stopped and scopes isolated, validate every remaining node before deletion.
+    // 在准入已停止、scope 已隔离的前提下，删除前再校验一遍剩余的每个节点。
     validate_tree(attempt)?;
     validate_tree(&record.admin)?;
     if identity(attempt)? != record.attempt_identity

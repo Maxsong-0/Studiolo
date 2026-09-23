@@ -2,34 +2,34 @@ use studiolo_core::{Classification, VaultPath};
 
 use crate::{FrontmatterValue, NormalizedFrontmatter};
 
-/// Display-only provenance inferred from path shape and declared metadata.
+/// 仅供展示的来源出处，由路径形态与声明的元数据推断。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SourceProvenance {
-    /// Ordinary human-authored content without an authenticated classification.
+    /// 普通的人工撰写内容，没有经过认证的密级。
     HumanUnclassified,
-    /// A generated TaskEngine/dashboard projection.
+    /// Studiolo 生成的 TaskEngine／仪表盘投影。
     StudioloGenerated,
-    /// An attempt draft or other agent-authored artifact.
+    /// 尝试草稿或其他由 agent 撰写的产物。
     AgentArtifact,
-    /// An externally sourced note whose declaration has not been manifest-verified.
+    /// 外部来源的笔记，其声明未经清单（manifest）核验。
     ExternalDeclared,
 }
 
-/// Advisory source facts extracted by the index.
+/// 索引提取出的参考性来源事实。
 ///
-/// This type is intentionally distinct from `studiolo_core::DataLabels`. A
-/// frontmatter edit can change declarations but cannot grant egress permission.
+/// 此类型刻意与 `studiolo_core::DataLabels` 区分：改 frontmatter 能改变声明，
+/// 但不能授予外发许可。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SourceProfile {
-    /// Inferred display provenance.
+    /// 推断出的展示用出处。
     pub provenance: SourceProvenance,
-    /// Declared logical source, if any.
+    /// 声明的逻辑来源（如有）。
     pub source: Option<String>,
-    /// Declared source kind, if any.
+    /// 声明的来源类型（如有）。
     pub source_type: Option<String>,
-    /// Untrusted frontmatter classification, if recognized.
+    /// 不可信的 frontmatter 密级声明，能识别时才有值。
     pub declared_classification: Option<Classification>,
-    /// Safe classification in the absence of verified policy/manifest metadata.
+    /// 缺少经核验的策略／清单元数据时采用的安全密级（当前恒为 `Restricted`）。
     pub safe_default: Classification,
 }
 

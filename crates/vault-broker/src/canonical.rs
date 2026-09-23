@@ -1,29 +1,28 @@
-//! Existing canonical identity and bounded content access without write authority.
+//! 对既有 canonical 根的身份与有界内容访问，不具备写权限。
 
 use std::path::{Path, PathBuf};
 use studiolo_core::{Revision, VaultPath, VaultUuid};
 
 use crate::{BrokerError, ReadOnlyVault, VaultIdentity};
 
-/// One stable canonical read; no index generation is used as an editing revision.
+/// 一次稳定的 canonical 读取；不把索引代次当作编辑 revision。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CanonicalRead {
-    /// Persistent identity read from the existing canonical marker.
+    /// 从既有 canonical 标记读出的持久身份。
     pub vault_uuid: VaultUuid,
-    /// Logical path beneath the approved canonical root.
+    /// 已批准 canonical 根之下的逻辑路径。
     pub path: VaultPath,
-    /// Exact bytes; text encoding and rendering are the caller's responsibility.
+    /// 精确字节；文本编码与渲染由调用方负责。
     pub content: Vec<u8>,
-    /// Existing Broker revision algorithm, bound to Vault, path and exact bytes.
+    /// 沿用 Broker 既有 revision 算法，绑定 Vault、路径与精确字节。
     pub revision: Revision,
 }
 
-/// Narrow read handle for one approved, existing canonical root.
+/// 针对一个已批准、已存在 canonical 根的窄读取句柄。
 ///
-/// This handle creates no marker, data directory, history, snapshot or cache and
-/// has no mutation capability. It rechecks the selected root and its bounded
-/// identity record before and after each read. These checks detect observed
-/// replacement; they do not lock out unrelated filesystem writers.
+/// 该句柄不创建标记、数据目录、历史、快照或缓存，也没有变更能力。
+/// 每次读取前后都会复核选定根、有界身份记录与批量屏障。
+/// 这些检查能发现已被观察到的替换，但不会阻止无关的文件系统写者。
 pub struct CanonicalReadVault {
     reader: ReadOnlyVault,
     selected_root: PathBuf,
@@ -31,11 +30,10 @@ pub struct CanonicalReadVault {
 }
 
 impl CanonicalReadVault {
-    /// Opens an existing canonical root approved by the trusted composition root.
+    /// 打开由可信组合根批准的既有 canonical 根。
     ///
-    /// Requires an absolute path and an existing format-v1 `.workbench/vault.json`
-    /// of at most 4096 bytes. Missing or invalid state is never initialized or
-    /// repaired. The caller must not obtain this path from an HTTP request.
+    /// 要求绝对路径，并已存在 `format_version` 为 1、不超过 4096 字节的 `.workbench/vault.json`。
+    /// 缺失或非法的状态绝不会被初始化或修复。调用方不得从 HTTP 请求取得此路径。
     pub fn open_existing(root: &Path) -> Result<Self, BrokerError> {
         if !root.is_absolute() {
             return Err(BrokerError::io(
@@ -54,26 +52,26 @@ impl CanonicalReadVault {
         Ok(handle)
     }
 
-    /// Returns the pinned persistent Vault identity, not a freshness assertion.
+    /// 返回已固定的 Vault 持久身份，并不断言其新鲜度。
     #[must_use]
     pub fn vault_uuid(&self) -> VaultUuid {
         self.vault_uuid
     }
 
-    /// Returns the still-bound directory identity for trusted startup composition.
-    /// This value is not intended for HTTP responses or caller authentication.
+    /// 返回仍然绑定的目录身份，供可信启动组合核对。
+    /// 该值不用于 HTTP 响应，也不用于调用方认证。
     #[cfg(unix)]
     pub fn root_identity(&self) -> Result<(u64, u64), BrokerError> {
         self.check_binding()?;
         self.reader.root_identity()
     }
 
-    /// Reads a visible regular file under a caller-supplied byte ceiling.
+    /// 在调用方给定的字节上限内读取可见的普通文件。
     ///
-    /// The caller must impose its endpoint's maximum; zero allows only empty
-    /// files. Growth beyond the ceiling is rejected, retaining at most ceiling
-    /// plus one content bytes. Hidden paths, links and special files are refused.
-    /// Stable single-file content does not assert that a derived index is fresh.
+    /// 调用方必须施加其端点自身的上限；上限为零时只允许空文件。
+    /// 超过上限的增长会被拒绝，内存中最多只保留上限加一字节的内容。
+    /// 隐藏路径、链接与特殊文件一律拒绝。
+    /// 单文件内容稳定并不代表派生索引是新鲜的。
     pub fn read_file(
         &self,
         path: &VaultPath,

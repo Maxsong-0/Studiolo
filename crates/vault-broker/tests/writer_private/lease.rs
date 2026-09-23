@@ -75,7 +75,14 @@ fn construction_error_releases_guard_with_a_retained_root_clone() {
         let _data = walk(&missing, false)?;
         Ok(())
     })();
-    assert!(result.is_err());
+    // data 根缺失时逐级打开失败；此前已取得的租约随闭包作用域释放。
+    assert!(matches!(
+        result,
+        Err(BrokerError::Io {
+            operation: "open writer directory",
+            source,
+        }) if source.kind() == std::io::ErrorKind::NotFound
+    ));
     assert!(inherited.is_some());
     assert!(!missing.exists());
 

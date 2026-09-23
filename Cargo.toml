@@ -61,7 +61,7 @@ studiolo-supply = { path = "crates/supply" }
 # M1 本机只读 HTTP 入口；不装配远程写入、Runner 或同步。
 axum = "=0.8.9"
 tokio = { version = "=1.53.1", features = ["macros", "rt-multi-thread", "net", "sync"] }
-tower = { version = "0.5", features = ["util"] }
+tower = { version = "0.5.3", features = ["util"] }
 
 # M2 身份验证与独立会话；复用已锁定的密码库和网络校验实现。
 jsonwebtoken = { version = "=10.3.0", features = ["rust_crypto"] }
@@ -85,7 +85,6 @@ grep-matcher = "=0.1.9"
 
 # 路径安全：目录句柄级操作（PRD 12.7、ADR-001）
 cap-std = "4.0.3"
-cap-tempfile = "4.0.3"
 rustix = { version = "1.1.4", features = ["fs"] }
 # 运行平面：SQLite WAL，捆绑 SQLite 以固定版本（PRD 0.4、技术栈表）
 rusqlite = { version = "0.40.2", features = ["bundled"] }

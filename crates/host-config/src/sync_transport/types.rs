@@ -168,9 +168,9 @@ impl TransportBackend {
 /// 运行预算；缺项或实际配置不支持则不得启动。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct TransportBudget {
-    /// wall deadline 秒数。
+    /// 墙钟截止时限，单位秒。
     pub deadline_seconds: u32,
-    /// TERM grace 秒数。
+    /// 停止时发出 TERM 后的宽限秒数。
     pub stop_grace_seconds: u32,
     /// stdout 字节限额。
     pub stdout_bytes: u32,

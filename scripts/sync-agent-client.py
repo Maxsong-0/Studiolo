@@ -11,7 +11,7 @@ from client_projection_fetch import fetch
 from client_projection_io import read_bundle, write_bundle
 from client_projection_render import render
 from client_projection_schema import config, make_bundle
-from client_projection_store import apply, check, plan
+from client_projection_store import apply, check, plan, policy_drift
 from replica_common import load_json, open_root, read_file, require
 
 
@@ -37,13 +37,21 @@ def export(cfg):
     return make_bundle(cfg, snapshot, render(cfg, snapshot))
 
 
+def with_policy(result, manifest):
+    """策略模式输出附带策略版本；vault 模式的输出键与改前相同。"""
+    if manifest.get("rules_source") == "policy":
+        result["policy_effective"] = manifest["policy_effective"]
+    return result
+
+
 def run(args):
     if args.command == "generate":
         bundle = export(load_config(args.config))
         write_bundle(absolute(args.out), bundle)
-        return {"status": "generated", "bundle_id": bundle["manifest"]["bundle_id"],
-                "projection_key": bundle["manifest"]["projection_key"],
-                "sources": len(bundle["manifest"]["sources"]), "out": args.out}, 0
+        return with_policy({"status": "generated", "bundle_id": bundle["manifest"]["bundle_id"],
+                            "projection_key": bundle["manifest"]["projection_key"],
+                            "sources": len(bundle["manifest"]["sources"]), "out": args.out},
+                           bundle["manifest"]), 0
     target = absolute(args.target)
     if args.command in ("plan", "apply"):
         bundle = read_bundle(absolute(args.bundle))
@@ -56,6 +64,7 @@ def run(args):
     if result["status"] != "ok":
         return result, 2
     result["generated_at_ms"] = manifest["generated_at_ms"]
+    with_policy(result, manifest)
     if args.online:
         try:
             remote = export(config(manifest["config"]))
@@ -64,6 +73,10 @@ def run(args):
             return result, 3
         result["source_status"] = ("unchanged" if remote["manifest"]["projection_key"] ==
                                    manifest["projection_key"] else "source_changed")
+        # 策略模式逐项报出策略版本与短摘要变化；projection_key 已含 effective，任一变化即 source_changed。
+        drift = policy_drift(manifest, remote["manifest"])
+        if drift is not None:
+            result["policy"] = drift
         return result, 0 if result["source_status"] == "unchanged" else 2
     return result, 0
 

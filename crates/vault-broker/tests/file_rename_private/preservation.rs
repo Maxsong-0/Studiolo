@@ -131,7 +131,11 @@ fn source_replacement_after_target_effect_is_rejected_without_any_detach() {
         .unwrap();
     fs::write(fixture.root.join("fresh.md"), b"same bytes").unwrap();
     fs::rename(fixture.root.join("fresh.md"), fixture.root.join("note.md")).unwrap();
-    assert!(ops::rename_source::prepare(&broker, &mut active).is_err());
+    // 同字节的新文件换了身份，不能冒充已固定的来源。
+    assert!(matches!(
+        ops::rename_source::prepare(&broker, &mut active),
+        Err(BrokerError::CaptureChanged)
+    ));
     assert_eq!(
         broker.file_operation_status().unwrap().unwrap().phase,
         FileOperationPhase::TargetInstalled

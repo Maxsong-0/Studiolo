@@ -1,11 +1,31 @@
 use axum::{
     extract::{Request, State},
-    http::{HeaderMap, Method, StatusCode, header},
+    http::{HeaderMap, HeaderValue, Method, StatusCode, header},
     middleware::Next,
     response::{IntoResponse, Response},
 };
 
 use crate::{AccessError, ApiError, AppState};
+
+/// CSP 模板：只有 style-src 随页面 nonce 变化，其余指令固定。可选的本机 Consumer 伴随进程
+/// 只绑字面 IPv4 回环，并同时认证已配置的 Studiolo 源与本机配对令牌；因此 connect-src
+/// 只放行 `http://127.0.0.1:*`，不放行任意主机、localhost 域名别名或局域网明文地址。
+macro_rules! csp {
+    ($style:literal) => {
+        concat!(
+            "default-src 'none'; script-src 'self'; ",
+            $style,
+            "; connect-src 'self' http://127.0.0.1:*; img-src 'self'; font-src 'self'; ",
+            "base-uri 'none'; form-action 'none'; frame-ancestors 'none'; object-src 'none'"
+        )
+    };
+}
+
+/// 无页面 nonce 时的严格策略，也是动态策略不能成为合法头值时的兜底。
+const STRICT_CSP: &str = csp!("style-src 'self'");
+/// 内容一变文件名就变，旧名永远对应同一份字节，所以可长期缓存且无需再验证。
+const IMMUTABLE: &str = "public, max-age=31536000, immutable";
+const NO_STORE: &str = "no-store";
 
 pub(crate) async fn guard(
     State(state): State<AppState>,
@@ -13,8 +33,9 @@ pub(crate) async fn guard(
     next: Next,
 ) -> Response {
     let head = request.method() == Method::HEAD;
-    let bootstrap = request.uri().path() == crate::bootstrap::PATH;
-    let allow = match request.uri().path() {
+    let path = request.uri().path().to_owned();
+    let bootstrap = path == crate::bootstrap::PATH;
+    let allow = match path.as_str() {
         crate::auth_http::SELF
         | crate::auth_http::FACTOR_STATE
         | crate::bootstrap::PATH
@@ -55,37 +76,95 @@ pub(crate) async fn guard(
         }
         Err(error) => error.into_response(),
     };
+    // 先定 CSP：动态策略失败会把响应换成不可用错误，后续状态、HEAD 与缓存判断都以换后的为准。
+    let policy = content_security_policy(&mut response);
     let method_not_allowed = response.status() == StatusCode::METHOD_NOT_ALLOWED;
     if head && (state.sessions.is_some() || bootstrap) {
         *response.body_mut() = axum::body::Body::empty();
     }
-    let nonce = response
-        .extensions_mut()
-        .remove::<crate::assets::StyleNonce>();
-    let style = nonce.map_or_else(
-        || "style-src 'self'".to_owned(),
-        |nonce| format!("style-src 'self' 'nonce-{}'", nonce.0),
-    );
+    // 只有成功送出的文件本体才可能长缓存；错误体即便路径形似哈希资源也一律 no-store。
+    let content_type = if response.status() == StatusCode::OK {
+        response.headers().get(header::CONTENT_TYPE)
+    } else {
+        None
+    };
+    let cache_control = cache_control_for(&path, content_type);
     let headers = response.headers_mut();
     if state.sessions.is_some() {
-        headers.insert(header::VARY, "Origin, Sec-Fetch-Site".parse().unwrap());
+        headers.insert(
+            header::VARY,
+            HeaderValue::from_static("Origin, Sec-Fetch-Site"),
+        );
     }
     if method_not_allowed && (state.sessions.is_some() || bootstrap) {
-        headers.insert(header::ALLOW, allow.parse().unwrap());
+        headers.insert(header::ALLOW, HeaderValue::from_static(allow));
     }
-    headers.insert(header::CACHE_CONTROL, "no-store".parse().unwrap());
-    headers.insert(header::X_CONTENT_TYPE_OPTIONS, "nosniff".parse().unwrap());
-    headers.insert(header::REFERRER_POLICY, "no-referrer".parse().unwrap());
-    // The opt-in local Consumer companion is bound to literal IPv4 loopback and
-    // authenticates both the configured Studiolo origin and a local pairing token.
-    // Do not allow arbitrary hosts, localhost DNS aliases, or insecure LAN URLs.
-    headers.insert(header::CONTENT_SECURITY_POLICY,
-        format!("default-src 'none'; script-src 'self'; {style}; connect-src 'self' http://127.0.0.1:*; img-src 'self'; font-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; object-src 'none'").parse().unwrap());
+    headers.insert(header::CACHE_CONTROL, cache_control);
+    headers.insert(
+        header::X_CONTENT_TYPE_OPTIONS,
+        HeaderValue::from_static("nosniff"),
+    );
+    headers.insert(
+        header::REFERRER_POLICY,
+        HeaderValue::from_static("no-referrer"),
+    );
+    headers.insert(header::CONTENT_SECURITY_POLICY, policy);
     headers.insert(
         "cross-origin-resource-policy",
-        "same-origin".parse().unwrap(),
+        HeaderValue::from_static("same-origin"),
     );
     response
+}
+
+/// 取出资产处理器留下的样式 nonce 并生成本响应的 CSP。nonce 由本进程生成（十六进制），
+/// 若仍不能成为合法头值，就把响应换成不可用错误并配严格策略，绝不 panic。
+fn content_security_policy(response: &mut Response) -> HeaderValue {
+    let Some(nonce) = response
+        .extensions_mut()
+        .remove::<crate::assets::StyleNonce>()
+    else {
+        return HeaderValue::from_static(STRICT_CSP);
+    };
+    match HeaderValue::from_str(&format!(csp!("style-src 'self' 'nonce-{}'"), nonce.0)) {
+        Ok(policy) => policy,
+        Err(_) => {
+            *response = ApiError::unavailable().into_response();
+            HeaderValue::from_static(STRICT_CSP)
+        }
+    }
+}
+
+/// 缓存策略：`/assets/` 下文件名带 Vite 内容哈希（`名字-哈希.js|css`）、且确以对应 MIME 送出的
+/// 脚本与样式长期缓存；index.html 每次带不同 CSP nonce，与 API、错误及其余响应一律 no-store。
+fn cache_control_for(path: &str, content_type: Option<&HeaderValue>) -> HeaderValue {
+    let expected = match path
+        .strip_prefix("/assets/")
+        .and_then(|name| name.rsplit_once('.'))
+    {
+        Some((stem, "js")) if content_hashed(stem) => crate::assets::JAVASCRIPT,
+        Some((stem, "css")) if content_hashed(stem) => crate::assets::STYLESHEET,
+        _ => return HeaderValue::from_static(NO_STORE),
+    };
+    if content_type.is_some_and(|value| value == expected) {
+        HeaderValue::from_static(IMMUTABLE)
+    } else {
+        HeaderValue::from_static(NO_STORE)
+    }
+}
+
+/// Vite 产物名 `[name]-[hash]`：扩展名前是以 `-` 起头、至少 8 位 `[A-Za-z0-9_-]` 的哈希段。
+/// 在紧贴扩展名的同字符集连续段里取第一个 `-`，因为哈希本身也可能含 `-`；该段遇 `/` 或 `.` 即止。
+fn content_hashed(stem: &str) -> bool {
+    let bytes = stem.as_bytes();
+    let run = bytes
+        .iter()
+        .rev()
+        .take_while(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
+        .count();
+    let tail = &bytes[bytes.len() - run..];
+    tail.iter()
+        .position(|byte| *byte == b'-')
+        .is_some_and(|dash| tail[dash + 1..].len() >= 8)
 }
 
 fn one<'a>(headers: &'a HeaderMap, name: &str) -> Result<Option<&'a str>, ApiError> {

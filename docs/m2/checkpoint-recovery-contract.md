@@ -2,6 +2,7 @@
 
 T-046，2026-09-13。本文冻结后续实现边界；尚无完整 BackupWorker、远端恢复点或
 干净机恢复验收。权威仍为 Vault PRD 第11节与 ADR-002/010，不把 L0 当作灾难备份。
+T-110（2026-09-22）补入 M4 策略库 `policy.sqlite3` 的屏障位置、水位与恢复核对规则。
 
 ## 封存边界
 
@@ -23,6 +24,14 @@ Auth 的会话检查和列表读取也会更新时钟地板、过期状态与 la
 可重建索引。若纳入恢复单元或共享本次 Audit 截止点，它必须参与批准的协调窗口；
 未参与的独立服务不能被静默忽略，也不由备份器擅自停止。清单逐项标记 present/absent。
 
+已装配的 M4 策略库（`policy.sqlite3`）保存规则母本、skills 与能力集的 desired／
+版本／effective，以及实例／类型／全局三级吊销。它同样参与协调窗口，固定顺序为
+Broker → Control → Auth → Bridge → AgentStore → Policy → Audit：接入方调用先经
+AgentStore 核身份、再复核策略库，发布与吊销又写 Audit，所以它在 AgentStore 之后、
+Audit 之前冻结。水位为 schema 版本、effective 版本、effective 哈希（64 位小写十六进制，
+不能用 effective 版本号或发布时间顶替）与截止点是否处于全局吊销。接入方未给
+`--policy` 的 M3 兼容模式里策略库未装配，清单显式标记 absent。
+
 每个 SQLite owner 导出自己经过验证的 checkpoint：固定 schema/身份，完成并检查
 WAL checkpoint 的 busy/result，使用 SQLite 自有备份机制或完整冻结后的安全复制。
 目标文件及父目录同步，重开核验后才返回封存票据。不能复制在线主文件并忽略 WAL，
@@ -37,6 +46,8 @@ SQLite 自有备份只保证单库一致，不能替代跨 owner 屏障。副本
 - Broker Vault UUID、逻辑 pair_id、提交水位、无未决证明。
 - Control schema/Vault UUID/outbox 状态；Auth schema/主人绑定/审计锚点。
 - Audit 最后 offset/hash；Bridge link/scope/共同基线/观察序号与持久门禁。
+- AgentStore schema/类型 token 摘要/实例数；Policy schema/effective 版本/effective
+  哈希/全局吊销。
 - 固定应用及 CLI 包摘要、部署清单、秘密引用的脱敏映射。
 
 这些水位各有含义，不能用索引 generation 或最后一次 Sync 退出时间替代。
@@ -98,12 +109,16 @@ Auth 自有恢复流程必须使旧会话/L3失效，并防止旧快照里的恢
 不能删表绕过已消费记录和审计锚点。保持原主人绑定，重新认证后才能最终切换。
 旧快照恢复还需新的签发代次，防止回滚后的序号复用旧 event_id；若包含 AgentStore，
 其旧类型 token 和实例同样失效，不能使快照之后撤销的凭据重新有效。
+若包含策略库，恢复后必须先核对吊销再启用：快照截止点之后发生的实例／类型／全局
+吊销要重新生效，未核对即 `PolicyRevocationsNotReconciled`，因为旧快照可能让已吊销
+的实例或类型复活；吊销的解除只走 L3 发布，不能靠回到旧快照。
 已发生的 bootstrap 步骤导入恢复后的 Ledger；尚未发生的切换不能预记成功。
 最终切换先记 Intent，切换后真实记录 Outcome；失败则回滚或保持只读停服。
 
-桌面与恢复点差异先隔离、人工协调；新 checkpoint 和写入/备份链重新验收后才能
-启用双向同步。旧目录保留至回滚窗口结束。recovery kit 独立加密保存固定包、
-摘要、主人/秘密映射、一次性材料和 Sync 端到端恢复资料，不进入普通 checkpoint。
+桌面与恢复点差异先隔离、人工协调；新 checkpoint 和写入/备份链重新验收、且纳入的
+策略库已核对吊销后，才能启用双向同步。旧目录保留至回滚窗口结束。recovery kit
+独立加密保存固定包、摘要、主人/秘密映射、一次性材料和 Sync 端到端恢复资料，
+不进入普通 checkpoint。
 
 ## 必须留下的故障与实机证据
 

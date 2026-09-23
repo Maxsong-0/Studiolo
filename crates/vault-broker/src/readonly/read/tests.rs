@@ -1,4 +1,4 @@
-//! Deterministic real-file checks at the shared stable-read boundary.
+//! 在共享稳定读取边界上，对真实文件做确定性检查。
 
 use cap_std::fs::File;
 use std::{fs, io::Write as _};

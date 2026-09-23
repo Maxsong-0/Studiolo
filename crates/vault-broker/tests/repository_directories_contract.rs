@@ -6,8 +6,8 @@ use std::{
     os::unix::fs::PermissionsExt,
     time::{Duration, UNIX_EPOCH},
 };
-use studiolo_core::VaultPath;
-use studiolo_vault_broker::ReadOnlyVault;
+use studiolo_core::{PathSyntaxError, VaultPath};
+use studiolo_vault_broker::{BrokerError, ReadOnlyVault};
 use tempfile::TempDir;
 
 fn temporary() -> TempDir {
@@ -84,13 +84,29 @@ fn files_and_hidden_entries_use_the_budget_and_overflow_returns_no_partial_resul
     fs::write(root.path().join("source.rs"), b"fixture").unwrap();
     fs::write(root.path().join(".hidden"), b"fixture").unwrap();
     let reader = ReadOnlyVault::open(root.path()).unwrap();
-    assert!(reader.list_directories(None, 2).is_err());
+    // 普通文件与隐藏项同样占用枚举预算，超限不返回部分结果。
+    assert!(matches!(
+        reader.list_directories(None, 2),
+        Err(BrokerError::Io {
+            operation: "directory listing entry limit exceeded",
+            ..
+        })
+    ));
     assert_eq!(
         reader.list_directories(None, 3).unwrap(),
         vec![path("folder")]
     );
     for budget in [0, 8193, usize::MAX] {
-        assert!(reader.list_directories(None, budget).is_err());
+        assert!(
+            matches!(
+                reader.list_directories(None, budget),
+                Err(BrokerError::Io {
+                    operation: "directory listing entry limit must be within 1..=8192",
+                    ..
+                })
+            ),
+            "{budget}"
+        );
     }
     assert_eq!(
         reader.list_directories(None, 8192).unwrap(),
@@ -104,24 +120,41 @@ fn caller_paths_reject_traversal_hidden_components_files_and_missing_directories
     fs::create_dir_all(root.path().join(".git/objects")).unwrap();
     fs::write(root.path().join("source.rs"), b"fixture").unwrap();
     let reader = ReadOnlyVault::open(root.path()).unwrap();
-    for value in [
-        "",
-        ".",
-        "..",
-        "../outside",
-        "/tmp",
-        "a/../b",
-        "a//b",
-        "a\\b",
+    for (value, expected) in [
+        ("", PathSyntaxError::Empty),
+        (".", PathSyntaxError::NotRelative),
+        ("..", PathSyntaxError::NotRelative),
+        ("../outside", PathSyntaxError::NotRelative),
+        ("/tmp", PathSyntaxError::NotRelative),
+        ("a/../b", PathSyntaxError::NotRelative),
+        ("a//b", PathSyntaxError::NotRelative),
+        ("a\\b", PathSyntaxError::ForbiddenEncoding),
     ] {
-        assert!(VaultPath::parse(value).is_err(), "{value}");
+        assert_eq!(VaultPath::parse(value), Err(expected), "{value}");
     }
-    for value in [".git", ".git/objects", "source.rs", "missing"] {
+    for value in [".git", ".git/objects"] {
         assert!(
-            reader.list_directories(Some(&path(value)), 8).is_err(),
+            matches!(
+                reader.list_directories(Some(&path(value)), 8),
+                Err(BrokerError::UnsafeNode {
+                    reason: "hidden path is not readable",
+                    ..
+                })
+            ),
             "{value}"
         );
     }
+    assert!(matches!(
+        reader.list_directories(Some(&path("source.rs")), 8),
+        Err(BrokerError::UnsafeNode {
+            reason: "no-link rooted resolution failed",
+            ..
+        })
+    ));
+    assert!(matches!(
+        reader.list_directories(Some(&path("missing")), 8),
+        Err(BrokerError::NotFound(missing)) if missing == path("missing")
+    ));
 }
 
 #[test]
@@ -131,6 +164,12 @@ fn a_budget_failure_on_a_directory_of_only_files_is_not_an_empty_success() {
         fs::write(root.path().join(format!("file-{index}.rs")), []).unwrap();
     }
     let reader = ReadOnlyVault::open(root.path()).unwrap();
-    assert!(reader.list_directories(None, 8).is_err());
+    assert!(matches!(
+        reader.list_directories(None, 8),
+        Err(BrokerError::Io {
+            operation: "directory listing entry limit exceeded",
+            ..
+        })
+    ));
     assert!(reader.list_directories(None, 9).unwrap().is_empty());
 }

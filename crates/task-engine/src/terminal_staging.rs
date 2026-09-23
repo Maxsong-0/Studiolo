@@ -1,4 +1,4 @@
-//! Inline v1/v2 reservations migrate through Broker durability before their DB body is removed.
+//! 内联的 v1/v2 预留先经 Broker 持久化，再从数据库中移除正文。
 use super::*;
 use studiolo_vault_broker::StagedArtifactCommit;
 
@@ -68,7 +68,7 @@ impl<B: VaultBroker + ArtifactStager, L: AuditLedger> PersistentTaskEngine<B, L>
         })
     }
 
-    /// Returns the number of legacy reservations safely moved to content-plane staging.
+    /// 返回已安全迁入内容面 staging 的旧预留数量。
     pub fn migrate_terminal_bodies(&mut self) -> Result<usize, TaskEngineError> {
         let attempts = self.control_db.legacy_terminal_attempts().map_err(map_db)?;
         for attempt in &attempts {

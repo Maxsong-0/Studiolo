@@ -1,6 +1,9 @@
 //! 固定恢复表的有界投影；所有调用均处于 Auth 唯一事务入口内。
 
-use super::super::{SessionError, database::unavailable};
+use super::super::{
+    SessionError,
+    database::{required_row, unavailable},
+};
 use super::model::{self, Code, Control, MAX_OPERATION, MAX_PROOF, Operation, Pending, Proof};
 use rusqlite::{Connection, OptionalExtension};
 
@@ -20,7 +23,7 @@ pub(super) fn control(db: &Connection) -> Result<Control, SessionError> {
          CASE WHEN octet_length(consumption_json)<=4096 THEN consumption_json END,used_mask
          FROM recovery_control WHERE id=1", [],
         |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?,r.get(5)?)),
-    ).map_err(unavailable)?;
+    ).map_err(required_row)?;
     Ok(Control {
         next: raw.0,
         current: raw.1.map(|v| model::decode(v, MAX_PROOF)).transpose()?,
@@ -37,7 +40,7 @@ pub(super) fn next(db: &Connection) -> Result<i64, SessionError> {
         [],
         |r| r.get(0),
     )
-    .map_err(unavailable)
+    .map_err(required_row)
 }
 
 pub(super) fn reserve(db: &Connection) -> Result<i64, SessionError> {

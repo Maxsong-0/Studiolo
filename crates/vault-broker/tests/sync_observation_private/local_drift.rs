@@ -28,10 +28,11 @@ fn local_metadata_to_finish_new_remove_replace_or_directory_swap_rejects_whole_b
             }
         }
         reset();
+        let result = reader.finish_scoped_observation(survey, &[path("notes/new")]);
         assert!(
-            reader
-                .finish_scoped_observation(survey, &[path("notes/new")])
-                .is_err()
+            matches!(result, Err(BrokerError::CaptureChanged)),
+            "attack {attack}: {:?}",
+            result.err()
         );
         assert_eq!(count(1), 0);
     }
@@ -54,7 +55,13 @@ fn local_body_phase_and_final_drift_never_return_partial_facts() {
                 .unwrap();
         });
         reset();
-        assert!(reader.finish_scoped_observation(survey, &[]).is_err());
+        assert!(
+            matches!(
+                reader.finish_scoped_observation(survey, &[]),
+                Err(BrokerError::CaptureChanged)
+            ),
+            "phase {phase}, growth {growth}"
+        );
         assert!(count(phase) > 0, "故障必须真正命中");
         if growth {
             assert_eq!(count(3), 1, "不能读取原长度以外的探测字节");
@@ -73,14 +80,23 @@ fn missing_and_empty_anchor_evidence_must_survive_until_final_revalidation() {
         .finish_scoped_observation(survey, &[path("notes/deep/missing")])
         .unwrap();
     f.write("notes/deep/missing", b"now present");
-    assert!(reader.revalidate_scoped_observation(&proof).is_err());
+    assert!(matches!(
+        reader.revalidate_scoped_observation(&proof),
+        Err(BrokerError::CaptureChanged)
+    ));
     let survey = reader.begin_scoped_observation(&selection(), &[]).unwrap();
     fs::remove_dir(f.root.join("notes/empty")).unwrap();
-    assert!(reader.finish_scoped_observation(survey, &[]).is_err());
+    assert!(matches!(
+        reader.finish_scoped_observation(survey, &[]),
+        Err(BrokerError::CaptureChanged)
+    ));
     let missing = Fixture::new();
     fs::create_dir(&missing.root).unwrap();
     let reader = ReadOnlyVault::open(&missing.root).unwrap();
-    assert!(reader.begin_scoped_observation(&selection(), &[]).is_err());
+    assert!(matches!(
+        reader.begin_scoped_observation(&selection(), &[]),
+        Err(BrokerError::NotFound(anchor)) if anchor == path("notes")
+    ));
 }
 
 #[test]
@@ -92,7 +108,10 @@ fn canonical_survey_preserves_instance_watermark_and_unknown_gate() {
     drop(broker);
     let mut broker = f.reopen();
     reset();
-    assert!(broker.finish_sync_observation(survey, &[]).is_err());
+    assert!(matches!(
+        broker.finish_sync_observation(survey, &[]),
+        Err(BrokerError::CaptureChanged)
+    ));
     assert_eq!(count(1), 0);
     let survey = broker.begin_sync_observation(&selection(), &[]).unwrap();
     broker
@@ -103,21 +122,29 @@ fn canonical_survey_preserves_instance_watermark_and_unknown_gate() {
         ))
         .unwrap();
     reset();
-    assert!(broker.finish_sync_observation(survey, &[]).is_err());
+    assert!(matches!(
+        broker.finish_sync_observation(survey, &[]),
+        Err(BrokerError::CaptureChanged)
+    ));
     assert_eq!(count(1), 0);
     let survey = broker.begin_sync_observation(&selection(), &[]).unwrap();
     broker.writer.fault.store(3, Ordering::Release);
-    assert!(
-        broker
-            .mutate(Mutation::create(
-                path("unknown"),
-                b"new".to_vec(),
-                "survey-unknown"
-            ))
-            .is_err()
-    );
+    assert!(matches!(
+        broker.mutate(Mutation::create(
+            path("unknown"),
+            b"new".to_vec(),
+            "survey-unknown"
+        )),
+        Err(BrokerError::Io {
+            operation: "injected writer interruption",
+            ..
+        })
+    ));
     reset();
-    assert!(broker.finish_sync_observation(survey, &[]).is_err());
+    assert!(matches!(
+        broker.finish_sync_observation(survey, &[]),
+        Err(BrokerError::MutationUnresolved)
+    ));
     assert_eq!(count(1), 0);
 }
 
@@ -129,11 +156,22 @@ fn canonical_final_union_rejects_new_excluded_or_case_alias_paths_before_body() 
     for name in ["notes/TASKS.md", "notes/PRIVATE/a", "notes/A"] {
         let survey = broker.begin_sync_observation(&selection(), &[]).unwrap();
         reset();
-        assert!(
-            broker
-                .finish_sync_observation(survey, &[path(name)])
-                .is_err()
-        );
+        let result = broker.finish_sync_observation(survey, &[path(name)]);
+        // 保留文件名按非法补充路径拒绝；大小写别名与已入索引的原拼写碰撞。
+        let rejected = match name {
+            "notes/TASKS.md" => {
+                matches!(&result, Err(BrokerError::InvalidArtifact(reason)) if reason == INVALID)
+            }
+            "notes/PRIVATE/a" => matches!(
+                &result,
+                Err(BrokerError::PathCollision { existing, .. }) if existing == "notes/private"
+            ),
+            _ => matches!(
+                &result,
+                Err(BrokerError::PathCollision { existing, .. }) if existing == "notes/a"
+            ),
+        };
+        assert!(rejected, "{name}: {:?}", result.err());
         assert_eq!(count(1), 0);
     }
 }

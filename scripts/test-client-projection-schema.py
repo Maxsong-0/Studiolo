@@ -11,9 +11,23 @@ sys.dont_write_bytecode = True
 
 from client_projection_io import read_bundle, write_bundle
 import client_projection_io as projection_io
-from client_projection_schema import config, validate_bundle
-from client_projection_test_support import fixture_bundle, fixture_config
-from replica_common import Invalid
+from client_projection_schema import MANIFEST_KEYS, config, projection_key, validate_bundle
+from client_projection_test_support import (fixture_bundle, fixture_config, fixture_policy_bundle,
+                                            fixture_policy_config)
+from replica_common import Invalid, digest, encode
+
+
+def resealed(mutate, factory=fixture_policy_bundle):
+    """改动后重算 projection_key 与 bundle_id，确保拒绝来自语义校验而不是哈希失配。"""
+    bundle = factory()
+    manifest = bundle["manifest"]
+    mutate(manifest)
+    try:
+        manifest["projection_key"] = projection_key(manifest)
+    except (KeyError, TypeError):
+        pass  # 缺键时无从重算，校验照样必须拒绝
+    manifest["bundle_id"] = digest(encode({k: v for k, v in manifest.items() if k != "bundle_id"}))
+    return bundle
 
 
 class SchemaTests(unittest.TestCase):
@@ -127,6 +141,66 @@ class SchemaTests(unittest.TestCase):
         candidate = fixture_config()
         candidate["rules"] = ["_规则/skills/demo/references/index.md"]
         self.assertEqual(config(candidate), candidate)
+
+    def test_rules_source_is_optional_closed_set(self):
+        self.assertEqual(config(fixture_policy_config()), fixture_policy_config())
+        explicit = dict(fixture_config(), rules_source="vault")
+        self.assertEqual(config(explicit), explicit)
+        for value in ("Policy", "", None, 1, ["policy"], "vault/policy"):
+            with self.subTest(value=value), self.assertRaises(Invalid):
+                config(dict(fixture_policy_config(), rules_source=value))
+        with self.assertRaises(Invalid):
+            config(dict(fixture_config(), rule_source="policy"))
+
+    def test_policy_names_with_separator_dotdot_control_or_empty_are_rejected(self):
+        for field, value in (
+            ("rules", ["a/b.md"]), ("rules", ["../secret.md"]), ("rules", ["a..md"]), ("rules", [".."]),
+            ("rules", ["规则\x07.md"]), ("rules", ["规则\n.md"]), ("rules", [""]), ("rules", [".hidden.md"]),
+            ("rules", ["规则.txt"]), ("rules", ["A.md", "a.md"]), ("rules", [1]), ("rules", []),
+            ("rules", ["_规则/通用工作规则.md"]), ("rules", ["x" * 126 + ".md"]),
+            ("skills", ["a/b"]), ("skills", [".."]), ("skills", [""]), ("skills", ["Demo"]),
+            ("skills", ["bad\nname"]), ("skills", ["-demo"]), ("skills", ["demo", "demo"]),
+            ("skills", ["_规则/skills/demo"]),
+        ):
+            candidate = fixture_policy_config()
+            candidate[field] = value
+            with self.subTest(field=field, value=value), self.assertRaises(Invalid):
+                config(candidate)
+
+    def test_policy_bundle_roundtrip_and_manifest_shape(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp).resolve() / "bundle"
+            bundle = fixture_policy_bundle()
+            write_bundle(path, bundle)
+            self.assertEqual(read_bundle(path), bundle)
+            self.assertTrue((path / "sources/policy/skills/demo/SKILL.md").is_file())
+        self.assertEqual(set(fixture_bundle()["manifest"]), MANIFEST_KEYS)
+        self.assertEqual(set(fixture_bundle()["manifest"]["sources"][0]), {"path", "revision", "bytes", "sha256"})
+        validate_bundle(resealed(lambda m: None))
+        # skill 短摘要是服务端规范 JSON 的摘要，与落盘字节无关；规则短摘要必须等于正文摘要。
+        validate_bundle(resealed(lambda m: m["sources"][1].update(policy_sha12="f" * 12)))
+        for name, mutate in {
+            "effective_case": lambda m: m.update(policy_effective="0123456789AB"),
+            "effective_missing": lambda m: m.pop("policy_effective"),
+            "source_flag": lambda m: m.update(rules_source="vault"),
+            "config_vault": lambda m: m["config"].pop("rules_source"),
+            "version_zero": lambda m: m["sources"][0].update(policy_version=0),
+            "version_text": lambda m: m["sources"][0].update(policy_version="3"),
+            "version_bool": lambda m: m["sources"][0].update(policy_version=True),
+            "rule_sha12": lambda m: m["sources"][0].update(policy_sha12="f" * 12),
+            "vault_revision": lambda m: m["sources"][0].update(revision="c" * 64),
+            "unselected_path": lambda m: m["sources"][0].update(path="policy/rules/其他.md"),
+        }.items():
+            with self.subTest(mutation=name), self.assertRaises(Invalid):
+                validate_bundle(resealed(mutate))
+        with self.assertRaises(Invalid):
+            validate_bundle(resealed(lambda m: m.update(policy_effective="0" * 12), fixture_bundle))
+
+    def test_policy_projection_key_tracks_effective_not_vault_generation(self):
+        base = fixture_policy_bundle()["manifest"]["projection_key"]
+        self.assertEqual(fixture_policy_bundle(generation="d" * 32)["manifest"]["projection_key"], base)
+        self.assertNotEqual(fixture_policy_bundle(effective="fedcba987654")["manifest"]["projection_key"], base)
+        self.assertNotEqual(fixture_policy_bundle(body="# 新规则\n")["manifest"]["projection_key"], base)
 
 
 if __name__ == "__main__":

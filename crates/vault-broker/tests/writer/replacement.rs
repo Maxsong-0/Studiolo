@@ -1,8 +1,16 @@
 use super::support::{Fixture, inventory, path};
-use std::fs;
+use std::{fs, io::ErrorKind};
 use studiolo_core::{AttemptId, Fence, TaskId};
-use studiolo_vault_broker::FsVaultBroker;
 use studiolo_vault_broker::{ArtifactCandidate, ArtifactCommit, Mutation, VaultWriter};
+use studiolo_vault_broker::{BrokerError, FsVaultBroker};
+
+/// 活写者复核固定句柄：canonical 根被换报根已变，其余被换节点报配对不符。
+fn live_rejection(node: &str, error: &BrokerError) -> bool {
+    match node {
+        "vault" => matches!(error, BrokerError::RootChanged),
+        _ => matches!(error, BrokerError::WriterBindingMismatch),
+    }
+}
 
 pub(super) fn artifacts() -> ArtifactCommit {
     ArtifactCommit {
@@ -38,27 +46,47 @@ fn replacing_a_pinned_root_control_marker_or_data_stops_all_installation() {
             fs::create_dir(&target).unwrap();
         }
         let before = inventory(fixture.directory.path());
+        let status = broker.write_status();
         assert!(
-            broker.write_status().is_err(),
-            "status accepted replaced {node}"
+            matches!(&status, Err(error) if live_rejection(node, error)),
+            "status accepted replaced {node}: {:?}",
+            status.err()
         );
+        let mutation = broker.mutate(Mutation::create(
+            path("escape.md"),
+            b"forbidden".to_vec(),
+            "after-replacement",
+        ));
         assert!(
-            broker
-                .mutate(Mutation::create(
-                    path("escape.md"),
-                    b"forbidden".to_vec(),
-                    "after-replacement"
-                ))
-                .is_err()
+            matches!(&mutation, Err(error) if live_rejection(node, error)),
+            "mutation accepted replaced {node}: {:?}",
+            mutation.err()
         );
-        assert!(broker.commit_attempt_artifacts(artifacts()).is_err());
+        let commit = broker.commit_attempt_artifacts(artifacts());
+        assert!(
+            matches!(&commit, Err(error) if live_rejection(node, error)),
+            "commit accepted replaced {node}: {:?}",
+            commit.err()
+        );
         assert_eq!(
             inventory(fixture.directory.path()),
             before,
             "wrote after {node} replacement"
         );
         drop(broker);
-        assert!(FsVaultBroker::open_existing(&fixture.vault, &fixture.data).is_err());
+        // 重开时：空的新 canonical 根缺控制目录；其余替换使两侧配对记录或 marker 不符。
+        let reopened = FsVaultBroker::open_existing(&fixture.vault, &fixture.data);
+        let rejected = match node {
+            "vault" => matches!(
+                &reopened,
+                Err(BrokerError::Io {
+                    operation: "inspect writer layout",
+                    source,
+                }) if source.kind() == ErrorKind::NotFound
+            ),
+            _ => matches!(&reopened, Err(BrokerError::WriterBindingMismatch)),
+        };
+        assert!(rejected, "reopened replaced {node}: {:?}", reopened.err());
         assert_eq!(inventory(fixture.directory.path()), before);
     }
 }

@@ -78,7 +78,20 @@ fn reconciled_indeterminate_restore_keeps_new_write_gate_and_never_replays_succe
         let mut broker = fixture.open();
         let (source, expected) = versions(&mut broker);
         ack(&mut broker);
-        assert!(install_restore(&mut broker, source, expected, streaming, true).is_err());
+        // 记录式恢复直接上报注入的中断；流式提交把安装期中断收敛为未决。
+        let result = install_restore(&mut broker, source, expected, streaming, true);
+        let interrupted = if streaming {
+            matches!(&result, Err(BrokerError::MutationUnresolved))
+        } else {
+            matches!(
+                &result,
+                Err(BrokerError::Io {
+                    operation: "injected writer interruption",
+                    ..
+                })
+            )
+        };
+        assert!(interrupted, "streaming {streaming}: {:?}", result.err());
         assert_eq!(
             broker.write_status().unwrap().phase,
             WriterPhase::Installing

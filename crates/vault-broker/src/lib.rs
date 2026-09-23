@@ -1,7 +1,7 @@
-//! Capability-rooted access to the canonical Studiolo Vault.
+//! 以目录能力句柄为根访问 canonical Studiolo Vault。
 //!
-//! This crate is the only production crate allowed to mutate canonical Vault
-//! files. Callers provide logical [`VaultPath`] values, never ambient paths.
+//! 本 crate 是唯一获准修改 canonical Vault 文件的生产 crate。
+//! 调用方只传入逻辑 [`VaultPath`] 值，绝不传入宿主（ambient）路径。
 
 mod numbering;
 pub use numbering::NumberingScanner;
@@ -102,7 +102,7 @@ use rustix::fs::{Mode, OFlags, RenameFlags, ResolveFlags, openat2, renameat_with
 
 static TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 
-/// Failure modes exposed at the Vault boundary.
+/// Vault 边界对外暴露的失败类型。
 #[derive(Debug, thiserror::Error)]
 pub enum BrokerError {
     /// 同一 canonical 根已有存活写者。
@@ -135,7 +135,7 @@ pub enum BrokerError {
     /// 扫描出现安全诊断，不能把部分结果当作完整捕获。
     #[error("canonical capture is incomplete")]
     IncompleteCapture,
-    /// A protected control path was sent through the ordinary mutation API.
+    /// 受保护的控制路径（或隐藏分量）被送入普通变更、历史、编号等业务接口。
     #[error("protected Vault path: {0}")]
     ProtectedPath(VaultPath),
     /// 历史游标语法错误或不属于本路径。
@@ -144,79 +144,79 @@ pub enum BrokerError {
     /// 历史目录已变化，调用方须重新从第一页开始。
     #[error("history changed")]
     HistoryChanged,
-    /// The requested object does not exist.
+    /// 请求的对象不存在。
     #[error("Vault object not found: {0}")]
     NotFound(VaultPath),
-    /// A compare-and-swap precondition did not match.
+    /// 比较并交换（CAS）前置条件不匹配。
     #[error("revision conflict at {path}: expected {expected}, found {actual:?}")]
     RevisionConflict {
-        /// Logical path that conflicted.
+        /// 发生冲突的逻辑路径。
         path: VaultPath,
-        /// Required revision, or absence when creating.
+        /// 要求的 revision；要求目标不存在（创建）时为 `absence`。
         expected: String,
-        /// Revision observed by the Broker.
+        /// Broker 实际观察到的 revision。
         actual: Option<Revision>,
     },
-    /// A path component was a symlink, hardlink, or special file.
+    /// 路径分量不是安全节点：符号链接、硬链接、特殊文件、跨设备、隐藏或非 UTF-8 名称等。
     #[error("unsafe filesystem node at {path}: {reason}")]
     UnsafeNode {
-        /// Logical path rejected.
+        /// 被拒绝的逻辑路径。
         path: VaultPath,
-        /// Non-sensitive reason.
+        /// 不含敏感信息的固定原因。
         reason: &'static str,
     },
-    /// A spelling would alias an existing name on a common filesystem.
+    /// 该拼写在常见文件系统上会与已有名称互为别名（如仅大小写或 Unicode 规范化形式不同）。
     #[error("path collision between {requested} and existing {existing}")]
     PathCollision {
-        /// Requested logical path.
+        /// 请求的逻辑路径。
         requested: VaultPath,
-        /// Existing logical spelling.
+        /// 已存在的逻辑拼写。
         existing: String,
     },
-    /// An idempotency key was reused for different input.
+    /// 幂等键（或同类重放绑定）被用于不同的输入。
     #[error("idempotency key was reused with different input")]
     IdempotencyConflict,
-    /// An artifact target or commit request was invalid.
+    /// 请求不合法：名称沿用自产物提交，现也用于快照、维护、文件操作、编号等输入校验。
     #[error("invalid artifact commit: {0}")]
     InvalidArtifact(String),
-    /// An orphan artifact conflicts with a retry of the same commit.
+    /// 已有产物或 manifest 与本次提交不一致（如同一提交重试时遇到内容不同的孤儿产物）。
     #[error("artifact already exists with different content: {0}")]
     ArtifactConflict(VaultPath),
-    /// The persisted Vault identity was malformed.
+    /// 持久化的 Vault 身份记录格式不合法。
     #[error("corrupt Vault identity")]
     CorruptIdentity,
-    /// The approved canonical root no longer resolves to its pinned directory.
+    /// 已批准的 canonical 根不再解析到当初固定的目录。
     #[error("canonical Vault root changed or is unavailable")]
     RootChanged,
-    /// A bounded read exceeded its caller-supplied byte budget.
+    /// 有界读取超出调用方给定的字节预算。
     #[error("read limit of {max_bytes} bytes exceeded at {path}")]
     ReadLimitExceeded {
-        /// Logical path whose bytes were refused.
+        /// 字节被拒收的逻辑路径。
         path: VaultPath,
-        /// Maximum permitted content bytes, including growth during the read.
+        /// 允许的最大内容字节数，读取期间的增长也计入。
         max_bytes: u64,
     },
-    /// Stored snapshot metadata or content failed integrity verification.
+    /// 已存快照的元数据或内容未通过完整性校验。
     #[error("corrupt snapshot record")]
     CorruptSnapshot,
-    /// A snapshot changed while it was being captured.
+    /// 读取、扫描或快照捕获期间源对象发生了变化（前后复核不一致）。
     #[error("source changed while snapshotting: {0}")]
     UnstableRead(VaultPath),
-    /// An operating-system operation failed without exposing an ambient path.
+    /// 操作系统调用失败；错误中不暴露宿主路径。
     #[error("Vault I/O failed during {operation}: {source}")]
     Io {
-        /// Stable operation label.
+        /// 稳定的操作标签。
         operation: &'static str,
-        /// Underlying operating-system error.
+        /// 底层操作系统错误。
         #[source]
         source: std::io::Error,
     },
-    /// A durable record was not valid JSON.
+    /// 持久记录的 JSON 解析失败（序列化失败也归入此类）。
     #[error("invalid durable record during {operation}: {source}")]
     Json {
-        /// Stable operation label.
+        /// 稳定的操作标签。
         operation: &'static str,
-        /// JSON error.
+        /// JSON 错误。
         #[source]
         source: serde_json::Error,
     },
@@ -232,31 +232,31 @@ impl BrokerError {
     }
 }
 
-/// Compare-and-swap condition for one mutation.
+/// 单次变更的比较并交换（CAS）条件。
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Precondition {
-    /// The path must not exist.
+    /// 路径必须不存在。
     MustNotExist,
-    /// The current content must have this revision.
+    /// 当前内容必须是此 revision。
     Match(Revision),
 }
 
-/// One ordinary canonical Vault mutation.
+/// 一次普通的 canonical Vault 变更。
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Mutation {
-    /// Logical target path.
+    /// 目标逻辑路径。
     pub path: VaultPath,
-    /// Complete replacement content.
+    /// 完整的替换内容。
     pub content: Vec<u8>,
-    /// Required prior state.
+    /// 要求的先前状态。
     pub precondition: Precondition,
-    /// Stable caller-supplied replay key.
+    /// 调用方提供的稳定重放键。
     pub idempotency_key: String,
 }
 
 impl Mutation {
-    /// Constructs a create-only mutation.
+    /// 构造仅创建（create-only）的变更。
     #[must_use]
     pub fn create(path: VaultPath, content: Vec<u8>, idempotency_key: impl Into<String>) -> Self {
         Self {
@@ -267,7 +267,7 @@ impl Mutation {
         }
     }
 
-    /// Constructs a compare-and-swap replacement.
+    /// 构造比较并交换（CAS）的替换变更。
     #[must_use]
     pub fn replace(
         path: VaultPath,
@@ -284,38 +284,38 @@ impl Mutation {
     }
 }
 
-/// Canonical object returned from a stable read.
+/// 稳定读取返回的 canonical 对象。
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct VaultObject {
-    /// Logical path.
+    /// 逻辑路径。
     pub path: VaultPath,
-    /// Complete content.
+    /// 完整内容。
     pub content: Vec<u8>,
-    /// Revision bound to Vault identity, path, and content.
+    /// 绑定 Vault 身份、路径与内容的 revision。
     pub revision: Revision,
 }
 
-/// Durable result of one mutation.
+/// 一次变更的持久结果。
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MutationReceipt {
-    /// Mutated logical path.
+    /// 被修改的逻辑路径。
     pub path: VaultPath,
-    /// Revision after the write.
+    /// 写入后的 revision。
     pub revision: Revision,
-    /// Revision stored in L0 history, if a prior object existed.
+    /// 原对象存在时，为已存入 L0 历史的原 revision。
     pub previous_revision: Option<Revision>,
 }
 
-/// A path and exact revision requested for a snapshot.
+/// 请求纳入快照的路径与精确 revision。
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SnapshotInput {
-    /// Logical source path.
+    /// 源逻辑路径。
     pub path: VaultPath,
-    /// Revision that must still be current.
+    /// 必须仍是当前版本的 revision。
     pub expected_revision: Revision,
 }
 
-/// Content-addressed snapshot identifier.
+/// 按内容寻址的快照标识。
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct SnapshotId(#[serde(deserialize_with = "deserialize_snapshot_id")] String);
@@ -338,7 +338,7 @@ fn deserialize_snapshot_id<'de, D: serde::Deserializer<'de>>(
 }
 
 impl SnapshotId {
-    /// Returns the hexadecimal identifier.
+    /// 返回十六进制标识。
     #[must_use]
     pub fn as_str(&self) -> &str {
         &self.0
@@ -351,73 +351,73 @@ impl std::fmt::Display for SnapshotId {
     }
 }
 
-/// One immutable file in a runner-facing snapshot.
+/// 面向 runner 的快照中的一个不可变文件。
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SnapshotFile {
-    /// Logical Vault path; no ambient host path is exposed.
+    /// Vault 逻辑路径；不暴露宿主路径。
     pub path: VaultPath,
-    /// Captured revision.
+    /// 捕获时的 revision。
     pub revision: Revision,
-    /// Captured bytes.
+    /// 捕获的字节。
     pub content: Vec<u8>,
 }
 
-/// Immutable, durable input snapshot.
+/// 不可变、持久化的输入快照。
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Snapshot {
-    /// Deterministic identifier derived from its manifest.
+    /// 由 Vault 身份与文件清单（路径、revision）确定性派生的标识。
     pub id: SnapshotId,
-    /// Vault identity at capture time.
+    /// 捕获时的 Vault 身份。
     pub vault_uuid: VaultUuid,
-    /// Files sorted by logical path.
+    /// 按逻辑路径排序的文件。
     pub files: Vec<SnapshotFile>,
 }
 
-/// One runner-produced artifact candidate.
+/// 一个由 runner 产出的产物候选。
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ArtifactCandidate {
-    /// Relative name underneath the attempt directory.
+    /// 位于尝试（attempt）目录下的相对名称。
     pub name: VaultPath,
-    /// Candidate bytes copied from runner-owned temporary storage.
+    /// 从 runner 自有临时存储复制来的候选字节。
     pub content: Vec<u8>,
 }
 
-/// Request to publish one attempt's artifacts.
+/// 发布一次尝试（attempt）全部产物的请求。
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ArtifactCommit {
-    /// Owning task.
+    /// 所属任务。
     pub task_id: TaskId,
-    /// Owning attempt.
+    /// 所属尝试。
     pub attempt_id: AttemptId,
-    /// Current attempt fence.
+    /// 该尝试当前的 fence。
     pub fence: Fence,
-    /// Identifier of the already-appended audit intent.
+    /// 已追加的审计意图（audit intent）标识。
     pub audit_intent: String,
-    /// Stable replay key.
+    /// 稳定重放键。
     pub idempotency_key: String,
-    /// Candidate artifacts. The Broker derives all canonical destinations.
+    /// 候选产物；所有 canonical 目标路径都由 Broker 派生。
     pub artifacts: Vec<ArtifactCandidate>,
 }
 
-/// One artifact recorded in the attempt manifest.
+/// 尝试 manifest 中记录的一个产物。
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CommittedArtifact {
-    /// Canonical Vault path.
+    /// canonical Vault 路径。
     pub path: VaultPath,
-    /// Bound Vault revision.
+    /// 绑定的 Vault revision。
     pub revision: Revision,
-    /// Plain SHA-256 content digest.
+    /// 内容的普通 SHA-256 摘要（小写十六进制，不绑定 Vault 与路径）。
     pub sha256: String,
 }
 
-/// Durable result of a manifest-last artifact commit.
+/// 产物提交（manifest 最后写入）的持久结果。
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ArtifactCommitReceipt {
-    /// Manifest commit point.
+    /// manifest 路径，即提交点。
     pub manifest_path: VaultPath,
-    /// Revision of the manifest itself.
+    /// manifest 自身的 revision。
     pub manifest_revision: Revision,
-    /// Published artifacts.
+    /// 已发布的产物。
     pub artifacts: Vec<CommittedArtifact>,
 }
 
@@ -458,45 +458,45 @@ struct MutationReplay {
     receipt: Option<MutationReceipt>,
 }
 
-/// Read capability for canonical Vault objects.
+/// canonical Vault 对象的读取能力。
 pub trait VaultReader: Send + Sync {
-    /// Returns the persistent Vault identity.
+    /// 返回 Vault 持久身份。
     fn vault_uuid(&self) -> VaultUuid;
 
-    /// Reads a regular, non-linked object and verifies a stable revision.
+    /// 读取无链接的普通文件对象，确认读取期间对象稳定后给出其 revision。
     fn read(&self, path: &VaultPath) -> Result<VaultObject, BrokerError>;
 }
 
-/// Snapshot creation capability.
+/// 快照创建能力。
 pub trait VaultSnapshotter: Send + Sync {
-    /// Captures exact revisions into an immutable, content-addressed snapshot.
+    /// 把精确 revision 捕获为不可变、按内容寻址的快照。
     fn snapshot(&self, inputs: &[SnapshotInput]) -> Result<Snapshot, BrokerError>;
 }
 
-/// Read capability for previously captured snapshots.
+/// 已捕获快照的读取能力。
 pub trait SnapshotReader: Send + Sync {
-    /// Loads a snapshot without exposing ambient host paths.
+    /// 加载快照，不暴露宿主路径。
     fn load_snapshot(&self, id: &SnapshotId) -> Result<Snapshot, BrokerError>;
 }
 
-/// The only ordinary capability that mutates canonical Vault files.
+/// 单对象整篇变更与尝试产物发布的写能力；批量、流式、文件操作等写入口另有专门接口。
 pub trait VaultWriter: Send + Sync {
-    /// Performs one idempotent, CAS-guarded full-content mutation.
+    /// 执行一次幂等、受 CAS 保护的整篇内容变更。
     fn mutate(&mut self, mutation: Mutation) -> Result<MutationReceipt, BrokerError>;
 
-    /// Publishes attempt artifacts and writes `manifest.json` last.
+    /// 发布尝试产物，最后写入 `manifest.json`。
     fn commit_attempt_artifacts(
         &mut self,
         commit: ArtifactCommit,
     ) -> Result<ArtifactCommitReceipt, BrokerError>;
 }
 
-/// Complete Broker interface used by the composition root.
+/// 组合根使用的完整 Broker 接口。
 pub trait VaultBroker: VaultReader + VaultSnapshotter + SnapshotReader + VaultWriter {}
 
 impl<T> VaultBroker for T where T: VaultReader + VaultSnapshotter + SnapshotReader + VaultWriter {}
 
-/// Filesystem-backed canonical Vault adapter.
+/// 基于文件系统的 canonical Vault 适配器。
 pub struct FsVaultBroker {
     root: Dir,
     data: Dir,
@@ -650,8 +650,8 @@ impl FsVaultBroker {
                 Err(error) => return Err(BrokerError::io("inspect Vault directory", error)),
             }
             current.push(component);
-            // Reopen from the approved root after creation. A concurrent rename
-            // or link replacement must not become authority for later children.
+            // 创建后从已批准的根重新打开：并发的改名或链接替换，
+            // 不得成为后续子目录的权威来源。
             Self::open_directory(&self.root, &current, path)?;
         }
         Ok(())
@@ -694,8 +694,8 @@ impl FsVaultBroker {
                     .map_err(|error| BrokerError::io("install create-only file", error.into()))?;
                 #[cfg(not(target_os = "linux"))]
                 {
-                    // link(2) has atomic create-only semantics, unlike a
-                    // metadata check followed by replacing rename(2).
+                    // link(2) 具备原子的仅创建语义；
+                    // 先查元数据再用会覆盖目标的 rename(2) 则做不到。
                     dir.hard_link(&temp_path, dir, path)
                         .map_err(|error| BrokerError::io("install create-only file", error))?;
                     dir.remove_file(&temp_path).map_err(|error| {
@@ -716,8 +716,8 @@ impl FsVaultBroker {
 
     #[cfg(target_os = "linux")]
     fn sync_directory(dir: &Dir, path: &Path) -> Result<(), BrokerError> {
-        // cap-std may return an O_PATH directory, which cannot be fsynced.
-        // Obtain a readable fd while retaining the same rooted resolution.
+        // cap-std 可能返回无法 fsync 的 O_PATH 目录句柄；
+        // 这里在保持同一有根解析的前提下另取一个可读 fd。
         let handle = openat2(
             dir,
             path,
@@ -1113,7 +1113,7 @@ impl VaultWriter for FsVaultBroker {
     }
 }
 
-/// In-memory contract adapter with the same logical CAS and manifest rules.
+/// 内存契约适配器，遵循相同的逻辑 CAS 与 manifest 规则。
 pub struct MemoryVaultBroker {
     vault_uuid: VaultUuid,
     objects: std::collections::BTreeMap<VaultPath, Vec<u8>>,
@@ -1132,13 +1132,13 @@ impl Default for MemoryVaultBroker {
 }
 
 impl MemoryVaultBroker {
-    /// Creates an empty adapter with a fresh Vault identity.
+    /// 用新生成的 Vault 身份创建空适配器。
     #[must_use]
     pub fn new() -> Self {
         Self::with_uuid(VaultUuid::new())
     }
 
-    /// Creates an empty adapter with a specified durable Vault identity.
+    /// 用指定的 Vault 持久身份创建空适配器。
     #[must_use]
     pub fn with_uuid(vault_uuid: VaultUuid) -> Self {
         Self {
@@ -1153,7 +1153,7 @@ impl MemoryVaultBroker {
         }
     }
 
-    /// Returns an L0 history object for contract assertions.
+    /// 返回 L0 历史对象，供契约断言使用。
     #[must_use]
     pub fn history_object(&self, revision: Revision) -> Option<&[u8]> {
         self.history.get(&revision).map(Vec::as_slice)

@@ -4,6 +4,7 @@ use std::{
     fs,
     os::unix::{fs::symlink, net::UnixListener},
 };
+use studiolo_core::{PathSyntaxError, VaultPath};
 use studiolo_vault_broker::{BrokerError, ReadOnlyVault, VaultReader as _};
 
 use super::support::{Fixture, create_fifo, inventory, path};
@@ -135,13 +136,20 @@ fn noncanonical_paths_and_case_aliases_are_not_silently_selected() {
     let fixture = Fixture::new();
     fs::write(fixture.root.join("Mixed.md"), b"original").unwrap();
     let reader = fixture.reader();
-    assert!(reader.read_file(&path("mixed.md"), 64).is_err());
-    for name in [
-        "../escape.md",
-        "/absolute.md",
-        "a/%2fsecret.md",
-        "cafe\u{301}.md",
+    // 两类卷上都只差大小写：不能把 mixed.md 静默解析成磁盘上的 Mixed.md。
+    assert!(matches!(
+        reader.read_file(&path("mixed.md"), 64),
+        Err(BrokerError::UnsafeNode {
+            reason: "case-colliding filesystem name",
+            ..
+        })
+    ));
+    for (name, expected) in [
+        ("../escape.md", PathSyntaxError::NotRelative),
+        ("/absolute.md", PathSyntaxError::NotRelative),
+        ("a/%2fsecret.md", PathSyntaxError::ForbiddenEncoding),
+        ("cafe\u{301}.md", PathSyntaxError::ForbiddenEncoding),
     ] {
-        assert!(studiolo_core::VaultPath::parse(name).is_err());
+        assert_eq!(VaultPath::parse(name), Err(expected), "{name}");
     }
 }

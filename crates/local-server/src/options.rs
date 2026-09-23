@@ -1,7 +1,10 @@
 //! 纯参数解析 Interface：不读环境、不连接网络、不打开副本。
 
+mod table;
+
 use std::{collections::HashSet, path::PathBuf};
 use studiolo_local_server::AccessConfig;
+use table::{Arity, PARAMS};
 
 pub(crate) struct Options {
     pub(crate) vault: PathBuf,
@@ -37,123 +40,76 @@ pub(crate) struct FactorOptions {
     pub(crate) replacement_seed_ref: Option<String>,
 }
 
+/// 逐个实参累积的原始取值：由参数表的取值处理写入，跨参数约束等全部实参读完后统一核验。
+#[derive(Default)]
+struct Raw {
+    help: bool,
+    canonical: bool,
+    cargo_dependencies: bool,
+    vault: Option<PathBuf>,
+    assets: Option<PathBuf>,
+    label: Option<String>,
+    port: Option<u16>,
+    public_origin: Option<String>,
+    team: Option<String>,
+    audience: Option<String>,
+    email: Option<String>,
+    session_config: Option<PathBuf>,
+    writer_data: Option<PathBuf>,
+    factor_socket: Option<PathBuf>,
+    replacement_seed_ref: Option<String>,
+    project_repository: Option<(String, PathBuf)>,
+    rust_call_sites: Option<Vec<String>>,
+    policy_data: Option<PathBuf>,
+    runner_config: Option<PathBuf>,
+    board_socket: Option<PathBuf>,
+    board_data: Option<PathBuf>,
+    board_agent_data: Option<PathBuf>,
+}
+
 pub(crate) fn parse(mut args: impl Iterator<Item = String>) -> Result<Option<Options>, String> {
     let mut seen = HashSet::new();
-    let mut help = false;
-    let mut canonical = false;
-    let mut writer_data = None;
-    let mut vault = None;
-    let mut session_config = None;
-    let mut factor_socket = None;
-    let mut replacement_seed_ref = None;
-    let mut project_repository = None;
-    let mut cargo_dependencies = false;
-    let mut rust_call_sites = None;
-    let mut policy_data = None;
-    let mut board_socket = None;
-    let mut runner_config = None;
-    let mut board_data = None;
-    let mut board_agent_data = None;
-    let mut assets = PathBuf::from("web/dist");
-    let mut label = "只读副本".to_owned();
-    let mut port = 4317;
-    let (mut public_origin, mut team, mut audience, mut email) = (None, None, None, None);
+    let mut raw = Raw::default();
     while let Some(argument) = args.next() {
         let key = if argument == "-h" {
             "--help"
         } else {
             argument.as_str()
         };
-        if !matches!(
-            key,
-            "--vault"
-                | "--assets"
-                | "--label"
-                | "--port"
-                | "--public-origin"
-                | "--access-team"
-                | "--access-audience"
-                | "--access-email"
-                | "--session-config"
-                | "--canonical"
-                | "--canonical-writer-data"
-                | "--factor-socket"
-                | "--replacement-seed-ref"
-                | "--project-repository"
-                | "--cargo-dependencies"
-                | "--rust-call-sites"
-                | "--policy-data"
-                | "--runner-config"
-                | "--board-socket"
-                | "--board-data"
-                | "--board-agent-data"
-                | "--help"
-        ) {
+        let Some((name, arity)) = PARAMS.iter().find(|(name, _)| *name == key) else {
             return Err("未知参数；仅接受 --help 中的非秘密参数".into());
-        }
-        if !seen.insert(key.to_owned()) {
+        };
+        if !seen.insert(*name) {
             return Err(format!("参数 {key} 不得重复"));
         }
-        if key == "--help" {
-            help = true;
-            continue;
-        }
-        if key == "--canonical" {
-            canonical = true;
-            continue;
-        }
-        if key == "--cargo-dependencies" {
-            cargo_dependencies = true;
-            continue;
-        }
+        let apply = match arity {
+            Arity::Flag(apply) => {
+                apply(&mut raw);
+                continue;
+            }
+            Arity::Value(apply) => apply,
+        };
         let value = args
             .next()
             .filter(|value| !value.is_empty() && !value.starts_with("--") && value != "-h")
             .ok_or_else(|| format!("参数 {key} 缺少值"))?;
-        match key {
-            "--vault" => vault = Some(PathBuf::from(value)),
-            "--canonical-writer-data" => writer_data = Some(PathBuf::from(value)),
-            "--session-config" => session_config = Some(PathBuf::from(value)),
-            "--factor-socket" => factor_socket = Some(PathBuf::from(value)),
-            "--replacement-seed-ref" => replacement_seed_ref = Some(value),
-            "--project-repository" => {
-                project_repository = Some(parse_repository(&value)?);
-            }
-            "--rust-call-sites" => rust_call_sites = Some(parse_rust_sources(&value)?),
-            "--policy-data" => policy_data = Some(PathBuf::from(value)),
-            "--runner-config" => runner_config = Some(PathBuf::from(value)),
-            "--board-socket" => board_socket = Some(PathBuf::from(value)),
-            "--board-data" => board_data = Some(PathBuf::from(value)),
-            "--board-agent-data" => board_agent_data = Some(PathBuf::from(value)),
-            "--assets" => assets = PathBuf::from(value),
-            "--label" => label = value,
-            "--port" => {
-                port = value
-                    .parse::<u16>()
-                    .ok()
-                    .filter(|p| *p != 0)
-                    .ok_or("端口必须为 1–65535")?;
-            }
-            "--public-origin" => public_origin = Some(value),
-            "--access-team" => team = Some(value),
-            "--access-audience" => audience = Some(value),
-            "--access-email" => email = Some(value),
-            _ => unreachable!("仅已知的带值参数到达此处"),
-        }
+        apply(&mut raw, value)?;
     }
-    let (access, session) = if let Some(config) = session_config {
-        if team.is_some() || audience.is_some() || email.is_some() {
+    let (access, session) = if let Some(config) = raw.session_config {
+        if raw.team.is_some() || raw.audience.is_some() || raw.email.is_some() {
             return Err(
                 "会话模式不得混用 --access-team、--access-audience 或 --access-email".into(),
             );
         }
-        let origin = public_origin.ok_or("会话模式必须显式提供 --public-origin")?;
+        let origin = raw
+            .public_origin
+            .ok_or("会话模式必须显式提供 --public-origin")?;
         if !config.is_absolute() {
             return Err("会话配置必须使用绝对路径".into());
         }
         (None, Some(SessionOptions { config, origin }))
     } else {
-        let access = match (public_origin, team, audience, email) {
+        let access = match (raw.public_origin, raw.team, raw.audience, raw.email) {
             (None, None, None, None) => None,
             (Some(origin), Some(team), Some(audience), Some(email)) => Some(
                 AccessConfig::new(origin, team, audience, email)
@@ -168,53 +124,57 @@ pub(crate) fn parse(mut args: impl Iterator<Item = String>) -> Result<Option<Opt
         };
         (access, None)
     };
-    let factor = if let Some(socket) = factor_socket {
+    let factor = if let Some(socket) = raw.factor_socket {
         if session.is_none() || seen.contains("--port") || !socket.is_absolute() {
             return Err("因子模式需要会话配置、公共Origin和绝对socket路径，不得指定TCP端口".into());
         }
         Some(FactorOptions {
             socket,
-            replacement_seed_ref,
+            replacement_seed_ref: raw.replacement_seed_ref,
         })
     } else {
-        if replacement_seed_ref.is_some() {
+        if raw.replacement_seed_ref.is_some() {
             return Err("候选因子引用仅能用于显式 --factor-socket 模式".into());
         }
         None
     };
-    if help {
+    if raw.help {
         return Ok(None);
     }
-    if project_repository.is_some() && session.is_some() {
+    if raw.project_repository.is_some() && session.is_some() {
         return Err(
             "仓库目录绑定首片仅用于本机或旧Access只读模式，不能混用会话/canonical/因子模式".into(),
         );
     }
-    if cargo_dependencies && project_repository.is_none() {
+    if raw.cargo_dependencies && raw.project_repository.is_none() {
         return Err("Cargo清单读取必须配合显式 --project-repository".into());
     }
-    if rust_call_sites.is_some() && project_repository.is_none() {
+    if raw.rust_call_sites.is_some() && raw.project_repository.is_none() {
         return Err("Rust源码读取必须配合显式 --project-repository".into());
     }
-    if canonical && session.is_none() {
+    if raw.canonical && session.is_none() {
         return Err("canonical读取必须配合显式 --session-config 及公共Origin".into());
     }
-    if policy_data
+    if raw
+        .policy_data
         .as_ref()
         .is_some_and(|path| !path.is_absolute() || session.is_none())
     {
         return Err("策略平面私有目录必须为绝对路径并配合会话配置".into());
     }
-    if writer_data.as_ref().is_some_and(|path| !path.is_absolute())
-        || (writer_data.is_some() && (canonical || session.is_none()))
+    if raw
+        .writer_data
+        .as_ref()
+        .is_some_and(|path| !path.is_absolute())
+        || (raw.writer_data.is_some() && (raw.canonical || session.is_none()))
     {
         return Err("canonical写者数据必须为绝对路径并配合会话配置，不得混用 --canonical".into());
     }
-    let board = match (board_socket, board_data, board_agent_data) {
+    let board = match (raw.board_socket, raw.board_data, raw.board_agent_data) {
         (None, None, None) => None,
         (Some(socket), Some(data), Some(agent_data))
-            if writer_data.is_some()
-                && policy_data.is_some()
+            if raw.writer_data.is_some()
+                && raw.policy_data.is_some()
                 && socket.is_absolute()
                 && data.is_absolute()
                 && agent_data.is_absolute() =>
@@ -227,54 +187,32 @@ pub(crate) fn parse(mut args: impl Iterator<Item = String>) -> Result<Option<Opt
         }
         _ => return Err("黑板必须同时指定三个绝对路径、canonical写者及策略目录".into()),
     };
-    if runner_config
+    if raw
+        .runner_config
         .as_ref()
         .is_some_and(|p| !p.is_absolute() || board.is_none() || factor.is_none())
     {
         return Err("执行体需规范绝对配置路径、黑板和可信二次认证入口".into());
     }
     Ok(Some(Options {
-        vault: vault.ok_or("必须显式提供 --vault <副本目录>，不会默认访问真实笔记库")?,
-        assets,
-        label,
-        port,
+        vault: raw
+            .vault
+            .ok_or("必须显式提供 --vault <副本目录>，不会默认访问真实笔记库")?,
+        assets: raw.assets.unwrap_or_else(|| PathBuf::from("web/dist")),
+        label: raw.label.unwrap_or_else(|| "只读副本".to_owned()),
+        port: raw.port.unwrap_or(4317),
         access,
         session,
-        canonical,
-        writer_data,
+        canonical: raw.canonical,
+        writer_data: raw.writer_data,
         factor,
-        project_repository,
-        cargo_dependencies,
-        rust_call_sites,
-        policy_data,
+        project_repository: raw.project_repository,
+        cargo_dependencies: raw.cargo_dependencies,
+        rust_call_sites: raw.rust_call_sites,
+        policy_data: raw.policy_data,
         board,
-        runner_config,
+        runner_config: raw.runner_config,
     }))
-}
-
-fn parse_rust_sources(value: &str) -> Result<Vec<String>, String> {
-    if value.len() > 32 * 1024 {
-        return Err("Rust源码白名单参数超过32KiB预算".into());
-    }
-    let paths: Vec<String> = serde_json::from_str(value)
-        .map_err(|_| "Rust源码白名单必须是JSON字符串数组；不回显输入".to_owned())?;
-    studiolo_workbench::validate_rust_source_paths(&paths).map_err(|error| error.message)
-}
-
-fn parse_repository(value: &str) -> Result<(String, PathBuf), String> {
-    let invalid = || "仓库绑定须为 项目/名称=/绝对仓库路径；不回显输入".to_owned();
-    let (project, root) = value.split_once('=').ok_or_else(invalid)?;
-    let path = studiolo_core::VaultPath::parse(project).map_err(|_| invalid())?;
-    let parts: Vec<_> = path.as_str().split('/').collect();
-    if parts.len() != 2
-        || parts[0] != "项目"
-        || parts[1].starts_with('.')
-        || !PathBuf::from(root).is_absolute()
-        || root.chars().any(char::is_control)
-    {
-        return Err(invalid());
-    }
-    Ok((project.to_owned(), PathBuf::from(root)))
 }
 
 #[cfg(test)]
@@ -300,3 +238,7 @@ mod cargo_dependency_tests;
 #[cfg(test)]
 #[path = "../tests/options/rust_call_sites.rs"]
 mod rust_call_tests;
+
+#[cfg(test)]
+#[path = "../tests/options/table.rs"]
+mod table_tests;

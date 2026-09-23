@@ -1,25 +1,25 @@
 use std::collections::BTreeMap;
 
-/// One parsed Markdown heading.
+/// 一个解析出的 Markdown 标题。
 #[derive(Clone, Debug, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Heading {
-    /// Heading level in the inclusive range 1 through 6.
+    /// 标题级别，取值 1 到 6（含两端）。
     pub level: u8,
-    /// Heading text with optional closing hashes removed.
+    /// 标题文本，已去掉可选的结尾 `#` 串。
     pub text: String,
-    /// Display-oriented anchor derived from the heading text.
+    /// 由标题文本派生、供展示用的锚点；同名锚点依次追加 `-1`、`-2` 后缀。
     pub anchor: String,
-    /// One-based source line.
+    /// 源文件行号（从 1 起）。
     pub line: u32,
 }
 
-/// One node in a document heading tree.
+/// 文档标题树中的一个节点。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct HeadingNode {
-    /// Heading represented by this node.
+    /// 本节点代表的标题。
     pub heading: Heading,
-    /// Later headings nested below it by Markdown level.
+    /// 按 Markdown 级别嵌套在它之下的后续标题。
     pub children: Vec<HeadingNode>,
 }
 

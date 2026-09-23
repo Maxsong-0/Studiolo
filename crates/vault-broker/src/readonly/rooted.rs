@@ -1,4 +1,4 @@
-//! Private no-link directory-handle primitives for the read-only adapter.
+//! 只读适配器内部使用的不跟随链接目录句柄原语。
 
 use std::path::Path;
 
@@ -26,7 +26,7 @@ pub(super) fn open_root(root: &Path) -> Result<Dir, BrokerError> {
             std::io::Error::other("parent traversal in selected root"),
         ));
     }
-    // Remove a trailing slash or `/.` so neither can bypass final-component NOFOLLOW.
+    // 去掉末尾的 `/` 或 `/.`，防止二者绕过最后一个分量的 NOFOLLOW。
     let selected = root.components().collect::<std::path::PathBuf>();
     let handle = open(
         &selected,

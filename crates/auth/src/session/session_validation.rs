@@ -2,7 +2,7 @@
 
 use super::{
     SessionError, SessionState,
-    database::unavailable,
+    database::{required_row, unavailable},
     events::{self, Grant},
     rows, schema,
     validation::check_receipt,
@@ -19,11 +19,11 @@ pub(super) fn sessions(db: &Connection, config: &str) -> Result<(), SessionError
         * 1000;
     let floor: i64 = db
         .query_row("SELECT clock_floor FROM auth_meta", [], |r| r.get(0))
-        .map_err(unavailable)?;
+        .map_err(required_row)?;
     let store_id = schema::store_id(db)?;
     let epoch: i64 = db
         .query_row("SELECT epoch FROM auth_meta", [], |r| r.get(0))
-        .map_err(unavailable)?;
+        .map_err(required_row)?;
     epochs(db, epoch)?;
     for row in rows::all(db)? {
         let access: i64 = db
@@ -32,7 +32,7 @@ pub(super) fn sessions(db: &Connection, config: &str) -> Result<(), SessionError
                 [row.info.id.as_str()],
                 |r| r.get(0),
             )
-            .map_err(unavailable)?;
+            .map_err(required_row)?;
         let grant = Grant {
             store_id: store_id.clone(),
             id: row.info.id.clone(),

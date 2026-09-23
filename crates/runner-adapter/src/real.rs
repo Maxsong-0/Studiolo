@@ -1,4 +1,4 @@
-//! Process lifecycle shared by Claude Code and Codex; disabled until live isolation passes.
+//! Claude Code 与 Codex 共用的进程生命周期；实时隔离探针通过之前一律禁用。
 use crate::{
     AdapterAvailability, BudgetPhase, CliProvider, LaunchStage, LinuxIsolation, RunHandle, RunSpec,
     RunnerAdapter, RunnerArtifact, RunnerError, RunnerObservation, RunnerProgress, RunnerRef,
@@ -14,22 +14,22 @@ use std::{
 };
 use studiolo_core::VaultPath;
 
-/// Host-owned runner deployment. Never constructed from an untrusted HTTP body.
+/// 宿主机持有的 runner 部署配置；绝不从不可信的 HTTP 请求体构造。
 #[derive(Clone, Debug)]
 pub struct RunnerLaunchConfig {
-    /// Selected pinned CLI adapter.
+    /// 选定的、版本钉死的 CLI 适配器。
     pub provider: CliProvider,
-    /// SHA-256 of the pinned native CLI binary installed in the immutable runtime root.
+    /// 装在不可变运行时根目录中、版本钉死的原生 CLI 二进制的 SHA-256。
     pub cli_sha256: String,
-    /// Verified Linux namespace/cgroup profile.
+    /// 已验证的 Linux namespace／cgroup 隔离配置。
     pub isolation: LinuxIsolation,
-    /// Trusted source checkout, containing no canonical Vault data or secrets.
+    /// 可信的源码检出目录，不含权威 Vault 数据或任何秘密。
     pub source_checkout: PathBuf,
-    /// Scratch must be mounted on a bounded filesystem (at most 512 MiB).
+    /// scratch 区必须挂载在有容量上限的文件系统上（至多 512 MiB）。
     pub attempt_root: PathBuf,
-    /// Durable directory outside the scratch area for all unlanded patches.
+    /// 位于 scratch 区之外的持久目录，存放所有未落地的补丁。
     pub retained_root: PathBuf,
-    /// Private short-lived Gateway capability file issued for exactly this attempt.
+    /// 专为本次 attempt 签发的私有短期 Gateway 凭证文件。
     pub capability_file: PathBuf,
 }
 struct Run {
@@ -50,14 +50,14 @@ struct Run {
     report: Option<RunnerReport>,
     retained: PathBuf,
 }
-/// Real CLI adapter; long-lived credentials are never accepted by this type.
+/// 真实 CLI 适配器；此类型绝不接受长期凭据。
 pub struct RealRunner {
     config: RunnerLaunchConfig,
     runs: Mutex<BTreeMap<RunHandle, Run>>,
     last_probe: Mutex<Option<crate::AdapterProbe>>,
 }
 impl RealRunner {
-    /// Creates an adapter in the unavailable-by-default state until the live probe succeeds.
+    /// 创建适配器；实时探针成功之前，默认处于不可用状态。
     #[must_use]
     pub fn new(config: RunnerLaunchConfig) -> Self {
         Self {
@@ -92,8 +92,8 @@ impl RealRunner {
         }
         let inputs = scratch.join("inputs");
         fs::create_dir(&inputs).map_err(|e| RunnerError::io("input directory", e))?;
-        // The authenticated Gateway resolves this job identity to an independently stored grant.
-        // No bearer or provider credential is serialized in a RunSpec or persisted here.
+        // 已认证的 Gateway 会把这个作业身份解析到独立存储的授权（grant）。
+        // 这里不会把任何 bearer 或供应商凭据序列化进 RunSpec，也不会落盘。
         let job = serde_json::json!({"task_id": spec.task_id, "attempt_id": spec.attempt_id,
             "fence": spec.fence, "provider": self.config.provider, "model": execution.model,
             "args": self.config.provider.args(&execution.model), "instruction": spec.instruction,
@@ -402,7 +402,7 @@ impl RunnerAdapter for RealRunner {
                 Ok(RunnerObservation::Completed(report.clone()))
             };
         }
-        // Counters are advisory; no runner-controlled host filesystem path is opened.
+        // 计数器仅供参考；不会打开任何由 runner 控制的宿主机文件系统路径。
         if let Ok(progress) = run.observed.lock() {
             run.progress.tool_calls = run.progress.tool_calls.max(progress.tool_calls);
             run.progress.edits = run.progress.edits.max(progress.edits);

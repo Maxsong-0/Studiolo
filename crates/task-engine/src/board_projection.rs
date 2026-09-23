@@ -1,4 +1,4 @@
-//! Generated blocks preserve human edits both outside and inside the previous system region.
+//! 生成块会保留人工修改，无论改动位于旧系统区之外还是之内。
 use crate::board_types::sha256_hex;
 use crate::{BoardView, TaskEngineError};
 const START: &str = "<!-- studiolo:board:start -->";
@@ -103,7 +103,7 @@ impl<
     L: studiolo_audit_ledger::AuditLedger,
 > crate::PersistentTaskEngine<B, L>
 {
-    /// Projects one generated block via Broker batch; modified prior blocks move to a human section.
+    /// 经 Broker 批量写入投影一个生成块；被改动过的旧块移入人工小节。
     pub fn project_board(
         &mut self,
         path: &studiolo_core::VaultPath,

@@ -1,4 +1,4 @@
-//! Trusted code-side landing, deliberately absent from RunnerAdapter execution.
+//! 可信的代码侧落地；刻意不出现在 RunnerAdapter 的执行路径中。
 use crate::RunnerError;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -8,30 +8,30 @@ use std::{
     process::{Command, Stdio},
 };
 
-/// Owner-approved mapping and immutable candidate binding; never deserialize from Runner HTTP.
+/// 经所有者批准的映射与不可变的候选绑定；绝不从 Runner 的 HTTP 请求反序列化。
 #[derive(Clone, Debug)]
 pub struct CodeLandingPlan {
-    /// Administrator-mapped repository checkout.
+    /// 管理员映射的仓库检出目录。
     pub repository: PathBuf,
-    /// Expected HEAD commit, checked before and after applying.
+    /// 预期的 HEAD 提交，应用前后都会检查。
     pub expected_head: String,
-    /// Full approved dirty/untracked worktree tree, compared before any application.
+    /// 经批准的完整工作树 tree（含未提交与未跟踪内容），在任何应用之前比对。
     pub expected_tree: String,
-    /// Exact candidate result tree; successful application must match this tree.
+    /// 精确的候选结果 tree；应用成功后必须与之一致。
     pub expected_after_tree: String,
-    /// SHA-256 of the already retained candidate.
+    /// 已保留候选补丁的 SHA-256。
     pub patch_sha256: String,
-    /// Durable unlanded candidate; retained regardless of landing outcome.
+    /// 持久化的未落地候选补丁；无论落地结果如何都会保留。
     pub patch_path: PathBuf,
 }
-/// A conflict is an open review item, never a successful task terminal.
+/// 冲突是待处理的评审项，绝不算任务的成功终态。
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CodeLandingResult {
-    /// Whether git applied the candidate without conflict markers and exact tree verification.
+    /// git 是否成功应用候选补丁：没有冲突标记，且通过精确的 tree 校验。
     pub applied: bool,
-    /// Repository-relative paths containing conflict markers.
+    /// 含冲突标记或处于未合并状态的文件路径（相对仓库根）。
     pub conflicts: Vec<String>,
-    /// Retained candidate always survives failures.
+    /// 已保留的候选补丁在任何失败下都会留存。
     pub unlanded_patch: PathBuf,
 }
 fn git(
@@ -118,7 +118,7 @@ impl CodeLandingPlan {
         }
         Ok(())
     }
-    /// Read-only-to-the-worktree precondition check while the caller holds the landing lease.
+    /// 前置条件检查（不改动工作树）；调用方须持有落地租约。
     pub fn verify_base(&self) -> Result<(), RunnerError> {
         self.head_matches()?;
         let (_, _, current) = private_index(&self.repository)?;
@@ -127,7 +127,7 @@ impl CodeLandingPlan {
         }
         Ok(())
     }
-    /// Rechecks a previously recorded landing before replay or owner acceptance.
+    /// 在重放或所有者验收之前，复核先前记录的落地结果。
     pub fn verify_landed(&self) -> Result<(), RunnerError> {
         self.head_matches()?;
         let (_, _, current) = private_index(&self.repository)?;
@@ -137,9 +137,9 @@ impl CodeLandingPlan {
         Ok(())
     }
 }
-/// Applies an explicitly approved patch using a private index for the three-way fallback.
-/// Caller holds the repository lease; HEAD, complete dirty tree and candidate bytes are CAS-bound.
-/// The user's index, commits and refs are never updated by this operation.
+/// 应用一个经显式批准的补丁；三方合并回退使用私有 index。
+/// 调用方须持有仓库租约；HEAD、完整的脏工作树与候选字节都做 CAS 绑定。
+/// 本操作绝不更新用户的 index、提交或 ref。
 pub fn apply_code_patch(plan: &CodeLandingPlan) -> Result<CodeLandingResult, RunnerError> {
     let metadata = fs::symlink_metadata(&plan.patch_path)
         .map_err(|e| RunnerError::io("candidate metadata", e))?;
@@ -233,8 +233,8 @@ pub fn apply_code_patch(plan: &CodeLandingPlan) -> Result<CodeLandingResult, Run
         unlanded_patch: plan.patch_path.clone(),
     })
 }
-/// Compare-and-swap branch advancement for a separately authorized trusted owner only.
-/// Candidate landing does not call this function.
+/// 以 CAS 方式推进分支，仅供另行授权的可信所有者使用。
+/// 候选落地流程不会调用此函数。
 pub fn advance_code_ref(
     repository: &Path,
     reference: &str,

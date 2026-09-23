@@ -6,7 +6,7 @@ use axum::{
     Json,
     body::{Body, Bytes},
     extract::{Request, State},
-    http::{StatusCode, header},
+    http::{HeaderValue, StatusCode, header},
     response::{IntoResponse, Response},
 };
 use serde::Serialize;
@@ -104,8 +104,9 @@ fn deliver_codes(codes: RecoveryCodes) -> Result<Response, Failure> {
     let mut bytes = Zeroizing::new(Vec::with_capacity(1024));
     serde_json::to_writer(&mut *bytes, &delivery).map_err(|_| Failure::unavailable())?;
     let mut response = Response::new(Body::from(Bytes::from_owner(bytes)));
-    response
-        .headers_mut()
-        .insert(header::CONTENT_TYPE, "application/json".parse().unwrap());
+    response.headers_mut().insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static("application/json"),
+    );
     Ok(response)
 }

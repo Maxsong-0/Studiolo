@@ -3,7 +3,7 @@
 
 use std::{fs, path::Path};
 use studiolo_core::VaultPath;
-use studiolo_vault_broker::{ReadEntryKind, ReadOnlyVault, ScanLimits};
+use studiolo_vault_broker::{BrokerError, ReadEntryKind, ReadOnlyVault, ScanLimits};
 use tempfile::TempDir;
 
 fn path(value: &str) -> VaultPath {
@@ -87,22 +87,27 @@ fn attachment_and_hidden_entries_consume_the_complete_scan_budget() {
     fs::write(root.path().join("attachment.bin"), b"data").unwrap();
     fs::create_dir(root.path().join("empty")).unwrap();
     let reader = ReadOnlyVault::open(root.path()).unwrap();
-    assert!(
-        reader
-            .scan(ScanLimits {
-                max_entries: 2,
-                ..Default::default()
-            })
-            .is_err()
-    );
-    assert!(
-        reader
-            .scan(ScanLimits {
-                max_depth: 0,
-                ..Default::default()
-            })
-            .is_err()
-    );
+    // 隐藏项与附件同样占用枚举预算。
+    assert!(matches!(
+        reader.scan(ScanLimits {
+            max_entries: 2,
+            ..Default::default()
+        }),
+        Err(BrokerError::Io {
+            operation: "scan entry limit exceeded",
+            ..
+        })
+    ));
+    assert!(matches!(
+        reader.scan(ScanLimits {
+            max_depth: 0,
+            ..Default::default()
+        }),
+        Err(BrokerError::Io {
+            operation: "scan depth limit exceeded",
+            ..
+        })
+    ));
     assert!(
         reader
             .scan(ScanLimits {

@@ -14,7 +14,7 @@ pub(crate) fn location(path: &str, line: u32) -> SourceLocation {
     }
 }
 
-/// Keep source numbering while excluding YAML, comments, and fenced code.
+/// 保留源行号，同时排除 YAML frontmatter、HTML 注释、围栏代码与缩进代码行（四空格或 tab 开头）。
 pub(crate) fn lines(content: &str) -> Vec<Line<'_>> {
     let mut result = Vec::new();
     let mut frontmatter = false;

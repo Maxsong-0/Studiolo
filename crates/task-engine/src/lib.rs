@@ -1,8 +1,8 @@
-//! Persistent task lifecycle orchestration across Control DB, VaultBroker, and AuditLedger.
+//! 跨 Control DB、VaultBroker 与 AuditLedger 的持久化任务生命周期编排。
 //!
-//! The module owns the only mutable [`ControlDb`] handle. Vault reads and snapshots
-//! happen before the claim transaction; terminal artifact publication uses a durable
-//! T1 reservation and manifest-last roll-forward.
+//! 本模块持有唯一可变的 [`ControlDb`] 句柄。Vault 读取与快照
+//! 都在认领事务之前完成；终态产物发布使用持久的
+//! T1 预留与「manifest 最后写入」的前滚。
 
 #![forbid(unsafe_code)]
 
@@ -35,43 +35,43 @@ use studiolo_vault_broker::{
 /// 一条投影事件在单轮里最多尝试的写入次数（契约 §6「每条事件最多尝试三次」）。
 const MAX_PROJECTION_ATTEMPTS: usize = 3;
 
-/// Human-authored retry declaration. M0 records this but never automatically retries.
+/// 人写的重试声明。M0 Stub 任务只记录不重试；黑板启动失败的重试规则见各字段。
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RetryPolicy {
-    /// Maximum attempts an explicitly confirmed future retry policy may permit.
+    /// 允许的 attempt 总数上限（含首次）；启动失败重试同样受此约束。
     pub max_attempts: u32,
-    /// Minimum delay before such a future retry.
+    /// 重试前的最短等待秒数；启动失败重试以此作为退避。
     pub backoff_seconds: u64,
-    /// Explicit retryable outcome names; empty means no automatic retry.
+    /// 显式列出可重试的结果名，空则不自动重试；目前只认 `launch_failure`（见 `launch_failed`）。
     pub retry_on: Vec<String>,
 }
 
-/// Human-authored task definition, deliberately excluding TaskEngine projections.
+/// 人写的任务定义，刻意不含 TaskEngine 投影字段。
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TaskSpec {
-    /// Logical role selected by the author.
+    /// 作者选定的逻辑角色。
     pub role: String,
-    /// Runner adapter kind.
+    /// runner 适配器类型。
     pub adapter: String,
-    /// Explicit canonical inputs to snapshot.
+    /// 需要快照的显式规范输入。
     pub input_paths: Vec<VaultPath>,
-    /// Web destinations allowed by the task before policy intersection.
+    /// 任务允许的 Web 目标，尚未与策略取交集。
     pub allow_web: Vec<String>,
-    /// Database operations allowed by the task before policy intersection.
+    /// 任务允许的数据库操作，尚未与策略取交集。
     pub allow_db: Vec<String>,
-    /// Recorded retry declaration; M0 does not execute it automatically.
+    /// 记录在案的重试声明；M0 不自动执行，只有 `launch_failed` 按它处理启动失败重试。
     pub retry_policy: RetryPolicy,
-    /// Attempt timeout in seconds.
+    /// attempt 超时秒数。
     pub timeout: u64,
-    /// Human project name.
+    /// 人类可读的项目名。
     pub project: String,
-    /// Optional parent task.
+    /// 可选的父任务。
     pub parent: Option<TaskId>,
-    /// Optional display title.
+    /// 可选的展示标题。
     pub title: Option<String>,
-    /// Optional runner instruction.
+    /// 可选的 runner 指令。
     pub instruction: Option<String>,
 }
 
@@ -119,168 +119,168 @@ impl TaskSpec {
     }
 }
 
-/// Closed task command set supported by M0.
+/// M0 支持的封闭任务命令集。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TaskCommand {
-    /// Move a draft to the claim queue.
+    /// 把 draft 移入认领队列。
     Run,
-    /// Revoke queued or running work.
+    /// 撤销 draft、queued 或 running 的工作。
     Cancel,
 }
 
-/// Deterministic inputs for one claim attempt.
+/// 一次认领尝试的确定性输入。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ClaimRequest {
-    /// Authenticated worker identity supplied by the composition root.
+    /// 由组合根提供的已认证 worker 身份。
     pub worker_id: String,
-    /// Current Unix time in milliseconds.
+    /// 当前 Unix 时间（毫秒）。
     pub now_ms: i64,
-    /// Lease deadline in Unix milliseconds.
+    /// 租约截止时间（Unix 毫秒）。
     pub lease_until_ms: i64,
 }
 
-/// Immutable run request returned after the claim transaction commits.
+/// 认领事务提交后返回的不可变运行请求。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ClaimedTask {
-    /// Snapshot identifier persisted with the attempt.
+    /// 随 attempt 持久化的快照标识。
     pub snapshot_id: String,
-    /// Runner-facing immutable request.
+    /// 面向 runner 的不可变请求。
     pub run_spec: RunSpec,
 }
 
-/// Task definition and Control DB projection kept in separate fields.
+/// 任务定义与 Control DB 投影分字段存放的视图。
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TaskView {
-    /// Stable task identity.
+    /// 稳定的任务标识。
     pub task_id: TaskId,
-    /// Human-authored definition only.
+    /// 只含人写定义。
     pub spec: TaskSpec,
-    /// Authoritative runtime state.
+    /// 权威运行时状态。
     pub status: TaskStatus,
-    /// Current attempt, if any.
+    /// 当前 attempt（若有）。
     pub active_attempt: Option<AttemptId>,
-    /// Most recent terminal attempt, if any.
+    /// 最近一次结束的 attempt（若有）。
     pub last_attempt: Option<AttemptId>,
-    /// Immutable input snapshot selected by the claim transaction.
+    /// 不可变输入快照：Run 确认（黑板任务在认领前冻结）时写入，认领事务只沿用、不另选。
     pub input_snapshot: Option<String>,
 }
 
-/// Successful terminal report result.
+/// 终态报告处理成功的结果。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ReportResult {
-    /// Final task state.
+    /// 处理后的任务状态（现恒为 NeedsReview，等待审阅）。
     pub status: TaskStatus,
-    /// Manifest-last Broker receipt.
+    /// 「manifest 最后写入」的 Broker 回执。
     pub receipt: ArtifactCommitReceipt,
-    /// Whether the same durable reservation was already terminal.
+    /// 同一持久预留是否早已进入终态（即本次为重放）。
     pub replayed: bool,
 }
 
-/// Work performed by one restart reconciliation pass.
+/// 一次重启对账完成的工作。
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct ReconcileReport {
-    /// Running attempts revoked and abandoned first.
+    /// 最先被撤销并放弃的运行中 attempt 数。
     pub abandoned_attempts: usize,
-    /// Previously requested cancellations finalized after restart isolation.
+    /// 重启隔离后完成的、先前已请求的取消数。
     pub cancelled_attempts: usize,
-    /// Persisted committing reservations rolled forward to review.
+    /// 前滚到待审阅的已持久 committing 预留数。
     pub committed_attempts: usize,
-    /// Previously finalized terminal outcomes repaired from the durable audit outbox.
+    /// 从持久审计 outbox 补投的、先前已落定的终态结果数。
     pub audit_outcomes: usize,
 }
 
-/// Failures exposed by the TaskEngine seam.
+/// TaskEngine 接缝对外暴露的失败。
 #[derive(Debug, thiserror::Error)]
 pub enum TaskEngineError {
-    /// A human-authored definition violates the public schema.
+    /// 人写定义违反公开 schema，或黑板相关请求未通过校验。
     #[error("invalid task specification: {0}")]
     InvalidTaskSpec(&'static str),
-    /// A task or attempt was absent.
+    /// 任务或 attempt 不存在。
     #[error("task engine record not found: {0}")]
     NotFound(&'static str),
-    /// The durable state does not allow the requested command.
+    /// 持久状态不允许请求的命令。
     #[error("invalid task transition from {from} via {operation}")]
     InvalidTransition {
-        /// Durable state observed by the Control DB.
+        /// Control DB 观察到的持久状态（入参不合法时为原因说明）。
         from: String,
-        /// Stable operation name.
+        /// 稳定的操作名。
         operation: &'static str,
     },
-    /// Attempt identity or fence is no longer authoritative.
+    /// attempt 身份或 fence 已不再权威。
     #[error("stale attempt fence")]
     StaleFence,
-    /// Another terminal transition already won.
+    /// 另一个终态迁移已经胜出。
     #[error("attempt is already terminal")]
     AlreadyTerminal,
-    /// An event identity was replayed with different content.
+    /// 同一事件或请求标识被以不同内容重放。
     #[error("idempotency identity was reused with different content")]
     IdempotencyMismatch,
-    /// The authoritative audit sink was unavailable; protected effects stopped.
+    /// 权威审计接收端不可用；受保护的副作用已停止。
     #[error("audit ledger is unavailable")]
     AuditUnavailable,
-    /// Audit validation or persistence failed.
+    /// 审计校验或持久化失败。
     #[error("audit operation failed: {0}")]
     Audit(#[source] AuditError),
-    /// A Vault read or snapshot operation failed.
+    /// Vault 读取或快照等 Broker 操作失败。
     #[error("Vault Broker operation failed: {0}")]
     Broker(#[source] BrokerError),
-    /// A manifest-last artifact commit failed and remains reserved for reconcile.
+    /// 「manifest 最后写入」的产物提交失败；预留仍在，留待对账前滚。
     #[error("artifact commit failed: {0}")]
     CommitFailed(#[source] BrokerError),
-    /// The Control DB failed outside a classified transition.
+    /// Control DB 在已归类迁移之外失败（含黑板规则拒绝等未单独映射的错误）。
     #[error("Control DB operation failed: {0}")]
     ControlDb(#[source] DbError),
-    /// JSON persistence failed.
+    /// JSON 序列化或解析失败。
     #[error("task engine JSON operation failed: {0}")]
     Json(#[from] serde_json::Error),
-    /// Another active claim owns requested paths.
+    /// 另一个活动认领占有了请求的路径。
     #[error("paths held by {by_instance}: {paths:?}")]
     PathsHeld {
-        #[doc = "Instance owning the conflicting claim."]
+        #[doc = "持有冲突认领的实例。"]
         by_instance: String,
-        #[doc = "Requested paths intersecting the active claim."]
+        #[doc = "与活动认领相交的请求路径。"]
         paths: Vec<String>,
     },
-    /// A durable terminal reservation did not match its attempt.
+    /// 完整性校验失败：持久记录、快照或产物指针与预期不符（如终态预留与其 attempt 不匹配）。
     #[error("task engine integrity failure: {0}")]
     Integrity(String),
-    /// A task page could not be updated without losing authored content.
+    /// 投影失败，例如任务页无法在不丢失作者内容的前提下更新。
     #[error("task projection failed: {0}")]
     Projection(String),
-    /// Some events stayed pending because their own task pages rejected them; every other
-    /// task's events in the same pass were still delivered.
+    /// 部分事件因各自任务页拒绝而仍待投递；同一轮中其他
+    /// 任务的事件照常投递。
     #[error("task projection incomplete: {delivered} delivered, {} task(s) left pending", failures.len())]
     ProjectionIncomplete {
-        /// Events delivered during this pass.
+        /// 本轮投递的事件数。
         delivered: usize,
-        /// First rejected event per quarantined task; that task's later events were skipped.
+        /// 每个被隔离任务的首个被拒事件；该任务后续事件本轮跳过。
         failures: Vec<ProjectionFailure>,
     },
-    /// A confirmed input changed while the task was waiting to be claimed.
+    /// 任务等待认领期间，已确认的输入发生了变化。
     #[error("task {0} requires input reconfirmation")]
     NeedsReconfirmation(TaskId),
-    /// A runner reference lacked a stable identity or its required PID/start pair.
+    /// runner 引用无效：适配器与任务不符、缺少稳定标识，或带有 M0 不接受的 PID/启动时刻。
     #[error("invalid or mismatched runner reference")]
     InvalidRunnerRef,
 }
 
-/// One projection event left pending because its own task page rejected it.
+/// 因所属任务页拒绝而留待投递的一条投影事件。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ProjectionFailure {
-    /// Task whose page rejected the projection.
+    /// 拒绝该投影的任务页所属的任务。
     pub task_id: TaskId,
-    /// Outbox sequence that stays pending.
+    /// 仍待投递的 outbox 序号。
     pub sequence: i64,
-    /// Stable, human-readable rejection reason.
+    /// 稳定、人类可读的拒绝原因。
     pub reason: String,
 }
 
-/// Synchronous, object-safe task lifecycle seam.
+/// 同步、对象安全的任务生命周期接缝。
 pub trait TaskEngine: Send {
-    /// Persists a validated human-authored draft.
+    /// 持久化一份已校验的人写 draft。
     fn create_task(&mut self, spec: TaskSpec, now_ms: i64) -> Result<TaskId, TaskEngineError>;
 
-    /// Applies one closed task command and returns the resulting view.
+    /// 执行一条封闭任务命令，并返回执行后的视图。
     fn command(
         &mut self,
         task_id: TaskId,
@@ -288,10 +288,10 @@ pub trait TaskEngine: Send {
         now_ms: i64,
     ) -> Result<TaskView, TaskEngineError>;
 
-    /// Loads the Run-confirmed snapshot and atomically claims the oldest queued task.
+    /// 加载 Run 确认的快照，原子地认领最早入队的 queued 任务。
     fn claim(&mut self, request: ClaimRequest) -> Result<Option<ClaimedTask>, TaskEngineError>;
 
-    /// Persists the runner's restart-safe identity under its attempt fence.
+    /// 在 attempt fence 下持久化 runner 的重启安全身份。
     fn attach_runner(
         &mut self,
         task_id: TaskId,
@@ -301,7 +301,7 @@ pub trait TaskEngine: Send {
         now_ms: i64,
     ) -> Result<(), TaskEngineError>;
 
-    /// Extends a live lease under its attempt fence.
+    /// 在 attempt fence 下续期有效租约。
     fn heartbeat(
         &mut self,
         task_id: TaskId,
@@ -311,7 +311,7 @@ pub trait TaskEngine: Send {
         now_ms: i64,
     ) -> Result<(), TaskEngineError>;
 
-    /// Finalizes cancellation after the composition root has stopped the runner.
+    /// 组合根停止 runner 后完成取消。
     fn acknowledge_cancel(
         &mut self,
         task_id: TaskId,
@@ -320,10 +320,10 @@ pub trait TaskEngine: Send {
         now_ms: i64,
     ) -> Result<TaskView, TaskEngineError>;
 
-    /// Replays pending protected-field projections through VaultBroker with CAS.
+    /// 经 VaultBroker 以 CAS 重放待投递的受保护字段投影。
     fn project_pending(&mut self) -> Result<usize, TaskEngineError>;
 
-    /// Reserves and rolls a structured runner report through audit and Broker commit.
+    /// 预留结构化 runner 报告，并经审计与 Broker 提交将其前滚。
     fn report(
         &mut self,
         event_id: &str,
@@ -331,14 +331,14 @@ pub trait TaskEngine: Send {
         now_ms: i64,
     ) -> Result<ReportResult, TaskEngineError>;
 
-    /// Revokes old running work, then rolls forward durable committing reservations.
+    /// 撤销遗留的运行中工作，再前滚持久化的 committing 预留。
     fn reconcile(&mut self, now_ms: i64) -> Result<ReconcileReport, TaskEngineError>;
 
-    /// Returns one task with definition and projection kept separate.
+    /// 返回单个任务，定义与投影分开存放。
     fn task(&self, task_id: TaskId) -> Result<Option<TaskView>, TaskEngineError>;
 }
 
-/// Persistent M0 adapter. Its Control DB and Broker writer are exclusively owned.
+/// 持久化的 M0 适配器；独占持有 Control DB 与 Broker 写入端。
 pub struct PersistentTaskEngine<B, L> {
     control_db: ControlDb,
     broker: B,
@@ -346,7 +346,7 @@ pub struct PersistentTaskEngine<B, L> {
 }
 
 impl<B, L> PersistentTaskEngine<B, L> {
-    /// Takes exclusive ownership of the Control DB and Broker writer.
+    /// 接管 Control DB 与 Broker 写入端的独占所有权。
     pub fn new(control_db: ControlDb, broker: B, audit_ledger: L) -> Self {
         Self {
             control_db,
@@ -355,25 +355,25 @@ impl<B, L> PersistentTaskEngine<B, L> {
         }
     }
 
-    /// Read-only access for composition and restart assertions.
+    /// 只读访问，供组合与重启断言使用。
     #[must_use]
     pub fn control_db(&self) -> &ControlDb {
         &self.control_db
     }
 
-    /// Read-only access to the owned Broker adapter.
+    /// 只读访问所持有的 Broker 适配器。
     #[must_use]
     pub fn broker(&self) -> &B {
         &self.broker
     }
 
-    /// Read-only access to the owned audit adapter.
+    /// 只读访问所持有的审计适配器。
     #[must_use]
     pub fn audit_ledger(&self) -> &L {
         &self.audit_ledger
     }
 
-    /// Returns owned parts for an explicit composition-root handoff.
+    /// 交出所持有的各部件，供组合根显式移交。
     #[must_use]
     pub fn into_parts(self) -> (ControlDb, B, L) {
         (self.control_db, self.broker, self.audit_ledger)
@@ -466,7 +466,7 @@ where
         };
         let spec = decode_spec(&task)?;
 
-        // All Vault I/O precedes the claim transaction; the queue never selects new input bytes.
+        // 所有 Vault I/O 都在认领事务之前完成；队列从不选取新的输入字节。
         let snapshot_id: SnapshotId =
             serde_json::from_value(json!(task.input_snapshot.as_ref().ok_or_else(|| {
                 TaskEngineError::Integrity("queued task has no confirmed snapshot".to_owned())
@@ -671,7 +671,7 @@ where
         }
         self.migrate_terminal_bodies()?;
         let abandoned_attempts = self.control_db.abandon_inflight(now_ms).map_err(map_db)?;
-        // M0 only runs the in-process Stub. A process restart has already isolated its work.
+        // M0 只运行进程内 Stub；进程重启本身已隔离了它的工作。
         let cancelling = self.control_db.cancelling_attempts().map_err(map_db)?;
         for attempt in &cancelling {
             self.control_db
@@ -732,7 +732,7 @@ where
     B: VaultBroker + ArtifactStager,
     L: AuditLedger,
 {
-    /// Delivers only the pending events of one task, in sequence order.
+    /// 只投递单个任务的待投递事件，按序号顺序。
     fn project_task(&mut self, task_id: TaskId) -> Result<usize, TaskEngineError> {
         self.verify_vault_binding()?;
         let pending = self
@@ -745,9 +745,9 @@ where
         self.project_events(pending)
     }
 
-    /// Delivers events in sequence order. A page-level rejection quarantines that task for
-    /// the rest of the pass (its later events stay pending, preserving per-task order) without
-    /// blocking other tasks; storage and Broker failures still abort the whole pass.
+    /// 按序号顺序投递事件。页面级拒绝会在本轮剩余部分隔离该任务
+    /// （其后续事件保持待投递，维持单任务内的顺序），但不阻塞其他
+    /// 任务；存储与 Broker 故障仍会中止整轮。
     fn project_events(&mut self, events: Vec<OutboxRecord>) -> Result<usize, TaskEngineError> {
         let mut delivered = 0;
         let mut failures: Vec<ProjectionFailure> = Vec::new();
@@ -855,8 +855,8 @@ where
                 let expected_content = mutation.content.clone();
                 match self.broker.mutate(mutation) {
                     Ok(receipt) => {
-                        // An idempotent receipt proves a historical write, not that an
-                        // external editor has left those bytes installed since then.
+                        // 幂等回执只证明历史上写入过，并不证明外部编辑者
+                        // 此后一直没有改动那些已安装的字节。
                         let installed = self.broker.read(&page).map_err(TaskEngineError::Broker)?;
                         if installed.revision == receipt.revision
                             && installed.content == expected_content
@@ -918,7 +918,7 @@ where
     }
 }
 
-/// Failures caused by the content of one task's own page: they must not block other tasks.
+/// 由单个任务自身页面内容引起的失败：不得阻塞其他任务。
 fn is_page_rejection(error: &TaskEngineError) -> bool {
     matches!(
         error,
@@ -1068,8 +1068,8 @@ where
                 )
                 .map_err(map_db)?;
         }
-        // Audit may only claim a workflow status after the authoritative T2 commit.
-        // T2's outbox survives a crash or unavailable ledger at this exact boundary.
+        // 只有在权威 T2 提交之后，审计才能宣称工作流状态。
+        // T2 的 outbox 能扛过恰好发生在此边界的崩溃或账本不可用。
         self.deliver_pending_outcomes(Some(attempt.attempt_id), now_ms)?;
         Ok(receipt)
     }

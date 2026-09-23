@@ -1,46 +1,46 @@
-//! Blackboard metadata and atomic hierarchy/path arbitration. Artifact bodies never enter here.
+//! 黑板元数据与原子的层级/路径仲裁。产物正文绝不进入这里。
 mod schema;
 use super::*;
 pub(super) use schema::migrate;
 use studiolo_core::VaultPath;
 
-/// Validated machine work-item constraints, supplied only by TaskEngine.
+/// 已校验的机器工作项约束，只由 TaskEngine 提供。
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct BoardDefinition {
-    #[doc = "Ordered, individually testable acceptance criteria."]
+    #[doc = "有序、可逐条验证的验收标准。"]
     pub acceptance_criteria: Vec<String>,
-    #[doc = "Exclusive logical paths, including directory prefixes; an empty list is read-only."]
+    #[doc = "独占的逻辑路径（含目录前缀）；空列表表示只读。"]
     pub files_owned: Vec<VaultPath>,
-    #[doc = "Maximum direct children, capped at eight."]
+    #[doc = "直接子项数上限，最多 8 个。"]
     pub max_children: u8,
-    #[doc = "Trusted effective policy version frozen at creation."]
+    #[doc = "创建时冻结的受信任生效策略版本。"]
     pub policy_hash: String,
-    #[doc = "Optional parent work item."]
+    #[doc = "可选的父工作项。"]
     pub parent: Option<TaskId>,
-    #[doc = "Optional mutually exclusive target within the project."]
+    #[doc = "项目内可选的互斥产物目标。"]
     pub artifact_target: Option<String>,
 }
 
-/// Authority metadata accompanying the separately stored task definition.
+/// 伴随单独存储的任务定义的权威元数据。
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct BoardRecord {
-    #[doc = "Stable work-item identity."]
+    #[doc = "稳定的工作项标识。"]
     pub task_id: TaskId,
-    #[doc = "Frozen machine constraints."]
+    #[doc = "冻结的机器约束。"]
     pub definition: BoardDefinition,
-    #[doc = "Derived tree depth, with roots at zero and a hard maximum of three."]
+    #[doc = "推导出的树深度：根为 0，硬上限为 3。"]
     pub depth: u8,
-    #[doc = "Authenticated creator retained after the task completes."]
+    #[doc = "经认证的创建者，任务完成后仍保留。"]
     pub created_by_instance: Option<String>,
-    #[doc = "Structured outbound handoff metadata."]
+    #[doc = "结构化的外发交接元数据。"]
     pub handoff: Option<Value>,
-    #[doc = "Structured terminal receipt metadata."]
+    #[doc = "结构化的终态回执元数据。"]
     pub receipt: Option<Value>,
 }
 
 impl ControlDb {
-    /// Atomically creates a board task, freezes trusted policy, and checks the parent tree.
+    /// 原子地创建黑板任务、冻结受信任策略，并检查父任务树。
     pub fn create_board_task(
         &mut self,
         request_id: &str,
@@ -52,7 +52,7 @@ impl ControlDb {
         self.create_board_task_by_instance(request_id, task_id, task, definition, None, now_ms)
     }
 
-    /// Creates metadata with an authenticated originating instance in the same transaction.
+    /// 在同一事务中创建元数据，并记下经认证的发起实例。
     pub fn create_board_task_by_instance(
         &mut self,
         request_id: &str,
@@ -90,7 +90,7 @@ impl ControlDb {
                 "SELECT b.depth,b.max_children,b.definition_json,t.status FROM board_tasks b JOIN tasks t USING(task_id) WHERE b.task_id=?1",
                 [parent.to_string()], |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?)))
                 .optional()?.ok_or(DbError::NotFound("parent board task"))?;
-            // Conservative delegation: create children before the parent takes any claim.
+            // 保守委派：子任务必须在父任务被认领之前创建。
             if !matches!(status.as_str(), "draft" | "queued") {
                 return Err(DbError::BoardRejected(
                     "parent must be unclaimed before delegation",
@@ -153,7 +153,7 @@ impl ControlDb {
         Ok(task_id)
     }
 
-    /// Reads one board record without artifact bytes.
+    /// 读取一条黑板记录，不含产物字节。
     pub fn board_task(&self, task_id: TaskId) -> Result<Option<BoardRecord>, DbError> {
         type Row = (String, u8, Option<String>, Option<String>, Option<String>);
         let row: Option<Row> = self.connection.query_row(
@@ -174,7 +174,7 @@ impl ControlDb {
         .transpose()
     }
 
-    /// Lists board tasks deterministically; callers apply authenticated project visibility.
+    /// 按确定顺序列出黑板任务；由调用方按认证身份套用项目可见性。
     pub fn board_tasks(&self) -> Result<Vec<BoardRecord>, DbError> {
         let mut stmt = self
             .connection

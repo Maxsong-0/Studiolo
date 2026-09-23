@@ -177,7 +177,7 @@ impl RunRecord {
 
 /// 解析完整持久记录；任何不完整或不自洽的输入都失败关闭。
 ///
-/// # Errors
+/// # 错误
 /// 超预算、半 JSON、未知字段返回 `CorruptStore`；未知版本返回 `UnknownSchema`。
 pub fn decode(bytes: &[u8]) -> Result<TransportState> {
     if bytes.len() > STATE_MAX_BYTES {
@@ -208,7 +208,7 @@ pub fn decode(bytes: &[u8]) -> Result<TransportState> {
 
 /// 序列化完整记录；超过 64 KiB 拒绝发布。
 ///
-/// # Errors
+/// # 错误
 /// 记录不自洽返回 `CorruptStore`；编码超预算返回 `Budget`。
 pub fn encode(state: &TransportState) -> Result<Vec<u8>> {
     validate(state)?;
@@ -221,7 +221,7 @@ pub fn encode(state: &TransportState) -> Result<Vec<u8>> {
 
 /// 完整记录的自洽检查；阶段与证据必须互相支撑。
 ///
-/// # Errors
+/// # 错误
 /// 任何不自洽返回 `CorruptStore`；未知版本返回 `UnknownSchema`。
 pub fn validate(state: &TransportState) -> Result<()> {
     if state.schema_version != SCHEMA_VERSION {

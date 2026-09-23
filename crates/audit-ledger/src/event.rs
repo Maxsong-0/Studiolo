@@ -3,13 +3,13 @@ use serde::{Deserialize, Serialize};
 use std::fmt;
 use studiolo_core::{AttemptId, TaskId, ToolId};
 
-/// Stable identity shared by the intent and outcome of one audited operation.
+/// 同一被审计操作的 Intent 与 Outcome 共用的稳定标识。
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
 #[serde(transparent)]
 pub struct AuditEventId(String);
 
 impl AuditEventId {
-    /// Parses a non-empty identifier without control characters.
+    /// 解析事件标识：空串、仅含空白或含控制字符的值一律拒绝。
     pub fn parse(value: impl Into<String>) -> Result<Self, AuditError> {
         let value = value.into();
         if value.trim().is_empty() || value.chars().any(char::is_control) {
@@ -18,7 +18,7 @@ impl AuditEventId {
         Ok(Self(value))
     }
 
-    /// Returns the textual identifier.
+    /// 返回标识文本。
     #[must_use]
     pub fn as_str(&self) -> &str {
         &self.0
@@ -41,17 +41,17 @@ impl<'de> Deserialize<'de> for AuditEventId {
     }
 }
 
-/// The two durable phases of an operation with possible side effects.
+/// 可能产生副作用的操作的两个持久化阶段。
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AuditPhase {
-    /// Persisted before the sensitive operation starts.
+    /// 在敏感操作开始之前持久化。
     Intent,
-    /// Persisted after an allow, denial, failure, or indeterminate result.
+    /// 在得出放行、拒绝、失败或无法确定的结果之后持久化。
     Outcome,
 }
 
-/// Subject metadata used to filter audit records without inspecting payloads.
+/// 过滤审计记录用的主体元数据，过滤时无需检视 payload。
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AuditSubject {
     task_id: Option<TaskId>,
@@ -60,47 +60,47 @@ pub struct AuditSubject {
 }
 
 impl AuditSubject {
-    /// Associates a task with this subject.
+    /// 为该主体关联任务。
     #[must_use]
     pub fn with_task(mut self, task_id: TaskId) -> Self {
         self.task_id = Some(task_id);
         self
     }
 
-    /// Associates an attempt with this subject.
+    /// 为该主体关联 attempt。
     #[must_use]
     pub fn with_attempt(mut self, attempt_id: AttemptId) -> Self {
         self.attempt_id = Some(attempt_id);
         self
     }
 
-    /// Associates a logical tool with this subject.
+    /// 为该主体关联逻辑工具。
     #[must_use]
     pub fn with_tool(mut self, tool: ToolId) -> Self {
         self.tool = Some(tool);
         self
     }
 
-    /// Returns the task identifier, if present.
+    /// 返回任务标识；未设置时为 `None`。
     #[must_use]
     pub fn task_id(&self) -> Option<TaskId> {
         self.task_id
     }
 
-    /// Returns the attempt identifier, if present.
+    /// 返回 attempt 标识；未设置时为 `None`。
     #[must_use]
     pub fn attempt_id(&self) -> Option<AttemptId> {
         self.attempt_id
     }
 
-    /// Returns the logical tool, if present.
+    /// 返回逻辑工具；未设置时为 `None`。
     #[must_use]
     pub fn tool(&self) -> Option<&ToolId> {
         self.tool.as_ref()
     }
 }
 
-/// One semantic audit event supplied to [`crate::AuditLedger::append`].
+/// 提交给 [`crate::AuditLedger::append`] 的一条语义审计事件。
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AuditEvent {
     event_id: AuditEventId,
@@ -111,7 +111,7 @@ pub struct AuditEvent {
 }
 
 impl AuditEvent {
-    /// Creates an event with an empty subject.
+    /// 创建主体为空的事件。
     #[must_use]
     pub fn new(
         event_id: AuditEventId,
@@ -128,38 +128,38 @@ impl AuditEvent {
         }
     }
 
-    /// Replaces the event's filterable subject metadata.
+    /// 替换事件可供过滤的主体元数据。
     #[must_use]
     pub fn with_subject(mut self, subject: AuditSubject) -> Self {
         self.subject = subject;
         self
     }
 
-    /// Returns the stable event identifier.
+    /// 返回稳定的事件标识。
     #[must_use]
     pub fn event_id(&self) -> &AuditEventId {
         &self.event_id
     }
 
-    /// Returns the operation phase.
+    /// 返回操作阶段。
     #[must_use]
     pub fn phase(&self) -> AuditPhase {
         self.phase
     }
 
-    /// Returns the stable action name.
+    /// 返回稳定的动作名。
     #[must_use]
     pub fn action(&self) -> &str {
         &self.action
     }
 
-    /// Returns the event subject.
+    /// 返回事件主体。
     #[must_use]
     pub fn subject(&self) -> &AuditSubject {
         &self.subject
     }
 
-    /// Returns the checked payload.
+    /// 返回已通过检查的 payload。
     #[must_use]
     pub fn payload(&self) -> &SanitizedPayload {
         &self.payload

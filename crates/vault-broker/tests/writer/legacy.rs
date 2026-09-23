@@ -1,6 +1,6 @@
 //! 兼容夹具只写已交付 M0 的磁盘格式，不模拟新协议的私有故障阶段。
 
-use super::support::{Fixture, inventory, path};
+use super::support::{Fixture, inventory, linked_record, path};
 use sha2::{Digest, Sha256};
 use std::{fs, path::PathBuf};
 use studiolo_core::{Revision, VaultUuid};
@@ -74,7 +74,11 @@ fn digest(bytes: &[u8]) -> String {
 fn existing_open_does_not_adopt_legacy_layout_implicitly() {
     let legacy = Legacy::new(true);
     let before = inventory(legacy.fixture.directory.path());
-    assert!(FsVaultBroker::open_existing(&legacy.fixture.vault, &legacy.fixture.data).is_err());
+    // 旧布局没有配对记录；普通重开不收养，只有显式 open 才迁移。
+    assert!(matches!(
+        FsVaultBroker::open_existing(&legacy.fixture.vault, &legacy.fixture.data),
+        Err(BrokerError::WriterBindingMismatch)
+    ));
     assert_eq!(inventory(legacy.fixture.directory.path()), before);
 }
 
@@ -176,10 +180,19 @@ fn malformed_and_linked_legacy_records_prevent_adoption_before_creating_new_stat
             }
         }
         let before = inventory(legacy.fixture.directory.path());
-        assert!(
-            FsVaultBroker::open(&legacy.fixture.vault, &legacy.fixture.data).is_err(),
-            "accepted {damage}"
-        );
+        let result = FsVaultBroker::open(&legacy.fixture.vault, &legacy.fixture.data);
+        let rejected = match damage {
+            "invalid-json" => matches!(&result, Err(BrokerError::CorruptWriterState)),
+            "symlink" => matches!(&result, Err(error) if linked_record(error)),
+            _ => matches!(
+                &result,
+                Err(BrokerError::UnsafeNode {
+                    reason: "hard-linked or unlinked file",
+                    ..
+                })
+            ),
+        };
+        assert!(rejected, "accepted {damage}: {:?}", result.err());
         assert_eq!(inventory(legacy.fixture.directory.path()), before);
     }
 }

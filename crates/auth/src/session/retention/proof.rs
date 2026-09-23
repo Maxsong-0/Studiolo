@@ -1,7 +1,10 @@
 //! 冻结原始审计行的摘要；跨库确认只使用这条原事件与原回执。
 
 use super::{SessionError, valid_hash};
-use crate::session::{database::unavailable, validation};
+use crate::session::{
+    database::{required_row, unavailable},
+    validation,
+};
 use rusqlite::{Connection, OptionalExtension, Row, types::ValueRef};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -26,16 +29,19 @@ pub(super) fn for_event(
     id: &str,
     phase: &str,
 ) -> Result<Option<Proof>, SessionError> {
+    // 调用方只查授权、终态与 epoch 推进证据，它们随会话或成对同事务写入，缺行即库损坏；
+    // None 只表示该行尚未送达回执。
     let sequence: i64 = db
         .query_row(
             "SELECT sequence FROM audit_outbox WHERE event_id=?1 AND phase=?2",
             rusqlite::params![id, phase],
             |row| row.get(0),
         )
-        .map_err(unavailable)?;
+        .map_err(required_row)?;
     capture(db, sequence)
 }
 
+// sequence 刚在同一事务内查到，对应行必然存在。
 fn capture(db: &Connection, sequence: i64) -> Result<Option<Proof>, SessionError> {
     db.query_row(SELECT, [sequence], |row| {
         let receipt: Option<String> = row.get(8)?;
@@ -48,7 +54,7 @@ fn capture(db: &Connection, sequence: i64) -> Result<Option<Proof>, SessionError
             None
         })
     })
-    .map_err(unavailable)
+    .map_err(required_row)
 }
 
 pub(super) fn load(db: &Connection, expected: &Proof) -> Result<Original, SessionError> {
@@ -110,3 +116,7 @@ pub(in crate::session) fn seal_row(
     }
     Ok(crate::session::secrets::hex(&hash.finalize()))
 }
+
+#[cfg(test)]
+#[path = "../../../tests/session/retention_proof.rs"]
+mod tests;

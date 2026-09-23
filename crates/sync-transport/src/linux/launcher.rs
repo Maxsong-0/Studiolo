@@ -73,7 +73,7 @@ pub struct IsolationReport {
 
 /// 任一项不成立就不是隔离；`ProtectSystem`/只读全盘不能替代最小文件系统隔离。
 ///
-/// # Errors
+/// # 错误
 /// 缺少 namespace 隔离返回 `NamespaceIsolationMissing`，缺专用身份返回
 /// `DedicatedIdentityMissing`，缺磁盘 quota 返回 `DiskQuotaMissing`。
 pub fn isolation_sufficient(report: &IsolationReport) -> Result<(), ContainmentGap> {

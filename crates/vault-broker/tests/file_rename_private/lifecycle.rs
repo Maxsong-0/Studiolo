@@ -4,7 +4,10 @@ fn explicit_enable_preserves_old_frozen_bytes_and_never_advances_sequence() {
     let fixture = Fixture::new();
     let (mut broker, revision) = fixture.seed(b"original");
     let rename = request("note.md", "target.md", revision, "rename");
-    assert!(broker.prepare_file_operation(rename, metadata()).is_err());
+    assert!(matches!(
+        broker.prepare_file_operation(rename, metadata()),
+        Err(BrokerError::InvalidArtifact(reason)) if reason == "重命名尚未显式启用"
+    ));
     let old =
         ops::frozen::Frozen::new(&broker, &delete(revision, "old"), &metadata(), limits()).unwrap();
     let before = crate::mutation::load(&broker).unwrap();
@@ -163,7 +166,13 @@ fn enabling_interruption_preserves_either_whole_v5_or_whole_v6_marker() {
         let fixture = Fixture::new();
         let (mut broker, _) = fixture.seed(b"unchanged");
         fault(&broker, point);
-        assert!(broker.enable_file_rename().is_err());
+        assert!(matches!(
+            broker.enable_file_rename(),
+            Err(BrokerError::Io {
+                operation: "injected writer interruption",
+                ..
+            })
+        ));
         drop(broker);
         let broker = fixture.reopen();
         let state = crate::mutation::load(&broker).unwrap();
