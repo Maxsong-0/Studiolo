@@ -7,6 +7,8 @@ use axum::{
 
 use crate::{AccessError, ApiError, AppState};
 
+mod cache;
+
 /// CSP 模板：只有 style-src 随页面 nonce 变化，其余指令固定。可选的本机 Consumer 伴随进程
 /// 只绑字面 IPv4 回环，并同时认证已配置的 Studiolo 源与本机配对令牌；因此 connect-src
 /// 只放行 `http://127.0.0.1:*`，不放行任意主机、localhost 域名别名或局域网明文地址。
@@ -23,9 +25,6 @@ macro_rules! csp {
 
 /// 无页面 nonce 时的严格策略，也是动态策略不能成为合法头值时的兜底。
 const STRICT_CSP: &str = csp!("style-src 'self'");
-/// 内容一变文件名就变，旧名永远对应同一份字节，所以可长期缓存且无需再验证。
-const IMMUTABLE: &str = "public, max-age=31536000, immutable";
-const NO_STORE: &str = "no-store";
 
 pub(crate) async fn guard(
     State(state): State<AppState>,
@@ -88,7 +87,7 @@ pub(crate) async fn guard(
     } else {
         None
     };
-    let cache_control = cache_control_for(&path, content_type);
+    let cache_control = cache::cache_control_for(&path, content_type);
     let headers = response.headers_mut();
     if state.sessions.is_some() {
         headers.insert(
@@ -132,42 +131,6 @@ fn content_security_policy(response: &mut Response) -> HeaderValue {
             HeaderValue::from_static(STRICT_CSP)
         }
     }
-}
-
-/// 缓存策略：`/assets/` 下文件名带 Vite 内容哈希（`名字-哈希.js|css|svg|woff2`）、且确以对应
-/// MIME 送出的脚本、样式、SVG 图标与 woff2 字体长期缓存；index.html 每次带不同 CSP nonce，
-/// 与 API、错误及其余响应一律 no-store。四类共用同一条哈希判定与同一张 MIME 表。
-fn cache_control_for(path: &str, content_type: Option<&HeaderValue>) -> HeaderValue {
-    let expected = match path
-        .strip_prefix("/assets/")
-        .and_then(|name| name.rsplit_once('.'))
-    {
-        Some((stem, "js")) if content_hashed(stem) => crate::assets::JAVASCRIPT,
-        Some((stem, "css")) if content_hashed(stem) => crate::assets::STYLESHEET,
-        Some((stem, "svg")) if content_hashed(stem) => crate::assets::SVG,
-        Some((stem, "woff2")) if content_hashed(stem) => crate::assets::WOFF2,
-        _ => return HeaderValue::from_static(NO_STORE),
-    };
-    if content_type.is_some_and(|value| value == expected) {
-        HeaderValue::from_static(IMMUTABLE)
-    } else {
-        HeaderValue::from_static(NO_STORE)
-    }
-}
-
-/// Vite 产物名 `[name]-[hash]`：扩展名前是以 `-` 起头、至少 8 位 `[A-Za-z0-9_-]` 的哈希段。
-/// 在紧贴扩展名的同字符集连续段里取第一个 `-`，因为哈希本身也可能含 `-`；该段遇 `/` 或 `.` 即止。
-fn content_hashed(stem: &str) -> bool {
-    let bytes = stem.as_bytes();
-    let run = bytes
-        .iter()
-        .rev()
-        .take_while(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
-        .count();
-    let tail = &bytes[bytes.len() - run..];
-    tail.iter()
-        .position(|byte| *byte == b'-')
-        .is_some_and(|dash| tail[dash + 1..].len() >= 8)
 }
 
 fn one<'a>(headers: &'a HeaderMap, name: &str) -> Result<Option<&'a str>, ApiError> {
@@ -273,37 +236,4 @@ fn factors_enabled(state: &AppState) -> bool {
         .sessions
         .as_ref()
         .is_some_and(crate::auth_http::AuthHttp::has_factors)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// 经真实路由只拿得到「类型与扩展名一致」的 200，类型不符的分支只能在这里直接锁住：
-    /// 四类长缓存资源各自只认资产处理器给自己的那个 MIME；别类的、缺失或 HTML 都是 no-store。
-    #[test]
-    fn each_long_cached_type_accepts_only_its_own_mime() {
-        let cases = [
-            ("/assets/index-C65IIHot.js", crate::assets::JAVASCRIPT),
-            ("/assets/index-ovxLtHW2.css", crate::assets::STYLESHEET),
-            ("/assets/favicon-4NhN4y5N.svg", crate::assets::SVG),
-            (
-                "/assets/archivo-latin-800-normal-DZa_k145.woff2",
-                crate::assets::WOFF2,
-            ),
-        ];
-        let html = HeaderValue::from_static("text/html; charset=utf-8");
-        for (path, own) in cases {
-            let own = HeaderValue::from_static(own);
-            assert_eq!(cache_control_for(path, Some(&own)), IMMUTABLE, "{path}");
-            assert_eq!(cache_control_for(path, None), NO_STORE, "{path}");
-            assert_eq!(cache_control_for(path, Some(&html)), NO_STORE, "{path}");
-            for (_, other) in cases {
-                let other = HeaderValue::from_static(other);
-                if other != own {
-                    assert_eq!(cache_control_for(path, Some(&other)), NO_STORE, "{path}");
-                }
-            }
-        }
-    }
 }

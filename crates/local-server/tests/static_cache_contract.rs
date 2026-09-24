@@ -1,5 +1,6 @@
-//! 静态资源缓存契约：只有 `/assets/` 下带 Vite 内容哈希、且成功送出的 JS/CSS/SVG/woff2 本体
-//! 长期缓存；index.html（每次带不同 CSP nonce）、API、错误与其余资源一律 no-store。
+//! 静态资源缓存契约：只有 `/assets/` 下带 Vite 内容哈希（`名字-` 后恰好 8 位 base64url）、且成功
+//! 送出的 JS/CSS/SVG/woff2 本体长期缓存；index.html（每次带不同 CSP nonce）、API、错误与其余资源
+//! 一律 no-store。
 //! 夹具均为临时虚构文件。
 
 use axum::{
@@ -22,29 +23,37 @@ const STRICT_CSP: &str = "default-src 'none'; script-src 'self'; style-src 'self
     connect-src 'self' http://127.0.0.1:*; img-src 'self'; font-src 'self'; base-uri 'none'; \
     form-action 'none'; frame-ancestors 'none'; object-src 'none'";
 
-/// 形如真实 Vite 产物的哈希文件（脚本、样式、SVG 图标、woff2 字体）：哈希段可含 `-` 与 `_`，
-/// 名字本身可含多段 `-`，也可位于子目录。
-const HASHED: [&str; 8] = [
+/// 形如真实 Vite 产物的哈希文件（脚本、样式、SVG 图标、woff2 字体）：`名字-` 后紧跟恰好 8 位
+/// base64url 哈希，哈希可以 `_` 开头、中间含 `-`；名字本身可含多段 `-`，也可位于子目录。
+const HASHED: [&str; 9] = [
     "assets/index-C65IIHot.js",
+    "assets/index-_njak0q8.js",
     "assets/index-ovxLtHW2.css",
     "assets/MarkdownEditor-CC7-Ql5Q.js",
     "assets/RecentlyDeleted-B_pY3tRi.js",
-    "assets/chunks/vendor-Abcdefgh12.js",
+    "assets/chunks/vendor-Abcdefgh.js",
     "assets/favicon-4NhN4y5N.svg",
     "assets/font-Abcdefgh.woff2",
     "assets/archivo-latin-800-normal-DZa_k145.woff2",
 ];
 
-/// 同在 `/assets/` 下、类型也在长缓存之列，却没有哈希、哈希段不足 8 位或不紧贴扩展名的文件。
-const UNHASHED: [&str; 8] = [
+/// 同在 `/assets/` 下、类型也在长缓存之列，却没有哈希、哈希段不是恰好 8 位或不紧贴扩展名的文件；
+/// 多段连字符的普通名（字体、图标、样式）改了内容也不换名，长缓存会让浏览器一年不重取。
+const UNHASHED: [&str; 14] = [
     "assets/app.js",
     "assets/app.css",
     "assets/favicon-fixture.js",
     "assets/vendor-Abcdefgh.min.js",
+    "assets/chunks/vendor-Abcdefgh12.js",
+    "assets/code-mirror-theme.css",
     "assets/favicon.svg",
     "assets/favicon-fixture.svg",
+    "assets/some-icon.svg",
+    "assets/my-long-icon.svg",
     "assets/font.woff2",
     "assets/font-Abcdefg.woff2",
+    "assets/archivo-latin-800-normal.woff2",
+    "assets/ibm-plex-mono-latin-400-normal.woff2",
 ];
 
 fn fixture() -> (TempDir, TempDir, Router) {

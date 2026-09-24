@@ -107,5 +107,7 @@ Markdown正文使用CodeMirror，预览按Markdown AST渲染，HTML正文不直�
 CodeMirror动态样式；脚本策略仍为 `script-src 'self'`，无 `unsafe-inline`。
 nonce不写回磁盘、不随API或静态资产返回。除 `/assets/` 下带 Vite 内容哈希、成功送出的
 JS/CSS/SVG/woff2 为长缓存 immutable（T-114、T-165）外，所有响应仍为no-store；HTML 模板始终 no-store。
+「带哈希」只认文件名为 `非空名字-` 加恰好 8 位 `[A-Za-z0-9_-]`（T-169），多段连字符的普通名
+（如 `archivo-latin-800-normal.woff2`）与非 8 位哈希一律 no-store；口径以 `auth-http.md` 为准。
 
 本接口与UI仍在整体验收中；同步、统一健康告警、独立备份与真实身份/部署尚不能据此计为完成。
