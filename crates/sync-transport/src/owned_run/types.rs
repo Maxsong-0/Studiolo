@@ -278,4 +278,7 @@ pub struct TerminalSummary {
     pub observation: RunObservation,
     /// 实测资源计数。
     pub counts: ResourceCounts,
+    /// 闭合时记录里的受控容器身份；未曾 Contained（如取消）即 `None`。
+    /// `config_output` 只对这个身份向 launcher 取正文，绝不按名字重找 unit。
+    pub container: Option<ContainerIdentity>,
 }

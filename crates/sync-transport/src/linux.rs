@@ -3,9 +3,10 @@
 //! 真实特权路径是管理员预置的 root 系统服务 `studiolo-sync-launcher serve`（ADR-025 D2）：
 //! owner 经固定私有 socket（`protocol::LAUNCHER_SOCKET`）发封闭请求，launcher 用 systemd
 //! transient unit 建 payload 子组、核对隔离、放行、读 cgroup 事实并回报。本文件的
-//! `verify_backend` 与 `LinuxContainment` 每个方法都必须是那条 IPC 的调用；在 W1 接上
-//! `client.rs` 之前它们如实报 `TrustedLauncherNotProvisioned`。**绝不回退 PID/PGID 观察
-//! 冒充 OwnedRun**，也没有任何 mock 能把平台标记为可用。
+//! `verify_backend` 与 `LinuxContainment` 每个方法都是那条 IPC 的一次往返（`client.rs`，
+//! 本 crate 里 socket IO 的唯一位置）：socket 未置备如实报 `TrustedLauncherNotProvisioned`，
+//! 探测项任一不满足按其分类报缺口。**绝不回退 PID/PGID 观察冒充 OwnedRun**，也没有任何
+//! mock 能把平台标记为可用——只有 launcher 的 `probe` 实测应答能产出 `VerifiedLinuxBackend`。
 
 pub mod cgroup;
 pub mod ipc;
@@ -15,10 +16,11 @@ pub mod service;
 pub mod stdio;
 
 mod backend;
+pub(crate) mod client;
 
 pub use backend::{LinuxContainment, VerifiedLinuxBackend, verify_backend, verify_backend_at};
 
-use crate::owned_run::{ContainerIdentity, ExitObservation, ResourceCounts, TransportError};
+use crate::owned_run::{ContainerIdentity, ExitObservation, ResourceCounts, RunId, TransportError};
 use cgroup::CgroupEvents;
 use launcher::{LaunchAcknowledgement, LaunchRequest, ReleaseToken};
 
@@ -112,15 +114,25 @@ pub trait ContainmentBackend {
 
     /// 观察执行是否真的开始。
     ///
+    /// 运行标识与容器身份一起进请求帧（`ContainerFrame`），launcher 逐字段核对；下同。
+    ///
     /// # 错误
     /// 身份不符返回 `IdentityMismatch`。
-    fn observe_running(&mut self, container: &ContainerIdentity) -> Result<bool, ContainmentGap>;
+    fn observe_running(
+        &mut self,
+        run_id: RunId,
+        container: &ContainerIdentity,
+    ) -> Result<bool, ContainmentGap>;
 
     /// 关闭一切继续创建 payload 的入口。
     ///
     /// # 错误
     /// 无法确证入口已关闭时返回 `IdentityMismatch`。
-    fn close_spawn_gate(&mut self, container: &ContainerIdentity) -> Result<(), ContainmentGap>;
+    fn close_spawn_gate(
+        &mut self,
+        run_id: RunId,
+        container: &ContainerIdentity,
+    ) -> Result<(), ContainmentGap>;
 
     /// 读取同一受控 payload 子组的 `cgroup.events`。
     ///
@@ -128,6 +140,7 @@ pub trait ContainmentBackend {
     /// 身份不符返回 `IdentityMismatch`。
     fn read_events(
         &mut self,
+        run_id: RunId,
         container: &ContainerIdentity,
     ) -> Result<CgroupEvents, ContainmentGap>;
 
@@ -135,7 +148,11 @@ pub trait ContainmentBackend {
     ///
     /// # 错误
     /// 身份不符返回 `IdentityMismatch`。
-    fn drain(&mut self, container: &ContainerIdentity) -> Result<ResourceCounts, ContainmentGap>;
+    fn drain(
+        &mut self,
+        run_id: RunId,
+        container: &ContainerIdentity,
+    ) -> Result<ResourceCounts, ContainmentGap>;
 
     /// 只停止绑定的子组：先 TERM 有界 grace，再对同一组执行覆盖全后代的强停。
     ///
@@ -143,6 +160,7 @@ pub trait ContainmentBackend {
     /// 身份不符返回 `IdentityMismatch`。
     fn stop(
         &mut self,
+        run_id: RunId,
         container: &ContainerIdentity,
         grace_seconds: u32,
     ) -> Result<(), ContainmentGap>;
@@ -151,7 +169,11 @@ pub trait ContainmentBackend {
     ///
     /// # 错误
     /// 身份不符返回 `IdentityMismatch`。
-    fn reap(&mut self, container: &ContainerIdentity) -> Result<ExitObservation, ContainmentGap>;
+    fn reap(
+        &mut self,
+        run_id: RunId,
+        container: &ContainerIdentity,
+    ) -> Result<ExitObservation, ContainmentGap>;
 
     /// 重开时核对旧容器身份。
     ///
@@ -159,6 +181,7 @@ pub trait ContainmentBackend {
     /// manager 不可用时返回 `ManagerUnavailable`。
     fn match_identity(
         &mut self,
+        run_id: RunId,
         container: &ContainerIdentity,
     ) -> Result<IdentityMatch, ContainmentGap>;
 
@@ -168,8 +191,12 @@ pub trait ContainmentBackend {
     ///
     /// # 错误
     /// 未 reap、超预算或非 UTF-8 返回 `BudgetUnsupported`；身份不符返回 `IdentityMismatch`。
-    fn config_output(&mut self, container: &ContainerIdentity) -> Result<String, ContainmentGap> {
-        let _ = container;
+    fn config_output(
+        &mut self,
+        run_id: RunId,
+        container: &ContainerIdentity,
+    ) -> Result<String, ContainmentGap> {
+        let _ = (run_id, container);
         Err(ContainmentGap::ProtocolViolation)
     }
 }

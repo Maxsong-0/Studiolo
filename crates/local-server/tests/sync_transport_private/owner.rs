@@ -219,6 +219,7 @@ fn the_status_projection_keeps_phase_quiescence_and_exit_as_separate_facts() {
                 stop_reason: None,
             },
             counts: ResourceCounts::default(),
+            container: None,
         }),
     };
 

@@ -47,6 +47,9 @@ pub const MIRROR_ROOT: &str = "/srv/studiolo/mirror";
 pub const MIRROR_VIEW_ROOT: &str = "/srv/studiolo/mirror-view";
 pub const SERVICE_UNIT: &str = "studiolo-sync-launcher@link-1.service";
 pub const CGROUP_PREFIX: &str = "/sys/fs/cgroup/studiolo.slice/payload";
+/// 假批准里的专用 payload 身份；假 launcher 的 `probe` 报回同一值。
+pub const PAYLOAD_UID: u32 = 61001;
+pub const PAYLOAD_GID: u32 = 61001;
 pub const OWNER: OwnerIdentity = OwnerIdentity {
     uid: 1000,
     gid: 1000,
@@ -89,8 +92,8 @@ impl FakeApproval {
             },
             backend: Shared::new(BackendDescriptor {
                 service_unit: SERVICE_UNIT.to_owned(),
-                payload_uid: 61001,
-                payload_gid: 61001,
+                payload_uid: PAYLOAD_UID,
+                payload_gid: PAYLOAD_GID,
                 payload_cgroup_prefix: CGROUP_PREFIX.to_owned(),
                 digest: [6u8; 32],
             }),
@@ -246,7 +249,7 @@ impl Fixture {
     }
 
     /// 走完 prepare → Intent ACK 的常规前置。
-    pub fn prepared(&self, session: &mut RunSession<'_, FakeBackend>) -> PreparedRun {
+    pub fn prepared<B: ContainmentBackend>(&self, session: &mut RunSession<'_, B>) -> PreparedRun {
         let prepared = session
             .prepare_once(1, RunOperation::RunOnce, 1_700_000_000_000)
             .expect("可以准备一次运行");
@@ -255,8 +258,8 @@ impl Fixture {
     }
 }
 
-/// 确认当前待补审计事件。
-pub fn acknowledge(session: &mut RunSession<'_, FakeBackend>) {
+/// 确认当前待补审计事件；对任何后端都一样，假 launcher 驱动的真实 adapter 也用它。
+pub fn acknowledge<B: ContainmentBackend>(session: &mut RunSession<'_, B>) {
     let candidate = session
         .pending_audit()
         .expect("可以读待补事件")
@@ -267,7 +270,7 @@ pub fn acknowledge(session: &mut RunSession<'_, FakeBackend>) {
         .expect("可以登记已核验回执");
 }
 
-fn next_offset(session: &RunSession<'_, FakeBackend>) -> u64 {
+fn next_offset<B: ContainmentBackend>(session: &RunSession<'_, B>) -> u64 {
     session
         .load()
         .expect("可以读权威记录")

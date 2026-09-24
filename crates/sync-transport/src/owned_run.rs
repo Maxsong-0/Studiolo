@@ -27,6 +27,7 @@ pub use audit::{
 pub use error::{Result, TransportError};
 pub use host_approval::backend_digest;
 pub use owner::{SyncTransportOwner, initial_state, initialize_store};
+pub(crate) use session::random;
 pub use state::{
     AuditReceipt, AuditSlot, OwnerIdentity, QuiescenceEvidence, QuiescenceProof, RunRecord,
     SCHEMA_VERSION, STATE_MAX_BYTES, TransportState,

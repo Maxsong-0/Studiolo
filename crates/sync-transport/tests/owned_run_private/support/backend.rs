@@ -54,6 +54,8 @@ pub struct FakeBackend {
     pub launch_gap: Option<ContainmentGap>,
     pub release_gap: Option<ContainmentGap>,
     pub observe_gap: Option<ContainmentGap>,
+    /// `config_output` 返回的正文；`None` 即 launcher 报超预算。
+    pub output: Option<String>,
 }
 
 impl FakeBackend {
@@ -75,6 +77,7 @@ impl FakeBackend {
             launch_gap: None,
             release_gap: None,
             observe_gap: None,
+            output: None,
         }
     }
 }
@@ -108,6 +111,7 @@ impl ContainmentBackend for FakeBackend {
 
     fn observe_running(
         &mut self,
+        _run_id: RunId,
         _container: &ContainerIdentity,
     ) -> std::result::Result<bool, ContainmentGap> {
         self.observe_gap.map_or(Ok(self.running), Err)
@@ -115,6 +119,7 @@ impl ContainmentBackend for FakeBackend {
 
     fn close_spawn_gate(
         &mut self,
+        _run_id: RunId,
         _container: &ContainerIdentity,
     ) -> std::result::Result<(), ContainmentGap> {
         self.gate_closures += 1;
@@ -123,6 +128,7 @@ impl ContainmentBackend for FakeBackend {
 
     fn read_events(
         &mut self,
+        _run_id: RunId,
         _container: &ContainerIdentity,
     ) -> std::result::Result<CgroupEvents, ContainmentGap> {
         Ok(CgroupEvents {
@@ -133,6 +139,7 @@ impl ContainmentBackend for FakeBackend {
 
     fn drain(
         &mut self,
+        _run_id: RunId,
         _container: &ContainerIdentity,
     ) -> std::result::Result<ResourceCounts, ContainmentGap> {
         Ok(self.counts)
@@ -140,6 +147,7 @@ impl ContainmentBackend for FakeBackend {
 
     fn stop(
         &mut self,
+        _run_id: RunId,
         _container: &ContainerIdentity,
         _grace_seconds: u32,
     ) -> std::result::Result<(), ContainmentGap> {
@@ -149,6 +157,7 @@ impl ContainmentBackend for FakeBackend {
 
     fn reap(
         &mut self,
+        _run_id: RunId,
         _container: &ContainerIdentity,
     ) -> std::result::Result<ExitObservation, ContainmentGap> {
         Ok(self.exit)
@@ -156,8 +165,18 @@ impl ContainmentBackend for FakeBackend {
 
     fn match_identity(
         &mut self,
+        _run_id: RunId,
         _container: &ContainerIdentity,
     ) -> std::result::Result<IdentityMatch, ContainmentGap> {
         Ok(self.identity)
+    }
+
+    fn config_output(
+        &mut self,
+        _run_id: RunId,
+        _container: &ContainerIdentity,
+    ) -> std::result::Result<String, ContainmentGap> {
+        let output = self.output.clone();
+        output.ok_or(ContainmentGap::BudgetUnsupported)
     }
 }

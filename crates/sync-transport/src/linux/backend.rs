@@ -1,18 +1,25 @@
 //! 已核验后端与真实 adapter：每个方法都是一次 launcher IPC 往返（ADR-025 D3）。
 //!
-//! 本文件不做 IO：socket 连接与收发只在 `client.rs`（W1 新建，唯一豁免的 IO 文件）。
-//! 在 W1 接上之前，这里如实报 `TrustedLauncherNotProvisioned`，绝不给「看起来能跑」的假实现。
+//! 本文件不做 IO：socket 连接与收发只在 `client.rs`（本 crate 唯一的 socket IO 文件）。
+//! 这里只组请求帧、按请求种类核对应答变体并映射成 owner 侧类型（`mapping.rs`）；
+//! 应答变体不符或 nonce 不回显是 `ProtocolViolation`，身份字段不一致是 `IdentityMismatch`，不猜。
+
+mod mapping;
+mod verify;
+
+pub use verify::{verify_backend, verify_backend_at};
 
 use super::cgroup::CgroupEvents;
 use super::launcher::{LaunchAcknowledgement, LaunchRequest, ReleaseToken};
-use super::{ContainmentBackend, ContainmentGap, IdentityMatch, protocol, service};
-use crate::owned_run::{ApprovedTransport, ContainerIdentity, ExitObservation, ResourceCounts};
+use super::protocol::{ContainerFrame, Empty, LaunchFrame, Request, Response, StopFrame};
+use super::{ContainmentBackend, ContainmentGap, IdentityMatch, client, service};
+use crate::owned_run::{ContainerIdentity, ExitObservation, ResourceCounts, RunId};
 use std::path::{Path, PathBuf};
 
 /// 已实测核验的受控 Linux 后端；没有公开构造器，也不能被反序列化。
 ///
 /// 唯一的构造路径是 `verify_backend_at`：它经 launcher IPC 的 `probe` 请求拿到实测事实，
-/// 逐项与批准值比对后才返回。W1 接上 `client.rs` 之前任何平台都拿不到它。
+/// 逐项与批准值比对后才返回。没有 launcher 应答的机器上任何代码路径都拿不到它。
 ///
 /// ```compile_fail
 /// let backend: studiolo_sync_transport::linux::VerifiedLinuxBackend =
@@ -46,61 +53,25 @@ impl VerifiedLinuxBackend {
     }
 }
 
-/// 首次检查受控隔离前置；缺任何一项都不启动第三方程序。
-///
-/// 生产固定连 `protocol::LAUNCHER_SOCKET`；契约测试用 `verify_backend_at` 指向临时 socket
-/// 上的假 launcher。探测事实全部来自 launcher 的 `probe` 应答，本函数不读 cgroupfs、不起子进程。
-///
-/// # 错误
-/// 非 Linux 返回 `UnsupportedPlatform`；launcher 未置备或探测项任一不满足返回对应缺口。
-pub fn verify_backend(
-    approval: &dyn ApprovedTransport,
-) -> Result<VerifiedLinuxBackend, ContainmentGap> {
-    verify_backend_at(approval, Path::new(protocol::LAUNCHER_SOCKET))
-}
-
-/// 同 `verify_backend`，但显式指定 launcher socket；生产只经 `verify_backend` 调用。
-///
-/// # 错误
-/// 同 `verify_backend`。
-pub fn verify_backend_at(
-    approval: &dyn ApprovedTransport,
-    socket: &Path,
-) -> Result<VerifiedLinuxBackend, ContainmentGap> {
-    approval
-        .revalidate()
-        .map_err(|_| ContainmentGap::IdentityMismatch)?;
-    let backend = approval.backend();
-    if !service::unit_name_acceptable(&backend.service_unit)
-        || !crate::owned_run::absolute_normal(socket)
-    {
-        return Err(ContainmentGap::ProtocolViolation);
-    }
-    if !cfg!(target_os = "linux") {
-        return Err(ContainmentGap::UnsupportedPlatform);
-    }
-    // B 轮 W1 实现：连接 socket → `Request::Probe` → 核对 `ProbeReport`（protocol_version、
-    // cgroup_v2、loop_quota、dedicated_identity、payload_uid/gid 与批准值相等）→ 构造
-    // `VerifiedLinuxBackend { service_unit, payload_uid, payload_gid, socket }`。
-    // 探测不到就是缺口，绝不用 PID/PGID 观察或任何 mock 把平台标记为可用。
-    let _ = (backend, socket);
-    Err(ContainmentGap::TrustedLauncherNotProvisioned)
-}
-
 /// 绑定已核验后端的真实 adapter：每个方法都是一次 launcher IPC 往返。
 ///
-/// owner 进程自己不读 cgroupfs、不起子进程；`ContainerIdentity` 逐字段进请求帧，
-/// launcher 逐字段核对后才回事实。W1 接上 `client.rs` 之前每个方法如实报缺口。
+/// owner 进程自己不读 cgroupfs、不起子进程；运行标识与 `ContainerIdentity` 逐字段进请求帧，
+/// launcher 逐字段核对后才回事实。应答变体与请求种类不符即 `ProtocolViolation`。
 #[derive(Debug)]
 pub struct LinuxContainment {
     backend: VerifiedLinuxBackend,
+    /// 最近一次 `issue_launch` 成功回报的容器身份；`release_once` 只为它拼放行帧。
+    last: Option<ContainerIdentity>,
 }
 
 impl LinuxContainment {
     /// 只能由已核验后端构造。
     #[must_use]
     pub fn new(backend: VerifiedLinuxBackend) -> Self {
-        Self { backend }
+        Self {
+            backend,
+            last: None,
+        }
     }
 
     /// 已核验后端的只读事实。
@@ -109,68 +80,178 @@ impl LinuxContainment {
         &self.backend
     }
 
-    // B 轮 W1 实现：换成 `client::call(self.backend.socket(), &Request)`，按 `Response` 变体
-    // 映射；`Refused { verdict }` 走 `verdict.gap()`。
-    fn gap(&self) -> ContainmentGap {
-        ContainmentGap::TrustedLauncherNotProvisioned
+    /// 一次往返；`Refused` 已在 `client::call` 里按 `Verdict::gap` 映射。
+    fn call(&self, request: Request) -> Result<Response, ContainmentGap> {
+        client::call(self.backend.socket(), &request)
+    }
+
+    /// 绑定运行标识与容器身份的一次往返。
+    fn bound(
+        &self,
+        run_id: RunId,
+        container: &ContainerIdentity,
+        kind: fn(ContainerFrame) -> Request,
+    ) -> Result<Response, ContainmentGap> {
+        self.call(kind(ContainerFrame::from_identity(run_id, container)))
     }
 }
 
 impl ContainmentBackend for LinuxContainment {
     fn boot_id(&mut self) -> Result<[u8; 16], ContainmentGap> {
-        Err(self.gap())
+        match self.call(Request::BootId(Empty {}))? {
+            Response::BootId { boot_id } => Ok(boot_id),
+            _ => Err(ContainmentGap::ProtocolViolation),
+        }
     }
 
     fn issue_launch(
         &mut self,
-        _request: &LaunchRequest,
+        request: &LaunchRequest,
     ) -> Result<LaunchAcknowledgement, ContainmentGap> {
-        Err(self.gap())
+        let (operation, mode) = LaunchFrame::split_operation(request.operation);
+        // argv 正文不过 IPC：只送摘要，launcher 用自己的固定 pins 重算比对。
+        let frame = LaunchFrame {
+            run_id: request.run_id,
+            sequence: request.sequence,
+            operation,
+            mode,
+            nonce: request.nonce.bytes(),
+            argv_digest: service::argv_digest(&request.argv),
+            budget: request.budget,
+            payload_uid: request.payload_uid,
+            payload_gid: request.payload_gid,
+        };
+        let report = match self.call(Request::Launch(frame))? {
+            Response::Launch(report) => report,
+            _ => return Err(ContainmentGap::ProtocolViolation),
+        };
+        if report.nonce != request.nonce.bytes() {
+            return Err(ContainmentGap::ProtocolViolation);
+        }
+        if report.container.run_id != request.run_id {
+            return Err(ContainmentGap::IdentityMismatch);
+        }
+        let container = report.container.identity();
+        self.last = Some(container.clone());
+        Ok(mapping::acknowledgement(request.run_id, container, &report))
     }
 
-    fn release_once(&mut self, _token: ReleaseToken) -> Result<(), ContainmentGap> {
-        Err(self.gap())
+    fn release_once(&mut self, token: ReleaseToken) -> Result<(), ContainmentGap> {
+        // 放行帧的其余身份字段来自本实例记下的 launch 回报；session 不符就不是同一次屏障。
+        let container = self
+            .last
+            .as_ref()
+            .filter(|container| container.launcher_session == token.launcher_session())
+            .ok_or(ContainmentGap::IdentityMismatch)?;
+        let frame = ContainerFrame::from_identity(token.run_id(), container);
+        match self.call(Request::Release(frame))? {
+            Response::Release(_) => Ok(()),
+            _ => Err(ContainmentGap::ProtocolViolation),
+        }
     }
 
-    fn observe_running(&mut self, _container: &ContainerIdentity) -> Result<bool, ContainmentGap> {
-        Err(self.gap())
+    fn observe_running(
+        &mut self,
+        run_id: RunId,
+        container: &ContainerIdentity,
+    ) -> Result<bool, ContainmentGap> {
+        match self.bound(run_id, container, Request::Running)? {
+            Response::Running { running } => Ok(running),
+            _ => Err(ContainmentGap::ProtocolViolation),
+        }
     }
 
-    fn close_spawn_gate(&mut self, _container: &ContainerIdentity) -> Result<(), ContainmentGap> {
-        Err(self.gap())
+    fn close_spawn_gate(
+        &mut self,
+        run_id: RunId,
+        container: &ContainerIdentity,
+    ) -> Result<(), ContainmentGap> {
+        match self.bound(run_id, container, Request::Gate)? {
+            Response::Gate(_) => Ok(()),
+            _ => Err(ContainmentGap::ProtocolViolation),
+        }
     }
 
     fn read_events(
         &mut self,
-        _container: &ContainerIdentity,
+        run_id: RunId,
+        container: &ContainerIdentity,
     ) -> Result<CgroupEvents, ContainmentGap> {
-        Err(self.gap())
+        match self.bound(run_id, container, Request::Events)? {
+            Response::Events { populated, frozen } => Ok(CgroupEvents { populated, frozen }),
+            _ => Err(ContainmentGap::ProtocolViolation),
+        }
     }
 
-    fn drain(&mut self, _container: &ContainerIdentity) -> Result<ResourceCounts, ContainmentGap> {
-        Err(self.gap())
+    fn drain(
+        &mut self,
+        run_id: RunId,
+        container: &ContainerIdentity,
+    ) -> Result<ResourceCounts, ContainmentGap> {
+        match self.bound(run_id, container, Request::Drain)? {
+            Response::Drain {
+                stdout_bytes,
+                stderr_bytes,
+                output_over_budget,
+            } => Ok(ResourceCounts {
+                stdout_bytes,
+                stderr_bytes,
+                output_over_budget,
+            }),
+            _ => Err(ContainmentGap::ProtocolViolation),
+        }
     }
 
     fn stop(
         &mut self,
-        _container: &ContainerIdentity,
-        _grace_seconds: u32,
+        run_id: RunId,
+        container: &ContainerIdentity,
+        grace_seconds: u32,
     ) -> Result<(), ContainmentGap> {
-        Err(self.gap())
+        let frame = StopFrame {
+            container: ContainerFrame::from_identity(run_id, container),
+            grace_seconds,
+        };
+        match self.call(Request::Stop(frame))? {
+            Response::Stop(_) => Ok(()),
+            _ => Err(ContainmentGap::ProtocolViolation),
+        }
     }
 
-    fn reap(&mut self, _container: &ContainerIdentity) -> Result<ExitObservation, ContainmentGap> {
-        Err(self.gap())
+    fn reap(
+        &mut self,
+        run_id: RunId,
+        container: &ContainerIdentity,
+    ) -> Result<ExitObservation, ContainmentGap> {
+        match self.bound(run_id, container, Request::Reap)? {
+            Response::Reap {
+                exit_observed,
+                exit_code,
+                exit_signal,
+            } => mapping::exit_observation(exit_observed, exit_code, exit_signal),
+            _ => Err(ContainmentGap::ProtocolViolation),
+        }
     }
 
     fn match_identity(
         &mut self,
-        _container: &ContainerIdentity,
+        run_id: RunId,
+        container: &ContainerIdentity,
     ) -> Result<IdentityMatch, ContainmentGap> {
-        Err(self.gap())
+        match self.bound(run_id, container, Request::Match)? {
+            Response::Match { identity } => mapping::identity_match(&identity),
+            _ => Err(ContainmentGap::ProtocolViolation),
+        }
     }
 
-    fn config_output(&mut self, _container: &ContainerIdentity) -> Result<String, ContainmentGap> {
-        Err(self.gap())
+    fn config_output(
+        &mut self,
+        run_id: RunId,
+        container: &ContainerIdentity,
+    ) -> Result<String, ContainmentGap> {
+        match self.bound(run_id, container, Request::Output)? {
+            Response::Output { output } => Ok(output),
+            _ => Err(ContainmentGap::ProtocolViolation),
+        }
     }
 }

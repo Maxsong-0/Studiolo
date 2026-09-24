@@ -1,4 +1,7 @@
 //! Linux adapter 的纯逻辑契约：解析、比对与封闭 argv，全部不触碰真实 OS。
+//! `SetMode` argv、`argv_digest` 与帧闭集的补充契约在 `adapters/argv.rs`（只为压住单文件行数）。
+
+mod argv;
 
 use crate::linux::cgroup::{
     CgroupLimits, parse_cpu_max, parse_events, parse_scalar, satisfies, within_prefix,

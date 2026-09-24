@@ -4,7 +4,7 @@ use super::error::{Result, TransportError};
 use super::session::RunSession;
 use super::tickets::QuiescentMirror;
 use super::types::{ExitObservation, Quiescence, RunId, RunOperation, RunPhase};
-use crate::linux::ContainmentBackend;
+use crate::linux::{ContainmentBackend, ContainmentGap};
 
 impl<B: ContainmentBackend> RunSession<'_, B> {
     /// 已有静止证据且 Outcome 已 ACK 才发；再 prepare 立即作废。
@@ -72,9 +72,13 @@ impl<B: ContainmentBackend> RunSession<'_, B> {
         {
             return Err(TransportError::Budget);
         }
-        // B 轮 W1 实现：容器身份须来自持久记录。闭合摘要目前不保存容器身份，
-        // W1 在 `TerminalSummary` 加 `container: Option<ContainerIdentity>` 后改为
-        // `self.backend.config_output(&container).map_err(ContainmentGap::after_start)`。
-        Err(TransportError::ExitUnconfirmed)
+        // 容器身份只来自持久记录：没有登记过容器就没有可取正文的对象，绝不按名字重找 unit。
+        let container = terminal
+            .container
+            .clone()
+            .ok_or(TransportError::ExitUnconfirmed)?;
+        self.backend
+            .config_output(run_id, &container)
+            .map_err(ContainmentGap::after_start)
     }
 }

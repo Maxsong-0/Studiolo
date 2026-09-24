@@ -174,6 +174,7 @@ impl RunRecord {
             operation: self.operation,
             observation: self.observation(),
             counts: self.counts,
+            container: self.container.clone(),
         }
     }
 }

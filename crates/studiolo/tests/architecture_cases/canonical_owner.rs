@@ -5,6 +5,8 @@ use std::{fs, path::Path};
 
 const INPUT: &str = "startup/canonical_input.rs";
 const MAINTENANCE_INPUT: &str = "maintenance/inputs.rs";
+#[path = "canonical_owner/bridge_seam.rs"]
+mod bridge_seam;
 
 fn compact(source: &str) -> String {
     source
@@ -40,6 +42,21 @@ fn boundary_violations(path: &Path, source: &str) -> Vec<&'static str> {
             1,
         );
     }
+    if path.ends_with("coordinator/sync_bridge.rs") {
+        // 双向 Bridge 的唯一 canonical 接缝（ADR-025 D8）：七条「外部：Obsidian」写形态各一次，加一条外 stage 只读附件来源。
+        for allowed in [
+            "Mutation::create(path.clone(),content,idempotency_key)",
+            "Mutation::replace(path.clone(),content,expected,idempotency_key)",
+            "broker.mutation_replay_recorded(&mutation,&metadata)",
+            "broker.mutate_recorded(mutation,metadata)",
+            "broker.prepare_stream_mutation(request,&source,limits,metadata)",
+            "broker.commit_stream_mutation(ticket)",
+            "broker.cancel_stream_mutation(ticket)",
+            "BlobSource::open(stage_root,stage_object.clone())",
+        ] {
+            remaining = remaining.replacen(allowed, "", 1);
+        }
+    }
     if remaining.contains("FsVaultBroker::")
         || ((owner || input)
             && ["::open(", "::open_existing("]
@@ -57,21 +74,6 @@ fn boundary_violations(path: &Path, source: &str) -> Vec<&'static str> {
             "Mutation::replace(",
             "broker.mutate_recorded(mutation,metadata)",
             "broker.check_precondition_recorded(mutation,metadata)",
-        ] {
-            remaining = remaining.replacen(allowed, "", 1);
-        }
-    }
-    if path.ends_with("coordinator/sync_bridge.rs") {
-        // 双向 Bridge 的唯一 canonical 接缝（T-132 P1，ADR-025 D8）：只放行固定的
-        // 「外部：Obsidian」条件写／流式写形态，主体与幂等键都由调用方按执行器原键给出。
-        for allowed in [
-            "Mutation::create(path.clone(),content,idempotency_key)",
-            "Mutation::replace(path.clone(),content,expected,idempotency_key)",
-            "broker.mutation_replay_recorded(&mutation,&metadata)",
-            "broker.mutate_recorded(mutation,metadata)",
-            "broker.prepare_stream_mutation(request,&source,limits,metadata)",
-            "broker.commit_stream_mutation(ticket)",
-            "broker.cancel_stream_mutation(ticket)",
         ] {
             remaining = remaining.replacen(allowed, "", 1);
         }
