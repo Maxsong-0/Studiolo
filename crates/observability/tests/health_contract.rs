@@ -227,6 +227,53 @@ fn 证据从缺失恢复成齐备之后健康页可以重新显示正常() {
     assert_eq!(recovered.overall(), HealthState::Normal);
 }
 
+#[test]
+fn sync配额正文在四种结论下都以非账号用量结尾() {
+    let owners = [owner("backup-worker", Some(9_950), 600)];
+    for verdict in [
+        QuotaVerdict::Normal,
+        QuotaVerdict::Warning,
+        QuotaVerdict::Exceeded,
+        QuotaVerdict::Unknown,
+    ] {
+        let mut inputs = healthy_inputs(&owners);
+        inputs.sync = verdict;
+        let report = aggregate(&inputs).expect("固定正文必须可构造");
+        let sync = section(report.sections(), "sync-quota");
+        assert!(sync.detail().ends_with("（非账号用量）"), "{verdict:?}");
+        assert_eq!(sync.state(), verdict.health(), "{verdict:?}");
+    }
+}
+
+#[test]
+fn 磁盘配额正文不带非账号用量后缀() {
+    let owners = [owner("backup-worker", Some(9_950), 600)];
+    for verdict in [
+        QuotaVerdict::Normal,
+        QuotaVerdict::Warning,
+        QuotaVerdict::Exceeded,
+        QuotaVerdict::Unknown,
+    ] {
+        let mut inputs = healthy_inputs(&owners);
+        inputs.disk = verdict;
+        let report = aggregate(&inputs).expect("固定正文必须可构造");
+        let disk = section(report.sections(), "disk-quota");
+        assert!(!disk.detail().contains("非账号用量"), "{verdict:?}");
+        assert!(!disk.detail().ends_with('）'), "{verdict:?}");
+    }
+}
+
+#[test]
+fn 公开摘要含第六节机器码且状态与正文一致() {
+    let owners = [owner("backup-worker", Some(9_950), 600)];
+    let report = aggregate(&healthy_inputs(&owners)).expect("固定正文必须可构造");
+
+    let summary = report.public_summary();
+    let sections = summary.sections();
+
+    assert!(sections.contains(&("sync-bridge", HealthState::Normal)));
+}
+
 /// 第六节「双向 Bridge」的契约，独立成文件只为压住单文件行数上限。
 /// 集成测试根文件的子模块默认在同级目录找，这里显式指到子目录，免得 cargo 把它当独立测试目标。
 #[path = "health_contract/bridge.rs"]

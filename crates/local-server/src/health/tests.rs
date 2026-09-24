@@ -276,3 +276,6 @@ fn 响应可以序列化成封闭json且字段固定() {
     assert!(text.contains("\"evidence_complete\":true"));
     assert!(text.contains("\"code\":\"recovery-point\""));
 }
+
+/// 探针接线契约：第六节与传输 owner 活性从 `BridgeHealthProbe` 原样进入快照。
+mod probe;
