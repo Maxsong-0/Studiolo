@@ -75,7 +75,8 @@ function hero() {
 /** 同一刻读两处。 */
 const both = () => ({ badge: badge(), hero: hero() });
 
-const region = (name: string) => screen.getByRole('region', { name });
+/** 驾驶舱里的某块区域；工作台快照到手前驾驶舱还没渲染，所以要等它出现。 */
+const region = (name: string) => screen.findByRole('region', { name });
 
 /** 黑板汇总被请求了几次（全站计，含驾驶舱与角标）。 */
 function overviewRequests() {
@@ -102,7 +103,7 @@ describe('四种黑板状态下，顶栏角标与驾驶舱巨号相等', () => {
     overview = () => new Response(null, { status: 404 });
     render(<App />);
     expect(
-      await within(region('协作拓扑，今天')).findByText('黑板未启用'),
+      await within(await region('协作拓扑，今天')).findByText('黑板未启用'),
     ).toBeInTheDocument();
     expect(both()).toEqual({ badge: '1', hero: '1' });
   });
@@ -111,7 +112,7 @@ describe('四种黑板状态下，顶栏角标与驾驶舱巨号相等', () => {
     overview = () => jsonResponse({ error: '黑板许可已满。' }, 429);
     render(<App />);
     expect(
-      await within(region('协作拓扑，今天')).findByRole('alert'),
+      await within(await region('协作拓扑，今天')).findByRole('alert'),
     ).toHaveTextContent('黑板许可已满。');
     expect(both()).toEqual({ badge: '—', hero: '—' });
   });

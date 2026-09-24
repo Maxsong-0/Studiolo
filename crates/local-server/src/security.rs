@@ -287,7 +287,10 @@ mod tests {
             ("/assets/index-C65IIHot.js", crate::assets::JAVASCRIPT),
             ("/assets/index-ovxLtHW2.css", crate::assets::STYLESHEET),
             ("/assets/favicon-4NhN4y5N.svg", crate::assets::SVG),
-            ("/assets/archivo-latin-800-normal-DZa_k145.woff2", crate::assets::WOFF2),
+            (
+                "/assets/archivo-latin-800-normal-DZa_k145.woff2",
+                crate::assets::WOFF2,
+            ),
         ];
         let html = HeaderValue::from_static("text/html; charset=utf-8");
         for (path, own) in cases {
