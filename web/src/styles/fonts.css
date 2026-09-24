@@ -1,0 +1,62 @@
+/*
+ * 自托管字体（T-130 规范第 2 节；CSP 只许 font-src 'self'）：只取拉丁子集与规范用到的字重，中文走系统字体。
+ * T-166：不再直接引入 @fontsource 的 latin-*.css——那些样式表同时列 woff2 与 woff，
+ * 构建会把 7 个用不到的 .woff 一起产出（人侧程序只供 woff2，.woff 请求得 404）。这里只声明 woff2。
+ * 字重或字体变了，同步改这里与规范第 2 节。
+ */
+@font-face {
+  font-family: 'Archivo';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 500;
+  src: url('@fontsource/archivo/files/archivo-latin-500-normal.woff2')
+    format('woff2');
+}
+@font-face {
+  font-family: 'Archivo';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 700;
+  src: url('@fontsource/archivo/files/archivo-latin-700-normal.woff2')
+    format('woff2');
+}
+@font-face {
+  font-family: 'Archivo';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 800;
+  src: url('@fontsource/archivo/files/archivo-latin-800-normal.woff2')
+    format('woff2');
+}
+@font-face {
+  font-family: 'Archivo';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 900;
+  src: url('@fontsource/archivo/files/archivo-latin-900-normal.woff2')
+    format('woff2');
+}
+@font-face {
+  font-family: 'IBM Plex Mono';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 400;
+  src: url('@fontsource/ibm-plex-mono/files/ibm-plex-mono-latin-400-normal.woff2')
+    format('woff2');
+}
+@font-face {
+  font-family: 'IBM Plex Mono';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 500;
+  src: url('@fontsource/ibm-plex-mono/files/ibm-plex-mono-latin-500-normal.woff2')
+    format('woff2');
+}
+@font-face {
+  font-family: 'IBM Plex Mono';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 600;
+  src: url('@fontsource/ibm-plex-mono/files/ibm-plex-mono-latin-600-normal.woff2')
+    format('woff2');
+}

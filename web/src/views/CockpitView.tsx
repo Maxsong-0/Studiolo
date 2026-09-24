@@ -8,6 +8,7 @@ import { TopologyCell } from '../cockpit/TopologyCell';
 import { planPending } from '../cockpit/pending';
 import { drawingSubtitle, titleCells } from '../cockpit/readings';
 import { useCockpitReads } from '../cockpit/useCockpitReads';
+import type { OverviewRead } from '../cockpit/useOverviewRead';
 import { sortProjects } from '../projectOrder';
 import type { Action, OpenSource, Project, Workbench } from '../types';
 import { Cell, GridFrame, TitleBlock } from '../ui';
@@ -24,11 +25,13 @@ const ROWS = '300px auto minmax(190px, auto)';
  *
  * 驾驶舱是全局总览：待我动作取整份工作台待办加黑板里等你的任务，项目明细取全部项目按 projectOrder
  * 的前五个，不受项目视图的筛选影响（筛选只在项目视图里，这里没有筛选栏，套用会成为看不见的截断）。
- * 黑板汇总（`/api/v1/board/overview`）与本机健康各读各的，任何一处失败只影响依赖它的格子。
+ * 黑板汇总（`/api/v1/board/overview`）由 App 读一次、经 `overview` 交进来，与顶栏「驾驶舱 N」角标共用，
+ * 巨号与角标同一口径（T-162）；本机健康由驾驶舱自己读。两路各自成败，任何一处失败只影响依赖它的格子。
  */
 export function CockpitView({
   workbench,
   refreshing,
+  overview,
   diagnostics,
   onOpen,
   onEnterProject,
@@ -39,6 +42,11 @@ export function CockpitView({
   workbench: Workbench;
   /** 快照正在刷新；标题栏据此显示读数是否可能过期。 */
   refreshing: boolean;
+  /**
+   * 黑板汇总的那一份读取（App 读，顶栏角标用的也是它）：巨号、拓扑、时间线与标题栏都取这里，
+   * 拓扑格的「重试」调它的 reload。驾驶舱不再自己另读黑板汇总，刷新后的重读也由 App 那边发。
+   */
+  overview: OverviewRead;
   onRefresh: () => void;
   /** 项目视图的筛选控件；驾驶舱是全局总览，不摆筛选栏。 */
   filters: ReactNode;
@@ -53,7 +61,8 @@ export function CockpitView({
   onViewProjects: () => void;
   onShowDiagnostics: () => void;
 }) {
-  const { overview, health, reloadOverview, reloadAll } = useCockpitReads();
+  const { health, reloadHealth } = useCockpitReads();
+  const board = overview.state;
   const { goTo } = useViewLocation();
   const [hoveredTask, setHoveredTask] = useState<string | null>(null);
   const projects = useMemo(
@@ -61,17 +70,17 @@ export function CockpitView({
     [workbench.projects],
   );
   const plan = useMemo(
-    () => planPending(overview, workbench.inbox, projects),
-    [overview, workbench.inbox, projects],
+    () => planPending(board, workbench.inbox, projects),
+    [board, workbench.inbox, projects],
   );
 
-  // 一轮刷新结束（成功或失败）就连带重读黑板汇总与本机健康：刷新说的是整页读数。
+  // 一轮刷新结束（成功或失败）就连带重读本机健康：刷新说的是整页读数（黑板汇总由 App 那份读取同规则重读）。
   // 与首次读取同样在提交的同一拍发出，不拖到绘制之后。
   const wasRefreshing = useRef(refreshing);
   useLayoutEffect(() => {
-    if (wasRefreshing.current && !refreshing) reloadAll();
+    if (wasRefreshing.current && !refreshing) reloadHealth();
     wasRefreshing.current = refreshing;
-  }, [refreshing, reloadAll]);
+  }, [refreshing, reloadHealth]);
 
   function openCollab(item?: string) {
     goTo(item ? { view: 'collab', item } : { view: 'collab' });
@@ -87,24 +96,24 @@ export function CockpitView({
           oldestWaitMs={plan.oldestWaitMs}
           marked={plan.markers.length}
           truncated={plan.truncated}
-          board={overview.kind}
+          board={board.kind}
         />
         <TopologyCell
-          state={overview}
+          state={board}
           plan={plan}
           selectedTaskId={hoveredTask}
           onSelectTask={(taskId) => openCollab(taskId)}
           onOpenCollab={() => openCollab()}
-          onRetry={reloadOverview}
+          onRetry={overview.reload}
         />
         <PendingActions
           entries={plan.entries}
-          board={overview.kind}
+          board={board.kind}
           onOpen={onOpen}
           onOpenTask={(taskId) => openCollab(taskId)}
           onHoverTask={setHoveredTask}
         />
-        <TimelineCell state={overview} />
+        <TimelineCell state={board} />
         <ProjectDigest
           projects={projects}
           diagnostics={diagnostics}
@@ -129,7 +138,7 @@ export function CockpitView({
             cells={titleCells({
               workbench,
               health,
-              overview,
+              overview: board,
             })}
           />
         </Cell>

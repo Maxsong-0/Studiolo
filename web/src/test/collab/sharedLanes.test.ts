@@ -23,8 +23,8 @@ import {
 import type { BoardOverview } from '../../boardOverviewModel';
 import { executorOf, overviewLabels } from '../../collab/executorGrouping';
 import { OWNER_KEY, type TodayLanes } from '../../collab/todayLanes';
-import { CockpitView } from '../../views/CockpitView';
 import { CollabView } from '../../views/CollabView';
+import { CockpitHarness } from '../cockpit/CockpitHarness';
 import {
   fixtureData,
   fixtureFetch,
@@ -73,7 +73,7 @@ async function mountCockpit(data: FixtureData, wire?: unknown) {
     ),
   );
   const { container } = render(
-    createElement(CockpitView, {
+    createElement(CockpitHarness, {
       workbench: data.workbench,
       refreshing: false,
       onRefresh: noop,

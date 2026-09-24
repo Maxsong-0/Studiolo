@@ -50,8 +50,13 @@ HTTP 输入中的 identity/owner/role、转发邮箱、IP 或来源布尔均不�
   不参与身份判断。Cookie 总值最多8KiB/64对；JWT沿 Access16KiB原有上限。
 - 新 POST 只接受 `application/json`，实际正文最多1KiB，读取最多2秒；不是只信Content-Length。
 - 所有经过应用路由的成功与失败响应带 no-store、nosniff、no-referrer、CSP、CORP，以及新模式的
-  （唯一例外：`/assets/` 下文件名带 Vite 内容哈希、200 成功送出且类型与扩展名一致的 JS/CSS
-  为 `public, max-age=31536000, immutable`，见 T-114；HTML 模板因每次有新 nonce 始终 no-store）
+  （唯一例外：`/assets/` 下文件名带 Vite 内容哈希、200 成功送出且类型与扩展名一致的
+  JS/CSS/SVG/woff2 为 `public, max-age=31536000, immutable`，JS/CSS 见 T-114、SVG/woff2
+  见 T-165；HTML 模板因每次有新 nonce 始终 no-store。「带哈希」只认最后一个路径段恰为
+  `非空名字-` 加恰好 8 位 `[A-Za-z0-9_-]`（rolldown 默认 base64 字母表与 8 位 `[hash]`，
+  T-169），`archivo-latin-800-normal.woff2`、`some-icon.svg` 这类多段连字符普通名与
+  非 8 位哈希一律 no-store；末段恰好 8 位的普通名（如 `Inter-SemiBold.woff2`）仍会被误认，
+  不得放进 `/assets/`；改 Vite 的哈希长度或字母表须同步改此判定）
   `Vary: Origin, Sec-Fetch-Site`；不开放 CORS，不将凭据放 URL、重定向或日志。
 
 ## Auth 专用签发与维护

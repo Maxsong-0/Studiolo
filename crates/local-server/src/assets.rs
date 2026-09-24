@@ -8,9 +8,12 @@ use studiolo_core::VaultPath;
 use crate::{ApiError, AppState};
 
 pub(crate) const STYLE_NONCE_MARKER: &str = "__STUDIOLO_STYLE_NONCE__";
-/// 脚本与样式的 MIME 唯一来源；缓存策略据此确认响应确是对应扩展名的文件本体。
+/// `/assets/` 下脚本、样式、SVG 图标与 woff2 字体的 MIME 唯一来源；缓存策略据此确认响应
+/// 确是对应扩展名的文件本体。
 pub(crate) const JAVASCRIPT: &str = "text/javascript; charset=utf-8";
 pub(crate) const STYLESHEET: &str = "text/css; charset=utf-8";
+pub(crate) const SVG: &str = "image/svg+xml";
+pub(crate) const WOFF2: &str = "font/woff2";
 #[derive(Clone)]
 pub(crate) struct StyleNonce(pub(crate) String);
 
@@ -79,8 +82,8 @@ fn asset_path(path: &str) -> Option<(&str, &'static str)> {
     let mime = match relative.rsplit_once('.')?.1 {
         "js" => JAVASCRIPT,
         "css" => STYLESHEET,
-        "svg" => "image/svg+xml",
-        "woff2" => "font/woff2",
+        "svg" => SVG,
+        "woff2" => WOFF2,
         _ => return None,
     };
     Some((relative, mime))

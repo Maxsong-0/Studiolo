@@ -147,7 +147,7 @@ T-006 当时完成生产构建经 Rust 同源真实 HTTP 的浏览器验收，�
   显式释放，覆盖到的请求收到 503 并说明原因，排队中的那次刷新由等待者接手重跑（T-061）。
 - Host 仅接受 `127.0.0.1:<端口>`；同源 Origin 与 Fetch Metadata 检查；无 CORS。应用只绑定 IPv4 loopback。默认本机模式不适用于公网；T-009 显式 Access 模式的鉴权与隧道要求见域名入口说明。
 - 内容只显示为转义纯文本，不执行 Markdown 中 HTML、脚本或远程资源。
-- 静态文件来自显式 `web/dist` 只读根；仅 `/` 与 `assets/` 下 js/css/woff2 可读。笔记不通过静态路径暴露。
+- 静态文件来自显式 `web/dist` 只读根；仅 `/` 与 `assets/` 下 js/css/svg/woff2 可读。笔记不通过静态路径暴露。
 - **M1 只读入口**（只给 `--vault` / `--assets` / `--label` / `--port`）不装配 FsVaultBroker、
   M0Workbench 或 TaskEngine；源目录不会被初始化为 canonical Vault，源目录始终零写入。
   2026-09-17 核实：`FsVaultBroker` 只在显式的 `--canonical-writer-data` 写者模式下装配，

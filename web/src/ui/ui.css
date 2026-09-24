@@ -207,9 +207,13 @@
   line-height: 1;
   font-weight: 600;
 }
+/*
+ * 实心红圈号里是 11.5px 的数字：圈底连同圈框用 --signal-text，圈内 --on-ink 字浅色 5.2:1、深色 6.7:1；
+ * 用 --signal 时浅色只有 4.1:1，够不上正文 4.5:1（规范第 1、11 节）。不含字的红色形状仍用 --signal。
+ */
 .ui-circled--filled {
-  border-color: var(--signal);
-  background: var(--signal);
+  border-color: var(--signal-text);
+  background: var(--signal-text);
   color: var(--on-ink);
 }
 

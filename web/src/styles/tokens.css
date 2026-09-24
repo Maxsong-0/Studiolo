@@ -16,7 +16,8 @@
   --hairline: #cfcfc8;
   --grid: #e3e3dc;
   --signal: #e61919;
-  /* 小号红字（≤14px）用更深的红，纸色上 5.2:1；形状、大字与底色仍用 --signal */
+  /* 非大字的红字用更深的红，纸色上 5.2:1；形状、大字与底色仍用 --signal。
+     例外：实心红圈号内含小字，圈底用 --signal-text（T-163） */
   --signal-text: #c81414;
   --signal-wash: #fbe3e1;
   --on-ink: #f1f1ec;

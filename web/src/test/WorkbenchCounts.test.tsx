@@ -2,7 +2,7 @@ import { render, screen, waitFor, within } from '@testing-library/react';
 import { expect, it, vi } from 'vitest';
 import { AppShell } from '../components/AppShell';
 import { validateWorkbench } from '../validate';
-import { CockpitView } from '../views/CockpitView';
+import { CockpitHarness } from './cockpit/CockpitHarness';
 import { defaultApiResponse, fixture } from './fixtures';
 
 function shell(documentCount: number | null, actionCount: number | null = 0) {
@@ -47,8 +47,9 @@ it('驾驶舱标题栏的副本文件与未关闭 BUG 取自首屏计数：已�
     'fetch',
     vi.fn<typeof fetch>(async (input) => defaultApiResponse(input)),
   );
+  // 黑板汇总由 App 读一次交给驾驶舱（T-162）；单独渲染驾驶舱时由外层代行那一份读取。
   render(
-    <CockpitView
+    <CockpitHarness
       workbench={fixture}
       refreshing={false}
       onRefresh={vi.fn()}
