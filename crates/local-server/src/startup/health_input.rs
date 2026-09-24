@@ -147,6 +147,7 @@ mod tests {
                 recovery: Some(RecoveryState::Idle),
                 residue_guard: Some(ResidueGuard::Clear),
                 mode: Some(ModeLabel::MirrorRemote),
+                config_matches: Some(true),
             }
         }
 

@@ -11,7 +11,12 @@ pub(super) fn remainder(crate_name: &str, path: &Path, source: &str) -> String {
         // `sync-purge-residue` 只在镜像视图根下按目录逐段 NOFOLLOW 进入、链接即拒、只删普通文件与空目录。
         return super::authority_tokens::checked_closed(
             source,
-            &["BRIDGE_DIR", "STAGE_DIR", "PLANE_STATE_FILE", "DIRECTORY_FLAGS"],
+            &[
+                "BRIDGE_DIR",
+                "STAGE_DIR",
+                "PLANE_STATE_FILE",
+                "DIRECTORY_FLAGS",
+            ],
             &[
                 (
                     "userustix::fs::{AtFlags,Dir,FileType,Mode,OFlags,open,openat,statat,unlinkat};",
@@ -96,7 +101,10 @@ mod tests {
             assert!(violates(SYNC, &format!("{fixture}\n{extra}")), "{extra}");
         }
         assert!(violates(SYNC, &fixture.replace("BRIDGE_DIR", "OTHER")));
-        assert!(violates("crates/local-server/src/maintenance/workflow.rs", &fixture));
+        assert!(violates(
+            "crates/local-server/src/maintenance/workflow.rs",
+            &fixture
+        ));
         let source = fs::read_to_string(workspace_root().join(SYNC)).unwrap();
         assert!(source_violations(CRATE, Path::new(SYNC), &source).is_empty());
     }

@@ -207,9 +207,11 @@ impl RoundPorts for RealPorts<'_> {
         let ticket = self.ticket.as_ref().ok_or(PlaneError::Quiescence)?;
         let outcome = execute::reserve_and_execute(&self.context()?, ticket, &observed);
         // 执行段回填（W5 `record_execution`）：序号、终态未知数、冲突副本累计、熔断是否生效。
-        if let Ok(RoundOutcome::Settled { sequence, .. }
-        | RoundOutcome::Unknown { sequence }
-        | RoundOutcome::Blocked { sequence }) = outcome
+        if let Ok(
+            RoundOutcome::Settled { sequence, .. }
+            | RoundOutcome::Unknown { sequence }
+            | RoundOutcome::Blocked { sequence },
+        ) = outcome
         {
             let (_, unknown) = self.pending_unknown()?;
             let fused = self
@@ -262,9 +264,6 @@ impl RealPorts<'_> {
             .iter()
             .filter(|progress| matches!(progress.status, ActionStatus::OutcomeUnknown))
             .count();
-        Ok((
-            Some(sequence),
-            u64::try_from(unknown).unwrap_or(u64::MAX),
-        ))
+        Ok((Some(sequence), u64::try_from(unknown).unwrap_or(u64::MAX)))
     }
 }

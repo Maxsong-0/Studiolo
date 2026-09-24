@@ -8,7 +8,7 @@ use std::path::Path;
 
 /// 任何登记文件的导入表都可以带的名字：rustix 类型名，加只读的 `fstat`（读元数据不是写能力，不计数；
 /// `mirror.rs` 按 W4 清单另外精确计数）。
-const RUSTIX_IMPORTABLE: [&str; 9] = [
+const RUSTIX_IMPORTABLE: [&str; 10] = [
     "AtFlags",
     "CWD",
     "Dir",
@@ -56,11 +56,7 @@ pub(super) fn remainder(crate_name: &str, path: &Path, source: &str) -> String {
         return plane_remainder(
             source,
             &["PLANE_STATE_FILE", "PLANE_STATE_STAGE_FILE", "PLANE_LOCK"],
-            &[
-                ("openat(", 1),
-                ("fstat(", 1),
-                ("flock(", 1),
-            ],
+            &[("openat(", 1), ("fstat(", 1), ("flock(", 1)],
         );
     }
     if path.ends_with("crates/local-server/src/sync_plane/mirror.rs") {
@@ -69,10 +65,7 @@ pub(super) fn remainder(crate_name: &str, path: &Path, source: &str) -> String {
         return plane_remainder(
             source,
             &["MirrorView", "renameat"],
-            &[
-                ("renameat(", 1),
-                ("fsync(", 1),
-            ],
+            &[("renameat(", 1), ("fsync(", 1)],
         );
     }
     source.to_owned()

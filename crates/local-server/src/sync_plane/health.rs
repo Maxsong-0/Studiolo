@@ -181,7 +181,10 @@ impl PlaneHealth {
     /// 本进程启动以来由 Bridge 生成的冲突副本累计数。
     #[must_use]
     pub fn conflicts_total(&self) -> u64 {
-        self.inner.lock().map(|inner| inner.conflicts_total).unwrap_or(0)
+        self.inner
+            .lock()
+            .map(|inner| inner.conflicts_total)
+            .unwrap_or(0)
     }
 
     /// 驱动器在观察镜像后回填的字节数与对象数。

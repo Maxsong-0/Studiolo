@@ -22,10 +22,15 @@ fn the_bridge_seam_admits_only_its_seven_write_shapes_and_one_blob_source() {
         "broker.cancel_stream_mutation(ticket)",
         "let source = studiolo_vault_broker::BlobSource::open(stage_root, stage_object.clone())?;",
     ];
-    let seam = format!("{source}\n{}", allowed.join("\n"));
+    // 真实接缝里七条形态已各出现一次，夹具只用这八行本身：各一次必须放行，再多一次就红。
+    let seam = allowed.join("\n");
     assert!(
         boundary_violations(&path, &seam).is_empty(),
         "七条固定形态各一次加一条附件来源必须放行"
+    );
+    assert!(
+        !boundary_violations(&path, &format!("{source}\n{seam}")).is_empty(),
+        "真实接缝已含七条形态，再各加一次必须红"
     );
     for extra in [
         "broker.mutate(mutation);",

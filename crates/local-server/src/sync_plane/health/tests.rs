@@ -5,8 +5,8 @@ use crate::sync_plane::PlaneError;
 use crate::sync_plane::driver::RoundOutcome;
 use studiolo_host_config::sync_transport::ManualQuota;
 use studiolo_observability::health::{
-    BridgeEvidence, ExitClass, HealthState, Instant, ModeLabel, RecoveryState, ResidueGuard,
-    bridge_section,
+    BridgeEvidence, ExitClass, HealthState, Instant, ModeLabel, OwnerLiveness, RecoveryState,
+    ResidueGuard, bridge_section,
 };
 use studiolo_observability::quota::SyncUsage;
 use studiolo_sync_transport::owned_run::SyncMode;
@@ -70,7 +70,9 @@ fn 新建时第六节全部字段为空且活性没有回执() {
 
     assert_eq!(health.bridge(), BridgeEvidence::default());
     assert_eq!(health.liveness().last_receipt, None);
-    assert_eq!(health.liveness().owner.as_str(), OWNER_LABEL);
+    // 写者边界词法门禁禁止本目录用点号访问 owner 字段，改用解构比对角色标签。
+    let OwnerLiveness { owner: label, .. } = health.liveness();
+    assert_eq!(label.as_str(), OWNER_LABEL);
     assert_eq!(health.liveness().expected_period_seconds, 600);
     assert_eq!(health.sync_usage(), None);
     assert_eq!(health.manual_quota(), Some(QUOTA));

@@ -85,7 +85,11 @@ pub(super) fn remainder(crate_name: &str, path: &Path, source: &str) -> String {
         // 只读：cgroup 事件与限额、/proc/<pid>/exe、session 输出文件的大小与正文。
         return super::authority_tokens::checked_closed(
             source,
-            &["\"cgroup.events\"", "facts::CGROUP_ROOT", "\"/proc/{pid}/exe\""],
+            &[
+                "\"cgroup.events\"",
+                "facts::CGROUP_ROOT",
+                "\"/proc/{pid}/exe\"",
+            ],
             &[
                 ("usestd::os::unix::fs::MetadataExt;", 1),
                 ("std::fs::read_link(format!(\"/proc/{pid}/exe\"))", 1),
@@ -241,10 +245,22 @@ mod tests {
     fn one_call_too_many_or_one_anchor_too_few_voids_the_launcher_exemption() {
         let fixtures = fixtures();
         for (index, duplicated, anchor) in [
-            (0, "let again = std::fs::read(CONFIG_PATH)?;", "CONFIG_MAX_BYTES"),
-            (1, "std::fs::create_dir(path)?;", "protocol::LAUNCHER_SOCKET"),
+            (
+                0,
+                "let again = std::fs::read(CONFIG_PATH)?;",
+                "CONFIG_MAX_BYTES",
+            ),
+            (
+                1,
+                "std::fs::create_dir(path)?;",
+                "protocol::LAUNCHER_SOCKET",
+            ),
             (2, "let shell = Command::new(&argv[0]);", "command.exec()"),
-            (3, "let extra = Command::new(config::SYSTEMCTL);", "config::SYSTEMD_RUN"),
+            (
+                3,
+                "let extra = Command::new(config::SYSTEMCTL);",
+                "config::SYSTEMD_RUN",
+            ),
             (4, "let more = std::fs::read(path)?;", "facts::CGROUP_ROOT"),
             (5, "std::fs::create_dir(&path)?;", "\"release.fifo\""),
         ] {
@@ -261,11 +277,10 @@ mod tests {
         }
         // 当前工作树里真实存在的六个 IO 文件与两个纯逻辑文件都必须过守卫。
         let root = workspace_root();
-        for path in FILES
-            .iter()
-            .copied()
-            .chain(["crates/sync-launcher/src/main.rs", "crates/sync-launcher/src/handler.rs"])
-        {
+        for path in FILES.iter().copied().chain([
+            "crates/sync-launcher/src/main.rs",
+            "crates/sync-launcher/src/handler.rs",
+        ]) {
             let source = fs::read_to_string(root.join(path)).unwrap();
             assert!(
                 source_violations(CRATE, Path::new(path), &source).is_empty(),
