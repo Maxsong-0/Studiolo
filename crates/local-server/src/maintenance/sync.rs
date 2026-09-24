@@ -196,6 +196,8 @@ pub(super) fn locate(
 
 /// 对 `parent/name` 递归：`delete=false` 只核验并计数，`delete=true` 按同样的顺序删除。
 /// 目录先清空子项再按 `REMOVEDIR` 删目录项，普通文件直接删目录项；链接与其它类型一律拒绝。
+/// 删除一趟自己先整棵核验一遍：树里任何一处有链接或非常规对象，就一个字节都不删，
+/// 不依赖调用方先跑核验趟。
 pub(super) fn sweep(
     parent: &OwnedFd,
     name: &CString,
@@ -205,6 +207,9 @@ pub(super) fn sweep(
 ) -> Result<(), MaintenanceError> {
     if depth > MAX_DEPTH {
         return Err(MaintenanceError::SyncResidueUnsafe);
+    }
+    if delete && depth == 0 {
+        sweep(parent, name, 0, &mut Counts::default(), false)?;
     }
     // 目标本身不存在＝没有残留可清；更深处消失了则是遍历期间有人在改，整体拒绝。
     let missing = if depth == 0 {

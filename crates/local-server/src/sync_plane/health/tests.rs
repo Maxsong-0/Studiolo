@@ -100,8 +100,9 @@ fn 一批闭合且轮内回填齐全后第六节正常并盖上序号与时刻()
 
 #[test]
 fn 每种失败只落到对应字段且任何失败轮都不留静止票据() {
-    let cases: [(PlaneError, Hit); 4] = [
+    let cases: [(PlaneError, Hit); 5] = [
         (PlaneError::Fused, |e| e.fused == Some(true)),
+        (PlaneError::ConfigMismatch, |e| e.config_matches == Some(false)),
         (PlaneError::ResidueBlocked, |e| {
             e.residue_guard == Some(ResidueGuard::Blocked)
         }),
@@ -128,7 +129,6 @@ fn 每种失败只落到对应字段且任何失败轮都不留静止票据() {
 fn 没有专属字段的失败也靠静止票据落到未知而不是保持正常() {
     let errors = [
         PlaneError::Configuration,
-        PlaneError::ConfigMismatch,
         PlaneError::Quiescence,
         PlaneError::Observation,
         PlaneError::Audit,
