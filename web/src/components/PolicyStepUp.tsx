@@ -53,7 +53,8 @@ export function PolicyStepUp({
   const [submitting, setSubmitting] = useState(false);
 
   // Esc 走 dialog 的 cancel：拦下浏览器的直接关闭；认证在途时不收起，否则走可中断的收起。
-  // Surface 的属性类型只收通用 HTML 属性（没有 onCancel），所以挂原生监听，随 submitting 换新。
+  // 用原生监听而不是 onCancel 属性：React 会让 cancel 沿组件树冒泡，内层对话框的 cancel 也会触发外层的 onCancel；
+  // 对话框的原生 cancel 不冒泡，内层的到不了这里。在布局阶段紧跟 showModal 挂上，不留空档；随 submitting 换新。
   useLayoutEffect(() => {
     const element = ref.current;
     if (!element) return;

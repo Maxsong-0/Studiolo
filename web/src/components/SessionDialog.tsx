@@ -74,7 +74,8 @@ export function SessionDialog({
     dismiss();
   }, [dismiss]);
   // Esc 走 dialog 的 cancel：拦下浏览器的直接关闭，先清掉未提交的因子输入再收起。
-  // 用原生监听而不是 onCancel 属性：Surface 的属性类型只收通用 HTML 属性；紧跟 showModal 挂上。
+  // 用原生监听而不是 onCancel 属性：React 会让 cancel 沿组件树冒泡，内层对话框的 cancel 也会触发外层的 onCancel；
+  // 对话框的原生 cancel 不冒泡，内层的到不了这里。在布局阶段紧跟 showModal 挂上，不留空档。
   useLayoutEffect(() => {
     const element = ref.current;
     if (!element) return;
