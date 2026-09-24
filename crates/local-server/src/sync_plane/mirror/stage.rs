@@ -1,14 +1,31 @@
 //! 外 stage（ADR-025 D8）：`<plane_root>/stage/objects/<sha256 hex>` 按内容寻址落库，
 //! 删除前保全的对象与 7 天保留期记在固定名 `stage/index.json`。
+//! 对象账本在 `store.rs`（`StageStore`），索引编解码在 `index.rs`；两者都不含系统调用。
 //!
-//! **本文件是 `sync_plane` 下唯一允许做真实文件 IO 的地方**（架构守卫按固定文件名登记）。
-//! 写法照 `observability` 的 `deadman-state.json`：临时件 → fsync → renameat → fsync 目录；
-//! 读时失败关闭。对象文件 NOFOLLOW、O_EXCL、0600；孤儿在打开时回收；
-//! 保留期到且不被当前 pending 引用的对象才删。
+//! **本文件是 `sync_plane` 下唯一允许做通用文件 IO 的地方**（架构守卫按固定文件名登记）：
+//! 逐段 NOFOLLOW 打开、节点分类、目录枚举、建目录、建文件、删名字、改名与刷盘都只在这里。
+//! `mirror.rs` 借用打开路径的助手（`pub(super)`，不出 `mirror` 模块），自己只保留登记过的
+//! 安装形态；`recovery.rs` 只借用需要已有描述符的助手，打开路径的能力不外泄。
+//! 写法照 `observability` 的 `deadman-state.json`：暂存件 → fsync → renameat → fsync 目录；
+//! 读时失败关闭。对象文件 NOFOLLOW、O_EXCL、0600；孤儿在打开与回收时清掉。
 
-use super::super::PlaneError;
-use std::path::{Path, PathBuf};
-use studiolo_sync_bridge::executor::ObjectId;
+mod index;
+mod store;
+
+pub use index::{PreservedEntry, StageIndex, hex};
+pub(in crate::sync_plane) use index::{read_fully, write_fully};
+pub use store::StageStore;
+
+use crate::sync_plane::PlaneError;
+use rustix::fd::{AsFd, BorrowedFd, OwnedFd};
+use rustix::fs::{
+    AtFlags, CWD, Dir, FileType, Mode, OFlags, Stat, fstat, fsync, mkdirat, openat, renameat,
+    unlinkat,
+};
+use rustix::io::Errno;
+use std::ffi::OsString;
+use std::os::unix::ffi::OsStringExt as _;
+use std::path::{Component, Path};
 
 /// 平面私有根下的 stage 目录名。
 pub const STAGE_DIR: &str = "stage";
@@ -24,156 +41,214 @@ pub const RECEIVING_FILE: &str = "receiving.partial";
 pub const RETENTION_SECONDS: u64 = 7 * 24 * 60 * 60;
 /// 索引文件字节上限。
 pub const INDEX_MAX_BYTES: usize = 1024 * 1024;
+/// 单个对象字节上限；与执行器 `CasLimits::internal` 的单对象上限一致。
+pub const OBJECT_MAX_BYTES: usize = 256 * 1024 * 1024;
+/// 一个目录最多枚举的名字数；超过即失败关闭。
+const ENTRY_LIMIT: usize = 65_536;
+const DIRECTORY: OFlags = OFlags::RDONLY.union(OFlags::DIRECTORY);
 
-/// 保全索引里的一条：谁保全的、保全时刻、是否仍被引用。
-#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct PreservedEntry {
-    /// 对象地址（sha256 小写十六进制）。
-    pub object: String,
-    /// 对象字节数。
-    pub bytes: u64,
-    /// 保全时刻（Unix 秒）。
-    pub preserved_at_unix: i64,
-    /// 产生保全的计划序号；退休后可回收。
-    pub plan_sequence: u64,
-    /// 原逻辑路径（只用于人工找回，不参与任何判定）。
-    pub original_path: String,
+/// 打开一个名字的结果；链接、套接字与其它特殊节点都只报 `Other`，不给描述符。
+pub(in crate::sync_plane) enum Opened {
+    /// 名字不存在。
+    Missing,
+    /// 存在但既不是目录也不是普通文件（含符号链接）。
+    Other,
+    /// 目录，已按 NOFOLLOW 打开。
+    Directory(OwnedFd),
+    /// 普通文件，已只读打开；`unique` 为链接数是否恰为 1。
+    Regular {
+        /// 只读描述符。
+        file: OwnedFd,
+        /// 打开时的字节数。
+        bytes: u64,
+        /// 链接数是否恰为 1。
+        unique: bool,
+    },
 }
 
-/// 固定名索引文档：版本 1，带校验和，失败关闭。
-#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct StageIndex {
-    /// 固定为 1。
-    pub version: u8,
-    /// 保全条目；按对象地址排序。
-    pub preserved: Vec<PreservedEntry>,
-    /// 对上面字段的域分隔 sha256（小写十六进制）。
-    pub checksum: String,
-}
-
-/// 已打开的外 stage；持有根目录 FD 与解析后的索引。
-pub struct StageStore {
-    root: PathBuf,
-    index: StageIndex,
-    receiving: bool,
-}
-
-impl StageStore {
-    /// 打开 `<plane_root>/stage`：核对 0700／本人所有，读索引（失败关闭），回收孤儿。
-    ///
-    /// # Errors
-    /// 目录或索引不满足约束返回 `Storage`。
-    pub fn open(plane_root: &Path) -> Result<Self, PlaneError> {
-        // B 轮 W4 实现（真实 IO 只许出现在本文件）。
-        let _ = plane_root;
-        Err(PlaneError::Storage)
+/// 当前进程身份：真实与有效 UID 必须一致，返回有效 UID。
+pub(in crate::sync_plane) fn caller() -> Result<u32, PlaneError> {
+    use rustix::process::{geteuid, getuid};
+    if getuid() != geteuid() {
+        return Err(PlaneError::Storage);
     }
+    Ok(geteuid().as_raw())
+}
 
-    /// 管理员显式初始化：目录与空索引都不存在时才建。
-    ///
-    /// # Errors
-    /// 已存在返回 `Storage`。
-    pub fn initialize(plane_root: &Path) -> Result<(), PlaneError> {
-        // B 轮 W4 实现；`studiolo-maintain sync-init`（W6）调用它。
-        let _ = plane_root;
-        Err(PlaneError::Storage)
+/// 唯一的打开点：NOFOLLOW、非阻塞、不夺控制终端、CLOEXEC，并立刻取回 stat。
+fn open_with<N: rustix::path::Arg>(
+    dir: BorrowedFd<'_>,
+    name: N,
+    flags: OFlags,
+    mode: Mode,
+) -> rustix::io::Result<(OwnedFd, Stat)> {
+    let common = OFlags::NOFOLLOW | OFlags::NONBLOCK | OFlags::NOCTTY | OFlags::CLOEXEC;
+    let handle = openat(dir, name, flags | common, mode)?;
+    let stat = fstat(&handle)?;
+    Ok((handle, stat))
+}
+
+/// 逐段 NOFOLLOW 打开一个绝对目录路径；任一段是链接、不是目录或不是规范分量即失败。
+pub(super) fn open_directory_path(path: &Path) -> rustix::io::Result<(OwnedFd, Stat)> {
+    if !path.is_absolute() {
+        return Err(Errno::INVAL);
     }
+    let mut current = open_with(CWD, "/", DIRECTORY, Mode::empty())?;
+    for component in path.components() {
+        let name = match component {
+            Component::RootDir => continue,
+            Component::Normal(name) => name,
+            _ => return Err(Errno::INVAL),
+        };
+        current = open_with(current.0.as_fd(), name, DIRECTORY, Mode::empty())?;
+    }
+    Ok(current)
+}
 
-    /// 开始接收一个对象：独占创建 `receiving.partial`。
-    ///
-    /// # Errors
-    /// 已有接收中对象返回 `Storage`。
-    pub fn begin(&mut self) -> Result<(), PlaneError> {
-        // B 轮 W4 实现。
-        if self.receiving {
-            return Err(PlaneError::Storage);
+/// 打开目录里的一个名字并分类；`Missing`／`Other` 不带描述符。
+pub(in crate::sync_plane) fn open_node_at<N: rustix::path::Arg>(
+    dir: BorrowedFd<'_>,
+    name: N,
+) -> rustix::io::Result<Opened> {
+    let (file, stat) = match open_with(dir, name, OFlags::RDONLY, Mode::empty()) {
+        Ok(opened) => opened,
+        Err(Errno::NOENT) => return Ok(Opened::Missing),
+        Err(Errno::LOOP | Errno::NXIO) => return Ok(Opened::Other),
+        Err(error) => return Err(error),
+    };
+    Ok(match FileType::from_raw_mode(stat.st_mode) {
+        FileType::Directory => Opened::Directory(file),
+        FileType::RegularFile => Opened::Regular {
+            file,
+            bytes: u64::try_from(stat.st_size).map_err(|_| Errno::INVAL)?,
+            unique: stat.st_nlink == 1,
+        },
+        _ => Opened::Other,
+    })
+}
+
+/// 目录里的全部名字（不含 `.`／`..`），按字节序排好；超过上限即失败。
+pub(in crate::sync_plane) fn entry_names(dir: BorrowedFd<'_>) -> rustix::io::Result<Vec<OsString>> {
+    let mut names = Vec::new();
+    for entry in Dir::read_from(dir)? {
+        let name = entry?.file_name().to_bytes().to_vec();
+        if name == b"." || name == b".." {
+            continue;
         }
-        Err(PlaneError::Storage)
+        if names.len() >= ENTRY_LIMIT {
+            return Err(Errno::FBIG);
+        }
+        names.push(OsString::from_vec(name));
     }
+    names.sort();
+    Ok(names)
+}
 
-    /// 追加一帧到接收中对象。
-    ///
-    /// # Errors
-    /// 没有接收中对象或写失败返回 `Storage`。
-    pub fn accept(&mut self, frame: &[u8]) -> Result<(), PlaneError> {
-        // B 轮 W4 实现。
-        let _ = frame;
-        Err(PlaneError::Storage)
-    }
-
-    /// 按最终地址封口：fsync → renameat 到 `objects/<hex>` → fsync 目录。
-    ///
-    /// # Errors
-    /// 地址已存在（重复落库不占新条目）时静默成功；IO 失败返回 `Storage`。
-    pub fn finish(&mut self, id: ObjectId) -> Result<(), PlaneError> {
-        // B 轮 W4 实现。
-        let _ = id;
-        Err(PlaneError::Storage)
-    }
-
-    /// 放弃接收中对象并删除临时件。
-    ///
-    /// # Errors
-    /// IO 失败返回 `Storage`。
-    pub fn discard(&mut self) -> Result<(), PlaneError> {
-        // B 轮 W4 实现。
-        Err(PlaneError::Storage)
-    }
-
-    /// 把已封口对象登记为「删除前保全」，进入 7 天保留期。
-    ///
-    /// # Errors
-    /// 对象不存在或索引写失败返回 `Storage`。
-    pub fn preserve(
-        &mut self,
-        id: ObjectId,
-        plan_sequence: u64,
-        original_path: &str,
-        now_unix: i64,
-    ) -> Result<(), PlaneError> {
-        // B 轮 W4 实现。
-        let _ = (id, plan_sequence, original_path, now_unix);
-        Err(PlaneError::Storage)
-    }
-
-    /// 对象文件路径；只读用途（安装时 renameat 的源）。
-    #[must_use]
-    pub fn object_path(&self, id: ObjectId) -> PathBuf {
-        self.root.join(OBJECTS_DIR).join(hex(id.digest()))
-    }
-
-    /// 回收：保留期已到且 `plan_sequence` ≤ `retired_through` 的保全对象，以及索引外的孤儿
-    /// （接收中除外）。返回回收的对象数。
-    ///
-    /// # Errors
-    /// IO 失败返回 `Storage`。
-    pub fn sweep(&mut self, now_unix: i64, retired_through: u64) -> Result<usize, PlaneError> {
-        // B 轮 W4 实现。
-        let _ = (
-            now_unix,
-            retired_through,
-            RETENTION_SECONDS,
-            INDEX_MAX_BYTES,
-        );
-        Err(PlaneError::Storage)
-    }
-
-    /// 当前索引（只读）。
-    #[must_use]
-    pub fn index(&self) -> &StageIndex {
-        &self.index
+/// 在目录里建 0700 子目录；`exclusive` 时已存在即错，否则容忍已存在。
+pub(super) fn make_directory_at(
+    dir: BorrowedFd<'_>,
+    name: &str,
+    exclusive: bool,
+) -> rustix::io::Result<()> {
+    match mkdirat(dir, name, Mode::from_raw_mode(0o700)) {
+        Err(Errno::EXIST) if !exclusive => Ok(()),
+        result => result,
     }
 }
 
-/// 小写十六进制。
-#[must_use]
-pub fn hex(bytes: [u8; 32]) -> String {
-    use std::fmt::Write as _;
-    let mut output = String::with_capacity(64);
-    for byte in bytes {
-        let _ = write!(&mut output, "{byte:02x}");
+/// 独占创建（`exclusive`）或按需创建并读写打开一个 0600 文件；调用方负责核对。
+pub(in crate::sync_plane) fn create_at(
+    dir: BorrowedFd<'_>,
+    name: &str,
+    exclusive: bool,
+) -> rustix::io::Result<(OwnedFd, Stat)> {
+    let flags = if exclusive {
+        OFlags::WRONLY | OFlags::CREATE | OFlags::EXCL
+    } else {
+        OFlags::RDWR | OFlags::CREATE
+    };
+    open_with(dir, name, flags, Mode::from_raw_mode(0o600))
+}
+
+/// 删除目录里的一个名字；不存在返回 `false`。
+pub(in crate::sync_plane) fn remove_at<N: rustix::path::Arg>(
+    dir: BorrowedFd<'_>,
+    name: N,
+) -> rustix::io::Result<bool> {
+    match unlinkat(dir, name, AtFlags::empty()) {
+        Ok(()) => Ok(true),
+        Err(Errno::NOENT) => Ok(false),
+        Err(error) => Err(error),
     }
-    output
+}
+
+/// 同一目录内改名（对象封口、索引替换）。
+fn rename_within(dir: BorrowedFd<'_>, from: &str, to: &str) -> rustix::io::Result<()> {
+    renameat(dir, from, dir, to)
+}
+
+/// 把文件内容或目录项刷盘。
+fn flush(fd: BorrowedFd<'_>) -> rustix::io::Result<()> {
+    fsync(fd)
+}
+
+fn private_directory_at(dir: BorrowedFd<'_>, name: &str, euid: u32) -> Result<OwnedFd, PlaneError> {
+    let (handle, stat) =
+        open_with(dir, name, DIRECTORY, Mode::empty()).map_err(|_| PlaneError::Storage)?;
+    if private_directory(&stat, euid) {
+        Ok(handle)
+    } else {
+        Err(PlaneError::Storage)
+    }
+}
+
+/// 目录是否为本人所有的 0700。
+pub(in crate::sync_plane) fn private_directory(stat: &Stat, euid: u32) -> bool {
+    FileType::from_raw_mode(stat.st_mode) == FileType::Directory
+        && stat.st_uid == euid
+        && Mode::from_raw_mode(stat.st_mode) == Mode::from_raw_mode(0o700)
+}
+
+/// 普通文件是否为本人所有的 0600 单链接且不超限；是则返回字节数。
+pub(in crate::sync_plane) fn private_regular(stat: &Stat, euid: u32, max: usize) -> Option<usize> {
+    let length = usize::try_from(stat.st_size).ok()?;
+    (FileType::from_raw_mode(stat.st_mode) == FileType::RegularFile
+        && stat.st_nlink == 1
+        && stat.st_uid == euid
+        && Mode::from_raw_mode(stat.st_mode) == Mode::from_raw_mode(0o600)
+        && length <= max)
+        .then_some(length)
+}
+
+/// 打开目录里的一个普通文件供整读：不存在返回 `None`；不是本人 0600 单链接或超限即错。
+pub(in crate::sync_plane) fn open_regular_at(
+    dir: BorrowedFd<'_>,
+    name: &str,
+    euid: u32,
+    max: usize,
+) -> rustix::io::Result<Option<(OwnedFd, usize)>> {
+    let (file, stat) = match open_with(dir, name, OFlags::RDONLY, Mode::empty()) {
+        Ok(opened) => opened,
+        Err(Errno::NOENT) => return Ok(None),
+        Err(error) => return Err(error),
+    };
+    let length = private_regular(&stat, euid, max).ok_or(Errno::PERM)?;
+    Ok(Some((file, length)))
+}
+
+/// 完整替换目录里的固定文件：清掉陈旧暂存件 → 独占建暂存件 → 写满 → fsync →
+/// renameat → fsync 目录。中途失败只会留下暂存件，不会留下半个目标文件。
+pub(in crate::sync_plane) fn replace_file(
+    dir: BorrowedFd<'_>,
+    staging: &str,
+    target: &str,
+    bytes: &[u8],
+) -> rustix::io::Result<()> {
+    remove_at(dir, staging)?;
+    let (file, _) = create_at(dir, staging, true)?;
+    write_fully(file.as_fd(), bytes)?;
+    flush(file.as_fd())?;
+    drop(file);
+    rename_within(dir, staging, target)?;
+    flush(dir)
 }

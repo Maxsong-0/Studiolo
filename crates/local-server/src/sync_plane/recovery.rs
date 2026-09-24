@@ -1,12 +1,24 @@
 //! 非正常退出恢复协议与退避（ADR-025 D9）、排除项守卫（D10）的持久小状态
-//! `<plane_root>/plane-state.json`：固定名、原子替换、失败关闭。
+//! `<plane_root>/plane-state.json`：固定名、原子替换、失败关闭（编解码在 `state.rs`）；
+//! `plane.lock` 是平面排他租约。
 //!
 //! 规则：上次未干净回收（含断电）→ 先 `SetMode(MirrorRemote)` 加一次 `RunOnce`，
 //! 成功后才允许回到审批模式；任何非 `Code(0)`＋静止确认的运行之后下一次 `RunOnce`
 //! 至少等 5 s；rc=1 连续出现按 5/10/20/40/80/160/300 s 退避（只看退出码，不解析 stderr）。
+//!
+//! 本文件的真实 IO 只有两处固定形态：逐段 NOFOLLOW 打开一个目录路径（平面根、视图根）
+//! 与 `flock` 租约；建文件、整读、原子替换、节点分类与目录枚举都借 `mirror::stage`
+//! 里只认已有描述符的助手。
+
+mod state;
 
 use super::PlaneError;
-use std::path::Path;
+use super::mirror::stage;
+use rustix::fd::{AsFd, OwnedFd};
+use rustix::fs::{CWD, FlockOperation, Mode, OFlags, Stat, flock, fstat, openat};
+use rustix::io::Errno;
+use std::ffi::OsStr;
+use std::path::{Component, Path};
 use studiolo_sync_transport::owned_run::SyncMode;
 
 /// 持久状态文件名。
@@ -21,6 +33,8 @@ pub const PLANE_STATE_MAX_BYTES: usize = 64 * 1024;
 pub const MIN_GAP_SECONDS: u64 = 5;
 /// rc=1 连续出现时的退避阶梯（秒）；超过最后一档保持 300。
 pub const BACKOFF_SECONDS: [u64; 7] = [5, 10, 20, 40, 80, 160, 300];
+/// 租约文件字节上限（设计文档第 5 节）。
+const LOCK_MAX_BYTES: usize = 4 * 1024;
 
 /// 持久小状态；`serde(deny_unknown_fields)`，版本固定 1。
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -44,6 +58,24 @@ pub struct PlaneState {
     pub applied_mode: Option<SyncMode>,
     /// 域分隔 sha256（小写十六进制）。
     pub checksum: String,
+}
+
+impl PlaneState {
+    /// 首次运行的状态：视为上次已干净回收、无退避、无已核验排除项。
+    #[must_use]
+    pub fn first_run() -> Self {
+        state::seal(Self {
+            version: state::VERSION,
+            last_run_clean: true,
+            started_sequence: None,
+            last_exit_unix: None,
+            consecutive_rc1: 0,
+            not_before_unix: None,
+            verified_excluded: Vec::new(),
+            applied_mode: None,
+            checksum: String::new(),
+        })
+    }
 }
 
 /// 本轮应采用的模式与是否处于退避。
@@ -82,8 +114,41 @@ pub fn backoff_seconds(count: u32) -> u64 {
         .unwrap_or(BACKOFF_SECONDS[BACKOFF_SECONDS.len() - 1])
 }
 
+/// 记录「已启动」：`sequence` 是本次 RunOnce 的运行序号；断电后重开见到它即视为未干净回收。
+#[must_use]
+pub fn mark_started(state: &PlaneState, sequence: u64) -> PlaneState {
+    state::seal(PlaneState {
+        started_sequence: Some(sequence),
+        ..state.clone()
+    })
+}
+
+/// 记录回收结果：干净 → 清零退避；rc=1 → 连续计数加一并按阶梯退避；
+/// 其它非干净退出 → 连续计数归零、至少等 `MIN_GAP_SECONDS`。
+#[must_use]
+pub fn mark_reaped(state: &PlaneState, clean: bool, rc_one: bool, now_unix: i64) -> PlaneState {
+    let mut next = state.clone();
+    next.started_sequence = None;
+    next.last_run_clean = clean;
+    next.last_exit_unix = Some(now_unix);
+    let gap = if clean {
+        next.consecutive_rc1 = 0;
+        None
+    } else if rc_one {
+        next.consecutive_rc1 = next.consecutive_rc1.saturating_add(1);
+        Some(backoff_seconds(next.consecutive_rc1))
+    } else {
+        next.consecutive_rc1 = 0;
+        Some(MIN_GAP_SECONDS)
+    };
+    next.not_before_unix =
+        gap.map(|seconds| now_unix.saturating_add(i64::try_from(seconds).unwrap_or(i64::MAX)));
+    state::seal(next)
+}
+
 /// 排除项守卫（D10）：`previous` 里有、`current` 里没有的文件夹，若镜像视图里仍有残留，
-/// 返回第一个残留文件夹名；调用方据此拒绝 RunOnce。
+/// 返回第一个残留文件夹名；调用方据此拒绝 RunOnce。文件夹不存在即跳过，存在且非空
+/// （或名字被文件／链接占着）即残留；名字畸形按残留处理。
 ///
 /// # Errors
 /// 视图不可读返回 `Unavailable`。
@@ -92,13 +157,38 @@ pub fn residue_guard(
     current: &[String],
     view_root: &Path,
 ) -> Result<Option<String>, PlaneError> {
-    // B 轮 W4 实现（只 stat 目录是否存在且非空，不递归读正文）。
-    let _ = (previous, current, view_root);
-    Err(PlaneError::Unavailable)
+    let (root, _) = directory_path(view_root).map_err(|_| PlaneError::Unavailable)?;
+    for folder in previous.iter().filter(|folder| !current.contains(folder)) {
+        let malformed = studiolo_core::VaultPath::parse(folder).is_err();
+        if malformed || residue(&root, folder)? {
+            return Ok(Some(folder.clone()));
+        }
+    }
+    Ok(None)
 }
 
-/// 已打开的持久状态存储。
+fn residue(root: &OwnedFd, folder: &str) -> Result<bool, PlaneError> {
+    let mut current: Option<OwnedFd> = None;
+    for name in folder.split('/') {
+        let dir = current.as_ref().unwrap_or(root).as_fd();
+        current = match stage::open_node_at(dir, name) {
+            Ok(stage::Opened::Directory(next)) => Some(next),
+            Ok(stage::Opened::Missing) => return Ok(false),
+            Ok(stage::Opened::Regular { .. } | stage::Opened::Other) => return Ok(true),
+            Err(_) => return Err(PlaneError::Unavailable),
+        };
+    }
+    let Some(directory) = current else {
+        return Ok(false);
+    };
+    let names = stage::entry_names(directory.as_fd()).map_err(|_| PlaneError::Unavailable)?;
+    Ok(!names.is_empty())
+}
+
+/// 已打开的持久状态存储；持有平面根 FD 与排他租约，实例活着就一直占着 `plane.lock`。
 pub struct PlaneStateStore {
+    root: OwnedFd,
+    _lease: OwnedFd,
     state: PlaneState,
 }
 
@@ -107,16 +197,33 @@ impl PlaneStateStore {
     /// `verified_excluded` 空）；撕裂／未知版本／校验和不符一律失败关闭。
     ///
     /// # Errors
-    /// 目录权限或文件损坏返回 `Storage`。
+    /// 目录权限、租约被占或文件损坏返回 `Storage`。
     pub fn open(plane_root: &Path) -> Result<Self, PlaneError> {
-        // B 轮 W4 实现（真实 IO 只许在本文件的 open／save 两处，形态照 deadman-state.json）。
-        let _ = (
-            plane_root,
-            PLANE_STATE_FILE,
-            PLANE_STATE_STAGE_FILE,
-            PLANE_LOCK,
-        );
-        Err(PlaneError::Storage)
+        let euid = stage::caller()?;
+        let (root, stat) = directory_path(plane_root).map_err(|_| PlaneError::Storage)?;
+        if !stage::private_directory(&stat, euid) {
+            return Err(PlaneError::Storage);
+        }
+        let (lease, lease_stat) =
+            stage::create_at(root.as_fd(), PLANE_LOCK, false).map_err(|_| PlaneError::Storage)?;
+        if stage::private_regular(&lease_stat, euid, LOCK_MAX_BYTES).is_none() {
+            return Err(PlaneError::Storage);
+        }
+        flock(&lease, FlockOperation::NonBlockingLockExclusive).map_err(|_| PlaneError::Storage)?;
+        let existing =
+            stage::open_regular_at(root.as_fd(), PLANE_STATE_FILE, euid, PLANE_STATE_MAX_BYTES)
+                .map_err(|_| PlaneError::Storage)?;
+        let state = match existing {
+            Some((file, length)) => state::decode(
+                &stage::read_fully(file.as_fd(), length).map_err(|_| PlaneError::Storage)?,
+            )?,
+            None => PlaneState::first_run(),
+        };
+        Ok(Self {
+            root,
+            _lease: lease,
+            state,
+        })
     }
 
     /// 当前状态。
@@ -125,13 +232,46 @@ impl PlaneStateStore {
         &self.state
     }
 
-    /// 完整替换持久状态。
+    /// 完整替换持久状态（版本与校验和由这里补齐，排除项集合排序去重）。
     ///
     /// # Errors
-    /// IO 失败返回 `Storage`。
+    /// 超过预算或 IO 失败返回 `Storage`。
     pub fn save(&mut self, next: PlaneState) -> Result<(), PlaneError> {
-        // B 轮 W4 实现。
-        let _ = (next, PLANE_STATE_MAX_BYTES, MIN_GAP_SECONDS);
-        Err(PlaneError::Storage)
+        let next = state::seal(next);
+        let bytes = serde_json::to_vec(&next).map_err(|_| PlaneError::Storage)?;
+        if bytes.len() > PLANE_STATE_MAX_BYTES {
+            return Err(PlaneError::Storage);
+        }
+        stage::replace_file(
+            self.root.as_fd(),
+            PLANE_STATE_STAGE_FILE,
+            PLANE_STATE_FILE,
+            &bytes,
+        )
+        .map_err(|_| PlaneError::Storage)?;
+        self.state = next;
+        Ok(())
     }
+}
+
+/// 逐段 NOFOLLOW 打开一个绝对目录路径（平面根或镜像视图根）；任一段是链接或不是目录即失败。
+fn directory_path(path: &Path) -> rustix::io::Result<(OwnedFd, Stat)> {
+    if !path.is_absolute() {
+        return Err(Errno::INVAL);
+    }
+    let flags =
+        OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::NONBLOCK | OFlags::CLOEXEC;
+    let mut handle: Option<OwnedFd> = None;
+    for component in path.components() {
+        let name = match component {
+            Component::RootDir => OsStr::new("/"),
+            Component::Normal(name) => name,
+            _ => return Err(Errno::INVAL),
+        };
+        let dir = handle.as_ref().map_or(CWD, AsFd::as_fd);
+        handle = Some(openat(dir, name, flags, Mode::empty())?);
+    }
+    let handle = handle.ok_or(Errno::INVAL)?;
+    let stat = fstat(&handle)?;
+    Ok((handle, stat))
 }
