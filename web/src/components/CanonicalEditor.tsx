@@ -216,23 +216,33 @@ function CanonicalEditorContent({
     if (dirty || busy) setLeaving(true);
     else dismissEditor();
   };
+  const continueEditing = () => {
+    setLeaving(false);
+    ref.current?.querySelector<HTMLElement>('.cm-content')?.focus();
+  };
+  // 关闭请求（Esc、返回手势、requestClose()）：确认框开着就等于「继续编辑」，否则同关闭按钮。
+  const requestClose = () => {
+    if (leaving) continueEditing();
+    else close();
+  };
   const download = () => {
     const record = state.base && store.get(state.base);
     if (record) exportDrafts([record]);
   };
-  // Esc 走 dialog 的 cancel：拦下浏览器的直接关闭，改走同一个 close（有草稿或保存在途时先问）。
-  // 焦点在离开确认框里时，Esc 由框自己在 keydown 拦下当作「继续编辑」，到不了这里。
-  // Surface 的属性类型只收通用 HTML 属性，所以用原生监听；监听只挂一次，调用时总用最新一轮的 close。
-  const latestClose = useRef(close);
+  // 其余关闭请求走 dialog 的 cancel：拦下浏览器的直接关闭，改走同一个 requestClose。
+  // 不可取消的 cancel 是浏览器坚持要关（拦下一次之后没有新的用户激活，如返回手势连按），拦不住；
+  // 这里不动，由 useDialogSurface 跟着 close 收起：本页草稿留在内存里，与「保留内存草稿并关闭」相同，绝不丢。
+  // 原生监听只挂一次，调用时总用最新一轮的 requestClose。
+  const latestRequestClose = useRef(requestClose);
   useLayoutEffect(() => {
-    latestClose.current = close;
+    latestRequestClose.current = requestClose;
   });
   useLayoutEffect(() => {
     const element = ref.current;
     if (!element) return;
     function cancel(event: Event) {
       event.preventDefault();
-      latestClose.current();
+      if (event.cancelable) latestRequestClose.current();
     }
     element.addEventListener('cancel', cancel);
     return () => element.removeEventListener('cancel', cancel);
@@ -247,6 +257,22 @@ function CanonicalEditorContent({
       appear={false}
       className="editor-overlay"
       aria-labelledby="editor-title"
+      onKeyDown={(event) => {
+        // Esc 在 keydown 阶段拦下、走 requestClose：不再变成浏览器的关闭请求，
+        // 连按也就不会被判为不可取消而强行关掉编辑器。编辑器自己用掉的（收起补全、历史确认框等）、
+        // 输入法组字中的、落在别的对话框里的 Esc 不管；焦点在离开确认框里时由框自己拦下，到不了这里。
+        if (
+          event.key !== 'Escape' ||
+          event.defaultPrevented ||
+          event.nativeEvent.isComposing ||
+          !(event.target instanceof Element) ||
+          event.target.closest('dialog') !== event.currentTarget
+        )
+          return;
+        event.preventDefault();
+        event.stopPropagation();
+        requestClose();
+      }}
     >
       <header className="editor-titlebar">
         <div className="editor-titlebar__row">
@@ -340,10 +366,7 @@ function CanonicalEditorContent({
         onLeave={() => setLeaving(true)}
         onClose={dismissEditor}
         onExport={download}
-        onContinue={() => {
-          setLeaving(false);
-          ref.current?.querySelector<HTMLElement>('.cm-content')?.focus();
-        }}
+        onContinue={continueEditing}
       />
       <div className="editor-file-ops">
         <DeleteFile controller={controller} state={state} />
