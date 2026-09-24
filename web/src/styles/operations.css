@@ -306,8 +306,9 @@
   font-weight: 600;
   line-height: 1.3;
 }
+/* 15px/600 不算大字：红字用 --signal-text 保住 4.5:1（T-163 同类横扫） */
 .operation-tally .is-signal {
-  color: var(--signal);
+  color: var(--signal-text);
 }
 .operation-drift-head,
 .operation-drift-list > li {

@@ -104,7 +104,7 @@ export function TopologyCell(props: TopologyCellProps) {
           drawn ? (
             <span className="cockpit-legend">
               <span>实线 认领</span>
-              <span className="cockpit-signal">红圈 等你，编号对应左下</span>
+              <span className="cockpit-signal">红圈 等你，编号对应待我动作</span>
             </span>
           ) : null
         }
