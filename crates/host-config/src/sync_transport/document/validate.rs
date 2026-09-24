@@ -85,22 +85,30 @@ pub(super) fn budget(document: &BudgetDocument) -> Result<TransportBudget, Confi
     })
 }
 
-/// 排除文件夹：Vault 相对路径，不带前后斜杠、不含 `.`/`..`、无控制字符、不重复、有序。
+/// 单个排除文件夹名是否合法：Vault 相对路径，不带前后斜杠、不含 `.`/`..` 段、
+/// 无反斜杠与控制字符、非空白、不超过 1024 字节。
+///
+/// 这是唯一母本：审批文档解析与 `studiolo-maintain sync-purge-residue --folder` 都用它，
+/// 不各抄一份规则。
+#[must_use]
+pub fn excluded_folder(value: &str) -> bool {
+    text_field(value, 1024)
+        && !value.starts_with('/')
+        && !value.ends_with('/')
+        && !value.contains('\\')
+        && !value
+            .split('/')
+            .any(|part| part.is_empty() || part == "." || part == "..")
+}
+
+/// 排除文件夹清单：逐项合法、不重复、条数不超过上限；返回值已排序。
 pub(super) fn excluded_folders(values: &[String]) -> Result<Vec<String>, ConfigError> {
     if values.len() > EXCLUDED_FOLDERS_MAX {
         return Err(ConfigError);
     }
     let mut seen = std::collections::BTreeSet::new();
     for value in values {
-        if !text_field(value, 1024)
-            || value.starts_with('/')
-            || value.ends_with('/')
-            || value.contains('\\')
-            || value
-                .split('/')
-                .any(|part| part.is_empty() || part == "." || part == "..")
-            || !seen.insert(value.as_str())
-        {
+        if !excluded_folder(value) || !seen.insert(value.as_str()) {
             return Err(ConfigError);
         }
     }

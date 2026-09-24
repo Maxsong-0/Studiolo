@@ -4,6 +4,8 @@
 mod behaviour;
 #[path = "sync_transport/failure.rs"]
 mod failure;
+#[path = "sync_transport/fields.rs"]
+mod fields;
 #[path = "sync_transport/fixture.rs"]
 mod fixture;
 #[path = "sync_transport/recovery.rs"]

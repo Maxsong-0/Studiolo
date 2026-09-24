@@ -17,17 +17,29 @@ pub mod quiescence;
 pub mod recovery;
 pub mod witness;
 
+use mirror::stage::StageStore;
+use recovery::PlaneStateStore;
+use sha2::{Digest, Sha256};
 use std::{
     path::PathBuf,
     sync::{Arc, Mutex},
     time::Duration,
 };
 use studiolo_audit_ledger::AuditLedger;
+use studiolo_host_config::SyncScope;
 use studiolo_host_config::sync_transport::ApprovedTransport;
-use studiolo_sync_bridge::sqlite::BridgeState;
+use studiolo_sync_bridge::{Binding, Limits, sqlite::BridgeState};
 use studiolo_sync_transport::owned_run::SyncTransportOwner;
 
 use crate::CanonicalWorkbench;
+pub use crate::sync_transport_config::{
+    ConfigError as HeadlessConfigError, Expected as HeadlessExpected, FileType as HeadlessFileType,
+    LocalConfigMatch as HeadlessConfigMatch, verify as verify_headless_config,
+};
+
+/// `<plane_root>` 下 Bridge 持久状态（sqlite 主库与租约）的固定子目录名；
+/// 组合根与 `studiolo-maintain sync-init` 共用这一个常量。
+pub const BRIDGE_DIR: &str = "bridge";
 
 /// 两轮驱动之间的固定间隔；不可配置，避免把 headless 的 60 秒级同步排成风暴。
 pub const ROUND_INTERVAL: Duration = Duration::from_secs(300);
@@ -100,6 +112,8 @@ pub struct SyncPlane {
     pub(crate) audit: Arc<dyn AuditLedger>,
     pub(crate) plane_root: PathBuf,
     pub(crate) health: Arc<health::PlaneHealth>,
+    pub(crate) state: Mutex<PlaneStateStore>,
+    pub(crate) stage: Mutex<StageStore>,
 }
 
 impl SyncPlane {
@@ -113,8 +127,10 @@ impl SyncPlane {
             .revalidate()
             .map_err(|_| PlaneError::Configuration)?;
         let health = Arc::new(health::PlaneHealth::new(inputs.approval.manual_quota()));
-        // B 轮 W6 实现：recovery::PlaneStateStore::open(&plane_root) 失败关闭；
-        // mirror::stage::StageStore::open(&plane_root) 回收孤儿；两者都过才返回 Ok。
+        // 私有存储失败关闭：plane-state.json 撕裂／校验和不符、外 stage 索引损坏都不装配；
+        // stage 打开时顺带回收孤儿对象。两者都过才有平面。
+        let state = PlaneStateStore::open(&inputs.plane_root).map_err(|_| PlaneError::Storage)?;
+        let stage = StageStore::open(&inputs.plane_root).map_err(|_| PlaneError::Storage)?;
         Ok(Arc::new(Self {
             approval: inputs.approval,
             transport: Mutex::new(inputs.transport),
@@ -123,6 +139,8 @@ impl SyncPlane {
             audit: inputs.audit,
             plane_root: inputs.plane_root,
             health,
+            state: Mutex::new(state),
+            stage: Mutex::new(stage),
         }))
     }
 
@@ -168,6 +186,18 @@ impl SyncPlane {
         &self.plane_root
     }
 
+    /// 恢复协议与排除项守卫的持久小状态；一轮内串行持锁。
+    #[must_use]
+    pub fn state(&self) -> &Mutex<PlaneStateStore> {
+        &self.state
+    }
+
+    /// 删除前保全的外 stage；一轮内串行持锁。
+    #[must_use]
+    pub fn stage(&self) -> &Mutex<StageStore> {
+        &self.stage
+    }
+
     /// 按固定间隔驱动，直到 `stop` 变真；每轮在阻塞线程里跑，轮内失败只记健康不退出。
     ///
     /// # Errors
@@ -194,4 +224,51 @@ impl SyncPlane {
             .map_err(|_| "Bridge 驱动轮次中断".to_owned())?;
         }
     }
+}
+
+/// Bridge 持久状态的绑定：链身份、Vault 身份与两个根 token 全部由审批与已核验根身份派生。
+///
+/// `canonical_identity` 是可信启动层（`ServingRoots`）或维护入口（`CanonicalServingRoots`）
+/// 核验过的 canonical 根 `(dev, ino)`。组合根与 `studiolo-maintain sync-init` 必须算出同一个
+/// 绑定，否则 `BridgeState::open_existing` 按绑定不符拒绝。
+#[must_use]
+pub fn bridge_binding(approval: &ApprovedTransport<'_>, canonical_identity: (u64, u64)) -> Binding {
+    let scope = approval.binding();
+    let roots = approval.roots();
+    Binding {
+        link_id: scope.link_id,
+        canonical_vault: vault_identity(&scope.vault_uuid.to_string()),
+        remote_vault: scope.remote_vault,
+        canonical_root_token: root_token("canonical", canonical_identity),
+        mirror_root_token: root_token("mirror", roots.mirror_identity()),
+        scope_hash: scope.scope_hash,
+        scope_epoch: scope.scope_epoch,
+    }
+}
+
+/// Bridge 执行器的保守预算：路径与输出上限固定，单对象字节上限取范围内最大的 `max_bytes`。
+#[must_use]
+pub fn bridge_limits(scope: &SyncScope) -> Limits {
+    Limits::conservative(scope.max_bytes())
+}
+
+/// 根 token：域分隔 sha256(角色 ‖ dev ‖ ino)。
+fn root_token(role: &str, identity: (u64, u64)) -> [u8; 32] {
+    let mut hash = Sha256::new();
+    hash.update(b"studiolo.sync-plane.root.v1\0");
+    hash.update(role.as_bytes());
+    hash.update(identity.0.to_be_bytes());
+    hash.update(identity.1.to_be_bytes());
+    hash.finalize().into()
+}
+
+/// Vault 身份的 16 字节投影：域分隔 sha256 的前 16 字节。
+fn vault_identity(uuid: &str) -> [u8; 16] {
+    let mut hash = Sha256::new();
+    hash.update(b"studiolo.sync-plane.vault.v1\0");
+    hash.update(uuid.as_bytes());
+    let digest: [u8; 32] = hash.finalize().into();
+    let mut identity = [0u8; 16];
+    identity.copy_from_slice(&digest[..16]);
+    identity
 }

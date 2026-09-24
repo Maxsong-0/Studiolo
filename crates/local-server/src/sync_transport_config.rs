@@ -1,8 +1,7 @@
 //! 只核对 Headless 0.0.14 的本地配置 JSON；不证明认证、文件存在或同步完成。
 //! 无 FS/进程/环境能力；实际根身份与本次输出来源由驱动器（`sync_plane::driver`）独立保证。
-
-// B 轮 W6 改签名（按审批核 syncMode／excludedFolders／五类）、W3 接线后删除本 allow。
-#![allow(dead_code)]
+//! 对外经 `sync_plane` 以 `Headless*` 别名重导出：驱动器每轮 InspectConfig 之后按审批核对
+//! 模式、排除项与五类附件，核对不过就不 RunOnce。
 
 use serde::{
     Deserialize, Deserializer,
@@ -18,11 +17,16 @@ const CONFIG_DIR_BYTES: usize = 64;
 /// 附件类型闭集；空集合允许仅批准 Markdown。
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
 #[serde(try_from = "String")]
-pub(crate) enum FileType {
+pub enum FileType {
+    /// headless `image` 类。
     Image,
+    /// headless `audio` 类。
     Audio,
+    /// headless `video` 类。
     Video,
+    /// headless `pdf` 类。
     Pdf,
+    /// headless `unsupported` 类（zip、txt、json 等都归这里）。
     Unsupported,
 }
 
@@ -44,27 +48,39 @@ impl TryFrom<String> for FileType {
 ///
 /// `sync_mode` 是本轮应处的模式（`mirror-remote`／`bidirectional`），
 /// `excluded_folders` 是审批文档里的唯一母本（已排序；ADR-025 D10），两者都逐项相等才算一致。
-pub(crate) struct Expected<'a> {
-    pub(crate) remote_vault_id: &'a str,
-    pub(crate) mirror_path: &'a str,
-    pub(crate) device_name: &'a str,
-    pub(crate) config_dir: &'a str,
-    pub(crate) file_types: &'a [FileType],
-    pub(crate) sync_mode: &'a str,
-    pub(crate) excluded_folders: &'a [String],
+pub struct Expected<'a> {
+    /// 审批绑定的远端 Vault 身份（headless `vaultId`）。
+    pub remote_vault_id: &'a str,
+    /// payload 视图内的真实镜像根（headless `vaultPath`）。
+    pub mirror_path: &'a str,
+    /// 审批的设备名（headless `deviceName`）。
+    pub device_name: &'a str,
+    /// 配置目录名（headless `configDir`，形如 `.obsidian`）。
+    pub config_dir: &'a str,
+    /// 批准的附件类别；空集合即只批准 Markdown。
+    pub file_types: &'a [FileType],
+    /// 本轮应处的模式字面量。
+    pub sync_mode: &'a str,
+    /// 审批母本里的排除文件夹，必须已排序。
+    pub excluded_folders: &'a [String],
 }
 
 /// 仅代表本次 JSON 与批准配置相同；没有远端、账号或文件系统权限。
 #[derive(Debug, PartialEq, Eq)]
-pub(crate) struct LocalConfigMatch;
+pub struct LocalConfigMatch;
 
 /// 固定分类不携带原文、路径或 serde 错误，避免误回显秘密输入。
 #[derive(Debug, PartialEq, Eq)]
-pub(crate) enum ConfigError {
+pub enum ConfigError {
+    /// 输出超过 64 KiB。
     InputTooLarge,
+    /// 不是封闭的命名字段对象。
     Malformed,
+    /// 字段形状合法但取值越界。
     InvalidValue,
+    /// 调用方给的批准值本身无效。
     InvalidExpected,
+    /// 与批准值不一致。
     Mismatch,
 }
 
@@ -126,10 +142,11 @@ impl<'de, T: Deserialize<'de>, const MAX: usize> Deserialize<'de> for Limited<T,
 }
 
 /// 只进行有界纯数据核对；不把成功结果解释为在线、已登录或已送达。
-pub(crate) fn verify(
-    input: &[u8],
-    expected: &Expected<'_>,
-) -> Result<LocalConfigMatch, ConfigError> {
+///
+/// # Errors
+/// 批准值无效返回 `InvalidExpected`；输出超预算、格式不封闭、取值越界或与批准不一致
+/// 各返回对应固定分类，不带原文。
+pub fn verify(input: &[u8], expected: &Expected<'_>) -> Result<LocalConfigMatch, ConfigError> {
     if !text(expected.remote_vault_id, TEXT_BYTES)
         || !absolute_path(expected.mirror_path)
         || !text(expected.device_name, TEXT_BYTES)

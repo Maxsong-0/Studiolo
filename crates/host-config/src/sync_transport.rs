@@ -7,7 +7,7 @@ mod document;
 mod types;
 
 pub use capability::ApprovedTransport;
-pub use document::SyncTransportApproval;
+pub use document::{SyncTransportApproval, excluded_folder_acceptable};
 pub use types::{
     ManualQuota, TransportBackend, TransportBudget, TransportRoots, TransportRuntime,
     TransportSyncMode,

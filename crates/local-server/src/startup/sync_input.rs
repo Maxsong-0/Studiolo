@@ -8,19 +8,15 @@
 
 use super::StartupError;
 use crate::options::Options;
-use sha2::{Digest, Sha256};
 use std::{path::Path, sync::Arc};
 use studiolo_audit_ledger::AuditLedger;
 use studiolo_host_config::SyncScope;
 use studiolo_host_config::sync_transport::{ApprovedTransport, SyncTransportApproval};
 use studiolo_local_server::CanonicalWorkbench;
-use studiolo_local_server::sync_plane::{PlaneInputs, SyncPlane};
-use studiolo_sync_bridge::{Binding, sqlite::BridgeState};
+use studiolo_local_server::sync_plane::{BRIDGE_DIR, PlaneInputs, SyncPlane, bridge_binding};
+use studiolo_sync_bridge::sqlite::BridgeState;
 use studiolo_sync_transport::linux::verify_backend;
 use studiolo_sync_transport::owned_run::{PinnedRuntime, SyncTransportOwner};
-
-/// `<plane_root>` 下 Bridge 持久状态的固定子目录。
-pub(super) const BRIDGE_DIR: &str = "bridge";
 
 /// 装配平面；默认关闭路径在这里就返回 `Ok(None)`。
 pub(super) fn assemble(
@@ -46,8 +42,13 @@ pub(super) fn assemble(
     let scope: &'static SyncScope = Box::leak(Box::new(scope));
     let approval =
         SyncTransportApproval::load(approval_path).map_err(|_| StartupError::SyncPlane)?;
+    // 传输私有根、视图根、平面根三者之间，以及它们与全部权威根（canonical、assets、
+    // writer-data、策略目录、黑板控制目录、Auth／Audit／配置目录）的两两不重叠都在
+    // `approve` 里按真实祖先身份核对；这里只负责把权威根申报齐全，漏报即等于没核。
     let mut isolated: Vec<&Path> = vec![options.vault.as_path(), options.assets.as_path()];
     isolated.extend(options.writer_data.as_deref());
+    isolated.extend(options.policy_data.as_deref());
+    isolated.extend(options.board.as_ref().map(|board| board.data.as_path()));
     isolated.extend(reserved.iter().map(std::path::PathBuf::as_path));
     let approved = ApprovedTransport::approve(scope, approval, &isolated)
         .map_err(|_| StartupError::SyncPlane)?;
@@ -60,7 +61,7 @@ pub(super) fn assemble(
     let roots = approved.roots();
     let bridge = BridgeState::open_existing(
         &roots.plane_root().join(BRIDGE_DIR),
-        binding(approved, canonical_identity),
+        bridge_binding(approved, canonical_identity),
     )
     .map_err(|_| StartupError::SyncPlane)?;
     let plane = SyncPlane::open(PlaneInputs {
@@ -73,41 +74,4 @@ pub(super) fn assemble(
     })
     .map_err(|_| StartupError::SyncPlane)?;
     Ok(Some(plane))
-}
-
-/// Bridge 持久状态的绑定：链身份、Vault 身份与两个根 token 全部由审批与已核验根身份派生；
-/// `canonical_identity` 是可信启动层核验过的 canonical 根 `(dev, ino)`（`ServingRoots`）。
-pub(super) fn binding(approved: &ApprovedTransport<'_>, canonical_identity: (u64, u64)) -> Binding {
-    let scope = approved.binding();
-    let roots = approved.roots();
-    Binding {
-        link_id: scope.link_id,
-        canonical_vault: vault_identity(&scope.vault_uuid.to_string()),
-        remote_vault: scope.remote_vault,
-        canonical_root_token: root_token("canonical", canonical_identity),
-        mirror_root_token: root_token("mirror", roots.mirror_identity()),
-        scope_hash: scope.scope_hash,
-        scope_epoch: scope.scope_epoch,
-    }
-}
-
-/// 根 token：域分隔 sha256(角色 ‖ dev ‖ ino)。
-pub(super) fn root_token(role: &str, identity: (u64, u64)) -> [u8; 32] {
-    let mut hash = Sha256::new();
-    hash.update(b"studiolo.sync-plane.root.v1\0");
-    hash.update(role.as_bytes());
-    hash.update(identity.0.to_be_bytes());
-    hash.update(identity.1.to_be_bytes());
-    hash.finalize().into()
-}
-
-/// Vault 身份的 16 字节投影：域分隔 sha256 的前 16 字节。
-pub(super) fn vault_identity(uuid: &str) -> [u8; 16] {
-    let mut hash = Sha256::new();
-    hash.update(b"studiolo.sync-plane.vault.v1\0");
-    hash.update(uuid.as_bytes());
-    let digest: [u8; 32] = hash.finalize().into();
-    let mut identity = [0u8; 16];
-    identity.copy_from_slice(&digest[..16]);
-    identity
 }

@@ -12,6 +12,7 @@ use sha2::{Digest, Sha256};
 use std::path::PathBuf;
 
 mod validate;
+pub use validate::excluded_folder as excluded_folder_acceptable;
 use validate::{backend, budget, excluded_folders, manual_quota, runtime, text_field};
 
 /// 审批文档字节上限；单文档远小于私有配置预算。
@@ -38,10 +39,19 @@ struct Document {
     device_name: String,
     headless_mode: String,
     excluded_folders: Vec<String>,
+    // 键必须显式出现：`null` 是「配额未知」的明确申报，漏写整个键则拒绝。
+    #[serde(deserialize_with = "explicit_quota")]
     manual_quota: Option<ManualQuotaDocument>,
     runtime: RuntimeDocument,
     backend: BackendDocument,
     budget: BudgetDocument,
+}
+
+/// 绕开 serde 对 `Option` 字段「缺键即 `None`」的默认处理：键缺失按缺字段拒绝。
+fn explicit_quota<'de, D: serde::Deserializer<'de>>(
+    input: D,
+) -> Result<Option<ManualQuotaDocument>, D::Error> {
+    Deserialize::deserialize(input)
 }
 
 #[derive(Deserialize)]

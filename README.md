@@ -203,6 +203,10 @@ npm --prefix web test && npm --prefix web run lint && npm --prefix web run forma
 不连后端看界面：`STUDIOLO_FIXTURES=1 npm --prefix web run dev` 用 `web/dev/` 的假数据应答全部 `/api/*`
 （写操作只改内存，重启复原）。只在 `vite serve` 下生效，生产构建里不出现（T-130）。
 
+双向 Bridge 平面默认关闭：只有 `--sync-transport </绝对路径/sync-approval.json>` 且私有配置带 `sync_scope` 才装配，
+四项私有存储先用 `studiolo-maintain sync-init`（任一已存在即拒绝）显式建立，已不再排除的文件夹在镜像视图里的残留
+用 `studiolo-maintain sync-purge-residue --folder <名>` 清除（须先停 `studiolo-human`）；设计见 `docs/m2/sync-plane-design.md`。
+
 上面那组之外，CI `rust` 作业还会做四件事（2026-09-22 按 `ci.yml` 逐条核对）：
 
 - 对**八个显式列名**的脚本跑 `bash -n`：`scripts/` 下的 `package-agent.sh`、

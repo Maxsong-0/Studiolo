@@ -122,6 +122,8 @@ fn table_names_are_unique_and_only_three_switches_take_no_value() {
     switches.sort_unstable();
     assert_eq!(switches, ["--canonical", "--cargo-dependencies", "--help"]);
     assert_eq!(valued().count() + switches.len(), PARAMS.len());
+    // 参数总数是显式登记的：新增参数必须同时补成功用例与落字段断言，不能只加表项。
+    assert_eq!(PARAMS.len(), 23, "参数表总数变了");
 }
 
 #[test]
@@ -183,6 +185,10 @@ fn session_writer_factor_board_and_runner_values_land_in_their_own_fields() {
     assert_eq!(board.agent_data, Path::new("/fixture/agents"));
     let runner = options.runner_config.unwrap();
     assert_eq!(runner, Path::new("/fixture/runner.json"));
+    assert_eq!(
+        options.sync_transport.unwrap(),
+        Path::new("/fixture/sync-approval.json")
+    );
     assert_eq!(options.port, 4317);
     assert!(!options.canonical && options.access.is_none());
 }

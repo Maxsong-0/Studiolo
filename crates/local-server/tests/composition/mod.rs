@@ -6,6 +6,7 @@ mod fixture;
 mod repository;
 mod repository_approved;
 mod residency;
+mod sync_plane;
 #[path = "../access/test_support.rs"]
 mod test_support;
 mod writer;

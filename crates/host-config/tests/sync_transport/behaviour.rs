@@ -1,6 +1,7 @@
 //! 行为契约：显式启用的审批产出封闭能力，并如实报告被批准的值。
 
 use super::fixture::Fixture;
+use studiolo_host_config::sync_transport::{ManualQuota, TransportSyncMode};
 
 #[test]
 fn explicit_enabled_approval_yields_a_closed_capability_with_pinned_roots_and_digest() {
@@ -64,6 +65,56 @@ fn approved_transport_reports_runtime_backend_and_budget_exactly_as_approved() {
     assert_eq!(approved.backend().payload_uid(), 61001);
     assert_eq!(approved.budget().config_json_bytes, 65536);
     assert_eq!(approved.budget().deadline_seconds, 3600);
+}
+
+/// 排除项按母本排序、设备名与模式逐字报告；人工配额显式 `null` 即未知，给了值才是 `Some`。
+#[test]
+fn excluded_folders_mode_device_and_manual_quota_are_reported_exactly_as_approved() {
+    let fixture = Fixture::new();
+    let mut value = fixture.approval();
+    value["excluded_folders"] = serde_json::json!(["日记", "School", "Archive/2025"]);
+    let approval = fixture.parse(&value).unwrap();
+    assert_eq!(
+        approval.excluded_folders(),
+        ["Archive/2025", "School", "日记"]
+    );
+    assert_eq!(approval.device_name(), "studiolo-fixture");
+    assert_eq!(approval.headless_mode(), TransportSyncMode::MirrorRemote);
+    assert_eq!(approval.manual_quota(), None);
+
+    value["headless_mode"] = serde_json::json!("bidirectional");
+    value["manual_quota"] = serde_json::json!({
+        "account_limit_bytes": 10_737_418_240_u64,
+        "used_bytes_manual": 4_294_967_296_u64,
+        "recorded_at_unix": 1_790_000_000
+    });
+    let approval = fixture.parse(&value).unwrap();
+    assert_eq!(approval.headless_mode(), TransportSyncMode::Bidirectional);
+    assert_eq!(
+        approval.manual_quota(),
+        Some(ManualQuota {
+            account_limit_bytes: 10_737_418_240,
+            used_bytes_manual: 4_294_967_296,
+            recorded_at_unix: 1_790_000_000,
+        })
+    );
+}
+
+/// 批准后的能力透传视图根与平面根，且平面根有自己的钉住身份。
+#[test]
+fn approved_transport_reports_view_and_plane_roots_and_the_new_approved_values() {
+    let fixture = Fixture::new();
+    let scope = fixture.scope();
+    let approved = fixture.approve(&scope).unwrap();
+    let roots = approved.roots();
+    assert_eq!(roots.mirror_view_root(), fixture.root.join("mirror-view"));
+    assert_eq!(roots.plane_root(), fixture.root.join("plane"));
+    assert_ne!(roots.plane_identity(), roots.private_identity());
+    assert_ne!(roots.plane_identity(), roots.mirror_identity());
+    assert_eq!(approved.excluded_folders(), ["School", "日记"]);
+    assert_eq!(approved.device_name(), "studiolo-fixture");
+    assert_eq!(approved.headless_mode(), TransportSyncMode::MirrorRemote);
+    assert!(approved.manual_quota().is_none());
 }
 
 #[test]

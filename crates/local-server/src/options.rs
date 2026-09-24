@@ -254,3 +254,7 @@ mod rust_call_tests;
 #[cfg(test)]
 #[path = "../tests/options/table.rs"]
 mod table_tests;
+
+#[cfg(test)]
+#[path = "../tests/options/sync_transport.rs"]
+mod sync_transport_tests;

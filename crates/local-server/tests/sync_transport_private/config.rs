@@ -134,5 +134,7 @@ fn duplicate_escaped_unknown_and_incomplete_json_never_match() {
     );
 }
 
+#[path = "config_approval.rs"]
+mod approval;
 #[path = "config_validation.rs"]
 mod validation;
