@@ -3,7 +3,9 @@ import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 import { TASK } from '../../../dev/fixtures/ids';
 import type { TopologyDiagramProps } from '../../collab/TopologyDiagram';
+import type { OverviewRead } from '../../cockpit/useOverviewRead';
 import { CockpitView } from '../../views/CockpitView';
+import { CockpitHarness } from './CockpitHarness';
 import {
   fixtureData,
   fixtureFetch,
@@ -41,8 +43,9 @@ function renderCockpit(
     onViewProjects: vi.fn(),
     onShowDiagnostics: vi.fn(),
   };
+  // 黑板汇总由 App 读一次交给驾驶舱（T-162）；单独渲染驾驶舱时由外层代行那一份读取。
   const element = (refreshing: boolean) => (
-    <CockpitView
+    <CockpitHarness
       workbench={data.workbench}
       refreshing={refreshing}
       filters={null}
@@ -383,5 +386,71 @@ describe('驾驶舱：今天的时间线', () => {
       'title',
       'runner.start（outcome）',
     );
+  });
+});
+
+/** 路径以 prefix 开头的请求数。 */
+function countSent(calls: readonly unknown[][], prefix: string) {
+  return calls.filter(([input]) => String(input).startsWith(prefix)).length;
+}
+
+describe('驾驶舱：黑板汇总由 App 读一次交进来（T-162）', () => {
+  /** 直接渲染驾驶舱、交一份现成的读取；返回按路径前缀数请求的函数。 */
+  function renderWithRead(data: FixtureData, overview: OverviewRead) {
+    const fetchMock = vi.fn(fixtureFetch(data.api));
+    vi.stubGlobal('fetch', fetchMock);
+    render(
+      <CockpitView
+        workbench={data.workbench}
+        refreshing={false}
+        overview={overview}
+        onRefresh={vi.fn()}
+        filters={null}
+        actions={data.workbench.inbox}
+        projects={data.workbench.projects}
+        diagnostics={0}
+        onOpen={vi.fn()}
+        onEnterProject={vi.fn()}
+        onViewProjects={vi.fn()}
+        onShowDiagnostics={vi.fn()}
+      />,
+    );
+    return (prefix: string) => countSent(fetchMock.mock.calls, prefix);
+  }
+
+  it('只用交进来的那一份，自己不另读黑板汇总；本机健康照旧自己读', async () => {
+    const data = fixtureData();
+    const reload = vi.fn();
+    const requests = renderWithRead(data, {
+      state: { kind: 'ready', overview: data.overview },
+      reload,
+    });
+    // 交进来的就是读完的汇总：首屏即给数，不经过读取中。
+    expect(within(hero()).getByText('8')).toHaveClass('sr-only');
+    expect(within(region('待我动作')).getAllByRole('listitem')).toHaveLength(
+      3 + data.workbench.inbox.length,
+    );
+    await within(titleCell('每轮同步')).findByText('85 S', undefined, WAIT);
+    expect(requests(HEALTH)).toBe(1);
+    expect(requests(OVERVIEW)).toBe(0);
+    expect(reload).not.toHaveBeenCalled();
+  });
+
+  it('拓扑格的「重试」调交进来的 reload，自己不发请求', async () => {
+    const reload = vi.fn();
+    const requests = renderWithRead(fixtureData(), {
+      state: { kind: 'error', message: '黑板许可已满。' },
+      reload,
+    });
+    const alert = within(region('协作拓扑，今天')).getByRole('alert');
+    expect(alert).toHaveTextContent('黑板许可已满。');
+    expect(hero()).toHaveTextContent('—');
+    await userEvent
+      .setup()
+      .click(within(alert).getByRole('button', { name: '重试黑板汇总' }));
+    expect(reload).toHaveBeenCalledTimes(1);
+    // 等本机健康读完再收尾，免得更新落在测试结束之后。
+    await within(titleCell('每轮同步')).findByText('85 S', undefined, WAIT);
+    expect(requests(OVERVIEW)).toBe(0);
   });
 });
