@@ -134,8 +134,9 @@ fn content_security_policy(response: &mut Response) -> HeaderValue {
     }
 }
 
-/// 缓存策略：`/assets/` 下文件名带 Vite 内容哈希（`名字-哈希.js|css`）、且确以对应 MIME 送出的
-/// 脚本与样式长期缓存；index.html 每次带不同 CSP nonce，与 API、错误及其余响应一律 no-store。
+/// 缓存策略：`/assets/` 下文件名带 Vite 内容哈希（`名字-哈希.js|css|svg|woff2`）、且确以对应
+/// MIME 送出的脚本、样式、SVG 图标与 woff2 字体长期缓存；index.html 每次带不同 CSP nonce，
+/// 与 API、错误及其余响应一律 no-store。四类共用同一条哈希判定与同一张 MIME 表。
 fn cache_control_for(path: &str, content_type: Option<&HeaderValue>) -> HeaderValue {
     let expected = match path
         .strip_prefix("/assets/")
@@ -143,6 +144,8 @@ fn cache_control_for(path: &str, content_type: Option<&HeaderValue>) -> HeaderVa
     {
         Some((stem, "js")) if content_hashed(stem) => crate::assets::JAVASCRIPT,
         Some((stem, "css")) if content_hashed(stem) => crate::assets::STYLESHEET,
+        Some((stem, "svg")) if content_hashed(stem) => crate::assets::SVG,
+        Some((stem, "woff2")) if content_hashed(stem) => crate::assets::WOFF2,
         _ => return HeaderValue::from_static(NO_STORE),
     };
     if content_type.is_some_and(|value| value == expected) {
@@ -270,4 +273,34 @@ fn factors_enabled(state: &AppState) -> bool {
         .sessions
         .as_ref()
         .is_some_and(crate::auth_http::AuthHttp::has_factors)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 经真实路由只拿得到「类型与扩展名一致」的 200，类型不符的分支只能在这里直接锁住：
+    /// 四类长缓存资源各自只认资产处理器给自己的那个 MIME；别类的、缺失或 HTML 都是 no-store。
+    #[test]
+    fn each_long_cached_type_accepts_only_its_own_mime() {
+        let cases = [
+            ("/assets/index-C65IIHot.js", crate::assets::JAVASCRIPT),
+            ("/assets/index-ovxLtHW2.css", crate::assets::STYLESHEET),
+            ("/assets/favicon-4NhN4y5N.svg", crate::assets::SVG),
+            ("/assets/archivo-latin-800-normal-DZa_k145.woff2", crate::assets::WOFF2),
+        ];
+        let html = HeaderValue::from_static("text/html; charset=utf-8");
+        for (path, own) in cases {
+            let own = HeaderValue::from_static(own);
+            assert_eq!(cache_control_for(path, Some(&own)), IMMUTABLE, "{path}");
+            assert_eq!(cache_control_for(path, None), NO_STORE, "{path}");
+            assert_eq!(cache_control_for(path, Some(&html)), NO_STORE, "{path}");
+            for (_, other) in cases {
+                let other = HeaderValue::from_static(other);
+                if other != own {
+                    assert_eq!(cache_control_for(path, Some(&other)), NO_STORE, "{path}");
+                }
+            }
+        }
+    }
 }

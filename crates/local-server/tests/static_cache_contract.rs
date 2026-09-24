@@ -1,5 +1,6 @@
-//! 静态资源缓存契约：只有 `/assets/` 下带 Vite 内容哈希、且成功送出的 JS/CSS 本体长期缓存；
-//! index.html（每次带不同 CSP nonce）、API、错误与其余资源一律 no-store。夹具均为临时虚构文件。
+//! 静态资源缓存契约：只有 `/assets/` 下带 Vite 内容哈希、且成功送出的 JS/CSS/SVG/woff2 本体
+//! 长期缓存；index.html（每次带不同 CSP nonce）、API、错误与其余资源一律 no-store。
+//! 夹具均为临时虚构文件。
 
 use axum::{
     Router,
@@ -21,23 +22,29 @@ const STRICT_CSP: &str = "default-src 'none'; script-src 'self'; style-src 'self
     connect-src 'self' http://127.0.0.1:*; img-src 'self'; font-src 'self'; base-uri 'none'; \
     form-action 'none'; frame-ancestors 'none'; object-src 'none'";
 
-/// 形如真实 Vite 产物的哈希文件：哈希段可含 `-` 与 `_`，也可位于子目录。
-const HASHED: [&str; 5] = [
+/// 形如真实 Vite 产物的哈希文件（脚本、样式、SVG 图标、woff2 字体）：哈希段可含 `-` 与 `_`，
+/// 名字本身可含多段 `-`，也可位于子目录。
+const HASHED: [&str; 8] = [
     "assets/index-C65IIHot.js",
     "assets/index-ovxLtHW2.css",
     "assets/MarkdownEditor-CC7-Ql5Q.js",
     "assets/RecentlyDeleted-B_pY3tRi.js",
     "assets/chunks/vendor-Abcdefgh12.js",
+    "assets/favicon-4NhN4y5N.svg",
+    "assets/font-Abcdefgh.woff2",
+    "assets/archivo-latin-800-normal-DZa_k145.woff2",
 ];
 
-/// 同在 `/assets/` 下，却没有哈希、哈希段不足 8 位或不紧贴扩展名、或不是脚本与样式的文件。
-const UNHASHED: [&str; 6] = [
+/// 同在 `/assets/` 下、类型也在长缓存之列，却没有哈希、哈希段不足 8 位或不紧贴扩展名的文件。
+const UNHASHED: [&str; 8] = [
     "assets/app.js",
     "assets/app.css",
     "assets/favicon-fixture.js",
     "assets/vendor-Abcdefgh.min.js",
-    "assets/favicon-4NhN4y5N.svg",
-    "assets/font-Abcdefgh.woff2",
+    "assets/favicon.svg",
+    "assets/favicon-fixture.svg",
+    "assets/font.woff2",
+    "assets/font-Abcdefg.woff2",
 ];
 
 fn fixture() -> (TempDir, TempDir, Router) {
@@ -78,14 +85,26 @@ fn cache_control(response: &Response) -> &str {
     response.headers()["cache-control"].to_str().unwrap()
 }
 
+/// 各类长缓存资源应带的类型：按扩展名逐字写死，从外部核对资产处理器的 MIME 表。
+fn expected_type(name: &str) -> &'static str {
+    match name.rsplit_once('.') {
+        Some((_, "js")) => "text/javascript; charset=utf-8",
+        Some((_, "css")) => "text/css; charset=utf-8",
+        Some((_, "svg")) => "image/svg+xml",
+        Some((_, "woff2")) => "font/woff2",
+        _ => panic!("夹具出现未登记的扩展名：{name}"),
+    }
+}
+
 #[tokio::test]
-async fn hashed_scripts_and_styles_are_immutable_and_keep_every_security_header() {
+async fn hashed_assets_are_immutable_and_keep_every_security_header() {
     let (_vault, _web, app) = fixture();
     for name in HASHED {
         let response = send(&app, "GET", &format!("/{name}"), HOST).await;
         assert_eq!(response.status(), StatusCode::OK, "{name}");
         assert_eq!(cache_control(&response), IMMUTABLE, "{name}");
         let headers = response.headers();
+        assert_eq!(headers["content-type"], expected_type(name), "{name}");
         assert_eq!(headers["x-content-type-options"], "nosniff", "{name}");
         assert_eq!(headers["referrer-policy"], "no-referrer", "{name}");
         assert_eq!(headers["cross-origin-resource-policy"], "same-origin");
@@ -135,6 +154,8 @@ async fn failures_on_hashed_looking_paths_are_never_cached() {
     let (_vault, _web, app) = fixture();
     for uri in [
         "/assets/index-Missing0.js",
+        "/assets/favicon-Missing0.svg",
+        "/assets/font-Missing0.woff2",
         "/assets/.hidden-C65IIHot.js",
         "/assets/../index-C65IIHot.js",
         "/api/index-C65IIHot.js",
@@ -144,11 +165,16 @@ async fn failures_on_hashed_looking_paths_are_never_cached() {
         assert_eq!(cache_control(&response), "no-store", "{uri}");
     }
     // 目标文件确实存在，但同源检查或只读方法检查先失败：错误体同样不可缓存。
-    let hashed = "/assets/index-C65IIHot.js";
-    let forbidden = send(&app, "GET", hashed, "attacker.example").await;
-    assert_eq!(forbidden.status(), StatusCode::FORBIDDEN);
-    assert_eq!(cache_control(&forbidden), "no-store");
-    let write = send(&app, "POST", hashed, HOST).await;
-    assert_eq!(write.status(), StatusCode::METHOD_NOT_ALLOWED);
-    assert_eq!(cache_control(&write), "no-store");
+    for hashed in [
+        "/assets/index-C65IIHot.js",
+        "/assets/favicon-4NhN4y5N.svg",
+        "/assets/font-Abcdefgh.woff2",
+    ] {
+        let forbidden = send(&app, "GET", hashed, "attacker.example").await;
+        assert_eq!(forbidden.status(), StatusCode::FORBIDDEN, "{hashed}");
+        assert_eq!(cache_control(&forbidden), "no-store", "{hashed}");
+        let write = send(&app, "POST", hashed, HOST).await;
+        assert_eq!(write.status(), StatusCode::METHOD_NOT_ALLOWED, "{hashed}");
+        assert_eq!(cache_control(&write), "no-store", "{hashed}");
+    }
 }
