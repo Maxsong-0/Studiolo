@@ -1,0 +1,19 @@
+# owner（studiolo-human）读写镜像所经的 idmapped bind 视图（ADR-025 D7）：磁盘上属 payload 身份
+# @PAYLOAD_UID@:@PAYLOAD_GID@ 的文件在这里显示为 owner @OWNER_UID@:@OWNER_GID@，owner 经视图写入的
+# 文件落盘时归 payload 身份；双方都不需要 chown，bind 与真实根是同一 inode。
+# X-mount.idmap 写法 u:<视图内 id>:<磁盘上 id>:<范围>（等价于 userns uid_map 的「内 外 长度」）。
+# 文件名是 systemd-escape -p --suffix=mount /var/lib/studiolo-owner/mirror 的结果；由 provision.sh 渲染安装。
+[Unit]
+Description=Studiolo sync mirror owner view (idmapped bind)
+Requires=var-lib-studiolo\x2dsync.mount
+After=var-lib-studiolo\x2dsync.mount
+Before=studiolo-sync-launcher.service
+
+[Mount]
+What=/var/lib/studiolo-sync/mirror
+Where=/var/lib/studiolo-owner/mirror
+Type=none
+Options=bind,X-mount.idmap=u:@OWNER_UID@:@PAYLOAD_UID@:1 g:@OWNER_GID@:@PAYLOAD_GID@:1
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,47 @@
+# Studiolo 可信 launcher（T-132 P1，ADR-025 D2）：root 系统服务，只监听私有 Unix socket
+# /run/studiolo-sync-launcher/launcher.sock（目录 0750 root:owner 组，socket 0660，进程自己改组与权限），
+# 每次运行经 systemd-run 起一个 transient service 跑 `studiolo-sync-launcher payload`。
+# 由 provision.sh 渲染安装；@LAUNCHER@ 是固定二进制路径 /usr/local/sbin/studiolo-sync-launcher。
+[Unit]
+Description=Studiolo trusted sync launcher (root, private socket)
+Requires=var-lib-studiolo\x2dsync.mount var-lib-studiolo\x2downer-mirror.mount
+After=var-lib-studiolo\x2dsync.mount var-lib-studiolo\x2downer-mirror.mount
+StartLimitIntervalSec=60
+StartLimitBurst=3
+
+[Service]
+Type=exec
+User=root
+Group=root
+ExecStart=@LAUNCHER@ serve
+RuntimeDirectory=studiolo-sync-launcher
+RuntimeDirectoryMode=0750
+# 重启（含崩溃自动重启）时保留 sessions/ 目录：launcher 只能接管目录仍在的旧 session（关门、不放行）；
+# 显式 stop 才清空。
+RuntimeDirectoryPreserve=restart
+Restart=on-failure
+RestartSec=3
+KillSignal=SIGTERM
+TimeoutStopSec=20
+UMask=0077
+LimitCORE=0
+# 它只需要：读 /etc/studiolo、/proc、/sys/fs/cgroup，写 /run/studiolo-sync-launcher，连 manager 的私有 socket。
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+LockPersonality=yes
+RestrictAddressFamilies=AF_UNIX
+SystemCallArchitectures=native
+MemoryMax=128M
+TasksMax=64
+StandardInput=null
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=studiolo-sync-launcher
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,42 @@
+{
+  "schema_version": 1,
+  "enabled": true,
+  "private_root": "/home/maxsong/.local/share/studiolo-sync-transport",
+  "mirror_root": "/var/lib/studiolo-sync/mirror",
+  "owner_view_root": "/var/lib/studiolo-owner/mirror",
+  "plane_root": "/home/maxsong/.local/share/studiolo-sync-plane",
+  "device_name": "studiolo-headless",
+  "headless_mode": "mirror-remote",
+  "excluded_folders": [],
+  "manual_quota": {
+    "account_limit_bytes": 1073741824,
+    "used_bytes_manual": 0,
+    "recorded_at_unix": 1790000000
+  },
+  "runtime": {
+    "node_path": "/opt/studiolo/node/bin/node",
+    "cli_path": "/opt/studiolo/obsidian-headless/lib/node_modules/obsidian-headless/cli.js",
+    "version": "0.0.14",
+    "closure_digest": "0000000000000000000000000000000000000000000000000000000000000000"
+  },
+  "backend": {
+    "service_unit": "studiolo-sync-launcher.service",
+    "launcher_path": "/usr/local/sbin/studiolo-sync-launcher",
+    "payload_cgroup_prefix": "/sys/fs/cgroup/studiolo.slice/studiolo-sync.slice",
+    "payload_uid": 999,
+    "payload_gid": 983
+  },
+  "budget": {
+    "deadline_seconds": 1800,
+    "stop_grace_seconds": 30,
+    "stdout_bytes": 262144,
+    "stderr_bytes": 262144,
+    "config_json_bytes": 65536,
+    "private_state_bytes": 67108864,
+    "log_bytes": 268435456,
+    "memory_bytes": 2147483648,
+    "swap_bytes": 0,
+    "pids_max": 64,
+    "cpu_max_percent": 200
+  }
+}

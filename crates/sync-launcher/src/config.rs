@@ -2,11 +2,14 @@
 //! 文档互相独立、互相核对。任何可执行路径、镜像路径、身份都只从这里来，不从 IPC 来。
 
 use serde::Deserialize;
+use std::os::unix::fs::MetadataExt;
 use std::path::PathBuf;
 use studiolo_sync_transport::owned_run::RuntimePins;
 
 /// 配置文件的固定路径。
 pub const CONFIG_PATH: &str = "/etc/studiolo/sync-launcher.json";
+/// 本程序的固定安装路径；transient unit 的 `ExecStart` 只指向它，不从 IPC 或环境取。
+pub const LAUNCHER_BINARY: &str = "/usr/local/sbin/studiolo-sync-launcher";
 /// 私有 socket 目录；0750 root:<owner 组>。
 pub const SOCKET_DIR: &str = "/run/studiolo-sync-launcher";
 /// 每个 session 的 FIFO 目录。
@@ -107,7 +110,17 @@ impl LauncherConfig {
     /// # Errors
     /// 文件不满足约束返回 `Unsafe`；内容不合法返回 `Malformed`。
     pub fn load() -> Result<Self, ConfigFault> {
-        // B 轮 W2 实现（真实 IO 放在 serve.rs 的固定读法里，本函数只转发）。
-        Err(ConfigFault::Unsafe)
+        // 只看链接本身（不跟随）：符号链接、非普通文件、非 root、非 0600、多链接或超预算一律不安全。
+        let metadata = std::fs::symlink_metadata(CONFIG_PATH).map_err(|_| ConfigFault::Unsafe)?;
+        let safe = metadata.is_file()
+            && metadata.uid() == 0
+            && metadata.mode() & 0o777 == 0o600
+            && metadata.nlink() == 1
+            && metadata.len() <= CONFIG_MAX_BYTES as u64;
+        if !safe {
+            return Err(ConfigFault::Unsafe);
+        }
+        let bytes = std::fs::read(CONFIG_PATH).map_err(|_| ConfigFault::Unsafe)?;
+        Self::parse(&bytes)
     }
 }

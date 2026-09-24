@@ -25,12 +25,12 @@ class PackageTests(unittest.TestCase):
         self.root = Path(self.temp.name)
         self.args = types.SimpleNamespace(repo=str(self.root / 'repo'),
             example_vault=str(self.root / 'example'), local_server=str(self.root / 'local-server'),
-            auth_admin=str(self.root / 'auth-admin'), source_commit='1' * 40,
-            output=str(self.root / 'release'))
+            auth_admin=str(self.root / 'auth-admin'), sync_launcher=str(self.root / 'sync-launcher'),
+            source_commit='1' * 40, output=str(self.root / 'release'))
         for name, data in {
             'repo/web/dist/index.html': b'fictional web', 'repo/web/dist/assets/main.js': b'void 0',
             'example/note.md': b'fictional note', 'local-server': b'fictional ELF',
-            'auth-admin': b'fictional CLI',
+            'auth-admin': b'fictional CLI', 'sync-launcher': b'fictional launcher',
             'repo/deploy/human/current-v2/launch-human.py': c.OLD_RELEASE.encode(),
             'repo/deploy/human/current-v2/studiolo-human.service': c.OLD_RELEASE.encode(),
         }.items():
@@ -53,6 +53,9 @@ class PackageTests(unittest.TestCase):
         self.assertEqual(set(doc), {'build', 'source_commit', 'assembly', 'files'})
         self.assertEqual((root / 'launch-human.py').read_bytes(), str(c.RELEASE).encode())
         self.assertEqual((root / 'bin/studiolo-auth-admin').stat().st_mode & 0o777, 0o755)
+        self.assertEqual((root / 'bin/studiolo-sync-launcher').stat().st_mode & 0o777, 0o755)
+        self.assertEqual((root / 'bin/studiolo-sync-launcher').read_bytes(), b'fictional launcher')
+        self.assertIn('bin/studiolo-sync-launcher', doc['files'])
         self.assertEqual((root / 'web/index.html').stat().st_mode & 0o777, 0o600)
 
     def test_existing_output_never_overwritten(self):
@@ -165,6 +168,12 @@ class ControlTests(unittest.TestCase):
             self.assertNotIn('fictional-sensitive-value', str(error.exception))
         with self.assertRaises(ValueError):
             package.options(['--repo', '/fictional'])
+        # 少了 --sync-launcher 就是旧的 12 参形状，闭集参数表拒绝。
+        twelve = ['--repo', '/f', '--example-vault', '/f', '--local-server', '/f', '--auth-admin', '/f',
+                  '--source-commit', '1' * 40, '--output', '/f']
+        with self.assertRaises(ValueError):
+            package.options(twelve)
+        self.assertEqual(package.options(twelve + ['--sync-launcher', '/f/launcher']).sync_launcher, '/f/launcher')
 
     def test_failure_boundaries_and_success(self):
         for failure, recover in [('preflight', None), ('backup', False), ('start', True),
