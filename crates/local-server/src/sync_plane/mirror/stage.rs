@@ -19,8 +19,8 @@ pub use store::StageStore;
 use crate::sync_plane::PlaneError;
 use rustix::fd::{AsFd, BorrowedFd, OwnedFd};
 use rustix::fs::{
-    AtFlags, CWD, Dir, FileType, Mode, OFlags, Stat, fstat, fsync, mkdirat, openat, renameat,
-    unlinkat,
+    AtFlags, CWD, Dir, FileType, Mode, OFlags, Stat, StatxFlags, fstat, fsync, mkdirat, openat,
+    renameat, statx, unlinkat,
 };
 use rustix::io::Errno;
 use std::ffi::OsString;
@@ -203,6 +203,21 @@ fn private_directory_at(dir: BorrowedFd<'_>, name: &str, euid: u32) -> Result<Ow
 }
 
 /// 目录是否为本人所有的 0700。
+/// 两个已打开目录是否在同一 vfsmount：外 stage 与镜像视图不同挂载时 `renameat` 必然 EXDEV，
+/// 安装前先核（ADR-025 D7／D8；置备把 `plane_root` 放在与视图同一条 idmapped bind 之下）。
+/// 内核不报 `STATX_MNT_ID` 时按「不同挂载」处理，失败关闭。
+pub(in crate::sync_plane) fn same_mount(
+    left: BorrowedFd<'_>,
+    right: BorrowedFd<'_>,
+) -> rustix::io::Result<bool> {
+    let first = statx(left, "", AtFlags::EMPTY_PATH, StatxFlags::MNT_ID)?;
+    let second = statx(right, "", AtFlags::EMPTY_PATH, StatxFlags::MNT_ID)?;
+    let reported = StatxFlags::MNT_ID.bits();
+    Ok(first.stx_mask & reported != 0
+        && second.stx_mask & reported != 0
+        && first.stx_mnt_id == second.stx_mnt_id)
+}
+
 pub(in crate::sync_plane) fn private_directory(stat: &Stat, euid: u32) -> bool {
     FileType::from_raw_mode(stat.st_mode) == FileType::Directory
         && stat.st_uid == euid

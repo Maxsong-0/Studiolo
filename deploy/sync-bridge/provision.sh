@@ -16,7 +16,7 @@ payload=studiolo-sync
 image=/var/lib/studiolo-sync.img
 image_size=4G
 mount_point=/var/lib/studiolo-sync
-view_point=/var/lib/studiolo-owner/mirror
+view_point=/var/lib/studiolo-owner/bridge
 launcher=/usr/local/sbin/studiolo-sync-launcher
 config_dir=/etc/studiolo
 config=$config_dir/sync-launcher.json
@@ -103,10 +103,11 @@ PY
 fi
 [[ -f $config && ! -L $config && $(stat -c '%u:%a:%h' "$config") == 0:600:1 ]] || fail "$config 须为 root 0600 单链接普通文件。"
 
-# 6 挂载与目录：先起镜像盘，再在盘上建镜像根与配置根（payload 专属 0700），再起视图，最后起服务。
+# 6 挂载与目录：先起镜像盘，再在盘上建 bridge/{mirror,plane} 与配置根（磁盘上都属 payload、0700；
+# plane/ 经 idmapped 视图显示为 owner，payload 侧由 launcher 的 InaccessiblePaths= 藏起来），再起视图，最后起服务。
 systemctl daemon-reload
 systemctl enable --now -- "$loop_unit"
-install -d -m 0700 -o "$payload" -g "$payload" "$mount_point/mirror" "$mount_point/config"
+install -d -m 0700 -o "$payload" -g "$payload" "$mount_point/bridge" "$mount_point/bridge/mirror" "$mount_point/bridge/plane" "$mount_point/config"
 systemctl enable --now -- "$view_unit"
 systemctl enable --now -- "$service"
 
@@ -115,8 +116,10 @@ loop_source=$(findmnt -no SOURCE -- "$mount_point") || fail '镜像盘未挂载�
 [[ $loop_source == /dev/loop* ]] || fail "镜像盘不是 loop 设备：$loop_source"
 [[ $(cat "/sys/block/${loop_source##*/}/loop/backing_file") == "$image" ]] || fail 'loop 设备的 backing_file 不是固定镜像。'
 findmnt -no OPTIONS -- "$view_point" | grep -q idmapped || fail '视图不是 idmapped 挂载。'
-[[ $(stat -c '%u:%g' "$view_point") == "$owner_uid:$owner_gid" ]] || fail '视图根没有映射成 owner 身份。'
-[[ $(stat -c '%u:%g:%a' "$mount_point/mirror") == "$payload_uid:$payload_gid:700" ]] || fail '镜像根不是 payload 专属 0700。'
+[[ $(stat -c '%u:%g' "$view_point/mirror") == "$owner_uid:$owner_gid" ]] || fail '视图里的镜像根没有映射成 owner 身份。'
+[[ $(stat -c '%u:%g:%a' "$view_point/plane") == "$owner_uid:$owner_gid:700" ]] || fail '视图里的平面根没有映射成 owner 0700。'
+[[ $(stat -c '%u:%g:%a' "$mount_point/bridge/mirror") == "$payload_uid:$payload_gid:700" ]] || fail '镜像根不是 payload 专属 0700。'
+[[ $(stat -c '%i' "$view_point/mirror") == $(stat -c '%i' "$mount_point/bridge/mirror") ]] || fail '视图与真实镜像根不是同一 inode。'
 systemctl is-active --quiet -- "$service" || fail 'launcher 服务未运行。'
 for attempt in $(seq 1 40); do
     [[ -S $socket ]] && break
@@ -127,7 +130,7 @@ done
 printf '置备完成：\n'
 printf '  身份   %s uid=%s gid=%s（owner %s uid=%s gid=%s）\n' "$payload" "$payload_uid" "$payload_gid" "$owner" "$owner_uid" "$owner_gid"
 printf '  镜像盘 %s → %s（%s，backing_file 已核对）\n' "$image" "$mount_point" "$loop_source"
-printf '  视图   %s（idmapped，显示为 owner）\n' "$view_point"
+printf '  视图   %s（idmapped；mirror/ 与 plane/ 同一挂载，显示为 owner）\n' "$view_point"
 printf '  程序   %s sha256=%s\n' "$launcher" "$(digest "$launcher")"
 printf '  配置   %s（0600 root；runtime 路径与 closure_digest 请按 README 第 2 节核对后再重启服务）\n' "$config"
 printf '  服务   %s active；socket %s（0660 root:%s）\n' "$service" "$socket" "$owner_gid"

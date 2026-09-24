@@ -8,13 +8,16 @@ use std::path::Path;
 
 /// 任何登记文件的导入表都可以带的名字：rustix 类型名，加只读的 `fstat`（读元数据不是写能力，不计数；
 /// `mirror.rs` 按 W4 清单另外精确计数）。
-const RUSTIX_IMPORTABLE: [&str; 7] = [
+const RUSTIX_IMPORTABLE: [&str; 9] = [
     "AtFlags",
+    "CWD",
     "Dir",
     "FileType",
     "FlockOperation",
     "Mode",
     "OFlags",
+    "Stat",
+    "StatxFlags",
     "fstat",
 ];
 
@@ -23,8 +26,8 @@ pub(super) fn remainder(crate_name: &str, path: &Path, source: &str) -> String {
         return source.to_owned();
     }
     if path.ends_with("crates/local-server/src/sync_plane/mirror/stage.rs") {
-        // open 根目录一次；objects／index／receiving／index 暂存件各 openat 一次；接收封口与索引替换各
-        // renameat 一次；孤儿、旧接收件、到期对象、扫描孤儿各 unlinkat 一次；建目录两次；fsync 四次。
+        // B 轮 W4 落地形态：唯一打开点 open_with（openat）＋fstat；flush／rename_within／remove_at／
+        // make_directory_at／entry_names 各是一个只认已有描述符的助手，每种调用只出现一次。
         return plane_remainder(
             source,
             &[
@@ -36,41 +39,39 @@ pub(super) fn remainder(crate_name: &str, path: &Path, source: &str) -> String {
                 "RETENTION_SECONDS",
             ],
             &[
-                ("open(", 1),
-                ("openat(", 4),
-                ("renameat(", 2),
-                ("unlinkat(", 4),
-                ("mkdirat(", 2),
-                ("fsync(", 4),
+                ("openat(", 1),
+                ("fstat(", 1),
+                ("fsync(", 1),
+                ("renameat(", 1),
+                ("unlinkat(", 1),
+                ("mkdirat(", 1),
+                ("Dir::read_from(", 1),
+                ("statx(", 2),
             ],
         );
     }
     if path.ends_with("crates/local-server/src/sync_plane/recovery.rs") {
-        // open 平面根一次；lock／state／暂存件／残留文件夹各 openat 一次；flock 一次；原子替换一次；fsync 两次。
+        // B 轮 W4 落地形态：directory_path 从 CWD 逐段 openat＋fstat；PlaneStateStore::open 一次 flock；
+        // 建文件／整读／原子替换全部借 stage.rs 的描述符助手，本文件不再有 renameat／fsync。
         return plane_remainder(
             source,
             &["PLANE_STATE_FILE", "PLANE_STATE_STAGE_FILE", "PLANE_LOCK"],
             &[
-                ("open(", 1),
-                ("openat(", 4),
+                ("openat(", 1),
+                ("fstat(", 1),
                 ("flock(", 1),
-                ("renameat(", 1),
-                ("fsync(", 2),
             ],
         );
     }
     if path.ends_with("crates/local-server/src/sync_plane/mirror.rs") {
-        // 观察只读：openat＋fstat 各两次（遍历与复验）；安装：renameat／mkdirat／fsync 各一次；删除：unlinkat 一次。
+        // B 轮 W4 落地形态：观察与删除都经 stage.rs 的描述符助手；本文件只剩 install 的
+        // renameat（stage 对象 → 视图目标）与父目录 fsync 各一次。
         return plane_remainder(
             source,
             &["MirrorView", "renameat"],
             &[
-                ("openat(", 2),
-                ("fstat(", 2),
                 ("renameat(", 1),
-                ("mkdirat(", 1),
                 ("fsync(", 1),
-                ("unlinkat(", 1),
             ],
         );
     }
@@ -143,56 +144,47 @@ mod tests {
 
     fn stage_fixture() -> String {
         [
-            "use rustix::fs::{AtFlags, Dir, Mode, OFlags, fstat, fsync, mkdirat, open, openat, renameat, unlinkat};",
+            "use rustix::fs::{AtFlags, CWD, Dir, FileType, Mode, OFlags, Stat, StatxFlags, fstat, fsync, mkdirat, openat, renameat, statx, unlinkat};",
+            "let first = statx(left, \"\", AtFlags::EMPTY_PATH, StatxFlags::MNT_ID)?; let second = statx(right, \"\", AtFlags::EMPTY_PATH, StatxFlags::MNT_ID)?;",
             "pub const STAGE_DIR: &str = \"stage\"; pub const OBJECTS_DIR: &str = \"objects\";",
             "pub const INDEX_FILE: &str = \"index.json\"; pub const INDEX_STAGE_FILE: &str = \"index.json.new\";",
             "pub const RECEIVING_FILE: &str = \"receiving.partial\"; pub const RETENTION_SECONDS: u64 = 604_800;",
-            "pub fn open(plane_root: &Path) -> Result<Self, PlaneError> {",
-            "let stage = open(plane_root.join(STAGE_DIR), OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC, Mode::empty())?;",
-            "let objects = openat(&stage, OBJECTS_DIR, FLAGS, Mode::empty())?;",
-            "let index = openat(&stage, INDEX_FILE, FLAGS, Mode::empty())?;",
-            "let stat = fstat(&index)?; for entry in Dir::read_from(&objects)? { unlinkat(&objects, name, AtFlags::empty())?; }",
-            "mkdirat(&root, STAGE_DIR, Mode::from_raw_mode(0o700))?; mkdirat(&root, OBJECTS_DIR, Mode::from_raw_mode(0o700))?;",
-            "let receiving = openat(&objects, RECEIVING_FILE, WRITE_FLAGS, Mode::from_raw_mode(0o600))?;",
-            "fsync(&receiving)?; renameat(&objects, RECEIVING_FILE, &objects, hex)?; fsync(&objects)?;",
-            "unlinkat(&objects, RECEIVING_FILE, AtFlags::empty())?;",
-            "let staged = openat(&stage, INDEX_STAGE_FILE, WRITE_FLAGS, Mode::from_raw_mode(0o600))?;",
-            "fsync(&staged)?; renameat(&stage, INDEX_STAGE_FILE, &stage, INDEX_FILE)?; fsync(&stage)?;",
-            "unlinkat(&objects, expired, AtFlags::empty())?; unlinkat(&objects, orphan, AtFlags::empty())?;",
-            "let _ = RETENTION_SECONDS;",
+            "fn open_with(dir: BorrowedFd<'_>, name: &str, flags: OFlags, mode: Mode) -> io::Result<(OwnedFd, Stat)> {",
+            "let fd = openat(dir, name, flags | OFlags::NOFOLLOW | OFlags::CLOEXEC, mode)?; let stat = fstat(&fd)?; Ok((fd, stat)) }",
+            "fn flush(fd: BorrowedFd<'_>) -> io::Result<()> { fsync(fd)?; Ok(()) }",
+            "fn rename_within(dir: BorrowedFd<'_>, from: &str, to: &str) -> io::Result<()> { renameat(dir, from, dir, to)?; Ok(()) }",
+            "fn remove_at(dir: BorrowedFd<'_>, name: &str) -> io::Result<bool> { unlinkat(dir, name, AtFlags::empty())?; Ok(true) }",
+            "fn make_directory_at(dir: BorrowedFd<'_>, name: &str) -> io::Result<()> { mkdirat(dir, name, Mode::from_raw_mode(0o700))?; Ok(()) }",
+            "fn entry_names(dir: BorrowedFd<'_>) -> io::Result<Vec<OsString>> { for entry in Dir::read_from(dir)? { let _ = FileType::RegularFile; } Ok(Vec::new()) }",
+            "let _ = (CWD, RETENTION_SECONDS);",
         ]
         .join("\n")
     }
 
     fn recovery_fixture() -> String {
         [
-            "use rustix::fs::{FlockOperation, Mode, OFlags, flock, fsync, open, openat, renameat};",
+            "use rustix::fs::{CWD, FlockOperation, Mode, OFlags, Stat, flock, fstat, openat};",
             "pub const PLANE_STATE_FILE: &str = \"plane-state.json\"; pub const PLANE_LOCK: &str = \"plane.lock\";",
             "pub const PLANE_STATE_STAGE_FILE: &str = \"plane-state.json.new\";",
+            "fn directory_path(path: &Path) -> io::Result<(OwnedFd, Stat)> {",
+            "let mut current = CWD; let fd = openat(current, segment, OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC, Mode::empty())?;",
+            "let stat = fstat(&fd)?; Ok((fd, stat)) }",
             "pub fn open(plane_root: &Path) -> Result<Self, PlaneError> {",
-            "let root = open(plane_root, OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC, Mode::empty())?;",
-            "let lock = openat(&root, PLANE_LOCK, OFlags::RDWR | OFlags::CREATE | OFlags::NOFOLLOW, Mode::from_raw_mode(0o600))?;",
+            "let (lock, _) = stage::create_at(root.as_fd(), PLANE_LOCK, false)?;",
             "flock(&lock, FlockOperation::NonBlockingLockExclusive)?;",
-            "let state = openat(&root, PLANE_STATE_FILE, READ_FLAGS, Mode::empty())?;",
-            "let staged = openat(&root, PLANE_STATE_STAGE_FILE, WRITE_FLAGS, Mode::from_raw_mode(0o600))?;",
-            "fsync(&staged)?; renameat(&root, PLANE_STATE_STAGE_FILE, &root, PLANE_STATE_FILE)?; fsync(&root)?;",
-            "let folder = openat(&view, name, OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW, Mode::empty())?;",
-            "let mut entries = rustix::fs::Dir::read_from(&folder)?;",
+            "let state = stage::read_fully(root.as_fd(), PLANE_STATE_FILE)?; stage::replace_file(root.as_fd(), PLANE_STATE_STAGE_FILE, PLANE_STATE_FILE, &bytes)?;",
         ]
         .join("\n")
     }
 
     fn mirror_fixture() -> String {
         [
-            "use rustix::fs::{AtFlags, Mode, OFlags, fstat, fsync, mkdirat, openat, renameat, unlinkat};",
+            "use rustix::fs::{fsync, renameat};",
             "pub struct MirrorView { root: PathBuf, identity: (u64, u64) }",
-            "let file = openat(&directory, name, OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::CLOEXEC, Mode::empty())?;",
-            "let stat = fstat(&file)?; for entry in rustix::fs::Dir::read_from(&directory)? { }",
-            "let target = openat(&view, path, OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::CLOEXEC, Mode::empty())?;",
-            "let current = fstat(&target)?;",
-            "mkdirat(&view, parent, Mode::from_raw_mode(0o700))?;",
-            "renameat(&objects, hex, &view, target_path)?; fsync(&parent_directory)?;",
-            "unlinkat(&view, target_path, AtFlags::empty())?;",
+            "let (target, current) = stage::open_regular_at(view.as_fd(), path, euid, max)?;",
+            "stage::make_directory_at(view.as_fd(), parent, false)?;",
+            "renameat(objects.as_fd(), hex, parent_directory.as_fd(), target_name)?; fsync(parent_directory.as_fd())?;",
+            "stage::remove_at(view.as_fd(), target_name)?;",
         ]
         .join("\n")
     }
@@ -203,7 +195,7 @@ mod tests {
             (
                 STAGE,
                 stage_fixture(),
-                "let more = openat(&stage, other, FLAGS, Mode::empty())?;",
+                "let more = openat(dir, other, flags, mode)?;",
             ),
             (
                 RECOVERY,
@@ -213,7 +205,7 @@ mod tests {
             (
                 MIRROR,
                 mirror_fixture(),
-                "renameat(&objects, hex, &view, other)?;",
+                "renameat(objects.as_fd(), hex, &view, other)?;",
             ),
         ] {
             assert!(!violates(path, &fixture), "{path} 的登记形态本身不该红");
@@ -250,12 +242,21 @@ mod tests {
             );
         }
         // 导入表是本文件能用的 rustix 调用闭集：多导入一个未登记的调用名就红。
-        let widened = stage_fixture().replace("mkdirat, open,", "mkdirat, open, symlinkat,");
+        let widened = stage_fixture().replace("mkdirat, openat,", "mkdirat, openat, symlinkat,");
         assert!(widened.contains("symlinkat"));
         assert!(violates(STAGE, &widened));
-        // 当前工作树里的三个骨架文件也必须过守卫（还没有 IO 就不该红）。
+        // 当前工作树里三个登记文件与几个纯逻辑子模块都必须过守卫。
         let root = workspace_root();
-        for path in [STAGE, RECOVERY, MIRROR] {
+        for path in [
+            STAGE,
+            RECOVERY,
+            MIRROR,
+            "crates/local-server/src/sync_plane/mirror/stage/store.rs",
+            "crates/local-server/src/sync_plane/mirror/stage/index.rs",
+            "crates/local-server/src/sync_plane/mirror/content.rs",
+            "crates/local-server/src/sync_plane/mirror/observe.rs",
+            "crates/local-server/src/sync_plane/driver/content.rs",
+        ] {
             let source = fs::read_to_string(root.join(path)).unwrap();
             assert!(
                 source_violations(CRATE, Path::new(path), &source).is_empty(),

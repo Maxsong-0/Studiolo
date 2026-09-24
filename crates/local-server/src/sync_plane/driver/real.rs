@@ -11,7 +11,8 @@ use super::content::RoundContext;
 use super::evidence::RevisionTable;
 use super::observe::Observed;
 use super::{
-    HeadlessRun, Inspection, RoundOutcome, RoundPorts, execute, headless, observe, resolve,
+    HeadlessRun, Inspection, RoundOutcome, RoundPorts, approved_mode, execute, headless, observe,
+    resolve,
 };
 use crate::sync_transport_config::ConfigError;
 use std::cell::RefCell;
@@ -26,7 +27,10 @@ pub struct RealPorts<'a> {
     store: PlaneStateStore,
     stage: RefCell<StageStore>,
     revisions: RefCell<RevisionTable>,
+    /// 本轮应处的模式；`inspect` 时记下，供 headless 回填判断是否为强制恢复运行。
     mode: SyncMode,
+    /// 审批文档里的模式；与 `mode` 不同即本轮在跑 D9 的强制 `mirror-remote` 恢复。
+    approved: SyncMode,
     ticket: Option<QuiescentMirror>,
     observed: Option<Observed>,
 }
@@ -44,6 +48,7 @@ impl<'a> RealPorts<'a> {
             stage: RefCell::new(StageStore::open(plane.plane_root())?),
             revisions: RefCell::new(RevisionTable::default()),
             mode: SyncMode::MirrorRemote,
+            approved: approved_mode(plane.approval().headless_mode()),
             ticket: None,
             observed: None,
         })
@@ -78,7 +83,9 @@ impl RoundPorts for RealPorts<'_> {
     }
 
     fn inspect(&mut self, expected: SyncMode) -> Result<Inspection, PlaneError> {
+        self.mode = expected;
         let run = headless::run(self.plane, RunOperation::InspectConfig, self.now_unix)?;
+        self.record_headless(run);
         if !run.clean {
             return Err(PlaneError::Transport);
         }
@@ -103,6 +110,9 @@ impl RoundPorts for RealPorts<'_> {
             }
             Err(_) => return Err(PlaneError::ConfigMismatch),
         };
+        if mode_matches {
+            self.plane.health.record_mode(expected);
+        }
         Ok(Inspection {
             mode_matches,
             excluded_folders: self.plane.approval().excluded_folders().to_vec(),
@@ -119,7 +129,9 @@ impl RoundPorts for RealPorts<'_> {
     }
 
     fn set_mode(&mut self, mode: SyncMode) -> Result<HeadlessRun, PlaneError> {
-        headless::run(self.plane, RunOperation::SetMode(mode), self.now_unix)
+        let run = headless::run(self.plane, RunOperation::SetMode(mode), self.now_unix)?;
+        self.record_headless(run);
+        Ok(run)
     }
 
     fn next_sequence(&mut self) -> Result<u64, PlaneError> {
@@ -134,7 +146,9 @@ impl RoundPorts for RealPorts<'_> {
     }
 
     fn run_once(&mut self) -> Result<HeadlessRun, PlaneError> {
-        headless::run(self.plane, RunOperation::RunOnce, self.now_unix)
+        let run = headless::run(self.plane, RunOperation::RunOnce, self.now_unix)?;
+        self.record_headless(run);
+        Ok(run)
     }
 
     fn save_state(&mut self, state: PlaneState) -> Result<(), PlaneError> {
@@ -154,25 +168,8 @@ impl RoundPorts for RealPorts<'_> {
     }
 
     fn unresolved(&mut self) -> Result<Option<u64>, PlaneError> {
-        let bridge = self
-            .plane
-            .bridge()
-            .lock()
-            .map_err(|_| PlaneError::Unavailable)?;
-        let view = bridge.view().map_err(|_| PlaneError::Storage)?;
-        let Some(sequence) = view.pending_sequence else {
-            return Ok(None);
-        };
-        let frozen = bridge
-            .frozen_pending()
-            .map_err(|_| PlaneError::Storage)?
-            .ok_or(PlaneError::Storage)?;
-        let unknown = bridge
-            .retry_pending(&frozen)
-            .map_err(|_| PlaneError::Storage)?
-            .iter()
-            .any(|progress| matches!(progress.status, ActionStatus::OutcomeUnknown));
-        Ok(unknown.then_some(sequence))
+        let (sequence, unknown) = self.pending_unknown()?;
+        Ok((unknown > 0).then_some(sequence).flatten())
     }
 
     fn observe(&mut self, mode: SyncMode) -> Result<(Input, Inventory, Inventory), PlaneError> {
@@ -188,7 +185,18 @@ impl RoundPorts for RealPorts<'_> {
     }
 
     fn preresolve(&mut self, decision: &Decision) -> Result<bool, PlaneError> {
-        resolve::preresolve_conflicts(&self.context()?, decision)
+        let changed = resolve::preresolve_conflicts(&self.context()?, decision)?;
+        if changed {
+            // 每个 canonical 侧存在的冲突都先保全成一份冲突副本；权威拒绝中途停下的那轮按上限计。
+            let preserved = match decision {
+                Decision::Ready(plan) => plan.conflicts().len(),
+                Decision::FuseBlocked(blocked) => blocked.conflicts.len(),
+            };
+            self.plane
+                .health
+                .record_conflicts(u64::try_from(preserved).unwrap_or(u64::MAX));
+        }
+        Ok(changed)
     }
 
     fn execute(&mut self, input: Input) -> Result<RoundOutcome, PlaneError> {
@@ -197,6 +205,66 @@ impl RoundPorts for RealPorts<'_> {
             return Err(PlaneError::Observation);
         }
         let ticket = self.ticket.as_ref().ok_or(PlaneError::Quiescence)?;
-        execute::reserve_and_execute(&self.context()?, ticket, &observed)
+        let outcome = execute::reserve_and_execute(&self.context()?, ticket, &observed);
+        // 执行段回填（W5 `record_execution`）：序号、终态未知数、冲突副本累计、熔断是否生效。
+        if let Ok(RoundOutcome::Settled { sequence, .. }
+        | RoundOutcome::Unknown { sequence }
+        | RoundOutcome::Blocked { sequence }) = outcome
+        {
+            let (_, unknown) = self.pending_unknown()?;
+            let fused = self
+                .plane
+                .bridge()
+                .lock()
+                .map_err(|_| PlaneError::Unavailable)?
+                .view()
+                .map(|view| view.fused)
+                .unwrap_or(true);
+            self.plane.health.record_execution(
+                sequence,
+                unknown,
+                self.plane.health.conflicts_total(),
+                fused,
+            );
+        }
+        outcome
+    }
+}
+
+impl RealPorts<'_> {
+    /// headless 一次运行回收后的健康回填；本轮应处模式与审批模式不同即强制恢复运行。
+    fn record_headless(&self, run: HeadlessRun) {
+        let forced =
+            self.mode == SyncMode::MirrorRemote && self.approved == SyncMode::Bidirectional;
+        self.plane
+            .health
+            .record_headless(run.clean, run.rc_one, forced);
+    }
+
+    /// 当前未闭合计划的序号与其中终态未知的动作数；没有未闭合计划即 `(None, 0)`。
+    fn pending_unknown(&self) -> Result<(Option<u64>, u64), PlaneError> {
+        let bridge = self
+            .plane
+            .bridge()
+            .lock()
+            .map_err(|_| PlaneError::Unavailable)?;
+        let view = bridge.view().map_err(|_| PlaneError::Storage)?;
+        let Some(sequence) = view.pending_sequence else {
+            return Ok((None, 0));
+        };
+        let frozen = bridge
+            .frozen_pending()
+            .map_err(|_| PlaneError::Storage)?
+            .ok_or(PlaneError::Storage)?;
+        let unknown = bridge
+            .retry_pending(&frozen)
+            .map_err(|_| PlaneError::Storage)?
+            .iter()
+            .filter(|progress| matches!(progress.status, ActionStatus::OutcomeUnknown))
+            .count();
+        Ok((
+            Some(sequence),
+            u64::try_from(unknown).unwrap_or(u64::MAX),
+        ))
     }
 }

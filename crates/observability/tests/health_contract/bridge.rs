@@ -89,8 +89,9 @@ fn judge(evidence: &BridgeEvidence) -> (HealthState, String) {
 }
 
 #[test]
-fn 第六节十个字段任一单独缺失都判未知并点名缺的字段() {
-    let blank: [(&str, Change); 10] = [
+fn 第六节十一个字段任一单独缺失都判未知并点名缺的字段() {
+    let blank: [(&str, Change); 11] = [
+        ("配置核对", |e| e.config_matches = None),
         ("最近一批", |e| e.last_batch = None),
         ("删除熔断", |e| e.fused = None),
         ("终态未知动作数", |e| e.unknown_jobs = None),
@@ -157,6 +158,7 @@ fn 多项异常并存时按熔断残留未知终态退出恢复静止的固定�
     let mut evidence = BridgeEvidence {
         fused: Some(true),
         residue_guard: Some(ResidueGuard::Blocked),
+        config_matches: Some(false),
         unknown_jobs: Some(1),
         last_exit: Some(ExitClass::Signal),
         recovery: Some(RecoveryState::Backoff),
@@ -166,6 +168,7 @@ fn 多项异常并存时按熔断残留未知终态退出恢复静止的固定�
     let expected = [
         "删除熔断生效，本批与后续批次全部阻断",
         "排除项清除前有镜像残留",
+        "headless 配置与审批文档不一致，本轮未同步",
         "有 1 条动作终态未知，等待原键核对",
         "上次 headless 运行被信号终止",
         "恢复协议进行中：退避等待",
@@ -176,9 +179,10 @@ fn 多项异常并存时按熔断残留未知终态退出恢复静止的固定�
         match index {
             0 => evidence.fused = Some(false),
             1 => evidence.residue_guard = Some(ResidueGuard::Clear),
-            2 => evidence.unknown_jobs = Some(0),
-            3 => evidence.last_exit = Some(ExitClass::Clean),
-            4 => evidence.recovery = Some(RecoveryState::Idle),
+            2 => evidence.config_matches = Some(true),
+            3 => evidence.unknown_jobs = Some(0),
+            4 => evidence.last_exit = Some(ExitClass::Clean),
+            5 => evidence.recovery = Some(RecoveryState::Idle),
             _ => evidence.quiescence_valid = Some(true),
         }
     }

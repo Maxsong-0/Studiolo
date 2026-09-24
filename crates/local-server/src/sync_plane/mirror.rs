@@ -142,6 +142,10 @@ pub fn install(
         }
         _ => return Err(PlaneError::Observation),
     }
+    // 跨挂载的 renameat 只会 EXDEV：外 stage 必须与视图同一条挂载（置备把二者放在同一 bind 之下）。
+    if !stage::same_mount(stage.objects(), parent.as_fd()).map_err(|_| PlaneError::Storage)? {
+        return Err(PlaneError::Storage);
+    }
     let source = stage::hex(object.digest());
     renameat(stage.objects(), source.as_str(), &parent, name).map_err(|_| PlaneError::Storage)?;
     fsync(&parent).map_err(|_| PlaneError::Unknown)?;

@@ -11,6 +11,8 @@ pub const BRIDGE_SECTION_CODE: &str = "sync-bridge";
 pub const BRIDGE_SECTION_TITLE: &str = "双向 Bridge";
 /// 排除项守卫阻断时的固定中文原因（ADR-025 D10）。
 pub const RESIDUE_BLOCKED: &str = "排除项清除前有镜像残留";
+/// headless 本地配置与审批文档不一致时的固定中文原因（设计文档第 2 节第 3 步）。
+pub const CONFIG_MISMATCH: &str = "headless 配置与审批文档不一致，本轮未同步";
 
 /// 最近一批的序号与时刻。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -88,11 +90,13 @@ pub struct BridgeEvidence {
     pub residue_guard: Option<ResidueGuard>,
     /// 当前生效的镜像模式。
     pub mode: Option<ModeLabel>,
+    /// headless 本地配置（模式／排除项／文件类型）是否与审批文档一致；不一致本轮不跑 RunOnce。
+    pub config_matches: Option<bool>,
 }
 
 /// 聚合第六节；缺证据一律未知。
 ///
-/// 判定顺序固定：缺字段 → 删除熔断 → 排除项残留 → 终态未知 → 非干净退出 → 恢复协议进行中 →
+/// 判定顺序固定：缺字段 → 删除熔断 → 排除项残留 → 配置不符 → 终态未知 → 非干净退出 → 恢复协议进行中 →
 /// 静止证据过期 → 正常。驱动平面未装配（默认关闭）时也是「未知」：与恢复点、白名单两节同一口径，
 /// 没启用的能力不显示绿。
 ///
@@ -123,6 +127,7 @@ struct Complete {
     recovery: RecoveryState,
     residue_guard: ResidueGuard,
     mode: ModeLabel,
+    config_matches: bool,
 }
 
 /// 第一个缺失字段的中文名作为 `Err`，正文里只报字段名，不报数值。
@@ -138,6 +143,7 @@ fn complete(evidence: &BridgeEvidence) -> Result<Complete, &'static str> {
         recovery: evidence.recovery.ok_or("恢复协议状态")?,
         residue_guard: evidence.residue_guard.ok_or("排除项守卫")?,
         mode: evidence.mode.ok_or("镜像模式")?,
+        config_matches: evidence.config_matches.ok_or("配置核对")?,
     })
 }
 
@@ -159,6 +165,9 @@ fn judge(evidence: &BridgeEvidence) -> (HealthState, String) {
     }
     if full.residue_guard == ResidueGuard::Blocked {
         return (HealthState::Degraded, RESIDUE_BLOCKED.to_owned());
+    }
+    if !full.config_matches {
+        return (HealthState::Degraded, CONFIG_MISMATCH.to_owned());
     }
     if full.unknown_jobs > 0 {
         return (

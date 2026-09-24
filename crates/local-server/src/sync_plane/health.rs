@@ -46,6 +46,8 @@ struct Inner {
     usage: Option<SyncUsage>,
     /// 最近一次 `record_execution` 报的计划序号；轮末据此判断本轮有没有执行段回填。
     executed_sequence: Option<u64>,
+    /// 本进程启动以来生成的冲突副本累计数。
+    conflicts_total: u64,
 }
 
 impl PlaneHealth {
@@ -112,9 +114,9 @@ impl PlaneHealth {
             Err(PlaneError::Unknown) => {
                 evidence.unknown_jobs = Some(evidence.unknown_jobs.unwrap_or(0).max(1));
             }
+            Err(PlaneError::ConfigMismatch) => evidence.config_matches = Some(false),
             Err(
                 PlaneError::Configuration
-                | PlaneError::ConfigMismatch
                 | PlaneError::Quiescence
                 | PlaneError::Observation
                 | PlaneError::Audit
@@ -160,11 +162,26 @@ impl PlaneHealth {
     /// 本轮核验通过的生效模式（驱动器在 InspectConfig 复核通过后每轮调一次）。
     pub fn record_mode(&self, mode: SyncMode) {
         if let Ok(mut inner) = self.inner.lock() {
+            inner.evidence.config_matches = Some(true);
             inner.evidence.mode = Some(match mode {
                 SyncMode::MirrorRemote => ModeLabel::MirrorRemote,
                 SyncMode::Bidirectional => ModeLabel::Bidirectional,
             });
         }
+    }
+
+    /// 预解决又生成了若干冲突副本（`ops/bridge-conflicts/`）；累计值只按本进程启动以来计，
+    /// 重启从 0 起——canonical 里 `ops/` 属硬排除，本平面拿不到目录总数（T-132 P5 前另立任务）。
+    pub fn record_conflicts(&self, added: u64) {
+        if let Ok(mut inner) = self.inner.lock() {
+            inner.conflicts_total = inner.conflicts_total.saturating_add(added);
+        }
+    }
+
+    /// 本进程启动以来由 Bridge 生成的冲突副本累计数。
+    #[must_use]
+    pub fn conflicts_total(&self) -> u64 {
+        self.inner.lock().map(|inner| inner.conflicts_total).unwrap_or(0)
     }
 
     /// 驱动器在观察镜像后回填的字节数与对象数。

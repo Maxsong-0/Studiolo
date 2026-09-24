@@ -58,13 +58,13 @@ launcher 逐字段与 session 记录比对，任一不同 → `identity_mismatch
 -p ProtectHome=yes -p ProtectControlGroups=yes -p PrivateTmp=yes -p PrivateDevices=yes -p NoNewPrivileges=yes
 -p CapabilityBoundingSet= -p RestrictAddressFamilies="AF_INET AF_INET6" -p ReadWritePaths="<mirror_root> <payload_config_root>"
 -p InaccessiblePaths="<config.inaccessible 逐项>" -p MemoryMax=<memory_bytes> -p MemorySwapMax=0 -p TasksMax=<pids_max> -p CPUQuota=<cpu_max_percent>%
--p OpenFile=<sessions>/<hex>/release.fifo:release:read -p OpenFile=<sessions>/<hex>/report.fifo:report -p StandardOutput=truncate:<sessions>/<hex>/stdout
+-p StandardInput=file:<sessions>/<hex>/release.fifo -p StandardOutput=truncate:<sessions>/<hex>/stdout
 -p StandardError=truncate:<sessions>/<hex>/stderr -- /usr/local/sbin/studiolo-sync-launcher payload`（argv 由垫片按 `LaunchFrame.operation/mode` 从固定 pins 构造，不过 IPC）。
 
 | `IsolationFrame` 项 | 实测 |
 |---|---|
 | `mount_namespace` | `systemctl show -p PrivateMounts,ProtectSystem,ProtectHome,InaccessiblePaths` 逐项等于请求值 |
-| `pid_namespace` | `PrivatePIDs=yes` 回读（systemd ≥ 258 才有此属性；`probe.systemd_version` < 258 → `not_provisioned`） |
+| `pid_namespace` | `PrivatePIDs=yes` 回读（systemd 257 起才有此属性，`facts::MIN_SYSTEMD_VERSION = 257`；`probe.systemd_version` < 257 → `not_provisioned`） |
 | `dedicated_identity` | `User`/`Group` 回读 == 配置 payload 身份，且 `SupplementaryGroups` 为空；垫片报回 `uid/gid` 相同 |
 | `dropped_capabilities` | `CapabilityBoundingSet` 回读为空 |
 | `payload_cannot_write_cgroup` | `ProtectControlGroups=yes` 且 `RestrictAddressFamilies` 不含 `AF_UNIX` |
@@ -75,9 +75,12 @@ launcher 逐字段与 session 记录比对，任一不同 → `identity_mismatch
 
 ## 5 垫片（`studiolo-sync-launcher payload`）
 
-1. 从 `LISTEN_FDNAMES`/`LISTEN_FDS` 取名为 `release`、`report` 的两个 fd；取不到即退出码 3。
-2. `stat` 四个对象（`mirror_root`、`payload_config_root`、`node_path`、`cli_path`，路径从 `/etc/studiolo/sync-launcher.json` 读——它对 payload 只读可见），
-   把 `PayloadReport{uid,gid,四个 (dev,ino)}` 一帧写入 report fd。
-3. 阻塞读 release fd 一字节；读到 EOF（launcher 作废 session）即退出码 4，不 exec。
-4. `env_clear`，只加 `XDG_CONFIG_HOME=<payload_config_root 父目录>`、`LANG=C.UTF-8`、`TZ=UTC`（`service::environment_acceptable` 认可），
+（B 轮 W2 落地形态：`forbid(unsafe_code)` 下拿不到 `LISTEN_FDS` 的裸 fd，改为 **stdin 控制 FIFO ＋ stdout 头部报告**，
+`OpenFile=`／`report.fifo`／`LISTEN_FDNAMES` 不再使用。）
+1. launcher 起 unit 前先把一帧 `LaunchFacts{kind:"launch_facts",runtime,mirror_root,payload_config_root,operation}` 预写进
+   `release.fifo`；垫片从 stdin 读这一帧（缺帧即退出码 3）。
+2. `stat` 四个对象（`mirror_root`、`payload_config_root`、`node_path`、`cli_path`），把 `PayloadReport{uid,gid,四个 (dev,ino)}`
+   一帧写在 stdout 文件头部（launcher 用 `facts::split_report` 切出来核对）；stat 失败退出码 3。
+3. 继续阻塞读 stdin 一字节作放行；读到 EOF（launcher 作废 session、丢掉写端）即退出码 4，不 exec。
+4. `env_clear`，只加 `XDG_CONFIG_HOME=<payload_config_root>`、`LANG=C.UTF-8`、`TZ=UTC`（`service::environment_acceptable` 认可），
    `exec` 固定 argv（`service::build_argv` 同一函数）。exec 失败退出码 5。

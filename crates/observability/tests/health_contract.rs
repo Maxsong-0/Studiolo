@@ -21,6 +21,7 @@ const NORMAL_BRIDGE: BridgeEvidence = BridgeEvidence {
     recovery: Some(RecoveryState::Idle),
     residue_guard: Some(ResidueGuard::Clear),
     mode: Some(ModeLabel::MirrorRemote),
+    config_matches: Some(true),
 };
 use studiolo_observability::quota::QuotaVerdict;
 

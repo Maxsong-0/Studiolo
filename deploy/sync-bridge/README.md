@@ -9,13 +9,13 @@ root 系统服务 `studiolo-sync-launcher.service`、固定配置样例、审批
 
 | 身份 | 进程 | 看到镜像的路径 |
 |---|---|---|
-| owner `maxsong`（uid 1000） | `studiolo-human`（驱动平面 `sync_plane`，每 300 s 一轮） | `/var/lib/studiolo-owner/mirror`（idmapped bind 视图） |
+| owner `maxsong`（uid 1000） | `studiolo-human`（驱动平面 `sync_plane`，每 300 s 一轮） | `/var/lib/studiolo-owner/bridge/mirror`（idmapped bind 视图） |
 | root | `studiolo-sync-launcher serve`（私有 socket，`systemd-run` 起 transient unit） | 不碰镜像 |
-| `studiolo-sync`（系统账号，无补充组） | 垫片 `studiolo-sync-launcher payload` → `node cli.js sync` | `/var/lib/studiolo-sync/mirror`（真实根，只进 argv） |
+| `studiolo-sync`（系统账号，无补充组） | 垫片 `studiolo-sync-launcher payload` → `node cli.js sync` | `/var/lib/studiolo-sync/bridge/mirror`（真实根，只进 argv） |
 
 固定物：`/var/lib/studiolo-sync.img`（4 GiB ext4，配额靠镜像大小硬限）挂到 `/var/lib/studiolo-sync`
-（`var-lib-studiolo\x2dsync.mount`，`nosuid,nodev,noexec`）；`/var/lib/studiolo-sync/mirror` 以
-`X-mount.idmap` bind 到 `/var/lib/studiolo-owner/mirror`（`var-lib-studiolo\x2downer-mirror.mount`，
+（`var-lib-studiolo\x2dsync.mount`，`nosuid,nodev,noexec`）；`/var/lib/studiolo-sync/bridge/mirror` 以
+`X-mount.idmap` bind 到 `/var/lib/studiolo-owner/bridge/mirror`（`var-lib-studiolo\x2downer-bridge.mount`，
 磁盘上 payload 身份的文件显示为 owner，owner 写入落盘归 payload）；socket `/run/studiolo-sync-launcher/launcher.sock`
 （目录 0750 root:owner 组，socket 0660，只接受 SO_PEERCRED 为 owner uid/gid 的连接）；
 每次运行一个 `/run/studiolo-sync-launcher/sessions/<hex>/{release.fifo,stdout,stderr}`（root 0700；
@@ -43,11 +43,11 @@ launcher 把启动事实（固定 pins、镜像根、配置根、操作）预写
    改成第 1 步的实际值后 `sudo systemctl restart studiolo-sync-launcher`。字段见第 3 节。
 5. **首次配对**（👤 用户本人，交互输入密码，不写进任何文件）：
    `sudo -u studiolo-sync -H env XDG_CONFIG_HOME=/var/lib/studiolo-sync/config LANG=C.UTF-8 /opt/studiolo/node/bin/node
-   /opt/studiolo/obsidian-headless/lib/node_modules/obsidian-headless/cli.js sync-setup --vault <远端 Vault> --path /var/lib/studiolo-sync/mirror`。
+   /opt/studiolo/obsidian-headless/lib/node_modules/obsidian-headless/cli.js sync-setup --vault <远端 Vault> --path /var/lib/studiolo-sync/bridge/mirror`。
    之后一切运行只经 launcher；`headless_mode` 先保持 `mirror-remote`（引导期只下载）。
 6. **审批文档**：从 `approval.example.json` 改成 `/home/maxsong/.config/studiolo-human/sync-transport.json`
-   （0600，父目录 0700）；`private_root` 与 `plane_root` 先 `mkdir -m 0700`；`owner_view_root` 必须就是第 3 步的视图。字段见第 4 节。
-7. **human 服务单元**（登记到待重启区，由用户执行）：`ReadWritePaths=` 加 `/var/lib/studiolo-owner/mirror`、
+   （0600，父目录 0700）；`private_root` 先 `mkdir -m 0700`；`plane_root` 固定为视图里的 `/var/lib/studiolo-owner/bridge/plane`（置备已建，与 `owner_view_root` 同一条 idmapped bind——外 stage 对象要 `renameat` 进镜像，跨挂载必 EXDEV），`owner_view_root` 必须就是第 3 步视图里的 `mirror/`。字段见第 4 节。
+7. **human 服务单元**（登记到待重启区，由用户执行）：`ReadWritePaths=` 加 `/var/lib/studiolo-owner/bridge/mirror`、
    `private_root`、`plane_root`；`ExecStart` 参数加 `--sync-transport /home/maxsong/.config/studiolo-human/sync-transport.json`；
    `daemon-reload` 后重启。私有配置 `owner.json` 必须已有 `sync_scope`（第 5 节），否则启动报 `StartupError::SyncPlane`。
 8. **初始化平面**：`studiolo-maintain sync-init`（W6 落地）在 `plane_root` 建 `plane-state.json`、`plane.lock`、`bridge/`；
@@ -139,8 +139,8 @@ launcher 把启动事实（固定 pins、镜像根、配置根、操作）预写
 ## 10 置备后自检（👤 root）
 
 ```sh
-findmnt /var/lib/studiolo-sync /var/lib/studiolo-owner/mirror        # loop 与 idmapped 两个挂载
-stat -c '%U:%G %a %n' /var/lib/studiolo-sync/mirror /var/lib/studiolo-owner/mirror
+findmnt /var/lib/studiolo-sync /var/lib/studiolo-owner/bridge/mirror        # loop 与 idmapped 两个挂载
+stat -c '%U:%G %a %n' /var/lib/studiolo-sync/bridge/mirror /var/lib/studiolo-owner/bridge/mirror
 systemctl status studiolo-sync-launcher.service --no-pager
 stat -c '%U:%G %a %n' /run/studiolo-sync-launcher /run/studiolo-sync-launcher/launcher.sock
 sudo -u maxsong /ABS/RELEASE/bin/studiolo-local-server … --sync-transport …   # 启动即做一次 probe

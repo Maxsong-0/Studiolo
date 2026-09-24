@@ -32,6 +32,9 @@ studiolo-human（uid 1000）                      root                          
   `mirror_identity` 经视图观察（bind 同 inode），launcher 在最终视图内 stat 真实根后必须报回同一 `(dev,ino)`。
 - 新私有根 `plane_root`（审批文档新增）：`stage/`、`plane-state.json`、`plane.lock`、`bridge/`（BridgeState）。
   与 transport 私有根、视图根、canonical、writer-data、Auth/Audit 两两不重叠（`ApprovedTransport::approve`）。
+  **必须与 `owner_view_root` 在同一条 vfsmount 上**：安装是 stage 对象 `renameat` 进镜像，跨挂载必 EXDEV；
+  置备把 `bridge/{mirror,plane}` 作为一个父目录 idmapped bind 到 `/var/lib/studiolo-owner/bridge`，
+  `mirror::install` 安装前用 `statx(STATX_MNT_ID)` 核同挂载，不同即 `Storage`（C 轮按 W4 回执补）。
 
 ## 2 一轮驱动的精确顺序（`sync_plane/driver.rs::run_round`）
 
@@ -86,7 +89,7 @@ studiolo-human（uid 1000）                      root                          
 | `<plane_root>/stage/index.json`（+`.new`）、`stage/receiving.partial` | owner 0600 | 1 MiB | `sync_plane/mirror/stage.rs` |
 | `<plane_root>/bridge/{bridge.sqlite3,bridge.lock}` | owner 0600 | 主库 256 MiB | sync-bridge `sqlite/storage.rs`（不变） |
 | `/run/studiolo-sync-launcher/launcher.sock` | root:studiolo 0750 目录，socket 0660 | 帧 16 KiB | launcher `serve.rs` |
-| `/run/studiolo-sync-launcher/sessions/<session hex>/{release.fifo,report.fifo,stdout,stderr}` | root 0700 | stdout/stderr 按 RunBudget | launcher `serve.rs` |
+| `/run/studiolo-sync-launcher/sessions/<session hex>/{release.fifo,stdout,stderr}` | root 0700 | stdout/stderr 按 RunBudget（报告帧在 stdout 头部） | launcher `unit/session.rs` |
 | `/etc/studiolo/sync-launcher.json` | root 0600 | 16 KiB | 管理员（provision.sh） |
 | `/var/lib/studiolo-sync.img` + mount 单元；`/var/lib/studiolo-owner/mirror` idmapped 视图 mount 单元 | root | 4 GiB | provision.sh |
 | `ops/bridge-conflicts/`、`ops/bridge-rollback/`（canonical 内，范围外） | Broker | 受 Broker 限额 | 经接缝，主体 Obsidian |
@@ -108,9 +111,10 @@ studiolo-human（uid 1000）                      root                          
 |---|---|
 | `architecture_support/policy.rs` | `studiolo-sync-launcher => [sync-transport, core]`；local-server 加 `studiolo-sync-bridge` |
 | `architecture_cases/dependencies.rs` | crate 数 24；rustix 归属加 `studiolo-sync-launcher` |
-| `architecture_support/sync_launcher.rs` | `serve.rs`／`payload.rs`／`unit.rs` 三文件的精确调用清单（形态见各任务书） |
-| `architecture_support/sync_transport.rs` | `linux/client.rs`：`UnixStream::connect(socket)`、`.write_all(&frame)` 各一次 |
-| `architecture_support/sync_plane.rs` | `stage.rs`／`recovery.rs`／`mirror.rs` 的固定名锚点＋精确调用清单 |
+| `architecture_support/sync_launcher.rs` | `config.rs`／`serve.rs`／`payload.rs`／`unit.rs`／`unit/reads.rs`／`unit/session.rs` 六文件的精确调用清单（按 W2 回执） |
+| `architecture_support/sync_transport.rs` | `linux/client.rs`：`UnixStream::connect(socket)`、`stream.write_all(&frame)` 各一次，`read_exact` 两次，`std::os::unix::net::UnixStream` 导入一次 |
+| `architecture_support/sync_plane.rs` | `stage.rs`（openat／fstat／fsync／renameat／unlinkat／mkdirat／Dir::read_from 各一、statx 两次）／`recovery.rs`（openat／fstat／flock 各一）／`mirror.rs`（renameat／fsync 各一）的固定名锚点＋精确调用清单（按 W4 回执） |
+| `architecture_support/maintenance.rs` | `maintenance/sync.rs`：两条导入行＋九处固定调用（按 W6 回执） |
 | `architecture_cases/canonical_owner.rs` | `coordinator/sync_bridge.rs` 的七条允许形态（第 4 节） |
 
 ## 8 未决
