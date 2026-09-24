@@ -1,18 +1,16 @@
 //! 双向 Bridge 对 canonical 的唯一接缝（ADR-025 D8）：完整观察、有界读、条件写与条件删除。
-//!
-//! 本文件是 `sync_plane` 触及 Broker 的唯一位置，因此住在 `coordinator/` 之下受同一写者
-//! 边界守卫；每个方法都在持有 owner 锁的情况下复验根身份，写入主体一律
-//! 「外部：Obsidian」（`MutationActor::Obsidian`），幂等键由调用方按执行器原键给出。
-//! 精确的 Broker 调用形态在 W1 的守卫登记里逐条列名，W3 只能用那些形态。
+//! 本文件是 `sync_plane` 触及 Broker 的唯一位置，住在 `coordinator/` 之下受同一写者边界守卫；
+//! 每个方法持 owner 锁复验根身份，主体一律「外部：Obsidian」，幂等键由调用方按执行器原键给出；
+//! Broker 调用形态由守卫 `canonical_owner.rs` 逐条列名，这里只用那些形态。
 
-// B 轮 W3 接线后删除本 allow：接缝方法在驱动器调用之前没有使用者。
-#![allow(dead_code)]
-
-use crate::CanonicalWorkbench;
+use crate::{CanonicalWorkbench, LocalError};
+use std::sync::MutexGuard;
 use studiolo_core::{Revision, VaultPath};
 use studiolo_vault_broker::{
-    BlobIdentity, CanonicalRead, CanonicalSyncObservation, FileOperationReceipt, MutationReceipt,
-    SyncReadSelection,
+    BlobIdentity, BlobSource, BrokerError, CanonicalRead, CanonicalSyncObservation,
+    FileOperationMetadata, FileOperationPhase, FileOperationReceipt, FileOperationRequest,
+    FileOperationScopeHash, FsVaultBroker, Mutation, MutationActor, MutationKind, MutationMetadata,
+    MutationReceipt, Precondition, StreamLimits, StreamMutation, SyncReadSelection,
 };
 
 /// 接缝的固定失败分类；不带路径或正文。
@@ -40,37 +38,71 @@ pub enum BridgePrecondition {
 }
 
 impl CanonicalWorkbench {
-    /// 完整观察批准范围（两阶段：元数据调查 → 增补 `required` → 逐文件流式事实）。
-    ///
-    /// # Errors
-    /// 写者不可用返回 `Unavailable`；范围外或不完整返回 `Incomplete`。
+    /// 持 owner 锁并复验根身份；关闭中、写者缺席或身份漂移一律 `Unavailable`。
+    fn attach(&self) -> Result<MutexGuard<'_, Option<FsVaultBroker>>, BridgeSeamError> {
+        if self.core.control.lock().map_err(unavailable)?.closing {
+            return Err(BridgeSeamError::Unavailable);
+        }
+        let owner = self.core.owner.lock().map_err(unavailable)?;
+        let broker = owner.as_ref().ok_or(BridgeSeamError::Unavailable)?;
+        self.core.roots.revalidate().map_err(unavailable)?;
+        broker
+            .validate_root_identities(
+                self.core.roots.vault_identity(),
+                self.core.roots.writer_data_identity(),
+            )
+            .map_err(unavailable)?;
+        Ok(owner)
+    }
+
+    /// canonical 已变：先标记视图过期，再请求一次后台刷新（失败只影响视图新鲜度）。
+    fn canonical_changed(&self) {
+        if let Ok(control) = self.core.control.lock() {
+            self.core.mark_stale(&control, "changed");
+        }
+        let _ = self.core.request("changed");
+    }
+
+    /// 权威账本；没装配就是 `Audit`。
+    fn ledger(&self) -> Result<&dyn studiolo_audit_ledger::AuditLedger, BridgeSeamError> {
+        let ledger = self.core.content_audit.as_deref();
+        ledger.ok_or(BridgeSeamError::Audit)
+    }
+
+    /// 完整观察批准范围（元数据调查 → 逐文件流式事实）；范围外或不完整返回 `Incomplete`。
     pub(crate) fn bridge_observe(
         &self,
         selection: &SyncReadSelection,
         required: &[VaultPath],
     ) -> Result<CanonicalSyncObservation, BridgeSeamError> {
-        // B 轮 W3 实现：owner 锁内 begin_sync_observation → finish_sync_observation。
-        let _ = (selection, required);
-        Err(BridgeSeamError::Unavailable)
+        let mut owner = self.attach()?;
+        let broker = owner.as_mut().ok_or(BridgeSeamError::Unavailable)?;
+        let survey = broker
+            .begin_sync_observation(selection, required)
+            .map_err(observation_error)?;
+        broker
+            .finish_sync_observation(survey, &[])
+            .map_err(observation_error)
     }
 
-    /// 有界读取单个 canonical 文件（≤ `max_bytes`）；用于正文搬运与保全。
-    ///
-    /// # Errors
-    /// 不存在或不稳定返回 `Rejected`；写者不可用返回 `Unavailable`。
+    /// 有界读取单个 canonical 文件（≤ `max_bytes`）；不存在、超预算或不稳定返回 `Rejected`。
     pub(crate) fn bridge_read(
         &self,
         path: &VaultPath,
         max_bytes: u64,
     ) -> Result<CanonicalRead, BridgeSeamError> {
         self.read_file(path, max_bytes)
-            .map_err(|_| BridgeSeamError::Unavailable)
+            .map_err(|error| match error {
+                LocalError::Read(
+                    BrokerError::NotFound(_)
+                    | BrokerError::UnstableRead(_)
+                    | BrokerError::ReadLimitExceeded { .. },
+                ) => BridgeSeamError::Rejected,
+                _ => BridgeSeamError::Unavailable,
+            })
     }
 
-    /// 整篇条件写（≤ 4 MiB 正文）：创建或按 revision 替换，主体「外部：Obsidian」。
-    ///
-    /// # Errors
-    /// CAS 拒绝返回 `Rejected`；安装后无法确认返回 `Unknown`。
+    /// 整篇条件写（≤ 4 MiB）：先按原键查重放（有回执直接返回，绝不第二次安装），再创建或替换。
     pub(crate) fn bridge_write(
         &self,
         path: &VaultPath,
@@ -78,40 +110,79 @@ impl CanonicalWorkbench {
         precondition: BridgePrecondition,
         idempotency_key: &str,
     ) -> Result<MutationReceipt, BridgeSeamError> {
-        // B 轮 W3 实现：先原键重放查询，再条件写；主体 Obsidian、种类 Replace。
-        let _ = (path, content, precondition, idempotency_key);
-        Err(BridgeSeamError::Unavailable)
+        let mut owner = self.attach()?;
+        let broker = owner.as_mut().ok_or(BridgeSeamError::Unavailable)?;
+        let metadata = MutationMetadata::new(MutationActor::Obsidian, MutationKind::Replace)
+            .map_err(unavailable)?;
+        let mutation = match precondition {
+            BridgePrecondition::MustNotExist => {
+                Mutation::create(path.clone(), content, idempotency_key)
+            }
+            BridgePrecondition::Match(expected) => {
+                Mutation::replace(path.clone(), content, expected, idempotency_key)
+            }
+        };
+        let _ = self.core.flush_content_audit(broker);
+        if let Some(receipt) = broker
+            .mutation_replay_recorded(&mutation, &metadata)
+            .map_err(write_error)?
+        {
+            return Ok(receipt);
+        }
+        if broker
+            .content_audit_status()
+            .map_or(true, |status| status.restore_unconfirmed)
+        {
+            return Err(BridgeSeamError::Audit);
+        }
+        let result = broker.mutate_recorded(mutation, metadata);
+        self.canonical_changed();
+        let _ = self.core.flush_content_audit(broker);
+        result.map_err(|error| install_error(broker, error))
     }
 
-    /// 大对象条件写（> 4 MiB，≤ 256 MiB）：正文来自外 stage 的只读来源，走流式准备／提交。
-    ///
-    /// # Errors
-    /// 同 `bridge_write`。
+    /// 大对象条件写（> 4 MiB）：正文来自调用方建好的只读来源，走流式准备／提交；准备后先把
+    /// 固定 Intent 追加进权威账本（账本按事件幂等），追加失败就取消票据。
     pub(crate) fn bridge_write_stream(
         &self,
         path: &VaultPath,
-        stage_root: &std::path::Path,
-        stage_object: &VaultPath,
+        source: BlobSource,
         content: BlobIdentity,
         precondition: BridgePrecondition,
         idempotency_key: &str,
     ) -> Result<MutationReceipt, BridgeSeamError> {
-        // B 轮 W3 实现：以 stage_root 与 stage_object 建只读附件来源 → 流式准备 → Intent 审计 → 流式提交。
-        let _ = (
-            path,
-            stage_root,
-            stage_object,
+        let mut owner = self.attach()?;
+        let broker = owner.as_mut().ok_or(BridgeSeamError::Unavailable)?;
+        let ledger = self.ledger()?;
+        let metadata = MutationMetadata::new(MutationActor::Obsidian, MutationKind::Replace)
+            .map_err(unavailable)?;
+        let limits = StreamLimits::new(content.bytes.max(1)).map_err(unavailable)?;
+        let request = StreamMutation {
+            path: path.clone(),
+            precondition: match precondition {
+                BridgePrecondition::MustNotExist => Precondition::MustNotExist,
+                BridgePrecondition::Match(expected) => Precondition::Match(expected),
+            },
+            idempotency_key: idempotency_key.to_owned(),
             content,
-            precondition,
-            idempotency_key,
-        );
-        Err(BridgeSeamError::Unavailable)
+        };
+        let _ = self.core.flush_content_audit(broker);
+        let ticket = broker
+            .prepare_stream_mutation(request, &source, limits, metadata)
+            .map_err(write_error)?;
+        if crate::editing::audit::append(ledger, ticket.intent()).is_err() {
+            let _ = broker.cancel_stream_mutation(ticket);
+            let _ = self.core.flush_content_audit(broker);
+            return Err(BridgeSeamError::Audit);
+        }
+        let result = broker.commit_stream_mutation(ticket);
+        self.canonical_changed();
+        let _ = self.core.flush_content_audit(broker);
+        result.map_err(|error| install_error(broker, error))
     }
 
-    /// 条件删除：走文件操作协议（保全进墓碑，可恢复），主体「外部：Obsidian」。
-    ///
-    /// # Errors
-    /// CAS 拒绝返回 `Rejected`；审计不可用返回 `Audit`。
+    /// 条件删除：走文件操作协议（保全进墓碑，可恢复），形态照人侧：准备 → Intent 追加并
+    /// 确认 → 提交 → 冲刷 outbox；已有终态的原键在准备阶段就拿回固定票据。
     pub(crate) fn bridge_delete(
         &self,
         path: &VaultPath,
@@ -120,17 +191,109 @@ impl CanonicalWorkbench {
         scope_hash: &str,
         scope_epoch: u64,
     ) -> Result<FileOperationReceipt, BridgeSeamError> {
-        // B 轮 W3 实现：prepare_file_operation → Intent 审计 → commit_file_operation。
-        let _ = (path, expected, idempotency_key, scope_hash, scope_epoch);
-        Err(BridgeSeamError::Unavailable)
+        let mut owner = self.attach()?;
+        let broker = owner.as_mut().ok_or(BridgeSeamError::Unavailable)?;
+        let ledger = self.ledger()?;
+        let request = FileOperationRequest::Delete {
+            path: path.clone(),
+            expected,
+            idempotency_key: idempotency_key.to_owned(),
+        };
+        let metadata = FileOperationScopeHash::new(scope_hash)
+            .and_then(|hash| FileOperationMetadata::new(MutationActor::Obsidian, hash, scope_epoch))
+            .map_err(unavailable)?;
+        if self.core.flush_file_operation_audit(broker).is_err() {
+            return Err(BridgeSeamError::Audit);
+        }
+        let ticket = broker
+            .prepare_file_operation(request, metadata)
+            .map_err(write_error)?;
+        let acknowledged = crate::file_operation_audit::append(ledger, ticket.intent())
+            .map_err(|_| ())
+            .and_then(|(offset, hash)| {
+                self.core.roots.revalidate().map_err(|_| ())?;
+                broker
+                    .confirm_file_operation_intent(&ticket, offset, &hash)
+                    .map_err(|_| ())
+            });
+        if acknowledged.is_err() {
+            let _ = broker.cancel_file_operation(ticket);
+            let _ = self.core.flush_file_operation_audit(broker);
+            return Err(BridgeSeamError::Audit);
+        }
+        let result = broker.commit_file_operation(&ticket);
+        if result.is_err() && before_visible(broker) {
+            // 尚未进入可见执行：闭合票据后按「未执行」报告，不留半截未知。
+            let _ = broker.cancel_file_operation(ticket);
+            let _ = self.core.flush_file_operation_audit(broker);
+            return Err(BridgeSeamError::Unavailable);
+        }
+        drop(ticket);
+        self.canonical_changed();
+        let flushed = self.core.flush_file_operation_audit(broker);
+        let receipt = result.map_err(|_| BridgeSeamError::Unknown)?;
+        if flushed.map_or(true, |status| status.is_some()) {
+            return Err(BridgeSeamError::Unknown);
+        }
+        Ok(receipt)
     }
 
     /// 冲刷内容与文件操作两条审计 outbox；任一失败返回 `Audit`。
-    ///
-    /// # Errors
-    /// 审计不可用返回 `Audit`。
     pub(crate) fn bridge_flush_audit(&self) -> Result<(), BridgeSeamError> {
-        // B 轮 W3 实现：flush_content_audit + flush_file_operation_audit。
-        Err(BridgeSeamError::Audit)
+        let mut owner = self.attach()?;
+        let broker = owner.as_mut().ok_or(BridgeSeamError::Unavailable)?;
+        let content = self.core.flush_content_audit(broker).map(|_| ());
+        let files = self.core.flush_file_operation_audit(broker).map(|_| ());
+        content.and(files).map_err(|()| BridgeSeamError::Audit)
+    }
+}
+
+/// 任何锁中毒、根漂移或身份不符都只报「写者不可用」，不带原因正文。
+fn unavailable<E>(_: E) -> BridgeSeamError {
+    BridgeSeamError::Unavailable
+}
+
+/// 文件操作仍停在准备阶段（尚无可见变更）。
+fn before_visible(broker: &FsVaultBroker) -> bool {
+    broker.file_operation_status().is_ok_and(|status| {
+        status.is_some_and(|status| {
+            matches!(
+                status.phase,
+                FileOperationPhase::Preparing | FileOperationPhase::Prepared
+            )
+        })
+    })
+}
+
+/// 观察阶段的失败分类：安全诊断与范围问题是 `Incomplete`，其余都是写者不可用。
+fn observation_error(error: BrokerError) -> BridgeSeamError {
+    match error {
+        BrokerError::IncompleteCapture
+        | BrokerError::InvalidArtifact(_)
+        | BrokerError::ProtectedPath(_)
+        | BrokerError::UnsafeNode { .. }
+        | BrokerError::PathCollision { .. } => BridgeSeamError::Incomplete,
+        _ => BridgeSeamError::Unavailable,
+    }
+}
+
+/// 安装之前（重放查询、准备）的失败分类：CAS 拒绝已持久为终态，未决与键冲突都当未知。
+fn write_error(error: BrokerError) -> BridgeSeamError {
+    match error {
+        BrokerError::RevisionConflict { .. } => BridgeSeamError::Rejected,
+        BrokerError::MutationUnresolved | BrokerError::IdempotencyConflict => {
+            BridgeSeamError::Unknown
+        }
+        _ => BridgeSeamError::Unavailable,
+    }
+}
+
+/// 安装之后的失败分类：CAS 拒绝是权威终态；其余只要写者仍有未决就是未知。
+fn install_error(broker: &FsVaultBroker, error: BrokerError) -> BridgeSeamError {
+    let status = broker.write_status();
+    match (error, status.map_or(true, |status| status.unresolved)) {
+        (BrokerError::RevisionConflict { .. }, _) => BridgeSeamError::Rejected,
+        (_, true) => BridgeSeamError::Unknown,
+        (_, false) => BridgeSeamError::Unavailable,
     }
 }

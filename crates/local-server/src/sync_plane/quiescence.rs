@@ -4,10 +4,11 @@
 //! `SyncTransportOwner::quiescent` 成功返回的含义；本文件不自造证据，每次 `observe`
 //! 前都先 `verify_quiescent`，票据被作废即返回 `Unavailable`。
 
-use super::{PlaneError, SyncPlane};
+use super::mirror::MirrorView;
+use super::{PlaneError, QUIESCENT_WINDOW, SyncPlane};
 use std::time::Instant;
 use studiolo_sync_bridge::executor::{
-    MirrorQuiescence, MirrorQuiescenceProof, QuiescenceFault, QuiescenceRequest,
+    MirrorQuiescence, MirrorQuiescenceProof, QuiescenceEvidence, QuiescenceFault, QuiescenceRequest,
 };
 use studiolo_sync_transport::owned_run::QuiescentMirror;
 
@@ -23,10 +24,10 @@ pub struct OwnerQuiescence<'a> {
 }
 
 impl<'a> OwnerQuiescence<'a> {
-    /// 从传输槽取当前静止票据；`mirror_observation` 是本轮镜像观察序号。
+    /// 从传输槽取当前静止票据；`mirror_observation` 是本轮在静止窗口内取得的镜像观察序号。
     ///
     /// # Errors
-    /// 没有静止证明或票据已作废返回 `Quiescence`。
+    /// 没有静止证明或票据已作废返回 `Quiescence`；传输槽锁不可用返回 `Unavailable`。
     pub fn take(
         plane: &'a SyncPlane,
         link_id: [u8; 16],
@@ -35,22 +36,36 @@ impl<'a> OwnerQuiescence<'a> {
         mirror_observation: u64,
         now: Instant,
     ) -> Result<Self, PlaneError> {
-        // B 轮 W3 实现：plane.transport.lock() → quiescent() → 记 expires_at = now + QUIESCENT_WINDOW。
-        let _ = (
+        let ticket = plane
+            .transport()
+            .lock()
+            .map_err(|_| PlaneError::Unavailable)?
+            .quiescent()
+            .map_err(|_| PlaneError::Quiescence)?;
+        Ok(Self {
             plane,
+            ticket,
             link_id,
             scope_epoch,
             mirror_root_token,
             mirror_observation,
-            now,
-        );
-        Err(PlaneError::Quiescence)
+            expires_at: now + QUIESCENT_WINDOW,
+        })
     }
 
     /// 票据本体；镜像安装前用它复验视图根身份。
     #[must_use]
     pub fn ticket(&self) -> &QuiescentMirror {
         &self.ticket
+    }
+
+    /// 票据证明静止的视图根与取证时刻的身份。
+    #[must_use]
+    pub fn view(&self) -> MirrorView {
+        MirrorView::new(
+            self.ticket.mirror_root().to_path_buf(),
+            self.ticket.mirror_identity(),
+        )
     }
 
     /// 所属平面。
@@ -71,15 +86,30 @@ impl MirrorQuiescence for OwnerQuiescence<'_> {
         &self,
         request: &QuiescenceRequest,
     ) -> Result<MirrorQuiescenceProof, QuiescenceFault> {
-        // B 轮 W3 实现：verify_quiescent 失败 → Unavailable；绑定不符 → BindingMismatch；
-        // 通过则 evidence = ControlledSubgroupIdle { spawn_gate_closed: true }。
-        let _ = (
-            request,
-            self.link_id,
-            self.scope_epoch,
-            self.mirror_root_token,
-            self.mirror_observation,
-        );
-        Err(QuiescenceFault::Unavailable)
+        self.plane
+            .transport()
+            .lock()
+            .map_err(|_| QuiescenceFault::Unavailable)?
+            .verify_quiescent(&self.ticket)
+            .map_err(|_| QuiescenceFault::Unavailable)?;
+        if request.link_id != self.link_id
+            || request.scope_epoch != self.scope_epoch
+            || request.mirror_root_token != self.mirror_root_token
+        {
+            return Err(QuiescenceFault::BindingMismatch);
+        }
+        if self.mirror_observation < request.minimum_mirror_observation {
+            return Err(QuiescenceFault::Stale);
+        }
+        Ok(MirrorQuiescenceProof {
+            link_id: self.link_id,
+            scope_epoch: self.scope_epoch,
+            mirror_root_token: self.mirror_root_token,
+            evidence: QuiescenceEvidence::ControlledSubgroupIdle {
+                spawn_gate_closed: true,
+            },
+            mirror_observation: self.mirror_observation,
+            expires_at: self.expires_at,
+        })
     }
 }

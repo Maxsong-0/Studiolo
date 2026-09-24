@@ -112,6 +112,14 @@ impl<'scope> ApprovedTransport<'scope> {
         &self.binding
     }
 
+    /// 借用的已批准整文件范围；驱动平面用它导出观察选择与批准完整联合路径。
+    ///
+    /// 只是借用回去，不新增任何根、写者或反序列化入口；范围自身每次使用前后仍复验配置。
+    #[must_use]
+    pub fn scope(&self) -> &'scope SyncScope {
+        self.scope
+    }
+
     /// 传输私有根与镜像根及其对象身份。
     #[must_use]
     pub fn roots(&self) -> &TransportRoots {
