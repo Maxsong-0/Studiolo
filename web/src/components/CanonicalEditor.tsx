@@ -192,6 +192,11 @@ function CanonicalEditorContent({
     void controller.load();
     return () => controller.stop();
   }, [controller]);
+  // 离开确认框开着时，人正在决定这份草稿的去留：停顿计时不再发起自动保存，
+  // 免得保存抢在「放弃」「保留并关闭」之前提交，或在点击途中改动版面。「继续编辑」后恢复。
+  useEffect(() => {
+    controller.holdAutosave(leaving);
+  }, [controller, leaving]);
   const dirty = state.base && Boolean(store.get(state.base));
   const busy = state.phase === 'saving' || state.phase === 'verifying';
   const locked =
@@ -216,6 +221,7 @@ function CanonicalEditorContent({
     if (record) exportDrafts([record]);
   };
   // Esc 走 dialog 的 cancel：拦下浏览器的直接关闭，改走同一个 close（有草稿或保存在途时先问）。
+  // 焦点在离开确认框里时，Esc 由框自己在 keydown 拦下当作「继续编辑」，到不了这里。
   // Surface 的属性类型只收通用 HTML 属性，所以用原生监听；监听只挂一次，调用时总用最新一轮的 close。
   const latestClose = useRef(close);
   useLayoutEffect(() => {
