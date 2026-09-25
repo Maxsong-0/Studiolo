@@ -4,7 +4,7 @@ use serde_json::json;
 use std::{
     fs,
     io::Write,
-    net::TcpListener,
+    net::Ipv4Addr,
     os::unix::fs::{DirBuilderExt, OpenOptionsExt},
     path::Path,
     sync::Arc,
@@ -152,7 +152,13 @@ async fn main() -> Result<()> {
             })
             .await
     });
-    let port = TcpListener::bind("127.0.0.1:0")?.local_addr()?.port();
+    // agent 端口由本宿主持有到退出（T-171）：占位带 SO_REUSEADDR 绑在 0.0.0.0、不监听，人手启动的
+    // agent 经 tokio 绑 127.0.0.1 的同一端口；期间同机别的进程的自动分配选不到它。旧写法取号后立即释放，
+    // 等人启动 agent 时端口可能已被占用。语义说明见 `tests/loopback_port/mod.rs`。
+    let reservation = tokio::net::TcpSocket::new_v4()?;
+    reservation.set_reuseaddr(true)?;
+    reservation.bind((Ipv4Addr::UNSPECIFIED, 0).into())?;
+    let port = reservation.local_addr()?.port();
     let descriptor = json!({"mode":"isolated-consumer-smoke","root":root,
         "mcp":format!("http://127.0.0.1:{port}/mcp"),"policy_hash":policy.effective()?.effective_hash,
         "agent_argv":["serve","--vault",root.join("vault"),"--data",root.join("agent"),
@@ -170,6 +176,7 @@ async fn main() -> Result<()> {
         result = tokio::signal::ctrl_c() => result?,
         _ = tokio::time::sleep(Duration::from_secs(1800)) => {},
     }
+    drop(reservation);
     stop.send(true)?;
     serving.await??;
     maintenance.await??;

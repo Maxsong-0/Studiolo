@@ -4,13 +4,14 @@
 //! 旧写法先 `bind(0)` 取号、立即释放再交给子进程：窗口内同机任何进程的自动分配都能拿走这个端口，
 //! 「能连上」于是可能连到别人的服务，对方一关监听，排队的连接就收到 RST（CI 上的 ConnectionReset）。
 //!
-//! 依赖的 Linux 语义（两台 CI 机实测）：
-//! - 占位带 `SO_REUSEADDR` 且不监听时，同样带该选项的显式绑定可以共享端口（socket(7)）；产品经 tokio
-//!   绑定、std 的监听都带这个选项，所以子进程与负向用例里的占用者都绑得上；
-//! - `net.ipv4.ip_autobind_reuse=0`（默认）时，别的进程 `bind(0)`／`connect` 的自动分配不会选中已有
-//!   绑定的端口，占位期间端口不会被同机进程拿走。
+//! 占位绑在通配地址 `0.0.0.0:P`（带 `SO_REUSEADDR`、不监听），子进程绑的是 `127.0.0.1:P`。两边的语义：
+//! - Linux：双方都带 `SO_REUSEADDR` 且占位未监听时，显式绑定可以共享端口（socket(7)）；
+//!   `net.ipv4.ip_autobind_reuse=0`（默认）时，别的进程 `bind(0)`／`connect` 的自动分配不会选中已有绑定的端口；
+//! - BSD／macOS：带 `SO_REUSEADDR` 的具体地址绑定只与同一具体地址冲突，不与通配地址上的占位冲突；
+//!   自动分配同样跳过已有绑定的端口。（若占位也绑具体地址，同地址二次绑定就要双方 `SO_REUSEPORT`，产品不设。）
 //!
-//! BSD／macOS 上同一地址的二次绑定要求双方都设 `SO_REUSEPORT`，产品不设，因此这些进程测试只在 Linux 成立。
+//! 产品经 tokio 绑定、std 的监听都带 `SO_REUSEADDR`，所以子进程与负向用例里的占用者都绑得上；
+//! 一旦有人在 `127.0.0.1:P` 上监听，后来者就绑不上。
 
 use std::{
     io::{BufRead, BufReader, Read},
@@ -65,7 +66,7 @@ impl Drop for Announced {
     }
 }
 
-/// 端口占位：必须活到子进程退出（或被收走）之后。
+/// 端口占位：必须活到子进程退出（或被收走）之后。`address` 是交给子进程的回环地址。
 pub struct Reservation {
     _socket: tokio::net::TcpSocket,
     pub address: SocketAddr,
@@ -75,11 +76,11 @@ impl Reservation {
     pub fn new() -> Self {
         let socket = tokio::net::TcpSocket::new_v4().unwrap();
         socket.set_reuseaddr(true).unwrap();
-        socket.bind((Ipv4Addr::LOCALHOST, 0).into()).unwrap();
-        let address = socket.local_addr().unwrap();
+        socket.bind((Ipv4Addr::UNSPECIFIED, 0).into()).unwrap();
+        let port = socket.local_addr().unwrap().port();
         Self {
             _socket: socket,
-            address,
+            address: (Ipv4Addr::LOCALHOST, port).into(),
         }
     }
 }

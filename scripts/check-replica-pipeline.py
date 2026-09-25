@@ -146,12 +146,12 @@ class Pipeline:
         return json.loads((self.remote / "control/state.json").read_text())
 
     def start(self, policy_dir=None):
-        # 端口占位与子进程同寿（T-171）：带 SO_REUSEADDR 只绑定不监听，agent 经 tokio 绑定同一端口；
-        # 占位期间同机别的进程的自动分配选不到它（Linux 默认 ip_autobind_reuse=0）。旧写法取号后立即释放，
-        # 窗口内端口可能落到别人手里，「连得上」就会连到别人的服务。共享绑定依赖 Linux 语义（本脚本只在 CI 跑）。
+        # 端口占位与子进程同寿（T-171）：占位带 SO_REUSEADDR 绑在 0.0.0.0、不监听，agent 经 tokio 绑
+        # 127.0.0.1 的同一端口；占位期间同机别的进程的自动分配选不到它。旧写法取号后立即释放，窗口内端口
+        # 可能落到别人手里，「连得上」就会连到别人的服务。语义说明见 crates/local-server/tests/loopback_port/mod.rs。
         self.reservation = socket.socket()
         self.reservation.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        self.reservation.bind(("127.0.0.1", 0))
+        self.reservation.bind(("0.0.0.0", 0))
         port = self.reservation.getsockname()[1]
         self.url = f"http://127.0.0.1:{port}/mcp"
         self.log = tempfile.TemporaryFile()

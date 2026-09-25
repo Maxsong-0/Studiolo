@@ -3,7 +3,9 @@
 from collections import Counter
 from hashlib import sha256
 import json
+import os
 from pathlib import Path
+import select
 import socket
 import subprocess
 import time
@@ -84,10 +86,32 @@ def check_graph(root, paths, observation):
     return graph, associations, contexts, incoming
 
 
+def wait_announced(process, announcement, budget=20):
+    """就绪只认子进程自己打印的启动行（绑定成功之后才打印），不认「能连上」。"""
+    expected = announcement.encode()
+    deadline = time.monotonic() + budget
+    received = b""
+    while not any(line.startswith(expected) for line in received.split(b"\n")):
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise RuntimeError(f"子进程 {budget} 秒内没有宣布「{announcement}」")
+        ready, _, _ = select.select([process.stdout], [], [], remaining)
+        if not ready:
+            continue
+        chunk = os.read(process.stdout.fileno(), 4096)
+        if not chunk:
+            raise RuntimeError(f"子进程没有宣布「{announcement}」就退出了（退出码 {process.wait()}）")
+        received += chunk
+
+
 def capture(repository, paths):
-    with socket.socket() as listener:
-        listener.bind(("127.0.0.1", 0))
-        port = listener.getsockname()[1]
+    # 端口占位与子进程同寿（T-171）：占位带 SO_REUSEADDR 绑在 0.0.0.0、不监听，子进程经 tokio 绑
+    # 127.0.0.1 的同一端口；占位期间同机别的进程的自动分配选不到它。旧写法取号后立即释放，窗口内端口
+    # 可能落到别人手里，「连得上」就会连到别人的服务。语义说明见 crates/local-server/tests/loopback_port/mod.rs。
+    reservation = socket.socket()
+    reservation.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    reservation.bind(("0.0.0.0", 0))
+    port = reservation.getsockname()[1]
     command = [
         str(ROOT / "target/debug/studiolo-local-server"),
         "--vault", str(EXAMPLE / "vault"),
@@ -97,20 +121,14 @@ def capture(repository, paths):
         "--rust-call-sites", json.dumps(paths),
     ]
     process = subprocess.Popen(
-        command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+        command, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL
     )
     try:
+        wait_announced(process, f"Studiolo：http://127.0.0.1:{port}（")
         query = urllib.parse.urlencode({"project": "项目/示例工坊", "generation": 1})
         url = f"http://127.0.0.1:{port}/api/project-operations?{query}"
-        for attempt in range(100):
-            try:
-                with OPENER.open(url, timeout=8) as response:
-                    data = json.load(response)
-                break
-            except OSError:
-                if process.poll() is not None or attempt == 99:
-                    raise
-                time.sleep(0.05)
+        with OPENER.open(url, timeout=8) as response:
+            data = json.load(response)
         assert data["cargo_dependencies"]["status"] == "disabled"
         return check_graph(repository, paths, data["rust_call_sites"])
     finally:
@@ -120,6 +138,9 @@ def capture(repository, paths):
         except subprocess.TimeoutExpired:
             process.kill()
             process.wait()
+        process.stdout.close()
+        # 子进程已收走，端口占位随之交还。
+        reservation.close()
 
 
 def main():
