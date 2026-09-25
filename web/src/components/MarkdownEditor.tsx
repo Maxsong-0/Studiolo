@@ -22,9 +22,41 @@ export function MarkdownEditor(props: Props) {
   const current = useRef(props);
   const [failure, setFailure] = useState('');
   const [editable] = useState(() => new Compartment());
+  // 刚按在「不保存区」（[data-editor-no-save]）里：Safari、macOS 上的 Firefox 与触屏点按按钮时
+  // 不把焦点交给按钮，失焦事件的 relatedTarget 为 null，只看它会把这类点按当成离开编辑区而自动保存。
+  const noSavePress = useRef(false);
   useEffect(() => {
     current.current = props;
   });
+  useEffect(() => {
+    const doc = mount.current?.ownerDocument ?? document;
+    const view = doc.defaultView ?? window;
+    let timer = 0;
+    const clearLater = (delay: number) => {
+      view.clearTimeout(timer);
+      timer = view.setTimeout(() => {
+        noSavePress.current = false;
+      }, delay);
+    };
+    const press = (event: Event) => {
+      const target = event.target;
+      noSavePress.current =
+        target instanceof Element &&
+        target.closest('[data-editor-no-save]') !== null;
+      // 桌面上失焦发生在这次按下的同一轮事件里；触屏要等到 click。兜底一秒后清掉。
+      clearLater(1000);
+    };
+    const settle = () => clearLater(0);
+    doc.addEventListener('pointerdown', press, true);
+    doc.addEventListener('click', settle, true);
+    doc.addEventListener('pointercancel', settle, true);
+    return () => {
+      doc.removeEventListener('pointerdown', press, true);
+      doc.removeEventListener('click', settle, true);
+      doc.removeEventListener('pointercancel', settle, true);
+      view.clearTimeout(timer);
+    };
+  }, []);
   useEffect(() => {
     if (!mount.current) return;
     let view: EditorView | null = null;
@@ -85,11 +117,12 @@ export function MarkdownEditor(props: Props) {
             }),
             EditorView.domEventHandlers({
               blur: (event) => {
-                if (!(
-                  event.relatedTarget instanceof Element &&
-                  event.relatedTarget.closest('[data-editor-no-save]')
-                ))
-                  current.current.onBlur();
+                const next = event.relatedTarget;
+                const intoNoSave =
+                  next instanceof Element
+                    ? next.closest('[data-editor-no-save]') !== null
+                    : noSavePress.current;
+                if (!intoNoSave) current.current.onBlur();
               },
               compositionstart: () => {
                 current.current.onComposition(true);

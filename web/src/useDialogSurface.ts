@@ -11,6 +11,7 @@ const OFFSET_PX = 4;
  * 原生弹窗的呈现、可中断过渡与焦点归还；关闭控件须标记 data-dialog-dismiss。
  * 出现与收起都是 120ms 透明度＋4px 位移（规范第 11 节）；系统要求减少动效时取消位移、只留透明度。
  * 过渡由数值驱动（不依赖 Web Animations），中途反向从当前值接着走，按剩余距离折算时长。
+ * 浏览器绕过页面直接关掉对话框（不可取消的关闭请求）时随之收起，onClose 同样只回调一次。
  */
 export function useDialogSurface(
   ref: RefObject<HTMLDialogElement | null>,
@@ -145,6 +146,22 @@ export function useDialogSurface(
       transition(1);
     }
 
+    // 浏览器绕过页面直接关掉对话框时，close 事件是唯一的信号：关闭请求（Esc、返回手势）拦下一次之后
+    // 没有新的用户激活，下一次的 cancel 就不可取消，preventDefault 无效（CloseWatcher 规则）。
+    // 不是自己收起引起的就立即跟着收起：作废进行中的过渡、归还焦点、只回调一次 onClose，
+    // 不留下看不见却没卸载的对话框。对话框此刻又开着（如严格模式重挂后，前一轮清理排下的 close 才送到）就不是关闭。
+    function closedNatively() {
+      if (disposed || phase === 'closed' || element!.open) return;
+      phase = 'closed';
+      revision += 1;
+      progress.stop();
+      currentInteraction.revision += 1;
+      currentInteraction.active = false;
+      element!.style.willChange = original.willChange;
+      restoreFocus();
+      closeCallback.current();
+    }
+
     // 偏好中途改变：立即按新偏好重画当前这一帧（开了减少动效就立刻去掉位移），进行中的过渡照常走完。
     function changePreference(event: MediaQueryListEvent) {
       reduced = event.matches;
@@ -159,6 +176,7 @@ export function useDialogSurface(
     element.addEventListener('pointerdown', continueInteraction);
     element.addEventListener('click', continueInteraction);
     element.addEventListener('keydown', continueInteraction);
+    element.addEventListener('close', closedNatively);
     preference?.addEventListener('change', changePreference);
     transition(1);
 
@@ -172,6 +190,7 @@ export function useDialogSurface(
       element.removeEventListener('pointerdown', continueInteraction);
       element.removeEventListener('click', continueInteraction);
       element.removeEventListener('keydown', continueInteraction);
+      element.removeEventListener('close', closedNatively);
       unsubscribe();
       progress.destroy();
       if (element.open) element.close();

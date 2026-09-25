@@ -21,6 +21,20 @@ const code = (error: ApiError) =>
 
 /** 单文档请求拥有者：一次保存绑定一个不可变正文与幂等键，响应不覆盖后续输入。 */
 export class EditorController extends EditorStateCore {
+  /** 离开确认框开着时为 true：人正在决定草稿去留，停顿计时不发起自动保存。 */
+  private autosaveHeld = false;
+  /**
+   * 暂停或恢复停顿计时的自动保存。只管这一个计时：不改保存阶段，不取消在途请求，
+   * 显式保存照常；失焦保存由界面的不保存区（data-editor-no-save）把关。恢复时按当前阶段重新排定。
+   */
+  holdAutosave = (held: boolean) => {
+    this.autosaveHeld = held;
+    this.schedule();
+  };
+  protected override schedule() {
+    if (this.autosaveHeld) clearTimeout(this.timer);
+    else super.schedule();
+  }
   async save(recover = false) {
     clearTimeout(this.timer);
     const { base, draft, phase, pending } = this.state;

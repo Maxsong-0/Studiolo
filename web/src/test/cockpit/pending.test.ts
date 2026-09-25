@@ -1,7 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import { TASK } from '../../../dev/fixtures/ids';
 import type { OverviewState } from '../../cockpit/model';
-import { MINI_TASKS, actionTitle, planPending } from '../../cockpit/pending';
+import {
+  MINI_TASKS,
+  actionTitle,
+  pendingCount,
+  planPending,
+} from '../../cockpit/pending';
 import { fixture } from '../fixtures';
 import { fixtureData } from './cockpitFixtures';
 
@@ -151,5 +156,41 @@ describe('待我动作：统一编号与圈号', () => {
       '验收只读工作台',
     );
     expect(actionTitle(action)).toBe('验收只读工作台');
+  });
+});
+
+describe('待我动作总数：巨号与顶栏「驾驶舱 N」角标同一个函数（T-162）', () => {
+  it.each<[string, OverviewState, number | null]>([
+    ['读完：工作台待办＋等你的黑板任务', ready, inbox.length + 3],
+    ['未启用（404）：只数工作台待办', { kind: 'disabled' }, inbox.length],
+    ['读取中：不可知', { kind: 'loading' }, null],
+    ['读取失败：不可知', { kind: 'error', message: '黑板许可已满。' }, null],
+  ])('黑板%s', (_, state, expected) => {
+    expect(pendingCount(data.workbench, state)).toBe(expected);
+    // 巨号用的 plan.total 就是它：两处不会各算各的。
+    expect(planPending(state, inbox, projects).total).toBe(expected);
+  });
+
+  it('只数未结束、等你的黑板任务：已认领、在跑、已批准与已结束的都不算', () => {
+    // 假数据汇总 8 条：3 条等你（T-093 待修订、T-106 与 T-108 待验收）；
+    // T-046 已认领、T-109 与 T-130 在跑、T-092 已批准、简报站 T-021 已结束，都不算。
+    expect(data.overview.items).toHaveLength(8);
+    expect(pendingCount({ inbox: [] }, ready)).toBe(3);
+    const board = planPending(ready, [], projects).entries;
+    expect(board.map((entry) => entry.source)).toEqual([
+      'board',
+      'board',
+      'board',
+    ]);
+  });
+
+  it('还没有工作台快照：不论黑板读到哪一步，总数都不可知', () => {
+    const states: OverviewState[] = [
+      ready,
+      { kind: 'disabled' },
+      { kind: 'loading' },
+      { kind: 'error', message: '黑板许可已满。' },
+    ];
+    for (const state of states) expect(pendingCount(null, state)).toBeNull();
   });
 });

@@ -323,12 +323,13 @@
   stroke: var(--signal);
   stroke-width: 1.6px;
 }
+/* 圈号：引线仍是 --signal；实心圆里有 12px 数字，圆用 --signal-text（与 ui.css 的 .ui-circled--filled 同理） */
 .topology__marker-leader {
   stroke: var(--signal);
   stroke-width: 1px;
 }
 .topology__marker-dot {
-  fill: var(--signal);
+  fill: var(--signal-text);
 }
 .topology__marker-n {
   font-family: var(--font-mono);

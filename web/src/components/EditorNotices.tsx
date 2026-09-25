@@ -1,3 +1,4 @@
+import { useEffect, useRef } from 'react';
 import type { EditorController, EditorSnapshot } from '../EditorController';
 import { canEdit, editingExplanation } from '../canonicalModel';
 import { Button } from '../ui';
@@ -48,6 +49,12 @@ export function EditorNotices({
     Boolean(comparison) ||
     rebasable ||
     discardable;
+  // 确认框一出现就把焦点移进「继续编辑」：编辑区就在这一刻失焦，落点在不保存区里，
+  // 不触发失焦自动保存；之后在框里点哪个按钮，版面都不会因为保存而移动、点击不会落空。
+  const continueButton = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    if (leaving) continueButton.current?.focus();
+  }, [leaving]);
   return (
     <>
       {/* 说明文字在前、动作按钮在后，顺序与改版前一致；只有出问题的附言套红色虚线框。 */}
@@ -105,17 +112,31 @@ export function EditorNotices({
           </div>
         ) : null}
       </div>
+      {/*
+       * 整块标 data-editor-no-save：焦点从编辑区移进框里不算离开编辑，不触发失焦保存。
+       * 框本身可聚焦（tabIndex=-1）：点到说明文字，或浏览器点按钮时不给按钮焦点（如 macOS 的 Safari），
+       * 焦点就落在框上，同样算在框内。Esc 在框里等于「继续编辑」：keydown 阶段就拦下，
+       * 不再交给编辑器对话框的取消处理。
+       */}
       {leaving ? (
         <section
           className="editor-leave"
           role="alertdialog"
           aria-label="处理未保存草稿"
+          tabIndex={-1}
+          data-editor-no-save
+          onKeyDown={(event) => {
+            if (event.key !== 'Escape') return;
+            event.preventDefault();
+            event.stopPropagation();
+            onContinue();
+          }}
         >
           <h3>草稿尚未处理</h3>
           <p>
             关闭会保留本页内存草稿；关闭整个页面会丢失内存内容。保存中的请求可能已经提交。
           </p>
-          <Button size="sm" onClick={onContinue}>
+          <Button ref={continueButton} size="sm" onClick={onContinue}>
             继续编辑
           </Button>
           <Button size="sm" onClick={onExport}>

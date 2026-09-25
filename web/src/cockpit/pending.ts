@@ -6,8 +6,9 @@
  * - 工作台待办（Action）排在后面，按服务端给的顺序，圈号黑色空心，点开是原文。
  * - 拓扑缩略最多画 6 条未结束任务：先保证等你的条目上图，再补尝试仍在进行的，最后补其余；
  *   其余条数交给「另 N 条，去协作页」。
+ * - 总数只由 {@link pendingCount} 算：驾驶舱巨号与顶栏「驾驶舱 N」角标同一口径（T-162）。
  */
-import type { BoardOverviewItem } from '../boardOverviewModel';
+import type { BoardOverview, BoardOverviewItem } from '../boardOverviewModel';
 import type { TopologyMarker } from '../collab/TopologyDiagram';
 import type { Action, Project } from '../types';
 import {
@@ -45,7 +46,9 @@ export type PendingEntry = BoardPending | InboxPending;
 
 export interface PendingPlan {
   entries: PendingEntry[];
-  /** 待我动作总数；黑板还在读或读取失败时，等你的黑板任务数不可知，总数为 null。 */
+  /**
+   * 待我动作总数，即 {@link pendingCount}；黑板还在读或读取失败时，等你的黑板任务数不可知，总数为 null。
+   */
   total: number | null;
   /** 带时间的等你条目中最久的一条已等了多少毫秒；没有带时间的条目时为 null。 */
   oldestWaitMs: number | null;
@@ -59,6 +62,33 @@ export interface PendingPlan {
   omitted: number;
   /** 缩略图上的红圈：只来自黑板条目。 */
   markers: TopologyMarker[];
+}
+
+/** 黑板里等你的任务：未结束、状态是待验收／待修订／待再次确认的条目，保持汇总原顺序。 */
+function waitingItems(overview: BoardOverview): BoardOverviewItem[] {
+  return overview.items.filter(
+    (item) => !isFinished(item) && waitingKind(item) !== null,
+  );
+}
+
+/**
+ * 待我动作总数：工作台待办＋黑板里等你的任务（T-162）。
+ *
+ * 驾驶舱巨号与顶栏「驾驶舱 N」角标都只用它算，而且喂同一份工作台快照、同一次黑板汇总读取，
+ * 所以两处任何时刻都相等。
+ * - 还没有工作台快照：null（显示「—」）。
+ * - 黑板未启用（404）：本机根本没有黑板，等你的黑板任务确实是 0，总数就是工作台待办数。
+ * - 黑板还在读或读取失败：等你的黑板任务数不可知，总数为 null（显示「—」），不拿工作台待办数冒充总数。
+ */
+export function pendingCount(
+  workbench: { readonly inbox: readonly Action[] } | null,
+  state: OverviewState,
+): number | null {
+  if (!workbench) return null;
+  if (state.kind === 'ready')
+    return workbench.inbox.length + waitingItems(state.overview).length;
+  if (state.kind === 'disabled') return workbench.inbox.length;
+  return null;
 }
 
 /** 等你条目的起始时间：该尝试最后一次进展；没有进展记录（或记录为 0）时不算带时间。 */
@@ -111,9 +141,8 @@ export function planPending(
   const unfinishedItems = overview
     ? overview.items.filter((item) => !isFinished(item))
     : [];
-  const waiting = unfinishedItems
+  const waiting = (overview ? waitingItems(overview) : [])
     .map((item, index) => ({ item, index }))
-    .filter(({ item }) => waitingKind(item) !== null)
     .sort(byWaitingAge)
     .map(({ item }) => item);
   const mini = pickMini(waiting, unfinishedItems, maxMini);
@@ -154,12 +183,11 @@ export function planPending(
     }
   }
 
-  // 黑板未启用：本机根本没有黑板，等你的黑板任务确实是 0；读取中或失败则总数不可知。
-  const settled = state.kind === 'ready' || state.kind === 'disabled';
   const miniItems = unfinishedItems.filter((item) => mini.has(item.id));
   return {
     entries,
-    total: settled ? entries.length : null,
+    // 与顶栏角标同一个函数：黑板读完（或未启用）时恰是上面列出的条数，读取中或失败时不可知。
+    total: pendingCount({ inbox }, state),
     oldestWaitMs,
     truncated: overview?.itemsTruncated ?? false,
     unfinished: overview ? unfinishedItems.length : null,
