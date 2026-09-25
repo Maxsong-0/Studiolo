@@ -1,5 +1,9 @@
 //! 内部组合测试仅替换取钥Adapter，其余使用真实配置文件、双库和路由。
 
+#[path = "../loopback_port/mod.rs"]
+#[allow(dead_code)]
+mod loopback_port;
+
 use std::{
     fs,
     os::unix::fs::PermissionsExt,
@@ -18,6 +22,8 @@ pub(super) struct Fixture {
     pub root: PathBuf,
     pub config: PathBuf,
     pub port: u16,
+    // 端口占位与夹具同寿（T-171）：产品在进程内绑定同一端口，期间别的进程拿不走它。
+    _reservation: loopback_port::Reservation,
 }
 
 impl Fixture {
@@ -79,13 +85,13 @@ impl Fixture {
             .unwrap();
             enrollment.enroll(code()).unwrap();
         }
-        let socket = std::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0)).unwrap();
-        let port = socket.local_addr().unwrap().port();
+        let reservation = loopback_port::Reservation::new();
         Self {
             _temp: temp,
             root,
             config,
-            port,
+            port: reservation.address.port(),
+            _reservation: reservation,
         }
     }
 

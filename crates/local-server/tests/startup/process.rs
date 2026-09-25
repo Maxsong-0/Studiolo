@@ -1,8 +1,15 @@
 //! 仅管理本测试派生的产品进程；清空继承环境，有界等待，退出后核对监听状态。
+//! 端口由本夹具持有到子进程退出，就绪只认子进程自己的启动行（T-171，见 `loopback_port`）。
+
+#[path = "../loopback_port/mod.rs"]
+#[allow(dead_code)]
+mod loopback_port;
+
+pub use loopback_port::Reservation;
 
 use std::{
     ffi::OsString,
-    net::{Ipv4Addr, SocketAddr, TcpListener, TcpStream},
+    net::{SocketAddr, TcpStream},
     path::{Path, PathBuf},
     process::{Child, Command, Output, Stdio},
     thread,
@@ -12,15 +19,31 @@ use std::{
 pub struct Running {
     child: Option<Child>,
     pub address: SocketAddr,
+    // 字段在 Drop::drop 收走子进程之后才释放：端口直到子进程退出都不交还系统。
+    _reservation: Reservation,
 }
 
 impl Running {
     pub fn start(root: &Path, args: Vec<String>) -> Self {
-        Self::start_os(root, args.into_iter().map(OsString::from).collect())
+        Self::start_on(Reservation::new(), root, args)
+    }
+
+    /// 在调用方给定的占位上启动旧本机模式；负向自检用它先在同一端口放一个占用者。
+    pub fn start_on(reservation: Reservation, root: &Path, args: Vec<String>) -> Self {
+        Self::start_os_on(
+            reservation,
+            root,
+            args.into_iter().map(OsString::from).collect(),
+        )
     }
 
     pub fn start_os(root: &Path, args: Vec<OsString>) -> Self {
+        Self::start_os_on(Reservation::new(), root, args)
+    }
+
+    fn start_os_on(reservation: Reservation, root: &Path, args: Vec<OsString>) -> Self {
         Self::launch(
+            reservation,
             root,
             args,
             true,
@@ -33,6 +56,7 @@ impl Running {
 
     pub fn start_factor(root: &Path, args: Vec<String>, environment: &[(&str, &str)]) -> Self {
         Self::launch(
+            Reservation::new(),
             root,
             args.into_iter().map(OsString::from).collect(),
             false,
@@ -41,14 +65,13 @@ impl Running {
     }
 
     fn launch(
+        reservation: Reservation,
         root: &Path,
         args: Vec<OsString>,
         tcp_port: bool,
         environment: &[(&str, &str)],
     ) -> Self {
-        let reservation = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
-        let address = reservation.local_addr().unwrap();
-        drop(reservation);
+        let address = reservation.address;
         // 仅测试运行器可选择已构建的生产二进制；该配置不传入产品环境。
         let binary = std::env::var_os("STUDIOLO_TEST_SERVER_BIN")
             .map(PathBuf::from)
@@ -75,10 +98,12 @@ impl Running {
         Self {
             child: Some(child),
             address,
+            _reservation: reservation,
         }
     }
 
-    pub fn wait(mut self) -> Output {
+    /// 等子进程自行退出；占位随 `Running` 一起活到调用方丢弃它，退出后的端口核对不受他人干扰。
+    pub fn wait(&mut self) -> Output {
         let deadline = Instant::now() + Duration::from_secs(8);
         while self.child.as_mut().unwrap().try_wait().unwrap().is_none() {
             assert!(Instant::now() < deadline, "产品进程未在启动失败预算内退出");
@@ -88,26 +113,30 @@ impl Running {
     }
 
     pub fn wait_ready(&mut self) {
-        let deadline = Instant::now() + Duration::from_secs(8);
-        loop {
-            assert!(
-                self.child.as_mut().unwrap().try_wait().unwrap().is_none(),
-                "旧本机模式意外退出"
-            );
-            if TcpStream::connect_timeout(&self.address, Duration::from_millis(100)).is_ok() {
-                return;
-            }
-            assert!(Instant::now() < deadline, "旧本机模式未及时监听");
-            thread::sleep(Duration::from_millis(20));
+        if let Err(reason) = self.ready() {
+            panic!("旧本机模式未就绪：{reason}");
         }
+    }
+
+    /// 就绪＝子进程自己宣布已在占位端口上监听；端口上有别人的监听也不算。
+    pub fn ready(&mut self) -> Result<(), String> {
+        let announcement = loopback_port::local_server_announcement(self.address);
+        loopback_port::wait_announced(
+            self.child.as_mut().unwrap(),
+            &announcement,
+            Duration::from_secs(8),
+        )
     }
 }
 
 impl Drop for Running {
     fn drop(&mut self) {
         if let Some(mut child) = self.child.take() {
-            let _ = child.kill();
-            let _ = child.wait();
+            // 测试失败时带出子进程去向，区分「连错了对象」与「子进程自己退出」。
+            let report = loopback_port::reap(&mut child);
+            if thread::panicking() {
+                eprintln!("{report}");
+            }
         }
     }
 }
@@ -121,8 +150,7 @@ pub fn reject(root: &Path, args: Vec<String>, forbidden: &[&str]) {
 }
 
 pub fn reject_os(root: &Path, args: Vec<OsString>, forbidden: &[&str]) {
-    let running = Running::start_os(root, args);
-    let address = running.address;
+    let mut running = Running::start_os(root, args);
     let output = running.wait();
     assert!(!output.status.success(), "不合格装配不能成功退出");
     assert!(output.stdout.is_empty(), "启动失败不能宣布已监听或输出配置");
@@ -140,8 +168,9 @@ pub fn reject_os(root: &Path, args: Vec<OsString>, forbidden: &[&str]) {
         "失败说明不得泄漏夹具配置或环境内容"
     );
     // 这里只证明退出后的端口状态；不声称观测到了全过程零监听或零网络数据包。
+    // 端口仍由 running 的占位持有，别的进程拿不到，连得上只能是本进程树留下的监听。
     assert!(
-        TcpStream::connect_timeout(&address, Duration::from_millis(100)).is_err(),
+        TcpStream::connect_timeout(&running.address, Duration::from_millis(100)).is_err(),
         "失败进程退出后不得留下监听"
     );
 }
