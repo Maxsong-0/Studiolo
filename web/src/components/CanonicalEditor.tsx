@@ -232,7 +232,8 @@ function CanonicalEditorContent({
   // 其余关闭请求走 dialog 的 cancel：拦下浏览器的直接关闭，改走同一个 requestClose。
   // 不可取消的 cancel 是浏览器坚持要关（拦下一次之后没有新的用户激活，如返回手势连按），拦不住；
   // 这里不动，由 useDialogSurface 跟着 close 收起：本页草稿留在内存里，与「保留内存草稿并关闭」相同，绝不丢。
-  // 原生监听只挂一次，调用时总用最新一轮的 requestClose。
+  // 用原生监听而不是 onCancel 属性：React 会让 cancel 沿组件树冒泡，内层对话框的 cancel 也会触发外层的 onCancel；
+  // 对话框的原生 cancel 不冒泡，内层的到不了这里。监听只挂一次，调用时总用最新一轮的 requestClose。
   const latestRequestClose = useRef(requestClose);
   useLayoutEffect(() => {
     latestRequestClose.current = requestClose;
