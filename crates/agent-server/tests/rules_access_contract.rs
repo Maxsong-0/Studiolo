@@ -82,6 +82,8 @@ async fn fixture(with_policy: bool) -> Fixture {
     );
     write(&vault.join("_规则/A.md"), "# A\n\n共同词 A-VAULT\n");
     write(&vault.join("_规则/B.md"), "# B\n\n共同词 B-VAULT-CANARY\n");
+    // 大写扩展名：供给层把 `.MD` 也当笔记，规则文件判定必须同口径，否则能绕过名单。
+    write(&vault.join("_规则/C.MD"), "# C\n\n共同词 C-UPPER-CANARY\n");
     write(
         &vault.join("_规则/references/x.md"),
         "# 参考\n\n共同词 REF\n",
@@ -385,6 +387,11 @@ async fn rules_outside_the_whitelist_are_invisible_on_every_read_path() {
     assert_eq!(f.last_denial(), "outside_allowlist");
     assert_eq!(denied, elsewhere);
     assert_eq!(denied["message"], "路径不在供给白名单内");
+    let upper = f
+        .refused(&session, 80, "read_note", json!({"path": "_规则/C.MD"}))
+        .await;
+    assert_eq!(f.last_denial(), "rule_not_whitelisted");
+    assert_eq!(upper, elsewhere);
 
     // list_entries：名单外规则文件不进清单（计数随之一致），子目录照常列出。
     let entries = f
@@ -395,6 +402,7 @@ async fn rules_outside_the_whitelist_are_invisible_on_every_read_path() {
     assert!(paths.contains(&"_规则/references/x.md".to_owned()));
     assert!(!paths.contains(&"_规则/B.md".to_owned()));
     assert!(!paths.contains(&"_规则/通用工作规则.md".to_owned()));
+    assert!(!paths.contains(&"_规则/C.MD".to_owned()));
 
     // search：全文与路径两种模式都不命中名单外规则文件。
     let hits = f
@@ -409,6 +417,10 @@ async fn rules_outside_the_whitelist_are_invisible_on_every_read_path() {
     assert!(hit_paths.contains(&"_规则/A.md".to_owned()), "{hits}");
     assert!(hit_paths.contains(&"_规则/references/x.md".to_owned()));
     assert!(!hits.contains("_规则/B.md") && !hits.contains("通用工作规则"));
+    assert!(
+        !hits.contains("C.MD") && !hits.contains("C-UPPER-CANARY"),
+        "{hits}"
+    );
     let by_path = f
         .text(
             &session,
@@ -422,7 +434,12 @@ async fn rules_outside_the_whitelist_are_invisible_on_every_read_path() {
     // 权威账本：名单外的规则文件与规则母本一次也没有作为内容供给。
     let served = f.payload_field("content.read", "path");
     assert!(served.contains(&"policy://rules/A.md".to_owned()));
-    for hidden in ["policy://rules/B.md", "_规则/B.md", "_规则/通用工作规则.md"] {
+    for hidden in [
+        "policy://rules/B.md",
+        "_规则/B.md",
+        "_规则/通用工作规则.md",
+        "_规则/C.MD",
+    ] {
         assert!(!served.contains(&hidden.to_owned()), "{hidden}: {served:?}");
     }
 

@@ -49,6 +49,7 @@ class PreparePolicyTests(unittest.TestCase):
         self.assertEqual(subprocess.run(['bash', '-n', str(script)], timeout=10).returncode, 0)
         capability = json.loads((self.output / 'claude.json').read_text())
         self.assertEqual(capability['read']['project_whitelist'], ['项目/Studiolo', '_规则'])
+        self.assertEqual(capability['read']['rules_whitelist'], ['通用工作规则.md', 'CLAUDE.md'])
         self.assertFalse(capability['write']['board'])
         self.assertFalse(capability['write']['content_direct'])
         self.assertFalse(capability['policy']['activate'])

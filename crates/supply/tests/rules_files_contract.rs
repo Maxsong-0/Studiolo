@@ -26,6 +26,9 @@ fn only_markdown_files_directly_under_the_rules_root_are_rule_files() {
         rule_subject("_规则/通用工作规则.md"),
         Some("通用工作规则.md")
     );
+    // 扩展名不分大小写：供给层把 `.MD` 也当笔记，规则判定必须同口径，否则可绕过名单。
+    assert_eq!(rule_subject("_规则/X.MD"), Some("X.MD"));
+    assert_eq!(rule_subject("_规则/y.Md"), Some("y.Md"));
     for path in [
         "_规则/sub/x.md",
         "_规则/references/x.md",

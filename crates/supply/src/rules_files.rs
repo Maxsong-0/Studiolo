@@ -9,9 +9,15 @@ pub const RULES_ROOT: &str = "_规则";
 
 /// `path` 是规则文件时返回其 subject（文件名），否则返回 `None`。
 ///
-/// 只看逻辑路径的形状：`_规则/<名>`，`<名>` 不含 `/` 且以 `.md` 结尾；不访问文件系统。
+/// 只看逻辑路径的形状：`_规则/<名>`，`<名>` 不含 `/` 且扩展名为 `md`；不访问文件系统。
+/// 扩展名不分大小写，与供给层判定 Markdown 的口径一致（`replica/verify.rs` 的 `markdown`）：
+/// 否则 `_规则/X.MD` 会被当笔记供出却不算规则文件，绕过名单。这类名字过不了规则 subject
+/// 的命名校验（只收小写 `.md`），永远不在名单里，因而一律拒绝（失败关闭）。
 #[must_use]
 pub fn rule_subject(path: &str) -> Option<&str> {
     let name = path.strip_prefix(RULES_ROOT)?.strip_prefix('/')?;
-    (!name.contains('/') && name.ends_with(".md")).then_some(name)
+    let markdown = name
+        .rsplit_once('.')
+        .is_some_and(|(_, extension)| extension.eq_ignore_ascii_case("md"));
+    (!name.contains('/') && markdown).then_some(name)
 }
