@@ -1,4 +1,4 @@
-//! 公开接口回归：导航安全的 `Markdown` 解析与路径匹配。
+//! 公开接口回归：导航安全的 Markdown 解析与路径匹配。
 
 use studiolo_core::VaultPath;
 use studiolo_vault_index::{InMemoryVaultIndex, LinkResolution, MarkdownDocument, VaultIndex};

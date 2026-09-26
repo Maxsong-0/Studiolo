@@ -24,7 +24,7 @@ impl RunnerPlane {
                     run.summary.state = "failed".into();
                 }
                 // 已保留的补丁与引擎的任何预留仍可供恢复使用。
-                // 这里的任何错误都不会重启 `CLI`，也不妨碍下一个尝试接受监管。
+                // 这里的任何错误都不会重启 CLI，也不妨碍下一个尝试接受监管。
                 run.cleanup_pending = self.stop_and_close(run, now).is_err();
             }
         }
@@ -264,7 +264,7 @@ impl RunnerPlane {
                 .command(run.spec.task_id, TaskCommand::Cancel, now)
                 .map_err(|_| "取消封闭待恢复")?;
         }
-        // 只有隔离而没有有效的 `CLI` 回执，不算停止回执。保留原定的
+        // 只有隔离而没有有效的 CLI 回执，不算停止回执。保留原定的
         // 180 秒窗口；到期后由周期对账记为 `abandoned`。
         Ok(())
     }

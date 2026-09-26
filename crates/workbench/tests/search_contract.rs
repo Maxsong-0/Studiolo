@@ -1,4 +1,4 @@
-//! T-007 测试走的是与 `HTTP` 调用方相同的内存搜索接口。
+//! T-007 测试走的是与 HTTP 调用方相同的内存搜索接口。
 
 use studiolo_core::VaultPath;
 use studiolo_vault_index::MarkdownDocument;

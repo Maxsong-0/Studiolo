@@ -54,7 +54,7 @@ pub struct ProviderConfig {
     pub model: String,
     /// 归管理员所有、不可变的最小运行时根目录。
     pub runtime_root: PathBuf,
-    /// 钉死的原生 `CLI` 摘要。
+    /// 钉死的原生 CLI 摘要。
     pub cli_sha256: String,
     /// 属主为 `root` 的 `bubblewrap` 可执行文件。
     pub bubblewrap: PathBuf,
@@ -84,7 +84,7 @@ pub struct SourceConfig {
     /// 留存期限上限。
     pub retain_until_unix_seconds: i64,
 }
-/// 管理员批准的项目映射；`API` 调用方绝不提供宿主机路径。
+/// 管理员批准的项目映射；API 调用方绝不提供宿主机路径。
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ProjectConfig {

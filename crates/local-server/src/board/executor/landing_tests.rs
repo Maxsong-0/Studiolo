@@ -1,4 +1,4 @@
-//! 仓库副作用只在私有临时夹具中演练，两种 `CLI` 都不调用。
+//! 仓库副作用只在私有临时夹具中演练，两种 CLI 都不调用。
 use super::{hash, landing_store::Lease};
 use std::{fs, os::unix::fs::PermissionsExt, path::Path, process::Command};
 use studiolo_runner_adapter::{CodeLandingPlan, apply_code_patch};

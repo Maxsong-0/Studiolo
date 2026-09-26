@@ -1,4 +1,4 @@
-//! `socket` 的归属钉在父目录 `FD` 与 `inode` 上；清理不会误中替换进来的文件。
+//! `socket` 的归属钉在父目录 FD 与 `inode` 上；清理不会误中替换进来的文件。
 use rustix::fs::{AtFlags, FileType, Mode, OFlags, Stat, chmodat, open, statat, unlinkat};
 use std::{
     fs::File,

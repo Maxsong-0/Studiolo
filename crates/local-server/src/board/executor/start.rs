@@ -11,7 +11,7 @@ use studiolo_runner_adapter::{RealRunner, RunnerAdapter, RunnerRef};
 use studiolo_task_engine::TaskEngine;
 
 impl RunnerPlane {
-    /// 启动一个显式选定、经认证的工作项；主人批准须由 `HTTP` 层强制执行。
+    /// 启动一个显式选定、经认证的工作项；主人批准须由 HTTP 层强制执行。
     pub fn start_task(&self, r: StartRequest) -> Result<RunSummary, String> {
         if self.authority.frozen.load(Ordering::SeqCst) {
             return Err("Runner全局冻结".into());

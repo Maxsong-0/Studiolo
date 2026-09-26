@@ -3,7 +3,7 @@ use super::RunnerConfig;
 use std::path::{Path, PathBuf};
 
 /// 用每个 `canonical` 根、凭据根与控制根校验受信任的 `Runner` 映射。
-/// 宿主机根由调用方提供且已核验；没有一个来自 `AI` 请求。
+/// 宿主机根由调用方提供且已核验；没有一个来自 AI 请求。
 pub fn validate_isolated_roots(config: &RunnerConfig, forbidden: &[PathBuf]) -> Result<(), String> {
     config.validate()?;
     if forbidden.is_empty() {

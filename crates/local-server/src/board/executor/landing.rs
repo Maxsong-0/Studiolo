@@ -106,7 +106,7 @@ impl RunnerPlane {
             result.replayed = true;
             return Ok(result);
         }
-        // `CAS` 被拒时绝不写入意图，也不触碰仓库工作树。
+        // CAS 被拒时绝不写入意图，也不触碰仓库工作树。
         plan.verify_base()
             .map_err(|_| "HEAD或完整脏工作树与候选基线不匹配")?;
         self.authority

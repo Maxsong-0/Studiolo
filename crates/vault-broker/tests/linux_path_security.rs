@@ -190,7 +190,7 @@ fn raced_file_replacements_never_read_links_or_block_on_a_fifo() {
         let result = receiver.recv_timeout(Duration::from_secs(15));
         stop.store(true, Ordering::Relaxed);
         attacker.join().unwrap();
-        // 失败时不要 `join` 被阻塞的读者：有界断言必须报告 `FIFO` 回归，
+        // 失败时不要 `join` 被阻塞的读者：有界断言必须报告 FIFO 回归，
         // 而不是让整个测试进程挂起。
         assert!(result.is_ok(), "{attack} replacement blocked a public read");
         assert!(

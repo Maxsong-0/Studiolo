@@ -1,4 +1,4 @@
-//! 被取消的运行保留真实的停止包，无需再调用一次 `CLI` 即可恢复。
+//! 被取消的运行保留真实的停止包，无需再调用一次 CLI 即可恢复。
 mod stopped_candidates_support;
 use stopped_candidates_support::*;
 use studiolo_audit_ledger::{AuditFilter, AuditLedger, MemoryAuditLedger};
