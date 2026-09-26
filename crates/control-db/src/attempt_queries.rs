@@ -1,5 +1,10 @@
 //! attempt 的只读查询：单条、按任务历史与按阶段列举。
-use super::*;
+use crate::{
+    AttemptPhase, AttemptRecord, ControlDb, DbError,
+    types::{parse_attempt_id, parse_task_id},
+};
+use rusqlite::{OptionalExtension as _, params};
+use studiolo_core::{AttemptId, Fence, TaskId};
 
 impl ControlDb {
     /// 列出已撤销、取消仍在等待 runner 隔离的 attempt。

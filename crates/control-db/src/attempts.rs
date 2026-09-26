@@ -1,5 +1,14 @@
 //! attempt 的认领、runner 挂接、租约续期、能力判定与重启隔离。
-use super::*;
+use crate::{
+    AttemptPhase, AttemptRecord, ControlDb, DbError, SnapshotRecord, board, lifecycle,
+    projection_outbox::enqueue_projection,
+    runtime_audit,
+    snapshots::persist_snapshot,
+    types::{fence_i64, parse_task_id},
+};
+use rusqlite::{OptionalExtension as _, TransactionBehavior, params};
+use serde_json::Value;
+use studiolo_core::{AttemptId, Fence, TaskId};
 
 impl ControlDb {
     /// 原子地创建唯一的活动 attempt，并保存快照元数据。

@@ -1,5 +1,7 @@
 //! 任务页投影 outbox：事务内入队、列出待投递与确认投递。
-use super::*;
+use crate::{ControlDb, DbError, OutboxRecord, types::parse_task_id};
+use rusqlite::{Transaction, params};
+use studiolo_core::TaskId;
 
 impl ControlDb {
     /// 返回尚未投递的任务页投影。

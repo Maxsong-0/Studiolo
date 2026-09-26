@@ -1,5 +1,11 @@
 //! 终态 T1：预留终态赢家及其前滚输入。
-use super::*;
+use crate::{
+    ControlDb, DbError, TerminalReservation, board, board_completion, lifecycle,
+    projection_outbox::enqueue_projection, stopped_candidates, types::fence_i64,
+};
+use rusqlite::{OptionalExtension as _, TransactionBehavior, params};
+use serde_json::Value;
+use studiolo_core::{AttemptId, Fence, TaskId};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum TerminalKind {

@@ -3,7 +3,8 @@ mod handoff;
 mod legacy;
 mod numbering;
 mod receipt;
-use super::*;
+use crate::TerminalReservation;
+use serde_json::Value;
 
 pub(super) fn is_pointer_reservation(reservation: &TerminalReservation) -> bool {
     let Some(pointer) = reservation.artifacts_json.as_object() else {

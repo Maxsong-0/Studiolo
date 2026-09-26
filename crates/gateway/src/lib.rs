@@ -42,8 +42,3 @@ pub use relay_unix::serve_relay_connection;
 mod wait_probe;
 #[cfg(test)]
 mod waiting_tests;
-
-// admission 经 crate 根路径取用下列内部类型与外部 ID 类型。
-use call_table::{CallAdmission, CallTable};
-use studiolo_audit_ledger::AuditEventId;
-use studiolo_core::{AttemptId, ToolId};

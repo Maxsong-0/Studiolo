@@ -1,9 +1,11 @@
 //! 准入后的完整授权在槽锁外执行；只有本次取得 Proceed 才承担释放责任。
 
 use crate::{
-    AuditEventId, CallAdmission, CallId, CallTable, GatewayError, JobCapability, MemoryGateway,
-    ToolId,
+    CallId, GatewayError, JobCapability, MemoryGateway,
+    call_table::{CallAdmission, CallTable},
 };
+use studiolo_audit_ledger::AuditEventId;
+use studiolo_core::{AttemptId, ToolId};
 
 pub(super) struct Authorization<'a> {
     pub(super) capability: &'a JobCapability,
@@ -33,7 +35,7 @@ impl Authorization<'_> {
 impl<Request: PartialEq, Response: Clone> CallTable<Request, Response> {
     pub(super) fn admit_checked(
         &self,
-        key: (crate::AttemptId, CallId),
+        key: (AttemptId, CallId),
         request: &Request,
         authorize: impl FnOnce() -> Result<(), GatewayError>,
     ) -> Result<CallAdmission<Response>, GatewayError> {

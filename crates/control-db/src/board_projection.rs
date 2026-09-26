@@ -1,5 +1,6 @@
 //! SQLite 只存投影哈希；生成文本与人写文本都留在 Broker。
-use super::*;
+use crate::{ControlDb, DbError, runtime_audit};
+use rusqlite::{OptionalExtension as _, TransactionBehavior, params};
 impl ControlDb {
     /// 读取最近一次成功安装的系统块指纹。
     pub fn board_projection_hash(&self, path: &str) -> Result<Option<String>, DbError> {

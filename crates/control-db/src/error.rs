@@ -1,5 +1,6 @@
 //! 控制面持久化失败的统一错误类型。
-use super::*;
+use crate::AttemptPhase;
+use studiolo_core::VaultUuid;
 
 /// 控制面持久化失败。
 #[derive(Debug, thiserror::Error)]

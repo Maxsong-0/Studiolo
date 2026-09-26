@@ -1,5 +1,6 @@
 //! schema 版本号与幂等迁移，全部步骤在同一写事务内完成。
-use super::*;
+use crate::{ControlDb, DbError, board, schema_guard};
+use rusqlite::TransactionBehavior;
 
 pub(super) const SCHEMA_VERSION: i64 = 3;
 

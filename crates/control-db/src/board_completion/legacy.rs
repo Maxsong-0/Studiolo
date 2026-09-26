@@ -1,5 +1,11 @@
 //! 旧版内联终态正文的一次性迁移：列出待迁记录，Broker staging 之后换成指针。
-use super::*;
+use super::is_pointer_reservation;
+use crate::{
+    AttemptRecord, ControlDb, DbError, TerminalReservation,
+    types::{parse_attempt_id, parse_task_id},
+};
+use rusqlite::params;
+use studiolo_core::AttemptId;
 
 impl ControlDb {
     /// 列出旧版内联终态正文，供经 Broker staging 的一次性迁移使用。

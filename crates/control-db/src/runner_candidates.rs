@@ -1,5 +1,12 @@
 //! 候选保留只是证据索引；T1/T2 仍是唯一的发布状态机。
-use super::*;
+use crate::{
+    ControlDb, DbError, TerminalReservation, board_completion, runtime_audit,
+    types::{fence_i64, parse_attempt_id},
+};
+use rusqlite::{TransactionBehavior, params};
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+use studiolo_core::{AttemptId, Fence, TaskId};
 /// 保留下来的内容面 staging 指针，含在 T1 之前被拒绝或取消的候选。
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct RunnerCandidateStage {

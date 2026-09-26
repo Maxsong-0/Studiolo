@@ -1,5 +1,6 @@
 //! 只含元数据的不可变输入快照：落盘与读取。
-use super::*;
+use crate::{ControlDb, DbError, SnapshotEntryRecord, SnapshotRecord, types::parse_vault_uuid};
+use rusqlite::{OptionalExtension as _, Transaction, params};
 
 impl ControlDb {
     /// 加载单个快照的元数据。

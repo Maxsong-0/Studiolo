@@ -1,5 +1,11 @@
 //! 结构化交接：按 task/attempt 读取已接受的交接；租约有效时经 fence 校验保存，并把任务放回队列。
-use super::*;
+use crate::{
+    ControlDb, DbError, lifecycle, projection_outbox::enqueue_projection, runtime_audit,
+    types::fence_i64,
+};
+use rusqlite::{OptionalExtension as _, TransactionBehavior, params};
+use serde_json::Value;
+use studiolo_core::{AttemptId, Fence, TaskId};
 
 impl ControlDb {
     /// 读取与 task/attempt 匹配的已接受交接；据此可在释放后精确重放。

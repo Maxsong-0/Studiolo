@@ -1,5 +1,11 @@
 //! 停止候选与终态共用 T1/T2，其取消结果在预留时即冻结。
-use super::*;
+use crate::{
+    BoardDefinition, ControlDb, DbError, TaskStatus, TerminalReservation, board,
+    terminal_reserve::TerminalKind, types::fence_i64,
+};
+use rusqlite::{OptionalExtension as _, Transaction, params};
+use serde_json::Value;
+use studiolo_core::{AttemptId, Fence, TaskId};
 
 impl ControlDb {
     /// T1 只在权威取消宽限期内接受停止态 staging 指针。

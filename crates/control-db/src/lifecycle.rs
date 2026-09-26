@@ -1,5 +1,13 @@
 //! 租约时效权威与感知进度的对账；后者有别于启动恢复。
-use super::*;
+use crate::{
+    BoardDefinition, ControlDb, DbError, board,
+    projection_outbox::enqueue_projection,
+    runtime_audit,
+    types::{fence_i64, parse_attempt_id, parse_task_id},
+};
+use rusqlite::{OptionalExtension as _, Transaction, TransactionBehavior, params};
+use serde::{Deserialize, Serialize};
+use studiolo_core::{AttemptId, Fence, TaskId};
 
 /// 活动 attempt 的单调进度计数。
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]

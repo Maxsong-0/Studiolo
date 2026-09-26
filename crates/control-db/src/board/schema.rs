@@ -1,5 +1,6 @@
 //! v3 增量元数据表；旧版正文预留在迁入 staging 之前仍可恢复。
-use super::super::*;
+use crate::DbError;
+use rusqlite::Transaction;
 pub(crate) fn migrate(tx: &Transaction<'_>) -> Result<(), DbError> {
     tx.execute_batch(
         "CREATE TABLE IF NOT EXISTS runner_candidate_stages (task_id TEXT NOT NULL REFERENCES tasks(task_id),attempt_id TEXT NOT NULL REFERENCES attempts(attempt_id),fence INTEGER NOT NULL,pointer_json TEXT NOT NULL,reason TEXT NOT NULL,PRIMARY KEY(attempt_id,pointer_json));

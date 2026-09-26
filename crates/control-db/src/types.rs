@@ -1,5 +1,9 @@
 //! 对外的持久状态与记录类型，以及持久文本与领域值之间的换算。
-use super::*;
+use crate::DbError;
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+use std::str::FromStr;
+use studiolo_core::{AttemptId, Fence, TaskId, VaultUuid};
 
 /// 权威的任务生命周期状态。
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
