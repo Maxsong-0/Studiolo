@@ -184,8 +184,6 @@ impl SyncPlane {
         &self.plane_root
     }
 
-
-
     /// 按固定间隔驱动，直到 `stop` 变真；每轮在阻塞线程里跑，轮内失败只记健康不退出。
     ///
     /// # Errors
