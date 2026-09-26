@@ -4,7 +4,10 @@ use std::collections::BTreeSet;
 
 use studiolo_core::VaultPath;
 
-use crate::{diff::json_diff, model::CapabilitySet};
+use crate::{
+    diff::json_diff,
+    model::{CapabilitySet, validate_rules_subject},
+};
 
 use super::{Context, Expansion, Problem, Report};
 
@@ -79,6 +82,20 @@ pub(super) fn capability_set(report: &mut Report, canonical: &str, context: &Con
                 .push(Problem::new(path, "不是合法的逻辑路径前缀")),
         }
     }
+    // 规则名单的每项都须是合法的规则母本 subject（与策略平面 rules 类同一命名规则，ADR-026 D3）。
+    let mut rules_seen = BTreeSet::new();
+    for (index, subject) in set.read.rules_whitelist.iter().enumerate() {
+        let path = format!("read.rules_whitelist[{index}]");
+        if validate_rules_subject(subject).is_err() {
+            report
+                .problems
+                .push(Problem::new(path, "不是合法的规则 subject"));
+        } else if !rules_seen.insert(subject.as_str()) {
+            report
+                .problems
+                .push(Problem::new(path, "重复的规则 subject"));
+        }
+    }
     for (index, binding) in set.hard_bound_skills.iter().enumerate() {
         let path = format!("hard_bound_skills[{index}]");
         if binding.when.trim().is_empty() || binding.when.chars().count() > 200 {
@@ -133,6 +150,34 @@ pub(super) fn capability_set(report: &mut Report, canonical: &str, context: &Con
                 before: Some(prefix.clone()),
                 after: None,
                 note: "读取范围收窄".into(),
+            });
+        }
+    }
+    let old_rules = previous
+        .as_ref()
+        .map(|set| set.read.rules_whitelist.clone())
+        .unwrap_or_default();
+    for subject in &set.read.rules_whitelist {
+        if !old_rules.contains(subject) {
+            report.expansions.push(Expansion {
+                path: "read.rules_whitelist".into(),
+                before: None,
+                after: Some(subject.clone()),
+                note: if previous.is_none() {
+                    "新类型首次获得规则读取".into()
+                } else {
+                    "规则读取范围变宽".into()
+                },
+            });
+        }
+    }
+    for subject in &old_rules {
+        if !set.read.rules_whitelist.contains(subject) {
+            report.narrowings.push(Expansion {
+                path: "read.rules_whitelist".into(),
+                before: Some(subject.clone()),
+                after: None,
+                note: "规则读取范围收窄".into(),
             });
         }
     }

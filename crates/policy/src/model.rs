@@ -56,7 +56,7 @@ impl fmt::Display for PolicyKind {
     }
 }
 
-/// 读权限：项目白名单式枚举；未登记者零权限。
+/// 读权限：项目白名单与规则名单两张枚举；未登记者零权限。
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ReadCaps {
@@ -64,6 +64,9 @@ pub struct ReadCaps {
     pub project_whitelist: Vec<String>,
     /// 必须为 true：白名单之外不进入计算。
     pub deny_by_default: bool,
+    /// 可读的规则 subject（如 `通用工作规则.md`）；缺省为空＝一条规则都不读（ADR-026 D4）。
+    #[serde(default)]
+    pub rules_whitelist: Vec<String>,
 }
 
 /// 写权限；`board` 由主人显式发布，`content_direct` 永久为 false。

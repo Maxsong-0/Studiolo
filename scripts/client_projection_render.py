@@ -28,7 +28,7 @@ def _origin(config, snapshot):
                   "导出时间、来源确认时间、读取实例、逐项策略版本与逐文件摘要见同目录 `manifest.json`。\n")
         return (origin, [(name, "policy/rules/" + name) for name in config["rules"]],
                 [(name, "policy/skills/" + name + "/SKILL.md") for name in config["skills"]],
-                "策略平面的 skill 是单篇文本（摘要、触发与正文），原样保存在对应的 `SKILL.md`。")
+                "策略平面的 skill 以规范 JSON 下发，导出时渲染为单篇文本（摘要、触发与正文），保存在对应的 `SKILL.md`。")
     fresh = snapshot["freshness"]
     origin = (f"来源 generation：`{fresh['generation']}`\n\n"
               f"来源摘要：`{fresh['source_digest']}`\n\n"

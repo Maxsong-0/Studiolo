@@ -26,7 +26,10 @@ impl AgentSession {
         let scope = format!("{prefix}/");
         let mut lines = Vec::new();
         for entry in &generation.snapshot.entries {
-            if !entry.path.as_str().starts_with(&scope) {
+            // 名单外的规则文件与白名单外一样不进入清单，计数随之一致（ADR-026 D5）。
+            if !entry.path.as_str().starts_with(&scope)
+                || !grant.allows_rule_file(entry.path.as_str())
+            {
                 continue;
             }
             let kind = match entry.kind {
@@ -63,9 +66,15 @@ impl AgentSession {
                 return Err(McpError::invalid_params("路径语法无效", None));
             }
         };
-        // 供给视图先于任何读取：能力集没列的路径从一开始不进入计算。
+        // 供给视图先于任何读取：能力集没列的路径从一开始不进入计算。先判前缀；前缀内的规则文件
+        // 不在规则名单时审计记真实原因，对外与白名单外同一句，不暴露该规则是否存在（ADR-026 D5）。
         if !grant.allows(&path) {
-            self.deny(actor, "read_note", "outside_allowlist");
+            let reason = if grant.in_view(&path) {
+                "rule_not_whitelisted"
+            } else {
+                "outside_allowlist"
+            };
+            self.deny(actor, "read_note", reason);
             return Err(McpError::invalid_params("路径不在供给白名单内", None));
         }
         let generation = self.generation(&grant.instance, "read_note").await?;
@@ -125,10 +134,11 @@ impl AgentSession {
             })
             .map_err(|error| McpError::invalid_params(error.to_string(), None))?;
         let scope = format!("{prefix}/");
+        // 名单外的规则文件先滤掉再截前 100 条：既不命中，也不占命中名额。
         let hits = results
             .hits
             .into_iter()
-            .filter(|hit| hit.path.starts_with(&scope))
+            .filter(|hit| hit.path.starts_with(&scope) && grant.allows_rule_file(&hit.path))
             .take(100)
             .collect::<Vec<_>>();
         // 每个命中路径都是一次供给：先审计，任一失败即整体拒绝。

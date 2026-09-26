@@ -8,6 +8,8 @@
 > **2026-09-17 T-069（M4）**：`serve --policy` 接入策略平面后，每次调用先复核三级吊销与该类型能力集，供给视图 ＝ `--allow` ∩ 能力集白名单，
 > 无能力集即零权限（握手「应答但一项不给」）；路牌第 3／5／6 项改自 effective；新增 tools `policy_read`／`propose_desired` 与 `GET /read/policy`。
 > 本文 §2「只读 ＋ 配置白名单（M4 前固定）」与 §4「四个 tools」是 M3 首片的历史口径；现行以 [策略平面契约](policy-plane.md) 为准。
+> **2026-09-26 T-160（ADR-026）**：能力集新增规则名单 `read.rules_whitelist`，规则文件与策略规则母本在接入方的五条读取路径上
+> 按同一名单裁决，`policy_read` 的单条 skill 正文改给规范 JSON；见 §10。
 
 ## 1. Module 与装配
 
@@ -98,6 +100,7 @@
 
 - 审计**先于**返回：`content.read` 追加失败即拒绝返回，错误 `audit_unavailable`。
 - 白名单外路径、隐藏路径、越界：拒绝并记 `agent.action_denied`（reason=`outside_allowlist` / `unsafe_path`）；不回显宿主路径。
+  接入策略平面后，前缀内但不在规则名单的规则文件记 `rule_not_whitelisted`，对外与白名单外同一句（§10）。
 - 不提供写、不提供整库视图、不提供「先给个只读」默认值（未列入即拒绝）。
 
 ## 5. 读取审计查询
@@ -120,6 +123,7 @@
 | `unauthenticated` | 无/错/吊销 token | HTTP 401，无正文细节 |
 | `budget_exceeded` | 路牌超 2000 token | initialize 失败，JSON-RPC 错误含实际 token 数 |
 | `outside_allowlist` / `unsafe_path` | 越界读取 | tool 错误，已审计 |
+| `rule_not_whitelisted` | 读能力集规则名单外的规则文件或规则母本（§10） | 与白名单外（`read_note`）或不存在（`policy_read`）同一对外错误，已审计 |
 | `audit_unavailable` | 账本不可用 | 降级握手 / tool 拒绝 |
 | `not_found` | 白名单内路径不存在 | tool 错误，已审计为拒绝 |
 
@@ -157,3 +161,33 @@
   升级时必须连同新单元一起安装，只换二进制会起不来。见
   [秘密驻留面](../m2/secret-residency.md) §5 与 `docs/m3/replica-operations.md` §2。
 - 服务器安装、目录约定与实际部署记录见 `docs/m3/server-agent.md`。
+
+## 10. 规则级读权限（T-160，2026-09-26，vault ADR-026）
+
+- **规则文件**＝直接位于 `_规则/` 下的 `.md` 文件，文件名即规则 subject，与是否已发布到策略平面无关（D9）；
+  `_规则/` 下的子目录（`references/`、`归档/`、`skills/` 等）不是规则文件，照项目白名单；`项目/*/CLAUDE.md` 是项目文件（D11）。
+  规则根名与判定只在 `crates/supply/src/rules_files.rs` 定义一处（`RULES_ROOT`、`rule_subject`）。
+- **单一裁决点**（D10）：`Grant::allows` ＝ 供给视图前缀判定 ∧ `allows_rule_file`；规则文件须在能力集
+  `read.rules_whitelist` 内，非规则文件一律放行；策略规则母本走 `allows_rule`，同一份名单。
+  未接策略平面的 M3 兼容模式不做规则过滤。能力集缺该字段即零规则（D4）。人侧永远全读（D5／D12）。
+- **五条读取路径同一判定**（D5）：
+
+| 路径 | 名单外的规则 | 审计 |
+|---|---|---|
+| `read_note` | 先判前缀：前缀外仍是 `outside_allowlist`；前缀内的名单外规则文件拒绝，对外同一句「路径不在供给白名单内」（HTTP 400） | `agent.action_denied{reason=rule_not_whitelisted}` |
+| `list_entries` | 不进清单，计数与行数一致 | 不单独记拒绝 |
+| `search` | 先滤掉再截前 100 条：不命中，也不占命中名额 | 不单独记拒绝；被滤掉的路径不产生 `content.read` |
+| `policy_read kind=rules` | 清单里不出现（计数一致）；单条对外与不存在同一句「规则母本不存在」（HTTP 404） | 单条记 `rule_not_whitelisted`；名单内而不存在记 `not_found` |
+| 握手路牌 | 第 5 项准则与硬绑定句、第 6 项入口都不取名单外的策略规则与 vault 规则文件（库文件兜底同一名单） | — |
+
+- `policy_read` 规则读取所见的 effective 哈希须等于本次授权复核时的哈希（名单与条目同属一版），不等即失败关闭
+  「策略在本次调用途中发布了新版本，本次拒绝供给，请重试」。
+- **`policy_read` 输出**：首行 `# 策略版本 <12 位>`。规则清单次行 `N 份规则母本`，其后逐行 `subject\tv<n>\t<sha256 前 12 位>`；
+  规则单条 `policy://rules/<subject>@v<n> sha256 <64 位>` 行后接正文原字节。skills 清单次行 `N 个 skill（…）`，其后逐行
+  `名\tv<n>\t摘要\t触发（以 " | " 相连）`，摘要与触发里的控制字符与 U+2028／U+2029 压成空格，一个 skill 恰占一行；
+  skill 单条 `policy://skills/<名>@v<n> sha256 <64 位>` 行后接**入库的规范 JSON 原文**
+  （`{"name","summary","triggers","markdown"}`，serde 字段序、紧凑分隔、非 ASCII 原样），sha256 即这段字节的摘要，
+  读方按收到的字节核对，不再从「摘要：…／触发：…」文本还原（待拍板清单第 9 条，用户 2026-09-23 选 (a)）。
+- 契约测试：`crates/agent-server/tests/rules_access_contract.rs`（五条路径、对外同一错误与审计原因、子目录、缺字段零规则、
+  M3 兼容模式不过滤、HTTP 外壳同一判定）、`crates/supply/tests/rules_files_contract.rs`（判定与路牌库文件兜底）、
+  `crates/policy/tests/rules_whitelist_contract.rs`（能力集字段校验与扩大／收窄项）。

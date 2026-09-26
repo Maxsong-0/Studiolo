@@ -80,6 +80,7 @@ fn signpost_has_six_sections_and_is_derived_from_index_tasks_and_rules() {
         freshness: None,
         tools: TOOLS,
         policy: None,
+        rules_whitelist: None,
     })
     .unwrap();
     let text = &signpost.text;
@@ -160,6 +161,7 @@ fn missing_skeleton_shows_unavailable_and_rules_absent_is_stated() {
         freshness: None,
         tools: TOOLS,
         policy: None,
+        rules_whitelist: None,
     })
     .unwrap()
     .text;
@@ -221,6 +223,7 @@ fn oversized_material_is_trimmed_then_fails_closed_past_the_hard_budget() {
         freshness: None,
         tools: TOOLS,
         policy: None,
+        rules_whitelist: None,
     };
     let error = signpost::derive(&input).unwrap_err();
     assert!(error.tokens > HARD_BUDGET_TOKENS);
@@ -241,6 +244,7 @@ fn freshness_is_never_trimmed_out_of_the_hard_handshake_budget() {
         freshness: Some(&freshness),
         tools: TOOLS,
         policy: None,
+        rules_whitelist: None,
     })
     .unwrap_err();
     assert!(error.tokens > HARD_BUDGET_TOKENS);

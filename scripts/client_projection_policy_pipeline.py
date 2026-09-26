@@ -20,16 +20,20 @@ RULE, LATER_RULE, SKILL_NAME = "通用工作规则.md", "新增规则.md", "demo
 # 规则母本入库只把 CRLF 统一为 LF；正文只用 LF，落盘字节才能与发布正文逐字节相等。
 RULE_BODY = "# 通用工作规则\n\n## 准则① 永远说中文\n\n禁止绕过式修复；改码前先读协调状态。\n"
 LATER_BODY = "# 新增规则\n\n首轮导出之后才发布，且不在投影所选之列。\n"
-# 摘要含全角标点、emoji、ASCII 引号与反斜杠；摘要与触发都不含换行，触发不含 ` | `（文本协议无法唯一还原）。
+# 摘要含全角标点、emoji、ASCII 引号、反斜杠与换行，触发含 ` | `：单条正文是入库的规范 JSON，
+# 客户端按收到的字节核对摘要，不再从文本还原，这些字符都不影响整批通过。
 SKILL = {"name": SKILL_NAME,
-         "summary": "演示技能：全角「引号」（括号）！emoji 🚀✨，ASCII \"quote\" 与反斜杠 \\",
-         "triggers": ["写或改 React / Next.js 代码", "重构：拆分组件？"],
+         "summary": "演示技能：全角「引号」（括号）！emoji 🚀✨，ASCII \"quote\" 与反斜杠 \\\n第二行摘要",
+         "triggers": ["写或改 React / Next.js 代码", "重构：拆分组件？", "前端 | 后端"],
          "markdown": "# 演示技能\n\n第一段：先读规则，再动手。\n\n```python\ndef greet():\n"
                      "\tprint(\"你好，\\\"世界\\\" 🚀\")\n```\n\n末段：结束。\n"}
+# 落盘是客户端从规范 JSON 渲染的三段文本（摘要、触发、空行加正文），与改前的落盘格式逐字节相同。
 SKILL_TEXT = f"摘要：{SKILL['summary']}\n触发：{' | '.join(SKILL['triggers'])}\n\n{SKILL['markdown']}"
-# 类型名须与 Pipeline 签发的类型一致；只读投影不需要任何写或提案能力。
+# 类型名须与 Pipeline 签发的类型一致；只读投影不需要任何写或提案能力。规则名单只列投影所选的规则
+# （ADR-026 D4：缺字段即零规则）；后发布的新增规则不在名单内，照样改变策略版本。
 CAPABILITY = {"ai_type": "fixture",
-              "read": {"project_whitelist": ["项目/Studiolo"], "deny_by_default": True},
+              "read": {"project_whitelist": ["项目/Studiolo"], "deny_by_default": True,
+                       "rules_whitelist": [RULE]},
               "write": {"board": False, "content_patch_only": False, "content_direct": False},
               "policy": {"propose_desired": False, "activate": False}, "hard_bound_skills": []}
 # 格式唯一来源：crates/agent-server/src/admin/policy.rs `bootstrap` 的控制终端回显。
@@ -144,7 +148,7 @@ def run_policy(binary, pipe, cli):
             pipe.require((installed / "rules" / RULE).read_bytes() == RULE_BODY.encode("utf-8"),
                          "规则母本落盘字节与发布正文不同")
             pipe.require((installed / "skills" / SKILL_NAME / "SKILL.md").read_bytes() == SKILL_TEXT.encode("utf-8"),
-                         "skill 落盘不是「摘要、触发、空行、正文」原样")
+                         "skill 落盘不是由规范 JSON 渲染的「摘要、触发、空行、正文」")
             offline = cli("check", "--target", target, token=p.token)
             pipe.require(offline["source_status"] == "unknown_offline" and offline["policy_effective"] == short,
                          "策略模式离线检查冒充来源新鲜度")

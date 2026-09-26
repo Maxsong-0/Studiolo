@@ -228,13 +228,29 @@ class FetchTests(unittest.TestCase):
         self.fixture.use_policy(skills=()).fetch()
         self.assertEqual(len(self.fixture.calls), 4, "只选规则时不读 skills 清单")
 
-    def test_skill_digest_matches_server_serde_json(self):
+    def test_fixture_skill_json_matches_server_serde_bytes(self):
         # 真实 studiolo-agent（main 959d473）bootstrap 后 `/read/policy` 回报的 sha256（serde 规范 JSON），
-        # 覆盖引号、反斜杠、制表、CRLF、控制符、DEL、emoji 与 U+2028；本地复算必须逐位一致。
-        body = ("摘要：演示\"引号\\反斜杠\t制表\n触发：新功能 | 写 React 时\n\n# 演示\n\t制表\r\n"
-                "CRLF\u0001控制\u007f删除 \U0001f600  段落 </script> \\ \"\n")
-        self.assertEqual(fetcher._skill_digest("demo", body),
+        # 覆盖引号、反斜杠、制表、CRLF、控制符、DEL、emoji 与 U+2028：夹具合成的服务端正文须与之逐字节一致。
+        self.fixture.skills["demo"] = (4, "演示\"引号\\反斜杠\t制表", ["新功能", "写 React 时"],
+                                       "# 演示\n\t制表\r\nCRLF\u0001控制\u007f删除 \U0001f600 \u2028段落 </script> \\ \"\n")
+        self.assertEqual(digest(self.fixture.skill_json("demo").encode()),
                          "12ae2c45a370f61ba8935874e49519b7d374f22be4e51bf5fbdcee28d472fe62")
+        snapshot = self.fixture.use_policy().fetch()
+        self.assertEqual(snapshot["sources"][1]["body"],
+                         "摘要：演示\"引号\\反斜杠\t制表\n触发：新功能 | 写 React 时\n\n"
+                         + self.fixture.skills["demo"][3])
+
+    def test_skill_with_newline_summary_and_pipe_trigger_passes_whole_batch(self):
+        # 规范 JSON 按收到的字节核对，摘要含换行、触发含 ` | ` 也能整批通过；旧的文本还原在此必拒。
+        self.fixture.skills["demo"] = (4, "演示\n技能", ["新功能 | 重构", "拆分"], "# 演示\n正文\n")
+        snapshot = self.fixture.use_policy().fetch()
+        demo = [s for s in snapshot["sources"] if s["path"] == "policy/skills/demo/SKILL.md"]
+        self.assertEqual(demo, [{"path": "policy/skills/demo/SKILL.md",
+                                 "body": "摘要：演示\n技能\n触发：新功能 | 重构 | 拆分\n\n# 演示\n正文\n",
+                                 "policy_version": 4,
+                                 "policy_sha12": digest(self.fixture.skill_json("demo").encode())[:12]}])
+        listing = self.fixture.policy_text({"kind": ["skills"]})
+        self.assertIn("demo\tv4\t演示 技能\t新功能 | 重构 | 拆分", listing.split("\n"))
 
     def test_policy_listing_parses_empty_and_tabbed_rows(self):
         self.assertEqual(fetcher._policy_listing(f"# 策略版本 {EFFECTIVE}\n0 份规则母本\n", "rules"), (EFFECTIVE, {}))
@@ -248,7 +264,7 @@ class FetchTests(unittest.TestCase):
                          (head + "2 个 skill", moved + "2 个 skill"),
                          (head + "policy://skills/", moved + "policy://skills/"),
                          ("通用工作规则.md@v3", "通用工作规则.md@v9"), ("demo@v4", "demo@v9"),
-                         ("禁止绕过式修复。", "已被替换。"), ("\t保留", "\t替换"),
+                         ("禁止绕过式修复。", "已被替换。"), ("\\t保留", "\\t替换"),
                          ("\tv3\t" + sha12, "\tv3\t" + "0" * 12),
                          ("policy://rules/通用工作规则.md@", "policy://rules/其他.md@"),
                          ("2 份规则母本", "3 份规则母本"), (head + "2 份", head + "\n2 份")):
@@ -257,7 +273,7 @@ class FetchTests(unittest.TestCase):
                 self.fixture.mutate = lambda route, text, h: text.replace(old, new) if route == "policy" else text
                 self.rejected()
 
-    def test_policy_unlisted_name_leaked_secret_or_ambiguous_skill_rejects_batch(self):
+    def test_policy_unlisted_name_or_leaked_secret_rejects_batch(self):
         for rules, skills in ((("缺失.md",), ("demo",)), (("通用工作规则.md",), ("missing",))):
             with self.subTest(rules=rules, skills=skills):
                 self.fixture = Fixture().use_policy(rules, skills)
@@ -266,11 +282,33 @@ class FetchTests(unittest.TestCase):
                             for c in self.fixture.calls}
                 self.assertFalse({"缺失.md", "missing"} & subjects, "不在清单的名字不得发出正文请求")
         for name, value in (("rules", (3, "正文" + TOKEN)), ("skills", (4, "演示", [], "正文" + SESSION)),
-                            ("skills", (4, "演示\n技能", ["新功能"], "# 演示\n")),
-                            ("skills", (4, "演示", ["新功能 | 重构"], "# 演示\n"))):
+                            ("skills", (4, "演示", [TOKEN], "# 演示\n"))):
             with self.subTest(kind=name, value=value):
                 self.fixture = Fixture().use_policy()
                 getattr(self.fixture, name)["通用工作规则.md" if name == "rules" else "demo"] = value
+                self.rejected()
+        # 经 JSON 转义的令牌在收到的字节里看不出来，渲染成落盘文本后那一次检查必须拦下。
+        self.fixture = Fixture().use_policy()
+        self.fixture.raw_skills["demo"] = ('{"name":"demo","summary":"演示","triggers":[],"markdown":"\\u'
+                                           + format(ord(TOKEN[0]), "04x") + TOKEN[1:] + '"}')
+        self.assertNotIn(TOKEN, self.fixture.raw_skills["demo"])
+        self.rejected()
+
+    def test_skill_body_must_be_the_canonical_json_of_that_skill(self):
+        # 摘要行与正文字节一致（无撕裂），但正文不是该 skill 的规范 JSON 形状：整批拒绝。
+        fields = {"name": "demo", "summary": "演示技能", "triggers": ["新功能"], "markdown": "# 演示\n"}
+        for label, raw in (("非 JSON", "摘要：演示技能\n触发：新功能\n\n# 演示\n"),
+                           ("名字不符", dict(fields, name="other")),
+                           ("多余键", dict(fields, extra="x")),
+                           ("缺键", {k: v for k, v in fields.items() if k != "triggers"}),
+                           ("触发不是列表", dict(fields, triggers="新功能")),
+                           ("触发含非字符串", dict(fields, triggers=["新功能", 1])),
+                           ("摘要不是字符串", dict(fields, summary=None)),
+                           ("深层嵌套", "[" * 100_000 + "]" * 100_000)):
+            with self.subTest(label=label):
+                self.fixture = Fixture().use_policy()
+                self.fixture.raw_skills["demo"] = raw if isinstance(raw, str) else json.dumps(
+                    raw, ensure_ascii=False, separators=(",", ":"))
                 self.rejected()
 
 

@@ -3,6 +3,7 @@ import importlib.util
 import io
 import json
 from pathlib import Path
+import re
 import time
 import urllib.error
 import urllib.parse
@@ -19,7 +20,13 @@ INSTANCE = "01K00000000000000000000000"
 SESSION = "01K11111111111111111111111"
 TOKEN = "PUBLIC_TEST_ONLY_CANARY"
 EFFECTIVE = "0123456789ab"
+# 策略模式 skill：服务端单条读取给入库的规范 JSON（serde 字段序、紧凑分隔、非 ASCII 原样），
+# 客户端渲染成「摘要、触发、空行、正文」落盘。POLICY_SKILL 是落盘文本，短摘要取自 POLICY_SKILL_JSON。
+POLICY_SKILL_JSON = json.dumps({"name": "demo", "summary": "演示", "triggers": ["新功能"],
+                                "markdown": "# 演示\n正文。\n"}, ensure_ascii=False, separators=(",", ":"))
 POLICY_SKILL = "摘要：演示\n触发：新功能\n\n# 演示\n正文。\n"
+# 与 crates/agent-server/src/server/policy.rs `one_line` 相同：skills 清单列里的控制字符与行／段分隔符压成空格。
+LISTING_BREAKS = re.compile("[\x00-\x1f\x7f-\x9f\u2028\u2029]")
 
 
 def fixture_config(client="claude", url="http://127.0.0.1:4400/read"):
@@ -47,8 +54,8 @@ def fixture_policy_config(client="claude", url="http://127.0.0.1:4400/read"):
 
 
 def fixture_policy_snapshot(body="# 规则\n测试正文。\n", effective=EFFECTIVE,
-                            generation="a" * 32, instance="0" * 26, skill=POLICY_SKILL):
-    """策略模式快照：规则短摘要即正文摘要前 12 位；skill 短摘要本应取自服务端规范 JSON，schema 不复算，这里借正文摘要充当。"""
+                            generation="a" * 32, instance="0" * 26):
+    """策略模式快照：规则短摘要即正文摘要前 12 位；skill 短摘要是服务端规范 JSON 的摘要（schema 不复算）。"""
     now = int(time.time() * 1000)
     return {"identity": {"type": "fixture", "instance": instance},
             "freshness": {"generation": generation, "source_digest": "b" * 64,
@@ -56,8 +63,8 @@ def fixture_policy_snapshot(body="# 规则\n测试正文。\n", effective=EFFECT
             "generated_at_ms": now, "rules_source": "policy", "policy_effective": effective,
             "sources": [{"path": "policy/rules/通用工作规则.md", "body": body, "policy_version": 3,
                          "policy_sha12": digest(body.encode())[:12]},
-                        {"path": "policy/skills/demo/SKILL.md", "body": skill, "policy_version": 4,
-                         "policy_sha12": digest(skill.encode())[:12]}]}
+                        {"path": "policy/skills/demo/SKILL.md", "body": POLICY_SKILL, "policy_version": 4,
+                         "policy_sha12": digest(POLICY_SKILL_JSON.encode())[:12]}]}
 
 
 def fixture_policy_bundle(client="claude", **snapshot):
@@ -92,7 +99,7 @@ class Response(io.BytesIO):
 
 
 class Fixture:
-    """内存 HTTP 供给：vault 路由是原抓取夹具；策略路由逐字对照 server.rs `text_policy_read` 合成。"""
+    """内存 HTTP 供给：vault 路由是原抓取夹具；策略路由逐字对照 policy.rs `text_policy_read` 合成。"""
 
     def __init__(self):
         self.config = {"schema_version": 1, "client": "claude", "project": "项目/Alpha",
@@ -108,6 +115,8 @@ class Fixture:
         self.rules = {"通用工作规则.md": (3, "# 规则\n禁止绕过式修复。\n"), "其他.md": (5, "其他\n")}
         self.skills = {"demo": (4, "演示技能", ["新功能", "重构"], "# 演示\n\t保留\"原样\"\\\r\n"),
                        "other": (6, "其他", [], "x\n")}
+        # 单条 skill 响应正文的覆盖（造规范 JSON 之外的形状）；摘要行按覆盖后的字节计算。
+        self.raw_skills = {}
 
     def use_policy(self, rules=("通用工作规则.md",), skills=("demo",)):
         self.config.update(rules_source="policy", rules=list(rules), skills=list(skills))
@@ -129,16 +138,18 @@ class Fixture:
             rows = [f"{name}\tv{v}\t{digest(body.encode())[:12]}" for name, (v, body) in self.rules.items()]
             return head + f"{len(rows)} 份规则母本\n" + "\n".join(rows)
         if subject is None:
-            rows = [f"{name}\tv{v}\t{s}\t{' | '.join(t)}" for name, (v, s, t, _) in self.skills.items()]
+            line = lambda text: LISTING_BREAKS.sub(" ", text)
+            rows = [f"{name}\tv{v}\t{line(s)}\t{' | '.join(line(x) for x in t)}"
+                    for name, (v, s, t, _) in self.skills.items()]
             return head + f"{len(rows)} 个 skill（索引式候选；硬绑定见路牌第 5 项）\n" + "\n".join(rows)
         if subject not in (self.rules if kind == "rules" else self.skills):
             return None
         if kind == "rules":
             version, body = self.rules[subject]
             return head + f"policy://rules/{subject}@v{version} sha256 {digest(body.encode())}\n{body}"
-        version, summary, triggers, markdown = self.skills[subject]
-        return (head + f"policy://skills/{subject}@v{version} sha256 {digest(self.skill_json(subject).encode())}\n"
-                f"摘要：{summary}\n触发：{' | '.join(triggers)}\n\n{markdown}")
+        # 单条 skill 的正文是入库的规范 JSON 原文，sha256 行就是这段字节的摘要。
+        body = self.raw_skills.get(subject, self.skill_json(subject))
+        return head + f"policy://skills/{subject}@v{self.skills[subject][0]} sha256 {digest(body.encode())}\n{body}"
 
     def open(self, request, timeout):
         self.calls.append(request)

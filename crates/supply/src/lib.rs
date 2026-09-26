@@ -11,6 +11,7 @@ mod error;
 pub mod index_cache;
 pub mod replica;
 pub mod roots;
+pub mod rules_files;
 pub mod signpost;
 mod storage;
 
@@ -20,6 +21,7 @@ pub use budget::{
 pub use database::{AgentStore, Instance, IssuedToken, ReadQuery, ReadRecord, validate_type_name};
 pub use error::SupplyError;
 pub use roots::{Entry, EntryKind, Note, Snapshot, SupplyRoots};
+pub use rules_files::{RULES_ROOT, rule_subject};
 pub use signpost::{PolicyRule, PolicySignpost, Principal, Signpost, SignpostInput};
 pub use studiolo_vault_broker::ScanLimits;
 pub use studiolo_vault_index::{ParseCache, ParseCacheStats};
