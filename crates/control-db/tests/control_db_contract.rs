@@ -1,4 +1,4 @@
-//! `SQLite` 控制面的契约测试。
+//! SQLite 控制面的契约测试。
 
 use serde_json::json;
 use studiolo_control_db::{

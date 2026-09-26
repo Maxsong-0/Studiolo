@@ -1,5 +1,10 @@
 //! 取消：撤销活动能力，并在 runner 隔离后完成取消。
-use super::*;
+use crate::{
+    AttemptPhase, ControlDb, DbError, board, projection_outbox::enqueue_projection, runtime_audit,
+    types::fence_i64,
+};
+use rusqlite::{OptionalExtension as _, TransactionBehavior, params};
+use studiolo_core::{AttemptId, Fence, TaskId};
 
 impl ControlDb {
     /// 立即撤销活动能力：非黑板的 draft/queued 直接取消，running 转入 `cancel_requested`。

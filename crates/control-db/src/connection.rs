@@ -1,5 +1,8 @@
 //! 单写者句柄：打开连接、配置连接级 PRAGMA、绑定 Vault 与只读诊断。
-use super::*;
+use crate::{DbError, schema_guard, types::parse_vault_uuid};
+use rusqlite::{Connection, OptionalExtension as _, TransactionBehavior};
+use std::path::Path;
+use studiolo_core::VaultUuid;
 
 /// 不可克隆、单写者的运行时权威。
 pub struct ControlDb {

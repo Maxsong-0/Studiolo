@@ -1,4 +1,4 @@
-//! M6 合成 `runner` 的两类证据：内存接缝，以及真实隔离的 `Demo` 数据源（`HTTP`/`SQLite`）。
+//! M6 合成 `runner` 的两类证据：内存接缝，以及真实隔离的 `Demo` 数据源（HTTP/SQLite）。
 use serde_json::{Value, json};
 use std::{
     io::{Read, Write},

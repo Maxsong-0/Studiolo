@@ -1,4 +1,4 @@
-//! 仅创建（`create-only`）的 `Demo` 环境搭建，外加一次真实的 `HTTP`/`SQLite` -> `Gateway` -> `Stub` -> `Broker` 往返。
+//! 仅创建（`create-only`）的 `Demo` 环境搭建，外加一次真实的 HTTP/SQLite -> `Gateway` -> `Stub` -> `Broker` 往返。
 //! 不涉及任何供应商、个人登录材料或生产数据源。
 use std::{
     fs,

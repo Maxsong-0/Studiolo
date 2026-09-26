@@ -1,5 +1,7 @@
 //! 编号预留：一个写事务内取受信任扫描结果与已持久预留的较大者加一，按 request_id 幂等。
-use super::*;
+use crate::{ControlDb, DbError, runtime_audit};
+use rusqlite::{OptionalExtension as _, TransactionBehavior, params};
+use studiolo_core::TaskId;
 
 impl ControlDb {
     /// 在一个写事务内取 max(受信任的文件名扫描结果, 已持久预留的最大号)+1。

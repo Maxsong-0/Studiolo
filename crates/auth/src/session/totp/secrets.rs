@@ -33,7 +33,8 @@ impl TotpSeed {
                 byte - b'a' + 10
             }
         };
-        for (byte, pair) in bytes.iter_mut().zip(encoded.chunks_exact(2)) {
+        let (pairs, _) = encoded.as_chunks::<2>();
+        for (byte, pair) in bytes.iter_mut().zip(pairs) {
             *byte = nibble(pair[0]) * 16 + nibble(pair[1]);
         }
         // 直接把零化容器交给内部构造，不走 `*bytes` 这条按值复制的路：那样会在

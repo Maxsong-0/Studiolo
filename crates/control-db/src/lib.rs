@@ -3,13 +3,6 @@
 //! 写操作要求 `&mut self`；事务只搬运普通数据，
 //! 从不调用其他 Studiolo 模块。
 
-use std::{path::Path, str::FromStr};
-
-use rusqlite::{Connection, OptionalExtension as _, Transaction, TransactionBehavior, params};
-use serde::{Deserialize, Serialize};
-use serde_json::Value;
-use studiolo_core::{AttemptId, Fence, TaskId, VaultUuid};
-
 mod board;
 mod board_completion;
 mod board_projection;
@@ -42,11 +35,3 @@ pub use types::{
     AttemptPhase, AttemptRecord, OutboxRecord, PendingTerminalAudit, SnapshotEntryRecord,
     SnapshotRecord, TaskRecord, TaskStatus, TerminalReservation,
 };
-
-// 以下内部项只在 crate 内可见：各子模块经 `use super::*` 取用，
-// schema_guard 经 `crate::SCHEMA_VERSION` 取用。
-use migration::SCHEMA_VERSION;
-use projection_outbox::enqueue_projection;
-use snapshots::persist_snapshot;
-use terminal_reserve::TerminalKind;
-use types::{fence_i64, parse_attempt_id, parse_task_id, parse_vault_uuid};

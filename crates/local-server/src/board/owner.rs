@@ -26,7 +26,7 @@ impl SharedBroker {
         &self,
         action: impl FnOnce(&mut FsVaultBroker) -> Result<T, BrokerError>,
     ) -> Result<T, BrokerError> {
-        // `canonical` 读写使用 `Broker` 当前的字节。派生 `UI` 索引的重建
+        // `canonical` 读写使用 `Broker` 当前的字节。派生 UI 索引的重建
         // 不得让已成功批次的下一次投影无端失败。
         validate_owner_roots(&self.workbench)?;
         let mut owner = self

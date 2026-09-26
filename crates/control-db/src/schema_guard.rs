@@ -2,7 +2,7 @@
 
 use rusqlite::{Connection, OptionalExtension as _};
 
-use crate::{DbError, SCHEMA_VERSION};
+use crate::{DbError, migration::SCHEMA_VERSION};
 
 pub(super) fn require_supported_version(connection: &Connection) -> Result<(), DbError> {
     let kind: Option<String> = connection

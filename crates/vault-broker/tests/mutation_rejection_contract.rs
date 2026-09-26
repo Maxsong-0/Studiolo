@@ -1,4 +1,4 @@
-//! 被拒绝的 `CAS` 不能把另一个请求随后的安装冒充为自己的成功。
+//! 被拒绝的 CAS 不能把另一个请求随后的安装冒充为自己的成功。
 
 use studiolo_core::{Revision, VaultPath};
 use studiolo_vault_broker::{

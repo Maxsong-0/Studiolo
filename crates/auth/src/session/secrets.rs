@@ -97,7 +97,9 @@ fn derive(
         return Err(SessionError::CorruptStore);
     }
     let mut info = [0_u8; 25];
-    for (index, pair) in store_id.as_bytes().chunks_exact(2).enumerate() {
+    // store_id 已核为 32 位小写十六进制，按 2 字节定长切分没有余数（as_chunks 为 1.98 的 clippy 准备）。
+    let (pairs, _) = store_id.as_bytes().as_chunks::<2>();
+    for (index, pair) in pairs.iter().enumerate() {
         let nibble = |byte: u8| {
             if byte <= b'9' {
                 byte - b'0'

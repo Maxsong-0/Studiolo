@@ -1,5 +1,13 @@
 //! 任务表：人写定义的创建、入队、重新确认与查询。
-use super::*;
+use crate::{
+    ControlDb, DbError, SnapshotRecord, TaskRecord, TaskStatus,
+    projection_outbox::enqueue_projection,
+    snapshots::persist_snapshot,
+    types::{parse_attempt_id, parse_task_id},
+};
+use rusqlite::{OptionalExtension as _, TransactionBehavior, params};
+use serde_json::Value;
+use studiolo_core::TaskId;
 
 impl ControlDb {
     /// 以 `draft` 状态插入人写任务定义。

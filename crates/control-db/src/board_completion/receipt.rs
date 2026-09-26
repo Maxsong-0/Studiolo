@@ -1,5 +1,11 @@
 //! 终态回执：runner 回执与主人复核共用一条仲裁路径，产物目标按「首个有效完成者胜出」。
-use super::*;
+use crate::{
+    BoardDefinition, ControlDb, DbError, TaskStatus, board, lifecycle,
+    projection_outbox::enqueue_projection, runtime_audit, types::fence_i64,
+};
+use rusqlite::{OptionalExtension as _, TransactionBehavior, params};
+use serde_json::Value;
+use studiolo_core::{AttemptId, Fence, TaskId};
 
 impl ControlDb {
     /// 原子地接受回执，并按「首个有效完成者胜出」仲裁产物目标。

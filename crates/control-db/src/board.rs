@@ -1,7 +1,13 @@
 //! 黑板元数据与原子的层级/路径仲裁。产物正文绝不进入这里。
 mod schema;
-use super::*;
+use crate::{
+    ControlDb, DbError, projection_outbox::enqueue_projection, runtime_audit, types::parse_task_id,
+};
+use rusqlite::{OptionalExtension as _, Transaction, TransactionBehavior, params};
 pub(super) use schema::migrate;
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+use studiolo_core::TaskId;
 use studiolo_core::VaultPath;
 
 /// 已校验的机器工作项约束，只由 TaskEngine 提供。

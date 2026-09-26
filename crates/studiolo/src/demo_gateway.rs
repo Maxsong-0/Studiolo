@@ -1,4 +1,4 @@
-//! 显式隔离的 `Demo` 数据源；`URL`、`SQL`、请求头与数据库路径一概不由 `Runner` 选择。
+//! 显式隔离的 `Demo` 数据源；URL、SQL、请求头与数据库路径一概不由 `Runner` 选择。
 use crate::stub_gateway::demo_arguments;
 use rusqlite::{Connection, OpenFlags};
 use serde_json::{Value, json};
@@ -40,7 +40,7 @@ pub struct DemoGateway {
     calls: Mutex<Cache>,
 }
 impl DemoGateway {
-    /// 只接受显式的 `Demo` 模式，且只打开固定的只读 `SQLite` 数据源。
+    /// 只接受显式的 `Demo` 模式，且只打开固定的只读 SQLite 数据源。
     pub fn open(
         config: DemoGatewayConfig,
         guard: Arc<dyn AttemptGuard>,

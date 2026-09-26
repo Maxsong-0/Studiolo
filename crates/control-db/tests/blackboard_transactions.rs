@@ -1,4 +1,4 @@
-//! `SQLite` 事务边界、重启后的持久性，以及不带正文的预留。
+//! SQLite 事务边界、重启后的持久性，以及不带正文的预留。
 use serde_json::json;
 use std::sync::{Arc, Barrier};
 use studiolo_control_db::*;

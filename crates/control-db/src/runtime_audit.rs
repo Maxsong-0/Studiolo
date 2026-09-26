@@ -1,5 +1,8 @@
 //! 只含元数据的持久审计结果与权威状态变更一同提交。
-use super::*;
+use crate::{ControlDb, DbError};
+use rusqlite::{Transaction, params};
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 /// 待投递的运行时事实（非接口端点审计），与其数据库状态迁移原子写入。
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

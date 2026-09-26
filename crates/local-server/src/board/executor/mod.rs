@@ -72,7 +72,7 @@ pub struct RunSummary {
 pub struct StartRequest {
     /// 要运行的显式工作项。
     pub task_id: TaskId,
-    /// 已登记的发起方 `AI` 类型，由平面重新授权。
+    /// 已登记的发起方 AI 类型，由平面重新授权。
     pub agent_type: String,
     /// 已登记的发起实例，含祖先撤销检查。
     pub instance_id: String,

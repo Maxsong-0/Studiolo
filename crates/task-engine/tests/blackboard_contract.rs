@@ -1,4 +1,4 @@
-//! M5/M6 权限测试使用真实 `SQLite`，以及与生产相同的 `Broker`/审计接缝。
+//! M5/M6 权限测试使用真实 SQLite，以及与生产相同的 `Broker`/审计接缝。
 use sha2::{Digest, Sha256};
 use studiolo_audit_ledger::MemoryAuditLedger;
 use studiolo_control_db::{ControlDb, TaskStatus};

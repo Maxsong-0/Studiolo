@@ -1,5 +1,11 @@
 //! 已落定终态的 Broker 回执读取与审计结果投递确认。
-use super::*;
+use crate::{
+    ControlDb, DbError, PendingTerminalAudit, TaskStatus,
+    types::{parse_attempt_id, parse_task_id},
+};
+use rusqlite::{OptionalExtension as _, params};
+use serde_json::Value;
+use studiolo_core::{AttemptId, TaskId};
 
 impl ControlDb {
     /// 读取已提交的 Broker 回执，不触碰规范产物。

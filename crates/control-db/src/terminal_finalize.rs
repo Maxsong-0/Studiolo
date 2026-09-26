@@ -1,5 +1,11 @@
 //! 终态 T2：落定终态，并在同一事务登记待投递的审计结果。
-use super::*;
+use crate::{
+    AttemptPhase, ControlDb, DbError, TaskStatus, projection_outbox::enqueue_projection,
+    runtime_audit, stopped_candidates, types::fence_i64,
+};
+use rusqlite::{OptionalExtension as _, TransactionBehavior, params};
+use serde_json::Value;
+use studiolo_core::{AttemptId, Fence, TaskId};
 
 impl ControlDb {
     /// 在审计意图与 Broker 效果之后执行 T2；带 Broker 回执时同事务登记待投递的审计结果。

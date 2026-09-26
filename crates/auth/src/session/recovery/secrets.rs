@@ -129,7 +129,9 @@ pub(super) fn generate(
 
 fn derive(seed: &[u8; 32], store: &str, generation: i64, slot: u8) -> Result<String, SessionError> {
     let mut info = [0_u8; 25];
-    for (index, pair) in store.as_bytes().chunks_exact(2).enumerate() {
+    // store 已由调用方核为 32 位小写十六进制，定长切分没有余数。
+    let (pairs, _) = store.as_bytes().as_chunks::<2>();
+    for (index, pair) in pairs.iter().enumerate() {
         let nibble = |byte: u8| {
             if byte <= b'9' {
                 byte - b'0'
