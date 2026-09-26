@@ -1,12 +1,14 @@
 /**
  * 策略平面：`/api/v1/policy`、`/desired`、`/versions`、`/versions/{n}`，以及写入时的校验报告。
  *
- * 初始状态：现行三版（v1 规则母本、v2 Claude 能力集、v3 Codex 能力集）；待处理 desired 一条——
- * 全项目收尾线的 Claude 实例为 T-109 盘点申请扩大读取范围（三项扩大，红色）；
+ * 初始状态：现行四版（v1 规则 CLAUDE.md、v2 规则 通用工作规则.md、v3 Claude 能力集、v4 Codex 能力集，
+ * 规则是 ADR-026 D6 的首批两条）；Claude 能力集的 read.rules_whitelist 列了这两条规则，Codex 的能力集
+ * 发布于该字段出现之前、没有这个字段（缺字段即零规则，D4），规则视图的两种状态都看得到。
+ * 待处理 desired 一条——全项目收尾线的 Claude 实例为 T-109 盘点申请扩大读取范围（三项扩大，红色）；
  * 吊销三级：一个越界的旧 Codex 实例（实例级）、消费端类型（类型级）生效中，全局未吊销。
  *
  * 校验规则按 `crates/policy/src/validate.rs` 的同一套口径简化实现：命名规则、JSON 形状、
- * 能力集扩大项/收窄项、规则母本删除约束性语句的候选扩大项。形状以 `policyModel.ts` 为准。
+ * 能力集扩大项/收窄项（含规则读名单）、规则母本删除约束性语句的候选扩大项。形状以 `policyModel.ts` 为准。
  */
 import { clockAt, iso } from './clock.ts';
 import { DESIRED_ID, INSTANCE, POLICY_HASH, sha256 } from './ids.ts';
@@ -101,8 +103,8 @@ export interface PolicyState {
   revocations: Revocation[];
 }
 
-const RULES_BODY = [
-  '# 协作规则',
+const CLAUDE_MD = [
+  '# CLAUDE.md',
   '',
   '1. 一任务一 agent，一文件一持有者；写域必须在任务书里点名。',
   '2. 不 commit、不 push、不切分支；改动留在工作树，由派发方收。',
@@ -111,14 +113,35 @@ const RULES_BODY = [
   '',
 ].join('\n');
 
+const GENERAL_RULES = [
+  '# 通用工作规则',
+  '',
+  '1. 验证后才声称完成：必须先跑验证命令并确认输出。',
+  '2. 共享服务不擅自重启，绝不动别人占用的资源。',
+  '3. 临时产物放会话草稿目录，用完清理自己产生的。',
+  '4. 真实密钥只经环境变量注入，不得写进仓库或档案。',
+  '',
+].join('\n');
+
+/** 首批两条规则（ADR-026 D6），文件名就是规则名。 */
+export const RULE_SUBJECTS = ['CLAUDE.md', '通用工作规则.md'];
+
 const capabilitySet = (
   type: string,
   read: string[],
   propose: boolean,
+  rules?: string[],
 ): string =>
   JSON.stringify({
     ai_type: type,
-    read: { project_whitelist: read, deny_by_default: true },
+    // 不给 rules 就不写 rules_whitelist：该字段出现之前发布的能力集就是这样，读作零规则（D4）。
+    read: rules
+      ? {
+          project_whitelist: read,
+          deny_by_default: true,
+          rules_whitelist: rules,
+        }
+      : { project_whitelist: read, deny_by_default: true },
     write: {
       board: true,
       board_projects: ['项目/Studiolo'],
@@ -134,20 +157,33 @@ const CLAUDE_READ = [
   '项目/Semiment-Docs',
   '项目/Brief 简报站',
 ];
-const CLAUDE_BODY = capabilitySet('claude', CLAUDE_READ, true);
+const CLAUDE_BODY = capabilitySet('claude', CLAUDE_READ, true, RULE_SUBJECTS);
 const CODEX_BODY = capabilitySet('codex', ['项目/Studiolo'], false);
 const PROPOSAL_BODY = capabilitySet(
   'claude',
   [...CLAUDE_READ, '项目/DocReader', '项目/NAS 网关', '项目/AI Quota Flow'],
   true,
+  RULE_SUBJECTS,
 );
 
-const firstGrant = (read: string[], propose: boolean) => [
+/**
+ * v3（Claude 能力集）发布后的 effective。ids.ts 只登记黑板任务冻结的几代：T-046 冻结在 v1，
+ * 其余任务冻结在当前的 v3（本表第 4 版之后）；多出来的这一代由上一代推出。
+ */
+const AFTER_CLAUDE = sha256(`effective v3 ${POLICY_HASH.v2}`);
+
+const firstGrant = (read: string[], propose: boolean, rules: string[] = []) => [
   ...read.map((prefix) => ({
     path: 'read.project_whitelist',
     before: null,
     after: prefix,
     note: '新类型首次获得读取范围',
+  })),
+  ...rules.map((rule) => ({
+    path: 'read.rules_whitelist',
+    before: null,
+    after: rule,
+    note: '新类型首次可读这条规则',
   })),
   {
     path: 'write.board_projects',
@@ -185,9 +221,9 @@ export function initialPolicy(now: number): PolicyState {
       meta: {
         version: 1,
         kind: 'rules' as const,
-        subject: '协作规则.md',
+        subject: RULE_SUBJECTS[0],
         retired: false,
-        body_sha256: sha256(RULES_BODY),
+        body_sha256: sha256(CLAUDE_MD),
         effective_hash: POLICY_HASH.v1,
         previous_effective_hash: POLICY_HASH.genesis,
         activated_at: '2026-09-08T09:14:02Z',
@@ -196,34 +232,51 @@ export function initialPolicy(now: number): PolicyState {
         rollback_of: null,
         expansions: [],
       },
-      body: RULES_BODY,
+      body: CLAUDE_MD,
     },
     {
       meta: {
         version: 2,
-        kind: 'capability_set' as const,
-        subject: 'claude',
+        kind: 'rules' as const,
+        subject: RULE_SUBJECTS[1],
         retired: false,
-        body_sha256: sha256(CLAUDE_BODY),
+        body_sha256: sha256(GENERAL_RULES),
         effective_hash: POLICY_HASH.v2,
         previous_effective_hash: POLICY_HASH.v1,
-        activated_at: '2026-09-12T02:40:31Z',
+        activated_at: '2026-09-10T03:22:15Z',
         activated_by: 'owner',
         desired_id: null,
         rollback_of: null,
-        expansions: firstGrant(CLAUDE_READ, true),
+        expansions: [],
       },
-      body: CLAUDE_BODY,
+      body: GENERAL_RULES,
     },
     {
       meta: {
         version: 3,
         kind: 'capability_set' as const,
+        subject: 'claude',
+        retired: false,
+        body_sha256: sha256(CLAUDE_BODY),
+        effective_hash: AFTER_CLAUDE,
+        previous_effective_hash: POLICY_HASH.v2,
+        activated_at: '2026-09-12T02:40:31Z',
+        activated_by: 'owner',
+        desired_id: null,
+        rollback_of: null,
+        expansions: firstGrant(CLAUDE_READ, true, RULE_SUBJECTS),
+      },
+      body: CLAUDE_BODY,
+    },
+    {
+      meta: {
+        version: 4,
+        kind: 'capability_set' as const,
         subject: 'codex',
         retired: false,
         body_sha256: sha256(CODEX_BODY),
         effective_hash: POLICY_HASH.v3,
-        previous_effective_hash: POLICY_HASH.v2,
+        previous_effective_hash: AFTER_CLAUDE,
         activated_at: '2026-09-15T06:05:47Z',
         activated_by: 'owner',
         desired_id: null,
@@ -360,7 +413,12 @@ function exactKeys(
 
 type CapabilitySet = {
   ai_type: string;
-  read: { project_whitelist: string[]; deny_by_default: boolean };
+  /** rules_whitelist 缺省即零规则（ADR-026 D3、D4）：缺字段时规范化正文里也不补。 */
+  read: {
+    project_whitelist: string[];
+    deny_by_default: boolean;
+    rules_whitelist?: string[];
+  };
   write: {
     board: boolean;
     board_projects: string[];
@@ -385,7 +443,11 @@ function parseCapabilitySet(body: string): CapabilitySet | null {
       ['hard_bound_skills'],
     ) ||
     typeof value.ai_type !== 'string' ||
-    !exactKeys(value.read, ['project_whitelist', 'deny_by_default']) ||
+    !exactKeys(
+      value.read,
+      ['project_whitelist', 'deny_by_default'],
+      ['rules_whitelist'],
+    ) ||
     !exactKeys(
       value.write,
       ['board', 'content_patch_only', 'content_direct'],
@@ -398,9 +460,13 @@ function parseCapabilitySet(body: string): CapabilitySet | null {
   const write = value.write as Record<string, unknown>;
   const policy = value.policy as Record<string, unknown>;
   const bindings = value.hard_bound_skills ?? [];
+  const rules = Object.hasOwn(read, 'rules_whitelist')
+    ? read.rules_whitelist
+    : undefined;
   if (
     !stringList(read.project_whitelist) ||
     typeof read.deny_by_default !== 'boolean' ||
+    !(rules === undefined || stringList(rules)) ||
     typeof write.board !== 'boolean' ||
     !stringList(write.board_projects ?? []) ||
     typeof write.content_patch_only !== 'boolean' ||
@@ -421,6 +487,7 @@ function parseCapabilitySet(body: string): CapabilitySet | null {
     read: {
       project_whitelist: read.project_whitelist,
       deny_by_default: read.deny_by_default,
+      ...(rules === undefined ? {} : { rules_whitelist: rules }),
     },
     write: {
       board: write.board,
@@ -705,6 +772,14 @@ function capabilityChecks(
     else if (set.read.project_whitelist.indexOf(prefix) !== index)
       problem(`read.project_whitelist[${index}]`, '重复的白名单前缀');
   });
+  // 规则读名单：元素须是合法的规则名、不得重复（ADR-026 D3）；缺字段即零规则。
+  const rules = set.read.rules_whitelist ?? [];
+  rules.forEach((rule, index) => {
+    if (!subjectValid('rules', rule))
+      problem(`read.rules_whitelist[${index}]`, '不是合法的规则名');
+    else if (rules.indexOf(rule) !== index)
+      problem(`read.rules_whitelist[${index}]`, '重复的规则名');
+  });
   set.hard_bound_skills.forEach((_, index) =>
     problem(`hard_bound_skills[${index}].must_use`, '指向的 skill 尚未发布'),
   );
@@ -729,6 +804,23 @@ function capabilityChecks(
         before: prefix,
         after: null,
         note: '读取范围收窄',
+      });
+  const oldRules = previous?.read.rules_whitelist ?? [];
+  for (const rule of rules)
+    if (!oldRules.includes(rule))
+      report.expansions.push({
+        path: 'read.rules_whitelist',
+        before: null,
+        after: rule,
+        note: previous ? '可读的规则增加' : '新类型首次可读这条规则',
+      });
+  for (const rule of oldRules)
+    if (!rules.includes(rule))
+      report.narrowings.push({
+        path: 'read.rules_whitelist',
+        before: rule,
+        after: null,
+        note: '可读的规则减少',
       });
   const oldBoard = previous?.write.board_projects ?? [];
   for (const prefix of set.write.board_projects)

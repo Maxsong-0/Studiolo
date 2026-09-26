@@ -79,12 +79,13 @@ describe('视图位置', () => {
     );
   });
 
-  it('新五视图都能原样往返', () => {
+  it('新六视图都能原样往返', () => {
     for (const view of [
       'cockpit',
       'projects',
       'documents',
       'collab',
+      'rules',
       'policy',
     ] as const) {
       const location = { view, project: project, panel: 'p', item: 'i' };

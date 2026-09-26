@@ -13,28 +13,37 @@
 
 hash 是一张白名单表，共四格，全部为非敏感导航状态：
 
-- `view`：七个已知视图之一（`overview`／`inbox`／`documents`／`operations`／`policy`／`board`／`execution`）。
-- `project`：项目 root，黑板／执行／运作三视图的项目选择。
-- `panel`：视图内的面板，如黑板的 `replay`、文档的 `tree`。
-- `item`：面板内选中的条目，如执行任务 id。
+- `view`：现行六个视图之一，顺序与顶栏一致——`cockpit`（驾驶舱）／`projects`（项目）／`documents`（文档）／
+  `collab`（协作）／`rules`（规则，T-160）／`policy`（策略）。
+- `project`：项目 root，项目运作与协作各标签的项目选择。
+- `panel`：视图内的面板，如项目的 `operations`、协作的 `timeline`、文档的 `tree`、规则的 `edit`／`access`；默认面板不写。
+- `item`：面板内选中的条目，如执行任务 id、策略版本号、在编辑的规则名。
 
-**禁止写入**：会话凭据、CSRF、owner scope、因子状态与恢复码、笔记正文、搜索词、草稿。
+**禁止写入**：会话凭据、CSRF、owner scope、因子状态与恢复码、笔记正文、搜索词、草稿，以及规则正文与规则草案正文。
 这些要么属于授权，要么属于内容，都随重挂消失，不借位置这条路偷渡到 URL 或浏览器存储。
-本轮也不写文档弹层与编辑器的笔记路径。
+规则名是规则的标识（`_规则/` 下的文件名），不是内容，可以进 `item`。本轮也不写文档弹层与编辑器的笔记路径。
+
+## 旧链接迁移
+
+T-130 之前的七个视图名（`overview`／`inbox`／`documents`／`operations`／`policy`／`board`／`execution`）的链接照样能打开：
+其中 `overview`、`inbox`、`operations`、`board`、`execution` 在解析时按
+[设计规范](../design/t130-design-system.md)第 4 节「旧链接迁移」表换算成新位置
+（如 `view=board&panel=replay&project=P` 落到 `view=collab&panel=timeline&project=P`），
+`documents` 与 `policy` 沿用原名。只在解析时迁移，写回 URL 一律只用新名；旧视图没用过的格子不带过去。
 
 ## 解析与写入
 
-- hash 是外部输入：未知视图、空 hash、损坏内容一律回落 `overview` 并丢弃其余三格；
+- hash 是外部输入：未知视图、空 hash、损坏内容一律回落驾驶舱（`cockpit`）并丢弃其余三格；
   单格的空值、超过 512 字符或含控制字符的值按「不是位置」丢弃，绝不原样回显。
 - 默认位置序列化成空串，首屏地址干净。
 - 写位置用 `history.replaceState`，位置是「回到离开处」的记号，不把后退键变成视图历史；
   禁用 History API 的环境退回直接改 hash。`hashchange`／`popstate` 变化立即被各视图读到。
 - 换视图即清空 `project`／`panel`／`item`：三格按视图解释，跨视图会读成别人的位置。
-  换项目同时清 `item`：条目属于旧项目。
+  换项目同时清 `item`：条目属于旧项目。视图内换面板（协作的子标签、规则的面板）只换 `panel`，其余两格留着。
 
 ## 验证边界
 
-自动测试覆盖：hash 白名单解析与回落、序列化往返、会话仍有效时重新核对后回到原视图与原项目、
-会话失效走登录后回到原位置、带位置的链接直接打开与损坏位置回落。
+自动测试覆盖：hash 白名单解析与回落、序列化往返（六个视图）、旧链接迁移、`#view=rules&panel=edit&item=…` 的解析、
+会话仍有效时重新核对后回到原视图与原项目、会话失效走登录后回到原位置、带位置的链接直接打开与损坏位置回落。
 真实浏览器（虚构预览库）验过：重新核对后回到原位置、刷新、带位置的链接、
 401 后登录再回原位置。未覆盖：跨设备同步位置、多标签页之间的位置协商。
