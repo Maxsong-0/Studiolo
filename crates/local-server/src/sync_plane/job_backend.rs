@@ -50,45 +50,48 @@ impl<'a> PlaneJobBackend<'a> {
             .ok_or(PlaneError::Observation)
     }
 
-    /// canonical 侧：CreateOnly／Replace 走条件写（前置＝冻结 `target_expected` 还原的 revision），
-    /// Delete 走文件操作删除；主体一律「外部：Obsidian」。
-    fn apply_canonical(
+    /// canonical 侧按原键重建首次请求走接缝：CreateOnly／Replace 走条件写（前置＝冻结 `target_expected`
+    /// 还原的 revision），Delete 走文件操作删除；主体一律「外部：Obsidian」。首次执行与重开核对共用
+    /// 这一份，保证核对时的请求与首次逐字段相同（接缝先按原键查重放，有原回执绝不第二次安装）。
+    ///
+    /// # Errors
+    /// 冻结前置的原 `Revision` 本轮没观察过（还原不出）返回 `Observation`。
+    pub(crate) fn canonical_verdict(
         &mut self,
         job: &IssuedJob,
         action: &Action,
-    ) -> Result<JobOutcome, PlaneError> {
+    ) -> Result<SeamVerdict, PlaneError> {
         let workbench = self.context.plane.workbench();
         let path = &action.key.path;
         match &action.change {
             Change::Delete { target_expected } => {
                 let expected = self.revision(target_expected)?;
-                let receipt = match workbench.bridge_delete(
+                let deleted = workbench.bridge_delete(
                     path,
                     expected,
                     &job.external_key,
                     &hex(&self.binding.scope_hash),
                     self.binding.scope_epoch,
-                ) {
-                    Ok(receipt) => receipt,
-                    Err(BridgeSeamError::Rejected) => return Ok(rejected(job)),
-                    Err(_) => return Ok(JobOutcome::Unknown),
-                };
-                Ok(match receipt.outcome {
-                    FileOperationOutcome::Committed => JobOutcome::Committed {
-                        new_revision: None,
-                        content_hash: None,
-                        bytes: None,
-                        receipt_id: receipt.operation_id,
-                    },
-                    FileOperationOutcome::Rejected => JobOutcome::NoEffect {
-                        reason: NoEffectCause::CasRejected,
-                        terminal_id: receipt.operation_id,
-                    },
-                    FileOperationOutcome::Cancelled => JobOutcome::NoEffect {
-                        reason: NoEffectCause::CancelledBeforeInstall,
-                        terminal_id: receipt.operation_id,
-                    },
-                    FileOperationOutcome::Indeterminate => JobOutcome::Unknown,
+                );
+                Ok(match deleted {
+                    Ok(receipt) => SeamVerdict::Outcome(match receipt.outcome {
+                        FileOperationOutcome::Committed => JobOutcome::Committed {
+                            new_revision: None,
+                            content_hash: None,
+                            bytes: None,
+                            receipt_id: receipt.operation_id,
+                        },
+                        FileOperationOutcome::Rejected => JobOutcome::NoEffect {
+                            reason: NoEffectCause::CasRejected,
+                            terminal_id: receipt.operation_id,
+                        },
+                        FileOperationOutcome::Cancelled => JobOutcome::NoEffect {
+                            reason: NoEffectCause::CancelledBeforeInstall,
+                            terminal_id: receipt.operation_id,
+                        },
+                        FileOperationOutcome::Indeterminate => JobOutcome::Unknown,
+                    }),
+                    Err(error) => seam_verdict(error),
                 })
             }
             Change::CreateOnly { source } | Change::Replace { source, .. } => {
@@ -98,9 +101,10 @@ impl<'a> PlaneJobBackend<'a> {
                     } => BridgePrecondition::Match(self.revision(target_expected)?),
                     _ => BridgePrecondition::MustNotExist,
                 };
-                match write_from_mirror(self.context, path, source, precondition, &job.external_key)
-                {
-                    Ok(receipt) => Ok(JobOutcome::Committed {
+                let written =
+                    write_from_mirror(self.context, path, source, precondition, &job.external_key);
+                Ok(match written {
+                    Ok(receipt) => SeamVerdict::Outcome(JobOutcome::Committed {
                         new_revision: Some(
                             self.context
                                 .revisions
@@ -111,9 +115,8 @@ impl<'a> PlaneJobBackend<'a> {
                         bytes: Some(source.bytes),
                         receipt_id: receipt.revision.to_hex(),
                     }),
-                    Err(BridgeSeamError::Rejected) => Ok(rejected(job)),
-                    Err(_) => Ok(JobOutcome::Unknown),
-                }
+                    Err(error) => seam_verdict(error),
+                })
             }
         }
     }
@@ -137,15 +140,19 @@ impl<'a> PlaneJobBackend<'a> {
         let view = &self.context.view;
         match &action.change {
             Change::CreateOnly { source } | Change::Replace { source, .. } => {
-                if self.context.mode == SyncMode::MirrorRemote {
-                    // 出站动作的源就是 canonical 当前版本；引导期它会被下一次 RunOnce 回滚，先保全。
-                    preserve_canonical(
+                // 出站动作的源就是 canonical 当前版本；引导期它会被下一次 RunOnce 回滚，先保全。
+                // 保全失败时视图还没被碰：本动作确定未安装，明确无效果，下一轮重新规划。
+                if self.context.mode == SyncMode::MirrorRemote
+                    && preserve_canonical(
                         self.context,
                         naming::ROLLBACK_DIR,
                         path,
                         source,
                         &format!("{}/rollback", job.external_key),
-                    )?;
+                    )
+                    .is_err()
+                {
+                    return Ok(not_attempted(&job.external_key));
                 }
                 let object = staged.ok_or(PlaneError::Storage)?;
                 let target_expected = match &action.change {
@@ -168,7 +175,7 @@ impl<'a> PlaneJobBackend<'a> {
                         bytes: Some(version.bytes),
                         receipt_id: hex(&version.revision),
                     },
-                    Err(PlaneError::Observation) => rejected(job),
+                    Err(PlaneError::Observation) => rejected(&job.external_key),
                     Err(_) => JobOutcome::Unknown,
                 })
             }
@@ -188,7 +195,7 @@ impl<'a> PlaneJobBackend<'a> {
                         bytes: None,
                         receipt_id: hex(&object.digest()),
                     },
-                    Err(PlaneError::Observation) => rejected(job),
+                    Err(PlaneError::Observation) => rejected(&job.external_key),
                     Err(_) => JobOutcome::Unknown,
                 })
             }
@@ -196,18 +203,63 @@ impl<'a> PlaneJobBackend<'a> {
     }
 }
 
+/// 接缝一次条件写／删除的结论（公开投影，契约测试可直接喂）；首次执行与重开核对各自映射成终态。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum SeamVerdict {
+    /// 后端按原键给出的回执（提交、经确认的无效果，或回执本身声明的未定）。
+    Outcome(JobOutcome),
+    /// 还没碰 Broker 就失败：本次调用确定没有安装。
+    NotAttempted,
+    /// 权威 CAS 拒绝。
+    Rejected,
+    /// 终态无法确认。
+    Unknown,
+}
+
+/// 接缝失败分类到结论：`Unavailable`／`Audit`／`Unknown` 一律未知。
+pub(crate) fn seam_verdict(error: BridgeSeamError) -> SeamVerdict {
+    match error {
+        BridgeSeamError::NotAttempted => SeamVerdict::NotAttempted,
+        BridgeSeamError::Rejected => SeamVerdict::Rejected,
+        _ => SeamVerdict::Unknown,
+    }
+}
+
+/// 首次执行的映射：未碰 Broker 即明确无效果（计划终结、基线不前进、下一轮重新规划），CAS 拒绝记无效果，其余未知。
+#[must_use]
+pub fn first_attempt_outcome(verdict: SeamVerdict, external_key: &str) -> JobOutcome {
+    match verdict {
+        SeamVerdict::Outcome(outcome) => outcome,
+        SeamVerdict::NotAttempted => not_attempted(external_key),
+        SeamVerdict::Rejected => rejected(external_key),
+        SeamVerdict::Unknown => JobOutcome::Unknown,
+    }
+}
+
+/// 未碰后端的固定无效果回执：动作确定未安装；终态标识由原键派生，不带路径。
+#[must_use]
+pub fn not_attempted(external_key: &str) -> JobOutcome {
+    JobOutcome::NoEffect {
+        reason: NoEffectCause::CancelledBeforeInstall,
+        terminal_id: format!("not-attempted:{external_key}"),
+    }
+}
+
 /// 权威 CAS 拒绝的固定无效果回执；终态标识由原键派生，不带路径。
-fn rejected(job: &IssuedJob) -> JobOutcome {
+#[must_use]
+pub fn rejected(external_key: &str) -> JobOutcome {
     JobOutcome::NoEffect {
         reason: NoEffectCause::CasRejected,
-        terminal_id: format!("cas-rejected:{}", hex(&sha256(job.external_key.as_bytes()))),
+        terminal_id: format!("cas-rejected:{}", hex(&sha256(external_key.as_bytes()))),
     }
 }
 
 impl JobBackend for PlaneJobBackend<'_> {
     fn apply(&mut self, job: &IssuedJob, action: &Action, staged: Option<ObjectId>) -> JobOutcome {
         let result = match action.key.target {
-            Side::Canonical => self.apply_canonical(job, action),
+            Side::Canonical => self
+                .canonical_verdict(job, action)
+                .map(|verdict| first_attempt_outcome(verdict, &job.external_key)),
             Side::Mirror => self.apply_mirror(job, action, staged),
         };
         // 任何失败都只能是未知：执行器不重发，下一轮按原键核对。

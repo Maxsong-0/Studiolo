@@ -168,3 +168,42 @@ fn a_no_effect_outcome_is_persisted_as_no_effect_and_keeps_the_old_common_baseli
     assert_eq!(settled.pending_sequence, None);
     assert_eq!(settled.baseline_version, 0);
 }
+
+#[test]
+fn issued_request_returns_the_original_key_and_digest_read_only_for_reconciliation() {
+    let fixture = Fixture::new();
+    let ledger = MemoryAuditLedger::new();
+    let mut store = fixture.init();
+    let original = input(&store, 1, Presence::Missing, present(9));
+    let action = reserve(&mut store, original.clone()).remove(0).action;
+    let evidence = recheck(&store, &original, &action);
+    // 尚未 Issued：没有可核对的原请求。
+    assert_eq!(
+        store.issued_request(&action.key),
+        Err(BridgeError::IntentRequired)
+    );
+    let issued = {
+        let mut journal = StateJournal::new(&mut store, &ledger, original.clone());
+        drain(&mut journal);
+        journal.issue(&action.key, &evidence).unwrap()
+    };
+    let version = store.view().unwrap().version;
+    let pending = store.issued_request(&action.key).unwrap();
+    // 与 issue 返回的原键、请求摘要逐字段相同；只读，不推进持久版本。
+    assert_eq!(pending.action, action);
+    assert_eq!(pending.external_key, issued.external_key);
+    assert_eq!(pending.request_digest, issued.request_digest);
+    assert_eq!(store.view().unwrap().version, version);
+    // 用它重建的执行数据写回执，与执行器原路径同样被接受。
+    let rebuilt = IssuedJob {
+        key: pending.action.key,
+        external_key: pending.external_key,
+        request_digest: pending.request_digest,
+    };
+    let mut journal = StateJournal::new(&mut store, &ledger, original);
+    journal.record_outcome(&rebuilt, &commit(&action)).unwrap();
+    assert_eq!(
+        journal.snapshot().unwrap().jobs[0].state,
+        JobState::Committed
+    );
+}

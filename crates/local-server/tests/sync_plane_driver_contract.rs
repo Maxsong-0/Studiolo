@@ -5,6 +5,10 @@
 mod fake_ports;
 #[path = "sync_plane_driver/fixture.rs"]
 mod fixture;
+#[path = "sync_plane_driver/reconcile.rs"]
+mod reconcile;
+#[path = "sync_plane_driver/reconcile_support.rs"]
+mod reconcile_support;
 
 use fake_ports::{Call, FakePorts};
 use studiolo_local_server::sync_plane::PlaneError;

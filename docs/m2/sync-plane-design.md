@@ -49,7 +49,7 @@ studiolo-human（uid 1000）                      root                          
 | 7 | `OwnerQuiescence::take`（`quiescent()`，窗口 1800 s） | 无静止证明→`Quiescence` | 下一轮重跑 RunOnce |
 | 8 | `observe_both`：canonical 经接缝完整观察，镜像经视图完整观察，`approve_union` → `Input` | 任一侧不完整／范围未批→`Observation` | 下一轮重观察 |
 | 9 | MirrorRemote 时 `plan` 试算；有冲突→`preresolve_conflicts`（D6）→ 重做第 8 步一次 | 预解决删除越熔断→`Fused`（不解决，健康降级） | 人在界面选边（后续任务） |
-| 10 | `bridge.reserve(version, input)`：Fused→`Fused` 停；Ready→`StateJournal`＋`execute(plan, ports, now, deadline)` | 逐动作 Issued 后未知→`Unknown`，本批不闭合 | 下一轮 `retry_pending` 原键核对（不重放） |
+| 10 | `bridge.reserve(version, input)`：Fused→`Fused` 停；Ready→`StateJournal`＋`execute(plan, ports, now, deadline)` | 逐动作 Issued 后未知→`Unknown`，本批不闭合 | 下一轮第 10 步 `reconcile::reconcile_pending` 只取仍未知的原键：canonical 侧先经接缝有界读把冻结前置还原成原 `Revision`，再经 `PlaneJobBackend::canonical_verdict` 按原键重建首次请求走接缝——有原回执照收（接缝绝不二次安装）、无回执才由接缝首次安装，CAS 拒绝→NoEffect，`NotAttempted` 且写者此刻接得上（原键已取消／受保护路径／预算）→NoEffect；镜像侧在同一视图的静止票据下逐字节比对目标：等于冻结源→Committed，Delete 且已不存在→Committed，仍是冻结前置（CreateOnly 即不存在）→NoEffect，读完复验静止失败则作废；核出的经 `StateJournal::record_outcome` 写回执，其余保持未知、本批不闭合。已安装的 canonical Replace／Delete 当前还原不出原 `Revision`（只存摘要、不跨轮），保持未知 |
 | 11 | `execute` 内部：Intent 审计→逐动作 保全→Issued→apply→回执→Outcome/Summary 审计→settle→退休 | 任一审计推不动→`Audit` | 下一轮 `deliver_audit` 继续 |
 | 12 | `stage.sweep(now, retired_through)`：保留期到且计划已退休的保全对象回收；孤儿回收 | IO 失败→`Storage`（不影响本批结论） | 下一轮再扫 |
 

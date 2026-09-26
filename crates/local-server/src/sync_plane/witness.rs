@@ -207,14 +207,15 @@ impl<'a> PlaneWitness<'a> {
     }
 }
 
-/// 接缝失败到平面失败的映射；`Rejected`／`Unknown` 在观察语境下都只是「写者不可用」。
+/// 接缝失败到平面失败的映射；`NotAttempted`／`Rejected`／`Unknown` 在观察语境下都只是「写者不可用」。
 pub(super) fn seam_error(error: BridgeSeamError) -> PlaneError {
     match error {
         BridgeSeamError::Incomplete => PlaneError::Observation,
         BridgeSeamError::Audit => PlaneError::Audit,
-        BridgeSeamError::Unavailable | BridgeSeamError::Rejected | BridgeSeamError::Unknown => {
-            PlaneError::Unavailable
-        }
+        BridgeSeamError::NotAttempted
+        | BridgeSeamError::Unavailable
+        | BridgeSeamError::Rejected
+        | BridgeSeamError::Unknown => PlaneError::Unavailable,
     }
 }
 
