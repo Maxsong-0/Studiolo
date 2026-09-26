@@ -10,9 +10,10 @@ use super::super::{PlaneError, SyncPlane};
 use super::content::RoundContext;
 use super::evidence::RevisionTable;
 use super::observe::Observed;
+use super::super::health::now_unix_seconds;
 use super::{
     HeadlessRun, Inspection, RoundOutcome, RoundPorts, approved_mode, execute, headless, observe,
-    resolve,
+    reconcile, resolve,
 };
 use crate::sync_transport_config::ConfigError;
 use std::cell::RefCell;
@@ -155,6 +156,10 @@ impl RoundPorts for RealPorts<'_> {
         self.store.save(state)
     }
 
+    fn clock(&mut self) -> Option<i64> {
+        Some(now_unix_seconds())
+    }
+
     fn quiescent(&mut self) -> Result<(), PlaneError> {
         let ticket = self
             .plane
@@ -168,6 +173,11 @@ impl RoundPorts for RealPorts<'_> {
     }
 
     fn unresolved(&mut self) -> Result<Option<u64>, PlaneError> {
+        // 第 10 步续做：上一批仍有 Issued 未知终态的动作，先按原键向后端核对权威终态并写回执，
+        // 核不出的才保持未知（设计文档第 2 节第 10 步「下一轮原键核对」，评审 P1-1）。
+        if self.pending_unknown()?.1 > 0 {
+            reconcile::reconcile_pending(&self.context()?)?;
+        }
         let (sequence, unknown) = self.pending_unknown()?;
         Ok((unknown > 0).then_some(sequence).flatten())
     }

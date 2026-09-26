@@ -10,9 +10,10 @@ pub mod execute;
 pub mod headless;
 pub mod observe;
 pub mod real;
+pub mod reconcile;
 pub mod resolve;
 
-use super::recovery::{self, MIN_GAP_SECONDS, PlaneState, backoff_seconds};
+use super::recovery::{self, PlaneState};
 use super::{PlaneError, SyncPlane};
 use studiolo_host_config::sync_transport::TransportSyncMode;
 use studiolo_sync_bridge::{Decision, Input, Inventory, plan};
@@ -21,8 +22,11 @@ use studiolo_sync_transport::owned_run::{RunId, RunObservation, RunOperation, Sy
 /// 一轮的结论；每个变体都对应健康页第六节的一种状态。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RoundOutcome {
-    /// 处于退避或恢复窗口，本轮什么都没跑。
+    /// 处于退避窗口，本轮什么都没跑。
     Skipped,
+    /// 强制 `mirror-remote` 恢复轮（D9）：上次未干净回收，本轮只跑 SetMode＋RunOnce 并干净回收，
+    /// 不观察、不规划、不执行；下一轮才按审批模式跑（评审 P2-1）。
+    Recovered,
     /// headless 跑了但没有可搬运的差异（规划结果全部是共同观察）。
     Idle,
     /// 一批已闭合。
@@ -86,6 +90,11 @@ pub trait RoundPorts {
     fn run_once(&mut self) -> Result<HeadlessRun, PlaneError>;
     /// 完整替换持久小状态。
     fn save_state(&mut self, state: PlaneState) -> Result<(), PlaneError>;
+    /// 当前墙钟（Unix 秒）；`None` 表示端口不提供时钟，编排沿用轮开始时刻。
+    /// 真实端口必须提供：一次 RunOnce 可跑到 `deadline_seconds`，退避与退出时刻要按回收后的钟算（评审 P3-1）。
+    fn clock(&mut self) -> Option<i64> {
+        None
+    }
     /// 取静止证据（第 7 步）；没有即 `Quiescence`。
     fn quiescent(&mut self) -> Result<(), PlaneError>;
     /// 上一批是否仍有未知终态的动作；有则返回其计划序号（第 10 步的续做守卫）。
@@ -151,14 +160,21 @@ pub fn run_round_with(
     }
     state.applied_mode = Some(mode);
     state.verified_excluded = inspection.excluded_folders;
-    // 6 先持久「已启动」再 RunOnce；回收后按退出码记退避，非 clean 本轮到此为止。
-    state.started_sequence = Some(ports.next_sequence()?);
+    // 6 先持久「已启动」再 RunOnce；回收后按退出码记退避（恢复逻辑只有 `recovery::mark_*` 一份），
+    // 非 clean 本轮到此为止。
+    state = recovery::mark_started(&state, ports.next_sequence()?);
     ports.save_state(state.clone())?;
     let run = ports.run_once()?;
-    reap(&mut state, run, now_unix);
+    let reaped_at = ports.clock().unwrap_or(now_unix);
+    state = recovery::mark_reaped(&state, run.clean, run.rc_one, reaped_at);
     ports.save_state(state.clone())?;
     if !run.clean {
         return Err(PlaneError::Transport);
+    }
+    // 强制恢复轮到此为止：mirror-remote 已把镜像拉齐，本轮不观察、不规划、不执行，
+    // 尤其不能在审批为 bidirectional 时按「镜像为准」预解决冲突（评审 P2-1）。
+    if decision.forced_recovery {
+        return Ok(RoundOutcome::Recovered);
     }
     // 7 静止证据。
     ports.quiescent()?;
@@ -176,26 +192,6 @@ pub fn run_round_with(
     }
     // 10～12 预留、逐动作执行、闭合与保留期回收。
     ports.execute(input)
-}
-
-/// RunOnce 回收后的持久小状态更新（D9）：干净即清零；rc=1 按阶梯退避；其它非干净至少等 5 s。
-fn reap(state: &mut PlaneState, run: HeadlessRun, now_unix: i64) {
-    state.started_sequence = None;
-    state.last_run_clean = run.clean;
-    state.last_exit_unix = Some(now_unix);
-    if run.rc_one {
-        state.consecutive_rc1 = state.consecutive_rc1.saturating_add(1);
-        let wait = seconds(backoff_seconds(state.consecutive_rc1));
-        state.not_before_unix = Some(now_unix.saturating_add(wait));
-    } else {
-        state.consecutive_rc1 = 0;
-        state.not_before_unix =
-            (!run.clean).then(|| now_unix.saturating_add(seconds(MIN_GAP_SECONDS)));
-    }
-}
-
-fn seconds(value: u64) -> i64 {
-    i64::try_from(value).unwrap_or(i64::MAX)
 }
 
 fn has_conflicts(decision: &Decision) -> bool {

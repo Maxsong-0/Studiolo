@@ -4,8 +4,8 @@
 # 由 provision.sh 渲染安装；@LAUNCHER@ 是固定二进制路径 /usr/local/sbin/studiolo-sync-launcher。
 [Unit]
 Description=Studiolo trusted sync launcher (root, private socket)
-Requires=var-lib-studiolo\x2dsync.mount var-lib-studiolo\x2downer-mirror.mount
-After=var-lib-studiolo\x2dsync.mount var-lib-studiolo\x2downer-mirror.mount
+Requires=var-lib-studiolo\x2dsync.mount var-lib-studiolo\x2downer-bridge.mount
+After=var-lib-studiolo\x2dsync.mount var-lib-studiolo\x2downer-bridge.mount
 StartLimitIntervalSec=60
 StartLimitBurst=3
 

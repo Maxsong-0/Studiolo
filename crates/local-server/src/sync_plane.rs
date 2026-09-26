@@ -112,8 +112,6 @@ pub struct SyncPlane {
     pub(crate) audit: Arc<dyn AuditLedger>,
     pub(crate) plane_root: PathBuf,
     pub(crate) health: Arc<health::PlaneHealth>,
-    pub(crate) state: Mutex<PlaneStateStore>,
-    pub(crate) stage: Mutex<StageStore>,
 }
 
 impl SyncPlane {
@@ -128,9 +126,11 @@ impl SyncPlane {
             .map_err(|_| PlaneError::Configuration)?;
         let health = Arc::new(health::PlaneHealth::new(inputs.approval.manual_quota()));
         // 私有存储失败关闭：plane-state.json 撕裂／校验和不符、外 stage 索引损坏都不装配；
-        // stage 打开时顺带回收孤儿对象。两者都过才有平面。
-        let state = PlaneStateStore::open(&inputs.plane_root).map_err(|_| PlaneError::Storage)?;
-        let stage = StageStore::open(&inputs.plane_root).map_err(|_| PlaneError::Storage)?;
+        // stage 打开时顺带回收孤儿对象。两者都过才有平面。**只核不留**：`plane.lock` 是 flock
+        // 排他租约，按打开文件描述计，同进程再开一次也会被自己拒绝（评审 P0-1）；每轮的
+        // `RealPorts::open` 才是唯一持有者，平面不留第二个描述符。
+        drop(PlaneStateStore::open(&inputs.plane_root).map_err(|_| PlaneError::Storage)?);
+        drop(StageStore::open(&inputs.plane_root).map_err(|_| PlaneError::Storage)?);
         Ok(Arc::new(Self {
             approval: inputs.approval,
             transport: Mutex::new(inputs.transport),
@@ -139,8 +139,6 @@ impl SyncPlane {
             audit: inputs.audit,
             plane_root: inputs.plane_root,
             health,
-            state: Mutex::new(state),
-            stage: Mutex::new(stage),
         }))
     }
 
@@ -186,17 +184,7 @@ impl SyncPlane {
         &self.plane_root
     }
 
-    /// 恢复协议与排除项守卫的持久小状态；一轮内串行持锁。
-    #[must_use]
-    pub fn state(&self) -> &Mutex<PlaneStateStore> {
-        &self.state
-    }
 
-    /// 删除前保全的外 stage；一轮内串行持锁。
-    #[must_use]
-    pub fn stage(&self) -> &Mutex<StageStore> {
-        &self.stage
-    }
 
     /// 按固定间隔驱动，直到 `stop` 变真；每轮在阻塞线程里跑，轮内失败只记健康不退出。
     ///

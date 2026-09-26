@@ -106,6 +106,10 @@ impl PlaneHealth {
             Ok(RoundOutcome::Skipped) | Err(PlaneError::Backoff) => {
                 evidence.recovery = Some(RecoveryState::Backoff);
             }
+            // 强制恢复轮干净跑完：恢复协议仍在进行（下一轮才回审批模式），本轮无静止票据。
+            Ok(RoundOutcome::Recovered) => {
+                evidence.recovery = Some(RecoveryState::ForcedMirrorRemote);
+            }
             Err(PlaneError::Fused) => evidence.fused = Some(true),
             Err(PlaneError::ResidueBlocked) => {
                 evidence.residue_guard = Some(ResidueGuard::Blocked);
