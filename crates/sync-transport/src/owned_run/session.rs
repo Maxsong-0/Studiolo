@@ -2,7 +2,7 @@
 //!
 //! 每次读取前后复验根 pins、配置摘要与代次；任何漂移都拒绝，不做部分继续。
 
-use super::approval::{ApprovedTransport, PinnedRuntime, RootPins, runtime_digest};
+use super::approval::{ApprovedTransport, PinnedRuntime, runtime_digest};
 use super::audit::{
     AuditPayload, AuditPhaseKind, RequesterSource, RunAuditCandidate, binding_digest, event_id,
     outcome_summary,
@@ -10,8 +10,8 @@ use super::audit::{
 use super::error::{Result, TransportError};
 use super::machine::{self, PrepareRequest, Transition};
 use super::state::{AuditReceipt, RunRecord, TransportState, decode, encode};
-use super::tickets::{PreparedRun, QuiescentMirror, TicketBinding};
-use super::types::{ActiveSummary, RunId, RunOperation, RunPhase, RunStatus};
+use super::tickets::{PreparedRun, TicketBinding};
+use super::types::{ActiveSummary, RunId, RunOperation, RunStatus};
 use crate::linux::ContainmentBackend;
 use crate::store::StatePublisher;
 use std::num::NonZeroU64;
@@ -262,56 +262,6 @@ impl<'scope, B: ContainmentBackend> RunSession<'scope, B> {
         state: &TransportState,
     ) -> Result<()> {
         ticket.check(state, self.epoch, self.lease, self.mirror_epoch)
-    }
-
-    /// 已有静止证据且 Outcome 已 ACK 才发；再 prepare 立即作废。
-    pub(crate) fn quiescent(&self) -> Result<QuiescentMirror> {
-        let state = self.load()?;
-        if state.active.is_some() {
-            return Err(TransportError::AuditPending);
-        }
-        let terminal = state
-            .last_terminal
-            .as_ref()
-            .ok_or(TransportError::NotFound)?;
-        if terminal.observation.quiescence != super::types::Quiescence::Confirmed
-            || terminal.observation.phase != RunPhase::Closed
-        {
-            return Err(TransportError::QuiescenceUnconfirmed);
-        }
-        let RootPins {
-            mirror_root,
-            mirror_identity,
-            ..
-        } = state.roots.clone();
-        Ok(QuiescentMirror {
-            binding: self.ticket(&state, terminal.run_id, terminal.sequence)?,
-            mirror_root,
-            mirror_identity,
-        })
-    }
-
-    /// 复验静止能力是否仍然有效；根变化、租约变化、owner 重开或新一轮 prepare 都会作废它。
-    pub(crate) fn verify_quiescent(&self, mirror: &QuiescentMirror) -> Result<()> {
-        let state = self.load()?;
-        if mirror.binding.epoch != self.epoch || mirror.binding.lease != self.lease {
-            return Err(TransportError::TicketForeign);
-        }
-        if mirror.binding.mirror_epoch != self.mirror_epoch
-            || mirror.binding.config_digest != state.binding.approved_config_digest
-            || mirror.binding.config_epoch != state.binding.scope_epoch
-        {
-            return Err(TransportError::TicketStale);
-        }
-        if mirror.binding.roots != state.roots
-            || mirror.mirror_identity != state.roots.mirror_identity
-        {
-            return Err(TransportError::RootsChanged);
-        }
-        if state.active.is_some() {
-            return Err(TransportError::TicketStale);
-        }
-        Ok(())
     }
 }
 

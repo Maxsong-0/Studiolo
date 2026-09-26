@@ -1,0 +1,21 @@
+# owner（studiolo-human）读写镜像与驱动平面私有根所经的 idmapped bind 视图（ADR-025 D7／D8）：
+# 绑定的是 bridge/ 这一层父目录，下面同时有 mirror/（headless 镜像根）与 plane/（外 stage、plane-state、
+# BridgeState）——二者必须在同一条挂载上，否则安装时 stage 对象 renameat 进镜像会 EXDEV。磁盘上属
+# payload 身份 @PAYLOAD_UID@:@PAYLOAD_GID@ 的文件在这里显示为 owner @OWNER_UID@:@OWNER_GID@，owner 经
+# 视图写入的文件落盘时归 payload 身份；双方都不需要 chown，bind 与真实根是同一 inode。payload 侧由
+# launcher 的 InaccessiblePaths= 把 plane/ 藏起来。X-mount.idmap 写法 u:<视图内 id>:<磁盘上 id>:<范围>。
+# 文件名是 systemd-escape -p --suffix=mount /var/lib/studiolo-owner/bridge 的结果；由 provision.sh 渲染安装。
+[Unit]
+Description=Studiolo sync bridge owner view (idmapped bind: mirror + plane)
+Requires=var-lib-studiolo\x2dsync.mount
+After=var-lib-studiolo\x2dsync.mount
+Before=studiolo-sync-launcher.service
+
+[Mount]
+What=/var/lib/studiolo-sync/bridge
+Where=/var/lib/studiolo-owner/bridge
+Type=none
+Options=bind,X-mount.idmap=u:@OWNER_UID@:@PAYLOAD_UID@:1 g:@OWNER_GID@:@PAYLOAD_GID@:1
+
+[Install]
+WantedBy=multi-user.target

@@ -121,6 +121,69 @@ fn maintenance_cancellation_uses_its_own_explicit_selector() {
     assert!(parse(input).is_err());
 }
 
+#[test]
+fn sync_commands_take_the_approval_document_and_purge_takes_a_validated_folder() {
+    let mut init = args("sync-init");
+    assert!(parse(init.clone()).is_err());
+    init.extend([
+        OsString::from("--sync-transport"),
+        "/private/sync-approval.json".into(),
+    ]);
+    let value = parse(init.clone()).unwrap().unwrap();
+    assert_eq!(value.command, Command::SyncInit);
+    assert_eq!(value.command.name(), "sync-init");
+    assert_eq!(
+        value
+            .sync_transport
+            .as_deref()
+            .and_then(std::path::Path::to_str),
+        Some("/private/sync-approval.json")
+    );
+    assert!(value.folder.is_none() && value.request.is_none());
+    let mut with_folder = init.clone();
+    with_folder.extend([OsString::from("--folder"), "School".into()]);
+    assert!(parse(with_folder).is_err());
+    let mut relative = args("sync-init");
+    relative.extend([OsString::from("--sync-transport"), "relative.json".into()]);
+    assert!(parse(relative).is_err());
+
+    let mut purge = args("sync-purge-residue");
+    purge.extend([
+        OsString::from("--sync-transport"),
+        "/private/sync-approval.json".into(),
+    ]);
+    assert!(parse(purge.clone()).is_err());
+    for bad in [
+        "/School", "School/", "a/../b", "", " ", "School\n", "a\\b", "./a",
+    ] {
+        let mut input = purge.clone();
+        input.extend([OsString::from("--folder"), bad.into()]);
+        assert!(parse(input).is_err(), "{bad:?}");
+    }
+    let mut good = purge.clone();
+    good.extend([OsString::from("--folder"), "School/子目录".into()]);
+    let value = parse(good).unwrap().unwrap();
+    assert_eq!(value.command, Command::SyncPurgeResidue);
+    assert_eq!(value.folder.as_deref(), Some("School/子目录"));
+    let mut duplicate = purge;
+    duplicate.extend([
+        OsString::from("--sync-transport"),
+        "/private/again.json".into(),
+    ]);
+    assert!(parse(duplicate).is_err());
+
+    // 老命令不接受审批文档参数，新命令也不接受请求指纹。
+    let mut inspect = args("inspect");
+    inspect.extend([
+        OsString::from("--sync-transport"),
+        "/private/sync-approval.json".into(),
+    ]);
+    assert!(parse(inspect).is_err());
+    let mut request = args("sync-init");
+    request.extend([OsString::from("--request"), "a".repeat(64).into()]);
+    assert!(parse(request).is_err());
+}
+
 #[cfg(unix)]
 #[test]
 fn non_utf8_arguments_are_rejected_before_any_io() {

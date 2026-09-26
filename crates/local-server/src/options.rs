@@ -22,6 +22,8 @@ pub(crate) struct Options {
     pub(crate) policy_data: Option<PathBuf>,
     pub(crate) board: Option<BoardOptions>,
     pub(crate) runner_config: Option<PathBuf>,
+    /// 双向 Bridge 传输审批文档（ADR-025 D1）；缺席即平面不装配。
+    pub(crate) sync_transport: Option<PathBuf>,
 }
 
 pub(crate) struct BoardOptions {
@@ -65,6 +67,7 @@ struct Raw {
     board_socket: Option<PathBuf>,
     board_data: Option<PathBuf>,
     board_agent_data: Option<PathBuf>,
+    sync_transport: Option<PathBuf>,
 }
 
 pub(crate) fn parse(mut args: impl Iterator<Item = String>) -> Result<Option<Options>, String> {
@@ -194,6 +197,14 @@ pub(crate) fn parse(mut args: impl Iterator<Item = String>) -> Result<Option<Opt
     {
         return Err("执行体需规范绝对配置路径、黑板和可信二次认证入口".into());
     }
+    // Bridge 平面要 canonical 写者与会话配置；没有写者就没有可摄入的 canonical。
+    if raw
+        .sync_transport
+        .as_ref()
+        .is_some_and(|p| !p.is_absolute() || raw.writer_data.is_none() || session.is_none())
+    {
+        return Err("双向 Bridge 审批文档必须为绝对路径，并配合会话配置与 canonical 写者".into());
+    }
     Ok(Some(Options {
         vault: raw
             .vault
@@ -212,6 +223,7 @@ pub(crate) fn parse(mut args: impl Iterator<Item = String>) -> Result<Option<Opt
         policy_data: raw.policy_data,
         board,
         runner_config: raw.runner_config,
+        sync_transport: raw.sync_transport,
     }))
 }
 
@@ -242,3 +254,7 @@ mod rust_call_tests;
 #[cfg(test)]
 #[path = "../tests/options/table.rs"]
 mod table_tests;
+
+#[cfg(test)]
+#[path = "../tests/options/sync_transport.rs"]
+mod sync_transport_tests;

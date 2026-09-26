@@ -23,6 +23,11 @@ impl HandshakeNonce {
     pub fn matches(&self, other: &Self) -> bool {
         self.0 == other.0
     }
+
+    /// 原始字节；只给 `client.rs` 装进 `launch` 请求帧，不进任何公开 DTO 或审计。
+    pub(crate) fn bytes(&self) -> [u8; 32] {
+        self.0
+    }
 }
 
 impl fmt::Debug for HandshakeNonce {

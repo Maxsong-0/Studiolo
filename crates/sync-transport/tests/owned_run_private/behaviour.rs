@@ -107,7 +107,8 @@ fn a_quiescent_capability_is_only_issued_after_confirmed_quiescence_and_outcome_
 
     let mirror = session.quiescent().expect("闭合后可取静止能力");
     assert_eq!(mirror.run_id(), owned.run_id());
-    assert_eq!(mirror.mirror_root(), std::path::Path::new(MIRROR_ROOT));
+    // 静止票据给 owner 的是 idmapped 视图路径，不是 payload 的真实镜像路径。
+    assert_eq!(mirror.mirror_root(), std::path::Path::new(MIRROR_VIEW_ROOT));
     assert!(mirror.remote_delivery_unknown());
     assert_eq!(session.verify_quiescent(&mirror), Ok(()));
 
@@ -217,4 +218,59 @@ fn stop_reason_is_persisted_before_the_bound_subgroup_is_ever_asked_to_stop() {
     assert_eq!(record.phase, RunPhase::StopRequested);
     assert_eq!(record.stop_reason, Some(StopReason::OwnerRequested));
     assert_eq!(session.backend.stops, 1);
+}
+
+#[test]
+fn config_output_needs_a_closed_inspect_run_and_its_recorded_container_never_run_once() {
+    let fixture = Fixture::new();
+    let mut session = fixture.session();
+    let prepared = session
+        .prepare_once(1, RunOperation::InspectConfig, 1)
+        .expect("可以准备一次运行");
+    acknowledge(&mut session);
+    let owned = session.start(&prepared).expect("可以放行");
+    // 未闭合就没有可取的正文。
+    assert_eq!(
+        session.config_output(owned.run_id()).err(),
+        Some(TransportError::NotFound)
+    );
+    session.backend.running = false;
+    session.backend.exit = ExitObservation::Code(0);
+    session.backend.populated = false;
+    session.backend.output = Some(r#"{"syncMode":"mirror-remote"}"#.to_owned());
+    session.wait(&owned).expect("可以推进观察");
+    acknowledge(&mut session);
+
+    let status = session.inspect().expect("可以读状态");
+    let terminal = status.last_terminal.expect("已审计闭合摘要");
+    // 闭合摘要带着 Contained 时记下的容器身份；正文只对这个身份取。
+    assert_eq!(terminal.container, Some(container()));
+    assert_eq!(
+        session.config_output(owned.run_id()).as_deref(),
+        Ok(r#"{"syncMode":"mirror-remote"}"#)
+    );
+    // launcher 拿不到正文（超预算／非 UTF-8）：不截断、不猜，保持未知。
+    session.backend.output = None;
+    assert_eq!(
+        session.config_output(owned.run_id()).err(),
+        Some(TransportError::ExitUnconfirmed)
+    );
+    assert_eq!(
+        session.config_output(RunId::from_bytes([0u8; 16])).err(),
+        Some(TransportError::NotFound)
+    );
+
+    // RunOnce 永远不取正文：它的输出不是证据。
+    let prepared = session
+        .prepare_once(2, RunOperation::RunOnce, 2)
+        .expect("可以准备下一次运行");
+    acknowledge(&mut session);
+    let owned = session.start(&prepared).expect("可以放行");
+    session.backend.output = Some("not evidence".to_owned());
+    session.wait(&owned).expect("可以推进观察");
+    acknowledge(&mut session);
+    assert_eq!(
+        session.config_output(owned.run_id()).err(),
+        Some(TransportError::Budget)
+    );
 }

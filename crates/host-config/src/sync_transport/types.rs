@@ -16,6 +16,9 @@ pub struct TransportRoots {
     private_identity: (u64, u64),
     mirror_root: PathBuf,
     mirror_identity: (u64, u64),
+    mirror_view_root: PathBuf,
+    plane_root: PathBuf,
+    plane_identity: (u64, u64),
 }
 
 impl TransportRoots {
@@ -24,13 +27,37 @@ impl TransportRoots {
         private_identity: (u64, u64),
         mirror_root: PathBuf,
         mirror_identity: (u64, u64),
+        mirror_view_root: PathBuf,
+        plane_root: PathBuf,
+        plane_identity: (u64, u64),
     ) -> Self {
         Self {
             private_root,
             private_identity,
             mirror_root,
             mirror_identity,
+            mirror_view_root,
+            plane_root,
+            plane_identity,
         }
+    }
+
+    /// owner 读写镜像所经的 idmapped bind 视图（ADR-025 D7）；被钉住的是它，不是真实镜像根。
+    #[must_use]
+    pub fn mirror_view_root(&self) -> &Path {
+        &self.mirror_view_root
+    }
+
+    /// Bridge 驱动平面的私有根：外 stage、`plane-state.json`、`plane.lock` 都在这里。
+    #[must_use]
+    pub fn plane_root(&self) -> &Path {
+        &self.plane_root
+    }
+
+    /// 平面私有根的 `(dev, ino)`。
+    #[must_use]
+    pub fn plane_identity(&self) -> (u64, u64) {
+        self.plane_identity
     }
 
     /// 只有 owner 写入的传输私有根；与 canonical、writer-data、审计、Bridge DB 两两不重叠。
@@ -45,17 +72,51 @@ impl TransportRoots {
         self.private_identity
     }
 
-    /// Headless 专用镜像根。
+    /// Headless 专用镜像根：payload 在其 mount 视图里看到的真实路径，只进 argv。
+    ///
+    /// owner 进程对它没有遍历权限（它属专用 payload 身份），所以不钉它；
+    /// 真实根与视图是同一 inode，`mirror_identity` 经视图观察得到。
     #[must_use]
     pub fn mirror_root(&self) -> &Path {
         &self.mirror_root
     }
 
-    /// 镜像根的 `(dev, ino)`。
+    /// 镜像根的 `(dev, ino)`（经 owner 视图观察；bind 视图与真实根相同）。
     #[must_use]
     pub fn mirror_identity(&self) -> (u64, u64) {
         self.mirror_identity
     }
+}
+
+/// 审批的镜像同步模式（ADR-025 D4／D5）；驱动器每轮先核对再决定是否 `SetMode`。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TransportSyncMode {
+    /// 引导期：只下载、永不上传。
+    MirrorRemote,
+    /// P6：双向。
+    Bidirectional,
+}
+
+impl TransportSyncMode {
+    /// headless `syncMode` 字段与 `--mode` 参数的字面量。
+    #[must_use]
+    pub fn cli_value(self) -> &'static str {
+        match self {
+            Self::MirrorRemote => "mirror-remote",
+            Self::Bidirectional => "bidirectional",
+        }
+    }
+}
+
+/// 人工录入的 Obsidian 账号配额（ADR-025 D11）；机器读不到账号用量，只能由人抄进来。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ManualQuota {
+    /// 账号套餐上限字节数。
+    pub account_limit_bytes: u64,
+    /// 人工从 Obsidian 设置页抄下的已用字节数。
+    pub used_bytes_manual: u64,
+    /// 抄录时刻（Unix 秒）；健康页据此判断录入是否过期。
+    pub recorded_at_unix: i64,
 }
 
 /// 固定运行时：精确发布版本与只读安装闭包摘要；不保存任何凭证正文。

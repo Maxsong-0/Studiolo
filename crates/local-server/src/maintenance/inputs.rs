@@ -9,6 +9,8 @@ pub(super) struct Inputs {
     pub(super) roots: CanonicalServingRoots,
     pub(super) broker: FsVaultBroker,
     pub(super) audit: Option<Box<dyn AuditLedger>>,
+    /// 同一份私有配置快照：Bridge 范围批准与 Auth／Audit 目录都从它取，不再二次读盘。
+    pub(super) config: Config,
 }
 
 impl Inputs {
@@ -37,6 +39,7 @@ impl Inputs {
             roots,
             broker,
             audit,
+            config,
         };
         inputs.revalidate()?;
         Ok(inputs)

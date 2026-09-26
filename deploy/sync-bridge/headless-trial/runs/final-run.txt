@@ -1,0 +1,38 @@
+# T-132 P2 收尾 20260923T041156Z
+   mirror 配置：{"vaultName": "studiolo-p2-test", "vaultPath": "/var/lib/studiolo-sync/p2/mirror", "syncMode": "bidirectional", "conflictStrategy": "conflict", "deviceName": "studiolo-169-p2", "configDir": ".obsidian", "fileTypes": ["image", "audio", "video", "pdf", "unsupported"], "configs": [], "excludedFolders": []}
+   observer 配置：{"vaultName": "studiolo-p2-test", "vaultPath": "/var/lib/studiolo-sync/p2/observer", "syncMode": "bidirectional", "conflictStrategy": "conflict", "deviceName": "studiolo-169-p2-observer", "configDir": ".obsidian", "fileTypes": ["image", "audio", "video", "pdf", "unsupported"], "configs": ["app", "appearance"], "excludedFolders": []}
+   [mirror] ob sync rc=0 0.4s | Fully synced / Disconnected from server
+   [observer] ob sync rc=0 0.3s | Fully synced / Disconnected from server
+## S5b 附件（pdf）双方同时修改：冲突策略是否生成冲突副本
+   [observer] ob sync rc=0 10.4s | Fully synced / Disconnected from server
+   [mirror] ob sync rc=0 60.5s | Fully synced / Disconnected from server
+   [mirror] ob sync rc=0 0.3s | Fully synced / Disconnected from server
+   [observer] ob sync rc=0 10.3s | Fully synced / Disconnected from server
+   [mirror] ob sync rc=0 0.5s | Fully synced / Disconnected from server
+   [observer] ob sync rc=0 0.4s | Fully synced / Disconnected from server
+   [mirror] ob sync rc=0 0.2s | Fully synced / Disconnected from server
+   [observer] ob sync rc=0 0.2s | Fully synced / Disconnected from server
+>> S5b 附件并发修改不丢任何一方: FAIL — 冲突副本=无；各处={"mirror:S5b/附件.pdf": "OBSERVER", "observer:S5b/附件.pdf": "OBSERVER"}
+   mirror sync.log | [2026-09-23T04:12:08.299Z] Push: S5b (updated)
+   mirror sync.log | [2026-09-23T04:12:08.299Z] Downloading S5b
+   mirror sync.log | [2026-09-23T04:12:08.300Z] Downloaded S5b
+   mirror sync.log | [2026-09-23T04:12:08.301Z] Accepted S5b
+   mirror sync.log | [2026-09-23T04:12:08.301Z] Push: S5b/附件.pdf (updated)
+   mirror sync.log | [2026-09-23T04:12:08.302Z] Downloading S5b/附件.pdf
+   mirror sync.log | [2026-09-23T04:12:08.352Z] Downloaded S5b/附件.pdf
+   mirror sync.log | [2026-09-23T04:12:08.352Z] Accepted S5b/附件.pdf
+   mirror sync.log | [2026-09-23T04:13:08.652Z] Uploading file S5b/附件.pdf
+   mirror sync.log | [2026-09-23T04:13:08.706Z] Upload complete S5b/附件.pdf
+   mirror sync.log | [2026-09-23T04:13:19.303Z] Push: S5b/附件.pdf (updated)
+   mirror sync.log | [2026-09-23T04:13:19.304Z] Downloading S5b/附件.pdf
+   mirror sync.log | [2026-09-23T04:13:19.328Z] Downloaded S5b/附件.pdf
+   mirror sync.log | [2026-09-23T04:13:19.328Z] Accepted S5b/附件.pdf
+## 清理：由 observer 删除全部测试目录，经同步传到远端与镜像
+   [observer] ob sync rc=0 3.2s | Fully synced / Disconnected from server
+   [mirror] ob sync rc=0 60.5s | Fully synced / Disconnected from server
+>> CLEAN 测试数据已从三处清除: PASS — 删除前 observer 体积 286.5 MiB；删除目录=['S5b', 'P2-Excluded', 'P2-Ex2', 'S9', 'S2-反向', 'S9d', 'S1-中文 目录', 'S9f', 'S5', 'S3', 'S9g']；镜像残留=无；observer 残留=无
+
+## 汇总
+   FAIL     S5b 附件并发修改不丢任何一方
+   PASS     CLEAN 测试数据已从三处清除
+报告已写入 /var/lib/studiolo-sync/p2/final-20260923T041156Z.txt

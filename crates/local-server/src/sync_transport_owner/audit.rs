@@ -149,9 +149,11 @@ fn payload_value(payload: &AuditPayload) -> Value {
         "schema_version": payload.schema_version,
         "run": format!("{}", payload.run_id),
         "sequence": payload.sequence,
-        "operation": match payload.operation {
-            RunOperation::InspectConfig => "inspect_config",
-            RunOperation::RunOnce => "run_once",
+        "operation": payload.operation.name(),
+        // 只有 SetMode 才有模式；InspectConfig／RunOnce 固定为 null，让审计形状稳定。
+        "mode": match payload.operation {
+            RunOperation::SetMode(mode) => Some(mode.cli_value()),
+            RunOperation::InspectConfig | RunOperation::RunOnce => None,
         },
         "binding_digest": hex(payload.binding_digest),
         "runtime_digest": hex(payload.runtime_digest),

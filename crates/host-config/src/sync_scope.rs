@@ -63,6 +63,26 @@ impl SyncScope {
         self.file.revalidate()
     }
 
+    /// 全部目录规则与精确文件规则里最大的单对象字节上限。
+    ///
+    /// Bridge 执行器的保守预算据此设定（`Limits::conservative`）；它是内部策略上限，
+    /// 不是任何 Sync 服务配额，也不放宽逐规则的 `max_bytes`。
+    #[must_use]
+    pub fn max_bytes(&self) -> u64 {
+        self.document
+            .whole_folders
+            .iter()
+            .map(|rule| rule.policy.max_bytes)
+            .chain(
+                self.document
+                    .whole_files
+                    .iter()
+                    .map(|rule| rule.policy.max_bytes),
+            )
+            .max()
+            .unwrap_or(0)
+    }
+
     /// 读取正文前取得该路径的类型/字节约束；None 表示不得读取该路径正文。
     ///
     /// 只核对单路径与可信配置，不证明 Missing、扫描完整、实际类型或摘要。

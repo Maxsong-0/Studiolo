@@ -91,6 +91,7 @@ fn a_transport_intent_event_carries_the_fixed_action_and_only_closed_digest_fiel
             "backend_digest",
             "binding_digest",
             "budget",
+            "mode",
             "operation",
             "outcome",
             "requester",
@@ -218,6 +219,7 @@ fn the_status_projection_keeps_phase_quiescence_and_exit_as_separate_facts() {
                 stop_reason: None,
             },
             counts: ResourceCounts::default(),
+            container: None,
         }),
     };
 

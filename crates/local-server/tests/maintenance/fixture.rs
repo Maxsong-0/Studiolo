@@ -54,6 +54,8 @@ impl Fixture {
             writer_data: self.root.join("data"),
             request: None,
             maintenance: None,
+            sync_transport: None,
+            folder: None,
         }
     }
 }

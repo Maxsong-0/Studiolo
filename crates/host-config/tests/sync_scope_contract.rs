@@ -1,5 +1,7 @@
 //! 双向整文件范围只读契约；仅创建本次 /tmp 合成配置，不运行传输或打开数据库。
 
+#[path = "sync_scope/attachments.rs"]
+mod attachments;
 #[path = "sync_scope/budgets.rs"]
 mod budgets;
 #[path = "sync_scope/config.rs"]

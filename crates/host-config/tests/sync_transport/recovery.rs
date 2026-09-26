@@ -39,15 +39,16 @@ fn capability_revalidation_fails_after_the_private_root_object_is_replaced() {
     assert!(approved.revalidate().is_err());
 }
 
-/// 镜像根同样按对象钉；删掉重建、换成另一个目录都必须让既有能力失效。
+/// owner 视图根同样按对象钉；删掉重建、换成另一个目录都必须让既有能力失效。
+/// 真实镜像根属 payload 身份、owner 无权遍历，所以钉的是视图根而不是它。
 #[test]
-fn capability_revalidation_fails_after_the_mirror_root_object_is_replaced() {
+fn capability_revalidation_fails_after_the_mirror_view_root_object_is_replaced() {
     let fixture = Fixture::new();
     let scope = fixture.scope();
     let approved = fixture.approve(&scope).unwrap();
 
-    fs::remove_dir(fixture.root.join("mirror")).unwrap();
-    directory(&fixture.root.join("mirror"));
+    fs::remove_dir(fixture.root.join("mirror-view")).unwrap();
+    directory(&fixture.root.join("mirror-view"));
 
     assert!(approved.revalidate().is_err());
 }
@@ -68,13 +69,13 @@ fn capability_revalidation_fails_when_the_root_path_is_renamed_onto_another_dire
 }
 
 #[test]
-fn capability_revalidation_fails_after_the_mirror_root_loses_private_permissions() {
+fn capability_revalidation_fails_after_the_mirror_view_root_loses_private_permissions() {
     let fixture = Fixture::new();
     let scope = fixture.scope();
     let approved = fixture.approve(&scope).unwrap();
 
     fs::set_permissions(
-        fixture.root.join("mirror"),
+        fixture.root.join("mirror-view"),
         <fs::Permissions as std::os::unix::fs::PermissionsExt>::from_mode(0o750),
     )
     .unwrap();

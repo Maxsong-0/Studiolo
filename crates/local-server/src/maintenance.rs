@@ -7,6 +7,7 @@ mod options;
 mod presentation;
 mod rename;
 mod state;
+mod sync;
 mod terminal;
 mod workflow;
 
@@ -31,8 +32,10 @@ pub fn run() -> Result<(), MaintenanceError> {
             "studiolo-maintain inspect --config /owner.json --vault /vault --assets /assets --writer-data /writer",
             "studiolo-maintain cancel-prepared|preserve-installing|cancel-restore-intent [相同根参数] --request <64位审阅指纹>",
             "studiolo-maintain cancel-maintenance [相同根参数] --maintenance <64位维护指纹>",
-            "studiolo-maintain audit-flush [相同根参数]"
-        ],"boundary":"仅本机 OS 权限与既有 Broker owner 租约；不是应用身份认证，不自动初始化、取消或停服务。"}));
+            "studiolo-maintain audit-flush [相同根参数]",
+            "studiolo-maintain sync-init [相同根参数] --sync-transport </绝对路径/sync-approval.json>",
+            "studiolo-maintain sync-purge-residue [相同根参数] --sync-transport </绝对路径/sync-approval.json> --folder <排除文件夹名>"
+        ],"boundary":"仅本机 OS 权限与既有 Broker owner 租约；不是应用身份认证，不自动初始化、取消或停服务。sync-init 只在四项私有存储都不存在时显式建立；sync-purge-residue 须先停 studiolo-human，只删镜像视图内已不再排除的文件夹残留。"}));
     };
     let terminal = terminal::Terminal::open()?;
     let operator = terminal.operator();
@@ -100,6 +103,18 @@ pub enum MaintenanceError {
     /// JSON 输出失败不回显底层错误。
     #[error("维护结果输出失败；请重新 inspect 核验持久状态")]
     Output,
+    /// Bridge 平面四项私有存储里已有实例；本命令不修复、不覆盖。
+    #[error("Bridge 平面私有存储已存在；请先人工处理，本命令不修复、不覆盖")]
+    SyncExists,
+    /// Bridge 平面私有存储初始化或打开失败。
+    #[error("Bridge 平面私有存储不可用；初始化或读取未完成，请检查四个根后重试")]
+    SyncStorage,
+    /// 指定文件夹不是当前可清除的排除残留。
+    #[error("指定文件夹不在上次核验的排除集合内，或仍在当前审批的排除清单里；未删除任何东西")]
+    SyncResidue,
+    /// 残留里有链接、非常规对象，或超出遍历预算。
+    #[error("镜像残留含链接、非常规对象或超出遍历预算；未删除任何东西")]
+    SyncResidueUnsafe,
 }
 
 #[cfg(test)]

@@ -1,0 +1,15 @@
+# Studiolo 同步镜像盘（T-132 P1，ADR-025 D7）：固定 4 GiB ext4 loop 镜像挂到 /var/lib/studiolo-sync；
+# 磁盘配额靠镜像大小硬限，launcher 的 probe 会核对该挂载的 loop 设备 backing_file 正是这个镜像文件。
+# 文件名是 systemd-escape -p --suffix=mount /var/lib/studiolo-sync 的结果；由 provision.sh 安装。
+[Unit]
+Description=Studiolo sync mirror volume (loop-backed ext4, 4 GiB hard cap)
+Before=studiolo-sync-launcher.service
+
+[Mount]
+What=/var/lib/studiolo-sync.img
+Where=/var/lib/studiolo-sync
+Type=ext4
+Options=loop,nosuid,nodev,noexec,noatime
+
+[Install]
+WantedBy=multi-user.target

@@ -1,13 +1,16 @@
 //! 本地只读健康聚合。没有 IO、没有时钟、没有网络；证据全部由调用方注入。
 
 use super::{
-    AgeEvidence, HealthReport, HealthSection, HealthState, Instant, OwnerLiveness,
-    RecoveryPointEvidence, SectionDetailError, WhitelistDiagnosis,
+    AgeEvidence, BridgeEvidence, HealthReport, HealthSection, HealthState, Instant, OwnerLiveness,
+    RecoveryPointEvidence, SectionDetailError, WhitelistDiagnosis, bridge_section,
 };
 use crate::quota::QuotaVerdict;
 
 /// 未建立恢复点时健康页固定显示的正文；这一节永远不是绿。
 pub const NO_RECOVERY_POINT: &str = "尚未建立灾难恢复点";
+
+/// Sync 配额一节正文固定的后缀：读数是 Studiolo 侧镜像字节数，不是 Obsidian 账号用量（ADR-025 D11）。
+const SYNC_QUOTA_DETAIL_SUFFIX: &str = "（非账号用量）";
 
 /// 一次聚合的全部证据。每一项都可以是 `None`，`None` 一律走"未知"。
 #[derive(Clone, Debug)]
@@ -26,6 +29,8 @@ pub struct HealthInputs<'a> {
     pub sync: QuotaVerdict,
     /// 白名单诊断结论；`None` 表示诊断本身没跑成。
     pub whitelist: Option<&'a WhitelistDiagnosis>,
+    /// 双向 Bridge 证据（第六节）；`None` 表示驱动平面未装配或读不到。
+    pub bridge: Option<&'a BridgeEvidence>,
 }
 
 /// 聚合成健康页报告。返回 `Err` 只可能是内部正文越界，属于实现缺陷。
@@ -33,9 +38,15 @@ pub fn aggregate(inputs: &HealthInputs<'_>) -> Result<HealthReport, SectionDetai
     Ok(HealthReport::new(vec![
         recovery_point_section(inputs)?,
         owners_section(inputs)?,
-        quota_section("disk-quota", "磁盘配额", inputs.disk)?,
-        quota_section("sync-quota", "Sync 配额", inputs.sync)?,
+        quota_section("disk-quota", "磁盘配额", inputs.disk, "")?,
+        quota_section(
+            "sync-quota",
+            "Sync 配额",
+            inputs.sync,
+            SYNC_QUOTA_DETAIL_SUFFIX,
+        )?,
         whitelist_section(inputs.whitelist)?,
+        bridge_section(inputs.bridge)?,
     ]))
 }
 
@@ -114,10 +125,12 @@ fn owners_section(inputs: &HealthInputs<'_>) -> Result<HealthSection, SectionDet
     )
 }
 
+/// 配额一节：三态文案固定，`detail_suffix` 原样拼在文案之后（磁盘传空，Sync 传「非账号用量」）。
 fn quota_section(
     code: &'static str,
     title: &'static str,
     verdict: QuotaVerdict,
+    detail_suffix: &str,
 ) -> Result<HealthSection, SectionDetailError> {
     let detail = match verdict {
         QuotaVerdict::Normal => "占用在预警水位以内",
@@ -125,7 +138,12 @@ fn quota_section(
         QuotaVerdict::Exceeded => "占用已越过上限，对应写入路径已阻断",
         QuotaVerdict::Unknown => "占用读数不可得，无法判断",
     };
-    HealthSection::new(code, title, verdict.health(), detail)
+    HealthSection::new(
+        code,
+        title,
+        verdict.health(),
+        format!("{detail}{detail_suffix}"),
+    )
 }
 
 fn whitelist_section(

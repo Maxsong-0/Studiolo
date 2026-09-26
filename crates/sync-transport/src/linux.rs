@@ -1,19 +1,26 @@
 //! 受控 Linux 后端的能力面。
 //!
-//! **平台前置未满足**：本仓库尚未由管理员预置可信 launcher/service 特权，也没有隔离
-//! 测试机，因此 `VerifiedLinuxBackend` 在任何平台上都还构造不出来。macOS 与缺权限的
-//! Linux 一律返回 `UnsupportedContainment`；**绝不回退 PID/PGID 观察冒充 OwnedRun**，
-//! 也没有任何 mock 能把平台标记为可用。
+//! 真实特权路径是管理员预置的 root 系统服务 `studiolo-sync-launcher serve`（ADR-025 D2）：
+//! owner 经固定私有 socket（`protocol::LAUNCHER_SOCKET`）发封闭请求，launcher 用 systemd
+//! transient unit 建 payload 子组、核对隔离、放行、读 cgroup 事实并回报。本文件的
+//! `verify_backend` 与 `LinuxContainment` 每个方法都是那条 IPC 的一次往返（`client.rs`，
+//! 本 crate 里 socket IO 的唯一位置）：socket 未置备如实报 `TrustedLauncherNotProvisioned`，
+//! 探测项任一不满足按其分类报缺口。**绝不回退 PID/PGID 观察冒充 OwnedRun**，也没有任何
+//! mock 能把平台标记为可用——只有 launcher 的 `probe` 实测应答能产出 `VerifiedLinuxBackend`。
 
 pub mod cgroup;
 pub mod ipc;
 pub mod launcher;
+pub mod protocol;
 pub mod service;
 pub mod stdio;
 
-use crate::owned_run::{
-    ApprovedTransport, ContainerIdentity, ExitObservation, ResourceCounts, TransportError,
-};
+mod backend;
+pub(crate) mod client;
+
+pub use backend::{LinuxContainment, VerifiedLinuxBackend, verify_backend, verify_backend_at};
+
+use crate::owned_run::{ContainerIdentity, ExitObservation, ResourceCounts, RunId, TransportError};
 use cgroup::CgroupEvents;
 use launcher::{LaunchAcknowledgement, LaunchRequest, ReleaseToken};
 
@@ -107,15 +114,25 @@ pub trait ContainmentBackend {
 
     /// 观察执行是否真的开始。
     ///
+    /// 运行标识与容器身份一起进请求帧（`ContainerFrame`），launcher 逐字段核对；下同。
+    ///
     /// # 错误
     /// 身份不符返回 `IdentityMismatch`。
-    fn observe_running(&mut self, container: &ContainerIdentity) -> Result<bool, ContainmentGap>;
+    fn observe_running(
+        &mut self,
+        run_id: RunId,
+        container: &ContainerIdentity,
+    ) -> Result<bool, ContainmentGap>;
 
     /// 关闭一切继续创建 payload 的入口。
     ///
     /// # 错误
     /// 无法确证入口已关闭时返回 `IdentityMismatch`。
-    fn close_spawn_gate(&mut self, container: &ContainerIdentity) -> Result<(), ContainmentGap>;
+    fn close_spawn_gate(
+        &mut self,
+        run_id: RunId,
+        container: &ContainerIdentity,
+    ) -> Result<(), ContainmentGap>;
 
     /// 读取同一受控 payload 子组的 `cgroup.events`。
     ///
@@ -123,6 +140,7 @@ pub trait ContainmentBackend {
     /// 身份不符返回 `IdentityMismatch`。
     fn read_events(
         &mut self,
+        run_id: RunId,
         container: &ContainerIdentity,
     ) -> Result<CgroupEvents, ContainmentGap>;
 
@@ -130,7 +148,11 @@ pub trait ContainmentBackend {
     ///
     /// # 错误
     /// 身份不符返回 `IdentityMismatch`。
-    fn drain(&mut self, container: &ContainerIdentity) -> Result<ResourceCounts, ContainmentGap>;
+    fn drain(
+        &mut self,
+        run_id: RunId,
+        container: &ContainerIdentity,
+    ) -> Result<ResourceCounts, ContainmentGap>;
 
     /// 只停止绑定的子组：先 TERM 有界 grace，再对同一组执行覆盖全后代的强停。
     ///
@@ -138,6 +160,7 @@ pub trait ContainmentBackend {
     /// 身份不符返回 `IdentityMismatch`。
     fn stop(
         &mut self,
+        run_id: RunId,
         container: &ContainerIdentity,
         grace_seconds: u32,
     ) -> Result<(), ContainmentGap>;
@@ -146,7 +169,11 @@ pub trait ContainmentBackend {
     ///
     /// # 错误
     /// 身份不符返回 `IdentityMismatch`。
-    fn reap(&mut self, container: &ContainerIdentity) -> Result<ExitObservation, ContainmentGap>;
+    fn reap(
+        &mut self,
+        run_id: RunId,
+        container: &ContainerIdentity,
+    ) -> Result<ExitObservation, ContainmentGap>;
 
     /// 重开时核对旧容器身份。
     ///
@@ -154,146 +181,22 @@ pub trait ContainmentBackend {
     /// manager 不可用时返回 `ManagerUnavailable`。
     fn match_identity(
         &mut self,
+        run_id: RunId,
         container: &ContainerIdentity,
     ) -> Result<IdentityMatch, ContainmentGap>;
-}
 
-/// 已实测核验的受控 Linux 后端；没有公开构造器，也不能被反序列化。
-///
-/// 目前**任何平台都拿不到它**：仓库尚未具备管理员预置的可信 launcher/service 特权。
-///
-/// ```compile_fail
-/// let backend: studiolo_sync_transport::linux::VerifiedLinuxBackend =
-///     serde_json::from_str("{}").unwrap();
-/// ```
-#[derive(Debug)]
-pub struct VerifiedLinuxBackend {
-    service_unit: String,
-    payload_uid: u32,
-    payload_gid: u32,
-}
-
-impl VerifiedLinuxBackend {
-    /// 已核验的精确 unit 名。
-    #[must_use]
-    pub fn service_unit(&self) -> &str {
-        &self.service_unit
-    }
-
-    /// 已核验的专用 payload 身份。
-    #[must_use]
-    pub fn payload_identity(&self) -> (u32, u32) {
-        (self.payload_uid, self.payload_gid)
-    }
-}
-
-/// 首次检查受控隔离前置；缺任何一项都不启动第三方程序。
-///
-/// 当前实现在所有平台都返回缺口：非 Linux 是 `UnsupportedPlatform`，Linux 是
-/// `TrustedLauncherNotProvisioned`。这不是占位符，而是如实报告本机确实没有该特权 ——
-/// 在管理员预置可信 launcher/service 并在隔离 Linux 上实测之前，这里不得返回 `Ok`。
-///
-/// # 错误
-/// 永远返回缺口分类；平台「受支持」状态留待实测。
-pub fn verify_backend(
-    approval: &dyn ApprovedTransport,
-) -> Result<VerifiedLinuxBackend, ContainmentGap> {
-    approval
-        .revalidate()
-        .map_err(|_| ContainmentGap::IdentityMismatch)?;
-    let backend = approval.backend();
-    if !service::unit_name_acceptable(&backend.service_unit) {
-        return Err(ContainmentGap::ProtocolViolation);
-    }
-    if !cfg!(target_os = "linux") {
-        return Err(ContainmentGap::UnsupportedPlatform);
-    }
-    // 真实探测（cgroup v2 挂载、委派、控制器、kill 能力、namespace、专用身份、磁盘 quota）
-    // 必须经由管理员预置的可信 launcher 完成；本仓库还没有那条特权路径，所以如实报缺口，
-    // 绝不用 PID/PGID 观察或任何 mock 把平台标记为可用。
-    Err(ContainmentGap::TrustedLauncherNotProvisioned)
-}
-
-/// 绑定已核验后端的真实 adapter。
-///
-/// 每个方法的真实 OS 调用（systemd 接口、cgroup FD、launcher IPC）必须在管理员预置
-/// 可信 launcher/service 并在隔离 Linux 上实测之后补齐。在那之前，本类型连构造都做不到
-/// （它需要一个 `VerifiedLinuxBackend`），因此这里如实报告缺口而不是给一个会「看起来能跑」
-/// 的假实现 —— 假实现正是本设计明令禁止的 PID/PGID 降级。
-#[derive(Debug)]
-pub struct LinuxContainment {
-    backend: VerifiedLinuxBackend,
-}
-
-impl LinuxContainment {
-    /// 只能由已核验后端构造。
-    #[must_use]
-    pub fn new(backend: VerifiedLinuxBackend) -> Self {
-        Self { backend }
-    }
-
-    /// 已核验后端的只读事实。
-    #[must_use]
-    pub fn backend(&self) -> &VerifiedLinuxBackend {
-        &self.backend
-    }
-
-    fn gap(&self) -> ContainmentGap {
-        ContainmentGap::TrustedLauncherNotProvisioned
-    }
-}
-
-impl ContainmentBackend for LinuxContainment {
-    fn boot_id(&mut self) -> Result<[u8; 16], ContainmentGap> {
-        Err(self.gap())
-    }
-
-    fn issue_launch(
+    /// 已 reap 的 InspectConfig／SetMode 运行的 stdout 正文（UTF-8，≤ `config_json_bytes`）。
+    ///
+    /// 只有 launcher 才持有 payload 的输出文件；默认实现如实报协议缺口，假后端按需覆盖。
+    ///
+    /// # 错误
+    /// 未 reap、超预算或非 UTF-8 返回 `BudgetUnsupported`；身份不符返回 `IdentityMismatch`。
+    fn config_output(
         &mut self,
-        _request: &LaunchRequest,
-    ) -> Result<LaunchAcknowledgement, ContainmentGap> {
-        Err(self.gap())
-    }
-
-    fn release_once(&mut self, _token: ReleaseToken) -> Result<(), ContainmentGap> {
-        Err(self.gap())
-    }
-
-    fn observe_running(&mut self, _container: &ContainerIdentity) -> Result<bool, ContainmentGap> {
-        Err(self.gap())
-    }
-
-    fn close_spawn_gate(&mut self, _container: &ContainerIdentity) -> Result<(), ContainmentGap> {
-        Err(self.gap())
-    }
-
-    fn read_events(
-        &mut self,
-        _container: &ContainerIdentity,
-    ) -> Result<CgroupEvents, ContainmentGap> {
-        Err(self.gap())
-    }
-
-    fn drain(&mut self, _container: &ContainerIdentity) -> Result<ResourceCounts, ContainmentGap> {
-        Err(self.gap())
-    }
-
-    fn stop(
-        &mut self,
-        _container: &ContainerIdentity,
-        _grace_seconds: u32,
-    ) -> Result<(), ContainmentGap> {
-        Err(self.gap())
-    }
-
-    fn reap(&mut self, _container: &ContainerIdentity) -> Result<ExitObservation, ContainmentGap> {
-        Err(self.gap())
-    }
-
-    fn match_identity(
-        &mut self,
-        _container: &ContainerIdentity,
-    ) -> Result<IdentityMatch, ContainmentGap> {
-        Err(self.gap())
+        run_id: RunId,
+        container: &ContainerIdentity,
+    ) -> Result<String, ContainmentGap> {
+        let _ = (run_id, container);
+        Err(ContainmentGap::ProtocolViolation)
     }
 }

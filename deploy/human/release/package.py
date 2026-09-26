@@ -35,6 +35,8 @@ def package(args):
     c.require(initial['web'][0] and initial['example-vault'][0])
     sources = {'bin/studiolo-local-server': c.absolute(args.local_server),
                'bin/studiolo-auth-admin': c.absolute(args.auth_admin),
+               # T-132 P1：可信 launcher 随人侧发行目录出包，由 deploy/sync-bridge/provision.sh 装到 /usr/local/sbin。
+               'bin/studiolo-sync-launcher': c.absolute(args.sync_launcher),
                'launch-human.py': repo / 'deploy/human/current-v2/launch-human.py',
                'studiolo-human.service': repo / 'deploy/human/current-v2/studiolo-human.service'}
     raw = {name: c.read(path, uid) for name, path in sources.items()}
@@ -77,10 +79,10 @@ def package(args):
 def options(argv):
     import release_common as c
     parser = c.ClosedParser(description=__doc__, allow_abbrev=False)
-    for option in ('repo', 'example-vault', 'local-server', 'auth-admin', 'source-commit', 'output'):
+    for option in ('repo', 'example-vault', 'local-server', 'auth-admin', 'sync-launcher', 'source-commit', 'output'):
         parser.add_argument('--' + option, required=True)
     args = parser.parse_args(argv)
-    c.require(len(argv) == 12)
+    c.require(len(argv) == 14)
     return args
 
 

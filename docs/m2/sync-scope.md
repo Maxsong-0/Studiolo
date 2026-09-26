@@ -15,7 +15,9 @@ T-046，2026-09-13。私有配置与范围核对已实现，本机38项契约通
 目录规则最多64项，精确文件128项，生成文档128项；批准根不能重叠。
 
 每条规则显式指定`markdown`、`attachment_types`和`max_bytes`，至少批准一种类型；
-单文件上限1..=268435456字节。附件闭集为png/jpeg/gif/webp/pdf/mp3/mp4/wav/zip。
+单文件上限1..=268435456字节。附件闭集为png/jpeg/gif/webp/pdf/mp3/mp4/wav/zip/txt/json
+（txt／json 自 2026-09-23 起加入，ADR-025 D12：`_规则/归档/` 的纯文本走目录规则显式批准，
+headless 侧它们归入 `unsupported` 类）。
 参数是内部策略上限，不能冒充真实Sync服务配额；文件后缀不自动授予类型批准。
 
 绑定摘要包含域分隔、实际完整配置长度与原始字节；修改配置中任何字段或格式都
@@ -39,7 +41,9 @@ None表示该路径正文不获批准；错误不转成None。它不证明路径
 ## 排除优先与产品边界
 
 隐藏路径、raw、ops、sources、policy、skills、capabilities、私有根，以及
-TASKS/INDEX/dashboard/CLAUDE/AGENTS/SKILL保留文档不可由宽目录批准覆盖。
+TASKS/INDEX/dashboard/CLAUDE/AGENTS/SKILL保留文档不可由宽目录批准覆盖；
+`_规则/` 自 2026-09-23 起可由目录规则批准（人侧网页保存仍保护，见 T-160），
+其下的保留文档名、AI 专属目录与隐藏路径照样拒绝。
 既有人写范围的protected/generated登记与新增生成文档优先于批准；删掉生成哨兵
 不会把文档变成整页可同步内容。混合TASKS页的人写条目回写需要独立协议，当前
 不把整页复制冒充该能力已实现。

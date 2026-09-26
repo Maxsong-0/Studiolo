@@ -5,16 +5,24 @@ use crate::linux::{ContainmentGap, verify_backend};
 use crate::owned_run::*;
 
 #[test]
-fn no_platform_can_currently_produce_a_verified_linux_backend() {
+fn the_production_socket_is_not_provisioned_on_any_test_host() {
     let approval = FakeApproval::new();
-    let gap = verify_backend(&approval).expect_err("当前没有任何平台能通过前置检查");
+    let gap = verify_backend(&approval).expect_err("测试机上没有置备过的可信 launcher");
 
     if cfg!(target_os = "linux") {
-        // Linux 上缺的是管理员预置的可信 launcher/service 特权，不是「平台不对」。
+        // Linux 上缺的是管理员置备的可信 launcher（固定 socket 不存在），不是「平台不对」。
         assert_eq!(gap, ContainmentGap::TrustedLauncherNotProvisioned);
     } else {
         assert_eq!(gap, ContainmentGap::UnsupportedPlatform);
     }
+}
+
+/// 本仓库的 CI 只有假 launcher：真实 systemd／cgroup／隔离契约在这里没有被验证。
+/// 用忽略用例把这句话印进测试输出，不用 skip 冒充绿灯。
+#[test]
+#[ignore = "平台契约未验：真实 systemd／cgroup／launcher 隔离只能在管理员置备后的隔离 Linux 上实测"]
+fn the_real_launcher_platform_contract_is_not_verified_by_this_suite() {
+    panic!("本用例只用来在测试输出里报告「平台契约未验」；假 launcher 不能替代真实平台验收");
 }
 
 #[test]

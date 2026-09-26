@@ -23,7 +23,8 @@
 
 | 模块 | 职责 | IO |
 |---|---|---|
-| `crates/observability/src/health/{model,aggregate,diagnostics}.rs` | 三态模型、只读聚合、白名单一致性诊断 | 无 |
+| `crates/observability/src/health/{model,aggregate,diagnostics,bridge}.rs` | 三态模型、只读聚合、白名单一致性诊断、双向 Bridge 判定 | 无 |
+| `crates/local-server/src/sync_plane/health.rs` | 双向 Bridge 平面的健康累积器（`BridgeHealthProbe`，T-132 P1） | 无 |
 | `crates/observability/src/quota/{disk,sync}.rs` | 磁盘与 Sync 配额判定与写入准入 | 无 |
 | `crates/observability/src/alert/{transport,dispatch,deadman}.rs` | 通道抽象、审计＋幂等＋有界重试、死人开关状态机 | 无 |
 | `crates/observability/src/store/state.rs` | 持久文档编解码与校验和 | 无 |
@@ -34,15 +35,16 @@
 
 ## 2. 健康页：本地只读聚合
 
-五节固定检查项，机器码稳定：
+六节固定检查项，机器码稳定：
 
 | 机器码 | 中文标题 | 判定 |
 |---|---|---|
 | `recovery-point` | 恢复点年龄 | 按**内容截止时刻**算年龄，不按上传完成时刻 |
 | `owner-liveness` | 各 owner 活性 | 逐个组件角色比对回执与约定周期 |
 | `disk-quota` | 磁盘配额 | 见 §3 |
-| `sync-quota` | Sync 配额 | 见 §3 |
+| `sync-quota` | Sync 配额 | 见 §3；正文固定带「非账号用量」 |
 | `whitelist-diagnosis` | 白名单诊断 | 见 §4 |
+| `sync-bridge` | 双向 Bridge | T-132 P1 契约 `docs/contracts/health-sync-bridge.md`；平面未装配即未知 |
 
 三态与汇总规则：`Degraded`（2）＞ `Unknown`（1）＞ `Normal`（0），
 整体取最重的一节。于是——
@@ -191,7 +193,7 @@ sha256 校验和。
 |---|---|---|
 | 告警实际送达 | 发送端未配置，且本轮未装配真实 SMTP 客户端 | 主人给 SMTP 通道，经环境变量注入；再补真实 `deliver` 实现与实机送达验收 |
 | 真实恢复点年龄 | 依赖 B1 的 checkpoint／BackupWorker 产出 | B1 落地后由装配层把真实证据接进 `HealthEvidence` |
-| 真实磁盘／Sync 读数 | 需要各 owner 自己统计后注入 | 装配层接线 |
+| 真实磁盘读数 | 需要持文件系统权限的 Broker 公开只读剩余容量查询（Sync 读数已由 Bridge 平面接线，T-132 P1） | Broker 接线 |
 | 健康页端到端鉴权验收 | 路由由组合根挂载，需整套装配 | root 接线后跑 local-server 整套契约 |
 | 实际两周 headless 试跑 | 只能真实等待 | 不接受模拟时间 |
 
@@ -237,16 +239,17 @@ let app = studiolo_local_server::health::with_health_evidence(app, health_input:
 
 ### 10.4 当前每一节证据的真实可得性
 
-组合根（`crates/local-server/src/startup/health_input.rs`）本轮**一条真实证据源都没接上**，
-因此五节全部显式"未知"，整体永远不是绿。逐条原因：
+组合根（`crates/local-server/src/startup/health_input.rs`）目前只有双向 Bridge 平面（T-132 P1）一个证据源：
+装配了它才有第六节、`sync-transport` 活性与 Sync 配额读数；其余各节仍显式"未知"，整体因此仍不是绿。逐条现状：
 
 | 节 | 现状 | 为什么 | 解除条件 |
 |---|---|---|---|
 | 恢复点年龄 | 未知（"恢复点证据不可读"） | 备份 Worker（B1）未接进组合根，连"有没有恢复点"都读不到；报"尚未建立"是一句证明不了的断言 | B1 接线后由它报 `NotEstablished`，届时才显示 `NO_RECOVERY_POINT` 那句固定中文 |
-| 各 owner 活性 | 未知 | 活性回执要 SyncTransportOwner（B3）与备份 Worker 各自持久，本轮都没接线 | B3／B1 接线 |
+| 各 owner 活性 | 平面装配后有 `sync-transport` 一个 owner（回执＝最近一轮结束时刻，周期 600 s）；未装配仍未知 | 备份 Worker 的回执仍没接线，所以列表里只有传输 owner，它不会被算成"正常" | B1 接线后加备份 Worker |
 | 磁盘配额 | 未知 | 剩余空间只能由持文件系统权限的 Broker 读，`vault-broker` 没有公开的剩余字节查询，HTTP 层自己不许读盘 | Broker 公开一个只读剩余容量查询 |
-| Sync 配额 | 未知 | 对象数与字节数属于 Sync 侧账本，本进程拿不到 | Sync 侧接线 |
+| Sync 配额 | 平面装配后按镜像字节数对人工配额判定：上限＝审批 `manual_quota.account_limit_bytes`、预警七成，正文带「非账号用量」；未装配或缺人工配额仍未知 | 机器读不到 Obsidian 账号用量，只能拿镜像字节数比人抄的上限（ADR-025 D11） | 无；这就是 D11 的最终形态 |
 | 白名单诊断 | 未知 | `host-config` 只公开 `observation_selection`（保护前缀与生成区已被并成一张 `excluded` 表），没有公开人侧可写范围与 `human_content` 登记；用半份快照诊断会凭空造出"搬运范围覆盖保护前缀"这类假冲突 | `host-config` 公开分开的保护前缀／生成区／可写范围／`human_content` 登记 |
+| 双向 Bridge | 平面装配后按 D11 十个字段判定，第一批闭合前是未知；未装配即未知 | 契约与字段来源见 `docs/contracts/health-sync-bridge.md` | 无 |
 
 **绝不为了页面好看而假装正常**：`EvidenceSnapshot::unknown` 的每一节都会被只读聚合判成
 `Unknown`，整体取最重一节，因此永远不可能显示绿。

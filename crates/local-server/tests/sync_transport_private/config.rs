@@ -12,6 +12,8 @@ fn expected() -> Expected<'static> {
         device_name: "Studiolo 合成",
         config_dir: ".obsidian",
         file_types: &APPROVED,
+        sync_mode: "bidirectional",
+        excluded_folders: &[],
     }
 }
 
@@ -132,5 +134,7 @@ fn duplicate_escaped_unknown_and_incomplete_json_never_match() {
     );
 }
 
+#[path = "config_approval.rs"]
+mod approval;
 #[path = "config_validation.rs"]
 mod validation;

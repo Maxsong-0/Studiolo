@@ -33,7 +33,41 @@ impl fmt::Display for RunId {
     }
 }
 
-/// 第一片只开放的两种操作；其余动作不在 runtime API 内。
+/// headless 镜像的同步模式；P1 只开放这两个值（ADR-025 D4）。
+///
+/// `MirrorRemote` 只下载、永不上传，是引导期（P4～P5）的唯一模式；
+/// `Bidirectional` 属 P6，由管理员改审批文档后才会被驱动器申请。
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SyncMode {
+    /// 镜像只跟随远端；本地改动会被回滚，崩溃后自愈且不可能上传。
+    MirrorRemote,
+    /// 双向；出站改动会上传到远端。
+    Bidirectional,
+}
+
+impl SyncMode {
+    /// headless `sync-config --mode` 接受的字面量。
+    #[must_use]
+    pub fn cli_value(self) -> &'static str {
+        match self {
+            Self::MirrorRemote => "mirror-remote",
+            Self::Bidirectional => "bidirectional",
+        }
+    }
+
+    /// 从 headless `sync-config --json` 的 `syncMode` 字段解析；其他值一律不认。
+    #[must_use]
+    pub fn from_cli_value(value: &str) -> Option<Self> {
+        match value {
+            "mirror-remote" => Some(Self::MirrorRemote),
+            "bidirectional" => Some(Self::Bidirectional),
+            _ => None,
+        }
+    }
+}
+
+/// 开放的三种操作；其余动作（登录、配对、continuous、任意配置项）不在 runtime API 内。
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RunOperation {
@@ -41,6 +75,20 @@ pub enum RunOperation {
     InspectConfig,
     /// 单次同步；不是 Continuous，也不接受任意 argv。
     RunOnce,
+    /// 只改镜像同步模式（`sync-config --mode`）；除此之外不开放任何配置修改。
+    SetMode(SyncMode),
+}
+
+impl RunOperation {
+    /// 审计与 IPC 里的固定操作名；`SetMode` 的模式另走 `mode` 字段。
+    #[must_use]
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::InspectConfig => "inspect_config",
+            Self::RunOnce => "run_once",
+            Self::SetMode(_) => "set_mode",
+        }
+    }
 }
 
 /// 停止原因单调升级；一旦记录就不再降级，也不被后来的 exit 0 覆盖。
@@ -230,4 +278,7 @@ pub struct TerminalSummary {
     pub observation: RunObservation,
     /// 实测资源计数。
     pub counts: ResourceCounts,
+    /// 闭合时记录里的受控容器身份；未曾 Contained（如取消）即 `None`。
+    /// `config_output` 只对这个身份向 launcher 取正文，绝不按名字重找 unit。
+    pub container: Option<ContainerIdentity>,
 }

@@ -55,13 +55,22 @@ fn paths_are_not_canonicalized_case_folded_or_unicode_normalized() {
 
 #[test]
 fn arrays_are_closed_bounded_and_cannot_enable_filters() {
-    for field in ["configs", "excludedFolders"] {
-        for item in [json!("one"), json!(null), json!({"nested": [1, 2]})] {
-            let mut changed = value();
-            changed[field] = json!([item]);
-            assert_eq!(check(&changed), Err(ConfigError::Malformed));
-        }
+    for item in [json!("one"), json!(null), json!({"nested": [1, 2]})] {
+        let mut changed = value();
+        changed["configs"] = json!([item]);
+        assert_eq!(check(&changed), Err(ConfigError::Malformed));
     }
+    for item in [json!(null), json!({"nested": [1, 2]}), json!(7)] {
+        let mut changed = value();
+        changed["excludedFolders"] = json!([item]);
+        assert_eq!(check(&changed), Err(ConfigError::Malformed));
+    }
+    // 排除项形状合法但审批母本为空：不是格式错误，是与批准值不一致；超过 64 项才是格式错误。
+    let mut changed = value();
+    changed["excludedFolders"] = json!(["one"]);
+    assert_eq!(check(&changed), Err(ConfigError::Mismatch));
+    changed["excludedFolders"] = json!(vec!["x"; 65]);
+    assert_eq!(check(&changed), Err(ConfigError::Malformed));
     for types in [
         json!(["pdf", "unknown"]),
         json!(["pdf", false]),

@@ -93,6 +93,10 @@ pub(super) const PARAMS: &[(&str, Arity)] = &[
         "--board-agent-data",
         Arity::Value(|raw, value| set(&mut raw.board_agent_data, value.into())),
     ),
+    (
+        "--sync-transport",
+        Arity::Value(|raw, value| set(&mut raw.sync_transport, value.into())),
+    ),
     ("--help", Arity::Flag(|raw| raw.help = true)),
 ];
 

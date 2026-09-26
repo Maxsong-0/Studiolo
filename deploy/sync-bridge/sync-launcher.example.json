@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "owner_uid": 1000,
+  "owner_gid": 1000,
+  "payload_uid": 999,
+  "payload_gid": 983,
+  "runtime": {
+    "version": "0.0.14",
+    "node_path": "/opt/studiolo/node/bin/node",
+    "cli_path": "/opt/studiolo/obsidian-headless/lib/node_modules/obsidian-headless/cli.js",
+    "closure_digest": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  },
+  "mirror_root": "/var/lib/studiolo-sync/bridge/mirror",
+  "payload_config_root": "/var/lib/studiolo-sync/config",
+  "loop_image": "/var/lib/studiolo-sync.img",
+  "loop_mount": "/var/lib/studiolo-sync",
+  "inaccessible": [
+    "/var/lib/studiolo-sync/bridge/plane",
+    "/var/lib/studiolo-owner",
+    "/run/studiolo-sync-launcher",
+    "/etc/studiolo"
+  ],
+  "payload_cgroup_prefix": "/sys/fs/cgroup/studiolo.slice/studiolo-sync.slice"
+}

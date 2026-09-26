@@ -54,6 +54,8 @@ pub(crate) fn source_violations(
     let checked_source = super::backup::remainder(crate_name, source_path, &checked_source);
     let checked_source = super::observability::remainder(crate_name, source_path, &checked_source);
     let checked_source = super::sync_transport::remainder(crate_name, source_path, &checked_source);
+    let checked_source = super::sync_launcher::remainder(crate_name, source_path, &checked_source);
+    let checked_source = super::sync_plane::remainder(crate_name, source_path, &checked_source);
     let checked_source =
         super::board_authority::remainder(crate_name, source_path, &checked_source);
     let checked_source =

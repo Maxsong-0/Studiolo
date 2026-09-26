@@ -4,24 +4,28 @@
 本片交付**纯状态机 + 持久 schema v1 + Linux adapter 代码 + 装配层**；
 没有启动过任何第三方程序，没有联网，没有触碰生产服务器或用户 Vault。
 
-## 0. 最重要的一条：平台「受支持」状态尚未取得
+## 0. 最重要的一条：受支持状态由 launcher `probe` 实测决定
 
-当前仓库**没有**隔离 Linux 测试机，也**没有**管理员预置的可信 launcher/service 特权。因此：
+「本机是否支持受控隔离」不是编译期常量，而是运行时事实（T-132 P1，ADR-025 D2／D3）：
 
-- `linux::verify_backend` 在**所有平台**都返回缺口：非 Linux 是 `UnsupportedPlatform`，
-  Linux 是 `TrustedLauncherNotProvisioned`。它永远不返回 `Ok`。
-- `VerifiedLinuxBackend` 没有公开构造器、没有 `Deserialize`、没有测试后门，
-  因此 `SyncTransportOwner::open_existing` 在今天的任何机器上都拿不到第三个参数。
-- 对调用方而言，这等价于 macOS 与缺权限的 Linux 一律 `UnsupportedContainment`。
+- `linux::verify_backend` 连固定私有 socket `/run/studiolo-sync-launcher/launcher.sock`
+  （`protocol::LAUNCHER_SOCKET`），发 `probe`，逐项核对应答：协议版本、nonce 回显、cgroup v2、
+  loop quota、专用身份、payload UID/GID 与批准值相等；任一项不成立按其分类报缺口。
+  socket 文件不存在＝管理员尚未置备（`TrustedLauncherNotProvisioned`），有文件没人听或超时＝
+  `ManagerUnavailable`；非 Linux 仍是 `UnsupportedPlatform`。对调用方而言这些都是 `UnsupportedContainment`。
+- `VerifiedLinuxBackend` 仍没有公开构造器、没有 `Deserialize`、没有测试后门：唯一来源是 launcher 的实测应答。
+- `LinuxContainment` 十一个方法都是一次 IPC 往返（`linux/client.rs` 是本 crate 唯一的 socket IO 文件，
+  架构守卫按精确调用清单登记）；owner 自己不读 cgroupfs、不起子进程。应答种类与请求不符、nonce 不回显
+  是 `ProtocolViolation`，身份字段不一致是 `IdentityMismatch`，不猜。
 - **绝不回退 PID/PGID 观察冒充 OwnedRun**：`linux::service::is_quiescence_evidence`
   对任何 unit 状态都返回 `false`，并有专门用例锁住这条。
-- **没有任何 mock 能把平台标记为可用**：契约测试驱动的是 crate 内部的
-  `RunSession<B: ContainmentBackend>`，假后端只能驱动纯状态机与持久层，
-  它拿不到 `VerifiedLinuxBackend`，也就无法让 `SyncTransportOwner` 存在。
+- **CI 只有假 launcher**：契约测试（`tests/owned_run_private/{launcher_fake,client_lifecycle}.rs`）用临时目录里
+  同名 socket 上的脚本线程复现线上协议，能证明帧、闭集、`Verdict` 映射与 adapter 的全路径映射，
+  **不能**证明 systemd、cgroup、namespace、专用身份或磁盘 quota 真的成立。测试输出里的忽略用例
+  「平台契约未验」就是这句话；不得用 skip 冒充绿灯。
 
-`LinuxContainment` 的每个方法目前都返回 `TrustedLauncherNotProvisioned`。
-这不是占位符，而是如实报告本机确实没有那条特权路径 —— 真实 systemd 接口、
-cgroup FD 与 launcher IPC 必须在管理员预置之后、并在隔离 Linux 上实测之后才补齐。
+`TerminalSummary.container` 记下闭合时的容器身份；`config_output(run_id)` 只对这个身份向 launcher
+取 `InspectConfig`／`SetMode` 的 stdout 正文（退出码 0、未超预算、审计已闭合才取，`RunOnce` 永远不取）。
 
 ## 1. 最小封闭 API
 
@@ -39,6 +43,7 @@ recover(run_id) -> RunObservation
 stop_recovered(run_id)
 quiescent() -> QuiescentMirror
 verify_quiescent(&QuiescentMirror)          // 新增：让「作废」可被调用方检验
+config_output(run_id) -> String             // T-132 P1：已闭合 InspectConfig／SetMode 的 stdout 正文
 ```
 
 与设计短文的三处差异，均在此登记：
@@ -146,17 +151,25 @@ payload 只放：schema 版本、run（十六进制）、序号、固定操作�
 
 ## 8. 已验收与未验收
 
-已验收（`cargo test -p studiolo-sync-transport`，64 个用例，全部本机纯逻辑/临时目录）：
-行为契约、失败契约、恢复契约三类齐备，崩溃切口覆盖 Prepared / LaunchIssued / Contained /
-ExecutionIssued 前后、主进程退出但后代未退出、Quiesced 前后、Outcome 与 ACK 前后；
-另有未知 schema、短写、fsync 失败、租约占用、根对象被替换、预算越界等。
+已验收（`cargo test -p studiolo-sync-transport`，服务器上原生跑，全部纯逻辑／临时目录）：
 
-**未验收（需要真实平台）**：systemd 接口与 unit 生命周期、cgroup 委派与 `cgroup.kill`、
-launcher 屏障与 IPC 的真实 peer credentials、namespace/挂载视图隔离、专用 payload 身份、
-磁盘 quota、真实 Headless 的资源峰值与 200 MB 级边界。
-CI 只有 mock 时必须报告「平台契约未验」，**不得用 skip 冒充绿灯**。
+- 行为契约、失败契约、恢复契约三类齐备（假后端驱动纯状态机与持久层），崩溃切口覆盖 Prepared /
+  LaunchIssued / Contained / ExecutionIssued 前后、主进程退出但后代未退出、Quiesced 前后、Outcome 与 ACK 前后；
+  另有未知 schema、短写、fsync 失败、租约占用、根对象被替换、预算越界等。
+- launcher IPC 客户端（`launcher_fake.rs`）：socket 缺失→未置备、没人听→manager 不可用、挂起→5 s 超时；
+  帧越界／撕裂／越闭集／种类不明一律缺口；`Refused` 八种 `Verdict` 逐一映射；launch 帧只含闭集键，
+  argv 正文与任何路径不进帧；`verify_backend_at` 对七种探测脚本逐项报对应缺口，探测 nonce 每次不同。
+- 真实 adapter（`client_lifecycle.rs`）经假 launcher 走完 launch→release→running→drain→reap→gate→events→
+  match→stop→config_output 全路径；二次放行（launcher `busy`）固定成 `IdentityMismatch`；`Output` 超预算固定成
+  `BudgetUnsupported`；`SetMode` 帧带模式且 argv 摘要独立；`RunSession` 在真实 adapter 上闭合并在
+  `TerminalSummary.container` 记下容器身份，`config_output(run_id)` 只对它取正文。
+
+**未验收（需要真实平台）**：真实 launcher 的 systemd transient unit 与 unit 生命周期、cgroup 委派与
+`cgroup.kill`、FIFO 屏障与真实 SO_PEERCRED、namespace／挂载视图隔离、专用 payload 身份、loop 镜像磁盘 quota、
+真实 Headless 的资源峰值与 200 MB 级边界。CI 只有假 launcher 时**必须报告「平台契约未验」**
+（`platform.rs` 的忽略用例把这句话印进测试输出），**不得用 skip 冒充绿灯**。
 
 `local-server` 的 `flush_transport_audit` 循环本身也未运行时验收 ——
-它需要一个真实 `SyncTransportOwner`，而那需要今天拿不到的 `VerifiedLinuxBackend`。
+它需要一个真实 `SyncTransportOwner`，而那需要真实 launcher 探测通过的 `VerifiedLinuxBackend`。
 其中可独立验收的部分（`flush_budget`、`verify_receipt`、`transport_event` 映射、
 `status_view` 投影）已有用例覆盖；剩下的是一段直白的循环接线，标注在此等平台就绪后补测。

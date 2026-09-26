@@ -42,6 +42,7 @@ studiolo-workbench.workspace = true
 studiolo-backup.workspace = true
 studiolo-observability.workspace = true
 studiolo-sync-transport.workspace = true
+studiolo-sync-bridge.workspace = true
 studiolo-policy.workspace = true
 jiff.workspace = true
 

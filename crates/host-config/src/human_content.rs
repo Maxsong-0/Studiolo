@@ -190,6 +190,15 @@ fn within(path: &VaultPath, prefix: &VaultPath) -> bool {
 }
 
 pub(crate) fn hard_protected(path: &VaultPath) -> bool {
+    // 规则目录对人侧保存仍然保护：改规则要走策略平面与 T-160 的规则管理界面，
+    // 不能从网页编辑器直接写；但它不再是同步范围的硬排除（用户 2026-09-23 拍板纳入）。
+    reserved_for_agents(path) || rules_directory(path)
+}
+
+/// 人侧与同步范围共用的硬保留：core 保护路径、AI 专属目录与保留文档名。
+///
+/// 这份清单是唯一母本；`sync_scope::paths::hard_excluded` 直接复用，不再各抄一份。
+pub(crate) fn reserved_for_agents(path: &VaultPath) -> bool {
     if path.is_protected() {
         return true;
     }
@@ -198,8 +207,7 @@ pub(crate) fn hard_protected(path: &VaultPath) -> bool {
     parts.iter().any(|part| {
         matches!(
             *part,
-            "_规则"
-                | "skills"
+            "skills"
                 | "policies"
                 | "capabilities"
                 | "ops"
@@ -211,6 +219,11 @@ pub(crate) fn hard_protected(path: &VaultPath) -> bool {
         parts.last().copied(),
         Some("claude.md" | "agents.md" | "skill.md")
     )
+}
+
+/// `_规则/` 目录：只对人侧保存保护，同步范围可批准。
+fn rules_directory(path: &VaultPath) -> bool {
+    path.as_str().split('/').any(|part| part == "_规则")
 }
 
 fn spans(text: &str, pairs: &[[String; 2]]) -> Option<Vec<std::ops::Range<usize>>> {

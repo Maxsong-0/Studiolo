@@ -28,7 +28,6 @@ fn hard_exclusions_apply_equally_to_canonical_mirror_and_missing_paths() {
         "skills/a.md",
         "policies/a.md",
         "capabilities/a.md",
-        "_规则/a.md",
     ] {
         let name = format!("笔记/{suffix}");
         let item = markdown(&name);

@@ -70,7 +70,7 @@ pub fn build_argv(
     let mirror = mirror_root
         .to_str()
         .ok_or(ContainmentGap::ProtocolViolation)?;
-    // 第一片只有这两条 argv；`--continuous`、登录/配对与任意 flag 都不在此。
+    // 只有这三条 argv；`--continuous`、登录/配对与任意 flag 都不在此。
     let mut argv = vec![node.to_owned(), cli.to_owned()];
     match operation {
         RunOperation::RunOnce => {
@@ -84,8 +84,32 @@ pub fn build_argv(
             argv.push(mirror.to_owned());
             argv.push("--json".to_owned());
         }
+        // ADR-025 D4：除同步模式外不开放任何配置修改。
+        RunOperation::SetMode(mode) => {
+            argv.push("sync-config".to_owned());
+            argv.push("--path".to_owned());
+            argv.push(mirror.to_owned());
+            argv.push("--mode".to_owned());
+            argv.push(mode.cli_value().to_owned());
+            argv.push("--json".to_owned());
+        }
     }
     Ok(argv)
+}
+
+/// 封闭 argv 的域分隔摘要；owner 经 IPC 只送摘要，launcher 用自己的固定 pins 重算后比对。
+///
+/// 可执行路径与镜像路径永远不过 IPC：摘要不同即拒绝启动，两边的 pins 谁漂移都藏不住。
+#[must_use]
+pub fn argv_digest(argv: &[String]) -> [u8; 32] {
+    use sha2::{Digest, Sha256};
+    let mut hash = Sha256::new();
+    hash.update(b"studiolo.sync-transport.argv.v1\0");
+    for item in argv {
+        hash.update((item.len() as u64).to_be_bytes());
+        hash.update(item.as_bytes());
+    }
+    hash.finalize().into()
 }
 
 /// 运行环境必须先清空再只加入批准变量；本函数拒绝任何会改变解析行为的变量。

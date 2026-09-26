@@ -17,11 +17,12 @@ python3 -I -B -S /ABS/PRIVATE/REPO/deploy/human/release/package.py \
   --example-vault /ABS/PRIVATE/REPO/examples/m1-vault \
   --local-server /ABS/PRIVATE/STAGING/studiolo-local-server \
   --auth-admin /ABS/PRIVATE/STAGING/studiolo-auth-admin \
+  --sync-launcher /ABS/PRIVATE/STAGING/studiolo-sync-launcher \
   --source-commit FINAL_40_LOWERCASE_HEX_COMMIT \
   --output /ABS/PRIVATE/STAGING/m4-t094-20260920-r8
 ```
 
-输出必须不存在。输出目录 `0700`，普通文件 `0600`，两个二进制 `0755`。
+输出必须不存在。输出目录 `0700`，普通文件 `0600`，三个二进制 `0755`（`studiolo-sync-launcher` 随 T-132 P1 加入清单）。
 失败保留已有不完整输出，不覆盖、不自动删除。模板只替换固定 r7 RELEASE 路径。
 manifest 顶层闭集为 `build/source_commit/assembly/files`，每项闭集为 `bytes/sha256`。
 打印的 `manifest_sha256` 由操作者保留并独立传给激活命令。

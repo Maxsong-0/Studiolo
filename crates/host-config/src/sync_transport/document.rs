@@ -3,20 +3,28 @@
 //! 本模块只做纯数据校验：不打开文件、不读环境变量、不解析凭证，
 //! 也不把批准值当作平台已具备该特权的证据。
 
-use super::types::{TransportBackend, TransportBudget, TransportRuntime};
+use super::types::{
+    ManualQuota, TransportBackend, TransportBudget, TransportRuntime, TransportSyncMode,
+};
 use crate::{ConfigError, absolute_normal};
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use std::path::PathBuf;
 
+mod validate;
+pub use validate::excluded_folder as excluded_folder_acceptable;
+use validate::{backend, budget, excluded_folders, manual_quota, runtime, text_field};
+
 /// 审批文档字节上限；单文档远小于私有配置预算。
 const APPROVAL_MAX_BYTES: usize = 8 * 1024;
+/// 排除文件夹条数上限；headless `--excluded-folders` 是逐项列出的。
+pub(super) const EXCLUDED_FOLDERS_MAX: usize = 64;
 /// 第一片只固定这一个精确发布版本。
-const PINNED_VERSION: &str = "0.0.14";
+pub(super) const PINNED_VERSION: &str = "0.0.14";
 /// InspectConfig 的 JSON 上限，与执行契约的 64 KiB 一致。
-const CONFIG_JSON_MAX: u32 = 64 * 1024;
+pub(super) const CONFIG_JSON_MAX: u32 = 64 * 1024;
 /// 受控 payload 子组只能落在 cgroup v2 挂载点之内。
-const CGROUP_ROOT: &str = "/sys/fs/cgroup/";
+pub(super) const CGROUP_ROOT: &str = "/sys/fs/cgroup/";
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -25,9 +33,33 @@ struct Document {
     enabled: bool,
     private_root: PathBuf,
     mirror_root: PathBuf,
+    #[serde(rename = "owner_view_root")]
+    mirror_view_root: PathBuf,
+    plane_root: PathBuf,
+    device_name: String,
+    headless_mode: String,
+    excluded_folders: Vec<String>,
+    // 键必须显式出现：`null` 是「配额未知」的明确申报，漏写整个键则拒绝。
+    #[serde(deserialize_with = "explicit_quota")]
+    manual_quota: Option<ManualQuotaDocument>,
     runtime: RuntimeDocument,
     backend: BackendDocument,
     budget: BudgetDocument,
+}
+
+/// 绕开 serde 对 `Option` 字段「缺键即 `None`」的默认处理：键缺失按缺字段拒绝。
+fn explicit_quota<'de, D: serde::Deserializer<'de>>(
+    input: D,
+) -> Result<Option<ManualQuotaDocument>, D::Error> {
+    Deserialize::deserialize(input)
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ManualQuotaDocument {
+    account_limit_bytes: u64,
+    used_bytes_manual: u64,
+    recorded_at_unix: i64,
 }
 
 #[derive(Deserialize)]
@@ -74,6 +106,12 @@ struct BudgetDocument {
 pub struct SyncTransportApproval {
     private_root: PathBuf,
     mirror_root: PathBuf,
+    mirror_view_root: PathBuf,
+    plane_root: PathBuf,
+    device_name: String,
+    headless_mode: TransportSyncMode,
+    excluded_folders: Vec<String>,
+    manual_quota: Option<ManualQuota>,
     runtime: TransportRuntime,
     backend: TransportBackend,
     budget: TransportBudget,
@@ -81,6 +119,15 @@ pub struct SyncTransportApproval {
 }
 
 impl SyncTransportApproval {
+    /// 从 0600 私有文件读取并解析审批文档；父目录须 0700、本人所有（与私有配置同一读法）。
+    ///
+    /// # Errors
+    /// 文件不满足私有约束或内容不合法返回 `ConfigError`。
+    pub fn load(path: &std::path::Path) -> Result<Self, ConfigError> {
+        let snapshot = crate::config_file::Snapshot::read(path)?;
+        Self::parse(snapshot.bytes())
+    }
+
     /// 解析主人显式提供的审批文档字节。
     ///
     /// 只接受 schema 1、显式 `enabled = true` 的命名字段对象；未知字段、位置数组、
@@ -104,9 +151,32 @@ impl SyncTransportApproval {
         let runtime = runtime(&document.runtime)?;
         let backend = backend(&document.backend)?;
         let budget = budget(&document.budget)?;
-        if !absolute_normal(&document.private_root) || !absolute_normal(&document.mirror_root) {
+        let roots = [
+            &document.private_root,
+            &document.mirror_root,
+            &document.mirror_view_root,
+            &document.plane_root,
+        ];
+        // 四个根两两不同名；真实对象不重叠由 `ApprovedTransport::approve` 用 (dev,ino) 再核。
+        if roots.iter().any(|root| !absolute_normal(root))
+            || (1..roots.len()).any(|i| roots[..i].contains(&roots[i]))
+        {
             return Err(ConfigError);
         }
+        let headless_mode = match document.headless_mode.as_str() {
+            "mirror-remote" => TransportSyncMode::MirrorRemote,
+            "bidirectional" => TransportSyncMode::Bidirectional,
+            _ => return Err(ConfigError),
+        };
+        let excluded_folders = excluded_folders(&document.excluded_folders)?;
+        if !text_field(&document.device_name, 256) {
+            return Err(ConfigError);
+        }
+        let manual_quota = document
+            .manual_quota
+            .as_ref()
+            .map(manual_quota)
+            .transpose()?;
         let mut hash = Sha256::new();
         hash.update(b"studiolo.sync-transport.approval.v1\0");
         hash.update((bytes.len() as u64).to_be_bytes());
@@ -114,6 +184,12 @@ impl SyncTransportApproval {
         Ok(Self {
             private_root: document.private_root,
             mirror_root: document.mirror_root,
+            mirror_view_root: document.mirror_view_root,
+            plane_root: document.plane_root,
+            device_name: document.device_name,
+            headless_mode,
+            excluded_folders,
+            manual_quota,
             runtime,
             backend,
             budget,
@@ -129,6 +205,38 @@ impl SyncTransportApproval {
         &self.mirror_root
     }
 
+    pub(super) fn mirror_view_root(&self) -> &std::path::Path {
+        &self.mirror_view_root
+    }
+
+    pub(super) fn plane_root(&self) -> &std::path::Path {
+        &self.plane_root
+    }
+
+    /// 镜像节点的设备名；核对 headless `deviceName` 用。
+    #[must_use]
+    pub fn device_name(&self) -> &str {
+        &self.device_name
+    }
+
+    /// 审批的镜像同步模式。
+    #[must_use]
+    pub fn headless_mode(&self) -> TransportSyncMode {
+        self.headless_mode
+    }
+
+    /// 审批的排除文件夹；这是唯一母本（ADR-025 D10），headless 配置必须逐项相等。
+    #[must_use]
+    pub fn excluded_folders(&self) -> &[String] {
+        &self.excluded_folders
+    }
+
+    /// 人工录入的账号配额；`None` 即该健康维度未知。
+    #[must_use]
+    pub fn manual_quota(&self) -> Option<ManualQuota> {
+        self.manual_quota
+    }
+
     pub(super) fn parts(&self) -> (&TransportRuntime, &TransportBackend, TransportBudget) {
         (&self.runtime, &self.backend, self.budget)
     }
@@ -138,95 +246,4 @@ impl SyncTransportApproval {
     pub fn digest(&self) -> [u8; 32] {
         self.digest
     }
-}
-
-fn runtime(document: &RuntimeDocument) -> Result<TransportRuntime, ConfigError> {
-    if document.version != PINNED_VERSION
-        || !absolute_normal(&document.node_path)
-        || !absolute_normal(&document.cli_path)
-        || document.node_path == document.cli_path
-    {
-        return Err(ConfigError);
-    }
-    Ok(TransportRuntime::new(
-        document.node_path.clone(),
-        document.cli_path.clone(),
-        document.version.clone(),
-        digest32(&document.closure_digest)?,
-    ))
-}
-
-fn backend(document: &BackendDocument) -> Result<TransportBackend, ConfigError> {
-    let unit = document.service_unit.as_str();
-    let unit_ok = unit.len() <= 128
-        && unit.ends_with(".service")
-        && unit.len() > ".service".len()
-        && unit
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'@' | b'.' | b'_' | b'-'));
-    let cgroup_ok = absolute_normal(&document.payload_cgroup_prefix)
-        && document
-            .payload_cgroup_prefix
-            .to_str()
-            .is_some_and(|value| value.starts_with(CGROUP_ROOT) && value.len() > CGROUP_ROOT.len());
-    // payload 身份必须与 owner 分开；root 或 owner 自身身份都不构成隔离。
-    let owner = rustix::process::geteuid().as_raw();
-    let identity_ok = document.payload_uid != 0
-        && document.payload_gid != 0
-        && document.payload_uid != owner
-        && document.payload_gid != rustix::process::getegid().as_raw();
-    if !unit_ok || !cgroup_ok || !identity_ok || !absolute_normal(&document.launcher_path) {
-        return Err(ConfigError);
-    }
-    Ok(TransportBackend::new(
-        document.service_unit.clone(),
-        document.launcher_path.clone(),
-        document.payload_cgroup_prefix.clone(),
-        document.payload_uid,
-        document.payload_gid,
-    ))
-}
-
-fn budget(document: &BudgetDocument) -> Result<TransportBudget, ConfigError> {
-    let bounded = (1..=86_400).contains(&document.deadline_seconds)
-        && (1..=300).contains(&document.stop_grace_seconds)
-        && (1..=16 * 1024 * 1024).contains(&document.stdout_bytes)
-        && (1..=16 * 1024 * 1024).contains(&document.stderr_bytes)
-        && (1..=CONFIG_JSON_MAX).contains(&document.config_json_bytes)
-        && (1..=4096).contains(&document.pids_max)
-        && (1..=6400).contains(&document.cpu_max_percent)
-        && document.private_state_bytes > 0
-        && document.log_bytes > 0
-        && document.memory_bytes > 0;
-    // 不给 payload 任何 swap 预算：内存上限必须可核验且不被换页绕开。
-    if !bounded || document.swap_bytes != 0 {
-        return Err(ConfigError);
-    }
-    Ok(TransportBudget {
-        deadline_seconds: document.deadline_seconds,
-        stop_grace_seconds: document.stop_grace_seconds,
-        stdout_bytes: document.stdout_bytes,
-        stderr_bytes: document.stderr_bytes,
-        config_json_bytes: document.config_json_bytes,
-        private_state_bytes: document.private_state_bytes,
-        log_bytes: document.log_bytes,
-        memory_bytes: document.memory_bytes,
-        pids_max: document.pids_max,
-        cpu_max_percent: document.cpu_max_percent,
-    })
-}
-
-fn digest32(value: &str) -> Result<[u8; 32], ConfigError> {
-    if value.len() != 64 || !value.bytes().all(|byte| byte.is_ascii_hexdigit()) {
-        return Err(ConfigError);
-    }
-    if value.bytes().any(|byte| byte.is_ascii_uppercase()) {
-        return Err(ConfigError);
-    }
-    let mut output = [0u8; 32];
-    for (index, slot) in output.iter_mut().enumerate() {
-        let pair = value.get(index * 2..index * 2 + 2).ok_or(ConfigError)?;
-        *slot = u8::from_str_radix(pair, 16).map_err(|_| ConfigError)?;
-    }
-    Ok(output)
 }

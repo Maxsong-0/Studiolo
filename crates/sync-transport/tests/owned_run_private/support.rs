@@ -9,13 +9,47 @@ use crate::linux::{ContainmentBackend, ContainmentGap, IdentityMatch};
 use crate::owned_run::session::RunSession;
 use crate::owned_run::*;
 use crate::store::StatePublisher;
-use std::{cell::RefCell, num::NonZeroU64, path::PathBuf, rc::Rc};
+use std::{
+    num::NonZeroU64,
+    path::PathBuf,
+    sync::{Arc, Mutex, MutexGuard},
+};
+
+/// 可跨线程的可变槽；接口沿用 `RefCell` 的 `borrow`／`borrow_mut`，用例不用改写。
+pub struct Shared<T>(Mutex<T>);
+
+impl<T> Shared<T> {
+    pub fn new(value: T) -> Self {
+        Self(Mutex::new(value))
+    }
+
+    pub fn borrow(&self) -> MutexGuard<'_, T> {
+        self.0.lock().expect("测试槽未中毒")
+    }
+
+    pub fn borrow_mut(&self) -> MutexGuard<'_, T> {
+        self.0.lock().expect("测试槽未中毒")
+    }
+}
+
+impl<T: Default> Default for Shared<T> {
+    fn default() -> Self {
+        Self::new(T::default())
+    }
+}
 use studiolo_core::VaultUuid;
+
+mod backend;
+pub use backend::*;
 
 pub const PRIVATE_ROOT: &str = "/srv/studiolo/transport";
 pub const MIRROR_ROOT: &str = "/srv/studiolo/mirror";
+pub const MIRROR_VIEW_ROOT: &str = "/srv/studiolo/mirror-view";
 pub const SERVICE_UNIT: &str = "studiolo-sync-launcher@link-1.service";
 pub const CGROUP_PREFIX: &str = "/sys/fs/cgroup/studiolo.slice/payload";
+/// 假批准里的专用 payload 身份；假 launcher 的 `probe` 报回同一值。
+pub const PAYLOAD_UID: u32 = 61001;
+pub const PAYLOAD_GID: u32 = 61001;
 pub const OWNER: OwnerIdentity = OwnerIdentity {
     uid: 1000,
     gid: 1000,
@@ -23,19 +57,19 @@ pub const OWNER: OwnerIdentity = OwnerIdentity {
 
 /// 假批准：字段可改，用来模拟配置漂移与根替换。
 pub struct FakeApproval {
-    pub fresh: RefCell<bool>,
-    pub binding: RefCell<TransportBindingFacts>,
-    pub roots: RefCell<RootPins>,
+    pub fresh: Shared<bool>,
+    pub binding: Shared<TransportBindingFacts>,
+    pub roots: Shared<RootPins>,
     pub runtime: RuntimePins,
-    pub backend: RefCell<BackendDescriptor>,
-    pub budget: RefCell<RunBudget>,
+    pub backend: Shared<BackendDescriptor>,
+    pub budget: Shared<RunBudget>,
 }
 
 impl FakeApproval {
     pub fn new() -> Self {
         Self {
-            fresh: RefCell::new(true),
-            binding: RefCell::new(TransportBindingFacts {
+            fresh: Shared::new(true),
+            binding: Shared::new(TransportBindingFacts {
                 vault_uuid: VaultUuid::new(),
                 link_id: [1u8; 16],
                 remote_vault: [2u8; 16],
@@ -43,11 +77,12 @@ impl FakeApproval {
                 scope_hash: [3u8; 32],
                 approved_config_digest: [4u8; 32],
             }),
-            roots: RefCell::new(RootPins {
+            roots: Shared::new(RootPins {
                 private_root: PathBuf::from(PRIVATE_ROOT),
                 private_identity: (64, 11),
                 mirror_root: PathBuf::from(MIRROR_ROOT),
                 mirror_identity: (64, 12),
+                mirror_view_root: PathBuf::from(MIRROR_VIEW_ROOT),
             }),
             runtime: RuntimePins {
                 version: PINNED_RUNTIME_VERSION.to_owned(),
@@ -55,14 +90,14 @@ impl FakeApproval {
                 cli_path: PathBuf::from("/opt/studiolo/obsidian-headless/cli.js"),
                 closure_digest: [5u8; 32],
             },
-            backend: RefCell::new(BackendDescriptor {
+            backend: Shared::new(BackendDescriptor {
                 service_unit: SERVICE_UNIT.to_owned(),
-                payload_uid: 61001,
-                payload_gid: 61001,
+                payload_uid: PAYLOAD_UID,
+                payload_gid: PAYLOAD_GID,
                 payload_cgroup_prefix: CGROUP_PREFIX.to_owned(),
                 digest: [6u8; 32],
             }),
-            budget: RefCell::new(budget()),
+            budget: Shared::new(budget()),
         }
     }
 }
@@ -114,7 +149,7 @@ pub fn budget() -> RunBudget {
 
 /// 共享字节槽；「崩溃」＝丢弃会话后在同一份字节上重开。
 #[derive(Clone, Default)]
-pub struct Slot(Rc<RefCell<SlotInner>>);
+pub struct Slot(Arc<Shared<SlotInner>>);
 
 #[derive(Default)]
 pub struct SlotInner {
@@ -185,164 +220,6 @@ impl StatePublisher for SlotPublisher {
     }
 }
 
-pub fn container() -> ContainerIdentity {
-    ContainerIdentity {
-        boot_id: [7u8; 16],
-        unit_name: SERVICE_UNIT.to_owned(),
-        invocation_id: [8u8; 16],
-        payload_cgroup: format!("{CGROUP_PREFIX}/run-1"),
-        cgroup_identity: (64, 99),
-        launcher_session: [9u8; 16],
-    }
-}
-
-pub fn limits() -> CgroupLimits {
-    CgroupLimits {
-        memory_max: Some(2_147_483_648),
-        memory_swap_max: Some(0),
-        pids_max: Some(64),
-        cpu_max: Some((200_000, 100_000)),
-    }
-}
-
-pub fn isolation() -> IsolationReport {
-    IsolationReport {
-        mount_namespace: true,
-        pid_namespace: true,
-        dedicated_identity: true,
-        dropped_capabilities: true,
-        payload_cannot_write_cgroup: true,
-        final_view_identity_checked: true,
-        disk_quota_enforced: true,
-    }
-}
-
-/// 脚本化后端；`launches`/`releases` 计数用来证明绝不二次 spawn。
-pub struct FakeBackend {
-    pub boot: [u8; 16],
-    pub container: ContainerIdentity,
-    pub limits: CgroupLimits,
-    pub isolation: IsolationReport,
-    pub populated: bool,
-    pub running: bool,
-    pub exit: ExitObservation,
-    pub counts: ResourceCounts,
-    pub identity: IdentityMatch,
-    pub launches: u32,
-    pub releases: u32,
-    pub stops: u32,
-    pub gate_closures: u32,
-    pub launch_gap: Option<ContainmentGap>,
-    pub release_gap: Option<ContainmentGap>,
-    pub observe_gap: Option<ContainmentGap>,
-}
-
-impl FakeBackend {
-    pub fn new() -> Self {
-        Self {
-            boot: [7u8; 16],
-            container: container(),
-            limits: limits(),
-            isolation: isolation(),
-            populated: true,
-            running: true,
-            exit: ExitObservation::NotObserved,
-            counts: ResourceCounts::default(),
-            identity: IdentityMatch::Exact,
-            launches: 0,
-            releases: 0,
-            stops: 0,
-            gate_closures: 0,
-            launch_gap: None,
-            release_gap: None,
-            observe_gap: None,
-        }
-    }
-}
-
-impl ContainmentBackend for FakeBackend {
-    fn boot_id(&mut self) -> std::result::Result<[u8; 16], ContainmentGap> {
-        Ok(self.boot)
-    }
-
-    fn issue_launch(
-        &mut self,
-        request: &LaunchRequest,
-    ) -> std::result::Result<LaunchAcknowledgement, ContainmentGap> {
-        self.launches += 1;
-        if let Some(gap) = self.launch_gap {
-            return Err(gap);
-        }
-        Ok(LaunchAcknowledgement {
-            container: self.container.clone(),
-            limits: self.limits,
-            isolation: self.isolation,
-            diagnostics: RunDiagnostics::default(),
-            release: ReleaseToken::new(request.run_id, self.container.launcher_session),
-        })
-    }
-
-    fn release_once(&mut self, _token: ReleaseToken) -> std::result::Result<(), ContainmentGap> {
-        self.releases += 1;
-        self.release_gap.map_or(Ok(()), Err)
-    }
-
-    fn observe_running(
-        &mut self,
-        _container: &ContainerIdentity,
-    ) -> std::result::Result<bool, ContainmentGap> {
-        self.observe_gap.map_or(Ok(self.running), Err)
-    }
-
-    fn close_spawn_gate(
-        &mut self,
-        _container: &ContainerIdentity,
-    ) -> std::result::Result<(), ContainmentGap> {
-        self.gate_closures += 1;
-        Ok(())
-    }
-
-    fn read_events(
-        &mut self,
-        _container: &ContainerIdentity,
-    ) -> std::result::Result<CgroupEvents, ContainmentGap> {
-        Ok(CgroupEvents {
-            populated: self.populated,
-            frozen: false,
-        })
-    }
-
-    fn drain(
-        &mut self,
-        _container: &ContainerIdentity,
-    ) -> std::result::Result<ResourceCounts, ContainmentGap> {
-        Ok(self.counts)
-    }
-
-    fn stop(
-        &mut self,
-        _container: &ContainerIdentity,
-        _grace_seconds: u32,
-    ) -> std::result::Result<(), ContainmentGap> {
-        self.stops += 1;
-        Ok(())
-    }
-
-    fn reap(
-        &mut self,
-        _container: &ContainerIdentity,
-    ) -> std::result::Result<ExitObservation, ContainmentGap> {
-        Ok(self.exit)
-    }
-
-    fn match_identity(
-        &mut self,
-        _container: &ContainerIdentity,
-    ) -> std::result::Result<IdentityMatch, ContainmentGap> {
-        Ok(self.identity)
-    }
-}
-
 /// 一个已初始化的槽加一份假批准。
 pub struct Fixture {
     pub approval: FakeApproval,
@@ -372,7 +249,7 @@ impl Fixture {
     }
 
     /// 走完 prepare → Intent ACK 的常规前置。
-    pub fn prepared(&self, session: &mut RunSession<'_, FakeBackend>) -> PreparedRun {
+    pub fn prepared<B: ContainmentBackend>(&self, session: &mut RunSession<'_, B>) -> PreparedRun {
         let prepared = session
             .prepare_once(1, RunOperation::RunOnce, 1_700_000_000_000)
             .expect("可以准备一次运行");
@@ -381,8 +258,8 @@ impl Fixture {
     }
 }
 
-/// 确认当前待补审计事件。
-pub fn acknowledge(session: &mut RunSession<'_, FakeBackend>) {
+/// 确认当前待补审计事件；对任何后端都一样，假 launcher 驱动的真实 adapter 也用它。
+pub fn acknowledge<B: ContainmentBackend>(session: &mut RunSession<'_, B>) {
     let candidate = session
         .pending_audit()
         .expect("可以读待补事件")
@@ -393,7 +270,7 @@ pub fn acknowledge(session: &mut RunSession<'_, FakeBackend>) {
         .expect("可以登记已核验回执");
 }
 
-fn next_offset(session: &RunSession<'_, FakeBackend>) -> u64 {
+fn next_offset<B: ContainmentBackend>(session: &RunSession<'_, B>) -> u64 {
     session
         .load()
         .expect("可以读权威记录")

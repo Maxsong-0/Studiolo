@@ -1,7 +1,10 @@
 //! 运行生命周期：阶段持久边界严格照契约，观察结果四项分开报告。
 //!
 //! 启动请求发出**之前**的失败是「不支持受控隔离」；发出**之后**的失败一律保持未知，
-//! 保留原槽，不取 token、不启新运行，更不会重新执行。
+//! 保留原槽，不取 token、不启新运行，更不会重新执行。重开路径（`recover`／`stop_recovered`）
+//! 在 `lifecycle/reopen.rs`。
+
+mod reopen;
 
 use super::error::{Result, TransportError};
 use super::machine::{self, Transition};
@@ -12,7 +15,7 @@ use super::types::{
     ContainerIdentity, ExitObservation, ResourceCounts, RunId, RunObservation, RunPhase, StopReason,
 };
 use crate::linux::launcher::{HandshakeNonce, LaunchRequest, isolation_sufficient};
-use crate::linux::{ContainmentBackend, IdentityMatch, cgroup, service};
+use crate::linux::{ContainmentBackend, cgroup, service};
 
 impl<B: ContainmentBackend> RunSession<'_, B> {
     /// Intent ACK 与最终绑定复验后才放行；借用票据至多放行一次。
@@ -112,72 +115,6 @@ impl<B: ContainmentBackend> RunSession<'_, B> {
         self.observe(owned.binding.run_id)
     }
 
-    /// 只观察旧容器，绝不重新执行。
-    pub(crate) fn recover(&mut self, run_id: RunId) -> Result<RunObservation> {
-        let state = self.load()?;
-        let record = state.active.as_ref().ok_or(TransportError::NotFound)?;
-        if record.run_id != run_id {
-            return Err(TransportError::NotFound);
-        }
-        if !record.phase.execution_may_have_started() {
-            return Ok(record.observation());
-        }
-        let current_boot = self
-            .backend
-            .boot_id()
-            .map_err(crate::linux::ContainmentGap::after_start)?;
-        match record.container.clone() {
-            // 尚未固定容器身份：只有跨 boot 才能收束，且原退出结果永远未知。
-            None => {
-                if record
-                    .requested_boot_id
-                    .is_some_and(|old| old != current_boot)
-                {
-                    self.close_by_boot_change(&state)?;
-                }
-            }
-            Some(container) => {
-                let matched = self
-                    .backend
-                    .match_identity(&container)
-                    .map_err(crate::linux::ContainmentGap::after_start)?;
-                match matched {
-                    IdentityMatch::Exact => return self.observe(run_id),
-                    IdentityMatch::BootChanged if current_boot != container.boot_id => {
-                        self.close_by_boot_change(&state)?;
-                    }
-                    // 缺 unit、换 unit、cgroup ABA、同 boot 的「boot 变化」自报都不是证明。
-                    _ => {}
-                }
-            }
-        }
-        observation_of(&self.load()?, run_id)
-    }
-
-    /// 只在完整匹配旧容器时停止；显式请求，绝不进程名搜索。
-    pub(crate) fn stop_recovered(&mut self, run_id: RunId) -> Result<()> {
-        let state = self.load()?;
-        let record = state.active.as_ref().ok_or(TransportError::NotFound)?;
-        if record.run_id != run_id {
-            return Err(TransportError::NotFound);
-        }
-        let container = record
-            .container
-            .clone()
-            .ok_or(TransportError::ExitUnconfirmed)?;
-        if self
-            .backend
-            .match_identity(&container)
-            .map_err(crate::linux::ContainmentGap::after_start)?
-            != IdentityMatch::Exact
-        {
-            return Err(TransportError::ExitUnconfirmed);
-        }
-        let next = machine::apply(&state, Transition::RequestStop(StopReason::OwnerRequested))?;
-        self.commit(&next)?;
-        self.enforce_stop(&next)
-    }
-
     fn enforce_stop(&mut self, state: &TransportState) -> Result<()> {
         let Some(record) = state.active.as_ref() else {
             return Ok(());
@@ -187,23 +124,8 @@ impl<B: ContainmentBackend> RunSession<'_, B> {
             return Ok(());
         };
         self.backend
-            .stop(&container, record.budget.stop_grace_seconds)
+            .stop(record.run_id, &container, record.budget.stop_grace_seconds)
             .map_err(crate::linux::ContainmentGap::after_start)
-    }
-
-    fn close_by_boot_change(&mut self, state: &TransportState) -> Result<()> {
-        let next = machine::apply(
-            state,
-            Transition::Quiesce(QuiescenceProof {
-                evidence: QuiescenceEvidence::BootChanged,
-                cgroup_identity: None,
-                spawn_gate_closed: true,
-            }),
-        )?;
-        self.commit(&next)?;
-        let state = self.load()?;
-        let next = machine::apply(&state, Transition::FixOutcome)?;
-        self.commit(&next)
     }
 
     fn observe(&mut self, expect: RunId) -> Result<RunObservation> {
@@ -241,9 +163,10 @@ impl<B: ContainmentBackend> RunSession<'_, B> {
         ) {
             return Ok(None);
         }
+        let run_id = record.run_id;
         let counts = self
             .backend
-            .drain(&container)
+            .drain(run_id, &container)
             .map_err(crate::linux::ContainmentGap::after_start)?;
         if grew(&record.counts, &counts) {
             return Ok(Some(Transition::RecordCounts(counts)));
@@ -256,7 +179,7 @@ impl<B: ContainmentBackend> RunSession<'_, B> {
         if record.phase == RunPhase::ExecutionIssued
             && self
                 .backend
-                .observe_running(&container)
+                .observe_running(run_id, &container)
                 .map_err(crate::linux::ContainmentGap::after_start)?
         {
             return Ok(Some(Transition::ObserveRunning));
@@ -264,17 +187,17 @@ impl<B: ContainmentBackend> RunSession<'_, B> {
         // 实际等待结果与静止证明分开取；两者互不替代。
         let exit = self
             .backend
-            .reap(&container)
+            .reap(run_id, &container)
             .map_err(crate::linux::ContainmentGap::after_start)?;
         if exit != ExitObservation::NotObserved && exit != record.exit {
             return Ok(Some(Transition::RecordExit(exit)));
         }
         self.backend
-            .close_spawn_gate(&container)
+            .close_spawn_gate(run_id, &container)
             .map_err(crate::linux::ContainmentGap::after_start)?;
         let events = self
             .backend
-            .read_events(&container)
+            .read_events(run_id, &container)
             .map_err(crate::linux::ContainmentGap::after_start)?;
         if events.populated {
             return Ok(None);

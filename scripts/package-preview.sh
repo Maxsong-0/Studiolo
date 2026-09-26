@@ -31,6 +31,7 @@ STUDIOLO_INPUTS=(
   deploy/preview/studiolo-preview.service.in
   deploy/preview/studiolo-access.service.in deploy/preview/studiolo-tunnel.service
   deploy/preview/install-runtime-package.sh docs/m3/release-packaging.md
+  deploy/sync-bridge
 )
 COPYFILE_DISABLE=1 tar -cf - "${STUDIOLO_INPUTS[@]}" |
   tar -xf - -C "$STUDIOLO_OUT/source"

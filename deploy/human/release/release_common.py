@@ -15,7 +15,7 @@ RELEASE = Path('/home/maxsong/.local/share/studiolo-human-releases') / BUILD
 UID = 1000
 MAX_FILE = 512 * 1024 * 1024
 MAX_TOTAL = 2 * 1024 * 1024 * 1024
-BINARIES = {'bin/studiolo-local-server', 'bin/studiolo-auth-admin'}
+BINARIES = {'bin/studiolo-local-server', 'bin/studiolo-auth-admin', 'bin/studiolo-sync-launcher'}
 REQUIRED = BINARIES | {'launch-human.py', 'studiolo-human.service', 'web/index.html'}
 
 

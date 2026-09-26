@@ -146,6 +146,17 @@ impl<'scope> SyncTransportOwner<'scope> {
     pub fn verify_quiescent(&self, mirror: &QuiescentMirror) -> Result<()> {
         self.inner.verify_quiescent(mirror)
     }
+
+    /// 已闭合的 InspectConfig／SetMode 运行的 stdout 正文（headless `--json` 输出）。
+    ///
+    /// 只在退出码为 0、输出未超预算、审计已闭合时可取；RunOnce 永远不取（它的输出不是证据）。
+    ///
+    /// # 错误
+    /// 不是该运行返回 `NotFound`；退出非零或超预算返回 `Budget`；launcher 拿不到正文返回
+    /// `ExitUnconfirmed`。
+    pub fn config_output(&mut self, run_id: RunId) -> Result<String> {
+        self.inner.config_output(run_id)
+    }
 }
 
 /// 构造首条完整记录；初始化是管理员显式动作，启动流程不得隐式创建它。
