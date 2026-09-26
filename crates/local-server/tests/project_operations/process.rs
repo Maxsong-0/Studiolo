@@ -1,29 +1,14 @@
 //! 真进程验证显式绑定启动与失败不监听；仅使用虚构资料和自有子进程。
+//! 端口由占位持有到子进程退出，就绪以子进程自己的启动行为准（T-171，见 `loopback_port`）。
 
-use std::{
-    net::TcpListener,
-    process::{Child, Command, Stdio},
-    time::Duration,
-};
+#[path = "../loopback_port/mod.rs"]
+#[allow(dead_code)]
+mod loopback_port;
+
+use loopback_port::{Announced, Reservation};
+use std::{net::TcpListener, process::Command, time::Duration};
 
 use super::fixture::{Fixture, PROJECT, uri};
-
-struct Running(Child);
-
-impl Drop for Running {
-    fn drop(&mut self) {
-        let _ = self.0.kill();
-        let _ = self.0.wait();
-    }
-}
-
-fn port() -> u16 {
-    TcpListener::bind("127.0.0.1:0")
-        .unwrap()
-        .local_addr()
-        .unwrap()
-        .port()
-}
 
 fn command(f: &Fixture, port: u16, binding: &str) -> Command {
     // 仅测试选择随发布包验证的生产程序，不依赖构建机绝对路径。
@@ -52,29 +37,17 @@ fn command(f: &Fixture, port: u16, binding: &str) -> Command {
 #[tokio::test]
 async fn real_binary_serves_bound_directory_evidence() {
     let f = Fixture::new();
-    let port = port();
+    let reservation = Reservation::new();
     let binding = format!("{PROJECT}={}", f.repository.path().display());
-    let _process = Running(
-        command(&f, port, &binding)
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-            .unwrap(),
-    );
+    let command = command(&f, reservation.address.port(), &binding);
+    let process = Announced::spawn(command, reservation, Duration::from_secs(8));
     let client = reqwest::Client::builder()
         .no_proxy()
         .timeout(Duration::from_secs(2))
         .build()
         .unwrap();
-    let endpoint = format!("http://127.0.0.1:{port}{}", uri(PROJECT, 1));
-    let deadline = std::time::Instant::now() + Duration::from_secs(5);
-    let response = loop {
-        if let Ok(response) = client.get(&endpoint).send().await {
-            break response;
-        }
-        assert!(std::time::Instant::now() < deadline, "测试子进程未及时监听");
-        tokio::time::sleep(Duration::from_millis(20)).await;
-    };
+    let endpoint = format!("http://{}{}", process.address, uri(PROJECT, 1));
+    let response = client.get(&endpoint).send().await.unwrap();
     assert_eq!(response.status(), 200);
     let value: serde_json::Value =
         serde_json::from_slice(&response.bytes().await.unwrap()).unwrap();
@@ -89,7 +62,10 @@ async fn real_binary_serves_bound_directory_evidence() {
 fn missing_or_symbolic_binding_fails_without_creating_it_or_listening() {
     let f = Fixture::new();
     let missing = f.repository.path().join("missing-root");
-    let port = port();
+    // 占位持有到本测试结束：退出后仍能在同一端口绑定监听，说明失败进程没有留下监听，
+    // 而端口不会在两次启动之间被同机进程拿走、造成误判。
+    let reservation = Reservation::new();
+    let port = reservation.address.port();
     let binding = format!("{PROJECT}={}", missing.display());
     let output = command(&f, port, &binding).output().unwrap();
     assert!(!output.status.success());

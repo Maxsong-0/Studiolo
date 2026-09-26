@@ -3,31 +3,19 @@
 #[path = "project_operations/fixture.rs"]
 #[allow(dead_code)]
 mod fixture;
+#[path = "loopback_port/mod.rs"]
+#[allow(dead_code)]
+mod loopback_port;
 
-use std::{
-    fs,
-    net::TcpListener,
-    process::{Child, Command, Stdio},
-    time::{Duration, Instant},
-};
+use loopback_port::{Announced, Reservation};
+use std::{fs, process::Command, time::Duration};
 
 use serde_json::Value;
 
-struct Running(Child);
-
-impl Drop for Running {
-    fn drop(&mut self) {
-        let _ = self.0.kill();
-        let _ = self.0.wait();
-    }
-}
-
-fn start(f: &fixture::Fixture, cargo: bool, rust: bool) -> (Running, String) {
-    let port = TcpListener::bind("127.0.0.1:0")
-        .unwrap()
-        .local_addr()
-        .unwrap()
-        .port();
+/// 启动并等子进程自己宣布就绪；端口由占位持有到子进程退出（T-171）。
+fn start(f: &fixture::Fixture, cargo: bool, rust: bool) -> (Announced, String) {
+    let reservation = Reservation::new();
+    let port = reservation.address.port();
     // 覆盖只供原生测试选取随包产品，不传入产品环境。
     let binary = std::env::var_os("STUDIOLO_TEST_SERVER_BIN")
         .map(std::path::PathBuf::from)
@@ -54,20 +42,13 @@ fn start(f: &fixture::Fixture, cargo: bool, rust: bool) -> (Running, String) {
     if rust {
         command.args(["--rust-call-sites", "[\"src/source.rs\"]"]);
     }
-    let process = Running(
-        command
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-            .unwrap(),
+    let process = Announced::spawn(command, reservation, Duration::from_secs(12));
+    let url = format!(
+        "http://{}{}",
+        process.address,
+        fixture::uri(fixture::PROJECT, 1)
     );
-    (
-        process,
-        format!(
-            "http://127.0.0.1:{port}{}",
-            fixture::uri(fixture::PROJECT, 1)
-        ),
-    )
+    (process, url)
 }
 
 fn client() -> reqwest::Client {
@@ -78,18 +59,13 @@ fn client() -> reqwest::Client {
         .unwrap()
 }
 
+/// 子进程已宣布就绪，传输错误即真实故障，不再重试掩盖。
 async fn get(client: &reqwest::Client, url: &str) -> Value {
-    let deadline = Instant::now() + Duration::from_secs(12);
-    loop {
-        if let Ok(response) = client.get(url).send().await {
-            assert_eq!(response.status(), 200);
-            assert_eq!(response.headers()["cache-control"], "no-store");
-            let body = response.bytes().await.unwrap();
-            return serde_json::from_slice(&body).unwrap();
-        }
-        assert!(Instant::now() < deadline, "测试子进程未及时响应");
-        tokio::time::sleep(Duration::from_millis(20)).await;
-    }
+    let response = client.get(url).send().await.unwrap();
+    assert_eq!(response.status(), 200);
+    assert_eq!(response.headers()["cache-control"], "no-store");
+    let body = response.bytes().await.unwrap();
+    serde_json::from_slice(&body).unwrap()
 }
 
 #[tokio::test]
@@ -194,7 +170,7 @@ async fn real_process_survives_bounded_adversarial_syntax_and_can_retry() {
         );
         assert!(source["graph"].is_null());
         assert!(source["observed_at"].is_null());
-        assert!(process.0.try_wait().unwrap().is_none());
+        assert!(process.child.try_wait().unwrap().is_none());
         fs::write(&path, "fn recovered() { usable(); }").unwrap();
         let recovered = get(&client, &url).await;
         assert_eq!(recovered["rust_call_sites"]["status"], "ready");

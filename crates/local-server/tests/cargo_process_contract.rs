@@ -3,25 +3,15 @@
 #[path = "project_operations/fixture.rs"]
 #[allow(dead_code)]
 mod fixture;
+#[path = "loopback_port/mod.rs"]
+#[allow(dead_code)]
+mod loopback_port;
 #[path = "access/test_support.rs"]
 #[allow(dead_code)]
 mod test_support;
 
-use std::{
-    fs,
-    net::TcpListener,
-    process::{Child, Command, Stdio},
-    time::{Duration, Instant},
-};
-
-struct Running(Child);
-
-impl Drop for Running {
-    fn drop(&mut self) {
-        let _ = self.0.kill();
-        let _ = self.0.wait();
-    }
-}
+use loopback_port::{Announced, Reservation};
+use std::{fs, process::Command, time::Duration};
 
 #[tokio::test]
 async fn real_binary_only_reads_manifests_with_explicit_cargo_opt_in() {
@@ -43,11 +33,9 @@ async fn real_binary_only_reads_manifests_with_explicit_cargo_opt_in() {
         .build()
         .unwrap();
     for enabled in [false, true] {
-        let port = TcpListener::bind("127.0.0.1:0")
-            .unwrap()
-            .local_addr()
-            .unwrap()
-            .port();
+        // 端口由占位持有到子进程退出，就绪以子进程自己的启动行为准（T-171）。
+        let reservation = Reservation::new();
+        let port = reservation.address.port();
         // 覆盖只供原生测试选取随包产品，不传入产品环境。
         let binary = std::env::var_os("STUDIOLO_TEST_SERVER_BIN")
             .map(std::path::PathBuf::from)
@@ -73,25 +61,13 @@ async fn real_binary_only_reads_manifests_with_explicit_cargo_opt_in() {
         if enabled {
             command.arg("--cargo-dependencies");
         }
-        let _process = Running(
-            command
-                .stdout(Stdio::null())
-                .stderr(Stdio::null())
-                .spawn()
-                .unwrap(),
-        );
+        let process = Announced::spawn(command, reservation, Duration::from_secs(8));
         let endpoint = format!(
-            "http://127.0.0.1:{port}{}",
+            "http://{}{}",
+            process.address,
             fixture::uri(fixture::PROJECT, 1)
         );
-        let deadline = Instant::now() + Duration::from_secs(8);
-        let response = loop {
-            if let Ok(response) = client.get(&endpoint).send().await {
-                break response;
-            }
-            assert!(Instant::now() < deadline, "测试子进程未及时监听");
-            tokio::time::sleep(Duration::from_millis(20)).await;
-        };
+        let response = client.get(&endpoint).send().await.unwrap();
         assert_eq!(response.status(), 200);
         let body = response.bytes().await.unwrap();
         let value: serde_json::Value = serde_json::from_slice(&body).unwrap();

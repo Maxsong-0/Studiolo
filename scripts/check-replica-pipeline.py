@@ -146,9 +146,13 @@ class Pipeline:
         return json.loads((self.remote / "control/state.json").read_text())
 
     def start(self, policy_dir=None):
-        with socket.socket() as sock:
-            sock.bind(("127.0.0.1", 0))
-            port = sock.getsockname()[1]
+        # 端口占位与子进程同寿（T-171）：占位带 SO_REUSEADDR 绑在 0.0.0.0、不监听，agent 经 tokio 绑
+        # 127.0.0.1 的同一端口；占位期间同机别的进程的自动分配选不到它。旧写法取号后立即释放，窗口内端口
+        # 可能落到别人手里，「连得上」就会连到别人的服务。语义说明见 crates/local-server/tests/loopback_port/mod.rs。
+        self.reservation = socket.socket()
+        self.reservation.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self.reservation.bind(("0.0.0.0", 0))
+        port = self.reservation.getsockname()[1]
         self.url = f"http://127.0.0.1:{port}/mcp"
         self.log = tempfile.TemporaryFile()
         # 缺省不接策略平面（M3 兼容模式），参数与改前逐字相同；给目录即追加 --policy。
@@ -158,24 +162,31 @@ class Pipeline:
                                       *[arg for allow in ALLOW for arg in ("--allow", allow)], "--data", str(self.data),
                                       *policy, "--port", str(port)],
                                      stdout=self.log, stderr=self.log)
-        for _ in range(100):
+        # 就绪只认 agent 自己的启动行（绑定成功后才打印），不认「能连上」。
+        announcement = f"studiolo-agent：{self.url}".encode()
+        deadline = time.monotonic() + 20
+        while announcement not in self.output():
             require(self.proc.poll() is None, "隔离 MCP 服务启动失败")
-            try:
-                urllib.request.urlopen(self.url, timeout=0.2).close()
-            except urllib.error.HTTPError as error:
-                require(error.code == 401, "匿名访问未被拒绝")
-                error.close()
-                break
-            except OSError:
-                time.sleep(0.05)
+            require(time.monotonic() < deadline, "等待隔离 MCP 服务超时")
+            time.sleep(0.05)
+        try:
+            urllib.request.urlopen(self.url, timeout=5).close()
+        except urllib.error.HTTPError as error:
+            require(error.code == 401, "匿名访问未被拒绝")
+            error.close()
         else:
-            raise RuntimeError("等待隔离 MCP 服务超时")
+            raise RuntimeError("匿名访问未被拒绝")
         self.session = None
         value = self.rpc("initialize", {"protocolVersion": CHECK.PROTOCOL, "capabilities": {},
                                        "clientInfo": {"name": "replica-pipeline-test", "version": "1"}})
         text = value["result"]["instructions"]
         self.rpc("notifications/initialized", {}, notification=True)
         return text
+
+    def output(self):
+        """读已写入的 stdout／stderr；用 pread 不动子进程与本进程共享的文件偏移，免得它后续写入覆盖开头。"""
+        fd = self.log.fileno()
+        return os.pread(fd, os.fstat(fd).st_size, 0)
 
     def stop(self):
         if self.proc:
@@ -187,6 +198,8 @@ class Pipeline:
                 self.proc.wait(timeout=5)
             self.proc = None
             self.log.close()
+            # 子进程已收走，端口占位随之交还。
+            self.reservation.close()
 
     def rpc(self, method, params, notification=False):
         self.id += 1

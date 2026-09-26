@@ -1,10 +1,13 @@
 //! 旧本机启动的真实 TCP 契约；不模拟 HTTPS 浏览器 Cookie 或生产 Access。
 
-use super::{fixture::Fixture, process::Running};
+use super::{
+    fixture::Fixture,
+    process::{Reservation, Running},
+};
 use std::{
     fs,
     io::{Read, Write},
-    net::{SocketAddr, TcpStream},
+    net::{SocketAddr, TcpListener, TcpStream},
     time::Duration,
 };
 
@@ -34,6 +37,20 @@ fn original_local_binary_still_serves_read_only_without_auth_or_secret() {
     fixture.empty_stores();
     assert_eq!(fs::read(fixture.vault.join("fixture.md")).unwrap(), note);
     assert_eq!(fs::read(fixture.web.join("index.html")).unwrap(), html);
+}
+
+/// 夹具自检（T-171）：交接出去的端口上若是别的进程在监听，子进程绑不上就退出；
+/// 就绪判据必须报失败，不能因为「能连上」就把别人的服务当成子进程。
+#[test]
+fn readiness_requires_the_childs_own_announcement_not_any_listener() {
+    let fixture = Fixture::new();
+    let reservation = Reservation::new();
+    // 占位只挡自动分配、不挡显式绑定：这里重现旧写法下端口被同机进程拿走后的局面。
+    let impostor = TcpListener::bind(reservation.address).unwrap();
+    let mut server = Running::start_on(reservation, &fixture.root, fixture.legacy_args());
+    let refusal = server.ready().expect_err("别人的监听不能被当成子进程就绪");
+    assert!(refusal.contains("无法绑定指定loopback端口"), "{refusal}");
+    drop(impostor);
 }
 
 #[test]

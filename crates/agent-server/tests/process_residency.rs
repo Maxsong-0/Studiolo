@@ -309,6 +309,8 @@ fn status_kilobytes(pid: u32, field: &str) -> Option<u64> {
 struct ServeFixture {
     _temp: tempfile::TempDir,
     child: std::process::Child,
+    // 端口占位在 Drop 收走子进程之后才释放（T-171）。
+    _reservation: tokio::net::TcpSocket,
 }
 
 #[cfg(target_os = "linux")]
@@ -339,12 +341,18 @@ impl ServeFixture {
         assert!(success, "admin init 失败：\n{stdout}\n{stderr}");
         only_record(&stderr, "admin init");
 
-        // 先占一个空闲回环端口再释放，交给产品自己去绑；产品只接受 1024..=65535。
-        let port = std::net::TcpListener::bind(("127.0.0.1", 0))
-            .expect("取一个空闲回环端口")
-            .local_addr()
-            .expect("已绑定的监听有本地地址")
-            .port();
+        // 端口占位与子进程同寿（T-171）：占位带 SO_REUSEADDR 绑在 0.0.0.0、不监听，产品经 tokio 绑
+        // 127.0.0.1 的同一端口；占位期间同机别的进程的自动分配选不到它，不会在交接窗口被抢走。
+        // 旧写法取号后立即释放，窗口内端口可能落到别的进程手里。语义说明见 local-server 的
+        // `tests/loopback_port/mod.rs`。产品只接受 1024..=65535，临时端口段满足。
+        let reservation = tokio::net::TcpSocket::new_v4().expect("建立端口占位");
+        reservation
+            .set_reuseaddr(true)
+            .expect("占位须允许产品共享绑定");
+        reservation
+            .bind(([0, 0, 0, 0], 0).into())
+            .expect("取一个空闲端口");
+        let port = reservation.local_addr().expect("占位有本地地址").port();
         let mut child = Command::new(agent_binary())
             .args([
                 "serve",
@@ -385,7 +393,11 @@ impl ServeFixture {
                 break;
             }
         }
-        Self { _temp: temp, child }
+        Self {
+            _temp: temp,
+            child,
+            _reservation: reservation,
+        }
     }
 
     fn pid(&self) -> u32 {
