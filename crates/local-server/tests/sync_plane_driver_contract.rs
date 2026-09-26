@@ -57,7 +57,8 @@ fn unclean_previous_run_forces_mirror_remote_set_mode_before_run_once() {
     let mut ports = FakePorts::healthy(SyncMode::Bidirectional);
     ports.state.last_run_clean = false;
     let outcome = run_round_with(&mut ports, SyncMode::Bidirectional, NOW);
-    assert!(matches!(outcome, Ok(RoundOutcome::Settled { .. })));
+    // 强制恢复轮只跑 SetMode＋RunOnce 并干净回收，本轮不取票、不观察、不执行（评审 P2-1）。
+    assert!(matches!(outcome, Ok(RoundOutcome::Recovered)));
     assert_eq!(
         ports.calls,
         vec![
@@ -70,10 +71,6 @@ fn unclean_previous_run_forces_mirror_remote_set_mode_before_run_once() {
             Call::Save,
             Call::RunOnce,
             Call::Save,
-            Call::Quiescent,
-            Call::Unresolved,
-            Call::Observe(SyncMode::MirrorRemote),
-            Call::Execute,
         ]
     );
     assert_eq!(ports.state.applied_mode, Some(SyncMode::MirrorRemote));
