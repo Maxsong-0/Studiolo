@@ -4,7 +4,7 @@ use crate::state::now;
 use rmcp::ErrorData as McpError;
 use studiolo_core::VaultPath;
 use studiolo_policy::{CapabilitySet, Denial, view::intersect_prefixes};
-use studiolo_supply::{Instance, audit::Actor};
+use studiolo_supply::{Instance, audit::Actor, rule_subject};
 
 /// 策略平面复核通过后拿到的能力集（每次调用重新读取，不缓存）。
 pub(crate) struct GrantPolicy {
@@ -27,11 +27,34 @@ pub(crate) struct Grant {
 }
 
 impl Grant {
-    /// 路径是否在供给视图内。
+    /// 路径是否可供给：落在供给视图前缀内，且规则文件还须在规则名单内（ADR-026 D10 单一裁决点）。
     pub(crate) fn allows(&self, path: &VaultPath) -> bool {
+        self.in_view(path) && self.allows_rule_file(path.as_str())
+    }
+
+    /// 路径是否落在供给视图的某个前缀内（只看前缀，不含规则名单）。
+    pub(crate) fn in_view(&self, path: &VaultPath) -> bool {
         self.allowed
             .iter()
             .any(|prefix| path == prefix || path.as_str().starts_with(&format!("{prefix}/")))
+    }
+
+    /// 规则文件（`_规则/<名>.md`）须在能力集规则名单内；非规则文件与未接策略平面的
+    /// M3 兼容模式一律放行（ADR-026 D9／D10）。
+    pub(crate) fn allows_rule_file(&self, path: &str) -> bool {
+        rule_subject(path).is_none_or(|subject| self.allows_rule(subject))
+    }
+
+    /// 策略平面的规则母本 subject 是否在能力集规则名单内；未接策略平面时放行（D4／D5）。
+    pub(crate) fn allows_rule(&self, subject: &str) -> bool {
+        self.policy.as_ref().is_none_or(|policy| {
+            policy
+                .set
+                .read
+                .rules_whitelist
+                .iter()
+                .any(|allowed| allowed == subject)
+        })
     }
 
     /// 审计主体。

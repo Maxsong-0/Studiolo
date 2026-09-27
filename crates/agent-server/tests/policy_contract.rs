@@ -36,9 +36,10 @@ fn private_dir(path: &Path) {
 }
 
 fn capability(whitelist: &[&str], bindings: &[(&str, &str)], propose: bool) -> String {
+    // 本文件的用例发布规则母本后都期望它可读：规则名单须显式给出（ADR-026 D4 缺省零规则）。
     json!({
         "ai_type": "claude",
-        "read": {"project_whitelist": whitelist, "deny_by_default": true},
+        "read": {"project_whitelist": whitelist, "deny_by_default": true, "rules_whitelist": ["通用工作规则.md"]},
         "write": {"board": false, "content_patch_only": true, "content_direct": false},
         "policy": {"propose_desired": propose, "activate": false},
         "hard_bound_skills": bindings.iter().map(|(when, skill)| json!({"when": when, "must_use": skill})).collect::<Vec<_>>(),

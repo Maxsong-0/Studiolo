@@ -41,8 +41,10 @@ impl AgentSession {
                 .iter()
                 .map(|binding| (binding.when.clone(), binding.must_use.clone()))
                 .collect(),
+            // 名单外的规则母本既不提供准则，也不进第 6 项入口（ADR-026 D5）。
             rules: rules
                 .into_iter()
+                .filter(|record| grant.allows_rule(&record.meta.subject))
                 .map(|record| PolicyRule {
                     subject: record.meta.subject,
                     version: record.meta.version,
@@ -73,6 +75,11 @@ impl AgentSession {
             freshness: (!freshness.is_empty()).then_some(freshness.as_str()),
             tools: if self.http { HTTP_TOOLS } else { TOOLS },
             policy: policy.as_ref(),
+            // 路牌库文件兜底与读取路径同一名单；未接策略平面时不过滤（ADR-026 D5／D10）。
+            rules_whitelist: grant
+                .policy
+                .as_ref()
+                .map(|policy| policy.set.read.rules_whitelist.as_slice()),
         };
         let derived = if self.http {
             signpost::derive_http(&input)

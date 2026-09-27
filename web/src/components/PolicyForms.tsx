@@ -17,6 +17,8 @@ const CAPABILITY_TEMPLATE = JSON.stringify(
     read: {
       project_whitelist: ['项目/Studiolo', '_规则'],
       deny_by_default: true,
+      // 缺这一项＝一条规则都读不到（ADR-026 D4）；首批规则与 docs/m5 初始能力集一致。
+      rules_whitelist: ['通用工作规则.md', 'CLAUDE.md'],
     },
     write: { board: false, content_patch_only: true, content_direct: false },
     policy: { propose_desired: true, activate: false },

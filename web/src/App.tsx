@@ -26,6 +26,7 @@ import { CockpitView } from './views/CockpitView';
 import { ProjectsView } from './views/ProjectsView';
 import { DocumentsView } from './views/DocumentsView';
 import { CollabView } from './views/CollabView';
+import { RulesView } from './views/RulesView';
 import { PolicyView } from './views/PolicyView';
 
 export function App({ account }: { account?: ReactNode }) {
@@ -255,8 +256,9 @@ export function App({ account }: { account?: ReactNode }) {
           onRefresh={refreshSnapshot}
         />
       ) : null}
-      {/* 协作与策略不依赖工作台快照：快照读不出来时也要能看黑板、发布或吊销。 */}
+      {/* 协作、规则与策略不依赖工作台快照：快照读不出来时也要能看黑板、改规则、发布或吊销。 */}
       {view === 'collab' ? <CollabView projects={projects} /> : null}
+      {view === 'rules' ? <RulesView /> : null}
       {view === 'policy' ? <PolicyView /> : null}
       {source && data ? (
         <DocumentDialog

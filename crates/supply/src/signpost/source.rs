@@ -1,6 +1,6 @@
 //! 从白名单结构化 Markdown 派生状态与规则，不读取手写路牌。
 use super::{ProjectStatus, STATUS_KEYS};
-use crate::Snapshot;
+use crate::{Snapshot, rules_files::rule_subject};
 use studiolo_core::VaultPath;
 
 pub(super) fn project_status(snapshot: &Snapshot, prefix: &VaultPath) -> Option<ProjectStatus> {
@@ -56,7 +56,14 @@ pub(super) struct RulesSummary {
 
 /// 规则来源按优先级：白名单内的 `通用工作规则.md`（母本）先于各项目的 `CLAUDE.md` 快照；
 /// 硬绑定句两处都扫，因为 Skill 路由表只在 CLAUDE.md 快照里。
-pub(super) fn rules_summary(snapshot: &Snapshot, allow: &[VaultPath]) -> RulesSummary {
+///
+/// `rules` 是能力集规则名单：候选是规则文件（`_规则/<名>.md`）而名单里没有它时跳过，
+/// 与读取路径同一判定（ADR-026 D5）；`None` 表示未接策略平面，不过滤（D10）。
+pub(super) fn rules_summary(
+    snapshot: &Snapshot,
+    allow: &[VaultPath],
+    rules: Option<&[String]>,
+) -> RulesSummary {
     let mut summary = RulesSummary::default();
     // 母本优先于任何项目的 CLAUDE.md 快照，与白名单顺序无关。
     let candidates = allow
@@ -65,6 +72,11 @@ pub(super) fn rules_summary(snapshot: &Snapshot, allow: &[VaultPath]) -> RulesSu
         .chain(allow.iter().map(|prefix| format!("{prefix}/CLAUDE.md")))
         .collect::<Vec<_>>();
     for path in candidates {
+        if let (Some(subject), Some(list)) = (rule_subject(&path), rules)
+            && !list.iter().any(|allowed| allowed == subject)
+        {
+            continue;
+        }
         let Some(note) = snapshot
             .notes
             .iter()

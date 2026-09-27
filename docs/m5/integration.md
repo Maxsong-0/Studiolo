@@ -2,7 +2,7 @@
 
 2026-09-20，主人确认：Claude、Codex 可写 `项目/Studiolo` 黑板，其他已登记 AI 保持只读。未登记类型仍是零权限。本文及示例不代表线上策略已激活。
 
-`write.board=true` 必须同时声明 `write.board_projects`，后者只能是读取白名单内的完整项目路径。扩大读取范围不会扩大写入范围；`content_direct` 永久为 false，正文必须走预览、CAS patch 和批次事务。`initial-capabilities/` 是待发布示例：使用时合并当前读取白名单及 hard_bound_skills，不能用示例覆盖既有配置。实际发布仍经过现有 desired → diff → One-time Code → effective。
+`write.board=true` 必须同时声明 `write.board_projects`，后者只能是读取白名单内的完整项目路径。扩大读取范围不会扩大写入范围；`content_direct` 永久为 false，正文必须走预览、CAS patch 和批次事务。`initial-capabilities/` 是待发布示例：使用时合并当前读取白名单、规则名单（`read.rules_whitelist`，缺省即一条规则都读不到，见 ADR-026）及 hard_bound_skills，不能用示例覆盖既有配置。实际发布仍经过现有 desired → diff → One-time Code → effective。
 
 ## 显式装配
 

@@ -1,0 +1,297 @@
+/*
+ * 规则（T-160，设计规范第 3、4、9 节）：子标签栏＋12 列网格；列表、编辑（左源码右预览）、读权限矩阵。
+ * 网格、格子、按钮、状态方块的骨架在 web/src/ui/ui.css；表单、反馈、出问题的一句、草案块、校验报告与
+ * 执行预览沿用 policy.css 的类，这里只排规则视图自己的块。只引用 tokens.css 的令牌；
+ * 与 ui.css 同名覆盖时一律叠两个类，不靠样式表的先后顺序。断点写区间语法，与 ui.css、shell.css 一致。
+ */
+
+.rules {
+  min-width: 0;
+}
+
+/* ---------- 子标签栏：左标签，右等宽汇总（与协作同一版式） ---------- */
+
+.rules-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: stretch;
+  justify-content: space-between;
+  gap: var(--space-2) var(--space-6);
+  min-height: 50px;
+  margin-bottom: var(--space-3);
+}
+.rules-bar__tabs {
+  flex: 0 1 auto;
+}
+.rules-bar__summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1) 22px;
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.3;
+  color: var(--ink-2);
+}
+
+/* ---------- 格子与共用 ---------- */
+
+.ui-cell.rules-cell {
+  gap: var(--space-3);
+}
+.rules-cell :where(code) {
+  font-family: var(--font-mono);
+  font-size: 0.92em;
+  overflow-wrap: anywhere;
+}
+
+/* ---------- 列表：表格沿用 policy-table，行头是规则名按钮（policy-queue__pick） ---------- */
+
+.rules-table tbody th {
+  border-bottom: 1px solid var(--hairline);
+  text-align: left;
+  vertical-align: baseline;
+}
+.rules-table tbody tr:last-child th {
+  border-bottom: 0;
+}
+.rules-table .rules-table__readers {
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+/* ---------- 编辑：规则名、左源码右预览 ---------- */
+
+.rules-name {
+  max-width: 36rem;
+}
+.ui-cell.rules-source {
+  gap: 0;
+}
+.ui-cell.rules-preview {
+  padding: var(--space-4) var(--space-6);
+  overflow-wrap: anywhere;
+}
+.rules-preview .markdown-preview > * {
+  max-width: 72ch;
+}
+
+/* ---------- 读权限矩阵：行＝规则，列＝AI 类型；格里是开关 ---------- */
+
+.rules-matrix-scroll {
+  max-width: 100%;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+}
+.rules-matrix-scroll:focus-visible {
+  outline: 2px solid var(--ink);
+  outline-offset: 2px;
+}
+.rules-matrix {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+  line-height: 1.45;
+}
+.rules-matrix th,
+.rules-matrix td {
+  padding: 6px var(--space-3) 6px 0;
+  text-align: left;
+  vertical-align: middle;
+}
+.rules-matrix thead th {
+  padding-top: 0;
+  border-bottom: 1.5px solid var(--ink);
+  vertical-align: bottom;
+}
+.rules-matrix thead th:first-child {
+  font-size: 12px;
+  color: var(--ink-2);
+}
+.rules-matrix tbody th,
+.rules-matrix tbody td {
+  border-bottom: 1px solid var(--hairline);
+}
+.rules-matrix tbody tr:last-child > * {
+  border-bottom: 0;
+}
+.rules-matrix__rule {
+  min-width: 10rem;
+  font-size: 13.5px;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+.rules-matrix__type {
+  display: block;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  font-weight: 600;
+}
+.rules-matrix__note {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 var(--space-2);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.5;
+  color: var(--ink-2);
+}
+.rules-matrix__note .is-signal {
+  font-weight: 600;
+  color: var(--signal-text);
+}
+/* 开关：实心墨色方块＝可读，空心浅框＝不可读，虚线框＝待发布草案改了这一格；状态总有文字 */
+.rules-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 32px;
+  padding: 0 var(--space-2);
+  border: 1.5px solid transparent;
+  border-radius: 0;
+  background: none;
+  color: var(--ink-2);
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.rules-switch[aria-checked='true'] {
+  color: var(--ink);
+}
+.rules-switch:hover:not(:disabled) {
+  background: var(--paper-raised);
+}
+.rules-switch:focus-visible {
+  outline: 2px solid var(--ink);
+  outline-offset: 2px;
+}
+.rules-switch:disabled {
+  opacity: 1;
+  color: var(--ink-3);
+  cursor: default;
+}
+.rules-switch[data-pending='true'] {
+  border-style: dashed;
+  border-color: var(--ink-2);
+}
+.rules-switch__mark {
+  flex-shrink: 0;
+  width: 11px;
+  height: 11px;
+  border: 1.5px solid var(--ink-3);
+}
+.rules-switch[aria-checked='true'] .rules-switch__mark {
+  border-color: var(--ink);
+  background: var(--ink);
+}
+/* 类型名只在窄屏的开关列表里露出来；宽屏由列头给出 */
+.rules-switch__type {
+  display: none;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .rules-switch {
+    transition: background-color var(--motion-fast) ease;
+  }
+}
+
+/* ---------- 窄屏（<760px）：网格已收成单列；表格按规则分组，控件 44px，输入 16px 字 ---------- */
+
+@media (width < 760px) {
+  .rules-bar {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .ui-cell.rules-cell,
+  .ui-cell.rules-preview {
+    padding: var(--space-3) 14px;
+  }
+  .view-rules :is(select, input:not([type='checkbox'], [type='radio'])) {
+    min-height: 44px;
+    font-size: 16px;
+  }
+  .rules-switch {
+    min-height: 44px;
+  }
+
+  /* 两张表同一套重排：表头只留给读屏，行变成一组；表格语义靠组件里显式的 role 保住 */
+  .rules-table,
+  .rules-table tbody,
+  .rules-matrix,
+  .rules-matrix tbody {
+    display: block;
+    width: 100%;
+  }
+  .rules-table thead,
+  .rules-matrix thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+  }
+  .rules-table tbody tr,
+  .rules-matrix tbody tr {
+    display: grid;
+    gap: var(--space-2) var(--space-3);
+    padding: var(--space-3) 0;
+    border-bottom: 1px solid var(--hairline);
+  }
+  .rules-table tbody tr:last-child,
+  .rules-matrix tbody tr:last-child {
+    border-bottom: 0;
+  }
+  /* :is 里带上 .is-number：数值列在窄屏也左对齐，特异度压过 policy.css 的右对齐，不靠先后顺序 */
+  .rules-table tbody :is(th, td, .is-number),
+  .rules-matrix tbody :is(th, td) {
+    display: block;
+    padding: 0;
+    border: 0;
+    text-align: left;
+  }
+
+  /* 列表：每条规则一组，名字占一整行，其余事实两列、各带原列名 */
+  .rules-table tbody tr {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .rules-table tbody th {
+    grid-column: 1 / -1;
+  }
+  .rules-table td[data-label]::before {
+    display: block;
+    margin-bottom: 2px;
+    color: var(--ink-2);
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    font-weight: 500;
+    line-height: 1.3;
+    letter-spacing: 0.04em;
+    content: attr(data-label);
+  }
+
+  /* 矩阵：同一份表格改排成按规则分组的开关列表，每个开关带自己的类型名 */
+  .rules-matrix-scroll {
+    overflow: visible;
+  }
+  .rules-matrix tbody tr {
+    grid-template-columns: minmax(0, 1fr);
+    row-gap: var(--space-1);
+  }
+  .rules-switch {
+    display: flex;
+    width: 100%;
+  }
+  .rules-switch__type {
+    display: block;
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    font-family: var(--font-mono);
+    color: var(--ink);
+    text-overflow: ellipsis;
+  }
+}

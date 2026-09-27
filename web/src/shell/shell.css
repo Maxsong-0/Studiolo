@@ -1,5 +1,5 @@
 /*
- * 外壳（T-130 设计规范第 5、11 节）：46px 顶栏，底边 3px 黑线；左字标、当前库名与五导航，右状态胶囊、⌘K 与工具。
+ * 外壳（T-130 设计规范第 5、11 节）：46px 顶栏，底边 3px 黑线；左字标、当前库名与六导航，右状态胶囊、⌘K 与工具。
  * 只引用 tokens.css 的令牌；深色值由 tokens.css 在 prefers-color-scheme 里重定义，这里不写深色分支。
  * 断点一律写区间语法（width < 760px 这类）：相邻两档首尾相接，缩放出小数宽度时不会两档都不命中。
  */
@@ -424,7 +424,7 @@
 
 /*
  * 窄屏（<760px，规范第 5 节）：顶栏只留字标、当前库名、胶囊与 ⌘K 图标；工具收到黑线下方一行；
- * 导航固定到底部成五格。可点的东西一律至少 44px 高。
+ * 导航固定到底部成六格。可点的东西一律至少 44px 高。
  */
 @media (width < 760px) {
   .shell {
@@ -506,7 +506,7 @@
     right: 0;
     bottom: 0;
     display: grid;
-    grid-template-columns: repeat(5, minmax(0, 1fr));
+    grid-template-columns: repeat(6, minmax(0, 1fr));
     padding-bottom: env(safe-area-inset-bottom);
     border-top: var(--rule-thick) solid var(--ink);
     background: var(--paper);

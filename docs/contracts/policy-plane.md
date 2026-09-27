@@ -38,7 +38,8 @@
 能力集形状：
 ```json
 {"ai_type":"claude",
- "read":{"project_whitelist":["项目/Studiolo","_规则"],"deny_by_default":true},
+ "read":{"project_whitelist":["项目/Studiolo","_规则"],"deny_by_default":true,
+         "rules_whitelist":["通用工作规则.md","CLAUDE.md"]},
  "write":{"board":false,"content_patch_only":true,"content_direct":false},
  "policy":{"propose_desired":true,"activate":false},
  "hard_bound_skills":[{"when":"写或改 React / Next.js 代码","must_use":"vercel-react-best-practices"}]}
@@ -48,6 +49,12 @@
 白名单每项须是合法逻辑路径前缀且不指向受保护目录；`hard_bound_skills[].must_use` 必须指向已发布的 skill；
 被硬绑定的 skill 不能撤销。正文上限：主人 256 KiB，接入方提案 64 KiB。
 
+**规则名单 `read.rules_whitelist`**（T-160，vault ADR-026 D3／D4）：该类型可读的规则 subject 列表，每项须满足
+rules 类的 subject 规则（`.md` 结尾、≤128 字符、不含 `/`、不以 `.` 开头），不得重复；不合规报
+`read.rules_whitelist[i]`「不是合法的规则 subject」，重复报「重复的规则 subject」。字段 `#[serde(default)]`：
+**缺字段即零规则**（失败关闭），旧能力集照常解析；规范化正文恒写出该字段（缺省为 `[]`）。名单只管接入方，
+人侧永远全读。规则名单管的是 rules 类 effective 与 vault `_规则/` 下的规则文件，两者用同一判定，见 §5。
+
 ## 3. desired → 校验 → diff → 发布 → effective
 
 - **提交**（主人 `POST /api/v1/policy/desired`；接入方 MCP `propose_desired`）：入库的是提交原文；同事务内对当前
@@ -55,7 +62,8 @@
   `rejected`）；两者都**永不自动生效**。接入方每实例最多 8 条 pending、全库 256 条。
 - **报告**：`ok`、逐条 `problems{path,message}`（不回显正文）、`diff`（JSON 字段级或 Markdown 行级 LCS，≤2000 条，超出标
   `truncated`）、`expansions`（扩大项，界面标红）、`narrowings`、`base_effective_hash`、`current_version`、`body_sha256`。
-- **扩大项判定**：能力集——白名单新增或变宽、`content_patch_only`／`propose_desired` false→true、硬绑定被解除、首次授予；
+- **扩大项判定**：能力集——白名单新增或变宽、规则名单新增（`read.rules_whitelist`：新类型记「新类型首次获得规则读取」，
+  已有类型记「规则读取范围变宽」；移除项记收窄「规则读取范围收窄」）、`content_patch_only`／`propose_desired` false→true、硬绑定被解除、首次授予；
   skills——被硬绑定的 skill 正文变更（标「人工判断」）；rules——被删除的含「禁止／绝不／不得／一律／必须／永不／必叠」的行
   （候选，人工判断）；撤销整份母本恒为扩大项。
 - **发布**（`POST /api/v1/policy/activate`，L3）：请求三选一 `{desired_id}` / `{rollback_to}` / `{release_global_revocation:true}`，
@@ -86,16 +94,27 @@
 ## 5. 接入方视角
 
 - **供给视图 ＝ `--allow`（部署上限）∩ 能力集 `project_whitelist`**，取较窄前缀；没有能力集的类型是**零权限**，不是空视图。
+  视图内直接位于 `_规则/` 下的 `.md` 规则文件另须在 `read.rules_whitelist` 内（ADR-026 D9／D10）。
 - 握手被策略拒绝时**应答但一项不给**：`initialize` 返回 `instructions = "策略拒绝：<原因>；本次会话所有读取与写入全部拒绝"`，
   路牌六项一项不给；每次调用再次复核并记 `agent.action_denied{reason}`。HTTP 文本外壳映射为 403。
 - 路牌改自 effective：第 3 项「读：<视图>（能力集 v<n> ∩ 部署上限）；写：…；策略：…；策略版本 <哈希 12 位>」；
-  第 5 项准则取策略平面规则母本（无则退回 vault 文件），硬绑定标「（策略强制）」；第 6 项加 `policy://rules/<subject>@v<n>`
-  与 skills 计数。仍受 ≤2000 token 硬预算。
+  第 5 项准则取策略平面规则母本（无则退回 vault 文件；两者都只取规则名单内的），硬绑定标「（策略强制）」；
+  第 6 项加 `policy://rules/<subject>@v<n>`（只列名单内的）与 skills 计数。仍受 ≤2000 token 硬预算。
 - `policy_read{kind=rules|skills[,subject]}`／`GET /read/policy`：读 effective 规则母本或 skill；每次先追加 `content.read`
   （路径 `policy://…`，revision `v<n>`，tool `policy_read`）并进四维读取索引。
   首行 `# 策略版本 <12 位>` 与清单／正文取自同一个 SQLite 读事务（`PolicyAgentStore::rules()`／`skills()` 返回
   `AtEffective`），人侧恰在读取途中发布也不会让版本行与条目各属一版（T-134）。路牌第 3／5／6 项同理用
   `rules_and_skills()` 一次读出，且其哈希须等于本次授权复核时的哈希，不等即失败关闭让调用方重试。
+  输出形状：规则清单逐行 `subject\tv<n>\t<sha256 前 12 位>`，单条为 `policy://rules/<subject>@v<n> sha256 <64 位>`
+  行后接正文原字节；skills 清单逐行 `名\tv<n>\t摘要\t触发（以 " | " 相连）`，摘要与触发里的控制字符与 U+2028／U+2029
+  压成空格，保证一个 skill 恰占一行；**单条 skill 的正文是入库的规范 JSON 原文**（`{name,summary,triggers,markdown}`，
+  serde 字段序、紧凑分隔），sha256 行就是这段字节的摘要（T-160，待拍板清单第 9 条选 (a)）。
+- **规则级读权限**（T-160，vault ADR-026 D5）：`policy_read kind=rules` 的清单与单条、路牌第 5／6 项的策略规则，
+  都只给能力集 `read.rules_whitelist` 里有的 subject；vault `_规则/` 下规则文件的五条读取路径用同一判定，见
+  [供给面契约](agent-supply.md) §10。清单里名单外的规则不出现（计数随之一致）；单条读名单外的 subject 对外与不存在
+  同一句（MCP `resource_not_found`「规则母本不存在」，HTTP 404），审计 `agent.action_denied{reason=rule_not_whitelisted}`，
+  名单内而不存在才记 `not_found`。名单取自本次授权复核时的能力集：规则读取所见的 effective 哈希须与复核时相同，
+  不等即失败关闭让调用方重试（与路牌同一做法）。
 - **skill 硬绑定与索引分家**：硬绑定＝能力集 `hard_bound_skills[{trigger, must_use}]`，策略强制，进路牌第 5 项并标「（策略强制）」；
   索引＝`policy_read{kind=skills}` 不带 `subject` 时返回全部已发布 skill 的「名称／版本／摘要／触发词」清单，只是候选、由 AI 自选，
   带 `subject` 才取正文。**Studiolo 不做语义路由**：不替 AI 判断该用哪个 skill，只保证硬绑定那几条一定出现在路牌里。
@@ -113,13 +132,19 @@
 | `DesiredNotActivatable` / `NotRevoked` / `AlreadyBootstrapped` | 状态不允许 | 409 |
 | `TooManyProposals` | 接入方提案超界 | MCP 错误「待处理提案已达上限」 |
 | `UnsafeStorage` / `MissingStore` / `CorruptStore` / `StoreUnavailable` | 私有库 | 503；启动期直接拒绝启动 |
-| （路牌）授权复核与条目读取之间 effective 变了 | 人侧恰在一次调用途中发布 | MCP 错误「策略在本次调用途中发布了新版本，本次拒绝供给，请重试」 |
+| （路牌、`policy_read` 规则）授权复核与条目读取之间 effective 变了 | 人侧恰在一次调用途中发布 | MCP 错误「策略在本次调用途中发布了新版本，本次拒绝供给，请重试」 |
+| `rule_not_whitelisted` | 接入方读名单外的规则母本或 `_规则/` 规则文件 | 与不存在（`policy_read`）或白名单外（`read_note`）同一对外错误，只在审计里区分 |
 
 ## 7. 契约测试清单
 
 - `crates/policy/tests`：校验／diff／扩大项、CAS 发布、恒定约束不可放宽、硬绑定阻止撤销、规则约束行删除标红、回滚、
   bootstrap 首版限制、三级吊销与恢复方向、接入方提案有界且永不生效、原文原样保留、多表／错头即损坏、视图求交、审计事件形状；
-  `agent_read_snapshot_contract.rs`：接入方读取与策略版本同一读事务，并发发布 40 版下无一撕裂（改回两个事务即红）。
+  `agent_read_snapshot_contract.rs`：接入方读取与策略版本同一读事务，并发发布 40 版下无一撕裂（改回两个事务即红）；
+  `rules_whitelist_contract.rs`：旧能力集缺字段解析为空、合法名单通过、非法与重复项按下标报问题、新增报扩大、移除报收窄。
+- `crates/agent-server/tests/rules_access_contract.rs`：规则名单对 `policy_read` 清单与单条、握手路牌、`read_note`／
+  `list_entries`／`search` 同一裁决，名单外与不存在（或白名单外）对外同一错误、审计 `rule_not_whitelisted`，
+  `_规则/` 子目录照项目白名单，缺字段零规则，M3 兼容模式不过滤；`crates/supply/tests/rules_files_contract.rs`：
+  规则文件判定与路牌库文件兜底按名单裁决。
 - `crates/agent-server/tests/policy_contract.rs`：零权限握手、供给视图求交、路牌 3／5／6 项、`policy_read` 审计与索引、
   `propose_desired` 永不生效与能力否决、三级吊销即刻生效与恢复、HTTP 外壳同一授权、M3 兼容模式。
 - `crates/local-server/tests/policy_http_contract.rs`：真实 Unix 入口＋TOTP：发布挡在 L3 后（用例 36 人侧）、Intent/Outcome
