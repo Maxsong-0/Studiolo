@@ -71,6 +71,8 @@
 - 前端检查不需要这个脚本：`npm --prefix web run build`／`test`／`lint`／`format` 直接跑（`node` 为 22.x，CI 钉 22.17.0）。
   只看界面可直接 `STUDIOLO_FIXTURES=1 npm --prefix web run dev`；要连真后端，README 的本机只读示例也得经这个脚本，且示例库与构建产物先复制进它给的 ext4（否则扫描不完整、不监听）：
   `scripts/test-cursor-cloud.sh sh -c 'cp -R examples/m1-vault web/dist /tmp/ && exec cargo run --locked -p studiolo-local-server -- --vault /tmp/m1-vault --assets /tmp/dist --label 示例库 --port 4317'`。
+- 线上站点 `https://studiolo.maxsong.me` 在 Cloudflare Access 单邮箱验证码门禁之后，应用层还校验 Access 令牌里的精确邮箱：VM 能连通，但未登录请求一律 302 到登录页，
+  agent 无法登录（service token 也过不了应用层）。界面验证用上面的本机示例或假数据。
 - 环境安装脚本（保存在 Cursor 面板，不在仓库）已备好 1.97.1 ＋ rustfmt／clippy、GNU `time`（内存测量用例调 `/usr/bin/time`）、`web/node_modules` 与 cargo 依赖缓存，
   并在 `$CARGO_HOME/config.toml` 设 `[profile.dev] debug = "line-tables-only"`，与 CI、`test-linux.sh` 同一设置。
 - vault `项目/Studiolo/` 与全局 `~/.claude/CLAUDE.md` 不在 VM 上。推送 PR 同样占第五节那条共享 runner 队列（draft PR 也触发）：先在 VM 里验完，攒成一次推送。
