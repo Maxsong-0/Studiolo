@@ -129,10 +129,14 @@ effective），不再读 Vault 文件。起点见 [策略模式示例配置](cli
   `crates/agent-server/src/server/policy.rs` 的 `text_policy_read`。
 - 一致性：两份清单与每份正文首行 `# 策略版本 <12 位>` 必须相同，否则视为导出途中 effective
   变化，整批拒绝；所选名字不在清单直接拒绝，不发正文请求；逐项 `@v<版本>` 须与清单相同；
-  规则正文 SHA256 须等于服务端声明，skill 按服务端规范 JSON（serde 字段序）复算后须相同。
+  规则正文与 skill 正文的 SHA256 都按收到的字节核对，须等于服务端声明。skill 单条正文是入库的
+  规范 JSON 原文（T-160 起；待拍板清单第 9 条选 (a)），解析后键须恰为 `name`／`summary`／`triggers`／
+  `markdown`、`name` 等于所选名字、各值类型正确，否则整批拒绝。
 - 输出：规则母本原字节落 `sources/policy/rules/<subject>`；skill 落
-  `sources/policy/skills/<名>/SKILL.md`，内容是服务端返回的 `摘要：…`、`触发：…`、空行加
-  Markdown 正文，原样不改写。入口文件标明策略版本，不写 Vault generation。
+  `sources/policy/skills/<名>/SKILL.md`，内容由规范 JSON 渲染为 `摘要：<summary>`、`触发：<triggers 以 " | " 相连>`、
+  空行加 Markdown 正文，与 T-160 之前的落盘字节相同。入口文件标明策略版本，不写 Vault generation。
+- 能力集规则名单（T-160，vault ADR-026）：接入方只看得见 `read.rules_whitelist` 里的规则母本，名单外的不在清单里；
+  所选规则须在名单内，否则按「不在清单」整批拒绝。
 - manifest：顶层增 `rules_source: "policy"` 与 `policy_effective`（12 位）；每项以
   `policy_version`、`policy_sha12` 取代 vault 的 `revision`。规则的 `policy_sha12` 必须等于
   正文 SHA256 前 12 位；skill 的是规范 JSON 的摘要。
@@ -141,9 +145,10 @@ effective），不再读 Vault 文件。起点见 [策略模式示例配置](cli
   （退出码 2）；两者都附 `policy` 字段列出新旧策略版本与变化项。effective 覆盖全部规则、
   skills 与能力集，未选中的条目变化同样改变策略版本；此时 `items` 为空，表示所选资料本身未变。
 
-限制：导出仍要求握手时托管副本 ready 且新鲜（manifest 照旧记录确认时间）。skill 的摘要或触发
-含换行、触发含 ` | ` 时，文本协议无法唯一还原，复算对不上即整批拒绝；skills 清单里任一摘要
-含换行也会让计数不符而拒绝。契约：schema 12、抓取 25、存储 21 项全部通过；另用本仓库构建的
+限制：导出仍要求握手时托管副本 ready 且新鲜（manifest 照旧记录确认时间）。T-160 之前，skill 的摘要或触发
+含换行、触发含 ` | ` 时文本协议无法唯一还原、整批拒绝，skills 清单里摘要含换行也会让计数不符；T-160 起单条正文
+改为规范 JSON、按字节核对，清单列里的控制字符由服务端压成空格，这两类 skill 都能整批通过（抓取契约与真实管线
+各有一例）。以下为 T-111 当时的记录。契约：schema 12、抓取 25、存储 21 项全部通过；另用本仓库构建的
 agent 加隔离策略平面（`policy-init`、`policy-bootstrap`）做过一次真实联调：含特殊字符的 skill
 摘要与服务端逐位一致，读取全部入审计，新增规则后 `check --online` 报出策略版本变化；
 该联调已于 T-139（2026-09-22）入库为 `scripts/check-client-projection-pipeline.py` 的策略模式段

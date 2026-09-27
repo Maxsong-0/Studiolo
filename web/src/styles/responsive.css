@@ -1,6 +1,6 @@
 /*
  * 全局窄屏规则（<760px，规范第 5 节）：视图共用的全局类（图名行、错误条、三种全局按钮）与没写尺寸的原生控件。
- * 外壳（底部五格导航、顶栏）在 shell/shell.css；ui 组件在 ui/ui.css；视图内部类名的覆盖在 mobile.css。
+ * 外壳（底部六格导航、顶栏）在 shell/shell.css；ui 组件在 ui/ui.css；视图内部类名的覆盖在 mobile.css。
  * 断点写区间语法，与 ui.css、shell.css 同一写法，缩放出小数宽度时不会两档都不命中。
  */
 @media (width < 760px) {

@@ -1,7 +1,7 @@
 /**
  * ⌘K 动作面板的命令清单（设计规范第 8 节）。只收录接口真实支持的动作：
  * 切换视图与协作子标签、打开项目与项目来源、刷新快照、内存草稿、最近删除、状态详情、
- * 跳到黑板任务、执行候选、策略待处理队列；文档组来自全文搜索。
+ * 跳到黑板任务、执行候选、策略待处理队列、新建规则；文档组来自全文搜索。
  * 不可逆或需二次认证的动作（发布/回滚策略、删除文件、落地候选产物）只做「执行预览」：
  * 回车只把人带到拥有该动作的界面，面板自己绝不调接口，确认仍在原界面完成。
  */
@@ -190,6 +190,12 @@ function viewCommands(): Command[] {
       }),
     },
     {
+      id: 'view:rules',
+      label: '规则',
+      keywords: ['rules', '规则母本', 'CLAUDE.md', '读权限', '谁能读'],
+      target: () => ({ view: 'rules' }),
+    },
+    {
       id: 'view:policy',
       label: '策略',
       keywords: ['policy', '规则', '能力集', 'skills'],
@@ -267,6 +273,15 @@ function actionCommands(ctx: CommandContext): Command[] {
         item: 'desired',
         focus: COMMAND_TARGETS.policyQueue,
       }),
+    },
+    {
+      id: 'action:rule-new',
+      group: 'action',
+      label: '新建规则',
+      hint: '规则 › 编辑：写好正文后保存为规则草案',
+      keywords: ['新建', '规则', '规则母本', 'new rule', 'rules'],
+      // 只打开空白的编辑面板（item 为空即新建）；保存只形成草案，发布仍在那里经二次认证完成。
+      target: () => ({ view: 'rules', panel: 'edit' }),
     },
     preview({
       id: 'action:policy-publish',

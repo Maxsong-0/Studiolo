@@ -78,6 +78,8 @@ pub struct SignpostInput<'a> {
     pub tools: &'a [(&'a str, &'a str)],
     /// 策略平面派生项；`None` ＝ 未接入。
     pub policy: Option<&'a PolicySignpost>,
+    /// 规则名单；None＝不过滤（未接策略平面）。
+    pub rules_whitelist: Option<&'a [String]>,
 }
 
 /// 派生结果：文本、计量与用于审计的摘要。
@@ -123,7 +125,7 @@ fn derive_with_label(
         .iter()
         .filter_map(|prefix| project_status(input.snapshot, prefix))
         .collect::<Vec<_>>();
-    let mut rules = rules_summary(input.snapshot, input.allow);
+    let mut rules = rules_summary(input.snapshot, input.allow, input.rules_whitelist);
     if let Some(policy) = input.policy {
         // 策略平面的规则母本优先于 vault 里的文件：effective 才是权威，文件只是 desired 文本。
         if let Some(principles) = policy

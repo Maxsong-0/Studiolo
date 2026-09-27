@@ -518,7 +518,7 @@ export function createFixtureApi(options: { now?: () => number } = {}) {
           `desired 当前状态 ${desired.status} 不可发布`,
           'state',
         );
-      const { report } = validate(
+      const { report, canonical } = validate(
         policy,
         desired.kind,
         desired.subject,
@@ -533,12 +533,13 @@ export function createFixtureApi(options: { now?: () => number } = {}) {
           'validation_failed',
         );
       }
+      // 与后端一样：desired 留提交原文，版本存规范化正文（能力集的键序、规则的换行），摘要按它算。
       const activation = publish(
         policy,
         {
           kind: desired.kind,
           subject: desired.subject,
-          body: desired.body,
+          body: canonical,
           report,
           desiredId: desired.id,
           rollbackOf: null,

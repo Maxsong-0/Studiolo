@@ -370,10 +370,10 @@ describe('假数据：协作黑板、汇总、回放与执行', () => {
 });
 
 describe('假数据：策略、健康、文档与项目运作', () => {
-  it('策略平面：现行三版、待处理 desired 一条（三项扩大）、实例与类型两级吊销生效', () => {
+  it('策略平面：现行四版、待处理 desired 一条（三项扩大）、实例与类型两级吊销生效', () => {
     const { read } = setup();
     const status = policyStatus(read('/api/v1/policy'));
-    expect(status.entries).toHaveLength(3);
+    expect(status.entries).toHaveLength(4);
     expect(status.pending_desired).toBe(1);
     expect(status.global_revoked).toBe(false);
     expect(status.revocations.map((row) => row.level)).toEqual([
@@ -388,7 +388,7 @@ describe('假数据：策略、健康、文档与项目运作', () => {
     });
     expect(desired[0].report?.expansions).toHaveLength(3);
     const versions = versionList(read('/api/v1/policy/versions'));
-    expect(versions.map((meta) => meta.version)).toEqual([3, 2, 1]);
+    expect(versions.map((meta) => meta.version)).toEqual([4, 3, 2, 1]);
     for (const meta of versions)
       expect(
         versionRecord(read(`/api/v1/policy/versions/${meta.version}`)).meta
@@ -483,7 +483,7 @@ describe('假数据：策略、健康、文档与项目运作', () => {
 });
 
 describe('假数据：写操作走得通', () => {
-  it('发布策略：先 403 要二次认证，认证后发布为 v4，旧任务改按旧版规则执行', () => {
+  it('发布策略：先 403 要二次认证，认证后发布为 v5，旧任务改按旧版规则执行', () => {
     const { get, post, read } = setup();
     const desired = desiredList(read('/api/v1/policy/desired'))[0];
     const status = policyStatus(read('/api/v1/policy'));
@@ -507,7 +507,7 @@ describe('假数据：写操作走得通', () => {
     );
     expect(outcome.kind).toBe('activated');
     if (outcome.kind === 'activated')
-      expect(outcome.activation.version).toBe(4);
+      expect(outcome.activation.version).toBe(5);
     const after = policyStatus(read('/api/v1/policy'));
     expect(after.effective_hash).not.toBe(status.effective_hash);
     expect(after.pending_desired).toBe(0);

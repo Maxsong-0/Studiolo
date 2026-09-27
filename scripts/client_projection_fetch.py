@@ -21,6 +21,8 @@ POLICY_COUNT = {"rules": re.compile(r"([0-9]{1,10}) 份规则母本"),
 POLICY_ROW = {"rules": re.compile(r"([^\t]+)\tv([1-9][0-9]{0,15})\t([a-f0-9]{12})"),
               "skills": re.compile(r"([a-z0-9][a-z0-9-]{0,63})\tv([1-9][0-9]{0,15})\t.*")}
 POLICY_ITEM = re.compile(r"@v([1-9][0-9]{0,15}) sha256 ([a-f0-9]{64})")
+# skill 单条正文是入库的规范 JSON（serde 的 Skill 形状，deny_unknown_fields）：键恰为这四个。
+SKILL_KEYS = {"name", "summary", "triggers", "markdown"}
 FRESHNESS = re.compile(
     r"副本状态 ready；stale=false；generation=(?P<generation>[a-f0-9]{32})；"
     r"source_digest=(?P<source_digest>[a-f0-9]{64})；"
@@ -161,22 +163,25 @@ def _policy_listing(text, kind):
     return head[1], listed
 
 
-def _skill_digest(name, body):
-    """按服务端规范 JSON（serde 字段序、紧凑分隔、非 ASCII 原样）复算 skill 摘要。
+def _skill_text(name, body):
+    """服务端给的 skill 正文是入库的规范 JSON；核对名字与闭集键后渲染成落盘的三段文本。
 
-    摘要或触发含换行、触发含 ` | ` 时文本无法唯一还原，复算对不上即整批拒绝。
+    落盘仍是「摘要：…」「触发：…」、空行加 Markdown 正文，与改前逐字节相同；摘要已按收到的
+    JSON 字节核对过，这里只做渲染，摘要含换行、触发含 ` | ` 也不影响核对。
     """
-    summary, _, rest = body.partition("\n")
-    triggers, _, markdown = rest.partition("\n")
-    require(summary.startswith("摘要：") and triggers.startswith("触发：") and markdown.startswith("\n"))
-    joined = triggers[len("触发："):]
-    value = {"name": name, "summary": summary[len("摘要："):],
-             "triggers": joined.split(" | ") if joined else [], "markdown": markdown[1:]}
-    return digest(json.dumps(value, ensure_ascii=False, separators=(",", ":")).encode("utf-8"))
+    value = json.loads(body)
+    require(isinstance(value, dict) and set(value) == SKILL_KEYS and value["name"] == name)
+    summary, triggers, markdown = value["summary"], value["triggers"], value["markdown"]
+    require(isinstance(summary, str) and isinstance(markdown, str) and isinstance(triggers, list)
+            and all(isinstance(trigger, str) for trigger in triggers))
+    return f"摘要：{summary}\n触发：{' | '.join(triggers)}\n\n{markdown}"
 
 
 def _policy_item(client, kind, name, effective, listed, token):
-    """逐项正文：策略版本行与 `policy://种类/名@v版本 sha256 摘要` 行之后的余下部分原样落盘。"""
+    """逐项正文：策略版本行与 `policy://种类/名@v版本 sha256 摘要` 行之后的余下部分。
+
+    两类正文都是入库字节，摘要直接按收到的字节核对；规则母本原样落盘，skill 由规范 JSON 渲染。
+    """
     require(name in listed)
     parts = client.get("policy", {"kind": kind, "subject": name}).split("\n", 2)
     require(len(parts) == 3)
@@ -186,13 +191,15 @@ def _policy_item(client, kind, name, effective, listed, token):
     require(head is not None and head[1] == effective and item is not None)
     version, full, body = int(item[1]), item[2], parts[2]
     require(version == listed[name][0])
+    require(len(body.encode("utf-8")) <= MAX_NOTE and digest(body.encode("utf-8")) == full)
     require(token not in body and client.session not in body)
-    require(len(body.encode("utf-8")) <= MAX_NOTE)
     if kind == "rules":
-        require(full[:12] == listed[name][1] and digest(body.encode("utf-8")) == full)
+        require(full[:12] == listed[name][1])
         path = "policy/rules/" + name
     else:
-        require(_skill_digest(name, body) == full)
+        body = _skill_text(name, body)
+        # 渲染后再查一次：JSON 转义过的秘密在落盘文本里会还原成原样。
+        require(token not in body and client.session not in body)
         path = "policy/skills/" + name + "/SKILL.md"
     return {"path": path, "body": body, "policy_version": version, "policy_sha12": full[:12]}
 
@@ -271,5 +278,7 @@ def fetch(config, token):
     except urllib.error.HTTPError as error:
         error.close()
         raise Invalid("projection_fetch_failed") from None
-    except (Invalid, OSError, ValueError, UnicodeError, OverflowError, http.client.HTTPException):
+    # RecursionError：skill 正文按 JSON 解析，畸形的深层嵌套同样只报固定类别。
+    except (Invalid, OSError, ValueError, UnicodeError, OverflowError, RecursionError,
+            http.client.HTTPException):
         raise Invalid("projection_fetch_failed") from None

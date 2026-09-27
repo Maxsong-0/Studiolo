@@ -2,7 +2,20 @@
 
 use super::{AgentSession, PolicyReadArgs, ProposeArgs, auditing};
 use rmcp::ErrorData as McpError;
-use studiolo_policy::{PolicyKind, ProposalInput};
+use studiolo_policy::{PolicyKind, ProposalInput, sha256_hex};
+
+/// 清单列里的控制字符与 Unicode 行／段分隔符压成空格，保证清单一行一项。
+fn one_line(text: &str) -> String {
+    text.chars()
+        .map(|character| {
+            if character.is_control() || matches!(character, '\u{2028}' | '\u{2029}') {
+                ' '
+            } else {
+                character
+            }
+        })
+        .collect()
+}
 
 impl AgentSession {
     /// 读策略平面 effective：规则母本与 skills 是「读取即外发」的内容，同样先审计后返回。
@@ -29,13 +42,25 @@ impl AgentSession {
         };
         // 版本行与条目取自同一读事务：人侧进程在两次读取之间发布，也不会让二者各属一版。
         let header = |hash: &str| format!("# 策略版本 {}\n", &hash[..12]);
+        // 规则名单取自授权复核时的能力集，规则条目还须与它同属一个 effective；否则人侧恰在两次读取
+        // 之间发布了新版本，名单与条目会各属一版，失败关闭让调用方重试（与路牌同一做法）。
+        let same_effective = |hash: &str| match &grant.policy {
+            Some(policy) if policy.effective_hash != hash => Err(McpError::internal_error(
+                "策略在本次调用途中发布了新版本，本次拒绝供给，请重试",
+                None,
+            )),
+            _ => Ok(()),
+        };
         match (kind, args.subject) {
             (PolicyKind::Rules, None) => {
                 let rules = store.rules().map_err(unavailable)?;
+                same_effective(&rules.effective_hash)?;
                 self.audit_read(&grant.instance, "policy://rules", "-", "policy_read")?;
+                // 名单外的规则母本不进清单，行数与计数一致（ADR-026 D5）。
                 let lines = rules
                     .value
                     .iter()
+                    .filter(|record| grant.allows_rule(&record.meta.subject))
                     .map(|record| {
                         format!(
                             "{}\tv{}\t{}",
@@ -53,7 +78,13 @@ impl AgentSession {
                 ))
             }
             (PolicyKind::Rules, Some(subject)) => {
+                // 名单外与不存在对外同一句：接入方无从分辨名单外的规则是否存在（ADR-026 D5）。
+                if !grant.allows_rule(&subject) {
+                    self.deny(actor, "policy_read", "rule_not_whitelisted");
+                    return Err(McpError::resource_not_found("规则母本不存在", None));
+                }
                 let rules = store.rules().map_err(unavailable)?;
+                same_effective(&rules.effective_hash)?;
                 let header = header(&rules.effective_hash);
                 let Some(record) = rules
                     .value
@@ -75,6 +106,8 @@ impl AgentSession {
             (PolicyKind::Skills, None) => {
                 let skills = store.skills().map_err(unavailable)?;
                 self.audit_read(&grant.instance, "policy://skills", "-", "policy_read")?;
+                // 一个 skill 恰占一行：摘要与触发里的换行等控制字符压成空格，否则一条 skill 会拆成
+                // 多行、与计数不符；原文以单条读取的规范 JSON 为准。
                 let lines = skills
                     .value
                     .iter()
@@ -83,8 +116,14 @@ impl AgentSession {
                             "{}\tv{}\t{}\t{}",
                             skill.name,
                             meta.version,
-                            skill.summary,
-                            skill.triggers.join(" | ")
+                            one_line(&skill.summary),
+                            skill
+                                .triggers
+                                .iter()
+                                .map(String::as_str)
+                                .map(one_line)
+                                .collect::<Vec<_>>()
+                                .join(" | ")
                         )
                     })
                     .collect::<Vec<_>>();
@@ -98,7 +137,7 @@ impl AgentSession {
             (PolicyKind::Skills, Some(name)) => {
                 let skills = store.skills().map_err(unavailable)?;
                 let header = header(&skills.effective_hash);
-                let Some((skill, meta)) = skills
+                let Some((_, meta)) = skills
                     .value
                     .into_iter()
                     .find(|(skill, _)| skill.name == name)
@@ -106,15 +145,20 @@ impl AgentSession {
                     self.deny(actor, "policy_read", "not_found");
                     return Err(McpError::resource_not_found("skill 不存在", None));
                 };
+                // 正文是入库的规范 JSON 原文：版本不可变，按版本号取回的就是入库字节，sha256 行即其摘要，
+                // 读方直接按收到的字节核对。取不回或摘要对不上即失败关闭，不拿重新序列化的文本顶替。
+                let body = store
+                    .version(meta.version)
+                    .map_err(unavailable)?
+                    .and_then(|record| record.body)
+                    .filter(|body| sha256_hex(body.as_bytes()) == meta.body_sha256)
+                    .ok_or_else(|| McpError::internal_error("策略库返回不一致", None))?;
                 let path = format!("policy://skills/{name}");
                 let revision = format!("v{}", meta.version);
                 self.audit_read(&grant.instance, &path, &revision, "policy_read")?;
                 Ok(format!(
-                    "{header}{path}@{revision} sha256 {}\n摘要：{}\n触发：{}\n\n{}",
-                    meta.body_sha256,
-                    skill.summary,
-                    skill.triggers.join(" | "),
-                    skill.markdown
+                    "{header}{path}@{revision} sha256 {}\n{body}",
+                    meta.body_sha256
                 ))
             }
             _ => Err(McpError::invalid_params(

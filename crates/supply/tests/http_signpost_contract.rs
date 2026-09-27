@@ -39,6 +39,7 @@ fn trimming_keeps_http_routes_and_required_headers_inside_the_measured_budget() 
         freshness: None,
         tools: &tools,
         policy: None,
+        rules_whitelist: None,
     };
     let mcp = signpost::derive(&input).unwrap();
     let http = signpost::derive_http(&input).unwrap();
@@ -73,6 +74,7 @@ fn oversized_nontrimmable_entry_fails_closed_for_both_shells() {
         freshness: None,
         tools: &tools,
         policy: None,
+        rules_whitelist: None,
     };
     for result in [signpost::derive(&input), signpost::derive_http(&input)] {
         let exceeded = result.expect_err("超预算必须失败，不能静默删除入口或返回超长路牌");

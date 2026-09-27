@@ -113,6 +113,7 @@ export interface SearchResponse {
   truncated: boolean;
 }
 
-/** 顶栏五个视图（T-130 设计规范第 4 节）；旧七视图的链接在 viewLocation 解析时迁移过来。 */
-export type View = 'cockpit' | 'projects' | 'documents' | 'collab' | 'policy';
+/** 顶栏六个视图（T-130 设计规范第 4 节，T-160 加「规则」）；旧七视图的链接在 viewLocation 解析时迁移过来。 */
+export type View =
+  'cockpit' | 'projects' | 'documents' | 'collab' | 'rules' | 'policy';
 export type OpenSource = (source: SourceLocation) => void;

@@ -8,19 +8,24 @@ export interface ViewLocation {
   view: View;
   /** 项目 root：项目运作与协作各标签的项目选择。 */
   project: string | null;
-  /** 视图内的面板：如项目的 `operations`、协作的 `timeline`、文档的 `tree`；默认面板记作 null。 */
+  /**
+   * 视图内的面板：如项目的 `operations`、协作的 `timeline`、文档的 `tree`、规则的 `edit`／`access`；
+   * 默认面板记作 null。
+   */
   panel: string | null;
-  /** 面板内选中的条目：如执行任务 id、策略版本号。 */
+  /** 面板内选中的条目：如执行任务 id、策略版本号、在编辑的规则名（subject）。 */
   item: string | null;
 }
 
 export type ViewSlot = 'project' | 'panel' | 'item';
 
+/** 顶栏六个视图，顺序与导航一致（设计规范第 4 节）。 */
 const views: readonly View[] = [
   'cockpit',
   'projects',
   'documents',
   'collab',
+  'rules',
   'policy',
 ];
 const slots: readonly ViewSlot[] = ['project', 'panel', 'item'];

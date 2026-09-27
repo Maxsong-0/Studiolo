@@ -77,7 +77,7 @@ describe('命令清单：每条命令的目标或预览', () => {
     expect(byId(commands, 'action:drafts').hint).toBe('本页 2 篇');
   });
 
-  it('跳转组：五个视图与协作四个子标签，协作页内切换沿用所选项目', () => {
+  it('跳转组：六个视图与协作四个子标签，协作页内切换沿用所选项目', () => {
     const commands = buildCommands(paletteContext().context);
     const targets = (location: CommandContext['location']) =>
       Object.fromEntries(
@@ -102,6 +102,7 @@ describe('命令清单：每条命令的目标或预览', () => {
       '协作 › 任务与回执': { view: 'collab', panel: 'board', project: null },
       '协作 › 时间线': { view: 'collab', panel: 'timeline', project: null },
       '协作 › 执行': { view: 'collab', panel: 'execution', project: null },
+      规则: { view: 'rules' },
       策略: { view: 'policy' },
     });
     // 已在协作页看某个项目：换子标签不丢项目，条目格按新子标签重新解释所以清掉。
@@ -301,6 +302,7 @@ describe('只收录真实可用的动作', () => {
       '打开最近删除',
       '打开执行候选',
       '打开策略待处理队列',
+      '新建规则',
       '发布策略',
       '回滚策略',
       '删除文件',
@@ -312,6 +314,7 @@ describe('只收录真实可用的动作', () => {
       '协作 › 任务与回执',
       '协作 › 时间线',
       '协作 › 执行',
+      '规则',
       '策略',
     ]);
   });

@@ -4,7 +4,11 @@
     "project_whitelist": [
       "项目/Studiolo"
     ],
-    "deny_by_default": true
+    "deny_by_default": true,
+    "rules_whitelist": [
+      "通用工作规则.md",
+      "CLAUDE.md"
+    ]
   },
   "write": {
     "board": true,

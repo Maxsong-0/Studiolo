@@ -92,7 +92,8 @@ export function lineage(key: InstanceKey): InstanceKey[] {
 }
 
 /**
- * 策略平面的 effective 哈希：genesis → v1 → v2 → v3（当前）。
+ * 策略平面的 effective 哈希：genesis → v1 → v2 → （第 3 版发布推出的一代，见 `policy.ts` 的
+ * `AFTER_CLAUDE`）→ v3（第 4 版发布后，当前）。键名 v1／v2／v3 沿用旧称，不等于版本号。
  * T-046 创建于 v1 生效期间，冻结在 v1 上，因此显示「按旧版规则执行」。
  */
 export const POLICY_HASH = {
