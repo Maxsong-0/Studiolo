@@ -8,9 +8,9 @@ use super::types::{
 };
 use crate::{ConfigError, absolute_normal};
 use serde::Deserialize;
-use sha2::{Digest, Sha256};
 use std::path::PathBuf;
 
+mod digest;
 mod validate;
 pub use validate::excluded_folder as excluded_folder_acceptable;
 use validate::{backend, budget, device_name, excluded_folders, manual_quota, runtime};
@@ -177,10 +177,17 @@ impl SyncTransportApproval {
             .as_ref()
             .map(manual_quota)
             .transpose()?;
-        let mut hash = Sha256::new();
-        hash.update(b"studiolo.sync-transport.approval.v1\0");
-        hash.update((bytes.len() as u64).to_be_bytes());
-        hash.update(bytes);
+        let digest = digest::transport_digest(
+            [
+                &document.private_root,
+                &document.mirror_root,
+                &document.mirror_view_root,
+                &document.plane_root,
+            ],
+            &runtime,
+            &backend,
+            budget,
+        );
         Ok(Self {
             private_root: document.private_root,
             mirror_root: document.mirror_root,
@@ -193,7 +200,7 @@ impl SyncTransportApproval {
             runtime,
             backend,
             budget,
-            digest: hash.finalize().into(),
+            digest,
         })
     }
 
@@ -241,7 +248,8 @@ impl SyncTransportApproval {
         (&self.runtime, &self.backend, self.budget)
     }
 
-    /// 域分隔后对审批文档实际字节的 SHA-256；批准配置摘要进入持久绑定。
+    /// 批准配置摘要：只覆盖传输安全相关字段（四个根、运行时、后端、预算），进入传输私有存储的
+    /// 持久绑定；平面字段改动不影响它（见 `document/digest.rs`）。
     #[must_use]
     pub fn digest(&self) -> [u8; 32] {
         self.digest

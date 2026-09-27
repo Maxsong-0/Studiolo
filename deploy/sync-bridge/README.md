@@ -151,8 +151,7 @@ purge 只在三条同时成立时动手：X 在上次核验集合里、不在当
 - 审批已改、human 还在跑时就清了 headless 排除：有残留时健康节报「排除项清除前有镜像残留」，但 `headless_excluded`
   已不含 X，purge 拒绝（「headless 最近一次核对已不再排除该文件夹」）。把排除项加回 headless、让 human 跑一轮核对，再从 ③ 继续。
 
-**当前限制**：传输私有存储把审批文档整份摘要绑在 `approved_config_digest` 里，改动审批文档后 human 启动即报
-`StartupError::SyncPlane`（传输槽绑定不符）；审批变更的重绑定入口尚未实现（另立任务），在此之前第 ① 步在生产上走不通。
+**改审批文档的两类字段**：`device_name`、`headless_mode`、`excluded_folders`、`manual_quota` 是平面字段，不进传输私有存储的绑定摘要，改后重启 human 即生效（前三项每轮 InspectConfig 按新审批值核对，`headless_mode` 改成 `bidirectional` 即 P6 切换）。四个根、`runtime`（含升级 headless 后的 `closure_digest`）、`backend`、`budget` 是传输安全字段，进绑定摘要：改了 human 启动即报 `StartupError::SyncPlane`（传输槽绑定不符），当前没有重绑定入口（`sync-init` 见任一私有存储已存在即整体拒绝），在 `sync-rebind`（另立任务）落地前不要改这几类字段。
 
 ## 9 回滚
 
