@@ -202,3 +202,61 @@ fn utc_minute_stamp_formats_utc() {
     assert_eq!(utc_minute_stamp(-1), None);
     assert_eq!(utc_minute_stamp(i64::MAX), None);
 }
+
+#[test]
+fn conflict_copy_count_recognizes_both_device_names_once_per_path() {
+    use std::collections::BTreeMap;
+    use studiolo_local_server::sync_plane::driver::observe::conflict_copy_count;
+    use studiolo_sync_bridge::{Binding, FileVersion, Inventory, Presence, Side};
+
+    let binding = Binding {
+        link_id: [1; 16],
+        canonical_vault: [2; 16],
+        remote_vault: [3; 16],
+        canonical_root_token: [4; 32],
+        mirror_root_token: [5; 32],
+        scope_hash: [6; 32],
+        scope_epoch: 1,
+    };
+    let present = || {
+        Presence::Present(FileVersion {
+            revision: [7; 32],
+            sha256: [7; 32],
+            bytes: 1,
+        })
+    };
+    let inventory = |side: Side, entries: BTreeMap<_, _>| Inventory {
+        binding: binding.clone(),
+        side,
+        sequence: 1,
+        complete: true,
+        entries,
+    };
+    let headless_copy = path("n (Conflicted copy iPhone 202609230332).md");
+    let canonical_copy = path("n (Conflicted copy studiolo-canonical 202609230332).md");
+    let canonical = inventory(
+        Side::Canonical,
+        BTreeMap::from([
+            (path("n.md"), present()),
+            (headless_copy.clone(), present()),
+            (
+                path("x (Conflicted copy d 202609230332).md"),
+                Presence::Missing,
+            ),
+        ]),
+    );
+    let mirror = inventory(
+        Side::Mirror,
+        BTreeMap::from([
+            (headless_copy, present()),
+            (canonical_copy, present()),
+            (
+                path("x (Conflicted copy d 202609230332).md"),
+                Presence::Missing,
+            ),
+        ]),
+    );
+    // headless 副本两侧都有只数一次；studiolo-canonical 副本只在镜像侧；显式缺失的不数；原文件不数。
+    assert_eq!(conflict_copy_count(&canonical, &mirror), 2);
+    assert_eq!(conflict_copy_count(&mirror, &canonical), 2);
+}
