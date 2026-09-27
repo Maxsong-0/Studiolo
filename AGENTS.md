@@ -63,8 +63,9 @@
 
 - 云端 VM 是一次性的 Ubuntu 24.04 x86_64（不是第四节写的本机 Mac），与 CI 同为原生 Linux，但连不到 `githubci`，`scripts/test-linux.sh` 在这里不可用。
   改用 **`scripts/test-cursor-cloud.sh <命令>`** 原生跑（对应 `test-linux.sh` 带参数的用法）；默认回路按 `test-linux.sh` 里的清单逐条跑，其余 CI 步骤照 `ci.yml`。
-- 必须经这个脚本跑，原因有二：VM 根文件系统是 overlayfs，目录与文件的 `st_dev` 不同，vault-broker 与 Python 副本／快照／发行工具的同设备检查对 `/tmp`、`$HOME` 下的夹具会失败关闭；
-  可锁定内存默认只有 8 MiB，秘密驻留面加固会失败关闭。脚本在私有 mount 命名空间里给 `/tmp` 与 `HOME` 换上临时 ext4，并抬高该上限。裸跑 `cargo test` 看到的这两类失败是环境问题，**不要去改这些检查**。
+- 必须经这个脚本跑。所有云端 VM 的可锁定内存上限都只有 8 MiB，普通用户抬不动，秘密驻留面加固（mlockall）会失败关闭（如 `studiolo-local-server` 二进制里的 `startup::tests` 集体红）；
+  没有环境构建、从默认镜像启动的 VM 根文件系统还是 overlayfs，目录与文件的 `st_dev` 不同，vault-broker 与 Python 副本／快照／发行工具的同设备检查对 `/tmp`、`$HOME` 下的夹具会失败关闭（从环境构建启动的是普通 ext4）。
+  脚本抬高该上限，并在私有 mount 命名空间里给 `/tmp` 与 `HOME` 换上临时 ext4，两种 VM 都适用。裸跑看到的这两类失败是环境问题，**不要去改这些检查**。
 - 已知环境局限：`studiolo-vault-broker` 的 `metadata_to_body_changes_do_not_publish_partial_or_missing_results` 与 `missing_and_empty_anchor_evidence_must_survive_until_final_revalidation`
   在 VM 上几乎必然失败——内核时间戳粒度 4 ms，同一节拍内的等长改写或删目录不改变 mtime／ctime。这两条以 CI 为准；
   全量测试用 `scripts/test-cursor-cloud.sh cargo --locked test --workspace -- --skip metadata_to_body_changes --skip missing_and_empty_anchor`。
