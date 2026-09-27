@@ -8,13 +8,14 @@ r2 已经把黑板接线（单元的 RuntimeDirectory／ReadWritePaths、启动�
 r2→r3（2026-09-22 T-102，已激活）；r3→r4（T-103/T-104，前端并发闸门＋会话每日复核，已激活）；
 r4→r5（T-105：服务端认证许可排队＋准确报错，换人侧程序，已激活）；
 r5→r6（T-159：T-130 新前端＋main 人侧程序一起换，含只读接口 /api/v1/board/overview，已激活）；
-本版 r6→r7（T-167：T-161～T-166 上线后修复，换网页与人侧程序——woff2／svg 长缓存在人侧程序里）。
+r6→r7（T-167：T-161～T-166 上线后修复，换网页与人侧程序——woff2／svg 长缓存在人侧程序里，已激活）；
+本版 r7→r8（T-160f：规则级读权限与「规则」视图；人侧程序须先于 agent 换上，才能解析带 rules_whitelist 的能力集）。
 """
 import shlex
 from pathlib import Path
 
-OLD_RELEASE = '/home/maxsong/.local/share/studiolo-human-releases/m5m6-board-20260920-r6'
-BUILD = 'm5m6-board-20260920-r7'
+OLD_RELEASE = '/home/maxsong/.local/share/studiolo-human-releases/m5m6-board-20260920-r7'
+BUILD = 'm5m6-board-20260920-r8'
 RELEASE = '/home/maxsong/.local/share/studiolo-human-releases/' + BUILD
 BASE = '/home/maxsong/.local/share/'
 VAULT = BASE + 'studiolo-canonical'
@@ -23,12 +24,13 @@ BOARD = BASE + 'studiolo-board'
 AGENT = BASE + 'studiolo-agent'
 BOARD_RUNTIME = '/run/studiolo-board'
 BOARD_SOCKET = BOARD_RUNTIME + '/board.sock'
-# 现场两个单元的摘要：人侧是 r6 激活时装上的那一版；agent 是 T-108 于 2026-09-22 22:25:44 UTC
+# 现场两个单元的摘要：人侧是 r7 激活时装上的那一版；agent 是 T-108 于 2026-09-22 22:25:44 UTC
 # 换装的那一版（读取范围 24 项、程序 t108-864cfb9）。预检以此确认起点没被别人改过。
-HUMAN_SHA = '01f12c8eede6e467251383abfc00da9b98bd222fd65a70fb4e30a6a43ba1db4b'
+HUMAN_SHA = '8a554edaa268082d55bd21267890d2296bc78f737e2066d73675aa8bb0b53595'
+# r8（T-160f）必须在 agent 换 t160 版之前激活：此时 agent 仍是 t108 单元；换版后下一次人侧发行须按现场重算。
 AGENT_SHA = '1c227871d5e1d9a84fe3a96feabda800b0d080a188786962017255795e782d67'
-# 上一发行（r6）manifest 的摘要。键名沿用 r8 时代的写法，manifest 的线格式因此保持不变。
-R8_MANIFEST_SHA = 'b2c7e37d2a86618cefd677b00e9c7a58f8ce32078b8f750b6f5fd8ae7d4bfcb0'
+# 上一发行（r7）manifest 的摘要。键名沿用 r8 时代的写法，manifest 的线格式因此保持不变。
+R8_MANIFEST_SHA = '67163d98565ca1f49ded26ae9666074284ca8f3d12b40b962701e5e751c8ed1d'
 # 发行目录里属于网页的前缀：本次唯一允许整体更换的部分。
 WEB_PREFIX = 'web/'
 # 上一发行的装配名；候选包沿用同一装配，只是换了网页。
