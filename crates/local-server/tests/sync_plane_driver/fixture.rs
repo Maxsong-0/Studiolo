@@ -23,6 +23,8 @@ pub fn first_run_state() -> PlaneState {
         not_before_unix: None,
         verified_excluded: Vec::new(),
         applied_mode: None,
+        headless_excluded: Vec::new(),
+        conflict_stamps: BTreeMap::new(),
         checksum: String::new(),
     }
 }
@@ -56,15 +58,20 @@ pub fn binding() -> Binding {
     }
 }
 
-fn version(index: u64) -> FileVersion {
+/// 第 `index` 条路径上带标记的版本：摘要与 revision 同为「序号＋标记」，不同标记即不同内容。
+pub fn tagged(index: u64, marker: u8, bytes: u64) -> FileVersion {
     let mut tag = [0u8; 32];
     tag[..8].copy_from_slice(&index.to_be_bytes());
-    tag[8] = 1;
+    tag[8] = marker;
     FileVersion {
         revision: tag,
         sha256: tag,
-        bytes: 10 + index,
+        bytes,
     }
+}
+
+fn version(index: u64) -> FileVersion {
+    tagged(index, 1, 10 + index)
 }
 
 fn inventory(side: Side, sequence: u64, entries: BTreeMap<VaultPath, Presence>) -> Inventory {
@@ -80,6 +87,20 @@ fn inventory(side: Side, sequence: u64, entries: BTreeMap<VaultPath, Presence>) 
 /// 没有任何路径、没有基线的冻结输入：规划结果为空，既无动作也无冲突。
 pub fn empty_input() -> Input {
     deletion_input(0, 0)
+}
+
+/// 原共同基线里有 `conflicts` 条存活路径，双方相对基线各改成不同内容：
+/// 纯规划器对每条都报 `BothChanged` 冲突，没有动作、也不触发删除熔断。
+pub fn conflict_input(conflicts: u64) -> Input {
+    let mut input = deletion_input(0, conflicts);
+    for (index, path) in input.scope.paths.iter().enumerate() {
+        let index = index as u64;
+        let canonical = Presence::Present(tagged(index, 2, 20 + index));
+        let mirror = Presence::Present(tagged(index, 3, 30 + index));
+        input.canonical.entries.insert(path.clone(), canonical);
+        input.mirror.entries.insert(path.clone(), mirror);
+    }
+    input
 }
 
 /// 原共同基线里有 `live` 条存活路径，本次镜像侧对其中前 `deletions` 条显式缺失：

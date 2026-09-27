@@ -1,5 +1,5 @@
-//! `sync-init` 与 `sync-purge-residue` 契约：既有 Broker 租约下显式初始化四项私有存储、
-//! 任一存在即拒绝；残留清除只对上次核验排除且现已不再排除的文件夹生效，链接一律拒绝。
+//! `sync-init` 契约与两条 Bridge 维护命令共用的夹具：既有 Broker 租约下显式初始化四项私有存储、
+//! 任一存在即拒绝。残留清除（`sync-purge-residue`）的契约在 `sync_purge.rs`。
 //!
 //! 依赖 W4 的 `PlaneStateStore::{open,save}` 与 `StageStore::initialize` 真实实现；
 //! 在 A 轮桩（一律 `Storage`）上，涉及外 stage 与 plane-state 的用例会以 `SyncStorage` 变红。
@@ -17,7 +17,7 @@ use crate::sync_plane::recovery::PlaneStateStore;
 use serde_json::{Value, json};
 use std::{
     fs,
-    os::unix::fs::{PermissionsExt, symlink},
+    os::unix::fs::PermissionsExt,
     path::{Path, PathBuf},
 };
 use studiolo_core::VaultUuid;
@@ -30,20 +30,33 @@ fn check() -> Result<(), MaintenanceError> {
     Ok(())
 }
 
-fn private_dir(path: &Path) {
+pub(super) fn private_dir(path: &Path) {
     fs::create_dir(path).unwrap();
     fs::set_permissions(path, fs::Permissions::from_mode(0o700)).unwrap();
 }
 
-struct Sync {
+fn owned(names: &[&str]) -> Vec<String> {
+    names.iter().map(|name| (*name).to_owned()).collect()
+}
+
+pub(super) struct Sync {
     fixture: Fixture,
     approval: PathBuf,
 }
 
 impl Sync {
-    /// 既有写者存储加四个 0700 自有根；`with_scope` 决定私有配置是否批准同步范围。
-    fn new(with_scope: bool) -> Self {
-        let fixture = Fixture::new(false, true);
+    /// 既有写者存储、权威审计账本加四个 0700 自有根；`with_scope` 决定私有配置是否批准同步范围。
+    pub(super) fn new(with_scope: bool) -> Self {
+        Self::build(with_scope, true)
+    }
+
+    /// 同上但没有权威审计账本（`Inputs::audit` 为 `None`）。
+    pub(super) fn without_audit() -> Self {
+        Self::build(true, false)
+    }
+
+    fn build(with_scope: bool, audit: bool) -> Self {
+        let fixture = Fixture::new(audit, true);
         for name in ["transport", "mirror", "mirror-view", "plane"] {
             private_dir(&fixture.root.join(name));
         }
@@ -91,7 +104,11 @@ impl Sync {
         options
     }
 
-    fn run(&self, command: Command, folder: Option<&str>) -> Result<Value, MaintenanceError> {
+    pub(super) fn run(
+        &self,
+        command: Command,
+        folder: Option<&str>,
+    ) -> Result<Value, MaintenanceError> {
         let options = self.options(command, folder);
         let mut inputs = Inputs::open(&options)?;
         execute(
@@ -103,20 +120,26 @@ impl Sync {
         )
     }
 
-    fn root(&self) -> &Path {
+    pub(super) fn root(&self) -> &Path {
         &self.fixture.root
     }
 
-    fn view(&self) -> PathBuf {
+    pub(super) fn view(&self) -> PathBuf {
         self.root().join("mirror-view")
     }
 
-    /// 把 `folder` 记成上次核验通过的排除项（W4 的持久状态 API）。
-    fn mark_verified_excluded(&self, folders: &[&str]) {
+    /// 守卫拦住那一轮之后的持久状态：`folders` 既是上次核验通过的排除项，也是 headless 仍排除的。
+    pub(super) fn mark_verified_excluded(&self, folders: &[&str]) {
+        self.mark_plane_state(folders, folders);
+    }
+
+    /// 分别写上次核验集合与 headless 最近一次核对报的排除集合（W4 的持久状态 API）。
+    pub(super) fn mark_plane_state(&self, verified: &[&str], headless: &[&str]) {
         let plane = self.root().join("plane");
         let mut store = PlaneStateStore::open(&plane).unwrap();
         let mut state = store.state().clone();
-        state.verified_excluded = folders.iter().map(|name| (*name).to_owned()).collect();
+        state.verified_excluded = owned(verified);
+        state.headless_excluded = owned(headless);
         store.save(state).unwrap();
     }
 }
@@ -182,74 +205,4 @@ fn sync_init_refuses_while_another_owner_holds_the_writer_lease() {
     ));
     drop(owner);
     assert_eq!(fs::read_dir(s.root().join("transport")).unwrap().count(), 0);
-}
-
-#[test]
-fn purge_refuses_folders_that_are_not_clearable_residue() {
-    let s = Sync::new(true);
-    s.mark_verified_excluded(&["School", "日记"]);
-    private_dir(&s.view().join("School"));
-    fs::write(s.view().join("School/a.md"), "残留").unwrap();
-    // 没在上次核验的排除集合里。
-    assert!(matches!(
-        s.run(Command::SyncPurgeResidue, Some("Archive")),
-        Err(MaintenanceError::SyncResidue)
-    ));
-    // 仍在当前审批的排除清单里：headless 自己不会往里写，也轮不到本命令删。
-    assert!(matches!(
-        s.run(Command::SyncPurgeResidue, Some("日记")),
-        Err(MaintenanceError::SyncResidue)
-    ));
-    assert!(s.view().join("School/a.md").is_file());
-}
-
-#[test]
-fn purge_refuses_links_and_deletes_nothing() {
-    let s = Sync::new(true);
-    s.mark_verified_excluded(&["School"]);
-    private_dir(&s.view().join("School"));
-    private_dir(&s.view().join("School/sub"));
-    fs::write(s.view().join("School/a.md"), "残留").unwrap();
-    symlink("a.md", s.view().join("School/sub/link.md")).unwrap();
-    assert!(matches!(
-        s.run(Command::SyncPurgeResidue, Some("School")),
-        Err(MaintenanceError::SyncResidueUnsafe)
-    ));
-    assert!(s.view().join("School/a.md").is_file());
-    assert!(s.view().join("School/sub/link.md").is_symlink());
-    // 文件夹本身是链接也拒绝。
-    private_dir(&s.root().join("elsewhere"));
-    symlink(s.root().join("elsewhere"), s.view().join("Linked")).unwrap();
-    s.mark_verified_excluded(&["Linked", "School"]);
-    assert!(matches!(
-        s.run(Command::SyncPurgeResidue, Some("Linked")),
-        Err(MaintenanceError::SyncResidueUnsafe)
-    ));
-    assert!(s.root().join("elsewhere").is_dir());
-}
-
-#[test]
-fn purge_removes_the_residue_tree_and_reports_exact_counts() {
-    let s = Sync::new(true);
-    s.mark_verified_excluded(&["School"]);
-    private_dir(&s.view().join("School"));
-    private_dir(&s.view().join("School/sub"));
-    private_dir(&s.view().join("School/sub/deeper"));
-    fs::write(s.view().join("School/a.md"), "残留").unwrap();
-    fs::write(s.view().join("School/sub/b.md"), "残留").unwrap();
-    fs::write(s.view().join("School/sub/deeper/c.txt"), "残留").unwrap();
-    private_dir(&s.view().join("笔记"));
-    fs::write(s.view().join("笔记/keep.md"), "不动").unwrap();
-    let report = s.run(Command::SyncPurgeResidue, Some("School")).unwrap();
-    assert_eq!(report["command"], "sync-purge-residue");
-    assert_eq!(report["folder"], "School");
-    assert_eq!(report["removed_files"], 3);
-    assert_eq!(report["removed_directories"], 3);
-    assert!(!s.view().join("School").exists());
-    assert!(s.view().join("笔记/keep.md").is_file());
-    // 已经清干净：再来一次没有残留可清。
-    assert!(matches!(
-        s.run(Command::SyncPurgeResidue, Some("School")),
-        Err(MaintenanceError::SyncResidue)
-    ));
 }

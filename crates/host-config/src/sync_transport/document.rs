@@ -13,7 +13,7 @@ use std::path::PathBuf;
 
 mod validate;
 pub use validate::excluded_folder as excluded_folder_acceptable;
-use validate::{backend, budget, excluded_folders, manual_quota, runtime, text_field};
+use validate::{backend, budget, device_name, excluded_folders, manual_quota, runtime};
 
 /// 审批文档字节上限；单文档远小于私有配置预算。
 const APPROVAL_MAX_BYTES: usize = 8 * 1024;
@@ -169,7 +169,7 @@ impl SyncTransportApproval {
             _ => return Err(ConfigError),
         };
         let excluded_folders = excluded_folders(&document.excluded_folders)?;
-        if !text_field(&document.device_name, 256) {
+        if !device_name(&document.device_name) {
             return Err(ConfigError);
         }
         let manual_quota = document

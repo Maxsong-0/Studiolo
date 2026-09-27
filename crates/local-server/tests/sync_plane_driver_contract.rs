@@ -1,14 +1,21 @@
 //! 驱动循环契约（T-132 P1 W3）：用假端口证明设计文档第 2 节的顺序、恢复／退避、守卫、
 //! 未知终态不重放与熔断停点，并证明 `deletion_fuse_blocked` 与纯规划器同结论。不碰真实 headless。
+//! 排除项安全顺序、双向冲突保全与关停停点各在 `sync_plane_driver/{guard,preserve,shutdown}.rs`。
 
 #[path = "sync_plane_driver/fake_ports.rs"]
 mod fake_ports;
 #[path = "sync_plane_driver/fixture.rs"]
 mod fixture;
+#[path = "sync_plane_driver/guard.rs"]
+mod guard;
+#[path = "sync_plane_driver/preserve.rs"]
+mod preserve;
 #[path = "sync_plane_driver/reconcile.rs"]
 mod reconcile;
 #[path = "sync_plane_driver/reconcile_support.rs"]
 mod reconcile_support;
+#[path = "sync_plane_driver/shutdown.rs"]
+mod shutdown;
 
 use fake_ports::{Call, FakePorts};
 use studiolo_local_server::sync_plane::PlaneError;
@@ -61,7 +68,8 @@ fn unclean_previous_run_forces_mirror_remote_set_mode_before_run_once() {
     let mut ports = FakePorts::healthy(SyncMode::Bidirectional);
     ports.state.last_run_clean = false;
     let outcome = run_round_with(&mut ports, SyncMode::Bidirectional, NOW);
-    // 强制恢复轮只跑 SetMode＋RunOnce 并干净回收，本轮不取票、不观察、不执行（评审 P2-1）。
+    // 强制恢复轮只跑 SetMode＋RunOnce 并干净回收，本轮不取票、不观察、不执行（评审 P2-1）；
+    // SetMode 之后按同样逻辑复核：再核一次守卫。
     assert!(matches!(outcome, Ok(RoundOutcome::Recovered)));
     assert_eq!(
         ports.calls,
@@ -71,6 +79,7 @@ fn unclean_previous_run_forces_mirror_remote_set_mode_before_run_once() {
             Call::Residue,
             Call::SetMode(SyncMode::MirrorRemote),
             Call::Inspect(SyncMode::MirrorRemote),
+            Call::Residue,
             Call::NextSequence,
             Call::Save,
             Call::RunOnce,
@@ -148,6 +157,22 @@ fn residue_guard_blocks_the_round_before_run_once() {
             Call::Residue,
         ]
     );
+    // headless 现状与上次记下的不同：先落盘再过守卫，拦住的轮次也留下 headless 现状（供 purge 校验）。
+    let mut ports = FakePorts::healthy(SyncMode::MirrorRemote);
+    ports.residue = true;
+    ports.state.headless_excluded.clear();
+    let outcome = run_round_with(&mut ports, SyncMode::MirrorRemote, NOW);
+    assert_eq!(outcome, Err(PlaneError::ResidueBlocked));
+    assert_eq!(
+        ports.calls,
+        vec![
+            Call::State,
+            Call::Inspect(SyncMode::MirrorRemote),
+            Call::Save,
+            Call::Residue,
+        ]
+    );
+    assert_eq!(ports.saved[0].headless_excluded, vec!["private".to_owned()]);
 }
 
 #[test]

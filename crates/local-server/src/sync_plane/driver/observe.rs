@@ -65,6 +65,9 @@ pub fn observe_both(context: &RoundContext<'_>) -> Result<Observed, PlaneError> 
     let (canonical, mirror, usage) = witness.observe_pair(&required)?;
     let approved = witness.approve(&canonical, &mirror)?;
     plane.health.record_usage(usage);
+    plane
+        .health
+        .record_observed_copies(conflict_copy_count(&canonical, &mirror));
     let (next_canonical, next_mirror) = witness.next_sequences();
     let input = Input {
         scope: approved,

@@ -2,19 +2,22 @@
 //! 下一轮从持久状态续做，绝不补造成功、不重放 Issued。
 //!
 //! 编排核心 `run_round_with` 只依赖端口 trait [`RoundPorts`]，便于用假端口做契约测试；
-//! 真实端口在 `driver/real.rs`，headless 运行、观察、预解决、预留执行各在其子模块。
+//! 真实端口在 `driver/real.rs`，headless 运行、观察、预解决、冲突保全、预留执行各在其子模块。
+//! 关停只在安全停点生效（见 `halt` 的各调用点），执行器内部不打断。
 
 pub mod content;
 pub mod evidence;
 pub mod execute;
 pub mod headless;
 pub mod observe;
+pub mod preserve;
 pub mod real;
 pub mod reconcile;
 pub mod resolve;
 
 use super::recovery::{self, PlaneState};
 use super::{PlaneError, SyncPlane};
+use std::sync::atomic::AtomicBool;
 use studiolo_host_config::sync_transport::TransportSyncMode;
 use studiolo_sync_bridge::{Decision, Input, Inventory, plan};
 use studiolo_sync_transport::owned_run::{RunId, RunObservation, RunOperation, SyncMode};
@@ -61,13 +64,18 @@ pub struct HeadlessRun {
     pub rc_one: bool,
 }
 
-/// InspectConfig 复核的结论；排除项／文件类型不一致不在这里表达，端口直接报 `ConfigMismatch`。
+/// InspectConfig 复核的结论（核对顺序见 `headless::classify`）；四种组合都不一致时端口直接报
+/// `ConfigMismatch`。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Inspection {
     /// headless 当前 `syncMode` 是否就是本轮应处的模式。
     pub mode_matches: bool,
-    /// 本轮核验通过的排除文件夹集合（审批母本，已排序）。
+    /// 本轮审批母本的排除文件夹集合（已排序）。
     pub excluded_folders: Vec<String>,
+    /// headless 本次报的排除集合，即核对时命中的那份母本（已排序）。
+    pub headless_excluded: Vec<String>,
+    /// 审批已去掉、headless 仍排除、等清残留的文件夹（已排序）；非空＝排除项安全顺序进行中。
+    pub pending_purge: Vec<String>,
 }
 
 /// 一轮驱动用到的全部外部能力；真实实现在 `real.rs`，契约测试用假端口记录调用序列。
@@ -77,6 +85,7 @@ pub trait RoundPorts {
     /// 补审计、回收旧槽并跑 InspectConfig 复核（第 2～3 步）。
     fn inspect(&mut self, expected: SyncMode) -> Result<Inspection, PlaneError>;
     /// 排除项守卫（第 4 步）：上次核验集合里有、当前没有的文件夹是否仍有镜像残留。
+    /// 真实端口在 InspectConfig 刚闭合留下的静止票据下读视图，读完复验，作废即 `Quiescence`。
     fn residue_blocked(
         &mut self,
         previous: &[String],
@@ -103,17 +112,28 @@ pub trait RoundPorts {
     fn observe(&mut self, mode: SyncMode) -> Result<(Input, Inventory, Inventory), PlaneError>;
     /// 引导期冲突预解决（第 9 步）；返回是否改动过 canonical。
     fn preresolve(&mut self, decision: &Decision) -> Result<bool, PlaneError>;
+    /// 双向冲突保全（第 9 步）：双方现存版本各保全一份到 `ops/bridge-conflicts/`，同一冲突跨轮只保全一次；
+    /// 返回本轮新保全的冲突数。
+    fn preserve_conflicts(&mut self, decision: &Decision) -> Result<u64, PlaneError>;
     /// 预留、逐动作执行、闭合与保留期回收（第 10～12 步）。
     fn execute(&mut self, input: Input) -> Result<RoundOutcome, PlaneError>;
+    /// 关停是否已请求；真即本轮在最近的安全停点以 `Stopping` 结束。端口不提供即从不关停。
+    fn stopping(&mut self) -> bool {
+        false
+    }
 }
 
-/// 跑完整的一轮；`now_unix` 由调用方注入。
+/// 跑完整的一轮；`now_unix` 由调用方注入，`stopping` 是 `SyncPlane::drive_until` 的关停标志。
 ///
 /// # Errors
 /// 任一步失败返回对应固定分类；调用方只记健康，不重试。
-pub fn run_round(plane: &SyncPlane, now_unix: i64) -> Result<RoundOutcome, PlaneError> {
+pub fn run_round(
+    plane: &SyncPlane,
+    now_unix: i64,
+    stopping: &AtomicBool,
+) -> Result<RoundOutcome, PlaneError> {
     let approved = approved_mode(plane.approval().headless_mode());
-    let mut ports = real::RealPorts::open(plane, now_unix)?;
+    let mut ports = real::RealPorts::open(plane, now_unix, stopping)?;
     run_round_with(&mut ports, approved, now_unix)
 }
 
@@ -129,7 +149,7 @@ pub fn approved_mode(mode: TransportSyncMode) -> SyncMode {
 /// 对端口 trait 的纯编排：设计文档第 2 节十二步逐条对应，停点与续做点见各步注释。
 ///
 /// # Errors
-/// 任一步失败返回对应固定分类。
+/// 任一步失败返回对应固定分类；关停已请求时在最近的安全停点返回 `Stopping`。
 pub fn run_round_with(
     ports: &mut dyn RoundPorts,
     approved: SyncMode,
@@ -142,18 +162,16 @@ pub fn run_round_with(
         return Ok(RoundOutcome::Skipped);
     }
     let mode = decision.effective_mode;
-    // 2＋3 补审计、回收旧槽、InspectConfig 复核；排除项与五类不一致由端口直接报 ConfigMismatch。
-    let mut inspection = ports.inspect(mode)?;
-    // 4 排除项守卫：残留未清就停，不跑 RunOnce。
-    if ports.residue_blocked(&state.verified_excluded, &inspection.excluded_folders)? {
-        return Err(PlaneError::ResidueBlocked);
-    }
-    // 5 模式不符才 SetMode，然后回到 3 复核；复核通过后才记 applied_mode。
+    // 2～4 补审计、回收旧槽、InspectConfig 复核、记下 headless 现状、排除项守卫。
+    let mut inspection = inspect_guarded(ports, &mut state, mode)?;
+    // 5 模式不符才 SetMode，然后按同样逻辑回到 3 复核；复核通过后才记 applied_mode。
     if !inspection.mode_matches {
-        if !ports.set_mode(mode)?.clean {
-            return Err(PlaneError::Transport);
+        halt(ports)?;
+        let run = ports.set_mode(mode)?;
+        if !run.clean {
+            return Err(run.failure());
         }
-        inspection = ports.inspect(mode)?;
+        inspection = inspect_guarded(ports, &mut state, mode)?;
         if !inspection.mode_matches {
             return Err(PlaneError::ConfigMismatch);
         }
@@ -161,15 +179,17 @@ pub fn run_round_with(
     state.applied_mode = Some(mode);
     state.verified_excluded = inspection.excluded_folders;
     // 6 先持久「已启动」再 RunOnce；回收后按退出码记退避（恢复逻辑只有 `recovery::mark_*` 一份），
-    // 非 clean 本轮到此为止。
+    // 干净与否都先落盘；关停已请求（运行已被 `request_stop` 停下）即到此为止，非 clean 同样到此为止。
+    halt(ports)?;
     state = recovery::mark_started(&state, ports.next_sequence()?);
     ports.save_state(state.clone())?;
     let run = ports.run_once()?;
     let reaped_at = ports.clock().unwrap_or(now_unix);
     state = recovery::mark_reaped(&state, run.clean, run.rc_one, reaped_at);
     ports.save_state(state.clone())?;
+    halt(ports)?;
     if !run.clean {
-        return Err(PlaneError::Transport);
+        return Err(run.failure());
     }
     // 强制恢复轮到此为止：mirror-remote 已把镜像拉齐，本轮不观察、不规划、不执行，
     // 尤其不能在审批为 bidirectional 时按「镜像为准」预解决冲突（评审 P2-1）。
@@ -177,21 +197,65 @@ pub fn run_round_with(
         return Ok(RoundOutcome::Recovered);
     }
     // 7 静止证据。
+    halt(ports)?;
     ports.quiescent()?;
     // 10 上一批仍有未知终态：本轮不观察、不重放，等原键核对。
     if let Some(sequence) = ports.unresolved()? {
         return Ok(RoundOutcome::Unknown { sequence });
     }
-    // 8＋9 两侧观察；MirrorRemote 下先试算，有冲突就按「镜像为准」预解决并重观察一次。
+    // 8＋9 两侧观察后一律试算。MirrorRemote 有冲突：按「镜像为准」预解决并重观察一次；
+    // Bidirectional 有冲突：双方版本先保全，再照常执行（执行器对冲突路径不动、闭合时不推进基线）；
+    // 熔断冻结的批次带冲突同样先保全，再交执行段报 `Fused`。
+    halt(ports)?;
     let (mut input, _, _) = ports.observe(mode)?;
-    if mode == SyncMode::MirrorRemote {
-        let decision = plan(input.clone(), None).map_err(|_| PlaneError::Observation)?;
-        if has_conflicts(&decision) && ports.preresolve(&decision)? {
-            input = ports.observe(mode)?.0;
+    let decision = plan(input.clone(), None).map_err(|_| PlaneError::Observation)?;
+    if has_conflicts(&decision) {
+        match mode {
+            SyncMode::MirrorRemote => {
+                if ports.preresolve(&decision)? {
+                    halt(ports)?;
+                    input = ports.observe(mode)?.0;
+                }
+            }
+            SyncMode::Bidirectional => {
+                ports.preserve_conflicts(&decision)?;
+            }
         }
     }
     // 10～12 预留、逐动作执行、闭合与保留期回收。
+    halt(ports)?;
     ports.execute(input)
+}
+
+/// 第 2～4 步：InspectConfig 复核 → headless 报的排除集合有变就落盘（守卫拦住时也要留下 headless
+/// 现状，供 purge 校验）→ 排除项守卫 → 残留已清但 headless 仍排除审批已去掉的文件夹即
+/// `ConfigMismatch`（该由管理员在 headless 侧清掉排除项了）。
+fn inspect_guarded(
+    ports: &mut dyn RoundPorts,
+    state: &mut PlaneState,
+    mode: SyncMode,
+) -> Result<Inspection, PlaneError> {
+    halt(ports)?;
+    let inspection = ports.inspect(mode)?;
+    if state.headless_excluded != inspection.headless_excluded {
+        state.headless_excluded = inspection.headless_excluded.clone();
+        ports.save_state(state.clone())?;
+    }
+    if ports.residue_blocked(&state.verified_excluded, &inspection.excluded_folders)? {
+        return Err(PlaneError::ResidueBlocked);
+    }
+    if !inspection.pending_purge.is_empty() {
+        return Err(PlaneError::ConfigMismatch);
+    }
+    Ok(inspection)
+}
+
+/// 安全停点：关停已请求就以 `Stopping` 结束本轮，不再发起新的运行、观察或执行。
+fn halt(ports: &mut dyn RoundPorts) -> Result<(), PlaneError> {
+    if ports.stopping() {
+        return Err(PlaneError::Stopping);
+    }
+    Ok(())
 }
 
 fn has_conflicts(decision: &Decision) -> bool {
@@ -202,7 +266,7 @@ fn has_conflicts(decision: &Decision) -> bool {
 }
 
 /// 经传输运行槽跑一次固定操作到闭合：prepare_once → Intent 审计 → start → wait 轮询
-/// （超过 deadline 则 request_stop(DeadlineExceeded)）→ Outcome 审计。
+/// （关停已请求则 request_stop(OwnerRequested)，超过 deadline 则 request_stop(DeadlineExceeded)）→ Outcome 审计。
 ///
 /// # Errors
 /// 传输槽拒绝返回 `Transport`；审计不可用返回 `Audit`。
@@ -210,8 +274,9 @@ pub fn run_headless(
     plane: &SyncPlane,
     operation: RunOperation,
     now_unix: i64,
+    stopping: &AtomicBool,
 ) -> Result<HeadlessRun, PlaneError> {
-    headless::run(plane, operation, now_unix)
+    headless::run(plane, operation, now_unix, stopping)
 }
 
 /// 删除熔断的同一判据（>5 或 >原基线存活路径 10% 即阻断，等号可过）；

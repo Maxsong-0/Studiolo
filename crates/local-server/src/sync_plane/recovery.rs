@@ -9,6 +9,9 @@
 //! 本文件的真实 IO 只有两处固定形态：逐段 NOFOLLOW 打开一个目录路径（平面根、视图根）
 //! 与 `flock` 租约；建文件、整读、原子替换、节点分类与目录枚举都借 `mirror::stage`
 //! 里只认已有描述符的助手。
+//!
+//! 版本 1 之后追加的字段（`headless_excluded`、`conflict_stamps`）缺省为空、为空时不写出，
+//! 只在非默认时进校验和：旧文件照常解码、校验和不变，不需要重建（兼容规则见 `state.rs`）。
 
 mod state;
 
@@ -17,6 +20,7 @@ use super::mirror::stage;
 use rustix::fd::{AsFd, OwnedFd};
 use rustix::fs::{CWD, FlockOperation, Mode, OFlags, Stat, flock, fstat, openat};
 use rustix::io::Errno;
+use std::collections::BTreeMap;
 use std::ffi::OsStr;
 use std::path::{Component, Path};
 use studiolo_sync_transport::owned_run::SyncMode;
@@ -35,6 +39,8 @@ pub const MIN_GAP_SECONDS: u64 = 5;
 pub const BACKOFF_SECONDS: [u64; 7] = [5, 10, 20, 40, 80, 160, 300];
 /// 租约文件字节上限（设计文档第 5 节）。
 const LOCK_MAX_BYTES: usize = 4 * 1024;
+/// `conflict_stamps` 的条目上限，也是一轮最多保全的冲突数（`driver::preserve`）。
+pub const MAX_CONFLICT_STAMPS: usize = 512;
 
 /// 持久小状态；`serde(deny_unknown_fields)`，版本固定 1。
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -56,12 +62,20 @@ pub struct PlaneState {
     pub verified_excluded: Vec<String>,
     /// 上次成功应用的镜像模式。
     pub applied_mode: Option<SyncMode>,
+    /// headless 最近一次核对时报的排除集合（已排序）；守卫拦住的轮次也记。
+    /// `sync-purge-residue` 只清其中的文件夹：headless 已不再排除的残留会被当成新内容上传。
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub headless_excluded: Vec<String>,
+    /// 双向冲突保全戳：冲突身份摘要（64 位小写十六进制）→ 首次保全的 UTC 分钟戳（12 位数字）；
+    /// 只留当前冲突，至多 [`MAX_CONFLICT_STAMPS`] 条。
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub conflict_stamps: BTreeMap<String, String>,
     /// 域分隔 sha256（小写十六进制）。
     pub checksum: String,
 }
 
 impl PlaneState {
-    /// 首次运行的状态：视为上次已干净回收、无退避、无已核验排除项。
+    /// 首次运行的状态：视为上次已干净回收、无退避、无已核验排除项、没有记下的 headless 现状与冲突戳。
     #[must_use]
     pub fn first_run() -> Self {
         state::seal(Self {
@@ -73,6 +87,8 @@ impl PlaneState {
             not_before_unix: None,
             verified_excluded: Vec::new(),
             applied_mode: None,
+            headless_excluded: Vec::new(),
+            conflict_stamps: BTreeMap::new(),
             checksum: String::new(),
         })
     }
@@ -232,12 +248,14 @@ impl PlaneStateStore {
         &self.state
     }
 
-    /// 完整替换持久状态（版本与校验和由这里补齐，排除项集合排序去重）。
+    /// 完整替换持久状态（版本与校验和由这里补齐，两个排除集合排序去重）；
+    /// 写前按解码同一套规则自检，畸形状态不落盘，免得下次打开才失败关闭。
     ///
     /// # Errors
-    /// 超过预算或 IO 失败返回 `Storage`。
+    /// 冲突戳畸形、超过预算或 IO 失败返回 `Storage`。
     pub fn save(&mut self, next: PlaneState) -> Result<(), PlaneError> {
         let next = state::seal(next);
+        state::validate(&next)?;
         let bytes = serde_json::to_vec(&next).map_err(|_| PlaneError::Storage)?;
         if bytes.len() > PLANE_STATE_MAX_BYTES {
             return Err(PlaneError::Storage);

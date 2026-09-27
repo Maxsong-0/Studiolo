@@ -54,7 +54,9 @@ launcher 把启动事实（固定 pins、镜像根、配置根、操作）预写
 8. **human 服务单元**（登记到待重启区，由用户执行）：`ReadWritePaths=` 加 `/var/lib/studiolo-owner/bridge`（视图整条，含 `mirror/` 与 `plane/`）、
    `private_root`；`ExecStart` 参数加 `--sync-transport /home/maxsong/.config/studiolo-human/sync-transport.json`；
    `daemon-reload` 后启动。私有配置 `owner.json` 必须已有 `sync_scope`（第 5 节），否则启动报 `StartupError::SyncPlane`；
-   `bridge/` 不存在（没做第 7 步）同样报 `SyncPlane`。
+   `bridge/` 不存在（没做第 7 步）同样报 `SyncPlane`。关停时平面在最近的安全停点结束：正在跑的 headless 被
+   `request_stop(OwnerRequested)` 停下并回收，所以单元的 `TimeoutStopSec=` 要不小于审批 `budget.stop_grace_seconds` 加 60 s
+   （现行单元 90 s 对样例 30 s 足够）；执行段不打断，恰在执行时收到关停、超时被 SIGKILL 也安全（执行器按原键续做），只丢本轮健康回填。
 
 ## 3 固定配置 `/etc/studiolo/sync-launcher.json`（0600 root，≤16 KiB）
 
@@ -76,7 +78,7 @@ launcher 把启动事实（固定 pins、镜像根、配置根、操作）预写
 | `private_root` | 传输私有根（`transport.lock`、`state.json`），owner 0700 |
 | `mirror_root`／`owner_view_root` | 真实镜像根（只进 argv）／owner 读写所经的 idmapped 视图 |
 | `plane_root` | 驱动平面私有根：`stage/`、`plane-state.json`、`plane.lock`、`bridge/`（BridgeState） |
-| `device_name` | 镜像节点在 Obsidian Sync 里的设备名（核对 headless `deviceName`） |
+| `device_name` | 镜像节点在 Obsidian Sync 里的设备名（核对 headless `deviceName`）；至多 64 个字符，不含 `(`、`)`、`/`、控制字符——它还要原样进冲突副本名，`sync-setup` 时就按这个规则取名 |
 | `headless_mode` | `mirror-remote`（引导期）或 `bidirectional`（P6）；每轮核对，不符就 `set_mode` |
 | `excluded_folders` | headless 排除文件夹的唯一母本（有序、去重）；改动后镜像残留须先清（第 8 节） |
 | `manual_quota` | 人工从 Obsidian 账号页抄的 `account_limit_bytes`／`used_bytes_manual`／`recorded_at_unix`；缺则健康节该维度未知 |
@@ -117,17 +119,40 @@ launcher 把启动事实（固定 pins、镜像根、配置根、操作）预写
 ## 7 健康节「双向 Bridge」（`sync-bridge`）
 
 `last_batch{sequence,unix_seconds}`、`fused`（熔断）、`unknown_jobs`（Issued 后未知的动作数）、`quiescence_valid`、
-`conflict_copies`、`mirror_bytes`、`last_exit`（clean／non_zero／signal／deadline_exceeded／unconfirmed）、
+`conflict_copies`、`mirror_bytes`、`last_exit`（clean／non_zero／signal／deadline_exceeded／owner_stopped／unconfirmed）、
 `recovery`（idle／forced_mirror_remote／backoff）、`residue_guard`（clear／blocked）、`mode`。任一 `None` → 未知；
 `fused`、`unknown_jobs>0`、`residue_guard=blocked`、`last_exit≠clean`、`recovery≠idle` → 降级；`quiescence_valid=false` → 未知。
+`conflict_copies`＝最近一次完整观察里两侧命名为冲突副本的路径数＋本进程启动以来 Bridge 保全进 `ops/bridge-conflicts/` 的冲突数。
 平面未装配时整节未知（没启用的能力不显示绿）。`sync-quota`：镜像字节对 `manual_quota.account_limit_bytes`，七成预警。
 `owner-liveness` 多一项 `sync-transport`（最近一轮时刻，周期 600 s）。
+`plane-state.json` 新增的 `headless_excluded`、`conflict_stamps` 两个字段向后兼容：旧文件照常读、字段为空时不写出，不需要重建。
 
-## 8 残留清理 `sync-purge-residue`
+## 8 排除项清除的安全顺序与 `sync-purge-residue`
 
-`excluded_folders` 去掉某文件夹后，镜像里可能仍有它的旧内容；每轮第 4 步 `residue_guard` 发现残留即停在
-`ResidueBlocked`（固定原因「排除项清除前有镜像残留」）。管理员确认后跑 `studiolo-maintain sync-purge-residue <folder>`
-（经 owner 视图删除该文件夹的镜像残留，走审计），下一轮自动放行。它不改审批文档，也不碰 canonical。
+要把文件夹 X 移出 `excluded_folders`（让它开始同步）时，镜像里可能还留着 X 被排除之前的旧内容（残留）；
+headless 一旦不再排除 X，下一次 RunOnce 就会把残留当新内容上传。驱动每轮核对 headless 实际报的排除集合并记进
+`plane-state.json`（`headless_excluded`）；审批已去掉、headless 仍排除的文件夹叫 `pending_purge`。按六步走：
+
+| 步 | 操作 | 这一步之后的一轮驱动 |
+|---|---|---|
+| ① | 审批文档 `excluded_folders` 去掉 X，重启 human 使之生效（审批只在启动时读取） | 见 ② |
+| ② | 等下一轮：headless 仍排除 X | 有残留→健康节「排除项清除前有镜像残留」（`ResidueBlocked`）；已无残留→「headless 配置与审批文档不一致」（`ConfigMismatch`）。两种都不跑 RunOnce，残留不会被当新内容上传 |
+| ③ | `systemctl --user stop studiolo-human`（purge 要 `plane.lock` 与 Broker 写者租约） | 不跑 |
+| ④ | `studiolo-maintain sync-purge-residue [相同根参数] --sync-transport <审批文档> --folder X`：只删镜像视图内的 X，canonical 不动；走审计：权威账本先后记 `sync.purge-residue` 的 Intent 与 Outcome | 不跑 |
+| ⑤ | 在 headless 侧（`studiolo-sync` 身份，同第 2 节第 5 步的环境）把 X 从排除项里去掉 | 不跑 |
+| ⑥ | 起 human | 核对一致、守卫放行，正常轮；X 从上次核验集合里去掉 |
+
+purge 只在三条同时成立时动手：X 在上次核验集合里、不在当前审批里、`headless_excluded` 仍含 X；另外权威审计账本
+必须可用。任一不满足即拒绝，一个字节不删。它不改审批文档，也不碰 canonical。
+
+**错序怎么办**：
+- 先清了 headless 排除、审批还没改：健康节报「headless 配置与审批文档不一致」，本轮不跑，purge 也因审批仍含 X 而拒绝。
+  把排除项加回 headless，从 ① 开始。
+- 审批已改、human 还在跑时就清了 headless 排除：有残留时健康节报「排除项清除前有镜像残留」，但 `headless_excluded`
+  已不含 X，purge 拒绝（「headless 最近一次核对已不再排除该文件夹」）。把排除项加回 headless、让 human 跑一轮核对，再从 ③ 继续。
+
+**当前限制**：传输私有存储把审批文档整份摘要绑在 `approved_config_digest` 里，改动审批文档后 human 启动即报
+`StartupError::SyncPlane`（传输槽绑定不符）；审批变更的重绑定入口尚未实现（另立任务），在此之前第 ① 步在生产上走不通。
 
 ## 9 回滚
 

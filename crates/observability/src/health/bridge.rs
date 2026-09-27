@@ -23,7 +23,7 @@ pub struct BatchStamp {
     pub unix_seconds: i64,
 }
 
-/// 上次 headless 运行的退出分类；只按退出码与静止证据分类，不解析 stderr。
+/// 上次 headless 运行的退出分类；只按退出码、停止原因与静止证据分类，不解析 stderr。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ExitClass {
     /// 退出码 0 且静止已证明。
@@ -34,6 +34,8 @@ pub enum ExitClass {
     Signal,
     /// 超过 wall deadline 被 owner 停止。
     DeadlineExceeded,
+    /// owner 关停（`studiolo-human` 收到停止信号）时被 `request_stop` 停下；非干净，照样降级。
+    OwnerStopped,
     /// 静止或退出结果未取得。
     Unconfirmed,
 }
@@ -78,7 +80,8 @@ pub struct BridgeEvidence {
     pub unknown_jobs: Option<u64>,
     /// 当前静止证据是否仍有效。
     pub quiescence_valid: Option<bool>,
-    /// 已生成的冲突副本数（`ops/bridge-conflicts/` 下）。
+    /// 冲突副本数：最近一次完整观察里两侧命名为冲突副本的路径数，加本进程启动以来 Bridge
+    /// 保全进 `ops/bridge-conflicts/` 的冲突数。
     pub conflict_copies: Option<u64>,
     /// Studiolo 侧镜像字节数；不是账号用量。
     pub mirror_bytes: Option<u64>,
@@ -215,6 +218,7 @@ impl ExitClass {
             Self::NonZero => "以非零退出码结束",
             Self::Signal => "被信号终止",
             Self::DeadlineExceeded => "超过时限被停止",
+            Self::OwnerStopped => "在 owner 关停时被停止",
             Self::Unconfirmed => "退出结果未确认",
         }
     }
