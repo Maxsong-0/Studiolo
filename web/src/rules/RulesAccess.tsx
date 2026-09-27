@@ -3,7 +3,8 @@ import type { PolicyStatus } from '../policyModel';
 import { Cell, CellHeader, EmptyState, GridFrame } from '../ui';
 import { DraftPanel } from './DraftPanel';
 import { RulesFeedback } from './RulesFeedback';
-import { accessCell, withRuleAccess } from './rulesModel';
+import { accessChange } from './accessChange';
+import { accessCell } from './rulesModel';
 import type { RulesModel, TypeColumn } from './rulesModel';
 import type { PolicyActions } from './usePolicyActions';
 import '../styles/policy.css';
@@ -28,7 +29,8 @@ function columnNotes(column: TypeColumn): { text: string; signal: boolean }[] {
 /**
  * 读权限面板：矩阵行＝规则、列＝AI 类型（能力集 subject）。改一格＝为该类型提交一份能力集草案，
  * 只改 read.rules_whitelist、其余字段与键顺序原样保留；校验报告与发布（执行预览＋二次认证）在下方一格。
- * 一列已有你提交、还没发布的能力集草案时按草案显示并锁住，先发布或撤回再改，免得两份草案互相覆盖。
+ * 一列已有你提交、还没发布的能力集草案时按草案显示；再改格子就在这份草案上追加（交新撤旧），
+ * 同一轮发布可以改好几格；改回生效原状则只撤回草案。只有名单读不出时才不让改（不猜结构）。
  * 窄屏同一份表格改排成按规则分组的开关列表。
  */
 export function RulesAccess({
@@ -46,18 +48,24 @@ export function RulesAccess({
 
   function toggle(column: TypeColumn, rule: string, allowed: boolean) {
     setProblem(null);
-    let body: string;
+    let change: ReturnType<typeof accessChange>;
     try {
-      body = withRuleAccess(column.body ?? '', rule, allowed);
+      change = accessChange(column, rule, allowed);
     } catch (cause) {
       setProblem(cause instanceof Error ? cause.message : '不能改这一格。');
       return;
     }
-    actions.submit(ORIGIN, {
-      kind: 'capability_set',
+    if (change.kind === 'withdraw') {
+      actions.withdraw(ORIGIN, change.draft);
+      return;
+    }
+    const input = {
+      kind: 'capability_set' as const,
       subject: column.type,
-      body,
-    });
+      body: change.body,
+    };
+    if (change.replaces) actions.amend(ORIGIN, input, change.replaces);
+    else actions.submit(ORIGIN, input);
   }
 
   return (
@@ -167,16 +175,15 @@ export function RulesAccess({
                             data-pending={cell.pending ? 'true' : undefined}
                             disabled={actions.busy || cell.locked}
                             title={
-                              column.ownerDraft
-                                ? `${column.type} 有一份待发布的能力集草案：先发布或撤回，再改这一列。`
-                                : undefined
+                              cell.locked
+                                ? `${column.type} 的能力集名单读不出，不能在这里改；请到「策略」页核对正文。`
+                                : column.ownerDraft
+                                  ? `${column.type} 有一份待发布草案：改这一格会追加到它上面。`
+                                  : undefined
                             }
                             onClick={() =>
-                              toggle(
-                                column,
-                                row.subject,
-                                cell.effective !== true,
-                              )
+                              // 按当前显示的状态取反：有待发布草案时显示的是草案，不是生效版本。
+                              toggle(column, row.subject, cell.shown !== true)
                             }
                           >
                             <span className="sr-only">
