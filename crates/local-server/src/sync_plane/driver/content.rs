@@ -4,14 +4,14 @@
 use super::super::mirror::stage::{OBJECTS_DIR, STAGE_DIR, StageStore};
 use super::super::mirror::{MirrorView, PlaneContent};
 use super::super::witness::seam_error;
-use super::super::{PlaneError, SyncPlane, naming};
-use super::evidence::{RevisionTable, hex, revision_digest, sha256};
+use super::super::{PlaneError, SyncPlane, naming, quiescence};
+use super::evidence::{hex, revision_digest, sha256};
 use crate::coordinator::sync_bridge::{BridgePrecondition, BridgeSeamError};
 use std::cell::RefCell;
 use studiolo_core::VaultPath;
 use studiolo_sync_bridge::executor::{MirrorContent, ObjectId};
 use studiolo_sync_bridge::{Binding, FileVersion, Side};
-use studiolo_sync_transport::owned_run::SyncMode;
+use studiolo_sync_transport::owned_run::{QuiescentMirror, SyncMode};
 use studiolo_vault_broker::{BlobIdentity, BlobSource, MutationReceipt};
 
 /// 整篇条件写的正文上限；更大的对象走流式写。
@@ -19,16 +19,16 @@ pub const INLINE_MAX_BYTES: u64 = 4 * 1024 * 1024;
 /// 逐帧读正文的固定帧长（与 MirrorCAS 相同）。
 pub const FRAME_BYTES: usize = 64 * 1024;
 
-/// 一轮里各步共享的上下文：平面、静止票据给出的视图、外 stage、`Revision` 表、绑定与模式。
+/// 一轮里各步共享的上下文：平面、静止票据与它证明的视图、外 stage、绑定与模式。
 pub struct RoundContext<'a> {
     /// 所属平面。
     pub plane: &'a SyncPlane,
+    /// 第 7 步取得的静止票据；每次读写镜像前都先经传输槽 `verify_quiescent` 复验它。
+    pub ticket: &'a QuiescentMirror,
     /// 静止票据证明的视图根。
     pub view: MirrorView,
     /// 本轮打开的外 stage。
     pub stage: &'a RefCell<StageStore>,
-    /// 本轮观察到的 `Revision` 表。
-    pub revisions: &'a RefCell<RevisionTable>,
     /// Bridge 持久状态的绑定。
     pub binding: Binding,
     /// 本轮 headless 所处模式。
@@ -37,17 +37,17 @@ pub struct RoundContext<'a> {
     pub now_unix: i64,
 }
 
-/// 经视图逐帧读出镜像上冻结版本的正文并核对摘要与字节数。
+/// 经视图逐帧读出镜像上冻结版本的正文并核对摘要与字节数；读之前先复验静止票据。
 ///
 /// # Errors
-/// 视图不可用返回 `Unavailable`；正文与冻结版本不符返回 `Observation`。
+/// 静止票据已作废返回 `Quiescence`；视图不可用返回 `Unavailable`；正文与冻结版本不符返回 `Observation`。
 pub fn read_mirror_bytes(
-    plane: &SyncPlane,
-    view: &MirrorView,
+    context: &RoundContext<'_>,
     path: &VaultPath,
     version: &FileVersion,
 ) -> Result<Vec<u8>, PlaneError> {
-    let mut content = PlaneContent::new(plane, view);
+    quiescence::verify(context.plane, context.ticket)?;
+    let mut content = PlaneContent::new(context.plane, &context.view);
     content
         .open(Side::Mirror, path, version)
         .map_err(|_| PlaneError::Unavailable)?;
@@ -122,7 +122,8 @@ pub fn write_bytes(
 /// 把镜像上的冻结版本条件写进 canonical：小对象经视图逐帧读后整篇写，大对象以视图为只读来源流式写。
 ///
 /// # Errors
-/// 分类同接缝。
+/// 还没碰接缝就失败（静止票据作废、镜像读不出或与冻结版本不符）返回 `NotAttempted`——动作确定未安装；
+/// 其余分类同接缝。
 pub fn write_from_mirror(
     context: &RoundContext<'_>,
     path: &VaultPath,
@@ -132,12 +133,14 @@ pub fn write_from_mirror(
 ) -> Result<MutationReceipt, BridgeSeamError> {
     let workbench = context.plane.workbench();
     if version.bytes <= INLINE_MAX_BYTES {
-        let bytes = read_mirror_bytes(context.plane, &context.view, path, version)
-            .map_err(|_| BridgeSeamError::Unavailable)?;
+        let bytes =
+            read_mirror_bytes(context, path, version).map_err(|_| BridgeSeamError::NotAttempted)?;
         return workbench.bridge_write(path, bytes, precondition, key);
     }
+    // 流式写由写者按需从视图读：交出来源前复验静止；读取本身发生在接缝之内，失败归接缝分类。
+    quiescence::verify(context.plane, context.ticket).map_err(|_| BridgeSeamError::NotAttempted)?;
     let source = BlobSource::open(context.view.root(), path.clone())
-        .map_err(|_| BridgeSeamError::Unavailable)?;
+        .map_err(|_| BridgeSeamError::NotAttempted)?;
     let identity = BlobIdentity {
         bytes: version.bytes,
         sha256: hex(&version.sha256),

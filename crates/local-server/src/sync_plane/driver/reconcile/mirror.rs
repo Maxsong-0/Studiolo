@@ -1,11 +1,12 @@
 //! 重开核对的镜像侧：静止窗口内经视图逐帧读目标，与冻结源／前置版本逐字节比对。
 //!
 //! 本文件不打开路径：读法就是执行器取正文的 `PlaneContent`（打开时核字节数，读完核摘要），
-//! 缺失、不符与读不出各自分开，读不出一律按「其它」保持未知。
+//! 缺失、不符与读不出各自分开，读不出一律按「其它」保持未知；每次打开前先复验静止票据。
 
 use super::super::content::{FRAME_BYTES, RoundContext};
 use super::MirrorTarget;
 use crate::sync_plane::mirror::PlaneContent;
+use crate::sync_plane::quiescence;
 use studiolo_core::VaultPath;
 use studiolo_sync_bridge::executor::{MirrorContent, TransferFault};
 use studiolo_sync_bridge::{Action, Change, FileVersion, Side};
@@ -52,6 +53,9 @@ pub(super) fn target(context: &RoundContext<'_>, action: &Action) -> MirrorTarge
 
 /// 经视图打开并读完目标，与一个冻结版本比对。
 fn probe(context: &RoundContext<'_>, path: &VaultPath, version: &FileVersion) -> Probe {
+    if quiescence::verify(context.plane, context.ticket).is_err() {
+        return Probe::Unreadable;
+    }
     let mut content = PlaneContent::new(context.plane, &context.view);
     match content.open(Side::Mirror, path, version) {
         Ok(()) => {}

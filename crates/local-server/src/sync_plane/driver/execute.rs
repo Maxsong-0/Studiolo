@@ -16,7 +16,6 @@ use studiolo_sync_bridge::executor::{
 };
 use studiolo_sync_bridge::sqlite::{BridgeError, Reservation, StateJournal};
 use studiolo_sync_bridge::{Decision, plan};
-use studiolo_sync_transport::owned_run::QuiescentMirror;
 
 /// 预留并执行一批；返回本轮结论。
 ///
@@ -24,7 +23,6 @@ use studiolo_sync_transport::owned_run::QuiescentMirror;
 /// 熔断返回 `Fused`；有未知终态不返回错误而是 `Unknown` 结论；其余按端口失败分类。
 pub fn reserve_and_execute(
     context: &RoundContext<'_>,
-    ticket: &QuiescentMirror,
     observed: &Observed,
 ) -> Result<RoundOutcome, PlaneError> {
     let plane = context.plane;
@@ -84,7 +82,7 @@ pub fn reserve_and_execute(
     let mut witness = PlaneWitness::new(
         plane,
         context.view.clone(),
-        context.revisions,
+        context.ticket,
         WitnessContext {
             binding: binding.clone(),
             approved: input.scope.clone(),
@@ -98,7 +96,7 @@ pub fn reserve_and_execute(
         let mut journal = StateJournal::new(&mut bridge, plane.audit().as_ref(), input.clone());
         let mut content = PlaneContent::new(plane, &context.view);
         let mut sink = SharedStageSink::new(context.stage);
-        let mut backend = PlaneJobBackend::new(context, ticket, binding);
+        let mut backend = PlaneJobBackend::new(context, binding);
         let mut cas = MirrorCas::new(CasLimits::internal());
         let ports = ExecutionPorts {
             quiescence: &quiescence,

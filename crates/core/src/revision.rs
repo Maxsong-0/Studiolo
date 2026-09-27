@@ -21,6 +21,20 @@ impl Revision {
         hasher.finish()
     }
 
+    /// 由 32 字节摘要原值构造。`Revision` 是比较用的修订值而不是能力：`Deserialize` 本就接受任意字节，
+    /// 这里不放宽任何边界。Bridge 证据（`studiolo-sync-bridge` 的 `FileVersion::revision`）直接承载这
+    /// 32 字节，条件写／条件删除的前置因此在任何一轮都能还原。
+    #[must_use]
+    pub const fn from_bytes(bytes: [u8; 32]) -> Self {
+        Self(bytes)
+    }
+
+    /// 摘要的 32 字节原值；与 [`Self::from_bytes`] 互逆。
+    #[must_use]
+    pub const fn to_bytes(self) -> [u8; 32] {
+        self.0
+    }
+
     /// 返回小写十六进制摘要。
     #[must_use]
     pub fn to_hex(self) -> String {

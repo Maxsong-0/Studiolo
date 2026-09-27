@@ -7,7 +7,7 @@ use super::super::witness::seam_error;
 use super::super::{PlaneError, naming};
 use super::content::{RoundContext, preserve_canonical, write_from_mirror};
 use super::deletion_fuse_blocked;
-use super::evidence::{hex, sha256};
+use super::evidence::{hex, revision_from_digest, sha256};
 use crate::coordinator::sync_bridge::{BridgePrecondition, BridgeSeamError};
 use studiolo_sync_bridge::{Conflict, Decision, PlanKey, Presence};
 
@@ -74,11 +74,7 @@ pub fn preresolve_conflicts(
                     canonical,
                     &format!("{base}/preserve"),
                 )?;
-                let expected = context
-                    .revisions
-                    .borrow()
-                    .restore(&canonical.revision)
-                    .ok_or(PlaneError::Observation)?;
+                let expected = revision_from_digest(&canonical.revision);
                 match mirror_side {
                     Presence::Present(mirror) => write_from_mirror(
                         context,

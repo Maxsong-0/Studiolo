@@ -5,10 +5,10 @@
 //! 拿不到就是 `JobOutcome::Unknown`，绝不用退出码或「内容碰巧相同」补成成功。
 
 use super::driver::content::{RoundContext, preserve_canonical, write_from_mirror};
-use super::driver::evidence::{hex, sha256};
+use super::driver::evidence::{hex, revision_digest, revision_from_digest, sha256};
 use super::mirror::stage::StageStore;
 use super::mirror::{self, StageSink};
-use super::{PlaneError, naming};
+use super::{PlaneError, naming, quiescence};
 use crate::coordinator::sync_bridge::{BridgePrecondition, BridgeSeamError};
 use std::cell::RefCell;
 use studiolo_core::Revision;
@@ -16,56 +16,36 @@ use studiolo_sync_bridge::executor::{
     IssuedJob, JobBackend, JobOutcome, MirrorObjectSink, NoEffectCause, ObjectId, TransferFault,
 };
 use studiolo_sync_bridge::{Action, Binding, Change, FileVersion, Side};
-use studiolo_sync_transport::owned_run::{QuiescentMirror, SyncMode};
+use studiolo_sync_transport::owned_run::SyncMode;
 use studiolo_vault_broker::FileOperationOutcome;
 
-/// 一批执行期间的后端；借用本轮上下文（视图、外 stage、`Revision` 表）与静止票据。
+/// 一批执行期间的后端；借用本轮上下文（静止票据、视图、外 stage）。
 pub struct PlaneJobBackend<'a> {
     context: &'a RoundContext<'a>,
-    ticket: &'a QuiescentMirror,
     binding: Binding,
 }
 
 impl<'a> PlaneJobBackend<'a> {
     /// 组装一批的执行后端。
     #[must_use]
-    pub fn new(
-        context: &'a RoundContext<'a>,
-        ticket: &'a QuiescentMirror,
-        binding: Binding,
-    ) -> Self {
-        Self {
-            context,
-            ticket,
-            binding,
-        }
+    pub fn new(context: &'a RoundContext<'a>, binding: Binding) -> Self {
+        Self { context, binding }
     }
 
-    /// 从本轮观察表还原冻结版本对应的原 `Revision`；没观察过就拿不到权威前置。
-    fn revision(&self, version: &FileVersion) -> Result<Revision, PlaneError> {
-        self.context
-            .revisions
-            .borrow()
-            .restore(&version.revision)
-            .ok_or(PlaneError::Observation)
+    /// 冻结版本对应的原 `Revision`：Bridge 证据里的 `revision` 就是它的 32 字节原值，任何轮都能还原。
+    fn revision(version: &FileVersion) -> Revision {
+        revision_from_digest(&version.revision)
     }
 
     /// canonical 侧按原键重建首次请求走接缝：CreateOnly／Replace 走条件写（前置＝冻结 `target_expected`
     /// 还原的 revision），Delete 走文件操作删除；主体一律「外部：Obsidian」。首次执行与重开核对共用
     /// 这一份，保证核对时的请求与首次逐字段相同（接缝先按原键查重放，有原回执绝不第二次安装）。
-    ///
-    /// # Errors
-    /// 冻结前置的原 `Revision` 本轮没观察过（还原不出）返回 `Observation`。
-    pub(crate) fn canonical_verdict(
-        &mut self,
-        job: &IssuedJob,
-        action: &Action,
-    ) -> Result<SeamVerdict, PlaneError> {
+    pub(crate) fn canonical_verdict(&self, job: &IssuedJob, action: &Action) -> SeamVerdict {
         let workbench = self.context.plane.workbench();
         let path = &action.key.path;
         match &action.change {
             Change::Delete { target_expected } => {
-                let expected = self.revision(target_expected)?;
+                let expected = Self::revision(target_expected);
                 let deleted = workbench.bridge_delete(
                     path,
                     expected,
@@ -73,7 +53,7 @@ impl<'a> PlaneJobBackend<'a> {
                     &hex(&self.binding.scope_hash),
                     self.binding.scope_epoch,
                 );
-                Ok(match deleted {
+                match deleted {
                     Ok(receipt) => SeamVerdict::Outcome(match receipt.outcome {
                         FileOperationOutcome::Committed => JobOutcome::Committed {
                             new_revision: None,
@@ -92,31 +72,26 @@ impl<'a> PlaneJobBackend<'a> {
                         FileOperationOutcome::Indeterminate => JobOutcome::Unknown,
                     }),
                     Err(error) => seam_verdict(error),
-                })
+                }
             }
             Change::CreateOnly { source } | Change::Replace { source, .. } => {
                 let precondition = match &action.change {
                     Change::Replace {
                         target_expected, ..
-                    } => BridgePrecondition::Match(self.revision(target_expected)?),
+                    } => BridgePrecondition::Match(Self::revision(target_expected)),
                     _ => BridgePrecondition::MustNotExist,
                 };
                 let written =
                     write_from_mirror(self.context, path, source, precondition, &job.external_key);
-                Ok(match written {
+                match written {
                     Ok(receipt) => SeamVerdict::Outcome(JobOutcome::Committed {
-                        new_revision: Some(
-                            self.context
-                                .revisions
-                                .borrow_mut()
-                                .remember(receipt.revision),
-                        ),
+                        new_revision: Some(revision_digest(receipt.revision)),
                         content_hash: Some(source.sha256),
                         bytes: Some(source.bytes),
                         receipt_id: receipt.revision.to_hex(),
                     }),
                     Err(error) => seam_verdict(error),
-                })
+                }
             }
         }
     }
@@ -129,13 +104,7 @@ impl<'a> PlaneJobBackend<'a> {
         action: &Action,
         staged: Option<ObjectId>,
     ) -> Result<JobOutcome, PlaneError> {
-        self.context
-            .plane
-            .transport()
-            .lock()
-            .map_err(|_| PlaneError::Unavailable)?
-            .verify_quiescent(self.ticket)
-            .map_err(|_| PlaneError::Quiescence)?;
+        quiescence::verify(self.context.plane, self.context.ticket)?;
         let path = &action.key.path;
         let view = &self.context.view;
         match &action.change {
@@ -256,14 +225,15 @@ pub fn rejected(external_key: &str) -> JobOutcome {
 
 impl JobBackend for PlaneJobBackend<'_> {
     fn apply(&mut self, job: &IssuedJob, action: &Action, staged: Option<ObjectId>) -> JobOutcome {
-        let result = match action.key.target {
-            Side::Canonical => self
-                .canonical_verdict(job, action)
-                .map(|verdict| first_attempt_outcome(verdict, &job.external_key)),
-            Side::Mirror => self.apply_mirror(job, action, staged),
-        };
-        // 任何失败都只能是未知：执行器不重发，下一轮按原键核对。
-        result.unwrap_or(JobOutcome::Unknown)
+        match action.key.target {
+            Side::Canonical => {
+                first_attempt_outcome(self.canonical_verdict(job, action), &job.external_key)
+            }
+            // 镜像侧的平面失败只能是未知：执行器不重发，下一轮按原键核对。
+            Side::Mirror => self
+                .apply_mirror(job, action, staged)
+                .unwrap_or(JobOutcome::Unknown),
+        }
     }
 }
 

@@ -44,7 +44,7 @@ pub fn observe_both(context: &RoundContext<'_>) -> Result<Observed, PlaneError> 
     let mut witness = PlaneWitness::new(
         plane,
         context.view.clone(),
-        context.revisions,
+        context.ticket,
         WitnessContext {
             binding: binding.clone(),
             approved: ApprovedScope {

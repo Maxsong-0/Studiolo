@@ -1,7 +1,7 @@
 //! `RoundPorts` 的真实实现：持久小状态、外 stage、传输运行槽、Bridge 持久状态与接缝的装配。
 //!
 //! 每轮新开一份：`plane-state.json` 与外 stage 在开工时打开（失败即 `Storage`），
-//! 静止票据在第 7 步取得后供观察与执行复用，`Revision` 表只活在本轮。
+//! 静止票据在第 7 步取得后供观察、核对与执行复用。
 
 use super::super::health::now_unix_seconds;
 use super::super::mirror::MirrorView;
@@ -9,7 +9,6 @@ use super::super::mirror::stage::StageStore;
 use super::super::recovery::{self, PlaneState, PlaneStateStore};
 use super::super::{PlaneError, SyncPlane};
 use super::content::RoundContext;
-use super::evidence::RevisionTable;
 use super::observe::Observed;
 use super::{
     HeadlessRun, Inspection, RoundOutcome, RoundPorts, approved_mode, execute, headless, observe,
@@ -27,7 +26,6 @@ pub struct RealPorts<'a> {
     now_unix: i64,
     store: PlaneStateStore,
     stage: RefCell<StageStore>,
-    revisions: RefCell<RevisionTable>,
     /// 本轮应处的模式；`inspect` 时记下，供 headless 回填判断是否为强制恢复运行。
     mode: SyncMode,
     /// 审批文档里的模式；与 `mode` 不同即本轮在跑 D9 的强制 `mirror-remote` 恢复。
@@ -47,7 +45,6 @@ impl<'a> RealPorts<'a> {
             now_unix,
             store: PlaneStateStore::open(plane.plane_root())?,
             stage: RefCell::new(StageStore::open(plane.plane_root())?),
-            revisions: RefCell::new(RevisionTable::default()),
             mode: SyncMode::MirrorRemote,
             approved: approved_mode(plane.approval().headless_mode()),
             ticket: None,
@@ -68,9 +65,9 @@ impl<'a> RealPorts<'a> {
             .binding;
         Ok(RoundContext {
             plane: self.plane,
+            ticket,
             view: MirrorView::new(ticket.mirror_root().to_path_buf(), ticket.mirror_identity()),
             stage: &self.stage,
-            revisions: &self.revisions,
             binding,
             mode: self.mode,
             now_unix: self.now_unix,
@@ -214,8 +211,7 @@ impl RoundPorts for RealPorts<'_> {
         if observed.input != input {
             return Err(PlaneError::Observation);
         }
-        let ticket = self.ticket.as_ref().ok_or(PlaneError::Quiescence)?;
-        let outcome = execute::reserve_and_execute(&self.context()?, ticket, &observed);
+        let outcome = execute::reserve_and_execute(&self.context()?, &observed);
         // 执行段回填（W5 `record_execution`）：序号、终态未知数、冲突副本累计、熔断是否生效。
         if let Ok(
             RoundOutcome::Settled { sequence, .. }

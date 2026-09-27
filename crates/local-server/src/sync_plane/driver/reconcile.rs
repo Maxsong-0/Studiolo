@@ -13,14 +13,13 @@ use super::evidence::hex;
 use super::execute::{bridge_error, executor_error};
 use crate::sync_plane::PlaneError;
 use crate::sync_plane::job_backend::{SeamVerdict, not_attempted, rejected};
-use crate::sync_plane::mirror::MirrorView;
+use crate::sync_plane::quiescence;
 use studiolo_audit_ledger::AuditLedger;
 use studiolo_sync_bridge::executor::{
     ExecutorError, IssuedJob, JobOutcome, NoEffectCause, PlanJournal,
 };
 use studiolo_sync_bridge::sqlite::{ActionStatus, BridgeState, StateJournal};
 use studiolo_sync_bridge::{Action, Change, Side};
-use studiolo_sync_transport::owned_run::QuiescentMirror;
 
 /// 一次核对的结果计数。
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -62,21 +61,9 @@ pub trait ReconcilePort {
 /// 持久层或后端不可用时返回对应分类；任何一条核不出都不是错误，只计入 `still_unknown`。
 pub fn reconcile_pending(context: &RoundContext<'_>) -> Result<ReconcileReport, PlaneError> {
     let plane = context.plane;
-    // 第 7 步刚证明过静止；按同一运行槽重取一张票据并核对是同一视图，读完镜像后再复验它。
-    let ticket = plane
-        .transport()
-        .lock()
-        .map_err(|_| PlaneError::Unavailable)?
-        .quiescent()
-        .map_err(|_| PlaneError::Quiescence)?;
-    let view = MirrorView::new(ticket.mirror_root().to_path_buf(), ticket.mirror_identity());
-    if view != context.view {
-        return Err(PlaneError::Quiescence);
-    }
-    let mut port = RealPort {
-        context,
-        ticket: &ticket,
-    };
+    // 第 7 步的静止票据就在上下文里：读镜像前复验一次，读完再复验一次（`still_quiescent`）。
+    quiescence::verify(plane, context.ticket)?;
+    let mut port = RealPort { context };
     let mut bridge = plane.bridge().lock().map_err(|_| PlaneError::Unavailable)?;
     reconcile_with(&mut port, &mut bridge, plane.audit().as_ref())
 }
@@ -182,15 +169,14 @@ pub fn mirror_verdict(action: &Action, target: MirrorTarget, external_key: &str)
     }
 }
 
-/// 真实端口：借本轮上下文与刚复核过的静止票据；canonical 只经接缝，镜像只经视图读。
+/// 真实端口：借本轮上下文（含第 7 步的静止票据）；canonical 只经接缝，镜像只经视图读。
 struct RealPort<'r, 'c> {
     context: &'r RoundContext<'c>,
-    ticket: &'r QuiescentMirror,
 }
 
 impl ReconcilePort for RealPort<'_, '_> {
     fn replay_canonical(&mut self, job: &IssuedJob, action: &Action) -> SeamVerdict {
-        canonical::replay(self.context, self.ticket, job, action)
+        canonical::replay(self.context, job, action)
     }
 
     fn writer_attached(&mut self) -> bool {
@@ -202,10 +188,6 @@ impl ReconcilePort for RealPort<'_, '_> {
     }
 
     fn still_quiescent(&mut self) -> bool {
-        self.context
-            .plane
-            .transport()
-            .lock()
-            .is_ok_and(|transport| transport.verify_quiescent(self.ticket).is_ok())
+        quiescence::verify(self.context.plane, self.context.ticket).is_ok()
     }
 }
