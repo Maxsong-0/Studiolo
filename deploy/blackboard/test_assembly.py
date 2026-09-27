@@ -1,4 +1,4 @@
-"""黑板形状发行（当前 r7→r8）的固定变更面；夹具不接触生产或凭据。"""
+"""黑板形状发行（当前 r8→r9）的固定变更面；夹具不接触生产或凭据。"""
 import ast
 from pathlib import Path
 import unittest
@@ -36,10 +36,10 @@ def board_unit():
 
 
 class AssemblyTests(unittest.TestCase):
-    def test_r8_upgrades_the_activated_r7(self):
-        self.assertEqual(a.BUILD, 'm5m6-board-20260920-r8')
+    def test_r9_upgrades_the_activated_r8(self):
+        self.assertEqual(a.BUILD, 'm5m6-board-20260920-r9')
         self.assertEqual(a.RELEASE.rsplit('/', 1)[1], a.BUILD)
-        self.assertTrue(a.OLD_RELEASE.endswith('/m5m6-board-20260920-r7'))
+        self.assertTrue(a.OLD_RELEASE.endswith('/m5m6-board-20260920-r8'))
         self.assertEqual(a.WEB_PREFIX, 'web/')
 
     def test_launcher_only_repoints_the_release_path(self):
