@@ -58,3 +58,19 @@
   每个工作树一份远端同步树与构建目录、flock 排队；它**不占 runner 队列**，推 PR 前先用它把 Linux 那一半验完。
   别再往仓库里加容器作业或 `docker run`（发布打包除外）。
 - 给别的仓库接入同一台机器：`deploy/ci-runner/README.md`。决定与取舍：vault `03-记忆/ADR-020-CI迁到自托管runner.md`。
+
+## 六、Cursor Cloud 云端 VM（2026-09-27 起）
+
+- 云端 VM 是一次性的 Ubuntu 24.04 x86_64（不是第四节写的本机 Mac），与 CI 同为原生 Linux，但连不到 `githubci`，`scripts/test-linux.sh` 在这里不可用。
+  改用 **`scripts/test-cursor-cloud.sh <命令>`** 原生跑（对应 `test-linux.sh` 带参数的用法）；默认回路按 `test-linux.sh` 里的清单逐条跑，其余 CI 步骤照 `ci.yml`。
+- 必须经这个脚本跑，原因有二：VM 根文件系统是 overlayfs，目录与文件的 `st_dev` 不同，vault-broker 与 Python 副本／快照／发行工具的同设备检查对 `/tmp`、`$HOME` 下的夹具会失败关闭；
+  可锁定内存默认只有 8 MiB，秘密驻留面加固会失败关闭。脚本在私有 mount 命名空间里给 `/tmp` 与 `HOME` 换上临时 ext4，并抬高该上限。裸跑 `cargo test` 看到的这两类失败是环境问题，**不要去改这些检查**。
+- 已知环境局限：`studiolo-vault-broker` 的 `metadata_to_body_changes_do_not_publish_partial_or_missing_results` 与 `missing_and_empty_anchor_evidence_must_survive_until_final_revalidation`
+  在 VM 上几乎必然失败——内核时间戳粒度 4 ms，同一节拍内的等长改写或删目录不改变 mtime／ctime。这两条以 CI 为准；
+  全量测试用 `scripts/test-cursor-cloud.sh cargo --locked test --workspace -- --skip metadata_to_body_changes --skip missing_and_empty_anchor`。
+- 前端检查不需要这个脚本：`npm --prefix web run build`／`test`／`lint`／`format` 直接跑（`node` 为 22.x，CI 钉 22.17.0）。
+  只看界面可直接 `STUDIOLO_FIXTURES=1 npm --prefix web run dev`；要连真后端，README 的本机只读示例也得经这个脚本，且示例库与构建产物先复制进它给的 ext4（否则扫描不完整、不监听）：
+  `scripts/test-cursor-cloud.sh sh -c 'cp -R examples/m1-vault web/dist /tmp/ && exec cargo run --locked -p studiolo-local-server -- --vault /tmp/m1-vault --assets /tmp/dist --label 示例库 --port 4317'`。
+- 环境安装脚本（保存在 Cursor 面板，不在仓库）已备好 1.97.1 ＋ rustfmt／clippy、GNU `time`（内存测量用例调 `/usr/bin/time`）、`web/node_modules` 与 cargo 依赖缓存，
+  并在 `$CARGO_HOME/config.toml` 设 `[profile.dev] debug = "line-tables-only"`，与 CI、`test-linux.sh` 同一设置。
+- vault `项目/Studiolo/` 与全局 `~/.claude/CLAUDE.md` 不在 VM 上。推送 PR 同样占第五节那条共享 runner 队列（draft PR 也触发）：先在 VM 里验完，攒成一次推送。
