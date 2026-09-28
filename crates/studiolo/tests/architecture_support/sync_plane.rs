@@ -51,12 +51,13 @@ pub(super) fn remainder(crate_name: &str, path: &Path, source: &str) -> String {
         );
     }
     if path.ends_with("crates/local-server/src/sync_plane/recovery.rs") {
-        // B 轮 W4 落地形态：directory_path 从 CWD 逐段 openat＋fstat；PlaneStateStore::open 一次 flock；
+        // B 轮 W4 落地形态：directory_path 从 CWD 逐段 openat＋fstat；PlaneStateStore::open 一次 flock、
+        // Drop 一次 flock(Unlock)（并发 fork 继承描述符时立即结束租约）；
         // 建文件／整读／原子替换全部借 stage.rs 的描述符助手，本文件不再有 renameat／fsync。
         return plane_remainder(
             source,
             &["PLANE_STATE_FILE", "PLANE_STATE_STAGE_FILE", "PLANE_LOCK"],
-            &[("openat(", 1), ("fstat(", 1), ("flock(", 1)],
+            &[("openat(", 1), ("fstat(", 1), ("flock(", 2)],
         );
     }
     if path.ends_with("crates/local-server/src/sync_plane/mirror.rs") {
@@ -165,6 +166,7 @@ mod tests {
             "pub fn open(plane_root: &Path) -> Result<Self, PlaneError> {",
             "let (lock, _) = stage::create_at(root.as_fd(), PLANE_LOCK, false)?;",
             "flock(&lock, FlockOperation::NonBlockingLockExclusive)?;",
+            "impl Drop for PlaneStateStore { fn drop(&mut self) { let _ = flock(&self.lease, FlockOperation::Unlock); } }",
             "let state = stage::read_fully(root.as_fd(), PLANE_STATE_FILE)?; stage::replace_file(root.as_fd(), PLANE_STATE_STAGE_FILE, PLANE_STATE_FILE, &bytes)?;",
         ]
         .join("\n")

@@ -13,7 +13,10 @@
 //! 版本 1 之后追加的字段（`headless_excluded`、`conflict_stamps`）缺省为空、为空时不写出，
 //! 只在非默认时进校验和：旧文件照常解码、校验和不变，不需要重建（兼容规则见 `state.rs`）。
 
+mod residue;
 mod state;
+
+pub use residue::residue_guard;
 
 use super::PlaneError;
 use super::mirror::stage;
@@ -162,49 +165,11 @@ pub fn mark_reaped(state: &PlaneState, clean: bool, rc_one: bool, now_unix: i64)
     state::seal(next)
 }
 
-/// 排除项守卫（D10）：`previous` 里有、`current` 里没有的文件夹，若镜像视图里仍有残留，
-/// 返回第一个残留文件夹名；调用方据此拒绝 RunOnce。文件夹不存在即跳过，存在且非空
-/// （或名字被文件／链接占着）即残留；名字畸形按残留处理。
-///
-/// # Errors
-/// 视图不可读返回 `Unavailable`。
-pub fn residue_guard(
-    previous: &[String],
-    current: &[String],
-    view_root: &Path,
-) -> Result<Option<String>, PlaneError> {
-    let (root, _) = directory_path(view_root).map_err(|_| PlaneError::Unavailable)?;
-    for folder in previous.iter().filter(|folder| !current.contains(folder)) {
-        let malformed = studiolo_core::VaultPath::parse(folder).is_err();
-        if malformed || residue(&root, folder)? {
-            return Ok(Some(folder.clone()));
-        }
-    }
-    Ok(None)
-}
-
-fn residue(root: &OwnedFd, folder: &str) -> Result<bool, PlaneError> {
-    let mut current: Option<OwnedFd> = None;
-    for name in folder.split('/') {
-        let dir = current.as_ref().unwrap_or(root).as_fd();
-        current = match stage::open_node_at(dir, name) {
-            Ok(stage::Opened::Directory(next)) => Some(next),
-            Ok(stage::Opened::Missing) => return Ok(false),
-            Ok(stage::Opened::Regular { .. } | stage::Opened::Other) => return Ok(true),
-            Err(_) => return Err(PlaneError::Unavailable),
-        };
-    }
-    let Some(directory) = current else {
-        return Ok(false);
-    };
-    let names = stage::entry_names(directory.as_fd()).map_err(|_| PlaneError::Unavailable)?;
-    Ok(!names.is_empty())
-}
-
-/// 已打开的持久状态存储；持有平面根 FD 与排他租约，实例活着就一直占着 `plane.lock`。
+/// 已打开的持久状态存储；持有平面根 FD 与排他租约，实例活着就一直占着 `plane.lock`，
+/// 析构时显式解锁（见 `Drop`）。
 pub struct PlaneStateStore {
     root: OwnedFd,
-    _lease: OwnedFd,
+    lease: OwnedFd,
     state: PlaneState,
 }
 
@@ -235,11 +200,7 @@ impl PlaneStateStore {
             )?,
             None => PlaneState::first_run(),
         };
-        Ok(Self {
-            root,
-            _lease: lease,
-            state,
-        })
+        Ok(Self { root, lease, state })
     }
 
     /// 当前状态。
@@ -272,6 +233,14 @@ impl PlaneStateStore {
     }
 }
 
+impl Drop for PlaneStateStore {
+    fn drop(&mut self) {
+        // 同进程里并发的 fork 可能在 exec 之前一直持有这个打开文件描述（flock 按它计），
+        // 只等本 FD 关闭，锁会多活到子进程 exec；显式解锁立即结束租约。Drop 不能报告错误。
+        let _ = flock(&self.lease, FlockOperation::Unlock);
+    }
+}
+
 /// 逐段 NOFOLLOW 打开一个绝对目录路径（平面根或镜像视图根）；任一段是链接或不是目录即失败。
 fn directory_path(path: &Path) -> rustix::io::Result<(OwnedFd, Stat)> {
     if !path.is_absolute() {
@@ -293,3 +262,7 @@ fn directory_path(path: &Path) -> rustix::io::Result<(OwnedFd, Stat)> {
     let stat = fstat(&handle)?;
     Ok((handle, stat))
 }
+
+#[cfg(test)]
+#[path = "../../tests/sync_plane_private/lease.rs"]
+mod lease_release;

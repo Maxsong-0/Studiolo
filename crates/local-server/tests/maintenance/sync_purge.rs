@@ -125,9 +125,10 @@ fn purge_removes_the_residue_tree_reports_exact_counts_and_audits_both_phases() 
     assert_eq!((audit[1].0, &audit[1].2), (AuditPhase::Outcome, &applied));
     assert_eq!(audit[0].1, audit[1].1);
     // 已经清干净：再来一次没有残留可清，也不再记审计。
-    assert!(matches!(
-        s.run(Command::SyncPurgeResidue, Some("School")),
-        Err(MaintenanceError::SyncResidue)
-    ));
+    let again = s.run(Command::SyncPurgeResidue, Some("School"));
+    assert!(
+        matches!(again, Err(MaintenanceError::SyncResidue)),
+        "{again:?}"
+    );
     assert_eq!(purge_audit(&s).len(), 2);
 }
