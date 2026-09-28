@@ -82,16 +82,79 @@ describe('规则视图', { timeout: 60_000 }, () => {
         '"deny_by_default":true,"rules_whitelist":["CLAUDE.md"]}',
       ),
     });
-    // 草案就位：这一格按草案显示为可读并标「待发布」，整列锁住；下方给出校验报告与发布。
+    // 草案就位：这一格按草案显示为可读并标「待发布」，这一列仍能继续改（T-160g）；下方给出校验报告与发布。
     const pending = await screen.findByRole('region', { name: '能力集 codex' });
     const after = screen.getByRole('switch', { name: CODEX_CLAUDE_MD });
     expect(after).toHaveAttribute('aria-checked', 'true');
     expect(after).toHaveAttribute('data-pending', 'true');
     expect(after).toHaveAccessibleDescription(/待发布/);
-    expect(after).toBeDisabled();
+    expect(after).toBeEnabled();
     expect(
       within(pending).getByRole('group', { name: '校验报告' }),
     ).toHaveTextContent('read.rules_whitelist');
+    expect(server.posts('/api/v1/policy/activate')).toHaveLength(0);
+  });
+
+  it('矩阵：已有草案时再切一格＝在草案上追加（交新撤旧），一轮发布两条都在（T-160g）', async () => {
+    const server = serveFixtures();
+    const user = await mountRules('#view=rules&panel=access');
+    await user.click(
+      await screen.findByRole('switch', { name: CODEX_CLAUDE_MD }),
+    );
+    await waitFor(() =>
+      expect(server.posts('/api/v1/policy/desired')).toHaveLength(1),
+    );
+    const first = (
+      server.read('/api/v1/policy/desired') as {
+        desired: {
+          id: string;
+          subject: string;
+          status: string;
+          submitter_kind: string;
+        }[];
+      }
+    ).desired.find(
+      (record) =>
+        record.subject === 'codex' &&
+        record.submitter_kind === 'owner' &&
+        record.status !== 'withdrawn',
+    )!;
+    const second = await screen.findByRole('switch', {
+      name: 'codex 读取 通用工作规则.md',
+    });
+    expect(second).toBeEnabled();
+
+    await user.click(second);
+
+    await waitFor(() =>
+      expect(server.posts('/api/v1/policy/withdraw')).toHaveLength(1),
+    );
+    const posted = server.posts('/api/v1/policy/desired');
+    expect(posted).toHaveLength(2);
+    const amended = posted[1].body as { subject: string; body: string };
+    expect(amended.subject).toBe('codex');
+    expect(JSON.parse(amended.body).read.rules_whitelist).toEqual([
+      'CLAUDE.md',
+      '通用工作规则.md',
+    ]);
+    // 先交后撤：新草案的提交排在撤回旧草案之前。
+    const order = server.sent
+      .filter((request) => request.method === 'POST')
+      .map((request) => request.path);
+    expect(order.lastIndexOf('/api/v1/policy/desired')).toBeLessThan(
+      order.lastIndexOf('/api/v1/policy/withdraw'),
+    );
+    expect(server.posts('/api/v1/policy/withdraw')[0].body).toEqual({
+      desired_id: first.id,
+    });
+    await waitFor(() =>
+      expect(
+        screen.getByRole('switch', { name: 'codex 读取 通用工作规则.md' }),
+      ).toHaveAttribute('aria-checked', 'true'),
+    );
+    expect(
+      screen.getByRole('switch', { name: CODEX_CLAUDE_MD }),
+    ).toHaveAttribute('aria-checked', 'true');
     expect(server.posts('/api/v1/policy/activate')).toHaveLength(0);
   });
 

@@ -102,6 +102,20 @@ export function usePolicyActions(reload: () => Promise<void>) {
     );
   }
 
+  /**
+   * 在待发布草案上追加改动：先交新草案，成功后再撤回旧的。先交后撤——撤回失败最多多留一份旧草案
+   * （发布新草案时后端会把它标为已取代），而不会出现旧的撤了、新的没交上、前面的改动丢了。
+   */
+  function amend(origin: string, input: DesiredInput, previous: DesiredRecord) {
+    void act(origin, async (signal) => {
+      const record = await submitDesired(input, signal);
+      await withdrawDesired(previous.id, signal);
+      return record.report?.ok
+        ? '已在待发布草案上追加并校验通过，旧草案已撤回；发布前请逐条确认扩大项。'
+        : '已在待发布草案上追加，但校验未通过；旧草案已撤回，请按逐条问题修改后重新提交。';
+    });
+  }
+
   function validate(origin: string, record: DesiredRecord) {
     void act(origin, async (signal) => {
       const updated = await validateDesired(record.id, signal);
@@ -173,6 +187,7 @@ export function usePolicyActions(reload: () => Promise<void>) {
     pending,
     preview,
     submit,
+    amend,
     validate,
     withdraw,
     togglePreview,

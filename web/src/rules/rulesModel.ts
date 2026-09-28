@@ -25,11 +25,11 @@ export type Whitelist =
   | { kind: 'unset' }
   | { kind: 'invalid' };
 
-function object(value: unknown): value is Record<string, unknown> {
+export function object(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 
-function strings(value: unknown): value is string[] {
+export function strings(value: unknown): value is string[] {
   return (
     Array.isArray(value) && value.every((item) => typeof item === 'string')
   );
@@ -129,7 +129,10 @@ export interface TypeColumn {
   /** 生效中的能力集正文；读不到为 null。 */
   body: string | null;
   whitelist: Whitelist;
-  /** 主人提交、尚未发布的最新一份能力集草案：矩阵这一列按它显示「待发布」并锁住。 */
+  /**
+   * 主人提交、尚未发布的最新一份能力集草案：矩阵这一列按它显示「待发布」，再改格子就在它上面追加
+   * （交一份新草案、撤回它），不另起一份基于生效正文的草案，免得前面的改动被覆盖。
+   */
   ownerDraft: DesiredRecord | null;
   /** 这份草案提议的名单；没有草案为 null。 */
   proposed: Whitelist | null;
@@ -235,7 +238,7 @@ export interface AccessCell {
   shown: boolean | null;
   /** 待发布草案把这一格改了（与生效不同）。 */
   pending: boolean;
-  /** 这一列不能再改：已有待发布草案，或生效正文读不出名单。 */
+  /** 这一列不能改：生效正文或待发布草案读不出名单（不在猜出来的结构上改）。 */
   locked: boolean;
 }
 
@@ -247,6 +250,7 @@ export function accessCell(column: TypeColumn, rule: string): AccessCell {
     effective,
     shown,
     pending: proposed !== null && proposed !== effective,
-    locked: column.ownerDraft !== null || effective === null || !column.body,
+    locked:
+      effective === null || !column.body || column.proposed?.kind === 'invalid',
   };
 }

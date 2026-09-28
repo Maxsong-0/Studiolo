@@ -6,6 +6,7 @@ import type {
   PolicyStatus,
   VersionRecord,
 } from '../../policyModel';
+import { accessChange } from '../../rules/accessChange';
 import { draftSummary } from '../../rules/labels';
 import {
   accessCell,
@@ -314,7 +315,7 @@ describe('规则行与读权限列', () => {
     expect(model.unreadable).toEqual(['broken']);
   });
 
-  it('你提交的能力集草案让这一列按草案显示并锁住；AI 提案只计数，发布时一并被取代', () => {
+  it('你提交的能力集草案让这一列按草案显示但不锁（T-160g）；AI 提案只计数，发布时一并被取代', () => {
     const codexColumn = model.types.find((column) => column.type === 'codex')!;
     expect(codexColumn.ownerDraft?.id).toBe(ownerDraft.id);
     expect(codexColumn.others).toBe(1);
@@ -322,13 +323,13 @@ describe('规则行与读权限列', () => {
       effective: false,
       shown: true,
       pending: true,
-      locked: true,
+      locked: false,
     });
     expect(accessCell(codexColumn, '通用工作规则.md')).toEqual({
       effective: false,
       shown: false,
       pending: false,
-      locked: true,
+      locked: false,
     });
     const claudeColumn = model.types.find(
       (column) => column.type === 'claude',
@@ -347,6 +348,78 @@ describe('规则行与读权限列', () => {
       shown: null,
       locked: true,
     });
+  });
+
+  it('有草案时再切一格：以草案为底追加，其余字段逐字不变，并注明取代哪份旧草案（T-160g）', () => {
+    const codexColumn = model.types.find((column) => column.type === 'codex')!;
+    const change = accessChange(codexColumn, '通用工作规则.md', true);
+    expect(change.kind).toBe('submit');
+    if (change.kind !== 'submit') return;
+    expect(change.replaces?.id).toBe(ownerDraft.id);
+    expect(ruleWhitelist(change.body)).toEqual({
+      kind: 'listed',
+      rules: ['CLAUDE.md', '通用工作规则.md'],
+    });
+    expect(withoutWhitelist(change.body)).toBe(
+      withoutWhitelist(ownerDraft.body!),
+    );
+  });
+
+  it('没有草案时切一格：以生效正文为底，交一份新草案，不取代任何草案', () => {
+    const claudeColumn = model.types.find(
+      (column) => column.type === 'claude',
+    )!;
+    const change = accessChange(claudeColumn, 'CLAUDE.md', false);
+    expect(change).toMatchObject({ kind: 'submit', replaces: null });
+    if (change.kind !== 'submit') return;
+    expect(ruleWhitelist(change.body)).toEqual({
+      kind: 'listed',
+      rules: ['通用工作规则.md', 'ghost.md'],
+    });
+    expect(withoutWhitelist(change.body)).toBe(withoutWhitelist(claudeBody));
+  });
+
+  it('把草案改回生效原状：只撤回草案；名单只是顺序不同也算原状（先删后加会排到末尾）', () => {
+    const claudeColumn = model.types.find(
+      (column) => column.type === 'claude',
+    )!;
+    const pendingDraft = draft({
+      id: '01ABCDEFGHJKMNPQRSTVWXYZ05',
+      kind: 'capability_set',
+      subject: 'claude',
+      body: withRuleAccess(claudeBody, 'CLAUDE.md', false),
+    });
+    const column = {
+      ...claudeColumn,
+      ownerDraft: pendingDraft,
+      proposed: ruleWhitelist(pendingDraft.body),
+    };
+    expect(accessCell(column, 'CLAUDE.md')).toMatchObject({
+      shown: false,
+      pending: true,
+      locked: false,
+    });
+    expect(accessChange(column, 'CLAUDE.md', true)).toEqual({
+      kind: 'withdraw',
+      draft: pendingDraft,
+    });
+  });
+
+  it('缺字段的生效正文与空名单草案等价（都是零规则）：勾上又取消只撤回草案', () => {
+    const codexColumn = model.types.find((column) => column.type === 'codex')!;
+    expect(accessChange(codexColumn, 'CLAUDE.md', false)).toEqual({
+      kind: 'withdraw',
+      draft: ownerDraft,
+    });
+  });
+
+  it('草案里的名单读不出时这一列不让改（不在猜出来的结构上追加）', () => {
+    const codexColumn = model.types.find((column) => column.type === 'codex')!;
+    const column = {
+      ...codexColumn,
+      proposed: { kind: 'invalid' as const },
+    };
+    expect(accessCell(column, 'CLAUDE.md').locked).toBe(true);
   });
 
   it('列表的「未发布草案」：校验未通过与 AI 提案是红色（等你），自己的草案是待定', () => {
