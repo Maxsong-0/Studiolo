@@ -37,6 +37,28 @@ pub struct RoundContext<'a> {
     pub now_unix: i64,
 }
 
+/// 从镜像条件写 canonical 的失败。`Source`：镜像上的冻结版本读不出或已不是它（票据作废、文件变了或没了），
+/// 本次调用还没碰接缝——首次执行据此记「确定未安装」，重开核对却据此什么也证明不了（原请求重建不出，
+/// 原键下可能早已安装），只能保持未知（评审 2026-09-28 P1-1）。`Seam`：接缝本身的分类。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MirrorWriteError {
+    /// 镜像源读不出或已变。
+    Source,
+    /// 接缝返回的分类。
+    Seam(BridgeSeamError),
+}
+
+impl MirrorWriteError {
+    /// 在不区分两者的语境（预解决）里当接缝分类用：镜像源读不出即还没碰 Broker。
+    #[must_use]
+    pub fn seam(self) -> BridgeSeamError {
+        match self {
+            Self::Source => BridgeSeamError::NotAttempted,
+            Self::Seam(error) => error,
+        }
+    }
+}
+
 /// 经视图逐帧读出镜像上冻结版本的正文并核对摘要与字节数；读之前先复验静止票据。
 ///
 /// # Errors
@@ -122,33 +144,37 @@ pub fn write_bytes(
 /// 把镜像上的冻结版本条件写进 canonical：小对象经视图逐帧读后整篇写，大对象以视图为只读来源流式写。
 ///
 /// # Errors
-/// 还没碰接缝就失败（静止票据作废、镜像读不出或与冻结版本不符）返回 `NotAttempted`——动作确定未安装；
-/// 其余分类同接缝。
+/// 镜像源读不出或已不是冻结版本（含静止票据作废）返回 `Source`；其余是接缝分类。
 pub fn write_from_mirror(
     context: &RoundContext<'_>,
     path: &VaultPath,
     version: &FileVersion,
     precondition: BridgePrecondition,
     key: &str,
-) -> Result<MutationReceipt, BridgeSeamError> {
+) -> Result<MutationReceipt, MirrorWriteError> {
     let workbench = context.plane.workbench();
     if version.bytes <= INLINE_MAX_BYTES {
         let bytes =
-            read_mirror_bytes(context, path, version).map_err(|_| BridgeSeamError::NotAttempted)?;
-        return workbench.bridge_write(path, bytes, precondition, key);
+            read_mirror_bytes(context, path, version).map_err(|_| MirrorWriteError::Source)?;
+        return workbench
+            .bridge_write(path, bytes, precondition, key)
+            .map_err(MirrorWriteError::Seam);
     }
     // 流式写由写者按需从视图读：交出来源前复验静止；读取本身发生在接缝之内，失败归接缝分类。
-    quiescence::verify(context.plane, context.ticket).map_err(|_| BridgeSeamError::NotAttempted)?;
+    quiescence::verify(context.plane, context.ticket).map_err(|_| MirrorWriteError::Source)?;
     let source = BlobSource::open(context.view.root(), path.clone())
-        .map_err(|_| BridgeSeamError::NotAttempted)?;
+        .map_err(|_| MirrorWriteError::Source)?;
     let identity = BlobIdentity {
         bytes: version.bytes,
         sha256: hex(&version.sha256),
     };
-    workbench.bridge_write_stream(path, source, identity, precondition, key)
+    workbench
+        .bridge_write_stream(path, source, identity, precondition, key)
+        .map_err(MirrorWriteError::Seam)
 }
 
 /// 把 canonical 上的冻结版本保全成范围外副本（D5 `ops/bridge-rollback/`、D6 `ops/bridge-conflicts/`）。
+/// 副本名里的分钟戳由调用方给：同一幂等键必须永远对应同一副本路径，否则重试会以新路径撞旧键。
 ///
 /// # Errors
 /// 副本命名失败、原文件已变或写者不可用返回对应分类；同键重试直接命中原回执。
@@ -157,10 +183,10 @@ pub fn preserve_canonical(
     directory: &str,
     path: &VaultPath,
     version: &FileVersion,
+    stamp: &str,
     key: &str,
 ) -> Result<(), PlaneError> {
-    let stamp = naming::utc_minute_stamp(context.now_unix).ok_or(PlaneError::Unavailable)?;
-    let copy = naming::copy_path(directory, path, naming::CANONICAL_DEVICE, &stamp)
+    let copy = naming::copy_path(directory, path, naming::CANONICAL_DEVICE, stamp)
         .ok_or(PlaneError::Unavailable)?;
     let bytes = read_canonical_bytes(context.plane, path, version)?;
     write_bytes(

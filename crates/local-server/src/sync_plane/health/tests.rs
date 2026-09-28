@@ -43,17 +43,13 @@ fn blocked(sequence: u64) -> Result<RoundOutcome, PlaneError> {
 
 /// 一次已闭合、静止已证明的 headless 运行；退出码 0 即 clean（与真实分类同一判据）。
 fn run(exit: ExitObservation, stop_reason: Option<StopReason>) -> HeadlessRun {
-    HeadlessRun {
-        run_id: RunId::from_bytes([7; 16]),
-        observation: RunObservation {
-            phase: RunPhase::Closed,
-            quiescence: Quiescence::Confirmed,
-            exit,
-            stop_reason,
-        },
-        clean: exit == ExitObservation::Code(0),
-        rc_one: exit == ExitObservation::Code(1),
-    }
+    let observation = RunObservation {
+        phase: RunPhase::Closed,
+        quiescence: Quiescence::Confirmed,
+        exit,
+        stop_reason,
+    };
+    HeadlessRun::from_terminal(RunId::from_bytes([7; 16]), observation)
 }
 
 /// 一整轮干净走完之前驱动器会做的四次回填。
@@ -250,7 +246,7 @@ fn headless回收结果按退出码与停止原因分类且强制恢复运行记
     let deadline = Some(StopReason::DeadlineExceeded);
     let cases = [
         (run(Code(0), None), ExitClass::Clean),
-        (run(Code(0), owner), ExitClass::Clean),
+        (run(Code(0), owner), ExitClass::OwnerStopped),
         (run(Signal(15), owner), ExitClass::OwnerStopped),
         (run(Signal(9), deadline), ExitClass::DeadlineExceeded),
         (run(Signal(9), None), ExitClass::Signal),

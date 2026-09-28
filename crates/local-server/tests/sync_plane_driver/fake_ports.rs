@@ -7,7 +7,7 @@ use studiolo_local_server::sync_plane::driver::{
 };
 use studiolo_local_server::sync_plane::recovery::PlaneState;
 use studiolo_sync_bridge::{Decision, Input, Inventory};
-use studiolo_sync_transport::owned_run::{ExitObservation, StopReason, SyncMode};
+use studiolo_sync_transport::owned_run::{StopReason, SyncMode};
 
 /// 驱动器对端口的一次调用。
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -142,13 +142,14 @@ impl RoundPorts for FakePorts {
     fn run_once(&mut self) -> Result<HeadlessRun, PlaneError> {
         self.calls.push(Call::RunOnce);
         if self.stopping() {
-            // 轮询里见到关停标志：request_stop(OwnerRequested)，被信号停下、照样闭合回收。
-            let mut run = fixture::headless(self.run_once_exit);
-            run.observation.exit = ExitObservation::Signal(15);
-            run.observation.stop_reason = Some(StopReason::OwnerRequested);
-            run.clean = false;
-            run.rc_one = false;
-            return Ok(run);
+            // 轮询里见到关停标志：request_stop(OwnerRequested)。headless 对 SIGTERM 以 rc=0 退出
+            // （P2 S9a/b 实测），照样闭合回收；分类必须看停止原因而不只看退出码（评审 P2-1）。
+            let mut observation = fixture::headless(0).observation;
+            observation.stop_reason = Some(StopReason::OwnerRequested);
+            return Ok(HeadlessRun::from_terminal(
+                fixture::headless(0).run_id,
+                observation,
+            ));
         }
         Ok(fixture::headless(self.run_once_exit))
     }

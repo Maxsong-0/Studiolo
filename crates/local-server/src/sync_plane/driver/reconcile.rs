@@ -137,7 +137,10 @@ pub fn replay_outcome(
         SeamVerdict::Outcome(outcome) => outcome,
         SeamVerdict::Rejected => rejected(external_key),
         SeamVerdict::NotAttempted if writer_attached => not_attempted(external_key),
-        SeamVerdict::NotAttempted | SeamVerdict::Unknown => JobOutcome::Unknown,
+        // 镜像源已变或读不出：重建不出首次请求，什么也证明不了（评审 2026-09-28 P1-1）。
+        SeamVerdict::NotAttempted | SeamVerdict::SourceUnavailable | SeamVerdict::Unknown => {
+            JobOutcome::Unknown
+        }
     }
 }
 

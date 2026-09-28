@@ -2,8 +2,9 @@
 //!
 //! 唯一被接受的证据是「同一受控子组 populated=0 且 spawn 入口已关闭」，它就是
 //! `SyncTransportOwner::quiescent` 成功返回的含义；本文件不自造证据，每次 `observe`
-//! 前都先 `verify_quiescent`，票据被作废即返回 `Unavailable`。平面内每一处镜像读写
-//! （观察、搬运、安装、核对、保全）都经 [`verify`] 复验同一张票据，不留无票据的读法。
+//! 前都先 `verify_quiescent`，票据被作废即返回 `Unavailable`。平面自己发起的镜像读写
+//! （观察、入站搬运读、安装、核对、冲突保全、排除项守卫）都经 [`verify`] 复验同一张票据；
+//! 执行器批内对镜像侧 Delete 的删除前保全读由批首取票与逐动作 recheck 覆盖，不单独复验。
 
 use super::mirror::MirrorView;
 use super::{PlaneError, QUIESCENT_WINDOW, SyncPlane};

@@ -76,3 +76,27 @@ fn only_an_owner_requested_stop_turns_an_unclean_run_into_stopping() {
     run.observation.stop_reason = Some(StopReason::OwnerRequested);
     assert_eq!(run.failure(), PlaneError::Stopping);
 }
+
+#[test]
+fn a_stopped_run_is_never_clean_even_when_headless_exits_zero() {
+    use studiolo_local_server::sync_plane::driver::HeadlessRun;
+    use studiolo_sync_transport::owned_run::{ExitObservation, RunId, StopReason};
+    let with = |exit, stop_reason| {
+        let mut observation = crate::fixture::headless(0).observation;
+        observation.exit = exit;
+        observation.stop_reason = stop_reason;
+        HeadlessRun::from_terminal(RunId::from_bytes([1; 16]), observation)
+    };
+    let owner = Some(StopReason::OwnerRequested);
+    let deadline = Some(StopReason::DeadlineExceeded);
+    assert!(with(ExitObservation::Code(0), None).clean);
+    // SIGTERM 下 rc=0：被 owner 停下不算干净，失败分类是 Stopping，下一轮走 D9 强制恢复。
+    let stopped = with(ExitObservation::Code(0), owner);
+    assert!(!stopped.clean && !stopped.rc_one);
+    assert_eq!(stopped.failure(), PlaneError::Stopping);
+    // 超时停下同理不算干净，失败分类是 Transport。
+    let late = with(ExitObservation::Code(0), deadline);
+    assert!(!late.clean);
+    assert_eq!(late.failure(), PlaneError::Transport);
+    assert!(with(ExitObservation::Code(1), None).rc_one);
+}

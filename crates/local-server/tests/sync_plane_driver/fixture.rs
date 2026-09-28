@@ -37,12 +37,7 @@ pub fn headless(exit: i32) -> HeadlessRun {
         exit: ExitObservation::Code(exit),
         stop_reason: None,
     };
-    HeadlessRun {
-        run_id: RunId::from_bytes([0x5A; 16]),
-        observation,
-        clean: exit == 0,
-        rc_one: exit == 1,
-    }
+    HeadlessRun::from_terminal(RunId::from_bytes([0x5A; 16]), observation)
 }
 
 /// 两个根 token 不同、其余固定的绑定。

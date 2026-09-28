@@ -49,7 +49,7 @@ studiolo-human（uid 1000）                      root                          
 | 7 | `OwnerQuiescence::take`（`quiescent()`，窗口 1800 s） | 无静止证明→`Quiescence` | 下一轮重跑 RunOnce |
 | 8 | `observe_both`：canonical 经接缝完整观察，镜像经视图完整观察（镜像观察、搬运读、核对读每次都先 `quiescence::verify` 复验第 7 步的票据），`approve_union` → `Input` | 任一侧不完整／范围未批→`Observation` | 下一轮重观察 |
 | 9 | 观察后一律 `plan` 试算。MirrorRemote 有冲突→`preresolve_conflicts`（D6）→ 重做第 8 步一次；Bidirectional 有冲突（含熔断冻结的批）→ `driver/preserve.rs` 先把戳写进 `plane-state.json`，再把双方现存版本各保全一份到 `ops/bridge-conflicts/`，然后照常执行（执行器对冲突路径不动、闭合时不推进基线）；同时 `conflict_copy_count` 数出两侧观察里的冲突副本回填健康 | 预解决删除越熔断→`Fused`（不解决，健康降级）；保全写入失败→按接缝分类停在执行之前 | 预解决：人在界面选边（后续任务）；保全：下一轮沿用已落盘的戳、同一路径与幂等键续写，不另生一份 |
-| 10 | `bridge.reserve(version, input)`：Fused→`Fused` 停；Ready→`StateJournal`＋`execute(plan, ports, now, deadline)` | 逐动作 Issued 后未知→`Unknown`，本批不闭合 | 下一轮第 10 步 `reconcile::reconcile_pending` 只取仍未知的原键：canonical 侧由冻结前置直接还原原 `Revision`（Bridge 证据的 `revision` 就是它的 32 字节原值，`driver/evidence.rs::revision_from_digest`），经 `PlaneJobBackend::canonical_verdict` 按原键重建首次请求走接缝——有原回执照收（接缝绝不二次安装）、无回执才由接缝首次安装，CAS 拒绝→NoEffect，`NotAttempted` 且写者此刻接得上（原键已取消／受保护路径／预算）→NoEffect；镜像侧在同一视图的静止票据下逐字节比对目标：等于冻结源→Committed，Delete 且已不存在→Committed，仍是冻结前置（CreateOnly 即不存在）→NoEffect，读完复验静止失败则作废；核出的经 `StateJournal::record_outcome` 写回执，其余保持未知、本批不闭合。已安装的 canonical Replace／Delete 同样按原键核对（前置跨轮可还原，2026-09-26 起） |
+| 10 | `bridge.reserve(version, input)`：Fused→`Fused` 停；Ready→`StateJournal`＋`execute(plan, ports, now, deadline)` | 逐动作 Issued 后未知→`Unknown`，本批不闭合 | 下一轮第 10 步 `reconcile::reconcile_pending` 只取仍未知的原键：canonical 侧由冻结前置直接还原原 `Revision`（Bridge 证据的 `revision` 就是它的 32 字节原值，`driver/evidence.rs::revision_from_digest`），经 `PlaneJobBackend::canonical_verdict` 按原键重建首次请求走接缝——有原回执照收（接缝绝不二次安装）、无回执才由接缝首次安装，CAS 拒绝→NoEffect，`NotAttempted` 且写者此刻接得上（原键已取消／受保护路径／预算）→NoEffect；镜像侧在同一视图的静止票据下逐字节比对目标：等于冻结源→Committed，Delete 且已不存在→Committed，仍是冻结前置（CreateOnly 即不存在）→NoEffect，读完复验静止失败则作废；核出的经 `StateJournal::record_outcome` 写回执，其余保持未知、本批不闭合。已安装的 canonical Replace／Delete 同样按原键核对（前置跨轮可还原，2026-09-26 起）；但入站源在镜像上已变或读不出时重建不出首次请求（内联写的指纹含正文），只能保持未知、不能记成无效果（评审 2026-09-28 P1-1；让核对不依赖镜像当前内容另立任务） |
 | 11 | `execute` 内部：Intent 审计→逐动作 保全→Issued→apply→回执→Outcome/Summary 审计→settle→退休 | 任一审计推不动→`Audit` | 下一轮 `deliver_audit` 继续 |
 | 12 | `stage.sweep(now, retired_through)`：保留期到且计划已退休的保全对象回收；孤儿回收 | IO 失败→`Storage`（不影响本批结论） | 下一轮再扫 |
 
@@ -89,7 +89,7 @@ studiolo-human（uid 1000）                      root                          
 | 固定名 | 所有者／权限 | 预算 | 写者 |
 |---|---|---|---|
 | `<transport_private>/{transport.lock,state.json,state.json.publish}` | owner 0600／根 0700 | 64 KiB | sync-transport `store/publish.rs`（不变） |
-| `<plane_root>/plane.lock` | owner 0600 | 4 KiB | `sync_plane/recovery.rs` |
+| `<plane_root>/plane.lock` | owner 0600 | 4 KiB | `sync_plane/recovery.rs`；flock 按打开文件描述计，租约守卫析构时显式解锁（并发 fork 在 exec 前继承的描述符不延长租约） |
 | `<plane_root>/plane-state.json`（+`.new`） | owner 0600 | 64 KiB，版本 1，校验和；追加字段 `headless_excluded`（headless 最近一次核对报的排除集合）、`conflict_stamps`（冲突身份→首次保全分钟戳，≤512 条），为空时不写出、非空才进校验和，旧文件照常解码 | `sync_plane/recovery.rs` |
 | `<plane_root>/stage/objects/<sha256 hex>` | owner 0600 | 单对象 256 MiB，合计 512 MiB，64 项（含孤儿） | `sync_plane/mirror/stage.rs` |
 | `<plane_root>/stage/index.json`（+`.new`）、`stage/receiving.partial` | owner 0600 | 1 MiB | `sync_plane/mirror/stage.rs` |
@@ -121,7 +121,7 @@ studiolo-human（uid 1000）                      root                          
 | `architecture_cases/dependencies.rs` | crate 数 24；rustix 归属加 `studiolo-sync-launcher` |
 | `architecture_support/sync_launcher.rs` | `config.rs`／`serve.rs`／`payload.rs`／`unit.rs`／`unit/reads.rs`／`unit/session.rs` 六文件的精确调用清单（按 W2 回执） |
 | `architecture_support/sync_transport.rs` | `linux/client.rs`：`UnixStream::connect(socket)`、`stream.write_all(&frame)` 各一次，`read_exact` 两次，`std::os::unix::net::UnixStream` 导入一次 |
-| `architecture_support/sync_plane.rs` | `stage.rs`（openat／fstat／fsync／renameat／unlinkat／mkdirat／Dir::read_from 各一、statx 两次）／`recovery.rs`（openat／fstat／flock 各一）／`mirror.rs`（renameat／fsync 各一）的固定名锚点＋精确调用清单（按 W4 回执） |
+| `architecture_support/sync_plane.rs` | `stage.rs`（openat／fstat／fsync／renameat／unlinkat／mkdirat／Dir::read_from 各一、statx 两次）／`recovery.rs`（openat／fstat 各一，flock 两次：加锁与租约守卫 `Lease` 析构时显式解锁）／`mirror.rs`（renameat／fsync 各一）的固定名锚点＋精确调用清单（按 W4 回执） |
 | `architecture_support/maintenance.rs` | `maintenance/sync.rs`：两条导入行＋九处固定调用（按 W6 回执） |
 | `architecture_cases/canonical_owner.rs` | `coordinator/sync_bridge.rs` 的七条允许形态（第 4 节） |
 

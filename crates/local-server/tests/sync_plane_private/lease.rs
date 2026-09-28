@@ -17,7 +17,7 @@ fn drop_releases_the_lease_even_while_an_inherited_copy_is_alive() {
     let root = plane_root();
     let store = PlaneStateStore::open(root.path()).unwrap();
     // 同一打开文件描述的副本，等同于并发 fork 的子进程在 exec 之前继承到的那一份。
-    let inherited = store.lease.try_clone().unwrap();
+    let inherited = store._lease.0.try_clone().unwrap();
     assert!(matches!(
         PlaneStateStore::open(root.path()),
         Err(PlaneError::Storage)
@@ -37,4 +37,15 @@ fn drop_releases_the_lease_even_while_an_inherited_copy_is_alive() {
     ));
     drop(next);
     assert!(PlaneStateStore::open(root.path()).is_ok());
+}
+
+#[test]
+fn the_lease_guard_alone_releases_the_lock_while_an_inherited_copy_is_alive() {
+    let root = plane_root();
+    let PlaneStateStore { _lease: lease, .. } = PlaneStateStore::open(root.path()).unwrap();
+    let inherited = lease.0.try_clone().unwrap();
+    // open 在拿到锁之后任何一步失败提前返回时，局部变量里只剩这个守卫；它析构即解锁（评审 P3-4）。
+    drop(lease);
+    assert!(PlaneStateStore::open(root.path()).is_ok());
+    drop(inherited);
 }

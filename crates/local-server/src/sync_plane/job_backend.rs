@@ -4,7 +4,9 @@
 //! 终态只认权威回执：Broker 返回的真实 revision、镜像 renameat 后复验的身份；
 //! 拿不到就是 `JobOutcome::Unknown`，绝不用退出码或「内容碰巧相同」补成成功。
 
-use super::driver::content::{RoundContext, preserve_canonical, write_from_mirror};
+use super::driver::content::{
+    MirrorWriteError, RoundContext, preserve_canonical, write_from_mirror,
+};
 use super::driver::evidence::{hex, revision_digest, revision_from_digest, sha256};
 use super::mirror::stage::StageStore;
 use super::mirror::{self, StageSink};
@@ -90,7 +92,8 @@ impl<'a> PlaneJobBackend<'a> {
                         bytes: Some(source.bytes),
                         receipt_id: receipt.revision.to_hex(),
                     }),
-                    Err(error) => seam_verdict(error),
+                    Err(MirrorWriteError::Source) => SeamVerdict::SourceUnavailable,
+                    Err(MirrorWriteError::Seam(error)) => seam_verdict(error),
                 }
             }
         }
@@ -111,15 +114,21 @@ impl<'a> PlaneJobBackend<'a> {
             Change::CreateOnly { source } | Change::Replace { source, .. } => {
                 // 出站动作的源就是 canonical 当前版本；引导期它会被下一次 RunOnce 回滚，先保全。
                 // 保全失败时视图还没被碰：本动作确定未安装，明确无效果，下一轮重新规划。
+                // 回滚保全只在首次执行里发生一次（重开核对不重放它），原键配本轮分钟戳即可。
+                let stamp = naming::utc_minute_stamp(self.context.now_unix);
                 if self.context.mode == SyncMode::MirrorRemote
-                    && preserve_canonical(
-                        self.context,
-                        naming::ROLLBACK_DIR,
-                        path,
-                        source,
-                        &format!("{}/rollback", job.external_key),
-                    )
-                    .is_err()
+                    && stamp.is_none_or(|stamp| {
+                        let key = format!("{}/rollback", job.external_key);
+                        preserve_canonical(
+                            self.context,
+                            naming::ROLLBACK_DIR,
+                            path,
+                            source,
+                            &stamp,
+                            &key,
+                        )
+                        .is_err()
+                    })
                 {
                     return Ok(not_attempted(&job.external_key));
                 }
@@ -179,6 +188,9 @@ pub enum SeamVerdict {
     Outcome(JobOutcome),
     /// 还没碰 Broker 就失败：本次调用确定没有安装。
     NotAttempted,
+    /// 镜像源读不出或已不是冻结版本：请求没发出去。首次执行等同 `NotAttempted`；重开核对时
+    /// 原请求重建不出、原键下可能早已安装，只能保持未知。
+    SourceUnavailable,
     /// 权威 CAS 拒绝。
     Rejected,
     /// 终态无法确认。
@@ -199,7 +211,7 @@ pub(crate) fn seam_verdict(error: BridgeSeamError) -> SeamVerdict {
 pub fn first_attempt_outcome(verdict: SeamVerdict, external_key: &str) -> JobOutcome {
     match verdict {
         SeamVerdict::Outcome(outcome) => outcome,
-        SeamVerdict::NotAttempted => not_attempted(external_key),
+        SeamVerdict::NotAttempted | SeamVerdict::SourceUnavailable => not_attempted(external_key),
         SeamVerdict::Rejected => rejected(external_key),
         SeamVerdict::Unknown => JobOutcome::Unknown,
     }

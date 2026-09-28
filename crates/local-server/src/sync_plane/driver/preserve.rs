@@ -9,8 +9,11 @@
 //! 不在即 `Rejected`（视为已保全），绝不覆盖、不自动选边。幂等键带上戳：冲突消失后原样重现
 //! （旧戳已回收）会按新戳另存一份，而不是拿新路径撞旧键、被接缝判成未知而卡住每一轮。
 //! 冲突超过 [`MAX_CONFLICT_STAMPS`] 条时只保全按路径序的前 512 条，其余等前面的解决后再轮到。
+//! 镜像侧副本的键另带设备名摘要：审批改了 `device_name` 后路径变了，键也跟着变（评审 P2-2）。
+//! 首次戳与 MirrorRemote 预解决（`resolve.rs`）共用；端口每轮按规划结果回收（[`prune`]），
+//! 冲突清零后旧戳也会删掉，原样重现时按新戳另存（评审 P3-7）。
 
-use super::super::recovery::MAX_CONFLICT_STAMPS;
+use super::super::recovery::{MAX_CONFLICT_STAMPS, PlaneStateStore};
 use super::super::witness::seam_error;
 use super::super::{PlaneError, naming};
 use super::content::{self, RoundContext};
@@ -98,14 +101,59 @@ pub fn preserve_conflicts(
         if let Presence::Present(version) = &conflict.observed.mirror {
             let copy = copy_path(conflict, device, stamp)?;
             let bytes = content::read_mirror_bytes(context, &conflict.path, version)?;
-            create(context, &copy, bytes, &format!("{base}/mirror"))?;
+            let device_key = hex(&sha256(device.as_bytes()));
+            create(
+                context,
+                &copy,
+                bytes,
+                &format!("{base}/mirror/{device_key}"),
+            )?;
         }
     }
     Ok(())
 }
 
+/// 端口用：给本轮要保全／预解决的冲突配首次戳并整份落盘（戳先落盘、后写副本）；返回新配戳的冲突数。
+///
+/// # Errors
+/// 分钟戳格式化不出返回 `Unavailable`；状态写盘失败返回 `Storage`。
+pub fn stamp(
+    store: &mut PlaneStateStore,
+    link_id: &[u8; 16],
+    decision: &Decision,
+    now_unix: i64,
+) -> Result<u64, PlaneError> {
+    let mut state = store.state().clone();
+    let added = assign_stamps(link_id, decision, &mut state.conflict_stamps, now_unix)?;
+    if state != *store.state() {
+        store.save(state)?;
+    }
+    Ok(added)
+}
+
+/// 端口用：每轮规划后回收已解决、已变或排在上限之外的冲突的戳，有变化才落盘；不配新戳。
+///
+/// # Errors
+/// 状态写盘失败返回 `Storage`。
+pub fn prune(
+    store: &mut PlaneStateStore,
+    link_id: &[u8; 16],
+    decision: &Decision,
+) -> Result<(), PlaneError> {
+    let current: BTreeSet<String> = preserved(decision)
+        .into_iter()
+        .map(|conflict| conflict_key(link_id, conflict))
+        .collect();
+    let mut state = store.state().clone();
+    state.conflict_stamps.retain(|key, _| current.contains(key));
+    if state != *store.state() {
+        store.save(state)?;
+    }
+    Ok(())
+}
+
 /// 本轮要保全的冲突：规划结果或熔断冻结里的冲突，按路径序取前 [`MAX_CONFLICT_STAMPS`] 条。
-fn preserved(decision: &Decision) -> Vec<&Conflict> {
+pub(super) fn preserved(decision: &Decision) -> Vec<&Conflict> {
     let conflicts = match decision {
         Decision::Ready(plan) => plan.conflicts(),
         Decision::FuseBlocked(blocked) => blocked.conflicts.as_slice(),

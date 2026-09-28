@@ -11,8 +11,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 use studiolo_audit_ledger::AuditLedger;
 use studiolo_sync_transport::owned_run::{
-    ExitObservation, Quiescence, RunOperation, RunPhase, StopReason, SyncMode, SyncTransportOwner,
-    TransportError,
+    ExitObservation, Quiescence, RunId, RunObservation, RunOperation, RunPhase, StopReason,
+    SyncMode, SyncTransportOwner, TransportError,
 };
 
 /// 两次 `wait` 之间的固定间隔。
@@ -94,16 +94,28 @@ pub fn run(
     if terminal.observation.phase != RunPhase::Closed {
         return Err(PlaneError::Transport);
     }
-    Ok(HeadlessRun {
-        run_id: terminal.run_id,
-        observation: terminal.observation,
-        clean: terminal.observation.exit == ExitObservation::Code(0)
-            && terminal.observation.quiescence == Quiescence::Confirmed,
-        rc_one: terminal.observation.exit == ExitObservation::Code(1),
-    })
+    Ok(HeadlessRun::from_terminal(
+        terminal.run_id,
+        terminal.observation,
+    ))
 }
 
 impl HeadlessRun {
+    /// 从闭合摘要分类：退出码 0、静止已证明、**且没有被停止**才算干净。headless 收到 SIGTERM
+    /// 会以 rc=0 退出（P2 S9a/b），被 owner 关停、超时或输出超限停下的运行都说明操作被打断，
+    /// 必须记成非干净，下一轮走 D9 强制恢复（评审 2026-09-28 P2-1）。
+    #[must_use]
+    pub fn from_terminal(run_id: RunId, observation: RunObservation) -> Self {
+        Self {
+            run_id,
+            observation,
+            clean: observation.exit == ExitObservation::Code(0)
+                && observation.quiescence == Quiescence::Confirmed
+                && observation.stop_reason.is_none(),
+            rc_one: observation.exit == ExitObservation::Code(1),
+        }
+    }
+
     /// 非 clean 运行的失败分类：owner 关停时被停止即 `Stopping`，其余一律 `Transport`。
     #[must_use]
     pub fn failure(&self) -> PlaneError {

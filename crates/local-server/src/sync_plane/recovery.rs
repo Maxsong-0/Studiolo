@@ -166,10 +166,11 @@ pub fn mark_reaped(state: &PlaneState, clean: bool, rc_one: bool, now_unix: i64)
 }
 
 /// 已打开的持久状态存储；持有平面根 FD 与排他租约，实例活着就一直占着 `plane.lock`，
-/// 析构时显式解锁（见 `Drop`）。
+/// 析构时由 [`Lease`] 显式解锁。
 pub struct PlaneStateStore {
     root: OwnedFd,
-    lease: OwnedFd,
+    /// 只为占着租约而持有：活着即持锁，析构即显式解锁。
+    _lease: Lease,
     state: PlaneState,
 }
 
@@ -191,6 +192,8 @@ impl PlaneStateStore {
             return Err(PlaneError::Storage);
         }
         flock(&lease, FlockOperation::NonBlockingLockExclusive).map_err(|_| PlaneError::Storage)?;
+        // 一拿到锁就交给守卫：后面任何一步失败提前返回，也在析构时显式解锁（评审 P3-4）。
+        let lease = Lease(lease);
         let existing =
             stage::open_regular_at(root.as_fd(), PLANE_STATE_FILE, euid, PLANE_STATE_MAX_BYTES)
                 .map_err(|_| PlaneError::Storage)?;
@@ -200,7 +203,11 @@ impl PlaneStateStore {
             )?,
             None => PlaneState::first_run(),
         };
-        Ok(Self { root, lease, state })
+        Ok(Self {
+            root,
+            _lease: lease,
+            state,
+        })
     }
 
     /// 当前状态。
@@ -233,11 +240,13 @@ impl PlaneStateStore {
     }
 }
 
-impl Drop for PlaneStateStore {
+/// `plane.lock` 的排他租约。flock 按打开文件描述计：同进程里并发的 fork 可能在 exec 之前一直持有
+/// 这个描述符，只等本 FD 关闭，锁会多活到子进程 exec；析构时显式解锁立即结束租约。Drop 不能报告错误。
+struct Lease(OwnedFd);
+
+impl Drop for Lease {
     fn drop(&mut self) {
-        // 同进程里并发的 fork 可能在 exec 之前一直持有这个打开文件描述（flock 按它计），
-        // 只等本 FD 关闭，锁会多活到子进程 exec；显式解锁立即结束租约。Drop 不能报告错误。
-        let _ = flock(&self.lease, FlockOperation::Unlock);
+        let _ = flock(&self.0, FlockOperation::Unlock);
     }
 }
 

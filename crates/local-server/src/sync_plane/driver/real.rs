@@ -195,35 +195,29 @@ impl RoundPorts for RealPorts<'_> {
     }
 
     fn preresolve(&mut self, decision: &Decision) -> Result<bool, PlaneError> {
-        let changed = resolve::preresolve_conflicts(&self.context()?, decision)?;
-        if changed {
-            // 每个 canonical 侧存在的冲突都先保全成一份冲突副本；权威拒绝中途停下的那轮按上限计。
-            let preserved = match decision {
-                Decision::Ready(plan) => plan.conflicts().len(),
-                Decision::FuseBlocked(blocked) => blocked.conflicts.len(),
-            };
-            self.plane
-                .health
-                .record_conflicts(u64::try_from(preserved).unwrap_or(u64::MAX));
-        }
-        Ok(changed)
+        // 戳先落盘、后保全与 CAS：中途失败的下一轮沿用同一戳、同一副本路径与幂等键（评审 P1-2）。
+        let link_id = self.context()?.binding.link_id;
+        let added = preserve::stamp(&mut self.store, &link_id, decision, self.now_unix)?;
+        self.plane.health.record_conflicts(added);
+        let stamps = &self.store.state().conflict_stamps;
+        resolve::preresolve_conflicts(&self.context()?, decision, stamps)
     }
 
     fn preserve_conflicts(&mut self, decision: &Decision) -> Result<u64, PlaneError> {
         // 戳先落盘、后写副本：写到一半失败或进程中断，下一轮沿用同一戳、同一路径与幂等键，不另生一份。
-        let link_id = self.context()?.binding.link_id;
-        let mut state = self.store.state().clone();
-        let stamps = &mut state.conflict_stamps;
-        let added = preserve::assign_stamps(&link_id, decision, stamps, self.now_unix)?;
-        if state != *self.store.state() {
-            self.store.save(state)?;
-        }
         // 冲突一经配戳落盘即计入健康节（副本由本轮或后续轮按同一戳幂等写出）。
+        let link_id = self.context()?.binding.link_id;
+        let added = preserve::stamp(&mut self.store, &link_id, decision, self.now_unix)?;
         self.plane.health.record_conflicts(added);
         let device = self.plane.approval().device_name();
         let stamps = &self.store.state().conflict_stamps;
         preserve::preserve_conflicts(&self.context()?, decision, stamps, device)?;
         Ok(added)
+    }
+
+    fn retain_conflicts(&mut self, decision: &Decision) -> Result<(), PlaneError> {
+        let link_id = self.context()?.binding.link_id;
+        preserve::prune(&mut self.store, &link_id, decision)
     }
 
     fn execute(&mut self, input: Input) -> Result<RoundOutcome, PlaneError> {

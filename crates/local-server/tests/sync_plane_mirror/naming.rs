@@ -260,3 +260,26 @@ fn conflict_copy_count_recognizes_both_device_names_once_per_path() {
     assert_eq!(conflict_copy_count(&canonical, &mirror), 2);
     assert_eq!(conflict_copy_count(&mirror, &canonical), 2);
 }
+
+#[test]
+fn copy_names_longer_than_name_max_are_shortened_with_a_digest() {
+    // 69 个汉字的标题本身合法（207 字节），加上副本标记后末段超过 255 字节（评审 P1-3）。
+    let title = "标".repeat(69);
+    let original = path(&format!("项目/{title}.md"));
+    let copy = copy_path(CONFLICTS_DIR, &original, CANONICAL_DEVICE, STAMP).expect("截短后放得下");
+    let last = copy.as_str().rsplit('/').next().unwrap();
+    assert!(last.len() <= 255, "{}", last.len());
+    assert!(last.ends_with(&format!(" (Conflicted copy {CANONICAL_DEVICE} {STAMP}).md")));
+    assert!(last.contains('~'));
+    // 同名前缀的两个长名不会撞成同一个副本名；同一原名每次结果相同。
+    let other = path(&format!("项目/{title}乙.md"));
+    let other_copy = copy_path(CONFLICTS_DIR, &other, CANONICAL_DEVICE, STAMP).unwrap();
+    assert_ne!(copy, other_copy);
+    assert_eq!(
+        copy_path(CONFLICTS_DIR, &original, CANONICAL_DEVICE, STAMP),
+        Some(copy)
+    );
+    // 短名照旧不截。
+    let short = copy_path(CONFLICTS_DIR, &path("项目/短.md"), CANONICAL_DEVICE, STAMP).unwrap();
+    assert!(!short.as_str().contains('~'));
+}

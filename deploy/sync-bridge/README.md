@@ -78,7 +78,7 @@ launcher 把启动事实（固定 pins、镜像根、配置根、操作）预写
 | `private_root` | 传输私有根（`transport.lock`、`state.json`），owner 0700 |
 | `mirror_root`／`owner_view_root` | 真实镜像根（只进 argv）／owner 读写所经的 idmapped 视图 |
 | `plane_root` | 驱动平面私有根：`stage/`、`plane-state.json`、`plane.lock`、`bridge/`（BridgeState） |
-| `device_name` | 镜像节点在 Obsidian Sync 里的设备名（核对 headless `deviceName`）；至多 64 个字符，不含 `(`、`)`、`/`、控制字符——它还要原样进冲突副本名，`sync-setup` 时就按这个规则取名 |
+| `device_name` | 镜像节点在 Obsidian Sync 里的设备名（核对 headless `deviceName`）；至多 64 字节（中文约 21 个字），不含 `(`、`)`、`/`、控制字符，也不能是 `studiolo-canonical`（大小写不论）——它还要原样进冲突副本名，`sync-setup` 时就按这个规则取名 |
 | `headless_mode` | `mirror-remote`（引导期）或 `bidirectional`（P6）；每轮核对，不符就 `set_mode` |
 | `excluded_folders` | headless 排除文件夹的唯一母本（有序、去重）；改动后镜像残留须先清（第 8 节） |
 | `manual_quota` | 人工从 Obsidian 账号页抄的 `account_limit_bytes`／`used_bytes_manual`／`recorded_at_unix`；缺则健康节该维度未知 |
@@ -145,6 +145,8 @@ headless 一旦不再排除 X，下一次 RunOnce 就会把残留当新内容上
 purge 只在三条同时成立时动手：X 在上次核验集合里、不在当前审批里、`headless_excluded` 仍含 X；另外权威审计账本
 必须可用。任一不满足即拒绝，一个字节不删。它不改审批文档，也不碰 canonical。
 
+第 ② 步若报的是「headless 配置与审批文档不一致」（镜像里已无残留），跳过第 ③、④ 步，直接做第 ⑤ 步；对没有残留的文件夹跑 purge 会报「不在上次核验的排除集合内…」，那不代表顺序错了。
+
 **错序怎么办**：
 - 先清了 headless 排除、审批还没改：健康节报「headless 配置与审批文档不一致」，本轮不跑，purge 也因审批仍含 X 而拒绝。
   把排除项加回 headless，从 ① 开始。
@@ -155,6 +157,7 @@ purge 只在三条同时成立时动手：X 在上次核验集合里、不在当
 
 ## 9 回滚
 
+- **换回旧二进制前先关平面**：新版会写出旧版不认识的 `plane-state.json` 字段（审批排除项非空就有），批准配置摘要与 Bridge 证据里 canonical 版本的投影也在 2026-09 改过；旧 human 读新状态会以 `StartupError::SyncPlane` 起不来。回退前把审批 `enabled` 改 false；要让旧版重新接管 Bridge，只能重新置备私有存储。
 - 关平面：审批文档 `enabled` 改 false（或去掉 `--sync-transport`）后重启 human；镜像盘、视图、launcher 都可以留着。
 - 停 launcher：`sudo systemctl disable --now studiolo-sync-launcher.service`；transient unit 名固定为
   `studiolo-sync-payload-<sequence>-<run_id 前 8 hex>.service`，`systemctl list-units 'studiolo-sync-payload-*'` 可查残留，

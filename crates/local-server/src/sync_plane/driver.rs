@@ -20,7 +20,7 @@ use super::{PlaneError, SyncPlane};
 use std::sync::atomic::AtomicBool;
 use studiolo_host_config::sync_transport::TransportSyncMode;
 use studiolo_sync_bridge::{Decision, Input, Inventory, plan};
-use studiolo_sync_transport::owned_run::{RunId, RunObservation, RunOperation, SyncMode};
+use studiolo_sync_transport::owned_run::{RunId, RunObservation, SyncMode};
 
 /// 一轮的结论；每个变体都对应健康页第六节的一种状态。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -110,6 +110,10 @@ pub trait RoundPorts {
     fn unresolved(&mut self) -> Result<Option<u64>, PlaneError>;
     /// 两侧完整观察并核准范围，组成冻结输入（第 8 步）。
     fn observe(&mut self, mode: SyncMode) -> Result<(Input, Inventory, Inventory), PlaneError>;
+    /// 按规划结果回收冲突首次戳（第 9 步之前每轮都调）；假端口可不实现。
+    fn retain_conflicts(&mut self, _decision: &Decision) -> Result<(), PlaneError> {
+        Ok(())
+    }
     /// 引导期冲突预解决（第 9 步）；返回是否改动过 canonical。
     fn preresolve(&mut self, decision: &Decision) -> Result<bool, PlaneError>;
     /// 双向冲突保全（第 9 步）：双方现存版本各保全一份到 `ops/bridge-conflicts/`，同一冲突跨轮只保全一次；
@@ -209,6 +213,7 @@ pub fn run_round_with(
     halt(ports)?;
     let (mut input, _, _) = ports.observe(mode)?;
     let decision = plan(input.clone(), None).map_err(|_| PlaneError::Observation)?;
+    ports.retain_conflicts(&decision)?;
     if has_conflicts(&decision) {
         match mode {
             SyncMode::MirrorRemote => {
@@ -263,20 +268,6 @@ fn has_conflicts(decision: &Decision) -> bool {
         Decision::Ready(plan) => !plan.conflicts().is_empty(),
         Decision::FuseBlocked(blocked) => !blocked.conflicts.is_empty(),
     }
-}
-
-/// 经传输运行槽跑一次固定操作到闭合：prepare_once → Intent 审计 → start → wait 轮询
-/// （关停已请求则 request_stop(OwnerRequested)，超过 deadline 则 request_stop(DeadlineExceeded)）→ Outcome 审计。
-///
-/// # Errors
-/// 传输槽拒绝返回 `Transport`；审计不可用返回 `Audit`。
-pub fn run_headless(
-    plane: &SyncPlane,
-    operation: RunOperation,
-    now_unix: i64,
-    stopping: &AtomicBool,
-) -> Result<HeadlessRun, PlaneError> {
-    headless::run(plane, operation, now_unix, stopping)
 }
 
 /// 删除熔断的同一判据（>5 或 >原基线存活路径 10% 即阻断，等号可过）；
