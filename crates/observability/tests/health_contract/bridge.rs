@@ -129,11 +129,12 @@ fn 恢复协议处于强制恢复或退避时第六节降级并写明所处状�
 }
 
 #[test]
-fn 四种非干净退出都降级且正文带对应分类() {
+fn 五种非干净退出都降级且正文带对应分类() {
     for exit in [
         ExitClass::NonZero,
         ExitClass::Signal,
         ExitClass::DeadlineExceeded,
+        ExitClass::OwnerStopped,
         ExitClass::Unconfirmed,
     ] {
         let mut evidence = NORMAL_BRIDGE;
@@ -143,6 +144,14 @@ fn 四种非干净退出都降级且正文带对应分类() {
         assert_eq!(state, HealthState::Degraded, "{exit:?}");
         assert_eq!(detail, expected, "{exit:?}");
     }
+}
+
+#[test]
+fn owner关停时被停止的运行判降级且正文写明() {
+    let (state, detail) = judge(&variant(|e| e.last_exit = Some(ExitClass::OwnerStopped)));
+
+    assert_eq!(state, HealthState::Degraded);
+    assert_eq!(detail, "上次 headless 运行在 owner 关停时被停止");
 }
 
 #[test]
@@ -196,6 +205,7 @@ fn 三组标签取值固定且不含路径邮箱形状或控制字符() {
         (ExitClass::NonZero.label(), "以非零退出码结束"),
         (ExitClass::Signal.label(), "被信号终止"),
         (ExitClass::DeadlineExceeded.label(), "超过时限被停止"),
+        (ExitClass::OwnerStopped.label(), "在 owner 关停时被停止"),
         (ExitClass::Unconfirmed.label(), "退出结果未确认"),
         (RecoveryState::Idle.label(), "空闲"),
         (

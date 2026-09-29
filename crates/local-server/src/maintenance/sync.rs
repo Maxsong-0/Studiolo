@@ -1,10 +1,11 @@
 //! Bridge 平面私有存储的显式初始化与排除残留清除（T-132 P1，ADR-025 D8／D10）。两个命令都只在
 //! 本机 OS 权限加既有 Broker 独占租约下运行（`studiolo-human` 在跑就拿不到租约，`Inputs::open`
 //! 即拒绝——这就是「只在静止窗口内」的落实）。`sync-init` 任一项已存在即拒绝、不修复、不覆盖；
-//! `sync-purge-residue` 先整棵核验再删除，遇到链接、非常规对象或超预算时一个字节都不动。本文件是
+//! `sync-purge-residue` 先整棵核验再删除，遇到链接、非常规对象或超预算时一个字节都不动；删除前后
+//! 各在权威审计账本记一条 `sync.purge-residue`（Intent／Outcome，`sync_audit.rs`）。本文件是
 //! maintenance 里唯一做真实目录创建与删除的地方：`bridge/` 一处 `mkdir 0700`，其余只经 FD 相对调用。
 
-use super::{MaintenanceError, inputs::Inputs, options::Options, workflow::guard};
+use super::{MaintenanceError, inputs::Inputs, options::Options, sync_audit, workflow::guard};
 use crate::sync_plane::{
     BRIDGE_DIR, bridge_binding, bridge_limits,
     mirror::stage::{STAGE_DIR, StageStore},
@@ -77,7 +78,10 @@ pub(super) fn init(
         "note":"四项私有存储均为首次建立；任一项已存在时本命令整体拒绝，不修复、不覆盖。"}))
 }
 
-/// 清除 `<owner_view_root>/<folder>` 的残留：只对「上次核验排除里有、当前审批里没有」的文件夹生效。
+/// 清除 `<owner_view_root>/<folder>` 的残留：只对「上次核验排除里有、当前审批里没有、headless
+/// 最近一次核对仍排除」的文件夹生效（安全顺序见 `deploy/sync-bridge/README.md` 第 8 节）。
+/// 顺序：前置 → 核验趟 → 确认 → Intent 审计（账本不可用即拒绝、不删）→ 复核 → 删除趟 →
+/// Outcome 审计（删除趟出错也先记 `applied=false` 再返回错误）。
 pub(super) fn purge_residue(
     inputs: &Inputs,
     options: &Options,
@@ -97,6 +101,10 @@ pub(super) fn purge_residue(
     if !listed(&state.state().verified_excluded) || listed(approved.excluded_folders()) {
         return Err(MaintenanceError::SyncResidue);
     }
+    // headless 已不再排除它：残留一清、下一次 RunOnce 就可能把镜像内容当新内容上传，先恢复排除。
+    if !listed(&state.state().headless_excluded) {
+        return Err(MaintenanceError::SyncResidueHeadless);
+    }
     guard(inputs, check)?;
     // 先整棵核验并计数：有链接、非常规对象或超预算就一个都不删。
     let (parent, name) = locate(roots.mirror_view_root(), folder)?;
@@ -108,9 +116,13 @@ pub(super) fn purge_residue(
         "sync-purge-residue",
     )?;
     guard(inputs, check)?;
+    let ledger = inputs.audit.as_deref().ok_or(MaintenanceError::Audit)?;
+    let event = sync_audit::intent(ledger, folder, &planned)?;
     revalidate(&approved)?;
     let mut removed = Counts::default();
-    sweep(&parent, &name, 0, &mut removed, true)?;
+    let swept = sweep(&parent, &name, 0, &mut removed, true);
+    sync_audit::outcome(ledger, &event, folder, &removed, swept.is_ok())?;
+    swept?;
     guard(inputs, check)?;
     Ok(json!({"command":"sync-purge-residue","folder":folder,
         "removed_files":removed.files,"removed_directories":removed.directories}))

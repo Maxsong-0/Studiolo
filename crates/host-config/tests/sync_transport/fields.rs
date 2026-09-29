@@ -99,17 +99,38 @@ fn manual_quota_must_be_a_consistent_positive_record() {
 }
 
 #[test]
-fn device_name_must_be_a_bounded_non_blank_line() {
+fn device_name_must_fit_a_conflict_copy_name() {
     let fixture = Fixture::new();
-    let overlong = "n".repeat(257);
-    for name in ["", "   ", "\t", "studiolo\nmirror", overlong.as_str()] {
+    let overlong = "n".repeat(65);
+    let wide = "镜".repeat(22);
+    let rejected = [
+        "",
+        "   ",
+        "\t",
+        "studiolo\nmirror",
+        overlong.as_str(),
+        // 按字节计：22 个汉字是 66 字节。
+        wide.as_str(),
+        "studiolo (mirror)",
+        "studiolo)",
+        "studiolo/mirror",
+        // 与 Studiolo 自己的副本设备名同名或只差大小写。
+        "studiolo-canonical",
+        "Studiolo-Canonical",
+    ];
+    for name in rejected {
         let mut value = fixture.approval();
         value["device_name"] = json!(name);
         assert_eq!(fixture.parse(&value).err(), Some(ConfigError), "{name:?}");
     }
-    let mut longest = fixture.approval();
-    longest["device_name"] = json!("n".repeat(256));
-    assert!(fixture.parse(&longest).is_ok());
+    // 上限 64 字节：64 个 ASCII、21 个汉字都可以；设备名可以带空格（副本名解析允许）。
+    let longest = "n".repeat(64);
+    let widest = "镜".repeat(21);
+    for name in [longest.as_str(), widest.as_str(), "studiolo 169 mirror"] {
+        let mut value = fixture.approval();
+        value["device_name"] = json!(name);
+        assert!(fixture.parse(&value).is_ok(), "{name:?}");
+    }
 }
 
 #[test]

@@ -1,8 +1,7 @@
-//! 观察证据的纯投影：`Revision` 摘要表、范围选择投影、路径类别与批准用证据；无 IO、无时钟。
+//! 观察证据的纯投影：`Revision` 与 Bridge 摘要的互换、范围选择投影、路径类别与批准用证据；无 IO、无时钟。
 //!
-//! `Revision` 没有字节访问器，Bridge 侧的 `FileVersion::revision` 统一取
-//! `sha256(revision.to_hex())`（ADR-025 待记录）；原 `Revision` 记在 [`RevisionTable`] 里，
-//! 条件写／条件删除时按摘要还原。
+//! Bridge 侧的 `FileVersion::revision` 直接承载 `Revision` 的 32 字节原值（ADR-025 2026-09-26 补充）：
+//! 条件写／条件删除的前置在任何一轮都能按证据还原，重开核对不再依赖「观察它的那一轮」。
 
 use super::super::PlaneError;
 use std::collections::BTreeMap;
@@ -14,31 +13,16 @@ use studiolo_host_config::{
 use studiolo_sync_bridge::{Baseline, Digest, Inventory, Presence, Side};
 use studiolo_vault_broker::{SyncReadRule, SyncReadSelection};
 
-/// 本轮观察到的 `Revision`，按 Bridge 侧摘要索引；条件写时用它还原原 `Revision`。
-#[derive(Default)]
-pub struct RevisionTable {
-    known: BTreeMap<Digest, Revision>,
-}
-
-impl RevisionTable {
-    /// 登记一个观察到的 `Revision`，返回它在 Bridge 侧的摘要。
-    pub fn remember(&mut self, revision: Revision) -> Digest {
-        let digest = revision_digest(revision);
-        self.known.insert(digest, revision);
-        digest
-    }
-
-    /// 按 Bridge 侧摘要还原原 `Revision`；没观察过的版本返回 `None`。
-    #[must_use]
-    pub fn restore(&self, digest: &Digest) -> Option<Revision> {
-        self.known.get(digest).copied()
-    }
-}
-
-/// `Revision` 在 Bridge 证据里的固定投影：`sha256(revision.to_hex())`。
+/// `Revision` 在 Bridge 证据里的固定投影：它的 32 字节原值。
 #[must_use]
 pub fn revision_digest(revision: Revision) -> Digest {
-    sha256(revision.to_hex().as_bytes())
+    revision.to_bytes()
+}
+
+/// 从 Bridge 证据里的摘要还原原 `Revision`；与 [`revision_digest`] 互逆。
+#[must_use]
+pub fn revision_from_digest(digest: &Digest) -> Revision {
+    Revision::from_bytes(*digest)
 }
 
 /// 域内通用 SHA-256。

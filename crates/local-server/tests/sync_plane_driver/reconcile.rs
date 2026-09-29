@@ -62,6 +62,18 @@ fn not_attempted_is_no_effect_settles_without_baseline_and_is_proposed_again() {
         replay_outcome(SeamVerdict::NotAttempted, true, KEY),
         no_effect
     );
+    // 镜像源已变或读不出：首次执行时请求没发出去＝确定未安装；重开核对时原请求重建不出、
+    // 原键下可能早已安装，写者接得上也只能保持未知（评审 2026-09-28 P1-1）。
+    assert_eq!(
+        first_attempt_outcome(SeamVerdict::SourceUnavailable, KEY),
+        no_effect
+    );
+    for attached in [false, true] {
+        assert_eq!(
+            replay_outcome(SeamVerdict::SourceUnavailable, attached, KEY),
+            JobOutcome::Unknown
+        );
+    }
 
     let mut store = store();
     let observed = [("notes/a.md", Presence::Missing, present(9))];

@@ -1,7 +1,7 @@
 //! 行为契约：显式启用的审批产出封闭能力，并如实报告被批准的值。
 
 use super::fixture::Fixture;
-use studiolo_host_config::sync_transport::{ManualQuota, TransportSyncMode};
+use studiolo_host_config::sync_transport::{ManualQuota, SyncTransportApproval, TransportSyncMode};
 
 #[test]
 fn explicit_enabled_approval_yields_a_closed_capability_with_pinned_roots_and_digest() {
@@ -118,12 +118,44 @@ fn approved_transport_reports_view_and_plane_roots_and_the_new_approved_values()
 }
 
 #[test]
-fn approval_digest_changes_when_any_approved_value_changes() {
+fn approval_digest_covers_transport_fields_but_not_plane_fields() {
     let fixture = Fixture::new();
     let first = fixture.parse(&fixture.approval()).unwrap().digest();
-    let mut other = fixture.approval();
-    other["budget"]["pids_max"] = serde_json::json!(65);
-    let second = fixture.parse(&other).unwrap().digest();
-
-    assert_ne!(first, second);
+    // 传输安全字段：根、运行时、后端、预算任一变化，摘要都变。
+    let transport: [(&str, &str, serde_json::Value); 4] = [
+        ("budget", "pids_max", serde_json::json!(65)),
+        ("backend", "payload_uid", serde_json::json!(4242)),
+        (
+            "runtime",
+            "closure_digest",
+            serde_json::json!("2".repeat(64)),
+        ),
+        (
+            "backend",
+            "service_unit",
+            serde_json::json!("other-launcher.service"),
+        ),
+    ];
+    for (section, key, value) in transport {
+        let mut other = fixture.approval();
+        other[section][key] = value;
+        let second = fixture.parse(&other).unwrap().digest();
+        assert_ne!(first, second, "{section}.{key}");
+    }
+    // 平面字段与排版：设备名、模式、排除项、人工配额、键序与空白都不改变摘要，改后重启即生效。
+    let mut plane = fixture.approval();
+    plane["device_name"] = serde_json::json!("studiolo-other");
+    plane["headless_mode"] = serde_json::json!("bidirectional");
+    plane["excluded_folders"] = serde_json::json!(["Archive"]);
+    plane["manual_quota"] = serde_json::json!({
+        "account_limit_bytes": 10_u64 << 30,
+        "used_bytes_manual": 1_u64 << 30,
+        "recorded_at_unix": 1_790_000_000_i64,
+    });
+    assert_eq!(fixture.parse(&plane).unwrap().digest(), first);
+    let pretty = serde_json::to_vec_pretty(&fixture.approval()).unwrap();
+    assert_eq!(
+        SyncTransportApproval::parse(&pretty).unwrap().digest(),
+        first
+    );
 }

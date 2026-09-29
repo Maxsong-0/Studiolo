@@ -2,14 +2,16 @@
 
 use super::{BridgeHealthProbe, OWNER_LABEL, PlaneHealth};
 use crate::sync_plane::PlaneError;
-use crate::sync_plane::driver::RoundOutcome;
+use crate::sync_plane::driver::{HeadlessRun, RoundOutcome};
 use studiolo_host_config::sync_transport::ManualQuota;
 use studiolo_observability::health::{
     BridgeEvidence, ExitClass, HealthState, Instant, ModeLabel, OwnerLiveness, RecoveryState,
     ResidueGuard, bridge_section,
 };
 use studiolo_observability::quota::SyncUsage;
-use studiolo_sync_transport::owned_run::SyncMode;
+use studiolo_sync_transport::owned_run::{
+    ExitObservation, Quiescence, RunId, RunObservation, RunPhase, StopReason, SyncMode,
+};
 
 const QUOTA: ManualQuota = ManualQuota {
     account_limit_bytes: 10_000,
@@ -39,12 +41,23 @@ fn blocked(sequence: u64) -> Result<RoundOutcome, PlaneError> {
     Ok(RoundOutcome::Blocked { sequence })
 }
 
+/// 一次已闭合、静止已证明的 headless 运行；退出码 0 即 clean（与真实分类同一判据）。
+fn run(exit: ExitObservation, stop_reason: Option<StopReason>) -> HeadlessRun {
+    let observation = RunObservation {
+        phase: RunPhase::Closed,
+        quiescence: Quiescence::Confirmed,
+        exit,
+        stop_reason,
+    };
+    HeadlessRun::from_terminal(RunId::from_bytes([7; 16]), observation)
+}
+
 /// 一整轮干净走完之前驱动器会做的四次回填。
 fn fully_reported(health: &PlaneHealth, sequence: u64) {
     health.record_mode(SyncMode::MirrorRemote);
-    health.record_headless(true, false, false);
+    health.record_headless(&run(ExitObservation::Code(0), None), false);
     health.record_usage(usage());
-    health.record_execution(sequence, 0, 0, false);
+    health.record_execution(sequence, 0, false);
 }
 
 /// 先干净闭合一批，让所有字段都处于"正常"，再看后续事件能不能把绿压下去。
@@ -136,6 +149,7 @@ fn 没有专属字段的失败也靠静止票据落到未知而不是保持正�
         PlaneError::Audit,
         PlaneError::Storage,
         PlaneError::Unavailable,
+        PlaneError::Stopping,
     ];
     for error in errors {
         let health = after_clean_batch();
@@ -163,7 +177,7 @@ fn 终态未知的批次至少记一条且执行段报了数就以报的为准()
     health.record_round(10_300, &unknown(2));
     assert_eq!(health.bridge().unknown_jobs, Some(1));
 
-    health.record_execution(3, 4, 0, false);
+    health.record_execution(3, 4, false);
     health.record_round(10_600, &unknown(3));
     assert_eq!(health.bridge().unknown_jobs, Some(4));
 
@@ -182,7 +196,8 @@ fn 冻结的批次若执行段没报本批就不敢说熔断未生效() {
     assert_eq!(health.bridge().fused, None);
     assert_eq!(state(&health), HealthState::Unknown);
 
-    health.record_execution(3, 0, 2, true);
+    health.record_conflicts(2);
+    health.record_execution(3, 0, true);
     health.record_round(10_600, &blocked(3));
 
     assert_eq!(health.bridge().fused, Some(true));
@@ -224,37 +239,49 @@ fn 熔断与残留在下一批干净闭合前一直压着第六节() {
 }
 
 #[test]
-fn headless回收结果按三个布尔保守分类且强制恢复运行记为协议进行中() {
+fn headless回收结果按退出码与停止原因分类且强制恢复运行记为协议进行中() {
+    use ExitObservation::{Code, NotObserved, Signal};
     let health = PlaneHealth::new(None);
+    let owner = Some(StopReason::OwnerRequested);
+    let deadline = Some(StopReason::DeadlineExceeded);
     let cases = [
-        ((true, false, false), ExitClass::Clean, RecoveryState::Idle),
-        (
-            (false, true, false),
-            ExitClass::NonZero,
-            RecoveryState::Idle,
-        ),
-        (
-            (false, false, false),
-            ExitClass::Unconfirmed,
-            RecoveryState::Idle,
-        ),
-        (
-            (true, false, true),
-            ExitClass::Clean,
-            RecoveryState::ForcedMirrorRemote,
-        ),
+        (run(Code(0), None), ExitClass::Clean),
+        (run(Code(0), owner), ExitClass::OwnerStopped),
+        (run(Signal(15), owner), ExitClass::OwnerStopped),
+        (run(Signal(9), deadline), ExitClass::DeadlineExceeded),
+        (run(Signal(9), None), ExitClass::Signal),
+        (run(Code(1), None), ExitClass::NonZero),
+        (run(Code(2), None), ExitClass::NonZero),
+        (run(NotObserved, None), ExitClass::Unconfirmed),
     ];
-    for ((clean, rc_one, forced), exit, recovery) in cases {
-        health.record_headless(clean, rc_one, forced);
-
+    for (headless, exit) in cases {
+        health.record_headless(&headless, false);
         let evidence = health.bridge();
-        assert_eq!(evidence.last_exit, Some(exit), "{clean} {rc_one} {forced}");
-        assert_eq!(
-            evidence.recovery,
-            Some(recovery),
-            "{clean} {rc_one} {forced}"
-        );
+        assert_eq!(evidence.last_exit, Some(exit), "{headless:?}");
+        assert_eq!(evidence.recovery, Some(RecoveryState::Idle));
     }
+    // 退出码 0 但静止未证明（不 clean）：不冒称干净，也不冒称信号或超时；强制恢复运行记为协议进行中。
+    let mut unconfirmed = run(Code(0), None);
+    unconfirmed.clean = false;
+    health.record_headless(&unconfirmed, true);
+    let evidence = health.bridge();
+    assert_eq!(evidence.last_exit, Some(ExitClass::Unconfirmed));
+    assert_eq!(evidence.recovery, Some(RecoveryState::ForcedMirrorRemote));
+}
+
+#[test]
+fn 冲突副本数是最近一次观察数加本进程保全数且重启后观察数仍在() {
+    let health = PlaneHealth::new(None);
+    health.record_observed_copies(2);
+    health.record_conflicts(1);
+    health.record_execution(1, 0, false);
+    assert_eq!(health.bridge().conflict_copies, Some(3));
+    // 重启：本进程保全数从 0 起，两侧已有的副本仍由观察数兜住；观察数每次覆盖、不累计。
+    let restarted = PlaneHealth::new(None);
+    restarted.record_observed_copies(2);
+    restarted.record_observed_copies(2);
+    restarted.record_execution(2, 0, false);
+    assert_eq!(restarted.bridge().conflict_copies, Some(2));
 }
 
 #[test]

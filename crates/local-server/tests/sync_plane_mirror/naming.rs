@@ -202,3 +202,84 @@ fn utc_minute_stamp_formats_utc() {
     assert_eq!(utc_minute_stamp(-1), None);
     assert_eq!(utc_minute_stamp(i64::MAX), None);
 }
+
+#[test]
+fn conflict_copy_count_recognizes_both_device_names_once_per_path() {
+    use std::collections::BTreeMap;
+    use studiolo_local_server::sync_plane::driver::observe::conflict_copy_count;
+    use studiolo_sync_bridge::{Binding, FileVersion, Inventory, Presence, Side};
+
+    let binding = Binding {
+        link_id: [1; 16],
+        canonical_vault: [2; 16],
+        remote_vault: [3; 16],
+        canonical_root_token: [4; 32],
+        mirror_root_token: [5; 32],
+        scope_hash: [6; 32],
+        scope_epoch: 1,
+    };
+    let present = || {
+        Presence::Present(FileVersion {
+            revision: [7; 32],
+            sha256: [7; 32],
+            bytes: 1,
+        })
+    };
+    let inventory = |side: Side, entries: BTreeMap<_, _>| Inventory {
+        binding: binding.clone(),
+        side,
+        sequence: 1,
+        complete: true,
+        entries,
+    };
+    let headless_copy = path("n (Conflicted copy iPhone 202609230332).md");
+    let canonical_copy = path("n (Conflicted copy studiolo-canonical 202609230332).md");
+    let canonical = inventory(
+        Side::Canonical,
+        BTreeMap::from([
+            (path("n.md"), present()),
+            (headless_copy.clone(), present()),
+            (
+                path("x (Conflicted copy d 202609230332).md"),
+                Presence::Missing,
+            ),
+        ]),
+    );
+    let mirror = inventory(
+        Side::Mirror,
+        BTreeMap::from([
+            (headless_copy, present()),
+            (canonical_copy, present()),
+            (
+                path("x (Conflicted copy d 202609230332).md"),
+                Presence::Missing,
+            ),
+        ]),
+    );
+    // headless 副本两侧都有只数一次；studiolo-canonical 副本只在镜像侧；显式缺失的不数；原文件不数。
+    assert_eq!(conflict_copy_count(&canonical, &mirror), 2);
+    assert_eq!(conflict_copy_count(&mirror, &canonical), 2);
+}
+
+#[test]
+fn copy_names_longer_than_name_max_are_shortened_with_a_digest() {
+    // 69 个汉字的标题本身合法（207 字节），加上副本标记后末段超过 255 字节（评审 P1-3）。
+    let title = "标".repeat(69);
+    let original = path(&format!("项目/{title}.md"));
+    let copy = copy_path(CONFLICTS_DIR, &original, CANONICAL_DEVICE, STAMP).expect("截短后放得下");
+    let last = copy.as_str().rsplit('/').next().unwrap();
+    assert!(last.len() <= 255, "{}", last.len());
+    assert!(last.ends_with(&format!(" (Conflicted copy {CANONICAL_DEVICE} {STAMP}).md")));
+    assert!(last.contains('~'));
+    // 同名前缀的两个长名不会撞成同一个副本名；同一原名每次结果相同。
+    let other = path(&format!("项目/{title}乙.md"));
+    let other_copy = copy_path(CONFLICTS_DIR, &other, CANONICAL_DEVICE, STAMP).unwrap();
+    assert_ne!(copy, other_copy);
+    assert_eq!(
+        copy_path(CONFLICTS_DIR, &original, CANONICAL_DEVICE, STAMP),
+        Some(copy)
+    );
+    // 短名照旧不截。
+    let short = copy_path(CONFLICTS_DIR, &path("项目/短.md"), CANONICAL_DEVICE, STAMP).unwrap();
+    assert!(!short.as_str().contains('~'));
+}

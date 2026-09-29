@@ -1,6 +1,6 @@
 //! Bridge 驱动平面（T-132 P1，ADR-025 D8／D9）在 local-server 里的真实 IO 只许在三个固定文件：
 //! `sync_plane/mirror/stage.rs`（外 stage：objects/<sha256>、index.json、接收临时件）、
-//! `sync_plane/recovery.rs`（plane-state.json、plane.lock、残留守卫）与 `sync_plane/mirror.rs`
+//! `sync_plane/recovery.rs`（plane-state.json、plane.lock；残留守卫的编排在 `recovery/residue.rs`，无 IO 记号）与 `sync_plane/mirror.rs`
 //! （视图观察只读；安装只许 stage 对象 renameat 进视图；删除前保全）。固定名常量不在场就拿不到
 //! 豁免；rustix 调用按 W4 任务书第 2 节的固定形态精确计数，导入表只能含类型与登记过的调用名。
 
@@ -51,12 +51,13 @@ pub(super) fn remainder(crate_name: &str, path: &Path, source: &str) -> String {
         );
     }
     if path.ends_with("crates/local-server/src/sync_plane/recovery.rs") {
-        // B 轮 W4 落地形态：directory_path 从 CWD 逐段 openat＋fstat；PlaneStateStore::open 一次 flock；
+        // B 轮 W4 落地形态：directory_path 从 CWD 逐段 openat＋fstat；PlaneStateStore::open 一次 flock、
+        // 租约守卫 Lease 的 Drop 一次 flock(Unlock)（并发 fork 继承描述符时立即结束租约）；
         // 建文件／整读／原子替换全部借 stage.rs 的描述符助手，本文件不再有 renameat／fsync。
         return plane_remainder(
             source,
             &["PLANE_STATE_FILE", "PLANE_STATE_STAGE_FILE", "PLANE_LOCK"],
-            &[("openat(", 1), ("fstat(", 1), ("flock(", 1)],
+            &[("openat(", 1), ("fstat(", 1), ("flock(", 2)],
         );
     }
     if path.ends_with("crates/local-server/src/sync_plane/mirror.rs") {
@@ -165,6 +166,7 @@ mod tests {
             "pub fn open(plane_root: &Path) -> Result<Self, PlaneError> {",
             "let (lock, _) = stage::create_at(root.as_fd(), PLANE_LOCK, false)?;",
             "flock(&lock, FlockOperation::NonBlockingLockExclusive)?;",
+            "impl Drop for Lease { fn drop(&mut self) { let _ = flock(&self.0, FlockOperation::Unlock); } }",
             "let state = stage::read_fully(root.as_fd(), PLANE_STATE_FILE)?; stage::replace_file(root.as_fd(), PLANE_STATE_STAGE_FILE, PLANE_STATE_FILE, &bytes)?;",
         ]
         .join("\n")

@@ -2,8 +2,9 @@
 //!
 //! 本文件只累积事实，不读磁盘；`startup/health_input.rs` 经 `BridgeHealthProbe` 取快照。
 //! 每个回填方法只写它能证明的字段：驱动器在轮内调 `record_mode`／`record_headless`／
-//! `record_execution`／`record_usage`，轮末由 `SyncPlane::drive_until` 调 `record_round` 收口；
-//! 没被任何方法证明过的字段保持 `None`，第六节因此判未知而不是判正常。
+//! `record_observed_copies`／`record_conflicts`／`record_execution`／`record_usage`，轮末由
+//! `SyncPlane::drive_until` 调 `record_round` 收口；没被任何方法证明过的字段保持 `None`，
+//! 第六节因此判未知而不是判正常。
 
 use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -13,10 +14,10 @@ use studiolo_observability::health::{
     RecoveryState, ResidueGuard,
 };
 use studiolo_observability::quota::SyncUsage;
-use studiolo_sync_transport::owned_run::SyncMode;
+use studiolo_sync_transport::owned_run::{ExitObservation, StopReason, SyncMode};
 
 use super::PlaneError;
-use super::driver::RoundOutcome;
+use super::driver::{HeadlessRun, RoundOutcome};
 
 /// 健康页上传输 owner 的角色标签。
 pub const OWNER_LABEL: &str = "sync-transport";
@@ -46,8 +47,10 @@ struct Inner {
     usage: Option<SyncUsage>,
     /// 最近一次 `record_execution` 报的计划序号；轮末据此判断本轮有没有执行段回填。
     executed_sequence: Option<u64>,
-    /// 本进程启动以来生成的冲突副本累计数。
+    /// 本进程启动以来 Bridge 自己保全进 `ops/bridge-conflicts/` 的冲突累计数。
     conflicts_total: u64,
+    /// 最近一次完整观察里两侧命名为冲突副本的路径数；不累计，每次观察覆盖，重启后下一次观察即恢复。
+    observed_copies: u64,
 }
 
 impl PlaneHealth {
@@ -119,42 +122,55 @@ impl PlaneHealth {
                 evidence.unknown_jobs = Some(evidence.unknown_jobs.unwrap_or(0).max(1));
             }
             Err(PlaneError::ConfigMismatch) => evidence.config_matches = Some(false),
+            // 关停停点结束的轮次没有专属字段：本轮没取到新票据，静止证据照上面置为过期。
             Err(
                 PlaneError::Configuration
                 | PlaneError::Quiescence
                 | PlaneError::Observation
                 | PlaneError::Audit
                 | PlaneError::Storage
-                | PlaneError::Unavailable,
+                | PlaneError::Unavailable
+                | PlaneError::Stopping,
             ) => {}
         }
     }
 
     /// 执行段回填（驱动器在 `reserve_and_execute` 之后调）：本批序号、终态未知的动作数、
-    /// 当前 `ops/bridge-conflicts/` 下的冲突副本总数、删除熔断是否生效。
-    pub fn record_execution(&self, sequence: u64, unknown: u64, conflicts: u64, fused: bool) {
+    /// 删除熔断是否生效；冲突副本数＝最近一次完整观察里两侧命名为冲突副本的路径数
+    /// ＋本进程启动以来 Bridge 自己保全进 `ops/bridge-conflicts/` 的冲突数（饱和加）。
+    pub fn record_execution(&self, sequence: u64, unknown: u64, fused: bool) {
         if let Ok(mut inner) = self.inner.lock() {
+            let copies = inner.conflicts_total.saturating_add(inner.observed_copies);
             inner.executed_sequence = Some(sequence);
             inner.evidence.unknown_jobs = Some(unknown);
-            inner.evidence.conflict_copies = Some(conflicts);
+            inner.evidence.conflict_copies = Some(copies);
             inner.evidence.fused = Some(fused);
         }
     }
 
-    /// headless 一次运行回收后回填（驱动器在 `run_headless` 返回后调）。
+    /// headless 一次运行回收后回填（驱动器在 `headless::run` 返回后调）。
     ///
-    /// 只有三个布尔，分类因此保守：`clean`（退出码 0 且静止已证明）→ 干净退出；
-    /// `rc_one`（退出码恰为 1，残留锁）→ 非零退出；两者都不是 → 退出结果未确认，
-    /// 不冒称信号或超时。`forced_recovery` 为真即本次是 D9 的强制 `mirror-remote` 恢复运行。
-    pub fn record_headless(&self, clean: bool, rc_one: bool, forced_recovery: bool) {
+    /// 按实际观察分类，不解析 stderr：`clean`（退出码 0 且静止已证明）→ 干净退出；owner 关停时
+    /// 被 `request_stop` 停下 → owner 关停时停止；超时限被停 → 超过时限；被信号终止 → 信号；
+    /// 非零退出码 → 非零退出；其余（没取得等待结果、退出 0 但静止未证明）→ 退出结果未确认。
+    /// `forced_recovery` 为真即本次是 D9 的强制 `mirror-remote` 恢复运行。
+    pub fn record_headless(&self, run: &HeadlessRun, forced_recovery: bool) {
+        let observation = run.observation;
+        let exit = if run.clean {
+            ExitClass::Clean
+        } else if observation.stop_reason == Some(StopReason::OwnerRequested) {
+            ExitClass::OwnerStopped
+        } else if observation.stop_reason == Some(StopReason::DeadlineExceeded) {
+            ExitClass::DeadlineExceeded
+        } else {
+            match observation.exit {
+                ExitObservation::Signal(_) => ExitClass::Signal,
+                ExitObservation::Code(code) if code != 0 => ExitClass::NonZero,
+                _ => ExitClass::Unconfirmed,
+            }
+        };
         if let Ok(mut inner) = self.inner.lock() {
-            inner.evidence.last_exit = Some(if clean {
-                ExitClass::Clean
-            } else if rc_one {
-                ExitClass::NonZero
-            } else {
-                ExitClass::Unconfirmed
-            });
+            inner.evidence.last_exit = Some(exit);
             inner.evidence.recovery = Some(if forced_recovery {
                 RecoveryState::ForcedMirrorRemote
             } else {
@@ -174,15 +190,24 @@ impl PlaneHealth {
         }
     }
 
-    /// 预解决又生成了若干冲突副本（`ops/bridge-conflicts/`）；累计值只按本进程启动以来计，
-    /// 重启从 0 起——canonical 里 `ops/` 属硬排除，本平面拿不到目录总数（T-132 P5 前另立任务）。
+    /// 预解决（MirrorRemote）或双向保全（Bidirectional）又把若干冲突保全进 `ops/bridge-conflicts/`；
+    /// 累计值只按本进程启动以来计，重启从 0 起——canonical 里 `ops/` 属硬排除，本平面拿不到目录总数，
+    /// 重启后健康节靠 `record_observed_copies` 的观察数兜住两侧已有的冲突副本。
     pub fn record_conflicts(&self, added: u64) {
         if let Ok(mut inner) = self.inner.lock() {
             inner.conflicts_total = inner.conflicts_total.saturating_add(added);
         }
     }
 
-    /// 本进程启动以来由 Bridge 生成的冲突副本累计数。
+    /// 最近一次完整观察里两侧命名为冲突副本的路径数（headless 设备名与 `studiolo-canonical`
+    /// 都识别，见 `driver::observe::conflict_copy_count`）；每次观察覆盖，不累计。
+    pub fn record_observed_copies(&self, count: u64) {
+        if let Ok(mut inner) = self.inner.lock() {
+            inner.observed_copies = count;
+        }
+    }
+
+    /// 本进程启动以来由 Bridge 保全进 `ops/bridge-conflicts/` 的冲突累计数。
     #[must_use]
     pub fn conflicts_total(&self) -> u64 {
         self.inner

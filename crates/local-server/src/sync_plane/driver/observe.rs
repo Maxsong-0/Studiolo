@@ -1,12 +1,13 @@
-//! 第 8 步：两侧完整观察、经 `SyncScope::approve_union` 核准，组成冻结 `Input`。
+//! 第 8 步：两侧完整观察、经 `SyncScope::approve_union` 核准，组成冻结 `Input`；
+//! 顺带数出两侧命名为冲突副本的路径（P2 硬要求 ⑦），供健康节「冲突副本」计数。
 
-use super::super::PlaneError;
 use super::super::witness::{PlaneWitness, WitnessContext};
+use super::super::{PlaneError, naming};
 use super::content::RoundContext;
 use super::evidence::max_object_bytes;
 use std::collections::BTreeSet;
 use studiolo_observability::quota::SyncUsage;
-use studiolo_sync_bridge::{ApprovedScope, Digest, Input, Inventory, Limits};
+use studiolo_sync_bridge::{ApprovedScope, Digest, Input, Inventory, Limits, Presence};
 
 /// 一次观察的全部产物；`execute` 用它接着同一实例标识与观察序号继续。
 pub struct Observed {
@@ -44,7 +45,7 @@ pub fn observe_both(context: &RoundContext<'_>) -> Result<Observed, PlaneError> 
     let mut witness = PlaneWitness::new(
         plane,
         context.view.clone(),
-        context.revisions,
+        context.ticket,
         WitnessContext {
             binding: binding.clone(),
             approved: ApprovedScope {
@@ -64,6 +65,9 @@ pub fn observe_both(context: &RoundContext<'_>) -> Result<Observed, PlaneError> 
     let (canonical, mirror, usage) = witness.observe_pair(&required)?;
     let approved = witness.approve(&canonical, &mirror)?;
     plane.health.record_usage(usage);
+    plane
+        .health
+        .record_observed_copies(conflict_copy_count(&canonical, &mirror));
     let (next_canonical, next_mirror) = witness.next_sequences();
     let input = Input {
         scope: approved,
@@ -84,6 +88,24 @@ pub fn observe_both(context: &RoundContext<'_>) -> Result<Observed, PlaneError> 
         next_canonical,
         next_mirror,
     })
+}
+
+/// 两侧完整观察里命名为冲突副本的路径数：headless（审批设备名或别的设备）与 `studiolo-canonical`
+/// 两种命名都按 `naming::parse_copy` 识别；只数至少一侧存在的路径，两侧都有的只数一次。
+#[must_use]
+pub fn conflict_copy_count(canonical: &Inventory, mirror: &Inventory) -> u64 {
+    let present: BTreeSet<_> = canonical
+        .entries
+        .iter()
+        .chain(mirror.entries.iter())
+        .filter(|(_, presence)| matches!(presence, Presence::Present(_)))
+        .map(|(path, _)| path)
+        .collect();
+    let copies = present
+        .into_iter()
+        .filter(|path| naming::parse_copy(path).is_some())
+        .count();
+    u64::try_from(copies).unwrap_or(u64::MAX)
 }
 
 /// 本链冻结的规划预算：保守删除阈值，字节上限取范围内最大 `max_bytes`。

@@ -1,7 +1,7 @@
 //! 双向 Bridge 驱动平面（T-132 P1，ADR-025 D1）：装进 `studiolo-human` 进程的新平面。
 //!
 //! 一轮驱动 = InspectConfig → 守卫 → RunOnce（经 `SyncTransportOwner`）→ 静止 → 观察两侧 →
-//! 规划 → 预留 → 逐动作执行 → 闭合 → 退休 → 保留期回收；顺序与失败即停点见
+//! 规划（双向冲突先保全）→ 预留 → 逐动作执行 → 闭合 → 退休 → 保留期回收；顺序与失败即停点见
 //! `docs/m2/sync-plane-design.md` 第 2 节。**默认关闭**：组合根没有 `--sync-transport`
 //! 或私有配置缺 `sync_scope` 时本平面根本不被构造。
 //!
@@ -22,6 +22,7 @@ use recovery::PlaneStateStore;
 use sha2::{Digest, Sha256};
 use std::{
     path::PathBuf,
+    sync::atomic::{AtomicBool, Ordering},
     sync::{Arc, Mutex},
     time::Duration,
 };
@@ -85,6 +86,9 @@ pub enum PlaneError {
     /// canonical 写者或镜像视图暂不可用。
     #[error("canonical 写者或镜像视图暂不可用")]
     Unavailable,
+    /// 平面正在关停：本轮在最近的安全停点结束，不再发起新的运行、观察或执行。
+    #[error("平面正在关停")]
+    Stopping,
 }
 
 /// 组合根交给平面的全部能力；每一项都已由可信启动层核验。
@@ -186,12 +190,18 @@ impl SyncPlane {
 
     /// 按固定间隔驱动，直到 `stop` 变真；每轮在阻塞线程里跑，轮内失败只记健康不退出。
     ///
+    /// 轮次进行中收到停止信号：置关停标志，再等本轮在最近的安全停点结束（`driver::run_round_with`
+    /// 的各个 `halt`），之后不再起新轮。最坏等待：headless 运行中＝一次 `request_stop(OwnerRequested)`
+    /// 到闭合（审批 `stop_grace_seconds` 加回收与审计冲刷）；执行段中＝执行器跑完本批（不打断，
+    /// 受静止票据到期约束）；其余步骤各自的一次 IO。
+    ///
     /// # Errors
     /// 只有阻塞任务被中断才返回错误；驱动轮次自身的失败进健康证据。
     pub async fn drive_until(
         self: Arc<Self>,
         mut stop: tokio::sync::watch::Receiver<bool>,
     ) -> Result<(), String> {
+        let stopping = Arc::new(AtomicBool::new(false));
         loop {
             tokio::select! {
                 _ = stop.changed() => return Ok(()),
@@ -201,13 +211,25 @@ impl SyncPlane {
                 return Ok(());
             }
             let plane = self.clone();
-            tokio::task::spawn_blocking(move || {
+            let flag = stopping.clone();
+            let mut round = tokio::task::spawn_blocking(move || {
                 let now = health::now_unix_seconds();
-                let outcome = driver::run_round(&plane, now);
+                let outcome = driver::run_round(&plane, now, &flag);
                 plane.health.record_round(now, &outcome);
-            })
-            .await
-            .map_err(|_| "Bridge 驱动轮次中断".to_owned())?;
+            });
+            let stopped = tokio::select! {
+                joined = &mut round => {
+                    joined.map_err(|_| "Bridge 驱动轮次中断".to_owned())?;
+                    false
+                }
+                _ = stop.changed() => true,
+            };
+            if stopped {
+                // 置关停标志，等本轮在最近的安全停点结束后返回，之后不再起新轮。
+                stopping.store(true, Ordering::Release);
+                round.await.map_err(|_| "Bridge 驱动轮次中断".to_owned())?;
+                return Ok(());
+            }
         }
     }
 }

@@ -144,7 +144,7 @@ impl<'scope> ApprovedTransport<'scope> {
         self.approval.parts().2
     }
 
-    /// 批准配置摘要；进入持久绑定，用于拒绝换配置后的旧运行槽。
+    /// 批准配置摘要（只覆盖传输安全相关字段）；进入持久绑定，用于拒绝换了根、运行时、后端或预算后的旧运行槽。
     #[must_use]
     pub fn approval_digest(&self) -> [u8; 32] {
         self.approval.digest()

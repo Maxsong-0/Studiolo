@@ -8,6 +8,7 @@ mod presentation;
 mod rename;
 mod state;
 mod sync;
+mod sync_audit;
 mod terminal;
 mod workflow;
 
@@ -112,6 +113,11 @@ pub enum MaintenanceError {
     /// 指定文件夹不是当前可清除的排除残留。
     #[error("指定文件夹不在上次核验的排除集合内，或仍在当前审批的排除清单里；未删除任何东西")]
     SyncResidue,
+    /// headless 最近一次核对已不再排除该文件夹：此时清残留，下一次 RunOnce 可能把镜像内容当新内容上传。
+    #[error(
+        "headless 最近一次核对已不再排除该文件夹，先在 headless 侧恢复排除、让 human 跑一轮核对后再清残留；未删除任何东西"
+    )]
+    SyncResidueHeadless,
     /// 残留里有链接、非常规对象，或超出遍历预算。
     #[error("镜像残留含链接、非常规对象或超出遍历预算；未删除任何东西")]
     SyncResidueUnsafe,

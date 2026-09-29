@@ -7,6 +7,9 @@ mod document;
 mod types;
 
 pub use capability::ApprovedTransport;
+/// Studiolo 自己生成冲突／回滚副本时用的固定设备名（local-server `sync_plane::naming` 取这里的母本）；
+/// 审批的 `device_name` 不许与它大小写不敏感地相同，否则两侧副本同名或撞名。
+pub const CANONICAL_CONFLICT_DEVICE: &str = "studiolo-canonical";
 pub use document::{SyncTransportApproval, excluded_folder_acceptable};
 pub use types::{
     ManualQuota, TransportBackend, TransportBudget, TransportRoots, TransportRuntime,

@@ -1,15 +1,14 @@
 //! 可信观察 adapter：canonical 完整观察经 `coordinator::sync_bridge` 接缝取得，
 //! 镜像观察经 `mirror::observe`；两者合成执行器要的 `ExecutionWitness`。
 //!
-//! 本文件不持有 Broker 类型、不开文件；证据投影与 `Revision` 摘要表在 `driver::evidence`。
+//! 本文件不持有 Broker 类型、不开文件；证据投影在 `driver::evidence`；镜像观察前先复验静止票据。
 
 use super::driver::evidence::{
-    RevisionTable, baseline_evidence, inventory_evidence, parse_digest, read_selection,
+    baseline_evidence, inventory_evidence, parse_digest, read_selection, revision_digest,
 };
 use super::mirror::{self, MirrorObservation, MirrorView};
-use super::{PlaneError, SyncPlane};
+use super::{PlaneError, SyncPlane, quiescence};
 use crate::coordinator::sync_bridge::BridgeSeamError;
-use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
 use studiolo_core::VaultPath;
 use studiolo_host_config::SyncObservationSelection;
@@ -20,6 +19,7 @@ use studiolo_sync_bridge::executor::{
 use studiolo_sync_bridge::{
     ActionKey, ApprovedScope, Baseline, Binding, Digest, FileVersion, Inventory, Presence, Side,
 };
+use studiolo_sync_transport::owned_run::QuiescentMirror;
 use studiolo_vault_broker::CanonicalSyncPresence;
 
 /// 见证的冻结上下文：绑定、已核准范围、原共同基线、打开实例标识与下一对观察序号。
@@ -42,7 +42,7 @@ pub struct WitnessContext {
 pub struct PlaneWitness<'a> {
     plane: &'a SyncPlane,
     view: MirrorView,
-    revisions: &'a RefCell<RevisionTable>,
+    ticket: &'a QuiescentMirror,
     context: WitnessContext,
     utf8: BTreeMap<VaultPath, bool>,
 }
@@ -53,13 +53,13 @@ impl<'a> PlaneWitness<'a> {
     pub fn new(
         plane: &'a SyncPlane,
         view: MirrorView,
-        revisions: &'a RefCell<RevisionTable>,
+        ticket: &'a QuiescentMirror,
         context: WitnessContext,
     ) -> Self {
         Self {
             plane,
             view,
-            revisions,
+            ticket,
             context,
             utf8: BTreeMap::new(),
         }
@@ -91,7 +91,6 @@ impl<'a> PlaneWitness<'a> {
         let sequence = self.context.next_canonical;
         self.context.next_canonical = sequence.checked_add(1).ok_or(PlaneError::Observation)?;
         let mut entries = BTreeMap::new();
-        let mut table = self.revisions.borrow_mut();
         for (path, presence) in observation.entries() {
             let presence = match presence {
                 CanonicalSyncPresence::Missing => {
@@ -101,7 +100,7 @@ impl<'a> PlaneWitness<'a> {
                 CanonicalSyncPresence::Present(file) => {
                     self.utf8.insert(path.clone(), file.utf8_valid);
                     Presence::Present(FileVersion {
-                        revision: table.remember(file.revision),
+                        revision: revision_digest(file.revision),
                         sha256: parse_digest(&file.identity.sha256)
                             .ok_or(PlaneError::Observation)?,
                         bytes: file.identity.bytes,
@@ -119,10 +118,10 @@ impl<'a> PlaneWitness<'a> {
         })
     }
 
-    /// 镜像侧完整观察（经视图，静止窗口内）。
+    /// 镜像侧完整观察（经视图，静止窗口内）：先复验第 7 步的静止票据再遍历。
     ///
     /// # Errors
-    /// 视图身份漂移或遍历失败返回 `Observation`。
+    /// 票据已作废返回 `Quiescence`；视图身份漂移或遍历失败返回 `Observation`。
     pub fn observe_mirror(
         &mut self,
         required: &BTreeSet<VaultPath>,
@@ -131,6 +130,7 @@ impl<'a> PlaneWitness<'a> {
         let sequence = self.context.next_mirror;
         self.context.next_mirror = sequence.checked_add(1).ok_or(PlaneError::Observation)?;
         let required: Vec<VaultPath> = required.iter().cloned().collect();
+        quiescence::verify(self.plane, self.ticket)?;
         mirror::observe(
             &self.view,
             &selection,

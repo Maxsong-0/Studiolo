@@ -3,11 +3,11 @@
 use super::fixture;
 use studiolo_local_server::sync_plane::PlaneError;
 use studiolo_local_server::sync_plane::driver::{
-    HeadlessRun, Inspection, RoundOutcome, RoundPorts,
+    HeadlessRun, Inspection, RoundOutcome, RoundPorts, headless,
 };
 use studiolo_local_server::sync_plane::recovery::PlaneState;
 use studiolo_sync_bridge::{Decision, Input, Inventory};
-use studiolo_sync_transport::owned_run::SyncMode;
+use studiolo_sync_transport::owned_run::{StopReason, SyncMode};
 
 /// 驱动器对端口的一次调用。
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -23,6 +23,7 @@ pub enum Call {
     Unresolved,
     Observe(SyncMode),
     Preresolve,
+    Preserve,
     Execute,
 }
 
@@ -32,10 +33,12 @@ pub struct FakePorts {
     pub state: PlaneState,
     /// headless 当前所处模式；`set_mode` 会改它。
     pub current_mode: SyncMode,
-    /// 排除项／文件类型是否与审批一致；不一致时 `inspect` 直接报 `ConfigMismatch`。
+    /// 文件类型等其余配置是否与审批一致；不一致时 `inspect` 直接报 `ConfigMismatch`。
     pub config_consistent: bool,
     /// 审批里的排除文件夹。
     pub excluded: Vec<String>,
+    /// headless 本地实际配置的排除文件夹；`inspect` 按真实端口同一核对顺序算 `pending_purge`。
+    pub headless_excluded: Vec<String>,
     /// 排除项守卫是否发现残留。
     pub residue: bool,
     /// RunOnce 的退出码。
@@ -46,8 +49,12 @@ pub struct FakePorts {
     pub unresolved: Option<u64>,
     /// `observe` 返回的冻结输入。
     pub input: Input,
+    /// `preserve_conflicts` 的结论。
+    pub preserve_result: Result<u64, PlaneError>,
     /// `execute` 的结论；返回 `Unknown` 时假端口会把它记成 `unresolved`。
     pub execute_result: Result<RoundOutcome, PlaneError>,
+    /// 调用数达到这个值起关停标志为真；RunOnce 恰在其中时模拟被 `request_stop(OwnerRequested)` 停下。
+    pub stop_after: Option<usize>,
     /// 下一个运行序号。
     pub next_sequence: u64,
     /// 调用序列。
@@ -57,22 +64,29 @@ pub struct FakePorts {
 }
 
 impl FakePorts {
-    /// 一切正常的脚本：模式一致、无残留、RunOnce 干净、静止可得、执行闭合。
+    /// 一切正常的脚本：模式一致、无残留、RunOnce 干净、静止可得、执行闭合；
+    /// 上一轮已记下 headless 现状（与审批同一排除集合），本轮不因它多存一次。
     pub fn healthy(current_mode: SyncMode) -> Self {
+        let excluded = vec!["private".to_owned()];
+        let mut state = fixture::first_run_state();
+        state.headless_excluded = excluded.clone();
         Self {
-            state: fixture::first_run_state(),
+            state,
             current_mode,
             config_consistent: true,
-            excluded: vec!["private".to_owned()],
+            headless_excluded: excluded.clone(),
+            excluded,
             residue: false,
             run_once_exit: 0,
             quiescent: true,
             unresolved: None,
             input: fixture::empty_input(),
+            preserve_result: Ok(0),
             execute_result: Ok(RoundOutcome::Settled {
                 sequence: 1,
                 baseline_advanced: true,
             }),
+            stop_after: None,
             next_sequence: 7,
             calls: Vec::new(),
             saved: Vec::new(),
@@ -96,10 +110,17 @@ impl RoundPorts for FakePorts {
         if !self.config_consistent {
             return Err(PlaneError::ConfigMismatch);
         }
-        Ok(Inspection {
-            mode_matches: self.current_mode == expected,
-            excluded_folders: self.excluded.clone(),
-        })
+        let current = self.current_mode;
+        let mut reported = self.headless_excluded.clone();
+        reported.sort();
+        reported.dedup();
+        let verified = self.state.verified_excluded.clone();
+        headless::classify(
+            expected,
+            &self.excluded,
+            &verified,
+            &mut |excluded, mode| mode == current && excluded == reported.as_slice(),
+        )
     }
 
     fn residue_blocked(&mut self, _: &[String], _: &[String]) -> Result<bool, PlaneError> {
@@ -120,6 +141,16 @@ impl RoundPorts for FakePorts {
 
     fn run_once(&mut self) -> Result<HeadlessRun, PlaneError> {
         self.calls.push(Call::RunOnce);
+        if self.stopping() {
+            // 轮询里见到关停标志：request_stop(OwnerRequested)。headless 对 SIGTERM 以 rc=0 退出
+            // （P2 S9a/b 实测），照样闭合回收；分类必须看停止原因而不只看退出码（评审 P2-1）。
+            let mut observation = fixture::headless(0).observation;
+            observation.stop_reason = Some(StopReason::OwnerRequested);
+            return Ok(HeadlessRun::from_terminal(
+                fixture::headless(0).run_id,
+                observation,
+            ));
+        }
         Ok(fixture::headless(self.run_once_exit))
     }
 
@@ -158,11 +189,21 @@ impl RoundPorts for FakePorts {
         Ok(false)
     }
 
+    fn preserve_conflicts(&mut self, _: &Decision) -> Result<u64, PlaneError> {
+        self.calls.push(Call::Preserve);
+        self.preserve_result
+    }
+
     fn execute(&mut self, _: Input) -> Result<RoundOutcome, PlaneError> {
         self.calls.push(Call::Execute);
         if let Ok(RoundOutcome::Unknown { sequence }) = self.execute_result {
             self.unresolved = Some(sequence);
         }
         self.execute_result
+    }
+
+    fn stopping(&mut self) -> bool {
+        self.stop_after
+            .is_some_and(|after| self.calls.len() >= after)
     }
 }

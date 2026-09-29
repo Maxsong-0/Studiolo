@@ -9,6 +9,7 @@ mod rename_legacy;
 mod rename_schema;
 mod rename_workflow;
 mod sync;
+mod sync_purge;
 mod sync_residue;
 mod terminal;
 mod terminal_subprocess;

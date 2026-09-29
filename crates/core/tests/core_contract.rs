@@ -168,3 +168,16 @@ fn protected_paths_reject_case_variant_spellings() {
         assert!(VaultPath::parse(raw).unwrap().is_protected());
     }
 }
+
+#[test]
+fn revision_bytes_roundtrip_and_match_hex() {
+    let vault = VaultUuid::new();
+    let path = VaultPath::parse("notes/a.md").unwrap();
+    let revision = Revision::compute(vault, &path, b"hello");
+
+    let bytes = revision.to_bytes();
+    assert_eq!(Revision::from_bytes(bytes), revision);
+    let hex: String = bytes.iter().map(|byte| format!("{byte:02x}")).collect();
+    assert_eq!(hex, revision.to_hex());
+    assert_ne!(Revision::from_bytes([0; 32]), revision);
+}

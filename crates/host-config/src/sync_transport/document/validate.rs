@@ -4,6 +4,7 @@ use super::{
     BackendDocument, BudgetDocument, CGROUP_ROOT, CONFIG_JSON_MAX, EXCLUDED_FOLDERS_MAX,
     ManualQuotaDocument, PINNED_VERSION, RuntimeDocument,
 };
+use crate::sync_transport::CANONICAL_CONFLICT_DEVICE;
 use crate::sync_transport::types::{
     ManualQuota, TransportBackend, TransportBudget, TransportRuntime,
 };
@@ -129,6 +130,25 @@ pub(super) fn manual_quota(document: &ManualQuotaDocument) -> Result<ManualQuota
         used_bytes_manual: document.used_bytes_manual,
         recorded_at_unix: document.recorded_at_unix,
     })
+}
+
+/// 设备名最多的字节数；64 字节同时满足 local-server `sync_plane::naming` 的 64 字符上限，
+/// 并给副本名末段的 255 字节（NAME_MAX）留出原名的空间。
+pub(super) const DEVICE_NAME_MAX_BYTES: usize = 64;
+
+/// 设备名：非空行、无控制字符、至多 [`DEVICE_NAME_MAX_BYTES`] 字节，不含 `(`、`)`、`/`，
+/// 也不与 [`CANONICAL_CONFLICT_DEVICE`] 大小写不敏感地相同。它既要逐字等于 headless 的 `deviceName`，
+/// 又要原样进冲突副本名 `<名> (Conflicted copy <设备名> <戳>).<ext>`——括号与斜杠会让副本名解析不回来，
+/// 与 Studiolo 自己的设备名同名会让两侧副本撞名。在审批层拒绝，而不是让冲突保全每轮在命名处失败。
+pub(super) fn device_name(value: &str) -> bool {
+    let folded: String = value
+        .chars()
+        .flat_map(char::to_uppercase)
+        .flat_map(char::to_lowercase)
+        .collect();
+    text_field(value, DEVICE_NAME_MAX_BYTES)
+        && !value.contains(['(', ')', '/'])
+        && folded != CANONICAL_CONFLICT_DEVICE
 }
 
 pub(super) fn text_field(value: &str, max: usize) -> bool {

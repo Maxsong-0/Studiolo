@@ -2,7 +2,9 @@
 //!
 //! 唯一被接受的证据是「同一受控子组 populated=0 且 spawn 入口已关闭」，它就是
 //! `SyncTransportOwner::quiescent` 成功返回的含义；本文件不自造证据，每次 `observe`
-//! 前都先 `verify_quiescent`，票据被作废即返回 `Unavailable`。
+//! 前都先 `verify_quiescent`，票据被作废即返回 `Unavailable`。平面自己发起的镜像读写
+//! （观察、入站搬运读、安装、核对、冲突保全、排除项守卫）都经 [`verify`] 复验同一张票据；
+//! 执行器批内对镜像侧 Delete 的删除前保全读由批首取票与逐动作 recheck 覆盖，不单独复验。
 
 use super::mirror::MirrorView;
 use super::{PlaneError, QUIESCENT_WINDOW, SyncPlane};
@@ -79,6 +81,19 @@ impl<'a> OwnerQuiescence<'a> {
     pub fn expires_at(&self) -> Instant {
         self.expires_at
     }
+}
+
+/// 每次读写镜像前的固定复验：第 7 步的票据仍有效才继续。
+///
+/// # Errors
+/// 传输槽锁不可用返回 `Unavailable`；票据已作废（新一轮 prepare、根或租约变化、owner 重开）返回 `Quiescence`。
+pub fn verify(plane: &SyncPlane, ticket: &QuiescentMirror) -> Result<(), PlaneError> {
+    plane
+        .transport()
+        .lock()
+        .map_err(|_| PlaneError::Unavailable)?
+        .verify_quiescent(ticket)
+        .map_err(|_| PlaneError::Quiescence)
 }
 
 impl MirrorQuiescence for OwnerQuiescence<'_> {

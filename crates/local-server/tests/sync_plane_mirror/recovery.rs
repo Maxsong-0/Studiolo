@@ -1,7 +1,9 @@
 //! 恢复协议与排除项守卫的契约：首次打开默认干净、已启动未回收强制恢复、rc=1 退避阶梯、
-//! 撕裂失败关闭、租约排他、残留守卫三态。
+//! 撕裂失败关闭、租约排他、残留守卫三态；版本 1 追加字段的兼容与失败关闭。
 
 use crate::fixture::private_dir;
+use sha2::{Digest, Sha256};
+use std::collections::BTreeMap;
 use std::fs;
 use studiolo_local_server::sync_plane::PlaneError;
 use studiolo_local_server::sync_plane::recovery::{
@@ -190,4 +192,105 @@ fn residue_guard_reports_three_states() {
         residue_guard(&previous, &current, &mirror.path().join("missing")).err(),
         Some(PlaneError::Unavailable)
     );
+}
+
+/// 追加字段之前的校验和算法（独立重写作对照）：追加字段为空时，新实现必须算出同一个值。
+fn legacy_checksum(state: &PlaneState) -> String {
+    let mut digest = Sha256::new();
+    digest.update(b"studiolo.sync-plane.state.v1\0");
+    digest.update([1, u8::from(state.last_run_clean)]);
+    digest.update([u8::from(state.started_sequence.is_some())]);
+    digest.update(state.started_sequence.unwrap_or_default().to_be_bytes());
+    digest.update([u8::from(state.last_exit_unix.is_some())]);
+    digest.update(state.last_exit_unix.unwrap_or_default().to_be_bytes());
+    digest.update(state.consecutive_rc1.to_be_bytes());
+    digest.update([u8::from(state.not_before_unix.is_some())]);
+    digest.update(state.not_before_unix.unwrap_or_default().to_be_bytes());
+    digest.update((state.verified_excluded.len() as u64).to_be_bytes());
+    for folder in &state.verified_excluded {
+        digest.update((folder.len() as u64).to_be_bytes());
+        digest.update(folder.as_bytes());
+    }
+    digest.update([match state.applied_mode {
+        None => 0,
+        Some(SyncMode::MirrorRemote) => 1,
+        Some(SyncMode::Bidirectional) => 2,
+    }]);
+    digest
+        .finalize()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
+#[test]
+fn state_new_fields_round_trip_and_the_old_format_still_decodes() {
+    let root = private_dir();
+    let mut store = PlaneStateStore::open(root.path()).unwrap();
+    // 旧格式：追加字段为空时不写出，校验和与旧算法逐字节相同，照常解码。
+    let mut old = mark_reaped(&mark_started(store.state(), 3), false, true, 1_000);
+    old.verified_excluded = vec!["Archive".to_owned()];
+    old.applied_mode = Some(SyncMode::MirrorRemote);
+    store.save(old).unwrap();
+    let old = store.state().clone();
+    assert_eq!(old.checksum, legacy_checksum(&old));
+    drop(store);
+    let text = fs::read_to_string(root.path().join(PLANE_STATE_FILE)).unwrap();
+    assert!(!text.contains("headless_excluded"));
+    assert!(!text.contains("conflict_stamps"));
+    let mut store = PlaneStateStore::open(root.path()).unwrap();
+    assert_eq!(store.state(), &old);
+    // 两个新字段落盘再读回一致；headless 集合排序去重，非空即进校验和。
+    let mut next = old.clone();
+    next.headless_excluded = ["School", "Archive", "School"].map(str::to_owned).to_vec();
+    next.conflict_stamps = BTreeMap::from([("a".repeat(64), "202609261200".to_owned())]);
+    store.save(next).unwrap();
+    let saved = store.state().clone();
+    drop(store);
+    let reopened = PlaneStateStore::open(root.path()).unwrap();
+    assert_eq!(reopened.state(), &saved);
+    assert_eq!(saved.headless_excluded, vec!["Archive", "School"]);
+    assert_eq!(saved.conflict_stamps.len(), 1);
+    assert_ne!(saved.checksum, legacy_checksum(&saved));
+}
+
+#[test]
+fn state_malformed_conflict_stamps_fail_closed_on_save_and_on_open() {
+    let root = private_dir();
+    let file = root.path().join(PLANE_STATE_FILE);
+    let (key, stamp) = ("b".repeat(64), "202609261200".to_owned());
+    let malformed = [
+        ("B".repeat(64), stamp.clone()),
+        ("b".repeat(63), stamp.clone()),
+        (key.clone(), "20260926120".to_owned()),
+        (key.clone(), "2026092612ab".to_owned()),
+    ];
+    for (bad_key, bad_stamp) in malformed {
+        let mut store = PlaneStateStore::open(root.path()).unwrap();
+        let mut state = store.state().clone();
+        state.conflict_stamps = BTreeMap::from([(bad_key.clone(), bad_stamp.clone())]);
+        // 写盘前自检：畸形状态不落盘。
+        assert_eq!(
+            store.save(state.clone()).err(),
+            Some(PlaneError::Storage),
+            "{bad_key} {bad_stamp}"
+        );
+        drop(store);
+        // 绕过自检写出一份校验和自洽的畸形文件（`mark_started` 会补齐校验和）：打开即失败关闭。
+        let sealed = serde_json::to_vec(&mark_started(&state, 1)).unwrap();
+        fs::write(&file, sealed).unwrap();
+        assert_eq!(
+            PlaneStateStore::open(root.path()).err(),
+            Some(PlaneError::Storage),
+            "{bad_key} {bad_stamp}"
+        );
+        fs::remove_file(&file).unwrap();
+    }
+    // 条目超过 512 同样拒绝落盘。
+    let mut store = PlaneStateStore::open(root.path()).unwrap();
+    let mut state = store.state().clone();
+    state.conflict_stamps = (0..513)
+        .map(|index| (format!("{index:064x}"), stamp.clone()))
+        .collect();
+    assert_eq!(store.save(state).err(), Some(PlaneError::Storage));
 }
