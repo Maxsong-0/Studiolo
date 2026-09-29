@@ -70,9 +70,9 @@ fn a_stop_before_set_mode_does_not_switch_the_headless_mode() {
 #[test]
 fn only_an_owner_requested_stop_turns_an_unclean_run_into_stopping() {
     let mut run = fixture::headless(143);
-    assert_eq!(run.failure(), PlaneError::Transport);
+    assert_eq!(run.failure(), PlaneError::Headless);
     run.observation.stop_reason = Some(StopReason::DeadlineExceeded);
-    assert_eq!(run.failure(), PlaneError::Transport);
+    assert_eq!(run.failure(), PlaneError::Headless);
     run.observation.stop_reason = Some(StopReason::OwnerRequested);
     assert_eq!(run.failure(), PlaneError::Stopping);
 }
@@ -94,9 +94,9 @@ fn a_stopped_run_is_never_clean_even_when_headless_exits_zero() {
     let stopped = with(ExitObservation::Code(0), owner);
     assert!(!stopped.clean && !stopped.rc_one);
     assert_eq!(stopped.failure(), PlaneError::Stopping);
-    // 超时停下同理不算干净，失败分类是 Transport。
+    // 超时停下同理不算干净，失败分类是 Headless。
     let late = with(ExitObservation::Code(0), deadline);
     assert!(!late.clean);
-    assert_eq!(late.failure(), PlaneError::Transport);
+    assert_eq!(late.failure(), PlaneError::Headless);
     assert!(with(ExitObservation::Code(1), None).rc_one);
 }

@@ -8,11 +8,51 @@ use studiolo_core::VaultPath;
 use crate::{BrokerError, FsVaultBroker};
 
 impl FsVaultBroker {
+    /// 在任何 Prepared/Preparing 记录或父目录创建之前核整条路径的分量字节数。
+    /// 已有父目录按自己的文件系统 NAME_MAX；缺失子树沿用最近已有父目录的上限。
+    pub(crate) fn validate_name_lengths(&self, path: &VaultPath) -> Result<(), BrokerError> {
+        let mut prefix = PathBuf::new();
+        let mut parts = path.as_str().split('/').peekable();
+        while let Some(part) = parts.next() {
+            let parent = if prefix.as_os_str().is_empty() {
+                Path::new(".")
+            } else {
+                &prefix
+            };
+            let directory = Self::open_directory(&self.root, parent, path)?;
+            let maximum = rustix::fs::fstatvfs(&directory)
+                .map_err(|error| BrokerError::io("读取路径分量上限", error.into()))?
+                .f_namemax;
+            if maximum == 0 || part.len() as u64 > maximum {
+                return Err(BrokerError::WriterLimitExceeded);
+            }
+            if parts.peek().is_none() {
+                break;
+            }
+            let descend = match directory.symlink_metadata(part) {
+                Ok(metadata) => metadata.is_dir() && !metadata.file_type().is_symlink(),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,
+                Err(error) => return Err(BrokerError::io("核路径父目录", error)),
+            };
+            if !descend {
+                // 长度预检不接管链接／非目录的既有错误分类，也不能跟随它们。
+                return if parts.any(|part| part.len() as u64 > maximum) {
+                    Err(BrokerError::WriterLimitExceeded)
+                } else {
+                    Ok(())
+                };
+            }
+            prefix.push(part);
+        }
+        Ok(())
+    }
+
     pub(crate) fn validate_components(
         &self,
         path: &VaultPath,
         allow_missing: bool,
     ) -> Result<(), BrokerError> {
+        self.validate_name_lengths(path)?;
         let components: Vec<&str> = path.as_str().split('/').collect();
         let mut current = PathBuf::new();
         for (index, component) in components.iter().enumerate() {

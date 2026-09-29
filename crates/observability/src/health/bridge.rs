@@ -80,8 +80,7 @@ pub struct BridgeEvidence {
     pub unknown_jobs: Option<u64>,
     /// 当前静止证据是否仍有效。
     pub quiescence_valid: Option<bool>,
-    /// 冲突副本数：最近一次完整观察里两侧命名为冲突副本的路径数，加本进程启动以来 Bridge
-    /// 保全进 `ops/bridge-conflicts/` 的冲突数。
+    /// 冲突副本数：最近一次完整观察的两侧副本路径数，加持久 conflict_stamps 的当前条数。
     pub conflict_copies: Option<u64>,
     /// Studiolo 侧镜像字节数；不是账号用量。
     pub mirror_bytes: Option<u64>,
@@ -154,10 +153,11 @@ fn judge(evidence: &BridgeEvidence) -> (HealthState, String) {
     let full = match complete(evidence) {
         Ok(full) => full,
         Err(missing) => {
-            return (
-                HealthState::Unknown,
-                format!("Bridge 证据不完整：缺{missing}"),
-            );
+            let mut detail = format!("Bridge 证据不完整：缺{missing}");
+            if let Some(exit) = evidence.last_exit.filter(|exit| *exit != ExitClass::Clean) {
+                detail.push_str(&format!("；上次 headless 运行{}", exit.label()));
+            }
+            return (HealthState::Unknown, detail);
         }
     };
     if full.fused {

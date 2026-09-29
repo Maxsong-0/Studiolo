@@ -1,14 +1,17 @@
 //! 双向 Bridge 对 canonical 的唯一接缝（ADR-025 D8）：完整观察、有界读、条件写与条件删除；本文件是 `sync_plane` 触及 Broker 的唯一位置，住在 `coordinator/` 之下受同一写者边界守卫；
 //! 每个方法持 owner 锁复验根身份，主体一律「外部：Obsidian」，幂等键由调用方按执行器原键给出；Broker 调用形态由守卫 `canonical_owner.rs` 逐条列名，这里只用那些形态。
+mod errors;
+
+use errors::{before_visible, install_error, not_attempted, observation_error, write_error};
 
 use crate::{CanonicalWorkbench, LocalError};
 use std::sync::MutexGuard;
 use studiolo_core::{Revision, VaultPath};
 use studiolo_vault_broker::{
     BlobIdentity, BlobSource, BrokerError, CanonicalRead, CanonicalSyncObservation,
-    FileOperationMetadata, FileOperationPhase, FileOperationReceipt, FileOperationRequest,
-    FileOperationScopeHash, FsVaultBroker, Mutation, MutationActor, MutationKind, MutationMetadata,
-    MutationReceipt, Precondition, StreamLimits, StreamMutation, SyncReadSelection,
+    FileOperationMetadata, FileOperationReceipt, FileOperationRequest, FileOperationScopeHash,
+    FsVaultBroker, Mutation, MutationActor, MutationKind, MutationMetadata, MutationReceipt,
+    Precondition, StreamLimits, StreamMutation, SyncReadSelection,
 };
 
 /// 接缝的固定失败分类；不带路径或正文。
@@ -27,7 +30,6 @@ pub enum BridgeSeamError {
     /// 审计账本不可用。
     Audit,
 }
-
 /// 条件写的目标前置：不存在（创建）或等于某 revision（替换）。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BridgePrecondition {
@@ -54,7 +56,6 @@ impl CanonicalWorkbench {
             .map_err(not_attempted)?;
         Ok(owner)
     }
-
     /// canonical 已变：先标记视图过期，再请求一次后台刷新（失败只影响视图新鲜度）。
     fn canonical_changed(&self) {
         if let Ok(control) = self.core.control.lock() {
@@ -62,7 +63,6 @@ impl CanonicalWorkbench {
         }
         let _ = self.core.request("changed");
     }
-
     /// 权威账本；没装配就是 `Audit`。
     fn ledger(&self) -> Result<&dyn studiolo_audit_ledger::AuditLedger, BridgeSeamError> {
         let ledger = self.core.content_audit.as_deref();
@@ -166,6 +166,12 @@ impl CanonicalWorkbench {
             content,
         };
         let _ = self.core.flush_content_audit(broker);
+        if let Some(receipt) = broker
+            .stream_mutation_replay(&request, &metadata)
+            .map_err(write_error)?
+        {
+            return Ok(receipt);
+        }
         let ticket = broker
             .prepare_stream_mutation(request, &source, limits, metadata)
             .map_err(write_error)?;
@@ -243,58 +249,5 @@ impl CanonicalWorkbench {
         let content = self.core.flush_content_audit(broker).map(|_| ());
         let files = self.core.flush_file_operation_audit(broker).map(|_| ());
         content.and(files).map_err(|()| BridgeSeamError::Audit)
-    }
-}
-
-/// 尚未碰 Broker 写入就失败（锁中毒、根漂移、身份不符、请求元数据不合法）的统一分类，不带原因正文。
-fn not_attempted<E>(_: E) -> BridgeSeamError {
-    BridgeSeamError::NotAttempted
-}
-
-/// 文件操作仍停在准备阶段（尚无可见变更）。
-fn before_visible(broker: &FsVaultBroker) -> bool {
-    broker.file_operation_status().is_ok_and(|status| {
-        status.is_some_and(|status| {
-            matches!(
-                status.phase,
-                FileOperationPhase::Preparing | FileOperationPhase::Prepared
-            )
-        })
-    })
-}
-
-/// 观察阶段的失败分类：安全诊断与范围问题是 `Incomplete`，其余都是写者不可用。
-fn observation_error(error: BrokerError) -> BridgeSeamError {
-    match error {
-        BrokerError::IncompleteCapture
-        | BrokerError::InvalidArtifact(_)
-        | BrokerError::ProtectedPath(_)
-        | BrokerError::UnsafeNode { .. }
-        | BrokerError::PathCollision { .. } => BridgeSeamError::Incomplete,
-        _ => BridgeSeamError::Unavailable,
-    }
-}
-
-/// 安装之前（重放查询、准备）的失败分类：CAS 拒绝已持久为终态；受保护路径、写者预算超限与原键已明确取消都肯定没写入；未决与键冲突都当未知。
-fn write_error(error: BrokerError) -> BridgeSeamError {
-    match error {
-        BrokerError::RevisionConflict { .. } => BridgeSeamError::Rejected,
-        BrokerError::ProtectedPath(_)
-        | BrokerError::WriterLimitExceeded
-        | BrokerError::MutationCancelled => BridgeSeamError::NotAttempted,
-        BrokerError::MutationUnresolved | BrokerError::IdempotencyConflict => {
-            BridgeSeamError::Unknown
-        }
-        _ => BridgeSeamError::Unavailable,
-    }
-}
-
-/// 安装之后的失败分类：CAS 拒绝是权威终态；其余只要写者仍有未决就是未知。
-fn install_error(broker: &FsVaultBroker, error: BrokerError) -> BridgeSeamError {
-    let status = broker.write_status();
-    match (error, status.map_or(true, |status| status.unresolved)) {
-        (BrokerError::RevisionConflict { .. }, _) => BridgeSeamError::Rejected,
-        (_, true) => BridgeSeamError::Unknown,
-        (_, false) => BridgeSeamError::Unavailable,
     }
 }

@@ -13,6 +13,7 @@ pub(super) fn apply(
     metadata: Option<&crate::MutationMetadata>,
 ) -> Result<MutationReceipt, BrokerError> {
     super::validate_request(&mutation)?;
+    broker.validate_name_lengths(&mutation.path)?;
     crate::file_operation::guard_legacy_key(broker, &sha256(mutation.idempotency_key.as_bytes()))?;
     crate::maintenance::ensure_idle(broker)?;
     super::validate_request(&mutation)?;

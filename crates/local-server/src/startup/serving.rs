@@ -77,21 +77,27 @@ impl PreparedServer {
     }
 
     // 私有组合Seam：生产只传真实信号；测试使用有界oneshot，不向进程发送信号。
-    pub(super) async fn serve_until<F>(self, shutdown: F) -> Result<(), StartupError>
+    pub(super) async fn serve_until<F>(mut self, shutdown: F) -> Result<(), StartupError>
     where
         F: Future<Output = ()> + Send + 'static,
     {
-        // bind消费PreparedServer后仍保留关闭owner；监听失败也走同一实际作业收尾。
         let workbench = self.workbench.as_ref().map(Arc::clone);
         let stopping = workbench.as_ref().map(Arc::clone);
-        let signal = async move {
-            shutdown.await;
-            // HTTP drain之前停止新刷新并唤醒等待者，避免关闭与刷新彼此等待。
+        let (stop, stopped) = tokio::sync::watch::channel(false);
+        let driver = self
+            .sync_plane
+            .take()
+            .map(|plane| tokio::spawn(plane.drive_until(stopped)));
+        let (http_stop, http_stopped) = tokio::sync::oneshot::channel();
+        let server = self.serve_bound_until(async move {
+            let _ = http_stopped.await;
+        });
+        let result = drain(server, shutdown, driver, stop, http_stop, move || {
             if let Some(workbench) = stopping {
                 workbench.stop();
             }
-        };
-        let result = self.serve_bound_until(signal).await;
+        })
+        .await;
         canonical_input::shutdown(workbench.as_ref()).await?;
         result
     }
@@ -100,20 +106,6 @@ impl PreparedServer {
     where
         F: Future<Output = ()> + Send + 'static,
     {
-        if let Some(plane) = self.sync_plane.take() {
-            // Bridge 驱动循环与 HTTP 同生死：关闭信号先停驱动，驱动异常退出即整体停服。
-            let (stop, stopped) = tokio::sync::watch::channel(false);
-            let mut driver = tokio::spawn(plane.drive_until(stopped));
-            let mut result = tokio::select! {
-                result=Box::pin(self.serve_bound_until(shutdown))=>result,
-                _=&mut driver=>Err(StartupError::Serve),
-            };
-            let _ = stop.send(true);
-            if !driver.is_finished() && !matches!(driver.await, Ok(Ok(()))) {
-                result = Err(StartupError::Serve);
-            }
-            return result;
-        }
         if let (Some(board), Some(plane)) = (self.board_ingress.take(), self.board_plane.take()) {
             let runner = self.runner_plane.take();
             let listener = board.bind().map_err(|_| StartupError::Ingress)?;
@@ -171,6 +163,47 @@ impl PreparedServer {
     }
 }
 
+/// 关闭链只走一遍：先通知并等待 Bridge 安全收尾，写者仍可用；再停止刷新并排空 HTTP。
+/// 监听失败或驱动异常退出同样走完整收尾，不能丢弃尚在处理请求的服务 future。
+async fn drain<S, F, W>(
+    server: S,
+    shutdown: F,
+    mut driver: Option<tokio::task::JoinHandle<Result<(), String>>>,
+    stop: tokio::sync::watch::Sender<bool>,
+    http_stop: tokio::sync::oneshot::Sender<()>,
+    stop_workbench: W,
+) -> Result<(), StartupError>
+where
+    S: Future<Output = Result<(), StartupError>>,
+    F: Future<Output = ()>,
+    W: FnOnce(),
+{
+    let mut server = Box::pin(server);
+    let (mut result, served, joined) = tokio::select! {
+        () = shutdown => (Ok(()), false, false),
+        result = &mut server => (result, true, false),
+        _ = async {
+            match driver.as_mut() {
+                Some(driver) => { let _ = driver.await; }
+                None => std::future::pending::<()>().await,
+            }
+        } => (Err(StartupError::Serve), false, true),
+    };
+    let _ = stop.send(true);
+    if !joined
+        && let Some(driver) = driver
+        && !matches!(driver.await, Ok(Ok(())))
+    {
+        result = Err(StartupError::Serve);
+    }
+    stop_workbench();
+    let _ = http_stop.send(());
+    if !served && let Err(error) = server.await {
+        result = Err(error);
+    }
+    result
+}
+
 struct Shutdown {
     interrupt: Signal,
     terminate: Signal,
@@ -191,3 +224,7 @@ impl Shutdown {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "../../tests/startup/shutdown_order.rs"]
+mod shutdown_order;

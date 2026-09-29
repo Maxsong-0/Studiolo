@@ -14,6 +14,7 @@ mod host_approval;
 mod lifecycle;
 mod owner;
 mod quiescence;
+mod rebind;
 mod session;
 
 pub use approval::{
@@ -27,6 +28,7 @@ pub use audit::{
 pub use error::{Result, TransportError};
 pub use host_approval::backend_digest;
 pub use owner::{SyncTransportOwner, initial_state, initialize_store};
+pub use rebind::{RebindReview, TransportRebind};
 pub(crate) use session::random;
 pub use state::{
     AuditReceipt, AuditSlot, OwnerIdentity, QuiescenceEvidence, QuiescenceProof, RunRecord,

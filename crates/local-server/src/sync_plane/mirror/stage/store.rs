@@ -13,6 +13,9 @@ use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
 use studiolo_sync_bridge::executor::ObjectId;
 
+#[path = "objects.rs"]
+mod object;
+
 /// 已打开的外 stage；持有 stage 与 objects 两个目录 FD、解析后的索引与接收中对象。
 pub struct StageStore {
     root: PathBuf,
@@ -27,6 +30,7 @@ struct Receiving {
     file: OwnedFd,
     hasher: Sha256,
     bytes: usize,
+    budget: u64,
 }
 
 impl StageStore {
@@ -35,6 +39,22 @@ impl StageStore {
     /// # Errors
     /// 目录或索引不满足约束返回 `Storage`。
     pub fn open(plane_root: &Path) -> Result<Self, PlaneError> {
+        let store = Self::open_inner(plane_root, false)?;
+        if store.collect_orphans()? > 0 {
+            flush(store.objects.as_fd()).map_err(|_| PlaneError::Storage)?;
+        }
+        Ok(store)
+    }
+
+    /// 维护入口只核对既有布局与索引，不创建、回收或改写任何对象。
+    ///
+    /// # Errors
+    /// 目录、索引缺失或不满足私有布局约束返回 `Storage`。
+    pub fn open_existing_for_maintenance(plane_root: &Path) -> Result<Self, PlaneError> {
+        Self::open_inner(plane_root, true)
+    }
+
+    fn open_inner(plane_root: &Path, require_index: bool) -> Result<Self, PlaneError> {
         let euid = caller()?;
         let root = plane_root.join(STAGE_DIR);
         let (stage, stat) = open_directory_path(&root).map_err(|_| PlaneError::Storage)?;
@@ -48,20 +68,17 @@ impl StageStore {
             Some((file, length)) => StageIndex::decode(
                 &read_fully(file.as_fd(), length).map_err(|_| PlaneError::Storage)?,
             )?,
+            None if require_index => return Err(PlaneError::Storage),
             None => StageIndex::empty(),
         };
-        let store = Self {
+        Ok(Self {
             root,
             stage,
             objects,
             euid,
             index,
             receiving: None,
-        };
-        if store.collect_orphans()? > 0 {
-            flush(store.objects.as_fd()).map_err(|_| PlaneError::Storage)?;
-        }
-        Ok(store)
+        })
     }
 
     /// 管理员显式初始化：`stage/` 与 `stage/objects/` 都不存在时才建，并写入空索引。
@@ -95,13 +112,15 @@ impl StageStore {
             return Err(PlaneError::Storage);
         }
         let objects = self.objects.as_fd();
-        let (file, _) = remove_at(objects, RECEIVING_FILE)
-            .and_then(|_| create_at(objects, RECEIVING_FILE, true))
-            .map_err(|_| PlaneError::Storage)?;
+        remove_at(objects, RECEIVING_FILE).map_err(|_| PlaneError::Storage)?;
+        let budget = self.capacity(0, 1)?;
+        let (file, _) =
+            create_at(objects, RECEIVING_FILE, true).map_err(|_| PlaneError::Storage)?;
         self.receiving = Some(Receiving {
             file,
             hasher: Sha256::new(),
             bytes: 0,
+            budget,
         });
         Ok(())
     }
@@ -115,7 +134,7 @@ impl StageStore {
         let bytes = receiving
             .bytes
             .checked_add(frame.len())
-            .filter(|total| *total <= OBJECT_MAX_BYTES)
+            .filter(|total| *total <= OBJECT_MAX_BYTES && *total as u64 <= receiving.budget)
             .ok_or(PlaneError::Storage)?;
         write_fully(receiving.file.as_fd(), frame).map_err(|_| PlaneError::Storage)?;
         receiving.hasher.update(frame);
@@ -126,7 +145,7 @@ impl StageStore {
     /// 按最终地址封口：核对摘要 → fsync → renameat 到 `objects/<hex>` → fsync 目录。
     ///
     /// # Errors
-    /// 摘要与地址不符或 IO 失败返回 `Storage`；地址已存在时丢弃临时件并静默成功。
+    /// 摘要与地址不符或 IO 失败返回 `Storage`；地址已存在时必须核验旧对象后才去重。
     pub fn finish(&mut self, id: ObjectId) -> Result<(), PlaneError> {
         let receiving = self.receiving.take().ok_or(PlaneError::Storage)?;
         let digest: [u8; 32] = receiving.hasher.finalize().into();
@@ -140,7 +159,8 @@ impl StageStore {
         let name = hex(digest);
         let sealed = open_regular_at(objects, &name, self.euid, OBJECT_MAX_BYTES)
             .map_err(|_| PlaneError::Storage)?;
-        if sealed.is_some() {
+        if let Some((file, length)) = sealed {
+            object::verify(file.as_fd(), length as u64, id, None)?;
             remove_at(objects, RECEIVING_FILE).map_err(|_| PlaneError::Storage)?;
         } else {
             rename_within(objects, RECEIVING_FILE, &name).map_err(|_| PlaneError::Storage)?;
@@ -158,7 +178,7 @@ impl StageStore {
         Ok(())
     }
 
-    /// 把已封口对象登记为「删除前保全」，进入 7 天保留期；同一地址重复保全以最新为准。
+    /// 登记已封口对象的入站或删除保全引用；重复地址的序号与时刻分别取最大。
     ///
     /// # Errors
     /// 对象不存在或索引写失败返回 `Storage`。

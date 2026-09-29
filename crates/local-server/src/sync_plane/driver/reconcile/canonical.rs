@@ -1,5 +1,5 @@
-//! 重开核对的 canonical 侧：经执行器同一份 `PlaneJobBackend::canonical_verdict` 重建首次请求走接缝，
-//! 由接缝按原键查重放。
+//! 重开核对的 canonical 侧：显式走 replay-only，从外 stage 保全源重建首次请求。
+//! stage 缺失或损坏即保持 Unknown；绝不依赖当前镜像、也不从镜像补造原请求。
 //!
 //! 冻结前置的原 `Revision` 就是 Bridge 证据里的 32 字节原值（`driver::evidence::revision_from_digest`），
 //! 任何一轮都能还原：目标已安装、被人改过或首次回执丢失都不妨碍按原键核对——重建的请求与首次逐字段相同，
@@ -12,5 +12,5 @@ use studiolo_sync_bridge::executor::IssuedJob;
 
 /// 按原键重放一条 canonical 未知动作。
 pub(super) fn replay(context: &RoundContext<'_>, job: &IssuedJob, action: &Action) -> SeamVerdict {
-    PlaneJobBackend::new(context, context.binding.clone()).canonical_verdict(job, action)
+    PlaneJobBackend::new(context, context.binding.clone()).canonical_verdict(job, action, true)
 }

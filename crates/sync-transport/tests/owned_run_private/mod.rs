@@ -13,6 +13,8 @@ mod failure;
 #[cfg(target_os = "linux")]
 mod launcher_fake;
 mod platform;
+mod rebind;
+mod rebind_store;
 mod recovery;
 mod schema;
 mod store;

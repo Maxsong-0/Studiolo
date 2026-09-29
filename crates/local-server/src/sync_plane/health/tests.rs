@@ -270,21 +270,6 @@ fn headless回收结果按退出码与停止原因分类且强制恢复运行记
 }
 
 #[test]
-fn 冲突副本数是最近一次观察数加本进程保全数且重启后观察数仍在() {
-    let health = PlaneHealth::new(None);
-    health.record_observed_copies(2);
-    health.record_conflicts(1);
-    health.record_execution(1, 0, false);
-    assert_eq!(health.bridge().conflict_copies, Some(3));
-    // 重启：本进程保全数从 0 起，两侧已有的副本仍由观察数兜住；观察数每次覆盖、不累计。
-    let restarted = PlaneHealth::new(None);
-    restarted.record_observed_copies(2);
-    restarted.record_observed_copies(2);
-    restarted.record_execution(2, 0, false);
-    assert_eq!(restarted.bridge().conflict_copies, Some(2));
-}
-
-#[test]
 fn 模式回填与传输模式枚举一一对应() {
     let health = PlaneHealth::new(None);
 
@@ -294,3 +279,6 @@ fn 模式回填与传输模式枚举一一对应() {
     health.record_mode(SyncMode::Bidirectional);
     assert_eq!(health.bridge().mode, Some(ModeLabel::Bidirectional));
 }
+
+#[path = "../../../tests/sync_plane_health/restart.rs"]
+mod restart;

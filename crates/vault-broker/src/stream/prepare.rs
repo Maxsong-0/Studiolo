@@ -32,6 +32,7 @@ pub(super) fn prepare(
     metadata: MutationMetadata,
 ) -> Result<PreparedStream, BrokerError> {
     request::validate(&request)?;
+    broker.validate_name_lengths(&request.path)?;
     crate::file_operation::guard_legacy_key(
         broker,
         &crate::sha256(request.idempotency_key.as_bytes()),

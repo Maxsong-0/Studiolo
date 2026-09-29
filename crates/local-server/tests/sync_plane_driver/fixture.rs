@@ -25,6 +25,7 @@ pub fn first_run_state() -> PlaneState {
         applied_mode: None,
         headless_excluded: Vec::new(),
         conflict_stamps: BTreeMap::new(),
+        pending_purge: None,
         checksum: String::new(),
     }
 }

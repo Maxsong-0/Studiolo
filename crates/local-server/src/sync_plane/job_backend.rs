@@ -5,7 +5,7 @@
 //! 拿不到就是 `JobOutcome::Unknown`，绝不用退出码或「内容碰巧相同」补成成功。
 
 use super::driver::content::{
-    MirrorWriteError, RoundContext, preserve_canonical, write_from_mirror,
+    MirrorWriteError, RoundContext, preserve_canonical, replay_from_stage, write_from_mirror,
 };
 use super::driver::evidence::{hex, revision_digest, revision_from_digest, sha256};
 use super::mirror::stage::StageStore;
@@ -39,10 +39,13 @@ impl<'a> PlaneJobBackend<'a> {
         revision_from_digest(&version.revision)
     }
 
-    /// canonical 侧按原键重建首次请求走接缝：CreateOnly／Replace 走条件写（前置＝冻结 `target_expected`
-    /// 还原的 revision），Delete 走文件操作删除；主体一律「外部：Obsidian」。首次执行与重开核对共用
-    /// 这一份，保证核对时的请求与首次逐字段相同（接缝先按原键查重放，有原回执绝不第二次安装）。
-    pub(crate) fn canonical_verdict(&self, job: &IssuedJob, action: &Action) -> SeamVerdict {
+    /// 首次先冻结入站源；`replay_only` 只读 stage。原路径、前置、幂等键与写入形态始终相同。
+    pub(crate) fn canonical_verdict(
+        &self,
+        job: &IssuedJob,
+        action: &Action,
+        replay_only: bool,
+    ) -> SeamVerdict {
         let workbench = self.context.plane.workbench();
         let path = &action.key.path;
         match &action.change {
@@ -83,8 +86,18 @@ impl<'a> PlaneJobBackend<'a> {
                     } => BridgePrecondition::Match(Self::revision(target_expected)),
                     _ => BridgePrecondition::MustNotExist,
                 };
-                let written =
-                    write_from_mirror(self.context, path, source, precondition, &job.external_key);
+                let written = if replay_only {
+                    replay_from_stage(self.context, path, source, precondition, &job.external_key)
+                } else {
+                    write_from_mirror(
+                        self.context,
+                        path,
+                        source,
+                        precondition,
+                        &job.external_key,
+                        job.key.plan.sequence,
+                    )
+                };
                 match written {
                     Ok(receipt) => SeamVerdict::Outcome(JobOutcome::Committed {
                         new_revision: Some(revision_digest(receipt.revision)),
@@ -188,8 +201,7 @@ pub enum SeamVerdict {
     Outcome(JobOutcome),
     /// 还没碰 Broker 就失败：本次调用确定没有安装。
     NotAttempted,
-    /// 镜像源读不出或已不是冻结版本：请求没发出去。首次执行等同 `NotAttempted`；重开核对时
-    /// 原请求重建不出、原键下可能早已安装，只能保持未知。
+    /// 首次冻结失败或 stage 保全源不可验证：首次为未安装，重放只能保持未知。
     SourceUnavailable,
     /// 权威 CAS 拒绝。
     Rejected,
@@ -238,9 +250,10 @@ pub fn rejected(external_key: &str) -> JobOutcome {
 impl JobBackend for PlaneJobBackend<'_> {
     fn apply(&mut self, job: &IssuedJob, action: &Action, staged: Option<ObjectId>) -> JobOutcome {
         match action.key.target {
-            Side::Canonical => {
-                first_attempt_outcome(self.canonical_verdict(job, action), &job.external_key)
-            }
+            Side::Canonical => first_attempt_outcome(
+                self.canonical_verdict(job, action, false),
+                &job.external_key,
+            ),
             // 镜像侧的平面失败只能是未知：执行器不重发，下一轮按原键核对。
             Side::Mirror => self
                 .apply_mirror(job, action, staged)
