@@ -103,7 +103,7 @@ fn consecutive_rc_one_backs_off_5_10_20_and_skips_inside_the_window() {
     let mut waits = Vec::new();
     for expected_count in 1..=3 {
         let outcome = run_round_with(&mut ports, SyncMode::MirrorRemote, now);
-        assert_eq!(outcome, Err(PlaneError::Transport));
+        assert_eq!(outcome, Err(PlaneError::Headless));
         let saved = ports.saved.last().expect("回收后必有保存");
         assert_eq!(saved.consecutive_rc1, expected_count);
         assert!(!saved.last_run_clean);
@@ -120,7 +120,7 @@ fn consecutive_rc_one_backs_off_5_10_20_and_skips_inside_the_window() {
     // 窗口一过就恢复；退出码非 0 非 1 只等最短间隔 5 s 且清零连续计数。
     ports.run_once_exit = 2;
     let outcome = run_round_with(&mut ports, SyncMode::MirrorRemote, now);
-    assert_eq!(outcome, Err(PlaneError::Transport));
+    assert_eq!(outcome, Err(PlaneError::Headless));
     let saved = ports.saved.last().expect("回收后必有保存");
     assert_eq!(saved.consecutive_rc1, 0);
     assert_eq!(saved.not_before_unix, Some(now + 5));

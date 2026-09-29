@@ -4,13 +4,13 @@ id: ADR-025
 状态: 已采纳
 ---
 
-> **快照**：同步自 vault `项目/Studiolo/03-记忆/ADR-025-双向Bridge P1装配架构.md`（2026-09-28）。权威以 vault 为准，本文可能滞后；供读不到 vault 的会话（如 Cursor Cloud）使用，见 [README](README.md)。
+> **快照**：同步自 vault `项目/Studiolo/03-记忆/ADR-025-双向Bridge P1装配架构.md`（2026-09-28，本轮推送前）。权威以 vault 为准，本文可能滞后；PR／CI 最新状态见 [接续分支](https://github.com/Maxsong-0/studiolo/tree/codex/t132-bridge-followup)，云端边界见 [README](README.md)。
 
 # ADR-025 双向 Bridge P1 装配架构
 
 ## 背景
 
-[2026-09-22-T-132-双向Bridge上线方案](2026-09-22-T-132-双向Bridge上线方案.md) 核实：T-048 的 Bridge 执行器是纯顺序核，全仓没有装配它；OwnedRun 的 Linux 后端在所有平台都报缺口（`verify_backend` 永不 `Ok`）；健康页看不到 Bridge。P2 试跑（「2026-09-22-T-132-P2-试跑记录」（vault，未同步） 步骤 5）给出九条硬约束：默认配置不能用、镜像只在 headless 退出后读、引导期 `mirror-remote`、双向模式必须配非正常退出恢复协议、强杀后等 ≥5 s、排除项清除前先删残留、删除会传到镜像、附件冲突 headless 不保全等。用户 2026-09-23 拍板 Q1～Q4（脚本进仓库、P3 走 NAS、P1 走 workflow ≥5 个 Fable 5.1 代理、冲突策略已改）。P1 代码阶段需要一次把「谁在哪个进程、以什么特权、按什么顺序、怎么恢复」定死，否则 6 个并行代理各自发明一套。
+[2026-09-22-T-132-双向Bridge上线方案](2026-09-22-T-132-%E5%8F%8C%E5%90%91Bridge%E4%B8%8A%E7%BA%BF%E6%96%B9%E6%A1%88.md) 核实：T-048 的 Bridge 执行器是纯顺序核，全仓没有装配它；OwnedRun 的 Linux 后端在所有平台都报缺口（`verify_backend` 永不 `Ok`）；健康页看不到 Bridge。P2 试跑（「2026-09-22-T-132-P2-试跑记录」（vault，未同步） 步骤 5）给出九条硬约束：默认配置不能用、镜像只在 headless 退出后读、引导期 `mirror-remote`、双向模式必须配非正常退出恢复协议、强杀后等 ≥5 s、排除项清除前先删残留、删除会传到镜像、附件冲突 headless 不保全等。用户 2026-09-23 拍板 Q1～Q4（脚本进仓库、P3 走 NAS、P1 走 workflow ≥5 个 Fable 5.1 代理、冲突策略已改）。P1 代码阶段需要一次把「谁在哪个进程、以什么特权、按什么顺序、怎么恢复」定死，否则 6 个并行代理各自发明一套。
 
 ## 决定
 
@@ -95,3 +95,16 @@ A 轮地基另定了三条实现级细节：`ApprovedTransport: Sync`、`StatePu
 3. **副本名按字节封顶**：末段超过 255 字节按字符边界截短并附原名摘要；审批 `device_name` 至多 64 字节、不许与 `studiolo-canonical` 大小写不敏感地相同。
 4. **被停下的运行不算干净**：任何停止原因（owner／超时／输出超限）都让 `clean=false`，即便 rc=0（headless 对 SIGTERM 以 0 退出），下一轮走 D9。
 5. **`plane.lock` 由租约守卫持有**：拿到锁即交给 `Lease`，析构（含 open 中途失败）显式 `flock(Unlock)`——并发 fork 在 exec 前继承的描述符不再延长租约（main CI 偶发红的根因）。
+
+
+## 2026-09-28 补充（P6 前代码遗留接续）
+
+以下为独立接续分支实现，合入与运行验收状态以 [2026-09-28-T-132-P6前代码遗留接续计划](2026-09-28-T-132-P6%E5%89%8D%E4%BB%A3%E7%A0%81%E9%81%97%E7%95%99%E6%8E%A5%E7%BB%AD%E8%AE%A1%E5%88%92.md) 为准，不据此关闭 P6。
+
+1. 入站首次写先保全外 stage 对象及索引，再进 Broker；未知动作只从保全源重建原类型、原指纹请求。stage 缺失／损坏仍 Unknown。流式接缝先取原回执。共享摘要保留时刻／序号取最大，安装镜像用独立副本，不消耗保全源；实际磁盘预算包含临时件与孤儿。
+2. 显式 `sync-rebind` 保留 installation_id 与 next_sequence，拒绝范围、原私有根／镜像实体漂移以及所有未闭合事项，generation 加一并废止旧静止事实。只核现有完整 Plane/Bridge/Stage；旧 schema 未记录 plane inode，不保证鉴别完整复制的 plane。SQLite open 可能 checkpoint，拒绝保证不发布新绑定、不改业务状态和不清 stage。
+3. 已确认非干净退出用独立 Headless 分类，轮末不被 Transport 覆盖；启动恢复 last_terminal 与持久冲突计数。健康证据缺项仍 Unknown，但显示已知上次非干净退出。先等 Bridge 收尾，再停 workbench 并排空 HTTP，最后等写者清理完成。
+4. purge 的事件号、删除停点和结果进入带校验和的 pending_purge 日记；恢复只补同一审计事件，不重放删除。已知结果沿用 schema 1；删除中断且结果未落盘用 schema 2 null 明示未知。未闭合日记阻断平面启动／新轮／重绑定；无日记时旧文件校验和不变。
+5. Broker 在持久 Prepared/Preparing 和建父目录之前核路径分量的文件系统 NAME_MAX，覆盖正文、流式及文件操作；不修改 VaultPath 语法或旧持久请求解码。
+
+`scope_hash` 整份 owner.json 的范围变更流程仍待拍板；冲突路径排除后推进基线仍另立 P6 规划器任务。NAS、登录配对与生产激活均未在本轮执行。

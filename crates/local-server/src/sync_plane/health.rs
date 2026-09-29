@@ -47,7 +47,7 @@ struct Inner {
     usage: Option<SyncUsage>,
     /// 最近一次 `record_execution` 报的计划序号；轮末据此判断本轮有没有执行段回填。
     executed_sequence: Option<u64>,
-    /// 本进程启动以来 Bridge 自己保全进 `ops/bridge-conflicts/` 的冲突累计数。
+    /// 持久 `conflict_stamps` 中当前待解决的冲突数；包含已配戳但副本尚在续写的冲突。
     conflicts_total: u64,
     /// 最近一次完整观察里两侧命名为冲突副本的路径数；不累计，每次观察覆盖，重启后下一次观察即恢复。
     observed_copies: u64,
@@ -124,7 +124,8 @@ impl PlaneHealth {
             Err(PlaneError::ConfigMismatch) => evidence.config_matches = Some(false),
             // 关停停点结束的轮次没有专属字段：本轮没取到新票据，静止证据照上面置为过期。
             Err(
-                PlaneError::Configuration
+                PlaneError::Headless
+                | PlaneError::Configuration
                 | PlaneError::Quiescence
                 | PlaneError::Observation
                 | PlaneError::Audit
@@ -137,7 +138,7 @@ impl PlaneHealth {
 
     /// 执行段回填（驱动器在 `reserve_and_execute` 之后调）：本批序号、终态未知的动作数、
     /// 删除熔断是否生效；冲突副本数＝最近一次完整观察里两侧命名为冲突副本的路径数
-    /// ＋本进程启动以来 Bridge 自己保全进 `ops/bridge-conflicts/` 的冲突数（饱和加）。
+    /// ＋持久 `conflict_stamps` 中当前待解决的冲突数（饱和加）。
     pub fn record_execution(&self, sequence: u64, unknown: u64, fused: bool) {
         if let Ok(mut inner) = self.inner.lock() {
             let copies = inner.conflicts_total.saturating_add(inner.observed_copies);
@@ -190,12 +191,12 @@ impl PlaneHealth {
         }
     }
 
-    /// 预解决（MirrorRemote）或双向保全（Bidirectional）又把若干冲突保全进 `ops/bridge-conflicts/`；
-    /// 累计值只按本进程启动以来计，重启从 0 起——canonical 里 `ops/` 属硬排除，本平面拿不到目录总数，
-    /// 重启后健康节靠 `record_observed_copies` 的观察数兜住两侧已有的冲突副本。
-    pub fn record_conflicts(&self, added: u64) {
+    /// 覆盖为持久冲突戳的当前条数：启动、配戳与回收后都从同一份状态回填。
+    /// 该值代表待解决冲突，既不冒称副本均已写完，也不代表 `ops/` 的历史文件总数。
+    pub fn record_conflicts(&self, count: u64) {
         if let Ok(mut inner) = self.inner.lock() {
-            inner.conflicts_total = inner.conflicts_total.saturating_add(added);
+            inner.conflicts_total = count;
+            inner.evidence.conflict_copies = Some(count.saturating_add(inner.observed_copies));
         }
     }
 
@@ -204,10 +205,11 @@ impl PlaneHealth {
     pub fn record_observed_copies(&self, count: u64) {
         if let Ok(mut inner) = self.inner.lock() {
             inner.observed_copies = count;
+            inner.evidence.conflict_copies = Some(count.saturating_add(inner.conflicts_total));
         }
     }
 
-    /// 本进程启动以来由 Bridge 保全进 `ops/bridge-conflicts/` 的冲突累计数。
+    /// 持久状态中当前待解决的冲突数。
     #[must_use]
     pub fn conflicts_total(&self) -> u64 {
         self.inner

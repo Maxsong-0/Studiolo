@@ -6,13 +6,18 @@ use super::super::mirror::{MirrorView, PlaneContent};
 use super::super::witness::seam_error;
 use super::super::{PlaneError, SyncPlane, naming, quiescence};
 use super::evidence::{hex, revision_digest, sha256};
-use crate::coordinator::sync_bridge::{BridgePrecondition, BridgeSeamError};
+pub use crate::coordinator::sync_bridge::BridgePrecondition;
+use crate::coordinator::sync_bridge::BridgeSeamError;
 use std::cell::RefCell;
 use studiolo_core::VaultPath;
 use studiolo_sync_bridge::executor::{MirrorContent, ObjectId};
 use studiolo_sync_bridge::{Binding, FileVersion, Side};
 use studiolo_sync_transport::owned_run::{QuiescentMirror, SyncMode};
 use studiolo_vault_broker::{BlobIdentity, BlobSource, MutationReceipt};
+
+#[path = "inbound.rs"]
+pub mod inbound;
+pub use inbound::{replay_from_stage, write_from_mirror};
 
 /// 整篇条件写的正文上限；更大的对象走流式写。
 pub const INLINE_MAX_BYTES: u64 = 4 * 1024 * 1024;
@@ -37,12 +42,11 @@ pub struct RoundContext<'a> {
     pub now_unix: i64,
 }
 
-/// 从镜像条件写 canonical 的失败。`Source`：镜像上的冻结版本读不出或已不是它（票据作废、文件变了或没了），
-/// 本次调用还没碰接缝——首次执行据此记「确定未安装」，重开核对却据此什么也证明不了（原请求重建不出，
-/// 原键下可能早已安装），只能保持未知（评审 2026-09-28 P1-1）。`Seam`：接缝本身的分类。
+/// 入站条件写的失败。`Source`：首次无法冻结镜像或保全源不可验证，本次尚未碰接缝。
+/// 首次执行据此记「确定未安装」；重开核对无法重建原请求，只能保持未知。`Seam` 为接缝分类。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MirrorWriteError {
-    /// 镜像源读不出或已变。
+    /// 首次冻结失败，或 stage 保全源缺失／损坏。
     Source,
     /// 接缝返回的分类。
     Seam(BridgeSeamError),
@@ -139,38 +143,6 @@ pub fn write_bytes(
     plane
         .workbench()
         .bridge_write_stream(path, source, identity, precondition, key)
-}
-
-/// 把镜像上的冻结版本条件写进 canonical：小对象经视图逐帧读后整篇写，大对象以视图为只读来源流式写。
-///
-/// # Errors
-/// 镜像源读不出或已不是冻结版本（含静止票据作废）返回 `Source`；其余是接缝分类。
-pub fn write_from_mirror(
-    context: &RoundContext<'_>,
-    path: &VaultPath,
-    version: &FileVersion,
-    precondition: BridgePrecondition,
-    key: &str,
-) -> Result<MutationReceipt, MirrorWriteError> {
-    let workbench = context.plane.workbench();
-    if version.bytes <= INLINE_MAX_BYTES {
-        let bytes =
-            read_mirror_bytes(context, path, version).map_err(|_| MirrorWriteError::Source)?;
-        return workbench
-            .bridge_write(path, bytes, precondition, key)
-            .map_err(MirrorWriteError::Seam);
-    }
-    // 流式写由写者按需从视图读：交出来源前复验静止；读取本身发生在接缝之内，失败归接缝分类。
-    quiescence::verify(context.plane, context.ticket).map_err(|_| MirrorWriteError::Source)?;
-    let source = BlobSource::open(context.view.root(), path.clone())
-        .map_err(|_| MirrorWriteError::Source)?;
-    let identity = BlobIdentity {
-        bytes: version.bytes,
-        sha256: hex(&version.sha256),
-    };
-    workbench
-        .bridge_write_stream(path, source, identity, precondition, key)
-        .map_err(MirrorWriteError::Seam)
 }
 
 /// 把 canonical 上的冻结版本保全成范围外副本（D5 `ops/bridge-rollback/`、D6 `ops/bridge-conflicts/`）。

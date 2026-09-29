@@ -45,6 +45,10 @@ impl FsVaultBroker {
         crate::maintenance::ensure_no_maintenance(self)?;
         let limits = store::required(self)?.limits;
         let frozen = frozen::Frozen::new(self, &request, &metadata, limits)?;
+        self.validate_name_lengths(&frozen.path)?;
+        if let FileOperationKind::Rename { to, .. } = &frozen.kind {
+            self.validate_name_lengths(to)?;
+        }
         let mut state = mutation::load(self)?;
         if frozen.version == 2 && !state.rename_enabled {
             return Err(BrokerError::InvalidArtifact("重命名尚未显式启用".into()));

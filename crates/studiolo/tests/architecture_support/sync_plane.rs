@@ -251,6 +251,9 @@ mod tests {
             "crates/local-server/src/sync_plane/mirror/content.rs",
             "crates/local-server/src/sync_plane/mirror/observe.rs",
             "crates/local-server/src/sync_plane/driver/content.rs",
+            "crates/local-server/src/sync_plane/driver/inbound.rs",
+            "crates/local-server/src/sync_plane/mirror/stage/objects.rs",
+            "crates/local-server/src/sync_plane/recovery/purge.rs",
         ] {
             let source = fs::read_to_string(root.join(path)).unwrap();
             assert!(

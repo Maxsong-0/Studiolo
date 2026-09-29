@@ -116,13 +116,13 @@ impl HeadlessRun {
         }
     }
 
-    /// 非 clean 运行的失败分类：owner 关停时被停止即 `Stopping`，其余一律 `Transport`。
+    /// 非 clean 运行的失败分类：owner 关停时被停止即 `Stopping`，其余为 `Headless`，保留闭合退出证据。
     #[must_use]
     pub fn failure(&self) -> PlaneError {
         if self.observation.stop_reason == Some(StopReason::OwnerRequested) {
             PlaneError::Stopping
         } else {
-            PlaneError::Transport
+            PlaneError::Headless
         }
     }
 }

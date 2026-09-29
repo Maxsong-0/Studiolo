@@ -65,3 +65,7 @@ key4KiB。首次legacy采用枚举最多4096条且合计16MiB；配对后只查�
 孤立stage最多64项，超限拒绝新准备；正常成功消耗stage，此限制不是写入生命周期上限。
 本片无孤立stage清理或Installing显式协调入口。测试故障点验证持久阶段，不等同真实断电
 或提交I/O故障。真实Vault和接入仍需独立验收。
+
+## 路径分量长度（T-132 P6 前遗留）
+
+正文、流式写入及 Delete／Restore／Rename 的源和目标，在持久 Prepared／Preparing 或创建父目录前逐分量按 UTF-8 字节核对文件系统 NAME_MAX。已有父目录读取其自身上限，缺失子树使用最近已有父目录的上限；超限返回 WriterLimitExceeded，不留下未决写状态。VaultPath 的逻辑语法及旧持久请求的解码规则不变。Linux 契约覆盖 255 字节边界、中文多字节超限、缺失父目录和拒绝后重开正常写入。

@@ -244,3 +244,34 @@ fn 第六节正常时正文带序号与非账号用量字样() {
     assert!(bridge.detail().contains("（非账号用量）"));
     assert!(bridge.detail().ends_with("模式 mirror-remote"));
 }
+
+#[test]
+fn 重启后证据仍不完整但已知退出分类可见且不假报正常() {
+    for exit in [
+        ExitClass::OwnerStopped,
+        ExitClass::NonZero,
+        ExitClass::Signal,
+        ExitClass::DeadlineExceeded,
+        ExitClass::Unconfirmed,
+    ] {
+        let evidence = BridgeEvidence {
+            last_exit: Some(exit),
+            ..BridgeEvidence::default()
+        };
+        let (state, detail) = judge(&evidence);
+        assert_eq!(state, HealthState::Unknown);
+        assert_eq!(
+            detail,
+            format!(
+                "Bridge 证据不完整：缺最近一批；上次 headless 运行{}",
+                exit.label()
+            )
+        );
+    }
+    let (state, detail) = judge(&BridgeEvidence {
+        last_exit: Some(ExitClass::Clean),
+        ..BridgeEvidence::default()
+    });
+    assert_eq!(state, HealthState::Unknown);
+    assert_eq!(detail, "Bridge 证据不完整：缺最近一批");
+}

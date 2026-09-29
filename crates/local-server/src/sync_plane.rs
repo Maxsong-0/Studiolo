@@ -1,12 +1,12 @@
 //! 双向 Bridge 驱动平面（T-132 P1，ADR-025 D1）：装进 `studiolo-human` 进程的新平面。
-//!
 //! 一轮驱动 = InspectConfig → 守卫 → RunOnce（经 `SyncTransportOwner`）→ 静止 → 观察两侧 →
 //! 规划（双向冲突先保全）→ 预留 → 逐动作执行 → 闭合 → 退休 → 保留期回收；顺序与失败即停点见
 //! `docs/m2/sync-plane-design.md` 第 2 节。**默认关闭**：组合根没有 `--sync-transport`
 //! 或私有配置缺 `sync_scope` 时本平面根本不被构造。
-//!
 //! 写者边界：本模块及子模块从不持有 Broker 类型，canonical 侧读写全部经
 //! `coordinator::sync_bridge` 的窄接缝；镜像只经 idmapped 视图根读写。
+mod binding;
+pub use binding::{bridge_binding, bridge_limits};
 
 pub mod driver;
 pub mod health;
@@ -16,10 +16,13 @@ pub mod naming;
 pub mod quiescence;
 pub mod recovery;
 pub mod witness;
-
+use crate::CanonicalWorkbench;
+pub use crate::sync_transport_config::{
+    ConfigError as HeadlessConfigError, Expected as HeadlessExpected, FileType as HeadlessFileType,
+    LocalConfigMatch as HeadlessConfigMatch, verify as verify_headless_config,
+};
 use mirror::stage::StageStore;
 use recovery::PlaneStateStore;
-use sha2::{Digest, Sha256};
 use std::{
     path::PathBuf,
     sync::atomic::{AtomicBool, Ordering},
@@ -27,16 +30,9 @@ use std::{
     time::Duration,
 };
 use studiolo_audit_ledger::AuditLedger;
-use studiolo_host_config::SyncScope;
 use studiolo_host_config::sync_transport::ApprovedTransport;
-use studiolo_sync_bridge::{Binding, Limits, sqlite::BridgeState};
+use studiolo_sync_bridge::sqlite::BridgeState;
 use studiolo_sync_transport::owned_run::SyncTransportOwner;
-
-use crate::CanonicalWorkbench;
-pub use crate::sync_transport_config::{
-    ConfigError as HeadlessConfigError, Expected as HeadlessExpected, FileType as HeadlessFileType,
-    LocalConfigMatch as HeadlessConfigMatch, verify as verify_headless_config,
-};
 
 /// `<plane_root>` 下 Bridge 持久状态（sqlite 主库与租约）的固定子目录名；
 /// 组合根与 `studiolo-maintain sync-init` 共用这一个常量。
@@ -44,6 +40,7 @@ pub const BRIDGE_DIR: &str = "bridge";
 
 /// 两轮驱动之间的固定间隔；不可配置，避免把 headless 的 60 秒级同步排成风暴。
 pub const ROUND_INTERVAL: Duration = Duration::from_secs(300);
+
 /// 静止票据的最长使用窗口；超过就重新跑一次 RunOnce 取证据。
 pub const QUIESCENT_WINDOW: Duration = Duration::from_secs(1800);
 
@@ -56,6 +53,9 @@ pub enum PlaneError {
     /// 受控 launcher 未就绪或传输运行槽拒绝。
     #[error("受控传输运行不可用")]
     Transport,
+    /// headless 已闭合但非干净退出；保留该次已确认的退出分类。
+    #[error("headless 运行非干净结束")]
+    Headless,
     /// headless 配置与审批值不一致（模式／排除项／文件类型）。
     #[error("headless 配置与审批不一致")]
     ConfigMismatch,
@@ -129,11 +129,29 @@ impl SyncPlane {
             .revalidate()
             .map_err(|_| PlaneError::Configuration)?;
         let health = Arc::new(health::PlaneHealth::new(inputs.approval.manual_quota()));
-        // 私有存储失败关闭：plane-state.json 撕裂／校验和不符、外 stage 索引损坏都不装配；
-        // stage 打开时顺带回收孤儿对象。两者都过才有平面。**只核不留**：`plane.lock` 是 flock
+        // plane-state 或 stage 索引损坏均拒绝；stage 顺带回收孤儿。只核不留：`plane.lock` 是 flock
         // 排他租约，按打开文件描述计，同进程再开一次也会被自己拒绝（评审 P0-1）；每轮的
         // `RealPorts::open` 才是唯一持有者，平面不留第二个描述符。
-        drop(PlaneStateStore::open(&inputs.plane_root).map_err(|_| PlaneError::Storage)?);
+        let state = PlaneStateStore::open(&inputs.plane_root).map_err(|_| PlaneError::Storage)?;
+        if state.state().pending_purge.is_some() {
+            return Err(PlaneError::Audit);
+        }
+        health.record_conflicts(state.state().conflict_stamps.len() as u64);
+        let status = inputs
+            .transport
+            .inspect()
+            .map_err(|_| PlaneError::Transport)?;
+        if let Some(terminal) = status.last_terminal {
+            let run = driver::HeadlessRun::from_terminal(terminal.run_id, terminal.observation);
+            let forced = recovery::decide(
+                state.state(),
+                driver::approved_mode(inputs.approval.headless_mode()),
+                health::now_unix_seconds(),
+            )
+            .forced_recovery;
+            health.record_headless(&run, forced);
+        }
+        drop(state);
         drop(StageStore::open(&inputs.plane_root).map_err(|_| PlaneError::Storage)?);
         Ok(Arc::new(Self {
             approval: inputs.approval,
@@ -232,51 +250,4 @@ impl SyncPlane {
             }
         }
     }
-}
-
-/// Bridge 持久状态的绑定：链身份、Vault 身份与两个根 token 全部由审批与已核验根身份派生。
-///
-/// `canonical_identity` 是可信启动层（`ServingRoots`）或维护入口（`CanonicalServingRoots`）
-/// 核验过的 canonical 根 `(dev, ino)`。组合根与 `studiolo-maintain sync-init` 必须算出同一个
-/// 绑定，否则 `BridgeState::open_existing` 按绑定不符拒绝。
-#[must_use]
-pub fn bridge_binding(approval: &ApprovedTransport<'_>, canonical_identity: (u64, u64)) -> Binding {
-    let scope = approval.binding();
-    let roots = approval.roots();
-    Binding {
-        link_id: scope.link_id,
-        canonical_vault: vault_identity(&scope.vault_uuid.to_string()),
-        remote_vault: scope.remote_vault,
-        canonical_root_token: root_token("canonical", canonical_identity),
-        mirror_root_token: root_token("mirror", roots.mirror_identity()),
-        scope_hash: scope.scope_hash,
-        scope_epoch: scope.scope_epoch,
-    }
-}
-
-/// Bridge 执行器的保守预算：路径与输出上限固定，单对象字节上限取范围内最大的 `max_bytes`。
-#[must_use]
-pub fn bridge_limits(scope: &SyncScope) -> Limits {
-    Limits::conservative(scope.max_bytes())
-}
-
-/// 根 token：域分隔 sha256(角色 ‖ dev ‖ ino)。
-fn root_token(role: &str, identity: (u64, u64)) -> [u8; 32] {
-    let mut hash = Sha256::new();
-    hash.update(b"studiolo.sync-plane.root.v1\0");
-    hash.update(role.as_bytes());
-    hash.update(identity.0.to_be_bytes());
-    hash.update(identity.1.to_be_bytes());
-    hash.finalize().into()
-}
-
-/// Vault 身份的 16 字节投影：域分隔 sha256 的前 16 字节。
-fn vault_identity(uuid: &str) -> [u8; 16] {
-    let mut hash = Sha256::new();
-    hash.update(b"studiolo.sync-plane.vault.v1\0");
-    hash.update(uuid.as_bytes());
-    let digest: [u8; 32] = hash.finalize().into();
-    let mut identity = [0u8; 16];
-    identity.copy_from_slice(&digest[..16]);
-    identity
 }

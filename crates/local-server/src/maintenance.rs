@@ -9,6 +9,7 @@ mod rename;
 mod state;
 mod sync;
 mod sync_audit;
+mod sync_rebind;
 mod terminal;
 mod workflow;
 
@@ -35,6 +36,7 @@ pub fn run() -> Result<(), MaintenanceError> {
             "studiolo-maintain cancel-maintenance [相同根参数] --maintenance <64位维护指纹>",
             "studiolo-maintain audit-flush [相同根参数]",
             "studiolo-maintain sync-init [相同根参数] --sync-transport </绝对路径/sync-approval.json>",
+            "studiolo-maintain sync-rebind [相同根参数] --sync-transport </绝对路径/新sync-approval.json>",
             "studiolo-maintain sync-purge-residue [相同根参数] --sync-transport </绝对路径/sync-approval.json> --folder <排除文件夹名>"
         ],"boundary":"仅本机 OS 权限与既有 Broker owner 租约；不是应用身份认证，不自动初始化、取消或停服务。sync-init 只在四项私有存储都不存在时显式建立；sync-purge-residue 须先停 studiolo-human，只删镜像视图内已不再排除的文件夹残留。"}));
     };
@@ -110,6 +112,15 @@ pub enum MaintenanceError {
     /// Bridge 平面私有存储初始化或打开失败。
     #[error("Bridge 平面私有存储不可用；初始化或读取未完成，请检查四个根后重试")]
     SyncStorage,
+    /// 重绑定前置拒绝，不复述路径、原配置或底层日志。
+    #[error("传输重绑定拒绝：{0}；未发布新绑定")]
+    SyncRebind(studiolo_sync_transport::owned_run::TransportError),
+    /// 平面有未回收运行或 Bridge 未闭合批次，必须先按原键恢复。
+    #[error("平面仍有未回收运行、未闭合 Bridge 批次或待补审计；先按原键恢复，未发布新绑定")]
+    SyncRebindPending,
+    /// 原子发布已尝试，不能将后续核验错误描述成没有写入。
+    #[error("重绑定发布结果未确认；请重开核验持久配置摘要与代次，不得据此重复初始化")]
+    SyncRebindOutcome,
     /// 指定文件夹不是当前可清除的排除残留。
     #[error("指定文件夹不在上次核验的排除集合内，或仍在当前审批的排除清单里；未删除任何东西")]
     SyncResidue,

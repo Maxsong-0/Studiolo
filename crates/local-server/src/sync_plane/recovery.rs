@@ -13,17 +13,19 @@
 //! 版本 1 之后追加的字段（`headless_excluded`、`conflict_stamps`）缺省为空、为空时不写出，
 //! 只在非默认时进校验和：旧文件照常解码、校验和不变，不需要重建（兼容规则见 `state.rs`）。
 
+mod purge;
 mod residue;
 mod state;
 
+pub use purge::{PendingPurge, PurgeResult};
 pub use residue::residue_guard;
+pub use state::PlaneState;
 
 use super::PlaneError;
 use super::mirror::stage;
 use rustix::fd::{AsFd, OwnedFd};
 use rustix::fs::{CWD, FlockOperation, Mode, OFlags, Stat, flock, fstat, openat};
 use rustix::io::Errno;
-use std::collections::BTreeMap;
 use std::ffi::OsStr;
 use std::path::{Component, Path};
 use studiolo_sync_transport::owned_run::SyncMode;
@@ -44,58 +46,6 @@ pub const BACKOFF_SECONDS: [u64; 7] = [5, 10, 20, 40, 80, 160, 300];
 const LOCK_MAX_BYTES: usize = 4 * 1024;
 /// `conflict_stamps` 的条目上限，也是一轮最多保全的冲突数（`driver::preserve`）。
 pub const MAX_CONFLICT_STAMPS: usize = 512;
-
-/// 持久小状态；`serde(deny_unknown_fields)`，版本固定 1。
-#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct PlaneState {
-    /// 固定为 1。
-    pub version: u8,
-    /// 上次 RunOnce 是否已干净回收（`Code(0)` 且静止确认）；`false` 或「已启动未回收」都算未干净。
-    pub last_run_clean: bool,
-    /// 已启动但尚未记录回收的运行序号；断电后重开时 `Some` 即视为未干净回收。
-    pub started_sequence: Option<u64>,
-    /// 上次退出时刻（Unix 秒）。
-    pub last_exit_unix: Option<i64>,
-    /// 连续 rc=1 次数。
-    pub consecutive_rc1: u32,
-    /// 下一次 RunOnce 不早于此刻（Unix 秒）。
-    pub not_before_unix: Option<i64>,
-    /// 上次核验通过的排除文件夹集合（已排序）。
-    pub verified_excluded: Vec<String>,
-    /// 上次成功应用的镜像模式。
-    pub applied_mode: Option<SyncMode>,
-    /// headless 最近一次核对时报的排除集合（已排序）；守卫拦住的轮次也记。
-    /// `sync-purge-residue` 只清其中的文件夹：headless 已不再排除的残留会被当成新内容上传。
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub headless_excluded: Vec<String>,
-    /// 双向冲突保全戳：冲突身份摘要（64 位小写十六进制）→ 首次保全的 UTC 分钟戳（12 位数字）；
-    /// 只留当前冲突，至多 [`MAX_CONFLICT_STAMPS`] 条。
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub conflict_stamps: BTreeMap<String, String>,
-    /// 域分隔 sha256（小写十六进制）。
-    pub checksum: String,
-}
-
-impl PlaneState {
-    /// 首次运行的状态：视为上次已干净回收、无退避、无已核验排除项、没有记下的 headless 现状与冲突戳。
-    #[must_use]
-    pub fn first_run() -> Self {
-        state::seal(Self {
-            version: state::VERSION,
-            last_run_clean: true,
-            started_sequence: None,
-            last_exit_unix: None,
-            consecutive_rc1: 0,
-            not_before_unix: None,
-            verified_excluded: Vec::new(),
-            applied_mode: None,
-            headless_excluded: Vec::new(),
-            conflict_stamps: BTreeMap::new(),
-            checksum: String::new(),
-        })
-    }
-}
 
 /// 本轮应采用的模式与是否处于退避。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

@@ -114,7 +114,7 @@ launcher 把启动事实（固定 pins、镜像根、配置根、操作）预写
   `sync_scope`，或审批文档／根身份／launcher 探测任一失败，启动报 `StartupError::SyncPlane` 且不监听（不静默降级）。
 - 装配顺序：审批文档 → 借用范围追加审批（根 pins、两两不重叠）→ 固定运行时 → 经 launcher `probe` 核验后端
   （systemd ≥ 257、cgroup v2、loop 配额、专用身份）→ 打开传输运行槽 → 打开 Bridge 状态 → 组装平面。
-- `studiolo-maintain sync-init`（W6）：初始化或重建 `plane_root`；`studiolo-maintain sync-purge-residue <folder>`：见第 8 节。
+- `studiolo-maintain sync-init`（W6）：初始化 `plane_root`；`studiolo-maintain sync-rebind`：安全配置重绑定，见第 8.1 节；`studiolo-maintain sync-purge-residue <folder>`：见第 8 节。
 
 ## 7 健康节「双向 Bridge」（`sync-bridge`）
 
@@ -122,10 +122,10 @@ launcher 把启动事实（固定 pins、镜像根、配置根、操作）预写
 `conflict_copies`、`mirror_bytes`、`last_exit`（clean／non_zero／signal／deadline_exceeded／owner_stopped／unconfirmed）、
 `recovery`（idle／forced_mirror_remote／backoff）、`residue_guard`（clear／blocked）、`mode`。任一 `None` → 未知；
 `fused`、`unknown_jobs>0`、`residue_guard=blocked`、`last_exit≠clean`、`recovery≠idle` → 降级；`quiescence_valid=false` → 未知。
-`conflict_copies`＝最近一次完整观察里两侧命名为冲突副本的路径数＋本进程启动以来 Bridge 保全进 `ops/bridge-conflicts/` 的冲突数。
+`conflict_copies`＝最近一次完整观察里两侧命名为冲突副本的路径数＋持久 `conflict_stamps` 的当前条数（含正在续写副本的冲突，非历史副本文件总数）。
 平面未装配时整节未知（没启用的能力不显示绿）。`sync-quota`：镜像字节对 `manual_quota.account_limit_bytes`，七成预警。
 `owner-liveness` 多一项 `sync-transport`（最近一轮时刻，周期 600 s）。
-`plane-state.json` 新增的 `headless_excluded`、`conflict_stamps` 两个字段向后兼容：旧文件照常读、字段为空时不写出，不需要重建。
+`plane-state.json` 新增的 `headless_excluded`、`conflict_stamps`、`pending_purge` 字段向后兼容：旧文件照常读、字段为空时不写出，不需要重建。
 
 ## 8 排除项清除的安全顺序与 `sync-purge-residue`
 
@@ -145,6 +145,8 @@ headless 一旦不再排除 X，下一次 RunOnce 就会把残留当新内容上
 purge 只在三条同时成立时动手：X 在上次核验集合里、不在当前审批里、`headless_excluded` 仍含 X；另外权威审计账本
 必须可用。任一不满足即拒绝，一个字节不删。它不改审批文档，也不碰 canonical。
 
+若命令因审计不可用或中断而失败，保持 human 停止，恢复账本后用同一审批再次运行。`plane-state.json.pending_purge` 保留原事件号；恢复调用只补原审计并报告 `recovered_audit=true`，不会继续删除。`outcome_known=false` 且计数／applied 为 null 表示删除中断、结果未知，不能解释成零删除。核对镜像残留后另一次显式清除才会进入新确认。未闭合日记会阻止 Bridge 启动与重绑定；不得删除日记或重新初始化来绕过它。
+
 第 ② 步若报的是「headless 配置与审批文档不一致」（镜像里已无残留），跳过第 ③、④ 步，直接做第 ⑤ 步；对没有残留的文件夹跑 purge 会报「不在上次核验的排除集合内…」，那不代表顺序错了。
 
 **错序怎么办**：
@@ -153,7 +155,32 @@ purge 只在三条同时成立时动手：X 在上次核验集合里、不在当
 - 审批已改、human 还在跑时就清了 headless 排除：有残留时健康节报「排除项清除前有镜像残留」，但 `headless_excluded`
   已不含 X，purge 拒绝（「headless 最近一次核对已不再排除该文件夹」）。把排除项加回 headless、让 human 跑一轮核对，再从 ③ 继续。
 
-**改审批文档的两类字段**：`device_name`、`headless_mode`、`excluded_folders`、`manual_quota` 是平面字段，不进传输私有存储的绑定摘要，改后重启 human 即生效（前三项每轮 InspectConfig 按新审批值核对，`headless_mode` 改成 `bidirectional` 即 P6 切换）。四个根、`runtime`（含升级 headless 后的 `closure_digest`）、`backend`、`budget` 是传输安全字段，进绑定摘要：改了 human 启动即报 `StartupError::SyncPlane`（传输槽绑定不符），当前没有重绑定入口（`sync-init` 见任一私有存储已存在即整体拒绝），在 `sync-rebind`（另立任务）落地前不要改这几类字段。
+**改审批文档的两类字段**：`device_name`、`headless_mode`、`excluded_folders`、`manual_quota` 是平面字段，不进传输私有存储的绑定摘要，改后重启 human 即生效（前三项每轮 InspectConfig 按新审批值核对，`headless_mode` 改成 `bidirectional` 即 P6 切换）。四个根、`runtime`（含升级 headless 后的 `closure_digest`）、`backend`、`budget` 是传输安全字段，进绑定摘要；修改后必须先执行下面的 `sync-rebind`，直接启动 human 会因旧槽绑定不符而拒绝。
+
+### 8.1 安全配置变更与 `sync-rebind`
+
+1. 先 `systemctl --user stop studiolo-human`，等待服务完整退出。若传输仍有 active／待补审计、平面有
+   `started_sequence`／未完成 purge，或 Bridge 有 pending／待补审计，先按原配置和原键恢复闭合。
+   `sync-rebind` 不会取消、补审计、清槽或假造静止证明。
+2. 准备新运行时／launcher 固定配置，再修改审批文档的安全字段；目录改名或移动必须保留原目录实体，
+   不复制到新 inode。旧软件已移除也不必为了重绑定恢复：本命令只检查旧持久状态、新审批与既有根。
+3. 用运行 human 的同一 OS 用户、真实前台终端执行：
+   `studiolo-maintain sync-rebind --config /ABS/owner.json --vault /ABS/vault --assets /ABS/assets --writer-data /ABS/writer --sync-transport /ABS/new-sync-approval.json`。
+   核对确认页的新旧配置摘要与代次，输入 `sync-rebind` 明确确认；没有 `--yes` 或身份代入开关。
+4. 成功时只完整原子替换 `state.json`：保留 installation_id、next_sequence，generation 加一，替换安全绑定，
+   清除旧 last_terminal。旧静止事实与票据不得供新配置复用；重复安全调用只再增加代次，不复用已分配序号。
+5. 如新固定配置需要，重启 launcher；随后起 human。启动仍要真实 probe 新 runtime／后端、每轮仍核对 headless 配置。
+   重绑定成功不等于新软件、隔离配置或双向同步已完成现场验收。
+
+边界：vault／link／remote／scope_hash／scope_epoch 必须完全不变；本命令不迁移范围。`private_root` 必须指向
+原 `(dev,ino)` 的私有目录，`owner_view_root` 必须仍映射原镜像 `(dev,ino)`；`mirror_root` 可改名，但其真实身份仍须
+由 launcher 在最终 payload 视图核验与 owner 视图一致。复制私有根或更换物理镜像不会被接受为路径重绑定。
+`plane_root` 必须已有完整 Plane／Bridge／Stage，且按同一 scope 与镜像绑定打开；当前 schema 没保存旧 plane inode，
+因此不保证识别完整复制的 plane 目录，本命令不提供这种复制迁移的验收。四根均不得指向缺失或需要初始化的存储。
+
+传输拒绝项在打开 Bridge 前检查，所有拒绝都不发布新绑定、不改变业务状态或清理 stage 对象。
+既有 Bridge 的 SQLite 开库可能执行恢复与 checkpoint，不能把这描述成磁盘字节完全不变。
+出现“发布结果未确认”时先重开核验摘要与代次；临时发布残留沿原存储规则失败关闭，不能用 `sync-init` 覆盖历史。
 
 ## 9 回滚
 

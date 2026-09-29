@@ -4,7 +4,7 @@ use super::{
     MaintenanceError, audit, flush,
     inputs::Inputs,
     options::{Command, Options},
-    presentation, state, sync,
+    presentation, state, sync, sync_rebind,
 };
 use serde_json::{Value, json};
 use studiolo_vault_broker::{
@@ -26,9 +26,12 @@ pub(super) fn execute(
             json!({"command":"inspect","operator":actor,"audit_available":inputs.audit.is_some(),"status":observed}),
         );
     }
-    // Bridge 平面的两条维护命令不写内容审计，也不动 Broker 的未决状态：只要既有租约在手就能跑。
+    // Bridge 维护由各入口核验专属存储；共同前置是同一 Broker 租约与主人终端。
     if options.command == Command::SyncInit {
         return sync::init(inputs, options, &check);
+    }
+    if options.command == Command::SyncRebind {
+        return sync_rebind::run(inputs, options, &mut confirm, &check);
     }
     if options.command == Command::SyncPurgeResidue {
         return sync::purge_residue(inputs, options, &mut confirm, &check);

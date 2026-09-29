@@ -146,7 +146,8 @@ pub fn install(
     if !stage::same_mount(stage.objects(), parent.as_fd()).map_err(|_| PlaneError::Storage)? {
         return Err(PlaneError::Storage);
     }
-    let source = stage::hex(object.digest());
+    // 被入站重放或删除保全引用的对象必须留下；只有独立安装副本可搬进视图。
+    let source = stage.install_source(object)?;
     renameat(stage.objects(), source.as_str(), &parent, name).map_err(|_| PlaneError::Storage)?;
     fsync(&parent).map_err(|_| PlaneError::Unknown)?;
     let (installed, bytes) = regular_at(parent.as_fd(), name)

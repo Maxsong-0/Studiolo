@@ -161,6 +161,9 @@ pub fn run_round_with(
 ) -> Result<RoundOutcome, PlaneError> {
     // 1 持久小状态与恢复判定：退避窗口内什么都不跑。
     let mut state = ports.state()?;
+    if state.pending_purge.is_some() {
+        return Err(PlaneError::Audit);
+    }
     let decision = recovery::decide(&state, approved, now_unix);
     if decision.backoff {
         return Ok(RoundOutcome::Skipped);

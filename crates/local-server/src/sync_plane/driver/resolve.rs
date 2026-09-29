@@ -52,6 +52,10 @@ pub fn preresolve_conflicts(
         return Err(PlaneError::Fused);
     }
     let workbench = context.plane.workbench();
+    let plan_sequence = match decision {
+        Decision::Ready(plan) => plan.key().sequence,
+        Decision::FuseBlocked(blocked) => blocked.key.sequence,
+    };
     let link_id = context.binding.link_id;
     let mut changed = false;
     for conflict in preserved(decision) {
@@ -67,6 +71,7 @@ pub fn preresolve_conflicts(
                 mirror,
                 BridgePrecondition::MustNotExist,
                 &resolve,
+                plan_sequence,
             )
             .map(|_| ())
             .map_err(MirrorWriteError::seam),
@@ -89,6 +94,7 @@ pub fn preresolve_conflicts(
                         mirror,
                         BridgePrecondition::Match(expected),
                         &resolve,
+                        plan_sequence,
                     )
                     .map(|_| ())
                     .map_err(MirrorWriteError::seam),

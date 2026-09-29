@@ -93,10 +93,15 @@ impl StageIndex {
             .binary_search_by(|entry| entry.object.as_str().cmp(object))
     }
 
-    /// 登记或刷新一条保全；同一地址再次保全以最新一次为准，保留期从最新时刻重算。
-    pub(super) fn upsert(&mut self, entry: PreservedEntry) {
+    /// 登记或刷新保全；时刻和计划序号分别取最大，旧调用不得缩短任何活跃引用。
+    pub(super) fn upsert(&mut self, mut entry: PreservedEntry) {
         match self.position(&entry.object) {
-            Ok(index) => self.preserved[index] = entry,
+            Ok(index) => {
+                let previous = &self.preserved[index];
+                entry.preserved_at_unix = entry.preserved_at_unix.max(previous.preserved_at_unix);
+                entry.plan_sequence = entry.plan_sequence.max(previous.plan_sequence);
+                self.preserved[index] = entry;
+            }
             Err(index) => self.preserved.insert(index, entry),
         }
         self.checksum = checksum(&self.preserved);
