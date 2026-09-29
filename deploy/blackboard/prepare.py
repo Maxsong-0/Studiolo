@@ -29,13 +29,14 @@ def load(name, path):
         raise ValueError('unsafe tools')
     spec = importlib.util.spec_from_file_location(name, path)
     module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
     spec.loader.exec_module(module)
     return module
 
 
 def mode_for(c, name):
     """发行里的可执行位：两个 r8 时代的二进制外，r2 起还多一个初始化程序。"""
-    return 0o755 if name in c.BINARIES | {'bin/studiolo-vault-admin'} else 0o600
+    return 0o755 if name in c.BINARIES | {'bin/studiolo-vault-admin', 'bin/studiolo-maintain'} else 0o600
 
 
 def prepare(args, a, c, ops):
@@ -49,6 +50,8 @@ def prepare(args, a, c, ops):
         c.require(re.fullmatch('[0-9a-f]{40}', args.human_source_commit))
         human = c.read(c.absolute(args.local_server), c.UID)
         c.require(human.startswith(b'\x7fELF') and c.sha(human) == args.local_server_sha256)
+    from board_sync_tools import read_inputs
+    tools = read_inputs(args, c)
     old = Path(a.OLD_RELEASE)
     # 上一发行是黑板形状的 manifest，用同一套闭集核验，而不是 r8 时代的 verifier。
     old_manifest = ops.verify_previous(a, c)
@@ -66,7 +69,7 @@ def prepare(args, a, c, ops):
     output.mkdir(mode=0o700)
     c.new_file(output / 'INCOMPLETE', b'preparing\n')
     for name in old_manifest['files']:
-        if name.startswith(a.WEB_PREFIX):
+        if name.startswith(a.WEB_PREFIX) or name in tools:
             continue
         target = output / c.relative(name)
         target.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
@@ -80,6 +83,10 @@ def prepare(args, a, c, ops):
         elif name == 'studiolo-agent.service':
             content = a.agent_unit(units['studiolo-agent'].decode()).encode()
         c.new_file(target, content, mode_for(c, name))
+    for name, content in tools.items():
+        target = output / c.relative(name)
+        target.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        c.new_file(target, content, 0o755)
     for name in web:
         target = output / c.relative(a.WEB_PREFIX + name)
         target.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
@@ -95,6 +102,10 @@ def prepare(args, a, c, ops):
                 'web_source_commit': args.web_source_commit,
                 'r8_manifest_sha256': a.R8_MANIFEST_SHA, 'assembly': a.ASSEMBLY,
                 'before_units': {name: c.sha(raw) for name, raw in units.items()}, 'files': files}
+    if tools:
+        manifest['sync_program_source_commit'] = args.human_source_commit
+    elif 'sync_program_source_commit' in old_manifest:
+        manifest['sync_program_source_commit'] = old_manifest['sync_program_source_commit']
     raw = (json.dumps(manifest, sort_keys=True, indent=2) + '\n').encode()
     c.new_file(output / 'manifest.json', raw)
     (output / 'INCOMPLETE').unlink()
@@ -108,12 +119,15 @@ def main():
     os.umask(0o077)
     a = load('board_assembly', HERE / 'assembly.py')
     c = load('board_release_common', HERE.parent / 'human/release/release_common.py')
+    for name in ('sync_tools', 'candidate', 'binding', 'snapshot'):
+        load('board_' + name, HERE / (name + '.py'))
     ops = load('board_ops', HERE / 'activation_ops.py')
     parser = argparse.ArgumentParser(description=__doc__, allow_abbrev=False)
     for name in ('web', 'web-source-commit'):
         parser.add_argument('--' + name, required=True)
     # 换人侧程序时三件套一起给；都不给则沿用上一发行的程序。
-    for name in ('local-server', 'local-server-sha256', 'human-source-commit'):
+    for name in ('local-server', 'local-server-sha256', 'human-source-commit',
+                 'maintain', 'maintain-sha256', 'sync-launcher', 'sync-launcher-sha256'):
         parser.add_argument('--' + name)
     args = parser.parse_args()
     print(json.dumps(prepare(args, a, c, ops), sort_keys=True))

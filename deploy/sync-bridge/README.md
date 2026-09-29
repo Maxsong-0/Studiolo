@@ -32,7 +32,8 @@ launcher 把启动事实（固定 pins、镜像根、配置根、操作）预写
    `/opt/studiolo/node` 与 `/opt/studiolo/obsidian-headless`（版本与 SHA256 以 `headless-trial/p2-10-install.sh`
    为准，只是装到 `/opt/studiolo` 而不是账号家目录）。记下安装目录总摘要（同脚本「安装目录总摘要」一行）。
 2. **出二进制**：`deploy/human/release/package.py … --sync-launcher /ABS/STAGING/studiolo-sync-launcher …`
-   （r8 发行目录里是 `bin/studiolo-sync-launcher`，0755）。
+   现行 rN 升级使用 `deploy/blackboard/prepare.py` 的双程序显式输入（见其 README），随包同时交付
+   `bin/studiolo-sync-launcher` 与 `bin/studiolo-maintain`（均 0755），两者与人侧程序来源一致；出包不启用 Bridge。
 3. **置备**：`sudo bash <仓库>/deploy/sync-bridge/provision.sh /ABS/RELEASE/bin/studiolo-sync-launcher`。
    它依次：建 `studiolo-sync`（`useradd --system --user-group`，无家目录、不可登录）→ `fallocate` 4 GiB 镜像并
    `mkfs.ext4` → 渲染安装两个 mount 单元与服务单元（`@OWNER_UID@`、`@PAYLOAD_UID@` 等换成真实数字）→

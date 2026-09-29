@@ -48,6 +48,10 @@ def trusted_modules():
         'release_common': release / 'release_common.py',
         'runtime_checks': release / 'runtime_checks.py',
         'board_r8_ops': release / 'activation_ops.py',
+        'board_sync_tools': HERE / 'sync_tools.py',
+        'board_candidate': HERE / 'candidate.py',
+        'board_binding': HERE / 'binding.py',
+        'board_snapshot': HERE / 'snapshot.py',
         'board_ops': HERE / 'activation_ops.py',
         'board_snapshot_worker': release / 'snapshot_worker.py',
     }
