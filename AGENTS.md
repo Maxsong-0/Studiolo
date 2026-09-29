@@ -77,3 +77,4 @@
 - 环境安装脚本（保存在 Cursor 面板，不在仓库）已备好 1.97.1 ＋ rustfmt／clippy、GNU `time`（内存测量用例调 `/usr/bin/time`）、`web/node_modules` 与 cargo 依赖缓存，
   并在 `$CARGO_HOME/config.toml` 设 `[profile.dev] debug = "line-tables-only"`，与 CI、`test-linux.sh` 同一设置。
 - vault `项目/Studiolo/` 与全局 `~/.claude/CLAUDE.md` 不在 VM 上。推送 PR 同样占第五节那条共享 runner 队列（draft PR 也触发）：先在 VM 里验完，攒成一次推送。
+- 在推进工作的交接快照放在 `docs/handoff/`（vault 为准，可能滞后）。验证一律用 GitHub CI 加上面的 `test-cursor-cloud.sh`；要登录 107／108／169、读写 vault 或用 studiolo MCP 的步骤云端做不了，停下写明「交本机会话」，不要索要或注入内网／SSH 凭据。
