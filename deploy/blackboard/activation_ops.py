@@ -1,18 +1,18 @@
 """有界双服务切换。只恢复程序文件，从不恢复、删除或迁移数据库。"""
 import fcntl
-import json
 import os
 from pathlib import Path
 import pwd
-import re
 import shlex
-import sqlite3
 import stat
 import subprocess
 import sys
 import tempfile
 import time
-import uuid
+
+from board_candidate import verify_previous, verify_candidate
+from board_binding import binding, board_files
+from board_snapshot import SnapshotOperations
 
 CONFIG = Path('/home/maxsong/.config/studiolo-human/owner.json')
 RECORDS = Path('/var/lib/studiolo-deployments')
@@ -22,145 +22,7 @@ UNIT_ROOT = Path('/etc/systemd/system')
 NAMES = ('studiolo-human', 'studiolo-agent')
 
 
-# manifest 的闭集：r2 那一版没有 web_source_commit，r3 起必须有。
-MANIFEST_KEYS = {'build', 'bootstrap_source_commit', 'human_program_source_commit',
-                 'web_source_commit', 'r8_manifest_sha256', 'assembly', 'before_units', 'files'}
-
-
-def verify_previous(a, c):
-    """上一发行也是黑板形状的 manifest，用同一闭集逐项核验；不沿用 r8 时代的 verifier。"""
-    root = Path(a.OLD_RELEASE)
-    raw = c.read(root / 'manifest.json', c.UID, 0o600)
-    c.require(c.sha(raw) == a.R8_MANIFEST_SHA)
-    manifest = c.document(raw)
-    c.require(MANIFEST_KEYS - {'web_source_commit'} <= set(manifest) <= MANIFEST_KEYS)
-    c.require(manifest['assembly'] == a.ASSEMBLY and isinstance(manifest['build'], str))
-    for key in ('bootstrap_source_commit', 'human_program_source_commit'):
-        c.require(isinstance(manifest[key], str) and re.fullmatch('[0-9a-f]{40}', manifest[key]))
-    files = manifest['files']
-    c.require(isinstance(files, dict) and files)
-    c.require(any(name.startswith(a.WEB_PREFIX) for name in files))
-    directories = set()
-    for name, item in files.items():
-        path = c.relative(name)
-        c.require(name != 'manifest.json')
-        c.require(isinstance(item, dict) and set(item) == {'bytes', 'sha256'})
-        c.require(type(item['bytes']) is int and 0 <= item['bytes'] <= c.MAX_FILE)
-        c.require(isinstance(item['sha256'], str) and re.fullmatch('[0-9a-f]{64}', item['sha256']))
-        directories.update(p.as_posix() for p in path.parents if str(p) != '.')
-    actual, dirs = c.scan(root, c.UID)
-    c.require(dirs == directories and set(actual) == set(files) | {'manifest.json'})
-    c.require(all(actual[name] == item for name, item in files.items()))
-    c.require(c.read(root / 'manifest.json', c.UID, 0o600) == raw)
-    return manifest
-
-
-def verify_candidate(a, c, expected_sha):
-    """候选包＝上一发行换掉整个 web/（可选换人侧程序）；其余逐字节相同，程序来源不得冒称新构建。"""
-    c.require(isinstance(expected_sha, str) and re.fullmatch('[0-9a-f]{64}', expected_sha))
-    root = Path(a.RELEASE)
-    old = verify_previous(a, c)
-    raw = c.read(root / 'manifest.json', c.UID, 0o600)
-    c.require(c.sha(raw) == expected_sha)
-    manifest = c.document(raw)
-    c.require(set(manifest) == MANIFEST_KEYS)
-    c.require(manifest['build'] == a.BUILD and manifest['assembly'] == a.ASSEMBLY)
-    c.require(re.fullmatch('[0-9a-f]{40}', manifest['bootstrap_source_commit']))
-    c.require(isinstance(manifest['human_program_source_commit'], str)
-              and re.fullmatch('[0-9a-f]{40}', manifest['human_program_source_commit']))
-    # 网页必须能追到构建它的提交；程序沿用上一发行，照抄其来源，不冒称新构建。
-    c.require(isinstance(manifest['web_source_commit'], str)
-              and re.fullmatch('[0-9a-f]{40}', manifest['web_source_commit']))
-    c.require(manifest['bootstrap_source_commit'] == old['bootstrap_source_commit'])
-    # 人侧程序：来源提交没变就必须逐字节沿用；来源变了才允许换（仍须是 ELF，见下）。
-    program_changed = manifest['human_program_source_commit'] != old['human_program_source_commit']
-    c.require(manifest['r8_manifest_sha256'] == a.R8_MANIFEST_SHA)
-    c.require(manifest['before_units'] == dict(zip(NAMES, (a.HUMAN_SHA, a.AGENT_SHA))))
-    files = manifest['files']
-    c.require(isinstance(files, dict))
-    # 这三份按现场重新派生：启动器与人侧单元改发行路径，agent 单元照抄现场
-    # （读取范围可能在两次发行之间被 L3 改过，必须以现场为准而不是上一发行的存档）。
-    changed = {'launch-human.py', 'studiolo-human.service', 'studiolo-agent.service'}
-    if program_changed:
-        changed.add('bin/studiolo-local-server')
-    old_web = {name for name in old['files'] if name.startswith(a.WEB_PREFIX)}
-    new_web = {name for name in files if name.startswith(a.WEB_PREFIX)}
-    c.require(new_web and a.WEB_PREFIX + 'index.html' in new_web)
-    c.require(set(files) == (set(old['files']) - old_web) | new_web)
-    directories = set()
-    for name, item in files.items():
-        path = c.relative(name)
-        c.require(isinstance(item, dict) and set(item) == {'bytes', 'sha256'})
-        c.require(type(item['bytes']) is int and 0 <= item['bytes'] <= c.MAX_FILE)
-        c.require(isinstance(item['sha256'], str) and re.fullmatch('[0-9a-f]{64}', item['sha256']))
-        if name not in changed and name not in new_web:
-            c.require(item == old['files'][name])
-        directories.update(p.as_posix() for p in path.parents if str(p) != '.')
-    c.inspect(root, c.UID, 0o700, True)
-    actual, dirs = c.scan(root, c.UID)
-    c.require(dirs == directories and set(actual) == set(files) | {'manifest.json'})
-    c.require(all(actual[name] == item for name, item in files.items()))
-    for directory in dirs:
-        c.inspect(root / directory, c.UID, 0o700, True)
-    for name in actual:
-        c.inspect(root / name, c.UID, 0o755 if name in c.BINARIES | {'bin/studiolo-vault-admin'} else 0o600)
-    c.require(c.read(root / 'bin/studiolo-vault-admin', c.UID, 0o755).startswith(b'\x7fELF'))
-    c.require(c.read(root / 'bin/studiolo-local-server', c.UID, 0o755).startswith(b'\x7fELF'))
-    c.require(c.read(root / 'manifest.json', c.UID, 0o600) == raw)
-    return manifest
-
-
-# 黑板数据目录只允许出现控制库本体及其 WAL/SHM；停服时 SQLite 可能收掉后两个。
-BOARD_FILES = {'control.sqlite3', 'control.sqlite3-wal', 'control.sqlite3-shm'}
-
-
-def board_files(c, board):
-    """起点是已在跑黑板的发行：目录里必须有控制库、不得有别的东西，每个文件私有且单链接。
-
-    r8→r2 那一次是首建，当时要求这个目录为空；r2 起黑板已接单，库里是真实的认领与回执，
-    因此「为空」会把每一次后续发行挡在预检，而「随便有什么都行」又会放过被篡改的目录。
-    本函数在预检与装单元前各跑一次（binding 被调用两次），停服后 WAL/SHM 消失同样通过。
-    """
-    names = {path.name for path in board.iterdir()}
-    c.require('control.sqlite3' in names and names <= BOARD_FILES)
-    for name in sorted(names):
-        c.inspect(board / name, c.UID, 0o600)
-
-
-def binding(c, a):
-    """逐项核验 Broker 的不可变配对；不打开写者，不补写任何目录。"""
-    vault, writer, board = [Path(p) for p in (a.VAULT, a.WRITER, a.BOARD)]
-    roots = []
-    for path in (vault, writer, board):
-        roots.append(c.inspect(path, c.UID, 0o700, True))
-    c.require(len({(s.st_dev, s.st_ino) for s in roots}) == 3)
-    for left in (vault, writer, board):
-        for right in (vault, writer, board):
-            c.require(left == right or not left.is_relative_to(right))
-    board_files(c, board)
-    control = vault / '.workbench'
-    left = c.document(c.read(control / 'broker-binding.json', c.UID, 0o600))
-    right = c.document(c.read(writer / 'broker-binding.json', c.UID, 0o600))
-    fields = {'format_version', 'pair_id', 'vault_uuid', 'canonical', 'data', 'control',
-              'marker', 'staging', 'history', 'idempotency', 'snapshots'}
-    c.require(isinstance(left, dict) and set(left) == fields and left == right)
-    c.require(type(left['format_version']) is int and left['format_version'] == 1)
-    for name in ('pair_id', 'vault_uuid'):
-        c.require(str(uuid.UUID(left[name])) == left[name])
-    paths = {'canonical': vault, 'data': writer, 'control': control,
-             'marker': control / 'vault.json', 'staging': control / 'staging',
-             **{name: writer / name for name in ('history', 'idempotency', 'snapshots')}}
-    for key, path in paths.items():
-        s = c.inspect(path, c.UID, 0o600 if key == 'marker' else 0o700, key != 'marker')
-        c.require(left[key] == {'dev': s.st_dev, 'ino': s.st_ino})
-        c.require(all(type(v) is int for v in left[key].values()))
-    marker = c.document(c.read(control / 'vault.json', c.UID, 0o600))
-    c.require(marker == {'format_version': 1, 'vault_uuid': left['vault_uuid']})
-    c.read(writer / 'writer-state.json', c.UID, 0o600)
-    return left
-
-
-class Operations:
+class Operations(SnapshotOperations):
     def __init__(self, manifest_sha, a, c, runtime, legacy):
         self.a, self.c, self.runtime, self.legacy = a, c, runtime, legacy
         self.manifest_sha, self.build = manifest_sha, a.BUILD
@@ -180,25 +42,6 @@ class Operations:
         fcntl.flock(self.lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         self.record = Path(tempfile.mkdtemp(prefix='board-' + self.build.rsplit('-', 1)[1] + '-', dir=RECORDS))
         c.inspect(self.record, 0, 0o700, True)
-
-    def worker(self, mode, descriptors=()):
-        # 复用原 r8 快照 worker；代码允许 root 冻结、祖先仍可由 UID1000 拥有。
-        # 不修改 r8 helper 的通用文件规则，也不读取认证数据到当前进程。
-        c = self.c
-        c.require(mode in ('binding', 'snapshot') and len(descriptors) == (3 if mode == 'snapshot' else 0))
-        account = pwd.getpwnam('maxsong')
-        c.require(account.pw_uid == c.UID == 1000)
-        code = self.trusted_read(self.legacy.WORKER)
-        c.require(len(code) <= 1024 * 1024)
-        result = subprocess.run(['/usr/bin/python3', '-I', '-B', '-S', '-', mode,
-            *(str(fd) for fd in descriptors)], input=code, stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL, pass_fds=tuple(descriptors), user=c.UID,
-            group=account.pw_gid, extra_groups=[], cwd='/', env=self.runtime.ENV,
-            timeout=40, check=True)
-        c.require(len(result.stdout) <= 4096)
-        value = c.document(result.stdout)
-        c.require(set(value) == {'epoch', 'factor_ref', 'code_count', 'restore_event_count'})
-        return value
 
     def unchanged(self):
         return self.legacy.Operations.unchanged(self)
@@ -351,39 +194,6 @@ class Operations:
         self.runtime.command(['systemctl', 'stop', 'studiolo-agent.service'], 110)
         self.runtime.command(['systemctl', 'stop', 'studiolo-human.service'], 110)
         self.stopped()
-
-    def backup(self):
-        c = self.c
-        self.stopped()
-        self.unchanged()
-        c.require({name: c.sha(raw) for name, raw in self.units().items()} == self.old_shas)
-        for name in NAMES:
-            c.new_file(self.record / (name + '.before.service'), self.old_units[name])
-        c.new_file(self.record / 'owner.before.json', self.config)
-        descriptors = []
-        paths = [self.record / (name + '.sqlite3') for name in ('auth', 'audit', 'policy')]
-        try:
-            for path in paths:
-                descriptors.append(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600))
-            c.require(self.worker('snapshot', descriptors) == self.before)
-        finally:
-            for fd in descriptors:
-                os.close(fd)
-        files = {}
-        for path in paths:
-            c.inspect(path, 0, 0o600)
-            db = sqlite3.connect(path.as_uri() + '?mode=ro&immutable=1', uri=True)
-            try:
-                c.require(db.execute('PRAGMA quick_check').fetchall() == [('ok',)])
-                c.require(not db.execute('PRAGMA foreign_key_check').fetchall())
-            finally:
-                db.close()
-        for path in paths + [self.record / (name + '.before.service') for name in NAMES] + [self.record / 'owner.before.json']:
-            raw = c.read(path, 0, 0o600)
-            files[path.name] = {'bytes': len(raw), 'sha256': c.sha(raw)}
-        self.unchanged()
-        self.receipt('backup', {'state': 'complete', 'files': files, 'sqlite_write_barrier': True,
-                                'agent_identity_database_changed': False})
 
     def install(self):
         c = self.c
