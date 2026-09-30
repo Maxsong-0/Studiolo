@@ -16,7 +16,7 @@ use crate::{
 /// 序列化缓存的硬字节预算；超限不影响正常索引构建。
 pub const MAX_CACHE_BYTES: usize = 32 * 1024 * 1024;
 /// 单文解析规则版本；Markdown、YAML 正规化语义变化时必须递增。
-pub const PARSE_CACHE_VERSION: u32 = 1;
+pub const PARSE_CACHE_VERSION: u32 = 2;
 const SCHEMA_VERSION: u32 = 1;
 const MAX_DOCUMENTS: usize = 25_000;
 

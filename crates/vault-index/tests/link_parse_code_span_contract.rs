@@ -37,7 +37,7 @@ fn outgoing(body: &str) -> Vec<Parsed> {
         .collect()
 }
 
-/// 与生产侧 `code_spans` 同一算法的参照副本（本次未改它）：等长反引号串界定行内 code。
+/// 优化前的 `code_spans` 语义参照：等长反引号串界定行内 code。
 fn reference_code_spans(line: &str) -> Vec<Range<usize>> {
     let mut spans = Vec::new();
     let mut cursor = 0;
@@ -146,9 +146,14 @@ fn two_hundred_code_spans_and_links_match_the_naive_scan() {
     let line = crowded_line();
     assert_eq!(reference_code_spans(&line).len(), 200);
     let actual = outgoing(&line);
-    assert_eq!(actual, naive_outgoing(&line));
+    let expected = naive_outgoing(&line);
     assert_eq!(actual.len(), 200);
-    for (index, link) in actual.iter().enumerate() {
+    assert_eq!(actual.len(), expected.len());
+    for (index, (link, expected)) in actual.iter().zip(&expected).enumerate() {
+        assert_eq!((link.line, link.column), (expected.line, expected.column));
+        assert_eq!(link.target, expected.target);
+        assert!(link.context.chars().count() <= 320);
+        assert!(link.context.contains(&format!("[[真{index}")));
         assert_eq!(link.target.target, format!("真{index}"));
         assert_eq!(link.target.embed, index % 4 == 1);
     }

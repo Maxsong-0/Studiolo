@@ -1,6 +1,6 @@
 //! 在现有的内存 Markdown 代次上做 ripgrep 字面匹配。
 
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, ops::Bound};
 
 use grep_matcher::Matcher as _;
 use grep_regex::{RegexMatcher, RegexMatcherBuilder};
@@ -38,13 +38,7 @@ pub(crate) fn search(
         .map(literal)
         .collect::<Result<Vec<_>, _>>()?;
     let mut hits = Vec::new();
-    for (path, document) in documents {
-        if project_prefix
-            .as_ref()
-            .is_some_and(|prefix| !path.as_str().starts_with(prefix))
-        {
-            continue;
-        }
+    for (path, document) in scoped_documents(documents, project_prefix.as_deref()) {
         if let Some(position) = path_match(&matchers, path.as_str())? {
             hits.push(hit(
                 document,
@@ -66,6 +60,17 @@ pub(crate) fn search(
     let truncated = hits.len() > MAX_HITS;
     hits.truncate(MAX_HITS);
     Ok(SearchResults { hits, truncated })
+}
+
+/// 有序映射直接定位项目的起点；扫到相邻项目即停止，不遍历其它项目的文档。
+fn scoped_documents<'a>(
+    documents: &'a BTreeMap<VaultPath, DocumentView>,
+    prefix: Option<&'a str>,
+) -> impl Iterator<Item = (&'a VaultPath, &'a DocumentView)> {
+    let start = prefix.map_or(Bound::Unbounded, Bound::Included);
+    documents
+        .range::<str, _>((start, Bound::Unbounded))
+        .take_while(move |(path, _)| prefix.is_none_or(|prefix| path.as_str().starts_with(prefix)))
 }
 
 fn validate(
@@ -193,3 +198,7 @@ fn excerpt(text: &str, first_match: usize) -> String {
     }
     snippet
 }
+
+#[cfg(test)]
+#[path = "search_scope_tests.rs"]
+mod tests;

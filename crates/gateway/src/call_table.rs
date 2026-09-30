@@ -1,31 +1,31 @@
-//! 调用幂等表：同键占位、可重放结果与按容量逐出，以及归还占位的 RAII 守卫。
+//! 调用幂等表：固定请求身份、有界完成队列，以及从占位时起持有的 RAII 守卫。
+
+#[path = "request_identity.rs"]
+mod request_identity;
+pub(crate) use request_identity::RequestIdentity;
 
 use crate::{CallId, GatewayError};
 use std::{
-    collections::BTreeMap,
-    sync::{
-        Condvar, Mutex,
-        atomic::{AtomicU64, Ordering},
-    },
+    collections::{BTreeMap, VecDeque},
+    sync::{Condvar, Mutex},
 };
 use studiolo_core::AttemptId;
 
-/// 调用幂等槽：`InFlight` 表示同键调用正在执行，`Done` 才携带可重放的结果（成功或已记入
-/// 账本的失败终态）；`Evicted` 只保留请求身份，结果已按容量逐出，同请求重放得到结构化拒绝。
-pub(crate) enum CallSlot<Request, Response> {
+type CallKey = (AttemptId, CallId);
+
+/// 已逐出槽只保留固定宽度请求指纹；请求正文从不进入槽表。
+pub(crate) enum CallSlot<Response> {
     InFlight,
     Done {
-        request: Request,
+        identity: RequestIdentity,
         response: Response,
-        sequence: u64,
     },
-    Evicted(Request),
+    Evicted(RequestIdentity),
 }
 
-/// 同键调用的准入结论。
-pub(crate) enum CallAdmission<Response> {
-    /// 首次调用，已占位；调用方持有 [`SlotGuard`]，以 `complete` 或丢弃守卫收尾。
-    Proceed,
+/// 同键调用的准入结论；取得占位的结果本身持有释放责任。
+pub(crate) enum CallAdmission<'a, Response> {
+    Proceed(SlotGuard<'a, Response>),
     /// 与首次请求完全相同的重放：完整重验授权后才能返回首次结果。
     Replay(Response),
     /// 已完成的是不同请求；重新授权后才报告内容冲突。
@@ -34,60 +34,68 @@ pub(crate) enum CallAdmission<Response> {
     Evicted,
 }
 
-/// 幂等表最多保留的已完成结果数；超出后按完成顺序把最早的结果逐出为 `Evicted`。
-/// 结果正文（arguments / output / prompt / text）随逐出释放，不随进程寿命无界驻留。
+/// 幂等表最多保留的已完成结果数；按完成顺序逐出结果正文。
+/// 历史 call ID 与固定指纹仍保留，防止旧调用被误当成首次执行。
 pub const MAX_RETAINED_RESULTS: usize = 4096;
 
-/// 按 `(attempt, call)` 键串行化同一调用：并发同键请求只执行一次，其余等待首次结果后再判定
-/// 重放或冲突。检查与占位在同一把锁内完成，不存在「都通过检查、各执行一次」的窗口。
-pub(crate) struct CallTable<Request, Response> {
-    pub(crate) slots: Mutex<BTreeMap<(AttemptId, CallId), CallSlot<Request, Response>>>,
+/// 槽与完成队列始终由同一把锁保护；队列中只有仍保有结果的槽。
+pub(crate) struct CallState<Response> {
+    pub(crate) slots: BTreeMap<CallKey, CallSlot<Response>>,
+    pub(crate) completed: VecDeque<CallKey>,
+}
+
+/// 检查、占位与完成队列更新都在同一把锁内完成。
+pub(crate) struct CallTable<Response> {
+    pub(crate) state: Mutex<CallState<Response>>,
     pub(crate) finished: Condvar,
-    next_sequence: AtomicU64,
     #[cfg(test)]
     pub(crate) wait_probe: crate::wait_probe::WaitProbe,
 }
 
-/// 占位守卫：取得 `Proceed` 的调用无论正常返回、提前返回还是 panic 展开，都归还自己的
-/// 占位并唤醒等待者；只有显式 `complete` 才把占位替换为可重放的结果。
-pub(crate) struct SlotGuard<'a, Request: PartialEq, Response: Clone> {
-    table: &'a CallTable<Request, Response>,
-    key: Option<(AttemptId, CallId)>,
+/// 守卫在占位时建立，覆盖二次授权、审计、执行及 unwind 的全部路径。
+pub(crate) struct SlotGuard<'a, Response> {
+    table: &'a CallTable<Response>,
+    key: Option<CallKey>,
+    identity: RequestIdentity,
 }
 
-impl<'a, Request: PartialEq, Response: Clone> SlotGuard<'a, Request, Response> {
-    pub(crate) fn new(table: &'a CallTable<Request, Response>, key: (AttemptId, CallId)) -> Self {
+impl<'a, Response> SlotGuard<'a, Response> {
+    pub(crate) fn new(
+        table: &'a CallTable<Response>,
+        key: CallKey,
+        identity: RequestIdentity,
+    ) -> Self {
         Self {
             table,
             key: Some(key),
+            identity,
         }
     }
 
-    pub(crate) fn complete(
-        mut self,
-        request: Request,
-        response: Response,
-    ) -> Result<(), GatewayError> {
-        let key = self.key.take().ok_or(GatewayError::StateUnavailable)?;
-        self.table.complete(key, request, response)
+    pub(crate) fn complete(mut self, response: Response) -> Result<(), GatewayError> {
+        let key = self.key.as_ref().ok_or(GatewayError::StateUnavailable)?;
+        self.table.complete(key.clone(), self.identity, response)?;
+        self.key = None;
+        Ok(())
     }
 }
 
-impl<Request: PartialEq, Response: Clone> Drop for SlotGuard<'_, Request, Response> {
+impl<Response> Drop for SlotGuard<'_, Response> {
     fn drop(&mut self) {
         if let Some(key) = self.key.take() {
-            // 展开或提前返回时锁不可用也无法再做别的；等待者由 abandon 内的 notify_all 唤醒。
             let _ = self.table.abandon(&key);
         }
     }
 }
 
-impl<Request: PartialEq, Response: Clone> CallTable<Request, Response> {
+impl<Response> CallTable<Response> {
     pub(crate) fn new() -> Self {
         Self {
-            slots: Mutex::new(BTreeMap::new()),
+            state: Mutex::new(CallState {
+                slots: BTreeMap::new(),
+                completed: VecDeque::new(),
+            }),
             finished: Condvar::new(),
-            next_sequence: AtomicU64::new(0),
             #[cfg(test)]
             wait_probe: crate::wait_probe::WaitProbe::default(),
         }
@@ -95,54 +103,48 @@ impl<Request: PartialEq, Response: Clone> CallTable<Request, Response> {
 
     fn complete(
         &self,
-        key: (AttemptId, CallId),
-        request: Request,
+        key: CallKey,
+        identity: RequestIdentity,
         response: Response,
     ) -> Result<(), GatewayError> {
-        let mut slots = self
-            .slots
+        let mut state = self
+            .state
             .lock()
             .map_err(|_| GatewayError::StateUnavailable)?;
-        let sequence = self.next_sequence.fetch_add(1, Ordering::Relaxed);
-        slots.insert(
-            key,
-            CallSlot::Done {
-                request,
-                response,
-                sequence,
-            },
-        );
-        let retained = slots
-            .values()
-            .filter(|slot| matches!(slot, CallSlot::Done { .. }))
-            .count();
-        if retained > MAX_RETAINED_RESULTS {
-            // 逐出最早完成的结果；保留请求身份，让「结果已逐出」与「从未调用」可区分。
-            let oldest = slots
-                .iter()
-                .filter_map(|(key, slot)| match slot {
-                    CallSlot::Done { sequence, .. } => Some((*sequence, key.clone())),
-                    _ => None,
-                })
-                .min_by_key(|(sequence, _)| *sequence)
-                .map(|(_, key)| key);
-            if let Some(key) = oldest
-                && let Some(CallSlot::Done { request, .. }) = slots.remove(&key)
-            {
-                slots.insert(key, CallSlot::Evicted(request));
-            }
+        if !matches!(state.slots.get(&key), Some(CallSlot::InFlight)) {
+            return Err(GatewayError::StateUnavailable);
         }
-        drop(slots);
+        if state.completed.len() == MAX_RETAINED_RESULTS
+            && let Some(oldest) = state.completed.pop_front()
+            && let Some(CallSlot::Done { identity, .. }) = state.slots.remove(&oldest)
+        {
+            state.slots.insert(oldest, CallSlot::Evicted(identity));
+        }
+        state.completed.push_back(key.clone());
+        state
+            .slots
+            .insert(key, CallSlot::Done { identity, response });
+        drop(state);
         self.finished.notify_all();
         Ok(())
     }
 
-    pub(crate) fn abandon(&self, key: &(AttemptId, CallId)) -> Result<(), GatewayError> {
-        self.slots
+    fn abandon(&self, key: &CallKey) -> Result<(), GatewayError> {
+        let result = self
+            .state
             .lock()
-            .map_err(|_| GatewayError::StateUnavailable)?
-            .remove(key);
+            .map_err(|_| GatewayError::StateUnavailable)
+            .map(|mut state| {
+                if matches!(state.slots.get(key), Some(CallSlot::InFlight)) {
+                    state.slots.remove(key);
+                }
+            });
+        // 即使锁中毒，也唤醒等待者让它们观察失败，而不是永久停在 Condvar。
         self.finished.notify_all();
-        Ok(())
+        result
     }
 }
+
+#[cfg(test)]
+#[path = "retention_tests.rs"]
+mod retention_tests;

@@ -95,6 +95,13 @@ fn is_unicode_combining_mark(character: char) -> bool {
     )
 }
 
+// VaultPath 的顺序与内部字符串一致，因此可以按逻辑前缀借用查询有序映射。
+impl std::borrow::Borrow<str> for VaultPath {
+    fn borrow(&self) -> &str {
+        self.as_str()
+    }
+}
+
 impl fmt::Display for VaultPath {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.0.fmt(formatter)

@@ -2,7 +2,7 @@
 
 use crate::{
     CallId, GatewayError, JobCapability, MemoryGateway,
-    call_table::{CallAdmission, CallTable},
+    call_table::{CallAdmission, CallTable, RequestIdentity},
 };
 use studiolo_audit_ledger::AuditEventId;
 use studiolo_core::{AttemptId, ToolId};
@@ -32,22 +32,17 @@ impl Authorization<'_> {
     }
 }
 
-impl<Request: PartialEq, Response: Clone> CallTable<Request, Response> {
+impl<Response: Clone> CallTable<Response> {
     pub(super) fn admit_checked(
         &self,
         key: (AttemptId, CallId),
-        request: &Request,
+        identity: RequestIdentity,
         authorize: impl FnOnce() -> Result<(), GatewayError>,
-    ) -> Result<CallAdmission<Response>, GatewayError> {
+    ) -> Result<CallAdmission<'_, Response>, GatewayError> {
         // admit 返回时槽锁已释放；guard 和拒绝审计不能延长该临界区。
-        let admission = self.admit(key.clone(), request)?;
-        if let Err(error) = authorize() {
-            if matches!(admission, CallAdmission::Proceed) {
-                // 包括 guard、拒绝事件 ID、拒绝审计失败在内，都归还自己的占位。
-                self.abandon(&key)?;
-            }
-            return Err(error);
-        }
+        let admission = self.admit(key, identity)?;
+        // Proceed 已持有守卫；回调返回 Err 或 panic 都自动归还本次占位。
+        authorize()?;
         Ok(admission)
     }
 }

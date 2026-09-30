@@ -50,8 +50,8 @@ impl AttemptGuard for LiveGuard {
 pub(super) fn assert_slots_unlocked(gateway: &Mutex<Weak<MemoryGateway>>) {
     let gateway = gateway.lock().unwrap().upgrade();
     if let Some(gateway) = gateway {
-        assert_can_lock(&gateway.tool_calls.slots);
-        assert_can_lock(&gateway.model_calls.slots);
+        assert_can_lock(&gateway.tool_calls.state);
+        assert_can_lock(&gateway.model_calls.state);
     }
 }
 
@@ -156,8 +156,8 @@ impl Fixture {
         // 通知发自 Wait 分支持锁处；重新取得槽锁，证明该调用已把锁交给 Condvar。
         // 首个调用仍停在独立审计夹具中，因此此时不可能已经完成准入。
         match self.branch {
-            Branch::Invoke => drop(self.gateway.tool_calls.slots.lock().unwrap()),
-            Branch::Relay => drop(self.gateway.model_calls.slots.lock().unwrap()),
+            Branch::Invoke => drop(self.gateway.tool_calls.state.lock().unwrap()),
+            Branch::Relay => drop(self.gateway.model_calls.state.lock().unwrap()),
         }
     }
 
@@ -200,17 +200,17 @@ impl Fixture {
         );
         let (exists, completed) = match self.branch {
             Branch::Invoke => {
-                let slots = self.gateway.tool_calls.slots.lock().unwrap();
+                let state = self.gateway.tool_calls.state.lock().unwrap();
                 (
-                    slots.contains_key(&key),
-                    matches!(slots.get(&key), Some(CallSlot::Done { .. })),
+                    state.slots.contains_key(&key),
+                    matches!(state.slots.get(&key), Some(CallSlot::Done { .. })),
                 )
             }
             Branch::Relay => {
-                let slots = self.gateway.model_calls.slots.lock().unwrap();
+                let state = self.gateway.model_calls.state.lock().unwrap();
                 (
-                    slots.contains_key(&key),
-                    matches!(slots.get(&key), Some(CallSlot::Done { .. })),
+                    state.slots.contains_key(&key),
+                    matches!(state.slots.get(&key), Some(CallSlot::Done { .. })),
                 )
             }
         };

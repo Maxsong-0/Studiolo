@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 /// 一个解析出的 Markdown 标题。
 #[derive(Clone, Debug, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
@@ -8,7 +8,7 @@ pub struct Heading {
     pub level: u8,
     /// 标题文本，已去掉可选的结尾 `#` 串。
     pub text: String,
-    /// 由标题文本派生、供展示用的锚点；同名锚点依次追加 `-1`、`-2` 后缀。
+    /// 整篇文档内唯一且非空的展示锚点；冲突时递增后缀，纯标点标题使用 `section`。
     pub anchor: String,
     /// 源文件行号（从 1 起）。
     pub line: u32,
@@ -87,7 +87,8 @@ pub(crate) fn split_frontmatter(contents: &str) -> MarkdownParts<'_> {
 
 pub(crate) fn parse_headings(body: &str, first_line: u32) -> Vec<Heading> {
     let mut headings = Vec::new();
-    let mut anchors = BTreeMap::<String, usize>::new();
+    let mut next_suffix = BTreeMap::<String, usize>::new();
+    let mut used_anchors = BTreeSet::new();
     for (number, line) in crate::markdown_scan::visible_lines(body, first_line) {
         let trimmed = line.trim_start();
         let hashes = trimmed.bytes().take_while(|byte| *byte == b'#').count();
@@ -108,13 +109,18 @@ pub(crate) fn parse_headings(body: &str, first_line: u32) -> Vec<Heading> {
             continue;
         }
         let base = anchor_for(&text);
-        let count = anchors.entry(base.clone()).or_default();
-        let anchor = if *count == 0 {
-            base
-        } else {
-            format!("{base}-{count}")
+        let count = next_suffix.entry(base.clone()).or_default();
+        let anchor = loop {
+            let candidate = if *count == 0 {
+                base.clone()
+            } else {
+                format!("{base}-{count}")
+            };
+            *count += 1;
+            if used_anchors.insert(candidate.clone()) {
+                break candidate;
+            }
         };
-        *count += 1;
         headings.push(Heading {
             level: hashes as u8,
             text,
@@ -137,7 +143,12 @@ fn anchor_for(text: &str) -> String {
             last_dash = true;
         }
     }
-    anchor.trim_end_matches('-').to_owned()
+    let anchor = anchor.trim_end_matches('-');
+    if anchor.is_empty() {
+        "section".to_owned()
+    } else {
+        anchor.to_owned()
+    }
 }
 
 pub(crate) fn build_heading_tree(headings: &[Heading]) -> Vec<HeadingNode> {

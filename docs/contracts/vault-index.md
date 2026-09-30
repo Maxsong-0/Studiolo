@@ -40,6 +40,8 @@ frontmatter、平面/树形标题、出链、来源 profile、非致命 warnings
 - `document` 对未索引路径返回 `Ok(None)`；要求既有源文档的 heading/resolve/source 查询返回
   `IndexError::NotIndexed(path)`。
 - 标题选择顺序固定为归一 frontmatter `title` → 第一条 H1 → 去掉 `.md` 的文件名。
+- 标题锚点在整篇文档内唯一；冲突时按该基础锚点的递增后缀跳过已用值，显式 `A-1` 不会
+  与重复 `A` 生成同一锚点。纯标点等空锚点使用 `section`，仍遵守同一去重规则。
 - 解析 warning 属于该文档的新结果，不能沿用旧解析值冒充当前 generation。
 
 M0 不提供泛化 `apply(IndexChange)` / `query(IndexQuery)`、增量 remove、watcher gap/freshness、
@@ -50,6 +52,9 @@ M0 不提供泛化 `apply(IndexChange)` / `query(IndexQuery)`、增量 remove、
 `WikilinkTarget` 解析 `[[target#heading|alias]]` 与 `![[...]]`，保留 raw、target、heading、
 alias 和 embed；缺分隔符或空目标分别为 `WikilinkParseError::MissingDelimiters | Empty`。
 索引跳过 fenced code block 与行内 code 中的伪链接，并保留一基行/Unicode 字符列和上下文。
+出链与反链上下文最多 320 个 Unicode 标量（含首尾省略号）；不超过 320 字符的源行逐字
+保留。长行窗口从链接前最多 32 字符开始，截断一侧标 `…`；列号始终基于完整原行。
+行内 code 的等长闭串先统一索引，再贪心扫描；列号用单调游标累计，不为每个链接重扫前缀。
 
 解析顺序：
 
@@ -136,6 +141,8 @@ T-054 另加三类：逐代增量索引与从零重建的公开查询结果逐�
 匹配路径、精确内容摘要与长度后只复用单篇解析；全局链接、反链和来源 profile 均重新派生。
 `ParseCache::encode/decode` 是纯有界编码，不读取或写入任何路径；正文始终由本次输入提供。
 格式/解析版本不匹配应丢弃缓存；预算超限只停止持久化，不阻止有效文档构建内存视图。
+当前 `PARSE_CACHE_VERSION = 2`：有界链接上下文和唯一非空标题锚点取代版本 1 的派生语义，
+版本 1 缓存必须失效并从本次输入重建，不做旧条目的原地修补。
 缓存信任边界、私有 SQLite 和完整副本验证见 [M3 持久派生索引](../m3/persistent-index.md)。
 
 ## 8. 降级诊断（T-054）

@@ -1,4 +1,4 @@
-use std::ops::Range;
+use std::{collections::HashMap, ops::Range};
 
 /// 标题与链接共用的块级扫描。闭合围栏必须使用同一种标记、长度不短于开栏且行尾没有非空白
 /// 内容。缩进行一律保留：Obsidian 的嵌套列表项与续行默认用 tab 或四空格缩进，契约（vault-index.md
@@ -47,25 +47,35 @@ fn fence_marker(line: &str) -> Option<(u8, usize, &str)> {
 /// 行内 code 由等长的反引号串界定，而不是看全部反引号的奇偶；找不到等长闭合串的起始串
 /// 仍是普通字面文本。返回的区间按起点升序且互不重叠，链接解析据此单调推进区间下标。
 pub(crate) fn code_spans(line: &str) -> Vec<Range<usize>> {
-    let mut spans = Vec::new();
+    let mut runs = Vec::new();
     let mut cursor = 0;
     while let Some(relative) = line[cursor..].find('`') {
         let start = cursor + relative;
         let run = backticks(&line[start..]);
         cursor = start + run;
-        if escaped(line, start) {
+        runs.push(start..cursor);
+    }
+
+    // 每个串只建立一次「右侧最近等长串」索引，未闭合开串不再反复搜索整段余文。
+    // 闭串可有前导反斜杠：转义仅影响开串，保留原先的 Markdown 语义。
+    let mut next_by_length = HashMap::new();
+    let mut closing = vec![None; runs.len()];
+    for (index, run) in runs.iter().enumerate().rev() {
+        closing[index] = next_by_length.insert(run.len(), index);
+    }
+
+    let mut spans = Vec::new();
+    let mut index = 0;
+    while let Some(run) = runs.get(index) {
+        if escaped(line, run.start) {
+            index += 1;
             continue;
         }
-        let mut end_cursor = cursor;
-        while let Some(relative) = line[end_cursor..].find('`') {
-            let end = end_cursor + relative;
-            let closing_run = backticks(&line[end..]);
-            end_cursor = end + closing_run;
-            if closing_run == run {
-                spans.push(start..end_cursor);
-                cursor = end_cursor;
-                break;
-            }
+        if let Some(end) = closing[index] {
+            spans.push(run.start..runs[end].end);
+            index = end + 1;
+        } else {
+            index += 1;
         }
     }
     spans
@@ -84,3 +94,7 @@ pub(crate) fn escaped(line: &str, position: usize) -> bool {
         % 2
         == 1
 }
+
+#[cfg(test)]
+#[path = "markdown_scan_tests.rs"]
+mod tests;
