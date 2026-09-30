@@ -1,0 +1,23 @@
+[Unit]
+Description=Studiolo append-only recovery storage
+After=network.target
+ConditionPathIsMountPoint=/volume1
+ConditionPathExists=/volume1/studiolo-dr/rest-server/backup.htpasswd
+ConditionPathExists=/volume1/studiolo-dr/rest-server/tls.key
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/chroot --userspec=61032:61032 --groups=61032 /volume1/studiolo-dr/rest-server /rest-server --path /data --listen 192.168.100.111:18443 --append-only --private-repos --htpasswd-file /backup.htpasswd --tls --tls-cert /tls.crt --tls-key /tls.key --tls-min-ver 1.3
+Restart=on-failure
+RestartSec=5
+UMask=0077
+NoNewPrivileges=yes
+CapabilityBoundingSet=CAP_SYS_CHROOT CAP_SETUID CAP_SETGID
+ProtectSystem=full
+ProtectHome=yes
+LimitCORE=0
+LimitNOFILE=4096
+MemoryLimit=256M
+
+[Install]
+WantedBy=multi-user.target
