@@ -52,6 +52,11 @@ payload_uid=$(id -u "$payload"); payload_gid=$(id -g "$payload")
 [[ $(id -G "$payload") == "$payload_gid" ]] || fail "$payload 不得有补充组。"
 [[ $payload_uid != 0 && $payload_uid != "$owner_uid" && $payload_gid != "$owner_gid" ]] || fail '专用身份与 owner 重合。'
 
+# 不得用新挂载遮住 P2 家目录或其他既有内容；管理员先原位改名保留。
+if ! findmnt -rn --mountpoint "$mount_point" >/dev/null && [[ -d $mount_point ]]; then
+    [[ -z $(find "$mount_point" -mindepth 1 -maxdepth 1 -print -quit) ]] ||
+        fail '挂载点非空：先保留既有目录，不能直接挂载覆盖。'
+fi
 # 2 loop 镜像：固定 4 GiB ext4，root 0600；已存在就不动（配额就是镜像大小）。
 if [[ ! -e $image ]]; then
     fallocate -l "$image_size" "$image"
@@ -59,7 +64,14 @@ if [[ ! -e $image ]]; then
     mkfs.ext4 -q -F -L studiolo-sync "$image"
 fi
 [[ -f $image && ! -L $image && $(stat -c '%u:%a:%h' "$image") == 0:600:1 ]] || fail "$image 不是 root 0600 单链接普通文件。"
-install -d -m 0755 -o root -g root "$mount_point" "$(dirname "$view_point")" "$view_point"
+install -d -m 0755 -o root -g root "$(dirname "$view_point")"
+for point in "$mount_point" "$view_point"; do
+    [[ ! -L $point ]] || fail '挂载点不得为符号链接。'
+    # 已挂载的视图根属于 payload；install -d 会透过 idmap 错改其属主。
+    if ! findmnt -rn --mountpoint "$point" >/dev/null; then
+        install -d -m 0755 -o root -g root "$point"
+    fi
+done
 
 # 3 单元：模板替换身份数字与二进制路径后按内容比对，变了才落盘。
 render() {
