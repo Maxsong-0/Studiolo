@@ -3,7 +3,7 @@
 use crate::{
     AttemptGuard, AttemptGuardError, AttemptSnapshot, Clock, GatewayError, JobCapability,
     ModelRequest, ModelResponse, PermissionLayers, ToolCall, ToolResult, admission,
-    call_table::{CallAdmission, CallTable, SlotGuard},
+    call_table::{CallAdmission, CallTable, RequestIdentity},
     execution::Execution,
 };
 use serde_json::Value;
@@ -39,8 +39,8 @@ pub struct MemoryGateway {
     permissions: PermissionLayers,
     pub(crate) tool_responses: Mutex<BTreeMap<ToolId, Value>>,
     pub(crate) model_responses: Mutex<BTreeMap<(String, String), String>>,
-    pub(crate) tool_calls: CallTable<ToolCall, Result<ToolResult, GatewayError>>,
-    pub(crate) model_calls: CallTable<ModelRequest, Result<ModelResponse, GatewayError>>,
+    pub(crate) tool_calls: CallTable<Result<ToolResult, GatewayError>>,
+    pub(crate) model_calls: CallTable<Result<ModelResponse, GatewayError>>,
 }
 
 impl MemoryGateway {
@@ -137,38 +137,38 @@ impl Gateway for MemoryGateway {
         };
         authorization.check(self)?;
 
-        match self
-            .tool_calls
-            .admit_checked(call_key.clone(), &call, || authorization.check(self))?
-        {
-            CallAdmission::Replay(result) => return result,
-            CallAdmission::Proceed => {}
-            CallAdmission::Conflict => {
-                return Err(self.deny_admission(
-                    GatewayError::CallConflict,
-                    &audit_id,
-                    "gateway.tool_call",
-                    capability,
-                    call.tool().clone(),
-                    call.call_id(),
-                ));
-            }
-            CallAdmission::Evicted => {
-                return Err(self.deny_admission(
-                    GatewayError::CallResultEvicted,
-                    &audit_id,
-                    "gateway.tool_call",
-                    capability,
-                    call.tool().clone(),
-                    call.call_id(),
-                ));
-            }
-        }
-
-        let guard = SlotGuard::new(&self.tool_calls, call_key);
+        let guard =
+            match self
+                .tool_calls
+                .admit_checked(call_key, RequestIdentity::tool(&call), || {
+                    authorization.check(self)
+                })? {
+                CallAdmission::Replay(result) => return result,
+                CallAdmission::Proceed(guard) => guard,
+                CallAdmission::Conflict => {
+                    return Err(self.deny_admission(
+                        GatewayError::CallConflict,
+                        &audit_id,
+                        "gateway.tool_call",
+                        capability,
+                        call.tool().clone(),
+                        call.call_id(),
+                    ));
+                }
+                CallAdmission::Evicted => {
+                    return Err(self.deny_admission(
+                        GatewayError::CallResultEvicted,
+                        &audit_id,
+                        "gateway.tool_call",
+                        capability,
+                        call.tool().clone(),
+                        call.call_id(),
+                    ));
+                }
+            };
         match self.execute_tool(&audit_id, capability, &call) {
             Execution::Recorded(result) => {
-                guard.complete(call, result.clone())?;
+                guard.complete(result.clone())?;
                 result
             }
             Execution::Unrecorded(error) => {
@@ -195,12 +195,13 @@ impl Gateway for MemoryGateway {
         };
         authorization.check(self)?;
 
-        match self
-            .model_calls
-            .admit_checked(call_key.clone(), &request, || authorization.check(self))?
-        {
+        let guard = match self.model_calls.admit_checked(
+            call_key,
+            RequestIdentity::model(&request),
+            || authorization.check(self),
+        )? {
             CallAdmission::Replay(response) => return response,
-            CallAdmission::Proceed => {}
+            CallAdmission::Proceed(guard) => guard,
             CallAdmission::Conflict => {
                 return Err(self.deny_admission(
                     GatewayError::CallConflict,
@@ -221,12 +222,10 @@ impl Gateway for MemoryGateway {
                     &request.call_id,
                 ));
             }
-        }
-
-        let guard = SlotGuard::new(&self.model_calls, call_key);
+        };
         match self.execute_relay(&audit_id, capability, &relay_tool, &request) {
             Execution::Recorded(response) => {
-                guard.complete(request, response.clone())?;
+                guard.complete(response.clone())?;
                 response
             }
             Execution::Unrecorded(error) => {
@@ -236,3 +235,7 @@ impl Gateway for MemoryGateway {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "admission_guard_tests.rs"]
+mod admission_guard_tests;

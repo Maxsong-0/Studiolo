@@ -2,7 +2,7 @@
 
 use crate::{
     CallId, GatewayError,
-    call_table::{CallAdmission, CallSlot, CallTable},
+    call_table::{CallAdmission, CallSlot, CallTable, RequestIdentity, SlotGuard},
 };
 use studiolo_core::AttemptId;
 
@@ -15,33 +15,35 @@ enum SlotDecision<Response> {
     Wait,
 }
 
-impl<Request: PartialEq, Response: Clone> CallTable<Request, Response> {
+impl<Response: Clone> CallTable<Response> {
     pub(crate) fn admit(
         &self,
         key: (AttemptId, CallId),
-        request: &Request,
-    ) -> Result<CallAdmission<Response>, GatewayError> {
-        let mut slots = self
-            .slots
+        identity: RequestIdentity,
+    ) -> Result<CallAdmission<'_, Response>, GatewayError> {
+        let mut state = self
+            .state
             .lock()
             .map_err(|_| GatewayError::StateUnavailable)?;
         loop {
-            let decision = match slots.get(&key) {
+            let decision = match state.slots.get(&key) {
                 None => SlotDecision::Vacant,
                 Some(CallSlot::Done {
-                    request: prior,
+                    identity: prior,
                     response,
                     ..
-                }) if prior == request => SlotDecision::Replay(response.clone()),
+                }) if *prior == identity => SlotDecision::Replay(response.clone()),
                 Some(CallSlot::Done { .. }) => SlotDecision::Conflict,
-                Some(CallSlot::Evicted(prior)) if prior == request => SlotDecision::Evicted,
+                Some(CallSlot::Evicted(prior)) if *prior == identity => SlotDecision::Evicted,
                 Some(CallSlot::Evicted(_)) => SlotDecision::Conflict,
                 Some(CallSlot::InFlight) => SlotDecision::Wait,
             };
             match decision {
                 SlotDecision::Vacant => {
-                    slots.insert(key, CallSlot::InFlight);
-                    return Ok(CallAdmission::Proceed);
+                    state.slots.insert(key.clone(), CallSlot::InFlight);
+                    let guard = SlotGuard::new(self, key, identity);
+                    drop(state);
+                    return Ok(CallAdmission::Proceed(guard));
                 }
                 SlotDecision::Replay(response) => return Ok(CallAdmission::Replay(response)),
                 SlotDecision::Conflict => return Ok(CallAdmission::Conflict),
@@ -49,9 +51,9 @@ impl<Request: PartialEq, Response: Clone> CallTable<Request, Response> {
                 SlotDecision::Wait => {
                     #[cfg(test)]
                     self.wait_probe.entered();
-                    slots = self
+                    state = self
                         .finished
-                        .wait(slots)
+                        .wait(state)
                         .map_err(|_| GatewayError::StateUnavailable)?;
                 }
             }

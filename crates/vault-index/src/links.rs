@@ -121,7 +121,7 @@ pub struct OutgoingLink {
     pub line: u32,
     /// 以 Unicode 标量计的列号（从 1 起）。
     pub column: u32,
-    /// 供展示的源文件原行。
+    /// 供展示的源行窗口：最多 320 个 Unicode 标量（含省略号），短行逐字保留。
     pub context: String,
 }
 
@@ -134,7 +134,7 @@ pub struct Backlink {
     pub line: u32,
     /// 来源列号（从 1 起）。
     pub column: u32,
-    /// 供展示的来源行。
+    /// 供展示的来源行窗口：最多 320 个 Unicode 标量（含省略号），短行逐字保留。
     pub context: String,
     /// wikilink 上的显示别名（如有）。
     pub alias: Option<String>,

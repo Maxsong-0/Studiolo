@@ -51,7 +51,6 @@ pub struct Diff {
 
 /// 单份差异保留的最多条目数。
 pub const MAX_ENTRIES: usize = 2000;
-const MAX_LCS_CELLS: usize = 4_000_000;
 
 impl Diff {
     /// 空差异。
@@ -151,64 +150,6 @@ pub(crate) fn json_diff(before: Option<&Value>, after: Option<&Value>) -> Diff {
     diff
 }
 
-/// 行级 LCS 差异；正文过大时退化为整体替换并标记截断。
-pub(crate) fn text_diff(before: &str, after: &str) -> Diff {
-    let mut diff = Diff::empty("text");
-    let old: Vec<&str> = before.lines().collect();
-    let new: Vec<&str> = after.lines().collect();
-    if old.len().saturating_mul(new.len()) > MAX_LCS_CELLS {
-        diff.truncated = true;
-        for (index, line) in old.iter().enumerate() {
-            diff.push(DiffEntry {
-                op: DiffOp::Removed,
-                path: format!("old:{}", index + 1),
-                before: Some((*line).to_owned()),
-                after: None,
-            });
-        }
-        for (index, line) in new.iter().enumerate() {
-            diff.push(DiffEntry {
-                op: DiffOp::Added,
-                path: format!("new:{}", index + 1),
-                before: None,
-                after: Some((*line).to_owned()),
-            });
-        }
-        return diff;
-    }
-    // 经典 LCS 表：table[i][j] = old[i..] 与 new[j..] 的最长公共子序列长度。
-    let mut table = vec![vec![0u32; new.len() + 1]; old.len() + 1];
-    for i in (0..old.len()).rev() {
-        for j in (0..new.len()).rev() {
-            table[i][j] = if old[i] == new[j] {
-                table[i + 1][j + 1] + 1
-            } else {
-                table[i + 1][j].max(table[i][j + 1])
-            };
-        }
-    }
-    let (mut i, mut j) = (0, 0);
-    while i < old.len() || j < new.len() {
-        if i < old.len() && j < new.len() && old[i] == new[j] {
-            i += 1;
-            j += 1;
-        } else if j < new.len() && (i == old.len() || table[i][j + 1] >= table[i + 1][j]) {
-            diff.push(DiffEntry {
-                op: DiffOp::Added,
-                path: format!("new:{}", j + 1),
-                before: None,
-                after: Some(new[j].to_owned()),
-            });
-            j += 1;
-        } else {
-            diff.push(DiffEntry {
-                op: DiffOp::Removed,
-                path: format!("old:{}", i + 1),
-                before: Some(old[i].to_owned()),
-                after: None,
-            });
-            i += 1;
-        }
-    }
-    diff
-}
+#[path = "text_diff.rs"]
+mod text;
+pub(crate) use text::{text_diff, text_diff_with_removals};
