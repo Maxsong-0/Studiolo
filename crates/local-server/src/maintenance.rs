@@ -8,6 +8,7 @@ mod presentation;
 mod rename;
 mod state;
 mod sync;
+mod sync_anchors;
 mod sync_audit;
 mod sync_rebind;
 mod terminal;
@@ -36,9 +37,10 @@ pub fn run() -> Result<(), MaintenanceError> {
             "studiolo-maintain cancel-maintenance [相同根参数] --maintenance <64位维护指纹>",
             "studiolo-maintain audit-flush [相同根参数]",
             "studiolo-maintain sync-init [相同根参数] --sync-transport </绝对路径/sync-approval.json>",
+            "studiolo-maintain sync-anchors [相同根参数] --sync-transport </绝对路径/sync-approval.json>",
             "studiolo-maintain sync-rebind [相同根参数] --sync-transport </绝对路径/新sync-approval.json>",
             "studiolo-maintain sync-purge-residue [相同根参数] --sync-transport </绝对路径/sync-approval.json> --folder <排除文件夹名>"
-        ],"boundary":"仅本机 OS 权限与既有 Broker owner 租约；不是应用身份认证，不自动初始化、取消或停服务。sync-init 只在四项私有存储都不存在时显式建立；sync-purge-residue 须先停 studiolo-human，只删镜像视图内已不再排除的文件夹残留。"}));
+        ],"boundary":"仅本机 OS 权限与既有 Broker owner 租约；不是应用身份认证，不自动初始化、取消或停服务。sync-init 经确认建立四项私有存储及批准的空目录；sync-anchors 只准备批准但缺失的空目录，不初始化传输状态；sync-purge-residue 须先停 studiolo-human，只删镜像视图内已不再排除的文件夹残留。"}));
     };
     let terminal = terminal::Terminal::open()?;
     let operator = terminal.operator();
@@ -112,6 +114,9 @@ pub enum MaintenanceError {
     /// Bridge 平面私有存储初始化或打开失败。
     #[error("Bridge 平面私有存储不可用；初始化或读取未完成，请检查四个根后重试")]
     SyncStorage,
+    /// 同步目录预检或初始化未完成；IO中断后只能重开核验，不删除已建目录。
+    #[error("同步目录初始化未完成；请核验既有根与目录后重试，可能已建立部分空目录")]
+    SyncAnchors,
     /// 重绑定前置拒绝，不复述路径、原配置或底层日志。
     #[error("传输重绑定拒绝：{0}；未发布新绑定")]
     SyncRebind(studiolo_sync_transport::owned_run::TransportError),

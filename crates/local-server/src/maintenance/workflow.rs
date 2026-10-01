@@ -4,7 +4,7 @@ use super::{
     MaintenanceError, audit, flush,
     inputs::Inputs,
     options::{Command, Options},
-    presentation, state, sync, sync_rebind,
+    presentation, state, sync, sync_anchors, sync_rebind,
 };
 use serde_json::{Value, json};
 use studiolo_vault_broker::{
@@ -28,7 +28,10 @@ pub(super) fn execute(
     }
     // Bridge 维护由各入口核验专属存储；共同前置是同一 Broker 租约与主人终端。
     if options.command == Command::SyncInit {
-        return sync::init(inputs, options, &check);
+        return sync::init(inputs, options, &mut confirm, &check);
+    }
+    if options.command == Command::SyncAnchors {
+        return sync_anchors::run(inputs, options, &mut confirm, &check);
     }
     if options.command == Command::SyncRebind {
         return sync_rebind::run(inputs, options, &mut confirm, &check);

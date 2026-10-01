@@ -203,3 +203,10 @@ systemctl status studiolo-sync-launcher.service --no-pager
 stat -c '%U:%G %a %n' /run/studiolo-sync-launcher /run/studiolo-sync-launcher/launcher.sock
 sudo -u maxsong /ABS/RELEASE/bin/studiolo-local-server … --sync-transport …   # 启动即做一次 probe
 ```
+
+
+## 首次接入的 canonical 目录锚点
+
+完整观察要求 `whole_folders` 的目录锚点存在；缺失时仍严格拒绝，不把它当成完整空目录。`sync-init` 在创建存储前预检全部锚点，经终端确认后由同一 Broker 独占写者补齐缺失空目录，再报告实际创建列表。非法锚点（文件、链接、碰撞或越界）在初始化任何存储前拒绝。
+
+旧版本已完成初始化但遗漏锚点时，先在批准的维护窗口停止 `studiolo-human`，运行 `studiolo-maintain sync-anchors`，传与 `sync-init` 相同的 `--config`、`--vault`、`--assets`、`--writer-data`、`--sync-transport` 根参数。核对终端显示的缺失目录并输入 `sync-anchors`；启动服务后另验正式导入。此命令只持既有 Broker 租约按原批准范围建空目录，不创建占位文件、不覆盖文件、不改范围、不初始化/重绑定传输状态；重复执行返回空创建列表。I/O中断可能留下部分空目录，保留它们、重开核验后同命令幂等补齐，不删目录或回填旧状态。

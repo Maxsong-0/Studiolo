@@ -1,5 +1,6 @@
 //! 基于文件系统的 canonical Vault 适配器：结构体、打开、稳定读取与快照。
 
+mod anchors;
 mod artifact;
 mod components;
 mod rooted;

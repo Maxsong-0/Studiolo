@@ -3,12 +3,14 @@
 //! 即拒绝——这就是「只在静止窗口内」的落实）。`sync-init` 任一项已存在即拒绝、不修复、不覆盖；
 //! `sync-purge-residue` 先整棵核验再删除，遇到链接、非常规对象或超预算时一个字节都不动；删除前后
 //! 各在权威审计账本记一条 `sync.purge-residue`（Intent／Outcome，`sync_audit.rs`）。本文件是
-//! maintenance 里唯一做真实目录创建与删除的地方：`bridge/` 一处 `mkdir 0700`，其余只经 FD 相对调用。
+//! canonical 目录由 Broker 显式准备；本文件负责私有存储与镜像残留的目录操作：`bridge/` 一处 `mkdir 0700`，其余只经 FD 相对调用。
 
 mod purge;
 pub(super) use purge::purge_residue;
 
-use super::{MaintenanceError, inputs::Inputs, options::Options, sync_audit, workflow::guard};
+use super::{
+    MaintenanceError, inputs::Inputs, options::Options, sync_anchors, sync_audit, workflow::guard,
+};
 use crate::sync_plane::{
     BRIDGE_DIR, bridge_binding, bridge_limits,
     mirror::stage::{STAGE_DIR, StageStore},
@@ -33,13 +35,14 @@ const DIRECTORY_FLAGS: OFlags = OFlags::RDONLY
     .union(OFlags::NOFOLLOW)
     .union(OFlags::CLOEXEC);
 
-/// 显式初始化四项私有存储：传输存储 → `bridge/`＋Bridge 主库 → 外 stage → `plane-state.json`。
+/// 确认后初始化四项私有存储并通过 Broker 准备批准的空目录：传输存储 → `bridge/`＋Bridge 主库 → 外 stage → `plane-state.json`。
 ///
 /// 任一项已存在整体拒绝：平面根下三项先探测，传输存储排在第一位自己按 `AlreadyExists` 拒绝，
 /// 它拒绝时其余三项都还没动过。
 pub(super) fn init(
-    inputs: &Inputs,
+    inputs: &mut Inputs,
     options: &Options,
+    confirm: &mut impl FnMut(&Value, &str) -> Result<(), MaintenanceError>,
     check: &impl Fn() -> Result<(), MaintenanceError>,
 ) -> Result<Value, MaintenanceError> {
     guard(inputs, check)?;
@@ -48,6 +51,11 @@ pub(super) fn init(
     let runtime =
         PinnedRuntime::from_approval(&approved).map_err(|_| MaintenanceError::Configuration)?;
     let plane_root = approved.roots().plane_root();
+    let selection = sync_anchors::selection(&scope)?;
+    let missing = inputs
+        .broker
+        .inspect_sync_anchors(&selection)
+        .map_err(|_| MaintenanceError::SyncAnchors)?;
     if [BRIDGE_DIR, STAGE_DIR, PLANE_STATE_FILE]
         .iter()
         .any(|name| fs::symlink_metadata(plane_root.join(name)).is_ok())
@@ -55,6 +63,25 @@ pub(super) fn init(
         return Err(MaintenanceError::SyncExists);
     }
     guard(inputs, check)?;
+    confirm(
+        &json!({"command":"sync-init", "missing_anchors":missing,
+        "note":"建立四项Bridge私有存储，并由既有Broker独占写者准备批准的空目录；不改任何现有文件。"}),
+        "sync-init",
+    )?;
+    revalidate(&approved)?;
+    guard(inputs, check)?;
+    let checked = approve(&scope, inputs, options)?;
+    if checked.approval_digest() != approved.approval_digest() {
+        return Err(MaintenanceError::Configuration);
+    }
+    if inputs
+        .broker
+        .inspect_sync_anchors(&selection)
+        .map_err(|_| MaintenanceError::SyncAnchors)?
+        != missing
+    {
+        return Err(MaintenanceError::Configuration);
+    }
     initialize_store(&approved, &runtime)
         .map_err(|error| conflict(matches!(error, TransportError::AlreadyExists)))?;
     let bridge = plane_root.join(BRIDGE_DIR);
@@ -76,7 +103,13 @@ pub(super) fn init(
         .map_err(|_| MaintenanceError::SyncStorage)?;
     revalidate(&approved)?;
     guard(inputs, check)?;
-    Ok(json!({"command":"sync-init",
+    let created = inputs
+        .broker
+        .prepare_sync_anchors(&selection)
+        .map_err(|_| MaintenanceError::SyncAnchors)?;
+    revalidate(&approved)?;
+    guard(inputs, check)?;
+    Ok(json!({"command":"sync-init", "created_anchors":created,
         "initialized":{"transport":true,"bridge":true,"stage":true,"plane_state":true},
         "note":"四项私有存储均为首次建立；任一项已存在时本命令整体拒绝，不修复、不覆盖。"}))
 }
