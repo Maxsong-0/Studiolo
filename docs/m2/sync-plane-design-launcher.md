@@ -48,6 +48,8 @@ launcher 逐字段与 session 记录比对，任一不同 → `identity_mismatch
 
 `Barrier`（unit 已起、垫片已报 (dev,ino)、未放行）→ `Released`（写放行 FIFO 一字节）→ `Gated`（不再放行）→ `Reaped` → `Retired`（`systemctl stop`，删 session 目录）。
 一次只有一个非 Retired session；`launch` 到来时旧 session 须已 `Reaped` 且 `populated=0` 才卸载替换，否则 `busy`。
+正常 owner 先 `gate` 再 `reap`，只在退出结果与空组分别确认后闭合。`stop` 始终保留 unit/session 及已取得的退出结果；已 reap 但后代仍在时仍停止整组，只有下一次 `launch` 经已 reap＋空组守卫后才退休旧 session。
+
 `release` 只在 `Barrier` 接受一次；`gate` 在 `Barrier`/`Released` 都可，之后任何 `release` → `busy`。
 超时：socket 单帧读写 5 s；`systemd-run` 等待 unit 进入 `active` 10 s；`systemctl stop` 等待 `grace_seconds+10` s；垫片报告 FIFO 等待 10 s。
 

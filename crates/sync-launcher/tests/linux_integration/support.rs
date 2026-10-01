@@ -177,3 +177,43 @@ pub fn fixture(runtime_dir: &Path) -> Fixture {
         config_root,
     }
 }
+
+/// Stop 后保留真实等待结果与静止事实，不提前清掉 owner 恢复所需的身份。
+pub fn assert_retained(socket: &Path, container: &ContainerFrame, code: i32) {
+    assert_eq!(user_show(&container.unit_name, "LoadState"), "loaded");
+    assert_eq!(
+        call(socket, &Request::Match(container.clone())),
+        Response::Match {
+            identity: "exact".to_owned()
+        }
+    );
+    assert_eq!(
+        call(socket, &Request::Reap(container.clone())),
+        Response::Reap {
+            exit_observed: true,
+            exit_code: Some(code),
+            exit_signal: None
+        }
+    );
+    assert_eq!(
+        call(socket, &Request::Events(container.clone())),
+        Response::Events {
+            populated: false,
+            frozen: false
+        }
+    );
+}
+
+/// 仅清理本测试明确持有的随机 unit；这是夹具回收，不是产品 Stop 语义。
+pub fn cleanup_unit(unit: &str) {
+    assert!(
+        Command::new("/usr/bin/systemctl")
+            .args(["--user", "stop", "--", unit])
+            .status()
+            .unwrap()
+            .success()
+    );
+    let _ = Command::new("/usr/bin/systemctl")
+        .args(["--user", "reset-failed", "--", unit])
+        .status();
+}

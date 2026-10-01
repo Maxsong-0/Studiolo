@@ -68,9 +68,10 @@ r2 之后每次发行只做「上一发行 → 本发行」：换网页，可选
 6. **激活**（用户本人 root）：`sudo /usr/bin/python3 -I -B -S <暂存>/deploy/blackboard/activate.py --manifest-sha256 <上一步的摘要>`。已激活后重复执行会在预检被拒（现场已不是上一发行），无副作用。
 
 
-本版固定 r10→r11（2026-10-01）：人侧程序与 Bridge 双程序来自 BUG-020 修复提交；
-网页沿用 r10 已验证字节和来源 `4a1ba63`，agent 仍为 t160。现场摘要在 assembly.py，
-激活继续保留认证与数据库。修复 owner 将动态载荷单元误与固定 launcher 单元比较的问题，
-不改变既有载荷命名或 IPC 协议。Bridge 的 P4 失败现场须按 OwnedRun 恢复契约独立收束：
-若 LaunchIssued 尚无持久容器身份，只能凭真实 boot 变化确认静止，不能清空状态重新初始化。
-程序发行成功不等于首轮同步或 P5 试跑验收。
+本版固定 r11→r12（2026-10-01）：修复 BUG-021 的退出观察顺序与 Stop 提前销毁证据。
+人侧程序和 Bridge 双程序来自同一修复提交；网页沿用 r11 已验证字节与来源 `4a1ba63`，agent 沿用 t160。
+当前 r11 已启用 Bridge，发行将现场已有的标签、`--sync-transport` 与两个写根纳入包，权限范围不变；
+人侧 ExecStart 从 P4 外部启动器迁回新发行内。现场单元和上一 manifest 摘要仍精确钉在 assembly.py。
+root 安装的 sync-launcher 也必须按新构建摘要单独升级，不能只交付到发行目录就冒称运行体已更新。
+已有 LaunchIssued/container=null 现场仍只能凭真实 boot 变化恢复，不清状态、不重新初始化或配对。
+激活保留认证、数据库、配对和同步范围；程序发行不等于 P4 首轮导入或 P5 两周试跑验收。

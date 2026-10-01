@@ -120,11 +120,15 @@ impl Script {
                 grace_seconds: _,
             }) => self.bound(container, |script| {
                 script.stops += 1;
+                script.gated = true;
                 Response::Stop(Empty {})
             }),
             Request::Reap(frame) => self.bound(frame, |script| {
                 let (exit_observed, exit_code, exit_signal) = script.exit;
                 if exit_observed {
+                    if !script.gated {
+                        return refused(Verdict::Busy);
+                    }
                     script.reaped = true;
                 }
                 Response::Reap {
@@ -201,7 +205,7 @@ impl Script {
 
     /// 建立屏障：旧 session 未 reap 就 `busy`；容器身份由假 launcher「实测」给出。
     fn launch(&mut self, frame: &LaunchFrame) -> Response {
-        if self.session.is_some() && !self.reaped {
+        if self.session.is_some() && (!self.reaped || self.populated) {
             return refused(Verdict::Busy);
         }
         let container = ContainerFrame {

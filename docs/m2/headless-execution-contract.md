@@ -125,6 +125,7 @@ wait(OwnedRun) -> Reaped | ExitUnconfirmed
 2. 精确校验 config JSON 的全部字段/类型/枚举、路径与 remote ID；键缺失、额外键、过大/多个对象或截断均拒绝。不从日志读授权；不把默认 fileTypes 当作完整附件授权，必须核对 approvedConfig。
 3. 子进程启动前登记 run 意图并持久化 binding/sequence；限制 stdout/stderr 内存且持续排空，超限按 Budget 取消/未知处理，不能截断后假成功；私有配置根自身另有实际磁盘预算。
 4. `wait` 必须等待真实自有 child 终结，并由平台层确认本运行容器/子进程组已静止。Linux 可采用专用受控 cgroup/服务 scope；普通 PID 名称搜索不是可靠身份。进程组方案还需排除 escape/复用风险。若平台不能给退出边界，返回 ExitUnconfirmed，禁止镜像安装；不能终止别人的进程来换取该边界。
+   正常同boot观察固定为 gate→reap→events：空组但退出码尚未观察到时保留原运行槽，下一次 wait/recover 重读；不能提前闭合后覆盖旧槽。跨boot恢复可独立证明静止，原退出结果仍保持未知。
 5. 取消/超时先只停止自己持有身份的 child/运行容器，给有界 grace；需要强停也只作用于该范围。即使最后 exit 0，父取消仍是 Cancelled。pipes EOF 或 `.sync.lock` 消失不替代真实 wait/静止证明。
 6. 只有静止后才发内存 `QuiescentMirror` 能力，其绑定当前实例 epoch、run、root pins 与排他租约；用于白名单 CAS 安装。安装回执只证明本地 mirror 的持久效果，必须显式 `remote_delivery=unknown`。以后再 start child，立即使该静止能力失效。
 7. 镜像外 stage、逐路径 expected revision、原 ActionKey 和审计保持既有 Bridge/Broker 规则。重启时原 child 是否仍活着不能从旧 PID 猜测；运行容器核对失败保持未知并阻断安装。

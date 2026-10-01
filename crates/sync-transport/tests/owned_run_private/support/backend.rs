@@ -52,6 +52,9 @@ pub struct FakeBackend {
     pub releases: u32,
     pub stops: u32,
     pub gate_closures: u32,
+    pub gate_closed: bool,
+    /// 在第一次读空组时才发布真实退出结果，复现退出观察竞态。
+    pub exit_after_events: Option<ExitObservation>,
     pub launch_gap: Option<ContainmentGap>,
     pub release_gap: Option<ContainmentGap>,
     pub observe_gap: Option<ContainmentGap>,
@@ -76,6 +79,8 @@ impl FakeBackend {
             releases: 0,
             stops: 0,
             gate_closures: 0,
+            gate_closed: false,
+            exit_after_events: None,
             launch_gap: None,
             release_gap: None,
             observe_gap: None,
@@ -94,6 +99,7 @@ impl ContainmentBackend for FakeBackend {
         request: &LaunchRequest,
     ) -> std::result::Result<LaunchAcknowledgement, ContainmentGap> {
         self.launches += 1;
+        self.gate_closed = false;
         if let Some(gap) = self.launch_gap {
             return Err(gap);
         }
@@ -133,6 +139,7 @@ impl ContainmentBackend for FakeBackend {
         _container: &ContainerIdentity,
     ) -> std::result::Result<(), ContainmentGap> {
         self.gate_closures += 1;
+        self.gate_closed = true;
         Ok(())
     }
 
@@ -141,6 +148,9 @@ impl ContainmentBackend for FakeBackend {
         _run_id: RunId,
         _container: &ContainerIdentity,
     ) -> std::result::Result<CgroupEvents, ContainmentGap> {
+        if let Some(exit) = self.exit_after_events.take() {
+            self.exit = exit;
+        }
         Ok(CgroupEvents {
             populated: self.populated,
             frozen: false,
@@ -170,6 +180,9 @@ impl ContainmentBackend for FakeBackend {
         _run_id: RunId,
         _container: &ContainerIdentity,
     ) -> std::result::Result<ExitObservation, ContainmentGap> {
+        if self.exit != ExitObservation::NotObserved && !self.gate_closed {
+            return Err(ContainmentGap::ManagerUnavailable);
+        }
         Ok(self.exit)
     }
 

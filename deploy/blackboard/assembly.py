@@ -1,8 +1,8 @@
-"""从已激活的上一发行派生下一发行：只换网页，其余逐字节沿用；不读取凭据、不操作服务或数据库。
+"""从已激活发行派生候选的固定装配；不读取凭据、不操作服务或数据库。
 
-r2 已经把黑板接线（单元的 RuntimeDirectory／ReadWritePaths、启动器的 board 参数）装好了，
-此后的发行**不再做任何装配改造**，只做两件事：把发行路径从上一发行指到本发行，把 `web/` 换成新构建。
-因此三个变换函数都是「路径替换 ＋ 现状核验」，多出来的差异一律拒绝。
+黑板接线沿用 r2；通常只替换发行路径。本版另将已批准且正在运行的 P4 外部启动器
+纳入发行，重放其标签与 --sync-transport 两项差异。写根与认证接线保持现场原值。
+变换只接受钉住的上一发行形状；额外差异由现场摘要和逐字变换核验拒绝。
 
 沿革：r8→r2 的装配逻辑见本文件在 main `40fdf8d` 及更早的版本（一次性迁移，已激活）；
 r2→r3（2026-09-22 T-102，已激活）；r3→r4（T-103/T-104，前端并发闸门＋会话每日复核，已激活）；
@@ -12,13 +12,18 @@ r6→r7（T-167：T-161～T-166 上线后修复，换网页与人侧程序——
 r7→r8（T-160f：规则级读权限与「规则」视图；人侧程序须先于 agent 换上，才能解析带 rules_whitelist 的能力集，已激活）；
 r8→r9（T-160g：权限矩阵改版，仅换网页，已激活）；
 r9→r10（T-132：更新人侧程序，并显式交付 maintain 与 sync-launcher，已激活）；
-本版 r10→r11（BUG-020：修复逐次载荷身份校验；Bridge失败现场恢复仍单独执行）。
+r10→r11（BUG-020：逐次载荷身份校验，已激活）；
+本版 r11→r12（BUG-021：退出观察与停止留证；纳入已启用的Bridge接线）。
 """
 import shlex
 from pathlib import Path
 
-OLD_RELEASE = '/home/maxsong/.local/share/studiolo-human-releases/m5m6-board-20260920-r10'
-BUILD = 'm5m6-board-20260920-r11'
+OLD_RELEASE = '/home/maxsong/.local/share/studiolo-human-releases/m5m6-board-20260920-r11'
+BUILD = 'm5m6-board-20260920-r12'
+BRIDGE_LAUNCHER = '/home/maxsong/.local/share/studiolo-bridge-activation/t132-p4-r11-20261001/launch-human.py'
+BRIDGE_ROOT = '/var/lib/studiolo-owner/bridge'
+TRANSPORT_ROOT = '/home/maxsong/.local/share/studiolo-sync-transport'
+SYNC_APPROVAL = '/home/maxsong/.config/studiolo-human/sync-transport.json'
 RELEASE = '/home/maxsong/.local/share/studiolo-human-releases/' + BUILD
 BASE = '/home/maxsong/.local/share/'
 VAULT = BASE + 'studiolo-canonical'
@@ -27,14 +32,14 @@ BOARD = BASE + 'studiolo-board'
 AGENT = BASE + 'studiolo-agent'
 BOARD_RUNTIME = '/run/studiolo-board'
 BOARD_SOCKET = BOARD_RUNTIME + '/board.sock'
-# 2026-10-01 现场：human r10（Bridge已回退）、agent t160；固定摘要防止覆盖其他发布。
-HUMAN_SHA = 'd8ce37129782e494675d307caccee8c202308c1ebb7453e6a1055287e231a971'
+# 2026-10-01 现场：human r11已接Bridge、agent t160；固定摘要防止覆盖其他发布。
+HUMAN_SHA = '2c9457b39a6fcb14ef325d70732cbed20a5e0764f52723b08fa883c55eeb244f'
 AGENT_SHA = '2e3d9ddfdc1344a448ae1e486afb0314fd94af48ca00f5ce7685a98591db226f'
-# 键名沿用早期协议，内容钉住当前 r10 manifest。
-R8_MANIFEST_SHA = '73863a22c779c8e877d051b7608bed9b617316855054fb48c3a3cff8e3557ed6'
+# 键名沿用早期协议，内容钉住当前 r11 manifest。
+R8_MANIFEST_SHA = 'c6b6c9a8c4d454adfa4c03733e6e0e96123bc22c9e8897becc63ef292648060d'
 # 发行目录里属于网页的前缀：本次唯一允许整体更换的部分。
 WEB_PREFIX = 'web/'
-# 上一发行的装配名；候选包沿用同一装配，只是换了网页。
+# 沿用黑板装配标识；Bridge 接线仍受固定现场摘要约束。
 ASSEMBLY = 'canonical-board-consumer-only'
 
 
@@ -46,11 +51,13 @@ def replace_once(text, old, new):
 
 def human_unit(text):
     """上一发行的人侧单元已带黑板接线；只把发行路径指到本发行，其余必须逐字不变。"""
+    # 当前P4启动器在发行目录外；按冻结现场迁回新发行，不改变任何写根。
+    text = replace_once(text, BRIDGE_LAUNCHER, OLD_RELEASE + "/launch-human.py")
     if text.count(OLD_RELEASE) != 2 or RELEASE in text:
         raise ValueError('unrecognized human unit')
     if 'RuntimeDirectory=studiolo-human studiolo-board\n' not in text:
         raise ValueError('board wiring missing')
-    for path in (VAULT, WRITER, BOARD, AGENT, BOARD_RUNTIME):
+    for path in (VAULT, WRITER, BOARD, AGENT, BOARD_RUNTIME, BRIDGE_ROOT, TRANSPORT_ROOT):
         if 'ReadWritePaths=' + path + '\n' not in text:
             raise ValueError('board wiring missing')
     return text.replace(OLD_RELEASE, RELEASE)
@@ -77,14 +84,18 @@ def agent_unit(text):
 
 
 def launcher(text):
-    """上一发行的启动器已带黑板参数；只把发行路径换成本发行，其余逐字不变，并要求仍能编译。"""
-    if RELEASE in text:
+    """重放已批准P4的标签/同步参数两项差异，再只换发行路径；认证函数逐字沿用。"""
+    if RELEASE in text or '"--sync-transport"' in text:
         raise ValueError('unrecognized launcher')
     for fragment in ('"--canonical-writer-data", WRITER', '"--board-socket", BOARD_SOCKET',
                      'BOARD_SOCKET = ' + repr(BOARD_SOCKET), 'VAULT = ' + repr(VAULT),
                      'RELEASE + "/web"'):
         if fragment not in text:
             raise ValueError('board wiring missing')
+    text = replace_once(text, '正式黑板库 · 初始快照（持续同步未接通）',
+                        '正式黑板库 · Obsidian 同步试跑')
+    anchor = '        "--board-agent-data", AGENT, "--board-socket", BOARD_SOCKET,\n'
+    text = replace_once(text, anchor, anchor + '        "--sync-transport", "' + SYNC_APPROVAL + '",\n')
     text = replace_once(text, 'RELEASE = "' + OLD_RELEASE + '"',
                         'RELEASE = "' + RELEASE + '"')
     if OLD_RELEASE in text:

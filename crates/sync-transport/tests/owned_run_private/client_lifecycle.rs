@@ -100,6 +100,13 @@ fn the_real_adapter_walks_the_whole_container_protocol_through_the_fake_launcher
     launcher.script().exit = (true, Some(0), None);
     assert_eq!(
         adapter.reap(run_id, &container),
+        Err(ContainmentGap::IdentityMismatch)
+    );
+    adapter
+        .close_spawn_gate(run_id, &container)
+        .expect("先关门才能登记退出结果");
+    assert_eq!(
+        adapter.reap(run_id, &container),
         Ok(ExitObservation::Code(0))
     );
     launcher.script().exit = (true, None, Some(15));
@@ -211,6 +218,9 @@ fn an_over_budget_output_is_budget_unsupported_and_a_foreign_variant_is_a_protoc
         output: "x".to_owned(),
     }));
     assert_eq!(adapter.boot_id(), Err(ContainmentGap::ProtocolViolation));
+    adapter
+        .close_spawn_gate(run_id, &container)
+        .expect("先关门再检验退出帧");
     // reap 应答自相矛盾：既观察到又没有退出码／信号，或两者都给。
     launcher.script().exit = (true, None, None);
     assert_eq!(
