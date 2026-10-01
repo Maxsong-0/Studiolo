@@ -7,7 +7,7 @@ use super::*;
 pub fn container() -> ContainerIdentity {
     ContainerIdentity {
         boot_id: [7u8; 16],
-        unit_name: SERVICE_UNIT.to_owned(),
+        unit_name: String::new(),
         invocation_id: [8u8; 16],
         payload_cgroup: format!("{CGROUP_PREFIX}/run-1"),
         cgroup_identity: (64, 99),
@@ -40,6 +40,7 @@ pub fn isolation() -> IsolationReport {
 pub struct FakeBackend {
     pub boot: [u8; 16],
     pub container: ContainerIdentity,
+    pub unit_name_override: Option<String>,
     pub limits: CgroupLimits,
     pub isolation: IsolationReport,
     pub populated: bool,
@@ -63,6 +64,7 @@ impl FakeBackend {
         Self {
             boot: [7u8; 16],
             container: container(),
+            unit_name_override: None,
             limits: limits(),
             isolation: isolation(),
             populated: true,
@@ -95,6 +97,14 @@ impl ContainmentBackend for FakeBackend {
         if let Some(gap) = self.launch_gap {
             return Err(gap);
         }
+        // 独立复现真实 launcher 的线协议形状，不把审批中的服务名当载荷名。
+        self.container.unit_name = self.unit_name_override.clone().unwrap_or_else(|| {
+            format!(
+                "studiolo-sync-payload-{}-{}.service",
+                request.sequence,
+                &request.run_id.to_string()[..8]
+            )
+        });
         Ok(LaunchAcknowledgement {
             container: self.container.clone(),
             limits: self.limits,

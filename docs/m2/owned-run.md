@@ -64,6 +64,12 @@ config_output(run_id) -> String             // T-132 P1：已闭合 InspectConfi
 
 ## 2. 阶段持久边界（代码位置）
 
+`BackendDescriptor.service_unit` 是固定可信 launcher 服务的审批值。启动回执里的
+`ContainerIdentity.unit_name` 则必须精确等于持久化 sequence/run_id 派生出的
+`studiolo-sync-payload-<sequence>-<run_id 前 8 hex>.service`，两者不能混同。
+owner 与 launcher 共用 `linux::service::payload_unit_name`；同时继续核对 boot、
+cgroup 前缀及真实对象身份、InvocationID、launcher session、隔离与实际预算。
+
 `owned_run/machine.rs` 是唯一的迁移入口；每次转换产出**完整新记录**，
 由 `owned_run/session.rs::commit` 原子发布后才生效。
 

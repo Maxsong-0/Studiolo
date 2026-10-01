@@ -68,4 +68,9 @@ r2 之后每次发行只做「上一发行 → 本发行」：换网页，可选
 6. **激活**（用户本人 root）：`sudo /usr/bin/python3 -I -B -S <暂存>/deploy/blackboard/activate.py --manifest-sha256 <上一步的摘要>`。已激活后重复执行会在预检被拒（现场已不是上一发行），无副作用。
 
 
-本版固定 r9→r10（2026-09-29）：人侧程序与 Bridge 双程序来自 PR #54 合并提交 `bcd47f4`；网页沿用 r9 已验证字节和来源 `4a1ba63`，agent 仍为 t160。现场摘要在 assembly.py，激活继续保留认证与数据库；Bridge 的 P3/P4/P6 仍按独立方案执行。
+本版固定 r10→r11（2026-10-01）：人侧程序与 Bridge 双程序来自 BUG-020 修复提交；
+网页沿用 r10 已验证字节和来源 `4a1ba63`，agent 仍为 t160。现场摘要在 assembly.py，
+激活继续保留认证与数据库。修复 owner 将动态载荷单元误与固定 launcher 单元比较的问题，
+不改变既有载荷命名或 IPC 协议。Bridge 的 P4 失败现场须按 OwnedRun 恢复契约独立收束：
+若 LaunchIssued 尚无持久容器身份，只能凭真实 boot 变化确认静止，不能清空状态重新初始化。
+程序发行成功不等于首轮同步或 P5 试跑验收。

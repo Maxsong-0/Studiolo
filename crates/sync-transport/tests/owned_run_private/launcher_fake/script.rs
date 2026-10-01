@@ -1,7 +1,7 @@
 //! 假 launcher 的脚本状态机：只复现协议**可见**行为（session 一次放行、gate 后拒绝、
 //! 逐字段身份核对、`Verdict` 闭集），不建 unit、不读 cgroupfs、不核隔离。
 
-use super::super::support::{CGROUP_PREFIX, PAYLOAD_GID, PAYLOAD_UID, SERVICE_UNIT, limits};
+use super::super::support::{CGROUP_PREFIX, PAYLOAD_GID, PAYLOAD_UID, limits};
 use crate::linux::protocol::{
     ContainerFrame, Empty, IsolationFrame, LaunchFrame, LaunchReport, LimitsFrame,
     PROTOCOL_VERSION, ProbeReport, Request, Response, StopFrame, Verdict,
@@ -207,7 +207,11 @@ impl Script {
         let container = ContainerFrame {
             run_id: frame.run_id,
             boot_id: self.boot_id,
-            unit_name: SERVICE_UNIT.to_owned(),
+            unit_name: format!(
+                "studiolo-sync-payload-{}-{}.service",
+                frame.sequence,
+                &frame.run_id.to_string()[..8]
+            ),
             invocation_id: [8u8; 16],
             payload_cgroup: format!("{CGROUP_PREFIX}/run-{}", frame.sequence),
             cgroup_identity: (64, 99),

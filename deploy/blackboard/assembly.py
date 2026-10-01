@@ -11,13 +11,14 @@ r5→r6（T-159：T-130 新前端＋main 人侧程序一起换，含只读接口
 r6→r7（T-167：T-161～T-166 上线后修复，换网页与人侧程序——woff2／svg 长缓存在人侧程序里，已激活）；
 r7→r8（T-160f：规则级读权限与「规则」视图；人侧程序须先于 agent 换上，才能解析带 rules_whitelist 的能力集，已激活）；
 r8→r9（T-160g：权限矩阵改版，仅换网页，已激活）；
-本版 r9→r10（T-132：更新人侧程序，并显式交付 maintain 与 sync-launcher；Bridge 启用仍单独执行）。
+r9→r10（T-132：更新人侧程序，并显式交付 maintain 与 sync-launcher，已激活）；
+本版 r10→r11（BUG-020：修复逐次载荷身份校验；Bridge失败现场恢复仍单独执行）。
 """
 import shlex
 from pathlib import Path
 
-OLD_RELEASE = '/home/maxsong/.local/share/studiolo-human-releases/m5m6-board-20260920-r9'
-BUILD = 'm5m6-board-20260920-r10'
+OLD_RELEASE = '/home/maxsong/.local/share/studiolo-human-releases/m5m6-board-20260920-r10'
+BUILD = 'm5m6-board-20260920-r11'
 RELEASE = '/home/maxsong/.local/share/studiolo-human-releases/' + BUILD
 BASE = '/home/maxsong/.local/share/'
 VAULT = BASE + 'studiolo-canonical'
@@ -26,11 +27,11 @@ BOARD = BASE + 'studiolo-board'
 AGENT = BASE + 'studiolo-agent'
 BOARD_RUNTIME = '/run/studiolo-board'
 BOARD_SOCKET = BOARD_RUNTIME + '/board.sock'
-# 2026-09-29 现场：human r9、agent t160；固定摘要防止覆盖其他发布。
-HUMAN_SHA = '17fbb229dbb0d93ac3f75eb15392ffe1cffbcd75b820913c8e0302001aa9d200'
+# 2026-10-01 现场：human r10（Bridge已回退）、agent t160；固定摘要防止覆盖其他发布。
+HUMAN_SHA = 'd8ce37129782e494675d307caccee8c202308c1ebb7453e6a1055287e231a971'
 AGENT_SHA = '2e3d9ddfdc1344a448ae1e486afb0314fd94af48ca00f5ce7685a98591db226f'
-# 键名沿用早期协议，内容钉住当前 r9 manifest。
-R8_MANIFEST_SHA = '5c70d516322c2ef74a6e71dbca2a46c91012c3e754dae55f79cc385d7b95f2af'
+# 键名沿用早期协议，内容钉住当前 r10 manifest。
+R8_MANIFEST_SHA = '73863a22c779c8e877d051b7608bed9b617316855054fb48c3a3cff8e3557ed6'
 # 发行目录里属于网页的前缀：本次唯一允许整体更换的部分。
 WEB_PREFIX = 'web/'
 # 上一发行的装配名；候选包沿用同一装配，只是换了网页。

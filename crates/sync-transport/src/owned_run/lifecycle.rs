@@ -236,8 +236,9 @@ fn container_acceptable(
     container: &ContainerIdentity,
     boot_id: [u8; 16],
 ) -> Result<()> {
+    let record = state.active.as_ref().ok_or(TransportError::NotFound)?;
     let acceptable = container.boot_id == boot_id
-        && container.unit_name == state.backend.service_unit
+        && container.unit_name == service::payload_unit_name(record.sequence, &record.run_id)
         && service::unit_name_acceptable(&container.unit_name)
         && cgroup::within_prefix(
             &container.payload_cgroup,

@@ -244,7 +244,7 @@ fn config_output_needs_a_closed_inspect_run_and_its_recorded_container_never_run
     let status = session.inspect().expect("可以读状态");
     let terminal = status.last_terminal.expect("已审计闭合摘要");
     // 闭合摘要带着 Contained 时记下的容器身份；正文只对这个身份取。
-    assert_eq!(terminal.container, Some(container()));
+    assert_eq!(terminal.container, Some(session.backend.container.clone()));
     assert_eq!(
         session.config_output(owned.run_id()).as_deref(),
         Ok(r#"{"syncMode":"mirror-remote"}"#)

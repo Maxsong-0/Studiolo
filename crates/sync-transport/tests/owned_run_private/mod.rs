@@ -12,6 +12,7 @@ mod client_lifecycle;
 mod failure;
 #[cfg(target_os = "linux")]
 mod launcher_fake;
+mod payload_identity;
 mod platform;
 mod rebind;
 mod rebind_store;
