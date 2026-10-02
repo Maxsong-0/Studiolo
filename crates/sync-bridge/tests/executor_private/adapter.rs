@@ -23,6 +23,13 @@ impl PlanJournal for LoggingJournal<'_> {
         note(&self.log, "audit.flush".into());
         self.inner.deliver_audit(max_records)
     }
+    fn cancel_changed(
+        &mut self,
+        key: &ActionKey,
+        recheck: &ExecutionRecheck,
+    ) -> Result<bool, JournalFault> {
+        self.inner.cancel_changed(key, recheck)
+    }
     fn issue(
         &mut self,
         key: &ActionKey,

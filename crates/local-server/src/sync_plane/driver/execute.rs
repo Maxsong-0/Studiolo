@@ -2,6 +2,8 @@
 //!
 //! 上一批未闭合（重开续做）就沿用冻结原输入，不重新预留；执行器自己保证 Issued 不重放。
 
+mod stopping;
+
 use super::super::PlaneError;
 use super::super::job_backend::{PlaneJobBackend, SharedStageSink};
 use super::super::mirror::PlaneContent;
@@ -10,7 +12,7 @@ use super::super::witness::{PlaneWitness, WitnessContext};
 use super::RoundOutcome;
 use super::content::RoundContext;
 use super::observe::Observed;
-use std::time::Instant;
+use std::{sync::atomic::AtomicBool, time::Instant};
 use studiolo_sync_bridge::executor::{
     CasLimits, ExecutionPorts, ExecutorError, JournalFault, MirrorCas, execute,
 };
@@ -24,6 +26,7 @@ use studiolo_sync_bridge::{Decision, plan};
 pub fn reserve_and_execute(
     context: &RoundContext<'_>,
     observed: &Observed,
+    stopping: &AtomicBool,
 ) -> Result<RoundOutcome, PlaneError> {
     let plane = context.plane;
     // 11 先把 canonical 写者的两条审计 outbox 推到真实 ACK；推不动就不发任何新动作。
@@ -96,7 +99,11 @@ pub fn reserve_and_execute(
         let mut journal = StateJournal::new(&mut bridge, plane.audit().as_ref(), input.clone());
         let mut content = PlaneContent::new(plane, &context.view);
         let mut sink = SharedStageSink::new(context.stage);
-        let mut backend = PlaneJobBackend::new(context, binding);
+        let mut jobs = PlaneJobBackend::new(context, binding);
+        let mut backend = stopping::StoppableBackend {
+            inner: &mut jobs,
+            stopping,
+        };
         let mut cas = MirrorCas::new(CasLimits::internal());
         let ports = ExecutionPorts {
             quiescence: &quiescence,
@@ -146,6 +153,7 @@ pub fn bridge_error(error: BridgeError) -> PlaneError {
 /// 执行器失败到平面失败；未知终态不是失败，不会走到这里。
 pub fn executor_error(error: ExecutorError) -> PlaneError {
     match error {
+        ExecutorError::Stopping => PlaneError::Stopping,
         ExecutorError::Fused
         | ExecutorError::DeletionFuseBlocked(_)
         | ExecutorError::Journal(JournalFault::Fused) => PlaneError::Fused,

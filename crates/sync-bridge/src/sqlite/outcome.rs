@@ -2,7 +2,7 @@
 use crate::Digest;
 use serde::{Deserialize, Serialize};
 
-/// 实际后端原键结果；禁止将普通 JSON、退出码或相同 hash 冒充此证据。
+/// 原键终态：后端结果或 BridgeState 原子取消；普通 JSON、退出码及相同 hash 均非证据。
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct EffectReceipt {
@@ -59,7 +59,7 @@ pub enum EffectOutcome {
         expected_revision: Option<Digest>,
         /// 后端已确认的无效果原因。
         reason: NoEffectReason,
-        /// 后端持久拒绝或取消票据标识。
+        /// 后端持久拒绝票据，或 BridgeState 从未发出动作的持久取消票据。
         terminal_id: String,
     },
 }
@@ -70,7 +70,7 @@ pub enum EffectOutcome {
 pub enum NoEffectReason {
     /// 原 CAS 条件未满足，未安装。
     CasRejected,
-    /// 安装前取消已由后端持久确认。
+    /// 后端持久确认安装前取消，或 BridgeState 原子确认从未发出后消费预约。
     CancelledBeforeInstall,
 }
 

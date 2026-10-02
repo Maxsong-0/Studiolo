@@ -59,7 +59,7 @@ T-048，2026-09-17。源码在 `studiolo-sync-bridge` 的 `executor` 模块，38
 
 - 单对象 256 MiB；
 - stage 合计 512 MiB，**孤儿一并计入**；
-- stage 条目 64 项，**孤儿一并计入**；
+- stage 条目 4096 项，**孤儿一并计入**；
 - 同时接收中最多 1 个，同时 Prepared 最多 1 个；
 - 固定帧 64 KiB，超过即拒。
 
@@ -159,3 +159,5 @@ StateJournal::new(state: &mut BridgeState, ledger: &dyn AuditLedger, input: Inpu
 明确无效果保留旧基线、`BridgeError` 每个变体的映射、Intent 前置、未知终态被拒、
 审计不可用与越界预算、错键回执、租约冲突、持久熔断、重开后原键重放与跨实例观察作废、
 退休票据需要自己的真实审计 ACK、退休后永久拒绝。
+
+冻结动作的源或目标发生变化时，执行器先取得真实新鲜双侧观察。BridgeState 仅对 Intent 已 ACK、从未发出且无回执的预约原子记录 `CancelledBeforeInstall`，不会返回 `IssuedJob`、调用文件写后端或保全陈旧源。持久 `issued` 位与取消票据同事务写入，表示原预约已消费，旧版读取仍为 Known；`bridge-unissued-cancel-<request digest>` 明确标识由持久 owner 取消。已发未知动作绝不走此入口。NoEffect 仍需真实 Outcome/Summary ACK，旧共同基线不推进，下一轮按现状重新规划。

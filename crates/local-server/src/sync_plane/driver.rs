@@ -3,7 +3,7 @@
 //!
 //! 编排核心 `run_round_with` 只依赖端口 trait [`RoundPorts`]，便于用假端口做契约测试；
 //! 真实端口在 `driver/real.rs`，headless 运行、观察、预解决、冲突保全、预留执行各在其子模块。
-//! 关停只在安全停点生效（见 `halt` 的各调用点），执行器内部不打断。
+//! 关停只在安全停点生效（见 `halt` 的各调用点），执行器内部只在审计批次与完整动作边界停止。
 
 pub mod content;
 pub mod evidence;

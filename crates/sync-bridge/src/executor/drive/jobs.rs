@@ -7,7 +7,7 @@ use crate::executor::{
     error::ExecutorError,
     journal::{JobOutcome, JobRecord, JobState, JournalFault, PlanJournal},
     quiescence::Quiesced,
-    transfer,
+    transfer::{self, JobBackend},
 };
 use crate::{Action, Change, FuseReason, Side};
 
@@ -16,10 +16,23 @@ const AUDIT_BATCH: usize = 64;
 /// 有界轮次；到顶说明审计无法推进，绝不无限重试。
 const AUDIT_ROUNDS: usize = 512;
 
-/// 把全部待确认审计事件推到真实 ACK；不能推进就显式失败。
-pub(super) fn drain_audit(journal: &mut dyn PlanJournal) -> Result<usize, ExecutorError> {
+/// 安全边界上读取关停请求；不改变任何动作或审计终态。
+pub(super) fn check_stopping(backend: &dyn JobBackend) -> Result<(), ExecutorError> {
+    if backend.stopping() {
+        Err(ExecutorError::Stopping)
+    } else {
+        Ok(())
+    }
+}
+
+/// 每个固定大小的审计批次后可安全退出；未确认事件留在持久 outbox。
+pub(super) fn drain_audit(
+    journal: &mut dyn PlanJournal,
+    backend: &dyn JobBackend,
+) -> Result<usize, ExecutorError> {
     let mut total = 0_usize;
     for _ in 0..AUDIT_ROUNDS {
+        check_stopping(backend)?;
         let progress = journal
             .deliver_audit(AUDIT_BATCH)
             .map_err(ExecutorError::Journal)?;
@@ -67,12 +80,20 @@ pub(super) fn run(
     if matches!(action.change, Change::Delete { .. }) && clearance.deletions() == 0 {
         return Err(ExecutorError::DeletionFuseBlocked(FuseReason::Count));
     }
-    // 破坏性操作之前先把字节保全进 MirrorCAS；保全失败就不会有 Issued。
-    let staged = stage(ports, action)?;
     let recheck = ports
         .witness
         .recheck(&action.key, quiesced)
         .map_err(ExecutorError::Witness)?;
+    if ports
+        .journal
+        .cancel_changed(&action.key, &recheck)
+        .map_err(ExecutorError::Journal)?
+    {
+        report.no_effect += 1;
+        return Ok(());
+    }
+    // 条件仍有效才保全；保全失败就不会有 Issued，issue 再检查证据截止点。
+    let staged = stage(ports, action)?;
     let job = ports
         .journal
         .issue(&action.key, &recheck)

@@ -33,43 +33,12 @@ impl BridgeState {
                 }
             },
             |s| {
-                binding_key(s, key)?;
-                if s.fuse.is_some() {
-                    return Err(BridgeError::Fused);
+                let (index, changed) = checked_action(s, key, &check)?;
+                if changed {
+                    return Err(BridgeError::StaleObservation);
                 }
                 let p = s.pending.as_mut().ok_or(BridgeError::NotFound)?;
-                let index = receipts::index(p, key)?;
                 let action = receipts::plan(p)?.actions()[index].clone();
-                if p.actions[index].receipt.is_some() {
-                    return Err(BridgeError::NotSettled);
-                }
-                if p.actions[index].intent_ack.is_none() {
-                    return Err(BridgeError::IntentRequired);
-                }
-                if check.binding != p.input.scope.binding {
-                    return Err(BridgeError::BindingMismatch);
-                }
-                if check.canonical_observation <= p.input.canonical.sequence
-                    || check.mirror_observation <= p.input.mirror.sequence
-                    || check.canonical_observation > i64::MAX as u64
-                    || check.mirror_observation > i64::MAX as u64
-                {
-                    return Err(BridgeError::StaleObservation);
-                }
-                let path = &action.key.path;
-                let (source, target) = match action.key.target {
-                    Side::Canonical => (
-                        &p.input.mirror.entries[path],
-                        &p.input.canonical.entries[path],
-                    ),
-                    Side::Mirror => (
-                        &p.input.canonical.entries[path],
-                        &p.input.mirror.entries[path],
-                    ),
-                };
-                if source != &check.source || target != &check.target {
-                    return Err(BridgeError::StaleObservation);
-                }
                 // 同 Issued 原键可再次返回，但不能清空未知或更换请求；安装后条件已变应先查询原回执。
                 p.actions[index].issued = true;
                 Ok(PendingAction {
@@ -115,4 +84,45 @@ impl BridgeState {
             },
         )
     }
+}
+
+/// 发出与安装前取消共用的证据门禁；不把条件变化当成证据缺失。
+pub(super) fn checked_action(
+    s: &State,
+    key: &ActionKey,
+    check: &ExecutionCheck,
+) -> Result<(usize, bool)> {
+    binding_key(s, key)?;
+    if s.fuse.is_some() {
+        return Err(BridgeError::Fused);
+    }
+    let p = s.pending.as_ref().ok_or(BridgeError::NotFound)?;
+    let index = receipts::index(p, key)?;
+    if p.actions[index].receipt.is_some() {
+        return Err(BridgeError::NotSettled);
+    }
+    if p.actions[index].intent_ack.is_none() {
+        return Err(BridgeError::IntentRequired);
+    }
+    if check.binding != p.input.scope.binding {
+        return Err(BridgeError::BindingMismatch);
+    }
+    if check.canonical_observation <= p.input.canonical.sequence
+        || check.mirror_observation <= p.input.mirror.sequence
+        || check.canonical_observation > i64::MAX as u64
+        || check.mirror_observation > i64::MAX as u64
+    {
+        return Err(BridgeError::StaleObservation);
+    }
+    let (source, target) = match key.target {
+        Side::Canonical => (
+            &p.input.mirror.entries[&key.path],
+            &p.input.canonical.entries[&key.path],
+        ),
+        Side::Mirror => (
+            &p.input.canonical.entries[&key.path],
+            &p.input.mirror.entries[&key.path],
+        ),
+    };
+    Ok((index, source != &check.source || target != &check.target))
 }

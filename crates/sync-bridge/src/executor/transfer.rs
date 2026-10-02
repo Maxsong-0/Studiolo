@@ -50,6 +50,11 @@ pub trait MirrorContent {
 
 /// 已 Issued 动作的实际执行者；无法证明终态时只能返回 [`JobOutcome::Unknown`]。
 pub trait JobBackend {
+    /// 仅在审计批次与动作边界检查；已 Issued 的动作仍必须处理并保存真实终态。
+    fn stopping(&self) -> bool {
+        false
+    }
+
     /// 按原幂等键执行一次；禁止用退出码、相同内容或超时伪造终态。
     fn apply(&mut self, job: &IssuedJob, action: &Action, staged: Option<ObjectId>) -> JobOutcome;
 }

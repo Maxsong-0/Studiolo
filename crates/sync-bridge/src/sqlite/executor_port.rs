@@ -140,21 +140,24 @@ impl PlanJournal for StateJournal<'_> {
             remaining: delivery.remaining,
         })
     }
+    fn cancel_changed(
+        &mut self,
+        key: &ActionKey,
+        recheck: &ExecutionRecheck,
+    ) -> Result<bool, JournalFault> {
+        self.state
+            .cancel_changed(key, execution_check(recheck))
+            .map_err(journal_fault)
+    }
     fn issue(
         &mut self,
         key: &ActionKey,
         recheck: &ExecutionRecheck,
     ) -> Result<IssuedJob, JournalFault> {
-        let check = ExecutionCheck {
-            binding: recheck.binding.clone(),
-            source: recheck.source.clone(),
-            target: recheck.target.clone(),
-            canonical_observation: recheck.canonical_observation,
-            mirror_observation: recheck.mirror_observation,
-            process_epoch: recheck.witness_epoch,
-            expires_at: recheck.expires_at,
-        };
-        let issued = self.state.issue(key, check).map_err(journal_fault)?;
+        let issued = self
+            .state
+            .issue(key, execution_check(recheck))
+            .map_err(journal_fault)?;
         Ok(IssuedJob {
             key: issued.action.key,
             external_key: issued.external_key,
@@ -246,5 +249,17 @@ impl PlanJournal for StateJournal<'_> {
         self.state
             .settle(expected_version, sequence, common)
             .map_err(journal_fault)
+    }
+}
+
+fn execution_check(recheck: &ExecutionRecheck) -> ExecutionCheck {
+    ExecutionCheck {
+        binding: recheck.binding.clone(),
+        source: recheck.source.clone(),
+        target: recheck.target.clone(),
+        canonical_observation: recheck.canonical_observation,
+        mirror_observation: recheck.mirror_observation,
+        process_epoch: recheck.witness_epoch,
+        expires_at: recheck.expires_at,
     }
 }

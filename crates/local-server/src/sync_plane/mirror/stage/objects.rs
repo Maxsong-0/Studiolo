@@ -65,7 +65,7 @@ impl StageStore {
         Ok((file, length))
     }
 
-    /// 所有实际对象（含孤儿和临时件）都计入固定 64 件／512 MiB 预算。
+    /// 所有实际对象（含孤儿和临时件）都计入固定 4096 件／512 MiB 预算。
     pub(super) fn capacity(
         &self,
         extra_bytes: u64,

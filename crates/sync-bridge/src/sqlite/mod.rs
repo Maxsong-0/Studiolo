@@ -4,6 +4,7 @@
 mod audit;
 mod audit_events;
 mod cache;
+mod cancellation;
 mod capacity;
 mod codec;
 mod configuration;

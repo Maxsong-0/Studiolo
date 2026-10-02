@@ -91,7 +91,7 @@ studiolo-human（uid 1000）                      root                          
 | `<transport_private>/{transport.lock,state.json,state.json.publish}` | owner 0600／根 0700 | 64 KiB | sync-transport `store/publish.rs`（不变） |
 | `<plane_root>/plane.lock` | owner 0600 | 4 KiB | `sync_plane/recovery.rs`；flock 按打开文件描述计，租约守卫析构时显式解锁（并发 fork 在 exec 前继承的描述符不延长租约） |
 | `<plane_root>/plane-state.json`（+`.new`） | owner 0600 | 64 KiB，版本 1，校验和；追加字段 `headless_excluded`（headless 最近一次核对报的排除集合）、`conflict_stamps`（冲突身份→首次保全分钟戳，≤512 条）、`pending_purge`（清除审计日记），为空时不写出、非空才进校验和，旧文件照常解码 | `sync_plane/recovery.rs` |
-| `<plane_root>/stage/objects/<sha256 hex>` | owner 0600 | 单对象 256 MiB，合计 512 MiB，64 项（含孤儿） | `sync_plane/mirror/stage.rs` |
+| `<plane_root>/stage/objects/<sha256 hex>` | owner 0600 | 单对象 256 MiB，合计 512 MiB，4096 项（含孤儿） | `sync_plane/mirror/stage.rs` |
 | `<plane_root>/stage/index.json`（+`.new`）、`stage/objects/{receiving.partial,installing.partial}` | owner 0600 | 1 MiB | `sync_plane/mirror/stage.rs` |
 | `<plane_root>/bridge/{bridge.sqlite3,bridge.lock}` | owner 0600 | 主库 256 MiB | sync-bridge `sqlite/storage.rs`（不变） |
 | `/run/studiolo-sync-launcher/launcher.sock` | root:studiolo 0750 目录，socket 0660 | 帧 16 KiB | launcher `serve.rs` |
@@ -138,8 +138,16 @@ studiolo-human（uid 1000）                      root                          
 
 canonical 入站第一次写前，先在有效静止票据下逐帧读取冻结镜像版本，核对长度与摘要，封口外 stage 对象并持久登记计划序号。首次缺源或登记失败为 NotAttempted；已 Issued 动作重开只读保全源，缺源／损坏保持 Unknown。小对象始终整篇写，大对象始终流式写；原路径、前置、幂等键和请求类型不变，流式接缝先查原回执，已有回执不二次安装。
 
-同摘要引用的保全时刻和计划序号分别取最大，只有保留期到且所有引用所在计划已退休才可回收。镜像安装遇到被引用对象时，逐帧制作独立安装副本，不能 rename 消耗保全源。实际磁盘对象（含孤儿、接收与安装临时件）共同受 64 项／512 MiB 限额，单对象 256 MiB。
+同摘要引用的保全时刻和计划序号分别取最大，只有保留期到且所有引用所在计划已退休才可回收。镜像安装遇到被引用对象时，逐帧制作独立安装副本，不能 rename 消耗保全源。实际磁盘对象（含孤儿、接收与安装临时件）共同受 4096 项／512 MiB 限额，单对象 256 MiB。
 
 `plane-state.json.pending_purge` 是单个未闭合清除的审计日记，与前文“待移出排除的文件夹集合”不同。它先记原事件号与计划数，再记删除可能开始，删除返回后先记结果、再追加 Outcome；Intent 后根复验失败也闭合已知失败结果。重开 `sync-purge-residue` 仅补原事件的 Intent／Outcome，不重放删除；删除期间崩溃而结果未落盘时，Outcome schema 2 的计数和 applied 为 null，明确未知。日记未闭合时拒绝平面启动、新轮和重绑定；日记为空时旧 schema 1 文件及校验和不变。
 
 安全配置变更使用显式 `sync-rebind`，维护过程、物理身份限制与确认步骤见部署手册 8.1。范围迁移、整份 owner.json 的 scope_hash 调整与冲突路径排除后推进基线仍是独立未决，不因本轮代码完成而关闭 P6。
+
+
+### 大批次关停与保全容量（BUG-023／024）
+
+持久保全源沿用七天保留与退休双条件，数量上限4096匹配批准路径预算；单件256MiB、合计512MiB、索引1MiB和唯一接收/Prepared槽不变。临时件和孤儿仍计数，满额拒绝、不清除恢复源换取空间。
+执行器在每个64条审计批次与每条动作开始前读取平面关停标志。已Issued动作完成后端调用与真实终态落盘后才退出；未知仍保留Issued。返回Stopping、不发后续动作、不settle或推进基线；原冻结计划、幂等键、outbox在重开后续做。单个后端调用或文件IO本身仍不能强制中断。
+
+冻结动作的源或目标发生变化时，执行器先取得真实新鲜双侧观察。BridgeState 仅对 Intent 已 ACK、从未发出且无回执的预约原子记录 `CancelledBeforeInstall`，不会返回 `IssuedJob`、调用文件写后端或保全陈旧源。持久 `issued` 位与取消票据同事务写入，表示原预约已消费，旧版读取仍为 Known；`bridge-unissued-cancel-<request digest>` 明确标识由持久 owner 取消。已发未知动作绝不走此入口。NoEffect 仍需真实 Outcome/Summary ACK，旧共同基线不推进，下一轮按现状重新规划。
