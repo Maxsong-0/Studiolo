@@ -5,6 +5,7 @@ import io
 import os
 from pathlib import Path
 import stat
+import subprocess
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -52,6 +53,62 @@ class CredentialTests(unittest.TestCase):
             with self.subTest(raw=raw[:3]), self.assertRaises(ValueError):
                 self.nas_install(raw)
         self.assertFalse((self.root / 'backup.htpasswd').exists())
+
+    def nas_activate(self, run, tty=True):
+        with patch.object(nas, 'ROOT', self.root), patch.object(nas.os, 'geteuid', return_value=0), \
+             patch.object(nas.os, 'chown'), patch.object(nas.sys, 'argv', ['fixture', 'activate']), \
+             patch.object(nas.sys.stdin, 'isatty', return_value=tty), \
+             patch.object(nas.sys.stdout, 'isatty', return_value=tty), \
+             patch.object(nas.subprocess, 'run', side_effect=run), patch('builtins.print') as printed:
+            nas.main()
+        return printed.call_args_list
+
+    def test_activation_generates_real_parseable_tls_certificate(self):
+        # 只生成临时夹具密钥；真实 OpenSSL 解析产物，systemctl 始终替身。
+        (self.root / 'backup.htpasswd').write_bytes(b'fixture-only\n')
+        actual_run = subprocess.run
+        service_calls = []
+
+        def run(argv, **kwargs):
+            if argv[0] == '/usr/bin/openssl':
+                return actual_run(argv, **kwargs)
+            self.assertEqual(argv[0], '/usr/bin/systemctl')
+            service_calls.append(argv)
+            return subprocess.CompletedProcess(argv, 0)
+
+        printed = self.nas_activate(run)
+        cert = self.root / 'tls.crt'
+        parsed = actual_run(['/usr/bin/openssl', 'x509', '-in', str(cert), '-noout', '-text'],
+                            check=True, capture_output=True, text=True).stdout
+        self.assertIn('IP Address:192.168.100.111', parsed)
+        self.assertIn('CA:TRUE', parsed)
+        actual_run(['/usr/bin/openssl', 'verify', '-CAfile', str(cert), str(cert)],
+                   check=True, capture_output=True)
+        for name in ('tls.crt', 'tls.key'):
+            self.assertEqual(stat.S_IMODE((self.root / name).stat().st_mode), 0o640)
+        self.assertEqual(service_calls, [
+            ['/usr/bin/systemctl', 'enable', 'studiolo-rest-backup.service'],
+            ['/usr/bin/systemctl', 'start', 'studiolo-rest-backup.service'],
+            ['/usr/bin/systemctl', 'is-active', '--quiet', 'studiolo-rest-backup.service'],
+        ])
+        self.assertEqual(str(printed), "[call('nas_backup_setup=ready')]")
+
+    def test_activation_refuses_existing_tls_material_without_overwrite(self):
+        (self.root / 'backup.htpasswd').write_bytes(b'fixture-only\n')
+        for name in ('tls.key', 'tls.crt'):
+            with self.subTest(name=name):
+                material = self.root / name
+                material.write_bytes(b'existing-fixture\n')
+                with self.assertRaisesRegex(ValueError, 'existing TLS material'):
+                    self.nas_activate(lambda *a, **kw: self.fail('must not run'))
+                self.assertEqual(material.read_bytes(), b'existing-fixture\n')
+                self.assertFalse((self.root / 'tls-request.cnf').exists())
+                material.unlink()
+
+    def test_activation_requires_private_terminal(self):
+        with self.assertRaisesRegex(ValueError, 'tty'):
+            self.nas_activate(lambda *a, **kw: self.fail('must not run'), tty=False)
+        self.assertEqual(list(self.root.iterdir()), [])
 
     def client_setup(self, answers, run):
         (self.root / 'ca.pem').touch(exist_ok=True)

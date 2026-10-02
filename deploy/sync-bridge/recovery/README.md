@@ -36,6 +36,10 @@ NAS 管理员的既有 SSH/sudo 身份保留清理权；追加备份密码没有
 不关闭证书验证。NAS TLS 私钥只在 NAS 生成；口令、bcrypt 文件、原始错误正文不进 agent 输出。
 任一步失败立即停止；保留已完成步骤，由操作者按元数据判断后续，不覆盖既有凭据。
 
+`test_credentials.py` 的 activate 契约使用真实 OpenSSL 生成临时夹具证书，核对 IP SAN、
+自签名验证与文件权限；systemctl 只使用替身，不启动测试主机上的服务。它同时验证已有 TLS
+材料和非私有终端会被拒绝。测试证书不用于生产，也不替代 NAS 实际备份与恢复验收。
+
 完成后仍需：制作 P4 前的新快照、restic backup、NAS 实际恢复到新目录、完整性与 Broker 验收、
 用追加账号对独立测试对象做删除/覆盖拒绝检查、Mac 只读归档。全部成立后主进程才能生成
 root 0600 `/var/lib/studiolo-bridge-p3/accepted.json`；配对入口只读该回执，不代替验收。
