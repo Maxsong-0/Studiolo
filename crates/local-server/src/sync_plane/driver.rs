@@ -6,6 +6,7 @@
 //! 关停只在安全停点生效（见 `halt` 的各调用点），执行器内部只在审计批次与完整动作边界停止。
 
 pub mod content;
+pub(crate) mod diagnostics;
 pub mod evidence;
 pub mod execute;
 pub mod headless;
@@ -17,6 +18,7 @@ pub mod resolve;
 
 use super::recovery::{self, PlaneState};
 use super::{PlaneError, SyncPlane};
+use diagnostics::{Step, at};
 use std::sync::atomic::AtomicBool;
 use studiolo_host_config::sync_transport::TransportSyncMode;
 use studiolo_sync_bridge::{Decision, Input, Inventory, plan};
@@ -137,7 +139,7 @@ pub fn run_round(
     stopping: &AtomicBool,
 ) -> Result<RoundOutcome, PlaneError> {
     let approved = approved_mode(plane.approval().headless_mode());
-    let mut ports = real::RealPorts::open(plane, now_unix, stopping)?;
+    let mut ports = at(Step::Open, real::RealPorts::open(plane, now_unix, stopping))?;
     run_round_with(&mut ports, approved, now_unix)
 }
 
@@ -160,7 +162,7 @@ pub fn run_round_with(
     now_unix: i64,
 ) -> Result<RoundOutcome, PlaneError> {
     // 1 持久小状态与恢复判定：退避窗口内什么都不跑。
-    let mut state = ports.state()?;
+    let mut state = at(Step::State, ports.state())?;
     if state.pending_purge.is_some() {
         return Err(PlaneError::Audit);
     }
@@ -174,7 +176,7 @@ pub fn run_round_with(
     // 5 模式不符才 SetMode，然后按同样逻辑回到 3 复核；复核通过后才记 applied_mode。
     if !inspection.mode_matches {
         halt(ports)?;
-        let run = ports.set_mode(mode)?;
+        let run = at(Step::SetMode, ports.set_mode(mode))?;
         if !run.clean {
             return Err(run.failure());
         }
@@ -188,12 +190,12 @@ pub fn run_round_with(
     // 6 先持久「已启动」再 RunOnce；回收后按退出码记退避（恢复逻辑只有 `recovery::mark_*` 一份），
     // 干净与否都先落盘；关停已请求（运行已被 `request_stop` 停下）即到此为止，非 clean 同样到此为止。
     halt(ports)?;
-    state = recovery::mark_started(&state, ports.next_sequence()?);
-    ports.save_state(state.clone())?;
-    let run = ports.run_once()?;
+    state = recovery::mark_started(&state, at(Step::NextSequence, ports.next_sequence())?);
+    at(Step::SaveState, ports.save_state(state.clone()))?;
+    let run = at(Step::RunOnce, ports.run_once())?;
     let reaped_at = ports.clock().unwrap_or(now_unix);
     state = recovery::mark_reaped(&state, run.clean, run.rc_one, reaped_at);
-    ports.save_state(state.clone())?;
+    at(Step::SaveState, ports.save_state(state.clone()))?;
     halt(ports)?;
     if !run.clean {
         return Err(run.failure());
@@ -205,34 +207,37 @@ pub fn run_round_with(
     }
     // 7 静止证据。
     halt(ports)?;
-    ports.quiescent()?;
+    at(Step::Quiescent, ports.quiescent())?;
     // 10 上一批仍有未知终态：本轮不观察、不重放，等原键核对。
-    if let Some(sequence) = ports.unresolved()? {
+    if let Some(sequence) = at(Step::Unresolved, ports.unresolved())? {
         return Ok(RoundOutcome::Unknown { sequence });
     }
     // 8＋9 两侧观察后一律试算。MirrorRemote 有冲突：按「镜像为准」预解决并重观察一次；
     // Bidirectional 有冲突：双方版本先保全，再照常执行（执行器对冲突路径不动、闭合时不推进基线）；
     // 熔断冻结的批次带冲突同样先保全，再交执行段报 `Fused`。
     halt(ports)?;
-    let (mut input, _, _) = ports.observe(mode)?;
-    let decision = plan(input.clone(), None).map_err(|_| PlaneError::Observation)?;
-    ports.retain_conflicts(&decision)?;
+    let (mut input, _, _) = at(Step::Observe, ports.observe(mode))?;
+    let decision = at(
+        Step::Plan,
+        plan(input.clone(), None).map_err(|_| PlaneError::Observation),
+    )?;
+    at(Step::RetainConflicts, ports.retain_conflicts(&decision))?;
     if has_conflicts(&decision) {
         match mode {
             SyncMode::MirrorRemote => {
-                if ports.preresolve(&decision)? {
+                if at(Step::Preresolve, ports.preresolve(&decision))? {
                     halt(ports)?;
-                    input = ports.observe(mode)?.0;
+                    input = at(Step::Observe, ports.observe(mode))?.0;
                 }
             }
             SyncMode::Bidirectional => {
-                ports.preserve_conflicts(&decision)?;
+                at(Step::Preserve, ports.preserve_conflicts(&decision))?;
             }
         }
     }
     // 10～12 预留、逐动作执行、闭合与保留期回收。
     halt(ports)?;
-    ports.execute(input)
+    at(Step::Execute, ports.execute(input))
 }
 
 /// 第 2～4 步：InspectConfig 复核 → headless 报的排除集合有变就落盘（守卫拦住时也要留下 headless
@@ -244,12 +249,15 @@ fn inspect_guarded(
     mode: SyncMode,
 ) -> Result<Inspection, PlaneError> {
     halt(ports)?;
-    let inspection = ports.inspect(mode)?;
+    let inspection = at(Step::Inspect, ports.inspect(mode))?;
     if state.headless_excluded != inspection.headless_excluded {
         state.headless_excluded = inspection.headless_excluded.clone();
-        ports.save_state(state.clone())?;
+        at(Step::SaveState, ports.save_state(state.clone()))?;
     }
-    if ports.residue_blocked(&state.verified_excluded, &inspection.excluded_folders)? {
+    if at(
+        Step::Residue,
+        ports.residue_blocked(&state.verified_excluded, &inspection.excluded_folders),
+    )? {
         return Err(PlaneError::ResidueBlocked);
     }
     if !inspection.pending_purge.is_empty() {
