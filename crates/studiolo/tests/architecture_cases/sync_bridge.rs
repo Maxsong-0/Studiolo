@@ -13,6 +13,9 @@ fn bridge_private_storage_cannot_open_another_file_or_database() {
         "File::create(other)?;",
         "file.write_all(body)?;",
         "Command::new(program);",
+        "openat(root, name, OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::NONBLOCK | OFlags::CLOEXEC, Mode::empty())?;",
+        "statat(root, name, AtFlags::SYMLINK_NOFOLLOW)?;",
+        "rustix::fs::fstat(pin)?;",
     ] {
         assert!(
             source_violations(
@@ -24,6 +27,15 @@ fn bridge_private_storage_cannot_open_another_file_or_database() {
             "固定 BridgeState 存储不能顺带取得其他写能力：{extra}"
         );
     }
+    let follows_links = source.replace(
+        "statat(root, name, AtFlags::SYMLINK_NOFOLLOW)",
+        "statat(root, name, AtFlags::empty())",
+    );
+    assert_ne!(follows_links, source);
+    assert!(
+        source_violations("studiolo-sync-bridge", storage, &follows_links)
+            .contains(&AuthorityViolation::GenericWrite)
+    );
     for path in [
         "crates/sync-bridge/src/sqlite/opening.rs",
         "crates/sync-bridge/src/sqlite/database.rs",

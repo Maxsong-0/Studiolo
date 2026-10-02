@@ -1,6 +1,6 @@
 """从已激活发行派生候选的固定装配；不读取凭据、不操作服务或数据库。
 
-黑板接线沿用 r2，Bridge接线沿用已激活r13；本版仅替换发行路径。
+黑板接线沿用 r2，Bridge接线沿用已激活r14；本版仅替换发行路径。
 写根、认证、配对和同步范围保持现场原值。
 变换只接受钉住的上一发行形状；额外差异由现场摘要和逐字变换核验拒绝。
 
@@ -15,13 +15,14 @@ r9→r10（T-132：更新人侧程序，并显式交付 maintain 与 sync-launch
 r10→r11（BUG-020：逐次载荷身份校验，已激活）；
 r11→r12（BUG-021：退出观察与停止留证，已激活）；
 r12→r13（BUG-022目录初始化、BUG-023保全数量、BUG-024执行器关停、BUG-025陈旧预约取消，已激活）；
-本版 r13→r14（BUG-026：同步运行步骤与无载荷失败分类日志）。
+r13→r14（BUG-026：同步运行步骤与无载荷失败分类日志，已激活）；
+本版 r14→r15（BUG-027：只查元数据，保留SQLite进程锁与版本守卫）。
 """
 import shlex
 from pathlib import Path
 
-OLD_RELEASE = '/home/maxsong/.local/share/studiolo-human-releases/m5m6-board-20260920-r13'
-BUILD = 'm5m6-board-20260920-r14'
+OLD_RELEASE = '/home/maxsong/.local/share/studiolo-human-releases/m5m6-board-20260920-r14'
+BUILD = 'm5m6-board-20260920-r15'
 BRIDGE_ROOT = '/var/lib/studiolo-owner/bridge'
 TRANSPORT_ROOT = '/home/maxsong/.local/share/studiolo-sync-transport'
 SYNC_APPROVAL = '/home/maxsong/.config/studiolo-human/sync-transport.json'
@@ -33,11 +34,11 @@ BOARD = BASE + 'studiolo-board'
 AGENT = BASE + 'studiolo-agent'
 BOARD_RUNTIME = '/run/studiolo-board'
 BOARD_SOCKET = BOARD_RUNTIME + '/board.sock'
-# 2026-10-01 现场：human r13已接Bridge、agent t160；固定摘要防止覆盖其他发布。
-HUMAN_SHA = '0678fd5004b3c2edb08df8acc30eef567dc4a14ef544c818260a25659822b321'
+# 2026-10-01 现场：human r14已接Bridge、agent t160；固定摘要防止覆盖其他发布。
+HUMAN_SHA = '9d1e8323e7cf299b4505356a7c219371ef955c452f50f4b720a5257d1fc7857c'
 AGENT_SHA = '2e3d9ddfdc1344a448ae1e486afb0314fd94af48ca00f5ce7685a98591db226f'
-# 键名沿用早期协议，内容钉住当前 r13 manifest。
-R8_MANIFEST_SHA = '1f450940032dc6b97bad554ab72097d76b0229b6f67416d776fc81ba95e829f1'
+# 键名沿用早期协议，内容钉住当前 r14 manifest。
+R8_MANIFEST_SHA = '85ecbfd4eb8472c2aafc1a9f9d83c0bb7c6c11b6b4097af58f8e0734d7e6ce87'
 # 发行目录里属于网页的前缀：本次唯一允许整体更换的部分。
 WEB_PREFIX = 'web/'
 # 沿用黑板装配标识；Bridge 接线仍受固定现场摘要约束。

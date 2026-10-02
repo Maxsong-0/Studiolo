@@ -161,3 +161,7 @@ StateJournal::new(state: &mut BridgeState, ledger: &dyn AuditLedger, input: Inpu
 退休票据需要自己的真实审计 ACK、退休后永久拒绝。
 
 冻结动作的源或目标发生变化时，执行器先取得真实新鲜双侧观察。BridgeState 仅对 Intent 已 ACK、从未发出且无回执的预约原子记录 `CancelledBeforeInstall`，不会返回 `IssuedJob`、调用文件写后端或保全陈旧源。持久 `issued` 位与取消票据同事务写入，表示原预约已消费，旧版读取仍为 Known；`bridge-unissued-cancel-<request digest>` 明确标识由持久 owner 取消。已发未知动作绝不走此入口。NoEffect 仍需真实 Outcome/Summary ACK，旧共同基线不推进，下一轮按现状重新规划。
+
+## SQLite存储检查与进程锁
+
+Bridge持有SQLite连接期间，对主库、WAL、SHM和journal只做目录FD相对的statat(SYMLINK_NOFOLLOW)，验证类型、owner、0600、单链接与大小；主库和lease另外与持有pin核对dev/ino。不得为了检查临时打开再关闭这些文件：POSIX会在关闭任一同文件FD时释放本进程的记录锁，使独立只读观察也能干扰WAL状态。database_pin在Connection之前打开、之后关闭。data_version与持久revision守卫保持严格，真实外部修改仍使缓存失效。独立Python SQLite只读连接和争用写事务分别回归观察兼容性与锁保持。
