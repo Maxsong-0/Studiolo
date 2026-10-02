@@ -14,19 +14,14 @@ use crate::protocol::{LaunchFrame, LimitsFrame, Verdict};
 use std::collections::BTreeMap;
 use std::path::Path;
 use studiolo_sync_transport::linux::cgroup;
-use studiolo_sync_transport::owned_run::{RunId, RunOperation};
+/// 与 owner 共用的逐次载荷单元命名规则。
+pub use studiolo_sync_transport::linux::service::payload_unit_name as unit_name;
+use studiolo_sync_transport::owned_run::RunOperation;
 
 /// `PrivatePIDs=` 自 systemd 257 起可用（systemd.exec(5)「Added in version 257」）；更低版本建不了 PID 视图。
 pub const MIN_SYSTEMD_VERSION: u32 = 257;
 /// cgroup v2 挂载点；`ControlGroup` 属性拼在它后面就是绝对路径。
 pub const CGROUP_ROOT: &str = "/sys/fs/cgroup";
-
-/// 精确 unit 名：`studiolo-sync-payload-<sequence>-<run_id 前 8 hex>.service`。
-#[must_use]
-pub fn unit_name(sequence: u64, run_id: &RunId) -> String {
-    let hex = run_id.to_string();
-    format!("studiolo-sync-payload-{sequence}-{}.service", &hex[..8])
-}
 
 /// 16 字节的小写十六进制（session 目录名、InvocationID 比对用）。
 #[must_use]

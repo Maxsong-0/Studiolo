@@ -61,3 +61,80 @@ fn validated_open_can_checkpoint_and_preserve_the_loaded_revision() {
         0
     );
 }
+
+#[test]
+fn readonly_sqlite_observers_do_not_invalidate_open_owner() {
+    for pending in [false, true] {
+        let f = Fixture::new();
+        let mut store = f.init();
+        if pending {
+            let original = input(&store, 1340, crate::Presence::Missing, present(9));
+            reserve(&mut store, original);
+        }
+        drop(store);
+        let store = f.reopen();
+        let before = store.view().unwrap().version;
+        let data_before = crate::sqlite::opening::data_version(&store.connection).unwrap();
+        for round in 0..3 {
+            let external = std::process::Command::new("python3")
+                .args([
+                    "-I",
+                    "-B",
+                    "-c",
+                    r#"
+import sqlite3,sys
+p=sys.argv[1]
+db=sqlite3.connect('file:'+p+'?mode=ro',uri=True,timeout=3)
+db.execute('PRAGMA query_only=ON')
+db.execute('BEGIN')
+assert db.execute('SELECT revision FROM bridge_meta WHERE id=1').fetchone()
+list(db.execute('SELECT sequence,role,ack IS NOT NULL FROM bridge_plans'))
+list(db.execute('SELECT payload FROM bridge_actions'))
+db.rollback(); db.close()
+"#,
+                ])
+                .arg(f.root.join("bridge.sqlite3"))
+                .output()
+                .unwrap();
+            assert!(external.status.success(), "readonly observer failed");
+            let data_after = crate::sqlite::opening::data_version(&store.connection).unwrap();
+            assert_eq!(data_before, data_after, "pending={pending} round={round}");
+            assert_eq!(store.view().unwrap().version, before);
+        }
+    }
+}
+
+#[test]
+fn storage_metadata_checks_preserve_sqlite_writer_lock() {
+    let f = Fixture::new();
+    let store = f.init();
+    store.connection.execute_batch("BEGIN IMMEDIATE").unwrap();
+    for _ in 0..3 {
+        store.storage.check().unwrap();
+        let external = std::process::Command::new("python3")
+            .args([
+                "-I",
+                "-B",
+                "-c",
+                r#"
+import sqlite3,sys
+db=sqlite3.connect(sys.argv[1],timeout=0)
+try:
+    db.execute('BEGIN IMMEDIATE')
+except sqlite3.OperationalError as error:
+    assert error.sqlite_errorcode == sqlite3.SQLITE_BUSY
+else:
+    db.rollback()
+    raise AssertionError('owner write lock lost')
+finally:
+    db.close()
+"#,
+            ])
+            .arg(f.root.join("bridge.sqlite3"))
+            .output()
+            .unwrap();
+        assert!(external.status.success(), "外部写事务必须仍被持有者锁阻挡");
+    }
+    store.connection.execute_batch("ROLLBACK").unwrap();
+    assert_eq!(store.view().unwrap().version, 0);
+}

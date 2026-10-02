@@ -25,7 +25,7 @@ pub struct CasLimits {
     pub max_object_bytes: u64,
     /// stage 合计上限（含孤儿），默认 512 MiB。
     pub max_stage_bytes: u64,
-    /// stage 条目上限（含孤儿），默认 64。
+    /// stage 条目上限（含孤儿），默认 4096（覆盖整批入站源的持久保全）。
     pub max_stage_entries: usize,
     /// 同时接收中的对象上限，默认 1。
     pub max_receiving: usize,
@@ -41,7 +41,7 @@ impl CasLimits {
         Self {
             max_object_bytes: 256 * 1024 * 1024,
             max_stage_bytes: 512 * 1024 * 1024,
-            max_stage_entries: 64,
+            max_stage_entries: 4096,
             max_receiving: 1,
             max_prepared: 1,
             frame_bytes: 64 * 1024,

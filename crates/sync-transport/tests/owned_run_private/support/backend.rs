@@ -7,7 +7,7 @@ use super::*;
 pub fn container() -> ContainerIdentity {
     ContainerIdentity {
         boot_id: [7u8; 16],
-        unit_name: SERVICE_UNIT.to_owned(),
+        unit_name: String::new(),
         invocation_id: [8u8; 16],
         payload_cgroup: format!("{CGROUP_PREFIX}/run-1"),
         cgroup_identity: (64, 99),
@@ -40,6 +40,7 @@ pub fn isolation() -> IsolationReport {
 pub struct FakeBackend {
     pub boot: [u8; 16],
     pub container: ContainerIdentity,
+    pub unit_name_override: Option<String>,
     pub limits: CgroupLimits,
     pub isolation: IsolationReport,
     pub populated: bool,
@@ -51,6 +52,9 @@ pub struct FakeBackend {
     pub releases: u32,
     pub stops: u32,
     pub gate_closures: u32,
+    pub gate_closed: bool,
+    /// 在第一次读空组时才发布真实退出结果，复现退出观察竞态。
+    pub exit_after_events: Option<ExitObservation>,
     pub launch_gap: Option<ContainmentGap>,
     pub release_gap: Option<ContainmentGap>,
     pub observe_gap: Option<ContainmentGap>,
@@ -63,6 +67,7 @@ impl FakeBackend {
         Self {
             boot: [7u8; 16],
             container: container(),
+            unit_name_override: None,
             limits: limits(),
             isolation: isolation(),
             populated: true,
@@ -74,6 +79,8 @@ impl FakeBackend {
             releases: 0,
             stops: 0,
             gate_closures: 0,
+            gate_closed: false,
+            exit_after_events: None,
             launch_gap: None,
             release_gap: None,
             observe_gap: None,
@@ -92,9 +99,18 @@ impl ContainmentBackend for FakeBackend {
         request: &LaunchRequest,
     ) -> std::result::Result<LaunchAcknowledgement, ContainmentGap> {
         self.launches += 1;
+        self.gate_closed = false;
         if let Some(gap) = self.launch_gap {
             return Err(gap);
         }
+        // 独立复现真实 launcher 的线协议形状，不把审批中的服务名当载荷名。
+        self.container.unit_name = self.unit_name_override.clone().unwrap_or_else(|| {
+            format!(
+                "studiolo-sync-payload-{}-{}.service",
+                request.sequence,
+                &request.run_id.to_string()[..8]
+            )
+        });
         Ok(LaunchAcknowledgement {
             container: self.container.clone(),
             limits: self.limits,
@@ -123,6 +139,7 @@ impl ContainmentBackend for FakeBackend {
         _container: &ContainerIdentity,
     ) -> std::result::Result<(), ContainmentGap> {
         self.gate_closures += 1;
+        self.gate_closed = true;
         Ok(())
     }
 
@@ -131,6 +148,9 @@ impl ContainmentBackend for FakeBackend {
         _run_id: RunId,
         _container: &ContainerIdentity,
     ) -> std::result::Result<CgroupEvents, ContainmentGap> {
+        if let Some(exit) = self.exit_after_events.take() {
+            self.exit = exit;
+        }
         Ok(CgroupEvents {
             populated: self.populated,
             frozen: false,
@@ -160,6 +180,9 @@ impl ContainmentBackend for FakeBackend {
         _run_id: RunId,
         _container: &ContainerIdentity,
     ) -> std::result::Result<ExitObservation, ContainmentGap> {
+        if self.exit != ExitObservation::NotObserved && !self.gate_closed {
+            return Err(ContainmentGap::ManagerUnavailable);
+        }
         Ok(self.exit)
     }
 

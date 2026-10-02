@@ -187,6 +187,15 @@ pub trait PlanJournal {
     fn snapshot(&self) -> Result<JournalSnapshot, JournalFault>;
     /// 真实 append 在事务之外，返回精确回执后才 CAS 保存 ACK。
     fn deliver_audit(&mut self, max_records: usize) -> Result<AuditProgress, JournalFault>;
+    /// 仅凭新鲜证据原子取消条件已变的未发动作；不返回执行能力。
+    /// 默认不取消，后续 issue 仍须拒绝陈旧条件；未知动作绝不能走此入口。
+    fn cancel_changed(
+        &mut self,
+        _key: &ActionKey,
+        _recheck: &ExecutionRecheck,
+    ) -> Result<bool, JournalFault> {
+        Ok(false)
+    }
     /// Intent ACK 与新鲜观察通过后持久化 Issued，再返回原键执行数据。
     fn issue(
         &mut self,

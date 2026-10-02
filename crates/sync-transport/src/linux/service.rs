@@ -1,8 +1,17 @@
 //! systemd 侧的纯策略：固定 unit 名、封闭 argv，且 service 状态永远不是静止证明。
 
 use super::ContainmentGap;
-use crate::owned_run::{RunOperation, RuntimePins};
+use crate::owned_run::{RunId, RunOperation, RuntimePins};
 use std::path::Path;
+
+/// 每次运行的精确载荷单元名；与审批中的固定 launcher 服务名分开。
+///
+/// owner 与 launcher 共用此规则，保持既有 transient unit 命名兼容。
+#[must_use]
+pub fn payload_unit_name(sequence: u64, run_id: &RunId) -> String {
+    let hex = run_id.to_string();
+    format!("studiolo-sync-payload-{sequence}-{}.service", &hex[..8])
+}
 
 /// 精确 unit 名的封闭形状；owner 不接受任意 unit 或属性。
 #[must_use]

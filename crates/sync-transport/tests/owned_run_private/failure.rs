@@ -264,7 +264,7 @@ fn a_failed_publish_leaves_the_authoritative_record_at_the_previous_version() {
 #[test]
 fn a_container_outside_the_approved_unit_or_cgroup_prefix_is_never_released() {
     for mutate in [
-        (|backend: &mut FakeBackend| backend.container.unit_name = "other.service".to_owned())
+        (|backend: &mut FakeBackend| backend.unit_name_override = Some("other.service".to_owned()))
             as fn(&mut FakeBackend),
         |backend: &mut FakeBackend| {
             backend.container.payload_cgroup = "/sys/fs/cgroup/x".to_owned()

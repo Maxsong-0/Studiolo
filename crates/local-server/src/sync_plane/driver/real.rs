@@ -72,7 +72,7 @@ impl<'a> RealPorts<'a> {
             .lock()
             .map_err(|_| PlaneError::Unavailable)?
             .view()
-            .map_err(|_| PlaneError::Storage)?
+            .map_err(super::diagnostics::storage)?
             .cursor
             .binding;
         Ok(RoundContext {
@@ -104,17 +104,17 @@ impl RealPorts<'_> {
             .bridge()
             .lock()
             .map_err(|_| PlaneError::Unavailable)?;
-        let view = bridge.view().map_err(|_| PlaneError::Storage)?;
+        let view = bridge.view().map_err(super::diagnostics::storage)?;
         let Some(sequence) = view.pending_sequence else {
             return Ok((None, 0));
         };
         let frozen = bridge
             .frozen_pending()
-            .map_err(|_| PlaneError::Storage)?
+            .map_err(super::diagnostics::storage)?
             .ok_or(PlaneError::Storage)?;
         let unknown = bridge
             .retry_pending(&frozen)
-            .map_err(|_| PlaneError::Storage)?
+            .map_err(super::diagnostics::storage)?
             .iter()
             .filter(|progress| matches!(progress.status, ActionStatus::OutcomeUnknown))
             .count();

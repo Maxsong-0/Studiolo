@@ -22,6 +22,12 @@ pub(super) fn before_visible(broker: &FsVaultBroker) -> bool {
 
 /// 观察阶段的失败分类：安全诊断与范围问题是 `Incomplete`，其余都是写者不可用。
 pub(super) fn observation_error(error: BrokerError) -> BridgeSeamError {
+    use std::io::Write as _;
+    let code = observation_class(&error);
+    let _ = writeln!(
+        std::io::stderr().lock(),
+        "studiolo_bridge component=canonical_observation error={code}"
+    );
     match error {
         BrokerError::IncompleteCapture
         | BrokerError::InvalidArtifact(_)
@@ -53,5 +59,79 @@ pub(super) fn install_error(broker: &FsVaultBroker, error: BrokerError) -> Bridg
         (BrokerError::RevisionConflict { .. }, _) => BridgeSeamError::Rejected,
         (_, true) => BridgeSeamError::Unknown,
         (_, false) => BridgeSeamError::Unavailable,
+    }
+}
+
+// 不输出 Debug/Display：这些错误的载荷可能含路径、正文或底层错误消息。
+fn observation_class(error: &BrokerError) -> &'static str {
+    match error {
+        BrokerError::WriterBusy => "WriterBusy",
+        BrokerError::WriterBindingMismatch => "WriterBindingMismatch",
+        BrokerError::CorruptWriterState => "CorruptWriterState",
+        BrokerError::MutationUnresolved => "MutationUnresolved",
+        BrokerError::MutationCancelled => "MutationCancelled",
+        BrokerError::MutationIndeterminate { .. } => "MutationIndeterminate",
+        BrokerError::WriterLimitExceeded => "WriterLimitExceeded",
+        BrokerError::CaptureChanged => "CaptureChanged",
+        BrokerError::IncompleteCapture => "IncompleteCapture",
+        BrokerError::ProtectedPath(_) => "ProtectedPath",
+        BrokerError::InvalidHistoryCursor => "InvalidHistoryCursor",
+        BrokerError::HistoryChanged => "HistoryChanged",
+        BrokerError::NotFound(_) => "NotFound",
+        BrokerError::RevisionConflict { .. } => "RevisionConflict",
+        BrokerError::UnsafeNode { .. } => "UnsafeNode",
+        BrokerError::PathCollision { .. } => "PathCollision",
+        BrokerError::IdempotencyConflict => "IdempotencyConflict",
+        BrokerError::InvalidArtifact(_) => "InvalidArtifact",
+        BrokerError::ArtifactConflict(_) => "ArtifactConflict",
+        BrokerError::CorruptIdentity => "CorruptIdentity",
+        BrokerError::RootChanged => "RootChanged",
+        BrokerError::ReadLimitExceeded { .. } => "ReadLimitExceeded",
+        BrokerError::CorruptSnapshot => "CorruptSnapshot",
+        BrokerError::UnstableRead(_) => "UnstableRead",
+        BrokerError::Io { .. } => "Io",
+        BrokerError::Json { .. } => "Json",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn observation_diagnostics_drop_private_error_payloads() {
+        let path = studiolo_core::VaultPath::parse("项目/private-marker.md").unwrap();
+        let errors = [
+            (
+                BrokerError::NotFound(path.clone()),
+                "NotFound",
+                BridgeSeamError::Unavailable,
+            ),
+            (
+                BrokerError::InvalidArtifact("private-body-marker".into()),
+                "InvalidArtifact",
+                BridgeSeamError::Incomplete,
+            ),
+            (
+                BrokerError::UnsafeNode {
+                    path,
+                    reason: "private-reason-marker",
+                },
+                "UnsafeNode",
+                BridgeSeamError::Incomplete,
+            ),
+            (
+                BrokerError::Io {
+                    operation: "private-operation-marker",
+                    source: std::io::Error::other("private-message-marker"),
+                },
+                "Io",
+                BridgeSeamError::Unavailable,
+            ),
+        ];
+        for (error, class, expected) in errors {
+            assert_eq!(observation_class(&error), class);
+            assert_eq!(observation_error(error), expected);
+        }
     }
 }

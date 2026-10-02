@@ -17,7 +17,7 @@ fn internal_ceilings_are_the_frozen_engineering_numbers_not_a_service_quota() {
     let limits = CasLimits::internal();
     assert_eq!(limits.max_object_bytes, 256 * 1024 * 1024);
     assert_eq!(limits.max_stage_bytes, 512 * 1024 * 1024);
-    assert_eq!(limits.max_stage_entries, 64);
+    assert_eq!(limits.max_stage_entries, 4096);
     assert_eq!(limits.max_receiving, 1);
     assert_eq!(limits.max_prepared, 1);
     assert_eq!(limits.frame_bytes, 64 * 1024);
@@ -53,15 +53,15 @@ fn a_single_object_beyond_the_frozen_object_ceiling_is_refused_before_any_byte_m
 }
 
 #[test]
-fn the_sixty_fifth_stage_entry_is_refused_and_orphans_still_occupy_the_budget() {
+fn the_entry_ceiling_refuses_an_extra_object_and_counts_orphans() {
     let mut cas = MirrorCas::new(CasLimits::internal());
     let mut sink = FakeSink::new(log());
     let mut staged = Vec::new();
-    for n in 0..64_u32 {
+    for n in 0..4096_u32 {
         staged.push(take(&mut cas, &mut sink, &n.to_be_bytes()).unwrap());
     }
-    assert_eq!(cas.usage().entries, 64);
-    assert_eq!(cas.usage().orphans, 64);
+    assert_eq!(cas.usage().entries, 4096);
+    assert_eq!(cas.usage().orphans, 4096);
     assert_eq!(
         cas.begin_receive(4, None, &mut sink),
         Err(CasFault::StageFull)

@@ -15,6 +15,18 @@ pub(super) fn remainder(crate_name: &str, path: &Path, source: &str) -> String {
     if !rest.contains("database:path.join(\"bridge.sqlite3\")") {
         return rest;
     }
+    // 只登记固定不跟随链接的元数据查询；重复或改参不得借用例外。
+    for (exact, count) in [
+        ("rustix::fs::{AtFlags,FileType,statat}", 1),
+        ("statat(root,name,AtFlags::SYMLINK_NOFOLLOW)", 1),
+        ("rustix::fs::fstat(pin)", 1),
+        ("rustix::fs::Stat", 2),
+    ] {
+        if rest.matches(exact).count() != count {
+            return source.to_owned();
+        }
+        rest = rest.replacen(exact, "", count);
+    }
     for exact in [
         "rustix::fs::{Mode,OFlags,openat}",
         "rustix::fs::{Mode,OFlags,open,openat}",
@@ -25,7 +37,6 @@ pub(super) fn remainder(crate_name: &str, path: &Path, source: &str) -> String {
         "openat(&root,\"bridge.sqlite3\",flags,Mode::from_raw_mode(0o600))",
         "open(\"/\",flags,Mode::empty())",
         "openat(&fd,n,flags,Mode::empty())",
-        "openat(root,name,OFlags::RDONLY|OFlags::NOFOLLOW|OFlags::NONBLOCK|OFlags::CLOEXEC,Mode::empty())",
         "storage._lease.0.sync_all()",
         "storage.database_pin.sync_all()",
         "storage.root.sync_all()",

@@ -149,9 +149,9 @@ impl Storage {
             ("bridge.sqlite3", &self.database_pin),
             ("bridge.lock", &self._lease.0),
         ] {
-            let fd =
+            let stat =
                 inspect(&self.root, name, self.owner, false)?.ok_or(BridgeError::MissingStore)?;
-            same(&fd, pin)?;
+            same_stat(&stat, pin)?;
         }
         for name in [
             "bridge.sqlite3-wal",
@@ -223,15 +223,17 @@ fn regular(f: &File, owner: u32, max: u64) -> Result<()> {
     Ok(())
 }
 #[cfg(unix)]
-fn inspect(root: &File, name: &str, owner: u32, optional: bool) -> Result<Option<File>> {
-    use rustix::fs::{Mode, OFlags, openat};
-    let f = match openat(
-        root,
-        name,
-        OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::NONBLOCK | OFlags::CLOEXEC,
-        Mode::empty(),
-    ) {
-        Ok(fd) => File::from(fd),
+// 不能为检查临时打开再关闭 DB/SHM：POSIX close 会释放本进程 SQLite 的锁。
+// 只对已钉住的目录作不跟随链接的元数据查询，pin 生命周期保持不变。
+fn inspect(
+    root: &File,
+    name: &str,
+    owner: u32,
+    optional: bool,
+) -> Result<Option<rustix::fs::Stat>> {
+    use rustix::fs::{AtFlags, FileType, statat};
+    let stat = match statat(root, name, AtFlags::SYMLINK_NOFOLLOW) {
+        Ok(stat) => stat,
         Err(rustix::io::Errno::NOENT) if optional => return Ok(None),
         Err(e) => return Err(storage_error(e)),
     };
@@ -241,8 +243,23 @@ fn inspect(root: &File, name: &str, owner: u32, optional: bool) -> Result<Option
         "bridge.sqlite3-shm" => 4 * 1024 * 1024,
         _ => DB_MAX,
     };
-    regular(&f, owner, max)?;
-    Ok(Some(f))
+    if FileType::from_raw_mode(stat.st_mode) != FileType::RegularFile
+        || stat.st_nlink != 1
+        || stat.st_uid != owner
+        || stat.st_mode & 0o7777 != 0o600
+        || u64::try_from(stat.st_size).map_or(true, |size| size > max)
+    {
+        return Err(BridgeError::UnsafeStorage);
+    }
+    Ok(Some(stat))
+}
+#[cfg(unix)]
+fn same_stat(current: &rustix::fs::Stat, pin: &File) -> Result<()> {
+    let held = rustix::fs::fstat(pin).map_err(|_| BridgeError::UnsafeStorage)?;
+    if (current.st_dev, current.st_ino) != (held.st_dev, held.st_ino) {
+        return Err(BridgeError::UnsafeStorage);
+    }
+    Ok(())
 }
 #[cfg(unix)]
 fn same(a: &File, b: &File) -> Result<()> {

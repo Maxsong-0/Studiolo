@@ -13,6 +13,8 @@ pub(super) enum Command {
     AuditFlush,
     /// 显式初始化双向 Bridge 平面的四项私有存储；任一已存在即拒绝。
     SyncInit,
+    /// 显式准备已批准的 canonical 目录锚点，不改任何文件或传输状态。
+    SyncAnchors,
     /// 静止窗口内显式重绑定传输安全配置，保留既有安装身份与序号。
     SyncRebind,
     /// 清除某个已不再排除的文件夹在镜像视图里的残留；须先停 `studiolo-human`。
@@ -29,6 +31,7 @@ impl Command {
             Self::CancelMaintenance => "cancel-maintenance",
             Self::AuditFlush => "audit-flush",
             Self::SyncInit => "sync-init",
+            Self::SyncAnchors => "sync-anchors",
             Self::SyncRebind => "sync-rebind",
             Self::SyncPurgeResidue => "sync-purge-residue",
         }
@@ -44,7 +47,7 @@ impl Command {
     fn needs_transport(self) -> bool {
         matches!(
             self,
-            Self::SyncInit | Self::SyncRebind | Self::SyncPurgeResidue
+            Self::SyncInit | Self::SyncAnchors | Self::SyncRebind | Self::SyncPurgeResidue
         )
     }
 
@@ -57,6 +60,7 @@ impl Command {
             | Self::CancelRestoreIntent
             | Self::CancelMaintenance
             | Self::SyncInit
+            | Self::SyncAnchors
             | Self::SyncRebind => 11,
             Self::SyncPurgeResidue => 13,
         }
@@ -71,7 +75,7 @@ pub(super) struct Options {
     pub(super) writer_data: PathBuf,
     pub(super) request: Option<String>,
     pub(super) maintenance: Option<String>,
-    /// 双向 Bridge 审批文档（`sync-init`／`sync-rebind`／`sync-purge-residue`）。
+    /// 双向 Bridge 审批文档（`sync-init`／`sync-anchors`／`sync-rebind`／`sync-purge-residue`）。
     pub(super) sync_transport: Option<PathBuf>,
     /// 要清除镜像残留的排除文件夹名（`sync-purge-residue`）。
     pub(super) folder: Option<String>,
@@ -89,6 +93,7 @@ pub(super) fn parse(args: Vec<OsString>) -> Result<Option<Options>, MaintenanceE
         Some("cancel-maintenance") => Command::CancelMaintenance,
         Some("audit-flush") => Command::AuditFlush,
         Some("sync-init") => Command::SyncInit,
+        Some("sync-anchors") => Command::SyncAnchors,
         Some("sync-rebind") => Command::SyncRebind,
         Some("sync-purge-residue") => Command::SyncPurgeResidue,
         _ => return Err(MaintenanceError::Arguments),

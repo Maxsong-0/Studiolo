@@ -5,6 +5,8 @@
 //! 用户 manager 起不了 PID 视图、清不了 capability、也不能切换身份，这几项在应答里如实为 false。
 #![cfg(target_os = "linux")]
 
+#[path = "linux_integration/stop.rs"]
+mod stop;
 #[path = "linux_integration/support.rs"]
 mod support;
 
@@ -18,7 +20,10 @@ use studiolo_sync_launcher::serve::serve_with;
 use studiolo_sync_launcher::unit::Manager;
 use studiolo_sync_transport::linux::service;
 use studiolo_sync_transport::owned_run::RunOperation;
-use support::{call, fixture, launch_frame, user_manager, user_show, wait_unpopulated};
+use support::{
+    assert_retained, call, cleanup_unit, fixture, launch_frame, user_manager, user_show,
+    wait_unpopulated,
+};
 
 const UNVERIFIED: &str = "平台契约未验：本机没有可用的 systemd --user，launcher 集成测试未跑";
 const PAYLOAD: &str = env!("CARGO_BIN_EXE_studiolo-sync-launcher");
@@ -81,7 +86,7 @@ fn 真实用户manager上的launch_release_reap_events回路() {
         }
     );
 
-    // 第一轮：launch → busy 拒第二个 → running=false → release（只一次）→ 退出 → drain/gate/reap/output/match → stop 退休。
+    // 第一轮：launch → busy 拒第二个 → running=false → release（只一次）→ 退出 → drain/gate/reap/output/match → stop 保留等待证据。
     let first = launch_frame(config, 1, digest);
     let report = match call(&socket, &Request::Launch(first.clone())) {
         Response::Launch(report) => report,
@@ -180,7 +185,7 @@ fn 真实用户manager上的launch_release_reap_events回路() {
     assert_eq!(
         call(&socket, &Request::Output(container.clone())),
         Response::Output {
-            output: expected_output
+            output: expected_output.clone()
         }
     );
     assert_eq!(
@@ -199,29 +204,15 @@ fn 真实用户manager上的launch_release_reap_events回路() {
         ),
         Response::Stop(Empty {})
     );
+    assert_retained(&socket, &container, 0);
     assert_eq!(
-        user_show(&container.unit_name, "LoadState"),
-        "not-found",
-        "退休后 unit 已卸载"
-    );
-    assert_eq!(
-        call(&socket, &Request::Match(container.clone())),
-        Response::Match {
-            identity: "unit_missing".to_owned()
+        call(&socket, &Request::Output(container.clone())),
+        Response::Output {
+            output: expected_output
         }
     );
-    assert_eq!(
-        call(&socket, &Request::Events(container.clone())),
-        Response::Refused {
-            verdict: Verdict::IdentityMismatch
-        },
-        "退休后没有 session 可对应"
-    );
-    assert_eq!(
-        fs::read_dir(&fixture.layout.sessions).unwrap().count(),
-        0,
-        "session 目录已清"
-    );
+    assert_eq!(fs::read_dir(&fixture.layout.sessions).unwrap().count(), 1);
+    let old = container;
 
     // 第二轮：不放行直接关门，垫片读到 EOF 退出 4。
     let second = launch_frame(config, 2, digest);
@@ -229,6 +220,14 @@ fn 真实用户manager上的launch_release_reap_events回路() {
         Response::Launch(report) => report.container,
         other => panic!("第二轮 launch 应答异常：{other:?}"),
     };
+    assert_eq!(user_show(&old.unit_name, "LoadState"), "not-found");
+    assert_eq!(
+        call(&socket, &Request::Events(old)),
+        Response::Refused {
+            verdict: Verdict::IdentityMismatch
+        }
+    );
+    assert_eq!(fs::read_dir(&fixture.layout.sessions).unwrap().count(), 1);
     assert_eq!(
         call(&socket, &Request::Gate(container.clone())),
         Response::Gate(Empty {})
@@ -259,5 +258,6 @@ fn 真实用户manager上的launch_release_reap_events回路() {
         ),
         Response::Stop(Empty {})
     );
-    assert_eq!(user_show(&container.unit_name, "LoadState"), "not-found");
+    assert_retained(&socket, &container, 4);
+    cleanup_unit(&container.unit_name);
 }

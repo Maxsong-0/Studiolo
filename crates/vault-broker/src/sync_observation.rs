@@ -19,6 +19,64 @@ use std::{collections::BTreeMap, sync::Arc};
 pub(crate) mod tests;
 
 impl FsVaultBroker {
+    /// 只读检查完整目录锚点及父链，返回缺失的锚点；不读取正文或改变提交水位。
+    /// selection 是可信装配传入的数据，不是写权限；本实例仍须独占 canonical 写租约。
+    pub fn inspect_sync_anchors(
+        &self,
+        selection: &SyncReadSelection,
+    ) -> Result<Vec<VaultPath>, BrokerError> {
+        let committed = self.sync_anchors_ready()?;
+        selection.validate(&[])?;
+        let mut missing = Vec::new();
+        for rule in &selection.folders {
+            if self.sync_anchor_directory(&rule.path, false)? {
+                missing.push(rule.path.clone());
+            }
+            if self.sync_anchors_ready()? != committed {
+                return Err(BrokerError::CaptureChanged);
+            }
+        }
+        if self.sync_anchors_ready()? != committed {
+            return Err(BrokerError::CaptureChanged);
+        }
+        Ok(missing)
+    }
+
+    /// 显式、幂等准备 folders 的空目录锚点，不处理 files、不写正文或提交记录。
+    /// 全部锚点预检通过后才创建；返回本次新建的锚点，不包含中间父目录。
+    /// I/O 或并发变化导致失败时可能已创建部分目录；错误不承诺回滚，重新预检后可重试。
+    pub fn prepare_sync_anchors(
+        &mut self,
+        selection: &SyncReadSelection,
+    ) -> Result<Vec<VaultPath>, BrokerError> {
+        let committed = self.sync_anchors_ready()?;
+        self.inspect_sync_anchors(selection)?;
+        let mut created = Vec::new();
+        for rule in &selection.folders {
+            if self.sync_anchors_ready()? != committed {
+                return Err(BrokerError::CaptureChanged);
+            }
+            if self.sync_anchor_directory(&rule.path, true)? {
+                created.push(rule.path.clone());
+            }
+        }
+        if !self.inspect_sync_anchors(selection)?.is_empty()
+            || self.sync_anchors_ready()? != committed
+        {
+            return Err(BrokerError::CaptureChanged);
+        }
+        Ok(created)
+    }
+
+    pub(crate) fn sync_anchors_ready(&self) -> Result<u64, BrokerError> {
+        self.writer.check(&self.root, &self.data)?;
+        let committed = capture::ready(self)?;
+        if self.write_status()?.unresolved {
+            return Err(BrokerError::MutationUnresolved);
+        }
+        Ok(committed)
+    }
+
     /// 兼容旧一次式 API；两阶段之间不开放额外能力，任意失败均不返回部分结果。
     /// selection/required 是数据而不是权限；完整结果也不是带外写入下的原子快照。
     pub fn capture_sync_observation(

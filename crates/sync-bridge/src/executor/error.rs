@@ -11,6 +11,8 @@ use crate::FuseReason;
 /// 整批或单动作被拒绝的原因；调用方不得把任何变体折叠成成功。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ExecutorError {
+    /// 已请求关停；保留未闭合原计划，不把未发出动作记作无效果。
+    Stopping,
     /// 持久层删除熔断仍生效；本片没有解除能力，解除须走已登记的 L3 动作。
     Fused,
     /// 本批删除数或占原共同基线存活路径比例越过冻结门槛，整个计划阻断。

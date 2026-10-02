@@ -9,7 +9,7 @@ use studiolo_local_server::sync_plane::mirror::stage::{
     OBJECT_MAX_BYTES, RETENTION_SECONDS, StageStore,
 };
 use studiolo_local_server::sync_plane::mirror::{install, remove};
-use studiolo_sync_bridge::executor::ObjectId;
+use studiolo_sync_bridge::executor::{CasLimits, ObjectId};
 
 #[test]
 fn preserved_reference_never_shrinks_sequence_or_retention_after_reopen() {
@@ -111,13 +111,13 @@ fn retained_and_orphan_objects_count_toward_existing_stage_budgets() {
     let f = Fixture::new(b"budget");
     let mut stage = f.stage();
     let objects = f.root.join("plane/stage/objects");
-    for index in 0..64 {
+    for index in 0..CasLimits::internal().max_stage_entries {
         sparse(&objects.join(format!("{index:064x}")), 0);
     }
     assert_eq!(
         stage.begin(),
         Err(PlaneError::Storage),
-        "64 件包含孤儿，不能再创建接收件"
+        "固定条目预算包含孤儿，不能再创建接收件"
     );
     drop(stage);
     // 重开清掉上述孤儿，再用稀疏夹具覆盖 512 MiB 总量边界，不实际分配大正文。
@@ -180,4 +180,31 @@ fn corrupted_duplicate_address_cannot_replace_a_preserved_source() {
         stage.verify_preserved(id, version.bytes),
         Err(PlaneError::Storage)
     );
+}
+
+#[test]
+fn more_than_64_distinct_inbound_sources_survive_reopen_and_retention() {
+    let f = Fixture::new(b"initial");
+    let mut stage = f.stage();
+    let mut expected = Vec::new();
+    for index in 0..96_u32 {
+        let bytes = format!("independent inbound source {index}").into_bytes();
+        fs::write(f.root.join("mirror").join(path().as_str()), &bytes).unwrap();
+        let frozen = version(&bytes);
+        f.freeze(&mut stage, &frozen);
+        expected.push((frozen, bytes));
+    }
+    assert_eq!(stage.index().preserved.len(), 96);
+    drop(stage);
+    let mut stage = f.stage();
+    assert_eq!(stage.sweep(NOW + 1, SEQUENCE).unwrap(), 0);
+    assert_eq!(stage.index().preserved.len(), 96);
+    for (frozen, bytes) in expected {
+        assert_eq!(
+            stage
+                .read_preserved(ObjectId::from_digest(frozen.sha256), frozen.bytes, 1024)
+                .unwrap(),
+            bytes
+        );
+    }
 }

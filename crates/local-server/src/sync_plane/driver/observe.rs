@@ -37,7 +37,7 @@ pub fn observe_both(context: &RoundContext<'_>) -> Result<Observed, PlaneError> 
     let (view_state, epoch) = {
         let bridge = plane.bridge().lock().map_err(|_| PlaneError::Unavailable)?;
         (
-            bridge.view().map_err(|_| PlaneError::Storage)?,
+            bridge.view().map_err(super::diagnostics::storage)?,
             bridge.observation_epoch(),
         )
     };
@@ -63,7 +63,10 @@ pub fn observe_both(context: &RoundContext<'_>) -> Result<Observed, PlaneError> 
     );
     let required: BTreeSet<_> = view_state.baseline.entries.keys().cloned().collect();
     let (canonical, mirror, usage) = witness.observe_pair(&required)?;
-    let approved = witness.approve(&canonical, &mirror)?;
+    let approved = super::diagnostics::at(
+        super::diagnostics::Step::Approve,
+        witness.approve(&canonical, &mirror),
+    )?;
     plane.health.record_usage(usage);
     plane
         .health

@@ -153,7 +153,7 @@ impl RoundPorts for RealPorts<'_> {
         if observed.input != input {
             return Err(PlaneError::Observation);
         }
-        let outcome = execute::reserve_and_execute(&self.context()?, &observed);
+        let outcome = execute::reserve_and_execute(&self.context()?, &observed, self.stopping);
         // 执行段回填（W5 `record_execution`）：序号、终态未知数、熔断是否生效；冲突副本数由健康侧合计。
         if let Ok(
             RoundOutcome::Settled { sequence, .. }

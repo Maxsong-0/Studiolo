@@ -69,7 +69,7 @@ pub struct RuntimePins {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct BackendDescriptor {
-    /// 精确 systemd unit 名。
+    /// 固定可信 launcher 的精确 systemd unit 名；逐次 payload 单元由运行身份派生。
     pub service_unit: String,
     /// 专用 payload UID。
     pub payload_uid: u32,

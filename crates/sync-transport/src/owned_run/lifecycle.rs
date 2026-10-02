@@ -184,6 +184,10 @@ impl<B: ContainmentBackend> RunSession<'_, B> {
         {
             return Ok(Some(Transition::ObserveRunning));
         }
+        // launcher 只在关门后登记 reap；快速退出也不能跳过这个顺序。
+        self.backend
+            .close_spawn_gate(run_id, &container)
+            .map_err(crate::linux::ContainmentGap::after_start)?;
         // 实际等待结果与静止证明分开取；两者互不替代。
         let exit = self
             .backend
@@ -192,14 +196,13 @@ impl<B: ContainmentBackend> RunSession<'_, B> {
         if exit != ExitObservation::NotObserved && exit != record.exit {
             return Ok(Some(Transition::RecordExit(exit)));
         }
-        self.backend
-            .close_spawn_gate(run_id, &container)
-            .map_err(crate::linux::ContainmentGap::after_start)?;
         let events = self
             .backend
             .read_events(run_id, &container)
             .map_err(crate::linux::ContainmentGap::after_start)?;
-        if events.populated {
+        // 退出码可能晚于空组可见：保留原槽，下一次 wait/recover 再取真实结果。
+        // 不把未 reap 的 launcher session 提前闭合，下一轮才不会永久 Busy。
+        if events.populated || record.exit == ExitObservation::NotObserved {
             return Ok(None);
         }
         Ok(Some(Transition::Quiesce(QuiescenceProof {
@@ -236,8 +239,9 @@ fn container_acceptable(
     container: &ContainerIdentity,
     boot_id: [u8; 16],
 ) -> Result<()> {
+    let record = state.active.as_ref().ok_or(TransportError::NotFound)?;
     let acceptable = container.boot_id == boot_id
-        && container.unit_name == state.backend.service_unit
+        && container.unit_name == service::payload_unit_name(record.sequence, &record.run_id)
         && service::unit_name_acceptable(&container.unit_name)
         && cgroup::within_prefix(
             &container.payload_cgroup,

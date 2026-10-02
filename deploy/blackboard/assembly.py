@@ -1,8 +1,8 @@
-"""从已激活的上一发行派生下一发行：只换网页，其余逐字节沿用；不读取凭据、不操作服务或数据库。
+"""从已激活发行派生候选的固定装配；不读取凭据、不操作服务或数据库。
 
-r2 已经把黑板接线（单元的 RuntimeDirectory／ReadWritePaths、启动器的 board 参数）装好了，
-此后的发行**不再做任何装配改造**，只做两件事：把发行路径从上一发行指到本发行，把 `web/` 换成新构建。
-因此三个变换函数都是「路径替换 ＋ 现状核验」，多出来的差异一律拒绝。
+黑板接线沿用 r2，Bridge接线沿用已激活r14；本版仅替换发行路径。
+写根、认证、配对和同步范围保持现场原值。
+变换只接受钉住的上一发行形状；额外差异由现场摘要和逐字变换核验拒绝。
 
 沿革：r8→r2 的装配逻辑见本文件在 main `40fdf8d` 及更早的版本（一次性迁移，已激活）；
 r2→r3（2026-09-22 T-102，已激活）；r3→r4（T-103/T-104，前端并发闸门＋会话每日复核，已激活）；
@@ -11,13 +11,21 @@ r5→r6（T-159：T-130 新前端＋main 人侧程序一起换，含只读接口
 r6→r7（T-167：T-161～T-166 上线后修复，换网页与人侧程序——woff2／svg 长缓存在人侧程序里，已激活）；
 r7→r8（T-160f：规则级读权限与「规则」视图；人侧程序须先于 agent 换上，才能解析带 rules_whitelist 的能力集，已激活）；
 r8→r9（T-160g：权限矩阵改版，仅换网页，已激活）；
-本版 r9→r10（T-132：更新人侧程序，并显式交付 maintain 与 sync-launcher；Bridge 启用仍单独执行）。
+r9→r10（T-132：更新人侧程序，并显式交付 maintain 与 sync-launcher，已激活）；
+r10→r11（BUG-020：逐次载荷身份校验，已激活）；
+r11→r12（BUG-021：退出观察与停止留证，已激活）；
+r12→r13（BUG-022目录初始化、BUG-023保全数量、BUG-024执行器关停、BUG-025陈旧预约取消，已激活）；
+r13→r14（BUG-026：同步运行步骤与无载荷失败分类日志，已激活）；
+本版 r14→r15（BUG-027：只查元数据，保留SQLite进程锁与版本守卫）。
 """
 import shlex
 from pathlib import Path
 
-OLD_RELEASE = '/home/maxsong/.local/share/studiolo-human-releases/m5m6-board-20260920-r9'
-BUILD = 'm5m6-board-20260920-r10'
+OLD_RELEASE = '/home/maxsong/.local/share/studiolo-human-releases/m5m6-board-20260920-r14'
+BUILD = 'm5m6-board-20260920-r15'
+BRIDGE_ROOT = '/var/lib/studiolo-owner/bridge'
+TRANSPORT_ROOT = '/home/maxsong/.local/share/studiolo-sync-transport'
+SYNC_APPROVAL = '/home/maxsong/.config/studiolo-human/sync-transport.json'
 RELEASE = '/home/maxsong/.local/share/studiolo-human-releases/' + BUILD
 BASE = '/home/maxsong/.local/share/'
 VAULT = BASE + 'studiolo-canonical'
@@ -26,14 +34,14 @@ BOARD = BASE + 'studiolo-board'
 AGENT = BASE + 'studiolo-agent'
 BOARD_RUNTIME = '/run/studiolo-board'
 BOARD_SOCKET = BOARD_RUNTIME + '/board.sock'
-# 2026-09-29 现场：human r9、agent t160；固定摘要防止覆盖其他发布。
-HUMAN_SHA = '17fbb229dbb0d93ac3f75eb15392ffe1cffbcd75b820913c8e0302001aa9d200'
+# 2026-10-01 现场：human r14已接Bridge、agent t160；固定摘要防止覆盖其他发布。
+HUMAN_SHA = '9d1e8323e7cf299b4505356a7c219371ef955c452f50f4b720a5257d1fc7857c'
 AGENT_SHA = '2e3d9ddfdc1344a448ae1e486afb0314fd94af48ca00f5ce7685a98591db226f'
-# 键名沿用早期协议，内容钉住当前 r9 manifest。
-R8_MANIFEST_SHA = '5c70d516322c2ef74a6e71dbca2a46c91012c3e754dae55f79cc385d7b95f2af'
+# 键名沿用早期协议，内容钉住当前 r14 manifest。
+R8_MANIFEST_SHA = '85ecbfd4eb8472c2aafc1a9f9d83c0bb7c6c11b6b4097af58f8e0734d7e6ce87'
 # 发行目录里属于网页的前缀：本次唯一允许整体更换的部分。
 WEB_PREFIX = 'web/'
-# 上一发行的装配名；候选包沿用同一装配，只是换了网页。
+# 沿用黑板装配标识；Bridge 接线仍受固定现场摘要约束。
 ASSEMBLY = 'canonical-board-consumer-only'
 
 
@@ -49,7 +57,7 @@ def human_unit(text):
         raise ValueError('unrecognized human unit')
     if 'RuntimeDirectory=studiolo-human studiolo-board\n' not in text:
         raise ValueError('board wiring missing')
-    for path in (VAULT, WRITER, BOARD, AGENT, BOARD_RUNTIME):
+    for path in (VAULT, WRITER, BOARD, AGENT, BOARD_RUNTIME, BRIDGE_ROOT, TRANSPORT_ROOT):
         if 'ReadWritePaths=' + path + '\n' not in text:
             raise ValueError('board wiring missing')
     return text.replace(OLD_RELEASE, RELEASE)
@@ -76,14 +84,17 @@ def agent_unit(text):
 
 
 def launcher(text):
-    """上一发行的启动器已带黑板参数；只把发行路径换成本发行，其余逐字不变，并要求仍能编译。"""
-    if RELEASE in text:
+    """已批准Bridge接线逐字沿用，只替换发行路径。"""
+    if RELEASE in text or text.count('"--sync-transport"') != 1:
         raise ValueError('unrecognized launcher')
     for fragment in ('"--canonical-writer-data", WRITER', '"--board-socket", BOARD_SOCKET',
                      'BOARD_SOCKET = ' + repr(BOARD_SOCKET), 'VAULT = ' + repr(VAULT),
                      'RELEASE + "/web"'):
         if fragment not in text:
             raise ValueError('board wiring missing')
+    if ('正式黑板库 · Obsidian 同步试跑' not in text
+            or '"--sync-transport", "' + SYNC_APPROVAL + '",' not in text):
+        raise ValueError('bridge wiring missing')
     text = replace_once(text, 'RELEASE = "' + OLD_RELEASE + '"',
                         'RELEASE = "' + RELEASE + '"')
     if OLD_RELEASE in text:

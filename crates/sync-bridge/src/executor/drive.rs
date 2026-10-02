@@ -75,6 +75,7 @@ pub fn execute(
     now: Instant,
     not_after: Instant,
 ) -> Result<ExecutionReport, ExecutorError> {
+    jobs::check_stopping(ports.backend)?;
     let before = ports.journal.snapshot().map_err(ExecutorError::Journal)?;
     guards::alignment(plan, &before)?;
     // 先算整批：门槛未过则在任何动作发出、任何证据放行之前整批阻断。
@@ -82,7 +83,7 @@ pub fn execute(
     guards::evidence(plan)?;
     let quiesced = guards::quiesce(plan, ports.quiescence, audit, now, not_after)?;
     // Intent 的真实审计 append 必须先于任何 Issued。
-    jobs::drain_audit(ports.journal)?;
+    jobs::drain_audit(ports.journal, ports.backend)?;
     let snapshot = ports.journal.snapshot().map_err(ExecutorError::Journal)?;
     guards::alignment(plan, &snapshot)?;
     let mut report = ExecutionReport {
@@ -101,6 +102,7 @@ pub fn execute(
         stage: StageUsage::default(),
     };
     for (index, action) in plan.actions().iter().enumerate() {
+        jobs::check_stopping(ports.backend)?;
         let record = snapshot
             .jobs
             .get(index)
@@ -116,7 +118,8 @@ pub fn execute(
         )?;
     }
     // Outcome 与整批 Summary 的真实审计 append 在结果闭合之前完成。
-    jobs::drain_audit(ports.journal)?;
+    jobs::drain_audit(ports.journal, ports.backend)?;
+    jobs::check_stopping(ports.backend)?;
     finish(plan, &mut ports, &quiesced, &before, &mut report)?;
     report.stage = ports.cas.usage();
     Ok(report)
@@ -159,7 +162,7 @@ fn finish(
                 .journal
                 .prepare_retirement(version)
                 .map_err(ExecutorError::Journal)?;
-            jobs::drain_audit(ports.journal)?;
+            jobs::drain_audit(ports.journal, ports.backend)?;
             let version = ports
                 .journal
                 .snapshot()

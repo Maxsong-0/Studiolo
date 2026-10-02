@@ -3,6 +3,7 @@
 //!
 //! 本文件不持有 Broker 类型、不开文件；证据投影在 `driver::evidence`；镜像观察前先复验静止票据。
 
+use super::driver::diagnostics::{Step, at};
 use super::driver::evidence::{
     baseline_evidence, inventory_evidence, parse_digest, read_selection, revision_digest,
 };
@@ -149,10 +150,10 @@ impl<'a> PlaneWitness<'a> {
         &mut self,
         required: &BTreeSet<VaultPath>,
     ) -> Result<(Inventory, Inventory, SyncUsage), PlaneError> {
-        let mut canonical = self.observe_canonical(required)?;
+        let mut canonical = at(Step::Canonical, self.observe_canonical(required))?;
         let mut union = required.clone();
         union.extend(canonical.entries.keys().cloned());
-        let mirror = self.observe_mirror(&union)?;
+        let mirror = at(Step::Mirror, self.observe_mirror(&union))?;
         if mirror
             .inventory
             .entries
@@ -160,7 +161,7 @@ impl<'a> PlaneWitness<'a> {
             .any(|path| !canonical.entries.contains_key(path))
         {
             union.extend(mirror.inventory.entries.keys().cloned());
-            canonical = self.observe_canonical(&union)?;
+            canonical = at(Step::Canonical, self.observe_canonical(&union))?;
         }
         if !canonical.entries.keys().eq(mirror.inventory.entries.keys()) {
             return Err(PlaneError::Observation);

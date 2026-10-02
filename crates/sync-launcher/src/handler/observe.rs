@@ -172,16 +172,22 @@ impl Handler {
         })
     }
 
-    /// 已 reap 的 session 由 stop 退休（卸载 unit、删目录）；活着的 session：关门、TERM、宽限后 SIGKILL。
+    /// 关门并停止整组；即使已 reap 也保留 unit/session，供 owner 复验退出与静止。
+    /// 只有下一次 launch 的 reap＋空组守卫通过后才退休。
     pub(super) fn stop(&mut self, frame: &StopFrame) -> Result<Response, Verdict> {
         let live = self.live(&frame.container)?;
-        if live.session.phase == Phase::Reaped {
-            self.retire();
-            return Ok(Response::Stop(Empty {}));
-        }
         live.session.gate();
         live.gate = None;
         let unit = live.session.container.unit_name.clone();
+        if matches!(
+            self.events(&frame.container)?,
+            Response::Events {
+                populated: false,
+                ..
+            }
+        ) {
+            return Ok(Response::Stop(Empty {}));
+        }
         self.manager.kill(&unit, "SIGTERM");
         self.manager.schedule_kill(&unit, frame.grace_seconds);
         Ok(Response::Stop(Empty {}))
