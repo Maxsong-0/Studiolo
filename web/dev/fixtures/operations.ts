@@ -342,7 +342,6 @@ const DECLARED = [
 /** 仓库里真实存在但声明没写到的目录（按比较父目录 `.` 与 `crates` 观测）。 */
 const UNDOCUMENTED = [
   'docs',
-  'droppy-code-main',
   'examples',
   ...[
     'core',

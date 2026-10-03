@@ -476,7 +476,7 @@ describe('假数据：策略、健康、文档与项目运作', () => {
         );
         expect(
           operations.drift.filter((item) => item.status === 'undocumented'),
-        ).toHaveLength(20);
+        ).toHaveLength(19);
       } else expect(operations.declaration_status).toBe('unavailable');
     }
   });
