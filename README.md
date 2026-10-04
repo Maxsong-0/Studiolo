@@ -91,7 +91,7 @@ sha `5854f91`）。
 
 ## 运行本机只读示例
 
-在仓库根目录运行：
+在仓库根目录运行（这三条会编译前端与 Rust：Mac 上不跑；在 DGX 上由主会话跑，构建目录先按下文「开发」段「DGX 本机跑」设好）：
 
 ```bash
 npm --prefix web ci --ignore-scripts
@@ -170,14 +170,15 @@ M1 的 `workbench` 只消费内存文档与 M0 索引；`local-server` 按启动
 
 ## 开发
 
-**所有测试与编译检查一律不在本机跑**（2026-09-23 用户硬约束）：`cargo test`／`fmt`／`clippy`／`build`、Python 契约、
-前端检查、真实管线都经 `scripts/test-linux.sh <命令>`（在服务器上原生跑，可带参数跑任意定向命令）或 CI。
-下面列出的命令是 CI 执行的内容，供对照与在服务器上复现，不是让你在本机跑。
+**测试与编译在哪跑按机器分**（细则见 `AGENTS.md` 第四、五、七节）：**Mac 一律不在本机跑**（2026-09-23 用户硬约束），`cargo test`／`fmt`／`clippy`／`build`、Python 契约、
+前端检查、真实管线都经 `scripts/test-linux.sh <命令>`（同步到 `githubci` 原生跑，可带参数跑任意定向命令）或 CI；
+**DGX（`max-spark`）由主会话在本机原生跑**（2026-10-04 用户拍板，子 agent 不跑），做法见本节末「DGX 本机跑」。
+下面列出的命令是 CI 执行的内容，供对照与复现，不是让你在 Mac 上跑。
 
 下面这组命令覆盖 CI `rust` 作业里的编译类检查，**不是它的全集**（权威始终是
-`.github/workflows/ci.yml`，缺的部分列在本节末尾）：
+`.github/workflows/ci.yml`，缺的部分列在本节后面「上面那组之外」一段）：
 
-本机若装了 Homebrew Rust（2026-09-22 为 1.98.1），`/opt/homebrew/bin/cargo` 排在 PATH 前面时
+Mac 上若装了 Homebrew Rust（2026-09-22 为 1.98.1；DGX 只有 rustup 的 cargo，不用这一步），`/opt/homebrew/bin/cargo` 排在 PATH 前面时
 不认 `rust-toolchain.toml`，clippy 结果会与 CI 不一致。先把 rustup 的钉死版本放到最前：
 
 ```bash
@@ -222,7 +223,7 @@ npm --prefix web test && npm --prefix web run lint && npm --prefix web run forma
 - 生产 `studiolo-auth-admin` 构建之后再跑
   `python3 crates/auth-admin/tests/support/cli_process.py target/debug/studiolo-auth-admin`。
 
-在 Linux 服务器上原生跑 Rust 那一半（把工作树同步到 `githubci` 后在那里跑；2026-09-19 起不再用 Docker）：
+Mac 会话在 Linux 服务器上原生跑 Rust 那一半（把工作树同步到 `githubci` 后在那里跑；2026-09-19 起不再用 Docker；DGX 见下面「DGX 本机跑」）：
 
 ```bash
 scripts/test-linux.sh   # fmt / clippy / workspace 测试 / 路径安全 / 两个生产构建 / 登记工具进程检查
@@ -231,10 +232,47 @@ scripts/test-linux.sh   # fmt / clippy / workspace 测试 / 路径安全 / 两�
 `scripts/test-linux.sh` **不包含**上面的 `bash -n`、逐条列名的 Python 契约脚本、两条管线检查，
 也不含前端作业；要复跑那些得自己按 `ci.yml` 逐条执行。
 
+### DGX 本机跑
+
+DGX（`max-spark`，Ubuntu 24.04 aarch64）连不到 `githubci`，`scripts/test-linux.sh` 在这里用不了；它的本机模式另有任务，
+落地前由**主会话**照下面手动跑（子 agent 不跑，把命令写进回执，见 `AGENTS.md` 第四、七节）。环境与 `test-linux.sh`
+在服务器上那一半相同：umask 022、`CARGO_PROFILE_DEV_DEBUG=line-tables-only`、每个工作树一份构建目录。
+**全量回路同一时间只许一个会话跑**（2026-10-04 用户拍板）：整机一把锁，别的会话占着就直接退出（退出码 75），不等、不抢，下一轮再跑。
+
+```bash
+# 在要验的工作树根目录、同一个 shell 里执行
+umask 022   # 捕获端与接收器按设计拒绝组可写节点，部分测试夹具按默认权限建目录（T-079）
+export PATH="$HOME/.cargo/bin:$PATH" CARGO_PROFILE_DEV_DEBUG=line-tables-only
+ROOT="$(pwd -P)"
+NAME="$(basename "$ROOT")-$(printf '%s' "$ROOT" | shasum -a 256 | cut -c1-12)"   # 与 test-linux.sh 同一命名规则
+export CARGO_TARGET_DIR="$HOME/.cache/studiolo-target/$NAME"                       # 不用工作树里共享的 target/
+mkdir -p "$CARGO_TARGET_DIR" "$HOME/.cache/studiolo-locks"
+
+# 定向命令直接跑：各工作树构建目录分开，同一目录由 cargo 自己的文件锁排队
+cargo --locked test -p <包> --test <目标>
+
+# 全量回路：与 test-linux.sh 不带参数时同一份清单（改那份清单时这里同改；本机模式落地后本段改为调用它）
+flock -n -E 75 "$HOME/.cache/studiolo-locks/local-full.lock" bash -euo pipefail -c '
+  cargo --locked fmt --all -- --check
+  cargo --locked clippy --workspace --all-targets -- -D warnings
+  cargo --locked test --workspace
+  cargo --locked test -p studiolo-vault-broker --test linux_path_security
+  cargo --locked build -p studiolo-local-server --features studiolo-auth/production
+  cargo --locked build -p studiolo-auth-admin --features production
+  python3 crates/auth-admin/tests/support/cli_process.py "$CARGO_TARGET_DIR/debug/studiolo-auth-admin"
+'
+```
+
+- 按 `ci.yml` 补跑 `bash -n`、Python 契约、两条管线和前端作业时，也包在同一把锁里（`flock -n -E 75 "$HOME/.cache/studiolo-locks/local-full.lock" …`）。
+- 工具链（2026-10-04 实测）：rustup 已装，`rust-toolchain.toml` 钉的 1.97.1 与 rustfmt／clippy 已就位；缺工具时怎么办见 `AGENTS.md` 第七节。
+- 前端：系统 `node` 是 24.x，满足 `web/package.json` 的 `>=22.12.0`；CI 钉 22.17.0，结果有出入以 CI 为准。
+- DGX 是 aarch64：本机通过只说明 Linux aarch64 上通过，合并门槛仍是 CI（x86_64）。
+  `scripts/run-agent-tests.sh`、`scripts/run-preview-tests.sh` 只认 Linux x86_64，在 DGX 上按设计拒绝。
+
 ## 纪律
 
 - 真实密钥只经环境变量或 secret mount 注入，永不入库。
 - 提交信息中文，带 Conventional Commits 前缀。
-- CI 在 Linux 上跑路径安全测试；macOS 只作快速回路。
+- CI（Linux x86_64）跑路径安全测试，结果为准；快速回路是 Mac 会话的 `scripts/test-linux.sh`（githubci）与 DGX（Linux aarch64）主会话的本机回路，Mac 本机不跑。
 - 进程内只有 VaultBroker 可写 canonical Vault；架构测试枚举全部写入口。
 - 文档不得冒称完成度：没有实跑证据的一律写「未验证 / 未验收」，不用「构建成功」代替发布证据。

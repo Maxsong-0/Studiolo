@@ -2,7 +2,7 @@
 
 日期：2026-09-13；2026-09-14更新验收。Broker、服务端审计/维护、人侧策略、HTTP和界面已整合；人侧策略114项、前端687项及合成浏览器通过。1006构建输入冻结点的完整workspace在macOS145目标1719项、Linux aarch64145目标1731项通过；两平台fmt、严格Clippy、生产构建及独立目录17项进程契约通过。尚未在真实Vault启用或发布。
 依据：`docs/m2/file-operations-design.md` 第 5—7 节；以下版本/API 已按登记实施，实际人侧身份和生产部署仍待验收，完整台账见 `m2-m3-closeout.md`。
-仓库基准目录：`/Users/maxsong/All-Project/studiolo`；未注明 crate 的源码路径相对 `crates/vault-broker/src`，local-server 路径相对 `crates`。
+仓库基准目录：本仓库根（Mac 与 DGX 上都是 `~/All-Project/studiolo`）；未注明 crate 的源码路径相对 `crates/vault-broker/src`，local-server 路径相对 `crates`。
 
 ## 1. 首片边界与公共入口
 

@@ -34,7 +34,8 @@ T-037 HTTP 外壳的同一类型身份、白名单、完整副本验证和审计
 ## 生成、预览与应用
 
 需要 macOS/Linux、Python 3 标准库，以及可用的托管副本 HTTP 入口。
-全部命令路径使用绝对路径；macOS 临时目录使用 `/private/tmp`，避免 `/tmp` 符号链接。
+全部命令路径使用不经符号链接的绝对路径：macOS 的 `/tmp` 与 `$TMPDIR` 都经过符号链接（`/tmp`→`/private/tmp`、`/var`→`/private/var`），
+Linux（如 DGX）的 `/tmp` 是实目录；下例用 `pwd -P` 取临时目录的物理路径，两种系统通用。
 文件和目标目录不得经符号链接定位。凭据从已经配置好的安全环境变量读取，不能写入 JSON。
 
 以 [Claude 示例配置](client-projection.example.json) 为起点，确认选定资料和服务地址：
@@ -59,12 +60,13 @@ HTTPS `/read`；隔离本机测试另允许 `http://127.0.0.1:<端口>/read` 或
 `--target` 是专用资料根，可以不存在或为空的 0700 目录，不应填写现有工作仓库。
 
 ```sh
+REVIEW="$(cd "${TMPDIR:-/tmp}" && pwd -P)/studiolo-client-review-01"   # Mac 落在 /private/var/folders/…/T，Linux 落在 /tmp
 python3 -B scripts/sync-agent-client.py generate \
-  --config /absolute/path/client.json --out /private/tmp/studiolo-client-review-01
+  --config /absolute/path/client.json --out "$REVIEW"
 python3 -B scripts/sync-agent-client.py plan \
-  --bundle /private/tmp/studiolo-client-review-01 --target /absolute/path/studiolo-client
+  --bundle "$REVIEW" --target /absolute/path/studiolo-client
 python3 -B scripts/sync-agent-client.py apply \
-  --bundle /private/tmp/studiolo-client-review-01 --target /absolute/path/studiolo-client
+  --bundle "$REVIEW" --target /absolute/path/studiolo-client
 python3 -B scripts/sync-agent-client.py check --target /absolute/path/studiolo-client
 python3 -B scripts/sync-agent-client.py check --target /absolute/path/studiolo-client --online
 ```

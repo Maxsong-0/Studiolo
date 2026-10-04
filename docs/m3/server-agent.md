@@ -64,9 +64,10 @@ T-036 将此入口升级为完整批次发布：源端双次稳定捕获，SSH �
 `git status --porcelain` 验工作树干净）与 **node**（校验源码清单），所以用 `git bundle` 送整段历史过去，不要只 tar 源码：
 
 ```bash
-# Mac：打出要发布的分支
-git bundle create /private/tmp/agent.bundle <分支>
-scp /private/tmp/agent.bundle maxsong@192.168.100.108:~/agent.bundle
+# Mac：打出要发布的分支（发布只在 Mac 做，DGX 连不到 108；临时文件放系统临时目录，不写死 /private/tmp）
+BUNDLE="$(cd "${TMPDIR:-/tmp}" && pwd -P)/agent.bundle"
+git bundle create "$BUNDLE" <分支>
+scp "$BUNDLE" maxsong@192.168.100.108:~/agent.bundle
 # 108：clone 后打包；发布名必须全新（构建卷按发布名独立，复用会被脚本拒绝）
 ssh maxsong@192.168.100.108 'git clone -q --branch <分支> ~/agent.bundle ~/agent-src && cd ~/agent-src && \
   mkdir -p target/agent-packages && bash scripts/package-agent.sh "$HOME/agent-src/target/agent-packages/<唯一发布名>"'
