@@ -19,6 +19,12 @@ from replica_common import (MAX_MANIFEST, Invalid, check_node, digest, encode, i
                             manifest, open_root, read_file, require)
 
 MODULES = ("replica_common", "replica_archive", "replica_cleanup", "replica_store", "replica_receiver")
+# 同步默认值只在这里定义一份，prepare-agent-sync.py 也从这里取。
+# vault 按家目录拼：两台机器的 vault 都在家目录下同一相对位置（Mac /Users/maxsong、DGX /home/maxsong），
+# 写死 /Users/... 在 DGX 上指向不存在的路径。副本仍只由 Mac 推（2026-10-04 用户拍板），这里只去掉写死。
+DEFAULT_VAULT = str(Path.home() / "Documents" / "Max's Secret Place")
+DEFAULT_HOST = "maxsong@192.168.100.169"
+DEFAULT_REMOTE = "/home/maxsong/.local/share/studiolo-agent-replica"  # 服务器 169 上的路径，不随本机变
 
 
 def remote_command(root, deadline):
@@ -112,9 +118,9 @@ def main(argv=None):
     modes.add_argument("--finish", metavar="DIRECTORY", help=argparse.SUPPRESS)
     parser.add_argument("--ssh-status", type=int, help=argparse.SUPPRESS)
     args = parser.parse_args(argv)
-    source = os.environ.get("STUDIOLO_VAULT", "/Users/maxsong/Documents/Max's Secret Place")
-    host = os.environ.get("STUDIOLO_HOST", "maxsong@192.168.100.169")
-    remote = os.environ.get("STUDIOLO_REMOTE_REPLICA", "/home/maxsong/.local/share/studiolo-agent-replica")
+    source = os.environ.get("STUDIOLO_VAULT", DEFAULT_VAULT)
+    host = os.environ.get("STUDIOLO_HOST", DEFAULT_HOST)
+    remote = os.environ.get("STUDIOLO_REMOTE_REPLICA", DEFAULT_REMOTE)
     temp_base = "/private/tmp" if sys.platform == "darwin" else tempfile.gettempdir()
     state_path = os.environ.get("STUDIOLO_SYNC_STATE_DIR", temp_base + "/studiolo-agent-sync-" + str(os.getuid()))
     os.umask(0o077)
