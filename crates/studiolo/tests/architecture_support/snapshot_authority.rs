@@ -16,7 +16,6 @@ pub(super) fn remainder(crate_name: &str, path: &Path, source: &str) -> String {
                 "letwork=attempt.join(\"work\");",
                 "fornamein[\".git\",\".codex\",\".claude\",\".mcp.json\"]",
                 "ifpatch.len()>MAX_PATCH",
-                ".env_clear().env(\"PATH\",\"/usr/bin:/bin\").env(\"GIT_CONFIG_NOSYSTEM\",\"1\").env(\"GIT_CONFIG_GLOBAL\",\"/dev/null\")",
                 "\"--binary\",\"--no-ext-diff\",\"--no-textconv\"",
                 "file.try_lock()",
                 "let_=self._file.unlock();",
@@ -39,14 +38,6 @@ pub(super) fn remainder(crate_name: &str, path: &Path, source: &str) -> String {
                 ("fs::read_dir(dir)", 1),
                 (".write_all(&bytes)", 1),
                 ("fs::metadata(root)", 1),
-                (
-                    "Command::new(\"git\").env_clear().env(\"PATH\",\"/usr/bin:/bin\").env(\"GIT_CONFIG_NOSYSTEM\",\"1\").env(\"GIT_CONFIG_GLOBAL\",\"/dev/null\").env(\"GIT_INDEX_FILE\",index).env(\"GIT_TERMINAL_PROMPT\",\"0\").env(\"GIT_AUTHOR_NAME\",\"Studiolosnapshot\").env(\"GIT_AUTHOR_EMAIL\",\"snapshot@invalid\").env(\"GIT_COMMITTER_NAME\",\"Studiolosnapshot\").env(\"GIT_COMMITTER_EMAIL\",\"snapshot@invalid\").arg(\"--git-dir\").arg(repo).arg(\"--work-tree\").arg(work).args([\"-c\",\"core.hooksPath=/dev/null\",\"-c\",\"core.fsmonitor=false\",\"-c\",\"core.untrackedCache=false\",\"-c\",\"diff.external=\",\"-c\",\"core.pager=cat\"]).args(args).stdin(Stdio::null()).output()",
-                    1,
-                ),
-                (
-                    "Command::new(\"git\").env_clear().env(\"PATH\",\"/usr/bin:/bin\").env(\"GIT_CONFIG_NOSYSTEM\",\"1\").env(\"GIT_CONFIG_GLOBAL\",\"/dev/null\").args([\"-C\"]).arg(&source).args([\"rev-parse\",\"--absolute-git-dir\"]).output()",
-                    1,
-                ),
                 ("fs::read_dir(&root)", 1),
                 ("fs::remove_file(path)", 2),
                 ("fs::read(entry.path())", 1),

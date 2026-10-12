@@ -1,12 +1,11 @@
 //! 宿主机持有的 git 快照，以及候选补丁的持久保留；绝不更新任何分支。
-use crate::{LaunchStage, RunnerError};
+use crate::{LaunchStage, RunnerError, git_trust};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
     fs::{self, File},
     io::{Read, Write},
     path::{Path, PathBuf},
-    process::{Command, Stdio},
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -34,35 +33,12 @@ pub struct CodeSnapshot {
     pub base: String,
 }
 fn git(repo: &Path, work: &Path, index: &Path, args: &[&str]) -> Result<Vec<u8>, RunnerError> {
-    let result = Command::new("git")
-        .env_clear()
-        .env("PATH", "/usr/bin:/bin")
-        .env("GIT_CONFIG_NOSYSTEM", "1")
-        .env("GIT_CONFIG_GLOBAL", "/dev/null")
-        .env("GIT_INDEX_FILE", index)
-        .env("GIT_TERMINAL_PROMPT", "0")
+    let result = git_trust::scoped(repo, work, Some(index))
         .env("GIT_AUTHOR_NAME", "Studiolo snapshot")
         .env("GIT_AUTHOR_EMAIL", "snapshot@invalid")
         .env("GIT_COMMITTER_NAME", "Studiolo snapshot")
         .env("GIT_COMMITTER_EMAIL", "snapshot@invalid")
-        .arg("--git-dir")
-        .arg(repo)
-        .arg("--work-tree")
-        .arg(work)
-        .args([
-            "-c",
-            "core.hooksPath=/dev/null",
-            "-c",
-            "core.fsmonitor=false",
-            "-c",
-            "core.untrackedCache=false",
-            "-c",
-            "diff.external=",
-            "-c",
-            "core.pager=cat",
-        ])
         .args(args)
-        .stdin(Stdio::null())
         .output()
         .map_err(|_| RunnerError::LaunchFailed {
             stage: LaunchStage::Snapshot,
@@ -99,38 +75,14 @@ impl CodeSnapshot {
             return Err(RunnerError::InvalidExecution);
         }
         private_directory(&attempt, lease.owner)?;
-        let result = Command::new("git")
-            .env_clear()
-            .env("PATH", "/usr/bin:/bin")
-            .env("GIT_CONFIG_NOSYSTEM", "1")
-            .env("GIT_CONFIG_GLOBAL", "/dev/null")
-            .args(["-C"])
-            .arg(&source)
-            .args(["rev-parse", "--absolute-git-dir"])
-            .output()
-            .map_err(|_| RunnerError::LaunchFailed {
-                stage: LaunchStage::Snapshot,
-            })?;
-        if !result.status.success() {
-            return Err(RunnerError::InvalidExecution);
-        }
-        let repo = PathBuf::from(
-            String::from_utf8(result.stdout)
-                .map_err(|_| RunnerError::InvalidExecution)?
-                .trim(),
-        );
-        let repo = canonical_directory(&repo)?;
+        // 先确认 `.git` 真属于这个检出（外来的 gitdir 指针、commondir 重定向一律拒绝），
+        // 并拒绝本地配置里会在 `git add`／合并时执行宿主机代码或改写工作树位置的键，再起任何写操作。
+        let opened = git_trust::open(&source)?;
+        let repo = canonical_directory(&opened.git_dir)?;
         let index = attempt.join("snapshot.index");
-        // 本地 include 与 clean/smudge 过滤器会在 git add 时执行宿主机代码，故一律拒绝。
-        let config = git(&repo, &source, &index, &["config", "--local", "--list"])?;
-        if String::from_utf8_lossy(&config).lines().any(|line| {
-            line.starts_with("filter.")
-                || line.starts_with("include.")
-                || line.starts_with("includeif.")
-        }) {
-            return Err(RunnerError::InvalidExecution);
-        }
         git(&repo, &source, &index, &["read-tree", "HEAD"])?;
+        // 最危险的一步（add -A 会跑过滤器）之前再审计一次，缩小检查到使用的窗口。
+        opened.audit()?;
         git(&repo, &source, &index, &["add", "-A", "--", "."])?;
         let base = oid(git(&repo, &source, &index, &["write-tree"])?)?;
         let head = oid(git(&repo, &source, &index, &["rev-parse", "HEAD"])?)?;
@@ -164,16 +116,7 @@ impl CodeSnapshot {
                 .strip_prefix("gitdir: ")
                 .ok_or(RunnerError::InvalidExecution)?,
         ))?;
-        let common = PathBuf::from(
-            String::from_utf8(git(
-                &repo,
-                &source,
-                &index,
-                &["rev-parse", "--path-format=absolute", "--git-common-dir"],
-            )?)
-            .map_err(|_| RunnerError::InvalidExecution)?
-            .trim(),
-        );
+        let common = opened.common_dir.clone();
         if admin.parent() != Some(common.join("worktrees").as_path()) {
             return Err(RunnerError::InvalidExecution);
         }
@@ -216,6 +159,8 @@ impl CodeSnapshot {
     pub fn preserve(&self, retained: &Path) -> Result<(PatchMetadata, Vec<u8>), RunnerError> {
         // 枚举候选时直接拒绝非普通文件、硬链接与控制路径；冲突标记只记下，先保留补丁再拒绝。
         let conflict_free = validate_tree(&self.work)?;
+        // `add -A` 用源仓库的配置处理沙箱产出：配置在创建之后被改过就不能照用。
+        git_trust::audit(&self.repo, &self.work)?;
         git(
             &self.repo,
             &self.work,
@@ -818,6 +763,7 @@ fn cleanup_one(
     validate_tree(&record.admin)?;
     if identity(&snapshot.work)? != record.work_identity
         || identity(&record.admin)? != record.admin_identity
+        || identity(&record.repo)? != record.repo_identity
     {
         return Err(RunnerError::InvalidExecution);
     }
@@ -826,17 +772,7 @@ fn cleanup_one(
     if Path::new(admin_link.trim()) != snapshot.work.join(".git") {
         return Err(RunnerError::InvalidExecution);
     }
-    let local_config = git(
-        &snapshot.repo,
-        &record.source,
-        &snapshot.index,
-        &["config", "--local", "--list"],
-    )?;
-    if String::from_utf8_lossy(&local_config).lines().any(|s| {
-        s.starts_with("filter.") || s.starts_with("include.") || s.starts_with("includeif.")
-    }) {
-        return Err(RunnerError::InvalidExecution);
-    }
+    git_trust::audit(&snapshot.repo, &record.source)?;
     let name = attempt
         .file_name()
         .and_then(|v| v.to_str())

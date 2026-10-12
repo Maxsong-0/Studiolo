@@ -2,6 +2,7 @@
 
 mod budget;
 mod cli;
+mod git_trust;
 mod isolation;
 mod landing;
 mod real;
