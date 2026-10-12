@@ -1,11 +1,13 @@
 //! 可信的代码侧落地；刻意不出现在 RunnerAdapter 的执行路径中。
-use crate::RunnerError;
+use crate::{
+    RunnerError,
+    git_trust::{self, GitRepo},
+};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
     fs,
     path::{Path, PathBuf},
-    process::{Command, Stdio},
 };
 
 /// 经所有者批准的映射与不可变的候选绑定；绝不从 Runner 的 HTTP 请求反序列化。
@@ -35,35 +37,16 @@ pub struct CodeLandingResult {
     pub unlanded_patch: PathBuf,
 }
 fn git(
-    repo: &Path,
+    repo: &GitRepo,
     index: Option<&Path>,
     args: &[&str],
 ) -> Result<std::process::Output, RunnerError> {
-    let mut command = Command::new("git");
-    command
-        .env_clear()
-        .env("PATH", "/usr/bin:/bin")
-        .env("GIT_CONFIG_NOSYSTEM", "1")
-        .env("GIT_CONFIG_GLOBAL", "/dev/null")
-        .env("GIT_TERMINAL_PROMPT", "0")
-        .arg("-C")
-        .arg(repo)
-        .args([
-            "-c",
-            "core.hooksPath=/dev/null",
-            "-c",
-            "core.fsmonitor=false",
-            "-c",
-            "diff.external=",
-        ])
+    repo.git(index)
         .args(args)
-        .stdin(Stdio::null());
-    if let Some(index) = index {
-        command.env("GIT_INDEX_FILE", index);
-    }
-    command.output().map_err(|_| RunnerError::InvalidExecution)
+        .output()
+        .map_err(|_| RunnerError::InvalidExecution)
 }
-fn ok(repo: &Path, index: Option<&Path>, args: &[&str]) -> Result<Vec<u8>, RunnerError> {
+fn ok(repo: &GitRepo, index: Option<&Path>, args: &[&str]) -> Result<Vec<u8>, RunnerError> {
     let result = git(repo, index, args)?;
     if result.status.success() {
         Ok(result.stdout)
@@ -85,17 +68,9 @@ fn text_oid(bytes: Vec<u8>) -> Result<String, RunnerError> {
         Err(RunnerError::InvalidExecution)
     }
 }
-fn private_index(repo: &Path) -> Result<(tempfile::TempDir, PathBuf, String), RunnerError> {
+/// 仓库本地配置与身份的校验都在 `GitRepo` 打开时做完，这里只管算出完整工作树的 tree。
+fn private_index(repo: &GitRepo) -> Result<(tempfile::TempDir, PathBuf, String), RunnerError> {
     use std::os::unix::fs::PermissionsExt;
-    let config = ok(repo, None, &["config", "--local", "--list"])?;
-    if String::from_utf8_lossy(&config).lines().any(|line| {
-        line.starts_with("filter.")
-            || line.starts_with("include.")
-            || line.starts_with("includeif.")
-            || line.starts_with("extensions.worktreeconfig=")
-    }) {
-        return Err(RunnerError::InvalidExecution);
-    }
     let directory = tempfile::Builder::new()
         .prefix("studiolo-landing-")
         .permissions(fs::Permissions::from_mode(0o700))
@@ -108,11 +83,11 @@ fn private_index(repo: &Path) -> Result<(tempfile::TempDir, PathBuf, String), Ru
     Ok((directory, index, tree))
 }
 impl CodeLandingPlan {
-    fn head_matches(&self) -> Result<(), RunnerError> {
+    fn head_matches(&self, repo: &GitRepo) -> Result<(), RunnerError> {
         if !oid(&self.expected_head)
             || !oid(&self.expected_tree)
             || !oid(&self.expected_after_tree)
-            || text_oid(ok(&self.repository, None, &["rev-parse", "HEAD"])?)? != self.expected_head
+            || text_oid(ok(repo, None, &["rev-parse", "HEAD"])?)? != self.expected_head
         {
             return Err(RunnerError::IdempotencyConflict);
         }
@@ -120,8 +95,9 @@ impl CodeLandingPlan {
     }
     /// 前置条件检查（不改动工作树）；调用方须持有落地租约。
     pub fn verify_base(&self) -> Result<(), RunnerError> {
-        self.head_matches()?;
-        let (_, _, current) = private_index(&self.repository)?;
+        let repo = git_trust::open(&self.repository)?;
+        self.head_matches(&repo)?;
+        let (_, _, current) = private_index(&repo)?;
         if current != self.expected_tree {
             return Err(RunnerError::IdempotencyConflict);
         }
@@ -129,8 +105,9 @@ impl CodeLandingPlan {
     }
     /// 在重放或所有者验收之前，复核先前记录的落地结果。
     pub fn verify_landed(&self) -> Result<(), RunnerError> {
-        self.head_matches()?;
-        let (_, _, current) = private_index(&self.repository)?;
+        let repo = git_trust::open(&self.repository)?;
+        self.head_matches(&repo)?;
+        let (_, _, current) = private_index(&repo)?;
         if current != self.expected_after_tree {
             return Err(RunnerError::IdempotencyConflict);
         }
@@ -157,9 +134,11 @@ pub fn apply_code_patch(plan: &CodeLandingPlan) -> Result<CodeLandingResult, Run
     {
         return Err(RunnerError::InvalidExecution);
     }
-    plan.head_matches()?;
+    // 每次落地都重新校验身份与配置：这是第一个起 git 子进程的地方，之前什么都不会执行。
+    let repo = git_trust::open(&plan.repository)?;
+    plan.head_matches(&repo)?;
     if !ok(
-        &plan.repository,
+        &repo,
         None,
         &["diff", "--name-only", "--diff-filter=U", "-z"],
     )?
@@ -167,7 +146,7 @@ pub fn apply_code_patch(plan: &CodeLandingPlan) -> Result<CodeLandingResult, Run
     {
         return Err(RunnerError::IdempotencyConflict);
     }
-    let (_private, index, before) = private_index(&plan.repository)?;
+    let (_private, index, before) = private_index(&repo)?;
     if before != plan.expected_tree {
         return Err(RunnerError::IdempotencyConflict);
     }
@@ -182,18 +161,16 @@ pub fn apply_code_patch(plan: &CodeLandingPlan) -> Result<CodeLandingResult, Run
         .patch_path
         .to_str()
         .ok_or(RunnerError::InvalidExecution)?;
-    let check = git(&plan.repository, None, &["apply", "--check", "--", path])?;
+    // 改动工作树之前再审计一次：合并驱动与过滤器都在 apply 里跑。
+    repo.audit()?;
+    let check = git(&repo, None, &["apply", "--check", "--", path])?;
     let applied = if check.status.success() {
-        git(&plan.repository, None, &["apply", "--", path])?
+        git(&repo, None, &["apply", "--", path])?
     } else {
-        git(
-            &plan.repository,
-            Some(&index),
-            &["apply", "--3way", "--", path],
-        )?
+        git(&repo, Some(&index), &["apply", "--3way", "--", path])?
     };
     let unmerged = ok(
-        &plan.repository,
+        &repo,
         Some(&index),
         &["diff", "--name-only", "--diff-filter=U", "-z"],
     )?;
@@ -202,10 +179,10 @@ pub fn apply_code_patch(plan: &CodeLandingPlan) -> Result<CodeLandingResult, Run
         .filter(|p| !p.is_empty())
         .map(|p| String::from_utf8_lossy(p).into_owned())
         .collect();
-    let tracked = ok(&plan.repository, Some(&index), &["ls-files", "-z"])?;
+    let tracked = ok(&repo, Some(&index), &["ls-files", "-z"])?;
     for path in tracked.split(|b| *b == 0).filter(|p| !p.is_empty()) {
         let path = std::str::from_utf8(path).map_err(|_| RunnerError::InvalidExecution)?;
-        let full = plan.repository.join(path);
+        let full = repo.work.join(path);
         let metadata = match full.symlink_metadata() {
             Ok(value) => value,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
@@ -244,8 +221,9 @@ pub fn advance_code_ref(
     if !reference.starts_with("refs/heads/") || !oid(new_commit) || !oid(expected_old) {
         return Err(RunnerError::InvalidExecution);
     }
+    let repo = git_trust::open(repository)?;
     if git(
-        repository,
+        &repo,
         None,
         &["update-ref", reference, new_commit, expected_old],
     )?

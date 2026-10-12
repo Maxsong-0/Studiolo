@@ -51,6 +51,14 @@ const SITES: &[(&str, &str)] = &[
         "studiolo-runner-adapter",
         "crates/runner-adapter/src/landing.rs",
     ),
+    (
+        "studiolo-runner-adapter",
+        "crates/runner-adapter/src/git_trust.rs",
+    ),
+    (
+        "studiolo-runner-adapter",
+        "crates/runner-adapter/src/git_trust/audit.rs",
+    ),
     ("studiolo-gateway", "crates/gateway/src/relay_store.rs"),
     ("studiolo-gateway", "crates/gateway/src/durable_relay.rs"),
     ("studiolo-gateway", "crates/gateway/src/relay_retention.rs"),
