@@ -1,4 +1,5 @@
 //! 所有 HTTP 方法先匹配预占中的凭据与 SID，再交给 rmcp。
+//! 状态码按 MCP 2025-11-25 会话管理：会话不可用回 404、缺会话号回 400；401 只给凭据本身失效。
 use super::{
     TransportState, body, input,
     manager::{REQUEST_BINDING, Reservation},
@@ -70,14 +71,17 @@ pub(super) async fn gate(
             binding.owner == owner && binding.credential == credential && state.valid(binding)
         });
         let Some(binding) = binding else {
+            // 查不到、已过期或属于别的主体都按会话已结束回 404：客户端据此不带会话号重新 initialize；
+            // 回 401 会被当成令牌失效而转去重新认证（BUG-029）。
             state.deny(&owner, "session_invalid");
-            return failure(StatusCode::UNAUTHORIZED);
+            return failure(StatusCode::NOT_FOUND);
         };
         (binding, None)
     } else {
+        // 除 initialize 外缺会话号回 400；POST 的首包是不是 initialize 由 input::post 判。
         if method != Method::POST {
             state.deny(&owner, "session_required");
-            return failure(StatusCode::UNAUTHORIZED);
+            return failure(StatusCode::BAD_REQUEST);
         }
         let binding = match state
             .manager
@@ -141,8 +145,13 @@ pub(super) async fn gate(
     if method == Method::DELETE {
         return response;
     }
-    if !state.valid(&binding) {
+    // 请求已交给 SDK 之后的复核：凭据途中被吊销或轮换回 401；会话途中结束时 SDK 可能已在处理、
+    // 结果未知，回 503 而不是 404，免得客户端当成「没处理过」而重新握手后自动重放。
+    if !binding.current(&state.app.store) {
         return failure(StatusCode::UNAUTHORIZED);
+    }
+    if !binding.live(Instant::now()) {
+        return failure(StatusCode::SERVICE_UNAVAILABLE);
     }
     let (parts, body) = response.into_parts();
     let body = body::GuardedBody::wrap(

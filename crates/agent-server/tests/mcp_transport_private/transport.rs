@@ -27,6 +27,8 @@ include!("late_initialize.rs");
 include!("backpressure.rs");
 include!("streams.rs");
 include!("replay.rs");
+include!("expiry.rs");
+include!("dispatch.rs");
 
 async fn bounded(limits: Limits) -> (Fixture, Arc<Manager>) {
     let mut manager = None;

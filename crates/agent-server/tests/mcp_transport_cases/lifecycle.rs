@@ -22,8 +22,9 @@ async fn rotating_a_type_token_invalidates_old_stream_and_session_even_after_rei
     let mut stream = transport(&f, reqwest::Method::GET, &f.token, &session).send().await.unwrap();
     assert_eq!(stream.status(), 200);
     let new = f.store().issue_type("claude", "2026-09-12T00:00:01Z").unwrap().token;
+    // 旧令牌在认证门回 401；新令牌带旧会话号按查不到处理回 404，客户端据此重新 initialize。
     assert_eq!(transport(&f, reqwest::Method::GET, &f.token, &session).send().await.unwrap().status(), 401);
-    assert_eq!(transport(&f, reqwest::Method::GET, &new, &session).send().await.unwrap().status(), 401);
+    assert_eq!(transport(&f, reqwest::Method::GET, &new, &session).send().await.unwrap().status(), 404);
     tokio::time::timeout(Duration::from_secs(3), async {
         while stream.chunk().await.unwrap().is_some() {}
     }).await.unwrap();
