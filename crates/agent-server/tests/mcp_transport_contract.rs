@@ -28,3 +28,4 @@ fn transport(
 include!("mcp_transport_cases/identity.rs");
 include!("mcp_transport_cases/lifecycle.rs");
 include!("mcp_transport_cases/input.rs");
+include!("mcp_transport_cases/session.rs");

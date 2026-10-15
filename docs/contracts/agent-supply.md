@@ -121,6 +121,8 @@
 | 错误 | 触发 | 对外 |
 |---|---|---|
 | `unauthenticated` | 无/错/吊销 token | HTTP 401，无正文细节 |
+| `session_invalid` | MCP 会话号查不到、已过期、已关闭，或属于别的类型或凭据 | HTTP 404，不带 `WWW-Authenticate`；客户端不带会话号重新 initialize（见 [MCP 会话边界](../m3/mcp-session-boundaries.md)） |
+| `session_required` | GET／DELETE 不带会话号 | HTTP 400 |
 | `budget_exceeded` | 路牌超 2000 token | initialize 失败，JSON-RPC 错误含实际 token 数 |
 | `outside_allowlist` / `unsafe_path` | 越界读取 | tool 错误，已审计 |
 | `rule_not_whitelisted` | 读能力集规则名单外的规则文件或规则母本（§10） | 与白名单外（`read_note`）或不存在（`policy_read`）同一对外错误，已审计 |
