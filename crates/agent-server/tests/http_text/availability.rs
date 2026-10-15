@@ -1,5 +1,6 @@
 use super::support::{denied, fixture};
 use std::{fs, os::unix::fs::PermissionsExt};
+use studiolo_audit_ledger::{AuditFilter, AuditLedger};
 
 #[tokio::test]
 async fn audit_failure_withholds_content_and_the_handshake_until_recovery() {
@@ -44,4 +45,48 @@ async fn audit_failure_withholds_content_and_the_handshake_until_recovery() {
         outages[0].3 >= 5,
         "every withheld operation counts as denied"
     );
+}
+
+/// 身份库读不出来（BUG-030）：令牌真假与类型是否吊销都未知，回 503、不带 Bearer challenge，
+/// 不交付内容也不碰会话；恢复后同一会话照常续读。注入方式同 MCP 契约：私有库文件改成 0640。
+/// 三次请求都在认证门被挡下；`dispatch` 交付前的最后复核要两次读之间身份库恰好坏掉才走得到，
+/// 不加生产钩子没法确定地测，靠代码复查。
+#[tokio::test]
+async fn an_unreadable_identity_store_answers_503_without_a_challenge_and_keeps_the_session() {
+    let (_temp, f) = fixture().await;
+    let (session, _, _) = f.handshake().await;
+    let database = f.data.join("agent.sqlite3");
+    let note = [("path", "项目/Alpha/00-总览/INDEX.md")];
+    fs::set_permissions(&database, fs::Permissions::from_mode(0o640)).unwrap();
+    for request in [
+        f.get("/read/note", Some(&session)).query(&note),
+        f.get("/read/handshake", Some(&session)),
+        f.get("/read/handshake", None),
+    ] {
+        let response = request.send().await.unwrap();
+        assert!(response.headers().get("www-authenticate").is_none());
+        denied(response, 503).await;
+    }
+    fs::set_permissions(&database, fs::Permissions::from_mode(0o600)).unwrap();
+    let recovered = f
+        .get("/read/note", Some(&session))
+        .query(&note)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(recovered.status(), 200);
+    assert!(recovered.text().await.unwrap().contains("Alpha · 总览"));
+    let reasons = f
+        .ledger()
+        .query(&AuditFilter::default().with_action("agent.action_denied"))
+        .unwrap()
+        .into_iter()
+        .map(|event| {
+            event.event().payload().as_value()["reason"]
+                .as_str()
+                .unwrap()
+                .to_owned()
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(reasons, ["identity_unavailable"; 3]);
 }

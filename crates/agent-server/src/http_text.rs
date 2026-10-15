@@ -242,8 +242,15 @@ async fn dispatch(State(state): State<Arc<HttpState>>, request: Request<Body>) -
             Some(reservation),
         )
     };
-    if !state.app.store.type_is_active(agent_type).unwrap_or(false) {
-        return failure(StatusCode::UNAUTHORIZED, "会话已失效，请重新握手");
+    match state.app.store.type_is_active(agent_type) {
+        Ok(true) => {}
+        Ok(false) => return failure(StatusCode::UNAUTHORIZED, "会话已失效，请重新握手"),
+        // 身份库读不出来：类型是否已吊销未知，不交付已备好的正文，也不碰会话，下一次请求再判
+        // （BUG-030）；回 401 会让客户端当成令牌或会话失效。
+        Err(_) => {
+            deny(&state, agent_type, auth::IDENTITY_UNAVAILABLE);
+            return auth::identity_unavailable();
+        }
     }
     let Some(instance) = session.bound_instance() else {
         return failure(StatusCode::SERVICE_UNAVAILABLE, "实例不可用");
