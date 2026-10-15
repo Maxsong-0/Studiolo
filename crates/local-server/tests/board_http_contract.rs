@@ -2,6 +2,8 @@
 #[allow(dead_code)]
 #[path = "writer_http/fixture.rs"]
 mod fixture;
+#[path = "board_http/identity_outage.rs"]
+mod identity_outage;
 #[allow(dead_code)]
 #[path = "sessions/support.rs"]
 mod support;

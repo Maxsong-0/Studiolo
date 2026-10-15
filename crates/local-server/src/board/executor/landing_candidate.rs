@@ -1,6 +1,6 @@
 //! 候选只按 `Control DB`／`Broker` 的权威记录解析，绝不采用请求提供的宿主机路径。
 use super::{ProjectConfig, RunnerPlane, hash};
-use crate::board::requests::Request;
+use crate::board::{auth::lineage, requests::Request};
 use studiolo_control_db::{AttemptPhase, TaskStatus};
 use studiolo_core::{AttemptId, Fence, TaskId, VaultPath};
 use studiolo_runner_adapter::{CodeLandingPlan, PatchMetadata};
@@ -75,13 +75,16 @@ impl RunnerPlane {
             .find(|p| p.provider.name() == view.task.spec.adapter)
             .cloned()
             .ok_or("候选adapter不在部署范围")?;
-        let lineage = self
-            .authority
-            .board
-            .identities
-            .instance_lineage(&attempt.worker_id)
-            .map_err(|_| "原执行身份失效")?;
-        let agent_type = lineage.first().ok_or("原执行身份缺失")?.agent_type.clone();
+        // 读不出身份库只说暂不可用；「原执行身份失效」会让人侧以为这份候选再也落不了地。
+        let chain = lineage(
+            self.authority
+                .board
+                .identities
+                .instance_lineage(&attempt.worker_id),
+            "原执行身份失效",
+        )
+        .map_err(String::from)?;
+        let agent_type = chain.first().ok_or("原执行身份缺失")?.agent_type.clone();
         let request = Request {
             agent_type,
             instance_id: attempt.worker_id.clone(),
@@ -92,7 +95,7 @@ impl RunnerPlane {
         self.authority
             .board
             .authorize(&request)
-            .map_err(str::to_owned)?;
+            .map_err(String::from)?;
         let receipt = view.candidate_receipt.ok_or("Broker候选回执缺失")?;
         let base = format!("sources/attempts/{task}/{}", attempt.attempt_id);
         if receipt.manifest_path.as_str() != format!("{base}/manifest.json")

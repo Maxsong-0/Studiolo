@@ -92,7 +92,7 @@ impl RunnerPlane {
             self.authority
                 .board
                 .authorize(&candidate.request)
-                .map_err(str::to_owned)?;
+                .map_err(String::from)?;
             self.authority.board.event(
                 &candidate.request,
                 &id,
@@ -112,7 +112,7 @@ impl RunnerPlane {
         self.authority
             .board
             .authorize(&candidate.request)
-            .map_err(str::to_owned)?;
+            .map_err(String::from)?;
         self.authority.board.event(
             &candidate.request,
             &id,

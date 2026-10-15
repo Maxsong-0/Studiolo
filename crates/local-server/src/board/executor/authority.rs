@@ -1,6 +1,6 @@
 //! 每个 `relay` 边界都重新核验 `canonical` 认领、策略、`lineage` 与分级。
 use super::{Binding, RunnerConfig};
-use crate::board::{BoardPlane, requests::Request};
+use crate::board::{BoardPlane, auth::Refusal, requests::Request};
 use std::{
     collections::BTreeMap,
     sync::{
@@ -73,7 +73,7 @@ impl RelayPolicyGuard for Authority {
             operation: "runner.relay".into(),
             request: serde_json::json!({}),
         };
-        let current = self.board.authorize(&r).map_err(|_| RelayError::Denied)?;
+        let current = self.board.authorize(&r).map_err(relay_refusal)?;
         if current.hash != grant.policy_hash {
             return Err(RelayError::Denied);
         }
@@ -111,9 +111,38 @@ impl RelayPolicyGuard for Authority {
         Ok(())
     }
 }
+/// 授权复核读不出身份库、策略库或控制存储时答「持久状态不可用」（503），执行体稍后重试；
+/// 只有确定拒绝才答 403，否则执行体会把一次读错当成授权被拒（BUG-032）。
+fn relay_refusal(refusal: Refusal) -> RelayError {
+    match refusal {
+        Refusal::Denied(_) => RelayError::Denied,
+        Refusal::Unavailable(_) => RelayError::Storage,
+    }
+}
 pub(super) struct SystemClock;
 impl studiolo_gateway::Clock for SystemClock {
     fn now_unix_seconds(&self) -> i64 {
         jiff::Timestamp::now().as_second()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Refusal, RelayError, relay_refusal};
+
+    #[test]
+    fn unreadable_authority_is_retryable_and_only_a_real_denial_is_forbidden() {
+        assert_eq!(
+            relay_refusal(Refusal::Unavailable("身份库暂不可用，请稍后重试")),
+            RelayError::Storage
+        );
+        assert_eq!(
+            relay_refusal(Refusal::Unavailable("策略不可用")),
+            RelayError::Storage
+        );
+        assert_eq!(
+            relay_refusal(Refusal::Denied("实例或祖先已失效")),
+            RelayError::Denied
+        );
     }
 }
