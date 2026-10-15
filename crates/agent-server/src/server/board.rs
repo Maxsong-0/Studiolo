@@ -118,10 +118,12 @@ impl AgentSession {
                 .state
                 .store
                 .type_is_active(&grant.instance.agent_type)
-                .map_err(|_| McpError::internal_error("身份库不可用", None))?
-                || self.mcp.as_ref().is_some_and(|binding| {
-                    binding.stale(std::time::Instant::now()) || !binding.current(&self.state.store)
-                })
+                .map_err(super::grant::identity_unavailable)?
+                || self
+                    .mcp
+                    .as_ref()
+                    .is_some_and(|binding| binding.stale(std::time::Instant::now()))
+                || !self.binding_current()?
             {
                 return Err(McpError::invalid_request("会话身份已失效", None));
             }

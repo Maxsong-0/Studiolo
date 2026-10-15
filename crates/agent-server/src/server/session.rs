@@ -1,12 +1,12 @@
 //! 会话认证、策略平面复核（三级吊销与能力集）、先审计后供给，及带新鲜度与策略版本的预算路牌。
 //! 本文件留会话构造、MCP 绑定与 initialize；授权复核、审计辅助、新鲜度与代次、路牌分别在同级
 //! grant／auditing／freshness／signpost 模块。
-use super::AgentSession;
+use super::{AgentSession, grant::identity_unavailable};
 use crate::state::{AppState, now};
 use rmcp::ErrorData as McpError;
 use std::sync::{Arc, OnceLock};
 use studiolo_supply::{
-    Instance,
+    Instance, SupplyError,
     audit::{self, Actor},
 };
 
@@ -38,8 +38,11 @@ impl AgentSession {
     }
 
     pub(super) fn finish_mcp(&self, text: String) -> Result<String, McpError> {
-        if let Some(binding) = &self.mcp
-            && (!binding.current(&self.state.store) || !binding.touch(std::time::Instant::now()))
+        if !self.binding_current()?
+            || self
+                .mcp
+                .as_ref()
+                .is_some_and(|binding| !binding.touch(std::time::Instant::now()))
         {
             return Err(McpError::invalid_request("会话无效，请重新握手", None));
         }
@@ -80,11 +83,15 @@ impl AgentSession {
             if self.state.policy.is_none() {
                 return Err(McpError::invalid_request("子实例需要有效策略平面", None));
             }
-            let ancestors = self
-                .state
-                .store
-                .instance_lineage(parent)
-                .map_err(|_| McpError::invalid_params("父实例无效", None))?;
+            let ancestors =
+                self.state
+                    .store
+                    .instance_lineage(parent)
+                    .map_err(|error| match error {
+                        SupplyError::InvalidParent => McpError::invalid_params("父实例无效", None),
+                        // 身份库读不出来不等于父实例无效。
+                        error => identity_unavailable(error),
+                    })?;
             let parent_instance = ancestors
                 .first()
                 .filter(|instance| instance.agent_type == agent_type)

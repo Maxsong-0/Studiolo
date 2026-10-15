@@ -176,10 +176,13 @@ impl Binding {
         }
     }
 
-    pub(crate) fn current(&self, store: &studiolo_supply::AgentStore) -> bool {
-        store
-            .credential_is_current(&self.owner, &self.credential)
-            .unwrap_or(false)
+    /// 凭据是否仍是该类型当前那一枚。`Err` 表示身份库读不出来、结论未知：调用方要报暂不可用，
+    /// 不能当成已吊销而回 401 或丢会话（BUG-030）。
+    pub(crate) fn current(
+        &self,
+        store: &studiolo_supply::AgentStore,
+    ) -> Result<bool, studiolo_supply::SupplyError> {
+        store.credential_is_current(&self.owner, &self.credential)
     }
 
     fn expired(&self, phase: &Phase, now: Instant) -> bool {

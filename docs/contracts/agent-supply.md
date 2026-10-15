@@ -74,6 +74,7 @@
     须改为在交互终端显示后由主人手工抄进 0600 文件；该文件不在本片写域。
 
 - 无 / 错 / 已吊销 token：HTTP 401（`WWW-Authenticate: Bearer`，无正文），**不进入任何内容计算**，记 `agent.action_denied`（reason=`unauthenticated`，主体匿名）。
+- 身份库读不出来（SQLite 忙超时、I/O 错、私有存储复核失败）时令牌真假未知：HTTP 503，**不带** `WWW-Authenticate`，正文只给固定类别、不回显底层错误或路径，记 `agent.action_denied`（reason=`identity_unavailable`）。不能折成 401：客户端收到 401 会当成令牌失效、转去重新认证（T-180，vault BUG-030）。已建立的会话里任何一处复核读不出来，也只报不可用、不当成吊销：MCP 门禁回 503，tool 返回「身份库不可用」错误（父实例查询同样，不报「父实例无效」），响应流暂停交付，会话保留到下一次再判（POST 响应体的 30 秒期限照旧，见 [MCP 会话边界](../m3/mcp-session-boundaries.md)）。
 - 同一 MCP 会话内所有 tool 调用共享该实例；实例注册记 `agent_instance.registered`；会话结束实例保留记录不删。本片服务端只协商带会话的协议版本（2025-11-25 / 2025-06-18 / 2025-03-26），SEP-2567 无会话模式下的实例身份另行设计。三级吊销属 M4；本片只提供 `admin type-revoke`：类型摘要标记吊销后，**同一会话的下一次调用在门禁处即 401**（记 `unauthenticated`），新握手同样 401；handler 内另有 `type_is_active` 复核作为纵深。
 
 ## 3. 冷启动路牌（二元验收）
@@ -121,6 +122,7 @@
 | 错误 | 触发 | 对外 |
 |---|---|---|
 | `unauthenticated` | 无/错/吊销 token | HTTP 401，无正文细节 |
+| `identity_unavailable` | 身份库读不出来（认证、会话复核或父实例查询时） | HTTP 503，不带 `WWW-Authenticate`，固定正文；会话保留，下一次请求再判；tool 内返回「身份库不可用」错误（见 [MCP 会话边界](../m3/mcp-session-boundaries.md)） |
 | `session_invalid` | MCP 会话号查不到、已过期、已关闭，或属于别的类型或凭据 | HTTP 404，不带 `WWW-Authenticate`；客户端不带会话号重新 initialize（见 [MCP 会话边界](../m3/mcp-session-boundaries.md)） |
 | `session_required` | GET／DELETE 不带会话号 | HTTP 400 |
 | `budget_exceeded` | 路牌超 2000 token | initialize 失败，JSON-RPC 错误含实际 token 数 |
@@ -133,7 +135,7 @@
 
 - 对象安全与依赖方向：supply 不依赖 axum/rmcp；agent-server 不依赖 FsVaultBroker、ControlDb、auth。
 - 预算二元：构造超预算 INDEX 夹具 → initialize 失败且账本有 `handshake.budget_exceeded`；正常夹具 → instructions ≤2000 且六项齐全。
-- 身份：无 token 401；错 token 401 且 `agent.action_denied`；正确 token → 实例落库并绑定会话；吊销类型后立即 401。
+- 身份：无 token 401；错 token 401 且 `agent.action_denied`；正确 token → 实例落库并绑定会话；吊销类型后立即 401。身份库读不出来（测试把私有库文件改成 0640）→ 503 不带 challenge、会话不丢，恢复后同一令牌和会话照常可用（`mcp_transport_cases/identity_store.rs`、`http_text/availability.rs`、`mcp_transport_private/identity_outage.rs`）。
 - 类型 token 显示门禁（真实 PTY 驱动实际二进制，`crates/agent-server/tests/admin_terminal_contract.rs`
   ＋ `tests/support/admin_terminal.py`）：真实控制终端上恰好显示一次；无控制终端 / 全管道 /
   `> file` / 管道接 stdout / 改接 stderr / stdin 来自 `/dev/null` 六种形状各自被拒绝，

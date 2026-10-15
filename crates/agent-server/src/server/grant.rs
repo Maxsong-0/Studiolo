@@ -4,7 +4,13 @@ use crate::state::now;
 use rmcp::ErrorData as McpError;
 use studiolo_core::VaultPath;
 use studiolo_policy::{CapabilitySet, Denial, view::intersect_prefixes};
-use studiolo_supply::{Instance, audit::Actor, rule_subject};
+use studiolo_supply::{Instance, SupplyError, audit::Actor, rule_subject};
+
+/// 身份库读不出来：本次拒绝供给并如实报不可用；不能当成会话失效、父实例无效之类的否定结论，
+/// 那会让客户端丢掉仍有效的会话去重新握手（BUG-030）。
+pub(super) fn identity_unavailable(_: SupplyError) -> McpError {
+    McpError::internal_error("身份库不可用", None)
+}
 
 /// 策略平面复核通过后拿到的能力集（每次调用重新读取，不缓存）。
 pub(crate) struct GrantPolicy {
@@ -64,11 +70,23 @@ impl Grant {
 }
 
 impl AgentSession {
+    /// MCP 会话绑定的凭据是否仍有效；HTTP 外壳没有绑定，恒为是。身份库读不出来报不可用。
+    pub(super) fn binding_current(&self) -> Result<bool, McpError> {
+        self.mcp.as_ref().map_or(Ok(true), |binding| {
+            binding
+                .current(&self.state.store)
+                .map_err(identity_unavailable)
+        })
+    }
+
     /// 每次调用都重验：实例已注册、类型未吊销（身份库）、策略平面三级吊销与能力集（策略库）。
     pub(super) fn authorize(&self, action: &str) -> Result<Grant, McpError> {
-        if self.mcp.as_ref().is_some_and(|binding| {
-            !binding.live(std::time::Instant::now()) || !binding.current(&self.state.store)
-        }) {
+        if self
+            .mcp
+            .as_ref()
+            .is_some_and(|binding| !binding.live(std::time::Instant::now()))
+            || !self.binding_current()?
+        {
             return Err(McpError::invalid_request("会话无效，请重新握手", None));
         }
         let Some(instance) = self.instance.get() else {
@@ -78,7 +96,7 @@ impl AgentSession {
             .state
             .store
             .type_is_active(&instance.agent_type)
-            .map_err(|_| McpError::internal_error("身份库不可用", None))?;
+            .map_err(identity_unavailable)?;
         if !active {
             self.deny(
                 Actor::instance(&instance.agent_type, &instance.id),

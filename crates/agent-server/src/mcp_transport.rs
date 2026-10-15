@@ -36,9 +36,26 @@ struct TransportState {
     requests: Arc<Semaphore>,
 }
 
+/// 会话还能不能用。身份库读不出来单列一态：结论未知，既不能放行，也不能当成失效
+/// 回 401／404 或丢会话，下一次再判（BUG-030）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Validity {
+    Valid,
+    /// 已过期、已关闭，或凭据已吊销、已轮换。
+    Invalid,
+    Unavailable,
+}
+
 impl TransportState {
-    fn valid(&self, binding: &Binding) -> bool {
-        binding.live(Instant::now()) && binding.current(&self.app.store)
+    fn validity(&self, binding: &Binding) -> Validity {
+        if !binding.live(Instant::now()) {
+            return Validity::Invalid;
+        }
+        match binding.current(&self.app.store) {
+            Ok(true) => Validity::Valid,
+            Ok(false) => Validity::Invalid,
+            Err(_) => Validity::Unavailable,
+        }
     }
 
     fn deny(&self, owner: &str, reason: &str) {
@@ -95,7 +112,10 @@ fn assemble(app: Arc<AppState>, limits: Limits) -> (Router, Arc<Manager>) {
                 break;
             };
             for binding in state.manager.pool.all() {
-                if binding.stale(Instant::now()) || !binding.current(&state.app.store) {
+                // 身份库读不出来不算吊销：留着会话，下一轮再判。
+                if binding.stale(Instant::now())
+                    || matches!(binding.current(&state.app.store), Ok(false))
+                {
                     state.manager.discard(binding);
                 }
             }
