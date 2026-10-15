@@ -49,6 +49,7 @@ import {
   initialPolicy,
   pendingCount,
   publish,
+  newerOpen,
   validate,
 } from './fixtures/policy.ts';
 import type { DesiredRecord, Kind, PolicyState } from './fixtures/policy.ts';
@@ -518,6 +519,18 @@ export function createFixtureApi(options: { now?: () => number } = {}) {
           `desired 当前状态 ${desired.status} 不可发布`,
           'state',
         );
+      // 与后端一样（T-181）：同一对象还有更晚入库的未发布草案就不发这份，什么都不改。
+      const newer = newerOpen(policy)[desired.id] ?? [];
+      if (newer.length)
+        return {
+          status: 409,
+          body: {
+            code: 'newer_desired_exists',
+            error:
+              '同一对象还有更新的未发布草案，只能发布最新的那一份；要发这份，先撤回更新的。',
+            newer_desired_ids: newer,
+          },
+        };
       const { report, canonical } = validate(
         policy,
         desired.kind,
@@ -549,6 +562,7 @@ export function createFixtureApi(options: { now?: () => number } = {}) {
       desired.status = 'activated';
       desired.report = report;
       desired.activated_version = activation.version;
+      // 上面已拦住更新的，同一对象剩下的未发布草案都比这份早。
       for (const other of policy.desired)
         if (
           other !== desired &&
@@ -768,7 +782,7 @@ export function createFixtureApi(options: { now?: () => number } = {}) {
       case '/api/v1/policy':
         return ok(policyStatus());
       case '/api/v1/policy/desired':
-        return ok({ desired: policy.desired });
+        return ok({ desired: policy.desired, newer_open: newerOpen(policy) });
       case '/api/v1/policy/versions':
         return ok({
           versions: [...policy.versions].reverse().map((row) => row.meta),

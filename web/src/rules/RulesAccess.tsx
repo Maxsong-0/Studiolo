@@ -247,7 +247,7 @@ export function RulesAccess({
                 origin={ORIGIN}
                 status={status}
                 actions={actions}
-                others={column.others}
+                drafts={column.drafts}
               />
             ) : null,
           )}

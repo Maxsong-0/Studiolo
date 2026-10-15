@@ -6,14 +6,14 @@ import {
   readVersion,
 } from '../policyApi';
 import type {
-  DesiredRecord,
+  ListedDesired,
   PolicyStatus,
   VersionRecord,
 } from '../policyModel';
 
 export interface RulesSnapshot {
   status: PolicyStatus;
-  desired: DesiredRecord[];
+  desired: ListedDesired[];
   /** 版本号 → 版本记录；只取生效中的规则与能力集。 */
   records: ReadonlyMap<number, VersionRecord>;
 }

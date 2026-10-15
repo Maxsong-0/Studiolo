@@ -4,11 +4,12 @@
  * 这里只做推导与改写，不发请求：所有结论都来自接口给的生效条目、版本正文与规则草案（desired）。
  */
 import type {
-  DesiredRecord,
   EffectiveEntry,
+  ListedDesired,
   PolicyStatus,
   VersionRecord,
 } from '../policyModel';
+import { isOpenStatus } from '../policyModel';
 
 // 规则名与正文的预校验（与后端同口径）单独成文件，这里一并导出，调用方只认规则模型这一个入口。
 export {
@@ -82,24 +83,18 @@ export function withRuleAccess(
   return JSON.stringify(root);
 }
 
-const ACTIONABLE: ReadonlySet<DesiredRecord['status']> = new Set([
-  'pending',
-  'validated',
-  'rejected',
-]);
-
-/** 还没发布、仍可发布／重新校验／撤回的规则草案。 */
-export function isOpenDraft(record: DesiredRecord): boolean {
-  return ACTIONABLE.has(record.status);
-}
-
 function time(value: string): number {
   const parsed = Date.parse(value);
   return Number.isNaN(parsed) ? 0 : parsed;
 }
 
-/** 新提交的在前；同一时刻按 id（ULID）倒序。 */
-function newestFirst(left: DesiredRecord, right: DesiredRecord): number {
+/**
+ * 同一对象的草案最新的在前：先按接口给的「比它更新的未发布草案」份数（服务端按入库先后判，最新那份是 0），
+ * 提交时间和 id 只让不同对象之间的顺序稳定。只按提交时间排会被时钟回拨、同一秒内的先后骗到（BUG-031）。
+ */
+function newestFirst(left: ListedDesired, right: ListedDesired): number {
+  const newer = left.newer_open.length - right.newer_open.length;
+  if (newer) return newer;
   const delta = time(right.submitted_at) - time(left.submitted_at);
   if (delta) return delta;
   return left.id < right.id ? 1 : left.id > right.id ? -1 : 0;
@@ -118,8 +113,8 @@ export interface RuleRow {
   body: string | null;
   /** 能读这条规则的 AI 类型（能力集名单里有它），按类型名排序。 */
   readers: string[];
-  /** 这条规则还没发布的草案，新的在前。 */
-  drafts: DesiredRecord[];
+  /** 这条规则还没发布的草案，最新的在前（按服务端判定）；只有第一份能发布。 */
+  drafts: ListedDesired[];
 }
 
 export interface TypeColumn {
@@ -133,11 +128,14 @@ export interface TypeColumn {
    * 主人提交、尚未发布的最新一份能力集草案：矩阵这一列按它显示「待发布」，再改格子就在它上面追加
    * （交一份新草案、撤回它），不另起一份基于生效正文的草案，免得前面的改动被覆盖。
    */
-  ownerDraft: DesiredRecord | null;
+  ownerDraft: ListedDesired | null;
   /** 这份草案提议的名单；没有草案为 null。 */
   proposed: Whitelist | null;
-  /** 同一类型其余未发布的能力集草案（多为 AI 提案）：发布本列的改动会把它们一并标为已取代。 */
-  others: number;
+  /**
+   * 这一类型全部未发布的能力集草案（含 ownerDraft，多出来的多为 AI 提案），最新的在前：发布 ownerDraft 时
+   * 比它早的一并标为已取代，比它新的会挡住发布（T-181）。
+   */
+  drafts: ListedDesired[];
   /** 该类型的撤销接入生效中。 */
   revoked: boolean;
 }
@@ -152,11 +150,13 @@ export interface RulesModel {
 /** 由生效条目、各版本正文与草案列表推出规则行与读权限的列。 */
 export function buildRulesModel(input: {
   status: PolicyStatus;
-  desired: readonly DesiredRecord[];
+  desired: readonly ListedDesired[];
   records: ReadonlyMap<number, VersionRecord>;
 }): RulesModel {
   const { status, desired, records } = input;
-  const open = desired.filter(isOpenDraft).sort(newestFirst);
+  const open = desired
+    .filter((record) => isOpenStatus(record.status))
+    .sort(newestFirst);
   const bodyOf = (entry: EffectiveEntry) =>
     records.get(entry.version)?.body ?? null;
   const revoked = new Set(
@@ -182,7 +182,7 @@ export function buildRulesModel(input: {
         whitelist: ruleWhitelist(body),
         ownerDraft,
         proposed: ownerDraft ? ruleWhitelist(ownerDraft.body) : null,
-        others: drafts.length - (ownerDraft ? 1 : 0),
+        drafts,
         revoked: revoked.has(entry.subject),
       };
     });

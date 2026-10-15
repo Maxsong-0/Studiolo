@@ -1,5 +1,7 @@
 //! 只读查询：effective 摘要、desired 列表、版本列表与单版正文；每次仍重验会话。
 
+use std::collections::BTreeMap;
+
 use axum::{
     extract::{Path, Request, State, rejection::PathRejection},
     response::{IntoResponse, Response},
@@ -51,6 +53,10 @@ pub(super) async fn status(State(state): State<AppState>, mut request: Request) 
 #[derive(Serialize)]
 struct DesiredList {
     desired: Vec<DesiredRecord>,
+    /// 每份未发布草案 → 同一对象里比它晚入库的未发布草案号，最新那份是空表；发布时按同一口径
+    /// 拦截（T-181），界面照这张表标「最新」「较早」。未发布草案一份不少都在 `desired` 里（200 份
+    /// 只截已结束的历史）。
+    newer_open: BTreeMap<String, Vec<String>>,
 }
 
 pub(super) async fn desired_list(State(state): State<AppState>, mut request: Request) -> Response {
@@ -64,11 +70,10 @@ pub(super) async fn desired_list(State(state): State<AppState>, mut request: Req
     };
     respond(
         run(plane, principal, |plane, _| {
+            let (desired, newer_open) = plane.store.desired_queue(200).map_err(Problem::policy)?;
             Ok(DesiredList {
-                desired: plane
-                    .store
-                    .desired_list(None, 200)
-                    .map_err(Problem::policy)?,
+                desired,
+                newer_open,
             })
         })
         .await,

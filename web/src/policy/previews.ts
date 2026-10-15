@@ -5,7 +5,7 @@ import type {
   RevokeRequest,
   VersionMeta,
 } from '../policyModel';
-import { KIND_LABEL, LEVEL_LABEL, shortHash } from '../policyModel';
+import { KIND_LABEL, LEVEL_LABEL, shortHash, shortId } from '../policyModel';
 
 /**
  * 不可逆动作「执行预览」的文字（纯函数，设计规范第 8、9 节）：做什么、对哪个对象、
@@ -54,11 +54,15 @@ function currentVersion(
   return entry ? `当前生效 v${entry.version}` : '当前没有生效版本';
 }
 
-/** 发布一份已校验的规则草案。 */
+/**
+ * 发布一份已校验的规则草案。`superseded` 是同一对象里较早的未发布草案：发布这一份时服务端把它们
+ * 一并标为已取代（只有最新那份能发布，所以剩下的都比它早，T-181）。
+ */
 export function publishPreview(
   record: DesiredRecord,
   report: Report,
   status: PolicyStatus,
+  superseded: readonly DesiredRecord[],
 ): PreviewContent {
   const target = `${KIND_LABEL[record.kind]} ${record.subject}`;
   const from = currentVersion(status, record.kind, record.subject);
@@ -67,6 +71,8 @@ export function publishPreview(
     title: `发布 ${target}`,
     facts: [
       { label: '对象', value: target },
+      // 发的就是这一份：草案号写全，与队列里的号逐位对得上。
+      { label: '草案', value: record.id },
       {
         label: '版本',
         value: `${from} → 新版本（编号在发布时由服务端分配）`,
@@ -77,6 +83,14 @@ export function publishPreview(
         value: expansions ? `${expansions} 项，见上方校验报告` : '无',
         signal: expansions > 0,
       },
+      {
+        label: '同时取代',
+        value: superseded.length
+          ? `同一对象较早的 ${superseded.length} 份未发布草案（${superseded
+              .map((entry) => shortId(entry.id))
+              .join('、')}）：发布后标为已取代，不能再发布`
+          : '无：同一对象没有别的未发布草案',
+      },
     ],
     notes: [
       ...(report.retire ? ['这是一次撤销：发布后该对象不再有生效版本。'] : []),
@@ -85,6 +99,27 @@ export function publishPreview(
     ],
     confirmLabel: '确认发布',
   };
+}
+
+/** 发布成功提示的补充：发布事务把同一对象剩下的未发布草案一并标成了已取代（执行预览里列过）。 */
+export function supersededNotice(supersedes: number): string {
+  return supersedes ? '；同一对象其余未发布的草案已一并标为已取代' : '';
+}
+
+/**
+ * 这份草案不是同一对象最新的那份时，发布按钮为什么不可点（服务端会以 newer_desired_exists 拒绝）；
+ * `newer` 是接口给的更新草案号。是最新的返回 null。
+ */
+export function newerDraftReason(newer: readonly string[]): string | null {
+  if (!newer.length) return null;
+  return `同一对象还有更新的未发布草案（${newer.map(shortId).join('、')}）：只能发布最新的那一份；要发这份，先在「策略」页的待处理草案里撤回更新的。`;
+}
+
+/** 发布这份最新草案会把同一对象较早的几份一并标为已取代：发布按钮旁先说一句。没有较早的返回 null。 */
+export function supersededHint(count: number): string | null {
+  return count
+    ? `同一对象另有 ${count} 份较早的未发布草案：发布这一份会把它们标为已取代。`
+    : null;
 }
 
 /** 回滚到某个历史版本：新建一个正文等于它的版本，历史不变。 */

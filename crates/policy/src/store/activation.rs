@@ -3,12 +3,13 @@
 use crate::{PolicyError, model::MAX_BODY_BYTES, sql, validate};
 
 use super::{
-    Activation, DesiredInput, DesiredStatus, PolicyStore,
+    Activation, DesiredInput, DesiredStatus, PolicyStore, queue,
     support::{check_hash, publish},
 };
 
 impl PolicyStore {
-    /// 发布一份 desired（调用前必须已过 L3）：CAS 校验 effective 哈希 → 重新校验 → 写新版本。
+    /// 发布一份 desired（调用前必须已过 L3）：CAS 校验 effective 哈希 → 只认同一对象最新的
+    /// 未发布 desired → 重新校验 → 写新版本，同一对象较早的未发布 desired 标为已取代。
     pub fn activate(
         &self,
         id: &str,
@@ -26,6 +27,12 @@ impl PolicyStore {
                 return Err(PolicyError::DesiredNotActivatable(
                     record.status.as_str().to_owned(),
                 ));
+            }
+            // 同一对象还有更晚入库的未发布 desired 就不发这份（T-181）：发布会把其余未发布的
+            // 一并标成已取代，较早那份不能悄悄盖掉更新的提议；要发这份，先撤回更新的。
+            let newer = queue::newer_than(tx, record.kind, &record.subject, id)?;
+            if !newer.is_empty() {
+                return Err(PolicyError::NewerDesiredExists { newer });
             }
             let context = sql::context(tx, record.kind, &record.subject)?;
             let report = validate::validate(
@@ -48,6 +55,7 @@ impl PolicyStore {
                 now,
                 Some(activation.version),
             )?;
+            // 上面已拦住更新的，同一对象剩下的未发布 desired 都比这份早。
             tx.execute(
                 "UPDATE policy_desired SET status = 'superseded'
                  WHERE kind = ?1 AND subject = ?2 AND id != ?3

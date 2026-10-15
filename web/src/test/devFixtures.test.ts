@@ -522,6 +522,64 @@ describe('假数据：写操作走得通', () => {
     expect(get('/api/v1/policy/versions/9').status).toBe(404);
   });
 
+  it('同一对象两份未发布草案：列表标出先后；发布较早那份回 409、什么都不改，最新那份照发并取代较早的（T-181）', () => {
+    const { post, read } = setup();
+    const proposal = desiredList(read('/api/v1/policy/desired'))[0];
+    const current = versionRecord(read('/api/v1/policy/versions/3'));
+    const body = JSON.parse(current.body ?? '{}') as {
+      read: { rules_whitelist: string[] };
+    };
+    body.read.rules_whitelist = ['CLAUDE.md'];
+    const owner = desiredEnvelope(
+      post('/api/v1/policy/desired', {
+        kind: 'capability_set',
+        subject: 'claude',
+        body: JSON.stringify(body),
+      }).body,
+    );
+    expect(owner.status).toBe('validated');
+    expect(
+      desiredList(read('/api/v1/policy/desired')).map((entry) => [
+        entry.id,
+        entry.newer_open,
+      ]),
+    ).toEqual([
+      [owner.id, []],
+      [proposal.id, [owner.id]],
+    ]);
+    const before = policyStatus(read('/api/v1/policy')).effective_hash;
+    recentAuthentication(post('/api/v1/auth/step-up', { code: '482913' }).body);
+    expect(
+      post('/api/v1/policy/activate', {
+        desired_id: proposal.id,
+        expected_effective_hash: before,
+      }),
+    ).toMatchObject({
+      status: 409,
+      body: { code: 'newer_desired_exists', newer_desired_ids: [owner.id] },
+    });
+    expect(policyStatus(read('/api/v1/policy')).effective_hash).toBe(before);
+    expect(
+      desiredList(read('/api/v1/policy/desired')).map((entry) => entry.status),
+    ).toEqual(['validated', 'pending']);
+    const outcome = activateOutcome(
+      post('/api/v1/policy/activate', {
+        desired_id: owner.id,
+        expected_effective_hash: before,
+      }).body,
+    );
+    expect(outcome.kind).toBe('activated');
+    expect(
+      desiredList(read('/api/v1/policy/desired')).map((entry) => [
+        entry.id,
+        entry.status,
+      ]),
+    ).toEqual([
+      [owner.id, 'activated'],
+      [proposal.id, 'superseded'],
+    ]);
+  });
+
   it('提交 desired、重新校验、撤回、吊销都返回解码器接受的形状', () => {
     const { post } = setup();
     const created = desiredEnvelope(

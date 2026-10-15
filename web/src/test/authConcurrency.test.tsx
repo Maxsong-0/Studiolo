@@ -56,7 +56,7 @@ function route(path: string, init?: RequestInit): Response {
         l3_available: true,
       });
     case '/api/v1/policy/desired':
-      return jsonResponse({ desired: [] });
+      return jsonResponse({ desired: [], newer_open: {} });
     case '/api/v1/policy/versions':
       return jsonResponse({ versions: [meta(1)] });
     case '/api/v1/policy/versions/1':

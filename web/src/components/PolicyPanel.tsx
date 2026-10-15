@@ -15,6 +15,7 @@ import type {
   ActivateRequest,
   DesiredInput,
   DesiredRecord,
+  ListedDesired,
   PolicyStatus,
   RevokeRequest,
   VersionMeta,
@@ -24,14 +25,20 @@ import {
   KIND_LABEL,
   LEVEL_LABEL,
   STATUS_LABEL,
+  isOpenStatus,
   shortHash,
+  shortId,
+  supersededBy,
 } from '../policyModel';
 import { ActionPreview } from '../policy/ActionPreview';
 import {
+  newerDraftReason,
   publishPreview,
   releasePreview,
   revokePreview,
   rollbackPreview,
+  supersededHint,
+  supersededNotice,
   type PreviewContent,
 } from '../policy/previews';
 import { Term } from '../policy/Term';
@@ -46,17 +53,21 @@ import '../styles/policy.css';
 
 type Loaded = {
   status: PolicyStatus;
-  desired: DesiredRecord[];
+  desired: ListedDesired[];
   versions: VersionMeta[];
 };
 /** 反馈落在发起动作的那一格里：人在哪格点的，就在哪格看结果。 */
 type Origin = 'effective' | 'submit' | 'queue' | 'versions' | 'revoke';
-/** 一次 L3 动作：请求本体、成功提示里的名字、给人看的动作说明、发起的格子。 */
+/**
+ * 一次 L3 动作：请求本体、成功提示里的名字、给人看的动作说明、发起的格子，以及执行预览里列出的、
+ * 同一对象会被一并标为已取代的较早草案份数（只有发布草案才可能不是 0）。
+ */
 type Activation = {
   request: ActivateRequest;
   label: string;
   action: string;
   origin: Origin;
+  supersedes: number;
 };
 /** 被二次认证挡下、等人就地认证后原样重试的那一个动作；`attempt` 只用于措辞。 */
 type Pending = Activation & { attempt: number };
@@ -81,11 +92,6 @@ const QUEUE_ITEM = 'desired';
 function when(value: string) {
   const parsed = new Date(value);
   return Number.isNaN(parsed.getTime()) ? value : parsed.toLocaleString();
-}
-
-/** 待处理草案：还能发布、重新校验或撤回的那几种状态。 */
-function actionableStatus(status: DesiredRecord['status']) {
-  return ['pending', 'validated', 'rejected'].includes(status);
 }
 
 function CellFeedback({
@@ -124,7 +130,8 @@ export function PolicyPanel({ initial }: { initial: Loaded }) {
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<Feedback | null>(null);
   const [error, setError] = useState<Feedback | null>(null);
-  const [selected, setSelected] = useState<DesiredRecord | null>(null);
+  // 选中只记草案号，记录每次从刚读到的列表里取：重读后状态、报告和先后都是新的，不会停在旧对象上。
+  const [selectedId, setSelectedId] = useState<string | null>(null);
   const [version, setVersion] = useState<VersionRecord | null>(null);
   const [pending, setPending] = useState<Pending | null>(null);
   const [preview, setPreview] = useState<Preview | null>(null);
@@ -214,7 +221,7 @@ export function PolicyPanel({ initial }: { initial: Loaded }) {
   function submit(input: DesiredInput) {
     void act('submit', async () => {
       const record = await submitDesired(input, lifetime.current.signal);
-      setSelected(record);
+      setSelectedId(record.id);
       return record.report?.ok
         ? `已提交并校验通过（${record.id}）；发布前请逐条确认扩大项。`
         : `已提交但校验未通过（${record.id}）；请按逐条问题修改后重新提交。`;
@@ -223,25 +230,25 @@ export function PolicyPanel({ initial }: { initial: Loaded }) {
   function validate(record: DesiredRecord) {
     void act('queue', async () => {
       const updated = await validateDesired(record.id, lifetime.current.signal);
-      setSelected(updated);
+      setSelectedId(updated.id);
       return `已重新校验：${STATUS_LABEL[updated.status]}。`;
     });
   }
   function withdraw(record: DesiredRecord) {
     void act('queue', async () => {
       await withdrawDesired(record.id, lifetime.current.signal);
-      setSelected(null);
+      setSelectedId(null);
       return '已撤回。';
     });
   }
   // 认证后重试沿用同一个 request：人审过哪一份生效中内容就按哪一份发布，
   // 期间生效中内容变了由服务端以 hash_mismatch 挡下，绝不悄悄改用新的。
   function activate(activation: Activation, attempt = 0) {
-    const { request, label, action, origin } = activation;
+    const { request, label, origin, supersedes } = activation;
     void act(origin, async () => {
       try {
         const outcome = await activatePolicy(request, lifetime.current.signal);
-        setSelected(null);
+        setSelectedId(null);
         setVersion(null);
         // 版本列表已经变了，位置里那个版本号不再是「刚才在看的那一份」。
         restored.current = null;
@@ -250,15 +257,15 @@ export function PolicyPanel({ initial }: { initial: Loaded }) {
           return `已解除全局撤销${outcome.audit_confirmed ? '' : '（审计未确认，请核对账本）'}。`;
         return `${label}：已发布为 v${outcome.activation.version}，生效中摘要 ${shortHash(
           outcome.activation.effective_hash,
-        )}${outcome.activation.cleared_type_revocation ? '，并解除了该类型的撤销接入' : ''}${
-          outcome.audit_confirmed ? '' : '（审计未确认，请核对账本）'
-        }。`;
+        )}${outcome.activation.cleared_type_revocation ? '，并解除了该类型的撤销接入' : ''}${supersededNotice(
+          supersedes,
+        )}${outcome.audit_confirmed ? '' : '（审计未确认，请核对账本）'}。`;
       } catch (cause) {
         // 403「需要二次认证」不是终点：发布没有发生，只差一次一次性验证码。
         if (needsReauthentication(cause)) {
-          setPending({ request, label, action, origin, attempt });
+          setPending({ ...activation, attempt });
           return {
-            notice: `${action} 需要二次认证：请在弹出的窗口输入一次性验证码，通过后会自动继续这一次动作。`,
+            notice: `${activation.action} 需要二次认证：请在弹出的窗口输入一次性验证码，通过后会自动继续这一次动作。`,
             reload: false,
           };
         }
@@ -339,7 +346,7 @@ export function PolicyPanel({ initial }: { initial: Loaded }) {
     };
   }
   function pick(record: DesiredRecord) {
-    setSelected(record);
+    setSelectedId(record.id);
     // 换了草案，发布预览描述的已不是眼前这一份。
     setPreview((current) =>
       current?.key.startsWith('publish:') ? null : current,
@@ -347,9 +354,12 @@ export function PolicyPanel({ initial }: { initial: Loaded }) {
   }
 
   const { status, desired, versions } = data;
-  const actionable = desired.filter((record) =>
-    actionableStatus(record.status),
-  );
+  const actionable = desired.filter((record) => isOpenStatus(record.status));
+  const selected = desired.find((record) => record.id === selectedId) ?? null;
+  // 发布选中这份时会被一并标为已取代的较早草案；选中的不是最新的就发不出，只说为什么。
+  const superseded = selected ? supersededBy(selected, desired) : [];
+  const newerReason = selected ? newerDraftReason(selected.newer_open) : null;
+  const selectedHint = newerReason ?? supersededHint(superseded.length);
   const heading = {
     effective: `${ids}-effective`,
     submit: `${ids}-submit`,
@@ -412,6 +422,7 @@ export function PolicyPanel({ initial }: { initial: Loaded }) {
                         label: '解除全局撤销',
                         action: '解除全局撤销',
                         origin: 'effective',
+                        supersedes: 0,
                       },
                       releasePreview(status.effective_hash),
                     )
@@ -545,25 +556,42 @@ export function PolicyPanel({ initial }: { initial: Loaded }) {
               {actionable.map((record) => {
                 const current = selected?.id === record.id;
                 const expansions = record.report?.expansions.length ?? null;
+                // 同一对象有几份未发布草案时标出哪份最新（服务端判定）：只有最新那份能发布（T-181）。
+                const order = record.newer_open.length
+                  ? 'older'
+                  : actionable.some((other) =>
+                        other.newer_open.includes(record.id),
+                      )
+                    ? 'newest'
+                    : null;
+                const meta = `${ids}-queue-${record.id}`;
                 return (
                   <li key={record.id}>
                     <button
                       type="button"
                       className="policy-queue__pick"
                       aria-current={current ? 'true' : undefined}
+                      aria-describedby={`${meta}-meta ${meta}-marks`}
                       disabled={busy}
                       onClick={() => pick(record)}
                     >
                       {KIND_LABEL[record.kind]} {record.subject}
                     </button>
-                    <span className="policy-queue__meta">
+                    <span className="policy-queue__meta" id={`${meta}-meta`}>
+                      草案 <code title={record.id}>{shortId(record.id)}</code>
+                      {' · '}
                       {STATUS_LABEL[record.status]}
                       {record.submitter_kind === 'agent'
                         ? `，由 ${record.agent_type ?? '未知类型'} 实例 ${record.agent_instance ?? '未知'} 提交`
                         : '，主人提交'}
                       ，{when(record.submitted_at)}
                     </span>
-                    <span className="policy-queue__marks">
+                    <span className="policy-queue__marks" id={`${meta}-marks`}>
+                      {order === 'newest' ? (
+                        <StatusMark state="active">最新</StatusMark>
+                      ) : order === 'older' ? (
+                        <StatusMark state="dormant">较早，不能发布</StatusMark>
+                      ) : null}
                       {/* 接口没给报告就照实说没有，不猜它扩大了几项 */}
                       {expansions === null ? (
                         <StatusMark state="dormant">无校验报告</StatusMark>
@@ -600,14 +628,20 @@ export function PolicyPanel({ initial }: { initial: Loaded }) {
                 </p>
               </div>
               <PolicyReport report={selected.report} />
-              {actionableStatus(selected.status) ? (
+              {isOpenStatus(selected.status) ? (
                 <>
+                  {selectedHint ? (
+                    <p className="policy-hint">{selectedHint}</p>
+                  ) : null}
                   {previewFor(`publish:${selected.id}`)}
                   <div className="policy-actions">
                     <Button
                       variant="danger"
                       disabled={
-                        busy || !selected.report.ok || !status.l3_available
+                        busy ||
+                        !selected.report.ok ||
+                        !status.l3_available ||
+                        newerReason !== null
                       }
                       {...trigger(`publish:${selected.id}`)}
                       onClick={() =>
@@ -622,8 +656,14 @@ export function PolicyPanel({ initial }: { initial: Loaded }) {
                             label: `${KIND_LABEL[selected.kind]} ${selected.subject}`,
                             action: `发布 ${KIND_LABEL[selected.kind]} ${selected.subject}`,
                             origin: 'queue',
+                            supersedes: superseded.length,
                           },
-                          publishPreview(selected, selected.report, status),
+                          publishPreview(
+                            selected,
+                            selected.report,
+                            status,
+                            superseded,
+                          ),
                         )
                       }
                     >
@@ -723,6 +763,7 @@ export function PolicyPanel({ initial }: { initial: Loaded }) {
                             label: `回滚到 v${meta.version}`,
                             action: `回滚到 v${meta.version}`,
                             origin: 'versions',
+                            supersedes: 0,
                           },
                           rollbackPreview(meta, status),
                         )

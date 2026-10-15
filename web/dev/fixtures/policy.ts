@@ -371,6 +371,28 @@ export function pendingCount(state: PolicyState) {
   ).length;
 }
 
+/**
+ * 每份未发布草案 → 同一对象里比它晚入库的未发布草案号，按入库先后（与 crates/policy/src/store/queue.rs
+ * 同口径，T-181）。假数据的 desired 新的在前（提交时 unshift），所以「晚入库」就是数组里排在它前面的。
+ */
+export function newerOpen(state: PolicyState): Record<string, string[]> {
+  const open = state.desired.filter((row) =>
+    ['pending', 'validated', 'rejected'].includes(row.status),
+  );
+  return Object.fromEntries(
+    open.map((row, index) => [
+      row.id,
+      open
+        .slice(0, index)
+        .filter(
+          (other) => other.kind === row.kind && other.subject === row.subject,
+        )
+        .map((other) => other.id)
+        .reverse(),
+    ]),
+  );
+}
+
 // ---------- 校验 ----------
 
 const token = (value: string, max: number) =>

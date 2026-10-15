@@ -1,6 +1,6 @@
 //! M4 人侧策略端点契约（真实 Unix 入口、私有双 SQLite、虚构签名身份、真实 TOTP）：
 //! desired → 校验／diff → 发布挡在 L3 后 → effective；回滚；三级吊销与解除；方法与查询封闭；
-//! 未装配策略平面时 404。用例 36 的人侧一半。
+//! 同一对象只能发布最新的未发布草案（T-181）；未装配策略平面时 404。用例 36 的人侧一半。
 
 #[allow(dead_code)]
 #[path = "factors/client.rs"]
@@ -27,7 +27,7 @@ use serde_json::{Value, json};
 use studiolo_audit_ledger::{AuditFilter, AuditLedger, AuditRecord, SqliteAuditLedger};
 use studiolo_auth::{FactorRuntime, OsSessionRandom, SessionManager, Totp, TotpCode};
 use studiolo_local_server::{PolicyPlane, PreparedUnixIngress, with_policy_plane};
-use studiolo_policy::PolicyStore;
+use studiolo_policy::{DesiredStatus, PolicyStore};
 use studiolo_vault_broker::ReadOnlyVault;
 use support::*;
 use test_support::{claims, signed, verifier};
@@ -504,6 +504,99 @@ async fn desired_is_validated_diffed_and_activation_is_gated_behind_l3() {
     .await;
     // 策略库直读核对：人侧发布的就是 effective。
     assert_eq!(f.policy().effective().unwrap().entries.len(), 1);
+    f.stop().await;
+}
+
+#[tokio::test]
+async fn an_older_desired_cannot_be_published_while_a_newer_one_is_open() {
+    // T-181／BUG-031：同一对象有两份未发布草案时，发布较早那份被拒、什么都不写；
+    // 列表为每份未发布草案列出比它更新的那几份，与发布时的拦截同一口径。
+    let mut f = Fixture::new(true).await;
+    let login = f.issue().await;
+    let initial = f.status(&login).await["effective_hash"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let mut ids = Vec::new();
+    for propose in [true, false] {
+        let submitted = f
+            .send(
+                f.request(
+                    "POST",
+                    DESIRED,
+                    Some(&login),
+                    &json!({"kind": "capability_set", "subject": "claude", "body": capability(&["项目/Studiolo"], propose)}).to_string(),
+                ),
+                200,
+            )
+            .await
+            .json();
+        assert_eq!(submitted["desired"]["status"], "validated");
+        ids.push(submitted["desired"]["id"].as_str().unwrap().to_owned());
+    }
+    let (older, newer) = (&ids[0], &ids[1]);
+
+    f.elevate(&login).await;
+    let refused = f
+        .send(
+            f.request(
+                "POST",
+                ACTIVATE,
+                Some(&login),
+                &json!({"desired_id": older, "expected_effective_hash": initial}).to_string(),
+            ),
+            409,
+        )
+        .await
+        .json();
+    assert_eq!(refused["code"], "newer_desired_exists");
+    assert_eq!(refused["newer_desired_ids"], json!([newer]));
+    // 什么都没写：effective 不变，两份都还是 validated；拒绝进审计（Intent 已先落账）。
+    assert_eq!(f.status(&login).await["effective_hash"], initial);
+    let refusals = f.events("policy.activate_denied");
+    assert_eq!(refusals.len(), 1);
+    assert_eq!(
+        refusals[0].event().payload().as_value()["reason"],
+        "newer_desired_exists"
+    );
+    assert_eq!(f.events("policy.activated").len(), 1, "只有 Intent");
+    let listed = f
+        .send(f.request("GET", DESIRED, Some(&login), ""), 200)
+        .await
+        .json();
+    let statuses: Vec<_> = listed["desired"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|record| record["status"].clone())
+        .collect();
+    assert_eq!(statuses, [json!("validated"), json!("validated")]);
+    assert_eq!(listed["newer_open"][older], json!([newer]));
+    assert_eq!(listed["newer_open"][newer], json!([]));
+
+    // 发布最新那份：照旧发布，较早那份标为已取代，列表里不再有未发布草案。
+    let published = f
+        .send(
+            f.request(
+                "POST",
+                ACTIVATE,
+                Some(&login),
+                &json!({"desired_id": newer, "expected_effective_hash": initial}).to_string(),
+            ),
+            200,
+        )
+        .await
+        .json();
+    assert_eq!(published["activation"]["desired_id"], json!(newer));
+    assert_eq!(
+        f.policy().desired(older).unwrap().unwrap().status,
+        DesiredStatus::Superseded
+    );
+    let listed = f
+        .send(f.request("GET", DESIRED, Some(&login), ""), 200)
+        .await
+        .json();
+    assert_eq!(listed["newer_open"], json!({}));
     f.stop().await;
 }
 

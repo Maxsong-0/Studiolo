@@ -34,6 +34,12 @@ pub enum PolicyError {
         /// 当前 effective 哈希。
         current: String,
     },
+    /// 同一对象还有更晚入库的未发布 desired：只能发布最新的那一份，要发这份先撤回更新的。
+    #[error("同一对象还有更新的未发布 desired")]
+    NewerDesiredExists {
+        /// 更新的未发布 desired 号，按入库先后。
+        newer: Vec<String>,
+    },
     /// 校验未通过；逐条问题在 desired 记录的报告里。
     #[error("策略校验未通过")]
     ValidationFailed,
