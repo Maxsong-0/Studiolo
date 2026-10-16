@@ -1,8 +1,8 @@
-//! 策略工具族：policy_read 读策略平面 effective，propose_desired 只把提案入库为 pending。
+//! 策略工具族：policy_read 读策略平面 effective。提案两件工具（propose_desired、list_proposals）在同级 proposals 模块。
 
-use super::{AgentSession, PolicyReadArgs, ProposeArgs, auditing};
+use super::{AgentSession, PolicyReadArgs};
 use rmcp::ErrorData as McpError;
-use studiolo_policy::{PolicyKind, ProposalInput, sha256_hex};
+use studiolo_policy::{PolicyKind, sha256_hex};
 
 /// 清单列里的控制字符与 Unicode 行／段分隔符压成空格，保证清单一行一项。
 fn one_line(text: &str) -> String {
@@ -166,78 +166,5 @@ impl AgentSession {
                 None,
             )),
         }
-    }
-
-    /// 提交 desired 提案：只入库为 `pending`，永不自动生效；须能力集 `policy.propose_desired`。
-    pub(crate) async fn text_propose(&self, args: ProposeArgs) -> Result<String, McpError> {
-        let grant = self.authorize("propose_desired")?;
-        let actor = grant.actor();
-        let (Some(store), Some(policy)) = (&self.state.policy, &grant.policy) else {
-            self.deny(actor, "propose_desired", "policy_plane_absent");
-            return Err(McpError::invalid_request(
-                "策略平面未接入（M3 兼容模式）",
-                None,
-            ));
-        };
-        if !policy.set.policy.propose_desired {
-            self.deny(actor, "propose_desired", "capability_denied");
-            return Err(McpError::invalid_request(
-                "能力集未授予提交 desired 提案的能力",
-                None,
-            ));
-        }
-        let kind = PolicyKind::parse(&args.kind)
-            .map_err(|_| McpError::invalid_params("kind 无效", None))?;
-        let record = store
-            .propose(
-                &grant.instance.agent_type,
-                &grant.instance.id,
-                ProposalInput {
-                    kind,
-                    subject: args.subject,
-                    body: args.body,
-                },
-                &crate::state::now(),
-            )
-            .map_err(|error| match error {
-                studiolo_policy::PolicyError::TooManyProposals => {
-                    McpError::invalid_request("待处理提案已达上限，请等待主人处理", None)
-                }
-                studiolo_policy::PolicyError::InvalidSubject
-                | studiolo_policy::PolicyError::InvalidKind
-                | studiolo_policy::PolicyError::InvalidBody(_) => {
-                    McpError::invalid_params(error.to_string(), None)
-                }
-                _ => McpError::internal_error("策略库不可用，本次拒绝", None),
-            })?;
-        let event = studiolo_policy::audit::desired_submitted(
-            studiolo_policy::audit::Principal::Agent {
-                agent_type: &grant.instance.agent_type,
-                instance_id: &grant.instance.id,
-            },
-            &record,
-        )
-        .map_err(|_| McpError::internal_error("审计事件构造失败", None))?;
-        self.state
-            .audit(event)
-            .map_err(|outage| auditing::degraded(&outage))?;
-        let report = record.report.as_ref();
-        let problems = report
-            .map(|report| {
-                report
-                    .problems
-                    .iter()
-                    .map(|problem| format!("- {}：{}", problem.path, problem.message))
-                    .collect::<Vec<_>>()
-                    .join("\n")
-            })
-            .unwrap_or_default();
-        Ok(format!(
-            "desired_id {}\nstatus {}\nok {}\nexpansions {}\n提案永不自动生效；须主人在人侧经 One-time Code 发布。\n{problems}",
-            record.id,
-            record.status.as_str(),
-            report.is_some_and(|report| report.ok),
-            report.map_or(0, |report| report.expansions.len()),
-        ))
     }
 }

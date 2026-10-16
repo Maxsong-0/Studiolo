@@ -16,6 +16,7 @@ mod database;
 mod diff;
 mod error;
 mod model;
+mod proposal;
 mod sql;
 mod storage;
 mod store;
@@ -24,7 +25,6 @@ pub mod view;
 
 pub use agent::{
     AtEffective, Authorization, CapabilityGrant, CurrentEntries, Denial, PolicyAgentStore,
-    ProposalInput,
 };
 pub use diff::{Diff, DiffEntry, DiffOp};
 pub use error::PolicyError;
@@ -32,6 +32,9 @@ pub use model::{
     CapabilitySet, HardBinding, MAX_BODY_BYTES, MAX_PROPOSAL_BYTES, PolicyCaps, PolicyKind,
     ReadCaps, Skill, WriteCaps, sha256_hex, validate_rules_subject, validate_skill_name,
     validate_type_name,
+};
+pub use proposal::{
+    MAX_LISTED_PROPOSALS, Proposal, ProposalInput, ProposalListing, ProposalSummary,
 };
 pub use store::{
     Activation, DesiredInput, DesiredRecord, DesiredStatus, EffectiveEntry, EffectiveSummary,

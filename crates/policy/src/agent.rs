@@ -1,4 +1,4 @@
-//! 接入方视角句柄：读 effective 与吊销状态、只能插入 `pending` 提案。
+//! 接入方视角句柄：读 effective 与吊销状态、只能插入 `pending` 提案、列本类型仍待处理的提案。
 //!
 //! 它与主人句柄打开同一个 `policy.sqlite3`，但代码路径里没有任何写版本表或吊销表的语句；
 //! 提案入库不改变 effective，不产生授权。
@@ -6,14 +6,13 @@
 use std::path::Path;
 
 use crate::{
-    DesiredRecord, DesiredStatus, EffectiveSummary, PolicyError, PolicyKind, Skill, VersionMeta,
-    VersionRecord,
+    EffectiveSummary, PolicyError, PolicyKind, Proposal, ProposalInput, ProposalListing, Skill,
+    VersionMeta, VersionRecord,
     database::Database,
-    model::{CapabilitySet, MAX_PROPOSAL_BYTES},
-    sql,
+    model::CapabilitySet,
+    proposal, sql,
     storage::CreatePolicy,
     store::{self, GLOBAL_TARGET, RevocationLevel},
-    validate,
 };
 
 /// 接入方在本次调用被拒的结构化原因（进 `agent.action_denied` 的 reason）。
@@ -82,17 +81,6 @@ pub struct Authorization {
     pub denial: Option<Denial>,
 }
 
-/// 接入方提案输入；接入方不能撤销任何 subject。
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ProposalInput {
-    /// 类别。
-    pub kind: PolicyKind,
-    /// subject。
-    pub subject: String,
-    /// 正文。
-    pub body: String,
-}
-
 /// 接入方句柄。
 pub struct PolicyAgentStore {
     db: Database,
@@ -148,43 +136,32 @@ impl PolicyAgentStore {
     }
 
     /// 接入方提交 desired 提案：有界、只入 `pending`（结构无效则 `rejected`），永不生效。
+    ///
+    /// 断线重提：本类型在该 subject 最新的未发布草案若正是同一份规范化正文且仍待处理，原样拿回它，
+    /// 不新建、不占名额（见 [`Proposal::deduplicated`]）。
     pub fn propose(
         &self,
         agent_type: &str,
         instance_id: &str,
         input: ProposalInput,
         now: &str,
-    ) -> Result<DesiredRecord, PolicyError> {
+    ) -> Result<Proposal, PolicyError> {
         crate::model::validate_subject(input.kind, &input.subject)?;
-        let id = ulid::Ulid::generate().to_string();
-        self.db.write(|tx| {
-            store::enforce_proposal_bounds(tx, instance_id)?;
-            let context = sql::context(tx, input.kind, &input.subject)?;
-            let report = validate::validate(
-                input.kind,
-                &input.subject,
-                Some(&input.body),
-                MAX_PROPOSAL_BYTES,
-                &context,
-            );
-            let status = if report.ok {
-                DesiredStatus::Pending
-            } else {
-                DesiredStatus::Rejected
-            };
-            sql::insert_desired(
-                tx,
-                &id,
-                &report,
-                Some(&input.body),
-                "agent",
-                Some(agent_type),
-                Some(instance_id),
-                now,
-                status,
-            )?;
-            sql::desired(tx, &id)?.ok_or(PolicyError::StoreUnavailable)
-        })
+        self.db
+            .write(|tx| proposal::submit(tx, agent_type, instance_id, &input, now))
+    }
+
+    /// 本类型仍待处理（pending／validated）的接入方提案，新到旧，至多
+    /// [`MAX_LISTED_PROPOSALS`](crate::MAX_LISTED_PROPOSALS) 份；可按 kind／subject 收窄。
+    /// 只给核对用的摘要列，不给正文与校验报告。
+    pub fn open_proposals(
+        &self,
+        agent_type: &str,
+        kind: Option<PolicyKind>,
+        subject: Option<&str>,
+    ) -> Result<ProposalListing, PolicyError> {
+        self.db
+            .read(|tx| proposal::open(tx, agent_type, kind, subject))
     }
 
     /// effective 摘要。

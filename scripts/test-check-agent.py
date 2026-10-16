@@ -170,10 +170,11 @@ class CheckAgentTests(unittest.TestCase):
             replies[7] = reply
             self.assertEqual(self.run_check(replies)[0], 1)
 
-    def test_tool_inventory_must_be_exactly_the_seven_m5_tools(self):
+    def test_tool_inventory_must_be_exactly_the_eight_tools(self):
         self.assertEqual(agent.EXPECTED_TOOLS, agent.READ_TOOLS | agent.POLICY_TOOLS | agent.BOARD_TOOLS)
-        self.assertEqual(len(agent.EXPECTED_TOOLS), 7)
+        self.assertEqual(len(agent.EXPECTED_TOOLS), 8)
         for names in (sorted(agent.READ_TOOLS),                       # M4 之前的二进制
+                      sorted(agent.EXPECTED_TOOLS - {"list_proposals"}),  # T-182 之前的二进制（M5 的七个）
                       sorted(agent.EXPECTED_TOOLS) + ["write_note"],  # 多出一个未登记工具
                       sorted(agent.EXPECTED_TOOLS - {"propose_desired"}) + ["handshake"]):
             with self.subTest(names=names):
@@ -186,8 +187,9 @@ class CheckAgentTests(unittest.TestCase):
         self.assertEqual(code, 0)
         body = json.loads(requests[-1].data)
         self.assertEqual(body["params"], {"name": "policy_read", "arguments": {"kind": "skills"}})
-        self.assertNotIn("propose_desired", [json.loads(request.data).get("params", {}).get("name")
-                                             for request in requests])
+        called = [json.loads(request.data).get("params", {}).get("name") for request in requests]
+        self.assertNotIn("propose_desired", called)
+        self.assertNotIn("list_proposals", called)
         for reply in (response(200, {"jsonrpc": "2.0", "id": 8,
                                      "error": {"code": -32600, "message": agent.POLICY_ABSENT_ERROR}}),
                       tool_result(8, PRIVATE_TEXT)):

@@ -38,6 +38,7 @@ async fn initialize_serves_a_budgeted_signpost_and_tools_read_only_inside_the_al
             "board",
             "handshake",
             "list_entries",
+            "list_proposals",
             "policy_read",
             "propose_desired",
             "read_note",
