@@ -14,6 +14,7 @@ use crate::{
     index::IndexRuntime,
     options::ServeOptions,
     refresh,
+    shutdown::{Lifecycle, STOP_LIMIT, Signals},
     state::{AppState, Generation, SupplySource, now},
     verifier::Verifier,
 };
@@ -77,6 +78,7 @@ pub fn prepare(options: &ServeOptions) -> Result<Arc<AppState>, String> {
         outage: Mutex::new(None),
         limits,
         index,
+        lifecycle: Arc::new(Lifecycle::default()),
         verifier,
     }))
 }
@@ -104,7 +106,7 @@ pub fn router(state: Arc<AppState>) -> Router {
     crate::mcp_transport::router(state.clone()).merge(crate::http_text::router(state))
 }
 
-/// 启动服务直到 Ctrl-C 或 SIGTERM。
+/// 启动服务直到 Ctrl-C 或 SIGTERM；收到信号后按 [`crate::shutdown`] 的顺序有上限地关停。
 pub async fn run(options: ServeOptions) -> Result<(), String> {
     let state = prepare(&options)?;
     let policy_present = state.policy.is_some();
@@ -113,11 +115,16 @@ pub async fn run(options: ServeOptions) -> Result<(), String> {
     let diagnostics = first.snapshot.diagnostics.len();
     let index_status = first.index_status;
     drop(first);
-    tokio::spawn(refresh::run(state.clone(), Duration::from_secs(60)));
+    let lifecycle = state.lifecycle.clone();
+    let refresh = tokio::spawn(refresh::run(state.clone(), Duration::from_secs(60)));
     let app = router(state);
     let listener = tokio::net::TcpListener::bind(("127.0.0.1", options.port))
         .await
         .map_err(|_| format!("无法监听 127.0.0.1:{}", options.port))?;
+    // 宣布监听之前装好信号处理器，之后的 SIGTERM 一律走优雅关停；原先要等关停 future 第一次被 poll
+    // 才装，这个窗口里的 SIGTERM 按默认动作直接杀进程（BUG-033）。也不提前到首扫之前：首扫卡住时，
+    // 装好的处理器会把 SIGTERM 拖到首扫做完，那时还没有连接要收尾，按默认动作立即退出更好。
+    let signals = Signals::listen();
     println!(
         "studiolo-agent：http://127.0.0.1:{}/mcp（仅 loopback；首扫 {notes} 篇笔记，{diagnostics} 条诊断；Ctrl-C 或 SIGTERM 停止）",
         options.port
@@ -131,31 +138,33 @@ pub async fn run(options: ServeOptions) -> Result<(), String> {
             "未接入（M3 兼容模式：白名单只来自 --allow，无能力集与吊销表）"
         }
     );
-    axum::serve(listener, app)
-        .with_graceful_shutdown(shutdown_signal())
-        .await
-        .map_err(|_| "服务异常退出".to_owned())
-}
-
-/// Ctrl-C（SIGINT）与 systemd 停止（SIGTERM）都触发优雅关停；SIGTERM 注册失败时只等待 Ctrl-C。
-async fn shutdown_signal() {
-    let interrupt = async {
-        let _ = tokio::signal::ctrl_c().await;
-    };
-    #[cfg(unix)]
-    let terminate = async {
-        use tokio::signal::unix::{SignalKind, signal};
-        match signal(SignalKind::terminate()) {
-            Ok(mut stream) => {
-                let _ = stream.recv().await;
-            }
-            Err(_) => std::future::pending::<()>().await,
+    let stopping = lifecycle.clone();
+    let server = axum::serve(listener, app).with_graceful_shutdown(async move {
+        signals.received().await;
+        // 先置关停：门禁从这一刻起拒绝新会话和新请求；axum 随即停止 accept，空闲连接关掉，
+        // MCP 传输排空已进门的请求后关闭全部会话，SSE 流随之结束。
+        stopping.stop();
+    });
+    let wind_down = {
+        let lifecycle = lifecycle.clone();
+        async move {
+            let served = server.await;
+            // 服务自己出错退出时没经过信号，也要让后台重扫停下。
+            lifecycle.stop();
+            // 正在跑的那次重扫在专用校验线程上写派生缓存，做完再返回。
+            let _ = refresh.await;
+            served
         }
     };
-    #[cfg(not(unix))]
-    let terminate = std::future::pending::<()>();
+    let deadline = async {
+        lifecycle.stopped().await;
+        tokio::time::sleep(STOP_LIMIT).await;
+    };
     tokio::select! {
-        () = interrupt => {}
-        () = terminate => {}
+        served = wind_down => served.map_err(|_| "服务异常退出".to_owned()),
+        () = deadline => Err(format!(
+            "关停超时：收到停止信号 {} 秒后仍有连接或后台重扫没有结束，强制退出",
+            STOP_LIMIT.as_secs()
+        )),
     }
 }

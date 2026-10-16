@@ -12,7 +12,7 @@ The scheduler constructs one `RealRunner` per attempt with an administrator-mapp
 
 `DurableRelay::open(database, raw_root, RelayServices)` starts frozen. Services require:
 
-- Fresh `AttemptGuard` plus `RelayPolicyGuard`: the latter must read the authoritative live lease, active effective-policy hash, immutable snapshot membership/classification, and admin-pinned rate ceilings on **every** call and stream check. A permissive fixture is not a production implementation.
+- Fresh `AttemptGuard` plus `RelayPolicyGuard`: the latter must read the authoritative live lease, active effective-policy hash, immutable snapshot membership/classification, and admin-pinned rate ceilings on **every** call and stream check. A permissive fixture is not a production implementation. When the Board-backed guard's authorization recheck cannot read the identity store, policy store or Board control storage, it answers `RelayError::Storage` (503, retry later); a definite authorization denial stays `RelayError::Denied` (403) (BUG-032). The claim-ownership check still maps Control DB read errors to `Denied`; that is tracked separately.
 - Real append-only `AuditLedger`.
 - Four-layer deployment/policy/role/capability permission intersection.
 - `RemoteRelayTransport` to a separate-UID key-holder using `HttpsRelayTransport` with two **dedicated** Gateway-only keys; the canonical application process never reads those key files.

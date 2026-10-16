@@ -1,4 +1,4 @@
-use super::{BoardPlane, requests};
+use super::{BoardPlane, execute::Failure, requests};
 use crate::editing::Problem;
 use axum::{
     Extension, Json, Router,
@@ -34,7 +34,7 @@ pub(super) fn busy() -> Response {
     )
     .into_response()
 }
-/// 控制存储、策略、审计或阻塞任务失败：仍是 503，只给固定句子，不回显内部原因。
+/// 控制存储、身份库、策略、审计或阻塞任务失败：仍是 503，只给固定句子，不回显内部原因。
 pub(super) fn unavailable() -> Response {
     Problem::new(
         StatusCode::SERVICE_UNAVAILABLE,
@@ -165,12 +165,14 @@ async fn command(
     .await;
     match result {
         Ok(Ok(value)) => Json(value).into_response(),
-        Ok(Err(reason)) => (
+        Ok(Err(Failure::Rejected(reason))) => (
             StatusCode::CONFLICT,
             Json(serde_json::json!({"error":reason})),
         )
             .into_response(),
-        Err(_) => unavailable(),
+        // 授权这一步读不出身份库、策略库或控制存储：结论未知、什么都没写，按暂不可用答复，
+        // 不能回 409 让调用方当成被拒（BUG-032）。具体原因只进审计。
+        Ok(Err(Failure::Unavailable)) | Err(_) => unavailable(),
     }
 }
 

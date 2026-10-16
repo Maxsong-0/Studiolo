@@ -1,5 +1,6 @@
-//! SSE 每次交付重验；流持有请求许可，断开或到期即释放，不靠响应头返回时计数。
+//! SSE 每次交付重验；流持有请求许可和关停登记，断开或到期即释放，不靠响应头返回时计数。
 use super::{TransportState, Validity, binding::Binding, manager::Reservation};
+use crate::shutdown::InFlight;
 use axum::body::{Body, BodyDataStream, Bytes};
 use futures_core::Stream;
 use std::{
@@ -16,6 +17,8 @@ pub(super) struct GuardedBody {
     state: Arc<TransportState>,
     binding: Arc<Binding>,
     _permit: OwnedSemaphorePermit,
+    /// POST 在关停排空里的登记：响应体结束或被丢弃才注销，关停据此等它把结果送完（BUG-033）。
+    _in_flight: Option<InFlight>,
     reservation: Option<Reservation>,
     timer: Pin<Box<Sleep>>,
     deadline: Option<Instant>,
@@ -27,6 +30,7 @@ impl GuardedBody {
         state: Arc<TransportState>,
         binding: Arc<Binding>,
         permit: OwnedSemaphorePermit,
+        in_flight: Option<InFlight>,
         reservation: Option<Reservation>,
         streaming: bool,
     ) -> Body {
@@ -35,6 +39,7 @@ impl GuardedBody {
             state,
             binding,
             _permit: permit,
+            _in_flight: in_flight,
             reservation,
             timer: Box::pin(tokio::time::sleep(Duration::from_secs(1))),
             deadline: (!streaming).then(|| Instant::now() + Duration::from_secs(30)),

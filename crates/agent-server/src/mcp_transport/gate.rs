@@ -1,12 +1,15 @@
 //! 所有 HTTP 方法先匹配预占中的凭据与 SID，再交给 rmcp。
 //! 状态码按 MCP 2025-11-25 会话管理：会话不可用回 404、缺会话号回 400；401 只给凭据本身失效；
-//! 身份库读不出来回 503，会话留着下一次再判（BUG-030）。
+//! 身份库读不出来回 503，会话留着下一次再判（BUG-030）；关停开始后新请求回 503（BUG-033）。
 use super::{
     TransportState, Validity, body, input,
     manager::{REQUEST_BINDING, Reservation},
     pool::ReserveError,
 };
-use crate::auth::{AgentType, CredentialDigest, IDENTITY_UNAVAILABLE};
+use crate::{
+    auth::{AgentType, CredentialDigest, IDENTITY_UNAVAILABLE},
+    shutdown::SERVER_STOPPING,
+};
 use axum::{
     body::Body,
     extract::State,
@@ -55,6 +58,22 @@ pub(super) async fn gate(
     let method = request.method().clone();
     if !matches!(method, Method::POST | Method::GET | Method::DELETE) {
         return failure(StatusCode::METHOD_NOT_ALLOWED);
+    }
+    // 关停开始后不接新会话、新请求，也不开新的 GET 流；已进门的 POST 登记在案，传输层等它们
+    // 做完再关会话。DELETE 照常放行：它本身就在关会话（BUG-033）。
+    let lifecycle = &state.app.lifecycle;
+    let (in_flight, refused) = match method {
+        Method::POST => {
+            let in_flight = lifecycle.enter();
+            let refused = in_flight.is_none();
+            (in_flight, refused)
+        }
+        Method::GET => (None, lifecycle.is_stopping()),
+        _ => (None, false),
+    };
+    if refused {
+        state.deny(&owner, SERVER_STOPPING);
+        return failure(StatusCode::SERVICE_UNAVAILABLE);
     }
     let session = match input::session(request.headers()) {
         Ok(session) => session,
@@ -183,6 +202,7 @@ pub(super) async fn gate(
         state,
         binding,
         permit,
+        in_flight,
         reservation.take(),
         method == Method::GET,
     );

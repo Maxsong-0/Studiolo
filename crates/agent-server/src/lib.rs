@@ -12,6 +12,7 @@ pub mod options;
 pub mod refresh;
 pub mod serve;
 pub mod server;
+pub mod shutdown;
 pub mod state;
 mod verifier;
 

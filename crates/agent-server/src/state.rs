@@ -105,6 +105,8 @@ pub struct AppState {
     pub limits: ScanLimits,
     /// 已验证源的派生缓存。
     pub(crate) index: IndexRuntime,
+    /// 关停状态：两个外壳据此拒绝新请求，MCP 传输据此排空后关会话，后台重扫据此停下。
+    pub(crate) lifecycle: Arc<crate::shutdown::Lifecycle>,
     /// 副本校验、重扫与首扫只在这条专用线程上做，常驻内存不随并发累加（BUG-034）。
     pub(crate) verifier: crate::verifier::Verifier,
 }

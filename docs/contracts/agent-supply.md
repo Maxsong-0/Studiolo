@@ -125,6 +125,7 @@
 | `identity_unavailable` | 身份库读不出来（认证、会话复核或父实例查询时） | HTTP 503，不带 `WWW-Authenticate`，固定正文；会话保留，下一次请求再判；tool 内返回「身份库不可用」错误（见 [MCP 会话边界](../m3/mcp-session-boundaries.md)） |
 | `session_invalid` | MCP 会话号查不到、已过期、已关闭，或属于别的类型或凭据 | HTTP 404，不带 `WWW-Authenticate`；客户端不带会话号重新 initialize（见 [MCP 会话边界](../m3/mcp-session-boundaries.md)） |
 | `session_required` | GET／DELETE 不带会话号 | HTTP 400 |
+| `server_stopping` | 收到 SIGTERM／SIGINT 之后到达的新会话、新请求、新 GET 流（MCP 与 `/read/*` 同样） | HTTP 503；MCP 的 DELETE 照常；已进门的请求照常做完（§9） |
 | `budget_exceeded` | 路牌超 2000 token | initialize 失败，JSON-RPC 错误含实际 token 数 |
 | `outside_allowlist` / `unsafe_path` | 越界读取 | tool 错误，已审计 |
 | `rule_not_whitelisted` | 读能力集规则名单外的规则文件或规则母本（§10） | 与白名单外（`read_note`）或不存在（`policy_read`）同一对外错误，已审计 |
@@ -147,6 +148,11 @@
   证明收紧挂在入口而不是挂在某条命令上；Linux 上另起一个真实 `serve`，由父进程从
   `/proc/<pid>/` 回读锁定页数、核心转储限额与环境块可读性。契约见
   [秘密驻留面](../m2/secret-residency.md)。
+- 停服（真实二进制，`crates/agent-server/tests/shutdown_contract.rs`，T-184／vault BUG-033）：没有会话、
+  开着 GET SSE 流、工具调用卡在半路（假黑板扣住）三种情形各发一次 SIGTERM，进程 5 秒内以退出码 0 退出、
+  流正常结束，卡在半路的那次结果完整送到客户端，期间新连接拿不到新会话。关停后两个外壳回 503、
+  排空后关全部会话、做不完的请求只能拖到 10 秒上限：`mcp_transport_private/shutdown.rs`、
+  `http_text_private/stopping.rs`。
 - 白名单：读 `School/...` 或 `../` → 拒绝＋审计；`list_entries` 只列白名单项目。
 - 审计先于返回：注入失败账本 → `read_note` 拒绝且无正文返回；降级握手不含 vault 内容。
 - 四维查询：两个类型两个实例各读若干路径 → `admin reads` 按类型/实例/时间/路径前缀过滤正确；重建索引与增量一致。
@@ -156,7 +162,12 @@
 ## 9. 部署形态（T-034，2026-09-07）
 
 - `serve` 只监听 `127.0.0.1:<port>`，不读 Host/Origin：公网入口由专用 Cloudflare Tunnel 的独立主机名转发到回环端口并把 Host 覆写为 `127.0.0.1:<port>`；应用不信任任何转发头，身份只来自 bearer 类型 token。
-- 优雅关停：SIGINT 与 SIGTERM 等价（systemd 默认 `KillSignal=SIGTERM`）；关停期间不再接受新会话，已开始的供给完成后退出。
+- 优雅关停：SIGINT 与 SIGTERM 等价（systemd 默认 `KillSignal=SIGTERM`）；关停期间不再接受新会话，已开始的供给完成后退出，全程有上限（T-184，vault BUG-033）：
+  - 信号处理器在绑定端口之后、宣布监听之前装好：监听一宣布，SIGTERM 就走下面的关停，不会被默认动作直接杀掉；更早的启动阶段（首扫、建索引）还没有连接要收尾，SIGTERM 按默认动作立即退出；
+  - 收到信号后关闭监听、关掉空闲连接；两个外壳对新会话、新请求、新 GET 流回 503（`server_stopping`），MCP 的 DELETE 照常；
+  - 已进门的 MCP 请求做完后关闭全部会话，客户端开着的 GET SSE 流随之正常结束；最多等 10 秒，到点强制关会话（响应截断）并在标准错误记一行；
+  - 后台重扫不再开新的一轮，正在跑的那次做完；
+  - 从收到信号起 15 秒仍有连接没收尾，`serve` 以退出码 1 退出；之后运行时再给阻塞线程 2 秒。合计 17 秒，小于 agent 各单元的 `TimeoutStopSec=20`，改任何一边都要保持这个关系。
 - T-034 已部署服务器使用 `--vault` 读取原只读副本。T-036 新发布模板使用 `--replica-root`；先完成首批完整同步，再按运维步骤更换 MCP 单元。两种形态白名单均为 `项目/Studiolo`、`_规则`，身份、审计与预算要求相同。
 - 未加 Cloudflare Access：服务 token 秘密不能经 agent 之手；主人在面板签发后可再挂 Access 应用（policy 为 Service Auth），届时客户端多带两条 `CF-Access-Client-*` 头即可，本契约不变。
 - **部署前置（T-065，2026-09-17）**：`studiolo-agent` 自本次起与另外三个持明文秘密的程序

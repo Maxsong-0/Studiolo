@@ -30,6 +30,7 @@ include!("replay.rs");
 include!("expiry.rs");
 include!("dispatch.rs");
 include!("identity_outage.rs");
+include!("shutdown.rs");
 
 async fn bounded(limits: Limits) -> (Fixture, Arc<Manager>) {
     let mut manager = None;
