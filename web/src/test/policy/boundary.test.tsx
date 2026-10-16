@@ -11,7 +11,7 @@ const reads = () => fetchMock.mock.calls.map(([input]) => String(input));
 function snapshot(path: string) {
   if (path === '/api/v1/policy') return jsonResponse(statusBody());
   if (path === '/api/v1/policy/desired')
-    return jsonResponse({ desired: [], newer_open: {} });
+    return jsonResponse({ desired: [], newer_open: {}, blocked_by: {} });
   if (path === '/api/v1/policy/versions') return jsonResponse({ versions: [] });
   return jsonResponse({ error: '未知' }, 404);
 }

@@ -60,10 +60,14 @@ export type DesiredRecord = {
   activated_version: number | null;
 };
 /**
- * 草案列表里的一份（T-181）：附「同一对象里比它晚入库的未发布草案号」，按入库先后；最新那份、
- * 已发布、已取代、已撤回的都是空表。发布时服务端按同一张表拦截较早的草案，界面只照它标「最新」「较早」。
+ * 草案列表里的一份（T-181）：附两张表，都按入库先后。`newer_open` 是同一对象里比它晚入库的未发布草案号；
+ * `blocked_by` 是其中同一提交者（主人，或同一类 AI）交的那几份，非空就不能发布。最新那份、已发布、
+ * 已取代、已撤回的都是空表。发布时服务端按同一口径拦截，界面只照这两张表标「最新」「较早」、挡发布按钮。
  */
-export type ListedDesired = DesiredRecord & { newer_open: string[] };
+export type ListedDesired = DesiredRecord & {
+  newer_open: string[];
+  blocked_by: string[];
+};
 export type EffectiveEntry = {
   kind: PolicyKind;
   subject: string;
@@ -275,28 +279,40 @@ export function desiredRecord(value: unknown): DesiredRecord {
   };
 }
 /**
- * 草案列表：每份未发布草案都必须在 `newer_open` 里有一张表，别的草案都不能有；缺了就整份报格式错，
- * 绝不当成「没有更新的草案」——那正是较早草案被当成最新发出去的那类静默（BUG-031）。
- * 表还得前后一致（见 `checkNewerOpen`），自相矛盾的同样整份拒收。
+ * 草案列表：每份未发布草案都必须在 `newer_open`、`blocked_by` 里各有一张表，别的草案都不能有；缺了就
+ * 整份报格式错，绝不当成「没有更新的草案」「没被挡」——那正是较早草案被当成最新发出去的那类静默
+ * （BUG-031）。两张表还得前后一致（见 `checkNewerOpen`、`checkBlockedBy`），自相矛盾的同样整份拒收。
  */
 export function desiredList(value: unknown): ListedDesired[] {
   const item = record(value);
-  const newer = record(item.newer_open);
   const desired = list(item.desired, desiredRecord);
   const open = desired.filter((entry) => isOpenStatus(entry.status));
+  const orders = openTable(item.newer_open, open);
+  const blocked = openTable(item.blocked_by, open);
+  checkNewerOpen(open, orders);
+  checkBlockedBy(open, orders, blocked);
+  return desired.map((entry) => {
+    const listed = isOpenStatus(entry.status);
+    return {
+      ...entry,
+      newer_open: listed ? (orders.get(entry.id) ?? []) : [],
+      blocked_by: listed ? (blocked.get(entry.id) ?? []) : [],
+    };
+  });
+}
+
+/** 按未发布草案号给的一张表：每份未发布草案恰好一项、值是草案号列表；少了、多了、形状不对都整份拒收。 */
+function openTable(
+  value: unknown,
+  open: readonly DesiredRecord[],
+): Map<string, string[]> {
+  const table = record(value);
   if (
-    Object.keys(newer).length !== open.length ||
-    open.some((entry) => !Object.hasOwn(newer, entry.id))
+    Object.keys(table).length !== open.length ||
+    open.some((entry) => !Object.hasOwn(table, entry.id))
   )
     invalid();
-  const orders = new Map(
-    open.map((entry) => [entry.id, list(newer[entry.id], text)]),
-  );
-  checkNewerOpen(open, orders);
-  return desired.map((entry) => ({
-    ...entry,
-    newer_open: isOpenStatus(entry.status) ? (orders.get(entry.id) ?? []) : [],
-  }));
+  return new Map(open.map((entry) => [entry.id, list(table[entry.id], text)]));
 }
 
 /**
@@ -330,12 +346,46 @@ function checkNewerOpen(
   }
 }
 
+/**
+ * `blocked_by` 只能从 `newer_open` 里挑、保持原来的先后：挡住发布的只会是同一对象里更新的草案。
+ * 挑了表外的（含自己、别的对象、已结束的）、重复的、顺序反了，都整份拒收。哪几份算同一提交者
+ * 由服务端判，这里不另算一套。
+ */
+function checkBlockedBy(
+  open: readonly DesiredRecord[],
+  orders: ReadonlyMap<string, readonly string[]>,
+  blocked: ReadonlyMap<string, readonly string[]>,
+): void {
+  for (const entry of open) {
+    const newer = orders.get(entry.id) ?? [];
+    let next = 0;
+    for (const id of blocked.get(entry.id) ?? []) {
+      // 在 newer_open 里、排在上一份之后才算数：找不到时 indexOf 回 -1，next 归 0。
+      next = newer.indexOf(id, next) + 1;
+      if (next === 0) invalid();
+    }
+  }
+}
+
 /** 发布这一份会一并标为已取代的：同一对象里比它早入库的未发布草案（照接口给的 `newer_open` 判）。 */
 export function supersededBy(
   target: ListedDesired,
   desired: readonly ListedDesired[],
 ): ListedDesired[] {
   return desired.filter((entry) => entry.newer_open.includes(target.id));
+}
+
+/**
+ * 发布这一份后仍待处理的：同一对象里比它晚入库的未发布草案，按入库先后。能发布时它们只会是别的
+ * 提交者交的（同一提交者更新的会挡住发布），服务端不取代它们（用户 2026-10-16 定）。
+ */
+export function remainingAfter(
+  target: ListedDesired,
+  desired: readonly ListedDesired[],
+): ListedDesired[] {
+  return target.newer_open.flatMap((id) =>
+    desired.filter((entry) => entry.id === id),
+  );
 }
 export function desiredEnvelope(value: unknown): DesiredRecord {
   return desiredRecord(record(value).desired);

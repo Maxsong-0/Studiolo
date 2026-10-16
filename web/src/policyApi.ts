@@ -54,7 +54,7 @@ function codeOf(error: unknown): string | undefined {
   return typeof code === 'string' ? code : undefined;
 }
 
-/** 409 `newer_desired_exists` 带回的更新草案号；字段缺失或形状不对就当没有，只少一句提示。 */
+/** 409 `newer_desired_same_submitter` 带回的、挡住发布的更新草案号；字段缺失或形状不对就当没有，只少一句提示。 */
 function newerDesiredIds(error: ApiError): string[] {
   if (!error.details || typeof error.details !== 'object') return [];
   const ids = (error.details as { newer_desired_ids?: unknown })
@@ -135,9 +135,9 @@ export function activateFailure(error: unknown): string {
     return '发布只接受可信入口的请求；当前入口不能发布。';
   if (error.status === 409 && code === 'hash_mismatch')
     return 'effective 已变化：请刷新并重新校验后再发布。';
-  if (error.status === 409 && code === 'newer_desired_exists') {
+  if (error.status === 409 && code === 'newer_desired_same_submitter') {
     const newer = newerDesiredIds(error).map(shortId).join('、');
-    return `没有发布：同一对象还有更新的未发布草案${newer ? `（${newer}）` : ''}，只能发布最新的那一份；要发这份，先撤回更新的。`;
+    return `没有发布：同一提交者还有更新的未发布草案${newer ? `（${newer}）` : ''}，只能发布其中最新的那一份；要发这份，先撤回更新的。`;
   }
   if (error.status === 409 && code === 'no_l3_path')
     return '本入口未启用二次认证，没有 One-time Code 路径，不能发布。';

@@ -1,6 +1,7 @@
 //! M4 人侧策略端点契约（真实 Unix 入口、私有双 SQLite、虚构签名身份、真实 TOTP）：
 //! desired → 校验／diff → 发布挡在 L3 后 → effective；回滚；三级吊销与解除；方法与查询封闭；
-//! 同一对象只能发布最新的未发布草案（T-181）；未装配策略平面时 404。用例 36 的人侧一半。
+//! 同一提交者有更新的未发布草案就不能发布较早那份、AI 更新的提案挡不住主人（T-181）；未装配策略平面时 404。
+//! 用例 36 的人侧一半。
 
 #[allow(dead_code)]
 #[path = "factors/client.rs"]
@@ -27,7 +28,7 @@ use serde_json::{Value, json};
 use studiolo_audit_ledger::{AuditFilter, AuditLedger, AuditRecord, SqliteAuditLedger};
 use studiolo_auth::{FactorRuntime, OsSessionRandom, SessionManager, Totp, TotpCode};
 use studiolo_local_server::{PolicyPlane, PreparedUnixIngress, with_policy_plane};
-use studiolo_policy::{DesiredStatus, PolicyStore};
+use studiolo_policy::{DesiredStatus, PolicyAgentStore, PolicyKind, PolicyStore, ProposalInput};
 use studiolo_vault_broker::ReadOnlyVault;
 use support::*;
 use test_support::{claims, signed, verifier};
@@ -508,9 +509,9 @@ async fn desired_is_validated_diffed_and_activation_is_gated_behind_l3() {
 }
 
 #[tokio::test]
-async fn an_older_desired_cannot_be_published_while_a_newer_one_is_open() {
-    // T-181／BUG-031：同一对象有两份未发布草案时，发布较早那份被拒、什么都不写；
-    // 列表为每份未发布草案列出比它更新的那几份，与发布时的拦截同一口径。
+async fn an_older_desired_cannot_be_published_while_the_same_submitter_has_a_newer_one() {
+    // T-181／BUG-031：主人对同一对象交了两份草案，发布较早那份被拒、什么都不写；
+    // 列表为每份未发布草案列出比它更新的那几份和挡住它的那几份，与发布时的拦截同一口径。
     let mut f = Fixture::new(true).await;
     let login = f.issue().await;
     let initial = f.status(&login).await["effective_hash"]
@@ -549,7 +550,7 @@ async fn an_older_desired_cannot_be_published_while_a_newer_one_is_open() {
         )
         .await
         .json();
-    assert_eq!(refused["code"], "newer_desired_exists");
+    assert_eq!(refused["code"], "newer_desired_same_submitter");
     assert_eq!(refused["newer_desired_ids"], json!([newer]));
     // 什么都没写：effective 不变，两份都还是 validated；拒绝进审计（Intent 已先落账）。
     assert_eq!(f.status(&login).await["effective_hash"], initial);
@@ -557,7 +558,7 @@ async fn an_older_desired_cannot_be_published_while_a_newer_one_is_open() {
     assert_eq!(refusals.len(), 1);
     assert_eq!(
         refusals[0].event().payload().as_value()["reason"],
-        "newer_desired_exists"
+        "newer_desired_same_submitter"
     );
     assert_eq!(f.events("policy.activated").len(), 1, "只有 Intent");
     let listed = f
@@ -573,6 +574,8 @@ async fn an_older_desired_cannot_be_published_while_a_newer_one_is_open() {
     assert_eq!(statuses, [json!("validated"), json!("validated")]);
     assert_eq!(listed["newer_open"][older], json!([newer]));
     assert_eq!(listed["newer_open"][newer], json!([]));
+    assert_eq!(listed["blocked_by"][older], json!([newer]));
+    assert_eq!(listed["blocked_by"][newer], json!([]));
 
     // 发布最新那份：照旧发布，较早那份标为已取代，列表里不再有未发布草案。
     let published = f
@@ -597,6 +600,81 @@ async fn an_older_desired_cannot_be_published_while_a_newer_one_is_open() {
         .await
         .json();
     assert_eq!(listed["newer_open"], json!({}));
+    assert_eq!(listed["blocked_by"], json!({}));
+    f.stop().await;
+}
+
+#[tokio::test]
+async fn an_agents_newer_proposal_neither_blocks_the_owner_nor_gets_superseded() {
+    // T-181，用户 2026-10-16 定：不同提交者互不阻挡。主人交了能力集草案之后，AI 对同一能力集交了提案；
+    // 列表照样标出先后，但 blocked_by 是空表，主人发布照发，AI 的提案留着待处理。
+    let mut f = Fixture::new(true).await;
+    let login = f.issue().await;
+    let initial = f.status(&login).await["effective_hash"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let submitted = f
+        .send(
+            f.request(
+                "POST",
+                DESIRED,
+                Some(&login),
+                &json!({"kind": "capability_set", "subject": "claude", "body": capability(&["项目/Studiolo"], false)}).to_string(),
+            ),
+            200,
+        )
+        .await
+        .json();
+    let owner = submitted["desired"]["id"].as_str().unwrap().to_owned();
+    let proposal = PolicyAgentStore::open_existing(&f.root.join("policy"))
+        .unwrap()
+        .propose(
+            "claude",
+            "01INSTANCE",
+            ProposalInput {
+                kind: PolicyKind::CapabilitySet,
+                subject: "claude".into(),
+                body: capability(&["项目/Studiolo", "项目/Semiment"], true),
+            },
+            "2026-10-15T18:01:00Z",
+        )
+        .unwrap();
+    assert_eq!(proposal.status, DesiredStatus::Pending);
+    let listed = f
+        .send(f.request("GET", DESIRED, Some(&login), ""), 200)
+        .await
+        .json();
+    assert_eq!(listed["newer_open"][&owner], json!([proposal.id]));
+    assert_eq!(listed["blocked_by"][&owner], json!([]));
+    assert_eq!(listed["blocked_by"][&proposal.id], json!([]));
+
+    f.elevate(&login).await;
+    let published = f
+        .send(
+            f.request(
+                "POST",
+                ACTIVATE,
+                Some(&login),
+                &json!({"desired_id": owner, "expected_effective_hash": initial}).to_string(),
+            ),
+            200,
+        )
+        .await
+        .json();
+    assert_eq!(published["activation"]["desired_id"], json!(owner));
+    assert!(f.events("policy.activate_denied").is_empty());
+    // AI 的提案没被取代，仍是唯一的未发布草案。
+    assert_eq!(
+        f.policy().desired(&proposal.id).unwrap().unwrap().status,
+        DesiredStatus::Pending
+    );
+    let listed = f
+        .send(f.request("GET", DESIRED, Some(&login), ""), 200)
+        .await
+        .json();
+    assert_eq!(listed["newer_open"], json!({ (proposal.id.clone()): [] }));
+    assert_eq!(listed["blocked_by"], json!({ (proposal.id.clone()): [] }));
     f.stop().await;
 }
 

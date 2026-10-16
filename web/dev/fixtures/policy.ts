@@ -393,6 +393,25 @@ export function newerOpen(state: PolicyState): Record<string, string[]> {
   );
 }
 
+/** 提交者：主人，或 AI 类型（同一类 AI 的几个实例算同一提交者，与 queue.rs 同口径）。 */
+function submitter(row: DesiredRecord): string {
+  return JSON.stringify([row.submitter_kind, row.agent_type]);
+}
+
+/**
+ * 每份未发布草案 → `newerOpen` 里同一提交者交的那几份：非空就不能发布（与 crates/policy/src/store/queue.rs
+ * 同口径，T-181，用户 2026-10-16 定：不同提交者互不阻挡）。
+ */
+export function blockedBy(state: PolicyState): Record<string, string[]> {
+  const own = new Map(state.desired.map((row) => [row.id, submitter(row)]));
+  return Object.fromEntries(
+    Object.entries(newerOpen(state)).map(([id, newer]) => [
+      id,
+      newer.filter((other) => own.get(other) === own.get(id)),
+    ]),
+  );
+}
+
 // ---------- 校验 ----------
 
 const token = (value: string, max: number) =>

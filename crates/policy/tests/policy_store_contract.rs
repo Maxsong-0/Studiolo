@@ -834,8 +834,8 @@ fn agent_proposals_are_bounded_pending_and_never_change_effective() {
         store.withdraw_desired(&proposal.id, NOW),
         Err(PolicyError::DesiredNotActivatable(_))
     ));
-    // 发布其中最新的一份提案后，同 subject 其余较早的 pending 被取代（较早的发不出，T-181）。
-    let (pending, newer) = store.desired_queue(100).unwrap();
+    // 发布其中最新的一份提案后，同 subject 其余较早的 pending 被取代（同一提交者较早的发不出，T-181）。
+    let (pending, newer, _) = store.desired_queue(100).unwrap();
     let chosen = pending
         .iter()
         .find(|record| record.subject == "提案.md" && newer[&record.id].is_empty())

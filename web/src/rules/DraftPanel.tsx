@@ -1,12 +1,12 @@
 import { useId } from 'react';
 import { PolicyReport } from '../components/PolicyReport';
 import type { ListedDesired, PolicyStatus } from '../policyModel';
-import { supersededBy } from '../policyModel';
+import { remainingAfter, supersededBy } from '../policyModel';
 import { ActionPreview } from '../policy/ActionPreview';
 import {
   newerDraftReason,
+  publishHint,
   publishPreview,
-  supersededHint,
 } from '../policy/previews';
 import { Button } from '../ui';
 import { draftOrigin } from './labels';
@@ -17,8 +17,8 @@ import '../styles/rules.css';
 /**
  * 一份未发布的规则草案（desired）：来历、校验报告（PolicyReport：结论、差异、扩大项）与三个动作——
  * 发布（先展开执行预览，确认才发请求，需二次认证）、校验（按当前生效内容重新校验）、撤回。
- * 同一对象只能发布最新的那份草案（服务端判定，T-181）：这份不是最新就挡住发布并说明；是最新的，
- * 执行预览列出会被一并标为已取代的较早草案。
+ * 同一提交者还有更新的未发布草案时，这份不能发布（服务端判定，T-181）：挡住发布并说明。能发布时，
+ * 执行预览列出会被一并标为已取代的较早草案，以及发布后照旧待处理的更新草案（别的提交者交的）。
  * 编辑面板与读权限面板共用；动作与反馈由视图级的 usePolicyActions 统一调度。
  */
 export function DraftPanel({
@@ -40,7 +40,7 @@ export function DraftPanel({
   origin: string;
   status: PolicyStatus;
   actions: PolicyActions;
-  /** 同一对象全部未发布的草案（含这一份），用来写明发布会取代哪几份。 */
+  /** 同一对象全部未发布的草案（含这一份），用来写明发布会取代哪几份、留下哪几份。 */
   drafts: readonly ListedDesired[];
   /** 发布之外的原因挡着（如编辑区有未保存的改动）；null 表示没有。 */
   blocked?: string | null;
@@ -51,9 +51,10 @@ export function DraftPanel({
   const report = record.report;
   const open = actions.preview?.key === key ? actions.preview : null;
   const superseded = supersededBy(record, drafts);
-  const newer = newerDraftReason(record.newer_open);
-  // 不是最新的就发不出，「发布会取代哪几份」也就无从谈起，只说为什么发不出。
-  const hint = newer ? null : supersededHint(superseded.length);
+  const remaining = remainingAfter(record, drafts);
+  const newer = newerDraftReason(record.blocked_by);
+  // 被同一提交者更新的草案挡着就发不出，「发布会取代、留下哪几份」也就无从谈起，只说为什么发不出。
+  const hint = newer ? null : publishHint(superseded.length, remaining.length);
   const reason = !report
     ? '这份草案还没有校验报告：先校验。'
     : !report.ok
@@ -103,8 +104,9 @@ export function DraftPanel({
                 action: `发布 ${label}`,
                 origin,
                 supersedes: superseded.length,
+                remains: remaining.length,
               },
-              publishPreview(record, report, status, superseded),
+              publishPreview(record, report, status, superseded, remaining),
             );
           }}
         >

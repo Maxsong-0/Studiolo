@@ -53,10 +53,11 @@ pub(super) async fn status(State(state): State<AppState>, mut request: Request) 
 #[derive(Serialize)]
 struct DesiredList {
     desired: Vec<DesiredRecord>,
-    /// 每份未发布草案 → 同一对象里比它晚入库的未发布草案号，最新那份是空表；发布时按同一口径
-    /// 拦截（T-181），界面照这张表标「最新」「较早」。未发布草案一份不少都在 `desired` 里（200 份
-    /// 只截已结束的历史）。
+    /// 每份未发布草案 → 同一对象里比它晚入库的未发布草案号，最新那份是空表；界面照它标「最新」
+    /// 「较早」。未发布草案一份不少都在 `desired` 里（200 份只截已结束的历史）。
     newer_open: BTreeMap<String, Vec<String>>,
+    /// 每份未发布草案 → 上面那些里同一提交者的、挡住它发布的那几份（T-181），与发布时的拦截同一口径。
+    blocked_by: BTreeMap<String, Vec<String>>,
 }
 
 pub(super) async fn desired_list(State(state): State<AppState>, mut request: Request) -> Response {
@@ -70,10 +71,12 @@ pub(super) async fn desired_list(State(state): State<AppState>, mut request: Req
     };
     respond(
         run(plane, principal, |plane, _| {
-            let (desired, newer_open) = plane.store.desired_queue(200).map_err(Problem::policy)?;
+            let (desired, newer_open, blocked_by) =
+                plane.store.desired_queue(200).map_err(Problem::policy)?;
             Ok(DesiredList {
                 desired,
                 newer_open,
+                blocked_by,
             })
         })
         .await,

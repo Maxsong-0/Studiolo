@@ -34,10 +34,11 @@ pub enum PolicyError {
         /// 当前 effective 哈希。
         current: String,
     },
-    /// 同一对象还有更晚入库的未发布 desired：只能发布最新的那一份，要发这份先撤回更新的。
-    #[error("同一对象还有更新的未发布 desired")]
-    NewerDesiredExists {
-        /// 更新的未发布 desired 号，按入库先后。
+    /// 同一提交者（主人，或同一类 AI）还有更晚入库的未发布 desired：只能发布其中最新的那一份，
+    /// 要发这份先撤回更新的。别的提交者的更新草案不挡。
+    #[error("同一提交者还有更新的未发布 desired")]
+    NewerDesiredFromSameSubmitter {
+        /// 挡住它的更新 desired 号，按入库先后。
         newer: Vec<String>,
     },
     /// 校验未通过；逐条问题在 desired 记录的报告里。

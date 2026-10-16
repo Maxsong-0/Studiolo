@@ -13,14 +13,14 @@ import type {
   DesiredRecord,
 } from '../policyModel';
 import { STATUS_LABEL, shortHash } from '../policyModel';
-import { supersededNotice } from '../policy/previews';
+import { publishedNotice } from '../policy/previews';
 import type { PreviewContent } from '../policy/previews';
 
 /** 反馈落在发起动作的那一块：`editor`、`access` 这类名字由面板自己定。 */
 export type Feedback = { origin: string; text: string };
 /**
- * 一次 L3 发布：请求本体、成功提示里的名字、给人看的动作说明、发起的那一块，
- * 以及执行预览里列出的、同一对象会被一并标为已取代的较早草案份数。
+ * 一次 L3 发布：请求本体、成功提示里的名字、给人看的动作说明、发起的那一块，以及执行预览里列出的
+ * 同一对象其余未发布草案份数：会被一并标为已取代的较早草案、照旧待处理的更新草案。
  */
 export type Activation = {
   request: ActivateRequest;
@@ -28,6 +28,7 @@ export type Activation = {
   action: string;
   origin: string;
   supersedes: number;
+  remains: number;
 };
 /** 被二次认证挡下、等人就地认证后原样重试的那一次发布；`attempt` 只用于措辞。 */
 export type PendingStepUp = Activation & { attempt: number };
@@ -136,7 +137,7 @@ export function usePolicyActions(reload: () => Promise<void>) {
   }
 
   function activate(activation: Activation, attempt = 0) {
-    const { request, label, action, origin, supersedes } = activation;
+    const { request, label, action, origin, supersedes, remains } = activation;
     void act(origin, async (signal) => {
       try {
         const outcome = await activatePolicy(request, signal);
@@ -146,7 +147,7 @@ export function usePolicyActions(reload: () => Promise<void>) {
         if (outcome.kind === 'released') return `已解除全局撤销${audit}。`;
         return `${label}：已发布为 v${outcome.activation.version}，生效中摘要 ${shortHash(
           outcome.activation.effective_hash,
-        )}${supersededNotice(supersedes)}${audit}。`;
+        )}${publishedNotice(supersedes, remains)}${audit}。`;
       } catch (cause) {
         // 403「需要二次认证」不是终点：发布没有发生，只差一次一次性验证码。
         if (needsReauthentication(cause)) {

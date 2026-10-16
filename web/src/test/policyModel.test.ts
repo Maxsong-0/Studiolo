@@ -4,6 +4,7 @@ import {
   desiredEnvelope,
   desiredList,
   policyStatus,
+  remainingAfter,
   report,
   supersededBy,
   versionList,
@@ -142,6 +143,8 @@ describe('草案列表的先后表（T-181）', () => {
   const OLDER = '01ABCDEFGHJKMNPQRSTVWXYZ01';
   const NEWER = '01ABCDEFGHJKMNPQRSTVWXYZ02';
   const DONE = '01ABCDEFGHJKMNPQRSTVWXYZ03';
+  const FIRST = '01ABCDEFGHJKMNPQRSTVWXYZ0A';
+  const OTHER = '01ABCDEFGHJKMNPQRSTVWXYZ0B';
   function row(id: string, status: string) {
     return {
       id,
@@ -164,71 +167,142 @@ describe('草案列表的先后表（T-181）', () => {
     row(OLDER, 'pending'),
     row(DONE, 'activated'),
   ];
+  const three = [
+    row(NEWER, 'pending'),
+    row(OLDER, 'validated'),
+    row(FIRST, 'rejected'),
+  ];
+  const elsewhere = [...rows, { ...row(OTHER, 'pending'), subject: '其他.md' }];
+  /** 每份未发布草案都没被挡：只测 newer_open 时用它，免得拒收是 blocked_by 引起的。 */
+  const clear = (ids: string[]) =>
+    Object.fromEntries(ids.map((id) => [id, [] as string[]]));
 
-  it('每份未发布草案带上「比它更新的」草案号，已发布的是空表；发布最新那份会取代较早的', () => {
+  it('每份未发布草案带上两张表，已发布的是空表；发布这份会取代比它早的、留下比它更新的', () => {
     const listed = desiredList({
       desired: rows,
       newer_open: { [OLDER]: [NEWER], [NEWER]: [] },
+      blocked_by: { [OLDER]: [NEWER], [NEWER]: [] },
     });
-    expect(listed.map((entry) => [entry.id, entry.newer_open])).toEqual([
-      [NEWER, []],
-      [OLDER, [NEWER]],
-      [DONE, []],
+    expect(
+      listed.map((entry) => [entry.id, entry.newer_open, entry.blocked_by]),
+    ).toEqual([
+      [NEWER, [], []],
+      [OLDER, [NEWER], [NEWER]],
+      [DONE, [], []],
     ]);
     expect(supersededBy(listed[0], listed).map((entry) => entry.id)).toEqual([
       OLDER,
     ]);
     expect(supersededBy(listed[1], listed)).toEqual([]);
+    expect(remainingAfter(listed[1], listed).map((entry) => entry.id)).toEqual([
+      NEWER,
+    ]);
+    expect(remainingAfter(listed[0], listed)).toEqual([]);
+  });
+
+  it('哪几份算同一提交者由服务端判：blocked_by 给空表就不挡，界面不按提交者另算一套', () => {
+    const listed = desiredList({
+      desired: rows,
+      newer_open: { [OLDER]: [NEWER], [NEWER]: [] },
+      blocked_by: { [OLDER]: [], [NEWER]: [] },
+    });
+    expect(listed.map((entry) => entry.blocked_by)).toEqual([[], [], []]);
+    // 留下的按入库先后（newer_open 的顺序），不按列表顺序（列表里 NEWER 在 OLDER 前面）。
+    const ordered = desiredList({
+      desired: three,
+      newer_open: { [FIRST]: [OLDER, NEWER], [OLDER]: [NEWER], [NEWER]: [] },
+      blocked_by: clear([FIRST, OLDER, NEWER]),
+    });
+    expect(
+      remainingAfter(ordered[2], ordered).map((entry) => entry.id),
+    ).toEqual([OLDER, NEWER]);
   });
 
   it('先后表缺了、少一份、多一份或形状不对都整份报格式错，绝不当成「没有更新的」', () => {
+    const blocked_by = clear([OLDER, NEWER]);
     const bad = [
-      { desired: rows },
-      { desired: rows, newer_open: { [NEWER]: [] } },
+      { desired: rows, blocked_by },
+      { desired: rows, newer_open: { [NEWER]: [] }, blocked_by },
       {
         desired: rows,
         newer_open: { [OLDER]: [NEWER], [NEWER]: [], [DONE]: [] },
+        blocked_by,
       },
-      { desired: rows, newer_open: { [OLDER]: NEWER, [NEWER]: [] } },
-      { desired: rows, newer_open: { [OLDER]: [1], [NEWER]: [] } },
+      {
+        desired: rows,
+        newer_open: { [OLDER]: NEWER, [NEWER]: [] },
+        blocked_by,
+      },
+      { desired: rows, newer_open: { [OLDER]: [1], [NEWER]: [] }, blocked_by },
+    ];
+    for (const value of bad)
+      expect(() => desiredList(value)).toThrow('策略平面响应格式无效');
+  });
+
+  it('挡住发布的表缺了、少一份、多一份或形状不对，同样整份报格式错，绝不当成「没被挡」', () => {
+    const newer_open = { [OLDER]: [NEWER], [NEWER]: [] };
+    const bad = [
+      { desired: rows, newer_open },
+      { desired: rows, newer_open, blocked_by: { [OLDER]: [NEWER] } },
+      {
+        desired: rows,
+        newer_open,
+        blocked_by: { [OLDER]: [NEWER], [NEWER]: [], [DONE]: [] },
+      },
+      {
+        desired: rows,
+        newer_open,
+        blocked_by: { [OLDER]: NEWER, [NEWER]: [] },
+      },
+      { desired: rows, newer_open, blocked_by: { [OLDER]: [1], [NEWER]: [] } },
     ];
     for (const value of bad)
       expect(() => desiredList(value)).toThrow('策略平面响应格式无效');
   });
 
   it('先后表自相矛盾也整份拒收：指向自己、别的对象、已结束的或不存在的草案，重复，两份都自称最新', () => {
-    const FIRST = '01ABCDEFGHJKMNPQRSTVWXYZ0A';
-    const OTHER = '01ABCDEFGHJKMNPQRSTVWXYZ0B';
-    const three = [
-      row(NEWER, 'pending'),
-      row(OLDER, 'validated'),
-      row(FIRST, 'rejected'),
-    ];
-    const elsewhere = [
-      ...rows,
-      { ...row(OTHER, 'pending'), subject: '其他.md' },
-    ];
+    const two = clear([OLDER, NEWER]);
     const bad = [
-      { desired: rows, newer_open: { [OLDER]: [NEWER], [NEWER]: [NEWER] } },
-      { desired: rows, newer_open: { [OLDER]: [NEWER], [NEWER]: [OLDER] } },
-      { desired: rows, newer_open: { [OLDER]: [], [NEWER]: [] } },
-      { desired: rows, newer_open: { [OLDER]: [DONE], [NEWER]: [] } },
+      {
+        desired: rows,
+        newer_open: { [OLDER]: [NEWER], [NEWER]: [NEWER] },
+        blocked_by: two,
+      },
+      {
+        desired: rows,
+        newer_open: { [OLDER]: [NEWER], [NEWER]: [OLDER] },
+        blocked_by: two,
+      },
+      {
+        desired: rows,
+        newer_open: { [OLDER]: [], [NEWER]: [] },
+        blocked_by: two,
+      },
+      {
+        desired: rows,
+        newer_open: { [OLDER]: [DONE], [NEWER]: [] },
+        blocked_by: two,
+      },
       {
         desired: rows,
         newer_open: { [OLDER]: ['01ABCDEFGHJKMNPQRSTVWXYZ99'], [NEWER]: [] },
+        blocked_by: two,
       },
       {
         desired: elsewhere,
         newer_open: { [OLDER]: [OTHER], [NEWER]: [], [OTHER]: [] },
+        blocked_by: clear([OLDER, NEWER, OTHER]),
       },
       {
         desired: three,
         newer_open: { [FIRST]: [NEWER, NEWER], [OLDER]: [NEWER], [NEWER]: [] },
+        blocked_by: clear([FIRST, OLDER, NEWER]),
       },
       // 每份列的份数都对，顺序却不是入库先后。
       {
         desired: three,
         newer_open: { [FIRST]: [NEWER, OLDER], [OLDER]: [NEWER], [NEWER]: [] },
+        blocked_by: clear([FIRST, OLDER, NEWER]),
       },
     ];
     for (const value of bad)
@@ -238,13 +312,44 @@ describe('草案列表的先后表（T-181）', () => {
       desiredList({
         desired: three,
         newer_open: { [FIRST]: [OLDER, NEWER], [OLDER]: [NEWER], [NEWER]: [] },
+        blocked_by: clear([FIRST, OLDER, NEWER]),
       }).map((entry) => entry.newer_open.length),
     ).toEqual([0, 1, 2]);
     expect(
       desiredList({
         desired: elsewhere,
         newer_open: { [OLDER]: [NEWER], [NEWER]: [], [OTHER]: [] },
+        blocked_by: clear([OLDER, NEWER, OTHER]),
       }).map((entry) => entry.newer_open),
     ).toEqual([[], [NEWER], [], []]);
+  });
+
+  it('挡住发布的只能从 newer_open 里挑、保持先后：挑了表外的、自己、重复的或顺序反了都整份拒收', () => {
+    const newer_open = {
+      [FIRST]: [OLDER, NEWER],
+      [OLDER]: [NEWER],
+      [NEWER]: [],
+    };
+    const bad = [
+      { [FIRST]: [NEWER, OLDER], [OLDER]: [], [NEWER]: [] },
+      { [FIRST]: [NEWER, NEWER], [OLDER]: [], [NEWER]: [] },
+      { [FIRST]: [FIRST], [OLDER]: [], [NEWER]: [] },
+      { [FIRST]: [], [OLDER]: [FIRST], [NEWER]: [] },
+      { [FIRST]: [], [OLDER]: [], [NEWER]: [OLDER] },
+      { [FIRST]: ['01ABCDEFGHJKMNPQRSTVWXYZ99'], [OLDER]: [], [NEWER]: [] },
+    ];
+    for (const blocked_by of bad)
+      expect(() =>
+        desiredList({ desired: three, newer_open, blocked_by }),
+      ).toThrow('策略平面响应格式无效');
+    // 从 newer_open 里按原先后挑几份都照收：挑哪几份是服务端的判定。
+    for (const blocked of [[], [OLDER], [NEWER], [OLDER, NEWER]])
+      expect(
+        desiredList({
+          desired: three,
+          newer_open,
+          blocked_by: { [FIRST]: blocked, [OLDER]: [], [NEWER]: [] },
+        })[2].blocked_by,
+      ).toEqual(blocked);
   });
 });

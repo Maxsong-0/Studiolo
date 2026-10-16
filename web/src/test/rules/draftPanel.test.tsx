@@ -6,8 +6,9 @@ import { DraftPanel } from '../../rules/DraftPanel';
 import type { PolicyActions } from '../../rules/usePolicyActions';
 
 /**
- * 规则视图的草案面板（T-181）：只照接口给的 newer_open 判先后——不是最新的就挡住发布并写明更新的是哪份，
- * 是最新的就先说会取代几份较早的，执行预览与发布请求都带上这件事。
+ * 规则视图的草案面板（T-181）：只照接口给的 newer_open、blocked_by 判先后。同一提交者有更新的就挡住发布
+ * 并写明是哪份；别的提交者更新的不挡（用户 2026-10-16 定），先说发布后它们照旧待处理；有较早的就先说
+ * 会取代几份。执行预览与发布请求都带上这些份数。
  */
 
 const HASH = 'a'.repeat(64);
@@ -60,6 +61,7 @@ function draft(overrides: Partial<ListedDesired>): ListedDesired {
     validated_at: '2026-10-15T18:05:21Z',
     activated_version: null,
     newer_open: [],
+    blocked_by: [],
     ...overrides,
   };
 }
@@ -100,19 +102,68 @@ function panel(record: ListedDesired, drafts: ListedDesired[]) {
 }
 
 describe('草案面板的先后（T-181）', () => {
-  it('你的草案之后又来了 AI 提案：写明更新的是哪份、去哪撤回，发布按钮不可点', () => {
-    const owner = draft({ id: OLDER, newer_open: [NEWEST] });
-    const proposal = draft({ id: NEWEST, submitter_kind: 'agent' });
-    panel(owner, [proposal, owner]);
+  it('同一提交者之后又交了一份：写明挡住它的是哪份、去哪撤回，发布按钮不可点', () => {
+    const older = draft({
+      id: OLDER,
+      newer_open: [NEWEST],
+      blocked_by: [NEWEST],
+    });
+    const newest = draft({});
+    panel(older, [newest, older]);
     expect(
       screen.getByText(
-        `同一对象还有更新的未发布草案（${NEWEST.slice(0, 12)}）：只能发布最新的那一份；要发这份，先在「策略」页的待处理草案里撤回更新的。`,
+        `同一提交者还有更新的未发布草案（${NEWEST.slice(0, 12)}）：只能发布其中最新的那一份；要发这份，先在「策略」页的待处理草案里撤回更新的。`,
       ),
     ).toBeInTheDocument();
     expect(
       screen.getByRole('button', { name: '发布（需二次认证）' }),
     ).toBeDisabled();
-    expect(screen.queryByText(/较早的未发布草案/)).not.toBeInTheDocument();
+    // 被挡住时不再说发布会取代、留下哪几份。
+    expect(screen.queryByText(/发布这一份/)).not.toBeInTheDocument();
+  });
+
+  it('你的草案之后又来了 AI 提案：不挡，先说它照旧待处理；执行预览与发布请求都带上它', async () => {
+    const owner = draft({ id: OLDER, newer_open: [NEWEST] });
+    const proposal = draft({
+      id: NEWEST,
+      submitter_kind: 'agent',
+      agent_type: 'claude',
+      agent_instance: '01M50KWFNX6A1QBV8X1G3KKTH2',
+      status: 'pending',
+    });
+    const actions = panel(owner, [proposal, owner]);
+    expect(
+      screen.getByText(
+        '同一对象还有 1 份更新的未发布草案，是别的提交者交的：发布这一份不会取代它们，它们照旧待处理。',
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/同一提交者/)).not.toBeInTheDocument();
+    await userEvent
+      .setup()
+      .click(screen.getByRole('button', { name: '发布（需二次认证）' }));
+    expect(actions.togglePreview).toHaveBeenCalledWith(
+      `publish:${OLDER}`,
+      {
+        request: { desired_id: OLDER, expected_effective_hash: HASH },
+        label: '能力集 claude',
+        action: '发布 能力集 claude',
+        origin: 'access',
+        supersedes: 0,
+        remains: 1,
+      },
+      expect.objectContaining({
+        facts: expect.arrayContaining([
+          { label: '草案', value: OLDER },
+          { label: '同时取代', value: '无：同一对象没有比它早的未发布草案' },
+          {
+            label: '仍待处理',
+            value: `同一对象还有 1 份比它更新的未发布草案，是别的提交者交的（${NEWEST.slice(0, 12)}，AI claude）：这次发的是较早的这一份，它们不会被取代，发布后照旧等你处理`,
+            signal: true,
+          },
+        ]),
+        confirmLabel: '确认发布这份较早的草案',
+      }),
+    );
   });
 
   it('最新的草案：先说会取代几份较早的；展开的执行预览与发布请求都带上它们', async () => {
@@ -120,6 +171,7 @@ describe('草案面板的先后（T-181）', () => {
     const older = draft({
       id: OLDER,
       submitter_kind: 'agent',
+      agent_type: 'claude',
       newer_open: [NEWEST],
     });
     const actions = panel(newest, [newest, older]);
@@ -139,15 +191,17 @@ describe('草案面板的先后（T-181）', () => {
         action: '发布 能力集 claude',
         origin: 'access',
         supersedes: 1,
+        remains: 0,
       },
       expect.objectContaining({
         facts: expect.arrayContaining([
           { label: '草案', value: NEWEST },
           {
             label: '同时取代',
-            value: `同一对象较早的 1 份未发布草案（${OLDER.slice(0, 12)}）：发布后标为已取代，不能再发布`,
+            value: `同一对象比它早的 1 份未发布草案（${OLDER.slice(0, 12)}）：发布后标为已取代，不能再发布`,
           },
         ]),
+        confirmLabel: '确认发布',
       }),
     );
   });

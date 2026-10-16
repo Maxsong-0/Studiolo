@@ -1,11 +1,12 @@
-//! 同一对象有多份未发布草案时的发布先后（T-181／BUG-031）：只能发布最新的那一份。
-//! 较早那份被拒、什么都不写；「谁更新」按入库先后判，不看提交时间字符串；
-//! 列表给界面的「更新的草案」与发布时的拦截同一口径，历史窗口截不掉任何一份未发布草案；
-//! 判定找不到要发的那份就报库损坏，不放行。
-//! 2026-10-15 生产事故：第一、二轮各两份规则提案都待处理，发布请求带的是第一轮 CLAUDE.md，
-//! 发布事务照发，还把更新的第二轮 CLAUDE.md 标成了「已取代」。
+//! 同一对象有多份未发布草案时的发布先后（T-181／BUG-031）。
+//! 同一提交者（主人，或同一类 AI）有更新的未发布草案，较早那份就被拒、什么都不写；不同提交者
+//! 互不阻挡（用户 2026-10-16 定：AI 交新提案挡不住主人）。发布只取代比它早的，比它晚的留着待处理。
+//! 「谁更新」按入库先后判，不看提交时间字符串；列表给界面的先后与发布时的拦截同一口径，历史窗口
+//! 截不掉任何一份未发布草案；判定找不到要发的那份就报库损坏，不放行。
+//! 2026-10-15 生产事故：同一类 AI 第一、二轮各两份规则提案都待处理，发布请求带的是第一轮
+//! CLAUDE.md，发布事务照发，还把更新的第二轮 CLAUDE.md 标成了「已取代」。
 
-use std::{fs, os::unix::fs::PermissionsExt, path::PathBuf};
+use std::{collections::BTreeSet, fs, os::unix::fs::PermissionsExt, path::PathBuf};
 
 use studiolo_policy::{
     Activation, DesiredInput, DesiredRecord, DesiredStatus, PolicyAgentStore, PolicyError,
@@ -44,19 +45,54 @@ fn submit(
         .unwrap()
 }
 
+/// AI（claude 类型的同一个实例）交一份规则提案。
 fn propose(agent: &PolicyAgentStore, subject: &str, body: &str, at: &str) -> DesiredRecord {
+    propose_kind(agent, PolicyKind::Rules, subject, body, at)
+}
+
+/// AI（claude 类型的同一个实例）交一份任意类别的提案；结构无效的入库为 rejected。
+fn propose_kind(
+    agent: &PolicyAgentStore,
+    kind: PolicyKind,
+    subject: &str,
+    body: &str,
+    at: &str,
+) -> DesiredRecord {
+    propose_from(agent, ("claude", "01INSTANCE"), kind, subject, body, at)
+}
+
+/// 指定 AI 类型与实例交一份提案。「同一提交者」按类型认，与实例无关。
+fn propose_from(
+    agent: &PolicyAgentStore,
+    (agent_type, instance): (&str, &str),
+    kind: PolicyKind,
+    subject: &str,
+    body: &str,
+    at: &str,
+) -> DesiredRecord {
     agent
         .propose(
-            "claude",
-            "01INSTANCE",
+            agent_type,
+            instance,
             ProposalInput {
-                kind: PolicyKind::Rules,
+                kind,
                 subject: subject.into(),
                 body: body.into(),
             },
             at,
         )
         .unwrap()
+}
+
+/// claude 类型的能力集正文：只读这几个项目，别的一律关。
+fn capability(projects: &[&str]) -> String {
+    serde_json::json!({
+        "ai_type": "claude",
+        "read": {"project_whitelist": projects, "deny_by_default": true},
+        "write": {"board": false, "content_patch_only": true, "content_direct": false},
+        "policy": {"propose_desired": false, "activate": false},
+    })
+    .to_string()
 }
 
 /// 按当前 effective 发布；调用方不必先读哈希。
@@ -69,10 +105,13 @@ fn status(store: &PolicyStore, id: &str) -> DesiredStatus {
     store.desired(id).unwrap().unwrap().status
 }
 
-/// 发布被拒，拒绝原因按入库先后列出同一对象更新的那几份。
+/// 发布被拒，拒绝原因按入库先后列出挡住它的、同一提交者更新的那几份。
 fn assert_blocked(result: Result<Activation, PolicyError>, newer: &[&DesiredRecord]) {
     let newer = newer.iter().map(|record| record.id.clone()).collect();
-    assert_eq!(result, Err(PolicyError::NewerDesiredExists { newer }));
+    assert_eq!(
+        result,
+        Err(PolicyError::NewerDesiredFromSameSubmitter { newer })
+    );
 }
 
 /// 两份规则各发布一版，作为提案的比较基准。
@@ -163,55 +202,96 @@ fn an_older_round_cannot_be_published_over_a_newer_round() {
 }
 
 #[test]
-fn every_newer_open_draft_is_named_and_withdrawing_them_lets_the_older_one_publish() {
+fn only_the_same_submitters_newer_drafts_block_and_withdrawing_them_lets_the_older_one_publish() {
     let (_temp, dir, store) = store_with_rules();
     let agent = PolicyAgentStore::open_existing(&dir).unwrap();
+    // 同一类 AI（claude）先后三份提案，中间夹着主人的一份。
     let first = propose(&agent, CLAUDE, "# 一\n", "2026-10-15T18:00:00Z");
     let second = propose(&agent, CLAUDE, "# 二\n", "2026-10-15T18:01:00Z");
-    let third = submit(
+    let owner = submit(
         &store,
         PolicyKind::Rules,
         CLAUDE,
-        "# 三\n",
+        "# 主人\n",
         "2026-10-15T18:02:00Z",
     );
+    let third = propose(&agent, CLAUDE, "# 三\n", "2026-10-15T18:03:00Z");
+    // 挡住的只有同一提交者更新的那几份，按入库先后列出；主人那份不算。
     assert_blocked(
-        publish(&store, &first.id, "2026-10-15T18:03:00Z"),
+        publish(&store, &first.id, "2026-10-15T18:04:00Z"),
         &[&second, &third],
     );
-    // 中间那份只被最新的挡住。
     assert_blocked(
-        publish(&store, &second.id, "2026-10-15T18:03:00Z"),
+        publish(&store, &second.id, "2026-10-15T18:04:00Z"),
         &[&third],
     );
-    // 人明确撤回更新的两份之后，最早那份就是最新的，可以发布。
+    // 人明确撤回同一提交者更新的两份之后，最早那份就能发。
     store
-        .withdraw_desired(&third.id, "2026-10-15T18:04:00Z")
+        .withdraw_desired(&third.id, "2026-10-15T18:05:00Z")
         .unwrap();
     store
-        .withdraw_desired(&second.id, "2026-10-15T18:04:00Z")
+        .withdraw_desired(&second.id, "2026-10-15T18:05:00Z")
         .unwrap();
-    publish(&store, &first.id, "2026-10-15T18:05:00Z").unwrap();
+    publish(&store, &first.id, "2026-10-15T18:06:00Z").unwrap();
     assert_eq!(status(&store, &first.id), DesiredStatus::Activated);
+    // 主人那份比它晚入库，照旧待处理，没被悄悄作废。
+    assert_eq!(status(&store, &owner.id), DesiredStatus::Validated);
     assert_eq!(status(&store, &second.id), DesiredStatus::Withdrawn);
     assert_eq!(status(&store, &third.id), DesiredStatus::Withdrawn);
 }
 
 #[test]
-fn a_newer_rejected_draft_also_blocks_until_it_is_withdrawn() {
+fn ai_types_are_separate_submitters_but_instances_of_one_type_are_the_same_submitter() {
+    let (_temp, dir, store) = store_with_rules();
+    let agent = PolicyAgentStore::open_existing(&dir).unwrap();
+    // claude 的两个实例先后各交一份：同一类 AI 算同一提交者。
+    let first = propose_from(
+        &agent,
+        ("claude", "01INSTANCEA"),
+        PolicyKind::Rules,
+        CLAUDE,
+        "# claude 甲\n",
+        "2026-10-15T18:00:00Z",
+    );
+    let second = propose_from(
+        &agent,
+        ("claude", "01INSTANCEB"),
+        PolicyKind::Rules,
+        CLAUDE,
+        "# claude 乙\n",
+        "2026-10-15T18:01:00Z",
+    );
+    // codex 之后交的一份：别的类型，不挡 claude 的，也不被 claude 的取代。
+    let codex = propose_from(
+        &agent,
+        ("codex", "01INSTANCEC"),
+        PolicyKind::Rules,
+        CLAUDE,
+        "# codex\n",
+        "2026-10-15T18:02:00Z",
+    );
+    assert_blocked(
+        publish(&store, &first.id, "2026-10-15T18:03:00Z"),
+        &[&second],
+    );
+    let (_, _, blocked) = store.desired_queue(200).unwrap();
+    assert_eq!(blocked[&first.id], [second.id.as_str()]);
+    assert!(blocked[&second.id].is_empty());
+    assert!(blocked[&codex.id].is_empty());
+    publish(&store, &second.id, "2026-10-15T18:04:00Z").unwrap();
+    assert_eq!(status(&store, &first.id), DesiredStatus::Superseded);
+    assert_eq!(status(&store, &codex.id), DesiredStatus::Pending);
+}
+
+#[test]
+fn a_newer_rejected_draft_from_the_same_submitter_also_blocks_until_withdrawn() {
     let (_temp, dir) = private_dir();
     let store = PolicyStore::open(&dir).unwrap();
     let valid = submit(
         &store,
         PolicyKind::CapabilitySet,
         "claude",
-        &serde_json::json!({
-            "ai_type": "claude",
-            "read": {"project_whitelist": ["项目/Studiolo"], "deny_by_default": true},
-            "write": {"board": false, "content_patch_only": true, "content_direct": false},
-            "policy": {"propose_desired": false, "activate": false},
-        })
-        .to_string(),
+        &capability(&["项目/Studiolo"]),
         "2026-10-15T18:00:00Z",
     );
     assert_eq!(valid.status, DesiredStatus::Validated);
@@ -223,7 +303,7 @@ fn a_newer_rejected_draft_also_blocks_until_it_is_withdrawn() {
         "2026-10-15T18:01:00Z",
     );
     assert_eq!(broken.status, DesiredStatus::Rejected);
-    // 校验没过的新草案也是一份没处理的提议，不能被较早那份悄悄作废。
+    // 主人自己校验没过的新草案也算数：它说明较早那份已被改过，要发较早那份，先撤回它。
     assert_blocked(
         publish(&store, &valid.id, "2026-10-15T18:02:00Z"),
         &[&broken],
@@ -259,7 +339,7 @@ fn newer_means_inserted_later_even_when_the_timestamps_disagree() {
 }
 
 #[test]
-fn the_queue_marks_newer_open_drafts_with_the_same_rule_as_publishing() {
+fn the_queue_marks_newer_and_blocking_drafts_with_the_same_rule_as_publishing() {
     let (_temp, dir, store) = store_with_rules();
     let agent = PolicyAgentStore::open_existing(&dir).unwrap();
     let r1_claude = propose(
@@ -280,26 +360,47 @@ fn the_queue_marks_newer_open_drafts_with_the_same_rule_as_publishing() {
         "# 第二轮\n",
         "2026-10-15T18:05:21.234156859Z",
     );
-    let (records, newer) = store.desired_queue(200).unwrap();
-    // 列表照旧含两份已发布的现行规则；只有三份未发布的带表，最新那份是空表。
-    assert_eq!(records.len(), 5);
-    assert_eq!(newer.len(), 3);
-    assert_eq!(newer[&r1_claude.id], [r2_claude.id.as_str()]);
-    assert!(newer[&r2_claude.id].is_empty());
+    let owner = submit(
+        &store,
+        PolicyKind::Rules,
+        CLAUDE,
+        "# 主人\n",
+        "2026-10-15T18:10:00Z",
+    );
+    let (records, newer, blocked) = store.desired_queue(200).unwrap();
+    // 列表照旧含两份已发布的现行规则；四份未发布的都带表，最新那份是空表。
+    assert_eq!(records.len(), 6);
+    assert_eq!(newer.len(), 4);
+    assert_eq!(
+        newer[&r1_claude.id],
+        [r2_claude.id.as_str(), owner.id.as_str()]
+    );
+    assert_eq!(newer[&r2_claude.id], [owner.id.as_str()]);
+    assert!(newer[&owner.id].is_empty());
     assert!(newer[&r1_rules.id].is_empty());
-    // 表里说有更新的那份，发布时就被拦住；空表的那份能发。
+    // 挡住发布的只算同一提交者的：第一轮被第二轮挡；主人那份不挡别人，也不被别人挡。
+    assert_eq!(blocked.len(), 4);
+    assert_eq!(blocked[&r1_claude.id], [r2_claude.id.as_str()]);
+    assert!(blocked[&r2_claude.id].is_empty());
+    assert!(blocked[&owner.id].is_empty());
+    assert!(blocked[&r1_rules.id].is_empty());
+    // 表里说被挡的那份，发布时就被拦住；没被挡的能发，发了只取代比它早的。
     assert_blocked(
         publish(&store, &r1_claude.id, "2026-10-15T18:21:09Z"),
         &[&r2_claude],
     );
     publish(&store, &r2_claude.id, "2026-10-15T18:21:09Z").unwrap();
-    let (_, newer) = store.desired_queue(200).unwrap();
-    assert_eq!(newer.keys().collect::<Vec<_>>(), [&r1_rules.id]);
+    assert_eq!(status(&store, &r1_claude.id), DesiredStatus::Superseded);
+    assert_eq!(status(&store, &owner.id), DesiredStatus::Validated);
+    let open = BTreeSet::from([r1_rules.id.clone(), owner.id.clone()]);
+    let (_, newer, blocked) = store.desired_queue(200).unwrap();
+    assert_eq!(newer.keys().cloned().collect::<BTreeSet<_>>(), open);
+    assert_eq!(blocked.keys().cloned().collect::<BTreeSet<_>>(), open);
     // limit 只截已结束的历史：落在窗口外的未发布草案照样列出（补在末尾），表里也有它。
-    let (records, newer) = store.desired_queue(1).unwrap();
+    let (records, newer, _) = store.desired_queue(1).unwrap();
     let ids: Vec<&str> = records.iter().map(|record| record.id.as_str()).collect();
-    assert_eq!(ids, [r2_claude.id.as_str(), r1_rules.id.as_str()]);
-    assert_eq!(newer.keys().collect::<Vec<_>>(), [&r1_rules.id]);
+    assert_eq!(ids, [owner.id.as_str(), r1_rules.id.as_str()]);
+    assert_eq!(newer.keys().cloned().collect::<BTreeSet<_>>(), open);
 }
 
 #[test]
@@ -314,7 +415,7 @@ fn the_history_window_never_drops_an_open_draft() {
         let record = submit(&store, PolicyKind::Rules, RULES, &format!("# {at}\n"), at);
         publish(&store, &record.id, at).unwrap();
     }
-    let (records, newer_open) = store.desired_queue(2).unwrap();
+    let (records, newer_open, blocked_by) = store.desired_queue(2).unwrap();
     let listed: Vec<(&str, DesiredStatus)> = records
         .iter()
         .map(|record| (record.id.as_str(), record.status))
@@ -338,10 +439,74 @@ fn the_history_window_never_drops_an_open_draft() {
     assert_eq!(newer_open.len(), 2);
     assert_eq!(newer_open[&older.id], [newer.id.as_str()]);
     assert!(newer_open[&newer.id].is_empty());
+    assert_eq!(blocked_by[&older.id], [newer.id.as_str()]);
     assert_blocked(
         publish(&store, &older.id, "2026-10-15T14:00:00Z"),
         &[&newer],
     );
+}
+
+#[test]
+fn an_agents_newer_proposals_neither_block_the_owner_nor_get_superseded() {
+    // 安全审查（2026-10-15）：AI 能对任何对象提案（含能力集），被拒的提案还不占名额；要是谁更新
+    // 都挡，AI 不停交新提案就能挡住主人，比如主人要收窄它的能力集。
+    let (_temp, dir) = private_dir();
+    let store = PolicyStore::open(&dir).unwrap();
+    let agent = PolicyAgentStore::open_existing(&dir).unwrap();
+    let narrowed = submit(
+        &store,
+        PolicyKind::CapabilitySet,
+        "claude",
+        &capability(&["项目/Studiolo"]),
+        "2026-10-15T18:00:00Z",
+    );
+    assert_eq!(narrowed.status, DesiredStatus::Validated);
+    // 之后 AI 对同一能力集交了一份有效的、一份结构无效的（入库为被拒）。
+    let wider = propose_kind(
+        &agent,
+        PolicyKind::CapabilitySet,
+        "claude",
+        &capability(&["项目/Studiolo", "项目/Semiment"]),
+        "2026-10-15T18:01:00Z",
+    );
+    let broken = propose_kind(
+        &agent,
+        PolicyKind::CapabilitySet,
+        "claude",
+        "{}",
+        "2026-10-15T18:02:00Z",
+    );
+    assert_eq!(wider.status, DesiredStatus::Pending);
+    assert_eq!(broken.status, DesiredStatus::Rejected);
+    // 主人发布自己较早的那份：不被挡。
+    let activation = publish(&store, &narrowed.id, "2026-10-15T18:03:00Z").unwrap();
+    assert_eq!(activation.desired_id.as_deref(), Some(narrowed.id.as_str()));
+    // 两份更新的提案照旧在，没被悄悄作废，主人之后逐份处理。
+    assert_eq!(status(&store, &wider.id), DesiredStatus::Pending);
+    assert_eq!(status(&store, &broken.id), DesiredStatus::Rejected);
+}
+
+#[test]
+fn publishing_supersedes_only_the_older_drafts_and_keeps_the_newer_ones() {
+    let (_temp, dir, store) = store_with_rules();
+    let agent = PolicyAgentStore::open_existing(&dir).unwrap();
+    let oldest = propose(&agent, CLAUDE, "# 最早的提案\n", "2026-10-15T18:00:00Z");
+    let owner = submit(
+        &store,
+        PolicyKind::Rules,
+        CLAUDE,
+        "# 主人改的\n",
+        "2026-10-15T18:01:00Z",
+    );
+    let newest = propose(&agent, CLAUDE, "# 最新的提案\n", "2026-10-15T18:02:00Z");
+    // 主人那份：同一提交者没有更新的，能发；比它早的那份标为已取代，比它晚的那份留着。
+    publish(&store, &owner.id, "2026-10-15T18:03:00Z").unwrap();
+    assert_eq!(status(&store, &owner.id), DesiredStatus::Activated);
+    assert_eq!(status(&store, &oldest.id), DesiredStatus::Superseded);
+    assert_eq!(status(&store, &newest.id), DesiredStatus::Pending);
+    // 留下的那份之后照样能发。
+    publish(&store, &newest.id, "2026-10-15T18:04:00Z").unwrap();
+    assert_eq!(status(&store, &newest.id), DesiredStatus::Activated);
 }
 
 #[test]

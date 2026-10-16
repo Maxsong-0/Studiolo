@@ -65,11 +65,11 @@ impl Problem {
                     "current_effective_hash": current,
                 }),
             },
-            PolicyError::NewerDesiredExists { newer } => Self {
+            PolicyError::NewerDesiredFromSameSubmitter { newer } => Self {
                 status: StatusCode::CONFLICT,
                 body: serde_json::json!({
-                    "code": "newer_desired_exists",
-                    "error": "同一对象还有更新的未发布草案，只能发布最新的那一份；要发这份，先撤回更新的。",
+                    "code": "newer_desired_same_submitter",
+                    "error": "同一提交者还有更新的未发布草案，只能发布其中最新的那一份；要发这份，先撤回更新的。",
                     "newer_desired_ids": newer,
                 }),
             },

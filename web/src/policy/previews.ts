@@ -17,7 +17,7 @@ import { KIND_LABEL, LEVEL_LABEL, shortHash, shortId } from '../policyModel';
 export interface PreviewFact {
   label: string;
   value: string;
-  /** 红字：只给「等你逐条确认」的扩大项。 */
+  /** 红字：只给等你处理的事实，即要逐条确认的扩大项、发布后仍等你处理的更新草案。 */
   signal?: boolean;
 }
 
@@ -54,15 +54,29 @@ function currentVersion(
   return entry ? `当前生效 v${entry.version}` : '当前没有生效版本';
 }
 
+/** 几份草案的号（前 12 位），顿号隔开。 */
+function draftIds(records: readonly DesiredRecord[]): string {
+  return records.map((entry) => shortId(entry.id)).join('、');
+}
+
+/** 谁交的：主人，或哪一类 AI（同一类 AI 的几个实例算同一提交者）。 */
+function submitterOf(record: DesiredRecord): string {
+  return record.submitter_kind === 'agent'
+    ? `AI ${record.agent_type ?? '未知类型'}`
+    : '主人';
+}
+
 /**
- * 发布一份已校验的规则草案。`superseded` 是同一对象里较早的未发布草案：发布这一份时服务端把它们
- * 一并标为已取代（只有最新那份能发布，所以剩下的都比它早，T-181）。
+ * 发布一份已校验的草案（T-181）。`superseded` 是同一对象里比它早的未发布草案：发布时服务端把它们一并
+ * 标为已取代。`remaining` 是比它更新的：同一提交者更新的会挡住发布，所以能走到这里的只会是别的提交者
+ * 交的，发布后照旧待处理（用户 2026-10-16 定：谁的提议都不悄悄作废）。
  */
 export function publishPreview(
   record: DesiredRecord,
   report: Report,
   status: PolicyStatus,
   superseded: readonly DesiredRecord[],
+  remaining: readonly DesiredRecord[],
 ): PreviewContent {
   const target = `${KIND_LABEL[record.kind]} ${record.subject}`;
   const from = currentVersion(status, record.kind, record.subject);
@@ -86,40 +100,75 @@ export function publishPreview(
       {
         label: '同时取代',
         value: superseded.length
-          ? `同一对象较早的 ${superseded.length} 份未发布草案（${superseded
-              .map((entry) => shortId(entry.id))
-              .join('、')}）：发布后标为已取代，不能再发布`
-          : '无：同一对象没有别的未发布草案',
+          ? `同一对象比它早的 ${superseded.length} 份未发布草案（${draftIds(
+              superseded,
+            )}）：发布后标为已取代，不能再发布`
+          : '无：同一对象没有比它早的未发布草案',
       },
+      ...(remaining.length
+        ? [
+            {
+              label: '仍待处理',
+              value: `同一对象还有 ${remaining.length} 份比它更新的未发布草案，是别的提交者交的（${remaining
+                .map((entry) => `${shortId(entry.id)}，${submitterOf(entry)}`)
+                .join(
+                  '；',
+                )}）：这次发的是较早的这一份，它们不会被取代，发布后照旧等你处理`,
+              signal: true,
+            },
+          ]
+        : []),
     ],
     notes: [
       ...(report.retire ? ['这是一次撤销：发布后该对象不再有生效版本。'] : []),
       '不可撤回：发布后成为新的生效版本，版本历史只增不减；要改回只能再发布或回滚出新版本。',
       L3_NOTE('发布'),
     ],
-    confirmLabel: '确认发布',
+    // 还有更新的草案时，确认按钮也点明发的是较早的这一份，不让人当成在发最新的。
+    confirmLabel: remaining.length ? '确认发布这份较早的草案' : '确认发布',
   };
 }
 
-/** 发布成功提示的补充：发布事务把同一对象剩下的未发布草案一并标成了已取代（执行预览里列过）。 */
-export function supersededNotice(supersedes: number): string {
-  return supersedes ? '；同一对象其余未发布的草案已一并标为已取代' : '';
+/**
+ * 发布成功提示的补充（执行预览里列过）：比它早的已一并标为已取代，比它更新的照旧待处理。
+ * 份数是确认时的；之后又有变化，以重读后的列表为准。
+ */
+export function publishedNotice(supersedes: number, remains: number): string {
+  return `${supersedes ? '；同一对象比它早的未发布草案已一并标为已取代' : ''}${
+    remains ? `；同一对象更新的 ${remains} 份未发布草案照旧待处理` : ''
+  }`;
 }
 
 /**
- * 这份草案不是同一对象最新的那份时，发布按钮为什么不可点（服务端会以 newer_desired_exists 拒绝）；
- * `newer` 是接口给的更新草案号。是最新的返回 null。
+ * 同一提交者（主人，或同一类 AI）还有更新的未发布草案时，发布按钮为什么不可点（服务端会以
+ * newer_desired_same_submitter 拒绝）；`blocked` 是接口给的挡住它的那几份。没被挡返回 null。
  */
-export function newerDraftReason(newer: readonly string[]): string | null {
-  if (!newer.length) return null;
-  return `同一对象还有更新的未发布草案（${newer.map(shortId).join('、')}）：只能发布最新的那一份；要发这份，先在「策略」页的待处理草案里撤回更新的。`;
+export function newerDraftReason(blocked: readonly string[]): string | null {
+  if (!blocked.length) return null;
+  return `同一提交者还有更新的未发布草案（${blocked.map(shortId).join('、')}）：只能发布其中最新的那一份；要发这份，先在「策略」页的待处理草案里撤回更新的。`;
 }
 
-/** 发布这份最新草案会把同一对象较早的几份一并标为已取代：发布按钮旁先说一句。没有较早的返回 null。 */
-export function supersededHint(count: number): string | null {
-  return count
-    ? `同一对象另有 ${count} 份较早的未发布草案：发布这一份会把它们标为已取代。`
-    : null;
+/**
+ * 发布按钮旁先说一句：发布这一份会取代几份比它早的、留下几份比它更新的（别的提交者交的）。
+ * 都没有返回 null。
+ */
+export function publishHint(
+  superseded: number,
+  remaining: number,
+): string | null {
+  const parts = [
+    ...(superseded
+      ? [
+          `同一对象另有 ${superseded} 份较早的未发布草案：发布这一份会把它们标为已取代。`,
+        ]
+      : []),
+    ...(remaining
+      ? [
+          `同一对象还有 ${remaining} 份更新的未发布草案，是别的提交者交的：发布这一份不会取代它们，它们照旧待处理。`,
+        ]
+      : []),
+  ];
+  return parts.length ? parts.join('') : null;
 }
 
 /** 回滚到某个历史版本：新建一个正文等于它的版本，历史不变。 */

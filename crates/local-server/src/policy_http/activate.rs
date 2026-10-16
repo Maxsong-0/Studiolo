@@ -156,7 +156,9 @@ pub(super) async fn activate(State(state): State<AppState>, mut request: Request
                 Err(error) => {
                     let reason = match &error {
                         PolicyError::HashMismatch { .. } => "hash_mismatch",
-                        PolicyError::NewerDesiredExists { .. } => "newer_desired_exists",
+                        PolicyError::NewerDesiredFromSameSubmitter { .. } => {
+                            "newer_desired_same_submitter"
+                        }
                         PolicyError::ValidationFailed => "validation_failed",
                         PolicyError::DesiredNotFound | PolicyError::VersionNotFound => "not_found",
                         PolicyError::DesiredNotActivatable(_) => "not_activatable",

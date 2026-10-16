@@ -82,17 +82,20 @@ rules 类的 subject 规则（`.md` 结尾、≤128 字符、不含 `/`、不以
   （候选，人工判断）；撤销整份母本恒为扩大项。
 - **发布**（`POST /api/v1/policy/activate`，L3）：请求三选一 `{desired_id}` / `{rollback_to}` / `{release_global_revocation:true}`，
   必带 `expected_effective_hash`（CAS）。服务端固定顺序：重验会话 → 审计 **Intent**（`policy.activated`）→
-  `require_l3(ActivatePolicy)` → 策略库事务（哈希 CAS → 只认同一对象最新的未发布 desired → 重新校验 → 写版本 → 更新现行 →
-  重算 effective 哈希 → 取代同 subject 其余（都比它早的）未发布 desired → 能力集发布顺带解除该类型吊销）→ 审计 **Outcome**（同 id）。
+  `require_l3(ActivatePolicy)` → 策略库事务（哈希 CAS → 同一提交者有更新的未发布 desired 就拒绝 → 重新校验 → 写版本 →
+  更新现行 → 重算 effective 哈希 → 取代同一对象比它早的未发布 desired → 能力集发布顺带解除该类型吊销）→ 审计 **Outcome**（同 id）。
   拒绝一律 `policy.activate_denied{reason}`：`reauthentication_required`（403）、`no_l3_path`（409）、`untrusted_source`（403）、
-  `hash_mismatch`（409，回传 `current_effective_hash`）、`newer_desired_exists`（409，回传 `newer_desired_ids`）、
+  `hash_mismatch`（409，回传 `current_effective_hash`）、`newer_desired_same_submitter`（409，回传 `newer_desired_ids`）、
   `validation_failed`（422）、`not_found`（404）、`not_activatable`（409）。
-  **只能发布同一对象最新的未发布 desired**（T-181，BUG-031）：同一 kind/subject 还有比它晚入库的 pending／validated／rejected
-  就拒绝，什么都不写；要发较早那份，先撤回更新的。「谁更新」按入库先后（SQLite rowid）判，不看提交时间、不看草案号；
-  草案列表 `GET /api/v1/policy/desired` 同时回 `newer_open`（每份未发布 desired → 比它晚入库的未发布 desired 号，按入库先后，
-  最新那份是空表），与拦截同一口径（`crates/policy/src/store/queue.rs`），界面只照它标「最新」「较早」、挡发布按钮。
-  列表的 200 份只截已结束的历史：未发布 desired 一份不少，落在窗口外的按同一排序补在末尾。判定找不到要发的那份
-  （行与判定对不上）就报库损坏（503 `store_unavailable`），不放行。
+  **同一提交者只能发布自己最新的那份未发布 desired**（T-181，BUG-031；用户 2026-10-16 定）：提交者按 `(submitter_kind, agent_type)`
+  认，主人算一个，同一类 AI 的几个实例算同一个。同一对象里同一提交者还有比它晚入库的 pending／validated／rejected 就拒绝，
+  什么都不写；要发较早那份，先撤回更新的。不同提交者互不阻挡：AI 交新提案（含被拒的）挡不住主人发布。发布只把同一对象
+  **比它早**入库的未发布 desired 标为已取代，比它晚的一律留着待处理，谁的提议都不悄悄作废。
+  「谁更新」按入库先后（SQLite rowid）判，不看提交时间、不看草案号。草案列表 `GET /api/v1/policy/desired` 同时回两张表，
+  都按入库先后：`newer_open`（每份未发布 desired → 同一对象里比它晚入库的未发布 desired 号，最新那份是空表）与 `blocked_by`
+  （其中同一提交者的那几份，非空就不能发布）。两张表与拦截同一口径（`crates/policy/src/store/queue.rs`），界面只照它们标
+  「最新」「较早」、挡发布按钮。列表的 200 份只截已结束的历史：未发布 desired 一份不少，落在窗口外的按同一排序补在末尾。
+  判定找不到要发的那份（行与判定对不上）就报库损坏（503 `store_unavailable`），不放行。
   账本不可用即失败关闭不发布；Outcome 落账失败时发布已持久，响应 `audit_confirmed=false` 而不是假装没发布。
 - **effective 哈希** ＝ 全部现行 (kind, subject, version, body_sha256) 按序拼接的 SHA-256；空策略也有确定值。
   每个版本记 `effective_hash`／`previous_effective_hash`；`handshake.served` 记接入方每次拿到的 `effective_hash`，
@@ -155,7 +158,7 @@ rules 类的 subject 规则（`.md` 结尾、≤128 字符、不含 `/`、不以
 | `InvalidKind` / `InvalidSubject` / `InvalidBody` | 类别、subject 或正文不合规 | 400；入库前拒绝，不留记录 |
 | `ValidationFailed` | 发布时重新校验未通过 | 422 ＋ desired 报告更新 |
 | `HashMismatch{current}` | CAS 失败 | 409 ＋ `current_effective_hash` |
-| `NewerDesiredExists{newer}` | 发布的 desired 不是同一对象最新的未发布 desired（T-181） | 409 `newer_desired_exists` ＋ `newer_desired_ids`；什么都不写 |
+| `NewerDesiredFromSameSubmitter{newer}` | 同一提交者在同一对象还有比它晚入库的未发布 desired（T-181） | 409 `newer_desired_same_submitter` ＋ `newer_desired_ids`；什么都不写 |
 | `DesiredNotFound` / `VersionNotFound` | 不存在 | 404 |
 | `DesiredNotActivatable` / `NotRevoked` / `AlreadyBootstrapped` | 状态不允许 | 409 |
 | `TooManyProposals` | 接入方提案超界 | MCP 错误「待处理提案已达上限」 |
@@ -169,7 +172,7 @@ rules 类的 subject 规则（`.md` 结尾、≤128 字符、不含 `/`、不以
   bootstrap 首版限制、三级吊销与恢复方向、接入方提案有界且永不生效、原文原样保留、多表／错头即损坏、视图求交、审计事件形状；
   `agent_read_snapshot_contract.rs`：接入方读取与策略版本同一读事务，并发发布 40 版下无一撕裂（改回两个事务即红）；
   `rules_whitelist_contract.rs`：旧能力集缺字段解析为空、合法名单通过、非法与重复项按下标报问题、新增报扩大、移除报收窄。
-- T-181 同一对象几份未发布 desired：`crates/policy/tests/desired_order_contract.rs`（只能发布最新那份，较早的被拒、什么都不写；被拒的更新草案也挡，撤回后放行；按入库先后、不看时间戳；`desired_queue` 与拦截同一口径，历史窗口不漏未发布草案；判定对不上报库损坏），`policy_http_contract.rs`（409 `newer_desired_exists`、审计原因、列表 `newer_open`），前端 `web/src/test/policy/newerDraft.test.tsx`、`web/src/test/rules/draftPanel.test.tsx`（标「最新」「较早」、挡较早草案、预览写出草案号与取代）、`policyStepUp.test.tsx`（认证期间来了更新的草案，重试被 409 挡下）、`policyModel.test.ts`（`newer_open` 必须是同一对象内的一条先后，自相矛盾整份拒收）。
+- T-181 同一对象几份未发布 desired：`crates/policy/tests/desired_order_contract.rs`（同一提交者有更新的就拒、什么都不写，被拒的更新草案也挡、撤回后放行；不同提交者互不阻挡，AI 的新提案（含被拒的）挡不住主人、也不被取代；发布只取代比它早的；按入库先后、不看时间戳；`desired_queue` 的 `newer_open`、`blocked_by` 与拦截同一口径，历史窗口不漏未发布草案；判定对不上报库损坏），`policy_http_contract.rs`（409 `newer_desired_same_submitter`、审计原因、列表 `newer_open` 与 `blocked_by`），前端 `web/src/test/policy/newerDraft.test.tsx`、`web/src/test/rules/draftPanel.test.tsx`（标「最新」「较早」、只挡同一提交者有更新的、预览写出草案号与取代、仍待处理）、`policyStepUp.test.tsx`（认证期间同一提交者来了更新的，重试被 409 挡下；别的提交者来的不挡，照发后它留着）、`policyModel.test.ts`（两张表缺一不可，`newer_open` 必须是同一对象内的一条先后，`blocked_by` 只能从中按序挑，自相矛盾整份拒收）、`devFixtures.test.ts`（开发假数据同一口径）。
 - `crates/agent-server/tests/rules_access_contract.rs`：规则名单对 `policy_read` 清单与单条、握手路牌、`read_note`／
   `list_entries`／`search` 同一裁决，名单外与不存在（或白名单外）对外同一错误、审计 `rule_not_whitelisted`，
   `_规则/` 子目录照项目白名单，缺字段零规则，M3 兼容模式不过滤；`crates/supply/tests/rules_files_contract.rs`：

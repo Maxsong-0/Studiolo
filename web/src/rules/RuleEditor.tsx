@@ -59,7 +59,7 @@ export function RuleEditor({
   const row = model.rules.find((rule) => rule.subject === subject);
   const existing =
     row !== undefined && (row.entry !== null || row.drafts.length > 0);
-  // 草案已按服务端判定排好、最新的在前：编辑区以它为底，也只有它能发布（T-181）。
+  // 草案已按服务端判定排好、最新的在前：编辑区以它为底，这里也只发布它；它没有更新的草案，不会被挡（T-181）。
   const draft = existing ? (row.drafts[0] ?? null) : null;
   const base = draft?.body ?? row?.body ?? '';
   const [name, setName] = useState(subject ?? '');

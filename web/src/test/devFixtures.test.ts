@@ -522,61 +522,96 @@ describe('假数据：写操作走得通', () => {
     expect(get('/api/v1/policy/versions/9').status).toBe(404);
   });
 
-  it('同一对象两份未发布草案：列表标出先后；发布较早那份回 409、什么都不改，最新那份照发并取代较早的（T-181）', () => {
+  it('同一对象几份未发布草案：列表标出先后和挡住发布的；同一提交者更新的才挡，发布只取代比它早的（T-181）', () => {
     const { post, read } = setup();
     const proposal = desiredList(read('/api/v1/policy/desired'))[0];
+    expect(proposal.submitter_kind).toBe('agent');
     const current = versionRecord(read('/api/v1/policy/versions/3'));
-    const body = JSON.parse(current.body ?? '{}') as {
-      read: { rules_whitelist: string[] };
+    // 主人在 AI 提案之后先后交两份能力集草案，只改规则读名单。
+    const submit = (rules: string[]) => {
+      const body = JSON.parse(current.body ?? '{}') as {
+        read: { rules_whitelist: string[] };
+      };
+      body.read.rules_whitelist = rules;
+      return desiredEnvelope(
+        post('/api/v1/policy/desired', {
+          kind: 'capability_set',
+          subject: 'claude',
+          body: JSON.stringify(body),
+        }).body,
+      );
     };
-    body.read.rules_whitelist = ['CLAUDE.md'];
-    const owner = desiredEnvelope(
-      post('/api/v1/policy/desired', {
-        kind: 'capability_set',
-        subject: 'claude',
-        body: JSON.stringify(body),
-      }).body,
-    );
-    expect(owner.status).toBe('validated');
+    const owner = submit(['CLAUDE.md']);
+    const latest = submit(['通用工作规则.md']);
+    expect([owner.status, latest.status]).toEqual(['validated', 'validated']);
     expect(
       desiredList(read('/api/v1/policy/desired')).map((entry) => [
         entry.id,
         entry.newer_open,
+        entry.blocked_by,
       ]),
     ).toEqual([
-      [owner.id, []],
-      [proposal.id, [owner.id]],
+      [latest.id, [], []],
+      [owner.id, [latest.id], [latest.id]],
+      [proposal.id, [owner.id, latest.id], []],
     ]);
     const before = policyStatus(read('/api/v1/policy')).effective_hash;
     recentAuthentication(post('/api/v1/auth/step-up', { code: '482913' }).body);
+    // 主人自己还有更新的：较早那份回 409、什么都不改。
     expect(
       post('/api/v1/policy/activate', {
-        desired_id: proposal.id,
+        desired_id: owner.id,
         expected_effective_hash: before,
       }),
     ).toMatchObject({
       status: 409,
-      body: { code: 'newer_desired_exists', newer_desired_ids: [owner.id] },
+      body: {
+        code: 'newer_desired_same_submitter',
+        newer_desired_ids: [latest.id],
+      },
     });
     expect(policyStatus(read('/api/v1/policy')).effective_hash).toBe(before);
     expect(
       desiredList(read('/api/v1/policy/desired')).map((entry) => entry.status),
-    ).toEqual(['validated', 'pending']);
-    const outcome = activateOutcome(
-      post('/api/v1/policy/activate', {
-        desired_id: owner.id,
-        expected_effective_hash: before,
-      }).body,
-    );
-    expect(outcome.kind).toBe('activated');
+    ).toEqual(['validated', 'validated', 'pending']);
+    // AI 的提案较早，但更新的两份都是主人交的，不挡它；发布后主人那两份留着待处理。
+    expect(
+      activateOutcome(
+        post('/api/v1/policy/activate', {
+          desired_id: proposal.id,
+          expected_effective_hash: before,
+        }).body,
+      ).kind,
+    ).toBe('activated');
     expect(
       desiredList(read('/api/v1/policy/desired')).map((entry) => [
         entry.id,
         entry.status,
       ]),
     ).toEqual([
-      [owner.id, 'activated'],
-      [proposal.id, 'superseded'],
+      [latest.id, 'validated'],
+      [owner.id, 'validated'],
+      [proposal.id, 'activated'],
+    ]);
+    // 主人最新那份照发，比它早的那份标为已取代。
+    const after = policyStatus(read('/api/v1/policy')).effective_hash;
+    expect(
+      activateOutcome(
+        post('/api/v1/policy/activate', {
+          desired_id: latest.id,
+          expected_effective_hash: after,
+        }).body,
+      ).kind,
+    ).toBe('activated');
+    expect(
+      desiredList(read('/api/v1/policy/desired')).map((entry) => [
+        entry.id,
+        entry.status,
+      ]),
+    ).toEqual([
+      [latest.id, 'activated'],
+      [owner.id, 'superseded'],
+      [proposal.id, 'activated'],
     ]);
   });
 

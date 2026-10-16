@@ -198,7 +198,7 @@ function versionOf(item: EffectiveEntry, body: string | null): VersionRecord {
   };
 }
 
-/** 列表里的一份草案；`newer_open` 缺省为空表，即它是同一对象最新的那份。 */
+/** 列表里的一份草案；`newer_open`、`blocked_by` 缺省为空表，即它是同一对象最新的那份。 */
 function draft(overrides: Partial<ListedDesired>): ListedDesired {
   return {
     id: '01ABCDEFGHJKMNPQRSTVWXYZ00',
@@ -215,6 +215,7 @@ function draft(overrides: Partial<ListedDesired>): ListedDesired {
     validated_at: null,
     activated_version: null,
     newer_open: [],
+    blocked_by: [],
     ...overrides,
   };
 }

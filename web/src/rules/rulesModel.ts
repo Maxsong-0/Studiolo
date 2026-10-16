@@ -113,7 +113,10 @@ export interface RuleRow {
   body: string | null;
   /** 能读这条规则的 AI 类型（能力集名单里有它），按类型名排序。 */
   readers: string[];
-  /** 这条规则还没发布的草案，最新的在前（按服务端判定）；只有第一份能发布。 */
+  /**
+   * 这条规则还没发布的草案，最新的在前（按服务端判定）。第一份没有更新的草案，总能发布；其余的
+   * 要看同一提交者有没有更新的（`blocked_by`）。
+   */
   drafts: ListedDesired[];
 }
 
@@ -133,7 +136,7 @@ export interface TypeColumn {
   proposed: Whitelist | null;
   /**
    * 这一类型全部未发布的能力集草案（含 ownerDraft，多出来的多为 AI 提案），最新的在前：发布 ownerDraft 时
-   * 比它早的一并标为已取代，比它新的会挡住发布（T-181）。
+   * 比它早的一并标为已取代，比它新的 AI 提案不挡、照旧待处理（T-181，用户 2026-10-16 定）。
    */
   drafts: ListedDesired[];
   /** 该类型的撤销接入生效中。 */

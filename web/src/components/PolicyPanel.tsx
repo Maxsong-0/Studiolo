@@ -27,18 +27,19 @@ import {
   STATUS_LABEL,
   isOpenStatus,
   shortHash,
+  remainingAfter,
   shortId,
   supersededBy,
 } from '../policyModel';
 import { ActionPreview } from '../policy/ActionPreview';
 import {
   newerDraftReason,
+  publishHint,
   publishPreview,
+  publishedNotice,
   releasePreview,
   revokePreview,
   rollbackPreview,
-  supersededHint,
-  supersededNotice,
   type PreviewContent,
 } from '../policy/previews';
 import { Term } from '../policy/Term';
@@ -59,8 +60,9 @@ type Loaded = {
 /** 反馈落在发起动作的那一格里：人在哪格点的，就在哪格看结果。 */
 type Origin = 'effective' | 'submit' | 'queue' | 'versions' | 'revoke';
 /**
- * 一次 L3 动作：请求本体、成功提示里的名字、给人看的动作说明、发起的格子，以及执行预览里列出的、
- * 同一对象会被一并标为已取代的较早草案份数（只有发布草案才可能不是 0）。
+ * 一次 L3 动作：请求本体、成功提示里的名字、给人看的动作说明、发起的格子，以及执行预览里列出的
+ * 同一对象其余未发布草案份数：会被一并标为已取代的较早草案、照旧待处理的更新草案（只有发布草案
+ * 才可能不是 0）。
  */
 type Activation = {
   request: ActivateRequest;
@@ -68,6 +70,7 @@ type Activation = {
   action: string;
   origin: Origin;
   supersedes: number;
+  remains: number;
 };
 /** 被二次认证挡下、等人就地认证后原样重试的那一个动作；`attempt` 只用于措辞。 */
 type Pending = Activation & { attempt: number };
@@ -244,7 +247,7 @@ export function PolicyPanel({ initial }: { initial: Loaded }) {
   // 认证后重试沿用同一个 request：人审过哪一份生效中内容就按哪一份发布，
   // 期间生效中内容变了由服务端以 hash_mismatch 挡下，绝不悄悄改用新的。
   function activate(activation: Activation, attempt = 0) {
-    const { request, label, origin, supersedes } = activation;
+    const { request, label, origin, supersedes, remains } = activation;
     void act(origin, async () => {
       try {
         const outcome = await activatePolicy(request, lifetime.current.signal);
@@ -257,8 +260,9 @@ export function PolicyPanel({ initial }: { initial: Loaded }) {
           return `已解除全局撤销${outcome.audit_confirmed ? '' : '（审计未确认，请核对账本）'}。`;
         return `${label}：已发布为 v${outcome.activation.version}，生效中摘要 ${shortHash(
           outcome.activation.effective_hash,
-        )}${outcome.activation.cleared_type_revocation ? '，并解除了该类型的撤销接入' : ''}${supersededNotice(
+        )}${outcome.activation.cleared_type_revocation ? '，并解除了该类型的撤销接入' : ''}${publishedNotice(
           supersedes,
+          remains,
         )}${outcome.audit_confirmed ? '' : '（审计未确认，请核对账本）'}。`;
       } catch (cause) {
         // 403「需要二次认证」不是终点：发布没有发生，只差一次一次性验证码。
@@ -356,10 +360,13 @@ export function PolicyPanel({ initial }: { initial: Loaded }) {
   const { status, desired, versions } = data;
   const actionable = desired.filter((record) => isOpenStatus(record.status));
   const selected = desired.find((record) => record.id === selectedId) ?? null;
-  // 发布选中这份时会被一并标为已取代的较早草案；选中的不是最新的就发不出，只说为什么。
+  // 发布选中这份时：比它早的一并标为已取代，比它更新的（别的提交者交的）照旧待处理；
+  // 同一提交者还有更新的就发不出，只说为什么。
   const superseded = selected ? supersededBy(selected, desired) : [];
-  const newerReason = selected ? newerDraftReason(selected.newer_open) : null;
-  const selectedHint = newerReason ?? supersededHint(superseded.length);
+  const remaining = selected ? remainingAfter(selected, desired) : [];
+  const newerReason = selected ? newerDraftReason(selected.blocked_by) : null;
+  const selectedHint =
+    newerReason ?? publishHint(superseded.length, remaining.length);
   const heading = {
     effective: `${ids}-effective`,
     submit: `${ids}-submit`,
@@ -423,6 +430,7 @@ export function PolicyPanel({ initial }: { initial: Loaded }) {
                         action: '解除全局撤销',
                         origin: 'effective',
                         supersedes: 0,
+                        remains: 0,
                       },
                       releasePreview(status.effective_hash),
                     )
@@ -556,9 +564,12 @@ export function PolicyPanel({ initial }: { initial: Loaded }) {
               {actionable.map((record) => {
                 const current = selected?.id === record.id;
                 const expansions = record.report?.expansions.length ?? null;
-                // 同一对象有几份未发布草案时标出哪份最新（服务端判定）：只有最新那份能发布（T-181）。
+                // 同一对象有几份未发布草案时标出哪份最新（服务端判定）；较早的那份只有同一提交者
+                // 还有更新的才不能发布（T-181，用户 2026-10-16 定）。
                 const order = record.newer_open.length
-                  ? 'older'
+                  ? record.blocked_by.length
+                    ? 'blocked'
+                    : 'older'
                   : actionable.some((other) =>
                         other.newer_open.includes(record.id),
                       )
@@ -589,8 +600,10 @@ export function PolicyPanel({ initial }: { initial: Loaded }) {
                     <span className="policy-queue__marks" id={`${meta}-marks`}>
                       {order === 'newest' ? (
                         <StatusMark state="active">最新</StatusMark>
-                      ) : order === 'older' ? (
+                      ) : order === 'blocked' ? (
                         <StatusMark state="dormant">较早，不能发布</StatusMark>
+                      ) : order === 'older' ? (
+                        <StatusMark state="dormant">较早</StatusMark>
                       ) : null}
                       {/* 接口没给报告就照实说没有，不猜它扩大了几项 */}
                       {expansions === null ? (
@@ -657,12 +670,14 @@ export function PolicyPanel({ initial }: { initial: Loaded }) {
                             action: `发布 ${KIND_LABEL[selected.kind]} ${selected.subject}`,
                             origin: 'queue',
                             supersedes: superseded.length,
+                            remains: remaining.length,
                           },
                           publishPreview(
                             selected,
                             selected.report,
                             status,
                             superseded,
+                            remaining,
                           ),
                         )
                       }
@@ -764,6 +779,7 @@ export function PolicyPanel({ initial }: { initial: Loaded }) {
                             action: `回滚到 v${meta.version}`,
                             origin: 'versions',
                             supersedes: 0,
+                            remains: 0,
                           },
                           rollbackPreview(meta, status),
                         )
