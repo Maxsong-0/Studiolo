@@ -33,16 +33,25 @@ const BURSTS: usize = 2;
 
 #[test]
 fn concurrent_reads_do_not_multiply_resident_memory() {
-    let output = Command::new(std::env::current_exe().expect("取得测试二进制路径"))
+    let mut probe = Command::new(std::env::current_exe().expect("取得测试二进制路径"));
+    probe
         .args([
             "--exact",
             "replica_memory_probe",
             "--nocapture",
             "--test-threads=1",
         ])
-        .env(PROBE, "1")
-        .output()
-        .expect("启动探针子进程");
+        .env(PROBE, "1");
+    // glibc 的 malloc 调参会改变 arena 行为（比如 MALLOC_ARENA_MAX=1 会让回归也量不出来），探针一律不继承。
+    for (key, _) in std::env::vars_os() {
+        if key
+            .to_str()
+            .is_some_and(|key| key.starts_with("MALLOC_") || key == "GLIBC_TUNABLES")
+        {
+            probe.env_remove(key);
+        }
+    }
+    let output = probe.output().expect("启动探针子进程");
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(output.status.success(), "探针失败：\n{stdout}\n{stderr}");
@@ -109,18 +118,17 @@ async fn probe() {
     let (session, _, _) = server.handshake().await;
     // 预热：先顺序读几次，让单次校验的峰值落进基线；之后的增长只来自并发。
     for note in 0..3 {
-        let response = server.get(&route(note), Some(&session)).send().await;
-        assert_eq!(response.expect("预热读请求").status(), 200);
+        let request = server.get(&route(note), Some(&session));
+        assert_eq!(read(request).await.expect("预热读请求"), 200);
     }
     let baseline = rss_anon_kib();
     for _ in 0..BURSTS {
         let mut burst = tokio::task::JoinSet::new();
         for note in 0..CONCURRENCY {
-            burst.spawn(server.get(&route(note), Some(&session)).send());
+            burst.spawn(read(server.get(&route(note), Some(&session))));
         }
         while let Some(done) = burst.join_next().await {
-            let response = done.expect("并发读任务").expect("并发读请求");
-            assert_eq!(response.status(), 200);
+            assert_eq!(done.expect("并发读任务").expect("并发读请求"), 200);
         }
     }
     let after = rss_anon_kib();
@@ -166,6 +174,13 @@ fn note_body(note: usize) -> Vec<u8> {
 
 fn route(note: usize) -> String {
     format!("/read/note?path=project%2Fnotes%2Fn{note:04}.md")
+}
+
+/// 发请求并读完响应体，像真实客户端一样让服务端把这次供给完整走完；返回状态码。
+async fn read(request: reqwest::RequestBuilder) -> reqwest::Result<reqwest::StatusCode> {
+    let response = request.send().await?;
+    let status = response.status();
+    response.bytes().await.map(|_| status)
 }
 
 /// 本进程的常驻匿名内存（KiB）：锁定后释放的堆页仍算在这里，cgroup 记账看的也是它。

@@ -173,9 +173,9 @@ Linux 上 `mlockall` 受 `RLIMIT_MEMLOCK` 约束。上限不足时 `harden()` �
 `madvise(MADV_DONTNEED)`（非主 arena 的堆收缩也是它），而内核对锁定的页一律回 `EINVAL`。
 只有整块 `munmap`（大块直接映射、整段 arena 堆）和主堆顶部的 `brk` 回缩还能退，其余释放掉的页
 留在分配它的那个 malloc arena 里，照样算常驻、照样记在 cgroup 的不可回收匿名内存上。
-glibc 又给并发分配的线程各开一个 arena（64 位上限 8 × 核数，每段堆按 64 MiB 对齐），
-于是**每条做过大分配的线程都把自己的常驻集停在自己的历史峰值**，进程常驻集约等于
-「做过大分配的线程数 × 单次峰值」，只涨不退。
+并发分配时 glibc 又会把线程分到不同的 arena（没有空闲的就新开，64 位上限 8 × 核数，每段堆按 64 MiB 对齐；
+线程退出后它的 arena 留给后来的线程复用），于是**每个经手过大分配的 arena 都停在自己的历史峰值**，
+进程常驻集约等于「经手过大分配的 arena 数 × 单次峰值」，只涨不退。
 
 - 证据：107 上的 C 探针在 `mlockall` 下 `free` 之后常驻集不降，N 条线程各分配一次峰值 P，常驻集约
   N × P；不锁时立即回落。169 上 `studiolo-agent` 的内存映射里主堆 97 MiB，另有多段 64 MiB 对齐的
@@ -186,7 +186,7 @@ glibc 又给并发分配的线程各开一个 arena（64 位上限 8 × 核数�
   `studiolo-agent` 的做法见 `crates/agent-server/src/verifier.rs`，内存契约测试见
   [接入方供给契约](../contracts/agent-supply.md) §8「常驻内存」。
 - 没选的办法：`MALLOC_ARENA_MAX=1` 要改部署单元，只把多份峰值压进一个共享 arena，锁竞争落到所有线程，
-  且守不住「以后新加的路径」；`malloc_trim` 同样走 `madvise`，锁定页上无效；换分配器动依赖面，
+  且守不住「以后新加的路径」；`malloc_trim` 除了主堆顶部的 `brk` 回缩，其余也走 `madvise`，对锁定页无效；换分配器动依赖面，
   也绕不过锁定页不能 `MADV_DONTNEED` 这一点。
 - `studiolo-local-server` 同样受影响、尚未处理：2026-10-16 169 上它的内存映射里 64 MiB 对齐的 arena 堆
   合计约 300 MiB、全部常驻，单元内存读数 468 MiB（上限 512 MiB）。
