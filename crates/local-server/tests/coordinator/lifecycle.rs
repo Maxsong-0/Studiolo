@@ -124,3 +124,55 @@ async fn a_new_commit_after_build_invalidates_the_candidate_before_publication()
     assert!(!after.freshness.unwrap().stale);
     workbench.shutdown().await.unwrap();
 }
+
+#[tokio::test]
+async fn every_capture_runs_on_the_dedicated_derivation_thread() {
+    let fixture = Fixture::new();
+    let workbench = fixture.start(false).await;
+    workbench.refresh().await.unwrap();
+    workbench.core.request("refreshing").unwrap();
+    idle(&workbench).await;
+    let threads = workbench.core.probe.capture_threads();
+    assert!(
+        threads.len() >= 3,
+        "首扫、刷新与请求至少各捕获一次：{threads:?}"
+    );
+    assert!(
+        threads
+            .iter()
+            .all(|name| name.as_deref() == Some(crate::deriver::THREAD_NAME)),
+        "整库捕获与建模必须都在专用派生线程上：{threads:?}"
+    );
+    workbench.shutdown().await.unwrap();
+    fixture.available();
+}
+
+#[tokio::test]
+async fn a_lost_derivation_thread_fails_closed_without_taking_the_held_owner() {
+    let fixture = Fixture::new();
+    let workbench = fixture.start(false).await;
+    workbench.core.deriver.lose();
+    // 正文保存与 Bridge 写入都在持 owner 锁时请求刷新；投递失败的收尾若再去拿这把锁就会死锁。
+    let ticket = {
+        let _owner = workbench.core.owner.lock().unwrap();
+        workbench.core.request("changed").unwrap()
+    };
+    let waited = tokio::time::timeout(super::TIMEOUT, workbench.core.wait(ticket))
+        .await
+        .expect("作业永远不会跑，等待者必须拿到结论而不是挂住");
+    assert!(waited.is_err(), "投递失败不能被当成刷新成功");
+    assert!(
+        workbench.core.request("refreshing").is_err(),
+        "失败关闭后不再受理刷新"
+    );
+    let freshness = workbench.core.view.snapshot().unwrap().freshness.unwrap();
+    assert!(freshness.stale);
+    assert_eq!(freshness.reason, Some("unavailable"));
+    tokio::time::timeout(super::TIMEOUT, workbench.shutdown())
+        .await
+        .expect("关停不能等一个永远不会跑的作业")
+        .unwrap();
+    // Broker 租约随协调器析构释放。
+    drop(workbench);
+    fixture.available();
+}

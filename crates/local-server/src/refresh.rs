@@ -5,9 +5,10 @@
 //! 时刻至多一次派生在途、至多一次派生排队，因此任意数量的并发请求最多换来两次派生，
 //! 且排队的那次一定开始于这些请求之后，不会把更旧的结果当成更新的结果交付。
 //!
-//! 结算写在阻塞闭包里，不由 HTTP future 代持：客户端取消只丢弃等待，不会提前释放
-//! 真实作业，也不会留下无人结算的在途派生。闭包连结算都做不到（panic 或阻塞任务
-//! 被取消）时，只有 `spawn_blocking` 的 `JoinError` 能证明运行者已死，那里是
+//! 结算写在派生闭包里，不由 HTTP future 代持：客户端取消只丢弃等待，不会提前释放
+//! 真实作业，也不会留下无人结算的在途派生。派生在专用派生线程上跑（见 `crate::deriver`，
+//! 整库建模的临时分配不再随阻塞池换线程、换 arena）。闭包连结算都做不到（panic，或专用
+//! 线程已不在）时，只有专用线程回报的失败能证明运行者已死，那里是
 //! [`RefreshGate::fail_abandoned_run`] 唯一正当的调用点：闸门自己不读时钟，分不清
 //! 「跑得久」和「已经死了」，绝不能拿它当超时用。收尸放在独立任务里而不是请求
 //! future 里，是因为发起请求的那一方随时可能被取消，而在途派生必须有人收尾。
@@ -22,7 +23,11 @@ use studiolo_vault_broker::ReadOnlyVault;
 use studiolo_workbench::{RefreshClosed, RefreshGate, RefreshRun, RefreshTicket, RefreshWait};
 use tokio::sync::Notify;
 
-use crate::{ApiError, AppState, LocalError, Source, ViewStore, load};
+use crate::{
+    ApiError, AppState, LocalError, Source, ViewStore,
+    deriver::{Deriver, OnDeriveThread},
+    load,
+};
 
 /// 派生失败时答复给客户端的固定说明。底层错误可能带库内相对路径与英文诊断，
 /// 只写服务端日志（标准错误），不进 HTTP 正文。
@@ -192,12 +197,16 @@ pub(crate) async fn run(state: &AppState) -> Result<(), ApiError> {
             .refresh()
             .await
             .map_err(|_| ApiError::unavailable()),
-        Source::Replica(vault) => replica(state, vault).await,
+        Source::Replica { vault, deriver } => replica(state, vault, deriver).await,
     }
 }
 
 /// 只读副本侧的刷新：受理一张票，然后要么接手派生，要么等自己的票被覆盖。
-async fn replica(state: &AppState, vault: &Arc<ReadOnlyVault>) -> Result<(), ApiError> {
+async fn replica(
+    state: &AppState,
+    vault: &Arc<ReadOnlyVault>,
+    deriver: &Deriver,
+) -> Result<(), ApiError> {
     let ticket = state.refresh.request("http")?;
     #[cfg(test)]
     state.refresh_probe.admitted();
@@ -207,25 +216,25 @@ async fn replica(state: &AppState, vault: &Arc<ReadOnlyVault>) -> Result<(), Api
         settled.as_mut().enable();
         match state.refresh.progress(ticket) {
             Progress::Settled(result) => return result,
-            Progress::Claimed(run) => start(state, vault, run),
+            Progress::Claimed(run) => start(state, vault, deriver, run),
             Progress::Wait => settled.await,
         }
     }
 }
 
-/// 把认领到的派生交给阻塞线程，并另派一个收尸任务观测运行者是否死亡。
-fn start(state: &AppState, vault: &Arc<ReadOnlyVault>, run: RefreshRun) {
+/// 把认领到的派生交给专用派生线程，并另派一个收尸任务观测运行者是否死亡。
+fn start(state: &AppState, vault: &Arc<ReadOnlyVault>, deriver: &Deriver, run: RefreshRun) {
     let runner = Arc::clone(&state.refresh);
     let vault = Arc::clone(vault);
     let view = state.current.clone();
     #[cfg(test)]
     let probe = Arc::clone(&state.refresh_probe);
-    let running = tokio::task::spawn_blocking(move || {
+    let running = deriver.run(move |on| {
         #[cfg(test)]
         probe.enter();
-        let outcome = derive(&vault, &view);
+        let outcome = derive(&vault, &view, on);
         if let Err(error) = &outcome {
-            // 完整原因在阻塞线程上写服务端日志；闸门自身仍不做 I/O，答复只给固定说明。
+            // 完整原因在派生线程上写服务端日志；闸门自身仍不做 I/O，答复只给固定说明。
             log_failure(error);
         }
         // 派生自己结算：HTTP 请求被取消也不会留下无人结算的在途派生。
@@ -234,21 +243,21 @@ fn start(state: &AppState, vault: &Arc<ReadOnlyVault>, run: RefreshRun) {
     let owner = Arc::clone(&state.refresh);
     tokio::spawn(async move {
         if running.await.is_err() {
-            // 运行者已死（panic 或阻塞任务被取消），派生句柄随它消失，永远不会结算。
+            // 运行者已死（panic，或专用线程已不在），派生句柄随它消失，永远不会结算。
             owner.abandon("刷新任务已死亡");
         }
     });
 }
 
 /// 重扫只读副本并整代发布；失败时保留上一代完整视图，不发布半成品。
-fn derive(vault: &ReadOnlyVault, view: &ViewStore) -> Result<(), LocalError> {
+fn derive(vault: &ReadOnlyVault, view: &ViewStore, on: &OnDeriveThread) -> Result<(), LocalError> {
     let next = view
         .snapshot()?
         .generation
         .number
         .checked_add(1)
         .ok_or(LocalError::Unavailable)?;
-    let replacement = load(vault, next)?;
+    let replacement = load(vault, next, on)?;
     let previous = view
         .0
         .write()

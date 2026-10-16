@@ -25,6 +25,7 @@ impl CanonicalWorkbench {
         roots: Arc<CanonicalServingRoots>,
         audit: Option<Arc<dyn studiolo_audit_ledger::AuditLedger>>,
     ) -> Result<Arc<Self>, LocalError> {
+        let deriver = crate::deriver::Deriver::start()?;
         let (completion, _) = watch::channel(Completion {
             finished: 0,
             running: false,
@@ -50,6 +51,7 @@ impl CanonicalWorkbench {
                 watcher: Mutex::new(None),
                 completion,
                 executor: tokio::runtime::Handle::current(),
+                deriver,
                 content_audit: audit,
                 content_audit_healthy: std::sync::atomic::AtomicBool::new(true),
                 content_restore_pending: std::sync::atomic::AtomicBool::new(false),

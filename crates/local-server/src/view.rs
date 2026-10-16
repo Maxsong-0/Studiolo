@@ -8,7 +8,7 @@ use studiolo_vault_broker::{ReadEntry, ReadEntryKind, ReadOnlyVault, ScanLimits}
 use studiolo_vault_index::MarkdownDocument;
 use studiolo_workbench::{FileTree, TreeInput, TreeKind, WorkbenchReadModel};
 
-use crate::LocalError;
+use crate::{LocalError, deriver::OnDeriveThread};
 
 pub(crate) struct Generation {
     pub number: u64,
@@ -78,7 +78,12 @@ const MAX_REPORTED_DIAGNOSTICS: usize = 20;
 /// 每条诊断最多保留的字符数（按 Unicode 标量计），超出部分以省略号代替。
 const MAX_DIAGNOSTIC_CHARS: usize = 200;
 
-pub(crate) fn load(vault: &ReadOnlyVault, number: u64) -> Result<Generation, LocalError> {
+/// 整库重扫只读副本并建出一代视图；只在专用派生线程上做（见 `deriver`）。
+pub(crate) fn load(
+    vault: &ReadOnlyVault,
+    number: u64,
+    on: &OnDeriveThread,
+) -> Result<Generation, LocalError> {
     let batch = vault.scan(ScanLimits::default())?;
     if !batch.diagnostics.is_empty() {
         return Err(incomplete(&batch.diagnostics));
@@ -90,6 +95,7 @@ pub(crate) fn load(vault: &ReadOnlyVault, number: u64) -> Result<Generation, Loc
             .into_iter()
             .map(|note| (note.path, note.content)),
         number,
+        on,
     )
 }
 
@@ -118,10 +124,12 @@ fn bounded(diagnostic: &str) -> String {
     }
 }
 
+/// 由整库捕获建出一代视图，临时分配随正文总量增长；凭证保证它只在专用派生线程上跑。
 pub(crate) fn build(
     entries: Vec<ReadEntry>,
     notes: impl Iterator<Item = (VaultPath, Vec<u8>)>,
     number: u64,
+    _on: &OnDeriveThread,
 ) -> Result<Generation, LocalError> {
     let entries: Vec<_> = entries
         .into_iter()

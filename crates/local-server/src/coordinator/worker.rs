@@ -6,12 +6,13 @@ use studiolo_vault_broker::{BrokerError, ScanLimits};
 
 use super::{Core, Failure, WatchHealth};
 use crate::{
+    deriver::OnDeriveThread,
     view::{self, Freshness},
     watcher,
 };
 
 impl Core {
-    pub(super) fn run(self: &Arc<Self>) {
+    pub(super) fn run(self: &Arc<Self>, on: &OnDeriveThread) {
         loop {
             let ticket = {
                 let mut state = self
@@ -31,7 +32,7 @@ impl Core {
                 state.pending = false;
                 state.requested
             };
-            let result = self.attempt();
+            let result = self.attempt(on);
             let mut state = self
                 .control
                 .lock()
@@ -46,7 +47,7 @@ impl Core {
         }
     }
 
-    fn attempt(self: &Arc<Self>) -> Result<(), Failure> {
+    fn attempt(self: &Arc<Self>, on: &OnDeriveThread) -> Result<(), Failure> {
         watcher::ensure(self)?;
         let (capture, epoch, next) = {
             let mut owner = self.owner.lock().map_err(|_| Failure::Internal)?;
@@ -98,6 +99,7 @@ impl Core {
                 .into_iter()
                 .map(|note| (note.path, note.content)),
             next,
+            on,
         )
         .map_err(|_| Failure::Build)?;
         #[cfg(test)]
@@ -157,6 +159,24 @@ impl Core {
         state.running = false;
         state.pending = false;
         state.finished = state.requested;
+        self.announce(&state);
+    }
+
+    /// 专用派生线程不在了、作业投递不出去：与作业 panic 一样失败关闭并交还运行位，
+    /// 等待者和关停都不会永远挂着。请求刷新的一方可能正持 owner 锁（正文保存、Bridge 写入
+    /// 都在锁内请求刷新），所以这里只动 control 与视图，不碰 owner 和 watcher；Broker 租约随 Core 析构释放。
+    pub(super) fn abandon_launch(&self) {
+        let mut state = self
+            .control
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        state.closing = true;
+        state.running = false;
+        state.pending = false;
+        state.finished = state.requested;
+        state.result = Some(Failure::Internal);
+        state.health = WatchHealth::Stopped;
+        self.mark_stale(&state, "unavailable");
         self.announce(&state);
     }
 

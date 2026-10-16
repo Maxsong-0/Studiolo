@@ -21,6 +21,8 @@ use super::*;
 pub(crate) struct Probe {
     admissions: tokio::sync::watch::Sender<usize>,
     derivations: AtomicUsize,
+    /// 每次派生所在线程的名字，按发生顺序。
+    derivation_threads: Mutex<Vec<Option<String>>>,
     gate: Mutex<Option<Gate>>,
     dies_after_release: AtomicBool,
 }
@@ -35,6 +37,7 @@ impl Default for Probe {
         Self {
             admissions: tokio::sync::watch::channel(0).0,
             derivations: AtomicUsize::new(0),
+            derivation_threads: Mutex::new(Vec::new()),
             gate: Mutex::new(None),
             dies_after_release: AtomicBool::new(false),
         }
@@ -50,6 +53,10 @@ impl Probe {
     /// 每次真实派生开始时调用一次；装了闸就卡住，注入了死亡就 panic。
     pub(crate) fn enter(&self) {
         self.derivations.fetch_add(1, Ordering::SeqCst);
+        self.derivation_threads
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .push(std::thread::current().name().map(str::to_owned));
         let gate = self
             .gate
             .lock()
@@ -66,6 +73,13 @@ impl Probe {
 
     fn derivations(&self) -> usize {
         self.derivations.load(Ordering::SeqCst)
+    }
+
+    fn derivation_threads(&self) -> Vec<Option<String>> {
+        self.derivation_threads
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone()
     }
 
     /// 等到受理数达到目标；用状态变更通知而不是睡眠或轮询。
@@ -101,10 +115,15 @@ fn fixture() -> (TempDir, AppState) {
     fs::create_dir(&vault_path).unwrap();
     fs::create_dir(&assets_path).unwrap();
     fs::write(vault_path.join("note.md"), "# 虚构正文\n").unwrap();
-    let vault = ReadOnlyVault::open(&vault_path).unwrap();
-    let generation = load(&vault, 1).unwrap();
+    let vault = Arc::new(ReadOnlyVault::open(&vault_path).unwrap());
+    let deriver = Arc::new(crate::deriver::Deriver::start().unwrap());
+    let first = Arc::clone(&vault);
+    let generation = deriver
+        .run_blocking(move |on| load(&first, 1, on))
+        .unwrap()
+        .unwrap();
     let state = AppState {
-        source: Source::Replica(Arc::new(vault)),
+        source: Source::Replica { vault, deriver },
         assets: Arc::new(ReadOnlyVault::open(&assets_path).unwrap()),
         current: ViewStore::replica(generation),
         refresh: Arc::new(crate::refresh::RefreshCoalescer::new()),
@@ -283,6 +302,20 @@ async fn a_refresh_whose_runner_dies_fails_its_own_ticket_and_lets_the_queued_on
         generation_of(&state).await,
         3,
         "闸门没有被死亡的运行者永久卡住"
+    );
+    drop(temp);
+}
+
+#[tokio::test]
+async fn every_replica_derivation_runs_on_the_dedicated_derivation_thread() {
+    let probe = Arc::new(Probe::default());
+    let (temp, state) = with_probe(Arc::clone(&probe));
+    completed(refresh_request(&state)).await;
+    completed(refresh_request(&state)).await;
+    assert_eq!(
+        probe.derivation_threads(),
+        vec![Some(crate::deriver::THREAD_NAME.to_owned()); 2],
+        "只读副本的整库重扫与建模必须在专用派生线程上"
     );
     drop(temp);
 }

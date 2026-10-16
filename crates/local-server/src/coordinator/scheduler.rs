@@ -122,15 +122,19 @@ impl Core {
     }
 }
 
+/// 把真实作业交给专用派生线程（见 `deriver`）：完整捕获与建模不再随阻塞池换线程、换 arena。
 fn launch_job(core: &Arc<Core>) {
     let running = Arc::clone(core);
-    core.executor.spawn_blocking(move || {
+    let submitted = core.deriver.submit(move |on| {
         // Arc 留在实际闭包中；请求取消或 Router 丢弃不能让真实作业提前释放 Broker。
-        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| running.run()));
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| running.run(on)));
         if outcome.is_err() {
             running.panic_cleanup();
         }
     });
+    if submitted.is_err() {
+        core.abandon_launch();
+    }
 }
 
 pub(super) fn periodic(core: &Arc<Core>) {
