@@ -133,7 +133,7 @@ pub async fn run(options: ServeOptions) -> Result<(), String> {
     println!(
         "策略平面：{}",
         if policy_present {
-            "已接入（能力集∩部署上限、三级吊销复核、policy_read／propose_desired）"
+            "已接入（能力集∩部署上限、三级吊销复核、policy_read／propose_desired／list_proposals）"
         } else {
             "未接入（M3 兼容模式：白名单只来自 --allow，无能力集与吊销表）"
         }

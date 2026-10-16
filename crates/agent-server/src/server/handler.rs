@@ -1,7 +1,7 @@
 //! MCP initialize：实例登记与初次只读路牌。
 use super::{
-    AgentSession, ListEntriesArgs, PolicyReadArgs, ProposeArgs, ReadNoteArgs, SearchArgs,
-    catalog::SESSION_VERSIONS,
+    AgentSession, ListEntriesArgs, ListProposalsArgs, PolicyReadArgs, ProposeArgs, ReadNoteArgs,
+    SearchArgs, catalog::SESSION_VERSIONS,
 };
 use crate::auth::AgentType;
 use rmcp::{
@@ -103,7 +103,7 @@ impl AgentSession {
     }
 
     #[tool(
-        description = "提交 desired 提案（kind=rules|skills|capability_set、subject、body）：只入库为待处理，永不自动生效，须主人经 One-time Code 发布；需能力集 policy.propose_desired"
+        description = "提交 desired 提案（kind=rules|skills|capability_set、subject、body）：只入库为待处理，永不自动生效，须主人经 One-time Code 发布；返回 desired_id、status 与服务端算的规范化正文摘要 body_sha256；断线重提：本类型在该 kind/subject 最新的未发布草案（含被拒的）正是同一规范化正文且仍待处理时拿回它（deduplicated true），不新建；本类型之后提过别的草案就照常新建；主人和别的类型的草案不影响判定；需能力集 policy.propose_desired"
     )]
     async fn propose_desired(
         &self,
@@ -112,6 +112,20 @@ impl AgentSession {
         let _work = self.enter_mcp_work()?;
         Ok(text_result(
             self.finish_mcp(self.text_propose(args).await?)?,
+        ))
+    }
+
+    // 说明里的 64 即 studiolo_policy::MAX_LISTED_PROPOSALS；属性里只能写字面量，两者由 tests/proposal_contract.rs 钉在一起。
+    #[tool(
+        description = "列本类型仍待处理（pending／validated）的 desired 提案，新到旧，最多 64 份，可选 kind、subject 收窄；断线后用它核对提案是否已入库；每行：desired_id<TAB>kind<TAB>subject<TAB>status<TAB>body_sha256<TAB>submitted_at<TAB>instance；不含正文；需能力集 policy.propose_desired，每次调用进读取审计"
+    )]
+    async fn list_proposals(
+        &self,
+        Parameters(args): Parameters<ListProposalsArgs>,
+    ) -> Result<CallToolResult, McpError> {
+        let _work = self.enter_mcp_work()?;
+        Ok(text_result(
+            self.finish_mcp(self.text_list_proposals(args).await?)?,
         ))
     }
 }

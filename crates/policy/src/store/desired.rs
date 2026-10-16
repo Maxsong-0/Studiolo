@@ -1,20 +1,14 @@
 //! desired 的提交、复核、撤回与不入库预览。
 
-use crate::{
-    PolicyError, Report,
-    model::{MAX_BODY_BYTES, MAX_PROPOSAL_BYTES},
-    sql, validate,
-};
+use crate::{PolicyError, ProposalInput, Report, model::MAX_BODY_BYTES, proposal, sql, validate};
 
-use super::{
-    DesiredInput, DesiredRecord, DesiredStatus, PolicyStore, Submitter, enforce_proposal_bounds,
-};
+use super::{DesiredInput, DesiredRecord, DesiredStatus, PolicyStore, Submitter};
 
 impl PolicyStore {
     /// 提交一份 desired：校验、与 effective 做 diff、入库。
     ///
-    /// 主人提交的记为 `validated` 或 `rejected`；接入方提交的记为 `pending`（结构无效则
-    /// `rejected`），两者都永不自动生效。
+    /// 主人提交的记为 `validated` 或 `rejected`；接入方提交的与接入方句柄走同一个入库函数
+    /// （含断线重提拿回已有提案），记为 `pending`（结构无效则 `rejected`）。两者都永不自动生效。
     pub fn submit_desired(
         &self,
         input: DesiredInput,
@@ -22,38 +16,37 @@ impl PolicyStore {
         now: &str,
     ) -> Result<DesiredRecord, PolicyError> {
         crate::model::validate_subject(input.kind, &input.subject)?;
+        if let Submitter::Agent {
+            agent_type,
+            instance_id,
+        } = &submitter
+        {
+            let input = ProposalInput {
+                kind: input.kind,
+                subject: input.subject,
+                body: input
+                    .body
+                    .ok_or(PolicyError::InvalidBody("接入方不能提交撤销"))?,
+            };
+            return self
+                .db
+                .write(|tx| proposal::submit(tx, agent_type, instance_id, &input, now))
+                .map(|proposal| proposal.record);
+        }
         let id = ulid::Ulid::generate().to_string();
         self.db.write(|tx| {
-            let (limit, submitter_kind, agent_type, instance) = match &submitter {
-                Submitter::Owner => (MAX_BODY_BYTES, "owner", None, None),
-                Submitter::Agent {
-                    agent_type,
-                    instance_id,
-                } => {
-                    if input.body.is_none() {
-                        return Err(PolicyError::InvalidBody("接入方不能提交撤销"));
-                    }
-                    enforce_proposal_bounds(tx, instance_id)?;
-                    (
-                        MAX_PROPOSAL_BYTES,
-                        "agent",
-                        Some(agent_type.as_str()),
-                        Some(instance_id.as_str()),
-                    )
-                }
-            };
             let context = sql::context(tx, input.kind, &input.subject)?;
             let report = validate::validate(
                 input.kind,
                 &input.subject,
                 input.body.as_deref(),
-                limit,
+                MAX_BODY_BYTES,
                 &context,
             );
-            let status = match (&submitter, report.ok) {
-                (_, false) => DesiredStatus::Rejected,
-                (Submitter::Owner, true) => DesiredStatus::Validated,
-                (Submitter::Agent { .. }, true) => DesiredStatus::Pending,
+            let status = if report.ok {
+                DesiredStatus::Validated
+            } else {
+                DesiredStatus::Rejected
             };
             // 入库的是提交原文而不是规范化正文：结构无效的 desired 必须原样保留，
             // 重新校验才会得到同样的拒绝，绝不能因为规范化失败而退化成「撤销」。
@@ -62,9 +55,9 @@ impl PolicyStore {
                 &id,
                 &report,
                 input.body.as_deref(),
-                submitter_kind,
-                agent_type,
-                instance,
+                "owner",
+                None,
+                None,
                 now,
                 status,
             )?;

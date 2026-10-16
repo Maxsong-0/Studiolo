@@ -766,7 +766,8 @@ fn agent_proposals_are_bounded_pending_and_never_change_effective() {
             },
             NOW,
         )
-        .unwrap();
+        .unwrap()
+        .record;
     assert_eq!(proposal.status, DesiredStatus::Pending);
     assert_eq!(proposal.submitter_kind, "agent");
     assert_eq!(proposal.agent_instance.as_deref(), Some("01INSTANCE"));
@@ -790,17 +791,18 @@ fn agent_proposals_are_bounded_pending_and_never_change_effective() {
             },
             NOW,
         )
-        .unwrap();
+        .unwrap()
+        .record;
     assert_eq!(bad.status, DesiredStatus::Rejected);
-    // 每实例上限。
-    for _ in 0..MAX_PENDING_PER_INSTANCE {
+    // 每实例上限；各份正文不同（同一正文连提只算一份，T-182）。
+    for index in 0..MAX_PENDING_PER_INSTANCE {
         let _ = agent.propose(
             "claude",
             "01INSTANCE",
             ProposalInput {
                 kind: PolicyKind::Rules,
                 subject: "提案.md".into(),
-                body: "# 提议\n".into(),
+                body: format!("# 提议 {index}\n"),
             },
             NOW,
         );

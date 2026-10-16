@@ -544,7 +544,7 @@ async fn a_type_without_a_capability_set_has_zero_rights_until_one_is_published(
         .await;
     assert!(tool_text(&listed).contains("项目/Alpha/00-总览/INDEX.md"));
 
-    // tools/list 含两个新 tool。
+    // tools/list 含策略平面的三个 tool。
     let tools = f.rpc(Some(&session), 13, "tools/list", json!({})).await.1;
     let mut names = tools["result"]["tools"]
         .as_array()
@@ -559,6 +559,7 @@ async fn a_type_without_a_capability_set_has_zero_rights_until_one_is_published(
             "board",
             "handshake",
             "list_entries",
+            "list_proposals",
             "policy_read",
             "propose_desired",
             "read_note",
@@ -987,7 +988,7 @@ async fn serve_without_policy_keeps_m3_behaviour_and_marks_the_plane_absent() {
     assert_eq!(policy.status(), 403);
 
     // MCP 侧同一语义。上线探针 `scripts/check-agent.py` 逐字依赖这里钉住的三点：
-    // 路牌里的「策略平面：未接入」、tools/list 恒为六个、`policy_read` 的固定拒绝码与文案。
+    // 路牌里的「策略平面：未接入」、tools/list 恒为八个、`policy_read` 的固定拒绝码与文案。
     // 改动其中任何一处都必须同步改探针，否则 4401 阶段验收会在上线当天失败（BUG-010）。
     let mcp = Fixture {
         _temp: temp,
@@ -1016,6 +1017,7 @@ async fn serve_without_policy_keeps_m3_behaviour_and_marks_the_plane_absent() {
             "board",
             "handshake",
             "list_entries",
+            "list_proposals",
             "policy_read",
             "propose_desired",
             "read_note",

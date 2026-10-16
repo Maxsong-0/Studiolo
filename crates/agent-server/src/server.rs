@@ -13,6 +13,7 @@ mod freshness;
 mod grant;
 mod handler;
 mod policy;
+mod proposals;
 mod session;
 mod signpost;
 
@@ -21,7 +22,9 @@ use std::sync::{Arc, OnceLock};
 use crate::state::AppState;
 use studiolo_supply::Instance;
 
-pub use args::{ListEntriesArgs, PolicyReadArgs, ProposeArgs, ReadNoteArgs, SearchArgs};
+pub use args::{
+    ListEntriesArgs, ListProposalsArgs, PolicyReadArgs, ProposeArgs, ReadNoteArgs, SearchArgs,
+};
 pub use catalog::TOOLS;
 pub(crate) use session::POLICY_DENIED_PREFIX;
 

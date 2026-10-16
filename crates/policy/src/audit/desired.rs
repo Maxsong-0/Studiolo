@@ -3,7 +3,7 @@
 use serde_json::{Value, json};
 use studiolo_audit_ledger::{AuditError, AuditEvent, AuditPhase};
 
-use crate::DesiredRecord;
+use crate::{DesiredRecord, Proposal};
 
 use super::{DESIRED_SUBMITTED, Principal, VALIDATED, event, fresh_id};
 
@@ -31,6 +31,23 @@ pub fn desired_submitted(
         DESIRED_SUBMITTED,
         principal,
         desired_payload(record),
+    )
+}
+
+/// 接入方提交的 `policy.desired_submitted`：比主人提交多一个 `deduplicated`，标明这次是断线重提、
+/// 拿回了已有提案（payload 里是那份已有提案的字段，主体是本次提交的实例）。
+pub fn proposal_submitted(
+    principal: Principal<'_>,
+    proposal: &Proposal,
+) -> Result<AuditEvent, AuditError> {
+    let mut payload = desired_payload(&proposal.record);
+    payload["deduplicated"] = proposal.deduplicated.into();
+    event(
+        fresh_id(DESIRED_SUBMITTED)?,
+        AuditPhase::Outcome,
+        DESIRED_SUBMITTED,
+        principal,
+        payload,
     )
 }
 

@@ -30,6 +30,10 @@ pub const TOOLS: &[(&str, &str)] = &[
         "propose_desired",
         "提交 desired 提案（永不自动生效）：kind、subject、body",
     ),
+    (
+        "list_proposals",
+        "核对本类型仍待处理的提案：[kind、subject]",
+    ),
 ];
 
 /// HTTP 续读说明放在入口名内，使各裁剪等级均保留并纳入预算。
