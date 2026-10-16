@@ -191,3 +191,7 @@ mod refresh_tests;
 #[cfg(test)]
 #[path = "../tests/coordinator/private.rs"]
 mod coordinator_tests;
+
+#[cfg(test)]
+#[path = "../tests/deriver/private.rs"]
+mod deriver_tests;

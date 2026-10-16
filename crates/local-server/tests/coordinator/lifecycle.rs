@@ -152,7 +152,8 @@ async fn a_lost_derivation_thread_fails_closed_without_taking_the_held_owner() {
     let fixture = Fixture::new();
     let workbench = fixture.start(false).await;
     workbench.core.deriver.lose();
-    // 正文保存与 Bridge 写入都在持 owner 锁时请求刷新；投递失败的收尾若再去拿这把锁就会死锁。
+    // 正文保存、恢复、文件操作与 Bridge 写入都在持 owner 锁时请求刷新：投递失败时若当场去拿
+    // 这把锁就会死锁，收尾必须等它放下再做。
     let ticket = {
         let _owner = workbench.core.owner.lock().unwrap();
         workbench.core.request("changed").unwrap()
@@ -172,7 +173,8 @@ async fn a_lost_derivation_thread_fails_closed_without_taking_the_held_owner() {
         .await
         .expect("关停不能等一个永远不会跑的作业")
         .unwrap();
-    // Broker 租约随协调器析构释放。
-    drop(workbench);
+    // 关停返回时 watcher 与 Broker 必须已经收尾：租约现在就能再取得，不靠协调器析构。
+    assert!(workbench.core.watcher.lock().unwrap().is_none());
+    assert!(workbench.core.owner.lock().unwrap().is_none());
     fixture.available();
 }

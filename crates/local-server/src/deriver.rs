@@ -42,6 +42,8 @@ type Job = Box<dyn FnOnce(&OnDeriveThread) + Send>;
 /// 专用派生线程的投递口；放下后（随协调器或副本状态析构），线程做完已投递的活就退出。
 pub(crate) struct Deriver {
     jobs: mpsc::Sender<Job>,
+    /// 专用线程的标识：[`Deriver::run_blocking`] 据此拒绝在它自己的任务里同步等它。
+    thread: thread::ThreadId,
     /// 测试用：置位后投递一律像线程已不在那样失败。
     #[cfg(test)]
     lost: std::sync::atomic::AtomicBool,
@@ -51,7 +53,7 @@ impl Deriver {
     /// 起专用线程；起不来就不提供视图。
     pub(crate) fn start() -> Result<Self, LocalError> {
         let (jobs, queue) = mpsc::channel::<Job>();
-        thread::Builder::new()
+        let worker = thread::Builder::new()
             .name(THREAD_NAME.to_owned())
             .stack_size(STACK_BYTES)
             .spawn(move || {
@@ -65,6 +67,7 @@ impl Deriver {
             .map_err(|_| LocalError::Unavailable)?;
         Ok(Self {
             jobs,
+            thread: worker.thread().id(),
             #[cfg(test)]
             lost: std::sync::atomic::AtomicBool::new(false),
         })
@@ -110,12 +113,16 @@ impl Deriver {
         }
     }
 
-    /// 同步装配（只读副本的启动建模）用：阻塞当前线程等结果。不得在专用线程自己的任务里调用。
+    /// 同步装配（只读副本的启动建模）用：阻塞当前线程等结果。在专用线程自己的任务里调用，
+    /// 等的就是自己、永远等不到，所以直接拒绝。
     pub(crate) fn run_blocking<T, F>(&self, work: F) -> Result<T, LocalError>
     where
         T: Send + 'static,
         F: FnOnce(&OnDeriveThread) -> T + Send + 'static,
     {
+        if thread::current().id() == self.thread {
+            return Err(LocalError::Unavailable);
+        }
         let (reply, result) = mpsc::sync_channel(1);
         self.submit(move |on| {
             let _ = reply.send(work(on));

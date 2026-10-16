@@ -11,6 +11,11 @@
 //! `mlockall` 影响其后所有映射，不能加到共享的测试进程上（同 process-safety 的约定）：本测试以
 //! 探针身份重跑测试二进制，子进程先像生产一样加固，再起真实协调器；每轮先用别的阻塞任务占满池里
 //! 的空闲线程再请求刷新，量自己的常驻匿名内存交给父进程判定。夹具只用虚构笔记，不含真实内容或口令。
+//!
+//! 量得出回归，靠的是 glibc 给新线程分配 arena 的规则：先取空闲链（已退出线程留下的 arena），
+//! 没有就新开一个（上限 8 × 核数），与有没有争用无关。探针里没有线程退出，派生若还交给阻塞池，
+//! 每轮都落在新开的线程、新开的 arena 上。换成别的分配器，或 arena 上限低于探针的线程数
+//! （约 30 条）时，本测试只会漏报、不会误报。
 
 use std::{process::Command, sync::Arc};
 
@@ -64,7 +69,7 @@ fn derivations_on_changing_threads_do_not_multiply_resident_memory() {
     let grown = after.saturating_sub(baseline);
     // 派生都在专用线程上时，换线程不该带来增长。上限 3 × 正文 + 8 MiB（约 15 MiB）小于一次派生在
     // 新 arena 上的占用（debug 构建约 16 倍正文、37 MiB），只要有一次派生落到别的线程上就超限；
-    // 8 MiB 留给占位线程的栈与它们各自的小 arena。
+    // 8 MiB 留给占位线程的栈与它们各自的小 arena（改码后实测：debug 共增长 240 KiB，发布版 704 KiB）。
     let bound = 3 * corpus + 8 * 1024;
     eprintln!(
         "canonical 派生内存自证：正文 {corpus} KiB；预热后 RssAnon {baseline} KiB；{ROUNDS} 轮换线程刷新后 \
@@ -107,19 +112,26 @@ async fn probe() {
     let workbench = fixture.start(false).await;
     // 预热：顺序刷新几次，让一次派生的峰值和在用的一代视图落进基线；之后的增长只来自换线程。
     for _ in 0..3 {
-        workbench.refresh().await.expect("预热刷新");
+        bounded(workbench.refresh()).await.expect("预热刷新");
     }
     let baseline = rss_anon_kib();
     for round in 0..ROUNDS {
-        let holders = Holders::occupy(FIRST_HOLDERS + round).await;
-        workbench.refresh().await.expect("换线程后的刷新");
-        holders.release().await;
+        let holders = bounded(Holders::occupy(FIRST_HOLDERS + round)).await;
+        bounded(workbench.refresh()).await.expect("换线程后的刷新");
+        bounded(holders.release()).await;
     }
     let after = rss_anon_kib();
     println!("CORPUS_KIB={}", corpus / 1024);
     println!("BASELINE_KIB={baseline}");
     println!("AFTER_KIB={after}");
-    workbench.shutdown().await.expect("关停协调器");
+    bounded(workbench.shutdown()).await.expect("关停协调器");
+}
+
+/// 探针里的每次等待都有时限：派生线程挂住时按时失败退出，不把父进程那边的整轮测试拖死。
+async fn bounded<T>(work: impl Future<Output = T>) -> T {
+    tokio::time::timeout(super::TIMEOUT, work)
+        .await
+        .expect("探针里的等待超过时限，按挂住处理")
 }
 
 /// 占住阻塞线程池的别的阻塞任务，生产上对应黑板维护、Bridge 轮次与 HTTP 查询。
