@@ -11,7 +11,7 @@ pub async fn run(state: Arc<AppState>, interval: Duration) {
     ticker.tick().await;
     loop {
         ticker.tick().await;
-        let state = state.clone();
-        let _ = tokio::task::spawn_blocking(move || state.rescan()).await;
+        let job = state.clone();
+        let _ = state.verifier.run(move || job.rescan()).await;
     }
 }

@@ -105,6 +105,8 @@ pub struct AppState {
     pub limits: ScanLimits,
     /// 已验证源的派生缓存。
     pub(crate) index: IndexRuntime,
+    /// 副本校验、重扫与首扫只在这条专用线程上做，常驻内存不随并发累加（BUG-034）。
+    pub(crate) verifier: crate::verifier::Verifier,
 }
 
 /// 当前时间（RFC 3339，UTC）。
@@ -198,16 +200,17 @@ impl AppState {
         Ok(next)
     }
 
-    /// 请求供给时取完整验证的同一代次；副本全量校验在阻塞线程完成。
+    /// 请求供给时取完整验证的同一代次；副本全量校验在专用校验线程上完成（BUG-034）。
     pub async fn verified(self: &Arc<Self>) -> Result<Arc<Generation>, String> {
         if matches!(&self.source, SupplySource::Replica(_)) {
             let state = self.clone();
-            return tokio::task::spawn_blocking(move || {
-                state.rescan()?;
-                Ok(state.current())
-            })
-            .await
-            .map_err(|_| "副本验证任务失败".to_owned())?;
+            return self
+                .verifier
+                .run(move || {
+                    state.rescan()?;
+                    Ok(state.current())
+                })
+                .await?;
         }
         Ok(self.current())
     }
