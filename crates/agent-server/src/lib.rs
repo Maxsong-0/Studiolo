@@ -14,6 +14,7 @@ pub mod serve;
 pub mod server;
 pub mod shutdown;
 pub mod state;
+mod verifier;
 
 /// 按命令行参数运行一个命令。
 pub async fn run(args: &[String]) -> Result<(), String> {

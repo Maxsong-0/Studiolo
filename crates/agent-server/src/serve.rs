@@ -16,6 +16,7 @@ use crate::{
     refresh,
     shutdown::{Lifecycle, STOP_LIMIT, Signals},
     state::{AppState, Generation, SupplySource, now},
+    verifier::Verifier,
 };
 
 /// 装配共享状态：白名单只读根、既有私有库与账本（no-create）、首扫代次。
@@ -56,17 +57,15 @@ pub fn prepare(options: &ServeOptions) -> Result<Arc<AppState>, String> {
         (None, _) => None,
     };
     let limits = ScanLimits::default();
-    let (snapshot, freshness) = source.scan(limits, None)?;
     let index = IndexRuntime::open(options)?;
-    let (model, index_status) = index.build(&snapshot, None)?;
-    let first = Generation {
-        number: 1,
-        snapshot,
-        model,
-        index_status,
-        generated_at: now(),
-        freshness,
-    };
+    // 首扫也交给专用校验线程：启动时整读与建模的峰值落在它的 arena 里、由之后的重扫复用，
+    // 不在主线程的 arena 里留下一份锁定后退不回去的启动峰值（BUG-034）。
+    let verifier = Verifier::start()?;
+    let (source, index, first) = verifier.run_blocking(move || {
+        let first = first_generation(&source, &index, limits);
+        (source, index, first)
+    })?;
+    let first = first?;
     Ok(Arc::new(AppState {
         source,
         scan_lock: Mutex::new(()),
@@ -80,7 +79,26 @@ pub fn prepare(options: &ServeOptions) -> Result<Arc<AppState>, String> {
         limits,
         index,
         lifecycle: Arc::new(Lifecycle::default()),
+        verifier,
     }))
+}
+
+/// 首扫：完整读取并验证供给源，建第 1 代；在专用校验线程上调用。
+fn first_generation(
+    source: &SupplySource,
+    index: &IndexRuntime,
+    limits: ScanLimits,
+) -> Result<Generation, String> {
+    let (snapshot, freshness) = source.scan(limits, None)?;
+    let (model, index_status) = index.build(&snapshot, None)?;
+    Ok(Generation {
+        number: 1,
+        snapshot,
+        model,
+        index_status,
+        generated_at: now(),
+        freshness,
+    })
 }
 
 /// `/mcp` 与 `/read/*` 使用同一类型门禁；各自负责协议会话，供给操作共用。
@@ -133,7 +151,7 @@ pub async fn run(options: ServeOptions) -> Result<(), String> {
             let served = server.await;
             // 服务自己出错退出时没经过信号，也要让后台重扫停下。
             lifecycle.stop();
-            // 正在跑的那次重扫在阻塞线程上写派生缓存，做完再返回。
+            // 正在跑的那次重扫在专用校验线程上写派生缓存，做完再返回。
             let _ = refresh.await;
             served
         }

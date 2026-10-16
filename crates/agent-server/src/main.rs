@@ -3,8 +3,9 @@
 use std::io::Write as _;
 
 fn main() -> std::process::ExitCode {
-    // 运行时手工建，收尾才能设上限：`#[tokio::main]` 的运行时析构会无限期等阻塞线程上的重扫或副本校验，
-    // 停服可能因此拖过 systemd 的 TimeoutStopSec 而被强杀（T-184，BUG-033）。
+    // 运行时手工建，收尾才能设上限：`#[tokio::main]` 的运行时析构会无限期等阻塞线程上没做完的活，
+    // 停服可能因此拖过 systemd 的 TimeoutStopSec 而被强杀（T-184，BUG-033）。当时那些活是重扫与
+    // 副本校验；T-185 起它们改在库里的专用校验线程上（BUG-034），不归运行时。
     let Ok(runtime) = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()

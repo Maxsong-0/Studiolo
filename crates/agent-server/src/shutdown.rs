@@ -13,7 +13,8 @@ use tokio::sync::Notify;
 pub(crate) const DRAIN_LIMIT: Duration = Duration::from_secs(10);
 /// 从收到信号到 `serve::run` 返回的总上限，含 `DRAIN_LIMIT`、连接收尾和后台重扫收尾。
 pub(crate) const STOP_LIMIT: Duration = Duration::from_secs(15);
-/// `serve::run` 返回之后，运行时再给阻塞线程（重扫、副本校验）的收尾时间，由 `main` 使用。
+/// `serve::run` 返回之后，运行时再给阻塞线程的收尾时间，由 `main` 使用。重扫与副本校验不在其列：
+/// T-185 起它们在专用校验线程上（`crate::verifier`，BUG-034），收尾见那里。
 /// `STOP_LIMIT + RUNTIME_LIMIT`（17 秒）必须小于 agent 各单元的 `TimeoutStopSec=20`
 /// （`deploy/agent/` 的两个单元模板和三个 systemd-run 脚本）。
 pub const RUNTIME_LIMIT: Duration = Duration::from_secs(2);
