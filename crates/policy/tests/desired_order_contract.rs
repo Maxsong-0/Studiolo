@@ -2,7 +2,8 @@
 //! 同一提交者（主人，或同一类 AI）有更新的未发布草案，较早那份就被拒、什么都不写；不同提交者
 //! 互不阻挡（用户 2026-10-16 定：AI 交新提案挡不住主人）。发布只取代比它早的，比它晚的留着待处理。
 //! 「谁更新」按入库先后判，不看提交时间字符串；列表给界面的先后与发布时的拦截同一口径，历史窗口
-//! 截不掉任何一份未发布草案；判定找不到要发的那份就报库损坏，不放行。
+//! 截不掉任何一份未发布草案；判定找不到要发的那份就报库损坏，不放行。断线重提（T-182）拿回的
+//! 也正是这一提交者能发布的那份：两边的「谁更新」出自同一处。
 //! 2026-10-15 生产事故：同一类 AI 第一、二轮各两份规则提案都待处理，发布请求带的是第一轮
 //! CLAUDE.md，发布事务照发，还把更新的第二轮 CLAUDE.md 标成了「已取代」。
 
@@ -82,6 +83,7 @@ fn propose_from(
             at,
         )
         .unwrap()
+        .record
 }
 
 /// claude 类型的能力集正文：只读这几个项目，别的一律关。
@@ -538,4 +540,60 @@ fn a_draft_the_ordering_cannot_place_is_refused_as_a_corrupt_store() {
     assert_eq!(store.effective().unwrap().effective_hash, before);
     assert_eq!(store.versions(None, None, 100).unwrap().len(), versions);
     assert_eq!(status(&store, &newer.id), DesiredStatus::Pending);
+}
+
+#[test]
+fn a_retry_and_the_publish_rule_agree_on_the_submitters_newest_draft() {
+    let (_temp, dir, store) = store_with_rules();
+    let agent = PolicyAgentStore::open_existing(&dir).unwrap();
+    let first = propose(&agent, CLAUDE, "# 一\n", "2026-10-15T18:00:00Z");
+    let second = propose(&agent, CLAUDE, "# 二\n", "2026-10-15T18:01:00Z");
+    let owner = submit(
+        &store,
+        PolicyKind::Rules,
+        CLAUDE,
+        "# 主人\n",
+        "2026-10-15T18:02:00Z",
+    );
+    // 断线重连后是另一个实例。
+    let retry = |body: &str, at: &str| {
+        agent
+            .propose(
+                "claude",
+                "01INSTANCEB",
+                ProposalInput {
+                    kind: PolicyKind::Rules,
+                    subject: CLAUDE.into(),
+                    body: body.into(),
+                },
+                at,
+            )
+            .unwrap()
+    };
+    // 重提第二版：主人之后交的那份不算，拿回的正是没被挡住、能发布的第二版。
+    let again = retry("# 二\n", "2026-10-15T18:03:00Z");
+    assert!(again.deduplicated);
+    assert_eq!(again.record.id, second.id);
+    let (_, _, blocked) = store.desired_queue(200).unwrap();
+    assert!(blocked[&second.id].is_empty());
+    assert_eq!(blocked[&first.id], [second.id.as_str()]);
+    // 重提第一版：它已被同一提交者的第二版挡住，拿不回；新建的那份成了最新的，挡住前两份。
+    let third = retry("# 一\n", "2026-10-15T18:04:00Z");
+    assert!(!third.deduplicated);
+    let (_, _, blocked) = store.desired_queue(200).unwrap();
+    assert_eq!(
+        blocked[&first.id],
+        [second.id.as_str(), third.record.id.as_str()]
+    );
+    assert_eq!(blocked[&second.id], [third.record.id.as_str()]);
+    assert!(blocked[&third.record.id].is_empty());
+    assert_blocked(
+        publish(&store, &second.id, "2026-10-15T18:05:00Z"),
+        &[&third.record],
+    );
+    publish(&store, &third.record.id, "2026-10-15T18:06:00Z").unwrap();
+    // 比它早入库的都被取代，主人那份也在内。
+    for earlier in [&first, &second, &owner] {
+        assert_eq!(status(&store, &earlier.id), DesiredStatus::Superseded);
+    }
 }

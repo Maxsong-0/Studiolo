@@ -639,7 +639,8 @@ async fn an_agents_newer_proposal_neither_blocks_the_owner_nor_gets_superseded()
             },
             "2026-10-15T18:01:00Z",
         )
-        .unwrap();
+        .unwrap()
+        .record;
     assert_eq!(proposal.status, DesiredStatus::Pending);
     let listed = f
         .send(f.request("GET", DESIRED, Some(&login), ""), 200)

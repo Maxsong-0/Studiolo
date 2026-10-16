@@ -64,8 +64,9 @@ rules 类的 subject 规则（`.md` 结尾、≤128 字符、不含 `/`、不以
 - **接入方断线重提**（T-182）：**本类型**在同一 kind／subject 上**最新**的未发布草案（pending／validated／rejected，按入库
   先后）若正是规范化正文摘要相同、仍待处理（pending／validated）的那份，原样返回它（`deduplicated=true`），不新建、不占名额；
   判定在名额检查之前、与入库同一写事务。否则照常有界入库：本类型之后又提过别的正文，再提旧正文就新建一条，让它重新成为本类型
-  最新的提议。只看本类型自己的草案，与发布的拦截同一口径（同一提交者有更新的未发布草案才挡，T-181）：主人和别的类型的更新
-  草案既不挡本类型那份的发布，也不让重提多出一条；重提的结果也就不透露别人有没有新草案。
+  最新的提议。只看本类型自己的草案，与发布的拦截同一口径、同出 `crates/policy/src/store/queue.rs`（同一提交者有更新的
+  未发布草案才挡，T-181）：主人和别的类型的更新草案既不挡本类型那份的发布，也不让重提多出一条；重提的结果也就不透露别人
+  有没有新草案。
   按类型而不按实例判定，因为断线重连后是另一个实例；规范化失败（结构无效）的正文没有摘要，每次都新建一条 `rejected`；
   能规范化、语义被拒的有真摘要，同样不拿回（重提要再校验一次）。
   调用方看到错误时提案有没有入库：会话层门禁（`crates/agent-server/src/mcp_transport/gate.rs`）回的 404（会话查不到或已
@@ -172,7 +173,7 @@ rules 类的 subject 规则（`.md` 结尾、≤128 字符、不含 `/`、不以
   bootstrap 首版限制、三级吊销与恢复方向、接入方提案有界且永不生效、原文原样保留、多表／错头即损坏、视图求交、审计事件形状；
   `agent_read_snapshot_contract.rs`：接入方读取与策略版本同一读事务，并发发布 40 版下无一撕裂（改回两个事务即红）；
   `rules_whitelist_contract.rs`：旧能力集缺字段解析为空、合法名单通过、非法与重复项按下标报问题、新增报扩大、移除报收窄。
-- T-181 同一对象几份未发布 desired：`crates/policy/tests/desired_order_contract.rs`（同一提交者有更新的就拒、什么都不写，被拒的更新草案也挡、撤回后放行；不同提交者互不阻挡，AI 的新提案（含被拒的）挡不住主人、也不被取代；发布只取代比它早的；按入库先后、不看时间戳；`desired_queue` 的 `newer_open`、`blocked_by` 与拦截同一口径，历史窗口不漏未发布草案；判定对不上报库损坏），`policy_http_contract.rs`（409 `newer_desired_same_submitter`、审计原因、列表 `newer_open` 与 `blocked_by`），前端 `web/src/test/policy/newerDraft.test.tsx`、`web/src/test/rules/draftPanel.test.tsx`（标「最新」「较早」、只挡同一提交者有更新的、预览写出草案号与取代、仍待处理）、`policyStepUp.test.tsx`（认证期间同一提交者来了更新的，重试被 409 挡下；别的提交者来的不挡，照发后它留着）、`policyModel.test.ts`（两张表缺一不可，`newer_open` 必须是同一对象内的一条先后，`blocked_by` 只能从中按序挑，自相矛盾整份拒收）、`devFixtures.test.ts`（开发假数据同一口径）。
+- T-181 同一对象几份未发布 desired：`crates/policy/tests/desired_order_contract.rs`（同一提交者有更新的就拒、什么都不写，被拒的更新草案也挡、撤回后放行；不同提交者互不阻挡，AI 的新提案（含被拒的）挡不住主人、也不被取代；发布只取代比它早的；按入库先后、不看时间戳；`desired_queue` 的 `newer_open`、`blocked_by` 与拦截同一口径，历史窗口不漏未发布草案；判定对不上报库损坏；断线重提拿回的正是本提交者能发布的那份），`policy_http_contract.rs`（409 `newer_desired_same_submitter`、审计原因、列表 `newer_open` 与 `blocked_by`），前端 `web/src/test/policy/newerDraft.test.tsx`、`web/src/test/rules/draftPanel.test.tsx`（标「最新」「较早」、只挡同一提交者有更新的、预览写出草案号与取代、仍待处理）、`policyStepUp.test.tsx`（认证期间同一提交者来了更新的，重试被 409 挡下；别的提交者来的不挡，照发后它留着）、`policyModel.test.ts`（两张表缺一不可，`newer_open` 必须是同一对象内的一条先后，`blocked_by` 只能从中按序挑，自相矛盾整份拒收）、`devFixtures.test.ts`（开发假数据同一口径）。
 - `crates/agent-server/tests/rules_access_contract.rs`：规则名单对 `policy_read` 清单与单条、握手路牌、`read_note`／
   `list_entries`／`search` 同一裁决，名单外与不存在（或白名单外）对外同一错误、审计 `rule_not_whitelisted`，
   `_规则/` 子目录照项目白名单，缺字段零规则，M3 兼容模式不过滤；`crates/supply/tests/rules_files_contract.rs`：

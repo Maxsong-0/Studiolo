@@ -1,6 +1,7 @@
 //! 同一对象未发布草案的先后（T-181／BUG-031）。
 //!
-//! 「谁更新」全仓只在这里判：按入库先后，也就是 SQLite 给每行的隐式 rowid。不按提交时间：
+//! 挡不挡发布、发布取代哪几份、断线重提（T-182）拿回哪一份，这几件事里的「谁更新」全仓只在这里判；
+//! 列表的显示顺序不在此列。按入库先后，也就是 SQLite 给每行的隐式 rowid。不按提交时间：
 //! 时间串由调用方给，时钟会回拨、各端时钟也不一致，jiff 写时间还会去掉小数尾部的 0，
 //! 按字符串比在同一秒内会排反。也不按草案号：同一毫秒里生成的 ULID 先后随机。
 //! rowid 可靠的前提：本库不 VACUUM，草案行只改状态、不删不换，备份走 SQLite backup 接口按页复制。
@@ -118,6 +119,24 @@ pub(super) fn place(
             .map(|draft| draft.id.clone())
             .collect(),
     })
+}
+
+/// 某一类 AI 在这个对象上最新的未发布草案号（按入库先后），断线重提拿回的只会是它。它正是发布时
+/// 这一提交者没被挡住的那份。主人和别的类型更晚交的不算：重提的结果只取决于提交方自己的草案，
+/// 也就不透露别人有没有新草案。
+pub(crate) fn latest_open_from_agent(
+    tx: &Transaction<'_>,
+    agent_type: &str,
+    kind: PolicyKind,
+    subject: &str,
+) -> Result<Option<String>, PolicyError> {
+    Ok(open_in_order(tx, Some((kind, subject)))?
+        .into_iter()
+        .rev()
+        .find(|draft| {
+            draft.submitter.0 == "agent" && draft.submitter.1.as_deref() == Some(agent_type)
+        })
+        .map(|draft| draft.id))
 }
 
 /// 把这几份较早的未发布草案标为已取代（只在发布事务里调用）。
