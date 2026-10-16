@@ -147,7 +147,9 @@ class PolicyProbeTests(unittest.TestCase):
                 code, requests, output = self.run_probe(replies)
                 self.assertEqual(code, 0)
                 summary = json.loads(output)
-                self.assertEqual(summary, {"responses_checked": 6, "tools_checked": 7,
+                # 工具数随 check-agent.py 的清单走，不在这里另写一个数（T-182 由 7 变 8 时这里漏过）。
+                self.assertEqual(summary, {"responses_checked": 6,
+                                          "tools_checked": len(probe.agent.EXPECTED_TOOLS),
                                           "forbidden_reads_rejected": 1, "capability_version": 1,
                                           "skills_count": 1, "effective_hash_prefix": HASH})
                 self.assertEqual(len(requests), 6)
@@ -218,7 +220,7 @@ class PolicyProbeTests(unittest.TestCase):
         replies[4]["body"] = replies[4]["body"].replace(HASH.encode(), b"fedcba987654")
         self.assertEqual(self.run_probe(replies)[0], 1)
 
-    def test_six_tools_alone_and_tool_errors_are_insufficient(self):
+    def test_a_missing_tool_and_tool_errors_are_insufficient(self):
         replies = happy_replies()
         change_result(replies, 2, lambda value: value["tools"].pop())
         self.assertEqual(self.run_probe(replies)[0], 1)

@@ -6,7 +6,7 @@
 > 短命HTTP会话、路由及发布状态以 [HTTP文本供给](../m3/http-text.md) 为准；首片历史说明保留。
 > T-038增加显式客户端资料投影，导出复用HTTP鉴权及审计；本地读取/吊销限制、配置格式与验收见 [客户端投影](../m3/client-projection.md)。
 > **2026-09-17 T-069（M4）**：`serve --policy` 接入策略平面后，每次调用先复核三级吊销与该类型能力集，供给视图 ＝ `--allow` ∩ 能力集白名单，
-> 无能力集即零权限（握手「应答但一项不给」）；路牌第 3／5／6 项改自 effective；新增 tools `policy_read`／`propose_desired` 与 `GET /read/policy`。
+> 无能力集即零权限（握手「应答但一项不给」）；路牌第 3／5／6 项改自 effective；新增 tools `policy_read`／`propose_desired` 与 `GET /read/policy`（T-182 再加只走 MCP 的 `list_proposals`）。
 > 本文 §2「只读 ＋ 配置白名单（M4 前固定）」与 §4「四个 tools」是 M3 首片的历史口径；现行以 [策略平面契约](policy-plane.md) 为准。
 > **2026-09-26 T-160（ADR-026）**：能力集新增规则名单 `read.rules_whitelist`，规则文件与策略规则母本在接入方的五条读取路径上
 > 按同一名单裁决，`policy_read` 的单条 skill 正文改给规范 JSON；见 §10。

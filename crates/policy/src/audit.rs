@@ -9,7 +9,7 @@ use serde_json::Value;
 use studiolo_audit_ledger::{AuditError, AuditEvent, AuditEventId, AuditPhase, SanitizedPayload};
 
 pub use activation::{ActivationId, ActivationRequest, activate_denied, bootstrapped};
-pub use desired::{desired_submitted, validated};
+pub use desired::{desired_submitted, proposal_submitted, validated};
 pub use revocation::{global_released, revoked, type_restored};
 
 /// desired 提交（主人或接入方）。

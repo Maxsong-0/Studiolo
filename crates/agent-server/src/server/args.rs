@@ -51,3 +51,15 @@ pub struct ProposeArgs {
     /// 正文（规则为 Markdown，其余为 JSON）。
     pub body: String,
 }
+
+/// `list_proposals` 参数；都不带时列本类型全部仍待处理的提案。
+#[derive(Debug, serde::Deserialize, rmcp::schemars::JsonSchema)]
+#[schemars(crate = "rmcp::schemars")]
+pub struct ListProposalsArgs {
+    /// 只列这一类：`rules`、`skills` 或 `capability_set`。
+    #[serde(default)]
+    pub kind: Option<String>,
+    /// 只列这个 subject。
+    #[serde(default)]
+    pub subject: Option<String>,
+}

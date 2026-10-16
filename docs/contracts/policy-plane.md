@@ -12,7 +12,7 @@
 |---|---|---|
 | `studiolo-policy` | 纯库：`policy.sqlite3` 私有库、三类母本的形状与校验、diff 与扩大项、版本／回滚／bootstrap、三级吊销、两个句柄、审计事件构造 | core、audit-ledger、rusqlite |
 | `studiolo-local-server` | 人侧：`--policy-data` 打开 `PolicyStore`，`/api/v1/policy/*` 与 `/api/v1/agents/revoke`，发布挡在 `FactorRuntime::require_l3(ActivatePolicy)` 之后 | ＋policy |
-| `studiolo-agent-server` | 接入方：`serve --policy` 打开 `PolicyAgentStore`，每次调用复核，供给视图求交，`policy_read`／`propose_desired`，admin 子命令 | ＋policy |
+| `studiolo-agent-server` | 接入方：`serve --policy` 打开 `PolicyAgentStore`，每次调用复核，供给视图求交，`policy_read`／`propose_desired`／`list_proposals`，admin 子命令 | ＋policy |
 
 - 私有目录：绝对路径、0700；唯一文件 `policy.sqlite3`（0600，单链接，同 owner，`-wal/-shm/-journal` 同规则）。
   架构守卫登记第六个固定私有库文件名，`Connection::open_with_flags` 只出现在 `crates/policy/src/database.rs`。
@@ -22,9 +22,10 @@
 - 两个句柄打开同一个文件：`PolicyStore`（主人发布者：唯一能写版本表与吊销表）与 `PolicyAgentStore`
   （接入方视角：读 effective／吊销状态，只能向 `policy_desired` 插入 `pending` 提案）。提案永不产生授权。
 - `serve` 未给 `--policy` ＝ **M3 兼容模式**：供给视图只来自 `--allow`，路牌第 3 项明写「策略平面：未接入」，
-  `handshake.served` 记 `policy_plane=absent`。**`tools/list` 与是否给 `--policy` 无关，恒为六个**（四个只读 ＋ `policy_read`／`propose_desired`）；
-  兼容模式下这两个策略工具一律以 JSON-RPC `-32600`、固定文案「策略平面未接入（M3 兼容模式）」拒绝并记 `agent.action_denied{policy_plane_absent}`。
-  上线探针 `scripts/check-agent.py` 逐字依赖这三点（路牌标记、六工具清单、拒绝码与文案），三处由
+  `handshake.served` 记 `policy_plane=absent`。**`tools/list` 与是否给 `--policy` 无关，恒为八个**（四个只读 ＋ 黑板 `board` ＋
+  `policy_read`／`propose_desired`／`list_proposals`，T-182 起由七个变八个）；
+  兼容模式下这三个策略工具一律以 JSON-RPC `-32600`、固定文案「策略平面未接入（M3 兼容模式）」拒绝并记 `agent.action_denied{policy_plane_absent}`。
+  上线探针 `scripts/check-agent.py` 逐字依赖这三点（路牌标记、八工具清单、拒绝码与文案），三处由
   `crates/agent-server/tests/policy_contract.rs` 的兼容模式用例钉住；改任何一处必须同步改探针。
 
 ## 2. 三类母本
@@ -60,6 +61,19 @@ rules 类的 subject 规则（`.md` 结尾、≤128 字符、不含 `/`、不以
 - **提交**（主人 `POST /api/v1/policy/desired`；接入方 MCP `propose_desired`）：入库的是提交原文；同事务内对当前
   effective 做校验与 diff，报告存进该 desired。主人提交记 `validated`／`rejected`，接入方提交记 `pending`（结构无效则
   `rejected`）；两者都**永不自动生效**。接入方每实例最多 8 条 pending、全库 256 条。
+- **接入方断线重提**（T-182）：**本类型**在同一 kind／subject 上**最新**的未发布草案（pending／validated／rejected，按入库
+  先后）若正是规范化正文摘要相同、仍待处理（pending／validated）的那份，原样返回它（`deduplicated=true`），不新建、不占名额；
+  判定在名额检查之前、与入库同一写事务。否则照常有界入库：本类型之后又提过别的正文，再提旧正文就新建一条，让它重新成为本类型
+  最新的提议。只看本类型自己的草案，与发布的拦截同一口径（同一提交者有更新的未发布草案才挡，T-181）：主人和别的类型的更新
+  草案既不挡本类型那份的发布，也不让重提多出一条；重提的结果也就不透露别人有没有新草案。
+  按类型而不按实例判定，因为断线重连后是另一个实例；规范化失败（结构无效）的正文没有摘要，每次都新建一条 `rejected`；
+  能规范化、语义被拒的有真摘要，同样不拿回（重提要再校验一次）。
+  调用方看到错误时提案有没有入库：会话层门禁（`crates/agent-server/src/mcp_transport/gate.rs`）回的 404（会话查不到或已
+  过期）与 400（缺会话号）只发生在交给 SDK **之前**，说明工具没有执行；401、503 在交给 SDK 前后都可能回（凭据被吊销、身份库
+  读不出、服务正在关停、会话途中结束），再加上 408 超时、工具末尾 `finish_mcp` 报会话无效、入库后审计不可用、响应送达前连接
+  断开，这些都说明不了有没有入库。拿不准就先用 `list_proposals` 核对，或直接重提。重提只在那份提案**仍是本类型在该 subject 最新的待处理草案**时
+  拿回它，并补记一条 `policy.desired_submitted`（`deduplicated=true`，主体是重提的实例）；本类型之后提过别的正文，或它已被
+  发布／撤回／取代时，重提照常新建，第一次提交没记上的那条审计不会补；只核对、不重提的也不补（提案无授权效果，人侧照样看得到它）。
 - **报告**：`ok`、逐条 `problems{path,message}`（不回显正文）、`diff`（JSON 字段级或 Markdown 行级 LCS，≤2000 条，超出标
   `truncated`）、`expansions`（扩大项，界面标红）、`narrowings`、`base_effective_hash`、`current_version`、`body_sha256`。
 - **扩大项判定**：能力集——白名单新增或变宽、规则名单新增（`read.rules_whitelist`：新类型记「新类型首次获得规则读取」，
@@ -118,8 +132,14 @@ rules 类的 subject 规则（`.md` 结尾、≤128 字符、不含 `/`、不以
 - **skill 硬绑定与索引分家**：硬绑定＝能力集 `hard_bound_skills[{trigger, must_use}]`，策略强制，进路牌第 5 项并标「（策略强制）」；
   索引＝`policy_read{kind=skills}` 不带 `subject` 时返回全部已发布 skill 的「名称／版本／摘要／触发词」清单，只是候选、由 AI 自选，
   带 `subject` 才取正文。**Studiolo 不做语义路由**：不替 AI 判断该用哪个 skill，只保证硬绑定那几条一定出现在路牌里。
-- `propose_desired{kind,subject,body}`：需能力集 `policy.propose_desired`；入库 `pending`，记 `policy.desired_submitted`；
-  返回 id／状态／扩大项计数／逐条问题；**不改变 effective**。
+- `propose_desired{kind,subject,body}`：需能力集 `policy.propose_desired`；入库 `pending`，记 `policy.desired_submitted`
+  （接入方的多一个 `deduplicated`）；返回 id／状态／扩大项计数／`body_sha256`（服务端算的规范化正文摘要，规则母本 CRLF
+  换 LF 后；过不了规范化为 `-`）／`deduplicated`／逐条问题；断线重提见 §3；**不改变 effective**。
+- `list_proposals{kind?,subject?}`（T-182，只走 MCP）：供断线后核对提案有没有入库。门槛与 `propose_desired` 相同（未接入策略
+  平面同样拒绝并记 `policy_plane_absent`，无提案能力记 `capability_denied`）；只列**本类型**仍待处理（pending／validated）的
+  接入方提案，新到旧，最多 64 份（超出时首行注明还有更早的）；每行 `desired_id`、`kind`、`subject`、状态、`body_sha256`、
+  提交时间、实例，以制表符分隔，不含正文与报告；先记 `content.read{path=policy://desired, revision=-, tool=list_proposals}`
+  并进读取索引，再返回。
 
 ## 6. 错误模式
 
@@ -147,6 +167,12 @@ rules 类的 subject 规则（`.md` 结尾、≤128 字符、不含 `/`、不以
   规则文件判定与路牌库文件兜底按名单裁决。
 - `crates/agent-server/tests/policy_contract.rs`：零权限握手、供给视图求交、路牌 3／5／6 项、`policy_read` 审计与索引、
   `propose_desired` 永不生效与能力否决、三级吊销即刻生效与恢复、HTTP 外壳同一授权、M3 兼容模式。
+- T-182 断线重提：`crates/policy/tests/proposal_contract.rs`（CRLF／LF 与规范 JSON 视为同一份、名额满时重提拿回原提案、
+  只有本类型最新的草案接得住重提、主人或别的类型的更新草案不影响重提、rejected（含语义被拒、有真摘要的）／撤回／主人提交的不接、
+  跨类型不相认、主人句柄的接入方分支同一规则、多条连接同时重提只留一条、列表的范围／顺序／上限、发布与取代后出列、
+  主人复核超长提案后摘要列同步）；`crates/agent-server/tests/proposal_contract.rs`（换实例重提只有一条且返回同一 id 与摘要、
+  语义被拒也给真摘要且不去重、入库后审计不可用如实说已入库且恢复后重提补记、`list_proposals` 只列本类型、进读取审计与索引、
+  审计不可用时失败关闭、无能力／三级吊销／未接入时拒绝、工具说明里的份数与常量一致）。
 - `crates/local-server/tests/policy_http_contract.rs`：真实 Unix 入口＋TOTP：发布挡在 L3 后（用例 36 人侧）、Intent/Outcome
   同 id、CAS 409、回滚、版本读取、三级吊销 L2 与全局解除 L3、方法与查询封闭、未装配策略平面 404。
 - 前端 `web/src/test/policy*`：模型封闭解析、扩大项标红、吊销提交、未接入显示；发布遇 403 `reauthentication_required` 就地弹二次认证窗口，认证通过后**按原 `expected_effective_hash`** 自动重试同一次动作（取消或认证失败都不重试；期间 effective 变了仍按原 hash 提交、由服务端 `hash_mismatch` 挡下；本入口无 One-time Code 路径时窗口直说不能发布）。

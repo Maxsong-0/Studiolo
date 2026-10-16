@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""验收 studiolo-agent：初始化、七个 tools（四个只读＋两个策略平面＋黑板）与白名单拒绝，任一步不符即失败。
+"""验收 studiolo-agent：初始化、八个 tools（四个只读＋三个策略平面＋黑板）与白名单拒绝，任一步不符即失败。
 策略平面只做只读探测：按路牌区分「未接入必须拒绝」与「已接入必须读得到 skills 索引」；
-永不调用 propose_desired——探针不得在被验收的服务里留下任何提案。
+永不调用 propose_desired——探针不得在被验收的服务里留下任何提案（也不调 list_proposals：它要提案能力，结果随能力集而变）。
 用法：python3 scripts/check-agent.py <mcp_url> <token 文件> [--no-token|--bad-token]
 服务器上无仓库时：ssh 主机 python3 - <url> <token 文件> < scripts/check-agent.py。
 只打印状态、长度与校验结论，不打印 token、会话 id、笔记正文或服务错误正文。
@@ -16,8 +16,8 @@ import urllib.request
 PROTOCOL = "2025-11-25"
 INDEX_PATH = "项目/Studiolo/00-总览/INDEX.md"
 READ_TOOLS = {"handshake", "list_entries", "read_note", "search"}
-# M5 起 tools/list 恒为七个；未装配的策略或黑板调用失败关闭，清单必须恰好相等。
-POLICY_TOOLS = {"policy_read", "propose_desired"}
+# T-182 起 tools/list 恒为八个（M5 为七个）；未装配的策略或黑板调用失败关闭，清单必须恰好相等。
+POLICY_TOOLS = {"policy_read", "propose_desired", "list_proposals"}
 BOARD_TOOLS = {"board"}
 EXPECTED_TOOLS = READ_TOOLS | POLICY_TOOLS | BOARD_TOOLS
 # 与 crates/supply/src/signpost/render.rs、crates/agent-server/src/server/policy.rs（「策略平面未接入」）与 server/session.rs（「策略拒绝：」）的固定文案逐字一致。
@@ -132,8 +132,8 @@ def check(base, token, mode):
     require(isinstance(tools, list) and len(tools) == len(EXPECTED_TOOLS)
             and all(isinstance(tool, dict) and isinstance(tool.get("name"), str) for tool in tools)
             and {tool["name"] for tool in tools} == EXPECTED_TOOLS,
-            "tools 清单不符合预期：应恰为四个只读工具加两个策略平面工具")
-    print("tools/list: 四个只读工具、两个策略工具与黑板工具齐全")
+            "tools 清单不符合预期：应恰为四个只读工具、三个策略平面工具加黑板工具")
+    print("tools/list: 四个只读工具、三个策略工具与黑板工具齐全")
 
     def call(request_id, name, arguments):
         _, value = rpc(request_id, "tools/call", {"name": name, "arguments": arguments}, session)
