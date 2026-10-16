@@ -1,12 +1,47 @@
 use super::{
     BoardPlane, Engine,
-    auth::{Grant, within},
+    auth::{Grant, Refusal, within},
     requests::*,
 };
 use serde::{Serialize, de::DeserializeOwned};
 use serde_json::{Value, json};
 use studiolo_audit_ledger::AuditPhase;
 use studiolo_task_engine::{TaskCommand, TaskEngine};
+
+/// 写操作已提交、返回前的授权复核却读不出来：结果不返回，也不能说成没发生。
+const COMMITTED_UNCONFIRMED: &str =
+    "权威状态已提交，但返回前的授权复核暂不可用，结果未返回；稍后刷新黑板核对，不要直接重试";
+
+/// 私有入口的失败：确定拒绝带原因回 409；授权这一步读不出来回 503，此时什么都没发生。
+pub(super) enum Failure {
+    Rejected(String),
+    Unavailable,
+}
+impl From<String> for Failure {
+    fn from(reason: String) -> Self {
+        Self::Rejected(reason)
+    }
+}
+impl From<&'static str> for Failure {
+    fn from(reason: &'static str) -> Self {
+        Self::Rejected(reason.into())
+    }
+}
+impl From<Refusal> for Failure {
+    fn from(refusal: Refusal) -> Self {
+        match refusal {
+            Refusal::Denied(reason) => Self::Rejected(reason.into()),
+            Refusal::Unavailable(_) => Self::Unavailable,
+        }
+    }
+}
+/// 会改权威状态的操作：成功后要投影，提交后就不能再说成没发生。
+fn writes(operation: &str) -> bool {
+    !matches!(
+        operation,
+        "list" | "get" | "batch.preview" | "memory.preview"
+    )
+}
 
 pub(super) fn parse<T: DeserializeOwned>(v: &Value) -> Result<T, String> {
     serde_json::from_value(v.clone()).map_err(|_| "请求字段缺失、多余或类型无效".into())
@@ -51,15 +86,15 @@ pub(super) fn owned(
     Ok(())
 }
 impl BoardPlane {
-    pub(super) fn execute(&self, r: Request) -> Result<Value, String> {
+    pub(super) fn execute(&self, r: Request) -> Result<Value, Failure> {
         let id = format!("board-request:{}", ulid::Ulid::generate());
         // 排队结束后复核，避免等待锁期间的撤权仍能写入。
         let mut engine = self.engine.lock().map_err(|_| "黑板不可用")?;
         let grant = match self.authorize(&r) {
             Ok(g) => g,
-            Err(reason) => {
-                self.event(&r, &id, AuditPhase::Outcome, reason)?;
-                return Err(reason.into());
+            Err(refusal) => {
+                self.event(&r, &id, AuditPhase::Outcome, refusal.message())?;
+                return Err(refusal.into());
             }
         };
         self.event(&r, &id, AuditPhase::Intent, "admitted")?;
@@ -67,10 +102,7 @@ impl BoardPlane {
         let outcome = self.dispatch(&mut engine, &r, &grant, now);
         // 状态机已提交时，投影失败不能把写入报告成未发生；调用方应刷新权威板。
         if outcome.is_ok()
-            && !matches!(
-                r.operation.as_str(),
-                "list" | "get" | "batch.preview" | "memory.preview"
-            )
+            && writes(&r.operation)
             && self
                 .project(&mut engine, r.project.as_str(), &grant.hash)
                 .is_err()
@@ -88,8 +120,14 @@ impl BoardPlane {
                 "rejected"
             },
         )?;
-        self.authorize(&r)?;
-        outcome
+        // 返回前再复核：撤权后不泄露内容；已提交的写这时核不了身份，也不能说成没发生。
+        match self.authorize(&r) {
+            Ok(_) => outcome.map_err(Failure::from),
+            Err(Refusal::Unavailable(_)) if outcome.is_ok() && writes(&r.operation) => {
+                Err(COMMITTED_UNCONFIRMED.into())
+            }
+            Err(refusal) => Err(refusal.into()),
+        }
     }
     pub(super) fn project(
         &self,

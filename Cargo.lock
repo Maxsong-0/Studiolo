@@ -2596,6 +2596,7 @@ dependencies = [
  "jsonwebtoken",
  "notify",
  "reqwest",
+ "rusqlite",
  "rustix",
  "serde",
  "serde_json",

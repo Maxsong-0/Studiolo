@@ -50,6 +50,8 @@ jiff.workspace = true
 rustix = { workspace = true, features = ["stdio"] }
 studiolo = { path = "../studiolo" }
 reqwest.workspace = true
+# 只给测试注入身份库故障（把实例表改名再改回）；开发依赖不进产物。
+rusqlite.workspace = true
 hmac.workspace = true
 sha1.workspace = true
 studiolo-auth = { workspace = true, features = ["test-support"] }

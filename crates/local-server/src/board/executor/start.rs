@@ -23,7 +23,7 @@ impl RunnerPlane {
             .authority
             .board
             .authorize(&request)
-            .map_err(str::to_owned)?;
+            .map_err(String::from)?;
         if let Some(existing) = runs.values().find(|run| {
             run.summary.task_id == r.task_id
                 && (run.summary.state != "failed" || run.cleanup_pending)
