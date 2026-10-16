@@ -39,6 +39,14 @@ impl Manager {
         });
     }
 
+    /// 关停时关掉全部会话：每个会话名下的 SSE 流随即结束，客户端开着的 GET 流也一样（BUG-033）。
+    /// 关停开始后门禁不再预占新会话，所以一轮就够。
+    pub fn close_all(&self) {
+        for binding in self.pool.all() {
+            self.discard(binding);
+        }
+    }
+
     async fn finish_close(&self, binding: Arc<Binding>) {
         binding.wait_creation().await;
         if let Some(id) = binding.session.get() {

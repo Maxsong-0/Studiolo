@@ -2,8 +2,22 @@
 
 use std::io::Write as _;
 
-#[tokio::main]
-async fn main() -> std::process::ExitCode {
+fn main() -> std::process::ExitCode {
+    // 运行时手工建，收尾才能设上限：`#[tokio::main]` 的运行时析构会无限期等阻塞线程上的重扫或副本校验，
+    // 停服可能因此拖过 systemd 的 TimeoutStopSec 而被强杀（T-184，BUG-033）。
+    let Ok(runtime) = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+    else {
+        let _ = writeln!(std::io::stderr(), "无法建立异步运行时");
+        return std::process::ExitCode::FAILURE;
+    };
+    let code = runtime.block_on(entry());
+    runtime.shutdown_timeout(studiolo_agent_server::shutdown::RUNTIME_LIMIT);
+    code
+}
+
+async fn entry() -> std::process::ExitCode {
     // 先收紧秘密驻留面，再做任何别的事。本进程持有两处明文：`admin type-issue` 铸出的
     // 32 字节类型 token，以及每次请求头里的 bearer —— 前者是 MCP 供给面的全部身份。
     // 崩溃转储、在线进程检视与换出到交换区这三条路径对它们一视同仁，**与执行哪个子命令
@@ -18,7 +32,7 @@ async fn main() -> std::process::ExitCode {
     // 跳过没有区别。走标准错误而不是标准输出，是因为标准输出留给管理子命令的非秘密结果
     // （允许重定向与管道）；摘要只含措施名与固定分类，永不含 token 或任何环境值。
     //
-    // 这是本程序最早的无条件路径：`#[tokio::main]` 只是在此之前建好运行时，其间既不读取
+    // 这是本程序最早的无条件路径：`main` 只是在此之前建好运行时，其间既不读取
     // 秘密也不派生子进程；本 crate 的 `src/` 由架构守卫禁用 `Command::new`，因此不存在
     // 更早的派生窗口可以把未清除的环境槽位带出去。
     let residency = match studiolo_process_safety::harden() {

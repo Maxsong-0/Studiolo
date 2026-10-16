@@ -12,6 +12,7 @@ pub mod options;
 pub mod refresh;
 pub mod serve;
 pub mod server;
+pub mod shutdown;
 pub mod state;
 
 /// 按命令行参数运行一个命令。

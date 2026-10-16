@@ -29,6 +29,10 @@ T-034：用户于 2026-09-07 指定部署到 `maxsong@192.168.100.169`，把 M3 
 - 私有库 `~/.local/share/studiolo-agent`（0700，`agent.sqlite3` 与 `audit/audit.sqlite3`）是服务唯一可写路径；
   发布目录与副本目录经 `ProtectHome=read-only` 保持只读。`RestrictSUIDSGID=no` 沿用 T-008 的 openat2 结论。
 - `serve` 现同时响应 SIGINT 与 SIGTERM 优雅关停（systemd 默认 `KillSignal=SIGTERM`），T-034 补齐。
+  T-184（vault BUG-033）起关停有上限：新请求回 503，已开始的供给最多等 10 秒，15 秒仍没收尾就以退出码 1 退出，
+  赶在单元 `TimeoutStopSec=20` 之前（契约 §9）。`restart` 后 journal 应在几秒内出现 `Deactivated successfully`；
+  再出现 `State 'stop-sigterm' timed out` 就是回归。T-184 之前的版本停服时客户端开着 SSE 流就会等满 20 秒被强杀，
+  所以换下这类旧版的那次重启照旧要等 20 秒，新版的停服表现要看它自己下一次停服。
 
 ## 目录约定（服务器）
 
@@ -110,7 +114,7 @@ agent 能改写自己的二进制，属加固倒退。
 
 **切换单元**：单元里版本名出现**两处**（`WorkingDirectory` 与 `ExecStart`），用全局替换，先备份：
 `sudo cp <单元> ~/studiolo-agent.service.bak-<旧版>-<日期> && sudo sed -i "s#<旧发布名>#<新发布名>#g" <单元>`，
-再 `daemon-reload`、`restart`，核对 `active` 与 `NRestarts=0`。
+再 `daemon-reload`、`restart`，核对 `active` 与 `NRestarts=0`，并看 journal 里旧进程的停服是否几秒内 `Deactivated successfully`（旧版早于 T-184 时见上文「边界与已核实环境」最后一条）。
 
 **同时改 `--allow` 时分两阶段**：先只换程序（白名单不动）验证新程序；再换白名单时，
 **必须让副本先变新、agent 最后重启一次**——运行中的 agent 遇到清单失配只拒绝内容，

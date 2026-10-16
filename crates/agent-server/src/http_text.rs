@@ -5,6 +5,7 @@ mod sessions;
 use crate::{
     auth::{self, AgentType},
     server::{AgentSession, ListEntriesArgs, PolicyReadArgs, ReadNoteArgs, SearchArgs},
+    shutdown::SERVER_STOPPING,
     state::AppState,
 };
 use axum::{
@@ -168,6 +169,11 @@ async fn dispatch(State(state): State<Arc<HttpState>>, request: Request<Body>) -
         deny(&state, agent_type, "invalid_session_header");
         return failure(StatusCode::BAD_REQUEST, "会话头无效");
     };
+    // 关停开始后不接新请求；已在处理的照常做完，axum 的优雅关停会等它们（BUG-033）。
+    if state.app.lifecycle.is_stopping() {
+        deny(&state, agent_type, SERVER_STOPPING);
+        return failure(StatusCode::SERVICE_UNAVAILABLE, "服务正在关停，请稍后重试");
+    }
     let Ok(_permit) = state.requests.try_acquire() else {
         return busy(ReserveError::Full);
     };
@@ -278,3 +284,9 @@ async fn dispatch(State(state): State<Arc<HttpState>>, request: Request<Body>) -
     }
     response
 }
+
+// 共用的 MCP 夹具里有本模块用不到的方法。
+#[cfg(test)]
+#[allow(dead_code)]
+#[path = "../tests/http_text_private/stopping.rs"]
+mod tests;

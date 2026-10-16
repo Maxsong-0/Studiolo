@@ -105,6 +105,8 @@ pub struct AppState {
     pub limits: ScanLimits,
     /// 已验证源的派生缓存。
     pub(crate) index: IndexRuntime,
+    /// 关停状态：两个外壳据此拒绝新请求，MCP 传输据此排空后关会话，后台重扫据此停下。
+    pub(crate) lifecycle: Arc<crate::shutdown::Lifecycle>,
 }
 
 /// 当前时间（RFC 3339，UTC）。
