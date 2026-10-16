@@ -107,6 +107,8 @@ let effective = HASH;
 let l3Available = true;
 let factors: unknown = null;
 let activateReply: (attempt: number) => Response;
+// 草案列表应答：默认只有这一份；测试可在认证期间换成「又来了一份更新的」。
+let listed: unknown;
 let stepUpReply: () => Response;
 
 function now() {
@@ -126,6 +128,11 @@ beforeEach(() => {
     pending: false,
   };
   activateReply = () => jsonResponse(activated(MOVED));
+  listed = {
+    desired: [record],
+    newer_open: { [DESIRED_ID]: [] },
+    blocked_by: { [DESIRED_ID]: [] },
+  };
   stepUpReply = () => jsonResponse(now());
   fetchMock.mockReset();
   fetchMock.mockImplementation(async (input, init) => {
@@ -141,8 +148,7 @@ beforeEach(() => {
     }
     if (path === '/api/v1/policy')
       return jsonResponse(status(effective, l3Available));
-    if (path === '/api/v1/policy/desired')
-      return jsonResponse({ desired: [record] });
+    if (path === '/api/v1/policy/desired') return jsonResponse(listed);
     if (path === '/api/v1/policy/versions')
       return jsonResponse({ versions: [] });
     if (path === '/api/v1/policy/activate') {
@@ -269,6 +275,100 @@ it('等认证期间 effective 变了，重试仍用人审过的那份 hash，被
     desired_id: DESIRED_ID,
     expected_effective_hash: HASH,
   });
+});
+
+it('等认证期间同一提交者交了更新的草案：重试仍发人审过的那份，被服务端以 newer_desired_same_submitter 挡下；重读后改标较早（T-181）', async () => {
+  const NEWER = '01ABCDEFGHZZMNPQRSTVWXYZ01';
+  const user = await openPolicy();
+  activateReply = (attempt) =>
+    attempt === 0
+      ? denied()
+      : jsonResponse(
+          {
+            code: 'newer_desired_same_submitter',
+            error: '同一提交者还有更新的未发布草案',
+            newer_desired_ids: [NEWER],
+          },
+          409,
+        );
+  const dialog = await publish(user);
+  // 认证窗口开着时，主人在别处又交了一份同一对象的草案。
+  listed = {
+    desired: [{ ...record, id: NEWER }, record],
+    newer_open: { [NEWER]: [], [DESIRED_ID]: [NEWER] },
+    blocked_by: { [NEWER]: [], [DESIRED_ID]: [NEWER] },
+  };
+
+  await user.type(within(dialog).getByLabelText('验证码'), CODE);
+  await user.click(
+    within(dialog).getByRole('button', { name: '完成认证并继续' }),
+  );
+
+  expect(
+    await screen.findByText(
+      `没有发布：同一提交者还有更新的未发布草案（${NEWER.slice(0, 12)}），只能发布其中最新的那一份；要发这份，先撤回更新的。`,
+    ),
+  ).toHaveAttribute('role', 'alert');
+  // 重试与首次逐字节相同：不因为来了更新的就悄悄改发别的那份。
+  expect(activations).toHaveLength(2);
+  expect(activations[1]).toEqual(activations[0]);
+  // 失败后重读：仍选着的那份改标较早，发布按钮不可点。
+  expect(
+    await screen.findByText(
+      `同一提交者还有更新的未发布草案（${NEWER.slice(0, 12)}）：只能发布其中最新的那一份；要发这份，先在「策略」页的待处理草案里撤回更新的。`,
+    ),
+  ).toBeInTheDocument();
+  expect(
+    screen.getByRole('button', { name: '发布（需二次认证）' }),
+  ).toBeDisabled();
+});
+
+it('等认证期间 AI 对同一对象交了更新的提案：重试照发人审过的那份，服务端不挡；重读后那份提案照旧待处理（T-181）', async () => {
+  const NEWER = '01ABCDEFGHZZMNPQRSTVWXYZ01';
+  const proposal = {
+    ...record,
+    id: NEWER,
+    submitter_kind: 'agent',
+    agent_type: 'claude',
+    agent_instance: '01M50KWFNX6A1QBV8X1G3KKTH2',
+    status: 'pending',
+  };
+  const user = await openPolicy();
+  activateReply = (attempt) => {
+    if (attempt === 0) return denied();
+    // 服务端照发人审过的那份，只取代比它早的；比它更新的 AI 提案留着待处理。
+    listed = {
+      desired: [
+        proposal,
+        { ...record, status: 'activated', activated_version: 2 },
+      ],
+      newer_open: { [NEWER]: [] },
+      blocked_by: { [NEWER]: [] },
+    };
+    return jsonResponse(activated(MOVED));
+  };
+  const dialog = await publish(user);
+  // 认证窗口开着时，AI 对同一对象交了一份更新的提案：不同提交者，不挡主人那份。
+  listed = {
+    desired: [proposal, record],
+    newer_open: { [NEWER]: [], [DESIRED_ID]: [NEWER] },
+    blocked_by: { [NEWER]: [], [DESIRED_ID]: [] },
+  };
+
+  await user.type(within(dialog).getByLabelText('验证码'), CODE);
+  await user.click(
+    within(dialog).getByRole('button', { name: '完成认证并继续' }),
+  );
+
+  await screen.findByText(/已发布为 v2/);
+  // 重试与首次逐字节相同：发的仍是人审过的那份。
+  expect(activations).toHaveLength(2);
+  expect(activations[1]).toEqual(activations[0]);
+  // 重读后那份 AI 提案还在待处理队列里，没被悄悄作废。
+  const queue = await screen.findByRole('list', { name: '待处理草案' });
+  const items = within(queue).getAllByRole('listitem');
+  expect(items).toHaveLength(1);
+  expect(items[0]).toHaveTextContent(NEWER.slice(0, 12));
 });
 
 it('取消认证就不发布：既不提交验证码，也不重试原动作', async () => {

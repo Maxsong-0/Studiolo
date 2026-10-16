@@ -42,7 +42,8 @@ beforeEach(() => {
         revocations: [],
         l3_available: true,
       });
-    if (path === '/api/v1/policy/desired') return jsonResponse({ desired: [] });
+    if (path === '/api/v1/policy/desired')
+      return jsonResponse({ desired: [], newer_open: {}, blocked_by: {} });
     if (path === '/api/v1/policy/versions')
       return jsonResponse({ versions: [meta(2), meta(1)] });
     if (path === '/api/v1/policy/versions/2')

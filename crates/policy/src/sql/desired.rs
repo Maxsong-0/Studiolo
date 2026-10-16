@@ -78,27 +78,6 @@ pub(crate) fn desired_list(
     rows.collect::<Result<Vec<_>, _>>().map_err(unavailable)
 }
 
-/// 某类型在同一 kind/subject 上最新的未发布草案（pending／validated／rejected）的 id，按入库先后（rowid）。
-// 只看这一类型自己提交的，与发布的拦截同一口径（同一提交者有更新的未发布草案才挡，T-181）；重提的结果
-// 也就只取决于提交方自己的草案，不透露别人有没有新草案（T-182）。
-pub(crate) fn latest_open_proposal(
-    tx: &Transaction<'_>,
-    agent_type: &str,
-    kind: PolicyKind,
-    subject: &str,
-) -> Result<Option<String>, PolicyError> {
-    tx.query_row(
-        "SELECT id FROM policy_desired
-         WHERE submitter_kind = 'agent' AND agent_type = ?1
-           AND status IN ('pending', 'validated', 'rejected') AND kind = ?2 AND subject = ?3
-         ORDER BY rowid DESC LIMIT 1",
-        params![agent_type, kind.as_str(), subject],
-        |row| row.get(0),
-    )
-    .optional()
-    .map_err(unavailable)
-}
-
 /// 某类型仍待处理（pending／validated）的接入方提案，新到旧（按入库先后），只取摘要列。
 pub(crate) fn open_agent_proposals(
     tx: &Transaction<'_>,

@@ -59,6 +59,15 @@ export type DesiredRecord = {
   validated_at: string | null;
   activated_version: number | null;
 };
+/**
+ * 草案列表里的一份（T-181）：附两张表，都按入库先后。`newer_open` 是同一对象里比它晚入库的未发布草案号；
+ * `blocked_by` 是其中同一提交者（主人，或同一类 AI）交的那几份，非空就不能发布。最新那份、已发布、
+ * 已取代、已撤回的都是空表。发布时服务端按同一口径拦截，界面只照这两张表标「最新」「较早」、挡发布按钮。
+ */
+export type ListedDesired = DesiredRecord & {
+  newer_open: string[];
+  blocked_by: string[];
+};
 export type EffectiveEntry = {
   kind: PolicyKind;
   subject: string;
@@ -145,6 +154,16 @@ const STATUSES: DesiredStatus[] = [
   'withdrawn',
 ];
 const LEVELS: RevocationLevel[] = ['instance', 'type', 'global'];
+/** 还没发布、仍可发布／重新校验／撤回的三种状态（与服务端 pending／validated／rejected 同口径）。 */
+const OPEN_STATUSES: readonly DesiredStatus[] = [
+  'pending',
+  'validated',
+  'rejected',
+];
+
+export function isOpenStatus(status: DesiredStatus): boolean {
+  return OPEN_STATUSES.includes(status);
+}
 
 function invalid(): never {
   throw new Error('策略平面响应格式无效，请重新核对。');
@@ -259,8 +278,114 @@ export function desiredRecord(value: unknown): DesiredRecord {
     activated_version: optionalCount(item.activated_version),
   };
 }
-export function desiredList(value: unknown): DesiredRecord[] {
-  return list(record(value).desired, desiredRecord);
+/**
+ * 草案列表：每份未发布草案都必须在 `newer_open`、`blocked_by` 里各有一张表，别的草案都不能有；缺了就
+ * 整份报格式错，绝不当成「没有更新的草案」「没被挡」——那正是较早草案被当成最新发出去的那类静默
+ * （BUG-031）。两张表还得前后一致（见 `checkNewerOpen`、`checkBlockedBy`），自相矛盾的同样整份拒收。
+ */
+export function desiredList(value: unknown): ListedDesired[] {
+  const item = record(value);
+  const desired = list(item.desired, desiredRecord);
+  const open = desired.filter((entry) => isOpenStatus(entry.status));
+  const orders = openTable(item.newer_open, open);
+  const blocked = openTable(item.blocked_by, open);
+  checkNewerOpen(open, orders);
+  checkBlockedBy(open, orders, blocked);
+  return desired.map((entry) => {
+    const listed = isOpenStatus(entry.status);
+    return {
+      ...entry,
+      newer_open: listed ? (orders.get(entry.id) ?? []) : [],
+      blocked_by: listed ? (blocked.get(entry.id) ?? []) : [],
+    };
+  });
+}
+
+/** 按未发布草案号给的一张表：每份未发布草案恰好一项、值是草案号列表；少了、多了、形状不对都整份拒收。 */
+function openTable(
+  value: unknown,
+  open: readonly DesiredRecord[],
+): Map<string, string[]> {
+  const table = record(value);
+  if (
+    Object.keys(table).length !== open.length ||
+    open.some((entry) => !Object.hasOwn(table, entry.id))
+  )
+    invalid();
+  return new Map(open.map((entry) => [entry.id, list(table[entry.id], text)]));
+}
+
+/**
+ * `newer_open` 必须排出同一对象内唯一的入库先后：一个对象有 n 份未发布草案时，第 k 早的那份
+ * 按入库先后列出比它晚的 n-1-k 份，最新那份是空表。指向别的对象或自己、重复、两份都自称最新，
+ * 都整份拒收：界面只照这张表挡发布、选编辑底稿，不自己猜。
+ */
+function checkNewerOpen(
+  open: readonly DesiredRecord[],
+  orders: ReadonlyMap<string, readonly string[]>,
+): void {
+  const objects = new Map<string, string[]>();
+  for (const entry of open) {
+    const key = `${entry.kind}\u0000${entry.subject}`;
+    objects.set(key, [...(objects.get(key) ?? []), entry.id]);
+  }
+  for (const ids of objects.values()) {
+    // 每份后面还有几份更新的：同一对象里各不相同，先后才唯一。
+    const rank = new Map(ids.map((id) => [id, orders.get(id)?.length ?? -1]));
+    if (new Set(rank.values()).size !== ids.length) invalid();
+    for (const id of ids) {
+      const newer = orders.get(id) ?? [];
+      // 第 i 份更新的草案后面还剩 newer.length-1-i 份：只能是同一对象里、按入库先后排好的那几份。
+      if (
+        newer.some(
+          (other, index) => rank.get(other) !== newer.length - 1 - index,
+        )
+      )
+        invalid();
+    }
+  }
+}
+
+/**
+ * `blocked_by` 只能从 `newer_open` 里挑、保持原来的先后：挡住发布的只会是同一对象里更新的草案。
+ * 挑了表外的（含自己、别的对象、已结束的）、重复的、顺序反了，都整份拒收。哪几份算同一提交者
+ * 由服务端判，这里不另算一套。
+ */
+function checkBlockedBy(
+  open: readonly DesiredRecord[],
+  orders: ReadonlyMap<string, readonly string[]>,
+  blocked: ReadonlyMap<string, readonly string[]>,
+): void {
+  for (const entry of open) {
+    const newer = orders.get(entry.id) ?? [];
+    let next = 0;
+    for (const id of blocked.get(entry.id) ?? []) {
+      // 在 newer_open 里、排在上一份之后才算数：找不到时 indexOf 回 -1，next 归 0。
+      next = newer.indexOf(id, next) + 1;
+      if (next === 0) invalid();
+    }
+  }
+}
+
+/** 发布这一份会一并标为已取代的：同一对象里比它早入库的未发布草案（照接口给的 `newer_open` 判）。 */
+export function supersededBy(
+  target: ListedDesired,
+  desired: readonly ListedDesired[],
+): ListedDesired[] {
+  return desired.filter((entry) => entry.newer_open.includes(target.id));
+}
+
+/**
+ * 发布这一份后仍待处理的：同一对象里比它晚入库的未发布草案，按入库先后。能发布时它们只会是别的
+ * 提交者交的（同一提交者更新的会挡住发布），服务端不取代它们（用户 2026-10-16 定）。
+ */
+export function remainingAfter(
+  target: ListedDesired,
+  desired: readonly ListedDesired[],
+): ListedDesired[] {
+  return target.newer_open.flatMap((id) =>
+    desired.filter((entry) => entry.id === id),
+  );
 }
 export function desiredEnvelope(value: unknown): DesiredRecord {
   return desiredRecord(record(value).desired);
@@ -390,4 +515,9 @@ export const LEVEL_LABEL: Record<RevocationLevel, string> = {
 /** 界面里只显示哈希前 12 位；完整值在悬停标题里。 */
 export function shortHash(value: string): string {
   return value.slice(0, 12);
+}
+
+/** 草案号（ULID）只显示前 12 位：前 10 位是毫秒时间，再带 2 位随机，足以区分同一对象的几份草案。 */
+export function shortId(id: string): string {
+  return id.slice(0, 12);
 }

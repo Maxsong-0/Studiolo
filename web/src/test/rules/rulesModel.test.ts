@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type {
-  DesiredRecord,
   EffectiveEntry,
+  ListedDesired,
   PolicyKind,
   PolicyStatus,
   VersionRecord,
@@ -198,7 +198,8 @@ function versionOf(item: EffectiveEntry, body: string | null): VersionRecord {
   };
 }
 
-function draft(overrides: Partial<DesiredRecord>): DesiredRecord {
+/** 列表里的一份草案；`newer_open`、`blocked_by` 缺省为空表，即它是同一对象最新的那份。 */
+function draft(overrides: Partial<ListedDesired>): ListedDesired {
   return {
     id: '01ABCDEFGHJKMNPQRSTVWXYZ00',
     kind: 'rules',
@@ -213,6 +214,8 @@ function draft(overrides: Partial<DesiredRecord>): DesiredRecord {
     report: null,
     validated_at: null,
     activated_version: null,
+    newer_open: [],
+    blocked_by: [],
     ...overrides,
   };
 }
@@ -276,6 +279,8 @@ describe('规则行与读权限列', () => {
     agent_type: 'codex',
     agent_instance: '01AGENT',
     status: 'pending',
+    // AI 提案先入库，你的草案更新（服务端判定）。
+    newer_open: ['01ABCDEFGHJKMNPQRSTVWXYZ02'],
   });
   const model = buildRulesModel({
     status: statusOf([rule, general, claude, codex, broken], ['codex']),
@@ -315,10 +320,13 @@ describe('规则行与读权限列', () => {
     expect(model.unreadable).toEqual(['broken']);
   });
 
-  it('你提交的能力集草案让这一列按草案显示但不锁（T-160g）；AI 提案只计数，发布时一并被取代', () => {
+  it('你提交的能力集草案让这一列按草案显示但不锁（T-160g）；较早的 AI 提案排在后面，发布时一并被取代', () => {
     const codexColumn = model.types.find((column) => column.type === 'codex')!;
     expect(codexColumn.ownerDraft?.id).toBe(ownerDraft.id);
-    expect(codexColumn.others).toBe(1);
+    expect(codexColumn.drafts.map((item) => item.id)).toEqual([
+      ownerDraft.id,
+      agentProposal.id,
+    ]);
     expect(accessCell(codexColumn, 'CLAUDE.md')).toEqual({
       effective: false,
       shown: true,
@@ -436,5 +444,30 @@ describe('规则行与读权限列', () => {
       state: 'alert',
       text: '草案校验未通过',
     });
+  });
+});
+
+describe('同一规则几份未发布草案的先后（T-181）', () => {
+  it('按服务端判定排、最新的在前：入库更晚的那份排第一，哪怕它的提交时间更早', () => {
+    const rule = entry('rules', 'CLAUDE.md', 1);
+    // 时钟回拨：后入库的第二轮反而带着更早的时间戳；服务端说第一轮有更新的（第二轮）。
+    const first = draft({
+      id: '01ABCDEFGHJKMNPQRSTVWXYZ0A',
+      submitted_at: '2026-10-15T18:05:21Z',
+      newer_open: ['01ABCDEFGHJKMNPQRSTVWXYZ0B'],
+    });
+    const second = draft({
+      id: '01ABCDEFGHJKMNPQRSTVWXYZ0B',
+      submitted_at: '2026-10-15T17:55:04Z',
+    });
+    const model = buildRulesModel({
+      status: statusOf([rule]),
+      desired: [first, second],
+      records: new Map([[1, versionOf(rule, '# CLAUDE\n')]]),
+    });
+    expect(model.rules[0].drafts.map((item) => item.id)).toEqual([
+      second.id,
+      first.id,
+    ]);
   });
 });

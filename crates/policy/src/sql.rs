@@ -11,8 +11,7 @@ mod version;
 // 按表分文件；两个句柄与建库（database/schema.rs）经 `sql::` 取用下列函数。
 pub(crate) use current::{capability_set, context, current_entries, current_records};
 pub(crate) use desired::{
-    desired, desired_list, insert_desired, latest_open_proposal, open_agent_proposals,
-    update_desired,
+    desired, desired_list, insert_desired, open_agent_proposals, update_desired,
 };
 pub(crate) use meta::{effective_hash, empty_effective_hash};
 pub(crate) use revocation::{revocations, revoked};

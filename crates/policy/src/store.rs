@@ -8,6 +8,7 @@
 mod activation;
 mod desired;
 mod queries;
+pub(crate) mod queue;
 mod revocation;
 mod support;
 mod types;
