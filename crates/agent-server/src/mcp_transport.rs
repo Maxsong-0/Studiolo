@@ -8,7 +8,7 @@ mod pool;
 mod streams;
 mod worker;
 
-use crate::{auth, server::AgentSession, state::AppState};
+use crate::{auth, server::AgentSession, shutdown::DRAIN_LIMIT, state::AppState};
 use axum::{
     Router,
     body::Body,
@@ -119,6 +119,25 @@ fn assemble(app: Arc<AppState>, limits: Limits) -> (Router, Arc<Manager>) {
                     state.manager.discard(binding);
                 }
             }
+        }
+    });
+    // 关停：等已进门的请求做完（最多 DRAIN_LIMIT）再关全部会话。会话一关，名下的 SSE 流随之结束，
+    // 客户端开着的 GET 流也一样，axum 的优雅关停才等得到连接收尾（BUG-033）。同样只保留 Weak。
+    let lifecycle = app.lifecycle.clone();
+    let closing = Arc::downgrade(&manager);
+    tokio::spawn(async move {
+        lifecycle.stopped().await;
+        if tokio::time::timeout(DRAIN_LIMIT, lifecycle.drained())
+            .await
+            .is_err()
+        {
+            eprintln!(
+                "关停：已进门的 MCP 请求 {} 秒内没有做完，强制关闭全部会话",
+                DRAIN_LIMIT.as_secs()
+            );
+        }
+        if let Some(manager) = closing.upgrade() {
+            manager.close_all();
         }
     });
     let router = Router::new()

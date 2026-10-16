@@ -185,6 +185,7 @@ async fn an_unreadable_identity_store_pauses_a_stream_without_ending_it_or_the_s
         binding.clone(),
         permit,
         None,
+        None,
         true,
     )
     .into_data_stream();
