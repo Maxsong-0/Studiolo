@@ -12,9 +12,11 @@
 //!
 //! 本 Module 不读磁盘、不查 Sync、不连远端，也不修改任何配置。
 
+mod bridge;
 mod evidence;
 mod model;
 
+pub use bridge::{BatchBody, BridgeBody, MANUAL_QUOTA_MAX_AGE_SECONDS, ManualQuotaBody};
 pub use evidence::{EvidenceSnapshot, HealthEvidence};
 pub use model::{HealthBody, SectionBody};
 
@@ -90,7 +92,7 @@ async fn page(evidence: Option<Extension<HealthEvidenceSource>>) -> Response {
     let snapshot = tokio::task::spawn_blocking(move || source.snapshot())
         .await
         .unwrap_or_else(|_| EvidenceSnapshot::unknown(0));
-    Json(HealthBody::from_report(&snapshot.report())).into_response()
+    Json(HealthBody::from_snapshot(&snapshot)).into_response()
 }
 
 #[cfg(test)]

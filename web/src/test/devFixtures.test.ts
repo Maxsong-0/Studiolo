@@ -396,7 +396,7 @@ describe('假数据：策略、健康、文档与项目运作', () => {
       ).toBe(meta.version);
   });
 
-  it('健康：整体降级，副本正常、同步「每轮 85 秒，时限 120 秒」降级、会话正常', () => {
+  it('健康：整体降级，同步超时有真实结构化明细，人工账号用量单列', () => {
     const { read } = setup();
     const report = parseHealth(read('/api/v1/health'));
     expect(report.overall).toBe('degraded');
@@ -404,8 +404,8 @@ describe('假数据：策略、健康、文档与项目运作', () => {
     const state = (code: string) =>
       report.sections.find((section) => section.code === code);
     expect(state('replica-freshness')?.state).toBe('normal');
-    expect(state('sync-round')).toMatchObject({ state: 'degraded' });
-    expect(state('sync-round')?.detail).toContain('每轮 85 秒，时限 120 秒');
+    expect(state('sync-bridge')).toMatchObject({ state: 'degraded' });
+    expect(state('sync-bridge')?.detail).toContain('超过时限被停止');
     expect(state('session')?.state).toBe('normal');
   });
 

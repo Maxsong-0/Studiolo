@@ -602,13 +602,13 @@ describe('驾驶舱：系统读数', () => {
   it('八格读数来自接口；要看的那一格标出来，拿不到的显示「—」并把原因写进格子', async () => {
     const { data } = renderCockpit();
     await settled(4 + data.workbench.inbox.length);
-    await within(reading('每轮同步')).findByText('85 S', undefined, WAIT);
+    await within(reading('双向同步')).findByText('需处理', undefined, WAIT);
     expect(within(readings()).getAllByRole('listitem')).toHaveLength(8);
     expect(within(reading('黑板在跑')).getByText('7')).toBeInTheDocument();
     expect(within(reading('执行')).getByText('3')).toBeInTheDocument();
     expect(within(reading('会话')).getByText('今日已复核')).toBeInTheDocument();
     // 副本没追平、同步降级：这两格要看（黑底反白，不用红）。
-    for (const label of ['副本新鲜度', '每轮同步']) {
+    for (const label of ['副本新鲜度', '双向同步']) {
       expect(reading(label)).toHaveAttribute('data-alert', 'true');
       expect(reading(label)).toHaveClass('ui-on-ink');
     }
@@ -629,7 +629,7 @@ describe('驾驶舱：系统读数', () => {
       [HEALTH]: () => failed('本机未装配健康证据来源。', 404),
     });
     await settled(4 + data.workbench.inbox.length);
-    for (const label of ['每轮同步', '会话'])
+    for (const label of ['双向同步', '会话'])
       await waitFor(
         () =>
           expect(reading(label)).toHaveAttribute(
@@ -667,7 +667,7 @@ describe('驾驶舱：刷新', () => {
     const { data, rerender, requests } = renderCockpit();
     const total = 4 + data.workbench.inbox.length;
     await settled(total);
-    await within(reading('每轮同步')).findByText('85 S', undefined, WAIT);
+    await within(reading('双向同步')).findByText('需处理', undefined, WAIT);
     expect(requests(OVERVIEW)).toBe(1);
     expect(requests(DESIRED)).toBe(1);
     expect(requests(HEALTH)).toBe(1);
@@ -677,7 +677,7 @@ describe('驾驶舱：刷新', () => {
     // 重读期间不拿上一次的结论冒充当前状态。
     expect(count()).toHaveTextContent('—');
     await settled(total);
-    await within(reading('每轮同步')).findByText('85 S', undefined, WAIT);
+    await within(reading('双向同步')).findByText('需处理', undefined, WAIT);
     expect(requests(OVERVIEW)).toBe(2);
     expect(requests(DESIRED)).toBe(2);
     expect(requests(HEALTH)).toBe(2);
@@ -732,7 +732,7 @@ describe('驾驶舱：黑板汇总与策略草案由 App 各读一次交进来�
     // 交进来的就是读完的：首屏即给数，不经过读取中。
     expect(count()).toHaveTextContent(String(4 + data.workbench.inbox.length));
     expect(rows()).toHaveLength(4 + data.workbench.inbox.length);
-    await within(reading('每轮同步')).findByText('85 S', undefined, WAIT);
+    await within(reading('双向同步')).findByText('需处理', undefined, WAIT);
     expect(requests(HEALTH)).toBe(1);
     expect(requests(OVERVIEW)).toBe(0);
     expect(requests(DESIRED)).toBe(0);
@@ -770,7 +770,7 @@ describe('驾驶舱：黑板汇总与策略草案由 App 各读一次交进来�
     expect(reloadPolicy).toHaveBeenCalledTimes(1);
     expect(reloadBoard).toHaveBeenCalledTimes(1);
     // 等本机健康读完再收尾，免得更新落在测试结束之后。
-    await within(reading('每轮同步')).findByText('85 S', undefined, WAIT);
+    await within(reading('双向同步')).findByText('需处理', undefined, WAIT);
     expect(requests(OVERVIEW)).toBe(0);
     expect(requests(DESIRED)).toBe(0);
   });

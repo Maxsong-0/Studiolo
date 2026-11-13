@@ -146,3 +146,44 @@
     grid-column: 1 / -1;
   }
 }
+
+.health-bridge-details,
+.health-quota-detail {
+  grid-column: 1 / -1;
+  min-width: 0;
+  margin-top: var(--space-2);
+  color: var(--ink-2);
+  font-size: var(--type-small);
+  overflow-wrap: anywhere;
+}
+.health-bridge-details summary {
+  width: fit-content;
+  min-height: var(--control-touch);
+  padding-block: var(--space-1-5);
+  color: var(--ink);
+  cursor: pointer;
+}
+.health-bridge-details dl {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-2) var(--space-4);
+  margin: var(--space-2) 0;
+}
+.health-bridge-details dl > div {
+  min-width: 0;
+}
+.health-bridge-details dt {
+  color: var(--ink-2);
+}
+.health-bridge-details dd {
+  margin: 0;
+  color: var(--ink);
+}
+.health-quota-detail p {
+  margin: 0 0 var(--space-1);
+}
+@media (width < 600px) {
+  .health-bridge-details dl {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

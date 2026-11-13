@@ -28,6 +28,8 @@ pub struct EvidenceSnapshot {
     pub whitelist: Option<WhitelistDiagnosis>,
     /// 双向 Bridge 证据；`None` 表示驱动平面未装配。
     pub bridge: Option<BridgeEvidence>,
+    /// 账号用量的人工抄录；不拿镜像字节数冒充账号用量。
+    pub manual_sync_quota: Option<studiolo_host_config::sync_transport::ManualQuota>,
 }
 
 impl EvidenceSnapshot {
@@ -43,6 +45,7 @@ impl EvidenceSnapshot {
             sync: QuotaVerdict::Unknown,
             whitelist: None,
             bridge: None,
+            manual_sync_quota: None,
         }
     }
 
@@ -60,7 +63,7 @@ impl EvidenceSnapshot {
             bridge: self.bridge.as_ref(),
         };
         // 正文越界只可能是实现缺陷；退化成"证据全部未知"，绝不退化成绿。
-        aggregate(&inputs).unwrap_or_else(|_| {
+        let report = aggregate(&inputs).unwrap_or_else(|_| {
             let fallback = HealthInputs {
                 now: Instant::from_unix_seconds(self.now_unix_seconds),
                 recovery_point: None,
@@ -72,7 +75,25 @@ impl EvidenceSnapshot {
                 bridge: None,
             };
             aggregate(&fallback).unwrap_or_else(|_| HealthReport::new(Vec::new()))
-        })
+        });
+        let mut sections = report.sections().to_vec();
+        if let Some(section) = sections
+            .iter_mut()
+            .find(|section| section.code() == "sync-quota")
+        {
+            *section = studiolo_observability::health::HealthSection::new(
+                "sync-quota",
+                "镜像范围配额",
+                section.state(),
+                section.detail().to_owned(),
+            )
+            .expect("固定健康前后缀必须满足脱敏契约");
+        }
+        sections.push(super::bridge::quota_section(
+            self.manual_sync_quota,
+            self.now_unix_seconds,
+        ));
+        HealthReport::new(sections)
     }
 }
 

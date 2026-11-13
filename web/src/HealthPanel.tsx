@@ -1,6 +1,7 @@
 import type { HealthReport, HealthState } from './healthApi';
 import { StatusMark } from './ui';
 import type { StatusState } from './ui';
+import { BridgeDetails, ManualQuotaDetails } from './health/BridgeDetails';
 import './styles/health.css';
 
 const HEALTH_LABEL: Record<HealthState, string> = {
@@ -60,6 +61,12 @@ export function HealthPanel({ report }: { report: HealthReport }) {
               {HEALTH_LABEL[section.state]}
             </p>
             <p className="health-detail">{section.detail}</p>
+            {section.code === 'sync-bridge' ? (
+              <BridgeDetails value={report.bridge} />
+            ) : null}
+            {section.code === 'manual-sync-quota' ? (
+              <ManualQuotaDetails value={report.manualSyncQuota} />
+            ) : null}
           </li>
         ))}
       </ul>

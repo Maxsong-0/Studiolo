@@ -3,8 +3,7 @@
  *
  * 每格只取接口原值；拿不到就是 null（显示「—」），原因写进 reason（格子的 title 与读屏文字）。
  * 要看的那一格（副本没追平、同步或会话降级）标 alert，界面画成黑底，不用红色：全页的红只留给「等你」。
- * 健康报告里的同步与会话读数目前只有开发假数据给出（后端尚未发这几节）：按 section code 找，
- * 找到才从原文里摘出数字或首句，完整原文进 reason；找不到就写「健康报告未提供」。
+ * 同步取真实sync-bridge三态；会话读数仍可能缺失，缺失时显示未知，不补造。
  * 接口从不提供的读数（agent 程序版本、人侧发行号、副本大小）和固定配置（同步时限）不占格子。
  */
 import { freshnessReason, type Freshness } from '../freshness';
@@ -14,7 +13,7 @@ import type { CountRollup, Workbench } from '../types';
 import { isFinished, type OverviewState } from './model';
 
 /** 健康报告里给系统读数的几节（code 与开发假数据 `web/dev/fixtures/health.ts` 一致）。 */
-export const HEALTH_SYNC = 'sync-round';
+export const HEALTH_SYNC = 'sync-bridge';
 export const HEALTH_SESSION = 'session';
 
 /** 一格读数。 */
@@ -87,23 +86,20 @@ function healthSection(
   return section ? { section } : { reason: '健康报告未提供' };
 }
 
-/** 从健康原文里摘出「<词> N 秒」的 N；原文不是这个说法时返回 null，不猜。 */
-function seconds(detail: string, word: string): string | null {
-  const match = new RegExp(`${word}\\s*(\\d+(?:\\.\\d+)?)\\s*秒`).exec(detail);
-  return match ? `${match[1]} S` : null;
-}
-
-function syncCell(health: HealthStatus, label: string, word: string): Reading {
+/** 直接读真实Bridge三态，不从文案猜同步耗时。 */
+function syncCell(health: HealthStatus): Reading {
+  const label = '双向同步';
   const found = healthSection(health, HEALTH_SYNC);
   if ('reason' in found) return missing(label, found.reason);
   const { section } = found;
-  const original = `${section.title}：${section.detail}`;
-  const value = seconds(section.detail, word);
-  if (value === null)
-    return missing(label, `健康报告没有给出${label}的秒数。${original}`);
-  return section.state === 'degraded'
-    ? { label, value, alert: true, reason: original }
-    : { label, value, reason: original };
+  const reason = `${section.title}：${section.detail}`;
+  if (section.state === 'unknown') return missing(label, reason);
+  return {
+    label,
+    value: section.state === 'degraded' ? '需处理' : '正常',
+    reason,
+    ...(section.state === 'degraded' ? { alert: true } : {}),
+  };
 }
 
 function sessionCell(health: HealthStatus): Reading {
@@ -169,7 +165,7 @@ export function systemReadings({
 }: ReadingInputs): Reading[] {
   return [
     freshnessCell(workbench.freshness),
-    syncCell(health, '每轮同步', '每轮'),
+    syncCell(health),
     sessionCell(health),
     boardCell(
       overview,

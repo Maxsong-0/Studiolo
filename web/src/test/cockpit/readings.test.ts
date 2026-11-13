@@ -37,7 +37,7 @@ describe('系统读数', () => {
     const labels = readings().map((cell) => cell.label);
     expect(labels).toEqual([
       '副本新鲜度',
-      '每轮同步',
+      '双向同步',
       '会话',
       '黑板在跑',
       '执行',
@@ -59,12 +59,11 @@ describe('系统读数', () => {
     expect(all['黑板在跑'].value).toBe('7');
     expect(all['执行'].value).toBe('3');
     // 健康「副本同步」一节降级：这一格要看（黑底，不用红）；完整原文进原因。
-    expect(all['每轮同步']).toEqual({
-      label: '每轮同步',
-      value: '85 S',
+    expect(all['双向同步']).toEqual({
+      label: '双向同步',
+      value: '需处理',
       alert: true,
-      reason:
-        '副本同步：每轮 85 秒，时限 120 秒；余量不足三成，全量重推不可持续',
+      reason: '双向 Bridge：上次 headless 运行超过时限被停止',
     });
     expect(all['会话']).toEqual({
       label: '会话',
@@ -125,7 +124,7 @@ describe('系统读数', () => {
 
   it('本机健康读取中、失败、没有对应一节，各自写明原因', () => {
     const loading = cells({ health: { kind: 'loading' } });
-    expect(loading['每轮同步']).toMatchObject({
+    expect(loading['双向同步']).toMatchObject({
       value: null,
       reason: '本机健康读取中。',
     });
@@ -142,36 +141,37 @@ describe('系统读数', () => {
         report: {
           ...data.health,
           sections: data.health.sections.filter(
-            (section) => !['sync-round', 'session'].includes(section.code),
+            (section) => !['sync-bridge', 'session'].includes(section.code),
           ),
         },
       },
     });
-    for (const label of ['每轮同步', '会话'])
+    for (const label of ['双向同步', '会话'])
       expect(bare[label]).toMatchObject({
         value: null,
         reason: '健康报告未提供',
       });
   });
 
-  it('健康原文不是「每轮 N 秒」的说法时不猜数字，原文进原因', () => {
+  it('同步直接取三态，文案变化不影响读数且原文保留', () => {
     const reworded = cells({
       health: {
         kind: 'ready',
         report: {
           ...data.health,
           sections: data.health.sections.map((section) =>
-            section.code === 'sync-round'
+            section.code === 'sync-bridge'
               ? { ...section, detail: '同步耗时接近上限' }
               : section,
           ),
         },
       },
     });
-    expect(reworded['每轮同步']).toEqual({
-      label: '每轮同步',
-      value: null,
-      reason: '健康报告没有给出每轮同步的秒数。副本同步：同步耗时接近上限',
+    expect(reworded['双向同步']).toEqual({
+      label: '双向同步',
+      value: '需处理',
+      alert: true,
+      reason: '双向 Bridge：同步耗时接近上限',
     });
   });
 
@@ -270,7 +270,7 @@ describe('系统读数：会话一节降级、要看几项', () => {
   it('会话一节降级时这一格要看；同步正常时不标', () => {
     const all = cells({ health: degraded('session') });
     expect(all['会话']).toMatchObject({ value: '今日已复核', alert: true });
-    expect(all['每轮同步'].alert).toBeUndefined();
+    expect(all['双向同步'].alert).toBeUndefined();
   });
 
   it('标题右侧的一句：有要看的先说几项要看，没有再说几项读不到，都没有就是都正常', () => {

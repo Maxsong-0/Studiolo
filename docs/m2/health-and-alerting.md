@@ -35,16 +35,17 @@
 
 ## 2. 健康页：本地只读聚合
 
-六节固定检查项，机器码稳定：
+七节固定检查项，机器码稳定（T-205）：
 
 | 机器码 | 中文标题 | 判定 |
 |---|---|---|
 | `recovery-point` | 恢复点年龄 | 按**内容截止时刻**算年龄，不按上传完成时刻 |
 | `owner-liveness` | 各 owner 活性 | 逐个组件角色比对回执与约定周期 |
 | `disk-quota` | 磁盘配额 | 见 §3 |
-| `sync-quota` | Sync 配额 | 见 §3；正文固定带「非账号用量」 |
+| `sync-quota` | 镜像范围配额 | 见 §3；正文固定带「非账号用量」 |
 | `whitelist-diagnosis` | 白名单诊断 | 见 §4 |
 | `sync-bridge` | 双向 Bridge | T-132 P1 契约 `docs/contracts/health-sync-bridge.md`；平面未装配即未知 |
+| `manual-sync-quota` | 账号配额（人工记录） | 人工用量达到七成预警；超过24小时未知，不是实时读数；见同步健康契约 §6 |
 
 三态与汇总规则：`Degraded`（2）＞ `Unknown`（1）＞ `Normal`（0），
 整体取最重的一节。于是——
