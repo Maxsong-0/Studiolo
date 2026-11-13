@@ -644,6 +644,13 @@
 .cockpit-readings > .cockpit-head {
   padding: var(--space-4) var(--space-3) 0;
 }
+/* 日期与副本代次，后面跟「读于 N 秒前」：放不下时整段换行，不拆开 */
+.cockpit-readings__when {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-0-5) var(--space-3);
+}
 .cockpit-readings__snapshot {
   display: flex;
   flex-wrap: wrap;

@@ -1,5 +1,6 @@
 import {
   useCallback,
+  useContext,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -20,6 +21,10 @@ import type { OverviewRead } from '../cockpit/useOverviewRead';
 import type { PolicyPendingRead } from '../cockpit/usePolicyPendingRead';
 import { overviewLabels } from '../collab/executorGrouping';
 import { clockLabel } from '../collab/todayLanes';
+import {
+  AutoRefreshContext,
+  useAutoRefreshReader,
+} from '../live/useAutoRefresh';
 import type { OpenSource, Workbench } from '../types';
 import { useViewLocation } from '../useViewLocation';
 import { POLICY_QUEUE_ITEM } from '../viewLocation';
@@ -39,6 +44,9 @@ const RULER = Array.from({ length: 12 }, (_, index) =>
  * 黑板汇总（`/api/v1/board/overview`）与策略草案（`/api/v1/policy/desired`）都由 App 各读一次、
  * 经 props 交进来，与顶栏「驾驶舱 N」角标共用，巨号与角标同一口径（T-162）；本机健康由驾驶舱自己读。
  * 三路各自成败，任何一处失败只影响依赖它的格子。
+ *
+ * 开着时每 20 秒安静重读一轮（T-196，live/autoRefresh.ts）：不闪「读取中」，没读成就留着上一次的数，
+ * 「系统读数」标题下那一行写着这些数是多久以前读的。
  */
 export function CockpitView({
   workbench,
@@ -65,7 +73,9 @@ export function CockpitView({
   /** 「上次查看」的记号；缺省用全站那一个，测试里换成自己的。 */
   seen?: SeenTracker;
 }) {
-  const { health, reloadHealth } = useCockpitReads();
+  const { health, reloadHealth, revalidateHealth } = useCockpitReads();
+  // 驾驶舱开着时，本机健康跟着自动刷新一起安静重读，排在 App 那三路后面（T-196）。
+  useAutoRefreshReader(useContext(AutoRefreshContext), revalidateHealth, 3);
   const board = overview.state;
   const drafts = policy.state;
   const { goTo } = useViewLocation();

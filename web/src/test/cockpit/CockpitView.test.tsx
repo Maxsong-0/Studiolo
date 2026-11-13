@@ -10,6 +10,7 @@ import {
 import type { OverviewRead } from '../../cockpit/useOverviewRead';
 import type { PolicyPendingRead } from '../../cockpit/usePolicyPendingRead';
 import { waitFraction } from '../../cockpit/wait';
+import { REVALIDATED } from '../../live/autoRefresh';
 import { executorOf, overviewLabels } from '../../collab/executorGrouping';
 import { CockpitView } from '../../views/CockpitView';
 import { CockpitHarness } from './CockpitHarness';
@@ -684,6 +685,9 @@ function countSent(calls: readonly unknown[][], prefix: string) {
 }
 
 describe('驾驶舱：黑板汇总与策略草案由 App 各读一次交进来（T-162、T-195）', () => {
+  /** 交进来的读取都带一个安静重读（自动刷新用，T-196）；这里没有调度器，不会被调到。 */
+  const revalidate = () => Promise.resolve(REVALIDATED);
+
   /** 直接渲染驾驶舱、交两份现成的读取；返回按路径前缀数请求的函数。 */
   function renderWithReads(
     data: FixtureData,
@@ -716,8 +720,9 @@ describe('驾驶舱：黑板汇总与策略草案由 App 各读一次交进来�
       {
         state: { kind: 'ready', overview: data.overview },
         reload: reloadBoard,
+        revalidate,
       },
-      { state: policyReady(data.desired), reload: reloadPolicy },
+      { state: policyReady(data.desired), reload: reloadPolicy, revalidate },
     );
     // 交进来的就是读完的：首屏即给数，不经过读取中。
     expect(count()).toHaveTextContent(String(4 + data.workbench.inbox.length));
@@ -739,10 +744,12 @@ describe('驾驶舱：黑板汇总与策略草案由 App 各读一次交进来�
       {
         state: { kind: 'error', message: '黑板许可已满。' },
         reload: reloadBoard,
+        revalidate,
       },
       {
         state: { kind: 'error', message: '策略服务暂时不可用。' },
         reload: reloadPolicy,
+        revalidate,
       },
     );
     expect(count()).toHaveTextContent('—');

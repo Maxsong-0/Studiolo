@@ -20,6 +20,12 @@ import type { FileOperationsEntry } from './components/FileOperationsAccess';
 import { CommandEntry } from './shell/CommandEntry';
 import { StatusCapsule } from './shell/StatusCapsule';
 import { useHealthStatus } from './shell/useHealthStatus';
+import { collabPanel } from './collab/panels';
+import {
+  AutoRefreshContext,
+  useAutoRefresh,
+  useAutoRefreshReader,
+} from './live/useAutoRefresh';
 import { pendingCount } from './cockpit/pending';
 import { useOverviewRead } from './cockpit/useOverviewRead';
 import { usePolicyPendingRead } from './cockpit/usePolicyPendingRead';
@@ -44,14 +50,19 @@ export function App({ account }: { account?: ReactNode }) {
   const { count: draftCount } = useDraftCount();
   // 工作台先于本机健康发请求：认证名额只有两个（ADR-022），主内容排在前面。
   // 本机健康不依赖工作台快照：快照读不出来时，状态胶囊照样要能报出健康。
-  const { data, loading, error, refresh, refreshLatest } = useWorkbench();
+  const { data, loading, error, refresh, refreshLatest, revalidate } =
+    useWorkbench();
   const health = useHealthStatus();
   // 跨项目黑板汇总与策略草案列表全站各只读一份：快照到手时随同一次提交发出，每轮刷新结束重读（T-162、T-195）。
   // 顶栏「驾驶舱 N」角标与驾驶舱巨号都用 pendingCount 从这两份和同一份快照算，任何时刻都相等；
   // 驾驶舱经 props 拿同样两份，不再另读，离开驾驶舱时角标照样含黑板里等你的任务和策略里等你的提案。
+  // 协作页的拓扑也用这一份汇总（T-196）：正在看拓扑时不等快照就读，快照读不出来也能看黑板；
+  // 首次读取快照的那一轮不算「刷新」，免得拓扑先读到一次、快照到手时又被清掉重读。
+  const onTopology =
+    view === 'collab' && collabPanel(location.panel) === 'topology';
   const overview = useOverviewRead({
-    ready: data !== null,
-    refreshing: loading,
+    ready: data !== null || onTopology,
+    refreshing: loading && data !== null,
   });
   const policyPending = usePolicyPendingRead({
     ready: data !== null,
@@ -63,6 +74,22 @@ export function App({ account }: { account?: ReactNode }) {
   const palette = useCommandPalette(
     Boolean(data) && !source && !editorPath && !draftsOpen && !loading,
   );
+  // 自动刷新（T-196）：只在驾驶舱和协作拓扑上，而且没有开着会被打断的东西时才读。
+  // 阅读器和 ⌘K 面板按快照代次取键，底下换了快照会把它们整个重挂；编辑器和草稿架开着时人在干别的。
+  // 三路按主次登记：快照、黑板汇总、策略草案；驾驶舱自己的健康读取排在它们后面（CockpitView 登记）。
+  const auto = useAutoRefresh({
+    active:
+      (view === 'cockpit' || onTopology) &&
+      !source &&
+      !editorPath &&
+      !draftsOpen &&
+      !palette.open,
+    reading: loading,
+    failed: Boolean(error),
+  });
+  useAutoRefreshReader(auto, revalidate, 0);
+  useAutoRefreshReader(auto, overview.revalidate, 1);
+  useAutoRefreshReader(auto, policyPending.revalidate, 2);
   const projects = useMemo(() => sortProjects(data?.projects ?? []), [data]);
   const normalizedQuery = query.trim().toLocaleLowerCase();
   const filtered = projects.filter(
@@ -152,7 +179,7 @@ export function App({ account }: { account?: ReactNode }) {
     />
   );
 
-  return (
+  const shell = (
     <AppShell
       view={view}
       onNavigate={navigate}
@@ -248,7 +275,9 @@ export function App({ account }: { account?: ReactNode }) {
         />
       ) : null}
       {/* 协作、规则与策略不依赖工作台快照：快照读不出来时也要能看黑板、改规则、发布或吊销。 */}
-      {view === 'collab' ? <CollabView projects={projects} /> : null}
+      {view === 'collab' ? (
+        <CollabView projects={projects} overview={overview} />
+      ) : null}
       {view === 'rules' ? <RulesView /> : null}
       {view === 'policy' ? <PolicyView /> : null}
       {source && data ? (
@@ -295,5 +324,12 @@ export function App({ account }: { account?: ReactNode }) {
         />
       ) : null}
     </AppShell>
+  );
+  // 调度器交给下面：驾驶舱登记自己的健康读取，「读于 N 秒前」订它的状态（T-196）。
+  // 外壳先放进变量再包一层，免得整段 JSX 为了多一层标签全部重排缩进。
+  return (
+    <AutoRefreshContext.Provider value={auto}>
+      {shell}
+    </AutoRefreshContext.Provider>
   );
 }
