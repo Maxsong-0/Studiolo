@@ -65,12 +65,15 @@ def freshness(text, name, expected):
 
 
 class Client:
-    def __init__(self, url, token):
+    def __init__(self, url, token, *, timeout=30, max_response_bytes=MAX_RESPONSE_BYTES):
         parsed = urllib.parse.urlsplit(url)
         require(parsed.scheme in {"http", "https"} and parsed.hostname and not parsed.username
                 and not parsed.password and not parsed.fragment and not parsed.query,
                 "MCP URL 必须为不含凭据、查询或片段的 HTTP(S) 地址")
         self.url, self.session, self.request_id = url, None, 0
+        require(type(timeout) is int and 1 <= timeout <= 30 and type(max_response_bytes) is int
+                and 1024 <= max_response_bytes <= MAX_RESPONSE_BYTES, "MCP 读取预算无效")
+        self.timeout, self.max_response_bytes = timeout, max_response_bytes
         self.headers = {"Content-Type": "application/json", "Accept": "application/json, text/event-stream",
                         "MCP-Protocol-Version": CHECK.PROTOCOL, "Authorization": "Bearer " + token,
                         "User-Agent": "studiolo-replica-check/1"}
@@ -86,12 +89,12 @@ class Client:
             headers["Mcp-Session-Id"] = self.session
         request = urllib.request.Request(self.url, data=json.dumps(body).encode(), headers=headers, method="POST")
         try:
-            with self.opener.open(request, timeout=30) as response:
+            with self.opener.open(request, timeout=self.timeout) as response:
                 require(response.status == (202 if notification else 200), f"{method} HTTP 状态不符合预期")
                 if notification:
                     return None
-                raw = response.read(MAX_RESPONSE_BYTES + 1)
-                require(len(raw) <= MAX_RESPONSE_BYTES, f"{method} 响应超过验收读取上限")
+                raw = response.read(self.max_response_bytes + 1)
+                require(len(raw) <= self.max_response_bytes, f"{method} 响应超过验收读取上限")
                 value = CHECK.payload(raw.decode("utf-8"), response.headers.get("Content-Type", ""), self.request_id)
                 if method == "initialize":
                     self.session = response.headers.get("Mcp-Session-Id")

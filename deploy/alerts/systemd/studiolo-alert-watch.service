@@ -1,0 +1,31 @@
+[Unit]
+Description=Studiolo 108 看门狗与独立外部心跳
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=maxsong
+Group=maxsong
+EnvironmentFile=/home/maxsong/.config/studiolo-alert/n108.env
+ExecStartPre=/usr/bin/python3 -I -B -S /opt/studiolo-alert/current/deploy/alerts/preflight.py n108
+ExecStart=/usr/bin/python3 -I -B -S /opt/studiolo-alert/current/deploy/alerts/run.py watch --node n108 --deliver
+TimeoutStartSec=100
+UMask=0077
+LimitCORE=0
+LimitMEMLOCK=infinity
+MemoryMax=256M
+TasksMax=32
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/maxsong/.local/share/studiolo-alert
+PrivateTmp=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+SystemCallArchitectures=native
+StandardInput=null
+StandardOutput=journal
+StandardError=journal
+UnsetEnvironment=PYTHONPATH PYTHONHOME LD_PRELOAD LD_LIBRARY_PATH

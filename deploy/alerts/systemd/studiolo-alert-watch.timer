@@ -1,0 +1,11 @@
+[Unit]
+Description=Studiolo 108 每分钟检查 169
+
+[Timer]
+OnBootSec=30
+OnCalendar=*-*-* *:*:00
+AccuracySec=1
+Unit=studiolo-alert-watch.service
+
+[Install]
+WantedBy=timers.target

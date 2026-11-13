@@ -5,13 +5,17 @@
 
 mod deadman;
 mod dispatch;
+mod push;
 mod transport;
 
 pub use deadman::{
     DEADMAN_ALERT_CODE, DeadmanDecision, DeadmanEvaluationError, DeadmanPolicy, DeadmanPolicyError,
     DeadmanReason, DeadmanState, evaluate,
 };
-pub use dispatch::{ALERT_AUDIT_ACTION, AlertDispatcher, DispatchOutcome, DispatcherConfigError};
+pub use dispatch::{
+    ALERT_AUDIT_ACTION, AlertDispatcher, DispatchOutcome, DispatcherConfigError, dispatch_event_id,
+};
+pub use push::PushTransport;
 pub use transport::{
     AlertMessage, AlertSeverity, AlertSummaryError, AlertTransport, DeliveryReceipt,
     EnvironmentSmtpTransport, IdempotencyKey, SMTP_TO_VARIABLE, SMTP_URL_VARIABLE, TransportError,

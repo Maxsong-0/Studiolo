@@ -11,6 +11,14 @@ use super::{AlertMessage, AlertTransport, IdempotencyKey, TransportError};
 use std::collections::{BTreeSet, VecDeque};
 use studiolo_audit_ledger::{AuditEvent, AuditEventId, AuditLedger, AuditPhase, SanitizedPayload};
 
+/// 某轮投递的审计标识，供重启后的调用方核对这一轮是否已经完成。
+pub fn dispatch_event_id(
+    message: &AlertMessage,
+    round: u64,
+) -> Result<AuditEventId, studiolo_audit_ledger::AuditError> {
+    AuditEventId::parse(format!("alert-{}-{round}", message.key().as_str()))
+}
+
 /// 带外告警的固定审计动作名。
 pub const ALERT_AUDIT_ACTION: &str = "observability.alert.dispatch";
 
@@ -176,7 +184,7 @@ fn record(
     classification: &str,
     attempts: u32,
 ) -> Result<(), studiolo_audit_ledger::AuditError> {
-    let event_id = AuditEventId::parse(format!("alert-{}-{round}", message.key().as_str()))?;
+    let event_id = dispatch_event_id(message, round)?;
     let payload = SanitizedPayload::try_from(serde_json::json!({
         "alert_code": message.code(),
         "severity": message.severity().code(),

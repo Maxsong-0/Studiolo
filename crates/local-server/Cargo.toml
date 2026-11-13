@@ -9,6 +9,10 @@ repository.workspace = true
 rust-version.workspace = true
 publish = false
 
+[[bin]]
+name = "studiolo-alert"
+path = "src/alert_main.rs"
+
 [lints]
 workspace = true
 

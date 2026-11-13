@@ -1,0 +1,11 @@
+[Unit]
+Description=Studiolo 169 每分钟外部心跳
+
+[Timer]
+OnBootSec=15
+OnCalendar=*-*-* *:*:00
+AccuracySec=1
+Unit=studiolo-alert-heartbeat.service
+
+[Install]
+WantedBy=timers.target
