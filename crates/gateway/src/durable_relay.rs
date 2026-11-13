@@ -1,6 +1,6 @@
 //! 持久化的真实调用协议，与 MemoryGateway 的响应缓存相互独立。
 use crate::{
-    AttemptGuard, CallId, Clock, PermissionLayers, relay_request,
+    AttemptGuard, AttemptGuardError, CallId, Clock, PermissionLayers, relay_request,
     relay_store::{Admission, Store, hash},
     relay_transport::RelayTransport,
     relay_types::*,
@@ -135,7 +135,7 @@ impl DurableRelay {
         let live = self
             .guard
             .inspect(grant.capability.task_id(), grant.capability.attempt_id())
-            .map_err(|_| RelayError::Denied)?;
+            .map_err(guard_refusal)?;
         if live.is_cancelled()
             || live.fence() != grant.capability.fence()
             || now >= grant.capability.expires_at_unix_seconds()
@@ -315,5 +315,13 @@ impl DurableRelay {
             content_type: "text/event-stream",
             body: bytes,
         })
+    }
+}
+/// 实时 attempt 权威读不出来答「持久状态不可用」（503），执行体稍后重试；只有 attempt
+/// 确定不活跃才答 403，否则一次读错会被当成授权被拒（BUG-037，分法同 `MemoryGateway`）。
+fn guard_refusal(error: AttemptGuardError) -> RelayError {
+    match error {
+        AttemptGuardError::UnknownAttempt => RelayError::Denied,
+        AttemptGuardError::Unavailable => RelayError::Storage,
     }
 }

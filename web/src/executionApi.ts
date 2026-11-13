@@ -89,6 +89,18 @@ export function executionFailure(
   )
     return '本次未完成：请先在「账户」完成二次认证（One-time Code），然后重新提交。不会自动重试。';
   if (error instanceof ApiError && error.status === 404)
-    return '本入口未接入执行服务，当前状态不可确认。';
+    return taskNotFound(error)
+      ? '这条工作项不存在：可能已被清理，或链接里的编号有误。'
+      : '本入口未接入执行服务，当前状态不可确认。';
   return message;
+}
+/** 服务端确定没有这条工作项（`board_task_not_found`）：与入口没装配黑板的 404 分开说。 */
+function taskNotFound(error: ApiError) {
+  const details = error.details;
+  return (
+    typeof details === 'object' &&
+    details !== null &&
+    'code' in details &&
+    details.code === 'board_task_not_found'
+  );
 }

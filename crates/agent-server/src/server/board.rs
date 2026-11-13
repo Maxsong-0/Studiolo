@@ -1,5 +1,6 @@
 //! 黑板权限在转发前与 canonical 提交端各复核一次。
 use super::*;
+use crate::board_client::BoardCallError;
 use rmcp::ErrorData as McpError;
 use studiolo_supply::audit::{self, Actor};
 
@@ -69,10 +70,7 @@ impl AgentSession {
             "agent_type":grant.instance.agent_type, "instance_id":grant.instance.id,
             "project":args.project, "operation":args.operation, "request":args.request,
         });
-        let response = client
-            .call(&request)
-            .await
-            .map_err(|message| McpError::invalid_request(message, None))?;
+        let response = client.call(&request).await.map_err(board_call_error)?;
         // 响应前再次复核，避免在排队与执行期间撤权后仍泄露黑板内容。
         let current = self.authorize("board")?;
         self.allowed_project(&current, "board", &args.project)?;
@@ -88,6 +86,14 @@ impl AgentSession {
         }
         serde_json::to_string(&response)
             .map_err(|_| McpError::internal_error("黑板响应编码失败", None))
+    }
+}
+
+/// 权威服务确定拒绝才是「请求无效」；这一刻读不出来是内部错误，AI 应稍后重试（BUG-037）。
+fn board_call_error(error: BoardCallError) -> McpError {
+    match error {
+        BoardCallError::Rejected(message) => McpError::invalid_request(message, None),
+        BoardCallError::Unavailable(message) => McpError::internal_error(message, None),
     }
 }
 

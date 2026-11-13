@@ -83,6 +83,7 @@ impl RelayPolicyGuard for Authority {
             .attempt(grant.capability.task_id(), grant.capability.attempt_id())
             .map_err(|_| RelayError::Storage)?
             .ok_or(RelayError::Denied)?;
+        // 认领确定不在才是 403；控制库读不出答 503（Storage），执行体稍后重试（BUG-037）。
         if a.snapshot_id != grant.snapshot_id
             || a.worker_id != binding.instance_id
             || a.lease_until_ms <= now.saturating_mul(1000)
@@ -94,7 +95,7 @@ impl RelayPolicyGuard for Authority {
                     &binding.instance_id,
                     now.saturating_mul(1000),
                 )
-                .map_err(|_| RelayError::Denied)?
+                .map_err(|_| RelayError::Storage)?
         {
             return Err(RelayError::Denied);
         }
