@@ -14,6 +14,50 @@ pub(super) fn remainder(crate_name: &str, path: &Path, source: &str) -> String {
     if path.ends_with("crates/sync-transport/src/linux/client.rs") {
         return client_remainder(source);
     }
+    if path.ends_with("crates/sync-transport/src/store/publish/io.rs") {
+        return super::authority_tokens::checked_closed(
+            source,
+            &[
+                "paths::max_bytes(name)",
+                "metadata.mode()&0o7777!=0o600",
+                "metadata.mode()&0o7777!=0o700",
+                "openat(&fd,name,flags,Mode::empty())",
+                "openat(root,name,OFlags::RDONLY|OFlags::NOFOLLOW|OFlags::NONBLOCK|OFlags::CLOEXEC,Mode::empty())",
+            ],
+            &[
+                ("userustix::fs::{Mode,OFlags,open,openat};", 1),
+                ("userustix::fs::{Mode,OFlags,openat};", 1),
+                ("usestd::os::unix::fs::MetadataExt;", 3),
+                ("File::from(", 3),
+                ("open(\"/\",flags,Mode::empty())", 1),
+                ("openat(", 2),
+            ],
+        );
+    }
+    if path.ends_with("crates/sync-transport/src/store/publish/checkpoint.rs") {
+        return super::authority_tokens::checked_closed(
+            source,
+            &[
+                "create(&target,paths::STATE,expected,source.owner.0)",
+                "create(&target,paths::TRANSPORT_LOCK,&[],source.owner.0)",
+                "if!matches!(name,paths::STATE|paths::TRANSPORT_LOCK)",
+                "OFlags::WRONLY|OFlags::CREATE|OFlags::EXCL|OFlags::NOFOLLOW|OFlags::NONBLOCK|OFlags::CLOEXEC",
+            ],
+            &[
+                (
+                    "usestd::{io::Write,os::unix::fs::MetadataExtas_,time::Instant};",
+                    1,
+                ),
+                ("userustix::fs::{Dir,Mode,OFlags,openat};", 1),
+                ("rustix::fs::fstatvfs(&target)", 1),
+                ("File::from(", 1),
+                ("openat(", 1),
+                ("file.write_all(bytes)", 1),
+                ("file.sync_all()", 1),
+                ("target.sync_all()", 1),
+            ],
+        );
+    }
     if !path.ends_with("crates/sync-transport/src/store/publish.rs") {
         return socket_free(source.to_owned());
     }
@@ -78,6 +122,36 @@ mod tests {
 
     const CRATE: &str = "studiolo-sync-transport";
     const CLIENT: &str = "crates/sync-transport/src/linux/client.rs";
+
+    #[test]
+    fn checkpoint_io_only_exports_fixed_private_files() {
+        for name in ["io", "checkpoint"] {
+            let owned = format!("crates/sync-transport/src/store/publish/{name}.rs");
+            let path = Path::new(&owned);
+            let source = fs::read_to_string(workspace_root().join(path)).unwrap();
+            assert!(source_violations(CRATE, path, &source).is_empty(), "{name}");
+            for extra in [
+                "std::fs::write(other, body)?;",
+                "file.write_all(other)?;",
+                "let file=File::from(openat(other,name,flags,mode)?);",
+            ] {
+                assert!(
+                    violates(path, &format!("{source}\n{extra}")),
+                    "{name}: {extra}"
+                );
+            }
+            assert!(violates(
+                Path::new("crates/sync-transport/src/other.rs"),
+                &source
+            ));
+            let anchor = if name == "checkpoint" {
+                "paths::TRANSPORT_LOCK"
+            } else {
+                "paths::max_bytes(name)"
+            };
+            assert!(violates(path, &source.replace(anchor, "unknown")));
+        }
+    }
 
     fn violates(path: &Path, source: &str) -> bool {
         source_violations(CRATE, path, source).contains(&AuthorityViolation::GenericWrite)

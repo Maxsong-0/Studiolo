@@ -33,6 +33,16 @@ pub trait StatePublisher: Send {
 
     /// 真实运行 UID/GID。
     fn owner_identity(&self) -> (u32, u32);
+
+    /// 固定源状态的独立副本；仅真实持久发布器实现，测试发布器默认不可导出。
+    fn export_checkpoint(
+        &self,
+        _target: &std::path::Path,
+        _expected: &[u8],
+        _deadline: std::time::Instant,
+    ) -> Result<()> {
+        Err(crate::owned_run::TransportError::Unavailable)
+    }
 }
 
 pub use publish::FilePublisher;
