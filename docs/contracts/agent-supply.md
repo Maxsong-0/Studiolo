@@ -204,7 +204,7 @@
 |---|---|---|
 | `read_note` | 先判前缀：前缀外仍是 `outside_allowlist`；前缀内的名单外规则文件拒绝，对外同一句「路径不在供给白名单内」（HTTP 400） | `agent.action_denied{reason=rule_not_whitelisted}` |
 | `list_entries` | 不进清单，计数与行数一致 | 不单独记拒绝 |
-| `search` | 先滤掉再截前 100 条：不命中，也不占命中名额 | 不单独记拒绝；被滤掉的路径不产生 `content.read` |
+| `search` | 项目范围和名单都在计数之前生效：名单外的规则文件不命中，也不占命中名额；100 条上限和「已截断」只数所请求项目内、名单内的命中，别的项目命中再多也不挤占（T-192，BUG-036） | 不单独记拒绝；被滤掉的路径不产生 `content.read` |
 | `policy_read kind=rules` | 清单里不出现（计数一致）；单条对外与不存在同一句「规则母本不存在」（HTTP 404） | 单条记 `rule_not_whitelisted`；名单内而不存在记 `not_found` |
 | 握手路牌 | 第 5 项准则与硬绑定句、第 6 项入口都不取名单外的策略规则与 vault 规则文件（库文件兜底同一名单） | — |
 

@@ -8,7 +8,7 @@ use grep_searcher::{BinaryDetection, SearcherBuilder, sinks::UTF8};
 use studiolo_core::VaultPath;
 
 use crate::search_dto::{
-    SearchError, SearchHit, SearchHitKind, SearchMode, SearchQuery, SearchResults,
+    SearchError, SearchHit, SearchHitKind, SearchMode, SearchQuery, SearchResults, SearchScope,
 };
 use crate::{DocumentView, ProjectSummary};
 
@@ -20,7 +20,33 @@ pub(crate) fn search(
     projects: &[ProjectSummary],
     query: &SearchQuery,
 ) -> Result<SearchResults, SearchError> {
-    let project_prefix = validate(projects, query)?;
+    validate_text(query)?;
+    let prefix = project_prefix(projects, query)?;
+    run(documents, prefix.as_deref(), &|_| true, query)
+}
+
+/// 在调用方已核过权限的范围内搜索：前缀与逐路径许可都在计数之前生效，
+/// 所以 100 条上限只数范围内、许可内的命中。
+pub(crate) fn search_within(
+    documents: &BTreeMap<VaultPath, DocumentView>,
+    scope: &SearchScope<'_>,
+    query: &SearchQuery,
+) -> Result<SearchResults, SearchError> {
+    validate_text(query)?;
+    // 范围已由调用方给出；再带项目筛选就有两个来源，含义不清，直接拒绝。
+    if query.project.is_some() || scope.prefix.is_empty() || !scope.prefix.ends_with('/') {
+        return Err(SearchError::InvalidProject);
+    }
+    run(documents, Some(scope.prefix), scope.permitted, query)
+}
+
+/// 建匹配器、遍历范围内且许可的文档、在第 101 条处截断。
+fn run(
+    documents: &BTreeMap<VaultPath, DocumentView>,
+    prefix: Option<&str>,
+    permitted: &dyn Fn(&str) -> bool,
+    query: &SearchQuery,
+) -> Result<SearchResults, SearchError> {
     let text = query.text.trim();
     if query.mode == SearchMode::FullText && text.is_empty() {
         return Ok(SearchResults::default());
@@ -38,7 +64,9 @@ pub(crate) fn search(
         .map(literal)
         .collect::<Result<Vec<_>, _>>()?;
     let mut hits = Vec::new();
-    for (path, document) in scoped_documents(documents, project_prefix.as_deref()) {
+    for (path, document) in
+        scoped_documents(documents, prefix).filter(|(path, _)| permitted(path.as_str()))
+    {
         if let Some(position) = path_match(&matchers, path.as_str())? {
             hits.push(hit(
                 document,
@@ -73,16 +101,22 @@ fn scoped_documents<'a>(
         .take_while(move |(path, _)| prefix.is_none_or(|prefix| path.as_str().starts_with(prefix)))
 }
 
-fn validate(
-    projects: &[ProjectSummary],
-    query: &SearchQuery,
-) -> Result<Option<String>, SearchError> {
+/// 查询文本的长度与字符约束，两种入口共用。
+fn validate_text(query: &SearchQuery) -> Result<(), SearchError> {
     if query.text.len() > 1024
         || query.text.chars().count() > 256
         || query.text.chars().any(char::is_control)
     {
         return Err(SearchError::InvalidQuery);
     }
+    Ok(())
+}
+
+/// 把项目筛选解析成以 `/` 结尾的前缀；只认本代次已知的精确项目身份。
+fn project_prefix(
+    projects: &[ProjectSummary],
+    query: &SearchQuery,
+) -> Result<Option<String>, SearchError> {
     match &query.project {
         Some(project) if projects.iter().any(|known| known.id == *project) => {
             Ok(Some(format!("{project}/")))
