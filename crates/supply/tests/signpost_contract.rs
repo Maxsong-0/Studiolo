@@ -95,9 +95,14 @@ fn signpost_has_six_sections_and_is_derived_from_index_tasks_and_rules() {
         assert!(text.contains(heading), "missing {heading}:\n{text}");
     }
     assert!(text.contains("类型 claude · 实例 01JT3STUDIOLO0000000000001"));
-    assert!(
-        text.contains("- 项目/Alpha：🟡 进行中 · 未关闭 BUG 无 · 重点：T-033 冷启动：说明文字。")
-    );
+    // 第 2 项项目行在「未关闭 BUG」之后带该项目的进行中／待认领条数（T-193）。
+    assert!(text.contains(
+        "- 项目/Alpha：🟡 进行中 · 未关闭 BUG 无 · 进行中 1／待认领 1 · 重点：T-033 冷启动：说明文字。"
+    ));
+    assert!(text.contains("- 项目/Bare：🟡 进行中 · 未关闭 BUG 无 · 重点：无协调板：说明文字。"));
+    assert!(text.contains(
+        "（共 1 条进行中、1 条待认领，这里列出 1＋1 条；各项目条数见第 2 节，完整见各项目 04-协调/TASKS.md）"
+    ));
     assert!(!text.contains("第二条不该出现"));
     assert!(text.contains("进行中：项目/Alpha · T-033 M3 首片（进行中：按计划）"));
     assert!(text.contains("待认领：项目/Alpha · T-031 复审登记，2026-09-06"));

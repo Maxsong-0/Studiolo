@@ -124,7 +124,7 @@ rules 类的 subject 规则（`.md` 结尾、≤128 字符、不含 `/`、不以
   路牌六项一项不给；每次调用再次复核并记 `agent.action_denied{reason}`。HTTP 文本外壳映射为 403。
 - 路牌改自 effective：第 3 项「读：<视图>（能力集 v<n> ∩ 部署上限）；写：…；策略：…；策略版本 <哈希 12 位>」；
   第 5 项准则取策略平面规则母本（无则退回 vault 文件；两者都只取规则名单内的），硬绑定标「（策略强制）」；
-  第 6 项加 `policy://rules/<subject>@v<n>`（只列名单内的）与 skills 计数。仍受 ≤2000 token 硬预算。
+  第 6 项加 `policy://rules/<subject>@v<n>`（只列名单内的）与 skills 计数。仍受 ≤8000 token 硬预算。
 - `policy_read{kind=rules|skills[,subject]}`／`GET /read/policy`：读 effective 规则母本或 skill；每次先追加 `content.read`
   （路径 `policy://…`，revision `v<n>`，tool `policy_read`）并进四维读取索引。
   首行 `# 策略版本 <12 位>` 与清单／正文取自同一个 SQLite 读事务（`PolicyAgentStore::rules()`／`skills()` 返回

@@ -74,6 +74,63 @@ fn success_and_failure_keep_real_source_time_and_old_snapshot_immutable() {
     assert_eq!(failed.snapshot, new.snapshot);
 }
 
+/// 机器行原有的全部键；探针按整行匹配，所以提示只能另起一行，不能改动这一行的任何字符。
+const MACHINE_KEYS: [&str; 7] = [
+    "；stale=",
+    "；generation=",
+    "；source_digest=",
+    "；source_observed_at_ms=",
+    "；received_at_ms=",
+    "；age_secs=",
+    "；max_age_secs=",
+];
+
+fn assert_machine_line(line: &str) {
+    assert!(!line.contains('\n'), "{line}");
+    assert!(line.starts_with("副本状态 "), "{line}");
+    for key in MACHINE_KEYS {
+        assert!(line.contains(key), "缺少 {key}：{line}");
+    }
+}
+
+#[test]
+fn stale_and_failed_replicas_add_one_human_notice_below_the_unchanged_machine_line() {
+    let f = ReplicaFixture::new();
+    let replica = root(&f).verify(f.observed + 1000, None).unwrap();
+    let ready = replica.freshness.describe(f.observed + 1000).unwrap();
+    assert_eq!(ready.split('\n').count(), 1, "新鲜时只有机器行：{ready}");
+    assert_machine_line(&ready);
+
+    let stopped = jiff::Timestamp::from_millisecond(f.observed)
+        .unwrap()
+        .strftime("%Y-%m-%d %H:%M")
+        .to_string();
+    let three_days_later = f.observed + 3 * 86_400_000 + 1000;
+    let stale = replica.freshness.describe(three_days_later).unwrap();
+    let lines = stale.split('\n').collect::<Vec<_>>();
+    assert_eq!(lines.len(), 2, "{stale}");
+    assert_machine_line(lines[0]);
+    assert!(lines[0].starts_with("副本状态 stale；stale=true；"));
+    assert!(lines[1].starts_with("⚠ 资料停在 ") && lines[1].contains("（3 天前）"));
+    assert_eq!(
+        lines[1],
+        format!(
+            "⚠ 资料停在 {stopped} UTC（3 天前），之后的改动这里看不到；涉及进度的结论先向用户核实。"
+        )
+    );
+
+    let mut failed = replica.freshness.clone();
+    failed.last_error = Some("transfer_failed".into());
+    let status = failed.describe(three_days_later).unwrap();
+    let lines = status.split('\n').collect::<Vec<_>>();
+    assert_eq!(lines.len(), 2, "{status}");
+    assert_machine_line(lines[0]);
+    assert!(lines[0].starts_with("副本状态 sync_failed；stale=true；"));
+    assert!(lines[0].ends_with("；last_error=transfer_failed（读取最后验证副本）"));
+    assert!(lines[1].starts_with("⚠ 最近一次同步失败"), "{status}");
+    assert!(lines[1].contains(&format!("停在 {stopped} UTC（3 天前）")));
+}
+
 #[test]
 fn files_attachments_missing_directories_and_extra_items_are_all_drift() {
     for action in 0..5 {

@@ -13,7 +13,7 @@
 
 | GET入口 | 参数 | 成功结果 |
 |---|---|---|
-| `/read/handshake` | 无 | 六项路牌；HTTP续读入口和头部说明计入≤2000 token硬预算 |
+| `/read/handshake` | 无 | 六项路牌；HTTP续读入口和头部说明计入≤8000 token硬预算 |
 | `/read/entries` | `project`，精确白名单根 | 代次、条目种类、逻辑路径与字节数 |
 | `/read/note` | `path`，笔记逻辑路径 | `revision`、托管模式新鲜度与正文，笔记上限4 MiB |
 | `/read/search` | `project`、非空`text`；可选`mode=full_text或path` | 最多100个匹配的路径、行号与片段 |
