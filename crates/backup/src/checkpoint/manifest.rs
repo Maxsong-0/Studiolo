@@ -21,7 +21,7 @@ use studiolo_core::checkpoint::{
 };
 
 /// 清单 schema 版本；未知版本失败关闭。
-pub const MANIFEST_SCHEMA_VERSION: u32 = 1;
+pub const MANIFEST_SCHEMA_VERSION: u32 = 2;
 
 /// 一次 checkpoint 的完整清单。
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

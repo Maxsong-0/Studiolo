@@ -98,6 +98,17 @@ fn a_persisted_manifest_with_an_unknown_schema_version_fails_closed() {
 }
 
 #[test]
+fn seven_owner_manifests_use_version_two_and_version_one_is_rejected() {
+    let mut manifest = build();
+    assert_eq!(manifest.schema_version, 2);
+    manifest.schema_version = 1;
+    assert_eq!(
+        manifest.validate(),
+        Err(ManifestError::UnsupportedSchema { found: 1 })
+    );
+}
+
+#[test]
 fn the_manifest_round_trips_through_json_without_losing_a_watermark() {
     let manifest = build();
     let encoded = serde_json::to_vec(&manifest).expect("encode");

@@ -19,6 +19,8 @@ mod dependencies;
 mod factor_http;
 #[path = "architecture_cases/maintenance.rs"]
 mod maintenance;
+#[path = "architecture_cases/policy_storage.rs"]
+mod policy_storage;
 #[path = "architecture_cases/supply_storage.rs"]
 mod supply_storage;
 #[path = "architecture_support/mod.rs"]

@@ -55,6 +55,9 @@ impl AgentSession {
                 &policy.effective_hash,
             )
             .map_err(|error| match error {
+                PolicyError::Busy => {
+                    McpError::internal_error("策略库忙，本次未提交，请稍后重试", None)
+                }
                 PolicyError::TooManyProposals => {
                     McpError::invalid_request("待处理提案已达上限，请等待主人处理", None)
                 }

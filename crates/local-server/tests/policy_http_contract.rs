@@ -845,3 +845,27 @@ async fn policy_routes_are_closed_and_absent_without_the_plane() {
 mod agents;
 #[path = "policy_http/reads.rs"]
 mod reads;
+
+#[tokio::test]
+async fn a_reserved_policy_store_returns_retry_after_without_landing_a_desired() {
+    let mut f = Fixture::new(true).await;
+    let login = f.issue().await;
+    let store = f.policy();
+    let checkpoint = store.checkpoint_handle().unwrap();
+    checkpoint
+        .freeze(std::time::Instant::now() + Duration::from_secs(2))
+        .unwrap();
+    let body = json!({"kind":"rules", "subject":"CLAUDE.md", "body":"暂时不能提交"}).to_string();
+    let reply = f
+        .send(f.request("POST", DESIRED, Some(&login), &body), 503)
+        .await;
+    assert_eq!(reply.json()["code"], "store_busy");
+    assert_eq!(reply.headers["retry-after"], "5");
+    assert!(store.desired_list(None, 10).unwrap().is_empty());
+    assert!(f.events("policy.desired_submitted").is_empty());
+    checkpoint.thaw().unwrap();
+    f.send(f.request("POST", DESIRED, Some(&login), &body), 200)
+        .await;
+    assert_eq!(store.desired_list(None, 10).unwrap().len(), 1);
+    f.stop().await;
+}

@@ -6,7 +6,7 @@ use super::{PolicyError, unavailable};
 
 /// SQLite `application_id`（ASCII "SPOL"）。
 const APPLICATION_ID: i64 = 0x5350_4f4c;
-const USER_VERSION: i64 = 1;
+pub(crate) const USER_VERSION: i64 = 1;
 
 const TABLES: &[(&str, &str)] = &[
     (

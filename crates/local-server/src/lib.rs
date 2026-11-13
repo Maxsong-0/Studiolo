@@ -15,6 +15,7 @@ mod file_operations;
 pub mod health;
 mod history;
 pub mod maintenance;
+pub mod policy_checkpoint;
 pub mod policy_http;
 mod project_cargo;
 mod project_operations;

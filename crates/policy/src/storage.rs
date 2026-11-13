@@ -16,7 +16,6 @@ pub(crate) struct Storage {
     pub(crate) created: bool,
     #[cfg(unix)]
     created_pin: Option<std::fs::File>,
-    #[cfg(unix)]
     root: PathBuf,
     #[cfg(unix)]
     root_identity: (u64, u64),
@@ -26,8 +25,46 @@ pub(crate) struct Storage {
     owner: u32,
 }
 
+impl Storage {
+    pub(crate) fn directory(&self) -> &Path {
+        &self.root
+    }
+}
+
 #[cfg(unix)]
 impl Storage {
+    pub(crate) fn checkpoint_target(root: &Path) -> Result<Self, PolicyError> {
+        use std::fs;
+        directory(root)?;
+        if fs::read_dir(root)
+            .map_err(|_| PolicyError::CheckpointTarget)?
+            .next()
+            .is_some()
+        {
+            return Err(PolicyError::CheckpointTarget);
+        }
+        let target = Self::prepare(root, CreatePolicy::AllowNew)?;
+        if !target.created {
+            return Err(PolicyError::CheckpointTarget);
+        }
+        Ok(target)
+    }
+
+    pub(crate) fn sync_created(&self) -> Result<(), PolicyError> {
+        use std::fs;
+        self.check()?;
+        let file = self
+            .created_pin
+            .as_ref()
+            .ok_or(PolicyError::CheckpointTarget)?;
+        file.sync_all().map_err(|_| PolicyError::StoreUnavailable)?;
+        let root = &self.root;
+        fs::File::open(root)
+            .and_then(|file| file.sync_all())
+            .map_err(|_| PolicyError::StoreUnavailable)?;
+        self.check()
+    }
+
     pub(crate) fn prepare(root: &Path, policy: CreatePolicy) -> Result<Self, PolicyError> {
         use std::{
             fs::{self, OpenOptions},
@@ -111,6 +148,14 @@ impl Storage {
 
 #[cfg(not(unix))]
 impl Storage {
+    pub(crate) fn checkpoint_target(_root: &Path) -> Result<Self, PolicyError> {
+        Err(PolicyError::UnsafeStorage)
+    }
+
+    pub(crate) fn sync_created(&self) -> Result<(), PolicyError> {
+        Err(PolicyError::UnsafeStorage)
+    }
+
     pub(crate) fn prepare(_root: &Path, _policy: CreatePolicy) -> Result<Self, PolicyError> {
         Err(PolicyError::UnsafeStorage)
     }

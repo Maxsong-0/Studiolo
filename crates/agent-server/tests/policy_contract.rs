@@ -1087,3 +1087,36 @@ async fn serve_without_policy_keeps_m3_behaviour_and_marks_the_plane_absent() {
         assert!(payload["effective_hash"].is_null());
     }
 }
+
+#[tokio::test]
+async fn a_frozen_policy_store_explains_retry_without_a_false_proposal_receipt() {
+    let f = fixture().await;
+    let store = f.policy();
+    publish(
+        &store,
+        PolicyKind::CapabilitySet,
+        "claude",
+        Some(&capability(&["项目/Alpha"], &[], true)),
+    );
+    let (session, _) = f.initialize().await.unwrap();
+    let before = store.desired_list(None, 100).unwrap().len();
+    let checkpoint = store.checkpoint_handle().unwrap();
+    checkpoint
+        .freeze(std::time::Instant::now() + Duration::from_secs(2))
+        .unwrap();
+    let args = json!({"kind":"rules", "subject":"通用工作规则.md", "body":"需要重试的提案"});
+    let result = f.call(&session, 2, "propose_desired", args.clone()).await;
+    assert!(is_error(&result), "{result}");
+    assert!(
+        result
+            .to_string()
+            .contains("策略库忙，本次未提交，请稍后重试"),
+        "{result}"
+    );
+    assert_eq!(store.desired_list(None, 100).unwrap().len(), before);
+    checkpoint.thaw().unwrap();
+    assert!(!is_error(
+        &f.call(&session, 3, "propose_desired", args).await
+    ));
+    assert_eq!(store.desired_list(None, 100).unwrap().len(), before + 1);
+}

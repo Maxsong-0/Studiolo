@@ -284,6 +284,10 @@ fn private_storage_remainder(crate_name: &str, path: &Path, source: &str) -> Str
     if path.ends_with("crates/supply/src/index_cache/paths.rs") {
         remainder = remainder.replace("fs::canonicalize(", "");
     }
+    if path.ends_with("crates/policy/src/storage.rs") {
+        // 仅检查注入的checkpoint目录是否为空，不引入其他写权限。
+        remainder = remainder.replace("fs::read_dir(root)", "");
+    }
     if path.ends_with("crates/supply/src/storage.rs")
         || path.ends_with("crates/policy/src/storage.rs")
     {

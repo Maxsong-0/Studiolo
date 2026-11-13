@@ -27,6 +27,8 @@ use activate::activate;
 use query::{desired_list, status, version, versions};
 use write::{desired_submit, revoke, validate, withdraw};
 
+pub(crate) const POLICY_CONCURRENCY: u32 = 2;
+
 /// 策略平面句柄与它的审计账本；由可信启动层构造一次。
 pub struct PolicyPlane {
     store: PolicyStore,
@@ -37,6 +39,18 @@ pub struct PolicyPlane {
 }
 
 impl PolicyPlane {
+    /// 参与者与HTTP共用同一许可池、同一策略源；目标由备份协调器注入。
+    pub fn checkpoint(
+        &self,
+        target: std::path::PathBuf,
+    ) -> Result<crate::policy_checkpoint::PolicyParticipant, studiolo_policy::PolicyError> {
+        Ok(crate::policy_checkpoint::PolicyParticipant::present(
+            self.store.checkpoint_handle()?,
+            self.permits.clone(),
+            target,
+        ))
+    }
+
     /// 组合主人发布者句柄与人侧权威账本。
     pub fn new(store: PolicyStore, ledger: Arc<dyn AuditLedger>) -> Self {
         Self {
@@ -44,7 +58,7 @@ impl PolicyPlane {
             identities: None,
             read_audit: None,
             ledger,
-            permits: Arc::new(Semaphore::new(2)),
+            permits: Arc::new(Semaphore::new(POLICY_CONCURRENCY as usize)),
         }
     }
     /// 显式装配人侧只读身份视图；不授予身份库写能力。

@@ -37,7 +37,9 @@ WAL checkpoint 的 busy/result，使用 SQLite 自有备份机制或完整冻结
 目标文件及父目录同步，重开核验后才返回封存票据。不能复制在线主文件并忽略 WAL，
 也不能把按次序复制的 DB/WAL/SHM 当作一致快照。复制前后固定源绑定不变。
 
-各 owner 可用现有 rusqlite 的 backup 特征导出，不暴露 Connection 给协调器。
+各 owner 可用 SQLite 的 `VACUUM INTO` 或 backup API 导出，不暴露 Connection 给协调器；
+workspace 未启用 rusqlite backup feature，策略实现采用前者并显式同步文件及父目录。
+目标根与各 owner 子目录由协调器预先建好，按窗口构造时注入，不在 export 中任意建目录。
 SQLite 自有备份只保证单库一致，不能替代跨 owner 屏障。副本中每个已 ACK 事件须
 精确对应 Audit 截止点内的原事件，而非只验证 offset 小于最后 offset。
 
@@ -129,3 +131,6 @@ manifest提交后ACK丢失、审计Outcome失败、新物理绑定中断，以�
 
 NAS专用目标、追加/独立恢复身份、实际不可变能力、带外告警和独立kit介质仍待
 接入核验。第二故障域已明确不配置，界面按权威说明未覆盖范围，不新增采购前提。
+
+T-204 的策略 RESERVED 屏障与重开核验见 [策略 checkpoint](../contracts/policy-checkpoint.md)。
+机制已验证，完整 Rust 生产协调器及 startup 接线仍未完成。

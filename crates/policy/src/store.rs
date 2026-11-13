@@ -35,6 +35,14 @@ pub struct PolicyStore {
 }
 
 impl PolicyStore {
+    /// 为本句柄绑定的同一个库创建封存者，不接受另一个源路径。
+    pub fn checkpoint_handle(&self) -> Result<crate::PolicyCheckpointHandle, PolicyError> {
+        self.db.storage().check()?;
+        let handle = crate::PolicyCheckpointHandle::open_existing(self.db.storage().directory())?;
+        self.db.storage().check()?;
+        Ok(handle)
+    }
+
     /// 打开部署批准的绝对私有目录；仅初始化本次独占新建的 `policy.sqlite3`。
     pub fn open(private_directory: &Path) -> Result<Self, PolicyError> {
         Ok(Self {

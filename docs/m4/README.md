@@ -68,7 +68,8 @@ cargo run --locked -p studiolo-agent-server -- serve --vault /path/to/readonly-c
   可改从策略平面 effective 导出（见 `m3/client-projection.md`），真实客户端尚未切换。
 - 人侧界面没有实例列表（吊销按 id）；`admin instances` 提供列表。
 - 策略库已在契约与类型层纳入一致 checkpoint 清单（2026-09-22 T-110：`CheckpointOwner::Policy`，
-  恢复含策略时须先核对吊销）；但策略库的真实 checkpoint 参与者与常态／异机备份仍未实施，
+  恢复含策略时须先核对吊销）；T-204 已实现[真实策略参与者](../contracts/policy-checkpoint.md)，
+  完整 Rust 协调器/startup 接线及常态／异机备份仍未实施，
   T-086 的同机恢复点不替代异机灾备。
 - M5 的规则版本钉定已由 T-089 在黑板工作项中实现（`task-engine/src/board_types.rs` 按 effective 版本钉定规则引用）。
 

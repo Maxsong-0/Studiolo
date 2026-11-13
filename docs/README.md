@@ -158,6 +158,7 @@ M4 把规则母本、skills 与各 AI 类型的能力集升入策略平面：des
 |---|---|---|
 | [`m4/README.md`](m4/README.md) | T-069 实现范围、本机运行方式、二元验收证据、明确未做与启用前置 | 已在开发分支，未部署 |
 | [`contracts/policy-plane.md`](contracts/policy-plane.md) | 策略平面契约：私有库、三类母本形状与恒定约束、发布链路与审计顺序、三级吊销、接入方视角、错误模式、契约测试清单 | 同上 |
+| [`contracts/policy-checkpoint.md`](contracts/policy-checkpoint.md) | T-204 策略跨进程写屏障、核验导出与真实接线边界 |
 
 ## contracts/ — Module Interface 契约（M0）
 

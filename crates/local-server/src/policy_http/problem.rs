@@ -12,6 +12,7 @@ use studiolo_policy::PolicyError;
 pub(super) struct Problem {
     status: StatusCode,
     body: serde_json::Value,
+    retry: bool,
 }
 
 impl Problem {
@@ -19,6 +20,7 @@ impl Problem {
         Self {
             status,
             body: serde_json::json!({"code": code, "error": error.into()}),
+            retry: false,
         }
     }
     pub(super) fn absent() -> Self {
@@ -59,6 +61,7 @@ impl Problem {
         match error {
             PolicyError::HashMismatch { current } => Self {
                 status: StatusCode::CONFLICT,
+                retry: false,
                 body: serde_json::json!({
                     "code": "hash_mismatch",
                     "error": "effective 已变化，请重新校验后再发布。",
@@ -67,6 +70,7 @@ impl Problem {
             },
             PolicyError::NewerDesiredFromSameSubmitter { newer } => Self {
                 status: StatusCode::CONFLICT,
+                retry: false,
                 body: serde_json::json!({
                     "code": "newer_desired_same_submitter",
                     "error": "同一提交者还有更新的未发布草案，只能发布其中最新的那一份；要发这份，先撤回更新的。",
@@ -92,7 +96,17 @@ impl Problem {
             | PolicyError::TooManyProposals => {
                 Self::new(StatusCode::BAD_REQUEST, "invalid", error.to_string())
             }
-            PolicyError::UnsafeStorage
+            PolicyError::Busy => {
+                let mut problem = Self::new(
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "store_busy",
+                    "策略私有库忙，请稍后重试。",
+                );
+                problem.retry = true;
+                problem
+            }
+            PolicyError::CheckpointTarget
+            | PolicyError::UnsafeStorage
             | PolicyError::MissingStore
             | PolicyError::CorruptStore
             | PolicyError::StoreUnavailable => Self::new(
@@ -113,6 +127,13 @@ impl Problem {
 
 impl IntoResponse for Problem {
     fn into_response(self) -> Response {
-        (self.status, Json(self.body)).into_response()
+        let mut response = (self.status, Json(self.body)).into_response();
+        if self.retry {
+            response.headers_mut().insert(
+                axum::http::header::RETRY_AFTER,
+                axum::http::HeaderValue::from_static("5"),
+            );
+        }
+        response
     }
 }
