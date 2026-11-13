@@ -74,6 +74,7 @@ impl Totp {
     ///
     /// 拒绝聚合继续由 `SessionManager::flush_audit` 交付；本方法不承诺清空所有审计工作。
     pub fn flush_audit(&self) -> Result<usize, SessionError> {
+        let _operation = self.context.sessions.enter_operation()?;
         let delivered = self.context.deliver(None)?;
         self.context.sessions.run(|db, observed| {
             super::pipeline::release_invalid(db, observed)?;

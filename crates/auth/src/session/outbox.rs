@@ -95,6 +95,7 @@ pub(super) fn validate(db: &Connection) -> Result<(), SessionError> {
 impl SessionManager {
     /// 顺序补记最多 256 条原事件，不重新授权、不激活 pending、不重做吊销。
     pub fn flush_audit(&self, max_events: usize) -> Result<usize, SessionError> {
+        let _operation = self.enter_operation()?;
         if !(1..=256).contains(&max_events) {
             return Err(SessionError::Configuration);
         }

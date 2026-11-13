@@ -14,6 +14,12 @@ pub(crate) fn source_violations(
     source_path: &Path,
     source: &str,
 ) -> Vec<AuthorityViolation> {
+    if crate_name == "studiolo-checkpoint-storage"
+        && source_path.ends_with("crates/checkpoint-storage/src/lib.rs")
+        && !super::backup::fixed_checkpoint_files(source)
+    {
+        return vec![AuthorityViolation::DatabaseOpen];
+    }
     let identity_writer = source
         .split(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
         .any(|token| {
@@ -103,8 +109,10 @@ pub(crate) fn source_violations(
     {
         violations.push(AuthorityViolation::CanonicalPath);
     }
-    if matches!(crate_name, "studiolo-gateway" | "studiolo")
-        && checked_source.contains("Connection::open")
+    if matches!(
+        crate_name,
+        "studiolo-gateway" | "studiolo" | "studiolo-checkpoint-storage"
+    ) && checked_source.contains("Connection::open")
     {
         violations.push(AuthorityViolation::DatabaseOpen);
     }

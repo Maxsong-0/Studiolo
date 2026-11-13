@@ -15,6 +15,17 @@ use studiolo_supply::{
 pub(crate) const POLICY_DENIED_PREFIX: &str = "策略拒绝：";
 
 impl AgentSession {
+    pub(super) async fn begin_operation(
+        &self,
+    ) -> Result<studiolo_audit_ledger::OperationPermit, McpError> {
+        use studiolo_audit_ledger::AuditLedger;
+        let state = self.state.clone();
+        tokio::task::spawn_blocking(move || state.ledger.enter_operation())
+            .await
+            .map_err(|_| McpError::internal_error("操作准入不可用，请稍后重试", None))?
+            .map_err(|_| McpError::internal_error("备份冻结或操作准入不可用，请稍后重试", None))
+    }
+
     /// 新会话：实例在 `initialize` 时铸造。
     pub fn new(state: Arc<AppState>) -> Self {
         Self {
@@ -79,6 +90,7 @@ impl AgentSession {
         agent_type: &str,
         parent: Option<&str>,
     ) -> Result<String, McpError> {
+        let _operation = self.begin_operation().await?;
         let instance = if let Some(parent) = parent {
             if self.state.policy.is_none() {
                 return Err(McpError::invalid_request("子实例需要有效策略平面", None));
@@ -112,8 +124,8 @@ impl AgentSession {
         let instructions = match self.state.audit(registered) {
             Err(outage) => Err(McpError::internal_error(
                 format!(
-                    "审计不可用：outage {}。本次会话所有读取与写入全部拒绝，不提供路牌；请稍后重试。",
-                    outage.outage_id
+                    "{}。本次会话所有读取与写入全部拒绝，不提供路牌；请稍后重试。",
+                    outage.reason()
                 ),
                 None,
             )),

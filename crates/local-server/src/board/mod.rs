@@ -30,6 +30,10 @@ use studiolo_vault_broker::VaultReader as _;
 
 struct SharedAudit(Arc<dyn AuditLedger>);
 impl AuditLedger for SharedAudit {
+    fn enter_operation(&self) -> Result<studiolo_audit_ledger::OperationPermit, AuditError> {
+        self.0.enter_operation()
+    }
+
     fn append(&self, event: AuditEvent) -> Result<AuditRecord, AuditError> {
         self.0.append(event)
     }
@@ -94,7 +98,11 @@ impl BoardPlane {
             .map_err(|_| "身份库不可用")?;
         let policy = PolicyAgentStore::open_existing(policy).map_err(|_| "策略库不可用")?;
         let storage = storage::Storage::open(data, isolated)?;
-        let control = ControlDb::open(storage.file(), uuid).map_err(|_| "控制库不可用")?;
+        let control = ControlDb::open_checkpoint_ready(
+            storage.file().parent().ok_or("控制目录不可用")?,
+            uuid,
+        )
+        .map_err(|_| "控制库不可用")?;
         let mut engine = PersistentTaskEngine::new(control, broker, SharedAudit(audit.clone()));
         if let Some(config) = runner {
             executor::isolate_persisted(engine.control_db(), config, &isolated_roots)?;
@@ -157,6 +165,10 @@ impl BoardPlane {
             let plane = self.clone();
             let runner = runner.clone();
             tokio::task::spawn_blocking(move || {
+                let _operation = plane
+                    .audit
+                    .enter_operation()
+                    .map_err(|_| "备份冻结或审计不可用".to_owned())?;
                 if let Some(runner) = runner {
                     runner.tick()?;
                 }

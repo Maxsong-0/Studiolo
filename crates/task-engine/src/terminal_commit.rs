@@ -190,29 +190,14 @@ where
             TaskEngineError::Integrity("pending audit has no report reservation".to_owned())
         })?;
         let plan = self.staged_plan(&prior_identity(&outcome.attempt), reservation)?;
-        let receipt: ArtifactCommitReceipt = serde_json::from_value(outcome.receipt_json.clone())?;
-        let payload = SanitizedPayload::try_from(json!({
-            "status": outcome.status,
-            "manifest_path": receipt.manifest_path,
-            "manifest_revision": receipt.manifest_revision,
-            "artifact_count": receipt.artifacts.len(),
-        }))
-        .map_err(map_audit)?;
-        self.audit_ledger
-            .append(
-                AuditEvent::new(
-                    plan.event_id,
-                    AuditPhase::Outcome,
-                    "task_engine.report",
-                    payload,
-                )
-                .with_subject(
-                    AuditSubject::default()
-                        .with_task(outcome.attempt.task_id)
-                        .with_attempt(outcome.attempt.attempt_id),
-                ),
-            )
-            .map_err(map_audit)?;
+        let _receipt: ArtifactCommitReceipt = serde_json::from_value(outcome.receipt_json.clone())?;
+        let event = outcome.audit_event().map_err(map_db)?;
+        if event.event_id() != &plan.event_id {
+            return Err(TaskEngineError::Integrity(
+                "终态审计与 staging 不一致".into(),
+            ));
+        }
+        self.audit_ledger.append(event).map_err(map_audit)?;
         Ok(())
     }
 }

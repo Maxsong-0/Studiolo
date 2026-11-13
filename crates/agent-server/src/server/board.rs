@@ -18,6 +18,7 @@ pub(super) struct BoardArgs {
 
 impl AgentSession {
     pub(super) async fn text_board(&self, args: BoardArgs) -> Result<String, McpError> {
+        let _operation = self.begin_operation().await?;
         let grant = self.authorize("board")?;
         self.allowed_project(&grant, "board", &args.project)?;
         let policy = grant

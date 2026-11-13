@@ -212,6 +212,9 @@ impl crate::CanonicalWorkbench {
         principal: &crate::auth_http::ContentPrincipal,
         query: crate::changes::PageQuery,
     ) -> Result<serde_json::Value, crate::editing::Problem> {
+        let _operation = principal
+            .enter_operation()
+            .map_err(super::content::session_error)?;
         paging::page(self, principal, query)
     }
     pub(crate) fn mark_changes_seen(
@@ -219,6 +222,9 @@ impl crate::CanonicalWorkbench {
         principal: &crate::auth_http::ContentPrincipal,
         input: crate::changes::SeenInput,
     ) -> Result<serde_json::Value, crate::editing::Problem> {
+        let _operation = principal
+            .enter_operation()
+            .map_err(super::content::session_error)?;
         seen::mark(self, principal, input)
     }
 }

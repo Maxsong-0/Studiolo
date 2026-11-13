@@ -39,6 +39,7 @@ pub enum RetentionWork {
 impl SessionManager {
     /// 最多回收 16 个终态并推进 16 个 epoch；审计调用不持 Auth 写锁。
     pub fn maintain_retention(&self) -> Result<RetentionReport, SessionError> {
+        let _operation = self.enter_operation()?;
         self.database.transaction(|db| {
             if !matches!(schema::version(db)?, 2..=4) {
                 return Err(SessionError::UnsupportedSchema);

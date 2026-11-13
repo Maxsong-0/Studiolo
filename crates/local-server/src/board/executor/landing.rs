@@ -50,6 +50,12 @@ impl RunnerPlane {
         expected_head: String,
         patch_sha256: String,
     ) -> Result<CodeLandingResult, String> {
+        let _operation = self
+            .authority
+            .board
+            .audit
+            .enter_operation()
+            .map_err(|_| "备份冻结或审计不可用".to_owned())?;
         let _admission = self.admission.lock()?;
         if self.stop.load(Ordering::SeqCst) {
             return Err("Runner平面已关闭".into());

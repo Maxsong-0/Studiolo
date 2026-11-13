@@ -42,6 +42,9 @@ pub(super) fn bootstrap(
     // 账本先于策略库：账本不可用就不发布，避免留下无审计的版本。
     let ledger = SqliteAuditLedger::open_existing(&data.join("audit"))
         .map_err(|_| "审计账本不可用或未初始化；请先运行 admin init".to_owned())?;
+    let _operation = ledger
+        .enter_operation()
+        .map_err(|_| "备份冻结或审计不可用".to_owned())?;
     let store = PolicyStore::open_existing(policy).map_err(|error| error.to_string())?;
     let input = DesiredInput {
         kind,

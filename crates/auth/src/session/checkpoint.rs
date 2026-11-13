@@ -1,0 +1,126 @@
+//! Auth 冻结保留真实主人绑定；所有 ACK 必须在最后冻结的原审计账本内逐条确认。
+mod receipts;
+use super::{SessionConfig, SessionError, SessionManager, schema};
+use sha2::{Digest, Sha256};
+use std::{path::Path, time::Instant};
+use studiolo_audit_ledger::{FrozenAudit, ReceiptCoverage};
+use studiolo_checkpoint_storage::{Error, FrozenSqlite, Source};
+use studiolo_core::checkpoint::{CheckpointOwner, OwnerWatermark, SealedOwnerCheckpoint};
+
+/// 来自实际 SessionManager 的固定源能力，不创建或迁移认证库。
+pub struct AuthCheckpointSource {
+    source: Source,
+    config: SessionConfig,
+}
+/// 仍持写屏障的 Auth 快照；完整 ACK 覆盖成立前不允许导出。
+pub struct FrozenAuth {
+    frozen: FrozenSqlite,
+    config: String,
+    watermark: OwnerWatermark,
+    coverage: Option<ReceiptCoverage>,
+}
+impl SessionManager {
+    /// 在全局操作暂停之前固定正在服务的认证库身份。
+    pub fn checkpoint_source(&self) -> Result<AuthCheckpointSource, SessionError> {
+        Ok(AuthCheckpointSource {
+            source: self.database.checkpoint_source()?,
+            config: self.config.clone(),
+        })
+    }
+}
+impl AuthCheckpointSource {
+    /// 只接受已完成补记和业务回写的库；待处理记录不能冒充已排空。
+    pub fn freeze(&self, deadline: Instant) -> Result<FrozenAuth, SessionError> {
+        let frozen = self.source.freeze(deadline).map_err(problem)?;
+        let config = self.config.encoded()?;
+        let owner =
+            serde_json::to_vec(&self.config.owner).map_err(|_| SessionError::Configuration)?;
+        let owner = super::secrets::hex(&Sha256::digest(owner));
+        let watermark = frozen
+            .inspect(|db| snapshot(db, &config, &owner))
+            .map_err(problem)?;
+        Ok(FrozenAuth {
+            frozen,
+            config,
+            watermark,
+            coverage: None,
+        })
+    }
+}
+impl FrozenAuth {
+    /// 本库独立的业务水位；不等同于审计尾部。
+    pub fn watermark(&self) -> &OwnerWatermark {
+        &self.watermark
+    }
+    /// 扫描所有持久回执，包括恢复控制 JSON 内的原证明；一次失败撤销此前确认。
+    pub fn verify_audit(&mut self, audit: &FrozenAudit) -> Result<ReceiptCoverage, SessionError> {
+        self.coverage = None;
+        let coverage = self
+            .frozen
+            .inspect(|db| {
+                let mut coverage = ReceiptCoverage::default();
+                receipts::visit(db, |record| {
+                    coverage
+                        .include(audit.verify_receipt(record).map_err(|_| Error::Invalid)?)
+                        .map_err(|_| Error::Invalid)
+                })?;
+                Ok(coverage)
+            })
+            .map_err(problem)?;
+        self.coverage = Some(coverage);
+        Ok(coverage)
+    }
+    /// 只有完整结构、排空和原账本核对通过，才能签出独立可重开的副本。
+    pub fn export(&self, target: &Path) -> Result<SealedOwnerCheckpoint, SessionError> {
+        self.coverage.ok_or(SessionError::AuditUnavailable)?;
+        let OwnerWatermark::Auth {
+            schema_version,
+            owner_binding_digest,
+            ..
+        } = &self.watermark
+        else {
+            return Err(SessionError::CorruptStore);
+        };
+        let wal = self
+            .frozen
+            .export(target, &self.watermark, |db| {
+                snapshot(db, &self.config, owner_binding_digest)
+            })
+            .map_err(problem)?;
+        Ok(SealedOwnerCheckpoint {
+            owner: CheckpointOwner::Auth,
+            schema_version: *schema_version,
+            wal,
+            target_synced: true,
+            parent_directory_synced: true,
+            reopen_verified: true,
+            source_binding_stable: true,
+            watermark: self.watermark.clone(),
+        })
+    }
+}
+fn snapshot(db: &rusqlite::Connection, config: &str, owner: &str) -> Result<OwnerWatermark, Error> {
+    schema::validate(db, config).map_err(|_| Error::Invalid)?;
+    let version = schema::version(db).map_err(|_| Error::Invalid)?;
+    if !(2..=4).contains(&version) {
+        return Err(Error::Invalid);
+    }
+    receipts::require_drained(db, version)?;
+    let mut maximum = 0;
+    receipts::visit(db, |receipt| {
+        maximum = maximum.max(receipt.offset());
+        Ok(())
+    })?;
+    Ok(OwnerWatermark::Auth {
+        schema_version: version as u32,
+        owner_binding_digest: owner.to_owned(),
+        audit_anchor_offset: maximum,
+    })
+}
+pub(super) fn problem(error: Error) -> SessionError {
+    match error {
+        Error::UnsafeStorage => SessionError::UnsafeStorage,
+        Error::Invalid => SessionError::CorruptStore,
+        _ => SessionError::StorageUnavailable,
+    }
+}

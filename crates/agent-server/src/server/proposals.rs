@@ -30,6 +30,7 @@ impl AgentSession {
     /// 断线重提：本类型在该 subject 最新的未发布草案正是同一份正文且仍待处理时，拿回它
     /// （`deduplicated true`），不新建、不占名额。
     pub(crate) async fn text_propose(&self, args: ProposeArgs) -> Result<String, McpError> {
+        let _operation = self.begin_operation().await?;
         let (grant, store) = self.proposal_gate("propose_desired")?;
         let kind = PolicyKind::parse(&args.kind)
             .map_err(|_| McpError::invalid_params("kind 无效", None))?;
@@ -83,8 +84,8 @@ impl AgentSession {
         self.state.audit(event).map_err(|outage| {
             McpError::internal_error(
                 format!(
-                    "审计不可用（outage {}）：提案 {} 已入库，但这次提交没能记进审计；恢复后用 list_proposals 核对，或重提同一份正文",
-                    outage.outage_id, proposal.record.id
+                    "{}：提案 {} 已入库，但这次提交没能记进审计；恢复后用 list_proposals 核对，或重提同一份正文",
+                    outage.reason(), proposal.record.id
                 ),
                 None,
             )
@@ -118,6 +119,7 @@ impl AgentSession {
         &self,
         args: ListProposalsArgs,
     ) -> Result<String, McpError> {
+        let _operation = self.begin_operation().await?;
         let (grant, store) = self.proposal_gate("list_proposals")?;
         if let Some(id) = &args.desired_id {
             if args.kind.is_some() || args.subject.is_some() || id.is_empty() || id.len() > 128 {

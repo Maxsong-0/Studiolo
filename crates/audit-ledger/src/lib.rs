@@ -6,6 +6,7 @@ mod codec;
 mod event;
 mod filter;
 mod memory;
+mod operation;
 mod payload;
 mod record;
 mod sqlite;
@@ -14,9 +15,11 @@ mod verification;
 pub use event::{AuditEvent, AuditEventId, AuditPhase, AuditSubject};
 pub use filter::AuditFilter;
 pub use memory::MemoryAuditLedger;
+pub use operation::{AuditQuiescence, OperationPermit};
 pub use payload::SanitizedPayload;
 pub use record::{AuditRecord, IntegrityHash};
 pub use sqlite::{AUDIT_SEGMENT_RECORDS, AuditPage, AuditReadView, SqliteAuditLedger};
+pub use sqlite::{AuditCheckpointSource, FrozenAudit, ReceiptCoverage, VerifiedReceipt};
 pub use verification::{AuditSegmentSummary, AuditVerificationCost};
 
 /// 权威审计接缝上的错误。
@@ -70,6 +73,15 @@ pub enum AuditError {
 
 /// 权威审计持久化的同步边界；对象安全，可作 `dyn AuditLedger` 使用。
 pub trait AuditLedger: Send + Sync {
+    /// 覆盖完整跨库语义操作的准入；持有到最后一次回写与回执确认结束。
+    ///
+    /// 内存/测试 Adapter 默认无持久屏障。生产封存只能由真实 SQLite owner 取得
+    /// `AuditQuiescence`；包装真实 owner 的 Adapter 必须转发本方法。
+    /// 单独 append/query 不代表完整操作，不能代替调用方持有本许可。
+    fn enter_operation(&self) -> Result<OperationPermit, AuditError> {
+        Ok(OperationPermit::uncoordinated())
+    }
+
     /// 追加一条事件；完全相同的重试直接返回既有记录。
     fn append(&self, event: AuditEvent) -> Result<AuditRecord, AuditError>;
 

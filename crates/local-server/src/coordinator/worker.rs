@@ -51,6 +51,7 @@ impl Core {
     }
 
     fn attempt(self: &Arc<Self>, on: &OnDeriveThread) -> Result<(), Failure> {
+        let _operation = self.operation().map_err(|_| Failure::Writer)?;
         watcher::ensure(self)?;
         let (capture, epoch, next) = {
             let mut owner = self.owner.lock().map_err(|_| Failure::Internal)?;

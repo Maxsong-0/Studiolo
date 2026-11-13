@@ -48,6 +48,17 @@ pub(crate) struct Core {
     pub probe: crate::coordinator_tests::Probe,
 }
 
+impl Core {
+    /// 未装配审计的只读组合没有跨库写操作；装配后必须使用实际账本的许可。
+    pub(crate) fn operation(&self) -> Result<Option<studiolo_audit_ledger::OperationPermit>, ()> {
+        self.content_audit
+            .as_ref()
+            .map(|audit| audit.enter_operation())
+            .transpose()
+            .map_err(|_| ())
+    }
+}
+
 pub(crate) struct Control {
     pub closing: bool,
     pub running: bool,

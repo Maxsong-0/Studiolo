@@ -9,6 +9,12 @@ impl RunnerPlane {
     /// 按尝试各自独立地复核租约／`fence`／撤销状态，并暂存候选。
     /// 须在 `spawn_blocking` 中、引擎锁之外调用，每个维护周期至多一次。
     pub fn tick(&self) -> Result<(), String> {
+        let _operation = self
+            .authority
+            .board
+            .audit
+            .enter_operation()
+            .map_err(|_| "备份冻结或审计不可用".to_owned())?;
         let mut runs = self.runs.lock().map_err(|_| "Runner状态不可用")?;
         let now = jiff::Timestamp::now().as_millisecond();
         for run in runs.values_mut() {
@@ -200,6 +206,12 @@ impl RunnerPlane {
     }
 
     pub(super) fn stop_and_close(&self, run: &ActiveRun, now: i64) -> Result<(), String> {
+        let _operation = self
+            .authority
+            .board
+            .audit
+            .enter_operation()
+            .map_err(|_| "备份冻结或审计不可用".to_owned())?;
         // 即使某一步失败，也执行完全部相互独立的清理步骤。
         let revoked = self.revoke_ticket(run.spec.attempt_id, &run.ticket);
         let cancelled = if run.launch_failed {
@@ -271,6 +283,12 @@ impl RunnerPlane {
 
     /// 先取消一个自有任务，再向已隔离的进程发信号。
     pub fn cancel(&self, task: studiolo_core::TaskId) -> Result<(), String> {
+        let _operation = self
+            .authority
+            .board
+            .audit
+            .enter_operation()
+            .map_err(|_| "备份冻结或审计不可用".to_owned())?;
         let now = jiff::Timestamp::now().as_millisecond();
         self.authority
             .board

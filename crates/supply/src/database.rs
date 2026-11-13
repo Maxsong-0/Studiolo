@@ -7,7 +7,9 @@ use std::{path::Path, sync::Mutex, time::Duration};
 
 use rusqlite::{Connection, OpenFlags, TransactionBehavior, params};
 
+mod checkpoint;
 mod children;
+pub use checkpoint::{AgentCheckpointSource, FrozenAgentStore};
 mod identity;
 mod view;
 pub use view::{AgentIdentityView, IdentitySnapshot, InstanceIdentity, TypeIdentity};

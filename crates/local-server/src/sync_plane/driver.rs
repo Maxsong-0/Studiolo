@@ -138,6 +138,10 @@ pub fn run_round(
     now_unix: i64,
     stopping: &AtomicBool,
 ) -> Result<RoundOutcome, PlaneError> {
+    let _operation = plane
+        .audit()
+        .enter_operation()
+        .map_err(|_| PlaneError::Unavailable)?;
     let approved = approved_mode(plane.approval().headless_mode());
     let mut ports = at(Step::Open, real::RealPorts::open(plane, now_unix, stopping))?;
     run_round_with(&mut ports, approved, now_unix)

@@ -1,5 +1,7 @@
 //! 恢复码公开 Interface 契约；真实 SQLite 与虚构秘密，不替代上线秘密装配。
 
+#[path = "recovery_checkpoint.rs"]
+mod checkpoint;
 #[path = "recovery_clock_guard.rs"]
 mod clock_guard;
 #[path = "recovery_concurrency.rs"]

@@ -110,6 +110,7 @@ impl FactorRuntime {
         request: &TotpRequest<'_>,
         code: TotpCode,
     ) -> Result<RecentAuthentication, SessionError> {
+        let _operation = self.sessions.enter_operation()?;
         let active = self.select(request)?;
         let context = match active {
             Active::Current => &self.current,
@@ -126,6 +127,7 @@ impl FactorRuntime {
 
     /// 以当前真实 L3 换发十枚恢复码，只交付原调用一次；不重读或自动重试原码。
     pub fn rotate_codes(&self, request: &TotpRequest<'_>) -> Result<RecoveryCodes, SessionError> {
+        let _operation = self.sessions.enter_operation()?;
         self.select(request)?;
         self.recovery.rotate_codes(request)
     }
@@ -141,6 +143,7 @@ impl FactorRuntime {
         request: &TotpRequest<'_>,
         action: SensitiveAction,
     ) -> Result<(), SessionError> {
+        let _operation = self.sessions.enter_operation()?;
         let active = self.select(request)?;
         let context = match active {
             Active::Current => &self.current,
@@ -160,6 +163,7 @@ impl FactorRuntime {
     /// 不依赖请求会话或重新选择秘密槽；替换后的旧句柄也只交付存储中的原事件。
     /// 返回本批新增 ACK 总数，不保证清空全部待办；失败前可能已有部分事件提交。
     pub fn flush_audit(&self) -> Result<usize, SessionError> {
+        let _operation = self.sessions.enter_operation()?;
         let totp = Totp {
             context: Arc::clone(&self.current),
         };
@@ -177,6 +181,7 @@ impl FactorRuntime {
         code: RecoveryCode,
         otp: TotpCode,
     ) -> Result<(), SessionError> {
+        let _operation = self.sessions.enter_operation()?;
         if self.select(request)? != Active::Current {
             return Err(SessionError::FactorUnavailable);
         }

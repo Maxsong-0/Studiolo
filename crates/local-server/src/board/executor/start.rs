@@ -13,6 +13,12 @@ use studiolo_task_engine::TaskEngine;
 impl RunnerPlane {
     /// 启动一个显式选定、经认证的工作项；主人批准须由 HTTP 层强制执行。
     pub fn start_task(&self, r: StartRequest) -> Result<RunSummary, String> {
+        let _operation = self
+            .authority
+            .board
+            .audit
+            .enter_operation()
+            .map_err(|_| "备份冻结或审计不可用".to_owned())?;
         if self.authority.frozen.load(Ordering::SeqCst) {
             return Err("Runner全局冻结".into());
         }

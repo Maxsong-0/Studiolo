@@ -11,6 +11,7 @@ const MAX_NOTE_BYTES: u64 = 4 * 1024 * 1024;
 impl AgentSession {
     /// 共用只读握手；由外壳选择已计入预算的续读入口。
     pub(crate) async fn text_handshake(&self) -> Result<String, McpError> {
+        let _operation = self.begin_operation().await?;
         let grant = self.authorize("handshake")?;
         self.signpost(&grant).await
     }
@@ -20,6 +21,7 @@ impl AgentSession {
         &self,
         args: ListEntriesArgs,
     ) -> Result<String, McpError> {
+        let _operation = self.begin_operation().await?;
         let grant = self.authorize("list_entries")?;
         let prefix = self.allowed_project(&grant, "list_entries", &args.project)?;
         let generation = self.generation(&grant.instance, "list_entries").await?;
@@ -57,6 +59,7 @@ impl AgentSession {
 
     /// 共用笔记供给；白名单、版本和审计不依赖传输外壳。
     pub(crate) async fn text_read_note(&self, args: ReadNoteArgs) -> Result<String, McpError> {
+        let _operation = self.begin_operation().await?;
         let grant = self.authorize("read_note")?;
         let actor = grant.actor();
         let path = match VaultPath::parse(&args.path) {
@@ -112,6 +115,7 @@ impl AgentSession {
 
     /// 共用搜索供给；全部命中审计成功后才返回任何文本。
     pub(crate) async fn text_search(&self, args: SearchArgs) -> Result<String, McpError> {
+        let _operation = self.begin_operation().await?;
         let grant = self.authorize("search")?;
         let prefix = self.allowed_project(&grant, "search", &args.project)?;
         let mode = match args.mode.as_deref() {

@@ -39,6 +39,10 @@ pub struct AgentIdentityView {
     store: AgentStore,
 }
 impl AgentIdentityView {
+    /// 从正在使用的只读身份源取得固定封存能力；不增加身份创建、认证或迁移入口。
+    pub fn checkpoint_source(&self) -> Result<super::AgentCheckpointSource, SupplyError> {
+        super::checkpoint::source(&self.store)
+    }
     /// 从同一已批准身份根下的固定 audit 子目录打开只读账本；不创建缺失库。
     pub fn read_audit(
         &self,

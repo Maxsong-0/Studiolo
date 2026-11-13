@@ -46,11 +46,25 @@ pub struct AuditAck {
     pub recorded_at: String,
 }
 
-/// 追加审计失败时返回，携带当前 outage id；调用方必须拒绝返回任何内容。
+/// 操作准入失败与真实审计故障分开；冻结不会伪造 outage 或追加降级计数。
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct AuditUnavailable {
-    /// 当前 outage id。
-    pub outage_id: String,
+pub enum AuditUnavailable {
+    /// 当前不能进入完整操作。
+    Frozen,
+    /// 真实审计故障的持久降级窗口。
+    Outage {
+        /// 当前持久降级窗口标识。
+        outage_id: String,
+    },
+}
+impl AuditUnavailable {
+    /// 对外固定故障类别；准入冻结不冒称已创建持久 outage。
+    pub fn reason(&self) -> String {
+        match self {
+            Self::Frozen => "备份冻结或操作准入不可用，请稍后重试".into(),
+            Self::Outage { outage_id } => format!("审计不可用（outage {outage_id}）"),
+        }
+    }
 }
 
 /// 供给源；两种模式都只持有只读能力。
@@ -227,6 +241,10 @@ impl AppState {
 
     /// 追加权威审计；失败即进入/延续降级窗口并返回 outage id，成功则结束窗口。
     pub fn audit(&self, event: AuditEvent) -> Result<AuditAck, AuditUnavailable> {
+        let _operation = self
+            .ledger
+            .enter_operation()
+            .map_err(|_| AuditUnavailable::Frozen)?;
         match self.ledger.append(event) {
             Ok(record) => {
                 let ended = self.outage.lock().ok().and_then(|mut guard| guard.take());
@@ -245,6 +263,9 @@ impl AppState {
 
     /// 进入或延续降级窗口；每次拒绝计数加一（有界补记落私有库，失败不影响拒绝本身）。
     pub fn enter_outage(&self, reason: &str) -> AuditUnavailable {
+        let Ok(_operation) = self.ledger.enter_operation() else {
+            return AuditUnavailable::Frozen;
+        };
         let mut guard = match self.outage.lock() {
             Ok(guard) => guard,
             Err(poisoned) => poisoned.into_inner(),
@@ -255,7 +276,7 @@ impl AppState {
             Outage { id }
         });
         let _ = self.store.record_outage_denial(&outage.id);
-        AuditUnavailable {
+        AuditUnavailable::Outage {
             outage_id: outage.id.clone(),
         }
     }

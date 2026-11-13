@@ -19,6 +19,7 @@ impl SessionManager {
     /// 初检同时观察会话到期，再执行一轮既有有界回收（最多 16 个终态）；
     /// 维护或审计失败关闭新授权，不自动重试，不承诺后台维护。无需注入因子种子。
     pub fn issue_enrolled(&self, identity: &AccessIdentity) -> Result<IssuedSession, SessionError> {
+        let _operation = self.enter_operation()?;
         self.issue_run(identity, IssuePolicy::Enrolled, |_, _| Ok(Ok(())))?;
         if let Err(error) = self.maintain_retention() {
             return self.issue_run(identity, IssuePolicy::Enrolled, |db, _| {

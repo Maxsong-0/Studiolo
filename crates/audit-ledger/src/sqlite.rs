@@ -1,6 +1,9 @@
 //! 真实 SQLite Adapter：写事务串行分配 offset，提交后才返回成功，失败不泄漏底层路径。
 
+mod checkpoint;
 mod inspection;
+pub use checkpoint::{AuditCheckpointSource, FrozenAudit, ReceiptCoverage, VerifiedReceipt};
+mod operation;
 mod query;
 mod read_view;
 pub use read_view::{AuditPage, AuditReadView};
@@ -83,6 +86,13 @@ impl SqliteAuditLedger {
         read_only: bool,
     ) -> Result<Self, AuditError> {
         let storage = Storage::prepare(private_directory, policy)?;
+        if !read_only {
+            // 打开写者即固定准入文件身份；后续冻结不能收养被替换的另一把锁。
+            drop(
+                storage
+                    .operation_lease(false, std::time::Instant::now() + Duration::from_secs(5))?,
+            );
+        }
         let mut connection = connect_mode(&storage, read_only)?;
         check_configuration(&connection)?;
         let cost = {
@@ -123,6 +133,10 @@ impl SqliteAuditLedger {
 }
 
 impl AuditLedger for SqliteAuditLedger {
+    fn enter_operation(&self) -> Result<crate::OperationPermit, AuditError> {
+        self.operation_permit()
+    }
+
     fn append(&self, event: AuditEvent) -> Result<AuditRecord, AuditError> {
         // 在取得写锁前拒绝明显过大的事件；完整记录仍在提交前二次检查。
         event.payload().validate()?;

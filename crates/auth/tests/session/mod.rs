@@ -2,6 +2,8 @@
 #![cfg(unix)]
 
 mod budget;
+mod checkpoint;
+mod checkpoint_operation;
 mod concurrency;
 mod credential_v2;
 mod durable;

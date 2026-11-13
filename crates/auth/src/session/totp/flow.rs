@@ -48,6 +48,7 @@ impl Context {
         request: Option<&TotpRequest<'_>>,
         code: &TotpCode,
     ) -> Result<RecentAuthentication, SessionError> {
+        let _operation = self.sessions.enter_operation()?;
         let ticket = self.prepare(request)?;
         let operation = self.sessions.run(|db, observed| {
             if let Err(error) = self.recheck(db, observed, &ticket, ticket.deadline, request)? {

@@ -11,6 +11,7 @@ use super::{
 impl Recovery {
     /// 以当前真实 L3 换发十枚恢复码。成功后整批旧码失效，只有本调用取得新原码。
     pub fn rotate_codes(&self, request: &TotpRequest<'_>) -> Result<RecoveryCodes, SessionError> {
+        let _operation = self.sessions.enter_operation()?;
         let ticket = self.prepare(request, Kind::Rotate)?;
         let store_id = self.sessions.database.transaction(auth_schema::store_id)?;
         let generated =

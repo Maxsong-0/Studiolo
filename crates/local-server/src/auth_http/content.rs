@@ -13,6 +13,12 @@ pub(crate) struct ContentPrincipal {
 }
 
 impl ContentPrincipal {
+    pub(crate) fn enter_operation(
+        &self,
+    ) -> Result<studiolo_audit_ledger::OperationPermit, SessionError> {
+        self.sessions.enter_operation()
+    }
+
     pub(crate) fn verify(&self) -> Result<SessionInfo, SessionError> {
         self.sessions.check_with_csrf(
             &self.identity,

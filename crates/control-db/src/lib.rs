@@ -3,7 +3,10 @@
 //! 写操作要求 `&mut self`；事务只搬运普通数据，
 //! 从不调用其他 Studiolo 模块。
 
+mod audit_events;
 mod board;
+mod checkpoint;
+pub use checkpoint::{ControlCheckpointSource, FrozenControl};
 mod board_completion;
 mod board_projection;
 mod runner_candidates;

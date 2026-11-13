@@ -18,6 +18,7 @@ impl SessionManager {
         csrf: &CsrfToken,
         target: &SessionId,
     ) -> Result<Revocation, SessionError> {
+        let _operation = self.enter_operation()?;
         let result = self.run(|db, observed| {
             if let Err(error) = self.authorized(db, observed, identity, token, Some(csrf))? {
                 return Ok(Err(error));
@@ -38,6 +39,7 @@ impl SessionManager {
         token: &SessionToken,
         csrf: &CsrfToken,
     ) -> Result<Revocation, SessionError> {
+        let _operation = self.enter_operation()?;
         let result = self.run(|db, observed| {
             let row = match self.authorized(db, observed, identity, token, Some(csrf))? {
                 Ok(row) => row,
@@ -56,6 +58,7 @@ impl SessionManager {
         token: &SessionToken,
         csrf: &CsrfToken,
     ) -> Result<Revocation, SessionError> {
+        let _operation = self.enter_operation()?;
         let result = self.run(|db, observed| {
             if let Err(error) = self.authorized(db, observed, identity, token, Some(csrf))? {
                 return Ok(Err(error));

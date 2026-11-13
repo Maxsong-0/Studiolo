@@ -21,6 +21,7 @@ impl CanonicalWorkbench {
         principal: ContentPrincipal,
         mut input: Replace,
     ) -> Result<MutationReceipt, Problem> {
+        let _operation = principal.enter_operation().map_err(session_error)?;
         let mut owner = self.core.owner.lock().map_err(|_| Problem::unavailable())?;
         let broker = owner.as_mut().ok_or_else(Problem::unavailable)?;
         self.core

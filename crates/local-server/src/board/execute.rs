@@ -87,6 +87,10 @@ pub(super) fn owned(
 }
 impl BoardPlane {
     pub(super) fn execute(&self, r: Request) -> Result<Value, Failure> {
+        let _operation = self
+            .audit
+            .enter_operation()
+            .map_err(|_| Failure::Unavailable)?;
         let id = format!("board-request:{}", ulid::Ulid::generate());
         // 排队结束后复核，避免等待锁期间的撤权仍能写入。
         let mut engine = self.engine.lock().map_err(|_| "黑板不可用")?;

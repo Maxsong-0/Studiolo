@@ -12,6 +12,7 @@ publish = false
 workspace = true
 
 [dependencies]
+studiolo-checkpoint-storage.workspace = true
 studiolo-core.workspace = true
 studiolo-audit-ledger.workspace = true
 rusqlite.workspace = true

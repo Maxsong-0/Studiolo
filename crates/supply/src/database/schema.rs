@@ -110,7 +110,7 @@ fn header(db: &Connection) -> Result<(), SupplyError> {
     Ok(())
 }
 
-fn validate(db: &Connection) -> Result<(), SupplyError> {
+pub(super) fn validate(db: &Connection) -> Result<(), SupplyError> {
     header(db)?;
     let count: i64 = db
         .query_row("SELECT count(*) FROM sqlite_schema", [], |r| r.get(0))
