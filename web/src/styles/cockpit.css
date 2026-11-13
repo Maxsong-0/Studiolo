@@ -8,6 +8,8 @@
  *   ≥1248px  画出 12 列细线和上沿标尺。这时一列（1/12）才不小于 104px 的最小列宽，线和内容对得上；
  *   <960px   左右两栏上下叠放；
  *   <640px   队列的一行拆成两行（序号与正文一行，等了多久与去处理一行），底部四个数排成两列。
+ *
+ * 队列的键盘流、「稍后再看」、就地细节和三段动效是 T-197 加的（规范第 6、11、16 节）；动效集中在队列样式的末尾。
  */
 
 .cockpit {
@@ -231,6 +233,9 @@
   align-items: center;
   padding: var(--space-2-5) 0;
   border-bottom: 1px solid var(--hairline);
+  /* J／K 把选中行滚进视野时，上面让出吸顶顶栏（46px 加粗线）的高度 */
+  scroll-margin-top: calc(46px + var(--rule-thick) + var(--space-4));
+  scroll-margin-bottom: var(--space-4);
 }
 /* 选中的一行：浅一档的纸色，上下各一条黑线（上面那条盖住前一行的细线），序号黑底 */
 .cockpit-queue__row[data-selected] {
@@ -416,6 +421,103 @@
   line-height: 1.5;
   color: var(--ink-2);
 }
+/* 「稍后再看」：排在队尾的一小段。它还在等你，只是先放一放；没选中时标题降一档字色 */
+.cockpit-queue__later {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-0-5) var(--space-4);
+  margin: 0;
+  padding: var(--space-4) var(--space-3) var(--space-2);
+  font-size: var(--type-small);
+  line-height: 1.5;
+  font-weight: 700;
+}
+.cockpit-queue__later span {
+  font-family: var(--font-mono);
+  font-size: var(--type-caption);
+  font-weight: 400;
+  color: var(--ink-2);
+}
+.cockpit-queue__row[data-later]:not([data-selected]) .cockpit-queue__select {
+  color: var(--ink-2);
+}
+/* 就地细节：一条细线隔开，每段一个等宽小标签带条数，下面一条一行；只读，不带动作，不用红 */
+.cockpit-detail {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-width: 0;
+  margin-top: var(--space-1);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--hairline);
+}
+.cockpit-detail__section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+}
+.cockpit-detail__label {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: var(--type-caption);
+  line-height: 1.5;
+  font-weight: 500;
+  color: var(--ink-2);
+}
+.cockpit-detail__label span {
+  font-weight: 600;
+  color: var(--ink);
+}
+.cockpit-detail__lines {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-0-5);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.cockpit-detail__line {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  min-width: 0;
+  font-size: var(--type-small);
+  line-height: 1.5;
+}
+.cockpit-detail__mark {
+  flex: none;
+  width: 1em;
+  font-family: var(--font-mono);
+  text-align: center;
+}
+.cockpit-detail__body {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 var(--space-2-5);
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.cockpit-detail__body code {
+  font-family: var(--font-mono);
+  font-size: var(--type-caption);
+  line-height: 1.625;
+}
+.cockpit-detail__note,
+.cockpit-detail__more {
+  color: var(--ink-2);
+}
+.cockpit-detail__more {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: var(--type-caption);
+  line-height: 1.5;
+}
+/* 键位提示：只在有鼠标的设备上出现（下面的媒体查询里打开）；触屏上没有键盘，不占地方 */
+.cockpit-queue__keys {
+  display: none;
+}
 /* 悬停只给真有悬停的指针设备：触屏上点一下会留下「卡住的悬停」 */
 @media (hover: hover) and (pointer: fine) {
   .cockpit-queue__row:not([data-selected]):hover {
@@ -425,6 +527,105 @@
     text-decoration: underline;
     text-decoration-thickness: 1px;
     text-underline-offset: 3px;
+  }
+  .cockpit-queue__keys {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-1) var(--space-6);
+    padding: 0 var(--space-3) var(--space-3);
+    font-family: var(--font-mono);
+    font-size: var(--type-caption);
+    line-height: 1.5;
+    color: var(--ink-2);
+  }
+  .cockpit-queue__keys ul {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-1) var(--space-4);
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+  .cockpit-queue__keys li {
+    display: flex;
+    align-items: baseline;
+    gap: var(--space-1);
+  }
+}
+
+/*
+ * ---------- 队列的动效（T-197；设计规范第 11 节）----------
+ * 新来的行自上方 8px 淡入 200ms；按了「稍后」的行上移 8px 淡出 160ms 再挪走；巨号换了数滚动 200ms。
+ * J／K 换选中行不做动效：键盘上按得快，动效只会拖慢。
+ * 进场用 @starting-style：节点第一次出现时从它起步，不用脚本先藏再显。只有带 data-live 的列表才进场——
+ * 首屏和手动刷新后重新列出来的行不算新来的（QueueCell 在三路都读完之后才打上 data-live）。
+ * 系统要求减少动效时位移全关，只留透明度。
+ */
+
+.cockpit-queue {
+  --cockpit-enter: 200ms;
+  --cockpit-leave: 160ms;
+  --cockpit-ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+}
+@keyframes cockpit-row-leave {
+  to {
+    opacity: 0;
+    transform: translateY(-8px);
+  }
+}
+@keyframes cockpit-row-fade {
+  to {
+    opacity: 0;
+  }
+}
+@media (prefers-reduced-motion: no-preference) {
+  .cockpit-queue__list[data-live] > .cockpit-queue__row {
+    transition:
+      opacity var(--cockpit-enter) var(--cockpit-ease-out),
+      transform var(--cockpit-enter) var(--cockpit-ease-out);
+  }
+  @starting-style {
+    .cockpit-queue__list[data-live] > .cockpit-queue__row {
+      opacity: 0;
+      transform: translateY(-8px);
+    }
+  }
+  .cockpit-queue__row[data-leave] {
+    animation: cockpit-row-leave var(--cockpit-leave) var(--cockpit-ease-out)
+      forwards;
+  }
+  .cockpit-queue__count-value[data-roll] {
+    transition:
+      opacity var(--cockpit-enter) var(--cockpit-ease-out),
+      transform var(--cockpit-enter) var(--cockpit-ease-out);
+  }
+  /* 数变大从下面滚上来，变小从上面滚下来，和里程表一个方向 */
+  @starting-style {
+    .cockpit-queue__count-value[data-roll='up'] {
+      opacity: 0;
+      transform: translateY(0.16em);
+    }
+    .cockpit-queue__count-value[data-roll='down'] {
+      opacity: 0;
+      transform: translateY(-0.16em);
+    }
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .cockpit-queue__list[data-live] > .cockpit-queue__row,
+  .cockpit-queue__count-value[data-roll] {
+    transition: opacity var(--cockpit-enter) ease-out;
+  }
+  @starting-style {
+    .cockpit-queue__list[data-live] > .cockpit-queue__row,
+    .cockpit-queue__count-value[data-roll] {
+      opacity: 0;
+    }
+  }
+  .cockpit-queue__row[data-leave] {
+    animation: cockpit-row-fade var(--cockpit-leave) ease-out forwards;
   }
 }
 

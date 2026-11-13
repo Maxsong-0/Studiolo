@@ -94,7 +94,9 @@ const queue = () => screen.getByRole('region', { name: '等你处理' });
 const crew = () => screen.getByRole('complementary', { name: '谁在干活' });
 const sinceCell = () => screen.getByRole('region', { name: '自上次查看以来' });
 const readings = () => screen.getByRole('region', { name: '系统读数' });
-const rows = () => within(queue()).getAllByRole('listitem');
+/** 队列的行：按类名取，选中行里就地细节的小清单不算。 */
+const rows = () =>
+  Array.from(queue().querySelectorAll<HTMLElement>('.cockpit-queue__row'));
 /** 巨号：对读屏隐藏，读屏读的是旁边二级标题里的数。 */
 const count = () =>
   queue().querySelector('.cockpit-queue__count') as HTMLElement;

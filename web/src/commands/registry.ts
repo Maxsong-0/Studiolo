@@ -1,6 +1,6 @@
 /**
  * ⌘K 动作面板的命令清单（设计规范第 8 节）。只收录接口真实支持的动作：
- * 切换视图与协作子标签、打开项目与项目来源、刷新快照、内存草稿、最近删除、状态详情、
+ * 切换视图与协作子标签、打开项目与项目来源、刷新快照、内存草稿、最近删除、状态详情、键盘快捷键一览、
  * 跳到黑板任务、执行候选、策略待处理队列、新建规则；文档组来自全文搜索。
  * 不可逆或需二次认证的动作（发布/回滚策略、删除文件、落地候选产物）只做「执行预览」：
  * 回车只把人带到拥有该动作的界面，面板自己绝不调接口，确认仍在原界面完成。
@@ -48,6 +48,8 @@ export interface CommandContext {
   openDrafts(): void;
   openRecentlyDeleted(): void;
   openStatus(): void;
+  /** 打开快捷键一览（T-197）：单键快捷键关掉之后，这里是把它开回来的入口。 */
+  openShortcuts(): void;
   /** 跳转之后尝试把焦点放到目标控件上；找不到就不动。 */
   focusTarget(target: CommandTarget): void;
 }
@@ -228,6 +230,22 @@ function actionCommands(ctx: CommandContext): Command[] {
       hint: '重新读取工作台',
       keywords: ['刷新', '重新读取', '工作台', 'refresh', 'reload'],
       run: (context) => context.refreshSnapshot(),
+    },
+    {
+      id: 'action:shortcuts',
+      group: 'action',
+      label: '查看键盘快捷键',
+      hint: '全部键位，和单键快捷键的开关',
+      keywords: [
+        '快捷键',
+        '键盘',
+        '键位',
+        '热键',
+        'shortcuts',
+        'keyboard',
+        'keys',
+      ],
+      run: (context) => context.openShortcuts(),
     },
   ];
   if (ctx.draftCount > 0)

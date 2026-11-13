@@ -21,6 +21,8 @@ import { CommandEntry } from './shell/CommandEntry';
 import { StatusCapsule } from './shell/StatusCapsule';
 import { useHealthStatus } from './shell/useHealthStatus';
 import { collabPanel } from './collab/panels';
+import { KeyboardSheet } from './keys/KeyboardSheet';
+import { KeyScopeContext, useGlobalKeys } from './keys/useGlobalKeys';
 import {
   AutoRefreshContext,
   useAutoRefresh,
@@ -44,6 +46,7 @@ export function App({ account }: { account?: ReactNode }) {
   const [source, setSource] = useState<SourceLocation | null>(null);
   const [draftsOpen, setDraftsOpen] = useState(false);
   const [statusOpen, setStatusOpen] = useState(false);
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
   // 顶栏「最近删除」入口：出现与否由文件操作接口决定，⌘K 面板据此收录「打开最近删除」。
   const [fileOperations, setFileOperations] =
     useState<FileOperationsEntry | null>(null);
@@ -137,6 +140,12 @@ export function App({ account }: { account?: ReactNode }) {
     window.scrollTo({ top: 0, left: 0, behavior: 'instant' });
   }
 
+  // 单键快捷键（T-197）：G 再按字母和点顶栏导航一样；「?」打开一览。各视图自己的键位经它登记（驾驶舱队列的 J／K／Enter／H）。
+  const keys = useGlobalKeys({
+    onGo: navigate,
+    onShowSheet: () => setShortcutsOpen(true),
+  });
+
   // ⌘K 的「查看全部项目」：先清掉项目视图上次留下的筛选，打开后看到的才是全部（T-117）。
   function viewAllProjects() {
     setQuery('');
@@ -163,6 +172,7 @@ export function App({ account }: { account?: ReactNode }) {
     openDrafts: () => setDraftsOpen(true),
     openRecentlyDeleted: () => fileOperations?.open(),
     openStatus: () => setStatusOpen(true),
+    openShortcuts: () => setShortcutsOpen(true),
     focusTarget: (target) => {
       focusCommandTarget(target);
     },
@@ -323,13 +333,19 @@ export function App({ account }: { account?: ReactNode }) {
           }}
         />
       ) : null}
+      {shortcutsOpen ? (
+        <KeyboardSheet
+          preference={keys.preference}
+          onClose={() => setShortcutsOpen(false)}
+        />
+      ) : null}
     </AppShell>
   );
   // 调度器交给下面：驾驶舱登记自己的健康读取，「读于 N 秒前」订它的状态（T-196）。
   // 外壳先放进变量再包一层，免得整段 JSX 为了多一层标签全部重排缩进。
   return (
     <AutoRefreshContext.Provider value={auto}>
-      {shell}
+      <KeyScopeContext.Provider value={keys}>{shell}</KeyScopeContext.Provider>
     </AutoRefreshContext.Provider>
   );
 }
