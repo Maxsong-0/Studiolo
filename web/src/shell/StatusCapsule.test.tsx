@@ -379,12 +379,12 @@ describe('顶栏状态胶囊：会话一项', () => {
     render(<Harness />);
     await user.click(capsule());
     expect(
-      within(popover()).getByText('从顶栏账户入口打开'),
+      within(popover()).getByText('从顶栏「更多」里的账户入口打开'),
     ).toBeInTheDocument();
     // 读屏聚焦带路按钮时一并读到去向说明。
     expect(
       screen.getByRole('button', { name: '前往账户与会话' }),
-    ).toHaveAccessibleDescription('从顶栏账户入口打开');
+    ).toHaveAccessibleDescription('从顶栏「更多」里的账户入口打开');
     await user.click(screen.getByRole('button', { name: '前往账户与会话' }));
     expect(screen.getByRole('button', { name: '账户与会话' })).toHaveFocus();
     expect(capsule()).toHaveAttribute('aria-expanded', 'false');

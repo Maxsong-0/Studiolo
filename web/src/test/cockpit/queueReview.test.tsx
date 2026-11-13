@@ -782,3 +782,91 @@ describe('键位提示', () => {
     ]);
   });
 });
+
+describe('手机初始选择与审批离场（T-199）', () => {
+  function viewport(narrow: boolean) {
+    vi.stubGlobal('matchMedia', (media: string) => ({
+      media,
+      matches: media === '(width < 760px)' && narrow,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    }));
+  }
+
+  it('手机缺省不展开，点标题才展开；桌面仍选第一行', () => {
+    viewport(true);
+    renderQueue({ drafts: [PROPOSAL, CODEX] });
+    expect(selectedIndex()).toBe(-1);
+    fireEvent.click(select(0));
+    expect(selectedIndex()).toBe(0);
+  });
+
+  it('不支持查询时不把无效 matches 当成手机', () => {
+    vi.stubGlobal('matchMedia', () => ({ media: 'not all', matches: true }));
+    renderQueue({ drafts: [PROPOSAL] });
+    expect(selectedIndex()).toBe(0);
+  });
+
+  it.each(['确认退回', '确认发布'])(
+    '%s 后保留同一个节点走离场，焦点立即交接，子元素动画不提前删除',
+    (name) => {
+      viewport(false);
+      const view = renderQueue({
+        drafts: [PROPOSAL, CODEX],
+        actions: stubActions({
+          preview:
+            name === '确认退回'
+              ? withdrawOpen(PROPOSAL)
+              : publishOpen(PROPOSAL),
+          confirmPreview: () =>
+            view.rerender({
+              drafts: [PROPOSAL, CODEX],
+              actions: stubActions({ busy: true }),
+            }),
+        }),
+      });
+      const original = rows()[0];
+      fireEvent.click(within(previewBox()!).getByRole('button', { name }));
+      view.rerender({ drafts: [CODEX] });
+      expect(rows()[0]).toBe(original);
+      expect(original).toHaveAttribute('data-leave', 'true');
+      expect(original).toHaveAttribute('inert');
+      expect(original).toHaveAttribute('aria-hidden', 'true');
+      expect(original).not.toHaveAttribute('data-selected');
+      expect(original.querySelector('.cockpit-queue__detail')).toBeNull();
+      expect(primary()).toHaveFocus();
+      fireEvent.animationEnd(original.querySelector('button')!);
+      expect(original).toBeInTheDocument();
+      fireEvent.animationEnd(original);
+      expect(original).not.toBeInTheDocument();
+      expect(primary()).toHaveFocus();
+    },
+  );
+
+  it('没有动画结束事件也会撤影子；没有本地审批的远端移除不留影子', () => {
+    viewport(false);
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const view = renderQueue({
+      drafts: [PROPOSAL, CODEX],
+      actions: stubActions({
+        preview: withdrawOpen(PROPOSAL),
+        confirmPreview: () =>
+          view.rerender({
+            drafts: [PROPOSAL, CODEX],
+            actions: stubActions({ busy: true }),
+          }),
+      }),
+    });
+    fireEvent.click(
+      within(previewBox()!).getByRole('button', { name: '确认退回' }),
+    );
+    view.rerender({ drafts: [CODEX] });
+    expect(queue().querySelector('[inert]')).not.toBeNull();
+    act(() => {
+      vi.advanceTimersByTime(400);
+    });
+    expect(queue().querySelector('[inert]')).toBeNull();
+    view.rerender({ drafts: [] });
+    expect(queue().querySelector('[inert]')).toBeNull();
+  });
+});

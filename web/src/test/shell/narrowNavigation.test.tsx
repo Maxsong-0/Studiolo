@@ -114,20 +114,27 @@ it('窄屏（<760px）导航固定在底部成六格，每格至少 44px 高', (
 it('当前库名任何宽度都在：窄屏与中等宽度的顶栏网格都给它留了格，样式表里没有藏掉它的规则', () => {
   const narrow = block(shellCss, '@media (width < 760px)');
   expect(declarations(narrow, '.shell-top')).toContain(
-    "'brand library status command'",
+    "'brand library status command more'",
   );
   // 360px 以下第一行放不下：库名挪到黑线下那一行的左端，仍然在
   const tiny = block(shellCss, '@media (width < 360px)');
   expect(declarations(tiny, '.shell-top')).toContain(
-    "'library library tools tools'",
+    "'library library library library library'",
   );
-  const medium = block(shellCss, '@media (760px <= width < 960px)');
-  expect(declarations(medium, '.shell-top')).toContain(
-    "'brand library nav . status command'",
-  );
+  expect(shellCss).not.toContain('@media (760px <= width < 960px)');
   expect(shellCss).not.toMatch(/\.shell-library\s*\{[^}]*display:\s*none/);
   const library = declarations(shellCss, '.shell-library');
   expect(library).toContain('max-width: 20ch;');
   expect(library).toContain('text-overflow: ellipsis;');
   expect(library).toContain('font-size: var(--type-label);');
+});
+
+it('手机底部只给驾驶舱恢复计数，不给文档格恢复', () => {
+  const narrow = block(shellCss, '@media (width < 760px)');
+  expect(narrow).toContain(
+    ".shell-nav-item[data-view='cockpit'] .shell-nav-count",
+  );
+  expect(narrow).not.toContain(
+    ".shell-nav-item[data-view='documents'] .shell-nav-count",
+  );
 });

@@ -11,6 +11,21 @@ import { describe, expect, it } from 'vitest';
 const SRC = join(import.meta.dirname, '../..');
 const AA = 4.5;
 
+it('手动深色与系统深色定义完全相同，高对比度仍可覆盖它们', () => {
+  const source = stylesheet('styles/tokens.css');
+  const system = block(
+    block(source, '@media (prefers-color-scheme: dark)'),
+    ':root',
+  );
+  const manual = block(source, ":root:where([data-theme='dark'])");
+  expect(manual.replace(/\s+/g, ' ').trim()).toBe(
+    system.replace(/\s+/g, ' ').trim(),
+  );
+  expect(source.indexOf('@media (prefers-contrast: more)')).toBeGreaterThan(
+    source.indexOf(":root:where([data-theme='dark'])"),
+  );
+});
+
 type Theme = '浅色' | '深色';
 
 /** 读 web/src 下的样式表并去掉注释：注释里提到的令牌与选择器不算数。 */

@@ -48,7 +48,7 @@ export function App({ account }: { account?: ReactNode }) {
   const [draftsOpen, setDraftsOpen] = useState(false);
   const [statusOpen, setStatusOpen] = useState(false);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
-  // 顶栏「最近删除」入口：出现与否由文件操作接口决定，⌘K 面板据此收录「打开最近删除」。
+  // 「更多」菜单里的「最近删除」入口：出现与否由文件操作接口决定，⌘K 面板据此收录「打开最近删除」。
   const [fileOperations, setFileOperations] =
     useState<FileOperationsEntry | null>(null);
   const { count: draftCount } = useDraftCount();
@@ -196,6 +196,15 @@ export function App({ account }: { account?: ReactNode }) {
     />
   );
 
+  // 「更多」上的标记：这两个入口原来常驻顶栏，自己就是提醒；收进菜单之后由这一句顶上（T-199）。
+  const toolsNote =
+    [
+      fileOperations?.pending ? '文件操作待核对' : null,
+      draftCount ? `草稿 ${draftCount}` : null,
+    ]
+      .filter((note) => note !== null)
+      .join('、') || null;
+
   const shell = (
     <AppShell
       view={view}
@@ -227,6 +236,7 @@ export function App({ account }: { account?: ReactNode }) {
       command={
         <CommandEntry onOpen={palette.show} disabled={!data || loading} />
       }
+      toolsNote={toolsNote}
       tools={
         <>
           {account}
