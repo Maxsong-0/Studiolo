@@ -10,7 +10,7 @@ mod age;
 mod watermark;
 
 pub use age::{AgeUnknownReason, InstantMillis, RecoveryPointAge, recovery_point_age};
-pub use watermark::OwnerWatermark;
+pub use watermark::{AuditChainCutoff, OwnerWatermark};
 
 use serde::{Deserialize, Serialize};
 

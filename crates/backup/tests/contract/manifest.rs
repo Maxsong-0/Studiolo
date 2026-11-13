@@ -2,6 +2,7 @@
 //!
 //! 本文件管各 owner 水位（含 M4 策略库）；固定事实与持久清单的 schema／往返在 `facts`。
 
+mod bindings;
 mod facts;
 
 use super::support::{DIGEST, manifest_inputs, ticket};

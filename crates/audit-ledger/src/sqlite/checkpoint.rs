@@ -123,6 +123,7 @@ fn snapshot(db: &rusqlite::Connection) -> Result<OwnerWatermark, Error> {
     Ok(OwnerWatermark::Audit {
         last_offset: anchor.last_offset,
         last_hash: anchor.last_hash.to_string(),
+        agent_ledger: None,
     })
 }
 fn invalid(_: AuditError) -> Error {
