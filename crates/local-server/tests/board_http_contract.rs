@@ -4,6 +4,8 @@
 mod fixture;
 #[path = "board_http/identity_outage.rs"]
 mod identity_outage;
+#[path = "board_http/replay_not_found.rs"]
+mod replay_not_found;
 #[allow(dead_code)]
 #[path = "sessions/support.rs"]
 mod support;
