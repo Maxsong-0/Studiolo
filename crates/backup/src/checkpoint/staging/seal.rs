@@ -1,0 +1,250 @@
+//! 清单与视图的摘要一并绑定；最终目录仅接受登记过的四个文件/目录。
+mod metadata;
+use super::catalog::CatalogEntry;
+use super::{
+    Directory, Result, SourceCatalog, StagingArea, StagingError, check_deadline, digest, tree,
+};
+use crate::checkpoint::{
+    manifest::{CheckpointManifest, ManifestInputs},
+    types::{
+        OwnerRoster, SealTicket, StagingBudget, StagingMaterialization, TransferSource,
+        TransferSourceKind,
+    },
+};
+use metadata::{read, write};
+use serde::{Deserialize, Serialize};
+use std::{
+    path::{Path, PathBuf},
+    time::Instant,
+};
+use studiolo_core::checkpoint::{CheckpointId, InstantMillis, SealedOwnerCheckpoint};
+
+/// 真实 owner 导出后的水位及版本化部署事实。
+pub struct SealInputs {
+    /// 已装配 owner 的完整登记。
+    pub roster: OwnerRoster,
+    /// 已验证的独立导出票据。
+    pub owners: Vec<SealedOwnerCheckpoint>,
+    /// 同一窗口逐条核验的审计证据与部署清单。
+    pub manifest: ManifestInputs,
+    /// 在冻结开始时记录的内容截止时刻。
+    pub content_cutoff: InstantMillis,
+    /// 专用传输副本的销毁期限。
+    pub expires_at: InstantMillis,
+    /// 当前可信时钟；不晚于 expires_at。
+    pub now: InstantMillis,
+}
+/// worker 请求所绑定的具体封存，不通过扫描目录猜「最新」尝试。
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SealedReference {
+    /// 原 checkpoint 身份。
+    pub checkpoint_id: CheckpointId,
+    /// seal.json 的真实摘要；不能只信同目录里自报的摘要。
+    pub seal_sha256: String,
+}
+/// 经实际重开复验后的封存；字段不可由调用方填布尔值伪造。
+pub struct SealedCheckpoint {
+    reference: SealedReference,
+    ticket: SealTicket,
+    manifest: CheckpointManifest,
+}
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DiskSeal {
+    schema: u32,
+    ticket: SealTicket,
+    manifest_sha256: String,
+    inclusion_sha256: String,
+}
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct InclusionDocument {
+    schema: u32,
+    checkpoint_id: CheckpointId,
+    entries: Vec<CatalogEntry>,
+    view: tree::TreeProof,
+}
+impl StagingArea {
+    /// 必须在 FrozenOwners 仍活着时调用；最终目录与本地 manifest 一次发布后才返还。
+    pub fn seal(mut self, catalog: &SourceCatalog, inputs: SealInputs) -> Result<SealedCheckpoint> {
+        self.check()?;
+        if inputs.content_cutoff > inputs.now || inputs.now >= inputs.expires_at {
+            return Err(StagingError::Expired);
+        }
+        self.deadline =
+            expiry_deadline(self.deadline, Instant::now(), inputs.now, inputs.expires_at)?;
+        let materialized = tree::materialize(
+            &self.exports,
+            Some(&self.data),
+            catalog,
+            inputs.now,
+            self.deadline,
+        )?;
+        if materialized.catalog.iter().any(|e| {
+            e.disposition != crate::checkpoint::inclusion::Disposition::NonContentTombstone
+                && e.source
+                    .expires_at
+                    .is_some_and(|expiry| inputs.expires_at > expiry)
+        }) {
+            return Err(StagingError::Expired);
+        }
+        let checked = tree::materialize(&self.exports, None, catalog, inputs.now, self.deadline)?;
+        if checked.source != materialized.source
+            || checked.catalog != materialized.catalog
+            || tree::verify(&self.data, self.deadline)? != materialized.view
+        {
+            return Err(StagingError::Changed);
+        }
+        self.check()?;
+        let final_root = self.parent_path.join(&self.final_name);
+        let ticket = SealTicket {
+            checkpoint_id: self.checkpoint_id.clone(),
+            roster: inputs.roster,
+            owners: inputs.owners,
+            transfer_source: TransferSource {
+                root: final_root.clone(),
+                kind: TransferSourceKind::FilteredStaging,
+                materialization: StagingMaterialization::StreamedCopy,
+                expires_at: inputs.expires_at,
+                budget: StagingBudget::FIXED,
+            },
+            content_cutoff: inputs.content_cutoff,
+        };
+        let manifest = CheckpointManifest::build(&ticket, inputs.manifest)
+            .map_err(|_| StagingError::Manifest)?;
+        let inclusion = InclusionDocument {
+            schema: 1,
+            checkpoint_id: self.checkpoint_id.clone(),
+            entries: materialized.catalog,
+            view: materialized.view,
+        };
+        let manifest_sha256 = write(&self.pending, "manifest.json", &manifest, self.deadline)?;
+        let inclusion_sha256 = write(&self.pending, "inclusion.json", &inclusion, self.deadline)?;
+        let seal = DiskSeal {
+            schema: 1,
+            ticket,
+            manifest_sha256,
+            inclusion_sha256,
+        };
+        let seal_sha256 = write(&self.pending, "seal.json", &seal, self.deadline)?;
+        self.pending.readonly()?;
+        self.check()?;
+        // 必须先销毁含排除 raw 的原始导出；失败就没有任何可交给 worker 的引用。
+        self.exports.discard(&self.parent, &self.export_name)?;
+        self.parent.check_path(&self.parent_path)?;
+        check_deadline(self.deadline)?;
+        self.parent.publish(&self.pending_name, &self.final_name)?;
+        self.pending.check_path(&final_root)?;
+        let reference = SealedReference {
+            checkpoint_id: self.checkpoint_id.clone(),
+            seal_sha256,
+        };
+        SealedCheckpoint::open(&self.parent_path, &reference, inputs.now, self.deadline)
+    }
+}
+impl SealedCheckpoint {
+    /// worker/restore 重开时重新计算每一个字节；外部请求只传封存引用，不传路径或票据。
+    pub fn open(
+        parent: &Path,
+        reference: &SealedReference,
+        now: InstantMillis,
+        deadline: Instant,
+    ) -> Result<Self> {
+        let started = Instant::now();
+        check_deadline(deadline)?;
+        let root_path = Self::root_path(parent, &reference.checkpoint_id);
+        let directory = Directory::open(&root_path, true)?;
+        directory.require_readonly()?;
+        if directory.names(5)? != ["data", "inclusion.json", "manifest.json", "seal.json"] {
+            return Err(StagingError::Manifest);
+        }
+        let (seal, hash): (DiskSeal, _) = read(&directory, "seal.json", deadline)?;
+        if hash != reference.seal_sha256
+            || seal.schema != 1
+            || seal.ticket.checkpoint_id != reference.checkpoint_id
+            || seal.ticket.transfer_source.root != root_path
+            || now >= seal.ticket.transfer_source.expires_at
+            || seal.ticket.content_cutoff > now
+        {
+            return Err(StagingError::Manifest);
+        }
+        let deadline = expiry_deadline(
+            deadline,
+            started,
+            now,
+            seal.ticket.transfer_source.expires_at,
+        )?;
+        let (manifest, hash): (CheckpointManifest, _) =
+            read(&directory, "manifest.json", deadline)?;
+        if hash != seal.manifest_sha256 {
+            return Err(StagingError::Manifest);
+        }
+        let reconstructed = CheckpointManifest::build(
+            &seal.ticket,
+            ManifestInputs {
+                application_packages: manifest.application_packages.clone(),
+                cli_packages: manifest.cli_packages.clone(),
+                deployment: manifest.deployment.clone(),
+                secret_references: manifest.secret_references.clone(),
+                audit_coverage: manifest.audit_coverage,
+            },
+        )
+        .map_err(|_| StagingError::Manifest)?;
+        if reconstructed != manifest {
+            return Err(StagingError::Manifest);
+        }
+        let (inclusion, hash): (InclusionDocument, _) =
+            read(&directory, "inclusion.json", deadline)?;
+        if hash != seal.inclusion_sha256
+            || inclusion.schema != 1
+            || inclusion.checkpoint_id != reference.checkpoint_id
+            || tree::verify(&directory.child("data")?, deadline)? != inclusion.view
+        {
+            return Err(StagingError::Changed);
+        }
+        directory.check_path(&root_path)?;
+        check_deadline(deadline)?;
+        Ok(Self {
+            reference: reference.clone(),
+            ticket: seal.ticket,
+            manifest,
+        })
+    }
+    /// 已验证的原封存引用。
+    #[must_use]
+    pub fn reference(&self) -> &SealedReference {
+        &self.reference
+    }
+    /// 已验证的跨 owner 票据。
+    #[must_use]
+    pub fn ticket(&self) -> &SealTicket {
+        &self.ticket
+    }
+    /// 已验证的本地清单；远端最终提交是独立的后续步骤。
+    #[must_use]
+    pub fn manifest(&self) -> &CheckpointManifest {
+        &self.manifest
+    }
+    /// 固定名称只取 checkpoint ID 的摘要，不允许 ID 注入路径。
+    #[must_use]
+    pub fn root_path(parent: &Path, id: &CheckpointId) -> PathBuf {
+        parent.join(format!("sealed-{}", digest(id.as_str().as_bytes())))
+    }
+}
+fn expiry_deadline(
+    deadline: Instant,
+    started: Instant,
+    now: InstantMillis,
+    expiry: InstantMillis,
+) -> Result<Instant> {
+    let remaining = expiry
+        .millis()
+        .checked_sub(now.millis())
+        .filter(|v| *v > 0)
+        .ok_or(StagingError::Expired)?;
+    let expiry = started
+        .checked_add(std::time::Duration::from_millis(remaining.unsigned_abs()))
+        .ok_or(StagingError::Expired)?;
+    Ok(deadline.min(expiry))
+}

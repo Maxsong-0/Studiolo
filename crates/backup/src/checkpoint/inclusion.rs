@@ -49,7 +49,8 @@ impl SourceCategory {
 }
 
 /// 一条来源登记。任一字段缺失都会导致整批拒绝。
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct SourceRecord {
     /// 逻辑路径。
     pub path: VaultPath,

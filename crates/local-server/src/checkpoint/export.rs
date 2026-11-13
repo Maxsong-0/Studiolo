@@ -66,6 +66,60 @@ pub struct CheckpointExports {
     pub audit_coverage: AuditCoverageProof,
 }
 impl FrozenOwners {
+    /// 保留全部真实冻结屏障直至过滤视图与本地清单原子封存及重开复验结束。
+    pub fn seal(
+        &self,
+        area: studiolo_backup::checkpoint::staging::StagingArea,
+        catalog: impl FnOnce(
+            &Path,
+            &CheckpointExports,
+        ) -> std::result::Result<
+            studiolo_backup::checkpoint::staging::SourceCatalog,
+            studiolo_backup::checkpoint::staging::StagingError,
+        >,
+        mut manifest: studiolo_backup::checkpoint::manifest::ManifestInputs,
+        times: CheckpointTimes,
+    ) -> std::result::Result<
+        studiolo_backup::checkpoint::staging::SealedCheckpoint,
+        studiolo_backup::checkpoint::staging::StagingError,
+    > {
+        use studiolo_backup::checkpoint::staging::{SealInputs, StagingError};
+        let started = Instant::now();
+        if self.paths.directories() != OwnerExportPaths::under(area.export_root()).directories()
+            || area.deadline() > self.deadline
+        {
+            return Err(StagingError::UnsafeRoot);
+        }
+        let exports = self.export().map_err(|_| StagingError::Unavailable)?;
+        // 只在真实副本已经形成、原窗口仍冻结时计算当前登记；不得按路径补默认标签。
+        let catalog = catalog(area.export_root(), &exports)?;
+        let CheckpointExports {
+            roster,
+            owners,
+            audit_coverage,
+        } = exports;
+        manifest.audit_coverage = audit_coverage;
+        let elapsed =
+            i64::try_from(started.elapsed().as_millis()).map_err(|_| StagingError::Expired)?;
+        let now = times
+            .now
+            .millis()
+            .checked_add(elapsed)
+            .ok_or(StagingError::Expired)?;
+        let sealed = area.seal(
+            &catalog,
+            SealInputs {
+                roster,
+                owners,
+                manifest,
+                content_cutoff: times.content_cutoff,
+                expires_at: times.expires_at,
+                now: studiolo_core::checkpoint::InstantMillis::from_millis(now),
+            },
+        )?;
+        check_deadline(self.deadline, Owner::Audit).map_err(|_| StagingError::Expired)?;
+        Ok(sealed)
+    }
     /// 仍持有全部屏障与原租约，逐项导出并汇总两个独立审计截止点。
     pub fn export(&self) -> Result<CheckpointExports> {
         let coverage = self.coverage.ok_or_else(|| unavailable(Owner::Audit))?;
@@ -160,4 +214,13 @@ impl FrozenOwners {
             audit_coverage: coverage,
         })
     }
+}
+/// 同一次冻结/封存使用的可信墙钟时刻，与冻结 Instant 截止时间职责不同。
+pub struct CheckpointTimes {
+    /// 冻结开始时的内容截止时刻。
+    pub content_cutoff: studiolo_core::checkpoint::InstantMillis,
+    /// 最终传输源的最迟销毁时刻。
+    pub expires_at: studiolo_core::checkpoint::InstantMillis,
+    /// 过滤计划判定保留期时的可信当前时刻。
+    pub now: studiolo_core::checkpoint::InstantMillis,
 }

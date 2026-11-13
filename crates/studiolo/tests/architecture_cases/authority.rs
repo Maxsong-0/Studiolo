@@ -5,6 +5,31 @@ use crate::support::{
 use std::{fs, path::Path};
 
 #[test]
+fn checkpoint_staging_keeps_creation_nofollow_and_atomic_no_replace_closed() {
+    for file in ["io.rs", "io/files.rs"] {
+        let path = std::path::PathBuf::from("crates/backup/src/checkpoint/staging").join(file);
+        let source = fs::read_to_string(workspace_root().join(&path)).unwrap();
+        assert!(
+            source_violations("studiolo-backup", &path, &source).is_empty(),
+            "{file}"
+        );
+        for changed in [
+            source.replacen("OFlags::NOFOLLOW", "OFlags::empty()", 1),
+            format!("{source}\nstd::fs::write(other, bytes)?;"),
+            format!("{source}\nfs::open(other, OFlags::WRONLY, Mode::empty())?;"),
+        ] {
+            assert!(
+                !source_violations("studiolo-backup", &path, &changed).is_empty(),
+                "{file}"
+            );
+        }
+        assert!(
+            !source_violations("studiolo-backup", Path::new("src/other.rs"), &source).is_empty()
+        );
+    }
+}
+
+#[test]
 fn authority_scanner_detects_sneaky_source_fixture() {
     let fixture = r#"
         use cap_std::ambient_authority;

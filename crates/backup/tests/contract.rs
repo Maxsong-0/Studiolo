@@ -9,6 +9,8 @@ mod contract {
     mod recovery_kit;
     mod recovery_point;
     mod restic;
+    #[cfg(unix)]
+    mod staging;
     mod state_machine;
     mod storage;
     mod support;

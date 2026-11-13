@@ -29,6 +29,7 @@ use studiolo_policy::PolicyStore;
 use studiolo_supply::AgentStore;
 
 mod fixture;
+mod seal;
 use fixture::Setup;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

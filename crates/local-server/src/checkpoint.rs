@@ -6,7 +6,7 @@ use crate::{
     policy_checkpoint::PolicyParticipant,
     sync_plane::{SyncPlane, checkpoint::FrozenSyncPlane},
 };
-pub use export::{CheckpointExports, OwnerExportPaths};
+pub use export::{CheckpointExports, CheckpointTimes, OwnerExportPaths};
 use std::{
     sync::Arc,
     time::{Duration, Instant},
