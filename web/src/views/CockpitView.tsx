@@ -12,6 +12,7 @@ import { QueueCell } from '../cockpit/QueueCell';
 import { ReadingsCell } from '../cockpit/ReadingsCell';
 import { SinceCell } from '../cockpit/SinceCell';
 import { seenTracker, type SeenTracker } from '../cockpit/lastSeen';
+import type { LaterStore } from '../cockpit/later';
 import { overviewNow } from '../cockpit/model';
 import { planPending } from '../cockpit/pending';
 import { snapshotLine, systemReadings } from '../cockpit/readings';
@@ -47,6 +48,8 @@ const RULER = Array.from({ length: 12 }, (_, index) =>
  *
  * 开着时每 20 秒安静重读一轮（T-196，live/autoRefresh.ts）：不闪「读取中」，没读成就留着上一次的数，
  * 「系统读数」标题下那一行写着这些数是多久以前读的。
+ *
+ * 队列能用键盘走（T-197）：J／K 上下选、Enter 去处理、H 稍后；键位由队列自己登记给全站监听（keys/useGlobalKeys.ts）。
  */
 export function CockpitView({
   workbench,
@@ -57,6 +60,7 @@ export function CockpitView({
   onOpen,
   onShowDiagnostics,
   seen = seenTracker(),
+  later,
 }: {
   /** 整份工作台快照（待办、新鲜度、计数、代次）。 */
   workbench: Workbench;
@@ -72,6 +76,8 @@ export function CockpitView({
   onShowDiagnostics: () => void;
   /** 「上次查看」的记号；缺省用全站那一个，测试里换成自己的。 */
   seen?: SeenTracker;
+  /** 队列里「稍后」的记号；缺省用全站那一份，测试里换成自己的。 */
+  later?: LaterStore;
 }) {
   const { health, reloadHealth, revalidateHealth } = useCockpitReads();
   // 驾驶舱开着时，本机健康跟着自动刷新一起安静重读，排在 App 那三路后面（T-196）。
@@ -165,6 +171,7 @@ export function CockpitView({
             onOpenTask={openTask}
             onOpenPolicy={openPolicyQueue}
             onRetryPolicy={policy.reload}
+            later={later}
           />
           <CrewCell
             state={board}

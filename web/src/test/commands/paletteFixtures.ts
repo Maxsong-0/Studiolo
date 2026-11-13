@@ -14,6 +14,7 @@ export function paletteContext(overrides: Partial<CommandContext> = {}) {
     openDrafts: vi.fn<CommandContext['openDrafts']>(),
     openRecentlyDeleted: vi.fn<CommandContext['openRecentlyDeleted']>(),
     openStatus: vi.fn<CommandContext['openStatus']>(),
+    openShortcuts: vi.fn<CommandContext['openShortcuts']>(),
     focusTarget: vi.fn<CommandContext['focusTarget']>(),
   };
   const context: CommandContext = {

@@ -1,12 +1,31 @@
-import { useId, useState, type ReactNode } from 'react';
+import {
+  useContext,
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useReducer,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type AnimationEvent,
+  type ReactNode,
+} from 'react';
+import { QUEUE_KEYS } from '../keys/shortcuts';
+import { KeyScopeContext, useKeyBindings } from '../keys/useGlobalKeys';
 import type { OpenSource } from '../types';
-import { Button } from '../ui';
+import { Button, KeyHint } from '../ui';
 import { cssVars } from '../ui/dom';
+import { EntryDetail } from './EntryDetail';
+import { laterStore, splitLater, type LaterStore } from './later';
 import type { OverviewState, PolicyPendingState } from './model';
 import { entryKey, type PendingEntry, type PendingPlan } from './pending';
 import { queueText } from './queueText';
 import { WAIT_MARKS, waitFraction, waitLabel } from './wait';
 import '../styles/cockpit.css';
+import '../styles/keys.css';
+
+/** 「稍后」的行淡出之后才挪走；动画没跑起来（样式没载入、行被换掉）时最多等这么久。 */
+const LEAVE_FALLBACK_MS = 400;
 
 /**
  * 「等了多久」的图例：一条刻度，三道线是 10 分、1 时、1 天。
@@ -66,23 +85,42 @@ function Waited({ ms }: { ms: number | null }) {
 function Row({
   entry,
   selected,
+  later,
+  leaving,
   labels,
   onToggle,
   onOpen,
+  onLater,
+  onLeft,
 }: {
   entry: PendingEntry;
   selected: boolean;
+  /** 这一行在「稍后再看」里。 */
+  later: boolean;
+  /** 刚按了「稍后」，正在淡出。 */
+  leaving: boolean;
   labels: ReadonlyMap<string, string> | undefined;
   onToggle: () => void;
   onOpen: () => void;
+  /** 放到「稍后」，或者从「稍后再看」放回队列。 */
+  onLater: () => void;
+  /** 淡出走完了。 */
+  onLeft: () => void;
 }) {
   const detailId = useId();
   const text = queueText(entry, labels);
+  // 只认这一行自己的淡出：行里别的东西的动画结束也会冒泡上来。
+  const left = (event: AnimationEvent<HTMLLIElement>) => {
+    if (event.target === event.currentTarget) onLeft();
+  };
   return (
     <li
       className="cockpit-queue__row"
       data-source={entry.source}
       data-selected={selected ? 'true' : undefined}
+      data-later={later ? 'true' : undefined}
+      data-leave={leaving ? 'true' : undefined}
+      onAnimationEnd={leaving ? left : undefined}
     >
       <div className="cockpit-queue__index">
         <span className="cockpit-queue__n" aria-hidden="true">
@@ -119,11 +157,20 @@ function Row({
               <Button
                 variant="primary"
                 aria-label={text.action.name}
+                data-queue-primary=""
                 onClick={onOpen}
               >
                 {text.action.primary}
               </Button>
+              <Button
+                variant="text"
+                aria-label={`${text.title}，${later ? '放回队列' : '稍后再看'}`}
+                onClick={onLater}
+              >
+                {later ? '放回队列' : '稍后'}
+              </Button>
             </div>
+            <EntryDetail entry={entry} />
           </div>
         ) : null}
       </div>
@@ -198,12 +245,62 @@ function sourceNotes(
   return notes;
 }
 
+/** 队列底下的键位提示：只在有鼠标的设备上显示（样式里控制），写的是这一格登记了的那几个键。 */
+function QueueKeys({
+  enabled,
+  onShowAll,
+}: {
+  /** 单键快捷键开着没有。 */
+  enabled: boolean;
+  onShowAll: () => void;
+}) {
+  return (
+    <div className="cockpit-queue__keys">
+      {enabled ? (
+        <ul aria-label="这一格的键盘快捷键">
+          <li>
+            <KeyHint className="keys-cap" keys={['J']} />
+            <KeyHint className="keys-cap" keys={['K']} />
+            上下移动
+          </li>
+          <li>
+            <KeyHint className="keys-cap" keys={['↵']} />
+            去处理
+          </li>
+          <li>
+            <KeyHint className="keys-cap" keys={['H']} />
+            稍后
+          </li>
+          <li>
+            <KeyHint className="keys-cap" keys={['G']} />
+            跳到别的视图
+          </li>
+        </ul>
+      ) : (
+        <span>单键快捷键已关闭</span>
+      )}
+      <Button
+        variant="text"
+        size="sm"
+        className="cockpit-link"
+        onClick={onShowAll}
+      >
+        全部快捷键
+        {enabled ? <KeyHint className="keys-cap" keys={['?']} /> : null}
+      </Button>
+    </div>
+  );
+}
+
 /**
- * 左上：等你处理的事（T-195；设计规范第 6 节）。
+ * 左上：等你处理的事（T-195、T-197；设计规范第 6、16 节）。
  * 巨号和「件事等你处理」同一行，下面是一列队列：序号与类型、标题与出处、等了多久、去处理。
- * 选中的那一行多一行事实和一个实心主按钮（全页唯一的黑色实心块），其余行行尾是文字链接；
- * 缺省选中第一行，点哪一行的标题就选中哪一行，再点一次收起。
+ * 选中的那一行多一行事实、一个实心主按钮（全页唯一的黑色实心块）、「稍后」，和就地展开的细节；
+ * 其余行行尾是文字链接。缺省选中第一行，点哪一行的标题就选中哪一行，再点一次收起。
  * 三路里任何一路没读到，巨号显示「—」，并在标题下说明少了哪一路；已经读到的照常列出。
+ *
+ * 键盘（T-197）：J／K 上下选（到头不绕回），选中后焦点落到那一行的主按钮上；Enter 去处理；
+ * H 把选中的那一件放到队尾的「稍后再看」，再按一次放回。「稍后」只是换个地方排，总数不变。
  */
 export function QueueCell({
   plan,
@@ -215,6 +312,7 @@ export function QueueCell({
   onOpenTask,
   onOpenPolicy,
   onRetryPolicy,
+  later = laterStore(),
 }: {
   plan: PendingPlan;
   board: OverviewState;
@@ -227,11 +325,32 @@ export function QueueCell({
   onOpenTask: (taskId: string) => void;
   onOpenPolicy: () => void;
   onRetryPolicy: () => void;
+  /** 「稍后」的记号；缺省用全站那一份，测试里换成自己的。 */
+  later?: LaterStore;
 }) {
+  const root = useRef<HTMLElement>(null);
+  const scope = useContext(KeyScopeContext);
+  const singleKeys = useSyncExternalStore(
+    scope.preference.subscribe,
+    scope.preference.enabled,
+  );
   // undefined＝还没点过，选第一行；null＝点过又收起了。
   const [picked, setPicked] = useState<string | null | undefined>(undefined);
+  // 刚按了「稍后」、正在淡出的那一行。
+  const [leaving, setLeaving] = useState<string | null>(null);
+  // 每加一，就把焦点交给选中行的主按钮（键盘移动、放到稍后、放回之后）。
+  const [focusRequest, requestFocus] = useReducer(
+    (count: number) => count + 1,
+    0,
+  );
+  // 「稍后」到期时重排一次。
+  const [expiryTick, reorder] = useReducer((count: number) => count + 1, 0);
+  const marks = useSyncExternalStore(later.subscribe, later.marks);
   const { entries, total } = plan;
-  const keys = entries.map(entryKey);
+  const split = splitLater(entries, marks, later.now());
+  // 屏幕上的先后：照常排着的在前，「稍后再看」在后；J／K 按这个顺序走。
+  const ordered = [...split.active, ...split.later];
+  const keys = ordered.map(entryKey);
   // 点过的那一行在重读之后不在队列里了（已经处理掉）：退回第一行。
   const selected =
     picked === null
@@ -247,14 +366,167 @@ export function QueueCell({
     policy.kind !== 'error';
   const timed = entries.some((entry) => entry.waitMs !== null);
 
+  // 三路都读完之后才开进场动效：首屏、手动刷新后重新列出来的行不算「新来的」（样式里按 data-live 判）。
+  const [live, setLive] = useState(false);
+  useEffect(() => setLive(settled), [settled]);
+
+  // 巨号从一个数变成另一个数才滚动；「—」换成数、数换成「—」不滚（首屏、手动刷新）。
+  const [shown, setShown] = useState(total);
+  const [roll, setRoll] = useState<'up' | 'down' | null>(null);
+  if (shown !== total) {
+    setShown(total);
+    setRoll(
+      shown === null || total === null ? null : total > shown ? 'up' : 'down',
+    );
+  }
+
+  const { nextExpiry } = split;
+  useEffect(() => {
+    if (nextExpiry === null) return;
+    // 多等一点：定时器早到半拍时这一件还没到期，重排了也白排；真早到了，expiryTick 变了会再等一轮。
+    const handle = window.setTimeout(
+      reorder,
+      Math.max(0, nextExpiry - later.now()) + 50,
+    );
+    return () => window.clearTimeout(handle);
+  }, [nextExpiry, later, expiryTick]);
+
+  useLayoutEffect(() => {
+    if (focusRequest === 0) return;
+    const row = root.current?.querySelector<HTMLElement>(
+      '.cockpit-queue__row[data-selected]',
+    );
+    row
+      ?.querySelector<HTMLElement>('[data-queue-primary]')
+      ?.focus({ preventScroll: true });
+    row?.scrollIntoView({ block: 'nearest' });
+  }, [focusRequest]);
+
   function open(entry: PendingEntry) {
     if (entry.source === 'board') onOpenTask(entry.item.id);
     else if (entry.source === 'policy') onOpenPolicy();
     else onOpen(entry.action.source);
   }
 
+  /**
+   * 把这一件记进「稍后」，返回之后该选中哪一行。`current` 是此刻选中的那一行：
+   * 放走的正是它，就改选它后面那一行（没有后面的就选前面的；一行不剩就还选它，它在「稍后再看」里）。
+   * 排法按记号现算，不用这一轮重画时的：同一下按键里可能刚落定过另一件。
+   */
+  function commitLater(key: string, current: string | null): string | null {
+    const fresh = splitLater(entries, later.marks(), later.now());
+    const activeKeys = fresh.active.map(entryKey);
+    const index = activeKeys.indexOf(key);
+    // 已经不在照常排着的那一段里了：处理掉了，或者别的标签页已经放过。
+    if (index === -1) return current;
+    later.later(key, fresh.active[index].since);
+    if (current !== key) return current;
+    const next = activeKeys[index + 1] ?? activeKeys[index - 1] ?? key;
+    setPicked(next);
+    return next;
+  }
+
+  /** 淡出还没走完就来了下一个键：先把那一件落定，不让人等动画。返回落定之后选中的那一行。 */
+  function settle(): string | null {
+    if (leaving === null) return selected;
+    setLeaving(null);
+    return commitLater(leaving, selected);
+  }
+
+  function finishLeave(key: string) {
+    if (leaving !== key) return;
+    setLeaving(null);
+    commitLater(key, selected);
+    requestFocus();
+  }
+  // 兜底定时器要调最新的那一份 finishLeave：淡出期间选中行可能已经换了。
+  const finish = useRef(finishLeave);
+  useLayoutEffect(() => {
+    finish.current = finishLeave;
+  });
+  useEffect(() => {
+    if (leaving === null) return;
+    const handle = window.setTimeout(
+      () => finish.current(leaving),
+      LEAVE_FALLBACK_MS,
+    );
+    return () => window.clearTimeout(handle);
+  }, [leaving]);
+
+  function toggleLater(key: string | null) {
+    if (key === null) return;
+    const fresh = splitLater(entries, later.marks(), later.now());
+    if (fresh.later.some((entry) => entryKey(entry) === key)) {
+      later.restore(key);
+      setPicked(key);
+      requestFocus();
+    } else if (fresh.active.some((entry) => entryKey(entry) === key)) {
+      // 没有偏好查询能力的环境不做动效（和弹层一样保守）：直接挪走。
+      if (typeof window.matchMedia === 'function') setLeaving(key);
+      else {
+        commitLater(key, key);
+        requestFocus();
+      }
+    }
+  }
+
+  function move(delta: 1 | -1) {
+    const current = settle();
+    const fresh = splitLater(entries, later.marks(), later.now());
+    const order = [...fresh.active, ...fresh.later].map(entryKey);
+    if (order.length === 0) return;
+    const index = current === null ? -1 : order.indexOf(current);
+    // 没有选中的（收起了）：从第一行开始。到头不绕回。
+    const target =
+      index === -1 ? 0 : Math.min(order.length - 1, Math.max(0, index + delta));
+    setPicked(order[target]);
+    requestFocus();
+  }
+
+  useKeyBindings(
+    {
+      [QUEUE_KEYS.next]: { run: () => move(1), repeat: true },
+      [QUEUE_KEYS.previous]: { run: () => move(-1), repeat: true },
+      [QUEUE_KEYS.open]: {
+        run: () => {
+          const current = settle();
+          const entry = ordered.find(
+            (candidate) => entryKey(candidate) === current,
+          );
+          if (entry) open(entry);
+        },
+        // Enter 在别处另有意思：只在焦点没落在任何东西上、或者落在这一格里时才算「去处理」。
+        when: (target) =>
+          !(target instanceof Element) ||
+          target === document.body ||
+          target === document.documentElement ||
+          Boolean(root.current?.contains(target)),
+      },
+      [QUEUE_KEYS.later]: { run: () => toggleLater(settle()) },
+    },
+    ordered.length > 0,
+  );
+
+  const row = (entry: PendingEntry, inLater: boolean) => {
+    const key = entryKey(entry);
+    return (
+      <Row
+        key={key}
+        entry={entry}
+        selected={key === selected}
+        later={inLater}
+        leaving={key === leaving}
+        labels={labels}
+        onToggle={() => setPicked(key === selected ? null : key)}
+        onOpen={() => open(entry)}
+        onLater={() => toggleLater(key)}
+        onLeft={() => finishLeave(key)}
+      />
+    );
+  };
+
   return (
-    <section className="cockpit-queue" aria-label="等你处理">
+    <section ref={root} className="cockpit-queue" aria-label="等你处理">
       <header
         className="cockpit-queue__head"
         style={cssVars({
@@ -269,7 +541,14 @@ export function QueueCell({
           }
           aria-hidden="true"
         >
-          <span className="cockpit-queue__count-value">{total ?? '—'}</span>
+          {/* 按数取键：数一变就换一个节点，新节点带着 data-roll 滚进来（样式里做），旧的直接撤掉。 */}
+          <span
+            key={total ?? 'unknown'}
+            className="cockpit-queue__count-value"
+            data-roll={roll ?? undefined}
+          >
+            {total ?? '—'}
+          </span>
         </div>
         <div className="cockpit-queue__heading">
           <h2>
@@ -300,31 +579,42 @@ export function QueueCell({
         </div>
         {timed ? <WaitLegend /> : null}
       </header>
-      {entries.length > 0 ? (
-        <ol className="cockpit-queue__list">
-          {entries.map((entry, index) => (
-            <Row
-              key={keys[index]}
-              entry={entry}
-              selected={keys[index] === selected}
-              labels={labels}
-              onToggle={() =>
-                setPicked(keys[index] === selected ? null : keys[index])
-              }
-              onOpen={() => open(entry)}
-            />
-          ))}
+      {split.active.length > 0 ? (
+        <ol
+          className="cockpit-queue__list"
+          data-live={live ? 'true' : undefined}
+        >
+          {split.active.map((entry) => row(entry, false))}
         </ol>
-      ) : settled ? (
+      ) : entries.length === 0 && settled ? (
         <p className="cockpit-queue__clear" role="status">
           现在没有事等你。
         </p>
+      ) : null}
+      {split.later.length > 0 ? (
+        <>
+          <h3 className="cockpit-queue__later">
+            稍后再看
+            <span>{split.later.length} 件</span>
+            <span>4 小时后，或它有了新进展，回到原位</span>
+          </h3>
+          <ol
+            className="cockpit-queue__list"
+            aria-label="稍后再看"
+            data-live={live ? 'true' : undefined}
+          >
+            {split.later.map((entry) => row(entry, true))}
+          </ol>
+        </>
       ) : null}
       {entries.length > 0 ? (
         <p className="cockpit-queue__foot">
           <span>队列到底了</span>
           {asOf && timed ? <span>等了多久算到 {asOf}</span> : null}
         </p>
+      ) : null}
+      {entries.length > 0 && scope.live ? (
+        <QueueKeys enabled={singleKeys} onShowAll={scope.showSheet} />
       ) : null}
     </section>
   );

@@ -22,6 +22,7 @@ const context: CommandPaletteContext = {
   openDrafts: () => {},
   openRecentlyDeleted: () => {},
   openStatus: () => {},
+  openShortcuts: () => {},
   focusTarget: () => {},
 };
 
