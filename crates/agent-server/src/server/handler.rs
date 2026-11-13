@@ -44,8 +44,9 @@ impl AgentSession {
         Ok(text_result(self.finish_mcp(self.text_board(args).await?)?))
     }
 
+    // 属性里只能写字面量：8000 与 HARD_BUDGET_TOKENS 同值。
     #[tool(
-        description = "重取冷启动路牌：我是谁、项目状态、能力、待我做的事、硬约束、继续拉的入口；≤2000 token"
+        description = "重取冷启动路牌：我是谁、项目状态、能力、待我做的事、硬约束、继续拉的入口；≤8000 token"
     )]
     async fn handshake(&self) -> Result<CallToolResult, McpError> {
         let _work = self.enter_mcp_work()?;
