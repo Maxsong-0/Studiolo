@@ -10,6 +10,7 @@ import { FileOperationStore } from '../../fileOperationStore';
 import { parseViewLocation } from '../../viewLocation';
 import { canonical, ownerScope } from '../canonicalFixtures';
 import {
+  COCKPIT_READY,
   defaultApiResponse,
   documents,
   emptyNavigation,
@@ -45,8 +46,8 @@ beforeEach(() => {
 async function openPalette(ui: ReactNode = <App />) {
   const user = userEvent.setup();
   render(ui);
-  // 等驾驶舱的项目表出来即工作台已读到，入口才可用。
-  await screen.findByRole('table');
+  // 等驾驶舱的标题出来即工作台已读到，入口才可用。
+  await screen.findByRole('heading', COCKPIT_READY);
   await user.click(screen.getByRole('button', { name: /^动作面板/ }));
   const dialog = screen.getByRole('dialog', { name: '动作面板' });
   const input = within(dialog).getByRole('combobox', {
@@ -142,7 +143,7 @@ describe('动作面板接进外壳', () => {
         : undefined;
     const user = userEvent.setup();
     render(<App />);
-    await screen.findByRole('table');
+    await screen.findByRole('heading', COCKPIT_READY);
     await user.click(screen.getByRole('button', { name: '项目' }));
     await user.type(
       screen.getByRole('searchbox', { name: '筛选项目' }),
@@ -311,7 +312,7 @@ describe('只在入口真实可用时收录', () => {
     );
     const user = userEvent.setup();
     render(ui);
-    await screen.findByRole('table');
+    await screen.findByRole('heading', COCKPIT_READY);
     // 顶栏入口出现即文件操作接口已核对可用。
     await screen.findByRole('button', { name: '最近删除' });
     await user.click(screen.getByRole('button', { name: /^动作面板/ }));

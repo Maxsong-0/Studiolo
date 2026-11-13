@@ -181,6 +181,11 @@ export interface TodayLanesOptions {
    * 传整份汇总的名字表，同一执行者在各处才同名。
    */
   labels?: ReadonlyMap<string, string>;
+  /**
+   * AI 泳道最多几条；缺省 {@link MAX_AI_LANES}。驾驶舱「谁在干活」自己按「等你的在前」取舍和排序，
+   * 要先拿到范围内全部有活动的执行者，传 `Infinity`。
+   */
+  maxLanes?: number;
 }
 
 export interface TodayLanes {
@@ -257,7 +262,7 @@ export function todayLanes(
     Math.max(...intervals.map((interval) => interval.end));
   const kept = [...active]
     .sort((a, b) => lastEnd(b.intervals) - lastEnd(a.intervals))
-    .slice(0, MAX_AI_LANES)
+    .slice(0, Math.max(0, options.maxLanes ?? MAX_AI_LANES))
     .map((lane) => ({ ...lane, name: nameOf(labels, lane.identity) }))
     .sort(
       (a, b) =>

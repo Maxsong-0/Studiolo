@@ -1,9 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import type { OverviewState } from '../../cockpit/model';
-import { drawingSubtitle, titleCells } from '../../cockpit/readings';
+import {
+  readingsSummary,
+  snapshotLine,
+  systemReadings,
+  type Reading,
+} from '../../cockpit/readings';
 import { freshnessReason } from '../../freshness';
 import type { HealthStatus } from '../../shell/useHealthStatus';
-import type { TitleBlockCell } from '../../ui';
 import { fixture } from '../fixtures';
 import { fixtureData } from './cockpitFixtures';
 
@@ -11,41 +15,38 @@ const data = fixtureData();
 const ready: OverviewState = { kind: 'ready', overview: data.overview };
 const healthy: HealthStatus = { kind: 'ready', report: data.health };
 
-function cells(
-  overrides: Partial<Parameters<typeof titleCells>[0]> = {},
-): Record<string, TitleBlockCell> {
+type Inputs = Parameters<typeof systemReadings>[0];
+
+function readings(overrides: Partial<Inputs> = {}): Reading[] {
+  return systemReadings({
+    workbench: data.workbench,
+    health: healthy,
+    overview: ready,
+    ...overrides,
+  });
+}
+
+function cells(overrides: Partial<Inputs> = {}): Record<string, Reading> {
   return Object.fromEntries(
-    titleCells({
-      workbench: data.workbench,
-      health: healthy,
-      overview: ready,
-      ...overrides,
-    }).map((cell) => [String(cell.label), cell]),
+    readings(overrides).map((cell) => [cell.label, cell]),
   );
 }
 
-describe('标题栏读数', () => {
-  it('十二格按规范第 6 节的顺序排', () => {
-    expect(
-      titleCells({
-        workbench: data.workbench,
-        health: healthy,
-        overview: ready,
-      }).map((cell) => cell.label),
-    ).toEqual([
+describe('系统读数', () => {
+  it('八格按规范第 6 节的顺序排；接口从不提供的读数和固定配置不占格子', () => {
+    const labels = readings().map((cell) => cell.label);
+    expect(labels).toEqual([
       '副本新鲜度',
       '每轮同步',
-      '同步时限',
-      '黑板在跑',
-      'agent 程序',
-      '人侧发行',
       '会话',
+      '黑板在跑',
       '执行',
       '可读项目',
       '副本文件',
-      '副本大小',
       '未关闭 BUG',
     ]);
+    for (const gone of ['同步时限', 'agent 程序', '人侧发行', '副本大小'])
+      expect(labels).not.toContain(gone);
   });
 
   it('每格取接口原值：工作台计数、黑板汇总条数、健康报告原文里的数字', () => {
@@ -57,29 +58,23 @@ describe('标题栏读数', () => {
     // 未结束 7 条；尝试仍在进行的 3 条（T-046 认领、T-109 与 T-130 在跑）。
     expect(all['黑板在跑'].value).toBe('7');
     expect(all['执行'].value).toBe('3');
-    // 健康「副本同步」一节降级：每轮标红，时限不标红；完整原文进原因。
-    expect(all['每轮同步']).toMatchObject({
+    // 健康「副本同步」一节降级：这一格要看（黑底，不用红）；完整原文进原因。
+    expect(all['每轮同步']).toEqual({
+      label: '每轮同步',
       value: '85 S',
-      tone: 'signal',
+      alert: true,
       reason:
         '副本同步：每轮 85 秒，时限 120 秒；余量不足三成，全量重推不可持续',
     });
-    expect(all['同步时限'].value).toBe('120 S');
-    expect(all['同步时限'].tone).toBeUndefined();
-    expect(all['会话']).toMatchObject({
+    expect(all['会话']).toEqual({
+      label: '会话',
       value: '今日已复核',
       reason: '今日已复核，当前会话 12 小时内有效',
     });
   });
 
-  it('接口不给的读数显示「—」并写明原因，绝不编造', () => {
+  it('汇总不可得的读数显示「—」并写明原因，绝不编造', () => {
     const all = cells();
-    for (const [label, reason] of [
-      ['agent 程序', '接口未提供 agent 程序版本。'],
-      ['人侧发行', '接口未提供人侧发行号。'],
-      ['副本大小', '接口未提供副本大小。'],
-    ] as const)
-      expect(all[label]).toEqual({ label, value: null, reason });
     // 未关闭 BUG：有项目没有 BUG 档，汇总显式不可得，逐个列出。
     const bugs = all['未关闭 BUG'];
     expect(bugs.value).toBeNull();
@@ -89,12 +84,12 @@ describe('标题栏读数', () => {
     );
   });
 
-  it('副本新鲜度：陈旧时标红，读数是两条水位之差，原因取 freshness 原文', () => {
+  it('副本新鲜度：陈旧时这一格要看，读数是两条水位之差，原因取 freshness 原文', () => {
     const freshness = data.workbench.freshness!;
     expect(cells()['副本新鲜度']).toEqual({
       label: '副本新鲜度',
       value: '落后 3 条',
-      tone: 'signal',
+      alert: true,
       reason: `${freshnessReason(freshness)}索引水位 ${freshness.indexed_through}，提交水位 ${freshness.committed_through}。`,
     });
     const caughtUp = {
@@ -152,7 +147,7 @@ describe('标题栏读数', () => {
         },
       },
     });
-    for (const label of ['每轮同步', '同步时限', '会话'])
+    for (const label of ['每轮同步', '会话'])
       expect(bare[label]).toMatchObject({
         value: null,
         reason: '健康报告未提供',
@@ -250,17 +245,73 @@ describe('标题栏读数', () => {
   });
 });
 
-describe('标题栏副题', () => {
-  it('日期带星期，换行写副本代次；刷新中注明', () => {
+describe('系统读数：会话一节降级、要看几项', () => {
+  const degraded = (code: string): HealthStatus => ({
+    kind: 'ready',
+    report: {
+      ...data.health,
+      sections: data.health.sections.map((section) =>
+        section.code === code
+          ? { ...section, state: 'degraded' as const }
+          : { ...section, state: 'normal' as const },
+      ),
+    },
+  });
+  const caughtUp = {
+    ...data.workbench,
+    freshness: {
+      ...data.workbench.freshness!,
+      stale: false,
+      reason: null,
+      indexed_through: data.workbench.freshness!.committed_through,
+    },
+  };
+
+  it('会话一节降级时这一格要看；同步正常时不标', () => {
+    const all = cells({ health: degraded('session') });
+    expect(all['会话']).toMatchObject({ value: '今日已复核', alert: true });
+    expect(all['每轮同步'].alert).toBeUndefined();
+  });
+
+  it('标题右侧的一句：有要看的先说几项要看，没有再说几项读不到，都没有就是都正常', () => {
+    // 假数据：副本没追平、同步降级两格要看。
+    expect(readingsSummary(readings())).toBe('8 项里 2 项要看');
+    const quiet = readings({
+      workbench: caughtUp,
+      health: degraded('none'),
+    });
+    // 只剩「未关闭 BUG」汇总不可得。
+    expect(readingsSummary(quiet)).toBe('8 项里 1 项读不到');
+    expect(
+      readingsSummary(
+        quiet.map((cell) =>
+          cell.value === null ? { ...cell, value: '0' } : cell,
+        ),
+      ),
+    ).toBe('8 项都正常');
+    expect(
+      readingsSummary(
+        readings({
+          workbench: caughtUp,
+          health: { kind: 'error', message: '请求失败（404）' },
+          overview: { kind: 'disabled' },
+        }),
+      ),
+    ).toBe('8 项里 5 项读不到');
+  });
+});
+
+describe('读数标题下的一行', () => {
+  it('日期带星期，接着写副本代次；刷新中注明', () => {
     const tuesday = new Date(2026, 8, 22, 20, 31).getTime();
-    expect(drawingSubtitle(tuesday, 243, false)).toBe(
-      '2026-09-22 周二\n副本代次 243',
+    expect(snapshotLine(tuesday, 243, false)).toBe(
+      '2026-09-22 周二 · 副本代次 243',
     );
-    expect(drawingSubtitle(tuesday, 243, true)).toBe(
-      '2026-09-22 周二\n副本代次 243（刷新中）',
+    expect(snapshotLine(tuesday, 243, true)).toBe(
+      '2026-09-22 周二 · 副本代次 243（刷新中）',
     );
-    expect(drawingSubtitle(new Date(2026, 8, 27).getTime(), 7, false)).toBe(
-      '2026-09-27 周日\n副本代次 7',
+    expect(snapshotLine(new Date(2026, 8, 27).getTime(), 7, false)).toBe(
+      '2026-09-27 周日 · 副本代次 7',
     );
   });
 });

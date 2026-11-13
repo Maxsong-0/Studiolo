@@ -7,6 +7,7 @@ import type {
   BoardOverviewItem,
   BoardOverviewStatus,
 } from '../boardOverviewModel';
+import type { ListedDesired } from '../policyModel';
 import type { Project } from '../types';
 
 /** 黑板汇总的读取状态。404（本机未启用黑板）单列为 disabled，其余失败一律 error。 */
@@ -16,9 +17,21 @@ export type OverviewState =
   | { kind: 'disabled' }
   | { kind: 'error'; message: string };
 
+/**
+ * 策略里等你的提案和草案的读取状态（`/api/v1/policy/desired`）。
+ * 404 `policy_plane_absent`（本入口没装策略平面）单列为 absent：那时确实没有草案在等你；其余失败一律 error。
+ * `readAt` 是读到这份列表那一刻的本机时钟：接口不带服务端时刻，草案「已等多久」只能以它为准。
+ */
+export type PolicyPendingState =
+  | { kind: 'loading' }
+  | { kind: 'ready'; desired: readonly ListedDesired[]; readAt: number }
+  | { kind: 'absent' }
+  | { kind: 'error'; message: string };
+
 /** 驾驶舱取的时间窗：默认 24 小时，足以盖住「今天」。 */
 export const COCKPIT_WINDOW_HOURS = 24;
 
+export const MINUTE_MS = 60_000;
 export const HOUR_MS = 3_600_000;
 export const DAY_MS = 24 * HOUR_MS;
 

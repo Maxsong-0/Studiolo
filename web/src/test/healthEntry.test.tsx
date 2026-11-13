@@ -2,7 +2,7 @@ import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, expect, it, vi } from 'vitest';
 import { App } from '../App';
-import { defaultApiResponse, jsonResponse } from './fixtures';
+import { COCKPIT_READY, defaultApiResponse, jsonResponse } from './fixtures';
 
 const HEALTH = '/api/v1/health';
 
@@ -42,7 +42,7 @@ beforeEach(() => {
 async function openStatus() {
   const user = userEvent.setup();
   render(<App />);
-  await screen.findByRole('table');
+  await screen.findByRole('heading', COCKPIT_READY);
   await user.click(screen.getByRole('button', { name: /^工作台状态/ }));
   return user;
 }

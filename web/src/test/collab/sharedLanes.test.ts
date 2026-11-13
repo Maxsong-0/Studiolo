@@ -1,9 +1,10 @@
 /*
- * 驾驶舱与协作页对同一份黑板汇总画出一模一样的「今天的时间线」，驾驶舱拓扑缩略、协作页拓扑、今天泳道
- * 三处对同一执行者叫同一个名字（T-130 C4：执行者标签与泳道规则只留一套）。
+ * 驾驶舱「谁在干活」与协作页「今天的时间线」对同一份黑板汇总走同一个 todayLanes：同一执行者的黑段逐一相等，
+ * 只是驾驶舱画最近 24 小时、不设条数上限；驾驶舱右栏、协作页拓扑、协作页泳道三处对同一执行者叫同一个名字
+ * （T-130 C4：执行者标签与泳道规则只留一套；T-195 起驾驶舱不再画拓扑缩略和当天时间线）。
  *
- * 做法：把 todayLanes 包一层，记下两页真正调用它时的入参与结果（泳道键、名字、块区间逐一比），
- * 再比两页渲染出来的泳道图；拓扑的名字从两张图的「按执行者列出」清单里读。
+ * 做法：把 todayLanes 包一层，记下两页真正调用它时的入参与结果（泳道键、名字、块区间逐一比）；
+ * 驾驶舱的名字从右栏每一行读，协作页拓扑的名字从「按执行者列出」清单里读。
  */
 import {
   cleanup,
@@ -63,7 +64,7 @@ function json(value: unknown): Response {
   });
 }
 
-/** 驾驶舱整页（拓扑缩略与时间线格都是真品）；等泳道画出来再返回。 */
+/** 驾驶舱整页（右栏「谁在干活」是真品）；等泳道画出来再返回。 */
 async function mountCockpit(data: FixtureData, wire?: unknown) {
   vi.stubGlobal(
     'fetch',
@@ -76,22 +77,21 @@ async function mountCockpit(data: FixtureData, wire?: unknown) {
     createElement(CockpitHarness, {
       workbench: data.workbench,
       refreshing: false,
-      onRefresh: noop,
-      filters: null,
-      actions: data.workbench.inbox,
-      projects: data.workbench.projects,
       diagnostics: 0,
       onOpen: noop,
-      onEnterProject: noop,
-      onViewProjects: noop,
       onShowDiagnostics: noop,
     }),
   );
-  await within(screen.getByRole('region', { name: '今天的时间线' })).findByRole(
-    'img',
-    { name: /^时间泳道/ },
-  );
+  const crew = screen.getByRole('complementary', { name: '谁在干活' });
+  await within(crew).findAllByRole('img', { name: /，最近 24 小时：/ });
   return container;
+}
+
+/** 驾驶舱右栏每一行的执行者名，从上到下。 */
+function crewNames(root: HTMLElement): (string | null)[] {
+  return [...root.querySelectorAll('.cockpit-crew__name')].map(
+    (node) => node.textContent,
+  );
 }
 
 /** 协作页（拓扑标签）；hash 决定项目筛选与选中条目。 */
@@ -123,9 +123,8 @@ function lastCall() {
   return call;
 }
 
-/** 泳道的键、名字、块区间与范围：两页要逐一相等的部分。 */
+/** 泳道的键、名字、块区间：两页要逐一相等的部分（范围各画各的，另核）。 */
 const shape = (today: TodayLanes) => ({
-  range: today.range,
   hidden: today.hidden,
   events: today.events,
   lanes: today.lanes.map(({ key, name, blocks }) => ({
@@ -184,13 +183,12 @@ describe(
   '驾驶舱与协作页：同一份汇总，同一套泳道与执行者名',
   { timeout: 180_000 },
   () => {
-    it('假数据：两页走同一个 todayLanes、入参相同，泳道键、名字、块区间逐一相等，画出来也一样；三处拓扑与泳道同名', async () => {
+    it('假数据：两页走同一个 todayLanes、同一份汇总，泳道键、名字、块区间逐一相等；驾驶舱右栏、协作页拓扑与泳道同名', async () => {
       const data = fixtureData();
       calls.length = 0;
       const cockpit = await mountCockpit(data);
       const fromCockpit = lastCall();
-      const cockpitPicture = lanesPicture(cockpit);
-      const mini = topologyNames(cockpit, fromCockpit.overview);
+      const inCockpit = crewNames(cockpit);
       cleanup();
 
       calls.length = 0;
@@ -209,9 +207,15 @@ describe(
         `instance:${INSTANCE.R2}`,
         OWNER_KEY,
       ]);
-      // 画出来也一样：泳道名、每个块的位置与宽度、刻度、读屏摘要。
-      expect(collabPicture).toEqual(cockpitPicture);
-      expect(cockpitPicture.names.slice(0, 5)).toEqual([
+      // 范围各画各的：终点同是汇总生成时刻的下一个整点；驾驶舱固定画 24 小时，盖住协作页的「今天」。
+      expect(fromCockpit.result.range.to).toBe(fromCollab.result.range.to);
+      expect(fromCockpit.result.range.to - fromCockpit.result.range.from).toBe(
+        24 * HOUR,
+      );
+      expect(fromCockpit.result.range.from).toBeLessThanOrEqual(
+        fromCollab.result.range.from,
+      );
+      expect(collabPicture.names.slice(0, 5)).toEqual([
         'Claude · 01M2Y',
         'Claude · 01M31',
         'Claude · 01M34',
@@ -219,9 +223,9 @@ describe(
         '你',
       ]);
 
-      // 三处同名：驾驶舱缩略画了 6 条（五位执行者），协作页画全部 7 条。
+      // 三处同名：驾驶舱右栏五位执行者（含今天没动静、仍认领着任务的 Codex 根统筹），协作页拓扑同样五位。
       const labels = overviewLabels(fromCockpit.overview);
-      expect([...mini.keys()].sort()).toEqual(
+      expect([...full.keys()].sort()).toEqual(
         [
           `instance:${INSTANCE.R1}`,
           `instance:${INSTANCE.R2}`,
@@ -230,22 +234,20 @@ describe(
           `instance:${INSTANCE.R5}`,
         ].sort(),
       );
-      for (const [key, name] of mini) {
-        expect(full.get(key)).toBe(name);
-        expect(labels.get(key)).toBe(name);
-      }
+      expect([...inCockpit].sort()).toEqual([...full.values()].sort());
+      for (const [key, name] of full) expect(labels.get(key)).toBe(name);
       for (const lane of fromCockpit.result.lanes) {
         if (lane.key === OWNER_KEY) continue;
-        expect(mini.get(lane.key)).toBe(lane.name);
+        expect(inCockpit).toContain(lane.name);
         expect(full.get(lane.key)).toBe(lane.name);
       }
     });
 
-    it('缩略图与按项目筛过的协作页只画汇总的一部分：执行者名仍按整份汇总取，三处都是「Claude · 01M34」', async () => {
+    it('按项目筛过的协作页只画汇总的一部分：执行者名仍按整份汇总取，各处都是「Claude · 01M34」', async () => {
       /*
        * 两个 Claude 根实例前 4 位都是 01M3：R1 在跑 Studiolo 的任务，R4 今天在简报站干完一件。
-       * 缩略图只画未结束的那条、筛到 Studiolo 的协作页也只剩它——若各自按画出来的条目起名，
-       * 就只剩一个根、前 4 位够用，名字成了「Claude · 01M3」，与泳道的「Claude · 01M34」对不上。
+       * 筛到 Studiolo 的协作页只剩 R1 那条——若按画出来的条目起名，就只剩一个根、前 4 位够用，
+       * 名字成了「Claude · 01M3」，与驾驶舱右栏、全部项目时的「Claude · 01M34」对不上。
        */
       const data = fixtureData();
       const now = Date.parse(data.overview.generatedAt);
@@ -372,13 +374,12 @@ describe(
       const key = `instance:${INSTANCE.R1}`;
       const expected = 'Claude · 01M34';
 
-      // 驾驶舱：缩略图只画在跑的一条，泳道有两位执行者。
+      // 驾驶舱右栏：在跑的排前面，今天干完一件的也列出来；两位执行者的名字都带五位前缀。
       calls.length = 0;
       const cockpit = await mountCockpit(data, wire);
       const fromCockpit = lastCall();
       expect(fromCockpit.overview.items).toHaveLength(2);
-      const mini = topologyNames(cockpit, fromCockpit.overview);
-      expect([...mini]).toEqual([[key, expected]]);
+      expect(crewNames(cockpit)).toEqual([expected, 'Claude · 01M31']);
       expect(
         fromCockpit.result.lanes.map(({ key: laneKey, name }) => [
           laneKey,
@@ -389,14 +390,19 @@ describe(
         [key, expected],
         [OWNER_KEY, '你'],
       ]);
-      const cockpitPicture = lanesPicture(cockpit);
       cleanup();
 
       // 协作页「全部项目」：与驾驶舱的泳道逐一相等，拓扑同名。
       calls.length = 0;
       const collab = await mountCollab(data, '#view=collab', wire);
       expect(shape(lastCall().result)).toEqual(shape(fromCockpit.result));
-      expect(lanesPicture(collab)).toEqual(cockpitPicture);
+      // 最后那个空名字是刻度那一行左边的空格子，不是一条泳道。
+      expect(lanesPicture(collab).names).toEqual([
+        'Claude · 01M31',
+        expected,
+        '你',
+        '',
+      ]);
       expect([...topologyNames(collab, fromCockpit.overview)]).toEqual([
         [key, expected],
       ]);

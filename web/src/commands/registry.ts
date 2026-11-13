@@ -7,6 +7,7 @@
  */
 import type { BoardOverview, BoardOverviewStatus } from '../boardOverviewModel';
 import type { Project, SearchHit, SourceLocation, View } from '../types';
+import { POLICY_QUEUE_ITEM } from '../viewLocation';
 import type { ViewLocation, ViewSlot } from '../viewLocation';
 import { COMMAND_TARGETS } from './focusTarget';
 import type { CommandTarget } from './focusTarget';
@@ -270,7 +271,7 @@ function actionCommands(ctx: CommandContext): Command[] {
       keywords: ['策略', '待处理', '规则草案', '队列', 'desired', 'policy'],
       target: () => ({
         view: 'policy',
-        item: 'desired',
+        item: POLICY_QUEUE_ITEM,
         focus: COMMAND_TARGETS.policyQueue,
       }),
     },
@@ -291,7 +292,7 @@ function actionCommands(ctx: CommandContext): Command[] {
         '发布会把一份已校验通过的规则草案（desired）变成新的生效版本（effective）。先在待处理队列里选定草案、逐条确认扩大项，再经一次性验证码（One-time Code）二次认证。',
       surface: {
         view: 'policy',
-        item: 'desired',
+        item: POLICY_QUEUE_ITEM,
         focus: COMMAND_TARGETS.policyQueue,
       },
       surfaceLabel: '策略 › 待处理队列',

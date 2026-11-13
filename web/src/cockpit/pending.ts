@@ -1,15 +1,17 @@
 /**
- * 待我动作（T-130 设计规范第 6 节第 1、2、3 条）：黑板里等你的任务＋工作台待办，统一编号 1..N。
+ * 「等你」的队列（T-195；设计规范第 6 节）：三路并成一列，统一编号 1..N。
  *
- * - 黑板条目（needs_review／needs_revision／needs_reconfirm）排在前面，最久没动静的先列；
- *   画进拓扑缩略的那几条圈号红色实心，并生成同号标记；缩略图放不下的退成空心圈。
- * - 工作台待办（Action）排在后面，按服务端给的顺序，圈号黑色空心，点开是原文。
- * - 拓扑缩略最多画 6 条未结束任务：先保证等你的条目上图，再补尝试仍在进行的，最后补其余；
- *   其余条数交给「另 N 条，去协作页」。
- * - 总数只由 {@link pendingCount} 算：驾驶舱巨号与顶栏「驾驶舱 N」角标同一口径（T-162）。
+ * - 黑板里等你的任务（needs_review／needs_revision／needs_reconfirm），从它最后一次进展算起；
+ * - 策略里等你的提案和草案（待复核、已校验可发布；被同一提交者更新的草案挡住的较早那份不算，
+ *   要处理的是更新的那份），从提交那一刻算起；
+ * - 工作台待办（Action），接口不带时间。
+ *
+ * 带时间的排前面，等得最久的在最上；不带时间的接在后面，先黑板、再策略、最后工作台待办，各按来源原顺序。
+ * 总数只由 {@link pendingCount} 算：驾驶舱巨号与顶栏「驾驶舱 N」角标同一口径（T-162），
+ * 任何一路还在读或读失败时总数不可知，不拿另外两路冒充。
  */
 import type { BoardOverview, BoardOverviewItem } from '../boardOverviewModel';
-import type { TopologyMarker } from '../collab/TopologyDiagram';
+import type { ListedDesired } from '../policyModel';
 import type { Action, Project } from '../types';
 import {
   isFinished,
@@ -17,51 +19,58 @@ import {
   projectName,
   waitingKind,
   type OverviewState,
+  type PolicyPendingState,
 } from './model';
 
-/** 驾驶舱拓扑缩略最多画几条任务（规范第 6 节第 2 条）。 */
-export const MINI_TASKS = 6;
+/** 策略一路的两种类型标签：AI 交来的提案，和你自己交的、还没发布的草案。 */
+export const KIND_PROPOSAL = 'AI 提案';
+export const KIND_DRAFT = '待发布草案';
 
-export interface BoardPending {
+interface Timed {
+  /** 从哪一刻开始等（毫秒时间戳）；来源不带时间时为 null。 */
+  since: number | null;
+  /** 已等了多久（毫秒，不为负）；没有起点时为 null。 */
+  waitMs: number | null;
+}
+
+export interface BoardPending extends Timed {
   source: 'board';
   n: number;
   item: BoardOverviewItem;
   /** 类型标签：待验收／待修订／待再次确认。 */
   kind: string;
   project: string;
-  /** 已画进拓扑缩略、图上有同号红圈。 */
-  marked: boolean;
 }
 
-export interface InboxPending {
+export interface PolicyPending extends Timed {
+  source: 'policy';
+  n: number;
+  desired: ListedDesired;
+  /** 类型标签：{@link KIND_PROPOSAL}／{@link KIND_DRAFT}。 */
+  kind: string;
+}
+
+export interface InboxPending extends Timed {
   source: 'inbox';
   n: number;
   action: Action;
-  /** 类型标签：取工作台待办的 kind 原文。 */
+  /** 类型标签：取工作台待办的 kind 原文；原文为空时写「未知」。 */
   kind: string;
   project: string;
 }
 
-export type PendingEntry = BoardPending | InboxPending;
+export type PendingEntry = BoardPending | PolicyPending | InboxPending;
 
 export interface PendingPlan {
   entries: PendingEntry[];
-  /**
-   * 待我动作总数，即 {@link pendingCount}；黑板还在读或读取失败时，等你的黑板任务数不可知，总数为 null。
-   */
+  /** 等你的总数，即 {@link pendingCount}；任何一路还在读或读失败时为 null。 */
   total: number | null;
-  /** 带时间的等你条目中最久的一条已等了多少毫秒；没有带时间的条目时为 null。 */
+  /** 带时间的条目里等得最久的那条已等了多少毫秒；没有带时间的条目时为 null。 */
   oldestWaitMs: number | null;
+  /** 类型分布：每种类型几条，按在队列里第一次出现的先后。 */
+  kinds: { kind: string; count: number }[];
   /** 黑板汇总是否被截断（此时等你的任务可能没列全）。 */
   truncated: boolean;
-  /** 未结束的黑板任务条数；黑板状态未定时为 null。 */
-  unfinished: number | null;
-  /** 画进拓扑缩略的条目，保持汇总原顺序。 */
-  miniItems: BoardOverviewItem[];
-  /** 未结束但没画进缩略图的条数。 */
-  omitted: number;
-  /** 缩略图上的红圈：只来自黑板条目。 */
-  markers: TopologyMarker[];
 }
 
 /** 黑板里等你的任务：未结束、状态是待验收／待修订／待再次确认的条目，保持汇总原顺序。 */
@@ -72,129 +81,157 @@ function waitingItems(overview: BoardOverview): BoardOverviewItem[] {
 }
 
 /**
- * 待我动作总数：工作台待办＋黑板里等你的任务（T-162）。
+ * 策略里等你的草案：待复核或已校验，并且没有被同一提交者更新的草案挡住（接口给的 `blocked_by` 为空）。
+ * 校验未通过的不算：它要先改好重交，不是等你点头。保持接口原顺序。
+ */
+export function waitingDesired(
+  desired: readonly ListedDesired[],
+): ListedDesired[] {
+  return desired.filter(
+    (entry) =>
+      (entry.status === 'pending' || entry.status === 'validated') &&
+      entry.blocked_by.length === 0,
+  );
+}
+
+/**
+ * 等你的总数：工作台待办＋黑板里等你的任务＋策略里等你的提案和草案（T-162、T-195）。
  *
- * 驾驶舱巨号与顶栏「驾驶舱 N」角标都只用它算，而且喂同一份工作台快照、同一次黑板汇总读取，
- * 所以两处任何时刻都相等。
+ * 驾驶舱巨号与顶栏「驾驶舱 N」角标都只用它算，而且喂同一份工作台快照、同一次黑板汇总读取、
+ * 同一次策略草案读取，所以两处任何时刻都相等。
  * - 还没有工作台快照：null（显示「—」）。
- * - 黑板未启用（404）：本机根本没有黑板，等你的黑板任务确实是 0，总数就是工作台待办数。
- * - 黑板还在读或读取失败：等你的黑板任务数不可知，总数为 null（显示「—」），不拿工作台待办数冒充总数。
+ * - 黑板未启用（404）或本入口没装策略平面（404 `policy_plane_absent`）：那一路确实是 0。
+ * - 黑板或策略任何一路还在读、读失败：那一路的条数不可知，总数为 null（显示「—」），不拿其余的冒充总数。
  */
 export function pendingCount(
   workbench: { readonly inbox: readonly Action[] } | null,
-  state: OverviewState,
+  board: OverviewState,
+  policy: PolicyPendingState,
 ): number | null {
   if (!workbench) return null;
-  if (state.kind === 'ready')
-    return workbench.inbox.length + waitingItems(state.overview).length;
-  if (state.kind === 'disabled') return workbench.inbox.length;
-  return null;
+  if (board.kind === 'loading' || board.kind === 'error') return null;
+  if (policy.kind === 'loading' || policy.kind === 'error') return null;
+  return (
+    workbench.inbox.length +
+    (board.kind === 'ready' ? waitingItems(board.overview).length : 0) +
+    (policy.kind === 'ready' ? waitingDesired(policy.desired).length : 0)
+  );
 }
 
-/** 等你条目的起始时间：该尝试最后一次进展；没有进展记录（或记录为 0）时不算带时间。 */
-function waitingSince(item: BoardOverviewItem): number | null {
+/** 等你的黑板任务从哪一刻算：该尝试最后一次进展；没有进展记录（或记录为 0）时不算带时间。 */
+function boardSince(item: BoardOverviewItem): number | null {
   const last = item.progress?.lastProgressMs ?? null;
   return last !== null && last > 0 ? last : null;
 }
 
-/** 最久没动静的排前面；没有时间的排在带时间的后面；其余保持汇总原顺序（项目、id）。 */
-function byWaitingAge(
-  left: { item: BoardOverviewItem; index: number },
-  right: { item: BoardOverviewItem; index: number },
-): number {
-  const a = waitingSince(left.item);
-  const b = waitingSince(right.item);
-  if (a !== null && b !== null && a !== b) return a - b;
-  if (a === null && b !== null) return 1;
-  if (a !== null && b === null) return -1;
-  return left.index - right.index;
+/** 草案从提交那一刻算；时间串解析不出来时不算带时间。 */
+function desiredSince(desired: ListedDesired): number | null {
+  const ms = Date.parse(desired.submitted_at);
+  return Number.isFinite(ms) && ms > 0 ? ms : null;
 }
 
-/**
- * 缩略图选条：等你的条目按待办顺序先上，再补尝试仍在进行的，最后补其余未结束的，
- * 同一档保持汇总原顺序。返回被选中的 id 集合。
- */
-function pickMini(
-  waiting: readonly BoardOverviewItem[],
-  unfinished: readonly BoardOverviewItem[],
-  max: number,
-): Set<string> {
-  const order = [
-    ...waiting,
-    ...unfinished.filter(
-      (item) => !waitingKind(item) && item.attempt?.active === true,
-    ),
-    ...unfinished.filter(
-      (item) => !waitingKind(item) && item.attempt?.active !== true,
-    ),
-  ];
-  return new Set(order.slice(0, Math.max(0, max)).map((item) => item.id));
+const waited = (now: number, since: number | null) =>
+  since === null ? null : Math.max(0, now - since);
+
+type Unnumbered =
+  Omit<BoardPending, 'n'> | Omit<PolicyPending, 'n'> | Omit<InboxPending, 'n'>;
+
+export interface PendingSources {
+  board: OverviewState;
+  policy: PolicyPendingState;
+  inbox: readonly Action[];
+  projects: readonly Project[];
 }
 
-export function planPending(
-  state: OverviewState,
-  inbox: readonly Action[],
-  projects: readonly Project[],
-  maxMini = MINI_TASKS,
-): PendingPlan {
-  const overview = state.kind === 'ready' ? state.overview : null;
-  const unfinishedItems = overview
-    ? overview.items.filter((item) => !isFinished(item))
-    : [];
-  const waiting = (overview ? waitingItems(overview) : [])
-    .map((item, index) => ({ item, index }))
-    .sort(byWaitingAge)
-    .map(({ item }) => item);
-  const mini = pickMini(waiting, unfinishedItems, maxMini);
-
-  const entries: PendingEntry[] = [];
-  const markers: TopologyMarker[] = [];
-  for (const item of waiting) {
-    const n = entries.length + 1;
-    const marked = mini.has(item.id);
-    entries.push({
-      source: 'board',
-      n,
-      item,
-      kind: waitingKind(item) ?? '',
-      project: projectName(item.project, projects),
-      marked,
-    });
-    if (marked) markers.push({ n, target: { taskId: item.id } });
-  }
-  for (const action of inbox) {
-    entries.push({
-      source: 'inbox',
-      n: entries.length + 1,
-      action,
-      kind: action.kind,
-      project: action.project_name,
-    });
-  }
-
-  let oldestWaitMs: number | null = null;
+export function planPending({
+  board,
+  policy,
+  inbox,
+  projects,
+}: PendingSources): PendingPlan {
+  const overview = board.kind === 'ready' ? board.overview : null;
+  const rows: Unnumbered[] = [];
   if (overview) {
     const now = overviewNow(overview);
-    for (const item of waiting) {
-      const since = waitingSince(item);
-      if (since === null) continue;
-      const age = Math.max(0, now - since);
-      oldestWaitMs = oldestWaitMs === null ? age : Math.max(oldestWaitMs, age);
+    for (const item of waitingItems(overview)) {
+      const since = boardSince(item);
+      rows.push({
+        source: 'board',
+        item,
+        kind: waitingKind(item) ?? '',
+        project: projectName(item.project, projects),
+        since,
+        waitMs: waited(now, since),
+      });
     }
   }
+  if (policy.kind === 'ready')
+    for (const desired of waitingDesired(policy.desired)) {
+      const since = desiredSince(desired);
+      rows.push({
+        source: 'policy',
+        desired,
+        kind: desired.submitter_kind === 'agent' ? KIND_PROPOSAL : KIND_DRAFT,
+        since,
+        waitMs: waited(policy.readAt, since),
+      });
+    }
+  for (const action of inbox)
+    rows.push({
+      source: 'inbox',
+      action,
+      kind: action.kind || '未知',
+      project: action.project_name,
+      since: null,
+      waitMs: null,
+    });
 
-  const miniItems = unfinishedItems.filter((item) => mini.has(item.id));
+  // 越早开始等的越靠前；不带时间的排在带时间的后面；其余保持上面的先后（黑板、策略、工作台待办）。
+  const ordered = rows
+    .map((row, index) => ({ row, index }))
+    .sort((left, right) => {
+      const a = left.row.since;
+      const b = right.row.since;
+      if (a !== null && b !== null && a !== b) return a - b;
+      if (a === null && b !== null) return 1;
+      if (a !== null && b === null) return -1;
+      return left.index - right.index;
+    });
+  const entries = ordered.map(
+    ({ row }, index) => ({ ...row, n: index + 1 }) as PendingEntry,
+  );
+
+  let oldestWaitMs: number | null = null;
+  const tally = new Map<string, number>();
+  for (const entry of entries) {
+    if (entry.waitMs !== null)
+      oldestWaitMs =
+        oldestWaitMs === null
+          ? entry.waitMs
+          : Math.max(oldestWaitMs, entry.waitMs);
+    tally.set(entry.kind, (tally.get(entry.kind) ?? 0) + 1);
+  }
+
   return {
     entries,
-    // 与顶栏角标同一个函数：黑板读完（或未启用）时恰是上面列出的条数，读取中或失败时不可知。
-    total: pendingCount({ inbox }, state),
+    // 与顶栏角标同一个函数：三路都读完（或确实没有）时恰是上面列出的条数，否则不可知。
+    total: pendingCount({ inbox }, board, policy),
     oldestWaitMs,
+    kinds: [...tally].map(([kind, count]) => ({ kind, count })),
     truncated: overview?.itemsTruncated ?? false,
-    unfinished: overview ? unfinishedItems.length : null,
-    miniItems,
-    omitted: unfinishedItems.length - miniItems.length,
-    markers,
   };
+}
+
+/** 队列里一行的稳定键：重排、重读之后选中的还是同一件事。 */
+export function entryKey(entry: PendingEntry): string {
+  switch (entry.source) {
+    case 'board':
+      return `board:${entry.item.id}`;
+    case 'policy':
+      return `policy:${entry.desired.id}`;
+    case 'inbox':
+      return `inbox:${entry.action.id}`;
+  }
 }
 
 /** 工作台待办标题常以「类型：」开头，类型已单独成列，列表里去掉这段重复。 */

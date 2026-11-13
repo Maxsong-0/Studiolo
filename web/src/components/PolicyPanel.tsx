@@ -47,6 +47,7 @@ import { POLICY_TERMS } from '../policy/terms';
 import { Button, Cell, CellHeader, GridFrame, StatusMark } from '../ui';
 import { cx } from '../ui/dom';
 import { useViewLocation } from '../useViewLocation';
+import { POLICY_QUEUE_ITEM } from '../viewLocation';
 import { DesiredForm, RevokeForm } from './PolicyForms';
 import { ChangeList, PolicyReport } from './PolicyReport';
 import { PolicyStepUp } from './PolicyStepUp';
@@ -90,7 +91,7 @@ type Preview = { key: string; content: PreviewContent } & (
  * 位置 `item=desired` 表示「滚到并聚焦待处理草案队列」（⌘K 的「打开策略待处理队列」「发布策略」写的就是它，
  * 见 commands/registry.ts）；其余 item 仍是版本号（BUG-015/T-098）。
  */
-const QUEUE_ITEM = 'desired';
+const QUEUE_ITEM = POLICY_QUEUE_ITEM;
 
 function when(value: string) {
   const parsed = new Date(value);

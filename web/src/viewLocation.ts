@@ -19,6 +19,12 @@ export interface ViewLocation {
 
 export type ViewSlot = 'project' | 'panel' | 'item';
 
+/**
+ * 策略页 `item` 格的一个保留值：直达待处理的草案队列（滚进视野并聚焦）。
+ * 驾驶舱「等你」队列里的提案和草案用它跳过去；其余取值是在看的策略版本号。
+ */
+export const POLICY_QUEUE_ITEM = 'desired';
+
 /** 顶栏六个视图，顺序与导航一致（设计规范第 4 节）。 */
 const views: readonly View[] = [
   'cockpit',
