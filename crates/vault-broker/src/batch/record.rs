@@ -4,9 +4,18 @@ use crate::mutation::record::{Operation, Phase};
 use crate::{BrokerError, FsVaultBroker, VaultUuid, writer::disk};
 use serde::{Deserialize, Serialize};
 
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct Provenance {
+    pub actor: crate::MutationActor,
+    pub requested_at_ms: Option<i64>,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Active {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub metadata: Option<Provenance>,
     pub batch_id: String,
     pub request_hash: String,
     pub preview_hash: String,
@@ -28,6 +37,13 @@ impl Active {
             || !disk::hex(&self.fingerprint)
         {
             return Err(BrokerError::CorruptWriterState);
+        }
+        if let Some(metadata) = &self.metadata {
+            crate::MutationMetadata::new(metadata.actor.clone(), crate::MutationKind::Replace)
+                .map_err(|_| BrokerError::CorruptWriterState)?;
+            if metadata.requested_at_ms.is_some_and(|v| v < 0) {
+                return Err(BrokerError::CorruptWriterState);
+            }
         }
         for item in &self.items {
             item.validate(false)?;
@@ -57,11 +73,16 @@ impl Active {
 pub(crate) struct Terminal {
     pub pair: VaultUuid,
     pub active: Active,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub committed: Option<Active>,
 }
 fn name(id: &str) -> String {
     format!("batch-{}.json", crate::sha256(id.as_bytes()))
 }
 pub(super) fn terminal(broker: &FsVaultBroker, id: &str) -> Result<Option<Active>, BrokerError> {
+    Ok(load_terminal(broker, id)?.map(|t| t.active))
+}
+fn load_terminal(broker: &FsVaultBroker, id: &str) -> Result<Option<Terminal>, BrokerError> {
     disk::read(&broker.data, &name(id), disk::RECORD_LIMIT)?
         .map(|bytes| {
             let record: Terminal = disk::decode(&bytes)?;
@@ -72,20 +93,62 @@ pub(super) fn terminal(broker: &FsVaultBroker, id: &str) -> Result<Option<Active
             {
                 return Err(BrokerError::CorruptWriterState);
             }
-            Ok(record.active)
+            if let Some(prior) = &record.committed {
+                prior.validate()?;
+                if !record.active.rollback
+                    || prior.rollback
+                    || prior.phase != Phase::Completed
+                    || prior.batch_id != id
+                    || prior.sequence > record.active.sequence
+                    || prior.request_hash != record.active.request_hash
+                    || prior.preview_hash != record.active.preview_hash
+                {
+                    return Err(BrokerError::CorruptWriterState);
+                }
+            }
+            Ok(record)
         })
         .transpose()
 }
 pub(super) fn save_terminal(broker: &FsVaultBroker, active: &Active) -> Result<(), BrokerError> {
+    let prior = load_terminal(broker, &active.batch_id)?;
+    let committed = if active.rollback {
+        prior.and_then(|t| {
+            if t.active.rollback {
+                t.committed
+            } else {
+                Some(t.active)
+            }
+        })
+    } else {
+        None
+    };
     disk::save(
         &broker.data,
         &name(&active.batch_id),
         &Terminal {
             pair: broker.writer.binding.pair_id,
             active: active.clone(),
+            committed,
         },
         || broker.writer.check(&broker.root, &broker.data),
     )
+}
+/// 历史条目以序号与方向绑定固定终态；原提交在回滚后仍保留。
+pub(crate) fn history_source(
+    broker: &FsVaultBroker,
+    id: &str,
+    sequence: u64,
+    rollback: bool,
+) -> Result<(Active, bool), BrokerError> {
+    let terminal = load_terminal(broker, id)?.ok_or(BrokerError::CorruptWriterState)?;
+    let visible = !(terminal.active.rollback && !rollback && terminal.active.sequence == sequence);
+    for active in std::iter::once(&terminal.active).chain(terminal.committed.iter()) {
+        if active.sequence == sequence && active.rollback == rollback {
+            return Ok((active.clone(), visible));
+        }
+    }
+    Err(BrokerError::CorruptWriterState)
 }
 
 /// 完成批次仍引用旧 revision，历史整理必须保留其回滚证据。

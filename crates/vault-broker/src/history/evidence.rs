@@ -16,6 +16,9 @@ pub(super) fn validate(
     path: &VaultPath,
     item: &Item,
 ) -> Result<(), BrokerError> {
+    if item.batch.is_some() {
+        return super::batch::validate(broker, path, item);
+    }
     if item.file_operation_id.is_some() {
         return super::file_operation::validate(broker, path, item);
     }

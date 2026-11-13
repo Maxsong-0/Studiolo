@@ -8,6 +8,9 @@ fn actor(value: Option<MutationActor>) -> Value {
         Some(MutationActor::Human { issuer, subject }) => {
             json!({"kind":"human", "issuer":issuer, "subject":subject})
         }
+        Some(value @ MutationActor::Agent { .. }) => {
+            serde_json::to_value(value).expect("固定主体投影必须可序列化")
+        }
         Some(MutationActor::Obsidian) => json!({"kind":"obsidian"}),
         None => Value::Null,
     }

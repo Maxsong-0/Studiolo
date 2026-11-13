@@ -1,5 +1,6 @@
 //! 故障注入检验事务边界，不把进程级夹具称为断电持久性证明。
 use super::*;
+mod provenance;
 mod staging;
 use crate::{
     FsVaultBroker, MemoryVaultBroker, Mutation, NumberingScanner, VaultPath, VaultReader,

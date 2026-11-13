@@ -80,6 +80,12 @@ pub(crate) fn reopen(broker: &FsVaultBroker) -> Result<(), BrokerError> {
 }
 
 pub(crate) fn finish(broker: &FsVaultBroker, state: &mut State) -> Result<(), BrokerError> {
+    if state.format_version < 8
+        && (state.operation.is_some() || state.file_operation.is_some() || state.batch.is_some())
+    {
+        state.format_version = 8;
+        save(broker, state)?;
+    }
     if state.batch.is_some() {
         return crate::batch::resume(broker, state);
     }

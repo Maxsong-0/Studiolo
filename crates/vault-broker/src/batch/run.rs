@@ -29,6 +29,37 @@ impl BatchWriter for FsVaultBroker {
         request: BatchRequest,
         preview: &BatchPreview,
     ) -> Result<BatchReceipt, BrokerError> {
+        self.commit_batch_metadata(request, preview, None)
+    }
+    fn rollback_batch(&mut self, batch_id: &str) -> Result<BatchReceipt, BrokerError> {
+        self.rollback_batch_metadata(batch_id, None)
+    }
+}
+impl FsVaultBroker {
+    /// 从可信 owner 固定批量主体；同一幂等键不能被另一主体重新解释。
+    pub fn commit_batch_recorded(
+        &mut self,
+        request: BatchRequest,
+        preview: &BatchPreview,
+        metadata: crate::MutationMetadata,
+    ) -> Result<BatchReceipt, BrokerError> {
+        self.commit_batch_metadata(request, preview, Some(metadata))
+    }
+    /// 回滚也记录实际发起主体，不把原提交者冒充为回滚发起者。
+    pub fn rollback_batch_recorded(
+        &mut self,
+        batch_id: &str,
+        metadata: crate::MutationMetadata,
+    ) -> Result<BatchReceipt, BrokerError> {
+        self.rollback_batch_metadata(batch_id, Some(metadata))
+    }
+    fn commit_batch_metadata(
+        &mut self,
+        request: BatchRequest,
+        preview: &BatchPreview,
+        metadata: Option<crate::MutationMetadata>,
+    ) -> Result<BatchReceipt, BrokerError> {
+        validate_metadata(metadata.as_ref())?;
         plan::validate(&request)?;
         let mut state = idle(self)?;
         let request_hash = Self::fingerprint(&request)?;
@@ -37,11 +68,13 @@ impl BatchWriter for FsVaultBroker {
             if prior.request_hash != request_hash || prior.preview_hash != preview_hash {
                 return Err(BrokerError::IdempotencyConflict);
             }
-            return if prior.rollback {
-                Err(BrokerError::MutationCancelled)
-            } else {
-                Ok(prior.receipt())
-            };
+            if prior.rollback {
+                return Err(BrokerError::MutationCancelled);
+            }
+            if prior.metadata.as_ref().map(|m| &m.actor) != metadata.as_ref().map(|m| &m.actor) {
+                return Err(BrokerError::IdempotencyConflict);
+            }
+            return Ok(prior.receipt());
         }
         let (expected, mutations) = plan::build(self.vault_uuid, &request, |path| {
             self.inspect_existing(path)
@@ -52,6 +85,9 @@ impl BatchWriter for FsVaultBroker {
         crate::memory_write::guard::filesystem(self, &expected.diffs)?;
         let sequence = state.next_sequence;
         let mut items = Vec::new();
+        for value in &mutations {
+            crate::history::batch::preflight(self, &value.path, 4)?;
+        }
         for (value, diff) in mutations.iter().zip(&expected.diffs) {
             if let Some(before) = &diff.before {
                 mutation::install::history(
@@ -81,11 +117,15 @@ impl BatchWriter for FsVaultBroker {
         for item in &items {
             mutation::install::check_before_install(self, item)?;
         }
-        state.format_version = 7;
+        state.format_version = state.format_version.max(8);
         state.next_sequence = sequence
             .checked_add(1)
             .ok_or(BrokerError::WriterLimitExceeded)?;
         state.batch = Some(record::Active {
+            metadata: metadata.map(|m| record::Provenance {
+                actor: m.actor,
+                requested_at_ms: crate::history::store::now(),
+            }),
             batch_id: request.batch_id,
             request_hash,
             preview_hash,
@@ -106,7 +146,12 @@ impl BatchWriter for FsVaultBroker {
             .map(|v| v.receipt())
             .ok_or(BrokerError::CorruptWriterState)
     }
-    fn rollback_batch(&mut self, batch_id: &str) -> Result<BatchReceipt, BrokerError> {
+    fn rollback_batch_metadata(
+        &mut self,
+        batch_id: &str,
+        metadata: Option<crate::MutationMetadata>,
+    ) -> Result<BatchReceipt, BrokerError> {
+        validate_metadata(metadata.as_ref())?;
         let mut state = mutation::load(self)?;
         if let Some(mut active) = state.batch.clone() {
             if active.batch_id != batch_id
@@ -116,6 +161,17 @@ impl BatchWriter for FsVaultBroker {
                 return Err(BrokerError::MutationUnresolved);
             }
             // 原批次尚未公开：以同一事务槽切换为整批回滚，原文和已安装项都先核验。
+            if active.rollback {
+                if active.metadata.as_ref().map(|m| &m.actor) != metadata.as_ref().map(|m| &m.actor)
+                {
+                    return Err(BrokerError::IdempotencyConflict);
+                }
+            } else {
+                active.metadata = metadata.map(|m| record::Provenance {
+                    actor: m.actor,
+                    requested_at_ms: crate::history::store::now(),
+                });
+            }
             active.rollback = true;
             active.phase = Phase::Prepared;
             recovery::check(self, &active)?;
@@ -133,6 +189,9 @@ impl BatchWriter for FsVaultBroker {
         let mut active =
             record::terminal(self, batch_id)?.ok_or_else(|| plan::invalid("批次不存在"))?;
         if active.rollback {
+            if active.metadata.as_ref().map(|m| &m.actor) != metadata.as_ref().map(|m| &m.actor) {
+                return Err(BrokerError::IdempotencyConflict);
+            }
             return Ok(active.receipt());
         }
         // 全批任何目标被后来编辑，连第一项也不得恢复。
@@ -140,13 +199,20 @@ impl BatchWriter for FsVaultBroker {
             recovery::require_installed(self, item)?;
             recovery::original(self, item)?;
         }
+        for item in &active.items {
+            crate::history::batch::preflight(self, &item.path, 2)?;
+        }
+        active.metadata = metadata.map(|m| record::Provenance {
+            actor: m.actor,
+            requested_at_ms: crate::history::store::now(),
+        });
         active.rollback = true;
         active.phase = Phase::Prepared;
         active.sequence = state.next_sequence;
         for item in &mut active.items {
             item.sequence = active.sequence;
         }
-        state.format_version = 7;
+        state.format_version = state.format_version.max(8);
         state.next_sequence = active
             .sequence
             .checked_add(1)
@@ -185,4 +251,15 @@ fn prepare(
         phase: Phase::Prepared,
         receipt: None,
     })
+}
+
+pub(super) fn validate_metadata(
+    value: Option<&crate::MutationMetadata>,
+) -> Result<(), BrokerError> {
+    if value.is_some_and(|m| m.kind != crate::MutationKind::Replace) {
+        return Err(BrokerError::InvalidArtifact(
+            "batch metadata must describe replace".into(),
+        ));
+    }
+    Ok(())
 }

@@ -84,8 +84,14 @@ impl FsVaultBroker {
             .map(|value| parse_cursor(value, &path_hash, &digest))
             .transpose()?
             .unwrap_or(0);
-        let mut items = catalog.entries.clone();
-        items.retain(|item| item.sequence <= state.committed_through);
+        let items = catalog.entries.clone();
+        let mut visible = Vec::new();
+        for item in items {
+            if item.sequence <= state.committed_through && super::batch::visible(self, &item)? {
+                visible.push(item);
+            }
+        }
+        let mut items = visible;
         items.sort_by(|a, b| {
             b.sequence
                 .cmp(&a.sequence)
@@ -120,13 +126,15 @@ impl FsVaultBroker {
         let state = readable(self)?;
         let catalog = catalog::load(self, path)?;
         let digest = checksum(&catalog)?;
-        let entries: Vec<_> = catalog
-            .entries
-            .iter()
-            .filter(|item| {
-                item.sequence <= state.committed_through && item.entry.revision == revision
-            })
-            .collect();
+        let mut entries = Vec::new();
+        for item in &catalog.entries {
+            if item.sequence <= state.committed_through
+                && item.entry.revision == revision
+                && super::batch::visible(self, item)?
+            {
+                entries.push(item);
+            }
+        }
         if entries.is_empty() {
             return Err(BrokerError::NotFound(path.clone()));
         }
@@ -149,7 +157,7 @@ impl FsVaultBroker {
         })
     }
 }
-fn parse_cursor(value: &str, path: &str, digest: &str) -> Result<usize, BrokerError> {
+pub(super) fn parse_cursor(value: &str, path: &str, digest: &str) -> Result<usize, BrokerError> {
     if value.len() > 160 {
         return Err(BrokerError::InvalidHistoryCursor);
     }

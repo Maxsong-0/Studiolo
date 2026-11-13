@@ -70,6 +70,10 @@ pub(crate) fn resume(
     if crate::maintenance::blocked(broker)? {
         return Ok(());
     }
+    if state.format_version < 8 {
+        state.format_version = 8;
+        mutation::save(broker, state)?;
+    }
     // 已观察到冲突时保持 journal；重开可成功但所有 canonical API 仍失败关闭。
     if let Err(error) = check(broker, &active) {
         return match error {
@@ -118,6 +122,7 @@ pub(crate) fn resume(
     }
     record::save_terminal(broker, &active)?;
     mutation::fault(broker, 44)?;
+    crate::history::batch::complete(broker, &active)?;
     state.committed_through = active.sequence;
     state.batch = None;
     mutation::save(broker, state)?;

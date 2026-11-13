@@ -65,6 +65,7 @@ pub(crate) fn complete(broker: &FsVaultBroker, active: &Active) -> Result<(), Br
         return Err(BrokerError::CorruptWriterState);
     }
     let item = Item {
+        batch: None,
         sequence: active.sequence,
         entry,
         recording: None,
@@ -77,14 +78,15 @@ pub(crate) fn complete(broker: &FsVaultBroker, active: &Active) -> Result<(), Br
             && existing.recording.is_none()
             && existing.file_operation_id == item.file_operation_id
         {
-            Ok(())
+            super::feed::record(broker, &active.frozen.path, existing)
         } else {
             Err(BrokerError::CorruptWriterState)
         };
     }
     catalog.version = 3;
-    catalog.entries.push(item);
-    catalog::save(broker, &mut catalog)
+    catalog.entries.push(item.clone());
+    catalog::save(broker, &mut catalog)?;
+    super::feed::record(broker, &active.frozen.path, &item)
 }
 pub(super) fn validate(
     broker: &FsVaultBroker,

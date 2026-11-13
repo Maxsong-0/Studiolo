@@ -16,6 +16,7 @@ use crate::{
 /// 内存契约适配器，遵循相同的逻辑 CAS 与 manifest 规则。
 pub struct MemoryVaultBroker {
     pub(crate) vault_uuid: VaultUuid,
+    pub(crate) change_history: crate::history::memory::Journal,
     pub(crate) objects: std::collections::BTreeMap<VaultPath, Vec<u8>>,
     pub(crate) history: std::collections::BTreeMap<Revision, Vec<u8>>,
     snapshots: Mutex<std::collections::BTreeMap<SnapshotId, Snapshot>>,
@@ -43,6 +44,7 @@ impl MemoryVaultBroker {
     pub fn with_uuid(vault_uuid: VaultUuid) -> Self {
         Self {
             vault_uuid,
+            change_history: crate::history::memory::Journal::default(),
             objects: std::collections::BTreeMap::new(),
             history: std::collections::BTreeMap::new(),
             snapshots: Mutex::new(std::collections::BTreeMap::new()),

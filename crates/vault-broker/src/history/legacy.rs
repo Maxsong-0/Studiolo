@@ -79,6 +79,7 @@ pub(super) fn load(broker: &FsVaultBroker, path: &VaultPath) -> Result<Vec<Item>
                 return Err(BrokerError::WriterLimitExceeded);
             }
             found.entry(key.clone()).or_insert(Item {
+                batch: None,
                 sequence: 0,
                 recording: None,
                 file_operation_id: None,

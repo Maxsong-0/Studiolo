@@ -115,3 +115,32 @@ it('恢复审计失效是独立闭集编辑锁，不把它当普通可写', () =
     ),
   ).toThrow();
 });
+
+it('接受有任务与尝试来源的AI主体，拒绝不成对和越界字段', () => {
+  const actor = {
+    kind: 'agent',
+    agent_type: 'claude',
+    instance_id: 'instance-1',
+    task_id: 'task-1',
+    attempt_id: 'attempt-2',
+  };
+  const value = {
+    ...historyPage,
+    entries: [{ ...historyEntry, author: actor, archived_by: actor }],
+  };
+  expect(parsePage(value, canonical, null).entries[0].author).toEqual(actor);
+  for (const bad of [
+    { ...actor, task_id: null },
+    { ...actor, instance_id: 'bad/path' },
+    { ...actor, display_name: 'fake' },
+    { ...actor, attempt_id: undefined },
+  ]) {
+    expect(() =>
+      parsePage(
+        { ...value, entries: [{ ...value.entries[0], author: bad }] },
+        canonical,
+        null,
+      ),
+    ).toThrow();
+  }
+});

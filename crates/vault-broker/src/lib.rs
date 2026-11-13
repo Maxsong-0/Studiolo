@@ -57,7 +57,8 @@ pub use content_audit::{
     ContentAuditStatus,
 };
 pub use history::{
-    HistoryContent, HistoryEntry, HistoryPage, HistoryPruneReport, HistoryRetention,
+    ChangeEntry, ChangeKind, ChangePage, HistoryContent, HistoryEntry, HistoryPage,
+    HistoryPruneReport, HistoryRetention,
 };
 pub use maintenance::{
     MaintenanceActor, MaintenanceAuditCandidate, MaintenanceAuditEvent, MaintenanceCurrent,

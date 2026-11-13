@@ -62,6 +62,10 @@ pub(crate) fn resume(
     broker: &FsVaultBroker,
     state: &mut mutation::State,
 ) -> Result<(), BrokerError> {
+    if state.file_operation.is_some() && state.format_version < 8 {
+        state.format_version = 8;
+        mutation::save(broker, state)?;
+    }
     let Some(active) = &state.file_operation else {
         return Ok(());
     };

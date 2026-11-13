@@ -100,6 +100,7 @@ M2 包含真实人侧身份、CAS 编辑与 L0、双向 Obsidian Sync、附件 /
 |---|---|
 | [`m2/checkpoint-recovery-contract.md`](m2/checkpoint-recovery-contract.md) | 一致 checkpoint 与新目录恢复契约（冻结实现边界） |
 | [`m2/backup-worker.md`](m2/backup-worker.md) | checkpoint 协调器、独立 BackupWorker 与恢复 kit 的实施记录；**T-048 实施中，未验收** |
+| [`contracts/change-feed.md`](contracts/change-feed.md) | 可信内容变更来源、批量历史与有界全库索引；T-206 人侧接线进行中、未部署 |
 | [`m2/health-and-alerting.md`](m2/health-and-alerting.md) | 健康页、配额、白名单诊断、带外告警与死人开关；**T-048 实施中，生产未启用** |
 
 ### 浏览器验收（均使用虚构夹具）

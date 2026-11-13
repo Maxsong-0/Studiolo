@@ -142,6 +142,7 @@ fn presence_valid(value: &FilePresence) -> bool {
 
 fn actor_valid(actor: &MutationActor) -> bool {
     match actor {
+        MutationActor::Agent { .. } => false,
         MutationActor::Obsidian => true,
         MutationActor::Human { issuer, subject } => {
             issuer.starts_with("https://") && text(issuer, 512) && text(subject, 256)

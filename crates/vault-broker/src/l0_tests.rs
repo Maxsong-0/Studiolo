@@ -1,6 +1,7 @@
 //! 本地私有故障契约，不声称等价于断电、真实设备或远端 Audit 可用性验收。
 
 mod compatibility;
+mod feed;
 mod history;
 mod lifecycle;
 mod restore;

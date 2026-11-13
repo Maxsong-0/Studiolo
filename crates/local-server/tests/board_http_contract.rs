@@ -336,6 +336,32 @@ async fn claim_batch_preview_commit_receipt_and_projection_are_one_authenticated
         fs::read_to_string(f.writer.http.root.join("vault").join(&path)).unwrap(),
         "# 已验证证据\n"
     );
+    // 私有入口已经核验 claim，历史不能用客户端显示名或正文猜主体。
+    let catalog_name = {
+        use sha2::{Digest, Sha256};
+        format!(
+            "{}.json",
+            Sha256::digest(path.as_bytes())
+                .iter()
+                .map(|b| format!("{b:02x}"))
+                .collect::<String>()
+        )
+    };
+    let catalog: Value = serde_json::from_slice(
+        &fs::read(
+            f.writer
+                .data
+                .join("history/meta-v1/catalogs")
+                .join(catalog_name),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    let author = &catalog["entries"][0]["entry"]["author"];
+    assert_eq!(
+        author,
+        &json!({"kind":"agent","agent_type":"claude","instance_id":f.instance,"task_id":identity["task_id"],"attempt_id":identity["attempt_id"]})
+    );
     // 真实Broker读取指针来自文件；测试不自行捏造成功哈希。
     use studiolo_vault_broker::CanonicalReadVault;
     let object = CanonicalReadVault::open_existing(&f.writer.http.root.join("vault"))
