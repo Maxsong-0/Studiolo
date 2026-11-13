@@ -1,196 +1,333 @@
 import { describe, expect, it } from 'vitest';
-import { TASK } from '../../../dev/fixtures/ids';
-import type { OverviewState } from '../../cockpit/model';
+import { DESIRED_ID, TASK } from '../../../dev/fixtures/ids';
+import type { OverviewState, PolicyPendingState } from '../../cockpit/model';
 import {
-  MINI_TASKS,
+  KIND_DRAFT,
+  KIND_PROPOSAL,
   actionTitle,
+  entryKey,
   pendingCount,
   planPending,
+  waitingDesired,
+  type PendingSources,
 } from '../../cockpit/pending';
+import type { ListedDesired } from '../../policyModel';
 import { fixture } from '../fixtures';
-import { fixtureData } from './cockpitFixtures';
+import { NOW, fixtureData, policyReady } from './cockpitFixtures';
 
 const data = fixtureData();
 const ready: OverviewState = { kind: 'ready', overview: data.overview };
+const drafts = policyReady(data.desired);
 const { inbox, projects } = data.workbench;
+const [proposal] = data.desired;
 const item = (id: string) =>
   data.overview.items.find((entry) => entry.id === id)!;
 
-describe('待我动作：统一编号与圈号', () => {
-  it('黑板里等你的任务排前面（最久没动静的先列），工作台待办接着编号，统一 1..N', () => {
-    const plan = planPending(ready, inbox, projects);
-    expect(plan.entries.map((entry) => entry.n)).toEqual(
-      Array.from({ length: 3 + inbox.length }, (_, index) => index + 1),
+function plan(overrides: Partial<PendingSources> = {}) {
+  return planPending({
+    board: ready,
+    policy: drafts,
+    inbox,
+    projects,
+    ...overrides,
+  });
+}
+
+/** 在假数据那份提案上改几个字段，造出别的草案。 */
+function draft(overrides: Partial<ListedDesired>): ListedDesired {
+  return { ...proposal, ...overrides };
+}
+
+const BOARD_FAILED: OverviewState = {
+  kind: 'error',
+  message: '黑板许可已满。',
+};
+const POLICY_FAILED: PolicyPendingState = {
+  kind: 'error',
+  message: '策略平面响应格式无效，请重新核对。',
+};
+
+describe('「等你」的队列：三路并成一列', () => {
+  it('带时间的排前面、等得最久的在最上，工作台待办接在后面，统一编号 1..N', () => {
+    const { entries, total } = plan();
+    expect(entries.map((entry) => entry.n)).toEqual(
+      Array.from({ length: 4 + inbox.length }, (_, index) => index + 1),
     );
-    const board = plan.entries.flatMap((entry) =>
-      entry.source === 'board' ? [entry] : [],
-    );
-    // T-093 最后进展 10:03，T-106 15:03，T-108 15:33：越早停下的越久没动静。
-    expect(board.map((entry) => entry.item.id)).toEqual([
-      TASK.T093,
-      TASK.T106,
-      TASK.T108,
+    // 提案 09:12 提交；T-093 最后进展 10:03，T-106 15:03，T-108 15:33：越早开始等的越靠前，不分来源。
+    expect(entries.slice(0, 4).map(entryKey)).toEqual([
+      `policy:${DESIRED_ID}`,
+      `board:${TASK.T093}`,
+      `board:${TASK.T106}`,
+      `board:${TASK.T108}`,
     ]);
-    expect(board.map((entry) => entry.kind)).toEqual([
+    expect(entries.slice(0, 4).map((entry) => entry.kind)).toEqual([
+      KIND_PROPOSAL,
       '待修订',
       '待验收',
       '待验收',
     ]);
     // 黑板条目的项目名取工作台里同一 root 的项目名。
-    expect(board.map((entry) => entry.project)).toEqual([
-      'Studiolo',
-      'Studiolo',
-      'Studiolo',
-    ]);
-    const tail = plan.entries.slice(board.length);
-    expect(tail.every((entry) => entry.source === 'inbox')).toBe(true);
     expect(
-      tail.map((entry) => (entry.source === 'inbox' ? entry.action.id : '')),
-    ).toEqual(inbox.map((action) => action.id));
-    // 类型取工作台待办的 kind 原文。
+      entries.flatMap((entry) =>
+        entry.source === 'board' ? [entry.project] : [],
+      ),
+    ).toEqual(['Studiolo', 'Studiolo', 'Studiolo']);
+    // 工作台待办不带时间：保持服务端顺序，类型取 kind 原文。
+    const tail = entries.slice(4);
+    expect(tail.map(entryKey)).toEqual(
+      inbox.map((action) => `inbox:${action.id}`),
+    );
     expect(tail.map((entry) => entry.kind)).toEqual(
       inbox.map((action) => action.kind),
     );
-    expect(plan.total).toBe(3 + inbox.length);
+    expect(tail.every((entry) => entry.waitMs === null)).toBe(true);
+    expect(total).toBe(4 + inbox.length);
   });
 
-  it('画进缩略图的黑板条目实心并生成同号标记；工作台待办一律空心，标记只来自黑板', () => {
-    const plan = planPending(ready, inbox, projects);
-    expect(plan.markers).toEqual([
-      { n: 1, target: { taskId: TASK.T093 } },
-      { n: 2, target: { taskId: TASK.T106 } },
-      { n: 3, target: { taskId: TASK.T108 } },
-    ]);
-    for (const marker of plan.markers) {
-      const entry = plan.entries[marker.n - 1];
-      expect(entry.source).toBe('board');
-      expect(entry.source === 'board' && entry.marked).toBe(true);
-    }
-    const drawn = new Set(plan.miniItems.map((entry) => entry.id));
-    for (const marker of plan.markers)
-      expect('taskId' in marker.target && drawn.has(marker.target.taskId)).toBe(
-        true,
+  it('等了多久：黑板任务从最后一次进展算到汇总生成那一刻，草案从提交算到读到列表那一刻', () => {
+    const { entries, oldestWaitMs } = plan();
+    const generated = Date.parse(data.overview.generatedAt);
+    const waits = new Map(
+      entries.map((entry) => [entryKey(entry), entry.waitMs]),
+    );
+    for (const id of [TASK.T093, TASK.T106, TASK.T108])
+      expect(waits.get(`board:${id}`)).toBe(
+        generated - item(id).progress!.lastProgressMs,
       );
+    const submitted = Date.parse(proposal.submitted_at);
+    expect(waits.get(`policy:${DESIRED_ID}`)).toBe(NOW - submitted);
+    // 「最久」是带时间的条目里最大的那个：这里是 09:12 交来的提案。
+    expect(oldestWaitMs).toBe(NOW - submitted);
+    // 读到列表的时刻换了，草案等的时长跟着变，黑板任务不变。
+    const later = plan({ policy: policyReady(data.desired, NOW + 60_000) });
+    expect(later.entries[0].waitMs).toBe(NOW + 60_000 - submitted);
+    expect(later.entries[1].waitMs).toBe(waits.get(`board:${TASK.T093}`));
+    // 读到的时刻比提交还早（本机钟慢）：不出负数。
     expect(
-      plan.entries.filter((entry) => entry.source === 'inbox'),
-    ).toHaveLength(inbox.length);
+      plan({
+        policy: policyReady(data.desired, submitted - 5_000),
+      }).entries.find((entry) => entry.source === 'policy')!.waitMs,
+    ).toBe(0);
   });
 
-  it('缩略图最多 6 条：等你的先上，再补尝试仍在进行的，其余算进「另 N 条」', () => {
-    const plan = planPending(ready, inbox, projects);
-    expect(MINI_TASKS).toBe(6);
-    // 未结束 7 条（简报站 T-021 今天已结束，不画）。
-    expect(plan.unfinished).toBe(7);
-    expect(plan.miniItems.map((entry) => entry.id).sort()).toEqual(
-      [TASK.T046, TASK.T093, TASK.T106, TASK.T108, TASK.T109, TASK.T130].sort(),
-    );
-    // 只剩已批准、写域未释放的 T-092 没上图。
-    expect(plan.omitted).toBe(1);
-    // 缩略图条目保持汇总原顺序（项目、id）。
-    const order = data.overview.items.map((entry) => entry.id);
-    const positions = plan.miniItems.map((entry) => order.indexOf(entry.id));
-    expect(positions).toEqual([...positions].sort((a, b) => a - b));
+  it('类型分布按在队列里第一次出现的先后数', () => {
+    expect(plan({ inbox: [] }).kinds).toEqual([
+      { kind: KIND_PROPOSAL, count: 1 },
+      { kind: '待修订', count: 1 },
+      { kind: '待验收', count: 2 },
+    ]);
+    // 工作台待办的类型和黑板的同名时并成一类。
+    const merged = plan({ inbox: fixture.inbox }).kinds;
+    expect(merged).toContainEqual({ kind: '待验收', count: 3 });
+    expect(merged.reduce((sum, entry) => sum + entry.count, 0)).toBe(5);
   });
 
-  it('等你的任务多过缩略图容量时，排在后面的退成空心圈、不生成标记', () => {
-    const plan = planPending(ready, [], projects, 2);
+  it('不带时间的接在带时间的后面：先黑板、再策略、最后工作台待办', () => {
+    const silent = { ...item(TASK.T106), progress: null };
+    const board: OverviewState = {
+      kind: 'ready',
+      overview: {
+        ...data.overview,
+        items: data.overview.items.map((entry) =>
+          entry.id === TASK.T106 ? silent : entry,
+        ),
+      },
+    };
+    const undated = draft({
+      id: '01M33ZA2G0HQ8K8HMTV4NH3KKQ',
+      subject: 'codex',
+      submitted_at: '时间不详',
+    });
+    const { entries, oldestWaitMs } = plan({
+      board,
+      policy: policyReady([proposal, undated]),
+      inbox: fixture.inbox,
+    });
+    expect(entries.map(entryKey)).toEqual([
+      `policy:${DESIRED_ID}`,
+      `board:${TASK.T093}`,
+      `board:${TASK.T108}`,
+      `board:${TASK.T106}`,
+      `policy:${undated.id}`,
+      'inbox:action-1',
+    ]);
+    expect(entries.map((entry) => entry.waitMs === null)).toEqual([
+      false,
+      false,
+      false,
+      true,
+      true,
+      true,
+    ]);
+    expect(oldestWaitMs).toBe(NOW - Date.parse(proposal.submitted_at));
+  });
+
+  it('同一刻开始等的保持来源先后：黑板在前，策略在后', () => {
+    const since = item(TASK.T093).progress!.lastProgressMs;
+    const tied = draft({ submitted_at: new Date(since).toISOString() });
     expect(
-      plan.entries.map((entry) => entry.source === 'board' && entry.marked),
-    ).toEqual([true, true, false]);
-    expect(plan.markers.map((marker) => marker.n)).toEqual([1, 2]);
-    expect(plan.miniItems).toHaveLength(2);
-    expect(plan.omitted).toBe(5);
+      plan({ policy: policyReady([tied]), inbox: [] })
+        .entries.slice(0, 2)
+        .map(entryKey),
+    ).toEqual([`board:${TASK.T093}`, `policy:${DESIRED_ID}`]);
   });
 
-  it('「最久」只算自带时间的黑板条目，以汇总生成时刻为准', () => {
-    const plan = planPending(ready, inbox, projects);
-    const now = Date.parse(data.overview.generatedAt);
-    expect(plan.oldestWaitMs).toBe(
-      now - item(TASK.T093).progress!.lastProgressMs,
-    );
-    // 工作台待办不带时间：只有它们时不给「最久」。
-    expect(
-      planPending({ kind: 'disabled' }, fixture.inbox, fixture.projects)
-        .oldestWaitMs,
-    ).toBeNull();
+  it('只有工作台待办时没有「最久」', () => {
+    const only = plan({
+      board: { kind: 'disabled' },
+      policy: { kind: 'absent' },
+      inbox: fixture.inbox,
+      projects: fixture.projects,
+    });
+    expect(only.oldestWaitMs).toBeNull();
+    expect(only.entries.map(entryKey)).toEqual(['inbox:action-1']);
+    expect(only.entries[0]).toMatchObject({
+      n: 1,
+      kind: '待验收',
+      project: '星舟',
+      since: null,
+    });
+    expect(only.total).toBe(1);
   });
-
-  it('黑板未启用：等你的黑板任务确实为 0，总数就是工作台待办数；不画缩略图', () => {
-    const plan = planPending({ kind: 'disabled' }, inbox, projects);
-    expect(plan.total).toBe(inbox.length);
-    expect(plan.entries.every((entry) => entry.source === 'inbox')).toBe(true);
-    expect(plan.entries.map((entry) => entry.n)).toEqual(
-      inbox.map((_, index) => index + 1),
-    );
-    expect(plan.markers).toEqual([]);
-    expect(plan.miniItems).toEqual([]);
-    expect(plan.unfinished).toBeNull();
-  });
-
-  it.each<OverviewState>([
-    { kind: 'loading' },
-    { kind: 'error', message: '黑板许可已满。' },
-  ])(
-    '黑板 $kind 时等你的黑板任务数不可知：总数为 null，列表只有工作台待办',
-    (state) => {
-      const plan = planPending(state, inbox, projects);
-      expect(plan.total).toBeNull();
-      expect(plan.entries).toHaveLength(inbox.length);
-      expect(plan.markers).toEqual([]);
-    },
-  );
 
   it('汇总被截断时照实标出', () => {
-    const plan = planPending(
-      { kind: 'ready', overview: { ...data.overview, itemsTruncated: true } },
-      inbox,
-      projects,
-    );
-    expect(plan.truncated).toBe(true);
-    expect(planPending(ready, inbox, projects).truncated).toBe(false);
+    const truncated = plan({
+      board: {
+        kind: 'ready',
+        overview: { ...data.overview, itemsTruncated: true },
+      },
+    });
+    expect(truncated.truncated).toBe(true);
+    expect(plan().truncated).toBe(false);
+    expect(plan({ board: { kind: 'disabled' } }).truncated).toBe(false);
   });
 
-  it('待办标题以「类型：」开头时去掉重复的类型前缀', () => {
+  it('待办标题以「类型：」开头时去掉重复的类型前缀；类型原文为空写「未知」', () => {
     const [action] = fixture.inbox;
     expect(actionTitle({ ...action, title: '待验收：验收只读工作台' })).toBe(
       '验收只读工作台',
     );
     expect(actionTitle(action)).toBe('验收只读工作台');
+    const blank = plan({
+      board: { kind: 'disabled' },
+      policy: { kind: 'absent' },
+      inbox: [{ ...action, kind: '' }],
+    });
+    expect(blank.entries[0].kind).toBe('未知');
+    expect(blank.kinds).toEqual([{ kind: '未知', count: 1 }]);
   });
 });
 
-describe('待我动作总数：巨号与顶栏「驾驶舱 N」角标同一个函数（T-162）', () => {
-  it.each<[string, OverviewState, number | null]>([
-    ['读完：工作台待办＋等你的黑板任务', ready, inbox.length + 3],
-    ['未启用（404）：只数工作台待办', { kind: 'disabled' }, inbox.length],
-    ['读取中：不可知', { kind: 'loading' }, null],
-    ['读取失败：不可知', { kind: 'error', message: '黑板许可已满。' }, null],
-  ])('黑板%s', (_, state, expected) => {
-    expect(pendingCount(data.workbench, state)).toBe(expected);
+describe('策略里哪些算等你', () => {
+  it('待复核和已校验的都算；AI 交的叫「AI 提案」，你自己交的叫「待发布草案」', () => {
+    const own = draft({
+      id: '01M33ZA2G0HQ8K8HMTV4NH3KKR',
+      subject: 'codex',
+      status: 'validated',
+      submitter_kind: 'owner',
+      agent_type: null,
+      agent_instance: null,
+    });
+    expect(waitingDesired([proposal, own])).toEqual([proposal, own]);
+    expect(
+      plan({
+        board: { kind: 'disabled' },
+        policy: policyReady([proposal, own]),
+      }).entries.flatMap((entry) =>
+        entry.source === 'policy' ? [[entry.desired.id, entry.kind]] : [],
+      ),
+    ).toEqual([
+      [proposal.id, KIND_PROPOSAL],
+      [own.id, KIND_DRAFT],
+    ]);
+  });
+
+  it('校验没通过的、已发布的、已取代的、已撤回的都不算', () => {
+    for (const status of [
+      'rejected',
+      'activated',
+      'superseded',
+      'withdrawn',
+    ] as const)
+      expect(waitingDesired([draft({ status })])).toEqual([]);
+  });
+
+  it('被同一提交者更新的草案挡住的较早那份不算：要处理的是更新的那份', () => {
+    const newer = draft({ id: '01M33ZA2G0HQ8K8HMTV4NH3KKS' });
+    const older = draft({ newer_open: [newer.id], blocked_by: [newer.id] });
+    expect(waitingDesired([newer, older])).toEqual([newer]);
+    // 别的提交者交了更新的一份、没挡住发布：两份都等你。
+    const unblocked = draft({ newer_open: [newer.id], blocked_by: [] });
+    expect(waitingDesired([newer, unblocked])).toEqual([newer, unblocked]);
+    expect(
+      pendingCount(
+        { inbox: [] },
+        { kind: 'disabled' },
+        policyReady([newer, older]),
+      ),
+    ).toBe(1);
+  });
+});
+
+describe('等你的总数：巨号与顶栏「驾驶舱 N」角标同一个函数（T-162、T-195）', () => {
+  it.each<[string, OverviewState, PolicyPendingState, number | null]>([
+    ['三路都读到', ready, drafts, inbox.length + 3 + 1],
+    ['黑板未启用（404）', { kind: 'disabled' }, drafts, inbox.length + 1],
+    ['没装策略平面（404）', ready, { kind: 'absent' }, inbox.length + 3],
+    [
+      '黑板和策略都没有',
+      { kind: 'disabled' },
+      { kind: 'absent' },
+      inbox.length,
+    ],
+    ['黑板读取中', { kind: 'loading' }, drafts, null],
+    ['黑板读取失败', BOARD_FAILED, drafts, null],
+    ['策略读取中', ready, { kind: 'loading' }, null],
+    ['策略读取失败', ready, POLICY_FAILED, null],
+    ['两路都在读', { kind: 'loading' }, { kind: 'loading' }, null],
+  ])('%s', (_, board, policy, expected) => {
+    expect(pendingCount(data.workbench, board, policy)).toBe(expected);
     // 巨号用的 plan.total 就是它：两处不会各算各的。
-    expect(planPending(state, inbox, projects).total).toBe(expected);
+    expect(plan({ board, policy }).total).toBe(expected);
+  });
+
+  it('总数不可知时，已经读到的照常列出，不拿它们冒充总数', () => {
+    const boardOnly = plan({ policy: { kind: 'loading' } });
+    expect(boardOnly.total).toBeNull();
+    expect(boardOnly.entries).toHaveLength(3 + inbox.length);
+    const policyOnly = plan({ board: BOARD_FAILED });
+    expect(policyOnly.total).toBeNull();
+    expect(policyOnly.entries).toHaveLength(1 + inbox.length);
+    expect(policyOnly.entries[0].source).toBe('policy');
   });
 
   it('只数未结束、等你的黑板任务：已认领、在跑、已批准与已结束的都不算', () => {
     // 假数据汇总 8 条：3 条等你（T-093 待修订、T-106 与 T-108 待验收）；
     // T-046 已认领、T-109 与 T-130 在跑、T-092 已批准、简报站 T-021 已结束，都不算。
     expect(data.overview.items).toHaveLength(8);
-    expect(pendingCount({ inbox: [] }, ready)).toBe(3);
-    const board = planPending(ready, [], projects).entries;
-    expect(board.map((entry) => entry.source)).toEqual([
-      'board',
-      'board',
-      'board',
-    ]);
+    expect(pendingCount({ inbox: [] }, ready, { kind: 'absent' })).toBe(3);
+    expect(
+      plan({ inbox: [], policy: { kind: 'absent' } }).entries.map(
+        (entry) => entry.source,
+      ),
+    ).toEqual(['board', 'board', 'board']);
   });
 
-  it('还没有工作台快照：不论黑板读到哪一步，总数都不可知', () => {
-    const states: OverviewState[] = [
+  it('还没有工作台快照：不论另外两路读到哪一步，总数都不可知', () => {
+    const boards: OverviewState[] = [
       ready,
       { kind: 'disabled' },
       { kind: 'loading' },
-      { kind: 'error', message: '黑板许可已满。' },
+      BOARD_FAILED,
     ];
-    for (const state of states) expect(pendingCount(null, state)).toBeNull();
+    const policies: PolicyPendingState[] = [
+      drafts,
+      { kind: 'absent' },
+      { kind: 'loading' },
+      POLICY_FAILED,
+    ];
+    for (const board of boards)
+      for (const policy of policies)
+        expect(pendingCount(null, board, policy)).toBeNull();
   });
 });

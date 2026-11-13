@@ -91,6 +91,13 @@ export const fixture: Workbench = {
   diagnostics: [],
 };
 
+/**
+ * 「工作台读到了、驾驶舱出来了」的信号：驾驶舱的一级标题。
+ * 渲染整个 App 的测试用它等首屏，也用它核对内容有没有被清掉：
+ * `await screen.findByRole('heading', COCKPIT_READY)`。
+ */
+export const COCKPIT_READY = { level: 1, name: '驾驶舱' } as const;
+
 export function jsonResponse(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
     status,

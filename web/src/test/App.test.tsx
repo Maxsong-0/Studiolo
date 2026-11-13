@@ -9,6 +9,7 @@ import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { App } from '../App';
 import {
+  COCKPIT_READY,
   defaultApiResponse,
   documents,
   emptyNavigation,
@@ -44,7 +45,7 @@ describe('只读工作台', () => {
     expect(await within(popover).findByText('测试只读库')).toBeInTheDocument();
     expect(screen.getByTitle('测试只读库')).toHaveClass('shell-library');
     expect(fetchMock.mock.calls[0][0]).toBe('/api/workbench');
-    // 项目明细全表与筛选在「项目」视图（T-130 规范第 4、9 节）；驾驶舱只摆前五行摘要。
+    // 项目明细全表与筛选在「项目」视图（T-130 规范第 4、9 节）；驾驶舱不摆项目表（T-195）。
     await user.click(screen.getByRole('button', { name: '项目' }));
     const unknownRow = screen.getByRole('row', { name: /灵感盒/ });
     expect(within(unknownRow).getAllByText('未知')).toHaveLength(5);
@@ -63,7 +64,7 @@ describe('只读工作台', () => {
     );
     expect(screen.getByRole('row', { name: /资料夹/ })).toBeInTheDocument();
     expect(screen.queryByRole('row', { name: /星舟/ })).not.toBeInTheDocument();
-    // 驾驶舱是全局总览、没有筛选栏：项目视图的筛选不截断待我动作（规范第 5、6 节）。
+    // 驾驶舱是全局总览、没有筛选栏：项目视图的筛选不截断「等你处理」的队列（规范第 5、6 节）。
     await user.click(screen.getByRole('button', { name: '驾驶舱' }));
     expect(
       screen.getByRole('button', { name: '验收只读工作台，查看原文' }),
@@ -84,8 +85,8 @@ describe('只读工作台', () => {
     );
     const user = userEvent.setup();
     render(<App />);
-    // 当前版本列在「项目」视图的明细全表里；驾驶舱的项目明细只有序号、项目、状态与备注。
-    await screen.findByRole('table');
+    // 当前版本列在「项目」视图的明细全表里。
+    await screen.findByRole('heading', COCKPIT_READY);
     await user.click(screen.getByRole('button', { name: '项目' }));
     const sourceButton = await screen.findByRole('button', {
       name: '星舟 当前版本：M1，查看来源',
@@ -129,10 +130,8 @@ describe('只读工作台', () => {
     );
     const user = userEvent.setup();
     render(<App />);
-    // 驾驶舱项目明细只列前五行，入口写明总数（规范第 5 节，承接 T-117）。
-    await user.click(
-      await screen.findByRole('button', { name: '全部 3 个项目，打开项目' }),
-    );
+    await screen.findByRole('heading', COCKPIT_READY);
+    await user.click(screen.getByRole('button', { name: '项目' }));
     expect(
       screen.getByRole('heading', { level: 1, name: '项目' }),
     ).toBeInTheDocument();
@@ -146,38 +145,36 @@ describe('只读工作台', () => {
     expect(await screen.findByText('# 星舟')).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: '关闭原文' }));
     await user.click(screen.getByRole('button', { name: '驾驶舱' }));
-    expect(screen.getByRole('table')).toBeInTheDocument();
+    expect(screen.getByRole('heading', COCKPIT_READY)).toBeInTheDocument();
+    expect(
+      screen.getByRole('region', { name: '等你处理' }),
+    ).toBeInTheDocument();
   });
 
-  it('驾驶舱「全部 N 个项目」先清掉项目视图留下的筛选，打开后行数等于总数（T-117）', async () => {
+  it('项目视图留下的筛选只管项目表：切去驾驶舱再回来筛选还在，驾驶舱的队列不受它影响', async () => {
     const user = userEvent.setup();
     render(<App />);
-    await screen.findByRole('table');
+    await screen.findByRole('heading', COCKPIT_READY);
     await user.click(screen.getByRole('button', { name: '项目' }));
     await user.type(
       screen.getByRole('searchbox', { name: '筛选项目' }),
-      '星舟',
-    );
-    await user.selectOptions(
-      screen.getByRole('combobox', { name: '生命周期' }),
-      '活跃',
+      '资料夹',
     );
     expect(
       within(screen.getByRole('table')).getAllByRole('rowheader'),
     ).toHaveLength(1);
+    // 待办属于「星舟」，项目视图此刻筛掉了它；驾驶舱照样列出。
     await user.click(screen.getByRole('button', { name: '驾驶舱' }));
-    await user.click(
-      await screen.findByRole('button', { name: '全部 3 个项目，打开项目' }),
+    expect(
+      screen.getByRole('button', { name: '验收只读工作台，查看原文' }),
+    ).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: '项目' }));
+    expect(screen.getByRole('searchbox', { name: '筛选项目' })).toHaveValue(
+      '资料夹',
     );
     expect(
-      screen.getByRole('heading', { level: 1, name: '项目' }),
-    ).toBeInTheDocument();
-    expect(screen.getByRole('searchbox', { name: '筛选项目' })).toHaveValue('');
-    expect(screen.getByRole('combobox', { name: '生命周期' })).toHaveValue('');
-    expect(
       within(screen.getByRole('table')).getAllByRole('rowheader'),
-    ).toHaveLength(3);
-    expect(screen.getByText('3 个项目')).toHaveAttribute('role', 'status');
+    ).toHaveLength(1);
   });
 
   it('失败可重试，刷新失败继续显示旧快照但明确提示', async () => {
@@ -186,7 +183,9 @@ describe('只读工作台', () => {
     render(<App />);
     expect(await screen.findByRole('alert')).toHaveTextContent('副本不可用');
     await user.click(screen.getByRole('button', { name: '重试' }));
-    expect(await screen.findByRole('table')).toBeInTheDocument();
+    expect(
+      await screen.findByRole('heading', COCKPIT_READY),
+    ).toBeInTheDocument();
     expect(workbenchRequests()).toEqual([
       '/api/workbench',
       '/api/workbench?refresh=true',
@@ -198,7 +197,11 @@ describe('只读工作台', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent(
       '刷新失败，仍显示上次快照。',
     );
-    expect(screen.getByRole('table')).toBeInTheDocument();
+    expect(screen.getByRole('heading', COCKPIT_READY)).toBeInTheDocument();
+    // 旧快照里的待办还在。
+    expect(
+      screen.getByRole('button', { name: '验收只读工作台，查看原文' }),
+    ).toBeInTheDocument();
   });
 
   it('409 说明快照过期并可刷新，不用新内容冒充旧来源', async () => {
@@ -246,11 +249,8 @@ describe('只读工作台', () => {
     );
     const user = userEvent.setup();
     render(<App />);
-    // 驾驶舱：项目明细与待我动作各自说明为空（黑板汇总回 404 后待我动作才算读完）。
-    expect(
-      await screen.findByText('当前快照没有可读项目。'),
-    ).toBeInTheDocument();
-    expect(await screen.findByText('当前没有待我动作。')).toBeInTheDocument();
+    // 驾驶舱：三路都读完（黑板汇总与策略草案都回 404）才说没有事等你。
+    expect(await screen.findByText('现在没有事等你。')).toBeInTheDocument();
     // 带筛选的明细全表在「项目」视图，空态文案仍提示调整筛选。
     await user.click(screen.getByRole('button', { name: '项目' }));
     expect(
@@ -316,11 +316,13 @@ describe('只读工作台', () => {
     );
     const user = userEvent.setup();
     render(<App />);
-    await screen.findByRole('table');
+    await screen.findByRole('heading', COCKPIT_READY);
     const main = screen.getByRole('main');
     expect(
-      within(main).getByText('当前快照有 2 条数据提示：缺失信息保持未知。'),
-    ).toBeInTheDocument();
+      within(main).getByRole('button', {
+        name: '2 条数据提示，查看数据提示',
+      }),
+    ).toHaveTextContent('2 条数据提示');
     expect(
       within(main).queryByText('副本里有两条同名笔记'),
     ).not.toBeInTheDocument();
@@ -333,7 +335,9 @@ describe('只读工作台', () => {
         within(screen.getByRole('main')).queryByText('副本里有两条同名笔记'),
       ).not.toBeInTheDocument();
     }
-    await user.click(screen.getByRole('button', { name: '查看数据提示' }));
+    await user.click(
+      screen.getByRole('button', { name: '2 条数据提示，查看数据提示' }),
+    );
     const capsule = screen.getByRole('button', { name: /^工作台状态/ });
     expect(capsule).toHaveAttribute('aria-expanded', 'true');
     const popover = document.getElementById(

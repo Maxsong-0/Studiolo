@@ -2,7 +2,7 @@ import { useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { boardOverviewDisabled, fetchBoardOverview } from '../boardOverviewApi';
 import { COCKPIT_WINDOW_HOURS, type OverviewState } from './model';
 
-/** 黑板汇总的一份读取：读取状态，加上只重读它的动作（拓扑格的「重试」）。 */
+/** 黑板汇总的一份读取：读取状态，加上只重读它的动作（「谁在干活」里的「重试」）。 */
 export interface OverviewRead {
   state: OverviewState;
   reload: () => void;
@@ -13,12 +13,12 @@ const message = (error: unknown) =>
 
 /**
  * 跨项目黑板汇总（`/api/v1/board/overview`）的全站那一份读取（T-162）：由 App 读，
- * 顶栏「驾驶舱 N」角标与驾驶舱（巨号、拓扑、时间线、标题栏）共用同一份，驾驶舱不再另读；
+ * 顶栏「驾驶舱 N」角标与驾驶舱（队列与巨号、谁在干活、自上次查看以来、系统读数）共用同一份，驾驶舱不再另读；
  * 离开驾驶舱时角标照样含黑板里等你的任务。
  *
  * - 有了工作台快照（`ready`）才读：总数要把工作台待办加进去，快照都没有时读了也用不上。
  * - 首次读取在快照到手的那次提交里就发出（layout effect，而不是绘制之后的 effect）：
- *   驾驶舱一出现，它要的请求已经在路上。否则「表格出现之后」再发的请求会落在别处的请求计数
+ *   驾驶舱一出现，它要的请求已经在路上。否则「驾驶舱出现之后」再发的请求会落在别处的请求计数
  *   与一次性应答之后，时序随机（会话「一天内切回不发请求」、工作台「刷新失败」两处核对都依赖这一点）。
  * - 一轮刷新（`refreshing` 由真转假，成功或失败）结束就重读：刷新说的是整页读数（沿用驾驶舱原规则）。
  *   还没有快照时的那一轮不算——首次读取跟着快照到手一起发，不会连发两次。

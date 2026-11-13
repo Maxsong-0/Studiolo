@@ -1,271 +1,289 @@
 /*
- * 驾驶舱（T-130 设计规范第 6 节，画布「第三轮 融合」主稿）。
- * 网格、格子、巨号、状态方块、圈号、泳道、标题栏的骨架都在 web/src/ui/ui.css；这里只排格子内部。
- * 只引用 tokens.css 的新令牌；14px 及以下的红字用 --signal-text，形状与大字用 --signal。
+ * 驾驶舱（T-195；设计规范第 6 节，画布「A 进阶」稿）。一张图纸分四格：左 8 列、右 4 列，上下两行。
+ * 只引用 tokens.css 的令牌。全页的红只有两处：巨号（--signal），和「停下等你」
+ * （泳道红段 --signal，12px 的状态小字用 --signal-text）；别处要强调就用黑底反白或字重。
+ * 字重：900 只给巨号、「件事等你处理」和底部四个数；行标题 500，选中那一行 700。
+ *
+ * 版面按驾驶舱自己的宽度变（容器查询），不看视口：
+ *   ≥1248px  画出 12 列细线和上沿标尺。这时一列（1/12）才不小于 104px 的最小列宽，线和内容对得上；
+ *   <960px   左右两栏上下叠放；
+ *   <640px   队列的一行拆成两行（序号与正文一行，等了多久与去处理一行），底部四个数排成两列。
  */
 
 .cockpit {
   min-width: 0;
+  container: cockpit / inline-size;
 }
 
-/* ---------- 共用：等宽小字、红字、文字链接、空态 ---------- */
+/* ---------- 图纸：标尺、外框、四格 ---------- */
 
-.cockpit-kicker,
-.cockpit-note {
-  margin: 0;
+/* 标尺左右各让出 1px：图纸有 1px 外框，这样 12 等分才和框里的细线对齐 */
+.cockpit-ruler {
+  display: none;
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+  padding: 0 1px;
   font-family: var(--font-mono);
-  font-size: var(--type-label);
-  line-height: 1.4;
-  color: var(--ink-2);
-}
-.cockpit-kicker {
-  letter-spacing: 0.08em;
-}
-.cockpit-signal {
-  color: var(--signal-text);
-}
-.cockpit-empty {
-  margin: 0;
-  font-size: var(--type-body);
+  font-size: var(--type-micro);
   line-height: 1.6;
   color: var(--ink-2);
 }
-/* 图例：格子标题行右侧的等宽小字（拓扑与时间线共用），几段之间留 14px */
-.cockpit-legend {
-  display: inline-flex;
+.cockpit-ruler > span {
+  padding-left: var(--space-1-5);
+  border-left: 1px solid var(--hairline);
+}
+.cockpit-sheet {
+  /* 一列的宽度：左栏的 1/8，也就是整张图纸的 1/12；内容放不下时不小于 104px */
+  --cockpit-col: max(12.5%, 104px);
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--ink);
+  background-color: var(--paper);
+}
+.cockpit-sheet__row {
+  display: grid;
+  grid-template-columns: minmax(0, 8fr) minmax(0, 4fr);
+}
+.cockpit-sheet__row + .cockpit-sheet__row {
+  border-top: 1px solid var(--ink);
+}
+.cockpit-crew,
+.cockpit-readings {
+  border-left: 1px solid var(--ink);
+}
+@container cockpit (width >= 1248px) {
+  .cockpit-ruler {
+    display: grid;
+  }
+  .cockpit-sheet {
+    background-image: linear-gradient(
+      to right,
+      var(--grid) 1px,
+      transparent 1px
+    );
+    background-size: calc(100% / 12) 100%;
+  }
+}
+@container cockpit (width < 960px) {
+  .cockpit-sheet__row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .cockpit-crew,
+  .cockpit-readings {
+    border-top: 1px solid var(--ink);
+    border-left: 0;
+  }
+}
+
+/* ---------- 共用：格子标题行、等宽小字、文字链接 ---------- */
+
+.cockpit-head {
+  display: flex;
   flex-wrap: wrap;
-  justify-content: flex-end;
-  gap: 0 var(--space-3-5);
-  font-size: var(--type-label);
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-0-5) var(--space-3);
+  min-width: 0;
 }
-.cockpit-legend > span {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-1);
+.cockpit-head h2,
+.cockpit-head h3 {
+  margin: 0;
+  font-size: var(--type-item);
+  line-height: 1.4;
+  font-weight: 700;
 }
-/* 格子标题行右侧的文字链接：等宽次要色，悬停转墨色；保留 24px 触控高度 */
+.cockpit-head__meta,
+.cockpit-note {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: var(--type-caption);
+  line-height: 1.5;
+  color: var(--ink-2);
+}
+/* 格子里的文字链接：等宽次要色，悬停转墨色；保留 24px 触控高度（窄屏 44px） */
 .ui-button.cockpit-link {
   min-height: 24px;
   padding: 0;
   font-family: var(--font-mono);
-  font-size: var(--type-label);
+  font-size: var(--type-caption);
   font-weight: 500;
-  letter-spacing: 0.04em;
   color: var(--ink-2);
 }
 .ui-button.cockpit-link:hover:not(:disabled) {
   background: transparent;
   color: var(--ink);
 }
-
-/* ---------- 左上：巨号 ---------- */
-
-.cockpit-hero {
-  justify-content: space-between;
-  padding-top: var(--space-4);
-  padding-bottom: var(--space-4);
-}
-.cockpit-hero .ui-big-number__note .cockpit-signal {
-  font-weight: 600;
+.cockpit-note .cockpit-link {
+  margin-left: var(--space-2);
 }
 
-/* ---------- 右上：协作拓扑缩略（网格纸底） ---------- */
+/* ---------- 左上：等你处理 ---------- */
 
-/* 缩略图装进格子里：按格子剩余高度等比缩放，不撑破 300px 的首行 */
-.cockpit-topology__canvas {
+.cockpit-queue {
   display: flex;
-  flex: 1 1 auto;
+  flex-direction: column;
   min-width: 0;
-  min-height: 0;
 }
-.cockpit-topology__canvas > * {
-  flex: 1 1 auto;
+/* 四列与下面每一行同宽：巨号（一位数占一列，两位数占两列）、标题、等了多久、去处理 */
+.cockpit-queue__head {
+  display: grid;
+  grid-template-columns:
+    calc(var(--cockpit-col) * var(--cockpit-digits, 1))
+    minmax(0, 1fr) var(--cockpit-col) var(--cockpit-col);
+  align-items: end;
+  padding: var(--space-6) 0 var(--space-4-5);
+}
+/* 巨号按自己那一格的宽度定大小（上限是巨号令牌）：格子随图纸变窄时数字跟着缩，不会压到标题上 */
+.cockpit-queue__count {
   min-width: 0;
-  min-height: 0;
-  margin: 0;
+  padding-left: var(--space-3);
+  container-type: inline-size;
+  color: var(--ink-2);
 }
-.cockpit-topology__canvas svg {
+.cockpit-queue__count[data-state='waiting'] {
+  color: var(--signal);
+}
+.cockpit-queue__count[data-state='clear'] {
+  color: var(--ink);
+}
+.cockpit-queue__count-value {
   display: block;
-  width: 100%;
-  height: 100%;
-  max-height: 100%;
+  font-size: min(var(--type-giant), calc(144cqi / var(--cockpit-digits, 1)));
+  line-height: 0.76;
+  font-weight: 900;
+  letter-spacing: -0.03em;
 }
-
-/* ---------- 左中：待我动作 ---------- */
-
-.cockpit-pending {
-  padding-bottom: var(--space-1-5);
-}
-.cockpit-pending__list {
-  display: flex;
-  flex: 1 1 auto;
-  flex-direction: column;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-.cockpit-pending__list > li {
-  display: flex;
-  flex: 1 1 auto;
-  border-top: 1px solid var(--hairline);
-}
-.cockpit-pending__list > li:first-child {
-  border-top-color: var(--ink);
-}
-.cockpit-pending__row {
-  display: grid;
-  flex: 1 1 auto;
-  grid-template-columns: 34px 76px minmax(0, 1fr) minmax(0, 96px);
-  align-items: center;
-  min-width: 0;
-  min-height: var(--control-compact);
-  padding: 0;
-  border: 0;
-  border-radius: 0;
-  background: transparent;
-  color: var(--ink);
-  text-align: left;
-  cursor: pointer;
-}
-.cockpit-pending__row:hover {
-  background: var(--paper-raised);
-}
-.cockpit-pending__kind {
-  font-size: var(--type-small);
-  line-height: 1.3;
-  font-weight: 800;
-  white-space: nowrap;
-}
-.cockpit-pending__title {
-  min-width: 0;
-  padding-right: var(--space-3-5);
-  overflow: hidden;
-  font-size: var(--type-item);
-  line-height: 1.4;
-  font-weight: 700;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-}
-.cockpit-pending__project {
-  min-width: 0;
-  overflow: hidden;
-  font-family: var(--font-mono);
-  font-size: var(--type-label);
-  line-height: 1.3;
-  letter-spacing: 0.06em;
-  color: var(--ink-2);
-  text-align: right;
-  text-transform: uppercase;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-}
-
-/* ---------- 右中：今天的时间线 ---------- */
-
-.cockpit-timeline {
-  gap: var(--space-3);
-}
-.cockpit-timeline .cockpit-legend {
-  color: var(--ink);
-}
-.cockpit-legend__mark {
-  width: 9px;
-  height: 9px;
-  background: var(--ink);
-}
-.cockpit-legend__mark--owner {
-  background: var(--signal);
-}
-.cockpit-feed {
+.cockpit-queue__heading {
   display: flex;
   flex-direction: column;
-  gap: var(--space-1-5);
+  gap: var(--space-2);
+  min-width: 0;
+  padding: 0 var(--space-3);
+}
+.cockpit-queue__heading h2 {
   margin: 0;
-  padding: var(--space-2-5) 0 0;
-  border-top: 1px solid var(--ink);
-  list-style: none;
+  font-size: var(--type-plate);
+  line-height: 1.15;
+  font-weight: 900;
 }
-.cockpit-feed > li {
-  display: grid;
-  grid-template-columns: 50px minmax(0, 112px) minmax(0, 1fr);
-  column-gap: var(--space-2);
-  align-items: baseline;
-  font-size: var(--type-small);
-  line-height: 1.4;
-}
-.cockpit-feed__time,
-.cockpit-feed__who {
+.cockpit-queue__meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-0-5) var(--space-4);
+  margin: 0;
   font-family: var(--font-mono);
-  font-size: var(--type-label);
-  white-space: nowrap;
-}
-.cockpit-feed__time {
+  font-size: var(--type-caption);
+  line-height: 1.5;
   color: var(--ink-2);
 }
-.cockpit-feed__who {
-  overflow: hidden;
-  font-weight: 600;
-  text-overflow: ellipsis;
+.cockpit-queue__oldest {
+  color: var(--ink);
 }
-.cockpit-feed__text {
+.cockpit-queue__legend {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-0-5);
   min-width: 0;
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
+  padding: 0 var(--space-3);
+  font-family: var(--font-mono);
+  font-size: var(--type-label);
+  line-height: 1.4;
+  color: var(--ink-2);
 }
-.cockpit-feed--empty {
-  padding-top: var(--space-2-5);
-  border-top: 1px solid var(--ink);
+/* 图例刻度：底边是轴，三道竖线是 10 分、1 时、1 天；下面留一行字高放刻度的字 */
+.cockpit-scale {
+  position: relative;
+  display: block;
+  height: 6px;
+  margin-bottom: 1.4em;
+  border-bottom: 1px solid var(--ink);
 }
-
-/* ---------- 左下：项目明细 ---------- */
-
-.cockpit-projects {
-  gap: var(--space-1-5);
-  padding-top: var(--space-3);
-  padding-bottom: var(--space-3);
-}
-.cockpit-projects__table {
-  width: 100%;
-  border-collapse: collapse;
-  border-top: 1.5px solid var(--ink);
-  table-layout: fixed;
-  font-size: var(--type-small);
-  line-height: 1.35;
-}
-.cockpit-projects__col-index {
-  width: 30px;
-}
-.cockpit-projects__col-state {
-  width: 104px;
-}
-/* 列名只给读屏：画布上没有表头行，列义由内容自明 */
-.cockpit-projects__table thead th {
+.cockpit-scale__mark {
   position: absolute;
-  width: 1px;
-  height: 1px;
-  padding: 0;
-  overflow: hidden;
-  clip-path: inset(50%);
+  top: 0;
+  bottom: 0;
+  left: var(--cockpit-at, 0%);
+  border-left: 1px solid var(--ink);
+}
+.cockpit-scale__label {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  padding-top: var(--space-0-5);
+  font-size: var(--type-micro);
+  line-height: 1.3;
   white-space: nowrap;
 }
-.cockpit-projects__table tbody td,
-.cockpit-projects__table tbody th {
-  padding: var(--space-1) var(--space-2) var(--space-1) 0;
-  border-bottom: 1px solid var(--hairline);
-  font-weight: inherit;
-  text-align: left;
-  vertical-align: middle;
+
+.cockpit-queue__list {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  border-top: 1px solid var(--hairline);
+  list-style: none;
 }
-.cockpit-projects__index {
+.cockpit-queue__row {
+  position: relative;
+  display: grid;
+  grid-template-columns:
+    var(--cockpit-col) minmax(0, 1fr) var(--cockpit-col)
+    var(--cockpit-col);
+  align-items: center;
+  padding: var(--space-2-5) 0;
+  border-bottom: 1px solid var(--hairline);
+}
+/* 选中的一行：浅一档的纸色，上下各一条黑线（上面那条盖住前一行的细线），序号黑底 */
+.cockpit-queue__row[data-selected] {
+  align-items: start;
+  padding: var(--space-4) 0 var(--space-4-5);
+  border-bottom-color: var(--ink);
+  background: var(--paper-raised);
+  box-shadow: 0 -1px 0 var(--ink);
+}
+/* 序号方块 24px、间距 6px：一列最窄 104px 时，五个字的类型（「待用户操作」「待再次确认」）刚好写得下 */
+.cockpit-queue__index {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1-5);
+  min-width: 0;
+  padding-left: var(--space-3);
   font-family: var(--font-mono);
-  font-size: var(--type-label);
+  font-size: var(--type-caption);
+  line-height: 1.5;
+}
+.cockpit-queue__n {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 24px;
+  height: 24px;
   color: var(--ink-2);
 }
-.cockpit-projects__name {
-  overflow: hidden;
+.cockpit-queue__row[data-selected] .cockpit-queue__n {
+  background: var(--ink);
+  color: var(--on-ink);
 }
-.cockpit-projects__name button {
+.cockpit-queue__kind {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.cockpit-queue__body {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  padding: 0 var(--space-3);
+}
+.cockpit-queue__row[data-selected] .cockpit-queue__body {
+  gap: var(--space-1-5);
+}
+.cockpit-queue__title {
+  min-width: 0;
+  margin: 0;
+}
+.cockpit-queue__select {
+  display: block;
   max-width: 100%;
   padding: 0;
   overflow: hidden;
@@ -274,41 +292,471 @@
   background: none;
   color: var(--ink);
   font: inherit;
-  font-weight: 700;
+  font-size: var(--type-item);
+  line-height: 1.45;
+  font-weight: 500;
   text-align: left;
   white-space: nowrap;
   text-overflow: ellipsis;
   cursor: pointer;
 }
-.cockpit-projects__name button:hover {
-  text-decoration: underline;
-  text-decoration-thickness: 1px;
-  text-underline-offset: 3px;
+.cockpit-queue__row[data-selected] .cockpit-queue__select {
+  font-size: var(--type-cell);
+  font-weight: 700;
+  white-space: normal;
 }
-.cockpit-projects__state {
-  font-size: var(--type-caption);
-  white-space: nowrap;
+/* 没选中的行整行都能点：标题按钮的点击区铺满这一行，行尾的链接浮在它上面 */
+.cockpit-queue__row:not([data-selected]) .cockpit-queue__select::after {
+  position: absolute;
+  inset: 0;
+  content: '';
 }
-.cockpit-projects__note {
+.cockpit-queue__sub {
+  margin: 0;
   overflow: hidden;
-  font-size: var(--type-caption);
+  font-size: var(--type-small);
+  line-height: 1.5;
   color: var(--ink-2);
   white-space: nowrap;
   text-overflow: ellipsis;
 }
-.cockpit-diagnostics {
+.cockpit-queue__detail {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+}
+.cockpit-queue__facts {
   display: flex;
   flex-wrap: wrap;
-  align-items: baseline;
-  gap: 0 var(--space-3);
+  gap: var(--space-0-5) var(--space-3-5);
   margin: 0;
+  font-size: var(--type-small);
+  line-height: 1.5;
+}
+.cockpit-queue__facts-label {
+  font-family: var(--font-mono);
+  font-size: var(--type-caption);
+  color: var(--ink-2);
+}
+.cockpit-queue__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+.cockpit-queue__actions .ui-button {
+  min-height: var(--control-touch);
+}
+.cockpit-queue__wait {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1-5);
+  min-width: 0;
+  padding: 0 var(--space-3);
+}
+.cockpit-queue__row[data-selected] .cockpit-queue__wait {
+  padding-top: var(--space-1);
+}
+.cockpit-queue__waited {
+  font-family: var(--font-mono);
+  font-size: var(--type-caption);
+  line-height: 1.5;
+  white-space: nowrap;
+}
+/* 等待刻度条：3px 的墨色条落在一条细线上，长度是对数刻度（wait.ts 的 waitFraction） */
+.cockpit-wait {
+  display: block;
+  height: 4px;
+  border-bottom: 1px solid var(--hairline);
+}
+.cockpit-wait__fill {
+  display: block;
+  width: var(--cockpit-wait, 0%);
+  height: 100%;
+  background: var(--ink);
+}
+.cockpit-queue__open {
+  display: flex;
+  justify-content: flex-end;
+  min-width: 0;
+  padding-right: var(--space-3);
+}
+.cockpit-queue__link {
+  position: relative;
+  z-index: 1;
+  min-height: var(--control-touch);
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: none;
+  color: var(--ink);
+  font: inherit;
+  font-size: var(--type-small);
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.cockpit-queue__clear {
+  margin: 0;
+  padding: var(--space-4) var(--space-3);
+  border-top: 1px solid var(--hairline);
+  font-size: var(--type-body);
+  line-height: 1.6;
+  color: var(--ink-2);
+}
+.cockpit-queue__foot {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: var(--space-1) var(--space-6);
+  margin: 0;
+  padding: var(--space-3);
+  font-family: var(--font-mono);
   font-size: var(--type-caption);
   line-height: 1.5;
   color: var(--ink-2);
 }
+/* 悬停只给真有悬停的指针设备：触屏上点一下会留下「卡住的悬停」 */
+@media (hover: hover) and (pointer: fine) {
+  .cockpit-queue__row:not([data-selected]):hover {
+    background: var(--paper-raised);
+  }
+  .cockpit-queue__link:hover {
+    text-decoration: underline;
+    text-decoration-thickness: 1px;
+    text-underline-offset: 3px;
+  }
+}
 
-/* ---------- 右下：图纸标题栏 ---------- */
+/* ---------- 右上：谁在干活 ---------- */
 
-.cockpit-title > .ui-title-block {
-  flex: 1 1 auto;
+/* 右栏自己也是一个容器：一行放不放得下名字、任务、状态，看的是这一栏的宽度 */
+.cockpit-crew {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3-5);
+  min-width: 0;
+  padding: var(--space-6) var(--space-3) var(--space-5);
+  container: cockpit-crew / inline-size;
+}
+/* 四段各 6 小时，和下面每条泳道同宽：刻度的竖线正对泳道上的那个钟点 */
+.cockpit-crew__scale {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  font-family: var(--font-mono);
+  font-size: var(--type-micro);
+  line-height: 1.4;
+  color: var(--ink-2);
+}
+.cockpit-crew__scale > span {
+  overflow: hidden;
+  padding-left: var(--space-1);
+  border-left: 1px solid var(--hairline);
+  white-space: nowrap;
+}
+.cockpit-crew__list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3-5);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.cockpit-crew__list > li {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1-5);
+  min-width: 0;
+}
+.cockpit-crew__line {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-0-5) var(--space-2-5);
+  min-width: 0;
+  font-size: var(--type-small);
+  line-height: 1.5;
+}
+.cockpit-crew__name {
+  flex: none;
+  max-width: 15ch;
+  overflow: hidden;
+  font-family: var(--font-mono);
+  font-size: var(--type-caption);
+  font-weight: 600;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+/* 任务这一段占掉名字和状态之间的地方；里面只有标题会被截短，「另 N 条」紧跟标题 */
+.cockpit-crew__what {
+  display: flex;
+  flex: 1 1 0;
+  align-items: baseline;
+  gap: var(--space-2);
+  min-width: 0;
+}
+.cockpit-crew__task {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  font-weight: 500;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.cockpit-crew__more {
+  flex: none;
+  font-family: var(--font-mono);
+  font-size: var(--type-caption);
+  color: var(--ink-2);
+  white-space: nowrap;
+}
+.cockpit-crew__status {
+  flex: none;
+  font-family: var(--font-mono);
+  font-size: var(--type-caption);
+  color: var(--ink-2);
+  white-space: nowrap;
+}
+/* 右栏窄（手机，或图纸在 960～1248px 之间）：名字和状态一行，任务另起一行，标题才有地方写 */
+@container cockpit-crew (width < 400px) {
+  .cockpit-crew__line {
+    flex-wrap: wrap;
+  }
+  .cockpit-crew__status {
+    margin-left: auto;
+  }
+  .cockpit-crew__what {
+    flex-basis: 100%;
+    order: 1;
+  }
+}
+.cockpit-crew__list > li[data-state='waiting'] .cockpit-crew__status {
+  font-weight: 600;
+  color: var(--signal-text);
+}
+/* 泳道：6px 高的段落在一条细线上；黑段、红段的颜色沿用 ui.css 的泳道块 */
+.cockpit-crew__lane {
+  display: block;
+  height: 7px;
+  border-bottom: 1px solid var(--hairline);
+}
+.cockpit-crew__svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+.cockpit-crew__feed {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1-5);
+  min-width: 0;
+  padding-top: var(--space-1-5);
+}
+.cockpit-crew__feed .cockpit-link {
+  align-self: flex-start;
+}
+.cockpit-feed {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.cockpit-feed > li {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-3);
+  min-width: 0;
+  padding: var(--space-1-5) 0;
+  border-top: 1px solid var(--hairline);
+  font-size: var(--type-small);
+  line-height: 1.5;
+}
+.cockpit-feed__time {
+  flex: none;
+  font-family: var(--font-mono);
+  font-size: var(--type-caption);
+  color: var(--ink-2);
+}
+.cockpit-feed__text {
+  flex: 1 1 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.cockpit-feed__who {
+  font-weight: 600;
+}
+
+/* ---------- 左下：自上次查看以来 ---------- */
+
+.cockpit-since {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-width: 0;
+  padding: var(--space-4) 0 var(--space-4-5);
+}
+.cockpit-since > .cockpit-head {
+  padding: 0 var(--space-3);
+}
+/* 四个数各占左栏的四分之一，也就是图纸上的两列 */
+.cockpit-since__stats {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--space-3) 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.cockpit-since__stats > li {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+  padding: 0 var(--space-3);
+}
+.cockpit-since__value {
+  font-size: var(--type-plate);
+  line-height: 1.1;
+  font-weight: 900;
+  letter-spacing: -0.02em;
+}
+.cockpit-since__unit {
+  font-size: var(--type-small);
+  line-height: 1.5;
+  font-weight: 700;
+}
+.cockpit-since__note {
+  font-family: var(--font-mono);
+  font-size: var(--type-caption);
+  line-height: 1.5;
+  color: var(--ink-2);
+  overflow-wrap: anywhere;
+}
+
+/* ---------- 右下：系统读数 ---------- */
+
+.cockpit-readings {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  background: var(--paper);
+}
+.cockpit-readings > .cockpit-head {
+  padding: var(--space-4) var(--space-3) 0;
+}
+.cockpit-readings__snapshot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-0-5) var(--space-3);
+  margin: 0;
+  padding: var(--space-1) var(--space-3) var(--space-2-5);
+  font-family: var(--font-mono);
+  font-size: var(--type-label);
+  line-height: 1.5;
+  color: var(--ink-2);
+}
+.cockpit-readings__cells {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-family: var(--font-mono);
+}
+.cockpit-readings__cell {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-2);
+  min-width: 0;
+  padding: var(--space-1-5) var(--space-3);
+  border-top: 1px solid var(--hairline);
+}
+/* 要看的那一格：黑底反白（底色与字色来自 .ui-on-ink），不用红 */
+.cockpit-readings__cell[data-alert] {
+  border-top-color: var(--ink);
+}
+.cockpit-readings__label {
+  flex: none;
+  font-size: var(--type-label);
+  line-height: 1.5;
+  color: var(--ink-2);
+}
+.cockpit-readings__cell[data-alert] .cockpit-readings__label {
+  color: inherit;
+}
+.cockpit-readings__value {
+  min-width: 0;
+  overflow: hidden;
+  font-size: var(--type-small);
+  line-height: 1.5;
+  font-weight: 600;
+  text-align: right;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+/* ---------- 窄：队列一行拆两行，巨号降为大号读数，底部四个数排两列 ---------- */
+
+@container cockpit (width < 640px) {
+  /* 数字的上沿对齐「件事等你处理」的上沿：连起来读是「9 件事等你处理」，下面几行小字不把数字拽下去 */
+  .cockpit-queue__head {
+    grid-template-columns: auto minmax(0, 1fr);
+    align-items: start;
+    padding-top: var(--space-4);
+  }
+  /* 巨号那一格改成随内容宽：不再按格宽算字号，直接用大号读数那一档 */
+  .cockpit-queue__count {
+    container-type: normal;
+  }
+  .cockpit-queue__count-value {
+    font-size: var(--type-large);
+    line-height: 0.85;
+  }
+  .cockpit-queue__legend {
+    display: none;
+  }
+  .cockpit-queue__row {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    row-gap: var(--space-1);
+  }
+  .cockpit-queue__index {
+    flex-direction: column;
+    align-items: flex-start;
+    align-self: start;
+    gap: var(--space-1);
+  }
+  .cockpit-queue__body {
+    grid-column: 2 / -1;
+  }
+  .cockpit-queue__select {
+    white-space: normal;
+  }
+  .cockpit-queue__wait {
+    grid-column: 2;
+    flex-direction: row;
+    align-items: center;
+    gap: var(--space-2-5);
+  }
+  .cockpit-queue__row[data-selected] .cockpit-queue__wait {
+    padding-top: 0;
+  }
+  .cockpit-wait {
+    flex: 1 1 auto;
+  }
+  .cockpit-queue__open {
+    grid-column: 3;
+  }
+  .cockpit-since__stats {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+/* 窄屏（触屏）：格子里的文字链接也要 44px 高 */
+@media (width < 760px) {
+  .ui-button.cockpit-link {
+    min-height: var(--control-touch);
+  }
 }

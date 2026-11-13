@@ -42,29 +42,23 @@ it('驾驶舱旁的待我动作计数在还没有快照时同样显示占位', (
   expect(navCount('项目')).toBeUndefined();
 });
 
-it('驾驶舱标题栏的副本文件与未关闭 BUG 取自首屏计数：已知给数，不可得显示「—」并列出是哪些项目', async () => {
+it('驾驶舱系统读数的副本文件与未关闭 BUG 取自首屏计数：已知给数，不可得显示「—」并列出是哪些项目', async () => {
   vi.stubGlobal(
     'fetch',
     vi.fn<typeof fetch>(async (input) => defaultApiResponse(input)),
   );
-  // 黑板汇总由 App 读一次交给驾驶舱（T-162）；单独渲染驾驶舱时由外层代行那一份读取。
+  // 黑板汇总与策略草案由 App 各读一次交给驾驶舱；单独渲染驾驶舱时由外层代行那两份读取。
   render(
     <CockpitHarness
       workbench={fixture}
       refreshing={false}
-      onRefresh={vi.fn()}
-      filters={null}
-      actions={fixture.inbox}
-      projects={fixture.projects}
       diagnostics={0}
       onOpen={vi.fn()}
-      onEnterProject={vi.fn()}
-      onViewProjects={vi.fn()}
       onShowDiagnostics={vi.fn()}
     />,
   );
   const cell = (label: string) =>
-    within(screen.getByRole('region', { name: '图纸标题栏' }))
+    within(screen.getByRole('region', { name: '系统读数' }))
       .getByText(label)
       .closest('li') as HTMLElement;
   expect(within(cell('副本文件')).getByText('1')).toBeInTheDocument();

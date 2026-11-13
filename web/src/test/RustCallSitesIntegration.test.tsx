@@ -4,6 +4,7 @@ import { expect, it, vi } from 'vitest';
 import { App } from '../App';
 import { ProjectOperations } from '../components/ProjectOperations';
 import {
+  COCKPIT_READY,
   defaultApiResponse,
   emptyNavigation,
   fixture,
@@ -35,7 +36,7 @@ it('源码选择不读取Vault，目录关联声明仍按文档代次打开并�
   vi.stubGlobal('fetch', fetchMock);
   const user = userEvent.setup();
   render(<App />);
-  await screen.findByRole('table');
+  await screen.findByRole('heading', COCKPIT_READY);
   // 项目运作并进了「项目」：从明细表点项目名进入它的运作。
   await user.click(screen.getByRole('button', { name: '项目' }));
   await user.click(screen.getByRole('button', { name: '星舟，进入项目运作' }));
@@ -114,7 +115,7 @@ it('顶栏同代刷新保留所选项目，卸载旧证据并清理文件与种�
   );
   const user = userEvent.setup();
   render(<App />);
-  await screen.findByRole('table');
+  await screen.findByRole('heading', COCKPIT_READY);
   // 项目运作并进了「项目」：从明细表点项目名进入它的运作。
   await user.click(screen.getByRole('button', { name: '项目' }));
   await user.click(screen.getByRole('button', { name: '星舟，进入项目运作' }));

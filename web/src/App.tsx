@@ -3,7 +3,7 @@ import type { ReactNode } from 'react';
 import { AppShell } from './components/AppShell';
 import { DocumentDialog } from './components/DocumentDialog';
 import { Filters } from './components/Filters';
-import type { Project, SourceLocation, View } from './types';
+import type { SourceLocation, View } from './types';
 import { useEditorNavigation } from './useEditorNavigation';
 import { useViewLocation } from './useViewLocation';
 import { useWorkbench } from './useWorkbench';
@@ -22,6 +22,7 @@ import { StatusCapsule } from './shell/StatusCapsule';
 import { useHealthStatus } from './shell/useHealthStatus';
 import { pendingCount } from './cockpit/pending';
 import { useOverviewRead } from './cockpit/useOverviewRead';
+import { usePolicyPendingRead } from './cockpit/usePolicyPendingRead';
 import { CockpitView } from './views/CockpitView';
 import { ProjectsView } from './views/ProjectsView';
 import { DocumentsView } from './views/DocumentsView';
@@ -45,10 +46,14 @@ export function App({ account }: { account?: ReactNode }) {
   // 本机健康不依赖工作台快照：快照读不出来时，状态胶囊照样要能报出健康。
   const { data, loading, error, refresh, refreshLatest } = useWorkbench();
   const health = useHealthStatus();
-  // 跨项目黑板汇总全站只读这一份：快照到手时随同一次提交发出，每轮刷新结束重读（T-162）。
-  // 顶栏「驾驶舱 N」角标与驾驶舱巨号都用 pendingCount 从它和同一份快照算，任何时刻都相等；
-  // 驾驶舱经 props 拿同一份，不再另读，离开驾驶舱时角标照样含黑板里等你的任务。
+  // 跨项目黑板汇总与策略草案列表全站各只读一份：快照到手时随同一次提交发出，每轮刷新结束重读（T-162、T-195）。
+  // 顶栏「驾驶舱 N」角标与驾驶舱巨号都用 pendingCount 从这两份和同一份快照算，任何时刻都相等；
+  // 驾驶舱经 props 拿同样两份，不再另读，离开驾驶舱时角标照样含黑板里等你的任务和策略里等你的提案。
   const overview = useOverviewRead({
+    ready: data !== null,
+    refreshing: loading,
+  });
+  const policyPending = usePolicyPendingRead({
     ready: data !== null,
     refreshing: loading,
   });
@@ -69,10 +74,6 @@ export function App({ account }: { account?: ReactNode }) {
         (lifecycle === '__unknown'
           ? !project.lifecycle.value
           : project.lifecycle.value === lifecycle)),
-  );
-  const visibleProjectIds = new Set(filtered.map((project) => project.id));
-  const actions = (data?.inbox ?? []).filter((action) =>
-    visibleProjectIds.has(action.project_id),
   );
   const lifecycles = [
     ...new Set(
@@ -109,12 +110,7 @@ export function App({ account }: { account?: ReactNode }) {
     window.scrollTo({ top: 0, left: 0, behavior: 'instant' });
   }
 
-  function enterProject(project: Project) {
-    goTo({ view: 'projects', panel: 'operations', project: project.root });
-    window.scrollTo({ top: 0, left: 0, behavior: 'instant' });
-  }
-
-  // 驾驶舱「全部 N 个项目」：先清掉项目视图上次留下的筛选，入口写的总数与打开后看到的行数才对得上（T-117）。
+  // ⌘K 的「查看全部项目」：先清掉项目视图上次留下的筛选，打开后看到的才是全部（T-117）。
   function viewAllProjects() {
     setQuery('');
     setLifecycle('');
@@ -161,7 +157,7 @@ export function App({ account }: { account?: ReactNode }) {
       view={view}
       onNavigate={navigate}
       sourceLabel={data?.source_label ?? null}
-      actionCount={pendingCount(data, overview.state)}
+      actionCount={pendingCount(data, overview.state, policyPending.state)}
       documentCount={data?.counts.documents.value ?? null}
       status={
         <StatusCapsule
@@ -226,14 +222,9 @@ export function App({ account }: { account?: ReactNode }) {
           workbench={data}
           refreshing={loading}
           overview={overview}
-          onRefresh={refreshSnapshot}
-          filters={filters}
-          actions={actions}
-          projects={filtered}
+          policy={policyPending}
           diagnostics={diagnostics.length}
           onOpen={setSource}
-          onEnterProject={enterProject}
-          onViewProjects={viewAllProjects}
           onShowDiagnostics={() => setStatusOpen(true)}
         />
       ) : null}

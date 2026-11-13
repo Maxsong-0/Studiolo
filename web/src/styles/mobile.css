@@ -1,7 +1,8 @@
 /*
  * 视图内部的收口覆盖（T-130 C3，规范第 5、9、11 节）。各视图的样式文件各有主人，这里只用它们已有的类名补三件事：
  *   一、窄屏（<760px）：触控目标至少 44px；输入控件 16px 字（iOS 聚焦字号小于 16px 会整页放大）；
- *       ⌘K 面板与浮层框宽 calc(100vw - 24px)（10px 硬阴影不出屏），编辑器与阅读器一样铺满；驾驶舱两处排版。
+ *       ⌘K 面板与浮层框宽 calc(100vw - 24px)（10px 硬阴影不出屏），编辑器与阅读器一样铺满。
+ *       驾驶舱的窄屏排版已收回它自己的 cockpit.css（T-195）。
  *   二、黑底块上的焦点环：选中项是黑底反白时，环画在块里、用 --on-ink（外偏的墨色环贴着黑块看不出是焦点）。
  *   三、减少动效：视图内部 CSS 的位移过渡与关键帧都写在 prefers-reduced-motion: no-preference 里，
  *       减少动效时只剩瞬时的状态变化；目录树展开由 FileTree 按偏好去掉位移、只留透明度。这里无需再盖。
@@ -40,36 +41,6 @@
   .file-dialog {
     width: calc(100vw - 24px);
     max-height: calc(100dvh - 24px);
-  }
-
-  /*
-   * 驾驶舱（cockpit.css）：拓扑缩略在窄屏应只剩 TopologyDiagram 自带的清单。collab.css 在窄屏隐藏
-   * .topology__svg，但 .cockpit-topology__canvas svg 的 display: block 特异度更高，缩成一指宽的图仍画在清单上方。
-   */
-  .cockpit-topology__canvas .topology__svg {
-    display: none;
-  }
-  /* 驾驶舱（cockpit.css）：格子标题行的文字链接写死 24px 触控高度 */
-  .ui-button.cockpit-link {
-    min-height: var(--control-touch);
-  }
-  /*
-   * 驾驶舱 › 待我动作（cockpit.css）：一行 32px 高，且桌面的四列在 390 宽下标题只剩八九个字。
-   * 窄屏每行至少 44px，项目挪到标题下一行，圈号与类型跨两行居中，标题拿到整行剩余宽度。
-   */
-  .cockpit-pending__row {
-    grid-template-columns: 30px max-content minmax(0, 1fr);
-    column-gap: var(--space-2);
-    min-height: var(--control-touch);
-    padding-block: var(--space-1);
-  }
-  .cockpit-pending__row > .ui-circled,
-  .cockpit-pending__kind {
-    grid-row: span 2;
-  }
-  .cockpit-pending__project {
-    grid-column: 3;
-    text-align: left;
   }
 
   /* 文档 › 搜索（search.css）：框已是 44px 高，框里的输入与下拉仍是 14px、13px 字 */
