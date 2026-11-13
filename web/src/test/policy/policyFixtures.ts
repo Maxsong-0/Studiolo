@@ -100,6 +100,26 @@ export function desiredBody(overrides: Body = {}): Body {
   };
 }
 
+/**
+ * 草案列表应答（与接口同形）：每份未发布草案都带两张表，「同一对象里比它更新的未发布草案号」与
+ * 「其中挡住它发布的」（服务端只算同一提交者的）。缺省都是空表，即每份都是各自对象最新的那份。
+ * 要测先后就用 `newer` 指明（草案号 → 更新的草案号），要测挡住发布再用 `blocked` 照服务端的判定写明。
+ */
+export function listBody(
+  desired: Body[],
+  newer: Record<string, string[]> = {},
+  blocked: Record<string, string[]> = {},
+): Body {
+  const open = desired.filter((row) =>
+    ['pending', 'validated', 'rejected'].includes(String(row.status)),
+  );
+  const table = (source: Record<string, string[]>) =>
+    Object.fromEntries(
+      open.map((row) => [String(row.id), source[String(row.id)] ?? []]),
+    );
+  return { desired, newer_open: table(newer), blocked_by: table(blocked) };
+}
+
 export function versionBody(version: number, overrides: Body = {}): Body {
   return {
     version,
@@ -121,6 +141,10 @@ export function versionBody(version: number, overrides: Body = {}): Body {
 export interface PolicyServerOptions {
   status?: Body;
   desired?: Body[];
+  /** 未发布草案的先后：草案号 → 同一对象里比它更新的草案号；缺省每份各自最新。 */
+  newer?: Record<string, string[]>;
+  /** 挡住发布的：草案号 → 同一提交者更新的草案号（照服务端判定写明）；缺省都不挡。 */
+  blocked?: Record<string, string[]>;
   versions?: Body[];
   /** 写接口的应答；缺省发布一律要二次认证、撤销接入一律成功。 */
   write?: (path: string, body: unknown) => unknown;
@@ -142,7 +166,8 @@ export function policyServer(options: PolicyServerOptions = {}): PolicyServer {
   const fetchMock = vi.fn<typeof fetch>(async (input) => {
     const path = String(input);
     if (path === '/api/v1/policy') return jsonResponse(status);
-    if (path === '/api/v1/policy/desired') return jsonResponse({ desired });
+    if (path === '/api/v1/policy/desired')
+      return jsonResponse(listBody(desired, options.newer, options.blocked));
     if (path === '/api/v1/policy/versions') return jsonResponse({ versions });
     const match = /^\/api\/v1\/policy\/versions\/(\d+)$/.exec(path);
     const meta = match

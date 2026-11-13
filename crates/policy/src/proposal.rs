@@ -10,8 +10,11 @@
 use rusqlite::Transaction;
 
 use crate::{
-    DesiredRecord, DesiredStatus, PolicyError, PolicyKind, model::MAX_PROPOSAL_BYTES, sql,
-    store::enforce_proposal_bounds, validate,
+    DesiredRecord, DesiredStatus, PolicyError, PolicyKind,
+    model::MAX_PROPOSAL_BYTES,
+    sql,
+    store::{enforce_proposal_bounds, queue},
+    validate,
 };
 
 /// `list_proposals` 一次最多列出的提案份数。
@@ -126,14 +129,15 @@ pub(crate) fn submit(
 }
 
 /// 本类型在该 subject 最新的未发布草案若是同一正文、仍待处理的提案，就是这次重提要拿回的那份。
-/// 被拒（rejected）的不拿回：重提应当再校验一次。
+/// 「最新」与发布的拦截出自同一处（`store::queue`）。被拒（rejected）的不拿回：重提应当再校验一次。
 fn retried(
     tx: &Transaction<'_>,
     agent_type: &str,
     input: &ProposalInput,
     digest: &str,
 ) -> Result<Option<DesiredRecord>, PolicyError> {
-    let Some(id) = sql::latest_open_proposal(tx, agent_type, input.kind, &input.subject)? else {
+    let Some(id) = queue::latest_open_from_agent(tx, agent_type, input.kind, &input.subject)?
+    else {
         return Ok(None);
     };
     let record = sql::desired(tx, &id)?.ok_or(PolicyError::StoreUnavailable)?;

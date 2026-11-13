@@ -44,11 +44,13 @@ import type { TaskKey } from './fixtures/ids.ts';
 import { projectOperations } from './fixtures/operations.ts';
 import {
   activeRevocations,
+  blockedBy,
   effectiveEntries,
   globalRevoked,
   initialPolicy,
   pendingCount,
   publish,
+  newerOpen,
   validate,
 } from './fixtures/policy.ts';
 import type { DesiredRecord, Kind, PolicyState } from './fixtures/policy.ts';
@@ -518,6 +520,22 @@ export function createFixtureApi(options: { now?: () => number } = {}) {
           `desired 当前状态 ${desired.status} 不可发布`,
           'state',
         );
+      // 与后端一样（T-181）：同一提交者还有更晚入库的未发布草案就不发这份，什么都不改。
+      const blocked = blockedBy(policy)[desired.id] ?? [];
+      if (blocked.length)
+        return {
+          status: 409,
+          body: {
+            code: 'newer_desired_same_submitter',
+            error:
+              '同一提交者还有更新的未发布草案，只能发布其中最新的那一份；要发这份，先撤回更新的。',
+            newer_desired_ids: blocked,
+          },
+        };
+      // 发布后只取代比它早入库的；比它晚的（别的提交者交的）留着待处理。
+      const older = Object.entries(newerOpen(policy))
+        .filter(([, newer]) => newer.includes(desired.id))
+        .map(([id]) => id);
       const { report, canonical } = validate(
         policy,
         desired.kind,
@@ -550,13 +568,7 @@ export function createFixtureApi(options: { now?: () => number } = {}) {
       desired.report = report;
       desired.activated_version = activation.version;
       for (const other of policy.desired)
-        if (
-          other !== desired &&
-          other.kind === desired.kind &&
-          other.subject === desired.subject &&
-          ['pending', 'validated', 'rejected'].includes(other.status)
-        )
-          other.status = 'superseded';
+        if (older.includes(other.id)) other.status = 'superseded';
       return ok({ activation, audit_confirmed: true });
     }
     if (path === '/api/v1/agents/revoke') {
@@ -768,7 +780,11 @@ export function createFixtureApi(options: { now?: () => number } = {}) {
       case '/api/v1/policy':
         return ok(policyStatus());
       case '/api/v1/policy/desired':
-        return ok({ desired: policy.desired });
+        return ok({
+          desired: policy.desired,
+          newer_open: newerOpen(policy),
+          blocked_by: blockedBy(policy),
+        });
       case '/api/v1/policy/versions':
         return ok({
           versions: [...policy.versions].reverse().map((row) => row.meta),

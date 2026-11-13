@@ -48,10 +48,10 @@ describe('假数据：规则视图可预览', () => {
       ['claude', 'listed'],
       ['codex', 'unset'],
     ]);
-    // T-109 的 AI 提案（扩大读取范围）不锁矩阵，只在发布时一并被取代。
+    // T-109 的 AI 提案（扩大读取范围）不锁矩阵；主人之后交的草案发布时，它比那份早，一并被取代。
     const claude = model.types.find((column) => column.type === 'claude')!;
     expect(claude.ownerDraft).toBeNull();
-    expect(claude.others).toBe(1);
+    expect(claude.drafts.map((item) => item.submitter_kind)).toEqual(['agent']);
     expect(model.unreadable).toEqual([]);
   });
 

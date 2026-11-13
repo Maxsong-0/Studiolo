@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
 import { PolicyPanel } from './components/PolicyPanel';
 import { isAbsent, readPolicySnapshot } from './policyApi';
-import type { DesiredRecord, PolicyStatus, VersionMeta } from './policyModel';
+import type { ListedDesired, PolicyStatus, VersionMeta } from './policyModel';
 import { Cell, EmptyState, ErrorState, GridFrame, Skeleton } from './ui';
 import './styles/policy.css';
 
@@ -11,7 +11,7 @@ type Status =
   | {
       kind: 'ready';
       status: PolicyStatus;
-      desired: DesiredRecord[];
+      desired: ListedDesired[];
       versions: VersionMeta[];
     }
   | { kind: 'absent' }

@@ -5,6 +5,7 @@ import { PolicyBoundary } from '../PolicyBoundary';
 import { installPolicyWriter } from '../policyApi';
 import { ApiError } from '../sessionHttp';
 import { jsonResponse } from './fixtures';
+import { listBody } from './policy/policyFixtures';
 
 const HASH = 'b'.repeat(64);
 const STATUS = '/api/v1/policy';
@@ -84,14 +85,18 @@ function desired(ok: boolean) {
 const fetchMock = vi.fn<typeof fetch>();
 const posts: { path: string; body: unknown }[] = [];
 let uninstall = () => {};
+// 已提交的草案：与真实接口一样，提交后重读的列表里就有它（界面从列表里取选中的那份）。
+let listed: Record<string, unknown>[] = [];
 
 beforeEach(() => {
   posts.length = 0;
+  listed = [];
   fetchMock.mockReset();
   fetchMock.mockImplementation(async (input) => {
     const path = String(input);
     if (path === STATUS) return jsonResponse(status());
-    if (path === '/api/v1/policy/desired') return jsonResponse({ desired: [] });
+    if (path === '/api/v1/policy/desired')
+      return jsonResponse(listBody(listed));
     if (path === '/api/v1/policy/versions')
       return jsonResponse({ versions: [] });
     return jsonResponse({ error: '未知' }, 404);
@@ -99,7 +104,11 @@ beforeEach(() => {
   vi.stubGlobal('fetch', fetchMock);
   uninstall = installPolicyWriter(async (path, body) => {
     posts.push({ path, body });
-    if (path === '/api/v1/policy/desired') return desired(true);
+    if (path === '/api/v1/policy/desired') {
+      const created = desired(true);
+      listed = [created.desired];
+      return created;
+    }
     if (path === '/api/v1/policy/activate')
       throw new ApiError('发布策略需要先完成二次认证。', 403, {
         code: 'reauthentication_required',

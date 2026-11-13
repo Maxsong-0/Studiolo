@@ -5,6 +5,7 @@ import {
   desiredList,
   policyStatus,
   revokeOutcome,
+  shortId,
   versionList,
   versionRecord,
 } from './policyModel';
@@ -51,6 +52,16 @@ function codeOf(error: unknown): string | undefined {
     return undefined;
   const code = (error.details as { code?: unknown }).code;
   return typeof code === 'string' ? code : undefined;
+}
+
+/** 409 `newer_desired_same_submitter` 带回的、挡住发布的更新草案号；字段缺失或形状不对就当没有，只少一句提示。 */
+function newerDesiredIds(error: ApiError): string[] {
+  if (!error.details || typeof error.details !== 'object') return [];
+  const ids = (error.details as { newer_desired_ids?: unknown })
+    .newer_desired_ids;
+  return Array.isArray(ids)
+    ? ids.filter((id): id is string => typeof id === 'string')
+    : [];
 }
 
 /** 404 `policy_plane_absent` 表示本入口没装策略平面，界面按「未接入」显示而不是报错。 */
@@ -114,7 +125,7 @@ export async function revokeAgent(request: RevokeRequest, signal: AbortSignal) {
   return revokeOutcome(await post(REVOKE, request, signal));
 }
 
-/** 把发布失败翻译成人能行动的一句话；403 需要二次认证，409 需要重新校验。 */
+/** 把发布失败翻译成人能行动的一句话；403 需要二次认证，409 需要重新校验或先处理更新的草案。 */
 export function activateFailure(error: unknown): string {
   if (!(error instanceof ApiError)) return '发布未完成，请核对当前 effective。';
   const code = codeOf(error);
@@ -124,6 +135,10 @@ export function activateFailure(error: unknown): string {
     return '发布只接受可信入口的请求；当前入口不能发布。';
   if (error.status === 409 && code === 'hash_mismatch')
     return 'effective 已变化：请刷新并重新校验后再发布。';
+  if (error.status === 409 && code === 'newer_desired_same_submitter') {
+    const newer = newerDesiredIds(error).map(shortId).join('、');
+    return `没有发布：同一提交者还有更新的未发布草案${newer ? `（${newer}）` : ''}，只能发布其中最新的那一份；要发这份，先撤回更新的。`;
+  }
   if (error.status === 409 && code === 'no_l3_path')
     return '本入口未启用二次认证，没有 One-time Code 路径，不能发布。';
   if (error.status === 422) return '校验未通过，请查看该 desired 的逐条问题。';

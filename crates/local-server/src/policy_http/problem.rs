@@ -65,6 +65,14 @@ impl Problem {
                     "current_effective_hash": current,
                 }),
             },
+            PolicyError::NewerDesiredFromSameSubmitter { newer } => Self {
+                status: StatusCode::CONFLICT,
+                body: serde_json::json!({
+                    "code": "newer_desired_same_submitter",
+                    "error": "同一提交者还有更新的未发布草案，只能发布其中最新的那一份；要发这份，先撤回更新的。",
+                    "newer_desired_ids": newer,
+                }),
+            },
             PolicyError::ValidationFailed => Self::new(
                 StatusCode::UNPROCESSABLE_ENTITY,
                 "validation_failed",

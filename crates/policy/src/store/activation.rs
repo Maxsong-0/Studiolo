@@ -3,12 +3,14 @@
 use crate::{PolicyError, model::MAX_BODY_BYTES, sql, validate};
 
 use super::{
-    Activation, DesiredInput, DesiredStatus, PolicyStore,
+    Activation, DesiredInput, DesiredStatus, PolicyStore, queue,
     support::{check_hash, publish},
 };
 
 impl PolicyStore {
-    /// 发布一份 desired（调用前必须已过 L3）：CAS 校验 effective 哈希 → 重新校验 → 写新版本。
+    /// 发布一份 desired（调用前必须已过 L3）：CAS 校验 effective 哈希 → 同一提交者有更晚入库的
+    /// 未发布 desired 就不发 → 重新校验 → 写新版本 → 同一对象比它早入库的未发布 desired 标为
+    /// 已取代，比它晚的留着待处理。
     pub fn activate(
         &self,
         id: &str,
@@ -26,6 +28,14 @@ impl PolicyStore {
                 return Err(PolicyError::DesiredNotActivatable(
                     record.status.as_str().to_owned(),
                 ));
+            }
+            // 同一提交者还有更晚入库的未发布 desired 就不发这份（T-181）：要发这份，先撤回更新的。
+            // 不同提交者互不阻挡（用户 2026-10-16 定），AI 交新提案挡不住主人发布。
+            let placement = queue::place(tx, record.kind, &record.subject, id)?;
+            if !placement.blocked_by.is_empty() {
+                return Err(PolicyError::NewerDesiredFromSameSubmitter {
+                    newer: placement.blocked_by,
+                });
             }
             let context = sql::context(tx, record.kind, &record.subject)?;
             let report = validate::validate(
@@ -48,13 +58,8 @@ impl PolicyStore {
                 now,
                 Some(activation.version),
             )?;
-            tx.execute(
-                "UPDATE policy_desired SET status = 'superseded'
-                 WHERE kind = ?1 AND subject = ?2 AND id != ?3
-                   AND status IN ('pending', 'validated', 'rejected')",
-                rusqlite::params![record.kind.as_str(), record.subject, id],
-            )
-            .map_err(crate::database::unavailable)?;
+            // 只取代比它早入库的；比它晚的（别的提交者交的）留着待处理，不悄悄作废谁的提议。
+            queue::supersede(tx, &placement.older)?;
             Ok(activation)
         })
     }
