@@ -73,6 +73,9 @@ fn checkpoint_shared_permissions_stay_bound_to_verified_original_descriptors() {
     }
 }
 
+#[path = "backup_worker.rs"]
+mod backup_worker;
+
 #[test]
 fn authority_scanner_detects_sneaky_source_fixture() {
     let fixture = r#"

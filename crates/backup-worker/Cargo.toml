@@ -1,0 +1,24 @@
+[package]
+name = "studiolo-backup-worker"
+description = "独立备份进程的固定 restic 执行边界；不得进入 App 或 owner 依赖闭包"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+studiolo-backup.workspace = true
+studiolo-process-safety.workspace = true
+rustix = { workspace = true, features = ["fs", "process"] }
+serde_json.workspace = true
+sha2.workspace = true
+url.workspace = true
+zeroize.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

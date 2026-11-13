@@ -111,14 +111,33 @@ pub(crate) fn source_violations(
     }
     if matches!(
         crate_name,
-        "studiolo-gateway" | "studiolo" | "studiolo-checkpoint-storage"
+        "studiolo-gateway" | "studiolo" | "studiolo-checkpoint-storage" | "studiolo-backup-worker"
     ) && checked_source.contains("Connection::open")
     {
         violations.push(AuthorityViolation::DatabaseOpen);
     }
-    let has_generic_write = generic_write_patterns
+    let worker_process_escape = crate_name == "studiolo-backup-worker"
+        && [
+            "process::waitid(",
+            "process::kill_process_group(",
+            ".env(",
+            ".envs(",
+            ".spawn(",
+            ".process_group(",
+            ".kill(",
+            ".wait(",
+            ".exec(",
+            ".output(",
+            ".status(",
+            "fcntl_getfl(",
+            "fcntl_setfl(",
+        ]
         .iter()
-        .any(|pattern| checked_source.contains(pattern))
+        .any(|token| checked_source.contains(token));
+    let has_generic_write = worker_process_escape
+        || generic_write_patterns
+            .iter()
+            .any(|pattern| checked_source.contains(pattern))
         || (matches!(crate_name, "studiolo-auth-admin" | "studiolo-host-config")
             && checked_source.contains("File::open("));
     let runner_writes_only_its_temp_result = if crate_name == "studiolo-runner-adapter"

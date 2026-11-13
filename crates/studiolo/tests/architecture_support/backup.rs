@@ -1,6 +1,8 @@
 //! BackupWorker 只写自己登记的固定备份状态与清单；协调器不持有任何 owner 的数据库句柄。
 
 use std::path::Path;
+#[path = "backup/process.rs"]
+mod process;
 #[path = "backup/staging.rs"]
 mod staging;
 #[path = "backup/storage.rs"]
@@ -12,6 +14,9 @@ pub(super) fn fixed_checkpoint_files(source: &str) -> bool {
 }
 
 pub(super) fn remainder(crate_name: &str, path: &Path, source: &str) -> String {
+    if crate_name == "studiolo-backup-worker" {
+        return process::remainder(path, source);
+    }
     if crate_name == "studiolo-checkpoint-storage" {
         return sqlite_checkpoint(path, source);
     }

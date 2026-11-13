@@ -2532,6 +2532,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "studiolo-backup-worker"
+version = "0.0.1"
+dependencies = [
+ "rustix",
+ "serde_json",
+ "sha2 0.11.0",
+ "studiolo-backup",
+ "studiolo-process-safety",
+ "tempfile",
+ "url",
+ "zeroize",
+]
+
+[[package]]
 name = "studiolo-checkpoint-storage"
 version = "0.0.1"
 dependencies = [

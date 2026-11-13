@@ -173,7 +173,7 @@ fn dependency_closure_covers_the_local_server_runtime() {
         assert!(closure.contains(&directory), "依赖闭包漏了 {member}");
     }
     // 读种子是其本职的 CLI 与带版本号宏的集成 crate 不在闭包里：闭包确有取舍，守卫不是空转。
-    for outsider in ["auth-admin", "studiolo"] {
+    for outsider in ["auth-admin", "studiolo", "backup-worker"] {
         let directory = root.join("crates").join(outsider);
         assert!(!closure.contains(&directory), "{outsider} 不该在依赖闭包里");
     }

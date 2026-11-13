@@ -16,6 +16,7 @@ members = [
     "crates/sync-transport",
     "crates/sync-launcher",
     "crates/backup",
+    "crates/backup-worker",
     "crates/observability",
     "crates/policy",
     "crates/runner-adapter",
@@ -73,6 +74,7 @@ reqwest = { version = "=0.12.28", default-features = false, features = ["rustls-
 getrandom = "=0.4.3"
 subtle = "=2.6.1"
 zeroize = "=1.9.0"
+url = "=2.5.8"
 signal-hook = { version = "=0.4.4", default-features = false }
 notify = "=8.2.0"
 hkdf = "=0.12.4"
