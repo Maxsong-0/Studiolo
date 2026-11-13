@@ -4,7 +4,7 @@ use super::{AgentSession, ListEntriesArgs, ReadNoteArgs, SearchArgs};
 use crate::state::SupplySource;
 use rmcp::ErrorData as McpError;
 use studiolo_core::VaultPath;
-use studiolo_supply::{SearchMode, SearchQuery, SupplyError};
+use studiolo_supply::{SearchMode, SearchQuery, SearchScope, SupplyError};
 
 const MAX_NOTE_BYTES: u64 = 4 * 1024 * 1024;
 
@@ -125,22 +125,24 @@ impl AgentSession {
             }
         };
         let generation = self.generation(&grant.instance, "search").await?;
+        let scope = format!("{prefix}/");
+        // 项目范围与规则名单都在计数之前生效：100 条上限与「已截断」只数这个项目里、
+        // 名单内的命中，别的项目命中再多也不挤占名额（BUG-036）。
         let results = generation
             .model
-            .search(&SearchQuery {
-                text: args.text,
-                project: None,
-                mode,
-            })
+            .search_within(
+                &SearchQuery {
+                    text: args.text,
+                    project: None,
+                    mode,
+                },
+                &SearchScope {
+                    prefix: &scope,
+                    permitted: &|path| grant.allows_rule_file(path),
+                },
+            )
             .map_err(|error| McpError::invalid_params(error.to_string(), None))?;
-        let scope = format!("{prefix}/");
-        // 名单外的规则文件先滤掉再截前 100 条：既不命中，也不占命中名额。
-        let hits = results
-            .hits
-            .into_iter()
-            .filter(|hit| hit.path.starts_with(&scope) && grant.allows_rule_file(&hit.path))
-            .take(100)
-            .collect::<Vec<_>>();
+        let hits = results.hits;
         // 每个命中路径都是一次供给：先审计，任一失败即整体拒绝。
         let mut audited = std::collections::BTreeSet::new();
         for hit in &hits {
