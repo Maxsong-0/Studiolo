@@ -7,6 +7,7 @@
  * 未通过）；写操作改的是内存里的状态，重启开发服务器即复原。未知接口一律 404。
  */
 import { agentsBody } from './fixtures/agents.ts';
+import { readAuditBody } from './fixtures/readAudit.ts';
 import { ATTACHMENT_BYTES } from './fixtures/attachments.ts';
 import { DAY, HOUR, iso } from './fixtures/clock.ts';
 import {
@@ -403,6 +404,10 @@ export function createFixtureApi(options: { now?: () => number } = {}) {
     body: Record<string, unknown>,
     now: number,
   ): Outcome {
+    if (path === '/api/v1/agents/reads/query') {
+      const result = readAuditBody(body, start, now);
+      return result ? ok(result) : error(400, '审计查询格式无效。', 'invalid');
+    }
     if (path === '/api/v1/policy/desired') {
       const kind = body.kind as Kind;
       if (
@@ -868,7 +873,8 @@ export function createFixtureApi(options: { now?: () => number } = {}) {
     if (pathname === '/api/v1/execution/command') return execute(body, now);
     if (
       pathname.startsWith('/api/v1/policy/') ||
-      pathname === '/api/v1/agents/revoke'
+      pathname === '/api/v1/agents/revoke' ||
+      pathname === '/api/v1/agents/reads/query'
     )
       return policyPost(pathname, body, now);
     return error(404, `假数据模式没有这个接口：POST ${pathname}`);

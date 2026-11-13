@@ -30,7 +30,10 @@ pub(super) fn policy(
                     directory, &isolated,
                 )
                 .map_err(|_| StartupError::Configuration)?;
-                plane = plane.with_identities(identities);
+                let audit = identities
+                    .read_audit()
+                    .map_err(|_| StartupError::Configuration)?;
+                plane = plane.with_read_audit(audit).with_identities(identities);
             }
             Ok(studiolo_local_server::with_policy_plane(
                 app,

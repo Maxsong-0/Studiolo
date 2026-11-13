@@ -9,6 +9,7 @@ import { REVOKE_PREVIEW, type PolicyActions } from '../policy/usePolicyActions';
 import { Button, Cell, CellHeader, GridFrame } from '../ui';
 import { useViewLocation } from '../useViewLocation';
 import { agentsAbsent, readAgents } from './api';
+import { ReadAuditPanel } from './ReadAuditPanel';
 import {
   DENIAL_LABEL,
   relativeCall,
@@ -403,6 +404,7 @@ export function AgentsPanel({
           </section>
         </Cell>
       ) : null}
+      <ReadAuditPanel types={data.types.map((t) => t.name)} />
     </GridFrame>
   );
 }

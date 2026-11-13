@@ -45,8 +45,9 @@ enum RevokeBody {
 }
 
 pub(super) async fn action(request: &mut Request) -> Result<Option<Action>, Failure> {
-    // 只保留固定路径常量，读取正文时不借用可变Request的URI。
-    let path = match request.uri().path() {
+    // 路径自持，读取正文时不借用可变Request；策略端点只认唯一方法表，避免漏接新POST。
+    let request_path = request.uri().path().to_owned();
+    let path = match request_path.as_str() {
         SELF => SELF,
         SESSIONS => SESSIONS,
         REVOKE => REVOKE,
@@ -58,13 +59,7 @@ pub(super) async fn action(request: &mut Request) -> Result<Option<Action>, Fail
         crate::file_operations::PATH => crate::file_operations::PATH,
         crate::file_operations::TOMBSTONES => crate::file_operations::TOMBSTONES,
         super::execution::COMMAND => super::execution::COMMAND,
-        policy::STATUS => policy::STATUS,
-        policy::DESIRED => policy::DESIRED,
-        policy::VALIDATE => policy::VALIDATE,
-        policy::WITHDRAW => policy::WITHDRAW,
-        policy::ACTIVATE => policy::ACTIVATE,
-        policy::VERSIONS => policy::VERSIONS,
-        policy::REVOKE => policy::REVOKE,
+        value if policy::is_policy_path(value) => value,
         _ => return Ok(None),
     };
     let posting = request.method() == Method::POST;
@@ -102,6 +97,8 @@ pub(super) async fn action(request: &mut Request) -> Result<Option<Action>, Fail
         crate::editing::JSON_LIMIT
     } else if posting && path == super::execution::COMMAND {
         super::execution::JSON_LIMIT
+    } else if posting && path == policy::READS {
+        policy::READS_LIMIT
     } else if posting && policy::is_policy_post(path) {
         policy::JSON_LIMIT
     } else if posting && path == crate::file_operations::PATH {

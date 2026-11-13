@@ -43,6 +43,11 @@ function post(path: string, body: unknown, signal: AbortSignal) {
   return writer(path, body, signal);
 }
 
+/** 审计查询同样走受控会话和CSRF；筛选条件不写入地址或日志。 */
+export function queryAgentReads(body: unknown, signal: AbortSignal) {
+  return post('/api/v1/agents/reads/query', body, signal);
+}
+
 function codeOf(error: unknown): string | undefined {
   if (
     !(error instanceof ApiError) ||

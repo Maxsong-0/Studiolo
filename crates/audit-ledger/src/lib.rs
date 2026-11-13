@@ -16,7 +16,7 @@ pub use filter::AuditFilter;
 pub use memory::MemoryAuditLedger;
 pub use payload::SanitizedPayload;
 pub use record::{AuditRecord, IntegrityHash};
-pub use sqlite::{AUDIT_SEGMENT_RECORDS, SqliteAuditLedger};
+pub use sqlite::{AUDIT_SEGMENT_RECORDS, AuditPage, AuditReadView, SqliteAuditLedger};
 pub use verification::{AuditSegmentSummary, AuditVerificationCost};
 
 /// 权威审计接缝上的错误。

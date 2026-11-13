@@ -12,6 +12,10 @@ pub(crate) use request::{ActivateRequest, Input};
 
 /// 人侧实例列表，不含凭据摘要。
 pub(crate) const AGENTS: &str = "/api/v1/agents";
+/// L2只读审计查询；POST承载私密筛选条件，仍要求CSRF。
+pub(crate) const READS: &str = "/api/v1/agents/reads/query";
+/// 审计筛选只有标识与时间，不接受大正文。
+pub(crate) const READS_LIMIT: usize = 4096;
 /// effective 摘要与生效中的吊销。
 pub(crate) const STATUS: &str = "/api/v1/policy";
 /// GET 列 desired；POST 提交 desired。
@@ -34,7 +38,7 @@ pub(crate) fn method_for(path: &str) -> Option<&'static str> {
     match path {
         AGENTS | STATUS | VERSIONS => Some("GET"),
         DESIRED => Some("GET, POST"),
-        VALIDATE | WITHDRAW | ACTIVATE | REVOKE => Some("POST"),
+        VALIDATE | WITHDRAW | ACTIVATE | REVOKE | READS => Some("POST"),
         _ if path
             .strip_prefix("/api/v1/policy/versions/")
             .is_some_and(|rest| {
@@ -52,7 +56,10 @@ pub(crate) fn is_policy_path(path: &str) -> bool {
 }
 
 pub(crate) fn is_policy_post(path: &str) -> bool {
-    matches!(path, DESIRED | VALIDATE | WITHDRAW | ACTIVATE | REVOKE)
+    matches!(
+        path,
+        DESIRED | VALIDATE | WITHDRAW | ACTIVATE | REVOKE | READS
+    )
 }
 
 /// 只有发布需要 L3，因而只有它需要可信 Unix 来源证明。

@@ -193,3 +193,4 @@ M4 把规则母本、skills 与各 AI 类型的能力集升入策略平面：des
 - Control DB 迁移沿革（随 schema 版本变化追加）
 
 - [人侧接入方列表](contracts/agents-list.md)：只读身份边界、快照、父子实例、吊销与恢复入口。
+- [接入方读取审计查询](contracts/agent-read-audit.md)：验链后四维筛选、拒绝单列、有界分页与只读装配。

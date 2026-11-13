@@ -105,6 +105,9 @@ impl Fixture {
         clock.0.fetch_add(60_000, Ordering::SeqCst);
         if identities {
             studiolo_supply::AgentStore::open(&root.join("agents")).unwrap();
+            fs::create_dir(root.join("agents/audit")).unwrap();
+            mode(&root.join("agents/audit"), 0o700);
+            SqliteAuditLedger::open(&root.join("agents/audit")).unwrap();
         }
         let socket = root.join("run/s");
         let mut fixture = Self {
@@ -163,10 +166,12 @@ impl Fixture {
                 ledger,
             );
             if self.identities {
-                plane = plane.with_identities(
+                let identities =
                     studiolo_supply::AgentIdentityView::open_existing(&self.root.join("agents"))
-                        .unwrap(),
-                );
+                        .unwrap();
+                plane = plane
+                    .with_read_audit(identities.read_audit().unwrap())
+                    .with_identities(identities);
             }
             with_policy_plane(app, Arc::new(plane))
         } else {
@@ -243,7 +248,7 @@ impl Fixture {
     }
 
     async fn send(&self, request: Request<Vec<u8>>, status: u16) -> Reply {
-        let limit = if request.uri().path() == "/api/v1/agents" {
+        let limit = if request.uri().path().starts_with("/api/v1/agents") {
             4 * 1024 * 1024
         } else {
             16 * 1024
@@ -838,3 +843,5 @@ async fn policy_routes_are_closed_and_absent_without_the_plane() {
 
 #[path = "policy_http/agents.rs"]
 mod agents;
+#[path = "policy_http/reads.rs"]
+mod reads;

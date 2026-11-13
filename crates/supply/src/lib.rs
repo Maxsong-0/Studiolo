@@ -9,6 +9,7 @@ pub mod budget;
 pub mod database;
 mod error;
 pub mod index_cache;
+pub mod read_audit;
 pub mod replica;
 pub mod roots;
 pub mod rules_files;

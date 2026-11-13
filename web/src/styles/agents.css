@@ -1,6 +1,61 @@
 .agents-state {
   padding: var(--space-6);
 }
+.read-audit__form {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 16em), 1fr));
+  gap: var(--space-3);
+  min-width: 0;
+}
+.read-audit__form label {
+  display: grid;
+  gap: var(--space-1);
+  min-width: 0;
+}
+.read-audit__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: var(--space-2);
+}
+.read-audit__records {
+  list-style: none;
+  padding: 0;
+  margin-block: var(--space-4);
+}
+.read-audit__records article {
+  padding-block: var(--space-4);
+  border-top: 1px solid var(--hairline);
+  overflow-wrap: anywhere;
+  min-width: 0;
+}
+.read-audit__records header {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+.read-audit__records dl {
+  display: grid;
+  gap: var(--space-2);
+}
+.read-audit__records dl > div {
+  display: grid;
+  grid-template-columns: minmax(0, 6em) minmax(0, 1fr);
+  gap: var(--space-2);
+}
+.read-audit__records dt {
+  color: var(--ink-2);
+}
+.read-audit__records dd {
+  margin: 0;
+  min-width: 0;
+}
+.read-audit__records button {
+  max-width: 100%;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
 .agents-filter {
   display: flex;
   align-items: center;

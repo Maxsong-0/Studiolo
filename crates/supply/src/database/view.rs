@@ -39,6 +39,27 @@ pub struct AgentIdentityView {
     store: AgentStore,
 }
 impl AgentIdentityView {
+    /// 从同一已批准身份根下的固定 audit 子目录打开只读账本；不创建缺失库。
+    pub fn read_audit(
+        &self,
+    ) -> Result<crate::read_audit::AgentReadAudit, studiolo_audit_ledger::AuditError> {
+        self.store
+            .storage
+            .check()
+            .map_err(|_| studiolo_audit_ledger::AuditError::UnsafeStorage)?;
+        let root = self
+            .store
+            .storage
+            .database
+            .parent()
+            .ok_or(studiolo_audit_ledger::AuditError::UnsafeStorage)?;
+        let view = crate::read_audit::AgentReadAudit::open(&root.join("audit"))?;
+        self.store
+            .storage
+            .check()
+            .map_err(|_| studiolo_audit_ledger::AuditError::UnsafeStorage)?;
+        Ok(view)
+    }
     /// 验证已有库，拒绝缺失、替换、损坏、未知格式与非 WAL 库。
     pub fn open_existing(directory: &Path) -> Result<Self, SupplyError> {
         Ok(Self {

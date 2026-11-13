@@ -9,6 +9,7 @@ mod agents;
 mod common;
 mod problem;
 mod query;
+mod reads;
 mod write;
 
 use std::sync::Arc;
@@ -30,6 +31,7 @@ use write::{desired_submit, revoke, validate, withdraw};
 pub struct PolicyPlane {
     store: PolicyStore,
     identities: Option<studiolo_supply::AgentIdentityView>,
+    read_audit: Option<studiolo_supply::read_audit::AgentReadAudit>,
     ledger: Arc<dyn AuditLedger>,
     permits: Arc<Semaphore>,
 }
@@ -40,6 +42,7 @@ impl PolicyPlane {
         Self {
             store,
             identities: None,
+            read_audit: None,
             ledger,
             permits: Arc::new(Semaphore::new(2)),
         }
@@ -47,6 +50,11 @@ impl PolicyPlane {
     /// 显式装配人侧只读身份视图；不授予身份库写能力。
     pub fn with_identities(mut self, identities: studiolo_supply::AgentIdentityView) -> Self {
         self.identities = Some(identities);
+        self
+    }
+    /// 装配接入方权威账本的只读查询，不授予审计追加能力。
+    pub fn with_read_audit(mut self, audit: studiolo_supply::read_audit::AgentReadAudit) -> Self {
+        self.read_audit = Some(audit);
         self
     }
 }
@@ -60,6 +68,7 @@ pub fn with_policy_plane(app: Router, plane: Arc<PolicyPlane>) -> Router {
 pub(crate) fn routes(routes: Router<AppState>) -> Router<AppState> {
     routes
         .route(input::AGENTS, get(agents::list))
+        .route(input::READS, post(reads::query))
         .route(input::STATUS, get(status))
         .route(input::DESIRED, get(desired_list).post(desired_submit))
         .route(input::VALIDATE, post(validate))
