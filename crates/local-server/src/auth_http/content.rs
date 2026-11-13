@@ -26,6 +26,30 @@ impl ContentPrincipal {
 }
 
 impl AuthHttp {
+    pub(crate) fn changes_seen(
+        &self,
+        request: &mut Request,
+    ) -> Result<(ContentPrincipal, crate::changes::SeenInput), Box<Response>> {
+        let context = request
+            .extensions_mut()
+            .remove::<Arc<Context>>()
+            .ok_or_else(|| Failure::unauthorized().response())?;
+        let context = Arc::try_unwrap(context).map_err(|_| Failure::unavailable().response())?;
+        let Some(Action::ChangesSeen(input)) = context.action else {
+            return Err(Box::new(Failure::bad_request().response()));
+        };
+        Ok((
+            ContentPrincipal {
+                sessions: self.sessions.clone(),
+                identity: context.identity,
+                credentials: context
+                    .credentials
+                    .ok_or_else(|| Failure::unauthorized().response())?,
+                _permit: context.content_permit,
+            },
+            input,
+        ))
+    }
     pub(crate) fn file_operation(
         &self,
         request: &mut Request,

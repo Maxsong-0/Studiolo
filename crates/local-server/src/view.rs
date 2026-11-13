@@ -12,6 +12,7 @@ use crate::{LocalError, deriver::OnDeriveThread};
 
 pub(crate) struct Generation {
     pub number: u64,
+    pub revisions: crate::coordinator::changes::Revisions,
     pub model: WorkbenchReadModel,
     pub tree: FileTree,
     pub indexed_through: Option<u64>,
@@ -152,6 +153,7 @@ pub(crate) fn build(
         .collect::<Result<Vec<_>, LocalError>>()?;
     Ok(Generation {
         number,
+        revisions: Default::default(),
         model: WorkbenchReadModel::build(&documents)?,
         tree: FileTree::build(&entries, &documents)?,
         indexed_through: None,

@@ -39,12 +39,15 @@ pub(crate) async fn guard(
         | crate::auth_http::FACTOR_STATE
         | crate::bootstrap::PATH
         | crate::canonical::PATH
+        | crate::changes::PATH
         | crate::history::PATH
         | crate::history::FILE
         | crate::health::PATH
         | crate::file_operations::TOMBSTONES => "GET",
         crate::auth_http::SESSIONS => "GET, POST",
-        crate::auth_http::REVOKE | crate::auth_http::execution::COMMAND => "POST",
+        crate::auth_http::REVOKE | crate::changes::SEEN | crate::auth_http::execution::COMMAND => {
+            "POST"
+        }
         crate::editing::PATH if crate::editing::enabled(&state) => "POST",
         crate::file_operations::PATH if crate::file_operations::available(&state) => "GET, POST",
         path if factors_enabled(&state) && crate::auth_http::is_factor_path(path) => "POST",
@@ -221,6 +224,7 @@ async fn authorize(state: &AppState, request: &mut Request) -> Result<(), ApiErr
             || (crate::file_operations::available(state)
                 && request.uri().path() == crate::file_operations::PATH)
             || crate::auth_http::policy::is_policy_post(request.uri().path())
+            || request.uri().path() == crate::changes::SEEN
             || request.uri().path() == crate::auth_http::execution::COMMAND);
     if !matches!(*request.method(), Method::GET | Method::HEAD) && !session_command {
         return Err(ApiError(

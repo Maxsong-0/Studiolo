@@ -39,3 +39,6 @@ mod file_operation_scope_races;
 
 #[path = "writer_http/file_rename.rs"]
 mod file_rename;
+
+#[path = "writer_http/changes.rs"]
+mod changes;

@@ -7,6 +7,7 @@ pub mod backup;
 pub mod board;
 mod bootstrap;
 mod canonical;
+mod changes;
 mod coordinator;
 mod deriver;
 mod editing;

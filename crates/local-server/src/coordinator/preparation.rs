@@ -35,6 +35,8 @@ impl CanonicalWorkbench {
         let workbench = Arc::new(Self {
             core: Arc::new(Core {
                 owner: Mutex::new(Some(broker)),
+                changes: Mutex::new(changes::ObservationLog::default()),
+                change_pages: Mutex::new(changes::Cache::default()),
                 roots,
                 view: ViewStore::canonical(),
                 control: Mutex::new(Control {

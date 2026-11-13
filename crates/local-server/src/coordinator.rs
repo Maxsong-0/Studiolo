@@ -1,5 +1,6 @@
 //! 封闭的 canonical 拥有者；公开控制句柄不导出 Broker 或任意写回调。
 
+pub(crate) mod changes;
 mod content;
 mod content_audit;
 mod file_operations;
@@ -28,6 +29,8 @@ pub struct CanonicalWorkbench {
 
 pub(crate) struct Core {
     pub owner: Mutex<Option<FsVaultBroker>>,
+    pub changes: Mutex<changes::ObservationLog>,
+    pub change_pages: Mutex<changes::Cache>,
     pub roots: Arc<CanonicalServingRoots>,
     pub view: ViewStore,
     pub control: Mutex<Control>,

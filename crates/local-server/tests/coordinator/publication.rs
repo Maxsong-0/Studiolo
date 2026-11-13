@@ -147,3 +147,44 @@ async fn ordinary_read_rejections_preserve_freshness_but_a_known_deletion_invali
     release.send(()).unwrap();
     workbench.shutdown().await.unwrap();
 }
+
+#[tokio::test]
+async fn changes_record_only_published_external_differences_and_do_not_duplicate_broker() {
+    let fixture = Fixture::new();
+    let workbench = fixture.start(false).await;
+    assert_eq!(workbench.core.changes.lock().unwrap().rows.len(), 1);
+    fs::write(fixture.root.join("vault/note.md"), [0xff]).unwrap();
+    assert!(workbench.refresh().await.is_err());
+    idle(&workbench).await;
+    assert_eq!(workbench.core.changes.lock().unwrap().rows.len(), 1);
+    fs::write(fixture.root.join("vault/note.md"), "# 外部变更\n").unwrap();
+    workbench.refresh().await.unwrap();
+    idle(&workbench).await;
+    {
+        let log = workbench.core.changes.lock().unwrap();
+        assert_eq!(log.rows.len(), 2);
+        assert_eq!(log.rows[1].path.as_ref().unwrap().as_str(), "note.md");
+        assert_eq!(
+            log.rows[1].kind,
+            crate::coordinator::changes::ObservedKind::Replaced
+        );
+    }
+    {
+        let mut guard = workbench.core.owner.lock().unwrap();
+        let broker = guard.as_mut().unwrap();
+        let path = VaultPath::parse("note.md").unwrap();
+        let old = broker.read_file(&path, 4096).unwrap();
+        broker
+            .mutate(Mutation::replace(
+                path,
+                b"# broker\n".to_vec(),
+                old.revision,
+                "changes-no-duplicate",
+            ))
+            .unwrap();
+    }
+    workbench.refresh().await.unwrap();
+    idle(&workbench).await;
+    assert_eq!(workbench.core.changes.lock().unwrap().rows.len(), 2);
+    workbench.shutdown().await.unwrap();
+}

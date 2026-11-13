@@ -18,6 +18,7 @@ use super::{
 
 pub(super) enum Action {
     Issue,
+    ChangesSeen(crate::changes::SeenInput),
     Revoke(Revoke),
     Factor(factor_input::Action),
     Content(crate::editing::Replace),
@@ -56,6 +57,7 @@ pub(super) async fn action(request: &mut Request) -> Result<Option<Action>, Fail
         RECOVER => RECOVER,
         FACTOR_STATE => FACTOR_STATE,
         crate::editing::PATH => crate::editing::PATH,
+        crate::changes::SEEN => crate::changes::SEEN,
         crate::file_operations::PATH => crate::file_operations::PATH,
         crate::file_operations::TOMBSTONES => crate::file_operations::TOMBSTONES,
         super::execution::COMMAND => super::execution::COMMAND,
@@ -128,6 +130,11 @@ pub(super) async fn action(request: &mut Request) -> Result<Option<Action>, Fail
         } else {
             Failure::bad_request()
         });
+    }
+    if path == crate::changes::SEEN {
+        return crate::changes::parse_seen(&bytes)
+            .map(|v| Some(Action::ChangesSeen(v)))
+            .map_err(|_| Failure::bad_request());
     }
     if path == super::execution::COMMAND {
         return super::execution::parse(&bytes).map(|v| Some(Action::Execution(v)));

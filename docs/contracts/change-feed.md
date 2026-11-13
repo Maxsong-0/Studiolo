@@ -1,7 +1,7 @@
 # 内容变更流（T-206 / ADR-032）
 
-2026-11-13 实施中，依据 T-148 的方案 A。Broker 来源链已落地；人侧接口、代次差分、
-已读水位及文档面板仍在本任务后续接线，不能把本页当作已上线接口说明。
+2026-11-13 实施中，依据 T-148 的方案 A。Broker 来源链、成功代次差分、L2 接口及审计已读水位已完成定向验证；
+文档面板与驾驶舱接线进行中。整批复查和部署尚未完成。
 
 ## 可信来源
 
@@ -52,3 +52,53 @@ writer 状态版本 8；完成新历史/索引之前先可靠升级，旧二进�
 - typed删除恢复和改名既有契约；200 MiB 改名投影仍满足原内存上限。
 - 真实黑板入口：调用成功后的私有路径历史固定已认证实例与有效 claim 的 task/attempt。
 - 前端历史闭集与展示接受 Agent、拒绝缺失/多余/不成对或非法字段。
+
+## 成功代次观察
+
+canonical 捕获的 Markdown 路径保留 revision 和字节数。只在整份候选通过重验并成功发布时，
+与上一成功代次比较；失败捕获、无效 UTF-8 和发布前失效不推进观察记录。只有本提交区间内
+Broker 已知行的路径和结果 revision 均匹配，才省略重复观察。解释扫描最多 64 页/4096 行，
+不完整时发 `explanation_incomplete` 缺口，不能猜作者。
+
+观察环最多 4096 条，独立递增序号；首次发布仅发 `startup` 缺口，淘汰记录由分页返回
+`retention` 缺口。每个进程有新 UUID epoch，旧进程水位不能压住新启动缺口。S2 只覆盖 capture
+实际给出 revision 的 Markdown；附件的可靠 Broker 提交仍由 S1 提供，不从附件大小推测内容变化。
+
+## L2 HTTP 与分页
+
+- `GET /api/v1/changes?limit=50&project=项目/名称&before=<opaque UUID>`：limit 1–100；project
+  可省略表示全库，只接受两个完整逻辑路径段。可带 `vault_uuid` 核对当前绑定库，省略时由唯一
+  owner 返回库身份。未知字段、重复查询字段及非法值拒绝。
+- 响应封闭字段：`vault_uuid, project, entries, next_cursor, snapshot, through, history_incomplete,
+  retired, seen_complete`。through 为 `{sequence, epoch, observation, generation}`，所有 64 位
+  数值均为十进制字符串，未知时间/版本/大小为 null。条目区分 `source=broker|observation`。
+- 保留两种来源各自的序号顺序，只用头条可用时间决定下一来源；时间回拨不能重排同源记录。
+  时间是显示提示，混合列表不声称全局严格时间顺序。
+- 游标内存缓存最多 64 项、存活 10 分钟。绑定主体哈希、Vault、项目、固定提交上限和观察上限；
+  保留预取但未消费的 Broker 行（最多 100），不把未显示的行跳过。每次请求至多补取两页 Broker、
+  消费 300 条候选；稀疏范围可为空页加 next_cursor。过期/淘汰/重启返回 409，重新读取第一页。
+- 每次请求在同一 canonical owner 内先后重验会话与根绑定；缓存不保存授权结果。保护路径不出现在
+  列表中。列表在审计不可用时仍可读，已读状态变为未知。没有额外文件或数据库写者。
+
+## 已读审计
+
+`POST /api/v1/changes/seen` 必须同源、L2 与 CSRF，闭集 DTO 是
+`{vault_uuid, project, snapshot, request_id}`；后两者均为 UUID。snapshot 引用 GET 签发的上限，
+客户端不能直接提交未来序号。操作含义是把该范围的这份快照整体标已读，不只是当前页。
+
+动作名 `content.changes_seen`，同一个稳定事件 ID 先 Intent 后 Outcome；载荷固定 schema 1、
+主体哈希、库、范围、快照及四项水位。实际 append 返回事件必须完全一致并通过完整性核对，
+才答复 seen。Intent 单独存在不算已读；Outcome 故障可使用同一 request_id 重试，已有 Intent
+允许在游标过期后续办。请求编号不能换快照或范围；审计故障返回 503。
+
+全库和各项目分别记水位，同一可信主体跨设备共用，不依赖浏览器 localStorage。读取先有界定位
+审计尾部，再扫描最近至多 8192 条，每页至多 1024；只认相同载荷的成对 Intent/Outcome，并取
+水位最大值，较旧快照不会在已观察范围内倒退已读状态。尾扫未涵盖整个账本时 `seen_complete=false`：
+已证明覆盖的行可以显示已读，其他行保持未知，不报告伪造的零未读或完整总量。进程重启只保留
+Broker 水位的意义，观察水位按 epoch 隔离。
+
+## 接口定向检查（108）
+
+`20261113-122447-ca1a`：changes 10 项、真实协调器发布 6 项、真实 HTTP 2 项、架构 58 项和
+local-server 全目标严格 Clippy 通过。覆盖固定分页上限、不丢预取行、跨设备与项目隔离、CSRF、
+伪造未来值拒绝、Intent/Outcome 故障重试、审计离线仍可读、观察淘汰与游标过期。

@@ -241,6 +241,14 @@ fn assemble(
     if state.canonical.is_some() {
         routes = routes.route(crate::canonical::PATH, get(crate::canonical::file));
     }
+    if state.sessions.is_some() && matches!(state.canonical, Some(CanonicalSource::Writer(_))) {
+        routes = routes
+            .route(crate::changes::PATH, get(crate::changes::page))
+            .route(
+                crate::changes::SEEN,
+                axum::routing::post(crate::changes::mark),
+            );
+    }
     if crate::editing::enabled(&state) {
         routes = routes
             .route(crate::history::PATH, get(crate::history::page))

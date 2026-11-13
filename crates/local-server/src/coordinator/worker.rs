@@ -92,6 +92,19 @@ impl Core {
                 next,
             )
         };
+        let revisions = capture
+            .notes
+            .iter()
+            .map(|note| {
+                (
+                    note.path.clone(),
+                    super::changes::Fingerprint {
+                        revision: note.revision,
+                        bytes: note.content.len() as u64,
+                    },
+                )
+            })
+            .collect();
         let stamp = capture.stamp;
         #[cfg(test)]
         self.probe.building();
@@ -115,6 +128,23 @@ impl Core {
         if writer_status.read_blocked {
             return Err(Failure::Unresolved);
         }
+        let previous_generation = self
+            .view
+            .0
+            .read()
+            .map_err(|_| Failure::Internal)?
+            .generation
+            .clone();
+        let (known, explained) = previous_generation
+            .as_ref()
+            .map(|previous| {
+                super::changes::known(
+                    broker,
+                    previous.indexed_through.unwrap_or(0),
+                    stamp.committed_through(),
+                )
+            })
+            .unwrap_or_default();
         let state = self.control.lock().map_err(|_| Failure::Internal)?;
         if state.closing {
             return Err(Failure::Stopped);
@@ -122,9 +152,21 @@ impl Core {
         if state.epoch != epoch || state.health != WatchHealth::Healthy {
             return Err(Failure::Changed);
         }
+        candidate.revisions = revisions;
         candidate.indexed_through = Some(stamp.committed_through());
         candidate.invalidation_epoch = Some(epoch);
         let mut published = self.view.0.write().map_err(|_| Failure::Internal)?;
+        self.changes
+            .lock()
+            .map_err(|_| Failure::Internal)?
+            .publish(
+                published.generation.as_deref(),
+                &candidate,
+                &known,
+                explained,
+                super::changes::now_ms(),
+            )
+            .map_err(|_| Failure::Internal)?;
         let previous = published.generation.replace(Arc::new(candidate));
         published.freshness = Some(Freshness {
             stale: writer_status.unresolved,
