@@ -9,7 +9,7 @@ fn approval() -> serde_json::Value {
         "target_shape": "dedicated_append_only_target",
         "claims_immutability": true,
         "restic_package": "restic",
-        "restic_version": "0.18.2",
+        "restic_version": "0.19.1",
         "schedule_interval_millis": 600_000,
         "completion_budget_millis": 300_000,
         "rpo_millis": 900_000,
@@ -36,7 +36,7 @@ fn an_approved_dedicated_target_parses_with_its_fixed_package_and_budgets() {
     );
     assert!(approved.claims_immutability());
     assert_eq!(approved.restic().package(), "restic");
-    assert_eq!(approved.restic().version(), "0.18.2");
+    assert_eq!(approved.restic().version(), "0.19.1");
     assert!(approved.schedule().satisfies_rpo());
     assert_eq!(approved.retention().keep_last(), 30);
     assert_eq!(

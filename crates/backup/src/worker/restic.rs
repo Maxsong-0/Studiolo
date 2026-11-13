@@ -22,7 +22,7 @@ use std::path::PathBuf;
 /// 固定 restic 包的名字。
 pub const RESTIC_PACKAGE_NAME: &str = "restic";
 /// 固定 restic 版本；换版本必须改代码并重新验收。
-pub const RESTIC_PACKAGE_VERSION: &str = "0.18.2";
+pub const RESTIC_PACKAGE_VERSION: &str = "0.19.1";
 
 /// 备份仓库凭据身份。
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -64,11 +64,8 @@ pub enum ResticCommand {
         /// 只读传输源根目录（绝对路径）。
         source_root: PathBuf,
     },
-    /// 校验远端对象完整性。
-    Check {
-        /// 目标快照。
-        snapshot: SnapshotRef,
-    },
+    /// 读取并校验仓库全部数据。此命令没有单快照筛选，不能冒充配对引用证明。
+    CheckRepository,
     /// 恢复到新目录。
     Restore {
         /// 目标快照。
@@ -88,7 +85,7 @@ impl ResticCommand {
     #[must_use]
     pub fn identity(&self) -> ResticIdentity {
         match self {
-            Self::Backup { .. } | Self::Check { .. } => ResticIdentity::Append,
+            Self::Backup { .. } | Self::CheckRepository => ResticIdentity::Append,
             Self::Restore { .. } => ResticIdentity::Restore,
             Self::Forget { .. } => ResticIdentity::RetentionCleanup,
         }
@@ -107,7 +104,11 @@ pub struct ResticInvocation {
 }
 
 /// 秘密只经这些环境变量注入；这里保存的是变量名，不是值。
-pub const RESTIC_SECRET_ENVIRONMENT: [&str; 2] = ["RESTIC_PASSWORD_FILE", "RESTIC_REPOSITORY_FILE"];
+pub const RESTIC_SECRET_ENVIRONMENT: [&str; 3] = [
+    "RESTIC_PASSWORD_FILE",
+    "RESTIC_REST_USERNAME",
+    "RESTIC_REST_PASSWORD",
+];
 
 impl ResticInvocation {
     /// 组装一次调用。持有者不是 BackupWorker、或身份与命令不符即拒绝。
@@ -126,7 +127,12 @@ impl ResticInvocation {
                 found: identity,
             });
         }
-        let mut argv = vec!["--repo".to_owned(), repository.as_str().to_owned()];
+        let mut argv = vec![
+            "--json".to_owned(),
+            "--no-cache".to_owned(),
+            "--repo".to_owned(),
+            repository.as_str().to_owned(),
+        ];
         match command {
             ResticCommand::Backup { tag, source_root } => {
                 argv.push("backup".to_owned());
@@ -135,12 +141,9 @@ impl ResticInvocation {
                 argv.push("--one-file-system".to_owned());
                 argv.push(absolute_argument(source_root)?);
             }
-            ResticCommand::Check { snapshot } => {
+            ResticCommand::CheckRepository => {
                 argv.push("check".to_owned());
-                argv.push("--read-data-subset".to_owned());
-                argv.push("100%".to_owned());
-                argv.push("--snapshot".to_owned());
-                argv.push(snapshot.as_str().to_owned());
+                argv.push("--read-data".to_owned());
             }
             ResticCommand::Restore {
                 snapshot,

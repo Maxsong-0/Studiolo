@@ -29,7 +29,7 @@ impl BackupWorker<'_> {
             Ok(())
         })?;
 
-        let tag = super::super::restic::JobTag::parse(format!("job-{}", key.sequence))?;
+        let tag = super::super::restic::JobTag::for_job(key)?;
         let backup = ResticCommand::Backup {
             tag,
             source_root: ticket.transfer_source.root.clone(),
