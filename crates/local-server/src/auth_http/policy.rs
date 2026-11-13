@@ -10,6 +10,8 @@ pub(crate) use principal::{L3Denial, PolicyPrincipal};
 pub(super) use request::parse;
 pub(crate) use request::{ActivateRequest, Input};
 
+/// 人侧实例列表，不含凭据摘要。
+pub(crate) const AGENTS: &str = "/api/v1/agents";
 /// effective 摘要与生效中的吊销。
 pub(crate) const STATUS: &str = "/api/v1/policy";
 /// GET 列 desired；POST 提交 desired。
@@ -30,7 +32,7 @@ pub(crate) const JSON_LIMIT: usize = 512 * 1024;
 /// 策略端点的方法表：单一来源。
 pub(crate) fn method_for(path: &str) -> Option<&'static str> {
     match path {
-        STATUS | VERSIONS => Some("GET"),
+        AGENTS | STATUS | VERSIONS => Some("GET"),
         DESIRED => Some("GET, POST"),
         VALIDATE | WITHDRAW | ACTIVATE | REVOKE => Some("POST"),
         _ if path

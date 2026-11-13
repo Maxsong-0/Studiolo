@@ -24,7 +24,7 @@ use std::{
 use studiolo_audit_ledger::{AuditError, AuditEvent, AuditFilter, AuditLedger, AuditRecord};
 use studiolo_control_db::ControlDb;
 use studiolo_policy::PolicyAgentStore;
-use studiolo_supply::AgentStore;
+use studiolo_supply::AgentIdentityView;
 use studiolo_task_engine::PersistentTaskEngine;
 use studiolo_vault_broker::VaultReader as _;
 
@@ -42,7 +42,7 @@ type Engine = PersistentTaskEngine<owner::SharedBroker, SharedAudit>;
 /// 已显式装配的黑板平面；没有可从 HTTP 构造的认证旁路。
 pub struct BoardPlane {
     engine: Mutex<Engine>,
-    identities: AgentStore,
+    identities: AgentIdentityView,
     policy: PolicyAgentStore,
     audit: Arc<dyn AuditLedger>,
     storage: storage::Storage,
@@ -85,7 +85,13 @@ impl BoardPlane {
                 policy.to_path_buf(),
             ])
             .collect::<Vec<_>>();
-        let identities = AgentStore::open_existing(identities).map_err(|_| "身份库不可用")?;
+        let identity_isolated: Vec<_> = isolated_roots
+            .iter()
+            .map(std::path::PathBuf::as_path)
+            .filter(|root| *root != identities)
+            .collect();
+        let identities = AgentIdentityView::open_existing_isolated(identities, &identity_isolated)
+            .map_err(|_| "身份库不可用")?;
         let policy = PolicyAgentStore::open_existing(policy).map_err(|_| "策略库不可用")?;
         let storage = storage::Storage::open(data, isolated)?;
         let control = ControlDb::open(storage.file(), uuid).map_err(|_| "控制库不可用")?;

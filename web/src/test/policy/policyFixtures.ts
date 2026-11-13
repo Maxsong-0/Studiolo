@@ -13,7 +13,7 @@ export const DESIRED_ID = '01ABCDEFGHJKMNPQRSTVWXYZ00';
 type Body = Record<string, unknown>;
 
 /** 策略页的三个子标签（T-198）。 */
-export type PolicyTabName = '现状' | '待处理' | '提交';
+export type PolicyTabName = '现状' | '待处理' | '提交' | '接入方';
 
 /** 子标签按钮；「待处理」的名字后面带件数，所以按开头找。 */
 export function tab(name: PolicyTabName) {

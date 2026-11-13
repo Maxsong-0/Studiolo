@@ -5,6 +5,7 @@
 //! `require_l3` → 策略库事务 → 审计 Outcome；账本不可用即失败关闭，不发布。
 
 mod activate;
+mod agents;
 mod common;
 mod problem;
 mod query;
@@ -28,6 +29,7 @@ use write::{desired_submit, revoke, validate, withdraw};
 /// 策略平面句柄与它的审计账本；由可信启动层构造一次。
 pub struct PolicyPlane {
     store: PolicyStore,
+    identities: Option<studiolo_supply::AgentIdentityView>,
     ledger: Arc<dyn AuditLedger>,
     permits: Arc<Semaphore>,
 }
@@ -37,9 +39,15 @@ impl PolicyPlane {
     pub fn new(store: PolicyStore, ledger: Arc<dyn AuditLedger>) -> Self {
         Self {
             store,
+            identities: None,
             ledger,
             permits: Arc::new(Semaphore::new(2)),
         }
+    }
+    /// 显式装配人侧只读身份视图；不授予身份库写能力。
+    pub fn with_identities(mut self, identities: studiolo_supply::AgentIdentityView) -> Self {
+        self.identities = Some(identities);
+        self
     }
 }
 
@@ -51,6 +59,7 @@ pub fn with_policy_plane(app: Router, plane: Arc<PolicyPlane>) -> Router {
 /// 装配了会话门禁时挂载策略路由；必须在 `security::guard` 那一层之前调用。
 pub(crate) fn routes(routes: Router<AppState>) -> Router<AppState> {
     routes
+        .route(input::AGENTS, get(agents::list))
         .route(input::STATUS, get(status))
         .route(input::DESIRED, get(desired_list).post(desired_submit))
         .route(input::VALIDATE, post(validate))

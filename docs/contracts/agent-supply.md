@@ -219,3 +219,8 @@
 - 契约测试：`crates/agent-server/tests/rules_access_contract.rs`（五条路径、对外同一错误与审计原因、子目录、缺字段零规则、
   M3 兼容模式不过滤、HTTP 外壳同一判定）、`crates/supply/tests/rules_files_contract.rs`（判定与路牌库文件兜底）、
   `crates/policy/tests/rules_whitelist_contract.rs`（能力集字段校验与扩大／收窄项）。
+
+
+## 人侧身份视图与管理输出（T202）
+
+人侧列表经 `AgentIdentityView` 只读观察身份库，不取得 token 或会话摘要。`session_digest` 绑定的是服务端随机 `session_ref` 的 SHA-256，非客户端提供的会话标识。`studiolo-agent admin instances` 保留原四列顺序并在末尾增加父实例号（无父为 `—`）；读取改用只读视图。网页契约见 [接入方列表](agents-list.md)。

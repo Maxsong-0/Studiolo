@@ -47,19 +47,20 @@ class AssemblyTests(unittest.TestCase):
     def test_launcher_preserves_the_approved_bridge_wiring(self):
         old = board_launcher()
         new = a.launcher(old)
-        restored = new.replace(a.RELEASE, a.OLD_RELEASE)
+        restored = new.replace(a.RELEASE, a.OLD_RELEASE).replace(' "--agent-data", AGENT,', '')
         self.assertEqual(restored, old)
+        self.assertEqual(new.count('"--agent-data"'), 1)
         self.assertEqual(new.count('"--sync-transport"'), 1)
 
         # 所有函数（含 main）的 AST 不变；只有模块级发行路径不同。
         def functions(source):
             return {n.name: ast.dump(n) for n in ast.parse(source).body
                     if isinstance(n, ast.FunctionDef)}
-        self.assertEqual(functions(old), functions(new))
+        self.assertEqual(functions(old), functions(restored))
         self.assertIn('"--canonical-writer-data", WRITER', new)
         self.assertIn('"STUDIOLO_TOTP_SEED_HEX": credential()', new)
         # 已转换的启动器不能再过一遍；接线或标签漂移也拒绝。
-        for bad in (new, old.replace('"--board-socket", BOARD_SOCKET,', ''),
+        for bad in (new, old + '\n# "--agent-data"\n', old.replace('"--board-socket", BOARD_SOCKET,', ''),
                     old.replace('"--sync-transport"', '"--foreign"'),
                     old.replace(a.SYNC_APPROVAL, '/foreign/approval.json'),
                     old + '\n# "--sync-transport"\n',

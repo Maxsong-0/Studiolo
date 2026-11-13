@@ -103,3 +103,73 @@ fn derived_index_storage_has_its_own_fixed_file_and_connection() {
         .contains(&AuthorityViolation::DatabaseOpen)
     );
 }
+
+#[test]
+fn identity_writers_cannot_enter_human_or_other_production_crates() {
+    for symbol in [
+        "AgentStore",
+        "register_instance",
+        "register_child_instance",
+        "touch_instance",
+        "issue_type",
+        "revoke_type",
+        "record_read",
+        "rebuild_reads",
+        "upgrade_child_instances",
+    ] {
+        for name in [
+            "studiolo-local-server",
+            "studiolo-workbench",
+            "studiolo-gateway",
+        ] {
+            assert!(
+                source_violations(
+                    name,
+                    Path::new("src/lib.rs"),
+                    &format!("let x = {symbol}::open(value); {symbol}(value);")
+                )
+                .contains(&AuthorityViolation::IdentityWrite)
+            );
+        }
+    }
+    for name in ["studiolo-supply", "studiolo-agent-server"] {
+        assert!(
+            source_violations(
+                name,
+                Path::new("src/lib.rs"),
+                "AgentStore::open_existing(path)"
+            )
+            .is_empty()
+        );
+    }
+    assert!(
+        source_violations(
+            "studiolo-local-server",
+            Path::new("src/lib.rs"),
+            "AgentIdentityView::open_existing(path); PolicyAgentStore::open_existing(policy)"
+        )
+        .is_empty()
+    );
+}
+
+#[test]
+fn identity_view_guard_rejects_import_alias_but_accepts_backup_kind() {
+    for source in [
+        "use studiolo_supply::{AgentStore as Writer};",
+        "use studiolo_supply::AgentStore;",
+        "let s = studiolo_supply::AgentStore ::open(path);",
+    ] {
+        assert!(
+            source_violations("studiolo-local-server", Path::new("src/lib.rs"), source)
+                .contains(&AuthorityViolation::IdentityWrite)
+        );
+    }
+    assert!(
+        source_violations(
+            "studiolo-core",
+            Path::new("src/lib.rs"),
+            "enum CheckpointKind { AgentStore } let kind = CheckpointKind::AgentStore;"
+        )
+        .is_empty()
+    );
+}

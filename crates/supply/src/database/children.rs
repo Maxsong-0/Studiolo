@@ -69,7 +69,7 @@ impl AgentStore {
     }
 }
 
-fn lineage(db: &Connection, id: &str) -> Result<Vec<Instance>, SupplyError> {
+pub(super) fn lineage(db: &Connection, id: &str) -> Result<Vec<Instance>, SupplyError> {
     let children = schema::version(db)? == 1;
     let mut next = Some(id.to_owned());
     let mut result: Vec<Instance> = Vec::new();
@@ -103,6 +103,12 @@ fn lineage(db: &Connection, id: &str) -> Result<Vec<Instance>, SupplyError> {
         } else {
             None
         };
+        if result
+            .first()
+            .is_some_and(|first| first.agent_type != instance.agent_type)
+        {
+            return Err(SupplyError::InvalidParent);
+        }
         result.push(instance);
     }
     Ok(result)

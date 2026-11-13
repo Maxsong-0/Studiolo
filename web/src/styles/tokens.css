@@ -153,7 +153,8 @@
 /* 页面底色由 :root 的 --paper 兜住；外壳（body 与顶栏）的样式归外壳自己的样式文件 */
 body {
   margin: 0;
-  min-width: 320px;
+  /* 320px 视口扣除经典滚动条后会更窄，不能让 body 强撑出横滚。 */
+  min-width: min(320px, 100%);
   color: var(--ink);
   font-size: var(--type-body);
   line-height: 1.6;

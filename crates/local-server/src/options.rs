@@ -20,6 +20,7 @@ pub(crate) struct Options {
     pub(crate) cargo_dependencies: bool,
     pub(crate) rust_call_sites: Option<Vec<String>>,
     pub(crate) policy_data: Option<PathBuf>,
+    pub(crate) agent_data: Option<PathBuf>,
     pub(crate) board: Option<BoardOptions>,
     pub(crate) runner_config: Option<PathBuf>,
     /// 双向 Bridge 传输审批文档（ADR-025 D1）；缺席即平面不装配。
@@ -63,6 +64,7 @@ struct Raw {
     project_repository: Option<(String, PathBuf)>,
     rust_call_sites: Option<Vec<String>>,
     policy_data: Option<PathBuf>,
+    agent_data: Option<PathBuf>,
     runner_config: Option<PathBuf>,
     board_socket: Option<PathBuf>,
     board_data: Option<PathBuf>,
@@ -190,6 +192,13 @@ pub(crate) fn parse(mut args: impl Iterator<Item = String>) -> Result<Option<Opt
         }
         _ => return Err("黑板必须同时指定三个绝对路径、canonical写者及策略目录".into()),
     };
+    if raw.agent_data.as_ref().is_some_and(|path| {
+        !path.is_absolute()
+            || raw.policy_data.is_none()
+            || board.as_ref().is_some_and(|b| b.agent_data != *path)
+    }) {
+        return Err("接入方身份目录必须为绝对路径、配合策略目录，且与黑板身份目录一致".into());
+    }
     if raw
         .runner_config
         .as_ref()
@@ -221,6 +230,7 @@ pub(crate) fn parse(mut args: impl Iterator<Item = String>) -> Result<Option<Opt
         cargo_dependencies: raw.cargo_dependencies,
         rust_call_sites: raw.rust_call_sites,
         policy_data: raw.policy_data,
+        agent_data: raw.agent_data,
         board,
         runner_config: raw.runner_config,
         sync_transport: raw.sync_transport,

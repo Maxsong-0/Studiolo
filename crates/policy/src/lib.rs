@@ -37,8 +37,9 @@ pub use proposal::{
     MAX_LISTED_PROPOSALS, Proposal, ProposalInput, ProposalListing, ProposalResult, ProposalSummary,
 };
 pub use store::{
-    Activation, DesiredInput, DesiredRecord, DesiredStatus, EffectiveEntry, EffectiveSummary,
-    MAX_PENDING_PER_INSTANCE, MAX_PENDING_PROPOSALS, PolicyStore, RevocationLevel,
-    RevocationRecord, Submitter, VersionMeta, VersionRecord,
+    Activation, AgentPolicySnapshot, DesiredInput, DesiredRecord, DesiredStatus, EffectiveEntry,
+    EffectiveSummary, InstancePolicyState, MAX_PENDING_PER_INSTANCE, MAX_PENDING_PROPOSALS,
+    PolicyStore, RevocationLevel, RevocationRecord, Submitter, TypePolicyState, VersionMeta,
+    VersionRecord,
 };
 pub use validate::{Expansion, Problem, Report};

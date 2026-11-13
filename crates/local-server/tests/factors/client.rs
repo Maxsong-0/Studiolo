@@ -48,14 +48,19 @@ impl Client {
     }
 
     pub async fn send(&mut self, request: Request<Vec<u8>>) -> Reply {
+        self.send_with_limit(request, 16 * 1024).await
+    }
+
+    /// 大型只读列表显式选择上限；因子契约继续固定 16 KiB。
+    pub async fn send_with_limit(&mut self, request: Request<Vec<u8>>, limit: usize) -> Reply {
         let head = request.method() == "HEAD";
         self.write(request).await;
-        tokio::time::timeout(Duration::from_secs(6), self.read(head))
+        tokio::time::timeout(Duration::from_secs(6), self.read(head, limit))
             .await
             .unwrap()
     }
 
-    async fn read(&mut self, head: bool) -> Reply {
+    async fn read(&mut self, head: bool, limit: usize) -> Reply {
         let end = loop {
             if let Some(position) = self
                 .buffered
@@ -96,7 +101,7 @@ impl Client {
                 .get("content-length")
                 .map_or(0, |value| value.to_str().unwrap().parse::<usize>().unwrap())
         };
-        assert!(length <= 16 * 1024);
+        assert!(length <= limit);
         self.buffered.drain(..end + 4);
         while self.buffered.len() < length {
             self.more().await;

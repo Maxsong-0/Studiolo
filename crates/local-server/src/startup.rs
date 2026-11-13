@@ -68,6 +68,14 @@ where
             .policy_data
             .as_ref()
             .is_some_and(|path| !path.is_absolute() || options.session.is_none())
+        || options.agent_data.as_ref().is_some_and(|path| {
+            !path.is_absolute()
+                || options.policy_data.is_none()
+                || options
+                    .board
+                    .as_ref()
+                    .is_some_and(|board| board.agent_data != *path)
+        })
         || options.runner_config.as_ref().is_some_and(|path| {
             !path.is_absolute() || options.board.is_none() || options.factor.is_none()
         })
@@ -217,7 +225,7 @@ where
     } else {
         app
     };
-    let policy = plane_input::policy(app, &options, content_audit.as_ref());
+    let policy = plane_input::policy(app, &options, content_audit.as_ref(), &board_protected);
     let app = or_shutdown(policy, workbench.as_ref()).await?;
     let board = plane_input::board(
         &options,

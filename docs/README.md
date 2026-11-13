@@ -191,3 +191,5 @@ M4 把规则母本、skills 与各 AI 类型的能力集升入策略平面：des
 
 - M2 部署清单与恢复手册（`deploy/` 目前只有 M3 agent 单元与 M1 示例模板）
 - Control DB 迁移沿革（随 schema 版本变化追加）
+
+- [人侧接入方列表](contracts/agents-list.md)：只读身份边界、快照、父子实例、吊销与恢复入口。

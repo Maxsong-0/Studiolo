@@ -2,6 +2,8 @@
 //!
 //! 所有函数都在调用方给定的事务内执行，不自己开连接。
 
+mod authorization;
+pub(crate) use authorization::authorization;
 mod current;
 mod desired;
 mod meta;
@@ -16,5 +18,5 @@ pub(crate) use desired::{
 };
 pub(crate) use meta::{effective_hash, empty_effective_hash};
 pub(crate) use proposal_result::proposal_result;
-pub(crate) use revocation::{revocations, revoked};
+pub(crate) use revocation::{active_revocation, revocations, revoked};
 pub(crate) use version::{insert_version, version_record, versions};

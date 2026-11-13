@@ -18,7 +18,10 @@ mod storage;
 pub use budget::{
     BudgetExceeded, HARD_BUDGET_TOKENS, TARGET_BUDGET_TOKENS, check_budget, count_tokens,
 };
-pub use database::{AgentStore, Instance, IssuedToken, ReadQuery, ReadRecord, validate_type_name};
+pub use database::{
+    AgentIdentityView, AgentStore, IdentitySnapshot, Instance, InstanceIdentity, IssuedToken,
+    ReadQuery, ReadRecord, TypeIdentity, validate_type_name,
+};
 pub use error::SupplyError;
 pub use roots::{Entry, EntryKind, Note, Snapshot, SupplyRoots};
 pub use rules_files::{RULES_ROOT, rule_subject};

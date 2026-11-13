@@ -41,12 +41,14 @@ export function FieldLabel({
  */
 export function RevokeForm({
   busy,
+  initial,
   preview,
   previewId,
   onRequest,
   onEdit,
 }: {
   busy: boolean;
+  initial?: { level: RevocationLevel; target: string };
   /** 打开的执行预览；没有就是 null。 */
   preview: ReactNode;
   /** 预览框的 id：提交按钮展开时用 aria-controls 指向它。 */
@@ -57,7 +59,9 @@ export function RevokeForm({
   onEdit: () => void;
 }) {
   const id = useId();
-  const [level, setLevel] = useState<RevocationLevel>('instance');
+  const [level, setLevel] = useState<RevocationLevel>(
+    initial?.level ?? 'instance',
+  );
   const [error, setError] = useState('');
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -111,6 +115,7 @@ export function RevokeForm({
             id={`${id}-target`}
             className="policy-input policy-input--mono"
             name="target"
+            defaultValue={initial?.target ?? ''}
             type="text"
             autoComplete="off"
             spellCheck={false}

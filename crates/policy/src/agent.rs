@@ -12,7 +12,7 @@ use crate::{
     model::CapabilitySet,
     proposal, sql,
     storage::CreatePolicy,
-    store::{self, GLOBAL_TARGET, RevocationLevel},
+    store::{self},
 };
 
 /// 接入方在本次调用被拒的结构化原因（进 `agent.action_denied` 的 reason）。
@@ -100,39 +100,8 @@ impl PolicyAgentStore {
         agent_type: &str,
         instance_id: Option<&str>,
     ) -> Result<Authorization, PolicyError> {
-        self.db.read(|tx| {
-            let effective_hash = sql::effective_hash(tx)?;
-            let denial = if sql::revoked(tx, RevocationLevel::Global, GLOBAL_TARGET)? {
-                Some(Denial::GlobalRevoked)
-            } else if sql::revoked(tx, RevocationLevel::Type, agent_type)? {
-                Some(Denial::TypeRevoked)
-            } else if let Some(instance) = instance_id
-                && sql::revoked(tx, RevocationLevel::Instance, instance)?
-            {
-                Some(Denial::InstanceRevoked)
-            } else {
-                None
-            };
-            if let Some(denial) = denial {
-                return Ok(Authorization {
-                    effective_hash,
-                    grant: None,
-                    denial: Some(denial),
-                });
-            }
-            match sql::capability_set(tx, agent_type)? {
-                Some((set, meta)) => Ok(Authorization {
-                    effective_hash,
-                    grant: Some(CapabilityGrant { set, meta }),
-                    denial: None,
-                }),
-                None => Ok(Authorization {
-                    effective_hash,
-                    grant: None,
-                    denial: Some(Denial::NoCapabilitySet),
-                }),
-            }
-        })
+        self.db
+            .read(|tx| sql::authorization(tx, agent_type, instance_id))
     }
 
     /// 接入方提交 desired 提案：有界、只入 `pending`（结构无效则 `rejected`），永不生效。

@@ -273,7 +273,7 @@ describe('撤销接入：提交只打开预览', () => {
     expect(preview).toHaveAccessibleName(
       '执行预览 撤销接入：实例 01J0INSTANCE0000000000000',
     );
-    expect(preview).toHaveTextContent('只拒绝这一个实例');
+    expect(preview).toHaveTextContent('拒绝这个实例及其子孙实例');
     expect(preview).toHaveTextContent('越界');
     expect(preview).toHaveTextContent('确认后即刻生效');
     expect(preview).toHaveTextContent('不可撤回：实例级撤销不能恢复。');

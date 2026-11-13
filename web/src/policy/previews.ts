@@ -270,7 +270,7 @@ export function revokePreview(request: RevokeRequest): PreviewContent {
   const target = request.target ?? '';
   const scope =
     request.level === 'instance'
-      ? `实例 ${target}：只拒绝这一个实例，同类型的其他实例不受影响`
+      ? `实例 ${target}：拒绝这个实例及其子孙实例，同类型的其他独立实例不受影响`
       : request.level === 'type'
         ? `类型 ${target}：该类型的全部实例，连同新的握手`
         : '全局：所有 AI 的全部调用';

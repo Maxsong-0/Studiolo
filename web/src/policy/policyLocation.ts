@@ -10,7 +10,7 @@
 import { POLICY_QUEUE_ITEM } from '../viewLocation';
 import type { ViewLocation } from '../viewLocation';
 
-export type PolicyTab = 'now' | 'pending' | 'submit';
+export type PolicyTab = 'now' | 'pending' | 'submit' | 'agents';
 
 type Slots = Pick<ViewLocation, 'panel' | 'item'>;
 
@@ -26,7 +26,11 @@ export function wantsQueueFocus({ panel, item }: Slots): boolean {
 
 /** 在看哪个标签。 */
 export function policyTab(location: Slots): PolicyTab {
-  if (location.panel === 'pending' || location.panel === 'submit')
+  if (
+    location.panel === 'pending' ||
+    location.panel === 'submit' ||
+    location.panel === 'agents'
+  )
     return location.panel;
   return wantsQueueFocus(location) ? 'pending' : 'now';
 }

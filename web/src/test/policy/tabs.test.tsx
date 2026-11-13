@@ -93,6 +93,7 @@ describe('三个子标签', () => {
       ['现状', 'true'],
       ['待处理 1', 'false'],
       ['提交', 'false'],
+      ['接入方', 'false'],
     ]);
     const panel = screen.getByRole('tabpanel', { name: '现状' });
     expect(tab('现状')).toHaveAttribute('aria-controls', panel.id);
@@ -196,8 +197,8 @@ describe('三个子标签', () => {
     expect(tab('待处理')).toHaveFocus();
     expect(window.location.hash).toBe('#view=policy&panel=pending');
     await user.keyboard('{End}');
-    expect(tab('提交')).toHaveFocus();
-    expect(window.location.hash).toBe('#view=policy&panel=submit');
+    expect(tab('接入方')).toHaveFocus();
+    expect(window.location.hash).toBe('#view=policy&panel=agents');
     // 到头了再往右回到第一个。
     await user.keyboard('{ArrowRight}');
     expect(tab('现状')).toHaveFocus();

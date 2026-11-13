@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
+import { AgentsPanel } from '../agents/AgentsPanel';
+import { editableBody } from '../policy/submitDraft';
 import { PolicyNow } from '../policy/PolicyNow';
 import { PolicyQueue } from '../policy/PolicyQueue';
 import { PolicySubmit } from '../policy/PolicySubmit';
@@ -33,11 +35,12 @@ type Loaded = {
   versions: VersionMeta[];
 };
 
-/** 三个子标签，顺序就是标签栏的顺序。 */
+/** 四个子标签，顺序就是标签栏的顺序。 */
 const TABS: readonly { id: PolicyTab; label: string }[] = [
   { id: 'now', label: '现状' },
   { id: 'pending', label: '待处理' },
   { id: 'submit', label: '提交' },
+  { id: 'agents', label: '接入方' },
 ];
 
 /**
@@ -47,10 +50,11 @@ const TABS: readonly { id: PolicyTab; label: string }[] = [
  * 先在按钮上方展开「执行预览」，确认后才发请求。
  *
  * 这里只管四样：整份数据和它的重读、在看哪个标签和选中哪一项（都写在位置里）、「提交」里正在写的草稿、
- * 以及全页那一份动作调度（usePolicyActions）连同二次认证弹层。内容在 policy/ 下的三个面板里。
+ * 以及全页那一份动作调度（usePolicyActions）连同二次认证弹层。内容在 policy/ 与 agents/ 的四个面板里。
  */
 export function PolicyPanel({ initial }: { initial: Loaded }) {
   const [data, setData] = useState<Loaded>(initial);
+  const [agentsRevision, setAgentsRevision] = useState(0);
   // 「提交」里正在写的那一份：放在这里，换标签不丢。
   const [draft, setDraft] = useState<SubmitDraft>(EMPTY_SUBMIT_DRAFT);
   const ids = useId();
@@ -71,8 +75,12 @@ export function PolicyPanel({ initial }: { initial: Loaded }) {
 
   const reload = useCallback(async () => {
     const signal = lifetime.current.signal;
-    const snapshot = await readPolicySnapshot(signal);
-    if (!signal.aborted) setData(snapshot);
+    try {
+      const snapshot = await readPolicySnapshot(signal);
+      if (!signal.aborted) setData(snapshot);
+    } finally {
+      if (!signal.aborted) setAgentsRevision((n) => n + 1);
+    }
   }, []);
 
   const actions = usePolicyActions(reload, {
@@ -231,6 +239,37 @@ export function PolicyPanel({ initial }: { initial: Loaded }) {
             versions={versionBodies}
             queueRef={queueRef}
             onPick={pick}
+          />
+        ) : tab === 'agents' ? (
+          <AgentsPanel
+            key={agentsRevision}
+            revision={agentsRevision}
+            actions={actions}
+            onRestore={(name, version) => {
+              void actions.run('agents', async (signal) => {
+                const record = await readVersion(version, signal);
+                if (
+                  record.meta.kind !== 'capability_set' ||
+                  record.meta.subject !== name ||
+                  record.body === null
+                )
+                  throw new Error('能力集版本不可用，请刷新后重试。');
+                if (!signal.aborted) {
+                  setDraft({
+                    kind: 'capability_set',
+                    subject: name,
+                    body: editableBody('capability_set', record.body),
+                    retire: false,
+                  });
+                  goTo({ view: 'policy', panel: 'submit', item: null });
+                }
+                return {
+                  notice:
+                    '已打开能力集草案；核对、提交并完成二次认证后才能恢复接入。',
+                  reload: false,
+                };
+              });
+            }}
           />
         ) : (
           <PolicySubmit

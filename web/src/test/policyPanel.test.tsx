@@ -253,6 +253,7 @@ it('首次加载在两个认证并发许可下读完整策略，不自触发503'
     '现状',
     '待处理 0',
     '提交',
+    '接入方',
   ]);
   expect(denied()).toBe(0);
   expect(posts).toHaveLength(0);

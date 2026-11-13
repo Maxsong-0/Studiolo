@@ -9,6 +9,8 @@ use rusqlite::{Connection, OpenFlags, TransactionBehavior, params};
 
 mod children;
 mod identity;
+mod view;
+pub use view::{AgentIdentityView, IdentitySnapshot, InstanceIdentity, TypeIdentity};
 mod outage;
 mod schema;
 
@@ -104,17 +106,26 @@ pub struct AgentStore {
 impl AgentStore {
     /// 打开部署批准的绝对私有目录；仅初始化本次独占新建的 `agent.sqlite3`。
     pub fn open(private_directory: &Path) -> Result<Self, SupplyError> {
-        Self::open_mode(private_directory, CreatePolicy::AllowNew)
+        Self::open_mode(private_directory, CreatePolicy::AllowNew, false)
     }
 
     /// 只打开并验证已有库；缺失返回 `MissingStore`，不建表、不迁移或修补损坏库。
     pub fn open_existing(private_directory: &Path) -> Result<Self, SupplyError> {
-        Self::open_mode(private_directory, CreatePolicy::ExistingOnly)
+        Self::open_mode(private_directory, CreatePolicy::ExistingOnly, false)
     }
 
-    fn open_mode(private_directory: &Path, policy: CreatePolicy) -> Result<Self, SupplyError> {
+    fn open_mode(
+        private_directory: &Path,
+        policy: CreatePolicy,
+        read_only: bool,
+    ) -> Result<Self, SupplyError> {
         let storage = Storage::prepare(private_directory, policy)?;
-        let flags = OpenFlags::SQLITE_OPEN_READ_WRITE
+        let access = if read_only {
+            OpenFlags::SQLITE_OPEN_READ_ONLY
+        } else {
+            OpenFlags::SQLITE_OPEN_READ_WRITE
+        };
+        let flags = access
             | OpenFlags::SQLITE_OPEN_NO_MUTEX
             | OpenFlags::SQLITE_OPEN_NOFOLLOW
             | OpenFlags::SQLITE_OPEN_PRIVATE_CACHE;
@@ -130,7 +141,11 @@ impl AgentStore {
             .map_err(unavailable)?;
         {
             let transaction = connection
-                .transaction_with_behavior(TransactionBehavior::Immediate)
+                .transaction_with_behavior(if read_only {
+                    TransactionBehavior::Deferred
+                } else {
+                    TransactionBehavior::Immediate
+                })
                 .map_err(unavailable)?;
             // 既有库先验格式，未知/缺损结构不能经过 journal_mode 设置或补表变成有效。
             schema::initialize(&transaction, storage.created)?;
@@ -138,7 +153,15 @@ impl AgentStore {
             transaction.commit().map_err(unavailable)?;
         }
         let mode: String = connection
-            .query_row("PRAGMA journal_mode=WAL", [], |row| row.get(0))
+            .query_row(
+                if read_only {
+                    "PRAGMA journal_mode"
+                } else {
+                    "PRAGMA journal_mode=WAL"
+                },
+                [],
+                |row| row.get(0),
+            )
             .map_err(unavailable)?;
         if mode != "wal" {
             return Err(SupplyError::StoreUnavailable);

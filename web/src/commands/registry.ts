@@ -199,6 +199,12 @@ function viewCommands(): Command[] {
       target: () => ({ view: 'rules' }),
     },
     {
+      id: 'view:agents',
+      label: '接入方实例',
+      keywords: ['agents', '实例', '身份', '吊销', '父实例'],
+      target: () => ({ view: 'policy', panel: 'agents' }),
+    },
+    {
       id: 'view:policy',
       label: '策略',
       keywords: ['policy', '规则', '能力集', 'skills'],

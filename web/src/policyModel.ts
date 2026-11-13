@@ -392,7 +392,7 @@ export function remainingAfter(
 export function desiredEnvelope(value: unknown): DesiredRecord {
   return desiredRecord(record(value).desired);
 }
-function revocation(value: unknown): RevocationRecord {
+export function revocation(value: unknown): RevocationRecord {
   const item = record(value);
   return {
     seq: count(item.seq),

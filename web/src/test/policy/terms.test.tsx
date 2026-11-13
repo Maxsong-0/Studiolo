@@ -80,6 +80,7 @@ describe('策略术语表', () => {
       ],
       待处理: [['待处理草案', 'desired']],
       提交: [['提交规则草案', 'desired']],
+      接入方: [],
     };
     for (const name of ['待处理', '提交', '现状'] as const) {
       await openTab(user, name);
@@ -151,7 +152,7 @@ describe('策略术语表', () => {
 
     expect(seen).toBeGreaterThan(8);
     // 子标签的名字同样只用人话。
-    expect(screen.getAllByRole('tab')).toHaveLength(3);
+    expect(screen.getAllByRole('tab')).toHaveLength(4);
     expect(screen.queryAllByRole('tab', { name: RAW_IN_NAME })).toEqual([]);
   });
 });

@@ -1,0 +1,64 @@
+.agents-state {
+  padding: var(--space-6);
+}
+.agents-filter {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-block: var(--space-4);
+}
+.agents-type {
+  border-top: 1px solid var(--hairline);
+  margin-top: var(--space-6);
+}
+.agents-type__header,
+.agents-instance__heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: start;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  padding-block: var(--space-3);
+}
+.agents-type h3,
+.agents-type p {
+  margin-block: var(--space-2);
+}
+.agents-instance {
+  padding: var(--space-4);
+  border-top: 1px solid var(--hairline);
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.agents-instance[data-selected] {
+  box-shadow: inset 3px 0 var(--ink);
+  background: var(--paper-raised);
+}
+.agents-instance dl {
+  display: grid;
+  gap: var(--space-2);
+  margin: 0;
+}
+.agents-instance dl > div {
+  display: grid;
+  grid-template-columns: minmax(0, 10em) minmax(0, 1fr);
+  gap: var(--space-3);
+}
+.agents-instance dt {
+  color: var(--ink-2);
+}
+.agents-instance dd {
+  margin: 0;
+  min-width: 0;
+}
+.agents-instance .ui-button {
+  white-space: normal;
+  overflow-wrap: anywhere;
+  max-width: 100%;
+}
+@media (width < 600px) {
+  .agents-instance dl > div {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--space-1);
+  }
+}

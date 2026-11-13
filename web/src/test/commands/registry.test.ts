@@ -105,6 +105,7 @@ describe('命令清单：每条命令的目标或预览', () => {
       '协作 › 时间线': { view: 'collab', panel: 'timeline', project: null },
       '协作 › 执行': { view: 'collab', panel: 'execution', project: null },
       规则: { view: 'rules' },
+      接入方实例: { view: 'policy', panel: 'agents' },
       策略: { view: 'policy' },
     });
     // 已在协作页看某个项目：换子标签不丢项目，条目格按新子标签重新解释所以清掉。
@@ -318,6 +319,7 @@ describe('只收录真实可用的动作', () => {
       '协作 › 时间线',
       '协作 › 执行',
       '规则',
+      '接入方实例',
       '策略',
     ]);
   });

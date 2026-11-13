@@ -46,6 +46,7 @@ struct Fixture {
     socket: PathBuf,
     clock: Arc<Clock>,
     plane: bool,
+    identities: bool,
     shutdown: Option<tokio::sync::oneshot::Sender<()>>,
     server: Option<tokio::task::JoinHandle<()>>,
 }
@@ -57,6 +58,10 @@ struct Login {
 
 impl Fixture {
     async fn new(plane: bool) -> Self {
+        Self::with_identities(plane, false).await
+    }
+
+    async fn with_identities(plane: bool, identities: bool) -> Self {
         let short_root = std::path::Path::new("/tmp").canonicalize().unwrap();
         let temporary = tempfile::Builder::new()
             .prefix("sp-")
@@ -64,7 +69,7 @@ impl Fixture {
             .unwrap();
         let root = temporary.path().canonicalize().unwrap();
         mode(&root, 0o700);
-        for directory in ["auth", "audit", "vault", "web", "run", "policy"] {
+        for directory in ["auth", "audit", "vault", "web", "run", "policy", "agents"] {
             let path = root.join(directory);
             fs::create_dir(&path).unwrap();
             mode(&path, 0o700);
@@ -98,6 +103,9 @@ impl Fixture {
         drop(enrollment);
         drop(manager);
         clock.0.fetch_add(60_000, Ordering::SeqCst);
+        if identities {
+            studiolo_supply::AgentStore::open(&root.join("agents")).unwrap();
+        }
         let socket = root.join("run/s");
         let mut fixture = Self {
             _temporary: temporary,
@@ -105,6 +113,7 @@ impl Fixture {
             socket,
             clock,
             plane,
+            identities,
             shutdown: None,
             server: None,
         };
@@ -149,13 +158,17 @@ impl Fixture {
         if self.plane {
             let ledger: Arc<dyn AuditLedger> =
                 Arc::new(SqliteAuditLedger::open_existing(&self.root.join("audit")).unwrap());
-            with_policy_plane(
-                app,
-                Arc::new(PolicyPlane::new(
-                    PolicyStore::open(&self.root.join("policy")).unwrap(),
-                    ledger,
-                )),
-            )
+            let mut plane = PolicyPlane::new(
+                PolicyStore::open(&self.root.join("policy")).unwrap(),
+                ledger,
+            );
+            if self.identities {
+                plane = plane.with_identities(
+                    studiolo_supply::AgentIdentityView::open_existing(&self.root.join("agents"))
+                        .unwrap(),
+                );
+            }
+            with_policy_plane(app, Arc::new(plane))
         } else {
             app
         }
@@ -230,7 +243,15 @@ impl Fixture {
     }
 
     async fn send(&self, request: Request<Vec<u8>>, status: u16) -> Reply {
-        let reply = Client::connect(&self.socket).await.send(request).await;
+        let limit = if request.uri().path() == "/api/v1/agents" {
+            4 * 1024 * 1024
+        } else {
+            16 * 1024
+        };
+        let reply = Client::connect(&self.socket)
+            .await
+            .send_with_limit(request, limit)
+            .await;
         assert_eq!(
             reply.status,
             status,
@@ -814,3 +835,6 @@ async fn policy_routes_are_closed_and_absent_without_the_plane() {
     .await;
     bare.stop().await;
 }
+
+#[path = "policy_http/agents.rs"]
+mod agents;

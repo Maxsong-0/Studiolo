@@ -6,6 +6,7 @@
  * 后追平；发布策略、落地候选、提交审阅、解冻执行都要先过二次认证（验证码任意六位数字，000000 视为
  * 未通过）；写操作改的是内存里的状态，重启开发服务器即复原。未知接口一律 404。
  */
+import { agentsBody } from './fixtures/agents.ts';
 import { ATTACHMENT_BYTES } from './fixtures/attachments.ts';
 import { DAY, HOUR, iso } from './fixtures/clock.ts';
 import {
@@ -778,6 +779,10 @@ export function createFixtureApi(options: { now?: () => number } = {}) {
         return query.get('vault_uuid') === VAULT_UUID
           ? ok(vault.tombstonePage())
           : error(404, '没有这个 Vault 的删除记录。');
+      case '/api/v1/agents':
+        return only(query, [])
+          ? ok(agentsBody(policy, now))
+          : error(400, '查询参数无效。');
       case '/api/v1/health':
         return ok(healthBody());
       case '/api/v1/board': {

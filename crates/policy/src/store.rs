@@ -6,6 +6,8 @@
 //! 因此只能由可信启动层装配，不能进入任何接入方可达的代码路径。
 
 mod activation;
+mod agents;
+pub use agents::{AgentPolicySnapshot, InstancePolicyState, TypePolicyState};
 mod desired;
 mod queries;
 pub(crate) mod queue;
