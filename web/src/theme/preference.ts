@@ -75,7 +75,8 @@ export function createThemePreference(
 /** 把选择套到根元素上：手动选的写属性，跟随系统就把属性拿掉。和当前一样就不动。 */
 export function applyTheme(root: Element, choice: ThemeChoice): void {
   if (choice === 'system') {
-    if (root.hasAttribute(THEME_ATTRIBUTE)) root.removeAttribute(THEME_ATTRIBUTE);
+    if (root.hasAttribute(THEME_ATTRIBUTE))
+      root.removeAttribute(THEME_ATTRIBUTE);
   } else if (root.getAttribute(THEME_ATTRIBUTE) !== choice)
     root.setAttribute(THEME_ATTRIBUTE, choice);
 }
@@ -93,9 +94,14 @@ let shared: ThemePreference | null = null;
 /** 全站那一个选择：第一次用到时才建，并跟着别的标签页的改动走。 */
 export function themePreference(): ThemePreference {
   if (shared) return shared;
-  const preference = createThemePreference(browserStorage());
+  const storage = browserStorage();
+  const preference = createThemePreference(storage);
   window.addEventListener('storage', (event) => {
-    if (event.key === THEME_KEY || event.key === null) preference.sync();
+    if (
+      event.storageArea === storage &&
+      (event.key === THEME_KEY || event.key === null)
+    )
+      preference.sync();
   });
   shared = preference;
   return preference;

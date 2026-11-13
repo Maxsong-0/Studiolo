@@ -47,6 +47,22 @@ interface Acted {
   label: string;
 }
 
+/** 已处理的行暂留原位，只负责离场，不再参与选择、计数和键盘顺序。 */
+interface Departure {
+  entry: PendingEntry;
+  later: boolean;
+  index: number;
+}
+
+function initialPick(): null | undefined {
+  const viewport = window.matchMedia?.('(width < 760px)');
+  return typeof viewport?.media === 'string' &&
+    viewport.media !== 'not all' &&
+    viewport.matches
+    ? null
+    : undefined;
+}
+
 /**
  * 就地审批的结果要不要写在队列标题下面：结果属于的那一行不是眼下选中的（多半是发布、退回之后
  * 已经不在队列里了）才写；还选中着，结果就在那一行自己的就地审批里。
@@ -134,6 +150,7 @@ function Row({
   selected,
   later,
   leaving,
+  departed = false,
   labels,
   review,
   drafts,
@@ -149,6 +166,8 @@ function Row({
   later: boolean;
   /** 刚按了「稍后」，正在淡出。 */
   leaving: boolean;
+  /** 已处理掉的影子行：读屏与交互都忽略。 */
+  departed?: boolean;
   labels: ReadonlyMap<string, string> | undefined;
   /** 就地审批（只对策略草案的行有用）；没给就没有那两个按钮。 */
   review: QueueReview | undefined;
@@ -164,6 +183,18 @@ function Row({
   onReviewed: (label: string) => void;
 }) {
   const detailId = useId();
+  const leftCallback = useRef(onLeft);
+  useLayoutEffect(() => {
+    leftCallback.current = onLeft;
+  });
+  useEffect(() => {
+    if (!departed) return;
+    const timer = window.setTimeout(
+      () => leftCallback.current(),
+      LEAVE_FALLBACK_MS,
+    );
+    return () => window.clearTimeout(timer);
+  }, [departed]);
   const text = queueText(entry, labels);
   // 就地批准的执行预览开着：细节全部列出，不截到前几条。
   const approving =
@@ -180,6 +211,8 @@ function Row({
       data-selected={selected ? 'true' : undefined}
       data-later={later ? 'true' : undefined}
       data-leave={leaving ? 'true' : undefined}
+      inert={departed ? true : undefined}
+      aria-hidden={departed ? true : undefined}
       onAnimationEnd={leaving ? left : undefined}
     >
       <div className="cockpit-queue__index">
@@ -429,8 +462,10 @@ export function QueueCell({
     scope.preference.subscribe,
     scope.preference.enabled,
   );
-  // undefined＝还没点过，选第一行；null＝点过又收起了。
-  const [picked, setPicked] = useState<string | null | undefined>(undefined);
+  // 桌面缺省选第一行；手机先列出全部，点哪一行再展开。转屏不重置人的选择。
+  const [picked, setPicked] = useState<string | null | undefined>(initialPick);
+  const [reviewedRow, setReviewedRow] = useState<Departure | null>(null);
+  const [departures, setDepartures] = useState<Departure[]>([]);
   // 刚按了「稍后」、正在淡出的那一行。
   const [leaving, setLeaving] = useState<string | null>(null);
   // 每加一，就把焦点交给选中行的主按钮（键盘移动、放到稍后、放回之后）。
@@ -454,6 +489,11 @@ export function QueueCell({
     known.some((key, index) => key !== keys[index])
   ) {
     setKnown(keys);
+    if (reviewedRow && !keys.includes(entryKey(reviewedRow.entry))) {
+      if (typeof window.matchMedia === 'function')
+        setDepartures((current) => [...current, reviewedRow]);
+      setReviewedRow(null);
+    }
     if (typeof picked === 'string' && !keys.includes(picked)) {
       const at = known.indexOf(picked);
       setPicked(at === -1 ? undefined : keys[Math.min(at, keys.length - 1)]);
@@ -540,7 +580,10 @@ export function QueueCell({
     const key = handoff.current;
     if (key === null || !settledReview) return;
     handoff.current = null;
-    if (keys.includes(key)) return;
+    if (keys.includes(key)) {
+      setReviewedRow(null);
+      return;
+    }
     const active = document.activeElement;
     if (
       active === null ||
@@ -548,7 +591,7 @@ export function QueueCell({
       root.current?.contains(active)
     )
       requestFocus();
-  });
+  }, [keys, settledReview]);
 
   function open(entry: PendingEntry) {
     if (entry.source === 'board') onOpenTask(entry.item.id);
@@ -678,29 +721,60 @@ export function QueueCell({
     ordered.length > 0,
   );
 
-  const row = (entry: PendingEntry, inLater: boolean) => {
+  const row = (entry: PendingEntry, inLater: boolean, departed = false) => {
     const key = entryKey(entry);
     return (
       <Row
         key={key}
         entry={entry}
-        selected={key === selected}
+        selected={!departed && key === selected}
         later={inLater}
-        leaving={key === leaving}
+        leaving={departed || key === leaving}
+        departed={departed}
         labels={labels}
         review={review}
         drafts={drafts}
         onToggle={() => setPicked(key === selected ? null : key)}
         onOpen={() => open(entry)}
         onLater={() => toggleLater(key)}
-        onLeft={() => finishLeave(key)}
+        onLeft={() => {
+          if (departed)
+            setDepartures((current) =>
+              current.filter((item) => entryKey(item.entry) !== key),
+            );
+          else finishLeave(key);
+        }}
         onReviewed={(label) => {
           setActed({ key, label });
+          setReviewedRow({
+            entry,
+            later: inLater,
+            index: (inLater ? split.later : split.active).findIndex(
+              (item) => entryKey(item) === key,
+            ),
+          });
           handoff.current = key;
         }}
       />
     );
   };
+
+  function rows(inLater: boolean) {
+    const result = (inLater ? split.later : split.active).map((entry) => ({
+      entry,
+      departed: false,
+    }));
+    // 在同一个列表、同一个 key 上切成影子，避免重新挂载而播放入场动画。
+    for (const item of departures.filter((item) => item.later === inLater))
+      if (!keys.includes(entryKey(item.entry)))
+        result.splice(Math.min(item.index, result.length), 0, {
+          entry: item.entry,
+          departed: true,
+        });
+    return result.map(({ entry, departed }) => row(entry, inLater, departed));
+  }
+  const activeRows = rows(false);
+  const laterRows = rows(true);
 
   return (
     <section ref={root} className="cockpit-queue" aria-label="等你处理">
@@ -773,19 +847,19 @@ export function QueueCell({
         </div>
         {timed ? <WaitLegend /> : null}
       </header>
-      {split.active.length > 0 ? (
+      {activeRows.length > 0 ? (
         <ol
           className="cockpit-queue__list"
           data-live={live ? 'true' : undefined}
         >
-          {split.active.map((entry) => row(entry, false))}
+          {activeRows}
         </ol>
       ) : entries.length === 0 && settled ? (
         <p className="cockpit-queue__clear" role="status">
           现在没有事等你。
         </p>
       ) : null}
-      {split.later.length > 0 ? (
+      {laterRows.length > 0 ? (
         <>
           <h3 className="cockpit-queue__later">
             稍后再看
@@ -797,7 +871,7 @@ export function QueueCell({
             aria-label="稍后再看"
             data-live={live ? 'true' : undefined}
           >
-            {split.later.map((entry) => row(entry, true))}
+            {laterRows}
           </ol>
         </>
       ) : null}

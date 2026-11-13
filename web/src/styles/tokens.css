@@ -104,6 +104,7 @@
  */
 @media (prefers-color-scheme: dark) {
   :root:where(:not([data-theme='light'])) {
+    color-scheme: dark;
     --paper: #121211;
     --paper-raised: #1a1a18;
     --ink: #ecece6;
