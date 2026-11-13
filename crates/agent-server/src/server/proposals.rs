@@ -33,8 +33,17 @@ impl AgentSession {
         let (grant, store) = self.proposal_gate("propose_desired")?;
         let kind = PolicyKind::parse(&args.kind)
             .map_err(|_| McpError::invalid_params("kind 无效", None))?;
+        // 名单在读取校验上下文前检查；不存在与存在的未授权母本给出同一个拒绝。
+        if kind == PolicyKind::Rules && !grant.allows_rule(&args.subject) {
+            self.deny(grant.actor(), "propose_desired", "rule_not_whitelisted");
+            return Err(McpError::invalid_request("规则母本不在授权名单内", None));
+        }
+        let policy = grant
+            .policy
+            .as_ref()
+            .ok_or_else(|| McpError::internal_error("策略授权不可用", None))?;
         let proposal = store
-            .propose(
+            .propose_at_effective(
                 &grant.instance.agent_type,
                 &grant.instance.id,
                 ProposalInput {
@@ -43,11 +52,16 @@ impl AgentSession {
                     body: args.body,
                 },
                 &crate::state::now(),
+                &policy.effective_hash,
             )
             .map_err(|error| match error {
                 PolicyError::TooManyProposals => {
                     McpError::invalid_request("待处理提案已达上限，请等待主人处理", None)
                 }
+                PolicyError::HashMismatch { .. } => McpError::internal_error(
+                    "策略在本次调用途中发布了新版本，本次拒绝，请重试",
+                    None,
+                ),
                 PolicyError::InvalidSubject
                 | PolicyError::InvalidKind
                 | PolicyError::InvalidBody(_) => McpError::invalid_params(error.to_string(), None),
@@ -102,6 +116,37 @@ impl AgentSession {
         args: ListProposalsArgs,
     ) -> Result<String, McpError> {
         let (grant, store) = self.proposal_gate("list_proposals")?;
+        if let Some(id) = &args.desired_id {
+            if args.kind.is_some() || args.subject.is_some() || id.is_empty() || id.len() > 128 {
+                return Err(McpError::invalid_params(
+                    "desired_id 不能与 kind／subject 同用，且须为有效提案号",
+                    None,
+                ));
+            }
+            // proposal_gate 已确认策略能力存在；缺失仍拒绝，绝不使用空名单以外的宽松回退。
+            let policy = grant
+                .policy
+                .as_ref()
+                .ok_or_else(|| McpError::internal_error("策略授权不可用", None))?;
+            let result = store
+                .proposal_result(
+                    &grant.instance.agent_type,
+                    id,
+                    &policy.set.read.rules_whitelist,
+                    &policy.effective_hash,
+                )
+                .map_err(|_| McpError::internal_error("策略库不可用，本次拒绝供给", None))?;
+            let Some(result) = result else {
+                self.deny(grant.actor(), "list_proposals", "proposal_not_visible");
+                return Err(McpError::invalid_request(
+                    "提案不存在或不在当前授权范围内",
+                    None,
+                ));
+            };
+            self.audit_read(&grant.instance, "policy://desired", "-", "list_proposals")?;
+            return serde_json::to_string(&result)
+                .map_err(|_| McpError::internal_error("提案结果不可用", None));
+        }
         let kind = args
             .kind
             .as_deref()

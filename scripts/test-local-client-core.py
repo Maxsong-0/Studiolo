@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Focused local transport and notification durability checks; no model calls."""
 from concurrent.futures import ThreadPoolExecutor
+import errno
 import io
 import json
 import os
@@ -9,6 +10,7 @@ import stat
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 import urllib.error
 import urllib.request
 
@@ -16,6 +18,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from local_client.mcp import (MAX_BYTES, PROTOCOL, McpClient, McpError,
                               _NoRedirect, _response_message)
 from local_client.store import Store
+from local_client import store as store_module
 
 
 class Response(io.BytesIO):
@@ -251,6 +254,145 @@ class McpTests(PrivateFixture):
 class StoreTests(PrivateFixture):
     def store(self):
         return Store(self.root / "notifications.sqlite")
+
+    def sidecar(self, suffix="-journal"):
+        store = self.store()
+        path = store.path.with_name(store.path.name + suffix)
+        path.write_bytes(b"")
+        path.chmod(0o600)
+        return store, path
+
+    def sidecar_opener(self, path, after_open):
+        real_open = os.open
+        opened = []
+
+        def open_then_change(open_path, flags, *args, **kwargs):
+            fd = real_open(open_path, flags, *args, **kwargs)
+            if Path(open_path) == path:
+                opened.append(fd)
+                after_open(fd, len(opened))
+            return fd
+
+        return open_then_change, opened
+
+    def assert_closed(self, descriptors):
+        for fd in descriptors:
+            with self.assertRaises(OSError) as caught:
+                os.fstat(fd)
+            self.assertEqual(errno.EBADF, caught.exception.errno)
+
+    def test_sidecar_removed_after_open_does_not_reject_a_connection(self):
+        for suffix in ("-journal", "-wal", "-shm"):
+            with self.subTest(suffix=suffix):
+                store, path = self.sidecar(suffix)
+
+                def remove(fd, count):
+                    path.unlink()
+                    self.assertEqual(0, os.fstat(fd).st_nlink)
+
+                opener, opened = self.sidecar_opener(path, remove)
+                with patch("local_client.store.os.open", side_effect=opener):
+                    self.assertEqual([], store.list())
+                self.assertEqual(1, len(opened))
+                self.assert_closed(opened)
+
+    def test_replaced_private_sidecar_is_reopened_and_checked(self):
+        _, path = self.sidecar()
+
+        def replace(fd, count):
+            if count == 1:
+                path.unlink()
+                path.write_bytes(b"")
+                path.chmod(0o600)
+                self.assertEqual(0, os.fstat(fd).st_nlink)
+
+        opener, opened = self.sidecar_opener(path, replace)
+        with patch("local_client.store.os.open", side_effect=opener):
+            store_module._check_sidecar(path)
+        self.assertEqual(2, len(opened))
+        self.assert_closed(opened)
+
+    def test_renamed_sidecar_with_one_link_still_rechecks_the_new_path(self):
+        _, path = self.sidecar()
+
+        def replace(fd, count):
+            if count == 1:
+                path.rename(self.root / "retired-journal")
+                path.write_bytes(b"")
+                path.chmod(0o600)
+                self.assertEqual(1, os.fstat(fd).st_nlink)
+
+        opener, opened = self.sidecar_opener(path, replace)
+        with patch("local_client.store.os.open", side_effect=opener):
+            store_module._check_sidecar(path)
+        self.assertEqual(2, len(opened))
+        self.assert_closed(opened)
+
+    def test_sidecar_replaced_by_symlink_is_refused(self):
+        _, path = self.sidecar()
+        target = self.root / "private-target"
+        target.write_bytes(b"unchanged")
+        target.chmod(0o600)
+
+        def replace(fd, count):
+            path.unlink()
+            path.symlink_to(target)
+
+        opener, opened = self.sidecar_opener(path, replace)
+        with patch("local_client.store.os.open", side_effect=opener):
+            self.assertCode("unsafe_file", store_module._check_sidecar, path)
+        self.assertEqual(1, len(opened))
+        self.assertEqual(b"unchanged", target.read_bytes())
+        self.assert_closed(opened)
+
+    def test_sidecar_replaced_by_public_file_is_refused(self):
+        _, path = self.sidecar()
+
+        def replace(fd, count):
+            if count == 1:
+                path.unlink()
+                path.write_bytes(b"")
+                path.chmod(0o644)
+
+        opener, opened = self.sidecar_opener(path, replace)
+        with patch("local_client.store.os.open", side_effect=opener):
+            self.assertCode("unsafe_file", store_module._check_sidecar, path)
+        self.assertEqual(2, len(opened))
+        self.assertEqual(0o644, stat.S_IMODE(path.stat().st_mode))
+        self.assert_closed(opened)
+
+    def test_sidecar_with_multiple_hardlinks_is_refused(self):
+        _, path = self.sidecar()
+        os.link(path, self.root / "linked-journal")
+        opener, opened = self.sidecar_opener(path, lambda fd, count: None)
+        with patch("local_client.store.os.open", side_effect=opener):
+            self.assertCode("unsafe_file", store_module._check_sidecar, path)
+        self.assertEqual(1, len(opened))
+        self.assert_closed(opened)
+
+    def test_nonregular_sidecar_is_refused(self):
+        _, path = self.sidecar()
+        path.unlink()
+        os.mkfifo(path, 0o600)
+        opener, opened = self.sidecar_opener(path, lambda fd, count: None)
+        with patch("local_client.store.os.open", side_effect=opener):
+            self.assertCode("unsafe_file", store_module._check_sidecar, path)
+        self.assertEqual(1, len(opened))
+        self.assert_closed(opened)
+
+    def test_sidecar_replaced_on_every_open_is_refused_after_eight_reads(self):
+        _, path = self.sidecar()
+
+        def replace(fd, count):
+            path.unlink()
+            path.write_bytes(b"")
+            path.chmod(0o600)
+
+        opener, opened = self.sidecar_opener(path, replace)
+        with patch("local_client.store.os.open", side_effect=opener):
+            self.assertCode("unsafe_file", store_module._check_sidecar, path)
+        self.assertEqual(8, len(opened))
+        self.assert_closed(opened)
 
     def test_enqueue_is_idempotent_and_conflicting_reuse_rejected(self):
         store = self.store()

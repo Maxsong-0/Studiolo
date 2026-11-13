@@ -56,6 +56,9 @@ pub struct ProposeArgs {
 #[derive(Debug, serde::Deserialize, rmcp::schemars::JsonSchema)]
 #[schemars(crate = "rmcp::schemars")]
 pub struct ListProposalsArgs {
+    /// 按号查本类型原提案的当前结果（JSON），涵盖已发布、校验失败、撤回、被取代；不能与筛选同用。
+    #[serde(default)]
+    pub desired_id: Option<String>,
     /// 只列这一类：`rules`、`skills` 或 `capability_set`。
     #[serde(default)]
     pub kind: Option<String>,

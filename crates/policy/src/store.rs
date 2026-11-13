@@ -24,7 +24,7 @@ pub use types::{
 };
 
 // 子模块与接入方句柄（agent.rs）经 `store::` 取用下列内部项。
-pub(crate) use support::{effective_summary, enforce_proposal_bounds, parse_skills};
+pub(crate) use support::{check_hash, effective_summary, enforce_proposal_bounds, parse_skills};
 pub(crate) use types::GLOBAL_TARGET;
 
 /// 主人发布者句柄。

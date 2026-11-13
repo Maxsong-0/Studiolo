@@ -60,7 +60,7 @@ rules 类的 subject 规则（`.md` 结尾、≤128 字符、不含 `/`、不以
 
 - **提交**（主人 `POST /api/v1/policy/desired`；接入方 MCP `propose_desired`）：入库的是提交原文；同事务内对当前
   effective 做校验与 diff，报告存进该 desired。主人提交记 `validated`／`rejected`，接入方提交记 `pending`（结构无效则
-  `rejected`）；两者都**永不自动生效**。接入方每实例最多 8 条 pending、全库 256 条。
+  `rejected`）；两者都**永不自动生效**。接入方每实例最多 8 条未完成提案、全库 256 条；pending、validated、rejected 都计入，只有发布、被取代或撤回才释放名额。
 - **接入方断线重提**（T-182）：**本类型**在同一 kind／subject 上**最新**的未发布草案（pending／validated／rejected，按入库
   先后）若正是规范化正文摘要相同、仍待处理（pending／validated）的那份，原样返回它（`deduplicated=true`），不新建、不占名额；
   判定在名额检查之前、与入库同一写事务。否则照常有界入库：本类型之后又提过别的正文，再提旧正文就新建一条，让它重新成为本类型
@@ -98,6 +98,8 @@ rules 类的 subject 规则（`.md` 结尾、≤128 字符、不含 `/`、不以
   「最新」「较早」、挡发布按钮。列表的 200 份只截已结束的历史：未发布 desired 一份不少，落在窗口外的按同一排序补在末尾。
   判定找不到要发的那份（行与判定对不上）就报库损坏（503 `store_unavailable`），不放行。
   账本不可用即失败关闭不发布；Outcome 落账失败时发布已持久，响应 `audit_confirmed=false` 而不是假装没发布。
+  发布响应与同次 Outcome 都带 `superseded_desired_ids` 和 `remaining_desired_ids`：事务实际取代的较早草案与保留的较晚草案号，按入库先后；回滚与 bootstrap 返回空数组。前端成功提示使用这份回执，确认预览只表示预览时的状态。
+  desired 列表及窗口外未完成草案也按入库倒序显示，时钟回拨或同毫秒随机 ID 不改变先后。
 - **effective 哈希** ＝ 全部现行 (kind, subject, version, body_sha256) 按序拼接的 SHA-256；空策略也有确定值。
   每个版本记 `effective_hash`／`previous_effective_hash`；`handshake.served` 记接入方每次拿到的 `effective_hash`，
   与 `policy.activated` 链逐条可对账（PRD-v2-01 2.4 第 7 条）。
@@ -146,11 +148,13 @@ rules 类的 subject 规则（`.md` 结尾、≤128 字符、不含 `/`、不以
 - `propose_desired{kind,subject,body}`：需能力集 `policy.propose_desired`；入库 `pending`，记 `policy.desired_submitted`
   （接入方的多一个 `deduplicated`）；返回 id／状态／扩大项计数／`body_sha256`（服务端算的规范化正文摘要，规则母本 CRLF
   换 LF 后；过不了规范化为 `-`）／`deduplicated`／逐条问题；断线重提见 §3；**不改变 effective**。
-- `list_proposals{kind?,subject?}`（T-182，只走 MCP）：供断线后核对提案有没有入库。门槛与 `propose_desired` 相同（未接入策略
+- `list_proposals{kind?,subject?,desired_id?}`（T-182，只走 MCP）：供断线后核对提案有没有入库。门槛与 `propose_desired` 相同（未接入策略
   平面同样拒绝并记 `policy_plane_absent`，无提案能力记 `capability_denied`）；只列**本类型**仍待处理（pending／validated）的
   接入方提案，新到旧，最多 64 份（超出时首行注明还有更早的）；每行 `desired_id`、`kind`、`subject`、状态、`body_sha256`、
   提交时间、实例，以制表符分隔，不含正文与报告；先记 `content.read{path=policy://desired, revision=-, tool=list_proposals}`
   并进读取索引，再返回。
+  单独传 `desired_id` 时返回 JSON：原提案七个摘要字段（实例为 `agent_instance`）、`activated_version`、`problems` 与 `reason`，涵盖全部六种状态；不与 kind／subject 同用，不进入待处理列表的 64 份窗口。只有校验失败返回问题，主人撤回标 `owner_withdrawn_no_reason_recorded`，不编造人工理由。未知、owner、其他类型、当前规则名单外的 ID 统一拒绝并记 `proposal_not_visible`；不返回正文、diff、扩大项或他人草案号。查询前同样过提案能力、吊销与审计门槛，并在同一读事务核对授权时的 effective 哈希。
+- **规则提案权限**：`propose_desired kind=rules` 在读校验上下文前检查当前 `rules_whitelist`，名单外无论母本存在与否均返回同一拒绝，审计 `rule_not_whitelisted`，不入库；入库事务再次核对授权时的 effective 哈希，期间名单或能力集发生发布则拒绝重试。主人提案不套用 AI 名单。
 
 ## 6. 错误模式
 

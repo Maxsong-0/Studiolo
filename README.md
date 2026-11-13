@@ -188,9 +188,11 @@ export PATH="$HOME/.rustup/toolchains/1.97.1-$(rustc -vV | sed -n 's/^host: //p'
 cargo --locked fmt --all -- --check
 cargo --locked clippy --workspace --all-targets -- -D warnings
 cargo --locked test --workspace
+cargo --locked test -p studiolo-vault-broker --example t132-restore-probe
 cargo --locked test -p studiolo-vault-broker --test linux_path_security   # 只在 Linux 有真实语义
 cargo --locked build -p studiolo-local-server --features studiolo-auth/production
 cargo --locked build -p studiolo-auth-admin --features production
+cargo --locked build -p studiolo-vault-admin
 ```
 
 前端（CI 原生运行，`setup-node` 钉死 Node 22.17.0，工作目录 `web`）：
@@ -225,7 +227,7 @@ npm --prefix web test && npm --prefix web run lint && npm --prefix web run forma
 在 Linux 服务器上原生跑 Rust 那一半（把工作树同步到 `githubci` 后在那里跑；2026-09-19 起不再用 Docker）：
 
 ```bash
-scripts/test-linux.sh   # fmt / clippy / workspace 测试 / 路径安全 / 两个生产构建 / 登记工具进程检查
+scripts/test-linux.sh   # fmt / clippy / workspace 与恢复探针测试 / 路径安全 / 两个生产特征构建与 vault-admin 构建 / 登记工具进程检查
 ```
 
 `scripts/test-linux.sh` **不包含**上面的 `bash -n`、逐条列名的 Python 契约脚本、两条管线检查，

@@ -40,7 +40,7 @@ fn private_dir(path: &Path) {
 fn capability(ai_type: &str, propose: bool) -> String {
     json!({
         "ai_type": ai_type,
-        "read": {"project_whitelist": ["项目/Alpha"], "deny_by_default": true, "rules_whitelist": []},
+        "read": {"project_whitelist": ["项目/Alpha"], "deny_by_default": true, "rules_whitelist": ["提议.md", "顺序.md", "断审计.md", "a.md", "b.md", "c.md", "d.md"]},
         "write": {"board": false, "content_patch_only": true, "content_direct": false},
         "policy": {"propose_desired": propose, "activate": false},
         "hard_bound_skills": [],
@@ -308,6 +308,148 @@ fn listed(text: &str) -> Vec<Vec<String>> {
         .filter(|line| line.contains('\t'))
         .map(|line| line.split('\t').map(str::to_owned).collect())
         .collect()
+}
+
+#[tokio::test]
+async fn rule_proposals_check_the_whitelist_before_reading_or_inserting() {
+    let f = fixture(true).await;
+    let store = f.policy();
+    store
+        .bootstrap(
+            DesiredInput {
+                kind: PolicyKind::Rules,
+                subject: "private.md".into(),
+                body: Some("# 不应泄漏的母本\n".into()),
+            },
+            NOW,
+        )
+        .unwrap();
+    let (session, _) = f.initialize("claude").await;
+    let before = store.desired_list(None, 100).unwrap();
+    let mut refusals = Vec::new();
+    for subject in ["private.md", "absent.md"] {
+        let response = f
+            .call(
+                "claude",
+                &session,
+                2,
+                "propose_desired",
+                json!({"kind":"rules", "subject":subject, "body":"# 同一提案\n"}),
+            )
+            .await;
+        assert_eq!(response["error"]["code"], -32600, "{response}");
+        refusals.push(response["error"].clone());
+        assert!(!response.to_string().contains("不应泄漏"));
+    }
+    assert_eq!(refusals[0], refusals[1]);
+    assert_eq!(store.desired_list(None, 100).unwrap(), before);
+    assert_eq!(
+        f.denied_reasons()
+            .iter()
+            .filter(|reason| *reason == "rule_not_whitelisted")
+            .count(),
+        2
+    );
+    f.propose_rule("claude", &session, 3, "a.md", "# 名单内\n")
+        .await;
+}
+
+#[tokio::test]
+async fn proposal_results_are_type_isolated_read_audited_and_use_current_permissions() {
+    let f = fixture(true).await;
+    let (session, _) = f.initialize("claude").await;
+    let text = f
+        .propose_rule("claude", &session, 2, "a.md", "# 不应回显的提案正文\n")
+        .await;
+    let id = field(&text, "desired_id").unwrap();
+    let store = f.policy();
+    let activation = store
+        .activate(id, &store.effective().unwrap().effective_hash, "owner", NOW)
+        .unwrap();
+    let (reconnected, _) = f.initialize("claude").await;
+    let response = f
+        .call(
+            "claude",
+            &reconnected,
+            2,
+            "list_proposals",
+            json!({"desired_id":id}),
+        )
+        .await;
+    assert!(!is_error(&response), "{response}");
+    let result: Value = serde_json::from_str(&tool_text(&response)).unwrap();
+    assert_eq!(result["status"], "activated");
+    assert_eq!(result["activated_version"], activation.version);
+    assert_eq!(result["reason"], "published");
+    assert!(result.get("body").is_none());
+    assert!(!response.to_string().contains("不应回显"));
+    assert!(
+        f.events("content.read")
+            .iter()
+            .any(|payload| payload["tool"] == "list_proposals")
+    );
+    let (other, _) = f.initialize("codex").await;
+    let foreign = f
+        .call(
+            "codex",
+            &other,
+            2,
+            "list_proposals",
+            json!({"desired_id":id}),
+        )
+        .await;
+    let absent = f
+        .call(
+            "codex",
+            &other,
+            3,
+            "list_proposals",
+            json!({"desired_id":"unknown"}),
+        )
+        .await;
+    assert_eq!(foreign["error"], absent["error"]);
+    assert_eq!(foreign["error"]["code"], -32600);
+    let mut narrowed: Value = serde_json::from_str(&capability("claude", true)).unwrap();
+    narrowed["read"]["rules_whitelist"] = json!([]);
+    let draft = store
+        .submit_desired(
+            DesiredInput {
+                kind: PolicyKind::CapabilitySet,
+                subject: "claude".into(),
+                body: Some(narrowed.to_string()),
+            },
+            Submitter::Owner,
+            NOW,
+        )
+        .unwrap();
+    store
+        .activate(
+            &draft.id,
+            &store.effective().unwrap().effective_hash,
+            "owner",
+            NOW,
+        )
+        .unwrap();
+    let refused = f
+        .call(
+            "claude",
+            &reconnected,
+            3,
+            "list_proposals",
+            json!({"desired_id":id}),
+        )
+        .await;
+    assert_eq!(refused["error"], absent["error"]);
+    let mixed = f
+        .call(
+            "claude",
+            &reconnected,
+            4,
+            "list_proposals",
+            json!({"desired_id":id,"kind":"rules"}),
+        )
+        .await;
+    assert_eq!(mixed["error"]["code"], -32602);
 }
 
 #[tokio::test]

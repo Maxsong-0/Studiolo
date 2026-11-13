@@ -533,6 +533,7 @@ export function createFixtureApi(options: { now?: () => number } = {}) {
           },
         };
       // 发布后只取代比它早入库的；比它晚的（别的提交者交的）留着待处理。
+      const remaining = newerOpen(policy)[desired.id] ?? [];
       const older = Object.entries(newerOpen(policy))
         .filter(([, newer]) => newer.includes(desired.id))
         .map(([id]) => id);
@@ -564,6 +565,8 @@ export function createFixtureApi(options: { now?: () => number } = {}) {
         },
         now,
       );
+      activation.superseded_desired_ids = older;
+      activation.remaining_desired_ids = remaining;
       desired.status = 'activated';
       desired.report = report;
       desired.activated_version = activation.version;

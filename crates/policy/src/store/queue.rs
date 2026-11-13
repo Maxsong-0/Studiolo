@@ -1,7 +1,7 @@
 //! 同一对象未发布草案的先后（T-181／BUG-031）。
 //!
 //! 挡不挡发布、发布取代哪几份、断线重提（T-182）拿回哪一份，这几件事里的「谁更新」全仓只在这里判；
-//! 列表的显示顺序不在此列。按入库先后，也就是 SQLite 给每行的隐式 rowid。不按提交时间：
+//! 列表也按同一入库顺序显示，也就是 SQLite 给每行的隐式 rowid。不按提交时间：
 //! 时间串由调用方给，时钟会回拨、各端时钟也不一致，jiff 写时间还会去掉小数尾部的 0，
 //! 按字符串比在同一秒内会排反。也不按草案号：同一毫秒里生成的 ULID 先后随机。
 //! rowid 可靠的前提：本库不 VACUUM，草案行只改状态、不删不换，备份走 SQLite backup 接口按页复制。
@@ -97,6 +97,8 @@ pub(super) struct Placement {
     pub(super) blocked_by: Vec<String>,
     /// 比它早入库的未发布草案：发布后标为已取代。
     pub(super) older: Vec<String>,
+    /// 比它晚入库的未发布草案：发布后仍然保留。
+    pub(super) later: Vec<String>,
 }
 
 /// `id` 在同一对象未发布草案里的位置。调用方已在同一事务里确认它是这个对象的未发布草案；
@@ -115,6 +117,10 @@ pub(super) fn place(
     Ok(Placement {
         blocked_by: blocking(&drafts[position], &drafts[position + 1..]),
         older: drafts[..position]
+            .iter()
+            .map(|draft| draft.id.clone())
+            .collect(),
+        later: drafts[position + 1..]
             .iter()
             .map(|draft| draft.id.clone())
             .collect(),
@@ -163,18 +169,12 @@ impl PolicyStore {
             let mut records = sql::desired_list(tx, None, limit)?;
             let (newer, blocked_by) = order(tx)?;
             let listed: BTreeSet<&str> = records.iter().map(|record| record.id.as_str()).collect();
-            let mut outside = newer
-                .keys()
-                .filter(|id| !listed.contains(id.as_str()))
-                .map(|id| sql::desired(tx, id)?.ok_or(PolicyError::CorruptStore))
+            let outside = open_in_order(tx, None)?
+                .into_iter()
+                .rev()
+                .filter(|draft| !listed.contains(draft.id.as_str()))
+                .map(|draft| sql::desired(tx, &draft.id)?.ok_or(PolicyError::CorruptStore))
                 .collect::<Result<Vec<_>, _>>()?;
-            // 与 desired_list 的 ORDER BY submitted_at DESC, id DESC 同序：SQLite 文本按字节比，String 也是。
-            outside.sort_by(|left, right| {
-                right
-                    .submitted_at
-                    .cmp(&left.submitted_at)
-                    .then_with(|| right.id.cmp(&left.id))
-            });
             records.extend(outside);
             Ok((records, newer, blocked_by))
         })

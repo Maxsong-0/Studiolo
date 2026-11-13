@@ -412,7 +412,7 @@ fn the_history_window_never_drops_an_open_draft() {
     // 同一对象两份未发布提案，后入库那份时间戳反而更早（时钟回拨）。
     let older = propose(&agent, CLAUDE, "# 先入库\n", "2026-10-15T10:00:00Z");
     let newer = propose(&agent, CLAUDE, "# 后入库\n", "2026-10-15T09:00:00Z");
-    // 之后另一对象发布了两版：按提交时间倒序的窗口（limit 2）只容得下这两份已发布的。
+    // 之后另一对象发布了两版：按入库倒序的窗口（limit 2）只容得下这两份已发布的。
     for at in ["2026-10-15T12:00:00Z", "2026-10-15T13:00:00Z"] {
         let record = submit(&store, PolicyKind::Rules, RULES, &format!("# {at}\n"), at);
         publish(&store, &record.id, at).unwrap();
@@ -422,7 +422,7 @@ fn the_history_window_never_drops_an_open_draft() {
         .iter()
         .map(|record| (record.id.as_str(), record.status))
         .collect();
-    // 窗口里的两份已发布记录在前；窗口外的未发布草案按同一排序（提交时间倒序）补在末尾，
+    // 窗口里的两份已发布记录在前；窗口外的未发布草案按同一排序（入库倒序）补在末尾，
     // 窗口外已结束的旧记录不补。
     assert_eq!(listed.len(), 4, "{listed:?}");
     assert!(
@@ -433,8 +433,8 @@ fn the_history_window_never_drops_an_open_draft() {
     assert_eq!(
         listed[2..],
         [
-            (older.id.as_str(), DesiredStatus::Pending),
             (newer.id.as_str(), DesiredStatus::Pending),
+            (older.id.as_str(), DesiredStatus::Pending),
         ]
     );
     // 两份都在表里，先后照样按入库：挡住发布的那份在列表里找得到、撤得掉。
@@ -450,7 +450,7 @@ fn the_history_window_never_drops_an_open_draft() {
 
 #[test]
 fn an_agents_newer_proposals_neither_block_the_owner_nor_get_superseded() {
-    // 安全审查（2026-10-15）：AI 能对任何对象提案（含能力集），被拒的提案还不占名额；要是谁更新
+    // 安全审查（2026-10-15）：AI 能对能力集提案；即便如今已统一名额，要是谁更新
     // 都挡，AI 不停交新提案就能挡住主人，比如主人要收窄它的能力集。
     let (_temp, dir) = private_dir();
     let store = PolicyStore::open(&dir).unwrap();
@@ -502,7 +502,15 @@ fn publishing_supersedes_only_the_older_drafts_and_keeps_the_newer_ones() {
     );
     let newest = propose(&agent, CLAUDE, "# 最新的提案\n", "2026-10-15T18:02:00Z");
     // 主人那份：同一提交者没有更新的，能发；比它早的那份标为已取代，比它晚的那份留着。
-    publish(&store, &owner.id, "2026-10-15T18:03:00Z").unwrap();
+    let result = publish(&store, &owner.id, "2026-10-15T18:03:00Z").unwrap();
+    assert_eq!(
+        result.superseded_desired_ids,
+        std::slice::from_ref(&oldest.id)
+    );
+    assert_eq!(
+        result.remaining_desired_ids,
+        std::slice::from_ref(&newest.id)
+    );
     assert_eq!(status(&store, &owner.id), DesiredStatus::Activated);
     assert_eq!(status(&store, &oldest.id), DesiredStatus::Superseded);
     assert_eq!(status(&store, &newest.id), DesiredStatus::Pending);

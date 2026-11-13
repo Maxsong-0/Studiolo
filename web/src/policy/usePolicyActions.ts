@@ -224,7 +224,7 @@ export function usePolicyActions(
 
   // 认证后重试沿用同一个 request：人审过哪一份生效中内容就按哪一份提交。
   function activate(activation: Activation, attempt = 0) {
-    const { request, label, action, origin, supersedes, remains } = activation;
+    const { request, label, action, origin } = activation;
     void run(origin, async (signal) => {
       try {
         const outcome = await activatePolicy(request, signal);
@@ -239,7 +239,7 @@ export function usePolicyActions(
           outcome.activation.cleared_type_revocation
             ? '，并解除了该类型的撤销接入'
             : ''
-        }${publishedNotice(supersedes, remains)}${audit}。`;
+        }${publishedNotice(outcome.activation.superseded_desired_ids.length, outcome.activation.remaining_desired_ids.length)}${audit}。`;
       } catch (cause) {
         // 403「需要二次认证」不是终点：动作没有发生，只差一次一次性验证码。
         if (needsReauthentication(cause)) {

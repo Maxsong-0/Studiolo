@@ -10,6 +10,7 @@
  * 校验规则按 `crates/policy/src/validate.rs` 的同一套口径简化实现：命名规则、JSON 形状、
  * 能力集扩大项/收窄项（含规则读名单）、规则母本删除约束性语句的候选扩大项。形状以 `policyModel.ts` 为准。
  */
+import type { Activation } from '../../src/policyModel.ts';
 import { clockAt, iso } from './clock.ts';
 import { DESIRED_ID, INSTANCE, POLICY_HASH, sha256 } from './ids.ts';
 
@@ -920,7 +921,7 @@ export function publish(
     rollbackOf: number | null;
   },
   now: number,
-) {
+): Activation {
   const version = state.versions.length + 1;
   const previous = state.effective;
   const effective = sha256(`effective v${version} ${previous}`);
@@ -971,6 +972,8 @@ export function publish(
     desired_id: meta.desired_id,
     rollback_of: meta.rollback_of,
     cleared_type_revocation: clearedType,
+    superseded_desired_ids: [],
+    remaining_desired_ids: [],
     activated_by: 'owner',
   };
 }

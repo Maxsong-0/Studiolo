@@ -44,7 +44,7 @@ pub struct Proposal {
 }
 
 /// 列表里的一份提案：只有核对用的摘要列，不含正文与校验报告。
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
 pub struct ProposalSummary {
     /// desired id。
     pub id: String,
@@ -52,7 +52,7 @@ pub struct ProposalSummary {
     pub kind: PolicyKind,
     /// subject。
     pub subject: String,
-    /// `pending` 或 `validated`。
+    /// 当前生命周期状态（待处理列表只有 pending／validated，按号查询涵盖全部状态）。
     pub status: DesiredStatus,
     /// 规范化正文 sha256。
     pub body_sha256: String,
@@ -69,6 +69,20 @@ pub struct ProposalListing {
     pub proposals: Vec<ProposalSummary>,
     /// 超出上限，还有更早的没有列出。
     pub more: bool,
+}
+
+/// 按号核对原提案的处理结果；不包含正文、diff、扩大项或其他人的草案号。
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
+pub struct ProposalResult {
+    /// 原提案的摘要。
+    #[serde(flatten)]
+    pub proposal: ProposalSummary,
+    /// 发布后的版本号，尚未发布则为空。
+    pub activated_version: Option<u64>,
+    /// 校验失败原因，只有 rejected 状态返回。
+    pub problems: Vec<crate::Problem>,
+    /// 明确区分校验失败与主人撤回；当前未记录人工退回理由。
+    pub reason: &'static str,
 }
 
 /// 接入方提案入库：断线重提拿回已有提案；否则有界、只入 `pending`（结构无效则 `rejected`），永不生效。

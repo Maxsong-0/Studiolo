@@ -794,18 +794,20 @@ fn agent_proposals_are_bounded_pending_and_never_change_effective() {
         .unwrap()
         .record;
     assert_eq!(bad.status, DesiredStatus::Rejected);
-    // 每实例上限；各份正文不同（同一正文连提只算一份，T-182）。
-    for index in 0..MAX_PENDING_PER_INSTANCE {
-        let _ = agent.propose(
-            "claude",
-            "01INSTANCE",
-            ProposalInput {
-                kind: PolicyKind::Rules,
-                subject: "提案.md".into(),
-                body: format!("# 提议 {index}\n"),
-            },
-            NOW,
-        );
+    // 已校验和校验失败各占一份名额；余下名额才用于 pending。
+    for index in 0..MAX_PENDING_PER_INSTANCE - 2 {
+        agent
+            .propose(
+                "claude",
+                "01INSTANCE",
+                ProposalInput {
+                    kind: PolicyKind::Rules,
+                    subject: "提案.md".into(),
+                    body: format!("# 提议 {index}\n"),
+                },
+                NOW,
+            )
+            .unwrap();
     }
     let count = store
         .desired_list(Some(DesiredStatus::Pending), 100)
@@ -813,7 +815,7 @@ fn agent_proposals_are_bounded_pending_and_never_change_effective() {
         .iter()
         .filter(|record| record.agent_instance.as_deref() == Some("01INSTANCE"))
         .count();
-    assert_eq!(count, MAX_PENDING_PER_INSTANCE);
+    assert_eq!(count, MAX_PENDING_PER_INSTANCE - 2);
     assert!(matches!(
         agent.propose(
             "claude",
@@ -846,7 +848,7 @@ fn agent_proposals_are_bounded_pending_and_never_change_effective() {
         .desired_list(Some(DesiredStatus::Superseded), 100)
         .unwrap();
     assert!(superseded.iter().all(|record| record.subject == "提案.md"));
-    assert!(superseded.len() >= MAX_PENDING_PER_INSTANCE - 1);
+    assert_eq!(superseded.len(), MAX_PENDING_PER_INSTANCE - 3);
     assert_eq!(store.rules().unwrap().len(), 1);
 }
 

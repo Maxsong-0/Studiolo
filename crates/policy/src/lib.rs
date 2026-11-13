@@ -34,7 +34,7 @@ pub use model::{
     validate_type_name,
 };
 pub use proposal::{
-    MAX_LISTED_PROPOSALS, Proposal, ProposalInput, ProposalListing, ProposalSummary,
+    MAX_LISTED_PROPOSALS, Proposal, ProposalInput, ProposalListing, ProposalResult, ProposalSummary,
 };
 pub use store::{
     Activation, DesiredInput, DesiredRecord, DesiredStatus, EffectiveEntry, EffectiveSummary,

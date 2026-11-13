@@ -49,6 +49,8 @@ function writes(path: string, body: unknown) {
         desired_id: DESIRED_ID,
         rollback_of: null,
         cleared_type_revocation: false,
+        superseded_desired_ids: [],
+        remaining_desired_ids: [],
         activated_by: 'owner',
       },
       audit_confirmed: true,

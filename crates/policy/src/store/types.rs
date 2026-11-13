@@ -4,9 +4,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::{Expansion, PolicyKind, Report};
 
-/// 全库待处理接入方提案上限。
+/// 全库未完成接入方提案上限（pending／validated／rejected）。
 pub const MAX_PENDING_PROPOSALS: usize = 256;
-/// 每个实例的待处理提案上限。
+/// 每个实例的未完成提案上限（校验失败仍占名额，撤回／发布／被取代才释放）。
 pub const MAX_PENDING_PER_INSTANCE: usize = 8;
 
 /// desired 的生命周期状态。
@@ -139,6 +139,10 @@ pub struct Activation {
     pub cleared_type_revocation: bool,
     /// 发布者（`owner` / `bootstrap`）。
     pub activated_by: String,
+    /// 本次事务实际取代的较早草案号，按入库先后；回滚／bootstrap 为空。
+    pub superseded_desired_ids: Vec<String>,
+    /// 同一对象仍未完成的较晚草案号，按入库先后；回滚／bootstrap 为空。
+    pub remaining_desired_ids: Vec<String>,
 }
 
 /// 版本元信息。

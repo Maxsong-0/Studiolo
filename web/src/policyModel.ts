@@ -121,6 +121,8 @@ export type Activation = {
   rollback_of: number | null;
   cleared_type_revocation: boolean;
   activated_by: string;
+  superseded_desired_ids: string[];
+  remaining_desired_ids: string[];
 };
 export type ActivateOutcome =
   | { kind: 'activated'; activation: Activation; audit_confirmed: boolean }
@@ -460,6 +462,8 @@ function activation(value: unknown): Activation {
     expansions: list(item.expansions, expansion),
     desired_id: optionalText(item.desired_id),
     rollback_of: optionalCount(item.rollback_of),
+    superseded_desired_ids: list(item.superseded_desired_ids, text),
+    remaining_desired_ids: list(item.remaining_desired_ids, text),
     cleared_type_revocation: flag(item.cleared_type_revocation),
     activated_by: text(item.activated_by),
   };
