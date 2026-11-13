@@ -7,6 +7,7 @@ pub mod board;
 mod bootstrap;
 mod canonical;
 mod coordinator;
+mod deriver;
 mod editing;
 mod file_operation_audit;
 mod file_operations;
@@ -87,7 +88,11 @@ pub enum LocalError {
 
 #[derive(Clone)]
 enum Source {
-    Replica(Arc<ReadOnlyVault>),
+    /// 只读副本；重扫与建模都交给它自己的专用派生线程（见 `deriver`）。
+    Replica {
+        vault: Arc<ReadOnlyVault>,
+        deriver: Arc<deriver::Deriver>,
+    },
     Writer(Arc<CanonicalWorkbench>),
 }
 
@@ -186,3 +191,7 @@ mod refresh_tests;
 #[cfg(test)]
 #[path = "../tests/coordinator/private.rs"]
 mod coordinator_tests;
+
+#[cfg(test)]
+#[path = "../tests/deriver/private.rs"]
+mod deriver_tests;

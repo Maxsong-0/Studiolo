@@ -11,7 +11,7 @@ use studiolo_vault_broker::{CanonicalReadVault, ReadOnlyVault};
 
 use crate::{
     AccessVerifier, AppState, CanonicalSource, LocalError, Source, ViewStore, assets, auth_http,
-    load, queries, security, snapshot, tree,
+    deriver::Deriver, load, queries, security, snapshot, tree,
 };
 
 /// 创建仅适用于 `127.0.0.1:port` 的只读路由。
@@ -151,10 +151,14 @@ fn configured_router(
     canonical: Option<Arc<CanonicalReadVault>>,
 ) -> Result<Router, LocalError> {
     validate(&source_label, &endpoint, access.as_ref())?;
-    let current = ViewStore::replica(load(&vault, 1)?);
+    // 启动建模也交给专用派生线程：首代视图与之后各代落在同一个 arena 里，换代释放的页能被后来的派生复用。
+    let vault = Arc::new(vault);
+    let deriver = Arc::new(Deriver::start()?);
+    let first = Arc::clone(&vault);
+    let current = ViewStore::replica(deriver.run_blocking(move |on| load(&first, 1, on))??);
     assemble(
         PreparedSource {
-            source: Source::Replica(Arc::new(vault)),
+            source: Source::Replica { vault, deriver },
             current,
             canonical: canonical.map(CanonicalSource::Reader),
         },

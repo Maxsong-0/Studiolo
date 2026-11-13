@@ -33,7 +33,10 @@ pub(crate) struct Core {
     pub control: Mutex<Control>,
     pub watcher: Mutex<Option<notify::RecommendedWatcher>>,
     pub completion: watch::Sender<Completion>,
+    /// 只跑例行检查的计时任务；完整捕获与建模不在运行时线程上做。
     pub executor: tokio::runtime::Handle,
+    /// 本协调器的专用派生线程：每次完整捕获与建模都在它上面串行做（见 `deriver`）。
+    pub deriver: crate::deriver::Deriver,
     pub content_audit: Option<Arc<dyn studiolo_audit_ledger::AuditLedger>>,
     pub content_audit_healthy: std::sync::atomic::AtomicBool,
     pub content_restore_pending: std::sync::atomic::AtomicBool,
