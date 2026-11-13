@@ -7,7 +7,7 @@ import {
 } from '@testing-library/react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { ProjectTimeline } from './ProjectTimeline';
-import { CollabView } from './views/CollabView';
+import { CollabHarness } from './test/collab/CollabHarness';
 
 const project = '项目/Studiolo';
 const other = '项目/另一个';
@@ -81,7 +81,7 @@ async function clickTab(name: string) {
 async function mountBoard() {
   window.location.hash = `#view=collab&panel=board&project=${encodeURIComponent(project)}`;
   await act(async () => {
-    render(<CollabView projects={projects} />);
+    render(<CollabHarness projects={projects} />);
   });
   await clickTab('任务与回执');
 }

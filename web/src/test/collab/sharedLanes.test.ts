@@ -24,7 +24,7 @@ import {
 import type { BoardOverview } from '../../boardOverviewModel';
 import { executorOf, overviewLabels } from '../../collab/executorGrouping';
 import { OWNER_KEY, type TodayLanes } from '../../collab/todayLanes';
-import { CollabView } from '../../views/CollabView';
+import { CollabHarness } from './CollabHarness';
 import { CockpitHarness } from '../cockpit/CockpitHarness';
 import {
   fixtureData,
@@ -105,7 +105,7 @@ async function mountCollab(data: FixtureData, hash: string, wire?: unknown) {
     ),
   );
   const { container } = render(
-    createElement(CollabView, {
+    createElement(CollabHarness, {
       projects: [
         { root: STUDIOLO, name: 'Studiolo' },
         { root: BRIEF, name: 'Brief 简报站' },
