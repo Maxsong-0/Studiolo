@@ -11,6 +11,7 @@ use studiolo_backup::store::storage::{
 };
 use studiolo_core::VaultUuid;
 use tempfile::TempDir;
+mod lease;
 
 struct Private {
     _temp: TempDir,
@@ -54,6 +55,7 @@ fn initializing_creates_the_fixed_state_file_and_reopening_finds_it() {
     assert!(!private.root.join(STATE_TEMP_FILE).exists());
     assert!(!private.root.join(MANIFEST_FILE).exists());
 
+    drop(store);
     let reopened = private.open(false).expect("reopen");
     assert_eq!(reopened.load_state().expect("load"), Some(state));
 }
@@ -104,6 +106,7 @@ fn saving_replaces_the_state_atomically_and_leaves_no_temporary_behind() {
     store.save_state(&state).expect("save");
 
     assert!(!private.root.join(STATE_TEMP_FILE).exists());
+    drop(store);
     assert_eq!(
         private
             .open(false)
@@ -230,6 +233,7 @@ fn committing_the_final_manifest_writes_the_fixed_file_and_survives_a_reopen() {
 
     assert!(private.root.join(MANIFEST_FILE).is_file());
     assert!(!private.root.join(MANIFEST_TEMP_FILE).exists());
+    drop(store);
     assert_eq!(
         private
             .open(false)

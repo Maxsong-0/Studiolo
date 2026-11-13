@@ -75,6 +75,8 @@ pub trait BackupStateStore {
 /// 存储层失败模式。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum StoreError {
+    /// 另一个独立 worker 已持有本目录的原进程租约。
+    Busy,
     /// 私有目录、权限或对象身份不满足约束。
     UnsafeStorage,
     /// 固定文件不存在，需要显式初始化。
@@ -98,6 +100,7 @@ pub enum StoreError {
 impl std::fmt::Display for StoreError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter.write_str(match self {
+            Self::Busy => "另一个备份 worker 正在持有此作业目录",
             Self::UnsafeStorage => "备份状态目录不满足私有存储约束",
             Self::MissingStore => "备份状态存储不存在；需要显式初始化",
             Self::AlreadyExists => "备份状态存储已存在",

@@ -3,6 +3,8 @@
 use std::path::Path;
 #[path = "backup/staging.rs"]
 mod staging;
+#[path = "backup/storage.rs"]
+mod storage;
 
 pub(super) fn fixed_checkpoint_files(source: &str) -> bool {
     let compact = source.split_whitespace().collect::<String>();
@@ -17,7 +19,7 @@ pub(super) fn remainder(crate_name: &str, path: &Path, source: &str) -> String {
         return operation_gate(path, source);
     }
     if crate_name == "studiolo-backup" && !path.ends_with("crates/backup/src/store/storage.rs") {
-        return staging::remainder(path, source);
+        return storage::remainder(path, &staging::remainder(path, source));
     }
     if crate_name != "studiolo-backup" || !path.ends_with("crates/backup/src/store/storage.rs") {
         return source.to_owned();
@@ -35,7 +37,7 @@ pub(super) fn remainder(crate_name: &str, path: &Path, source: &str) -> String {
         }
     }
     rest.replace(
-        "userustix::fs::{AtFlags,FileType,Mode,OFlags,fstat,fsync,open,openat,renameat,unlinkat};",
+        "userustix::fs::{AtFlags,Mode,OFlags,fsync,openat,renameat,unlinkat};",
         "",
     )
 }
