@@ -74,20 +74,34 @@ impl ReplicaFixture {
     }
 
     pub fn publish(&self, generation: &str, marker: &str, observed: i64) {
-        let release = self.release(generation);
         let note = format!("# {marker}\n\n{marker} content\n");
         // 标记同时写进「状态」：路牌清单化后只摘状态与未关闭 BUG，
         // 仅放「当前版本」的话标记不会出现在路牌里，跟随性断言就失去观察点。
         let index = format!(
             "# Project\n\n| 项 | 当前值 |\n|---|---|\n| 当前版本 | {marker} |\n| 状态 | {marker} |\n"
         );
-        let entries = [
-            ("project/00-总览", None),
-            ("project/00-总览/INDEX.md", Some(index.as_bytes())),
-            ("project/empty", None),
-            ("project/image.bin", Some(&[0, 1, 255][..])),
-            ("project/note.md", Some(note.as_bytes())),
-        ].into_iter().map(|(path, content)| {
+        self.publish_entries(
+            generation,
+            observed,
+            &[
+                ("project/00-总览", None),
+                ("project/00-总览/INDEX.md", Some(index.as_bytes())),
+                ("project/empty", None),
+                ("project/image.bin", Some(&[0, 1, 255][..])),
+                ("project/note.md", Some(note.as_bytes())),
+            ],
+        );
+    }
+
+    /// 按给定条目发布一个代次并让状态指向它；路径须按字节序排好，`None` 表示目录。
+    pub fn publish_entries(
+        &self,
+        generation: &str,
+        observed: i64,
+        entries: &[(&str, Option<&[u8]>)],
+    ) {
+        let release = self.release(generation);
+        let entries = entries.iter().map(|&(path, content)| {
             let target = release.join("vault").join(path);
             match content {
                 Some(body) => { write(&target, body); json!({"path": path, "kind": "file", "bytes": body.len(), "sha256": digest(body)}) }
