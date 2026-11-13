@@ -32,7 +32,7 @@
 /* 浮层里的原文一律等宽、软换行：覆盖层不横滚，长行不能被裁掉。 */
 .editor-overlay pre {
   font-family: var(--font-mono);
-  font-size: 12.5px;
+  font-size: var(--type-caption);
   line-height: 1.7;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
@@ -58,7 +58,7 @@
 }
 .editor-titlebar h2 {
   margin: 0;
-  font-size: 24px;
+  font-size: var(--type-title);
   line-height: 1.2;
   font-weight: 800;
   letter-spacing: -0.01em;
@@ -71,7 +71,7 @@
   align-items: baseline;
   gap: var(--space-1) var(--space-6);
   margin: 0;
-  padding: var(--space-2) var(--space-5) 10px;
+  padding: var(--space-2) var(--space-5) var(--space-2-5);
   border-top: 1px solid var(--hairline);
   font-family: var(--font-mono);
   font-size: var(--type-label);
@@ -103,7 +103,7 @@
   flex-wrap: wrap;
   align-items: center;
   gap: var(--space-2);
-  padding: 10px var(--space-5);
+  padding: var(--space-2-5) var(--space-5);
   border-bottom: 1px solid var(--hairline);
 }
 .editor-controls__hint {
@@ -118,7 +118,7 @@
 
 .editor-notices {
   flex-shrink: 0;
-  padding: 10px var(--space-5);
+  padding: var(--space-2-5) var(--space-5);
   border-bottom: 1px solid var(--hairline);
   font-size: var(--type-body);
   line-height: 1.6;
@@ -131,10 +131,10 @@
 }
 .editor-notices > p {
   max-width: 72ch;
-  margin: 2px 0;
+  margin: var(--space-0-5) 0;
 }
 .editor-notices > .editor-notice-error {
-  margin: 6px 0;
+  margin: var(--space-1-5) 0;
 }
 .editor-notice-error {
   display: flex;
@@ -156,7 +156,7 @@
   display: flex;
   flex-wrap: wrap;
   gap: var(--space-2);
-  margin-top: 6px;
+  margin-top: var(--space-1-5);
 }
 
 /*
@@ -168,7 +168,7 @@
 .editor-leave {
   display: block;
   /* 下边距少 8px：最后一行按钮自带 8px 下外边距 */
-  padding: var(--space-3) 14px var(--space-1);
+  padding: var(--space-3) var(--space-3-5) var(--space-1);
   border: 1.5px dashed var(--signal);
   background: var(--paper);
   color: var(--ink);
@@ -192,7 +192,7 @@
 }
 .editor-overlay > .editor-leave {
   flex-shrink: 0;
-  margin: 10px var(--space-5);
+  margin: var(--space-2-5) var(--space-5);
 }
 
 /* 删除、重命名两块并排；各自的审阅框与回执在自己那一栏里展开，按钮不跳位。 */
@@ -202,7 +202,7 @@
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 380px), 1fr));
   align-items: start;
   gap: var(--space-3) var(--space-6);
-  padding: 10px var(--space-5);
+  padding: var(--space-2-5) var(--space-5);
   border-bottom: 1px solid var(--hairline);
 }
 .editor-file-ops:empty {
@@ -256,7 +256,7 @@
 /* 正文区不超过 72 个字宽（规范第 9 节）；内边距另算。 */
 .markdown-editor .cm-content {
   max-width: calc(72ch + 40px);
-  padding: 18px var(--space-5);
+  padding: var(--space-4-5) var(--space-5);
   caret-color: var(--signal);
 }
 .markdown-editor .cm-cursor,
@@ -314,7 +314,7 @@
 
 .editor-comparison {
   flex-shrink: 0;
-  padding: 14px var(--space-5) var(--space-5);
+  padding: var(--space-3-5) var(--space-5) var(--space-5);
   border-top: 2px solid var(--ink);
 }
 .editor-comparison > h3 {
@@ -363,13 +363,13 @@
   max-width: 72ch;
 }
 .markdown-preview h1 {
-  font-size: 28px;
+  font-size: var(--type-title);
   line-height: 1.25;
   font-weight: 900;
   letter-spacing: -0.02em;
 }
 .markdown-preview h2 {
-  font-size: 22px;
+  font-size: var(--type-cell);
   line-height: 1.3;
   font-weight: 800;
 }
@@ -416,7 +416,7 @@
   border-collapse: collapse;
 }
 .preview-table td {
-  padding: 6px 10px;
+  padding: var(--space-1-5) var(--space-2-5);
   border: 1px solid var(--hairline);
 }
 
@@ -441,7 +441,7 @@
 }
 .draft-entry__path {
   font-family: var(--font-mono);
-  font-size: 12.5px;
+  font-size: var(--type-caption);
   line-height: 1.5;
   font-weight: 600;
   overflow-wrap: anywhere;

@@ -31,13 +31,13 @@
 .policy-hint {
   max-width: 72ch;
   margin: 0;
-  font-size: 13px;
+  font-size: var(--type-small);
   line-height: 1.6;
   color: var(--ink-2);
   overflow-wrap: anywhere;
 }
 .policy-hint {
-  font-size: 12.5px;
+  font-size: var(--type-small);
 }
 .policy-subhead {
   display: flex;
@@ -94,7 +94,7 @@
   gap: var(--space-2);
   max-width: 72ch;
   margin: 0;
-  font-size: 13px;
+  font-size: var(--type-small);
   line-height: 1.6;
   color: var(--ink);
   overflow-wrap: anywhere;
@@ -124,7 +124,7 @@
   display: grid;
   gap: var(--space-2);
   justify-items: start;
-  padding: 10px var(--space-3) var(--space-3);
+  padding: var(--space-2-5) var(--space-3) var(--space-3);
   border: 1.5px solid var(--signal);
   background: var(--signal-wash);
 }
@@ -151,12 +151,12 @@
 .policy-table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 13px;
+  font-size: var(--type-small);
   line-height: 1.45;
 }
 .policy-table th,
 .policy-table td {
-  padding: 7px var(--space-3) 7px 0;
+  padding: var(--space-2) var(--space-3) var(--space-2) 0;
   text-align: left;
   vertical-align: baseline;
   overflow-wrap: anywhere;
@@ -168,7 +168,7 @@
 .policy-table thead th {
   padding-top: 0;
   border-bottom: 1.5px solid var(--ink);
-  font-size: 12px;
+  font-size: var(--type-caption);
   line-height: 1.3;
   font-weight: 700;
   color: var(--ink-2);
@@ -190,7 +190,7 @@
 /* 版本号与摘要不从中间折断（窄屏时列宽让给对象列）；发布时间只在日期与时刻之间换行 */
 .policy-table td.is-number {
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: var(--type-caption);
   overflow-wrap: normal;
 }
 /* 类别是两到四个字的名词，不拆成两行 */
@@ -224,10 +224,10 @@
   display: grid;
   grid-template-columns: 48px minmax(0, 1fr);
   column-gap: var(--space-3);
-  row-gap: 2px;
-  padding: 7px 0;
+  row-gap: var(--space-0-5);
+  padding: var(--space-2) 0;
   border-bottom: 1px solid var(--hairline);
-  font-size: 13px;
+  font-size: var(--type-small);
   line-height: 1.5;
 }
 .policy-revocations li:last-child {
@@ -236,7 +236,7 @@
 .policy-revocations__level {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
+  gap: var(--space-1);
   font-family: var(--font-mono);
   font-size: var(--type-label);
   font-weight: 600;
@@ -262,7 +262,7 @@
 .policy-revocations__when {
   grid-column: 2;
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: var(--type-label);
   color: var(--ink-2);
 }
 
@@ -281,14 +281,14 @@
 }
 .policy-field {
   display: grid;
-  gap: 5px;
+  gap: var(--space-1);
   min-width: 0;
 }
 .policy-field__label {
   display: flex;
   flex-wrap: wrap;
   align-items: baseline;
-  gap: 2px 6px;
+  gap: var(--space-0-5) var(--space-1-5);
   font-family: var(--font-mono);
   font-size: var(--type-label);
   line-height: 1.3;
@@ -300,7 +300,7 @@
 .policy-select select {
   width: 100%;
   min-width: 0;
-  height: 38px;
+  height: var(--control-default);
   margin: 0;
   padding: 0 var(--space-3);
   border: 1.5px solid var(--ink);
@@ -313,13 +313,13 @@
 }
 .policy-input--mono {
   font-family: var(--font-mono);
-  font-size: 13px;
+  font-size: var(--type-small);
 }
 .policy-textarea {
   height: auto;
-  padding: 10px var(--space-3);
+  padding: var(--space-2-5) var(--space-3);
   font-family: var(--font-mono);
-  font-size: 12.5px;
+  font-size: var(--type-caption);
   line-height: 1.6;
   resize: vertical;
 }
@@ -367,7 +367,7 @@
   align-items: center;
   justify-self: start;
   gap: var(--space-2);
-  font-size: 13px;
+  font-size: var(--type-small);
   line-height: 1.4;
   cursor: pointer;
 }
@@ -394,7 +394,7 @@
   align-items: flex-start;
   gap: var(--space-2);
   margin: 0;
-  font-size: 13px;
+  font-size: var(--type-small);
   line-height: 1.6;
   color: var(--ink);
 }
@@ -411,8 +411,8 @@
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: baseline;
-  gap: 3px var(--space-3);
-  padding: 8px 0;
+  gap: var(--space-1) var(--space-3);
+  padding: var(--space-2) 0;
   border-bottom: 1px solid var(--hairline);
 }
 .policy-queue > li:last-child {
@@ -421,8 +421,8 @@
 .policy-queue__pick {
   justify-self: start;
   max-width: 100%;
-  margin: 0 0 0 -6px;
-  padding: 1px 6px;
+  margin: 0 0 0 calc(-1 * var(--space-1-5));
+  padding: 1px var(--space-1-5);
   border: 0;
   border-radius: 0;
   background: none;
@@ -447,7 +447,7 @@
 .policy-queue__meta {
   grid-column: 1;
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: var(--type-label);
   line-height: 1.5;
   letter-spacing: 0.02em;
   color: var(--ink-2);
@@ -456,7 +456,7 @@
 .policy-queue__marks {
   grid-column: 2;
   grid-row: 1;
-  font-size: 12px;
+  font-size: var(--type-caption);
   font-weight: 700;
   white-space: nowrap;
 }
@@ -470,7 +470,7 @@
 }
 .policy-selected__head {
   display: grid;
-  gap: 2px;
+  gap: var(--space-0-5);
 }
 .policy-selected__title {
   margin: 0;
@@ -482,7 +482,7 @@
 .policy-selected__meta {
   margin: 0;
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: var(--type-label);
   line-height: 1.5;
   color: var(--ink-2);
   overflow-wrap: anywhere;
@@ -494,7 +494,7 @@
   display: grid;
   gap: var(--space-2);
   min-width: 0;
-  font-size: 13px;
+  font-size: var(--type-small);
   line-height: 1.6;
 }
 .policy-report__head {
@@ -502,7 +502,7 @@
   flex-wrap: wrap;
   align-items: baseline;
   gap: var(--space-1) var(--space-3);
-  padding-bottom: 6px;
+  padding-bottom: var(--space-1-5);
   border-bottom: 1px solid var(--hairline);
 }
 .policy-report__title {
@@ -512,7 +512,7 @@
   font-weight: 800;
 }
 .policy-report__verdict {
-  font-size: 12.5px;
+  font-size: var(--type-small);
   font-weight: 700;
 }
 /* 报告标题右侧的等宽计数：扩大 N · 收窄 N · 未知 — */
@@ -531,7 +531,7 @@
 .policy-report__counts .is-signal {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
+  gap: var(--space-1);
   font-weight: 600;
   color: var(--signal-text);
 }
@@ -542,7 +542,7 @@
 }
 .policy-report__base {
   margin: 0;
-  font-size: 12.5px;
+  font-size: var(--type-small);
   color: var(--ink-2);
   overflow-wrap: anywhere;
 }
@@ -567,7 +567,7 @@
   grid-template-columns: 52px minmax(0, 1fr);
   align-items: baseline;
   column-gap: var(--space-2);
-  padding: 5px 0;
+  padding: var(--space-1) 0;
   border-bottom: 1px solid var(--hairline);
   overflow-wrap: anywhere;
 }
@@ -577,7 +577,7 @@
 }
 .policy-problems__tag,
 .policy-changes__tag {
-  font-size: 12px;
+  font-size: var(--type-caption);
   font-weight: 700;
   white-space: nowrap;
 }
@@ -594,7 +594,7 @@
 }
 .policy-changes__note {
   display: block;
-  font-size: 12px;
+  font-size: var(--type-caption);
   font-style: normal;
 }
 
@@ -618,7 +618,7 @@
   outline-offset: 2px;
 }
 .policy-diff ul {
-  margin: 6px 0 0;
+  margin: var(--space-1-5) 0 0;
   padding: 0;
   list-style: none;
   border-top: 1px solid var(--hairline);
@@ -627,11 +627,11 @@
   display: flex;
   flex-wrap: wrap;
   align-items: baseline;
-  gap: 2px var(--space-2);
-  padding: 3px 0;
+  gap: var(--space-0-5) var(--space-2);
+  padding: var(--space-1) 0;
   border-bottom: 1px solid var(--hairline);
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: var(--type-caption);
   line-height: 1.5;
   overflow-wrap: anywhere;
 }
@@ -653,19 +653,19 @@
   color: var(--ink);
 }
 .policy-diff > .policy-hint {
-  margin-top: 6px;
+  margin-top: var(--space-1-5);
 }
 
 /* ---------- 执行预览：红色虚线框，出现在触发按钮上方 ---------- */
 
 .policy-preview {
   display: grid;
-  gap: 6px;
+  gap: var(--space-1-5);
   min-width: 0;
-  padding: 10px var(--space-3) var(--space-3);
+  padding: var(--space-2-5) var(--space-3) var(--space-3);
   border: 1.5px dashed var(--signal);
   background: var(--paper);
-  font-size: 13px;
+  font-size: var(--type-small);
   line-height: 1.6;
   overflow-wrap: anywhere;
 }
@@ -679,7 +679,7 @@
 }
 .policy-preview__label {
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: var(--type-label);
   line-height: 1.3;
   font-weight: 600;
   letter-spacing: 0.04em;
@@ -693,7 +693,7 @@
 .policy-preview__facts {
   display: grid;
   grid-template-columns: max-content minmax(0, 1fr);
-  gap: 3px var(--space-3);
+  gap: var(--space-1) var(--space-3);
   margin: 0;
 }
 .policy-preview__facts > div {
@@ -713,7 +713,7 @@
 .policy-preview__facts dd.is-signal {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-1-5);
   font-weight: 700;
   color: var(--signal-text);
 }
@@ -737,8 +737,8 @@
   display: flex;
   flex-wrap: wrap;
   align-items: baseline;
-  gap: 6px var(--space-3);
-  padding: 7px 0;
+  gap: var(--space-1-5) var(--space-3);
+  padding: var(--space-2) 0;
   border-bottom: 1px solid var(--hairline);
 }
 .policy-version:last-child {
@@ -746,14 +746,14 @@
 }
 .policy-version__open {
   flex-shrink: 0;
-  min-width: 40px;
-  padding: 1px 6px;
+  min-width: var(--control-default);
+  padding: 1px var(--space-1-5);
   border: 1.5px solid var(--ink);
   border-radius: 0;
   background: none;
   color: var(--ink);
   font-family: var(--font-mono);
-  font-size: 12.5px;
+  font-size: var(--type-caption);
   line-height: 1.4;
   font-weight: 600;
   cursor: pointer;
@@ -774,14 +774,14 @@
   min-width: 0;
 }
 .policy-version__subject {
-  font-size: 13.5px;
+  font-size: var(--type-small);
   line-height: 1.4;
   font-weight: 700;
   overflow-wrap: anywhere;
 }
 .policy-version__meta {
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: var(--type-label);
   line-height: 1.5;
   color: var(--ink-2);
   overflow-wrap: anywhere;
@@ -805,7 +805,7 @@
   flex-wrap: wrap;
   align-items: baseline;
   justify-content: space-between;
-  gap: 2px var(--space-3);
+  gap: var(--space-0-5) var(--space-3);
 }
 .policy-version-body__hash,
 .policy-version-body__label {
@@ -824,12 +824,12 @@
 .policy-version-body pre {
   max-height: 320px;
   margin: 0;
-  padding: 10px var(--space-3);
+  padding: var(--space-2-5) var(--space-3);
   overflow: auto;
   border: 1px solid var(--hairline);
   background: var(--paper-raised);
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: var(--type-caption);
   line-height: 1.6;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
@@ -855,7 +855,7 @@
   align-items: flex-start;
   justify-content: space-between;
   gap: var(--space-4);
-  padding: 14px var(--space-3) var(--space-3) var(--space-5);
+  padding: var(--space-3-5) var(--space-3) var(--space-3) var(--space-5);
   border-bottom: 2px solid var(--ink);
 }
 .policy-stepup__heading {
@@ -871,7 +871,7 @@
 }
 .policy-stepup h2 {
   margin: 0;
-  font-size: 24px;
+  font-size: var(--type-title);
   line-height: 1.2;
   font-weight: 800;
   letter-spacing: -0.01em;
@@ -879,7 +879,7 @@
 .policy-stepup__body {
   display: grid;
   gap: var(--space-3);
-  padding: 14px var(--space-5) var(--space-5);
+  padding: var(--space-3-5) var(--space-5) var(--space-5);
   font-size: var(--type-body);
   line-height: 1.6;
   overflow-wrap: anywhere;
@@ -889,7 +889,7 @@
   margin: 0;
 }
 .policy-stepup .policy-stepup__note {
-  font-size: 13px;
+  font-size: var(--type-small);
   color: var(--ink-2);
 }
 .policy-stepup__alert {
@@ -907,7 +907,7 @@
 .policy-stepup__field {
   display: grid;
   justify-items: start;
-  gap: 5px;
+  gap: var(--space-1);
 }
 .policy-stepup__label {
   font-family: var(--font-mono);
@@ -919,7 +919,7 @@
 /* 验证码：描边等宽，字距拉开便于逐位核对 */
 .policy-stepup__code {
   width: min(100%, 220px);
-  height: 44px;
+  height: var(--control-touch);
   margin: 0;
   padding: 0 var(--space-3);
   border: 1.5px solid var(--ink);
@@ -927,7 +927,7 @@
   background: var(--paper-raised);
   color: var(--ink);
   font-family: var(--font-mono);
-  font-size: 18px;
+  font-size: var(--type-cell);
   font-weight: 600;
   letter-spacing: 0.24em;
 }
@@ -958,26 +958,26 @@
 
 @media (width < 760px) {
   .ui-cell.policy-cell {
-    padding: var(--space-3) 14px;
+    padding: var(--space-3) var(--space-3-5);
   }
   .policy-input,
   .policy-select select {
-    height: 44px;
-    font-size: 16px;
+    height: var(--control-touch);
+    font-size: var(--type-touch);
   }
   .policy-textarea {
     height: auto;
-    font-size: 16px;
+    font-size: var(--type-touch);
   }
   .policy-stepup__code {
-    font-size: 20px;
+    font-size: var(--type-cell);
   }
   .policy .ui-button {
-    min-height: 44px;
+    min-height: var(--control-touch);
   }
   .policy-queue__pick,
   .policy-version__open {
-    min-height: 44px;
+    min-height: var(--control-touch);
   }
   .policy-queue > li {
     grid-template-columns: minmax(0, 1fr);

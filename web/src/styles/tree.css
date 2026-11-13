@@ -14,7 +14,7 @@
   max-width: 65ch;
   margin: 0;
   color: var(--ink-2);
-  font-size: 13px;
+  font-size: var(--type-small);
   line-height: 1.6;
 }
 .file-tree-body {
@@ -37,10 +37,10 @@
 .file-tree .tree-entry-button {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: var(--space-2-5);
   width: 100%;
-  min-height: 40px;
-  padding: 7px var(--space-2);
+  min-height: var(--control-default);
+  padding: var(--space-2) var(--space-2);
   border: 0;
   border-radius: 0;
   background: transparent;
@@ -179,7 +179,7 @@
 }
 .attachment-name {
   margin: 0;
-  padding: 14px var(--space-5) var(--space-3);
+  padding: var(--space-3-5) var(--space-5) var(--space-3);
   font-size: var(--type-item);
   line-height: 1.4;
   font-weight: 700;
@@ -198,9 +198,9 @@
   display: flex;
   flex-direction: column;
   justify-content: space-between;
-  gap: 2px;
+  gap: var(--space-0-5);
   min-width: 0;
-  padding: 7px var(--space-3);
+  padding: var(--space-2) var(--space-3);
   background: var(--paper);
 }
 .attachment-details > .attachment-detail--wide {
@@ -216,7 +216,7 @@
 .attachment-details dd {
   margin: 0;
   font-family: var(--font-mono);
-  font-size: 14px;
+  font-size: var(--type-body);
   line-height: 1.45;
   font-weight: 600;
   overflow-wrap: anywhere;
@@ -227,7 +227,7 @@
   margin: 0;
   padding: var(--space-3) var(--space-5) var(--space-5);
   color: var(--ink-2);
-  font-size: 13px;
+  font-size: var(--type-small);
   line-height: 1.6;
 }
 
@@ -236,10 +236,10 @@
 @media (width < 760px) {
   .file-tree .tree-entry-button {
     gap: var(--space-2);
-    min-height: 44px;
+    min-height: var(--control-touch);
   }
   .tree-pagination .ui-button {
-    min-height: 44px;
+    min-height: var(--control-touch);
   }
   .tree-children {
     margin-left: 9px;
@@ -249,13 +249,13 @@
     grid-template-columns: minmax(0, 1fr);
   }
   .attachment-header {
-    padding-left: 14px;
+    padding-left: var(--space-3-5);
   }
   .attachment-name,
   .attachment-note {
-    padding-inline: 14px;
+    padding-inline: var(--space-3-5);
   }
   .attachment-details {
-    margin-inline: 14px;
+    margin-inline: var(--space-3-5);
   }
 }

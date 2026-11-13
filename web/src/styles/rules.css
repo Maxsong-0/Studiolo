@@ -27,10 +27,10 @@
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: var(--space-1) 22px;
+  gap: var(--space-1) var(--space-6);
   margin: 0;
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: var(--type-caption);
   line-height: 1.3;
   color: var(--ink-2);
 }
@@ -58,7 +58,7 @@
 }
 .rules-table .rules-table__readers {
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: var(--type-caption);
 }
 
 /* ---------- 编辑：规则名、左源码右预览 ---------- */
@@ -91,12 +91,12 @@
 .rules-matrix {
   width: 100%;
   border-collapse: collapse;
-  font-size: 13px;
+  font-size: var(--type-small);
   line-height: 1.45;
 }
 .rules-matrix th,
 .rules-matrix td {
-  padding: 6px var(--space-3) 6px 0;
+  padding: var(--space-1-5) var(--space-3) var(--space-1-5) 0;
   text-align: left;
   vertical-align: middle;
 }
@@ -106,7 +106,7 @@
   vertical-align: bottom;
 }
 .rules-matrix thead th:first-child {
-  font-size: 12px;
+  font-size: var(--type-caption);
   color: var(--ink-2);
 }
 .rules-matrix tbody th,
@@ -118,14 +118,14 @@
 }
 .rules-matrix__rule {
   min-width: 10rem;
-  font-size: 13.5px;
+  font-size: var(--type-small);
   font-weight: 700;
   overflow-wrap: anywhere;
 }
 .rules-matrix__type {
   display: block;
   font-family: var(--font-mono);
-  font-size: 13px;
+  font-size: var(--type-small);
   font-weight: 600;
 }
 .rules-matrix__note {
@@ -133,7 +133,7 @@
   flex-wrap: wrap;
   gap: 0 var(--space-2);
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: var(--type-label);
   font-weight: 500;
   line-height: 1.5;
   color: var(--ink-2);
@@ -146,14 +146,14 @@
 .rules-switch {
   display: inline-flex;
   align-items: center;
-  gap: 7px;
-  min-height: 32px;
+  gap: var(--space-2);
+  min-height: var(--control-compact);
   padding: 0 var(--space-2);
   border: 1.5px solid transparent;
   border-radius: 0;
   background: none;
   color: var(--ink-2);
-  font-size: 13px;
+  font-size: var(--type-small);
   font-weight: 600;
   white-space: nowrap;
   cursor: pointer;
@@ -207,14 +207,14 @@
   }
   .ui-cell.rules-cell,
   .ui-cell.rules-preview {
-    padding: var(--space-3) 14px;
+    padding: var(--space-3) var(--space-3-5);
   }
   .view-rules :is(select, input:not([type='checkbox'], [type='radio'])) {
-    min-height: 44px;
-    font-size: 16px;
+    min-height: var(--control-touch);
+    font-size: var(--type-touch);
   }
   .rules-switch {
-    min-height: 44px;
+    min-height: var(--control-touch);
   }
 
   /* 两张表同一套重排：表头只留给读屏，行变成一组；表格语义靠组件里显式的 role 保住 */
@@ -263,10 +263,10 @@
   }
   .rules-table td[data-label]::before {
     display: block;
-    margin-bottom: 2px;
+    margin-bottom: var(--space-0-5);
     color: var(--ink-2);
     font-family: var(--font-mono);
-    font-size: 10.5px;
+    font-size: var(--type-micro);
     font-weight: 500;
     line-height: 1.3;
     letter-spacing: 0.04em;

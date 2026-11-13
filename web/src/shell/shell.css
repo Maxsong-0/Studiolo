@@ -5,7 +5,7 @@
  */
 .shell {
   min-height: 100dvh;
-  padding: 20px 28px 24px;
+  padding: var(--space-5) var(--space-7) var(--space-6);
   background: var(--paper);
   color: var(--ink);
 }
@@ -20,12 +20,12 @@
   z-index: var(--z-sticky);
   display: flex;
   align-items: stretch;
-  gap: 18px;
+  gap: var(--space-4-5);
   box-sizing: content-box;
   height: 46px;
   /* 背景铺满左右页边，滚动时正文不会从页边露出来；3px 黑线仍只画在内容宽度内（::after）。 */
-  margin: 0 -28px;
-  padding: 0 28px var(--rule-thick);
+  margin: 0 calc(-1 * var(--space-7));
+  padding: 0 var(--space-7) var(--rule-thick);
   background: var(--paper);
 }
 .shell-top::after {
@@ -46,7 +46,7 @@
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  font-size: 15px;
+  font-size: var(--type-item);
   font-weight: 900;
   line-height: 1;
   letter-spacing: 0.06em;
@@ -62,7 +62,7 @@
   align-self: center;
   min-width: 0;
   max-width: 20ch;
-  margin: 0 14px 0 0;
+  margin: 0 var(--space-3-5) 0 0;
   overflow: hidden;
   font-family: var(--font-mono);
   font-size: var(--type-label);
@@ -81,8 +81,8 @@
 .shell-nav-item {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 0 16px;
+  gap: var(--space-1-5);
+  padding: 0 var(--space-4);
   border: 0;
   border-radius: 0;
   background: transparent;
@@ -113,7 +113,7 @@
 }
 .shell-nav-count {
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: var(--type-label);
   font-weight: 500;
   letter-spacing: 0.04em;
   color: var(--ink-2);
@@ -133,15 +133,15 @@
 .status-capsule {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-1-5);
   min-height: 30px;
-  padding: 4px 8px;
+  padding: var(--space-1) var(--space-2);
   border: 0;
   border-radius: 0;
   background: transparent;
   color: var(--ink);
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: var(--type-caption);
   font-weight: 600;
   line-height: 1.3;
   letter-spacing: 0.04em;
@@ -171,7 +171,7 @@
   max-height: calc(100dvh - 96px);
   overflow: auto;
   overscroll-behavior: contain;
-  padding: 16px 20px 20px;
+  padding: var(--space-4) var(--space-5) var(--space-5);
   border: 2px solid var(--ink);
   border-radius: 0;
   background: var(--paper);
@@ -189,8 +189,8 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
-  padding-bottom: 12px;
+  gap: var(--space-3);
+  padding-bottom: var(--space-3);
   border-bottom: 1.5px solid var(--ink);
 }
 .status-popover-head h2 {
@@ -204,7 +204,7 @@
   opacity: 0.6;
 }
 .status-block {
-  padding: 14px 0;
+  padding: var(--space-3-5) 0;
   border-bottom: 1px solid var(--hairline);
 }
 .status-block:last-child {
@@ -212,7 +212,7 @@
   border-bottom: 0;
 }
 .status-block-title {
-  margin: 0 0 8px;
+  margin: 0 0 var(--space-2);
   font-family: var(--font-mono);
   font-size: var(--type-label);
   font-weight: 600;
@@ -224,9 +224,9 @@
   display: flex;
   flex-wrap: wrap;
   align-items: baseline;
-  gap: 4px 10px;
-  margin: 0 0 8px;
-  font-size: 13px;
+  gap: var(--space-1) var(--space-2-5);
+  margin: 0 0 var(--space-2);
+  font-size: var(--type-small);
   overflow-wrap: anywhere;
 }
 .status-source > span {
@@ -245,17 +245,17 @@
   display: flex;
   align-self: center;
   align-items: center;
-  gap: 10px;
+  gap: var(--space-2-5);
   box-sizing: border-box;
   width: 250px;
   min-height: 30px;
-  padding: 6px 10px;
+  padding: var(--space-1-5) var(--space-2-5);
   border: 1.5px solid var(--ink);
   border-radius: 0;
   background: transparent;
   color: var(--ink);
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: var(--type-caption);
   line-height: 1.3;
   letter-spacing: 0.04em;
   text-align: left;
@@ -289,7 +289,7 @@
 .shell-tools {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: var(--space-2-5);
 }
 .shell-tools:empty {
   display: none;
@@ -302,7 +302,7 @@
 .shell-main {
   display: block;
   min-width: 0;
-  padding-top: 18px;
+  padding-top: var(--space-4-5);
 }
 .shell-main:focus {
   outline: none;
@@ -360,13 +360,13 @@
  */
 @media (width < 1200px) {
   .shell-top {
-    gap: 12px;
+    gap: var(--space-3);
   }
   .shell-library {
-    margin-right: 4px;
+    margin-right: var(--space-1);
   }
   .shell-nav-item {
-    padding: 0 12px;
+    padding: 0 var(--space-3);
   }
   .shell-tools .account-button > span {
     display: none;
@@ -390,7 +390,7 @@
       'brand library nav . status command'
       'tools tools tools tools tools tools';
     row-gap: var(--rule-thick);
-    column-gap: 12px;
+    column-gap: var(--space-3);
     height: auto;
   }
   .shell-top::after {
@@ -419,7 +419,7 @@
     grid-area: tools;
     justify-content: flex-end;
     flex-wrap: wrap;
-    padding: 8px 0;
+    padding: var(--space-2) 0;
   }
 }
 
@@ -429,7 +429,7 @@
  */
 @media (width < 760px) {
   .shell {
-    padding: 0 16px calc(47px + env(safe-area-inset-bottom) + 24px);
+    padding: 0 var(--space-4) calc(47px + env(safe-area-inset-bottom) + 24px);
   }
   .shell-top {
     position: relative;
@@ -440,10 +440,10 @@
       'brand library status command'
       'tools tools tools tools';
     row-gap: var(--rule-thick);
-    column-gap: 8px;
+    column-gap: var(--space-2);
     height: auto;
-    margin: 0 -16px;
-    padding: 0 16px;
+    margin: 0 calc(-1 * var(--space-4));
+    padding: 0 var(--space-4);
   }
   .shell-top::after {
     left: 16px;
@@ -465,7 +465,7 @@
     margin-left: 0;
   }
   .status-capsule {
-    min-height: 44px;
+    min-height: var(--control-touch);
   }
   /* 浮层宽度 calc(100vw - 24px)：以铺满视口的顶栏为定位基准，左右各留 12px，硬阴影也不出屏 */
   .status-popover {
@@ -476,13 +476,13 @@
     max-height: calc(100dvh - 55px - 47px - 24px - env(safe-area-inset-bottom));
   }
   .status-popover .refresh-button {
-    min-height: 44px;
+    min-height: var(--control-touch);
   }
   .shell-command {
     grid-area: command;
     justify-content: center;
-    width: 44px;
-    height: 44px;
+    width: var(--control-touch);
+    height: var(--control-touch);
     padding: 0;
   }
   .shell-command .icon {
@@ -495,10 +495,10 @@
     grid-area: tools;
     justify-content: flex-end;
     flex-wrap: wrap;
-    padding: 8px 0;
+    padding: var(--space-2) 0;
   }
   .shell-tools .outline-button {
-    min-height: 44px;
+    min-height: var(--control-touch);
   }
   .shell-nav {
     position: fixed;
@@ -514,12 +514,12 @@
   }
   .shell-nav-item {
     justify-content: center;
-    min-height: 44px;
-    padding: 0 4px;
-    font-size: 13px;
+    min-height: var(--control-touch);
+    padding: 0 var(--space-1);
+    font-size: var(--type-small);
   }
   .shell-main {
-    padding-top: 16px;
+    padding-top: var(--space-4);
   }
 }
 /*

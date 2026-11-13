@@ -12,7 +12,7 @@
   align-items: center;
   gap: var(--space-2);
   min-width: 0;
-  height: 38px;
+  height: var(--control-default);
   border: 1.5px solid var(--ink);
   border-radius: 0;
   background: var(--paper-raised);
@@ -137,7 +137,7 @@
 }
 .projects-table th,
 .projects-table td {
-  padding: 10px var(--space-3);
+  padding: var(--space-2-5) var(--space-3);
   border-bottom: 1px solid var(--hairline);
   vertical-align: middle;
   overflow-wrap: anywhere;
@@ -151,8 +151,8 @@
   padding-right: var(--space-5);
 }
 .projects-table thead th {
-  padding-top: 12px;
-  padding-bottom: 8px;
+  padding-top: var(--space-3);
+  padding-bottom: var(--space-2);
   border-bottom: 1.5px solid var(--ink);
   color: var(--ink-2);
   font-family: var(--font-mono);
@@ -186,7 +186,7 @@
 }
 .projects-table td.projects-table__number {
   font-family: var(--font-mono);
-  font-size: 13px;
+  font-size: var(--type-small);
 }
 
 /* 项目：名字进入运作，下接等宽路径与「来源」 */
@@ -218,11 +218,11 @@ button.projects-table__value:hover {
 .projects-table__profile {
   display: inline-block;
   margin-left: var(--space-2);
-  padding: 0 5px;
+  padding: 0 var(--space-1);
   border: 1px dashed var(--ink-2);
   color: var(--ink-2);
   font-family: var(--font-mono);
-  font-size: 10.5px;
+  font-size: var(--type-micro);
   line-height: 1.5;
   white-space: nowrap;
   vertical-align: 2px;
@@ -231,11 +231,11 @@ button.projects-table__value:hover {
   display: flex;
   flex-wrap: wrap;
   align-items: baseline;
-  gap: 2px 10px;
-  margin-top: 2px;
+  gap: var(--space-0-5) var(--space-2-5);
+  margin-top: var(--space-0-5);
   color: var(--ink-2);
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: var(--type-label);
   line-height: 1.4;
   letter-spacing: 0.02em;
 }
