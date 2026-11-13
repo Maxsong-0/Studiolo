@@ -23,12 +23,15 @@ import type { PolicyPendingRead } from '../cockpit/usePolicyPendingRead';
 import { overviewLabels } from '../collab/executorGrouping';
 import { COMMAND_TARGETS, focusCommandTarget } from '../commands/focusTarget';
 import { clockLabel } from '../collab/todayLanes';
+import { PolicyStepUp } from '../components/PolicyStepUp';
 import {
   AutoRefreshContext,
   useAutoRefreshReader,
 } from '../live/useAutoRefresh';
 import type { OpenSource, Workbench } from '../types';
 import { policyPanelSlot } from '../policy/policyLocation';
+import { usePolicyActions } from '../policy/usePolicyActions';
+import { useRecentAuth } from '../policy/useRecentAuth';
 import { useViewLocation } from '../useViewLocation';
 import '../styles/cockpit.css';
 
@@ -51,6 +54,10 @@ const RULER = Array.from({ length: 12 }, (_, index) =>
  * 「系统读数」标题下那一行写着这些数是多久以前读的。
  *
  * 队列能用键盘走（T-197）：J／K 上下选、Enter 去处理、H 稍后；键位由队列自己登记给全站监听（keys/useGlobalKeys.ts）。
+ *
+ * 策略草案能在队列里就地批准、退回（T-200）：写动作用全站那一份 policy/usePolicyActions（先执行预览、确认才发、
+ * 被要求二次认证时就地认证后原样重试），做完安静重读 App 那一份草案列表——巨号、角标、队列一起变。
+ * 近期二次认证还剩多久只读、只显示（policy/useRecentAuth.ts），要不要重新认证由服务端裁定。
  */
 export function CockpitView({
   workbench,
@@ -86,6 +93,43 @@ export function CockpitView({
   const board = overview.state;
   const drafts = policy.state;
   const { goTo } = useViewLocation();
+
+  // 就地审批做完后的重读、近期认证的读取都挂在这个视图上：离开驾驶舱就作废。
+  // 控制器在挂载时重建（BUG-016）：StrictMode 的装载—卸载—再装载会先 abort 一次。
+  const lifetime = useRef(new AbortController());
+  useEffect(() => {
+    lifetime.current = new AbortController();
+    return () => lifetime.current.abort();
+  }, []);
+  const { revalidate: revalidateDrafts, reload: rereadDrafts } = policy;
+  // 手动读取在途时安静重读会让路；提交之后记下来，下面的重读要看。
+  const draftsLoading = useRef(drafts.kind === 'loading');
+  useLayoutEffect(() => {
+    draftsLoading.current = drafts.kind === 'loading';
+  });
+  // 做完一件写动作，重读的就是 App 那一份草案列表。先安静重读（不闪「读取中」，巨号不变成「—」）；
+  // 两种情况改成手动重读，不让写之前的列表冒充现状：有一次手动读取正在途（它可能是写之前发的，
+  // 安静重读会给它让路），或者安静重读没读成——照实显示读取中，再读不到就是「读取失败，可重试」。
+  const reloadDrafts = useCallback(async () => {
+    const { signal } = lifetime.current;
+    if (draftsLoading.current) {
+      rereadDrafts();
+      return;
+    }
+    const outcome = await revalidateDrafts(signal);
+    if (!outcome.ok && !signal.aborted) rereadDrafts();
+  }, [revalidateDrafts, rereadDrafts]);
+  const auth = useRecentAuth();
+  const readAuth = auth.read;
+  const actions = usePolicyActions(reloadDrafts, {
+    // 上面的重读已经是那一份草案列表，不必再发「策略平面刚被写过」。
+    announce: false,
+    // 一份刚发布成功：读一次近期认证还剩多久，接着批下一份时心里有数。
+    // 这一刻认证窗口已经关了（认证通过才会走到这里），读它不会打断谁。
+    onActivated: () => {
+      void readAuth(lifetime.current.signal);
+    },
+  });
   const plan = useMemo(
     () =>
       planPending({
@@ -183,6 +227,7 @@ export function CockpitView({
             onOpenPolicy={openPolicyDraft}
             onRetryPolicy={policy.reload}
             later={later}
+            review={{ actions, auth }}
           />
           <CrewCell
             state={board}
@@ -204,6 +249,14 @@ export function CockpitView({
           />
         </div>
       </div>
+      {actions.pending ? (
+        <PolicyStepUp
+          action={actions.pending.action}
+          attempt={actions.pending.attempt}
+          onAuthenticated={actions.retryAfterStepUp}
+          onClose={actions.closeStepUp}
+        />
+      ) : null}
     </div>
   );
 }

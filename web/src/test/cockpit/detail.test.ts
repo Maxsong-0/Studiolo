@@ -193,6 +193,44 @@ describe('就地细节：策略草案', () => {
     expect(diff.note).toBe('改动太多，接口只给了前一部分。');
   });
 
+  it('不设上限（就地批准的预览开着，T-200）：每段全部列出；接口自己截断了的差异照实写还有几条', () => {
+    const many = Array.from({ length: DETAIL_LIMIT + 3 }, (_, index) => ({
+      path: `p${index}`,
+      before: null,
+      after: 'x',
+      note: '多了',
+    }));
+    const entry = withReport({
+      problems: [],
+      expansions: many,
+      narrowings: [],
+      diff: {
+        format: 'text',
+        entries: Array.from({ length: 200 }, (_, index) => ({
+          op: 'added' as const,
+          path: `new:${index + 1}`,
+          before: null,
+          after: `第 ${index + 1} 行`,
+        })),
+        added: 320,
+        removed: 5,
+        changed: 0,
+        truncated: true,
+      },
+    });
+    const [expansions, diff] = entryDetail(entry, Infinity);
+    expect(expansions.lines).toHaveLength(DETAIL_LIMIT + 3);
+    expect(expansions.count).toBe(DETAIL_LIMIT + 3);
+    expect(expansions.more).toBe(0);
+    // 接口只给了 200 条：给了的全列，没给的那 125 条照实写明。
+    expect(diff.lines).toHaveLength(200);
+    expect(diff.count).toBe(325);
+    expect(diff.more).toBe(125);
+    expect(diff.note).toBe('改动太多，接口只给了前一部分。');
+    // 不给上限就是平时的六条。
+    expect(entryDetail(entry)[0].lines).toHaveLength(DETAIL_LIMIT);
+  });
+
   it('长的一截截短；空的一截不出；没有校验报告或没有可列的就没有细节', () => {
     const long = '很长的一行规则'.repeat(40);
     const [diff] = entryDetail(

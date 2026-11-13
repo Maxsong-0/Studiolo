@@ -80,6 +80,7 @@ function stubActions(): PolicyActions {
     withdraw: vi.fn(),
     togglePreview: vi.fn(),
     previewRevoke: vi.fn(),
+    previewWithdraw: vi.fn(),
     confirmPreview: vi.fn(),
     closePreview: vi.fn(),
     closePreviewIf: vi.fn(),

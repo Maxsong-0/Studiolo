@@ -66,6 +66,14 @@ function submitterOf(record: DesiredRecord): string {
     : '主人';
 }
 
+/** 发布预览里随页面不同的两句话；不给就是策略页、规则页的说法。 */
+export interface PublishWording {
+  /** 扩大项逐条列在哪里。 */
+  expansionsWhere?: string;
+  /** 二次认证那一句（驾驶舱知道近期认证还剩多久时换成它）。 */
+  stepUp?: string;
+}
+
 /**
  * 发布一份已校验的草案（T-181）。`superseded` 是同一对象里比它早的未发布草案：发布时服务端把它们一并
  * 标为已取代。`remaining` 是比它更新的：同一提交者更新的会挡住发布，所以能走到这里的只会是别的提交者
@@ -77,6 +85,7 @@ export function publishPreview(
   status: PolicyStatus,
   superseded: readonly DesiredRecord[],
   remaining: readonly DesiredRecord[],
+  wording: PublishWording = {},
 ): PreviewContent {
   const target = `${KIND_LABEL[record.kind]} ${record.subject}`;
   const from = currentVersion(status, record.kind, record.subject);
@@ -94,7 +103,9 @@ export function publishPreview(
       basis(status.effective_hash),
       {
         label: '扩大项',
-        value: expansions ? `${expansions} 项，见上方校验报告` : '无',
+        value: expansions
+          ? `${expansions} 项，${wording.expansionsWhere ?? '见上方校验报告'}`
+          : '无',
         signal: expansions > 0,
       },
       {
@@ -122,7 +133,7 @@ export function publishPreview(
     notes: [
       ...(report.retire ? ['这是一次撤销：发布后该对象不再有生效版本。'] : []),
       '不可撤回：发布后成为新的生效版本，版本历史只增不减；要改回只能再发布或回滚出新版本。',
-      L3_NOTE('发布'),
+      wording.stepUp ?? L3_NOTE('发布'),
     ],
     // 还有更新的草案时，确认按钮也点明发的是较早的这一份，不让人当成在发最新的。
     confirmLabel: remaining.length ? '确认发布这份较早的草案' : '确认发布',
@@ -169,6 +180,37 @@ export function publishHint(
       : []),
   ];
   return parts.length ? parts.join('') : null;
+}
+
+/**
+ * 撤回一份未发布的草案（T-200，驾驶舱的「退回」）：AI 的提案上叫「退回」，自己交的叫「撤回」，
+ * 接口是同一个。策略页、规则页的「撤回草案」不出这个框，照旧点了就撤。
+ */
+export function withdrawPreview(record: DesiredRecord): PreviewContent {
+  const target = `${KIND_LABEL[record.kind]} ${record.subject}`;
+  const verb = withdrawVerb(record);
+  return {
+    title: `${verb} ${target}`,
+    facts: [
+      { label: '对象', value: target },
+      { label: '草案', value: record.id },
+      { label: '提交者', value: submitterOf(record) },
+      {
+        label: '结果',
+        value: '这份草案标为已撤回，不再等你处理；生效中的内容不变',
+      },
+    ],
+    notes: [
+      '不可撤回：撤回的草案不能恢复；要再提，得重新提交一份。',
+      '不需要一次性验证码：确认后立即提交。',
+    ],
+    confirmLabel: `确认${verb}`,
+  };
+}
+
+/** 撤回这份草案在界面上叫什么：AI 交的提案是「退回」，主人自己交的是「撤回」。 */
+export function withdrawVerb(record: DesiredRecord): '退回' | '撤回' {
+  return record.submitter_kind === 'agent' ? '退回' : '撤回';
 }
 
 /** 回滚到某个历史版本：新建一个正文等于它的版本，历史不变。 */

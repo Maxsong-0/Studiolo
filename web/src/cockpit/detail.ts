@@ -7,6 +7,7 @@
  * - 工作台待办：接口只给标题和出处，出处已经写在上面那一行，这里不再重复。
  *
  * 每段最多列 {@link DETAIL_LIMIT} 条，多的写明还有几条；一截文字最长 {@link DETAIL_TEXT_MAX} 个字，超了截短。
+ * 就地批准的执行预览开着时（T-200）不截条数，全部列出：要点头的东西得先看全。
  */
 import type { DiffEntry, Expansion } from '../policyModel';
 import type { PendingEntry } from './pending';
@@ -89,58 +90,80 @@ function diffLine(entry: DiffEntry): DetailLine {
   };
 }
 
-/** 一段：没有条目就不出这一段。`total` 是一共几条（接口另给了总数时用它，条目本身可能被截断）。 */
+/**
+ * 一段：没有条目就不出这一段。`limit` 是最多列几条；`total` 是一共几条
+ * （接口另给了总数时用它，条目本身可能被截断）。
+ */
 function section<Item>(
   id: DetailSection['id'],
   label: string,
   items: readonly Item[],
   toLine: (item: Item) => DetailLine,
+  limit: number,
   { total = items.length, note = null as string | null } = {},
 ): DetailSection[] {
   if (items.length === 0) return [];
-  const lines = items.slice(0, DETAIL_LIMIT).map(toLine);
+  const lines = items.slice(0, limit).map(toLine);
   const count = Math.max(total, items.length);
   return [{ id, label, count, lines, more: count - lines.length, note }];
 }
 
-export function entryDetail(entry: PendingEntry): DetailSection[] {
+/** `limit` 是每段最多列几条；就地批准的预览开着时传 `Infinity`，全部列出。 */
+export function entryDetail(
+  entry: PendingEntry,
+  limit: number = DETAIL_LIMIT,
+): DetailSection[] {
   switch (entry.source) {
     case 'policy': {
       const report = entry.desired.report;
       if (!report) return [];
       const { diff } = report;
       return [
-        ...section('problems', '问题', report.problems, (problem) => ({
-          mark: null,
-          code: problem.path,
-          parts: [brief(problem.message)],
-          note: null,
-        })),
+        ...section(
+          'problems',
+          '问题',
+          report.problems,
+          (problem) => ({
+            mark: null,
+            code: problem.path,
+            parts: [brief(problem.message)],
+            note: null,
+          }),
+          limit,
+        ),
         ...section(
           'expansions',
           '扩大',
           report.expansions,
           changeLine(EXPANSION),
+          limit,
         ),
         ...section(
           'narrowings',
           '收窄',
           report.narrowings,
           changeLine(NARROWING),
+          limit,
         ),
-        ...section('diff', '改动', diff.entries, diffLine, {
+        ...section('diff', '改动', diff.entries, diffLine, limit, {
           total: diff.added + diff.removed + diff.changed,
           note: diff.truncated ? '改动太多，接口只给了前一部分。' : null,
         }),
       ];
     }
     case 'board':
-      return section('paths', '写域', entry.item.paths, (path) => ({
-        mark: null,
-        code: path,
-        parts: [],
-        note: null,
-      }));
+      return section(
+        'paths',
+        '写域',
+        entry.item.paths,
+        (path) => ({
+          mark: null,
+          code: path,
+          parts: [],
+          note: null,
+        }),
+        limit,
+      );
     case 'inbox':
       return [];
   }

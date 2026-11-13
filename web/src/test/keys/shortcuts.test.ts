@@ -372,6 +372,40 @@ describe('一次按键归谁', () => {
     ).toEqual({ kind: 'bound', key: 'j' });
   });
 
+  it('驾驶舱的 A 批准、R 退回（T-200）：单独按交给登记的地方；「G R」是去规则页，不落到退回上', () => {
+    const { value, bound, sequence } = state();
+    bound.set(QUEUE_KEYS.approve, {});
+    bound.set(QUEUE_KEYS.reject, {});
+    expect(decideKey(press('a'), value)).toEqual({ kind: 'bound', key: 'a' });
+    expect(decideKey(press('r'), value)).toEqual({ kind: 'bound', key: 'r' });
+    // 开着大写锁定也认；带 Shift 的不算。
+    expect(decideKey(press('A'), value)).toEqual({ kind: 'bound', key: 'a' });
+    expect(decideKey(press('R', { shiftKey: true }), value)).toEqual({
+      kind: 'none',
+    });
+    // 按住不放只认第一下：不会连着打开又收起。
+    expect(decideKey(press('a', { repeat: true }), value)).toEqual({
+      kind: 'none',
+    });
+    // G 之后的 R 归这次跳转。
+    expect(decideKey(press('g'), value)).toEqual({ kind: 'pending' });
+    expect(decideKey(press('r'), value)).toEqual({
+      kind: 'go',
+      view: 'rules',
+    });
+    expect(sequence.pending()).toBe(false);
+    // G 之后的 A 不是跳转字母：这一键作废，也不落到批准上。
+    expect(decideKey(press('g'), value)).toEqual({ kind: 'pending' });
+    expect(decideKey(press('a'), value)).toEqual({ kind: 'cancelled' });
+    // 打字的地方、弹层开着：都不算。
+    expect(
+      decideKey(press('a', { target: target('<input type="text" />') }), value),
+    ).toEqual({ kind: 'none' });
+    expect(decideKey(press('r'), { ...value, dialogOpen: true })).toEqual({
+      kind: 'none',
+    });
+  });
+
   it('没有登记的键不管；登记方说焦点在这里不算数的也不管', () => {
     const { value, bound } = state();
     expect(decideKey(press('j'), value)).toEqual({ kind: 'none' });
@@ -428,7 +462,7 @@ describe('一览的内容和监听用的是同一张表', () => {
       ).toBe(true);
   });
 
-  it('队列登记的四个键和「?」都列着', () => {
+  it('队列登记的每个键（J、K、Enter、H、A、R）和「?」都列着', () => {
     const listed = new Set(
       single.flatMap(({ row }) =>
         row.ways
@@ -438,6 +472,15 @@ describe('一览的内容和监听用的是同一张表', () => {
     );
     for (const key of [...Object.values(QUEUE_KEYS), SHEET_KEY])
       expect(listed.has(normalizeKey(key)), key).toBe(true);
+  });
+
+  it('会写东西的两个键写明只到确认那一步', () => {
+    const does = (key: string) =>
+      single.find(({ row }) =>
+        row.ways.some((way) => !way.sequence && way.keys.join('') === key),
+      )?.row.does ?? '';
+    expect(does('A')).toContain('只展开执行预览，点了确认才发布');
+    expect(does('R')).toContain('只展开确认框，点了确认才撤回');
   });
 
   it('⌘K 那一组不算单键快捷键：关掉开关后它还在', () => {
