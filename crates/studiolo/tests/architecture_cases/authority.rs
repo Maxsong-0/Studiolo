@@ -46,6 +46,34 @@ fn checkpoint_staging_keeps_creation_nofollow_and_atomic_no_replace_closed() {
 }
 
 #[test]
+fn checkpoint_shared_permissions_stay_bound_to_verified_original_descriptors() {
+    for (file, anchor) in [
+        ("io/share.rs", "file.check(self, name)?;"),
+        ("io/acl.rs", "system.posix_acl_default"),
+    ] {
+        let path = std::path::PathBuf::from("crates/backup/src/checkpoint/staging").join(file);
+        let source = fs::read_to_string(workspace_root().join(&path)).unwrap();
+        assert!(
+            source_violations("studiolo-backup", &path, &source).is_empty(),
+            "{file}"
+        );
+        assert!(source.contains(anchor));
+        for changed in [
+            source.replacen(anchor, "removed", 1),
+            format!("{source}\nfs::fchmod(other, Mode::all())?;"),
+        ] {
+            assert!(
+                !source_violations("studiolo-backup", &path, &changed).is_empty(),
+                "{file}"
+            );
+        }
+        assert!(
+            !source_violations("studiolo-backup", Path::new("src/other.rs"), &source).is_empty()
+        );
+    }
+}
+
+#[test]
 fn authority_scanner_detects_sneaky_source_fixture() {
     let fixture = r#"
         use cap_std::ambient_authority;

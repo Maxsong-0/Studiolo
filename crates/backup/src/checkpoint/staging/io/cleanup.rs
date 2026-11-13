@@ -4,6 +4,8 @@ use crate::checkpoint::staging::{MAX_NODES, Result, StagingError};
 
 impl Directory {
     pub fn discard(&self, parent: &Self, name: &str) -> Result<()> {
+        self.access.require_writer()?;
+        parent.access.require_writer()?;
         component(name)?;
         if !parent.exists(name)? {
             return Ok(());

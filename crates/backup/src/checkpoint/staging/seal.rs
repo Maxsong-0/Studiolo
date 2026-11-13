@@ -1,9 +1,8 @@
 //! 清单与视图的摘要一并绑定；最终目录仅接受登记过的四个文件/目录。
 mod metadata;
+mod read;
 use super::catalog::CatalogEntry;
-use super::{
-    Directory, Result, SourceCatalog, StagingArea, StagingError, check_deadline, digest, tree,
-};
+use super::{Result, SourceCatalog, StagingArea, StagingError, check_deadline, digest, tree};
 use crate::checkpoint::{
     manifest::{CheckpointManifest, ManifestInputs},
     types::{
@@ -140,77 +139,34 @@ impl StagingArea {
             checkpoint_id: self.checkpoint_id.clone(),
             seal_sha256,
         };
-        SealedCheckpoint::open(&self.parent_path, &reference, inputs.now, self.deadline)
+        let mut sealed = SealedCheckpoint::verify_directory(
+            &self.pending,
+            &final_root,
+            &reference,
+            inputs.now,
+            self.deadline,
+        )?;
+        if let Some(identity) = self.reader {
+            self.pending.share_contents(identity, self.deadline)?;
+            // 根仍为 0500：共享子节点全量核验通过后才允许 worker 进入。
+            sealed = SealedCheckpoint::verify_directory(
+                &self.pending,
+                &final_root,
+                &reference,
+                inputs.now,
+                self.deadline,
+            )?;
+            self.parent.check_path(&self.parent_path)?;
+            check_deadline(self.deadline)?;
+            self.pending.activate_reader()?;
+            self.pending.check_path(&final_root)?;
+            self.parent.check_path(&self.parent_path)?;
+        }
+        check_deadline(self.deadline)?;
+        Ok(sealed)
     }
 }
 impl SealedCheckpoint {
-    /// worker/restore 重开时重新计算每一个字节；外部请求只传封存引用，不传路径或票据。
-    pub fn open(
-        parent: &Path,
-        reference: &SealedReference,
-        now: InstantMillis,
-        deadline: Instant,
-    ) -> Result<Self> {
-        let started = Instant::now();
-        check_deadline(deadline)?;
-        let root_path = Self::root_path(parent, &reference.checkpoint_id);
-        let directory = Directory::open(&root_path, true)?;
-        directory.require_readonly()?;
-        if directory.names(5)? != ["data", "inclusion.json", "manifest.json", "seal.json"] {
-            return Err(StagingError::Manifest);
-        }
-        let (seal, hash): (DiskSeal, _) = read(&directory, "seal.json", deadline)?;
-        if hash != reference.seal_sha256
-            || seal.schema != 1
-            || seal.ticket.checkpoint_id != reference.checkpoint_id
-            || seal.ticket.transfer_source.root != root_path
-            || now >= seal.ticket.transfer_source.expires_at
-            || seal.ticket.content_cutoff > now
-        {
-            return Err(StagingError::Manifest);
-        }
-        let deadline = expiry_deadline(
-            deadline,
-            started,
-            now,
-            seal.ticket.transfer_source.expires_at,
-        )?;
-        let (manifest, hash): (CheckpointManifest, _) =
-            read(&directory, "manifest.json", deadline)?;
-        if hash != seal.manifest_sha256 {
-            return Err(StagingError::Manifest);
-        }
-        let reconstructed = CheckpointManifest::build(
-            &seal.ticket,
-            ManifestInputs {
-                application_packages: manifest.application_packages.clone(),
-                cli_packages: manifest.cli_packages.clone(),
-                deployment: manifest.deployment.clone(),
-                secret_references: manifest.secret_references.clone(),
-                audit_coverage: manifest.audit_coverage,
-            },
-        )
-        .map_err(|_| StagingError::Manifest)?;
-        if reconstructed != manifest {
-            return Err(StagingError::Manifest);
-        }
-        let (inclusion, hash): (InclusionDocument, _) =
-            read(&directory, "inclusion.json", deadline)?;
-        if hash != seal.inclusion_sha256
-            || inclusion.schema != 1
-            || inclusion.checkpoint_id != reference.checkpoint_id
-            || tree::verify(&directory.child("data")?, deadline)? != inclusion.view
-        {
-            return Err(StagingError::Changed);
-        }
-        directory.check_path(&root_path)?;
-        check_deadline(deadline)?;
-        Ok(Self {
-            reference: reference.clone(),
-            ticket: seal.ticket,
-            manifest,
-        })
-    }
     /// 已验证的原封存引用。
     #[must_use]
     pub fn reference(&self) -> &SealedReference {

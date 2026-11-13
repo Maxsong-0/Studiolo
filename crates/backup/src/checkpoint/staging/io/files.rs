@@ -1,5 +1,5 @@
 //! 文件内容只经固定缓冲读取，创建用 EXCL；前后核同一 FD 与重新打开的路径。
-use super::{Directory, FileType, Mode, OFlags, component, error, fs};
+use super::{Directory, FileType, Mode, OFlags, access::Access, component, error, fs};
 use crate::checkpoint::staging::{Result, StagingError};
 use std::{
     fs::{File, Metadata},
@@ -10,6 +10,7 @@ use std::{
 pub(in crate::checkpoint::staging) struct Regular {
     file: File,
     pin: Metadata,
+    access: Access,
 }
 impl Regular {
     pub fn open(parent: &Directory, name: &str) -> Result<Self> {
@@ -21,9 +22,10 @@ impl Regular {
             Mode::empty(),
         )
         .map_err(error)?;
-        Self::new(File::from(fd), parent.pin.0)
+        Self::new(File::from(fd), parent.pin.0, parent.access)
     }
     pub fn create(parent: &Directory, name: &str, size: u64) -> Result<Self> {
+        parent.access.require_writer()?;
         component(name)?;
         parent.capacity(size)?;
         let fd = fs::openat(
@@ -33,25 +35,25 @@ impl Regular {
             Mode::RUSR | Mode::WUSR,
         )
         .map_err(error)?;
-        Self::new(File::from(fd), parent.pin.0)
+        Self::new(File::from(fd), parent.pin.0, parent.access)
     }
-    fn new(file: File, device: u64) -> Result<Self> {
+    fn new(file: File, device: u64, access: Access) -> Result<Self> {
+        super::acl::require_no_acl(&file, false)?;
         let pin = file.metadata().map_err(|_| StagingError::Unavailable)?;
         if FileType::from_raw_mode(pin.mode()) != FileType::RegularFile
             || pin.nlink() != 1
             || pin.dev() != device
-            || pin.uid() != rustix::process::geteuid().as_raw()
-            || !matches!(pin.mode() & 0o7777, 0o600 | 0o400)
+            || !access.file(pin.uid(), pin.gid(), pin.mode())
         {
             return Err(StagingError::UnsafeRoot);
         }
-        Ok(Self { file, pin })
+        Ok(Self { file, pin, access })
     }
     pub fn len(&self) -> u64 {
         self.pin.len()
     }
     pub fn require_readonly(&self) -> Result<()> {
-        if self.pin.mode() & 0o7777 != 0o400 {
+        if self.pin.mode() & 0o7777 != self.access.readonly_file() {
             return Err(StagingError::UnsafeRoot);
         }
         Ok(())
@@ -62,6 +64,7 @@ impl Regular {
             .map_err(|_| StagingError::Unavailable)
     }
     pub fn write(&mut self, bytes: &[u8]) -> Result<()> {
+        self.access.require_writer()?;
         self.file
             .write_all(bytes)
             .map_err(|_| StagingError::Unavailable)
@@ -78,10 +81,23 @@ impl Regular {
         Ok(())
     }
     pub fn finish(self) -> Result<()> {
+        self.access.require_writer()?;
         self.file
             .sync_all()
             .map_err(|_| StagingError::Unavailable)?;
         fs::fchmod(&self.file, Mode::RUSR).map_err(error)?;
+        self.file.sync_all().map_err(|_| StagingError::Unavailable)
+    }
+    pub(super) fn grant_reader(self, reader_gid: u32) -> Result<()> {
+        self.access.require_writer()?;
+        self.require_readonly()?;
+        fs::fchown(
+            &self.file,
+            None,
+            Some(rustix::process::Gid::from_raw(reader_gid)),
+        )
+        .map_err(error)?;
+        fs::fchmod(&self.file, Mode::RUSR | Mode::RGRP).map_err(error)?;
         self.file.sync_all().map_err(|_| StagingError::Unavailable)
     }
 }

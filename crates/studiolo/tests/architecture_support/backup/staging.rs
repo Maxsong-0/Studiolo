@@ -7,6 +7,8 @@ pub(super) fn remainder(path: &Path, source: &str) -> String {
             source,
             &[
                 "self.check_child(parent,name)?;",
+                "self.access.require_writer()?;",
+                "parent.access.require_writer()?;",
                 "letmutremaining=MAX_NODES;",
                 "ifdepth>64",
                 "child.check_child(self,name)?;",
@@ -20,12 +22,46 @@ pub(super) fn remainder(path: &Path, source: &str) -> String {
             ],
         );
     }
+    if path.ends_with("crates/backup/src/checkpoint/staging/io/acl.rs") {
+        return checked_closed(
+            source,
+            &[
+                "[\"system.posix_acl_access\",\"system.posix_acl_default\"]",
+                "_=>returnErr(StagingError::UnsafeRoot)",
+            ],
+            &[("rustix::fs::fgetxattr(fd,name,&mutbyte[..])", 1)],
+        );
+    }
+    if path.ends_with("crates/backup/src/checkpoint/staging/io/share.rs") {
+        return checked_closed(
+            source,
+            &[
+                "self.access!=Access::Private||depth>64||identity.producer_uid!=rustix::process::geteuid().as_raw()",
+                "file.check(self,name)?;",
+                "self.require_readonly()?;",
+                "self.access=Access::SharingRoot(identity);",
+                "letAccess::SharingRoot(identity)=self.accesselse",
+            ],
+            &[
+                (
+                    "fs::fchown(&self.fd,None,Some(rustix::process::Gid::from_raw(identity.reader_gid)))",
+                    1,
+                ),
+                (
+                    "fs::fchmod(&self.fd,Mode::RUSR|Mode::XUSR|Mode::RGRP|Mode::XGRP)",
+                    1,
+                ),
+            ],
+        );
+    }
     if path.ends_with("crates/backup/src/checkpoint/staging/io.rs") {
         return checked_closed(
             source,
             &[
                 ".union(OFlags::NOFOLLOW)",
-                "||private&&!matches!(st.st_mode&0o7777,0o700|0o500)",
+                "!access.directory(st.st_uid,st.st_gid,st.st_mode)",
+                "acl::require_no_acl(&fd,true)?;",
+                "self.access.require_writer()?;",
                 "component(name)?;",
                 "child.pin.0!=self.pin.0",
                 "a.starts_with(b)||b.starts_with(a)||ancestor(a,right.pin)?||ancestor(b,left.pin)?",
@@ -58,7 +94,9 @@ pub(super) fn remainder(path: &Path, source: &str) -> String {
                 "component(name)?;",
                 "parent.capacity(size)?;",
                 "pin.nlink()!=1||pin.dev()!=device",
-                "!matches!(pin.mode()&0o7777,0o600|0o400)",
+                "!access.file(pin.uid(),pin.gid(),pin.mode())",
+                "super::acl::require_no_acl(&file,false)?;",
+                "self.access.require_writer()?;",
                 "!same(&self.pin,&after)||!same(&after,&reopened.pin)",
             ],
             &[
@@ -74,7 +112,12 @@ pub(super) fn remainder(path: &Path, source: &str) -> String {
                 ),
                 ("File::from(fd)", 2),
                 ("self.file.write_all(bytes)", 1),
-                ("self.file.sync_all()", 2),
+                ("self.file.sync_all()", 3),
+                (
+                    "fs::fchown(&self.file,None,Some(rustix::process::Gid::from_raw(reader_gid)))",
+                    1,
+                ),
+                ("fs::fchmod(&self.file,Mode::RUSR|Mode::RGRP)", 1),
                 ("fs::fchmod(&self.file,Mode::RUSR)", 1),
             ],
         );

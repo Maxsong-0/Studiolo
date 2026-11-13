@@ -1,6 +1,7 @@
 //! 实际六 owner 导出接原子封存；所有内容均为专门生成并显式批准 Full 的测试数据。
 use super::*;
 use crate::checkpoint::CheckpointTimes;
+use std::os::unix::fs::MetadataExt as _;
 use std::path::Path;
 use studiolo_backup::checkpoint::{
     inclusion::{SourceCategory, SourceRecord},
@@ -14,8 +15,8 @@ use studiolo_core::{
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn checkpoint_actual_owners_hold_all_gates_through_atomic_readonly_seal() {
-    for mode in 0..3 {
-        let reject = mode != 0;
+    for mode in 0..4 {
+        let reject = matches!(mode, 1 | 2);
         let f = Setup::new(true).await;
         let parent = target(&f.fixture, "staging");
         let ephemeral = target(&f.fixture, "ephemeral");
@@ -23,13 +24,26 @@ async fn checkpoint_actual_owners_hold_all_gates_through_atomic_readonly_seal() 
             "vault", "data", "auth", "control", "agent", "policy", "audit",
         ]
         .map(|name| f.fixture.root.join(name));
-        let area = StagingArea::create(
-            &parent,
-            f.key.checkpoint_id.clone(),
-            &sources,
-            &ephemeral,
-            Instant::now() + Duration::from_secs(25),
-        )
+        let reader_gid = fs::metadata(&parent).unwrap().gid();
+        let area = if mode == 3 {
+            fs::set_permissions(&parent, fs::Permissions::from_mode(0o750)).unwrap();
+            StagingArea::create_for_reader(
+                &parent,
+                f.key.checkpoint_id.clone(),
+                &sources,
+                &ephemeral,
+                reader_gid,
+                Instant::now() + Duration::from_secs(25),
+            )
+        } else {
+            StagingArea::create(
+                &parent,
+                f.key.checkpoint_id.clone(),
+                &sources,
+                &ephemeral,
+                Instant::now() + Duration::from_secs(25),
+            )
+        }
         .unwrap();
         let exports_path = area.export_root().to_owned();
         let frozen = f
@@ -88,15 +102,23 @@ async fn checkpoint_actual_owners_hold_all_gates_through_atomic_readonly_seal() 
         f.writable(false);
         if let Ok(sealed) = result {
             assert_eq!(sealed.manifest().audit_coverage.acked_events_checked, 3);
-            assert!(
+            let reopened = if mode == 3 {
+                SealedCheckpoint::open_shared(
+                    &parent,
+                    sealed.reference(),
+                    reader_gid,
+                    InstantMillis::from_millis(1001),
+                    Instant::now() + Duration::from_secs(10),
+                )
+            } else {
                 SealedCheckpoint::open(
                     &parent,
                     sealed.reference(),
                     InstantMillis::from_millis(1001),
-                    Instant::now() + Duration::from_secs(10)
+                    Instant::now() + Duration::from_secs(10),
                 )
-                .is_ok()
-            );
+            };
+            assert!(reopened.is_ok());
             let root = &sealed.ticket().transfer_source.root;
             for path in [
                 "auth/auth.sqlite3",

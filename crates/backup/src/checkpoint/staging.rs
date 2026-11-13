@@ -2,11 +2,13 @@
 mod catalog;
 mod io;
 mod seal;
+mod shared;
 mod tree;
 
 pub use catalog::{ObjectRegistration, RedactedObject, SourceCatalog};
 use io::Directory;
 pub use seal::{SealInputs, SealedCheckpoint, SealedReference};
+pub use shared::ReaderIdentity;
 use std::{
     path::{Path, PathBuf},
     time::Instant,
@@ -46,6 +48,7 @@ pub struct StagingArea {
     protected: Vec<(PathBuf, Directory)>,
     ephemeral: (PathBuf, Directory),
     deadline: Instant,
+    reader: Option<ReaderIdentity>,
 }
 impl StagingArea {
     /// 所有目录必须已获部署批准。ephemeral 与源/封存根须物理分离；链接不参与解析。
@@ -57,11 +60,50 @@ impl StagingArea {
         ephemeral_root: &Path,
         deadline: Instant,
     ) -> Result<Self> {
+        Self::create_inner(
+            parent,
+            checkpoint_id,
+            source_roots,
+            ephemeral_root,
+            deadline,
+            None,
+        )
+    }
+    /// 共享父目录须事先配置为当前生产者 UID、专用读取组 GID、0750；本函数不改部署权限。
+    /// 原始导出与中间目录仍为 0700，只有过滤封存复验后才开放最终根。
+    pub fn create_for_reader(
+        parent: &Path,
+        checkpoint_id: CheckpointId,
+        source_roots: &[PathBuf],
+        ephemeral_root: &Path,
+        reader_gid: u32,
+        deadline: Instant,
+    ) -> Result<Self> {
+        Self::create_inner(
+            parent,
+            checkpoint_id,
+            source_roots,
+            ephemeral_root,
+            deadline,
+            Some(ReaderIdentity::producer(reader_gid)?),
+        )
+    }
+    fn create_inner(
+        parent: &Path,
+        checkpoint_id: CheckpointId,
+        source_roots: &[PathBuf],
+        ephemeral_root: &Path,
+        deadline: Instant,
+        reader: Option<ReaderIdentity>,
+    ) -> Result<Self> {
         check_deadline(deadline)?;
         if source_roots.is_empty() {
             return Err(StagingError::UnsafeRoot);
         }
-        let parent_dir = Directory::open(parent, true)?;
+        let parent_dir = match reader {
+            Some(identity) => Directory::publisher(parent, identity)?,
+            None => Directory::open(parent, true)?,
+        };
         let ephemeral = Directory::open(ephemeral_root, true)?;
         io::disjoint(parent, &parent_dir, ephemeral_root, &ephemeral)?;
         let mut protected = Vec::new();
@@ -98,6 +140,7 @@ impl StagingArea {
             protected,
             ephemeral: (ephemeral_root.to_owned(), ephemeral),
             deadline,
+            reader,
         };
         area.check()?;
         Ok(area)

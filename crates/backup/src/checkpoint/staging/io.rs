@@ -1,7 +1,11 @@
 //! 本目录的路径能力仅在这里打开；逐层 nofollow，后续操作只相对已持有 FD。
+mod access;
+mod acl;
 mod cleanup;
 mod files;
+mod share;
 use super::{Result, StagingError};
+use access::Access;
 pub(super) use files::Regular;
 use rustix::{
     fd::OwnedFd,
@@ -12,7 +16,7 @@ use std::path::{Component, Path};
 pub(super) struct Directory {
     fd: OwnedFd,
     pin: (u64, u64),
-    private: bool,
+    access: Access,
 }
 const FLAGS: OFlags = OFlags::RDONLY
     .union(OFlags::DIRECTORY)
@@ -21,6 +25,22 @@ const FLAGS: OFlags = OFlags::RDONLY
     .union(OFlags::NONBLOCK);
 impl Directory {
     pub fn open(path: &Path, private: bool) -> Result<Self> {
+        Self::open_with(
+            path,
+            if private {
+                Access::Private
+            } else {
+                Access::Source
+            },
+        )
+    }
+    pub fn publisher(path: &Path, identity: super::ReaderIdentity) -> Result<Self> {
+        Self::open_with(path, Access::Publisher(identity))
+    }
+    pub fn reader_parent(path: &Path, identity: super::ReaderIdentity) -> Result<Self> {
+        Self::open_with(path, Access::SharedParent(identity))
+    }
+    fn open_with(path: &Path, access: Access) -> Result<Self> {
         if !path.is_absolute()
             || path
                 .components()
@@ -34,27 +54,32 @@ impl Directory {
                 fd = fs::openat(&fd, name, FLAGS, Mode::empty()).map_err(error)?;
             }
         }
-        Self::from_fd(fd, private)
+        Self::from_fd(fd, access)
     }
-    fn from_fd(fd: OwnedFd, private: bool) -> Result<Self> {
+    fn from_fd(fd: OwnedFd, access: Access) -> Result<Self> {
         let st = fs::fstat(&fd).map_err(error)?;
         if FileType::from_raw_mode(st.st_mode) != FileType::Directory
-            || st.st_uid != rustix::process::geteuid().as_raw()
-            || private && !matches!(st.st_mode & 0o7777, 0o700 | 0o500)
+            || !access.directory(st.st_uid, st.st_gid, st.st_mode)
         {
             return Err(StagingError::UnsafeRoot);
+        }
+        if access != Access::Source {
+            acl::require_no_acl(&fd, true)?;
         }
         Ok(Self {
             fd,
             pin: (st.st_dev, st.st_ino),
-            private,
+            access,
         })
     }
     pub fn child(&self, name: &str) -> Result<Self> {
+        self.child_with(name, self.access.child())
+    }
+    fn child_with(&self, name: &str, access: Access) -> Result<Self> {
         component(name)?;
         let child = Self::from_fd(
             fs::openat(&self.fd, name, FLAGS, Mode::empty()).map_err(error)?,
-            true,
+            access,
         )?;
         if child.pin.0 != self.pin.0 {
             return Err(StagingError::UnsafeRoot);
@@ -62,6 +87,7 @@ impl Directory {
         Ok(child)
     }
     pub fn create_dir(&self, name: &str) -> Result<Self> {
+        self.access.require_writer()?;
         component(name)?;
         self.capacity(4096)?;
         fs::mkdirat(&self.fd, name, Mode::RWXU).map_err(error)?;
@@ -69,7 +95,7 @@ impl Directory {
         self.child(name)
     }
     pub fn check_path(&self, path: &Path) -> Result<()> {
-        if Self::open(path, self.private)?.pin != self.pin {
+        if Self::open_with(path, self.access)?.pin != self.pin {
             return Err(StagingError::Changed);
         }
         Ok(())
@@ -122,12 +148,16 @@ impl Directory {
         fs::fsync(&self.fd).map_err(error)
     }
     pub fn readonly(&self) -> Result<()> {
+        self.access.require_writer()?;
         fs::fchmod(&self.fd, Mode::RUSR | Mode::XUSR).map_err(error)?;
         self.sync()
     }
     pub fn require_readonly(&self) -> Result<()> {
+        acl::require_no_acl(&self.fd, true)?;
         let st = fs::fstat(&self.fd).map_err(error)?;
-        if st.st_mode & 0o7777 != 0o500 {
+        if !self.access.directory(st.st_uid, st.st_gid, st.st_mode)
+            || st.st_mode & 0o7777 != self.access.readonly_directory()
+        {
             return Err(StagingError::UnsafeRoot);
         }
         Ok(())
@@ -147,6 +177,7 @@ impl Directory {
         Ok(())
     }
     pub fn publish(&self, pending: &str, final_name: &str) -> Result<()> {
+        self.access.require_writer()?;
         component(pending)?;
         component(final_name)?;
         // Linux 的 NOREPLACE 是原子性要求，不能用「先 exists 再覆盖式 rename」。

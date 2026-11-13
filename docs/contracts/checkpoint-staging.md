@@ -4,7 +4,7 @@
 
 ## 真实文件边界
 
-- 已批准 staging 父目录必须私有，源根、ephemeral 与 staging 逐层 nofollow 打开并检查物理祖先，不能只依赖路径字符串。所有根的原 inode 保持固定。
+- 已批准 staging 父目录默认私有；专用 worker 交接使用下述 0750 读取组布局。源根、ephemeral 与 staging 逐层 nofollow 打开并检查物理祖先，不能只依赖路径字符串。所有根的原 inode 保持固定。
 - checkpoint ID 只经 SHA-256 形成 `export-*`、`pending-*`、`sealed-*` 固定名字；不能向名称注入宿主机路径。
 - owner 导出到本次新建 `export-*` 的 11 个固定子目录。所有导出文件必须是当前用户的独立普通文件，私有权限；链接、特殊文件、跨设备节点拒绝。
 - SourceCatalog 必须来自可信 owner/effective policy。每个实际文件恰好一份登记；缺项、多项、重复或折叠撞名、标签缺失、保留期缺失、声明 revision 与实际流式 revision 不一致均失败关闭。调用方的 observed_revision 不被当成证据。
@@ -18,10 +18,18 @@
 
 发布前必须回收含排除 raw 的原始 export；清理只沿本次新建目录的原 FD，拒绝根身份替换，unlink 不跟随链接。失败/展开也回收本次 export 与 pending，无法完成的 IO/身份异常不会改删其他目录；异常残留须由受控回收程序处理。只有 Linux 的原子 NOREPLACE rename 加父目录 fsync 成功，且最终目录重开复验成功，才返回 `SealedReference`。没有覆盖旧尝试或扫描目录选“最新”的行为。
 
-worker 只能接受原引用：checkpoint ID 与 seal 的外部摘要。`SealedCheckpoint::open` 重开固定目录、检查只读权限与精确布局、核 manifest/票据一致性、重新哈希所有内容，并验证保留期与同一剩余期限。原始导出、清单计算和文件复验耗时不能重置全局冻结期限或传输副本保留期。
+读取只接受原引用：checkpoint ID 与 seal 的外部摘要。`SealedCheckpoint::open` 重开私有固定目录、检查只读权限与精确布局、核 manifest/票据一致性、重新哈希所有内容，并验证保留期与同一剩余期限。原始导出、清单计算和文件复验耗时不能重置全局冻结期限或传输副本保留期。
+
+## 独立身份的只读交接
+
+`create_for_reader` 要求部署预先建立生产者 UID、专用 worker 读取组 GID 的 0750 父目录。它不创建系统账号、不修改已有父目录权限。原始 export 和 pending 保持 0700；发布并完整核验私有封存后，逐个原 FD 将过滤视图文件改为 0440、子目录改为 0550，组固定为已批准 GID。根仍为 0500，再完整核验一次全部元数据和内容；只有通过后才把根改为 0550 并返回引用。
+
+读取组无写权，worker 使用不同非 root UID。`open_for_worker` 从受保护部署配置接收 `ReaderIdentity`，拒绝同 UID/root 冒充独立身份，每次读取核生产者 UID、读取组 GID、精确权限、原父目录/根身份和全部字节；不能把请求自报的 UID/GID 当成配置。`open_shared` 仅供生产者恢复自己的待交接记录，其生产者 UID 固定为当前系统身份。
+
+Linux 上私有和共享节点都拒绝 POSIX access/default ACL，避免 chmod 改 mask 时把继承的命名用户重新放开；不支持此权限验证的平台拒绝启用该文件能力。只读组权限不代表 NAS 不可变性，也不限制生产者自身重新 chmod；实际 worker 仍须在传输前后核原引用，并验证远端完整内容。
 
 ## 验证与未接线范围
 
-真实文件契约覆盖过滤/独立 inode/只读权限/内容篡改/多余文件/链接/硬链接/缺元数据/revision/过期/错误引用。实际六 owner + 双 Audit 集成在整个封存及失败回收期间检查 SQL 屏障和两端语义门禁；Bridge 明确 absent，不代替真实 cgroup 平台演练。
+真实文件契约覆盖过滤/独立 inode/只读权限/内容篡改/多余文件/链接/硬链接/缺元数据/revision/过期/错误引用，以及共享父目录、错误组、同 UID worker、access/default ACL 拒绝。实际六 owner + 双 Audit 集成在私有和共享封存及失败回收期间检查 SQL 屏障和两端语义门禁；Bridge 明确 absent，不代替真实 cgroup 平台演练。测试箱仅映射一个 UID，未把单 UID 的权限检查冒充两个生产账号的实际读取演练。
 
 生产来源登记仍须接可信元数据提供方；当前 TaskEngine 输入只存 restricted 分类，不是完整 DataLabels，测试里的 Full fixture 工厂不得用于生产默认分类。实际 startup/调度、独立仓库 worker、远端最终清单提交与完整新根恢复仍在 T147/T204 后续写域；本文件不表示整条 Rust 备份链已经完成。

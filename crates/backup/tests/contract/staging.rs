@@ -1,5 +1,6 @@
 //! 真实文件系统与过滤边界；owner 水位明确使用纯 fixture，不代替七 owner 集成验收。
 mod fixture;
+mod shared;
 use fixture::*;
 use std::{
     fs,
