@@ -67,6 +67,14 @@
   white-space: nowrap;
 }
 
+/* 「二次认证还有效 m 分 s 秒」里的时间（policy/AuthCountdown.tsx）：数字等宽，每秒变的时候不左右晃 */
+.policy-countdown__time {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  color: var(--ink);
+  white-space: nowrap;
+}
+
 /* ---------- 格子 ---------- */
 
 .ui-cell.policy-cell {

@@ -514,6 +514,38 @@
   font-size: var(--type-caption);
   line-height: 1.5;
 }
+/*
+ * 就地审批（T-200）：策略草案的行在细节下面多两个按钮。一条细线隔开；说明用次要色；
+ * 执行预览和动作结果沿用策略页的样式（policy.css），所以红色虚线框只在人按了批准或退回之后出现。
+ */
+.cockpit-review {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--hairline);
+}
+.cockpit-review__hint {
+  max-width: 72ch;
+  margin: 0;
+  font-size: var(--type-small);
+  line-height: 1.5;
+  color: var(--ink-2);
+}
+.cockpit-review__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+.cockpit-review__actions .ui-button {
+  min-height: var(--control-touch);
+}
+/* 就地审批的结果：写在标题下面，和别的说明同一种字，用墨色（近期认证还剩多久那一行的数字样式在 policy.css） */
+.cockpit-queue__outcome {
+  color: var(--ink);
+}
 /* 键位提示：只在有鼠标的设备上出现（下面的媒体查询里打开）；触屏上没有键盘，不占地方 */
 .cockpit-queue__keys {
   display: none;

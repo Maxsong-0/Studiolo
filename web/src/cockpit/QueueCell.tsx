@@ -12,20 +12,67 @@ import {
 } from 'react';
 import { QUEUE_KEYS } from '../keys/shortcuts';
 import { KeyScopeContext, useKeyBindings } from '../keys/useGlobalKeys';
+import { AuthCountdown } from '../policy/AuthCountdown';
+import { withdrawVerb } from '../policy/previews';
+import type { Feedback } from '../policy/usePolicyActions';
+import type { ListedDesired } from '../policyModel';
 import type { OpenSource } from '../types';
 import { Button, KeyHint } from '../ui';
 import { cssVars } from '../ui/dom';
 import { EntryDetail } from './EntryDetail';
+import { InlineReview, type QueueReview } from './InlineReview';
 import { laterStore, splitLater, type LaterStore } from './later';
 import type { OverviewState, PolicyPendingState } from './model';
-import { entryKey, type PendingEntry, type PendingPlan } from './pending';
+import {
+  entryKey,
+  policyEntryKey,
+  type PendingEntry,
+  type PendingPlan,
+} from './pending';
 import { queueText } from './queueText';
+import { REVIEW_ORIGIN, publishKey } from './review';
 import { WAIT_MARKS, waitFraction, waitLabel } from './wait';
 import '../styles/cockpit.css';
 import '../styles/keys.css';
 
 /** 「稍后」的行淡出之后才挪走；动画没跑起来（样式没载入、行被换掉）时最多等这么久。 */
 const LEAVE_FALLBACK_MS = 400;
+
+/** 策略还没读到时的空草案列表：同一个数组，不让下面的行白白重画。 */
+const NO_DRAFTS: readonly ListedDesired[] = [];
+
+/** 就地审批里刚交出去的那一件写动作：哪一行、叫什么（出错时写在队列标题下面，要点明是哪一份）。 */
+interface Acted {
+  key: string;
+  label: string;
+}
+
+/**
+ * 就地审批的结果要不要写在队列标题下面：结果属于的那一行不是眼下选中的（多半是发布、退回之后
+ * 已经不在队列里了）才写；还选中着，结果就在那一行自己的就地审批里。
+ */
+function reviewOutcome(
+  review: QueueReview,
+  selected: string | null,
+  acted: Acted | null,
+): { text: string; failed: boolean } | null {
+  const elsewhere = (feedback: Feedback | null) => {
+    if (!feedback?.origin.startsWith(REVIEW_ORIGIN)) return null;
+    const key = policyEntryKey(feedback.origin.slice(REVIEW_ORIGIN.length));
+    return key === selected ? null : { key, text: feedback.text };
+  };
+  const failed = elsewhere(review.actions.error);
+  if (failed)
+    return {
+      failed: true,
+      text:
+        acted?.key === failed.key
+          ? `${acted.label}：${failed.text}`
+          : failed.text,
+    };
+  const done = elsewhere(review.actions.notice);
+  return done ? { failed: false, text: done.text } : null;
+}
 
 /**
  * 「等了多久」的图例：一条刻度，三道线是 10 分、1 时、1 天。
@@ -88,10 +135,13 @@ function Row({
   later,
   leaving,
   labels,
+  review,
+  drafts,
   onToggle,
   onOpen,
   onLater,
   onLeft,
+  onReviewed,
 }: {
   entry: PendingEntry;
   selected: boolean;
@@ -100,15 +150,25 @@ function Row({
   /** 刚按了「稍后」，正在淡出。 */
   leaving: boolean;
   labels: ReadonlyMap<string, string> | undefined;
+  /** 就地审批（只对策略草案的行有用）；没给就没有那两个按钮。 */
+  review: QueueReview | undefined;
+  /** 整份草案列表，给就地审批的执行预览用。 */
+  drafts: readonly ListedDesired[];
   onToggle: () => void;
   onOpen: () => void;
   /** 放到「稍后」，或者从「稍后再看」放回队列。 */
   onLater: () => void;
   /** 淡出走完了。 */
   onLeft: () => void;
+  /** 就地审批里交出去了一件写动作（确认了发布或退回，或者点了校验）；参数是对象的名字。 */
+  onReviewed: (label: string) => void;
 }) {
   const detailId = useId();
   const text = queueText(entry, labels);
+  // 就地批准的执行预览开着：细节全部列出，不截到前几条。
+  const approving =
+    entry.source === 'policy' &&
+    review?.actions.preview?.key === publishKey(entry.desired.id);
   // 只认这一行自己的淡出：行里别的东西的动画结束也会冒泡上来。
   const left = (event: AnimationEvent<HTMLLIElement>) => {
     if (event.target === event.currentTarget) onLeft();
@@ -170,7 +230,16 @@ function Row({
                 {later ? '放回队列' : '稍后'}
               </Button>
             </div>
-            <EntryDetail entry={entry} />
+            <EntryDetail entry={entry} full={approving} />
+            {review && entry.source === 'policy' ? (
+              <InlineReview
+                desired={entry.desired}
+                drafts={drafts}
+                actions={review.actions}
+                auth={review.auth}
+                onActed={onReviewed}
+              />
+            ) : null}
           </div>
         ) : null}
       </div>
@@ -248,10 +317,16 @@ function sourceNotes(
 /** 队列底下的键位提示：只在有鼠标的设备上显示（样式里控制），写的是这一格登记了的那几个键。 */
 function QueueKeys({
   enabled,
+  rejectVerb,
   onShowAll,
 }: {
   /** 单键快捷键开着没有。 */
   enabled: boolean;
+  /**
+   * 选中的那一行能就地批准、退回（是策略草案）时，R 在这一行叫什么（AI 的提案是「退回」，
+   * 自己交的是「撤回」，和按钮上写的一样）：多写 A、R 两个键。别的行是 null，不写。
+   */
+  rejectVerb: '退回' | '撤回' | null;
   onShowAll: () => void;
 }) {
   return (
@@ -271,6 +346,18 @@ function QueueKeys({
             <KeyHint className="keys-cap" keys={['H']} />
             稍后
           </li>
+          {rejectVerb ? (
+            <>
+              <li>
+                <KeyHint className="keys-cap" keys={['A']} />
+                批准
+              </li>
+              <li>
+                <KeyHint className="keys-cap" keys={['R']} />
+                {rejectVerb}
+              </li>
+            </>
+          ) : null}
           <li>
             <KeyHint className="keys-cap" keys={['G']} />
             跳到别的视图
@@ -301,6 +388,10 @@ function QueueKeys({
  *
  * 键盘（T-197）：J／K 上下选（到头不绕回），选中后焦点落到那一行的主按钮上；Enter 去处理；
  * H 把选中的那一件放到队尾的「稍后再看」，再按一次放回。「稍后」只是换个地方排，总数不变。
+ *
+ * 就地审批（T-200，给了 `review` 才有）：选中的是策略草案时，细节下面有「批准并发布」「退回」，
+ * A／R 两个键替人点这两个按钮——都只打开确认那一步。做完之后那一行不在队列里了：结果写在标题下面，
+ * 改选顶上来的那一行，焦点交给它的主按钮，接着审下一件。
  */
 export function QueueCell({
   plan,
@@ -313,6 +404,7 @@ export function QueueCell({
   onOpenPolicy,
   onRetryPolicy,
   later = laterStore(),
+  review,
 }: {
   plan: PendingPlan;
   board: OverviewState;
@@ -328,6 +420,8 @@ export function QueueCell({
   onRetryPolicy: () => void;
   /** 「稍后」的记号；缺省用全站那一份，测试里换成自己的。 */
   later?: LaterStore;
+  /** 就地批准、退回策略草案用的那一份写动作和近期认证读取；不给就没有就地审批。 */
+  review?: QueueReview;
 }) {
   const root = useRef<HTMLElement>(null);
   const scope = useContext(KeyScopeContext);
@@ -352,13 +446,45 @@ export function QueueCell({
   // 屏幕上的先后：照常排着的在前，「稍后再看」在后；J／K 按这个顺序走。
   const ordered = [...split.active, ...split.later];
   const keys = ordered.map(entryKey);
-  // 点过的那一行在重读之后不在队列里了（已经处理掉）：退回第一行。
+  // 点过的那一行在重读之后不在队列里了（已经处理掉）：改选顶上来的那一行（它原来的位置上现在的那一行），
+  // 不跳回第一行——连着审的时候不用再找回位置。照上一轮的顺序找它原来排第几。
+  const [known, setKnown] = useState(keys);
+  if (
+    known.length !== keys.length ||
+    known.some((key, index) => key !== keys[index])
+  ) {
+    setKnown(keys);
+    if (typeof picked === 'string' && !keys.includes(picked)) {
+      const at = known.indexOf(picked);
+      setPicked(at === -1 ? undefined : keys[Math.min(at, keys.length - 1)]);
+    }
+  }
   const selected =
     picked === null
       ? null
       : picked !== undefined && keys.includes(picked)
         ? picked
         : (keys[0] ?? null);
+  const drafts = policy.kind === 'ready' ? policy.desired : NO_DRAFTS;
+  // 就地审批里刚交出去的那一件写动作。
+  const [acted, setActed] = useState<Acted | null>(null);
+  // 等它做完、那一行不见了，把焦点交给新选中的那一行；记的是那一行的键。
+  const handoff = useRef<string | null>(null);
+  const outcome = review ? reviewOutcome(review, selected, acted) : null;
+  const selectedEntry = ordered.find(
+    (candidate) => entryKey(candidate) === selected,
+  );
+  // 选中的是策略草案、而且接了就地审批：键位提示多写 A、R，R 用这一行按钮上的叫法。
+  const rejectVerb =
+    review && selectedEntry?.source === 'policy'
+      ? withdrawVerb(selectedEntry.desired)
+      : null;
+  // 近期二次认证还有效的那一段；队列里还有策略草案时才写——没有可批的，这个数对人没用。
+  const authSpan =
+    review?.auth.state.kind === 'valid' &&
+    entries.some((entry) => entry.source === 'policy')
+      ? review.auth.state.window
+      : null;
   const notes = sourceNotes(board, policy, plan.truncated, onRetryPolicy);
   const settled =
     board.kind !== 'loading' &&
@@ -402,6 +528,27 @@ export function QueueCell({
       ?.focus({ preventScroll: true });
     row?.scrollIntoView({ block: 'nearest' });
   }, [focusRequest]);
+
+  // 就地审批的那一件做完了（没有动作在途、认证窗口也不开着）：那一行不见了（发布了、退回了、校验没通过），
+  // 就把焦点交给新选中的那一行，接着审下一件；那一行还在（没做成、取消了认证、校验通过），就不交了。
+  // 人已经把焦点放到别处时不抢。
+  const settledReview =
+    review !== undefined &&
+    !review.actions.busy &&
+    review.actions.pending === null;
+  useLayoutEffect(() => {
+    const key = handoff.current;
+    if (key === null || !settledReview) return;
+    handoff.current = null;
+    if (keys.includes(key)) return;
+    const active = document.activeElement;
+    if (
+      active === null ||
+      active === document.body ||
+      root.current?.contains(active)
+    )
+      requestFocus();
+  });
 
   function open(entry: PendingEntry) {
     if (entry.source === 'board') onOpenTask(entry.item.id);
@@ -484,10 +631,31 @@ export function QueueCell({
     requestFocus();
   }
 
+  /**
+   * 替人点一下选中行里就地审批的那个按钮（A 批准、R 退回）：键和鼠标走同一条路。
+   * 按钮不在（选中的不是策略草案）或者禁用着，就什么都不做；有一行正在淡出时也不做——
+   * 那一瞬间屏幕上选中的还是要走的那一行。
+   *
+   * 焦点先落到按钮上再点，和鼠标点它一样：确认框收起时焦点回到这个按钮（读屏念得出按的是哪一个），
+   * 不回到按键之前焦点所在的地方（可能是顶栏、别的格子）；做完之后那一行不见了，焦点才交得到
+   * 顶上来的那一行——焦点留在这一格之外的话，队列是不抢的。J／K 也是这样把焦点带进选中行的。
+   */
+  function press(selector: string) {
+    if (leaving !== null) return;
+    const button = root.current?.querySelector<HTMLButtonElement>(
+      `.cockpit-queue__row[data-selected] ${selector}`,
+    );
+    if (!button || button.disabled) return;
+    button.focus({ preventScroll: true });
+    button.click();
+  }
+
   useKeyBindings(
     {
       [QUEUE_KEYS.next]: { run: () => move(1), repeat: true },
       [QUEUE_KEYS.previous]: { run: () => move(-1), repeat: true },
+      [QUEUE_KEYS.approve]: { run: () => press('[data-queue-approve]') },
+      [QUEUE_KEYS.reject]: { run: () => press('[data-queue-reject]') },
       [QUEUE_KEYS.open]: {
         run: () => {
           const current = settle();
@@ -497,11 +665,13 @@ export function QueueCell({
           if (entry) open(entry);
         },
         // Enter 在别处另有意思：只在焦点没落在任何东西上、或者落在这一格里时才算「去处理」。
+        // 焦点在执行预览的框里时不算：人正在看要确认的东西，一下 Enter 不该把他带去别的页面。
         when: (target) =>
           !(target instanceof Element) ||
           target === document.body ||
           target === document.documentElement ||
-          Boolean(root.current?.contains(target)),
+          (Boolean(root.current?.contains(target)) &&
+            target.closest('.policy-preview') === null),
       },
       [QUEUE_KEYS.later]: { run: () => toggleLater(settle()) },
     },
@@ -518,10 +688,16 @@ export function QueueCell({
         later={inLater}
         leaving={key === leaving}
         labels={labels}
+        review={review}
+        drafts={drafts}
         onToggle={() => setPicked(key === selected ? null : key)}
         onOpen={() => open(entry)}
         onLater={() => toggleLater(key)}
         onLeft={() => finishLeave(key)}
+        onReviewed={(label) => {
+          setActed({ key, label });
+          handoff.current = key;
+        }}
       />
     );
   };
@@ -577,6 +753,23 @@ export function QueueCell({
               {note.body}
             </p>
           ))}
+          {/* 就地批准、退回的结果：那一行已经不在队列里（或者不是选中的那一行）了，写在这里 */}
+          {outcome ? (
+            <p
+              className="cockpit-note cockpit-queue__outcome"
+              role={outcome.failed ? 'alert' : 'status'}
+            >
+              {outcome.text}
+            </p>
+          ) : null}
+          {review && authSpan ? (
+            <AuthCountdown
+              className="cockpit-note cockpit-queue__auth"
+              span={authSpan}
+              now={review.auth.now}
+              onExpire={review.auth.expire}
+            />
+          ) : null}
         </div>
         {timed ? <WaitLegend /> : null}
       </header>
@@ -615,7 +808,11 @@ export function QueueCell({
         </p>
       ) : null}
       {entries.length > 0 && scope.live ? (
-        <QueueKeys enabled={singleKeys} onShowAll={scope.showSheet} />
+        <QueueKeys
+          enabled={singleKeys}
+          rejectVerb={rejectVerb}
+          onShowAll={scope.showSheet}
+        />
       ) : null}
     </section>
   );

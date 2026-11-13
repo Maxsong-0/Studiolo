@@ -45,11 +45,14 @@ export type Activation = {
 export type PendingStepUp = Activation & { attempt: number };
 /**
  * 打开着的执行预览：同一时刻只有一个，`key` 标明属于哪个按钮
- * （`publish:<草案号>`、`rollback:<版本号>`、`release`、`revoke`）；请求在打开时就定下，确认时原样发出。
+ * （`publish:<草案号>`、`rollback:<版本号>`、`release`、`revoke`、`withdraw:<草案号>`）；
+ * 请求在打开时就定下，确认时原样发出。
  */
 export type OpenPreview = { key: string; content: PreviewContent } & (
   | { kind: 'activate'; activation: Activation }
   | { kind: 'revoke'; origin: string; request: RevokeRequest }
+  // 撤回一份草案（驾驶舱的「退回」）：`done` 是撤回之后要说的那一句。
+  | { kind: 'withdraw'; origin: string; record: DesiredRecord; done: string }
 );
 /** 收场时服务端状态没变（被二次认证挡下，或只是读了一版正文），不必重读，也不算写过。 */
 export type Unchanged = { notice: string; reload: false };
@@ -63,10 +66,15 @@ export interface PolicyActionOptions {
    * 版本列表已经变了，位置里那个号不再是「刚才在看的那一份」。
    */
   onActivated?: (outcome: ActivateOutcome) => void;
+  /**
+   * 做完写动作要不要发一次「策略平面刚被写过」（PolicyChangedContext）；缺省发。
+   * 驾驶舱传 false：它的 `reload` 重读的就是 App 那一份草案列表，再发一次等于同一份列表读两遍。
+   */
+  announce?: boolean;
 }
 
 /**
- * 策略平面的写动作，全站只有这一份（T-198）：策略页、规则页、驾驶舱的行内批准都用它。
+ * 策略平面的写动作，全站只有这一份（T-198）：策略页、规则页、驾驶舱的行内批准（T-200）都用它。
  * 同一时刻只做一件；每件做完重读整份数据（`reload`）。发布、回滚、解除全局撤销和撤销接入先展开执行预览，
  * 确认才发请求；被 403 `reauthentication_required` 挡下时记下这一次，等人在 PolicyStepUp 里认证后原样重试——
  * 人审过哪一份生效中内容就按哪一份提交，期间变了由服务端以 hash_mismatch 挡下，绝不悄悄改用新的。
@@ -95,6 +103,11 @@ export function usePolicyActions(
   useLayoutEffect(() => {
     latest.current = { options, changed };
   });
+  /** 告诉全站那一份草案读取：策略平面刚被写过。这一页自己的 `reload` 就是那份读取时不发。 */
+  function announce() {
+    const { options: current, changed: notify } = latest.current;
+    if (current.announce !== false) notify();
+  }
 
   /**
    * 做一件事。`operation` 的返回值是要显示的一句话；返回 `{ reload: false }` 用于服务端明确没有改动状态的
@@ -116,7 +129,7 @@ export function usePolicyActions(
     try {
       const result = await operation(signal);
       // 这一件真的做了（不是被二次认证挡下）：先告诉全站那一份草案读取——哪怕人已经离开这一页，写入也是真的。
-      if (typeof result === 'string') latest.current.changed();
+      if (typeof result === 'string') announce();
       if (signal.aborted) return;
       setNotice({
         origin,
@@ -132,7 +145,7 @@ export function usePolicyActions(
           cause instanceof Error ? cause.message : '操作未完成，请重新核对。',
       });
       // 没做成也可能已经写了一半（先交新草案、撤旧的那一步失败）：同样重读。
-      latest.current.changed();
+      announce();
       await reload().catch(() => undefined);
     } finally {
       if (!signal.aborted) setBusy(false);
@@ -166,19 +179,34 @@ export function usePolicyActions(
     });
   }
 
-  function validate(origin: string, record: DesiredRecord) {
+  /**
+   * `describe` 是校验之后要说的那一句；结果不落在草案旁边的地方（驾驶舱：校验没通过的草案会离开队列）
+   * 要点明是哪一份、去了哪里。
+   */
+  function validate(
+    origin: string,
+    record: DesiredRecord,
+    describe: (updated: DesiredRecord) => string = (updated) =>
+      `已重新校验：${STATUS_LABEL[updated.status]}。`,
+  ) {
     void run(origin, async (signal) => {
       const updated = await validateDesired(record.id, signal);
-      return `已重新校验：${STATUS_LABEL[updated.status]}。`;
+      return describe(updated);
     });
   }
 
-  function withdraw(origin: string, record: DesiredRecord, after?: () => void) {
+  /** `done` 是撤回之后要说的那一句；结果不落在草案旁边的地方（驾驶舱）要点明是哪一份。 */
+  function withdraw(
+    origin: string,
+    record: DesiredRecord,
+    after?: () => void,
+    done = '已撤回这份草案。',
+  ) {
     void run(
       origin,
       async (signal) => {
         await withdrawDesired(record.id, signal);
-        return '已撤回这份草案。';
+        return done;
       },
       after,
     );
@@ -250,12 +278,31 @@ export function usePolicyActions(
     });
   }
 
+  /**
+   * 打开撤回一份草案的执行预览（驾驶舱的「退回」：一个键就能够到的写动作，先确认）；
+   * 触发按钮再点一次就收起。策略页、规则页的「撤回草案」不经这里，照旧点了就撤。
+   */
+  function previewWithdraw(
+    key: string,
+    origin: string,
+    record: DesiredRecord,
+    content: PreviewContent,
+    done: string,
+  ) {
+    setPreview((current) =>
+      current?.key === key
+        ? null
+        : { key, content, kind: 'withdraw', origin, record, done },
+    );
+  }
+
   function confirmPreview() {
     const current = preview;
     if (!current) return;
     setPreview(null);
     if (current.kind === 'activate') activate(current.activation);
-    else revoke(current.origin, current.request);
+    else if (current.kind === 'revoke') revoke(current.origin, current.request);
+    else withdraw(current.origin, current.record, undefined, current.done);
   }
 
   /** 只收起符合条件的那一个执行预览（表单改了字段、换了选中的草案）。 */
@@ -267,6 +314,20 @@ export function usePolicyActions(
     const next = pending;
     setPending(null);
     if (next) activate(next, next.attempt + 1);
+  }
+
+  /**
+   * 人关掉了认证窗口：这一次动作没有发生，也不会再自动继续。提示照实改写——
+   * 窗口已经不在了，不能还留着「请在弹出的窗口输入一次性验证码」那一句。
+   */
+  function closeStepUp() {
+    const dropped = pending;
+    setPending(null);
+    if (dropped)
+      setNotice({
+        origin: dropped.origin,
+        text: `已取消二次认证：${dropped.action} 没有执行。`,
+      });
   }
 
   return {
@@ -282,12 +343,13 @@ export function usePolicyActions(
     withdraw,
     togglePreview,
     previewRevoke,
+    previewWithdraw,
     confirmPreview,
     // 不收参数：常被直接当点击回调用，事件对象不能被当成别的东西。
     closePreview: () => setPreview(null),
     closePreviewIf,
     retryAfterStepUp,
-    closeStepUp: () => setPending(null),
+    closeStepUp,
   };
 }
 

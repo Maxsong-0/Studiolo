@@ -222,13 +222,16 @@ export function planPending({
   };
 }
 
+/** 一份策略草案在队列里的键（就地审批的反馈按草案号找回它是哪一行）。 */
+export const policyEntryKey = (desiredId: string) => `policy:${desiredId}`;
+
 /** 队列里一行的稳定键：重排、重读之后选中的还是同一件事。 */
 export function entryKey(entry: PendingEntry): string {
   switch (entry.source) {
     case 'board':
       return `board:${entry.item.id}`;
     case 'policy':
-      return `policy:${entry.desired.id}`;
+      return policyEntryKey(entry.desired.id);
     case 'inbox':
       return `inbox:${entry.action.id}`;
   }
