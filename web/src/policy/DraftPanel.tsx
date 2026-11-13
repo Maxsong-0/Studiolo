@@ -1,25 +1,21 @@
 import { useId } from 'react';
+import type { ReactNode } from 'react';
 import { PolicyReport } from '../components/PolicyReport';
 import type { ListedDesired, PolicyStatus } from '../policyModel';
 import { remainingAfter, supersededBy } from '../policyModel';
-import { ActionPreview } from '../policy/ActionPreview';
-import {
-  newerDraftReason,
-  publishHint,
-  publishPreview,
-} from '../policy/previews';
 import { Button } from '../ui';
+import { ActionPreview } from './ActionPreview';
 import { draftOrigin } from './labels';
+import { newerDraftReason, publishHint, publishPreview } from './previews';
 import type { PolicyActions } from './usePolicyActions';
 import '../styles/policy.css';
-import '../styles/rules.css';
 
 /**
  * 一份未发布的规则草案（desired）：来历、校验报告（PolicyReport：结论、差异、扩大项）与三个动作——
  * 发布（先展开执行预览，确认才发请求，需二次认证）、校验（按当前生效内容重新校验）、撤回。
  * 同一提交者还有更新的未发布草案时，这份不能发布（服务端判定，T-181）：挡住发布并说明。能发布时，
  * 执行预览列出会被一并标为已取代的较早草案，以及发布后照旧待处理的更新草案（别的提交者交的）。
- * 编辑面板与读权限面板共用；动作与反馈由视图级的 usePolicyActions 统一调度。
+ * 策略页的待处理草案、规则页的编辑面板与读权限面板共用；动作与反馈由视图级的 usePolicyActions 统一调度。
  */
 export function DraftPanel({
   record,
@@ -30,6 +26,7 @@ export function DraftPanel({
   actions,
   drafts,
   blocked = null,
+  children,
 }: {
   record: ListedDesired;
   /** 块标题，如「最新的未发布草案」「能力集 claude」。 */
@@ -44,6 +41,8 @@ export function DraftPanel({
   drafts: readonly ListedDesired[];
   /** 发布之外的原因挡着（如编辑区有未保存的改动）；null 表示没有。 */
   blocked?: string | null;
+  /** 排在校验报告前面的补充（策略页放能力差异表）。 */
+  children?: ReactNode;
 }) {
   const ids = useId();
   const key = `publish:${record.id}`;
@@ -73,6 +72,7 @@ export function DraftPanel({
           {draftOrigin(record)} <code>{record.id}</code>
         </p>
       </div>
+      {children}
       {report ? <PolicyReport report={report} /> : null}
       {hint ? <p className="policy-hint">{hint}</p> : null}
       {reason ? <p className="policy-hint">{reason}</p> : null}
@@ -117,7 +117,7 @@ export function DraftPanel({
           disabled={actions.busy}
           onClick={() => actions.validate(origin, record)}
         >
-          校验
+          {report ? '重新校验' : '校验'}
         </Button>
         <Button
           variant="text"

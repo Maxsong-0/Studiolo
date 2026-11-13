@@ -6,6 +6,7 @@ import {
   DESIRED_ID,
   HASH,
   desiredBody,
+  openTab,
   policyServer,
   statusBody,
   versionBody,
@@ -39,10 +40,19 @@ async function openPanel(options: Parameters<typeof policyServer>[0]) {
   return { user, server };
 }
 
+/** 打开「待处理」并选中 claude 那份草案（发布按钮在选中草案的细节里）。 */
+async function openDraft(options: Parameters<typeof policyServer>[0]) {
+  const opened = await openPanel(options);
+  await openTab(opened.user, '待处理');
+  await opened.user.click(
+    screen.getByRole('button', { name: '能力集 claude' }),
+  );
+  return opened;
+}
+
 describe('发布：执行预览先于请求', () => {
   it('点发布只展开红色虚线框「执行预览」，点「确认发布」之前 fetch 与写入都是零次', async () => {
-    const { user, server } = await openPanel({ desired: [desiredBody()] });
-    await user.click(screen.getByRole('button', { name: '能力集 claude' }));
+    const { user, server } = await openDraft({ desired: [desiredBody()] });
     const reads = server.fetchMock.mock.calls.length;
     const trigger = screen.getByRole('button', { name: '发布（需二次认证）' });
 
@@ -79,8 +89,7 @@ describe('发布：执行预览先于请求', () => {
   });
 
   it('「取消」收起预览、不发任何请求，焦点回到发布按钮', async () => {
-    const { user, server } = await openPanel({ desired: [desiredBody()] });
-    await user.click(screen.getByRole('button', { name: '能力集 claude' }));
+    const { user, server } = await openDraft({ desired: [desiredBody()] });
     const reads = server.fetchMock.mock.calls.length;
     const trigger = screen.getByRole('button', { name: '发布（需二次认证）' });
     await user.click(trigger);
@@ -96,8 +105,7 @@ describe('发布：执行预览先于请求', () => {
   });
 
   it('Esc 与再点一次发布按钮同样只收起预览，不发请求', async () => {
-    const { user, server } = await openPanel({ desired: [desiredBody()] });
-    await user.click(screen.getByRole('button', { name: '能力集 claude' }));
+    const { user, server } = await openDraft({ desired: [desiredBody()] });
     const trigger = screen.getByRole('button', { name: '发布（需二次认证）' });
 
     await user.click(trigger);
@@ -115,13 +123,12 @@ describe('发布：执行预览先于请求', () => {
 
   it('预览打开时换选另一份草案，发布预览随之作废', async () => {
     const other = '01ABCDEFGHJKMNPQRSTVWXYZ11';
-    const { user } = await openPanel({
+    const { user } = await openDraft({
       desired: [
         desiredBody(),
         desiredBody({ id: other, subject: 'codex', report: null }),
       ],
     });
-    await user.click(screen.getByRole('button', { name: '能力集 claude' }));
     await user.click(
       screen.getByRole('button', { name: '发布（需二次认证）' }),
     );
@@ -169,23 +176,42 @@ describe('回滚与解除全局撤销：同样先预览', () => {
     );
   });
 
-  it('同一时刻只有一个预览：打开回滚预览会收起发布预览', async () => {
+  it('同一时刻只有一个预览：打开另一版的回滚预览会收起前一个', async () => {
     const { user } = await openPanel({
+      versions: [versionBody(2), versionBody(1)],
+    });
+    const rollback = (version: string) => {
+      const row = screen.getByRole('button', { name: version }).closest('li');
+      if (!row) throw new Error(`缺少 ${version} 行`);
+      return within(row).getByRole('button', {
+        name: '回滚到此版本（需二次认证）',
+      });
+    };
+    await user.click(rollback('v1'));
+    expect(previewBox()).toHaveAccessibleName('执行预览 回滚到 v1');
+    await user.click(rollback('v2'));
+    expect(screen.getAllByRole('group', { name: /^执行预览/ })).toHaveLength(1);
+    expect(previewBox()).toHaveAccessibleName('执行预览 回滚到 v2');
+  });
+
+  it('换标签就收起执行预览：回来时不会留着一个描述旧状态的框，也不发请求', async () => {
+    const { user, server } = await openDraft({
       desired: [desiredBody()],
       versions: [versionBody(2), versionBody(1)],
     });
-    await user.click(screen.getByRole('button', { name: '能力集 claude' }));
     await user.click(
       screen.getByRole('button', { name: '发布（需二次认证）' }),
     );
     expect(previewBox()).toHaveAccessibleName('执行预览 发布 能力集 claude');
-    const row = screen.getByRole('button', { name: 'v1' }).closest('li');
-    if (!row) throw new Error('缺少 v1 行');
-    await user.click(
-      within(row).getByRole('button', { name: '回滚到此版本（需二次认证）' }),
-    );
-    expect(screen.getAllByRole('group', { name: /^执行预览/ })).toHaveLength(1);
-    expect(previewBox()).toHaveAccessibleName('执行预览 回滚到 v1');
+
+    await openTab(user, '现状');
+    expect(noPreview()).not.toBeInTheDocument();
+    await openTab(user, '待处理');
+    expect(noPreview()).not.toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: '发布（需二次认证）' }),
+    ).toHaveAttribute('aria-expanded', 'false');
+    expect(server.posts).toEqual([]);
   });
 
   it('解除全局撤销：预览说明范围与恢复路径，确认后才按原 hash 发出', async () => {

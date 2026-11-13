@@ -2,18 +2,19 @@ import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it } from 'vitest';
 import { PolicyBoundary } from '../../PolicyBoundary';
-import { COMMAND_TARGETS } from '../../commands/focusTarget';
 import { ApiError } from '../../sessionHttp';
 import {
   DESIRED_ID,
   HASH,
   desiredBody,
+  detailCell,
+  openTab,
   policyServer,
   versionBody,
   type PolicyServer,
 } from './policyFixtures';
 
-/** 换皮不换行为：重新校验、撤回、提交的本地校验、发布成功后清位置，请求与文案语义都照旧。 */
+/** 拆标签不换行为：重新校验、撤回、提交的本地校验、发布成功后清位置，请求与文案语义都照旧。 */
 
 const MOVED = 'c'.repeat(64);
 
@@ -22,14 +23,6 @@ afterEach(() => {
   server?.uninstall();
   server = undefined;
 });
-
-function queueCell() {
-  const element = document.querySelector<HTMLElement>(
-    `[data-command-target="${COMMAND_TARGETS.policyQueue}"]`,
-  );
-  if (!element) throw new Error('缺少待处理草案格');
-  return element;
-}
 
 function writes(path: string, body: unknown) {
   if (path === '/api/v1/policy/validate')
@@ -63,21 +56,30 @@ function writes(path: string, body: unknown) {
   throw new ApiError('未知', 404);
 }
 
+/** 打开「待处理」：队列里只有一份草案，落地就选中它。撤回之后列表里就没有它了（与真实接口一样）。 */
 async function openWithDraft() {
+  const listed = [desiredBody()];
   server = policyServer({
-    desired: [desiredBody()],
+    desired: listed,
     versions: [versionBody(2), versionBody(1)],
-    write: writes,
+    write: (path, body) => {
+      const reply = writes(path, body);
+      if (path === '/api/v1/policy/withdraw') listed.length = 0;
+      return reply;
+    },
   });
   const user = userEvent.setup();
   render(<PolicyBoundary />);
   await screen.findByRole('table', { name: '生效中的各项' });
-  await user.click(screen.getByRole('button', { name: '能力集 claude' }));
+  await openTab(user, '待处理');
+  expect(
+    within(detailCell()).getByRole('heading', { name: '能力集 claude' }),
+  ).toBeInTheDocument();
   return { user, server };
 }
 
 describe('待处理草案的动作', () => {
-  it('重新校验：直接发出（可逆，不走执行预览），提示落在待处理草案格', async () => {
+  it('重新校验：直接发出（可逆，不走执行预览），提示落在选中的草案那一格', async () => {
     const { user, server } = await openWithDraft();
     await user.click(screen.getByRole('button', { name: '重新校验' }));
     await waitFor(() =>
@@ -86,26 +88,32 @@ describe('待处理草案的动作', () => {
       ]),
     );
     expect(
-      await within(queueCell()).findByText('已重新校验：已校验，可发布。'),
+      await within(detailCell()).findByText('已重新校验：已校验，可发布。'),
     ).toHaveAttribute('role', 'status');
     expect(
       screen.queryByRole('group', { name: /^执行预览/ }),
     ).not.toBeInTheDocument();
   });
 
-  it('撤回：发出撤回请求，提示「已撤回。」，选中的草案与报告收起', async () => {
+  it('撤回：发出撤回请求，提示「已撤回这份草案。」，队列空了，草案与报告收起', async () => {
     const { user, server } = await openWithDraft();
     expect(screen.getByRole('group', { name: '校验报告' })).toBeInTheDocument();
-    await user.click(screen.getByRole('button', { name: '撤回' }));
+    await user.click(screen.getByRole('button', { name: '撤回草案' }));
     await waitFor(() =>
       expect(server.posts).toEqual([
         { path: '/api/v1/policy/withdraw', body: { desired_id: DESIRED_ID } },
       ]),
     );
-    expect(await within(queueCell()).findByText('已撤回。')).toBeVisible();
     expect(
-      screen.queryByRole('group', { name: '校验报告' }),
-    ).not.toBeInTheDocument();
+      await within(detailCell()).findByText('已撤回这份草案。'),
+    ).toHaveAttribute('role', 'status');
+    await waitFor(() =>
+      expect(
+        screen.queryByRole('group', { name: '校验报告' }),
+      ).not.toBeInTheDocument(),
+    );
+    expect(screen.getByText('没有待处理的规则草案。')).toBeInTheDocument();
+    expect(within(detailCell()).getByText(/^队列是空的。/)).toBeInTheDocument();
   });
 
   it('发布成功：提示新版本与生效中摘要，位置里的版本号作废（item 清掉），版本正文收起', async () => {
@@ -119,14 +127,14 @@ describe('待处理草案的动作', () => {
     render(<PolicyBoundary />);
     expect(await screen.findByText('v2 正文')).toBeInTheDocument();
 
-    await user.click(screen.getByRole('button', { name: '能力集 claude' }));
+    await openTab(user, '待处理');
     await user.click(
       screen.getByRole('button', { name: '发布（需二次认证）' }),
     );
     await user.click(screen.getByRole('button', { name: '确认发布' }));
 
     expect(
-      await within(queueCell()).findByText(
+      await within(detailCell()).findByText(
         `能力集 claude：已发布为 v3，生效中摘要 ${MOVED.slice(0, 12)}。`,
       ),
     ).toBeInTheDocument();
@@ -137,6 +145,10 @@ describe('待处理草案的动作', () => {
       },
     ]);
     expect(window.location.hash).not.toContain('item=');
+    // 回到「现状」：发布之前在读的 v2 不再展开——版本列表已经变了，那个号不再是「刚才在看的那一份」。
+    await openTab(user, '现状');
+    await screen.findByRole('list', { name: '版本列表' });
+    expect(window.location.hash).not.toContain('item=');
     expect(screen.queryByText('v2 正文')).not.toBeInTheDocument();
   });
 });
@@ -146,7 +158,9 @@ describe('提交规则草案的本地校验（不发请求）', () => {
     server = policyServer({ write: writes });
     const user = userEvent.setup();
     render(<PolicyBoundary />);
-    const form = await screen.findByRole('form', { name: '提交规则草案' });
+    await screen.findByRole('table', { name: '生效中的各项' });
+    await openTab(user, '提交');
+    const form = screen.getByRole('form', { name: '提交规则草案' });
     const submit = within(form).getByRole('button', {
       name: '提交并校验（不发布）',
     });

@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
 import { AppShell } from './components/AppShell';
 import { DocumentDialog } from './components/DocumentDialog';
@@ -31,6 +31,7 @@ import {
 import { pendingCount } from './cockpit/pending';
 import { useOverviewRead } from './cockpit/useOverviewRead';
 import { usePolicyPendingRead } from './cockpit/usePolicyPendingRead';
+import { PolicyChangedContext } from './policy/policyChanged';
 import { CockpitView } from './views/CockpitView';
 import { ProjectsView } from './views/ProjectsView';
 import { DocumentsView } from './views/DocumentsView';
@@ -71,6 +72,12 @@ export function App({ account }: { account?: ReactNode }) {
     ready: data !== null,
     refreshing: loading,
   });
+  // 规则页、策略页写过策略平面之后（提交、校验、撤回、发布……），角标用的这一份跟着安静重读，
+  // 不必等人回到驾驶舱那一轮自动刷新（T-198）。没读成就留着上一次的，下一轮刷新再说。
+  const revalidatePolicyPending = policyPending.revalidate;
+  const policyChanged = useCallback(() => {
+    void revalidatePolicyPending(new AbortController().signal);
+  }, [revalidatePolicyPending]);
   const editor = useEditorNavigation(refreshLatest);
   const editorPath = editor.current?.path ?? null;
   const setEditorPath = editor.open;
@@ -288,8 +295,10 @@ export function App({ account }: { account?: ReactNode }) {
       {view === 'collab' ? (
         <CollabView projects={projects} overview={overview} />
       ) : null}
-      {view === 'rules' ? <RulesView /> : null}
-      {view === 'policy' ? <PolicyView /> : null}
+      <PolicyChangedContext.Provider value={policyChanged}>
+        {view === 'rules' ? <RulesView /> : null}
+        {view === 'policy' ? <PolicyView /> : null}
+      </PolicyChangedContext.Provider>
       {source && data ? (
         <DocumentDialog
           key={`${source.path}:${data.generation}`}

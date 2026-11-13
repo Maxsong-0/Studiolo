@@ -1,8 +1,8 @@
 import type { Feedback } from './usePolicyActions';
 import '../styles/policy.css';
 
-/** 动作结果落在发起它的那一块：人在哪里点的，就在哪里看结果（与策略页同一写法）。 */
-export function RulesFeedback({
+/** 动作结果落在发起它的那一块：人在哪里点的，就在哪里看结果。策略页和规则页共用。 */
+export function PolicyFeedback({
   origin,
   notice,
   error,

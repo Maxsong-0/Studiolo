@@ -196,7 +196,7 @@ describe('驾驶舱：等你处理的队列', () => {
     expect(document.querySelectorAll('.ui-button--primary')).toHaveLength(0);
   });
 
-  it('去处理：黑板任务去协作页并带上那条任务，提案去策略页的草案队列，工作台待办打开原文', async () => {
+  it('去处理：黑板任务去协作页并带上那条任务，提案去策略页「待处理」里的那一份草案，工作台待办打开原文', async () => {
     const { data, handlers } = renderCockpit();
     await settled(4 + data.workbench.inbox.length);
     const user = userEvent.setup();
@@ -209,7 +209,10 @@ describe('驾驶舱：等你处理的队列', () => {
     await user.click(
       screen.getByRole('button', { name: `${PROPOSAL}，在策略页处理` }),
     );
-    expect(window.location.hash).toBe('#view=policy&item=desired');
+    // 位置里只有标签名和草案号，草案正文不进 URL。
+    expect(window.location.hash).toBe(
+      `#view=policy&panel=pending&item=${data.desired[0].id}`,
+    );
     const [first] = data.workbench.inbox;
     await user.click(
       screen.getByRole('button', { name: `${first.title}，查看原文` }),

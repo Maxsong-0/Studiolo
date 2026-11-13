@@ -1,48 +1,16 @@
 import { useId, useState } from 'react';
 import type { FormEvent, ReactNode } from 'react';
-import type {
-  DesiredInput,
-  PolicyKind,
-  RevokeRequest,
-  RevocationLevel,
-} from '../policyModel';
-import { KIND_LABEL, LEVEL_LABEL } from '../policyModel';
+import type { RevokeRequest, RevocationLevel } from '../policyModel';
+import { LEVEL_LABEL } from '../policyModel';
 import { POLICY_TERMS } from '../policy/terms';
 import { Button } from '../ui';
 import '../styles/policy.css';
 
-const CAPABILITY_TEMPLATE = JSON.stringify(
-  {
-    ai_type: 'claude',
-    read: {
-      project_whitelist: ['项目/Studiolo', '_规则'],
-      deny_by_default: true,
-      // 缺这一项＝一条规则都读不到（ADR-026 D4）；首批规则与 docs/m5 初始能力集一致。
-      rules_whitelist: ['通用工作规则.md', 'CLAUDE.md'],
-    },
-    write: { board: false, content_patch_only: true, content_direct: false },
-    policy: { propose_desired: true, activate: false },
-    hard_bound_skills: [],
-  },
-  null,
-  2,
-);
-const SKILL_TEMPLATE = JSON.stringify(
-  {
-    name: 'skill-name',
-    summary: '一句摘要',
-    triggers: [],
-    markdown: '# 正文\n',
-  },
-  null,
-  2,
-);
-
 /**
  * 字段名：等宽小字标签；给了原术语就跟在人话后面（「对象 subject」）。
- * 原术语放在 label 外面：输入框的可访问名只是人话。
+ * 原术语放在 label 外面：输入框的可访问名只是人话。提交草案的表单（policy/PolicySubmit）也用它。
  */
-function FieldLabel({
+export function FieldLabel({
   htmlFor,
   raw,
   children,
@@ -64,125 +32,6 @@ function FieldLabel({
         </>
       ) : null}
     </span>
-  );
-}
-
-/** 提交规则草案：只形成待确认意图，永不自动发布。 */
-export function DesiredForm({
-  busy,
-  onSubmit,
-}: {
-  busy: boolean;
-  onSubmit: (input: DesiredInput) => void;
-}) {
-  const id = useId();
-  const [kind, setKind] = useState<PolicyKind>('capability_set');
-  const [retire, setRetire] = useState(false);
-  const [error, setError] = useState('');
-  function submit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const values = new FormData(event.currentTarget);
-    const subject = String(values.get('subject') ?? '').trim();
-    const body = String(values.get('body') ?? '');
-    if (!subject) {
-      setError('请填写对象（规则文件名、skill 名或 AI 类型名）。');
-      return;
-    }
-    if (!retire && !body.trim()) {
-      setError('请填写正文，或勾选「撤销该对象」。');
-      return;
-    }
-    setError('');
-    onSubmit({ kind, subject, body: retire ? null : body });
-  }
-  return (
-    <form
-      className="policy-form"
-      onSubmit={submit}
-      aria-label={`提交${POLICY_TERMS.desired.human}`}
-    >
-      <div className="policy-form__row">
-        <div className="policy-field">
-          <FieldLabel htmlFor={`${id}-kind`}>类别</FieldLabel>
-          <span className="policy-select">
-            <select
-              id={`${id}-kind`}
-              name="kind"
-              value={kind}
-              onChange={(event) => setKind(event.target.value as PolicyKind)}
-            >
-              {(Object.keys(KIND_LABEL) as PolicyKind[]).map((value) => (
-                <option key={value} value={value}>
-                  {KIND_LABEL[value]}
-                </option>
-              ))}
-            </select>
-          </span>
-        </div>
-        <div className="policy-field">
-          <FieldLabel htmlFor={`${id}-subject`} raw={POLICY_TERMS.subject.raw}>
-            {POLICY_TERMS.subject.human}
-          </FieldLabel>
-          <input
-            id={`${id}-subject`}
-            className="policy-input policy-input--mono"
-            name="subject"
-            type="text"
-            autoComplete="off"
-            spellCheck={false}
-            placeholder={
-              kind === 'rules'
-                ? '通用工作规则.md'
-                : kind === 'skills'
-                  ? 'vercel-react-best-practices'
-                  : 'claude'
-            }
-          />
-        </div>
-      </div>
-      <label className="policy-check">
-        <input
-          type="checkbox"
-          checked={retire}
-          onChange={(event) => setRetire(event.target.checked)}
-        />
-        撤销该对象
-      </label>
-      <div className="policy-field">
-        <FieldLabel htmlFor={`${id}-body`}>
-          正文（规则为 Markdown，其余为 JSON）
-        </FieldLabel>
-        <textarea
-          id={`${id}-body`}
-          className="policy-input policy-textarea"
-          name="body"
-          rows={12}
-          spellCheck={false}
-          disabled={retire}
-          defaultValue={
-            kind === 'capability_set'
-              ? CAPABILITY_TEMPLATE
-              : kind === 'skills'
-                ? SKILL_TEMPLATE
-                : ''
-          }
-          key={kind}
-        />
-      </div>
-      {error ? (
-        <p className="policy-form__error" role="alert">
-          {error}
-        </p>
-      ) : null}
-      <div className="policy-actions">
-        <Button type="submit" variant="primary" disabled={busy}>
-          提交并校验（不发布）
-        </Button>
-        <span className="policy-hint">
-          提交只形成待确认的规则草案；发布须先完成二次认证。
-        </span>
-      </div>
-    </form>
   );
 }
 

@@ -7,6 +7,8 @@ import { ApiError } from '../../sessionHttp';
 import {
   HASH,
   desiredBody,
+  detailCell,
+  openTab,
   policyServer,
   type PolicyServer,
   type PolicyServerOptions,
@@ -82,11 +84,13 @@ function publishes(path: string, body: unknown) {
   throw new ApiError('未知', 404);
 }
 
+/** 打开策略页的「待处理」：队列在左，选中草案的细节和动作结果在右。 */
 async function openPanel(options: PolicyServerOptions) {
   server = policyServer(options);
   const user = userEvent.setup();
   render(<PolicyBoundary />);
   await screen.findByRole('table', { name: '生效中的各项' });
+  await openTab(user, '待处理');
   return { user, server };
 }
 
@@ -170,7 +174,7 @@ describe('同一对象几份未发布草案（T-181）', () => {
       ]),
     );
     expect(
-      await within(queueCell()).findByText(
+      await within(detailCell()).findByText(
         /已发布为 v3.*同一对象比它早的未发布草案已一并标为已取代/,
       ),
     ).toHaveAttribute('role', 'status');
@@ -217,7 +221,7 @@ describe('同一对象几份未发布草案（T-181）', () => {
       ]),
     );
     expect(
-      await within(queueCell()).findByText(
+      await within(detailCell()).findByText(
         /已发布为 v3.*同一对象更新的 1 份未发布草案照旧待处理/,
       ),
     ).toHaveAttribute('role', 'status');
@@ -270,7 +274,7 @@ describe('同一对象几份未发布草案（T-181）', () => {
       ]),
     );
     expect(
-      await within(queueCell()).findByText(
+      await within(detailCell()).findByText(
         /已发布为 v3.*；同一对象比它早的未发布草案已一并标为已取代；同一对象更新的 1 份未发布草案照旧待处理/,
       ),
     ).toHaveAttribute('role', 'status');
@@ -311,7 +315,7 @@ describe('同一对象几份未发布草案（T-181）', () => {
     );
     // 校验报告里的扩大项提示也是 alert，按文字找发布失败那一句。
     expect(
-      await within(queueCell()).findByText(
+      await within(detailCell()).findByText(
         `没有发布：同一提交者还有更新的未发布草案（${NEWEST.slice(0, 12)}），只能发布其中最新的那一份；要发这份，先撤回更新的。`,
       ),
     ).toHaveAttribute('role', 'alert');
@@ -342,9 +346,9 @@ describe('同一对象几份未发布草案（T-181）', () => {
     blocked[OLDER] = [NEWEST];
     await user.click(screen.getByRole('button', { name: '重新校验' }));
     expect(
-      await within(queueCell()).findByText('已重新校验：已校验，可发布。'),
+      await within(detailCell()).findByText('已重新校验：已校验，可发布。'),
     ).toBeVisible();
-    expect(publishButton()).toBeDisabled();
+    await waitFor(() => expect(publishButton()).toBeDisabled());
     expect(
       screen.getByText(/同一提交者还有更新的未发布草案（01JZ00000BBB）/),
     ).toBeInTheDocument();

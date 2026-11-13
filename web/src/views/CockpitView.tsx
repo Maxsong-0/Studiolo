@@ -21,14 +21,15 @@ import { useCockpitReads } from '../cockpit/useCockpitReads';
 import type { OverviewRead } from '../cockpit/useOverviewRead';
 import type { PolicyPendingRead } from '../cockpit/usePolicyPendingRead';
 import { overviewLabels } from '../collab/executorGrouping';
+import { COMMAND_TARGETS, focusCommandTarget } from '../commands/focusTarget';
 import { clockLabel } from '../collab/todayLanes';
 import {
   AutoRefreshContext,
   useAutoRefreshReader,
 } from '../live/useAutoRefresh';
 import type { OpenSource, Workbench } from '../types';
+import { policyPanelSlot } from '../policy/policyLocation';
 import { useViewLocation } from '../useViewLocation';
-import { POLICY_QUEUE_ITEM } from '../viewLocation';
 import '../styles/cockpit.css';
 
 /** 图纸上沿的标尺：01 到 12，对应 12 列网格。 */
@@ -146,10 +147,20 @@ export function CockpitView({
     goTo({ view: 'collab' });
     window.scrollTo({ top: 0, left: 0, behavior: 'instant' });
   }, [goTo]);
-  const openPolicyQueue = useCallback(() => {
-    goTo({ view: 'policy', item: POLICY_QUEUE_ITEM });
-    window.scrollTo({ top: 0, left: 0, behavior: 'instant' });
-  }, [goTo]);
+  // 直接落到策略页「待处理」里的这一份草案上，再把焦点交给那边的队列（与 ⌘K 带路同一做法：
+  // 那边读完才有队列，按帧等它出现；人自己动了焦点就不抢）。
+  const openPolicyDraft = useCallback(
+    (desiredId: string) => {
+      goTo({
+        view: 'policy',
+        panel: policyPanelSlot('pending'),
+        item: desiredId,
+      });
+      window.scrollTo({ top: 0, left: 0, behavior: 'instant' });
+      focusCommandTarget(COMMAND_TARGETS.policyQueue);
+    },
+    [goTo],
+  );
 
   return (
     <div className="view view-cockpit cockpit">
@@ -169,7 +180,7 @@ export function CockpitView({
             asOf={asOf}
             onOpen={onOpen}
             onOpenTask={openTask}
-            onOpenPolicy={openPolicyQueue}
+            onOpenPolicy={openPolicyDraft}
             onRetryPolicy={policy.reload}
             later={later}
           />

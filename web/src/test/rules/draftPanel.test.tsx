@@ -2,8 +2,8 @@ import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 import type { ListedDesired, PolicyStatus, Report } from '../../policyModel';
-import { DraftPanel } from '../../rules/DraftPanel';
-import type { PolicyActions } from '../../rules/usePolicyActions';
+import { DraftPanel } from '../../policy/DraftPanel';
+import type { PolicyActions } from '../../policy/usePolicyActions';
 
 /**
  * 规则视图的草案面板（T-181）：只照接口给的 newer_open、blocked_by 判先后。同一提交者有更新的就挡住发布
@@ -73,13 +73,16 @@ function stubActions(): PolicyActions {
     error: null,
     pending: null,
     preview: null,
+    run: vi.fn(),
     submit: vi.fn(),
     amend: vi.fn(),
     validate: vi.fn(),
     withdraw: vi.fn(),
     togglePreview: vi.fn(),
+    previewRevoke: vi.fn(),
     confirmPreview: vi.fn(),
     closePreview: vi.fn(),
+    closePreviewIf: vi.fn(),
     retryAfterStepUp: vi.fn(),
     closeStepUp: vi.fn(),
   };

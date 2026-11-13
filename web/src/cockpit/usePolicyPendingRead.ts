@@ -31,7 +31,9 @@ const message = (error: unknown) =>
  *   把原因交回调度器。手动读取在途、还没有快照、本入口没装策略平面时都让路。
  *
  * 读到列表时记下本机时刻（`readAt`）：接口不带服务端时刻，草案「已等多久」以它为准。
- * 在策略页发布或撤回之后，这一份要等下一轮刷新才更新（黑板那一路同样如此）。
+ * 在策略页、规则页写过策略平面之后（提交、校验、撤回、发布……），App 经 PolicyChangedContext 再调一次
+ * 安静重读（T-198），角标不必等人回到驾驶舱。于是两次安静重读可能叠在一起：按发出的先后算，
+ * 后发的那一次已经换上了、先发的才到，就不要它——它读到的可能是写入之前的列表。
  */
 export function usePolicyPendingRead({
   ready,
@@ -46,6 +48,8 @@ export function usePolicyPendingRead({
   const [revision, setRevision] = useState(0);
   /** 每发一次手动读取就加一；在途的安静重读看到它变了，就知道自己的结果过期了。 */
   const epoch = useRef(0);
+  /** 安静重读按发出的先后编号：`sent` 是发到第几次，`applied` 是已经换上的那一次。 */
+  const quiet = useRef({ sent: 0, applied: 0 });
   /** 安静重读要看的现状；提交之后更新（渲染期间不写 ref）。 */
   const latest = useRef({ ready, kind: state.kind });
   useLayoutEffect(() => {
@@ -89,15 +93,22 @@ export function usePolicyPendingRead({
     const { ready: due, kind } = latest.current;
     if (!due || kind === 'loading' || kind === 'absent') return REVALIDATED;
     const started = epoch.current;
-    const stale = () => signal.aborted || started !== epoch.current;
+    const turn = (quiet.current.sent += 1);
+    // 过期：调用方不要了、期间发过手动读取、或者比它晚发的那一次已经换上了。
+    const stale = () =>
+      signal.aborted ||
+      started !== epoch.current ||
+      turn < quiet.current.applied;
     try {
       const desired = await readDesired(signal);
       if (stale()) return REVALIDATED;
+      quiet.current.applied = turn;
       setState({ kind: 'ready', desired, readAt: Date.now() });
       return REVALIDATED;
     } catch (error) {
       if (stale()) return REVALIDATED;
       if (isAbsent(error)) {
+        quiet.current.applied = turn;
         setState({ kind: 'absent' });
         return REVALIDATED;
       }

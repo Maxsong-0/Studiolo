@@ -5,7 +5,7 @@ import { PolicyBoundary } from '../PolicyBoundary';
 import { installPolicyWriter } from '../policyApi';
 import { ApiError } from '../sessionHttp';
 import { jsonResponse } from './fixtures';
-import { listBody } from './policy/policyFixtures';
+import { listBody, openTab } from './policy/policyFixtures';
 
 const HASH = 'b'.repeat(64);
 const STATUS = '/api/v1/policy';
@@ -129,6 +129,7 @@ it('提交规则草案后把扩大项标红，发布被挡在二次认证后且�
   await screen.findByRole('table', { name: '生效中的各项' });
   expect(screen.getAllByText(HASH.slice(0, 12)).length).toBeGreaterThan(0);
 
+  await openTab(user, '提交');
   const form = screen.getByRole('form', { name: '提交规则草案' });
   await user.clear(within(form).getByRole('textbox', { name: '对象' }));
   await user.type(
@@ -139,7 +140,12 @@ it('提交规则草案后把扩大项标红，发布被挡在二次认证后且�
     within(form).getByRole('button', { name: '提交并校验（不发布）' }),
   );
 
+  // 交成功就被带到「待处理」里刚交的那一份：校验报告把扩大项标红。
   await screen.findByRole('alert');
+  expect(screen.getByRole('tab', { name: /^待处理/ })).toHaveAttribute(
+    'aria-selected',
+    'true',
+  );
   expect(screen.getByText(/1 项权限扩大/)).toBeInTheDocument();
   const expansions = screen.getByRole('list', { name: '权限扩大项' });
   expect(within(expansions).getByText('读取范围变宽')).toBeInTheDocument();
@@ -243,9 +249,11 @@ it('首次加载在两个认证并发许可下读完整策略，不自触发503'
   const denied = authLimitedReads();
   render(<PolicyBoundary />);
   await screen.findByRole('table', { name: '生效中的各项' });
-  expect(
-    screen.getByRole('form', { name: '提交规则草案' }),
-  ).toBeInTheDocument();
+  expect(screen.getAllByRole('tab').map((item) => item.textContent)).toEqual([
+    '现状',
+    '待处理 0',
+    '提交',
+  ]);
   expect(denied()).toBe(0);
   expect(posts).toHaveLength(0);
 });
@@ -253,18 +261,27 @@ it('首次加载在两个认证并发许可下读完整策略，不自触发503'
 it('提交后的刷新也遵守认证预算，读完后保留成功提示且不重放提交', async () => {
   const user = userEvent.setup();
   render(<PolicyBoundary />);
-  const form = await screen.findByRole('form', { name: '提交规则草案' });
+  await screen.findByRole('table', { name: '生效中的各项' });
+  await openTab(user, '提交');
+  const form = screen.getByRole('form', { name: '提交规则草案' });
   const denied = authLimitedReads();
   await user.type(
     within(form).getByRole('textbox', { name: '对象' }),
     'claude',
   );
-  const submit = within(form).getByRole('button', {
-    name: '提交并校验（不发布）',
-  });
-  await user.click(submit);
-  await waitFor(() => expect(submit).toBeEnabled());
-  expect(screen.getByRole('status')).toHaveTextContent('已提交并校验通过');
+  await user.click(
+    within(form).getByRole('button', { name: '提交并校验（不发布）' }),
+  );
+  // 刷新读完才被带到「待处理」：成功提示跟着过来，发布按钮可点说明这一件已经做完。
+  expect(await screen.findByText(/^已提交并校验通过/)).toHaveAttribute(
+    'role',
+    'status',
+  );
+  await waitFor(() =>
+    expect(
+      screen.getByRole('button', { name: '发布（需二次认证）' }),
+    ).toBeEnabled(),
+  );
   expect(screen.queryByText('认证并发预算已满')).not.toBeInTheDocument();
   expect(denied()).toBe(0);
   expect(posts.map((post) => post.path)).toEqual(['/api/v1/policy/desired']);

@@ -5,7 +5,7 @@ import { RuleEditor } from '../rules/RuleEditor';
 import { RulesAccess } from '../rules/RulesAccess';
 import { RulesList } from '../rules/RulesList';
 import { buildRulesModel } from '../rules/rulesModel';
-import { usePolicyActions } from '../rules/usePolicyActions';
+import { usePolicyActions } from '../policy/usePolicyActions';
 import { useRulesData } from '../rules/useRulesData';
 import { Cell, EmptyState, ErrorState, GridFrame, Skeleton, Tabs } from '../ui';
 import { useViewLocation } from '../useViewLocation';

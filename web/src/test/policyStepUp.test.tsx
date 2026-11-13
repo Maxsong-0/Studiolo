@@ -185,6 +185,7 @@ async function openPolicy() {
  * 不必从整页 DOM 里猜（[[分支断言必须自证走了哪一支]]）。
  */
 async function publish(user: ReturnType<typeof userEvent.setup>) {
+  await user.click(screen.getByRole('tab', { name: /^待处理/ }));
   await user.click(screen.getByRole('button', { name: '能力集 claude' }));
   const button = await screen.findByRole('button', {
     name: '发布（需二次认证）',
@@ -461,7 +462,8 @@ it('超过一天才回来：会话重新核对、整页重挂，窗口和待重�
 
   await leaveAndReturn({ afterADay: true });
 
-  await screen.findByRole('table', { name: '生效中的各项' });
+  // 重挂后位置还在：仍落在「待处理」里那一份草案上。
+  await screen.findByRole('list', { name: '待处理草案' });
   expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   // 重挂丢掉待重试的动作是**失败关闭**：人要重新点发布、重新认证，绝不会自己发出去。
   expect(stepUps).toHaveLength(0);
