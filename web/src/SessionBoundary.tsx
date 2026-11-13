@@ -1,3 +1,4 @@
+import { installChangesWriter } from './changesApi';
 import { useEffect, useMemo, useState, useSyncExternalStore } from 'react';
 import type { ReactNode } from 'react';
 import { SessionClient } from './sessionClient';
@@ -50,6 +51,7 @@ function SessionBoundaryContent({
     const uninstall = installSessionReader(client.read);
     const uninstallBlob = installSessionBlobReader(client.readBlob);
     const uninstallWriter = installCanonicalWriter(client.replace);
+    const uninstallChanges = installChangesWriter(client.changesSeen);
     const uninstallRestorer = installCanonicalRestorer(client.restore);
     const uninstallFileOperations = installFileOperationWriter(
       client.fileOperation,
@@ -68,6 +70,7 @@ function SessionBoundaryContent({
       uninstall();
       uninstallBlob();
       uninstallWriter();
+      uninstallChanges();
       uninstallRestorer();
       uninstallFileOperations();
       uninstallPolicy();

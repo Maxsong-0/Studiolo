@@ -157,6 +157,16 @@ function viewCommands(): Command[] {
       target: () => ({ view: 'documents' }),
     },
     {
+      id: 'view:documents:changes',
+      label: '文档 › 变更流',
+      keywords: ['changes', '未读', '修改', '写回'],
+      target: () => ({
+        view: 'documents',
+        panel: 'changes',
+        focus: COMMAND_TARGETS.changesProject,
+      }),
+    },
+    {
       id: 'view:collab:topology',
       label: '协作 › 拓扑',
       keywords: ['collab', 'topology', '写域', '占用'],

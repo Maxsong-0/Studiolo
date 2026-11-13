@@ -236,7 +236,7 @@ export function CockpitView({
           />
         </div>
         <div className="cockpit-sheet__row">
-          <SinceCell since={since} />
+          <SinceCell since={since} refreshing={refreshing} />
           <ReadingsCell
             readings={systemReadings({ workbench, health, overview: board })}
             snapshot={snapshotLine(

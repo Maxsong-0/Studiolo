@@ -1,3 +1,4 @@
+import { changesFixture } from '../../../dev/fixtures/changes';
 /*
  * 自动刷新接进整页之后（T-196）：驾驶舱和协作拓扑开着，就每 20 秒安静地重读一轮
  * （工作台快照、黑板汇总、策略草案、驾驶舱的本机健康，一个接一个）。
@@ -36,6 +37,7 @@ const WORKBENCH = '/api/workbench';
 const OVERVIEW = '/api/v1/board/overview';
 const DESIRED = '/api/v1/policy/desired';
 const HEALTH = '/api/v1/health';
+const CHANGES = '/api/v1/changes';
 const STARSHIP = '项目/星舟';
 
 type Reply = () => Response | Promise<Response>;
@@ -78,6 +80,7 @@ let workbench: Reply;
 let overview: Reply;
 let desired: Reply;
 let health: Reply;
+let changes: Reply;
 
 beforeEach(() => {
   vi.useFakeTimers({
@@ -95,6 +98,16 @@ beforeEach(() => {
   overview = () => jsonResponse(overviewResponse(board));
   desired = () => jsonResponse(drafts);
   health = () => jsonResponse(healthy);
+  changes = () =>
+    jsonResponse(
+      changesFixture(
+        Date.now(),
+        21,
+        null,
+        '40000000-0000-4000-8000-000000000001',
+        false,
+      ),
+    );
   fetchMock.mockReset();
   fetchMock.mockImplementation(async (input) => {
     const path = String(input);
@@ -102,6 +115,7 @@ beforeEach(() => {
     if (path.startsWith(OVERVIEW)) return overview();
     if (path === DESIRED) return desired();
     if (path === HEALTH) return health();
+    if (path.startsWith(CHANGES)) return changes();
     return defaultApiResponse(input);
   });
   vi.stubGlobal('fetch', fetchMock);
@@ -495,4 +509,16 @@ describe('协作拓扑', () => {
     // 策略草案那一路要等快照，这时不读。
     expect(requests(DESIRED)).toHaveLength(0);
   });
+});
+
+it('内容变更摘要跟随同一轮安静重读，不自动写已读记录', async () => {
+  render(<App />);
+  await screen.findByRole('heading', COCKPIT_READY);
+  await waitFor(() => expect(requests(CHANGES)).toHaveLength(1));
+  await screen.findByRole('region', { name: '最近内容变化' });
+  await elapse(AUTO_REFRESH_INTERVAL_MS + 100);
+  await waitFor(() => expect(requests(CHANGES)).toHaveLength(2));
+  expect(
+    fetchMock.mock.calls.every(([, init]) => init?.method !== 'POST'),
+  ).toBe(true);
 });

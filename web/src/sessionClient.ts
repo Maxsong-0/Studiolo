@@ -13,6 +13,7 @@ import type { FactorAction, FactorOutcome } from './factorModel';
 import { SessionCore } from './sessionCore';
 import type { Replacement, Restoration } from './canonicalModel';
 import type { FileOperationRequest } from './fileOperationModel';
+import type { SeenRequest } from './changesModel';
 
 /**
  * 切回页面时再核对会话的最短间隔：一天（用户 2026-09-22 拍板，见 vault ADR-022）。
@@ -22,6 +23,8 @@ export const REVISIT_INTERVAL_MS = 24 * 60 * 60 * 1000;
 
 /** 会话的公开Interface；协议与状态实现共享同一个拥有者，不增加独立授权入口。 */
 export class SessionClient extends SessionCore {
+  changesSeen = (request: SeenRequest, signal: AbortSignal) =>
+    this.postJson('/api/v1/changes/seen', request, signal);
   replace = (request: Replacement, signal: AbortSignal) =>
     this.writeContent(request, signal);
   restore = (request: Restoration, signal: AbortSignal) =>

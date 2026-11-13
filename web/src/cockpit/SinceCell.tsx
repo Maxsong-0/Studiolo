@@ -1,4 +1,5 @@
 import { useId } from 'react';
+import { ChangesSummary } from './ChangesSummary';
 import type { Since } from './since';
 import '../styles/cockpit.css';
 
@@ -8,7 +9,13 @@ const counts = new Intl.NumberFormat('en-US');
  * 左下：自上次查看以来（T-195；设计规范第 6 节）。四个数各带一句说明；
  * 拿不到的显示「—」，原因在说明那一行和悬停提示里；实际可能更多的数字后面带「+」。
  */
-export function SinceCell({ since }: { since: Since }) {
+export function SinceCell({
+  since,
+  refreshing,
+}: {
+  since: Since;
+  refreshing?: boolean;
+}) {
   const titleId = useId();
   return (
     <section className="cockpit-since" aria-labelledby={titleId}>
@@ -32,6 +39,7 @@ export function SinceCell({ since }: { since: Since }) {
           </li>
         ))}
       </ul>
+      <ChangesSummary refreshing={refreshing} />
     </section>
   );
 }

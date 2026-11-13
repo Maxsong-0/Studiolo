@@ -6,10 +6,10 @@ import type { View } from './types';
  */
 export interface ViewLocation {
   view: View;
-  /** 项目 root：项目运作与协作各标签的项目选择。 */
+  /** 项目 root：项目运作、协作各标签及文档变更流的项目选择。 */
   project: string | null;
   /**
-   * 视图内的面板：如项目的 `operations`、协作的 `timeline`、文档的 `tree`、规则的 `edit`／`access`；
+   * 视图内的面板：如项目的 `operations`、协作的 `timeline`、文档的 `tree`／`changes`、规则的 `edit`／`access`；
    * 默认面板记作 null。
    */
   panel: string | null;

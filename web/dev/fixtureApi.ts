@@ -1,3 +1,5 @@
+import { changesFixture } from './fixtures/changes.ts';
+import type { ChangesPage } from '../src/changesModel.ts';
 /**
  * 假数据模式的 `/api/*` 应答器：纯函数式入口 `handle(request)`，不碰网络与文件系统，
  * 时钟可注入——Vite 插件拿它接请求，`src/test/devFixtures.test.ts` 拿它把每份假数据喂给真实解码器。
@@ -118,6 +120,10 @@ function counter(value: string | null): number | null {
 export function createFixtureApi(options: { now?: () => number } = {}) {
   const clock = options.now ?? Date.now;
   const start = clock();
+  let changeSnapshot = 0;
+  const changesSnapshots = new Map<string, ChangesPage>();
+  const changesSeen = new Set<string | null>();
+  const changesRequests = new Map<string, string>();
   const notes = buildVault(start);
   let generation = 243;
   let committed = 48_216;
@@ -671,6 +677,27 @@ export function createFixtureApi(options: { now?: () => number } = {}) {
   ): FixtureResponse {
     const session = sessions.find((item) => item.id === current)!;
     switch (pathname) {
+      case '/api/v1/changes': {
+        if (!only(query, ['limit', 'project', 'before', 'vault_uuid']))
+          return error(400, '变更查询无效。');
+        if (query.has('before'))
+          return error(409, '变更快照已失效。', 'changes_expired');
+        const project = query.get('project');
+        if (project !== null && !PROJECT_ROOTS.includes(project))
+          return error(400, '项目无效。');
+        const snapshot = `d11d3d3a-2943-4cae-bf21-${String(++changeSnapshot).padStart(12, '0')}`;
+        const page = changesFixture(
+          start,
+          committed,
+          project,
+          snapshot,
+          changesSeen.has(project),
+        );
+        changesSnapshots.set(snapshot, page);
+        if (changesSnapshots.size > 64)
+          changesSnapshots.delete(changesSnapshots.keys().next().value!);
+        return ok(page);
+      }
       case '/api/v1/session':
         return ok(sessionPair(session));
       case '/api/v1/sessions':
@@ -859,6 +886,34 @@ export function createFixtureApi(options: { now?: () => number } = {}) {
       (!login && request.headers['x-csrf-token'] !== CSRF_TOKEN)
     )
       return error(403, '认证请求不符合安全策略。');
+    if (request.method === 'POST' && pathname === '/api/v1/changes/seen') {
+      const body = request.body;
+      if (
+        !record(body) ||
+        Object.keys(body).length !== 4 ||
+        typeof body.snapshot !== 'string' ||
+        typeof body.request_id !== 'string'
+      )
+        return error(400, '已读请求无效。');
+      const page = changesSnapshots.get(body.snapshot);
+      if (
+        !page ||
+        body.vault_uuid !== page.vault_uuid ||
+        body.project !== page.project
+      )
+        return error(409, '快照已失效。', 'changes_expired');
+      const bound = changesRequests.get(body.request_id);
+      if (bound && bound !== body.snapshot)
+        return error(409, '请求编号已占用。', 'seen_conflict');
+      changesRequests.set(body.request_id, body.snapshot);
+      changesSeen.add(page.project);
+      return ok({
+        status: 'seen',
+        vault_uuid: page.vault_uuid,
+        project: page.project,
+        through: page.through,
+      });
+    }
     const body = request.body;
     if (
       pathname.startsWith('/api/v1/sessions') ||
