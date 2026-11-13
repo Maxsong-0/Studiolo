@@ -13,7 +13,7 @@ import {
 
 /**
  * 登录闸门与账户对话框的新视觉（T-130 C2）只换样子：这里钉住换样子后仍在的内容与语义——
- * 闸门的字标、图名与唯一动作；当前登录小表的三格读数；会话记录每行的状态文字与撤销按钮。
+ * 闸门的标志与字标、图名与唯一动作；当前登录小表的三格读数；会话记录每行的状态文字与撤销按钮。
  */
 
 function renderWorkbench() {
@@ -23,7 +23,7 @@ function renderWorkbench() {
 }
 
 describe('登录闸门', () => {
-  it('未登录：字标、图名「进入你的工作台」、说明原文与唯一的登录动作', async () => {
+  it('未登录：标准版标志与字标、图名「进入你的工作台」、说明原文与唯一的登录动作', async () => {
     const fetchMock = mockSessions();
     fetchMock.mockImplementation(async (input, init) =>
       input === '/api/v1/session'
@@ -36,7 +36,13 @@ describe('登录闸门', () => {
     expect(
       within(gate).getByRole('heading', { level: 1, name: '进入你的工作台' }),
     ).toBeInTheDocument();
-    expect(within(gate).getByText('Studiolo')).toBeInTheDocument();
+    // 登录页没有「有没有事等你」可言：标志固定是标准版（红影），24px；旁边有字，标志本身读屏跳过。
+    const brand = within(gate).getByText('Studiolo');
+    const mark = brand.querySelector('svg.brand-mark');
+    expect(mark).toHaveAttribute('data-tone', 'standard');
+    expect(mark).toHaveAttribute('width', '24');
+    expect(mark).toHaveAttribute('aria-hidden', 'true');
+    expect(gate.querySelector('.session-brand-dot')).toBeNull();
     expect(within(gate).getByRole('status')).toHaveTextContent(
       '登录后即可进入工作台。',
     );

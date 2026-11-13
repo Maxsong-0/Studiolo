@@ -27,19 +27,28 @@
   border: 2px solid var(--ink);
   background: var(--paper);
 }
-/* 字标：与顶栏同一个 STUDIOLO＋红色句点；和下面的正文格子之间一道 1px 墨线。 */
+/*
+ * 标志与字标：标准版横排组合（规范第 14 节），和下面的正文格子之间一道 1px 墨线。
+ * 比例都按标志的格子算：标志边长 8 格，这里 1 格 = 3px（24px 的标志）。
+ */
 .session-brand {
+  --mark-unit: 3px;
   margin: 0;
   padding: var(--space-4) var(--space-5);
   border-bottom: 1px solid var(--ink);
-  font-size: 21px;
+  /* 大写字母高 5 格；Archivo 的大写高是 0.686em。 */
+  font-size: calc(5 * var(--mark-unit) / 0.686);
   line-height: 1;
   font-weight: 900;
-  letter-spacing: -0.03em;
-  text-transform: uppercase;
+  letter-spacing: -0.02em;
+  /* 导出的轮廓稿没有用字偶间距，这里关掉才和它一致。 */
+  font-kerning: none;
 }
-.session-brand-dot {
-  color: var(--signal);
+.session-brand .brand-mark {
+  /* 基线压在纸的下边：纸的下边在标志底边之上 2 格。 */
+  vertical-align: calc(-2 * var(--mark-unit));
+  /* 标与字之间 2 格，量到字的墨迹左缘：S 左侧自带 0.043em 的留白，扣掉。 */
+  margin-right: calc(2 * var(--mark-unit) - 0.043em);
 }
 .session-welcome-body {
   display: flex;

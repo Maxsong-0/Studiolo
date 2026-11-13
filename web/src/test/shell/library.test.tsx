@@ -18,7 +18,7 @@ function shell(sourceLabel?: string | null) {
   );
 }
 
-it('顶栏字标右侧显示当前库名，title 给全名；超长只在视觉上省略，读屏读到全名', () => {
+it('顶栏品牌格右侧显示当前库名，title 给全名；超长只在视觉上省略，读屏读到全名', () => {
   const name = '某个很长很长的只读副本库名 · 超过二十个字符也照样给出全名';
   shell(name);
   const banner = screen.getByRole('banner');
@@ -26,7 +26,7 @@ it('顶栏字标右侧显示当前库名，title 给全名；超长只在视觉�
   expect(library).toHaveClass('shell-library');
   expect(within(library).getByText(name)).toBeInTheDocument();
   expect(library).toHaveTextContent(`当前库：${name}`);
-  // 紧跟字标，排在主导航之前（规范第 5 节：库名在字标右侧）
+  // 紧跟品牌格，排在主导航之前（规范第 5 节：库名在品牌格右侧）
   expect(banner.querySelector('.shell-brand')?.nextElementSibling).toBe(
     library,
   );

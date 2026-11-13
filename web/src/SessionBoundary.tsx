@@ -5,6 +5,7 @@ import { installSessionReader } from './sessionHttp';
 import { watchSession } from './sessionLifecycle';
 import { SessionStatusContext } from './sessionStatus';
 import type { SessionStatus } from './sessionStatus';
+import { BrandMark } from './brand/BrandMark';
 import { SessionAccount } from './components/SessionAccount';
 import { Icon } from './components/Icon';
 import { Button } from './ui';
@@ -125,16 +126,15 @@ function SessionBoundaryContent({
   const proceed = () => {
     void (signedOut ? client.login() : client.check());
   };
-  // 登录闸门（规范第 1、2、3 节）：纸色底上居中一个 2px 墨框格子；字标、图名、说明、一个动作。
+  // 登录闸门（规范第 1、2、3、14 节）：纸色底上居中一个 2px 墨框格子；标志与字标、图名、说明、一个动作。
+  // 这里没有「有没有事等你」可言，标志固定画成标准版（红影）。
   // 核对中是空心方块，出问题是红色方块，未登录不加标记：颜色之外总有形状与原文。
   return (
     <main className="session-gate">
       <section className="session-welcome" aria-labelledby="session-title">
         <p className="session-brand">
+          <BrandMark tone="standard" size={24} />
           Studiolo
-          <span className="session-brand-dot" aria-hidden="true">
-            .
-          </span>
         </p>
         <div className="session-welcome-body">
           <h1 id="session-title" className="session-title">

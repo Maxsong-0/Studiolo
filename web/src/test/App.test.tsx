@@ -35,7 +35,7 @@ describe('只读工作台', () => {
   it('从 API 读取真实快照，筛选项目和生命周期，并保留未知值', async () => {
     const user = userEvent.setup();
     render(<App />);
-    // 数据来源标签在顶栏状态浮层里逐字列出：先打开胶囊再核对；顶栏字标旁另有当前库名（T-117）。
+    // 数据来源标签在顶栏状态浮层里逐字列出：先打开胶囊再核对；顶栏品牌格旁另有当前库名（T-117）。
     const capsule = screen.getByRole('button', { name: /^工作台状态/ });
     await user.click(capsule);
     const popover = document.getElementById(
