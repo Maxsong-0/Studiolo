@@ -7,8 +7,8 @@ import { SessionDialog } from './SessionDialog';
 import '../styles/session.css';
 
 /**
- * 顶栏账户入口：账户与会话对话框只从这里开。状态胶囊浮层的「前往账户与会话」
- * 按 SESSION_ACCOUNT_ATTRIBUTE 找到这个按钮、把焦点带过来，不另开一份对话框。
+ * 账户入口（收在顶栏「更多」菜单里，T-199）：账户与会话对话框只从这里开。状态胶囊浮层的
+ * 「前往账户与会话」按 SESSION_ACCOUNT_ATTRIBUTE 找到这个按钮——先让菜单展开，再把焦点带过来，不另开一份对话框。
  */
 export function SessionAccount({
   client,

@@ -625,10 +625,11 @@
       background-color var(--motion-fast) ease,
       border-color var(--motion-fast) ease,
       color var(--motion-fast) ease,
-      transform var(--motion-fast) ease;
+      transform var(--motion-press) ease-out;
   }
-  .ui-button:active:not(:disabled) {
-    transform: translateY(1px);
+  /* 按下缩到 0.97（T-199）：按下要有回应；写着 aria-disabled 的按钮点了不做事，就不缩 */
+  .ui-button:active:not(:disabled, [aria-disabled='true']) {
+    transform: scale(0.97);
   }
   .ui-surface--appear {
     animation: ui-surface-in var(--motion-fast) ease-out;

@@ -2,7 +2,7 @@
  * ⌘K 动作面板（T-130 设计规范第 8 节；画布 R3_palette）。
  * 640px 宽、2px 墨框、10px 硬偏移阴影（.ui-surface 给出）、纸色底；输入行 24px/800；
  * 结果按「动作 · 跳转 · 文档」分组，等宽小标题；选中行黑底反白；匹配字下划红线；底部键位提示。
- * 只引用 tokens.css 的新令牌；深色值由令牌在 prefers-color-scheme 里重定义，这里不写深色分支。
+ * 只引用 tokens.css 的新令牌；深色值由令牌重定义（跟随系统或手动选择），这里不写深色分支。
  * 出现与收起由 useDialogSurface 驱动（Surface 传 appear={false}），这里不另写动画。
  */
 

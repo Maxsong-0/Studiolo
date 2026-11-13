@@ -3,7 +3,7 @@
  * 审阅框与对话框用 ui/Surface（2px 墨框、10px 硬偏移阴影）；确认按钮是 Button danger，确认文案原样。
  * 对话框的出现与收起由 useDialogSurface 驱动（Surface 传 appear={false}）；原地展开的审阅框用 Surface
  * 自带的 120ms 透明度＋4px 位移（减少动态时只留透明度），这里不另写动画。
- * 只引用 tokens.css 的新令牌；深色值由令牌在 prefers-color-scheme 里重定义，这里不写深色分支。
+ * 只引用 tokens.css 的新令牌；深色值由令牌重定义（跟随系统或手动选择），这里不写深色分支。
  * 红色只标「出问题」与「等你」，并且同时带方块或虚线框；14px 及以下的红字用 --signal-text。
  */
 
@@ -334,8 +334,20 @@
 /* ---------- 顶栏入口：最近删除载入中的等宽小字、能力还没核对完时的状态浮层 ---------- */
 
 /* 顶栏是一行 flex：去掉段落默认外边距，免得载入的一瞬间把顶栏撑高 */
+/*
+ * 「正在打开最近删除…」和下面的状态小浮层都画在顶栏「更多」菜单的面板里（T-199）。点了入口菜单就收起，
+ * 面板收着时自己不占盒子（shell.css），所以这两样要自己脱离文档流：挂在顶栏下方、靠右，
+ * 定位基准是「更多」那一格（窄屏是铺满视口的顶栏）。
+ */
 .file-operation-loading {
+  position: absolute;
+  z-index: var(--z-popover);
+  top: calc(100% + var(--space-2));
+  right: 0;
   margin: 0;
+  padding: var(--space-1-5) var(--space-2-5);
+  border: 1.5px solid var(--ink);
+  background: var(--paper);
   font-family: var(--font-mono);
   font-size: var(--type-label);
   line-height: 1.3;
@@ -347,7 +359,7 @@
   position: absolute;
   z-index: var(--z-popover);
   top: calc(100% + var(--space-2));
-  right: var(--space-7);
+  right: 0;
   display: flex;
   flex-direction: column;
   align-items: flex-start;
@@ -376,6 +388,7 @@
   .deleted-entry__meta {
     white-space: normal;
   }
+  .file-operation-loading,
   .file-operation-fallback {
     right: var(--space-4);
   }

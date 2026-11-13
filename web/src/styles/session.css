@@ -2,7 +2,7 @@
  * 会话：登录闸门、顶栏账户入口、账户与会话对话框、状态浮层里的「会话」一栏
  * （T-130 设计规范第 1、2、3、5、9、11 节）。
  *
- * 只引用 tokens.css 的新令牌；深色值由令牌在 prefers-color-scheme 里重定义，这里不写深色分支。
+ * 只引用 tokens.css 的新令牌；深色值由令牌重定义（跟随系统或手动选择），这里不写深色分支。
  * 红色只标「出问题」与「等你」，并且同时带方块或虚线框；14px 及以下的红字用 --signal-text。
  *
  * 本文件由组件自己 import，在层叠里可能排在 tokens.css、ui.css、editor.css 之前或之后：
@@ -99,19 +99,6 @@
 .ui-button.session-primary {
   min-height: var(--control-touch);
   margin-top: var(--space-2);
-}
-
-/* ---------- 顶栏账户入口：窄屏只留图标，保住 44px 触控 ---------- */
-
-@media (width < 760px) {
-  .outline-button.account-button {
-    min-width: var(--control-touch);
-    min-height: var(--control-touch);
-    padding: var(--space-2);
-  }
-  .outline-button.account-button > span {
-    display: none;
-  }
 }
 
 /* ---------- 账户与会话对话框（浮层框由 ui/Surface 画） ---------- */

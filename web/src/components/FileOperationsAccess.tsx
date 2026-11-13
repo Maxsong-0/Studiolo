@@ -17,11 +17,13 @@ const RecentlyDeleted = lazy(() =>
   })),
 );
 
-/** 交给 ⌘K 动作面板的入口：等同点一次顶栏「最近删除」，以及当前能不能删文件。 */
+/** 交给 ⌘K 动作面板的入口：等同点一次「更多」菜单里的「最近删除」，以及当前能不能删文件。 */
 export interface FileOperationsEntry {
   open: () => void;
   /** 文件操作可用（没被关闭）：能删才在面板里列「删除文件」预览。 */
   deletable: boolean;
+  /** 有一件文件操作结果待核对：入口上写的是「文件操作待核对」，顶栏的「更多」据此带上标记。 */
+  pending: boolean;
 }
 
 export function FileOperationsAccess({
@@ -37,6 +39,9 @@ export function FileOperationsAccess({
   const [open, setOpen] = useState(false);
   const hidden = capability.phase === 'disabled' && !record;
   const deletable = capability.phase !== 'disabled';
+  const pending = record
+    ? ['sending', 'uncertain'].includes(record.phase)
+    : false;
   function show() {
     setOpen(true);
     if (capability.phase === 'error') capability.retry();
@@ -49,10 +54,10 @@ export function FileOperationsAccess({
   useEffect(() => {
     if (!onEntryChange) return;
     onEntryChange(
-      hidden ? null : { open: () => latestShow.current(), deletable },
+      hidden ? null : { open: () => latestShow.current(), deletable, pending },
     );
     return () => onEntryChange(null);
-  }, [hidden, deletable, onEntryChange]);
+  }, [hidden, deletable, pending, onEntryChange]);
   if (hidden) return null;
   return (
     <>
@@ -61,9 +66,7 @@ export function FileOperationsAccess({
         disabled={capability.phase === 'loading'}
         onClick={show}
       >
-        {record && ['sending', 'uncertain'].includes(record.phase)
-          ? '文件操作待核对'
-          : '最近删除'}
+        {pending ? '文件操作待核对' : '最近删除'}
       </button>
       {open && capability.vault ? (
         <Suspense
@@ -82,7 +85,7 @@ export function FileOperationsAccess({
         </Suspense>
       ) : null}
       {open && !capability.vault ? (
-        // 顶栏下方的小浮层：Surface 的 2px 墨框与硬阴影，出现时 120ms 透明度＋4px 位移。
+        // 顶栏下方的小浮层（菜单已经收起，自己定位）：Surface 的 2px 墨框与硬阴影，出现时 120ms 透明度＋4px 位移。
         <Surface
           as="section"
           className="file-operation-fallback"

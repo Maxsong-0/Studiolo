@@ -1,6 +1,7 @@
 /*
  * 设计令牌单一来源（T-130 瑞士网格＋工程图纸，规范 docs/design/t130-design-system.md 第 1、2、3、11 节）。
- * 浅色值写在 :root，深色值只在唯一的 @media (prefers-color-scheme: dark) 里重定义同名令牌。
+ * 浅色值写在 :root，深色值只在本文件里重定义同名令牌：缺省跟随系统（prefers-color-scheme），
+ * 人也可以手动选浅色或深色（T-199，写在 <html data-theme> 上，见 web/src/theme/preference.ts）。
  * 任何页面样式一律只引用令牌，不得自带深色补丁或颜色字面量：
  * 局部补丁会让深色文字落在仍为浅色的底上，对比度反而更差。
  */
@@ -78,8 +79,9 @@
   --control-small: 36px;
   --control-compact: 32px;
 
-  /* 动效只有一档；阴影只有浮层这一种（硬偏移、无模糊）；粗线用于顶栏底边与当前子标签 */
+  /* 动效两档：反馈 120ms，按钮按下 100ms；阴影只有浮层这一种（硬偏移、无模糊）；粗线用于顶栏底边与当前子标签 */
   --motion-fast: 120ms;
+  --motion-press: 100ms;
   --overlay-shadow: 10px 10px 0 var(--ink);
   --rule-thick: 3px;
 
@@ -94,8 +96,14 @@
   background: var(--paper);
 }
 
+/*
+ * 深色值写两遍：系统是深色、人又没手动选浅色时一遍；人手动选了深色时一遍。
+ * 两遍必须逐字相同（守卫 test/ui/contrast.test.ts）——改一处就要改另一处。
+ * 选择器都包在 :where() 里，特异度和上面的 :root 一样：后面「高对比度」那一段照旧压得过它们。
+ * 手动选了哪一套，color-scheme 就只报哪一套：原生控件和滚动条跟着页面走，不跟系统。
+ */
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:where(:not([data-theme='light'])) {
     --paper: #121211;
     --paper-raised: #1a1a18;
     --ink: #ecece6;
@@ -108,6 +116,23 @@
     --signal-wash: #3a1714;
     --on-ink: #121211;
   }
+}
+:root:where([data-theme='dark']) {
+  color-scheme: dark;
+  --paper: #121211;
+  --paper-raised: #1a1a18;
+  --ink: #ecece6;
+  --ink-2: #a6a69e;
+  --ink-3: #75756e;
+  --hairline: #34342f;
+  --grid: #1e1e1b;
+  --signal: #ff4a3d;
+  --signal-text: #ff6a5f;
+  --signal-wash: #3a1714;
+  --on-ink: #121211;
+}
+:root:where([data-theme='light']) {
+  color-scheme: light;
 }
 
 /*
@@ -244,7 +269,7 @@ a {
 .is-unknown {
   color: var(--ink-2);
 }
-/* 动效只用于反馈：120ms 的底色、线色、字色与 1px 下移；减少动态时取消位移 */
+/* 动效只用于反馈：120ms 的底色、线色、字色；按钮按下缩到 0.97、100ms（T-199）。减少动态时不缩放 */
 @media (prefers-reduced-motion: no-preference) {
   button,
   input,
@@ -253,10 +278,11 @@ a {
       background-color var(--motion-fast) ease,
       border-color var(--motion-fast) ease,
       color var(--motion-fast) ease,
-      transform var(--motion-fast) ease;
+      transform var(--motion-press) ease-out;
   }
-  .outline-button:active:not(:disabled),
-  .icon-button:active {
-    transform: translateY(1px);
+  /* 写着 aria-disabled 的按钮点了不做事，就不缩 */
+  .outline-button:active:not(:disabled, [aria-disabled='true']),
+  .icon-button:active:not(:disabled, [aria-disabled='true']) {
+    transform: scale(0.97);
   }
 }
