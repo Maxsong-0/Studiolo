@@ -17,7 +17,7 @@ pub(crate) fn append(
     Ok((record.offset(), record.record_hash().to_hex()))
 }
 
-fn event(value: &ContentAuditEvent) -> Result<AuditEvent, ()> {
+pub(crate) fn event(value: &ContentAuditEvent) -> Result<AuditEvent, ()> {
     let phase = match value.phase {
         ContentAuditPhase::Intent => AuditPhase::Intent,
         ContentAuditPhase::Outcome => AuditPhase::Outcome,

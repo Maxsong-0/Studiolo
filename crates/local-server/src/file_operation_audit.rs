@@ -25,7 +25,7 @@ pub(crate) fn append(
     Ok((record.offset(), record.record_hash().to_hex()))
 }
 
-fn event(value: &FileOperationAuditEvent) -> Result<AuditEvent, AuditError> {
+pub(crate) fn event(value: &FileOperationAuditEvent) -> Result<AuditEvent, AuditError> {
     validate(value)?;
     let action = match value.kind {
         FileOperationKind::Delete { .. } | FileOperationKind::Rename { .. } => "vault.mutation",

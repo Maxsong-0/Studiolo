@@ -33,7 +33,7 @@ mod tree;
 mod unix_ingress;
 mod view;
 mod watcher;
-pub use coordinator::CanonicalWorkbench;
+pub use coordinator::{CanonicalWorkbench, FrozenWorkbench};
 pub use policy_http::{PolicyPlane, with_policy_plane};
 pub use project_repository::{ProjectRepository, with_project_repository};
 pub use unix_ingress::{BoundUnixIngress, IngressError, PreparedUnixIngress};

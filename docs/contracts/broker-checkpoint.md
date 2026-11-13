@@ -36,3 +36,11 @@ UUID/pair_id，重绑两个主根、已启用 history/meta-v1、maintenance-v1 �
 架构 60 通过。补齐反向母本核对和恢复布局后，108 `20261113-135334-12af` 封存 7、
 恢复回归 24、审计回归 6、严格 Clippy 和架构 60 全通过。最终全量/生产演练仍与
 上述机制证据分开。
+
+## 实际工作台与 Audit 接线
+
+`CanonicalWorkbench::freeze_checkpoint` 移走正在服务的 Broker；任何失败或上层展开均返还同一个 owner。普通写者槽在窗口内为空，原唯一租约仍被持有，既不重开写者也不释放给第二进程。
+
+`FrozenWorkbench::verify_audit` 复用线上正文、类型化文件操作和维护三个事件映射，按永久 ACK 的原 offset 读取真实 FrozenAudit，再核对完整事件和原记录哈希。相同 event_id 但 action/payload 不符，或只持有真实 offset 而哈希不符，都拒绝导出。没有新增第二套 payload 编码。
+
+108 `20261113-141921-acd6`：3 项真实工作台接线契约、严格 Clippy、架构 62 通过。真实正文、取消文件删除及维护操作共 6 个原事件全部核对；另覆盖错误完整事件/哈希不能导出，以及超时/展开返还原实例。七 owner 全局屏障仍由最终组合根接线，不能用这个单 owner 窗口冒充全系统冻结。

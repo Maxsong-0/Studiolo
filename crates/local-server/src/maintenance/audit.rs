@@ -21,7 +21,7 @@ pub(super) fn append(
     Ok((record.offset(), record.record_hash().to_hex()))
 }
 
-fn event(value: &MaintenanceAuditEvent) -> Result<AuditEvent, MaintenanceError> {
+pub(crate) fn event(value: &MaintenanceAuditEvent) -> Result<AuditEvent, MaintenanceError> {
     let schema_version = schema(value)?;
     let phase = match value.phase {
         ContentAuditPhase::Intent => AuditPhase::Intent,

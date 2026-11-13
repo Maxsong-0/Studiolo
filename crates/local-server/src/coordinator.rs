@@ -1,6 +1,8 @@
 //! 封闭的 canonical 拥有者；公开控制句柄不导出 Broker 或任意写回调。
 
 pub(crate) mod changes;
+mod checkpoint;
+pub use checkpoint::FrozenWorkbench;
 mod content;
 mod content_audit;
 mod file_operations;
