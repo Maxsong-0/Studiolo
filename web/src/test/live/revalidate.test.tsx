@@ -386,6 +386,43 @@ describe('策略草案的安静重读', () => {
     expect(requests(DESIRED)).toHaveLength(3);
   });
 
+  it('两次安静重读叠在一起：后发的已经换上了，先发的才到，就不要它（它读到的可能是写入之前的列表）', async () => {
+    replies[DESIRED] = () => jsonResponse(listBody([draft('01'), draft('02')]));
+    const { result } = mount();
+    await waitFor(() => expect(count(result.current)).toBe(2));
+
+    // 先发的那一次读到的是写入之前的两份，应答晚到；后发的读到写入之后的一份，先到。
+    const early = deferred<Response>();
+    const late = deferred<Response>();
+    const pending = [early.promise, late.promise];
+    replies[DESIRED] = () => pending.shift() ?? late.promise;
+    const first = startQuiet(
+      result.current.revalidate,
+      new AbortController().signal,
+    );
+    const second = startQuiet(
+      result.current.revalidate,
+      new AbortController().signal,
+    );
+    await waitFor(() => expect(requests(DESIRED)).toHaveLength(3));
+
+    await act(async () => {
+      late.resolve(jsonResponse(listBody([draft('01')])));
+      await second;
+    });
+    expect(count(result.current)).toBe(1);
+    const applied = result.current.state;
+
+    let outcome: Revalidation | undefined;
+    await act(async () => {
+      early.resolve(jsonResponse(listBody([draft('01'), draft('02')])));
+      outcome = await first;
+    });
+    // 晚到的旧结果不算失败（调度器不必退避），只是不用它。
+    expect(outcome).toEqual({ ok: true });
+    expect(result.current.state).toBe(applied);
+  });
+
   it('本入口没装策略平面：不读', async () => {
     replies[DESIRED] = () =>
       jsonResponse(

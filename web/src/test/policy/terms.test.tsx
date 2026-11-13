@@ -9,10 +9,12 @@ import {
 } from '../../policy/terms';
 import {
   desiredBody,
+  openTab,
   policyServer,
   statusBody,
   versionBody,
   type PolicyServer,
+  type PolicyTabName,
 } from './policyFixtures';
 
 let server: PolicyServer | undefined;
@@ -63,27 +65,39 @@ describe('策略术语表', () => {
       desired: [desiredBody()],
       versions: [versionBody(2)],
     });
+    const user = userEvent.setup();
     render(<PolicyBoundary />);
-    const table = await screen.findByRole('table', { name: '生效中的各项' });
+    await screen.findByRole('table', { name: '生效中的各项' });
 
-    for (const [human, raw] of [
-      ['生效中', 'effective'],
-      ['提交规则草案', 'desired'],
-      ['待处理草案', 'desired'],
-      ['版本与回滚', 'rollback'],
-      ['撤销接入（实例/类型/全局）', 'revoke'],
-    ] as const) {
-      const heading = screen.getByRole('heading', {
-        level: 2,
-        name: `${human} ${raw}`,
-      });
-      expect(heading.textContent?.startsWith(human)).toBe(true);
-      const term = heading.querySelector('code.policy-term');
-      expect(term).toHaveTextContent(raw);
-      // 原术语跟在人话后面：它是标题里最后一段文字。
-      expect(heading.textContent?.endsWith(raw)).toBe(true);
+    const headings: Record<
+      PolicyTabName,
+      readonly (readonly [string, string])[]
+    > = {
+      现状: [
+        ['生效中', 'effective'],
+        ['版本与回滚', 'rollback'],
+        ['撤销接入（实例/类型/全局）', 'revoke'],
+      ],
+      待处理: [['待处理草案', 'desired']],
+      提交: [['提交规则草案', 'desired']],
+    };
+    for (const name of ['待处理', '提交', '现状'] as const) {
+      await openTab(user, name);
+      for (const [human, raw] of headings[name]) {
+        const heading = screen.getByRole('heading', {
+          level: 2,
+          name: `${human} ${raw}`,
+        });
+        expect(heading.textContent?.startsWith(human)).toBe(true);
+        const term = heading.querySelector('code.policy-term');
+        expect(term).toHaveTextContent(raw);
+        // 原术语跟在人话后面：它是标题里最后一段文字。
+        expect(heading.textContent?.endsWith(raw)).toBe(true);
+      }
     }
 
+    // 上面最后停在「现状」：生效中各项的表头。
+    const table = screen.getByRole('table', { name: '生效中的各项' });
     for (const [human, raw] of [
       ['对象', 'subject'],
       ['摘要', 'sha256'],
@@ -95,6 +109,7 @@ describe('策略术语表', () => {
     }
 
     // 字段：输入框的可访问名只是人话，原术语等宽跟在字段名后面。
+    await openTab(user, '提交');
     const form = screen.getByRole('form', { name: '提交规则草案' });
     const subject = within(form).getByRole('textbox', { name: '对象' });
     const label = subject
@@ -115,17 +130,28 @@ describe('策略术语表', () => {
     const user = userEvent.setup();
     render(<PolicyBoundary />);
     await screen.findByRole('table', { name: '生效中的各项' });
-    // 把能出现的按钮都摆出来：选中草案（发布、重新校验、撤回），展开一个执行预览（确认、取消）。
-    await user.click(screen.getByRole('button', { name: '能力集 claude' }));
+    // 三个标签各走一遍，把能出现的按钮都摆出来：现状（解除全局撤销、各版与回滚、撤销接入），
+    // 待处理（选中草案的发布、重新校验、撤回，再展开一个执行预览的确认、取消），提交。
+    let seen = screen.getAllByRole('button').length;
+    expect(screen.queryAllByRole('button', { name: RAW_IN_NAME })).toEqual([]);
+
+    await openTab(user, '待处理');
     await user.click(
       screen.getByRole('button', { name: '发布（需二次认证）' }),
     );
     expect(
       screen.getByRole('button', { name: '确认发布' }),
     ).toBeInTheDocument();
-
-    const buttons = screen.getAllByRole('button');
-    expect(buttons.length).toBeGreaterThan(8);
+    seen += screen.getAllByRole('button').length;
     expect(screen.queryAllByRole('button', { name: RAW_IN_NAME })).toEqual([]);
+
+    await openTab(user, '提交');
+    seen += screen.getAllByRole('button').length;
+    expect(screen.queryAllByRole('button', { name: RAW_IN_NAME })).toEqual([]);
+
+    expect(seen).toBeGreaterThan(8);
+    // 子标签的名字同样只用人话。
+    expect(screen.getAllByRole('tab')).toHaveLength(3);
+    expect(screen.queryAllByRole('tab', { name: RAW_IN_NAME })).toEqual([]);
   });
 });

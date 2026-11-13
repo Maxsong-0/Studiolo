@@ -1,12 +1,12 @@
 import { useId, useState } from 'react';
 import type { PolicyStatus } from '../policyModel';
 import { Cell, CellHeader, EmptyState, GridFrame } from '../ui';
-import { DraftPanel } from './DraftPanel';
-import { RulesFeedback } from './RulesFeedback';
+import { DraftPanel } from '../policy/DraftPanel';
+import { PolicyFeedback } from '../policy/PolicyFeedback';
 import { accessChange } from './accessChange';
 import { accessCell } from './rulesModel';
 import type { RulesModel, TypeColumn } from './rulesModel';
-import type { PolicyActions } from './usePolicyActions';
+import type { PolicyActions } from '../policy/usePolicyActions';
 import '../styles/policy.css';
 import '../styles/rules.css';
 
@@ -75,7 +75,7 @@ export function RulesAccess({
           title={<span id={`${ids}-matrix`}>哪类 AI 能读哪条规则</span>}
           meta={`${model.rules.length} 条规则 × ${model.types.length} 类 AI`}
         />
-        <RulesFeedback
+        <PolicyFeedback
           origin={ORIGIN}
           notice={actions.notice}
           error={actions.error}

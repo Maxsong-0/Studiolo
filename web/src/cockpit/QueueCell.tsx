@@ -323,7 +323,8 @@ export function QueueCell({
   asOf: string | null;
   onOpen: OpenSource;
   onOpenTask: (taskId: string) => void;
-  onOpenPolicy: () => void;
+  /** 去策略页处理这一份草案（草案号）。 */
+  onOpenPolicy: (desiredId: string) => void;
   onRetryPolicy: () => void;
   /** 「稍后」的记号；缺省用全站那一份，测试里换成自己的。 */
   later?: LaterStore;
@@ -404,7 +405,7 @@ export function QueueCell({
 
   function open(entry: PendingEntry) {
     if (entry.source === 'board') onOpenTask(entry.item.id);
-    else if (entry.source === 'policy') onOpenPolicy();
+    else if (entry.source === 'policy') onOpenPolicy(entry.desired.id);
     else onOpen(entry.action.source);
   }
 

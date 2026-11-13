@@ -1,0 +1,251 @@
+/*
+ * 策略页的子标签与能力差异表（T-198，设计规范第 9 节）：标签栏、三个面板里新加的块、「现在／改后」表。
+ * 格子、表单、队列、选中的草案、校验报告、执行预览沿用 policy.css 的类，这里只排拆标签之后新加的东西；
+ * 只引用 tokens.css 的令牌，断点写区间语法，与 ui.css、policy.css 一致。
+ * 红色只给服务端判定的扩大项和全局撤销；新增、去掉、有改动一律墨色，靠文字和粗细区分。
+ */
+
+/* ---------- 子标签栏：左标签，右等宽汇总（与规则、协作同一版式） ---------- */
+
+.policy-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: stretch;
+  justify-content: space-between;
+  gap: var(--space-2) var(--space-6);
+  min-height: 50px;
+  margin-bottom: var(--space-3);
+}
+.policy-bar__tabs {
+  flex: 0 1 auto;
+}
+.policy-bar__summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1) var(--space-6);
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: var(--type-caption);
+  line-height: 1.3;
+  color: var(--ink-2);
+}
+/* 全局撤销是要处理的事：红色方块＋红字，三个标签上都看得到 */
+.policy-bar__alert {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1-5);
+  font-weight: 700;
+  color: var(--signal-text);
+}
+
+/* ---------- 提交：「从生效中的版本开始改」一行 ---------- */
+
+.policy-submit__base {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+  margin: 0;
+}
+
+/* ---------- 能力差异：排在校验报告前面的一块 ---------- */
+
+.policy-capability {
+  display: grid;
+  gap: var(--space-2);
+  min-width: 0;
+}
+.policy-capability__title {
+  margin: 0;
+  padding-bottom: var(--space-1-5);
+  border-bottom: 1px solid var(--hairline);
+  font-size: var(--type-body);
+  line-height: 1.4;
+  font-weight: 800;
+}
+
+/* ---------- 「现在／改后」表：一个字段一行 ---------- */
+
+.policy-capdiff {
+  display: grid;
+  gap: var(--space-2);
+  min-width: 0;
+}
+/* 汇总一行：几项有改动、几项不变，右边跟着「列出／收起不变的 N 项」 */
+.policy-capdiff__summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-1) var(--space-3);
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: var(--type-label);
+  line-height: 1.3;
+  letter-spacing: 0.04em;
+  color: var(--ink-2);
+}
+.policy-capdiff__table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+  font-size: var(--type-small);
+  line-height: 1.5;
+}
+.policy-capdiff__table th,
+.policy-capdiff__table td {
+  padding: var(--space-2) var(--space-3) var(--space-2) 0;
+  text-align: left;
+  vertical-align: top;
+  overflow-wrap: anywhere;
+}
+.policy-capdiff__table th:last-child,
+.policy-capdiff__table td:last-child {
+  padding-right: 0;
+}
+.policy-capdiff__table thead th {
+  padding-top: 0;
+  border-bottom: 1.5px solid var(--ink);
+  font-size: var(--type-caption);
+  line-height: 1.3;
+  font-weight: 700;
+  color: var(--ink-2);
+}
+/* 列头下的小字：这一列比的是哪一版 */
+.policy-capdiff__which {
+  display: block;
+  font-family: var(--font-mono);
+  font-size: var(--type-micro);
+  font-weight: 500;
+  letter-spacing: 0.04em;
+}
+.policy-capdiff__table tbody th,
+.policy-capdiff__table tbody td {
+  border-bottom: 1px solid var(--hairline);
+  font-weight: 400;
+}
+.policy-capdiff__table tbody tr:last-child th,
+.policy-capdiff__table tbody tr:last-child td {
+  border-bottom: 0;
+}
+/* 不变的行展开之后才列出，颜色放淡；有改动的行用墨色，字段名加粗并写「有改动」 */
+.policy-capdiff__table tbody tr {
+  color: var(--ink-2);
+}
+.policy-capdiff__table tbody tr[data-changed='true'] {
+  color: var(--ink);
+}
+.policy-capdiff__name {
+  font-weight: 600;
+}
+.policy-capdiff__table tr[data-changed='true'] .policy-capdiff__name {
+  font-weight: 800;
+}
+.policy-capdiff__flag {
+  margin-left: var(--space-2);
+  font-family: var(--font-mono);
+  font-size: var(--type-micro);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+}
+.policy-capdiff__about {
+  display: block;
+  font-size: var(--type-caption);
+  line-height: 1.4;
+  color: var(--ink-2);
+}
+/* 「—」「空」是要读的字：用 --ink-2，--ink-3 不做活文字的颜色（T-191） */
+.policy-capdiff__none {
+  color: var(--ink-2);
+}
+.policy-capdiff__scalar {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-1) var(--space-2);
+}
+.policy-capdiff__list {
+  display: grid;
+  gap: var(--space-0-5);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.policy-capdiff__list > li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0 var(--space-2);
+}
+/* 只在这一边有的项：新增的加粗，去掉的划线；「新增」「去掉」两个字都写出来，样式只是辅助 */
+.policy-capdiff__list > li[data-only] code {
+  font-weight: 700;
+}
+.policy-capdiff__list > li[data-only='before'] code {
+  text-decoration: line-through;
+}
+.policy-capdiff__tag {
+  font-family: var(--font-mono);
+  font-size: var(--type-micro);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+}
+.policy-capdiff__direction {
+  font-size: var(--type-caption);
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+/* ---------- 窄屏（<760px）：网格已收成单列；差异表每个字段一组，字段名占一整行，下面两格各带列名 ---------- */
+
+@media (width < 760px) {
+  .policy-bar {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  /* 表头只留给读屏，行改排成一组；表格语义靠组件里显式的 role 保住 */
+  .policy-capdiff__table,
+  .policy-capdiff__table tbody {
+    display: block;
+    width: 100%;
+  }
+  .policy-capdiff__table thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+  }
+  .policy-capdiff__table tbody tr {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--space-1) var(--space-3);
+    padding: var(--space-2) 0;
+    border-bottom: 1px solid var(--hairline);
+  }
+  .policy-capdiff__table tbody tr:last-child {
+    border-bottom: 0;
+  }
+  .policy-capdiff__table tbody :is(th, td) {
+    display: block;
+    padding: 0;
+    border: 0;
+  }
+  .policy-capdiff__table tbody th {
+    grid-column: 1 / -1;
+  }
+  .policy-capdiff__table td[data-label]::before {
+    display: block;
+    margin-bottom: var(--space-0-5);
+    color: var(--ink-2);
+    font-family: var(--font-mono);
+    font-size: var(--type-micro);
+    font-weight: 500;
+    line-height: 1.3;
+    letter-spacing: 0.04em;
+    content: attr(data-label);
+  }
+}

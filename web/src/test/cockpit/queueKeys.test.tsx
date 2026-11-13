@@ -54,7 +54,7 @@ interface Sources {
 interface Handlers {
   onOpen: Mock<OpenSource>;
   onOpenTask: Mock<(taskId: string) => void>;
-  onOpenPolicy: Mock<() => void>;
+  onOpenPolicy: Mock<(desiredId: string) => void>;
 }
 
 function cell(
@@ -96,7 +96,7 @@ function renderQueue(sources: Sources = {}, { live = true } = {}) {
   const handlers: Handlers = {
     onOpen: vi.fn<OpenSource>(),
     onOpenTask: vi.fn<(taskId: string) => void>(),
-    onOpenPolicy: vi.fn<() => void>(),
+    onOpenPolicy: vi.fn<(desiredId: string) => void>(),
   };
   const onGo = vi.fn();
   const environment = { later, handlers };
@@ -239,7 +239,8 @@ describe('队列的键盘：Enter 去处理', () => {
   it('焦点没落在任何东西上：去处理选中的那一件', () => {
     const { handlers } = renderQueue();
     expect(press('Enter')).toBe(false);
-    expect(handlers.onOpenPolicy).toHaveBeenCalledTimes(1);
+    // 带着那一份草案的号过去：策略页落地就选中它。
+    expect(handlers.onOpenPolicy.mock.calls).toEqual([[data.desired[0].id]]);
     expect(handlers.onOpenTask).not.toHaveBeenCalled();
   });
 
