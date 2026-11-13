@@ -1,7 +1,7 @@
 //! 图3只读回放只提供权威元数据，原始模型响应与提示词永不进入监督JSON。
 use super::{
     BoardPlane,
-    http::{busy, unavailable, unconfigured},
+    http::{busy, task_not_found, unavailable, unconfigured},
 };
 use axum::{
     Extension, Json,
@@ -19,6 +19,11 @@ pub(super) struct ReplayQuery {
     task_id: TaskId,
     after: Option<u64>,
 }
+/// 回放失败的两种性质：工作项确定不存在答 404，这一刻读不出来答 503，不能压成一种（BUG-037）。
+enum ReplayFailure {
+    NotFound,
+    Unavailable,
+}
 pub(super) async fn replay(
     plane: Option<Extension<Arc<BoardPlane>>>,
     query: Result<Query<ReplayQuery>, QueryRejection>,
@@ -35,12 +40,12 @@ pub(super) async fn replay(
         Err(_) => return busy(),
     };
     let result=tokio::task::spawn_blocking(move||{
-        let _permit=permit;plane.storage.check().map_err(str::to_owned)?;
-        let hash=plane.policy.effective().map_err(|_|"策略不可用")?.effective_hash;
-        let engine=plane.engine.lock().map_err(|_|"黑板不可用")?;
-        let task=engine.board_detail(query.task_id,&hash).map_err(|e|e.to_string())?.ok_or("工作项不存在")?;
+        let _permit=permit;plane.storage.check().map_err(|_|ReplayFailure::Unavailable)?;
+        let hash=plane.policy.effective().map_err(|_|ReplayFailure::Unavailable)?.effective_hash;
+        let engine=plane.engine.lock().map_err(|_|ReplayFailure::Unavailable)?;
+        let task=engine.board_detail(query.task_id,&hash).map_err(|_|ReplayFailure::Unavailable)?.ok_or(ReplayFailure::NotFound)?;
         let filter=AuditFilter::default().with_task(query.task_id).after_offset(query.after.unwrap_or(0)).with_limit(101);
-        let records=plane.audit.query(&filter).map_err(|_|"权威审计不可用")?;
+        let records=plane.audit.query(&filter).map_err(|_|ReplayFailure::Unavailable)?;
         let more=records.len()>100;
         let events=records.iter().take(100).map(|record|{
             let event=record.event();let source=event.payload().as_value();let mut details=serde_json::Map::new();
@@ -50,10 +55,12 @@ pub(super) async fn replay(
             json!({"offset":record.offset().to_string(),"at":record.recorded_at().to_string(),"action":event.action(),"phase":event.phase(),"attempt_id":event.subject().attempt_id(),"details":details})
         }).collect::<Vec<_>>();
         let next=if more{records.get(99).map(|r|r.offset().to_string())}else{None};
-        Ok::<_,String>(json!({"task":task,"events":events,"next":next}))
+        Ok::<_,ReplayFailure>(json!({"task":task,"events":events,"next":next}))
     }).await;
     match result {
         Ok(Ok(value)) => Json(value).into_response(),
+        Ok(Err(ReplayFailure::NotFound)) => task_not_found(),
+        // 存储、策略、审计读不出，或阻塞任务本身失败：都是这一刻拿不到结论。
         _ => unavailable(),
     }
 }

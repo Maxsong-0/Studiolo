@@ -280,7 +280,8 @@ export function createFixtureApi(options: { now?: () => number } = {}) {
     const key = taskKeyOf(query.get('task_id') ?? '');
     const after = query.has('after') ? counter(query.get('after')) : 0;
     if (after === null) return error(400, '回放游标无效。');
-    if (!key) return error(503, '工作项不存在');
+    // 与真后端一致：没有这条工作项是确定结论（404），不是「暂不可用」（503）。
+    if (!key) return error(404, '工作项不存在。', 'board_task_not_found');
     const own = events.filter(
       (event) => event.task === key && Number(event.offset) > after,
     );
