@@ -6,6 +6,7 @@
  * 后追平；发布策略、落地候选、提交审阅、解冻执行都要先过二次认证（验证码任意六位数字，000000 视为
  * 未通过）；写操作改的是内存里的状态，重启开发服务器即复原。未知接口一律 404。
  */
+import { ATTACHMENT_BYTES } from './fixtures/attachments.ts';
 import { DAY, HOUR, iso } from './fixtures/clock.ts';
 import {
   FINISHED,
@@ -87,7 +88,9 @@ export interface FixtureRequest {
   /** 已解析的 JSON 正文；GET 为 undefined。 */
   body?: unknown;
 }
-export type FixtureResponse = Outcome;
+export type FixtureResponse = Outcome & {
+  binary?: { bytes: Uint8Array; type: string };
+};
 
 const ok = (body: unknown): Outcome => ({ status: 200, body });
 const error = (status: number, message: string, code?: string): Outcome => ({
@@ -655,7 +658,11 @@ export function createFixtureApi(options: { now?: () => number } = {}) {
   }
 
   // ---------- 路由 ----------
-  function get(pathname: string, query: URLSearchParams, now: number): Outcome {
+  function get(
+    pathname: string,
+    query: URLSearchParams,
+    now: number,
+  ): FixtureResponse {
     const session = sessions.find((item) => item.id === current)!;
     switch (pathname) {
       case '/api/v1/session':
@@ -693,6 +700,20 @@ export function createFixtureApi(options: { now?: () => number } = {}) {
         if (counter(query.get('generation')) !== generation)
           return error(409, STALE_VIEW);
         return ok(search(notes, text, mode, project, generation));
+      }
+      case '/api/attachment': {
+        if (
+          !only(query, ['path', 'generation']) ||
+          query.getAll('path').length !== 1 ||
+          query.getAll('generation').length !== 1
+        )
+          return error(400, '需要唯一的路径与代次。');
+        if (counter(query.get('generation')) !== generation)
+          return error(409, STALE_VIEW);
+        const file = ATTACHMENT_BYTES.get(query.get('path') ?? '');
+        return file
+          ? { status: 200, binary: file }
+          : error(404, '附件不在当前快照中。');
       }
       case '/api/tree': {
         if (counter(query.get('generation')) !== generation)
@@ -806,7 +827,7 @@ export function createFixtureApi(options: { now?: () => number } = {}) {
     return error(404, `假数据模式没有这个接口：GET ${pathname}`);
   }
 
-  function handle(request: FixtureRequest): Outcome {
+  function handle(request: FixtureRequest): FixtureResponse {
     const now = clock();
     const url = new URL(request.url, 'http://fixture.invalid');
     const { pathname } = url;

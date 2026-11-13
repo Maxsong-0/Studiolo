@@ -119,6 +119,23 @@ function send(response: ServerResponse, result: FixtureResponse) {
   response.statusCode = result.status;
   response.setHeader('Cache-Control', 'no-store');
   response.setHeader('X-Studiolo-Fixture', FIXTURE_MARKER);
+  if (result.binary) {
+    response.setHeader('Cache-Control', 'no-store, no-transform');
+    response.setHeader('Content-Type', result.binary.type);
+    response.setHeader(
+      'Content-Length',
+      String(result.binary.bytes.byteLength),
+    );
+    response.setHeader('Content-Disposition', 'attachment');
+    response.setHeader('X-Content-Type-Options', 'nosniff');
+    response.setHeader(
+      'Content-Security-Policy',
+      "default-src 'none'; sandbox; frame-ancestors 'none'",
+    );
+    response.setHeader('Accept-Ranges', 'none');
+    response.end(result.binary.bytes);
+    return;
+  }
   if (result.body === undefined) {
     response.end();
     return;

@@ -1,4 +1,10 @@
-import { ApiError, cancelled, linkedSignal, requestJson } from './sessionHttp';
+import {
+  ApiError,
+  cancelled,
+  linkedSignal,
+  requestJson,
+  requestBlob,
+} from './sessionHttp';
 import { sessionList } from './sessionModel';
 import type { RevokeScope } from './sessionModel';
 import { discoverSession } from './sessionBootstrap';
@@ -107,12 +113,19 @@ export class SessionClient extends SessionCore {
   revoke = async (scope: RevokeScope) =>
     (await this.mutate({ kind: 'revoke', scope })).kind === 'revoked';
 
-  read = async (path: string, signal: AbortSignal): Promise<unknown> => {
+  read = (path: string, signal: AbortSignal) =>
+    this.readWith(signal, (linked) => requestJson(path, linked));
+  readBlob = (path: string, signal: AbortSignal, expectedBytes: number) =>
+    this.readWith(signal, (linked) => requestBlob(path, linked, expectedBytes));
+  private readWith = async <T>(
+    signal: AbortSignal,
+    request: (signal: AbortSignal) => Promise<T>,
+  ): Promise<T> => {
     if (!['ready', 'legacy'].includes(this.state.phase)) cancelled();
     const revision = this.state.revision;
     const linked = linkedSignal([signal, this.lifetime.signal]);
     try {
-      const value = await requestJson(path, linked.signal);
+      const value = await request(linked.signal);
       this.current(revision);
       return value;
     } catch (error) {

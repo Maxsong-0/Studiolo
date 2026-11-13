@@ -2592,6 +2592,7 @@ name = "studiolo-local-server"
 version = "0.0.1"
 dependencies = [
  "axum",
+ "futures-core",
  "getrandom 0.4.3",
  "hmac",
  "jiff",

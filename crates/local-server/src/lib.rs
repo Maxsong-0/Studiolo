@@ -1,6 +1,7 @@
 //! 工作台、显式人侧正文会话与本机事务维护；canonical 写入始终交给唯一 Broker。
 
 mod assets;
+mod attachments;
 mod auth_http;
 pub mod backup;
 pub mod board;

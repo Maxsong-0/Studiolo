@@ -1,3 +1,4 @@
+import { ATTACHMENT_BYTES } from './attachments.ts';
 /**
  * 假 Vault：几篇 Markdown 笔记与两个附件。目录树、搜索、原文、编辑器、页面历史、
  * 工作台首屏（项目字段与待我动作的来源行号）都从这里派生，彼此一致。
@@ -470,10 +471,9 @@ export function buildVault(now: number): VaultNote[] {
   ];
 }
 
-export const ATTACHMENTS: VaultAttachment[] = [
-  { path: '项目/Studiolo/01-框架/视觉方向第三轮.png', bytes: 482_133 },
-  { path: '项目/Brief 简报站/05-版本/v0.3.0 发布截图.png', bytes: 219_804 },
-];
+export const ATTACHMENTS: VaultAttachment[] = [...ATTACHMENT_BYTES].map(
+  ([path, file]) => ({ path, bytes: file.bytes.byteLength }),
+);
 
 /** 「最近删除」里的一篇：删除前的原文，供恢复时原样放回。 */
 export const DELETED_NOTE: VaultNote = {

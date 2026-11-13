@@ -33,6 +33,7 @@
 |---|---|
 | [`m1/README.md`](m1/README.md) | M1 实现约定、只读入口启动方式、运行契约、四个只读 Interface，以及 T-006～T-011 的历史验证记录 |
 | [`m1/search-navigation.md`](m1/search-navigation.md) | T-007 查询语义、同代次定位、截断与错误规则 |
+| [`m1/attachments.md`](m1/attachments.md) | T-201 人侧附件类型校验、认证读取、安全预览与下载 |
 | [`m1/file-tree.md`](m1/file-tree.md) | T-010 空目录、纯附件目录、按目录分页与同代次元信息 |
 | [`m1/design/t011-design-system.md`](m1/design/t011-design-system.md) | T-011 Apple 通透工作台视觉规范（**已被 [T-130 规范](design/t130-design-system.md) 取代**，仅作历史参考）；曾取代旧 `overview-concept.png` 的历史视觉约束 |
 | [`m1/server-preview.md`](m1/server-preview.md) | T-008 服务器示例的运行边界、可校验源码包、原生路径测试与同端口 SSH 转发 |

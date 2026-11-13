@@ -17,7 +17,7 @@ macro_rules! csp {
         concat!(
             "default-src 'none'; script-src 'self'; ",
             $style,
-            "; connect-src 'self' http://127.0.0.1:*; img-src 'self'; font-src 'self'; ",
+            "; connect-src 'self' http://127.0.0.1:*; img-src 'self' blob:; font-src 'self'; ",
             "base-uri 'none'; form-action 'none'; frame-ancestors 'none'; object-src 'none'"
         )
     };
@@ -76,6 +76,10 @@ pub(crate) async fn guard(
         Err(error) => error.into_response(),
     };
     // 先定 CSP：动态策略失败会把响应换成不可用错误，后续状态、HEAD 与缓存判断都以换后的为准。
+    let attachment = response
+        .extensions()
+        .get::<crate::attachments::DownloadPolicy>()
+        .is_some();
     let policy = content_security_policy(&mut response);
     let method_not_allowed = response.status() == StatusCode::METHOD_NOT_ALLOWED;
     if head && (state.sessions.is_some() || bootstrap) {
@@ -87,7 +91,12 @@ pub(crate) async fn guard(
     } else {
         None
     };
-    let cache_control = cache::cache_control_for(&path, content_type);
+    // 附件以精确字节长度校验；禁止反向代理压缩改写后移除 Content-Length。
+    let cache_control = if attachment && response.status() == StatusCode::OK {
+        HeaderValue::from_static("no-store, no-transform")
+    } else {
+        cache::cache_control_for(&path, content_type)
+    };
     let headers = response.headers_mut();
     if state.sessions.is_some() {
         headers.insert(
@@ -118,6 +127,13 @@ pub(crate) async fn guard(
 /// 取出资产处理器留下的样式 nonce 并生成本响应的 CSP。nonce 由本进程生成（十六进制），
 /// 若仍不能成为合法头值，就把响应换成不可用错误并配严格策略，绝不 panic。
 fn content_security_policy(response: &mut Response) -> HeaderValue {
+    if response
+        .extensions_mut()
+        .remove::<crate::attachments::DownloadPolicy>()
+        .is_some()
+    {
+        return HeaderValue::from_static("default-src 'none'; sandbox; frame-ancestors 'none'");
+    }
     let Some(nonce) = response
         .extensions_mut()
         .remove::<crate::assets::StyleNonce>()

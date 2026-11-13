@@ -5,7 +5,7 @@ import type { OpenSource } from '../types';
 import { TREE_PAGE_SIZE, type TreeEntry } from '../treeTypes';
 import { useDirectory } from '../useDirectory';
 import { Button, Cell, CellHeader, ErrorState, GridFrame } from '../ui';
-import { AttachmentInfo } from './AttachmentInfo';
+import { AttachmentPanel } from './AttachmentPanel';
 import { Icon } from './Icon';
 import { FileTypeIcon } from './FileTypeIcon';
 import '../styles/tree.css';
@@ -20,7 +20,7 @@ interface TreeActions {
 
 /**
  * 文件树（只读副本）：目录按需读取、每页至多 200 项；缩进是 1px 竖线，类型图标单色。
- * 附件只看元数据（AttachmentInfo 浮层），笔记打开阅读器第 1 行。
+ * 附件在认证浮层中读取，笔记打开阅读器第 1 行。
  */
 export function FileTree({
   generation,
@@ -35,7 +35,7 @@ export function FileTree({
         <Cell as="div" className="file-tree-intro">
           <CellHeader title="只读副本" meta="目录 · 笔记 · 附件" />
           <p className="file-tree-note">
-            展开目录按需读取，每页最多 200 项。附件仅展示路径、后缀与大小。
+            展开目录按需读取，每页最多 200 项。附件支持安全预览与下载。
           </p>
         </Cell>
         <Cell as="div" flush className="file-tree-body">
@@ -50,7 +50,9 @@ export function FileTree({
         </Cell>
       </GridFrame>
       {attachment ? (
-        <AttachmentInfo
+        <AttachmentPanel
+          key={`${generation}:${attachment.path}`}
+          generation={generation}
           entry={attachment}
           onClose={() => setAttachment(null)}
         />

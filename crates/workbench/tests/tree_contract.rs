@@ -213,3 +213,24 @@ fn owned_pages_and_large_byte_strings_need_no_external_files() {
         "预组合é 与 空格.bin"
     );
 }
+
+#[test]
+fn file_lookup_preserves_kind_size_and_excludes_directories_and_unknown_paths() {
+    let tree = FileTree::build(
+        &[
+            entry("folder", TreeKind::Directory, None),
+            entry("folder/a.png", TreeKind::Attachment, Some(8)),
+            entry("note.md", TreeKind::Markdown, Some(0)),
+        ],
+        &[MarkdownDocument::new(
+            VaultPath::parse("note.md").unwrap(),
+            "",
+        )],
+    )
+    .unwrap();
+    assert_eq!(tree.file("folder/a.png"), Some((TreeKind::Attachment, 8)));
+    assert_eq!(tree.file("note.md"), Some((TreeKind::Markdown, 0)));
+    for path in ["folder", "", ".hidden", "missing", "folder/../note.md"] {
+        assert_eq!(tree.file(path), None);
+    }
+}

@@ -174,6 +174,18 @@ pub(crate) async fn run_query<T: Send + 'static>(
     on_worker(query_permit(queries)?, work).await
 }
 
+/// 附件在下载体销毁前保留同一许可，避免慢客户端积累多份完整文件缓冲。
+/// 调用方必须把许可交给有界响应体；取消后台读取不会提早归还许可。
+pub(crate) async fn run_leased_query<T: Send + 'static>(
+    queries: &Arc<tokio::sync::Semaphore>,
+    work: impl FnOnce(tokio::sync::OwnedSemaphorePermit) -> Result<T, ApiError> + Send + 'static,
+) -> Result<T, ApiError> {
+    let permit = query_permit(queries)?;
+    tokio::task::spawn_blocking(move || work(permit))
+        .await
+        .map_err(|_| ApiError::unavailable())?
+}
+
 /// 首屏专用：满额时排队等待工作槽，而不是把入口请求快速失败掉。
 ///
 /// 等待者是一个廉价 future，客户端断开就直接消失，不会占住工作槽；真正占住工作槽的

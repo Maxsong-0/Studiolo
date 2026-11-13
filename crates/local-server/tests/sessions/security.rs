@@ -170,3 +170,30 @@ async fn cookie_pair_binding_is_required_and_ambiguity_never_selects_a_favorite(
     f.send(f.request("GET", OWN, Some(&first.cookie), ""), 200)
         .await;
 }
+
+#[tokio::test]
+async fn attachments_cannot_be_requested_as_navigation_or_image_or_without_session() {
+    let f = Fixture::new(true).await;
+    let issued = f.issue().await;
+    let path = "/api/attachment?path=missing.png&generation=1";
+    for (name, value) in [
+        ("x-studiolo-request", "0"),
+        ("sec-fetch-dest", "image"),
+        ("sec-fetch-mode", "navigate"),
+    ] {
+        let mut request = f.request("GET", path, Some(&issued.cookie), "");
+        request.headers_mut().insert(
+            HeaderName::from_bytes(name.as_bytes()).unwrap(),
+            value.parse().unwrap(),
+        );
+        f.send(request, 403).await;
+    }
+    let mut request = f.request("GET", path, Some(&issued.cookie), "");
+    request.headers_mut().remove("x-studiolo-request");
+    f.send(request, 403).await;
+    f.send(f.request("GET", path, None, ""), 401).await;
+    let response = f
+        .send(f.request("GET", path, Some(&issued.cookie), ""), 404)
+        .await;
+    assert_eq!(response.headers()["vary"], "Origin, Sec-Fetch-Site");
+}

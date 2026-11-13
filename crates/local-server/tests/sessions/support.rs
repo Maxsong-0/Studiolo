@@ -94,8 +94,13 @@ pub fn cleared(response: &Response) {
 }
 
 pub fn secure(response: &Response) {
+    let cache = if response.headers().contains_key("content-disposition") {
+        "no-store, no-transform"
+    } else {
+        "no-store"
+    };
     for (name, expected) in [
-        ("cache-control", "no-store"),
+        ("cache-control", cache),
         ("x-content-type-options", "nosniff"),
         ("referrer-policy", "no-referrer"),
         ("cross-origin-resource-policy", "same-origin"),

@@ -228,6 +228,7 @@ fn assemble(
         .route(crate::bootstrap::PATH, get(crate::bootstrap::mode))
         .route("/api/workbench", get(snapshot))
         .route("/api/document", get(queries::document))
+        .route("/api/attachment", get(crate::attachments::file))
         .route("/api/search", get(queries::search))
         .route(
             "/api/project-operations",

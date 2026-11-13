@@ -972,3 +972,30 @@ describe('假数据插件：只在 vite serve 且 STUDIOLO_FIXTURES=1 时挂载'
     );
   });
 });
+
+it('附件夹具从文件树进入认证二进制入口，大小一致且旧代拒绝', () => {
+  const { get, read } = setup();
+  const generation = workbench(read).generation;
+  const page = validateTree(
+    read(
+      `/api/tree?${query({ path: '项目/Studiolo/01-框架', offset: '0', generation: String(generation) })}`,
+    ),
+  );
+  const attachments = page.entries.filter(
+    (entry) => entry.kind === 'attachment',
+  );
+  expect(attachments.length).toBe(3);
+  for (const entry of attachments) {
+    const response = get(
+      `/api/attachment?${query({ path: entry.path, generation: String(generation) })}`,
+    );
+    expect(response.status).toBe(200);
+    expect(response.body).toBeUndefined();
+    expect(String(response.binary?.bytes.byteLength)).toBe(entry.size_bytes);
+    expect(
+      get(
+        `/api/attachment?${query({ path: entry.path, generation: String(generation - 1) })}`,
+      ).status,
+    ).toBe(409);
+  }
+});

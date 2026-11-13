@@ -1,6 +1,6 @@
 //! 纯内存文件树；在构建期校验完整批次并建立直属父子索引。
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
 use studiolo_vault_index::MarkdownDocument;
 
@@ -15,7 +15,7 @@ const PAGE_SIZE: usize = 200;
 #[derive(Clone, Debug)]
 pub struct FileTree {
     directories: BTreeMap<String, Vec<TreeEntry>>,
-    files: BTreeSet<String>,
+    files: BTreeMap<String, (TreeKind, u64)>,
 }
 
 impl FileTree {
@@ -27,7 +27,7 @@ impl FileTree {
     pub fn build(entries: &[TreeInput], documents: &[MarkdownDocument]) -> Result<Self, TreeError> {
         validate(entries, documents)?;
         let mut directories = BTreeMap::from([(String::new(), Vec::new())]);
-        let mut files = BTreeSet::new();
+        let mut files = BTreeMap::new();
         let mut counts = BTreeMap::<&str, usize>::new();
         for entry in entries {
             let path = entry.path.as_str();
@@ -35,7 +35,10 @@ impl FileTree {
             if entry.kind == TreeKind::Directory {
                 directories.insert(path.to_owned(), Vec::new());
             } else {
-                files.insert(path.to_owned());
+                files.insert(
+                    path.to_owned(),
+                    (entry.kind, entry.size_bytes.ok_or(TreeError::InvalidInput)?),
+                );
             }
         }
         for entry in entries {
@@ -62,6 +65,11 @@ impl FileTree {
         Ok(Self { directories, files })
     }
 
+    /// 只返回当前不可变清单中的文件种类和大小；目录、隐藏与未知路径均不命中。
+    pub fn file(&self, path: &str) -> Option<(TreeKind, u64)> {
+        self.files.get(path).copied()
+    }
+
     /// 读取指定目录的直属子节点；空路径表示根，其余必须是可见规范目录路径。
     ///
     /// 起点可为任何有效位置，不要求是 200 的倍数；非空目录不接受等于总数的起点。
@@ -71,7 +79,7 @@ impl FileTree {
             return Err(TreeError::InvalidPath);
         }
         let children = self.directories.get(path).ok_or_else(|| {
-            if self.files.contains(path) {
+            if self.files.contains_key(path) {
                 TreeError::NotDirectory
             } else {
                 TreeError::NotFound
