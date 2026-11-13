@@ -6,10 +6,11 @@ use super::Fixture;
 use crate::{BrokerError, FsVaultBroker};
 use std::fs;
 
-const INTERRUPTION_POINTS: [RestoreFault; 5] = [
+const INTERRUPTION_POINTS: [RestoreFault; 6] = [
     RestoreFault::AfterLineage,
     RestoreFault::AfterHistory,
     RestoreFault::AfterMaintenance,
+    RestoreFault::AfterFileOperations,
     RestoreFault::AfterDataBinding,
     RestoreFault::AfterCanonicalBinding,
 ];
@@ -31,6 +32,10 @@ fn every_interruption_point_leaves_a_new_directory_that_cannot_serve() {
             assert_eq!(lineage.state, LineageState::Rebinding);
             assert!(!lineage.is_completed());
             assert!(matches!(fixture.rebind(), Err(RestoreError::Interrupted)));
+            assert!(matches!(
+                fixture.open_new(),
+                Err(BrokerError::WriterBindingMismatch)
+            ));
         } else {
             assert!(
                 matches!(fixture.open_new(), Err(BrokerError::WriterBindingMismatch)),

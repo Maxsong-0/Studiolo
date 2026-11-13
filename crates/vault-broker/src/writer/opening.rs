@@ -58,6 +58,7 @@ pub(super) fn open(
     if lease::has_ancestor(&vault_path, Identity::directory(&data)?)? {
         return Err(BrokerError::WriterBindingMismatch);
     }
+    crate::restore::check_lineage(&data)?;
     let check_roots = || {
         root_pin.check()?;
         data_pin.check()?;

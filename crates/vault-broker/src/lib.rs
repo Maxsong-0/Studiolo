@@ -22,6 +22,8 @@ pub use sync_observation::{
 };
 mod canonical;
 mod capture;
+mod checkpoint;
+pub use checkpoint::{BrokerCheckpointAudit, BrokerCheckpointCoverage, FrozenBroker};
 mod check_precondition;
 mod content_audit;
 pub(crate) mod file_operation;
@@ -78,8 +80,8 @@ pub use recovery::{
     StagePruneReport, WriterPhase,
 };
 pub use restore::{
-    LineageState, MaintenanceCoverage, NewRootRebind, PhysicalId, RebindCoverage, RestoreError,
-    RestoreLineage, RestoreReceipt, read_restore_lineage, rebind_new_roots,
+    BindingCoverage, LineageState, MaintenanceCoverage, NewRootRebind, PhysicalId, RebindCoverage,
+    RestoreError, RestoreLineage, RestoreReceipt, read_restore_lineage, rebind_new_roots,
 };
 pub use writer::WriterStatus;
 

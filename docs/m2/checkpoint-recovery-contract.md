@@ -38,7 +38,7 @@ WAL checkpoint 的 busy/result，使用 SQLite 自有备份机制或完整冻结
 也不能把按次序复制的 DB/WAL/SHM 当作一致快照。复制前后固定源绑定不变。
 
 各 owner 可用 SQLite 的 `VACUUM INTO` 或 backup API 导出，不暴露 Connection 给协调器；
-workspace 未启用 rusqlite backup feature，策略实现采用前者并显式同步文件及父目录。
+T-204 为其他 SQLite owner 启用 backup API；策略仍采用前者并显式同步文件及父目录。
 目标根与各 owner 子目录由协调器预先建好，按窗口构造时注入，不在 export 中任意建目录。
 SQLite 自有备份只保证单库一致，不能替代跨 owner 屏障。副本中每个已 ACK 事件须
 精确对应 Audit 截止点内的原事件，而非只验证 offset 小于最后 offset。
@@ -100,7 +100,9 @@ pair_id，重新建立新目录的物理绑定并记录恢复 lineage。它必�
 中途失败只能留下隔离且不能服务的新目录，不能发布半配对活动根。
 
 新物理绑定须覆盖两处主 broker-binding、history/meta-v1 目录组以及已启用的
-maintenance-v1，不能只重写主根设备号。日志、原幂等键与历史保持原逻辑 pair_id。
+maintenance-v1，以及文件操作目录/删除隔离区，不能只重写主根设备号。
+空 Vault 的历史元数据经严格核对后可明确记录未启用；缺失已启用存储仍拒绝。
+日志、原幂等键与历史保持原逻辑 pair_id。lineage 尚未完成时普通打开仍拒绝。
 
 仅本机 TTY/localhost 的 restore bootstrap 使用 recovery kit 中独立、一次性、
 有期限的恢复身份；任何恢复写入前建立带完整性保护且不含秘密的 transcript。
@@ -133,4 +135,5 @@ NAS专用目标、追加/独立恢复身份、实际不可变能力、带外告�
 接入核验。第二故障域已明确不配置，界面按权威说明未覆盖范围，不新增采购前提。
 
 T-204 的策略 RESERVED 屏障与重开核验见 [策略 checkpoint](../contracts/policy-checkpoint.md)。
+Broker 原租约、永久 ACK 核对、独立副本与新根恢复见 [Broker checkpoint](../contracts/broker-checkpoint.md)。
 机制已验证，完整 Rust 生产协调器及 startup 接线仍未完成。
