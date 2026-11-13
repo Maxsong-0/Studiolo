@@ -26,5 +26,5 @@ pub use signpost::{PolicyRule, PolicySignpost, Principal, Signpost, SignpostInpu
 pub use studiolo_vault_broker::ScanLimits;
 pub use studiolo_vault_index::{ParseCache, ParseCacheStats};
 pub use studiolo_workbench::{
-    SearchHit, SearchMode, SearchQuery, SearchResults, WorkbenchReadModel,
+    SearchHit, SearchMode, SearchQuery, SearchResults, SearchScope, WorkbenchReadModel,
 };

@@ -11,6 +11,14 @@ pub struct SearchQuery {
     pub mode: SearchMode,
 }
 
+/// 调用方已核过权限的搜索范围：先按前缀限定文档、再逐路径过滤，两步都发生在计数之前。
+pub struct SearchScope<'a> {
+    /// 以 `/` 结尾的逻辑路径前缀（如 `项目/甲/`、`_规则/`）；不要求是已登记的项目。
+    pub prefix: &'a str,
+    /// 逐路径许可；返回 false 的文档既不命中，也不占 100 条名额。
+    pub permitted: &'a dyn Fn(&str) -> bool,
+}
+
 /// 全部调用方共用的搜索语义，包括键盘路径查找。
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]

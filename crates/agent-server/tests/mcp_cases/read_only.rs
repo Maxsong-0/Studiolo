@@ -222,3 +222,40 @@ async fn initialize_serves_a_budgeted_signpost_and_tools_read_only_inside_the_al
         .status();
     assert_eq!(status, 401);
 }
+
+/// 字典序排在 `项目/Alpha` 之前的项目放 101 篇含同一个词的笔记，`项目/Alpha` 只放 1 篇。
+fn seed_neighbor(vault: &Path) {
+    let overview = vault.join("项目/Aardvark/00-总览/INDEX.md");
+    write(&overview, "# Aardvark · 总览\n");
+    for index in 0..101 {
+        let path = vault.join(format!("项目/Aardvark/笔记-{index:03}.md"));
+        write(&path, "前面项目的漏命中探针。\n");
+    }
+    let path = vault.join("项目/Alpha/02-日志/2026-09-07.md");
+    write(&path, "# 日志\n\n后面项目的漏命中探针。\n");
+}
+
+/// BUG-036：100 条上限只数所请求项目里的命中；前面的项目命中再多也不挤占后面项目的名额。
+#[tokio::test]
+async fn search_limit_counts_only_hits_inside_the_requested_project() {
+    let f = fixture_seeded(serve::router, seed_neighbor, &["项目/Aardvark"]).await;
+    let (session, _) = f.initialize(&f.token).await;
+
+    let args = json!({"project": "项目/Alpha", "text": "漏命中探针"});
+    let found = f.call(&f.token, &session, 2, "search", args).await;
+    assert!(!is_error(&found), "{found}");
+    let text = tool_text(&found);
+    let header = text.lines().next().unwrap_or_default();
+    assert!(header.starts_with("# 代次 "), "{text}");
+    assert!(header.ends_with(" · 1 条"), "{text}");
+    assert!(!text.contains("已截断"), "{text}");
+    let hit = "项目/Alpha/02-日志/2026-09-07.md:3\t";
+    assert!(text.contains(hit), "{text}");
+
+    // 前面的项目自己超过 100 条时，截断照常标在它自己的结果上。
+    let args = json!({"project": "项目/Aardvark", "text": "漏命中探针"});
+    let crowded = f.call(&f.token, &session, 3, "search", args).await;
+    let crowded = tool_text(&crowded);
+    let header = crowded.lines().next().unwrap_or_default();
+    assert!(header.ends_with(" · 100 条（已截断）"), "{crowded}");
+}
