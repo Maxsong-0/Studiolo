@@ -5,11 +5,12 @@ use super::model::{BridgeError, Result};
 use std::{
     fs::{File, TryLockError},
     path::{Path, PathBuf},
+    sync::Arc,
 };
 pub(super) const DB_MAX: u64 = 256 * 1024 * 1024;
 pub(super) const WAL_MAX: u64 = (4096 + 24) * 65536 + 32;
 // 只在真正持锁后构造；后续 Storage 构造失败也立即显式释放这把锁。
-struct HeldLease(File);
+pub(super) struct HeldLease(File);
 impl HeldLease {
     fn acquire(file: File) -> Result<Self> {
         file.try_lock().map_err(lock_error)?;
@@ -36,9 +37,14 @@ pub(super) struct Storage {
     root_path: PathBuf,
     root: File,
     database_pin: File,
-    _lease: HeldLease,
+    _lease: Arc<HeldLease>,
     #[cfg(unix)]
     owner: u32,
+}
+impl Storage {
+    pub(super) fn retain_lease(&self) -> Arc<HeldLease> {
+        self._lease.clone()
+    }
 }
 #[cfg(unix)]
 impl Storage {
@@ -104,7 +110,7 @@ impl Storage {
             root_path: path.to_owned(),
             root,
             database_pin,
-            _lease: lease,
+            _lease: Arc::new(lease),
             owner,
         };
         storage.check()?;

@@ -4,6 +4,8 @@
 mod audit;
 mod audit_events;
 mod cache;
+mod checkpoint;
+pub use checkpoint::{BridgeCheckpointGate, BridgeCheckpointSource, FrozenBridge};
 mod cancellation;
 mod capacity;
 mod codec;
