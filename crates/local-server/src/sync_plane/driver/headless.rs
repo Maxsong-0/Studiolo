@@ -41,17 +41,18 @@ pub fn run(
     now_unix: i64,
     stopping: &AtomicBool,
 ) -> Result<HeadlessRun, PlaneError> {
-    let mut transport = plane
+    let mut slot = plane
         .transport()
         .lock()
         .map_err(|_| PlaneError::Unavailable)?;
+    let transport = slot.as_mut().ok_or(PlaneError::Unavailable)?;
     let ledger: &dyn AuditLedger = plane.audit().as_ref();
-    settle_active(&mut transport, ledger)?;
+    settle_active(transport, ledger)?;
     let status = transport.inspect().map_err(transport_error)?;
     let prepared = transport
         .prepare_once(status.next_sequence, operation, millis(now_unix))
         .map_err(transport_error)?;
-    flush_transport_audit(&mut transport, ledger, AUDIT_BATCH).map_err(|_| PlaneError::Audit)?;
+    flush_transport_audit(transport, ledger, AUDIT_BATCH).map_err(|_| PlaneError::Audit)?;
     let owned = transport.start(&prepared).map_err(transport_error)?;
     let deadline = Duration::from_secs(plane.approval().budget().deadline_seconds.into());
     let started = Instant::now();
@@ -82,7 +83,7 @@ pub fn run(
         }
         std::thread::sleep(POLL_INTERVAL);
     }
-    flush_transport_audit(&mut transport, ledger, AUDIT_BATCH).map_err(|_| PlaneError::Audit)?;
+    flush_transport_audit(transport, ledger, AUDIT_BATCH).map_err(|_| PlaneError::Audit)?;
     let status = transport.inspect().map_err(transport_error)?;
     if status.active.is_some() {
         return Err(PlaneError::Audit);

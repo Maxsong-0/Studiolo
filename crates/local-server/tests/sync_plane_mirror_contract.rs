@@ -10,3 +10,6 @@ mod observe;
 mod recovery;
 #[path = "sync_plane_mirror/stage.rs"]
 mod stage;
+
+#[path = "sync_plane_mirror/checkpoint.rs"]
+mod checkpoint;

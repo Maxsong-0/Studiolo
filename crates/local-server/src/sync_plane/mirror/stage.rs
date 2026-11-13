@@ -9,6 +9,7 @@
 //! 写法照 `observability` 的 `deadman-state.json`：暂存件 → fsync → renameat → fsync 目录；
 //! 读时失败关闭。对象文件 NOFOLLOW、O_EXCL、0600；孤儿在打开与回收时清掉。
 
+pub(in crate::sync_plane) mod checkpoint_io;
 mod index;
 mod store;
 

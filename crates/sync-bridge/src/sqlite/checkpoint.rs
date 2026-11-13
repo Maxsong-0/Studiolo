@@ -73,6 +73,14 @@ impl BridgeCheckpointSource {
     }
 }
 impl FrozenBridge {
+    /// 附属文件导出后复验原传输门禁和库 binding；不重新创建或覆盖任何目标。
+    pub fn verify_source(&self) -> Result<(), BridgeError> {
+        self.gate.verify(&self.state.binding, self.deadline)?;
+        self.frozen
+            .inspect(|db| snapshot::load(db, &self.state.binding).map(|_| ()))
+            .map_err(problem)
+    }
+
     /// 共同基线内容摘要和 canonical 观察序号；并非索引 generation 或同步退出时间。
     pub fn watermark(&self) -> &OwnerWatermark {
         &self.watermark

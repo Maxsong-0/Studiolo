@@ -136,4 +136,6 @@ NAS专用目标、追加/独立恢复身份、实际不可变能力、带外告�
 
 T-204 的策略 RESERVED 屏障与重开核验见 [策略 checkpoint](../contracts/policy-checkpoint.md)。
 Broker 原租约、永久 ACK 核对、独立副本与新根恢复见 [Broker checkpoint](../contracts/broker-checkpoint.md)。
+Transport 原实例与固定状态导出见 [Transport checkpoint](../contracts/transport-checkpoint.md)。
+实际 SyncPlane 门禁、平面租约及 stage 封存见 [SyncPlane checkpoint](../contracts/sync-plane-checkpoint.md)。
 机制已验证，完整 Rust 生产协调器及 startup 接线仍未完成。

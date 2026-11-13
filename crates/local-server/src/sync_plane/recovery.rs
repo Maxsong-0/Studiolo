@@ -13,6 +13,9 @@
 //! 版本 1 之后追加的字段（`headless_excluded`、`conflict_stamps`）缺省为空、为空时不写出，
 //! 只在非默认时进校验和：旧文件照常解码、校验和不变，不需要重建（兼容规则见 `state.rs`）。
 
+mod checkpoint;
+pub use checkpoint::FrozenPlaneFiles;
+
 mod purge;
 mod residue;
 mod state;

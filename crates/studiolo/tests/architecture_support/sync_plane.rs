@@ -50,6 +50,25 @@ pub(super) fn remainder(crate_name: &str, path: &Path, source: &str) -> String {
             ],
         );
     }
+    if path.ends_with("crates/local-server/src/sync_plane/mirror/stage/checkpoint_io.rs") {
+        return plane_remainder(
+            source,
+            &[
+                "INDEX_FILE|\"plane-state.json\"|\"plane.lock\"",
+                "digest_name(name)",
+                "create_at(root,name,true)",
+                "free<bytes.saturating_add(2*1024*1024*1024)",
+            ],
+            &[
+                ("fstat(", 1),
+                ("fstatvfs(", 1),
+                ("openat(", 0),
+                ("mkdirat(", 0),
+                ("renameat(", 0),
+                ("unlinkat(", 0),
+            ],
+        );
+    }
     if path.ends_with("crates/local-server/src/sync_plane/recovery.rs") {
         // B 轮 W4 落地形态：directory_path 从 CWD 逐段 openat＋fstat；PlaneStateStore::open 一次 flock、
         // 租约守卫 Lease 的 Drop 一次 flock(Unlock)（并发 fork 继承描述符时立即结束租约）；
@@ -261,5 +280,30 @@ mod tests {
                 "{path}"
             );
         }
+    }
+    #[test]
+    fn checkpoint_io_has_only_fixed_creates_and_registered_metadata_calls() {
+        let path = "crates/local-server/src/sync_plane/mirror/stage/checkpoint_io.rs";
+        let source = fs::read_to_string(workspace_root().join(path)).unwrap();
+        assert!(!violates(path, &source));
+        for extra in [
+            "std::fs::write(path, body);",
+            "openat(root, other, flags, mode);",
+            "fstatvfs(other);",
+            "file.write_all(body);",
+        ] {
+            assert!(violates(path, &format!("{source}\n{extra}")), "{extra}");
+        }
+        assert!(violates(
+            "crates/local-server/src/sync_plane/other.rs",
+            &source
+        ));
+        assert!(violates(
+            path,
+            &source.replace(
+                "create_at(root, name, true)",
+                "create_at(root, name, false)"
+            )
+        ));
     }
 }

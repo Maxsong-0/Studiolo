@@ -13,6 +13,9 @@ use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
 use studiolo_sync_bridge::executor::ObjectId;
 
+#[path = "checkpoint.rs"]
+mod checkpoint;
+
 #[path = "objects.rs"]
 mod object;
 

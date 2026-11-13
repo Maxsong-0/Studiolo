@@ -18,6 +18,8 @@ impl RoundPorts for RealPorts<'_> {
             .transport()
             .lock()
             .map_err(|_| PlaneError::Unavailable)?
+            .as_mut()
+            .ok_or(PlaneError::Unavailable)?
             .config_output(run.run_id)
             .map_err(|_| PlaneError::Transport)?;
         let plane = self.plane;
@@ -46,6 +48,8 @@ impl RoundPorts for RealPorts<'_> {
             .transport()
             .lock()
             .map_err(|_| PlaneError::Unavailable)?
+            .as_mut()
+            .ok_or(PlaneError::Unavailable)?
             .quiescent()
             .map_err(|_| PlaneError::Quiescence)?;
         let residue = recovery::residue_guard(previous, current, ticket.mirror_root())?;
@@ -63,6 +67,8 @@ impl RoundPorts for RealPorts<'_> {
             .transport()
             .lock()
             .map_err(|_| PlaneError::Unavailable)?
+            .as_mut()
+            .ok_or(PlaneError::Unavailable)?
             .inspect()
             .map_err(headless::transport_error)?
             .next_sequence)
@@ -86,6 +92,8 @@ impl RoundPorts for RealPorts<'_> {
             .transport()
             .lock()
             .map_err(|_| PlaneError::Unavailable)?
+            .as_mut()
+            .ok_or(PlaneError::Unavailable)?
             .quiescent()
             .map_err(|_| PlaneError::Quiescence)?;
         self.ticket = Some(ticket);

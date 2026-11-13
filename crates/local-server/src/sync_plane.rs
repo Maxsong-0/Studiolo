@@ -6,6 +6,7 @@
 //! 写者边界：本模块及子模块从不持有 Broker 类型，canonical 侧读写全部经
 //! `coordinator::sync_bridge` 的窄接缝；镜像只经 idmapped 视图根读写。
 mod binding;
+pub mod checkpoint;
 pub use binding::{bridge_binding, bridge_limits};
 
 pub mod driver;
@@ -110,7 +111,7 @@ pub struct PlaneInputs {
 /// 已装配的驱动平面；一个进程至多一个。
 pub struct SyncPlane {
     pub(crate) approval: &'static ApprovedTransport<'static>,
-    pub(crate) transport: Mutex<SyncTransportOwner<'static>>,
+    pub(crate) transport: Mutex<Option<SyncTransportOwner<'static>>>,
     pub(crate) bridge: Mutex<BridgeState>,
     pub(crate) workbench: Arc<CanonicalWorkbench>,
     pub(crate) audit: Arc<dyn AuditLedger>,
@@ -155,7 +156,7 @@ impl SyncPlane {
         drop(StageStore::open(&inputs.plane_root).map_err(|_| PlaneError::Storage)?);
         Ok(Arc::new(Self {
             approval: inputs.approval,
-            transport: Mutex::new(inputs.transport),
+            transport: Mutex::new(Some(inputs.transport)),
             bridge: Mutex::new(inputs.bridge),
             workbench: inputs.workbench,
             audit: inputs.audit,
@@ -178,7 +179,7 @@ impl SyncPlane {
 
     /// 传输运行槽；一轮内串行持锁。
     #[must_use]
-    pub fn transport(&self) -> &Mutex<SyncTransportOwner<'static>> {
+    pub fn transport(&self) -> &Mutex<Option<SyncTransportOwner<'static>>> {
         &self.transport
     }
 
