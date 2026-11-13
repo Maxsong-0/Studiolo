@@ -1,0 +1,14 @@
+/*
+ * 标志「纸与影」（设计规范第 14 节）。只引用 tokens.css 的令牌：深色主题下纸块跟着 --ink 变浅、
+ * 红影跟着 --signal 变亮，这里不写深色分支。怎么和旁边的字对齐由用它的地方自己定。
+ */
+.brand-mark {
+  flex: none;
+}
+.brand-mark-paper,
+.brand-mark-shadow {
+  fill: var(--ink);
+}
+.brand-mark[data-tone='standard'] .brand-mark-shadow {
+  fill: var(--signal);
+}
