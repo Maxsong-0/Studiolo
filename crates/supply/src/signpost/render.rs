@@ -36,9 +36,15 @@ pub(super) fn render(
         out.push_str("白名单内没有带 00-总览/INDEX.md 的项目。\n");
     }
     if !projects.is_empty() {
+        // 条数只在裁剪等级 0、1 时写进项目行（见下），说明行跟着写，不说一个行里没有的字段。
+        let counts = if level <= 1 {
+            " · 进行中／待认领条数（有才写）"
+        } else {
+            ""
+        };
         let _ = writeln!(
             out,
-            "{} 个可读项目；每行＝状态 · 未关闭 BUG，详情读 <项目前缀>/00-总览/INDEX.md",
+            "{} 个可读项目；每行＝状态 · 未关闭 BUG{counts}，详情读 <项目前缀>/00-总览/INDEX.md",
             projects.len()
         );
     }
@@ -61,6 +67,16 @@ pub(super) fn render(
             truncate(field(STATUS_KEYS[1]), digest_chars),
             truncate(field(STATUS_KEYS[3]), 24)
         );
+        // 第 4 节只轮流列每个项目的前几条，各项目实际有多少在这里补齐。
+        let pending = project.in_progress.len() + project.unclaimed.len();
+        if level <= 1 && pending > 0 {
+            let _ = write!(
+                out,
+                " · 进行中 {}／待认领 {}",
+                project.in_progress.len(),
+                project.unclaimed.len()
+            );
+        }
         if level == 0
             && let Some(focus) = project.focus.as_deref()
         {
@@ -117,41 +133,40 @@ pub(super) fn render(
         }
     }
     out.push_str("## 4 待我做的事\n");
-    let mut any = false;
-    let mut in_progress = 0usize;
-    let mut unclaimed = 0usize;
-    for project in projects {
-        for row in &project.in_progress {
-            if in_progress >= max_tasks {
-                break;
-            }
-            let _ = writeln!(
-                out,
-                "进行中：{} · {}",
-                project.prefix,
-                truncate(row, task_chars + 40)
-            );
-            in_progress += 1;
-            any = true;
-        }
+    let in_progress = round_robin(
+        projects,
+        |project| project.in_progress.as_slice(),
+        max_tasks,
+    );
+    let unclaimed = round_robin(
+        projects,
+        |project| project.unclaimed.as_slice(),
+        max_unclaimed,
+    );
+    for (prefix, row) in &in_progress {
+        let row = truncate(row, task_chars + 40);
+        let _ = writeln!(out, "进行中：{prefix} · {row}");
     }
-    for project in projects {
-        for title in &project.unclaimed {
-            if unclaimed >= max_unclaimed {
-                break;
-            }
-            let _ = writeln!(
-                out,
-                "待认领：{} · {}",
-                project.prefix,
-                truncate(title, task_chars)
-            );
-            unclaimed += 1;
-            any = true;
-        }
+    for (prefix, title) in &unclaimed {
+        let title = truncate(title, task_chars);
+        let _ = writeln!(out, "待认领：{prefix} · {title}");
     }
-    if any {
-        out.push_str("（仅列前若干条；完整见各项目 04-协调/TASKS.md）\n");
+    let total_in_progress = projects
+        .iter()
+        .map(|project| project.in_progress.len())
+        .sum::<usize>();
+    let total_unclaimed = projects
+        .iter()
+        .map(|project| project.unclaimed.len())
+        .sum::<usize>();
+    // 按合计判断而不是按列出的条数：最深裁剪不列待认领时，也不能说成「无」。
+    if total_in_progress + total_unclaimed > 0 {
+        let _ = writeln!(
+            out,
+            "（共 {total_in_progress} 条进行中、{total_unclaimed} 条待认领，这里列出 {}＋{} 条；各项目条数见第 2 节，完整见各项目 04-协调/TASKS.md）",
+            in_progress.len(),
+            unclaimed.len()
+        );
     } else {
         out.push_str("无（协调板无进行中或待认领项，或不可用）\n");
     }
@@ -240,4 +255,79 @@ pub(super) fn render(
         );
     }
     out
+}
+
+/// 按项目轮流取：第 1 轮每个项目取它的第 1 条，第 2 轮取第 2 条……取满 `limit` 或取完为止。
+///
+/// 按项目顺序取满就停的话，项目一多，只有排在最前的两三个能出现在路牌里。
+/// 返回（项目前缀，行）对，顺序就是取的先后。
+fn round_robin<'a>(
+    projects: &'a [ProjectStatus],
+    rows: impl Fn(&'a ProjectStatus) -> &'a [String],
+    limit: usize,
+) -> Vec<(&'a str, &'a str)> {
+    let rounds = projects
+        .iter()
+        .map(|project| rows(project).len())
+        .max()
+        .unwrap_or(0);
+    let mut picked = Vec::new();
+    for round in 0..rounds {
+        for project in projects {
+            if picked.len() >= limit {
+                return picked;
+            }
+            if let Some(row) = rows(project).get(round) {
+                picked.push((project.prefix.as_str(), row.as_str()));
+            }
+        }
+    }
+    picked
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ProjectStatus, round_robin};
+
+    fn project(prefix: &str, in_progress: &[&str]) -> ProjectStatus {
+        ProjectStatus {
+            prefix: prefix.to_owned(),
+            in_progress: in_progress.iter().map(|row| (*row).to_owned()).collect(),
+            ..ProjectStatus::default()
+        }
+    }
+
+    fn take(projects: &[ProjectStatus], limit: usize) -> Vec<(&str, &str)> {
+        round_robin(projects, |project| project.in_progress.as_slice(), limit)
+    }
+
+    #[test]
+    fn rounds_visit_every_project_before_taking_second_rows() {
+        let projects = [
+            project("A", &["a1", "a2", "a3"]),
+            project("B", &[]),
+            project("C", &["c1"]),
+            project("D", &["d1", "d2"]),
+        ];
+        assert_eq!(
+            take(&projects, 5),
+            [
+                ("A", "a1"),
+                ("C", "c1"),
+                ("D", "d1"),
+                ("A", "a2"),
+                ("D", "d2"),
+            ]
+        );
+        assert_eq!(take(&projects, 2), [("A", "a1"), ("C", "c1")]);
+        assert_eq!(take(&projects, 100).len(), 6);
+        assert!(take(&projects, 0).is_empty());
+        assert!(take(&[], 8).is_empty());
+    }
+
+    #[test]
+    fn a_single_project_keeps_its_original_order() {
+        let projects = [project("A", &["a1", "a2", "a3"])];
+        assert_eq!(take(&projects, 2), [("A", "a1"), ("A", "a2")]);
+    }
 }

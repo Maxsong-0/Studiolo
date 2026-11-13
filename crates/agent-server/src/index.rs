@@ -33,7 +33,7 @@ pub enum Persistence {
     Unavailable,
 }
 
-/// 派生索引运行结果；不进入2000token路牌或内容响应。
+/// 派生索引运行结果；不进入硬预算内的路牌或内容响应。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct IndexStatus {
     /// 模型来源。

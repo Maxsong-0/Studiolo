@@ -106,7 +106,7 @@ impl AgentSession {
                         .audit(event)
                         .map_err(|outage| degraded(&outage))?;
                     return Err(McpError::internal_error(
-                        "路牌超过2000 token硬预算，拒绝供给",
+                        format!("路牌超过 {HARD_BUDGET_TOKENS} token 硬预算，拒绝供给"),
                         None,
                     ));
                 }
