@@ -1,4 +1,7 @@
 //! 实际只读身份视图取得的固定源，冻结时拒绝未结束降级窗口并核对派生读取索引。
+mod assembly;
+pub use assembly::AgentCheckpointAssembly;
+pub(super) use assembly::assemble;
 mod reads;
 mod validate;
 use super::{AgentStore, SupplyError};

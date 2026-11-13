@@ -39,6 +39,11 @@ pub struct AgentIdentityView {
     store: AgentStore,
 }
 impl AgentIdentityView {
+    /// 总协调器只接收这份身份库与其固定附属 Audit 成对能力，不允许另传账本路径。
+    pub fn checkpoint_assembly(&self) -> Result<super::AgentCheckpointAssembly, SupplyError> {
+        super::checkpoint::assemble(&self.store)
+    }
+
     /// 从正在使用的只读身份源取得固定封存能力；不增加身份创建、认证或迁移入口。
     pub fn checkpoint_source(&self) -> Result<super::AgentCheckpointSource, SupplyError> {
         super::checkpoint::source(&self.store)

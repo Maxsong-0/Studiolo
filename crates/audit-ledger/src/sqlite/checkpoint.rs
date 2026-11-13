@@ -1,4 +1,6 @@
 //! Audit 最后冻结；全量验链后提供截止点内逐条原事件核对，不向协调器暴露连接。
+mod access;
+pub use access::AuditCheckpointAccess;
 mod coverage;
 use super::{SqliteAuditLedger, query, schema, verify};
 use crate::{AuditError, AuditEvent, AuditRecord, codec};

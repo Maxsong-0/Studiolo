@@ -2,7 +2,9 @@
 
 mod checkpoint;
 mod inspection;
-pub use checkpoint::{AuditCheckpointSource, FrozenAudit, ReceiptCoverage, VerifiedReceipt};
+pub use checkpoint::{
+    AuditCheckpointAccess, AuditCheckpointSource, FrozenAudit, ReceiptCoverage, VerifiedReceipt,
+};
 mod operation;
 mod query;
 mod read_view;

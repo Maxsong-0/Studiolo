@@ -20,9 +20,9 @@ pub use budget::{
     BudgetExceeded, HARD_BUDGET_TOKENS, TARGET_BUDGET_TOKENS, check_budget, count_tokens,
 };
 pub use database::{
-    AgentCheckpointSource, AgentIdentityView, AgentStore, FrozenAgentStore, IdentitySnapshot,
-    Instance, InstanceIdentity, IssuedToken, ReadQuery, ReadRecord, TypeIdentity,
-    validate_type_name,
+    AgentCheckpointAssembly, AgentCheckpointSource, AgentIdentityView, AgentStore,
+    FrozenAgentStore, IdentitySnapshot, Instance, InstanceIdentity, IssuedToken, ReadQuery,
+    ReadRecord, TypeIdentity, validate_type_name,
 };
 pub use error::SupplyError;
 pub use roots::{Entry, EntryKind, Note, Snapshot, SupplyRoots};

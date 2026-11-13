@@ -112,3 +112,93 @@ fn an_open_outage_or_damaged_identity_blocks_the_checkpoint() {
         .unwrap();
     assert!(source.freeze(deadline()).is_err());
 }
+
+#[test]
+fn paired_checkpoint_uses_only_fixed_agent_audit_and_original_operation_gate() {
+    let dir = directory();
+    let human_root = directory();
+    let audit_root = dir.path().join("audit");
+    fs::create_dir(&audit_root).unwrap();
+    fs::set_permissions(&audit_root, fs::Permissions::from_mode(0o700)).unwrap();
+    let store = AgentStore::open(dir.path()).unwrap();
+    store.issue_type("codex", NOW).unwrap();
+    let instance = store.register_instance("codex", "session", NOW).unwrap();
+    let agent = SqliteAuditLedger::open(&audit_root).unwrap();
+    let event = audit::content_read(
+        Actor::instance("codex", &instance.id),
+        "notes/test.md",
+        "aabb",
+        "read_note",
+    )
+    .unwrap();
+    let record = agent.append(event).unwrap();
+    store
+        .record_read(&ReadRecord {
+            recorded_at_ms: record.recorded_at().as_millisecond(),
+            recorded_at: record.recorded_at().to_string(),
+            agent_type: "codex".into(),
+            instance_id: instance.id,
+            path: "notes/test.md".into(),
+            revision: "aabb".into(),
+            tool: "read_note".into(),
+            ledger_offset: record.offset(),
+        })
+        .unwrap();
+    let human = SqliteAuditLedger::open(human_root.path()).unwrap();
+    human
+        .append(
+            audit::content_read(
+                Actor::instance("codex", "different"),
+                "notes/human.md",
+                "ccdd",
+                "read_note",
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let view = AgentIdentityView::open_existing(dir.path()).unwrap();
+    let pair = view.checkpoint_assembly().unwrap();
+    let active = agent.enter_operation().unwrap();
+    assert!(
+        pair.quiesce(Instant::now() + Duration::from_millis(30))
+            .is_err()
+    );
+    drop(active);
+    let quiet = pair.quiesce(deadline()).unwrap();
+    // 人侧许可不被这个独立根的排空错误地关闭。
+    let human_operation = human.enter_operation().unwrap();
+    drop(human_operation);
+    let mut frozen = pair.freeze_store(deadline()).unwrap();
+    let wrong = human
+        .checkpoint_source()
+        .unwrap()
+        .freeze(deadline())
+        .unwrap();
+    assert!(frozen.verify_audit(&wrong).is_err());
+    let original = pair.freeze_audit(deadline()).unwrap();
+    assert_eq!(frozen.verify_audit(&original).unwrap().checked(), 1);
+    frozen.export(directory().path()).unwrap();
+    drop(original);
+    drop(frozen);
+    drop(quiet);
+    assert!(agent.enter_operation().is_ok());
+}
+#[test]
+fn paired_checkpoint_does_not_initialize_missing_audit_or_rebind_replaced_identity() {
+    let dir = directory();
+    let store = AgentStore::open(dir.path()).unwrap();
+    store.issue_type("codex", NOW).unwrap();
+    let view = AgentIdentityView::open_existing(dir.path()).unwrap();
+    assert!(view.checkpoint_assembly().is_err());
+    assert!(!dir.path().join("audit").exists());
+    let audit_root = dir.path().join("audit");
+    fs::create_dir(&audit_root).unwrap();
+    fs::set_permissions(&audit_root, fs::Permissions::from_mode(0o700)).unwrap();
+    let _ledger = SqliteAuditLedger::open(&audit_root).unwrap();
+    let pair = view.checkpoint_assembly().unwrap();
+    let database = dir.path().join("agent.sqlite3");
+    fs::rename(&database, dir.path().join("replaced.sqlite3")).unwrap();
+    fs::copy(dir.path().join("replaced.sqlite3"), &database).unwrap();
+    assert!(pair.freeze_store(deadline()).is_err());
+    assert!(view.checkpoint_assembly().is_err());
+}

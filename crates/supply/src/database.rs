@@ -9,7 +9,7 @@ use rusqlite::{Connection, OpenFlags, TransactionBehavior, params};
 
 mod checkpoint;
 mod children;
-pub use checkpoint::{AgentCheckpointSource, FrozenAgentStore};
+pub use checkpoint::{AgentCheckpointAssembly, AgentCheckpointSource, FrozenAgentStore};
 mod identity;
 mod view;
 pub use view::{AgentIdentityView, IdentitySnapshot, InstanceIdentity, TypeIdentity};
