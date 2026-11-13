@@ -17,21 +17,26 @@
 | `web/` | 「策略平面」视图：effective 与现行各项、提交 desired 并看报告（扩大项标红）、发布（就地弹 One-time Code 窗口，认证通过后自动继续这一次发布，不必去账户页再回来重来）、待处理 desired（含 AI 提案）、版本列表与回滚、三级吊销 |
 | `auth` | `FactorRuntime::require_l3` 门面透出（T-026 复审 #19 的 M4 前置） |
 
-## 本机跑一遍（全部虚构材料）
+## 在 DGX 或 Linux 服务器上跑一遍（全部虚构材料；Mac 本机不跑 cargo）
+
+在 DGX 上由主会话跑，构建环境先按根 `README.md`「开发」段「DGX 本机跑」设好（子 agent 不跑）。
 
 ```bash
-# 1. 接入方私有目录与策略库
-mkdir -m 700 -p /private/tmp/sa/data/audit /private/tmp/sa/policy
-cargo run --locked -p studiolo-agent-server -- admin init --data /private/tmp/sa/data
-cargo run --locked -p studiolo-agent-server -- admin policy-init --policy /private/tmp/sa/policy
+# 0. 私有演示根：取临时目录的物理路径（账本拒绝路径里有符号链接；macOS 的 /tmp、$TMPDIR 都经过符号链接，Linux 上就是 /tmp）
+SA="$(cd "${TMPDIR:-/tmp}" && pwd -P)/studiolo-sa"
+# 1. 接入方私有目录与策略库：<data>、<data>/audit、<policy> 都必须恰好是 0700（私有库按此校验），
+#    而 mkdir -m 只作用于列出的目录、-p 补出的中间层按 umask 建，所以每一层都显式列出
+mkdir -m 700 -p "$SA" "$SA/data" "$SA/data/audit" "$SA/policy"
+cargo run --locked -p studiolo-agent-server -- admin init --data "$SA/data"
+cargo run --locked -p studiolo-agent-server -- admin policy-init --policy "$SA/policy"
 # 2. 在交互终端签发类型 token 并 bootstrap 首版能力集（正文文件见 contracts/policy-plane.md §2 的形状）
-cargo run --locked -p studiolo-agent-server -- admin type-issue --data /private/tmp/sa/data --type claude
-cargo run --locked -p studiolo-agent-server -- admin policy-bootstrap --policy /private/tmp/sa/policy \
-  --data /private/tmp/sa/data --kind capability_set --subject claude --file /private/tmp/sa/claude.json
-cargo run --locked -p studiolo-agent-server -- admin policy-status --policy /private/tmp/sa/policy
+cargo run --locked -p studiolo-agent-server -- admin type-issue --data "$SA/data" --type claude
+cargo run --locked -p studiolo-agent-server -- admin policy-bootstrap --policy "$SA/policy" \
+  --data "$SA/data" --kind capability_set --subject claude --file "$SA/claude.json"
+cargo run --locked -p studiolo-agent-server -- admin policy-status --policy "$SA/policy"
 # 3. 接入方服务：能力集之外的目录从一开始不进入计算（本机 --vault 示例；生产白名单见 scripts/replica_common.py 的 ALLOW）
 cargo run --locked -p studiolo-agent-server -- serve --vault /path/to/readonly-copy \
-  --allow 项目/<示例项目> --allow _规则 --data /private/tmp/sa/data --policy /private/tmp/sa/policy --port 4400
+  --allow 项目/<示例项目> --allow _规则 --data "$SA/data" --policy "$SA/policy" --port 4400
 ```
 
 人侧发布链路需要会话模式与因子模式（`--session-config` ＋ `--factor-socket` ＋ `--policy-data`），

@@ -7,11 +7,12 @@ import plistlib
 import shutil
 import sys
 
+# 默认 vault／主机／远端根与同步客户端共用一份（本脚本按 python3 scripts/prepare-agent-sync.py 运行，
+# scripts/ 在 sys.path 上；replica_client 只有 import 与定义，导入它没有副作用）。
+from replica_client import DEFAULT_HOST, DEFAULT_REMOTE, DEFAULT_VAULT
+
 
 LABEL = "me.studiolo.agent-sync"
-DEFAULT_VAULT = "/Users/maxsong/Documents/Max's Secret Place"
-DEFAULT_HOST = "maxsong@192.168.100.169"
-DEFAULT_REMOTE = "/home/maxsong/.local/share/studiolo-agent-replica"
 
 
 def prepare(output, vault, host, remote, python):
