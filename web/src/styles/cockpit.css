@@ -35,13 +35,13 @@
   display: inline-flex;
   flex-wrap: wrap;
   justify-content: flex-end;
-  gap: 0 14px;
-  font-size: 11px;
+  gap: 0 var(--space-3-5);
+  font-size: var(--type-label);
 }
 .cockpit-legend > span {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
+  gap: var(--space-1);
 }
 /* 格子标题行右侧的文字链接：等宽次要色，悬停转墨色；保留 24px 触控高度 */
 .ui-button.cockpit-link {
@@ -94,7 +94,7 @@
 /* ---------- 左中：待我动作 ---------- */
 
 .cockpit-pending {
-  padding-bottom: 6px;
+  padding-bottom: var(--space-1-5);
 }
 .cockpit-pending__list {
   display: flex;
@@ -118,7 +118,7 @@
   grid-template-columns: 34px 76px minmax(0, 1fr) minmax(0, 96px);
   align-items: center;
   min-width: 0;
-  min-height: 32px;
+  min-height: var(--control-compact);
   padding: 0;
   border: 0;
   border-radius: 0;
@@ -131,14 +131,14 @@
   background: var(--paper-raised);
 }
 .cockpit-pending__kind {
-  font-size: 13.5px;
+  font-size: var(--type-small);
   line-height: 1.3;
   font-weight: 800;
   white-space: nowrap;
 }
 .cockpit-pending__title {
   min-width: 0;
-  padding-right: 14px;
+  padding-right: var(--space-3-5);
   overflow: hidden;
   font-size: var(--type-item);
   line-height: 1.4;
@@ -150,7 +150,7 @@
   min-width: 0;
   overflow: hidden;
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: var(--type-label);
   line-height: 1.3;
   letter-spacing: 0.06em;
   color: var(--ink-2);
@@ -179,9 +179,9 @@
 .cockpit-feed {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--space-1-5);
   margin: 0;
-  padding: 10px 0 0;
+  padding: var(--space-2-5) 0 0;
   border-top: 1px solid var(--ink);
   list-style: none;
 }
@@ -190,7 +190,7 @@
   grid-template-columns: 50px minmax(0, 112px) minmax(0, 1fr);
   column-gap: var(--space-2);
   align-items: baseline;
-  font-size: 13px;
+  font-size: var(--type-small);
   line-height: 1.4;
 }
 .cockpit-feed__time,
@@ -214,14 +214,14 @@
   text-overflow: ellipsis;
 }
 .cockpit-feed--empty {
-  padding-top: 10px;
+  padding-top: var(--space-2-5);
   border-top: 1px solid var(--ink);
 }
 
 /* ---------- 左下：项目明细 ---------- */
 
 .cockpit-projects {
-  gap: 6px;
+  gap: var(--space-1-5);
   padding-top: var(--space-3);
   padding-bottom: var(--space-3);
 }
@@ -230,7 +230,7 @@
   border-collapse: collapse;
   border-top: 1.5px solid var(--ink);
   table-layout: fixed;
-  font-size: 13px;
+  font-size: var(--type-small);
   line-height: 1.35;
 }
 .cockpit-projects__col-index {
@@ -251,7 +251,7 @@
 }
 .cockpit-projects__table tbody td,
 .cockpit-projects__table tbody th {
-  padding: 4px var(--space-2) 4px 0;
+  padding: var(--space-1) var(--space-2) var(--space-1) 0;
   border-bottom: 1px solid var(--hairline);
   font-weight: inherit;
   text-align: left;
@@ -259,7 +259,7 @@
 }
 .cockpit-projects__index {
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: var(--type-label);
   color: var(--ink-2);
 }
 .cockpit-projects__name {
@@ -286,12 +286,12 @@
   text-underline-offset: 3px;
 }
 .cockpit-projects__state {
-  font-size: 12px;
+  font-size: var(--type-caption);
   white-space: nowrap;
 }
 .cockpit-projects__note {
   overflow: hidden;
-  font-size: 12px;
+  font-size: var(--type-caption);
   color: var(--ink-2);
   white-space: nowrap;
   text-overflow: ellipsis;
@@ -302,7 +302,7 @@
   align-items: baseline;
   gap: 0 var(--space-3);
   margin: 0;
-  font-size: 12px;
+  font-size: var(--type-caption);
   line-height: 1.5;
   color: var(--ink-2);
 }

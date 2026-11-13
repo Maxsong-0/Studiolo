@@ -21,28 +21,28 @@
   flex-wrap: wrap;
   align-items: baseline;
   justify-content: space-between;
-  gap: 2px var(--space-3);
+  gap: var(--space-0-5) var(--space-3);
   font-size: var(--type-item);
   line-height: 1.4;
   font-weight: 700;
 }
 .health-overall-state {
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: var(--type-caption);
   line-height: 1.5;
   font-weight: 600;
   letter-spacing: 0.04em;
 }
 .health-panel .health-loading {
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: var(--type-caption);
   line-height: 1.5;
   color: var(--ink-2);
 }
 .health-panel .health-incomplete {
-  margin-top: 6px;
+  margin-top: var(--space-1-5);
   color: var(--ink-2);
-  font-size: 12px;
+  font-size: var(--type-caption);
   line-height: 1.6;
   overflow-wrap: anywhere;
 }
@@ -57,11 +57,11 @@
   min-width: 0;
 }
 .health-table-head {
-  margin-top: 10px;
-  padding-bottom: 4px;
+  margin-top: var(--space-2-5);
+  padding-bottom: var(--space-1);
   border-bottom: 1.5px solid var(--ink);
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: var(--type-label);
   line-height: 1.3;
   letter-spacing: 0.08em;
   color: var(--ink-2);
@@ -73,13 +73,13 @@
 }
 .health-sections > li {
   align-items: baseline;
-  padding: 7px 0;
+  padding: var(--space-2) 0;
   border-bottom: 1px solid var(--hairline);
 }
 .health-sections h4 {
   min-width: 0;
   margin: 0;
-  font-size: 13px;
+  font-size: var(--type-small);
   line-height: 1.5;
   font-weight: 700;
   overflow-wrap: anywhere;
@@ -88,10 +88,10 @@
 .health-sections .health-state {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-1-5);
   margin: 0;
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: var(--type-caption);
   line-height: 1.5;
   font-weight: 600;
   letter-spacing: 0.04em;
@@ -124,7 +124,7 @@
   min-width: 0;
   margin: 0;
   color: var(--ink-2);
-  font-size: 13px;
+  font-size: var(--type-small);
   line-height: 1.5;
   overflow-wrap: anywhere;
 }
@@ -135,12 +135,12 @@
     display: none;
   }
   .health-sections:not(:empty) {
-    margin-top: 10px;
+    margin-top: var(--space-2-5);
     border-top: 1.5px solid var(--ink);
   }
   .health-sections > li {
     grid-template-columns: minmax(0, 1fr) auto;
-    row-gap: 2px;
+    row-gap: var(--space-0-5);
   }
   .health-sections .health-detail {
     grid-column: 1 / -1;

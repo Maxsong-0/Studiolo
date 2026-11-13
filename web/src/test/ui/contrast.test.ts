@@ -103,6 +103,8 @@ describe.each<Theme>(['浅色', '深色'])('%s主题', (theme) => {
     ['实心红圈号里的数字', '--on-ink', '--signal-text'],
     ['14px 及以下的红字', '--signal-text', '--paper'],
     ['正文', '--ink', '--paper'],
+    ['次要文字、休眠项的文字', '--ink-2', '--paper'],
+    ['次要文字压在抬高一档的底上', '--ink-2', '--paper-raised'],
   ])('%s：%s 对 %s ≥ 4.5:1', (_role, text, ground) => {
     const ratio = contrast(color(theme, text), color(theme, ground));
     expect(ratio).toBeGreaterThanOrEqual(AA);
@@ -139,6 +141,26 @@ it('拓扑图的圈号：圆用 --signal-text，数字用 --on-ink', () => {
   const digit = rule(collab, '.topology__marker-n');
   expect(tokenOf(dot, 'fill')).toBe('--signal-text');
   expect(tokenOf(digit, 'fill')).toBe('--on-ink');
+});
+
+/*
+ * --ink-3 在纸色上只有 3.07:1（深色 4.03:1），够不上小字的 4.5:1。它只给禁用控件的字与边、
+ * 休眠项的框线、刻度这类非文字记号用；要读的字（休眠项的名字、占位提示、序号）用 --ink-2（T-191）。
+ */
+it('--ink-3 不做活文字的颜色：color 与 fill 只出现在禁用态的规则里', () => {
+  const rules = /([^{}]+)\{([^{}]*)\}/g;
+  const inkThreeText = /(?:^|[;\s])(?:color|fill)\s*:[^;]*var\(--ink-3\)/;
+  const disabled = /:disabled|\[aria-disabled='true'\]/;
+  const offenders: string[] = [];
+  for (const path of readdirSync(SRC, { encoding: 'utf8', recursive: true })) {
+    if (!path.endsWith('.css')) continue;
+    for (const [, selectors, body] of stylesheet(path).matchAll(rules))
+      if (inkThreeText.test(body))
+        for (const selector of selectors.split(','))
+          if (!disabled.test(selector))
+            offenders.push(`${path}：${selector.trim()}`);
+  }
+  expect(offenders).toEqual([]);
 });
 
 it('别处的样式表没有把实心圈号的底改回 --signal', () => {

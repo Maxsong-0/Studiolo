@@ -26,15 +26,15 @@
   flex-wrap: wrap;
   align-items: center;
   justify-content: flex-end;
-  gap: var(--space-2) 22px;
+  gap: var(--space-2) var(--space-6);
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: var(--type-caption);
   line-height: 1.3;
 }
 .collab-summary {
   display: flex;
   flex-wrap: wrap;
-  gap: var(--space-1) 22px;
+  gap: var(--space-1) var(--space-6);
   margin: 0;
   font-variant-numeric: tabular-nums;
 }
@@ -45,7 +45,7 @@
 .collab-toggle {
   display: inline-flex;
   align-items: center;
-  gap: 7px;
+  gap: var(--space-2);
   cursor: pointer;
 }
 .collab-toggle input {
@@ -98,14 +98,14 @@
 .collab-select__control {
   min-width: 0;
   max-width: 260px;
-  height: 32px;
-  padding: 0 30px 0 10px;
+  height: var(--control-compact);
+  padding: 0 30px 0 var(--space-2-5);
   border: 1.5px solid var(--ink);
   border-radius: 0;
   background: var(--paper-raised);
   color: var(--ink);
   font-family: var(--font-sans);
-  font-size: 13px;
+  font-size: var(--type-small);
   letter-spacing: 0;
   text-overflow: ellipsis;
   appearance: none;
@@ -134,26 +134,26 @@
   gap: var(--space-2) var(--space-3);
 }
 .collab-topology__detail {
-  padding: var(--space-4) 18px;
+  padding: var(--space-4) var(--space-4-5);
 }
 .collab-topology__timeline {
-  gap: 6px;
-  padding: 10px var(--space-5) 14px;
+  gap: var(--space-1-5);
+  padding: var(--space-2-5) var(--space-5) var(--space-3-5);
 }
 .collab-legend {
   display: flex;
   flex-wrap: wrap;
-  gap: var(--space-1) 22px;
+  gap: var(--space-1) var(--space-6);
   margin: 0;
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: var(--type-label);
   line-height: 1.4;
   color: var(--ink-2);
 }
 .collab-lanes-legend {
   display: inline-flex;
   flex-wrap: wrap;
-  gap: var(--space-1) 14px;
+  gap: var(--space-1) var(--space-3-5);
 }
 .collab-legend .is-signal,
 .collab-lanes-legend .is-signal {
@@ -162,7 +162,7 @@
 .collab-note {
   max-width: 65ch;
   margin: 0;
-  font-size: 12.5px;
+  font-size: var(--type-small);
   line-height: 1.5;
   color: var(--ink-2);
 }
@@ -185,7 +185,7 @@
 }
 .topology__heads text {
   font-family: var(--font-mono);
-  font-size: 10.5px;
+  font-size: var(--type-micro);
   fill: var(--ink-2);
 }
 .topology__edge {
@@ -211,13 +211,13 @@
   stroke-width: 1.5px;
 }
 .topology__executor-name {
-  font-size: 14px;
+  font-size: var(--type-body);
   font-weight: 800;
   fill: var(--ink);
 }
 .topology__executor-detail {
   font-family: var(--font-mono);
-  font-size: 10px;
+  font-size: var(--type-micro);
   fill: var(--ink-2);
 }
 .topology__executor--dormant .topology__executor-box {
@@ -226,7 +226,7 @@
   stroke-dasharray: 4 4;
 }
 .topology__executor--dormant text {
-  fill: var(--ink-3);
+  fill: var(--ink-2);
 }
 
 .topology__task-box {
@@ -236,16 +236,16 @@
 }
 .topology__task-caption {
   font-family: var(--font-mono);
-  font-size: 10px;
+  font-size: var(--type-micro);
   fill: var(--ink-2);
 }
 .topology__task-status {
-  font-size: 10.5px;
+  font-size: var(--type-micro);
   font-weight: 700;
   fill: var(--ink);
 }
 .topology__task-title {
-  font-size: 13.5px;
+  font-size: var(--type-small);
   font-weight: 700;
   fill: var(--ink);
 }
@@ -266,7 +266,7 @@
   stroke-dasharray: 4 4;
 }
 .topology__task--dormant text {
-  fill: var(--ink-3);
+  fill: var(--ink-2);
 }
 .topology__task--clickable {
   cursor: pointer;
@@ -293,14 +293,14 @@
 }
 .topology__path-text {
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: var(--type-caption);
   fill: var(--ink);
 }
 .topology__path--dormant .topology__path-box {
   stroke: var(--ink-3);
 }
 .topology__path--dormant .topology__path-text {
-  fill: var(--ink-3);
+  fill: var(--ink-2);
 }
 /* 写域重叠：红底红框，框下一行说明，右侧红括号连起重叠的两端 */
 .topology__path--overlap .topology__path-box {
@@ -315,7 +315,7 @@
 }
 .topology__path-note {
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: var(--type-label);
   fill: var(--signal-text);
 }
 .topology__bracket {
@@ -333,7 +333,7 @@
 }
 .topology__marker-n {
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: var(--type-caption);
   font-weight: 600;
   fill: var(--on-ink);
 }
@@ -375,9 +375,9 @@
   display: flex;
   flex-wrap: wrap;
   align-items: baseline;
-  gap: var(--space-1) 10px;
+  gap: var(--space-1) var(--space-2-5);
   margin: 0;
-  font-size: 14px;
+  font-size: var(--type-body);
   line-height: 1.4;
   font-weight: 800;
 }
@@ -386,14 +386,14 @@
 }
 .topology__group-detail {
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: var(--type-label);
   font-weight: 500;
   color: var(--ink-2);
 }
 .topology__entries {
   display: grid;
   gap: var(--space-2);
-  margin: 6px 0 0;
+  margin: var(--space-1-5) 0 0;
   padding: 0 0 0 var(--space-3);
   border-left: 1px solid var(--ink);
   list-style: none;
@@ -402,8 +402,8 @@
   display: flex;
   flex-wrap: wrap;
   align-items: baseline;
-  gap: var(--space-1) 10px;
-  font-size: 13px;
+  gap: var(--space-1) var(--space-2-5);
+  font-size: var(--type-small);
   line-height: 1.5;
 }
 .topology__entry--dormant {
@@ -416,7 +416,7 @@
   background: none;
   color: inherit;
   font: inherit;
-  font-size: 14px;
+  font-size: var(--type-body);
   font-weight: 700;
   text-align: left;
   text-decoration: underline;
@@ -435,26 +435,26 @@
   outline-offset: 2px;
 }
 .topology__entry-title {
-  font-size: 14px;
+  font-size: var(--type-body);
   font-weight: 700;
 }
 .topology__entry-status {
-  font-size: 12px;
+  font-size: var(--type-caption);
 }
 .topology__entry-markers {
   display: inline-flex;
-  gap: 6px;
+  gap: var(--space-1-5);
 }
 .topology__entry-marker {
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: var(--type-label);
   font-weight: 600;
   color: var(--signal-text);
 }
 .topology__entry-paths {
   display: grid;
   flex-basis: 100%;
-  gap: 2px;
+  gap: var(--space-0-5);
   margin: 0;
   padding: 0;
   list-style: none;
@@ -463,20 +463,20 @@
   display: flex;
   flex-wrap: wrap;
   align-items: baseline;
-  gap: 2px var(--space-2);
+  gap: var(--space-0-5) var(--space-2);
 }
 .topology__entry-paths code {
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: var(--type-caption);
   overflow-wrap: anywhere;
 }
 .topology__entry-overlap {
   flex-basis: 100%;
-  font-size: 12px;
+  font-size: var(--type-caption);
   color: var(--signal-text);
 }
 .topology__entry-none {
-  font-size: 12px;
+  font-size: var(--type-caption);
   color: var(--ink-2);
 }
 .topology__more {
@@ -502,7 +502,7 @@
 .task-detail {
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: var(--space-3-5);
   min-width: 0;
   min-height: 100%;
 }
@@ -513,14 +513,14 @@
 }
 .task-detail__caption {
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: var(--type-label);
   line-height: 1.4;
   color: var(--ink-2);
   overflow-wrap: anywhere;
 }
 .task-detail__title {
   margin: 0;
-  font-size: 26px;
+  font-size: var(--type-title);
   line-height: 1.15;
   font-weight: 900;
   letter-spacing: -0.02em;
@@ -533,10 +533,10 @@
 .task-detail__facts {
   display: grid;
   grid-template-columns: 44px minmax(0, 1fr);
-  gap: 9px 10px;
+  gap: var(--space-2) var(--space-2-5);
   padding-top: var(--space-3);
   border-top: 1.5px solid var(--ink);
-  font-size: 13px;
+  font-size: var(--type-small);
   line-height: 1.5;
 }
 .task-detail__facts > div {
@@ -544,7 +544,7 @@
 }
 .task-detail__facts dt {
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: var(--type-label);
   line-height: 1.8;
   color: var(--ink-2);
 }
@@ -552,7 +552,7 @@
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  gap: 2px;
+  gap: var(--space-0-5);
   min-width: 0;
   margin: 0;
   overflow-wrap: anywhere;
@@ -560,17 +560,17 @@
 .task-detail__facts code,
 .task-detail__fields code {
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: var(--type-caption);
 }
 .task-detail__progress {
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: var(--type-label);
   line-height: 1.5;
   color: var(--ink-2);
 }
 .task-detail__overlaps {
   display: grid;
-  gap: 6px;
+  gap: var(--space-1-5);
   margin: 0;
   padding: 0;
   list-style: none;
@@ -586,13 +586,13 @@
 .task-detail__receipt {
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  padding-top: 10px;
+  gap: var(--space-1-5);
+  padding-top: var(--space-2-5);
   border-top: 1.5px solid var(--ink);
 }
 .task-detail__receipt h3 {
   margin: 0;
-  font-size: 14px;
+  font-size: var(--type-body);
   line-height: 1.4;
   font-weight: 800;
 }
@@ -605,9 +605,9 @@
   align-items: baseline;
   justify-content: space-between;
   gap: var(--space-3);
-  padding: 5px 0;
+  padding: var(--space-1) 0;
   border-bottom: 1px solid var(--hairline);
-  font-size: 12.5px;
+  font-size: var(--type-small);
   line-height: 1.5;
 }
 .task-detail__fields dt {
@@ -624,7 +624,7 @@
 }
 .task-detail__reason {
   margin: 0;
-  font-size: 12px;
+  font-size: var(--type-caption);
   line-height: 1.5;
   color: var(--ink-2);
 }

@@ -32,7 +32,7 @@
   justify-content: space-between;
   gap: var(--space-4);
   min-height: 60px;
-  padding: 14px var(--space-5) var(--space-3);
+  padding: var(--space-3-5) var(--space-5) var(--space-3);
   border-bottom: 2px solid var(--ink);
 }
 .file-dialog__head > div {
@@ -40,7 +40,7 @@
 }
 .file-dialog__head h2 {
   margin: 0;
-  font-size: 24px;
+  font-size: var(--type-title);
   line-height: 1.2;
   font-weight: 800;
   letter-spacing: -0.01em;
@@ -63,7 +63,7 @@
   align-items: flex-start;
   gap: var(--space-2);
   min-height: 0;
-  padding: 14px var(--space-5) var(--space-5);
+  padding: var(--space-3-5) var(--space-5) var(--space-5);
   overflow-y: auto;
   overscroll-behavior: contain;
   font-size: var(--type-body);
@@ -124,8 +124,8 @@
   align-self: stretch;
   min-width: 0;
   /* 右、下各留 10px：硬偏移阴影不压到旁边一栏和下面的内容 */
-  margin: 2px 10px 10px 0;
-  padding: var(--space-3) var(--space-4) 14px;
+  margin: var(--space-0-5) var(--space-2-5) var(--space-2-5) 0;
+  padding: var(--space-3) var(--space-4) var(--space-3-5);
 }
 .file-op__review p {
   max-width: 72ch;
@@ -133,7 +133,7 @@
 }
 .file-op__path {
   font-family: var(--font-mono);
-  font-size: 12.5px;
+  font-size: var(--type-caption);
   font-weight: 600;
   overflow-wrap: anywhere;
 }
@@ -163,7 +163,7 @@
 .file-op__confirm {
   display: flex;
   align-items: flex-start;
-  gap: 10px;
+  gap: var(--space-2-5);
   margin: var(--space-1) 0;
   font-weight: 700;
 }
@@ -201,15 +201,15 @@
 .rename-target input {
   width: 100%;
   min-width: 0;
-  min-height: 40px;
-  padding: var(--space-2) 10px;
+  min-height: var(--control-default);
+  padding: var(--space-2) var(--space-2-5);
   border: 1.5px solid var(--ink);
   border-radius: 0;
   background: var(--paper-raised);
   color: var(--ink);
   caret-color: var(--signal);
   font-family: var(--font-mono);
-  font-size: 13px;
+  font-size: var(--type-small);
   letter-spacing: 0;
 }
 .rename-target input:focus-visible {
@@ -227,10 +227,10 @@
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  gap: 6px;
+  gap: var(--space-1-5);
   align-self: stretch;
   min-width: 0;
-  padding: 10px 14px var(--space-3);
+  padding: var(--space-2-5) var(--space-3-5) var(--space-3);
   border: 1px solid var(--ink);
   background: var(--paper);
   font-size: var(--type-body);
@@ -270,7 +270,7 @@
 }
 .file-receipt__paths {
   font-family: var(--font-mono);
-  font-size: 12.5px;
+  font-size: var(--type-caption);
   line-height: 1.6;
 }
 .file-receipt__paths > p {
@@ -312,7 +312,7 @@
 }
 .deleted-entry__path {
   font-family: var(--font-mono);
-  font-size: 12.5px;
+  font-size: var(--type-caption);
   line-height: 1.5;
   font-weight: 600;
   overflow-wrap: anywhere;
@@ -353,7 +353,7 @@
   align-items: flex-start;
   gap: var(--space-2);
   width: min(30rem, calc(100vw - 32px));
-  padding: 14px var(--space-4);
+  padding: var(--space-3-5) var(--space-4);
   font-size: var(--type-body);
   line-height: 1.6;
   overflow-wrap: anywhere;

@@ -64,6 +64,10 @@ const shellCss = readFileSync(
   join(import.meta.dirname, '../../shell/shell.css'),
   'utf8',
 ).replace(/\/\*[\s\S]*?\*\//g, '');
+const tokensCss = readFileSync(
+  join(import.meta.dirname, '../../styles/tokens.css'),
+  'utf8',
+);
 
 function block(source: string, header: string) {
   const start = source.indexOf(header);
@@ -96,9 +100,11 @@ it('窄屏（<760px）导航固定在底部成六格，每格至少 44px 高', (
     `grid-template-columns: repeat(${ORDER.length}, minmax(0, 1fr));`,
   );
   expect(nav).toContain('padding-bottom: env(safe-area-inset-bottom);');
+  // 触控高度的数值只在 tokens.css 一处（T-191）：这里看引用了令牌，再看令牌确实是 44px
   expect(declarations(narrow, '.shell-nav-item')).toContain(
-    'min-height: 44px;',
+    'min-height: var(--control-touch);',
   );
+  expect(tokensCss).toMatch(/--control-touch:\s*44px;/);
   // 页面底部留出导航的高度，最后一行内容不被六格盖住
   expect(declarations(narrow, '.shell')).toContain(
     'calc(47px + env(safe-area-inset-bottom) + 24px)',

@@ -61,7 +61,7 @@
 }
 .document-header .source-location {
   max-height: 4.5em;
-  margin-top: 2px;
+  margin-top: var(--space-0-5);
   overflow: auto;
 }
 .source-location {
@@ -244,18 +244,18 @@
   }
   .document-header {
     padding: max(var(--space-3), env(safe-area-inset-top)) var(--space-2)
-      var(--space-3) 14px;
+      var(--space-3) var(--space-3-5);
   }
   .document-header .icon-button {
-    width: 44px;
-    height: 44px;
+    width: var(--control-touch);
+    height: var(--control-touch);
   }
   .document-toolbar {
     gap: var(--space-1) var(--space-3);
-    padding: var(--space-2) 14px;
+    padding: var(--space-2) var(--space-3-5);
   }
   .document-toolbar .ui-button {
-    min-height: 44px;
+    min-height: var(--control-touch);
   }
   .document-toolbar .document-navigation-toggle {
     display: inline-flex;
@@ -308,22 +308,22 @@
   letter-spacing: -0.01em;
 }
 .markdown-preview .markdown-body h1 {
-  padding-top: 10px;
+  padding-top: var(--space-2-5);
   border-top: 2px solid var(--ink);
-  font-size: 24px;
+  font-size: var(--type-title);
   font-weight: 900;
   letter-spacing: -0.02em;
 }
 .markdown-preview .markdown-body h2 {
-  padding-top: 8px;
+  padding-top: var(--space-2);
   border-top: 1px solid var(--ink);
-  font-size: 19px;
+  font-size: var(--type-cell);
   font-weight: 800;
 }
 .markdown-preview .markdown-body h3 {
-  padding-top: 6px;
+  padding-top: var(--space-1-5);
   border-top: 1px solid var(--hairline);
-  font-size: 16px;
+  font-size: var(--type-item);
   font-weight: 800;
 }
 .markdown-preview .markdown-body :is(h4, h5, h6) {
@@ -369,12 +369,12 @@
 }
 .markdown-preview .markdown-body pre {
   margin: 1em 0;
-  padding: var(--space-3) 14px;
+  padding: var(--space-3) var(--space-3-5);
   overflow-x: auto;
   border: 1px solid var(--hairline);
   border-radius: 0;
   background: var(--paper-raised);
-  font-size: 12.5px;
+  font-size: var(--type-caption);
   line-height: 1.7;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
@@ -387,7 +387,7 @@
 }
 .markdown-preview .markdown-body blockquote {
   margin: 1em 0;
-  padding: 0 0 0 14px;
+  padding: 0 0 0 var(--space-3-5);
   border-left: 3px solid var(--ink);
   color: var(--ink-2);
 }
@@ -405,7 +405,7 @@
   border: 1px solid var(--hairline);
 }
 .markdown-preview .markdown-body summary {
-  padding: 6px var(--space-3);
+  padding: var(--space-1-5) var(--space-3);
   cursor: pointer;
   font-family: var(--font-mono);
   font-size: var(--type-label);
@@ -425,11 +425,11 @@
 }
 .markdown-preview .markdown-body table {
   border-collapse: collapse;
-  font-size: 13px;
+  font-size: var(--type-small);
   line-height: 1.5;
 }
 .markdown-preview .markdown-body td {
-  padding: 6px 10px;
+  padding: var(--space-1-5) var(--space-2-5);
   border: 1px solid var(--ink);
   vertical-align: top;
 }

@@ -18,11 +18,11 @@
     width: calc(100vw - 24px);
   }
   .palette-option {
-    min-height: 44px;
+    min-height: var(--control-touch);
   }
   .palette-scope select {
-    min-height: 44px;
-    font-size: 16px;
+    min-height: var(--control-touch);
+    font-size: var(--type-touch);
   }
 
   /*
@@ -51,7 +51,7 @@
   }
   /* 驾驶舱（cockpit.css）：格子标题行的文字链接写死 24px 触控高度 */
   .ui-button.cockpit-link {
-    min-height: 44px;
+    min-height: var(--control-touch);
   }
   /*
    * 驾驶舱 › 待我动作（cockpit.css）：一行 32px 高，且桌面的四列在 390 宽下标题只剩八九个字。
@@ -60,7 +60,7 @@
   .cockpit-pending__row {
     grid-template-columns: 30px max-content minmax(0, 1fr);
     column-gap: var(--space-2);
-    min-height: 44px;
+    min-height: var(--control-touch);
     padding-block: var(--space-1);
   }
   .cockpit-pending__row > .ui-circled,
@@ -75,51 +75,51 @@
   /* 文档 › 搜索（search.css）：框已是 44px 高，框里的输入与下拉仍是 14px、13px 字 */
   .document-search-controls .document-search-input input,
   .document-search-controls .project-search-select select {
-    font-size: 16px;
+    font-size: var(--type-touch);
   }
 
   /* 协作（collab.css）：两个开关的复选框只有 12px，整个标签作触控目标；项目选择 32px 高、13px 字 */
   .collab-toggle {
-    min-height: 44px;
+    min-height: var(--control-touch);
   }
   .collab-select__control {
-    height: 44px;
-    font-size: 16px;
+    height: var(--control-touch);
+    font-size: var(--type-touch);
   }
 
   /* 协作 › 任务与回执（board.css）：「独占路径 · 验收标准 · 候选证据」等展开标题 32px 高 */
   .board-details > summary,
   .board-receipt > summary {
-    min-height: 44px;
-    padding-block: 12px;
+    min-height: var(--control-touch);
+    padding-block: var(--space-3);
   }
 
   /* 协作 › 本机派发（localDispatch.css）：展开标题 32px，表单输入 36px 高、14px 字 */
   .local-dispatch > summary {
-    min-height: 44px;
+    min-height: var(--control-touch);
   }
   .local-dispatch-form input,
   .local-dispatch-form textarea,
   .local-dispatch-form select {
-    min-height: 44px;
-    font-size: 16px;
+    min-height: var(--control-touch);
+    font-size: var(--type-touch);
   }
 
   /* 协作 › 时间线（board.css）：回放时间轴滑块只有 16px 高，拇指难按 */
   .timeline__scrub input {
-    height: 44px;
+    height: var(--control-touch);
   }
 
   /* 策略（policy.css）：表单下拉 34px、输入 39px、正文 13px 字，复选框标签只有字高。按视图根限定，不依赖内部类名 */
   .view-policy :is(select, input:not([type='checkbox'], [type='radio'])) {
-    min-height: 44px;
+    min-height: var(--control-touch);
   }
   .view-policy
     :is(select, textarea, input:not([type='checkbox'], [type='radio'])) {
-    font-size: 16px;
+    font-size: var(--type-touch);
   }
   .view-policy label:has(> input[type='checkbox']) {
-    min-height: 44px;
+    min-height: var(--control-touch);
   }
 }
 

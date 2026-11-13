@@ -33,24 +33,50 @@
     'Archivo', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
   --font-mono: 'IBM Plex Mono', ui-monospace, monospace;
 
-  /* 字号：巨号、大号读数、图名、格子标题、条目标题、正文、等宽标签 */
+  /*
+   * 字号十二档，样式里的 font-size 只许引用这些（守卫 test/ui/spacingTokens.test.ts）：
+   * 巨号、大号读数、图名、标题（对话框、文档一级标题、详情页）、格子标题、触控输入框、
+   * 条目标题、正文、次要正文、代码与路径、等宽标签、图内标注。
+   * --type-touch 不是版式选择：输入框字号低于 16px 时 iOS 聚焦会把整页放大。
+   */
   --type-giant: 196px;
   --type-large: 72px;
   --type-plate: 34px;
+  --type-title: 24px;
   --type-cell: 18px;
+  --type-touch: 16px;
   --type-item: 15.5px;
   --type-body: 14px;
+  --type-small: 13px;
+  --type-caption: 12px;
   --type-label: 11.5px;
+  --type-micro: 10.5px;
 
-  /* 间距 */
+  /*
+   * 间距：主档是 4 的倍数（--space-N ＝ N×4px），新写的间距优先用主档；
+   * 半档（-0-5、-1-5 …）只收现有的 2／6／10／14／18，不再往里加别的值。
+   * padding、margin、gap 里不许再写 px 字面量，0、1px（细线补偿）和登记过的几何值除外。
+   */
+  --space-0-5: 2px;
   --space-1: 4px;
+  --space-1-5: 6px;
   --space-2: 8px;
+  --space-2-5: 10px;
   --space-3: 12px;
+  --space-3-5: 14px;
   --space-4: 16px;
+  --space-4-5: 18px;
   --space-5: 20px;
   --space-6: 24px;
   --space-7: 28px;
   --space-8: 32px;
+  --space-10: 40px;
+
+  /* 控件高度四档：触控（规范第 5 节的 44px 触控高度）、默认（按钮、输入框）、小、紧凑 */
+  --control-touch: 44px;
+  --control-default: 40px;
+  --control-small: 36px;
+  --control-compact: 32px;
 
   /* 动效只有一档；阴影只有浮层这一种（硬偏移、无模糊）；粗线用于顶栏底边与当前子标签 */
   --motion-fast: 120ms;
