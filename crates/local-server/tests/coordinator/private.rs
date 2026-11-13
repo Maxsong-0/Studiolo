@@ -1,6 +1,7 @@
 //! 私有真实作业同步点；文件系统夹具留在 tests 目录，不增加生产文件权限。
 
 mod checkpoint;
+mod checkpoint_owners;
 mod fixture;
 mod lifecycle;
 #[cfg(target_os = "linux")]

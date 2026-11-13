@@ -146,10 +146,12 @@ impl FrozenSyncPlane {
         self.bridge.watermark()
     }
     /// Bridge 持久 ACK 与 Transport 最后运行原事件，全部核对同一真实人侧 FrozenAudit。
-    pub fn verify_audit(&mut self, audit: &FrozenAudit) -> Result<(), PlaneError> {
-        self.bridge
+    pub fn verify_audit(&mut self, audit: &FrozenAudit) -> Result<u64, PlaneError> {
+        let mut checked = self
+            .bridge
             .verify_audit(audit)
-            .map_err(|_| PlaneError::Audit)?;
+            .map_err(|_| PlaneError::Audit)?
+            .checked();
         self.restore
             .frozen
             .try_lock()
@@ -162,10 +164,14 @@ impl FrozenSyncPlane {
                         .map_err(|_| TransportError::AuditRejected)?;
                 audit
                     .verify_event(&event)
-                    .map(|_| ())
-                    .map_err(|_| TransportError::AuditRejected)
+                    .map_err(|_| TransportError::AuditRejected)?;
+                checked = checked
+                    .checked_add(1)
+                    .ok_or(TransportError::AuditRejected)?;
+                Ok(())
             })
-            .map_err(|_| PlaneError::Audit)
+            .map_err(|_| PlaneError::Audit)?;
+        Ok(checked)
     }
     /// 三个独立空目标由最终 inclusion plan 分配；全部完成才返回 Bridge 的签封回执。
     pub fn export(

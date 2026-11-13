@@ -39,6 +39,17 @@ pub struct PolicyPlane {
 }
 
 impl PolicyPlane {
+    /// 备份与人侧列表使用同一个实际身份源；未装配明确返回 None。
+    pub fn checkpoint_agents(
+        &self,
+    ) -> Result<Option<studiolo_supply::AgentCheckpointAssembly>, studiolo_supply::SupplyError>
+    {
+        self.identities
+            .as_ref()
+            .map(studiolo_supply::AgentIdentityView::checkpoint_assembly)
+            .transpose()
+    }
+
     /// 参与者与HTTP共用同一许可池、同一策略源；目标由备份协调器注入。
     pub fn checkpoint(
         &self,

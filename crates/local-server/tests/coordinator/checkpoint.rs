@@ -25,13 +25,13 @@ fn deadline() -> Instant {
 fn note() -> VaultPath {
     VaultPath::parse("new.md").unwrap()
 }
-fn target(f: &Fixture, name: &str) -> std::path::PathBuf {
+pub(super) fn target(f: &Fixture, name: &str) -> std::path::PathBuf {
     let path = f.root.join(name);
     fs::create_dir(&path).unwrap();
     fs::set_permissions(&path, fs::Permissions::from_mode(0o700)).unwrap();
     path
 }
-fn source(f: &Fixture) -> (FsVaultBroker, Arc<SqliteAuditLedger>) {
+pub(super) fn source(f: &Fixture) -> (FsVaultBroker, Arc<SqliteAuditLedger>) {
     let mut broker =
         FsVaultBroker::open_existing(&f.root.join("vault"), &f.root.join("data")).unwrap();
     let audit = Arc::new(SqliteAuditLedger::open(&f.root.join("audit")).unwrap());
@@ -43,7 +43,7 @@ fn source(f: &Fixture) -> (FsVaultBroker, Arc<SqliteAuditLedger>) {
         .unwrap();
     (broker, audit)
 }
-fn flush_content(broker: &mut FsVaultBroker, audit: &SqliteAuditLedger, corrupt: u8) {
+pub(super) fn flush_content(broker: &mut FsVaultBroker, audit: &SqliteAuditLedger, corrupt: u8) {
     for _ in 0..4 {
         for candidate in broker.pending_content_audit(64).unwrap() {
             let mut event = crate::editing::audit::event(candidate.event()).unwrap();
@@ -138,7 +138,7 @@ fn flush_maintenance(broker: &mut FsVaultBroker, audit: &SqliteAuditLedger) {
             .unwrap();
     }
 }
-async fn start(
+pub(super) async fn start(
     f: &Fixture,
     broker: FsVaultBroker,
     audit: Arc<SqliteAuditLedger>,

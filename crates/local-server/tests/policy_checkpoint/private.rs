@@ -70,3 +70,45 @@ fn absent_owner_never_claims_a_real_freeze_or_export() {
     assert!(absent.export(&request).is_err());
     absent.thaw().unwrap();
 }
+
+#[test]
+fn original_global_deadline_cannot_be_extended_by_later_export_or_refreeze() {
+    let temp = tempfile::tempdir().unwrap();
+    for name in ["policy", "audit", "copy"] {
+        let path = temp.path().join(name);
+        fs::create_dir(&path).unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o700)).unwrap();
+    }
+    let plane = crate::PolicyPlane::new(
+        PolicyStore::open(&temp.path().join("policy")).unwrap(),
+        Arc::new(SqliteAuditLedger::open(&temp.path().join("audit")).unwrap()),
+    );
+    let participant = plane
+        .checkpoint(temp.path().join("copy"))
+        .unwrap()
+        .before(Instant::now() + Duration::from_millis(200));
+    let request = FreezeRequest {
+        checkpoint_id: CheckpointId::parse("global-expiry").unwrap(),
+        budget: FreezeBudget::new(1000).unwrap(),
+    };
+    participant.freeze(&request).unwrap();
+    std::thread::sleep(Duration::from_millis(220));
+    assert!(matches!(
+        participant.export(&request),
+        Err(CheckpointError::FreezeTimeout { .. })
+    ));
+    participant.thaw().unwrap();
+    assert!(matches!(
+        participant.freeze(&request),
+        Err(CheckpointError::FreezeTimeout { .. })
+    ));
+    assert_eq!(
+        participant
+            .inner
+            .as_ref()
+            .unwrap()
+            .permits
+            .available_permits(),
+        2
+    );
+}

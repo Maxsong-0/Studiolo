@@ -65,6 +65,20 @@ pub struct BackupWorker<'a> {
     target: BackupTargetKind,
 }
 
+/// 排队与协调器核验共用唯一 Intent 映射，避免两端事件内容漂移。
+pub fn backup_intent(key: &JobKey, target: BackupTargetKind) -> Result<AuditEvent, WorkerError> {
+    let id = AuditEventId::parse(payload::event_id_text(key))
+        .map_err(|error| WorkerError::Audit(error.into()))?;
+    let payload = SanitizedPayload::try_from(payload::intent(key, target))
+        .map_err(|error| WorkerError::Audit(error.into()))?;
+    Ok(AuditEvent::new(
+        id,
+        AuditPhase::Intent,
+        BACKUP_AUDIT_ACTION,
+        payload,
+    ))
+}
+
 impl<'a> BackupWorker<'a> {
     /// 组装 Worker；持有者不是 BackupWorker 即拒绝。
     pub fn new(
@@ -127,7 +141,19 @@ impl<'a> BackupWorker<'a> {
             sequence,
             checkpoint_id: checkpoint_id.clone(),
         };
-        self.append(&key, AuditPhase::Intent, payload::intent(&key, self.target))?;
+        let expected = backup_intent(&key, self.target)?;
+        let record = self
+            .ledger
+            .append(expected.clone())
+            .map_err(|error| WorkerError::Audit(error.into()))?;
+        record
+            .verify_integrity()
+            .map_err(|error| WorkerError::Audit(error.into()))?;
+        if record.event() != &expected {
+            return Err(WorkerError::Audit(
+                studiolo_audit_ledger::AuditError::CorruptStore.into(),
+            ));
+        }
         state.next_sequence = state
             .next_sequence
             .checked_add(1)

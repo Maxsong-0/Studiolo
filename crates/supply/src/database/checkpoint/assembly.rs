@@ -9,7 +9,9 @@ pub struct AgentCheckpointAssembly {
     source: AgentCheckpointSource,
     audit: AuditCheckpointAccess,
 }
-pub(in crate::database) fn assemble(store: &AgentStore) -> Result<AgentCheckpointAssembly, SupplyError> {
+pub(in crate::database) fn assemble(
+    store: &AgentStore,
+) -> Result<AgentCheckpointAssembly, SupplyError> {
     let source = source(store)?;
     let root = store
         .storage

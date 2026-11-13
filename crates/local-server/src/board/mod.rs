@@ -56,6 +56,24 @@ pub struct BoardPlane {
     overview_tail: std::sync::atomic::AtomicU64,
 }
 impl BoardPlane {
+    /// 从实际引擎取得固定 Control 源，不重新开库或执行迁移。
+    pub fn checkpoint_source(
+        &self,
+    ) -> Result<studiolo_control_db::ControlCheckpointSource, String> {
+        self.engine
+            .try_lock()
+            .map_err(|_| "黑板正忙".to_owned())?
+            .control_db()
+            .checkpoint_source()
+            .map_err(|_| "黑板封存源不可用".to_owned())
+    }
+    /// 只取实际身份视图及其固定附属账本的成对能力。
+    pub fn checkpoint_agents(
+        &self,
+    ) -> Result<studiolo_supply::AgentCheckpointAssembly, studiolo_supply::SupplyError> {
+        self.identities.checkpoint_assembly()
+    }
+
     /// 已有 canonical 写者、身份库、策略与审计全部就绪后，才打开独立控制目录。
     pub fn open(
         workbench: Arc<CanonicalWorkbench>,

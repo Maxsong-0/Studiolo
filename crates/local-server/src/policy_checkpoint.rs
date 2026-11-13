@@ -28,16 +28,24 @@ struct Lease {
 
 /// 必须由实际PolicyPlane构造；不会用另一条源路径与许可池错配。
 pub struct PolicyParticipant {
+    global_deadline: Option<Instant>,
     inner: Option<Present>,
     lease: Mutex<Option<Lease>>,
 }
 impl PolicyParticipant {
+    /// 总协调器的原始截止时间；后续 freeze/export 不得刷新整个窗口预算。
+    pub(crate) fn before(mut self, deadline: Instant) -> Self {
+        self.global_deadline = Some(deadline);
+        self
+    }
+
     pub(crate) fn present(
         handle: PolicyCheckpointHandle,
         permits: Arc<Semaphore>,
         target: PathBuf,
     ) -> Self {
         Self {
+            global_deadline: None,
             inner: Some(Present {
                 handle,
                 permits,
@@ -50,6 +58,7 @@ impl PolicyParticipant {
     /// 只用于该部署确实没有策略平面；实际存在的库不能以此跳过。
     pub fn absent() -> Self {
         Self {
+            global_deadline: None,
             inner: None,
             lease: Mutex::new(None),
         }
@@ -90,6 +99,9 @@ impl CheckpointParticipant for PolicyParticipant {
             .as_ref()
             .ok_or(CheckpointError::OwnerUnavailable { owner: OWNER })?;
         let deadline = Instant::now() + Duration::from_millis(u64::from(request.budget.millis()));
+        let deadline = self
+            .global_deadline
+            .map_or(deadline, |global| global.min(deadline));
         let mut lease = self.lock_until(deadline)?;
         if lease.is_some() {
             return Err(CheckpointError::NotDrained { owner: OWNER });
@@ -133,6 +145,9 @@ impl CheckpointParticipant for PolicyParticipant {
             .as_ref()
             .ok_or(CheckpointError::OwnerUnavailable { owner: OWNER })?;
         let deadline = Instant::now() + Duration::from_millis(u64::from(request.budget.millis()));
+        let deadline = self
+            .global_deadline
+            .map_or(deadline, |global| global.min(deadline));
         let guard = self.lock_until(deadline)?;
         let lease = guard
             .as_ref()

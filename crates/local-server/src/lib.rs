@@ -8,6 +8,7 @@ pub mod board;
 mod bootstrap;
 mod canonical;
 mod changes;
+pub mod checkpoint;
 mod coordinator;
 mod deriver;
 mod editing;
