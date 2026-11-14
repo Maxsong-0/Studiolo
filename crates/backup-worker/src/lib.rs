@@ -4,6 +4,7 @@
 mod audit;
 mod config;
 mod credentials;
+mod job;
 mod package;
 mod process;
 mod runner;
@@ -14,6 +15,7 @@ mod temporary;
 pub use audit::WorkerAuditClient;
 pub use config::WorkerConfig;
 pub use credentials::ResticCredentials;
+pub use job::ApprovedJob;
 pub use package::ResticPackage;
 pub use runner::{AppendRunner, FinalManifestProbe};
 

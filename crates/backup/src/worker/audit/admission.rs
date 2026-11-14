@@ -23,6 +23,33 @@ pub struct AdmissionFact {
     audit_hash: String,
 }
 impl AdmissionFact {
+    /// 重开正文前后核原封存的全部准入事实，不因同 checkpoint 名称而接受替换。
+    pub fn verify_sealed(&self, sealed: &SealedCheckpoint) -> Result<(), AuditError> {
+        if self != &Self::from_sealed(self.key.clone(), self.target, sealed)? {
+            return Err(AuditError::CorruptStore);
+        }
+        Ok(())
+    }
+    /// 过期后只核非正文原 draft；不重开或延长来源权限。
+    pub fn verify_draft(
+        &self,
+        draft: &crate::worker::final_manifest::FinalManifestDraft,
+    ) -> Result<(), AuditError> {
+        self.validate()?;
+        if draft.key() != &self.key
+            || draft.source() != &self.source
+            || draft.source_expires_at() != self.expires_at
+            || draft.manifest().content_cutoff != self.content_cutoff
+            || !draft.manifest().watermarks.iter().any(|w| {
+                matches!(w,
+                OwnerWatermark::Audit { last_offset, last_hash, .. }
+                if *last_offset == self.audit_offset && last_hash == &self.audit_hash)
+            })
+        {
+            return Err(AuditError::CorruptStore);
+        }
+        Ok(())
+    }
     /// 原作业键。
     pub fn key(&self) -> &JobKey {
         &self.key

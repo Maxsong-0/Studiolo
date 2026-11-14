@@ -3,9 +3,13 @@ mod listing;
 pub(crate) mod plan;
 pub(crate) mod read;
 use super::AppendRunner;
-use crate::{ProcessError, ResticCredentials, Result, WorkerConfig, runtime::Runtime};
-use std::time::{Duration, Instant};
+use crate::{ApprovedJob, ProcessError, ResticCredentials, Result, runtime::Runtime};
+use std::{
+    path::PathBuf,
+    time::{Duration, Instant},
+};
 use studiolo_backup::worker::{
+    audit::AdmissionFact,
     final_manifest::{
         FinalManifestDraft, FinalManifestLookup, FinalManifestReader, FinalManifestReceipt,
         FinalManifestWriter,
@@ -16,20 +20,24 @@ use studiolo_backup::worker::{
 /// 独立的非正文核对能力。没有 Source，不能打开本地封存、读取远端数据文件或上传。
 pub struct FinalManifestProbe {
     runtime: Runtime,
+    admission: AdmissionFact,
+    source_root: PathBuf,
 }
 impl FinalManifestProbe {
     /// 固定配置/包/凭据沿用同一执行边界，单次核对最多五分钟，不继承过期源权限。
-    pub fn new(
-        config: &WorkerConfig,
-        credentials: ResticCredentials,
-        deadline: Instant,
-    ) -> Result<Self> {
+    pub fn new(job: &ApprovedJob<'_>, credentials: ResticCredentials) -> Result<Self> {
         Ok(Self {
             runtime: Runtime::open(
-                config,
+                job.config(),
                 credentials,
-                deadline.min(Instant::now() + Duration::from_secs(300)),
+                job.deadline()
+                    .min(Instant::now() + Duration::from_secs(300)),
             )?,
+            admission: job.fact().clone(),
+            source_root: studiolo_backup::checkpoint::staging::SealedCheckpoint::root_path(
+                job.config().sealed_parent(),
+                &job.key().checkpoint_id,
+            ),
         })
     }
     /// 清理无法证实即永久关闭；启动方须终止服务。
@@ -59,6 +67,12 @@ impl FinalManifestReader for FinalManifestProbe {
         &self,
         draft: &FinalManifestDraft,
     ) -> std::result::Result<FinalManifestLookup, ResticError> {
+        self.admission
+            .verify_draft(draft)
+            .map_err(|_| ResticError::ExecutionFailed)?;
+        if draft.source_root() != self.source_root {
+            return Err(ResticError::ExecutionFailed);
+        }
         read_remote(&self.runtime, draft).map_err(|_| ResticError::ExecutionFailed)
     }
 }

@@ -3,19 +3,15 @@ pub(crate) mod final_record;
 pub(crate) mod inspect;
 mod probe;
 use crate::{
-    ProcessError, ResticCredentials, Result, WorkerConfig, process, runtime::Runtime,
-    source::Source,
+    ApprovedJob, ProcessError, ResticCredentials, Result, process, runtime::Runtime, source::Source,
 };
 pub use final_record::FinalManifestProbe;
-use std::{cell::RefCell, time::Instant};
+use std::cell::RefCell;
 use studiolo_backup::worker::{
     final_manifest::FinalManifestDraft,
     restic::{RepositoryRef, ResticError, ResticInvocation, ResticOutcome, ResticRunner},
 };
-use studiolo_backup::{
-    checkpoint::staging::{SealedCheckpoint, SealedReference},
-    worker::state::JobKey,
-};
+use studiolo_backup::{checkpoint::staging::SealedCheckpoint, worker::state::JobKey};
 
 /// 单个作业持有固定配置、包、追加凭据与真实封存；启动方另负责秘密来源及作业租约。
 pub struct AppendRunner {
@@ -25,16 +21,20 @@ pub struct AppendRunner {
 }
 impl AppendRunner {
     /// 所有调用共用原作业截止时间，检查和上传不会各自重新得到完整预算。
-    pub fn new(
-        config: &WorkerConfig,
-        key: JobKey,
-        reference: &SealedReference,
-        credentials: ResticCredentials,
-        deadline: Instant,
-    ) -> Result<Self> {
-        let source = Source::open(config, key, reference, deadline)?;
-        let runtime = Runtime::open(config, credentials, source.deadline())?;
+    pub fn new(job: &ApprovedJob<'_>, credentials: ResticCredentials) -> Result<Self> {
+        job.check_live()?;
+        let source = Source::open(
+            job.config(),
+            job.key().clone(),
+            job.fact().source(),
+            job.deadline(),
+        )?;
+        job.fact()
+            .verify_sealed(source.sealed())
+            .map_err(|_| ProcessError::Source)?;
+        let runtime = Runtime::open(job.config(), credentials, source.deadline())?;
         source.check()?;
+        job.check_live()?;
         Ok(Self {
             runtime,
             source,

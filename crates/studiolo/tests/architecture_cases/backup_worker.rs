@@ -51,6 +51,16 @@ fn backup_worker_process_capabilities_are_fixed_and_cannot_move_to_another_file(
 #[test]
 fn backup_worker_cannot_detach_job_source_or_expiry_from_execution() {
     for (file, before, after) in [
+        ("job.rs", "audit.admitted_source()", "request.fact()"),
+        ("job.rs", "fact: AdmissionFact,", "pub fact: AdmissionFact,"),
+        ("runner.rs", "job.check_live()?;", ""),
+        ("runner.rs", ".verify_sealed(source.sealed())", ".skip()"),
+        ("runner/final_record.rs", ".verify_draft(draft)", ".skip()"),
+        (
+            "runner/final_record.rs",
+            "draft.source_root() != self.source_root",
+            "false",
+        ),
         (
             "source.rs",
             "config.reader_identity()",

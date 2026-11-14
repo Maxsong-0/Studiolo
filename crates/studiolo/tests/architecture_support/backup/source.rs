@@ -45,11 +45,21 @@ pub(super) fn fixed_binding(path: &Path, source: &str) -> bool {
         ]
     } else if path.ends_with("crates/backup-worker/src/runner.rs") {
         &[
-            "Source::open(config,key,reference,deadline)?",
+            "pubfnnew(job:&ApprovedJob<'_>,credentials:ResticCredentials",
+            "job.check_live()?;letsource=Source::open(job.config(),job.key().clone(),job.fact().source(),job.deadline()",
+            "job.fact().verify_sealed(source.sealed())",
+            "Runtime::open(job.config(),credentials,source.deadline())?",
             "letbackup=self.source.accepts(invocation)?;self.source.check()?;",
             "letsource_time=||self.source.check_time();",
             "self.source.deadline(),&source_time",
             "self.source.check()?;parse_output(&output,backup)",
+        ]
+    } else if path.ends_with("crates/backup-worker/src/job.rs") {
+        &[
+            "pubstructApprovedJob<'a>{config:&'aWorkerConfig,audit:WorkerAuditClient<'a>,fact:AdmissionFact,deadline:Instant}",
+            "WorkerAuditClient::new(config,key,BackupTargetKind::DedicatedAppendOnlyTarget,deadline)",
+            "audit.admitted_source()",
+            "self.fact.check_live()",
         ]
     } else if path.ends_with("crates/backup-worker/src/source/binding.rs") {
         &[
@@ -96,6 +106,9 @@ pub(super) fn fixed_binding(path: &Path, source: &str) -> bool {
         ]
     } else if path.ends_with("crates/backup-worker/src/runner/final_record.rs") {
         &[
+            "pubfnnew(job:&ApprovedJob<'_>,credentials:ResticCredentials",
+            "self.admission.verify_draft(draft)",
+            "draft.source_root()!=self.source_root",
             "self.source.check()?;",
             "self.verified.borrow_mut().take().ok_or(ProcessError::Source)?",
             "if&verified!=draft",
