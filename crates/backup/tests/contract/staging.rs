@@ -58,6 +58,19 @@ fn independent_readonly_view_seals_all_metadata_and_excludes_raw() {
         .unwrap();
     assert_eq!(summaries.len(), 1);
     assert_eq!(fs::read(summaries[0].path()).unwrap(), b"redacted summary");
+    let files = sealed.inventory().files().collect::<Vec<_>>();
+    assert_eq!(files.len(), 5, "完整正文、摘要和三个封存元数据");
+    for file in files {
+        let bytes = fs::read(root.join(file.path().as_str())).unwrap();
+        assert_eq!(file.bytes(), bytes.len() as u64);
+        assert_eq!(file.sha256(), redacted(&bytes).sha256);
+    }
+    assert!(
+        sealed
+            .inventory()
+            .directories()
+            .any(|path| path == "data/canonical")
+    );
     assert_eq!(
         fs::metadata(root).unwrap().permissions().mode() & 0o777,
         0o500

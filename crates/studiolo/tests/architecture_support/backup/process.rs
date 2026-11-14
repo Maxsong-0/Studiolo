@@ -199,7 +199,7 @@ pub(super) fn remainder(path: &Path, source: &str) -> String {
                 "letstatus=cleanup?;",
                 "child.kill_group()?;",
                 "ifInstant::now()>=deadline",
-                "letresult=capture(&mutchild,deadline,check_source_time);",
+                "letresult=capture(&mutchild,deadline,check_source_time,sink);",
                 "check_source_time()?;",
                 "credentials.attach(&mutcommand,deadline)?;",
                 "credentials.check(deadline)?;",
@@ -216,7 +216,7 @@ pub(super) fn remainder(path: &Path, source: &str) -> String {
     if path.ends_with("crates/backup-worker/src/process/pipe.rs") {
         return checked_closed(
             source,
-            &["ifcount>self.limit-self.bytes.len()"],
+            &["ifcountasu64>self.sink.limit()-self.seen"],
             &[
                 ("fs::{OFlags,fcntl_getfl,fcntl_setfl}", 1),
                 ("fcntl_getfl(&pipe)", 1),

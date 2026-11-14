@@ -18,6 +18,9 @@ pub(super) struct Binding {
     check: ResticInvocation,
 }
 impl Binding {
+    pub fn repository(&self) -> &RepositoryRef {
+        self.backup.repository()
+    }
     pub fn new(
         repository: RepositoryRef,
         key: JobKey,
@@ -64,6 +67,7 @@ impl Binding {
         if reopened.reference() != self.sealed.reference()
             || reopened.ticket() != self.sealed.ticket()
             || reopened.manifest() != self.sealed.manifest()
+            || reopened.inventory() != self.sealed.inventory()
         {
             return Err(ProcessError::Source);
         }

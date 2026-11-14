@@ -67,6 +67,9 @@ impl Source {
     pub fn accepts(&self, invocation: &ResticInvocation) -> Result<bool> {
         self.binding.accepts(invocation)
     }
+    pub fn repository(&self) -> &studiolo_backup::worker::restic::RepositoryRef {
+        self.binding.repository()
+    }
     pub fn deadline(&self) -> Instant {
         self.window.deadline()
     }

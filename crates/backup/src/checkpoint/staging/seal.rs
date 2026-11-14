@@ -2,7 +2,9 @@
 mod metadata;
 mod read;
 use super::catalog::CatalogEntry;
-use super::{Result, SourceCatalog, StagingArea, StagingError, check_deadline, digest, tree};
+use super::{
+    Result, SealedInventory, SourceCatalog, StagingArea, StagingError, check_deadline, digest, tree,
+};
 use crate::checkpoint::{
     manifest::{CheckpointManifest, ManifestInputs},
     types::{
@@ -47,6 +49,7 @@ pub struct SealedCheckpoint {
     reference: SealedReference,
     ticket: SealTicket,
     manifest: CheckpointManifest,
+    inventory: SealedInventory,
 }
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -181,6 +184,11 @@ impl SealedCheckpoint {
     #[must_use]
     pub fn manifest(&self) -> &CheckpointManifest {
         &self.manifest
+    }
+    /// 全部目录及文件的原字节摘要；远端必须完整逐项核对，不能只比较文件数。
+    #[must_use]
+    pub fn inventory(&self) -> &SealedInventory {
+        &self.inventory
     }
     /// 固定名称只取 checkpoint ID 的摘要，不允许 ID 注入路径。
     #[must_use]

@@ -28,7 +28,7 @@ impl ResticCredentials {
         Ok(Self {
             password_file: Zeroizing::new(format!("{}/repository-password", root::ROOT)),
             username: values.username,
-            password: Zeroizing<String>,
+            password: values.password,
             origin: Origin::Fixed(Box::new(values.input)),
         })
     }

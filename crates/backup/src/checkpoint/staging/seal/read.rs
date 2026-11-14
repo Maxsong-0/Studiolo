@@ -1,7 +1,8 @@
 //! 用可信角色打开原路径，每次重开都重新核验全部清单和内容。
 use super::super::{Directory, ReaderIdentity, Result, StagingError, check_deadline, tree};
 use super::{
-    DiskSeal, InclusionDocument, SealedCheckpoint, SealedReference, expiry_deadline, read,
+    DiskSeal, InclusionDocument, SealedCheckpoint, SealedInventory, SealedReference,
+    expiry_deadline, read,
 };
 use crate::checkpoint::manifest::{CheckpointManifest, ManifestInputs};
 use std::{path::Path, time::Instant};
@@ -74,7 +75,7 @@ impl SealedCheckpoint {
         if directory.names(5)? != ["data", "inclusion.json", "manifest.json", "seal.json"] {
             return Err(StagingError::Manifest);
         }
-        let (seal, hash): (DiskSeal, _) = read(directory, "seal.json", deadline)?;
+        let (seal, hash, seal_bytes): (DiskSeal, _, _) = read(directory, "seal.json", deadline)?;
         if hash != reference.seal_sha256
             || seal.schema != 1
             || seal.ticket.checkpoint_id != reference.checkpoint_id
@@ -90,7 +91,8 @@ impl SealedCheckpoint {
             now,
             seal.ticket.transfer_source.expires_at,
         )?;
-        let (manifest, hash): (CheckpointManifest, _) = read(directory, "manifest.json", deadline)?;
+        let (manifest, hash, manifest_bytes): (CheckpointManifest, _, _) =
+            read(directory, "manifest.json", deadline)?;
         if hash != seal.manifest_sha256 {
             return Err(StagingError::Manifest);
         }
@@ -108,7 +110,7 @@ impl SealedCheckpoint {
         if reconstructed != manifest {
             return Err(StagingError::Manifest);
         }
-        let (inclusion, hash): (InclusionDocument, _) =
+        let (inclusion, hash, inclusion_bytes): (InclusionDocument, _, _) =
             read(directory, "inclusion.json", deadline)?;
         if hash != seal.inclusion_sha256
             || inclusion.schema != 1
@@ -119,10 +121,20 @@ impl SealedCheckpoint {
         }
         directory.check_path(root_path)?;
         check_deadline(deadline)?;
+        let inventory = SealedInventory::from_data(
+            inclusion.view,
+            [
+                ("seal.json", reference.seal_sha256.clone(), seal_bytes),
+                ("manifest.json", seal.manifest_sha256, manifest_bytes),
+                ("inclusion.json", seal.inclusion_sha256, inclusion_bytes),
+            ],
+            deadline,
+        )?;
         Ok(Self {
             reference: reference.clone(),
             ticket: seal.ticket,
             manifest,
+            inventory,
         })
     }
 }

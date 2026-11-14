@@ -1,11 +1,13 @@
 //! 隔离 owner 导出、按真实字节过滤、视图和清单一次原子发布。
 mod catalog;
+mod inventory;
 mod io;
 mod seal;
 mod shared;
 mod tree;
 
 pub use catalog::{ObjectRegistration, RedactedObject, SourceCatalog};
+pub use inventory::{SealedFile, SealedInventory};
 use io::Directory;
 pub use seal::{SealInputs, SealedCheckpoint, SealedReference};
 pub use shared::ReaderIdentity;

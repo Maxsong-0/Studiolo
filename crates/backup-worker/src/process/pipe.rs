@@ -1,3 +1,4 @@
+use super::sink::Sink;
 use crate::{ProcessError, Result};
 use rustix::{
     fd::AsFd,
@@ -6,36 +7,45 @@ use rustix::{
 use std::io::{ErrorKind, Read};
 use zeroize::Zeroizing;
 
-pub(super) struct Capture<T> {
+pub(super) struct Capture<T, S> {
     pipe: T,
-    limit: usize,
-    pub bytes: Zeroizing<Vec<u8>>,
+    pub sink: S,
+    pub seen: u64,
     pub eof: bool,
 }
-impl<T: Read + AsFd> Capture<T> {
-    pub fn new(pipe: T, limit: usize) -> Result<Self> {
+impl<T: Read + AsFd, S: Sink> Capture<T, S> {
+    pub fn new(pipe: T, sink: S) -> Result<Self> {
         let flags = fcntl_getfl(&pipe).map_err(|_| ProcessError::Io)?;
         fcntl_setfl(&pipe, flags | OFlags::NONBLOCK).map_err(|_| ProcessError::Io)?;
         Ok(Self {
             pipe,
-            limit,
-            bytes: Zeroizing::new(Vec::with_capacity(limit)),
+            sink,
+            seen: 0,
             eof: false,
         })
     }
-    pub fn read(&mut self) -> Result<()> {
+    pub fn read(&mut self) -> Result<bool> {
+        if self.eof {
+            return Ok(false);
+        }
         let mut buffer = Zeroizing::new([0_u8; 16 * 1024]);
         match self.pipe.read(&mut buffer[..]) {
-            Ok(0) => self.eof = true,
+            Ok(0) => {
+                self.eof = true;
+                Ok(true)
+            }
             Ok(count) => {
-                if count > self.limit - self.bytes.len() {
+                if count as u64 > self.sink.limit() - self.seen {
                     return Err(ProcessError::OutputLimit);
                 }
-                self.bytes.extend_from_slice(&buffer[..count]);
+                self.sink.append(&buffer[..count]);
+                self.seen += count as u64;
+                Ok(true)
             }
-            Err(e) if matches!(e.kind(), ErrorKind::WouldBlock | ErrorKind::Interrupted) => {}
-            Err(_) => return Err(ProcessError::Io),
+            Err(e) if matches!(e.kind(), ErrorKind::WouldBlock | ErrorKind::Interrupted) => {
+                Ok(false)
+            }
+            Err(_) => Err(ProcessError::Io),
         }
-        Ok(())
     }
 }

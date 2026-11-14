@@ -27,7 +27,7 @@ pub(super) fn read<T: DeserializeOwned>(
     directory: &Directory,
     name: &str,
     deadline: Instant,
-) -> Result<(T, String)> {
+) -> Result<(T, String, u64)> {
     let mut file = Regular::open(directory, name)?;
     file.require_readonly()?;
     if file.len() > MAX_METADATA {
@@ -52,7 +52,7 @@ pub(super) fn read<T: DeserializeOwned>(
     file.check(directory, name)?;
     let result = serde_json::from_slice(&bytes).map_err(|_| StagingError::Manifest)?;
     check_deadline(deadline)?;
-    Ok((result, digest(&bytes)))
+    Ok((result, digest(&bytes), bytes.len() as u64))
 }
 struct Limited(Vec<u8>);
 impl Write for Limited {

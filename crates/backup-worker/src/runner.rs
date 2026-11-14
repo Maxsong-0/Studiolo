@@ -1,4 +1,5 @@
 //! 追加角色只接受 HTTPS REST 仓库和 Backup/Check 的封闭计划；其余身份另行装配。
+pub(crate) mod inspect;
 use crate::{
     ProcessError, ResticCredentials, ResticPackage, Result, WorkerConfig, process, source::Source,
     temporary::Temporary,

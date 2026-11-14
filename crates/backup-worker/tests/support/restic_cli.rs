@@ -41,11 +41,13 @@ fn official_restic_executes_from_original_fd_and_uses_only_explicit_credentials(
     );
     let source = temp.path().join("sealed");
     fs::create_dir(&source).unwrap();
-    fs::write(source.join("fictional.txt"), b"fictional sealed source").unwrap();
+    let relative = studiolo_core::VaultPath::parse("中文 note;$.txt").unwrap();
+    let expected_file = source.join(relative.as_str());
+    fs::write(&expected_file, vec![0x5a; 16 * 1024 * 1024]).unwrap();
     let commands = [
         ResticCommand::Backup {
             tag: JobTag::parse("fixed-process-fixture").unwrap(),
-            source_root: source,
+            source_root: source.clone(),
         },
         ResticCommand::CheckRepository,
     ];
@@ -73,5 +75,47 @@ fn official_restic_executes_from_original_fd_and_uses_only_explicit_credentials(
                 reported_objects: if i == 0 { 1 } else { 0 }
             }
         );
+        if i == 0 {
+            let summary: serde_json::Value = output
+                .stdout
+                .split(|b| *b == b'\n')
+                .filter(|line| !line.is_empty())
+                .filter_map(|line| serde_json::from_slice::<serde_json::Value>(line).ok())
+                .find(|value| value["message_type"] == "summary")
+                .unwrap();
+            let snapshot = studiolo_backup::worker::restic::SnapshotRef::parse(
+                summary["snapshot_id"].as_str().unwrap(),
+            )
+            .unwrap();
+            let argv =
+                crate::runner::inspect::plan::file(&repository, &snapshot, &source, &relative)
+                    .unwrap();
+            let digest = hash(&expected_file);
+            let bytes = fs::metadata(&expected_file).unwrap().len();
+            for (size, expected, succeeds) in [
+                (bytes, digest.as_str(), true),
+                (
+                    bytes,
+                    "0000000000000000000000000000000000000000000000000000000000000000",
+                    false,
+                ),
+                (bytes - 1, digest.as_str(), false),
+                (bytes + 1, digest.as_str(), false),
+            ] {
+                let result = process::verify_digest(
+                    &package,
+                    &argv,
+                    &credentials,
+                    temp.path(),
+                    deadline(),
+                    &|| Ok(()),
+                    process::DigestExpectation {
+                        bytes: size,
+                        sha256: expected,
+                    },
+                );
+                assert_eq!(result.is_ok(), succeeds);
+            }
+        }
     }
 }

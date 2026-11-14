@@ -28,6 +28,15 @@ pub(super) fn fixed_binding(path: &Path, source: &str) -> bool {
             "ifinvocation==&self.backup",
             "elseifinvocation==&self.check",
             "reopened.reference()!=self.sealed.reference()||reopened.ticket()!=self.sealed.ticket()||reopened.manifest()!=self.sealed.manifest()",
+            "reopened.inventory()!=self.sealed.inventory()",
+        ]
+    } else if path.ends_with("crates/backup-worker/src/runner/inspect.rs") {
+        &[
+            "forfileinself.sealed().inventory().files()",
+            "plan::file(self.source.repository(),snapshot,root,file.path())?",
+            "process::DigestExpectation{bytes:file.bytes(),sha256:file.sha256()}",
+            "self.source.check()",
+            "self.poisoned.set(true)",
         ]
     } else if path.ends_with("crates/backup-worker/src/source/window.rs") {
         &[
