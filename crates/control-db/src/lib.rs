@@ -3,6 +3,7 @@
 //! 写操作要求 `&mut self`；事务只搬运普通数据，
 //! 从不调用其他 Studiolo 模块。
 
+mod artifact_policies;
 mod audit_events;
 mod board;
 mod checkpoint;

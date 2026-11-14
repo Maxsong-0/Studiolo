@@ -2,6 +2,7 @@
 
 // 各值类型按职责拆在私有子模块里，经下方 `pub use` 重导出，
 // 对外路径仍是 `studiolo_core::类型名`；公开子模块只有 `checkpoint`。
+mod artifact_provenance;
 pub mod checkpoint;
 mod data_labels;
 mod error;
@@ -13,6 +14,7 @@ mod revision_hasher;
 mod source_policy;
 mod vault_path;
 
+pub use artifact_provenance::{ArtifactProvenance, ArtifactProvenanceError};
 pub use data_labels::{BackupScope, Classification, DataLabels, DesktopSync, ModelEgress};
 pub use error::{DataLabelError, IdParseError, PathSyntaxError};
 pub use fence::Fence;

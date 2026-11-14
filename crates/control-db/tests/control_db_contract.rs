@@ -30,7 +30,7 @@ fn empty_database_migrates_and_enforces_runtime_pragmas() {
     let vault_uuid = VaultUuid::new();
     let db = ControlDb::open(database_path(&temp), vault_uuid).expect("open database");
 
-    assert_eq!(db.schema_version().expect("schema version"), 3);
+    assert_eq!(db.schema_version().expect("schema version"), 4);
     assert_eq!(db.bound_vault_uuid().expect("vault binding"), vault_uuid);
     assert_eq!(db.pragma("journal_mode").expect("journal mode"), "wal");
     assert_eq!(db.pragma("synchronous").expect("sync mode"), "2");
@@ -75,7 +75,7 @@ fn existing_v1_database_upgrades_without_losing_runtime_records() {
             .unwrap();
     }
     let db = ControlDb::open(&path, vault).unwrap();
-    assert_eq!(db.schema_version().unwrap(), 3);
+    assert_eq!(db.schema_version().unwrap(), 4);
     assert_eq!(db.pragma("journal_mode").unwrap(), "wal");
     assert_eq!(db.pragma("synchronous").unwrap(), "2");
     assert_eq!(db.pragma("foreign_keys").unwrap(), "1");
@@ -501,7 +501,7 @@ fn a_recorded_newer_schema_version_is_rejected() {
         ControlDb::open(&path, vault_uuid),
         Err(DbError::UnsupportedSchema {
             found: 99,
-            supported: 3,
+            supported: 4,
         })
     ));
     // 这里只验证版本不降级；物理副作用由原始 SQLite 夹具另行覆盖。

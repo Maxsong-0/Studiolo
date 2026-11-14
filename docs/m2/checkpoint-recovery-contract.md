@@ -149,5 +149,11 @@ BoardPlane 与 SyncPlane，监听时把同一组源注入可信路由；无 cano
 两处都有时必须核对原目录与数据库 inode；换根、漏库或来源不一致均拒绝。
 这里没有新增公开端点、自动冻结或备份调度。生产来源标签、worker IPC/常驻运行、
 完整恢复及部署演练仍未完成，不能把启动源接线记作整条 Rust 链已可用。
+Control schema 4 增加不可变 `artifact_policies`：批准与 runtime audit outbox 同事务，
+外键绑定原 task/attempt/fence/snapshot，首次写入只允许有效租约且尚未挂接执行体。
+`ArtifactProvenance` 保存原来源/策略引用、完整标签、期限和原批准摘要，当前正文管线
+只接受明确 Full；此值本身不是授权。重开和精确重放不续期，旧 attempt 缺批准不补默认值。
+checkpoint 核对批准与原审计事实，ACK 后仍须实际账本验证才能导出。可信启动和产物
+提交/L0/来源 catalog 接线尚待完成；这些数据层契约不等于生产写入已有来源元数据。
 单作业事件、原 Intent 前提与有界 UDS 消息见 [备份审计通信](../contracts/backup-audit.md)；
 固定监听器、持久准入与独立 worker 主循环仍待接入。

@@ -6,6 +6,7 @@ use studiolo_core::{VaultUuid, checkpoint::OwnerWatermark};
 
 pub(super) fn snapshot(db: &Connection, vault: VaultUuid) -> Result<OwnerWatermark, Error> {
     catalog(db)?;
+    crate::artifact_policies::validate(db).map_err(invalid)?;
     let (count, minimum, maximum): (i64, i64, i64) = db
         .query_row(
             "SELECT count(*),min(version),max(version) FROM schema_migrations",
@@ -91,6 +92,7 @@ fn catalog(db: &Connection) -> Result<(), Error> {
         "processed_events",
         "projection_outbox",
         "artifact_commits",
+        "artifact_policies",
         "terminal_audit_outbox",
         "runner_candidate_stages",
         "board_handoffs",
@@ -105,6 +107,7 @@ fn catalog(db: &Connection) -> Result<(), Error> {
         "sqlite_sequence",
     ];
     let mut tables = 0;
+    let mut policy_triggers = 0;
     let mut statement = db.prepare("SELECT type,CASE WHEN octet_length(name)<=128 THEN name END,CASE WHEN octet_length(tbl_name)<=128 THEN tbl_name END,sql IS NULL FROM sqlite_schema").map_err(invalid)?;
     let mut rows = statement.query([]).map_err(invalid)?;
     while let Some(row) = rows.next().map_err(invalid)? {
@@ -122,11 +125,23 @@ fn catalog(db: &Connection) -> Result<(), Error> {
                             "one_active_attempt_per_task"
                                 | "pending_terminal_audits"
                                 | "board_parent"
+                                | "artifact_attempt_identity"
                         )) => {}
+            "trigger"
+                if table == "artifact_policies"
+                    && matches!(
+                        name.as_str(),
+                        "artifact_policy_no_update"
+                            | "artifact_policy_no_delete"
+                            | "artifact_policy_before_launch"
+                    ) =>
+            {
+                policy_triggers += 1;
+            }
             _ => return Err(Error::Invalid),
         }
     }
-    if tables != TABLES.len() {
+    if tables != TABLES.len() || policy_triggers != 3 {
         return Err(Error::Invalid);
     }
     Ok(())

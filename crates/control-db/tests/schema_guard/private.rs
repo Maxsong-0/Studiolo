@@ -38,7 +38,7 @@ fn migration_rechecks_a_schema_that_advanced_after_preflight() {
         db.migrate(),
         Err(DbError::UnsupportedSchema {
             found: 99,
-            supported: 3,
+            supported: 4,
         })
     ));
     drop(db);

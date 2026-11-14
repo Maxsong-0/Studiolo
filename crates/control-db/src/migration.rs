@@ -2,7 +2,7 @@
 use crate::{ControlDb, DbError, board, schema_guard};
 use rusqlite::TransactionBehavior;
 
-pub(super) const SCHEMA_VERSION: i64 = 3;
+pub(super) const SCHEMA_VERSION: i64 = 4;
 
 impl ControlDb {
     pub(super) fn migrate(&mut self) -> Result<(), DbError> {
@@ -95,6 +95,11 @@ impl ControlDb {
             "INSERT OR IGNORE INTO schema_migrations(version, applied_at_ms) VALUES (2, 0)",
             [],
         )?;
+        tx.execute(
+            "INSERT OR IGNORE INTO schema_migrations(version, applied_at_ms) VALUES (3, 0)",
+            [],
+        )?;
+        crate::artifact_policies::migrate(&tx)?;
         tx.execute(
             "INSERT OR IGNORE INTO schema_migrations(version, applied_at_ms) VALUES (?1, 0)",
             [SCHEMA_VERSION],
