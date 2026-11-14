@@ -7,7 +7,7 @@ use crate::worker::final_manifest::FinalManifestReceipt;
 use serde_json::json;
 
 /// Intent 与 Outcome 共用的稳定事件键。
-pub(super) fn event_id_text(key: &JobKey) -> String {
+pub(in crate::worker) fn event_id_text(key: &JobKey) -> String {
     format!(
         "backup.snapshot:{}:{}",
         key.sequence,
@@ -27,14 +27,30 @@ pub(super) fn intent(key: &JobKey, target: BackupTargetKind) -> serde_json::Valu
 
 /// 成功的 Outcome：补记时必须逐字节一致，所以这里只依赖作业键与校验结果。
 pub(super) fn outcome_success(key: &JobKey, receipt: &FinalManifestReceipt) -> serde_json::Value {
+    outcome_success_fields(
+        key,
+        receipt.draft().data_snapshot(),
+        receipt.final_snapshot(),
+        receipt.draft().data_verified_at(),
+        receipt.finalized_at(),
+    )
+}
+/// 同一固定成功事件供 worker 与封闭通信协议复用；不把这些字段当作远端 IO 证明。
+pub(in crate::worker) fn outcome_success_fields(
+    key: &JobKey,
+    data_snapshot: &super::super::restic::SnapshotRef,
+    final_snapshot: &super::super::restic::SnapshotRef,
+    data_verified_at: studiolo_core::checkpoint::InstantMillis,
+    finalized_at: studiolo_core::checkpoint::InstantMillis,
+) -> serde_json::Value {
     json!({
         "job_sequence": key.sequence.get(),
         "checkpoint_id": key.checkpoint_id.as_str(),
         "result": "succeeded",
-        "data_snapshot": receipt.draft().data_snapshot().as_str(),
-        "final_snapshot": receipt.final_snapshot().as_str(),
-        "finalized_at": receipt.finalized_at(),
-        "data_verified_at": receipt.draft().data_verified_at(),
+        "data_snapshot": data_snapshot.as_str(),
+        "final_snapshot": final_snapshot.as_str(),
+        "finalized_at": finalized_at,
+        "data_verified_at": data_verified_at,
         "objects_complete": true,
         "checksum_verified": true,
         "paired_checkpoint_reference": true,
@@ -44,7 +60,7 @@ pub(super) fn outcome_success(key: &JobKey, receipt: &FinalManifestReceipt) -> s
 }
 
 /// 明确失败的 Outcome。
-pub(super) fn outcome_failed(key: &JobKey, reason: FailureReason) -> serde_json::Value {
+pub(in crate::worker) fn outcome_failed(key: &JobKey, reason: FailureReason) -> serde_json::Value {
     json!({
         "job_sequence": key.sequence.get(),
         "checkpoint_id": key.checkpoint_id.as_str(),
@@ -55,7 +71,10 @@ pub(super) fn outcome_failed(key: &JobKey, reason: FailureReason) -> serde_json:
 }
 
 /// 明确未验证的 Outcome；既不是成功也不是失败。
-pub(super) fn outcome_unverified(key: &JobKey, reason: UnverifiedReason) -> serde_json::Value {
+pub(in crate::worker) fn outcome_unverified(
+    key: &JobKey,
+    reason: UnverifiedReason,
+) -> serde_json::Value {
     json!({
         "job_sequence": key.sequence.get(),
         "checkpoint_id": key.checkpoint_id.as_str(),

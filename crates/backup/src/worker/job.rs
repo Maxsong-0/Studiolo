@@ -10,7 +10,7 @@
 mod error;
 mod finalize;
 mod followup;
-mod payload;
+pub(super) mod payload;
 mod run;
 
 pub use error::{AuditError2, WorkerError};
