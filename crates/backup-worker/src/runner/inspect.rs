@@ -1,5 +1,7 @@
 //! 只复验本作业原清单中的文件，不提供任意路径读取或恢复落盘能力。
+pub(crate) mod listing;
 pub(crate) mod plan;
+pub(crate) mod snapshot;
 use super::*;
 use studiolo_backup::worker::restic::SnapshotRef;
 

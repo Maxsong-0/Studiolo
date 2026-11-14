@@ -1,8 +1,6 @@
 //! 封存由真实 staging 产生，owner 水位是明确的 fixture；跨 UID 读取另行演练。
-#[path = "source_binding/fixture.rs"]
-mod fixture;
 use super::*;
-use fixture::*;
+use crate::seal_fixture::*;
 use std::{fs, os::unix::fs::PermissionsExt};
 
 #[test]

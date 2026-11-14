@@ -2,7 +2,34 @@
 use crate::{ProcessError, Result};
 use std::path::Path;
 use studiolo_backup::worker::restic::{RepositoryRef, SnapshotRef};
+use studiolo_backup::worker::{restic::JobTag, state::JobKey};
 use studiolo_core::VaultPath;
+
+pub(crate) fn snapshots(repository: &RepositoryRef, key: &JobKey) -> Result<Vec<String>> {
+    let tag = JobTag::for_job(key).map_err(|_| ProcessError::Configuration)?;
+    Ok(vec![
+        "--json".into(),
+        "--no-cache".into(),
+        "--repo".into(),
+        repository.as_str().into(),
+        "snapshots".into(),
+        "--tag".into(),
+        tag.as_str().into(),
+    ])
+}
+pub(crate) fn listing(repository: &RepositoryRef, snapshot: &SnapshotRef) -> Result<Vec<String>> {
+    if snapshot.as_str().len() != 64 {
+        return Err(ProcessError::Configuration);
+    }
+    Ok(vec![
+        "--json".into(),
+        "--no-cache".into(),
+        "--repo".into(),
+        repository.as_str().into(),
+        "ls".into(),
+        snapshot.as_str().into(),
+    ])
+}
 
 pub(crate) fn file(
     repository: &RepositoryRef,

@@ -61,6 +61,16 @@ fn backup_worker_cannot_detach_job_source_or_expiry_from_execution() {
         ("source/binding.rs", "invocation == &self.backup", "true"),
         ("source/window.rs", "now < self.last.get()", "false"),
         ("runner/inspect.rs", "file.sha256()", "request.digest()"),
+        (
+            "runner/probe.rs",
+            "self.verify_snapshot_files(snapshot)?;",
+            "",
+        ),
+        (
+            "runner/inspect/plan.rs",
+            "\"dump\".into()",
+            "\"forget\".into()",
+        ),
     ] {
         let path = std::path::PathBuf::from("crates/backup-worker/src").join(file);
         let source = fs::read_to_string(workspace_root().join(&path)).unwrap();

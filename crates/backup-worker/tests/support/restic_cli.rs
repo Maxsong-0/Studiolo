@@ -119,3 +119,87 @@ fn official_restic_executes_from_original_fd_and_uses_only_explicit_credentials(
         }
     }
 }
+
+#[test]
+#[ignore = "仅在108核验官方发行后运行，不使用生产仓库"]
+fn official_restic_snapshot_and_complete_tree_match_real_sealed_inventory() {
+    use crate::{
+        runner::inspect::{listing, plan, snapshot},
+        seal_fixture,
+    };
+    use std::os::unix::fs::MetadataExt;
+    let path = std::env::var_os("STUDIOLO_RESTIC_TEST_BINARY").unwrap();
+    let package =
+        ResticPackage::fixture(Path::new(&path), &hash(Path::new(&path)), deadline()).unwrap();
+    let temp = tempfile::tempdir().unwrap();
+    let password = temp.path().join("password");
+    fs::write(&password, "fictional-fixture-only\n").unwrap();
+    let credentials = ResticCredentials::fixture(&password);
+    let repository =
+        RepositoryRef::parse(temp.path().join("repository").to_str().unwrap()).unwrap();
+    let call = |argv: &[String]| {
+        let output =
+            process::run(&package, argv, Some(&credentials), temp.path(), deadline()).unwrap();
+        assert!(output.success);
+        output
+    };
+    call(&[
+        "--json".into(),
+        "--no-cache".into(),
+        "--repo".into(),
+        repository.as_str().into(),
+        "init".into(),
+    ]);
+    let fixture = seal_fixture::Fixture::new();
+    let sealed = fixture.seal("remote-inventory");
+    let root = &sealed.ticket().transfer_source.root;
+    let key = seal_fixture::job("remote-inventory", 9);
+    let backup = ResticInvocation::plan(
+        repository.clone(),
+        &ResticCommand::Backup {
+            tag: JobTag::for_job(&key).unwrap(),
+            source_root: root.clone(),
+        },
+        CredentialHolder::BackupWorker,
+        studiolo_backup::worker::restic::ResticIdentity::Append,
+    )
+    .unwrap();
+    call(backup.argv());
+    let output = call(&plan::snapshots(&repository, &key).unwrap());
+    let snapshot = snapshot::locate(&output.stdout, &key, root)
+        .unwrap()
+        .unwrap();
+    let listing = call(&plan::listing(&repository, &snapshot).unwrap());
+    let stat = fs::metadata(root).unwrap();
+    listing::verify(
+        &listing.stdout,
+        listing::Expected {
+            key: &key,
+            snapshot: &snapshot,
+            root,
+            inventory: sealed.inventory(),
+            producer: stat.uid(),
+            group: stat.gid(),
+        },
+    )
+    .unwrap();
+    for file in sealed.inventory().files() {
+        process::verify_digest(
+            &package,
+            &plan::file(&repository, &snapshot, root, file.path()).unwrap(),
+            &credentials,
+            temp.path(),
+            deadline(),
+            &|| Ok(()),
+            process::DigestExpectation {
+                bytes: file.bytes(),
+                sha256: file.sha256(),
+            },
+        )
+        .unwrap();
+    }
+    // 相同作业出现两个候选不能按 latest 猜一个。
+    call(backup.argv());
+    let duplicate = call(&plan::snapshots(&repository, &key).unwrap());
+    assert!(snapshot::locate(&duplicate.stdout, &key, root).is_err());
+}

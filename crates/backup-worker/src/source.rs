@@ -22,6 +22,15 @@ pub(crate) struct Source {
     window: Window,
 }
 impl Source {
+    pub fn producer(&self) -> u32 {
+        self.producer
+    }
+    pub fn group(&self) -> u32 {
+        self.group
+    }
+    pub fn current_time(&self) -> Result<studiolo_core::checkpoint::InstantMillis> {
+        self.window.current_time()
+    }
     pub fn open(
         config: &WorkerConfig,
         key: JobKey,

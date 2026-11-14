@@ -36,10 +36,16 @@ impl Window {
         self.deadline.get()
     }
     pub fn check(&self) -> Result<()> {
+        self.current_time().map(|_| ())
+    }
+    pub fn current_time(&self) -> Result<InstantMillis> {
         // 先采单调时钟；读取墙钟耗时不会凭空延长有效期。
         let instant = Instant::now();
         match utc_now() {
-            Ok(now) => self.observe(now, instant),
+            Ok(now) => {
+                self.observe(now, instant)?;
+                Ok(now)
+            }
             Err(error) => {
                 self.closed.set(true);
                 Err(error)

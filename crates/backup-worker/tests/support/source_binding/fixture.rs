@@ -1,4 +1,3 @@
-use super::super::*;
 use std::{
     fs,
     num::NonZeroU64,
@@ -12,6 +11,16 @@ use studiolo_backup::checkpoint::{
     staging::{ObjectRegistration, SealInputs, SourceCatalog, StagingArea, StagingError},
     types::OwnerRoster,
 };
+use studiolo_backup::{
+    checkpoint::staging::{SealedCheckpoint, SealedReference},
+    worker::{
+        restic::{
+            CredentialHolder, JobTag, RepositoryRef, ResticCommand, ResticIdentity,
+            ResticInvocation,
+        },
+        state::JobKey,
+    },
+};
 use studiolo_core::{
     BackupScope, Classification, DataLabels, DesktopSync, ModelEgress, Revision, VaultPath,
     VaultUuid,
@@ -21,7 +30,7 @@ use studiolo_core::{
     },
 };
 
-pub(super) struct Fixture {
+pub(crate) struct Fixture {
     _temp: tempfile::TempDir,
     pub parent: PathBuf,
     source: PathBuf,
@@ -156,22 +165,22 @@ impl Fixture {
         SealedCheckpoint::open_shared(&self.parent, reference, self.group, ms(1100), deadline())
     }
 }
-pub(super) fn ms(value: i64) -> InstantMillis {
+pub(crate) fn ms(value: i64) -> InstantMillis {
     InstantMillis::from_millis(value)
 }
-pub(super) fn deadline() -> Instant {
+pub(crate) fn deadline() -> Instant {
     Instant::now() + Duration::from_secs(20)
 }
-pub(super) fn repo() -> RepositoryRef {
+pub(crate) fn repo() -> RepositoryRef {
     RepositoryRef::parse("rest:https://backup.example.test/repository/").unwrap()
 }
-pub(super) fn job(id: &str, sequence: u64) -> JobKey {
+pub(crate) fn job(id: &str, sequence: u64) -> JobKey {
     JobKey {
         sequence: NonZeroU64::new(sequence).unwrap(),
         checkpoint_id: CheckpointId::parse(id).unwrap(),
     }
 }
-pub(super) fn plan(repository: RepositoryRef, key: &JobKey, root: &Path) -> ResticInvocation {
+pub(crate) fn plan(repository: RepositoryRef, key: &JobKey, root: &Path) -> ResticInvocation {
     ResticInvocation::plan(
         repository,
         &ResticCommand::Backup {

@@ -47,3 +47,6 @@ type Result<T> = std::result::Result<T, ProcessError>;
 #[cfg(test)]
 #[path = "../tests/support/fixtures.rs"]
 mod fixtures;
+#[cfg(test)]
+#[path = "../tests/support/source_binding/fixture.rs"]
+mod seal_fixture;

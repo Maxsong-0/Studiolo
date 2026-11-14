@@ -38,6 +38,23 @@ pub(super) fn fixed_binding(path: &Path, source: &str) -> bool {
             "self.source.check()",
             "self.poisoned.set(true)",
         ]
+    } else if path.ends_with("crates/backup-worker/src/runner/probe.rs") {
+        &[
+            "ifkey!=self.key()",
+            "self.locate_snapshot(self.key())?.as_ref()!=Some(snapshot)",
+            "self.verify_snapshot_files(snapshot)?;",
+            "inventory:self.sealed().inventory()",
+            "letverified_at=self.source.current_time()?;",
+            "self.poisoned.set(true)",
+        ]
+    } else if path.ends_with("crates/backup-worker/src/runner/inspect/plan.rs") {
+        &[
+            "snapshot.as_str().len()!=64",
+            "root.join(relative.as_str())",
+            "\"snapshots\".into(),\"--tag\".into(),tag.as_str().into()",
+            "\"dump\".into(),snapshot.as_str().into(),text.into()",
+            "\"ls\".into(),snapshot.as_str().into()",
+        ]
     } else if path.ends_with("crates/backup-worker/src/source/window.rs") {
         &[
             "SystemTime::now().duration_since(UNIX_EPOCH)",
