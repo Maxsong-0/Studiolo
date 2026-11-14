@@ -71,7 +71,8 @@ impl StagingArea {
     /// 必须在 FrozenOwners 仍活着时调用；最终目录与本地 manifest 一次发布后才返还。
     pub fn seal(mut self, catalog: &SourceCatalog, inputs: SealInputs) -> Result<SealedCheckpoint> {
         let result = self.seal_inner(catalog, inputs).and_then(|sealed| {
-            self.lifecycle.finish(&self.parent)?;
+            self.lifecycle
+                .retain(&self.parent, &sealed, self.deadline)?;
             Ok(sealed)
         });
         match result {
@@ -151,7 +152,7 @@ impl StagingArea {
         self.check()?;
         // 必须先销毁含排除 raw 的原始导出；失败就没有任何可交给 worker 的引用。
         self.exports
-            .discard(&self.parent, &self.export_name, self.reader)?;
+            .discard_until(&self.parent, &self.export_name, self.reader, self.deadline)?;
         self.parent.check_path(&self.parent_path)?;
         check_deadline(self.deadline)?;
         self.lifecycle.published = true;
@@ -189,6 +190,24 @@ impl StagingArea {
     }
 }
 impl SealedCheckpoint {
+    pub(super) fn retention_evidence(&self) -> Result<String> {
+        let hash = |path| {
+            self.inventory
+                .files()
+                .find(|file| file.path().as_str() == path)
+                .map(|file| file.sha256().to_owned())
+                .ok_or(StagingError::Changed)
+        };
+        let seal = DiskSeal {
+            schema: 1,
+            ticket: self.ticket.clone(),
+            manifest_sha256: hash("manifest.json")?,
+            inclusion_sha256: hash("inclusion.json")?,
+        };
+        let bytes = serde_json::to_string(&seal).map_err(|_| StagingError::Manifest)?;
+        retention_expiry(&self.reference, &bytes)?;
+        Ok(bytes)
+    }
     /// 已验证的原封存引用。
     #[must_use]
     pub fn reference(&self) -> &SealedReference {
@@ -214,6 +233,16 @@ impl SealedCheckpoint {
     pub fn root_path(parent: &Path, id: &CheckpointId) -> PathBuf {
         parent.join(format!("sealed-{}", digest(id.as_str().as_bytes())))
     }
+}
+pub(super) fn retention_expiry(reference: &SealedReference, bytes: &str) -> Result<InstantMillis> {
+    if bytes.len() > super::io::JOURNAL_LIMIT || digest(bytes.as_bytes()) != reference.seal_sha256 {
+        return Err(StagingError::Changed);
+    }
+    let seal: DiskSeal = serde_json::from_str(bytes).map_err(|_| StagingError::Manifest)?;
+    if seal.schema != 1 || seal.ticket.checkpoint_id != reference.checkpoint_id {
+        return Err(StagingError::Changed);
+    }
+    Ok(seal.ticket.transfer_source.expires_at)
 }
 fn expiry_deadline(
     deadline: Instant,

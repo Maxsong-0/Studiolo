@@ -1,14 +1,17 @@
 //! 隔离 owner 导出、按真实字节过滤、视图和清单一次原子发布。
 mod catalog;
 mod creation;
+mod housekeeping;
 mod inventory;
 mod io;
+mod journal;
 mod lifecycle;
 mod seal;
 mod shared;
 mod tree;
 
 pub use catalog::{ObjectRegistration, RedactedObject, SourceCatalog};
+pub use housekeeping::{CleanupSummary, reclaim_staging};
 pub use inventory::{SealedFile, SealedInventory};
 use io::Directory;
 pub use seal::{SealInputs, SealedCheckpoint, SealedReference};
@@ -125,8 +128,14 @@ impl StagingArea {
         if parent_dir.exists(&final_name)? {
             return Err(StagingError::AlreadyExists);
         }
-        let (lifecycle, exports, pending, data) =
-            creation::layout(&parent_dir, &key, &export_name, &pending_name)?;
+        let (lifecycle, exports, pending, data) = creation::layout(
+            &parent_dir,
+            &checkpoint_id,
+            &export_name,
+            &pending_name,
+            reader,
+            deadline,
+        )?;
         let mut area = Self {
             lifecycle,
             parent: parent_dir,

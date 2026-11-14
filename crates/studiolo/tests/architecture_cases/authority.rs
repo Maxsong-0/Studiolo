@@ -52,7 +52,10 @@ fn checkpoint_shared_permissions_stay_bound_to_verified_original_descriptors() {
         ("io/acl.rs", "system.posix_acl_default"),
         ("io/cleanup.rs", "Some(id) == reader"),
         ("lifecycle.rs", "parent.acquire_lease()?;"),
-        ("creation.rs", "Lifecycle::begin(parent, key)?;"),
+        (
+            "creation.rs",
+            "Lifecycle::begin(parent, checkpoint_id, reader)?;",
+        ),
     ] {
         let path = std::path::PathBuf::from("crates/backup/src/checkpoint/staging").join(file);
         let source = fs::read_to_string(workspace_root().join(&path)).unwrap();
@@ -78,6 +81,28 @@ fn checkpoint_shared_permissions_stay_bound_to_verified_original_descriptors() {
 
 #[path = "backup_worker.rs"]
 mod backup_worker;
+
+#[test]
+fn checkpoint_journal_and_gc_require_registered_original_identity_and_expiry() {
+    for (file, anchor) in [
+        ("io/journal.rs", "identity.json"),
+        ("housekeeping.rs", "parent.acquire_existing_lease()?;"),
+        ("housekeeping/plan.rs", "proof.directory"),
+    ] {
+        let path = std::path::PathBuf::from("crates/backup/src/checkpoint/staging").join(file);
+        let source = fs::read_to_string(workspace_root().join(&path)).unwrap();
+        assert!(
+            source_violations("studiolo-backup", &path, &source).is_empty(),
+            "{file}"
+        );
+        assert!(source.contains(anchor));
+        let changed = source.replacen(anchor, "removed", 1);
+        assert!(
+            !source_violations("studiolo-backup", &path, &changed).is_empty(),
+            "{file}"
+        );
+    }
+}
 
 #[test]
 fn authority_scanner_detects_sneaky_source_fixture() {

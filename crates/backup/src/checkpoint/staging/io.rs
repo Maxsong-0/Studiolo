@@ -3,11 +3,13 @@ mod access;
 mod acl;
 mod cleanup;
 mod files;
+mod journal;
 mod lease;
 mod share;
 use super::{Result, StagingError};
 use access::Access;
 pub(super) use files::Regular;
+pub(super) use journal::{JournalFile, LIMIT as JOURNAL_LIMIT};
 pub(super) use lease::Lease;
 use rustix::{
     fd::OwnedFd,
@@ -28,6 +30,9 @@ const FLAGS: OFlags = OFlags::RDONLY
 impl Directory {
     pub fn acquire_lease(&self) -> Result<Lease> {
         Lease::acquire(self)
+    }
+    pub fn acquire_existing_lease(&self) -> Result<Lease> {
+        Lease::existing(self)
     }
     pub fn open(path: &Path, private: bool) -> Result<Self> {
         Self::open_with(

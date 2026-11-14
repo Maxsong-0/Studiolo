@@ -44,6 +44,10 @@ fn abrupt_producer_death_keeps_the_persistent_gate_closed() {
         }
     }
     assert_eq!(f.try_area("while-alive").err(), Some(StagingError::Busy));
+    assert_eq!(
+        studiolo_backup::checkpoint::staging::reclaim_staging(&f.parent, None, deadline()),
+        Err(StagingError::Busy)
+    );
     child.kill().unwrap();
     child.wait().unwrap();
     assert_eq!(
@@ -57,6 +61,23 @@ fn abrupt_producer_death_keeps_the_persistent_gate_closed() {
             .to_string_lossy()
             .starts_with("incomplete-")
     }));
+    let marker = fs::read_dir(&f.parent)
+        .unwrap()
+        .map(|e| e.unwrap().path())
+        .find(|p| {
+            p.file_name()
+                .unwrap()
+                .to_string_lossy()
+                .starts_with("incomplete-")
+        })
+        .unwrap();
+    // 已有原身份记录；崩溃留下的半写临时 JSON 不是完成回执。
+    private_file(&marker.join("sealed.new"), b"{");
+    let reclaimed =
+        studiolo_backup::checkpoint::staging::reclaim_staging(&f.parent, None, deadline()).unwrap();
+    assert_eq!(reclaimed.interrupted, 1);
+    assert_eq!(fs::read_dir(&f.parent).unwrap().count(), 1);
+    f.area("after-recovery").abort().unwrap();
 }
 #[test]
 fn explicit_abort_releases_the_gate_only_after_both_original_directories_are_removed() {

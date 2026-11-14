@@ -26,8 +26,8 @@ pub(super) fn remainder(path: &Path, source: &str) -> String {
                     1,
                 ),
                 ("fs::fstat(&self.fd)", 1),
-                ("fs::fstat(&fd)", 1),
-                ("fs::openat(&self.fd,name,super::FLAGS,Mode::empty())", 1),
+                ("fs::fstat(&fd)", 2),
+                ("fs::openat(&self.fd,name,super::FLAGS,Mode::empty())", 2),
                 ("fs::unlinkat(&self.fd,name,fs::AtFlags::REMOVEDIR)", 1),
                 ("fs::unlinkat(&self.fd,name,fs::AtFlags::empty())", 1),
             ],
@@ -49,7 +49,7 @@ pub(super) fn remainder(path: &Path, source: &str) -> String {
                     "fs::openat(&parent.fd,NAME,flags|OFlags::CREATE|OFlags::EXCL,Mode::RUSR|Mode::WUSR)",
                     1,
                 ),
-                ("fs::openat(&parent.fd,NAME,flags,Mode::empty())", 1),
+                ("fs::openat(&parent.fd,NAME,flags,Mode::empty())", 2),
                 ("fs::fsync(&fd)", 1),
                 (
                     "fs::flock(&fd,fs::FlockOperation::NonBlockingLockExclusive)",
@@ -167,7 +167,7 @@ pub(super) fn remainder(path: &Path, source: &str) -> String {
         return checked_closed(
             source,
             &[
-                "Lifecycle::begin(parent,key)?;",
+                "Lifecycle::begin(parent,checkpoint_id,reader)?;",
                 "Err(StagingError::CleanupFailed)",
                 "self.parent.check_path(&self.parent_path)",
                 "ifself.lifecycle.published",
@@ -188,7 +188,7 @@ pub(super) fn remainder(path: &Path, source: &str) -> String {
                 "name.starts_with(\"incomplete-\")||name.starts_with(\"export-\")||name.starts_with(\"pending-\")",
                 "returnErr(StagingError::CleanupRequired)",
                 "self.lease.check(parent)?;",
-                "self.marker.check_child(parent,&self.name)?;",
+                "self.marker.check_child(parent,name)?;",
             ],
             &[("parent.create_dir(&name)", 1)],
         );

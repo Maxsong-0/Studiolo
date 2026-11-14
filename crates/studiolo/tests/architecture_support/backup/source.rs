@@ -3,7 +3,37 @@ use super::super::authority_tokens::compact;
 use std::path::Path;
 pub(super) fn fixed_binding(path: &Path, source: &str) -> bool {
     let source = compact(source);
-    let anchors: &[&str] = if path.ends_with("crates/backup-worker/src/source.rs") {
+    let anchors: &[&str] = if path.ends_with("crates/backup/src/checkpoint/staging/io/journal.rs") {
+        &[
+            "LIMIT:usize=16*1024",
+            "Self::Identity=>(\"identity.json\",\"identity.new\")",
+            "Self::Export=>(\"export.json\",\"export.new\")",
+            "Self::Pending=>(\"pending.json\",\"pending.new\")",
+            "Self::Sealed=>(\"sealed.json\",\"sealed.new\")",
+            "Regular::create(self,temporary,bytes.len()asu64)?",
+            "self.publish(temporary,name)?;",
+            "file.require_readonly()?;",
+            "file.check(self,name)?;",
+        ]
+    } else if path.ends_with("crates/backup/src/checkpoint/staging/housekeeping.rs") {
+        &[
+            "parent.acquire_existing_lease()?;",
+            "plan::read_all(&parent,reader,started,deadline)?;",
+            "parent.check_path(parent_path)?;",
+            "plan.check(&parent)?;",
+            "expiry>now",
+            "root.discard_until(&parent,name,reader,deadline)?;",
+            "plan.marker.discard_until(&parent,&plan.name,None,deadline)?;",
+        ]
+    } else if path.ends_with("crates/backup/src/checkpoint/staging/housekeeping/plan.rs") {
+        &[
+            "identity.validate(parent,&marker,key,reader,now)?;",
+            "parent.reclaim_child(&root_name,proof.directory,reader)?;",
+            "ifknown!=covered",
+            "self.marker.read_journal(*kind)?!=*expected",
+            "ifretained&&prefix!=\"sealed\"",
+        ]
+    } else if path.ends_with("crates/backup-worker/src/source.rs") {
         &[
             "config:&WorkerConfig,key:JobKey,reference:&SealedReference",
             "key.checkpoint_id!=reference.checkpoint_id",

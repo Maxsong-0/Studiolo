@@ -14,7 +14,8 @@ pub(crate) fn source_violations(
     source_path: &Path,
     source: &str,
 ) -> Vec<AuthorityViolation> {
-    if crate_name == "studiolo-backup-worker" && !super::backup::fixed_binding(source_path, source)
+    if matches!(crate_name, "studiolo-backup-worker" | "studiolo-backup")
+        && !super::backup::fixed_binding(source_path, source)
     {
         return vec![AuthorityViolation::GenericWrite];
     }

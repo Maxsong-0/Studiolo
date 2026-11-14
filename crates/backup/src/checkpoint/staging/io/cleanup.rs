@@ -1,10 +1,17 @@
 //! 仅生产者以原 FD 回收本次目录；支持共享发布到一半，读取者仍没有删除能力。
 use super::{Access, Directory, FileType, Mode, component, error, fs};
 use crate::checkpoint::staging::{MAX_NODES, ReaderIdentity, Result, StagingError};
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 impl Directory {
-    pub fn discard(&self, parent: &Self, name: &str, reader: Option<ReaderIdentity>) -> Result<()> {
+    pub fn discard_until(
+        &self,
+        parent: &Self,
+        name: &str,
+        reader: Option<ReaderIdentity>,
+        deadline: Instant,
+    ) -> Result<()> {
+        crate::checkpoint::staging::check_deadline(deadline)?;
         parent.access.require_writer()?;
         match self.access {
             Access::Private => {}
@@ -17,13 +24,37 @@ impl Directory {
         if !parent.exists(name)? {
             return Ok(());
         }
-        let deadline = Instant::now() + Duration::from_secs(30);
         self.cleanup_binding(parent, name, reader)?;
         let mut remaining = MAX_NODES;
         self.empty(reader, &mut remaining, 0, deadline)?;
         self.cleanup_binding(parent, name, reader)?;
         fs::unlinkat(&parent.fd, name, fs::AtFlags::REMOVEDIR).map_err(error)?;
         parent.sync()
+    }
+    pub fn reclaim_child(
+        &self,
+        name: &str,
+        expected: (u64, u64),
+        reader: Option<ReaderIdentity>,
+    ) -> Result<Self> {
+        self.access.require_writer()?;
+        component(name)?;
+        let fd = fs::openat(&self.fd, name, super::FLAGS, Mode::empty()).map_err(error)?;
+        let st = fs::fstat(&fd).map_err(error)?;
+        if (st.st_dev, st.st_ino) != expected {
+            return Err(StagingError::Changed);
+        }
+        let access = match (st.st_mode & 0o7777, reader) {
+            (0o550, Some(id)) => Access::Shared(id),
+            _ => Access::Private,
+        };
+        let child = Self {
+            fd,
+            pin: expected,
+            access,
+        };
+        child.cleanup_binding(self, name, reader)?;
+        Ok(child)
     }
     fn cleanup_binding(
         &self,

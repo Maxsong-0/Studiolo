@@ -8,23 +8,33 @@ pub(in crate::checkpoint::staging) struct Lease {
 pub(super) const NAME: &str = ".producer-lease";
 impl Lease {
     pub(super) fn acquire(parent: &Directory) -> Result<Self> {
+        Self::acquire_mode(parent, true)
+    }
+    pub(super) fn existing(parent: &Directory) -> Result<Self> {
+        Self::acquire_mode(parent, false)
+    }
+    fn acquire_mode(parent: &Directory, create: bool) -> Result<Self> {
         parent.access.require_writer()?;
         let flags = OFlags::RDWR | OFlags::NOFOLLOW | OFlags::CLOEXEC | OFlags::NONBLOCK;
-        let fd = match fs::openat(
-            &parent.fd,
-            NAME,
-            flags | OFlags::CREATE | OFlags::EXCL,
-            Mode::RUSR | Mode::WUSR,
-        ) {
-            Ok(fd) => {
-                fs::fsync(&fd).map_err(error)?;
-                parent.sync()?;
-                fd
+        let fd = if !create {
+            fs::openat(&parent.fd, NAME, flags, Mode::empty()).map_err(error)?
+        } else {
+            match fs::openat(
+                &parent.fd,
+                NAME,
+                flags | OFlags::CREATE | OFlags::EXCL,
+                Mode::RUSR | Mode::WUSR,
+            ) {
+                Ok(fd) => {
+                    fs::fsync(&fd).map_err(error)?;
+                    parent.sync()?;
+                    fd
+                }
+                Err(rustix::io::Errno::EXIST) => {
+                    fs::openat(&parent.fd, NAME, flags, Mode::empty()).map_err(error)?
+                }
+                Err(e) => return Err(error(e)),
             }
-            Err(rustix::io::Errno::EXIST) => {
-                fs::openat(&parent.fd, NAME, flags, Mode::empty()).map_err(error)?
-            }
-            Err(e) => return Err(error(e)),
         };
         validate(&fd)?;
         fs::flock(&fd, fs::FlockOperation::NonBlockingLockExclusive).map_err(|e| {

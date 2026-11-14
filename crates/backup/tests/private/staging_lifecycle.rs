@@ -68,7 +68,15 @@ fn partial_layout_failure_removes_owned_exports_and_preserves_foreign_collision(
     private(&f.parent.join("foreign"));
     fs::write(f.parent.join("foreign/keep"), b"not ours").unwrap();
     assert_eq!(
-        creation::layout(&parent, "key", "export-key", "foreign").err(),
+        creation::layout(
+            &parent,
+            &CheckpointId::parse("key").unwrap(),
+            "export-key",
+            "foreign",
+            None,
+            Instant::now() + Duration::from_secs(30)
+        )
+        .err(),
         Some(StagingError::CleanupFailed)
     );
     assert!(!f.parent.join("export-key").exists());
@@ -77,7 +85,7 @@ fn partial_layout_failure_removes_owned_exports_and_preserves_foreign_collision(
         b"not ours"
     );
     assert_eq!(
-        Lifecycle::begin(&parent, "next").err(),
+        Lifecycle::begin(&parent, &CheckpointId::parse("next").unwrap(), None).err(),
         Some(StagingError::CleanupRequired)
     );
 }
@@ -125,7 +133,7 @@ fn original_descriptor_never_deletes_a_replacement_directory() {
     assert_eq!(fs::read(replacement).unwrap(), b"foreign");
     let parent = Directory::open(&f.parent, true).unwrap();
     assert_eq!(
-        Lifecycle::begin(&parent, "next").err(),
+        Lifecycle::begin(&parent, &CheckpointId::parse("next").unwrap(), None).err(),
         Some(StagingError::CleanupRequired)
     );
     assert!(old.is_dir());
@@ -134,12 +142,39 @@ fn original_descriptor_never_deletes_a_replacement_directory() {
 fn marker_removal_is_idempotent_after_its_directory_entry_has_already_disappeared() {
     let f = Fixture::new();
     let parent = Directory::open(&f.parent, true).unwrap();
-    let mut lifecycle = Lifecycle::begin(&parent, "marker").unwrap();
+    let mut lifecycle =
+        Lifecycle::begin(&parent, &CheckpointId::parse("marker").unwrap(), None).unwrap();
     lifecycle.removing_marker = true;
     lifecycle
         .marker
-        .discard(&parent, &lifecycle.name, None)
+        .discard_until(
+            &parent,
+            &lifecycle.name,
+            None,
+            Instant::now() + Duration::from_secs(30),
+        )
         .unwrap();
-    lifecycle.finish(&parent).unwrap();
+    lifecycle
+        .finish(&parent, Instant::now() + Duration::from_secs(30))
+        .unwrap();
     assert!(lifecycle.finished);
+}
+
+#[test]
+fn expired_freeze_never_starts_another_cleanup_window_and_registered_gc_can_resume() {
+    let f = Fixture::new();
+    let mut area = f.area(false);
+    let export = area.export_root().to_owned();
+    fs::write(export.join("canonical/raw"), b"unfinished raw").unwrap();
+    area.deadline = Instant::now();
+    assert_eq!(area.abort(), Err(StagingError::CleanupFailed));
+    assert!(export.exists());
+    let result = crate::checkpoint::staging::reclaim_staging(
+        &f.parent,
+        None,
+        Instant::now() + Duration::from_secs(10),
+    )
+    .unwrap();
+    assert_eq!(result.interrupted, 1);
+    assert!(!export.exists());
 }
