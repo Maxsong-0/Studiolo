@@ -101,7 +101,6 @@ fn saving_replaces_the_state_atomically_and_leaves_no_temporary_behind() {
     let store = private.open(true).expect("initialize");
     let mut state = PersistedState::initial();
     state.next_sequence = 9;
-    state.seed_verified = true;
 
     store.save_state(&state).expect("save");
 
@@ -152,7 +151,7 @@ fn an_unknown_field_or_schema_version_fails_closed() {
     private.open(true).expect("initialize");
     overwrite(
         &private.root.join(STATE_FILE),
-        br#"{"schema_version":1,"next_sequence":1,"jobs":[],"last_scheduled":null,
+        br#"{"schema_version":2,"pending_final":null,"last_final":null,"next_sequence":1,"jobs":[],"last_scheduled":null,
             "last_daily_immutable":null,"seed_verified":false,"surprise":true}"#,
     );
     assert_eq!(
@@ -162,7 +161,7 @@ fn an_unknown_field_or_schema_version_fails_closed() {
 
     overwrite(
         &private.root.join(STATE_FILE),
-        br#"{"schema_version":99,"next_sequence":1,"jobs":[],"last_scheduled":null,
+        br#"{"schema_version":99,"pending_final":null,"last_final":null,"next_sequence":1,"jobs":[],"last_scheduled":null,
             "last_daily_immutable":null,"seed_verified":false}"#,
     );
     assert_eq!(
@@ -177,9 +176,9 @@ fn a_state_whose_job_sequence_runs_past_the_allocator_is_corrupt() {
     private.open(true).expect("initialize");
     overwrite(
         &private.root.join(STATE_FILE),
-        br#"{"schema_version":1,"next_sequence":1,
+        br#"{"schema_version":2,"pending_final":null,"last_final":null,"next_sequence":1,
             "jobs":[{"key":{"sequence":5,"checkpoint_id":"cp-1"},"state":{"state":"queued"},
-            "checkpoint_at":null,"remote_verified_at":null,"finalized_at":null}],
+            "source":null,"checkpoint_at":null,"remote_verified_at":null,"finalized_at":null}],
             "last_scheduled":null,"last_daily_immutable":null,"seed_verified":false}"#,
     );
 

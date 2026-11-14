@@ -11,6 +11,7 @@ fn backup_worker_process_capabilities_are_fixed_and_cannot_move_to_another_file(
             "WaitIdOptions::empty()",
         ),
         ("process/pipe.rs", "OFlags::NONBLOCK", "OFlags::empty()"),
+        ("process/input.rs", "OFlags::NONBLOCK", "OFlags::empty()"),
         ("package.rs", "OFlags::NOFOLLOW", "OFlags::empty()"),
         ("source/parents.rs", "OFlags::NOFOLLOW", "OFlags::empty()"),
         ("credentials/root.rs", "0x8584_58f6", "0"),
@@ -57,9 +58,29 @@ fn backup_worker_cannot_detach_job_source_or_expiry_from_execution() {
         ),
         ("source.rs", "self.binding.check_reopened(&reopened)?;", ""),
         ("runner.rs", "self.source.accepts(invocation)?", "true"),
-        ("runner.rs", "&|| self.source.check_time()", "&|| Ok(())"),
+        (
+            "runner.rs",
+            "let source_time = || self.source.check_time();",
+            "let source_time = || Ok(());",
+        ),
         ("source/binding.rs", "invocation == &self.backup", "true"),
         ("source/window.rs", "now < self.last.get()", "false"),
+        (
+            "runtime.rs",
+            "self.poisoned.set(true)",
+            "self.poisoned.set(false)",
+        ),
+        ("runner/final_record.rs", ".borrow_mut()", ".borrow()"),
+        (
+            "runner/final_record/read.rs",
+            "sha256: &hash",
+            "sha256: request.digest()",
+        ),
+        (
+            "runner/final_record/plan.rs",
+            "\"--stdin\".into()",
+            "\"--stdin-from-command\".into()",
+        ),
         ("runner/inspect.rs", "file.sha256()", "request.digest()"),
         (
             "runner/probe.rs",

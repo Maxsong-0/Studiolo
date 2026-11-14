@@ -194,22 +194,39 @@ pub(super) fn remainder(path: &Path, source: &str) -> String {
             source,
             &[
                 "letexecutable=package.executable()?;",
-                "command.args(argv).env_clear().env(\"TMPDIR\",temporary).current_dir(\"/\").stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped()).process_group(0);",
+                "command.args(argv).env_clear().env(\"TMPDIR\",temporary).current_dir(\"/\").stdin(ifstreams.input.is_some(){Stdio::piped()}else{Stdio::null()}).stdout(Stdio::piped()).stderr(Stdio::piped()).process_group(0);",
                 "letcleanup=child.finish();",
                 "letstatus=cleanup?;",
                 "child.kill_group()?;",
                 "ifInstant::now()>=deadline",
-                "letresult=capture(&mutchild,deadline,check_source_time,sink);",
+                "letresult=capture(&mutchild,deadline,check_source_time,streams);",
                 "check_source_time()?;",
+                "bytes.len()>studiolo_backup::worker::final_manifest::FINAL_MANIFEST_MAX_BYTES",
+                "if!input.finished(){returnErr(ProcessError::Io);}",
                 "credentials.attach(&mutcommand,deadline)?;",
                 "credentials.check(deadline)?;",
             ],
             &[
                 ("Command::new(&executable)", 1),
                 (
-                    "command.args(argv).env_clear().env(\"TMPDIR\",temporary).current_dir(\"/\").stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped()).process_group(0)",
+                    "command.args(argv).env_clear().env(\"TMPDIR\",temporary).current_dir(\"/\").stdin(ifstreams.input.is_some(){Stdio::piped()}else{Stdio::null()}).stdout(Stdio::piped()).stderr(Stdio::piped()).process_group(0)",
                     1,
                 ),
+            ],
+        );
+    }
+    if path.ends_with("crates/backup-worker/src/process/input.rs") {
+        return checked_closed(
+            source,
+            &[
+                "self.remaining.len().min(16*1024)",
+                "self.remaining=&self.remaining[count..]",
+                "self.pipe=None",
+            ],
+            &[
+                ("fs::{OFlags,fcntl_getfl,fcntl_setfl}", 1),
+                ("fcntl_getfl(pipe)", 1),
+                ("fcntl_setfl(pipe,flags|OFlags::NONBLOCK)", 1),
             ],
         );
     }

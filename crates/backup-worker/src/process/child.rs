@@ -2,7 +2,7 @@
 use crate::{ProcessError, Result};
 use rustix::process::{self, Pid, Signal, WaitId, WaitIdOptions};
 use std::{
-    process::{Child, ChildStderr, ChildStdout, Command, ExitStatus},
+    process::{Child, ChildStderr, ChildStdin, ChildStdout, Command, ExitStatus},
     time::{Duration, Instant},
 };
 
@@ -38,6 +38,9 @@ impl OwnedChild {
     }
     pub fn stderr(&mut self) -> Result<ChildStderr> {
         self.child.stderr.take().ok_or(ProcessError::Io)
+    }
+    pub fn stdin(&mut self) -> Result<ChildStdin> {
+        self.child.stdin.take().ok_or(ProcessError::Io)
     }
     pub fn exited(&mut self) -> Result<bool> {
         match process::waitid(

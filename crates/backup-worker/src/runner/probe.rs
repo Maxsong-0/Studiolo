@@ -6,24 +6,11 @@ use studiolo_core::checkpoint::CheckpointId;
 
 impl AppendRunner {
     fn inspect_output(&self, argv: &[String]) -> Result<process::Output> {
-        if self.poisoned.get() {
-            return Err(ProcessError::CleanupFailed);
-        }
-        self.source.check_time()?;
-        self.temporary.check()?;
-        let result = process::run_scoped(
-            &self.package,
-            argv,
-            Some(&self.credentials),
-            self.temporary.path(),
-            self.source.deadline(),
-            &|| self.source.check_time(),
-        );
-        if matches!(result, Err(ProcessError::CleanupFailed)) {
-            self.poisoned.set(true);
-        }
-        let output = result?;
-        self.temporary.check()?;
+        let output = self
+            .runtime
+            .capture(argv, None, self.source.deadline(), &|| {
+                self.source.check_time()
+            })?;
         if !output.success {
             return Err(ProcessError::Protocol);
         }
@@ -49,6 +36,7 @@ impl AppendRunner {
         snapshot: &SnapshotRef,
         checkpoint: &CheckpointId,
     ) -> Result<RemoteVerification> {
+        self.verified.borrow_mut().take();
         if checkpoint != &self.key().checkpoint_id
             || self.locate_snapshot(self.key())?.as_ref() != Some(snapshot)
         {
@@ -71,12 +59,21 @@ impl AppendRunner {
             return Err(ProcessError::Source);
         }
         let verified_at = self.source.current_time()?;
-        Ok(RemoteVerification {
+        let verification = RemoteVerification {
             objects_complete: true,
             checksum_verified: true,
             paired_checkpoint_reference: true,
             verified_at,
-        })
+        };
+        let draft = FinalManifestDraft::new(
+            self.key().clone(),
+            self.sealed(),
+            snapshot.clone(),
+            verification,
+        )
+        .map_err(|_| ProcessError::Protocol)?;
+        *self.verified.borrow_mut() = Some(draft);
+        Ok(verification)
     }
 }
 impl RemoteProbe for AppendRunner {

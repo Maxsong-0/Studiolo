@@ -8,7 +8,7 @@ use studiolo_backup::worker::{
 };
 
 #[derive(Deserialize)]
-pub(super) struct Snapshot {
+pub(crate) struct Snapshot {
     pub id: SnapshotRef,
     tree: SnapshotRef,
     paths: Vec<String>,
@@ -20,6 +20,9 @@ pub(super) struct Snapshot {
 impl Snapshot {
     pub fn check(&self, key: &JobKey, root: &Path) -> Result<()> {
         let tag = JobTag::for_job(key).map_err(|_| ProcessError::Configuration)?;
+        self.check_named(&tag, root)
+    }
+    pub(crate) fn check_named(&self, tag: &JobTag, root: &Path) -> Result<()> {
         if self.id.as_str().len() != 64
             || self.tree.as_str().len() != 64
             || self.paths.len() != 1
@@ -35,6 +38,10 @@ impl Snapshot {
     }
 }
 pub(crate) fn locate(bytes: &[u8], key: &JobKey, root: &Path) -> Result<Option<SnapshotRef>> {
+    let tag = JobTag::for_job(key).map_err(|_| ProcessError::Configuration)?;
+    locate_named(bytes, &tag, root)
+}
+pub(crate) fn locate_named(bytes: &[u8], tag: &JobTag, root: &Path) -> Result<Option<SnapshotRef>> {
     let mut snapshots: Vec<Snapshot> =
         serde_json::from_slice(bytes).map_err(|_| ProcessError::Protocol)?;
     if snapshots.len() > 1 {
@@ -43,7 +50,7 @@ pub(crate) fn locate(bytes: &[u8], key: &JobKey, root: &Path) -> Result<Option<S
     let Some(snapshot) = snapshots.pop() else {
         return Ok(None);
     };
-    snapshot.check(key, root)?;
+    snapshot.check_named(tag, root)?;
     Ok(Some(snapshot.id))
 }
 

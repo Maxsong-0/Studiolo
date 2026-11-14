@@ -1,12 +1,44 @@
 //! 持久状态的纯 DTO 与存储 Interface；这里没有任何 IO。
 
 use crate::checkpoint::manifest::CheckpointManifest;
+use crate::worker::final_manifest::{FinalManifestDraft, FinalManifestReceipt};
 use crate::worker::recovery_point::RecoveryPointStamps;
 use crate::worker::state::JobRecord;
+use crate::worker::{
+    restic::UnverifiedReason,
+    state::{FailureReason, JobKey},
+};
 use serde::{Deserialize, Serialize};
+mod validation;
 
 /// 持久状态 schema 版本；未知版本失败关闭。
-pub const STATE_SCHEMA_VERSION: u32 = 1;
+pub const STATE_SCHEMA_VERSION: u32 = 2;
+/// 总记录数有界；排队前回收旧终态，保留最近成功作业。
+pub const MAX_JOBS: usize = 128;
+/// 等待队列不能无限增长。
+pub const MAX_QUEUED: usize = 32;
+
+/// 最多一个提交中的非正文记录；先持久 draft，远端读回后再持久 receipt。
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PendingFinal {
+    /// 不能在重启或重试时重新生成另一份内容。
+    pub draft: FinalManifestDraft,
+    /// 已经读回的完整远端事实；本地写失败不能把它当远端失败。
+    pub receipt: Option<FinalManifestReceipt>,
+}
+
+/// 失败／未验证也保留固定 Outcome 载荷，不能因审计故障而丢失这条事件。
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PendingFailure {
+    /// 原作业键。
+    pub key: JobKey,
+    /// 固定失败分类。
+    pub reason: FailureReason,
+    /// 目标尚未验证时的固定分类；不能把它当真实远端失败。
+    pub unverified: Option<UnverifiedReason>,
+}
 
 /// `backup-state.json` 的完整内容。
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -18,6 +50,12 @@ pub struct PersistedState {
     pub next_sequence: u64,
     /// 尚未进入终态或仍待补记的作业。
     pub jobs: Vec<JobRecord>,
+    /// 唯一活动提交，阻止并行作业覆盖未知结果。
+    pub pending_final: Option<PendingFinal>,
+    /// 与 pending_final 互斥，未补记前不开始另一作业。
+    pub pending_failure: Option<PendingFailure>,
+    /// 最近一次审计确认的远端最终记录，与成功指针同次保存。
+    pub last_final: Option<FinalManifestReceipt>,
     /// 最近一个普通调度恢复点。
     pub last_scheduled: Option<RecoveryPointStamps>,
     /// 最近一个每日追加／不可变恢复点。
@@ -34,6 +72,9 @@ impl PersistedState {
             schema_version: STATE_SCHEMA_VERSION,
             next_sequence: 1,
             jobs: Vec::new(),
+            pending_final: None,
+            pending_failure: None,
+            last_final: None,
             last_scheduled: None,
             last_daily_immutable: None,
             seed_verified: false,
@@ -45,15 +86,7 @@ impl PersistedState {
         if self.schema_version != STATE_SCHEMA_VERSION {
             return Err(StoreError::UnsupportedSchema);
         }
-        if self.next_sequence == 0 {
-            return Err(StoreError::CorruptStore);
-        }
-        for job in &self.jobs {
-            if job.key.sequence.get() >= self.next_sequence {
-                return Err(StoreError::CorruptStore);
-            }
-        }
-        Ok(())
+        validation::validate(self)
     }
 }
 
@@ -65,7 +98,7 @@ pub trait BackupStateStore {
     /// 原子替换持久状态。
     fn save_state(&self, state: &PersistedState) -> Result<(), StoreError>;
 
-    /// 原子提交最终清单；提交成功才可能存在可恢复点。
+    /// 原子缓存清单；只是本地缓存，绝不构成远端最终提交或成功依据。
     fn commit_final_manifest(&self, manifest: &CheckpointManifest) -> Result<(), StoreError>;
 
     /// 读取已提交的最终清单。

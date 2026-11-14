@@ -25,6 +25,10 @@ pub enum WorkerError {
     JobNotFound,
     /// 尚无成功作业与已提交清单，不能标记 seed 已校验。
     SeedNotVerifiable,
+    /// 另一个未结束作业仍占用唯一执行槽。
+    JobBusy,
+    /// 实际封存或远端最终记录没有匹配持久的原作业。
+    EvidenceMismatch,
 }
 
 /// 审计失败的可复制摘要；`AuditError` 本身不是 `Copy`。
@@ -58,6 +62,8 @@ impl std::fmt::Display for WorkerError {
             Self::Restic(error) => write!(formatter, "restic 调用不合法：{error}"),
             Self::JobNotFound => formatter.write_str("作业不存在"),
             Self::SeedNotVerifiable => formatter.write_str("尚无成功作业与已提交清单"),
+            Self::JobBusy => formatter.write_str("另一个备份作业尚未结束"),
+            Self::EvidenceMismatch => formatter.write_str("备份证据与原作业不匹配"),
         }
     }
 }

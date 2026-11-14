@@ -198,6 +198,78 @@ fn official_restic_snapshot_and_complete_tree_match_real_sealed_inventory() {
         )
         .unwrap();
     }
+    // 最终记录是另一个真实快照，仅 stdin 的固定虚拟文件进入远端。
+    use crate::runner::final_record::{plan::Marker, read};
+    use studiolo_backup::worker::{final_manifest::FinalManifestDraft, state::RemoteVerification};
+    let proof = RemoteVerification {
+        objects_complete: true,
+        checksum_verified: true,
+        paired_checkpoint_reference: true,
+        verified_at: studiolo_core::checkpoint::InstantMillis::from_millis(2000),
+    };
+    let draft = FinalManifestDraft::new(key.clone(), &sealed, snapshot.clone(), proof).unwrap();
+    let marker = Marker::for_job(&key).unwrap();
+    let read_final = |draft: &FinalManifestDraft| {
+        read::read(
+            draft,
+            &repository,
+            &|argv| process::run(&package, argv, Some(&credentials), temp.path(), deadline()),
+            &|argv, expected| {
+                process::verify_digest(
+                    &package,
+                    argv,
+                    &credentials,
+                    temp.path(),
+                    deadline(),
+                    &|| Ok(()),
+                    expected,
+                )
+            },
+        )
+    };
+    assert!(read_final(&draft).unwrap().is_none());
+    let write_final = |marker: &Marker, bytes: &[u8]| {
+        let output = process::run_input(
+            &package,
+            &marker.backup(&repository),
+            &credentials,
+            temp.path(),
+            deadline(),
+            &|| Ok(()),
+            bytes,
+        )
+        .unwrap();
+        assert!(matches!(
+            crate::runner::parse_output(&output, true).unwrap(),
+            ResticOutcome::Exited {
+                status_zero: true,
+                reported_objects: 1
+            }
+        ));
+    };
+    write_final(&marker, &draft.encode().unwrap());
+    let final_snapshot = read_final(&draft).unwrap().unwrap();
+    assert_ne!(final_snapshot, snapshot);
+    // 原路径暂不可读不会影响固定非正文 marker 的读回。
+    fs::set_permissions(root, fs::Permissions::from_mode(0o000)).unwrap();
+    assert_eq!(read_final(&draft).unwrap().unwrap(), final_snapshot);
+    fs::set_permissions(root, fs::Permissions::from_mode(0o550)).unwrap();
+    let wrong_key = seal_fixture::job("remote-inventory", 10);
+    let wrong =
+        FinalManifestDraft::new(wrong_key.clone(), &sealed, snapshot.clone(), proof).unwrap();
+    let wrong_marker = Marker::for_job(&wrong_key).unwrap();
+    let mut wrong_bytes = wrong.encode().unwrap();
+    wrong_bytes[0] = b'[';
+    write_final(&wrong_marker, &wrong_bytes);
+    assert!(
+        read_final(&wrong).is_err(),
+        "同长度的错误正文不能冒充确定最终记录"
+    );
+    write_final(&marker, &draft.encode().unwrap());
+    assert!(
+        read_final(&draft).is_err(),
+        "同作业的多个最终记录不能按 latest 猜选"
+    );
     // 相同作业出现两个候选不能按 latest 猜一个。
     call(backup.argv());
     let duplicate = call(&plan::snapshots(&repository, &key).unwrap());

@@ -1,6 +1,7 @@
 //! 最终记录绑定原作业、封存摘要和数据快照；本类型自身不宣称远端已提交。
 mod codec;
 mod receipt;
+mod remote;
 use super::{
     restic::SnapshotRef,
     state::{JobKey, RemoteVerification},
@@ -11,6 +12,7 @@ use crate::checkpoint::{
 };
 pub use codec::FinalManifestError;
 pub use receipt::FinalManifestReceipt;
+pub use remote::{FinalManifestLookup, FinalManifestReader, FinalManifestWriter};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use studiolo_core::checkpoint::InstantMillis;

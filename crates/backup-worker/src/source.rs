@@ -1,7 +1,7 @@
 //! 配置批准的路径、同一作业引用与真实保留期共同约束每次执行。
 mod binding;
 mod parents;
-mod window;
+pub(crate) mod window;
 use crate::{ProcessError, Result, WorkerConfig};
 use binding::Binding;
 use parents::Parents;

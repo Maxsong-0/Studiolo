@@ -2,7 +2,8 @@
 
 use super::super::recovery_point::BackupTargetKind;
 use super::super::restic::UnverifiedReason;
-use super::super::state::{FailureReason, JobKey, RemoteVerification};
+use super::super::state::{FailureReason, JobKey};
+use crate::worker::final_manifest::FinalManifestReceipt;
 use serde_json::json;
 
 /// Intent 与 Outcome 共用的稳定事件键。
@@ -25,17 +26,18 @@ pub(super) fn intent(key: &JobKey, target: BackupTargetKind) -> serde_json::Valu
 }
 
 /// 成功的 Outcome：补记时必须逐字节一致，所以这里只依赖作业键与校验结果。
-pub(super) fn outcome_success(
-    key: &JobKey,
-    verification: &RemoteVerification,
-) -> serde_json::Value {
+pub(super) fn outcome_success(key: &JobKey, receipt: &FinalManifestReceipt) -> serde_json::Value {
     json!({
         "job_sequence": key.sequence.get(),
         "checkpoint_id": key.checkpoint_id.as_str(),
         "result": "succeeded",
-        "objects_complete": verification.objects_complete,
-        "checksum_verified": verification.checksum_verified,
-        "paired_checkpoint_reference": verification.paired_checkpoint_reference,
+        "data_snapshot": receipt.draft().data_snapshot().as_str(),
+        "final_snapshot": receipt.final_snapshot().as_str(),
+        "finalized_at": receipt.finalized_at(),
+        "data_verified_at": receipt.draft().data_verified_at(),
+        "objects_complete": true,
+        "checksum_verified": true,
+        "paired_checkpoint_reference": true,
         // Outcome 发生在 checkpoint 截止之后，不包含在本次 Audit 数据库快照内。
         "recorded_after_checkpoint_cutoff": true,
     })

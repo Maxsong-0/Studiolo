@@ -1,17 +1,16 @@
 //! 追加角色只接受 HTTPS REST 仓库和 Backup/Check 的封闭计划；其余身份另行装配。
+pub(crate) mod final_record;
 pub(crate) mod inspect;
 mod probe;
 use crate::{
-    ProcessError, ResticCredentials, ResticPackage, Result, WorkerConfig, process, source::Source,
-    temporary::Temporary,
+    ProcessError, ResticCredentials, Result, WorkerConfig, process, runtime::Runtime,
+    source::Source,
 };
-use std::{
-    cell::Cell,
-    time::{Duration, Instant},
-};
-use studiolo_backup::worker::restic::{
-    RESTIC_PACKAGE_VERSION, RepositoryRef, ResticError, ResticInvocation, ResticOutcome,
-    ResticRunner,
+pub use final_record::FinalManifestProbe;
+use std::{cell::RefCell, time::Instant};
+use studiolo_backup::worker::{
+    final_manifest::FinalManifestDraft,
+    restic::{RepositoryRef, ResticError, ResticInvocation, ResticOutcome, ResticRunner},
 };
 use studiolo_backup::{
     checkpoint::staging::{SealedCheckpoint, SealedReference},
@@ -20,11 +19,9 @@ use studiolo_backup::{
 
 /// 单个作业持有固定配置、包、追加凭据与真实封存；启动方另负责秘密来源及作业租约。
 pub struct AppendRunner {
-    package: ResticPackage,
-    credentials: ResticCredentials,
+    runtime: Runtime,
     source: Source,
-    poisoned: Cell<bool>,
-    temporary: Temporary,
+    verified: RefCell<Option<FinalManifestDraft>>,
 }
 impl AppendRunner {
     /// 所有调用共用原作业截止时间，检查和上传不会各自重新得到完整预算。
@@ -36,52 +33,27 @@ impl AppendRunner {
         deadline: Instant,
     ) -> Result<Self> {
         let source = Source::open(config, key, reference, deadline)?;
-        let deadline = source.deadline();
-        let package = ResticPackage::open(config.restic_sha256(), deadline)?;
-        let temporary = Temporary::open()?;
-        let version = process::run_scoped(
-            &package,
-            &["version".into()],
-            None,
-            temporary.path(),
-            deadline.min(Instant::now() + Duration::from_secs(10)),
-            &|| source.check_time(),
-        )?;
-        let prefix = format!("restic {RESTIC_PACKAGE_VERSION} ");
-        if !version.success || !version.stdout.starts_with(prefix.as_bytes()) {
-            return Err(ProcessError::Protocol);
-        }
-        temporary.check()?;
+        let runtime = Runtime::open(config, credentials, source.deadline())?;
         source.check()?;
         Ok(Self {
-            package,
-            credentials,
+            runtime,
             source,
-            poisoned: Cell::new(false),
-            temporary,
+            verified: RefCell::new(None),
         })
     }
+
     /// 返回固定错误分类；CleanupFailed 须令外层停止服务，不能当成可重试上传。
     pub fn execute(&self, invocation: &ResticInvocation) -> Result<ResticOutcome> {
-        if self.poisoned.get() {
-            return Err(ProcessError::CleanupFailed);
-        }
         let backup = self.source.accepts(invocation)?;
         self.source.check()?;
-        self.temporary.check()?;
-        let output = process::run_scoped(
-            &self.package,
+        self.verified.borrow_mut().take();
+        let source_time = || self.source.check_time();
+        let output = self.runtime.capture(
             invocation.argv(),
-            Some(&self.credentials),
-            self.temporary.path(),
+            None,
             self.source.deadline(),
-            &|| self.source.check_time(),
-        );
-        if matches!(output, Err(ProcessError::CleanupFailed)) {
-            self.poisoned.set(true);
-        }
-        let output = output?;
-        self.temporary.check()?;
+            &source_time,
+        )?;
         self.source.check()?;
         parse_output(&output, backup)
     }
@@ -98,7 +70,7 @@ impl AppendRunner {
     /// 任何清理未证实都会永久封闭本 runner；外层须停止整个 worker 服务。
     #[must_use]
     pub fn requires_shutdown(&self) -> bool {
-        self.poisoned.get()
+        self.runtime.poisoned()
     }
 }
 impl ResticRunner for AppendRunner {

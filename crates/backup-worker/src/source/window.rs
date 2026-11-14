@@ -6,7 +6,7 @@ use std::{
 };
 use studiolo_core::checkpoint::InstantMillis;
 
-pub(super) struct Window {
+pub(crate) struct Window {
     deadline: Cell<Instant>,
     last: Cell<InstantMillis>,
     expiry: InstantMillis,
@@ -76,7 +76,7 @@ impl Window {
         Ok(())
     }
 }
-pub(super) fn utc_now() -> Result<InstantMillis> {
+pub(crate) fn utc_now() -> Result<InstantMillis> {
     let millis = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_err(|_| ProcessError::Deadline)?

@@ -198,3 +198,61 @@ fn child_descendant() {
 }
 
 mod restic_cli;
+
+#[test]
+fn bounded_stdin_delivers_eof_without_blocking_output_or_bypassing_deadline() {
+    let temp = tempfile::tempdir().unwrap();
+    let password = temp.path().join("password");
+    fs::write(&password, "fictional-only\n").unwrap();
+    let credentials = ResticCredentials::fixture(&password);
+    let package = package();
+    let bytes = vec![0x5a; 64 * 1024];
+    let output = process::run_input(
+        &package,
+        &args("child_stdin"),
+        &credentials,
+        temp.path(),
+        deadline(),
+        &|| Ok(()),
+        &bytes,
+    )
+    .unwrap();
+    assert!(output.success);
+    assert!(String::from_utf8_lossy(&output.stdout).contains("input-ok"));
+    assert!(matches!(
+        process::run_input(
+            &package,
+            &args("child_stdin"),
+            &credentials,
+            temp.path(),
+            deadline(),
+            &|| Ok(()),
+            &vec![0; 65537]
+        ),
+        Err(ProcessError::Configuration)
+    ));
+    assert!(matches!(
+        process::run_input(
+            &package,
+            &args("child_hangs"),
+            &credentials,
+            temp.path(),
+            Instant::now() + Duration::from_millis(150),
+            &|| Ok(()),
+            &bytes
+        ),
+        Err(ProcessError::Deadline)
+    ));
+}
+#[test]
+#[ignore = "由父测试交付有界虚构 stdin"]
+fn child_stdin() {
+    use std::io::Read;
+    let mut bytes = Vec::new();
+    std::io::stdin()
+        .take(65537)
+        .read_to_end(&mut bytes)
+        .unwrap();
+    assert_eq!(bytes, vec![0x5a; 64 * 1024]);
+    println!("input-ok");
+}

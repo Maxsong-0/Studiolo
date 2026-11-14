@@ -17,7 +17,8 @@ pub(super) fn fixed_binding(path: &Path, source: &str) -> bool {
         &[
             "Source::open(config,key,reference,deadline)?",
             "letbackup=self.source.accepts(invocation)?;self.source.check()?;",
-            "self.source.deadline(),&||self.source.check_time()",
+            "letsource_time=||self.source.check_time();",
+            "self.source.deadline(),&source_time",
             "self.source.check()?;parse_output(&output,backup)",
         ]
     } else if path.ends_with("crates/backup-worker/src/source/binding.rs") {
@@ -36,7 +37,7 @@ pub(super) fn fixed_binding(path: &Path, source: &str) -> bool {
             "plan::file(self.source.repository(),snapshot,root,file.path())?",
             "process::DigestExpectation{bytes:file.bytes(),sha256:file.sha256()}",
             "self.source.check()",
-            "self.poisoned.set(true)",
+            "self.runtime.digest(",
         ]
     } else if path.ends_with("crates/backup-worker/src/runner/probe.rs") {
         &[
@@ -45,7 +46,7 @@ pub(super) fn fixed_binding(path: &Path, source: &str) -> bool {
             "self.verify_snapshot_files(snapshot)?;",
             "inventory:self.sealed().inventory()",
             "letverified_at=self.source.current_time()?;",
-            "self.poisoned.set(true)",
+            "self.runtime.capture(",
         ]
     } else if path.ends_with("crates/backup-worker/src/runner/inspect/plan.rs") {
         &[
@@ -54,6 +55,36 @@ pub(super) fn fixed_binding(path: &Path, source: &str) -> bool {
             "\"snapshots\".into(),\"--tag\".into(),tag.as_str().into()",
             "\"dump\".into(),snapshot.as_str().into(),text.into()",
             "\"ls\".into(),snapshot.as_str().into()",
+        ]
+    } else if path.ends_with("crates/backup-worker/src/runtime.rs") {
+        &[
+            "ifself.poisoned.get(){returnErr(ProcessError::CleanupFailed);}",
+            "self.poisoned.set(true)",
+            "self.window.check()?;source_time()",
+            "self.temporary.check()",
+            "ResticPackage::open(config.restic_sha256(),deadline)?",
+        ]
+    } else if path.ends_with("crates/backup-worker/src/runner/final_record.rs") {
+        &[
+            "self.source.check()?;",
+            "self.verified.borrow_mut().take().ok_or(ProcessError::Source)?",
+            "if&verified!=draft",
+            "Some(&bytes),self.source.deadline(),&||self.source.check_time()",
+            "read_remote(&self.runtime,draft)",
+            "runtime.digest(argv,expected,runtime.deadline(),&||Ok(()))",
+        ]
+    } else if path.ends_with("crates/backup-worker/src/runner/final_record/read.rs") {
+        &[
+            "snapshot::locate_named(&output.stdout,&marker.tag,&marker.path)",
+            "listing::verify(&output.stdout,&marker,&found,encoded.len()asu64)?",
+            "DigestExpectation{bytes:encoded.len()asu64,sha256:&hash}",
+            "iflocate()?.as_ref()!=Some(&found)",
+        ]
+    } else if path.ends_with("crates/backup-worker/src/runner/final_record/plan.rs") {
+        &[
+            "format!(\"{}.final\",original.as_str())",
+            "format!(\"/studiolo-final-{}.json\",original.as_str())",
+            "\"backup\".into(),\"--stdin\".into(),\"--stdin-filename\".into()",
         ]
     } else if path.ends_with("crates/backup-worker/src/source/window.rs") {
         &[

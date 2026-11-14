@@ -8,6 +8,7 @@
 //! 审计载荷在 `payload` 子模块。
 
 mod error;
+mod finalize;
 mod followup;
 mod payload;
 mod run;
@@ -18,8 +19,8 @@ use super::recovery_point::BackupTargetKind;
 use super::restic::{
     CredentialHolder, RepositoryRef, ResticError, ResticRunner, SnapshotRef, UnverifiedReason,
 };
-use super::state::{FailureReason, JobKey, JobRecord, RemoteVerification, UnknownStage};
-use crate::store::model::{BackupStateStore, PersistedState, StoreError};
+use super::state::{FailureReason, JobKey, JobRecord, JobState, RemoteVerification, UnknownStage};
+use crate::store::model::{BackupStateStore, MAX_JOBS, MAX_QUEUED, PersistedState, StoreError};
 use std::num::NonZeroU64;
 use studiolo_audit_ledger::{AuditEvent, AuditEventId, AuditLedger, AuditPhase, SanitizedPayload};
 use studiolo_core::checkpoint::CheckpointId;
@@ -40,6 +41,14 @@ pub trait RemoteProbe {
     ) -> Result<RemoteVerification, ResticError>;
 }
 
+/// 上传与数据复验端口由启动方显式装配；最终记录的读写能力独立传入。
+pub struct DataRemote<'a> {
+    /// 只接受封闭上传计划的执行器。
+    pub runner: &'a dyn ResticRunner,
+    /// 沿原作业核对完整数据快照。
+    pub probe: &'a dyn RemoteProbe,
+}
+
 /// 一次作业的对外结论。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum JobOutcome {
@@ -58,8 +67,6 @@ pub enum JobOutcome {
 /// 独立身份的 BackupWorker。
 pub struct BackupWorker<'a> {
     ledger: &'a dyn AuditLedger,
-    runner: &'a dyn ResticRunner,
-    probe: &'a dyn RemoteProbe,
     store: &'a dyn BackupStateStore,
     repository: RepositoryRef,
     target: BackupTargetKind,
@@ -83,8 +90,6 @@ impl<'a> BackupWorker<'a> {
     /// 组装 Worker；持有者不是 BackupWorker 即拒绝。
     pub fn new(
         ledger: &'a dyn AuditLedger,
-        runner: &'a dyn ResticRunner,
-        probe: &'a dyn RemoteProbe,
         store: &'a dyn BackupStateStore,
         repository: RepositoryRef,
         holder: CredentialHolder,
@@ -95,8 +100,6 @@ impl<'a> BackupWorker<'a> {
         }
         Ok(Self {
             ledger,
-            runner,
-            probe,
             store,
             repository,
             target,
@@ -122,20 +125,54 @@ impl<'a> BackupWorker<'a> {
             .map_err(|error| WorkerError::Audit(error.into()))?;
         let payload = SanitizedPayload::try_from(payload)
             .map_err(|error| WorkerError::Audit(error.into()))?;
-        self.ledger
-            .append(AuditEvent::new(
-                event_id,
-                phase,
-                BACKUP_AUDIT_ACTION,
-                payload,
-            ))
+        let expected = AuditEvent::new(event_id, phase, BACKUP_AUDIT_ACTION, payload);
+        let record = self
+            .ledger
+            .append(expected.clone())
             .map_err(|error| WorkerError::Audit(error.into()))?;
+        record
+            .verify_integrity()
+            .map_err(|error| WorkerError::Audit(error.into()))?;
+        if record.event() != &expected {
+            return Err(WorkerError::Audit(
+                studiolo_audit_ledger::AuditError::CorruptStore.into(),
+            ));
+        }
         Ok(())
     }
 
     /// 排队一次备份：先持久 Intent，再持久排队记录。审计失败即失败关闭。
     pub fn enqueue(&self, checkpoint_id: &CheckpointId) -> Result<JobKey, WorkerError> {
         let mut state = self.state()?;
+        if state
+            .jobs
+            .iter()
+            .filter(|j| j.state == JobState::Queued)
+            .count()
+            >= MAX_QUEUED
+        {
+            return Err(StoreError::LimitExceeded.into());
+        }
+        if state.jobs.len() == MAX_JOBS {
+            let last = state.last_final.as_ref().map(|r| r.draft().key());
+            let oldest = state
+                .jobs
+                .iter()
+                .position(|j| {
+                    j.state.is_terminal()
+                        && Some(&j.key) != last
+                        && state
+                            .pending_failure
+                            .as_ref()
+                            .is_none_or(|pending| pending.key != j.key)
+                })
+                .ok_or(StoreError::LimitExceeded)?;
+            state.jobs.remove(oldest);
+        }
+        let next_sequence = state
+            .next_sequence
+            .checked_add(1)
+            .ok_or(StoreError::LimitExceeded)?;
         let sequence = NonZeroU64::new(state.next_sequence).ok_or(StoreError::CorruptStore)?;
         let key = JobKey {
             sequence,
@@ -154,10 +191,7 @@ impl<'a> BackupWorker<'a> {
                 studiolo_audit_ledger::AuditError::CorruptStore.into(),
             ));
         }
-        state.next_sequence = state
-            .next_sequence
-            .checked_add(1)
-            .ok_or(StoreError::CorruptStore)?;
+        state.next_sequence = next_sequence;
         state.jobs.push(JobRecord::queued(key.clone()));
         self.store.save_state(&state)?;
         Ok(key)

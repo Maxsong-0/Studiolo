@@ -6,13 +6,14 @@ mod credentials;
 mod package;
 mod process;
 mod runner;
+mod runtime;
 mod source;
 mod temporary;
 
 pub use config::WorkerConfig;
 pub use credentials::ResticCredentials;
 pub use package::ResticPackage;
-pub use runner::AppendRunner;
+pub use runner::{AppendRunner, FinalManifestProbe};
 
 /// 固定错误类别，不包含子进程正文、环境值、路径或凭据。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

@@ -10,6 +10,8 @@
 use super::model::{BackupStateStore, PersistedState, StoreError};
 use crate::checkpoint::manifest::CheckpointManifest;
 use std::path::Path;
+mod encoding;
+use encoding::encode;
 #[cfg(unix)]
 mod lease;
 #[cfg(unix)]
@@ -72,7 +74,7 @@ impl BackupStore {
             store.replace(
                 STATE_FILE,
                 STATE_TEMP_FILE,
-                &encode(&PersistedState::initial())?,
+                &encode(&PersistedState::initial(), STATE_MAX_BYTES)?,
             )?;
         } else if !present {
             return Err(StoreError::MissingStore);
@@ -185,7 +187,7 @@ impl BackupStateStore for BackupStore {
 
     fn save_state(&self, state: &PersistedState) -> Result<(), StoreError> {
         state.validate()?;
-        let bytes = encode(state)?;
+        let bytes = encode(state, STATE_MAX_BYTES)?;
         if bytes.len() as u64 > STATE_MAX_BYTES {
             return Err(StoreError::LimitExceeded);
         }
@@ -194,7 +196,7 @@ impl BackupStateStore for BackupStore {
 
     fn commit_final_manifest(&self, manifest: &CheckpointManifest) -> Result<(), StoreError> {
         manifest.validate().map_err(|_| StoreError::CorruptStore)?;
-        let bytes = encode(manifest)?;
+        let bytes = encode(manifest, MANIFEST_MAX_BYTES)?;
         if bytes.len() as u64 > MANIFEST_MAX_BYTES {
             return Err(StoreError::LimitExceeded);
         }
@@ -210,10 +212,6 @@ impl BackupStateStore for BackupStore {
         manifest.validate().map_err(|_| StoreError::CorruptStore)?;
         Ok(Some(manifest))
     }
-}
-
-fn encode<T: serde::Serialize>(value: &T) -> Result<Vec<u8>, StoreError> {
-    serde_json::to_vec(value).map_err(|_| StoreError::CorruptStore)
 }
 
 #[cfg(not(unix))]
