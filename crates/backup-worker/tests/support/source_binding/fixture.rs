@@ -75,6 +75,9 @@ impl Fixture {
         let source = SourceRecord {
             path: path.clone(),
             category: SourceCategory::SourceMaterial,
+            source_policy: Some(
+                studiolo_core::SourcePolicyRef::new("fixture-source", "ab".repeat(32)).unwrap(),
+            ),
             labels: Some(
                 DataLabels::new(
                     Classification::Restricted,

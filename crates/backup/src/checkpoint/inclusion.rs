@@ -6,7 +6,7 @@ use super::types::{SealError, TransferSource, TransferSourceKind};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use studiolo_core::{
-    BackupScope, DataLabels, Revision, VaultPath,
+    BackupScope, DataLabels, Revision, SourcePolicyRef, VaultPath,
     checkpoint::{CheckpointOwner, InstantMillis},
 };
 
@@ -56,6 +56,8 @@ pub struct SourceRecord {
     pub path: VaultPath,
     /// 来源分类。
     pub category: SourceCategory,
+    /// 原逻辑来源及生效策略；普通来源资料必须由可信 owner 提供，缺失不能猜补。
+    pub source_policy: Option<SourcePolicyRef>,
     /// 分类/备份范围/同步与外发标签。
     pub labels: Option<DataLabels>,
     /// 到期时刻；普通来源资料必须有。
@@ -153,6 +155,12 @@ impl InclusionPlan {
                     reason: RejectionReason::MissingRetentionMetadata,
                 });
             }
+            if record.category == SourceCategory::SourceMaterial && record.source_policy.is_none() {
+                return Err(InclusionError::BatchRejected {
+                    path: record.path.clone(),
+                    reason: RejectionReason::MissingSourcePolicy,
+                });
+            }
             let disposition = if record.category.is_mandatory() {
                 if labels.backup_scope() != BackupScope::Full {
                     return Err(InclusionError::MandatoryExcluded {
@@ -216,6 +224,8 @@ fn is_within(candidate: &Path, root: &Path) -> bool {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RejectionReason {
+    /// 缺少来源逻辑名或原生效策略引用。
+    MissingSourcePolicy,
     /// 缺少来源分类或备份范围。
     MissingClassificationOrScope,
     /// 缺少到期元数据。

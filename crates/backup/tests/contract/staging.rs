@@ -40,6 +40,18 @@ fn independent_readonly_view_seals_all_metadata_and_excludes_raw() {
     let catalog = SourceCatalog::new([full, summary, none]).unwrap();
     let sealed = area.seal(&catalog, f.inputs()).unwrap();
     let root = &sealed.ticket().transfer_source.root;
+    let inclusion: serde_json::Value =
+        serde_json::from_slice(&fs::read(root.join("inclusion.json")).unwrap()).unwrap();
+    for entry in inclusion["entries"].as_array().unwrap() {
+        assert_eq!(
+            entry["source"]["source_policy"]["source_id"],
+            "fixture-source"
+        );
+        assert_eq!(
+            entry["source"]["source_policy"]["effective_policy_sha256"],
+            "ab".repeat(32)
+        );
+    }
     assert_eq!(
         fs::read(root.join("data/canonical/note.md")).unwrap(),
         b"canonical"
@@ -110,7 +122,7 @@ fn independent_readonly_view_seals_all_metadata_and_excludes_raw() {
 
 #[test]
 fn missing_extra_stale_or_unlabelled_registration_rejects_whole_checkpoint() {
-    for mode in 0..5 {
+    for mode in 0..6 {
         let f = Fixture::new();
         let area = f.area("invalid");
         let mut record = f.object(&area, "canonical/note.md", b"current", BackupScope::Full);
@@ -122,6 +134,7 @@ fn missing_extra_stale_or_unlabelled_registration_rejects_whole_checkpoint() {
             }
             2 => record.export_path = VaultPath::parse("canonical/missing.md").unwrap(),
             3 => record.source.declared_revision = None,
+            4 => record.source.source_policy = None,
             _ => private_file(&area.export_root().join("canonical/unregistered"), b"raw"),
         }
         let reference_path = SealedCheckpoint::root_path(&f.parent, &checkpoint("invalid"));

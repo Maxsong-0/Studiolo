@@ -60,6 +60,11 @@ SQLite 自有备份只保证单库一致，不能替代跨 owner 屏障。副本
 inclusion plan。canonical、Control、Audit、完整范围的 L0 及部署/备份清单不可
 被任意排除；raw/summary_only/none、已到期和 crypto-erase 按来源保留语义处理。
 缺来源/分类/备份范围/到期元数据或 revision/hash 不匹配时整批拒绝，不按文件名猜。
+普通 `SourceMaterial` 现须携带 `SourcePolicyRef`：原逻辑来源名与原生效策略的完整
+SHA-256，写入实际 inclusion.json 并受 seal 摘要绑定。缺失时即使已经到期、
+crypto-erase 或范围为 none，也不能用空来源墓碑假称登记完整。该值类型只核形状，
+真正授权仍须由可信 owner 提供；frontmatter 自报不能替代它。旧来源记录没有此项
+时失败关闭，不自动补成 Full。生产元数据提供方与写入/L0 的继承链仍待接入。
 
 只要有来源排除项，就建立专用过滤 staging；它位于 Vault 和 WORKBENCH_DATA 之外，
 不会先把不允许的 raw 放入共享 L0 再排除。使用固定流式缓冲、文件数/总字节/空间

@@ -10,6 +10,7 @@ mod ids;
 mod permission;
 mod revision;
 mod revision_hasher;
+mod source_policy;
 mod vault_path;
 
 pub use data_labels::{BackupScope, Classification, DataLabels, DesktopSync, ModelEgress};
@@ -19,4 +20,5 @@ pub use ids::{AttemptId, TaskId, VaultUuid};
 pub use permission::{PermissionSet, ToolId};
 pub use revision::Revision;
 pub use revision_hasher::RevisionHasher;
+pub use source_policy::{SourcePolicyError, SourcePolicyRef};
 pub use vault_path::VaultPath;

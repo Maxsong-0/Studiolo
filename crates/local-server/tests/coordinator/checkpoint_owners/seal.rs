@@ -231,6 +231,7 @@ fn fixture_records(
             source: SourceRecord {
                 path: relative.clone(),
                 category: SourceCategory::Canonical,
+                source_policy: None,
                 labels: Some(
                     DataLabels::new(
                         Classification::Restricted,

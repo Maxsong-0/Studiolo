@@ -81,6 +81,8 @@ canonical／Control／Audit／完整范围 L0／部署清单／备份清单是�
 其备份范围不是 `Full` 就是 `MandatoryExcluded`。
 普通来源资料按 `BackupScope`、到期与 crypto-erase 分别落到
 完整对象／脱敏摘要／非正文墓碑。
+其 `source_policy` 必须包含有界逻辑来源名和完整生效策略 SHA-256；缺失返回
+`MissingSourcePolicy`。这是一份原策略引用，不是从文件自报内容取得的授权。
 
 只要出现任何非「完整对象」的处理方式，`requires_filter_staging` 就为真，
 此时传输源必须是 `FilteredStaging`、位于 Vault 与 `WORKBENCH_DATA` 之外、
