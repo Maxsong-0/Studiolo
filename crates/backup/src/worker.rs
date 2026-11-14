@@ -2,6 +2,7 @@
 //!
 //! 全部为纯逻辑；真实进程执行与落盘由调用方经 Interface 注入。
 
+pub mod final_manifest;
 pub mod job;
 pub mod recovery_point;
 pub mod restic;

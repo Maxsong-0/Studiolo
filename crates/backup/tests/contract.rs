@@ -4,6 +4,8 @@
 
 mod contract {
     mod barrier;
+    #[cfg(unix)]
+    mod final_manifest;
     mod inclusion;
     mod manifest;
     mod recovery_kit;
