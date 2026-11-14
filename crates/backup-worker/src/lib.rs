@@ -6,6 +6,7 @@ mod credentials;
 mod package;
 mod process;
 mod runner;
+mod source;
 mod temporary;
 
 pub use config::WorkerConfig;
@@ -20,6 +21,8 @@ pub enum ProcessError {
     Package,
     /// 调用不满足固定角色、仓库或参数约束。
     Configuration,
+    /// 原封存引用、内容或源路径身份不符。
+    Source,
     /// 无法启动已批准的固定包。
     Spawn,
     /// 输出越界，已终止并回收本次进程组。

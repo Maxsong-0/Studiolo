@@ -3,10 +3,15 @@
 use std::path::Path;
 #[path = "backup/process.rs"]
 mod process;
+#[path = "backup/source.rs"]
+mod source;
 #[path = "backup/staging.rs"]
 mod staging;
 #[path = "backup/storage.rs"]
 mod storage;
+pub(super) fn fixed_binding(path: &Path, contents: &str) -> bool {
+    source::fixed_binding(path, contents)
+}
 
 pub(super) fn fixed_checkpoint_files(source: &str) -> bool {
     let compact = source.split_whitespace().collect::<String>();

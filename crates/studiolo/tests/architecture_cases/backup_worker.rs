@@ -12,6 +12,7 @@ fn backup_worker_process_capabilities_are_fixed_and_cannot_move_to_another_file(
         ),
         ("process/pipe.rs", "OFlags::NONBLOCK", "OFlags::empty()"),
         ("package.rs", "OFlags::NOFOLLOW", "OFlags::empty()"),
+        ("source/parents.rs", "OFlags::NOFOLLOW", "OFlags::empty()"),
         ("config/input.rs", "backup-worker.json", "other.json"),
         ("temporary.rs", "studiolo-backup-worker/tmp", "other/tmp"),
         (
@@ -39,6 +40,39 @@ fn backup_worker_process_capabilities_are_fixed_and_cannot_move_to_another_file(
         assert!(
             !source_violations("studiolo-backup-worker", Path::new("src/other.rs"), &source)
                 .is_empty(),
+            "{file}"
+        );
+    }
+}
+
+#[test]
+fn backup_worker_cannot_detach_job_source_or_expiry_from_execution() {
+    for (file, before, after) in [
+        (
+            "source.rs",
+            "config.reader_identity()",
+            "request.identity()",
+        ),
+        ("source.rs", "self.binding.check_reopened(&reopened)?;", ""),
+        ("runner.rs", "self.source.accepts(invocation)?", "true"),
+        ("runner.rs", "&|| self.source.check_time()", "&|| Ok(())"),
+        ("source/binding.rs", "invocation == &self.backup", "true"),
+        ("source/window.rs", "now < self.last.get()", "false"),
+    ] {
+        let path = std::path::PathBuf::from("crates/backup-worker/src").join(file);
+        let source = fs::read_to_string(workspace_root().join(&path)).unwrap();
+        assert!(
+            source_violations("studiolo-backup-worker", &path, &source).is_empty(),
+            "{file}"
+        );
+        assert!(source.contains(before), "{file}");
+        assert!(
+            !source_violations(
+                "studiolo-backup-worker",
+                &path,
+                &source.replace(before, after)
+            )
+            .is_empty(),
             "{file}"
         );
     }

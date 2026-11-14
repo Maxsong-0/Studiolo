@@ -16,16 +16,18 @@ pub(crate) struct Output {
     pub success: bool,
     pub stdout: Zeroizing<Vec<u8>>,
 }
-pub(crate) fn run(
+pub(crate) fn run_scoped(
     package: &ResticPackage,
     argv: &[String],
     credentials: Option<&ResticCredentials>,
     temporary: &Path,
     deadline: Instant,
+    check_source_time: &impl Fn() -> Result<()>,
 ) -> Result<Output> {
     if Instant::now() >= deadline {
         return Err(ProcessError::Deadline);
     }
+    check_source_time()?;
     let executable = package.executable()?;
     let mut command = Command::new(&executable);
     command
@@ -42,24 +44,30 @@ pub(crate) fn run(
     }
     let mut child = OwnedChild::spawn(command)?;
     // Command 自己保存的环境副本在启动后马上释放；不把它留到远端作业结束。
-    let result = capture(&mut child, deadline);
+    let result = capture(&mut child, deadline, check_source_time);
     let cleanup = child.finish();
     // 清理失败优先于原错误：worker 不得继续下一个作业。
     let status = cleanup?;
     let stdout = result?;
     package.check()?;
+    check_source_time()?;
     Ok(Output {
         success: status.success(),
         stdout,
     })
 }
-fn capture(child: &mut OwnedChild, deadline: Instant) -> Result<Zeroizing<Vec<u8>>> {
+fn capture(
+    child: &mut OwnedChild,
+    deadline: Instant,
+    check_source_time: &impl Fn() -> Result<()>,
+) -> Result<Zeroizing<Vec<u8>>> {
     let mut stdout = Capture::new(child.stdout()?, 8 * 1024 * 1024)?;
     let mut stderr = Capture::new(child.stderr()?, 64 * 1024)?;
     loop {
         if Instant::now() >= deadline {
             return Err(ProcessError::Deadline);
         }
+        check_source_time()?;
         stdout.read()?;
         stderr.read()?;
         if child.exited()? {
@@ -71,4 +79,15 @@ fn capture(child: &mut OwnedChild, deadline: Instant) -> Result<Zeroizing<Vec<u8
         }
         std::thread::sleep(Duration::from_millis(2));
     }
+}
+
+#[cfg(test)]
+pub(crate) fn run(
+    package: &ResticPackage,
+    argv: &[String],
+    credentials: Option<&ResticCredentials>,
+    temporary: &Path,
+    deadline: Instant,
+) -> Result<Output> {
+    run_scoped(package, argv, credentials, temporary, deadline, &|| Ok(()))
 }

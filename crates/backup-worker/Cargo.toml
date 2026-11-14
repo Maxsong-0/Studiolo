@@ -13,6 +13,7 @@ workspace = true
 
 [dependencies]
 studiolo-backup.workspace = true
+studiolo-core.workspace = true
 studiolo-process-safety.workspace = true
 rustix = { workspace = true, features = ["fs", "process"] }
 serde_json.workspace = true

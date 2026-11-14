@@ -14,6 +14,10 @@ pub(crate) fn source_violations(
     source_path: &Path,
     source: &str,
 ) -> Vec<AuthorityViolation> {
+    if crate_name == "studiolo-backup-worker" && !super::backup::fixed_binding(source_path, source)
+    {
+        return vec![AuthorityViolation::GenericWrite];
+    }
     if crate_name == "studiolo-checkpoint-storage"
         && source_path.ends_with("crates/checkpoint-storage/src/lib.rs")
         && !super::backup::fixed_checkpoint_files(source)

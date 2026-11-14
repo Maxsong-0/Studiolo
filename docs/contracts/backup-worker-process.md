@@ -8,7 +8,7 @@
 
 私有schema1文档必含 `worker_uid`、`producer_uid`、`reader_gid`、`sealed_parent`、`producer_socket`、`repository`、`restic_sha256`。未知/重复/缺失字段拒绝，秘密值不属于此文档。当前worker必须为文档指定的非root UID，且不同于producer；producer和读取GID不能为root/无效身份，实际进程必须已加入读取组。路径只允许规范化绝对ASCII字母/数字及 `/_-.`，socket路径最多100字节；封存和审计socket不得覆盖worker状态、运行目录或凭据目录，二者不得互相包含。
 
-仓库沿用HTTPS REST约束，包摘要必须为完整小写SHA-256。配置保留原JSON字节摘要供部署证据使用。`AppendRunner::new` 只接收已核验的WorkerConfig，以其中的仓库及包摘要装配；不会把调用方自报的repository/digest当成配置。真实socket的peer UID、封存的物理路径和内容仍须由后续作业边界再次核验。
+仓库沿用HTTPS REST约束，包摘要必须为完整小写SHA-256。配置保留原JSON字节摘要供部署证据使用。`AppendRunner::new` 以已核验的WorkerConfig选择仓库及包摘要，并要求同作业键和外部封存引用；不会把调用方自报的repository/digest当成配置。真实socket的peer UID仍须由后续审计代理边界核验。
 
 108 `20261113-160800-e359`：配置定向3项（字段/身份/路径/未知秘密字段/重复字段、原文件权限/硬链接/预算/截止）及严格Clippy、66项架构检查通过。实际root配置文件未在生产创建。
 
@@ -21,6 +21,12 @@
 `AppendRunner` 只接受配置绑定的 HTTPS REST 仓库和 Append 身份；SFTP/S3/本地路径、URL凭据、查询、fragment及非规范URL拒绝。它不接受额外argv或可变环境键。恢复与保留清理身份不得借此 runner 运行。内核对真实仓库的只追加能力及远端不可变配置仍须单独验证。
 
 ## 环境、输出与截止时间
+
+追加runner必须绑定同一 `JobKey` / `SealedReference`，经配置指定的独立worker读取身份实际重开封存，核验外部seal摘要、完整清单和实际内容。源路径从 `/` 逐级nofollow，只允许root或配置生产者拥有祖先，禁止组/其他写权、特殊权限及ACL，最多64级；父根须为生产者/读取组0750，封存根0550。记录每级device/inode/uid/gid/mode，后续重开必须相同，末端目录相同不能掩盖祖先替换。
+
+Backup和CheckRepository两种完整调用都由本作业派生；Backup固定原作业tag及原封存根。不同作业号、checkpoint、tag、目录或仓库即使各自语法合法也拒绝。传输前后重新读取全部封存并核对原引用、票据、清单和路径身份。源生产者本身仍属受信任主体；本地只读权限不等于NAS不可变或远端校验。
+
+真实UTC由系统采样，不接受请求自报now；原单调预算还须受封存expires_at限制。每次复验和子进程轮询都检查到期与UTC回退，UTC前跳只能缩短预算；发现回退/到期后本作业永久关闭。所有阶段共用原预算，包括初始化、版本检查、上传及仓库校验，不能重置延长保留期。
 
 子进程使用 `env_clear`，仅设置固定 TMPDIR 和 `RESTIC_PASSWORD_FILE`、`RESTIC_REST_USERNAME`、`RESTIC_REST_PASSWORD` 三槽。上层必须先通过共同的 process-safety 加固并记录结果，再从 worker 受保护凭据源构造 `ResticCredentials`；该类型不实现 Debug/Clone，自有字符串零化。启动后立即释放 Command 的环境副本，不把正文/凭据/原始stderr放入错误或日志。
 
@@ -38,4 +44,6 @@ stdout最多8 MiB、stderr最多64 KiB，预分配有界缓冲并在释放时零
 
 108 `20261113-155333-4b6c`：真实进程定向4项通过，6个ignored子入口由父测试实际执行；官方发行CLI单项另外用ignored入口实际执行。覆盖继承环境清除、stdout/stderr越界、超时、组长退出遗留子孙、原包摘要/权限变化拒绝、仓库URL拒绝。核验官方amd64发行压缩包SHA-256后，真实restic从原FD完成临时仓库init、重复init拒绝、backup和check --read-data，实际JSON解析通过。严格Clippy及66项架构检查通过。
 
-所有仓库、凭据和正文均为虚构测试数据；未使用生产仓库、未修改系统账号或部署服务。生产只读封存引用核验、实际私有凭据源、审计代理、远端最终提交和完整新根恢复仍须继续。
+所有仓库、凭据和正文均为虚构测试数据；未使用生产仓库、未修改系统账号或部署服务。独立UID交接的实际部署验收、私有凭据源、审计代理、远端最终提交和完整新根恢复仍须继续。
+
+108 `20261113-162357-7ea9`：来源绑定定向6项、真实进程到期回收1项、严格Clippy及67项架构检查通过。覆盖同作业完整参数、外部引用和重读内容、祖先替换、链接/ACL/写权限拒绝、UTC回退/前跳与原截止不重置。此处owner水位为明确fixture，封存内容由真实staging生成；不替代七owner集成测试或两个实际UID的部署演练。

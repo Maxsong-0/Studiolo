@@ -1,6 +1,6 @@
 //! 追加角色只接受 HTTPS REST 仓库和 Backup/Check 的封闭计划；其余身份另行装配。
 use crate::{
-    ProcessError, ResticCredentials, ResticPackage, Result, WorkerConfig, process,
+    ProcessError, ResticCredentials, ResticPackage, Result, WorkerConfig, process, source::Source,
     temporary::Temporary,
 };
 use std::{
@@ -8,16 +8,19 @@ use std::{
     time::{Duration, Instant},
 };
 use studiolo_backup::worker::restic::{
-    RESTIC_PACKAGE_VERSION, RepositoryRef, ResticError, ResticIdentity, ResticInvocation,
-    ResticOutcome, ResticRunner,
+    RESTIC_PACKAGE_VERSION, RepositoryRef, ResticError, ResticInvocation, ResticOutcome,
+    ResticRunner,
+};
+use studiolo_backup::{
+    checkpoint::staging::{SealedCheckpoint, SealedReference},
+    worker::state::JobKey,
 };
 
-/// 单个 worker 持有固定配置、包与追加凭据；启动方另负责秘密来源、封存引用与作业租约。
+/// 单个作业持有固定配置、包、追加凭据与真实封存；启动方另负责秘密来源及作业租约。
 pub struct AppendRunner {
     package: ResticPackage,
-    repository: RepositoryRef,
     credentials: ResticCredentials,
-    deadline: Instant,
+    source: Source,
     poisoned: Cell<bool>,
     temporary: Temporary,
 }
@@ -25,32 +28,33 @@ impl AppendRunner {
     /// 所有调用共用原作业截止时间，检查和上传不会各自重新得到完整预算。
     pub fn new(
         config: &WorkerConfig,
+        key: JobKey,
+        reference: &SealedReference,
         credentials: ResticCredentials,
         deadline: Instant,
     ) -> Result<Self> {
-        let repository = config.repository().clone();
+        let source = Source::open(config, key, reference, deadline)?;
+        let deadline = source.deadline();
         let package = ResticPackage::open(config.restic_sha256(), deadline)?;
         let temporary = Temporary::open()?;
-        if deadline <= Instant::now() || deadline > Instant::now() + Duration::from_secs(7200) {
-            return Err(ProcessError::Configuration);
-        }
-        let version = process::run(
+        let version = process::run_scoped(
             &package,
             &["version".into()],
             None,
             temporary.path(),
             deadline.min(Instant::now() + Duration::from_secs(10)),
+            &|| source.check_time(),
         )?;
         let prefix = format!("restic {RESTIC_PACKAGE_VERSION} ");
         if !version.success || !version.stdout.starts_with(prefix.as_bytes()) {
             return Err(ProcessError::Protocol);
         }
         temporary.check()?;
+        source.check()?;
         Ok(Self {
             package,
-            repository,
             credentials,
-            deadline,
+            source,
             poisoned: Cell::new(false),
             temporary,
         })
@@ -60,33 +64,34 @@ impl AppendRunner {
         if self.poisoned.get() {
             return Err(ProcessError::CleanupFailed);
         }
-        if invocation.identity() != ResticIdentity::Append
-            || invocation.repository() != &self.repository
-            || invocation.version() != RESTIC_PACKAGE_VERSION
-            || invocation.package() != "restic"
-        {
-            return Err(ProcessError::Configuration);
-        }
+        let backup = self.source.accepts(invocation)?;
+        self.source.check()?;
         self.temporary.check()?;
-        let output = process::run(
+        let output = process::run_scoped(
             &self.package,
             invocation.argv(),
             Some(&self.credentials),
             self.temporary.path(),
-            self.deadline,
+            self.source.deadline(),
+            &|| self.source.check_time(),
         );
         if matches!(output, Err(ProcessError::CleanupFailed)) {
             self.poisoned.set(true);
         }
         let output = output?;
         self.temporary.check()?;
-        parse_output(
-            &output,
-            invocation
-                .argv()
-                .get(4)
-                .is_some_and(|command| command == "backup"),
-        )
+        self.source.check()?;
+        parse_output(&output, backup)
+    }
+    /// 已核验封存，只能用于此 runner 的同一作业。
+    #[must_use]
+    pub fn sealed(&self) -> &SealedCheckpoint {
+        self.source.sealed()
+    }
+    /// 封存与所有调用固定绑定的原作业键。
+    #[must_use]
+    pub fn key(&self) -> &JobKey {
+        self.source.key()
     }
     /// 任何清理未证实都会永久封闭本 runner；外层须停止整个 worker 服务。
     #[must_use]

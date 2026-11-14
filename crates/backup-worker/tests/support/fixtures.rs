@@ -101,6 +101,25 @@ fn timeout_and_exit_with_inherited_pipe_kill_group_before_reaping_leader() {
         Err(ProcessError::Deadline)
     ));
     assert!(started.elapsed() < Duration::from_secs(4));
+    let expires = Instant::now() + Duration::from_millis(100);
+    assert!(matches!(
+        process::run_scoped(
+            &package,
+            &args("child_hangs"),
+            None,
+            temp.path(),
+            deadline(),
+            &|| {
+                if Instant::now() >= expires {
+                    Err(ProcessError::Deadline)
+                } else {
+                    Ok(())
+                }
+            }
+        ),
+        Err(ProcessError::Deadline)
+    ));
+    assert!(started.elapsed() < Duration::from_secs(4));
     let output = process::run(
         &package,
         &args("child_leaves_descendant"),

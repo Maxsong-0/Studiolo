@@ -3,6 +3,28 @@ use super::super::authority_tokens::checked_closed;
 use std::path::Path;
 
 pub(super) fn remainder(path: &Path, source: &str) -> String {
+    if path.ends_with("crates/backup-worker/src/source/parents.rs") {
+        return checked_closed(
+            source,
+            &[
+                ".union(OFlags::NOFOLLOW)",
+                "parts.len()<2||parts.len()>64",
+                "stat.st_uid!=0&&stat.st_uid!=producer",
+                "stat.st_mode&0o7022!=0",
+                "item.uid!=producer||item.gid!=group||item.mode&0o7777!=mode",
+                "ifindex+1==parts.len(){0o550}else{0o750}",
+                "[\"system.posix_acl_access\",\"system.posix_acl_default\"]",
+                "Err(rustix::io::Errno::NODATA|rustix::io::Errno::OPNOTSUPP)",
+            ],
+            &[
+                ("fs::{self,Mode,OFlags,Stat}", 1),
+                ("fs::open(\"/\",FLAGS,Mode::empty())", 1),
+                ("fs::openat(&fd,*name,FLAGS,Mode::empty())", 1),
+                ("fs::fstat(fd)", 1),
+                ("fs::fgetxattr(fd,name,&mutbyte[..])", 1),
+            ],
+        );
+    }
     if path.ends_with("crates/backup-worker/src/config/input.rs") {
         return checked_closed(
             source,
@@ -120,6 +142,8 @@ pub(super) fn remainder(path: &Path, source: &str) -> String {
                 "letstatus=cleanup?;",
                 "child.kill_group()?;",
                 "ifInstant::now()>=deadline",
+                "letresult=capture(&mutchild,deadline,check_source_time);",
+                "check_source_time()?;",
             ],
             &[
                 ("Command::new(&executable)", 1),

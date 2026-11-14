@@ -12,7 +12,11 @@ pub(crate) fn allowed_workspace_dependencies(crate_name: &str) -> &'static [&'st
             "studiolo-checkpoint-storage",
         ],
         "studiolo-backup" | "studiolo-observability" => &["studiolo-core", "studiolo-audit-ledger"],
-        "studiolo-backup-worker" => &["studiolo-backup", "studiolo-process-safety"],
+        "studiolo-backup-worker" => &[
+            "studiolo-backup",
+            "studiolo-core",
+            "studiolo-process-safety",
+        ],
         "studiolo-sync-transport" => &["studiolo-core", "studiolo-host-config"],
         // T-132 P1（ADR-025 D2）：可信 launcher 只认线上契约与值类型；不得依赖 host-config／vault-broker。
         "studiolo-sync-launcher" => &["studiolo-sync-transport", "studiolo-core"],
