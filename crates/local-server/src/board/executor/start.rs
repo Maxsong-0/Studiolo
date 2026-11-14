@@ -108,6 +108,26 @@ impl RunnerPlane {
         );
         let mut retryable_launch = false;
         let outcome = (|| {
+            let provenance = super::artifact_policy::original(
+                &project,
+                &grant.policy_hash,
+                &grant.snapshot_id,
+                &grant.sources,
+            )?;
+            self.authority
+                .board
+                .engine
+                .lock()
+                .map_err(|_| "黑板不可用")?
+                .authorize_artifacts(
+                    spec.task_id,
+                    spec.attempt_id,
+                    spec.fence,
+                    &grant.snapshot_id,
+                    &provenance,
+                    jiff::Timestamp::now().as_millisecond(),
+                )
+                .map_err(|_| "原产物批准或审计未持久确认")?;
             self.authority
                 .board
                 .engine

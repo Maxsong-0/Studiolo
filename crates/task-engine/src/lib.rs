@@ -8,6 +8,7 @@
 
 // 各职责模块都是私有的；公开项经下方 `pub use` 重导出，
 // 对外路径仍是 `studiolo_task_engine::名字`。
+mod artifact_policies;
 mod board;
 mod board_audit;
 mod board_projection;

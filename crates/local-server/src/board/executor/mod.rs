@@ -1,5 +1,6 @@
 //! 受信任的生产 `Runner` 组装；未提供配置时它不可用。
 mod admission;
+mod artifact_policy;
 mod authority;
 mod cleanup;
 mod config;
