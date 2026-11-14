@@ -1,7 +1,9 @@
 //! 隔离 owner 导出、按真实字节过滤、视图和清单一次原子发布。
 mod catalog;
+mod creation;
 mod inventory;
 mod io;
+mod lifecycle;
 mod seal;
 mod shared;
 mod tree;
@@ -37,6 +39,7 @@ const MAX_METADATA: u64 = 128 * 1024 * 1024;
 
 /// 一次尝试独占的新目录；回收仅限这次新建目录的原身份，不覆盖其他尝试。
 pub struct StagingArea {
+    lifecycle: lifecycle::Lifecycle,
     parent: Directory,
     exports: Directory,
     pending: Directory,
@@ -122,13 +125,10 @@ impl StagingArea {
         if parent_dir.exists(&final_name)? {
             return Err(StagingError::AlreadyExists);
         }
-        let exports = parent_dir.create_dir(&export_name)?;
-        for name in OWNER_DIRECTORIES {
-            exports.create_dir(name)?;
-        }
-        let pending = parent_dir.create_dir(&pending_name)?;
-        let data = pending.create_dir("data")?;
-        let area = Self {
+        let (lifecycle, exports, pending, data) =
+            creation::layout(&parent_dir, &key, &export_name, &pending_name)?;
+        let mut area = Self {
+            lifecycle,
             parent: parent_dir,
             exports,
             pending,
@@ -144,7 +144,10 @@ impl StagingArea {
             deadline,
             reader,
         };
-        area.check()?;
+        if let Err(error) = area.check() {
+            area.cleanup()?;
+            return Err(error);
+        }
         Ok(area)
     }
     /// 仅供原 owner 导出独立副本；此路径永远不是 worker 的传输源。
@@ -160,6 +163,7 @@ impl StagingArea {
     fn check(&self) -> Result<()> {
         check_deadline(self.deadline)?;
         self.parent.check_path(&self.parent_path)?;
+        self.lifecycle.check(&self.parent)?;
         self.exports.check_path(&self.export_path)?;
         self.pending
             .check_path(&self.parent_path.join(&self.pending_name))?;
@@ -174,8 +178,8 @@ impl StagingArea {
 impl Drop for StagingArea {
     fn drop(&mut self) {
         // 原 FD/根身份与固定预算限定了清理范围；失败不许改删被替换的目录。
-        let _ = self.exports.discard(&self.parent, &self.export_name);
-        let _ = self.pending.discard(&self.parent, &self.pending_name);
+        // 普通错误经 seal/abort 显式返回；展开期间仍尽力回收，失败标记持久保留。
+        let _ = self.cleanup();
     }
 }
 pub(crate) fn digest(bytes: &[u8]) -> String {
@@ -196,6 +200,12 @@ type Result<T> = std::result::Result<T, StagingError>;
 /// 只返回固定类别；错误不带正文、密钥或宿主机路径。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum StagingError {
+    /// 同一封存父目录已有正在构造或回收的生产者。
+    Busy,
+    /// 前次中断或清理失败；须先完成受控恢复，不能开始新作业。
+    CleanupRequired,
+    /// 无法确认本次原目录已回收；未完成标记保持关闭。
+    CleanupFailed,
     /// 路径、权限、链接或物理重叠不满足隔离要求。
     UnsafeRoot,
     /// checkpoint 名称已被一次尝试占用。

@@ -3,10 +3,12 @@ mod access;
 mod acl;
 mod cleanup;
 mod files;
+mod lease;
 mod share;
 use super::{Result, StagingError};
 use access::Access;
 pub(super) use files::Regular;
+pub(super) use lease::Lease;
 use rustix::{
     fd::OwnedFd,
     fs::{self, FileType, Mode, OFlags},
@@ -24,6 +26,9 @@ const FLAGS: OFlags = OFlags::RDONLY
     .union(OFlags::CLOEXEC)
     .union(OFlags::NONBLOCK);
 impl Directory {
+    pub fn acquire_lease(&self) -> Result<Lease> {
+        Lease::acquire(self)
+    }
     pub fn open(path: &Path, private: bool) -> Result<Self> {
         Self::open_with(
             path,

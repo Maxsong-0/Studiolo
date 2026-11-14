@@ -16,7 +16,11 @@
 
 `pending-*` 包含 `data/`、`manifest.json`、`inclusion.json`、`seal.json`。seal 绑定前两份 JSON 的实际摘要；inclusion 覆盖全部目标文件摘要/大小、目录和原始来源判定。文件刷盘后变为 0400，目录刷盘后变为 0500。
 
-发布前必须回收含排除 raw 的原始 export；清理只沿本次新建目录的原 FD，拒绝根身份替换，unlink 不跟随链接。失败/展开也回收本次 export 与 pending，无法完成的 IO/身份异常不会改删其他目录；异常残留须由受控回收程序处理。只有 Linux 的原子 NOREPLACE rename 加父目录 fsync 成功，且最终目录重开复验成功，才返回 `SealedReference`。没有覆盖旧尝试或扫描目录选“最新”的行为。
+发布前必须回收含排除 raw 的原始 export；清理只沿本次新建目录的原 FD，拒绝根身份替换，unlink 不跟随链接。只有 Linux 的原子 NOREPLACE rename 加父目录 fsync 成功，且最终目录重开复验成功，才返回 `SealedReference`。没有覆盖旧尝试或扫描目录选“最新”的行为。
+
+同一父目录以固定 `.producer-lease` 空文件的内核排他锁限定一个生产者；锁为当前生产者所有、0600、单链接、无 ACL，原 inode 每次复核，正常流程从不删除锁文件。复制正文前先创建并同步 `incomplete-<checkpoint 摘要>` 标记。构造未完成时的错误、显式 `abort`、封存失败和展开都会尝试回收本次原 export/pending；rename 已生效但 fsync 或后续复验失败时，还核原 inode 回收本次 sealed。已经部分或全部改成读取组权限的根，也只能由原生产者按固定读取组回收；不扩展 worker 的删除权限。
+
+每次目录回收有 30 秒、100 万节点及 64 层边界，先收回目录组可读性再删除。只有全部原目录确认回收或完整封存成功交接，才移除未完成标记。无法确认时返回 `CleanupFailed`；原标记保留，下一作业返回 `CleanupRequired`。进程被杀后即使内核锁已释放，也不能越过未完成标记；旧版本遗留的 export/pending 同样阻塞。普通创建不会猜测旧目录身份后删除，崩溃后的受控恢复及成功封存的到期 GC 仍须由后续生命周期服务接线。
 
 读取只接受原引用：checkpoint ID 与 seal 的外部摘要。`SealedCheckpoint::open` 重开私有固定目录、检查只读权限与精确布局、核 manifest/票据一致性、重新哈希所有内容，并验证保留期与同一剩余期限。原始导出、清单计算和文件复验耗时不能重置全局冻结期限或传输副本保留期。
 
@@ -32,4 +36,4 @@ Linux 上私有和共享节点都拒绝 POSIX access/default ACL，避免 chmod 
 
 真实文件契约覆盖过滤/独立 inode/只读权限/内容篡改/多余文件/链接/硬链接/缺元数据/revision/过期/错误引用，以及共享父目录、错误组、同 UID worker、access/default ACL 拒绝。实际六 owner + 双 Audit 集成在私有和共享封存及失败回收期间检查 SQL 屏障和两端语义门禁；Bridge 明确 absent，不代替真实 cgroup 平台演练。测试箱仅映射一个 UID，未把单 UID 的权限检查冒充两个生产账号的实际读取演练。
 
-生产来源登记仍须接可信元数据提供方；当前 TaskEngine 输入只存 restricted 分类，不是完整 DataLabels，测试里的 Full fixture 工厂不得用于生产默认分类。实际 startup/调度、独立仓库 worker、远端最终清单提交与完整新根恢复仍在 T147/T204 后续写域；本文件不表示整条 Rust 备份链已经完成。
+生产来源登记仍须接可信元数据提供方；当前 TaskEngine 输入只存 restricted 分类，不是完整 DataLabels，测试里的 Full fixture 工厂不得用于生产默认分类。原生独立执行器与远端最终记录机制已实现，见 [最终记录契约](backup-finalization.md)。实际 startup/调度、审计 IPC、到期回收与完整新根恢复仍在 T147/T204 后续写域；本文件不表示整条 Rust 备份链已经完成。

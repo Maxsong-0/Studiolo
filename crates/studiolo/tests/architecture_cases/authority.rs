@@ -22,7 +22,7 @@ fn worker_state_lease_cannot_be_moved_or_changed_to_an_unbound_lock() {
 
 #[test]
 fn checkpoint_staging_keeps_creation_nofollow_and_atomic_no_replace_closed() {
-    for file in ["io.rs", "io/files.rs"] {
+    for file in ["io.rs", "io/files.rs", "io/lease.rs"] {
         let path = std::path::PathBuf::from("crates/backup/src/checkpoint/staging").join(file);
         let source = fs::read_to_string(workspace_root().join(&path)).unwrap();
         assert!(
@@ -50,6 +50,9 @@ fn checkpoint_shared_permissions_stay_bound_to_verified_original_descriptors() {
     for (file, anchor) in [
         ("io/share.rs", "file.check(self, name)?;"),
         ("io/acl.rs", "system.posix_acl_default"),
+        ("io/cleanup.rs", "Some(id) == reader"),
+        ("lifecycle.rs", "parent.acquire_lease()?;"),
+        ("creation.rs", "Lifecycle::begin(parent, key)?;"),
     ] {
         let path = std::path::PathBuf::from("crates/backup/src/checkpoint/staging").join(file);
         let source = fs::read_to_string(workspace_root().join(&path)).unwrap();

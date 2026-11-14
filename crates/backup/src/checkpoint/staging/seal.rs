@@ -70,6 +70,23 @@ struct InclusionDocument {
 impl StagingArea {
     /// 必须在 FrozenOwners 仍活着时调用；最终目录与本地 manifest 一次发布后才返还。
     pub fn seal(mut self, catalog: &SourceCatalog, inputs: SealInputs) -> Result<SealedCheckpoint> {
+        let result = self.seal_inner(catalog, inputs).and_then(|sealed| {
+            self.lifecycle.finish(&self.parent)?;
+            Ok(sealed)
+        });
+        match result {
+            Ok(sealed) => Ok(sealed),
+            Err(error) => {
+                self.cleanup()?;
+                Err(error)
+            }
+        }
+    }
+    fn seal_inner(
+        &mut self,
+        catalog: &SourceCatalog,
+        inputs: SealInputs,
+    ) -> Result<SealedCheckpoint> {
         self.check()?;
         if inputs.content_cutoff > inputs.now || inputs.now >= inputs.expires_at {
             return Err(StagingError::Expired);
@@ -133,9 +150,11 @@ impl StagingArea {
         self.pending.readonly()?;
         self.check()?;
         // 必须先销毁含排除 raw 的原始导出；失败就没有任何可交给 worker 的引用。
-        self.exports.discard(&self.parent, &self.export_name)?;
+        self.exports
+            .discard(&self.parent, &self.export_name, self.reader)?;
         self.parent.check_path(&self.parent_path)?;
         check_deadline(self.deadline)?;
+        self.lifecycle.published = true;
         self.parent.publish(&self.pending_name, &self.final_name)?;
         self.pending.check_path(&final_root)?;
         let reference = SealedReference {
