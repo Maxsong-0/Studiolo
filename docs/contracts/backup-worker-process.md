@@ -1,6 +1,6 @@
 # 独立备份进程执行边界
 
-`studiolo-backup-worker` 是独立的 Linux 包，不能进入 App/owner 的依赖闭包。当前实现固定root配置、固定包执行与追加runner；服务入口、受保护凭据文件读取、作业主循环、审计IPC、远端最终清单和完整恢复仍待后续接线，不能据此宣称生产Rust备份链完成。
+`studiolo-backup-worker` 是独立的 Linux 包，不能进入 App/owner 的依赖闭包。当前实现固定root配置、只读凭据源、固定包执行与封存绑定的追加runner；服务入口、作业主循环、审计IPC、远端最终清单和完整恢复仍待后续接线，不能据此宣称生产Rust备份链完成。
 
 ## 固定配置来源
 
@@ -21,6 +21,12 @@
 `AppendRunner` 只接受配置绑定的 HTTPS REST 仓库和 Append 身份；SFTP/S3/本地路径、URL凭据、查询、fragment及非规范URL拒绝。它不接受额外argv或可变环境键。恢复与保留清理身份不得借此 runner 运行。内核对真实仓库的只追加能力及远端不可变配置仍须单独验证。
 
 ## 环境、输出与截止时间
+
+`ResticCredentials::load` 只在持有共同process-safety加固结果后读取固定 `/run/credentials/studiolo-backup-worker.service`，不接受 `CREDENTIALS_DIRECTORY`、请求路径或调用者直接传入秘密。固定三槽为 `repository-password`、`rest-username`、`rest-password`。父路径逐级root所有、无组/其他写权、nofollow且无ACL；实际unit目录须worker所有0500，文件须同UID、0400、单链接普通文件，无ACL。目录和文件还必须实测为只读ramfs，普通目录、可写挂载和可能换出的其他文件系统均拒绝。代码不创建目录、不装载/轮换秘密、不替管理员修权限。
+
+该部署选择依据[systemd官方凭据说明](https://www.freedesktop.org/software/systemd/man/257/systemd.exec.html)及[v255固定实现](https://github.com/systemd/systemd/blob/v255/src/core/exec-credential.c)：systemd可能采用ACL或文件所有权授予读取，也可能降级存储；本worker只接受其中可实际证明的只读ramfs/所有权形态，不能仅凭使用了LoadCredential便宣称满足隔离。
+
+仓库密码和REST密码各最多4096字节、用户名最多256字节，另允许一个录入工具留下的末尾LF；拒绝空值、非法UTF-8、其他控制字符、首尾空白和用户名中的冒号。流式读取的固定容量缓冲和块都零化，不在增长时遗留重分配副本。父进程仅核仓库密码格式后立即释放其正文，restic读取固定只读文件；用户名/REST密码保留于Zeroizing字符串。原根每级身份、原文件FD与路径重开身份在装配和每次执行前后都核对；异常仅返回固定分类。
 
 追加runner必须绑定同一 `JobKey` / `SealedReference`，经配置指定的独立worker读取身份实际重开封存，核验外部seal摘要、完整清单和实际内容。源路径从 `/` 逐级nofollow，只允许root或配置生产者拥有祖先，禁止组/其他写权、特殊权限及ACL，最多64级；父根须为生产者/读取组0750，封存根0550。记录每级device/inode/uid/gid/mode，后续重开必须相同，末端目录相同不能掩盖祖先替换。
 
@@ -44,6 +50,8 @@ stdout最多8 MiB、stderr最多64 KiB，预分配有界缓冲并在释放时零
 
 108 `20261113-155333-4b6c`：真实进程定向4项通过，6个ignored子入口由父测试实际执行；官方发行CLI单项另外用ignored入口实际执行。覆盖继承环境清除、stdout/stderr越界、超时、组长退出遗留子孙、原包摘要/权限变化拒绝、仓库URL拒绝。核验官方amd64发行压缩包SHA-256后，真实restic从原FD完成临时仓库init、重复init拒绝、backup和check --read-data，实际JSON解析通过。严格Clippy及66项架构检查通过。
 
-所有仓库、凭据和正文均为虚构测试数据；未使用生产仓库、未修改系统账号或部署服务。独立UID交接的实际部署验收、私有凭据源、审计代理、远端最终提交和完整新根恢复仍须继续。
+所有仓库、凭据和正文均为虚构测试数据；未使用生产仓库、未修改系统账号或部署服务。独立UID交接、systemd只读ramfs凭据的实际部署验收、审计代理、远端最终提交和完整新根恢复仍须继续。
 
 108 `20261113-162357-7ea9`：来源绑定定向6项、真实进程到期回收1项、严格Clippy及67项架构检查通过。覆盖同作业完整参数、外部引用和重读内容、祖先替换、链接/ACL/写权限拒绝、UTC回退/前跳与原截止不重置。此处owner水位为明确fixture，封存内容由真实staging生成；不替代七owner集成测试或两个实际UID的部署演练。
+
+108 `20261113-163055-806d`：固定槽/格式/边界与真实文件权限/别名/变化拒绝2项、真实子进程环境1项、严格Clippy及67项架构检查通过。普通测试文件被只读ramfs校验实际拒绝；测试未安装systemd凭据或伪称覆盖正向内存挂载。官方restic CLI入口本轮按设计ignored，其上次显式运行证据见上文，整批终验再统一执行。

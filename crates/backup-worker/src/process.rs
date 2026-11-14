@@ -40,8 +40,9 @@ pub(crate) fn run_scoped(
         .stderr(Stdio::piped())
         .process_group(0);
     if let Some(credentials) = credentials {
-        credentials.attach(&mut command);
+        credentials.attach(&mut command, deadline)?;
     }
+    check_source_time()?;
     let mut child = OwnedChild::spawn(command)?;
     // Command 自己保存的环境副本在启动后马上释放；不把它留到远端作业结束。
     let result = capture(&mut child, deadline, check_source_time);
@@ -50,6 +51,9 @@ pub(crate) fn run_scoped(
     let status = cleanup?;
     let stdout = result?;
     package.check()?;
+    if let Some(credentials) = credentials {
+        credentials.check(deadline)?;
+    }
     check_source_time()?;
     Ok(Output {
         success: status.success(),
