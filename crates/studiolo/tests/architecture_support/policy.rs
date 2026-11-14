@@ -14,6 +14,8 @@ pub(crate) fn allowed_workspace_dependencies(crate_name: &str) -> &'static [&'st
         "studiolo-backup" | "studiolo-observability" => &["studiolo-core", "studiolo-audit-ledger"],
         "studiolo-backup-worker" => &[
             "studiolo-backup",
+            // 只实现跨进程 AuditLedger 接口；具体存储/内存 owner 类型由源码守卫拒绝。
+            "studiolo-audit-ledger",
             "studiolo-core",
             "studiolo-process-safety",
         ],

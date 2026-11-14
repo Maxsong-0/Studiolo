@@ -14,6 +14,23 @@ pub(crate) fn source_violations(
     source_path: &Path,
     source: &str,
 ) -> Vec<AuthorityViolation> {
+    if crate_name == "studiolo-backup-worker"
+        && source
+            .split(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+            .any(|token| {
+                matches!(
+                    token,
+                    "SqliteAuditLedger"
+                        | "MemoryAuditLedger"
+                        | "AuditReadView"
+                        | "AuditCheckpointAccess"
+                        | "AuditCheckpointSource"
+                        | "FrozenAudit"
+                )
+            })
+    {
+        return vec![AuthorityViolation::DatabaseOpen];
+    }
     if matches!(crate_name, "studiolo-backup-worker" | "studiolo-backup")
         && !super::backup::fixed_binding(source_path, source)
     {
@@ -136,6 +153,9 @@ pub(crate) fn source_violations(
             ".status(",
             "fcntl_getfl(",
             "fcntl_setfl(",
+            "net::connect(",
+            "net::socket_with(",
+            "UnixStream::connect(",
         ]
         .iter()
         .any(|token| checked_source.contains(token));

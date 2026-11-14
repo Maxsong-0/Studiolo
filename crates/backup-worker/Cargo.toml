@@ -12,10 +12,11 @@ publish = false
 workspace = true
 
 [dependencies]
+studiolo-audit-ledger.workspace = true
 studiolo-backup.workspace = true
 studiolo-core.workspace = true
 studiolo-process-safety.workspace = true
-rustix = { workspace = true, features = ["fs", "process"] }
+rustix = { workspace = true, features = ["fs", "process", "net"] }
 serde_json.workspace = true
 serde.workspace = true
 sha2.workspace = true
