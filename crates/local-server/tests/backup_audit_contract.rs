@@ -15,7 +15,12 @@ use studiolo_backup::worker::{
     audit::BackupAuditRequest, job::backup_intent, recovery_point::BackupTargetKind, state::JobKey,
 };
 use studiolo_core::checkpoint::CheckpointId;
+use studiolo_local_server::backup::admission::BackupAdmission;
 use studiolo_local_server::backup::audit::BackupAuditPort;
+#[path = "backup_audit/admission.rs"]
+mod admission;
+#[path = "backup_audit/fixture.rs"]
+mod fixture;
 const TARGET: BackupTargetKind = BackupTargetKind::DedicatedAppendOnlyTarget;
 fn key() -> JobKey {
     JobKey {
@@ -27,7 +32,7 @@ fn setup() -> (tempfile::TempDir, Arc<SqliteAuditLedger>, BackupAuditPort) {
     let root = tempfile::tempdir().unwrap();
     fs::set_permissions(root.path(), fs::Permissions::from_mode(0o700)).unwrap();
     let ledger = Arc::new(SqliteAuditLedger::open(root.path()).unwrap());
-    let port = BackupAuditPort::new(ledger.clone(), key(), TARGET);
+    let port = BackupAuditPort::new(fixture::existing(&ledger));
     (root, ledger, port)
 }
 fn intent() -> BackupAuditRequest {
@@ -66,19 +71,16 @@ fn original_intent_and_outcome_are_durable_idempotent_and_readable_only_for_this
         port.dispatch(&failed("out_of_space").encode().unwrap()),
         Err(AuditError::IdempotencyConflict { .. })
     ));
-    assert_eq!(ledger.query(&AuditFilter::default()).unwrap().len(), 2);
+    assert_eq!(ledger.query(&AuditFilter::default()).unwrap().len(), 3);
     drop((port, ledger));
     let reopened = Arc::new(SqliteAuditLedger::open_existing(root.path()).unwrap());
-    let port = BackupAuditPort::new(reopened, key(), TARGET);
+    let admission = BackupAdmission::resume(reopened, &key(), TARGET).unwrap();
+    let port = BackupAuditPort::new(admission);
     assert_eq!(outcome, port.dispatch(&failure.encode().unwrap()).unwrap());
 }
 #[test]
-fn no_outcome_without_the_exact_persisted_intent_and_no_cross_job_queries() {
+fn no_cross_job_queries_or_new_target_after_persistent_admission() {
     let (_root, ledger, port) = setup();
-    assert!(
-        port.dispatch(&failed("upload_rejected").encode().unwrap())
-            .is_err()
-    );
     let lookup = BackupAuditRequest::read(key(), TARGET, AuditPhase::Outcome);
     assert!(
         lookup
@@ -104,21 +106,13 @@ fn no_outcome_without_the_exact_persisted_intent_and_no_cross_job_queries() {
     ] {
         assert!(port.dispatch(&request.encode().unwrap()).is_err());
     }
-    assert!(ledger.query(&AuditFilter::default()).unwrap().is_empty());
-    ledger
-        .append(backup_intent(&key(), BackupTargetKind::LocalTemporaryRepository).unwrap())
-        .unwrap();
-    assert!(matches!(
-        port.dispatch(&failed("upload_rejected").encode().unwrap()),
-        Err(AuditError::CorruptStore)
-    ));
-    assert_eq!(ledger.query(&AuditFilter::default()).unwrap().len(), 1);
+    assert_eq!(ledger.query(&AuditFilter::default()).unwrap().len(), 2);
 }
 #[test]
 fn invalid_message_and_replaced_ledger_do_not_initialize_or_write_another_store() {
     let (root, ledger, port) = setup();
     assert!(port.dispatch(b"{}").is_err());
-    assert!(ledger.query(&AuditFilter::default()).unwrap().is_empty());
+    assert_eq!(ledger.query(&AuditFilter::default()).unwrap().len(), 2);
     let original = root.path().join("audit.sqlite3");
     fs::rename(&original, root.path().join("original.sqlite3")).unwrap();
     assert!(port.dispatch(&intent().encode().unwrap()).is_err());
@@ -140,7 +134,7 @@ fn dispatch_participates_in_the_original_complete_operation_gate() {
     });
     started_rx.recv_timeout(Duration::from_secs(1)).unwrap();
     assert!(done_rx.recv_timeout(Duration::from_millis(100)).is_err());
-    assert!(ledger.query(&AuditFilter::default()).unwrap().is_empty());
+    assert_eq!(ledger.query(&AuditFilter::default()).unwrap().len(), 2);
     drop(quiet);
     assert!(
         done_rx
@@ -149,7 +143,7 @@ fn dispatch_participates_in_the_original_complete_operation_gate() {
             .is_ok()
     );
     worker.join().unwrap();
-    assert_eq!(ledger.query(&AuditFilter::default()).unwrap().len(), 1);
+    assert_eq!(ledger.query(&AuditFilter::default()).unwrap().len(), 2);
 }
 
 #[cfg(target_os = "linux")]
@@ -166,7 +160,7 @@ fn production_connection_rejects_shared_uid_and_wrong_actual_peer_before_dispatc
             Err(AuditTransportError::Peer)
         );
     }
-    assert!(ledger.query(&AuditFilter::default()).unwrap().is_empty());
+    assert_eq!(ledger.query(&AuditFilter::default()).unwrap().len(), 2);
 }
 
 #[cfg(target_os = "linux")]
@@ -191,16 +185,16 @@ fn real_socket_ack_loss_replays_the_original_sqlite_record_without_duplicate_eve
             }
         });
         let mut socket = AuditSocket::new(a, uid, Instant::now() + Duration::from_secs(2)).unwrap();
-        let request = intent();
+        let request = failed("upload_rejected");
         socket.send(&request.encode().unwrap()).unwrap();
         let response = socket.receive();
         if lose_reply {
             assert!(response.is_err());
         } else {
             let record = request.decode_reply(&response.unwrap()).unwrap().unwrap();
-            assert_eq!(record.offset(), 1);
+            assert_eq!(record.offset(), 3);
         }
         server.join().unwrap();
-        assert_eq!(ledger.query(&AuditFilter::default()).unwrap().len(), 1);
+        assert_eq!(ledger.query(&AuditFilter::default()).unwrap().len(), 3);
     }
 }

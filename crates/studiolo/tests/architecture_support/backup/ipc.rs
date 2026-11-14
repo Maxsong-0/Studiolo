@@ -3,7 +3,34 @@ use super::super::authority_tokens::{checked_closed, compact};
 use std::path::Path;
 pub(super) fn fixed_binding(path: &Path, source: &str) -> bool {
     let source = compact(source);
-    let anchors: &[&str] = if path.ends_with("crates/backup-worker/src/audit.rs") {
+    let anchors: &[&str] = if path.ends_with("crates/local-server/src/backup/audit.rs") {
+        &[
+            "pubfnnew(admission:BackupAdmission)->Self",
+            "self.admission.verify()?;",
+            "self.admission.ledger.enter_operation()?",
+            "request.key()!=self.admission.key()",
+            "request.target()!=self.admission.target()",
+        ]
+    } else if path.ends_with("crates/local-server/src/backup/admission.rs") {
+        &[
+            "sealed:&SealedCheckpoint",
+            "record.check_live()?;",
+            "verify_source(&ledger,&record)?;",
+            "letreceipt=ledger.append(event.clone())?;",
+            "admission.verify()?;",
+            "intent.event()!=&expected||intent.offset()>record.audit_offset",
+            "tail.offset()!=record.audit_offset||tail.record_hash().to_hex()!=record.audit_hash",
+            "receipt.event()!=expected||receipt.offset()<=cutoff",
+        ]
+    } else if path.ends_with("crates/local-server/src/backup/admission/record.rs") {
+        &[
+            "#[serde(deny_unknown_fields)]",
+            "self.key.checkpoint_id!=self.source.checkpoint_id",
+            "self.audit_offset==0",
+            "verify_receipt(receipt,&record.event()?,record.audit_offset)?;",
+            "now<self.content_cutoff||now>=self.expires_at",
+        ]
+    } else if path.ends_with("crates/backup-worker/src/audit.rs") {
         &[
             "identity(config)?;",
             "Endpoint::bind(config,deadline)?",

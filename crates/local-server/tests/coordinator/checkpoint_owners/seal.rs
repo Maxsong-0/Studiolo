@@ -18,6 +18,13 @@ async fn checkpoint_actual_owners_hold_all_gates_through_atomic_readonly_seal() 
     for mode in 0..4 {
         let reject = matches!(mode, 1 | 2);
         let f = Setup::new(true).await;
+        let now = i64::try_from(
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_millis(),
+        )
+        .unwrap();
         let parent = target(&f.fixture, "staging");
         let ephemeral = target(&f.fixture, "ephemeral");
         let sources = [
@@ -89,9 +96,9 @@ async fn checkpoint_actual_owners_hold_all_gates_through_atomic_readonly_seal() 
             },
             manifest(),
             CheckpointTimes {
-                content_cutoff: InstantMillis::from_millis(900),
-                now: InstantMillis::from_millis(1000),
-                expires_at: InstantMillis::from_millis(if mode == 2 { 1001 } else { 10000 }),
+                content_cutoff: InstantMillis::from_millis(now - 100),
+                now: InstantMillis::from_millis(now),
+                expires_at: InstantMillis::from_millis(now + if mode == 2 { 1 } else { 30_000 }),
             },
         );
         assert_eq!(result.is_err(), reject);
@@ -100,21 +107,21 @@ async fn checkpoint_actual_owners_hold_all_gates_through_atomic_readonly_seal() 
         }
         assert!(!exports_path.exists(), "原始导出必须在成功和失败后都已回收");
         f.writable(false);
-        if let Ok(sealed) = result {
+        if let Ok(sealed) = &result {
             assert_eq!(sealed.manifest().audit_coverage.acked_events_checked, 3);
             let reopened = if mode == 3 {
                 SealedCheckpoint::open_shared(
                     &parent,
                     sealed.reference(),
                     reader_gid,
-                    InstantMillis::from_millis(1001),
+                    InstantMillis::from_millis(now + 1),
                     Instant::now() + Duration::from_secs(10),
                 )
             } else {
                 SealedCheckpoint::open(
                     &parent,
                     sealed.reference(),
-                    InstantMillis::from_millis(1001),
+                    InstantMillis::from_millis(now + 1),
                     Instant::now() + Duration::from_secs(10),
                 )
             };
@@ -135,6 +142,70 @@ async fn checkpoint_actual_owners_hold_all_gates_through_atomic_readonly_seal() 
         f.writable(true);
         assert!(f.human.enter_operation().is_ok());
         assert!(f.agent.enter_operation().is_ok());
+        if let Ok(sealed) = result {
+            use crate::backup::{admission::BackupAdmission, audit::BackupAuditPort};
+            let approved = BackupAdmission::approve(
+                f.human.clone(),
+                f.key.clone(),
+                BackupTargetKind::LocalTemporaryRepository,
+                &sealed,
+            )
+            .unwrap();
+            assert_eq!(approved.source(), sealed.reference());
+            assert!(approved.check_live().is_ok());
+            // 原封存同键重放不再追加，也不能拿另一条审计链来认领封存。
+            let before = f
+                .human
+                .query(&studiolo_audit_ledger::AuditFilter::default())
+                .unwrap();
+            assert!(
+                BackupAdmission::approve(
+                    f.human.clone(),
+                    f.key.clone(),
+                    BackupTargetKind::LocalTemporaryRepository,
+                    &sealed
+                )
+                .is_ok()
+            );
+            assert_eq!(
+                before,
+                f.human
+                    .query(&studiolo_audit_ledger::AuditFilter::default())
+                    .unwrap()
+            );
+            let wrong =
+                Arc::new(SqliteAuditLedger::open(&target(&f.fixture, "wrong-audit")).unwrap());
+            wrong
+                .append(backup_intent(&f.key, BackupTargetKind::LocalTemporaryRepository).unwrap())
+                .unwrap();
+            assert!(
+                BackupAdmission::approve(
+                    wrong,
+                    f.key.clone(),
+                    BackupTargetKind::LocalTemporaryRepository,
+                    &sealed
+                )
+                .is_err()
+            );
+            let resumed = BackupAdmission::resume(
+                f.human.clone(),
+                &f.key,
+                BackupTargetKind::LocalTemporaryRepository,
+            )
+            .unwrap();
+            let port = BackupAuditPort::new(resumed);
+            let request = studiolo_backup::worker::audit::BackupAuditRequest::read(
+                f.key.clone(),
+                BackupTargetKind::LocalTemporaryRepository,
+                studiolo_audit_ledger::AuditPhase::Intent,
+            );
+            assert!(
+                request
+                    .decode_reply(&port.dispatch(&request.encode().unwrap()).unwrap())
+                    .unwrap()
+                    .is_some()
+            );
+        }
         f.workbench.shutdown().await.unwrap();
     }
 }
