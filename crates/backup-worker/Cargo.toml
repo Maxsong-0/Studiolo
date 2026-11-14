@@ -16,6 +16,7 @@ studiolo-backup.workspace = true
 studiolo-process-safety.workspace = true
 rustix = { workspace = true, features = ["fs", "process"] }
 serde_json.workspace = true
+serde.workspace = true
 sha2.workspace = true
 url.workspace = true
 zeroize.workspace = true

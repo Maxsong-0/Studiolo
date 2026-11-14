@@ -1,6 +1,7 @@
 //! 追加角色只接受 HTTPS REST 仓库和 Backup/Check 的封闭计划；其余身份另行装配。
 use crate::{
-    ProcessError, ResticCredentials, ResticPackage, Result, process, temporary::Temporary,
+    ProcessError, ResticCredentials, ResticPackage, Result, WorkerConfig, process,
+    temporary::Temporary,
 };
 use std::{
     cell::Cell,
@@ -11,7 +12,7 @@ use studiolo_backup::worker::restic::{
     ResticOutcome, ResticRunner,
 };
 
-/// 单个 worker 持有固定包与追加凭据；启动方另负责配置、UID、来源引用与作业租约。
+/// 单个 worker 持有固定配置、包与追加凭据；启动方另负责秘密来源、封存引用与作业租约。
 pub struct AppendRunner {
     package: ResticPackage,
     repository: RepositoryRef,
@@ -23,12 +24,12 @@ pub struct AppendRunner {
 impl AppendRunner {
     /// 所有调用共用原作业截止时间，检查和上传不会各自重新得到完整预算。
     pub fn new(
-        package: ResticPackage,
-        repository: RepositoryRef,
+        config: &WorkerConfig,
         credentials: ResticCredentials,
         deadline: Instant,
     ) -> Result<Self> {
-        validate_repository(&repository)?;
+        let repository = config.repository().clone();
+        let package = ResticPackage::open(config.restic_sha256(), deadline)?;
         let temporary = Temporary::open()?;
         if deadline <= Instant::now() || deadline > Instant::now() + Duration::from_secs(7200) {
             return Err(ProcessError::Configuration);
@@ -145,7 +146,7 @@ pub(crate) fn parse_output(output: &process::Output, backup: bool) -> Result<Res
         reported_objects: count,
     })
 }
-fn validate_repository(repository: &RepositoryRef) -> Result<()> {
+pub(crate) fn validate_repository(repository: &RepositoryRef) -> Result<()> {
     let text = repository
         .as_str()
         .strip_prefix("rest:")

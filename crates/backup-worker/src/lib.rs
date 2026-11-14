@@ -1,12 +1,14 @@
 //! 独立 worker 的真实进程边界；App 不依赖本包，也不获得凭据或命令执行能力。
 #![cfg(target_os = "linux")]
 
+mod config;
 mod credentials;
 mod package;
 mod process;
 mod runner;
 mod temporary;
 
+pub use config::WorkerConfig;
 pub use credentials::ResticCredentials;
 pub use package::ResticPackage;
 pub use runner::AppendRunner;

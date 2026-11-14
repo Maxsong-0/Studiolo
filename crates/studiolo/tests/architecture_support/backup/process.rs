@@ -3,6 +3,33 @@ use super::super::authority_tokens::checked_closed;
 use std::path::Path;
 
 pub(super) fn remainder(path: &Path, source: &str) -> String {
+    if path.ends_with("crates/backup-worker/src/config/input.rs") {
+        return checked_closed(
+            source,
+            &[
+                ".union(OFlags::NOFOLLOW)",
+                "[None,Some(\"etc\"),Some(\"studiolo\")]",
+                "read_checked(open_config()?,0,deadline)?",
+                "stat.st_uid!=0||stat.st_mode&0o7022!=0",
+                "!same(&pin,&reopened)",
+                "pin.len()>16*1024",
+                "(&mutfile).take(16*1024+1).read_to_end(&mutbytes)",
+            ],
+            &[
+                ("rustix::fs::{self,Mode,OFlags}", 1),
+                ("fs::{File,Metadata}", 1),
+                ("os::unix::fs::MetadataExt", 1),
+                ("fs::open(\"/\",FLAGS,Mode::empty())", 1),
+                ("fs::openat(&directory,name,FLAGS,Mode::empty())", 1),
+                ("fs::fstat(&directory)", 1),
+                (
+                    "fs::openat(&directory,\"backup-worker.json\",OFlags::RDONLY|OFlags::NOFOLLOW|OFlags::CLOEXEC|OFlags::NONBLOCK,Mode::empty())",
+                    1,
+                ),
+                ("File::from(fd)", 1),
+            ],
+        );
+    }
     if path.ends_with("crates/backup-worker/src/credentials.rs") {
         return checked_closed(
             source,

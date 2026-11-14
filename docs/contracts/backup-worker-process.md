@@ -1,6 +1,16 @@
 # 独立备份进程执行边界
 
-`studiolo-backup-worker` 是独立的 Linux 包，不能进入 App/owner 的依赖闭包。当前子单元实现固定包执行与追加 runner；服务入口、受保护配置/凭据文件读取、作业主循环、审计 IPC、远端最终清单和完整恢复仍待后续接线，不能据此宣称生产 Rust 备份链完成。
+`studiolo-backup-worker` 是独立的 Linux 包，不能进入 App/owner 的依赖闭包。当前实现固定root配置、固定包执行与追加runner；服务入口、受保护凭据文件读取、作业主循环、审计IPC、远端最终清单和完整恢复仍待后续接线，不能据此宣称生产Rust备份链完成。
+
+## 固定配置来源
+
+`WorkerConfig` 只有 `/etc/studiolo/backup-worker.json` 这一条生产构造入口，不接受环境/请求覆盖路径，不实现Deserialize或公开字段构造。所有路径组件逐层nofollow且root所有、无组/其他写权；文件要求单链接普通文件、0644或0444、1 字节～16 KiB，并核同一FD内容前后身份及原路径重开身份，不创建缺失配置。
+
+私有schema1文档必含 `worker_uid`、`producer_uid`、`reader_gid`、`sealed_parent`、`producer_socket`、`repository`、`restic_sha256`。未知/重复/缺失字段拒绝，秘密值不属于此文档。当前worker必须为文档指定的非root UID，且不同于producer；producer和读取GID不能为root/无效身份，实际进程必须已加入读取组。路径只允许规范化绝对ASCII字母/数字及 `/_-.`，socket路径最多100字节；封存和审计socket不得覆盖worker状态、运行目录或凭据目录，二者不得互相包含。
+
+仓库沿用HTTPS REST约束，包摘要必须为完整小写SHA-256。配置保留原JSON字节摘要供部署证据使用。`AppendRunner::new` 只接收已核验的WorkerConfig，以其中的仓库及包摘要装配；不会把调用方自报的repository/digest当成配置。真实socket的peer UID、封存的物理路径和内容仍须由后续作业边界再次核验。
+
+108 `20261113-160800-e359`：配置定向3项（字段/身份/路径/未知秘密字段/重复字段、原文件权限/硬链接/预算/截止）及严格Clippy、66项架构检查通过。实际root配置文件未在生产创建。
 
 ## 固定包与身份
 

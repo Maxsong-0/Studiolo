@@ -12,6 +12,7 @@ fn backup_worker_process_capabilities_are_fixed_and_cannot_move_to_another_file(
         ),
         ("process/pipe.rs", "OFlags::NONBLOCK", "OFlags::empty()"),
         ("package.rs", "OFlags::NOFOLLOW", "OFlags::empty()"),
+        ("config/input.rs", "backup-worker.json", "other.json"),
         ("temporary.rs", "studiolo-backup-worker/tmp", "other/tmp"),
         (
             "credentials.rs",
