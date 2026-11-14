@@ -18,7 +18,13 @@ pub(super) fn policy(
     options: &Options,
     audit: Option<&Arc<dyn AuditLedger>>,
     protected: &[PathBuf],
-) -> Result<axum::Router, StartupError> {
+) -> Result<
+    (
+        axum::Router,
+        Option<Arc<studiolo_local_server::PolicyPlane>>,
+    ),
+    StartupError,
+> {
     match (&options.policy_data, audit) {
         (Some(directory), Some(ledger)) => {
             let store = studiolo_policy::PolicyStore::open(directory)
@@ -35,13 +41,14 @@ pub(super) fn policy(
                     .map_err(|_| StartupError::Configuration)?;
                 plane = plane.with_read_audit(audit).with_identities(identities);
             }
-            Ok(studiolo_local_server::with_policy_plane(
-                app,
-                Arc::new(plane),
+            let plane = Arc::new(plane);
+            Ok((
+                studiolo_local_server::with_policy_plane(app, plane.clone()),
+                Some(plane),
             ))
         }
         (Some(_), None) => Err(StartupError::Configuration),
-        (None, _) => Ok(app),
+        (None, _) => Ok((app, None)),
     }
 }
 

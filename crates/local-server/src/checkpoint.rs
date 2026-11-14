@@ -1,4 +1,5 @@
 //! 七个实际 owner 的总窗口：先排空完整操作，再按固定顺序冻结；全体原事件核对后才导出。
+mod assembly;
 mod export;
 use crate::{
     CanonicalWorkbench, FrozenWorkbench, PolicyPlane,
@@ -6,6 +7,7 @@ use crate::{
     policy_checkpoint::PolicyParticipant,
     sync_plane::{SyncPlane, checkpoint::FrozenSyncPlane},
 };
+pub use assembly::CheckpointInputs;
 pub use export::{CheckpointExports, CheckpointTimes, OwnerExportPaths};
 use std::{
     sync::Arc,
@@ -26,23 +28,6 @@ use studiolo_core::checkpoint::{
 use studiolo_supply::{AgentCheckpointAssembly, FrozenAgentStore};
 type Result<T> = std::result::Result<T, CheckpointError>;
 
-/// 仅由可信启动层交入实际装配，已装配能力不得伪装 None。
-pub struct CheckpointInputs {
-    /// 正在服务的唯一 canonical 工作台。
-    pub workbench: Arc<CanonicalWorkbench>,
-    /// 正在服务的 Auth 管理器及原主人绑定。
-    pub sessions: Arc<SessionManager>,
-    /// 人侧实际权威账本；也提供完整操作门禁。
-    pub audit: Arc<SqliteAuditLedger>,
-    /// 实际装配的黑板；None 仅表示未装配。
-    pub board: Option<Arc<BoardPlane>>,
-    /// 实际装配的双向同步平面。
-    pub bridge: Option<Arc<SyncPlane>>,
-    /// 实际身份库与其固定附属审计链。
-    pub agents: Option<AgentCheckpointAssembly>,
-    /// 实际主人策略发布平面及共享许可池。
-    pub policy: Option<Arc<PolicyPlane>>,
-}
 /// 固定正在服务的源能力；无任意路径开库、初始化或取消在途任务的方法。
 pub struct CheckpointOwners {
     workbench: Arc<CanonicalWorkbench>,
@@ -74,9 +59,7 @@ pub struct FrozenOwners {
 impl CheckpointOwners {
     /// 在暂停业务前从实际装配固定全部源能力；黑板不能遗漏其身份库。
     pub fn new(input: CheckpointInputs) -> Result<Self> {
-        if input.board.is_some() && input.agents.is_none() {
-            return Err(unavailable(Owner::AgentStore));
-        }
+        let agents = input.agents()?;
         Ok(Self {
             auth: input
                 .sessions
@@ -95,7 +78,7 @@ impl CheckpointOwners {
                 .transpose()?,
             workbench: input.workbench,
             bridge: input.bridge,
-            agents: input.agents,
+            agents,
             policy: input.policy,
         })
     }

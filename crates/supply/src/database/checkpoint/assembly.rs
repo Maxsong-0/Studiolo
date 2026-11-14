@@ -24,6 +24,19 @@ pub(in crate::database) fn assemble(
     Ok(AgentCheckpointAssembly { source, audit })
 }
 impl AgentCheckpointAssembly {
+    /// 身份库及其附属账本都必须仍是同一原对象；同路径替换不算同一来源。
+    pub fn same_origin(&self, other: &Self) -> Result<bool, SupplyError> {
+        let store = self
+            .source
+            .source
+            .same_origin(&other.source.source)
+            .map_err(super::problem)?;
+        let audit = self
+            .audit
+            .same_origin(&other.audit)
+            .map_err(|_| SupplyError::StoreUnavailable)?;
+        Ok(store && audit)
+    }
     /// 接入方先于人侧取得独占许可，遵循实际嵌套调用方向。
     pub fn quiesce(&self, deadline: Instant) -> Result<AuditQuiescence, SupplyError> {
         self.audit

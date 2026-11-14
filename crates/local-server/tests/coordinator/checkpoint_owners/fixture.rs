@@ -50,14 +50,12 @@ impl Setup {
             human.clone(),
         )
         .unwrap();
-        let agents = board.checkpoint_agents().unwrap();
         let owners = CheckpointOwners::new(CheckpointInputs {
             workbench: workbench.clone(),
             sessions,
             audit: human.clone(),
             board: Some(board),
             bridge: None,
-            agents: Some(agents),
             policy: Some(policy),
         })
         .unwrap();

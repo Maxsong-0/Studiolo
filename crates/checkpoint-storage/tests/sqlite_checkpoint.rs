@@ -31,6 +31,23 @@ fn deadline() -> Instant {
 }
 
 #[test]
+fn source_comparison_checks_both_original_directory_and_database_objects() {
+    let (dir, db, source) = database();
+    let second = Source::bind(dir.path(), DatabaseFile::Control).unwrap();
+    assert!(source.same_origin(&second).unwrap());
+    let (_other, _other_db, other_source) = database();
+    assert!(!source.same_origin(&other_source).unwrap());
+    drop(db);
+    let path = dir.path().join("control.sqlite3");
+    fs::rename(&path, dir.path().join("old.sqlite3")).unwrap();
+    fs::copy(dir.path().join("old.sqlite3"), &path).unwrap();
+    let replacement = Source::bind(dir.path(), DatabaseFile::Control).unwrap();
+    assert_eq!(source.same_origin(&replacement), Err(Error::UnsafeStorage));
+    assert_eq!(replacement.same_origin(&source), Err(Error::UnsafeStorage));
+    assert_eq!(source.same_origin(&second), Err(Error::UnsafeStorage));
+}
+
+#[test]
 fn export_preserves_rowid_gaps_and_blocks_second_writer_until_drop() {
     let (dir, db, source) = database();
     let target = private();

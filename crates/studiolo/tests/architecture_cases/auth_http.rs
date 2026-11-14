@@ -52,6 +52,8 @@ fn session_composition_is_explicit_and_does_not_change_the_existing_binary_mode(
         "startup/plane_input.rs",
         "startup/prepared.rs",
         "startup/sync_input.rs",
+        "startup/checkpoint_input.rs",
+        "startup/validation.rs",
     ]
     .iter()
     .map(|path| fs::read_to_string(root.join(path)).unwrap())

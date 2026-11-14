@@ -9,6 +9,13 @@ pub struct AuditCheckpointAccess {
     source: AuditCheckpointSource,
 }
 impl AuditCheckpointAccess {
+    /// 两个实际装配共享同一原账本才可合并为一个 Audit 参与者。
+    pub fn same_origin(&self, other: &Self) -> Result<bool, AuditError> {
+        self.source
+            .source
+            .same_origin(&other.source.source)
+            .map_err(super::problem)
+    }
     /// 人侧复用正在服务的实际 ledger，不另开新连接伪装原 owner。
     pub fn from_ledger(ledger: Arc<SqliteAuditLedger>) -> Result<Self, AuditError> {
         let source = ledger.checkpoint_source()?;

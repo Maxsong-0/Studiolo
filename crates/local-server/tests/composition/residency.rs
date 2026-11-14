@@ -288,12 +288,12 @@ fn hardening_is_the_first_thing_each_entry_point_does() {
         .expect("harden() 的逐项分类必须被记录，不能只返回不记录");
     assert!(hardened < recorded);
     // 参数校验、仓库打开、配置加载、因子输入都必须排在收紧与记录之后；
-    // `options.factor` 出现在其后，正说明收紧不挂在因子这个条件上。
+    // 实际因子输入构造出现在其后，正说明收紧不挂在因子这个条件上。
     for later in [
-        "options.port == 0",
+        "validation::options(&options)",
         "repository_input::open",
         "Config::load",
-        "options.factor",
+        "let factor_input = options",
         "factor_input::Inputs::load",
     ] {
         let at = startup
@@ -301,6 +301,9 @@ fn hardening_is_the_first_thing_each_entry_point_does() {
             .unwrap_or_else(|| panic!("startup.rs 应当包含 {later}"));
         assert!(recorded < at, "{later} 出现在加固与记录之前");
     }
+    let validation = without_comments(&read_source("startup/validation.rs"));
+    assert!(validation.contains("options.port == 0"));
+    assert!(validation.contains("options.factor.is_some() && options.session.is_none()"));
 
     let maintenance = without_comments(&read_source("maintenance.rs"));
     let hardened = maintenance

@@ -161,7 +161,6 @@ async fn checkpoint_minimal_actual_assembly_does_not_invent_optional_stores_or_s
         audit: audit.clone(),
         board: None,
         bridge: None,
-        agents: None,
         policy: None,
     })
     .unwrap();

@@ -91,6 +91,18 @@ impl Binding {
         }
         Ok(())
     }
+    pub fn same_origin(&self, other: &Self) -> Result<bool, Error> {
+        self.check()?;
+        other.check()?;
+        let same = self.file == other.file
+            && identity(&self.root_pin.metadata().map_err(io)?)
+                == identity(&other.root_pin.metadata().map_err(io)?)
+            && identity(&self.file_pin.metadata().map_err(io)?)
+                == identity(&other.file_pin.metadata().map_err(io)?);
+        self.check()?;
+        other.check()?;
+        Ok(same)
+    }
     pub fn sync(&self) -> Result<(), Error> {
         self.check()?;
         self.file_pin.sync_all().map_err(io)?;
@@ -174,6 +186,9 @@ fn io(_: std::io::Error) -> Error {
 
 #[cfg(not(unix))]
 impl Binding {
+    pub fn same_origin(&self, _: &Self) -> Result<bool, Error> {
+        Err(Error::UnsafeStorage)
+    }
     pub fn control_before_initialization(_: &Path) -> Result<Self, Error> {
         Err(Error::UnsafeStorage)
     }

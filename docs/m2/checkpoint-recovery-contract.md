@@ -138,4 +138,9 @@ T-204 的策略 RESERVED 屏障与重开核验见 [策略 checkpoint](../contrac
 Broker 原租约、永久 ACK 核对、独立副本与新根恢复见 [Broker checkpoint](../contracts/broker-checkpoint.md)。
 Transport 原实例与固定状态导出见 [Transport checkpoint](../contracts/transport-checkpoint.md)。
 实际 SyncPlane 门禁、平面租约及 stage 封存见 [SyncPlane checkpoint](../contracts/sync-plane-checkpoint.md)。
-机制已验证，完整 Rust 生产协调器及 startup 接线仍未完成。
+启动层现已保留实际 canonical、SessionManager、原 SqliteAuditLedger、PolicyPlane、
+BoardPlane 与 SyncPlane，监听时把同一组源注入可信路由；无 canonical 写者不提供
+封存能力。备份请求绑定 owner 时，从实际 Board/Policy 取得身份库及固定附属审计链，
+两处都有时必须核对原目录与数据库 inode；换根、漏库或来源不一致均拒绝。
+这里没有新增公开端点、自动冻结或备份调度。生产来源标签、worker IPC/常驻运行、
+完整恢复及部署演练仍未完成，不能把启动源接线记作整条 Rust 链已可用。

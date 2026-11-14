@@ -87,6 +87,10 @@ impl Source {
     pub fn check(&self) -> Result<(), Error> {
         self.binding.check()
     }
+    /// 比较两份能力是否固定同一原目录和原库；任一来源已改变时拒绝，而非比较路径字符串。
+    pub fn same_origin(&self, other: &Self) -> Result<bool, Error> {
+        self.binding.same_origin(&other.binding)
+    }
 }
 
 /// 一个仍持有 RESERVED 锁的单库窗口；丢弃会关闭连接并回滚，不遗留持久锁。

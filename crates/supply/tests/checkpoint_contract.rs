@@ -202,3 +202,27 @@ fn paired_checkpoint_does_not_initialize_missing_audit_or_rebind_replaced_identi
     assert!(pair.freeze_store(deadline()).is_err());
     assert!(view.checkpoint_assembly().is_err());
 }
+
+#[test]
+fn shared_identity_assembly_also_requires_the_same_original_audit() {
+    let dir = directory();
+    drop(AgentStore::open(dir.path()).unwrap());
+    let audit = dir.path().join("audit");
+    fs::create_dir(&audit).unwrap();
+    fs::set_permissions(&audit, fs::Permissions::from_mode(0o700)).unwrap();
+    drop(SqliteAuditLedger::open(&audit).unwrap());
+    let view = AgentIdentityView::open_existing(dir.path()).unwrap();
+    let pair = view.checkpoint_assembly().unwrap();
+    assert!(
+        pair.same_origin(&view.checkpoint_assembly().unwrap())
+            .unwrap()
+    );
+    let retained = dir.path().join("old-audit");
+    fs::rename(&audit, &retained).unwrap();
+    fs::create_dir(&audit).unwrap();
+    fs::set_permissions(&audit, fs::Permissions::from_mode(0o700)).unwrap();
+    drop(SqliteAuditLedger::open(&audit).unwrap());
+    let replacement = view.checkpoint_assembly().unwrap();
+    assert!(pair.same_origin(&replacement).is_err());
+    assert!(replacement.same_origin(&pair).is_err());
+}
