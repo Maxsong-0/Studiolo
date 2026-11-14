@@ -19,6 +19,8 @@ use studiolo_local_server::backup::admission::BackupAdmission;
 use studiolo_local_server::backup::audit::BackupAuditPort;
 #[path = "backup_audit/admission.rs"]
 mod admission;
+#[path = "backup_audit/delivery.rs"]
+mod delivery;
 #[path = "backup_audit/fixture.rs"]
 mod fixture;
 const TARGET: BackupTargetKind = BackupTargetKind::DedicatedAppendOnlyTarget;

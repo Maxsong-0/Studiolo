@@ -50,9 +50,13 @@ impl BackupAuditPort {
                 return Err(AuditError::CorruptStore);
             }
         }
-        let record = match request.event() {
-            Some(event) => Some(self.admission.ledger.append(event.clone())?),
-            None => self.query_one(request.phase())?,
+        let record = if request.is_admission() {
+            Some(self.admission.receipt()?)
+        } else {
+            match request.event() {
+                Some(event) => Some(self.admission.ledger.append(event.clone())?),
+                None => self.query_one(request.phase())?,
+            }
         };
         request
             .encode_reply(record)

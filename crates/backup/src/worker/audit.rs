@@ -1,5 +1,7 @@
 //! 独立 worker 的封闭审计消息；字段与回执自洽不等于 peer 鉴权或作业获准。
+mod admission;
 mod codec;
+pub use admission::AdmissionFact;
 #[cfg(target_os = "linux")]
 pub mod transport;
 mod validation;
@@ -24,6 +26,7 @@ struct Fields {
 enum Command {
     Append { event: AuditEvent },
     Read { phase: AuditPhase },
+    Admission,
 }
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -33,6 +36,19 @@ struct Reply {
     record: Option<AuditRecord>,
 }
 impl BackupAuditRequest {
+    /// 只读这个作业的原准入回执；不给客户端签发或替换来源的能力。
+    pub fn admission(key: JobKey, target: BackupTargetKind) -> Self {
+        Self(Fields {
+            schema: 1,
+            key,
+            target,
+            command: Command::Admission,
+        })
+    }
+    /// 是否请求原准入回执；服务端仍须先核持久授权。
+    pub fn is_admission(&self) -> bool {
+        matches!(self.0.command, Command::Admission)
+    }
     /// 客户端在传输前校验事件：不能从通用 AuditLedger 端口偷渡其他动作、正文或主体。
     pub fn append(key: JobKey, target: BackupTargetKind, event: AuditEvent) -> Result<Self> {
         let request = Self(Fields {
@@ -80,13 +96,14 @@ impl BackupAuditRequest {
         match &self.0.command {
             Command::Append { event } => event.phase(),
             Command::Read { phase } => *phase,
+            Command::Admission => AuditPhase::Intent,
         }
     }
     /// 只有 Append 包含已验证的固定事件；Read 不获得追加能力。
     pub fn event(&self) -> Option<&AuditEvent> {
         match &self.0.command {
             Command::Append { event } => Some(event),
-            Command::Read { .. } => None,
+            Command::Read { .. } | Command::Admission => None,
         }
     }
     /// 服务端只返回本请求的完整原回执；无结果只允许用于 Read。
@@ -124,7 +141,7 @@ impl BackupAuditRequest {
     fn check_record(&self, record: Option<&AuditRecord>) -> Result<()> {
         self.validate()?;
         let Some(record) = record else {
-            return if self.event().is_none() {
+            return if self.event().is_none() && !self.is_admission() {
                 Ok(())
             } else {
                 Err(AuditMessageError::Invalid)
@@ -134,6 +151,15 @@ impl BackupAuditRequest {
         record
             .verify_integrity()
             .map_err(|_| AuditMessageError::Invalid)?;
+        if self.is_admission() {
+            let fact =
+                AdmissionFact::from_receipt(record).map_err(|_| AuditMessageError::Invalid)?;
+            return if fact.key() == self.key() && fact.target() == self.target() {
+                Ok(())
+            } else {
+                Err(AuditMessageError::Invalid)
+            };
+        }
         validation::event(record.event(), self.key(), self.target())?;
         if record.event().phase() != self.phase()
             || self.event().is_some_and(|e| e != record.event())

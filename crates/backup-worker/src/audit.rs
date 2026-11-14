@@ -7,7 +7,10 @@ use studiolo_audit_ledger::{
     AuditError, AuditEvent, AuditFilter, AuditLedger, AuditPhase, AuditRecord, OperationPermit,
 };
 use studiolo_backup::worker::{
-    audit::BackupAuditRequest, job::backup_intent, recovery_point::BackupTargetKind, state::JobKey,
+    audit::{AdmissionFact, BackupAuditRequest},
+    job::backup_intent,
+    recovery_point::BackupTargetKind,
+    state::JobKey,
 };
 
 /// 不持有任何审计库路径或连接；只能通过已批准的独立生产者核对这一个作业。
@@ -43,6 +46,13 @@ impl<'a> WorkerAuditClient<'a> {
             self.target,
             phase,
         ))
+    }
+    /// 真实生产者返回的原准入事实；正文使用方必须再核固定根和原有效期。
+    pub fn admitted_source(&self) -> Result<AdmissionFact, AuditError> {
+        let record = self
+            .exchange(BackupAuditRequest::admission(self.key.clone(), self.target))?
+            .ok_or(AuditError::CorruptStore)?;
+        AdmissionFact::from_receipt(&record)
     }
     fn exchange(&self, request: BackupAuditRequest) -> Result<Option<AuditRecord>, AuditError> {
         let deadline = self.deadline.min(Instant::now() + Duration::from_secs(10));

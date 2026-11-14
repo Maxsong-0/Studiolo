@@ -1,10 +1,9 @@
 //! 只由可信协调器批准实际封存；借原权威账本持久化，不引入第二份准入状态文件。
-mod record;
-use record::AdmissionRecord;
 use std::sync::Arc;
 use studiolo_audit_ledger::{
     AuditError, AuditEvent, AuditFilter, AuditLedger, AuditPhase, AuditRecord, SqliteAuditLedger,
 };
+use studiolo_backup::worker::audit::AdmissionFact;
 use studiolo_backup::{
     checkpoint::staging::{SealedCheckpoint, SealedReference},
     worker::{job::backup_intent, recovery_point::BackupTargetKind, state::JobKey},
@@ -14,7 +13,7 @@ use studiolo_core::checkpoint::InstantMillis;
 /// 已持久且绑定原账本的准入能力；请求消息不能反序列化或直接构造它。
 pub struct BackupAdmission {
     pub(super) ledger: Arc<SqliteAuditLedger>,
-    record: AdmissionRecord,
+    record: AdmissionFact,
 }
 impl BackupAdmission {
     /// 可信 L2/调度协调器在释放冻结窗口后调用；原 Intent 必须已落在本次封存链内。
@@ -25,13 +24,13 @@ impl BackupAdmission {
         target: BackupTargetKind,
         sealed: &SealedCheckpoint,
     ) -> Result<Self, AuditError> {
-        let record = AdmissionRecord::from_sealed(key, target, sealed)?;
+        let record = AdmissionFact::from_sealed(key, target, sealed)?;
         let _operation = ledger.enter_operation()?;
         record.check_live()?;
         verify_source(&ledger, &record)?;
         let event = record.event()?;
         let receipt = ledger.append(event.clone())?;
-        verify_receipt(&receipt, &event, record.audit_offset)?;
+        verify_receipt(&receipt, &event, record.audit_offset())?;
         record.check_live()?;
         Ok(Self {
             ledger: ledger.clone(),
@@ -46,10 +45,10 @@ impl BackupAdmission {
         target: BackupTargetKind,
     ) -> Result<Self, AuditError> {
         let _operation = ledger.enter_operation()?;
-        let receipt = query_one(&ledger, &AdmissionRecord::event_id(&key.checkpoint_id)?)?
+        let receipt = query_one(&ledger, &AdmissionFact::event_id(&key.checkpoint_id)?)?
             .ok_or(AuditError::Unavailable)?;
-        let record = AdmissionRecord::from_receipt(&receipt)?;
-        if record.key != *key || record.target != target {
+        let record = AdmissionFact::from_receipt(&receipt)?;
+        if record.key() != key || record.target() != target {
             return Err(AuditError::CorruptStore);
         }
         let admission = Self {
@@ -61,48 +60,55 @@ impl BackupAdmission {
     }
     /// 原批准作业；不能用新的 sequence 替换同一 checkpoint。
     pub fn key(&self) -> &JobKey {
-        &self.record.key
+        self.record.key()
     }
     /// 已批准的固定目标类别。
     pub fn target(&self) -> BackupTargetKind {
-        self.record.target
+        self.record.target()
     }
     /// 原封存摘要；worker 必须按此引用重开，不能扫描并选择最新目录。
     pub fn source(&self) -> &SealedReference {
-        &self.record.source
+        self.record.source()
     }
     /// 原正文销毁期限；续办不能延长。
     pub fn expires_at(&self) -> InstantMillis {
-        self.record.expires_at
+        self.record.expires_at()
     }
     /// 仅新交付正文要求仍在原期限内；纯远端核对和审计允许在过期后继续。
     pub fn check_live(&self) -> Result<(), AuditError> {
         self.record.check_live()
+    }
+    pub(super) fn receipt(&self) -> Result<AuditRecord, AuditError> {
+        let event = self.record.event()?;
+        let receipt = query_one(&self.ledger, event.event_id())?.ok_or(AuditError::Unavailable)?;
+        verify_receipt(&receipt, &event, self.record.audit_offset())?;
+        Ok(receipt)
     }
     pub(super) fn verify(&self) -> Result<(), AuditError> {
         verify_source(&self.ledger, &self.record)?;
         let expected = self.record.event()?;
         let receipt =
             query_one(&self.ledger, expected.event_id())?.ok_or(AuditError::Unavailable)?;
-        verify_receipt(&receipt, &expected, self.record.audit_offset)
+        verify_receipt(&receipt, &expected, self.record.audit_offset())
     }
 }
-fn verify_source(ledger: &SqliteAuditLedger, record: &AdmissionRecord) -> Result<(), AuditError> {
+fn verify_source(ledger: &SqliteAuditLedger, record: &AdmissionFact) -> Result<(), AuditError> {
     record.validate()?;
     let expected =
-        backup_intent(&record.key, record.target).map_err(|_| AuditError::Serialization)?;
+        backup_intent(record.key(), record.target()).map_err(|_| AuditError::Serialization)?;
     let intent = query_one(ledger, expected.event_id())?.ok_or(AuditError::Unavailable)?;
-    if intent.event() != &expected || intent.offset() > record.audit_offset {
+    if intent.event() != &expected || intent.offset() > record.audit_offset() {
         return Err(AuditError::CorruptStore);
     }
     let mut tails = ledger.query(
         &AuditFilter::default()
-            .after_offset(record.audit_offset - 1)
+            .after_offset(record.audit_offset() - 1)
             .with_limit(1),
     )?;
     let tail = tails.pop().ok_or(AuditError::CorruptStore)?;
     tail.verify_integrity()?;
-    if tail.offset() != record.audit_offset || tail.record_hash().to_hex() != record.audit_hash {
+    if tail.offset() != record.audit_offset() || tail.record_hash().to_hex() != record.audit_hash()
+    {
         return Err(AuditError::CorruptStore);
     }
     Ok(())

@@ -2,25 +2,37 @@ use crate::support::{source_violations, workspace_root};
 use std::{fs, path::Path};
 #[test]
 fn producer_requires_persistent_admission_original_intent_and_sealed_audit_tail() {
-    for (file, anchor) in [
-        ("audit.rs", "self.admission.verify()?;"),
-        ("admission.rs", "verify_source(&ledger, &record)?;"),
-        ("admission/record.rs", "now >= self.expires_at"),
+    for (crate_name, file, anchor) in [
+        (
+            "studiolo-local-server",
+            "crates/local-server/src/backup/audit.rs",
+            "self.admission.verify()?;",
+        ),
+        (
+            "studiolo-local-server",
+            "crates/local-server/src/backup/admission.rs",
+            "verify_source(&ledger, &record)?;",
+        ),
+        (
+            "studiolo-backup",
+            "crates/backup/src/worker/audit/admission.rs",
+            "now >= self.expires_at",
+        ),
+        (
+            "studiolo-backup",
+            "crates/backup/src/worker/audit.rs",
+            "fact.key() == self.key()",
+        ),
     ] {
-        let path = std::path::PathBuf::from("crates/local-server/src/backup").join(file);
+        let path = Path::new(file);
         let source = fs::read_to_string(workspace_root().join(&path)).unwrap();
         assert!(
-            source_violations("studiolo-local-server", &path, &source).is_empty(),
+            source_violations(crate_name, path, &source).is_empty(),
             "{file}"
         );
         assert!(source.contains(anchor), "{file}");
         assert!(
-            !source_violations(
-                "studiolo-local-server",
-                &path,
-                &source.replacen(anchor, "removed", 1)
-            )
-            .is_empty(),
+            !source_violations(crate_name, path, &source.replacen(anchor, "removed", 1)).is_empty(),
             "{file}"
         );
     }

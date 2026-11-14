@@ -10,6 +10,7 @@ pub(super) fn fixed_binding(path: &Path, source: &str) -> bool {
             "self.admission.ledger.enter_operation()?",
             "request.key()!=self.admission.key()",
             "request.target()!=self.admission.target()",
+            "Some(self.admission.receipt()?)",
         ]
     } else if path.ends_with("crates/local-server/src/backup/admission.rs") {
         &[
@@ -18,16 +19,16 @@ pub(super) fn fixed_binding(path: &Path, source: &str) -> bool {
             "verify_source(&ledger,&record)?;",
             "letreceipt=ledger.append(event.clone())?;",
             "admission.verify()?;",
-            "intent.event()!=&expected||intent.offset()>record.audit_offset",
-            "tail.offset()!=record.audit_offset||tail.record_hash().to_hex()!=record.audit_hash",
+            "intent.event()!=&expected||intent.offset()>record.audit_offset()",
+            "tail.offset()!=record.audit_offset()||tail.record_hash().to_hex()!=record.audit_hash()",
             "receipt.event()!=expected||receipt.offset()<=cutoff",
         ]
-    } else if path.ends_with("crates/local-server/src/backup/admission/record.rs") {
+    } else if path.ends_with("crates/backup/src/worker/audit/admission.rs") {
         &[
             "#[serde(deny_unknown_fields)]",
             "self.key.checkpoint_id!=self.source.checkpoint_id",
             "self.audit_offset==0",
-            "verify_receipt(receipt,&record.event()?,record.audit_offset)?;",
+            "receipt.event()!=&record.event()?||receipt.offset()<=record.audit_offset",
             "now<self.content_cutoff||now>=self.expires_at",
         ]
     } else if path.ends_with("crates/backup-worker/src/audit.rs") {
@@ -40,6 +41,14 @@ pub(super) fn fixed_binding(path: &Path, source: &str) -> bool {
             "BackupAuditRequest::append(self.key.clone(),self.target,event)",
             "filter.limit()!=Some(1)",
             "filter.event_id()!=Some(intent.event_id())",
+            "self.exchange(BackupAuditRequest::admission(self.key.clone(),self.target))?",
+            "AdmissionFact::from_receipt(&record)",
+        ]
+    } else if path.ends_with("crates/backup/src/worker/audit.rs") {
+        &[
+            "self.event().is_none()&&!self.is_admission()",
+            "AdmissionFact::from_receipt(record)",
+            "fact.key()==self.key()&&fact.target()==self.target()",
         ]
     } else if path.ends_with("crates/backup-worker/src/audit/endpoint.rs") {
         if source.matches("net::connect(").count() != 1
