@@ -40,7 +40,7 @@
 
 - 只做任务书里的这一件，不扩范围；任务书没点名的文件非改不可时，最小改动并在回执里说明。
 - 工作树里有别人的未提交改动是正常的：不 stash、不 checkout、不 reset、不 restore、不 clean；不用 `git status`／`git diff` 判断「谁改了什么」。
-- 用**最窄的证明**自检，但测试与编译**在哪跑看你在哪台机器**（对照表见第七节）。**Mac：所有测试与编译检查一律不在本机跑**（2026-09-23 用户硬约束），定向测试、fmt、clippy、build 都用 `scripts/test-linux.sh <命令>`（如 `scripts/test-linux.sh cargo --locked test -p <包> --test <目标>`）在服务器上跑，前端检查以 CI 为准。**DGX：子 agent 不跑任何测试与编译**（2026-10-04 用户拍板），把要跑的命令写进回执「验收自评」并标 `unverified`，由主会话最后统一跑。Cursor Cloud VM 见第六节。全量回归留给派发方；全量命令见 `README.md`「开发」段。
+- 用**最窄的证明**自检，但测试与编译**在哪跑看你在哪台机器**（对照表见第七节）。**Mac：所有测试与编译检查一律不在本机跑**（2026-09-23 用户硬约束），定向测试、fmt、clippy、build 都用 `scripts/test-linux.sh <命令>`（如 `scripts/test-linux.sh cargo --locked test -p <包> --test <目标>`）在服务器上跑，前端检查以 CI 为准。**DGX：子 agent 不跑任何测试与编译**（2026-10-04 用户拍板），把要跑的命令写进回执「验收自评」并标 `unverified`，由主会话最后统一跑；主会话在 DGX 上经本机登记的隔离测试入口（`testbox submit --project studiolo …`）提交，不在登录 shell 里裸跑（ADR-028）。Cursor Cloud VM 见第六节。全量回归留给派发方；全量命令见 `README.md`「开发」段。
 - 被卡就在回执里写明阻塞，不猜、不绕、不伪造闭环。
 - 临时产物放会话 scratchpad，用完清理自己产生的。
 
@@ -48,7 +48,7 @@
 
 - **CI 跑在专用服务器 `githubci`（192.168.100.107，Ubuntu x86_64）上的自托管 runner**，不再消耗 GitHub 托管分钟数。
   开关是仓库变量 `CI_RUNNER_LABELS`：存在即走自托管，删掉即回退 GitHub 托管。**不要自行改动或删除这个变量**——私有仓库的免费额度两天就能烧光。
-- **CI 是门槛，不是调试器**。推送前先把 Linux 那一半验完：Mac 上用 `scripts/test-linux.sh` 在服务器上跑，**Mac 本机不跑任何测试与编译检查**（`cargo test`／`fmt`／`clippy`／`build`、Python 契约、前端 tsc／lint／vitest／build、真实管线都算，2026-09-23 用户硬约束）；DGX 上由主会话在本机原生跑（第七节）；Cursor Cloud VM 用 `scripts/test-cursor-cloud.sh`（第六节）。
+- **CI 是门槛，不是调试器**。推送前先把 Linux 那一半验完：Mac 上用 `scripts/test-linux.sh` 在服务器上跑，**Mac 本机不跑任何测试与编译检查**（`cargo test`／`fmt`／`clippy`／`build`、Python 契约、前端 tsc／lint／vitest／build、真实管线都算，2026-09-23 用户硬约束）；DGX 上由主会话经本机登记的隔离测试入口提交（第七节，ADR-028）；Cursor Cloud VM 用 `scripts/test-cursor-cloud.sh`（第六节）。
   一个 runner 一次只跑一个作业，所有会话共用一条队列：反复小步推送等于让别人排队。攒成一次推送；不为 WIP 开 PR。
 - `push` 只对 `main` 触发，PR 走 `pull_request`，同一 PR 上被顶替的旧运行会自动取消。不要把触发改回 `branches: ["**"]`。
 - runner 离线或作业一直排队：先 `gh api repos/Maxsong-0/studiolo/actions/runners` 看状态并报告用户。它是共享服务，
@@ -89,7 +89,7 @@
 | Linux 回路入口 | `scripts/test-linux.sh [命令]`（同步到 `githubci` 跑） | 手动，按 `README.md`「开发」段「DGX 本机跑」 | `scripts/test-cursor-cloud.sh <命令>` |
 
 - DGX 是用户自己的 DGX Spark，仓库在 `~/All-Project/studiolo`（2026-10-03 从 Mac 原样拷来，之后两边各自干活、经 GitHub 推拉）。本地 `main` 可能落后，开工先 `git fetch`，从 `origin/main` 开分支。
-- 主会话按 `README.md`「开发」段「DGX 本机跑」在本机原生跑：umask 022、每个工作树一份 `CARGO_TARGET_DIR`（不用共享 `target/`）；
+- 主会话经本机登记的隔离测试入口（testbox，ADR-028）提交：结果要和 CI 同架构的交 x86_64 节点（`--arch x86_64`），要 aarch64 的留在 DGX；入口不可用时才按 `README.md`「开发」段「DGX 本机跑」手动跑：umask 022、每个工作树一份 `CARGO_TARGET_DIR`（不用共享 `target/`）；
   **全量回路整机一把锁**（`flock -n`，别的会话占着就退出，不等、不抢；锁文件与命令都在那一段）。`scripts/test-linux.sh` 的本机模式另有任务，落地前一律照那段手动跑。
 - DGX 不用第六节的 `scripts/test-cursor-cloud.sh`：`ulimit -l` 为 unlimited、`/tmp` 与家目录在同一块 ext4 上（2026-10-04 实测），那两类环境失败在这里不会出现；
   它还要免密 sudo，而 DGX 的 sudo 只有用户本人能输。缺工具就停下报告用户，不要自己下载执行安装脚本；工具链现状、aarch64 与 CI 的差别见 README 那一段。
