@@ -8,6 +8,7 @@ pub mod admission;
 pub mod audit;
 mod evidence;
 mod model;
+pub mod producer;
 
 pub use evidence::{BackupEvidence, BackupSnapshot};
 pub use model::{BackupSection, Severity};

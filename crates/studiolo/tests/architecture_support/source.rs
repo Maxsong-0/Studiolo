@@ -103,6 +103,7 @@ pub(crate) fn source_violations(
     let checked_source = super::admin::remainder(crate_name, source_path, &checked_source);
     let checked_source = vault_admin_remainder(crate_name, source_path, &checked_source);
     let checked_source = super::unix_ingress::remainder(crate_name, source_path, &checked_source);
+    let checked_source = backup_producer_remainder(crate_name, source_path, &checked_source);
     let checked_source = super::maintenance::remainder(crate_name, source_path, &checked_source);
     let checked_source = super::sync_bridge::remainder(crate_name, source_path, &checked_source);
     let checked_source = super::backup::remainder(crate_name, source_path, &checked_source);
@@ -349,4 +350,33 @@ fn private_storage_remainder(crate_name: &str, path: &Path, source: &str) -> Str
         remainder = remainder.replace("created_pin:Option<std::fs::File>,", "");
     }
     remainder
+}
+
+fn backup_producer_remainder(crate_name: &str, path: &Path, source: &str) -> String {
+    if crate_name != "studiolo-local-server"
+        || !path.ends_with("crates/local-server/src/backup/producer.rs")
+    {
+        return source.to_owned();
+    }
+    let compact = source.split_whitespace().collect::<String>();
+    let anchors = [
+        "constCONFIG_PATH:&str=\"/etc/studiolo/backup-producer.json\";",
+        "uid!=0",
+        "mode&0o022!=0",
+    ];
+    let calls = [
+        "std::fs::symlink_metadata(CONFIG_PATH)",
+        "std::fs::read(CONFIG_PATH)",
+    ];
+    if anchors.iter().any(|anchor| !compact.contains(anchor))
+        || calls.iter().any(|call| compact.matches(call).count() != 1)
+        || compact.matches("std::fs::").count() != 2
+    {
+        return compact;
+    }
+    let mut rest = compact.clone();
+    for call in calls {
+        rest = rest.replacen(call, "", 1);
+    }
+    if rest.contains("fs::") { compact } else { rest }
 }
