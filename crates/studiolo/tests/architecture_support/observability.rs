@@ -22,7 +22,7 @@ pub(super) fn remainder(crate_name: &str, path: &Path, source: &str) -> String {
         }
     }
     rest.replace(
-        "userustix::fs::{AtFlags,FileType,Mode,OFlags,fstat,fsync,open,openat,renameat,unlinkat};",
+        "userustix::fs::{AtFlags,FileType,FlockOperation,Mode,OFlags,flock,fstat,fsync,open,openat,renameat,unlinkat,};",
         "",
     )
 }

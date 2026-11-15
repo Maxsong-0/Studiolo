@@ -191,3 +191,76 @@ fn 真实账本和状态目录连起来按位置往后发且重开后接着发()
     );
     assert_eq!(recorder.0.lock().unwrap().len(), 3);
 }
+
+/// 发送时去试一次备份封存（独占排空），记下结果。
+struct FreezeProbe<'a> {
+    ledger: &'a SqliteAuditLedger,
+    frozen_during_post: Mutex<Vec<bool>>,
+}
+
+impl DoorbellTransport for FreezeProbe<'_> {
+    fn endpoint_tag(&self) -> Result<String, PostError> {
+        Ok("00000000000000aa".into())
+    }
+
+    fn link(&self) -> Option<&str> {
+        None
+    }
+
+    fn post(&self, _: &str, _: i64, _: &[u8]) -> Result<(), PostError> {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_millis(100);
+        let frozen = self.ledger.quiesce_operations(deadline).is_ok();
+        self.frozen_during_post.lock().unwrap().push(frozen);
+        Ok(())
+    }
+}
+
+#[test]
+fn 发送途中备份封存排不空而封存期间一条都不发() {
+    let fixture = fixture();
+    let ledger = SqliteAuditLedger::open(&fixture.audit).expect("账本必须可创建");
+    let store = DoorbellStore::open(&fixture.state).expect("私有目录必须可绑定");
+    let probe = FreezeProbe {
+        ledger: &ledger,
+        frozen_during_post: Mutex::new(Vec::new()),
+    };
+    assert_eq!(
+        run(&ledger, &store, &probe, now()).unwrap().outcome,
+        RunOutcome::Enabled
+    );
+    task(&ledger, 1);
+    assert_eq!(run(&ledger, &store, &probe, now()).unwrap().delivered, 1);
+    // 意图已记、请求在途时，这条事件还握着操作许可：封存必须等它做完。
+    assert_eq!(*probe.frozen_during_post.lock().unwrap(), [false]);
+
+    // 反过来：封存占着的时候，门铃取不到许可，整条不开始。
+    task(&ledger, 2);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    let frozen = ledger
+        .quiesce_operations(deadline)
+        .expect("空闲时封存必须成功");
+    let recorder = Recorder(Mutex::new(Vec::new()));
+    assert_eq!(
+        run(&ledger, &store, &recorder, now()),
+        Err(RunError::AuditUnavailable)
+    );
+    assert!(recorder.0.lock().unwrap().is_empty());
+    drop(frozen);
+    assert_eq!(run(&ledger, &store, &recorder, now()).unwrap().delivered, 1);
+}
+
+#[test]
+fn 同一个状态目录同一时间只让一个门铃进程打开() {
+    let fixture = fixture();
+    let first = DoorbellStore::open(&fixture.state).expect("私有目录必须可绑定");
+    first.save(&sample()).expect("保存必须成功");
+    // 第二个打开者（另一个进程，或同进程的另一个句柄）直接让开，不等待、不读不写。
+    assert_eq!(
+        DoorbellStore::open(&fixture.state).err(),
+        Some(StoreError::Busy)
+    );
+    first.save(&sample()).expect("持有者照常保存");
+    drop(first);
+    let second = DoorbellStore::open(&fixture.state).expect("放下之后可以再打开");
+    assert_eq!(second.load(), Ok(Some(sample())));
+}

@@ -6,6 +6,10 @@
 //! 核对目录 0700、文件 0600、当前 EUID 与单链接；写入走"暂存件 → fsync → renameat →
 //! fsync 目录"的完整替换，读侧再靠文档内校验和判定撕裂，两层一起保证半写一律失败关闭。
 //!
+//! 暂存件的名字是固定的，所以两个进程不能同时替换同一份状态：后来的会删掉先到者的暂存件，
+//! 再被对方把自己的空文件改名成正式状态。整段替换拿目录上的 `flock` 串行；门铃的存储
+//! 从打开到放下一直独占这把锁，同一个状态目录同一时间只有一个门铃进程在跑。
+//!
 //! 不对抗可信父目录被同 UID 管理员恶意更名的 ABA；不导出任何文件能力。
 
 use super::{StoreError, doorbell_state, state};
@@ -41,7 +45,10 @@ const DOORBELL: Names = Names {
 };
 
 #[cfg(unix)]
-use rustix::fs::{AtFlags, FileType, Mode, OFlags, fstat, fsync, open, openat, renameat, unlinkat};
+use rustix::fs::{
+    AtFlags, FileType, FlockOperation, Mode, OFlags, flock, fstat, fsync, open, openat, renameat,
+    unlinkat,
+};
 
 /// 绑定到一个已存在私有目录的死人开关状态存储。
 pub struct DeadmanStore {
@@ -68,6 +75,19 @@ struct Root {
     root: rustix::fd::OwnedFd,
     root_path: PathBuf,
     owner: u32,
+    /// 打开时就独占了目录锁、一直持到放下；为假时每次替换各拿一次。
+    exclusive: bool,
+}
+
+/// 替换期间持有的目录锁；放下即解锁。
+#[cfg(unix)]
+struct Serial<'a>(&'a rustix::fd::OwnedFd);
+
+#[cfg(unix)]
+impl Drop for Serial<'_> {
+    fn drop(&mut self) {
+        let _ = flock(self.0, FlockOperation::Unlock);
+    }
 }
 
 #[cfg(unix)]
@@ -75,7 +95,7 @@ impl DeadmanStore {
     /// 绑定已存在的私有目录；不创建目录，也不修复权限。
     pub fn open(root: &Path) -> Result<Self, StoreError> {
         Ok(Self {
-            root: Root::open(root)?,
+            root: Root::open(root, false)?,
         })
     }
 
@@ -102,10 +122,13 @@ impl DeadmanStore {
 
 #[cfg(unix)]
 impl DoorbellStore {
-    /// 绑定已存在的私有目录；不创建目录，也不修复权限。
+    /// 绑定已存在的私有目录并独占它，直到本值放下；不创建目录，也不修复权限。
+    ///
+    /// 另一个进程正开着同一个目录时返回 [`StoreError::Busy`]，不等待：定时器和手动运行撞上时，
+    /// 后到的那个直接让开，不会两边各读各写、互相盖掉位置和退避。
     pub fn open(root: &Path) -> Result<Self, StoreError> {
         Ok(Self {
-            root: Root::open(root)?,
+            root: Root::open(root, true)?,
         })
     }
 
@@ -132,15 +155,37 @@ impl DoorbellStore {
 
 #[cfg(unix)]
 impl Root {
-    fn open(root: &Path) -> Result<Self, StoreError> {
+    fn open(root: &Path, exclusive: bool) -> Result<Self, StoreError> {
         let owner = caller()?;
         let handle = walk(root)?;
         directory(&handle, owner)?;
+        if exclusive {
+            match flock(&handle, FlockOperation::NonBlockingLockExclusive) {
+                Ok(()) => {}
+                Err(rustix::io::Errno::WOULDBLOCK) => return Err(StoreError::Busy),
+                Err(_) => return Err(StoreError::Unavailable),
+            }
+        }
         Ok(Self {
             root: handle,
             root_path: root.to_owned(),
             owner,
+            exclusive,
         })
+    }
+
+    /// 没有整段独占时，替换前等到目录锁；锁随返回值放下。
+    fn serial(&self) -> Result<Option<Serial<'_>>, StoreError> {
+        if self.exclusive {
+            return Ok(None);
+        }
+        loop {
+            match flock(&self.root, FlockOperation::LockExclusive) {
+                Ok(()) => return Ok(Some(Serial(&self.root))),
+                Err(rustix::io::Errno::INTR) => {}
+                Err(_) => return Err(StoreError::Unavailable),
+            }
+        }
     }
 
     /// 读出固定状态文件的全部字节；不存在返回 `Ok(None)`。
@@ -181,6 +226,7 @@ impl Root {
 
     /// 暂存件 → fsync → renameat → fsync 目录；中途失败只留下暂存件。
     fn replace(&self, names: Names, bytes: &[u8]) -> Result<(), StoreError> {
+        let _serial = self.serial()?;
         self.check()?;
         // 上一轮崩在中途留下的暂存件必须先清掉，再独占创建，避免复用陌生对象。
         match unlinkat(&self.root, names.stage, AtFlags::empty()) {

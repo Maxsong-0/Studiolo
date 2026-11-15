@@ -278,3 +278,39 @@ fn 跨重启恢复的幂等键被调度器识别为已送达因而不重复打�
     );
     assert_eq!(transport.calls(), 0);
 }
+
+#[test]
+fn 两个写者同时替换时每次保存都完整成功() {
+    // 暂存件的名字是固定的：不串行的话，后来的写者会删掉先到者的暂存件（先到者改名失败），
+    // 或者自己刚建的空文件被对方改名成正式状态（读到撕裂）。
+    let fixture = fixture();
+    let writers: Vec<_> = (0..2_u64)
+        .map(|writer| {
+            let root = fixture.root.clone();
+            std::thread::spawn(move || {
+                let store = DeadmanStore::open(&root).expect("私有目录必须可绑定");
+                for round in 0..200 {
+                    let value = DeadmanState {
+                        episode: writer,
+                        dispatch_round: round,
+                        ..state()
+                    };
+                    store.save(&value).expect("并发保存也必须成功");
+                    let loaded = store.load().expect("任何时刻读到的都是完整状态");
+                    assert!(loaded.is_some());
+                }
+            })
+        })
+        .collect();
+    for writer in writers {
+        writer.join().expect("写者线程不该崩溃");
+    }
+    let store = DeadmanStore::open(&fixture.root).expect("私有目录必须可绑定");
+    let last = store.load().expect("最终状态必须完整").expect("必须有状态");
+    assert_eq!(last.dispatch_round, 199);
+    let names: Vec<_> = fs::read_dir(&fixture.root)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().into_string().unwrap())
+        .collect();
+    assert_eq!(names, [STATE_FILE_NAME]);
+}

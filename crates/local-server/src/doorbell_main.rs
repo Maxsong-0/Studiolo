@@ -10,7 +10,7 @@ use std::{
 use studiolo_audit_ledger::SqliteAuditLedger;
 use studiolo_observability::{
     doorbell::{HttpEndpoint, RunError, RunOutcome, RunSummary, run},
-    store::DoorbellStore,
+    store::{DoorbellStore, StoreError},
 };
 
 #[derive(Debug, PartialEq, Eq)]
@@ -85,7 +85,12 @@ fn execute() -> Result<String, &'static str> {
     // 只开已有的账本和状态目录；门铃不创建、不修复任何一个。
     let ledger = SqliteAuditLedger::open_existing(Path::new(&request.audit))
         .map_err(|_| "私有审计库不可用")?;
-    let store = DoorbellStore::open(Path::new(&request.state)).map_err(|_| "私有状态目录不可用")?;
+    let store = match DoorbellStore::open(Path::new(&request.state)) {
+        Ok(store) => store,
+        // 定时器和手动运行撞上：后到的让开，不算失败。
+        Err(StoreError::Busy) => return Ok("busy".into()),
+        Err(_) => return Err("私有状态目录不可用"),
+    };
     let now_ms = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .ok()

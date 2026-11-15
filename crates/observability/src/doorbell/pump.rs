@@ -3,6 +3,9 @@
 //! 顺序是硬约束：先写 Intent 审计，写不进去就**不发**；发完再写 Outcome；送到了才往前挪位置。
 //! 前一条没送到，后面的不发，整条通道一起退避。本模块不睡眠、不起线程、不读时钟，
 //! 「现在几点」由调用方传入，重试靠定时器下一次拉起。
+//!
+//! 「送到没有」以账本里的结果记录为准，状态文件只是位置和退避的缓存：状态没存上就崩溃、
+//! 甚至状态文件丢了，重扫时送到过的不重发，没送到的不会被跳过。每条事件全程持账本的操作许可。
 
 use super::{DoorbellEvent, DoorbellTransport, PostError, classify};
 use crate::store::{DoorbellStore, StoreError};
@@ -26,6 +29,10 @@ const MAX_DELIVERIES_PER_RUN: u32 = 32;
 const BACKOFF_MINUTES: [i64; 6] = [0, 5, 30, 120, 300, 600];
 /// 同一条事件在账本里最多找多少个已用过的轮次编号。
 const MAX_ATTEMPT_PROBES: u32 = 64;
+/// 启用标记的固定事件编号。
+const ENABLED_EVENT_ID: &str = "doorbell-enabled";
+/// 过期记录占用的轮次名（不是数字，和发送轮次不会撞）。
+const EXPIRED_ROUND: &str = "expired";
 
 /// 门铃的持久状态。
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -132,8 +139,12 @@ pub fn run(
         expired: 0,
     };
     let Some(mut state) = store.load()? else {
-        // 启用本身进审计；这条记录的位置就是起点，之前的历史不补发。
-        let enabled = ledger.append(enabled_event(now_ms)?)?;
+        // 启用本身进审计，这条记录的位置就是起点，之前的历史不补发。事件编号固定：
+        // 记了启用却没存下状态（崩溃，或状态文件后来丢了）时，重试拿回的是原来那条记录，
+        // 位置回到原起点重新扫一遍。送到过、过期过的账本里都有结论，不会重发；
+        // 两次之间新来的事件也不会被一个更晚的起点跳过去。
+        let _operation = ledger.enter_operation()?;
+        let enabled = ledger.append(enabled_event()?)?;
         store.save(&DoorbellState {
             cursor: enabled.offset(),
             attempts: 0,
@@ -181,31 +192,62 @@ pub fn run(
                 store.save(&state)?;
                 saved = state.cursor;
             }
-            if now_ms.saturating_sub(event.occurred_at_ms()) > MAX_EVENT_AGE_MS {
-                ledger.append(dispatch_event(
-                    &event,
-                    "expired",
-                    AuditPhase::Outcome,
-                    "expired",
-                )?)?;
-                summary.expired += 1;
-            } else if summary.delivered == MAX_DELIVERIES_PER_RUN {
-                break 'pages;
-            } else {
-                match deliver(ledger, transport, &event, state.attempts, now_ms)? {
-                    Ok(()) => summary.delivered += 1,
-                    Err(PostError::Gone) => {
+            // 一条事件从查账、记意图、发送、记结果到存位置是一次完整操作，全程持操作许可
+            // （`AuditLedger::enter_operation` 的调用方义务）：备份封存要么等这一条做完，
+            // 要么让它整条不开始。许可一条一拿，不跨事件，封存最多等一次发送的超时。
+            let _operation = ledger.enter_operation()?;
+            match plan(ledger, &event, state.attempts, now_ms)? {
+                Plan::Settled => {}
+                Plan::Expire => {
+                    ledger.append(dispatch_event(
+                        &event,
+                        EXPIRED_ROUND,
+                        AuditPhase::Outcome,
+                        "expired",
+                    )?)?;
+                    summary.expired += 1;
+                }
+                Plan::Send(_) if summary.delivered == MAX_DELIVERIES_PER_RUN => break 'pages,
+                Plan::Send(round) => {
+                    let round = round.to_string();
+                    ledger.append(dispatch_event(
+                        &event,
+                        &round,
+                        AuditPhase::Intent,
+                        "intent",
+                    )?)?;
+                    let result = transport.post(
+                        event.message_id(),
+                        now_ms.div_euclid(1000),
+                        &event.body(transport.link()),
+                    );
+                    if result == Err(PostError::Gone) {
+                        // 先存「停用」再记结果。反过来的话，记了结果、没存状态就崩溃，
+                        // 重跑会换一个轮次，再去敲一次已经说不要了的门。
                         state.gone = true;
                         store.save(&state)?;
-                        summary.outcome = RunOutcome::EndpointGone;
-                        return Ok(summary);
                     }
-                    Err(error) => {
-                        state.attempts = state.attempts.saturating_add(1);
-                        state.retry_at_ms = now_ms.saturating_add(backoff_ms(state.attempts));
-                        store.save(&state)?;
-                        summary.outcome = RunOutcome::Deferred(error.classification());
-                        return Ok(summary);
+                    let classification =
+                        result.map_or_else(PostError::classification, |()| "delivered");
+                    ledger.append(dispatch_event(
+                        &event,
+                        &round,
+                        AuditPhase::Outcome,
+                        classification,
+                    )?)?;
+                    match result {
+                        Ok(()) => summary.delivered += 1,
+                        Err(PostError::Gone) => {
+                            summary.outcome = RunOutcome::EndpointGone;
+                            return Ok(summary);
+                        }
+                        Err(error) => {
+                            state.attempts = state.attempts.saturating_add(1);
+                            state.retry_at_ms = now_ms.saturating_add(backoff_ms(state.attempts));
+                            store.save(&state)?;
+                            summary.outcome = RunOutcome::Deferred(error.classification());
+                            return Ok(summary);
+                        }
                     }
                 }
             }
@@ -225,49 +267,61 @@ pub fn run(
     Ok(summary)
 }
 
-/// 发一条：审计先行；外层错误是审计不可用（一次都没发，或结果没记上），内层是投递结论。
-fn deliver(
+/// 对一条白名单事件接下来该做什么。
+enum Plan {
+    /// 账本里已有定论（送到过，或记过过期）：只把位置挪过去，不发也不再记。
+    Settled,
+    /// 超过年龄上限还没送出去：记一条过期，跳过。
+    Expire,
+    /// 用这个轮次编号发一次。
+    Send(u32),
+}
+
+/// 账本是「送到没有」的权威，状态文件只是位置：上一次运行可能已经发了、只是没来得及存状态
+/// 就退出了，状态文件丢了重扫时也一样。送到过的不再发；没送到的换下一个轮次编号，
+/// 不去改写已有的审计。
+fn plan(
     ledger: &dyn AuditLedger,
-    transport: &dyn DoorbellTransport,
     event: &DoorbellEvent,
     attempts: u32,
     now_ms: i64,
-) -> Result<Result<(), PostError>, AuditError> {
-    // 上一次运行可能已经发了、只是没来得及记状态就退出了：账本里这一轮已有结果的，
-    // 送到了就不再发；没送到的换下一个轮次编号，不去改写已有的审计。
+) -> Result<Plan, AuditError> {
     let mut round = attempts;
-    loop {
-        let recorded = ledger.query(
-            &AuditFilter::default()
-                .with_event_id(dispatch_id(event, &round.to_string())?)
-                .with_phase(AuditPhase::Outcome),
-        )?;
-        let Some(outcome) = recorded.first() else {
-            break;
-        };
-        if outcome.event().payload().as_value()["classification"] == "delivered" {
-            return Ok(Ok(()));
+    while let Some(classification) = recorded(ledger, event, &round.to_string())? {
+        if classification == "delivered" {
+            return Ok(Plan::Settled);
         }
         round = round.checked_add(1).ok_or(AuditError::Unavailable)?;
         if round - attempts > MAX_ATTEMPT_PROBES {
             return Err(AuditError::Unavailable);
         }
     }
-    let round = round.to_string();
-    ledger.append(dispatch_event(event, &round, AuditPhase::Intent, "intent")?)?;
-    let result = transport.post(
-        event.message_id(),
-        now_ms.div_euclid(1000),
-        &event.body(transport.link()),
-    );
-    let classification = result.map_or_else(PostError::classification, |()| "delivered");
-    ledger.append(dispatch_event(
-        event,
-        &round,
-        AuditPhase::Outcome,
-        classification,
-    )?)?;
-    Ok(result)
+    if recorded(ledger, event, EXPIRED_ROUND)?.is_some() {
+        return Ok(Plan::Settled);
+    }
+    if now_ms.saturating_sub(event.occurred_at_ms()) > MAX_EVENT_AGE_MS {
+        return Ok(Plan::Expire);
+    }
+    Ok(Plan::Send(round))
+}
+
+/// 这条事件在某个轮次上已经记下的结论；没有结果记录返回 `None`。
+fn recorded(
+    ledger: &dyn AuditLedger,
+    event: &DoorbellEvent,
+    round: &str,
+) -> Result<Option<String>, AuditError> {
+    let outcome = ledger.query(
+        &AuditFilter::default()
+            .with_event_id(dispatch_id(event, round)?)
+            .with_phase(AuditPhase::Outcome),
+    )?;
+    Ok(outcome.first().map(|record| {
+        record.event().payload().as_value()["classification"]
+            .as_str()
+            .unwrap_or_default()
+            .to_owned()
+    }))
 }
 
 fn backoff_ms(failures: u32) -> i64 {
@@ -303,12 +357,13 @@ fn dispatch_event(
     ))
 }
 
-fn enabled_event(now_ms: i64) -> Result<AuditEvent, AuditError> {
+/// 启用标记：编号和载荷都固定，重复追加拿回的是第一次那条记录（启用时间看记录自己的时间）。
+fn enabled_event() -> Result<AuditEvent, AuditError> {
     Ok(AuditEvent::new(
-        AuditEventId::parse(format!("doorbell-enabled-{now_ms}"))?,
+        AuditEventId::parse(ENABLED_EVENT_ID)?,
         AuditPhase::Outcome,
         DOORBELL_ENABLED_ACTION,
-        SanitizedPayload::try_from(serde_json::json!({ "enabled_at_ms": now_ms }))?,
+        SanitizedPayload::try_from(serde_json::json!({ "schema": 1 }))?,
     ))
 }
 
