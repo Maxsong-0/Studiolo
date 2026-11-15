@@ -61,6 +61,7 @@ fn assert_blocked(broker: &mut FsVaultBroker) {
         fence: crate::Fence::new(1).unwrap(),
         audit_intent: "fixture".into(),
         idempotency_key: "artifacts".into(),
+        provenance: crate::granted_provenance(),
         artifacts: vec![crate::ArtifactCandidate {
             name: path("out.md"),
             content: b"artifact".to_vec(),

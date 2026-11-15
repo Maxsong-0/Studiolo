@@ -2,7 +2,10 @@
 use sha2::{Digest, Sha256};
 use studiolo_audit_ledger::{AuditFilter, AuditLedger, MemoryAuditLedger};
 use studiolo_control_db::{ControlDb, TaskStatus};
-use studiolo_core::{TaskId, VaultPath, VaultUuid};
+use studiolo_core::{
+    ArtifactProvenance, BackupScope, Classification, DataLabels, DesktopSync, ModelEgress,
+    SourcePolicyRef, TaskId, VaultPath, VaultUuid,
+};
 use studiolo_runner_adapter::{PatchMetadata, RunnerArtifact, RunnerReport};
 use studiolo_task_engine::*;
 use studiolo_vault_broker::*;
@@ -107,7 +110,37 @@ fn claimed() -> (
     let claim = engine
         .claim_board_task(task, "runner-instance", 1000, 1)
         .unwrap();
+    grant_board(&mut engine, task, &claim);
     (engine, task, claim)
+}
+
+fn grant_board<B, L>(engine: &mut PersistentTaskEngine<B, L>, task: TaskId, claim: &BoardClaim)
+where
+    B: VaultBroker + ArtifactStager,
+    L: AuditLedger,
+{
+    engine
+        .authorize_artifacts(
+            task,
+            claim.attempt.attempt_id,
+            claim.attempt.fence,
+            &claim.attempt.snapshot_id,
+            &ArtifactProvenance::new(
+                SourcePolicyRef::new("fixture-source", "a".repeat(64)).unwrap(),
+                DataLabels::new(
+                    Classification::Restricted,
+                    BackupScope::Full,
+                    DesktopSync::Deny,
+                    ModelEgress::Deny,
+                )
+                .unwrap(),
+                4_000_000_000,
+                "b".repeat(64),
+            )
+            .unwrap(),
+            1,
+        )
+        .unwrap();
 }
 
 struct LostManifestAck {
@@ -186,6 +219,7 @@ fn manifest_ack_crash_recovers_candidates_into_needs_review_without_running_cli(
     let claim = engine
         .claim_board_task(task, "runner-instance", 1000, 1)
         .unwrap();
+    grant_board(&mut engine, task, &claim);
     let report = report(&claim, b"diff --git a/src/a b/src/a\n+safe\n");
     assert!(matches!(
         engine.stage_board_runner_candidates(report.clone(), 2),

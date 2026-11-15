@@ -17,7 +17,10 @@ use studiolo_audit_ledger::{
     AuditError, AuditEvent, AuditFilter, AuditLedger, AuditRecord, SqliteAuditLedger,
 };
 use studiolo_control_db::ControlDb;
-use studiolo_core::{AttemptId, PermissionSet, TaskId, ToolId, VaultPath};
+use studiolo_core::{
+    ArtifactProvenance, AttemptId, BackupScope, Classification, DataLabels, DesktopSync,
+    ModelEgress, PermissionSet, SourcePolicyRef, TaskId, ToolId, VaultPath,
+};
 use studiolo_gateway::{
     AttemptGuard, AttemptGuardError, AttemptSnapshot, Clock, JobCapability, PermissionLayers,
 };
@@ -209,13 +212,32 @@ fn main() -> Result<()> {
         now() * 1000,
     )?;
     engine.command(task, TaskCommand::Run, now() * 1000)?;
+    let stamped = now();
     let claimed = engine
         .claim(ClaimRequest {
             worker_id: "demo-stub".into(),
-            now_ms: now() * 1000,
-            lease_until_ms: (now() + 120) * 1000,
+            now_ms: stamped * 1000,
+            lease_until_ms: (stamped + 120) * 1000,
         })?
         .ok_or("Demo task did not claim")?;
+    engine.authorize_artifacts(
+        task,
+        claimed.run_spec.attempt_id,
+        claimed.run_spec.fence,
+        &claimed.snapshot_id,
+        &ArtifactProvenance::new(
+            SourcePolicyRef::new("demo-source", "a".repeat(64))?,
+            DataLabels::new(
+                Classification::Restricted,
+                BackupScope::Full,
+                DesktopSync::Deny,
+                ModelEgress::Deny,
+            )?,
+            stamped.saturating_add(86_400),
+            "b".repeat(64),
+        )?,
+        stamped.saturating_mul(1000),
+    )?;
     let web = DemoWeb::start()?;
     let gateway = Arc::new(DemoGateway::open(
         DemoGatewayConfig {

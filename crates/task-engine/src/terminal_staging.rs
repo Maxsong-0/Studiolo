@@ -4,10 +4,15 @@ use studiolo_vault_broker::StagedArtifactCommit;
 
 impl<B: VaultBroker + ArtifactStager, L: AuditLedger> PersistentTaskEngine<B, L> {
     pub(super) fn stage_reservation(
-        &self,
+        &mut self,
         event: &AuditEventId,
         report: &RunnerReport,
     ) -> Result<TerminalReservation, TaskEngineError> {
+        let provenance = self.bound_provenance(&AttemptIdentity {
+            task_id: report.task_id,
+            attempt_id: report.attempt_id,
+            fence: report.fence,
+        })?;
         let commit = ArtifactCommit {
             task_id: report.task_id,
             attempt_id: report.attempt_id,
@@ -22,6 +27,7 @@ impl<B: VaultBroker + ArtifactStager, L: AuditLedger> PersistentTaskEngine<B, L>
                     content: a.content.clone(),
                 })
                 .collect(),
+            provenance,
         };
         let pointer = self
             .broker
@@ -65,7 +71,51 @@ impl<B: VaultBroker + ArtifactStager, L: AuditLedger> PersistentTaskEngine<B, L>
         Ok(CommitPlan {
             event_id: AuditEventId::parse(commit.audit_intent).map_err(map_audit)?,
             artifacts: commit.artifacts,
+            staged_provenance: Some(commit.provenance),
         })
+    }
+
+    /// 来源只取原批准和原账本。报告里没有授权字段，旧 attempt 缺记录时不补完整范围。
+    pub(super) fn bound_provenance(
+        &mut self,
+        attempt: &AttemptIdentity,
+    ) -> Result<ArtifactProvenance, TaskEngineError> {
+        self.deliver_runtime_audits()?;
+        let stored = self
+            .control_db
+            .artifact_provenance(attempt.task_id, attempt.attempt_id, attempt.fence)
+            .map_err(map_db)?
+            .ok_or_else(|| {
+                TaskEngineError::Integrity("旧 attempt 没有产物批准，不能补成完整范围".into())
+            })?;
+        let expected = self
+            .control_db
+            .artifact_approval_event(attempt.task_id, attempt.attempt_id, attempt.fence)
+            .map_err(map_db)?
+            .ok_or_else(|| TaskEngineError::Integrity("原账本缺少产物批准事实".into()))?;
+        let mut records = self
+            .audit_ledger
+            .query(
+                &AuditFilter::default()
+                    .with_event_id(expected.event_id().clone())
+                    .with_limit(2),
+            )
+            .map_err(map_audit)?;
+        let Some(record) = records.pop() else {
+            return Err(TaskEngineError::Integrity(
+                "原账本的产物批准不是唯一事实".into(),
+            ));
+        };
+        if !records.is_empty() {
+            return Err(TaskEngineError::Integrity(
+                "原账本的产物批准不是唯一事实".into(),
+            ));
+        }
+        record.verify_integrity().map_err(map_audit)?;
+        if record.event() != &expected {
+            return Err(TaskEngineError::Integrity("原账本与原批准不一致".into()));
+        }
+        Ok(stored)
     }
 
     /// 返回已安全迁入内容面 staging 的旧预留数量。
@@ -76,7 +126,13 @@ impl<B: VaultBroker + ArtifactStager, L: AuditLedger> PersistentTaskEngine<B, L>
                 .terminal
                 .as_ref()
                 .ok_or_else(|| TaskEngineError::Integrity("legacy reservation missing".into()))?;
-            let plan = decode_plan(&prior_identity(attempt), prior)?;
+            let identity = prior_identity(attempt);
+            let plan = decode_plan(&identity, prior)?;
+            if plan.staged_provenance.is_some() {
+                return Err(TaskEngineError::Integrity(
+                    "旧内联预留不能自带完整范围".into(),
+                ));
+            }
             let commit = ArtifactCommit {
                 task_id: attempt.task_id,
                 attempt_id: attempt.attempt_id,
@@ -84,6 +140,7 @@ impl<B: VaultBroker + ArtifactStager, L: AuditLedger> PersistentTaskEngine<B, L>
                 audit_intent: plan.event_id.to_string(),
                 idempotency_key: format!("task-engine:{}:{}", attempt.attempt_id, plan.event_id),
                 artifacts: plan.artifacts,
+                provenance: self.bound_provenance(&identity)?,
             };
             let pointer = self
                 .broker

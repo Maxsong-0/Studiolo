@@ -2,6 +2,8 @@
 
 #![cfg(unix)]
 
+#[path = "common/provenance.rs"]
+mod granted;
 #[path = "writer/history.rs"]
 mod history;
 #[path = "writer/legacy.rs"]
