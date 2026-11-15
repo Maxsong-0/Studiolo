@@ -13,7 +13,7 @@ export interface ViewLocation {
    * 默认面板记作 null。
    */
   panel: string | null;
-  /** 面板内选中的条目：如执行任务 id、策略版本号、在编辑的规则名（subject）。 */
+  /** 面板内选中的条目：如执行任务 id、策略版本号、在编辑的规则名（subject）、文档视图里阅读器在看的文件路径。 */
   item: string | null;
 }
 
@@ -88,6 +88,11 @@ function slotValue(value: string | null): string | null {
   const trimmed = value.trim();
   if (!trimmed || trimmed.length > slotLimit) return null;
   return control.test(trimmed) ? null : trimmed;
+}
+
+/** 这个值能不能原样放进一格：超长、带控制字符或首尾带空白的放不进去，调用方得另想办法记住它。 */
+export function locatable(value: string): boolean {
+  return slotValue(value) === value;
 }
 
 /** 解析 hash 中的视图位置；旧视图名先迁移，未知视图或损坏内容回落默认视图，绝不抛错。 */

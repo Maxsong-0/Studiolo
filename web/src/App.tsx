@@ -3,8 +3,9 @@ import type { ReactNode } from 'react';
 import { AppShell } from './components/AppShell';
 import { DocumentDialog } from './components/DocumentDialog';
 import { Filters } from './components/Filters';
-import type { SourceLocation, View } from './types';
+import type { View } from './types';
 import { useEditorNavigation } from './useEditorNavigation';
+import { useReaderSource } from './useReaderSource';
 import { useViewLocation } from './useViewLocation';
 import { useWorkbench } from './useWorkbench';
 import { sortProjects } from './projectOrder';
@@ -40,11 +41,15 @@ import { RulesView } from './views/RulesView';
 import { PolicyView } from './views/PolicyView';
 
 export function App({ account }: { account?: ReactNode }) {
-  const { location, selectView, goTo } = useViewLocation();
+  const { location, selectView, select, goTo } = useViewLocation();
   const view = location.view;
   const [query, setQuery] = useState('');
   const [lifecycle, setLifecycle] = useState('');
-  const [source, setSource] = useState<SourceLocation | null>(null);
+  const {
+    source,
+    open: setSource,
+    close: closeSource,
+  } = useReaderSource(location, select);
   const [draftsOpen, setDraftsOpen] = useState(false);
   const [statusOpen, setStatusOpen] = useState(false);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
@@ -130,7 +135,7 @@ export function App({ account }: { account?: ReactNode }) {
 
   function refreshSnapshot() {
     if (loading) return;
-    setSource(null);
+    closeSource();
     palette.close();
     refresh();
   }
@@ -314,10 +319,10 @@ export function App({ account }: { account?: ReactNode }) {
           key={`${source.path}:${data.generation}`}
           source={source}
           generation={data.generation}
-          onClose={() => setSource(null)}
+          onClose={closeSource}
           onRefresh={refreshSnapshot}
           onEdit={(path) => {
-            setSource(null);
+            closeSource();
             setEditorPath(path);
           }}
         />
