@@ -109,8 +109,8 @@ impl SupplySource {
 pub struct AppState {
     /// 白名单只读根。
     pub source: SupplySource,
-    /// 序列化重扫，避免慢旧批次覆盖较新的已验证代次。
-    pub scan_lock: Mutex<()>,
+    /// 序列化重扫（慢的旧批次不会盖掉较新的已验证代次），并让并发请求共用受理之后的那次校验（T-211）。
+    pub(crate) scans: crate::shared_scan::SharedScan<Arc<Generation>>,
     /// 白名单前缀（配置顺序）。
     pub allow: Vec<VaultPath>,
     /// agent 私有库。
@@ -200,10 +200,13 @@ pub fn replica_generation(
 impl AppState {
     /// 重扫并替换当前代次。
     pub fn rescan(&self) -> Result<u64, String> {
-        let _scan = self
-            .scan_lock
-            .lock()
-            .map_err(|_| "重扫锁不可用".to_owned())?;
+        self.scans
+            .run(|| self.replace_generation())
+            .map(|generation| generation.number)
+    }
+
+    /// 完整读取并验证来源、建模、换上新代次；只在 `scans` 的串行闸里调用。
+    fn replace_generation(&self) -> Result<Arc<Generation>, String> {
         let previous = self.current();
         let next = previous
             .number
@@ -222,19 +225,25 @@ impl AppState {
         *self
             .current
             .write()
-            .map_err(|_| "代次锁不可用".to_owned())? = generation;
-        Ok(next)
+            .map_err(|_| "代次锁不可用".to_owned())? = generation.clone();
+        Ok(generation)
     }
 
     /// 请求供给时取完整验证的同一代次；副本全量校验在专用校验线程上完成（BUG-034）。
+    ///
+    /// 每个请求拿到的都是它到达之后重新完整校验过的代次。并发到达的请求共用受理之后才开始的
+    /// 那一次校验，不再一人整读一遍（T-211，规则见 `crate::shared_scan`）。
     pub async fn verified(self: &Arc<Self>) -> Result<Arc<Generation>, String> {
         if matches!(&self.source, SupplySource::Replica(_)) {
+            // 受理点在排队之前：此后才开始的校验才算数。
+            let admitted = self.scans.admit();
             let state = self.clone();
             return self
                 .verifier
                 .run(move || {
-                    state.rescan()?;
-                    Ok(state.current())
+                    state
+                        .scans
+                        .covered_or(admitted, || state.replace_generation())
                 })
                 .await?;
         }

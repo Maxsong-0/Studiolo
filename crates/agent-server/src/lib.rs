@@ -12,6 +12,7 @@ pub mod options;
 pub mod refresh;
 pub mod serve;
 pub mod server;
+mod shared_scan;
 pub mod shutdown;
 pub mod state;
 mod verifier;
