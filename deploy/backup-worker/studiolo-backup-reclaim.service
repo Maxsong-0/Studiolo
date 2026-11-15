@@ -1,0 +1,17 @@
+[Unit]
+Description=Studiolo backup retention reclaim
+ConditionPathExists=/etc/studiolo/backup-worker.json
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/studiolo-backup-worker reclaim
+User=studiolo-backup
+Group=studiolo-backup-readers
+UMask=0077
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+StateDirectory=studiolo-backup-worker
+ReadOnlyPaths=/etc/studiolo/backup-worker.json
+Nice=10

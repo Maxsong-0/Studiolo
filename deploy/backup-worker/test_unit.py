@@ -20,5 +20,20 @@ class UnitTemplate(unittest.TestCase):
         self.assertNotIn("/volume1", UNIT)
 
 
+class ReclaimTimer(unittest.TestCase):
+    def test_timer_only_starts_the_reclaim_oneshot(self):
+        root = pathlib.Path(__file__).parent
+        service = (root / "studiolo-backup-reclaim.service").read_text()
+        timer = (root / "studiolo-backup-reclaim.timer").read_text()
+        self.assertIn("Type=oneshot\n", service)
+        self.assertIn("ExecStart=/usr/local/bin/studiolo-backup-worker reclaim\n", service)
+        self.assertIn("Unit=studiolo-backup-reclaim.service\n", timer)
+        self.assertIn("Persistent=true\n", timer)
+        self.assertIn("OnUnitActiveSec=10min\n", timer)
+        self.assertNotIn("password", service.lower())
+        self.assertNotIn("password", timer.lower())
+        self.assertNotIn("192.168.", service + timer)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -1,0 +1,12 @@
+[Unit]
+Description=Studiolo backup retention timer
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=10min
+AccuracySec=1min
+Persistent=true
+Unit=studiolo-backup-reclaim.service
+
+[Install]
+WantedBy=timers.target
