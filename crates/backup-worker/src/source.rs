@@ -31,6 +31,12 @@ impl Source {
     pub fn current_time(&self) -> Result<studiolo_core::checkpoint::InstantMillis> {
         self.window.current_time()
     }
+    pub fn backup(&self) -> &ResticInvocation {
+        self.binding.backup()
+    }
+    pub fn check_plan(&self) -> &ResticInvocation {
+        self.binding.check()
+    }
     pub fn open(
         config: &WorkerConfig,
         key: JobKey,

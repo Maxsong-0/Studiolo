@@ -54,6 +54,12 @@ impl Binding {
             check,
         })
     }
+    pub fn backup(&self) -> &ResticInvocation {
+        &self.backup
+    }
+    pub fn check(&self) -> &ResticInvocation {
+        &self.check
+    }
     pub fn accepts(&self, invocation: &ResticInvocation) -> Result<bool> {
         if invocation == &self.backup {
             Ok(true)

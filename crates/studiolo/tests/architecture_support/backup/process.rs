@@ -3,6 +3,27 @@ use super::super::authority_tokens::checked_closed;
 use std::path::Path;
 
 pub(super) fn remainder(path: &Path, source: &str) -> String {
+    if path.ends_with("crates/backup-worker/src/queue.rs") {
+        return checked_closed(
+            source,
+            &["checkpoint.contains('/')||checkpoint.contains(\"..\")"],
+            &[
+                ("fs::read_dir(directory)", 1),
+                ("fs::read(entry.path())", 1),
+            ],
+        );
+    }
+    if path.ends_with("crates/backup-worker/src/main.rs") {
+        return checked_closed(
+            source,
+            &[
+                "Path::new(\"/var/lib/studiolo-backup-worker/queue\")",
+                "AppendRunner::new(&job,credentials)?",
+                "runner.run_approved_backup()?",
+            ],
+            &[("std::fs::remove_file(file)", 1)],
+        );
+    }
     if path.ends_with("crates/backup-worker/src/credentials/root.rs") {
         return checked_closed(
             source,

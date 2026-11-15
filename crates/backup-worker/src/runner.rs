@@ -42,6 +42,12 @@ impl AppendRunner {
         })
     }
 
+    /// 先跑该作业派生的 backup，再跑固定的仓库检查。调用向量不由队列正文提供。
+    pub fn run_approved_backup(&self) -> Result<()> {
+        self.execute(self.source.backup())?;
+        self.execute(self.source.check_plan())?;
+        Ok(())
+    }
     /// 返回固定错误分类；CleanupFailed 须令外层停止服务，不能当成可重试上传。
     pub fn execute(&self, invocation: &ResticInvocation) -> Result<ResticOutcome> {
         let backup = self.source.accepts(invocation)?;

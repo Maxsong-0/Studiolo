@@ -7,6 +7,7 @@ mod credentials;
 mod job;
 mod package;
 mod process;
+mod queue;
 mod runner;
 mod runtime;
 mod source;
@@ -17,6 +18,7 @@ pub use config::WorkerConfig;
 pub use credentials::ResticCredentials;
 pub use job::ApprovedJob;
 pub use package::ResticPackage;
+pub use queue::read_queue;
 pub use runner::{AppendRunner, FinalManifestProbe};
 
 /// 固定错误类别，不包含子进程正文、环境值、路径或凭据。
