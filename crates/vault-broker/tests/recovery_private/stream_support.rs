@@ -4,6 +4,8 @@ use crate::{ContentAuditPhase, MaintenanceActor};
 use std::io::Write;
 
 pub(super) const LARGE: usize = crate::writer::disk::CONTENT_LIMIT + 1;
+/// 当前二进制写下或收尾过的写者状态版本。
+pub(super) const CURRENT_STATE: u32 = 8;
 pub(super) fn old_pending(
     f: &Fixture,
     size: usize,
@@ -15,7 +17,8 @@ pub(super) fn old_pending(
 ) {
     let (broker, request) = f.interrupted(2);
     let state = crate::mutation::load(&broker).unwrap();
-    assert_eq!(state.format_version, 2);
+    // 变更流（ADR-032）起，带未决操作收尾前状态先升到 8；这里的「旧」指 Vec 入口留下的未决安装。
+    assert_eq!(state.format_version, CURRENT_STATE);
     let op = state.operation.unwrap();
     let original = envelope(&broker, &op);
     drop(broker);
@@ -31,7 +34,10 @@ pub(super) fn old_pending(
     file.sync_all().unwrap();
     drop(file);
     let broker = f.open();
-    assert_eq!(crate::mutation::load(&broker).unwrap().format_version, 2);
+    assert_eq!(
+        crate::mutation::load(&broker).unwrap().format_version,
+        CURRENT_STATE
+    );
     assert_eq!(
         broker.write_status().unwrap().phase,
         WriterPhase::Installing

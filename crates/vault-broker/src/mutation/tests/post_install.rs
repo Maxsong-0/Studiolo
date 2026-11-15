@@ -59,9 +59,12 @@ fn post_install_unsafe_node_is_unresolved_and_retry_never_infers_success() {
             Err(BrokerError::MutationUnresolved)
         ));
         assert_eq!(fs::read(fixture.root.join("note.md")).unwrap(), b"intended");
-        assert_eq!(
-            fs::read(fixture.data.join("writer-state.json")).unwrap(),
-            journal
-        );
+        // 重开只许把状态版本升到 8（ADR-032：带未决操作收尾前先升级），其余字段一个都不能动。
+        let mut expected: serde_json::Value = serde_json::from_slice(&journal).unwrap();
+        expected["format_version"] = 8.into();
+        let reopened: serde_json::Value =
+            serde_json::from_slice(&fs::read(fixture.data.join("writer-state.json")).unwrap())
+                .unwrap();
+        assert_eq!(reopened, expected);
     }
 }

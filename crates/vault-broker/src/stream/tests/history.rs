@@ -61,9 +61,10 @@ fn old_fingerprints_remain_byte_for_byte_after_stream_and_legacy_writes() {
     .unwrap();
     assert_eq!(fs::read(receipt_file).unwrap(), original);
     assert_eq!(b.mutation_replay(&old_request).unwrap(), Some(old));
-    assert_eq!(mutation::load(&b).unwrap().format_version, 4);
+    // 变更流（ADR-032）起每次收尾前状态先升到 8；旧回执字节不变才是这条用例要守的。
+    assert_eq!(mutation::load(&b).unwrap().format_version, 8);
     drop(b);
-    assert_eq!(mutation::load(&f.reopen()).unwrap().format_version, 4);
+    assert_eq!(mutation::load(&f.reopen()).unwrap().format_version, 8);
 }
 #[test]
 fn effective_limit_downshift_does_not_reduce_old_object_preservation_limit() {
@@ -98,7 +99,7 @@ fn first_legacy_write_over_an_external_large_file_activates_large_history_before
     let old = installed(&b).revision.unwrap();
     b.mutate(Mutation::replace(path(), b"small".to_vec(), old, "small"))
         .unwrap();
-    assert_eq!(mutation::load(&b).unwrap().format_version, 4);
+    assert_eq!(mutation::load(&b).unwrap().format_version, 8);
     assert_eq!(
         crate::history::blob::selected(&b, &path(), old)
             .unwrap()

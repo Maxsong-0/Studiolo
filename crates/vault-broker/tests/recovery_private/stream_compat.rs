@@ -9,14 +9,14 @@ fn old_small_installing_uses_actual_current_budget_and_preserves_original_envelo
         let (mut broker, request, op, original) = old_pending(&f, size);
         let review = broker.pending_mutation().unwrap().unwrap();
         let receipt = broker.reconcile_pending(&review, preserve()).unwrap();
-        let large = size > crate::writer::disk::CONTENT_LIMIT;
         let id = receipt.evidence_id.unwrap();
         assert_eq!(receipt.outcome, ReconciliationOutcome::Indeterminate);
         assert_eq!(receipt.committed_through, 1);
-        assert_package(&f, &broker, &id, &op, size, if large { 2 } else { 1 });
+        // 状态已在 4 以上，小对象的证据清单也用版本 2，不再按对象大小回落到 1。
+        assert_package(&f, &broker, &id, &op, size, 2);
         assert_eq!(
             crate::mutation::load(&broker).unwrap().format_version,
-            if large { 4 } else { 2 }
+            CURRENT_STATE
         );
         assert_eq!(envelope(&broker, &op), original);
         assert!(matches!(
@@ -47,7 +47,10 @@ fn maintenance_keeps_original_review_through_state3_then_promotes_v2_terminal_to
         )
         .unwrap();
     assert_eq!(ticket.intent().target, target);
-    assert_eq!(crate::mutation::load(&broker).unwrap().format_version, 3);
+    assert_eq!(
+        crate::mutation::load(&broker).unwrap().format_version,
+        CURRENT_STATE
+    );
     broker
         .confirm_maintenance_intent(&ticket, 1, &"a".repeat(64))
         .unwrap();
@@ -66,7 +69,10 @@ fn maintenance_keeps_original_review_through_state3_then_promotes_v2_terminal_to
         LARGE,
         2,
     );
-    assert_eq!(crate::mutation::load(&broker).unwrap().format_version, 4);
+    assert_eq!(
+        crate::mutation::load(&broker).unwrap().format_version,
+        CURRENT_STATE
+    );
     assert_eq!(envelope(&broker, &op), original);
     assert!(matches!(
         broker.mutation_replay(&request),
@@ -77,7 +83,10 @@ fn maintenance_keeps_original_review_through_state3_then_promotes_v2_terminal_to
     drop(broker);
     let reopened = f.open();
     assert_ready(&reopened);
-    assert_eq!(crate::mutation::load(&reopened).unwrap().format_version, 4);
+    assert_eq!(
+        crate::mutation::load(&reopened).unwrap().format_version,
+        CURRENT_STATE
+    );
 }
 
 #[test]
@@ -97,7 +106,11 @@ fn state4_small_evidence_does_not_downgrade_to_manifest1() {
         64,
         2,
     );
-    assert_eq!(crate::mutation::load(&broker).unwrap().format_version, 4);
+    // 手工放回 4 的旧状态，收尾时照样先升到当前版本。
+    assert_eq!(
+        crate::mutation::load(&broker).unwrap().format_version,
+        CURRENT_STATE
+    );
 }
 
 #[test]
