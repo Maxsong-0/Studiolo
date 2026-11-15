@@ -9,6 +9,7 @@ pub mod audit;
 mod evidence;
 mod model;
 pub mod producer;
+pub mod restore;
 
 pub use evidence::{BackupEvidence, BackupSnapshot};
 pub use model::{BackupSection, Severity};
