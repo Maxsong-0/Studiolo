@@ -88,13 +88,6 @@ impl SqliteAuditLedger {
         read_only: bool,
     ) -> Result<Self, AuditError> {
         let storage = Storage::prepare(private_directory, policy)?;
-        if !read_only {
-            // 打开写者即固定准入文件身份；后续冻结不能收养被替换的另一把锁。
-            drop(
-                storage
-                    .operation_lease(false, std::time::Instant::now() + Duration::from_secs(5))?,
-            );
-        }
         let mut connection = connect_mode(&storage, read_only)?;
         check_configuration(&connection)?;
         let cost = {
@@ -127,6 +120,14 @@ impl SqliteAuditLedger {
         }
         check_configuration(&connection)?;
         storage.check()?;
+        if !read_only {
+            // 库通过校验后才固定准入文件身份：被拒绝的空库、坏库目录里不留下任何新文件；
+            // 后续冻结也不能收养被替换的另一把锁。
+            drop(
+                storage
+                    .operation_lease(false, std::time::Instant::now() + Duration::from_secs(5))?,
+            );
+        }
         Ok(Self {
             connection: Mutex::new(Session { connection, cost }),
             storage,

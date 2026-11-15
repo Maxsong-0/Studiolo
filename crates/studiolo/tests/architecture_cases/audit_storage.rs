@@ -60,6 +60,8 @@ fn checkpoint_operation_gate_is_fixed_and_cannot_gain_another_write() {
         source.replace("found.len() != 0", "false"),
         format!("{source}\nFile::create(other)?;"),
         format!("{source}\nopen(other, flags, Mode::empty())?;"),
+        format!("{source}\nopenat(root, other, flags, Mode::empty())?;"),
+        source.replace("if exclusive {", "if false {"),
     ] {
         assert!(
             source_violations("studiolo-audit-ledger", path, &changed)

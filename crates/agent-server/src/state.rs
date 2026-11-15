@@ -65,6 +65,16 @@ impl AuditUnavailable {
             Self::Outage { outage_id } => format!("审计不可用（outage {outage_id}）"),
         }
     }
+
+    /// 握手被拒时给 AI 的整段说明。真实故障沿用 M3 起对外固定的开头
+    /// 「审计不可用：outage <编号>。」，接入方和运维按这个开头取编号，不随 `reason` 的写法变。
+    pub fn handshake_refusal(&self) -> String {
+        const REST: &str = "本次会话所有读取与写入全部拒绝，不提供路牌；请稍后重试。";
+        match self {
+            Self::Frozen => format!("{}。{REST}", self.reason()),
+            Self::Outage { outage_id } => format!("审计不可用：outage {outage_id}。{REST}"),
+        }
+    }
 }
 
 /// 供给源；两种模式都只持有只读能力。

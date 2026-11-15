@@ -46,8 +46,9 @@ async fn changes_preserve_prefetched_rows_fixed_upper_scope_and_cross_device_see
         );
         input["expected_revision"] = revision;
         revision = save(&f, &issued, &input, 200).await["receipt"]["new_revision"].clone();
+        // 保存后视图要追平才收下一次保存（否则按设计回 503 stale）；不等就成了和后台刷新赛跑。
+        refresh(&f, &issued).await;
     }
-    refresh(&f, &issued).await;
     fs::create_dir_all(f.http.root.join("vault/项目/Alpha")).unwrap();
     fs::write(f.http.root.join("vault/项目/Alpha/external.md"), "# 外部\n").unwrap();
     refresh(&f, &issued).await;

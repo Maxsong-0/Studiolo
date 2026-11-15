@@ -25,7 +25,7 @@ fn producer_requires_persistent_admission_original_intent_and_sealed_audit_tail(
         ),
     ] {
         let path = Path::new(file);
-        let source = fs::read_to_string(workspace_root().join(&path)).unwrap();
+        let source = fs::read_to_string(workspace_root().join(path)).unwrap();
         assert!(
             source_violations(crate_name, path, &source).is_empty(),
             "{file}"

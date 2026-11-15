@@ -87,3 +87,67 @@ fn changed_gate_identity_or_permissions_are_never_adopted() {
     std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
     let _operation = ledger.enter_operation().unwrap();
 }
+
+/// 审计中断（库文件权限被改、目录权限被改、目录被挪走）时，完整操作仍能取得共享许可，
+/// 各自走既有的「落待补记、照常读」路径；冻结方必须面对健康的审计库，一律拒绝。
+#[test]
+fn shared_permits_survive_an_audit_outage_while_freezing_is_refused() {
+    use studiolo_audit_ledger::AuditFilter;
+    let dir = support::private_dir();
+    let root = dir.path().canonicalize().unwrap();
+    let ledger = SqliteAuditLedger::open(&root).unwrap();
+    let mode = |path: &std::path::Path, bits| {
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(bits)).unwrap();
+    };
+    let database = root.join("audit.sqlite3");
+
+    mode(&database, 0o400);
+    assert!(ledger.query(&AuditFilter::default()).is_err());
+    drop(ledger.enter_operation().unwrap());
+    assert!(ledger.quiesce_operations(deadline()).is_err());
+    mode(&database, 0o600);
+
+    mode(&root, 0o750);
+    assert!(ledger.query(&AuditFilter::default()).is_err());
+    drop(ledger.enter_operation().unwrap());
+    assert!(ledger.quiesce_operations(deadline()).is_err());
+    mode(&root, 0o700);
+
+    let away = root.with_extension("away");
+    std::fs::rename(&root, &away).unwrap();
+    assert!(ledger.query(&AuditFilter::default()).is_err());
+    drop(ledger.enter_operation().unwrap());
+    assert!(ledger.quiesce_operations(deadline()).is_err());
+    std::fs::rename(&away, &root).unwrap();
+
+    assert!(ledger.query(&AuditFilter::default()).is_ok());
+    let _frozen = ledger.quiesce_operations(deadline()).unwrap();
+}
+
+/// 中断不是绕过冻结的门：别的实例已经冻结时，中断中的实例照样拿不到许可。
+#[test]
+fn an_outage_does_not_let_operations_past_a_freeze_held_elsewhere() {
+    let dir = support::private_dir();
+    let root = dir.path().canonicalize().unwrap();
+    let freezer = SqliteAuditLedger::open(&root).unwrap();
+    let worker = SqliteAuditLedger::open_existing(&root).unwrap();
+    let frozen = freezer.quiesce_operations(deadline()).unwrap();
+    let database = root.join("audit.sqlite3");
+    std::fs::set_permissions(&database, std::fs::Permissions::from_mode(0o400)).unwrap();
+    assert!(worker.enter_operation().is_err());
+    std::fs::set_permissions(&database, std::fs::Permissions::from_mode(0o600)).unwrap();
+    drop(frozen);
+    let _operation = worker.enter_operation().unwrap();
+}
+
+/// 被拒绝的目录里不留下准入文件；合法库在第一次打开后才有它。
+#[test]
+fn the_gate_file_appears_only_after_the_store_is_accepted() {
+    let dir = support::private_dir();
+    let root = dir.path().canonicalize().unwrap();
+    assert!(SqliteAuditLedger::open_existing(&root).is_err());
+    assert_eq!(std::fs::read_dir(&root).unwrap().count(), 0);
+    let ledger = SqliteAuditLedger::open(&root).unwrap();
+    assert!(root.join("checkpoint-operations.lock").is_file());
+    drop(ledger);
+}

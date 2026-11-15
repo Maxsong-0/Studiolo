@@ -22,7 +22,7 @@ STUDIOLO_IMAGE='rust:1.97.1-bookworm'
 STUDIOLO_TEST_PACKAGES=(
   -p studiolo -p studiolo-supply -p studiolo-agent-server -p studiolo-vault-broker
   -p studiolo-core -p studiolo-audit-ledger -p studiolo-vault-index -p studiolo-workbench
-  -p studiolo-process-safety -p studiolo-policy
+  -p studiolo-process-safety -p studiolo-policy -p studiolo-checkpoint-storage
 )
 mkdir "$STUDIOLO_OUT"
 mkdir "$STUDIOLO_OUT/source" "$STUDIOLO_OUT/payload" "$STUDIOLO_OUT/build-meta"
@@ -149,7 +149,7 @@ const packageIds = new Map();
 const identities = new Map();
 // 必须与上面 STUDIOLO_TEST_PACKAGES 推出的 crate 目录集合逐项一致（test-agent-package.py 有守卫）。
 const packages = new Set(['studiolo', 'supply', 'agent-server', 'vault-broker', 'core', 'audit-ledger', 'vault-index', 'workbench',
-  'process-safety', 'policy']);
+  'process-safety', 'policy', 'checkpoint-storage']);
 let complete = false;
 for (const line of fs.readFileSync(path.join(out, 'build-meta/tests.jsonl'), 'utf8').split('\n')) {
   if (!line.trim()) continue;

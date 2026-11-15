@@ -23,7 +23,7 @@ pub(super) struct Storage {
     #[cfg(unix)]
     owner: u32,
     #[cfg(unix)]
-    operation_identity: std::sync::Mutex<Option<(u64, u64)>>,
+    operation_gate: std::sync::OnceLock<operation::Gate>,
 }
 
 #[cfg(unix)]
@@ -74,7 +74,7 @@ impl Storage {
             owner,
             root_identity: (metadata.dev(), metadata.ino()),
             database_identity: (db.dev(), db.ino()),
-            operation_identity: std::sync::Mutex::new(None),
+            operation_gate: std::sync::OnceLock::new(),
         };
         storage.check()?;
         Ok(storage)
