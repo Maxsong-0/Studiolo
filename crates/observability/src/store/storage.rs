@@ -1,20 +1,44 @@
 //! **本 crate 唯一允许做真实 IO 的文件。**
 //!
-//! 固定私有根下只碰两个固定名字：`deadman-state.json` 与暂存件
-//! `deadman-state.json.new`。逐段走 `NOFOLLOW` 打开父目录，核对目录 0700、
-//! 文件 0600、当前 EUID 与单链接；写入走"暂存件 → fsync → renameat → fsync 目录"
-//! 的完整替换，读侧再靠文档内校验和判定撕裂，两层一起保证半写一律失败关闭。
+//! 每个私有根下只碰一对固定名字：死人开关是 `deadman-state.json` 与暂存件
+//! `deadman-state.json.new`，出站门铃是 `doorbell-state.json` 与
+//! `doorbell-state.json.new`（两者各用各的私有目录）。逐段走 `NOFOLLOW` 打开父目录，
+//! 核对目录 0700、文件 0600、当前 EUID 与单链接；写入走"暂存件 → fsync → renameat →
+//! fsync 目录"的完整替换，读侧再靠文档内校验和判定撕裂，两层一起保证半写一律失败关闭。
 //!
 //! 不对抗可信父目录被同 UID 管理员恶意更名的 ABA；不导出任何文件能力。
 
-use super::{StoreError, state};
-use crate::alert::DeadmanState;
+use super::{StoreError, doorbell_state, state};
+use crate::{alert::DeadmanState, doorbell::DoorbellState};
 use std::path::{Path, PathBuf};
 
 /// 固定状态文件名。
 pub const STATE_FILE_NAME: &str = "deadman-state.json";
 /// 固定暂存文件名；只用于完整替换，不是第二份状态。
 pub const STAGE_FILE_NAME: &str = "deadman-state.json.new";
+/// 出站门铃的固定状态文件名。
+pub const DOORBELL_STATE_FILE_NAME: &str = "doorbell-state.json";
+/// 出站门铃的固定暂存文件名；只用于完整替换。
+pub const DOORBELL_STAGE_FILE_NAME: &str = "doorbell-state.json.new";
+
+/// 一份持久文档在私有根下的固定名字对。
+#[cfg(unix)]
+#[derive(Clone, Copy)]
+struct Names {
+    state: &'static str,
+    stage: &'static str,
+}
+
+#[cfg(unix)]
+const DEADMAN: Names = Names {
+    state: STATE_FILE_NAME,
+    stage: STAGE_FILE_NAME,
+};
+#[cfg(unix)]
+const DOORBELL: Names = Names {
+    state: DOORBELL_STATE_FILE_NAME,
+    stage: DOORBELL_STAGE_FILE_NAME,
+};
 
 #[cfg(unix)]
 use rustix::fs::{AtFlags, FileType, Mode, OFlags, fstat, fsync, open, openat, renameat, unlinkat};
@@ -22,11 +46,15 @@ use rustix::fs::{AtFlags, FileType, Mode, OFlags, fstat, fsync, open, openat, re
 /// 绑定到一个已存在私有目录的死人开关状态存储。
 pub struct DeadmanStore {
     #[cfg(unix)]
-    root: rustix::fd::OwnedFd,
+    root: Root,
+    #[cfg(not(unix))]
+    _unsupported: PhantomRoot,
+}
+
+/// 绑定到一个已存在私有目录的出站门铃状态存储（读到账本第几条、退避到什么时候）。
+pub struct DoorbellStore {
     #[cfg(unix)]
-    root_path: PathBuf,
-    #[cfg(unix)]
-    owner: u32,
+    root: Root,
     #[cfg(not(unix))]
     _unsupported: PhantomRoot,
 }
@@ -34,10 +62,77 @@ pub struct DeadmanStore {
 #[cfg(not(unix))]
 struct PhantomRoot;
 
+/// 已核对身份与权限的私有目录句柄；两种状态存储共用同一套读写。
+#[cfg(unix)]
+struct Root {
+    root: rustix::fd::OwnedFd,
+    root_path: PathBuf,
+    owner: u32,
+}
+
 #[cfg(unix)]
 impl DeadmanStore {
     /// 绑定已存在的私有目录；不创建目录，也不修复权限。
     pub fn open(root: &Path) -> Result<Self, StoreError> {
+        Ok(Self {
+            root: Root::open(root)?,
+        })
+    }
+
+    /// 读取持久状态；固定文件不存在返回 `Ok(None)`（首次运行）。
+    ///
+    /// 撕裂、未知版本、未知字段、超限一律返回错误，**不会**降级成 `Ok(None)`。
+    pub fn load(&self) -> Result<Option<DeadmanState>, StoreError> {
+        self.root
+            .read(DEADMAN)?
+            .map(|bytes| state::decode(&bytes))
+            .transpose()
+    }
+
+    /// 完整替换持久状态。中途失败只会留下暂存件，不会留下半个状态文件。
+    pub fn save(&self, value: &DeadmanState) -> Result<(), StoreError> {
+        self.root.replace(DEADMAN, &state::encode(value)?)
+    }
+
+    /// 重新核对根目录身份与权限；每次读写前后各做一次。
+    pub fn check(&self) -> Result<(), StoreError> {
+        self.root.check()
+    }
+}
+
+#[cfg(unix)]
+impl DoorbellStore {
+    /// 绑定已存在的私有目录；不创建目录，也不修复权限。
+    pub fn open(root: &Path) -> Result<Self, StoreError> {
+        Ok(Self {
+            root: Root::open(root)?,
+        })
+    }
+
+    /// 读取持久状态；固定文件不存在返回 `Ok(None)`（还没启用过）。
+    ///
+    /// 撕裂、未知版本、未知字段、超限一律返回错误，**不会**降级成 `Ok(None)`。
+    pub fn load(&self) -> Result<Option<DoorbellState>, StoreError> {
+        self.root
+            .read(DOORBELL)?
+            .map(|bytes| doorbell_state::decode(&bytes))
+            .transpose()
+    }
+
+    /// 完整替换持久状态。中途失败只会留下暂存件，不会留下半个状态文件。
+    pub fn save(&self, value: &DoorbellState) -> Result<(), StoreError> {
+        self.root.replace(DOORBELL, &doorbell_state::encode(value)?)
+    }
+
+    /// 重新核对根目录身份与权限。
+    pub fn check(&self) -> Result<(), StoreError> {
+        self.root.check()
+    }
+}
+
+#[cfg(unix)]
+impl Root {
+    fn open(root: &Path) -> Result<Self, StoreError> {
         let owner = caller()?;
         let handle = walk(root)?;
         directory(&handle, owner)?;
@@ -48,14 +143,12 @@ impl DeadmanStore {
         })
     }
 
-    /// 读取持久状态；固定文件不存在返回 `Ok(None)`（首次运行）。
-    ///
-    /// 撕裂、未知版本、未知字段、超限一律返回错误，**不会**降级成 `Ok(None)`。
-    pub fn load(&self) -> Result<Option<DeadmanState>, StoreError> {
+    /// 读出固定状态文件的全部字节；不存在返回 `Ok(None)`。
+    fn read(&self, names: Names) -> Result<Option<Vec<u8>>, StoreError> {
         self.check()?;
         let file = match openat(
             &self.root,
-            STATE_FILE_NAME,
+            names.state,
             OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::NONBLOCK | OFlags::CLOEXEC,
             Mode::empty(),
         ) {
@@ -83,21 +176,20 @@ impl DeadmanStore {
             Err(_) => return Err(StoreError::Unavailable),
         }
         self.check()?;
-        state::decode(&bytes).map(Some)
+        Ok(Some(bytes))
     }
 
-    /// 完整替换持久状态。中途失败只会留下暂存件，不会留下半个状态文件。
-    pub fn save(&self, value: &DeadmanState) -> Result<(), StoreError> {
+    /// 暂存件 → fsync → renameat → fsync 目录；中途失败只留下暂存件。
+    fn replace(&self, names: Names, bytes: &[u8]) -> Result<(), StoreError> {
         self.check()?;
-        let bytes = state::encode(value)?;
         // 上一轮崩在中途留下的暂存件必须先清掉，再独占创建，避免复用陌生对象。
-        match unlinkat(&self.root, STAGE_FILE_NAME, AtFlags::empty()) {
+        match unlinkat(&self.root, names.stage, AtFlags::empty()) {
             Ok(()) | Err(rustix::io::Errno::NOENT) => {}
             Err(_) => return Err(StoreError::UnsafeStorage),
         }
         let stage = openat(
             &self.root,
-            STAGE_FILE_NAME,
+            names.stage,
             OFlags::WRONLY | OFlags::CREATE | OFlags::EXCL | OFlags::NOFOLLOW | OFlags::CLOEXEC,
             Mode::from_raw_mode(0o600),
         )
@@ -113,14 +205,14 @@ impl DeadmanStore {
         }
         fsync(&stage).map_err(|_| StoreError::Unavailable)?;
         self.check()?;
-        renameat(&self.root, STAGE_FILE_NAME, &self.root, STATE_FILE_NAME)
+        renameat(&self.root, names.stage, &self.root, names.state)
             .map_err(|_| StoreError::Unavailable)?;
         fsync(&self.root).map_err(|_| StoreError::Unavailable)?;
         self.check()
     }
 
     /// 重新核对根目录身份与权限；每次读写前后各做一次。
-    pub fn check(&self) -> Result<(), StoreError> {
+    fn check(&self) -> Result<(), StoreError> {
         if caller()? != self.owner {
             return Err(StoreError::UnsafeStorage);
         }
@@ -219,6 +311,29 @@ impl DeadmanStore {
 
     /// 当前平台没有实现安全的私有本地文件约束。
     pub fn save(&self, _value: &DeadmanState) -> Result<(), StoreError> {
+        Err(StoreError::UnsupportedPlatform)
+    }
+
+    /// 当前平台没有实现安全的私有本地文件约束。
+    pub fn check(&self) -> Result<(), StoreError> {
+        Err(StoreError::UnsupportedPlatform)
+    }
+}
+
+#[cfg(not(unix))]
+impl DoorbellStore {
+    /// 当前平台没有实现安全的私有本地文件约束。
+    pub fn open(_root: &Path) -> Result<Self, StoreError> {
+        Err(StoreError::UnsupportedPlatform)
+    }
+
+    /// 当前平台没有实现安全的私有本地文件约束。
+    pub fn load(&self) -> Result<Option<DoorbellState>, StoreError> {
+        Err(StoreError::UnsupportedPlatform)
+    }
+
+    /// 当前平台没有实现安全的私有本地文件约束。
+    pub fn save(&self, _value: &DoorbellState) -> Result<(), StoreError> {
         Err(StoreError::UnsupportedPlatform)
     }
 

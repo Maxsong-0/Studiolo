@@ -1,0 +1,11 @@
+[Unit]
+Description=Studiolo 出站事件门铃每分钟拉起一次
+
+[Timer]
+OnBootSec=60
+OnCalendar=*-*-* *:*:30
+AccuracySec=1
+Unit=studiolo-doorbell.service
+
+[Install]
+WantedBy=timers.target

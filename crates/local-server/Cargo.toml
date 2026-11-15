@@ -13,6 +13,10 @@ publish = false
 name = "studiolo-alert"
 path = "src/alert_main.rs"
 
+[[bin]]
+name = "studiolo-doorbell"
+path = "src/doorbell_main.rs"
+
 [lints]
 workspace = true
 

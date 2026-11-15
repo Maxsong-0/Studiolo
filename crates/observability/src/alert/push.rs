@@ -134,30 +134,9 @@ fn secret(value: Option<String>) -> Result<Option<String>, TransportError> {
 }
 
 fn valid_link(value: String) -> Result<String, TransportError> {
-    if value
-        .chars()
-        .any(|ch| ch.is_whitespace() || ch.is_control())
-        || value.contains('\\')
-    {
-        return Err(TransportError::Malformed);
-    }
-    let url = reqwest::Url::parse(&value).map_err(|_| TransportError::Malformed)?;
-    // URL 解析会消去空 userinfo；另查原始 authority，连 https://@host 也拒绝。
-    let authority = value
-        .split_once("://")
-        .map(|(_, rest)| rest.split(['/', '?', '#']).next().unwrap_or_default())
-        .ok_or(TransportError::Malformed)?;
-    if url.scheme() != "https"
-        || url.host_str().is_none()
-        || authority.contains('@')
-        || !url.username().is_empty()
-        || url.password().is_some()
-        || url.query().is_some()
-        || url.fragment().is_some()
-    {
-        return Err(TransportError::Malformed);
-    }
-    Ok(url.into())
+    crate::https_url::checked(&value, false)
+        .map(Into::into)
+        .ok_or(TransportError::Malformed)
 }
 
 fn valid_code(code: &str) -> bool {

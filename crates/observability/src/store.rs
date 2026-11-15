@@ -1,13 +1,18 @@
-//! 死人开关状态的私有持久存储。
+//! 死人开关状态与出站门铃状态的私有持久存储。
 //!
-//! 死人开关状态的文件 IO 只在 [`storage`] 一个文件里，固定文件名
-//! `deadman-state.json`（加同名 `.new` 暂存件），其余模块保持纯逻辑。
+//! 文件 IO 只在 [`storage`] 一个文件里：死人开关用固定文件名 `deadman-state.json`，
+//! 出站门铃用 `doorbell-state.json`（各加同名 `.new` 暂存件，各在自己的私有目录），
+//! 其余模块保持纯逻辑。
 
+mod doorbell_state;
 mod state;
 mod storage;
 
 pub use state::STATE_MAX_BYTES;
-pub use storage::{DeadmanStore, STAGE_FILE_NAME, STATE_FILE_NAME};
+pub use storage::{
+    DOORBELL_STAGE_FILE_NAME, DOORBELL_STATE_FILE_NAME, DeadmanStore, DoorbellStore,
+    STAGE_FILE_NAME, STATE_FILE_NAME,
+};
 
 /// 持久层失败的固定分类；不回显路径或底层 errno 文本。
 #[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
