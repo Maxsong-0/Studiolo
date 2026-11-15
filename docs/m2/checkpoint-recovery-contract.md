@@ -147,8 +147,9 @@ Transport 原实例与固定状态导出见 [Transport checkpoint](../contracts/
 BoardPlane 与 SyncPlane，监听时把同一组源注入可信路由；无 canonical 写者不提供
 封存能力。备份请求绑定 owner 时，从实际 Board/Policy 取得身份库及固定附属审计链，
 两处都有时必须核对原目录与数据库 inode；换根、漏库或来源不一致均拒绝。
-这里没有新增公开端点、自动冻结或备份调度。生产来源标签、worker IPC/常驻运行、
-完整恢复及部署演练仍未完成，不能把启动源接线记作整条 Rust 链已可用。
+这里没有新增公开 HTTP 端点，服务进程也不会因为缺少生产者配置就自动冻结。
+备份调度、固定 Unix 监听和常驻 worker 已有代码入口；没有生产者配置文件时不监听。
+生产双 UID、真实 NAS 和 RTO 演练仍未完成，不能把这些入口记作整条链已在生产可用。
 Control schema 4 增加不可变 `artifact_policies`：批准与 runtime audit outbox 同事务，
 外键绑定原 task/attempt/fence/snapshot，首次写入只允许有效租约且尚未挂接执行体。
 `ArtifactProvenance` 保存原来源/策略引用、完整标签、期限和原批准摘要，当前正文管线
@@ -163,5 +164,7 @@ checkpoint 核对批准与原审计事实，ACK 后仍须实际账本验证才�
 `trusted_source_catalog` 只组装事实：尝试正文只跟清单里的原批准，L0 只继承已登记的
 逻辑路径，固定 owner 目录由 owner 声明类别。缺来源的尝试文件、孤立历史 blob 和未知
 目录整批拒绝，不补成完整范围。
-单作业事件、原 Intent 前提与有界 UDS 消息见 [备份审计通信](../contracts/backup-audit.md)；
-固定监听器、持久准入与独立 worker 主循环仍待接入。
+单作业事件、原 Intent 前提与有界 UDS 消息见 [备份审计通信](../contracts/backup-audit.md)。
+生产者监听器只接受配置中的 worker。常驻 worker 从固定队列取出作业键，再经原准入连接。
+保留期回收由 `studiolo-backup-reclaim.timer` 调用 `studiolo-backup-worker reclaim`。
+这些都是模板和代码入口，没有在本机安装或指向真实仓库。

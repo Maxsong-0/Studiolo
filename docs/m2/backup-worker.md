@@ -187,6 +187,21 @@ Auth 恢复必须使旧会话与 L3 失效、阻断旧快照里的恢复码、
 半截 JSON、未知字段、未知 schema 版本、作业序号越过分配器、
 符号链接冒充固定文件、目录权限被放宽，全部失败关闭。
 
+## 2026-11-15 代码入口
+
+| 步骤 | 代码 |
+| --- | --- |
+| 产物来源 | 终端提交读 Control `artifact_policies` 和原账本，清单第 2 版保存 `ArtifactProvenance` |
+| 来源目录 | `read_trusted_export` 扫描导出，`trusted_source_catalog` 组装；缺来源不升为 Full |
+| 原暂存 | 成功提交后 `discard_staged_artifact_commit`；已完成重放不再重写暂存 |
+| 生产者 | `/etc/studiolo/backup-producer.json`、`ProducerListener`、`BackupSchedule` |
+| 常驻 worker | `studiolo-backup-worker` 读 `/var/lib/studiolo-backup-worker/queue` |
+| 新根恢复 | `restore_into_new_root`：Broker 重绑定，重开控制库和两条审计链 |
+| 保留期 | `studiolo-backup-reclaim.timer` 每 10 分钟执行 `reclaim` |
+
+Auth 恢复仍走 `SessionManager::open_existing_for_restore`，因为它还要原会话配置、时钟和随机源，目录本身带不了这些。
+官方 restic 0.19.1 的封存→本地仓库→新根→重开全链没有在本环境执行。
+
 ## 明确未验证（不要当成已通过）
 
 - **没有 NAS 专用目标、没有真实 restic 仓库、没有真实不可变能力**。
