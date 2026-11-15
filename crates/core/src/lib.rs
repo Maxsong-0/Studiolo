@@ -12,6 +12,7 @@ mod permission;
 mod revision;
 mod revision_hasher;
 mod source_policy;
+mod trusted_export;
 mod vault_path;
 
 pub use artifact_provenance::{ArtifactProvenance, ArtifactProvenanceError};
@@ -23,4 +24,5 @@ pub use permission::{PermissionSet, ToolId};
 pub use revision::Revision;
 pub use revision_hasher::RevisionHasher;
 pub use source_policy::{SourcePolicyError, SourcePolicyRef};
+pub use trusted_export::{TrustedExportClass, TrustedExportFact};
 pub use vault_path::VaultPath;

@@ -50,6 +50,10 @@ impl SourceCatalog {
         }
         Ok(Self(entries))
     }
+    /// 按导出路径读取一条已接受的登记。没有登记时返回空，不补默认标签。
+    pub fn registration(&self, path: &VaultPath) -> Option<&ObjectRegistration> {
+        self.0.get(path)
+    }
     pub(super) fn inspect(
         &self,
         path: &VaultPath,

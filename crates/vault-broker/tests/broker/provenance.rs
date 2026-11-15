@@ -113,3 +113,18 @@ fn new_staging_and_body_writes_reject_expired_material() {
         Err(BrokerError::InvalidArtifact(_))
     ));
 }
+
+#[test]
+fn successful_stage_can_be_discarded_without_deleting_a_different_candidate() {
+    let (_vault, data, broker) = broker();
+    let request = artifact_request();
+    let pointer = broker.stage_artifact_commit(&request).unwrap();
+    let file = data
+        .path()
+        .join(format!("artifact-candidate-{}.json", pointer.id));
+    assert!(file.is_file());
+    broker.discard_staged_artifact_commit(&pointer).unwrap();
+    assert!(!file.exists());
+    assert!(broker.load_staged_artifact_commit(&pointer).is_err());
+    broker.discard_staged_artifact_commit(&pointer).unwrap();
+}
