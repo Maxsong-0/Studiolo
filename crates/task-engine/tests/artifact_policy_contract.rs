@@ -10,10 +10,14 @@ use studiolo_audit_ledger::{
 use studiolo_control_db::{ControlDb, SnapshotRecord};
 use studiolo_core::{
     ArtifactProvenance, BackupScope, Classification, DataLabels, DesktopSync, ModelEgress,
-    SourcePolicyRef, TaskId,
+    SourcePolicyRef, TaskId, VaultPath,
 };
-use studiolo_task_engine::{PersistentTaskEngine, TaskEngineError};
-use studiolo_vault_broker::{MemoryVaultBroker, VaultReader};
+use studiolo_runner_adapter::{RunnerArtifact, RunnerReport};
+use studiolo_task_engine::{
+    ClaimRequest, PersistentTaskEngine, RetryPolicy, TaskCommand, TaskEngine, TaskEngineError,
+    TaskSpec,
+};
+use studiolo_vault_broker::{MemoryVaultBroker, Mutation, VaultReader, VaultWriter};
 #[derive(Clone)]
 struct Switch {
     ledger: Arc<MemoryAuditLedger>,
@@ -120,4 +124,102 @@ fn artifact_approval_cannot_report_ready_until_original_ledger_acknowledges() {
         approved[0].event().payload().as_value()["approved_at_ms"],
         4
     );
+}
+
+#[test]
+fn terminal_report_takes_provenance_from_the_approval_and_ledger() {
+    let mut broker = MemoryVaultBroker::new();
+    let vault = broker.vault_uuid();
+    let input = VaultPath::parse("input.md").unwrap();
+    broker
+        .mutate(Mutation::create(
+            input.clone(),
+            b"input".to_vec(),
+            "fixture",
+        ))
+        .unwrap();
+    let mut engine = PersistentTaskEngine::new(
+        ControlDb::open_in_memory(vault).unwrap(),
+        broker,
+        MemoryAuditLedger::new(),
+    );
+    let task = engine
+        .create_task(
+            TaskSpec {
+                role: "implementer".into(),
+                adapter: "stub".into(),
+                input_paths: vec![input],
+                allow_web: vec![],
+                allow_db: vec![],
+                retry_policy: RetryPolicy {
+                    max_attempts: 1,
+                    backoff_seconds: 0,
+                    retry_on: vec![],
+                },
+                timeout: 300,
+                project: "fixture".into(),
+                parent: None,
+                title: None,
+                instruction: None,
+            },
+            1,
+        )
+        .unwrap();
+    engine.command(task, TaskCommand::Run, 2).unwrap();
+    let claimed = engine
+        .claim(ClaimRequest {
+            worker_id: "worker".into(),
+            now_ms: 3,
+            lease_until_ms: 100,
+        })
+        .unwrap()
+        .unwrap();
+    let report = RunnerReport {
+        task_id: task,
+        attempt_id: claimed.run_spec.attempt_id,
+        fence: claimed.run_spec.fence,
+        artifacts: vec![RunnerArtifact {
+            name: VaultPath::parse("result.md").unwrap(),
+            content: b"body".to_vec(),
+        }],
+    };
+    assert!(matches!(
+        engine.report("missing-approval", report.clone(), 4),
+        Err(TaskEngineError::Integrity(ref message)) if message.contains("不能补成完整范围")
+    ));
+    let fact = ArtifactProvenance::new(
+        SourcePolicyRef::new("fixture-source", "a".repeat(64)).unwrap(),
+        DataLabels::new(
+            Classification::Restricted,
+            BackupScope::Full,
+            DesktopSync::Deny,
+            ModelEgress::Deny,
+        )
+        .unwrap(),
+        4_000_000_000,
+        "b".repeat(64),
+    )
+    .unwrap();
+    engine
+        .authorize_artifacts(
+            task,
+            claimed.run_spec.attempt_id,
+            claimed.run_spec.fence,
+            &claimed.snapshot_id,
+            &fact,
+            4,
+        )
+        .unwrap();
+    let committed = engine.report("approved-report", report.clone(), 5).unwrap();
+    assert!(!committed.replayed);
+    let manifest = engine
+        .broker()
+        .read(&committed.receipt.manifest_path)
+        .unwrap();
+    let parsed: serde_json::Value = serde_json::from_slice(&manifest.content).unwrap();
+    assert_eq!(parsed["format_version"], 2);
+    assert_eq!(parsed["provenance"], serde_json::to_value(&fact).unwrap());
+    let replay = engine.report("approved-report", report, 6).unwrap();
+    assert!(replay.replayed);
+    assert_eq!(replay.receipt, committed.receipt);
 }

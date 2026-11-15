@@ -19,6 +19,9 @@ use studiolo_vault_broker::{
 };
 use tempfile::TempDir;
 
+#[path = "common/provenance.rs"]
+mod granted;
+
 /// 每条场景的期望终态形状。顺序与 `scenarios` 的记录顺序一一对应。
 const EXPECTED: &[(&str, &str)] = &[
     // —— 读路径：命名空间判定必须与 `FsVaultBroker::validate_components` 同形 ——
@@ -148,6 +151,7 @@ fn artifact_commit(
         fence: Fence::new(1).expect("非零 fence"),
         audit_intent: "parity-intent".to_owned(),
         idempotency_key: idempotency_key.to_owned(),
+        provenance: granted::granted_provenance(),
         artifacts: artifacts
             .iter()
             .map(|(name, content)| ArtifactCandidate {

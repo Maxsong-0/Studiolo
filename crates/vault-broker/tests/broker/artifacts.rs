@@ -21,6 +21,7 @@ fn artifact_commit_writes_manifest_last_and_replays_without_duplicates() {
         fence: Fence::new(1).expect("non-zero fence"),
         audit_intent: "audit-intent-1".to_owned(),
         idempotency_key: "commit-1".to_owned(),
+        provenance: super::granted::granted_provenance(),
         artifacts: vec![ArtifactCandidate {
             name: path("result.md"),
             content: b"done".to_vec(),
@@ -100,7 +101,7 @@ fn manifest_replay_rejects_tampered_metadata_and_missing_artifact_after_reopen()
                 "hash" => manifest["artifacts"][0]["sha256"] = "forged".into(),
                 "path" => manifest["artifacts"][0]["path"] = "unrelated.md".into(),
                 "fence" => manifest["fence"] = 2.into(),
-                "format" => manifest["format_version"] = 2.into(),
+                "format" => manifest["format_version"] = 9.into(),
                 "count" => manifest["artifacts"] = serde_json::json!([]),
                 _ => unreachable!(),
             }

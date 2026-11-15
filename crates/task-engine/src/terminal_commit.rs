@@ -100,7 +100,17 @@ where
         reservation: &TerminalReservation,
         now_ms: i64,
     ) -> Result<ArtifactCommitReceipt, TaskEngineError> {
+        let provenance = self.bound_provenance(attempt)?;
         let plan = self.staged_plan(attempt, reservation)?;
+        if plan
+            .staged_provenance
+            .as_ref()
+            .is_some_and(|staged| staged != &provenance)
+        {
+            return Err(TaskEngineError::Integrity(
+                "精确重放不能改变来源策略或期限".into(),
+            ));
+        }
         let stopped = if reservation
             .report_json
             .get("outcome")
@@ -138,6 +148,7 @@ where
             audit_intent: plan.event_id.to_string(),
             idempotency_key: format!("task-engine:{}:{}", attempt.attempt_id, plan.event_id),
             artifacts: plan.artifacts,
+            provenance,
         };
         let receipt = self
             .broker
@@ -212,6 +223,8 @@ pub(super) struct CommitPlan {
     // 字段放宽到 crate 内可见：terminal_staging 与 board::stopped 直接构造或读取计划。
     pub(super) event_id: AuditEventId,
     pub(super) artifacts: Vec<ArtifactCandidate>,
+    /// 暂存字节里的来源。旧的内联预留没有这一项，不能据此补成完整范围。
+    pub(super) staged_provenance: Option<ArtifactProvenance>,
 }
 
 #[derive(Clone, Copy)]
@@ -262,5 +275,6 @@ pub(super) fn decode_plan(
     Ok(CommitPlan {
         event_id: persisted.event_id,
         artifacts,
+        staged_provenance: None,
     })
 }

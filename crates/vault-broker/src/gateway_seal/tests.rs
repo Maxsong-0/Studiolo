@@ -67,6 +67,7 @@ fn contract(broker: &mut (impl GatewayPublisher + VaultWriter)) {
             fence: first.fence,
             audit_intent: "final-intent".into(),
             idempotency_key: "final-result".into(),
+            provenance: crate::granted_provenance(),
             artifacts: vec![ArtifactCandidate {
                 name: path("answer.md"),
                 content: b"final answer".to_vec(),

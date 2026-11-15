@@ -8,7 +8,10 @@ use crate::{
     ArtifactCommit, ArtifactCommitReceipt, BrokerError, CommittedArtifact, FsVaultBroker, Mutation,
     MutationReceipt, Snapshot, SnapshotFile, SnapshotId, SnapshotInput, SnapshotReader,
     VaultObject, VaultReader, VaultSnapshotter, VaultWriter, batch,
-    broker::{verify_artifact_records, verify_manifest},
+    broker::{
+        accept_existing_manifest, fresh_manifest, reject_expired, verify_artifact_records,
+        verify_manifest,
+    },
     memory_mutation, memory_namespace, memory_state_error, mutation, sha256,
     types::{AttemptManifest, snapshot_identity},
 };
@@ -193,11 +196,7 @@ impl VaultWriter for MemoryVaultBroker {
         if let Some(existing) = self.inspect_existing(&manifest_path)? {
             let manifest: AttemptManifest = serde_json::from_slice(&existing.content)
                 .map_err(|error| BrokerError::json("parse attempt manifest", error))?;
-            if manifest.idempotency_key != commit.idempotency_key
-                || manifest.request_fingerprint != request_fingerprint
-            {
-                return Err(BrokerError::IdempotencyConflict);
-            }
+            accept_existing_manifest(&manifest, &commit, &request_fingerprint, &manifest_path)?;
             verify_manifest(self, &commit, &manifest, &existing)?;
             return Ok(ArtifactCommitReceipt {
                 manifest_path,
@@ -205,6 +204,7 @@ impl VaultWriter for MemoryVaultBroker {
                 artifacts: manifest.artifacts,
             });
         }
+        reject_expired(&commit)?;
         let base = format!("sources/attempts/{}/{}", commit.task_id, commit.attempt_id);
         let mut artifacts = Vec::new();
         for candidate in &commit.artifacts {
@@ -229,16 +229,7 @@ impl VaultWriter for MemoryVaultBroker {
                 sha256: sha256(&candidate.content),
             });
         }
-        let manifest = AttemptManifest {
-            format_version: 1,
-            task_id: commit.task_id.to_string(),
-            attempt_id: commit.attempt_id.to_string(),
-            fence: commit.fence.get(),
-            audit_intent: commit.audit_intent,
-            idempotency_key: commit.idempotency_key.clone(),
-            request_fingerprint,
-            artifacts: artifacts.clone(),
-        };
+        let manifest = fresh_manifest(&commit, request_fingerprint, artifacts.clone())?;
         verify_artifact_records(self, &artifacts)?;
         let bytes = serde_json::to_vec_pretty(&manifest)
             .map_err(|error| BrokerError::json("serialize attempt manifest", error))?;

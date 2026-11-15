@@ -156,7 +156,9 @@ Control schema 4 增加不可变 `artifact_policies`：批准与 runtime audit o
 checkpoint 核对批准与原审计事实，ACK 后仍须实际账本验证才能导出。真实 Runner 启动
 从已认证 ProjectConfig、实际来源和 snapshot 固定批准，经 TaskEngine 持久并投递审计后
 才挂接执行体和发放能力；任一步失败走原取消清理。期限取原项目及实际来源最短值，
-未知生成内容仍 restricted/deny，不把输入外发许可当成生成内容分类。产物提交、L0 和
-来源 catalog 接线尚待完成；当前还不能宣称正文写入已有完整的来源继承链。
+未知生成内容仍 restricted/deny，不把输入外发许可当成生成内容分类。产物提交从原批准
+和原账本取得来源，不读 RunnerReport；清单第 2 版写入完整来源，精确重放不改策略或期限，
+新的暂存和正文写入拒绝过期材料，缺字段的旧清单不升为完整范围。L0 与最终来源 catalog
+接线仍待完成。
 单作业事件、原 Intent 前提与有界 UDS 消息见 [备份审计通信](../contracts/backup-audit.md)；
 固定监听器、持久准入与独立 worker 主循环仍待接入。

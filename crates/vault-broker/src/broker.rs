@@ -52,7 +52,8 @@ pub(crate) fn verify_manifest(
     manifest: &AttemptManifest,
     existing: &VaultObject,
 ) -> Result<(), BrokerError> {
-    if manifest.format_version != 1
+    if manifest.format_version != 2
+        || manifest.provenance.as_ref() != Some(&commit.provenance)
         || manifest.task_id != commit.task_id.to_string()
         || manifest.attempt_id != commit.attempt_id.to_string()
         || manifest.fence != commit.fence.get()
@@ -97,4 +98,65 @@ pub(crate) fn verify_artifact_records(
         }
     }
     Ok(())
+}
+
+/// 采样系统 UTC。新的暂存和正文写入用它判断期限，不接受调用方自报的时钟。
+pub(crate) fn system_now_ms() -> Result<i64, BrokerError> {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|_| BrokerError::InvalidArtifact("系统时钟无效".into()))?;
+    i64::try_from(now.as_millis()).map_err(|_| BrokerError::InvalidArtifact("系统时钟无效".into()))
+}
+
+pub(crate) fn reject_expired(commit: &ArtifactCommit) -> Result<(), BrokerError> {
+    if commit.provenance.is_live_at(system_now_ms()?) {
+        Ok(())
+    } else {
+        Err(BrokerError::InvalidArtifact(
+            "产物留存期限已过，拒绝新的暂存与正文写入".into(),
+        ))
+    }
+}
+
+/// 已有清单的重放判定。旧版本或缺少来源时失败关闭，不把缺字段升成完整范围。
+pub(crate) fn accept_existing_manifest(
+    manifest: &AttemptManifest,
+    commit: &ArtifactCommit,
+    request_fingerprint: &str,
+    manifest_path: &VaultPath,
+) -> Result<(), BrokerError> {
+    if manifest.format_version == 1 || manifest.provenance.is_none() {
+        return Err(BrokerError::InvalidArtifact(
+            "旧清单缺少来源元数据，不能升为完整范围".into(),
+        ));
+    }
+    if manifest.format_version != 2 {
+        return Err(BrokerError::ArtifactConflict(manifest_path.clone()));
+    }
+    if manifest.provenance.as_ref() != Some(&commit.provenance)
+        || manifest.idempotency_key != commit.idempotency_key
+        || manifest.request_fingerprint != request_fingerprint
+    {
+        return Err(BrokerError::IdempotencyConflict);
+    }
+    Ok(())
+}
+
+pub(crate) fn fresh_manifest(
+    commit: &ArtifactCommit,
+    request_fingerprint: String,
+    artifacts: Vec<CommittedArtifact>,
+) -> Result<AttemptManifest, BrokerError> {
+    reject_expired(commit)?;
+    Ok(AttemptManifest {
+        format_version: 2,
+        task_id: commit.task_id.to_string(),
+        attempt_id: commit.attempt_id.to_string(),
+        fence: commit.fence.get(),
+        audit_intent: commit.audit_intent.clone(),
+        idempotency_key: commit.idempotency_key.clone(),
+        request_fingerprint,
+        artifacts,
+        provenance: Some(commit.provenance.clone()),
+    })
 }

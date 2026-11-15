@@ -175,6 +175,7 @@ fn stopped_manifest_ack_loss_recovers_after_grace_without_inline_bodies_or_cli()
     let claim = engine
         .claim_board_task(task, "runner-instance", 1000, 1)
         .unwrap();
+    grant_board(&mut engine, task, &claim);
     engine.command(task, TaskCommand::Cancel, 2).unwrap();
     let report = report(
         &claim,

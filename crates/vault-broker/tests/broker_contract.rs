@@ -2,8 +2,12 @@
 
 #[path = "broker/artifacts.rs"]
 mod artifacts;
+#[path = "common/provenance.rs"]
+mod granted;
 #[path = "broker/paths.rs"]
 mod paths;
+#[path = "broker/provenance.rs"]
+mod provenance;
 #[path = "broker/snapshots.rs"]
 mod snapshots;
 
@@ -36,6 +40,7 @@ fn artifact_request() -> ArtifactCommit {
         fence: Fence::new(1).unwrap(),
         audit_intent: "intent-integrity".to_owned(),
         idempotency_key: "commit-integrity".to_owned(),
+        provenance: granted::granted_provenance(),
         artifacts: vec![ArtifactCandidate {
             name: path("result.md"),
             content: b"authentic".to_vec(),

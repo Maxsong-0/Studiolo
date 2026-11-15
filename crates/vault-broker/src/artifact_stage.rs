@@ -1,4 +1,5 @@
 //! 候选正文仅存 Broker 私有数据根；控制面只持内容寻址指针。
+use crate::broker::reject_expired;
 use crate::writer::disk;
 use crate::{ArtifactCommit, BrokerError, FsVaultBroker, MemoryVaultBroker, VaultUuid, sha256};
 use serde::{Deserialize, Serialize};
@@ -91,6 +92,7 @@ impl ArtifactStager for FsVaultBroker {
         if let Some(existing) = disk::read(&self.data, &path, LIMIT)? {
             decode(self.vault_uuid, &reference, &existing)?;
         } else {
+            reject_expired(plan)?;
             let mut count = 0usize;
             let mut total = bytes.len() as u64;
             for entry in self
@@ -146,11 +148,13 @@ impl ArtifactStager for MemoryVaultBroker {
             .artifact_stages
             .lock()
             .map_err(|_| crate::memory_state_error())?;
-        if !stages.contains_key(&reference.id)
-            && (stages.len() >= 4096
-                || stages.values().map(Vec::len).sum::<usize>() + bytes.len() > 64 * 1024 * 1024)
-        {
-            return Err(BrokerError::WriterLimitExceeded);
+        if !stages.contains_key(&reference.id) {
+            reject_expired(plan)?;
+            if stages.len() >= 4096
+                || stages.values().map(Vec::len).sum::<usize>() + bytes.len() > 64 * 1024 * 1024
+            {
+                return Err(BrokerError::WriterLimitExceeded);
+            }
         }
         stages.insert(reference.id.clone(), bytes);
         Ok(reference)

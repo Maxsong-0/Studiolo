@@ -4,6 +4,7 @@ use crate::{ControlDb, DbError, RuntimeAuditRecord, lifecycle, runtime_audit, ty
 use rusqlite::{Connection, OptionalExtension as _, TransactionBehavior, params};
 pub(super) use schema::migrate;
 use serde_json::json;
+use studiolo_audit_ledger::AuditEvent;
 use studiolo_core::{ArtifactProvenance, AttemptId, Fence, TaskId};
 
 impl ControlDb {
@@ -63,6 +64,45 @@ impl ControlDb {
             return Err(DbError::FenceMismatch);
         }
         read(&self.connection, task, attempt, fence, &row.snapshot_id)
+    }
+
+    /// 原批准对应的账本事件。没有批准时返回空，不补造完整范围。
+    pub fn artifact_approval_event(
+        &self,
+        task: TaskId,
+        attempt: AttemptId,
+        fence: Fence,
+    ) -> Result<Option<AuditEvent>, DbError> {
+        let row = self
+            .attempt(task, attempt)?
+            .ok_or(DbError::NotFound("attempt"))?;
+        if row.fence != fence {
+            return Err(DbError::FenceMismatch);
+        }
+        let Some(provenance) = read(&self.connection, task, attempt, fence, &row.snapshot_id)?
+        else {
+            return Ok(None);
+        };
+        let approved_at: Option<i64> = self
+            .connection
+            .query_row(
+                "SELECT approved_at_ms FROM artifact_policies WHERE attempt_id=?1",
+                [attempt.to_string()],
+                |row| row.get(0),
+            )
+            .optional()?;
+        let approved_at = approved_at.ok_or_else(invalid)?;
+        Ok(Some(
+            event(
+                task,
+                attempt,
+                fence,
+                &row.snapshot_id,
+                &provenance,
+                approved_at,
+            )
+            .audit_event()?,
+        ))
     }
 }
 

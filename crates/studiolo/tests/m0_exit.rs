@@ -3,7 +3,10 @@
 use studiolo::M0Workbench;
 use studiolo_audit_ledger::{AuditFilter, AuditLedger as _, AuditPhase};
 use studiolo_control_db::TaskStatus;
-use studiolo_core::{Revision, VaultPath};
+use studiolo_core::{
+    ArtifactProvenance, BackupScope, Classification, DataLabels, DesktopSync, ModelEgress,
+    Revision, SourcePolicyRef, VaultPath,
+};
 use studiolo_runner_adapter::{RunnerAdapter as _, RunnerObservation};
 use studiolo_task_engine::{
     ClaimRequest, PersistentTaskEngine, RetryPolicy, TaskCommand, TaskEngine as _, TaskSpec,
@@ -98,6 +101,29 @@ fn vertical_chain_preserves_author_fields_and_publishes_verified_manifest() {
         })
         .unwrap()
         .unwrap();
+    workbench
+        .tasks
+        .authorize_artifacts(
+            task,
+            claimed.run_spec.attempt_id,
+            claimed.run_spec.fence,
+            &claimed.snapshot_id,
+            &ArtifactProvenance::new(
+                SourcePolicyRef::new("fixture-source", "a".repeat(64)).unwrap(),
+                DataLabels::new(
+                    Classification::Restricted,
+                    BackupScope::Full,
+                    DesktopSync::Deny,
+                    ModelEgress::Deny,
+                )
+                .unwrap(),
+                4_000_000_000,
+                "b".repeat(64),
+            )
+            .unwrap(),
+            11,
+        )
+        .unwrap();
     assert_eq!(claimed.run_spec.inputs.len(), 2);
     assert!(
         claimed
@@ -174,9 +200,20 @@ fn vertical_chain_preserves_author_fields_and_publishes_verified_manifest() {
         .audit_ledger()
         .query(&AuditFilter::default().with_task(task))
         .unwrap();
-    assert_eq!(events.len(), 2);
-    assert_eq!(events[0].event().phase(), AuditPhase::Intent);
-    assert_eq!(events[1].event().phase(), AuditPhase::Outcome);
+    let reports: Vec<_> = events
+        .iter()
+        .filter(|record| record.event().action() == "task_engine.report")
+        .collect();
+    assert_eq!(reports.len(), 2);
+    assert_eq!(reports[0].event().phase(), AuditPhase::Intent);
+    assert_eq!(reports[1].event().phase(), AuditPhase::Outcome);
+    assert_eq!(
+        events
+            .iter()
+            .filter(|record| record.event().action() == "task.artifacts.authorized")
+            .count(),
+        1
+    );
     let mut index = InMemoryVaultIndex::new();
     index
         .rebuild(&[
