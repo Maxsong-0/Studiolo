@@ -48,7 +48,29 @@ where
         ) {
             return Err(TaskEngineError::AlreadyTerminal);
         }
-        let reservation = self.stage_reservation(&event_id, &report)?;
+        let commit = self.commit_for_report(&event_id, &report)?;
+        let predicted = self.predicted_reservation(&commit)?;
+        if prior.phase == AttemptPhase::Completed && prior.terminal.as_ref() == Some(&predicted) {
+            let receipt = self
+                .control_db
+                .artifact_receipt(prior.task_id, prior.attempt_id)
+                .map_err(map_db)?
+                .ok_or_else(|| {
+                    TaskEngineError::Integrity("completed attempt has no receipt".to_owned())
+                })?;
+            self.deliver_pending_outcomes(Some(prior.attempt_id), now_ms)?;
+            self.discard_reservation(&predicted)?;
+            return Ok(ReportResult {
+                status: TaskStatus::NeedsReview,
+                receipt: serde_json::from_value(receipt)?,
+                replayed: true,
+            });
+        }
+        let reservation = if prior.terminal.as_ref() == Some(&predicted) {
+            predicted
+        } else {
+            self.stage_commit(&commit)?
+        };
         let replayed = match prior.phase {
             AttemptPhase::Running => {
                 self.control_db
@@ -173,6 +195,7 @@ where
         // 只有在权威 T2 提交之后，审计才能宣称工作流状态。
         // T2 的 outbox 能扛过恰好发生在此边界的崩溃或账本不可用。
         self.deliver_pending_outcomes(Some(attempt.attempt_id), now_ms)?;
+        self.discard_reservation(reservation)?;
         Ok(receipt)
     }
 

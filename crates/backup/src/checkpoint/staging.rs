@@ -9,6 +9,7 @@ mod lifecycle;
 mod seal;
 mod shared;
 mod tree;
+mod trusted;
 
 pub use catalog::{ObjectRegistration, RedactedObject, SourceCatalog};
 pub use housekeeping::{CleanupSummary, reclaim_staging};
@@ -21,6 +22,7 @@ use std::{
     time::Instant,
 };
 use studiolo_core::checkpoint::CheckpointId;
+pub use trusted::trusted_source_catalog;
 
 /// 所有 owner 的固定导出位置；不能通过请求增加一个任意宿主机路径。
 pub const OWNER_DIRECTORIES: [&str; 11] = [

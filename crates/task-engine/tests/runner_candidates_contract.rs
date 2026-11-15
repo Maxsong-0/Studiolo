@@ -178,6 +178,15 @@ impl ArtifactStager for LostManifestAck {
     ) -> Result<ArtifactCommit, BrokerError> {
         self.inner.load_staged_artifact_commit(p)
     }
+    fn staged_reference(&self, plan: &ArtifactCommit) -> Result<StagedArtifactCommit, BrokerError> {
+        self.inner.staged_reference(plan)
+    }
+    fn discard_staged_artifact_commit(
+        &self,
+        pointer: &StagedArtifactCommit,
+    ) -> Result<(), BrokerError> {
+        self.inner.discard_staged_artifact_commit(pointer)
+    }
 }
 impl VaultWriter for LostManifestAck {
     fn mutate(&mut self, m: Mutation) -> Result<MutationReceipt, BrokerError> {

@@ -106,6 +106,15 @@ impl ArtifactStager for SharedBroker {
     ) -> Result<ArtifactCommit, BrokerError> {
         self.access(|b| b.load_staged_artifact_commit(pointer))
     }
+    fn staged_reference(&self, plan: &ArtifactCommit) -> Result<StagedArtifactCommit, BrokerError> {
+        self.access(|b| b.staged_reference(plan))
+    }
+    fn discard_staged_artifact_commit(
+        &self,
+        pointer: &StagedArtifactCommit,
+    ) -> Result<(), BrokerError> {
+        self.access(|b| b.discard_staged_artifact_commit(pointer))
+    }
 }
 impl NumberingScanner for SharedBroker {
     fn scan_number_max(&self, scope: &VaultPath, prefix: &str) -> Result<u64, BrokerError> {

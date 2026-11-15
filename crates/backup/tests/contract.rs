@@ -19,5 +19,7 @@ mod contract {
     mod state_machine;
     mod storage;
     mod support;
+    #[cfg(unix)]
+    mod trusted_catalog;
     mod worker_flow;
 }

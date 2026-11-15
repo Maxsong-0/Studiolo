@@ -29,6 +29,13 @@ pub trait ArtifactStager: Send + Sync {
         &self,
         pointer: &StagedArtifactCommit,
     ) -> Result<ArtifactCommit, BrokerError>;
+    /// 只计算指针，不写新的暂存。精确重放用它核对，避免过期后重写正文。
+    fn staged_reference(&self, plan: &ArtifactCommit) -> Result<StagedArtifactCommit, BrokerError>;
+    /// 删除已经核对过的原暂存。文件不存在视为已清理；身份不符则拒绝。
+    fn discard_staged_artifact_commit(
+        &self,
+        pointer: &StagedArtifactCommit,
+    ) -> Result<(), BrokerError>;
 }
 
 fn encode(plan: &ArtifactCommit) -> Result<Vec<u8>, BrokerError> {
@@ -125,6 +132,24 @@ impl ArtifactStager for FsVaultBroker {
         self.load_staged_artifact_commit(&reference)?;
         Ok(reference)
     }
+    fn staged_reference(&self, plan: &ArtifactCommit) -> Result<StagedArtifactCommit, BrokerError> {
+        Ok(pointer(self.vault_uuid, &encode(plan)?))
+    }
+    fn discard_staged_artifact_commit(
+        &self,
+        reference: &StagedArtifactCommit,
+    ) -> Result<(), BrokerError> {
+        self.writer.check(&self.root, &self.data)?;
+        let path = name(reference)?;
+        if let Some(bytes) = disk::read(&self.data, &path, LIMIT)? {
+            decode(self.vault_uuid, reference, &bytes)?;
+            self.data
+                .remove_file(Path::new(&path))
+                .map_err(|error| BrokerError::io("remove staged artifact", error))?;
+        }
+        self.writer.check(&self.root, &self.data)?;
+        Ok(())
+    }
     fn load_staged_artifact_commit(
         &self,
         reference: &StagedArtifactCommit,
@@ -158,6 +183,23 @@ impl ArtifactStager for MemoryVaultBroker {
         }
         stages.insert(reference.id.clone(), bytes);
         Ok(reference)
+    }
+    fn staged_reference(&self, plan: &ArtifactCommit) -> Result<StagedArtifactCommit, BrokerError> {
+        Ok(pointer(self.vault_uuid, &encode(plan)?))
+    }
+    fn discard_staged_artifact_commit(
+        &self,
+        reference: &StagedArtifactCommit,
+    ) -> Result<(), BrokerError> {
+        let mut stages = self
+            .artifact_stages
+            .lock()
+            .map_err(|_| crate::memory_state_error())?;
+        if let Some(bytes) = stages.get(&reference.id) {
+            decode(self.vault_uuid, reference, bytes)?;
+            stages.remove(&reference.id);
+        }
+        Ok(())
     }
     fn load_staged_artifact_commit(
         &self,

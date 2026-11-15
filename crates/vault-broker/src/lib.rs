@@ -89,12 +89,14 @@ mod broker;
 mod error;
 mod fs;
 mod memory;
+mod trusted_export;
 mod types;
 
 pub use broker::{SnapshotReader, VaultBroker, VaultReader, VaultSnapshotter, VaultWriter};
 pub use error::BrokerError;
 pub use fs::FsVaultBroker;
 pub use memory::MemoryVaultBroker;
+pub use trusted_export::read_trusted_export;
 pub use types::{
     ArtifactCandidate, ArtifactCommit, ArtifactCommitReceipt, CommittedArtifact, Mutation,
     MutationReceipt, Precondition, Snapshot, SnapshotFile, SnapshotId, SnapshotInput, VaultObject,

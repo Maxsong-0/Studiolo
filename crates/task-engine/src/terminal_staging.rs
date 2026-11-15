@@ -3,17 +3,17 @@ use super::*;
 use studiolo_vault_broker::StagedArtifactCommit;
 
 impl<B: VaultBroker + ArtifactStager, L: AuditLedger> PersistentTaskEngine<B, L> {
-    pub(super) fn stage_reservation(
+    pub(super) fn commit_for_report(
         &mut self,
         event: &AuditEventId,
         report: &RunnerReport,
-    ) -> Result<TerminalReservation, TaskEngineError> {
+    ) -> Result<ArtifactCommit, TaskEngineError> {
         let provenance = self.bound_provenance(&AttemptIdentity {
             task_id: report.task_id,
             attempt_id: report.attempt_id,
             fence: report.fence,
         })?;
-        let commit = ArtifactCommit {
+        Ok(ArtifactCommit {
             task_id: report.task_id,
             attempt_id: report.attempt_id,
             fence: report.fence,
@@ -28,12 +28,52 @@ impl<B: VaultBroker + ArtifactStager, L: AuditLedger> PersistentTaskEngine<B, L>
                 })
                 .collect(),
             provenance,
-        };
+        })
+    }
+
+    pub(super) fn stage_commit(
+        &self,
+        commit: &ArtifactCommit,
+    ) -> Result<TerminalReservation, TaskEngineError> {
         let pointer = self
             .broker
-            .stage_artifact_commit(&commit)
+            .stage_artifact_commit(commit)
             .map_err(TaskEngineError::Broker)?;
-        pointer_reservation(&commit, &pointer)
+        pointer_reservation(commit, &pointer)
+    }
+
+    pub(super) fn predicted_reservation(
+        &self,
+        commit: &ArtifactCommit,
+    ) -> Result<TerminalReservation, TaskEngineError> {
+        let pointer = self
+            .broker
+            .staged_reference(commit)
+            .map_err(TaskEngineError::Broker)?;
+        pointer_reservation(commit, &pointer)
+    }
+
+    pub(super) fn discard_reservation(
+        &self,
+        reservation: &TerminalReservation,
+    ) -> Result<(), TaskEngineError> {
+        if reservation.artifacts_json.is_array() {
+            return Ok(());
+        }
+        let pointer: StagedArtifactCommit =
+            serde_json::from_value(reservation.artifacts_json.clone())?;
+        self.broker
+            .discard_staged_artifact_commit(&pointer)
+            .map_err(TaskEngineError::Broker)
+    }
+
+    pub(super) fn stage_reservation(
+        &mut self,
+        event: &AuditEventId,
+        report: &RunnerReport,
+    ) -> Result<TerminalReservation, TaskEngineError> {
+        let commit = self.commit_for_report(event, report)?;
+        self.stage_commit(&commit)
     }
 
     pub(super) fn staged_plan(
