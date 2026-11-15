@@ -4,7 +4,6 @@ use studiolo_audit_ledger::SqliteAuditLedger;
 use studiolo_control_db::ControlDb;
 use studiolo_core::VaultUuid;
 use studiolo_policy::PolicyStore;
-use studiolo_supply::AgentStore;
 use studiolo_vault_broker::{NewRootRebind, RestoreReceipt, rebind_new_roots};
 
 /// 可选 owner 的显式状态。不能省略字段来表示缺席。
@@ -90,7 +89,11 @@ pub fn restore_into_new_root(request: RestoreRequest<'_>) -> Result<RestoredRoot
         broker.vault_uuid,
     )
     .map_err(|_| RestoreFailure::Control)?;
-    if control.bound_vault_uuid().map_err(|_| RestoreFailure::Control)? != broker.vault_uuid {
+    if control
+        .bound_vault_uuid()
+        .map_err(|_| RestoreFailure::Control)?
+        != broker.vault_uuid
+    {
         return Err(RestoreFailure::Control);
     }
     drop(control);
@@ -104,7 +107,8 @@ pub fn restore_into_new_root(request: RestoreRequest<'_>) -> Result<RestoredRoot
     let agent_store = match request.agent_store {
         OwnerPresence::Absent => false,
         OwnerPresence::Present(path) => {
-            AgentStore::open_existing(path).map_err(|_| RestoreFailure::AgentStore)?;
+            studiolo_supply::database::reopen_restored_store(path)
+                .map_err(|_| RestoreFailure::AgentStore)?;
             true
         }
     };

@@ -1,9 +1,15 @@
 //! 新根恢复重开人侧和接入方两条审计链，以及控制库。
-use std::{fs, os::unix::fs::PermissionsExt, time::{Duration, Instant}};
+use std::{
+    fs,
+    os::unix::fs::PermissionsExt,
+    time::{Duration, Instant},
+};
 use studiolo_audit_ledger::SqliteAuditLedger;
 use studiolo_control_db::ControlDb;
 use studiolo_core::checkpoint::{CheckpointId, OwnerWatermark};
-use studiolo_local_server::backup::restore::{OwnerPresence, RestoreRequest, restore_into_new_root};
+use studiolo_local_server::backup::restore::{
+    OwnerPresence, RestoreRequest, restore_into_new_root,
+};
 use studiolo_vault_broker::{FsVaultBroker, NewRootRebind};
 
 fn private(path: &std::path::Path) {
@@ -24,7 +30,12 @@ fn new_root_reopens_broker_control_and_both_ledgers() {
     private(&restored_vault);
     private(&restored_data);
     let sealed = frozen.export(&restored_vault, &restored_data).unwrap();
-    let OwnerWatermark::Broker { vault_uuid, pair_id, .. } = sealed.watermark else {
+    let OwnerWatermark::Broker {
+        vault_uuid,
+        pair_id,
+        ..
+    } = sealed.watermark
+    else {
         panic!("broker watermark");
     };
     let human = root.path().join("audit");

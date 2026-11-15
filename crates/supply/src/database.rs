@@ -115,7 +115,14 @@ impl AgentStore {
     pub fn open_existing(private_directory: &Path) -> Result<Self, SupplyError> {
         Self::open_mode(private_directory, CreatePolicy::ExistingOnly, false)
     }
+}
 
+/// 在新根重开已有接入方身份库。失败不建库。
+pub fn reopen_restored_store(directory: &Path) -> Result<(), SupplyError> {
+    AgentStore::open_existing(directory).map(|_| ())
+}
+
+impl AgentStore {
     fn open_mode(
         private_directory: &Path,
         policy: CreatePolicy,
