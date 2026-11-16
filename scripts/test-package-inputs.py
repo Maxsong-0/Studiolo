@@ -14,6 +14,11 @@ CI 整仓检出一路全绿，运行包却只带白名单里的文件，包里�
   scripts/、仓库根为基准落到 scripts/ 下已有文件的。路径参数不是字面量（经辅助函数、变量或 f-string
   传入）时退回该文件全部 "*.py" 字面量，一个都没有就判红。依赖的依赖一路递归；标准库与第三方模块不算。
   子进程按路径执行的脚本不在本守卫范围。
+
+另一类同样只有真打包才发现的缺口（2026-11-15，T-187）：两个运行包都带着架构守卫的测试程序到服务器上跑，
+守卫在运行时按仓库根读文件。源码里点名的、crates/ 以外的仓库文件必须在两份清单里；漏带时那条守卫在包里
+读不到文件。口径：架构守卫源码（crates/studiolo/tests 下的 architecture.rs、architecture_cases、
+architecture_support）里的字符串字面量，恰好是仓库里一个已有的普通文件、且不在 crates/ 下的，都算。
 """
 import ast
 import os
@@ -163,6 +168,82 @@ def scan(root, script):
                 gaps.append(f"{script}: {relative(path)} -> {relative(dependency)}，后者不在 STUDIOLO_INPUTS 里")
             pending.append(dependency)
     return edges, sorted(gaps)
+
+
+ARCHITECTURE = ("crates/studiolo/tests/architecture.rs", "crates/studiolo/tests/architecture_cases",
+                "crates/studiolo/tests/architecture_support")
+LITERAL = re.compile(rf'"({SEGMENT}(?:/{SEGMENT})*)"')
+
+
+def architecture_inputs(root):
+    """架构守卫源码点名的、crates/ 以外的仓库文件；返回 {仓库相对路径: 点名它的源码文件}。"""
+    root = Path(root).resolve()
+    sources = []
+    for entry in ARCHITECTURE:
+        target = root / entry
+        sources += sorted(target.rglob("*.rs")) if target.is_dir() else [target]
+    named = {}
+    for source in sources:
+        for literal in LITERAL.findall(source.read_text(encoding="utf-8")):
+            if literal.startswith("crates/") or {".", ".."} & set(literal.split("/")):
+                continue
+            if (root / literal).is_file():
+                named.setdefault(literal, source.relative_to(root).as_posix())
+    return named
+
+
+def architecture_gaps(root, script):
+    """一个打包脚本漏带的、架构守卫运行时要读的文件。"""
+    entries, problems = manifest_entries((Path(root) / script).read_text(encoding="utf-8"))
+    if problems:
+        return [f"{script}: {problem}" for problem in problems]
+    covered = lambda name: any(name == entry or name.startswith(entry + "/") for entry in entries)
+    return sorted(f"{script}: 架构守卫 {source} 要读 {name}，它不在 STUDIOLO_INPUTS 里"
+                  for name, source in architecture_inputs(root).items() if not covered(name))
+
+
+class ArchitectureRuntimeInputsTests(unittest.TestCase):
+    """架构守卫运行时读的仓库文件必须随两个运行包走；从清单删掉其中一个，必须红并点名。"""
+
+    # 守卫必须认得出这些（一个都认不出的「全绿」不算数）。
+    KNOWN = (".config/nextest.toml", ".github/workflows/ci.yml", "scripts/test-linux.sh", "Cargo.toml")
+
+    def test_both_manifests_carry_every_file_the_architecture_guards_read(self):
+        named = architecture_inputs(ROOT)
+        for name in self.KNOWN:
+            self.assertIn(name, named, "守卫没认出架构测试点名的文件，扫描逻辑失效")
+        for script in EDGES:
+            with self.subTest(script=script):
+                self.assertEqual(architecture_gaps(ROOT, script), [],
+                                 "打包清单漏了架构守卫要读的文件，随包测试在服务器上会读不到")
+
+    def test_dropping_a_named_file_from_either_manifest_is_red(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            for entry in ARCHITECTURE:
+                source, target = ROOT / entry, root / entry
+                target.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copytree(source, target) if source.is_dir() else shutil.copy(source, target)
+            named = architecture_inputs(ROOT)
+            for name in named:
+                (root / name).parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy(ROOT / name, root / name)
+            for script in EDGES:
+                original = (ROOT / script).read_text(encoding="utf-8")
+                (root / script).parent.mkdir(parents=True, exist_ok=True)
+                (root / script).write_text(original, encoding="utf-8")
+                self.assertEqual(architecture_gaps(root, script), [], "复制出的副本在变异前就不绿")
+                for name in self.KNOWN:
+                    if name == "Cargo.toml":
+                        continue  # 清单里另有 Cargo.lock 等以它开头的词，单独变异它不干净；另三个足够
+                    with self.subTest(script=script, name=name):
+                        mutated, count = re.subn(rf"(?<!\S){re.escape(name)}(?!\S)", "", original)
+                        self.assertEqual(count, 1, f"{script} 里没有唯一一处 {name}，变异没生效")
+                        (root / script).write_text(mutated, encoding="utf-8")
+                        gaps = architecture_gaps(root, script)
+                        self.assertEqual(len(gaps), 1, gaps)
+                        self.assertIn(f"要读 {name}，", gaps[0])
+                (root / script).write_text(original, encoding="utf-8")
 
 
 class RealManifestTests(unittest.TestCase):
