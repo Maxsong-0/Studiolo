@@ -194,4 +194,6 @@ checkpoint 核对批准与原审计事实，ACK 后仍须实际账本验证才�
   这要先拿到写者身份；要补的话用 `blob::verify` 那套按路径复算，代价是扫描时把历史正文多读一遍。
 
 单作业事件、原 Intent 前提与有界 UDS 消息见 [备份审计通信](../contracts/backup-audit.md)；
-固定监听器、定时调度、独立 worker 主循环、生产者一侧的保留期回收和全 owner 新根恢复仍待接入。
+固定监听器、按固定间隔的调度、过期暂存回收见 [备份生产者](../contracts/backup-producer.md)，独立 worker 主循环见
+[worker 进程边界](../contracts/backup-worker-process.md)「服务入口」（2026-11-15 接入，真机部署没验证）；
+全 owner 新根恢复仍待接入。

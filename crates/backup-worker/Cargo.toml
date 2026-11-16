@@ -8,6 +8,10 @@ repository.workspace = true
 rust-version.workspace = true
 publish = false
 
+[[bin]]
+name = "studiolo-backup-worker"
+path = "src/main.rs"
+
 [lints]
 workspace = true
 

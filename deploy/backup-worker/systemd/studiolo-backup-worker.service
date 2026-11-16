@@ -1,0 +1,43 @@
+# T-204 候选：专用账号、读取组、目录、固定包和仓库凭据由用户建好并验收之后才安装。
+# 单元名不能改：worker 只从 /run/credentials/studiolo-backup-worker.service 读凭据。
+[Unit]
+Description=Studiolo 独立备份 worker（取主服务封存好的检查点，追加上传到专用仓库）
+Wants=network-online.target
+After=network-online.target studiolo-human.service
+
+[Service]
+Type=simple
+User=studiolo-backup
+Group=studiolo-backup
+SupplementaryGroups=studiolo-backup-read
+ExecStart=/usr/lib/studiolo-backup-worker/studiolo-backup-worker run
+Restart=on-failure
+RestartSec=60
+KillMode=control-group
+TimeoutStopSec=30
+StateDirectory=studiolo-backup-worker/state studiolo-backup-worker/tmp
+StateDirectoryMode=0700
+LoadCredential=repository-password:/etc/studiolo/backup-worker-credentials/repository-password
+LoadCredential=rest-username:/etc/studiolo/backup-worker-credentials/rest-username
+LoadCredential=rest-password:/etc/studiolo/backup-worker-credentials/rest-password
+UMask=0077
+LimitCORE=0
+LimitMEMLOCK=infinity
+MemoryMax=2G
+TasksMax=64
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+SystemCallArchitectures=native
+StandardInput=null
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=studiolo-backup-worker
+UnsetEnvironment=LD_PRELOAD LD_LIBRARY_PATH
+
+[Install]
+WantedBy=multi-user.target

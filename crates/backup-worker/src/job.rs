@@ -56,6 +56,10 @@ impl<'a> ApprovedJob<'a> {
     pub(crate) fn deadline(&self) -> Instant {
         self.deadline
     }
+    /// 原封存是否还在有效期内；只看原准入事实，不看这次连接的窗口。
+    pub(crate) fn source_live(&self) -> bool {
+        self.fact.check_live().is_ok()
+    }
     pub(crate) fn check_live(&self) -> Result<()> {
         if Instant::now() >= self.deadline {
             return Err(ProcessError::Deadline);

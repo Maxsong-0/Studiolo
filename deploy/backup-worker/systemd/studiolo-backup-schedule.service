@@ -1,0 +1,30 @@
+# T-204 候选：和 studiolo-backup-worker.service 一起安装。
+# 只请主服务判断该不该做一次封存；做不做由主服务按批准的间隔定，这里不读凭据、不碰正文。
+[Unit]
+Description=Studiolo 备份定时触发（请主服务判断该不该做一次封存）
+After=studiolo-human.service
+
+[Service]
+Type=oneshot
+User=studiolo-backup
+Group=studiolo-backup
+SupplementaryGroups=studiolo-backup-read
+ExecStart=/usr/lib/studiolo-backup-worker/studiolo-backup-worker schedule
+TimeoutStartSec=30
+UMask=0077
+LimitCORE=0
+MemoryMax=128M
+TasksMax=16
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+RestrictAddressFamilies=AF_UNIX
+SystemCallArchitectures=native
+StandardInput=null
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=studiolo-backup-schedule
+UnsetEnvironment=LD_PRELOAD LD_LIBRARY_PATH

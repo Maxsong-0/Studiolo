@@ -8,6 +8,7 @@
 //! 审计载荷在 `payload` 子模块。
 
 mod accept;
+mod drive;
 mod error;
 mod finalize;
 mod followup;
@@ -15,6 +16,7 @@ pub(super) mod payload;
 mod run;
 
 pub use accept::JobPosition;
+pub use drive::{Advance, JobPorts, PortUnavailable, Transfer};
 pub use error::{AuditError2, WorkerError};
 
 use super::recovery_point::BackupTargetKind;
