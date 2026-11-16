@@ -238,3 +238,51 @@ fn lease_plan_is_a_dry_run_and_a_database_changed_since_voids_it() {
     );
     assert!(db.plan_lease_reconciliation(300, false).unwrap().is_empty());
 }
+#[test]
+fn a_restored_control_reopens_without_migrating_and_revokes_every_live_attempt() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("control.sqlite3");
+    let vault = VaultUuid::new();
+    let task = TaskId::new();
+    let expected = {
+        let mut db = ControlDb::open(&path, vault).unwrap();
+        db.create_task(task, &json!({"adapter":"consumer"}), 0)
+            .unwrap();
+        db.queue_task(task, 1).unwrap();
+        db.claim(task, "worker", snapshot(vault, "one"), 2, 1_000_000)
+            .unwrap();
+        // 封存前各 outbox 都已排空：这时的水位就是清单里会记的那一份。
+        for record in db.pending_runtime_audits().unwrap() {
+            db.acknowledge_runtime_audit(&record.event_id).unwrap();
+        }
+        for record in db.pending_outbox().unwrap() {
+            db.mark_outbox_delivered(record.sequence, 3).unwrap();
+        }
+        db.restored_watermark().unwrap()
+    };
+    // 只开已有库：Vault 绑定不同、目录里没有库，都拒绝，也不建出新文件。
+    assert!(ControlDb::open_existing(temp.path(), VaultUuid::new()).is_err());
+    let empty = tempfile::tempdir().unwrap();
+    assert!(ControlDb::open_existing(empty.path(), vault).is_err());
+    assert_eq!(std::fs::read_dir(empty.path()).unwrap().count(), 0);
+
+    let mut db = ControlDb::open_existing(temp.path(), vault).unwrap();
+    assert_eq!(db.restored_watermark().unwrap(), expected);
+    assert_eq!(
+        db.live_attempts().unwrap(),
+        LiveAttempts {
+            leased: 1,
+            cancel_requested: 0
+        }
+    );
+    // 租约远没到期，启动巡检照样撤销；撤销之后再来一遍什么都不变。
+    assert_eq!(db.reconcile_leases(10, true).unwrap().abandoned.len(), 1);
+    assert_eq!(db.live_attempts().unwrap().leased, 0);
+    assert!(db.reconcile_leases(11, true).unwrap().abandoned.is_empty());
+    assert_eq!(
+        db.task(task).unwrap().unwrap().status,
+        TaskStatus::Abandoned
+    );
+    // 撤销留下了待投的运行时结果，库已经不是封存那一份：水位核对不再相等。
+    assert!(db.restored_watermark().is_err());
+}

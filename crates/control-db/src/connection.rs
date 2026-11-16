@@ -31,7 +31,10 @@ impl ControlDb {
         Self::from_connection(Connection::open_in_memory()?, vault_uuid)
     }
 
-    fn from_connection(connection: Connection, vault_uuid: VaultUuid) -> Result<Self, DbError> {
+    pub(crate) fn from_connection(
+        connection: Connection,
+        vault_uuid: VaultUuid,
+    ) -> Result<Self, DbError> {
         // 这些设置只影响当前连接；新版库判定前不切换持久 journal mode。
         connection.execute_batch(
             "PRAGMA synchronous=FULL;

@@ -93,6 +93,66 @@ impl FrozenControl {
         })
     }
 }
+impl ControlDb {
+    /// 新根恢复专用（T-212）：只打开封存里放出来的固定 `control.sqlite3`。不建库（文件不在就失败）、不迁移：
+    /// schema 必须已经是当前版本、Vault 绑定必须已经在库里且等于 `vault_uuid`，都核过才走正常的连接配置。
+    pub fn open_existing(root: &Path, vault_uuid: VaultUuid) -> Result<Self, DbError> {
+        let connection = rusqlite::Connection::open_with_flags(
+            root.join("control.sqlite3"),
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE
+                | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX
+                | rusqlite::OpenFlags::SQLITE_OPEN_NOFOLLOW,
+        )?;
+        let version: i64 = connection.query_row(
+            "SELECT COALESCE(MAX(version),0) FROM schema_migrations",
+            [],
+            |row| row.get(0),
+        )?;
+        let stored: String = connection.query_row(
+            "SELECT vault_uuid FROM vault_binding WHERE singleton=1",
+            [],
+            |row| row.get(0),
+        )?;
+        if version != crate::migration::SCHEMA_VERSION
+            || crate::types::parse_vault_uuid(&stored)? != vault_uuid
+        {
+            return Err(problem(Error::Invalid));
+        }
+        Self::from_connection(connection, vault_uuid)
+    }
+
+    /// 按封存时同一套规则在这个库上重算 Control 水位（schema、Vault 绑定、各 outbox 排空、没有提交中的
+    /// attempt、完整性检查），只读。新根恢复用它核「放出来的库就是清单里那一份」。
+    pub fn restored_watermark(&self) -> Result<OwnerWatermark, DbError> {
+        validate::snapshot(&self.connection, self.vault_uuid).map_err(problem)
+    }
+
+    /// 还活着的 attempt 数，只读。新根恢复撤销之后拿着租约的必须是 0。
+    pub fn live_attempts(&self) -> Result<LiveAttempts, DbError> {
+        let (leased, cancel_requested): (i64, i64) = self.connection.query_row(
+            "SELECT count(*) FILTER (WHERE phase IN ('claimed','running')),
+                    count(*) FILTER (WHERE phase='cancel_requested')
+             FROM attempts",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        Ok(LiveAttempts {
+            leased: u64::try_from(leased).map_err(|_| problem(Error::Invalid))?,
+            cancel_requested: u64::try_from(cancel_requested)
+                .map_err(|_| problem(Error::Invalid))?,
+        })
+    }
+}
+
+/// 还活着的 attempt 分两类：拿着租约的（已认领、运行中）和已经收回工具能力、只等结束的（取消中）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct LiveAttempts {
+    /// 已认领或运行中。
+    pub leased: u64,
+    /// 取消中：工具能力已经收回，只等子任务终结或取消宽限到期。
+    pub cancel_requested: u64,
+}
+
 pub(super) fn problem(error: Error) -> DbError {
     DbError::Corrupt(error.to_string())
 }

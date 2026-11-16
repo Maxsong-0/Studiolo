@@ -7,7 +7,7 @@ mod artifact_policies;
 mod audit_events;
 mod board;
 mod checkpoint;
-pub use checkpoint::{ControlCheckpointSource, FrozenControl};
+pub use checkpoint::{ControlCheckpointSource, FrozenControl, LiveAttempts};
 mod board_completion;
 mod board_projection;
 mod runner_candidates;
