@@ -36,6 +36,10 @@ pub(crate) enum StartupError {
     Ingress,
     #[error("既有canonical写者或完整监视视图不可用；不初始化、不修复、不回退")]
     Writer,
+    /// 新根恢复的启动闸门（T-212）：写者数据根上有恢复 lineage，而 Auth 里没有同一恢复标识、已投进账本的
+    /// 撤权记录（含第 1 版 lineage 没有恢复标识）。由人在同一新根上补走撤权再启动。
+    #[error("这是恢复出来的新根，Auth 撤权还没做完；未监听")]
+    RestoreRevocationPending,
     /// 双向 Bridge 平面只在显式 `--sync-transport` 且审批、launcher、私有存储全部就绪时装配。
     #[error("双向 Bridge 平面装配失败；审批文档、受控 launcher 或私有存储未就绪，未监听")]
     SyncPlane,

@@ -26,7 +26,13 @@ impl Stage {
     }
     /// `retention_millis` 是封存正文留多久；演练「来源过期」时给一个很短的值。
     pub(super) async fn with_retention(shared: bool, retention_millis: u64) -> Self {
-        let assembled = Assembled::new().await;
+        Self::assemble(Assembled::new().await, shared, retention_millis)
+    }
+    /// 主人登记过 TOTP、有一个接入方实例的六 owner；新根恢复的用例用它。
+    pub(super) async fn with_owner_factor() -> Self {
+        Self::assemble(Assembled::with_owner_factor().await, true, 600_000)
+    }
+    fn assemble(assembled: Assembled, shared: bool, retention_millis: u64) -> Self {
         let parent = target(&assembled.fixture, "staging");
         if shared {
             fs::set_permissions(&parent, fs::Permissions::from_mode(0o750)).unwrap();
