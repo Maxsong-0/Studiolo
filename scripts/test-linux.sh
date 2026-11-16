@@ -12,15 +12,12 @@
 #
 # 用法：scripts/test-linux.sh            # fmt + clippy + test + 路径安全 + 生产构建
 #       scripts/test-linux.sh cargo --locked test -p studiolo-vault-broker
+#       STUDIOLO_TEST_RUNNER=nextest scripts/test-linux.sh   # 可选（T-187）：测试那一步换成 nextest 加文档测试
+#       STUDIOLO_TEST_PRINT_RUN=1 scripts/test-linux.sh      # 只打印要在服务器上执行的清单，不连服务器
 # 环境：STUDIOLO_TEST_HOST 覆盖目标主机（默认 maxsong@192.168.100.107）。
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 HOST="${STUDIOLO_TEST_HOST:-maxsong@192.168.100.107}"
-# 每个工作树一个远端目录：并发会话互不覆盖，各自的构建缓存也不互相作废。
-KEY="$(printf '%s' "$ROOT" | shasum -a 256 | cut -c1-12)"
-NAME="$(basename "$ROOT")-$KEY"
-REMOTE=".cache/studiolo-tests/$NAME"
-
 if [ "$#" -eq 0 ]; then
   RUN='
     cargo --locked fmt --all -- --check
@@ -33,10 +30,49 @@ if [ "$#" -eq 0 ]; then
     cargo --locked build -p studiolo-vault-admin
     python3 crates/auth-admin/tests/support/cli_process.py "$CARGO_TARGET_DIR/debug/studiolo-auth-admin"
   '
+  # 可选开关（T-187）：STUDIOLO_TEST_RUNNER=nextest 时只把「workspace 测试」那一行换成 nextest 加文档测试
+  # （nextest 不跑文档测试），其余门禁原样。默认 cargo：上面的清单一个字不变，和 CI 一致。
+  case "${STUDIOLO_TEST_RUNNER:-cargo}" in
+    cargo) ;;
+    nextest)
+      SWAPPED=""
+      FOUND=0
+      while IFS= read -r line; do
+        if [ "$line" = "    cargo --locked test --workspace" ]; then
+          SWAPPED+='    command -v cargo-nextest >/dev/null || { echo "服务器上没有 cargo-nextest（.config/nextest.toml 要求 0.9.148 及以上）：装好再用，或去掉 STUDIOLO_TEST_RUNNER 走默认回路。" >&2; exit 1; }'$'\n'
+          SWAPPED+='    cargo nextest run --locked --workspace'$'\n'
+          SWAPPED+='    cargo --locked test --workspace --doc'$'\n'
+          FOUND=1
+        else
+          SWAPPED+="$line"$'\n'
+        fi
+      done <<<"$RUN"
+      if [ "$FOUND" -ne 1 ]; then
+        printf '默认回路里找不到「cargo --locked test --workspace」这一行，没法换成 nextest。\n' >&2
+        exit 2
+      fi
+      RUN="$SWAPPED"
+      ;;
+    *)
+      printf 'STUDIOLO_TEST_RUNNER 只认 cargo 或 nextest，收到：%s\n' "$STUDIOLO_TEST_RUNNER" >&2
+      exit 2
+      ;;
+  esac
 else
   # ssh 把多个参数拼成一条远端命令再由远端 shell 重新分词，所以这里先逐个加引号。
   RUN="$(printf '%q ' "$@")"
 fi
+
+# 只看清单、不连服务器：核对上面那个开关用（架构守卫 test_linux_runner 会跑它）。
+if [ "${STUDIOLO_TEST_PRINT_RUN:-0}" = 1 ]; then
+  printf '%s\n' "$RUN"
+  exit 0
+fi
+
+# 每个工作树一个远端目录：并发会话互不覆盖，各自的构建缓存也不互相作废。
+KEY="$(printf '%s' "$ROOT" | shasum -a 256 | cut -c1-12)"
+NAME="$(basename "$ROOT")-$KEY"
+REMOTE=".cache/studiolo-tests/$NAME"
 
 # rsync 不会建多级父目录，先建好（-p 幂等）。
 ssh -o BatchMode=yes -o ConnectTimeout=15 "$HOST" "mkdir -p '$REMOTE'"
