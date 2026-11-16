@@ -132,6 +132,15 @@ impl PolicyCheckpointHandle {
     }
 }
 
+/// 按封存时同一套规则在一个已打开的库上重算 Policy 水位（schema、现行 effective 的版本和哈希、全局吊销），
+/// 只读。新根恢复用它核「放出来的库就是清单里那一份」（T-212）。
+pub(crate) fn watermark(
+    database: &Database,
+    deadline: Instant,
+) -> Result<studiolo_core::checkpoint::OwnerWatermark, PolicyError> {
+    Ok(snapshot::read(database, deadline)?.watermark)
+}
+
 fn check_deadline(deadline: Instant) -> Result<(), PolicyError> {
     if Instant::now() >= deadline {
         Err(PolicyError::Busy)

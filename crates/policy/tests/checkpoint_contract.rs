@@ -322,3 +322,56 @@ fn checkpoint_child() {
         std::io::stdout().flush().unwrap();
     }
 }
+
+#[test]
+fn restored_copy_recomputes_the_sealed_watermark_until_the_restore_revokes_globally() {
+    let (temp, _directory, store) = fixture();
+    store
+        .bootstrap(
+            DesiredInput {
+                kind: PolicyKind::Rules,
+                subject: "CLAUDE.md".into(),
+                body: Some("原规则".into()),
+            },
+            NOW,
+        )
+        .unwrap();
+    let handle = store.checkpoint_handle().unwrap();
+    handle.freeze(until(3000)).unwrap();
+    let target = private(temp.path(), "export");
+    let receipt = handle.export(&target, until(3000)).unwrap();
+    handle.thaw().unwrap();
+    // 放出来的副本按封存时同一套规则重算，水位逐项相等。
+    let copy = PolicyStore::open_existing(&target).unwrap();
+    assert_eq!(
+        copy.restored_watermark(until(3000)).unwrap(),
+        receipt.watermark
+    );
+    // 恢复一律全局吊销：之后重算的水位记着吊销，和封存那一份不再相等；同一吊销再来一次不重复记。
+    assert!(
+        copy.revoke(
+            studiolo_policy::RevocationLevel::Global,
+            "*",
+            "restore",
+            "新根恢复",
+            NOW
+        )
+        .unwrap()
+    );
+    assert!(
+        !copy
+            .revoke(
+                studiolo_policy::RevocationLevel::Global,
+                "*",
+                "restore",
+                "新根恢复",
+                NOW
+            )
+            .unwrap()
+    );
+    assert!(copy.effective().unwrap().global_revoked);
+    assert_ne!(
+        copy.restored_watermark(until(3000)).unwrap(),
+        receipt.watermark
+    );
+}
