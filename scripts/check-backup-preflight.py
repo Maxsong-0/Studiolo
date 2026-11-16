@@ -11,8 +11,9 @@
 规则照抄封存代码，每条检查旁边写了出处。代码改了规则，这里和 scripts/test-check-backup-preflight.py
 的对照用例要一起改；SQL 和几个名字常量由那份用例逐字比对 Rust 源码，漂了会红。
 
-退出码：0 没有会挡封存的问题；1 有（逐条列出）；2 用法错、读不了输入，或核查中途出了没预料到的错
-（这时什么结论都没有，不能当成「有问题」或「没问题」）。
+退出码：0 没有会挡封存的问题；1 有（逐条列出）；2 用法错，或者有一部分没核成（给的路径读不了、账号不对、
+中途出了没预料到的错）。没核成的部分逐条写明原因，别的部分照样核完、查出的问题照样列出；退出码 2 的结论
+不完整，不能当成「没问题」。
 """
 import argparse
 from dataclasses import asdict, dataclass, field
@@ -103,7 +104,7 @@ LISTING_PREFIXES = (
 
 
 class InputError(Exception):
-    """给的路径不能核查（不存在、不是目录、读不了）；退出码 2。"""
+    """这一部分不能核查（路径不存在、不是目录、读不了，账号不对）：记成没核成，退出码 2。"""
 
 
 @dataclass
@@ -119,6 +120,8 @@ class Report:
     checked: list = field(default_factory=list)
     findings: list = field(default_factory=list)
     notes: list = field(default_factory=list)
+    # 没核成的部分和原因：别的部分照样核完、照样输出，退出码 2（复审 R2-F5）。
+    incomplete: list = field(default_factory=list)
 
     def add(self, kind, where, detail):
         self.findings.append(Finding(kind, where, detail))
@@ -292,15 +295,29 @@ def quarantine_usable(path, uid):
 
 
 def count_quarantined(path, limit):
-    """隔离区里有多少个文件：封存不带它们，只给人看。数到上限就停；返回（个数, 是不是「至少」）。
+    """隔离区里有多少个目录项（文件和目录都算）：封存不带它们，只给人看。返回（个数, 是不是「至少」）。
+    数到上限就停，每层也只读到上限为止：空目录再多也不会整棵走完（复审 R2-F4）。不跟随链接；
     里面有读不了的目录也算「至少」，不静默少数。"""
     count = 0
-    unreadable = []
-    for _, _, names in os.walk(path, onerror=unreadable.append):
-        count += len(names)
-        if count >= limit:
-            return count, True
-    return count, bool(unreadable)
+    at_least = False
+    pending = [path]
+    while pending:
+        directory = pending.pop()
+        try:
+            entries = listed_entries(directory, limit - count)
+        except OSError:
+            at_least = True
+            continue
+        for entry in entries:
+            count += 1
+            if count >= limit:
+                return count, True
+            try:
+                if entry.is_dir(follow_symlinks=False):
+                    pending.append(entry.path)
+            except OSError:
+                at_least = True
+    return count, at_least
 
 
 def listed_entries(directory, room):
@@ -344,7 +361,8 @@ def walk_tree(root, prefix, skip, report, sweep_hint, keep, node_budget):
             if len(skip_here) == 1 and name == skip_here[0] and entry.is_dir(follow_symlinks=False):
                 count, at_least = count_quarantined(absolute, QUARANTINE_COUNT_LIMIT)
                 if count:
-                    report.notes.append(f"{absolute} 里有{'至少 ' if at_least else ' '}{count} 个文件：封存不带它们，人看过可以删")
+                    report.notes.append(f"{absolute} 里有{'至少 ' if at_least else ' '}{count} 个目录项（文件和目录都算）："
+                                        "封存不带它们，人看过可以删")
                 continue
             tree.nodes += 1
             if tree.nodes > node_budget:
@@ -582,9 +600,13 @@ def check_control(path, report):
 
 # ---------- 汇总与输出 ----------
 
-def check_totals(trees, report):
+def check_totals(trees, report, missing=0):
     """tree.rs `check_pair`：Vault 根和写者数据根两棵树的目录项数、字节数合起来比上限（复审 A3-F1）；
-    trusted_export.rs `walk`：导出扫描插入前文件数已经到上限才拒绝，所以超过上限才算（复审 A3-F3）。"""
+    trusted_export.rs `walk`：导出扫描插入前文件数已经到上限才拒绝，所以超过上限才算（复审 A3-F3）。
+    missing 是给了却没核成的树有几棵：只算核成的，超了照样报（实际只会更多），没超不能说没超。"""
+    if missing:
+        report.notes.append(f"有 {missing} 棵树没核成：两棵树合计的目录项数、字节数、文件数只算了核成的部分，"
+                            "实际只会更多")
     if not trees:
         return
     where = " + ".join(tree.root for tree in trees)
@@ -604,22 +626,44 @@ def check_totals(trees, report):
     elif files >= EXPORT_MAX_FILES * 9 // 10:
         report.notes.append(f"{where} 共 {files} 个文件，离导出扫描上限 {EXPORT_MAX_FILES} 不远；上限按整份导出算，"
                             "控制库、审计这些 owner 的文件这里没数，可能已经超了")
-    if len(trees) == 1:
+    if len(trees) == 1 and not missing:
         report.notes.append("只给了一棵树：封存按 Vault 根和写者数据根两棵合计比目录项数和字节数，另一棵也要算进去")
+
+
+def attempt(report, label, check):
+    """跑一部分核查。核不成（InputError，或者没预料到的错）就记下是哪部分、为什么，返回 None：别的部分照样核，
+    已经查出的问题照样输出（复审 R2-F5）；没预料到的错不能以退出码 1 被读成「有问题」（复审 A3-F2）。"""
+    try:
+        return check()
+    except InputError as error:
+        report.incomplete.append(f"{label}：{error}")
+    except Exception as error:  # noqa: BLE001 —— 见上面的说明
+        report.incomplete.append(f"{label}：意外错误 {type(error).__name__}：{error}")
+    return None
 
 
 def run(arguments):
     report = Report(uid=arguments.uid if arguments.uid is not None else os.geteuid())
     trees = []
+    missing = 0
     if arguments.vault:
-        trees.append(check_vault(Path(arguments.vault), report))
+        tree = attempt(report, f"Vault 根 {arguments.vault}", lambda: check_vault(Path(arguments.vault), report))
+        if tree is None:
+            missing += 1
+        else:
+            trees.append(tree)
     if arguments.data:
         # 两棵树共用一份目录项预算：前一棵用掉的，后一棵就少走这么多。
         budget = max(TREE_MAX_NODES - sum(tree.nodes for tree in trees), 0)
-        trees.append(check_data(Path(arguments.data), report, budget))
-    check_totals(trees, report)
+        tree = attempt(report, f"写者数据根 {arguments.data}",
+                       lambda: check_data(Path(arguments.data), report, budget))
+        if tree is None:
+            missing += 1
+        else:
+            trees.append(tree)
+    check_totals(trees, report, missing)
     if arguments.control:
-        check_control(arguments.control, report)
+        attempt(report, f"控制库 {arguments.control}", lambda: check_control(arguments.control, report))
     return report
 
 
@@ -636,8 +680,12 @@ def render(report):
                 lines.append(f"    {finding.where}：{finding.detail}")
             if len(findings) > LIST_LIMIT:
                 lines.append(f"    ……另有 {len(findings) - LIST_LIMIT} 处没列")
+    elif report.incomplete:
+        lines.append("核成的部分没发现会挡封存的现存数据；下面几部分没核成，结论不完整。")
     else:
         lines.append("没发现会挡封存的现存数据。")
+    for item in report.incomplete:
+        lines.append(f"没核成：{item}")
     for note in report.notes:
         lines.append(f"留意：{note}")
     lines.append("没核的：历史目录对历史正文的认领、暂存正文的内容和名字是否对得上、清单里原批准的内部字段、"
@@ -663,18 +711,18 @@ def main(argv=None):
     arguments = parse_arguments(sys.argv[1:] if argv is None else argv)
     try:
         report = run(arguments)
-    except InputError as error:
-        print(f"核查没做完：{error}", file=sys.stderr)
-        return 2
-    except Exception as error:  # noqa: BLE001 —— 没预料到的错误不能以退出码 1 被读成「有问题」（复审 A3-F2）
+        output = json.dumps({"uid": report.uid, "checked": report.checked,
+                             "findings": [asdict(finding) for finding in report.findings],
+                             "notes": report.notes, "incomplete": report.incomplete},
+                            ensure_ascii=False, indent=1) if arguments.json else render(report)
+    except Exception as error:  # noqa: BLE001 —— 汇总、输出出错时什么结论都没有，同样不能以退出码 1 被读成「有问题」
         print(f"核查没做完：意外错误 {type(error).__name__}：{error}", file=sys.stderr)
         return 2
-    if arguments.json:
-        print(json.dumps({"uid": report.uid, "checked": report.checked,
-                          "findings": [asdict(finding) for finding in report.findings],
-                          "notes": report.notes}, ensure_ascii=False, indent=1))
-    else:
-        print(render(report))
+    print(output)
+    for item in report.incomplete:
+        print(f"核查没做完：{item}", file=sys.stderr)
+    if report.incomplete:
+        return 2
     return 1 if report.findings else 0
 
 

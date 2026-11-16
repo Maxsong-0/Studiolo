@@ -373,10 +373,32 @@ class FileSystemChecks(Fixture):
     def test_quarantine_count_stops_and_says_at_least(self):
         for index in range(3):
             write(self.data, f"residue-quarantine/1-2-3/.f{index}.studiolo-tmp-1-{index}")
+        _, result = self.kinds()
+        self.assertTrue(any("residue-quarantine 里有 4 个目录项" in note for note in result["notes"]), result["notes"])
         with mock.patch.object(preflight, "QUARANTINE_COUNT_LIMIT", 2):
             kinds, result = self.kinds()
         self.assertEqual(kinds, [])
-        self.assertTrue(any("residue-quarantine 里有至少 3 个文件" in note for note in result["notes"]), result["notes"])
+        self.assertTrue(any("residue-quarantine 里有至少 2 个目录项" in note for note in result["notes"]), result["notes"])
+
+    def test_quarantine_count_is_bounded_even_for_empty_directories(self):
+        """隔离区里全是空目录时也数到上限就停，每层只读到上限为止，不整棵走完（复审 R2-F4）。"""
+        quarantine = self.data / "residue-quarantine"
+        for index in range(10):
+            (quarantine / f"batch-{index}" / "deeper").mkdir(parents=True)
+        read = []
+        original = preflight.listed_entries
+
+        def counting(directory, room):
+            entries = original(directory, room)
+            read.append(len(entries))
+            return entries
+
+        with mock.patch.object(preflight, "listed_entries", counting):
+            self.assertEqual(preflight.count_quarantined(quarantine, 4), (4, True))
+        self.assertLessEqual(sum(read), 4, "数到上限就停，不整棵走完")
+        self.assertEqual(preflight.count_quarantined(quarantine, 1000), (20, False))
+        os.symlink(self.root, quarantine / "batch-0" / "link")
+        self.assertEqual(preflight.count_quarantined(quarantine, 1000), (21, False), "链接只算一项，不跟进去")
 
     def test_one_tree_only_is_noted(self):
         output = io.StringIO()
@@ -406,9 +428,25 @@ class FileSystemChecks(Fixture):
 
     def test_unexpected_errors_exit_two_not_one(self):
         with mock.patch.object(preflight, "check_vault", side_effect=RuntimeError("boom")), \
+                contextlib.redirect_stdout(io.StringIO()) as output, \
                 contextlib.redirect_stderr(io.StringIO()) as error:
             self.assertEqual(preflight.main(["--vault", str(self.vault)]), 2)
         self.assertIn("意外错误 RuntimeError", error.getvalue())
+        self.assertIn("没核成：Vault 根", output.getvalue())
+
+    def test_a_tree_that_cannot_be_checked_does_not_hide_the_other(self):
+        """一棵树核不成，另一棵照样核完、问题照样列出；退出码 2，合计只算核成的那棵（复审 R2-F5）。"""
+        write(self.data, ".writer-state.json.studiolo-tmp-1-1")
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output), contextlib.redirect_stderr(io.StringIO()) as error:
+            code = preflight.main(["--vault", str(self.root / "missing"), "--data", str(self.data), "--json"])
+        self.assertEqual(code, 2)
+        result = json.loads(output.getvalue())
+        self.assertEqual(sorted({finding["kind"] for finding in result["findings"]}), ["residue"])
+        self.assertEqual(len(result["incomplete"]), 1)
+        self.assertIn("Vault 根", result["incomplete"][0])
+        self.assertTrue(any("没核成" in note for note in result["notes"]), result["notes"])
+        self.assertIn("核查没做完：Vault 根", error.getvalue())
 
     def test_owner_is_compared_against_the_running_account_or_uid_flag(self):
         kinds, result = self.kinds("--uid", str(os.geteuid() + 1))
@@ -416,7 +454,7 @@ class FileSystemChecks(Fixture):
         self.assertEqual(result["uid"], os.geteuid() + 1)
 
     def test_bad_roots_and_arguments_exit_two(self):
-        with contextlib.redirect_stderr(io.StringIO()):
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
             self.assertEqual(preflight.main(["--vault", str(self.root / "missing")]), 2)
             os.symlink(self.vault, self.root / "vault-link")
             self.assertEqual(preflight.main(["--vault", str(self.root / "vault-link")]), 2)
@@ -530,10 +568,33 @@ class ControlChecks(unittest.TestCase):
         self.assertTrue(Path(f"{self.path}-shm").exists())
         before = snapshot(self.directory)
         with mock.patch.object(preflight.os, "geteuid", return_value=os.stat(self.path).st_uid + 1), \
+                contextlib.redirect_stdout(io.StringIO()), \
                 contextlib.redirect_stderr(io.StringIO()) as error:
             self.assertEqual(preflight.main(["--control", str(self.path), "--uid", "0"]), 2)
         self.assertIn("属主账号", error.getvalue())
         self.assertEqual(snapshot(self.directory), before)
+
+    def test_a_refused_control_check_keeps_what_the_trees_found(self):
+        """控制库这一项因为账号不对没核成：前面两棵树查出的问题照样输出，退出码 2（复审 R2-F5）。"""
+        vault = self.directory / "vault"
+        write(vault, "notes/.a.md.studiolo-tmp-1-1")
+        owner = os.stat(self.path).st_uid
+        arguments = ["--vault", str(vault), "--control", str(self.path), "--uid", str(owner)]
+        for extra in (["--json"], []):
+            output = io.StringIO()
+            with mock.patch.object(preflight.os, "geteuid", return_value=owner + 1), \
+                    contextlib.redirect_stdout(output), \
+                    contextlib.redirect_stderr(io.StringIO()) as error:
+                self.assertEqual(preflight.main(arguments + extra), 2)
+            self.assertIn("属主账号", error.getvalue())
+            if extra:
+                result = json.loads(output.getvalue())
+                self.assertEqual([finding["kind"] for finding in result["findings"]], ["residue"])
+                self.assertEqual(len(result["incomplete"]), 1)
+                self.assertIn("属主账号", result["incomplete"][0])
+            else:
+                self.assertIn("会让每一次整批封存都失败", output.getvalue())
+                self.assertIn("没核成：控制库", output.getvalue())
 
     def test_wal_without_shm_is_refused_untouched(self):
         copy = self.directory / "copy"
@@ -544,7 +605,7 @@ class ControlChecks(unittest.TestCase):
         shutil.copy(self.path, copy / "control.sqlite3")
         shutil.copy(f"{self.path}-wal", copy / "control.sqlite3-wal")
         before = snapshot(copy)
-        with contextlib.redirect_stderr(io.StringIO()) as error:
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()) as error:
             self.assertEqual(preflight.main(["--control", str(copy / "control.sqlite3")]), 2)
         self.assertIn("先让主服务正常开一次库", error.getvalue())
         self.assertEqual(snapshot(copy), before)
