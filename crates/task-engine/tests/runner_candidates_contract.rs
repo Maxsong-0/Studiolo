@@ -162,6 +162,8 @@ struct LostManifestAck {
     fail: bool,
     /// 预留之后、第一篇正文之前进程就没了：这一次提交什么都没写。
     before: bool,
+    /// 「过期且没开始写」这件事 Broker 这会儿证实不了（只读检查出错）。
+    unprovable: bool,
 }
 impl VaultReader for LostManifestAck {
     fn vault_uuid(&self) -> VaultUuid {
@@ -204,6 +206,12 @@ impl ArtifactStager for LostManifestAck {
         self.inner.discard_staged_artifact_commit(pointer)
     }
     fn expired_before_start(&self, plan: &ArtifactCommit) -> Result<bool, BrokerError> {
+        if self.unprovable {
+            return Err(BrokerError::Io {
+                operation: "expiry proof unavailable",
+                source: std::io::Error::other("fixture fault"),
+            });
+        }
         self.inner.expired_before_start(plan)
     }
 }
@@ -247,6 +255,7 @@ fn manifest_ack_crash_recovers_candidates_into_needs_review_without_running_cli(
             inner: broker,
             fail: true,
             before: false,
+            unprovable: false,
         },
         MemoryAuditLedger::new(),
     );
@@ -326,17 +335,40 @@ fn manifest_ack_crash_recovers_candidates_into_needs_review_without_running_cli(
 }
 /// 预留之后、还没写出任何正文，原批准就过期了：对账把这次提交落成失败并丢掉暂存，
 /// 不再永远停在「提交中」（那会一直挡住控制库检查点导出）。
-#[test]
-fn reservation_that_expires_before_any_body_is_written_fails_instead_of_staying_committing() {
-    let temp = tempfile::TempDir::new_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
-    let data = temp.path().join("broker");
-    let broker = FsVaultBroker::open(&temp.path().join("vault"), &data).unwrap();
+/// 数写者数据目录里还有几份暂存正文。
+fn staged_candidates(data: &std::path::Path) -> usize {
+    std::fs::read_dir(data)
+        .unwrap()
+        .filter(|entry| {
+            entry
+                .as_ref()
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .starts_with("artifact-candidate-")
+        })
+        .count()
+}
+
+/// 预留成功、第一篇正文之前「进程没了」，然后等到原批准过期。返回时 attempt 还停在「提交中」，
+/// 暂存正文还在，Vault 里一个字节都没写。
+fn expired_before_first_body(
+    temp: &tempfile::TempDir,
+    unprovable: bool,
+) -> (
+    PersistentTaskEngine<LostManifestAck, MemoryAuditLedger>,
+    TaskId,
+    BoardClaim,
+) {
+    let broker =
+        FsVaultBroker::open(&temp.path().join("vault"), &temp.path().join("broker")).unwrap();
     let mut engine = PersistentTaskEngine::new(
         ControlDb::open(temp.path().join("control.sqlite3"), broker.vault_uuid()).unwrap(),
         LostManifestAck {
             inner: broker,
             fail: false,
             before: true,
+            unprovable,
         },
         MemoryAuditLedger::new(),
     );
@@ -350,19 +382,6 @@ fn reservation_that_expires_before_any_body_is_written_fails_instead_of_staying_
     // 原批准再过两到三秒到期：暂存和预留时还有效。
     let retain_until = i64::try_from(now.as_secs()).unwrap() + 3;
     grant_until(&mut engine, task, &claim, retain_until);
-    let staged = || {
-        std::fs::read_dir(&data)
-            .unwrap()
-            .filter(|entry| {
-                entry
-                    .as_ref()
-                    .unwrap()
-                    .file_name()
-                    .to_string_lossy()
-                    .starts_with("artifact-candidate-")
-            })
-            .count()
-    };
     assert!(matches!(
         engine.stage_board_runner_candidates(
             report(&claim, b"diff --git a/src/a b/src/a\n+safe\n"),
@@ -374,15 +393,22 @@ fn reservation_that_expires_before_any_body_is_written_fails_instead_of_staying_
         engine.task(task).unwrap().unwrap().status,
         TaskStatus::Committing
     );
-    assert_eq!(staged(), 1);
-
-    // 还没到期：对账只把它记成待恢复……但这一次 Broker 不再出错，所以要先等到期再对账。
+    assert_eq!(staged_candidates(&temp.path().join("broker")), 1);
     let wait = std::time::Duration::from_secs(u64::try_from(retain_until).unwrap()).saturating_sub(
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap(),
     ) + std::time::Duration::from_millis(200);
     std::thread::sleep(wait);
+    (engine, task, claim)
+}
+
+#[test]
+fn reservation_that_expires_before_any_body_is_written_fails_instead_of_staying_committing() {
+    let temp = tempfile::TempDir::new_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
+    let data = temp.path().join("broker");
+    let (mut engine, task, claim) = expired_before_first_body(&temp, false);
+    let staged = || staged_candidates(&data);
     engine.reconcile_periodic(10).unwrap();
 
     let view = engine.board_detail(task, HASH).unwrap().unwrap();
@@ -413,6 +439,38 @@ fn reservation_that_expires_before_any_body_is_written_fails_instead_of_staying_
             .filter(|record| record.event().action() == "task.commit_expired")
             .count(),
         1
+    );
+}
+
+/// 过期了，但 Broker 这会儿证实不了「一个字节都没写」：这次提交保持待恢复，对账照常做完，
+/// 不因为一个证实不了的提交整轮出错（那会挡住别的 attempt）。
+#[test]
+fn expiry_that_cannot_be_proven_stays_pending_and_does_not_abort_reconciliation() {
+    let temp = tempfile::TempDir::new_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
+    let (mut engine, task, _claim) = expired_before_first_body(&temp, true);
+    engine.reconcile_periodic(10).unwrap();
+    assert_eq!(
+        engine.task(task).unwrap().unwrap().status,
+        TaskStatus::Committing
+    );
+    assert_eq!(
+        staged_candidates(&temp.path().join("broker")),
+        1,
+        "证实不了就不能丢暂存"
+    );
+    assert_eq!(engine.control_db().committing_attempts().unwrap().len(), 1);
+    let (_db, _broker, ledger) = engine.into_parts();
+    let actions: Vec<_> = ledger
+        .query(&AuditFilter::default())
+        .unwrap()
+        .iter()
+        .map(|record| record.event().action().to_owned())
+        .collect();
+    assert!(actions.iter().all(|action| action != "task.commit_expired"));
+    assert!(
+        actions
+            .iter()
+            .any(|action| action == "task.candidate_recovery_pending")
     );
 }
 

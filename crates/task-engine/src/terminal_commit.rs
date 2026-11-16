@@ -217,6 +217,25 @@ where
         reservation: &TerminalReservation,
         now_ms: i64,
     ) -> Result<bool, TaskEngineError> {
+        // 证实这一步只读（读暂存、问 Broker）。它出任何错都按「证实不了」算：这次提交保持待恢复，
+        // 调用方照常记一条待恢复审计。一份读不出来的暂存不能挡住别的 attempt 的对账。
+        if !matches!(self.expired_unstarted(attempt, reservation), Ok(true)) {
+            return Ok(false);
+        }
+        self.control_db
+            .expire_committing(attempt.task_id, attempt.attempt_id, attempt.fence, now_ms)
+            .map_err(map_db)?;
+        self.deliver_runtime_audits()?;
+        self.discard_reservation(reservation)?;
+        Ok(true)
+    }
+
+    /// 只读：这份预留的原批准是不是已经过期、而且一个字节都没写出去。
+    fn expired_unstarted(
+        &self,
+        attempt: &AttemptIdentity,
+        reservation: &TerminalReservation,
+    ) -> Result<bool, TaskEngineError> {
         // 旧的内联预留没有暂存指针，也就没有可核对的原批准：不走这个出口。
         if reservation.artifacts_json.is_array() {
             return Ok(false);
@@ -235,19 +254,9 @@ where
                 "暂存与 attempt 身份不一致".into(),
             ));
         }
-        if !self
-            .broker
+        self.broker
             .expired_before_start(&commit)
-            .map_err(TaskEngineError::Broker)?
-        {
-            return Ok(false);
-        }
-        self.control_db
-            .expire_committing(attempt.task_id, attempt.attempt_id, attempt.fence, now_ms)
-            .map_err(map_db)?;
-        self.deliver_runtime_audits()?;
-        self.discard_reservation(reservation)?;
-        Ok(true)
+            .map_err(TaskEngineError::Broker)
     }
 
     pub(super) fn deliver_pending_outcomes(
