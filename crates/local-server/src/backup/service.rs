@@ -15,6 +15,9 @@ use tokio::{sync::watch, task::JoinHandle};
 const WINDOW: Duration = Duration::from_secs(10);
 /// 接受失败后的退避，免得在文件句柄用尽这类情况下空转。
 const BACKOFF: Duration = Duration::from_millis(200);
+/// 只回收、不冻结的周期：监听起来时先回收一次，之后每隔这么久一次。过期的封存副本（含 Auth
+/// 和审计）不能只靠 `schedule` 回收：定时器停了，它们就会一直留在盘上。
+const RECLAIM_EVERY: Duration = Duration::from_secs(15 * 60);
 
 /// 正在监听的备份 socket；停下时先收监听，再等在途的回收和封存做完。
 pub struct BackupService {
@@ -38,9 +41,17 @@ impl BackupService {
         let acceptor = tokio::spawn(async move {
             // 清理责任跟着接受循环走：循环结束才删 socket。
             let _claim = claim;
+            // 第一次 tick 立刻到：起来先回收一次。
+            let mut tidy = tokio::time::interval(RECLAIM_EVERY);
+            tidy.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
             loop {
                 let stream = tokio::select! {
                     _ = stopped.changed() => break,
+                    _ = tidy.tick() => {
+                        let producer = Arc::clone(&serving);
+                        let _ = tokio::task::spawn_blocking(move || producer.reclaim()).await;
+                        continue;
+                    }
                     accepted = listener.accept() => match accepted {
                         Ok((stream, _)) => stream,
                         Err(_) => {

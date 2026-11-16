@@ -1,14 +1,15 @@
 //! 可信生产者：答队列命令、按固定策略安排总封存，把带键的审计请求交给原准入端口。
 //!
-//! 主服务进程里没有定时器：只有收到 `schedule` 才判断做不做，判断只看固定配置和账本，
+//! 主服务进程里没有封存定时器：只有收到 `schedule` 才判断做不做，判断只看固定配置和账本，
 //! 请求里没有任何可以影响结果的参数。序号由这里发，原意图在冻结之前落账。
 //! 回收过期暂存和总封存都在后台线程里做，连接只拿到「做了／还有没做完的／还没到」。
+//! 回收另外由监听循环按固定周期触发（`reclaim`）：只回收、不冻结，定时器停了也不会让过期副本一直留在盘上。
 use super::{admission::BackupAdmission, audit::BackupAuditPort, queue::Queue};
 use crate::checkpoint::{CheckpointInputs, CheckpointTimes, OwnerExportPaths, trusted_catalog};
 use std::{
     num::NonZeroU64,
     path::PathBuf,
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex, PoisonError},
     thread::JoinHandle,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
@@ -29,8 +30,6 @@ use studiolo_core::checkpoint::{CheckpointId, FreezeBudget, FreezeRequest, Insta
 
 /// 原生 worker 只接专用的仅追加目标；生产者和它用同一个固定类别。
 pub const TARGET: BackupTargetKind = BackupTargetKind::DedicatedAppendOnlyTarget;
-/// 两次尝试之间至少隔这么久；封存失败后不会被连续的 `schedule` 反复拉起冻结。
-const RETRY_FLOOR_MILLIS: i64 = 60_000;
 /// 一次读账本的页大小和时间预算；没读完就先回「暂不可用」，进度留着下次接着读。
 const PAGE: usize = 512;
 const SCAN_BUDGET: Duration = Duration::from_secs(5);
@@ -49,7 +48,7 @@ pub struct ProducerPlan {
     pub ephemeral_root: PathBuf,
     /// 各 owner 正在服务的数据根；只用来核对它们和封存目录互不重叠。
     pub source_roots: Vec<PathBuf>,
-    /// 两次封存成功之间的最小间隔。
+    /// 两次尝试之间的最小间隔：从上一次准入或上一次尝试（含失败的）算起，取较晚的那个。
     pub min_interval_millis: u64,
     /// 封存正文从内容截止起保留多久。
     pub source_retention_millis: u64,
@@ -197,17 +196,37 @@ impl BackupProducer {
         let (answer, job) = self.decide(&mut state.queue)?;
         state.busy = true;
         drop(state);
+        self.launch(job).map(|()| answer)
+    }
+
+    /// 只回收过期暂存：不安排封存、不冻结、不读账本。监听循环起来时做一次，之后按固定周期做；
+    /// 后台线程在忙（回收或封存）就跳过这一轮。
+    pub fn reclaim(self: &Arc<Self>) {
+        let Ok(mut state) = self.state.lock() else {
+            return;
+        };
+        if state.busy {
+            return;
+        }
+        state.busy = true;
+        drop(state);
+        // 线程没起来时 `launch` 已经复位 busy，下一轮再试。
+        let _ = self.launch(None);
+    }
+
+    /// 起后台线程（回收，`job` 有值时接着做这一次封存）。调用前 busy 已经置上。
+    fn launch(self: &Arc<Self>, job: Option<JobKey>) -> Result<(), AuditError> {
         let producer = Arc::clone(self);
         let spawned = std::thread::Builder::new()
             .name("backup-producer".to_owned())
             .spawn(move || producer.housekeep(job));
         match spawned {
             Ok(handle) => {
-                // 上一个线程早已结束（busy 为 false 才走到这里），直接换掉。
+                // 上一个线程已经复位过 busy（否则走不到这里），它的句柄直接换掉。
                 if let Ok(mut slot) = self.background.lock() {
                     *slot = Some(handle);
                 }
-                Ok(answer)
+                Ok(())
             }
             Err(_) => {
                 // 线程没起来：已写的原意图留在账本里，下一次 `schedule` 会给它补失败结果。
@@ -226,11 +245,12 @@ impl BackupProducer {
         }
         let now = now_millis()?;
         let interval = i64::try_from(self.plan.min_interval_millis).unwrap_or(i64::MAX);
-        // 时钟回退时差值为负，按「还没到」处理。
-        let due = |last: Option<i64>, gap: i64| last.is_none_or(|at| now.saturating_sub(at) >= gap);
-        if !due(queue.last_admission_ms(), interval)
-            || !due(queue.last_attempt_ms(), RETRY_FLOOR_MILLIS)
-        {
+        if !due(
+            now,
+            interval,
+            queue.last_admission_ms(),
+            queue.last_attempt_ms(),
+        ) {
             return Ok((QueueAnswer::NotDue, None));
         }
         let sequence = queue
@@ -250,6 +270,8 @@ impl BackupProducer {
 
     /// 后台线程：先回收过期暂存，再做这一次封存（如果安排了）。
     fn housekeep(&self, job: Option<JobKey>) {
+        // 正常返回和 panic 展开都要复位 busy，否则之后的 `schedule` 永远回 `outstanding`。
+        let _idle = Idle(&self.state);
         // 回收不成不挡后面：登记损坏或别的进程占着时，新封存自己会被暂存层拒绝并记失败。
         if let Err(error) = reclaim_staging(
             &self.plan.staging_parent,
@@ -267,9 +289,6 @@ impl BackupProducer {
                 let _ = self.ledger.append(event);
             }
             eprintln!("备份封存未完成：{reason:?}");
-        }
-        if let Ok(mut state) = self.state.lock() {
-            state.busy = false;
         }
     }
 
@@ -323,6 +342,25 @@ impl BackupProducer {
     }
 }
 
+/// 后台线程结束时复位 busy 的守卫。锁被别处的 panic 毒化时也照样取回状态复位。
+struct Idle<'a>(&'a Mutex<State>);
+
+impl Drop for Idle<'_> {
+    fn drop(&mut self) {
+        let mut state = self.0.lock().unwrap_or_else(PoisonError::into_inner);
+        state.busy = false;
+    }
+}
+
+/// 到没到下一次尝试：距上一次准入、距上一次尝试（含失败的）都要满批准的最小间隔。
+/// 失败不缩短间隔，确定性的失败也只会按间隔重试。时钟回退时差值为负，按「还没到」处理。
+fn due(now: i64, interval: i64, last_admission: Option<i64>, last_attempt: Option<i64>) -> bool {
+    [last_admission, last_attempt]
+        .into_iter()
+        .flatten()
+        .all(|at| now.saturating_sub(at) >= interval)
+}
+
 /// 冻结、绑定、准入这些环节的失败都归成同一个固定原因，不带细节。
 fn barrier<E>(_: E) -> FailureReason {
     FailureReason::BarrierNotEstablished
@@ -342,4 +380,50 @@ fn now_millis() -> Result<i64, AuditError> {
         .ok()
         .and_then(|elapsed| i64::try_from(elapsed.as_millis()).ok())
         .ok_or(AuditError::Unavailable)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Idle, State, due};
+    use std::sync::Mutex;
+
+    const HOUR: i64 = 3_600_000;
+
+    #[test]
+    fn a_failed_attempt_waits_the_whole_approved_interval() {
+        let failed_at = 10 * HOUR;
+        // 没有任何历史：可以做。
+        assert!(due(failed_at, HOUR, None, None));
+        // 失败之后一分钟、半小时都不重试，满一个间隔才重试。
+        assert!(!due(failed_at + 61_000, HOUR, None, Some(failed_at)));
+        assert!(!due(failed_at + HOUR / 2, HOUR, None, Some(failed_at)));
+        assert!(due(failed_at + HOUR, HOUR, None, Some(failed_at)));
+        // 准入和尝试取较晚的那个。
+        assert!(!due(
+            failed_at + HOUR,
+            HOUR,
+            Some(failed_at + HOUR / 2),
+            Some(failed_at)
+        ));
+        // 时钟回退按「还没到」处理。
+        assert!(!due(failed_at - 1, HOUR, None, Some(failed_at)));
+    }
+
+    #[test]
+    fn a_panicking_background_thread_still_clears_busy() {
+        let state = Mutex::new(State {
+            busy: true,
+            ..State::default()
+        });
+        let outcome = std::thread::scope(|scope| {
+            scope
+                .spawn(|| {
+                    let _idle = Idle(&state);
+                    panic!("封存中途 panic");
+                })
+                .join()
+        });
+        assert!(outcome.is_err());
+        assert!(!state.lock().unwrap().busy);
+    }
 }

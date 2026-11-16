@@ -158,7 +158,7 @@ async fn producer_seals_only_when_scheduled_and_hands_the_admitted_key_to_the_wo
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_seal_that_cannot_be_made_is_recorded_as_failed_and_not_retried_at_once() {
+async fn a_seal_that_cannot_be_made_is_recorded_as_failed_and_not_retried_before_the_interval() {
     let stage = Stage::new(false).await;
     assert_eq!(stage.ask(QueueCommand::Schedule), QueueAnswer::Started);
     stage.producer.settle();
@@ -170,7 +170,8 @@ async fn a_seal_that_cannot_be_made_is_recorded_as_failed_and_not_retried_at_onc
     assert_eq!(stage.ask(QueueCommand::NextPending), QueueAnswer::Idle);
     assert_eq!(stage.ask(QueueCommand::Schedule), QueueAnswer::NotDue);
     stage.producer.settle();
-    assert_eq!(stage.outcomes(2), 0, "一分钟之内不发新序号");
+    // 失败也不缩短批准的间隔（这里一小时）：到点之前不发新序号，间隔的边界由单元测试钉住。
+    assert_eq!(stage.outcomes(2), 0, "不到批准的间隔不发新序号");
     stage.assembled.workbench.shutdown().await.unwrap();
 }
 
