@@ -391,6 +391,34 @@ fn events_older_than_a_day_are_skipped_with_an_audit_record() {
 }
 
 #[test]
+fn an_event_with_too_many_used_rounds_stops_sending_but_still_expires() {
+    let (ledger, store, transport) = enabled();
+    let event = classify(&ledger.task(1)).expect("任务创建在白名单里");
+    ledger.task(2);
+    // 账本里这条事件的轮次从 0 起连着用掉了 MAX_ATTEMPT_PROBES + 1 个，都没送到。
+    for round in 0..=MAX_ATTEMPT_PROBES {
+        ledger.add(
+            &format!("doorbell-{}-{round}", event.message_id()),
+            DOORBELL_AUDIT_ACTION,
+            serde_json::json!({"round": round.to_string(), "classification": "unavailable"}),
+        );
+    }
+    // 没到年龄上限：不发、不跳过，报不可用等人来看。
+    assert_eq!(
+        run(&ledger, &store, &transport, now()),
+        Err(RunError::AuditUnavailable)
+    );
+    assert!(transport.ids().is_empty());
+    // 过了年龄上限：照样按过期跳过，后面的事件不被它永远堵住（这里第 2 条也过期了）。
+    let late = now() + MAX_EVENT_AGE_MS + MINUTE;
+    assert_eq!(
+        run(&ledger, &store, &transport, late).unwrap(),
+        caught_up(0, 2)
+    );
+    assert!(transport.ids().is_empty());
+}
+
+#[test]
 fn nothing_is_sent_when_the_intent_cannot_be_audited() {
     let (ledger, store, transport) = enabled();
     ledger.task(1);

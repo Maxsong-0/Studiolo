@@ -287,20 +287,27 @@ fn plan(
     now_ms: i64,
 ) -> Result<Plan, AuditError> {
     let mut round = attempts;
+    // 已用过的轮次多到查不完：这一条不再发。但不能让它把通道永远堵住，
+    // 所以先往下看年龄，到了上限照样按过期跳过，没到才报不可用。
+    let mut exhausted = false;
     while let Some(classification) = recorded(ledger, event, &round.to_string())? {
         if classification == "delivered" {
             return Ok(Plan::Settled);
         }
-        round = round.checked_add(1).ok_or(AuditError::Unavailable)?;
-        if round - attempts > MAX_ATTEMPT_PROBES {
-            return Err(AuditError::Unavailable);
+        if round - attempts == MAX_ATTEMPT_PROBES || round == u32::MAX {
+            exhausted = true;
+            break;
         }
+        round += 1;
     }
     if recorded(ledger, event, EXPIRED_ROUND)?.is_some() {
         return Ok(Plan::Settled);
     }
     if now_ms.saturating_sub(event.occurred_at_ms()) > MAX_EVENT_AGE_MS {
         return Ok(Plan::Expire);
+    }
+    if exhausted {
+        return Err(AuditError::Unavailable);
     }
     Ok(Plan::Send(round))
 }
