@@ -127,8 +127,11 @@ TaskEngine 根据已存在 manifest 或保存的 plan 继续 T2/提交；该路�
 唯一不前滚的出口是 `expire_committing`（T-204，2026-11-15）：attempt 还在 committing、还没有任何
 `artifact_commits` 时，把它落成 Failed（预留是停止态候选的落成 Cancelled），同一个事务写
 `task.commit_expired` 运行时审计和投影；fence 不符、没有预留、已经有提交记录都拒绝，重放回同一个结果。
-它不判断「该不该过期」：调用方（TaskEngine）必须先让 Broker 证实原批准已过期且一个字节都没写出去
-（见[恢复契约](../m2/checkpoint-recovery-contract.md)「已知限制」）。
+它不判断「该不该过期」：调用方（TaskEngine 的主人入口 `discard_expired_commit`）必须先让 Broker
+证实原批准已过期且一个字节都没写出去（见[恢复契约](../m2/checkpoint-recovery-contract.md)「已知限制」）。
+对账从不调用它：过期的候选停在待审，由主人决定丢不丢（2026-11-16 用户拍板）。落定之后投递审计或丢暂存
+失败时，主人再调一次：只读的 `expired_commit(task, attempt)` 按落定标记认出「已经落定过」、给回当时的状态，
+引擎跳过证实，只补做投递和丢暂存，不再记第二条审计。标记在、attempt 阶段对不上按损坏拒绝。
 
 ## 7. M0 错误与验收
 

@@ -206,11 +206,86 @@ where
         Ok(receipt)
     }
 
+    /// 受信任的 L3 主人入口：原批准已经过期、一篇正文都还没写进 Vault 的提交（黑板候选和其他任务的
+    /// 终态提交都算），由主人决定丢掉。
+    ///
+    /// 对账不会自己丢（2026-11-16 用户拍板：过期的候选停在待审、保留正文，由主人决定）；主人处理之前
+    /// 这次提交一直是「提交中」，控制库检查点导出照旧被挡。证实不了「已过期」和「一个字节都没写」就
+    /// 拒绝，提交和暂存原样保留。成功时停止态的提交落成取消，其余落成失败，并丢掉暂存。
+    /// 上一次已经落定、只是审计投递、丢暂存或结果回送没做完的，再调一次就把剩下的做完、给回同一个
+    /// 状态，不再要求证实（暂存可能已经丢了）。每次调用传当前时间：请求摘要就是审计身份，同一个时间
+    /// 换了结果会和上一次的审计冲突。组合根绝不能经由 AI 的回执端点暴露此方法。
+    pub fn discard_expired_commit(
+        &mut self,
+        task: TaskId,
+        now: i64,
+    ) -> Result<TaskStatus, TaskEngineError> {
+        let request = (task, now);
+        self.audit_board(
+            "task.expired_commit_discarded",
+            &request,
+            AuditPhase::Intent,
+            None,
+        )?;
+        let result = self.discard_expired_commit_inner(task, now);
+        self.audit_board(
+            "task.expired_commit_discarded",
+            &request,
+            AuditPhase::Outcome,
+            Some(result.is_ok()),
+        )?;
+        result
+    }
+
+    fn discard_expired_commit_inner(
+        &mut self,
+        task: TaskId,
+        now: i64,
+    ) -> Result<TaskStatus, TaskEngineError> {
+        self.verify_vault_binding()?;
+        let record = self.task(task)?.ok_or(TaskEngineError::NotFound("task"))?;
+        // 上一次可能已经落定：按最后一个 attempt 找。
+        let attempt_id = record
+            .active_attempt
+            .or(record.last_attempt)
+            .ok_or(TaskEngineError::NotFound("attempt"))?;
+        let attempt = self
+            .control_db
+            .attempt(task, attempt_id)
+            .map_err(map_db)?
+            .ok_or(TaskEngineError::NotFound("attempt"))?;
+        let reservation = attempt
+            .terminal
+            .as_ref()
+            .ok_or_else(|| crate::board_types::reject("no reserved commit to discard"))?;
+        if let Some(status) = self
+            .control_db
+            .expired_commit(task, attempt_id)
+            .map_err(map_db)?
+        {
+            // 已经落定过：只补做审计投递和丢暂存（暂存已经没了也算做完）。
+            self.deliver_runtime_audits()?;
+            self.discard_reservation(reservation)?;
+            return Ok(status);
+        }
+        if !self.expire_unstarted(&prior_identity(&attempt), reservation, now)? {
+            return Err(crate::board_types::reject(
+                "commit is not provably expired before any body was written",
+            ));
+        }
+        Ok(self
+            .task(task)?
+            .ok_or(TaskEngineError::NotFound("task"))?
+            .status)
+    }
+
     /// 提交被 Broker 拒绝之后唯一的失败出口：原批准已经过期，而且一个字节都没写出去。
+    /// 只由主人入口 `discard_expired_commit` 调用，对账不调用。
     ///
     /// 两条都由 Broker 用自己的时钟和只读检查证实才走；证实不了返回 false，这次提交保持待恢复。
     /// 已经写出过正文的提交不走这里：Broker 会让它写完为止。先落定状态再丢暂存：中间崩溃最多留下
     /// 一份已过期的暂存正文，不会留下「状态还在提交中、暂存却没了」这种前滚不了也退不出的组合。
+    /// 落定之后投递审计或丢暂存失败可以原样重试：控制库按落定标记重放，暂存还在就照样证实、丢掉。
     pub(super) fn expire_unstarted(
         &mut self,
         attempt: &AttemptIdentity,

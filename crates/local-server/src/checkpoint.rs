@@ -10,6 +10,8 @@ use crate::{
 };
 pub use assembly::CheckpointInputs;
 pub use export::{CheckpointExports, CheckpointTimes, OwnerExportPaths, trusted_catalog};
+#[cfg(test)]
+pub(crate) use restore::{AuthRevocation, restore_with};
 pub use restore::{NewRootRestore, RestoreRefusal, RestoreReport, restore_into_new_root};
 use std::{
     sync::Arc,

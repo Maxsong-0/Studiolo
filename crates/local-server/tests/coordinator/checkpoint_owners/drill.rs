@@ -157,3 +157,46 @@ async fn sealed_job_whose_source_expires_is_closed_by_the_worker_over_the_closed
     assert_eq!(stage.outcomes(1), 1);
     stage.assembled.workbench.shutdown().await.unwrap();
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_expired_seal_is_reclaimed_without_schedule_and_without_a_new_freeze() {
+    // 定时器停了、worker 也没来取：过期的封存正文由只回收的周期任务清掉，不冻结、不发新序号。
+    // 保留 6 秒，理由同上一条：够真实六 owner 封存完并写下准入。
+    let stage = Stage::with_retention(true, 6_000).await;
+    assert_eq!(stage.ask(QueueCommand::Schedule), QueueAnswer::Started);
+    stage.producer.settle();
+    stage.assembled.writable(true);
+    assert_eq!(sealed_directories(&stage.parent), 1);
+    let QueueAnswer::Pending(record) = stage.ask(QueueCommand::NextPending) else {
+        panic!("封存完成后必须有待办");
+    };
+    let fact = AdmissionFact::from_receipt(&record).unwrap();
+
+    // 还在保留期里：回收不动它。
+    assert!(fact.check_live().is_ok());
+    stage.producer.reclaim();
+    stage.producer.settle();
+    assert_eq!(sealed_directories(&stage.parent), 1);
+
+    let waited = Instant::now();
+    while fact.check_live().is_ok() {
+        assert!(waited.elapsed() < Duration::from_secs(20), "封存一直没过期");
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    stage.producer.reclaim();
+    stage.producer.settle();
+    assert_eq!(sealed_directories(&stage.parent), 0);
+    // 只回收：工作台一直可写，账本里只有第一次的原意图。
+    stage.assembled.writable(true);
+    assert!(stage.assembled.human.enter_operation().is_ok());
+    let intents = stage
+        .assembled
+        .human
+        .query(&AuditFilter::default().with_phase(studiolo_audit_ledger::AuditPhase::Intent))
+        .unwrap()
+        .iter()
+        .filter(|record| studiolo_backup::worker::job::backup_event_key(record.event()).is_some())
+        .count();
+    assert_eq!(intents, 1);
+    stage.assembled.workbench.shutdown().await.unwrap();
+}

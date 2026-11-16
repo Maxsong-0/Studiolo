@@ -1,7 +1,9 @@
-//! 新根恢复接真实 owner：只有人侧三件（Broker、Auth、Audit）的封存能恢复；带黑板的在写之前拒绝。
+//! 新根恢复接真实 owner：现在整次恢复都在写之前拒绝——带黑板的 owner 没有协议，Auth 的撤权入口
+//! 和启动闸门还没有。放置、重绑定、核链尾这几步经测试专用的 `AuthRevocation::PlacementOnly` 照样验。
 use super::{producer::Stage, seal::manifest, *};
 use crate::checkpoint::{
-    CheckpointTimes, NewRootRestore, RestoreRefusal, restore_into_new_root, trusted_catalog,
+    AuthRevocation, CheckpointTimes, NewRootRestore, RestoreRefusal, restore_into_new_root,
+    restore_with, trusted_catalog,
 };
 use std::path::{Path, PathBuf};
 use studiolo_audit_ledger::AuditFilter;
@@ -169,7 +171,7 @@ async fn human_only() -> (Fixture, Arc<SqliteAuditLedger>, SealedCheckpoint) {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn human_side_checkpoint_restores_into_a_new_root_and_rebinds_the_broker() {
+async fn human_side_checkpoint_is_refused_until_auth_revocation_exists() {
     let (fixture, _human, sealed) = human_only().await;
     assert_eq!(
         sealed.manifest().roster.assembly(Owner::Control),
@@ -197,7 +199,21 @@ async fn human_side_checkpoint_restores_into_a_new_root_and_rebinds_the_broker()
     assert_eq!(fs::read_dir(&new_root).unwrap().count(), 0);
     assert_eq!(steps(&held), [RecoveryStep::KitOpened]);
 
-    let report = restore_into_new_root(&mut held, request(&restored, &new_root, true)).unwrap();
+    // 前置条件都齐了，名单里也只有人侧三件：Auth 的撤权入口没有，照样在写之前拒绝。
+    assert_eq!(
+        restore_into_new_root(&mut held, request(&restored, &new_root, true)).unwrap_err(),
+        RestoreRefusal::Unsupported(Owner::Auth)
+    );
+    assert_eq!(fs::read_dir(&new_root).unwrap().count(), 0);
+    assert_eq!(steps(&held), [RecoveryStep::KitOpened]);
+
+    // 下面只有测试能走：越过 Auth 那道拒绝，验放置、重绑定、核链尾，撤权编排补上之后复用。
+    let report = restore_with(
+        &mut held,
+        request(&restored, &new_root, true),
+        AuthRevocation::PlacementOnly,
+    )
+    .unwrap();
     assert!(!report.reused_placement);
     let OwnerWatermark::Broker {
         vault_uuid,
@@ -255,7 +271,12 @@ async fn human_side_checkpoint_restores_into_a_new_root_and_rebinds_the_broker()
     // 同一个新根再来一次、又没声明接手：拒绝，不覆盖。
     let mut again = grant(sealed.reference());
     assert_eq!(
-        restore_into_new_root(&mut again, request(&restored, &new_root, true)).unwrap_err(),
+        restore_with(
+            &mut again,
+            request(&restored, &new_root, true),
+            AuthRevocation::PlacementOnly
+        )
+        .unwrap_err(),
         RestoreRefusal::AlreadyPlaced
     );
     assert_eq!(steps(&again), [RecoveryStep::KitOpened]);

@@ -138,6 +138,52 @@ impl ControlDb {
         Ok(status)
     }
 
+    /// 只读：这个 attempt 是不是已经经 `expire_committing` 落定过；是就给回当时落成的状态。
+    ///
+    /// 主人重试丢弃时用它跳过证实（暂存可能已经丢了），只把剩下的审计投递和丢暂存做完。
+    /// 落定标记在、attempt 的阶段却对不上，按损坏拒绝。
+    pub fn expired_commit(
+        &self,
+        task_id: TaskId,
+        attempt_id: AttemptId,
+    ) -> Result<Option<TaskStatus>, DbError> {
+        const OPERATION: &str = "expired_commit";
+        let payload: Option<String> = self
+            .connection
+            .query_row(
+                "SELECT payload_json FROM runtime_audit_outbox WHERE event_id=?1",
+                [format!("commit-expired:{attempt_id}")],
+                |row| row.get(0),
+            )
+            .optional()?;
+        let Some(payload) = payload else {
+            return Ok(None);
+        };
+        let payload: Value = serde_json::from_str(&payload)?;
+        let status =
+            TaskStatus::parse(payload.get("status").and_then(Value::as_str).unwrap_or(""))?;
+        let phase: Option<String> = self
+            .connection
+            .query_row(
+                "SELECT phase FROM attempts WHERE task_id = ?1 AND attempt_id = ?2",
+                params![task_id.to_string(), attempt_id.to_string()],
+                |row| row.get(0),
+            )
+            .optional()?;
+        let expected = if status == TaskStatus::Cancelled {
+            AttemptPhase::Cancelled
+        } else {
+            AttemptPhase::Failed
+        };
+        if phase.as_deref() != Some(expected.as_str()) {
+            return Err(DbError::InvalidTransition {
+                from: phase.unwrap_or_default(),
+                operation: OPERATION,
+            });
+        }
+        Ok(Some(status))
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub(super) fn finalize_terminal_kind(
         &mut self,

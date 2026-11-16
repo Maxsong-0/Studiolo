@@ -164,6 +164,8 @@ struct LostManifestAck {
     before: bool,
     /// 「过期且没开始写」这件事 Broker 这会儿证实不了（只读检查出错）。
     unprovable: bool,
+    /// 接下来这么多次丢暂存会失败（落定之后、丢暂存之前出错）。
+    discard_faults: std::sync::atomic::AtomicU32,
 }
 impl VaultReader for LostManifestAck {
     fn vault_uuid(&self) -> VaultUuid {
@@ -203,6 +205,19 @@ impl ArtifactStager for LostManifestAck {
         &self,
         pointer: &StagedArtifactCommit,
     ) -> Result<(), BrokerError> {
+        use std::sync::atomic::Ordering;
+        if self
+            .discard_faults
+            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |left| {
+                left.checked_sub(1)
+            })
+            .is_ok()
+        {
+            return Err(BrokerError::Io {
+                operation: "discard staged commit",
+                source: std::io::Error::other("fixture fault"),
+            });
+        }
         self.inner.discard_staged_artifact_commit(pointer)
     }
     fn expired_before_start(&self, plan: &ArtifactCommit) -> Result<bool, BrokerError> {
@@ -256,6 +271,7 @@ fn manifest_ack_crash_recovers_candidates_into_needs_review_without_running_cli(
             fail: true,
             before: false,
             unprovable: false,
+            discard_faults: Default::default(),
         },
         MemoryAuditLedger::new(),
     );
@@ -333,8 +349,6 @@ fn manifest_ack_crash_recovers_candidates_into_needs_review_without_running_cli(
     assert_eq!(Some(replay), view.candidate_receipt);
     assert_eq!(staged(), 0, "已完成的精确重放不重建暂存");
 }
-/// 预留之后、还没写出任何正文，原批准就过期了：对账把这次提交落成失败并丢掉暂存，
-/// 不再永远停在「提交中」（那会一直挡住控制库检查点导出）。
 /// 数写者数据目录里还有几份暂存正文。
 fn staged_candidates(data: &std::path::Path) -> usize {
     std::fs::read_dir(data)
@@ -355,6 +369,7 @@ fn staged_candidates(data: &std::path::Path) -> usize {
 fn expired_before_first_body(
     temp: &tempfile::TempDir,
     unprovable: bool,
+    discard_faults: u32,
 ) -> (
     PersistentTaskEngine<LostManifestAck, MemoryAuditLedger>,
     TaskId,
@@ -369,6 +384,7 @@ fn expired_before_first_body(
             fail: false,
             before: true,
             unprovable,
+            discard_faults: discard_faults.into(),
         },
         MemoryAuditLedger::new(),
     );
@@ -403,20 +419,43 @@ fn expired_before_first_body(
     (engine, task, claim)
 }
 
+/// 审计里每种动作各有几条。
+fn actions(ledger: &MemoryAuditLedger, action: &str) -> usize {
+    ledger
+        .query(&AuditFilter::default())
+        .unwrap()
+        .iter()
+        .filter(|record| record.event().action() == action)
+        .count()
+}
+
+/// 预留之后、还没写出任何正文，原批准就过期了：对账不替主人丢，照旧停在「提交中」、保留暂存；
+/// 只有主人调用丢弃入口才落成失败并丢掉暂存（2026-11-16 用户拍板：过期候选停在待审）。
 #[test]
-fn reservation_that_expires_before_any_body_is_written_fails_instead_of_staying_committing() {
+fn expired_unstarted_candidates_wait_for_the_owner_and_only_the_owner_discards_them() {
     let temp = tempfile::TempDir::new_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
     let data = temp.path().join("broker");
-    let (mut engine, task, claim) = expired_before_first_body(&temp, false);
+    let (mut engine, task, claim) = expired_before_first_body(&temp, false, 0);
     let staged = || staged_candidates(&data);
     engine.reconcile_periodic(10).unwrap();
+    engine.reconcile_periodic(11).unwrap();
+    assert_eq!(
+        engine.task(task).unwrap().unwrap().status,
+        TaskStatus::Committing
+    );
+    assert_eq!(staged(), 1, "对账不能替主人丢暂存");
+    assert_eq!(engine.control_db().committing_attempts().unwrap().len(), 1);
 
+    assert_eq!(
+        engine.discard_expired_commit(task, 12).unwrap(),
+        TaskStatus::Failed
+    );
     let view = engine.board_detail(task, HASH).unwrap().unwrap();
     assert_eq!(view.task.status, TaskStatus::Failed);
     assert!(view.task.active_attempt.is_none());
     assert_eq!(view.task.last_attempt, Some(claim.attempt.attempt_id));
     assert!(view.candidate_receipt.is_none());
-    assert_eq!(staged(), 0, "过期的暂存正文必须丢掉");
+    assert_eq!(staged(), 0, "主人丢掉之后暂存正文必须清掉");
     assert!(
         engine
             .control_db()
@@ -424,31 +463,30 @@ fn reservation_that_expires_before_any_body_is_written_fails_instead_of_staying_
             .unwrap()
             .is_empty()
     );
-    // 再对账一次什么都不变；审计里恰好有一条「提交过期」。
-    engine.reconcile_periodic(11).unwrap();
+    // 再对账不改结果；再丢一次（比如结果没送回来、主人又点了一次）给回同一个状态，不再要证实。
+    engine.reconcile_periodic(13).unwrap();
+    assert_eq!(
+        engine.discard_expired_commit(task, 14).unwrap(),
+        TaskStatus::Failed
+    );
     assert_eq!(
         engine.task(task).unwrap().unwrap().status,
         TaskStatus::Failed
     );
     let (_db, _broker, ledger) = engine.into_parts();
-    assert_eq!(
-        ledger
-            .query(&AuditFilter::default())
-            .unwrap()
-            .iter()
-            .filter(|record| record.event().action() == "task.commit_expired")
-            .count(),
-        1
-    );
+    assert_eq!(actions(&ledger, "task.commit_expired"), 1);
+    assert_eq!(actions(&ledger, "task.candidate_recovery_pending"), 2);
 }
 
-/// 过期了，但 Broker 这会儿证实不了「一个字节都没写」：这次提交保持待恢复，对账照常做完，
-/// 不因为一个证实不了的提交整轮出错（那会挡住别的 attempt）。
+/// 过期了，但 Broker 这会儿证实不了「一个字节都没写」：主人的丢弃也被拒绝，提交和暂存原样保留，
+/// 对账照常做完（不因为一个证实不了的提交整轮出错，那会挡住别的 attempt）。
 #[test]
-fn expiry_that_cannot_be_proven_stays_pending_and_does_not_abort_reconciliation() {
+fn owner_discard_is_refused_when_expiry_cannot_be_proven() {
     let temp = tempfile::TempDir::new_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
-    let (mut engine, task, _claim) = expired_before_first_body(&temp, true);
+    let (mut engine, task, _claim) = expired_before_first_body(&temp, true, 0);
     engine.reconcile_periodic(10).unwrap();
+    assert!(engine.discard_expired_commit(task, 11).is_err());
+    engine.reconcile_periodic(12).unwrap();
     assert_eq!(
         engine.task(task).unwrap().unwrap().status,
         TaskStatus::Committing
@@ -460,17 +498,131 @@ fn expiry_that_cannot_be_proven_stays_pending_and_does_not_abort_reconciliation(
     );
     assert_eq!(engine.control_db().committing_attempts().unwrap().len(), 1);
     let (_db, _broker, ledger) = engine.into_parts();
-    let actions: Vec<_> = ledger
-        .query(&AuditFilter::default())
+    assert_eq!(actions(&ledger, "task.commit_expired"), 0);
+    assert_eq!(actions(&ledger, "task.candidate_recovery_pending"), 2);
+}
+
+/// 落定已经提交、丢暂存那一步出错：主人再点一次就收拾干净，审计里仍然只有一条「提交过期」。
+#[test]
+fn owner_discard_that_fails_after_settling_can_be_retried() {
+    let temp = tempfile::TempDir::new_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
+    let data = temp.path().join("broker");
+    let (mut engine, task, _claim) = expired_before_first_body(&temp, false, 1);
+    engine.reconcile_periodic(10).unwrap();
+    assert!(engine.discard_expired_commit(task, 11).is_err());
+    assert_eq!(
+        engine.task(task).unwrap().unwrap().status,
+        TaskStatus::Failed
+    );
+    assert_eq!(staged_candidates(&data), 1);
+    assert_eq!(
+        engine.discard_expired_commit(task, 12).unwrap(),
+        TaskStatus::Failed
+    );
+    assert_eq!(staged_candidates(&data), 0);
+    let (_db, _broker, ledger) = engine.into_parts();
+    assert_eq!(actions(&ledger, "task.commit_expired"), 1);
+}
+
+/// 不是黑板的任务（这里是 stub 执行体）：终态提交同样带原批准、同样会过期，也只能由主人丢。
+#[test]
+fn expired_plain_task_commit_is_discarded_by_the_owner_too() {
+    let temp = tempfile::TempDir::new_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
+    let data = temp.path().join("broker");
+    let broker = FsVaultBroker::open(&temp.path().join("vault"), &data).unwrap();
+    let mut engine = PersistentTaskEngine::new(
+        ControlDb::open(temp.path().join("control.sqlite3"), broker.vault_uuid()).unwrap(),
+        LostManifestAck {
+            inner: broker,
+            fail: false,
+            before: true,
+            unprovable: false,
+            discard_faults: Default::default(),
+        },
+        MemoryAuditLedger::new(),
+    );
+    let task = engine
+        .create_task(
+            TaskSpec {
+                adapter: "stub".into(),
+                ..spec().task
+            },
+            1,
+        )
+        .unwrap();
+    engine.command(task, TaskCommand::Run, 2).unwrap();
+    let claimed = engine
+        .claim(ClaimRequest {
+            worker_id: "worker".into(),
+            now_ms: 3,
+            lease_until_ms: 100,
+        })
         .unwrap()
-        .iter()
-        .map(|record| record.event().action().to_owned())
-        .collect();
-    assert!(actions.iter().all(|action| action != "task.commit_expired"));
+        .unwrap();
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap();
+    let retain_until = i64::try_from(now.as_secs()).unwrap() + 3;
+    engine
+        .authorize_artifacts(
+            task,
+            claimed.run_spec.attempt_id,
+            claimed.run_spec.fence,
+            &claimed.snapshot_id,
+            &ArtifactProvenance::new(
+                SourcePolicyRef::new("fixture-source", "a".repeat(64)).unwrap(),
+                DataLabels::new(
+                    Classification::Restricted,
+                    BackupScope::Full,
+                    DesktopSync::Deny,
+                    ModelEgress::Deny,
+                )
+                .unwrap(),
+                retain_until,
+                "b".repeat(64),
+            )
+            .unwrap(),
+            4,
+        )
+        .unwrap();
+    let report = RunnerReport {
+        task_id: task,
+        attempt_id: claimed.run_spec.attempt_id,
+        fence: claimed.run_spec.fence,
+        artifacts: vec![RunnerArtifact {
+            name: path("result.md"),
+            content: b"body".to_vec(),
+        }],
+    };
+    assert!(matches!(
+        engine.report("plain-report", report, 5),
+        Err(TaskEngineError::CommitFailed(_))
+    ));
+    assert_eq!(staged_candidates(&data), 1);
+    let wait = std::time::Duration::from_secs(u64::try_from(retain_until).unwrap()).saturating_sub(
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap(),
+    ) + std::time::Duration::from_millis(200);
+    std::thread::sleep(wait);
+
+    engine.reconcile_periodic(10).unwrap();
+    assert_eq!(
+        engine.task(task).unwrap().unwrap().status,
+        TaskStatus::Committing
+    );
+    assert_eq!(staged_candidates(&data), 1, "对账不能替主人丢暂存");
+    assert_eq!(
+        engine.discard_expired_commit(task, 11).unwrap(),
+        TaskStatus::Failed
+    );
+    assert_eq!(staged_candidates(&data), 0);
     assert!(
-        actions
-            .iter()
-            .any(|action| action == "task.candidate_recovery_pending")
+        engine
+            .control_db()
+            .committing_attempts()
+            .unwrap()
+            .is_empty()
     );
 }
 

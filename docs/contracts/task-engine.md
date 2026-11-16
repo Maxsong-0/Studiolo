@@ -197,3 +197,8 @@ patch 哈希和冲突标记；经 Broker staging、既有 T1、manifest-last 与
 NeedsReview 及 Runner completed 回执拒绝。人工审阅必须引用完整、精确且仍匹配真实内容的
 候选收据，附 closeout 与逐标准结论；成功才进入 Succeeded 并参与首个有效赢家仲裁。
 候选的拒绝、取消与失败保留 staging 指针；它们不表示发布成功或已经验收。
+`discard_expired_commit(task,now)`（2026-11-16）同样只向 L3 人侧开放，黑板候选和其他任务的终态提交都算：
+原批准已过期、一篇正文都还没写进 Vault 的提交，周期对账不替主人丢，保持「提交中」并保留暂存；主人调它、
+且 Broker 证实之后才落成 Failed（停止态落成 Cancelled）、记 `task.commit_expired`、丢暂存。证实不了拒绝。
+已经落定过的再调一次只补做审计投递和丢暂存、给回同一个状态（控制库 `expired_commit` 只读判断）。每次调用
+传当前时间：请求摘要就是审计身份。HTTP 和驾驶舱入口还没接。

@@ -191,3 +191,22 @@ Still **not verified**: the upload / re-verification / final-manifest leg and th
 restic (none on the test node, nothing is downloaded there); a full round with two system accounts, systemd
 credentials and the timer on a real machine; Auth offline restore and the final cut-over after a new-root restore;
 the "resume an interrupted restore" path (no test).
+
+## Review and the user's rulings (2026-11-16)
+
+An independent review (seven agents) of the four decisions above was run, and the user ruled on the four trade-offs it
+raised. The code was changed accordingly on the same branch; the contracts named above are authoritative:
+
+1. A failed seal is retried only after the full approved interval (the 60-second retry floor is gone). The main service
+   also reclaims expired staging on its own every 15 minutes (reclaim only, no freeze), so stopped timers no longer
+   leave expired copies on disk; the busy flag is reset even if the background thread panics.
+2. New-root restore is now refused as a whole whenever Auth is present (every production checkpoint), because there is
+   no production-usable Auth revocation entry and no "cannot open before revocation" gate yet. Placement, rebind and
+   the ledger-tail check stay, tested only through a test-only bypass. Restoring is therefore unavailable until a
+   follow-up task adds the revocation entry and the gate.
+3. Expired, never-started candidate commits are **no longer failed by reconciliation**. They stay pending with their
+   staged bodies kept; only the owner entry `discard_expired_commit` (task engine, covers board and non-board tasks, not yet exposed over HTTP or in
+   the cockpit) settles them as failed and discards the staging. Until the owner acts, control-db export and the whole
+   seal stay blocked; the user accepted that cost.
+4. Version-1 attempt directories and pre-upgrade staging stay rejected; before go-live, run a read-only check on the
+   production vault from the Mac (see `deploy/backup-worker/README.md`).
