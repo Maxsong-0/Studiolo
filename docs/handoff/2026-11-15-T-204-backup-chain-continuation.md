@@ -229,18 +229,29 @@ raised. The code was changed accordingly on the same branch; the contracts named
   (`eb624a4`).
 - An independent review of this batch (eight agents) raised 19 findings; all are fixed (targeted run on the x86_64
   test box `20261116-114242-25d4`, all passed). Behaviour worth knowing:
-  - Only reservation-level failures are isolated per attempt. Broker-wide failures (writer busy, identity or root
-    changed, storage full, read-only file system, permission denied) fail the whole reconciliation round again, so
-    the service stops where someone sees it. One failed commit check no longer turns the whole board list into a
-    503; that row shows as still committing and a rate-limited log line says how many could not be checked. The
-    "recovery pending" audit is written once per attempt (`03b1454`). The cockpit's discard button works even when
-    the execution status cannot be read (`6371bf0`).
+  - Only reservation-level failures are isolated per attempt. Broker-wide failures that can only be handled outside
+    the service (writer busy, writer state or binding record corrupt, Vault identity corrupt or root changed, storage
+    full, quota exceeded, read-only file system) fail the whole reconciliation round again, so the service stops
+    where someone sees it. One failed commit check no longer turns the whole board list into a 503; that row shows
+    as still committing and a rate-limited log line says how many could not be checked. The "recovery pending" audit
+    is written once per attempt (`03b1454`). The cockpit's discard button works even when the execution status
+    cannot be read (`6371bf0`).
+  - A second review round (two agents) found the 19 fixes in place and raised five minor points, handled in
+    `ae795f2` and `14f4278`. The Broker classification now lists every error explicitly, so a new one does not
+    compile until it is placed. Permission denied moved back to per attempt (permissions are per path). Unresolved,
+    indeterminate or cancelled writer mutations and the writer limit stay per attempt on purpose: they are settled
+    through maintenance, which needs the running service, so failing the round would crash-loop startup instead.
+    The board first asks the control database (read-only) whether a commit's approval deadline has passed and spends
+    its budget of 16 Broker checks only on those. `task.reconcile` still writes one write-ahead audit row per round
+    (about 11,500 a day, no ledger retention); that predates this batch and is a registered follow-up.
   - The health page counts a backup as successful only when it also references this checkpoint as a pair; the
     `interrupted` placement is pinned in all four shapes (`d208b56`).
   - The quarantine is reused only when it is a directory owned by the service user with no group or other
     permissions. The preflight script counts both trees against one limit, stops at the limit, reports unreadable
-    files and an unsafe quarantine, exits 2 when it could not finish, and must run as the main service account
-    (`cc788c9`).
+    files and an unsafe quarantine, and must run as the main service account (`cc788c9`). A part it cannot check
+    (unreadable root, wrong account for the control database, unexpected error) is named in the output and makes the
+    exit code 2, while the other parts are still checked and their findings still listed; the quarantine count is
+    bounded and counts files and directories (`14f4278`).
   - The architecture guard pins each gated step's environment line and allows only gates and five diagnostic lines
     (tool versions, memory-lock limit) ahead of the last gate; the remaining regressions and the Worker steps are
     pinned too. The environment script refuses a `rustc` that differs from `rust-toolchain.toml` and a sandbox
