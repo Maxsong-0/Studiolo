@@ -1,0 +1,26 @@
+# cargo-nextest 的配置（T-187）。只在有人用 `cargo nextest run` 时生效，对 `cargo test` 没有影响；
+# CI 和 scripts/test-linux.sh 的默认回路仍是 `cargo --locked test --workspace`。
+#
+# nextest 每个测试一个进程，vault-broker 那把进程内的大文件闸门（`blob::LARGE_IO`，
+# crates/vault-broker/src/blob/serial_gate.rs）就管不到了：17 个处理 200～512 MiB 正文的测试会同时跑，
+# 内存和磁盘一起顶满。这里用测试组把它们重新排成一次只跑一个，和 `cargo test` 下的语义一致。
+# 进闸门的测试增减时，这张名单要跟着改；架构守卫 `nextest_large_io_group` 会核对两边一致。
+#
+# 不开重试：偶发失败不许被掩盖。nextest 不跑文档测试，要另跑 `cargo --locked test --workspace --doc`。
+nextest-version = { required = "0.9.148" }
+
+[test-groups]
+vault-broker-large-io = { max-threads = 1 }
+
+[profile.default]
+retries = 0
+fail-fast = false
+
+[profile.default.junit]
+path = "junit.xml"
+
+[[profile.default.overrides]]
+filter = '''
+package(studiolo-vault-broker) & kind(lib) & test(/::(full_512_mib_per_directory_is_legal_as_a_single_batch|any_directory_over_count_object_or_total_budget_refuses_the_entire_batch|non_sparse_body_over_old_four_mib_limit_is_fully_verified_and_removed|last_temporary_after_a_full_producer_scan_can_still_be_cleaned|large_delete_restore_is_measured_in_an_isolated_process|effective_limit_downshift_does_not_reduce_old_object_preservation_limit|first_legacy_write_over_an_external_large_file_activates_large_history_before_install|true_large_content_small_replacement_and_strict_restore_keep_exact_history|legacy_vec_keeps_large_previous_canonical_when_its_l0_drifts_after_installing|source_growth_near_total_limit_never_writes_more_than_the_reservation|over_total_and_count_fail_before_creating_another_stage|all_orphan_bytes_are_validated_before_pruning|full_large_pipeline_is_measured_in_an_isolated_process|large_installing_maintenance_preserves_three_objects_and_never_returns_original_success|large_rename_projection_is_measured_in_an_isolated_process|exact_256_mib_sparse_object_is_streamed_and_one_extra_byte_is_rejected|canonical_and_local_large_facts_have_measured_bounded_rss)$/)
+'''
+test-group = 'vault-broker-large-io'

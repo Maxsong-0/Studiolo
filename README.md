@@ -196,6 +196,11 @@ cargo --locked build -p studiolo-auth-admin --features production
 cargo --locked build -p studiolo-vault-admin
 ```
 
+可选用 cargo-nextest 跑测试（T-187；CI 和默认回路不变，换不换由用户定）：`cargo nextest run --locked --workspace`，
+再加 `cargo --locked test --workspace --doc`（nextest 不跑文档测试）。nextest 每个测试一个进程，vault-broker 那把进程内的
+大文件闸门管不到，所以 `.config/nextest.toml` 用测试组把进闸门的测试排成一次只跑一个；进闸门的测试增减时名单要跟着改，
+架构守卫 `nextest_large_io_group_lists_exactly_the_tests_that_enter_the_gate` 会核对两边一致。
+
 前端（CI 原生运行，`setup-node` 钉死 Node 22.17.0，工作目录 `web`）：
 
 ```bash
