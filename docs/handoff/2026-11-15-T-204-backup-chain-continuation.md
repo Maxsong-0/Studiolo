@@ -121,3 +121,39 @@ Reply with: branch name, head commit, one line per sub-unit
 (`done` / `partial` / `not started`) with the commands you ran and their
 result lines, every decision you made on your own, anything left open, and
 anything that needs the owner in person.
+
+## Status after the first hand-back (2026-11-15, main session)
+
+The cloud agent pushed eight commits to `cursor/t204-backup-chain` (head `34f19ea`). It ran on `grok-4.7`, not the
+requested model. The main session reviewed the full diff and verified on the x86_64 test node.
+
+**Landed on `claude/project-code-completion-40e514`** (sub-units 1 and 2 only):
+
+- `24af3b2` — terminal commit takes provenance from the original approval and ledger (cherry-picked from `fa31775`).
+- `8d4138c` — final source catalog; original staging is cleaned after commit (cherry-picked from `def7125`).
+- `000efae` — the export scanner was **rewritten** by the main session. The agent's scanner rejected every real
+  export (it parsed `meta-v1/catalogs/feed-v1-N.json` as a history catalog) and its tests only used hand-built trees.
+  The rewrite follows the real six-owner layout, adds `local-server::checkpoint::trusted_catalog`, and is exercised by
+  the real seal test (mode 4 in `crates/local-server/tests/coordinator/checkpoint_owners/seal.rs`).
+
+**Not landed** (sub-units 3–7 stay on `cursor/t204-backup-chain`; do not cherry-pick them as they are):
+
+| Commits | Why it was not taken |
+|---|---|
+| `7477cb6` producer config / listener / schedule check | The listener is not wired into `serve()`; there is no scheduling loop. |
+| `c8701f2` worker `main.rs`, `queue.rs`, service template | Bypasses the existing `BackupWorker` state machine (no per-file remote re-verification, no final-manifest commit, no audit); `harden()` runs per batch instead of at start; the queue lives in the worker's own 0700 state directory, so the producer cannot enqueue. |
+| `7c1de3e`, `34f19ea` new-root restore | Uses `ControlDb::open`, which silently creates an empty database when the file is missing; covers 6 of the 11 owner directories; presence is reported by the caller instead of read from the sealed manifest. |
+| `1145a21` reclaim timer | Runs reclaim inside the worker binary; `reclaim_staging` is producer-only by contract. |
+| `7e67ecd` end-to-end test and docs | `local_roundtrip.rs` only asserts the restic version string. |
+
+**Open decisions (owner: the user) before sub-units 3–7 can be redone:**
+
+1. How a job crosses the two system accounts (a read-only "next pending key" command on the sealed protocol, or a
+   producer-owned queue directory readable by the worker's group).
+2. The new-root restore protocol for Auth, Bridge, Transport and Plane (Auth needs session config, clock and entropy;
+   Bridge needs an explicit mode and a new-root binding restore).
+3. How attempt directories with a version-1 manifest enter a backup (today the whole seal fails closed).
+4. Whether the "freeze all owners" schedule lives in the main service process.
+
+Known limits are recorded in `docs/m2/checkpoint-recovery-contract.md` ("已知限制，上线前要处理"). The restic
+end-to-end drill has not been run (the test node has no pinned restic 0.19.1 and nothing is downloaded there).
