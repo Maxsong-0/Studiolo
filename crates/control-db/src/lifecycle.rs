@@ -27,6 +27,41 @@ pub struct LeaseReconciliation {
     pub abandoned: Vec<(TaskId, AttemptId, String)>,
 }
 
+impl LeaseReconciliation {
+    fn from_steps(steps: &[LeaseStep]) -> Self {
+        Self {
+            abandoned: steps
+                .iter()
+                .filter(|step| step.action == LeaseAction::Abandon)
+                .map(|step| (step.task_id, step.attempt_id, step.reason.clone()))
+                .collect(),
+        }
+    }
+}
+
+/// 一轮租约巡检对一个 attempt 做的事。
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LeaseAction {
+    /// 撤销：attempt 落成 abandoned，任务释放占用。
+    Abandon,
+    /// 子任务还没终结，先转成取消中，等它们终结后再撤销。
+    RequestCancel,
+}
+
+/// 一轮租约巡检里的一步：先在回滚掉的事务里预演出整轮的清单、记进审计意图，再照单执行（T-213）。
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LeaseStep {
+    #[doc = "被处理的任务。"]
+    pub task_id: TaskId,
+    #[doc = "被处理的 attempt。"]
+    pub attempt_id: AttemptId,
+    #[doc = "撤销，或先转成取消中。"]
+    pub action: LeaseAction,
+    #[doc = "机器可读的原因：restart、cancel_timeout、lease_expired、stalled。"]
+    pub reason: String,
+}
+
 pub(super) fn require_live(
     tx: &Transaction<'_>,
     task: TaskId,
@@ -57,6 +92,109 @@ pub(super) fn require_retry_ready(
         ));
     }
     Ok(())
+}
+
+/// 在给定事务里做一轮租约巡检，返回做了的每一步；提交还是回滚由调用方定。
+/// 子任务先于父任务处理（按深度倒序），同一轮里撤销掉的子任务让父任务也能撤销；同深度按标识排，
+/// 让预演和执行在库没变时得到逐条相同的清单。
+fn sweep_leases(tx: &Transaction<'_>, now: i64, startup: bool) -> Result<Vec<LeaseStep>, DbError> {
+    let rows = {
+        let mut stmt=tx.prepare("SELECT a.task_id,a.attempt_id,a.phase,a.lease_until_ms,p.last_progress_ms,p.edits,p.cancel_requested_ms,json_extract(t.definition_json,'$.adapter'),t.status FROM attempts a JOIN tasks t USING(task_id) JOIN attempt_progress p USING(attempt_id) LEFT JOIN board_tasks b USING(task_id) WHERE a.phase IN ('running','claimed','cancel_requested') ORDER BY COALESCE(b.depth,0) DESC,a.task_id,a.attempt_id")?;
+        stmt.query_map([], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, String>(2)?,
+                r.get::<_, i64>(3)?,
+                r.get::<_, i64>(4)?,
+                r.get::<_, i64>(5)?,
+                r.get::<_, Option<i64>>(6)?,
+                r.get::<_, String>(7)?,
+                r.get::<_, String>(8)?,
+            ))
+        })?
+        .collect::<Result<Vec<_>, _>>()?
+    };
+    let mut steps = Vec::new();
+    for (task, attempt, phase, lease, last, edits, cancel, adapter, status) in rows {
+        let reason = if startup {
+            Some("restart")
+        } else if phase == "cancel_requested" {
+            cancel
+                .filter(|start| now >= start.saturating_add(180_000))
+                .map(|_| "cancel_timeout")
+        } else if lease <= now {
+            Some("lease_expired")
+        } else if adapter != "consumer" && edits == 0 && now >= last.saturating_add(600_000) {
+            Some("stalled")
+        } else {
+            None
+        };
+        let Some(reason) = reason else { continue };
+        let task_id = parse_task_id(&task)?;
+        let children = board::require_children_terminal(tx, task_id);
+        if let Err(error) = children {
+            if !matches!(error, DbError::BoardRejected(_)) {
+                return Err(error);
+            }
+            // 已经是取消中、只在等子任务的，这一轮没有可改的：不再每轮重写一遍时间戳（T-213）。
+            if phase == "cancel_requested" && status == "cancel_requested" && cancel.is_some() {
+                continue;
+            }
+            tx.execute(
+                "UPDATE attempts SET phase='cancel_requested',updated_at_ms=?2 WHERE attempt_id=?1",
+                params![attempt, now],
+            )?;
+            tx.execute(
+                "UPDATE tasks SET status='cancel_requested',updated_at_ms=?2 WHERE task_id=?1",
+                params![task, now],
+            )?;
+            tx.execute("UPDATE attempt_progress SET cancel_requested_ms=COALESCE(cancel_requested_ms,?2) WHERE attempt_id=?1",params![attempt,now])?;
+            steps.push(LeaseStep {
+                task_id,
+                attempt_id: parse_attempt_id(&attempt)?,
+                action: LeaseAction::RequestCancel,
+                reason: reason.into(),
+            });
+            continue;
+        }
+        tx.execute(
+            "UPDATE attempts SET phase='abandoned',updated_at_ms=?2 WHERE attempt_id=?1",
+            params![attempt, now],
+        )?;
+        tx.execute(
+            "UPDATE attempt_progress SET terminal_reason=?2 WHERE attempt_id=?1",
+            params![attempt, reason],
+        )?;
+        tx.execute("UPDATE tasks SET status='abandoned',last_attempt=active_attempt,active_attempt=NULL,updated_at_ms=?2 WHERE task_id=?1",params![task,now])?;
+        let definition: Option<String> = tx
+            .query_row(
+                "SELECT definition_json FROM board_tasks WHERE task_id=?1",
+                [&task],
+                |r| r.get(0),
+            )
+            .optional()?;
+        let acceptance=definition.map(|raw|serde_json::from_str::<BoardDefinition>(&raw)).transpose()?.map(|d|d.acceptance_criteria.into_iter().map(|criterion|serde_json::json!({"criterion":criterion,"result":"unverified","evidence":[]})).collect::<Vec<_>>()).unwrap_or_default();
+        let receipt = serde_json::json!({"status":"abandoned","artifacts":[],"conflicts":[],"unlanded":[],"acceptance":acceptance,"remaining":[format!("Attempt abandoned: {reason}")],"elapsed_ms":0,"tool_calls":0,"learned":[],"closeout":null,"system_reason":reason});
+        tx.execute(
+            "UPDATE board_tasks SET receipt_json=COALESCE(receipt_json,?2) WHERE task_id=?1",
+            params![task, serde_json::to_string(&receipt)?],
+        )?;
+        enqueue_projection(tx, task_id, &format!("abandoned:{attempt}"))?;
+        runtime_audit::enqueue(
+            tx,
+            &format!("abandoned:{attempt}"),
+            "task.abandoned",
+            serde_json::json!({"task_id":task,"attempt_id":attempt,"reason":reason}),
+        )?;
+        steps.push(LeaseStep {
+            task_id,
+            attempt_id: parse_attempt_id(&attempt)?,
+            action: LeaseAction::Abandon,
+            reason: reason.into(),
+        });
+    }
+    Ok(steps)
 }
 
 impl ControlDb {
@@ -132,7 +270,8 @@ impl ControlDb {
         .transpose()
     }
 
-    /// 周期巡检保留健康的 running attempt；启动巡检则显式撤销它们。
+    /// 周期巡检保留健康的 running attempt；启动巡检则显式撤销它们。预演和执行合在一个事务里，
+    /// 给不记审计的调用方（恢复编排、测试）；任务引擎走 `plan_lease_reconciliation` 加 `apply_lease_plan`。
     pub fn reconcile_leases(
         &mut self,
         now: i64,
@@ -141,87 +280,41 @@ impl ControlDb {
         let tx = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
-        let rows = {
-            let mut stmt=tx.prepare("SELECT a.task_id,a.attempt_id,a.phase,a.lease_until_ms,p.last_progress_ms,p.edits,p.cancel_requested_ms,json_extract(t.definition_json,'$.adapter') FROM attempts a JOIN tasks t USING(task_id) JOIN attempt_progress p USING(attempt_id) LEFT JOIN board_tasks b USING(task_id) WHERE a.phase IN ('running','claimed','cancel_requested') ORDER BY COALESCE(b.depth,0) DESC")?;
-            stmt.query_map([], |r| {
-                Ok((
-                    r.get::<_, String>(0)?,
-                    r.get::<_, String>(1)?,
-                    r.get::<_, String>(2)?,
-                    r.get::<_, i64>(3)?,
-                    r.get::<_, i64>(4)?,
-                    r.get::<_, i64>(5)?,
-                    r.get::<_, Option<i64>>(6)?,
-                    r.get::<_, String>(7)?,
-                ))
-            })?
-            .collect::<Result<Vec<_>, _>>()?
-        };
-        let mut result = LeaseReconciliation::default();
-        for (task, attempt, phase, lease, last, edits, cancel, adapter) in rows {
-            let reason = if startup {
-                Some("restart")
-            } else if phase == "cancel_requested" {
-                cancel
-                    .filter(|start| now >= start.saturating_add(180_000))
-                    .map(|_| "cancel_timeout")
-            } else if lease <= now {
-                Some("lease_expired")
-            } else if adapter != "consumer" && edits == 0 && now >= last.saturating_add(600_000) {
-                Some("stalled")
-            } else {
-                None
-            };
-            let Some(reason) = reason else { continue };
-            let task_id = parse_task_id(&task)?;
-            let children = board::require_children_terminal(&tx, task_id);
-            if let Err(error) = children {
-                if !matches!(error, DbError::BoardRejected(_)) {
-                    return Err(error);
-                }
-                tx.execute("UPDATE attempts SET phase='cancel_requested',updated_at_ms=?2 WHERE attempt_id=?1",params![attempt,now])?;
-                tx.execute(
-                    "UPDATE tasks SET status='cancel_requested',updated_at_ms=?2 WHERE task_id=?1",
-                    params![task, now],
-                )?;
-                tx.execute("UPDATE attempt_progress SET cancel_requested_ms=COALESCE(cancel_requested_ms,?2) WHERE attempt_id=?1",params![attempt,now])?;
-                continue;
-            }
-            tx.execute(
-                "UPDATE attempts SET phase='abandoned',updated_at_ms=?2 WHERE attempt_id=?1",
-                params![attempt, now],
-            )?;
-            tx.execute(
-                "UPDATE attempt_progress SET terminal_reason=?2 WHERE attempt_id=?1",
-                params![attempt, reason],
-            )?;
-            tx.execute("UPDATE tasks SET status='abandoned',last_attempt=active_attempt,active_attempt=NULL,updated_at_ms=?2 WHERE task_id=?1",params![task,now])?;
-            let definition: Option<String> = tx
-                .query_row(
-                    "SELECT definition_json FROM board_tasks WHERE task_id=?1",
-                    [&task],
-                    |r| r.get(0),
-                )
-                .optional()?;
-            let acceptance=definition.map(|raw|serde_json::from_str::<BoardDefinition>(&raw)).transpose()?.map(|d|d.acceptance_criteria.into_iter().map(|criterion|serde_json::json!({"criterion":criterion,"result":"unverified","evidence":[]})).collect::<Vec<_>>()).unwrap_or_default();
-            let receipt = serde_json::json!({"status":"abandoned","artifacts":[],"conflicts":[],"unlanded":[],"acceptance":acceptance,"remaining":[format!("Attempt abandoned: {reason}")],"elapsed_ms":0,"tool_calls":0,"learned":[],"closeout":null,"system_reason":reason});
-            tx.execute(
-                "UPDATE board_tasks SET receipt_json=COALESCE(receipt_json,?2) WHERE task_id=?1",
-                params![task, serde_json::to_string(&receipt)?],
-            )?;
-            enqueue_projection(&tx, task_id, &format!("abandoned:{attempt}"))?;
-            runtime_audit::enqueue(
-                &tx,
-                &format!("abandoned:{attempt}"),
-                "task.abandoned",
-                serde_json::json!({"task_id":task,"attempt_id":attempt,"reason":reason}),
-            )?;
-            result
-                .abandoned
-                .push((task_id, parse_attempt_id(&attempt)?, reason.into()));
+        let steps = sweep_leases(&tx, now, startup)?;
+        tx.commit()?;
+        Ok(LeaseReconciliation::from_steps(&steps))
+    }
+
+    /// 只预演这一轮要做什么，改动随事务回滚、一条不留。没有要做的事时整轮只读（T-213：这种轮次不记审计）。
+    pub fn plan_lease_reconciliation(
+        &mut self,
+        now: i64,
+        startup: bool,
+    ) -> Result<Vec<LeaseStep>, DbError> {
+        let tx = self.connection.transaction()?;
+        let steps = sweep_leases(&tx, now, startup)?;
+        tx.rollback()?;
+        Ok(steps)
+    }
+
+    /// 照预演的清单执行：在写事务里重做一遍，结果和清单逐条相同才提交。预演之后库变了（多一步、少一步、
+    /// 原因不同）就整轮不做、返回 `None`：审计意图里没写的事不做，下一轮重新预演。
+    pub fn apply_lease_plan(
+        &mut self,
+        now: i64,
+        startup: bool,
+        plan: &[LeaseStep],
+    ) -> Result<Option<LeaseReconciliation>, DbError> {
+        let tx = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let steps = sweep_leases(&tx, now, startup)?;
+        if steps != plan {
+            tx.rollback()?;
+            return Ok(None);
         }
         tx.commit()?;
-        Ok(result)
+        Ok(Some(LeaseReconciliation::from_steps(&steps)))
     }
 
     /// 只重试首个工具调用前的启动失败：最多两次、带退避，并受 `allow_retry` 与 `max_attempts` 约束。

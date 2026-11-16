@@ -53,7 +53,8 @@ request id 重放保持原号，历史空号不回填。扫描失败不会退回
 
 权威事实与 `runtime_audit_outbox` 同事务保存，审计失败保留待交付事件；Engine 的创建、
 claim、handoff、receipt、number、进度、对账和启动失败在 effect 前写 Intent，成功后交付
-outbox 与 Outcome。外层仍必须校验每个调用者的实例/祖先吊销、项目、策略与请求幂等。
+outbox 与 Outcome。对账先预演，没有要撤销或转取消的轮次没有 effect、不写 Intent（T-213）。
+外层仍必须校验每个调用者的实例/祖先吊销、项目、策略与请求幂等。
 
 外层授权复核是三态（BUG-032）：放行；依据读到的数据确定拒绝（类型失效、实例或父链无效、
 吊销、能力集或项目不符），私有入口 `/internal/board` 回 409 并带原因；身份库、策略库或黑板

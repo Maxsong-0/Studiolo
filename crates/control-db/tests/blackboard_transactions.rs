@@ -188,3 +188,53 @@ fn restart_revokes_live_board_attempt_and_keeps_auditable_reason() {
     assert!(!db.pending_runtime_audits().unwrap().is_empty());
     assert!(db.reconcile_leases(4, true).unwrap().abandoned.is_empty());
 }
+#[test]
+fn lease_plan_is_a_dry_run_and_a_database_changed_since_voids_it() {
+    let vault = VaultUuid::new();
+    let mut db = ControlDb::open_in_memory(vault).unwrap();
+    let first = TaskId::new();
+    db.create_task(first, &json!({"adapter":"consumer"}), 0)
+        .unwrap();
+    db.queue_task(first, 1).unwrap();
+    let a = db
+        .claim(first, "worker", snapshot(vault, "one"), 2, 100)
+        .unwrap();
+    // claim 自己也会留待投的运行时结果；预演前后条数不变才算没留改动。
+    let pending = db.pending_runtime_audits().unwrap().len();
+    let plan = db.plan_lease_reconciliation(200, false).unwrap();
+    assert_eq!(
+        plan,
+        vec![LeaseStep {
+            task_id: first,
+            attempt_id: a.attempt_id,
+            action: LeaseAction::Abandon,
+            reason: "lease_expired".into(),
+        }]
+    );
+    assert_eq!(
+        db.task(first).unwrap().unwrap().status,
+        TaskStatus::Running,
+        "预演不留改动"
+    );
+    assert_eq!(db.pending_runtime_audits().unwrap().len(), pending);
+    // 预演之后又有一个租约到期：照旧清单执行会多做一步意图里没写的事，所以整轮不做。
+    let second = TaskId::new();
+    db.create_task(second, &json!({"adapter":"consumer"}), 3)
+        .unwrap();
+    db.queue_task(second, 4).unwrap();
+    db.claim(second, "worker", snapshot(vault, "two"), 5, 150)
+        .unwrap();
+    let pending = db.pending_runtime_audits().unwrap().len();
+    assert_eq!(db.apply_lease_plan(200, false, &plan).unwrap(), None);
+    assert_eq!(db.task(first).unwrap().unwrap().status, TaskStatus::Running);
+    assert_eq!(db.pending_runtime_audits().unwrap().len(), pending);
+    let plan = db.plan_lease_reconciliation(200, false).unwrap();
+    assert_eq!(plan.len(), 2);
+    let done = db.apply_lease_plan(200, false, &plan).unwrap().unwrap();
+    assert_eq!(done.abandoned.len(), 2);
+    assert_eq!(
+        db.task(first).unwrap().unwrap().status,
+        TaskStatus::Abandoned
+    );
+    assert!(db.plan_lease_reconciliation(300, false).unwrap().is_empty());
+}

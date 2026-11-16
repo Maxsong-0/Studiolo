@@ -17,7 +17,7 @@ pub use runner_candidates::RunnerCandidateStage;
 mod lifecycle;
 mod runtime_audit;
 pub use board::{BoardDefinition, BoardRecord};
-pub use lifecycle::{AttemptProgress, LeaseReconciliation};
+pub use lifecycle::{AttemptProgress, LeaseAction, LeaseReconciliation, LeaseStep};
 pub use runtime_audit::RuntimeAuditRecord;
 
 mod attempt_queries;

@@ -546,3 +546,151 @@ fn manual_change_inside_generated_block_is_preserved_and_audited() {
     );
     assert!(e.control_db().pending_outbox().unwrap().is_empty());
 }
+
+/// 账本里某个动作的记录，按落账顺序，只取阶段。
+fn audited(ledger: &MemoryAuditLedger, action: &str) -> Vec<studiolo_audit_ledger::AuditPhase> {
+    use studiolo_audit_ledger::{AuditFilter, AuditLedger as _};
+    ledger
+        .query(&AuditFilter::default())
+        .unwrap()
+        .iter()
+        .filter(|record| record.event().action() == action)
+        .map(|record| record.event().phase())
+        .collect()
+}
+
+fn set_status(database: &std::path::Path, task: studiolo_core::TaskId, status: &str) {
+    rusqlite::Connection::open(database)
+        .unwrap()
+        .execute(
+            "UPDATE tasks SET status=?2 WHERE task_id=?1",
+            rusqlite::params![task.to_string(), status],
+        )
+        .unwrap();
+}
+
+#[test]
+fn quiet_rounds_write_no_reconcile_audit_and_an_acting_round_records_intent_first() {
+    use studiolo_audit_ledger::{AuditFilter, AuditLedger as _, AuditPhase};
+    let mut e = engine();
+    let id = e.create_board_task("t", spec(&[]), HASH, 0).unwrap();
+    let a = e
+        .claim_board_task(id, "worker", 1_000_000, 1)
+        .unwrap()
+        .attempt;
+    for now in [100_000, 200_000, 300_000] {
+        assert!(e.reconcile_periodic(now).unwrap().abandoned.is_empty());
+    }
+    let (db, broker, ledger) = e.into_parts();
+    assert!(
+        audited(&ledger, "task.reconcile").is_empty(),
+        "没事可做的轮次不记审计（T-213）"
+    );
+    let mut e = Engine::new(db, broker, ledger);
+    let report = e.reconcile_periodic(1_000_000).unwrap();
+    assert_eq!(
+        report.abandoned,
+        vec![(id, a.attempt_id, "lease_expired".to_owned())]
+    );
+    assert!(
+        e.reconcile_periodic(1_100_000)
+            .unwrap()
+            .abandoned
+            .is_empty()
+    );
+    let (_db, _broker, ledger) = e.into_parts();
+    assert_eq!(
+        audited(&ledger, "task.reconcile"),
+        vec![AuditPhase::Intent, AuditPhase::Outcome],
+        "撤销的那一轮只记一对，之后的空轮不再记"
+    );
+    let order: Vec<_> = ledger
+        .query(&AuditFilter::default())
+        .unwrap()
+        .iter()
+        .filter(|r| matches!(r.event().action(), "task.reconcile" | "task.abandoned"))
+        .map(|r| (r.event().action().to_owned(), r.event().phase()))
+        .collect();
+    assert_eq!(
+        order[0],
+        ("task.reconcile".to_owned(), AuditPhase::Intent),
+        "意图先于撤销落账：{order:?}"
+    );
+    assert_eq!(order[1].0, "task.abandoned", "{order:?}");
+    assert_eq!(
+        order[2],
+        ("task.reconcile".to_owned(), AuditPhase::Outcome),
+        "{order:?}"
+    );
+}
+
+#[test]
+fn a_quiet_round_still_delivers_runtime_audits_left_by_an_interrupted_ledger() {
+    let mut e = engine();
+    let id = e.create_board_task("t", spec(&[]), HASH, 0).unwrap();
+    e.claim_board_task(id, "worker", 1_000, 1).unwrap();
+    // 控制库直接撤销、不经引擎投审计：等同账本中断时留下的待投结果。
+    let (mut db, broker, ledger) = e.into_parts();
+    assert_eq!(
+        db.reconcile_leases(2_000, false).unwrap().abandoned.len(),
+        1
+    );
+    assert_eq!(db.pending_runtime_audits().unwrap().len(), 1);
+    let mut e = Engine::new(db, broker, ledger);
+    assert!(e.reconcile_periodic(3_000).unwrap().abandoned.is_empty());
+    assert!(e.control_db().pending_runtime_audits().unwrap().is_empty());
+    let (_db, _broker, ledger) = e.into_parts();
+    assert_eq!(audited(&ledger, "task.abandoned").len(), 1, "空轮照样补投");
+    assert!(audited(&ledger, "task.reconcile").is_empty());
+}
+
+#[test]
+fn a_parent_waiting_on_children_is_not_rewritten_or_audited_every_round() {
+    let temp = tempfile::tempdir().unwrap();
+    let database = temp.path().join("control.sqlite3");
+    let vault = VaultUuid::new();
+    let mut e = Engine::new(
+        ControlDb::open(&database, vault).unwrap(),
+        MemoryVaultBroker::with_uuid(vault),
+        MemoryAuditLedger::new(),
+    );
+    let p = e.create_board_task("p", spec(&["src"]), HASH, 0).unwrap();
+    let mut child = spec(&["src/a.rs"]);
+    child.task.parent = Some(p);
+    let c = e.create_board_task("c", child, HASH, 1).unwrap();
+    // 父任务只能在子任务都终结后认领；之后子任务被重新排队（比如主人重试），父任务就带着没终结的子任务在跑。
+    set_status(&database, c, "failed");
+    let a = e.claim_board_task(p, "parent", 1_000, 2).unwrap().attempt;
+    set_status(&database, c, "queued");
+    assert!(e.reconcile_periodic(2_000).unwrap().abandoned.is_empty());
+    assert_eq!(
+        e.task(p).unwrap().unwrap().status,
+        TaskStatus::CancelRequested
+    );
+    let stamp = |database: &std::path::Path| -> (i64, i64) {
+        rusqlite::Connection::open(database)
+            .unwrap()
+            .query_row(
+                "SELECT a.updated_at_ms,t.updated_at_ms FROM attempts a JOIN tasks t USING(task_id) WHERE a.attempt_id=?1",
+                [a.attempt_id.to_string()],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap()
+    };
+    let before = stamp(&database);
+    for now in [200_000, 400_000, 600_000] {
+        assert!(e.reconcile_periodic(now).unwrap().abandoned.is_empty());
+    }
+    assert_eq!(stamp(&database), before, "只在等子任务的轮次不改库");
+    set_status(&database, c, "failed");
+    assert_eq!(
+        e.reconcile_periodic(800_000).unwrap().abandoned,
+        vec![(p, a.attempt_id, "cancel_timeout".to_owned())]
+    );
+    let (_db, _broker, ledger) = e.into_parts();
+    assert_eq!(
+        audited(&ledger, "task.reconcile").len(),
+        4,
+        "转取消中一对、最后撤销一对，中间等子任务的三轮一条不记"
+    );
+}

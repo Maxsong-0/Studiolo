@@ -171,6 +171,9 @@ TaskEngine/Broker 完成。`create_board_task_by_instance`、原 `claim` 路径�
 不能 claim 或终态；不存在父子免锁。层级与路径检查和创建/claim 同事务，防止并发 TOCTOU。
 
 周期 `reconcile_leases(now,false)` 不撤销健康租约；启动 `true` 要求组合根已隔离旧运行体。
+任务引擎不直接调它，而是先 `plan_lease_reconciliation` 预演（改动随事务回滚）、再 `apply_lease_plan` 照单执行：
+写事务里重做的结果和清单不同就回滚、返回 `None`（T-213，ADR-037）。同深度按任务和 attempt 标识排序，库没变时
+两次得到逐条相同的清单；已是取消中、只在等子任务的 attempt 不进清单、不改时间戳。
 `heartbeat_progress` 强制单调、未过期租约；执行体十分钟零进度且 edits=0 判 stalled。
 取消仅 stopped 回执可在三分钟内结束，超时 system abandoned。`launch_failed` 在零工具调用、
 显式 retry_on、max_attempts 与最多两次重试约束下排入退避队列。
