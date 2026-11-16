@@ -448,6 +448,35 @@ class FileSystemChecks(Fixture):
         self.assertTrue(any("没核成" in note for note in result["notes"]), result["notes"])
         self.assertIn("核查没做完：Vault 根", error.getvalue())
 
+    def test_a_read_error_after_opening_is_unreadable_not_a_crash(self):
+        """打开了、读的时候出错（如磁盘 I/O 错）：和打不开一样报「读不出来」，别的照样核，不算没核成
+        （2026-11-16 第二意见）。"""
+        with mock.patch.object(preflight.os, "fstat", side_effect=OSError(5, "Input/output error")):
+            kinds, result = self.kinds()
+        self.assertEqual(kinds, ["manifest_unreadable", "staged_unreadable"])
+        self.assertEqual(result["incomplete"], [])
+
+    def test_a_tree_that_fails_after_its_walk_still_uses_up_the_shared_budget(self):
+        """Vault 根走完了树、后面一步出错没核成：走过的目录项照样占两棵树共用的预算、照样进合计，写者数据根
+        拿不到满额预算，合计超了照样报（2026-11-16 第二意见）。"""
+        report = preflight.Report(uid=os.geteuid())
+        vault_nodes = preflight.check_vault(self.vault, report).nodes
+        data_nodes = preflight.check_data(self.data, report).nodes
+        self.assertGreater(data_nodes, 0)
+        output = io.StringIO()
+        with mock.patch.object(preflight, "check_attempts", side_effect=RuntimeError("boom")), \
+                mock.patch.object(preflight, "TREE_MAX_NODES", vault_nodes + data_nodes - 1), \
+                contextlib.redirect_stdout(output), contextlib.redirect_stderr(io.StringIO()):
+            code = preflight.main(["--vault", str(self.vault), "--data", str(self.data), "--json"])
+        self.assertEqual(code, 2)
+        result = json.loads(output.getvalue())
+        self.assertEqual(len(result["incomplete"]), 1)
+        self.assertIn("Vault 根", result["incomplete"][0])
+        details = {finding["kind"]: finding["detail"] for finding in result["findings"]}
+        self.assertIn("too_many_nodes", details, result)
+        self.assertIn(f"至少 {vault_nodes + data_nodes} 个目录项", details["too_many_nodes"])
+        self.assertIn("数到上限就停了", details["too_many_nodes"], "写者数据根只拿到剩下的预算，走到上限就停")
+
     def test_owner_is_compared_against_the_running_account_or_uid_flag(self):
         kinds, result = self.kinds("--uid", str(os.geteuid() + 1))
         self.assertEqual(kinds, ["foreign_owner"])

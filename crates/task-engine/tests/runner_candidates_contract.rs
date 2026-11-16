@@ -3,8 +3,8 @@ use sha2::{Digest, Sha256};
 use studiolo_audit_ledger::{AuditFilter, AuditLedger, MemoryAuditLedger};
 use studiolo_control_db::{ControlDb, TaskStatus};
 use studiolo_core::{
-    ArtifactProvenance, BackupScope, Classification, DataLabels, DesktopSync, ModelEgress,
-    SourcePolicyRef, TaskId, VaultPath, VaultUuid,
+    ArtifactProvenance, AttemptId, BackupScope, Classification, DataLabels, DesktopSync,
+    ModelEgress, SourcePolicyRef, TaskId, VaultPath, VaultUuid,
 };
 use studiolo_runner_adapter::{PatchMetadata, RunnerArtifact, RunnerReport};
 use studiolo_task_engine::*;
@@ -168,6 +168,8 @@ struct LostManifestAck {
     discard_faults: std::sync::atomic::AtomicU32,
     /// 设上之后每次提交都以这个错误失败（存储写满、写者未决之类），清掉就恢复。
     commit_fault: std::sync::Mutex<Option<fn() -> BrokerError>>,
+    /// 只对这个 attempt 的提交注入 `commit_fault`；空就对每次提交都注入。
+    fault_attempt: std::sync::Mutex<Option<AttemptId>>,
 }
 impl VaultReader for LostManifestAck {
     fn vault_uuid(&self) -> VaultUuid {
@@ -241,7 +243,10 @@ impl VaultWriter for LostManifestAck {
         c: ArtifactCommit,
     ) -> Result<ArtifactCommitReceipt, BrokerError> {
         if let Some(fault) = *self.commit_fault.lock().unwrap() {
-            return Err(fault());
+            let only = *self.fault_attempt.lock().unwrap();
+            if only.is_none_or(|attempt| attempt == c.attempt_id) {
+                return Err(fault());
+            }
         }
         if std::mem::take(&mut self.before) {
             return Err(BrokerError::Io {
@@ -278,6 +283,7 @@ fn manifest_ack_crash_recovers_candidates_into_needs_review_without_running_cli(
             unprovable: false,
             discard_faults: Default::default(),
             commit_fault: Default::default(),
+            fault_attempt: Default::default(),
         },
         MemoryAuditLedger::new(),
     );
@@ -392,6 +398,7 @@ fn expired_before_first_body(
             unprovable,
             discard_faults: discard_faults.into(),
             commit_fault: Default::default(),
+            fault_attempt: Default::default(),
         },
         MemoryAuditLedger::new(),
     );
@@ -503,8 +510,12 @@ fn owner_discard_is_refused_when_expiry_cannot_be_proven() {
     let (mut engine, task, _claim) = expired_before_first_body(&temp, true, 0);
     engine.reconcile_periodic(10).unwrap();
     assert!(
-        !engine.commit_awaiting_discard(task).unwrap(),
-        "证实不了就不提示主人丢"
+        engine.commit_past_deadline(task, wall_ms()).unwrap(),
+        "期限确实过了，黑板会去问 Broker"
+    );
+    assert!(
+        engine.commit_awaiting_discard(task).is_err(),
+        "证实这一步出错就如实报错：不提示主人丢，黑板记作没核对出来、日志看得见（2026-11-16 第二意见）"
     );
     assert!(engine.discard_expired_commit(task, 11).is_err());
     engine.reconcile_periodic(12).unwrap();
@@ -620,6 +631,101 @@ fn faults_settled_outside_the_round_park_the_attempt_and_keep_reconciling() {
     );
 }
 
+/// 两个黑板任务都停在「提交中」、原批准都还有效（文件归属不能重叠，否则第二个认领不了）：第一个的提交
+/// 在第一篇正文前崩溃，第二个的提交碰上一次注入的故障。按创建先后返回两个任务。
+fn two_live_committing_board_tasks(
+    temp: &tempfile::TempDir,
+) -> (
+    PersistentTaskEngine<LostManifestAck, MemoryAuditLedger>,
+    TaskId,
+    TaskId,
+) {
+    let broker =
+        FsVaultBroker::open(&temp.path().join("vault"), &temp.path().join("broker")).unwrap();
+    let mut engine = PersistentTaskEngine::new(
+        ControlDb::open(temp.path().join("control.sqlite3"), broker.vault_uuid()).unwrap(),
+        LostManifestAck {
+            inner: broker,
+            fail: false,
+            before: true,
+            unprovable: false,
+            discard_faults: Default::default(),
+            commit_fault: Default::default(),
+            fault_attempt: Default::default(),
+        },
+        MemoryAuditLedger::new(),
+    );
+    let mut tasks = Vec::new();
+    // 时间两个任务都一样：`grant_board` 按时刻 1 批准，控制库要求 attempt 的创建不晚于批准。
+    for owned in ["src", "docs"] {
+        let mut definition = spec();
+        definition.files_owned = vec![path(owned)];
+        // 第一个参数是创建请求的幂等键：两个任务各用各的，同一个键配不同的定义会被拒绝。
+        let task = engine
+            .create_board_task(&format!("create-{owned}"), definition, HASH, 0)
+            .unwrap();
+        let claim = engine
+            .claim_board_task(task, &format!("runner-{owned}"), 1000, 1)
+            .unwrap();
+        grant_board(&mut engine, task, &claim);
+        if !tasks.is_empty() {
+            // 一次性的崩溃第一个已经用掉了；第二个靠注入的故障停在提交中。
+            *engine.broker().commit_fault.lock().unwrap() = Some(|| BrokerError::WriterBusy);
+        }
+        let patch = format!("diff --git a/{owned}/a b/{owned}/a\n+safe\n");
+        assert!(matches!(
+            engine.stage_board_runner_candidates(report(&claim, patch.as_bytes()), 2),
+            Err(TaskEngineError::CommitFailed(_))
+        ));
+        *engine.broker().commit_fault.lock().unwrap() = None;
+        assert_eq!(
+            engine.task(task).unwrap().unwrap().status,
+            TaskStatus::Committing
+        );
+        tasks.push(task);
+    }
+    (engine, tasks[0], tasks[1])
+}
+
+/// 一个 attempt 因为单份预留的问题停在待恢复（这里是没有权限），同一轮里别的提交中 attempt 照常前滚：
+/// 记完待恢复不能跳出循环（2026-11-16 第二意见）。不靠遍历顺序：故障分别落在先建、后建的那个上各跑一遍。
+#[test]
+fn a_parked_attempt_does_not_hold_up_the_others_in_the_same_round() {
+    for fault_on_first in [true, false] {
+        let temp = tempfile::TempDir::new_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
+        let (mut engine, first, second) = two_live_committing_board_tasks(&temp);
+        let (parked, rolled) = if fault_on_first {
+            (first, second)
+        } else {
+            (second, first)
+        };
+        let parked_attempt = engine.task(parked).unwrap().unwrap().active_attempt;
+        assert!(parked_attempt.is_some());
+        *engine.broker().fault_attempt.lock().unwrap() = parked_attempt;
+        *engine.broker().commit_fault.lock().unwrap() =
+            Some(|| storage_fault(std::io::ErrorKind::PermissionDenied));
+        engine.reconcile_periodic(100).unwrap();
+        assert_eq!(
+            engine.task(parked).unwrap().unwrap().status,
+            TaskStatus::Committing
+        );
+        assert_eq!(
+            engine.task(rolled).unwrap().unwrap().status,
+            TaskStatus::NeedsReview,
+            "同一轮里另一个照常前滚（故障落在先建的那个上：{fault_on_first}）"
+        );
+        *engine.broker().commit_fault.lock().unwrap() = None;
+        engine.reconcile_periodic(101).unwrap();
+        assert_eq!(
+            engine.task(parked).unwrap().unwrap().status,
+            TaskStatus::NeedsReview,
+            "故障过去之后照常前滚"
+        );
+        let (_db, _broker, ledger) = engine.into_parts();
+        assert_eq!(actions(&ledger, "task.candidate_recovery_pending"), 1);
+    }
+}
+
 /// 落定已经提交、丢暂存那一步出错：主人再点一次就收拾干净，审计里仍然只有一条「提交过期」。
 #[test]
 fn owner_discard_that_fails_after_settling_can_be_retried() {
@@ -657,6 +763,7 @@ fn expired_plain_task_commit_is_discarded_by_the_owner_too() {
             unprovable: false,
             discard_faults: Default::default(),
             commit_fault: Default::default(),
+            fault_attempt: Default::default(),
         },
         MemoryAuditLedger::new(),
     );

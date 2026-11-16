@@ -282,9 +282,10 @@ where
     /// 只读：这个任务的提交是不是原批准已经过期、一篇正文都还没写，正等主人决定丢不丢。
     ///
     /// 和主人入口 [`Self::discard_expired_commit`] 用同一步证实（读暂存、问 Broker），不另写一套
-    /// 判断。只看「提交中」任务的当前 attempt；证实不了（暂存读不出、Broker 说没过期或写过正文）
-    /// 一律返回 false，界面照旧显示「写回中」。答案随时间变（批准会到期），只给人侧实时读，不能写进
-    /// 任务页投影。
+    /// 判断。只看「提交中」任务的当前 attempt；Broker 说没过期或写过正文返回 false。证实这一步本身出错
+    /// （暂存读不出、和 attempt 对不上、Broker 查不了）返回错误，不混进 false：调用方记作「没核对出来」、
+    /// 照旧显示「写回中」，人侧列表的计数和日志才看得见是哪一步坏了（2026-11-16 第二意见）。答案随时间变
+    /// （批准会到期），只给人侧实时读，不能写进任务页投影。
     pub fn commit_awaiting_discard(&self, task: TaskId) -> Result<bool, TaskEngineError> {
         self.verify_vault_binding()?;
         let Some(attempt) = self.committing_attempt(task)? else {
@@ -293,10 +294,7 @@ where
         let Some(reservation) = attempt.terminal.as_ref() else {
             return Ok(false);
         };
-        Ok(matches!(
-            self.expired_unstarted(&prior_identity(&attempt), reservation),
-            Ok(true)
-        ))
+        self.expired_unstarted(&prior_identity(&attempt), reservation)
     }
 
     /// 便宜的一步，只读控制库、不碰 Broker：这次提交的原批准到 `now_ms` 过没过期。`now_ms` 要用墙上时钟

@@ -17,6 +17,7 @@
 """
 import argparse
 from dataclasses import asdict, dataclass, field
+import functools
 import json
 import os
 from pathlib import Path
@@ -228,17 +229,21 @@ def staged_problem(name, document):
 # ---------- 读文件系统（只读） ----------
 
 def read_limited(path, limit):
-    """不跟随符号链接，按上限读；超过上限或不是普通文件返回 None。"""
+    """不跟随符号链接，按上限读；超过上限、不是普通文件、打不开或读的时候出错（如磁盘 I/O 错）都返回 None，
+    调用方报「读不出来」：封存同样读不了它，而且一份读不出的文件不能让别的文件没核（2026-11-16 第二意见）。"""
     flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_CLOEXEC", 0)
     try:
         fd = os.open(path, flags)
     except OSError:
         return None
-    with os.fdopen(fd, "rb") as handle:
-        info = os.fstat(handle.fileno())
-        if not stat.S_ISREG(info.st_mode) or info.st_size > limit:
-            return None
-        data = handle.read(limit + 1)
+    try:
+        with os.fdopen(fd, "rb") as handle:
+            info = os.fstat(handle.fileno())
+            if not stat.S_ISREG(info.st_mode) or info.st_size > limit:
+                return None
+            data = handle.read(limit + 1)
+    except OSError:
+        return None
     return data if len(data) <= limit else None
 
 
@@ -332,12 +337,13 @@ def listed_entries(directory, room):
     return entries
 
 
-def walk_tree(root, prefix, skip, report, sweep_hint, keep, node_budget):
+def walk_tree(root, prefix, skip, report, sweep_hint, keep, node_budget, tree=None):
     """照 tree.rs 和 trusted_export.rs 走一棵树。prefix 是导出里的顶层目录（`canonical/`、`writer-data/`），
     skip 是封存跳过的隔离区路径；sweep_hint(逻辑路径) 给开库清扫会挪走的位置返回处理说法，不管的位置返回 None；
-    keep(逻辑路径, 名字) 选出后面还要细看的普通文件；node_budget 是这棵树还能有多少个目录项，超了就停。"""
+    keep(逻辑路径, 名字) 选出后面还要细看的普通文件；node_budget 是这棵树还能有多少个目录项，超了就停。
+    tree 由调用方给时就地填：后面哪一步出错没核成，已经走过的计数也留得住（2026-11-16 第二意见）。"""
     root_info = root_metadata(root, prefix.rstrip("/"))
-    tree = Tree(root=str(root))
+    tree = Tree(root=str(root)) if tree is None else tree
     if root_info.st_uid != report.uid:
         report.add("foreign_owner", str(root), f"根目录属主是 {root_info.st_uid}，不是 {report.uid}")
     elif missing_access(root_info):
@@ -441,8 +447,8 @@ def node_problem(info, root_info, report, absolute, check_links):
     return False
 
 
-def check_vault(vault, report, node_budget=None):
-    """Vault 根：结构、临时文件、尝试目录的清单。开库清扫只管 `.workbench/` 底下。"""
+def check_vault(vault, report, node_budget=None, tree=None):
+    """Vault 根：结构、临时文件、尝试目录的清单。开库清扫只管 `.workbench/` 底下。tree 见 `walk_tree`。"""
     report.checked.append(f"Vault 根 {vault}")
     usable = quarantine_usable(vault / WORKBENCH / QUARANTINE, report.uid)
 
@@ -453,7 +459,7 @@ def check_vault(vault, report, node_budget=None):
 
     tree = walk_tree(vault, "canonical/", (WORKBENCH, QUARANTINE), report, sweep_hint,
                      lambda logical, name: logical.startswith(ATTEMPTS),
-                     TREE_MAX_NODES if node_budget is None else node_budget)
+                     TREE_MAX_NODES if node_budget is None else node_budget, tree)
     check_attempts(tree.files, report)
     return tree
 
@@ -493,14 +499,14 @@ def check_attempts(files, report):
         report.add("missing_manifest", directory, f"尝试目录没有清单（里面 {count} 个文件都归不了类）")
 
 
-def check_data(data, report, node_budget=None):
-    """写者数据根：结构、临时文件、暂存正文。开库清扫管整个数据根。"""
+def check_data(data, report, node_budget=None, tree=None):
+    """写者数据根：结构、临时文件、暂存正文。开库清扫管整个数据根。tree 见 `walk_tree`。"""
     report.checked.append(f"写者数据根 {data}")
     usable = quarantine_usable(data / QUARANTINE, report.uid)
     tree = walk_tree(data, "writer-data/", (QUARANTINE,), report,
                      lambda logical: RESIDUE_SWEPT if usable else RESIDUE_UNSAFE_QUARANTINE,
                      lambda logical, name: name.startswith(STAGED_PREFIX),
-                     TREE_MAX_NODES if node_budget is None else node_budget)
+                     TREE_MAX_NODES if node_budget is None else node_budget, tree)
     for logical, absolute in sorted(tree.files.items()):
         name = logical.rsplit("/", 1)[-1]
         if name != logical:
@@ -603,21 +609,23 @@ def check_control(path, report):
 def check_totals(trees, report, missing=0):
     """tree.rs `check_pair`：Vault 根和写者数据根两棵树的目录项数、字节数合起来比上限（复审 A3-F1）；
     trusted_export.rs `walk`：导出扫描插入前文件数已经到上限才拒绝，所以超过上限才算（复审 A3-F3）。
-    missing 是给了却没核成的树有几棵：只算核成的，超了照样报（实际只会更多），没超不能说没超。"""
+    missing 是给了却没核成的树有几棵：它们走过的那部分也在 trees 里、照样算进合计，超了照样报（实际只会更多），
+    没超不能说没超。"""
     if missing:
-        report.notes.append(f"有 {missing} 棵树没核成：两棵树合计的目录项数、字节数、文件数只算了核成的部分，"
+        report.notes.append(f"有 {missing} 棵树没核成：两棵树合计的目录项数、字节数、文件数只算了走到的部分，"
                             "实际只会更多")
     if not trees:
         return
     where = " + ".join(tree.root for tree in trees)
-    at_least = "至少 " if any(tree.stopped for tree in trees) else ""
+    stopped = any(tree.stopped for tree in trees)
+    at_least = "至少 " if stopped or missing else ""
     nodes = sum(tree.nodes for tree in trees)
     total_bytes = sum(tree.total_bytes for tree in trees)
     files = sum(tree.file_count for tree in trees)
     if nodes > TREE_MAX_NODES:
         report.add("too_many_nodes", where,
                    f"{at_least}{nodes} 个目录项，封存两棵树合计最多 {TREE_MAX_NODES} 个"
-                   + ("（数到上限就停了，后面的没核）" if at_least else ""))
+                   + ("（数到上限就停了，后面的没核）" if stopped else ""))
     if total_bytes > TREE_MAX_BYTES:
         report.add("too_many_bytes", where, f"{at_least}{total_bytes} 字节，封存两棵树合计最多 {TREE_MAX_BYTES} 字节")
     if files > EXPORT_MAX_FILES:
@@ -644,23 +652,21 @@ def attempt(report, label, check):
 
 def run(arguments):
     report = Report(uid=arguments.uid if arguments.uid is not None else os.geteuid())
+    sections = []
+    if arguments.vault:
+        sections.append((f"Vault 根 {arguments.vault}", Path(arguments.vault), check_vault))
+    if arguments.data:
+        sections.append((f"写者数据根 {arguments.data}", Path(arguments.data), check_data))
+    # 两棵树共用一份目录项预算：前一棵走过的，后一棵就少走这么多。计数对象在这里建、交给检查就地填，
+    # 一棵树走完之后哪一步出错没核成，走过的部分也照样占预算、照样进合计（2026-11-16 第二意见）。
     trees = []
     missing = 0
-    if arguments.vault:
-        tree = attempt(report, f"Vault 根 {arguments.vault}", lambda: check_vault(Path(arguments.vault), report))
-        if tree is None:
-            missing += 1
-        else:
-            trees.append(tree)
-    if arguments.data:
-        # 两棵树共用一份目录项预算：前一棵用掉的，后一棵就少走这么多。
+    for label, root, check in sections:
         budget = max(TREE_MAX_NODES - sum(tree.nodes for tree in trees), 0)
-        tree = attempt(report, f"写者数据根 {arguments.data}",
-                       lambda: check_data(Path(arguments.data), report, budget))
-        if tree is None:
+        tree = Tree(root=str(root))
+        if attempt(report, label, functools.partial(check, root, report, budget, tree)) is None:
             missing += 1
-        else:
-            trees.append(tree)
+        trees.append(tree)
     check_totals(trees, report, missing)
     if arguments.control:
         attempt(report, f"控制库 {arguments.control}", lambda: check_control(arguments.control, report))
