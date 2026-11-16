@@ -16,7 +16,8 @@
 #   SHA-256（取自 nodejs.org/dist/v<版本>/SHASUMS256.txt，2026-11-16）；对不上就从 nodejs.org 重新下载。
 # - python3 指到 3.12（CI 跑的也是 3.12）。
 # - 原 workflow 要自己装 Rust 工具链和 rustfmt、clippy；测试箱的工具链由平台只读提供（/opt/testbox/toolchains/rust，
-#   2026-11-16 实测 1.97.1 带 rustfmt、clippy，`rustup toolchain install` 会因为目录只读而报错），这里不装。
+#   2026-11-16 实测 1.97.1 带 rustfmt、clippy，`rustup toolchain install` 会因为目录只读而报错），这里不装，
+#   只核对 rustc 的版本和 rust-toolchain.toml 钉的一致，不一致直接失败（原 workflow 钉 1.97.1，复审 A4-F1）。
 #   缺了组件时 fmt、clippy 那两步自己会失败，不会被放过。
 # - 没有 sudo：CI 用 prlimit 抬 RLIMIT_MEMLOCK，沙盒本来就是 unlimited；不是就直接失败——秘密驻留面加固
 #   失败关闭是正确行为，不降级。
@@ -27,6 +28,19 @@ if [ -z "${TESTBOX_APT_ROOT:-}" ] || [ ! -d /work ] || [ ! -d /cache ]; then
 fi
 if [ "$(ulimit -l)" != unlimited ]; then
   echo "ulimit -l 是 $(ulimit -l)，不是 unlimited：秘密驻留面加固会失败关闭，先换一台测试节点" >&2
+  return 1
+fi
+
+studiolo_ci_channel="$(sed -n 's/^channel = "\(.*\)"$/\1/p' "$(dirname "${BASH_SOURCE[0]}")/../rust-toolchain.toml")"
+case "$(rustc --version 2>/dev/null)" in
+  "rustc $studiolo_ci_channel "*) ;;
+  *)
+    echo "rustc 是「$(rustc --version 2>&1)」，rust-toolchain.toml 钉的是 ${studiolo_ci_channel:-（没读到）}：门禁换了编译器就不算数" >&2
+    return 1
+    ;;
+esac
+if ! command -v python3.12 >/dev/null; then
+  echo "沙盒里没有 python3.12（原 CI 跑的是 3.12）" >&2
   return 1
 fi
 

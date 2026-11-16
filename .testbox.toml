@@ -6,7 +6,9 @@
 # ci 套逐步照搬原来 .github/workflows/ci.yml 的三个作业（rust、frontend、alerts-worker），命令一字不改；
 # runner 和沙盒环境的差别（umask、私有临时目录、本任务自己的构建目录、Node 版本）由 scripts/testbox-ci-env.sh 补齐，
 # 每一步开头 source 它。门禁命令由架构守卫（crates/studiolo/tests/architecture_cases/ci.rs）逐行钉住：
-# 删掉、注释、改参数、吞失败、关 errexit、换目录、改成后台服务都判红。改这份文件时只用守卫认得的写法：
+# 删掉、注释、改参数、吞失败、关 errexit、换目录、改成后台服务都判红；有门禁的那一步第一行必须是这行 source，
+# 最后一条门禁之前只许有别的门禁和几行版本诊断（插 exit、if、cd、改 PATH 也判红）。新加的回归放在那一步最后一条
+# 钉住的行之后，或者先在守卫里钉上。改这份文件时只用守卫认得的写法：
 # 字符串用双引号且不带转义，run 用独占一行的 ''' 开合，键后不跟行尾注释，表头只用 [suites.ci] 和 [[suites.ci.steps]]。
 #
 # lanes = 1：一步接一步，同一任务的各步共用构建目录（clippy、测试、构建之间照样增量）。

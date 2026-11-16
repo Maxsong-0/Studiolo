@@ -55,7 +55,9 @@
 - **ci 套是门槛，不是调试器**：改的过程中用定向命令（`testbox submit --project studiolo --arch x86_64 --cmd '…'`）验，攒成一批再交 ci 套。
   Mac 本机不跑任何测试与编译检查（`cargo test`／`fmt`／`clippy`／`build`、Python 契约、前端 tsc／lint／vitest／build、真实管线都算，2026-09-23 用户硬约束）。
 - 门禁命令由架构守卫逐行钉住（`crates/studiolo/tests/architecture_cases/ci.rs`）：删掉、注释、改参数、吞失败、关 errexit、换目录、
-  改成后台服务都判红。改 `.testbox.toml` 只用守卫认得的写法（见文件开头说明）。
+  改成后台服务都判红；有门禁的那一步第一行必须是对应目录的 `source …testbox-ci-env.sh`，最后一条门禁之前只许有别的门禁和几行版本诊断
+  （插 `exit`、`if`、`cd`、改 PATH、同名函数也判红）。新加的回归放在那一步最后一条钉住的行之后，或者先在守卫里钉上。
+  改 `.testbox.toml` 只用守卫认得的写法（见文件开头说明）。
 - 沙盒和原来 runner 的环境差别（umask、私有临时目录、本任务自己的构建目录、Node 版本）由 `scripts/testbox-ci-env.sh` 补齐，
   每一步开头 source 它；它只在测试箱里用，会换掉 HOME、TMPDIR 和构建目录。
 - **Mac 会话的 Linux 回路照旧在 `githubci` 上原生跑，不用 Docker**（2026-09-19，T-081）：`scripts/test-linux.sh` 把当前工作树 rsync 到服务器后原生执行
