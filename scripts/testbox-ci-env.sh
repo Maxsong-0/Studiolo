@@ -9,8 +9,9 @@
 #   /var/tmp 每个任务一份（任务结束随沙盒删掉），和 /work 同一块盘，Broker 的同设备检查照常成立。
 # - 默认构建目录 /cache/cargo-target 是跨任务共用的缓存，并发任务的产物会互相覆盖 → 换成本次任务自己的。
 #   同一个任务的各步共用它，所以 clippy、测试、构建之间照样增量。
-# - 自带 Node 是 26 → 前端照 CI 用 22.17.0，告警 Worker 用 24.22.2；没装过就从 nodejs.org 下载，
-#   核对下面钉住的 SHA-256（取自 nodejs.org/dist/v<版本>/SHASUMS256.txt，2026-11-16）再装进 /cache。
+# - 自带 Node 是 26 → 前端照 CI 用 22.17.0，告警 Worker 用 24.22.2，每个任务解压到自己的私有目录。
+#   /cache 跨任务共用、别的任务改得了，所以那里只存下载的压缩包，每次用之前复制到私有目录再核对下面钉住的
+#   SHA-256（取自 nodejs.org/dist/v<版本>/SHASUMS256.txt，2026-11-16）；对不上就从 nodejs.org 重新下载。
 # - python3 指到 3.12（CI 跑的也是 3.12）。
 # - 没有 sudo：CI 用 prlimit 抬 RLIMIT_MEMLOCK，沙盒本来就是 unlimited；不是就直接失败——秘密驻留面加固
 #   失败关闭是正确行为，不降级。
@@ -35,9 +36,10 @@ mkdir -p -m 700 "$studiolo_ci_base/tmp" "$studiolo_ci_base/target"
 ln -sfn "$(command -v python3.12)" "$studiolo_ci_base/bin/python3"
 export HOME="$studiolo_ci_base/home" TMPDIR="$studiolo_ci_base/tmp" CARGO_TARGET_DIR="$studiolo_ci_base/target"
 
-# 装好的 Node 目录；没装过就下载、核对摘要、解压后原子改名（并发任务先装好的就用它的）。
+# 本任务私有的 Node 目录；同一任务里前面的步骤解好了就直接用。缓存里的压缩包只当省一次下载：
+# 先复制到私有目录再核对摘要（核对完到解压之间别的任务换不了它），对不上就重新下载。
 studiolo_ci_node() {
-  local version="$1" arch sum dir staging
+  local version="$1" arch sum name dir tarball staging
   case "$(uname -m)" in
     x86_64) arch=x64 ;;
     aarch64) arch=arm64 ;;
@@ -50,20 +52,28 @@ studiolo_ci_node() {
     24.22.2-arm64) sum=eb187837a2230d4047161ac0be008584e16b46f726e9c9490ee35dc6b17d9ba8 ;;
     *) echo "没有钉住 Node $version（$arch）的摘要" >&2; return 1 ;;
   esac
-  dir="/cache/studiolo-node/node-v$version-linux-$arch"
+  name="node-v$version-linux-$arch"
+  dir="$studiolo_ci_base/$name"
   if [ ! -x "$dir/bin/node" ]; then
-    mkdir -p /cache/studiolo-node
-    staging="$(mktemp -d /cache/studiolo-node/.staging-XXXXXX)" || return 1
-    if ! curl -fsSL "https://nodejs.org/dist/v$version/node-v$version-linux-$arch.tar.xz" -o "$staging/node.tar.xz" \
-      || ! echo "$sum  $staging/node.tar.xz" | sha256sum -c --quiet - \
-      || ! tar -xJf "$staging/node.tar.xz" -C "$staging"; then
-      rm -rf "$staging"
-      echo "Node $version 下载或核对失败" >&2
-      return 1
+    tarball="$(mktemp "$studiolo_ci_base/.node-tar-XXXXXX")" || return 1
+    cp "/cache/studiolo-node/$name.tar.xz" "$tarball" 2>/dev/null || true
+    if ! echo "$sum  $tarball" | sha256sum -c --quiet - >/dev/null 2>&1; then
+      if ! curl -fsSL "https://nodejs.org/dist/v$version/$name.tar.xz" -o "$tarball" \
+        || ! echo "$sum  $tarball" | sha256sum -c --quiet -; then
+        rm -f "$tarball"
+        echo "Node $version 下载或核对失败" >&2
+        return 1
+      fi
+      # 核对过的压缩包放回缓存给后面的任务省一次下载；放不回去不影响这一步。
+      if mkdir -p /cache/studiolo-node && staging="$(mktemp /cache/studiolo-node/.download-XXXXXX)"; then
+        cp "$tarball" "$staging" && mv -f "$staging" "/cache/studiolo-node/$name.tar.xz" || rm -f "$staging"
+      fi
     fi
-    mv -T "$staging/node-v$version-linux-$arch" "$dir" 2>/dev/null || true
-    rm -rf "$staging"
-    [ -x "$dir/bin/node" ] || { echo "Node $version 没装上" >&2; return 1; }
+    staging="$(mktemp -d "$studiolo_ci_base/.node-XXXXXX")" || { rm -f "$tarball"; return 1; }
+    tar -xJf "$tarball" -C "$staging" && mv -T "$staging/$name" "$dir" 2>/dev/null
+    rm -rf "$staging" "$tarball"
+    # 并行的步骤先解好了也算：内容来自同一个核对过的压缩包。
+    [ -x "$dir/bin/node" ] || { echo "Node $version 解压失败" >&2; return 1; }
   fi
   printf '%s\n' "$dir"
 }
