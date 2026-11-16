@@ -53,12 +53,10 @@ impl<B: VaultBroker + ArtifactStager, L: AuditLedger> PersistentTaskEngine<B, L>
             match self.roll_forward(&prior_identity(&attempt), reservation, now) {
                 Ok(_) => {}
                 Err(TaskEngineError::CommitFailed(_)) => {
-                    // 原批准已经过期、又一个字节都没写出去的提交永远前滚不了：落成终态、丢掉暂存。
-                    if self.expire_unstarted(&prior_identity(&attempt), reservation, now)? {
-                        continue;
-                    }
                     // 单个被保留的发布不能挡住其他租约的处理；它的预留仍是
                     // Committing，因此新持有者和成功回执都无法胜出。
+                    // 原批准过期、一篇正文都没写出去的提交也停在这里、保留暂存，对账不替主人丢：
+                    // 只有主人经 `discard_expired_candidates` 决定（2026-11-16 用户拍板）。
                     self.audit_board(
                         "task.candidate_recovery_pending",
                         &(attempt.task_id, attempt.attempt_id, now),
