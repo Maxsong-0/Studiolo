@@ -127,7 +127,9 @@ Auth 自有恢复流程必须使旧会话/L3失效，并防止旧快照里的恢
 桌面与恢复点差异先隔离、人工协调；新 checkpoint 和写入/备份链重新验收、且纳入的
 策略库已核对吊销后，才能启用双向同步。旧目录保留至回滚窗口结束。recovery kit
 独立加密保存固定包、摘要、主人/秘密映射、一次性材料和 Sync 端到端恢复资料，
-不进入普通 checkpoint。
+不进入普通 checkpoint。（T-212 实现时偏离：恢复包不含秘密，恢复时从核验过的副本当场生成、
+立即兑换，不单独保存；Sync 不恢复、从零重新引导，所以没有 Sync 恢复资料。见
+[新根恢复](../contracts/new-root-restore.md)「恢复包」。）
 
 ## 必须留下的故障与实机证据
 
@@ -215,6 +217,7 @@ checkpoint 核对批准与原审计事实，ACK 后仍须实际账本验证才�
 单作业事件、原 Intent 前提与有界 UDS 消息见 [备份审计通信](../contracts/backup-audit.md)；
 固定监听器、按固定间隔的调度、过期暂存回收见 [备份生产者](../contracts/backup-producer.md)，独立 worker 主循环见
 [worker 进程边界](../contracts/backup-worker-process.md)「服务入口」（2026-11-15 接入，真机部署没验证）；
-新根恢复的取回副本核验、逐字节放置和按名单的编排见 [新根恢复](../contracts/new-root-restore.md)：现在整次恢复
-都在写之前拒绝（2026-11-16 用户拍板）——Auth 的撤权入口和启动闸门还没有；Control、Bridge、AgentStore、Policy
-各自的新根恢复协议也仍待补。等于暂时只能备份、不能恢复。
+新根恢复的取回副本核验、逐字节放置、按名单的编排、启动闸门、接手、命令行 `studiolo-restore` 和两步最终切换见
+[新根恢复](../contracts/new-root-restore.md)（T-212，2026-11-16）：测试箱用例用真实 owner 跑通；真实 restic 取回、
+真机一整轮和 RTO 没有验证，要主人本人演练。恢复包改成恢复时从核验过的副本当场生成（没有秘密，不单独加密
+保存），是对设计的偏离，用户可以推翻。

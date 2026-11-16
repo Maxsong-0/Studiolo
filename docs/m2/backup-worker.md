@@ -148,6 +148,9 @@ lineage(`restore-v1/lineage.json`，先写 `Rebinding`) →
 `resume_interrupted = true`；此时只容忍「只差物理身份」的不一致，
 逻辑身份（格式版本／`pair_id`／Vault UUID）仍必须完全一致。
 
+T-212（2026-11-16）起 lineage 第 2 版多记一个恢复标识，接手要同一个；整个新根恢复（Auth 撤权、
+启动闸门、黑板三件的失效、命令行、最终切换）见 [新根恢复](../contracts/new-root-restore.md)。
+
 明确不提供也不依赖的路径：CLI 手改 JSON、普通 `initialize` 自动修复
 （`FsVaultBroker::open` 对复制过来的配对同样失败）、复用单事务维护票据。
 旧目录保持原样不动。

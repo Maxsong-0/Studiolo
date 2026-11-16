@@ -225,6 +225,14 @@
   `crates/policy/tests/rules_whitelist_contract.rs`（能力集字段校验与扩大／收窄项）。
 
 
+## 新根恢复（T-212，2026-11-16）
+
+`invalidate_restored_identities(目录, 清单水位, now)`：只打开封存里放出来的已有 `agent.sqlite3`（不建、不迁移）。
+第一次做这一步时给清单里的水位，先按封存时同一套规则重算、逐项相等才往下做；接手上一次、这一步已经开始过时
+库已经改过，不给，只做幂等的吊销和事后核对。吊销全部类型（旧类型 token 一律失效），核「没有一个类型还有效」，
+交回全部实例标识，由编排在策略库逐个记实例吊销。之后由主人在现有界面重新签发类型 token、AI 重新登记。
+接入方账本（`<agent 私有目录>/audit`）在恢复里只核链尾、不写。见[新根恢复](new-root-restore.md)。
+
 ## 人侧身份视图与管理输出（T202）
 
 人侧列表经 `AgentIdentityView` 只读观察身份库，不取得 token 或会话摘要。`session_digest` 绑定的是服务端随机 `session_ref` 的 SHA-256，非客户端提供的会话标识。`studiolo-agent admin instances` 保留原四列顺序并在末尾增加父实例号（无父为 `—`）；读取改用只读视图。网页契约见 [接入方列表](agents-list.md)。

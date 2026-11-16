@@ -35,5 +35,10 @@ HTTP 为503 `store_busy`，`Retry-After: 5`；MCP说明尚未提交、可稍后�
 HTTP与MCP Busy各1项、清单23项、架构58项及Clippy通过；
 `20261113-112231-ca62` 的VM截止时间中断/后续读恢复1项及Clippy通过。
 
+新根恢复（T-212，2026-11-16，见[新根恢复](new-root-restore.md)）：`PolicyStore::restored_watermark(截止时间)`
+按封存时同一套规则重算这个库的 Policy 水位（schema、生效版本、生效哈希、是否全局吊销），只读。编排只开已有库
+（`open_existing`），第一次先核水位等于清单里的，再一律全局吊销（2026-11-16 用户拍板），只能由主人经 L3 解除；
+封存截止点时已经全局吊销的，原记录保留、不再加一条。AgentStore 的每个实例在这里记实例吊销（不可恢复）。
+
 SQLite语义依据：[VACUUM](https://www.sqlite.org/lang_vacuum.html)、
 [WAL checkpoint](https://www.sqlite.org/c3ref/wal_checkpoint_v2.html)。

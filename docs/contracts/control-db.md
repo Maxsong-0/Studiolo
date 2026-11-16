@@ -186,6 +186,12 @@ Broker 整体出问题、只能在服务外面处理（写者被占、写者状�
 新 `reserve_terminal` 拒绝 inline 字节数组。历史磁盘页/WAL/备份不是逻辑迁移的擦除承诺。
 更多输入与投影边界见 [M5 黑板](../m5/blackboard.md)。
 
+新根恢复（T-212，2026-11-16，见[新根恢复](new-root-restore.md)）：`ControlDb::open_existing(目录, vault_uuid)`
+只打开封存里放出来的 `control.sqlite3`，不建库、不迁移，schema 必须已经是当前版本、Vault 绑定必须已经在库里
+且相等；`restored_watermark()` 按封存时同一套规则在这个库上重算 Control 水位（schema、Vault 绑定、各 outbox
+排空、没有提交中的 attempt、完整性检查），只读；`live_attempts()` 只读地数拿着租约的（已认领、运行中）和取消中的
+attempt。编排第一次先核水位，再按启动巡检调 `reconcile_leases(now, true)`，之后拿着租约的必须是 0。
+
 Runner 候选继续复用 `reserve_board_runner_candidates` → `finalize_terminal(NeedsReview)`
 的原 T1/T2；board 的普通 reserve/report 与直接 Succeeded 被拒。NeedsReview 不算子项终态，
 不能重新 claim。仅 `review_board_candidates` 能接受已提交候选的可信主人收尾决定。

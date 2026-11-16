@@ -32,6 +32,13 @@ UUID/pair_id，重绑两个主根、已启用 history/meta-v1、maintenance-v1 �
 重新核验历史字节并执行真正的墓碑恢复。lineage 尚为 Rebinding 时，普通打开和
 初始化都拒绝，即使两个主 binding 已写完；只有显式恢复接手可继续。
 
+T-212（2026-11-16）：lineage 第 2 版多记一个恢复标识 `restore_id`（1～55 个字母、数字或 `-`，和 Auth
+撤权记录同一套规则，`valid_restore_id`），`NewRootRebind` 跟着加，格式不对在写任何东西之前拒绝。接手上一次
+中途失败的重绑定时，恢复标识必须和 lineage 里记的相同，否则 `RestoreIdMismatch`。第 1 版 lineage 照旧能读
+（`restore_id` 为空），版本和字段对不上的拒绝。`read_restore_lineage(写者数据根)` 只读，主服务启动闸门和
+最终切换都按它认「这是哪一次恢复」，见[新根恢复](new-root-restore.md)。108 `20261116-132450-185c`：Broker
+库内用例和示例编译通过。
+
 定向验证：108 `20261113-134846-a727` 的初始封存 5、审计回归 6、严格 Clippy、
 架构 60 通过。补齐反向母本核对和恢复布局后，108 `20261113-135334-12af` 封存 7、
 恢复回归 24、审计回归 6、严格 Clippy 和架构 60 全通过。最终全量/生产演练仍与
