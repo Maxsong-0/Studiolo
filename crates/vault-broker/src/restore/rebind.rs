@@ -71,13 +71,16 @@ pub(super) fn read_lineage(data: &Dir) -> Result<Option<RestoreLineage>, Restore
         return Ok(None);
     };
     let lineage: RestoreLineage = disk::decode(&bytes).map_err(broker)?;
-    // 第 1 版没有恢复标识；第 2 版必须有、而且合法。别的版本、两版混写都按未知版本拒绝。
+    // 第 1 版没有恢复标识；第 2 版必须有、而且合法；第 3 版再加之前用过的那一串（每个都合法、不重复、不含这次
+    // 的、不超过上限）。别的版本、几版混写都按未知版本拒绝。
+    let identified = lineage
+        .restore_id
+        .as_deref()
+        .is_some_and(super::valid_restore_id);
     let consistent = match lineage.format_version {
-        1 => lineage.restore_id.is_none(),
-        RestoreLineage::FORMAT_VERSION => lineage
-            .restore_id
-            .as_deref()
-            .is_some_and(super::valid_restore_id),
+        1 => lineage.restore_id.is_none() && lineage.earlier_restores.is_empty(),
+        2 => identified && lineage.earlier_restores.is_empty(),
+        RestoreLineage::FORMAT_VERSION => identified && consistent_chain(&lineage),
         _ => false,
     };
     if !consistent {
@@ -86,9 +89,34 @@ pub(super) fn read_lineage(data: &Dir) -> Result<Option<RestoreLineage>, Restore
     Ok(Some(lineage))
 }
 
+/// 之前用过的恢复标识那一串自洽：每个都合法、互不相同、不含这次的、不超过上限。
+fn consistent_chain(lineage: &RestoreLineage) -> bool {
+    let earlier = &lineage.earlier_restores;
+    let distinct: std::collections::BTreeSet<&str> = earlier.iter().map(String::as_str).collect();
+    earlier.len() <= RestoreLineage::MAX_EARLIER_RESTORES
+        && distinct.len() == earlier.len()
+        && earlier.iter().all(|id| super::valid_restore_id(id))
+        && lineage
+            .restore_id
+            .as_ref()
+            .is_none_or(|current| !earlier.contains(current))
+}
+
 pub(super) struct Rebound {
     pub(super) coverage: RebindCoverage,
     pub(super) lineage: RestoreLineage,
+}
+
+/// 新 lineage 里说明「这是哪一次恢复」的四项，原样写进 [`RestoreLineage`]。
+pub(super) struct RestoreChain<'a> {
+    /// 这次恢复基于的 checkpoint。
+    pub(super) checkpoint_id: &'a str,
+    /// 这次的恢复标识。
+    pub(super) restore_id: &'a str,
+    /// 上一环：被封存的根本身是恢复出来的，就是它的恢复标识。
+    pub(super) parent_lineage: Option<String>,
+    /// 这份数据以前用过的全部恢复标识，按先后（[`RestoreLineage::earlier_for_next`]）。
+    pub(super) earlier_restores: Vec<String>,
 }
 
 #[allow(clippy::too_many_lines)]
@@ -96,9 +124,7 @@ pub(super) fn rebind(
     root: &Dir,
     data: &Dir,
     verified: &Verified,
-    checkpoint_id: &str,
-    restore_id: &str,
-    parent_lineage: Option<String>,
+    chain: RestoreChain<'_>,
     fault: RestoreFault,
 ) -> Result<Rebound, RestoreError> {
     let control = directory(root, CONTROL).map_err(broker)?;
@@ -117,13 +143,14 @@ pub(super) fn rebind(
         state: LineageState::Rebinding,
         vault_uuid: verified.vault_uuid,
         pair_id: verified.pair_id,
-        checkpoint_id: checkpoint_id.to_owned(),
+        checkpoint_id: chain.checkpoint_id.to_owned(),
         previous_canonical: previous.0.into(),
         previous_data: previous.1.into(),
         restored_canonical: None,
         restored_data: None,
-        parent_lineage,
-        restore_id: Some(restore_id.to_owned()),
+        parent_lineage: chain.parent_lineage,
+        restore_id: Some(chain.restore_id.to_owned()),
+        earlier_restores: chain.earlier_restores,
     };
     write_lineage(data, &control, &lineage)?;
     fault.trip(RestoreFault::AfterLineage)?;

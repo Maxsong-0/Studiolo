@@ -149,6 +149,9 @@ pub enum RestoreError {
     InvalidRestoreId,
     /// 接手上一次中途失败的恢复时，恢复标识和 lineage 里记的不是同一个。
     RestoreIdMismatch,
+    /// 这个恢复标识这份数据以前用过（在它 lineage 记的那一串里）：Auth 里留着那次的撤权记录，再用一次
+    /// 启动闸门会认旧记录。动手之前拒绝，什么都不写。
+    RestoreIdReused,
     /// 测试中断点触发。
     InterruptedByFault,
 }
@@ -173,6 +176,7 @@ impl std::fmt::Display for RestoreError {
             Self::InvalidCheckpointId => formatter.write_str("checkpoint 标识不合法"),
             Self::InvalidRestoreId => formatter.write_str("恢复标识不合法"),
             Self::RestoreIdMismatch => formatter.write_str("接手的恢复标识和 lineage 里的不同"),
+            Self::RestoreIdReused => formatter.write_str("这个恢复标识这份数据以前用过"),
             Self::InterruptedByFault => formatter.write_str("恢复在注入的中断点停止"),
         }
     }
@@ -248,6 +252,18 @@ pub(crate) fn run(
     {
         return Err(RestoreError::RestoreIdMismatch);
     }
+    // 这份数据之前用过的恢复标识（封存的那个根本身是恢复出来的，就有一串）：这次的不许是其中任何一个
+    // （T-212，Codex 第二意见第 1 条）。在写任何东西之前拒绝。
+    let earlier = existing
+        .as_ref()
+        .map(RestoreLineage::earlier_for_next)
+        .unwrap_or_default();
+    if earlier.iter().any(|id| id == request.restore_id) {
+        return Err(RestoreError::RestoreIdReused);
+    }
+    if earlier.len() > RestoreLineage::MAX_EARLIER_RESTORES {
+        return Err(RestoreError::UnsupportedLineage);
+    }
 
     let verified = verify::verify(
         &root,
@@ -260,9 +276,12 @@ pub(crate) fn run(
         &root,
         &data,
         &verified,
-        &request.checkpoint_id,
-        request.restore_id,
-        request.parent_lineage.clone(),
+        rebind::RestoreChain {
+            checkpoint_id: &request.checkpoint_id,
+            restore_id: request.restore_id,
+            parent_lineage: request.parent_lineage.clone(),
+            earlier_restores: earlier,
+        },
         fault,
     )?;
     Ok(RestoreReceipt {
