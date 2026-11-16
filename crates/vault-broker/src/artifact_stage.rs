@@ -85,9 +85,10 @@ fn decode(
 const NAME_PREFIX: &str = "artifact-candidate-";
 const NAME_SUFFIX: &str = ".json";
 
-/// 导出扫描用：文件名像不像一份暂存正文。
+/// 导出扫描用：文件名是不是以暂存正文的前缀开头。只看前缀：后缀不对的也要交给
+/// `staged_provenance` 去拒绝，不能让它漏到别的归类里。
 pub(crate) fn is_staged_name(file_name: &str) -> bool {
-    file_name.starts_with(NAME_PREFIX) && file_name.ends_with(NAME_SUFFIX)
+    file_name.starts_with(NAME_PREFIX)
 }
 
 /// 导出扫描用：按文件名和内容核对一份暂存正文（和 `load_staged_artifact_commit` 同一套核对），

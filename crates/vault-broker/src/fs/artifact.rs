@@ -62,6 +62,8 @@ impl VaultWriter for FsVaultBroker {
                 artifacts: manifest.artifacts,
             });
         }
+        // 期限在这里判定一次。已经开始的提交写完为止：中途再拒绝只会留下没有清单的正文，
+        // 那种半截状态没有出口，还会让整批封存被拒。
         reject_expired(&commit)?;
 
         let base = format!("sources/attempts/{}/{}", commit.task_id, commit.attempt_id);
@@ -74,8 +76,6 @@ impl VaultWriter for FsVaultBroker {
                 Some(existing) if existing.revision == expected => existing.revision,
                 Some(_) => return Err(BrokerError::ArtifactConflict(target)),
                 None => {
-                    // 期限按每一篇新正文算：提交中途过了期限，后面的正文不再写。
-                    reject_expired(&commit)?;
                     self.mutate(Mutation::create(
                         target.clone(),
                         candidate.content.clone(),

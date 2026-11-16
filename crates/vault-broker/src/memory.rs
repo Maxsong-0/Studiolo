@@ -215,8 +215,6 @@ impl VaultWriter for MemoryVaultBroker {
                 Some(object) if object.revision == expected => object.revision,
                 Some(_) => return Err(BrokerError::ArtifactConflict(path)),
                 None => {
-                    // 和文件版一致：期限按每一篇新正文算。
-                    reject_expired(&commit)?;
                     self.mutate(Mutation::create(
                         path.clone(),
                         candidate.content.clone(),

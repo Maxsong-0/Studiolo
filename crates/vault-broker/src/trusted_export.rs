@@ -10,6 +10,7 @@
 //! - 暂存正文（`writer-data/artifact-candidate-<id>.json`）装着还没发布、或被黑板留作候选的产物全文，
 //!   它是来源资料，带它自己那份原批准和期限。按顶层目录归成普通写者状态的话，期限对它就不起作用了。
 //!   升级前留下、没有原批准的暂存读不出来，整批拒绝。
+//! - 原子写留下的临时文件（`.<名字>.studiolo-tmp-…`）不管在哪一层都拒绝：它可能是任何文件的半截或全文。
 //! - 其余文件按顶层目录归 owner 声明的类别；不认识的顶层目录拒绝。
 //!
 //! 本模块按路径读文件，自己不防并发替换：导出根是封存窗口里刚写出的私有目录，
@@ -104,14 +105,17 @@ fn staged_approvals(
 ) -> Result<BTreeMap<VaultPath, ArtifactProvenance>, BrokerError> {
     let mut staged = BTreeMap::new();
     for path in files.keys() {
-        // 只认写者数据根这一层的文件，和 Broker 写暂存的位置一致。
-        let Some(name) = path
-            .as_str()
-            .strip_prefix(WRITER_DATA)
-            .filter(|name| !name.contains('/') && crate::artifact_stage::is_staged_name(name))
-        else {
+        let Some(inside) = path.as_str().strip_prefix(WRITER_DATA) else {
             continue;
         };
+        let name = inside.rsplit('/').next().unwrap_or(inside);
+        if !crate::artifact_stage::is_staged_name(name) {
+            continue;
+        }
+        // Broker 只把暂存写在写者数据根这一层。名字像暂存、位置却不对的，不能漏到别的归类里。
+        if name != inside {
+            return Err(rejected(path, "暂存正文不在写者数据根这一层"));
+        }
         let bytes = read_limited(export_root, path, STAGED_LIMIT)?;
         let approval = crate::artifact_stage::staged_provenance(vault, name, &bytes)
             .map_err(|_| rejected(path, "暂存正文没有原批准，或内容和文件名对不上"))?;
@@ -284,6 +288,14 @@ fn walk(
         // 符号链接、设备、套接字这些都不是 owner 导出该有的东西。
         if !metadata.is_file() {
             return Err(rejected(&path, "不是普通文件"));
+        }
+        // 崩溃时写到一半的临时文件：里面可能是来源资料的半截或全文，没法归类，只能拒绝。
+        if absolute
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(crate::fs::is_temporary_name)
+        {
+            return Err(rejected(&path, "写到一半留下的临时文件"));
         }
         if files.len() >= MAX_FILES {
             return Err(BrokerError::WriterLimitExceeded);

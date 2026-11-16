@@ -147,7 +147,7 @@ pub(crate) fn fresh_manifest(
     request_fingerprint: String,
     artifacts: Vec<CommittedArtifact>,
 ) -> Result<AttemptManifest, BrokerError> {
-    reject_expired(commit)?;
+    // 这里不再查期限：调用方在写第一篇正文之前已经判定过，正文写完之后再拒绝清单只会留下孤儿正文。
     Ok(AttemptManifest {
         format_version: 2,
         task_id: commit.task_id.to_string(),

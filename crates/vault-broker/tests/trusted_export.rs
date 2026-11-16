@@ -289,6 +289,45 @@ fn anything_that_cannot_be_classified_rejects_the_whole_export() {
         },
         "两篇文档认领",
     );
+    // 崩溃时写到一半留下的临时文件，不管是谁的；名字像暂存正文、却不是 Broker 会写出来的样子。
+    reject(
+        &|root| {
+            write(
+                root,
+                "writer-data/.artifact-candidate-ab.json.studiolo-tmp-7-1",
+                b"half a staged body",
+            )
+        },
+        "写到一半留下的临时文件",
+    );
+    reject(
+        &|root| {
+            write(
+                root,
+                &format!("writer-data/history/.{}.studiolo-tmp-7-2", "ab".repeat(32)),
+                b"half an old version",
+            )
+        },
+        "写到一半留下的临时文件",
+    );
+    reject(
+        &|root| {
+            write(
+                root,
+                "canonical/notes/.plain.md.studiolo-tmp-7-3",
+                b"half a note",
+            )
+        },
+        "写到一半留下的临时文件",
+    );
+    reject(
+        &|root| write(root, "writer-data/artifact-candidate-ab.json.bak", b"{}"),
+        "暂存正文没有原批准",
+    );
+    reject(
+        &|root| write(root, "writer-data/nested/artifact-candidate-ab.json", b"{}"),
+        "暂存正文不在写者数据根这一层",
+    );
     // 不认识的顶层目录、不是普通文件的东西。
     reject(
         &|root| write(root, "mystery/secret.txt", b"no owner"),
