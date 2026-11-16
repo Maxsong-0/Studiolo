@@ -27,9 +27,8 @@ fn registration(vault: VaultUuid, fact: TrustedExportFact) -> Result<ObjectRegis
         TrustedExportClass::AuditLedger => SourceCategory::AuditLedger,
         TrustedExportClass::Canonical => SourceCategory::Canonical,
     };
-    let (source_policy, labels, expires_at) = if category == SourceCategory::SourceMaterial {
-        let provenance = fact.provenance.as_ref().ok_or(StagingError::Catalog)?;
-        (
+    let (source_policy, labels, expires_at) = match (category, fact.provenance.as_ref()) {
+        (SourceCategory::SourceMaterial, Some(provenance)) => (
             Some(provenance.source_policy().clone()),
             provenance.labels().clone(),
             Some(InstantMillis::from_millis(
@@ -38,15 +37,12 @@ fn registration(vault: VaultUuid, fact: TrustedExportFact) -> Result<ObjectRegis
                     .checked_mul(1000)
                     .ok_or(StagingError::Catalog)?,
             )),
-        )
-    } else if let Some(provenance) = fact.provenance.as_ref() {
-        (
-            Some(provenance.source_policy().clone()),
-            provenance.labels().clone(),
-            None,
-        )
-    } else {
-        (None, owner_labels()?, None)
+        ),
+        (SourceCategory::SourceMaterial, None) => return Err(StagingError::Catalog),
+        // 带原批准的只能是来源资料。别的类别都是必含的、不看期限，
+        // 让带期限的内容以那些类别进来，期限就失效了。
+        (_, Some(_)) => return Err(StagingError::Catalog),
+        (_, None) => (None, owner_labels()?, None),
     };
     if category == SourceCategory::FullScopeL0 && labels.backup_scope() != BackupScope::Full {
         return Err(StagingError::Catalog);

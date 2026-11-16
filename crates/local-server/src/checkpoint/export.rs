@@ -215,6 +215,31 @@ impl FrozenOwners {
         })
     }
 }
+/// 生产用的来源目录，交给 [`FrozenOwners::seal`] 的 `catalog` 参数。
+///
+/// Broker 扫描真实导出给出来源事实，备份层只做组装：尝试正文跟清单里的原批准，
+/// 历史正文只继承已登记的逻辑路径，固定 owner 目录由 owner 声明类别。缺来源的尝试文件、
+/// 旧清单、孤立历史和未知目录一律整批拒绝，不按路径补默认标签。
+pub fn trusted_catalog(
+    export_root: &Path,
+    exports: &CheckpointExports,
+) -> std::result::Result<
+    studiolo_backup::checkpoint::staging::SourceCatalog,
+    studiolo_backup::checkpoint::staging::StagingError,
+> {
+    use studiolo_backup::checkpoint::staging::{StagingError, trusted_source_catalog};
+    let CheckpointExports { owners, .. } = exports;
+    let vault = owners
+        .iter()
+        .find_map(|owner| match owner.watermark {
+            OwnerWatermark::Broker { vault_uuid, .. } => Some(vault_uuid),
+            _ => None,
+        })
+        .ok_or(StagingError::Catalog)?;
+    let facts = studiolo_vault_broker::read_trusted_export(export_root, vault)
+        .map_err(|_| StagingError::Catalog)?;
+    trusted_source_catalog(vault, facts)
+}
 /// 同一次冻结/封存使用的可信墙钟时刻，与冻结 Instant 截止时间职责不同。
 pub struct CheckpointTimes {
     /// 冻结开始时的内容截止时刻。

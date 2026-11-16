@@ -15,7 +15,8 @@ use studiolo_core::{
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn checkpoint_actual_owners_hold_all_gates_through_atomic_readonly_seal() {
-    for mode in 0..4 {
+    // 第 4 种不用夹具登记，走生产用的来源目录：Broker 扫描这份真实导出，备份层组装。
+    for mode in 0..5 {
         let reject = matches!(mode, 1 | 2);
         let f = Setup::new(true).await;
         let now = i64::try_from(
@@ -78,6 +79,17 @@ async fn checkpoint_actual_owners_hold_all_gates_through_atomic_readonly_seal() 
                 );
                 if mode == 1 {
                     return Err(StagingError::Catalog);
+                }
+                if mode == 4 {
+                    let catalog = crate::checkpoint::trusted_catalog(root, exported);
+                    if catalog.is_err() {
+                        // 扫描器和真实导出布局对不上时，把布局打出来，不用再猜是哪个文件。
+                        let mut layout = Vec::new();
+                        listing(root, root, &mut layout);
+                        layout.sort();
+                        eprintln!("真实导出被来源扫描拒绝，文件清单：{layout:#?}");
+                    }
+                    return catalog;
                 }
                 let vault = exported
                     .owners
@@ -207,6 +219,16 @@ async fn checkpoint_actual_owners_hold_all_gates_through_atomic_readonly_seal() 
             );
         }
         f.workbench.shutdown().await.unwrap();
+    }
+}
+fn listing(root: &Path, directory: &Path, files: &mut Vec<String>) {
+    for entry in fs::read_dir(directory).unwrap() {
+        let path = entry.unwrap().path();
+        if path.is_dir() {
+            listing(root, &path, files);
+        } else {
+            files.push(path.strip_prefix(root).unwrap().display().to_string());
+        }
     }
 }
 // 这里只是显式批准的虚构样本登记，不能作为生产缺失元数据时的默认值工厂。

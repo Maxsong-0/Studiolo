@@ -4,9 +4,9 @@ use crate::{ArtifactProvenance, Revision, VaultPath};
 /// owner 导出里一个文件的固定类别。尝试正文必须另带原批准。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TrustedExportClass {
-    /// 清单第 2 版里的尝试正文或清单本身。
+    /// 清单第 2 版里的尝试正文或清单本身，以及它们留在历史里的旧版本。
     SourceMaterial,
-    /// 已登记逻辑路径的完整范围 L0。
+    /// 已登记逻辑路径的完整范围 L0；来源资料的旧版本不在这一类。
     FullScopeL0,
     /// Control 数据库副本。
     ControlDatabase,
@@ -23,7 +23,7 @@ pub struct TrustedExportFact {
     pub export_path: VaultPath,
     /// owner 或原清单给出的类别。
     pub class: TrustedExportClass,
-    /// 原批准。只有尝试正文和继承它的 L0 才有。
+    /// 原批准。只有来源资料（尝试正文、清单和它们的历史版本）才有，别的类别带着它会被整批拒绝。
     pub provenance: Option<ArtifactProvenance>,
     /// 按导出路径和实际字节计算的 revision。
     pub revision: Revision,

@@ -1,10 +1,16 @@
-//! 导出扫描：尝试正文只跟清单第 2 版，L0 只继承已登记路径。
-use std::fs;
+//! 导出扫描：尝试正文只跟清单第 2 版，历史正文跟着所属文档走，归不了类的整批拒绝。
+//!
+//! 这里的目录树是手搭的，只管分类规则；真实六 owner 导出走同一个扫描器的证据在
+//! `local-server` 的总封存集成用例里（第 4 种模式）。
+use sha2::{Digest, Sha256};
+use std::{fs, path::Path};
 use studiolo_core::{
     ArtifactProvenance, BackupScope, Classification, DataLabels, DesktopSync, ModelEgress,
-    SourcePolicyRef, TrustedExportClass, VaultUuid,
+    SourcePolicyRef, TrustedExportClass, TrustedExportFact, VaultUuid,
 };
 use studiolo_vault_broker::read_trusted_export;
+
+const ATTEMPT: &str = "sources/attempts/task/attempt";
 
 fn provenance() -> ArtifactProvenance {
     ArtifactProvenance::new(
@@ -22,123 +28,277 @@ fn provenance() -> ArtifactProvenance {
     .unwrap()
 }
 
-fn manifest(version: u32, with_provenance: bool) -> String {
+fn manifest(version: u32, with_provenance: bool, artifacts: &[&str]) -> Vec<u8> {
     let mut value = serde_json::json!({
         "format_version": version,
-        "artifacts": [{"path": "sources/attempts/task/attempt/result.md"}]
+        "artifacts": artifacts
+            .iter()
+            .map(|path| serde_json::json!({ "path": path }))
+            .collect::<Vec<_>>(),
     });
     if with_provenance {
         value["provenance"] = serde_json::to_value(provenance()).unwrap();
     }
-    serde_json::to_string(&value).unwrap()
+    serde_json::to_vec(&value).unwrap()
 }
 
-fn write(root: &std::path::Path, relative: &str, bytes: &[u8]) {
+fn write(root: &Path, relative: &str, bytes: &[u8]) {
     let path = root.join(relative);
     fs::create_dir_all(path.parent().unwrap()).unwrap();
     fs::write(path, bytes).unwrap();
 }
 
-#[test]
-fn attempt_files_keep_manifest_provenance_and_l0_inherits_the_note() {
-    let root = tempfile::tempdir().unwrap();
+/// 给一篇文档写历史目录（文件名是逻辑路径的摘要，和真实布局一样）和对应的历史正文。
+/// 每个字节值代表一个 revision；同一个值出现两次就是「改回旧内容」。
+fn history(root: &Path, document: &str, entries: &[u8], garbage: &[u8]) {
+    let name: String = Sha256::digest(document.as_bytes())
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect();
+    let revision = |byte: &u8| vec![*byte; 32];
     write(
-        root.path(),
-        "canonical/sources/attempts/task/attempt/manifest.json",
-        manifest(2, true).as_bytes(),
-    );
-    write(
-        root.path(),
-        "canonical/sources/attempts/task/attempt/result.md",
-        b"attempt body",
-    );
-    write(root.path(), "canonical/notes/plain.md", b"note");
-    write(root.path(), "control/control.sqlite3", b"control");
-    let revision = "11".repeat(32);
-    write(
-        root.path(),
-        &format!("writer-data/history/{revision}"),
-        b"old note",
-    );
-    write(
-        root.path(),
-        "writer-data/history/meta-v1/catalogs/note.json",
-        serde_json::to_string(&serde_json::json!({
-            "version": 1,
+        root,
+        &format!("writer-data/history/meta-v1/catalogs/{name}.json"),
+        &serde_json::to_vec(&serde_json::json!({
+            "version": 3,
             "pair_id": VaultUuid::new(),
-            "path": "notes/plain.md",
-            "entries": [{"entry": {"revision": vec![0x11; 32]}}],
-            "garbage": [],
-            "feed_retire": []
+            "path": document,
+            "entries": entries
+                .iter()
+                .map(|byte| serde_json::json!({
+                    "entry": { "id": "ab".repeat(16), "revision": revision(byte), "bytes": 3 }
+                }))
+                .collect::<Vec<_>>(),
+            "garbage": garbage.iter().map(revision).collect::<Vec<_>>(),
         }))
-        .unwrap()
-        .as_bytes(),
+        .unwrap(),
     );
-    let facts = read_trusted_export(root.path(), VaultUuid::new()).unwrap();
-    let class = |path: &str| {
-        facts
-            .iter()
-            .find(|fact| fact.export_path.as_str() == path)
-            .unwrap()
-            .class
-    };
-    assert_eq!(
-        class("canonical/sources/attempts/task/attempt/result.md"),
-        TrustedExportClass::SourceMaterial
-    );
-    assert_eq!(
-        facts
-            .iter()
-            .find(|fact| fact.export_path.as_str()
-                == "canonical/sources/attempts/task/attempt/result.md")
-            .unwrap()
-            .provenance
-            .as_ref()
-            .unwrap()
-            .source_policy()
-            .source_id(),
-        "fixture-source"
-    );
-    assert_eq!(
-        class("control/control.sqlite3"),
-        TrustedExportClass::ControlDatabase
-    );
-    assert_eq!(
-        class(&format!("writer-data/history/{revision}")),
-        TrustedExportClass::FullScopeL0
-    );
-    assert_eq!(
-        class("canonical/notes/plain.md"),
-        TrustedExportClass::Canonical
-    );
+    for byte in entries.iter().chain(garbage) {
+        write(root, &body(*byte), b"old");
+    }
+}
+
+fn body(byte: u8) -> String {
+    let revision = format!("{byte:02x}").repeat(32);
+    format!("writer-data/history/{revision}")
+}
+
+fn scan(root: &Path) -> Result<Vec<TrustedExportFact>, String> {
+    read_trusted_export(root, VaultUuid::new()).map_err(|error| error.to_string())
+}
+
+fn fact<'a>(facts: &'a [TrustedExportFact], path: &str) -> &'a TrustedExportFact {
+    facts
+        .iter()
+        .find(|fact| fact.export_path.as_str() == path)
+        .unwrap_or_else(|| panic!("没有 {path} 的事实"))
 }
 
 #[test]
-fn old_attempt_manifest_unknown_directory_and_orphan_blob_fail() {
-    let vault = VaultUuid::new();
-    let missing = tempfile::tempdir().unwrap();
+fn every_file_gets_exactly_one_fact_by_owner_directory_manifest_or_history_catalog() {
+    let root = tempfile::tempdir().unwrap();
+    let root = root.path();
     write(
-        missing.path(),
-        "canonical/sources/attempts/task/attempt/manifest.json",
-        manifest(1, false).as_bytes(),
+        root,
+        &format!("canonical/{ATTEMPT}/manifest.json"),
+        // 清单列了 gone.md，但文件已经不在：不算错。
+        &manifest(
+            2,
+            true,
+            &[
+                &format!("{ATTEMPT}/result.md"),
+                &format!("{ATTEMPT}/nested/manifest.json"),
+                &format!("{ATTEMPT}/gone.md"),
+            ],
+        ),
     );
+    write(root, &format!("canonical/{ATTEMPT}/result.md"), b"body");
+    // 更深处叫 manifest.json 的是产物，不是清单。
     write(
-        missing.path(),
-        "canonical/sources/attempts/task/attempt/result.md",
-        b"body",
+        root,
+        &format!("canonical/{ATTEMPT}/nested/manifest.json"),
+        b"an artifact",
     );
-    let error = read_trusted_export(missing.path(), vault).unwrap_err();
-    assert!(error.to_string().contains("不能升为完整范围"), "{error}");
+    write(root, "canonical/notes/plain.md", b"note");
+    write(root, "canonical/.workbench/vault.json", b"{}");
+    write(root, "control/control.sqlite3", b"control");
+    write(root, "audit/audit.sqlite3", b"audit");
+    write(root, "agent-audit/audit.sqlite3", b"agent audit");
+    write(root, "writer-data/writer-state.json", b"{}");
+    write(root, "writer-data/history/meta-v1/binding.json", b"{}");
+    // 变更流分页和历史目录在同一个文件夹里，但不是历史目录。
+    write(
+        root,
+        "writer-data/history/meta-v1/catalogs/feed-v1-0.json",
+        b"{\"another\":\"schema\"}",
+    );
+    // 普通笔记：改回过旧内容（两条记录同一份正文），还有一份等待删除的旧正文。
+    history(root, "notes/plain.md", &[0x11, 0x11], &[0x12]);
+    // 已经删掉的笔记，历史还在。
+    history(root, "notes/deleted.md", &[0x13], &[]);
+    // 尝试正文的旧版本，包括清单列了但已经不在的那一个。
+    history(root, &format!("{ATTEMPT}/result.md"), &[0x21], &[]);
+    history(root, &format!("{ATTEMPT}/gone.md"), &[0x22], &[]);
 
-    let unknown = tempfile::tempdir().unwrap();
-    write(unknown.path(), "mystery/secret.txt", b"no owner");
-    assert!(read_trusted_export(unknown.path(), vault).is_err());
+    let facts = scan(root).unwrap();
+    let on_disk = walkdir(root);
+    assert_eq!(facts.len(), on_disk, "每个文件恰好一条事实");
 
-    let orphan = tempfile::tempdir().unwrap();
-    write(
-        orphan.path(),
-        "writer-data/history/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-        b"orphan",
+    for path in [
+        format!("canonical/{ATTEMPT}/manifest.json"),
+        format!("canonical/{ATTEMPT}/result.md"),
+        format!("canonical/{ATTEMPT}/nested/manifest.json"),
+        // 来源资料的旧版本仍是来源资料，带着同一份原批准（期限跟着走）。
+        body(0x21),
+        body(0x22),
+    ] {
+        let fact = fact(&facts, &path);
+        assert_eq!(fact.class, TrustedExportClass::SourceMaterial, "{path}");
+        assert_eq!(fact.provenance, Some(provenance()), "{path}");
+    }
+    for (path, class) in [
+        ("canonical/notes/plain.md", TrustedExportClass::Canonical),
+        (
+            "canonical/.workbench/vault.json",
+            TrustedExportClass::Canonical,
+        ),
+        (
+            "control/control.sqlite3",
+            TrustedExportClass::ControlDatabase,
+        ),
+        ("audit/audit.sqlite3", TrustedExportClass::AuditLedger),
+        ("agent-audit/audit.sqlite3", TrustedExportClass::AuditLedger),
+        (
+            "writer-data/writer-state.json",
+            TrustedExportClass::Canonical,
+        ),
+        (
+            "writer-data/history/meta-v1/catalogs/feed-v1-0.json",
+            TrustedExportClass::Canonical,
+        ),
+        (body(0x11).as_str(), TrustedExportClass::FullScopeL0),
+        (body(0x12).as_str(), TrustedExportClass::FullScopeL0),
+        (body(0x13).as_str(), TrustedExportClass::FullScopeL0),
+    ] {
+        let fact = fact(&facts, path);
+        assert_eq!(fact.class, class, "{path}");
+        assert!(fact.provenance.is_none(), "{path}");
+    }
+}
+
+fn walkdir(directory: &Path) -> usize {
+    fs::read_dir(directory)
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .map(|path| if path.is_dir() { walkdir(&path) } else { 1 })
+        .sum()
+}
+
+#[test]
+fn anything_that_cannot_be_classified_rejects_the_whole_export() {
+    let reject = |build: &dyn Fn(&Path), expected: &str| {
+        let root = tempfile::tempdir().unwrap();
+        build(root.path());
+        let error = scan(root.path()).unwrap_err();
+        assert!(
+            error.contains(expected),
+            "期望「{expected}」，得到「{error}」"
+        );
+    };
+    let manifest_path = format!("canonical/{ATTEMPT}/manifest.json");
+    let result = format!("{ATTEMPT}/result.md");
+
+    // 旧清单（第 1 版，或者第 2 版却没有原批准）不升成完整范围。
+    reject(
+        &|root| {
+            write(root, &manifest_path, &manifest(1, false, &[&result]));
+            write(root, &format!("canonical/{result}"), b"body");
+        },
+        "不能升为完整范围",
     );
-    assert!(read_trusted_export(orphan.path(), vault).is_err());
+    reject(
+        &|root| write(root, &manifest_path, &manifest(2, false, &[])),
+        "不能升为完整范围",
+    );
+    // 尝试目录里有清单没列出的文件，或者干脆没有清单。
+    reject(
+        &|root| {
+            write(root, &manifest_path, &manifest(2, true, &[&result]));
+            write(root, &format!("canonical/{result}"), b"body");
+            write(root, &format!("canonical/{ATTEMPT}/extra.md"), b"extra");
+        },
+        "没有被本目录的清单列出",
+    );
+    reject(
+        &|root| write(root, &format!("canonical/{result}"), b"body"),
+        "没有被本目录的清单列出",
+    );
+    // 清单认领别处的文件：不能把必含的普通笔记说成会到期的来源资料。
+    reject(
+        &|root| {
+            write(
+                root,
+                &manifest_path,
+                &manifest(2, true, &["notes/plain.md"]),
+            );
+            write(root, "canonical/notes/plain.md", b"note");
+        },
+        "清单列了本目录以外的文件",
+    );
+    reject(
+        &|root| {
+            write(
+                root,
+                &manifest_path,
+                &manifest(2, true, &["sources/attempts/task/other/result.md"]),
+            );
+        },
+        "清单列了本目录以外的文件",
+    );
+    reject(
+        &|root| {
+            write(
+                root,
+                &manifest_path,
+                &manifest(2, true, &[&result, &result]),
+            );
+            write(root, &format!("canonical/{result}"), b"body");
+        },
+        "认领了两次",
+    );
+    // 历史：没人认领的正文、尝试正文的历史却找不到清单、目录文件名和内容对不上。
+    reject(&|root| write(root, &body(0x31), b"orphan"), "没有目录认领");
+    reject(&|root| history(root, &result, &[0x32], &[]), "找不到原清单");
+    reject(
+        &|root| {
+            history(root, "notes/a.md", &[0x33], &[]);
+            let catalogs = root.join("writer-data/history/meta-v1/catalogs");
+            let only = fs::read_dir(&catalogs).unwrap().next().unwrap().unwrap();
+            fs::rename(
+                only.path(),
+                catalogs.join(format!("{}.json", "c".repeat(64))),
+            )
+            .unwrap();
+        },
+        "文件名对不上",
+    );
+    reject(
+        &|root| {
+            history(root, "notes/a.md", &[0x34], &[]);
+            history(root, "notes/b.md", &[0x34], &[]);
+        },
+        "两篇文档认领",
+    );
+    // 不认识的顶层目录、不是普通文件的东西。
+    reject(
+        &|root| write(root, "mystery/secret.txt", b"no owner"),
+        "不认识的顶层目录",
+    );
+    reject(
+        &|root| {
+            write(root, "canonical/notes/plain.md", b"note");
+            std::os::unix::fs::symlink("plain.md", root.join("canonical/notes/link.md")).unwrap();
+        },
+        "不是普通文件",
+    );
 }

@@ -8,7 +8,7 @@ use crate::{
     sync_plane::{SyncPlane, checkpoint::FrozenSyncPlane},
 };
 pub use assembly::CheckpointInputs;
-pub use export::{CheckpointExports, CheckpointTimes, OwnerExportPaths};
+pub use export::{CheckpointExports, CheckpointTimes, OwnerExportPaths, trusted_catalog};
 use std::{
     sync::Arc,
     time::{Duration, Instant},
