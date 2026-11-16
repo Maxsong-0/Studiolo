@@ -37,7 +37,9 @@ WAL checkpoint 的 busy/result，使用 SQLite 自有备份机制或完整冻结
 目标文件及父目录同步，重开核验后才返回封存票据。不能复制在线主文件并忽略 WAL，
 也不能把按次序复制的 DB/WAL/SHM 当作一致快照。复制前后固定源绑定不变。
 
-各 owner 可用现有 rusqlite 的 backup 特征导出，不暴露 Connection 给协调器。
+各 owner 可用 SQLite 的 `VACUUM INTO` 或 backup API 导出，不暴露 Connection 给协调器；
+T-204 为其他 SQLite owner 启用 backup API；策略仍采用前者并显式同步文件及父目录。
+目标根与各 owner 子目录由协调器预先建好，按窗口构造时注入，不在 export 中任意建目录。
 SQLite 自有备份只保证单库一致，不能替代跨 owner 屏障。副本中每个已 ACK 事件须
 精确对应 Audit 截止点内的原事件，而非只验证 offset 小于最后 offset。
 
@@ -58,6 +60,11 @@ SQLite 自有备份只保证单库一致，不能替代跨 owner 屏障。副本
 inclusion plan。canonical、Control、Audit、完整范围的 L0 及部署/备份清单不可
 被任意排除；raw/summary_only/none、已到期和 crypto-erase 按来源保留语义处理。
 缺来源/分类/备份范围/到期元数据或 revision/hash 不匹配时整批拒绝，不按文件名猜。
+普通 `SourceMaterial` 现须携带 `SourcePolicyRef`：原逻辑来源名与原生效策略的完整
+SHA-256，写入实际 inclusion.json 并受 seal 摘要绑定。缺失时即使已经到期、
+crypto-erase 或范围为 none，也不能用空来源墓碑假称登记完整。该值类型只核形状，
+真正授权仍须由可信 owner 提供；frontmatter 自报不能替代它。旧来源记录没有此项
+时失败关闭，不自动补成 Full。生产元数据提供方与写入/L0 的继承链仍待接入。
 
 只要有来源排除项，就建立专用过滤 staging；它位于 Vault 和 WORKBENCH_DATA 之外，
 不会先把不允许的 raw 放入共享 L0 再排除。使用固定流式缓冲、文件数/总字节/空间
@@ -98,7 +105,9 @@ pair_id，重新建立新目录的物理绑定并记录恢复 lineage。它必�
 中途失败只能留下隔离且不能服务的新目录，不能发布半配对活动根。
 
 新物理绑定须覆盖两处主 broker-binding、history/meta-v1 目录组以及已启用的
-maintenance-v1，不能只重写主根设备号。日志、原幂等键与历史保持原逻辑 pair_id。
+maintenance-v1，以及文件操作目录/删除隔离区，不能只重写主根设备号。
+空 Vault 的历史元数据经严格核对后可明确记录未启用；缺失已启用存储仍拒绝。
+日志、原幂等键与历史保持原逻辑 pair_id。lineage 尚未完成时普通打开仍拒绝。
 
 仅本机 TTY/localhost 的 restore bootstrap 使用 recovery kit 中独立、一次性、
 有期限的恢复身份；任何恢复写入前建立带完整性保护且不含秘密的 transcript。
@@ -129,3 +138,60 @@ manifest提交后ACK丢失、审计Outcome失败、新物理绑定中断，以�
 
 NAS专用目标、追加/独立恢复身份、实际不可变能力、带外告警和独立kit介质仍待
 接入核验。第二故障域已明确不配置，界面按权威说明未覆盖范围，不新增采购前提。
+
+T-204 的策略 RESERVED 屏障与重开核验见 [策略 checkpoint](../contracts/policy-checkpoint.md)。
+Broker 原租约、永久 ACK 核对、独立副本与新根恢复见 [Broker checkpoint](../contracts/broker-checkpoint.md)。
+Transport 原实例与固定状态导出见 [Transport checkpoint](../contracts/transport-checkpoint.md)。
+实际 SyncPlane 门禁、平面租约及 stage 封存见 [SyncPlane checkpoint](../contracts/sync-plane-checkpoint.md)。
+启动层现已保留实际 canonical、SessionManager、原 SqliteAuditLedger、PolicyPlane、
+BoardPlane 与 SyncPlane，监听时把同一组源注入可信路由；无 canonical 写者不提供
+封存能力。备份请求绑定 owner 时，从实际 Board/Policy 取得身份库及固定附属审计链，
+两处都有时必须核对原目录与数据库 inode；换根、漏库或来源不一致均拒绝。
+这里没有新增公开端点、自动冻结或备份调度。生产来源标签、worker IPC/常驻运行、
+完整恢复及部署演练仍未完成，不能把启动源接线记作整条 Rust 链已可用。
+Control schema 4 增加不可变 `artifact_policies`：批准与 runtime audit outbox 同事务，
+外键绑定原 task/attempt/fence/snapshot，首次写入只允许有效租约且尚未挂接执行体。
+`ArtifactProvenance` 保存原来源/策略引用、完整标签、期限和原批准摘要，当前正文管线
+只接受明确 Full；此值本身不是授权。重开和精确重放不续期，旧 attempt 缺批准不补默认值。
+checkpoint 核对批准与原审计事实，ACK 后仍须实际账本验证才能导出。真实 Runner 启动
+从已认证 ProjectConfig、实际来源和 snapshot 固定批准，经 TaskEngine 持久并投递审计后
+才挂接执行体和发放能力；任一步失败走原取消清理。期限取原项目及实际来源最短值，
+未知生成内容仍 restricted/deny，不把输入外发许可当成生成内容分类。产物提交从原批准
+和原账本取得来源，不读 RunnerReport；清单第 2 版写入完整来源，精确重放不改策略或期限，
+新的暂存和正文写入拒绝过期材料（期限在一次提交开始时判定一次，已经开始的提交写完为止，
+不在半路留下没有清单的正文），
+缺字段的旧清单不升为完整范围。成功提交后删除原私有暂存；已完成的精确重放直接给回原回执，
+不再重写暂存（终端报告、黑板候选、停止候选三个入口一致）。提交到一半暂存丢了，
+同一份报告重试时补回；内容不同的终端报告直接判幂等冲突，不为了比较先写暂存。
+
+来源目录（2026-11-15）：封存时把 `checkpoint::trusted_catalog` 交给 `FrozenOwners::seal`。
+它让 Broker 的 `read_trusted_export` 扫描这次真实导出，再由 `trusted_source_catalog` 组装，
+每个文件恰好一条登记，归不了类的整批拒绝，不补成完整范围：
+
+- 尝试目录（`canonical/sources/attempts/<任务>/<尝试>/`）里的文件只承认本目录清单第 2 版
+  列出的，来源是清单里的原批准；清单只能认领自己目录里的文件。旧清单、清单没列的文件拒绝。
+- 历史正文跟着所属文档走（历史目录的文件名必须等于文档路径的摘要）：文档是来源资料，
+  旧版本也是来源资料，带同一份原批准和期限；文档是普通 canonical 内容（已删除的也算），
+  旧版本是完整范围 L0。没有目录认领的历史正文拒绝。
+- 暂存正文（`writer-data/artifact-candidate-<id>.json`，装着还没发布或被黑板留作候选的产物全文）
+  是来源资料，带它自己那份原批准和期限；文件名和内容要对得上本库身份。读不出原批准的
+  （升级前留下的旧暂存）拒绝；名字像暂存、后缀或位置不对的也拒绝。
+- 原子写留下的临时文件（`.<名字>.studiolo-tmp-…`）不管在哪一层都拒绝。
+- 其余文件按固定的 owner 顶层目录归类；不认识的顶层目录、不是普通文件的东西拒绝。
+- 只有来源资料能带原批准：别的类别都是必含的、不看期限，带着批准进来整批拒绝。
+
+已知限制，上线前要处理：
+
+- 库里只要还有旧清单（第 1 版）的尝试目录，或升级前留下的旧暂存正文，整批封存就会被拒。
+  这是有意的失败关闭，旧数据怎么处理还没定。
+- 崩溃时写到一半留下的临时文件会让整批封存被拒，Broker 现在不会自己清，要加开库时的清扫。
+- 预留之后、清单发布之前期限到了的 attempt 会一直停在「提交中」：恢复只会重试发布，
+  Broker 每次都按期限拒绝，对账把它记成待恢复后继续处理别的 attempt。它留下的暂存和
+  已写出的正文没有人清，控制库检查点也会因为还有「提交中」的 attempt 而拒绝导出。
+  要给它一个终态出口并回收正文（生产者一侧的保留期回收），现在没有。
+- 历史目录只核对「文件名等于文档路径的摘要」，没有逐份核对历史正文的 revision 确实绑定
+  那个路径。能改写者私有目录的人可以伪造目录，把来源资料的旧版本说成普通笔记的旧版本。
+  这要先拿到写者身份；要补的话用 `blob::verify` 那套按路径复算，代价是扫描时把历史正文多读一遍。
+
+单作业事件、原 Intent 前提与有界 UDS 消息见 [备份审计通信](../contracts/backup-audit.md)；
+固定监听器、定时调度、独立 worker 主循环、生产者一侧的保留期回收和全 owner 新根恢复仍待接入。

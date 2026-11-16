@@ -3,6 +3,9 @@ import { BoardBoundary } from '../BoardBoundary';
 import { ExecutionBoundary } from '../ExecutionBoundary';
 import { ProjectTimeline } from '../ProjectTimeline';
 import type { BoardOverview, BoardOverviewItem } from '../boardOverviewModel';
+import { COCKPIT_WINDOW_HOURS, type OverviewState } from '../cockpit/model';
+import type { OverviewRead } from '../cockpit/useOverviewRead';
+import { LiveStamp } from '../live/LiveStamp';
 import {
   Button,
   Cell,
@@ -17,6 +20,7 @@ import {
 import { cx } from '../ui/dom';
 import { useViewLocation } from '../useViewLocation';
 import { executorOf, overviewLabels } from '../collab/executorGrouping';
+import { COLLAB_TABS, collabPanel } from '../collab/panels';
 import { ProjectSelect } from '../collab/ProjectSelect';
 import type { ProjectChoice } from '../collab/ProjectSelect';
 import { TaskDetail } from '../collab/TaskDetail';
@@ -27,45 +31,33 @@ import {
   topologySummary,
   type TopologySummary,
 } from '../collab/topologyLayout';
-import {
-  OVERVIEW_WINDOW_HOURS,
-  useBoardOverview,
-  type OverviewState,
-} from '../collab/useBoardOverview';
 import '../styles/board.css';
 import '../styles/collab.css';
-
-const tabs = [
-  { id: 'topology', label: '拓扑' },
-  { id: 'board', label: '任务与回执' },
-  { id: 'timeline', label: '时间线' },
-  { id: 'execution', label: '执行' },
-] as const;
-
-type CollabPanel = (typeof tabs)[number]['id'];
-
-/** 默认面板拓扑记作 null；未知面板值一律当拓扑，不猜。 */
-function collabPanel(value: string | null): CollabPanel {
-  return value === 'board' || value === 'timeline' || value === 'execution'
-    ? value
-    : 'topology';
-}
 
 const summaryRule =
   '在跑：未结束且未休眠的任务；写域重叠：未结束任务之间路径相等，或在「/」边界上一条是另一条的前缀；等你：待审阅、等待修订、等待重新确认。';
 
 /**
  * 协作（设计规范第 7 节）：拓扑 · 任务与回执（含本机派发）· 时间线 · 执行。
- * 拓扑读跨项目汇总、缺省看全部项目；其余三个标签沿用 BoardBoundary、ProjectTimeline、
+ * 拓扑画跨项目汇总、缺省看全部项目；其余三个标签沿用 BoardBoundary、ProjectTimeline、
  * ExecutionBoundary 的全部行为，需要先选具体项目。换标签只换 `panel`，项目与条目留在原处。
+ *
+ * 跨项目汇总不在这里读：用 App 读的那一份（T-196），和顶栏角标、驾驶舱是同一份数，
+ * 开着拓扑时跟着自动刷新一起更新；「重新读取」调它的 reload。
  */
-export function CollabView({ projects }: { projects: ProjectChoice[] }) {
+export function CollabView({
+  projects,
+  overview,
+}: {
+  projects: ProjectChoice[];
+  /** 黑板汇总的那一份读取（App 读，顶栏角标与驾驶舱用的也是它）。 */
+  overview: OverviewRead;
+}) {
   const { location, select, goTo } = useViewLocation();
   const panel = collabPanel(location.panel);
   const id = useId();
   const [showDormant, setShowDormant] = useState(true);
   const [onlyConflicts, setOnlyConflicts] = useState(false);
-  const overview = useBoardOverview(panel === 'topology');
   const topology = useTopology(overview.state, projects, location.project);
   const chosen = projects.some((project) => project.root === location.project)
     ? location.project
@@ -86,7 +78,7 @@ export function CollabView({ projects }: { projects: ProjectChoice[] }) {
       <h1 className="sr-only">协作</h1>
       <div className="collab-bar">
         <Tabs
-          items={tabs}
+          items={COLLAB_TABS}
           value={panel}
           onChange={switchPanel}
           ariaLabel="协作面板"
@@ -304,8 +296,9 @@ function TopologyPanel({
           title="协作拓扑"
           meta={
             <>
-              近 {OVERVIEW_WINDOW_HOURS} 小时 · 截至{' '}
+              近 {COCKPIT_WINDOW_HOURS} 小时 · 截至{' '}
               <time dateTime={overview.generatedAt}>{clock(now)}</time>
+              <LiveStamp className="collab-topology__stamp" />
             </>
           }
           action={

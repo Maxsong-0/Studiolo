@@ -30,6 +30,9 @@ fn record(path: &str, category: SourceCategory, scope: BackupScope) -> SourceRec
     SourceRecord {
         path,
         category,
+        source_policy: Some(
+            studiolo_core::SourcePolicyRef::new("fixture-source", "ab".repeat(32)).unwrap(),
+        ),
         labels: Some(labels(
             scope,
             if scope == BackupScope::None {
@@ -52,6 +55,34 @@ fn request(records: Vec<SourceRecord>) -> InclusionRequest {
         records,
         now: InstantMillis::from_millis(1_000),
     }
+}
+
+#[test]
+fn original_source_policy_is_required_even_for_expired_or_excluded_source_material() {
+    for scope in [
+        BackupScope::Full,
+        BackupScope::SummaryOnly,
+        BackupScope::None,
+    ] {
+        let mut source = record(
+            "notes/looks-canonical.md",
+            SourceCategory::SourceMaterial,
+            scope,
+        );
+        source.source_policy = None;
+        source.expires_at = Some(InstantMillis::from_millis(1));
+        source.crypto_erased = true;
+        assert!(matches!(
+            InclusionPlan::build(&request(vec![source])),
+            Err(InclusionError::BatchRejected {
+                reason: RejectionReason::MissingSourcePolicy,
+                ..
+            })
+        ));
+    }
+    let mut canonical = record("notes/a.md", SourceCategory::Canonical, BackupScope::Full);
+    canonical.source_policy = None;
+    assert!(InclusionPlan::build(&request(vec![canonical])).is_ok());
 }
 
 #[test]

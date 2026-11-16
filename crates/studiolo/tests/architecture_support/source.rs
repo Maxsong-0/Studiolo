@@ -6,6 +6,7 @@ pub(crate) enum AuthorityViolation {
     AmbientRoot,
     GenericWrite,
     DatabaseOpen,
+    IdentityWrite,
 }
 
 pub(crate) fn source_violations(
@@ -13,6 +14,59 @@ pub(crate) fn source_violations(
     source_path: &Path,
     source: &str,
 ) -> Vec<AuthorityViolation> {
+    if crate_name == "studiolo-backup-worker"
+        && source
+            .split(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+            .any(|token| {
+                matches!(
+                    token,
+                    "SqliteAuditLedger"
+                        | "MemoryAuditLedger"
+                        | "AuditReadView"
+                        | "AuditCheckpointAccess"
+                        | "AuditCheckpointSource"
+                        | "FrozenAudit"
+                )
+            })
+    {
+        return vec![AuthorityViolation::DatabaseOpen];
+    }
+    if matches!(
+        crate_name,
+        "studiolo-backup-worker" | "studiolo-backup" | "studiolo-local-server"
+    ) && !super::backup::fixed_binding(source_path, source)
+    {
+        return vec![AuthorityViolation::GenericWrite];
+    }
+    if crate_name == "studiolo-checkpoint-storage"
+        && source_path.ends_with("crates/checkpoint-storage/src/lib.rs")
+        && !super::backup::fixed_checkpoint_files(source)
+    {
+        return vec![AuthorityViolation::DatabaseOpen];
+    }
+    let identity_writer = source
+        .split(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+        .any(|token| {
+            matches!(
+                token,
+                "register_instance"
+                    | "register_child_instance"
+                    | "touch_instance"
+                    | "issue_type"
+                    | "revoke_type"
+                    | "record_read"
+                    | "rebuild_reads"
+                    | "upgrade_child_instances"
+            )
+        });
+    let compact: String = source.chars().filter(|c| !c.is_whitespace()).collect();
+    let identity_handle = compact.match_indices("AgentStore::").any(|(offset, _)| offset == 0 || !matches!(compact.as_bytes()[offset - 1], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_'))
+        || source.split(';').any(|statement| statement.contains("use studiolo_supply") && statement.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_')).any(|token| token == "AgentStore"));
+    if (identity_writer || identity_handle)
+        && !matches!(crate_name, "studiolo-supply" | "studiolo-agent-server")
+    {
+        return vec![AuthorityViolation::IdentityWrite];
+    }
     if crate_name == "studiolo-vault-broker" {
         return Vec::new();
     }
@@ -79,14 +133,38 @@ pub(crate) fn source_violations(
     {
         violations.push(AuthorityViolation::CanonicalPath);
     }
-    if matches!(crate_name, "studiolo-gateway" | "studiolo")
-        && checked_source.contains("Connection::open")
+    if matches!(
+        crate_name,
+        "studiolo-gateway" | "studiolo" | "studiolo-checkpoint-storage" | "studiolo-backup-worker"
+    ) && checked_source.contains("Connection::open")
     {
         violations.push(AuthorityViolation::DatabaseOpen);
     }
-    let has_generic_write = generic_write_patterns
+    let worker_process_escape = crate_name == "studiolo-backup-worker"
+        && [
+            "process::waitid(",
+            "process::kill_process_group(",
+            ".env(",
+            ".envs(",
+            ".spawn(",
+            ".process_group(",
+            ".kill(",
+            ".wait(",
+            ".exec(",
+            ".output(",
+            ".status(",
+            "fcntl_getfl(",
+            "fcntl_setfl(",
+            "net::connect(",
+            "net::socket_with(",
+            "UnixStream::connect(",
+        ]
         .iter()
-        .any(|pattern| checked_source.contains(pattern))
+        .any(|token| checked_source.contains(token));
+    let has_generic_write = worker_process_escape
+        || generic_write_patterns
+            .iter()
+            .any(|pattern| checked_source.contains(pattern))
         || (matches!(crate_name, "studiolo-auth-admin" | "studiolo-host-config")
             && checked_source.contains("File::open("));
     let runner_writes_only_its_temp_result = if crate_name == "studiolo-runner-adapter"
@@ -259,6 +337,10 @@ fn private_storage_remainder(crate_name: &str, path: &Path, source: &str) -> Str
     }
     if path.ends_with("crates/supply/src/index_cache/paths.rs") {
         remainder = remainder.replace("fs::canonicalize(", "");
+    }
+    if path.ends_with("crates/policy/src/storage.rs") {
+        // 仅检查注入的checkpoint目录是否为空，不引入其他写权限。
+        remainder = remainder.replace("fs::read_dir(root)", "");
     }
     if path.ends_with("crates/supply/src/storage.rs")
         || path.ends_with("crates/policy/src/storage.rs")

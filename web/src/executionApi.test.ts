@@ -1,6 +1,7 @@
 import { expect, it, vi } from 'vitest';
 import {
   commandExecution,
+  executionFailure,
   installExecutionWriter,
   readReplay,
 } from './executionApi';
@@ -146,4 +147,39 @@ it('replay sends the exact string cursor', async () => {
   expect(fetch.mock.calls[0]?.[0]).toBe(
     `/api/v1/board/replay?task_id=${executionId()}&after=9007199254740993`,
   );
+});
+const MISSING = '这条工作项不存在：可能已被清理，或链接里的编号有误。';
+const UNWIRED = '本入口未接入执行服务，当前状态不可确认。';
+/** 让回放请求收到这份 404 正文，返回界面据此给出的错误文案。 */
+async function replayFailure(body: unknown) {
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async () => executionResponse(body, 404)),
+  );
+  try {
+    await readReplay(
+      executionId(),
+      executionProject,
+      null,
+      new AbortController().signal,
+    );
+  } catch (error) {
+    return executionFailure(error);
+  }
+  throw new Error('回放本应失败。');
+}
+it('replay of a task the board does not have says so, not that execution is unwired', async () => {
+  const message = await replayFailure({
+    code: 'board_task_not_found',
+    error: '工作项不存在。',
+  });
+  expect(message).toBe(MISSING);
+});
+it('any other 404 still says the entry has no execution service', async () => {
+  const other = await replayFailure({
+    code: 'board_unconfigured',
+    error: '黑板未配置。',
+  });
+  expect(other).toBe(UNWIRED);
+  expect(await replayFailure(null)).toBe(UNWIRED);
 });

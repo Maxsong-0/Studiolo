@@ -5,7 +5,15 @@ export interface HistoryScope {
   path: string;
 }
 export type HistoryActor =
-  { kind: 'human'; issuer: string; subject: string } | { kind: 'obsidian' };
+  | { kind: 'human'; issuer: string; subject: string }
+  | { kind: 'obsidian' }
+  | {
+      kind: 'agent';
+      agent_type: string;
+      instance_id: string;
+      task_id: string | null;
+      attempt_id: string | null;
+    };
 export interface HistoryEntry {
   id: string;
   revision: string;
@@ -34,10 +42,19 @@ const hex = (value: unknown): value is string =>
 const integer = (value: unknown): value is number =>
   typeof value === 'number' && Number.isSafeInteger(value);
 const time = (value: unknown) => value === null || integer(value);
-const actor = (value: unknown) =>
+const agentId = (value: unknown): value is string =>
+  typeof value === 'string' && /^[A-Za-z0-9_.-]{1,128}$/.test(value);
+export const historyActor = (value: unknown): value is HistoryActor | null =>
   value === null ||
   (record(value) &&
-    ((value.kind === 'obsidian' && Object.keys(value).length === 1) ||
+    ((value.kind === 'agent' &&
+      Object.keys(value).length === 5 &&
+      agentId(value.agent_type) &&
+      agentId(value.instance_id) &&
+      (value.task_id === null || agentId(value.task_id)) &&
+      (value.attempt_id === null || agentId(value.attempt_id)) &&
+      (value.attempt_id === null || value.task_id !== null)) ||
+      (value.kind === 'obsidian' && Object.keys(value).length === 1) ||
       (value.kind === 'human' &&
         Object.keys(value).length === 3 &&
         text(value.issuer) &&
@@ -89,8 +106,8 @@ export function historyPage(
       entry.bytes < 0 ||
       !time(entry.authored_at_ms) ||
       !time(entry.archived_at_ms) ||
-      !actor(entry.author) ||
-      !actor(entry.archived_by)
+      !historyActor(entry.author) ||
+      !historyActor(entry.archived_by)
     )
       invalid();
     ids.add(entry.id);

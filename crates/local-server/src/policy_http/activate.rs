@@ -25,7 +25,7 @@ use crate::{
 #[serde(untagged)]
 enum ActivateBody {
     Activated {
-        activation: Activation,
+        activation: Box<Activation>,
         audit_confirmed: bool,
     },
     Released {
@@ -206,7 +206,7 @@ pub(super) async fn activate(State(state): State<AppState>, mut request: Request
 impl ActivateBody {
     fn from_activation(activation: Activation) -> Self {
         Self::Activated {
-            activation,
+            activation: Box::new(activation),
             audit_confirmed: true,
         }
     }

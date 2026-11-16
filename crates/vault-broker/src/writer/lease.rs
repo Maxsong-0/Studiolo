@@ -43,6 +43,10 @@ pub(crate) struct DirectoryPin {
 }
 
 impl DirectoryPin {
+    pub(crate) fn path(&self) -> &Path {
+        &self.path
+    }
+
     pub(crate) fn new(path: PathBuf, dir: &Dir) -> Result<Self, BrokerError> {
         Ok(Self {
             path,

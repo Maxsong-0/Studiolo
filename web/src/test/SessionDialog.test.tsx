@@ -10,7 +10,7 @@ import {
   otherSession,
   sessionResponse,
 } from './sessionFixtures';
-import { jsonResponse } from './fixtures';
+import { COCKPIT_READY, jsonResponse } from './fixtures';
 
 function renderWorkbench() {
   return render(
@@ -36,7 +36,7 @@ describe('账户与会话', () => {
     });
     const user = userEvent.setup();
     renderWorkbench();
-    await screen.findByRole('table');
+    await screen.findByRole('heading', COCKPIT_READY);
     expect(
       fetchMock.mock.calls.some(([input]) => input === '/api/v1/sessions'),
     ).toBe(false);
@@ -66,7 +66,7 @@ describe('账户与会话', () => {
       'X-Studiolo-Request': '1',
     });
     expect(request?.headers).not.toHaveProperty('Origin');
-    expect(screen.getByRole('table')).toBeInTheDocument();
+    expect(screen.getByRole('heading', COCKPIT_READY)).toBeInTheDocument();
   });
 
   it.each([
@@ -89,7 +89,9 @@ describe('账户与会话', () => {
       expect(
         await screen.findByRole('button', { name: '登录工作台' }),
       ).toBeInTheDocument();
-      expect(screen.queryByRole('table')).not.toBeInTheDocument();
+      expect(
+        screen.queryByRole('heading', COCKPIT_READY),
+      ).not.toBeInTheDocument();
       expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
       const posts = fetchMock.mock.calls.filter(
         ([, init]) => init?.method === 'POST',
@@ -111,6 +113,8 @@ describe('账户与会话', () => {
     await user.click(await screen.findByRole('button', { name: '账户与会话' }));
     expect(await screen.findByRole('alert')).toHaveTextContent('登录已失效');
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
-    expect(screen.queryByRole('table')).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole('heading', COCKPIT_READY),
+    ).not.toBeInTheDocument();
   });
 });

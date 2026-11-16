@@ -17,21 +17,38 @@ pub(super) fn policy(
     app: axum::Router,
     options: &Options,
     audit: Option<&Arc<dyn AuditLedger>>,
-) -> Result<axum::Router, StartupError> {
+    protected: &[PathBuf],
+) -> Result<
+    (
+        axum::Router,
+        Option<Arc<studiolo_local_server::PolicyPlane>>,
+    ),
+    StartupError,
+> {
     match (&options.policy_data, audit) {
-        (Some(directory), Some(ledger)) => studiolo_policy::PolicyStore::open(directory)
-            .map_err(|_| StartupError::Configuration)
-            .map(|store| {
-                studiolo_local_server::with_policy_plane(
-                    app,
-                    Arc::new(studiolo_local_server::PolicyPlane::new(
-                        store,
-                        Arc::clone(ledger),
-                    )),
+        (Some(directory), Some(ledger)) => {
+            let store = studiolo_policy::PolicyStore::open(directory)
+                .map_err(|_| StartupError::Configuration)?;
+            let mut plane = studiolo_local_server::PolicyPlane::new(store, Arc::clone(ledger));
+            if let Some(directory) = &options.agent_data {
+                let isolated = identity_isolated_roots(options, protected);
+                let identities = studiolo_supply::AgentIdentityView::open_existing_isolated(
+                    directory, &isolated,
                 )
-            }),
+                .map_err(|_| StartupError::Configuration)?;
+                let audit = identities
+                    .read_audit()
+                    .map_err(|_| StartupError::Configuration)?;
+                plane = plane.with_read_audit(audit).with_identities(identities);
+            }
+            let plane = Arc::new(plane);
+            Ok((
+                studiolo_local_server::with_policy_plane(app, plane.clone()),
+                Some(plane),
+            ))
+        }
         (Some(_), None) => Err(StartupError::Configuration),
-        (None, _) => Ok(app),
+        (None, _) => Ok((app, None)),
     }
 }
 
@@ -90,3 +107,24 @@ pub(super) fn runner(
         _ => Err(StartupError::Configuration),
     }
 }
+
+// 组合根只列出已批准的根；规范化与隔离核验由供给存储适配器执行。
+fn identity_isolated_roots<'a>(
+    options: &'a Options,
+    protected: &'a [PathBuf],
+) -> Vec<&'a std::path::Path> {
+    [
+        Some(options.vault.as_path()),
+        Some(options.assets.as_path()),
+        options.policy_data.as_deref(),
+        options.writer_data.as_deref(),
+        options.board.as_ref().map(|b| b.data.as_path()),
+    ]
+    .into_iter()
+    .flatten()
+    .chain(protected.iter().map(PathBuf::as_path))
+    .collect()
+}
+#[cfg(test)]
+#[path = "../../tests/composition/identity_input.rs"]
+mod identity_tests;

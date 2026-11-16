@@ -8,6 +8,7 @@
 
 // 各职责模块都是私有的；公开项经下方 `pub use` 重导出，
 // 对外路径仍是 `studiolo_task_engine::名字`。
+mod artifact_policies;
 mod board;
 mod board_audit;
 mod board_projection;
@@ -43,13 +44,14 @@ use terminal_commit::{AttemptIdentity, CommitPlan, decode_plan, prior_identity};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use studiolo_audit_ledger::{
-    AuditError, AuditEvent, AuditEventId, AuditLedger, AuditPhase, AuditSubject, SanitizedPayload,
+    AuditError, AuditEvent, AuditEventId, AuditFilter, AuditLedger, AuditPhase, AuditSubject,
+    SanitizedPayload,
 };
 use studiolo_control_db::{
     AttemptPhase, AttemptRecord, ControlDb, DbError, OutboxRecord, PendingTerminalAudit,
     SnapshotEntryRecord, SnapshotRecord, TaskRecord, TaskStatus, TerminalReservation,
 };
-use studiolo_core::{AttemptId, Fence, TaskId, VaultPath};
+use studiolo_core::{ArtifactProvenance, AttemptId, Fence, TaskId, VaultPath};
 use studiolo_runner_adapter::{RunInput, RunSpec, RunnerRef, RunnerReport};
 use studiolo_vault_broker::{
     ArtifactCandidate, ArtifactCommit, ArtifactCommitReceipt, ArtifactStager, BrokerError,

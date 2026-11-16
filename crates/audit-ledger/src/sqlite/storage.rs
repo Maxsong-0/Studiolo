@@ -3,6 +3,8 @@
 use crate::AuditError;
 use std::path::{Path, PathBuf};
 
+mod operation;
+
 #[derive(Clone, Copy)]
 pub(super) enum CreatePolicy {
     AllowNew,
@@ -20,6 +22,8 @@ pub(super) struct Storage {
     database_identity: (u64, u64),
     #[cfg(unix)]
     owner: u32,
+    #[cfg(unix)]
+    operation_gate: std::sync::OnceLock<operation::Gate>,
 }
 
 #[cfg(unix)]
@@ -70,6 +74,7 @@ impl Storage {
             owner,
             root_identity: (metadata.dev(), metadata.ino()),
             database_identity: (db.dev(), db.ino()),
+            operation_gate: std::sync::OnceLock::new(),
         };
         storage.check()?;
         Ok(storage)

@@ -2,6 +2,7 @@
 resolver = "3"
 members = [
     "crates/core",
+    "crates/checkpoint-storage",
     "crates/process-safety",
     "crates/vault-broker",
     "crates/vault-admin",
@@ -15,6 +16,7 @@ members = [
     "crates/sync-transport",
     "crates/sync-launcher",
     "crates/backup",
+    "crates/backup-worker",
     "crates/observability",
     "crates/policy",
     "crates/runner-adapter",
@@ -40,6 +42,7 @@ rust-version = "1.97"
 tree-sitter = "=0.26.13"
 tree-sitter-rust = "=0.24.2"
 studiolo-core = { path = "crates/core" }
+studiolo-checkpoint-storage = { path = "crates/checkpoint-storage" }
 # 秘密驻留面加固：依赖只有 rustix，四个持明文秘密的程序都能无条件依赖（见 crates/process-safety/src/lib.rs）。
 studiolo-process-safety = { path = "crates/process-safety" }
 studiolo-vault-broker = { path = "crates/vault-broker" }
@@ -71,6 +74,7 @@ reqwest = { version = "=0.12.28", default-features = false, features = ["rustls-
 getrandom = "=0.4.3"
 subtle = "=2.6.1"
 zeroize = "=1.9.0"
+url = "=2.5.8"
 signal-hook = { version = "=0.4.4", default-features = false }
 notify = "=8.2.0"
 hkdf = "=0.12.4"
@@ -79,6 +83,8 @@ hmac = "=0.12.1"
 sha1 = "=0.10.6"
 # hkdf 0.12 使用 digest 0.10；复用已锁定版本，不替换其余模块的 sha2 0.11。
 sha2-legacy = { package = "sha2", version = "=0.10.9" }
+# 出站门铃签名与密钥的 base64 编解码；复用 reqwest 已带进锁文件的版本，不新增下载。
+base64 = "=0.22.1"
 
 # M1 ripgrep 搜索核心：只搜索 Broker 提供的内存快照，不启动外部进程。
 grep-regex = "=0.1.14"

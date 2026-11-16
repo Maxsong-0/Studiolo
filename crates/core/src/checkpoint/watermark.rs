@@ -7,9 +7,19 @@ use super::CheckpointOwner;
 use crate::VaultUuid;
 use serde::{Deserialize, Serialize};
 
+/// 一条明确账本的独立截止点；不能拿另一条链的 offset 或哈希顶替。
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AuditChainCutoff {
+    /// 该账本的最后原记录偏移。
+    pub last_offset: u64,
+    /// 同一条链在该偏移的哈希。
+    pub last_hash: String,
+}
+
 /// 各 owner 的水位。语义各不相同，任何一项都不能互相替代。
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "owner", rename_all = "snake_case")]
+#[serde(tag = "owner", rename_all = "snake_case", deny_unknown_fields)]
 pub enum OwnerWatermark {
     /// Broker：Vault UUID、逻辑 pair_id、提交水位与无未决证明。
     Broker {
@@ -48,6 +58,8 @@ pub enum OwnerWatermark {
         last_offset: u64,
         /// 截止点的记录哈希（64 位十六进制）。
         last_hash: String,
+        /// 接入方独立账本；AgentStore present 时必须存在，不能与人侧 offset 合并。
+        agent_ledger: Option<AuditChainCutoff>,
     },
     /// Bridge：link/scope/共同基线/观察序号与持久门禁。
     Bridge {

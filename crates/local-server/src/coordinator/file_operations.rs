@@ -16,6 +16,9 @@ impl CanonicalWorkbench {
         &self,
         principal: ContentPrincipal,
     ) -> Result<(VaultUuid, bool), Problem> {
+        let _operation = principal
+            .enter_operation()
+            .map_err(super::content::session_error)?;
         let owner = self.core.owner.lock().map_err(|_| problem::unavailable())?;
         let broker = owner.as_ref().ok_or_else(problem::unavailable)?;
         let vault = broker.vault_uuid();
@@ -38,6 +41,9 @@ impl CanonicalWorkbench {
         limit: usize,
         cursor: Option<&str>,
     ) -> Result<TombstonePage, Problem> {
+        let _operation = principal
+            .enter_operation()
+            .map_err(super::content::session_error)?;
         let owner = self.core.owner.lock().map_err(|_| problem::unavailable())?;
         let broker = owner.as_ref().ok_or_else(problem::unavailable)?;
         let policy = self.file_access(broker, &principal, vault, None)?;
@@ -66,6 +72,9 @@ impl CanonicalWorkbench {
         principal: ContentPrincipal,
         input: Input,
     ) -> Result<FileOperationReceipt, Problem> {
+        let _operation = principal
+            .enter_operation()
+            .map_err(super::content::session_error)?;
         let mut owner = self.core.owner.lock().map_err(|_| problem::unavailable())?;
         let broker = owner.as_mut().ok_or_else(problem::unavailable)?;
         let (policy, _) = self.file_input_access(broker, &principal, &input)?;

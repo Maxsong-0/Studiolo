@@ -9,8 +9,8 @@ import {
 import { describe, expect, it, vi } from 'vitest';
 import { createFixtureApi } from '../../../dev/fixtureApi';
 import { TASK } from '../../../dev/fixtures/ids';
-import { CollabView } from '../../views/CollabView';
 import { parseViewLocation } from '../../viewLocation';
+import { CollabHarness } from './CollabHarness';
 
 /*
  * 拓扑整页有上百个 SVG 与清单节点：角色查询默认要对每个节点算一遍 getComputedStyle 判可见性，
@@ -56,7 +56,7 @@ function serve(override?: (url: string) => Response | undefined) {
 async function mount(hash: string) {
   window.location.hash = hash;
   await act(async () => {
-    render(<CollabView projects={projects} />);
+    render(<CollabHarness projects={projects} />);
   });
 }
 

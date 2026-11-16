@@ -29,6 +29,36 @@ def _identifier(value):
     return value
 
 
+def _check_sidecar(path):
+    """校验当前 sidecar；并发事务删除或替换旧 inode 时有界重读。"""
+    for _ in range(8):
+        try:
+            fd = os.open(path, os.O_RDWR | os.O_NOFOLLOW | os.O_CLOEXEC)
+        except FileNotFoundError:
+            return
+        except OSError:
+            raise McpError("unsafe_file") from None
+        try:
+            info = os.fstat(fd)
+            if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid()
+                    or stat.S_IMODE(info.st_mode) != 0o600 or info.st_nlink not in (0, 1)):
+                raise McpError("unsafe_file")
+            try:
+                current = os.stat(path, follow_symlinks=False)
+            except FileNotFoundError:
+                return
+            # DELETE journal 可能在 open 后正常消失，旧 fd 的链接数因此是 0；
+            # 路径若已经指向新文件，必须重新打开校验，不能拿旧 inode 的许可放行新路径。
+            if (info.st_nlink == 1
+                    and (current.st_dev, current.st_ino) == (info.st_dev, info.st_ino)):
+                return
+        except OSError:
+            raise McpError("unsafe_file") from None
+        finally:
+            os.close(fd)
+    raise McpError("unsafe_file")
+
+
 class Store:
     """One connection per transaction permits concurrent HTTP request threads.
 
@@ -63,20 +93,7 @@ class Store:
         # DELETE journaling avoids persistent WAL/SHM files with different ACLs.
         os.close(_private_open(self.path, os.O_RDWR))
         for suffix in ("-journal", "-wal", "-shm"):
-            sidecar = self.path.with_name(self.path.name + suffix)
-            try:
-                fd = os.open(sidecar, os.O_RDWR | os.O_NOFOLLOW | os.O_CLOEXEC)
-            except FileNotFoundError:
-                continue  # Another completed transaction may remove its journal.
-            except OSError:
-                raise McpError("unsafe_file") from None
-            try:
-                info = os.fstat(fd)
-                if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid()
-                        or stat.S_IMODE(info.st_mode) != 0o600 or info.st_nlink != 1):
-                    raise McpError("unsafe_file")
-            finally:
-                os.close(fd)
+            _check_sidecar(self.path.with_name(self.path.name + suffix))
         db = sqlite3.connect(self.path, timeout=20, isolation_level=None)
         db.row_factory = sqlite3.Row
         try:

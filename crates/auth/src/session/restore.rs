@@ -39,6 +39,7 @@ impl SessionManager {
         &self,
         restore_id: &str,
     ) -> Result<RestoreInvalidation, SessionError> {
+        let _operation = self.enter_operation()?;
         if !valid_id(restore_id) {
             return Err(SessionError::Configuration);
         }

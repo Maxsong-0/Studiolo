@@ -1,0 +1,177 @@
+"""告警状态与私有落盘契约；外部服务全部用本地假对象，无真实投递。"""
+import importlib.util
+import json
+import os
+from pathlib import Path
+import tempfile
+import unittest
+from unittest.mock import patch
+import resource
+import subprocess
+import sys
+
+SPEC = importlib.util.spec_from_file_location("alert_run", Path(__file__).with_name("run.py"))
+RUN = importlib.util.module_from_spec(SPEC)
+SPEC.loader.exec_module(RUN)
+STATE = RUN.sys.modules["watch_state"]
+IO = RUN.sys.modules["private_state"]
+HB = RUN.sys.modules["heartbeat"]
+PROBE = RUN.sys.modules["probe"]
+BOUNDED = RUN.sys.modules["bounded_process"]
+GATE_SPEC = importlib.util.spec_from_file_location("time_gate", Path(__file__).with_name("time_gate.py"))
+GATE = importlib.util.module_from_spec(GATE_SPEC)
+GATE_SPEC.loader.exec_module(GATE)
+
+
+class MonitorTests(unittest.TestCase):
+    def test_two_failures_delivery_cooldown_and_new_episode(self):
+        state, fire = STATE.observe(STATE.initial(100), "A02", 100)
+        self.assertFalse(fire)
+        state, fire = STATE.observe(state, "A02", 160)
+        self.assertTrue(fire)
+        state["sent"] = 160
+        state, fire = STATE.observe(state, "A02", 759)
+        self.assertFalse(fire)
+        state, fire = STATE.observe(state, "A02", 760)
+        self.assertTrue(fire)
+        prior_episode = state["episode"]
+        state, fire = STATE.observe(state, None, 761)
+        self.assertFalse(fire)
+        state, fire = STATE.observe(state, "A02", 762)
+        self.assertFalse(fire)
+        state, fire = STATE.observe(state, "A02", 822)
+        self.assertTrue(fire)
+        self.assertGreater(state["episode"], prior_episode)
+
+    def test_clock_rollback_fires_even_inside_cooldown(self):
+        state, _ = STATE.observe(STATE.initial(1000), "A01", 1000)
+        state, _ = STATE.observe(state, "A01", 1060)
+        state["sent"] = 1060
+        state, fire = STATE.observe(state, None, 900)
+        self.assertTrue(fire)
+        self.assertEqual(state["code"], "A06")
+        self.assertIsNone(state["sent"])
+
+    def test_failed_delivery_retries_after_restart_and_round_is_saved_first(self):
+        with tempfile.TemporaryDirectory() as directory:
+            with IO.locked_state(directory) as state:
+                self.assertTrue(RUN.tick(state, "A01", 100, lambda value: self.fail("不应发送")))
+                def failed(value):
+                    self.assertEqual(state.load()["round"], value["round"])
+                    return False
+                self.assertFalse(RUN.tick(state, "A01", 160, failed))
+            with IO.locked_state(directory) as state:
+                old_round = state.load()["round"]
+                self.assertTrue(RUN.tick(state, "A01", 220, lambda value: value["round"] == old_round + 1))
+                self.assertEqual(state.load()["sent"], 220)
+
+    def test_unsafe_or_corrupt_state_is_never_reset_to_healthy(self):
+        with tempfile.TemporaryDirectory() as directory:
+            target = Path(directory, "state.json")
+            target.write_text("not-json")
+            target.chmod(0o600)
+            with IO.locked_state(directory) as state:
+                with self.assertRaises(ValueError):
+                    RUN.tick(state, None, 100, lambda value: True)
+            target.chmod(0o644)
+            with IO.locked_state(directory) as state:
+                with self.assertRaises(ValueError):
+                    state.load()
+            target.unlink()
+            target.symlink_to("/etc/passwd")
+            with IO.locked_state(directory) as state:
+                with self.assertRaises(OSError):
+                    state.load()
+
+    def test_lock_excludes_concurrent_watchers(self):
+        with tempfile.TemporaryDirectory() as directory:
+            with IO.locked_state(directory):
+                with self.assertRaises(BlockingIOError):
+                    with IO.locked_state(directory):
+                        self.fail("第二个写者不应获得锁")
+
+    def test_duplicate_json_and_boolean_schema_fail_closed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            target = Path(directory, "state.json")
+            target.write_text('{"schema":1,"schema":2}')
+            target.chmod(0o600)
+            with IO.locked_state(directory) as state:
+                with self.assertRaises(ValueError): state.load()
+        value = STATE.initial(100)
+        value["schema"] = True
+        with self.assertRaises(ValueError): STATE.validate(value)
+
+    def test_probe_receipt_must_be_current_boot_and_fresh(self):
+        with tempfile.TemporaryDirectory() as directory, patch.object(PROBE.time, "time", return_value=1000):
+            result = dict(services_ok=True, clock_ok=True, mcp_ok=True, replica_stale=False, memory_high=False)
+            PROBE.save_receipt(result, directory)
+            self.assertEqual(PROBE.read_receipt(directory), result)
+            with patch.object(PROBE.time, "time", return_value=1121):
+                with self.assertRaises(ValueError): PROBE.read_receipt(directory)
+            with patch.object(PROBE, "boot_id", return_value="different-boot"):
+                with self.assertRaises(ValueError): PROBE.read_receipt(directory)
+            with patch.object(PROBE.time, "time", return_value=999):
+                with self.assertRaises(ValueError): PROBE.read_receipt(directory)
+
+    def test_bounded_commands_reject_large_and_hanging_output(self):
+        command = [sys.executable, "-I", "-B", "-S", "-c"]
+        self.assertEqual(BOUNDED.output(command + ["print('ok')"], 2), b"ok\n")
+        with self.assertRaises(ValueError):
+            BOUNDED.output(command + ["print('x' * 10000)"], 2)
+        with self.assertRaises(TimeoutError):
+            BOUNDED.output(command + ["import time; time.sleep(10)"], 0.1)
+
+    def test_time_gate_waits_for_real_synchronization_and_times_out(self):
+        now = [0]
+        def sleep(seconds): now[0] += seconds
+        self.assertEqual(GATE.wait_for_sync(lambda: "yes" if now[0] == 3 else "no", lambda: now[0], sleep, 5), 3)
+        with self.assertRaises(TimeoutError): GATE.wait_for_sync(lambda: "no", lambda: now[0], sleep, 5)
+
+    def test_residency_is_real_and_low_memlock_cannot_reach_secret_read(self):
+        source = Path(__file__).with_name("residency.py").resolve()
+        program = "import importlib.util,sys; s=importlib.util.spec_from_file_location('residency',sys.argv[1]); m=importlib.util.module_from_spec(s); s.loader.exec_module(m); m.harden(); print('protected')"
+        command = [sys.executable, "-I", "-B", "-S", "-c", program, str(source)]
+        success = subprocess.run(command, capture_output=True, timeout=5)
+        self.assertEqual(success.returncode, 0, success.stderr.decode())
+        self.assertEqual(success.stdout, b"protected\n")
+        self.assertIn(b"not_dumpable", success.stderr)
+        failure = subprocess.run(command, capture_output=True, timeout=5,
+                                 preexec_fn=lambda: resource.setrlimit(resource.RLIMIT_MEMLOCK, (0, 0)))
+        self.assertNotEqual(failure.returncode, 0)
+        self.assertNotIn(b"protected", failure.stdout)
+
+    def test_unknown_probe_is_not_healthy_and_priority_is_explicit(self):
+        self.assertEqual(STATE.failure_code({}), "A01")
+        probe = dict(services_ok=True, clock_ok=True, mcp_ok=True, replica_stale=False, memory_high=False)
+        self.assertIsNone(STATE.failure_code(probe))
+        for field, code in (("memory_high", "A04"), ("replica_stale", "A03"), ("mcp_ok", "A02"), ("clock_ok", "A06")):
+            probe[field] = not probe[field]
+            self.assertEqual(STATE.failure_code(probe), code)
+
+    def test_heartbeats_are_independent_empty_posts_and_bounded(self):
+        environment = {"STUDIOLO_HEALTHCHECKS_URL": "https://hc-ping.com/" + "a" * 36,
+                       "STUDIOLO_WORKER_HEARTBEAT_URL": "https://heartbeat.example.com/heartbeat/n108",
+                       "STUDIOLO_WORKER_HEARTBEAT_TOKEN": "test-only"}
+        class Reply:
+            status = 204
+            def __enter__(self): return self
+            def __exit__(self, *args): return None
+            def read(self, size):
+                self.size = size
+                return b""
+        class Opener:
+            def __init__(self): self.requests = []
+            def open(self, request, timeout):
+                self.requests.append(request)
+                if "hc-ping.com" in request.full_url: raise TimeoutError()
+                return Reply()
+        opener = Opener()
+        self.assertEqual(HB.ping("n108", environment, opener), [False, True])
+        self.assertEqual(len(opener.requests), 2)
+        self.assertTrue(all(request.get_method() == "POST" and request.data is None for request in opener.requests))
+        environment["STUDIOLO_HEALTHCHECKS_URL"] = "http://bad.invalid/"
+        self.assertEqual(HB.ping("n108", environment, Opener()), [False, True])
+
+
+if __name__ == "__main__":
+    unittest.main()

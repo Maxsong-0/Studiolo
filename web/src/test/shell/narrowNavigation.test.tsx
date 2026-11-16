@@ -64,6 +64,10 @@ const shellCss = readFileSync(
   join(import.meta.dirname, '../../shell/shell.css'),
   'utf8',
 ).replace(/\/\*[\s\S]*?\*\//g, '');
+const tokensCss = readFileSync(
+  join(import.meta.dirname, '../../styles/tokens.css'),
+  'utf8',
+);
 
 function block(source: string, header: string) {
   const start = source.indexOf(header);
@@ -96,9 +100,11 @@ it('窄屏（<760px）导航固定在底部成六格，每格至少 44px 高', (
     `grid-template-columns: repeat(${ORDER.length}, minmax(0, 1fr));`,
   );
   expect(nav).toContain('padding-bottom: env(safe-area-inset-bottom);');
+  // 触控高度的数值只在 tokens.css 一处（T-191）：这里看引用了令牌，再看令牌确实是 44px
   expect(declarations(narrow, '.shell-nav-item')).toContain(
-    'min-height: 44px;',
+    'min-height: var(--control-touch);',
   );
+  expect(tokensCss).toMatch(/--control-touch:\s*44px;/);
   // 页面底部留出导航的高度，最后一行内容不被六格盖住
   expect(declarations(narrow, '.shell')).toContain(
     'calc(47px + env(safe-area-inset-bottom) + 24px)',
@@ -108,20 +114,27 @@ it('窄屏（<760px）导航固定在底部成六格，每格至少 44px 高', (
 it('当前库名任何宽度都在：窄屏与中等宽度的顶栏网格都给它留了格，样式表里没有藏掉它的规则', () => {
   const narrow = block(shellCss, '@media (width < 760px)');
   expect(declarations(narrow, '.shell-top')).toContain(
-    "'brand library status command'",
+    "'brand library status command more'",
   );
   // 360px 以下第一行放不下：库名挪到黑线下那一行的左端，仍然在
   const tiny = block(shellCss, '@media (width < 360px)');
   expect(declarations(tiny, '.shell-top')).toContain(
-    "'library library tools tools'",
+    "'library library library library library'",
   );
-  const medium = block(shellCss, '@media (760px <= width < 960px)');
-  expect(declarations(medium, '.shell-top')).toContain(
-    "'brand library nav . status command'",
-  );
+  expect(shellCss).not.toContain('@media (760px <= width < 960px)');
   expect(shellCss).not.toMatch(/\.shell-library\s*\{[^}]*display:\s*none/);
   const library = declarations(shellCss, '.shell-library');
   expect(library).toContain('max-width: 20ch;');
   expect(library).toContain('text-overflow: ellipsis;');
   expect(library).toContain('font-size: var(--type-label);');
+});
+
+it('手机底部只给驾驶舱恢复计数，不给文档格恢复', () => {
+  const narrow = block(shellCss, '@media (width < 760px)');
+  expect(narrow).toContain(
+    ".shell-nav-item[data-view='cockpit'] .shell-nav-count",
+  );
+  expect(narrow).not.toContain(
+    ".shell-nav-item[data-view='documents'] .shell-nav-count",
+  );
 });

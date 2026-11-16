@@ -61,6 +61,8 @@ impl ActivationId {
                 "desired_id": activation.desired_id,
                 "rollback_of": activation.rollback_of,
                 "cleared_type_revocation": activation.cleared_type_revocation,
+                "superseded_desired_ids": activation.superseded_desired_ids,
+                "remaining_desired_ids": activation.remaining_desired_ids,
             }),
         )
     }

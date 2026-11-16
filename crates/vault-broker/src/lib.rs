@@ -22,6 +22,8 @@ pub use sync_observation::{
 };
 mod canonical;
 mod capture;
+mod checkpoint;
+pub use checkpoint::{BrokerCheckpointAudit, BrokerCheckpointCoverage, FrozenBroker};
 mod check_precondition;
 mod content_audit;
 pub(crate) mod file_operation;
@@ -57,7 +59,8 @@ pub use content_audit::{
     ContentAuditStatus,
 };
 pub use history::{
-    HistoryContent, HistoryEntry, HistoryPage, HistoryPruneReport, HistoryRetention,
+    ChangeEntry, ChangeKind, ChangePage, HistoryContent, HistoryEntry, HistoryPage,
+    HistoryPruneReport, HistoryRetention,
 };
 pub use maintenance::{
     MaintenanceActor, MaintenanceAuditCandidate, MaintenanceAuditEvent, MaintenanceCurrent,
@@ -77,8 +80,8 @@ pub use recovery::{
     StagePruneReport, WriterPhase,
 };
 pub use restore::{
-    LineageState, MaintenanceCoverage, NewRootRebind, PhysicalId, RebindCoverage, RestoreError,
-    RestoreLineage, RestoreReceipt, read_restore_lineage, rebind_new_roots,
+    BindingCoverage, LineageState, MaintenanceCoverage, NewRootRebind, PhysicalId, RebindCoverage,
+    RestoreError, RestoreLineage, RestoreReceipt, read_restore_lineage, rebind_new_roots,
 };
 pub use writer::WriterStatus;
 
@@ -86,12 +89,14 @@ mod broker;
 mod error;
 mod fs;
 mod memory;
+mod trusted_export;
 mod types;
 
 pub use broker::{SnapshotReader, VaultBroker, VaultReader, VaultSnapshotter, VaultWriter};
 pub use error::BrokerError;
 pub use fs::FsVaultBroker;
 pub use memory::MemoryVaultBroker;
+pub use trusted_export::read_trusted_export;
 pub use types::{
     ArtifactCandidate, ArtifactCommit, ArtifactCommitReceipt, CommittedArtifact, Mutation,
     MutationReceipt, Precondition, Snapshot, SnapshotFile, SnapshotId, SnapshotInput, VaultObject,
@@ -102,3 +107,25 @@ use error::memory_state_error;
 use fs::collision_component_key;
 use studiolo_core::{AttemptId, Fence, Revision, TaskId, VaultPath, VaultUuid};
 use types::{MutationReplay, VaultIdentity, hex, sha256};
+
+/// 单元测试显式授予的完整来源。生产构建不包含此函数。
+#[cfg(test)]
+pub(crate) fn granted_provenance() -> studiolo_core::ArtifactProvenance {
+    use studiolo_core::{
+        ArtifactProvenance, BackupScope, Classification, DataLabels, DesktopSync, ModelEgress,
+        SourcePolicyRef,
+    };
+    ArtifactProvenance::new(
+        SourcePolicyRef::new("fixture-source", "a".repeat(64)).unwrap(),
+        DataLabels::new(
+            Classification::Restricted,
+            BackupScope::Full,
+            DesktopSync::Deny,
+            ModelEgress::Deny,
+        )
+        .unwrap(),
+        4_000_000_000,
+        "b".repeat(64),
+    )
+    .unwrap()
+}

@@ -48,6 +48,7 @@ pub(super) fn assemble(
     let mut isolated: Vec<&Path> = vec![options.vault.as_path(), options.assets.as_path()];
     isolated.extend(options.writer_data.as_deref());
     isolated.extend(options.policy_data.as_deref());
+    isolated.extend(options.agent_data.as_deref());
     isolated.extend(options.board.as_ref().map(|board| board.data.as_path()));
     isolated.extend(reserved.iter().map(std::path::PathBuf::as_path));
     let approved = ApprovedTransport::approve(scope, approval, &isolated)

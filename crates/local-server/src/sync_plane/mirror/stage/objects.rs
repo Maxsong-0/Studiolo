@@ -135,10 +135,23 @@ pub(super) fn verify(
     id: ObjectId,
     output: Option<BorrowedFd<'_>>,
 ) -> Result<(), PlaneError> {
+    verify_until(file, bytes, id, output, None)
+}
+
+pub(super) fn verify_until(
+    file: BorrowedFd<'_>,
+    bytes: u64,
+    id: ObjectId,
+    output: Option<BorrowedFd<'_>>,
+    deadline: Option<std::time::Instant>,
+) -> Result<(), PlaneError> {
     let mut buffer = [0u8; FRAME_BYTES];
     let mut digest = Sha256::new();
     let mut read = 0_u64;
     loop {
+        if let Some(until) = deadline {
+            super::super::checkpoint_io::deadline(until)?;
+        }
         let count = match rustix::io::read(file, &mut buffer) {
             Err(rustix::io::Errno::INTR) => continue,
             result => result.map_err(|_| PlaneError::Storage)?,

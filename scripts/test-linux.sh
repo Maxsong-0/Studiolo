@@ -26,9 +26,11 @@ if [ "$#" -eq 0 ]; then
     cargo --locked fmt --all -- --check
     cargo --locked clippy --workspace --all-targets -- -D warnings
     cargo --locked test --workspace
+    cargo --locked test -p studiolo-vault-broker --example t132-restore-probe
     cargo --locked test -p studiolo-vault-broker --test linux_path_security
     cargo --locked build -p studiolo-local-server --features studiolo-auth/production
     cargo --locked build -p studiolo-auth-admin --features production
+    cargo --locked build -p studiolo-vault-admin
     python3 crates/auth-admin/tests/support/cli_process.py "$CARGO_TARGET_DIR/debug/studiolo-auth-admin"
   '
 else

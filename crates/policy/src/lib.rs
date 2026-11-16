@@ -12,6 +12,7 @@
 
 mod agent;
 pub mod audit;
+mod checkpoint;
 mod database;
 mod diff;
 mod error;
@@ -26,6 +27,7 @@ pub mod view;
 pub use agent::{
     AtEffective, Authorization, CapabilityGrant, CurrentEntries, Denial, PolicyAgentStore,
 };
+pub use checkpoint::PolicyCheckpointHandle;
 pub use diff::{Diff, DiffEntry, DiffOp};
 pub use error::PolicyError;
 pub use model::{
@@ -34,11 +36,12 @@ pub use model::{
     validate_type_name,
 };
 pub use proposal::{
-    MAX_LISTED_PROPOSALS, Proposal, ProposalInput, ProposalListing, ProposalSummary,
+    MAX_LISTED_PROPOSALS, Proposal, ProposalInput, ProposalListing, ProposalResult, ProposalSummary,
 };
 pub use store::{
-    Activation, DesiredInput, DesiredRecord, DesiredStatus, EffectiveEntry, EffectiveSummary,
-    MAX_PENDING_PER_INSTANCE, MAX_PENDING_PROPOSALS, PolicyStore, RevocationLevel,
-    RevocationRecord, Submitter, VersionMeta, VersionRecord,
+    Activation, AgentPolicySnapshot, DesiredInput, DesiredRecord, DesiredStatus, EffectiveEntry,
+    EffectiveSummary, InstancePolicyState, MAX_PENDING_PER_INSTANCE, MAX_PENDING_PROPOSALS,
+    PolicyStore, RevocationLevel, RevocationRecord, Submitter, TypePolicyState, VersionMeta,
+    VersionRecord,
 };
 pub use validate::{Expansion, Problem, Report};

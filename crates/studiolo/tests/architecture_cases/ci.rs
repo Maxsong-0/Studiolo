@@ -30,11 +30,13 @@ const ERREXIT_OFF: &str = "不许有 set +e、set +o errexit 一类关掉 errexi
 const REMOTE: &str = r#"exec flock "$HOME/.cache/studiolo-locks/$STUDIOLO_NAME.lock" bash -euo pipefail -c "$STUDIOLO_RUN""#;
 
 /// ci.yml 的 rust 作业与 test-linux.sh 默认回路都要逐字执行的 Rust 门禁。
-const SHARED: [&str; 4] = [
+const SHARED: [&str; 6] = [
     "cargo --locked fmt --all -- --check",
     "cargo --locked clippy --workspace --all-targets -- -D warnings",
     WORKSPACE_TEST,
+    "cargo --locked test -p studiolo-vault-broker --example t132-restore-probe",
     "cargo --locked test -p studiolo-vault-broker --test linux_path_security",
+    "cargo --locked build -p studiolo-vault-admin",
 ];
 
 /// 只在 ci.yml 的 rust 作业里钉住的生产特征构建。

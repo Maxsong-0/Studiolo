@@ -21,7 +21,7 @@ export function useSessionStatus(): SessionStatus | null {
 }
 
 /**
- * 顶栏账户入口（SessionAccount 的按钮）上的标记：胶囊浮层的「前往账户与会话」据此把焦点带过去，
+ * 「更多」菜单里的账户入口（SessionAccount 的按钮）上的标记：胶囊浮层的「前往账户与会话」据此把焦点带过去，
  * 不在胶囊里另开账户对话框，免得两处入口各持一份状态。
  */
 export const SESSION_ACCOUNT_ATTRIBUTE = 'data-session-account';

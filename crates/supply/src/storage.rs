@@ -122,7 +122,18 @@ impl Storage {
 
 #[cfg(unix)]
 fn directory(root: &Path) -> Result<std::fs::Metadata, SupplyError> {
-    use std::{fs, os::unix::fs::MetadataExt, path::Component};
+    use std::os::unix::fs::MetadataExt;
+    let metadata = directory_path(root)?;
+    if metadata.mode() & 0o7777 != 0o700 {
+        return Err(SupplyError::UnsafeStorage);
+    }
+    Ok(metadata)
+}
+
+/// 逐层核验绝对目录，不跟随链接；其它服务根无需具备身份目录的私有权限。
+#[cfg(unix)]
+fn directory_path(root: &Path) -> Result<std::fs::Metadata, SupplyError> {
+    use std::{fs, path::Component};
     if !root.is_absolute() {
         return Err(SupplyError::UnsafeStorage);
     }
@@ -137,11 +148,7 @@ fn directory(root: &Path) -> Result<std::fs::Metadata, SupplyError> {
             return Err(SupplyError::UnsafeStorage);
         }
     }
-    let metadata = fs::symlink_metadata(root).map_err(|_| SupplyError::UnsafeStorage)?;
-    if metadata.mode() & 0o7777 != 0o700 {
-        return Err(SupplyError::UnsafeStorage);
-    }
-    Ok(metadata)
+    fs::symlink_metadata(root).map_err(|_| SupplyError::UnsafeStorage)
 }
 
 #[cfg(unix)]
@@ -166,4 +173,22 @@ fn inspect_file(
         Err(error) if optional && error.kind() == std::io::ErrorKind::NotFound => Ok(None),
         Err(_) => Err(SupplyError::UnsafeStorage),
     }
+}
+
+/// 已验证私有根必须与每个其它根互不嵌套；文件系统读取只在存储适配器内执行。
+#[cfg(unix)]
+pub(crate) fn ensure_separate(root: &Path, isolated: &[&Path]) -> Result<(), SupplyError> {
+    directory(root)?;
+    for other in isolated {
+        directory_path(other)?;
+        if root.starts_with(other) || other.starts_with(root) {
+            return Err(SupplyError::UnsafeStorage);
+        }
+    }
+    Ok(())
+}
+
+#[cfg(not(unix))]
+pub(crate) fn ensure_separate(_root: &Path, _isolated: &[&Path]) -> Result<(), SupplyError> {
+    Err(SupplyError::UnsafeStorage)
 }

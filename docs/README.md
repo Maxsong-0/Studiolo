@@ -33,6 +33,7 @@
 |---|---|
 | [`m1/README.md`](m1/README.md) | M1 实现约定、只读入口启动方式、运行契约、四个只读 Interface，以及 T-006～T-011 的历史验证记录 |
 | [`m1/search-navigation.md`](m1/search-navigation.md) | T-007 查询语义、同代次定位、截断与错误规则 |
+| [`m1/attachments.md`](m1/attachments.md) | T-201 人侧附件类型校验、认证读取、安全预览与下载 |
 | [`m1/file-tree.md`](m1/file-tree.md) | T-010 空目录、纯附件目录、按目录分页与同代次元信息 |
 | [`m1/design/t011-design-system.md`](m1/design/t011-design-system.md) | T-011 Apple 通透工作台视觉规范（**已被 [T-130 规范](design/t130-design-system.md) 取代**，仅作历史参考）；曾取代旧 `overview-concept.png` 的历史视觉约束 |
 | [`m1/server-preview.md`](m1/server-preview.md) | T-008 服务器示例的运行边界、可校验源码包、原生路径测试与同端口 SSH 转发 |
@@ -99,6 +100,8 @@ M2 包含真实人侧身份、CAS 编辑与 L0、双向 Obsidian Sync、附件 /
 |---|---|
 | [`m2/checkpoint-recovery-contract.md`](m2/checkpoint-recovery-contract.md) | 一致 checkpoint 与新目录恢复契约（冻结实现边界） |
 | [`m2/backup-worker.md`](m2/backup-worker.md) | checkpoint 协调器、独立 BackupWorker 与恢复 kit 的实施记录；**T-048 实施中，未验收** |
+| [`contracts/change-feed.md`](contracts/change-feed.md) | 可信内容变更来源、批量历史与有界全库索引；T-206 人侧接线进行中、未部署 |
+| [`contracts/doorbell.md`](contracts/doorbell.md) | 出站事件门铃（Webhook）：事件白名单、请求与签名、回执怎么算、审计与状态；候选，未部署（ADR-033） |
 | [`m2/health-and-alerting.md`](m2/health-and-alerting.md) | 健康页、配额、白名单诊断、带外告警与死人开关；**T-048 实施中，生产未启用** |
 
 ### 浏览器验收（均使用虚构夹具）
@@ -157,6 +160,7 @@ M4 把规则母本、skills 与各 AI 类型的能力集升入策略平面：des
 |---|---|---|
 | [`m4/README.md`](m4/README.md) | T-069 实现范围、本机运行方式、二元验收证据、明确未做与启用前置 | 已在开发分支，未部署 |
 | [`contracts/policy-plane.md`](contracts/policy-plane.md) | 策略平面契约：私有库、三类母本形状与恒定约束、发布链路与审计顺序、三级吊销、接入方视角、错误模式、契约测试清单 | 同上 |
+| [`contracts/policy-checkpoint.md`](contracts/policy-checkpoint.md) | T-204 策略跨进程写屏障、核验导出与真实接线边界 |
 
 ## contracts/ — Module Interface 契约（M0）
 
@@ -190,3 +194,6 @@ M4 把规则母本、skills 与各 AI 类型的能力集升入策略平面：des
 
 - M2 部署清单与恢复手册（`deploy/` 目前只有 M3 agent 单元与 M1 示例模板）
 - Control DB 迁移沿革（随 schema 版本变化追加）
+
+- [人侧接入方列表](contracts/agents-list.md)：只读身份边界、快照、父子实例、吊销与恢复入口。
+- [接入方读取审计查询](contracts/agent-read-audit.md)：验链后四维筛选、拒绝单列、有界分页与只读装配。

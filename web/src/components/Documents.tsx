@@ -6,17 +6,19 @@ import { Cell, CellHeader, GridFrame, Tabs } from '../ui';
 import { QueryResults } from './QueryResults';
 import { SearchControls } from './SearchControls';
 import { FileTree } from './FileTree';
+import { ChangesPanel } from './ChangesPanel';
 import '../styles/search.css';
 
 const panels = [
   { id: 'search', label: '搜索' },
   { id: 'tree', label: '文件树' },
+  { id: 'changes', label: '变更' },
 ] as const;
 
 /**
- * 文档（设计规范第 9 节）：「搜索 · 文件树」两个子标签，面板位置记在 URL 的 `panel`
- * （搜索是默认，记作 null）。两个面板切走只藏不卸：查询、项目范围、目录展开与页码原样保留，
- * 藏起来的面板不重复请求。阅读器是 App 挂的全屏覆盖层（DocumentDialog），不在这里。
+ * 文档（设计规范第 9 节）：「搜索 · 文件树 · 变更」三个子标签，面板位置记在 URL 的 `panel`
+ * （搜索是默认，记作 null）。搜索和文件树切走只藏不卸：查询、项目范围、目录展开与页码原样保留，
+ * 变更面板切走会取消在途读取，回来重读已读水位。阅读器是 App 挂的全屏覆盖层（DocumentDialog），不在这里。
  */
 export function Documents({
   projects,
@@ -30,7 +32,12 @@ export function Documents({
   onRefresh: () => void;
 }) {
   const { location, select } = useViewLocation();
-  const mode = location.panel === 'tree' ? 'tree' : 'search';
+  const mode =
+    location.panel === 'changes'
+      ? 'changes'
+      : location.panel === 'tree'
+        ? 'tree'
+        : 'search';
   // 文件树第一次露面才挂上（才读根目录）。不论怎么到的文件树——点标签、⌘K、从 URL 恢复、
   // 挂着时 hash 被改成 panel=tree——都算来过，否则文件树面板会空着。
   const [treeVisited, setTreeVisited] = useState(mode === 'tree');
@@ -50,7 +57,7 @@ export function Documents({
           items={panels}
           value={mode}
           onChange={(next) =>
-            select({ panel: next === 'tree' ? 'tree' : null })
+            select({ panel: next === 'search' ? null : next })
           }
           ariaLabel="文档浏览方式"
           idPrefix={id}
@@ -62,6 +69,13 @@ export function Documents({
           generation={generation}
           onOpen={onOpen}
           onRefresh={onRefresh}
+        />
+      </div>
+      <div {...panel('changes')}>
+        <ChangesPanel
+          projects={projects}
+          onOpen={onOpen}
+          active={mode === 'changes'}
         />
       </div>
       <div {...panel('tree')}>

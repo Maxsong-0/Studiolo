@@ -8,12 +8,12 @@ mod session;
 
 pub use access::{AccessConfig, AccessError, AccessIdentity, AccessVerifier};
 pub use session::{
-    CsrfToken, FactorRuntime, FactorState, IssuedSession, OsSessionRandom, OwnerBinding,
-    PreparedTotpFactor, RecentAuthentication, Recovery, RecoveryCode, RecoveryCodes,
-    RestoreInvalidation, RetentionReport, RetentionWork, Revocation, SensitiveAction, SessionClock,
-    SessionConfig, SessionError, SessionId, SessionInfo, SessionManager, SessionPolicy,
-    SessionRandom, SessionState, SessionToken, SystemSessionClock, Totp, TotpCode, TotpEnrollment,
-    TotpEnrollmentState, TotpRequest, TotpSeed,
+    AuthCheckpointSource, CsrfToken, FactorRuntime, FactorState, FrozenAuth, IssuedSession,
+    OsSessionRandom, OwnerBinding, PreparedTotpFactor, RecentAuthentication, Recovery,
+    RecoveryCode, RecoveryCodes, RestoreInvalidation, RetentionReport, RetentionWork, Revocation,
+    SensitiveAction, SessionClock, SessionConfig, SessionError, SessionId, SessionInfo,
+    SessionManager, SessionPolicy, SessionRandom, SessionState, SessionToken, SystemSessionClock,
+    Totp, TotpCode, TotpEnrollment, TotpEnrollmentState, TotpRequest, TotpSeed,
 };
 
 #[cfg(feature = "test-support")]

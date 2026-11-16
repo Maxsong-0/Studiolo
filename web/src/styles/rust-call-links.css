@@ -10,7 +10,7 @@
 .rust-link-batch {
   min-width: 0;
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: var(--type-caption);
   line-height: 1.6;
   overflow-wrap: anywhere;
 }
@@ -30,7 +30,7 @@
   margin: var(--space-1) 0 0;
   color: var(--ink-2);
   font-family: var(--font-sans);
-  font-size: 12.5px;
+  font-size: var(--type-small);
   line-height: 1.6;
 }
 
@@ -42,8 +42,8 @@
   gap: var(--space-3);
   min-width: 0;
   /* 右、下各留出 10px 硬阴影的位置，阴影不压到格子的分区线上 */
-  margin: 0 10px 10px 0;
-  padding: var(--space-4) 18px 18px;
+  margin: 0 var(--space-2-5) var(--space-2-5) 0;
+  padding: var(--space-4) var(--space-4-5) var(--space-4-5);
   overflow-wrap: anywhere;
 }
 .rust-link-details h3 {
@@ -62,17 +62,17 @@
 .rust-link-details p:not([class]),
 .rust-reference-count {
   margin: 0;
-  font-size: 13px;
+  font-size: var(--type-small);
   line-height: 1.55;
 }
 .rust-link-field {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--space-1-5);
   min-width: 0;
 }
 .rust-link-field label {
-  font-size: 13px;
+  font-size: var(--type-small);
   font-weight: 700;
 }
 .rust-link-field .rust-select {
@@ -108,7 +108,7 @@
 }
 .rust-definition-references .ui-button {
   font-family: var(--font-mono);
-  font-size: 13px;
+  font-size: var(--type-small);
   font-weight: 600;
 }
 .rust-link-details .rust-source-position__file {
@@ -125,20 +125,20 @@
 .rust-link-unresolved {
   margin: 0;
   color: var(--ink-2);
-  font-size: 12.5px;
+  font-size: var(--type-small);
   line-height: 1.5;
 }
 .rust-linked-definition {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: var(--space-0-5);
   min-width: 0;
   padding-left: var(--space-2);
   border-left: 1.5px solid var(--ink);
 }
 .rust-linked-definition p:not([class]) {
   margin: 0;
-  font-size: 12.5px;
+  font-size: var(--type-small);
   line-height: 1.5;
 }
 .rust-linked-definition strong {
@@ -148,7 +148,7 @@
 .rust-call__link {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: var(--space-0-5);
   min-width: 0;
 }
 
@@ -169,7 +169,7 @@
 .rust-references-text {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: var(--space-0-5);
   min-width: 0;
 }
 .rust-references-text p {
@@ -189,6 +189,6 @@
 /* 窄屏（<760px）：侧栏收窄内边距，select 用 projects-mobile.css 的 44px 高 */
 @media (width < 760px) {
   .rust-link-details {
-    padding: 14px 14px 16px;
+    padding: var(--space-3-5) var(--space-3-5) var(--space-4);
   }
 }

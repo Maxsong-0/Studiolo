@@ -15,6 +15,14 @@ use crate::{BrokerError, FsVaultBroker};
 use rustix::fs::{Mode, OFlags, RenameFlags, ResolveFlags, openat2, renameat_with};
 
 static TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(1);
+/// 原子写的临时文件名里的固定标记：`.<原文件名>.studiolo-tmp-<进程号>-<序号>`。
+const TEMPORARY_MARKER: &str = ".studiolo-tmp-";
+
+/// 文件名是不是原子写留下的临时文件。崩溃在写到一半时会留下这种残留，
+/// 里面可能是任何文件的半截或全文，导出扫描没法给它归类，只能拒绝。
+pub(crate) fn is_temporary_name(file_name: &str) -> bool {
+    file_name.starts_with('.') && file_name.contains(TEMPORARY_MARKER)
+}
 
 impl FsVaultBroker {
     pub(crate) fn atomic_write_dir_checked(
@@ -34,7 +42,7 @@ impl FsVaultBroker {
             .ok_or(BrokerError::CorruptIdentity)?;
         let sequence = TEMP_SEQUENCE.fetch_add(1, Ordering::Relaxed);
         let temp_path = parent.join(format!(
-            ".{file_name}.studiolo-tmp-{}-{sequence}",
+            ".{file_name}{TEMPORARY_MARKER}{}-{sequence}",
             std::process::id()
         ));
         let mut options = OpenOptions::new();

@@ -20,6 +20,7 @@ impl SessionManager {
         identity: &AccessIdentity,
         policy: IssuePolicy,
     ) -> Result<IssuedSession, SessionError> {
+        let _operation = self.enter_operation()?;
         let (grant, issuance) = self.issue_run(identity, policy, |db, observed| {
             if let Err(error) = self.identity(db, identity, observed.now)? {
                 return Ok(Err(error));

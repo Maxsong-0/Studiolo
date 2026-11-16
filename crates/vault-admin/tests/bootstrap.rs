@@ -294,7 +294,12 @@ fn missing_audit_is_not_created_and_prevents_bootstrap() {
         initialize(&f.options, &approved.plan_digest),
         Err(Error::Audit)
     );
-    assert_eq!(fs::read_dir(f.root.join("audit")).unwrap().count(), 0);
+    // 夹具合法开过一次库，留下的只有操作准入文件；失败的首建不新建数据库，也不留侧文件。
+    let left = fs::read_dir(f.root.join("audit"))
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name())
+        .collect::<Vec<_>>();
+    assert_eq!(left, ["checkpoint-operations.lock"]);
     f.empty_targets();
 }
 

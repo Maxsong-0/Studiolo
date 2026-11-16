@@ -56,6 +56,11 @@ fn complete(now: i64) -> EvidenceSnapshot {
         sync: QuotaVerdict::Normal,
         whitelist: Some(diagnose(&WhitelistSnapshot::default()).expect("空白名单必须可诊断")),
         bridge: Some(normal_bridge(now)),
+        manual_sync_quota: Some(studiolo_host_config::sync_transport::ManualQuota {
+            account_limit_bytes: 10_000,
+            used_bytes_manual: 1_000,
+            recorded_at_unix: now - 10,
+        }),
     }
 }
 
@@ -153,7 +158,7 @@ fn 会话门禁具备时装配函数挂载健康页路由() {
 }
 
 #[tokio::test]
-async fn 装配了证据来源时健康页给出封闭json且六节齐全() {
+async fn 装配了证据来源时健康页给出封闭json且七节齐全() {
     let (status, body) = get(served(Some(source(FixedEvidence(10_000)))), PATH).await;
 
     assert_eq!(status, StatusCode::OK);
@@ -161,8 +166,8 @@ async fn 装配了证据来源时健康页给出封闭json且六节齐全() {
     assert_eq!(body["evidence_complete"], true);
     assert_eq!(
         body["sections"].as_array().map(Vec::len),
-        Some(6),
-        "六节必须齐全"
+        Some(7),
+        "七节必须齐全"
     );
 }
 
@@ -208,12 +213,12 @@ async fn 证据一度读不到之后重新可得时健康页自行恢复成正�
 }
 
 #[test]
-fn 证据齐备时响应标记证据完整并给出全部六节() {
+fn 证据齐备时响应标记证据完整并给出全部七节() {
     let body = HealthBody::from_report(&complete(10_000).report());
 
     assert_eq!(body.overall, "normal");
     assert!(body.evidence_complete);
-    assert_eq!(body.sections.len(), 6);
+    assert_eq!(body.sections.len(), 7);
 }
 
 #[test]
@@ -278,5 +283,8 @@ fn 响应可以序列化成封闭json且字段固定() {
     assert!(text.contains("\"code\":\"recovery-point\""));
 }
 
-/// 探针接线契约：第六节与传输 owner 活性从 `BridgeHealthProbe` 原样进入快照。
+/// 探针接线契约：第七节与传输 owner 活性从 `BridgeHealthProbe` 原样进入快照。
 mod probe;
+
+#[path = "tests/bridge_details.rs"]
+mod bridge_details;

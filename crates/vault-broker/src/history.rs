@@ -1,5 +1,9 @@
 //! L0 内容历史公开投影；保存主体与归档主体分开，未知旧元数据不由 mtime 补推。
 
+pub(crate) mod batch;
+mod feed;
+pub(crate) mod memory;
+pub use feed::{ChangeEntry, ChangeKind, ChangePage};
 pub(crate) mod blob;
 mod catalog;
 mod catalog_disk;

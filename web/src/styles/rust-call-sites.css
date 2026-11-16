@@ -22,7 +22,7 @@
   flex-wrap: wrap;
   align-items: baseline;
   gap: var(--space-1) var(--space-6);
-  padding: 6px 0;
+  padding: var(--space-1-5) 0;
   border-top: 1px solid var(--hairline);
   border-bottom: 1px solid var(--hairline);
 }
@@ -30,7 +30,7 @@
   margin: 0;
   color: var(--ink-2);
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: var(--type-caption);
   line-height: 1.6;
 }
 .rust-observation time {
@@ -71,7 +71,7 @@
   gap: var(--space-3);
 }
 .rust-files__head {
-  padding: 0 var(--space-2) 6px;
+  padding: 0 var(--space-2) var(--space-1-5);
   border-bottom: 1.5px solid var(--ink);
   color: var(--ink-2);
   font-family: var(--font-mono);
@@ -81,8 +81,8 @@
 }
 .rust-file {
   width: 100%;
-  min-height: 36px;
-  padding: 6px var(--space-2);
+  min-height: var(--control-small);
+  padding: var(--space-1-5) var(--space-2);
   border: 0;
   border-bottom: 1px solid var(--hairline);
   border-radius: 0;
@@ -98,7 +98,7 @@
 }
 .rust-file code {
   min-width: 0;
-  font-size: 12.5px;
+  font-size: var(--type-caption);
   font-weight: 600;
   overflow-wrap: anywhere;
 }
@@ -134,7 +134,7 @@
   line-height: 1.4;
 }
 .rust-selected-file code {
-  font-size: 15px;
+  font-size: var(--type-item);
   font-weight: 600;
 }
 
@@ -164,9 +164,9 @@
   display: flex;
   flex-direction: column;
   justify-content: space-between;
-  gap: 2px;
+  gap: var(--space-0-5);
   min-width: 0;
-  padding: 7px var(--space-3);
+  padding: var(--space-2) var(--space-3);
   border-left: 1px solid var(--hairline);
 }
 .rust-coverage dl > div:nth-child(6n + 1) {
@@ -183,7 +183,7 @@
 .rust-coverage dd {
   margin: 0;
   font-family: var(--font-mono);
-  font-size: 15px;
+  font-size: var(--type-item);
   font-weight: 600;
   line-height: 1.3;
 }
@@ -201,10 +201,10 @@
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  gap: 2px;
+  gap: var(--space-0-5);
   min-width: 0;
-  min-height: 44px;
-  padding: 8px var(--space-3);
+  min-height: var(--control-touch);
+  padding: var(--space-2) var(--space-3);
   border: 0;
   border-right: 1px solid var(--hairline);
   border-bottom: 1px solid var(--hairline);
@@ -217,13 +217,13 @@
   cursor: pointer;
 }
 .rust-context strong {
-  font-size: 13px;
+  font-size: var(--type-small);
   font-weight: 700;
   line-height: 1.35;
 }
 .rust-context span {
   color: var(--ink-2);
-  font-size: 12px;
+  font-size: var(--type-caption);
   line-height: 1.4;
 }
 .rust-context .rust-context__at {
@@ -250,7 +250,7 @@
   gap: var(--space-2) var(--space-3);
 }
 .rust-call-filter label {
-  font-size: 13px;
+  font-size: var(--type-small);
   font-weight: 700;
 }
 .rust-call-filter .rust-select {
@@ -325,7 +325,7 @@
   gap: var(--space-1) var(--space-3);
 }
 .rust-call-table__head {
-  padding-bottom: 6px;
+  padding-bottom: var(--space-1-5);
   border-bottom: 1.5px solid var(--ink);
   color: var(--ink-2);
   font-family: var(--font-mono);
@@ -349,9 +349,9 @@
 .rust-call__at {
   justify-self: start;
   max-width: 100%;
-  padding: 1px 6px;
+  padding: 1px var(--space-1-5);
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: var(--type-caption);
   font-weight: 600;
   line-height: 1.5;
   overflow-wrap: anywhere;
@@ -364,12 +364,12 @@
 .rust-call__site {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: var(--space-0-5);
   min-width: 0;
 }
 .rust-call__name {
   font-family: var(--font-mono);
-  font-size: 13px;
+  font-size: var(--type-small);
   font-weight: 600;
   line-height: 1.5;
   overflow-wrap: anywhere;
@@ -377,7 +377,7 @@
 .rust-call__kind,
 .rust-call__context {
   margin: 0;
-  font-size: 12.5px;
+  font-size: var(--type-small);
   line-height: 1.5;
 }
 .rust-call__kind {
@@ -438,8 +438,8 @@
   display: flex;
   flex-wrap: wrap;
   align-items: baseline;
-  gap: 2px var(--space-3);
-  padding: 6px 0;
+  gap: var(--space-0-5) var(--space-3);
+  padding: var(--space-1-5) 0;
   border-bottom: 1px solid var(--hairline);
 }
 .rust-declarations li:last-child {
@@ -447,7 +447,7 @@
 }
 .rust-declarations code {
   color: var(--ink-2);
-  font-size: 12px;
+  font-size: var(--type-caption);
 }
 .rust-panel .rust-declarations .ui-button,
 .rust-panel .rust-call .ui-button {
@@ -499,7 +499,7 @@
 }
 .rust-text-data h4 {
   margin: var(--space-2) 0 0;
-  padding-bottom: 6px;
+  padding-bottom: var(--space-1-5);
   border-bottom: 1.5px solid var(--ink);
   font-size: var(--type-body);
   font-weight: 800;
@@ -513,10 +513,10 @@
 .rust-text-data li {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: var(--space-0-5);
   padding: var(--space-2) 0;
   border-bottom: 1px solid var(--hairline);
-  font-size: 13px;
+  font-size: var(--type-small);
   line-height: 1.5;
 }
 .rust-text-data li:last-child {
@@ -525,7 +525,7 @@
 .rust-text-data li > p:not([class]),
 .rust-text-data section > p:not([class]) {
   margin: 0;
-  font-size: 13px;
+  font-size: var(--type-small);
   line-height: 1.5;
 }
 
@@ -617,15 +617,15 @@
   /* 坐标列收起后，所选那一处改由调用名反白标出 */
   .rust-call__name {
     align-self: flex-start;
-    margin: 0 -4px;
-    padding: 0 4px;
+    margin: 0 calc(-1 * var(--space-1));
+    padding: 0 var(--space-1);
   }
   .rust-call[data-selected='true'] .rust-call__name {
     background: var(--ink);
     color: var(--on-ink);
   }
   .rust-file {
-    min-height: 44px;
+    min-height: var(--control-touch);
   }
   .rust-call-filter .rust-select {
     flex: 1;
@@ -637,6 +637,6 @@
   }
   .rust-panel .rust-declarations .ui-button,
   .rust-panel .rust-call .ui-button {
-    min-height: 44px;
+    min-height: var(--control-touch);
   }
 }

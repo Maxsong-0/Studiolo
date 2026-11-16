@@ -20,6 +20,7 @@ fn one_line(text: &str) -> String {
 impl AgentSession {
     /// 读策略平面 effective：规则母本与 skills 是「读取即外发」的内容，同样先审计后返回。
     pub(crate) async fn text_policy_read(&self, args: PolicyReadArgs) -> Result<String, McpError> {
+        let _operation = self.begin_operation().await?;
         let grant = self.authorize("policy_read")?;
         let actor = grant.actor();
         let Some(store) = &self.state.policy else {

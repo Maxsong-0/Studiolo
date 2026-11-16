@@ -46,11 +46,35 @@ pub struct AuditAck {
     pub recorded_at: String,
 }
 
-/// 追加审计失败时返回，携带当前 outage id；调用方必须拒绝返回任何内容。
+/// 操作准入失败与真实审计故障分开；冻结不会伪造 outage 或追加降级计数。
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct AuditUnavailable {
-    /// 当前 outage id。
-    pub outage_id: String,
+pub enum AuditUnavailable {
+    /// 当前不能进入完整操作。
+    Frozen,
+    /// 真实审计故障的持久降级窗口。
+    Outage {
+        /// 当前持久降级窗口标识。
+        outage_id: String,
+    },
+}
+impl AuditUnavailable {
+    /// 对外固定故障类别；准入冻结不冒称已创建持久 outage。
+    pub fn reason(&self) -> String {
+        match self {
+            Self::Frozen => "备份冻结或操作准入不可用，请稍后重试".into(),
+            Self::Outage { outage_id } => format!("审计不可用（outage {outage_id}）"),
+        }
+    }
+
+    /// 握手被拒时给 AI 的整段说明。真实故障沿用 M3 起对外固定的开头
+    /// 「审计不可用：outage <编号>。」，接入方和运维按这个开头取编号，不随 `reason` 的写法变。
+    pub fn handshake_refusal(&self) -> String {
+        const REST: &str = "本次会话所有读取与写入全部拒绝，不提供路牌；请稍后重试。";
+        match self {
+            Self::Frozen => format!("{}。{REST}", self.reason()),
+            Self::Outage { outage_id } => format!("审计不可用：outage {outage_id}。{REST}"),
+        }
+    }
 }
 
 /// 供给源；两种模式都只持有只读能力。
@@ -85,8 +109,8 @@ impl SupplySource {
 pub struct AppState {
     /// 白名单只读根。
     pub source: SupplySource,
-    /// 序列化重扫，避免慢旧批次覆盖较新的已验证代次。
-    pub scan_lock: Mutex<()>,
+    /// 序列化重扫（慢的旧批次不会盖掉较新的已验证代次），并让并发请求共用受理之后的那次校验（T-211）。
+    pub(crate) scans: crate::shared_scan::SharedScan<Arc<Generation>>,
     /// 白名单前缀（配置顺序）。
     pub allow: Vec<VaultPath>,
     /// agent 私有库。
@@ -176,10 +200,13 @@ pub fn replica_generation(
 impl AppState {
     /// 重扫并替换当前代次。
     pub fn rescan(&self) -> Result<u64, String> {
-        let _scan = self
-            .scan_lock
-            .lock()
-            .map_err(|_| "重扫锁不可用".to_owned())?;
+        self.scans
+            .run(|| self.replace_generation())
+            .map(|generation| generation.number)
+    }
+
+    /// 完整读取并验证来源、建模、换上新代次；只在 `scans` 的串行闸里调用。
+    fn replace_generation(&self) -> Result<Arc<Generation>, String> {
         let previous = self.current();
         let next = previous
             .number
@@ -198,19 +225,25 @@ impl AppState {
         *self
             .current
             .write()
-            .map_err(|_| "代次锁不可用".to_owned())? = generation;
-        Ok(next)
+            .map_err(|_| "代次锁不可用".to_owned())? = generation.clone();
+        Ok(generation)
     }
 
     /// 请求供给时取完整验证的同一代次；副本全量校验在专用校验线程上完成（BUG-034）。
+    ///
+    /// 每个请求拿到的都是它到达之后重新完整校验过的代次。并发到达的请求共用受理之后才开始的
+    /// 那一次校验，不再一人整读一遍（T-211，规则见 `crate::shared_scan`）。
     pub async fn verified(self: &Arc<Self>) -> Result<Arc<Generation>, String> {
         if matches!(&self.source, SupplySource::Replica(_)) {
+            // 受理点在排队之前：此后才开始的校验才算数。
+            let admitted = self.scans.admit();
             let state = self.clone();
             return self
                 .verifier
                 .run(move || {
-                    state.rescan()?;
-                    Ok(state.current())
+                    state
+                        .scans
+                        .covered_or(admitted, || state.replace_generation())
                 })
                 .await?;
         }
@@ -227,6 +260,10 @@ impl AppState {
 
     /// 追加权威审计；失败即进入/延续降级窗口并返回 outage id，成功则结束窗口。
     pub fn audit(&self, event: AuditEvent) -> Result<AuditAck, AuditUnavailable> {
+        let _operation = self
+            .ledger
+            .enter_operation()
+            .map_err(|_| AuditUnavailable::Frozen)?;
         match self.ledger.append(event) {
             Ok(record) => {
                 let ended = self.outage.lock().ok().and_then(|mut guard| guard.take());
@@ -245,6 +282,9 @@ impl AppState {
 
     /// 进入或延续降级窗口；每次拒绝计数加一（有界补记落私有库，失败不影响拒绝本身）。
     pub fn enter_outage(&self, reason: &str) -> AuditUnavailable {
+        let Ok(_operation) = self.ledger.enter_operation() else {
+            return AuditUnavailable::Frozen;
+        };
         let mut guard = match self.outage.lock() {
             Ok(guard) => guard,
             Err(poisoned) => poisoned.into_inner(),
@@ -255,7 +295,7 @@ impl AppState {
             Outage { id }
         });
         let _ = self.store.record_outage_denial(&outage.id);
-        AuditUnavailable {
+        AuditUnavailable::Outage {
             outage_id: outage.id.clone(),
         }
     }

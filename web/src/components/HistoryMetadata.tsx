@@ -3,6 +3,8 @@ import '../styles/history.css';
 
 function actor(value: HistoryActor | null) {
   if (value === null) return '未知';
+  if (value.kind === 'agent')
+    return `AI · ${value.agent_type} · ${value.instance_id}${value.task_id ? ` · 任务 ${value.task_id}` : ''}${value.attempt_id ? ` · 尝试 ${value.attempt_id}` : ''}`;
   return value.kind === 'obsidian'
     ? 'Obsidian'
     : `人侧会话 · ${value.issuer} · ${value.subject}`;

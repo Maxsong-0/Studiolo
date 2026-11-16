@@ -13,6 +13,12 @@ pub enum PolicyError {
     /// SQLite 操作失败；不回显底层路径。
     #[error("策略私有库不可用")]
     StoreUnavailable,
+    /// 写屏障、其他写者或导出截止时间阻止了本次操作；调用方可稍后重试。
+    #[error("策略私有库忙，请稍后重试")]
+    Busy,
+    /// checkpoint 目标必须是尚无文件的私有目录，不收养既有库。
+    #[error("策略 checkpoint 目标不可用")]
+    CheckpointTarget,
     /// kind 不是 rules / skills / capability_set。
     #[error("策略母本类别无效")]
     InvalidKind,

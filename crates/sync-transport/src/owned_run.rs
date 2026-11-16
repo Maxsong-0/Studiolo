@@ -10,9 +10,11 @@ pub mod state;
 pub mod tickets;
 pub mod types;
 
+mod checkpoint;
 mod host_approval;
 mod lifecycle;
 mod owner;
+pub use checkpoint::FrozenTransport;
 mod quiescence;
 mod rebind;
 mod session;

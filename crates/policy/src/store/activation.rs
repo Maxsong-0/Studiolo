@@ -49,7 +49,7 @@ impl PolicyStore {
                 sql::update_desired(tx, id, DesiredStatus::Rejected, Some(&report), now, None)?;
                 return Err(PolicyError::ValidationFailed);
             }
-            let activation = publish(tx, &report, actor, now, Some(id), None)?;
+            let mut activation = publish(tx, &report, actor, now, Some(id), None)?;
             sql::update_desired(
                 tx,
                 id,
@@ -60,6 +60,8 @@ impl PolicyStore {
             )?;
             // 只取代比它早入库的；比它晚的（别的提交者交的）留着待处理，不悄悄作废谁的提议。
             queue::supersede(tx, &placement.older)?;
+            activation.superseded_desired_ids = placement.older;
+            activation.remaining_desired_ids = placement.later;
             Ok(activation)
         })
     }

@@ -44,6 +44,7 @@ pub(super) async fn run<T: Send + 'static>(
         .map_err(|_| Problem::busy())?;
     tokio::task::spawn_blocking(move || {
         let _permit = permit;
+        let _operation = plane.ledger.enter_operation().map_err(Problem::audit)?;
         principal.verify().map_err(Problem::session)?;
         operation(&plane, &principal)
     })

@@ -1,6 +1,7 @@
 //! 生产装配顺序的私有Seam测试；固定公钥Adapter不进入production构建。
 
 mod canonical;
+mod checkpoint;
 mod factors;
 mod fixture;
 mod repository;

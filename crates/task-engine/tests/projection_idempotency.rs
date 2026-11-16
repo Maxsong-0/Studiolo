@@ -379,6 +379,18 @@ impl studiolo_vault_broker::ArtifactStager for SealingBroker {
     ) -> Result<ArtifactCommit, BrokerError> {
         studiolo_vault_broker::ArtifactStager::load_staged_artifact_commit(&self.inner, pointer)
     }
+    fn staged_reference(
+        &self,
+        plan: &ArtifactCommit,
+    ) -> Result<studiolo_vault_broker::StagedArtifactCommit, BrokerError> {
+        studiolo_vault_broker::ArtifactStager::staged_reference(&self.inner, plan)
+    }
+    fn discard_staged_artifact_commit(
+        &self,
+        pointer: &studiolo_vault_broker::StagedArtifactCommit,
+    ) -> Result<(), BrokerError> {
+        studiolo_vault_broker::ArtifactStager::discard_staged_artifact_commit(&self.inner, pointer)
+    }
 }
 
 impl studiolo_vault_broker::ArtifactStager for KeySquattingBroker {
@@ -393,5 +405,17 @@ impl studiolo_vault_broker::ArtifactStager for KeySquattingBroker {
         pointer: &studiolo_vault_broker::StagedArtifactCommit,
     ) -> Result<ArtifactCommit, BrokerError> {
         studiolo_vault_broker::ArtifactStager::load_staged_artifact_commit(&self.inner, pointer)
+    }
+    fn staged_reference(
+        &self,
+        plan: &ArtifactCommit,
+    ) -> Result<studiolo_vault_broker::StagedArtifactCommit, BrokerError> {
+        studiolo_vault_broker::ArtifactStager::staged_reference(&self.inner, plan)
+    }
+    fn discard_staged_artifact_commit(
+        &self,
+        pointer: &studiolo_vault_broker::StagedArtifactCommit,
+    ) -> Result<(), BrokerError> {
+        studiolo_vault_broker::ArtifactStager::discard_staged_artifact_commit(&self.inner, pointer)
     }
 }

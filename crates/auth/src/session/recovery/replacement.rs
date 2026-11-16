@@ -23,6 +23,7 @@ impl Recovery {
         prepared: &PreparedTotpFactor,
         otp: TotpCode,
     ) -> Result<Totp, SessionError> {
+        let _operation = self.sessions.enter_operation()?;
         let ticket = self.prepare(request, Kind::Replace)?;
         let operation = self.sessions.run(|db, observed| {
             if let Err(error) = self.recheck(db, observed, request, &ticket, ticket.deadline)? {

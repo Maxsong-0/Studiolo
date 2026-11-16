@@ -5,7 +5,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { App } from '../App';
 import { SessionBoundary } from '../SessionBoundary';
 import { REVISIT_INTERVAL_MS } from '../sessionClient';
-import { jsonResponse } from './fixtures';
+import { COCKPIT_READY, jsonResponse } from './fixtures';
 import {
   deferred,
   mockSessions,
@@ -36,7 +36,9 @@ describe('会话入口', () => {
     await act(async () =>
       pending.resolve(jsonResponse({ authentication: 'local' })),
     );
-    expect(await screen.findByRole('table')).toBeInTheDocument();
+    expect(
+      await screen.findByRole('heading', COCKPIT_READY),
+    ).toBeInTheDocument();
     expect(
       screen.queryByRole('button', { name: '账户与会话' }),
     ).not.toBeInTheDocument();
@@ -57,7 +59,9 @@ describe('会话入口', () => {
       '/api/v1/session',
     ]);
     await user.click(screen.getByRole('button', { name: '登录工作台' }));
-    expect(await screen.findByRole('table')).toBeInTheDocument();
+    expect(
+      await screen.findByRole('heading', COCKPIT_READY),
+    ).toBeInTheDocument();
     const [, request] = fetchMock.mock.calls.find(
       ([input, init]) =>
         input === '/api/v1/sessions' && init?.method === 'POST',
@@ -83,7 +87,7 @@ describe('会话入口', () => {
         : sessionResponse(input, init),
     );
     render(boundary());
-    await screen.findByRole('table');
+    await screen.findByRole('heading', COCKPIT_READY);
     expect(
       fetchMock.mock.calls.some(([input]) => input === '/api/v1/session'),
     ).toBe(false);
@@ -101,7 +105,9 @@ describe('会话入口', () => {
     expect(
       screen.queryByRole('button', { name: '登录工作台' }),
     ).not.toBeInTheDocument();
-    expect(screen.queryByRole('table')).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole('heading', COCKPIT_READY),
+    ).not.toBeInTheDocument();
   });
 
   it.each([
@@ -117,7 +123,9 @@ describe('会话入口', () => {
       render(boundary());
       await screen.findByRole('alert');
       expect(fetchMock).toHaveBeenCalledTimes(1);
-      expect(screen.queryByRole('table')).not.toBeInTheDocument();
+      expect(
+        screen.queryByRole('heading', COCKPIT_READY),
+      ).not.toBeInTheDocument();
       expect(
         screen.queryByRole('button', { name: '登录工作台' }),
       ).not.toBeInTheDocument();
@@ -137,7 +145,9 @@ describe('会话入口', () => {
       await screen.findByRole('button', { name: '验收只读工作台，查看原文' }),
     );
     expect(await screen.findByRole('alert')).toHaveTextContent('登录已失效');
-    expect(screen.queryByRole('table')).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole('heading', COCKPIT_READY),
+    ).not.toBeInTheDocument();
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
     expect(screen.queryByText('星舟')).not.toBeInTheDocument();
     expect(
@@ -164,9 +174,13 @@ describe('会话入口', () => {
       '操作可能已生效',
     );
     window.dispatchEvent(new Event('focus'));
-    expect(screen.queryByRole('table')).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole('heading', COCKPIT_READY),
+    ).not.toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: '核对登录状态' }));
-    expect(await screen.findByRole('table')).toBeInTheDocument();
+    expect(
+      await screen.findByRole('heading', COCKPIT_READY),
+    ).toBeInTheDocument();
     expect(
       fetchMock.mock.calls.filter(([, init]) => init?.method === 'POST'),
     ).toHaveLength(1);
@@ -175,7 +189,7 @@ describe('会话入口', () => {
   it('一天内切回页面不再核对：不清内容、不重挂、不发核对请求（ADR-022）', async () => {
     const fetchMock = mockSessions();
     render(boundary());
-    const table = await screen.findByRole('table');
+    const heading = await screen.findByRole('heading', COCKPIT_READY);
     const before = fetchMock.mock.calls.length;
     for (const state of ['hidden', 'visible'] as const) {
       Object.defineProperty(document, 'visibilityState', {
@@ -187,15 +201,15 @@ describe('会话入口', () => {
       );
     }
     await act(async () => window.dispatchEvent(new Event('focus')));
-    // 同一个表格节点还在：没有卸载重挂，也没有任何新的请求。
-    expect(screen.getByRole('table')).toBe(table);
+    // 同一个标题节点还在：没有卸载重挂，也没有任何新的请求。
+    expect(screen.getByRole('heading', COCKPIT_READY)).toBe(heading);
     expect(fetchMock.mock.calls.length).toBe(before);
   });
 
   it('超过一天再切回页面才核对，过期会话清除已展示内容', async () => {
     const fetchMock = mockSessions();
     render(boundary());
-    await screen.findByRole('table');
+    await screen.findByRole('heading', COCKPIT_READY);
     fetchMock.mockImplementation(async (input, init) =>
       input === '/api/v1/session'
         ? jsonResponse({}, 401)
@@ -204,18 +218,20 @@ describe('会话入口', () => {
     const start = Date.now();
     vi.spyOn(Date, 'now').mockReturnValue(start + REVISIT_INTERVAL_MS - 1000);
     await act(async () => window.dispatchEvent(new Event('focus')));
-    expect(screen.getByRole('table')).toBeInTheDocument();
+    expect(screen.getByRole('heading', COCKPIT_READY)).toBeInTheDocument();
     vi.spyOn(Date, 'now').mockReturnValue(start + REVISIT_INTERVAL_MS + 1000);
     await act(async () => window.dispatchEvent(new Event('focus')));
     await screen.findByRole('button', { name: '登录工作台' });
-    expect(screen.queryByRole('table')).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole('heading', COCKPIT_READY),
+    ).not.toBeInTheDocument();
   });
 
   it('跨标签页会话变化重新核对，旧授权不保留', async () => {
     vi.stubGlobal('BroadcastChannel', undefined);
     const fetchMock = mockSessions();
     render(boundary());
-    await screen.findByRole('table');
+    await screen.findByRole('heading', COCKPIT_READY);
     fetchMock.mockImplementation(async (input, init) =>
       input === '/api/v1/session'
         ? jsonResponse({}, 401)
@@ -230,7 +246,9 @@ describe('会话入口', () => {
       ),
     );
     await waitFor(() =>
-      expect(screen.queryByRole('table')).not.toBeInTheDocument(),
+      expect(
+        screen.queryByRole('heading', COCKPIT_READY),
+      ).not.toBeInTheDocument(),
     );
     await screen.findByRole('button', { name: '登录工作台' });
   });

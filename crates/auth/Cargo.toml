@@ -19,6 +19,8 @@ test-support = []
 production = []
 
 [dependencies]
+studiolo-core.workspace = true
+studiolo-checkpoint-storage.workspace = true
 studiolo-audit-ledger.workspace = true
 jsonwebtoken.workspace = true
 reqwest.workspace = true

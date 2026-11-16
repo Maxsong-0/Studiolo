@@ -14,7 +14,31 @@ use studiolo_supply::{
 /// 外壳据此把它当授权拒绝而不是会话失效。
 pub(crate) const POLICY_DENIED_PREFIX: &str = "策略拒绝：";
 
+/// 等备份冻结放行的上限与重试间隔；和同步侧 `enter_operation` 的 5 秒、5 毫秒一致。
+const OPERATION_ADMISSION_WAIT: std::time::Duration = std::time::Duration::from_secs(5);
+const OPERATION_ADMISSION_RETRY: std::time::Duration = std::time::Duration::from_millis(5);
+
 impl AgentSession {
+    /// 取一次完整操作的准入许可；备份冻结正占着时最多等 5 秒。
+    ///
+    /// 在异步侧短睡重试，不把等待交给阻塞线程池：进程启动时锁定了全部内存，
+    /// 每多起一条线程，它的栈和堆区就一直常驻（BUG-034），而冻结期间每个请求都会来等。
+    pub(super) async fn begin_operation(
+        &self,
+    ) -> Result<studiolo_audit_ledger::OperationPermit, McpError> {
+        let refused = || McpError::internal_error("备份冻结或操作准入不可用，请稍后重试", None);
+        let deadline = tokio::time::Instant::now() + OPERATION_ADMISSION_WAIT;
+        loop {
+            match self.state.ledger.try_enter_operation() {
+                Ok(Some(permit)) => return Ok(permit),
+                Ok(None) if tokio::time::Instant::now() < deadline => {
+                    tokio::time::sleep(OPERATION_ADMISSION_RETRY).await;
+                }
+                Ok(None) | Err(_) => return Err(refused()),
+            }
+        }
+    }
+
     /// 新会话：实例在 `initialize` 时铸造。
     pub fn new(state: Arc<AppState>) -> Self {
         Self {
@@ -79,6 +103,7 @@ impl AgentSession {
         agent_type: &str,
         parent: Option<&str>,
     ) -> Result<String, McpError> {
+        let _operation = self.begin_operation().await?;
         let instance = if let Some(parent) = parent {
             if self.state.policy.is_none() {
                 return Err(McpError::invalid_request("子实例需要有效策略平面", None));
@@ -110,13 +135,7 @@ impl AgentSession {
         let registered = audit::instance_registered(actor)
             .map_err(|_| McpError::internal_error("审计事件构造失败", None))?;
         let instructions = match self.state.audit(registered) {
-            Err(outage) => Err(McpError::internal_error(
-                format!(
-                    "审计不可用：outage {}。本次会话所有读取与写入全部拒绝，不提供路牌；请稍后重试。",
-                    outage.outage_id
-                ),
-                None,
-            )),
+            Err(outage) => Err(McpError::internal_error(outage.handshake_refusal(), None)),
             Ok(_) => match self.grant_for(&instance, "handshake") {
                 Ok(grant) => self.signpost(&grant).await,
                 Err(error) => Err(error),

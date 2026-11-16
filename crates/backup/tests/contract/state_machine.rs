@@ -147,7 +147,7 @@ fn an_interrupted_upload_becomes_result_unknown_and_stays_out_of_both_terminals(
 fn an_unknown_result_is_reconciled_only_under_its_original_job_key() {
     let mut job = through_upload();
     job.advance(JobEvent::ResultUnknown {
-        stage: UnknownStage::FinalManifestAck,
+        stage: UnknownStage::Uploading,
     })
     .expect("unknown");
 
@@ -176,7 +176,7 @@ fn an_unknown_result_is_reconciled_only_under_its_original_job_key() {
 fn a_lost_ack_whose_object_is_absent_remotely_settles_as_a_failure() {
     let mut job = through_upload();
     job.advance(JobEvent::ResultUnknown {
-        stage: UnknownStage::FinalManifestAck,
+        stage: UnknownStage::Uploading,
     })
     .expect("unknown");
 

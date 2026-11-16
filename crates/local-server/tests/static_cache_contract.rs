@@ -20,7 +20,7 @@ const IMMUTABLE: &str = "public, max-age=31536000, immutable";
 const NOTE: &str = "---\nlifecycle: 活跃\n---\n# 缓存项目\n";
 /// 无 nonce 响应的完整 CSP，逐字锁定；长缓存不得放宽任何安全头。
 const STRICT_CSP: &str = "default-src 'none'; script-src 'self'; style-src 'self'; \
-    connect-src 'self' http://127.0.0.1:*; img-src 'self'; font-src 'self'; base-uri 'none'; \
+    connect-src 'self' http://127.0.0.1:*; img-src 'self' blob:; font-src 'self'; base-uri 'none'; \
     form-action 'none'; frame-ancestors 'none'; object-src 'none'";
 
 /// 形如真实 Vite 产物的哈希文件（脚本、样式、SVG 图标、woff2 字体）：`名字-` 后紧跟恰好 8 位

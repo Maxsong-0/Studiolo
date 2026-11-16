@@ -1,18 +1,23 @@
 //! 工作台、显式人侧正文会话与本机事务维护；canonical 写入始终交给唯一 Broker。
 
 mod assets;
+mod attachments;
 mod auth_http;
 pub mod backup;
 pub mod board;
 mod bootstrap;
 mod canonical;
+mod changes;
+pub mod checkpoint;
 mod coordinator;
+mod deriver;
 mod editing;
 mod file_operation_audit;
 mod file_operations;
 pub mod health;
 mod history;
 pub mod maintenance;
+pub mod policy_checkpoint;
 pub mod policy_http;
 mod project_cargo;
 mod project_operations;
@@ -29,7 +34,7 @@ mod tree;
 mod unix_ingress;
 mod view;
 mod watcher;
-pub use coordinator::CanonicalWorkbench;
+pub use coordinator::{CanonicalWorkbench, FrozenWorkbench};
 pub use policy_http::{PolicyPlane, with_policy_plane};
 pub use project_repository::{ProjectRepository, with_project_repository};
 pub use unix_ingress::{BoundUnixIngress, IngressError, PreparedUnixIngress};
@@ -87,7 +92,11 @@ pub enum LocalError {
 
 #[derive(Clone)]
 enum Source {
-    Replica(Arc<ReadOnlyVault>),
+    /// 只读副本；重扫与建模都交给它自己的专用派生线程（见 `deriver`）。
+    Replica {
+        vault: Arc<ReadOnlyVault>,
+        deriver: Arc<deriver::Deriver>,
+    },
     Writer(Arc<CanonicalWorkbench>),
 }
 
@@ -186,3 +195,7 @@ mod refresh_tests;
 #[cfg(test)]
 #[path = "../tests/coordinator/private.rs"]
 mod coordinator_tests;
+
+#[cfg(test)]
+#[path = "../tests/deriver/private.rs"]
+mod deriver_tests;

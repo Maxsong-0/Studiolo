@@ -71,7 +71,7 @@ it('默认搜索不请求文件树；展开才读子目录，附件只显示文�
   expect(within(dialog).getByText(attachment.path)).toBeInTheDocument();
   expect(within(dialog).getByText('9007199254740993 字节')).toBeInTheDocument();
   expect(within(dialog).getByText('.pdf')).toBeInTheDocument();
-  expect(within(dialog).getByText(/不提供预览或下载/)).toBeInTheDocument();
+  expect(within(dialog).getByText(/附件超出网页读取上限/)).toBeInTheDocument();
   expect(container.querySelector('img')).toBeNull();
   expect(container.querySelector('a')).toBeNull();
   expect(fetchMock).toHaveBeenCalledTimes(3);

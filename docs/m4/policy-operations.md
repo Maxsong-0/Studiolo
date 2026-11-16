@@ -8,10 +8,12 @@
 先只读取得当前 `/etc/systemd/system/studiolo-agent.service` 原文和运行二进制 SHA-256；不要取 token 正文。
 
 ```bash
+# 准备器只要求绝对路径、单元文件本身不是链接、--output 尚不存在（scripts/prepare-m4-policy.py 的 prepare()），用系统临时目录即可
+OPS_TMP="$(cd "${TMPDIR:-/tmp}" && pwd -P)"
 python3 -B scripts/prepare-m4-policy.py \
-  --unit /private/tmp/observed-agent.service \
+  --unit "$OPS_TMP/observed-agent.service" \
   --binary-sha <刚核验的SHA-256> \
-  --output /private/tmp/studiolo-m4-policy-ops
+  --output "$OPS_TMP/studiolo-m4-policy-ops"
 ```
 
 准备器只接受当前 maxsong 的两个目录白名单、4400、私有数据与派生索引等已知单元形状。

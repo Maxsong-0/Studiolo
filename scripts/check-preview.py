@@ -21,7 +21,7 @@ GUIDE = "项目/Studiolo/01-框架/搜索说明.md"
 PROJECTS = {"项目/Studiolo", "项目/纸页", "项目/山野笔记", "项目/灵感盒"}
 ATTACHMENTS = "附件演示/仅附件"
 EMPTY_DIRECTORY = "附件演示/空目录"
-ATTACHMENT_NAMES = {"关系画布.canvas", "不会执行的页面.html", "表格 & 说明.csv"}
+ATTACHMENT_NAMES = {"关系画布.canvas", "不会执行的页面.html", "表格 & 说明.csv", "像素.png", "伪装成图片.png", "说明.txt"}
 MAX_RESPONSE = 8 * 1024 * 1024
 
 
@@ -67,23 +67,26 @@ class Checks:
             raise CheckFailed() from None
         print(f"{name}：通过")
 
-    def fetch(self, name, path, status=200, method="GET", headers=None, as_json=False):
+    def fetch(self, name, path, status=200, method="GET", headers=None, as_json=False, expected_headers=None):
         """把一次请求记作一项检查：状态码与大小符合预期才显式返回 True，响应另行交回调用方继续判定。"""
         response = None
 
         def operation():
             nonlocal response
-            response = self.request(path, status, method, headers, as_json)
+            response = self.request(path, status, method, headers, as_json, expected_headers)
             return True
 
         self.run(name, operation)
         return response
 
-    def request(self, path, status=200, method="GET", headers=None, as_json=False):
+    def request(self, path, status=200, method="GET", headers=None, as_json=False, expected_headers=None):
         connection = http.client.HTTPConnection("127.0.0.1", self.port, timeout=10)
         try:
             connection.request(method, path, headers=headers or {})
             response = connection.getresponse()
+            for name, expected in (expected_headers or {}).items():
+                if response.getheader(name, "") != expected:
+                    raise CheckFailed()
             body = response.read(MAX_RESPONSE + 1)
             if response.status != status or len(body) > MAX_RESPONSE:
                 raise CheckFailed()
@@ -157,7 +160,7 @@ def check_tree(checks, generation):
     folders = tree_page(checks, "附件演示目录", "附件演示", generation)
     checks.run("空目录与纯附件目录可见", lambda: {
         (item["name"], item["kind"], item["child_count"]) for item in folders["entries"]
-    } == {("仅附件", "directory", 3), ("空目录", "directory", 0)})
+    } == {("仅附件", "directory", len(ATTACHMENT_NAMES)), ("空目录", "directory", 0)})
     empty = tree_page(checks, "空目录", EMPTY_DIRECTORY, generation)
     checks.run("空目录无隐藏占位文件", lambda: empty["entries"] == [])
     files = tree_page(checks, "纯附件目录", ATTACHMENTS, generation)
@@ -173,6 +176,16 @@ def check_tree(checks, generation):
     attachment = ATTACHMENTS + "/不会执行的页面.html"
     checks.fetch("附件无正文接口", api("document", path=attachment, generation=generation), 404)
     checks.fetch("附件无静态下载", "/" + quote(attachment, safe="/"), 404)
+    for name, mime in [
+            ("不会执行的页面.html", "application/octet-stream"),
+            ("表格 & 说明.csv", "text/plain; charset=utf-8"),
+            ("像素.png", "image/png"), ("伪装成图片.png", "application/octet-stream")]:
+        result = checks.fetch("认证附件读取", api("attachment", path=ATTACHMENTS + "/" + name, generation=generation),
+                              expected_headers={"Content-Security-Policy": "default-src 'none'; sandbox; frame-ancestors 'none'",
+                                                "Cache-Control": "no-store, no-transform", "X-Content-Type-Options": "nosniff",
+                                                "Accept-Ranges": "none"})
+        checks.run("附件字节类型", lambda: result[0] == mime and bool(result[1]))
+
 
 
 def exercise(checks):

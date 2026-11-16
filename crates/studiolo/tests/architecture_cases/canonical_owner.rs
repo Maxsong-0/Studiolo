@@ -147,11 +147,14 @@ fn canonical_router_receives_a_completed_owner_and_keeps_legacy_sources_distinct
         );
     }
     let legacy = compact(&fs::read_to_string(root.join("routing.rs")).unwrap());
-    assert!(legacy.contains("Source::Replica(Arc::new(vault))"));
+    assert!(legacy.contains("letvault=Arc::new(vault)"));
+    assert!(legacy.contains("letderiver=Arc::new(Deriver::start()?)"));
+    assert!(legacy.contains("deriver.run_blocking(move|on|load(&first,1,on))??"));
+    assert!(legacy.contains("Source::Replica{vault,deriver}"));
     assert!(legacy.contains("canonical.map(CanonicalSource::Reader)"));
     let refresh = compact(&fs::read_to_string(root.join("refresh.rs")).unwrap());
     assert!(refresh.contains("Source::Writer(workbench)=>workbench.refresh().await"));
-    assert!(refresh.contains("Source::Replica(vault)=>"));
+    assert!(refresh.contains("Source::Replica{vault,deriver}=>replica(state,vault,deriver).await"));
     let owner = compact(&fs::read_to_string(root.join("coordinator.rs")).unwrap());
     let preparation =
         compact(&fs::read_to_string(root.join("coordinator/preparation.rs")).unwrap());

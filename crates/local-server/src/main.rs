@@ -58,6 +58,9 @@ async fn run() -> Result<(), String> {
              源码白名单不自动跟随mod/include，不执行代码或宏，不解析调用目标。\n\
              文档代次与仓库观测时间分别标识；未绑定项目显示未核验。"
         );
+        println!(
+            "\n接入方列表：--policy-data </绝对路径/策略库> --agent-data </绝对路径/身份库>；需要会话入口。\n身份库只读、必须已存在且与内容/静态资源/其它私有目录隔离；同给 --board-agent-data 时两值必须一致。"
+        );
         return Ok(());
     };
     startup::PreparedServer::prepare(options)

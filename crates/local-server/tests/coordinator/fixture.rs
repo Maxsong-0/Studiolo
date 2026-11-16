@@ -21,6 +21,11 @@ pub(super) struct Fixture {
 
 impl Fixture {
     pub fn new() -> Self {
+        Self::with_notes(&[("note.md".to_owned(), "# 原始虚构内容\n".into())])
+    }
+
+    /// 同 [`Fixture::new`]，库根下放调用方给的虚构笔记（文件名、正文）。
+    pub fn with_notes(notes: &[(String, Vec<u8>)]) -> Self {
         let temp = tempfile::tempdir().unwrap();
         let root = temp.path().canonicalize().unwrap();
         for name in ["config", "vault", "data", "assets", "auth", "audit"] {
@@ -28,7 +33,9 @@ impl Fixture {
             fs::create_dir(&path).unwrap();
             fs::set_permissions(&path, fs::Permissions::from_mode(0o700)).unwrap();
         }
-        fs::write(root.join("vault/note.md"), "# 原始虚构内容\n").unwrap();
+        for (name, body) in notes {
+            fs::write(root.join("vault").join(name), body).unwrap();
+        }
         let config = root.join("config/owner.json");
         fs::write(&config, serde_json::to_vec(&serde_json::json!({
             "version":1, "auth_directory":root.join("auth"), "audit_directory":root.join("audit"),

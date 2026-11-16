@@ -1,22 +1,38 @@
-# 健康页第六节「双向 Bridge」契约（`GET /api/v1/health`）
+# 同步健康与人工账号配额契约（`GET /api/v1/health`）
 
-T-132 P1（ADR-025 D11），2026-09-23。本文只讲 `/api/v1/health` 响应里与双向 Bridge 平面有关的三处：
-第六节 `sync-bridge`、`owner-liveness` 新增的 `sync-transport` 回执、`sync-quota` 的正文后缀。
+T-132 P1（ADR-025 D11），2026-09-23；T-205 于 2026-11-13 补齐只读界面。本文记录同步状态、
+`sync-transport` 活性回执、镜像范围配额和人工账号配额。
 入口、鉴权与整体三态规则不变，见 [health-and-alerting](../m2/health-and-alerting.md) §2、§8、§10。
 实现位置：
 
 - 判定：`crates/observability/src/health/bridge.rs`（`BridgeEvidence`／`bridge_section`），聚合在 `aggregate.rs`。
 - 证据来源：`crates/local-server/src/sync_plane/health.rs`（`PlaneHealth`，实现 `BridgeHealthProbe`），
   组合根接线 `crates/local-server/src/startup/health_input.rs`。
-- 前端解码：`web/src/healthApi.ts` 已接受任意 `code`（`title` 缺省回退为 `code`，`state` 无法识别一律降到
-  `unknown`），因此新节不需要改解码器；展示由 T-159 之后接，本轮不改 `web/**`。
+- 前端解码：`web/src/healthApi.ts`、`web/src/health/model.ts`；结构化明细在 `health/BridgeDetails.tsx`。
+  驾驶舱「双向同步」格读取 `sync-bridge` 状态，不从文案提取秒数。
 
-## 1. 响应形状不变
+## 1. 响应形状
 
-`sections` 仍是封闭数组，每项 `{code, title, state, detail}`；本轮把长度从五固定为**六**，新节排在最后。
-`state` 仍只有 `normal`／`degraded`／`unknown`，整体 `overall` 取最重一节，`evidence_complete`
-只有六节都不是 `unknown` 才为真。`detail` 仍由 `HealthSection::new` 在构造期排除 `/`、`\`、`@`、控制字符
-与超过 200 字符的正文，因此不会出现路径、主机名或身份。
+顶层为 `{overall, evidence_complete, sections, bridge, manual_sync_quota}`。生产健康页使用同一次
+`EvidenceSnapshot`，七项检查中新增 `manual-sync-quota`。`bridge` 未装配时为 `null`，否则为下面的
+封闭对象；每项未取得的证据单独为 `null`。已知故障时仍展示其他已知明细。
+
+| 字段 | 形状 |
+|---|---|
+| `last_batch` | `null` 或 `{sequence, closed_at}`；序号为 u64 十进制字符串，时刻为 UTC RFC3339 或 `null` |
+| `fused` / `quiescence_valid` / `config_matches` | 布尔或 `null` |
+| `unknown_jobs` / `conflict_copies` / `mirror_bytes` | u64 十进制字符串或 `null`，避免浏览器整数精度丢失 |
+| `last_exit` | `clean` / `non_zero` / `signal` / `deadline_exceeded` / `owner_stopped` / `unconfirmed` / `null` |
+| `recovery` | `idle` / `forced_mirror_remote` / `backoff` / `null` |
+| `residue_guard` | `clear` / `blocked` / `null` |
+| `mode` | `mirror-remote` / `bidirectional` / `null` |
+
+`sections` 每项仍是 `{code, title, state, detail}`。`state` 只有 `normal`／`degraded`／`unknown`，
+整体取最重一项，全部证据已知才可标 `evidence_complete`。`detail` 的构造期脱敏规则不变。
+明细不包含路径、凭证、远端地址、主机名、stderr 或身份。
+
+前端保留旧三字段健康响应的兼容读取；出现结构化字段时严格校验闭集、u64、时间和结论一致性。
+重复检查项、缺字段、多余字段、未知枚举或与明细矛盾的正常结论均不能显示正常；已知降级项仍保留。
 
 ## 2. 第六节 `sync-bridge`
 
@@ -96,3 +112,23 @@ T-132 P1（ADR-025 D11），2026-09-23。本文只讲 `/api/v1/health` 响应里
   三组标签、配额后缀、公开摘要。
 - `crates/local-server/src/health/tests/probe.rs`、`src/sync_plane/health/tests.rs`、
   `src/startup/health_input.rs`（`tests`）：探针接线、回填语义、七成预警。
+
+## 6. 人工账号配额（T-205）
+
+`sync-quota` 标题改为「镜像范围配额」，仍沿用 §4 的读数与准入规则。新增 `manual-sync-quota`
+仅判断配置中的人工记录，不改变写入准入，不主动读取或修改 Obsidian 账号。
+
+`manual_sync_quota` 未配置时为 `null`；配置后固定八字段：`account_limit_bytes`、`used_bytes_manual`
+（u64 十进制字符串）、`recorded_at`、`as_of`（UTC RFC3339 或 `null`）、`warning_percent: 70`、
+`max_age_seconds: 86400`、`state`、`reason`。两项时刻分别是人工记录时刻与本次快照时刻。
+
+判定按顺序：上限 0 → `unknown/invalid`；时刻无效、未来或差值溢出 → `unknown/clock`；
+记录超过 24 小时 → `unknown/stale`；记录用量大于上限 → `degraded/exceeded`；
+达到 70%（含等号）→ `degraded/warning`；其他 → `normal/within`。缺记录的检查项为未知。
+乘法使用 u128，浏览器复核使用 BigInt；不丢失 u64 最大值。
+
+健康浮层展示人工用量、上限、比例、记录时间及更新提示，并明确「实时账号用量未知」。
+镜像字节另列且标「非账号用量」。明细触点最小 44px，小于 600px 改单列。
+
+新增契约：`local-server/src/health/tests/bridge_details.rs` 与 `web/src/test/healthBridge.test.tsx`，
+覆盖七成边界、过期／未来时钟、整数上限、闭集及矛盾结论；启动、原健康和驾驶舱契约同步更新。

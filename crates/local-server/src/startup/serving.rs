@@ -1,6 +1,6 @@
 //! 最后复核并选择一个监听器；因子模式不隐式留下TCP旁路。
 
-use super::{PreparedServer, StartupError, canonical_input};
+use super::{PreparedServer, StartupError, canonical_input, checkpoint_input};
 use std::{future::Future, net::Ipv4Addr, sync::Arc};
 use studiolo_local_server::BoundUnixIngress;
 use tokio::signal::unix::{Signal, SignalKind, signal};
@@ -44,7 +44,10 @@ impl PreparedServer {
         let listener = tokio::net::TcpListener::bind((Ipv4Addr::LOCALHOST, self.port))
             .await
             .map_err(|_| StartupError::Listen)?;
-        Ok((listener, self.app))
+        Ok((
+            listener,
+            checkpoint_input::attach(self.app, self.checkpoint),
+        ))
     }
 
     pub(super) fn bind_unix(self) -> Result<(BoundUnixIngress, axum::Router), StartupError> {
@@ -54,7 +57,10 @@ impl PreparedServer {
             .ok_or(StartupError::Configuration)?
             .bind()
             .map_err(|_| StartupError::Ingress)?;
-        Ok((listener, self.app))
+        Ok((
+            listener,
+            checkpoint_input::attach(self.app, self.checkpoint),
+        ))
     }
 
     pub(crate) async fn serve(self) -> Result<(), StartupError> {

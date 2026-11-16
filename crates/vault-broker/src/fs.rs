@@ -6,6 +6,7 @@ mod components;
 mod rooted;
 
 pub(crate) use components::collision_component_key;
+pub(crate) use rooted::is_temporary_name;
 
 use std::{
     io::Read,

@@ -41,15 +41,15 @@ studiolo-vault-admin initialize \
 
 这只建立快照当时的 canonical 正文。后续原 Obsidian 文件变化不会自动进入该库；持续同步必须另行配置和验收。黑板的消费者写权限仍由真实 effective policy、身份和 L3 发布裁决，本 CLI 不批准这些权限。
 
-定向验收：
+定向验收（在哪跑按机器分：Mac 上每条前加 `scripts/test-linux.sh`，送到 `githubci` 跑；DGX 由主会话先按根 `README.md`「开发」段「DGX 本机跑」设好构建目录再直接跑；子 agent 不在本机跑。构建目录由这两种入口按工作树隔离，不再单独指定）：
 
 ```sh
-CARGO_TARGET_DIR=/private/tmp/studiolo-vault-admin-target cargo test --locked --offline -p studiolo-vault-admin
-cargo fmt -p studiolo-vault-admin -- --check
+cargo --locked test -p studiolo-vault-admin
+cargo --locked fmt -p studiolo-vault-admin -- --check
 ```
 
 真实 CLI 权限测试只在子进程设置继承 umask=0022，并逐项核对导入后 canonical/writer-data 的所有新目录 0700、新文件 0600。macOS 和 Linux 都默认执行，没有 ignored 分支。Linux 须沿用标准测试机/CI 的 unlimited MEMLOCK；加固失败使测试失败，不降级跳过：
 
 ```sh
-cargo test --locked --offline -p studiolo-vault-admin cli_overrides_inherited_umask
+cargo --locked test -p studiolo-vault-admin cli_overrides_inherited_umask
 ```

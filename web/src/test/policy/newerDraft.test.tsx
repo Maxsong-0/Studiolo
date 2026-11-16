@@ -7,6 +7,8 @@ import { ApiError } from '../../sessionHttp';
 import {
   HASH,
   desiredBody,
+  detailCell,
+  openTab,
   policyServer,
   type PolicyServer,
   type PolicyServerOptions,
@@ -60,7 +62,12 @@ function preview() {
 }
 
 /** 发布照发：回一份新版本（认证已在别处验过，这里只看界面怎么说）。 */
-function publishes(path: string, body: unknown) {
+function publishes(
+  path: string,
+  body: unknown,
+  superseded: string[] = [],
+  remaining: string[] = [],
+) {
   if (path === '/api/v1/policy/activate')
     return {
       activation: {
@@ -75,6 +82,8 @@ function publishes(path: string, body: unknown) {
         desired_id: (body as { desired_id: string }).desired_id,
         rollback_of: null,
         cleared_type_revocation: false,
+        superseded_desired_ids: superseded,
+        remaining_desired_ids: remaining,
         activated_by: 'owner',
       },
       audit_confirmed: true,
@@ -82,11 +91,13 @@ function publishes(path: string, body: unknown) {
   throw new ApiError('未知', 404);
 }
 
+/** 打开策略页的「待处理」：队列在左，选中草案的细节和动作结果在右。 */
 async function openPanel(options: PolicyServerOptions) {
   server = policyServer(options);
   const user = userEvent.setup();
   render(<PolicyBoundary />);
   await screen.findByRole('table', { name: '生效中的各项' });
+  await openTab(user, '待处理');
   return { user, server };
 }
 
@@ -113,6 +124,24 @@ const agentAfterOwner: PolicyServerOptions = {
 };
 
 describe('同一对象几份未发布草案（T-181）', () => {
+  it('确认期间草案变动：成功提示只用事务回执中的实际取代与保留数量', async () => {
+    const { user } = await openPanel({
+      ...twoRounds,
+      write: (path, body) =>
+        publishes(path, body, [], ['late-one', 'late-two']),
+    });
+    await user.click(picks()[0]);
+    await user.click(publishButton());
+    expect(preview()).toHaveTextContent('比它早的 1 份');
+    await user.click(
+      within(preview()).getByRole('button', { name: '确认发布' }),
+    );
+    const notice = await within(detailCell()).findByText(
+      /已发布为 v3.*同一对象更新的 2 份未发布草案照旧待处理/,
+    );
+    expect(notice).not.toHaveTextContent('已一并标为已取代');
+  });
+
   it('队列给每份写出草案号前 12 位并标「最新」「较早」；同名按钮靠描述区分', async () => {
     await openPanel(twoRounds);
     const items = queueItems();
@@ -144,7 +173,7 @@ describe('同一对象几份未发布草案（T-181）', () => {
   it('选中最新那份：先说会取代较早那份；执行预览写出完整草案号与「同时取代」；成功提示补一句', async () => {
     const { user, server } = await openPanel({
       ...twoRounds,
-      write: publishes,
+      write: (path, body) => publishes(path, body, [OLDER]),
     });
     await user.click(picks()[0]);
     expect(
@@ -170,7 +199,7 @@ describe('同一对象几份未发布草案（T-181）', () => {
       ]),
     );
     expect(
-      await within(queueCell()).findByText(
+      await within(detailCell()).findByText(
         /已发布为 v3.*同一对象比它早的未发布草案已一并标为已取代/,
       ),
     ).toHaveAttribute('role', 'status');
@@ -179,7 +208,7 @@ describe('同一对象几份未发布草案（T-181）', () => {
   it('更新的那份是别的提交者交的：较早那份只标「较早」、照样能发；预览红字写明它照旧待处理，成功提示也说', async () => {
     const { user, server } = await openPanel({
       ...agentAfterOwner,
-      write: publishes,
+      write: (path, body) => publishes(path, body, [], [NEWEST]),
     });
     const items = queueItems();
     expect(items[0]).toHaveTextContent('最新');
@@ -217,7 +246,7 @@ describe('同一对象几份未发布草案（T-181）', () => {
       ]),
     );
     expect(
-      await within(queueCell()).findByText(
+      await within(detailCell()).findByText(
         /已发布为 v3.*同一对象更新的 1 份未发布草案照旧待处理/,
       ),
     ).toHaveAttribute('role', 'status');
@@ -236,7 +265,7 @@ describe('同一对象几份未发布草案（T-181）', () => {
       desired: [proposal(NEWEST), desiredBody({ id: OLDER }), proposal(OLDEST)],
       newer: { [OLDER]: [NEWEST], [OLDEST]: [OLDER, NEWEST] },
       blocked: { [OLDEST]: [NEWEST] },
-      write: publishes,
+      write: (path, body) => publishes(path, body, [OLDEST], [NEWEST]),
     });
     const items = queueItems();
     expect(items[0]).toHaveTextContent('最新');
@@ -270,7 +299,7 @@ describe('同一对象几份未发布草案（T-181）', () => {
       ]),
     );
     expect(
-      await within(queueCell()).findByText(
+      await within(detailCell()).findByText(
         /已发布为 v3.*；同一对象比它早的未发布草案已一并标为已取代；同一对象更新的 1 份未发布草案照旧待处理/,
       ),
     ).toHaveAttribute('role', 'status');
@@ -311,7 +340,7 @@ describe('同一对象几份未发布草案（T-181）', () => {
     );
     // 校验报告里的扩大项提示也是 alert，按文字找发布失败那一句。
     expect(
-      await within(queueCell()).findByText(
+      await within(detailCell()).findByText(
         `没有发布：同一提交者还有更新的未发布草案（${NEWEST.slice(0, 12)}），只能发布其中最新的那一份；要发这份，先撤回更新的。`,
       ),
     ).toHaveAttribute('role', 'alert');
@@ -342,9 +371,9 @@ describe('同一对象几份未发布草案（T-181）', () => {
     blocked[OLDER] = [NEWEST];
     await user.click(screen.getByRole('button', { name: '重新校验' }));
     expect(
-      await within(queueCell()).findByText('已重新校验：已校验，可发布。'),
+      await within(detailCell()).findByText('已重新校验：已校验，可发布。'),
     ).toBeVisible();
-    expect(publishButton()).toBeDisabled();
+    await waitFor(() => expect(publishButton()).toBeDisabled());
     expect(
       screen.getByText(/同一提交者还有更新的未发布草案（01JZ00000BBB）/),
     ).toBeInTheDocument();

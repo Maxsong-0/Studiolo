@@ -31,13 +31,28 @@ pub(crate) fn apply(
             .insert(mutation.idempotency_key, (fingerprint, outcome.clone()));
         return outcome.result();
     }
+    let revision = Revision::compute(broker.vault_uuid, &mutation.path, &mutation.content);
+    let history = broker.change_history.prepare(
+        vec![crate::history::memory::Change {
+            path: mutation.path.clone(),
+            before: actual.zip(current.map(|v| v.len() as u64)),
+            after: Some((revision, mutation.content.len() as u64)),
+            kind: if actual.is_some() {
+                crate::ChangeKind::Replaced
+            } else {
+                crate::ChangeKind::Created
+            },
+        }],
+        None,
+    )?;
     if let (Some(bytes), Some(revision)) = (current, actual) {
         broker
             .history
             .entry(revision)
             .or_insert_with(|| bytes.clone());
     }
-    let revision = Revision::compute(broker.vault_uuid, &mutation.path, &mutation.content);
+    broker.history.insert(revision, mutation.content.clone());
+    broker.change_history.commit(history);
     broker
         .objects
         .insert(mutation.path.clone(), mutation.content);

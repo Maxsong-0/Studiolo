@@ -57,7 +57,8 @@ impl HealthEvidence for AssembledEvidence {
         if let Some(probe) = &self.bridge {
             snapshot.bridge = Some(probe.bridge());
             snapshot.liveness = vec![probe.liveness()];
-            snapshot.sync = sync_quota_verdict(probe.manual_quota(), probe.sync_usage());
+            snapshot.manual_sync_quota = probe.manual_quota();
+            snapshot.sync = sync_quota_verdict(snapshot.manual_sync_quota, probe.sync_usage());
         }
         snapshot
     }
@@ -265,10 +266,10 @@ mod tests {
     }
 
     #[test]
-    fn 六节结论一节不少且全部标为未知() {
+    fn 七节结论一节不少且全部标为未知() {
         let body = HealthBody::from_report(&AssembledEvidence { bridge: None }.snapshot().report());
 
-        assert_eq!(body.sections.len(), 6);
+        assert_eq!(body.sections.len(), 7);
         assert!(
             body.sections
                 .iter()

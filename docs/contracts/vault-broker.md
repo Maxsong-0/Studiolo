@@ -195,3 +195,10 @@ manifest。固定请求绑定 Vault、task/attempt/fence、审计 intent、raw/s
 Fs 沿既有 writer 身份与未决门禁，通过逐级安全目录句柄执行元数据 manifest-last 的原子
 安装与 fsync；Memory 提供相同幂等契约。回执只有逻辑 manifest 路径和 SHA-256，不能代表
 Gateway 私有 raw 的实际保留状态。完整字段与验收边界见 [Gateway 调用封存](../m6/gateway-seal.md)。
+
+
+## 内容变更索引（T-206，2026-11-13）
+
+Broker 新增 `list_changes(limit, cursor)`，以现有 L0 与成功终态提供跨路径元数据，包含录入
+可信 Agent 主体的批量提交和回滚。早期「changes 等到有 M1 消费者再设计」的延期由本任务接续；
+接口、水位和界面仍按 [变更流契约](change-feed.md) 中的实施状态分别追踪，不代表已部署。

@@ -8,13 +8,7 @@ use studiolo_supply::{
 };
 
 pub(super) fn degraded(outage: &AuditUnavailable) -> McpError {
-    McpError::internal_error(
-        format!(
-            "审计不可用（outage {}）：本次读写全部拒绝",
-            outage.outage_id
-        ),
-        None,
-    )
+    McpError::internal_error(format!("{}：本次读写全部拒绝", outage.reason()), None)
 }
 
 impl AgentSession {

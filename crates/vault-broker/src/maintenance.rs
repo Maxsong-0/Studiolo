@@ -1,5 +1,6 @@
 //! 离线 OS 维护的封闭决策：双审计确认、单持久槽，不授予应用身份。
 mod audit;
+pub(crate) mod checkpoint;
 mod model;
 mod prepare;
 mod record;

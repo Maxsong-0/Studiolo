@@ -20,6 +20,8 @@ fn activation() -> Activation {
         rollback_of: None,
         cleared_type_revocation: true,
         activated_by: "owner".into(),
+        superseded_desired_ids: vec!["01OLDER".into()],
+        remaining_desired_ids: vec!["01NEWER".into()],
     }
 }
 
@@ -49,6 +51,14 @@ fn activation_intent_and_outcome_share_one_id_and_carry_no_body() {
     let payload = records[1].event().payload().as_value();
     assert_eq!(payload["actor"], "owner");
     assert_eq!(payload["version"], 3);
+    assert_eq!(
+        payload["superseded_desired_ids"],
+        serde_json::json!(["01OLDER"])
+    );
+    assert_eq!(
+        payload["remaining_desired_ids"],
+        serde_json::json!(["01NEWER"])
+    );
     assert_eq!(payload["cleared_type_revocation"], true);
     assert!(payload.get("body").is_none());
     assert!(payload["agent_type"].is_null());

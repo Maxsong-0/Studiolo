@@ -1,10 +1,11 @@
-import { useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
 import { AppShell } from './components/AppShell';
 import { DocumentDialog } from './components/DocumentDialog';
 import { Filters } from './components/Filters';
-import type { Project, SourceLocation, View } from './types';
+import type { View } from './types';
 import { useEditorNavigation } from './useEditorNavigation';
+import { useReaderSource } from './useReaderSource';
 import { useViewLocation } from './useViewLocation';
 import { useWorkbench } from './useWorkbench';
 import { sortProjects } from './projectOrder';
@@ -20,8 +21,18 @@ import type { FileOperationsEntry } from './components/FileOperationsAccess';
 import { CommandEntry } from './shell/CommandEntry';
 import { StatusCapsule } from './shell/StatusCapsule';
 import { useHealthStatus } from './shell/useHealthStatus';
+import { collabPanel } from './collab/panels';
+import { KeyboardSheet } from './keys/KeyboardSheet';
+import { KeyScopeContext, useGlobalKeys } from './keys/useGlobalKeys';
+import {
+  AutoRefreshContext,
+  useAutoRefresh,
+  useAutoRefreshReader,
+} from './live/useAutoRefresh';
 import { pendingCount } from './cockpit/pending';
 import { useOverviewRead } from './cockpit/useOverviewRead';
+import { usePolicyPendingRead } from './cockpit/usePolicyPendingRead';
+import { PolicyChangedContext } from './policy/policyChanged';
 import { CockpitView } from './views/CockpitView';
 import { ProjectsView } from './views/ProjectsView';
 import { DocumentsView } from './views/DocumentsView';
@@ -30,34 +41,70 @@ import { RulesView } from './views/RulesView';
 import { PolicyView } from './views/PolicyView';
 
 export function App({ account }: { account?: ReactNode }) {
-  const { location, selectView, goTo } = useViewLocation();
+  const { location, selectView, select, goTo } = useViewLocation();
   const view = location.view;
   const [query, setQuery] = useState('');
   const [lifecycle, setLifecycle] = useState('');
-  const [source, setSource] = useState<SourceLocation | null>(null);
+  const {
+    source,
+    open: setSource,
+    close: closeSource,
+  } = useReaderSource(location, select);
   const [draftsOpen, setDraftsOpen] = useState(false);
   const [statusOpen, setStatusOpen] = useState(false);
-  // 顶栏「最近删除」入口：出现与否由文件操作接口决定，⌘K 面板据此收录「打开最近删除」。
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  // 「更多」菜单里的「最近删除」入口：出现与否由文件操作接口决定，⌘K 面板据此收录「打开最近删除」。
   const [fileOperations, setFileOperations] =
     useState<FileOperationsEntry | null>(null);
   const { count: draftCount } = useDraftCount();
   // 工作台先于本机健康发请求：认证名额只有两个（ADR-022），主内容排在前面。
   // 本机健康不依赖工作台快照：快照读不出来时，状态胶囊照样要能报出健康。
-  const { data, loading, error, refresh, refreshLatest } = useWorkbench();
+  const { data, loading, error, refresh, refreshLatest, revalidate } =
+    useWorkbench();
   const health = useHealthStatus();
-  // 跨项目黑板汇总全站只读这一份：快照到手时随同一次提交发出，每轮刷新结束重读（T-162）。
-  // 顶栏「驾驶舱 N」角标与驾驶舱巨号都用 pendingCount 从它和同一份快照算，任何时刻都相等；
-  // 驾驶舱经 props 拿同一份，不再另读，离开驾驶舱时角标照样含黑板里等你的任务。
+  // 跨项目黑板汇总与策略草案列表全站各只读一份：快照到手时随同一次提交发出，每轮刷新结束重读（T-162、T-195）。
+  // 顶栏「驾驶舱 N」角标与驾驶舱巨号都用 pendingCount 从这两份和同一份快照算，任何时刻都相等；
+  // 驾驶舱经 props 拿同样两份，不再另读，离开驾驶舱时角标照样含黑板里等你的任务和策略里等你的提案。
+  // 协作页的拓扑也用这一份汇总（T-196）：正在看拓扑时不等快照就读，快照读不出来也能看黑板；
+  // 首次读取快照的那一轮不算「刷新」，免得拓扑先读到一次、快照到手时又被清掉重读。
+  const onTopology =
+    view === 'collab' && collabPanel(location.panel) === 'topology';
   const overview = useOverviewRead({
+    ready: data !== null || onTopology,
+    refreshing: loading && data !== null,
+  });
+  const policyPending = usePolicyPendingRead({
     ready: data !== null,
     refreshing: loading,
   });
+  // 规则页、策略页写过策略平面之后（提交、校验、撤回、发布……），角标用的这一份跟着安静重读，
+  // 不必等人回到驾驶舱那一轮自动刷新（T-198）。没读成就留着上一次的，下一轮刷新再说。
+  const revalidatePolicyPending = policyPending.revalidate;
+  const policyChanged = useCallback(() => {
+    void revalidatePolicyPending(new AbortController().signal);
+  }, [revalidatePolicyPending]);
   const editor = useEditorNavigation(refreshLatest);
   const editorPath = editor.current?.path ?? null;
   const setEditorPath = editor.open;
   const palette = useCommandPalette(
     Boolean(data) && !source && !editorPath && !draftsOpen && !loading,
   );
+  // 自动刷新（T-196）：只在驾驶舱和协作拓扑上，而且没有开着会被打断的东西时才读。
+  // 阅读器和 ⌘K 面板按快照代次取键，底下换了快照会把它们整个重挂；编辑器和草稿架开着时人在干别的。
+  // 三路按主次登记：快照、黑板汇总、策略草案；驾驶舱自己的健康读取排在它们后面（CockpitView 登记）。
+  const auto = useAutoRefresh({
+    active:
+      (view === 'cockpit' || onTopology) &&
+      !source &&
+      !editorPath &&
+      !draftsOpen &&
+      !palette.open,
+    reading: loading,
+    failed: Boolean(error),
+  });
+  useAutoRefreshReader(auto, revalidate, 0);
+  useAutoRefreshReader(auto, overview.revalidate, 1);
+  useAutoRefreshReader(auto, policyPending.revalidate, 2);
   const projects = useMemo(() => sortProjects(data?.projects ?? []), [data]);
   const normalizedQuery = query.trim().toLocaleLowerCase();
   const filtered = projects.filter(
@@ -69,10 +116,6 @@ export function App({ account }: { account?: ReactNode }) {
         (lifecycle === '__unknown'
           ? !project.lifecycle.value
           : project.lifecycle.value === lifecycle)),
-  );
-  const visibleProjectIds = new Set(filtered.map((project) => project.id));
-  const actions = (data?.inbox ?? []).filter((action) =>
-    visibleProjectIds.has(action.project_id),
   );
   const lifecycles = [
     ...new Set(
@@ -92,7 +135,7 @@ export function App({ account }: { account?: ReactNode }) {
 
   function refreshSnapshot() {
     if (loading) return;
-    setSource(null);
+    closeSource();
     palette.close();
     refresh();
   }
@@ -109,12 +152,13 @@ export function App({ account }: { account?: ReactNode }) {
     window.scrollTo({ top: 0, left: 0, behavior: 'instant' });
   }
 
-  function enterProject(project: Project) {
-    goTo({ view: 'projects', panel: 'operations', project: project.root });
-    window.scrollTo({ top: 0, left: 0, behavior: 'instant' });
-  }
+  // 单键快捷键（T-197）：G 再按字母和点顶栏导航一样；「?」打开一览。各视图自己的键位经它登记（驾驶舱队列的 J／K／Enter／H）。
+  const keys = useGlobalKeys({
+    onGo: navigate,
+    onShowSheet: () => setShortcutsOpen(true),
+  });
 
-  // 驾驶舱「全部 N 个项目」：先清掉项目视图上次留下的筛选，入口写的总数与打开后看到的行数才对得上（T-117）。
+  // ⌘K 的「查看全部项目」：先清掉项目视图上次留下的筛选，打开后看到的才是全部（T-117）。
   function viewAllProjects() {
     setQuery('');
     setLifecycle('');
@@ -140,6 +184,7 @@ export function App({ account }: { account?: ReactNode }) {
     openDrafts: () => setDraftsOpen(true),
     openRecentlyDeleted: () => fileOperations?.open(),
     openStatus: () => setStatusOpen(true),
+    openShortcuts: () => setShortcutsOpen(true),
     focusTarget: (target) => {
       focusCommandTarget(target);
     },
@@ -156,12 +201,21 @@ export function App({ account }: { account?: ReactNode }) {
     />
   );
 
-  return (
+  // 「更多」上的标记：这两个入口原来常驻顶栏，自己就是提醒；收进菜单之后由这一句顶上（T-199）。
+  const toolsNote =
+    [
+      fileOperations?.pending ? '文件操作待核对' : null,
+      draftCount ? `草稿 ${draftCount}` : null,
+    ]
+      .filter((note) => note !== null)
+      .join('、') || null;
+
+  const shell = (
     <AppShell
       view={view}
       onNavigate={navigate}
       sourceLabel={data?.source_label ?? null}
-      actionCount={pendingCount(data, overview.state)}
+      actionCount={pendingCount(data, overview.state, policyPending.state)}
       documentCount={data?.counts.documents.value ?? null}
       status={
         <StatusCapsule
@@ -187,6 +241,7 @@ export function App({ account }: { account?: ReactNode }) {
       command={
         <CommandEntry onOpen={palette.show} disabled={!data || loading} />
       }
+      toolsNote={toolsNote}
       tools={
         <>
           {account}
@@ -226,14 +281,9 @@ export function App({ account }: { account?: ReactNode }) {
           workbench={data}
           refreshing={loading}
           overview={overview}
-          onRefresh={refreshSnapshot}
-          filters={filters}
-          actions={actions}
-          projects={filtered}
+          policy={policyPending}
           diagnostics={diagnostics.length}
           onOpen={setSource}
-          onEnterProject={enterProject}
-          onViewProjects={viewAllProjects}
           onShowDiagnostics={() => setStatusOpen(true)}
         />
       ) : null}
@@ -257,18 +307,22 @@ export function App({ account }: { account?: ReactNode }) {
         />
       ) : null}
       {/* 协作、规则与策略不依赖工作台快照：快照读不出来时也要能看黑板、改规则、发布或吊销。 */}
-      {view === 'collab' ? <CollabView projects={projects} /> : null}
-      {view === 'rules' ? <RulesView /> : null}
-      {view === 'policy' ? <PolicyView /> : null}
+      {view === 'collab' ? (
+        <CollabView projects={projects} overview={overview} />
+      ) : null}
+      <PolicyChangedContext.Provider value={policyChanged}>
+        {view === 'rules' ? <RulesView /> : null}
+        {view === 'policy' ? <PolicyView /> : null}
+      </PolicyChangedContext.Provider>
       {source && data ? (
         <DocumentDialog
           key={`${source.path}:${data.generation}`}
           source={source}
           generation={data.generation}
-          onClose={() => setSource(null)}
+          onClose={closeSource}
           onRefresh={refreshSnapshot}
           onEdit={(path) => {
-            setSource(null);
+            closeSource();
             setEditorPath(path);
           }}
         />
@@ -303,6 +357,19 @@ export function App({ account }: { account?: ReactNode }) {
           }}
         />
       ) : null}
+      {shortcutsOpen ? (
+        <KeyboardSheet
+          preference={keys.preference}
+          onClose={() => setShortcutsOpen(false)}
+        />
+      ) : null}
     </AppShell>
+  );
+  // 调度器交给下面：驾驶舱登记自己的健康读取，「读于 N 秒前」订它的状态（T-196）。
+  // 外壳先放进变量再包一层，免得整段 JSX 为了多一层标签全部重排缩进。
+  return (
+    <AutoRefreshContext.Provider value={auto}>
+      <KeyScopeContext.Provider value={keys}>{shell}</KeyScopeContext.Provider>
+    </AutoRefreshContext.Provider>
   );
 }

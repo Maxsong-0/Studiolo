@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef } from 'react';
+import { useContext, useEffect, useId, useRef } from 'react';
 import { Diagnostics } from '../components/Diagnostics';
 import { FreshnessNotice } from '../components/FreshnessNotice';
 import { Icon } from '../components/Icon';
@@ -10,6 +10,8 @@ import type { SessionStatus } from '../sessionStatus';
 import { Button, StatusMark } from '../ui';
 import type { StatusState } from '../ui';
 import { summarizeStatus } from './statusModel';
+import { ToolsMenuContext } from './toolsMenuContext';
+import type { ToolsMenuHandle } from './toolsMenuContext';
 import type { HealthStatus } from './useHealthStatus';
 import './shell.css';
 import '../styles/session.css';
@@ -47,11 +49,14 @@ function sessionPhase(status: SessionStatus): {
   }
 }
 
-/** 把焦点交给顶栏的账户入口；对话框只从那里开，胶囊不另开一份。 */
-function focusAccountEntry() {
-  document
-    .querySelector<HTMLElement>(`[${SESSION_ACCOUNT_ATTRIBUTE}]`)
-    ?.focus();
+/**
+ * 把焦点交给顶栏的账户入口；对话框只从那里开，胶囊不另开一份。
+ * 账户入口收在「更多」菜单里（T-199）：经菜单带路，先展开再交焦点。外面没有菜单时入口就在原地，直接找。
+ */
+function focusAccountEntry(menu: ToolsMenuHandle | null) {
+  const selector = `[${SESSION_ACCOUNT_ATTRIBUTE}]`;
+  if (menu) menu.reveal(selector);
+  else document.querySelector<HTMLElement>(selector)?.focus();
 }
 
 /**
@@ -60,6 +65,7 @@ function focusAccountEntry() {
  */
 function SessionBlock({ status }: { status: SessionStatus | null }) {
   const hintId = useId();
+  const menu = useContext(ToolsMenuContext);
   if (status === null)
     return (
       <div className="status-session">
@@ -109,11 +115,11 @@ function SessionBlock({ status }: { status: SessionStatus | null }) {
             size="sm"
             className="status-session-link"
             aria-describedby={hintId}
-            onClick={focusAccountEntry}
+            onClick={() => focusAccountEntry(menu)}
           >
             前往账户与会话
           </Button>
-          <span id={hintId}>从顶栏账户入口打开</span>
+          <span id={hintId}>从顶栏「更多」里的账户入口打开</span>
         </p>
       ) : null}
     </div>

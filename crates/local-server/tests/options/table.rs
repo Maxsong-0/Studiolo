@@ -59,6 +59,8 @@ const SESSION: &[&str] = &[
     "next-v2",
     "--policy-data",
     "/fixture/policy",
+    "--agent-data",
+    "/fixture/agents",
     "--board-socket",
     "/fixture/board.sock",
     "--board-data",
@@ -123,7 +125,7 @@ fn table_names_are_unique_and_only_three_switches_take_no_value() {
     assert_eq!(switches, ["--canonical", "--cargo-dependencies", "--help"]);
     assert_eq!(valued().count() + switches.len(), PARAMS.len());
     // 参数总数是显式登记的：新增参数必须同时补成功用例与落字段断言，不能只加表项。
-    assert_eq!(PARAMS.len(), 23, "参数表总数变了");
+    assert_eq!(PARAMS.len(), 24, "参数表总数变了");
 }
 
 #[test]
@@ -178,6 +180,7 @@ fn session_writer_factor_board_and_runner_values_land_in_their_own_fields() {
     let factor = options.factor.unwrap();
     assert_eq!(factor.socket, Path::new("/fixture/proxy/http.sock"));
     assert_eq!(factor.replacement_seed_ref.as_deref(), Some("next-v2"));
+    assert_eq!(options.agent_data.unwrap(), Path::new("/fixture/agents"));
     assert_eq!(options.policy_data.unwrap(), Path::new("/fixture/policy"));
     let board = options.board.unwrap();
     assert_eq!(board.socket, Path::new("/fixture/board.sock"));
@@ -258,4 +261,22 @@ fn arguments_are_checked_in_order_so_the_first_error_wins() {
         error(&["--vault", "--port", "4318"]).as_deref(),
         Some("参数 --vault 缺少值")
     );
+}
+
+#[test]
+fn agent_identity_path_requires_policy_and_matches_board_path() {
+    let options = check(SESSION).unwrap().unwrap();
+    assert_eq!(
+        options.agent_data.as_ref(),
+        options.board.as_ref().map(|b| &b.agent_data)
+    );
+    for path in ["relative", "/different/identity"] {
+        let mut args = SESSION.iter().map(|v| (*v).to_owned()).collect::<Vec<_>>();
+        let index = args.iter().position(|v| v == "--agent-data").unwrap() + 1;
+        args[index] = path.into();
+        assert!(parse(args.into_iter()).is_err());
+    }
+    let mut args = CANONICAL.to_vec();
+    args.extend(["--agent-data", "/fixture/agents"]);
+    assert!(check(&args).is_err());
 }

@@ -33,6 +33,7 @@ pub(crate) fn complete(broker: &FsVaultBroker, op: &Operation) -> Result<(), Bro
             .any(|item| item.entry.revision == previous)
         {
             catalog.entries.push(Item {
+                batch: None,
                 sequence: op.sequence,
                 recording: Some(reference.clone()),
                 file_operation_id: None,
@@ -56,9 +57,18 @@ pub(crate) fn complete(broker: &FsVaultBroker, op: &Operation) -> Result<(), Bro
         if catalog.entries.len() != original_len {
             return Err(BrokerError::CorruptWriterState);
         }
-        return Ok(());
+        return super::feed::record(
+            broker,
+            &op.path,
+            catalog
+                .entries
+                .iter()
+                .find(|i| i.entry.id == id)
+                .ok_or(BrokerError::CorruptWriterState)?,
+        );
     }
     catalog.entries.push(Item {
+        batch: None,
         sequence: op.sequence,
         recording: Some(reference.clone()),
         file_operation_id: None,
@@ -73,5 +83,14 @@ pub(crate) fn complete(broker: &FsVaultBroker, op: &Operation) -> Result<(), Bro
         },
     });
     save(broker, &mut catalog)?;
-    mutation::fault(broker, 14)
+    mutation::fault(broker, 14)?;
+    super::feed::record(
+        broker,
+        &op.path,
+        catalog
+            .entries
+            .iter()
+            .find(|i| i.entry.id == sha256(format!("{}:new", envelope.id).as_bytes()))
+            .ok_or(BrokerError::CorruptWriterState)?,
+    )
 }

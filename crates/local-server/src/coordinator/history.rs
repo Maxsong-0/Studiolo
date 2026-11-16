@@ -12,6 +12,9 @@ impl CanonicalWorkbench {
         limit: usize,
         cursor: Option<&str>,
     ) -> Result<HistoryPage, Problem> {
+        let _operation = principal
+            .enter_operation()
+            .map_err(super::content::session_error)?;
         let owner = self.core.owner.lock().map_err(|_| Problem::unavailable())?;
         let broker = owner.as_ref().ok_or_else(Problem::unavailable)?;
         self.check_history_access(&principal, vault, path)?;
@@ -32,6 +35,9 @@ impl CanonicalWorkbench {
         path: &VaultPath,
         revision: Revision,
     ) -> Result<HistoryContent, Problem> {
+        let _operation = principal
+            .enter_operation()
+            .map_err(super::content::session_error)?;
         let owner = self.core.owner.lock().map_err(|_| Problem::unavailable())?;
         let broker = owner.as_ref().ok_or_else(Problem::unavailable)?;
         self.check_history_access(&principal, vault, path)?;

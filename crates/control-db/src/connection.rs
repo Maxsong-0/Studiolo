@@ -8,9 +8,19 @@ use studiolo_core::VaultUuid;
 pub struct ControlDb {
     pub(super) connection: Connection,
     pub(super) vault_uuid: VaultUuid,
+    pub(super) checkpoint_source: Option<studiolo_checkpoint_storage::Source>,
 }
 
 impl ControlDb {
+    /// 为实际服务打开已由私有目录适配器建立的固定 control.sqlite3；先 pin 再初始化。
+    pub fn open_checkpoint_ready(root: &Path, vault_uuid: VaultUuid) -> Result<Self, DbError> {
+        let source = studiolo_checkpoint_storage::Source::pin_control_before_initialization(root)
+            .map_err(crate::checkpoint::problem)?;
+        let mut db = Self::open(root.join("control.sqlite3"), vault_uuid)?;
+        source.check().map_err(crate::checkpoint::problem)?;
+        db.checkpoint_source = Some(source);
+        Ok(db)
+    }
     /// 打开文件数据库：配置连接、执行迁移并绑定 Vault。
     pub fn open(path: impl AsRef<Path>, vault_uuid: VaultUuid) -> Result<Self, DbError> {
         Self::from_connection(Connection::open(path)?, vault_uuid)
@@ -33,6 +43,7 @@ impl ControlDb {
         let mut db = Self {
             connection,
             vault_uuid,
+            checkpoint_source: None,
         };
         db.migrate()?;
         db.connection.execute_batch("PRAGMA journal_mode=WAL;")?;

@@ -25,6 +25,15 @@ pub(super) fn routes(routes: Router<crate::AppState>) -> Router<crate::AppState>
 pub(super) fn unconfigured() -> Response {
     Problem::new(StatusCode::NOT_FOUND, "board_unconfigured", "黑板未配置。").into_response()
 }
+/// 黑板已装配、控制库读得出，但没有这条工作项：404，问题代码与「未配置」区分开（BUG-037）。
+pub(super) fn task_not_found() -> Response {
+    Problem::new(
+        StatusCode::NOT_FOUND,
+        "board_task_not_found",
+        "工作项不存在。",
+    )
+    .into_response()
+}
 /// 黑板许可已满：仍是 429，本次请求没有进入控制库；人侧与私有入口共用。
 pub(super) fn busy() -> Response {
     Problem::new(

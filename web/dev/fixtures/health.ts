@@ -1,14 +1,37 @@
 /**
- * `/api/v1/health`：整体「降级」，因为副本同步每轮 85 秒、逼近 120 秒时限。
+ * `/api/v1/health`：整体「降级」，因为同步驱动上次超时，正在退避。
  *
  * 前五节与后端 `crates/observability/src/health/aggregate.rs` 的 code、标题与措辞逐字一致；
- * 后三节（副本、同步、会话）是画布标题栏要的读数，当前后端还不发——界面拿不到时必须显示「—」
+ * Bridge与人工配额使用真实接口形状；副本与会话仍为标题栏夹具——界面拿不到时必须显示「—」
  * 并写明原因，不能依赖它们一定存在。解码器（`parseHealth`）对未知 code 照单全收。
  */
 export function healthBody() {
   return {
     overall: 'degraded',
     evidence_complete: true,
+    bridge: {
+      last_batch: { sequence: '18', closed_at: '2026-11-13T11:58:00Z' },
+      fused: false,
+      unknown_jobs: '0',
+      quiescence_valid: false,
+      conflict_copies: '2',
+      mirror_bytes: '1288490188',
+      last_exit: 'deadline_exceeded',
+      recovery: 'backoff',
+      residue_guard: 'clear',
+      mode: 'mirror-remote',
+      config_matches: true,
+    },
+    manual_sync_quota: {
+      account_limit_bytes: '10737418240',
+      used_bytes_manual: '5368709120',
+      recorded_at: '2026-11-13T11:00:00Z',
+      as_of: '2026-11-13T12:00:00Z',
+      warning_percent: 70,
+      max_age_seconds: 86400,
+      state: 'normal',
+      reason: 'within',
+    },
     sections: [
       {
         code: 'recovery-point',
@@ -30,7 +53,7 @@ export function healthBody() {
       },
       {
         code: 'sync-quota',
-        title: 'Sync 配额',
+        title: '镜像范围配额',
         state: 'normal',
         detail: '占用在预警水位以内',
       },
@@ -47,10 +70,16 @@ export function healthBody() {
         detail: '副本 ready，代次 243，距上次确认 111 秒（阈值 300 秒）',
       },
       {
-        code: 'sync-round',
-        title: '副本同步',
+        code: 'sync-bridge',
+        title: '双向 Bridge',
         state: 'degraded',
-        detail: '每轮 85 秒，时限 120 秒；余量不足三成，全量重推不可持续',
+        detail: '上次 headless 运行超过时限被停止',
+      },
+      {
+        code: 'manual-sync-quota',
+        title: '账号配额（人工记录）',
+        state: 'normal',
+        detail: '人工记录低于70%预警；这是抄录时的值，实时账号用量未知',
       },
       {
         code: 'session',

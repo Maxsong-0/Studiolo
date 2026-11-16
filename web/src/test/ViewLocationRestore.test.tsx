@@ -5,6 +5,7 @@ import { App } from '../App';
 import { SessionBoundary } from '../SessionBoundary';
 import { REVISIT_INTERVAL_MS } from '../sessionClient';
 import { mockSessions } from './sessionFixtures';
+import { COCKPIT_READY } from './fixtures';
 
 function boundary() {
   return (
@@ -41,7 +42,7 @@ describe('离开再回来的位置', () => {
     mockSessions();
     const user = userEvent.setup();
     render(boundary());
-    await screen.findByRole('table');
+    await screen.findByRole('heading', COCKPIT_READY);
 
     await user.click(screen.getByRole('button', { name: '协作' }));
     await user.click(screen.getByRole('tab', { name: '任务与回执' }));
@@ -82,7 +83,7 @@ describe('离开再回来的位置', () => {
     });
     const user = userEvent.setup();
     render(boundary());
-    await screen.findByRole('table');
+    await screen.findByRole('heading', COCKPIT_READY);
     await user.click(screen.getByRole('button', { name: '文档' }));
     await user.click(screen.getByRole('tab', { name: '文件树' }));
     expect(window.location.hash).toContain('panel=tree');
@@ -141,7 +142,7 @@ describe('离开再回来的位置', () => {
     render(boundary());
     await waitFor(() => expect(heading('驾驶舱')).toBeInTheDocument());
     expect(
-      screen.getByRole('region', { name: '待我动作' }),
+      screen.getByRole('region', { name: '等你处理' }),
     ).toBeInTheDocument();
   });
 });

@@ -95,7 +95,11 @@ pub(super) fn run(engine: &mut Engine, r: &Request, g: &Grant, now: i64) -> Resu
                             .preview
                             .as_ref()
                             .ok_or(studiolo_vault_broker::BrokerError::CorruptWriterState)?;
-                        let receipt = broker.commit_batch(a.batch, preview)?;
+                        let receipt = broker.commit_batch_recorded(
+                            a.batch,
+                            preview,
+                            metadata(r, &a.identity)?,
+                        )?;
                         Ok(serde_json::json!({"receipt":receipt}))
                     }
                 })
@@ -107,7 +111,7 @@ pub(super) fn run(engine: &mut Engine, r: &Request, g: &Grant, now: i64) -> Resu
             let id = key(r, &a.identity, &a.batch_id)?;
             engine
                 .broker()
-                .access(|broker| broker.rollback_batch(&id))
+                .access(|broker| broker.rollback_batch_recorded(&id, metadata(r, &a.identity)?))
                 .map_err(|e| e.to_string())
                 .and_then(super::execute::value)
         }
@@ -132,4 +136,19 @@ pub(super) fn run(engine: &mut Engine, r: &Request, g: &Grant, now: i64) -> Resu
         }
         _ => Err("未知内容操作".into()),
     }
+}
+
+fn metadata(
+    r: &Request,
+    identity: &Identity,
+) -> Result<studiolo_vault_broker::MutationMetadata, studiolo_vault_broker::BrokerError> {
+    studiolo_vault_broker::MutationMetadata::new(
+        studiolo_vault_broker::MutationActor::Agent {
+            agent_type: r.agent_type.clone(),
+            instance_id: r.instance_id.clone(),
+            task_id: Some(identity.task_id.to_string()),
+            attempt_id: Some(identity.attempt_id.to_string()),
+        },
+        studiolo_vault_broker::MutationKind::Replace,
+    )
 }

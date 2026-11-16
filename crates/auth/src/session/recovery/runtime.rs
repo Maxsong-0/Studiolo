@@ -9,6 +9,7 @@ impl Recovery {
     /// 本证明交付阶段调用量有界（含全部旧 L3 最多 2076 次），不承诺满表时的固定延迟。
     /// 过期或已撤销操作只有双 ACK 后可释放，绝不自动完成换发或因子替换。
     pub fn flush_audit(&self) -> Result<usize, SessionError> {
+        let _operation = self.sessions.enter_operation()?;
         let delivered = self.deliver(None)?;
         self.sessions.run(|db, observed| {
             pipeline::release_invalid(db, observed)?;

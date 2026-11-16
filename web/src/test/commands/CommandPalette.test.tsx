@@ -206,6 +206,7 @@ describe('不可逆动作只预览', () => {
       'openDrafts',
       'openRecentlyDeleted',
       'openStatus',
+      'openShortcuts',
     ] as const)
       expect(actions[action]).not.toHaveBeenCalled();
   });

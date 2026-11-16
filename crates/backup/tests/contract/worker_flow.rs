@@ -1,18 +1,21 @@
 //! Worker 端到端契约：Intent 先持久、审计失败关闭；
 //! 上传中断、ACK 丢失、Outcome 审计失败、磁盘满与目标未接入各自留下不同的真实状态。
 
-use super::support::{
-    MemoryStore, PickyLedger, StubProbe, StubRunner, TestClock, manifest_inputs, ticket,
-};
+use super::staging::fixture::Fixture;
+use super::support::{MemoryStore, PickyLedger, StubFinal, StubProbe, StubRunner, TestClock};
 use studiolo_audit_ledger::AuditPhase;
+use studiolo_backup::checkpoint::staging::{SealedCheckpoint, SourceCatalog};
 use studiolo_backup::store::model::{BackupStateStore, StoreError};
+use studiolo_backup::worker::job::DataRemote;
 use studiolo_backup::worker::job::{BackupWorker, JobOutcome, WorkerError};
 use studiolo_backup::worker::recovery_point::{BackupTargetKind, RecoveryPointDisplay, RpoBudget};
 use studiolo_backup::worker::restic::{CredentialHolder, RepositoryRef, UnverifiedReason};
-use studiolo_backup::worker::state::{FailureReason, JobState, UnknownStage};
-use studiolo_core::VaultUuid;
+use studiolo_backup::worker::state::{FailureReason, JobState};
 use studiolo_core::checkpoint::CheckpointId;
-use tempfile::TempDir;
+use studiolo_core::checkpoint::InstantMillis;
+mod durable;
+mod failure_audit;
+mod recovery;
 
 fn repository() -> RepositoryRef {
     RepositoryRef::parse("/srv/backup/repo").expect("repository")
@@ -22,51 +25,12 @@ fn checkpoint() -> CheckpointId {
     CheckpointId::parse("cp-0001").expect("checkpoint id")
 }
 
-struct World {
-    ledger: PickyLedger,
-    store: MemoryStore,
-    clock: TestClock,
-    temporary: TempDir,
-    vault: VaultUuid,
-    pair: VaultUuid,
-}
-
-impl World {
-    fn new() -> Self {
-        Self {
-            ledger: PickyLedger::new(),
-            store: MemoryStore::default(),
-            clock: TestClock::new(3_000),
-            temporary: TempDir::new().expect("tempdir"),
-            vault: VaultUuid::new(),
-            pair: VaultUuid::new(),
-        }
-    }
-
-    fn worker<'a>(
-        &'a self,
-        runner: &'a StubRunner,
-        probe: &'a StubProbe,
-        target: BackupTargetKind,
-    ) -> BackupWorker<'a> {
-        BackupWorker::new(
-            &self.ledger,
-            runner,
-            probe,
-            &self.store,
-            repository(),
-            CredentialHolder::BackupWorker,
-            target,
-        )
-        .expect("worker")
-    }
-}
+mod world;
+use world::World;
 
 #[test]
 fn the_append_credential_cannot_be_handed_to_the_app_or_any_owner() {
     let world = World::new();
-    let runner = StubRunner::exiting(true);
-    let probe = StubProbe::present(2_000);
     for holder in [
         CredentialHolder::App,
         CredentialHolder::Broker,
@@ -77,8 +41,6 @@ fn the_append_credential_cannot_be_handed_to_the_app_or_any_owner() {
         assert_eq!(
             BackupWorker::new(
                 &world.ledger,
-                &runner,
-                &probe,
                 &world.store,
                 repository(),
                 holder,
@@ -93,9 +55,7 @@ fn the_append_credential_cannot_be_handed_to_the_app_or_any_owner() {
 #[test]
 fn enqueueing_persists_the_intent_before_the_job_record_and_fails_closed_on_audit_failure() {
     let world = World::new();
-    let runner = StubRunner::exiting(true);
-    let probe = StubProbe::present(2_000);
-    let worker = world.worker(&runner, &probe, BackupTargetKind::LocalTemporaryRepository);
+    let worker = world.worker(BackupTargetKind::LocalTemporaryRepository);
     world.ledger.fail(AuditPhase::Intent);
 
     let error = worker.enqueue(&checkpoint()).err();
@@ -121,17 +81,10 @@ fn a_full_run_reaches_success_and_publishes_a_recovery_point() {
     let world = World::new();
     let runner = StubRunner::exiting(true);
     let probe = StubProbe::present(2_000);
-    let worker = world.worker(&runner, &probe, BackupTargetKind::DedicatedAppendOnlyTarget);
+    let worker = world.worker(BackupTargetKind::DedicatedAppendOnlyTarget);
     let key = worker.enqueue(&checkpoint()).expect("enqueue");
 
-    let outcome = worker
-        .run(
-            &key,
-            &ticket(world.vault, world.pair, world.temporary.path()),
-            manifest_inputs(),
-            &world.clock,
-        )
-        .expect("run");
+    let outcome = world.run(&worker, &key, &runner, &probe).expect("run");
 
     assert_eq!(outcome, JobOutcome::Succeeded);
     let state = world.store.load_state().expect("load").expect("state");
@@ -159,9 +112,7 @@ fn a_full_run_reaches_success_and_publishes_a_recovery_point() {
 #[test]
 fn seed_verification_is_refused_while_nothing_has_succeeded() {
     let world = World::new();
-    let runner = StubRunner::exiting(true);
-    let probe = StubProbe::present(2_000);
-    let worker = world.worker(&runner, &probe, BackupTargetKind::LocalTemporaryRepository);
+    let worker = world.worker(BackupTargetKind::LocalTemporaryRepository);
     worker.enqueue(&checkpoint()).expect("enqueue");
 
     assert_eq!(
@@ -175,17 +126,10 @@ fn an_upload_that_exits_zero_but_leaves_nothing_remote_is_not_a_recovery_point()
     let world = World::new();
     let runner = StubRunner::exiting(true);
     let probe = StubProbe::absent();
-    let worker = world.worker(&runner, &probe, BackupTargetKind::LocalTemporaryRepository);
+    let worker = world.worker(BackupTargetKind::LocalTemporaryRepository);
     let key = worker.enqueue(&checkpoint()).expect("enqueue");
 
-    let outcome = worker
-        .run(
-            &key,
-            &ticket(world.vault, world.pair, world.temporary.path()),
-            manifest_inputs(),
-            &world.clock,
-        )
-        .expect("run");
+    let outcome = world.run(&worker, &key, &runner, &probe).expect("run");
 
     assert_eq!(
         outcome,
@@ -206,17 +150,10 @@ fn a_rejected_upload_is_recorded_as_a_failure_with_its_own_outcome_audit() {
     let world = World::new();
     let runner = StubRunner::exiting(false);
     let probe = StubProbe::present(2_000);
-    let worker = world.worker(&runner, &probe, BackupTargetKind::LocalTemporaryRepository);
+    let worker = world.worker(BackupTargetKind::LocalTemporaryRepository);
     let key = worker.enqueue(&checkpoint()).expect("enqueue");
 
-    let outcome = worker
-        .run(
-            &key,
-            &ticket(world.vault, world.pair, world.temporary.path()),
-            manifest_inputs(),
-            &world.clock,
-        )
-        .expect("run");
+    let outcome = world.run(&worker, &key, &runner, &probe).expect("run");
 
     assert_eq!(outcome, JobOutcome::Failed(FailureReason::UploadRejected));
     let records = world.ledger.records();
@@ -229,18 +166,11 @@ fn a_remote_that_is_confirmed_while_the_outcome_audit_fails_stays_audit_pending(
     let world = World::new();
     let runner = StubRunner::exiting(true);
     let probe = StubProbe::present(2_000);
-    let worker = world.worker(&runner, &probe, BackupTargetKind::DedicatedAppendOnlyTarget);
+    let worker = world.worker(BackupTargetKind::DedicatedAppendOnlyTarget);
     let key = worker.enqueue(&checkpoint()).expect("enqueue");
     world.ledger.fail(AuditPhase::Outcome);
 
-    let outcome = worker
-        .run(
-            &key,
-            &ticket(world.vault, world.pair, world.temporary.path()),
-            manifest_inputs(),
-            &world.clock,
-        )
-        .expect("run");
+    let outcome = world.run(&worker, &key, &runner, &probe).expect("run");
 
     assert_eq!(outcome, JobOutcome::AuditPending);
     let state = world.store.load_state().expect("load").expect("state");
@@ -256,9 +186,7 @@ fn a_remote_that_is_confirmed_while_the_outcome_audit_fails_stays_audit_pending(
 
     world.ledger.recover();
     assert_eq!(
-        worker
-            .backfill_outcome(&key, &world.clock)
-            .expect("backfill"),
+        worker.backfill_outcome(&key).expect("backfill"),
         JobOutcome::Succeeded
     );
     let settled = world.store.load_state().expect("load").expect("state");
@@ -272,16 +200,9 @@ fn the_outcome_payload_states_that_it_happened_after_the_checkpoint_cutoff() {
     let world = World::new();
     let runner = StubRunner::exiting(true);
     let probe = StubProbe::present(2_000);
-    let worker = world.worker(&runner, &probe, BackupTargetKind::DedicatedAppendOnlyTarget);
+    let worker = world.worker(BackupTargetKind::DedicatedAppendOnlyTarget);
     let key = worker.enqueue(&checkpoint()).expect("enqueue");
-    worker
-        .run(
-            &key,
-            &ticket(world.vault, world.pair, world.temporary.path()),
-            manifest_inputs(),
-            &world.clock,
-        )
-        .expect("run");
+    world.run(&worker, &key, &runner, &probe).expect("run");
 
     let records = world.ledger.records();
     let outcome = records
@@ -297,26 +218,25 @@ fn the_outcome_payload_states_that_it_happened_after_the_checkpoint_cutoff() {
 }
 
 #[test]
-fn a_full_disk_during_the_final_manifest_commit_is_a_named_failure() {
+fn a_full_disk_during_local_cache_write_retains_the_verified_remote_receipt() {
     let world = World::new();
     let runner = StubRunner::exiting(true);
     let probe = StubProbe::present(2_000);
-    let worker = world.worker(&runner, &probe, BackupTargetKind::LocalTemporaryRepository);
+    let worker = world.worker(BackupTargetKind::LocalTemporaryRepository);
     let key = worker.enqueue(&checkpoint()).expect("enqueue");
     *world.store.fail_manifest_commit.lock().expect("fail lock") = Some(StoreError::OutOfSpace);
 
-    let outcome = worker
-        .run(
-            &key,
-            &ticket(world.vault, world.pair, world.temporary.path()),
-            manifest_inputs(),
-            &world.clock,
-        )
-        .expect("run");
+    let outcome = world.run(&worker, &key, &runner, &probe).expect("run");
 
-    assert_eq!(outcome, JobOutcome::Failed(FailureReason::OutOfSpace));
+    assert_eq!(outcome, JobOutcome::AuditPending);
+    assert!(world.finalizer.receipt.lock().unwrap().is_some());
+    *world.store.fail_manifest_commit.lock().unwrap() = None;
+    assert_eq!(
+        worker.backfill_outcome(&key).unwrap(),
+        JobOutcome::Succeeded
+    );
     let state = world.store.load_state().expect("load").expect("state");
-    assert!(state.last_scheduled.is_none());
+    assert!(state.last_scheduled.is_some());
 }
 
 #[test]
@@ -324,17 +244,10 @@ fn a_target_that_is_not_connected_reports_unverified_rather_than_success_or_fail
     let world = World::new();
     let runner = StubRunner::unverified(UnverifiedReason::NoRealRepository);
     let probe = StubProbe::absent();
-    let worker = world.worker(&runner, &probe, BackupTargetKind::LocalTemporaryRepository);
+    let worker = world.worker(BackupTargetKind::LocalTemporaryRepository);
     let key = worker.enqueue(&checkpoint()).expect("enqueue");
 
-    let outcome = worker
-        .run(
-            &key,
-            &ticket(world.vault, world.pair, world.temporary.path()),
-            manifest_inputs(),
-            &world.clock,
-        )
-        .expect("run");
+    let outcome = world.run(&worker, &key, &runner, &probe).expect("run");
 
     assert_eq!(
         outcome,
@@ -356,60 +269,26 @@ fn a_target_that_is_not_connected_reports_unverified_rather_than_success_or_fail
 }
 
 #[test]
-fn an_interrupted_run_is_reconciled_under_the_original_job_key() {
-    let world = World::new();
-    let runner = StubRunner::exiting(true);
-    let probe = StubProbe::present(2_000);
-    let worker = world.worker(&runner, &probe, BackupTargetKind::LocalTemporaryRepository);
-    let key = worker.enqueue(&checkpoint()).expect("enqueue");
-    worker
-        .mark_unknown(&key, UnknownStage::Uploading)
-        .expect("mark unknown");
-
-    let state = worker.reconcile_unknown(&key).expect("reconcile");
-
-    assert_eq!(state, JobState::CommittingFinalManifest);
-    assert_eq!(
-        probe.probed.lock().expect("probe lock").as_slice(),
-        [key.sequence.get()]
-    );
-}
-
-#[test]
-fn a_lost_final_manifest_ack_settles_as_a_failure_when_the_remote_has_nothing() {
-    let world = World::new();
-    let runner = StubRunner::exiting(true);
-    let probe = StubProbe::absent();
-    let worker = world.worker(&runner, &probe, BackupTargetKind::LocalTemporaryRepository);
-    let key = worker.enqueue(&checkpoint()).expect("enqueue");
-    worker
-        .mark_unknown(&key, UnknownStage::FinalManifestAck)
-        .expect("mark unknown");
-
-    let state = worker.reconcile_unknown(&key).expect("reconcile");
-
-    assert_eq!(
-        state,
-        JobState::Failed {
-            reason: FailureReason::UploadRejected
-        }
-    );
-}
-
-#[test]
 fn the_planned_restic_argument_vector_only_ever_points_at_the_transfer_source() {
     let world = World::new();
     let runner = StubRunner::exiting(true);
     let probe = StubProbe::present(2_000);
-    let worker = world.worker(&runner, &probe, BackupTargetKind::LocalTemporaryRepository);
+    let worker = world.worker(BackupTargetKind::LocalTemporaryRepository);
     let key = worker.enqueue(&checkpoint()).expect("enqueue");
-    let seal = ticket(world.vault, world.pair, world.temporary.path());
-    worker
-        .run(&key, &seal, manifest_inputs(), &world.clock)
-        .expect("run");
+    world.run(&worker, &key, &runner, &probe).expect("run");
 
     let seen = runner.seen.lock().expect("seen lock");
     assert_eq!(seen.len(), 1);
-    assert!(seen[0].contains(&seal.transfer_source.root.display().to_string()));
+    assert!(
+        seen[0].contains(
+            &world
+                .seal
+                .ticket()
+                .transfer_source
+                .root
+                .display()
+                .to_string()
+        )
+    );
     assert!(seen[0].contains(&"--one-file-system".to_owned()));
 }

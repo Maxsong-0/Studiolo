@@ -1,0 +1,21 @@
+[package]
+name = "studiolo-checkpoint-storage"
+description = "存储 owner 内部使用的固定 SQLite 封存机制；不解释业务 schema、不作跨库排空承诺"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+studiolo-core.workspace = true
+rusqlite = { workspace = true, features = ["backup", "hooks"] }
+rustix.workspace = true
+sha2.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

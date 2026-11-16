@@ -25,7 +25,7 @@ pub(crate) fn append(
     Ok((record.offset(), record.record_hash().to_hex()))
 }
 
-fn event(value: &FileOperationAuditEvent) -> Result<AuditEvent, AuditError> {
+pub(crate) fn event(value: &FileOperationAuditEvent) -> Result<AuditEvent, AuditError> {
     validate(value)?;
     let action = match value.kind {
         FileOperationKind::Delete { .. } | FileOperationKind::Rename { .. } => "vault.mutation",
@@ -142,6 +142,7 @@ fn presence_valid(value: &FilePresence) -> bool {
 
 fn actor_valid(actor: &MutationActor) -> bool {
     match actor {
+        MutationActor::Agent { .. } => false,
         MutationActor::Obsidian => true,
         MutationActor::Human { issuer, subject } => {
             issuer.starts_with("https://") && text(issuer, 512) && text(subject, 256)

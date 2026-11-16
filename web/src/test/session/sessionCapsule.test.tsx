@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest';
 import { App } from '../../App';
 import { SessionBoundary } from '../../SessionBoundary';
 import { factorResponse, mockFactors } from '../factorFixtures';
-import { fixture, jsonResponse } from '../fixtures';
+import { COCKPIT_READY, fixture, jsonResponse } from '../fixtures';
 import {
   currentSession,
   mockSessions,
@@ -68,7 +68,7 @@ describe('状态胶囊的会话一项（经 SessionBoundary）', () => {
     );
     const user = userEvent.setup();
     renderWorkbench();
-    await screen.findByRole('table');
+    await screen.findByRole('heading', COCKPIT_READY);
     await within(capsule()).findByText('正常');
     expect(capsule()).toHaveAccessibleName(/^工作台状态：\s*正常$/);
     await user.click(capsule());
@@ -98,7 +98,7 @@ describe('状态胶囊的会话一项（经 SessionBoundary）', () => {
     );
     const user = userEvent.setup();
     renderWorkbench();
-    await screen.findByRole('table');
+    await screen.findByRole('heading', COCKPIT_READY);
     await within(capsule()).findByText('正常');
     await user.click(capsule());
     expect(
@@ -123,7 +123,7 @@ describe('状态胶囊的会话一项（经 SessionBoundary）', () => {
     await user.click(screen.getByRole('button', { name: '确认生成新恢复码' }));
     expect(await screen.findByRole('alert')).toHaveTextContent('原码无法重读');
     await user.click(screen.getByRole('button', { name: '核对登录状态' }));
-    await screen.findByRole('table');
+    await screen.findByRole('heading', COCKPIT_READY);
     await within(capsule()).findByText('安全验证待处理');
     expect(capsule()).toHaveAttribute('data-level', 'problem');
     await user.click(capsule());
@@ -142,7 +142,7 @@ describe('状态胶囊的会话一项（经 SessionBoundary）', () => {
     );
     const user = userEvent.setup();
     renderWorkbench();
-    await screen.findByRole('table');
+    await screen.findByRole('heading', COCKPIT_READY);
     await user.click(capsule());
     await user.click(screen.getByRole('button', { name: '前往账户与会话' }));
     expect(screen.getByRole('button', { name: '账户与会话' })).toHaveFocus();

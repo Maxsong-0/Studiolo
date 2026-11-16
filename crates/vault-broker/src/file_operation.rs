@@ -17,6 +17,7 @@ mod audit;
 mod audit_model;
 pub(crate) mod binding;
 mod capacity;
+pub(crate) mod checkpoint;
 mod commit;
 mod disk;
 mod evidence;

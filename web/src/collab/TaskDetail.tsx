@@ -17,6 +17,7 @@ import {
   projectName,
   taskStatus,
 } from './topologyLayout';
+import { useViewLocation } from '../useViewLocation';
 import '../styles/collab.css';
 
 export interface TaskDetailProps {
@@ -49,6 +50,7 @@ export function TaskDetail({
   onViewInBoard,
   onOpenTaskBook,
 }: TaskDetailProps) {
+  const { goTo } = useViewLocation();
   const receiptHeading = useId();
   const read = useReceipt(item);
   if (!item)
@@ -136,7 +138,17 @@ export function TaskDetail({
               <span>
                 {executorLabel ?? agentName(item.adapter)}
                 {' / '}
-                <code title={item.holder}>{shortId(item.holder)}</code>
+                <Button
+                  variant="text"
+                  size="sm"
+                  title={item.holder}
+                  aria-label={`查看实例 ${item.holder}`}
+                  onClick={() =>
+                    goTo({ view: 'policy', panel: 'agents', item: item.holder })
+                  }
+                >
+                  {shortId(item.holder)}
+                </Button>
               </span>
             )}
           </dd>

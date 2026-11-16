@@ -137,6 +137,7 @@ fn artifact_and_manifest_installations_share_capture_watermark() {
         fence: crate::Fence::new(1).unwrap(),
         audit_intent: "fictional-capture".into(),
         idempotency_key: "capture-artifacts".into(),
+        provenance: crate::granted_provenance(),
         artifacts: vec![crate::ArtifactCandidate {
             name: path("result.md"),
             content: b"result".to_vec(),

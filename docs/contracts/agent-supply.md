@@ -84,10 +84,10 @@
   1. 我是谁：类型、实例 id、注册时间；
   2. 白名单内每个项目：`00-总览/INDEX.md` 首表的「当前版本 / 状态 / 最近日志 / 未关闭 BUG」＋「当前重点」首条（截断 200 字）；骨架缺失的字段显示「不可用」；
   3. 能力摘要：只读；白名单清单；写与审批：无（M3）；
-  4. 待我做的事：`04-协调/TASKS.md`「① 进行中」各行（ID / 任务截断 80 字 / 状态）＋「待认领」段落标题；
+  4. 待我做的事：`04-协调/TASKS.md`「① 进行中」各行（ID / 任务截断 80 字 / 状态）＋「待认领」段落标题；按项目轮流取（第 1 轮每个项目取第 1 条，第 2 轮取第 2 条……），收尾行写明全部项目合计与实际列出的条数；裁剪等级 0～1 时第 2 项的项目行另带该项目的「进行中 n／待认领 m」（T-193）；
   5. 硬约束：白名单内 `通用工作规则.md`（母本）的 `## 准则…` 标题（母本缺失时退回项目 `CLAUDE.md` 快照「准则」节的编号加粗条目）＋ 两处文件里含「一律叠加 / 必叠」的硬绑定句；
   6. 继续拉：tool 清单 ＋ 入口文件（INDEX、TASKS、最新日志、规则母本）的路径与 revision。
-- 预算：以 `tiktoken-rs` o200k_base 计量 instructions 文本；派生器先按四级裁剪（当前重点字数、进行中行数、待认领条数、入口条数）逼近内部目标 ≤1500，**裁剪后仍 > 2000 token 即 initialize 失败**（`budget_exceeded`），记 `handshake.budget_exceeded`。**这是二元验收项**，不得降级为告警。真实库首次验收（2026-09-07）：项目/Studiolo + _规则 的路牌 1583 字符、o200k 931 token（cl100k 参考 1105），裁剪等级 0（见 verify-log）。
+- 预算：以 `tiktoken-rs` o200k_base 计量 instructions 文本；派生器先按四级裁剪（当前重点字数、进行中行数、待认领条数、入口条数）逼近内部目标 ≤6000（`TARGET_BUDGET_TOKENS`），**裁剪后仍 > 8000 token（`HARD_BUDGET_TOKENS`）即 initialize 失败**（`budget_exceeded`），记 `handshake.budget_exceeded`。**这是二元验收项**，不得降级为告警。真实库首次验收（2026-09-07）：项目/Studiolo + _规则 的路牌 1583 字符、o200k 931 token（cl100k 参考 1105），裁剪等级 0（见 verify-log）。
 - 成功记 `handshake.served`（类型、实例、路牌版本＝生成代次、实际 token 数）。
 
 ## 4. tools（接入方动作，按「四附」矩阵）
@@ -113,7 +113,7 @@
 
 - 直接 `--vault` 模式沿用首片契约：启动全扫白名单子树建代次；后台每 60 秒重扫；`read_note` 直接读当前文件并返回其 revision。扫描诊断降级为路牌里的「诊断 n 条」。此模式没有远端同步回执，不声称资料已从来源同步。
 - T-036 增加显式 `--replica-root` 托管模式，与 `--vault` 互斥。每次内容请求在专用校验线程上串行验证完整批次与 SHA-256 清单（T-185 起；此前在 tokio 阻塞线程池上，进程 `mlockall` 后各线程 malloc arena 释放的页退不回去，并发请求把常驻集叠成几份校验峰值，2026-10-15 生产被单元 `MemoryMax=512M` 杀掉，见 vault BUG-034 与 §9「内存预算」），四工具使用该次完整内存快照；附件只供给元信息（路径、大小），**每次请求只核同一次安全扫描得到的类型与字节长度，不整读、不算哈希**；附件字节的完整性由接收端在副本到达时逐文件核 SHA-256 保证（`scripts/replica_store.py`）。笔记正文会对外供给，仍每次整读并核 SHA-256，同大小字节漂移立即阻断。（2026-09-22 T-108 改，见 vault ADR-023：此前附件也每次核哈希，纳入 199 MB 附件后每请求要多约 1.5 秒。）控制文件无效、内容漂移、任意扫描诊断都拒绝内容；不静默退回直接模式。
-- 托管模式每个结果包含 generation、source_digest、source_observed_at_ms、received_at_ms、age_secs、状态。默认超过 300 秒为 stale；最近同步失败为 sync_failed，同时保留 stale 布尔值。旧完整副本可在明确标记后只读使用，不能据此开展实时协作。只重扫服务器目录不能刷新来源确认时间。新鲜度是路牌强制字段，同样受 ≤2000 token 硬门槛约束。
+- 托管模式每个结果包含 generation、source_digest、source_observed_at_ms、received_at_ms、age_secs、状态。默认超过 300 秒为 stale；最近同步失败为 sync_failed，同时保留 stale 布尔值。旧完整副本可在明确标记后只读使用，不能据此开展实时协作。只重扫服务器目录不能刷新来源确认时间。新鲜度是路牌强制字段，同样受 ≤8000 token 硬门槛约束。过期或同步失败时，机器行的下一行有一句给人看的提示（资料停在哪一刻 UTC、停了多久、涉及进度的结论先向用户核实）；新鲜时没有，机器行本身一个字符都不变。
 - 完整协议、边界与启用状态见 [资料同步与新鲜度](../m3/replica-freshness.md)，操作步骤见 [自动同步运维](../m3/replica-operations.md)。本片是服务器副本同步；ADR-015客户端独立投影由T-038实现，实际客户端安装仍另验。
 - 审计不可用（账本追加失败，含存储复核失败）：initialize 仍应答，但 instructions 只含「审计不可用 ＋ outage id ＋ 本次读写全部拒绝」，不含任何 vault 内容；所有 tool 返回 `audit_unavailable`；outage 起始、拒绝计数与结束时间落 `agent.sqlite3` 的 `outage` 表（同一 outage 只记一行，计数有界），账本恢复后第一次成功追加即结束窗口。带外告警与健康页红属运维片，本片只留持久痕迹（`admin outages`）。
 
@@ -126,7 +126,7 @@
 | `session_invalid` | MCP 会话号查不到、已过期、已关闭，或属于别的类型或凭据 | HTTP 404，不带 `WWW-Authenticate`；客户端不带会话号重新 initialize（见 [MCP 会话边界](../m3/mcp-session-boundaries.md)） |
 | `session_required` | GET／DELETE 不带会话号 | HTTP 400 |
 | `server_stopping` | 收到 SIGTERM／SIGINT 之后到达的新会话、新请求、新 GET 流（MCP 与 `/read/*` 同样） | HTTP 503；MCP 的 DELETE 照常；已进门的请求照常做完（§9） |
-| `budget_exceeded` | 路牌超 2000 token | initialize 失败，JSON-RPC 错误含实际 token 数 |
+| `budget_exceeded` | 路牌超 8000 token | initialize 失败，JSON-RPC 错误含实际 token 数 |
 | `outside_allowlist` / `unsafe_path` | 越界读取 | tool 错误，已审计 |
 | `rule_not_whitelisted` | 读能力集规则名单外的规则文件或规则母本（§10） | 与白名单外（`read_note`）或不存在（`policy_read`）同一对外错误，已审计 |
 | `audit_unavailable` | 账本不可用 | 降级握手 / tool 拒绝 |
@@ -135,7 +135,7 @@
 ## 8. 契约测试清单
 
 - 对象安全与依赖方向：supply 不依赖 axum/rmcp；agent-server 不依赖 FsVaultBroker、ControlDb、auth。
-- 预算二元：构造超预算 INDEX 夹具 → initialize 失败且账本有 `handshake.budget_exceeded`；正常夹具 → instructions ≤2000 且六项齐全。
+- 预算二元：构造超预算 INDEX 夹具 → initialize 失败且账本有 `handshake.budget_exceeded`；正常夹具 → instructions ≤8000 且六项齐全。
 - 身份：无 token 401；错 token 401 且 `agent.action_denied`；正确 token → 实例落库并绑定会话；吊销类型后立即 401。身份库读不出来（测试把私有库文件改成 0640）→ 503 不带 challenge、会话不丢，恢复后同一令牌和会话照常可用（`mcp_transport_cases/identity_store.rs`、`http_text/availability.rs`、`mcp_transport_private/identity_outage.rs`）。
 - 类型 token 显示门禁（真实 PTY 驱动实际二进制，`crates/agent-server/tests/admin_terminal_contract.rs`
   ＋ `tests/support/admin_terminal.py`）：真实控制终端上恰好显示一次；无控制终端 / 全管道 /
@@ -186,6 +186,10 @@
   （[秘密驻留面](../m2/secret-residency.md) §5.1）。所以副本校验、后台重扫与首扫只在一条专用线程上做
   （`crates/agent-server/src/verifier.rs`），常驻上界是「同时在用的几份代次 + 一次校验」：请求拿到的代次用完即放，
   校验一个个出队，不再随做过校验的线程数相乘，也不随运行时长累加；排队时调用方已放弃的那次不再做。
+  并发到达的请求共用**受理之后才开始、并且成功**的最近一次校验（T-211，`crates/agent-server/src/shared_scan.rs`）：
+  每个请求拿到的仍是它到达之后重新完整校验过的代次，但 N 路同时到达最多做两次整读，不再是 N 次
+  （生产 14 MiB、16 路并发，最后一个从约 40 秒降到两次校验的时间）。最近一次校验失败了就各自重做，
+  失败不外传，也不退回去用失败之前的旧结果；一个接一个到达的请求仍然一人一次。
   以后凡是整读副本或做大块临时分配的新路径，都要放到这条线程上，不能用 `spawn_blocking`，也不能直接在
   tokio 工作线程上做；§8「常驻内存」两条测试守着这一点。
 - 服务器安装、目录约定与实际部署记录见 `docs/m3/server-agent.md`。
@@ -204,7 +208,7 @@
 |---|---|---|
 | `read_note` | 先判前缀：前缀外仍是 `outside_allowlist`；前缀内的名单外规则文件拒绝，对外同一句「路径不在供给白名单内」（HTTP 400） | `agent.action_denied{reason=rule_not_whitelisted}` |
 | `list_entries` | 不进清单，计数与行数一致 | 不单独记拒绝 |
-| `search` | 先滤掉再截前 100 条：不命中，也不占命中名额 | 不单独记拒绝；被滤掉的路径不产生 `content.read` |
+| `search` | 项目范围和名单都在计数之前生效：名单外的规则文件不命中，也不占命中名额；100 条上限和「已截断」只数所请求项目内、名单内的命中，别的项目命中再多也不挤占（T-192，BUG-036） | 不单独记拒绝；被滤掉的路径不产生 `content.read` |
 | `policy_read kind=rules` | 清单里不出现（计数一致）；单条对外与不存在同一句「规则母本不存在」（HTTP 404） | 单条记 `rule_not_whitelisted`；名单内而不存在记 `not_found` |
 | 握手路牌 | 第 5 项准则与硬绑定句、第 6 项入口都不取名单外的策略规则与 vault 规则文件（库文件兜底同一名单） | — |
 
@@ -219,3 +223,8 @@
 - 契约测试：`crates/agent-server/tests/rules_access_contract.rs`（五条路径、对外同一错误与审计原因、子目录、缺字段零规则、
   M3 兼容模式不过滤、HTTP 外壳同一判定）、`crates/supply/tests/rules_files_contract.rs`（判定与路牌库文件兜底）、
   `crates/policy/tests/rules_whitelist_contract.rs`（能力集字段校验与扩大／收窄项）。
+
+
+## 人侧身份视图与管理输出（T202）
+
+人侧列表经 `AgentIdentityView` 只读观察身份库，不取得 token 或会话摘要。`session_digest` 绑定的是服务端随机 `session_ref` 的 SHA-256，非客户端提供的会话标识。`studiolo-agent admin instances` 保留原四列顺序并在末尾增加父实例号（无父为 `—`）；读取改用只读视图。网页契约见 [接入方列表](agents-list.md)。

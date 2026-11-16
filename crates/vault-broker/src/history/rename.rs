@@ -66,6 +66,7 @@ pub(super) fn complete(broker: &FsVaultBroker, a: &Active) -> Result<(), BrokerE
             return Err(bad());
         }
         let item = Item {
+            batch: None,
             sequence: a.sequence,
             entry,
             recording: None,
@@ -82,9 +83,10 @@ pub(super) fn complete(broker: &FsVaultBroker, a: &Active) -> Result<(), BrokerE
             }
         } else {
             catalog.version = 3;
-            catalog.entries.push(item);
+            catalog.entries.push(item.clone());
             catalog::save(broker, &mut catalog)?;
         }
+        super::feed::record(broker, path, &item)?;
         crate::mutation::fault(broker, if index == 0 { 80 } else { 81 })?;
     }
     Ok(())

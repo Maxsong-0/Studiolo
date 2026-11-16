@@ -1,7 +1,11 @@
 //! 私有真实作业同步点；文件系统夹具留在 tests 目录，不增加生产文件权限。
 
+mod checkpoint;
+mod checkpoint_owners;
 mod fixture;
 mod lifecycle;
+#[cfg(target_os = "linux")]
+mod memory;
 mod publication;
 mod staging;
 mod staging_notify;
@@ -23,6 +27,8 @@ pub(crate) struct Probe {
     gates: Mutex<BTreeMap<&'static str, Gate>>,
     pub(crate) os_events: AtomicBool,
     pub(super) captures: AtomicUsize,
+    /// 每次捕获所在线程的名字，按发生顺序。
+    capture_threads: Mutex<Vec<Option<String>>>,
     read_observer: Mutex<Option<tokio::sync::oneshot::Sender<()>>>,
 }
 
@@ -37,6 +43,7 @@ impl Default for Probe {
             gates: Mutex::new(BTreeMap::new()),
             os_events: AtomicBool::new(true),
             captures: AtomicUsize::new(0),
+            capture_threads: Mutex::new(Vec::new()),
             read_observer: Mutex::new(None),
         }
     }
@@ -72,7 +79,14 @@ impl Probe {
 
     pub(crate) fn capture(&self) {
         self.captures.fetch_add(1, Ordering::SeqCst);
+        self.capture_threads
+            .lock()
+            .unwrap()
+            .push(std::thread::current().name().map(str::to_owned));
         self.enter("capture");
+    }
+    pub(super) fn capture_threads(&self) -> Vec<Option<String>> {
+        self.capture_threads.lock().unwrap().clone()
     }
     pub(crate) fn building(&self) {
         self.enter("building");

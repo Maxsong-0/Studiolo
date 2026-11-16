@@ -6,18 +6,24 @@ import type { View } from './types';
  */
 export interface ViewLocation {
   view: View;
-  /** 项目 root：项目运作与协作各标签的项目选择。 */
+  /** 项目 root：项目运作、协作各标签及文档变更流的项目选择。 */
   project: string | null;
   /**
-   * 视图内的面板：如项目的 `operations`、协作的 `timeline`、文档的 `tree`、规则的 `edit`／`access`；
+   * 视图内的面板：如项目的 `operations`、协作的 `timeline`、文档的 `tree`／`changes`、规则的 `edit`／`access`；
    * 默认面板记作 null。
    */
   panel: string | null;
-  /** 面板内选中的条目：如执行任务 id、策略版本号、在编辑的规则名（subject）。 */
+  /** 面板内选中的条目：如执行任务 id、策略版本号、在编辑的规则名（subject）、文档视图里阅读器在看的文件路径。 */
   item: string | null;
 }
 
 export type ViewSlot = 'project' | 'panel' | 'item';
+
+/**
+ * 策略页 `item` 格的一个保留值：直达待处理的草案队列（滚进视野并聚焦）。
+ * 驾驶舱「等你」队列里的提案和草案用它跳过去；其余取值是在看的策略版本号。
+ */
+export const POLICY_QUEUE_ITEM = 'desired';
 
 /** 顶栏六个视图，顺序与导航一致（设计规范第 4 节）。 */
 const views: readonly View[] = [
@@ -82,6 +88,11 @@ function slotValue(value: string | null): string | null {
   const trimmed = value.trim();
   if (!trimmed || trimmed.length > slotLimit) return null;
   return control.test(trimmed) ? null : trimmed;
+}
+
+/** 这个值能不能原样放进一格：超长、带控制字符或首尾带空白的放不进去，调用方得另想办法记住它。 */
+export function locatable(value: string): boolean {
+  return slotValue(value) === value;
 }
 
 /** 解析 hash 中的视图位置；旧视图名先迁移，未知视图或损坏内容回落默认视图，绝不抛错。 */

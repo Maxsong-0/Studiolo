@@ -4,6 +4,7 @@ import { expect, it, vi } from 'vitest';
 import { App } from '../App';
 import { ProjectOperations } from '../components/ProjectOperations';
 import {
+  COCKPIT_READY,
   defaultApiResponse,
   emptyNavigation,
   fixture,
@@ -35,7 +36,7 @@ it('Cargo选择不请求Vault原文，只有精确关联的Vault按钮使用既�
   vi.stubGlobal('fetch', fetchMock);
   const user = userEvent.setup();
   render(<App />);
-  await screen.findByRole('table');
+  await screen.findByRole('heading', COCKPIT_READY);
   // 项目运作并进了「项目」：从明细表点项目名进入它的运作。
   await user.click(screen.getByRole('button', { name: '项目' }));
   await user.click(screen.getByRole('button', { name: '星舟，进入项目运作' }));

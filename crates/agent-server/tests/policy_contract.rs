@@ -201,6 +201,51 @@ async fn board_response_is_withheld_when_its_project_is_removed_while_waiting() 
     server.abort();
 }
 
+/// BUG-037：黑板权威服务这一刻不可用（503）时，`board` 工具报的是内部错误（稍后可重试），
+/// 不是「请求无效」；权威服务确定拒绝（409）才是请求无效。两种都把上游给的原因原样带回。
+#[tokio::test]
+async fn board_outage_is_an_internal_error_and_a_refusal_stays_an_invalid_request() {
+    use axum::http::StatusCode;
+    let temp = TempDir::new_in(fs::canonicalize("/tmp").unwrap()).unwrap();
+    let socket = temp.path().join("board.sock");
+    let listener = tokio::net::UnixListener::bind(&socket).unwrap();
+    let app = axum::Router::new().route(
+        "/internal/board",
+        axum::routing::post(|axum::Json(request): axum::Json<Value>| async move {
+            // 握手路牌要读一次 list：它答得出来，会话才建得起来。
+            if request["operation"] == "list" {
+                return (StatusCode::OK, axum::Json(json!([])));
+            }
+            if request["request"]["task_id"] == "refused" {
+                let body = json!({"error": "工作项已被认领"});
+                return (StatusCode::CONFLICT, axum::Json(body));
+            }
+            let body = json!({"error": "黑板暂不可用，请重试。"});
+            (StatusCode::SERVICE_UNAVAILABLE, axum::Json(body))
+        }),
+    );
+    let server = tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+    let f = fixture_with_board(Some(socket)).await;
+    publish(
+        &f.policy(),
+        PolicyKind::CapabilitySet,
+        "claude",
+        Some(&capability(&["项目/Alpha"], &[], true)),
+    );
+    let (session, _) = f.initialize().await.unwrap();
+    let get =
+        |task: &str| json!({"project":"项目/Alpha","operation":"get","request":{"task_id":task}});
+    let outage = f.call(&session, 2, "board", get("fixture")).await;
+    assert_eq!(outage["error"]["code"], json!(-32603), "{outage}");
+    assert_eq!(outage["error"]["message"], json!("黑板暂不可用，请重试。"));
+    let refused = f.call(&session, 3, "board", get("refused")).await;
+    assert_eq!(refused["error"]["code"], json!(-32600), "{refused}");
+    assert_eq!(refused["error"]["message"], json!("工作项已被认领"));
+    server.abort();
+}
+
 impl Fixture {
     fn policy(&self) -> PolicyStore {
         PolicyStore::open_existing(&self.policy).unwrap()
@@ -1041,4 +1086,37 @@ async fn serve_without_policy_keeps_m3_behaviour_and_marks_the_plane_absent() {
         assert_eq!(payload["policy_plane"], "absent");
         assert!(payload["effective_hash"].is_null());
     }
+}
+
+#[tokio::test]
+async fn a_frozen_policy_store_explains_retry_without_a_false_proposal_receipt() {
+    let f = fixture().await;
+    let store = f.policy();
+    publish(
+        &store,
+        PolicyKind::CapabilitySet,
+        "claude",
+        Some(&capability(&["项目/Alpha"], &[], true)),
+    );
+    let (session, _) = f.initialize().await.unwrap();
+    let before = store.desired_list(None, 100).unwrap().len();
+    let checkpoint = store.checkpoint_handle().unwrap();
+    checkpoint
+        .freeze(std::time::Instant::now() + Duration::from_secs(2))
+        .unwrap();
+    let args = json!({"kind":"rules", "subject":"通用工作规则.md", "body":"需要重试的提案"});
+    let result = f.call(&session, 2, "propose_desired", args.clone()).await;
+    assert!(is_error(&result), "{result}");
+    assert!(
+        result
+            .to_string()
+            .contains("策略库忙，本次未提交，请稍后重试"),
+        "{result}"
+    );
+    assert_eq!(store.desired_list(None, 100).unwrap().len(), before);
+    checkpoint.thaw().unwrap();
+    assert!(!is_error(
+        &f.call(&session, 3, "propose_desired", args).await
+    ));
+    assert_eq!(store.desired_list(None, 100).unwrap().len(), before + 1);
 }

@@ -41,7 +41,7 @@ impl State {
         }
     }
     pub(crate) fn validate(&self, pair: VaultUuid) -> Result<(), BrokerError> {
-        if !matches!(self.format_version, 1..=7)
+        if !matches!(self.format_version, 1..=8)
             || (self.format_version < 4 && (self.format_version == 3) != self.maintenance_enabled)
             || (self.format_version < 7
                 && (self.format_version >= 5) != self.file_operations_enabled)
@@ -57,7 +57,7 @@ impl State {
         }
         if let Some(batch) = &self.batch {
             batch.validate()?;
-            if self.format_version != 7
+            if self.format_version < 7
                 || self.operation.is_some()
                 || self.file_operation.is_some()
                 || self.legacy_unresolved

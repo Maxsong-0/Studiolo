@@ -3,6 +3,7 @@ import type { View } from '../types';
 import {
   defaultViewLocation,
   formatViewLocation,
+  locatable,
   parseViewLocation,
   sameViewLocation,
 } from '../viewLocation';
@@ -256,5 +257,14 @@ describe('旧链接迁移（设计规范第 4 节）', () => {
           item: null,
         }),
       ).toBe('');
+  });
+
+  it('能不能原样放进一格：超长、带控制字符、首尾带空白的都不行', () => {
+    expect(locatable('项目/星舟/00-总览/INDEX.md')).toBe(true);
+    expect(locatable('a'.repeat(512))).toBe(true);
+    expect(locatable('a'.repeat(513))).toBe(false);
+    expect(locatable('项目/星舟\n.md')).toBe(false);
+    expect(locatable(' 项目/星舟.md')).toBe(false);
+    expect(locatable('')).toBe(false);
   });
 });

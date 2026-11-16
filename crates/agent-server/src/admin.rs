@@ -143,13 +143,19 @@ pub fn run(command: AdminCommand) -> Result<(), String> {
             Ok(())
         }
         AdminCommand::Instances { data, limit } => {
-            let store = AgentStore::open_existing(&data).map_err(|error| error.to_string())?;
-            for (instance, last_seen) in
-                store.instances(limit).map_err(|error| error.to_string())?
+            let store = studiolo_supply::AgentIdentityView::open_existing(&data)
+                .map_err(|error| error.to_string())?;
+            for row in store
+                .instances_with_parents(limit)
+                .map_err(|error| error.to_string())?
             {
                 println!(
-                    "{}\t{}\t{}\t{last_seen}",
-                    instance.id, instance.agent_type, instance.registered_at
+                    "{}\t{}\t{}\t{}\t{}",
+                    row.instance.id,
+                    row.instance.agent_type,
+                    row.instance.registered_at,
+                    row.last_seen_at,
+                    row.parent.as_deref().unwrap_or("—")
                 );
             }
             Ok(())

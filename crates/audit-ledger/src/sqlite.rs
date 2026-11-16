@@ -1,7 +1,14 @@
 //! 真实 SQLite Adapter：写事务串行分配 offset，提交后才返回成功，失败不泄漏底层路径。
 
+mod checkpoint;
 mod inspection;
+pub use checkpoint::{
+    AuditCheckpointAccess, AuditCheckpointSource, FrozenAudit, ReceiptCoverage, VerifiedReceipt,
+};
+mod operation;
 mod query;
+mod read_view;
+pub use read_view::{AuditPage, AuditReadView};
 mod schema;
 mod segment;
 mod storage;
@@ -60,7 +67,7 @@ impl SqliteAuditLedger {
     /// [`SqliteAuditLedger::upgrade_existing`]。
     /// 可信父目录和同 UID 进程不得恶意更名；本 Interface 不是对抗同权限管理员的隔离。
     pub fn open(private_directory: &Path) -> Result<Self, AuditError> {
-        Self::open_mode(private_directory, CreatePolicy::AllowNew)
+        Self::open_mode(private_directory, CreatePolicy::AllowNew, false)
     }
 
     /// 只打开已有的 audit.sqlite3；缺失返回 MissingStore，不创建数据库或修复坏库。
@@ -68,20 +75,28 @@ impl SqliteAuditLedger {
     /// 目录、文件、侧文件与完整性要求同 open。合法既有库仍允许追加审计和创建 SQLite 侧文件，
     /// 本方法不是只读入口；存在性检查后文件消失也不会回退到初始化。
     pub fn open_existing(private_directory: &Path) -> Result<Self, AuditError> {
-        Self::open_mode(private_directory, CreatePolicy::ExistingOnly)
+        Self::open_mode(private_directory, CreatePolicy::ExistingOnly, false)
     }
 
     fn lock(&self) -> Result<MutexGuard<'_, Session>, AuditError> {
         self.connection.lock().map_err(|_| AuditError::Unavailable)
     }
 
-    fn open_mode(private_directory: &Path, policy: CreatePolicy) -> Result<Self, AuditError> {
+    fn open_mode(
+        private_directory: &Path,
+        policy: CreatePolicy,
+        read_only: bool,
+    ) -> Result<Self, AuditError> {
         let storage = Storage::prepare(private_directory, policy)?;
-        let mut connection = connect(&storage)?;
+        let mut connection = connect_mode(&storage, read_only)?;
         check_configuration(&connection)?;
         let cost = {
             let transaction = connection
-                .transaction_with_behavior(TransactionBehavior::Immediate)
+                .transaction_with_behavior(if read_only {
+                    TransactionBehavior::Deferred
+                } else {
+                    TransactionBehavior::Immediate
+                })
                 .map_err(unavailable)?;
             schema::initialize(&transaction, storage.created)?;
             let anchored = verify::anchor(&transaction)?;
@@ -90,13 +105,29 @@ impl SqliteAuditLedger {
             anchored.cost
         };
         let mode: String = connection
-            .query_row("PRAGMA journal_mode=WAL", [], |row| row.get(0))
+            .query_row(
+                if read_only {
+                    "PRAGMA journal_mode"
+                } else {
+                    "PRAGMA journal_mode=WAL"
+                },
+                [],
+                |row| row.get(0),
+            )
             .map_err(unavailable)?;
         if mode != "wal" {
             return Err(AuditError::Unavailable);
         }
         check_configuration(&connection)?;
         storage.check()?;
+        if !read_only {
+            // 库通过校验后才固定准入文件身份：被拒绝的空库、坏库目录里不留下任何新文件；
+            // 后续冻结也不能收养被替换的另一把锁。
+            drop(
+                storage
+                    .operation_lease(false, std::time::Instant::now() + Duration::from_secs(5))?,
+            );
+        }
         Ok(Self {
             connection: Mutex::new(Session { connection, cost }),
             storage,
@@ -105,6 +136,10 @@ impl SqliteAuditLedger {
 }
 
 impl AuditLedger for SqliteAuditLedger {
+    fn enter_operation(&self) -> Result<crate::OperationPermit, AuditError> {
+        self.operation_permit()
+    }
+
     fn append(&self, event: AuditEvent) -> Result<AuditRecord, AuditError> {
         // 在取得写锁前拒绝明显过大的事件；完整记录仍在提交前二次检查。
         event.payload().validate()?;
@@ -213,9 +248,16 @@ impl AuditLedger for SqliteAuditLedger {
 }
 
 fn connect(storage: &Storage) -> Result<Connection, AuditError> {
-    // 两种模式均不让 SQLite 自建主文件；初始化只由 Storage 的明确创建策略负责。
-    let flags = OpenFlags::SQLITE_OPEN_READ_WRITE
-        | OpenFlags::SQLITE_OPEN_NO_MUTEX
+    connect_mode(storage, false)
+}
+
+fn connect_mode(storage: &Storage, read_only: bool) -> Result<Connection, AuditError> {
+    // 所有模式均不让 SQLite 自建主文件；初始化只由 Storage 的明确创建策略负责。
+    let flags = if read_only {
+        OpenFlags::SQLITE_OPEN_READ_ONLY
+    } else {
+        OpenFlags::SQLITE_OPEN_READ_WRITE
+    } | OpenFlags::SQLITE_OPEN_NO_MUTEX
         | OpenFlags::SQLITE_OPEN_NOFOLLOW
         | OpenFlags::SQLITE_OPEN_PRIVATE_CACHE;
     let connection = Connection::open_with_flags(&storage.database, flags).map_err(unavailable)?;

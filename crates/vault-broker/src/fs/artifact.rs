@@ -7,7 +7,10 @@ use studiolo_core::{Revision, VaultPath};
 use crate::{
     ArtifactCommit, ArtifactCommitReceipt, BrokerError, CommittedArtifact, FsVaultBroker, Mutation,
     MutationReceipt, VaultWriter,
-    broker::{verify_artifact_records, verify_manifest},
+    broker::{
+        accept_existing_manifest, fresh_manifest, reject_expired, verify_artifact_records,
+        verify_manifest,
+    },
     mutation, sha256,
     types::AttemptManifest,
 };
@@ -51,18 +54,17 @@ impl VaultWriter for FsVaultBroker {
         if let Some(existing) = self.inspect_existing(&manifest_path)? {
             let manifest: AttemptManifest = serde_json::from_slice(&existing.content)
                 .map_err(|error| BrokerError::json("parse attempt manifest", error))?;
-            if manifest.idempotency_key == commit.idempotency_key
-                && manifest.request_fingerprint == request_fingerprint
-            {
-                verify_manifest(self, &commit, &manifest, &existing)?;
-                return Ok(ArtifactCommitReceipt {
-                    manifest_path,
-                    manifest_revision: existing.revision,
-                    artifacts: manifest.artifacts,
-                });
-            }
-            return Err(BrokerError::IdempotencyConflict);
+            accept_existing_manifest(&manifest, &commit, &request_fingerprint, &manifest_path)?;
+            verify_manifest(self, &commit, &manifest, &existing)?;
+            return Ok(ArtifactCommitReceipt {
+                manifest_path,
+                manifest_revision: existing.revision,
+                artifacts: manifest.artifacts,
+            });
         }
+        // 期限在这里判定一次。已经开始的提交写完为止：中途再拒绝只会留下没有清单的正文，
+        // 那种半截状态没有出口，还会让整批封存被拒。
+        reject_expired(&commit)?;
 
         let base = format!("sources/attempts/{}/{}", commit.task_id, commit.attempt_id);
         let mut artifacts = Vec::with_capacity(commit.artifacts.len());
@@ -89,16 +91,7 @@ impl VaultWriter for FsVaultBroker {
             });
         }
 
-        let manifest = AttemptManifest {
-            format_version: 1,
-            task_id: commit.task_id.to_string(),
-            attempt_id: commit.attempt_id.to_string(),
-            fence: commit.fence.get(),
-            audit_intent: commit.audit_intent,
-            idempotency_key: commit.idempotency_key.clone(),
-            request_fingerprint,
-            artifacts: artifacts.clone(),
-        };
+        let manifest = fresh_manifest(&commit, request_fingerprint, artifacts.clone())?;
         verify_artifact_records(self, &artifacts)?;
         let bytes = serde_json::to_vec_pretty(&manifest)
             .map_err(|error| BrokerError::json("serialize attempt manifest", error))?;

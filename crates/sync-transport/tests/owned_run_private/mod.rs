@@ -6,6 +6,7 @@
 
 mod adapters;
 mod behaviour;
+mod checkpoint;
 // 真实 adapter 只能由 Linux 上的探测应答构造（`verify_backend_at` 在别的平台先报 `UnsupportedPlatform`）。
 #[cfg(target_os = "linux")]
 mod client_lifecycle;

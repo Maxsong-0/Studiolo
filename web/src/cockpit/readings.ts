@@ -1,27 +1,38 @@
 /**
- * 标题栏（T-130 设计规范第 6 节第 6 条）：图名、日期与副本代次，十二格读数按规范顺序。
+ * 系统读数（T-195；设计规范第 6 节）：右下角八格，加一行日期与副本代次。
  *
  * 每格只取接口原值；拿不到就是 null（显示「—」），原因写进 reason（格子的 title 与读屏文字）。
- * 健康报告里的同步与会话读数目前只有开发假数据给出（后端尚未发这几节）：按 section code 找，
- * 找到才从原文里摘出数字或首句，完整原文进 reason；找不到就写「健康报告未提供」。
+ * 要看的那一格（副本没追平、同步或会话降级）标 alert，界面画成黑底，不用红色：全页的红只留给「等你」。
+ * 同步取真实sync-bridge三态；会话读数仍可能缺失，缺失时显示未知，不补造。
+ * 接口从不提供的读数（agent 程序版本、人侧发行号、副本大小）和固定配置（同步时限）不占格子。
  */
 import { freshnessReason, type Freshness } from '../freshness';
 import type { HealthSection } from '../healthApi';
 import type { HealthStatus } from '../shell/useHealthStatus';
-import type { TitleBlockCell } from '../ui';
 import type { CountRollup, Workbench } from '../types';
 import { isFinished, type OverviewState } from './model';
 
-/** 健康报告里给标题栏的几节（code 与开发假数据 `web/dev/fixtures/health.ts` 一致）。 */
-export const HEALTH_SYNC = 'sync-round';
+/** 健康报告里给系统读数的几节（code 与开发假数据 `web/dev/fixtures/health.ts` 一致）。 */
+export const HEALTH_SYNC = 'sync-bridge';
 export const HEALTH_SESSION = 'session';
+
+/** 一格读数。 */
+export interface Reading {
+  label: string;
+  /** 读数；null 显示「—」。 */
+  value: string | null;
+  /** 读数怎么来的，或为什么拿不到。 */
+  reason?: string;
+  /** 这一格要看：画成黑底。 */
+  alert?: boolean;
+}
 
 const WEEKDAYS = ['日', '一', '二', '三', '四', '五', '六'];
 const pad = (value: number) => String(value).padStart(2, '0');
 const counts = new Intl.NumberFormat('en-US');
 
-/** 标题栏副题：`2026-09-22 周二` 换行 `副本代次 243`，刷新中在末尾注明。日期取本机今天。 */
-export function drawingSubtitle(
+/** 读数标题下的一行：`2026-09-22 周二 · 副本代次 243`，刷新中在末尾注明。日期取本机今天。 */
+export function snapshotLine(
   now: number,
   generation: number,
   refreshing: boolean,
@@ -30,10 +41,10 @@ export function drawingSubtitle(
   const day = `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(
     date.getDate(),
   )} 周${WEEKDAYS[date.getDay()]}`;
-  return `${day}\n副本代次 ${generation}${refreshing ? '（刷新中）' : ''}`;
+  return `${day} · 副本代次 ${generation}${refreshing ? '（刷新中）' : ''}`;
 }
 
-const missing = (label: string, reason: string): TitleBlockCell => ({
+const missing = (label: string, reason: string): Reading => ({
   label,
   value: null,
   reason,
@@ -47,9 +58,7 @@ function lag(freshness: Freshness): bigint | null {
   return behind > 0n ? behind : null;
 }
 
-function freshnessCell(
-  freshness: Freshness | null | undefined,
-): TitleBlockCell {
+function freshnessCell(freshness: Freshness | null | undefined): Reading {
   const label = '副本新鲜度';
   if (!freshness) return missing(label, '工作台快照没有给出新鲜度证据。');
   if (!freshness.stale) return { label, value: '已追平' };
@@ -57,7 +66,7 @@ function freshnessCell(
   return {
     label,
     value: behind === null ? '未追平' : `落后 ${counts.format(behind)} 条`,
-    tone: 'signal',
+    alert: true,
     // 原因取 freshness.ts 的原文，再附两条水位，读数「落后 N 条」由此而来。
     reason: `${freshnessReason(freshness)}索引水位 ${
       freshness.indexed_through ?? '未知'
@@ -77,32 +86,23 @@ function healthSection(
   return section ? { section } : { reason: '健康报告未提供' };
 }
 
-/** 从健康原文里摘出「<词> N 秒」的 N；原文不是这个说法时返回 null，不猜。 */
-function seconds(detail: string, word: string): string | null {
-  const match = new RegExp(`${word}\\s*(\\d+(?:\\.\\d+)?)\\s*秒`).exec(detail);
-  return match ? `${match[1]} S` : null;
-}
-
-function syncCell(
-  health: HealthStatus,
-  label: string,
-  word: string,
-  signalWhenDegraded: boolean,
-): TitleBlockCell {
+/** 直接读真实Bridge三态，不从文案猜同步耗时。 */
+function syncCell(health: HealthStatus): Reading {
+  const label = '双向同步';
   const found = healthSection(health, HEALTH_SYNC);
   if ('reason' in found) return missing(label, found.reason);
   const { section } = found;
-  const original = `${section.title}：${section.detail}`;
-  const value = seconds(section.detail, word);
-  if (value === null)
-    return missing(label, `健康报告没有给出${label}的秒数。${original}`);
-  const signal = signalWhenDegraded && section.state === 'degraded';
-  return signal
-    ? { label, value, tone: 'signal', reason: original }
-    : { label, value, reason: original };
+  const reason = `${section.title}：${section.detail}`;
+  if (section.state === 'unknown') return missing(label, reason);
+  return {
+    label,
+    value: section.state === 'degraded' ? '需处理' : '正常',
+    reason,
+    ...(section.state === 'degraded' ? { alert: true } : {}),
+  };
 }
 
-function sessionCell(health: HealthStatus): TitleBlockCell {
+function sessionCell(health: HealthStatus): Reading {
   const label = '会话';
   const found = healthSection(health, HEALTH_SESSION);
   if ('reason' in found) return missing(label, found.reason);
@@ -110,7 +110,7 @@ function sessionCell(health: HealthStatus): TitleBlockCell {
   const first = section.detail.split(/[，,；;。]/)[0]?.trim();
   if (!first) return missing(label, '健康报告的会话一节没有正文。');
   return section.state === 'degraded'
-    ? { label, value: first, tone: 'signal', reason: section.detail }
+    ? { label, value: first, alert: true, reason: section.detail }
     : { label, value: first, reason: section.detail };
 }
 
@@ -119,7 +119,7 @@ function boardCell(
   overview: OverviewState,
   label: string,
   count: (state: Extract<OverviewState, { kind: 'ready' }>) => number,
-): TitleBlockCell {
+): Reading {
   switch (overview.kind) {
     case 'loading':
       return missing(label, '黑板汇总读取中。');
@@ -140,11 +140,7 @@ function boardCell(
   }
 }
 
-function rollupCell(
-  label: string,
-  rollup: CountRollup,
-  what: string,
-): TitleBlockCell {
+function rollupCell(label: string, rollup: CountRollup, what: string): Reading {
   if (rollup.value !== null)
     return { label, value: counts.format(rollup.value) };
   return missing(
@@ -161,25 +157,22 @@ export interface ReadingInputs {
   overview: OverviewState;
 }
 
-/** 十二格，顺序与规范第 6 节一致：按行从左到右排进 3 行 × 4 列。 */
-export function titleCells({
+/** 八格，按行从左到右排成两列：左列偏「数据新不新」，右列偏「现在有多少」。 */
+export function systemReadings({
   workbench,
   health,
   overview,
-}: ReadingInputs): TitleBlockCell[] {
+}: ReadingInputs): Reading[] {
   return [
     freshnessCell(workbench.freshness),
-    syncCell(health, '每轮同步', '每轮', true),
-    syncCell(health, '同步时限', '时限', false),
+    syncCell(health),
+    sessionCell(health),
     boardCell(
       overview,
       '黑板在跑',
       ({ overview: data }) =>
         data.items.filter((item) => !isFinished(item)).length,
     ),
-    missing('agent 程序', '接口未提供 agent 程序版本。'),
-    missing('人侧发行', '接口未提供人侧发行号。'),
-    sessionCell(health),
     boardCell(
       overview,
       '执行',
@@ -188,7 +181,16 @@ export function titleCells({
     ),
     { label: '可读项目', value: counts.format(workbench.projects.length) },
     rollupCell('副本文件', workbench.counts.documents, '文档数'),
-    missing('副本大小', '接口未提供副本大小。'),
     rollupCell('未关闭 BUG', workbench.counts.open_bugs, '未关闭 BUG 数'),
   ];
+}
+
+/** 读数标题右侧的一句：几项要看；没有要看的再说几项读不到；都没有就是都正常。 */
+export function readingsSummary(readings: readonly Reading[]): string {
+  const alerts = readings.filter((reading) => reading.alert).length;
+  if (alerts > 0) return `${readings.length} 项里 ${alerts} 项要看`;
+  const unread = readings.filter((reading) => reading.value === null).length;
+  return unread > 0
+    ? `${readings.length} 项里 ${unread} 项读不到`
+    : `${readings.length} 项都正常`;
 }

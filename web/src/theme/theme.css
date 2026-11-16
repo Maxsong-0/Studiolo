@@ -1,0 +1,62 @@
+/*
+ * 深浅色三选一（T-199；设计规范第 5 节）：等宽小标签「外观」，下面三格首尾相接的按钮。
+ * 选中的是黑底块、700 字重，不靠颜色单独区分（读屏读 aria-pressed）。只引用 tokens.css 的令牌。
+ */
+.theme-switch {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1-5);
+  min-width: 0;
+}
+.theme-switch__label {
+  font-family: var(--font-mono);
+  font-size: var(--type-label);
+  font-weight: 600;
+  line-height: 1.3;
+  letter-spacing: 0.08em;
+  color: var(--ink-2);
+}
+.theme-switch__choices {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  border: 1.5px solid var(--ink);
+}
+.theme-switch__choice {
+  min-height: var(--control-small);
+  padding: 0 var(--space-2);
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--ink);
+  font-size: var(--type-small);
+  font-weight: 500;
+  line-height: 1.3;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.theme-switch__choice + .theme-switch__choice {
+  border-left: 1.5px solid var(--ink);
+}
+.theme-switch__choice[aria-pressed='true'] {
+  background: var(--ink);
+  color: var(--on-ink);
+  font-weight: 700;
+}
+/* 焦点环画在格子里面：三格首尾相接，外偏的环会被邻格吃掉；黑底块上换成 --on-ink */
+.theme-switch__choice:focus-visible {
+  outline: 2px solid var(--ink);
+  outline-offset: -4px;
+}
+.theme-switch__choice[aria-pressed='true']:focus-visible {
+  outline-color: var(--on-ink);
+}
+@media (hover: hover) and (pointer: fine) {
+  .theme-switch__choice:not([aria-pressed='true']):hover {
+    background: var(--paper-raised);
+  }
+}
+@media (width < 760px) {
+  .theme-switch__choice {
+    min-height: var(--control-touch);
+  }
+}

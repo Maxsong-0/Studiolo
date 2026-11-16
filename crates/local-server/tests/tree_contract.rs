@@ -109,11 +109,10 @@ async fn empty_and_attachment_only_directories_are_first_class_without_content()
 }
 
 #[tokio::test]
-async fn attachment_bytes_have_no_document_search_or_download_route() {
+async fn attachment_bytes_have_no_document_search_or_static_route() {
     let (_vault, _assets, app) = fixture();
     for uri in [
         format!("/api/document?path={}&generation=1", encoded(ATTACHMENT)),
-        format!("/api/attachment?path={}&generation=1", encoded(ATTACHMENT)),
         format!("/{}", encoded(ATTACHMENT)),
     ] {
         assert_eq!(get(app.clone(), &uri).await.0, StatusCode::NOT_FOUND);

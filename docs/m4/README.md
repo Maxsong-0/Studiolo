@@ -13,25 +13,30 @@
 |---|---|
 | `crates/policy` | 私有库 `policy.sqlite3`；三类母本（规则母本 Markdown、skill JSON、能力集 JSON）；desired 校验、diff 与权限扩大项；CAS 发布、回滚、首版 bootstrap；实例／类型／全局三级吊销；主人句柄与接入方句柄；审计事件 |
 | `studiolo-agent`（接入方） | `serve --policy <目录>`：每次调用复核吊销与能力集；供给视图 ＝ `--allow` ∩ 能力集白名单；路牌第 3／5／6 项改自 effective；tools `policy_read`、`propose_desired`（T-182 起加 `list_proposals`）；`GET /read/policy`；admin `policy-init` / `policy-bootstrap` / `policy-status` / `instances` |
-| `studiolo-local-server`（人侧） | `--policy-data <目录>`（会话模式）：`/api/v1/policy`（状态）、`/policy/desired`（GET 列、POST 提交）、`/policy/validate`、`/policy/withdraw`、`/policy/activate`（**L3**：发布／回滚／解除全局吊销）、`/policy/versions[/{n}]`、`/api/v1/agents/revoke`（L2 三级吊销） |
+| `studiolo-local-server`（人侧） | `--agent-data <已有身份目录>` 接入只读 [实例列表](../contracts/agents-list.md)（须配策略目录）， `--policy-data <目录>`（会话模式）：`/api/v1/policy`（状态）、`/policy/desired`（GET 列、POST 提交）、`/policy/validate`、`/policy/withdraw`、`/policy/activate`（**L3**：发布／回滚／解除全局吊销）、`/policy/versions[/{n}]`、`/api/v1/agents/revoke`（L2 三级吊销） |
 | `web/` | 「策略平面」视图：effective 与现行各项、提交 desired 并看报告（扩大项标红）、发布（就地弹 One-time Code 窗口，认证通过后自动继续这一次发布，不必去账户页再回来重来）、待处理 desired（含 AI 提案）、版本列表与回滚、三级吊销 |
 | `auth` | `FactorRuntime::require_l3` 门面透出（T-026 复审 #19 的 M4 前置） |
 
-## 本机跑一遍（全部虚构材料）
+## 在 DGX 或 Linux 服务器上跑一遍（全部虚构材料；Mac 本机不跑 cargo）
+
+在 DGX 上由主会话跑，构建环境先按根 `README.md`「开发」段「DGX 本机跑」设好（子 agent 不跑）。
 
 ```bash
-# 1. 接入方私有目录与策略库
-mkdir -m 700 -p /private/tmp/sa/data/audit /private/tmp/sa/policy
-cargo run --locked -p studiolo-agent-server -- admin init --data /private/tmp/sa/data
-cargo run --locked -p studiolo-agent-server -- admin policy-init --policy /private/tmp/sa/policy
+# 0. 私有演示根：取临时目录的物理路径（账本拒绝路径里有符号链接；macOS 的 /tmp、$TMPDIR 都经过符号链接，Linux 上就是 /tmp）
+SA="$(cd "${TMPDIR:-/tmp}" && pwd -P)/studiolo-sa"
+# 1. 接入方私有目录与策略库：<data>、<data>/audit、<policy> 都必须恰好是 0700（私有库按此校验），
+#    而 mkdir -m 只作用于列出的目录、-p 补出的中间层按 umask 建，所以每一层都显式列出
+mkdir -m 700 -p "$SA" "$SA/data" "$SA/data/audit" "$SA/policy"
+cargo run --locked -p studiolo-agent-server -- admin init --data "$SA/data"
+cargo run --locked -p studiolo-agent-server -- admin policy-init --policy "$SA/policy"
 # 2. 在交互终端签发类型 token 并 bootstrap 首版能力集（正文文件见 contracts/policy-plane.md §2 的形状）
-cargo run --locked -p studiolo-agent-server -- admin type-issue --data /private/tmp/sa/data --type claude
-cargo run --locked -p studiolo-agent-server -- admin policy-bootstrap --policy /private/tmp/sa/policy \
-  --data /private/tmp/sa/data --kind capability_set --subject claude --file /private/tmp/sa/claude.json
-cargo run --locked -p studiolo-agent-server -- admin policy-status --policy /private/tmp/sa/policy
+cargo run --locked -p studiolo-agent-server -- admin type-issue --data "$SA/data" --type claude
+cargo run --locked -p studiolo-agent-server -- admin policy-bootstrap --policy "$SA/policy" \
+  --data "$SA/data" --kind capability_set --subject claude --file "$SA/claude.json"
+cargo run --locked -p studiolo-agent-server -- admin policy-status --policy "$SA/policy"
 # 3. 接入方服务：能力集之外的目录从一开始不进入计算（本机 --vault 示例；生产白名单见 scripts/replica_common.py 的 ALLOW）
 cargo run --locked -p studiolo-agent-server -- serve --vault /path/to/readonly-copy \
-  --allow 项目/<示例项目> --allow _规则 --data /private/tmp/sa/data --policy /private/tmp/sa/policy --port 4400
+  --allow 项目/<示例项目> --allow _规则 --data "$SA/data" --policy "$SA/policy" --port 4400
 ```
 
 人侧发布链路需要会话模式与因子模式（`--session-config` ＋ `--factor-socket` ＋ `--policy-data`），
@@ -63,7 +68,8 @@ cargo run --locked -p studiolo-agent-server -- serve --vault /path/to/readonly-c
   可改从策略平面 effective 导出（见 `m3/client-projection.md`），真实客户端尚未切换。
 - 人侧界面没有实例列表（吊销按 id）；`admin instances` 提供列表。
 - 策略库已在契约与类型层纳入一致 checkpoint 清单（2026-09-22 T-110：`CheckpointOwner::Policy`，
-  恢复含策略时须先核对吊销）；但策略库的真实 checkpoint 参与者与常态／异机备份仍未实施，
+  恢复含策略时须先核对吊销）；T-204 已实现[真实策略参与者](../contracts/policy-checkpoint.md)，
+  完整 Rust 协调器/startup 接线及常态／异机备份仍未实施，
   T-086 的同机恢复点不替代异机灾备。
 - M5 的规则版本钉定已由 T-089 在黑板工作项中实现（`task-engine/src/board_types.rs` 按 effective 版本钉定规则引用）。
 

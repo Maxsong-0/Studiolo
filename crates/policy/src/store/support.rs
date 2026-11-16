@@ -49,14 +49,16 @@ pub(crate) fn enforce_proposal_bounds(
 ) -> Result<(), PolicyError> {
     let per_instance: i64 = tx
         .query_row(
-            "SELECT count(*) FROM policy_desired WHERE agent_instance = ?1 AND status = 'pending'",
+            "SELECT count(*) FROM policy_desired WHERE agent_instance = ?1
+             AND status IN ('pending', 'validated', 'rejected')",
             rusqlite::params![instance_id],
             |row| row.get(0),
         )
         .map_err(crate::database::unavailable)?;
     let total: i64 = tx
         .query_row(
-            "SELECT count(*) FROM policy_desired WHERE submitter_kind = 'agent' AND status = 'pending'",
+            "SELECT count(*) FROM policy_desired WHERE submitter_kind = 'agent'
+             AND status IN ('pending', 'validated', 'rejected')",
             [],
             |row| row.get(0),
         )
@@ -67,7 +69,7 @@ pub(crate) fn enforce_proposal_bounds(
     Ok(())
 }
 
-pub(super) fn check_hash(
+pub(crate) fn check_hash(
     tx: &rusqlite::Transaction<'_>,
     expected: &str,
 ) -> Result<(), PolicyError> {
@@ -132,5 +134,7 @@ pub(super) fn publish(
         rollback_of,
         cleared_type_revocation,
         activated_by: actor.to_owned(),
+        superseded_desired_ids: Vec::new(),
+        remaining_desired_ids: Vec::new(),
     })
 }

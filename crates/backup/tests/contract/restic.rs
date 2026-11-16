@@ -35,6 +35,8 @@ fn a_backup_invocation_pins_the_package_version_and_a_closed_argument_vector() {
     assert_eq!(
         invocation.argv(),
         [
+            "--json",
+            "--no-cache",
             "--repo",
             "/srv/backup/repo",
             "backup",
@@ -52,6 +54,45 @@ fn a_backup_invocation_pins_the_package_version_and_a_closed_argument_vector() {
             .all(|argument| !argument.contains(';') && !argument.contains(' ')),
         "参数向量里不可能出现 shell 片段"
     );
+}
+
+#[test]
+fn checking_is_repository_wide_and_does_not_claim_a_snapshot_filter() {
+    let invocation = ResticInvocation::plan(
+        repository(),
+        &ResticCommand::CheckRepository,
+        CredentialHolder::BackupWorker,
+        ResticIdentity::Append,
+    )
+    .unwrap();
+    assert_eq!(
+        invocation.argv(),
+        [
+            "--json",
+            "--no-cache",
+            "--repo",
+            "/srv/backup/repo",
+            "check",
+            "--read-data"
+        ]
+    );
+    assert_eq!(invocation.version(), "0.19.1");
+}
+
+#[test]
+fn persisted_arguments_cannot_bypass_parsing_and_remote_tags_bind_checkpoint_identity() {
+    assert!(serde_json::from_str::<RepositoryRef>("\"relative\"").is_err());
+    assert!(serde_json::from_str::<JobTag>("\"--exec=anything\"").is_err());
+    assert!(serde_json::from_str::<SnapshotRef>("\"latest\"").is_err());
+    let key = |checkpoint| studiolo_backup::worker::state::JobKey {
+        sequence: std::num::NonZeroU64::new(u64::MAX).unwrap(),
+        checkpoint_id: studiolo_core::checkpoint::CheckpointId::parse(checkpoint).unwrap(),
+    };
+    let a = JobTag::for_job(&key("original")).unwrap();
+    let b = JobTag::for_job(&key("new restoration")).unwrap();
+    assert_ne!(a, b);
+    assert_eq!(a, JobTag::for_job(&key("original")).unwrap());
+    assert!(a.as_str().len() <= 64);
 }
 
 #[test]

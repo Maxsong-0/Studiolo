@@ -193,6 +193,30 @@ async fn static_allowlist_and_security_headers_are_enforced() {
             .unwrap()
             .contains("connect-src 'self' http://127.0.0.1:*;")
     );
+    let attachment = app
+        .clone()
+        .oneshot(
+            request("/api/attachment?path=assets/private.svg&generation=1")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(attachment.status(), StatusCode::OK);
+    assert_eq!(
+        attachment.headers()["content-type"],
+        "application/octet-stream"
+    );
+    assert!(
+        attachment.headers()["content-disposition"]
+            .to_str()
+            .unwrap()
+            .starts_with("attachment;")
+    );
+    assert_eq!(
+        attachment.headers()["content-security-policy"],
+        "default-src 'none'; sandbox; frame-ancestors 'none'"
+    );
     for path in [
         "/.env",
         "/assets/../index.html",
@@ -201,7 +225,6 @@ async fn static_allowlist_and_security_headers_are_enforced() {
         "/assets/%2e%2e/favicon-fixture.svg",
         "/favicon-fixture.svg",
         "/assets/private.svg",
-        "/api/attachment?path=assets/private.svg&generation=1",
         "/api/document?path=assets/private.svg&generation=1",
         "/api/missing",
         "/README.md",

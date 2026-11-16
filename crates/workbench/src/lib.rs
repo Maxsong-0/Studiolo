@@ -204,6 +204,18 @@ impl WorkbenchReadModel {
         search::search(&self.documents, &self.projects, query)
     }
 
+    /// 只在调用方已核过权限的范围内搜索本不可变代次：`scope.prefix` 限定文档、
+    /// `scope.permitted` 逐路径过滤，两者都在计数之前生效，100 条上限与 `truncated`
+    /// 只针对范围内、许可内的命中。`scope.prefix` 为空或不以 `/` 结尾、或
+    /// `query.project` 不是 `None` 时返回 [`SearchError::InvalidProject`]。
+    pub fn search_within(
+        &self,
+        query: &SearchQuery,
+        scope: &SearchScope<'_>,
+    ) -> Result<SearchResults, SearchError> {
+        search::search_within(&self.documents, scope, query)
+    }
+
     /// 从同一个 M0 索引派生大纲、wikilink 目标与反链。笔记不存在时返回 `None`；
     /// 导航截断会显式标出。
     #[must_use]

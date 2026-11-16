@@ -1,6 +1,6 @@
 //! 离线事务维护：使用实际 OS 权限和 Broker 独占租约，不构造应用身份。
 
-mod audit;
+pub(crate) mod audit;
 mod flush;
 mod inputs;
 mod options;

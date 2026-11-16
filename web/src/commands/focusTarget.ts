@@ -15,6 +15,7 @@ export const COMMAND_TARGETS = {
   policyVersions: 'policy-versions',
   /** 文档页的搜索框：删文件要先找到并打开那个文件。 */
   documentsSearch: 'documents-search',
+  changesProject: 'changes-project',
   /** 协作 › 执行里的「代码候选落地」：核对 HEAD 与补丁摘要后二次认证落地。 */
   executionLanding: 'execution-landing',
   /** 协作 › 执行里的「逐项审阅候选」：候选产物在这里逐项审阅。 */

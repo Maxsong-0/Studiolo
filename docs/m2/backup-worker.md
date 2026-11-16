@@ -81,6 +81,8 @@ canonical／Control／Audit／完整范围 L0／部署清单／备份清单是�
 其备份范围不是 `Full` 就是 `MandatoryExcluded`。
 普通来源资料按 `BackupScope`、到期与 crypto-erase 分别落到
 完整对象／脱敏摘要／非正文墓碑。
+其 `source_policy` 必须包含有界逻辑来源名和完整生效策略 SHA-256；缺失返回
+`MissingSourcePolicy`。这是一份原策略引用，不是从文件自报内容取得的授权。
 
 只要出现任何非「完整对象」的处理方式，`requires_filter_staging` 就为真，
 此时传输源必须是 `FilteredStaging`、位于 Vault 与 `WORKBENCH_DATA` 之外、
@@ -199,3 +201,6 @@ Auth 恢复必须使旧会话与 L3 失效、阻断旧快照里的恢复码、
 - **`maintenance-v1` 的重绑定用的是按其固定绑定形状装配的已启用状态**，
   不是走真实离线维护启用流程产生的目录。
 - 第二故障域已明确不配置，本页不新增采购前提。
+
+策略库真实参与者及其边界见 [策略 checkpoint](../contracts/policy-checkpoint.md)。
+T-204 已实现单库机制与同一人侧许可池的工厂；完整生产协调器仍未接线。

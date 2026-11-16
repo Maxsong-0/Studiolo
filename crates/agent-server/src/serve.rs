@@ -68,7 +68,7 @@ pub fn prepare(options: &ServeOptions) -> Result<Arc<AppState>, String> {
     let first = first?;
     Ok(Arc::new(AppState {
         source,
-        scan_lock: Mutex::new(()),
+        scans: crate::shared_scan::SharedScan::new(),
         allow,
         store,
         policy,

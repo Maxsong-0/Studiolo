@@ -156,6 +156,9 @@ impl SessionManager {
         migrate: Migration,
         create: CreatePolicy,
     ) -> Result<Self, SessionError> {
+        let _operation = audit
+            .enter_operation()
+            .map_err(|_| SessionError::AuditUnavailable)?;
         let database = Database::open(root, &config, random.as_ref(), migrate, create)?;
         let manager = Self {
             database,

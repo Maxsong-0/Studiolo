@@ -9,6 +9,7 @@ fn artifacts() -> ArtifactCommit {
         fence: studiolo_core::Fence::new(1).unwrap(),
         audit_intent: "intent".into(),
         idempotency_key: "stage".into(),
+        provenance: crate::granted_provenance(),
         artifacts: vec![ArtifactCandidate {
             name: path("answer.md"),
             content: b"PRIVATE CANDIDATE BODY".to_vec(),

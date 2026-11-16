@@ -15,6 +15,7 @@ use std::{
 pub(crate) use binding::Binding;
 pub(crate) use lease::child as directory;
 pub(crate) use lease::{DirectoryPin, Identity};
+pub(crate) use lease::{absolute, has_ancestor, walk};
 
 /// 持久写者状态的观测值，不代表授权或当前文件仍为某次提交的内容。
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
@@ -48,6 +49,10 @@ pub(crate) struct Writer {
 }
 
 impl Writer {
+    pub(crate) fn checkpoint_paths(&self) -> (&Path, &Path) {
+        (self.root.path(), self.data.path())
+    }
+
     pub(crate) fn open(
         vault: &Path,
         data: &Path,

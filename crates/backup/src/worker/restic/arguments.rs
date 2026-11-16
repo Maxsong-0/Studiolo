@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use std::path::Path;
 
 /// 备份仓库定位符；只接受绝对路径或固定前缀的远端形式。
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 #[serde(transparent)]
 pub struct RepositoryRef(String);
 
@@ -34,11 +34,21 @@ impl RepositoryRef {
 }
 
 /// 作业 tag；只允许小写字母、数字、点、下划线与连字符。
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 #[serde(transparent)]
 pub struct JobTag(String);
 
 impl JobTag {
+    /// 远端键绑定完整作业身份；恢复后序号重用不能指向旧 checkpoint。
+    pub fn for_job(key: &crate::worker::state::JobKey) -> Result<Self, ResticError> {
+        use sha2::{Digest, Sha256};
+        let hash = Sha256::digest(key.checkpoint_id.as_str().as_bytes());
+        let suffix: String = hash[..16]
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect();
+        Self::parse(format!("job-{}-{suffix}", key.sequence))
+    }
     /// 解析 tag。
     pub fn parse(value: impl Into<String>) -> Result<Self, ResticError> {
         let value = value.into();
@@ -64,7 +74,7 @@ impl JobTag {
 }
 
 /// 远端快照标识；8 至 64 位小写十六进制。
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 #[serde(transparent)]
 pub struct SnapshotRef(String);
 
@@ -128,3 +138,18 @@ pub(super) fn is_closed_token(value: &str) -> bool {
                 )
         })
 }
+
+// 持久化/IPC 读取同样经过封闭校验，不能绕过 parse 构造不合法的新类型。
+macro_rules! checked_deserialize {
+    ($type:ty) => {
+        impl<'de> Deserialize<'de> for $type {
+            fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+                let text = String::deserialize(deserializer)?;
+                Self::parse(text).map_err(serde::de::Error::custom)
+            }
+        }
+    };
+}
+checked_deserialize!(RepositoryRef);
+checked_deserialize!(JobTag);
+checked_deserialize!(SnapshotRef);

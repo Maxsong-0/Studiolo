@@ -22,6 +22,15 @@ pub struct MemoryStore {
     state: Mutex<Option<PersistedState>>,
     manifest: Mutex<Option<CheckpointManifest>>,
     pub fail_manifest_commit: Mutex<Option<StoreError>>,
+    pub fail_state: Mutex<Option<SaveFault>>,
+    pub writes: Mutex<Vec<PersistedState>>,
+}
+
+#[derive(Clone, Copy)]
+pub enum SaveFault {
+    Draft,
+    Receipt,
+    Succeeded,
 }
 
 impl BackupStateStore for MemoryStore {
@@ -31,6 +40,27 @@ impl BackupStateStore for MemoryStore {
 
     fn save_state(&self, state: &PersistedState) -> Result<(), StoreError> {
         state.validate()?;
+        let mut fault = self.fail_state.lock().unwrap();
+        let fail = match *fault {
+            Some(SaveFault::Draft) => state
+                .pending_final
+                .as_ref()
+                .is_some_and(|p| p.receipt.is_none()),
+            Some(SaveFault::Receipt) => state
+                .pending_final
+                .as_ref()
+                .is_some_and(|p| p.receipt.is_some()),
+            Some(SaveFault::Succeeded) => state
+                .jobs
+                .iter()
+                .any(|j| j.state == studiolo_backup::worker::state::JobState::Succeeded),
+            None => false,
+        };
+        if fail {
+            *fault = None;
+            return Err(StoreError::OutOfSpace);
+        }
+        self.writes.lock().unwrap().push(state.clone());
         *self.state.lock().expect("state lock") = Some(state.clone());
         Ok(())
     }
@@ -93,7 +123,7 @@ pub struct StubProbe {
 impl StubProbe {
     pub fn present(verified_at: i64) -> Self {
         Self {
-            located: Some(SnapshotRef::parse("0a1b2c3d").expect("snapshot")),
+            located: Some(SnapshotRef::parse("ab".repeat(32)).expect("snapshot")),
             verification: RemoteVerification {
                 objects_complete: true,
                 checksum_verified: true,
@@ -140,6 +170,7 @@ impl RemoteProbe for StubProbe {
 pub struct PickyLedger {
     inner: MemoryAuditLedger,
     pub failing_phase: Mutex<Option<AuditPhase>>,
+    pub wrong_ack: Mutex<Option<AuditPhase>>,
 }
 
 impl PickyLedger {
@@ -147,6 +178,7 @@ impl PickyLedger {
         Self {
             inner: MemoryAuditLedger::default(),
             failing_phase: Mutex::new(None),
+            wrong_ack: Mutex::new(None),
         }
     }
 
@@ -170,7 +202,16 @@ impl AuditLedger for PickyLedger {
         if *self.failing_phase.lock().expect("phase lock") == Some(event.phase()) {
             return Err(AuditError::Unavailable);
         }
-        self.inner.append(event)
+        let phase = event.phase();
+        let receipt = self.inner.append(event)?;
+        if *self.wrong_ack.lock().unwrap() == Some(phase) {
+            return self
+                .records()
+                .into_iter()
+                .find(|r| r.event().phase() != phase)
+                .ok_or(AuditError::Unavailable);
+        }
+        Ok(receipt)
     }
 
     fn query(&self, filter: &AuditFilter) -> Result<Vec<AuditRecord>, AuditError> {

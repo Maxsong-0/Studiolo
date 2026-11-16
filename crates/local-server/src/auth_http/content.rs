@@ -13,6 +13,12 @@ pub(crate) struct ContentPrincipal {
 }
 
 impl ContentPrincipal {
+    pub(crate) fn enter_operation(
+        &self,
+    ) -> Result<studiolo_audit_ledger::OperationPermit, SessionError> {
+        self.sessions.enter_operation()
+    }
+
     pub(crate) fn verify(&self) -> Result<SessionInfo, SessionError> {
         self.sessions.check_with_csrf(
             &self.identity,
@@ -26,6 +32,30 @@ impl ContentPrincipal {
 }
 
 impl AuthHttp {
+    pub(crate) fn changes_seen(
+        &self,
+        request: &mut Request,
+    ) -> Result<(ContentPrincipal, crate::changes::SeenInput), Box<Response>> {
+        let context = request
+            .extensions_mut()
+            .remove::<Arc<Context>>()
+            .ok_or_else(|| Failure::unauthorized().response())?;
+        let context = Arc::try_unwrap(context).map_err(|_| Failure::unavailable().response())?;
+        let Some(Action::ChangesSeen(input)) = context.action else {
+            return Err(Box::new(Failure::bad_request().response()));
+        };
+        Ok((
+            ContentPrincipal {
+                sessions: self.sessions.clone(),
+                identity: context.identity,
+                credentials: context
+                    .credentials
+                    .ok_or_else(|| Failure::unauthorized().response())?,
+                _permit: context.content_permit,
+            },
+            input,
+        ))
+    }
     pub(crate) fn file_operation(
         &self,
         request: &mut Request,

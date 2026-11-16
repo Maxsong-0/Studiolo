@@ -22,6 +22,24 @@ pub(super) struct Database {
 }
 
 impl Database {
+    pub(super) fn checkpoint_source(
+        &self,
+    ) -> Result<studiolo_checkpoint_storage::Source, SessionError> {
+        self.storage.check()?;
+        let root = self
+            .storage
+            .database
+            .parent()
+            .ok_or(SessionError::UnsafeStorage)?;
+        let source = studiolo_checkpoint_storage::Source::bind(
+            root,
+            studiolo_checkpoint_storage::DatabaseFile::Auth,
+        )
+        .map_err(super::checkpoint::problem)?;
+        self.storage.check()?;
+        Ok(source)
+    }
+
     pub(super) fn open(
         root: &Path,
         config: &SessionConfig,

@@ -48,7 +48,35 @@ where
         ) {
             return Err(TaskEngineError::AlreadyTerminal);
         }
-        let reservation = self.stage_reservation(&event_id, &report)?;
+        let commit = self.commit_for_report(&event_id, &report)?;
+        let predicted = self.predicted_reservation(&commit)?;
+        if prior.phase == AttemptPhase::Completed && prior.terminal.as_ref() == Some(&predicted) {
+            let receipt = self
+                .control_db
+                .artifact_receipt(prior.task_id, prior.attempt_id)
+                .map_err(map_db)?
+                .ok_or_else(|| {
+                    TaskEngineError::Integrity("completed attempt has no receipt".to_owned())
+                })?;
+            self.deliver_pending_outcomes(Some(prior.attempt_id), now_ms)?;
+            self.discard_reservation(&predicted)?;
+            return Ok(ReportResult {
+                status: TaskStatus::NeedsReview,
+                receipt: serde_json::from_value(receipt)?,
+                replayed: true,
+            });
+        }
+        // 已经预留过的 attempt 只认原来那份报告：内容不同就直接拒绝，不为了比较先写一份新的暂存。
+        if matches!(
+            prior.phase,
+            AttemptPhase::Committing | AttemptPhase::Completed
+        ) && prior.terminal.as_ref() != Some(&predicted)
+        {
+            return Err(TaskEngineError::IdempotencyMismatch);
+        }
+        // 其余情况都走暂存：文件还在时只核对、不重写（也不看期限）；
+        // 提交到一半丢了就由这份报告补回，期限已过则由 Broker 拒绝。
+        let reservation = self.stage_commit(&commit)?;
         let replayed = match prior.phase {
             AttemptPhase::Running => {
                 self.control_db
@@ -100,7 +128,17 @@ where
         reservation: &TerminalReservation,
         now_ms: i64,
     ) -> Result<ArtifactCommitReceipt, TaskEngineError> {
+        let provenance = self.bound_provenance(attempt)?;
         let plan = self.staged_plan(attempt, reservation)?;
+        if plan
+            .staged_provenance
+            .as_ref()
+            .is_some_and(|staged| staged != &provenance)
+        {
+            return Err(TaskEngineError::Integrity(
+                "精确重放不能改变来源策略或期限".into(),
+            ));
+        }
         let stopped = if reservation
             .report_json
             .get("outcome")
@@ -138,6 +176,7 @@ where
             audit_intent: plan.event_id.to_string(),
             idempotency_key: format!("task-engine:{}:{}", attempt.attempt_id, plan.event_id),
             artifacts: plan.artifacts,
+            provenance,
         };
         let receipt = self
             .broker
@@ -162,6 +201,7 @@ where
         // 只有在权威 T2 提交之后，审计才能宣称工作流状态。
         // T2 的 outbox 能扛过恰好发生在此边界的崩溃或账本不可用。
         self.deliver_pending_outcomes(Some(attempt.attempt_id), now_ms)?;
+        self.discard_reservation(reservation)?;
         Ok(receipt)
     }
 
@@ -190,29 +230,14 @@ where
             TaskEngineError::Integrity("pending audit has no report reservation".to_owned())
         })?;
         let plan = self.staged_plan(&prior_identity(&outcome.attempt), reservation)?;
-        let receipt: ArtifactCommitReceipt = serde_json::from_value(outcome.receipt_json.clone())?;
-        let payload = SanitizedPayload::try_from(json!({
-            "status": outcome.status,
-            "manifest_path": receipt.manifest_path,
-            "manifest_revision": receipt.manifest_revision,
-            "artifact_count": receipt.artifacts.len(),
-        }))
-        .map_err(map_audit)?;
-        self.audit_ledger
-            .append(
-                AuditEvent::new(
-                    plan.event_id,
-                    AuditPhase::Outcome,
-                    "task_engine.report",
-                    payload,
-                )
-                .with_subject(
-                    AuditSubject::default()
-                        .with_task(outcome.attempt.task_id)
-                        .with_attempt(outcome.attempt.attempt_id),
-                ),
-            )
-            .map_err(map_audit)?;
+        let _receipt: ArtifactCommitReceipt = serde_json::from_value(outcome.receipt_json.clone())?;
+        let event = outcome.audit_event().map_err(map_db)?;
+        if event.event_id() != &plan.event_id {
+            return Err(TaskEngineError::Integrity(
+                "终态审计与 staging 不一致".into(),
+            ));
+        }
+        self.audit_ledger.append(event).map_err(map_audit)?;
         Ok(())
     }
 }
@@ -227,6 +252,8 @@ pub(super) struct CommitPlan {
     // 字段放宽到 crate 内可见：terminal_staging 与 board::stopped 直接构造或读取计划。
     pub(super) event_id: AuditEventId,
     pub(super) artifacts: Vec<ArtifactCandidate>,
+    /// 暂存字节里的来源。旧的内联预留没有这一项，不能据此补成完整范围。
+    pub(super) staged_provenance: Option<ArtifactProvenance>,
 }
 
 #[derive(Clone, Copy)]
@@ -277,5 +304,6 @@ pub(super) fn decode_plan(
     Ok(CommitPlan {
         event_id: persisted.event_id,
         artifacts,
+        staged_provenance: None,
     })
 }

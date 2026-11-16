@@ -15,7 +15,7 @@ use crate::store::{FilePublisher, StatePublisher};
 
 /// 固定 link 的一次一运行 owner。
 pub struct SyncTransportOwner<'scope> {
-    inner: RunSession<'scope, LinuxContainment>,
+    pub(super) inner: RunSession<'scope, LinuxContainment>,
 }
 
 impl<'scope> SyncTransportOwner<'scope> {

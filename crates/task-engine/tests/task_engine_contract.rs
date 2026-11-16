@@ -9,7 +9,10 @@ use studiolo_audit_ledger::{
     AuditError, AuditEvent, AuditFilter, AuditLedger, AuditPhase, AuditRecord, MemoryAuditLedger,
 };
 use studiolo_control_db::{AttemptPhase, ControlDb, TaskStatus};
-use studiolo_core::{Fence, VaultPath, VaultUuid};
+use studiolo_core::{
+    ArtifactProvenance, BackupScope, Classification, DataLabels, DesktopSync, Fence, ModelEgress,
+    SourcePolicyRef, VaultPath, VaultUuid,
+};
 use studiolo_runner_adapter::{
     RunnerAdapter, RunnerArtifact, RunnerObservation, RunnerReport, StubRunner,
 };
@@ -18,14 +21,47 @@ use studiolo_task_engine::{
     TaskEngineError, TaskSpec,
 };
 use studiolo_vault_broker::{
-    ArtifactCommit, ArtifactCommitReceipt, BrokerError, FsVaultBroker, MemoryVaultBroker, Mutation,
-    MutationReceipt, Snapshot, SnapshotId, SnapshotInput, SnapshotReader, VaultObject, VaultReader,
-    VaultSnapshotter, VaultWriter,
+    ArtifactCommit, ArtifactCommitReceipt, ArtifactStager, BrokerError, FsVaultBroker,
+    MemoryVaultBroker, Mutation, MutationReceipt, Snapshot, SnapshotId, SnapshotInput,
+    SnapshotReader, VaultBroker, VaultObject, VaultReader, VaultSnapshotter, VaultWriter,
 };
 use tempfile::TempDir;
 
 fn path(value: &str) -> VaultPath {
     VaultPath::parse(value).expect("fixture path is valid")
+}
+
+fn granted_provenance() -> ArtifactProvenance {
+    ArtifactProvenance::new(
+        SourcePolicyRef::new("fixture-source", "a".repeat(64)).unwrap(),
+        DataLabels::new(
+            Classification::Restricted,
+            BackupScope::Full,
+            DesktopSync::Deny,
+            ModelEgress::Deny,
+        )
+        .unwrap(),
+        4_000_000_000,
+        "b".repeat(64),
+    )
+    .unwrap()
+}
+
+fn grant_report<B, L>(engine: &mut PersistentTaskEngine<B, L>, claimed: &ClaimedTask)
+where
+    B: VaultBroker + ArtifactStager,
+    L: AuditLedger,
+{
+    engine
+        .authorize_artifacts(
+            claimed.run_spec.task_id,
+            claimed.run_spec.attempt_id,
+            claimed.run_spec.fence,
+            &claimed.snapshot_id,
+            &granted_provenance(),
+            4,
+        )
+        .unwrap();
 }
 
 fn spec(input: VaultPath) -> TaskSpec {
@@ -210,6 +246,7 @@ fn restart_rolls_forward_no_partial_and_complete_manifest_without_runner_reexecu
             name: path("second.md"),
             content: b"two".to_vec(),
         });
+        grant_report(&mut engine, &claimed);
         assert!(matches!(
             engine.report("crash-matrix", report.clone(), 4),
             Err(TaskEngineError::CommitFailed(_))
@@ -218,7 +255,21 @@ fn restart_rolls_forward_no_partial_and_complete_manifest_without_runner_reexecu
             engine.task(task).unwrap().unwrap().status,
             TaskStatus::Committing
         );
-        assert_eq!(ledger.query(&AuditFilter::default()).unwrap().len(), 1);
+        let during_crash = ledger.query(&AuditFilter::default()).unwrap();
+        assert_eq!(
+            during_crash
+                .iter()
+                .filter(|record| record.event().action() == "task_engine.report")
+                .count(),
+            1
+        );
+        assert_eq!(
+            during_crash
+                .iter()
+                .filter(|record| record.event().action() == "task.artifacts.authorized")
+                .count(),
+            1
+        );
         let manifest_path = path(&format!(
             "sources/attempts/{}/{}/manifest.json",
             task, claimed.run_spec.attempt_id
@@ -262,7 +313,14 @@ fn restart_rolls_forward_no_partial_and_complete_manifest_without_runner_reexecu
             committed_calls,
             "completed replay never re-enters Broker commit"
         );
-        assert_eq!(ledger.query(&AuditFilter::default()).unwrap().len(), 2);
+        let recovered = ledger.query(&AuditFilter::default()).unwrap();
+        assert_eq!(
+            recovered
+                .iter()
+                .filter(|record| record.event().action() == "task_engine.report")
+                .count(),
+            2
+        );
         assert!(
             restarted
                 .control_db()
@@ -277,6 +335,105 @@ fn restart_rolls_forward_no_partial_and_complete_manifest_without_runner_reexecu
         .unwrap();
         assert_eq!(entries.count(), 3);
     }
+}
+
+/// 递归找 Broker 私有数据根里的暂存正文（文件名以 `artifact-candidate-` 开头）。
+fn staged_bodies(directory: &std::path::Path) -> Vec<std::path::PathBuf> {
+    let mut found = Vec::new();
+    for entry in std::fs::read_dir(directory).unwrap() {
+        let path = entry.unwrap().path();
+        if path.is_dir() {
+            found.extend(staged_bodies(&path));
+        } else if path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| name.starts_with("artifact-candidate-"))
+        {
+            found.push(path);
+        }
+    }
+    found
+}
+
+/// 提交到一半时暂存正文丢了（比如数据根被恢复到更早的时间点）：
+/// 同一份报告重试能把它补回来并提交完，不会永远卡在「提交中」；内容不同的报告仍被拒绝，也不留下新的暂存。
+#[test]
+fn a_lost_staged_body_is_restored_by_the_same_report_while_committing() {
+    let temp = TempDir::new_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
+    let root = temp.path().join("vault");
+    let data = temp.path().join("data");
+    let db_path = data.join("control.sqlite3");
+    let mut inner = FsVaultBroker::open(&root, &data).unwrap();
+    let vault = inner.vault_uuid();
+    inner
+        .mutate(Mutation::create(
+            path("input.md"),
+            b"frozen".to_vec(),
+            "fixture",
+        ))
+        .unwrap();
+    let ledger = OutcomeSwitchLedger::new(false);
+    let calls = Arc::new(AtomicUsize::new(0));
+    let mut engine = PersistentTaskEngine::new(
+        ControlDb::open(&db_path, vault).unwrap(),
+        InterruptingBroker {
+            inner,
+            crash: Some(CrashPoint::BeforeArtifacts),
+            commits: calls.clone(),
+        },
+        ledger.clone(),
+    );
+    let task = engine.create_task(spec(path("input.md")), 1).unwrap();
+    engine.command(task, TaskCommand::Run, 2).unwrap();
+    let claimed = engine
+        .claim(ClaimRequest {
+            worker_id: "worker".to_owned(),
+            now_ms: 3,
+            lease_until_ms: 100,
+        })
+        .unwrap()
+        .unwrap();
+    let report = report_for(&claimed, b"one");
+    grant_report(&mut engine, &claimed);
+    assert!(matches!(
+        engine.report("lost-stage", report.clone(), 4),
+        Err(TaskEngineError::CommitFailed(_))
+    ));
+    assert_eq!(
+        engine.task(task).unwrap().unwrap().status,
+        TaskStatus::Committing
+    );
+    drop(engine);
+
+    let staged = staged_bodies(&data);
+    assert_eq!(staged.len(), 1, "提交中恰好有一份暂存正文");
+    std::fs::remove_file(&staged[0]).unwrap();
+
+    let mut restarted = PersistentTaskEngine::new(
+        ControlDb::open(&db_path, vault).unwrap(),
+        InterruptingBroker {
+            inner: FsVaultBroker::open(&root, &data).unwrap(),
+            crash: None,
+            commits: calls.clone(),
+        },
+        ledger.clone(),
+    );
+    let result = restarted.report("lost-stage", report.clone(), 5).unwrap();
+    assert!(!result.replayed);
+    assert_eq!(result.status, TaskStatus::NeedsReview);
+    assert_eq!(
+        restarted.task(task).unwrap().unwrap().status,
+        TaskStatus::NeedsReview
+    );
+    assert!(staged_bodies(&data).is_empty(), "提交完成后暂存已清理");
+
+    // 内容不同的报告：幂等冲突，而且不许为了比较先写一份新的暂存。
+    assert!(matches!(
+        restarted.report("lost-stage", report_for(&claimed, b"other"), 6),
+        Err(TaskEngineError::IdempotencyMismatch)
+    ));
+    assert!(staged_bodies(&data).is_empty(), "被拒的报告不留暂存");
+    assert!(restarted.report("lost-stage", report, 7).unwrap().replayed);
 }
 
 #[test]
@@ -355,6 +512,7 @@ fn cancellation_wins_before_report_and_acknowledgement_preserves_the_terminal_st
 #[test]
 fn completed_report_wins_before_cancellation() {
     let (mut engine, claimed) = claimed_memory_engine();
+    grant_report(&mut engine, &claimed);
     engine
         .report("winner", report_for(&claimed, b"complete"), 10)
         .unwrap();
@@ -379,6 +537,7 @@ fn audit_intent_failure_stops_artifacts_and_reconcile_can_retry_the_reserved_pla
     let ledger = OutcomeSwitchLedger::new(false);
     ledger.fail_intent.store(true, Ordering::SeqCst);
     let mut engine = PersistentTaskEngine::new(db, broker, ledger.clone());
+    grant_report(&mut engine, &claimed);
     assert!(matches!(
         engine.report("intent-unavailable", report_for(&claimed, b"protected"), 10),
         Err(TaskEngineError::AuditUnavailable)
@@ -391,7 +550,19 @@ fn audit_intent_failure_stops_artifacts_and_reconcile_can_retry_the_reserved_pla
         engine.broker().read(&manifest),
         Err(BrokerError::NotFound(_))
     ));
-    assert!(ledger.query(&AuditFilter::default()).unwrap().is_empty());
+    let pending = ledger.query(&AuditFilter::default()).unwrap();
+    assert!(
+        pending
+            .iter()
+            .all(|record| record.event().action() != "task_engine.report")
+    );
+    assert_eq!(
+        pending
+            .iter()
+            .filter(|record| record.event().action() == "task.artifacts.authorized")
+            .count(),
+        1
+    );
     assert_eq!(
         engine
             .task(claimed.run_spec.task_id)
@@ -406,7 +577,15 @@ fn audit_intent_failure_stops_artifacts_and_reconcile_can_retry_the_reserved_pla
     ));
     ledger.fail_intent.store(false, Ordering::SeqCst);
     assert_eq!(engine.reconcile(20).unwrap().committed_attempts, 1);
-    assert_eq!(ledger.query(&AuditFilter::default()).unwrap().len(), 2);
+    assert_eq!(
+        ledger
+            .query(&AuditFilter::default())
+            .unwrap()
+            .iter()
+            .filter(|record| record.event().action() == "task_engine.report")
+            .count(),
+        2
+    );
 }
 
 #[test]
@@ -653,6 +832,7 @@ fn stub_report_chain_commits_manifest_after_audit_and_enters_needs_review() {
         })
         .expect("claim succeeds")
         .expect("task is claimable");
+    grant_report(&mut engine, &claimed);
     assert_eq!(claimed.run_spec.task_id, task_id);
     assert_eq!(claimed.run_spec.inputs.len(), 2);
     assert!(
@@ -719,9 +899,20 @@ fn stub_report_chain_commits_manifest_after_audit_and_enters_needs_review() {
         .audit_ledger()
         .query(&AuditFilter::default().with_task(task_id))
         .expect("query audit");
-    assert_eq!(audit.len(), 2);
-    assert_eq!(audit[0].event().phase(), AuditPhase::Intent);
-    assert_eq!(audit[1].event().phase(), AuditPhase::Outcome);
+    let reports: Vec<_> = audit
+        .iter()
+        .filter(|record| record.event().action() == "task_engine.report")
+        .collect();
+    assert_eq!(reports.len(), 2);
+    assert_eq!(reports[0].event().phase(), AuditPhase::Intent);
+    assert_eq!(reports[1].event().phase(), AuditPhase::Outcome);
+    assert_eq!(
+        audit
+            .iter()
+            .filter(|record| record.event().action() == "task.artifacts.authorized")
+            .count(),
+        1
+    );
 }
 
 #[test]
@@ -755,6 +946,7 @@ fn task_spec_contains_only_human_authored_fields() {
 #[test]
 fn identical_report_replay_returns_the_same_manifest_without_duplicate_audit() {
     let (mut engine, claimed) = claimed_memory_engine();
+    grant_report(&mut engine, &claimed);
     let report = report_for(&claimed, b"candidate");
 
     let first = engine
@@ -767,13 +959,23 @@ fn identical_report_replay_returns_the_same_manifest_without_duplicate_audit() {
     assert!(!first.replayed);
     assert!(replay.replayed);
     assert_eq!(replay.receipt, first.receipt);
+    let audit = engine
+        .audit_ledger()
+        .query(&AuditFilter::default())
+        .expect("query audit");
     assert_eq!(
-        engine
-            .audit_ledger()
-            .query(&AuditFilter::default())
-            .expect("query audit")
-            .len(),
+        audit
+            .iter()
+            .filter(|record| record.event().action() == "task_engine.report")
+            .count(),
         2
+    );
+    assert_eq!(
+        audit
+            .iter()
+            .filter(|record| record.event().action() == "task.artifacts.authorized")
+            .count(),
+        1
     );
 }
 
@@ -872,7 +1074,7 @@ fn restart_rolls_manifest_forward_after_outcome_audit_recovers_without_duplicate
         ))
         .expect("create input");
     let db = ControlDb::open(&database_path, vault_uuid).expect("open control db");
-    let ledger = OutcomeSwitchLedger::new(true);
+    let ledger = OutcomeSwitchLedger::new(false);
     let mut first = PersistentTaskEngine::new(db, broker, ledger.clone());
     let task_id = first.create_task(spec(input), 1).expect("create task");
     first
@@ -886,6 +1088,8 @@ fn restart_rolls_manifest_forward_after_outcome_audit_recovers_without_duplicate
         })
         .expect("claim")
         .expect("claimable task");
+    grant_report(&mut first, &claimed);
+    ledger.fail_outcome.store(true, Ordering::SeqCst);
 
     assert!(matches!(
         first.report("recoverable-report", report_for(&claimed, b"result"), 10),
@@ -954,7 +1158,9 @@ fn restart_rolls_manifest_forward_after_outcome_audit_recovers_without_duplicate
         ledger
             .query(&AuditFilter::default().with_task(task_id))
             .expect("query recovered audit")
-            .len(),
+            .iter()
+            .filter(|record| record.event().action() == "task_engine.report")
+            .count(),
         2
     );
     assert_eq!(
@@ -966,11 +1172,11 @@ fn restart_rolls_manifest_forward_after_outcome_audit_recovers_without_duplicate
         .count(),
         2
     );
-    assert_eq!(ledger.outcome_appends.load(Ordering::SeqCst), 2);
+    assert_eq!(ledger.outcome_appends.load(Ordering::SeqCst), 4);
     assert_eq!(restarted.reconcile(30).unwrap().audit_outcomes, 0);
     assert_eq!(
         ledger.outcome_appends.load(Ordering::SeqCst),
-        2,
+        4,
         "acknowledged outcomes are never scanned for replay"
     );
 }
@@ -1049,7 +1255,7 @@ struct OutcomeStateObserver {
 
 impl AuditLedger for OutcomeStateObserver {
     fn append(&self, event: AuditEvent) -> Result<AuditRecord, AuditError> {
-        if event.phase() == AuditPhase::Outcome {
+        if event.action() == "task_engine.report" && event.phase() == AuditPhase::Outcome {
             let task = event.subject().task_id().unwrap();
             let db = ControlDb::open(&self.database_path, self.vault).unwrap();
             assert_eq!(
@@ -1101,6 +1307,7 @@ fn audit_outcome_observes_the_already_committed_db_state_and_durable_obligation(
         })
         .unwrap()
         .unwrap();
+    grant_report(&mut engine, &claimed);
     engine
         .report("truthful-outcome", report_for(&claimed, b"result"), 10)
         .unwrap();
@@ -1236,6 +1443,18 @@ impl studiolo_vault_broker::ArtifactStager for InterruptingBroker {
     ) -> Result<ArtifactCommit, BrokerError> {
         studiolo_vault_broker::ArtifactStager::load_staged_artifact_commit(&self.inner, pointer)
     }
+    fn staged_reference(
+        &self,
+        plan: &ArtifactCommit,
+    ) -> Result<studiolo_vault_broker::StagedArtifactCommit, BrokerError> {
+        studiolo_vault_broker::ArtifactStager::staged_reference(&self.inner, plan)
+    }
+    fn discard_staged_artifact_commit(
+        &self,
+        pointer: &studiolo_vault_broker::StagedArtifactCommit,
+    ) -> Result<(), BrokerError> {
+        studiolo_vault_broker::ArtifactStager::discard_staged_artifact_commit(&self.inner, pointer)
+    }
 }
 
 impl studiolo_vault_broker::ArtifactStager for LostMutationAck {
@@ -1251,11 +1470,24 @@ impl studiolo_vault_broker::ArtifactStager for LostMutationAck {
     ) -> Result<ArtifactCommit, BrokerError> {
         studiolo_vault_broker::ArtifactStager::load_staged_artifact_commit(&self.inner, pointer)
     }
+    fn staged_reference(
+        &self,
+        plan: &ArtifactCommit,
+    ) -> Result<studiolo_vault_broker::StagedArtifactCommit, BrokerError> {
+        studiolo_vault_broker::ArtifactStager::staged_reference(&self.inner, plan)
+    }
+    fn discard_staged_artifact_commit(
+        &self,
+        pointer: &studiolo_vault_broker::StagedArtifactCommit,
+    ) -> Result<(), BrokerError> {
+        studiolo_vault_broker::ArtifactStager::discard_staged_artifact_commit(&self.inner, pointer)
+    }
 }
 
 #[test]
 fn terminal_reservation_contains_only_identity_and_content_plane_pointer() {
     let (mut engine, claimed) = claimed_memory_engine();
+    grant_report(&mut engine, &claimed);
     engine
         .report(
             "body-free-db",
@@ -1306,6 +1538,7 @@ fn historical_inline_reservation_migrates_after_durable_staging_and_replays() {
         })
         .unwrap()
         .unwrap();
+    grant_report(&mut engine, &claimed);
     let report = report_for(&claimed, b"historical candidate");
     let first = engine.report("legacy-body", report.clone(), 4).unwrap();
     let legacy = studiolo_control_db::TerminalReservation {

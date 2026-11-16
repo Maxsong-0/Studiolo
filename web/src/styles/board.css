@@ -32,14 +32,14 @@
 /* 还没换成 ProjectSelect 的下拉（执行面板）：同一套直角墨线 */
 .board-toolbar select:not(.collab-select__control) {
   max-width: 100%;
-  height: 32px;
-  padding: 0 10px;
+  height: var(--control-compact);
+  padding: 0 var(--space-2-5);
   border: 1.5px solid var(--ink);
   border-radius: 0;
   background: var(--paper-raised);
   color: var(--ink);
   font: inherit;
-  font-size: 13px;
+  font-size: var(--type-small);
 }
 .board-toolbar select:focus-visible {
   outline: 2px solid var(--ink);
@@ -47,7 +47,7 @@
 }
 .board-hint {
   margin: 0;
-  font-size: 13px;
+  font-size: var(--type-small);
   line-height: 1.6;
   color: var(--ink-2);
 }
@@ -60,7 +60,7 @@
   align-items: baseline;
   gap: var(--space-2);
   margin: 0;
-  font-size: 13px;
+  font-size: var(--type-small);
   line-height: 1.6;
   color: var(--signal-text);
 }
@@ -76,8 +76,8 @@
 
 .board-bar,
 .board-dispatch {
-  padding-top: 10px;
-  padding-bottom: 10px;
+  padding-top: var(--space-2-5);
+  padding-bottom: var(--space-2-5);
 }
 .board-items {
   gap: var(--space-3);
@@ -101,7 +101,7 @@
   display: grid;
   grid-template-columns: minmax(150px, 200px) minmax(0, 1fr);
   gap: var(--space-2) var(--space-5);
-  padding: 14px 0;
+  padding: var(--space-3-5) 0;
   border-bottom: 1px solid var(--hairline);
   overflow-wrap: anywhere;
   scroll-margin: var(--space-8);
@@ -117,7 +117,7 @@
   flex-direction: column;
   align-items: flex-start;
   gap: var(--space-1);
-  font-size: 13px;
+  font-size: var(--type-small);
   line-height: 1.5;
 }
 .board-status {
@@ -131,7 +131,7 @@
 .board-item__body {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--space-1-5);
   min-width: 0;
 }
 .board-item__title {
@@ -142,7 +142,7 @@
 }
 .board-item code {
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: var(--type-caption);
   overflow-wrap: anywhere;
 }
 .board-item__id {
@@ -151,14 +151,14 @@
 .board-item__holder,
 .board-item__progress {
   margin: 0;
-  font-size: 13px;
+  font-size: var(--type-small);
   line-height: 1.6;
 }
 .board-attempt {
   display: grid;
   gap: var(--space-1);
   margin: 0;
-  font-size: 13px;
+  font-size: var(--type-small);
   line-height: 1.6;
 }
 .board-attempt > div {
@@ -179,7 +179,7 @@
 .board-receipt small {
   display: block;
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: var(--type-label);
   line-height: 1.5;
   color: var(--ink-2);
   overflow-wrap: anywhere;
@@ -187,7 +187,7 @@
 .board-instances {
   margin: var(--space-1) 0 0;
   padding-left: 1.25rem;
-  font-size: 13px;
+  font-size: var(--type-small);
   line-height: 1.7;
 }
 
@@ -200,9 +200,9 @@
 }
 .board-details > summary,
 .board-receipt > summary {
-  min-height: 32px;
-  padding: 6px 0;
-  font-size: 13px;
+  min-height: var(--control-compact);
+  padding: var(--space-1-5) 0;
+  font-size: var(--type-small);
   line-height: 1.5;
   font-weight: 700;
   cursor: pointer;
@@ -217,17 +217,17 @@
 .board-receipt ul {
   margin: 0 0 var(--space-2);
   padding-left: 1.25rem;
-  font-size: 13px;
+  font-size: var(--type-small);
   line-height: 1.6;
 }
 .board-details p,
 .board-receipt p {
   margin: var(--space-1) 0;
-  font-size: 13px;
+  font-size: var(--type-small);
   line-height: 1.6;
 }
 .board-receipt h4 {
-  margin: 10px 0 var(--space-1);
+  margin: var(--space-2-5) 0 var(--space-1);
   font-family: var(--font-mono);
   font-size: var(--type-label);
   line-height: 1.3;
@@ -236,7 +236,7 @@
   color: var(--ink-2);
 }
 .board-paths code {
-  font-size: 12px;
+  font-size: var(--type-caption);
 }
 
 /* ---------- 时间线（项目时间回放） ---------- */
@@ -255,7 +255,7 @@
 }
 .timeline__scrub-label {
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: var(--type-caption);
   line-height: 1.4;
   color: var(--ink-2);
 }
@@ -279,9 +279,9 @@
   grid-template-columns: 11.5rem minmax(0, 1fr) 4.5rem minmax(0, 15rem);
   align-items: baseline;
   gap: var(--space-3);
-  padding: 7px 0;
+  padding: var(--space-2) 0;
   border-bottom: 1px solid var(--hairline);
-  font-size: 13px;
+  font-size: var(--type-small);
   line-height: 1.5;
 }
 .timeline__time {
@@ -295,22 +295,22 @@
   overflow-wrap: anywhere;
 }
 .timeline__phase {
-  font-size: 12px;
+  font-size: var(--type-caption);
 }
 .timeline__task,
 .timeline__log-path {
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: var(--type-label);
   color: var(--ink-2);
   overflow-wrap: anywhere;
 }
 .timeline__log {
   display: grid;
   grid-template-columns: 6.5rem minmax(0, 1fr);
-  gap: 2px var(--space-3);
-  padding: 7px 0;
+  gap: var(--space-0-5) var(--space-3);
+  padding: var(--space-2) 0;
   border-bottom: 1px solid var(--hairline);
-  font-size: 13px;
+  font-size: var(--type-small);
   line-height: 1.5;
 }
 .timeline__log-title {
@@ -344,7 +344,7 @@
   }
   .timeline__event {
     grid-template-columns: minmax(0, 1fr) max-content;
-    gap: 2px var(--space-3);
+    gap: var(--space-0-5) var(--space-3);
   }
   .timeline__time,
   .timeline__task {

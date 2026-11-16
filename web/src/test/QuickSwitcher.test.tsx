@@ -9,6 +9,7 @@ import userEvent from '@testing-library/user-event';
 import { beforeEach, expect, it, vi } from 'vitest';
 import { App } from '../App';
 import {
+  COCKPIT_READY,
   defaultApiResponse,
   documents,
   emptyNavigation,
@@ -56,8 +57,8 @@ function paletteSearches() {
 it('动作面板的文档组用全文接口带当前代次查询，停手才发一次，Enter 打开选中的文档', async () => {
   const user = userEvent.setup();
   render(<App />);
-  // 数据来源标签收进了状态浮层；等驾驶舱的项目表出来即工作台已读到。
-  await screen.findByRole('table');
+  // 数据来源标签收进了状态浮层；等驾驶舱的标题出来即工作台已读到。
+  await screen.findByRole('heading', COCKPIT_READY);
   await user.click(screen.getByRole('button', { name: /^动作面板/ }));
   const dialog = screen.getByRole('dialog', { name: '动作面板' });
   const input = within(dialog).getByRole('combobox', {
@@ -88,8 +89,8 @@ it('动作面板的文档组用全文接口带当前代次查询，停手才发�
 it('⌘K与CtrlK可在三页面打开，Esc关闭并还原启动按钮焦点', async () => {
   const user = userEvent.setup();
   render(<App />);
-  // 数据来源标签收进了状态浮层；等驾驶舱的项目表出来即工作台已读到。
-  await screen.findByRole('table');
+  // 数据来源标签收进了状态浮层；等驾驶舱的标题出来即工作台已读到。
+  await screen.findByRole('heading', COCKPIT_READY);
   const trigger = screen.getByRole('button', { name: /^动作面板/ });
   trigger.focus();
   fireEvent.keyDown(window, { key: 'k', metaKey: true });
@@ -112,8 +113,8 @@ it('⌘K与CtrlK可在三页面打开，Esc关闭并还原启动按钮焦点', a
 it('方向键选择结果，快照刷新关闭动作面板并取消其请求', async () => {
   const user = userEvent.setup();
   render(<App />);
-  // 数据来源标签收进了状态浮层；等驾驶舱的项目表出来即工作台已读到。
-  await screen.findByRole('table');
+  // 数据来源标签收进了状态浮层；等驾驶舱的标题出来即工作台已读到。
+  await screen.findByRole('heading', COCKPIT_READY);
   await user.click(screen.getByRole('button', { name: /^动作面板/ }));
   const dialog = screen.getByRole('dialog', { name: '动作面板' });
   const input = within(dialog).getByRole('combobox', {

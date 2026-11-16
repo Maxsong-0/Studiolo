@@ -115,7 +115,7 @@ fn assert_newer_database_unchanged(journal_mode: &str) {
         ControlDb::open(&path, VaultUuid::new()),
         Err(DbError::UnsupportedSchema {
             found: 99,
-            supported: 3,
+            supported: 4,
         })
     ));
 
@@ -154,7 +154,7 @@ fn an_empty_existing_migration_ledger_initializes_and_keeps_runtime_pragmas() {
     let vault = VaultUuid::new();
 
     let db = ControlDb::open(&path, vault).unwrap();
-    assert_eq!(db.schema_version().unwrap(), 3);
+    assert_eq!(db.schema_version().unwrap(), 4);
     assert_eq!(db.bound_vault_uuid().unwrap(), vault);
     assert_eq!(db.pragma("journal_mode").unwrap(), "wal");
     assert_eq!(db.pragma("synchronous").unwrap(), "2");
@@ -165,14 +165,14 @@ fn an_empty_existing_migration_ledger_initializes_and_keeps_runtime_pragmas() {
             .unwrap()
             .schema_version()
             .unwrap(),
-        3
+        4
     );
 }
 
 #[test]
 fn in_memory_initialization_keeps_runtime_pragmas() {
     let db = ControlDb::open_in_memory(VaultUuid::new()).unwrap();
-    assert_eq!(db.schema_version().unwrap(), 3);
+    assert_eq!(db.schema_version().unwrap(), 4);
     assert_eq!(db.pragma("journal_mode").unwrap(), "memory");
     assert_eq!(db.pragma("synchronous").unwrap(), "2");
     assert_eq!(db.pragma("foreign_keys").unwrap(), "1");
@@ -196,7 +196,7 @@ fn a_case_variant_ledger_name_cannot_bypass_the_newer_version_check() {
         ControlDb::open(&path, VaultUuid::new()),
         Err(DbError::UnsupportedSchema {
             found: 99,
-            supported: 3,
+            supported: 4,
         })
     ));
     assert!(fs::read(&path).unwrap() == before);

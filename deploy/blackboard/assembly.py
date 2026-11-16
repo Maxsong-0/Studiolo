@@ -1,6 +1,6 @@
 """从已激活发行派生候选的固定装配；不读取凭据、不操作服务或数据库。
 
-黑板接线沿用 r2，Bridge接线沿用已激活r14；本版仅替换发行路径。
+黑板接线沿用 r2，Bridge接线沿用已激活r14；本版替换发行路径，并按 T-151 已批准范围增加只读身份库参数。
 写根、认证、配对和同步范围保持现场原值。
 变换只接受钉住的上一发行形状；额外差异由现场摘要和逐字变换核验拒绝。
 
@@ -84,7 +84,7 @@ def agent_unit(text):
 
 
 def launcher(text):
-    """已批准Bridge接线逐字沿用，只替换发行路径。"""
+    """沿用 Bridge 接线，增加已批准的只读身份目录参数；仅生成候选，不激活。"""
     if RELEASE in text or text.count('"--sync-transport"') != 1:
         raise ValueError('unrecognized launcher')
     for fragment in ('"--canonical-writer-data", WRITER', '"--board-socket", BOARD_SOCKET',
@@ -95,6 +95,10 @@ def launcher(text):
     if ('正式黑板库 · Obsidian 同步试跑' not in text
             or '"--sync-transport", "' + SYNC_APPROVAL + '",' not in text):
         raise ValueError('bridge wiring missing')
+    if '"--agent-data"' in text:
+        raise ValueError('unexpected agents wiring')
+    text = replace_once(text, '"--board-agent-data", AGENT,',
+                        '"--board-agent-data", AGENT, "--agent-data", AGENT,')
     text = replace_once(text, 'RELEASE = "' + OLD_RELEASE + '"',
                         'RELEASE = "' + RELEASE + '"')
     if OLD_RELEASE in text:

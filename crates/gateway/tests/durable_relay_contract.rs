@@ -2,17 +2,41 @@
 use std::{
     path::Path,
     sync::{
-        Arc,
+        Arc, Mutex,
         atomic::{AtomicBool, AtomicUsize, Ordering},
     },
 };
 use studiolo_audit_ledger::MemoryAuditLedger;
 use studiolo_core::{AttemptId, Fence, PermissionSet, TaskId, ToolId};
 use studiolo_gateway::{
-    AttemptSnapshot, CallId, DurableRelay, JobCapability, ManualClock, MemoryAttemptGuard,
-    ModelEgress, PermissionLayers, RelayError, RelayGrant, RelayLimits, RelayPolicyGuard,
-    RelayProvider, RelayPublisher, RelayServices, RelaySource, RelayTransport,
+    AttemptGuard, AttemptGuardError, AttemptSnapshot, CallId, DurableRelay, JobCapability,
+    ManualClock, MemoryAttemptGuard, ModelEgress, PermissionLayers, RelayError, RelayGrant,
+    RelayLimits, RelayPolicyGuard, RelayProvider, RelayPublisher, RelayServices, RelaySource,
+    RelayTransport,
 };
+
+/// 实时 attempt 权威：注入了故障就照故障答，否则转给内存权威。
+struct FaultyGuard {
+    inner: Arc<MemoryAttemptGuard>,
+    fault: Mutex<Option<AttemptGuardError>>,
+}
+impl FaultyGuard {
+    fn fail_with(&self, fault: Option<AttemptGuardError>) {
+        *self.fault.lock().unwrap() = fault;
+    }
+}
+impl AttemptGuard for FaultyGuard {
+    fn inspect(
+        &self,
+        task: TaskId,
+        attempt: AttemptId,
+    ) -> Result<AttemptSnapshot, AttemptGuardError> {
+        if let Some(fault) = *self.fault.lock().unwrap() {
+            return Err(fault);
+        }
+        self.inner.inspect(task, attempt)
+    }
+}
 
 struct Policy(AtomicBool);
 impl RelayPolicyGuard for Policy {
@@ -59,6 +83,7 @@ struct Fixture {
     relay: DurableRelay,
     grant: RelayGrant,
     guard: Arc<MemoryAttemptGuard>,
+    faulty: Arc<FaultyGuard>,
     clock: Arc<ManualClock>,
     policy: Arc<Policy>,
     publisher: Arc<Publisher>,
@@ -86,6 +111,10 @@ impl Fixture {
         guard
             .set(task, attempt, AttemptSnapshot::active(fence))
             .unwrap();
+        let faulty = Arc::new(FaultyGuard {
+            inner: guard.clone(),
+            fault: Mutex::new(None),
+        });
         let clock = Arc::new(ManualClock::new(100));
         let policy = Arc::new(Policy(AtomicBool::new(true)));
         let publisher = Arc::new(Publisher(AtomicBool::new(true)));
@@ -128,7 +157,7 @@ impl Fixture {
             &directory.path().join("relay.db"),
             raw,
             RelayServices {
-                guard: guard.clone(),
+                guard: faulty.clone(),
                 policy: policy.clone(),
                 clock: clock.clone(),
                 audit: Arc::new(MemoryAuditLedger::new()),
@@ -148,6 +177,7 @@ impl Fixture {
             relay,
             grant,
             guard,
+            faulty,
             clock,
             policy,
             publisher,
@@ -270,4 +300,37 @@ fn opening_gateway_state_always_freezes_admission() {
     )
     .unwrap();
     assert!(matches!(reopened.issue(f.grant), Err(RelayError::Frozen)));
+}
+#[test]
+fn unreadable_attempt_guard_is_retryable_storage_not_a_denial() {
+    let f = Fixture::new();
+    // 签发与中继两处都先问实时 attempt 权威：读不出来答 Storage（503），不答 Denied（403）。
+    f.faulty.fail_with(Some(AttemptGuardError::Unavailable));
+    assert_eq!(
+        f.relay.issue(f.grant.clone()).map(|_| ()),
+        Err(RelayError::Storage)
+    );
+    f.faulty.fail_with(None);
+    let ticket = f.relay.issue(f.grant.clone()).unwrap();
+    f.faulty.fail_with(Some(AttemptGuardError::Unavailable));
+    assert_eq!(f.call(ticket.expose(), "a"), Err(RelayError::Storage));
+    assert_eq!(f.transport.calls.load(Ordering::SeqCst), 0);
+    // 权威恢复后同一调用照常放行：上面那次没有留下预留或结果未知的边界。
+    f.faulty.fail_with(None);
+    f.call(ticket.expose(), "a").unwrap();
+    assert_eq!(f.transport.calls.load(Ordering::SeqCst), 1);
+}
+#[test]
+fn inactive_attempt_is_still_a_denial() {
+    let f = Fixture::new();
+    f.faulty.fail_with(Some(AttemptGuardError::UnknownAttempt));
+    assert_eq!(
+        f.relay.issue(f.grant.clone()).map(|_| ()),
+        Err(RelayError::Denied)
+    );
+    f.faulty.fail_with(None);
+    let ticket = f.relay.issue(f.grant.clone()).unwrap();
+    f.faulty.fail_with(Some(AttemptGuardError::UnknownAttempt));
+    assert_eq!(f.call(ticket.expose(), "a"), Err(RelayError::Denied));
+    assert_eq!(f.transport.calls.load(Ordering::SeqCst), 0);
 }

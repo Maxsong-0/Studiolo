@@ -44,8 +44,9 @@ impl AgentSession {
         Ok(text_result(self.finish_mcp(self.text_board(args).await?)?))
     }
 
+    // 属性里只能写字面量：8000 与 HARD_BUDGET_TOKENS 同值。
     #[tool(
-        description = "重取冷启动路牌：我是谁、项目状态、能力、待我做的事、硬约束、继续拉的入口；≤2000 token"
+        description = "重取冷启动路牌：我是谁、项目状态、能力、待我做的事、硬约束、继续拉的入口；≤8000 token"
     )]
     async fn handshake(&self) -> Result<CallToolResult, McpError> {
         let _work = self.enter_mcp_work()?;
@@ -117,7 +118,7 @@ impl AgentSession {
 
     // 说明里的 64 即 studiolo_policy::MAX_LISTED_PROPOSALS；属性里只能写字面量，两者由 tests/proposal_contract.rs 钉在一起。
     #[tool(
-        description = "列本类型仍待处理（pending／validated）的 desired 提案，新到旧，最多 64 份，可选 kind、subject 收窄；断线后用它核对提案是否已入库；每行：desired_id<TAB>kind<TAB>subject<TAB>status<TAB>body_sha256<TAB>submitted_at<TAB>instance；不含正文；需能力集 policy.propose_desired，每次调用进读取审计"
+        description = "传 desired_id 可按号查本类型原提案的当前结果，返回 JSON（状态、发布版本、校验失败原因；撤回不含人工理由），不能与 kind／subject 同用；不传则列本类型仍待处理（pending／validated）的 desired 提案，新到旧，最多 64 份，可选 kind、subject 收窄；断线后用它核对提案是否已入库；每行：desired_id<TAB>kind<TAB>subject<TAB>status<TAB>body_sha256<TAB>submitted_at<TAB>instance；不含正文；需能力集 policy.propose_desired，每次调用进读取审计"
     )]
     async fn list_proposals(
         &self,

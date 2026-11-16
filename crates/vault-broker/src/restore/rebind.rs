@@ -117,25 +117,29 @@ pub(super) fn rebind(
     write_lineage(data, &control, &lineage)?;
     fault.trip(RestoreFault::AfterLineage)?;
 
-    // history/meta-v1：目录组的四个身份全部重新采集。
-    let history_root = directory(data, "history").map_err(broker)?;
-    let meta = directory(&history_root, HISTORY_META).map_err(broker)?;
-    let history = super::mirror::HistoryBinding {
-        version: verified.history.version,
-        pair_id: verified.pair_id,
-        vault_uuid: verified.vault_uuid,
-        root: Identity::directory(&meta).map_err(broker)?,
-        requests: Identity::directory(&directory(&meta, "requests").map_err(broker)?)
-            .map_err(broker)?,
-        catalogs: Identity::directory(&directory(&meta, "catalogs").map_err(broker)?)
-            .map_err(broker)?,
-        outbox: Identity::directory(&directory(&meta, "outbox").map_err(broker)?)
-            .map_err(broker)?,
+    let history = if let Some(previous) = &verified.history {
+        let history_root = directory(data, "history").map_err(broker)?;
+        let meta = directory(&history_root, HISTORY_META).map_err(broker)?;
+        let history = super::mirror::HistoryBinding {
+            version: previous.version,
+            pair_id: verified.pair_id,
+            vault_uuid: verified.vault_uuid,
+            root: Identity::directory(&meta).map_err(broker)?,
+            requests: Identity::directory(&directory(&meta, "requests").map_err(broker)?)
+                .map_err(broker)?,
+            catalogs: Identity::directory(&directory(&meta, "catalogs").map_err(broker)?)
+                .map_err(broker)?,
+            outbox: Identity::directory(&directory(&meta, "outbox").map_err(broker)?)
+                .map_err(broker)?,
+        };
+        disk::save(&meta, BINDING, &history, || {
+            marker_check(&control, verified.vault_uuid)
+        })
+        .map_err(broker)?;
+        super::BindingCoverage::Rebound
+    } else {
+        super::BindingCoverage::NotEnabled
     };
-    disk::save(&meta, BINDING, &history, || {
-        marker_check(&control, verified.vault_uuid)
-    })
-    .map_err(broker)?;
     fault.trip(RestoreFault::AfterHistory)?;
 
     // 已启用的 maintenance-v1 同样要重绑定，不能只改主根。
@@ -156,6 +160,16 @@ pub(super) fn rebind(
         MaintenanceCoverage::NotEnabled
     };
     fault.trip(RestoreFault::AfterMaintenance)?;
+
+    let file_operations = if let Some(previous) = &verified.file_operations {
+        super::optional::rebind_file_operations(root, data, previous, || {
+            marker_check(&control, verified.vault_uuid)
+        })?;
+        super::BindingCoverage::Rebound
+    } else {
+        super::BindingCoverage::NotEnabled
+    };
+    fault.trip(RestoreFault::AfterFileOperations)?;
 
     // 两处主 binding：先 data 侧，再 canonical 侧。
     let mut binding = Binding::capture(root, data, verified.vault_uuid).map_err(broker)?;
@@ -185,7 +199,8 @@ pub(super) fn rebind(
         coverage: RebindCoverage {
             canonical_binding: true,
             data_binding: true,
-            history_meta_v1: true,
+            history_meta_v1: history,
+            file_operations_v1: file_operations,
             maintenance_v1: maintenance,
         },
         lineage,

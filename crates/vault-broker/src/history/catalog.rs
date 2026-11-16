@@ -5,9 +5,11 @@ use crate::{BrokerError, FsVaultBroker, Revision, VaultPath, VaultUuid, sha256};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct Item {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub batch: Option<super::batch::Reference>,
     pub sequence: u64,
     pub entry: HistoryEntry,
     pub recording: Option<crate::recorded::store::RecordingRef>,
@@ -24,6 +26,8 @@ pub(super) struct Catalog {
     pub entries: Vec<Item>,
     /// 已从查询目录退役、等待可靠删除的对象；崩溃后可以继续清理。
     pub garbage: Vec<Revision>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub feed_retire: Vec<(u64, String)>,
     #[serde(skip)]
     pub original: Option<String>,
 }
@@ -47,6 +51,7 @@ pub(super) fn load(broker: &FsVaultBroker, path: &VaultPath) -> Result<Catalog, 
             path: path.clone(),
             entries: legacy::load(broker, path)?,
             garbage: Vec::new(),
+            feed_retire: Vec::new(),
             original: None,
         },
     };
@@ -58,7 +63,7 @@ pub(super) fn validate(
     path: &VaultPath,
     value: &Catalog,
 ) -> Result<(), BrokerError> {
-    if !matches!(value.version, 1..=3)
+    if !matches!(value.version, 1..=5)
         || value.pair_id != broker.writer.binding.pair_id
         || &value.path != path
         || path.is_protected()
@@ -67,6 +72,13 @@ pub(super) fn validate(
     }
     if value.entries.len() > store::MAX_ENTRIES || value.garbage.len() > store::MAX_ENTRIES {
         return Err(BrokerError::WriterLimitExceeded);
+    }
+    if value.feed_retire.len() > 64
+        || value.feed_retire.iter().any(|(_, id)| {
+            !crate::writer::disk::hex(id) || value.entries.iter().any(|i| &i.entry.id == id)
+        })
+    {
+        return Err(BrokerError::CorruptWriterState);
     }
     let mut ids = BTreeSet::new();
     for item in &value.entries {
@@ -106,6 +118,9 @@ pub(super) fn save(broker: &FsVaultBroker, value: &mut Catalog) -> Result<(), Br
         value.version = value.version.max(3);
     } else if state.format_version >= 4 {
         value.version = value.version.max(2);
+    }
+    if !value.feed_retire.is_empty() {
+        value.version = value.version.max(5);
     }
     validate(broker, &value.path, value)?;
     store::save_catalog(broker, &name(&value.path), value, value.original.as_deref())?;

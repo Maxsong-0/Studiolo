@@ -5,14 +5,14 @@
  */
 @media (width < 760px) {
   .view-header {
-    margin-bottom: 14px;
+    margin-bottom: var(--space-3-5);
   }
   .view-header h1 {
-    font-size: 28px;
+    font-size: var(--type-title);
   }
   .view-header p {
-    margin-top: 8px;
-    font-size: 13px;
+    margin-top: var(--space-2);
+    font-size: var(--type-small);
   }
   .error-feedback {
     align-items: flex-start;
@@ -20,12 +20,12 @@
 
   /* 触控目标至少 44px 见方：tokens.css 的三种全局按钮 */
   .icon-button {
-    width: 44px;
-    height: 44px;
+    width: var(--control-touch);
+    height: var(--control-touch);
   }
   .text-button,
   .outline-button {
-    min-height: 44px;
+    min-height: var(--control-touch);
   }
 
   /*
@@ -34,11 +34,11 @@
    * 正文里的链接不算控件，也不在此列。
    */
   :where(button, [role='button'], [role='tab']) {
-    min-width: 44px;
-    min-height: 44px;
+    min-width: var(--control-touch);
+    min-height: var(--control-touch);
   }
   :where(summary) {
-    min-height: 44px;
-    padding-block: 12px;
+    min-height: var(--control-touch);
+    padding-block: var(--space-3);
   }
 }

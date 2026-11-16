@@ -75,6 +75,7 @@ impl CanonicalWorkbench {
         selection: &SyncReadSelection,
         required: &[VaultPath],
     ) -> Result<CanonicalSyncObservation, BridgeSeamError> {
+        let _operation = self.core.operation().map_err(|_| BridgeSeamError::Audit)?;
         let mut owner = self.attach()?;
         let broker = owner.as_mut().ok_or(BridgeSeamError::NotAttempted)?;
         let survey = broker
@@ -110,6 +111,7 @@ impl CanonicalWorkbench {
         precondition: BridgePrecondition,
         idempotency_key: &str,
     ) -> Result<MutationReceipt, BridgeSeamError> {
+        let _operation = self.core.operation().map_err(|_| BridgeSeamError::Audit)?;
         let mut owner = self.attach()?;
         let broker = owner.as_mut().ok_or(BridgeSeamError::NotAttempted)?;
         let metadata = MutationMetadata::new(MutationActor::Obsidian, MutationKind::Replace)
@@ -150,6 +152,7 @@ impl CanonicalWorkbench {
         precondition: BridgePrecondition,
         idempotency_key: &str,
     ) -> Result<MutationReceipt, BridgeSeamError> {
+        let _operation = self.core.operation().map_err(|_| BridgeSeamError::Audit)?;
         let mut owner = self.attach()?;
         let broker = owner.as_mut().ok_or(BridgeSeamError::NotAttempted)?;
         let ledger = self.ledger()?;
@@ -195,6 +198,7 @@ impl CanonicalWorkbench {
         scope_hash: &str,
         scope_epoch: u64,
     ) -> Result<FileOperationReceipt, BridgeSeamError> {
+        let _operation = self.core.operation().map_err(|_| BridgeSeamError::Audit)?;
         let mut owner = self.attach()?;
         let broker = owner.as_mut().ok_or(BridgeSeamError::NotAttempted)?;
         let ledger = self.ledger()?;
@@ -244,6 +248,7 @@ impl CanonicalWorkbench {
 
     /// 冲刷内容与文件操作两条审计 outbox；任一失败返回 `Audit`。
     pub(crate) fn bridge_flush_audit(&self) -> Result<(), BridgeSeamError> {
+        let _operation = self.core.operation().map_err(|_| BridgeSeamError::Audit)?;
         let mut owner = self.attach()?;
         let broker = owner.as_mut().ok_or(BridgeSeamError::NotAttempted)?;
         let content = self.core.flush_content_audit(broker).map(|_| ());

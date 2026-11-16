@@ -1,8 +1,10 @@
 //! 候选正文仅存 Broker 私有数据根；控制面只持内容寻址指针。
+use crate::broker::reject_expired;
 use crate::writer::disk;
 use crate::{ArtifactCommit, BrokerError, FsVaultBroker, MemoryVaultBroker, VaultUuid, sha256};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
+use studiolo_core::ArtifactProvenance;
 
 const LIMIT: usize = 8 * 1024 * 1024;
 
@@ -28,6 +30,13 @@ pub trait ArtifactStager: Send + Sync {
         &self,
         pointer: &StagedArtifactCommit,
     ) -> Result<ArtifactCommit, BrokerError>;
+    /// 只计算指针，不写新的暂存。精确重放用它核对，避免过期后重写正文。
+    fn staged_reference(&self, plan: &ArtifactCommit) -> Result<StagedArtifactCommit, BrokerError>;
+    /// 删除已经核对过的原暂存。文件不存在视为已清理；身份不符则拒绝。
+    fn discard_staged_artifact_commit(
+        &self,
+        pointer: &StagedArtifactCommit,
+    ) -> Result<(), BrokerError>;
 }
 
 fn encode(plan: &ArtifactCommit) -> Result<Vec<u8>, BrokerError> {
@@ -73,11 +82,38 @@ fn decode(
     }
     Ok(plan)
 }
+const NAME_PREFIX: &str = "artifact-candidate-";
+const NAME_SUFFIX: &str = ".json";
+
+/// 导出扫描用：文件名是不是以暂存正文的前缀开头。只看前缀：后缀不对的也要交给
+/// `staged_provenance` 去拒绝，不能让它漏到别的归类里。
+pub(crate) fn is_staged_name(file_name: &str) -> bool {
+    file_name.starts_with(NAME_PREFIX)
+}
+
+/// 导出扫描用：按文件名和内容核对一份暂存正文（和 `load_staged_artifact_commit` 同一套核对），
+/// 取出它自带的原批准。升级前留下的暂存没有这一项，这里读不出来，调用方按拒绝处理。
+pub(crate) fn staged_provenance(
+    uuid: VaultUuid,
+    file_name: &str,
+    bytes: &[u8],
+) -> Result<ArtifactProvenance, BrokerError> {
+    let id = file_name
+        .strip_prefix(NAME_PREFIX)
+        .and_then(|rest| rest.strip_suffix(NAME_SUFFIX))
+        .ok_or(BrokerError::CorruptWriterState)?;
+    let reference = StagedArtifactCommit {
+        id: id.to_owned(),
+        sha256: sha256(bytes),
+    };
+    Ok(decode(uuid, &reference, bytes)?.provenance)
+}
+
 fn name(reference: &StagedArtifactCommit) -> Result<String, BrokerError> {
     if !disk::hex(&reference.id) || !disk::hex(&reference.sha256) {
         return Err(BrokerError::CorruptWriterState);
     }
-    Ok(format!("artifact-candidate-{}.json", reference.id))
+    Ok(format!("{NAME_PREFIX}{}{NAME_SUFFIX}", reference.id))
 }
 impl ArtifactStager for FsVaultBroker {
     fn stage_artifact_commit(
@@ -91,6 +127,7 @@ impl ArtifactStager for FsVaultBroker {
         if let Some(existing) = disk::read(&self.data, &path, LIMIT)? {
             decode(self.vault_uuid, &reference, &existing)?;
         } else {
+            reject_expired(plan)?;
             let mut count = 0usize;
             let mut total = bytes.len() as u64;
             for entry in self
@@ -123,6 +160,24 @@ impl ArtifactStager for FsVaultBroker {
         self.load_staged_artifact_commit(&reference)?;
         Ok(reference)
     }
+    fn staged_reference(&self, plan: &ArtifactCommit) -> Result<StagedArtifactCommit, BrokerError> {
+        Ok(pointer(self.vault_uuid, &encode(plan)?))
+    }
+    fn discard_staged_artifact_commit(
+        &self,
+        reference: &StagedArtifactCommit,
+    ) -> Result<(), BrokerError> {
+        self.writer.check(&self.root, &self.data)?;
+        let path = name(reference)?;
+        if let Some(bytes) = disk::read(&self.data, &path, LIMIT)? {
+            decode(self.vault_uuid, reference, &bytes)?;
+            self.data
+                .remove_file(Path::new(&path))
+                .map_err(|error| BrokerError::io("remove staged artifact", error))?;
+        }
+        self.writer.check(&self.root, &self.data)?;
+        Ok(())
+    }
     fn load_staged_artifact_commit(
         &self,
         reference: &StagedArtifactCommit,
@@ -146,14 +201,33 @@ impl ArtifactStager for MemoryVaultBroker {
             .artifact_stages
             .lock()
             .map_err(|_| crate::memory_state_error())?;
-        if !stages.contains_key(&reference.id)
-            && (stages.len() >= 4096
-                || stages.values().map(Vec::len).sum::<usize>() + bytes.len() > 64 * 1024 * 1024)
-        {
-            return Err(BrokerError::WriterLimitExceeded);
+        if !stages.contains_key(&reference.id) {
+            reject_expired(plan)?;
+            if stages.len() >= 4096
+                || stages.values().map(Vec::len).sum::<usize>() + bytes.len() > 64 * 1024 * 1024
+            {
+                return Err(BrokerError::WriterLimitExceeded);
+            }
         }
         stages.insert(reference.id.clone(), bytes);
         Ok(reference)
+    }
+    fn staged_reference(&self, plan: &ArtifactCommit) -> Result<StagedArtifactCommit, BrokerError> {
+        Ok(pointer(self.vault_uuid, &encode(plan)?))
+    }
+    fn discard_staged_artifact_commit(
+        &self,
+        reference: &StagedArtifactCommit,
+    ) -> Result<(), BrokerError> {
+        let mut stages = self
+            .artifact_stages
+            .lock()
+            .map_err(|_| crate::memory_state_error())?;
+        if let Some(bytes) = stages.get(&reference.id) {
+            decode(self.vault_uuid, reference, bytes)?;
+            stages.remove(&reference.id);
+        }
+        Ok(())
     }
     fn load_staged_artifact_commit(
         &self,

@@ -28,13 +28,30 @@ pub struct HealthBody {
     pub evidence_complete: bool,
     /// 各节结论。
     pub sections: Vec<SectionBody>,
+    /// 可缺失的同步证据明细；不改变任何同步状态。
+    pub bridge: Option<super::BridgeBody>,
+    /// 人工账号记录，与镜像读数分别显示。
+    pub manual_sync_quota: Option<super::ManualQuotaBody>,
 }
 
 impl HealthBody {
+    /// 正式端点从同一次快照组合结论与明细。
+    #[must_use]
+    pub fn from_snapshot(snapshot: &super::EvidenceSnapshot) -> Self {
+        let mut body = Self::from_report(&snapshot.report());
+        body.bridge = snapshot.bridge.map(super::BridgeBody::from_evidence);
+        body.manual_sync_quota = snapshot
+            .manual_sync_quota
+            .map(|quota| super::ManualQuotaBody::new(quota, snapshot.now_unix_seconds));
+        body
+    }
+
     /// 由只读聚合结果塑形。
     #[must_use]
     pub fn from_report(report: &HealthReport) -> Self {
         Self {
+            bridge: None,
+            manual_sync_quota: None,
             overall: report.overall().code(),
             evidence_complete: report
                 .sections()

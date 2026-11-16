@@ -8,7 +8,9 @@ import {
   parseBoardOverview,
   type BoardOverview,
 } from '../../boardOverviewModel';
+import type { PolicyPendingState } from '../../cockpit/model';
 import { parseHealth, type HealthReport } from '../../healthApi';
+import { desiredList, type ListedDesired } from '../../policyModel';
 import type { Workbench } from '../../types';
 import { validateWorkbench } from '../../validate';
 
@@ -16,6 +18,7 @@ import { validateWorkbench } from '../../validate';
 export const NOW = new Date(2026, 8, 22, 20, 31, 0, 0).getTime();
 
 export const OVERVIEW_URL = '/api/v1/board/overview?window_hours=24';
+export const DESIRED_URL = '/api/v1/policy/desired';
 
 export type FixtureApi = ReturnType<typeof createFixtureApi>;
 
@@ -43,6 +46,8 @@ export interface FixtureData {
   workbench: Workbench;
   overview: BoardOverview;
   health: HealthReport;
+  /** 策略草案列表：假数据里是一份待复核的 AI 提案（09:12 提交）。 */
+  desired: ListedDesired[];
 }
 
 export function fixtureData(now = NOW): FixtureData {
@@ -52,7 +57,16 @@ export function fixtureData(now = NOW): FixtureData {
     workbench: validateWorkbench(read(api, '/api/workbench')),
     overview: parseBoardOverview(read(api, OVERVIEW_URL), 24),
     health: parseHealth(read(api, '/api/v1/health')),
+    desired: desiredList(read(api, DESIRED_URL)),
   };
+}
+
+/** 策略草案「读到了」的状态；`readAt` 缺省取假数据的此刻，与黑板汇总生成时刻相同。 */
+export function policyReady(
+  desired: readonly ListedDesired[],
+  readAt = NOW,
+): PolicyPendingState {
+  return { kind: 'ready', desired, readAt };
 }
 
 export function toResponse(outcome: FixtureResponse): Response {

@@ -1,12 +1,13 @@
 /**
  * ⌘K 动作面板的命令清单（设计规范第 8 节）。只收录接口真实支持的动作：
- * 切换视图与协作子标签、打开项目与项目来源、刷新快照、内存草稿、最近删除、状态详情、
+ * 切换视图与协作子标签、打开项目与项目来源、刷新快照、内存草稿、最近删除、状态详情、键盘快捷键一览、
  * 跳到黑板任务、执行候选、策略待处理队列、新建规则；文档组来自全文搜索。
  * 不可逆或需二次认证的动作（发布/回滚策略、删除文件、落地候选产物）只做「执行预览」：
  * 回车只把人带到拥有该动作的界面，面板自己绝不调接口，确认仍在原界面完成。
  */
 import type { BoardOverview, BoardOverviewStatus } from '../boardOverviewModel';
 import type { Project, SearchHit, SourceLocation, View } from '../types';
+import { POLICY_QUEUE_ITEM } from '../viewLocation';
 import type { ViewLocation, ViewSlot } from '../viewLocation';
 import { COMMAND_TARGETS } from './focusTarget';
 import type { CommandTarget } from './focusTarget';
@@ -47,6 +48,8 @@ export interface CommandContext {
   openDrafts(): void;
   openRecentlyDeleted(): void;
   openStatus(): void;
+  /** 打开快捷键一览（T-197）：单键快捷键关掉之后，这里是把它开回来的入口。 */
+  openShortcuts(): void;
   /** 跳转之后尝试把焦点放到目标控件上；找不到就不动。 */
   focusTarget(target: CommandTarget): void;
 }
@@ -154,6 +157,16 @@ function viewCommands(): Command[] {
       target: () => ({ view: 'documents' }),
     },
     {
+      id: 'view:documents:changes',
+      label: '文档 › 变更流',
+      keywords: ['changes', '未读', '修改', '写回'],
+      target: () => ({
+        view: 'documents',
+        panel: 'changes',
+        focus: COMMAND_TARGETS.changesProject,
+      }),
+    },
+    {
       id: 'view:collab:topology',
       label: '协作 › 拓扑',
       keywords: ['collab', 'topology', '写域', '占用'],
@@ -196,6 +209,12 @@ function viewCommands(): Command[] {
       target: () => ({ view: 'rules' }),
     },
     {
+      id: 'view:agents',
+      label: '接入方实例',
+      keywords: ['agents', '实例', '身份', '吊销', '父实例'],
+      target: () => ({ view: 'policy', panel: 'agents' }),
+    },
+    {
       id: 'view:policy',
       label: '策略',
       keywords: ['policy', '规则', '能力集', 'skills'],
@@ -227,6 +246,22 @@ function actionCommands(ctx: CommandContext): Command[] {
       hint: '重新读取工作台',
       keywords: ['刷新', '重新读取', '工作台', 'refresh', 'reload'],
       run: (context) => context.refreshSnapshot(),
+    },
+    {
+      id: 'action:shortcuts',
+      group: 'action',
+      label: '查看键盘快捷键',
+      hint: '全部键位，和单键快捷键的开关',
+      keywords: [
+        '快捷键',
+        '键盘',
+        '键位',
+        '热键',
+        'shortcuts',
+        'keyboard',
+        'keys',
+      ],
+      run: (context) => context.openShortcuts(),
     },
   ];
   if (ctx.draftCount > 0)
@@ -270,7 +305,7 @@ function actionCommands(ctx: CommandContext): Command[] {
       keywords: ['策略', '待处理', '规则草案', '队列', 'desired', 'policy'],
       target: () => ({
         view: 'policy',
-        item: 'desired',
+        item: POLICY_QUEUE_ITEM,
         focus: COMMAND_TARGETS.policyQueue,
       }),
     },
@@ -291,7 +326,7 @@ function actionCommands(ctx: CommandContext): Command[] {
         '发布会把一份已校验通过的规则草案（desired）变成新的生效版本（effective）。先在待处理队列里选定草案、逐条确认扩大项，再经一次性验证码（One-time Code）二次认证。',
       surface: {
         view: 'policy',
-        item: 'desired',
+        item: POLICY_QUEUE_ITEM,
         focus: COMMAND_TARGETS.policyQueue,
       },
       surfaceLabel: '策略 › 待处理队列',

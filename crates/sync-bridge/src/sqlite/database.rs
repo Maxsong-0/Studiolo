@@ -24,6 +24,13 @@ pub(super) fn initialize(db: &Connection, state: &State) -> Result<()> {
     full(db, state)
 }
 pub(super) fn schema(db: &Connection) -> Result<()> {
+    schema_mode(db, false)
+}
+/// 独立封存副本只含主文件；重开核验接受已关闭的 DELETE 模式，线上打开仍严格要求 WAL。
+pub(super) fn sealed_schema(db: &Connection) -> Result<()> {
+    schema_mode(db, true)
+}
+fn schema_mode(db: &Connection, sealed: bool) -> Result<()> {
     let version: i64 = db
         .query_row("PRAGMA user_version", [], |r| r.get(0))
         .map_err(error)?;
@@ -39,7 +46,7 @@ pub(super) fn schema(db: &Connection) -> Result<()> {
     let mode: String = db
         .query_row("PRAGMA journal_mode", [], |r| r.get(0))
         .map_err(error)?;
-    if application != 0 || page != 4096 || mode != "wal" {
+    if application != 0 || page != 4096 || (mode != "wal" && !(sealed && mode == "delete")) {
         return Err(BridgeError::CorruptStore);
     }
     let count: i64 = db

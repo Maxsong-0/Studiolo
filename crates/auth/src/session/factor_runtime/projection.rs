@@ -30,6 +30,7 @@ impl FactorRuntime {
         token: &SessionToken,
         csrf: &CsrfToken,
     ) -> Result<FactorState, SessionError> {
+        let _operation = self.sessions.enter_operation()?;
         self.sessions.run(|db, observed| {
             let selected = match self.select_in(db, observed, identity, token, csrf)? {
                 Ok(selected) => selected,

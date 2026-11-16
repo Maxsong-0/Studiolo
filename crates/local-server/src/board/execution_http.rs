@@ -120,6 +120,10 @@ fn execute(
     principal: &Principal,
     input: Input,
 ) -> Result<Value, String> {
+    let _operation = board
+        .audit
+        .enter_operation()
+        .map_err(|_| "备份冻结或审计不可用".to_owned())?;
     principal.verify()?;
     board.storage.check().map_err(str::to_owned)?;
     let (action, task) = match &input {

@@ -175,6 +175,7 @@ fn stopped_manifest_ack_loss_recovers_after_grace_without_inline_bodies_or_cli()
     let claim = engine
         .claim_board_task(task, "runner-instance", 1000, 1)
         .unwrap();
+    grant_board(&mut engine, task, &claim);
     engine.command(task, TaskCommand::Cancel, 2).unwrap();
     let report = report(
         &claim,
@@ -221,12 +222,28 @@ fn stopped_manifest_ack_loss_recovers_after_grace_without_inline_bodies_or_cli()
     let view = engine.board_detail(task, HASH).unwrap().unwrap();
     assert_eq!(view.task.status, TaskStatus::Cancelled);
     let committed = view.candidate_receipt.unwrap();
+    // Broker 私有数据根里现存的暂存正文份数。
+    let staged = || {
+        std::fs::read_dir(&data)
+            .unwrap()
+            .filter(|entry| {
+                entry
+                    .as_ref()
+                    .unwrap()
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with("artifact-candidate-")
+            })
+            .count()
+    };
+    assert_eq!(staged(), 0, "提交完成后暂存已清理");
     assert_eq!(
         engine
             .stage_board_stopped_candidates(report.clone(), stopped(), 180_004)
             .unwrap(),
         committed
     );
+    assert_eq!(staged(), 0, "已落定的精确重放不重建暂存");
     let mut changed = stopped();
     changed.remaining.push("different receipt".into());
     assert!(matches!(

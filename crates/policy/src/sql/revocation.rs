@@ -54,3 +54,12 @@ pub(crate) fn revocations(
         .map_err(unavailable)?;
     rows.collect::<Result<Vec<_>, _>>().map_err(unavailable)
 }
+
+/// 直接按目标取，不能使用 UI 历史列表的 1000 条窗口判定授权。
+pub(crate) fn active_revocation(
+    tx: &Transaction<'_>,
+    level: RevocationLevel,
+    target: &str,
+) -> Result<Option<RevocationRecord>, PolicyError> {
+    tx.query_row("SELECT seq,level,target,revoked_at,revoked_by,reason,released_at,released_by FROM policy_revocation WHERE level=?1 AND target=?2 AND released_at IS NULL ORDER BY seq DESC LIMIT 1", params![level.as_str(), target], revocation_from_row).optional().map_err(unavailable)
+}

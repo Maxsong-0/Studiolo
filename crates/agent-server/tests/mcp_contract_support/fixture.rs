@@ -22,6 +22,15 @@ async fn fixture() -> Fixture {
 }
 
 async fn fixture_with_router(make_router: impl FnOnce(Arc<AppState>) -> axum::Router) -> Fixture {
+    fixture_seeded(make_router, |_| {}, &[]).await
+}
+
+/// 在基础夹具库之上由 `seed` 追加笔记、由 `extra_allow` 追加白名单，再启动服务。
+async fn fixture_seeded(
+    make_router: impl FnOnce(Arc<AppState>) -> axum::Router,
+    seed: impl FnOnce(&Path),
+    extra_allow: &[&str],
+) -> Fixture {
     let temp = TempDir::new_in(fs::canonicalize("/tmp").unwrap()).unwrap();
     let vault = temp.path().join("vault");
     write(
@@ -45,6 +54,9 @@ async fn fixture_with_router(make_router: impl FnOnce(Arc<AppState>) -> axum::Ro
         &vault.join("项目/Beta/00-总览/INDEX.md"),
         "# Beta 不在白名单\n",
     );
+    seed(&vault);
+    let mut allow = vec!["项目/Alpha".to_owned(), "_规则".to_owned()];
+    allow.extend(extra_allow.iter().map(|prefix| (*prefix).to_owned()));
     let data = temp.path().join("agent-data");
     private_dir(&data);
     private_dir(&data.join("audit"));
@@ -62,7 +74,7 @@ async fn fixture_with_router(make_router: impl FnOnce(Arc<AppState>) -> axum::Ro
         vault: Some(vault.clone()),
         replica_root: None,
         replica_max_age_secs: 300,
-        allow: vec!["项目/Alpha".into(), "_规则".into()],
+        allow,
         data: data.clone(),
         policy: None,
         port: 0,

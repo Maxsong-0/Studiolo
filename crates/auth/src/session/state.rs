@@ -23,6 +23,7 @@ impl SessionManager {
         &self,
         operation: impl FnOnce(&Connection, &Observed) -> Result<Result<T, SessionError>, SessionError>,
     ) -> Result<T, SessionError> {
+        let _operation = self.enter_operation()?;
         self.database.transaction(|db| {
             let (floor, epoch): (i64, i64) = db
                 .query_row(

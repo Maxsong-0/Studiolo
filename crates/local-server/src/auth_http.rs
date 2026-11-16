@@ -147,7 +147,7 @@ impl AuthHttp {
         }
         let content_permit = if matches!(
             request.uri().path(),
-            crate::editing::PATH | crate::file_operations::PATH
+            crate::editing::PATH | crate::changes::SEEN | crate::file_operations::PATH
         ) {
             Some(
                 self.content_permits

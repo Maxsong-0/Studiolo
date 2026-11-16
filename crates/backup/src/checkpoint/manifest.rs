@@ -6,6 +6,7 @@
 
 mod error;
 mod inputs;
+mod validation;
 
 pub use error::ManifestError;
 pub use inputs::{
@@ -14,14 +15,11 @@ pub use inputs::{
 };
 
 use super::types::{OwnerRoster, SealTicket};
-use inputs::check_secret_reference;
 use serde::{Deserialize, Serialize};
-use studiolo_core::checkpoint::{
-    CheckpointId, CheckpointOwner, InstantMillis, OwnerAssembly, OwnerWatermark,
-};
+use studiolo_core::checkpoint::{CheckpointId, CheckpointOwner, InstantMillis, OwnerWatermark};
 
 /// 清单 schema 版本；未知版本失败关闭。
-pub const MANIFEST_SCHEMA_VERSION: u32 = 1;
+pub const MANIFEST_SCHEMA_VERSION: u32 = 2;
 
 /// 一次 checkpoint 的完整清单。
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -52,46 +50,19 @@ pub struct CheckpointManifest {
 impl CheckpointManifest {
     /// 由封存票据与固定事实组装清单；任一必填水位缺失或被替代即拒绝。
     pub fn build(ticket: &SealTicket, inputs: ManifestInputs) -> Result<Self, ManifestError> {
+        for sealed in &ticket.owners {
+            if !sealed.is_verified() {
+                return Err(ManifestError::UnverifiedOwner {
+                    owner: sealed.owner,
+                });
+            }
+        }
         let watermarks: Vec<OwnerWatermark> = ticket
             .owners
             .iter()
             .map(|sealed| sealed.watermark.clone())
             .collect();
-        for (owner, assembly) in ticket.roster.entries() {
-            if assembly == OwnerAssembly::Present
-                && !watermarks
-                    .iter()
-                    .any(|watermark| watermark.owner() == owner)
-            {
-                return Err(ManifestError::WatermarkMissing { owner });
-            }
-        }
-        for watermark in &watermarks {
-            check_watermark(watermark)?;
-        }
-        if inputs.application_packages.is_empty() || inputs.cli_packages.is_empty() {
-            return Err(ManifestError::PackageDigestsMissing);
-        }
-        for package in inputs
-            .application_packages
-            .iter()
-            .chain(&inputs.cli_packages)
-        {
-            if package.name.trim().is_empty() || package.version.trim().is_empty() {
-                return Err(ManifestError::PackageDigestsMissing);
-            }
-            require_digest(&package.digest, CheckpointOwner::Broker, "package_digest")?;
-        }
-        if inputs.deployment.is_empty() {
-            return Err(ManifestError::DeploymentManifestMissing);
-        }
-        for reference in &inputs.secret_references {
-            check_secret_reference(reference)?;
-        }
-        if !inputs.audit_coverage.is_exact() {
-            return Err(ManifestError::AuditCoverageNotExact);
-        }
-        Ok(Self {
+        let manifest = Self {
             schema_version: MANIFEST_SCHEMA_VERSION,
             checkpoint_id: ticket.checkpoint_id.clone(),
             content_cutoff: ticket.content_cutoff,
@@ -102,7 +73,9 @@ impl CheckpointManifest {
             deployment: inputs.deployment,
             secret_references: inputs.secret_references,
             audit_coverage: inputs.audit_coverage,
-        })
+        };
+        manifest.validate()?;
+        Ok(manifest)
     }
 
     /// 重新校验一份已持久的清单；未知 schema 版本失败关闭。
@@ -112,23 +85,7 @@ impl CheckpointManifest {
                 found: self.schema_version,
             });
         }
-        for (owner, assembly) in self.roster.entries() {
-            if assembly == OwnerAssembly::Present
-                && !self
-                    .watermarks
-                    .iter()
-                    .any(|watermark| watermark.owner() == owner)
-            {
-                return Err(ManifestError::WatermarkMissing { owner });
-            }
-        }
-        for watermark in &self.watermarks {
-            check_watermark(watermark)?;
-        }
-        if !self.audit_coverage.is_exact() {
-            return Err(ManifestError::AuditCoverageNotExact);
-        }
-        Ok(())
+        validation::validate(self)
     }
 }
 
@@ -139,12 +96,8 @@ fn check_watermark(watermark: &OwnerWatermark) -> Result<(), ManifestError> {
                 return Err(ManifestError::BrokerUnresolved);
             }
         }
-        OwnerWatermark::Control {
-            outbox_pending,
-            outbox_delivered_through,
-            ..
-        } => {
-            if *outbox_pending > 0 && *outbox_delivered_through == 0 {
+        OwnerWatermark::Control { outbox_pending, .. } => {
+            if *outbox_pending > 0 {
                 return Err(ManifestError::ControlOutboxUnsettled);
             }
         }
@@ -156,8 +109,15 @@ fn check_watermark(watermark: &OwnerWatermark) -> Result<(), ManifestError> {
             CheckpointOwner::Auth,
             "owner_binding_digest",
         )?,
-        OwnerWatermark::Audit { last_hash, .. } => {
+        OwnerWatermark::Audit {
+            last_hash,
+            agent_ledger,
+            ..
+        } => {
             require_digest(last_hash, CheckpointOwner::Audit, "last_hash")?;
+            if let Some(agent) = agent_ledger {
+                require_digest(&agent.last_hash, CheckpointOwner::Audit, "agent_last_hash")?;
+            }
         }
         OwnerWatermark::Bridge {
             link_id,

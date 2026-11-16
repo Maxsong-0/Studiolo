@@ -8,6 +8,8 @@ use studiolo_core::checkpoint::InstantMillis;
 /// 驱动状态机的事件。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum JobEvent {
+    /// 重新读取原上传结果，绝不重新上传。
+    ResumeRemoteVerification,
     /// 开始封存，并记录内容截止时刻。
     StartSealing {
         /// 内容截止时刻。
@@ -54,6 +56,8 @@ pub enum JobEvent {
 /// 事件类别，用于错误消息，不携带载荷。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum EventKind {
+    /// 恢复只读校验。
+    ResumeRemoteVerification,
     /// 开始封存。
     StartSealing,
     /// 封存完成。
@@ -77,6 +81,7 @@ pub enum EventKind {
 impl EventKind {
     pub(super) fn of(event: JobEvent) -> Self {
         match event {
+            JobEvent::ResumeRemoteVerification => Self::ResumeRemoteVerification,
             JobEvent::StartSealing { .. } => Self::StartSealing,
             JobEvent::SealCompleted => Self::SealCompleted,
             JobEvent::UploadExited { .. } => Self::UploadExited,
@@ -102,6 +107,8 @@ pub enum StateError {
     },
     /// 核对未知结果时作业键不符。
     JobKeyMismatch,
+    /// 状态与时间戳、原封存引用不自洽。
+    InconsistentRecord,
 }
 
 impl std::fmt::Display for StateError {
@@ -111,6 +118,7 @@ impl std::fmt::Display for StateError {
                 write!(formatter, "状态 {from:?} 不接受事件 {event:?}")
             }
             Self::JobKeyMismatch => formatter.write_str("未知结果必须沿原作业键核对"),
+            Self::InconsistentRecord => formatter.write_str("作业状态、时间戳或封存引用不一致"),
         }
     }
 }

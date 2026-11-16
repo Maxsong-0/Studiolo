@@ -1,7 +1,8 @@
+import { installChangesWriter } from './changesApi';
 import { useEffect, useMemo, useState, useSyncExternalStore } from 'react';
 import type { ReactNode } from 'react';
 import { SessionClient } from './sessionClient';
-import { installSessionReader } from './sessionHttp';
+import { installSessionReader, installSessionBlobReader } from './sessionHttp';
 import { watchSession } from './sessionLifecycle';
 import { SessionStatusContext } from './sessionStatus';
 import type { SessionStatus } from './sessionStatus';
@@ -48,7 +49,9 @@ function SessionBoundaryContent({
   const state = useSyncExternalStore(client.subscribe, client.getSnapshot);
   useEffect(() => {
     const uninstall = installSessionReader(client.read);
+    const uninstallBlob = installSessionBlobReader(client.readBlob);
     const uninstallWriter = installCanonicalWriter(client.replace);
+    const uninstallChanges = installChangesWriter(client.changesSeen);
     const uninstallRestorer = installCanonicalRestorer(client.restore);
     const uninstallFileOperations = installFileOperationWriter(
       client.fileOperation,
@@ -65,7 +68,9 @@ function SessionBoundaryContent({
       unwatch();
       client.stop();
       uninstall();
+      uninstallBlob();
       uninstallWriter();
+      uninstallChanges();
       uninstallRestorer();
       uninstallFileOperations();
       uninstallPolicy();

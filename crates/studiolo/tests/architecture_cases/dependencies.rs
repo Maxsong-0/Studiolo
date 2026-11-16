@@ -59,7 +59,7 @@ fn dependency_scanner_includes_renamed_target_and_table_dependencies() {
 #[test]
 fn workspace_dependencies_follow_the_acyclic_module_direction() {
     let manifests = workspace_manifests(&workspace_root());
-    assert_eq!(manifests.len(), 24, "workspace crate inventory changed");
+    assert_eq!(manifests.len(), 26, "workspace crate inventory changed");
     assert!(
         dependency_cycle(&manifests).is_none(),
         "workspace dependency cycle: {:?}",
@@ -136,6 +136,9 @@ fn filesystem_authority_dependencies_have_explicit_owners() {
                 | "studiolo-local-server"
                 | "studiolo-sync-bridge"
                 | "studiolo-backup"
+                | "studiolo-backup-worker"
+                | "studiolo-audit-ledger"
+                | "studiolo-checkpoint-storage"
                 | "studiolo-observability"
                 | "studiolo-sync-transport"
                 | "studiolo-sync-launcher"
@@ -176,6 +179,7 @@ fn filesystem_authority_dependencies_have_explicit_owners() {
             matches!(
                 manifest.name.as_str(),
                 "studiolo-control-db"
+                    | "studiolo-checkpoint-storage"
                     | "studiolo-audit-ledger"
                     | "studiolo-auth"
                     | "studiolo-supply"
@@ -188,7 +192,7 @@ fn filesystem_authority_dependencies_have_explicit_owners() {
             manifest.name
         );
     }
-    for forbidden in ["tempfile", "cap-std", "cap-tempfile", "rustix"] {
+    for forbidden in ["tempfile", "cap-std", "cap-tempfile"] {
         assert!(
             !manifests["studiolo-audit-ledger"]
                 .dependencies

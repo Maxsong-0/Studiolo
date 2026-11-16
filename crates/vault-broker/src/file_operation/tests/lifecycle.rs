@@ -31,6 +31,14 @@ fn delete_and_original_path_restore_have_distinct_sequences_and_exact_history() 
     );
     let restored = committed(&mut broker, restore(&page.entries[0].id, "restore"));
     assert_eq!(restored.sequence, 2);
+    let changes = broker.list_changes(10, None).unwrap();
+    assert_eq!(changes.entries.len(), 2);
+    assert_eq!(changes.entries[0].kind, ChangeKind::Restored);
+    assert_eq!(changes.entries[0].revision, Some(original));
+    assert_eq!(changes.entries[1].kind, ChangeKind::Deleted);
+    assert_eq!(changes.entries[1].previous_revision, Some(original));
+    assert_eq!(changes.entries[1].revision, None);
+
     assert_eq!(fs::read(fixture.root.join("note.md")).unwrap(), body);
     assert_eq!(broker.list_tombstones(100, None).unwrap().entries.len(), 1);
     assert_eq!(

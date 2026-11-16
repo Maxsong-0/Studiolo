@@ -74,6 +74,10 @@ pub(super) const PARAMS: &[(&str, Arity)] = &[
         Arity::Value(|raw, value| set(&mut raw.rust_call_sites, parse_rust_sources(&value)?)),
     ),
     (
+        "--agent-data",
+        Arity::Value(|raw, value| set(&mut raw.agent_data, value.into())),
+    ),
+    (
         "--policy-data",
         Arity::Value(|raw, value| set(&mut raw.policy_data, value.into())),
     ),

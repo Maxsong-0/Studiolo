@@ -6,8 +6,8 @@
 
 use super::RestoreError;
 use super::mirror::{
-    BINDING, BROKER_BINDING, CONTROL, HISTORY_META, HistoryBinding, MAINTENANCE,
-    MAINTENANCE_PREPARING, MaintenanceBinding, WRITER_STATE,
+    BINDING, BROKER_BINDING, CONTROL, HistoryBinding, MAINTENANCE, MAINTENANCE_PREPARING,
+    MaintenanceBinding, WRITER_STATE,
 };
 use crate::writer::{Binding, directory, disk};
 use crate::{BrokerError, VaultIdentity, VaultUuid};
@@ -17,7 +17,8 @@ use cap_std::fs::Dir;
 pub(super) struct Verified {
     pub(super) vault_uuid: VaultUuid,
     pub(super) pair_id: VaultUuid,
-    pub(super) history: HistoryBinding,
+    pub(super) history: Option<HistoryBinding>,
+    pub(super) file_operations: Option<crate::file_operation::binding::Binding>,
     pub(super) maintenance: Option<MaintenanceBinding>,
 }
 
@@ -105,21 +106,12 @@ pub(super) fn verify(
     }
     require_directory(&control, "staging")?;
 
-    let history_root = require_directory(data, "history")?;
-    let meta = require_directory(&history_root, HISTORY_META)?;
-    let history_bytes = disk::read(&meta, BINDING, disk::IDENTITY_LIMIT)
-        .map_err(RestoreError::Broker)?
-        .ok_or(RestoreError::NewRootIncomplete)?;
-    let history: HistoryBinding = disk::decode(&history_bytes).map_err(RestoreError::Broker)?;
-    if history.version != 1 || history.vault_uuid != expected_vault {
-        return Err(reference("history/meta-v1"));
-    }
-    if history.pair_id != expected_pair {
-        return Err(RestoreError::PairIdMismatch);
-    }
-    for name in ["requests", "catalogs", "outbox"] {
-        require_directory(&meta, name)?;
-    }
+    state
+        .validate(expected_pair)
+        .map_err(RestoreError::Broker)?;
+    let history = super::optional::history(data, &state, expected_vault, expected_pair)?;
+    let file_operations =
+        super::optional::file_operations(root, data, &state, expected_vault, expected_pair)?;
 
     if present(data, MAINTENANCE_PREPARING)? {
         return Err(RestoreError::MaintenanceHalfInitialized);
@@ -151,6 +143,7 @@ pub(super) fn verify(
         vault_uuid: expected_vault,
         pair_id: expected_pair,
         history,
+        file_operations,
         maintenance,
     })
 }

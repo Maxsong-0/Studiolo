@@ -1,6 +1,7 @@
 //! 进程组合根：检查全部成功后才允许监听；HTTP不持有配置或初始化能力。
 
 mod canonical_input;
+mod checkpoint_input;
 mod error;
 mod factor_input;
 mod health_input;
@@ -11,6 +12,7 @@ mod router_input;
 mod runner_input;
 mod serving;
 mod sync_input;
+mod validation;
 
 pub(crate) use error::StartupError;
 pub(crate) use prepared::PreparedServer;
@@ -49,31 +51,7 @@ where
     let residency = studiolo_process_safety::harden()?;
     writeln!(std::io::stderr(), "秘密驻留面：{residency}")
         .map_err(|_| StartupError::ResidencyReport)?;
-    if options.port == 0
-        || options.label.trim().is_empty()
-        || options.label.chars().count() > 80
-        || options.label.chars().any(char::is_control)
-        || (options.session.is_some() && options.access.is_some())
-        || (options.canonical && options.session.is_none())
-        || (options.factor.is_some() && options.session.is_none())
-        || (options.project_repository.is_some() && options.session.is_some())
-        || (options.cargo_dependencies && options.project_repository.is_none())
-        || (options.rust_call_sites.is_some() && options.project_repository.is_none())
-        || (options.writer_data.is_some() && (options.canonical || options.session.is_none()))
-        || options
-            .writer_data
-            .as_ref()
-            .is_some_and(|path| !path.is_absolute())
-        || options
-            .policy_data
-            .as_ref()
-            .is_some_and(|path| !path.is_absolute() || options.session.is_none())
-        || options.runner_config.as_ref().is_some_and(|path| {
-            !path.is_absolute() || options.board.is_none() || options.factor.is_none()
-        })
-    {
-        return Err(StartupError::Configuration);
-    }
+    validation::options(&options)?;
     let runner_config = options
         .runner_config
         .as_deref()
@@ -81,6 +59,7 @@ where
         .transpose()?;
     let mut repository = repository_input::open(&options)?;
     let mut content_audit: Option<Arc<dyn studiolo_audit_ledger::AuditLedger>> = None;
+    let mut checkpoint_audit = None;
     let mut board_protected = Vec::new();
     let (sessions, roots, access_config, factors, writer_roots, sync_scope) =
         if let Some(session) = &options.session {
@@ -135,6 +114,7 @@ where
                 config.sessions().map_err(|_| StartupError::Configuration)?,
                 {
                     content_audit = Some(audit.clone());
+                    checkpoint_audit = Some(audit.clone());
                     audit
                 },
                 Arc::new(SystemSessionClock),
@@ -206,7 +186,7 @@ where
         label: options.label.clone(),
         port: options.port,
         access,
-        sessions,
+        sessions: sessions.clone(),
         factors,
         canonical: canonical.clone(),
         workbench: workbench.clone(),
@@ -217,8 +197,8 @@ where
     } else {
         app
     };
-    let policy = plane_input::policy(app, &options, content_audit.as_ref());
-    let app = or_shutdown(policy, workbench.as_ref()).await?;
+    let policy = plane_input::policy(app, &options, content_audit.as_ref(), &board_protected);
+    let (app, policy_plane) = or_shutdown(policy, workbench.as_ref()).await?;
     let board = plane_input::board(
         &options,
         workbench.as_ref(),
@@ -249,6 +229,15 @@ where
         &board_protected,
     );
     let sync_plane = or_shutdown(sync, workbench.as_ref()).await?;
+    let checkpoint = checkpoint_input::sources(
+        workbench.clone(),
+        sessions,
+        checkpoint_audit,
+        board_plane.clone(),
+        sync_plane.clone(),
+        policy_plane,
+    );
+    let checkpoint = or_shutdown(checkpoint, workbench.as_ref()).await?;
     // 健康页的路由已在 router 装配期挂好（且在鉴权那一层之内）；这里只把证据来源
     // 装上去。不装则健康页一律回 404，因此这一行是"健康页可用"的唯一开关。
     let app = studiolo_local_server::health::with_health_evidence(
@@ -268,6 +257,7 @@ where
         board_plane,
         runner_plane,
         sync_plane,
+        checkpoint,
     };
     if let Err(error) = prepared.revalidate() {
         canonical_input::shutdown(prepared.workbench.as_ref()).await?;

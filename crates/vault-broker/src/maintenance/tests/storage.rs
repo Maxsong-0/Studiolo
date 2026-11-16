@@ -54,7 +54,8 @@ fn legacy_v1_pending_can_cancel_without_inventing_a_recorded_origin() {
     broker.commit_maintenance(ticket).unwrap();
     flush(&mut broker);
     let state = crate::mutation::load(&broker).unwrap();
-    assert_eq!(state.format_version, 3);
+    // 带未决操作收尾前状态先升到 8（ADR-032）；维护开关自 7 起是独立字段。
+    assert_eq!(state.format_version, 8);
     assert!(state.maintenance_enabled);
     assert_eq!(state.committed_through, 1);
     assert_eq!(fixture.body(), b"old");

@@ -24,12 +24,16 @@ use std::{
 use studiolo_audit_ledger::{AuditError, AuditEvent, AuditFilter, AuditLedger, AuditRecord};
 use studiolo_control_db::ControlDb;
 use studiolo_policy::PolicyAgentStore;
-use studiolo_supply::AgentStore;
+use studiolo_supply::AgentIdentityView;
 use studiolo_task_engine::PersistentTaskEngine;
 use studiolo_vault_broker::VaultReader as _;
 
 struct SharedAudit(Arc<dyn AuditLedger>);
 impl AuditLedger for SharedAudit {
+    fn enter_operation(&self) -> Result<studiolo_audit_ledger::OperationPermit, AuditError> {
+        self.0.enter_operation()
+    }
+
     fn append(&self, event: AuditEvent) -> Result<AuditRecord, AuditError> {
         self.0.append(event)
     }
@@ -42,7 +46,7 @@ type Engine = PersistentTaskEngine<owner::SharedBroker, SharedAudit>;
 /// 已显式装配的黑板平面；没有可从 HTTP 构造的认证旁路。
 pub struct BoardPlane {
     engine: Mutex<Engine>,
-    identities: AgentStore,
+    identities: AgentIdentityView,
     policy: PolicyAgentStore,
     audit: Arc<dyn AuditLedger>,
     storage: storage::Storage,
@@ -52,6 +56,24 @@ pub struct BoardPlane {
     overview_tail: std::sync::atomic::AtomicU64,
 }
 impl BoardPlane {
+    /// 从实际引擎取得固定 Control 源，不重新开库或执行迁移。
+    pub fn checkpoint_source(
+        &self,
+    ) -> Result<studiolo_control_db::ControlCheckpointSource, String> {
+        self.engine
+            .try_lock()
+            .map_err(|_| "黑板正忙".to_owned())?
+            .control_db()
+            .checkpoint_source()
+            .map_err(|_| "黑板封存源不可用".to_owned())
+    }
+    /// 只取实际身份视图及其固定附属账本的成对能力。
+    pub fn checkpoint_agents(
+        &self,
+    ) -> Result<studiolo_supply::AgentCheckpointAssembly, studiolo_supply::SupplyError> {
+        self.identities.checkpoint_assembly()
+    }
+
     /// 已有 canonical 写者、身份库、策略与审计全部就绪后，才打开独立控制目录。
     pub fn open(
         workbench: Arc<CanonicalWorkbench>,
@@ -85,10 +107,20 @@ impl BoardPlane {
                 policy.to_path_buf(),
             ])
             .collect::<Vec<_>>();
-        let identities = AgentStore::open_existing(identities).map_err(|_| "身份库不可用")?;
+        let identity_isolated: Vec<_> = isolated_roots
+            .iter()
+            .map(std::path::PathBuf::as_path)
+            .filter(|root| *root != identities)
+            .collect();
+        let identities = AgentIdentityView::open_existing_isolated(identities, &identity_isolated)
+            .map_err(|_| "身份库不可用")?;
         let policy = PolicyAgentStore::open_existing(policy).map_err(|_| "策略库不可用")?;
         let storage = storage::Storage::open(data, isolated)?;
-        let control = ControlDb::open(storage.file(), uuid).map_err(|_| "控制库不可用")?;
+        let control = ControlDb::open_checkpoint_ready(
+            storage.file().parent().ok_or("控制目录不可用")?,
+            uuid,
+        )
+        .map_err(|_| "控制库不可用")?;
         let mut engine = PersistentTaskEngine::new(control, broker, SharedAudit(audit.clone()));
         if let Some(config) = runner {
             executor::isolate_persisted(engine.control_db(), config, &isolated_roots)?;
@@ -151,6 +183,10 @@ impl BoardPlane {
             let plane = self.clone();
             let runner = runner.clone();
             tokio::task::spawn_blocking(move || {
+                let _operation = plane
+                    .audit
+                    .enter_operation()
+                    .map_err(|_| "备份冻结或审计不可用".to_owned())?;
                 if let Some(runner) = runner {
                     runner.tick()?;
                 }

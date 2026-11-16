@@ -1,0 +1,159 @@
+/*
+ * 键盘快捷键（T-197；设计规范第 16 节）。
+ * 一、带框的键帽：一览和驾驶舱队列的键位提示共用。
+ * 二、快捷键一览：2px 墨框的浮层，每组键位一张小表——左边键帽，右边一句话；底下是单键快捷键的开关。
+ */
+
+/* ---------- 带框的键帽 ---------- */
+
+.keys-cap {
+  gap: var(--space-0-5);
+}
+.keys-cap kbd {
+  display: inline-block;
+  min-width: 1.75em;
+  padding: 1px var(--space-1);
+  border: 1px solid var(--ink-2);
+  text-align: center;
+}
+
+/* ---------- 快捷键一览 ---------- */
+
+.keys-sheet {
+  width: min(560px, calc(100vw - 32px));
+  max-width: none;
+  max-height: calc(100dvh - 48px);
+  margin: auto;
+  padding: 0;
+  overflow: auto;
+}
+.keys-sheet::backdrop {
+  background: color-mix(in srgb, var(--paper) 80%, transparent);
+}
+.keys-sheet__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  padding: var(--space-3) var(--space-3) var(--space-3) var(--space-5);
+  border-bottom: 2px solid var(--ink);
+}
+.keys-sheet h2 {
+  margin: 0;
+  font-size: var(--type-cell);
+  line-height: 1.3;
+  font-weight: 800;
+}
+.keys-sheet__groups {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4-5);
+  padding: var(--space-4) var(--space-5) var(--space-5);
+}
+.keys-sheet__group h3 {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin: 0 0 var(--space-1-5);
+  font-size: var(--type-small);
+  line-height: 1.4;
+  font-weight: 800;
+}
+.keys-sheet__where {
+  font-family: var(--font-mono);
+  font-size: var(--type-label);
+  font-weight: 500;
+  color: var(--ink-2);
+}
+.keys-sheet__rows {
+  margin: 0;
+  border-top: 1px solid var(--ink);
+}
+.keys-sheet__row {
+  display: grid;
+  grid-template-columns: minmax(0, 11em) minmax(0, 1fr);
+  align-items: baseline;
+  gap: var(--space-3);
+  padding: var(--space-1-5) 0;
+  border-bottom: 1px solid var(--hairline);
+}
+.keys-sheet__row dt {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-1) var(--space-1-5);
+  min-width: 0;
+}
+.keys-sheet__row dd {
+  min-width: 0;
+  margin: 0;
+  font-size: var(--type-small);
+  line-height: 1.5;
+}
+.keys-sheet__then,
+.keys-sheet__or {
+  font-size: var(--type-label);
+  line-height: 1.3;
+  color: var(--ink-2);
+}
+/* 关掉了的那几组：字色降一档，标题旁写着「已关闭」，不只靠颜色 */
+.keys-sheet__group[data-off] .keys-sheet__rows {
+  color: var(--ink-2);
+}
+.keys-sheet__group[data-off] .ui-keyhint {
+  color: inherit;
+}
+.keys-sheet__toggle {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1-5);
+  padding: var(--space-3) var(--space-5) var(--space-5);
+  border-top: 2px solid var(--ink);
+}
+.keys-sheet__toggle label {
+  display: flex;
+  align-items: center;
+  align-self: flex-start;
+  gap: var(--space-2);
+  min-height: var(--control-compact);
+  font-size: var(--type-body);
+  font-weight: 700;
+  cursor: pointer;
+}
+.keys-sheet__toggle input {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: var(--ink);
+}
+.keys-sheet__note {
+  max-width: 65ch;
+  margin: 0;
+  color: var(--ink-2);
+  font-size: var(--type-small);
+  line-height: 1.6;
+}
+
+/* ---------- 窄屏（<760px）：框宽留出硬阴影，开关那一行 44px 高，键位和说明上下排 ---------- */
+
+@media (width < 760px) {
+  .keys-sheet {
+    width: calc(100vw - 24px);
+  }
+  .keys-sheet__header {
+    padding-left: var(--space-3-5);
+  }
+  .keys-sheet__groups,
+  .keys-sheet__toggle {
+    padding-inline: var(--space-3-5);
+  }
+  .keys-sheet__row {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--space-1);
+  }
+  .keys-sheet__toggle label {
+    min-height: var(--control-touch);
+  }
+}

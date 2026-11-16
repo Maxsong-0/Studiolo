@@ -28,6 +28,17 @@ pub enum MutationActor {
     },
     /// 受信 bridge 观察到的外部 Obsidian 变更。
     Obsidian,
+    /// 可信黑板 owner 核验过的接入方；任务与尝试来自有效 claim。
+    Agent {
+        /// 已认证的接入类型。
+        agent_type: String,
+        /// 已认证的实例标识。
+        instance_id: String,
+        /// 已核验所属任务；不由正文或显示名称猜测。
+        task_id: Option<String>,
+        /// 已核验本次执行尝试。
+        attempt_id: Option<String>,
+    },
 }
 
 /// 固定的正文操作类型；恢复来源是路径绑定的历史 revision。
@@ -53,6 +64,35 @@ pub struct MutationMetadata {
 impl MutationMetadata {
     /// 验证固定主体字段，不创建或缓存授权。
     pub fn new(actor: MutationActor, kind: MutationKind) -> Result<Self, BrokerError> {
+        if let MutationActor::Agent {
+            agent_type,
+            instance_id,
+            task_id,
+            attempt_id,
+        } = &actor
+        {
+            for value in [
+                Some(agent_type),
+                Some(instance_id),
+                task_id.as_ref(),
+                attempt_id.as_ref(),
+            ]
+            .into_iter()
+            .flatten()
+            {
+                if value.is_empty()
+                    || value.len() > 128
+                    || !value
+                        .bytes()
+                        .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.'))
+                {
+                    return Err(BrokerError::InvalidArtifact("invalid agent actor".into()));
+                }
+            }
+            if attempt_id.is_some() && task_id.is_none() {
+                return Err(BrokerError::InvalidArtifact("attempt requires task".into()));
+            }
+        }
         if let MutationActor::Human { issuer, subject } = &actor {
             for (value, maximum) in [(issuer, 512), (subject, 256)] {
                 if value.is_empty() || value.len() > maximum || value.chars().any(char::is_control)

@@ -6,6 +6,8 @@
 //! 因此只能由可信启动层装配，不能进入任何接入方可达的代码路径。
 
 mod activation;
+mod agents;
+pub use agents::{AgentPolicySnapshot, InstancePolicyState, TypePolicyState};
 mod desired;
 mod queries;
 pub(crate) mod queue;
@@ -24,7 +26,7 @@ pub use types::{
 };
 
 // 子模块与接入方句柄（agent.rs）经 `store::` 取用下列内部项。
-pub(crate) use support::{effective_summary, enforce_proposal_bounds, parse_skills};
+pub(crate) use support::{check_hash, effective_summary, enforce_proposal_bounds, parse_skills};
 pub(crate) use types::GLOBAL_TARGET;
 
 /// 主人发布者句柄。
@@ -33,6 +35,14 @@ pub struct PolicyStore {
 }
 
 impl PolicyStore {
+    /// 为本句柄绑定的同一个库创建封存者，不接受另一个源路径。
+    pub fn checkpoint_handle(&self) -> Result<crate::PolicyCheckpointHandle, PolicyError> {
+        self.db.storage().check()?;
+        let handle = crate::PolicyCheckpointHandle::open_existing(self.db.storage().directory())?;
+        self.db.storage().check()?;
+        Ok(handle)
+    }
+
     /// 打开部署批准的绝对私有目录；仅初始化本次独占新建的 `policy.sqlite3`。
     pub fn open(private_directory: &Path) -> Result<Self, PolicyError> {
         Ok(Self {

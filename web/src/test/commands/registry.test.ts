@@ -40,6 +40,7 @@ function effects(command: Command, context: CommandContext) {
     'openDrafts',
     'openRecentlyDeleted',
     'openStatus',
+    'openShortcuts',
     'focusTarget',
   ] as const) {
     const spy = vi.mocked(context[name]);
@@ -62,6 +63,7 @@ describe('命令清单：每条命令的目标或预览', () => {
     };
     expect(run('action:status')).toEqual({ openStatus: [[]] });
     expect(run('action:refresh')).toEqual({ refreshSnapshot: [[]] });
+    expect(run('action:shortcuts')).toEqual({ openShortcuts: [[]] });
     expect(run('action:drafts')).toEqual({ openDrafts: [[]] });
     expect(run('action:recently-deleted')).toEqual({
       openRecentlyDeleted: [[]],
@@ -98,11 +100,13 @@ describe('命令清单：每条命令的目标或预览', () => {
       驾驶舱: { view: 'cockpit' },
       项目: { view: 'projects' },
       文档: { view: 'documents' },
+      '文档 › 变更流': { view: 'documents', panel: 'changes' },
       '协作 › 拓扑': { view: 'collab', project: null },
       '协作 › 任务与回执': { view: 'collab', panel: 'board', project: null },
       '协作 › 时间线': { view: 'collab', panel: 'timeline', project: null },
       '协作 › 执行': { view: 'collab', panel: 'execution', project: null },
       规则: { view: 'rules' },
+      接入方实例: { view: 'policy', panel: 'agents' },
       策略: { view: 'policy' },
     });
     // 已在协作页看某个项目：换子标签不丢项目，条目格按新子标签重新解释所以清掉。
@@ -298,6 +302,7 @@ describe('只收录真实可用的动作', () => {
     ).toEqual([
       '打开状态详情',
       '刷新快照',
+      '查看键盘快捷键',
       '打开内存草稿',
       '打开最近删除',
       '打开执行候选',
@@ -310,11 +315,13 @@ describe('只收录真实可用的动作', () => {
       '驾驶舱',
       '项目',
       '文档',
+      '文档 › 变更流',
       '协作 › 拓扑',
       '协作 › 任务与回执',
       '协作 › 时间线',
       '协作 › 执行',
       '规则',
+      '接入方实例',
       '策略',
     ]);
   });

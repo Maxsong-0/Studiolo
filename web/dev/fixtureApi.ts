@@ -1,3 +1,5 @@
+import { changesFixture } from './fixtures/changes.ts';
+import type { ChangesPage } from '../src/changesModel.ts';
 /**
  * 假数据模式的 `/api/*` 应答器：纯函数式入口 `handle(request)`，不碰网络与文件系统，
  * 时钟可注入——Vite 插件拿它接请求，`src/test/devFixtures.test.ts` 拿它把每份假数据喂给真实解码器。
@@ -6,6 +8,9 @@
  * 后追平；发布策略、落地候选、提交审阅、解冻执行都要先过二次认证（验证码任意六位数字，000000 视为
  * 未通过）；写操作改的是内存里的状态，重启开发服务器即复原。未知接口一律 404。
  */
+import { agentsBody } from './fixtures/agents.ts';
+import { readAuditBody } from './fixtures/readAudit.ts';
+import { ATTACHMENT_BYTES } from './fixtures/attachments.ts';
 import { DAY, HOUR, iso } from './fixtures/clock.ts';
 import {
   FINISHED,
@@ -87,7 +92,9 @@ export interface FixtureRequest {
   /** 已解析的 JSON 正文；GET 为 undefined。 */
   body?: unknown;
 }
-export type FixtureResponse = Outcome;
+export type FixtureResponse = Outcome & {
+  binary?: { bytes: Uint8Array; type: string };
+};
 
 const ok = (body: unknown): Outcome => ({ status: 200, body });
 const error = (status: number, message: string, code?: string): Outcome => ({
@@ -113,6 +120,10 @@ function counter(value: string | null): number | null {
 export function createFixtureApi(options: { now?: () => number } = {}) {
   const clock = options.now ?? Date.now;
   const start = clock();
+  let changeSnapshot = 0;
+  const changesSnapshots = new Map<string, ChangesPage>();
+  const changesSeen = new Set<string | null>();
+  const changesRequests = new Map<string, string>();
   const notes = buildVault(start);
   let generation = 243;
   let committed = 48_216;
@@ -280,7 +291,8 @@ export function createFixtureApi(options: { now?: () => number } = {}) {
     const key = taskKeyOf(query.get('task_id') ?? '');
     const after = query.has('after') ? counter(query.get('after')) : 0;
     if (after === null) return error(400, '回放游标无效。');
-    if (!key) return error(503, '工作项不存在');
+    // 与真后端一致：没有这条工作项是确定结论（404），不是「暂不可用」（503）。
+    if (!key) return error(404, '工作项不存在。', 'board_task_not_found');
     const own = events.filter(
       (event) => event.task === key && Number(event.offset) > after,
     );
@@ -398,6 +410,10 @@ export function createFixtureApi(options: { now?: () => number } = {}) {
     body: Record<string, unknown>,
     now: number,
   ): Outcome {
+    if (path === '/api/v1/agents/reads/query') {
+      const result = readAuditBody(body, start, now);
+      return result ? ok(result) : error(400, '审计查询格式无效。', 'invalid');
+    }
     if (path === '/api/v1/policy/desired') {
       const kind = body.kind as Kind;
       if (
@@ -533,6 +549,7 @@ export function createFixtureApi(options: { now?: () => number } = {}) {
           },
         };
       // 发布后只取代比它早入库的；比它晚的（别的提交者交的）留着待处理。
+      const remaining = newerOpen(policy)[desired.id] ?? [];
       const older = Object.entries(newerOpen(policy))
         .filter(([, newer]) => newer.includes(desired.id))
         .map(([id]) => id);
@@ -564,6 +581,8 @@ export function createFixtureApi(options: { now?: () => number } = {}) {
         },
         now,
       );
+      activation.superseded_desired_ids = older;
+      activation.remaining_desired_ids = remaining;
       desired.status = 'activated';
       desired.report = report;
       desired.activated_version = activation.version;
@@ -651,9 +670,34 @@ export function createFixtureApi(options: { now?: () => number } = {}) {
   }
 
   // ---------- 路由 ----------
-  function get(pathname: string, query: URLSearchParams, now: number): Outcome {
+  function get(
+    pathname: string,
+    query: URLSearchParams,
+    now: number,
+  ): FixtureResponse {
     const session = sessions.find((item) => item.id === current)!;
     switch (pathname) {
+      case '/api/v1/changes': {
+        if (!only(query, ['limit', 'project', 'before', 'vault_uuid']))
+          return error(400, '变更查询无效。');
+        if (query.has('before'))
+          return error(409, '变更快照已失效。', 'changes_expired');
+        const project = query.get('project');
+        if (project !== null && !PROJECT_ROOTS.includes(project))
+          return error(400, '项目无效。');
+        const snapshot = `d11d3d3a-2943-4cae-bf21-${String(++changeSnapshot).padStart(12, '0')}`;
+        const page = changesFixture(
+          start,
+          committed,
+          project,
+          snapshot,
+          changesSeen.has(project),
+        );
+        changesSnapshots.set(snapshot, page);
+        if (changesSnapshots.size > 64)
+          changesSnapshots.delete(changesSnapshots.keys().next().value!);
+        return ok(page);
+      }
       case '/api/v1/session':
         return ok(sessionPair(session));
       case '/api/v1/sessions':
@@ -689,6 +733,20 @@ export function createFixtureApi(options: { now?: () => number } = {}) {
         if (counter(query.get('generation')) !== generation)
           return error(409, STALE_VIEW);
         return ok(search(notes, text, mode, project, generation));
+      }
+      case '/api/attachment': {
+        if (
+          !only(query, ['path', 'generation']) ||
+          query.getAll('path').length !== 1 ||
+          query.getAll('generation').length !== 1
+        )
+          return error(400, '需要唯一的路径与代次。');
+        if (counter(query.get('generation')) !== generation)
+          return error(409, STALE_VIEW);
+        const file = ATTACHMENT_BYTES.get(query.get('path') ?? '');
+        return file
+          ? { status: 200, binary: file }
+          : error(404, '附件不在当前快照中。');
       }
       case '/api/tree': {
         if (counter(query.get('generation')) !== generation)
@@ -753,6 +811,10 @@ export function createFixtureApi(options: { now?: () => number } = {}) {
         return query.get('vault_uuid') === VAULT_UUID
           ? ok(vault.tombstonePage())
           : error(404, '没有这个 Vault 的删除记录。');
+      case '/api/v1/agents':
+        return only(query, [])
+          ? ok(agentsBody(policy, now))
+          : error(400, '查询参数无效。');
       case '/api/v1/health':
         return ok(healthBody());
       case '/api/v1/board': {
@@ -802,7 +864,7 @@ export function createFixtureApi(options: { now?: () => number } = {}) {
     return error(404, `假数据模式没有这个接口：GET ${pathname}`);
   }
 
-  function handle(request: FixtureRequest): Outcome {
+  function handle(request: FixtureRequest): FixtureResponse {
     const now = clock();
     const url = new URL(request.url, 'http://fixture.invalid');
     const { pathname } = url;
@@ -824,6 +886,34 @@ export function createFixtureApi(options: { now?: () => number } = {}) {
       (!login && request.headers['x-csrf-token'] !== CSRF_TOKEN)
     )
       return error(403, '认证请求不符合安全策略。');
+    if (request.method === 'POST' && pathname === '/api/v1/changes/seen') {
+      const body = request.body;
+      if (
+        !record(body) ||
+        Object.keys(body).length !== 4 ||
+        typeof body.snapshot !== 'string' ||
+        typeof body.request_id !== 'string'
+      )
+        return error(400, '已读请求无效。');
+      const page = changesSnapshots.get(body.snapshot);
+      if (
+        !page ||
+        body.vault_uuid !== page.vault_uuid ||
+        body.project !== page.project
+      )
+        return error(409, '快照已失效。', 'changes_expired');
+      const bound = changesRequests.get(body.request_id);
+      if (bound && bound !== body.snapshot)
+        return error(409, '请求编号已占用。', 'seen_conflict');
+      changesRequests.set(body.request_id, body.snapshot);
+      changesSeen.add(page.project);
+      return ok({
+        status: 'seen',
+        vault_uuid: page.vault_uuid,
+        project: page.project,
+        through: page.through,
+      });
+    }
     const body = request.body;
     if (
       pathname.startsWith('/api/v1/sessions') ||
@@ -838,7 +928,8 @@ export function createFixtureApi(options: { now?: () => number } = {}) {
     if (pathname === '/api/v1/execution/command') return execute(body, now);
     if (
       pathname.startsWith('/api/v1/policy/') ||
-      pathname === '/api/v1/agents/revoke'
+      pathname === '/api/v1/agents/revoke' ||
+      pathname === '/api/v1/agents/reads/query'
     )
       return policyPost(pathname, body, now);
     return error(404, `假数据模式没有这个接口：POST ${pathname}`);

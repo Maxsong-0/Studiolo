@@ -25,7 +25,7 @@ spec.loader.exec_module(helpers)
 preview = helpers.preview
 
 # exercise() 当前的检查项数；增删检查都必须在这里显式改数，不能让它悄悄少查。
-TOTAL = 74
+TOTAL = 82
 
 READING = "项目/纸页/01-框架/阅读体验.md"
 GUIDE = "项目/Studiolo/01-框架/搜索说明.md"
@@ -79,7 +79,7 @@ class ExampleServer(helpers.Transport):
         self.links = {item["raw"]: item for item in LINKS}
         self.static = {"/": PAGE, **helpers.ASSETS}
         self.allowed = dict(ALLOWED)
-        self.generation_checked = {"/api/document", "/api/search", "/api/tree"}
+        self.generation_checked = {"/api/document", "/api/search", "/api/tree", "/api/attachment"}
 
     def reply(self, method, url, headers):
         self.requests.append((method, url, headers))
@@ -95,6 +95,8 @@ class ExampleServer(helpers.Transport):
             return 409, {}
         if location.path in self.static:
             return 200, self.static[location.path]
+        if location.path == "/api/attachment":
+            return super().reply(method, url, headers)
         routes = {"/api/v1/bootstrap": lambda query: (200, {"authentication": "local"}),
                   "/api/workbench": self.workbench, "/api/document": self.document,
                   "/api/search": self.search, "/api/tree": self.tree}

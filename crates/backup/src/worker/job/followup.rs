@@ -1,64 +1,71 @@
 //! 主流程之后的补记、结果未知核对、seed 校验与恢复点显示状态。
 
-use super::super::recovery_point::{
-    RecoveryPointInputs, RecoveryPointStamps, RecoveryPointStatus, RpoBudget,
-};
-use super::super::state::{
-    JobEvent, JobKey, JobState, ReconciledOutcome, StateError, UnknownStage,
-};
+use super::super::recovery_point::{RecoveryPointInputs, RecoveryPointStatus, RpoBudget};
+use super::super::state::{JobEvent, JobKey, JobState, UnknownStage};
 use super::{BackupWorker, JobOutcome, WorkerError, payload};
 use crate::checkpoint::barrier::BarrierClock;
-use crate::store::model::StoreError;
 
 impl BackupWorker<'_> {
-    /// `AuditPending` 的固定补记；补记成功才推进成功指针。
-    pub fn backfill_outcome<C: BarrierClock>(
-        &self,
-        key: &JobKey,
-        clock: &C,
-    ) -> Result<JobOutcome, WorkerError> {
-        let state = self.state()?;
-        let job = state
-            .jobs
-            .iter()
-            .find(|job| job.key == *key)
-            .ok_or(WorkerError::JobNotFound)?;
-        let JobState::AuditPending { verification } = job.state else {
-            return Err(WorkerError::State(StateError::JobKeyMismatch));
+    /// 仅补记已持久的失败事实，不重新执行上传或封存。
+    pub fn backfill_failure(&self, key: &JobKey) -> Result<JobOutcome, WorkerError> {
+        let mut state = self.state()?;
+        let pending = state
+            .pending_failure
+            .as_ref()
+            .filter(|p| &p.key == key)
+            .ok_or(WorkerError::EvidenceMismatch)?;
+        let (outcome, event) = match pending.unverified {
+            Some(reason) => (
+                JobOutcome::Unverified(reason),
+                payload::outcome_unverified(key, reason),
+            ),
+            None => (
+                JobOutcome::Failed(pending.reason),
+                payload::outcome_failed(key, pending.reason),
+            ),
         };
-        let checkpoint_at = job.checkpoint_at.ok_or(StoreError::CorruptStore)?;
-        let finalized_at = job.finalized_at.unwrap_or_else(|| clock.now());
-        self.record_outcome(key, payload::outcome_success(key, &verification))?;
-        let (_, mut persisted) = self.with_job(key, |job| {
-            job.advance(JobEvent::OutcomeBackfilled)?;
-            Ok(())
-        })?;
-        persisted.last_scheduled = Some(RecoveryPointStamps {
-            checkpoint_at,
-            remote_verified_at: verification.verified_at,
-            finalized_at,
-        });
-        self.store.save_state(&persisted)?;
-        Ok(JobOutcome::Succeeded)
+        self.record_outcome(key, event)?;
+        state.pending_failure = None;
+        self.store.save_state(&state)?;
+        Ok(outcome)
+    }
+    /// 崩溃重启后只把执行中的阶段标为未知；不自动重新运行任何副作用。
+    pub fn recover_interrupted(&self) -> Result<(), WorkerError> {
+        let mut state = self.state()?;
+        for job in &mut state.jobs {
+            let stage = match job.state {
+                JobState::Sealing => Some(UnknownStage::Sealing),
+                JobState::Uploading => Some(UnknownStage::Uploading),
+                JobState::Verifying => Some(UnknownStage::Verifying),
+                JobState::CommittingFinalManifest => Some(UnknownStage::FinalManifestAck),
+                _ => None,
+            };
+            if let Some(stage) = stage {
+                job.advance(JobEvent::ResultUnknown { stage })?;
+            }
+        }
+        self.store.save_state(&state)?;
+        Ok(())
     }
 
-    /// 沿原作业键核对结果未知的作业。
-    pub fn reconcile_unknown(&self, key: &JobKey) -> Result<JobState, WorkerError> {
-        let located = self.probe.locate(key).map_err(WorkerError::Restic)?;
-        let outcome = match located {
-            None => ReconciledOutcome::RemoteAbsent,
-            Some(snapshot) => ReconciledOutcome::RemoteVerified {
-                verification: self
-                    .probe
-                    .verify(&snapshot, &key.checkpoint_id)
-                    .map_err(WorkerError::Restic)?,
-            },
-        };
-        let (state, _) = self.with_job(key, |job| {
-            job.reconcile_unknown(key, outcome)?;
-            Ok(job.state)
+    /// 上传阶段中断只重新查询原快照；本方法绝不调用上传执行器。
+    pub fn reconcile_upload(
+        &self,
+        key: &JobKey,
+        source: &crate::checkpoint::staging::SealedCheckpoint,
+        probe: &dyn super::RemoteProbe,
+        finalizer: &dyn crate::worker::final_manifest::FinalManifestWriter,
+    ) -> Result<JobOutcome, WorkerError> {
+        self.with_job(key, |job| {
+            if job.source.as_ref() != Some(source.reference())
+                || job.checkpoint_at != Some(source.ticket().content_cutoff)
+            {
+                return Err(WorkerError::EvidenceMismatch);
+            }
+            job.advance(JobEvent::ResumeRemoteVerification)?;
+            Ok(())
         })?;
-        Ok(state)
+        self.verify_and_commit(key, source, probe, finalizer)
     }
 
     /// 记录一次阶段性结果未知。
@@ -73,12 +80,17 @@ impl BackupWorker<'_> {
     /// 首次完整 seed 校验：必须已有成功作业且清单已提交。
     pub fn mark_seed_verified(&self) -> Result<(), WorkerError> {
         let mut state = self.state()?;
+        let receipt = state
+            .last_final
+            .as_ref()
+            .ok_or(WorkerError::SeedNotVerifiable)?;
         let has_success = state
             .jobs
             .iter()
-            .any(|job| job.state.advances_success_pointer());
-        let has_manifest = self.store.load_final_manifest()?.is_some();
-        if !has_success || !has_manifest {
+            .any(|job| &job.key == receipt.draft().key() && job.state == JobState::Succeeded);
+        if !has_success
+            || self.store.load_final_manifest()?.as_ref() != Some(receipt.draft().manifest())
+        {
             return Err(WorkerError::SeedNotVerifiable);
         }
         state.seed_verified = true;

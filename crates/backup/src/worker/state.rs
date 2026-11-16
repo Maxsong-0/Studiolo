@@ -9,6 +9,7 @@
 
 mod event;
 mod evidence;
+mod validation;
 
 pub use event::{EventKind, JobEvent, StateError};
 pub use evidence::{
@@ -71,6 +72,8 @@ impl JobState {
 pub struct JobRecord {
     /// 作业键。
     pub key: JobKey,
+    /// 上传前持久的原封存摘要；崩溃后不能换成同名的新封存。
+    pub source: Option<crate::checkpoint::staging::SealedReference>,
     /// 当前状态。
     pub state: JobState,
     /// 内容截止时刻。
@@ -87,6 +90,7 @@ impl JobRecord {
     pub fn queued(key: JobKey) -> Self {
         Self {
             key,
+            source: None,
             state: JobState::Queued,
             checkpoint_at: None,
             remote_verified_at: None,
@@ -97,8 +101,11 @@ impl JobRecord {
     /// 推进状态机；非法迁移一律拒绝，不会把中间证据当成结论。
     pub fn advance(&mut self, event: JobEvent) -> Result<(), StateError> {
         let next = self.next_state(event)?;
-        self.apply_timestamps(event);
-        self.state = next;
+        let mut updated = self.clone();
+        updated.apply_timestamps(event);
+        updated.state = next;
+        updated.validate()?;
+        *self = updated;
         Ok(())
     }
 
@@ -108,10 +115,18 @@ impl JobRecord {
             event: EventKind::of(event),
         };
         Ok(match (self.state, event) {
+            (
+                JobState::ResultUnknown {
+                    stage: UnknownStage::Uploading | UnknownStage::Verifying,
+                },
+                JobEvent::ResumeRemoteVerification,
+            ) => JobState::Verifying,
             (_, JobEvent::Failed { reason }) if !self.state.is_terminal() => {
                 JobState::Failed { reason }
             }
-            (_, JobEvent::ResultUnknown { stage }) if !self.state.is_terminal() => {
+            (_, JobEvent::ResultUnknown { stage })
+                if validation::stage_matches(self.state, stage) =>
+            {
                 JobState::ResultUnknown { stage }
             }
             (JobState::Queued, JobEvent::StartSealing { .. }) => JobState::Sealing,
@@ -160,15 +175,24 @@ impl JobRecord {
             }
             (JobState::AuditPending { .. }, JobEvent::OutcomeBackfilled) => JobState::Succeeded,
             (
-                JobState::ResultUnknown { .. },
+                JobState::ResultUnknown { stage },
                 JobEvent::ReconcileUnknown {
                     outcome: ReconciledOutcome::RemoteAbsent,
                 },
             ) => JobState::Failed {
-                reason: FailureReason::UploadRejected,
+                reason: if stage == UnknownStage::FinalManifestAck {
+                    FailureReason::FinalManifestCommitFailed
+                } else {
+                    FailureReason::UploadRejected
+                },
             },
             (
-                JobState::ResultUnknown { .. },
+                JobState::ResultUnknown {
+                    stage:
+                        UnknownStage::Uploading
+                        | UnknownStage::Verifying
+                        | UnknownStage::FinalManifestAck,
+                },
                 JobEvent::ReconcileUnknown {
                     outcome: ReconciledOutcome::RemoteVerified { verification },
                 },

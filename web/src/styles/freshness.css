@@ -21,7 +21,7 @@
   display: flex;
   flex: 1 1 240px;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--space-1-5);
   min-width: 0;
   overflow-wrap: anywhere;
 }
@@ -41,16 +41,16 @@
 .freshness-watermarks {
   display: flex;
   flex-wrap: wrap;
-  gap: 2px var(--space-4);
+  gap: var(--space-0-5) var(--space-4);
   margin: 0;
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: var(--type-caption);
   line-height: 1.5;
   letter-spacing: 0.02em;
 }
 .freshness-watermarks > div {
   display: flex;
-  gap: 6px;
+  gap: var(--space-1-5);
   min-width: 0;
 }
 .freshness-watermarks dt {
@@ -62,7 +62,7 @@
 }
 .freshness-notice .freshness-scope {
   color: var(--ink-2);
-  font-size: 12px;
+  font-size: var(--type-caption);
   line-height: 1.6;
 }
 .ui-button.freshness-verify {
@@ -82,7 +82,7 @@
   padding: 0;
   list-style: none;
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: var(--type-caption);
   line-height: 1.6;
   letter-spacing: 0.02em;
   overflow-wrap: anywhere;
@@ -91,7 +91,7 @@
   display: flex;
   align-items: flex-start;
   gap: var(--space-2);
-  padding: 5px 0;
+  padding: var(--space-1) 0;
   border-bottom: 1px solid var(--hairline);
 }
 .status-notes-list > li:first-child {
@@ -110,7 +110,7 @@
   margin: 0;
   color: var(--ink-2);
   font-family: var(--font-mono);
-  font-size: 11.5px;
+  font-size: var(--type-label);
   line-height: 1.6;
 }
 .status-notes .status-notes-hint {
@@ -119,6 +119,6 @@
 
 @media (width < 760px) {
   .ui-button.freshness-verify {
-    min-height: 44px;
+    min-height: var(--control-touch);
   }
 }

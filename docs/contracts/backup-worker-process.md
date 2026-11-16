@@ -1,0 +1,71 @@
+# 独立备份进程执行边界
+
+`studiolo-backup-worker` 是独立的 Linux 包，不能进入 App/owner 的依赖闭包。当前实现固定root配置、只读凭据源、固定包执行与封存绑定的追加runner；服务入口、作业主循环、审计IPC、远端最终清单和完整恢复仍待后续接线，不能据此宣称生产Rust备份链完成。
+
+## 固定配置来源
+
+`WorkerConfig` 只有 `/etc/studiolo/backup-worker.json` 这一条生产构造入口，不接受环境/请求覆盖路径，不实现Deserialize或公开字段构造。所有路径组件逐层nofollow且root所有、无组/其他写权；文件要求单链接普通文件、0644或0444、1 字节～16 KiB，并核同一FD内容前后身份及原路径重开身份，不创建缺失配置。
+
+私有schema1文档必含 `worker_uid`、`producer_uid`、`reader_gid`、`sealed_parent`、`producer_socket`、`repository`、`restic_sha256`。未知/重复/缺失字段拒绝，秘密值不属于此文档。当前worker必须为文档指定的非root UID，且不同于producer；producer和读取GID不能为root/无效身份，实际进程必须已加入读取组。路径只允许规范化绝对ASCII字母/数字及 `/_-.`，socket路径最多100字节；封存和审计socket不得覆盖worker状态、运行目录或凭据目录，二者不得互相包含。
+
+仓库沿用HTTPS REST约束，包摘要必须为完整小写SHA-256。配置保留原JSON字节摘要供部署证据使用。`AppendRunner::new` 以已核验的WorkerConfig选择仓库及包摘要，并要求同作业键和外部封存引用；不会把调用方自报的repository/digest当成配置。真实socket的peer UID仍须由后续审计代理边界核验。
+
+108 `20261113-160800-e359`：配置定向3项（字段/身份/路径/未知秘密字段/重复字段、原文件权限/硬链接/预算/截止）及严格Clippy、66项架构检查通过。实际root配置文件未在生产创建。
+
+## 固定包与身份
+
+生产只打开 `/usr/lib/studiolo-backup-worker/restic-0.19.1`。逐级 nofollow，目录必须 root 所有且没有组/其他写权；二进制必须 root 所有、单链接普通 ELF 文件、受限执行权限、最多128 MiB。SHA-256 必须匹配受保护部署清单提供的摘要，不能信二进制旁边自报的摘要。
+
+持有原文件 FD，经 `/proc/self/fd/<原FD>` 执行；没有 PATH 搜索或 shell。每次调用前后检查原 inode、所有者、权限、大小及修改时间。先运行固定 `version` 核对0.19.1，单次版本探测最多10秒。测试以当前测试UID持有的发行副本验证执行机制，不代表已经验收生产 root 安装目录。
+
+`AppendRunner` 只接受配置绑定的 HTTPS REST 仓库和 Append 身份；SFTP/S3/本地路径、URL凭据、查询、fragment及非规范URL拒绝。它不接受额外argv或可变环境键。恢复与保留清理身份不得借此 runner 运行。内核对真实仓库的只追加能力及远端不可变配置仍须单独验证。
+
+## 环境、输出与截止时间
+
+`ResticCredentials::load` 只在持有共同process-safety加固结果后读取固定 `/run/credentials/studiolo-backup-worker.service`，不接受 `CREDENTIALS_DIRECTORY`、请求路径或调用者直接传入秘密。固定三槽为 `repository-password`、`rest-username`、`rest-password`。父路径逐级root所有、无组/其他写权、nofollow且无ACL；实际unit目录须worker所有0500，文件须同UID、0400、单链接普通文件，无ACL。目录和文件还必须实测为只读ramfs，普通目录、可写挂载和可能换出的其他文件系统均拒绝。代码不创建目录、不装载/轮换秘密、不替管理员修权限。
+
+该部署选择依据[systemd官方凭据说明](https://www.freedesktop.org/software/systemd/man/257/systemd.exec.html)及[v255固定实现](https://github.com/systemd/systemd/blob/v255/src/core/exec-credential.c)：systemd可能采用ACL或文件所有权授予读取，也可能降级存储；本worker只接受其中可实际证明的只读ramfs/所有权形态，不能仅凭使用了LoadCredential便宣称满足隔离。
+
+仓库密码和REST密码各最多4096字节、用户名最多256字节，另允许一个录入工具留下的末尾LF；拒绝空值、非法UTF-8、其他控制字符、首尾空白和用户名中的冒号。流式读取的固定容量缓冲和块都零化，不在增长时遗留重分配副本。父进程仅核仓库密码格式后立即释放其正文，restic读取固定只读文件；用户名/REST密码保留于Zeroizing字符串。原根每级身份、原文件FD与路径重开身份在装配和每次执行前后都核对；异常仅返回固定分类。
+
+追加runner必须绑定同一 `JobKey` / `SealedReference`，经配置指定的独立worker读取身份实际重开封存，核验外部seal摘要、完整清单和实际内容。源路径从 `/` 逐级nofollow，只允许root或配置生产者拥有祖先，禁止组/其他写权、特殊权限及ACL，最多64级；父根须为生产者/读取组0750，封存根0550。记录每级device/inode/uid/gid/mode，后续重开必须相同，末端目录相同不能掩盖祖先替换。
+
+Backup和CheckRepository两种完整调用都由本作业派生；Backup固定原作业tag及原封存根。不同作业号、checkpoint、tag、目录或仓库即使各自语法合法也拒绝。传输前后重新读取全部封存并核对原引用、票据、清单和路径身份。源生产者本身仍属受信任主体；本地只读权限不等于NAS不可变或远端校验。
+
+真实UTC由系统采样，不接受请求自报now；原单调预算还须受封存expires_at限制。每次复验和子进程轮询都检查到期与UTC回退，UTC前跳只能缩短预算；发现回退/到期后本作业永久关闭。所有阶段共用原预算，包括初始化、版本检查、上传及仓库校验，不能重置延长保留期。
+
+子进程使用 `env_clear`，仅设置固定 TMPDIR 和 `RESTIC_PASSWORD_FILE`、`RESTIC_REST_USERNAME`、`RESTIC_REST_PASSWORD` 三槽。上层必须先通过共同的 process-safety 加固并记录结果，再从 worker 受保护凭据源构造 `ResticCredentials`；该类型不实现 Debug/Clone，自有字符串零化。启动后立即释放 Command 的环境副本，不把正文/凭据/原始stderr放入错误或日志。
+
+生产临时根固定 `/var/lib/studiolo-backup-worker/tmp`，必须事先创建为当前非root worker的0700目录，逐层拒绝链接和非可信所有者/写权；调用前后重核原根身份。初始化/回收由后续服务装配完成，本模块不擅自创建宿主机目录。
+
+stdout最多8 MiB、stderr最多64 KiB，预分配有界缓冲并在释放时零化，两根管道以非阻塞方式交替读取，不能堵住一侧管道。一个作业共用原单调时钟截止时间（最多2小时），不为每次上传/校验重置预算。输出或截止越界立即进入回收，退出0和自报文件数只作中间证据，不能替代远端校验。
+
+## 原进程组回收
+
+每次执行创建独占进程组。`waitid(WEXITED|WNOHANG|WNOWAIT)` 保留组长身份；先对本次原进程组发SIGKILL，再reap组长，避免PID复用后误杀别的进程。组长正常退出时同样清理继承管道的同组子孙。无法证明原child身份时不再向那个整数PID发信号。
+
+终止后的等待最多2秒。无法证实回收则返回 `CleanupFailed`，runner永久封闭，外层必须停止服务并保留作业未知状态；不能换一个runner悄悄继续。服务最终部署仍需受控cgroup和KillMode验收。进程组测试只证明同组子孙回收，不冒充跨组/cgroup隔离。Rust父进程的内存/可转储加固不能假定跨第三方程序exec继续生效；独立UID、子进程核心转储与swap约束须在最终服务部署中实际验收。
+
+## 开发验证
+
+108 `20261113-155333-4b6c`：真实进程定向4项通过，6个ignored子入口由父测试实际执行；官方发行CLI单项另外用ignored入口实际执行。覆盖继承环境清除、stdout/stderr越界、超时、组长退出遗留子孙、原包摘要/权限变化拒绝、仓库URL拒绝。核验官方amd64发行压缩包SHA-256后，真实restic从原FD完成临时仓库init、重复init拒绝、backup和check --read-data，实际JSON解析通过。严格Clippy及66项架构检查通过。
+
+所有仓库、凭据和正文均为虚构测试数据；未使用生产仓库、未修改系统账号或部署服务。独立UID交接、systemd只读ramfs凭据的实际部署验收、审计代理、远端最终提交和完整新根恢复仍须继续。
+
+108 `20261113-162357-7ea9`：来源绑定定向6项、真实进程到期回收1项、严格Clippy及67项架构检查通过。覆盖同作业完整参数、外部引用和重读内容、祖先替换、链接/ACL/写权限拒绝、UTC回退/前跳与原截止不重置。此处owner水位为明确fixture，封存内容由真实staging生成；不替代七owner集成测试或两个实际UID的部署演练。
+
+108 `20261113-163055-806d`：固定槽/格式/边界与真实文件权限/别名/变化拒绝2项、真实子进程环境1项、严格Clippy及67项架构检查通过。普通测试文件被只读ramfs校验实际拒绝；测试未安装systemd凭据或伪称覆盖正向内存挂载。官方restic CLI入口本轮按设计ignored，其上次显式运行证据见上文，整批终验再统一执行。
+
+完整传输清单由真实封存复验生成，不可反序列化构造；包含data目录树及seal.json/manifest.json/inclusion.json三个原元数据文件的实际长度与SHA。108 `20261113-164047-eaf1`：真实清单逐项1项、来源绑定2项、严格Clippy、67项架构通过，同时修正了此前格式化差异回传时误还原的一处凭据字段赋值（首轮 `20261113-163915-3cb8` 语法检查拒绝）。
+
+`verify_snapshot_files` 只从本作业已核验清单派生固定 `dump <完整64位snapshot> <原根/相对文件>`。中文/空格等文件名作为单个exec参数保留，不经过shell；短snapshot和越界路径拒绝。stdout只流式计算SHA和长度，超出原文件长度即回收进程，不写额外副本；少字节、错摘要、非零退出均拒绝。和JSON捕获共用env清除、凭据复验、原期限与进程组清理，有数据可读时持续排空，无进展才休眠。此方法仅证明期望文件内容；RemoteProbe另核快照tag及目录漏项/多项，远端最终清单仍待接线。
+
+108 `20261113-164351-72e1`：官方restic 0.19.1真实CLI1项通过，16 MiB中文/空格/元字符文件从远端快照流式核验，错误摘要、长/短期望均拒绝；来源绑定2项、封闭读取参数1项、实际进程3项、严格Clippy与67项架构通过。原6个子入口由父测试实际执行，官方CLI另显式运行。此轮格式化差异没有脱敏掩码，逐文件原样应用。
+
+原生 `RemoteProbe` 现按原JobKey派生tag调用snapshots；零个候选返回不存在，两个以上拒绝，绝不按latest猜选。候选必须含完整snapshot/tree ID、唯一原根和唯一原tag，无排除项或重写original。接着用ls列完整快照（含原根祖先），对封存中的全部目录/文件逐项消除期望项；漏项、多项、重复、特殊节点、名称/大小/只读权限或生产者UID/GID不一致均拒绝。祖先只允许确切的原路径目录，不作为恢复数据。完成逐文件字节核验后重新确认原作业仍只有同一快照，再采真实UTC生成数据已验证证据；尚未替代远端最终清单提交。定位/列目录JSON仍受8 MiB输出上限，越界整次失败，不截断放行。
+
+108 `20261113-165041-f4bc`：官方CLI2项（含真实staging→backup→snapshots→完整ls→逐文件dump、重复同作业候选拒绝），来源2项、inspect3项、真实进程3项、严格Clippy及67项架构通过。六个子进程入口由父用例执行，两个官方CLI入口显式运行。测试仍使用本地临时restic仓库与单UID，未证明NAS只追加或双UID部署；原生probe仍依赖未过期本地封存，旧作业在本地副本已过期后的独立核对还需最终提交协议补齐。
+
+## 最终记录接线
+
+固定包／凭据／临时根／仓库／时钟／回收已收进内部 Runtime，数据执行器继续叠加原 Source 检查。最终记录采用不超过 64 KiB 的非阻塞 stdin，只上传固定虚拟文件；上传权限只来自本执行器实际 RemoteProbe 缓存的同一 draft。FinalManifestProbe 是独立的非正文只读能力，本地源过期后不需要重新开放 Source。完整流程、持久顺序与仍未完成的服务边界见 [最终记录契约](backup-finalization.md)。

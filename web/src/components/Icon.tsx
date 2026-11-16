@@ -21,7 +21,8 @@ type IconName =
   | 'shield'
   | 'key'
   | 'copy'
-  | 'chevron';
+  | 'chevron'
+  | 'menu';
 
 const paths: Record<IconName, React.ReactNode> = {
   overview: (
@@ -137,6 +138,7 @@ const paths: Record<IconName, React.ReactNode> = {
       <path d="M10 3H4v18h6M9 12h12m-4-4 4 4-4 4" />
     </>
   ),
+  menu: <path d="M4 6h16M4 12h16M4 18h16" />,
 };
 
 export function Icon({

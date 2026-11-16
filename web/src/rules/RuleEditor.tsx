@@ -2,16 +2,16 @@ import { lazy, useDeferredValue, useId, useState } from 'react';
 import { EditorPane } from '../components/EditorPane';
 import type { PolicyStatus } from '../policyModel';
 import { Button, Cell, CellHeader, GridFrame } from '../ui';
-import { DraftPanel } from './DraftPanel';
+import { DraftPanel } from '../policy/DraftPanel';
 import { displayTime } from './labels';
-import { RulesFeedback } from './RulesFeedback';
+import { PolicyFeedback } from '../policy/PolicyFeedback';
 import {
   RULE_BODY_MAX_BYTES,
   bodyBytes,
   ruleSubjectProblem,
 } from './rulesModel';
 import type { RulesModel } from './rulesModel';
-import type { PolicyActions } from './usePolicyActions';
+import type { PolicyActions } from '../policy/usePolicyActions';
 import '../styles/policy.css';
 import '../styles/rules.css';
 
@@ -165,7 +165,7 @@ export function RuleEditor({
             ) : null}
           </div>
         )}
-        <RulesFeedback
+        <PolicyFeedback
           origin={ORIGIN}
           notice={actions.notice}
           error={actions.error}

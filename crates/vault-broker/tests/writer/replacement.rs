@@ -19,6 +19,7 @@ pub(super) fn artifacts() -> ArtifactCommit {
         fence: Fence::new(1).unwrap(),
         audit_intent: "fictional-writer-test".into(),
         idempotency_key: "writer-artifacts".into(),
+        provenance: super::granted::granted_provenance(),
         artifacts: vec![ArtifactCandidate {
             name: path("result.md"),
             content: b"result".to_vec(),

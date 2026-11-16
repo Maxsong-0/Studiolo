@@ -3,7 +3,7 @@
 use serde::Deserialize;
 use studiolo_policy::{PolicyKind, RevocationLevel};
 
-use super::{ACTIVATE, DESIRED, REVOKE, VALIDATE, WITHDRAW};
+use super::{ACTIVATE, DESIRED, READS, REVOKE, VALIDATE, WITHDRAW};
 use crate::auth_http::responses::Failure;
 
 #[derive(Deserialize)]
@@ -63,6 +63,7 @@ pub(crate) enum ActivateRequest {
 /// 已解析的策略端点输入。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum Input {
+    Reads(studiolo_supply::read_audit::ReadAuditQuery),
     Submit {
         kind: PolicyKind,
         subject: String,
@@ -92,6 +93,17 @@ fn valid_id(value: &str) -> bool {
 pub(crate) fn parse(path: &str, bytes: &[u8]) -> Result<Input, Failure> {
     let bad = |_| Failure::bad_request();
     match path {
+        READS => {
+            if bytes.len() > super::READS_LIMIT {
+                return Err(Failure::bad_request());
+            }
+            let query: studiolo_supply::read_audit::ReadAuditQuery =
+                serde_json::from_slice(bytes).map_err(bad)?;
+            if !query.validate() {
+                return Err(Failure::bad_request());
+            }
+            Ok(Input::Reads(query))
+        }
         DESIRED => {
             let body: DesiredBody = serde_json::from_slice(bytes).map_err(bad)?;
             let text = body.body.ok_or_else(Failure::bad_request)?;

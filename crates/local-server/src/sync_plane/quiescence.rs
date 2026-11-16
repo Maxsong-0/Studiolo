@@ -42,6 +42,8 @@ impl<'a> OwnerQuiescence<'a> {
             .transport()
             .lock()
             .map_err(|_| PlaneError::Unavailable)?
+            .as_ref()
+            .ok_or(PlaneError::Unavailable)?
             .quiescent()
             .map_err(|_| PlaneError::Quiescence)?;
         Ok(Self {
@@ -92,6 +94,8 @@ pub fn verify(plane: &SyncPlane, ticket: &QuiescentMirror) -> Result<(), PlaneEr
         .transport()
         .lock()
         .map_err(|_| PlaneError::Unavailable)?
+        .as_ref()
+        .ok_or(PlaneError::Unavailable)?
         .verify_quiescent(ticket)
         .map_err(|_| PlaneError::Quiescence)
 }
@@ -105,6 +109,8 @@ impl MirrorQuiescence for OwnerQuiescence<'_> {
             .transport()
             .lock()
             .map_err(|_| QuiescenceFault::Unavailable)?
+            .as_ref()
+            .ok_or(QuiescenceFault::Unavailable)?
             .verify_quiescent(&self.ticket)
             .map_err(|_| QuiescenceFault::Unavailable)?;
         if request.link_id != self.link_id

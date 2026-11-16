@@ -35,24 +35,8 @@ impl<B: VaultBroker + ArtifactStager, L: AuditLedger> PersistentTaskEngine<B, L>
     pub fn deliver_runtime_audits(&mut self) -> Result<usize, TaskEngineError> {
         let events = self.control_db.pending_runtime_audits().map_err(map_db)?;
         for event in &events {
-            let mut subject = AuditSubject::default();
-            if let Some(task) = event.payload.get("task_id") {
-                subject = subject.with_task(serde_json::from_value(task.clone())?);
-            }
-            if let Some(attempt) = event.payload.get("attempt_id") {
-                subject = subject.with_attempt(serde_json::from_value(attempt.clone())?);
-            }
             self.audit_ledger
-                .append(
-                    AuditEvent::new(
-                        AuditEventId::parse(format!("runtime:{}", event.event_id))
-                            .map_err(map_audit)?,
-                        AuditPhase::Outcome,
-                        &event.action,
-                        SanitizedPayload::try_from(event.payload.clone()).map_err(map_audit)?,
-                    )
-                    .with_subject(subject),
-                )
+                .append(event.audit_event().map_err(map_db)?)
                 .map_err(map_audit)?;
             self.control_db
                 .acknowledge_runtime_audit(&event.event_id)

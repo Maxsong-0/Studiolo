@@ -23,6 +23,7 @@ pub(crate) struct PreparedServer {
     pub(super) board_ingress: Option<PreparedUnixIngress>,
     pub(super) board_plane: Option<Arc<studiolo_local_server::board::BoardPlane>>,
     pub(super) sync_plane: Option<Arc<studiolo_local_server::sync_plane::SyncPlane>>,
+    pub(super) checkpoint: Option<Arc<studiolo_local_server::checkpoint::CheckpointInputs>>,
 }
 
 impl PreparedServer {

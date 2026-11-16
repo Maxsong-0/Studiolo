@@ -2,7 +2,7 @@ import { act, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, expect, it, vi } from 'vitest';
 import { App } from '../App';
-import { fixture, jsonResponse } from './fixtures';
+import { COCKPIT_READY, fixture, jsonResponse } from './fixtures';
 
 const fetchMock = vi.fn<typeof fetch>();
 const fresh = {
@@ -47,7 +47,7 @@ it('显示真实原因与未知水位，不把陈旧结果解释为允许编辑'
     }),
   );
   render(<App />);
-  await screen.findByRole('table');
+  await screen.findByRole('heading', COCKPIT_READY);
   // 不再在每页顶部挂新鲜度横幅：胶囊收起时页面里没有这一块，胶囊上报的是原因。
   expect(
     screen.queryByRole('region', { name: '内容新鲜度' }),

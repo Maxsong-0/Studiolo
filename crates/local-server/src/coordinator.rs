@@ -1,5 +1,8 @@
 //! 封闭的 canonical 拥有者；公开控制句柄不导出 Broker 或任意写回调。
 
+pub(crate) mod changes;
+mod checkpoint;
+pub use checkpoint::FrozenWorkbench;
 mod content;
 mod content_audit;
 mod file_operations;
@@ -28,18 +31,34 @@ pub struct CanonicalWorkbench {
 
 pub(crate) struct Core {
     pub owner: Mutex<Option<FsVaultBroker>>,
+    pub changes: Mutex<changes::ObservationLog>,
+    pub change_pages: Mutex<changes::Cache>,
     pub roots: Arc<CanonicalServingRoots>,
     pub view: ViewStore,
     pub control: Mutex<Control>,
     pub watcher: Mutex<Option<notify::RecommendedWatcher>>,
     pub completion: watch::Sender<Completion>,
+    /// 只跑例行检查的计时任务；完整捕获与建模不在运行时线程上做。
     pub executor: tokio::runtime::Handle,
+    /// 本协调器的专用派生线程：每次完整捕获与建模都在它上面串行做（见 `deriver`）。
+    pub deriver: crate::deriver::Deriver,
     pub content_audit: Option<Arc<dyn studiolo_audit_ledger::AuditLedger>>,
     pub content_audit_healthy: std::sync::atomic::AtomicBool,
     pub content_restore_pending: std::sync::atomic::AtomicBool,
     pub file_operation_pending: std::sync::atomic::AtomicBool,
     #[cfg(test)]
     pub probe: crate::coordinator_tests::Probe,
+}
+
+impl Core {
+    /// 未装配审计的只读组合没有跨库写操作；装配后必须使用实际账本的许可。
+    pub(crate) fn operation(&self) -> Result<Option<studiolo_audit_ledger::OperationPermit>, ()> {
+        self.content_audit
+            .as_ref()
+            .map(|audit| audit.enter_operation())
+            .transpose()
+            .map_err(|_| ())
+    }
 }
 
 pub(crate) struct Control {

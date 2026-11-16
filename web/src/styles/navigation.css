@@ -22,8 +22,8 @@
   align-items: center;
   justify-content: space-between;
   gap: var(--space-3);
-  min-height: 44px;
-  padding: 10px var(--space-4) 10px var(--space-5);
+  min-height: var(--control-touch);
+  padding: var(--space-2-5) var(--space-4) var(--space-2-5) var(--space-5);
   cursor: pointer;
   list-style: none;
   color: var(--ink);
@@ -56,19 +56,19 @@
   list-style: none;
 }
 .navigation-list > li {
-  padding: 2px 0;
+  padding: var(--space-0-5) 0;
   font-size: var(--type-body);
   line-height: 1.5;
 }
 .document-navigation .navigation-target {
   display: block;
   width: 100%;
-  padding: 6px var(--space-3);
+  padding: var(--space-1-5) var(--space-3);
   border: 0;
   border-radius: 0;
   background: none;
   color: var(--ink);
-  font-size: 13.5px;
+  font-size: var(--type-small);
   line-height: 1.5;
   text-align: left;
   overflow-wrap: anywhere;
@@ -100,10 +100,10 @@
 }
 .navigation-context {
   display: block;
-  margin: 2px 0 0;
+  margin: var(--space-0-5) 0 0;
   color: var(--ink-2);
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: var(--type-label);
   font-weight: 400;
   line-height: 1.5;
   letter-spacing: 0.02em;
@@ -115,7 +115,7 @@
   color: var(--on-ink);
 }
 .navigation-link-label {
-  padding: 4px var(--space-3) 0;
+  padding: var(--space-1) var(--space-3) 0;
   font-weight: 700;
   overflow-wrap: anywhere;
 }
@@ -124,9 +124,9 @@
 }
 .navigation-unresolved {
   display: block;
-  padding: 4px var(--space-3);
+  padding: var(--space-1) var(--space-3);
   color: var(--ink-2);
-  font-size: 12px;
+  font-size: var(--type-caption);
   line-height: 1.5;
   overflow-wrap: anywhere;
 }
@@ -139,9 +139,9 @@
 .navigation-empty,
 .navigation-limit {
   margin: 0;
-  padding: 2px var(--space-5) var(--space-4);
+  padding: var(--space-0-5) var(--space-5) var(--space-4);
   color: var(--ink-2);
-  font-size: 12px;
+  font-size: var(--type-caption);
   line-height: 1.6;
   overflow-wrap: anywhere;
 }
@@ -191,6 +191,6 @@
     padding-bottom: max(var(--space-6), env(safe-area-inset-bottom));
   }
   .document-navigation .navigation-target {
-    min-height: 44px;
+    min-height: var(--control-touch);
   }
 }

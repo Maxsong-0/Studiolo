@@ -1,5 +1,6 @@
 //! 只持久化固定正文事件；owner 完成权威 AuditLedger 的完整回执检查后确认。
 
+pub(crate) mod checkpoint;
 pub(crate) mod delivery;
 mod event;
 mod status;

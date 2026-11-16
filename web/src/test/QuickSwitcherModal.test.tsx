@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { expect, it, vi } from 'vitest';
-import { AttachmentInfo } from '../components/AttachmentInfo';
+import { AttachmentPanel } from '../components/AttachmentPanel';
 import { CommandPalette } from '../components/CommandPalette';
 import type { CommandPaletteContext } from '../components/CommandPalette';
 import { useCommandPalette } from '../commands/useCommandPalette';
@@ -22,6 +22,7 @@ const context: CommandPaletteContext = {
   openDrafts: () => {},
   openRecentlyDeleted: () => {},
   openStatus: () => {},
+  openShortcuts: () => {},
   focusTarget: () => {},
 };
 
@@ -33,7 +34,8 @@ function ModalHarness() {
       <button onClick={() => setAttachment(true)}>查看附件</button>
       <button onClick={palette.show}>打开动作面板</button>
       {attachment ? (
-        <AttachmentInfo
+        <AttachmentPanel
+          generation={7}
           entry={treeEntry('资料.pdf')}
           onClose={() => setAttachment(false)}
         />

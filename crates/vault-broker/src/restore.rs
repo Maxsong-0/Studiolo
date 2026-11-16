@@ -10,6 +10,7 @@
 
 mod lineage;
 mod mirror;
+mod optional;
 mod paths;
 mod rebind;
 mod verify;
@@ -19,14 +20,17 @@ pub use lineage::{LineageState, PhysicalId, RestoreLineage};
 use crate::{BrokerError, VaultUuid};
 use std::path::Path;
 
-/// 已启用的 `maintenance-v1` 是否被重绑定。
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum MaintenanceCoverage {
+/// 可选存储已经重绑定，或经过严格核对确实未启用；缺失/半初始化没有成功变体。
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BindingCoverage {
     /// 已启用并已重绑定。
     Rebound,
     /// 该 Vault 未启用离线维护。
     NotEnabled,
 }
+/// 维护目录沿用既有类型名。
+pub type MaintenanceCoverage = BindingCoverage;
 
 /// 本次重绑定实际覆盖到的位置。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -36,16 +40,18 @@ pub struct RebindCoverage {
     /// data 侧 `broker-binding.json`。
     pub data_binding: bool,
     /// `history/meta-v1` 目录组。
-    pub history_meta_v1: bool,
+    pub history_meta_v1: BindingCoverage,
+    /// 已启用的文件操作目录及 canonical 删除对象隔离区。
+    pub file_operations_v1: BindingCoverage,
     /// 已启用的 `maintenance-v1`。
     pub maintenance_v1: MaintenanceCoverage,
 }
 
 impl RebindCoverage {
-    /// 是否覆盖了两处主 binding 与 `history/meta-v1`，而不是只改主根设备号。
+    /// 两处主 binding 必须完成；可选目录只会返回「已重绑定」或「确认未启用」。
     #[must_use]
     pub fn covers_required_bindings(&self) -> bool {
-        self.canonical_binding && self.data_binding && self.history_meta_v1
+        self.canonical_binding && self.data_binding
     }
 }
 
@@ -92,6 +98,8 @@ pub(crate) enum RestoreFault {
     AfterHistory,
     /// `maintenance-v1` 重绑定之后中断。
     AfterMaintenance,
+    /// 文件操作目录重绑定之后中断。
+    AfterFileOperations,
     /// data 侧主 binding 改写之后中断。
     AfterDataBinding,
     /// canonical 侧主 binding 改写之后中断。
@@ -169,6 +177,16 @@ pub fn read_restore_lineage(new_data_root: &Path) -> Result<Option<RestoreLineag
     let data_path = paths::absolute(new_data_root)?;
     let data = paths::walk(&data_path)?;
     rebind::read_lineage(&data)
+}
+
+pub(crate) fn check_lineage(data: &cap_std::fs::Dir) -> Result<(), BrokerError> {
+    if rebind::read_lineage(data)
+        .map_err(|_| BrokerError::CorruptWriterState)?
+        .is_some_and(|lineage| !lineage.is_completed())
+    {
+        return Err(BrokerError::WriterBindingMismatch);
+    }
+    Ok(())
 }
 
 /// 把已复制到新目录的封存内容重新绑定成一个可服务的配对存储。

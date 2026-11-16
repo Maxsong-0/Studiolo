@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use studiolo_core::{AttemptId, Fence, Revision, TaskId, VaultPath, VaultUuid};
+use studiolo_core::{ArtifactProvenance, AttemptId, Fence, Revision, TaskId, VaultPath, VaultUuid};
 
 use crate::BrokerError;
 
@@ -171,6 +171,8 @@ pub struct ArtifactCommit {
     pub idempotency_key: String,
     /// 候选产物；所有 canonical 目标路径都由 Broker 派生。
     pub artifacts: Vec<ArtifactCandidate>,
+    /// 原批准与原账本核对后的来源事实。缺字段不能当成完整范围。
+    pub provenance: ArtifactProvenance,
 }
 
 /// 尝试 manifest 中记录的一个产物。
@@ -196,6 +198,7 @@ pub struct ArtifactCommitReceipt {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct AttemptManifest {
     pub(crate) format_version: u32,
     pub(crate) task_id: String,
@@ -205,6 +208,9 @@ pub(crate) struct AttemptManifest {
     pub(crate) idempotency_key: String,
     pub(crate) request_fingerprint: String,
     pub(crate) artifacts: Vec<CommittedArtifact>,
+    /// 第 2 版才有。旧记录缺此字段时保持空，不得补成完整范围。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) provenance: Option<ArtifactProvenance>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

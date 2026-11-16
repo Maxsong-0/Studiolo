@@ -41,7 +41,7 @@ impl FsVaultBroker {
             return Err(BrokerError::MutationUnresolved);
         }
         let mut removed = 0;
-        if catalog.garbage.is_empty() {
+        if catalog.garbage.is_empty() && catalog.feed_retire.is_empty() {
             let mut ordered = catalog.entries.clone();
             ordered.sort_by(|a, b| {
                 b.sequence
@@ -66,6 +66,12 @@ impl FsVaultBroker {
                 .iter()
                 .filter(|item| retire.contains(&item.entry.id))
                 .map(|item| item.entry.revision)
+                .collect();
+            catalog.feed_retire = catalog
+                .entries
+                .iter()
+                .filter(|i| retire.contains(&i.entry.id))
+                .map(|i| (i.sequence, i.entry.id.clone()))
                 .collect();
             catalog
                 .entries
@@ -106,6 +112,7 @@ impl FsVaultBroker {
         // 先退役：删除中断不会留下声称可恢复、实际已缺字节的可见条目。
         catalog::save(self, &mut catalog)?;
         mutation::fault(self, 15)?;
+        super::feed::retire(self, path, &catalog.feed_retire)?;
         for (name, pin) in &pins {
             self.writer.check(&self.root, &self.data)?;
             crate::blob::file::check_file(&history, &crate::blob::store::logical(name)?, pin)?;
@@ -117,6 +124,7 @@ impl FsVaultBroker {
         }
         self.writer.check(&self.root, &self.data)?;
         catalog.garbage.clear();
+        catalog.feed_retire.clear();
         catalog::save(self, &mut catalog)?;
         Ok(HistoryPruneReport {
             removed_entries: removed,

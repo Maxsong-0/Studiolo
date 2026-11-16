@@ -16,9 +16,9 @@ fn direct_v2_evidence_and_terminal_interruptions_keep_unknown_and_upgrade_only_o
                 ..
             })
         ));
-        // 此时 v2 包已经完整，但 State 仍是旧 Installing，水位从未变成成功。
+        // 此时 v2 包已经完整，但 State 仍是原来的 Installing，水位从未变成成功。
         let state = crate::mutation::load(&broker).unwrap();
-        assert_eq!(state.format_version, 2);
+        assert_eq!(state.format_version, CURRENT_STATE);
         assert!(state.operation.is_some());
         assert_eq!(state.committed_through, 1);
         drop(broker);
@@ -38,7 +38,10 @@ fn direct_v2_evidence_and_terminal_interruptions_keep_unknown_and_upgrade_only_o
             broker.reconcile_pending(&next, preserve()).unwrap();
         }
         assert_ready(&broker);
-        assert_eq!(crate::mutation::load(&broker).unwrap().format_version, 4);
+        assert_eq!(
+            crate::mutation::load(&broker).unwrap().format_version,
+            CURRENT_STATE
+        );
         assert_eq!(envelope(&broker, &op), original);
         let Err(BrokerError::MutationIndeterminate { evidence_id }) =
             broker.mutation_replay(&request)
@@ -73,7 +76,7 @@ fn maintenance_reopen_keeps_exact_intent_review_and_never_calls_unreferenced_evi
             Err(BrokerError::MutationUnresolved)
         ));
         let state = crate::mutation::load(&broker).unwrap();
-        assert_eq!(state.format_version, 3);
+        assert_eq!(state.format_version, CURRENT_STATE);
         assert!(state.operation.is_some());
         drop(broker);
         let mut broker = f.open();
@@ -109,7 +112,10 @@ fn maintenance_reopen_keeps_exact_intent_review_and_never_calls_unreferenced_evi
             LARGE,
             2,
         );
-        assert_eq!(crate::mutation::load(&broker).unwrap().format_version, 4);
+        assert_eq!(
+            crate::mutation::load(&broker).unwrap().format_version,
+            CURRENT_STATE
+        );
         assert_eq!(envelope(&broker, &op), original);
         assert!(matches!(
             broker.mutation_replay(&request),

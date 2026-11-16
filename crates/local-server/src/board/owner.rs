@@ -26,6 +26,11 @@ impl SharedBroker {
         &self,
         action: impl FnOnce(&mut FsVaultBroker) -> Result<T, BrokerError>,
     ) -> Result<T, BrokerError> {
+        let _operation = self
+            .workbench
+            .core
+            .operation()
+            .map_err(|_| BrokerError::WriterBusy)?;
         // `canonical` 读写使用 `Broker` 当前的字节。派生 UI 索引的重建
         // 不得让已成功批次的下一次投影无端失败。
         validate_owner_roots(&self.workbench)?;
@@ -100,6 +105,15 @@ impl ArtifactStager for SharedBroker {
         pointer: &StagedArtifactCommit,
     ) -> Result<ArtifactCommit, BrokerError> {
         self.access(|b| b.load_staged_artifact_commit(pointer))
+    }
+    fn staged_reference(&self, plan: &ArtifactCommit) -> Result<StagedArtifactCommit, BrokerError> {
+        self.access(|b| b.staged_reference(plan))
+    }
+    fn discard_staged_artifact_commit(
+        &self,
+        pointer: &StagedArtifactCommit,
+    ) -> Result<(), BrokerError> {
+        self.access(|b| b.discard_staged_artifact_commit(pointer))
     }
 }
 impl NumberingScanner for SharedBroker {

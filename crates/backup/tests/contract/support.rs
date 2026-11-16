@@ -3,7 +3,10 @@
 //!
 //! 这些假实现只用于驱动状态与判定，绝不假装真实备份目标存在。
 
+mod final_remote;
 mod worker;
+pub use final_remote::StubFinal;
+pub use worker::SaveFault;
 
 pub use worker::{MemoryStore, PickyLedger, StubProbe, StubRunner};
 
@@ -79,6 +82,10 @@ pub fn watermark(owner: CheckpointOwner, vault: VaultUuid, pair: VaultUuid) -> O
         CheckpointOwner::Audit => OwnerWatermark::Audit {
             last_offset: 91,
             last_hash: DIGEST.to_owned(),
+            agent_ledger: Some(studiolo_core::checkpoint::AuditChainCutoff {
+                last_offset: 37,
+                last_hash: DIGEST.to_owned(),
+            }),
         },
         CheckpointOwner::Bridge => OwnerWatermark::Bridge {
             link_id: "link-1".to_owned(),

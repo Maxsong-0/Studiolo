@@ -1,5 +1,6 @@
 //! 持久会话与独立因子 Interface；不设置 Cookie，不直接执行内容写入。
 
+mod checkpoint;
 mod config;
 mod credential_store;
 mod database;
@@ -33,6 +34,7 @@ mod types;
 mod validation;
 mod verification_rate;
 
+pub use checkpoint::{AuthCheckpointSource, FrozenAuth};
 pub use config::{OwnerBinding, SessionConfig, SessionPolicy};
 pub use dependencies::{OsSessionRandom, SessionClock, SessionRandom, SystemSessionClock};
 pub use factor_runtime::{FactorRuntime, FactorState};
@@ -61,6 +63,13 @@ pub struct SessionManager {
 }
 
 impl SessionManager {
+    /// 与实际审计 owner 共用跨进程操作边界；必须涵盖 Audit 调用后的 Auth 回写。
+    pub fn enter_operation(&self) -> Result<studiolo_audit_ledger::OperationPermit, SessionError> {
+        self.audit
+            .enter_operation()
+            .map_err(|_| SessionError::AuditUnavailable)
+    }
+
     /// 检查本次真实 Access 身份及活跃会话；仅为普通读取，不授予内容 mutation 权限。
     pub fn check(
         &self,

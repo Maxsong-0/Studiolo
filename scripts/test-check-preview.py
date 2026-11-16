@@ -27,7 +27,7 @@ def entry(path, kind, children=None):
 PAGES = {
     "": [entry("附件演示", "directory", 2), entry("项目", "directory", 4),
          entry("README.md", "markdown")],
-    "附件演示": [entry(preview.ATTACHMENTS, "directory", 3),
+    "附件演示": [entry(preview.ATTACHMENTS, "directory", len(preview.ATTACHMENT_NAMES)),
                  entry(preview.EMPTY_DIRECTORY, "directory", 0)],
     preview.EMPTY_DIRECTORY: [],
     preview.ATTACHMENTS: [entry(preview.ATTACHMENTS + "/" + name, "attachment")
@@ -38,6 +38,7 @@ PAGES = {
 class RawResponse(NamedTuple):
     mime: str
     body: bytes
+    headers: dict | None = None
 
 
 HTML = b'''<script src="/assets/app.js"></script>
@@ -68,6 +69,12 @@ class Transport:
             status, value = 200, ASSETS[location.path]
         elif location.path == "/api/v1/bootstrap":
             status, value = 200, {"authentication": "local"}
+        elif location.path == "/api/attachment":
+            name = query["path"][0].rsplit("/", 1)[-1]
+            mime = {"像素.png": "image/png", "表格 & 说明.csv": "text/plain; charset=utf-8"}.get(name, "application/octet-stream")
+            status, value = 200, RawResponse(mime, b"fixture bytes", {
+                "Content-Security-Policy": "default-src 'none'; sandbox; frame-ancestors 'none'",
+                "Cache-Control": "no-store, no-transform", "X-Content-Type-Options": "nosniff", "Accept-Ranges": "none"})
         elif location.path == "/api/tree":
             path = query["path"][0]
             generation = int(query["generation"][0])
@@ -96,8 +103,9 @@ class Transport:
         class Connection:
             def request(self, method, url, headers):
                 self.status, value = transport.reply(method, url, headers)
-                self.mime, self.body = value if isinstance(value, RawResponse) else (
+                self.mime, self.body = (value.mime, value.body) if isinstance(value, RawResponse) else (
                     "application/json", json.dumps(value).encode())
+                self.headers = (value.headers or {}) if isinstance(value, RawResponse) else {}
 
             def getresponse(self):
                 return self
@@ -106,7 +114,7 @@ class Transport:
                 return self.body[:limit]
 
             def getheader(self, name, default):
-                return self.mime
+                return self.mime if name == "Content-Type" else self.headers.get(name, default)
 
             def close(self):
                 pass

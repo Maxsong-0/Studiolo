@@ -1,0 +1,33 @@
+# ADR-033 候选：用户配好收件地址和签名密钥、试响验收之后才安装。
+[Unit]
+Description=Studiolo 出站事件门铃（读人侧审计账本，按 Standard Webhooks 签名投递）
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=maxsong
+Group=maxsong
+EnvironmentFile=/home/maxsong/.config/studiolo-doorbell/doorbell.env
+ExecStart=/opt/studiolo-doorbell/current/bin/studiolo-doorbell /home/maxsong/.local/share/studiolo-human-audit /home/maxsong/.local/share/studiolo-doorbell --deliver
+TimeoutStartSec=420
+UMask=0077
+LimitCORE=0
+LimitMEMLOCK=infinity
+MemoryMax=256M
+TasksMax=32
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/maxsong/.local/share/studiolo-human-audit
+ReadWritePaths=/home/maxsong/.local/share/studiolo-doorbell
+PrivateTmp=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+SystemCallArchitectures=native
+StandardInput=null
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=studiolo-doorbell
+UnsetEnvironment=LD_PRELOAD LD_LIBRARY_PATH

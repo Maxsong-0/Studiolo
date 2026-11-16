@@ -1,20 +1,36 @@
 pub(crate) fn allowed_workspace_dependencies(crate_name: &str) -> &'static [&'static str] {
     match crate_name {
         "studiolo-core" => &[],
+        "studiolo-checkpoint-storage" => &["studiolo-core"],
         // 秘密驻留面加固：只依赖 rustix，零工作区依赖。四个持明文秘密的程序都要能
         // 无条件依赖它，包括不得依赖认证栈的 studiolo-agent-server；它一旦长出任何
         // 工作区依赖，那条「谁都能用」的性质就没了，加固又会漏掉某个程序。
         "studiolo-process-safety" => &[],
-        "studiolo-sync-bridge" => &["studiolo-core", "studiolo-audit-ledger"],
+        "studiolo-sync-bridge" => &[
+            "studiolo-core",
+            "studiolo-audit-ledger",
+            "studiolo-checkpoint-storage",
+        ],
         "studiolo-backup" | "studiolo-observability" => &["studiolo-core", "studiolo-audit-ledger"],
+        "studiolo-backup-worker" => &[
+            "studiolo-backup",
+            // 只实现跨进程 AuditLedger 接口；具体存储/内存 owner 类型由源码守卫拒绝。
+            "studiolo-audit-ledger",
+            "studiolo-core",
+            "studiolo-process-safety",
+        ],
         "studiolo-sync-transport" => &["studiolo-core", "studiolo-host-config"],
         // T-132 P1（ADR-025 D2）：可信 launcher 只认线上契约与值类型；不得依赖 host-config／vault-broker。
         "studiolo-sync-launcher" => &["studiolo-sync-transport", "studiolo-core"],
-        "studiolo-vault-broker"
-        | "studiolo-vault-index"
-        | "studiolo-control-db"
-        | "studiolo-audit-ledger"
-        | "studiolo-runner-adapter" => &["studiolo-core"],
+        "studiolo-vault-broker" | "studiolo-vault-index" | "studiolo-runner-adapter" => {
+            &["studiolo-core"]
+        }
+        "studiolo-control-db" => &[
+            "studiolo-core",
+            "studiolo-checkpoint-storage",
+            "studiolo-audit-ledger",
+        ],
+        "studiolo-audit-ledger" => &["studiolo-core", "studiolo-checkpoint-storage"],
         "studiolo-gateway" => &[
             "studiolo-core",
             "studiolo-audit-ledger",
@@ -22,7 +38,11 @@ pub(crate) fn allowed_workspace_dependencies(crate_name: &str) -> &'static [&'st
         ],
         // M4 策略平面：只依赖值类型与审计事件类型；不得依赖 control-db / auth / vault-broker。
         "studiolo-policy" => &["studiolo-core", "studiolo-audit-ledger"],
-        "studiolo-auth" => &["studiolo-audit-ledger"],
+        "studiolo-auth" => &[
+            "studiolo-audit-ledger",
+            "studiolo-core",
+            "studiolo-checkpoint-storage",
+        ],
         "studiolo-host-config" => &["studiolo-auth", "studiolo-core"],
         "studiolo-auth-admin" => &[
             "studiolo-auth",
@@ -85,6 +105,7 @@ pub(crate) fn allowed_workspace_dependencies(crate_name: &str) -> &'static [&'st
             "studiolo-vault-index",
             "studiolo-workbench",
             "studiolo-audit-ledger",
+            "studiolo-checkpoint-storage",
         ],
         // MCP 主外壳：只经 supply 取内容；不直接依赖 vault-broker / control-db / auth。
         // M4 加 policy：接入方句柄（读 effective 与吊销状态、只插 pending 提案）。

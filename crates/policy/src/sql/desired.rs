@@ -63,7 +63,7 @@ pub(crate) fn desired_list(
         .prepare(&format!(
             "SELECT {DESIRED_COLUMNS} FROM policy_desired
              WHERE (?1 IS NULL OR status = ?1)
-             ORDER BY submitted_at DESC, id DESC LIMIT ?2"
+             ORDER BY rowid DESC LIMIT ?2"
         ))
         .map_err(unavailable)?;
     let rows = statement

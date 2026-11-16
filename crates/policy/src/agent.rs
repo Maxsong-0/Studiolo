@@ -12,7 +12,7 @@ use crate::{
     model::CapabilitySet,
     proposal, sql,
     storage::CreatePolicy,
-    store::{self, GLOBAL_TARGET, RevocationLevel},
+    store::{self},
 };
 
 /// 接入方在本次调用被拒的结构化原因（进 `agent.action_denied` 的 reason）。
@@ -100,39 +100,8 @@ impl PolicyAgentStore {
         agent_type: &str,
         instance_id: Option<&str>,
     ) -> Result<Authorization, PolicyError> {
-        self.db.read(|tx| {
-            let effective_hash = sql::effective_hash(tx)?;
-            let denial = if sql::revoked(tx, RevocationLevel::Global, GLOBAL_TARGET)? {
-                Some(Denial::GlobalRevoked)
-            } else if sql::revoked(tx, RevocationLevel::Type, agent_type)? {
-                Some(Denial::TypeRevoked)
-            } else if let Some(instance) = instance_id
-                && sql::revoked(tx, RevocationLevel::Instance, instance)?
-            {
-                Some(Denial::InstanceRevoked)
-            } else {
-                None
-            };
-            if let Some(denial) = denial {
-                return Ok(Authorization {
-                    effective_hash,
-                    grant: None,
-                    denial: Some(denial),
-                });
-            }
-            match sql::capability_set(tx, agent_type)? {
-                Some((set, meta)) => Ok(Authorization {
-                    effective_hash,
-                    grant: Some(CapabilityGrant { set, meta }),
-                    denial: None,
-                }),
-                None => Ok(Authorization {
-                    effective_hash,
-                    grant: None,
-                    denial: Some(Denial::NoCapabilitySet),
-                }),
-            }
-        })
+        self.db
+            .read(|tx| sql::authorization(tx, agent_type, instance_id))
     }
 
     /// 接入方提交 desired 提案：有界、只入 `pending`（结构无效则 `rejected`），永不生效。
@@ -151,6 +120,22 @@ impl PolicyAgentStore {
             .write(|tx| proposal::submit(tx, agent_type, instance_id, &input, now))
     }
 
+    /// 对外入口使用本方法：在入库事务里确认授权复核所见的策略仍然有效，名单收窄与提案不穿插。
+    pub fn propose_at_effective(
+        &self,
+        agent_type: &str,
+        instance_id: &str,
+        input: ProposalInput,
+        now: &str,
+        expected_effective_hash: &str,
+    ) -> Result<Proposal, PolicyError> {
+        crate::model::validate_subject(input.kind, &input.subject)?;
+        self.db.write(|tx| {
+            store::check_hash(tx, expected_effective_hash)?;
+            proposal::submit(tx, agent_type, instance_id, &input, now)
+        })
+    }
+
     /// 本类型仍待处理（pending／validated）的接入方提案，新到旧，至多
     /// [`MAX_LISTED_PROPOSALS`](crate::MAX_LISTED_PROPOSALS) 份；可按 kind／subject 收窄。
     /// 只给核对用的摘要列，不给正文与校验报告。
@@ -162,6 +147,21 @@ impl PolicyAgentStore {
     ) -> Result<ProposalListing, PolicyError> {
         self.db
             .read(|tx| proposal::open(tx, agent_type, kind, subject))
+    }
+
+    /// 按号查本类型原提案的当前结果；重连后的实例仍可核对。未知、他人、owner 或规则名单
+    /// 已收窄的提案均返回 None。名单在读取校验报告前检查，结果不含正文或 diff。
+    pub fn proposal_result(
+        &self,
+        agent_type: &str,
+        id: &str,
+        rules_whitelist: &[String],
+        expected_effective_hash: &str,
+    ) -> Result<Option<crate::ProposalResult>, PolicyError> {
+        self.db.read(|tx| {
+            store::check_hash(tx, expected_effective_hash)?;
+            sql::proposal_result(tx, agent_type, id, rules_whitelist)
+        })
     }
 
     /// effective 摘要。

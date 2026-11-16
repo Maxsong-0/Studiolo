@@ -142,3 +142,37 @@ async fn writer_entry_preserves_authentication_and_has_no_mutation_route() {
     .await;
     assert!(body.get("freshness").is_none());
 }
+
+#[tokio::test]
+async fn authenticated_attachments_read_through_the_existing_canonical_owner() {
+    let f = Fixture::new(0, false).await;
+    let issued = f.http.issue().await;
+    let path = f.http.root.join("vault/attachment.txt");
+    std::fs::write(&path, b"canonical attachment").unwrap();
+    let snapshot = f
+        .get("/api/workbench?refresh=true", &issued.cookie, 200)
+        .await;
+    let generation = snapshot["generation"].as_u64().unwrap();
+    let uri = format!("/api/attachment?path=attachment.txt&generation={generation}");
+    let response = f
+        .http
+        .send(f.http.request("GET", &uri, Some(&issued.cookie), ""), 200)
+        .await;
+    assert_eq!(
+        response.headers()["content-type"],
+        "text/plain; charset=utf-8"
+    );
+    assert_eq!(response.headers()["vary"], "Origin, Sec-Fetch-Site");
+    assert_eq!(
+        axum::body::to_bytes(response.into_body(), 1024)
+            .await
+            .unwrap()
+            .as_ref(),
+        b"canonical attachment"
+    );
+    assert_eq!(std::fs::read(path).unwrap(), b"canonical attachment");
+    f.http
+        .send(f.http.request("GET", &uri, None, ""), 401)
+        .await;
+    f.close().await;
+}
