@@ -11,7 +11,8 @@
 规则照抄封存代码，每条检查旁边写了出处。代码改了规则，这里和 scripts/test-check-backup-preflight.py
 的对照用例要一起改；SQL 和几个名字常量由那份用例逐字比对 Rust 源码，漂了会红。
 
-退出码：0 没有会挡封存的问题；1 有（逐条列出）；2 用法错或读不了输入。
+退出码：0 没有会挡封存的问题；1 有（逐条列出）；2 用法错、读不了输入，或核查中途出了没预料到的错
+（这时什么结论都没有，不能当成「有问题」或「没问题」）。
 """
 import argparse
 from dataclasses import asdict, dataclass, field
@@ -40,9 +41,12 @@ STAGED_LIMIT = 9 * 1024 * 1024
 EXPORT_MAX_FILES = 100_000
 # 导出扫描从导出根算层数（`canonical/` 是第 1 层），超过 64 层拒绝；所以 Vault 里目录最多套 63 层。
 MAX_DIRECTORY_NESTING = 63
-# crates/vault-broker/src/checkpoint/tree.rs：每棵树的目录项数和字节数上限。
+# crates/vault-broker/src/checkpoint/tree.rs：目录项数和字节数上限。`check_pair` 把 Vault 根和写者数据根
+# 两棵树合起来比，所以这里也合起来比；走查数到上限就停（封存同样走到上限就拒绝）。
 TREE_MAX_NODES = 1_000_000
 TREE_MAX_BYTES = 512 * 1024 * 1024 * 1024
+# 隔离区里的文件只数给人看（封存不带它们），数到这么多就停，写「至少」。
+QUARANTINE_COUNT_LIMIT = 100_000
 # crates/core/src/vault_path.rs `is_unicode_combining_mark`：路径里不许出现的组合字符。
 COMBINING_MARKS = ((0x0300, 0x036F), (0x1AB0, 0x1AFF), (0x1DC0, 0x1DFF), (0x20D0, 0x20FF), (0xFE20, 0xFE2F))
 # 每类问题最多列这么多条，其余只给总数。
@@ -236,11 +240,12 @@ def read_limited(path, limit):
 
 
 def decode_json(data):
+    """读不出来一律返回 None：不是 UTF-8、不是 JSON、整数位数超过解释器上限（ValueError）、嵌套太深（RecursionError）。"""
     if data is None:
         return None
     try:
         return json.loads(data.decode("utf-8"))
-    except (UnicodeDecodeError, json.JSONDecodeError):
+    except (ValueError, RecursionError):
         return None
 
 
@@ -256,28 +261,80 @@ def root_metadata(path, label):
 
 @dataclass
 class Tree:
-    """一棵树的走查结果：逻辑路径到绝对路径的普通文件表，加上计数。"""
+    """一棵树的走查结果：要细看的普通文件（逻辑路径到绝对路径，只留 keep 选中的），加上计数。"""
+    root: str
     files: dict = field(default_factory=dict)
+    file_count: int = 0
     nodes: int = 0
     total_bytes: int = 0
-    quarantined: int = 0
+    # 目录项数走到上限就停了：计数是「至少」，后面的没核。
+    stopped: bool = False
+    # 列出来之后、取元数据之前就不见了的（主服务在写）；不算问题，只提一句。
+    vanished: int = 0
 
 
-def walk_tree(root, prefix, skip, report, swept_area):
+# 残留临时文件的三种处理说法。
+RESIDUE_SWEPT = "原子写崩溃留下的临时文件；主服务下次开库会把它挪进隔离区（重启主服务即可）"
+RESIDUE_NOT_SWEPT = "原子写崩溃留下的临时文件，开库清扫不管这个位置；要人看过再删"
+RESIDUE_UNSAFE_QUARANTINE = ("原子写崩溃留下的临时文件；隔离区目录不是本账号私有的（属主不对，或组、其他人有权限），"
+                             "开库清扫不会往里挪，要人看过再处理")
+
+
+def quarantine_usable(path, uid):
+    """residue.rs `ensure_directory`：隔离区还没有（开库时新建），或者是本账号私有的真目录，开库清扫才会往里挪。"""
+    try:
+        info = os.lstat(path)
+    except FileNotFoundError:
+        return True
+    except OSError:
+        return False
+    return stat.S_ISDIR(info.st_mode) and info.st_uid == uid and not info.st_mode & 0o077
+
+
+def count_quarantined(path, limit):
+    """隔离区里有多少个文件：封存不带它们，只给人看。数到上限就停；返回（个数, 是不是「至少」）。
+    里面有读不了的目录也算「至少」，不静默少数。"""
+    count = 0
+    unreadable = []
+    for _, _, names in os.walk(path, onerror=unreadable.append):
+        count += len(names)
+        if count >= limit:
+            return count, True
+    return count, bool(unreadable)
+
+
+def listed_entries(directory, room):
+    """一层目录的目录项，按名字排序；最多取 room 个（再多就超上限了，不必全读进来）。"""
+    entries = []
+    with os.scandir(directory) as iterator:
+        for entry in iterator:
+            entries.append(entry)
+            if len(entries) >= room:
+                break
+    entries.sort(key=lambda entry: entry.name)
+    return entries
+
+
+def walk_tree(root, prefix, skip, report, sweep_hint, keep, node_budget):
     """照 tree.rs 和 trusted_export.rs 走一棵树。prefix 是导出里的顶层目录（`canonical/`、`writer-data/`），
-    skip 是封存跳过的隔离区路径，swept_area(逻辑路径) 说这个位置开库清扫管不管。"""
+    skip 是封存跳过的隔离区路径；sweep_hint(逻辑路径) 给开库清扫会挪走的位置返回处理说法，不管的位置返回 None；
+    keep(逻辑路径, 名字) 选出后面还要细看的普通文件；node_budget 是这棵树还能有多少个目录项，超了就停。"""
     root_info = root_metadata(root, prefix.rstrip("/"))
-    tree = Tree()
+    tree = Tree(root=str(root))
     if root_info.st_uid != report.uid:
         report.add("foreign_owner", str(root), f"根目录属主是 {root_info.st_uid}，不是 {report.uid}")
+    elif missing_access(root_info):
+        report.add("unreadable", str(root), f"属主没有{missing_access(root_info)}权限，封存读不了，下面的没核")
+        return tree
     pending = [(Path(root), "", tuple(skip), 0)]
-    while pending:
+    while pending and not tree.stopped:
         directory, relative, skip_here, nesting = pending.pop()
         if nesting > MAX_DIRECTORY_NESTING:
             report.add("too_deep", str(directory), f"目录套了 {nesting} 层，封存最多 {MAX_DIRECTORY_NESTING} 层")
             continue
         try:
-            entries = sorted(os.scandir(directory), key=lambda entry: entry.name)
+            # 多取两个：一个可能是隔离区（不计数），再多一个就证明超了上限。
+            entries = listed_entries(directory, node_budget - tree.nodes + 2)
         except OSError as error:
             report.add("unreadable", str(directory), f"列不出目录（{error.strerror}），封存同样读不了")
             continue
@@ -285,9 +342,14 @@ def walk_tree(root, prefix, skip, report, swept_area):
             name = entry.name
             absolute = Path(entry.path)
             if len(skip_here) == 1 and name == skip_here[0] and entry.is_dir(follow_symlinks=False):
-                tree.quarantined += sum(len(files) for _, _, files in os.walk(absolute))
+                count, at_least = count_quarantined(absolute, QUARANTINE_COUNT_LIMIT)
+                if count:
+                    report.notes.append(f"{absolute} 里有{'至少 ' if at_least else ' '}{count} 个文件：封存不带它们，人看过可以删")
                 continue
             tree.nodes += 1
+            if tree.nodes > node_budget:
+                tree.stopped = True
+                break
             # tree.rs `names`：目录和文件的名字都要是 UTF-8、不含控制字符，否则整棵树封存不了。
             try:
                 name.encode("utf-8")
@@ -298,7 +360,14 @@ def walk_tree(root, prefix, skip, report, swept_area):
                 report.add("bad_name", str(absolute), "名字里有控制字符，封存扫描认不了")
                 continue
             logical = relative + name
-            info = entry.stat(follow_symlinks=False)
+            try:
+                info = entry.stat(follow_symlinks=False)
+            except FileNotFoundError:
+                tree.vanished += 1
+                continue
+            except OSError as error:
+                report.add("unreadable", str(absolute), f"取不了元数据（{error.strerror}），封存同样读不了")
+                continue
             if stat.S_ISDIR(info.st_mode):
                 if node_problem(info, root_info, report, absolute, check_links=False):
                     continue
@@ -314,30 +383,39 @@ def walk_tree(root, prefix, skip, report, swept_area):
             if problem:
                 report.add("bad_name", str(absolute), f"路径不合法：{problem}")
             if is_temporary_name(name):
-                if swept_area(logical) and is_exact_temporary_name(name):
-                    hint = "原子写崩溃留下的临时文件；主服务下次开库会把它挪进隔离区（重启主服务即可）"
-                else:
-                    hint = "原子写崩溃留下的临时文件，开库清扫不管这个位置；要人看过再删"
-                report.add("residue", str(absolute), hint)
+                hint = sweep_hint(logical) if is_exact_temporary_name(name) else None
+                report.add("residue", str(absolute), hint or RESIDUE_NOT_SWEPT)
                 continue
-            tree.files[logical] = absolute
+            tree.file_count += 1
             tree.total_bytes += info.st_size
-    if tree.nodes > TREE_MAX_NODES:
-        report.add("too_many_nodes", str(root), f"{tree.nodes} 个目录项，封存每棵树最多 {TREE_MAX_NODES} 个")
-    if tree.total_bytes > TREE_MAX_BYTES:
-        report.add("too_many_bytes", str(root), f"{tree.total_bytes} 字节，封存每棵树最多 {TREE_MAX_BYTES} 字节")
-    if tree.quarantined:
-        report.notes.append(f"{root} 的隔离区里有 {tree.quarantined} 个文件：封存不带它们，人看过可以删")
+            if keep(logical, name):
+                tree.files[logical] = absolute
+    if tree.vanished:
+        report.notes.append(f"{root} 里有 {tree.vanished} 个目录项在扫描时不见了（主服务在写），结论按扫描那一刻")
     return tree
 
 
+def missing_access(info):
+    """files.rs 以只读打开每个文件，tree.rs 要列目录、进目录：属主缺的那几种权限，不缺返回空串。
+    按权限位判断，不看是谁在跑脚本（root 跑也一样准）。"""
+    if stat.S_ISDIR(info.st_mode):
+        needed = ((stat.S_IRUSR, "读"), (stat.S_IXUSR, "进入"))
+    else:
+        needed = ((stat.S_IRUSR, "读"),)
+    return "和".join(label for bit, label in needed if not info.st_mode & bit)
+
+
 def node_problem(info, root_info, report, absolute, check_links):
-    """tree.rs、files.rs：每个目录和文件都要和根同一个文件系统、属于运行账号，文件只许一个硬链接。"""
+    """tree.rs、files.rs：每个目录和文件都要和根同一个文件系统、属于运行账号、属主读得了，文件只许一个硬链接。"""
     if info.st_dev != root_info.st_dev:
         report.add("foreign_device", str(absolute), "不在根目录那个文件系统上（挂载点），封存不跨文件系统")
         return True
     if info.st_uid != report.uid:
         report.add("foreign_owner", str(absolute), f"属主是 {info.st_uid}，不是 {report.uid}")
+        return True
+    if missing_access(info):
+        report.add("unreadable", str(absolute),
+                   f"属主没有{missing_access(info)}权限（{stat.filemode(info.st_mode)}），封存读不了")
         return True
     if check_links and info.st_nlink != 1:
         report.add("hard_link", str(absolute), f"有 {info.st_nlink} 个硬链接，封存只收单链接的文件")
@@ -345,11 +423,19 @@ def node_problem(info, root_info, report, absolute, check_links):
     return False
 
 
-def check_vault(vault, report):
-    """Vault 根：结构、临时文件、尝试目录的清单。"""
+def check_vault(vault, report, node_budget=None):
+    """Vault 根：结构、临时文件、尝试目录的清单。开库清扫只管 `.workbench/` 底下。"""
     report.checked.append(f"Vault 根 {vault}")
-    tree = walk_tree(vault, "canonical/", (WORKBENCH, QUARANTINE), report,
-                     lambda logical: logical.startswith(WORKBENCH + "/"))
+    usable = quarantine_usable(vault / WORKBENCH / QUARANTINE, report.uid)
+
+    def sweep_hint(logical):
+        if not logical.startswith(WORKBENCH + "/"):
+            return None
+        return RESIDUE_SWEPT if usable else RESIDUE_UNSAFE_QUARANTINE
+
+    tree = walk_tree(vault, "canonical/", (WORKBENCH, QUARANTINE), report, sweep_hint,
+                     lambda logical, name: logical.startswith(ATTEMPTS),
+                     TREE_MAX_NODES if node_budget is None else node_budget)
     check_attempts(tree.files, report)
     return tree
 
@@ -389,14 +475,16 @@ def check_attempts(files, report):
         report.add("missing_manifest", directory, f"尝试目录没有清单（里面 {count} 个文件都归不了类）")
 
 
-def check_data(data, report):
-    """写者数据根：结构、临时文件、暂存正文。"""
+def check_data(data, report, node_budget=None):
+    """写者数据根：结构、临时文件、暂存正文。开库清扫管整个数据根。"""
     report.checked.append(f"写者数据根 {data}")
-    tree = walk_tree(data, "writer-data/", (QUARANTINE,), report, lambda logical: True)
+    usable = quarantine_usable(data / QUARANTINE, report.uid)
+    tree = walk_tree(data, "writer-data/", (QUARANTINE,), report,
+                     lambda logical: RESIDUE_SWEPT if usable else RESIDUE_UNSAFE_QUARANTINE,
+                     lambda logical, name: name.startswith(STAGED_PREFIX),
+                     TREE_MAX_NODES if node_budget is None else node_budget)
     for logical, absolute in sorted(tree.files.items()):
         name = logical.rsplit("/", 1)[-1]
-        if not name.startswith(STAGED_PREFIX):
-            continue
         if name != logical:
             report.add("staged_misplaced", str(absolute), "名字像暂存正文，却不在写者数据根这一层")
             continue
@@ -410,9 +498,23 @@ def check_data(data, report):
 
 # ---------- 控制库（只读） ----------
 
+def sidecar_size(path):
+    """控制库旁文件（-wal、-shm）的大小，不跟随链接；不存在返回 None。"""
+    try:
+        return os.lstat(path).st_size
+    except FileNotFoundError:
+        return None
+    except OSError as error:
+        raise InputError(f"控制库旁文件读不了：{path}（{error.strerror}）") from None
+
+
 def open_control_readonly(path):
     """只读打开，保证不建 -wal、-shm：主服务开着时 -shm 在，按只读模式共享它；
-    关着时两者都不在，按不可变方式读主文件。只有 -wal 没有 -shm 是异常状态，不碰。"""
+    关着时两者都不在，按不可变方式读主文件。只有 -wal 没有 -shm 是异常状态，不碰。
+
+    -shm 在的时候只许控制库的属主账号跑：判断完到连上之间主服务可能正好关库、收掉 -wal 和 -shm，
+    只读的 WAL 连接这时会以当前账号新建 -shm；账号不对，主服务之后就打不开库了（复审 A3-F7）。
+    属主账号建出来的 -shm 和主服务自己建的一样，无害。"""
     try:
         info = os.lstat(path)
     except OSError as error:
@@ -421,9 +523,13 @@ def open_control_readonly(path):
         raise InputError(f"控制库不是普通文件（符号链接也不行）：{path}")
     wal = Path(f"{path}-wal")
     shm = Path(f"{path}-shm")
-    if shm.exists():
+    wal_size = sidecar_size(wal)
+    if sidecar_size(shm) is not None:
+        if info.st_uid != os.geteuid():
+            raise InputError(f"主服务开着（{shm.name} 在）时只能用控制库的属主账号（{info.st_uid}）核查："
+                             "换别的账号，它关库的那一刻可能以这个账号建出 -shm，之后主服务打不开库")
         mode = "mode=ro"
-    elif wal.exists() and wal.stat().st_size > 0:
+    elif wal_size:
         raise InputError(f"控制库有没合并的 {wal.name} 却没有 {shm.name}：先让主服务正常开一次库再核查")
     else:
         mode = "mode=ro&immutable=1"
@@ -476,18 +582,42 @@ def check_control(path, report):
 
 # ---------- 汇总与输出 ----------
 
+def check_totals(trees, report):
+    """tree.rs `check_pair`：Vault 根和写者数据根两棵树的目录项数、字节数合起来比上限（复审 A3-F1）；
+    trusted_export.rs `walk`：导出扫描插入前文件数已经到上限才拒绝，所以超过上限才算（复审 A3-F3）。"""
+    if not trees:
+        return
+    where = " + ".join(tree.root for tree in trees)
+    at_least = "至少 " if any(tree.stopped for tree in trees) else ""
+    nodes = sum(tree.nodes for tree in trees)
+    total_bytes = sum(tree.total_bytes for tree in trees)
+    files = sum(tree.file_count for tree in trees)
+    if nodes > TREE_MAX_NODES:
+        report.add("too_many_nodes", where,
+                   f"{at_least}{nodes} 个目录项，封存两棵树合计最多 {TREE_MAX_NODES} 个"
+                   + ("（数到上限就停了，后面的没核）" if at_least else ""))
+    if total_bytes > TREE_MAX_BYTES:
+        report.add("too_many_bytes", where, f"{at_least}{total_bytes} 字节，封存两棵树合计最多 {TREE_MAX_BYTES} 字节")
+    if files > EXPORT_MAX_FILES:
+        report.add("too_many_files", where,
+                   f"{at_least}{files} 个文件，导出扫描整份最多 {EXPORT_MAX_FILES} 个（这里只数了这两棵树）")
+    elif files >= EXPORT_MAX_FILES * 9 // 10:
+        report.notes.append(f"{where} 共 {files} 个文件，离导出扫描上限 {EXPORT_MAX_FILES} 不远；上限按整份导出算，"
+                            "控制库、审计这些 owner 的文件这里没数，可能已经超了")
+    if len(trees) == 1:
+        report.notes.append("只给了一棵树：封存按 Vault 根和写者数据根两棵合计比目录项数和字节数，另一棵也要算进去")
+
+
 def run(arguments):
     report = Report(uid=arguments.uid if arguments.uid is not None else os.geteuid())
-    files = 0
+    trees = []
     if arguments.vault:
-        files += len(check_vault(Path(arguments.vault), report).files)
+        trees.append(check_vault(Path(arguments.vault), report))
     if arguments.data:
-        files += len(check_data(Path(arguments.data), report).files)
-    if files >= EXPORT_MAX_FILES:
-        report.add("too_many_files", "Vault 根 + 写者数据根",
-                   f"{files} 个文件，导出扫描（含别的 owner）最多 {EXPORT_MAX_FILES} 个")
-    elif files >= EXPORT_MAX_FILES * 9 // 10:
-        report.notes.append(f"Vault 根和写者数据根共 {files} 个文件，离导出扫描上限 {EXPORT_MAX_FILES} 不远")
+        # 两棵树共用一份目录项预算：前一棵用掉的，后一棵就少走这么多。
+        budget = max(TREE_MAX_NODES - sum(tree.nodes for tree in trees), 0)
+        trees.append(check_data(Path(arguments.data), report, budget))
+    check_totals(trees, report)
     if arguments.control:
         check_control(arguments.control, report)
     return report
@@ -511,7 +641,8 @@ def render(report):
     for note in report.notes:
         lines.append(f"留意：{note}")
     lines.append("没核的：历史目录对历史正文的认领、暂存正文的内容和名字是否对得上、清单里原批准的内部字段、"
-                 "控制库的表结构清单和产物批准的逐条核对；这些由封存本身把关，第一次封存失败会写明原因。")
+                 "控制库的表结构清单和产物批准的逐条核对、ACL 和安全模块对读权限的限制（这里只看权限位）、"
+                 "导出里别的 owner（控制库、审计、认证……）的文件数；这些由封存本身把关，第一次封存失败会写明原因。")
     return "\n".join(lines)
 
 
@@ -534,6 +665,9 @@ def main(argv=None):
         report = run(arguments)
     except InputError as error:
         print(f"核查没做完：{error}", file=sys.stderr)
+        return 2
+    except Exception as error:  # noqa: BLE001 —— 没预料到的错误不能以退出码 1 被读成「有问题」（复审 A3-F2）
+        print(f"核查没做完：意外错误 {type(error).__name__}：{error}", file=sys.stderr)
         return 2
     if arguments.json:
         print(json.dumps({"uid": report.uid, "checked": report.checked,

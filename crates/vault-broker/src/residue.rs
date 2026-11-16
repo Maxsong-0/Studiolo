@@ -238,13 +238,21 @@ fn create_batch(base: &Dir) -> Option<Dir> {
 }
 
 /// 建一层只有本用户能进的目录，或复用已有的真目录；打开不跟随链接，同名的链接和文件都打不开。
+///
+/// 打开之后核对它属于本用户、组和其他人没有任何权限：残留可能是来源资料的全文，不能挪进别的账号建的、
+/// 或者谁都能读的目录（复审 A3-F6）。对不上就这一处不挪，残留原地不动，照旧挡封存、等人看过。
 fn ensure_directory(parent: &Dir, name: &str) -> Option<Dir> {
     match mkdirat(parent, name, Mode::RWXU) {
         Ok(()) => FsVaultBroker::sync_directory(parent, Path::new(".")).ok()?,
         Err(error) if error == Errno::EXIST => {}
         Err(_) => return None,
     }
-    directory(parent, name).ok()
+    let opened = directory(parent, name).ok()?;
+    let metadata = opened.dir_metadata().ok()?;
+    let private = metadata.is_dir()
+        && metadata.uid() == rustix::process::geteuid().as_raw()
+        && metadata.mode() & 0o077 == 0;
+    private.then_some(opened)
 }
 
 /// 改名不覆盖：Linux 上用 `RENAME_NOREPLACE`。

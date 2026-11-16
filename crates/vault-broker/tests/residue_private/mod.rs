@@ -330,3 +330,32 @@ fn checkpoint_export_skips_the_quarantine_and_still_refuses_fresh_residue() {
     assert!(matches!(facts, Err(BrokerError::InvalidArtifact(_))));
     drop(broker);
 }
+
+/// 隔离区目录已经在、却不是本用户私有的（组或其他人有权限）：不往里挪，残留原地不动、照旧挡封存，等人看过
+/// （复审 A3-F6）；收成本用户私有之后照常复用它。
+#[test]
+fn an_existing_quarantine_is_reused_only_when_it_is_private() {
+    let f = Fixture::new();
+    drop(f.open());
+    let name = ".broker-binding.json.studiolo-tmp-4242-11";
+    let residue = f.vault.join(".workbench").join(name);
+    fs::create_dir(f.vault_quarantine()).unwrap();
+    for loose in [0o750, 0o705, 0o777] {
+        fs::set_permissions(f.vault_quarantine(), fs::Permissions::from_mode(loose)).unwrap();
+        plant(&residue, b"source text");
+        drop(f.reopen());
+        assert_eq!(
+            fs::read(&residue).unwrap(),
+            b"source text",
+            "{loose:o} 的隔离区不往里挪"
+        );
+        assert_eq!(fs::read_dir(f.vault_quarantine()).unwrap().count(), 0);
+    }
+
+    fs::set_permissions(f.vault_quarantine(), fs::Permissions::from_mode(0o700)).unwrap();
+    drop(f.reopen());
+    assert!(!residue.exists(), "私有的隔离区照常复用");
+    let batch = only_batch(&f.vault_quarantine());
+    assert_eq!(fs::read(batch.join(name)).unwrap(), b"source text");
+    assert_eq!(mode(&batch), 0o700);
+}

@@ -110,7 +110,7 @@ fn script_and_real_sealing_agree_on_current_data_and_every_planted_legacy_shape(
     ));
 
     type Step<'a> = Box<dyn Fn() + 'a>;
-    let cases: Vec<(&str, &str, Step, Step)> = vec![
+    let mut cases: Vec<(&str, &str, Step, Step)> = vec![
         (
             "第 1 版清单、没有原批准",
             "old_manifest",
@@ -167,6 +167,19 @@ fn script_and_real_sealing_agree_on_current_data_and_every_planted_legacy_shape(
             Box::new(|| fs::remove_file(v.join("notes/a%2e.md")).unwrap()),
         ),
     ];
+    // root 绕得过读权限，真封存照样读得出来：只有普通账号跑时两边才对得上（主服务本来就不是 root）。
+    if !rustix::process::geteuid().is_root() {
+        cases.push((
+            "属主没有读权限的文件",
+            "unreadable",
+            Box::new(|| {
+                plant(&v.join("notes/locked.md"), b"locked");
+                fs::set_permissions(v.join("notes/locked.md"), fs::Permissions::from_mode(0o200))
+                    .unwrap();
+            }),
+            Box::new(|| fs::remove_file(v.join("notes/locked.md")).unwrap()),
+        ));
+    }
     for (label, kind, add, remove) in &cases {
         add();
         assert_eq!(preflight(v, d), (1, vec![(*kind).to_owned()]), "{label}");

@@ -17,6 +17,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 sys.dont_write_bytecode = True
 SCRIPT = Path(__file__).resolve().with_name("check-backup-preflight.py")
@@ -98,6 +99,28 @@ class SourceParity(unittest.TestCase):
         self.assertIn('VAULT_QUARANTINE: &[&str] = &[".workbench", QUARANTINE];', residue)
         self.assertIn("DATA_QUARANTINE: &[&str] = &[QUARANTINE];", residue)
         self.assertEqual(preflight.WORKBENCH, ".workbench")
+
+    def test_limit_semantics_match_the_rust_sources(self):
+        # check_pair 把两棵树合起来比，脚本的 check_totals 也合起来比（复审 A3-F1）。
+        tree = rust("crates/vault-broker/src/checkpoint/tree.rs")
+        pair = tree[tree.index("pub(super) fn check_pair"):]
+        pair = pair[: pair.index("\n}\n")]
+        self.assertIn(".checked_add(right.nodes)", pair)
+        self.assertIn(".checked_add(right.bytes)", pair)
+        self.assertIn("is_none_or(|v| v > MAX_NODES)", pair)
+        self.assertIn("is_none_or(|v| v > MAX_BYTES)", pair)
+        # 导出扫描在插入之前「已经到上限」才拒绝：恰好上限个是允许的，超过才算（复审 A3-F3）。
+        export = rust("crates/vault-broker/src/trusted_export.rs")
+        walk = export[export.index("fn walk("):]
+        self.assertLess(walk.index("if files.len() >= MAX_FILES"), walk.index("files.insert(path, revision)"))
+        # 开库清扫只往本用户私有的隔离区里挪（复审 A3-F6）。
+        residue = rust("crates/vault-broker/src/residue.rs")
+        ensure = residue[residue.index("fn ensure_directory"):]
+        ensure = ensure[: ensure.index("\n}\n")]
+        self.assertIn("metadata.uid() == rustix::process::geteuid().as_raw()", ensure)
+        self.assertIn("metadata.mode() & 0o077 == 0", ensure)
+        # 封存以只读打开每个文件：属主要有读权限（复审 A3-F5）。
+        self.assertIn("OFlags::RDONLY", rust("crates/vault-broker/src/checkpoint/files.rs"))
 
     def test_combining_mark_ranges_match_vault_path(self):
         source = rust("crates/core/src/vault_path.rs")
@@ -264,6 +287,129 @@ class FileSystemChecks(Fixture):
         # 硬链接的两个名字都算。
         self.assertEqual(sum(f["kind"] == "hard_link" for f in result["findings"]), 2)
 
+    def test_unsafe_quarantine_is_not_promised_as_a_sweep_target(self):
+        swept = write(self.vault, ".workbench/.vault.json.studiolo-tmp-12-3")
+        data_swept = write(self.data, ".writer-state.json.studiolo-tmp-12-4")
+        for quarantine in (self.vault / ".workbench/residue-quarantine", self.data / "residue-quarantine"):
+            quarantine.mkdir()
+            quarantine.chmod(0o750)
+        kinds, result = self.kinds()
+        self.assertEqual(kinds, ["residue"])
+        hints = {finding["where"]: finding["detail"] for finding in result["findings"]}
+        for path in (swept, data_swept):
+            self.assertIn("不会往里挪", hints[str(path)])
+            self.assertNotIn("挪进隔离区", hints[str(path)])
+        (self.vault / ".workbench/residue-quarantine").chmod(0o700)
+        hints = {finding["where"]: finding["detail"] for finding in self.kinds()[1]["findings"]}
+        self.assertIn("挪进隔离区", hints[str(swept)])
+        self.assertIn("不会往里挪", hints[str(data_swept)])
+
+    def test_files_and_directories_the_owner_cannot_read(self):
+        locked = write(self.vault, "notes/locked.md")
+        locked.chmod(0o200)
+        closed = self.vault / "notes/closed"
+        closed.mkdir()
+        write(closed, "inside.md")
+        closed.chmod(0o600)
+        try:
+            kinds, result = self.kinds()
+        finally:
+            closed.chmod(0o700)
+        self.assertEqual(kinds, ["unreadable"])
+        details = {finding["where"]: finding["detail"] for finding in result["findings"]}
+        self.assertIn("读", details[str(locked)])
+        self.assertIn("进入", details[str(closed)])
+        self.assertNotIn(str(closed / "inside.md"), details, "进不去的目录不往下走")
+
+    def test_limits_are_compared_across_both_trees(self):
+        report = preflight.Report(uid=os.geteuid())
+        vault_nodes = preflight.check_vault(self.vault, report).nodes
+        data = preflight.check_data(self.data, report)
+        total = vault_nodes + data.nodes
+        total_bytes = preflight.check_vault(self.vault, report).total_bytes + data.total_bytes
+        # 每棵单独都在上限以内、合起来超了：照样挡（tree.rs check_pair）。
+        with mock.patch.object(preflight, "TREE_MAX_NODES", total - 1):
+            kinds, result = self.kinds()
+        self.assertEqual(kinds, ["too_many_nodes"])
+        self.assertIn("至少", result["findings"][0]["detail"])
+        with mock.patch.object(preflight, "TREE_MAX_NODES", total):
+            self.assertEqual(self.kinds()[0], [])
+        with mock.patch.object(preflight, "TREE_MAX_BYTES", total_bytes - 1):
+            self.assertEqual(self.kinds()[0], ["too_many_bytes"])
+        with mock.patch.object(preflight, "TREE_MAX_BYTES", total_bytes):
+            self.assertEqual(self.kinds()[0], [])
+
+    def test_the_walk_stops_at_the_node_budget(self):
+        big = self.root / "big"
+        for index in range(50):
+            write(big, f"many/{index:02}.md")
+        report = preflight.Report(uid=os.geteuid())
+        listed = []
+        original = preflight.listed_entries
+
+        def counting(directory, room):
+            entries = original(directory, room)
+            listed.append(len(entries))
+            return entries
+
+        with mock.patch.object(preflight, "listed_entries", counting):
+            tree = preflight.check_vault(big, report, node_budget=5)
+        self.assertTrue(tree.stopped)
+        self.assertEqual(tree.nodes, 6)
+        self.assertEqual(listed, [1, 6], "50 个目录项的那一层只读进来 6 个")
+
+    def test_export_file_limit_counts_only_above_it(self):
+        report = preflight.Report(uid=os.geteuid())
+        files = preflight.check_vault(self.vault, report).file_count + preflight.check_data(self.data, report).file_count
+        with mock.patch.object(preflight, "EXPORT_MAX_FILES", files):
+            kinds, result = self.kinds()
+        self.assertEqual(kinds, [], "恰好上限个是允许的")
+        self.assertTrue(any("可能已经超了" in note for note in result["notes"]))
+        with mock.patch.object(preflight, "EXPORT_MAX_FILES", files - 1):
+            kinds, result = self.kinds()
+        self.assertEqual(kinds, ["too_many_files"])
+        self.assertIn("只数了这两棵树", result["findings"][0]["detail"])
+
+    def test_quarantine_count_stops_and_says_at_least(self):
+        for index in range(3):
+            write(self.data, f"residue-quarantine/1-2-3/.f{index}.studiolo-tmp-1-{index}")
+        with mock.patch.object(preflight, "QUARANTINE_COUNT_LIMIT", 2):
+            kinds, result = self.kinds()
+        self.assertEqual(kinds, [])
+        self.assertTrue(any("residue-quarantine 里有至少 3 个文件" in note for note in result["notes"]), result["notes"])
+
+    def test_one_tree_only_is_noted(self):
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            self.assertEqual(preflight.main(["--vault", str(self.vault), "--json"]), 0)
+        self.assertTrue(any("两棵合计" in note for note in json.loads(output.getvalue())["notes"]))
+
+    def test_unreadable_json_never_crashes_the_check(self):
+        for body in ("[" * 100_000 + "]" * 100_000, '{"format_version": 1' + "0" * 5000 + "}"):
+            write(self.vault, f"{ATTEMPT_DIR}manifest.json", body)
+            self.assertEqual(self.kinds()[0], ["manifest_unreadable"])
+
+    def test_entries_that_vanish_mid_scan_are_skipped(self):
+        doomed = write(self.vault, ".workbench/.vault.json.studiolo-tmp-1-1")
+        original = preflight.listed_entries
+
+        def racing(directory, room):
+            entries = original(directory, room)
+            if Path(directory) == doomed.parent and doomed.exists():
+                doomed.unlink()
+            return entries
+
+        with mock.patch.object(preflight, "listed_entries", racing):
+            kinds, result = self.kinds()
+        self.assertEqual(kinds, [])
+        self.assertTrue(any("不见了" in note for note in result["notes"]), result["notes"])
+
+    def test_unexpected_errors_exit_two_not_one(self):
+        with mock.patch.object(preflight, "check_vault", side_effect=RuntimeError("boom")), \
+                contextlib.redirect_stderr(io.StringIO()) as error:
+            self.assertEqual(preflight.main(["--vault", str(self.vault)]), 2)
+        self.assertIn("意外错误 RuntimeError", error.getvalue())
+
     def test_owner_is_compared_against_the_running_account_or_uid_flag(self):
         kinds, result = self.kinds("--uid", str(os.geteuid() + 1))
         self.assertEqual(kinds, ["foreign_owner"])
@@ -378,6 +524,15 @@ class ControlChecks(unittest.TestCase):
         self.assertFalse(Path(f"{self.path}-shm").exists())
         before = snapshot(self.directory)
         self.kinds()
+        self.assertEqual(snapshot(self.directory), before)
+
+    def test_a_live_database_is_read_only_by_its_owner_account(self):
+        self.assertTrue(Path(f"{self.path}-shm").exists())
+        before = snapshot(self.directory)
+        with mock.patch.object(preflight.os, "geteuid", return_value=os.stat(self.path).st_uid + 1), \
+                contextlib.redirect_stderr(io.StringIO()) as error:
+            self.assertEqual(preflight.main(["--control", str(self.path), "--uid", "0"]), 2)
+        self.assertIn("属主账号", error.getvalue())
         self.assertEqual(snapshot(self.directory), before)
 
     def test_wal_without_shm_is_refused_untouched(self):
