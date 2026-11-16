@@ -125,3 +125,8 @@ missing_docs = "warn"
 
 [workspace.lints.clippy]
 all = { level = "warn", priority = -1 }
+
+# 只影响 dev／test 构建（发行包走 --release，不受影响）。vault-broker 的大文件测试要对 200～512 MiB 的正文算
+# SHA-256，未优化的 sha2 把库测试拖到 939 秒（108，x86_64）；单给它开优化后 84 秒（T-187 实测，2026-11-15）。
+[profile.dev.package.sha2]
+opt-level = 3
