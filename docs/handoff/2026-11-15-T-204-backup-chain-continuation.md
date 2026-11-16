@@ -205,7 +205,7 @@ raised. The code was changed accordingly on the same branch; the contracts named
    the ledger-tail check stay, tested only through a test-only bypass. Restoring is therefore unavailable until a
    follow-up task adds the revocation entry and the gate.
 3. Expired, never-started candidate commits are **no longer failed by reconciliation**. They stay pending with their
-   staged bodies kept; only the owner entry `discard_expired_candidates` (task engine, not yet exposed over HTTP or in
+   staged bodies kept; only the owner entry `discard_expired_commit` (task engine, covers board and non-board tasks, not yet exposed over HTTP or in
    the cockpit) settles them as failed and discards the staging. Until the owner acts, control-db export and the whole
    seal stay blocked; the user accepted that cost.
 4. Version-1 attempt directories and pre-upgrade staging stay rejected; before go-live, run a read-only check on the

@@ -447,7 +447,7 @@ fn expired_unstarted_candidates_wait_for_the_owner_and_only_the_owner_discards_t
     assert_eq!(engine.control_db().committing_attempts().unwrap().len(), 1);
 
     assert_eq!(
-        engine.discard_expired_candidates(task, 12).unwrap(),
+        engine.discard_expired_commit(task, 12).unwrap(),
         TaskStatus::Failed
     );
     let view = engine.board_detail(task, HASH).unwrap().unwrap();
@@ -463,9 +463,12 @@ fn expired_unstarted_candidates_wait_for_the_owner_and_only_the_owner_discards_t
             .unwrap()
             .is_empty()
     );
-    // 再对账、再丢一次都不改结果：没有可丢的了。
+    // 再对账不改结果；再丢一次（比如结果没送回来、主人又点了一次）给回同一个状态，不再要证实。
     engine.reconcile_periodic(13).unwrap();
-    assert!(engine.discard_expired_candidates(task, 14).is_err());
+    assert_eq!(
+        engine.discard_expired_commit(task, 14).unwrap(),
+        TaskStatus::Failed
+    );
     assert_eq!(
         engine.task(task).unwrap().unwrap().status,
         TaskStatus::Failed
@@ -482,7 +485,7 @@ fn owner_discard_is_refused_when_expiry_cannot_be_proven() {
     let temp = tempfile::TempDir::new_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
     let (mut engine, task, _claim) = expired_before_first_body(&temp, true, 0);
     engine.reconcile_periodic(10).unwrap();
-    assert!(engine.discard_expired_candidates(task, 11).is_err());
+    assert!(engine.discard_expired_commit(task, 11).is_err());
     engine.reconcile_periodic(12).unwrap();
     assert_eq!(
         engine.task(task).unwrap().unwrap().status,
@@ -499,26 +502,128 @@ fn owner_discard_is_refused_when_expiry_cannot_be_proven() {
     assert_eq!(actions(&ledger, "task.candidate_recovery_pending"), 2);
 }
 
-/// 落定已经提交、丢暂存那一步出错：主人原样再点一次就收拾干净，审计里仍然只有一条「提交过期」。
+/// 落定已经提交、丢暂存那一步出错：主人再点一次就收拾干净，审计里仍然只有一条「提交过期」。
 #[test]
 fn owner_discard_that_fails_after_settling_can_be_retried() {
     let temp = tempfile::TempDir::new_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
     let data = temp.path().join("broker");
     let (mut engine, task, _claim) = expired_before_first_body(&temp, false, 1);
     engine.reconcile_periodic(10).unwrap();
-    assert!(engine.discard_expired_candidates(task, 11).is_err());
+    assert!(engine.discard_expired_commit(task, 11).is_err());
     assert_eq!(
         engine.task(task).unwrap().unwrap().status,
         TaskStatus::Failed
     );
     assert_eq!(staged_candidates(&data), 1);
     assert_eq!(
-        engine.discard_expired_candidates(task, 12).unwrap(),
+        engine.discard_expired_commit(task, 12).unwrap(),
         TaskStatus::Failed
     );
     assert_eq!(staged_candidates(&data), 0);
     let (_db, _broker, ledger) = engine.into_parts();
     assert_eq!(actions(&ledger, "task.commit_expired"), 1);
+}
+
+/// 不是黑板的任务（这里是 stub 执行体）：终态提交同样带原批准、同样会过期，也只能由主人丢。
+#[test]
+fn expired_plain_task_commit_is_discarded_by_the_owner_too() {
+    let temp = tempfile::TempDir::new_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
+    let data = temp.path().join("broker");
+    let broker = FsVaultBroker::open(&temp.path().join("vault"), &data).unwrap();
+    let mut engine = PersistentTaskEngine::new(
+        ControlDb::open(temp.path().join("control.sqlite3"), broker.vault_uuid()).unwrap(),
+        LostManifestAck {
+            inner: broker,
+            fail: false,
+            before: true,
+            unprovable: false,
+            discard_faults: Default::default(),
+        },
+        MemoryAuditLedger::new(),
+    );
+    let task = engine
+        .create_task(
+            TaskSpec {
+                adapter: "stub".into(),
+                ..spec().task
+            },
+            1,
+        )
+        .unwrap();
+    engine.command(task, TaskCommand::Run, 2).unwrap();
+    let claimed = engine
+        .claim(ClaimRequest {
+            worker_id: "worker".into(),
+            now_ms: 3,
+            lease_until_ms: 100,
+        })
+        .unwrap()
+        .unwrap();
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap();
+    let retain_until = i64::try_from(now.as_secs()).unwrap() + 3;
+    engine
+        .authorize_artifacts(
+            task,
+            claimed.run_spec.attempt_id,
+            claimed.run_spec.fence,
+            &claimed.snapshot_id,
+            &ArtifactProvenance::new(
+                SourcePolicyRef::new("fixture-source", "a".repeat(64)).unwrap(),
+                DataLabels::new(
+                    Classification::Restricted,
+                    BackupScope::Full,
+                    DesktopSync::Deny,
+                    ModelEgress::Deny,
+                )
+                .unwrap(),
+                retain_until,
+                "b".repeat(64),
+            )
+            .unwrap(),
+            4,
+        )
+        .unwrap();
+    let report = RunnerReport {
+        task_id: task,
+        attempt_id: claimed.run_spec.attempt_id,
+        fence: claimed.run_spec.fence,
+        artifacts: vec![RunnerArtifact {
+            name: path("result.md"),
+            content: b"body".to_vec(),
+        }],
+    };
+    assert!(matches!(
+        engine.report("plain-report", report, 5),
+        Err(TaskEngineError::CommitFailed(_))
+    ));
+    assert_eq!(staged_candidates(&data), 1);
+    let wait = std::time::Duration::from_secs(u64::try_from(retain_until).unwrap()).saturating_sub(
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap(),
+    ) + std::time::Duration::from_millis(200);
+    std::thread::sleep(wait);
+
+    engine.reconcile_periodic(10).unwrap();
+    assert_eq!(
+        engine.task(task).unwrap().unwrap().status,
+        TaskStatus::Committing
+    );
+    assert_eq!(staged_candidates(&data), 1, "对账不能替主人丢暂存");
+    assert_eq!(
+        engine.discard_expired_commit(task, 11).unwrap(),
+        TaskStatus::Failed
+    );
+    assert_eq!(staged_candidates(&data), 0);
+    assert!(
+        engine
+            .control_db()
+            .committing_attempts()
+            .unwrap()
+            .is_empty()
+    );
 }
 
 #[test]
