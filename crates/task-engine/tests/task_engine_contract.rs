@@ -337,6 +337,105 @@ fn restart_rolls_forward_no_partial_and_complete_manifest_without_runner_reexecu
     }
 }
 
+/// 递归找 Broker 私有数据根里的暂存正文（文件名以 `artifact-candidate-` 开头）。
+fn staged_bodies(directory: &std::path::Path) -> Vec<std::path::PathBuf> {
+    let mut found = Vec::new();
+    for entry in std::fs::read_dir(directory).unwrap() {
+        let path = entry.unwrap().path();
+        if path.is_dir() {
+            found.extend(staged_bodies(&path));
+        } else if path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| name.starts_with("artifact-candidate-"))
+        {
+            found.push(path);
+        }
+    }
+    found
+}
+
+/// 提交到一半时暂存正文丢了（比如数据根被恢复到更早的时间点）：
+/// 同一份报告重试能把它补回来并提交完，不会永远卡在「提交中」；内容不同的报告仍被拒绝，也不留下新的暂存。
+#[test]
+fn a_lost_staged_body_is_restored_by_the_same_report_while_committing() {
+    let temp = TempDir::new_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
+    let root = temp.path().join("vault");
+    let data = temp.path().join("data");
+    let db_path = data.join("control.sqlite3");
+    let mut inner = FsVaultBroker::open(&root, &data).unwrap();
+    let vault = inner.vault_uuid();
+    inner
+        .mutate(Mutation::create(
+            path("input.md"),
+            b"frozen".to_vec(),
+            "fixture",
+        ))
+        .unwrap();
+    let ledger = OutcomeSwitchLedger::new(false);
+    let calls = Arc::new(AtomicUsize::new(0));
+    let mut engine = PersistentTaskEngine::new(
+        ControlDb::open(&db_path, vault).unwrap(),
+        InterruptingBroker {
+            inner,
+            crash: Some(CrashPoint::BeforeArtifacts),
+            commits: calls.clone(),
+        },
+        ledger.clone(),
+    );
+    let task = engine.create_task(spec(path("input.md")), 1).unwrap();
+    engine.command(task, TaskCommand::Run, 2).unwrap();
+    let claimed = engine
+        .claim(ClaimRequest {
+            worker_id: "worker".to_owned(),
+            now_ms: 3,
+            lease_until_ms: 100,
+        })
+        .unwrap()
+        .unwrap();
+    let report = report_for(&claimed, b"one");
+    grant_report(&mut engine, &claimed);
+    assert!(matches!(
+        engine.report("lost-stage", report.clone(), 4),
+        Err(TaskEngineError::CommitFailed(_))
+    ));
+    assert_eq!(
+        engine.task(task).unwrap().unwrap().status,
+        TaskStatus::Committing
+    );
+    drop(engine);
+
+    let staged = staged_bodies(&data);
+    assert_eq!(staged.len(), 1, "提交中恰好有一份暂存正文");
+    std::fs::remove_file(&staged[0]).unwrap();
+
+    let mut restarted = PersistentTaskEngine::new(
+        ControlDb::open(&db_path, vault).unwrap(),
+        InterruptingBroker {
+            inner: FsVaultBroker::open(&root, &data).unwrap(),
+            crash: None,
+            commits: calls.clone(),
+        },
+        ledger.clone(),
+    );
+    let result = restarted.report("lost-stage", report.clone(), 5).unwrap();
+    assert!(!result.replayed);
+    assert_eq!(result.status, TaskStatus::NeedsReview);
+    assert_eq!(
+        restarted.task(task).unwrap().unwrap().status,
+        TaskStatus::NeedsReview
+    );
+    assert!(staged_bodies(&data).is_empty(), "提交完成后暂存已清理");
+
+    // 内容不同的报告：幂等冲突，而且不许为了比较先写一份新的暂存。
+    assert!(matches!(
+        restarted.report("lost-stage", report_for(&claimed, b"other"), 6),
+        Err(TaskEngineError::IdempotencyMismatch)
+    ));
+    assert!(staged_bodies(&data).is_empty(), "被拒的报告不留暂存");
+    assert!(restarted.report("lost-stage", report, 7).unwrap().replayed);
+}
+
 #[test]
 fn cancellation_wins_before_report_and_acknowledgement_preserves_the_terminal_state() {
     let (mut engine, claimed) = claimed_memory_engine();

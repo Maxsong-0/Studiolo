@@ -66,11 +66,17 @@ where
                 replayed: true,
             });
         }
-        let reservation = if prior.terminal.as_ref() == Some(&predicted) {
-            predicted
-        } else {
-            self.stage_commit(&commit)?
-        };
+        // 已经预留过的 attempt 只认原来那份报告：内容不同就直接拒绝，不为了比较先写一份新的暂存。
+        if matches!(
+            prior.phase,
+            AttemptPhase::Committing | AttemptPhase::Completed
+        ) && prior.terminal.as_ref() != Some(&predicted)
+        {
+            return Err(TaskEngineError::IdempotencyMismatch);
+        }
+        // 其余情况都走暂存：文件还在时只核对、不重写（也不看期限）；
+        // 提交到一半丢了就由这份报告补回，期限已过则由 Broker 拒绝。
+        let reservation = self.stage_commit(&commit)?;
         let replayed = match prior.phase {
             AttemptPhase::Running => {
                 self.control_db

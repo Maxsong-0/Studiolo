@@ -4,6 +4,7 @@ use crate::writer::disk;
 use crate::{ArtifactCommit, BrokerError, FsVaultBroker, MemoryVaultBroker, VaultUuid, sha256};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
+use studiolo_core::ArtifactProvenance;
 
 const LIMIT: usize = 8 * 1024 * 1024;
 
@@ -81,11 +82,37 @@ fn decode(
     }
     Ok(plan)
 }
+const NAME_PREFIX: &str = "artifact-candidate-";
+const NAME_SUFFIX: &str = ".json";
+
+/// 导出扫描用：文件名像不像一份暂存正文。
+pub(crate) fn is_staged_name(file_name: &str) -> bool {
+    file_name.starts_with(NAME_PREFIX) && file_name.ends_with(NAME_SUFFIX)
+}
+
+/// 导出扫描用：按文件名和内容核对一份暂存正文（和 `load_staged_artifact_commit` 同一套核对），
+/// 取出它自带的原批准。升级前留下的暂存没有这一项，这里读不出来，调用方按拒绝处理。
+pub(crate) fn staged_provenance(
+    uuid: VaultUuid,
+    file_name: &str,
+    bytes: &[u8],
+) -> Result<ArtifactProvenance, BrokerError> {
+    let id = file_name
+        .strip_prefix(NAME_PREFIX)
+        .and_then(|rest| rest.strip_suffix(NAME_SUFFIX))
+        .ok_or(BrokerError::CorruptWriterState)?;
+    let reference = StagedArtifactCommit {
+        id: id.to_owned(),
+        sha256: sha256(bytes),
+    };
+    Ok(decode(uuid, &reference, bytes)?.provenance)
+}
+
 fn name(reference: &StagedArtifactCommit) -> Result<String, BrokerError> {
     if !disk::hex(&reference.id) || !disk::hex(&reference.sha256) {
         return Err(BrokerError::CorruptWriterState);
     }
-    Ok(format!("artifact-candidate-{}.json", reference.id))
+    Ok(format!("{NAME_PREFIX}{}{NAME_SUFFIX}", reference.id))
 }
 impl ArtifactStager for FsVaultBroker {
     fn stage_artifact_commit(

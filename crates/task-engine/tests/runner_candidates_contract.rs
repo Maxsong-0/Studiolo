@@ -279,8 +279,24 @@ fn manifest_ack_crash_recovers_candidates_into_needs_review_without_running_cli(
             .len(),
         2
     );
+    // Broker 私有数据根里现存的暂存正文份数。
+    let staged = || {
+        std::fs::read_dir(&data)
+            .unwrap()
+            .filter(|entry| {
+                entry
+                    .as_ref()
+                    .unwrap()
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with("artifact-candidate-")
+            })
+            .count()
+    };
+    assert_eq!(staged(), 0, "提交完成后暂存已清理");
     let replay = engine.stage_board_runner_candidates(report, 4).unwrap();
     assert_eq!(Some(replay), view.candidate_receipt);
+    assert_eq!(staged(), 0, "已完成的精确重放不重建暂存");
 }
 #[test]
 fn ai_cannot_self_approve_or_reclaim_candidates_awaiting_owner_review() {

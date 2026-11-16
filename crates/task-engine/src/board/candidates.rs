@@ -64,7 +64,22 @@ impl<B: VaultBroker + ArtifactStager, L: AuditLedger> PersistentTaskEngine<B, L>
             report.fence.get()
         ))
         .map_err(map_audit)?;
-        let reservation = self.stage_reservation(&event, report)?;
+        let commit = self.commit_for_report(&event, report)?;
+        if prior.phase == AttemptPhase::Completed
+            && prior.terminal.as_ref() == Some(&self.predicted_reservation(&commit)?)
+        {
+            // 已完成的精确重放直接给回原回执：暂存在提交后已经清理，
+            // 不为了比较再写一份（期限过后 Broker 也不会再让写）。
+            self.deliver_pending_outcomes(Some(prior.attempt_id), now)?;
+            return serde_json::from_value(
+                self.control_db
+                    .artifact_receipt(prior.task_id, prior.attempt_id)
+                    .map_err(map_db)?
+                    .ok_or(TaskEngineError::NotFound("candidate receipt"))?,
+            )
+            .map_err(TaskEngineError::from);
+        }
+        let reservation = self.stage_commit(&commit)?;
         self.control_db
             .retain_runner_candidate(
                 report.task_id,

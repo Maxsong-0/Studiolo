@@ -67,15 +67,6 @@ impl<B: VaultBroker + ArtifactStager, L: AuditLedger> PersistentTaskEngine<B, L>
             .map_err(TaskEngineError::Broker)
     }
 
-    pub(super) fn stage_reservation(
-        &mut self,
-        event: &AuditEventId,
-        report: &RunnerReport,
-    ) -> Result<TerminalReservation, TaskEngineError> {
-        let commit = self.commit_for_report(event, report)?;
-        self.stage_commit(&commit)
-    }
-
     pub(super) fn staged_plan(
         &self,
         attempt: &AttemptIdentity,

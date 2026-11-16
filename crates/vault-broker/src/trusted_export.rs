@@ -7,6 +7,9 @@
 //! - 历史正文跟着它所属的那篇文档走：文档是来源资料，旧版本也是来源资料（同一份原批准、
 //!   同一个期限）；文档是普通 canonical 内容（哪怕已经删掉），旧版本是完整范围 L0。
 //!   没有目录认领的历史正文拒绝。
+//! - 暂存正文（`writer-data/artifact-candidate-<id>.json`）装着还没发布、或被黑板留作候选的产物全文，
+//!   它是来源资料，带它自己那份原批准和期限。按顶层目录归成普通写者状态的话，期限对它就不起作用了。
+//!   升级前留下、没有原批准的暂存读不出来，整批拒绝。
 //! - 其余文件按顶层目录归 owner 声明的类别；不认识的顶层目录拒绝。
 //!
 //! 本模块按路径读文件，自己不防并发替换：导出根是封存窗口里刚写出的私有目录，
@@ -29,6 +32,9 @@ const HISTORY: &str = "writer-data/history/";
 const HISTORY_METADATA: &str = "meta-v1";
 const HISTORY_CATALOGS: &str = "writer-data/history/meta-v1/catalogs/";
 const MANIFEST_NAME: &str = "manifest.json";
+const WRITER_DATA: &str = "writer-data/";
+/// 暂存正文的上限是 8 MiB（`artifact_stage::LIMIT`），这里留一点余量，超过就拒绝。
+const STAGED_LIMIT: u64 = 9 * 1024 * 1024;
 
 /// 扫描一次导出根，每个文件恰好给出一条事实；任何一个文件归不了类，整批拒绝。
 pub fn read_trusted_export(
@@ -39,10 +45,14 @@ pub fn read_trusted_export(
     walk(export_root, export_root, vault, &mut files, 0)?;
     let approvals = attempt_approvals(export_root, &files)?;
     let owners = history_owners(export_root, &files)?;
+    let staged = staged_approvals(export_root, vault, &files)?;
     files
         .iter()
         .map(|(path, revision)| {
-            let (class, provenance) = classify(path, &approvals, &owners)?;
+            let (class, provenance) = match staged.get(path) {
+                Some(approval) => (TrustedExportClass::SourceMaterial, Some(approval.clone())),
+                None => classify(path, &approvals, &owners)?,
+            };
             Ok(TrustedExportFact {
                 export_path: path.clone(),
                 class,
@@ -84,6 +94,30 @@ fn classify(
     }
     let class = owner_class(path).ok_or_else(|| rejected(path, "不认识的顶层目录"))?;
     Ok((class, None))
+}
+
+/// 写者数据根里的暂存正文各自带的原批准。读不出来（升级前的旧暂存、内容和文件名对不上）就整批拒绝。
+fn staged_approvals(
+    export_root: &Path,
+    vault: VaultUuid,
+    files: &BTreeMap<VaultPath, Revision>,
+) -> Result<BTreeMap<VaultPath, ArtifactProvenance>, BrokerError> {
+    let mut staged = BTreeMap::new();
+    for path in files.keys() {
+        // 只认写者数据根这一层的文件，和 Broker 写暂存的位置一致。
+        let Some(name) = path
+            .as_str()
+            .strip_prefix(WRITER_DATA)
+            .filter(|name| !name.contains('/') && crate::artifact_stage::is_staged_name(name))
+        else {
+            continue;
+        };
+        let bytes = read_limited(export_root, path, STAGED_LIMIT)?;
+        let approval = crate::artifact_stage::staged_provenance(vault, name, &bytes)
+            .map_err(|_| rejected(path, "暂存正文没有原批准，或内容和文件名对不上"))?;
+        staged.insert(path.clone(), approval);
+    }
+    Ok(staged)
 }
 
 /// 每个尝试目录的清单认领了哪些逻辑路径（清单自己也算），各自的原批准是什么。

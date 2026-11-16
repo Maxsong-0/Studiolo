@@ -5,8 +5,10 @@ use studiolo_core::{
     ArtifactProvenance, BackupScope, Classification, DataLabels, DesktopSync, ModelEgress,
     SourcePolicyRef,
 };
+use studiolo_core::{TrustedExportClass, VaultUuid};
 use studiolo_vault_broker::{
-    ArtifactStager, BrokerError, FsVaultBroker, MemoryVaultBroker, VaultWriter,
+    ArtifactStager, BrokerError, FsVaultBroker, MemoryVaultBroker, VaultReader, VaultWriter,
+    read_trusted_export,
 };
 
 fn labels() -> DataLabels {
@@ -127,4 +129,51 @@ fn successful_stage_can_be_discarded_without_deleting_a_different_candidate() {
     assert!(!file.exists());
     assert!(broker.load_staged_artifact_commit(&pointer).is_err());
     broker.discard_staged_artifact_commit(&pointer).unwrap();
+}
+
+/// 真实 Broker 写出的暂存正文装着产物全文：导出扫描要把它认成来源资料、带它自己的原批准，
+/// 不能按顶层目录归成没有期限的写者状态。读不出原批准的（换了 Vault 身份、升级前的旧暂存）整批拒绝。
+#[test]
+fn a_staged_body_written_by_a_real_broker_scans_as_source_material_with_its_own_approval() {
+    let export = tempfile::tempdir().unwrap();
+    let export = export.path().canonicalize().unwrap();
+    let data = export.join("writer-data");
+    let disk = FsVaultBroker::open(&export.join("canonical"), &data).unwrap();
+    let mut request = artifact_request();
+    request.provenance = provenance(4_000_000_000, &"e".repeat(64));
+    let pointer = disk.stage_artifact_commit(&request).unwrap();
+    let staged = format!("writer-data/artifact-candidate-{}.json", pointer.id);
+    assert!(
+        export.join(&staged).is_file(),
+        "暂存正文就在写者数据根这一层"
+    );
+
+    let facts = read_trusted_export(&export, disk.vault_uuid()).unwrap();
+    let fact = facts
+        .iter()
+        .find(|fact| fact.export_path.as_str() == staged)
+        .expect("暂存正文有一条事实");
+    assert_eq!(fact.class, TrustedExportClass::SourceMaterial);
+    assert_eq!(fact.provenance.as_ref(), Some(&request.provenance));
+    assert!(
+        facts
+            .iter()
+            .filter(|fact| fact.export_path.as_str() != staged)
+            .all(|fact| fact.provenance.is_none()),
+        "别的写者状态文件不带批准"
+    );
+
+    let error = read_trusted_export(&export, VaultUuid::new())
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("暂存正文没有原批准"), "{error}");
+    fs::write(
+        data.join(format!("artifact-candidate-{}.json", "0".repeat(64))),
+        br#"{"artifacts":[]}"#,
+    )
+    .unwrap();
+    let error = read_trusted_export(&export, disk.vault_uuid())
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("暂存正文没有原批准"), "{error}");
 }

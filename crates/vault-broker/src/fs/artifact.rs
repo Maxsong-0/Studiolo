@@ -74,6 +74,8 @@ impl VaultWriter for FsVaultBroker {
                 Some(existing) if existing.revision == expected => existing.revision,
                 Some(_) => return Err(BrokerError::ArtifactConflict(target)),
                 None => {
+                    // 期限按每一篇新正文算：提交中途过了期限，后面的正文不再写。
+                    reject_expired(&commit)?;
                     self.mutate(Mutation::create(
                         target.clone(),
                         candidate.content.clone(),
