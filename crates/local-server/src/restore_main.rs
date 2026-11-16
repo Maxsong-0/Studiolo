@@ -3,7 +3,7 @@
 //! ```text
 //! studiolo-restore run --config <私有配置> --checkpoint-copy <取回的副本> --checkpoint <封存标识>
 //!     --seal-sha256 <64 位十六进制> --new-root <新根> --restore-id <恢复标识>
-//!     [--parent-lineage <上一次的恢复标识>] [--resume] --confirm <检查名>（八项前置检查各一次）
+//!     [--resume] --confirm <检查名>（八项前置检查各一次）
 //! studiolo-restore cutover begin|finish --config <私有配置> --new-root <新根> --restore-id <恢复标识>
 //! ```
 //!
@@ -18,6 +18,8 @@
 //! - 标准错误：中文的进度、结论和下一步。
 //!
 //! 只认本机终端：标准错误要连着终端、标准输入不是终端，而且不在 SSH 会话里；不是的什么都不读、不写就拒绝。
+//! 恢复标识每次恢复取一个新的：这份数据以前用过的（被封存的根本身是恢复出来的）一律拒绝。lineage 的上一环
+//! 由数据定，不用给。
 //! 退出码：0 做完；1 拒绝或没做完（原因和下一步在标准错误，新根照旧起不来）；2 用法不对。
 
 use std::{
@@ -48,7 +50,7 @@ use zeroize::Zeroizing;
 const USAGE: &str = "用法：
   studiolo-restore run --config <私有配置> --checkpoint-copy <取回的副本> --checkpoint <封存标识> \\
       --seal-sha256 <64位十六进制> --new-root <新根> --restore-id <恢复标识> \\
-      [--parent-lineage <上一次的恢复标识>] [--resume] --confirm <检查名>（八项各一次）
+      [--resume] --confirm <检查名>（八项各一次）
   studiolo-restore cutover begin|finish --config <私有配置> --new-root <新根> --restore-id <恢复标识>
 八项检查名：sync-adapter-disabled execution-adapter-disabled content-verified version-verified
   permissions-verified hashes-verified audit-continuity-verified space-verified
@@ -97,7 +99,6 @@ struct Run {
     copy: PathBuf,
     checkpoint: CheckpointId,
     seal_sha256: String,
-    parent_lineage: Option<String>,
     resume: bool,
     confirmed: BTreeSet<String>,
 }
@@ -148,11 +149,7 @@ fn parse(args: &[String]) -> Result<Command, &'static str> {
             || (kind == Kind::Run
                 && matches!(
                     flag,
-                    "--checkpoint-copy"
-                        | "--checkpoint"
-                        | "--seal-sha256"
-                        | "--parent-lineage"
-                        | "--confirm"
+                    "--checkpoint-copy" | "--checkpoint" | "--seal-sha256" | "--confirm"
                 ));
         if !known {
             return Err("有不认识的参数");
@@ -190,16 +187,11 @@ fn parse(args: &[String]) -> Result<Command, &'static str> {
             let checkpoint = CheckpointId::parse(take("--checkpoint", "缺 --checkpoint")?)
                 .map_err(|_| "--checkpoint 不是合法的封存标识")?;
             let copy = absolute(take("--checkpoint-copy", "缺 --checkpoint-copy")?)?;
-            let parent_lineage = values
-                .remove("--parent-lineage")
-                .map(identifier)
-                .transpose()?;
             Ok(Command::Run(Run {
                 target,
                 copy,
                 checkpoint,
                 seal_sha256,
-                parent_lineage,
                 resume,
                 confirmed,
             }))
@@ -215,7 +207,7 @@ fn absolute(value: String) -> Result<PathBuf, &'static str> {
     Ok(path)
 }
 
-/// 恢复标识和上一次的恢复标识：1～55 个字母、数字或 `-`（Broker lineage 和 Auth 撤权记录同一个规则）。
+/// 恢复标识：1～55 个字母、数字或 `-`（Broker lineage 和 Auth 撤权记录同一个规则）。
 fn identifier(value: String) -> Result<String, &'static str> {
     if valid_restore_id(&value) {
         Ok(value)
@@ -412,7 +404,6 @@ fn restore(run: Run, channel: BootstrapChannel) -> Result<String, Failure> {
         restored: &restored,
         new_root: &run.target.new_root,
         restore_id: &run.target.restore_id,
-        parent_lineage: run.parent_lineage.clone(),
         resume_interrupted: run.resume,
         checks,
         deadline,
@@ -479,10 +470,13 @@ fn restored_summary(report: &RestoreReport, restore_id: &str) -> String {
 }
 
 /// 拒绝原因加下一步。`started`：恢复记录里有这次恢复的放置意图，新根可能已经写过，只能接着这份记录接手；
-/// 没有的话这次一个字节都没往新根写，改正之后再来就行。
+/// 没有的话这次一个字节都没往新根写，改正之后再来就行。恢复标识用过的例外：接手解决不了，要从头来。
 fn restore_reason(refusal: RestoreRefusal, started: bool) -> String {
     let reason = match refusal {
         RestoreRefusal::RestoreId => "恢复标识不合法".to_owned(),
+        RestoreRefusal::RestoreIdUsed => {
+            return "这个恢复标识这份数据以前用过（被封存的根本身是恢复出来的），再用一次启动闸门会认旧的撤权记录。新根照旧起不来（Auth 还在 auth.held 下）；删掉这次放进新根的东西，换一个没用过的恢复标识、不接恢复记录从头来。".to_owned();
+        }
         RestoreRefusal::Transcript => {
             "恢复记录对不上：接手要接上一次那份完整记录（新开时不接记录）；或者恢复记录写不到标准输出".to_owned()
         }
@@ -495,14 +489,20 @@ fn restore_reason(refusal: RestoreRefusal, started: bool) -> String {
             "新根里留着上一次放置中途失败的 <名字>.restoring：人看过、清掉再来".to_owned()
         }
         RestoreRefusal::Placement => {
-            "封存内容没能逐字节放进新根，或者接手时已放好的组件和封存对不上".to_owned()
+            "封存内容没能逐字节放进新根、接手时已放好的组件和封存对不上，或者新根里 auth、agent 的正式名和暂用名（.held）同时在".to_owned()
         }
-        RestoreRefusal::Rebind => "Broker 的新根重绑定没有完成".to_owned(),
+        RestoreRefusal::Rebind => {
+            "Broker 的新根重绑定没有完成，或者新根 data 里的 lineage 和这次恢复对不上".to_owned()
+        }
         RestoreRefusal::Audit => {
             "账本打不开，或者链尾和清单水位对不上（水位之后只许有这次恢复 Auth 撤权自己记的事件）".to_owned()
         }
-        RestoreRefusal::Owner(owner) => format!("{owner:?} 的失效没有做完"),
-        RestoreRefusal::Auth => "Auth 撤权没有完成（TOTP 种子不对也会这样）".to_owned(),
+        RestoreRefusal::Owner(owner) => {
+            format!("{owner:?} 的失效没有做完（核对、失效、事后核对或改正式名有一步不过）")
+        }
+        RestoreRefusal::Auth => {
+            "Auth 撤权没有完成（TOTP 种子不对也会这样；改不成正式名 auth 也算）".to_owned()
+        }
     };
     let next = if started {
         "新根照旧起不来；看过原因之后，接这次写出的恢复记录加 --resume 接手"
@@ -606,16 +606,15 @@ mod tests {
         assert_eq!(run.target.restore_id, "drill-1");
         assert_eq!(run.copy, PathBuf::from("/fetched/copy"));
         assert_eq!(run.checkpoint, CheckpointId::parse("cp-0001").unwrap());
-        assert!(!run.resume && run.parent_lineage.is_none());
+        assert!(!run.resume);
         assert!(checks(&run.confirmed).is_complete());
 
         let mut resumed = full_run();
-        resumed.extend(args(&["--resume", "--parent-lineage", "drill-0"]));
+        resumed.extend(args(&["--resume"]));
         let Command::Run(run) = parse(&resumed).unwrap() else {
             panic!("应为 run");
         };
         assert!(run.resume);
-        assert_eq!(run.parent_lineage.as_deref(), Some("drill-0"));
 
         // 少确认一项：参数本身合法，但前置检查不完整，运行时在读任何输入之前拒绝。
         let mut partial = full_run();
@@ -672,7 +671,7 @@ mod tests {
         let mut twice_resumed = full_run();
         twice_resumed.extend(args(&["--resume", "--resume"]));
         let mut dangling = full_run();
-        dangling.push("--parent-lineage".into());
+        dangling.push("--restore-id".into());
         for wrong in [
             args(&[]),
             args(&["restore"]),
@@ -690,9 +689,10 @@ mod tests {
             duplicate_flag,
             twice_resumed,
             dangling,
+            // 上一环由数据定，命令行不再收（以前的 --parent-lineage）。
             {
                 let mut values = full_run();
-                values.extend(args(&["--parent-lineage", "../up"]));
+                values.extend(args(&["--parent-lineage", "drill-0"]));
                 values
             },
             {
@@ -754,6 +754,13 @@ mod tests {
             let untouched = restore_reason(refusal, false);
             assert!(untouched.contains("没往新根写任何东西"), "{untouched}");
             assert!(untouched.ends_with("改正之后再来。"), "{untouched}");
+        }
+        // 恢复标识用过的：接手解决不了，不管写没写过都叫人换标识从头来。
+        for started in [true, false] {
+            let reason = restore_reason(RestoreRefusal::RestoreIdUsed, started);
+            assert!(reason.contains("新根照旧起不来"), "{reason}");
+            assert!(reason.contains("换一个没用过的恢复标识"), "{reason}");
+            assert!(!reason.contains("--resume"), "{reason}");
         }
     }
 }

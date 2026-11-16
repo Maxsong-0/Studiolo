@@ -15,22 +15,28 @@ pub struct RestoredIdentities {
     pub instances: Vec<String>,
 }
 
+/// 新根恢复第一次做身份库这一步之前的核对（只读）：只打开封存里放出来的已有库（不建、不迁移），按封存时
+/// 同一套规则重算水位，和清单里的 `expected` 逐项相等才算过。核过了编排才把「开始」交出去、再调
+/// [`invalidate_restored_identities`]；核不过什么都不动，恢复记录里也没有「开始」，接手时照旧先核。
+pub fn verify_restored_identities(
+    private_directory: &Path,
+    expected: &OwnerWatermark,
+) -> Result<(), SupplyError> {
+    let store = AgentStore::open_existing(private_directory)?;
+    if restored_watermark(&store)? != *expected {
+        return Err(SupplyError::CorruptStore);
+    }
+    Ok(())
+}
+
 /// 新根恢复：只打开封存里放出来的已有库（不建、不迁移），吊销全部类型（旧 token 一律失效），
-/// 核「没有一个类型还有效」，交回全部实例标识。
-///
-/// `expected` 是清单里这个 owner 的水位：第一次做这一步时给，先按封存时同一套规则重算、逐项相等才往下做；
-/// 接手上一次、这一步已经开始过时库已经改过，不给，只做（幂等的）吊销和事后核对。
+/// 核「没有一个类型还有效」，交回全部实例标识。幂等：再做一遍什么都不变，接手上一次时照样调。
+/// 第一次做之前先过 [`verify_restored_identities`]。
 pub fn invalidate_restored_identities(
     private_directory: &Path,
-    expected: Option<&OwnerWatermark>,
     now: &str,
 ) -> Result<RestoredIdentities, SupplyError> {
     let store = AgentStore::open_existing(private_directory)?;
-    if let Some(expected) = expected
-        && restored_watermark(&store)? != *expected
-    {
-        return Err(SupplyError::CorruptStore);
-    }
     let types = store.types()?;
     let mut types_revoked = 0;
     for (name, _, _) in &types {

@@ -32,6 +32,7 @@ mod drill;
 mod fixture;
 mod producer;
 mod restore;
+mod restore_plan;
 mod seal;
 use fixture::Setup;
 

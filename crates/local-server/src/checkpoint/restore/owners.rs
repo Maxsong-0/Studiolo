@@ -1,8 +1,9 @@
 //! 组件放好、Broker 重绑定之后，每个 owner 要做的失效（T-212 设计 4.1～4.4）和账本链尾核对。
 //!
-//! 每个 owner 的步骤都一个形状（[`run_stage`]）：这次恢复里还没开始过的，先在恢复记录里记「开始」，按清单里
-//! 它的水位重算核对，再做失效、做事后核对、记「完成」；已经开始过的（接手上一次），它的库已经改过，不再按封存
-//! 水位核，只做幂等的失效和事后核对。失效本身都是幂等的：同一恢复标识再做一遍什么都不变。
+//! 每个 owner 的步骤都一个形状（[`run_stage`]）：这次恢复里还没开始过的，先只读核对（按清单里它的水位重算；
+//! Auth 核这个恢复标识没用过），核过了才在恢复记录里记「开始」，再做失效、做事后核对、记「完成」；已经开始过的
+//! （接手上一次），它的库已经改过，不再按封存水位核，只做幂等的失效和事后核对。失效本身都是幂等的：同一恢复
+//! 标识再做一遍什么都不变。
 use super::{Recorder, RestoreRefusal};
 use serde_json::{Value, json};
 use std::{collections::BTreeSet, path::Path, sync::Arc, time::Instant};
@@ -18,7 +19,7 @@ use studiolo_core::{
     checkpoint::{AuditChainCutoff, CheckpointOwner, OwnerWatermark},
 };
 use studiolo_policy::{PolicyStore, RevocationLevel};
-use studiolo_supply::invalidate_restored_identities;
+use studiolo_supply::{invalidate_restored_identities, verify_restored_identities};
 
 /// 恢复写进策略库的吊销者名字。
 const ACTOR: &str = "restore";
@@ -109,24 +110,28 @@ pub(super) struct Context<'a> {
     pub deadline: Instant,
 }
 
-/// 按固定形状走一个 owner 的失效：没开始过的先记「开始」，`work(true)` 先核清单水位再动手；开始过的
-/// `work(false)` 只做幂等的失效和事后核对。「完成」只记一次，载荷是 `work` 交回的事实（不带凭据）。
+/// 按固定形状走一个 owner 的失效：没开始过的先 `verify`（只读），核过了才记「开始」，再 `work`；开始过的
+/// 只 `work`（幂等的失效和事后核对）。「完成」只记一次，载荷是 `work` 交回的事实（不带凭据）。
+///
+/// 核对必须在「开始」之前：「开始」一记，接手时就当这个库已经改过、不再核了，核不过的库会被当成核过的直接改
+/// （Codex 第二意见第 3 条）。所以核不过就停在这里，记录里没有「开始」，接手时照旧先核。
 pub(super) fn run_stage<T>(
     recorder: &mut Recorder<'_>,
     history: &History,
     context: &Context<'_>,
     stage: Stage,
-    work: impl FnOnce(bool) -> Result<(T, Value), RestoreRefusal>,
+    verify: impl FnOnce() -> Result<(), RestoreRefusal>,
+    work: impl FnOnce() -> Result<(T, Value), RestoreRefusal>,
 ) -> Result<T, RestoreRefusal> {
-    let begun = history.begun(stage);
-    if !begun {
+    if !history.begun(stage) {
+        verify()?;
         // 「开始」先交到人手里再动库：接手时据此知道这个库可能已经改过。
         recorder.record(
             RecoveryStep::OwnerRestoreIntent,
             json!({ "owner": stage.name(), "restore": context.restore_id }),
         )?;
     }
-    let (value, mut facts) = work(!begun)?;
+    let (value, mut facts) = work()?;
     if !history.recorded(stage.outcome()) {
         let Some(object) = facts.as_object_mut() else {
             return Err(RestoreRefusal::Transcript);
@@ -141,21 +146,32 @@ fn refuse<E>(owner: CheckpointOwner) -> impl FnOnce(E) -> RestoreRefusal {
     move |_| RestoreRefusal::Owner(owner)
 }
 
-/// Control（设计 4.2）：只打开放出来的库（不建、不迁移），第一次先核水位，再按启动巡检撤销全部活动 attempt。
-/// 事后核对：没有 attempt 还拿着租约（已认领、运行中）；只在等子任务的转成取消中，工具能力已经收回。
-/// 过期提交按 2026-11-16 拍板停在待审，恢复不替主人丢。
-pub(super) fn control(
+/// Control 第一次做之前的核对（只读）：只打开放出来的库（不建、不迁移、不切 journal mode），按封存时同一套
+/// 规则重算水位，和清单里的逐项相等。
+pub(super) fn verify_control(
     context: &Context<'_>,
     vault: VaultUuid,
     expected: &OwnerWatermark,
-    fresh: bool,
+) -> Result<(), RestoreRefusal> {
+    let owner = CheckpointOwner::Control;
+    let db = ControlDb::open_existing(&context.new_root.join("control"), vault)
+        .map_err(refuse(owner))?;
+    if db.restored_watermark().map_err(refuse(owner))? != *expected {
+        return Err(RestoreRefusal::Owner(owner));
+    }
+    Ok(())
+}
+
+/// Control（设计 4.2）：只打开放出来的库，按启动巡检撤销全部活动 attempt。事后核对：没有 attempt 还拿着租约
+/// （已认领、运行中）；只在等子任务的转成取消中，工具能力已经收回。过期提交按 2026-11-16 拍板停在待审，恢复
+/// 不替主人丢。
+pub(super) fn control(
+    context: &Context<'_>,
+    vault: VaultUuid,
 ) -> Result<((), Value), RestoreRefusal> {
     let owner = CheckpointOwner::Control;
     let mut db = ControlDb::open_existing(&context.new_root.join("control"), vault)
         .map_err(refuse(owner))?;
-    if fresh && db.restored_watermark().map_err(refuse(owner))? != *expected {
-        return Err(RestoreRefusal::Owner(owner));
-    }
     let reconciled = db
         .reconcile_leases(context.now.as_millisecond(), true)
         .map_err(refuse(owner))?;
@@ -172,12 +188,29 @@ pub(super) fn control(
     ))
 }
 
-/// Policy（设计 4.4，用户 2026-11-16 拍板「一律全局吊销」）：第一次先核水位，再全局吊销，只能由主人经 L3 解除。
-/// 封存截止点时已经是全局吊销的，原记录保留、不再新加一条。
+/// Policy 第一次做之前的核对（只读）：只打开放出来的库，按封存时同一套规则重算水位，和清单里的逐项相等。
+pub(super) fn verify_policy(
+    context: &Context<'_>,
+    expected: &OwnerWatermark,
+) -> Result<(), RestoreRefusal> {
+    let owner = CheckpointOwner::Policy;
+    let store =
+        PolicyStore::open_existing(&context.new_root.join("policy")).map_err(refuse(owner))?;
+    if store
+        .restored_watermark(context.deadline)
+        .map_err(refuse(owner))?
+        != *expected
+    {
+        return Err(RestoreRefusal::Owner(owner));
+    }
+    Ok(())
+}
+
+/// Policy（设计 4.4，用户 2026-11-16 拍板「一律全局吊销」）：全局吊销，只能由主人经 L3 解除。封存截止点时
+/// 已经是全局吊销的，原记录保留、不再新加一条。
 pub(super) fn policy(
     context: &Context<'_>,
     expected: &OwnerWatermark,
-    fresh: bool,
 ) -> Result<((), Value), RestoreRefusal> {
     let owner = CheckpointOwner::Policy;
     let OwnerWatermark::Policy { global_revoked, .. } = expected else {
@@ -185,14 +218,6 @@ pub(super) fn policy(
     };
     let store =
         PolicyStore::open_existing(&context.new_root.join("policy")).map_err(refuse(owner))?;
-    if fresh
-        && store
-            .restored_watermark(context.deadline)
-            .map_err(refuse(owner))?
-            != *expected
-    {
-        return Err(RestoreRefusal::Owner(owner));
-    }
     let newly = store
         .revoke(
             RevocationLevel::Global,
@@ -211,21 +236,25 @@ pub(super) fn policy(
     ))
 }
 
-/// AgentStore（设计 4.3）：第一次先核水位，吊销全部类型（旧 token 一律失效），每个已登记实例在策略库记实例
-/// 吊销（不可恢复）。之后由主人重新签发类型 token、AI 重新登记。事后核对：每个实例在策略库都是吊销状态。
+/// AgentStore 第一次做之前的核对（只读）：`directory` 是身份库现在的位置（暂用名下），按封存时同一套规则
+/// 重算水位，和清单里的逐项相等。
+pub(super) fn verify_agents(
+    directory: &Path,
+    expected: &OwnerWatermark,
+) -> Result<(), RestoreRefusal> {
+    verify_restored_identities(directory, expected).map_err(refuse(CheckpointOwner::AgentStore))
+}
+
+/// AgentStore（设计 4.3）：吊销全部类型（旧 token 一律失效），每个已登记实例在策略库记实例吊销（不可恢复）。
+/// 之后由主人重新签发类型 token、AI 重新登记。事后核对：每个实例在策略库都是吊销状态。`directory` 是身份库
+/// 现在的位置；做完之后由编排改成正式名。
 pub(super) fn agents(
     context: &Context<'_>,
-    expected: &OwnerWatermark,
-    fresh: bool,
+    directory: &Path,
 ) -> Result<((), Value), RestoreRefusal> {
     let owner = CheckpointOwner::AgentStore;
     let now = context.now.to_string();
-    let identities = invalidate_restored_identities(
-        &context.new_root.join("agent"),
-        fresh.then_some(expected),
-        &now,
-    )
-    .map_err(refuse(owner))?;
+    let identities = invalidate_restored_identities(directory, &now).map_err(refuse(owner))?;
     let store =
         PolicyStore::open_existing(&context.new_root.join("policy")).map_err(refuse(owner))?;
     for instance in &identities.instances {
@@ -263,29 +292,57 @@ pub(super) fn agents(
     ))
 }
 
+/// 只为恢复打开 `directory` 下的已有 Auth（不建、不迁移、不采样时钟）。
+fn open_auth(
+    directory: &Path,
+    sessions: SessionConfig,
+    ledger: Arc<SqliteAuditLedger>,
+) -> Result<SessionManager, RestoreRefusal> {
+    SessionManager::open_existing_for_restore(
+        directory,
+        sessions,
+        ledger,
+        Arc::new(SystemSessionClock),
+        Arc::new(OsSessionRandom),
+    )
+    .map_err(|_| RestoreRefusal::Auth)
+}
+
+/// Auth 撤权第一次做之前的核对：这份数据的 Auth 里没有记过这个恢复标识。Broker 重绑定已经按 lineage 记的那一串
+/// 拒过一次；这里按 Auth 自己的记录再核一次，记过就拒绝（[`RestoreRefusal::RestoreIdUsed`]）：照旧走下去，
+/// 撤权会把那条旧记录当成这次的、什么都不作废（Codex 第二意见第 1 条）。
+pub(super) fn verify_auth(
+    directory: &Path,
+    sessions: SessionConfig,
+    restore_id: &str,
+    ledger: Arc<SqliteAuditLedger>,
+) -> Result<(), RestoreRefusal> {
+    let manager = open_auth(directory, sessions, ledger)?;
+    if manager
+        .restored_epoch(restore_id)
+        .map_err(|_| RestoreRefusal::Auth)?
+        .is_some()
+    {
+        return Err(RestoreRefusal::RestoreIdUsed);
+    }
+    Ok(())
+}
+
 /// Auth 撤权（设计 4.1），照 `studiolo-auth-admin restore` 的顺序：只为恢复打开已有库 → 挂 TOTP 和恢复码因子 →
 /// 废止全部旧会话、L3 和恢复码。要求身份版本恰好加一（接手上一次时等于当时提交的那次、之后没再变）、
-/// 两条恢复事件都投进了新根的人侧账本；否则拒绝，启动闸门照旧不放行。
+/// 两条恢复事件都投进了新根的人侧账本；否则拒绝，启动闸门照旧不放行。`directory` 是 Auth 现在的位置（暂用名
+/// 下）；返回时 Auth 句柄和因子都已经关了，编排接着把它改成正式名。
 ///
 /// 这里不调 `AuthRestoreInvalidation::check`：它要的「主人已重新认证」只有最终切换之后才成立，归切换那一步核
 /// （`cutover.rs`）。
 pub(super) fn auth(
-    new_root: &Path,
+    directory: &Path,
     sessions: SessionConfig,
     seed: TotpSeed,
     restore_id: &str,
     ledger: Arc<SqliteAuditLedger>,
 ) -> Result<(RestoreInvalidation, Value), RestoreRefusal> {
-    let manager = Arc::new(
-        SessionManager::open_existing_for_restore(
-            &new_root.join("auth"),
-            sessions,
-            ledger,
-            Arc::new(SystemSessionClock),
-            Arc::new(OsSessionRandom),
-        )
-        .map_err(|_| RestoreRefusal::Auth)?,
-    );
+    let manager = Arc::new(open_auth(directory, sessions, ledger)?);
     let earlier = manager
         .restored_epoch(restore_id)
         .map_err(|_| RestoreRefusal::Auth)?;

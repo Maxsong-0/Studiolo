@@ -246,7 +246,7 @@ fn restored_identities_lose_every_old_token_and_hand_back_every_instance() {
         frozen.watermark().clone()
     };
     drop(store);
-    // 水位对不上（这里拿另一个库的）就什么都不动。
+    // 水位对不上（这里拿另一个库的）核对不过；核对只读，什么都不动。
     let other = directory();
     let foreign = AgentStore::open(other.path()).unwrap();
     foreign.issue_type("codex", NOW).unwrap();
@@ -259,10 +259,8 @@ fn restored_identities_lose_every_old_token_and_hand_back_every_instance() {
             .unwrap();
         frozen.watermark().clone()
     };
-    assert!(
-        studiolo_supply::invalidate_restored_identities(dir.path(), Some(&foreign_mark), NOW)
-            .is_err()
-    );
+    assert!(studiolo_supply::verify_restored_identities(dir.path(), &foreign_mark).is_err());
+    studiolo_supply::verify_restored_identities(dir.path(), &expected).unwrap();
     let untouched = AgentStore::open_existing(dir.path()).unwrap();
     assert_eq!(
         untouched.authenticate(&codex.token).unwrap(),
@@ -270,8 +268,7 @@ fn restored_identities_lose_every_old_token_and_hand_back_every_instance() {
     );
     drop(untouched);
 
-    let done =
-        studiolo_supply::invalidate_restored_identities(dir.path(), Some(&expected), NOW).unwrap();
+    let done = studiolo_supply::invalidate_restored_identities(dir.path(), NOW).unwrap();
     assert_eq!(done.types_revoked, 2);
     assert_eq!(done.types_total, 2);
     let mut ids = vec![first.id.clone(), second.id.clone()];
@@ -287,12 +284,14 @@ fn restored_identities_lose_every_old_token_and_hand_back_every_instance() {
             .all(|(_, _, revoked)| *revoked)
     );
     drop(reopened);
-    // 接手时库已经改过，不再给水位；再做一遍什么都不变。
-    let again = studiolo_supply::invalidate_restored_identities(dir.path(), None, NOW).unwrap();
+    // 失效之后库已经不是封存那一份：再核水位不过（接手时不再核，只做幂等的失效）；再做一遍什么都不变。
+    assert!(studiolo_supply::verify_restored_identities(dir.path(), &expected).is_err());
+    let again = studiolo_supply::invalidate_restored_identities(dir.path(), NOW).unwrap();
     assert_eq!(again.types_revoked, 0);
     assert_eq!(again.instances, ids);
-    // 不建库：目录里没有库就失败，也不留下新文件。
+    // 不建库：目录里没有库，核对和失效都失败，也不留下新文件。
     let empty = directory();
-    assert!(studiolo_supply::invalidate_restored_identities(empty.path(), None, NOW).is_err());
+    assert!(studiolo_supply::verify_restored_identities(empty.path(), &expected).is_err());
+    assert!(studiolo_supply::invalidate_restored_identities(empty.path(), NOW).is_err());
     assert_eq!(fs::read_dir(empty.path()).unwrap().count(), 0);
 }
