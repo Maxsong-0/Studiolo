@@ -79,6 +79,7 @@ jobs:
             bash -n "$script"
           done
           python3 scripts/test-agent-package.py
+          python3 scripts/test-project-registry.py
           python3 scripts/test-render-agent-upgrade.py
           python3 scripts/test-prepare-m4-policy.py
           python3 scripts/test-m4-recovery.py

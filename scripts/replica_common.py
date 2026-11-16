@@ -6,6 +6,8 @@ import re
 import stat
 import unicodedata
 
+# 不手改：由 scripts/project_registry.json 生成（python3 scripts/project_registry.py sync），
+# test-project-registry.py 守卫两边一致。
 ALLOW = sorted([
     "_规则",
     "项目/AI Quota Flow",

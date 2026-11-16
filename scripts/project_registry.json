@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "entries": [
+    {"path": "_规则", "ai_visible": true},
+    {"path": "项目/AI Quota Flow", "ai_visible": true},
+    {"path": "项目/AI 网关门户", "ai_visible": true},
+    {"path": "项目/Brief 简报站", "ai_visible": true},
+    {"path": "项目/Codex源码分析", "ai_visible": true},
+    {"path": "项目/DocReader", "ai_visible": true},
+    {"path": "项目/Echo", "ai_visible": true},
+    {"path": "项目/HR系统", "ai_visible": true},
+    {"path": "项目/MindGarden", "ai_visible": true},
+    {"path": "项目/NAS 网关", "ai_visible": true},
+    {"path": "项目/Perplexity", "ai_visible": true},
+    {"path": "项目/Semiment", "ai_visible": true},
+    {"path": "项目/Semiment-Docs", "ai_visible": true},
+    {"path": "项目/Studiolo", "ai_visible": true},
+    {"path": "项目/Tillerwright", "ai_visible": true},
+    {"path": "项目/brian-web", "ai_visible": true},
+    {"path": "项目/hermes", "ai_visible": true},
+    {"path": "项目/max-personal-web", "ai_visible": true},
+    {"path": "项目/培训 App", "ai_visible": true},
+    {"path": "项目/盖章", "ai_visible": true},
+    {"path": "项目/研究项目", "ai_visible": true},
+    {"path": "项目/绩效", "ai_visible": true},
+    {"path": "项目/远程桌面网关", "ai_visible": true},
+    {"path": "项目/销售报表", "ai_visible": true}
+  ]
+}

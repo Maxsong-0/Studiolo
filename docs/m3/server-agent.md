@@ -122,6 +122,8 @@ agent 能改写自己的二进制，属加固倒退。
 启动时失配会直接退出，几秒内连撞 systemd 启动限流而 `failed`（T-095 踩过）。
 `--allow` 必须与 `scripts/replica_common.py` 的 `ALLOW` 逐项相等（`scripts/test-agent-package.py` 的
 `DeployAllowlistTests` 守卫模板）；含空格的项目名一律加引号。
+这两处都不手改：新项目只登记进 `scripts/project_registry.json`，再跑 `python3 scripts/project_registry.py sync`
+重写副本清单和各份模板（T-209，`scripts/test-project-registry.py` 守卫三者一致）。
 
 **换程序或单元之后**：人侧发行门禁里的 `AGENT_SHA` 与程序权限按现场计算，下一次人侧发行前须重算
 （见 `deploy/blackboard/`，2026-09-22 T-103/T-104）。
