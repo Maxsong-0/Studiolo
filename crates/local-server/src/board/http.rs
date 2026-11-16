@@ -91,6 +91,12 @@ async fn view(
         items
             .into_iter()
             .map(|item| {
+                // 「提交已过期、等主人决定」随时间变：只在人侧这里实时问 Broker，不进任务页投影。
+                let commit_expired = item.task.status
+                    == studiolo_control_db::TaskStatus::Committing
+                    && engine
+                        .commit_awaiting_discard(item.task.task_id)
+                        .map_err(|_| "提交状态不可用")?;
                 let mut lineages = Vec::new();
                 for id in [
                     item.board.created_by_instance.as_deref(),
@@ -118,6 +124,7 @@ async fn view(
                 }
                 let mut value = serde_json::to_value(item).map_err(|_| "黑板编码失败")?;
                 value["instance_lineages"] = serde_json::json!(lineages);
+                value["commit_expired"] = serde_json::json!(commit_expired);
                 Ok::<_, String>(value)
             })
             .collect::<Result<Vec<_>, _>>()

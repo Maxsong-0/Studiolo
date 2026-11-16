@@ -14,6 +14,7 @@ import type {
 } from './executionModel';
 import { isFresh, useExecutionResource } from './useExecutionResource';
 import { ExecutionReview } from './ExecutionReview';
+import { ExecutionDiscard } from './ExecutionDiscard';
 import { ExecutionLanding } from './ExecutionLanding';
 import { ExecutionReplay } from './ExecutionReplay';
 import { CandidateDetails } from './ExecutionCandidates';
@@ -97,7 +98,12 @@ export function ExecutionBoundary({
     };
   }, []);
   const submit = async (command: ExecutionCommand): Promise<boolean> => {
-    if (pending.current || !isFresh(state) || !state.data?.configured)
+    // 丢弃过期的提交只经黑板、不碰执行体：没配执行服务的部署也得能丢，不然备份一直被挡。
+    if (
+      pending.current ||
+      !isFresh(state) ||
+      (command.operation !== 'discard_expired' && !state.data?.configured)
+    )
       return false;
     const controller = new AbortController();
     pending.current = controller;
@@ -113,9 +119,10 @@ export function ExecutionBoundary({
         throw new Error(
           '操作响应已过期，结果不可确认。请重新核对后再决定是否提交。',
         );
+      // 只有落地有结果；落地要求执行服务已配置，state.data 此时一定在。
       if (
         result &&
-        state.data.runs.find((run) => run.task_id === result.task_id)
+        state.data?.runs.find((run) => run.task_id === result.task_id)
           ?.attempt_id !== result.attempt_id
       )
         throw new Error(
@@ -281,7 +288,7 @@ export function ExecutionBoundary({
                 </Button>
               ) : null}
               <p className="execution-hint">
-                解冻、代码落地与提交审阅需要在「账户」完成当前有效的二次认证。状态每
+                解冻、代码落地、提交审阅与丢弃过期的提交需要在「账户」完成当前有效的二次认证。状态每
                 15 秒核对。
               </p>
             </>
@@ -528,6 +535,12 @@ function ExecutionTasks({
                     run.state === 'candidate_retained',
                 )
               }
+              submit={command}
+            />
+            <ExecutionDiscard
+              key={`discard-${task.id}-${task.attempt?.id ?? 'none'}`}
+              task={task}
+              disabled={busy || !current}
               submit={command}
             />
             <ExecutionReplay

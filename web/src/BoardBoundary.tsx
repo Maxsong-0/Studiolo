@@ -284,12 +284,12 @@ function BoardSnapshot({
     </Cell>
   );
 }
-/** 状态方块：租约到期算出问题；排队但子项未收尾算待定。 */
+/** 状态方块：租约到期、提交已过期等你定，都算出问题；排队但子项未收尾算待定。 */
 function nodeMark(
   item: BoardItem,
   lease: ReturnType<typeof boardLease>,
 ): StatusState {
-  if (lease === 'expired') return 'alert';
+  if (lease === 'expired' || item.commitExpired) return 'alert';
   return statusMark(item.status);
 }
 function TaskNode({
@@ -307,9 +307,11 @@ function TaskNode({
   const label =
     item.status === 'queued' && blocked
       ? '等待子项收尾'
-      : lease === 'expired'
-        ? '租约已到期，状态待核对'
-        : statusLabels[item.status];
+      : item.commitExpired
+        ? '提交已过期，等你决定丢不丢'
+        : lease === 'expired'
+          ? '租约已到期，状态待核对'
+          : statusLabels[item.status];
   // 从拓扑「在任务与回执中查看」过来：这一条标成当前并滚到视野里。
   const focused = item.id === focusId;
   const article = useRef<HTMLElement>(null);

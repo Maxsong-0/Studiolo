@@ -279,6 +279,35 @@ where
             .status)
     }
 
+    /// 只读：这个任务的提交是不是原批准已经过期、一篇正文都还没写，正等主人决定丢不丢。
+    ///
+    /// 和主人入口 [`Self::discard_expired_commit`] 用同一步证实（读暂存、问 Broker），不另写一套
+    /// 判断。只看「提交中」任务的当前 attempt；证实不了（暂存读不出、Broker 说没过期或写过正文）
+    /// 一律返回 false，界面照旧显示「写回中」。答案随时间变（批准会到期），只给人侧实时读，不能写进
+    /// 任务页投影。
+    pub fn commit_awaiting_discard(&self, task: TaskId) -> Result<bool, TaskEngineError> {
+        self.verify_vault_binding()?;
+        let Some(record) = self.task(task)? else {
+            return Ok(false);
+        };
+        let Some(attempt_id) = record.active_attempt else {
+            return Ok(false);
+        };
+        if record.status != TaskStatus::Committing {
+            return Ok(false);
+        }
+        let Some(attempt) = self.control_db.attempt(task, attempt_id).map_err(map_db)? else {
+            return Ok(false);
+        };
+        let Some(reservation) = attempt.terminal.as_ref() else {
+            return Ok(false);
+        };
+        Ok(matches!(
+            self.expired_unstarted(&prior_identity(&attempt), reservation),
+            Ok(true)
+        ))
+    }
+
     /// 提交被 Broker 拒绝之后唯一的失败出口：原批准已经过期，而且一个字节都没写出去。
     /// 只由主人入口 `discard_expired_commit` 调用，对账不调用。
     ///

@@ -13,6 +13,7 @@ import {
   executionResponse,
 } from './test/executionFixtures';
 import { SessionClient } from './sessionClient';
+import { ApiError } from './sessionHttp';
 import {
   csrf,
   mockSessions,
@@ -182,4 +183,39 @@ it('any other 404 still says the entry has no execution service', async () => {
   });
   expect(other).toBe(UNWIRED);
   expect(await replayFailure(null)).toBe(UNWIRED);
+});
+it('discarding an expired commit accepts only a failed or cancelled status bound to the same task', async () => {
+  const command = {
+    operation: 'discard_expired',
+    task_id: executionId(),
+  } as const;
+  const run = async (reply: unknown) => {
+    const uninstall = installExecutionWriter(vi.fn(async () => reply));
+    try {
+      return await commandExecution(command, new AbortController().signal);
+    } finally {
+      uninstall();
+    }
+  };
+  for (const status of ['failed', 'cancelled'])
+    await expect(
+      run({ task_id: command.task_id, status }),
+    ).resolves.toBeUndefined();
+  for (const reply of [
+    { task_id: command.task_id, status: 'committing' },
+    { task_id: executionId(2), status: 'failed' },
+    { task_id: command.task_id, status: 'failed', extra: true },
+    { ok: true },
+    null,
+  ])
+    await expect(run(reply)).rejects.toThrow('丢弃响应无效，请刷新核对。');
+  // 和落地、审阅一样算高风险：二次认证没过要说清楚、不自动重试。
+  expect(
+    executionFailure(
+      new ApiError('请先完成二次认证（One-time Code）', 409),
+      command,
+    ),
+  ).toBe(
+    '本次未完成：请先在「账户」完成二次认证（One-time Code），然后重新提交。不会自动重试。',
+  );
 });

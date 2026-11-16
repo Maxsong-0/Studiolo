@@ -445,11 +445,16 @@ fn expired_unstarted_candidates_wait_for_the_owner_and_only_the_owner_discards_t
     );
     assert_eq!(staged(), 1, "对账不能替主人丢暂存");
     assert_eq!(engine.control_db().committing_attempts().unwrap().len(), 1);
+    assert!(
+        engine.commit_awaiting_discard(task).unwrap(),
+        "人侧要能看出：提交已过期、等主人决定"
+    );
 
     assert_eq!(
         engine.discard_expired_commit(task, 12).unwrap(),
         TaskStatus::Failed
     );
+    assert!(!engine.commit_awaiting_discard(task).unwrap());
     let view = engine.board_detail(task, HASH).unwrap().unwrap();
     assert_eq!(view.task.status, TaskStatus::Failed);
     assert!(view.task.active_attempt.is_none());
@@ -485,6 +490,10 @@ fn owner_discard_is_refused_when_expiry_cannot_be_proven() {
     let temp = tempfile::TempDir::new_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
     let (mut engine, task, _claim) = expired_before_first_body(&temp, true, 0);
     engine.reconcile_periodic(10).unwrap();
+    assert!(
+        !engine.commit_awaiting_discard(task).unwrap(),
+        "证实不了就不提示主人丢"
+    );
     assert!(engine.discard_expired_commit(task, 11).is_err());
     engine.reconcile_periodic(12).unwrap();
     assert_eq!(
@@ -550,6 +559,10 @@ fn expired_plain_task_commit_is_discarded_by_the_owner_too() {
             1,
         )
         .unwrap();
+    assert!(
+        !engine.commit_awaiting_discard(task).unwrap(),
+        "草稿没有提交"
+    );
     engine.command(task, TaskCommand::Run, 2).unwrap();
     let claimed = engine
         .claim(ClaimRequest {
@@ -599,6 +612,10 @@ fn expired_plain_task_commit_is_discarded_by_the_owner_too() {
         Err(TaskEngineError::CommitFailed(_))
     ));
     assert_eq!(staged_candidates(&data), 1);
+    assert!(
+        !engine.commit_awaiting_discard(task).unwrap(),
+        "原批准还没过期：不提示主人丢"
+    );
     let wait = std::time::Duration::from_secs(u64::try_from(retain_until).unwrap()).saturating_sub(
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -612,10 +629,12 @@ fn expired_plain_task_commit_is_discarded_by_the_owner_too() {
         TaskStatus::Committing
     );
     assert_eq!(staged_candidates(&data), 1, "对账不能替主人丢暂存");
+    assert!(engine.commit_awaiting_discard(task).unwrap());
     assert_eq!(
         engine.discard_expired_commit(task, 11).unwrap(),
         TaskStatus::Failed
     );
+    assert!(!engine.commit_awaiting_discard(task).unwrap());
     assert_eq!(staged_candidates(&data), 0);
     assert!(
         engine

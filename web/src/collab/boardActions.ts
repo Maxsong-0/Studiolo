@@ -20,7 +20,7 @@ export const WORK_ACTIONS: ReadonlySet<string> = new Set([
   'handoff.returned',
 ]);
 
-/** 主人经执行接口做的决定（启动、取消、审阅、落地）都记成 `execution.*`。 */
+/** 主人经执行接口做的决定（启动、取消、审阅、落地、丢弃过期的提交）都记成 `execution.*`。 */
 const OWNER_PREFIX = 'execution.';
 
 /** 高频遥测与请求记录：不进「最近动态」（模型、工具调用与心跳仍算工作段）。 */
@@ -46,6 +46,9 @@ const ACTION_TEXT: Readonly<Record<string, string>> = {
   'task.stopped_candidates_committed': '停止候选已入库',
   'task.candidates_reviewed': '候选已审阅',
   'task.candidate_recovery_pending': '候选待恢复',
+  'task.legacy_reservation_pending': '旧预留待恢复',
+  'task.expired_commit_discarded': '丢弃过期提交',
+  'task.commit_expired': '过期提交已落定',
   'task.board_projected': '投影到任务页',
   'task.board_out_of_band_preserved': '保留带外改动',
   'task.policy_pinned': '钉定策略版本',
@@ -64,6 +67,7 @@ const ACTION_TEXT: Readonly<Record<string, string>> = {
   'execution.cancel': '取消执行',
   'execution.review': '审阅',
   'execution.land': '落地候选',
+  'execution.discard_expired': '丢弃过期的提交',
 };
 
 export function actionText(action: string): string {

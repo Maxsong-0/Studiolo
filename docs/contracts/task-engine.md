@@ -185,6 +185,10 @@ scanner，外部不能填最大号。`board_detail/board_list` 返回可序列�
 `reconcile_startup` 专用于隔离后的启动恢复；`reconcile_periodic` 专用于常驻循环，不能把
 旧 M0 `reconcile` 当周期 sweep 使用。前者撤销旧工作，后者只处理过期、执行体 stalled
 或取消宽限到期；两者都前滚 Broker staging 与耐久审计 outbox，不重启 Runner。
+两者开头先把历史内联预留迁进 Broker staging，迁移和前滚都逐个 attempt 隔离失败（2026-11-16，复审 D3-F5）：
+只和某一份预留有关的失败（预留或暂存内容对不上、M0 时代的 attempt 没有原批准、暂存读不出、Broker 拒绝）
+只让那个 attempt 原样留着——迁不了的记一次 `task.legacy_reservation_pending`（同一个 attempt 只记一次），
+前滚不了的每轮记 `task.candidate_recovery_pending`——别的 attempt 照常处理；控制库、审计账本本身出错仍中止整轮。
 
 完整 schema、保守父子串行约束、终态仲裁、收尾、真实内容指针验证、历史正文迁移与受控
 Markdown 投影见 [M5 黑板](../m5/blackboard.md)。已有 M0 验收不等于真实 M6 运行体验收。
@@ -201,4 +205,7 @@ NeedsReview 及 Runner completed 回执拒绝。人工审阅必须引用完整�
 原批准已过期、一篇正文都还没写进 Vault 的提交，周期对账不替主人丢，保持「提交中」并保留暂存；主人调它、
 且 Broker 证实之后才落成 Failed（停止态落成 Cancelled）、记 `task.commit_expired`、丢暂存。证实不了拒绝。
 已经落定过的再调一次只补做审计投递和丢暂存、给回同一个状态（控制库 `expired_commit` 只读判断）。每次调用
-传当前时间：请求摘要就是审计身份。HTTP 和驾驶舱入口还没接。
+传当前时间：请求摘要就是审计身份。人侧入口是执行命令 `discard_expired`（local-server 每次传服务器当前
+时间，AI 的黑板入口没有这个操作）。只读的 `commit_awaiting_discard(task)` 用同一步证实回答「这个任务的提交是不是
+已过期、一篇正文都没写、等主人决定」：只看提交中任务的当前 attempt，证实不了一律 false；答案随时间变，只给
+人侧黑板列表实时读，不进任务页投影。

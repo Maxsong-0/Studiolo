@@ -56,6 +56,19 @@ export async function commandExecution(
   } else if (command.operation === 'review') {
     if (boardItem(value).id !== command.task_id)
       throw new Error('审阅响应归属无效，请刷新核对。');
+  } else if (command.operation === 'discard_expired') {
+    // 服务端只回 {task_id, status}：落定后的状态只能是失败或取消。
+    const row =
+      value && typeof value === 'object' && !Array.isArray(value)
+        ? (value as Record<string, unknown>)
+        : null;
+    if (
+      !row ||
+      Object.keys(row).length !== 2 ||
+      row.task_id !== command.task_id ||
+      (row.status !== 'failed' && row.status !== 'cancelled')
+    )
+      throw new Error('丢弃响应无效，请刷新核对。');
   } else {
     const field = command.operation === 'freeze' ? 'frozen' : 'ok';
     const expected = command.operation === 'freeze' ? command.frozen : true;
@@ -81,6 +94,7 @@ export function executionFailure(
   const highRisk =
     command?.operation === 'land' ||
     command?.operation === 'review' ||
+    command?.operation === 'discard_expired' ||
     (command?.operation === 'freeze' && !command.frozen);
   if (
     highRisk &&

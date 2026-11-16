@@ -61,7 +61,8 @@ export type ExecutionCommand =
       instance_id: string;
     }
   | { operation: 'cancel'; task_id: string }
-  | { operation: 'review'; task_id: string; receipt: unknown };
+  | { operation: 'review'; task_id: string; receipt: unknown }
+  | { operation: 'discard_expired'; task_id: string };
 function invalid(): never {
   throw new Error('执行响应格式无效，当前状态不可确认。');
 }

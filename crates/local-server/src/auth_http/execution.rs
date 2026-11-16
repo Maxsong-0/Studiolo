@@ -1,4 +1,4 @@
-//! 执行体人侧命令只走现有会话/CSRF；解冻与候选验收还需当前 L3。
+//! 执行体人侧命令只走现有会话/CSRF；解冻、候选验收与丢弃过期提交还需当前 L3。
 use super::{AuthHttp, Context, cookie::Credentials, input::Action, responses::Failure};
 use axum::{extract::Request, response::Response};
 use serde::Deserialize;
@@ -32,6 +32,10 @@ pub(crate) enum Input {
     Review {
         task_id: TaskId,
         receipt: BoardReceipt,
+    },
+    /// 主人丢掉原批准已过期、一篇正文都没写的提交（黑板候选和其他任务都算）；要当前 L3。
+    DiscardExpired {
+        task_id: TaskId,
     },
 }
 pub(super) fn parse(bytes: &[u8]) -> Result<Input, Failure> {
