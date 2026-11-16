@@ -15,7 +15,7 @@
 
 | 文件 | 内容 |
 |---|---|
-| [`handoff/README.md`](handoff/README.md) | vault 里在推进工作的文档快照（vault 为准）、云端会话用 GitHub CI 验证与「交本机会话」的边界；当前是 T-160 上线续做 |
+| [`handoff/README.md`](handoff/README.md) | vault 里在推进工作的文档快照（vault 为准）、云端会话怎么验证、哪些要「交本机会话」；当前是 T-160 上线续做 |
 
 ## design/ — 界面设计规范
 

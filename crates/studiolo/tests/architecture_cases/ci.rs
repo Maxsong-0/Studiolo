@@ -1,25 +1,24 @@
 //! CI 入口逐行钉住门禁命令：整条逻辑命令行相等才算数，子串命中不算（旧写法的重言式：
-//! `cargo --locked test` 会被路径安全那一行满足）。ci.yml 里的命令还必须落在指定作业、
-//! 所在步骤与作业都不带 `if:`，也不 `continue-on-error`——否则门禁可以原样留着却不拦合并。
-//! 命令一字不改也能让门禁失效的另有两类（T-138），同样判红：
-//! - shell 语义：步骤、作业或全局 `defaults.run` 的 `shell` 不是恰好 `bash`（`sh`、`bash {0}`、
-//!   `pwsh` 都不保证 errexit），或 run 块里一行 `set +e` 之类关掉 errexit——门禁失败后照样
-//!   往下跑，步骤只看最后一条命令的退出码。test-linux.sh 同理：第一条门禁之前须有
-//!   `set -euo pipefail`，全文不许关 errexit，服务器上执行门禁的 `bash -euo pipefail -c` 那一行
-//!   也逐字钉住（换成 `bash -c` 本机照旧严格、远端门禁却全部失效）。
-//! - 触发条件：`on:` 里 pull_request 缺失或被分支／路径／事件类型过滤，PR 上根本不跑门禁；
-//!   push 不再恰只对 main，每次推 PR 分支都多跑一整套、挤占自托管 runner 那一条队列（ADR-020）。
+//! `cargo --locked test` 会被路径安全那一行满足）。两个入口：
+//! - `.testbox.toml` 的 ci 套（2026-11-16 起取代 GitHub CI，合进 main 之前必过）：每条门禁要落在 ci 套里
+//!   指定目录的一步，这一步读得懂、不是后台服务、run 里没有关掉 errexit——否则门禁可以原样留着却不拦合并。
+//!   测试箱按 `bash -eo pipefail -c` 跑每一步，errexit 默认开着。
+//! - `scripts/test-linux.sh` 的默认回路：第一条门禁之前须有 `set -euo pipefail`，全文不许关 errexit，
+//!   服务器上执行门禁的 `bash -euo pipefail -c` 那一行也逐字钉住（换成 `bash -c` 本机照旧严格、
+//!   远端门禁却全部失效）。
 //!
-//! YAML 子集的解析在 `ci_yaml.rs`。
+//! 步骤单的 TOML 子集解析在 `ci_steps.rs`。
 
 use crate::support::workspace_root;
-use ci_yaml::{JOB_INDENT, disables_errexit, indent, logical_lines, trigger_gaps, workflow_steps};
+use ci_steps::{disables_errexit, logical_lines, steps};
 use std::fs;
 
-#[path = "ci_yaml.rs"]
-mod ci_yaml;
+#[path = "ci_steps.rs"]
+mod ci_steps;
 
-const WORKFLOW: &str = ".github/workflows/ci.yml";
+const STEPS: &str = ".testbox.toml";
+/// 合进 main 之前必过的那一套。
+const SUITE: &str = "ci";
 const LINUX: &str = "scripts/test-linux.sh";
 const WORKSPACE_TEST: &str = "cargo --locked test --workspace";
 /// test-linux.sh 须在第一条门禁之前开启的严格模式。
@@ -29,7 +28,7 @@ const ERREXIT_OFF: &str = "不许有 set +e、set +o errexit 一类关掉 errexi
 /// test-linux.sh 在服务器上真正执行门禁的那一行：远端 shell 也必须带 errexit。
 const REMOTE: &str = r#"exec flock "$HOME/.cache/studiolo-locks/$STUDIOLO_NAME.lock" bash -euo pipefail -c "$STUDIOLO_RUN""#;
 
-/// ci.yml 的 rust 作业与 test-linux.sh 默认回路都要逐字执行的 Rust 门禁。
+/// ci 套与 test-linux.sh 默认回路都要逐字执行的 Rust 门禁。
 const SHARED: [&str; 6] = [
     "cargo --locked fmt --all -- --check",
     "cargo --locked clippy --workspace --all-targets -- -D warnings",
@@ -39,13 +38,13 @@ const SHARED: [&str; 6] = [
     "cargo --locked build -p studiolo-vault-admin",
 ];
 
-/// 只在 ci.yml 的 rust 作业里钉住的生产特征构建。
+/// 只在 ci 套里钉住的生产特征构建。
 const PRODUCTION: [&str; 2] = [
     "cargo --locked build -p studiolo-local-server --features studiolo-auth/production",
     "cargo --locked build -p studiolo-auth-admin --features production",
 ];
 
-/// ci.yml 的 frontend 作业：不跑安装脚本的固定依赖安装，以及构建、测试、规范、格式四道门。
+/// 前端：不跑安装脚本的固定依赖安装，以及构建、测试、规范、格式四道门，都在 `web` 目录里跑。
 const FRONTEND: [&str; 5] = [
     "npm ci --ignore-scripts",
     "npm run build",
@@ -53,27 +52,36 @@ const FRONTEND: [&str; 5] = [
     "npm run lint",
     "npm run format",
 ];
+const WEB: &str = "web";
 
-fn pinned() -> impl Iterator<Item = (&'static str, &'static str)> {
+/// 每条钉住的门禁和它必须所在的目录（`None` 是仓库根）。
+fn pinned() -> impl Iterator<Item = (Option<&'static str>, &'static str)> {
     let rust = SHARED
         .into_iter()
         .chain(PRODUCTION)
-        .map(|command| ("rust", command));
-    rust.chain(FRONTEND.into_iter().map(|command| ("frontend", command)))
+        .map(|command| (None, command));
+    rust.chain(FRONTEND.into_iter().map(|command| (Some(WEB), command)))
 }
 
-/// ci.yml 的缺口：没有在指定作业中被无条件、整行执行的门禁（形如 `作业: 命令`），
-/// 以及 `on:` 触发条件的缺口。
-fn workflow_gaps(yaml: &str) -> Vec<String> {
-    let steps = workflow_steps(yaml);
+fn label(cwd: Option<&str>, command: &str) -> String {
+    format!("{}: {command}", cwd.unwrap_or("."))
+}
+
+/// 门禁落在第几步（读得懂且没被削弱的那一步）；没有就是 `None`。
+fn gate_step(toml: &str, cwd: Option<&str>, command: &str) -> Option<usize> {
+    steps(toml).iter().position(|step| {
+        step.suite == SUITE
+            && !step.loose
+            && step.cwd.as_deref() == cwd
+            && step.run.iter().any(|line| line == command)
+    })
+}
+
+/// 步骤单的缺口：没有在 ci 套里指定目录、读得懂且没被削弱的一步中整行执行的门禁（形如 `目录: 命令`）。
+fn suite_gaps(toml: &str) -> Vec<String> {
     pinned()
-        .filter(|&(job, command)| {
-            !steps.iter().any(|step| {
-                step.job == job && !step.loose && step.run.iter().any(|line| line == command)
-            })
-        })
-        .map(|(job, command)| format!("{job}: {command}"))
-        .chain(trigger_gaps(yaml))
+        .filter(|&(cwd, command)| gate_step(toml, cwd, command).is_none())
+        .map(|(cwd, command)| label(cwd, command))
         .collect()
 }
 
@@ -105,72 +113,79 @@ fn entrypoints() -> (String, String) {
     let root = workspace_root();
     let read =
         |relative: &str| fs::read_to_string(root.join(relative)).expect("read CI entrypoint");
-    (read(WORKFLOW), read(LINUX))
+    (read(STEPS), read(LINUX))
 }
 
 #[test]
 fn ci_entrypoints_run_every_gate_as_an_unconditional_whole_command_line() {
-    let (yaml, script) = entrypoints();
-    assert_eq!(workflow_gaps(&yaml), Vec::<String>::new(), "{WORKFLOW}");
+    let (toml, script) = entrypoints();
+    assert_eq!(suite_gaps(&toml), Vec::<String>::new(), "{STEPS}");
     assert_eq!(script_gaps(&script), Vec::<&str>::new(), "{LINUX}");
 }
 
-/// 红臂只改内存副本：定位目标行（整行相等；行内 `run:` 的命令也认）后交给 `edit` 改写。
-fn mutate(text: &str, command: &str, edit: impl FnOnce(&mut Vec<String>, usize)) -> String {
+/// 红臂只改内存副本：定位目标行（去首尾空白后整行相等）后交给 `edit` 改写。
+fn mutate(text: &str, target: &str, edit: impl FnOnce(&mut Vec<String>, usize)) -> String {
     let mut lines = text.lines().map(str::to_owned).collect::<Vec<_>>();
     let at = lines
         .iter()
-        .position(|line| {
-            let line = line.trim();
-            line == command || line.strip_prefix("run:").map(str::trim) == Some(command)
-        })
-        .unwrap_or_else(|| panic!("找不到 `{command}`"));
+        .position(|line| line.trim() == target)
+        .unwrap_or_else(|| panic!("找不到 `{target}`"));
     edit(&mut lines, at);
     lines.join("\n")
 }
 
-/// 向上找第一个满足条件的非注释行：命令所在步骤的 `- ` 行，或所在作业的作业名行。
-fn enclosing(lines: &[String], at: usize, hit: impl Fn(&str) -> bool) -> usize {
+/// 向上找第一行满足条件的：命令所在步骤的表头，或所在 run 块的开头。
+fn above(lines: &[String], at: usize, hit: impl Fn(&str) -> bool) -> usize {
     (0..at)
         .rev()
-        .find(|&index| !lines[index].trim().starts_with('#') && hit(&lines[index]))
-        .expect("命令属于某个步骤与作业")
+        .find(|&index| hit(lines[index].trim()))
+        .expect("命令属于某一步")
 }
 
-fn step_start(lines: &[String], at: usize) -> usize {
-    enclosing(lines, at, |line| line.trim().starts_with("- "))
+fn header(lines: &[String], at: usize) -> usize {
+    above(lines, at, |line| line.starts_with("[["))
 }
 
-/// 在 `owner` 行下插入更深一层的键；多行时后续行相对第一行缩进。
-fn with_key(lines: &mut Vec<String>, owner: usize, key: &str) {
-    let pad = " ".repeat(indent(&lines[owner]) + 2);
-    let key = key.replace('\n', &format!("\n{pad}"));
-    lines.insert(owner + 1, format!("{pad}{key}"));
+/// 命令所在这一步之后的第一个步骤表头（没有就是文件末尾）。
+fn next_header(lines: &[String], at: usize) -> usize {
+    (at + 1..lines.len())
+        .find(|&index| lines[index].trim().starts_with("[["))
+        .unwrap_or(lines.len())
+}
+
+/// 同一步里的门禁（它们共进退）。
+fn same_step(toml: &str, command: &str) -> Vec<String> {
+    let (cwd, _) = pinned()
+        .find(|&(_, pinned)| pinned == command)
+        .expect("钉住的门禁");
+    let step = gate_step(toml, cwd, command);
+    pinned()
+        .filter(|&(cwd, other)| gate_step(toml, cwd, other) == step)
+        .map(|(cwd, other)| label(cwd, other))
+        .collect()
 }
 
 #[test]
 fn every_pinned_command_is_load_bearing_and_weakened_copies_turn_red() {
-    let (yaml, script) = entrypoints();
-    let red = [format!("rust: {WORKSPACE_TEST}")];
+    let (toml, script) = entrypoints();
+    let red = [label(None, WORKSPACE_TEST)];
     // 删掉整个 Workspace 测试步骤：旧守卫的判据 `contains("cargo --locked test")` 仍被
     // 路径安全那一行满足（重言式），新守卫照样报缺。
-    let dropped = mutate(&yaml, WORKSPACE_TEST, |lines, at| {
-        let start = step_start(lines, at);
-        let level = indent(&lines[start]);
-        let end = (at + 1..lines.len())
-            .find(|&index| !lines[index].trim().is_empty() && indent(&lines[index]) <= level)
-            .unwrap_or(lines.len());
+    let dropped = mutate(&toml, WORKSPACE_TEST, |lines, at| {
+        let (start, end) = (header(lines, at), next_header(lines, at));
         lines.drain(start..end);
     });
     assert!(!dropped.contains(WORKSPACE_TEST) && dropped.contains("cargo --locked test"));
-    assert_eq!(workflow_gaps(&dropped), red);
+    assert_eq!(suite_gaps(&dropped), red);
     // 每条钉住的命令都只由它自己那一行满足：删掉即报缺，且只报它。
     let remove = |lines: &mut Vec<String>, at: usize| {
         lines.remove(at);
     };
-    for (job, command) in pinned() {
-        let gaps = workflow_gaps(&mutate(&yaml, command, remove));
-        assert_eq!(gaps, [format!("{job}: {command}")]);
+    for (cwd, command) in pinned() {
+        assert_eq!(
+            suite_gaps(&mutate(&toml, command, remove)),
+            [label(cwd, command)]
+        );
     }
     for command in SHARED {
         assert_eq!(script_gaps(&mutate(&script, command, remove)), [command]);
@@ -182,106 +197,57 @@ fn every_pinned_command_is_load_bearing_and_weakened_copies_turn_red() {
         format!("{WORKSPACE_TEST} || true"),
         format!("echo \\\n{WORKSPACE_TEST}"),
     ] {
-        let rewrite = |lines: &mut Vec<String>, at: usize| {
-            let pad = " ".repeat(indent(&lines[at]));
-            lines[at] = weakened.replace('\n', &format!("\n{pad}"));
-            lines[at].insert_str(0, &pad);
-        };
-        assert_eq!(workflow_gaps(&mutate(&yaml, WORKSPACE_TEST, rewrite)), red);
+        let rewrite = |lines: &mut Vec<String>, at: usize| lines[at] = weakened.clone();
+        assert_eq!(suite_gaps(&mutate(&toml, WORKSPACE_TEST, rewrite)), red);
         let gaps = script_gaps(&mutate(&script, WORKSPACE_TEST, rewrite));
         assert_eq!(gaps, [WORKSPACE_TEST]);
     }
-    // 步骤带条件、容错或换成不保证 errexit 的 shell：命令原样还在，但门禁可能不跑、跑挂了也不拦。
+    // 这一步换了套、改成后台服务、换了目录、加了守卫读不懂的键：命令原样还在，但门禁可能不跑、跑挂了也不拦。
     for key in [
-        "if: false",
-        "continue-on-error: true",
-        "'if': ${{ false }}",
-        "shell: sh",
-        "shell: bash {0}",
-        "'shell': pwsh",
+        "service = true",
+        "cwd = \"crates\"",
+        "env = { CARGO_TARGET_DIR = \"/tmp\" }",
+        "run_as = \"nobody\"",
     ] {
-        let gated = mutate(&yaml, WORKSPACE_TEST, |lines, at| {
-            let start = step_start(lines, at);
-            with_key(lines, start, key);
+        let changed = mutate(&toml, WORKSPACE_TEST, |lines, at| {
+            let start = header(lines, at);
+            lines.insert(start + 1, key.to_owned());
         });
-        assert_eq!(workflow_gaps(&gated), red, "{key}");
+        assert_eq!(suite_gaps(&changed), red, "{key}");
     }
-    // 作业级 `if:` 让整组前端门禁都不算数。
-    let skipped = mutate(&yaml, "npm test", |lines, at| {
-        let job = enclosing(lines, at, |line| indent(line) == JOB_INDENT);
-        with_key(lines, job, "if: false");
+    // 紧跟在这一步后面的子表在 TOML 里把键挂到这一步上（这里改 PATH，cargo 可以被换掉）。
+    let nested = mutate(&toml, WORKSPACE_TEST, |lines, at| {
+        let end = next_header(lines, at);
+        lines.insert(end, "[suites.ci.steps.env]".to_owned());
+        lines.insert(end + 1, "PATH = \"/tmp\"".to_owned());
     });
-    let frontend = FRONTEND.map(|command| format!("frontend: {command}"));
-    assert_eq!(workflow_gaps(&skipped), frontend);
+    assert_eq!(suite_gaps(&nested), red);
+    let moved = mutate(&toml, WORKSPACE_TEST, |lines, at| {
+        let start = header(lines, at);
+        lines[start] = "[[suites.nightly.steps]]".to_owned();
+    });
+    assert_eq!(suite_gaps(&moved), red);
+    // 前端那几步离开 web 目录也不算数。
+    let elsewhere = mutate(&toml, "npm test", |lines, at| {
+        let start = header(lines, at);
+        let cwd = (start..at)
+            .find(|&index| lines[index].trim() == "cwd = \"web\"")
+            .expect("前端步骤写明了目录");
+        lines.remove(cwd);
+    });
+    assert_eq!(suite_gaps(&elsewhere), [label(Some(WEB), "npm test")]);
 }
 
 #[test]
-fn errexit_and_trigger_weakenings_turn_red() {
-    let (yaml, script) = entrypoints();
-    let red = [format!("rust: {WORKSPACE_TEST}")];
-    let all = pinned()
-        .map(|(job, command)| format!("{job}: {command}"))
-        .collect::<Vec<_>>();
-    let rust = &all[..SHARED.len() + PRODUCTION.len()];
-    // run 块首行 `set +e`（行内 `run:` 先改写成字面块）：每条门禁都只让自己那一步报缺。
-    for (job, command) in pinned() {
-        let off = mutate(&yaml, command, |lines, at| {
-            let pad = " ".repeat(indent(&lines[at]));
-            if lines[at].trim().starts_with("run:") {
-                lines[at] = format!("{pad}run: |\n{pad}  set +e\n{pad}  {command}");
-            } else {
-                let run = enclosing(lines, at, |line| line.trim().starts_with("run:"));
-                lines.insert(run + 1, format!("{pad}set +e"));
-            }
+fn errexit_weakenings_turn_red() {
+    let (toml, script) = entrypoints();
+    // run 块开头 `set +e`：这一步的门禁（只有它们）都报缺。
+    for (_, command) in pinned() {
+        let off = mutate(&toml, command, |lines, at| {
+            let run = above(lines, at, |line| line == "run = '''");
+            lines.insert(run + 1, "set +e".to_owned());
         });
-        assert_eq!(workflow_gaps(&off), [format!("{job}: {command}")]);
-    }
-    // 步骤、rust 作业或全局 defaults 换了 shell：该步／该作业／全部门禁都不算数；
-    // 显式写 `bash`（带不带引号）与省略时一样开着 errexit，照旧全绿。
-    for (shell, step_red, job_red, top_red) in [
-        ("bash {0}", &red[..], rust, &all[..]),
-        ("sh", &red[..], rust, &all[..]),
-        ("\"bash\"", &[][..], &[][..], &[][..]),
-        ("bash", &[][..], &[][..], &[][..]),
-    ] {
-        let block = format!("defaults:\n  run:\n    shell: {shell}");
-        let step = mutate(&yaml, WORKSPACE_TEST, |lines, at| {
-            let start = step_start(lines, at);
-            with_key(lines, start, &format!("shell: {shell}"));
-        });
-        let job = mutate(&yaml, "rust:", |lines, at| with_key(lines, at, &block));
-        let top = mutate(&yaml, "jobs:", |lines, at| lines.insert(at, block.clone()));
-        assert_eq!(workflow_gaps(&step), step_red, "步骤：{shell}");
-        assert_eq!(workflow_gaps(&job), job_red, "作业 defaults：{shell}");
-        assert_eq!(workflow_gaps(&top), top_red, "全局 defaults：{shell}");
-    }
-    // 把 `anchor` 那一行里的它换成 `new`（可含换行，空串即删掉这个键）后的 ci.yml 缺口。
-    let gaps_after = |anchor: &str, new: &str| {
-        let edit = |lines: &mut Vec<String>, at: usize| lines[at] = lines[at].replace(anchor, new);
-        workflow_gaps(&mutate(&yaml, anchor, edit))
-    };
-    // 触发条件：PR 被过滤或不触发、push 放宽到别的分支或被路径过滤，门禁原样都在也不算数。
-    for (anchor, new) in [
-        ("pull_request:", "pull_request:\n    paths: [docs/**]"),
-        ("pull_request:", ""),
-        ("pull_request:", "pull_request:\n    types: [opened]"),
-        ("branches: [main]", "branches: [\"**\"]"),
-        ("push:", "push:\n    paths-ignore: [web/**]"),
-        ("on:", "true:"),
-    ] {
-        let gaps = gaps_after(anchor, new);
-        let triggers = gaps.iter().all(|gap| gap.starts_with("on"));
-        assert!(!gaps.is_empty() && triggers, "{new}：{gaps:?}");
-    }
-    // 与现状等价的写法照旧全绿：带引号的 on、另两种写法的 [main]、含三种默认类型的 types。
-    let typed = "pull_request:\n    types: [opened, synchronize, reopened, edited]";
-    for (anchor, new) in [
-        ("on:", "\"on\":"),
-        ("branches: [main]", "branches: ['main']"),
-        ("branches: [main]", "branches:\n      - \"main\""),
-        ("pull_request:", typed),
-    ] {
-        assert_eq!(gaps_after(anchor, new), Vec::<String>::new(), "{new}");
+        assert_eq!(suite_gaps(&off), same_step(&toml, command), "{command}");
     }
     // test-linux.sh：严格模式要在第一条门禁之前，全文不许关 errexit。
     let strict = |edit: fn(&mut Vec<String>, usize)| script_gaps(&mutate(&script, STRICT, edit));

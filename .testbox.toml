@@ -1,0 +1,267 @@
+# 测试箱步骤单（testbox guide「步骤单」）。GitHub CI 2026-11-16 弃用（spark-testbox 项目 T-078 的 Studiolo 份，ADR-036），合进 main 之前必过 ci 套：
+#   testbox submit --project studiolo --recipe full --steps ci --arch x86_64 --memory 20G --cpu 8 --wait
+# Mac 上在 testbox 后面加 --remote testbox@max-spark；一步失败 --wait 马上返回，任务照跑完剩下的步骤（--wait-all 等全部）。
+# --recipe full 取 full 档（上限 60 分钟、64 GiB）；默认的 targeted 档只有 30 分钟，整套跑不完时会被停。
+#
+# ci 套逐步照搬原来 .github/workflows/ci.yml 的三个作业（rust、frontend、alerts-worker），命令一字不改；
+# runner 和沙盒环境的差别（umask、私有临时目录、本任务自己的构建目录、Node 版本）由 scripts/testbox-ci-env.sh 补齐，
+# 每一步开头 source 它。门禁命令由架构守卫（crates/studiolo/tests/architecture_cases/ci.rs）逐行钉住：
+# 删掉、注释、改参数、吞失败、关 errexit、换目录、改成后台服务都判红。改这份文件时只用守卫认得的写法：
+# 字符串用双引号且不带转义，run 用独占一行的 ''' 开合，键后不跟行尾注释，表头只用 [suites.ci] 和 [[suites.ci.steps]]。
+#
+# lanes = 1：一步接一步，同一任务的各步共用构建目录（clippy、测试、构建之间照样增量）。
+# 资源（2026-11-16 照 ci.yml 整批跑的实测）：Rust 部分约 9 分钟、内存峰值 15.9 GiB；前端和 Worker 约 1.5 分钟、1.7 GiB。
+
+[suites.ci]
+lanes = 1
+
+# ---------------------------------------------------------------- 原 rust 作业
+
+[[suites.ci.steps]]
+name = "env"
+title = "环境：工具链、Node、Python 版本与内存锁定上限"
+run = '''
+source scripts/testbox-ci-env.sh
+rustc --version
+cargo --version
+node --version
+python3 --version
+ulimit -l
+'''
+timeout_sec = 600
+
+[[suites.ci.steps]]
+name = "fmt"
+title = "格式检查"
+run = '''
+source scripts/testbox-ci-env.sh
+cargo --locked fmt --all -- --check
+'''
+timeout_sec = 600
+
+[[suites.ci.steps]]
+name = "deploy-scripts"
+title = "部署脚本回归"
+run = '''
+source scripts/testbox-ci-env.sh
+for script in scripts/package-agent.sh scripts/run-agent-tests.sh scripts/sync-agent-vault.sh scripts/package-preview.sh scripts/run-preview-tests.sh deploy/agent/install-t036-system.sh deploy/agent/upgrade-read-supply.sh.in deploy/agent/enable-m4-policy.sh.in; do
+  bash -n "$script"
+done
+python3 scripts/test-agent-package.py
+python3 scripts/test-project-registry.py
+python3 scripts/test-render-agent-upgrade.py
+python3 scripts/test-prepare-m4-policy.py
+python3 scripts/test-m4-recovery.py
+python3 -I -B scripts/test-human-offline.py
+python3 scripts/test-check-agent-policy.py
+python3 scripts/test-check-policy-revocation.py
+python3 -I -B scripts/test-check-backup-preflight.py
+python3 scripts/test-preview-package.py
+python3 scripts/test-check-agent-http.py
+python3 scripts/test-check-agent.py
+python3 scripts/test-check-agent-replica.py
+python3 scripts/test-sync-agent-vault.py
+python3 scripts/test-prepare-agent-sync.py
+python3 scripts/test-replica-receiver.py
+python3 scripts/test-replica-boundaries.py
+python3 scripts/test-check-preview.py
+python3 scripts/test-check-preview-exercise.py
+python3 scripts/test-package-inputs.py
+python3 scripts/test-client-projection-schema.py
+python3 scripts/test-client-projection-fetch.py
+python3 scripts/test-client-projection-store.py
+python3 scripts/test-local-client-core.py
+python3 scripts/test-local-client-native.py
+python3 scripts/test-local-client-server.py
+python3 scripts/test-local-client-contract.py
+python3 deploy/blackboard/test_assembly.py
+python3 deploy/blackboard/test_freeze.py
+python3 deploy/blackboard/test_activation.py
+python3 deploy/blackboard/test_sync_tools.py
+python3 deploy/blackboard/test_sync_release.py
+python3 -I -B deploy/sync-bridge/recovery/test_canonical_snapshot.py
+python3 -I -B deploy/sync-bridge/recovery/test_credentials.py
+python3 -I -B deploy/sync-bridge/test_pair_production.py
+python3 -I -B -S deploy/doorbell/test_units.py
+python3 -I -B -S deploy/backup-worker/test_units.py
+python3 scripts/tests/test_runner_launch.py
+( umask 002; python3 scripts/test-sync-agent-vault.py; python3 scripts/test-replica-receiver.py; python3 scripts/test-replica-boundaries.py )
+'''
+timeout_sec = 1800
+
+[[suites.ci.steps]]
+name = "alerts-monitor"
+title = "告警监控契约（需要锁定内存）"
+run = '''
+source scripts/testbox-ci-env.sh
+python3 -I -B -S deploy/alerts/test_monitor.py
+'''
+timeout_sec = 600
+
+[[suites.ci.steps]]
+name = "clippy"
+title = "Clippy（警告即失败）"
+run = '''
+source scripts/testbox-ci-env.sh
+cargo --locked clippy --workspace --all-targets -- -D warnings
+'''
+timeout_sec = 2400
+
+[[suites.ci.steps]]
+name = "workspace-test"
+title = "Workspace 测试"
+run = '''
+source scripts/testbox-ci-env.sh
+python3 --version
+ulimit -l
+cargo --locked test --workspace
+'''
+timeout_sec = 3600
+
+[[suites.ci.steps]]
+name = "restore-probe"
+title = "恢复探针示例契约"
+run = '''
+source scripts/testbox-ci-env.sh
+cargo --locked test -p studiolo-vault-broker --example t132-restore-probe
+'''
+timeout_sec = 1200
+
+[[suites.ci.steps]]
+name = "mcp-pipelines"
+title = "Python 副本发布与真实 MCP 管线"
+run = '''
+source scripts/testbox-ci-env.sh
+cargo --locked build -p studiolo-agent-server
+python3 scripts/check-replica-pipeline.py "${CARGO_TARGET_DIR:-target}/debug/studiolo-agent"
+python3 scripts/check-client-projection-pipeline.py "${CARGO_TARGET_DIR:-target}/debug/studiolo-agent"
+( umask 002; python3 scripts/check-replica-pipeline.py "${CARGO_TARGET_DIR:-target}/debug/studiolo-agent"; python3 scripts/check-client-projection-pipeline.py "${CARGO_TARGET_DIR:-target}/debug/studiolo-agent" )
+'''
+timeout_sec = 1800
+
+[[suites.ci.steps]]
+name = "linux-path-security"
+title = "Linux 路径安全负向测试（显式验收）"
+run = '''
+source scripts/testbox-ci-env.sh
+cargo --locked test -p studiolo-vault-broker --test linux_path_security
+'''
+timeout_sec = 1200
+
+[[suites.ci.steps]]
+name = "production-build"
+title = "生产身份特征构建（禁止混入虚构测试验证器）"
+run = '''
+source scripts/testbox-ci-env.sh
+cargo --locked build -p studiolo-local-server --features studiolo-auth/production
+'''
+timeout_sec = 1800
+
+[[suites.ci.steps]]
+name = "vault-admin-build"
+title = "Vault 首建工具构建"
+run = '''
+source scripts/testbox-ci-env.sh
+cargo --locked build -p studiolo-vault-admin
+'''
+timeout_sec = 1200
+
+[[suites.ci.steps]]
+name = "auth-admin-cli"
+title = "本地登记工具生产特征构建与 CLI 契约"
+run = '''
+source scripts/testbox-ci-env.sh
+cargo --locked build -p studiolo-auth-admin --features production
+python3 crates/auth-admin/tests/support/cli_process.py "${CARGO_TARGET_DIR:-target}/debug/studiolo-auth-admin"
+'''
+timeout_sec = 1200
+
+# ---------------------------------------------------------------- 原 frontend 作业（Node 22.17.0）
+
+[[suites.ci.steps]]
+name = "web-install"
+title = "前端：安装固定依赖（不运行安装脚本）"
+cwd = "web"
+run = '''
+source ../scripts/testbox-ci-env.sh
+npm ci --ignore-scripts
+'''
+timeout_sec = 900
+
+[[suites.ci.steps]]
+name = "web-build"
+title = "前端：生产构建与类型检查"
+cwd = "web"
+needs = ["web-install"]
+run = '''
+source ../scripts/testbox-ci-env.sh
+npm run build
+'''
+timeout_sec = 900
+
+[[suites.ci.steps]]
+name = "web-test"
+title = "前端：契约测试"
+cwd = "web"
+needs = ["web-install"]
+run = '''
+source ../scripts/testbox-ci-env.sh
+npm test
+'''
+timeout_sec = 1200
+
+[[suites.ci.steps]]
+name = "web-lint"
+title = "前端：代码规范"
+cwd = "web"
+needs = ["web-install"]
+run = '''
+source ../scripts/testbox-ci-env.sh
+npm run lint
+'''
+timeout_sec = 900
+
+[[suites.ci.steps]]
+name = "web-format"
+title = "前端：格式检查"
+cwd = "web"
+needs = ["web-install"]
+run = '''
+source ../scripts/testbox-ci-env.sh
+npm run format
+'''
+timeout_sec = 600
+
+# ---------------------------------------------------------------- 原 alerts-worker 作业（Node 24.22.2）
+
+[[suites.ci.steps]]
+name = "worker-install"
+title = "外部心跳 Worker：安装锁定依赖"
+cwd = "deploy/alerts/worker"
+run = '''
+source ../../../scripts/testbox-ci-env.sh 24.22.2
+npm ci --ignore-scripts
+'''
+timeout_sec = 900
+
+[[suites.ci.steps]]
+name = "worker-test"
+title = "外部心跳 Worker：状态机和实际 Workers 运行时"
+cwd = "deploy/alerts/worker"
+needs = ["worker-install"]
+run = '''
+source ../../../scripts/testbox-ci-env.sh 24.22.2
+npm test
+'''
+timeout_sec = 900
+
+[[suites.ci.steps]]
+name = "worker-build"
+title = "外部心跳 Worker：生成部署产物（不发布）"
+cwd = "deploy/alerts/worker"
+needs = ["worker-install"]
+run = '''
+source ../../../scripts/testbox-ci-env.sh 24.22.2
+npm run build
+'''
+timeout_sec = 900

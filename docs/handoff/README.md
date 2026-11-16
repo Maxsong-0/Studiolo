@@ -12,7 +12,7 @@ Cursor Cloud 这类云端会话读不到它，所以把**当前在推进的工�
 
 ## 云端会话怎么干活
 
-- 验证一律用 **GitHub CI**：推分支／开 PR 触发自托管 runner（`AGENTS.md` 第五节）；推之前在 VM 里用 `scripts/test-cursor-cloud.sh` 与 `npm --prefix web run …` 把能验的验完（`AGENTS.md` 第六节）。
+- GitHub 上已没有 CI（2026-11-16 弃用，`AGENTS.md` 第五节）：在 VM 里用 `scripts/test-cursor-cloud.sh` 与 `npm --prefix web run …` 把能验的验完（`AGENTS.md` 第六节）；合进 main 之前必过的测试箱 ci 套在 VM 里连不到，写明「交本机会话」。
 - 需要登录内网机器（107／108／169）、读写 vault、或用 studiolo MCP 的步骤，云端做不了——停下，在回复或 PR 描述里写明「交本机会话」，不要索要或注入内网／SSH 凭据。
 
 ## 当前快照

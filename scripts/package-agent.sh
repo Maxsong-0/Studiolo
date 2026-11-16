@@ -28,7 +28,7 @@ mkdir "$STUDIOLO_OUT"
 mkdir "$STUDIOLO_OUT/source" "$STUDIOLO_OUT/payload" "$STUDIOLO_OUT/build-meta"
 cd "$STUDIOLO_ROOT"
 # 只复制白名单内的已跟踪普通文件；目录入口不递归收集未跟踪文件、缓存或用户资料。
-# 架构守卫要读 package-preview.sh / test-linux.sh / ci.yml / .config/nextest.toml，一并携带
+# 架构守卫要读 package-preview.sh / test-linux.sh / 测试箱步骤单（.testbox.toml）/ .config/nextest.toml，一并携带
 # （漏带时随包的架构测试在服务器上读不到文件；test-package-inputs.py 有守卫）。
 STUDIOLO_INPUTS=(
   Cargo.toml Cargo.lock rust-toolchain.toml crates
@@ -36,7 +36,7 @@ STUDIOLO_INPUTS=(
   scripts/check-agent.py scripts/test-check-agent.py scripts/test-sync-agent-vault.py
   scripts/check-agent-replica.py scripts/test-check-agent-replica.py
   scripts/check-agent-http.py scripts/test-check-agent-http.py
-  scripts/sync-agent-vault.sh scripts/test-linux.sh .github/workflows/ci.yml .config/nextest.toml
+  scripts/sync-agent-vault.sh scripts/test-linux.sh .testbox.toml .config/nextest.toml
   scripts/replica_archive.py scripts/replica_capture.py scripts/replica_cleanup.py
   scripts/replica_client.py scripts/replica_common.py scripts/replica_receiver.py scripts/replica_store.py
   scripts/test-replica-receiver.py scripts/test-replica-boundaries.py
