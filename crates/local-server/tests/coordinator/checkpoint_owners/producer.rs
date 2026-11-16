@@ -22,6 +22,10 @@ pub(super) struct Stage {
 impl Stage {
     /// `shared` 为 false 时封存父目录保持 0700：读取组条件不满足，封存一定做不成。
     pub(super) async fn new(shared: bool) -> Self {
+        Self::with_retention(shared, 600_000).await
+    }
+    /// `retention_millis` 是封存正文留多久；演练「来源过期」时给一个很短的值。
+    pub(super) async fn with_retention(shared: bool, retention_millis: u64) -> Self {
         let assembled = Assembled::new().await;
         let parent = target(&assembled.fixture, "staging");
         if shared {
@@ -45,7 +49,7 @@ impl Stage {
                 ephemeral_root: ephemeral,
                 source_roots,
                 min_interval_millis: 3_600_000,
-                source_retention_millis: 600_000,
+                source_retention_millis: retention_millis,
                 freeze_budget: FreezeBudget::new(30_000).unwrap(),
                 manifest: manifest(),
             },
@@ -63,7 +67,7 @@ impl Stage {
             .decode_reply(&self.producer.dispatch(&request.encode().unwrap()).unwrap())
             .unwrap()
     }
-    fn outcomes(&self, sequence: u64) -> usize {
+    pub(super) fn outcomes(&self, sequence: u64) -> usize {
         self.assembled
             .human
             .query(&AuditFilter::default().with_phase(AuditPhase::Outcome))
