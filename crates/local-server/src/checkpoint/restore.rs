@@ -1,14 +1,15 @@
 //! 新根恢复的编排：按已核验清单里的名单，逐个走每个 owner 自己的恢复入口。
 //!
-//! 这一版只有三个 owner 有定义好的新根恢复协议：Broker（专用重绑定）、Audit（只开已有库并核对
-//! 链尾）、Auth（现成的离线恢复工具 `studiolo-auth-admin`，要人从标准输入给 TOTP 种子）。名单里别的
-//! owner 在场（Control、Bridge、AgentStore、Policy）时，整次恢复在写任何东西之前拒绝：它们恢复之后
-//! 必须做的事（旧 token 和实例失效、吊销核对、同步 binding 重建）还没有协议，硬开等于让旧凭据和
-//! 已吊销的实例复活。
+//! **现在整次恢复都会被拒绝**（2026-11-16 用户拍板「先整体拒绝，另立任务补」）：
+//! - 名单里 Control、Bridge、AgentStore、Policy 在场时拒绝：它们恢复之后必须做的事（旧 token 和
+//!   实例失效、吊销核对、同步 binding 重建）还没有协议，硬开等于让旧凭据和已吊销的实例复活。
+//! - Auth 在场（每份生产封存都有）也拒绝：恢复之后要废止旧会话、L3 和恢复码，而现成的离线恢复
+//!   工具 `studiolo-auth-admin` 不认这个新根布局、也拒绝生产路径；新根又能直接起服务。撤权入口和
+//!   「撤权前新根不能打开」的闸门补上之前，不能交出一个旧凭据仍然有效的新根。
 //!
-//! 这里做到「四个组件已放到新根、Broker 已重绑定、人侧账本链尾和清单对上」为止。Auth 的库只放置、
-//! 不打开：废止旧会话、L3 和恢复码由离线恢复工具在同一个新根上做（它要的布局正是这里的 `auth` 和
-//! `audit` 两个名字）。这里不建空库、不补默认 owner、不做最终切换。
+//! 拒绝都发生在写任何东西之前。放置四个组件、Broker 重绑定、重开人侧账本核链尾这几步留着并有
+//! 用例（只有测试能越过 Auth 那道拒绝），撤权编排补上之后直接复用。这里不建空库、不补默认 owner、
+//! 不做最终切换。
 use super::export::{AUDIT, AUTH, CANONICAL, WRITER_DATA};
 use std::{path::Path, time::Instant};
 use studiolo_audit_ledger::{AuditFilter, AuditLedger, SqliteAuditLedger};
@@ -78,7 +79,7 @@ impl std::fmt::Display for RestoreRefusal {
 }
 impl std::error::Error for RestoreRefusal {}
 
-/// 做到「可以交给 Auth 离线恢复工具」时的回执；不是服务可以上线的证明。
+/// 做到「四个组件已放好、Broker 已重绑定、链尾对上」时的回执；不是服务可以上线的证明。
 #[derive(Debug)]
 pub struct RestoreReport {
     /// Broker 重绑定的回执（保留下来的 Vault 身份、配对标识和 lineage）。
@@ -95,14 +96,31 @@ struct Plan {
     audit_hash: String,
 }
 
-/// 把一份已核验的取回副本恢复到新根。
-///
-/// 顺序：核恢复记录和前置检查 → 按名单定能不能恢复（不能就在这里拒绝，还没写任何东西）→ 逐字节
-/// 核对着放置四个组件 → Broker 重绑定 → 重开人侧账本并核链尾。每一步都记进恢复记录。
-/// 成功返回后还剩两步，都不在这里做：Auth 离线恢复工具废止旧凭据，然后人做最终切换。
+/// Auth 的撤权入口和「撤权前新根不能打开」的闸门有没有接上。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum AuthRevocation {
+    /// 没有：名单里有 Auth 就在写任何东西之前拒绝。生产只有这一种。
+    Missing,
+    /// 只在测试里有：照样放置、重绑定、核链尾，保住这几步的覆盖。生产二进制里没有这个变体。
+    #[cfg(test)]
+    PlacementOnly,
+}
+
+/// 把一份已核验的取回副本恢复到新根。现在总是在写任何东西之前拒绝，见模块说明。
 pub fn restore_into_new_root(
     grant: &mut RecoveryGrant,
     request: NewRootRestore<'_>,
+) -> Result<RestoreReport, RestoreRefusal> {
+    restore_with(grant, request, AuthRevocation::Missing)
+}
+
+/// 顺序：核恢复记录和前置检查 → 按名单定能不能恢复（不能就在这里拒绝，还没写任何东西）→ Auth 的
+/// 撤权没接上就拒绝 → 逐字节核对着放置四个组件 → Broker 重绑定 → 重开人侧账本并核链尾。
+/// 每一步都记进恢复记录。成功返回后还剩两步，都不在这里做：Auth 废止旧凭据，然后人做最终切换。
+pub(crate) fn restore_with(
+    grant: &mut RecoveryGrant,
+    request: NewRootRestore<'_>,
+    auth: AuthRevocation,
 ) -> Result<RestoreReport, RestoreRefusal> {
     let checkpoint = &request.restored.reference().checkpoint_id;
     if &grant.transcript.checkpoint_id != checkpoint || grant.transcript.authorize_write().is_err()
@@ -113,6 +131,9 @@ pub fn restore_into_new_root(
         return Err(RestoreRefusal::ChecksIncomplete);
     }
     let plan = plan(request.restored)?;
+    if auth == AuthRevocation::Missing {
+        return Err(RestoreRefusal::Unsupported(CheckpointOwner::Auth));
+    }
     let mut present = 0;
     for (_, name) in LAYOUT {
         if RestoredCheckpoint::placed(request.new_root, name)
