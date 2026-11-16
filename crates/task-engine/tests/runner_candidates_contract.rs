@@ -166,6 +166,8 @@ struct LostManifestAck {
     unprovable: bool,
     /// 接下来这么多次丢暂存会失败（落定之后、丢暂存之前出错）。
     discard_faults: std::sync::atomic::AtomicU32,
+    /// Broker 整体出了问题（存储写满之类）：设上之后每次提交都这样失败，清掉就恢复。
+    wide_fault: std::sync::Mutex<Option<std::io::ErrorKind>>,
 }
 impl VaultReader for LostManifestAck {
     fn vault_uuid(&self) -> VaultUuid {
@@ -238,6 +240,12 @@ impl VaultWriter for LostManifestAck {
         &mut self,
         c: ArtifactCommit,
     ) -> Result<ArtifactCommitReceipt, BrokerError> {
+        if let Some(kind) = *self.wide_fault.lock().unwrap() {
+            return Err(BrokerError::Io {
+                operation: "broker storage",
+                source: std::io::Error::from(kind),
+            });
+        }
         if std::mem::take(&mut self.before) {
             return Err(BrokerError::Io {
                 operation: "crash before the first body",
@@ -272,6 +280,7 @@ fn manifest_ack_crash_recovers_candidates_into_needs_review_without_running_cli(
             before: false,
             unprovable: false,
             discard_faults: Default::default(),
+            wide_fault: Default::default(),
         },
         MemoryAuditLedger::new(),
     );
@@ -385,6 +394,7 @@ fn expired_before_first_body(
             before: true,
             unprovable,
             discard_faults: discard_faults.into(),
+            wide_fault: Default::default(),
         },
         MemoryAuditLedger::new(),
     );
@@ -480,7 +490,11 @@ fn expired_unstarted_candidates_wait_for_the_owner_and_only_the_owner_discards_t
     );
     let (_db, _broker, ledger) = engine.into_parts();
     assert_eq!(actions(&ledger, "task.commit_expired"), 1);
-    assert_eq!(actions(&ledger, "task.candidate_recovery_pending"), 2);
+    assert_eq!(
+        actions(&ledger, "task.candidate_recovery_pending"),
+        1,
+        "同一个 attempt 对账两轮也只记一次"
+    );
 }
 
 /// 过期了，但 Broker 这会儿证实不了「一个字节都没写」：主人的丢弃也被拒绝，提交和暂存原样保留，
@@ -508,7 +522,53 @@ fn owner_discard_is_refused_when_expiry_cannot_be_proven() {
     assert_eq!(engine.control_db().committing_attempts().unwrap().len(), 1);
     let (_db, _broker, ledger) = engine.into_parts();
     assert_eq!(actions(&ledger, "task.commit_expired"), 0);
-    assert_eq!(actions(&ledger, "task.candidate_recovery_pending"), 2);
+    assert_eq!(
+        actions(&ledger, "task.candidate_recovery_pending"),
+        1,
+        "同一个 attempt 对账两轮也只记一次"
+    );
+}
+
+/// Broker 整体出了问题（这里是存储写满、只读、没有权限）不是哪一份预留的事：周期对账整轮报错，常驻循环
+/// 停下来让人看见，不把每个提交中的 attempt 记成各自待恢复（复审 A1-F3）。故障过去之后照常对账：过期的
+/// 提交停在待恢复、等主人决定，待恢复审计只记一次。
+#[test]
+fn broker_wide_failure_fails_the_round_instead_of_parking_each_attempt() {
+    let temp = tempfile::TempDir::new_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
+    let (mut engine, task, _claim) = expired_before_first_body(&temp, false, 0);
+    for kind in [
+        std::io::ErrorKind::StorageFull,
+        std::io::ErrorKind::ReadOnlyFilesystem,
+        std::io::ErrorKind::PermissionDenied,
+    ] {
+        *engine.broker().wide_fault.lock().unwrap() = Some(kind);
+        assert!(
+            matches!(
+                engine.reconcile_periodic(10),
+                Err(TaskEngineError::CommitFailed(BrokerError::Io { .. }))
+            ),
+            "{kind:?} 要让整轮报错"
+        );
+        assert_eq!(
+            engine.task(task).unwrap().unwrap().status,
+            TaskStatus::Committing
+        );
+    }
+    *engine.broker().wide_fault.lock().unwrap() = None;
+    engine.reconcile_periodic(11).unwrap();
+    engine.reconcile_periodic(12).unwrap();
+    assert!(engine.commit_awaiting_discard(task).unwrap());
+    assert_eq!(
+        staged_candidates(&temp.path().join("broker")),
+        1,
+        "整轮报错不能丢暂存"
+    );
+    let (_db, _broker, ledger) = engine.into_parts();
+    assert_eq!(
+        actions(&ledger, "task.candidate_recovery_pending"),
+        1,
+        "故障那几轮不记待恢复，恢复后同一个 attempt 只记一次"
+    );
 }
 
 /// 落定已经提交、丢暂存那一步出错：主人再点一次就收拾干净，审计里仍然只有一条「提交过期」。
@@ -547,6 +607,7 @@ fn expired_plain_task_commit_is_discarded_by_the_owner_too() {
             before: true,
             unprovable: false,
             discard_faults: Default::default(),
+            wide_fault: Default::default(),
         },
         MemoryAuditLedger::new(),
     );

@@ -62,7 +62,7 @@ manifest 的逻辑证明关联 Vault 身份、task/attempt/fence、请求指纹�
 | `running` 任意时刻 | 不调用 Stub `start`；旧 attempt `abandoned`，迟到 report 为 stale/terminal |
 | `cancel_requested` | M0 Stub 不会在重启后留存独立进程，收敛 Cancelled；不恢复为 Running |
 | `committing` 已保存，尚无 artifact | 用 reservation 中保存的候选字节前滚提交，不依赖 Runner 临时目录；损坏计划失败关闭，不重跑 Stub |
-| `committing` 已保存，尚无 artifact，原批准已过期 | 对账不替主人丢：保持待恢复、保留暂存，每轮记 `task.candidate_recovery_pending`。主人调用 `discard_expired_commit`（黑板和非黑板任务都算）且 Broker 证实「已过期且一个字节都没写出」后才落成 `failed`（停止态候选落成 `cancelled`）、丢暂存、记 `task.commit_expired`；证实不了拒绝、原样保留。已经落定过的再调一次只补做收尾 |
+| `committing` 已保存，尚无 artifact，原批准已过期 | 对账不替主人丢：保持待恢复、保留暂存，记 `task.candidate_recovery_pending`（同一个 attempt 只记一次）。主人调用 `discard_expired_commit`（黑板和非黑板任务都算）且 Broker 证实「已过期且一个字节都没写出」后才落成 `failed`（停止态候选落成 `cancelled`）、丢暂存、记 `task.commit_expired`；证实不了拒绝、原样保留。已经落定过的再调一次只补做收尾 |
 | 部分 artifact 已落、无 manifest | 校验同 hash 后继续缺失项；异 hash 失败；orphan 不算成功 |
 | manifest 已落、DB 尚未 finalize | 不复制 artifact；校验 manifest 后前滚 `needs_review` |
 | DB 已 `needs_review`、outbox 未投影 | 只重试 outbox；不回滚状态、不重跑 Runner |

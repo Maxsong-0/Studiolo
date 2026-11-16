@@ -62,9 +62,11 @@ impl<B: VaultBroker + ArtifactStager, L: AuditLedger> PersistentTaskEngine<B, L>
                     // 不能挡住其他租约的处理；它的预留仍是 Committing，因此新持有者和成功回执都无法胜出。
                     // 原批准过期、一篇正文都没写出去的提交也停在这里、保留暂存，对账不替主人丢：
                     // 只有主人经 `discard_expired_commit` 决定（2026-11-16 用户拍板）。
+                    // 同一个 attempt 只记一次（请求里不带时间，账本按幂等键重放）：主人几天不处理时，
+                    // 每 15 秒一条会让审计无界增长（复审 A1-F4）。
                     self.audit_board(
                         "task.candidate_recovery_pending",
-                        &(attempt.task_id, attempt.attempt_id, now),
+                        &(attempt.task_id, attempt.attempt_id),
                         AuditPhase::Outcome,
                         Some(false),
                     )?;

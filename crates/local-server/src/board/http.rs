@@ -57,6 +57,52 @@ pub(super) fn unavailable() -> Response {
 struct QueryProject {
     project: String,
 }
+/// 一次列表最多替这么多条「提交中」任务问 Broker 过没过期：每问一次都要读暂存、问 Broker，而且拿着引擎锁，
+/// 不设上限的话页面轮询会拖住写入（复审 A1-F1）。超出的照旧显示「写回中」，主人处理掉前面的再显示后面的。
+const COMMIT_CHECKS_PER_LIST: usize = 16;
+/// 同一个故障里，没核对出来的提交状态最多隔这么久记一行日志：页面每几秒轮询一次，不能刷屏。
+const COMMIT_CHECK_NOTE_EVERY_MS: i64 = 60_000;
+
+/// 一次列表里替「提交中」任务问「提交过期、等主人决定」的预算和计数（复审 A1-F1）。
+#[derive(Default)]
+struct CommitChecks {
+    asked: usize,
+    /// 问出错或超出本次上限、没问出来的条数。
+    unknown: usize,
+}
+impl CommitChecks {
+    /// 不是「提交中」不问。问出错、或者超出本次上限的，记作没问出来、按 false 显示「写回中」：一条提交
+    /// 核对不出来只影响它自己，不能让整张列表失败、别的任务连丢弃按钮一起消失。
+    fn expired<E>(&mut self, committing: bool, ask: impl FnOnce() -> Result<bool, E>) -> bool {
+        if !committing {
+            return false;
+        }
+        if self.asked >= COMMIT_CHECKS_PER_LIST {
+            self.unknown += 1;
+            return false;
+        }
+        self.asked += 1;
+        ask().unwrap_or_else(|_| {
+            self.unknown += 1;
+            false
+        })
+    }
+}
+/// 有没核对出来的提交状态时记一行日志（只有条数，不带任务和原因），同一段故障里最多每分钟一行。
+fn note_unknown_commits(noted_ms: &std::sync::atomic::AtomicI64, unknown: usize, now_ms: i64) {
+    use std::sync::atomic::Ordering;
+    if unknown == 0 {
+        return;
+    }
+    let last = noted_ms.load(Ordering::Relaxed);
+    if now_ms.saturating_sub(last) >= COMMIT_CHECK_NOTE_EVERY_MS
+        && noted_ms
+            .compare_exchange(last, now_ms, Ordering::Relaxed, Ordering::Relaxed)
+            .is_ok()
+    {
+        eprintln!("黑板列表：{unknown} 条提交中任务的过期状态没核对出来，按「写回中」显示");
+    }
+}
 async fn view(
     plane: Option<Extension<Arc<BoardPlane>>>,
     query: Result<Query<QueryProject>, QueryRejection>,
@@ -88,15 +134,15 @@ async fn view(
         let items = engine
             .board_list(&q.project, &hash)
             .map_err(|e| e.to_string())?;
-        items
+        let mut checks = CommitChecks::default();
+        let values = items
             .into_iter()
             .map(|item| {
                 // 「提交已过期、等主人决定」随时间变：只在人侧这里实时问 Broker，不进任务页投影。
-                let commit_expired = item.task.status
-                    == studiolo_control_db::TaskStatus::Committing
-                    && engine
-                        .commit_awaiting_discard(item.task.task_id)
-                        .map_err(|_| "提交状态不可用")?;
+                let commit_expired = checks.expired(
+                    item.task.status == studiolo_control_db::TaskStatus::Committing,
+                    || engine.commit_awaiting_discard(item.task.task_id),
+                );
                 let mut lineages = Vec::new();
                 for id in [
                     item.board.created_by_instance.as_deref(),
@@ -127,7 +173,13 @@ async fn view(
                 value["commit_expired"] = serde_json::json!(commit_expired);
                 Ok::<_, String>(value)
             })
-            .collect::<Result<Vec<_>, _>>()
+            .collect::<Result<Vec<_>, _>>();
+        note_unknown_commits(
+            &plane.commit_check_noted_ms,
+            checks.unknown,
+            jiff::Timestamp::now().as_millisecond(),
+        );
+        values
     })
     .await;
     match result {
@@ -306,5 +358,55 @@ mod tests {
                 json!({"code": code, "error": error})
             );
         }
+    }
+
+    /// 一条提交核对出错只让它自己显示「写回中」，别的照常；不是「提交中」的不问（复审 A1-F1）。
+    #[test]
+    fn commit_check_failure_only_affects_that_item() {
+        let mut checks = super::CommitChecks::default();
+        assert!(!checks.expired(false, || -> Result<bool, ()> {
+            unreachable!("不是提交中，不该问")
+        }));
+        assert!(checks.expired(true, || Ok::<_, ()>(true)));
+        assert!(!checks.expired(true, || Err::<bool, _>("Broker 读不出")));
+        assert!(checks.expired(true, || Ok::<_, ()>(true)));
+        assert!(!checks.expired(true, || Ok::<_, ()>(false)));
+        assert_eq!((checks.asked, checks.unknown), (4, 1));
+    }
+
+    /// 每次列表最多问上限这么多条，超出的不问、按没问出来计（复审 A1-F1）。
+    #[test]
+    fn commit_checks_stop_at_the_per_list_budget() {
+        let mut checks = super::CommitChecks::default();
+        let mut asked = 0;
+        let shown = (0..super::COMMIT_CHECKS_PER_LIST + 3)
+            .filter(|_| {
+                checks.expired(true, || {
+                    asked += 1;
+                    Ok::<_, ()>(true)
+                })
+            })
+            .count();
+        assert_eq!(asked, super::COMMIT_CHECKS_PER_LIST);
+        assert_eq!(shown, super::COMMIT_CHECKS_PER_LIST);
+        assert_eq!(checks.unknown, 3);
+    }
+
+    /// 没核对出来的提交状态限频记日志：没有就不记，第一次记，一分钟内不再记，过了再记。
+    #[test]
+    fn unknown_commit_notes_are_rate_limited() {
+        use std::sync::atomic::{AtomicI64, Ordering};
+        let noted = AtomicI64::new(i64::MIN);
+        super::note_unknown_commits(&noted, 0, 1_000);
+        assert_eq!(noted.load(Ordering::Relaxed), i64::MIN, "没有就不记");
+        super::note_unknown_commits(&noted, 2, 1_000);
+        assert_eq!(noted.load(Ordering::Relaxed), 1_000);
+        super::note_unknown_commits(&noted, 2, 1_000 + super::COMMIT_CHECK_NOTE_EVERY_MS - 1);
+        assert_eq!(noted.load(Ordering::Relaxed), 1_000, "一分钟内不再记");
+        super::note_unknown_commits(&noted, 2, 1_000 + super::COMMIT_CHECK_NOTE_EVERY_MS);
+        assert_eq!(
+            noted.load(Ordering::Relaxed),
+            1_000 + super::COMMIT_CHECK_NOTE_EVERY_MS
+        );
     }
 }

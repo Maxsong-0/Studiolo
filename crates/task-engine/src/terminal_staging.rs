@@ -211,15 +211,37 @@ impl<B: VaultBroker + ArtifactStager, L: AuditLedger> PersistentTaskEngine<B, L>
 
 /// 只和某一个 attempt 的预留有关的失败：预留或暂存内容对不上、旧格式缺原批准、暂存读不出、Broker 拒绝
 /// 提交。这种失败只让那个 attempt 停在待恢复，不能挡住别的 attempt；控制库、审计账本本身出错不算，
-/// 那是整轮的问题。
+/// 那是整轮的问题。Broker 整体出了问题也不算（见 [`broker_wide`]）。
 pub(super) fn reservation_specific(error: &TaskEngineError) -> bool {
-    matches!(
-        error,
-        TaskEngineError::Integrity(_)
-            | TaskEngineError::Json(_)
-            | TaskEngineError::Broker(_)
-            | TaskEngineError::CommitFailed(_)
-    )
+    match error {
+        TaskEngineError::Integrity(_) | TaskEngineError::Json(_) => true,
+        TaskEngineError::Broker(error) | TaskEngineError::CommitFailed(error) => {
+            !broker_wide(error)
+        }
+        _ => false,
+    }
+}
+
+/// Broker 整体出了问题，不只是这一份预留：写者被占、写者状态或配对记录坏了、Vault 身份或根目录变了，
+/// 或者存储写满、只读、没有权限。这种失败对每个 attempt 都一样，当成各自待恢复悄悄跳过的话，常驻循环
+/// 照转、只剩审计里的记录，没人看得见（复审 A1-F3）；所以整轮报错，和 D3-F5 之前一样让服务停下来。
+fn broker_wide(error: &BrokerError) -> bool {
+    use std::io::ErrorKind;
+    match error {
+        BrokerError::WriterBusy
+        | BrokerError::WriterBindingMismatch
+        | BrokerError::CorruptWriterState
+        | BrokerError::CorruptIdentity
+        | BrokerError::RootChanged => true,
+        BrokerError::Io { source, .. } => matches!(
+            source.kind(),
+            ErrorKind::StorageFull
+                | ErrorKind::QuotaExceeded
+                | ErrorKind::ReadOnlyFilesystem
+                | ErrorKind::PermissionDenied
+        ),
+        _ => false,
+    }
 }
 
 fn pointer_reservation(
@@ -230,4 +252,49 @@ fn pointer_reservation(
         report_json: serde_json::json!({"format":3,"event_id":commit.audit_intent,"task_id":commit.task_id,"attempt_id":commit.attempt_id,"fence":commit.fence}),
         artifacts_json: serde_json::to_value(pointer)?,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn io(kind: std::io::ErrorKind) -> BrokerError {
+        BrokerError::Io {
+            operation: "fixture",
+            source: std::io::Error::from(kind),
+        }
+    }
+
+    /// 只挡这一份预留的失败放过去；Broker 整体出问题、控制库或审计出错都让整轮报错（复审 A1-F3）。
+    #[test]
+    fn only_reservation_level_failures_are_isolated() {
+        use std::io::ErrorKind;
+        let isolated = [
+            TaskEngineError::Integrity("bad".into()),
+            TaskEngineError::Json(serde_json::from_str::<u8>("x").unwrap_err()),
+            TaskEngineError::Broker(BrokerError::InvalidArtifact("expired".into())),
+            TaskEngineError::CommitFailed(BrokerError::IdempotencyConflict),
+            TaskEngineError::CommitFailed(io(ErrorKind::NotFound)),
+            TaskEngineError::Broker(io(ErrorKind::Other)),
+        ];
+        for error in &isolated {
+            assert!(reservation_specific(error), "{error:?}");
+        }
+        let whole_round = [
+            TaskEngineError::Broker(BrokerError::WriterBusy),
+            TaskEngineError::Broker(BrokerError::WriterBindingMismatch),
+            TaskEngineError::CommitFailed(BrokerError::CorruptWriterState),
+            TaskEngineError::Broker(BrokerError::CorruptIdentity),
+            TaskEngineError::CommitFailed(BrokerError::RootChanged),
+            TaskEngineError::CommitFailed(io(ErrorKind::StorageFull)),
+            TaskEngineError::Broker(io(ErrorKind::QuotaExceeded)),
+            TaskEngineError::Broker(io(ErrorKind::ReadOnlyFilesystem)),
+            TaskEngineError::CommitFailed(io(ErrorKind::PermissionDenied)),
+            TaskEngineError::AuditUnavailable,
+            TaskEngineError::NotFound("task"),
+        ];
+        for error in &whole_round {
+            assert!(!reservation_specific(error), "{error:?}");
+        }
+    }
 }

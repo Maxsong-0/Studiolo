@@ -54,6 +54,8 @@ pub struct BoardPlane {
     permits: Arc<tokio::sync::Semaphore>,
     /// 跨项目汇总上次看到的审计末条偏移；只是倒扫起点的提示，每次使用前都重新核实。
     overview_tail: std::sync::atomic::AtomicU64,
+    /// 黑板列表上次为「提交状态没核对出来」记日志的时刻（毫秒），用来限频。
+    commit_check_noted_ms: std::sync::atomic::AtomicI64,
 }
 impl BoardPlane {
     /// 从实际引擎取得固定 Control 源，不重新开库或执行迁移。
@@ -157,6 +159,7 @@ impl BoardPlane {
             isolated_roots,
             permits: Arc::new(tokio::sync::Semaphore::new(4)),
             overview_tail: std::sync::atomic::AtomicU64::new(0),
+            commit_check_noted_ms: std::sync::atomic::AtomicI64::new(i64::MIN),
         }))
     }
     /// 独立租约巡检；关闭时等待本轮控制事务结束，不留下后台写者。

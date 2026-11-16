@@ -187,8 +187,11 @@ scanner，外部不能填最大号。`board_detail/board_list` 返回可序列�
 或取消宽限到期；两者都前滚 Broker staging 与耐久审计 outbox，不重启 Runner。
 两者开头先把历史内联预留迁进 Broker staging，迁移和前滚都逐个 attempt 隔离失败（2026-11-16，复审 D3-F5）：
 只和某一份预留有关的失败（预留或暂存内容对不上、M0 时代的 attempt 没有原批准、暂存读不出、Broker 拒绝）
-只让那个 attempt 原样留着——迁不了的记一次 `task.legacy_reservation_pending`（同一个 attempt 只记一次），
-前滚不了的每轮记 `task.candidate_recovery_pending`——别的 attempt 照常处理；控制库、审计账本本身出错仍中止整轮。
+只让那个 attempt 原样留着——迁不了的记一次 `task.legacy_reservation_pending`，前滚不了的记一次
+`task.candidate_recovery_pending`（两者请求里都不带时间，同一个 attempt 各只记一次，主人晚处理也不会每轮
+加一条，复审 A1-F4）——别的 attempt 照常处理。控制库、审计账本本身出错仍中止整轮；Broker 整体出了问题
+（写者被占、写者状态或配对记录坏了、Vault 身份或根目录变了，或存储写满、只读、没有权限）同样中止整轮，
+常驻循环停下、服务退出让人看见，不当成各自待恢复（复审 A1-F3）。
 
 完整 schema、保守父子串行约束、终态仲裁、收尾、真实内容指针验证、历史正文迁移与受控
 Markdown 投影见 [M5 黑板](../m5/blackboard.md)。已有 M0 验收不等于真实 M6 运行体验收。
