@@ -166,8 +166,8 @@ struct LostManifestAck {
     unprovable: bool,
     /// 接下来这么多次丢暂存会失败（落定之后、丢暂存之前出错）。
     discard_faults: std::sync::atomic::AtomicU32,
-    /// Broker 整体出了问题（存储写满之类）：设上之后每次提交都这样失败，清掉就恢复。
-    wide_fault: std::sync::Mutex<Option<std::io::ErrorKind>>,
+    /// 设上之后每次提交都以这个错误失败（存储写满、写者未决之类），清掉就恢复。
+    commit_fault: std::sync::Mutex<Option<fn() -> BrokerError>>,
 }
 impl VaultReader for LostManifestAck {
     fn vault_uuid(&self) -> VaultUuid {
@@ -240,11 +240,8 @@ impl VaultWriter for LostManifestAck {
         &mut self,
         c: ArtifactCommit,
     ) -> Result<ArtifactCommitReceipt, BrokerError> {
-        if let Some(kind) = *self.wide_fault.lock().unwrap() {
-            return Err(BrokerError::Io {
-                operation: "broker storage",
-                source: std::io::Error::from(kind),
-            });
+        if let Some(fault) = *self.commit_fault.lock().unwrap() {
+            return Err(fault());
         }
         if std::mem::take(&mut self.before) {
             return Err(BrokerError::Io {
@@ -280,7 +277,7 @@ fn manifest_ack_crash_recovers_candidates_into_needs_review_without_running_cli(
             before: false,
             unprovable: false,
             discard_faults: Default::default(),
-            wide_fault: Default::default(),
+            commit_fault: Default::default(),
         },
         MemoryAuditLedger::new(),
     );
@@ -394,7 +391,7 @@ fn expired_before_first_body(
             before: true,
             unprovable,
             discard_faults: discard_faults.into(),
-            wide_fault: Default::default(),
+            commit_fault: Default::default(),
         },
         MemoryAuditLedger::new(),
     );
@@ -459,6 +456,7 @@ fn expired_unstarted_candidates_wait_for_the_owner_and_only_the_owner_discards_t
         engine.commit_awaiting_discard(task).unwrap(),
         "人侧要能看出：提交已过期、等主人决定"
     );
+    assert!(engine.commit_past_deadline(task, wall_ms()).unwrap());
 
     assert_eq!(
         engine.discard_expired_commit(task, 12).unwrap(),
@@ -529,32 +527,42 @@ fn owner_discard_is_refused_when_expiry_cannot_be_proven() {
     );
 }
 
-/// Broker 整体出了问题（这里是存储写满、只读、没有权限）不是哪一份预留的事：周期对账整轮报错，常驻循环
+/// 提交时 Broker 报这种 I/O 错误。
+fn storage_fault(kind: std::io::ErrorKind) -> BrokerError {
+    BrokerError::Io {
+        operation: "broker storage",
+        source: std::io::Error::from(kind),
+    }
+}
+
+/// Broker 整体出了问题（这里是存储写满、只读、写者被占）不是哪一份预留的事：周期对账整轮报错，常驻循环
 /// 停下来让人看见，不把每个提交中的 attempt 记成各自待恢复（复审 A1-F3）。故障过去之后照常对账：过期的
 /// 提交停在待恢复、等主人决定，待恢复审计只记一次。
 #[test]
 fn broker_wide_failure_fails_the_round_instead_of_parking_each_attempt() {
     let temp = tempfile::TempDir::new_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
     let (mut engine, task, _claim) = expired_before_first_body(&temp, false, 0);
-    for kind in [
-        std::io::ErrorKind::StorageFull,
-        std::io::ErrorKind::ReadOnlyFilesystem,
-        std::io::ErrorKind::PermissionDenied,
-    ] {
-        *engine.broker().wide_fault.lock().unwrap() = Some(kind);
+    let faults: [fn() -> BrokerError; 3] = [
+        || storage_fault(std::io::ErrorKind::StorageFull),
+        || storage_fault(std::io::ErrorKind::ReadOnlyFilesystem),
+        || BrokerError::WriterBusy,
+    ];
+    for fault in faults {
+        *engine.broker().commit_fault.lock().unwrap() = Some(fault);
         assert!(
             matches!(
                 engine.reconcile_periodic(10),
-                Err(TaskEngineError::CommitFailed(BrokerError::Io { .. }))
+                Err(TaskEngineError::CommitFailed(_))
             ),
-            "{kind:?} 要让整轮报错"
+            "{:?} 要让整轮报错",
+            fault()
         );
         assert_eq!(
             engine.task(task).unwrap().unwrap().status,
             TaskStatus::Committing
         );
     }
-    *engine.broker().wide_fault.lock().unwrap() = None;
+    *engine.broker().commit_fault.lock().unwrap() = None;
     engine.reconcile_periodic(11).unwrap();
     engine.reconcile_periodic(12).unwrap();
     assert!(engine.commit_awaiting_discard(task).unwrap());
@@ -568,6 +576,47 @@ fn broker_wide_failure_fails_the_round_instead_of_parking_each_attempt() {
         actions(&ledger, "task.candidate_recovery_pending"),
         1,
         "故障那几轮不记待恢复，恢复后同一个 attempt 只记一次"
+    );
+}
+
+/// 写者未决、结果不确定、预算超限、没有权限都按单个 attempt 算（复审 R2-F1）：前几种要经维护收口，维护要
+/// 服务开着，整轮报错会让服务起不来、反倒收不了口；权限按路径给，只挡涉及它的提交。对账照常做完，提交停在
+/// 待恢复、暂存不丢，待恢复审计同一个 attempt 只记一次；故障过去之后照样能看出「提交已过期、等主人决定」。
+#[test]
+fn faults_settled_outside_the_round_park_the_attempt_and_keep_reconciling() {
+    let temp = tempfile::TempDir::new_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
+    let (mut engine, task, _claim) = expired_before_first_body(&temp, false, 0);
+    let faults: [fn() -> BrokerError; 4] = [
+        || BrokerError::MutationUnresolved,
+        || BrokerError::MutationIndeterminate {
+            evidence_id: "fixture".into(),
+        },
+        || BrokerError::WriterLimitExceeded,
+        || storage_fault(std::io::ErrorKind::PermissionDenied),
+    ];
+    for (round, fault) in (10..).zip(faults) {
+        *engine.broker().commit_fault.lock().unwrap() = Some(fault);
+        if let Err(error) = engine.reconcile_periodic(round) {
+            panic!("{:?} 不该让整轮报错：{error:?}", fault());
+        }
+        assert_eq!(
+            engine.task(task).unwrap().unwrap().status,
+            TaskStatus::Committing
+        );
+    }
+    *engine.broker().commit_fault.lock().unwrap() = None;
+    engine.reconcile_periodic(20).unwrap();
+    assert!(engine.commit_awaiting_discard(task).unwrap());
+    assert_eq!(
+        staged_candidates(&temp.path().join("broker")),
+        1,
+        "对账不能替主人丢暂存"
+    );
+    let (_db, _broker, ledger) = engine.into_parts();
+    assert_eq!(
+        actions(&ledger, "task.candidate_recovery_pending"),
+        1,
+        "同一个 attempt 对账几轮也只记一次"
     );
 }
 
@@ -607,7 +656,7 @@ fn expired_plain_task_commit_is_discarded_by_the_owner_too() {
             before: true,
             unprovable: false,
             discard_faults: Default::default(),
-            wide_fault: Default::default(),
+            commit_fault: Default::default(),
         },
         MemoryAuditLedger::new(),
     );
@@ -624,6 +673,7 @@ fn expired_plain_task_commit_is_discarded_by_the_owner_too() {
         !engine.commit_awaiting_discard(task).unwrap(),
         "草稿没有提交"
     );
+    assert!(!engine.commit_past_deadline(task, wall_ms()).unwrap());
     engine.command(task, TaskCommand::Run, 2).unwrap();
     let claimed = engine
         .claim(ClaimRequest {
@@ -677,6 +727,10 @@ fn expired_plain_task_commit_is_discarded_by_the_owner_too() {
         !engine.commit_awaiting_discard(task).unwrap(),
         "原批准还没过期：不提示主人丢"
     );
+    assert!(
+        !engine.commit_past_deadline(task, wall_ms()).unwrap(),
+        "原批准还没过期：只读控制库这一步就筛掉，不用问 Broker（复审 R2-F2）"
+    );
     let wait = std::time::Duration::from_secs(u64::try_from(retain_until).unwrap()).saturating_sub(
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -690,12 +744,17 @@ fn expired_plain_task_commit_is_discarded_by_the_owner_too() {
         TaskStatus::Committing
     );
     assert_eq!(staged_candidates(&data), 1, "对账不能替主人丢暂存");
+    assert!(engine.commit_past_deadline(task, wall_ms()).unwrap());
     assert!(engine.commit_awaiting_discard(task).unwrap());
     assert_eq!(
         engine.discard_expired_commit(task, 11).unwrap(),
         TaskStatus::Failed
     );
     assert!(!engine.commit_awaiting_discard(task).unwrap());
+    assert!(
+        !engine.commit_past_deadline(task, wall_ms()).unwrap(),
+        "落定之后不再是提交中"
+    );
     assert_eq!(staged_candidates(&data), 0);
     assert!(
         engine
@@ -704,6 +763,17 @@ fn expired_plain_task_commit_is_discarded_by_the_owner_too() {
             .unwrap()
             .is_empty()
     );
+}
+
+/// 墙上时钟的毫秒：原批准的期限按它比，和 Broker 证实时用的是同一个钟。
+fn wall_ms() -> i64 {
+    i64::try_from(
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis(),
+    )
+    .unwrap()
 }
 
 #[test]

@@ -287,16 +287,7 @@ where
     /// 任务页投影。
     pub fn commit_awaiting_discard(&self, task: TaskId) -> Result<bool, TaskEngineError> {
         self.verify_vault_binding()?;
-        let Some(record) = self.task(task)? else {
-            return Ok(false);
-        };
-        let Some(attempt_id) = record.active_attempt else {
-            return Ok(false);
-        };
-        if record.status != TaskStatus::Committing {
-            return Ok(false);
-        }
-        let Some(attempt) = self.control_db.attempt(task, attempt_id).map_err(map_db)? else {
+        let Some(attempt) = self.committing_attempt(task)? else {
             return Ok(false);
         };
         let Some(reservation) = attempt.terminal.as_ref() else {
@@ -306,6 +297,43 @@ where
             self.expired_unstarted(&prior_identity(&attempt), reservation),
             Ok(true)
         ))
+    }
+
+    /// 便宜的一步，只读控制库、不碰 Broker：这次提交的原批准到 `now_ms` 过没过期。`now_ms` 要用墙上时钟
+    /// 的毫秒，和 Broker 证实时用的是同一个钟。没过期的提交不可能等主人丢：人侧列表先用它筛，
+    /// [`Self::commit_awaiting_discard`] 那一步的预算只花在原批准已经过期的提交上（复审 R2-F2）。
+    /// 旧的内联预留没有暂存指针、不走主人丢弃这个出口，返回 false。
+    pub fn commit_past_deadline(&self, task: TaskId, now_ms: i64) -> Result<bool, TaskEngineError> {
+        let Some(attempt) = self.committing_attempt(task)? else {
+            return Ok(false);
+        };
+        if attempt
+            .terminal
+            .as_ref()
+            .is_none_or(|reservation| reservation.artifacts_json.is_array())
+        {
+            return Ok(false);
+        }
+        let identity = prior_identity(&attempt);
+        Ok(self
+            .control_db
+            .artifact_provenance(identity.task_id, identity.attempt_id, identity.fence)
+            .map_err(map_db)?
+            .is_some_and(|provenance| !provenance.is_live_at(now_ms)))
+    }
+
+    /// 「提交中」任务的当前 attempt；不是提交中、或者没有当前 attempt 的返回空。
+    fn committing_attempt(&self, task: TaskId) -> Result<Option<AttemptRecord>, TaskEngineError> {
+        let Some(record) = self.task(task)? else {
+            return Ok(None);
+        };
+        let Some(attempt_id) = record.active_attempt else {
+            return Ok(None);
+        };
+        if record.status != TaskStatus::Committing {
+            return Ok(None);
+        }
+        self.control_db.attempt(task, attempt_id).map_err(map_db)
     }
 
     /// 提交被 Broker 拒绝之后唯一的失败出口：原批准已经过期，而且一个字节都没写出去。

@@ -222,9 +222,20 @@ pub(super) fn reservation_specific(error: &TaskEngineError) -> bool {
     }
 }
 
-/// Broker 整体出了问题，不只是这一份预留：写者被占、写者状态或配对记录坏了、Vault 身份或根目录变了，
-/// 或者存储写满、只读、没有权限。这种失败对每个 attempt 都一样，当成各自待恢复悄悄跳过的话，常驻循环
-/// 照转、只剩审计里的记录，没人看得见（复审 A1-F3）；所以整轮报错，和 D3-F5 之前一样让服务停下来。
+/// Broker 整体出了问题、不只是这一份预留，而且只能在服务外面处理：写者被占、写者状态或配对记录坏了、
+/// Vault 身份或根目录变了，或者整个文件系统写满、配额用完、只读。这种失败对每个 attempt 都一样，当成
+/// 各自待恢复悄悄跳过的话，常驻循环照转、只剩审计里的记录，没人看得见（复审 A1-F3）；所以整轮报错、
+/// 让服务停下来。
+///
+/// 每一种 Broker 错误都列出来，不用通配：Broker 新加一种错误时这里编译不过，逼着先想清楚它归哪边
+/// （复审 R2-F1）。下面这些按单个 attempt 算：
+/// - 写者未决、结果不确定、已取消：要经维护收口，维护要服务开着；整轮报错会让服务起不来，反倒收不了口。
+///   它们另有出口看得见：内容接口读到「过期」，维护页列出写者状态。
+/// - 预算超限：要么是这一份的输入超了，要么是暂存区攒满了；后者要经维护清理，同样要服务开着，
+///   别的写入也会报同样的错、看得见。
+/// - 没有权限：权限按路径给，一份暂存或一个笔记目录的权限不对只挡涉及它的提交；写者根本身读不了时，
+///   别的读写一样失败、看得见。
+/// - 其余是这一份涉及的路径、内容、幂等键或记录对不上。
 fn broker_wide(error: &BrokerError) -> bool {
     use std::io::ErrorKind;
     match error {
@@ -235,12 +246,28 @@ fn broker_wide(error: &BrokerError) -> bool {
         | BrokerError::RootChanged => true,
         BrokerError::Io { source, .. } => matches!(
             source.kind(),
-            ErrorKind::StorageFull
-                | ErrorKind::QuotaExceeded
-                | ErrorKind::ReadOnlyFilesystem
-                | ErrorKind::PermissionDenied
+            ErrorKind::StorageFull | ErrorKind::QuotaExceeded | ErrorKind::ReadOnlyFilesystem
         ),
-        _ => false,
+        BrokerError::MutationUnresolved
+        | BrokerError::MutationCancelled
+        | BrokerError::MutationIndeterminate { .. }
+        | BrokerError::WriterLimitExceeded
+        | BrokerError::CaptureChanged
+        | BrokerError::IncompleteCapture
+        | BrokerError::ProtectedPath(_)
+        | BrokerError::InvalidHistoryCursor
+        | BrokerError::HistoryChanged
+        | BrokerError::NotFound(_)
+        | BrokerError::RevisionConflict { .. }
+        | BrokerError::UnsafeNode { .. }
+        | BrokerError::PathCollision { .. }
+        | BrokerError::IdempotencyConflict
+        | BrokerError::InvalidArtifact(_)
+        | BrokerError::ArtifactConflict(_)
+        | BrokerError::ReadLimitExceeded { .. }
+        | BrokerError::CorruptSnapshot
+        | BrokerError::UnstableRead(_)
+        | BrokerError::Json { .. } => false,
     }
 }
 
@@ -266,6 +293,7 @@ mod tests {
     }
 
     /// 只挡这一份预留的失败放过去；Broker 整体出问题、控制库或审计出错都让整轮报错（复审 A1-F3）。
+    /// 没有权限、写者未决这一类、预算超限按单个 attempt 算（复审 R2-F1）。
     #[test]
     fn only_reservation_level_failures_are_isolated() {
         use std::io::ErrorKind;
@@ -276,6 +304,14 @@ mod tests {
             TaskEngineError::CommitFailed(BrokerError::IdempotencyConflict),
             TaskEngineError::CommitFailed(io(ErrorKind::NotFound)),
             TaskEngineError::Broker(io(ErrorKind::Other)),
+            TaskEngineError::CommitFailed(io(ErrorKind::PermissionDenied)),
+            TaskEngineError::Broker(io(ErrorKind::PermissionDenied)),
+            TaskEngineError::CommitFailed(BrokerError::MutationUnresolved),
+            TaskEngineError::CommitFailed(BrokerError::MutationIndeterminate {
+                evidence_id: "fixture".into(),
+            }),
+            TaskEngineError::Broker(BrokerError::MutationCancelled),
+            TaskEngineError::Broker(BrokerError::WriterLimitExceeded),
         ];
         for error in &isolated {
             assert!(reservation_specific(error), "{error:?}");
@@ -289,7 +325,6 @@ mod tests {
             TaskEngineError::CommitFailed(io(ErrorKind::StorageFull)),
             TaskEngineError::Broker(io(ErrorKind::QuotaExceeded)),
             TaskEngineError::Broker(io(ErrorKind::ReadOnlyFilesystem)),
-            TaskEngineError::CommitFailed(io(ErrorKind::PermissionDenied)),
             TaskEngineError::AuditUnavailable,
             TaskEngineError::NotFound("task"),
         ];
