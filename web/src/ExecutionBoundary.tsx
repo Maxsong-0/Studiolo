@@ -98,11 +98,12 @@ export function ExecutionBoundary({
     };
   }, []);
   const submit = async (command: ExecutionCommand): Promise<boolean> => {
-    // 丢弃过期的提交只经黑板、不碰执行体：没配执行服务的部署也得能丢，不然备份一直被挡。
+    // 丢弃过期的提交只经黑板、不碰执行体：没配执行服务、执行状态读不出来的时候也得能丢，不然备份一直
+    // 被挡（复审 A1-F2）。它只要求黑板列表新鲜，那一层在任务区守着；别的命令才看执行状态。
     if (
       pending.current ||
-      !isFresh(state) ||
-      (command.operation !== 'discard_expired' && !state.data?.configured)
+      (command.operation !== 'discard_expired' &&
+        (!isFresh(state) || !state.data?.configured))
     )
       return false;
     const controller = new AbortController();

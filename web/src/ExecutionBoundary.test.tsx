@@ -38,10 +38,15 @@ let status = {
   frozen: false,
   runs: [] as ReturnType<typeof executionRun>[],
 };
+/** 执行状态接口回 503（runner 回放出错之类）。 */
+let statusUnavailable = false;
 function mockReads() {
   const fetch = vi.fn(async (input: RequestInfo | URL) => {
     const url = String(input);
-    if (url === '/api/v1/execution') return executionResponse(status);
+    if (url === '/api/v1/execution')
+      return statusUnavailable
+        ? executionResponse({ error: '执行服务暂不可用' }, 503)
+        : executionResponse(status);
     if (url.startsWith('/api/v1/board?'))
       return executionResponse([currentBoard]);
     if (url.startsWith('/api/v1/board/replay?'))
@@ -70,6 +75,7 @@ beforeEach(() => {
   vi.setSystemTime(Date.UTC(2026, 8, 20, 10));
   currentBoard = executionBoard();
   status = { configured: true, frozen: false, runs: [] };
+  statusUnavailable = false;
 });
 afterEach(() => {
   cleanup();
@@ -602,6 +608,27 @@ describe('丢弃过期的提交', () => {
     await click(acknowledge());
     await click(discard());
     expect(writer).toHaveBeenCalledTimes(1);
+  });
+
+  it('still works when the execution status cannot be read', async () => {
+    statusUnavailable = true;
+    currentBoard = expired();
+    mockReads();
+    const writer = vi.fn(async (body: unknown, signal: AbortSignal) => {
+      void signal;
+      return {
+        task_id: (body as { task_id: string }).task_id,
+        status: 'failed',
+      };
+    });
+    uninstall = installExecutionWriter(writer);
+    await mount();
+    await click(acknowledge());
+    await click(discard());
+    expect(writer).toHaveBeenCalledTimes(1);
+    expect(
+      screen.getByText('服务器已接受操作，正在重新核对状态。'),
+    ).toBeInTheDocument();
   });
 
   it('is not offered for a commit the server has not shown to be expired', async () => {
