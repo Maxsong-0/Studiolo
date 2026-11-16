@@ -29,13 +29,14 @@ export function useReaderSource(
   const inDocuments = location.view === 'documents';
   const mine = opened?.view === location.view ? opened : null;
   let source: SourceLocation | null;
-  if (!inDocuments || (mine && !mine.linked)) source = mine?.source ?? null;
-  else if (location.item === null) source = null;
-  else
+  if (!inDocuments) source = mine?.source ?? null;
+  else if (location.item !== null)
+    // 位置里有路径就以它为准，哪怕手上还开着一篇没记进位置的。
     source =
       mine?.source.path === location.item
         ? mine.source
         : { path: location.item, line: 1 };
+  else source = mine && !mine.linked ? mine.source : null;
 
   const view = location.view;
   const open = useCallback(

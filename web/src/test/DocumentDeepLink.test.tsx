@@ -157,6 +157,12 @@ describe('文档视图的单文件深链', () => {
     expect(select).toHaveBeenLastCalledWith({ item: null });
     expect(result.current.source).toEqual({ path: long, line: 7 });
 
+    // 地址里后来有了路径（后退、手改）：以地址为准，不停在没记进位置的那一篇上。
+    rerender({ location: { ...documentsView, item: path } });
+    expect(result.current.source).toEqual({ path, line: 1 });
+    rerender({ location: documentsView });
+    expect(result.current.source).toEqual({ path: long, line: 7 });
+
     rerender({ location: { ...defaultViewLocation, view: 'projects' } });
     expect(result.current.source).toBeNull();
   });
