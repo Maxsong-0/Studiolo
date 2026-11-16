@@ -7,12 +7,17 @@
 # - umask 是 002：捕获端拒绝组可写节点，夹具按默认权限建目录 → 设回 022（同 test-linux.sh）。
 # - 家目录 /home/testbox、临时目录 /var/tmp 都是 775 → 换成本次任务私有的目录（家 755、临时 700）。
 #   /var/tmp 每个任务一份（任务结束随沙盒删掉），和 /work 同一块盘，Broker 的同设备检查照常成立。
+#   告警状态目录、M4 恢复工具、副本管线要求路径上每一级祖先都不可被组写（root 所有带粘滞位的除外），
+#   所以 /var/tmp 自己也收成 755（它是本任务私有的）。
 # - 默认构建目录 /cache/cargo-target 是跨任务共用的缓存，并发任务的产物会互相覆盖 → 换成本次任务自己的。
 #   同一个任务的各步共用它，所以 clippy、测试、构建之间照样增量。
 # - 自带 Node 是 26 → 前端照 CI 用 22.17.0，告警 Worker 用 24.22.2，每个任务解压到自己的私有目录。
 #   /cache 跨任务共用、别的任务改得了，所以那里只存下载的压缩包，每次用之前复制到私有目录再核对下面钉住的
 #   SHA-256（取自 nodejs.org/dist/v<版本>/SHASUMS256.txt，2026-11-16）；对不上就从 nodejs.org 重新下载。
 # - python3 指到 3.12（CI 跑的也是 3.12）。
+# - 原 workflow 要自己装 Rust 工具链和 rustfmt、clippy；测试箱的工具链由平台只读提供（/opt/testbox/toolchains/rust，
+#   2026-11-16 实测 1.97.1 带 rustfmt、clippy，`rustup toolchain install` 会因为目录只读而报错），这里不装。
+#   缺了组件时 fmt、clippy 那两步自己会失败，不会被放过。
 # - 没有 sudo：CI 用 prlimit 抬 RLIMIT_MEMLOCK，沙盒本来就是 unlimited；不是就直接失败——秘密驻留面加固
 #   失败关闭是正确行为，不降级。
 
@@ -28,6 +33,7 @@ fi
 umask 022
 export CARGO_TERM_COLOR=never PYTHONDONTWRITEBYTECODE=1 CARGO_PROFILE_DEV_DEBUG=line-tables-only CARGO_INCREMENTAL=0
 
+chmod go-w /var/tmp || { echo "收不了 /var/tmp 的组写权限：私有目录的祖先检查会失败" >&2; return 1; }
 studiolo_ci_base=/var/tmp/studiolo-ci
 mkdir -p "$studiolo_ci_base"
 chmod 700 "$studiolo_ci_base"
