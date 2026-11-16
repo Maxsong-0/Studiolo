@@ -1,7 +1,7 @@
 //! 终态 T2：落定终态，并在同一事务登记待投递的审计结果。
 use crate::{
-    AttemptPhase, ControlDb, DbError, TaskStatus, projection_outbox::enqueue_projection,
-    runtime_audit, stopped_candidates, types::fence_i64,
+    AttemptPhase, ControlDb, DbError, TaskStatus, TerminalReservation,
+    projection_outbox::enqueue_projection, runtime_audit, stopped_candidates, types::fence_i64,
 };
 use rusqlite::{OptionalExtension as _, TransactionBehavior, params};
 use serde_json::Value;
@@ -27,6 +27,115 @@ impl ControlDb {
             None,
             now_ms,
         )
+    }
+
+    /// 预留之后原批准就过期了、产物一个字节都没写出去：把这次提交落成终态。
+    ///
+    /// 只许在 Broker 证实「过期且没开始写」之后调用；这里再核一遍这个 attempt 确实停在「提交中」、
+    /// 没有任何产物回执。普通预留落成失败；停止态候选的取消结果在预留时已经冻结，落成取消。
+    /// 这是黑板 runner 候选唯一一条不经主人审阅的终态：没有候选可审，也没有任何内容被接受。
+    /// 审计事件和状态变化在同一个事务里登记；同一个 attempt 重放返回同一个结果。
+    pub fn expire_committing(
+        &mut self,
+        task_id: TaskId,
+        attempt_id: AttemptId,
+        fence: Fence,
+        now_ms: i64,
+    ) -> Result<TaskStatus, DbError> {
+        const OPERATION: &str = "expire_committing";
+        let tx = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let state: Option<(String, i64, Option<String>, String)> = tx
+            .query_row(
+                "SELECT a.phase, a.fence, a.terminal_json, t.status
+                 FROM attempts a JOIN tasks t ON t.task_id = a.task_id
+                 WHERE a.task_id = ?1 AND a.attempt_id = ?2",
+                params![task_id.to_string(), attempt_id.to_string()],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )
+            .optional()?;
+        let (phase, stored_fence, terminal, task_status) =
+            state.ok_or(DbError::NotFound("attempt"))?;
+        if stored_fence != fence_i64(fence)? {
+            return Err(DbError::FenceMismatch);
+        }
+        let Some(terminal) = terminal else {
+            return Err(DbError::InvalidTransition {
+                from: phase,
+                operation: OPERATION,
+            });
+        };
+        let reservation: TerminalReservation = serde_json::from_str(&terminal)?;
+        let stopped = reservation
+            .report_json
+            .get("outcome")
+            .and_then(Value::as_str)
+            == Some("stopped");
+        let (status, terminal_phase) = if stopped {
+            (TaskStatus::Cancelled, AttemptPhase::Cancelled)
+        } else {
+            (TaskStatus::Failed, AttemptPhase::Failed)
+        };
+        let marker = format!("commit-expired:{attempt_id}");
+        if phase == terminal_phase.as_str() && task_status == status.as_str() {
+            // 重放：只有当初就是经这条出口落定的才算数，别的途径失败的不能借它改口。
+            let recorded: i64 = tx.query_row(
+                "SELECT COUNT(*) FROM runtime_audit_outbox WHERE event_id=?1",
+                [&marker],
+                |row| row.get(0),
+            )?;
+            if recorded == 1 {
+                tx.commit()?;
+                return Ok(status);
+            }
+        }
+        let committed: i64 = tx.query_row(
+            "SELECT COUNT(*) FROM artifact_commits WHERE attempt_id=?1",
+            [attempt_id.to_string()],
+            |row| row.get(0),
+        )?;
+        if phase != AttemptPhase::Committing.as_str() || committed != 0 {
+            return Err(DbError::InvalidTransition {
+                from: phase,
+                operation: OPERATION,
+            });
+        }
+        runtime_audit::enqueue(
+            &tx,
+            &marker,
+            "task.commit_expired",
+            serde_json::json!({
+                "task_id": task_id,
+                "attempt_id": attempt_id,
+                "fence": fence.get(),
+                "status": status.as_str(),
+            }),
+        )?;
+        tx.execute(
+            "UPDATE attempts SET phase = ?4, updated_at_ms = ?5
+             WHERE task_id = ?1 AND attempt_id = ?2 AND fence = ?3",
+            params![
+                task_id.to_string(),
+                attempt_id.to_string(),
+                fence_i64(fence)?,
+                terminal_phase.as_str(),
+                now_ms
+            ],
+        )?;
+        tx.execute(
+            "UPDATE tasks SET status = ?2, active_attempt = NULL, last_attempt = ?3,
+                 updated_at_ms = ?4 WHERE task_id = ?1",
+            params![
+                task_id.to_string(),
+                status.as_str(),
+                attempt_id.to_string(),
+                now_ms
+            ],
+        )?;
+        enqueue_projection(&tx, task_id, &format!("terminal:{attempt_id}"))?;
+        tx.commit()?;
+        Ok(status)
     }
 
     #[allow(clippy::too_many_arguments)]

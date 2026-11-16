@@ -1,5 +1,6 @@
 //! 终态报告：T1 持久预留、「manifest 最后写入」的 T2 前滚与审计结果补投，以及预留计划的解码。
 use super::*;
+use studiolo_vault_broker::StagedArtifactCommit;
 
 impl<B, L> PersistentTaskEngine<B, L>
 where
@@ -203,6 +204,50 @@ where
         self.deliver_pending_outcomes(Some(attempt.attempt_id), now_ms)?;
         self.discard_reservation(reservation)?;
         Ok(receipt)
+    }
+
+    /// 提交被 Broker 拒绝之后唯一的失败出口：原批准已经过期，而且一个字节都没写出去。
+    ///
+    /// 两条都由 Broker 用自己的时钟和只读检查证实才走；证实不了返回 false，这次提交保持待恢复。
+    /// 已经写出过正文的提交不走这里：Broker 会让它写完为止。先落定状态再丢暂存：中间崩溃最多留下
+    /// 一份已过期的暂存正文，不会留下「状态还在提交中、暂存却没了」这种前滚不了也退不出的组合。
+    pub(super) fn expire_unstarted(
+        &mut self,
+        attempt: &AttemptIdentity,
+        reservation: &TerminalReservation,
+        now_ms: i64,
+    ) -> Result<bool, TaskEngineError> {
+        // 旧的内联预留没有暂存指针，也就没有可核对的原批准：不走这个出口。
+        if reservation.artifacts_json.is_array() {
+            return Ok(false);
+        }
+        let pointer: StagedArtifactCommit =
+            serde_json::from_value(reservation.artifacts_json.clone())?;
+        let commit = self
+            .broker
+            .load_staged_artifact_commit(&pointer)
+            .map_err(TaskEngineError::Broker)?;
+        if commit.task_id != attempt.task_id
+            || commit.attempt_id != attempt.attempt_id
+            || commit.fence != attempt.fence
+        {
+            return Err(TaskEngineError::Integrity(
+                "暂存与 attempt 身份不一致".into(),
+            ));
+        }
+        if !self
+            .broker
+            .expired_before_start(&commit)
+            .map_err(TaskEngineError::Broker)?
+        {
+            return Ok(false);
+        }
+        self.control_db
+            .expire_committing(attempt.task_id, attempt.attempt_id, attempt.fence, now_ms)
+            .map_err(map_db)?;
+        self.deliver_runtime_audits()?;
+        self.discard_reservation(reservation)?;
+        Ok(true)
     }
 
     pub(super) fn deliver_pending_outcomes(

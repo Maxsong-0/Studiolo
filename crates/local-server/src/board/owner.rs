@@ -115,6 +115,9 @@ impl ArtifactStager for SharedBroker {
     ) -> Result<(), BrokerError> {
         self.access(|b| b.discard_staged_artifact_commit(pointer))
     }
+    fn expired_before_start(&self, plan: &ArtifactCommit) -> Result<bool, BrokerError> {
+        self.access(|b| b.expired_before_start(plan))
+    }
 }
 impl NumberingScanner for SharedBroker {
     fn scan_number_max(&self, scope: &VaultPath, prefix: &str) -> Result<u64, BrokerError> {

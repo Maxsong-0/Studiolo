@@ -124,6 +124,12 @@ M0 Stub 已隔离后结束取消；`committing_attempts` 返回全部 reservatio
 TaskEngine 根据已存在 manifest 或保存的 plan 继续 T2/提交；该路径绝不能调用 Runner
 `start`。具体矩阵见 [task-engine.md](task-engine.md) 与 [vertical-chain.md](vertical-chain.md)。
 
+唯一不前滚的出口是 `expire_committing`（T-204，2026-11-15）：attempt 还在 committing、还没有任何
+`artifact_commits` 时，把它落成 Failed（预留是停止态候选的落成 Cancelled），同一个事务写
+`task.commit_expired` 运行时审计和投影；fence 不符、没有预留、已经有提交记录都拒绝，重放回同一个结果。
+它不判断「该不该过期」：调用方（TaskEngine）必须先让 Broker 证实原批准已过期且一个字节都没写出去
+（见[恢复契约](../m2/checkpoint-recovery-contract.md)「已知限制」）。
+
 ## 7. M0 错误与验收
 
 `DbError` 精确为：`Sqlite`、`Json`、`VaultBindingMismatch { expected, actual }`、

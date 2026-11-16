@@ -9,8 +9,8 @@ use crate::{
     MutationReceipt, Snapshot, SnapshotFile, SnapshotId, SnapshotInput, SnapshotReader,
     VaultObject, VaultReader, VaultSnapshotter, VaultWriter, batch,
     broker::{
-        accept_existing_manifest, fresh_manifest, reject_expired, verify_artifact_records,
-        verify_manifest,
+        accept_existing_manifest, artifact_target, fresh_manifest, reject_expired,
+        verify_artifact_records, verify_manifest,
     },
     memory_mutation, memory_namespace, memory_state_error, mutation, sha256,
     types::{AttemptManifest, snapshot_identity},
@@ -204,24 +204,32 @@ impl VaultWriter for MemoryVaultBroker {
                 artifacts: manifest.artifacts,
             });
         }
-        reject_expired(&commit)?;
-        let base = format!("sources/attempts/{}/{}", commit.task_id, commit.attempt_id);
-        let mut artifacts = Vec::new();
+        // 与磁盘同序：先只读看每篇正文写没写；写出过任何一篇就算已经开始，期限只挡还没开始的提交。
+        let mut planned = Vec::with_capacity(commit.artifacts.len());
         for candidate in &commit.artifacts {
-            let path = VaultPath::parse(format!("{base}/{}", candidate.name.as_str()))
-                .map_err(|_| BrokerError::InvalidArtifact("invalid derived target".to_owned()))?;
+            let path = artifact_target(&commit, candidate.name.as_str())?;
             let expected = Revision::compute(self.vault_uuid, &path, &candidate.content);
-            let revision = match self.inspect_existing(&path)? {
-                Some(object) if object.revision == expected => object.revision,
+            let written = match self.inspect_existing(&path)? {
+                Some(object) if object.revision == expected => true,
                 Some(_) => return Err(BrokerError::ArtifactConflict(path)),
-                None => {
-                    self.mutate(Mutation::create(
-                        path.clone(),
-                        candidate.content.clone(),
-                        format!("artifact:{}:{}", commit.idempotency_key, candidate.name),
-                    ))?
-                    .revision
-                }
+                None => false,
+            };
+            planned.push((path, expected, written));
+        }
+        if !planned.iter().any(|(_, _, written)| *written) {
+            reject_expired(&commit)?;
+        }
+        let mut artifacts = Vec::new();
+        for (candidate, (path, expected, written)) in commit.artifacts.iter().zip(planned) {
+            let revision = if written {
+                expected
+            } else {
+                self.mutate(Mutation::create(
+                    path.clone(),
+                    candidate.content.clone(),
+                    format!("artifact:{}:{}", commit.idempotency_key, candidate.name),
+                ))?
+                .revision
             };
             artifacts.push(CommittedArtifact {
                 path,

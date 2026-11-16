@@ -119,6 +119,19 @@ where
     B: VaultBroker + ArtifactStager,
     L: AuditLedger,
 {
+    grant_until(engine, task, claim, 4_000_000_000);
+}
+
+/// `retain_until` 是原批准的到期时刻（Unix 秒）；Broker 按系统时钟判断它，不接受调用方自报的时间。
+fn grant_until<B, L>(
+    engine: &mut PersistentTaskEngine<B, L>,
+    task: TaskId,
+    claim: &BoardClaim,
+    retain_until: i64,
+) where
+    B: VaultBroker + ArtifactStager,
+    L: AuditLedger,
+{
     engine
         .authorize_artifacts(
             task,
@@ -134,7 +147,7 @@ where
                     ModelEgress::Deny,
                 )
                 .unwrap(),
-                4_000_000_000,
+                retain_until,
                 "b".repeat(64),
             )
             .unwrap(),
@@ -145,7 +158,10 @@ where
 
 struct LostManifestAck {
     inner: FsVaultBroker,
+    /// 清单已经写出、回执却没送回来。
     fail: bool,
+    /// 预留之后、第一篇正文之前进程就没了：这一次提交什么都没写。
+    before: bool,
 }
 impl VaultReader for LostManifestAck {
     fn vault_uuid(&self) -> VaultUuid {
@@ -187,6 +203,9 @@ impl ArtifactStager for LostManifestAck {
     ) -> Result<(), BrokerError> {
         self.inner.discard_staged_artifact_commit(pointer)
     }
+    fn expired_before_start(&self, plan: &ArtifactCommit) -> Result<bool, BrokerError> {
+        self.inner.expired_before_start(plan)
+    }
 }
 impl VaultWriter for LostManifestAck {
     fn mutate(&mut self, m: Mutation) -> Result<MutationReceipt, BrokerError> {
@@ -196,6 +215,12 @@ impl VaultWriter for LostManifestAck {
         &mut self,
         c: ArtifactCommit,
     ) -> Result<ArtifactCommitReceipt, BrokerError> {
+        if std::mem::take(&mut self.before) {
+            return Err(BrokerError::Io {
+                operation: "crash before the first body",
+                source: std::io::Error::other("fixture crash"),
+            });
+        }
         let receipt = self.inner.commit_attempt_artifacts(c)?;
         if std::mem::take(&mut self.fail) {
             Err(BrokerError::Io {
@@ -221,6 +246,7 @@ fn manifest_ack_crash_recovers_candidates_into_needs_review_without_running_cli(
         LostManifestAck {
             inner: broker,
             fail: true,
+            before: false,
         },
         MemoryAuditLedger::new(),
     );
@@ -298,6 +324,98 @@ fn manifest_ack_crash_recovers_candidates_into_needs_review_without_running_cli(
     assert_eq!(Some(replay), view.candidate_receipt);
     assert_eq!(staged(), 0, "已完成的精确重放不重建暂存");
 }
+/// 预留之后、还没写出任何正文，原批准就过期了：对账把这次提交落成失败并丢掉暂存，
+/// 不再永远停在「提交中」（那会一直挡住控制库检查点导出）。
+#[test]
+fn reservation_that_expires_before_any_body_is_written_fails_instead_of_staying_committing() {
+    let temp = tempfile::TempDir::new_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
+    let data = temp.path().join("broker");
+    let broker = FsVaultBroker::open(&temp.path().join("vault"), &data).unwrap();
+    let mut engine = PersistentTaskEngine::new(
+        ControlDb::open(temp.path().join("control.sqlite3"), broker.vault_uuid()).unwrap(),
+        LostManifestAck {
+            inner: broker,
+            fail: false,
+            before: true,
+        },
+        MemoryAuditLedger::new(),
+    );
+    let task = engine.create_board_task("runner", spec(), HASH, 0).unwrap();
+    let claim = engine
+        .claim_board_task(task, "runner-instance", 1000, 1)
+        .unwrap();
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap();
+    // 原批准再过两到三秒到期：暂存和预留时还有效。
+    let retain_until = i64::try_from(now.as_secs()).unwrap() + 3;
+    grant_until(&mut engine, task, &claim, retain_until);
+    let staged = || {
+        std::fs::read_dir(&data)
+            .unwrap()
+            .filter(|entry| {
+                entry
+                    .as_ref()
+                    .unwrap()
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with("artifact-candidate-")
+            })
+            .count()
+    };
+    assert!(matches!(
+        engine.stage_board_runner_candidates(
+            report(&claim, b"diff --git a/src/a b/src/a\n+safe\n"),
+            2
+        ),
+        Err(TaskEngineError::CommitFailed(_))
+    ));
+    assert_eq!(
+        engine.task(task).unwrap().unwrap().status,
+        TaskStatus::Committing
+    );
+    assert_eq!(staged(), 1);
+
+    // 还没到期：对账只把它记成待恢复……但这一次 Broker 不再出错，所以要先等到期再对账。
+    let wait = std::time::Duration::from_secs(u64::try_from(retain_until).unwrap()).saturating_sub(
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap(),
+    ) + std::time::Duration::from_millis(200);
+    std::thread::sleep(wait);
+    engine.reconcile_periodic(10).unwrap();
+
+    let view = engine.board_detail(task, HASH).unwrap().unwrap();
+    assert_eq!(view.task.status, TaskStatus::Failed);
+    assert!(view.task.active_attempt.is_none());
+    assert_eq!(view.task.last_attempt, Some(claim.attempt.attempt_id));
+    assert!(view.candidate_receipt.is_none());
+    assert_eq!(staged(), 0, "过期的暂存正文必须丢掉");
+    assert!(
+        engine
+            .control_db()
+            .committing_attempts()
+            .unwrap()
+            .is_empty()
+    );
+    // 再对账一次什么都不变；审计里恰好有一条「提交过期」。
+    engine.reconcile_periodic(11).unwrap();
+    assert_eq!(
+        engine.task(task).unwrap().unwrap().status,
+        TaskStatus::Failed
+    );
+    let (_db, _broker, ledger) = engine.into_parts();
+    assert_eq!(
+        ledger
+            .query(&AuditFilter::default())
+            .unwrap()
+            .iter()
+            .filter(|record| record.event().action() == "task.commit_expired")
+            .count(),
+        1
+    );
+}
+
 #[test]
 fn ai_cannot_self_approve_or_reclaim_candidates_awaiting_owner_review() {
     let (mut engine, task, claim) = claimed();
