@@ -1,7 +1,9 @@
 //! 独立 worker 的封闭审计消息；字段与回执自洽不等于 peer 鉴权或作业获准。
 mod admission;
 mod codec;
+mod queue;
 pub use admission::AdmissionFact;
+pub use queue::{BackupQueueRequest, QueueAnswer, QueueCommand};
 #[cfg(target_os = "linux")]
 pub mod transport;
 mod validation;

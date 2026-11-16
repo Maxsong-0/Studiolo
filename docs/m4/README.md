@@ -34,7 +34,7 @@ cargo run --locked -p studiolo-agent-server -- admin type-issue --data "$SA/data
 cargo run --locked -p studiolo-agent-server -- admin policy-bootstrap --policy "$SA/policy" \
   --data "$SA/data" --kind capability_set --subject claude --file "$SA/claude.json"
 cargo run --locked -p studiolo-agent-server -- admin policy-status --policy "$SA/policy"
-# 3. 接入方服务：能力集之外的目录从一开始不进入计算（本机 --vault 示例；生产白名单见 scripts/replica_common.py 的 ALLOW）
+# 3. 接入方服务：能力集之外的目录从一开始不进入计算（本机 --vault 示例；生产白名单见 scripts/replica_common.py 的 ALLOW，由 scripts/project_registry.json 生成）
 cargo run --locked -p studiolo-agent-server -- serve --vault /path/to/readonly-copy \
   --allow 项目/<示例项目> --allow _规则 --data "$SA/data" --policy "$SA/policy" --port 4400
 ```

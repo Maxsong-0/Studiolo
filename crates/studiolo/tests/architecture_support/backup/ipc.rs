@@ -23,6 +23,27 @@ pub(super) fn fixed_binding(path: &Path, source: &str) -> bool {
             "tail.offset()!=record.audit_offset()||tail.record_hash().to_hex()!=record.audit_hash()",
             "receipt.event()!=expected||receipt.offset()<=cutoff",
         ]
+    } else if path.ends_with("crates/local-server/src/backup/producer.rs") {
+        // 生产者只认固定目标和批准的 worker 账号；带键的请求每次都从账本重开原准入。
+        // 队列命令和带键请求两条路各核一次目标，少一处都不行。
+        if source
+            .matches("ifrequest.target()!=TARGET{returnErr(AuditError::Serialization);}")
+            .count()
+            != 2
+        {
+            return false;
+        }
+        &[
+            "self.plan.worker_uid==rustix::process::geteuid().as_raw()",
+            "AuditSocket::new(stream,self.plan.worker_uid,deadline)",
+            "ifrequest.target()!=TARGET{returnErr(AuditError::Serialization);}",
+            "BackupAdmission::resume(self.ledger.clone(),request.key(),TARGET)",
+            "ifqueue.outstanding(){returnOk((QueueAnswer::Outstanding,None));}",
+            "self.ledger.append(backup_intent(&key,TARGET).map_err(|_|AuditError::Serialization)?)?;",
+            "drop(frozen);letsealed=sealed.map_err(staging_reason)?;BackupAdmission::approve(self.ledger.clone(),key.clone(),TARGET,&sealed)",
+        ]
+    } else if path.ends_with("crates/local-server/src/backup/listener.rs") {
+        PRODUCER_SOCKET
     } else if path.ends_with("crates/backup/src/worker/audit/admission.rs") {
         &[
             "#[serde(deny_unknown_fields)]",
@@ -82,6 +103,52 @@ pub(super) fn fixed_binding(path: &Path, source: &str) -> bool {
         &[]
     };
     anchors.iter().all(|anchor| source.contains(anchor))
+}
+/// 备份 socket 的条件要和 worker 一侧 endpoint proof 的核对一一对应：父目录 0750、socket 0660、读取组。
+const PRODUCER_SOCKET: &[&str] = &[
+    "held.st_uid!=uid||held.st_gid!=reader_gid||held.st_mode&0o7777!=0o750",
+    "if!matches!(node.stat(),Err(Errno::NOENT)){returnErr(ListenError::Configuration);}",
+    "FileType::from_raw_mode(stat.st_mode)!=FileType::Socket||stat.st_uid!=uid||stat.st_nlink!=1",
+    "identity(&ready)!=claim.identity||ready.st_gid!=reader_gid||ready.st_mode&0o7777!=0o660",
+    ".is_ok_and(|stat|identity(&stat)==self.identity)",
+];
+/// 主服务里只有这一个文件能建备份 socket：一次绑定、一次改属组、一次改权限、一次清理，都相对原父目录句柄。
+pub(super) fn producer_socket(path: &Path, source: &str) -> String {
+    if !path.ends_with("crates/local-server/src/backup/listener.rs") {
+        return source.to_owned();
+    }
+    checked_closed(
+        source,
+        PRODUCER_SOCKET,
+        &[
+            (
+                "fs::{AtFlags,FileType,Mode,OFlags,Stat,chmodat,chownat,fstat,open,statat,unlinkat}",
+                1,
+            ),
+            (
+                "open(directory,OFlags::RDONLY|OFlags::DIRECTORY|OFlags::NOFOLLOW|OFlags::CLOEXEC,Mode::empty())",
+                1,
+            ),
+            ("fstat(&parent)", 1),
+            (
+                "statat(&self.parent,&self.name,AtFlags::SYMLINK_NOFOLLOW)",
+                1,
+            ),
+            (
+                "chownat(&claim.node.parent,&claim.node.name,None,Some(Gid::from_raw(reader_gid)),AtFlags::SYMLINK_NOFOLLOW)",
+                1,
+            ),
+            (
+                "chmodat(&claim.node.parent,&claim.node.name,Mode::from_raw_mode(0o660),AtFlags::empty())",
+                1,
+            ),
+            (
+                "unlinkat(&self.node.parent,&self.node.name,AtFlags::empty())",
+                1,
+            ),
+            ("UnixListener::bind(path)", 1),
+        ],
+    )
 }
 pub(super) fn remainder(path: &Path, source: &str) -> String {
     if path.ends_with("crates/backup-worker/src/audit/endpoint.rs") {

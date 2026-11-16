@@ -200,6 +200,8 @@ cargo --locked build -p studiolo-vault-admin
 再加 `cargo --locked test --workspace --doc`（nextest 不跑文档测试）。nextest 每个测试一个进程，vault-broker 那把进程内的
 大文件闸门管不到，所以 `.config/nextest.toml` 用测试组把进闸门的测试排成一次只跑一个；进闸门的测试增减时名单要跟着改，
 架构守卫 `nextest_large_io_group_lists_exactly_the_tests_that_enter_the_gate` 会核对两边一致。
+Mac 上经服务器跑时用 `STUDIOLO_TEST_RUNNER=nextest scripts/test-linux.sh`：只把测试那一步换成 nextest 加文档测试，
+其余门禁原样；服务器上没有 cargo-nextest 就停下报错，不自动安装。
 
 根 `Cargo.toml` 给 `sha2` 单独开了优化（`[profile.dev.package.sha2]`，只影响 dev／test 构建，发行包走 `--release` 不受影响）：
 vault-broker 的大文件测试要对几百 MiB 的正文算 SHA-256，不开时库测试在 108 上要 939 秒，开了 84 秒（T-187 实测，2026-11-15）。

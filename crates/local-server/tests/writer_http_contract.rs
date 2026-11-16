@@ -1,5 +1,7 @@
 //! 显式写者模式的真实认证、Broker 捕获与 HTTP 投影；仅使用临时合成内容。
 
+#[path = "writer_http/blame.rs"]
+mod blame;
 #[path = "writer_http/editing.rs"]
 mod editing;
 #[path = "writer_http/editing_races.rs"]

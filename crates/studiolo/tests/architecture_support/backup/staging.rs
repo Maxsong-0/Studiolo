@@ -153,7 +153,7 @@ pub(super) fn remainder(path: &Path, source: &str) -> String {
                 ),
                 ("File::from(fd)", 2),
                 ("self.file.write_all(bytes)", 1),
-                ("self.file.sync_all()", 3),
+                ("self.file.sync_all()", 4),
                 (
                     "fs::fchown(&self.file,None,Some(rustix::process::Gid::from_raw(reader_gid)))",
                     1,
@@ -191,6 +191,28 @@ pub(super) fn remainder(path: &Path, source: &str) -> String {
                 "self.marker.check_child(parent,name)?;",
             ],
             &[("parent.create_dir(&name)", 1)],
+        );
+    }
+    // 取回副本是把封存内容放到新目录的唯一出口：只许建这两处目录，写的每个文件都对着已核验视图。
+    if path.ends_with("crates/backup/src/checkpoint/staging/seal/restored.rs") {
+        return checked_closed(
+            source,
+            &[
+                "hash!=reference.seal_sha256",
+                "tree::verify(&directory.child(\"data\")?,deadline)?!=inclusion.view",
+                "iftarget.exists(name)?{returnOk(Placement::AlreadyPresent);}",
+                "iftarget.exists(&partial)?{returnErr(StagingError::CleanupRequired);}",
+                "ifreplica.directories!=directories||replica.files!=files",
+                "target.publish(&partial,name)?;",
+                "ifdepth>64",
+                "if!expected.directories.contains(&path){returnErr(StagingError::Changed);}",
+                "child.check_child(source,name)?;",
+                "size!=expected.bytes||hex(&hash.finalize())!=expected.sha256",
+            ],
+            &[
+                ("target.create_dir(&partial)", 1),
+                ("target.create_dir(name)", 1),
+            ],
         );
     }
     if path.ends_with("crates/backup/src/checkpoint/staging/tree.rs") {

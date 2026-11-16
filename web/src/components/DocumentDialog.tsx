@@ -7,6 +7,7 @@ import { DocumentNavigation } from './DocumentNavigation';
 import { useDocumentHistory } from '../useDocumentHistory';
 import { useSourceDocument } from '../useSourceDocument';
 import { useDialogSurface } from '../useDialogSurface';
+import { useBlame, type LineBlame } from '../useBlame';
 import '../styles/document.css';
 
 /**
@@ -38,6 +39,9 @@ export function DocumentDialog({
     location.path,
     generation,
   );
+  // 逐行归属默认关（T-210）：打开才向服务端要一次。
+  const [blameOn, setBlameOn] = useState(false);
+  const blame = useBlame(location.path, document?.content ?? null, blameOn);
   const visible = useMemo(
     () => (document ? sourceWindow(document.content, location.line) : null),
     [document, location.line],
@@ -122,6 +126,16 @@ export function DocumentDialog({
         <p className="document-readonly" id="source-readonly">
           原文只读 · 内容按纯文本显示
         </p>
+        {document ? (
+          <Button
+            size="sm"
+            className="document-blame-toggle"
+            aria-pressed={blameOn}
+            onClick={() => setBlameOn((on) => !on)}
+          >
+            {blameOn ? '隐藏每行是谁改的' : '显示每行是谁改的'}
+          </Button>
+        ) : null}
         {document && onEdit ? (
           <Button
             size="sm"
@@ -156,6 +170,25 @@ export function DocumentDialog({
               行）
             </p>
           ) : null}
+          {blameOn && document ? (
+            <p
+              className="document-blame-note"
+              role={blame.error ? 'alert' : 'status'}
+            >
+              {blame.loading
+                ? '正在读取每行是谁改的…'
+                : blame.error
+                  ? blame.error
+                  : blame.mismatch
+                    ? '这份原文快照和库里当前的正文不是同一版，行号对不上。刷新工作台后再看。'
+                    : `人＝人侧会话 · AI＝代理 · Ob＝Obsidian 同步 · ?＝作者没有记录 · 外＝库外改动 · 早＝早于可查历史${blame.moreHistory ? '（只回看最近 50 版）' : ''}`}
+              {blame.error ? (
+                <Button variant="text" onClick={blame.retry}>
+                  重试
+                </Button>
+              ) : null}
+            </p>
+          ) : null}
           {error ? (
             <div className="document-feedback" role="alert">
               <h3>{stale ? '快照已更新，请刷新工作台' : '无法读取原文'}</h3>
@@ -170,7 +203,9 @@ export function DocumentDialog({
               tabIndex={0}
               aria-label="原文内容"
             >
-              <ol className="source-lines">
+              <ol
+                className={`source-lines${blame.marks ? ' source-lines--blame' : ''}`}
+              >
                 {visible?.lines.map((line) => (
                   <li
                     key={line.number}
@@ -182,6 +217,9 @@ export function DocumentDialog({
                       line.number === location.line ? 'location' : undefined
                     }
                   >
+                    {blame.marks ? (
+                      <BlameCell mark={blame.marks.get(line.number)} />
+                    ) : null}
                     <span className="line-number" aria-hidden="true">
                       {line.number}
                     </span>
@@ -200,5 +238,27 @@ export function DocumentDialog({
         </div>
       </div>
     </Surface>
+  );
+}
+
+/** 行号左边的归属窄带：每段第一行写缩写、可聚焦，整句放在 title 里；同一段后面的行只留线。 */
+function BlameCell({ mark }: { mark: LineBlame | undefined }) {
+  if (!mark) return <span className="line-blame" aria-hidden="true" />;
+  return mark.first ? (
+    <span
+      className={`line-blame line-blame--${mark.kind}`}
+      title={mark.title}
+      aria-label={mark.title}
+      role="note"
+      tabIndex={0}
+    >
+      {mark.short}
+    </span>
+  ) : (
+    <span
+      className={`line-blame line-blame--${mark.kind}`}
+      title={mark.title}
+      aria-hidden="true"
+    />
   );
 }

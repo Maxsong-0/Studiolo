@@ -5,10 +5,10 @@ use studiolo_core::{
     ArtifactProvenance, BackupScope, Classification, DataLabels, DesktopSync, ModelEgress,
     SourcePolicyRef,
 };
-use studiolo_core::{TrustedExportClass, VaultUuid};
+use studiolo_core::{TrustedExportClass, VaultPath, VaultUuid};
 use studiolo_vault_broker::{
-    ArtifactStager, BrokerError, FsVaultBroker, MemoryVaultBroker, VaultReader, VaultWriter,
-    read_trusted_export,
+    ArtifactCandidate, ArtifactCommit, ArtifactStager, BrokerError, FsVaultBroker,
+    MemoryVaultBroker, Mutation, VaultReader, VaultWriter, read_trusted_export,
 };
 
 fn labels() -> DataLabels {
@@ -114,6 +114,78 @@ fn new_staging_and_body_writes_reject_expired_material() {
         disk.stage_artifact_commit(&request),
         Err(BrokerError::InvalidArtifact(_))
     ));
+}
+
+/// 过期提交的两种结局，磁盘和内存两个实现走同一份断言。
+fn started_commit_finishes_and_untouched_one_stays_rejected<B>(
+    broker: &mut B,
+    request: &ArtifactCommit,
+) where
+    B: VaultReader + VaultWriter + ArtifactStager,
+{
+    // 一个字节都没写：能证实「过期且没开始」，提交照旧被拒，被拒之后仍然什么都没留下。
+    assert!(broker.expired_before_start(request).unwrap());
+    assert!(matches!(
+        broker.commit_attempt_artifacts(request.clone()),
+        Err(BrokerError::InvalidArtifact(ref message)) if message.contains("留存期限已过")
+    ));
+    assert!(broker.expired_before_start(request).unwrap());
+
+    // 模拟上次进程在过期之前已经写出第一篇正文、然后没了。
+    let first = &request.artifacts[0];
+    let target = VaultPath::parse(format!(
+        "sources/attempts/{}/{}/{}",
+        request.task_id,
+        request.attempt_id,
+        first.name.as_str()
+    ))
+    .unwrap();
+    broker
+        .mutate(Mutation::create(
+            target,
+            first.content.clone(),
+            "earlier-run",
+        ))
+        .unwrap();
+    assert!(!broker.expired_before_start(request).unwrap());
+
+    // 已经开始的提交写完为止：剩下那篇和清单都写出来，不留没有清单的半截目录。
+    let receipt = broker.commit_attempt_artifacts(request.clone()).unwrap();
+    assert_eq!(receipt.artifacts.len(), 2);
+    for artifact in &receipt.artifacts {
+        broker.read(&artifact.path).unwrap();
+    }
+    broker.read(&receipt.manifest_path).unwrap();
+    // 重放得到同一份回执；有了清单更谈不上「没开始」。
+    assert_eq!(
+        broker.commit_attempt_artifacts(request.clone()).unwrap(),
+        receipt
+    );
+    assert!(!broker.expired_before_start(request).unwrap());
+}
+
+#[test]
+fn expiry_only_stops_commits_that_have_not_written_anything_yet() {
+    let mut request = artifact_request();
+    request.provenance = provenance(1, &"e".repeat(64));
+    request.artifacts.push(ArtifactCandidate {
+        name: VaultPath::parse("second.md").unwrap(),
+        content: b"second body".to_vec(),
+    });
+    let (_vault, _data, mut disk) = broker();
+    started_commit_finishes_and_untouched_one_stays_rejected(&mut disk, &request);
+    let mut memory = MemoryVaultBroker::new();
+    started_commit_finishes_and_untouched_one_stays_rejected(&mut memory, &request);
+
+    // 批准还有效的提交谈不上「过期」，哪怕一个字节都没写。
+    let live = artifact_request();
+    assert!(
+        !MemoryVaultBroker::new()
+            .expired_before_start(&live)
+            .unwrap()
+    );
+    let (_vault, _data, disk) = broker();
+    assert!(!disk.expired_before_start(&live).unwrap());
 }
 
 #[test]

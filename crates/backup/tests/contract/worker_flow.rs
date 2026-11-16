@@ -13,6 +13,8 @@ use studiolo_backup::worker::restic::{CredentialHolder, RepositoryRef, Unverifie
 use studiolo_backup::worker::state::{FailureReason, JobState};
 use studiolo_core::checkpoint::CheckpointId;
 use studiolo_core::checkpoint::InstantMillis;
+mod accept;
+mod drive;
 mod durable;
 mod failure_audit;
 mod recovery;

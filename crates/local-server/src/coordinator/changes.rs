@@ -217,6 +217,16 @@ impl crate::CanonicalWorkbench {
             .map_err(super::content::session_error)?;
         paging::page(self, principal, query)
     }
+    pub(crate) fn changes_head(
+        &self,
+        principal: &crate::auth_http::ContentPrincipal,
+        vault: Option<VaultUuid>,
+    ) -> Result<serde_json::Value, crate::editing::Problem> {
+        let _operation = principal
+            .enter_operation()
+            .map_err(super::content::session_error)?;
+        paging::head(self, principal, vault)
+    }
     pub(crate) fn mark_changes_seen(
         &self,
         principal: &crate::auth_http::ContentPrincipal,

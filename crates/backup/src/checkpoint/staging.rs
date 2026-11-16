@@ -15,7 +15,7 @@ pub use catalog::{ObjectRegistration, RedactedObject, SourceCatalog};
 pub use housekeeping::{CleanupSummary, reclaim_staging};
 pub use inventory::{SealedFile, SealedInventory};
 use io::Directory;
-pub use seal::{SealInputs, SealedCheckpoint, SealedReference};
+pub use seal::{Placement, RestoredCheckpoint, SealInputs, SealedCheckpoint, SealedReference};
 pub use shared::ReaderIdentity;
 use std::{
     path::{Path, PathBuf},

@@ -2,14 +2,14 @@
 
 use std::collections::BTreeSet;
 
-use studiolo_core::{Revision, VaultPath};
+use studiolo_core::Revision;
 
 use crate::{
     ArtifactCommit, ArtifactCommitReceipt, BrokerError, CommittedArtifact, FsVaultBroker, Mutation,
     MutationReceipt, VaultWriter,
     broker::{
-        accept_existing_manifest, fresh_manifest, reject_expired, verify_artifact_records,
-        verify_manifest,
+        accept_existing_manifest, artifact_target, fresh_manifest, reject_expired,
+        verify_artifact_records, verify_manifest,
     },
     mutation, sha256,
     types::AttemptManifest,
@@ -62,27 +62,36 @@ impl VaultWriter for FsVaultBroker {
                 artifacts: manifest.artifacts,
             });
         }
-        // 期限在这里判定一次。已经开始的提交写完为止：中途再拒绝只会留下没有清单的正文，
-        // 那种半截状态没有出口，还会让整批封存被拒。
-        reject_expired(&commit)?;
-
-        let base = format!("sources/attempts/{}/{}", commit.task_id, commit.attempt_id);
-        let mut artifacts = Vec::with_capacity(commit.artifacts.len());
+        // 先只读地看一遍：每篇正文是已经原样写出、还是没写。写出过任何一篇，这次提交就算「已经开始」
+        // （包括上次进程中途没了、重启之后接着做的）。
+        let mut planned = Vec::with_capacity(commit.artifacts.len());
         for candidate in &commit.artifacts {
-            let target = VaultPath::parse(format!("{base}/{}", candidate.name.as_str()))
-                .map_err(|_| BrokerError::InvalidArtifact("invalid derived target".to_owned()))?;
+            let target = artifact_target(&commit, candidate.name.as_str())?;
             let expected = Revision::compute(self.vault_uuid, &target, &candidate.content);
-            let revision = match self.inspect_existing(&target)? {
-                Some(existing) if existing.revision == expected => existing.revision,
+            let written = match self.inspect_existing(&target)? {
+                Some(existing) if existing.revision == expected => true,
                 Some(_) => return Err(BrokerError::ArtifactConflict(target)),
-                None => {
-                    self.mutate(Mutation::create(
-                        target.clone(),
-                        candidate.content.clone(),
-                        format!("artifact:{}:{}", commit.idempotency_key, candidate.name),
-                    ))?
-                    .revision
-                }
+                None => false,
+            };
+            planned.push((target, expected, written));
+        }
+        // 期限只挡还没开始的提交，并且只在这里判定一次。已经开始的写完为止：中途再拒绝只会留下没有
+        // 清单的正文，那种半截状态没有出口，还会让整批封存和控制库导出一直被拒。
+        if !planned.iter().any(|(_, _, written)| *written) {
+            reject_expired(&commit)?;
+        }
+
+        let mut artifacts = Vec::with_capacity(commit.artifacts.len());
+        for (candidate, (target, expected, written)) in commit.artifacts.iter().zip(planned) {
+            let revision = if written {
+                expected
+            } else {
+                self.mutate(Mutation::create(
+                    target.clone(),
+                    candidate.content.clone(),
+                    format!("artifact:{}:{}", commit.idempotency_key, candidate.name),
+                ))?
+                .revision
             };
             artifacts.push(CommittedArtifact {
                 path: target,

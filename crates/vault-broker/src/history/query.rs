@@ -35,6 +35,13 @@ pub(super) fn unchanged(
     }
     Ok(())
 }
+/// 历史列表和版本链共用的次序：提交序号新的在前，同一次提交里「这一版」排在「之前的版本」前面。
+pub(super) fn newest_first(a: &catalog::Item, b: &catalog::Item) -> std::cmp::Ordering {
+    b.sequence
+        .cmp(&a.sequence)
+        .then_with(|| b.entry.authored_at_ms.cmp(&a.entry.authored_at_ms))
+        .then_with(|| a.entry.id.cmp(&b.entry.id))
+}
 pub(super) fn checksum(value: &catalog::Catalog) -> Result<String, BrokerError> {
     Ok(sha256(
         &serde_json::to_vec(value).map_err(|_| BrokerError::CorruptWriterState)?,
@@ -92,12 +99,7 @@ impl FsVaultBroker {
             }
         }
         let mut items = visible;
-        items.sort_by(|a, b| {
-            b.sequence
-                .cmp(&a.sequence)
-                .then_with(|| b.entry.authored_at_ms.cmp(&a.entry.authored_at_ms))
-                .then_with(|| a.entry.id.cmp(&b.entry.id))
-        });
+        items.sort_by(newest_first);
         if start > items.len() {
             return Err(BrokerError::InvalidHistoryCursor);
         }

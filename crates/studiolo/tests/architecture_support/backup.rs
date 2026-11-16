@@ -24,6 +24,9 @@ pub(super) fn remainder(crate_name: &str, path: &Path, source: &str) -> String {
     if crate_name == "studiolo-backup-worker" {
         return process::remainder(path, &ipc::remainder(path, source));
     }
+    if crate_name == "studiolo-local-server" {
+        return ipc::producer_socket(path, source);
+    }
     if crate_name == "studiolo-checkpoint-storage" {
         return sqlite_checkpoint(path, source);
     }

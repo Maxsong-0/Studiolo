@@ -272,7 +272,7 @@ fn fixture_records(
         });
     }
 }
-fn manifest() -> ManifestInputs {
+pub(super) fn manifest() -> ManifestInputs {
     let package = |name: &str| PackageDigest {
         name: name.into(),
         version: "fixture-1".into(),

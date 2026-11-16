@@ -1,5 +1,8 @@
 //! 固定部署 socket 的单作业客户端；每次连接及回执前后核原路径与真实生产者身份。
 mod endpoint;
+mod queue;
+pub use queue::WorkerQueueClient;
+
 use crate::WorkerConfig;
 use endpoint::Endpoint;
 use std::time::{Duration, Instant};

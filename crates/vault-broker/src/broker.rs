@@ -108,6 +108,36 @@ pub(crate) fn system_now_ms() -> Result<i64, BrokerError> {
     i64::try_from(now.as_millis()).map_err(|_| BrokerError::InvalidArtifact("系统时钟无效".into()))
 }
 
+/// 一篇尝试产物在 Vault 里的固定位置。
+pub(crate) fn artifact_target(
+    commit: &ArtifactCommit,
+    name: &str,
+) -> Result<VaultPath, BrokerError> {
+    VaultPath::parse(format!(
+        "sources/attempts/{}/{}/{name}",
+        commit.task_id, commit.attempt_id
+    ))
+    .map_err(|_| BrokerError::InvalidArtifact("invalid derived target".to_owned()))
+}
+
+/// 这份提交是不是「原批准已经过期，而且一个字节都还没写出去」：没有清单，也没有任何一篇正文。
+/// 磁盘和内存两个实现共用；`exists` 由各自的只读检查提供。
+pub(crate) fn expired_before_start(
+    commit: &ArtifactCommit,
+    manifest_path: &VaultPath,
+    exists: impl Fn(&VaultPath) -> Result<bool, BrokerError>,
+) -> Result<bool, BrokerError> {
+    if commit.provenance.is_live_at(system_now_ms()?) || exists(manifest_path)? {
+        return Ok(false);
+    }
+    for candidate in &commit.artifacts {
+        if exists(&artifact_target(commit, candidate.name.as_str())?)? {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
 pub(crate) fn reject_expired(commit: &ArtifactCommit) -> Result<(), BrokerError> {
     if commit.provenance.is_live_at(system_now_ms()?) {
         Ok(())

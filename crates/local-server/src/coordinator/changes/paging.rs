@@ -137,6 +137,42 @@ fn refill(
     }
     Ok(true)
 }
+/// 四项水位的线格式；列表页和只问水位共用，两边永远是同一个形状。
+fn through(sequence: u64, epoch: &str, observation: u64, generation: u64) -> Value {
+    json!({"sequence":sequence.to_string(),"epoch":epoch,"observation":observation.to_string(),"generation":generation.to_string()})
+}
+/// 只回当前水位：和列表第一页签发快照时取的是同一组数，不读任何条目正文、不占游标缓存。
+pub(super) fn head(
+    owner: &CanonicalWorkbench,
+    principal: &ContentPrincipal,
+    requested: Option<VaultUuid>,
+) -> Result<Value, Problem> {
+    let guard = owner
+        .core
+        .owner
+        .lock()
+        .map_err(|_| Problem::unavailable())?;
+    let broker = guard.as_ref().ok_or_else(Problem::unavailable)?;
+    check(owner, principal)?;
+    let vault = broker.vault_uuid();
+    if requested.is_some_and(|v| v != vault) {
+        return Err(Problem::forbidden());
+    }
+    let sequence = broker
+        .list_changes(1, None)
+        .map_err(crate::history::read_error)?
+        .through_sequence;
+    let summary = {
+        let log = owner
+            .core
+            .changes
+            .lock()
+            .map_err(|_| Problem::unavailable())?;
+        through(sequence, &log.epoch, log.last_index, log.generation)
+    };
+    check(owner, principal)?;
+    Ok(json!({"vault_uuid":vault,"through":summary}))
+}
 pub(super) fn page(
     owner: &CanonicalWorkbench,
     principal: &ContentPrincipal,
@@ -255,7 +291,12 @@ pub(super) fn page(
         || observation(&mut position, &log).is_some();
     drop(log);
     check(owner, principal)?;
-    let summary = json!({"sequence":position.snapshot.through.to_string(),"epoch":position.snapshot.epoch,"observation":position.snapshot.observation.to_string(),"generation":position.snapshot.generation.to_string()});
+    let summary = through(
+        position.snapshot.through,
+        &position.snapshot.epoch,
+        position.snapshot.observation,
+        position.snapshot.generation,
+    );
     let incomplete = position.incomplete;
     let retired = position.retired;
     let seen_complete = position.seen.complete;

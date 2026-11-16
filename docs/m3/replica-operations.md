@@ -43,6 +43,17 @@ bash scripts/sync-agent-vault.sh
 
 `--allow` 不在文档里抄列（抄过两次都过时了）：以 `deploy/agent/studiolo-agent-system.service.in` 为准，它与 `scripts/replica_common.py` 的 `ALLOW` 逐项相等，由 `DeployAllowlistTests` 守卫。
 
+**加一个新项目（T-209，2026-11-15）**：只改 `scripts/project_registry.json` 一处（路径、给不给 AI 看、备注），然后
+
+```bash
+python3 scripts/project_registry.py sync            # 重写 replica_common.py 的 ALLOW 和 deploy/ 下各模板的 --allow
+python3 scripts/project_registry.py check --vault <库根目录>   # 登记了但库里没有的目录会让副本捕获整批失败，这里先拦
+python3 scripts/project_registry.py desired --capability <现行能力集.json> --grant 项目/<名字>   # 生成能力集提案正文
+```
+
+两道门都还在：`sync` 之后仍要重发 Mac 副本包、发行并重启 agent（主人在场，顺序见上：副本先变新、agent 最后重启）；
+`desired` 只打印提案正文，照旧经策略平面提交、由人批准后才生效。注册表不记代码仓库地址。
+
 必须先由系统管理器使用相同隔离参数，在独立回环端口（例如 4401）启动新程序，验证实际 PID/UID/二进制、initialize、四工具与匿名 401；
 确认新鲜度、版本和读取审计后，再安装 `/etc/systemd/system/studiolo-agent.service`，停止并禁用旧用户级 MCP 单元，启用系统级单元。网页和 Tunnel 无需调整。
 私有身份库/审计账本沿用，不重复初始化、不重新签发 token。真实凭据不放进聊天、命令参数或日志。

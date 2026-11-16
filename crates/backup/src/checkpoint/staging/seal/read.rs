@@ -4,7 +4,10 @@ use super::{
     DiskSeal, InclusionDocument, SealedCheckpoint, SealedInventory, SealedReference,
     expiry_deadline, read,
 };
-use crate::checkpoint::manifest::{CheckpointManifest, ManifestInputs};
+use crate::checkpoint::{
+    manifest::{CheckpointManifest, ManifestInputs},
+    types::SealTicket,
+};
 use std::{path::Path, time::Instant};
 use studiolo_core::checkpoint::InstantMillis;
 
@@ -96,20 +99,7 @@ impl SealedCheckpoint {
         if hash != seal.manifest_sha256 {
             return Err(StagingError::Manifest);
         }
-        let reconstructed = CheckpointManifest::build(
-            &seal.ticket,
-            ManifestInputs {
-                application_packages: manifest.application_packages.clone(),
-                cli_packages: manifest.cli_packages.clone(),
-                deployment: manifest.deployment.clone(),
-                secret_references: manifest.secret_references.clone(),
-                audit_coverage: manifest.audit_coverage,
-            },
-        )
-        .map_err(|_| StagingError::Manifest)?;
-        if reconstructed != manifest {
-            return Err(StagingError::Manifest);
-        }
+        consistent(&seal.ticket, &manifest)?;
         let (inclusion, hash, inclusion_bytes): (InclusionDocument, _, _) =
             read(directory, "inclusion.json", deadline)?;
         if hash != seal.inclusion_sha256
@@ -137,4 +127,22 @@ impl SealedCheckpoint {
             inventory,
         })
     }
+}
+/// 清单必须能由票据和它自己带的固定事实原样重建；重开原封存和核验取回副本共用这一条。
+pub(super) fn consistent(ticket: &SealTicket, manifest: &CheckpointManifest) -> Result<()> {
+    let reconstructed = CheckpointManifest::build(
+        ticket,
+        ManifestInputs {
+            application_packages: manifest.application_packages.clone(),
+            cli_packages: manifest.cli_packages.clone(),
+            deployment: manifest.deployment.clone(),
+            secret_references: manifest.secret_references.clone(),
+            audit_coverage: manifest.audit_coverage,
+        },
+    )
+    .map_err(|_| StagingError::Manifest)?;
+    if &reconstructed != manifest {
+        return Err(StagingError::Manifest);
+    }
+    Ok(())
 }

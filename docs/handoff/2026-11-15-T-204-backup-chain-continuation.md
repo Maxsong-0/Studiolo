@@ -1,5 +1,8 @@
 # T-204 backup chain — continuation handoff (2026-11-15)
 
+> **Superseded on 2026-11-15 (evening).** Sub-units 3–7 below were redone by the main session and are in the
+> repository; do **not** redo them from this brief. Read "Status after the redo" at the end of this file first.
+
 Written by the main session (Claude, DGX) for a cloud agent that cannot read the
 project vault. The vault stays authoritative; this file is a snapshot.
 
@@ -157,3 +160,34 @@ requested model. The main session reviewed the full diff and verified on the x86
 
 Known limits are recorded in `docs/m2/checkpoint-recovery-contract.md` ("已知限制，上线前要处理"). The restic
 end-to-end drill has not been run (the test node has no pinned restic 0.19.1 and nothing is downloaded there).
+
+## Status after the redo (2026-11-15 evening, main session)
+
+The four open decisions above were settled by the main session on the user's behalf (the user asked for everything to
+be finished in one session and can still overturn any of them): (1) a read-only "next pending key" command on the
+sealed protocol; (2) new-root restore fails closed; (3) version-1 manifests stay rejected; (4) no timer inside the main
+service — a one-shot command started by a system timer.
+
+Sub-units 3–7 were then redone, one commit each, verified on the x86_64 test node:
+
+| Sub-unit | Commit | Where to read |
+|---|---|---|
+| Producer wired into the main service | `916e01d` | `docs/contracts/backup-producer.md` |
+| Worker long-running entry (`run` / `schedule` / `init`), deploy templates | `138d44c` | `docs/contracts/backup-worker-process.md` |
+| New-root restore (retrieved copy, byte-checked placement, roster-driven orchestration) | `a85732b` | `docs/contracts/new-root-restore.md` |
+| Exit for expired `committing` attempts | `56781fa`, `90443a7` | `docs/m2/checkpoint-recovery-contract.md` ("已知限制") |
+| In-process end-to-end drill (source-expired path, no restic) | `2966f15` | `docs/contracts/backup-worker-process.md` ("端到端演练做到哪") |
+
+Still **not done** (each needs its own task; do not start them from this file):
+
+- New-root restore protocols for Control, AgentStore, Policy and Bridge. Today a sealed checkpoint that contains any of
+  them is refused before anything is written, so a deployment with the board cannot be restored through this path.
+  How post-cutoff revocations are reconciled for the policy store is a security decision that belongs to the user.
+- A command-line entry for the restore orchestration, and encrypted storage for the recovery kit.
+- Broker cleanup of atomic-write leftovers at open.
+- Deleting already-published source bodies after their retention ends (the Broker has no delete capability).
+
+Still **not verified**: the upload / re-verification / final-manifest leg and the retrieval leg against a real pinned
+restic (none on the test node, nothing is downloaded there); a full round with two system accounts, systemd
+credentials and the timer on a real machine; Auth offline restore and the final cut-over after a new-root restore;
+the "resume an interrupted restore" path (no test).

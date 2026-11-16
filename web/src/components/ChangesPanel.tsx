@@ -1,6 +1,7 @@
 import { COMMAND_TARGETS } from '../commands/focusTarget';
 import { useId } from 'react';
 import { useChanges } from '../useChanges';
+import { useAutoRefresh, useAutoRefreshReader } from '../live/useAutoRefresh';
 import { useViewLocation } from '../useViewLocation';
 import {
   changeActor,
@@ -64,6 +65,14 @@ function ChangesContent({
 }) {
   const id = useId();
   const feed = useChanges(project, active);
+  // 面板自己的一路（T-210）：开着、页面看得见、有人在操作时，隔一个间隔只问一次水位；
+  // 变了亮提示，由人决定什么时候读。不动全站那一个调度器，文档页的快照不会被悄悄换掉。
+  const live = useAutoRefresh({
+    active: active && feed.page !== null && !feed.behind,
+    reading: feed.loading || feed.marking,
+    failed: Boolean(feed.error),
+  });
+  useAutoRefreshReader(live, feed.watch, 0);
   const grouped = new Map<string, ChangeEntry[]>();
   for (const row of feed.page?.entries ?? []) {
     const name = group(row);
@@ -130,6 +139,14 @@ function ChangesContent({
         </p>
       ) : null}
       {feed.message ? <p role="status">{feed.message}</p> : null}
+      {feed.behind ? (
+        <p className="changes-notice" role="status">
+          有新变化。
+          <Button variant="text" onClick={() => void feed.reload()}>
+            读取新变化
+          </Button>
+        </p>
+      ) : null}
       {feed.page ? (
         <>
           <p className="changes-caption">

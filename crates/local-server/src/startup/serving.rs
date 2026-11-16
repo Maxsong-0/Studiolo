@@ -1,6 +1,6 @@
 //! 最后复核并选择一个监听器；因子模式不隐式留下TCP旁路。
 
-use super::{PreparedServer, StartupError, canonical_input, checkpoint_input};
+use super::{PreparedServer, StartupError, backup_input, canonical_input, checkpoint_input};
 use std::{future::Future, net::Ipv4Addr, sync::Arc};
 use studiolo_local_server::BoundUnixIngress;
 use tokio::signal::unix::{Signal, SignalKind, signal};
@@ -89,6 +89,27 @@ impl PreparedServer {
     {
         let workbench = self.workbench.as_ref().map(Arc::clone);
         let stopping = workbench.as_ref().map(Arc::clone);
+        // 备份 socket 配了就必须起得来；起不来先关停写者，再带着入口错误返回。
+        let backup = match self
+            .backup
+            .take()
+            .map(backup_input::Listening::start)
+            .transpose()
+        {
+            Ok(listening) => listening.map(Arc::new),
+            Err(error) => {
+                canonical_input::shutdown(workbench.as_ref()).await?;
+                return Err(error);
+            }
+        };
+        // 收到退出信号后先停备份：在途的封存还握着全部 owner 的冻结屏障，要等它放开才能动写者。
+        let settling = backup.clone();
+        let shutdown = async move {
+            shutdown.await;
+            if let Some(backup) = &settling {
+                backup.shutdown().await;
+            }
+        };
         let (stop, stopped) = tokio::sync::watch::channel(false);
         let driver = self
             .sync_plane
@@ -104,6 +125,10 @@ impl PreparedServer {
             }
         })
         .await;
+        // 监听失败或驱动异常退出没经过上面那条路：这里补一次，重复调用无害。
+        if let Some(backup) = &backup {
+            backup.shutdown().await;
+        }
         canonical_input::shutdown(workbench.as_ref()).await?;
         result
     }

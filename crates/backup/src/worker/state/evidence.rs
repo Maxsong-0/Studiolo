@@ -78,6 +78,8 @@ pub enum FailureReason {
     FinalManifestCommitFailed,
     /// 备份目标未接入，无法验证。
     TargetUnverified,
+    /// 封存正文在作业做完之前过了销毁期限；不重传，也不猜远端状态。
+    SourceExpired,
 }
 
 /// 未知结果沿原作业键核对后的结论。

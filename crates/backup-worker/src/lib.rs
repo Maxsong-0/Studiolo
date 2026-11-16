@@ -9,10 +9,11 @@ mod package;
 mod process;
 mod runner;
 mod runtime;
+pub mod serve;
 mod source;
 mod temporary;
 
-pub use audit::WorkerAuditClient;
+pub use audit::{WorkerAuditClient, WorkerQueueClient};
 pub use config::WorkerConfig;
 pub use credentials::ResticCredentials;
 pub use job::ApprovedJob;

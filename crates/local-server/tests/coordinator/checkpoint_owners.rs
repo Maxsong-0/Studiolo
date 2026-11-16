@@ -28,7 +28,10 @@ use studiolo_host_config::Config;
 use studiolo_policy::PolicyStore;
 use studiolo_supply::AgentStore;
 
+mod drill;
 mod fixture;
+mod producer;
+mod restore;
 mod seal;
 use fixture::Setup;
 

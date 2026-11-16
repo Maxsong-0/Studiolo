@@ -1,5 +1,5 @@
 //! 候选正文仅存 Broker 私有数据根；控制面只持内容寻址指针。
-use crate::broker::reject_expired;
+use crate::broker::{expired_before_start, reject_expired};
 use crate::writer::disk;
 use crate::{ArtifactCommit, BrokerError, FsVaultBroker, MemoryVaultBroker, VaultUuid, sha256};
 use serde::{Deserialize, Serialize};
@@ -37,6 +37,14 @@ pub trait ArtifactStager: Send + Sync {
         &self,
         pointer: &StagedArtifactCommit,
     ) -> Result<(), BrokerError>;
+    /// 这份提交是不是「原批准已经过期，而且一个字节都还没写出去」（没有清单，也没有任何一篇正文）。
+    ///
+    /// 按 Broker 自己的时钟判断，只读。回答「是」时调用方才可以把这次提交落成失败并丢掉暂存。
+    /// 默认回答「不是」：证明不了就保持待恢复，不走失败出口。
+    fn expired_before_start(&self, plan: &ArtifactCommit) -> Result<bool, BrokerError> {
+        let _ = plan;
+        Ok(false)
+    }
 }
 
 fn encode(plan: &ArtifactCommit) -> Result<Vec<u8>, BrokerError> {
@@ -189,6 +197,17 @@ impl ArtifactStager for FsVaultBroker {
         self.writer.check(&self.root, &self.data)?;
         Ok(result)
     }
+    fn expired_before_start(&self, plan: &ArtifactCommit) -> Result<bool, BrokerError> {
+        self.writer.check(&self.root, &self.data)?;
+        // 有没收口的写入时说不清「写没写」：不回答「是」。
+        if self.write_status()?.unresolved {
+            return Ok(false);
+        }
+        let manifest = Self::manifest_path(plan.task_id, plan.attempt_id)?;
+        expired_before_start(plan, &manifest, |path| {
+            Ok(self.inspect_existing(path)?.is_some())
+        })
+    }
 }
 impl ArtifactStager for MemoryVaultBroker {
     fn stage_artifact_commit(
@@ -241,5 +260,11 @@ impl ArtifactStager for MemoryVaultBroker {
             .get(&reference.id)
             .ok_or(BrokerError::CorruptWriterState)?;
         decode(self.vault_uuid, reference, bytes)
+    }
+    fn expired_before_start(&self, plan: &ArtifactCommit) -> Result<bool, BrokerError> {
+        let manifest = FsVaultBroker::manifest_path(plan.task_id, plan.attempt_id)?;
+        expired_before_start(plan, &manifest, |path| {
+            Ok(self.inspect_existing(path)?.is_some())
+        })
     }
 }

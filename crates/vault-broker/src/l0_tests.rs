@@ -4,6 +4,7 @@ mod compatibility;
 mod feed;
 mod history;
 mod lifecycle;
+mod lineage;
 mod restore;
 mod restore_review;
 #[path = "../tests/l0_private/restore_write_gate/mod.rs"]
