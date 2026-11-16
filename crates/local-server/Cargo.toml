@@ -17,6 +17,10 @@ path = "src/alert_main.rs"
 name = "studiolo-doorbell"
 path = "src/doorbell_main.rs"
 
+[[bin]]
+name = "studiolo-restore"
+path = "src/restore_main.rs"
+
 [lints]
 workspace = true
 

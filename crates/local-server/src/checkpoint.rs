@@ -11,8 +11,9 @@ use crate::{
 pub use assembly::CheckpointInputs;
 pub use export::{CheckpointExports, CheckpointTimes, OwnerExportPaths, trusted_catalog};
 pub use restore::{
-    NewRootRestore, RestoreRefusal, RestoreReport, RevocationPending, require_restore_revoked,
-    restore_into_new_root,
+    Cutover, CutoverRefusal, Journal, NewRootRestore, RestoreRefusal, RestoreReport,
+    RevocationPending, begin_cutover, finish_cutover, require_restore_revoked,
+    restore_into_new_root, restore_started,
 };
 use std::{
     sync::Arc,

@@ -10,7 +10,10 @@
 //! 拒绝都发生在写任何东西之前；写了之后任何一步失败都停在「新根起不来」，由人看过再接手。接手要接在同一份
 //! 恢复记录上：Broker 重绑定还没开始的，已放好的组件逐个按已核验视图重核；某个 owner 的失效已经开始过的，
 //! 它的库已经改过，不再按封存水位核，只做幂等的失效和事后核对（`owners.rs`）。
-//! 这里不建空库、不补默认 owner、不做最终切换。
+//! 每追加一条恢复记录，先交给调用方的去处（命令行写到标准输出并刷新），交出去了才做那一步；交不出去就停，
+//! 人手里那份记录里没有的步骤一步都不做（[`Recorder`]）。
+//! 这里不建空库、不补默认 owner；最终切换在 `cutover.rs`，由人核对之后另外执行。
+mod cutover;
 mod owners;
 
 use super::export::{AGENT_AUDIT, AGENTS, AUDIT, AUTH, CANONICAL, CONTROL, POLICY, WRITER_DATA};
@@ -27,7 +30,7 @@ use studiolo_backup::{
     checkpoint::staging::{Placement, RestoredCheckpoint},
     recovery::{
         kit::{PreRestoreChecks, RecoveryGrant},
-        transcript::RecoveryStep,
+        transcript::{RecoveryStep, RecoveryTranscript, TranscriptEntry},
     },
 };
 use studiolo_core::{
@@ -35,8 +38,39 @@ use studiolo_core::{
     checkpoint::{AuditChainCutoff, CheckpointOwner, OwnerAssembly, OwnerWatermark},
 };
 use studiolo_vault_broker::{
-    NewRootRebind, RestoreLineage, read_restore_lineage, rebind_new_roots,
+    NewRootRebind, RestoreLineage, read_restore_lineage, rebind_new_roots, valid_restore_id,
 };
+
+pub use cutover::{Cutover, CutoverRefusal, begin_cutover, finish_cutover};
+
+/// 恢复记录的去处：每追加一条就交给它一次，交不出去返回 `Err(())`。命令行把每条写到标准输出并刷新；
+/// 进程内的调用方（用例）不需要另存时给一个什么都不做的。
+pub type Journal<'a> = dyn FnMut(&TranscriptEntry) -> Result<(), ()> + 'a;
+
+/// 恢复记录和它的去处，编排里每一步都经它记。
+pub(super) struct Recorder<'a> {
+    grant: &'a mut RecoveryGrant,
+    journal: &'a mut Journal<'a>,
+}
+impl Recorder<'_> {
+    /// 追加一条，交给去处；交出去了才返回，调用方这时才能做这一步。交不出去的那条从内存里撤掉：那一步没做，
+    /// 内存里的记录要和人手里的一样，命令行按它判断新根写没写过。
+    pub(super) fn record(
+        &mut self,
+        step: RecoveryStep,
+        payload: serde_json::Value,
+    ) -> Result<(), RestoreRefusal> {
+        let transcript = &mut self.grant.transcript;
+        let entry = transcript
+            .append(step, payload)
+            .map_err(|_| RestoreRefusal::Transcript)?;
+        if (self.journal)(entry).is_err() {
+            transcript.entries.pop();
+            return Err(RestoreRefusal::Transcript);
+        }
+        Ok(())
+    }
+}
 
 /// 一个要放到新根里的组件：封存里的目录 → 新根下面的固定位置；位置不由调用方给。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -101,6 +135,9 @@ pub struct NewRootRestore<'a> {
 /// 固定的拒绝类别；不带路径、键和底层错误。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RestoreRefusal {
+    /// 恢复标识不合法（要 1～55 个字母、数字或 `-`，Broker lineage 和 Auth 撤权记录是同一个规则）。
+    /// 写任何东西之前就拒绝。
+    RestoreId,
     /// 恢复记录不是这个 checkpoint 的、还没取得写入授权、写不进去，或者和「新开 / 接手」对不上：
     /// 新开一次恢复要用干净的记录，接手要接在上一次那份记录上。
     Transcript,
@@ -192,14 +229,18 @@ impl Plan {
 
 /// 把一份已核验的取回副本恢复到新根。
 ///
-/// 顺序：核恢复记录和前置检查 → 按名单定能不能恢复（不能就在这里拒绝，还没写任何东西）→ 新根里有
+/// 顺序：核恢复标识、恢复记录和前置检查 → 按名单定能不能恢复（不能就在这里拒绝，还没写任何东西）→ 新根里有
 /// `.restoring` 半成品就拒绝 → 核「新开 / 接手」和恢复记录对得上 → 接手且 Broker 重绑定还没开始的，重核已放好的
 /// 组件 → 逐字节核对着放置组件 → Broker 重绑定 → 核两条账本链尾 → 各 owner 失效 → Auth 撤权。每一步都记进
-/// 恢复记录。成功返回后只剩人核对之后的最终切换，不在这里做。
+/// 恢复记录，每一条都先交给 `journal`。成功返回后只剩人核对之后的最终切换，不在这里做。
 pub fn restore_into_new_root(
     grant: &mut RecoveryGrant,
     request: NewRootRestore<'_>,
+    journal: &mut Journal<'_>,
 ) -> Result<RestoreReport, RestoreRefusal> {
+    if !valid_restore_id(request.restore_id) {
+        return Err(RestoreRefusal::RestoreId);
+    }
     let checkpoint = &request.restored.reference().checkpoint_id;
     if &grant.transcript.checkpoint_id != checkpoint || grant.transcript.authorize_write().is_err()
     {
@@ -255,16 +296,17 @@ pub fn restore_into_new_root(
                 .map_err(|_| RestoreRefusal::Placement)?;
         }
     }
-    record(
-        grant,
+    let mut recorder = Recorder { grant, journal };
+    recorder.record(
         RecoveryStep::PreRestoreChecksCompleted,
         serde_json::json!({ "checks": request.checks }),
     )?;
-    record(
-        grant,
+    recorder.record(
         RecoveryStep::PhysicalRebindIntent,
         serde_json::json!({
             "restore": request.restore_id,
+            // 这次要恢复的 owner：最终切换按它核「名单里有的都失效了」。
+            "owners": plan.restored_owners(),
             "reused_components": placed.len(),
             "resumed": request.resume_interrupted,
         }),
@@ -286,8 +328,7 @@ pub fn restore_into_new_root(
     }
 
     let lineage = rebind(&request, &plan, &data_root)?;
-    record(
-        grant,
+    recorder.record(
         RecoveryStep::PhysicalRebindOutcome,
         serde_json::json!({ "restore": request.restore_id }),
     )?;
@@ -314,29 +355,28 @@ pub fn restore_into_new_root(
         deadline: request.deadline,
     };
     if let Some(expected) = &plan.control {
-        owners::run_stage(grant, &history, &context, Stage::Control, |fresh| {
+        owners::run_stage(&mut recorder, &history, &context, Stage::Control, |fresh| {
             owners::control(&context, plan.vault_uuid, expected, fresh)
         })?;
     }
     if let Some(expected) = &plan.policy {
-        owners::run_stage(grant, &history, &context, Stage::Policy, |fresh| {
+        owners::run_stage(&mut recorder, &history, &context, Stage::Policy, |fresh| {
             owners::policy(&context, expected, fresh)
         })?;
     }
     if let Some(expected) = &plan.agents {
-        owners::run_stage(grant, &history, &context, Stage::Agents, |fresh| {
+        owners::run_stage(&mut recorder, &history, &context, Stage::Agents, |fresh| {
             owners::agents(&context, expected, fresh)
         })?;
     }
     if plan.bridge && !history.recorded(RecoveryStep::SyncLeftClosed) {
         // Bridge 绑着旧根的物理身份，这一版不恢复它的运行状态，目录也不放；同步按引导流程从零重新打开。
-        record(
-            grant,
+        recorder.record(
             RecoveryStep::SyncLeftClosed,
             serde_json::json!({ "restore": request.restore_id }),
         )?;
     }
-    let invalidation = owners::run_stage(grant, &history, &context, Stage::Auth, |_| {
+    let invalidation = owners::run_stage(&mut recorder, &history, &context, Stage::Auth, |_| {
         owners::auth(
             request.new_root,
             request.sessions,
@@ -352,6 +392,13 @@ pub fn restore_into_new_root(
         sync_left_closed: plan.bridge,
         invalidation,
     })
+}
+
+/// 恢复记录里有没有这次恢复（这个恢复标识）的放置意图。有：新根可能已经写过，没做完只能接着这份记录接手；
+/// 没有：新根上一个字节都没写过（放置意图交出去之后才放第一个组件）。命令行据此告诉人下一步。
+#[must_use]
+pub fn restore_started(transcript: &RecoveryTranscript, restore_id: &str) -> bool {
+    History::of(transcript, restore_id).started
 }
 
 /// 组件在新根里的状态：（已放好，上一次放置中途失败留下的 `.restoring` 还在）。放在别的组件里面的，
@@ -495,18 +542,6 @@ fn plan(restored: &RestoredCheckpoint) -> Result<Plan, RestoreRefusal> {
         policy,
         bridge,
     })
-}
-
-fn record(
-    grant: &mut RecoveryGrant,
-    step: RecoveryStep,
-    payload: serde_json::Value,
-) -> Result<(), RestoreRefusal> {
-    grant
-        .transcript
-        .append(step, payload)
-        .map(drop)
-        .map_err(|_| RestoreRefusal::Transcript)
 }
 
 /// 启动闸门的拒绝：这是恢复出来的新根，Auth 撤权还没做完（或看不清是不是）。不带路径和底层错误。

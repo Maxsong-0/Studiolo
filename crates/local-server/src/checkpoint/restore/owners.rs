@@ -3,7 +3,7 @@
 //! 每个 owner 的步骤都一个形状（[`run_stage`]）：这次恢复里还没开始过的，先在恢复记录里记「开始」，按清单里
 //! 它的水位重算核对，再做失效、做事后核对、记「完成」；已经开始过的（接手上一次），它的库已经改过，不再按封存
 //! 水位核，只做幂等的失效和事后核对。失效本身都是幂等的：同一恢复标识再做一遍什么都不变。
-use super::{RestoreRefusal, record};
+use super::{Recorder, RestoreRefusal};
 use serde_json::{Value, json};
 use std::{collections::BTreeSet, path::Path, sync::Arc, time::Instant};
 use studiolo_audit_ledger::{AuditFilter, AuditLedger, AuditRecord, SqliteAuditLedger};
@@ -11,10 +11,7 @@ use studiolo_auth::{
     OsSessionRandom, Recovery, RestoreInvalidation, SessionConfig, SessionManager,
     SystemSessionClock, Totp, TotpSeed,
 };
-use studiolo_backup::recovery::{
-    kit::RecoveryGrant,
-    transcript::{RecoveryStep, RecoveryTranscript},
-};
+use studiolo_backup::recovery::transcript::{RecoveryStep, RecoveryTranscript};
 use studiolo_control_db::ControlDb;
 use studiolo_core::{
     VaultUuid,
@@ -55,7 +52,7 @@ impl Stage {
     }
 }
 
-/// 同一份恢复记录里，这次恢复（同一恢复标识）之前已经走到哪了。
+/// 同一份恢复记录里，这次恢复（同一恢复标识）之前已经走到哪了。最终切换也用它核前面的步骤。
 pub(super) struct History {
     /// 记录里有这次恢复的放置意图：接手的前提。
     pub started: bool,
@@ -115,7 +112,7 @@ pub(super) struct Context<'a> {
 /// 按固定形状走一个 owner 的失效：没开始过的先记「开始」，`work(true)` 先核清单水位再动手；开始过的
 /// `work(false)` 只做幂等的失效和事后核对。「完成」只记一次，载荷是 `work` 交回的事实（不带凭据）。
 pub(super) fn run_stage<T>(
-    grant: &mut RecoveryGrant,
+    recorder: &mut Recorder<'_>,
     history: &History,
     context: &Context<'_>,
     stage: Stage,
@@ -123,8 +120,8 @@ pub(super) fn run_stage<T>(
 ) -> Result<T, RestoreRefusal> {
     let begun = history.begun(stage);
     if !begun {
-        record(
-            grant,
+        // 「开始」先交到人手里再动库：接手时据此知道这个库可能已经改过。
+        recorder.record(
             RecoveryStep::OwnerRestoreIntent,
             json!({ "owner": stage.name(), "restore": context.restore_id }),
         )?;
@@ -135,7 +132,7 @@ pub(super) fn run_stage<T>(
             return Err(RestoreRefusal::Transcript);
         };
         object.insert("restore".into(), context.restore_id.into());
-        record(grant, stage.outcome(), facts)?;
+        recorder.record(stage.outcome(), facts)?;
     }
     Ok(value)
 }
@@ -267,10 +264,11 @@ pub(super) fn agents(
 }
 
 /// Auth 撤权（设计 4.1），照 `studiolo-auth-admin restore` 的顺序：只为恢复打开已有库 → 挂 TOTP 和恢复码因子 →
-/// 废止全部旧会话、L3 和恢复码。要求身份版本变大（接手上一次时等于当时提交的那次、之后没再变）、
+/// 废止全部旧会话、L3 和恢复码。要求身份版本恰好加一（接手上一次时等于当时提交的那次、之后没再变）、
 /// 两条恢复事件都投进了新根的人侧账本；否则拒绝，启动闸门照旧不放行。
 ///
-/// 这里不调 `AuthRestoreInvalidation::check`：它要的「主人已重新认证」只有最终切换之后才成立，归切换那一步核。
+/// 这里不调 `AuthRestoreInvalidation::check`：它要的「主人已重新认证」只有最终切换之后才成立，归切换那一步核
+/// （`cutover.rs`）。
 pub(super) fn auth(
     new_root: &Path,
     sessions: SessionConfig,
@@ -299,7 +297,8 @@ pub(super) fn auth(
         .invalidate_restored_credentials(restore_id)
         .map_err(|_| RestoreRefusal::Auth)?;
     let advanced = match earlier {
-        None => report.epoch > before,
+        // 第一次撤权：Auth 把身份版本恰好加一（设计第 2 节第 1 条）。
+        None => before.checked_add(1) == Some(report.epoch),
         Some(epoch) => report.epoch == epoch && epoch == before,
     };
     let delivered = manager
@@ -310,6 +309,8 @@ pub(super) fn auth(
     }
     let facts = json!({
         "epoch": report.epoch,
+        // 撤权之前的身份版本：最终切换按它核「签发代次前进了」。接手时撤权已经做过，按「恰好加一」推回去。
+        "previous_epoch": report.epoch - 1,
         "revoked_sessions": report.revoked_sessions,
         "cleared_l3": report.cleared_l3,
         // 字段名照 Auth 恢复事件的写法：末两词是 recovery codes 的会被当成凭据拒掉。

@@ -1,9 +1,11 @@
 //! 新根恢复接真实 owner（T-212）：人侧三件放置、重绑定、核链尾、Auth 撤权一整轮，启动闸门跟着数据走；
 //! 接手要接在同一份恢复记录上，重绑定前接手逐字节重核；六 owner 封存里黑板三件各按自己的协议失效。
+//! 命令行的写法（每追加一条先交出去）中途交不出去时，拿交出去的文本接手；最终切换两步要主人重新登录。
 use super::{producer::Stage, seal::manifest, *};
 use crate::checkpoint::{
-    CheckpointTimes, NewRootRestore, RestoreRefusal, RevocationPending, require_restore_revoked,
-    restore_into_new_root, trusted_catalog,
+    CheckpointTimes, Cutover, CutoverRefusal, NewRootRestore, RestoreRefusal, RestoreReport,
+    RevocationPending, begin_cutover, finish_cutover, require_restore_revoked,
+    restore_into_new_root, restore_started, trusted_catalog,
 };
 use hmac::{Hmac, Mac};
 use std::path::{Path, PathBuf};
@@ -13,7 +15,7 @@ use studiolo_backup::{
     checkpoint::staging::{RestoredCheckpoint, SealedCheckpoint, SealedReference, StagingArea},
     recovery::{
         kit::{BootstrapChannel, PreRestoreChecks, RecoveryGrant, RecoveryIdentity, RecoveryKit},
-        transcript::RecoveryStep,
+        transcript::{RecoveryStep, RecoveryTranscript, TranscriptEntry},
     },
     worker::audit::{AdmissionFact, QueueAnswer, QueueCommand},
 };
@@ -21,6 +23,10 @@ use studiolo_control_db::ControlDb;
 use studiolo_core::checkpoint::InstantMillis;
 use studiolo_policy::RevocationLevel;
 use studiolo_vault_broker::FsVaultBroker;
+
+/// Access 测试夹具（公开的测试密钥）：模拟主人在新根上重新登录。
+#[path = "../../access/test_support.rs"]
+mod access_fixture;
 
 pub(super) fn wall() -> i64 {
     i64::try_from(
@@ -127,6 +133,64 @@ fn request<'a>(
         totp_seed: seed(SECRET),
     }
 }
+/// 进程内恢复：记录只留在 `grant` 里，不另交给别处。
+fn restore(
+    grant: &mut RecoveryGrant,
+    request: NewRootRestore<'_>,
+) -> Result<RestoreReport, RestoreRefusal> {
+    restore_into_new_root(grant, request, &mut |_| Ok(()))
+}
+/// 命令行的写法：已有的整份先写出去（头一行加每条一行）。
+fn text_of(transcript: &RecoveryTranscript) -> Vec<String> {
+    let mut lines = vec![transcript.header_line().unwrap()];
+    lines.extend(
+        transcript
+            .entries
+            .iter()
+            .map(|entry| RecoveryTranscript::entry_line(entry).unwrap()),
+    );
+    lines
+}
+/// 命令行的去处：每追加一条写一行。
+fn written(lines: &mut Vec<String>) -> impl FnMut(&TranscriptEntry) -> Result<(), ()> + '_ {
+    move |entry: &TranscriptEntry| {
+        lines.push(RecoveryTranscript::entry_line(entry).map_err(drop)?);
+        Ok(())
+    }
+}
+/// 接手或切换时读回人手里的那份文本。
+fn read_back(lines: &[String]) -> RecoveryGrant {
+    let transcript = RecoveryTranscript::from_lines(&lines.join("\n")).unwrap();
+    RecoveryGrant {
+        authorization: transcript.authorize_write().unwrap(),
+        transcript,
+    }
+}
+fn cutover<'a>(fixture: &Fixture, new_root: &'a Path) -> Cutover<'a> {
+    Cutover {
+        new_root,
+        restore_id: "drill-1",
+        sessions: sessions(fixture),
+    }
+}
+/// 主人在新根上重新登录一次：像服务那样打开新根的 Auth，拿 Access 夹具签的令牌签发会话。
+async fn login(fixture: &Fixture, new_root: &Path) {
+    let identity = access_fixture::verifier()
+        .await
+        .verify(&access_fixture::signed(&access_fixture::claims()))
+        .await
+        .unwrap();
+    let ledger = Arc::new(SqliteAuditLedger::open_existing(&new_root.join("audit")).unwrap());
+    let manager = SessionManager::open_existing(
+        &new_root.join("auth"),
+        sessions(fixture),
+        ledger,
+        Arc::new(SystemSessionClock),
+        Arc::new(OsSessionRandom),
+    )
+    .unwrap();
+    manager.issue(&identity).unwrap();
+}
 /// 按私有配置打开新根上的 Auth，问启动闸门放不放行。
 fn gate(fixture: &Fixture, new_root: &Path) -> Result<(), RevocationPending> {
     let ledger = Arc::new(SqliteAuditLedger::open_existing(&new_root.join("audit")).unwrap());
@@ -230,10 +294,16 @@ async fn human_side_checkpoint_restores_with_auth_revocation_and_the_gate_follow
     let restored = RestoredCheckpoint::open(&fetched, sealed.reference(), deadline()).unwrap();
     let new_root = target(&fixture, "new-root");
 
-    // 前置检查没确认全、恢复记录不是这个 checkpoint 的：都在写之前拒绝，记录里也不多一行。
+    // 恢复标识不合法、前置检查没确认全、恢复记录不是这个 checkpoint 的：都在写之前拒绝，记录里也不多一行。
     let mut held = grant(sealed.reference());
+    let mut bad = request(&restored, &new_root, true, sessions(&fixture));
+    bad.restore_id = "drill 1";
     assert_eq!(
-        restore_into_new_root(
+        restore(&mut held, bad).unwrap_err(),
+        RestoreRefusal::RestoreId
+    );
+    assert_eq!(
+        restore(
             &mut held,
             request(&restored, &new_root, false, sessions(&fixture))
         )
@@ -245,7 +315,7 @@ async fn human_side_checkpoint_restores_with_auth_revocation_and_the_gate_follow
         seal_sha256: sealed.reference().seal_sha256.clone(),
     });
     assert_eq!(
-        restore_into_new_root(
+        restore(
             &mut foreign,
             request(&restored, &new_root, true, sessions(&fixture))
         )
@@ -261,7 +331,7 @@ async fn human_side_checkpoint_restores_with_auth_revocation_and_the_gate_follow
         let mut leftover = request(&restored, &new_root, true, sessions(&fixture));
         leftover.resume_interrupted = resume;
         assert_eq!(
-            restore_into_new_root(&mut held, leftover).unwrap_err(),
+            restore(&mut held, leftover).unwrap_err(),
             RestoreRefusal::CleanupRequired
         );
     }
@@ -272,10 +342,7 @@ async fn human_side_checkpoint_restores_with_auth_revocation_and_the_gate_follow
     // 拿错的 TOTP 种子：放置、重绑定都做完了，撤权那一步拒绝。新根放好了，但启动闸门不放行。
     let mut wrong = request(&restored, &new_root, true, sessions(&fixture));
     wrong.totp_seed = seed([7; 20]);
-    assert_eq!(
-        restore_into_new_root(&mut held, wrong).unwrap_err(),
-        RestoreRefusal::Auth
-    );
+    assert_eq!(restore(&mut held, wrong).unwrap_err(), RestoreRefusal::Auth);
     let rebound = [
         RecoveryStep::KitOpened,
         RecoveryStep::PreRestoreChecksCompleted,
@@ -295,7 +362,7 @@ async fn human_side_checkpoint_restores_with_auth_revocation_and_the_gate_follow
     // 同一新根、没声明接手：拒绝，不覆盖。
     let mut again = grant(sealed.reference());
     assert_eq!(
-        restore_into_new_root(
+        restore(
             &mut again,
             request(&restored, &new_root, true, sessions(&fixture))
         )
@@ -307,13 +374,13 @@ async fn human_side_checkpoint_restores_with_auth_revocation_and_the_gate_follow
     let mut resume = request(&restored, &new_root, true, sessions(&fixture));
     resume.resume_interrupted = true;
     assert_eq!(
-        restore_into_new_root(&mut again, resume).unwrap_err(),
+        restore(&mut again, resume).unwrap_err(),
         RestoreRefusal::Transcript
     );
     assert_eq!(steps(&again), [RecoveryStep::KitOpened]);
     let elsewhere = target(&fixture, "elsewhere");
     assert_eq!(
-        restore_into_new_root(
+        restore(
             &mut held,
             request(&restored, &elsewhere, true, sessions(&fixture))
         )
@@ -326,10 +393,10 @@ async fn human_side_checkpoint_restores_with_auth_revocation_and_the_gate_follow
     // 人看过之后在同一份记录上声明接手、拿对的种子：不再重放置、不再重绑，Auth 已经开始过，接着做完。
     let mut resume = request(&restored, &new_root, true, sessions(&fixture));
     resume.resume_interrupted = true;
-    let report = restore_into_new_root(&mut held, resume).unwrap();
+    let report = restore(&mut held, resume).unwrap();
     assert!(report.reused_placement);
     assert!(report.invalidation.audit_confirmed);
-    assert!(report.invalidation.epoch > old_epoch);
+    assert_eq!(report.invalidation.epoch, old_epoch + 1);
     assert_eq!(report.lineage.restore_id.as_deref(), Some("drill-1"));
     assert_eq!(
         report.restored_owners,
@@ -404,7 +471,7 @@ async fn human_side_checkpoint_restores_with_auth_revocation_and_the_gate_follow
     let before = held.transcript.entries.len();
     let mut resume = request(&restored, &new_root, true, sessions(&fixture));
     resume.resume_interrupted = true;
-    let again = restore_into_new_root(&mut held, resume).unwrap();
+    let again = restore(&mut held, resume).unwrap();
     assert_eq!(again.invalidation.epoch, report.invalidation.epoch);
     assert_eq!(
         steps(&held)[before..],
@@ -432,7 +499,7 @@ async fn human_side_checkpoint_restores_with_auth_revocation_and_the_gate_follow
     let mut resume = request(&restored, &new_root, true, sessions(&fixture));
     resume.resume_interrupted = true;
     assert_eq!(
-        restore_into_new_root(&mut held, resume).unwrap_err(),
+        restore(&mut held, resume).unwrap_err(),
         RestoreRefusal::Audit
     );
 }
@@ -475,7 +542,7 @@ async fn resuming_before_the_rebind_rechecks_every_placed_component() {
     changed[last] ^= 1;
     fs::write(&file, &changed).unwrap();
     assert_eq!(
-        restore_into_new_root(&mut held, resume()).unwrap_err(),
+        restore(&mut held, resume()).unwrap_err(),
         RestoreRefusal::Placement
     );
     fs::write(&file, &original).unwrap();
@@ -483,7 +550,7 @@ async fn resuming_before_the_rebind_rechecks_every_placed_component() {
     fs::write(&extra, b"extra").unwrap();
     fs::set_permissions(&extra, fs::Permissions::from_mode(0o600)).unwrap();
     assert_eq!(
-        restore_into_new_root(&mut held, resume()).unwrap_err(),
+        restore(&mut held, resume()).unwrap_err(),
         RestoreRefusal::Placement
     );
     fs::remove_file(&extra).unwrap();
@@ -492,10 +559,182 @@ async fn resuming_before_the_rebind_rechecks_every_placed_component() {
         [RecoveryStep::KitOpened, RecoveryStep::PhysicalRebindIntent]
     );
     // 都复原之后接手：重核通过，接着重绑定、核链尾、撤权，做完；启动闸门放行。
-    let report = restore_into_new_root(&mut held, resume()).unwrap();
+    let report = restore(&mut held, resume()).unwrap();
     assert!(report.reused_placement);
     assert!(report.invalidation.audit_confirmed);
     assert_eq!(gate(&fixture, &new_root), Ok(()));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_stop_mid_journal_resumes_from_the_delivered_text_and_cutover_needs_a_fresh_login() {
+    let (fixture, _human, sealed, old_epoch) = human_only().await;
+    let fetched = target(&fixture, "fetched").join("copy");
+    fetch(&sealed.ticket().transfer_source.root, &fetched);
+    let restored = RestoredCheckpoint::open(&fetched, sealed.reference(), deadline()).unwrap();
+    let new_root = target(&fixture, "new-root");
+
+    // 命令行新开时的恢复包：从核验过的副本当场生成（封存摘要、清单里的秘密引用），马上兑换。
+    let mut kit = RecoveryKit::for_restored(
+        &restored,
+        "restore-drill".into(),
+        InstantMillis::from_millis(wall() + 600_000),
+    );
+    assert_eq!(kit.checkpoint_id, sealed.reference().checkpoint_id);
+    assert_eq!(kit.package_digest, sealed.reference().seal_sha256);
+    assert_eq!(kit.secret_references, restored.manifest().secret_references);
+    assert!(kit.stored_outside_ordinary_checkpoint && !kit.sync_recovery_material);
+    let mut held = kit
+        .redeem(
+            BootstrapChannel::LocalTty,
+            InstantMillis::from_millis(wall()),
+        )
+        .unwrap();
+
+    // 放置意图那条就交不出去：一个组件都没放，内存里也没有这次的放置意图，命令行据此说「这次没写过新根」。
+    let mut untouched = RecoveryKit::for_restored(
+        &restored,
+        "restore-drill-0".into(),
+        InstantMillis::from_millis(wall() + 600_000),
+    )
+    .redeem(
+        BootstrapChannel::LocalTty,
+        InstantMillis::from_millis(wall()),
+    )
+    .unwrap();
+    let refusal = restore_into_new_root(
+        &mut untouched,
+        request(&restored, &new_root, true, sessions(&fixture)),
+        &mut |entry: &TranscriptEntry| {
+            if entry.step == RecoveryStep::PhysicalRebindIntent {
+                return Err(());
+            }
+            Ok(())
+        },
+    )
+    .unwrap_err();
+    assert_eq!(refusal, RestoreRefusal::Transcript);
+    assert!(!restore_started(&untouched.transcript, "drill-1"));
+    assert_eq!(
+        steps(&untouched),
+        [
+            RecoveryStep::KitOpened,
+            RecoveryStep::PreRestoreChecksCompleted
+        ]
+    );
+    assert_eq!(fs::read_dir(&new_root).unwrap().count(), 0);
+
+    // 命令行的写法：已有的先整份写出，之后每追加一条写一行。Auth 撤权的「开始」那条交不出去（比如标准输出
+    // 断了）：那一步不做，人手里的文本停在它前面，内存里那条也撤掉。
+    let mut text = text_of(&held.transcript);
+    let refusal = {
+        let mut deliver = written(&mut text);
+        restore_into_new_root(
+            &mut held,
+            request(&restored, &new_root, true, sessions(&fixture)),
+            &mut |entry: &TranscriptEntry| {
+                if entry.step == RecoveryStep::OwnerRestoreIntent {
+                    return Err(());
+                }
+                deliver(entry)
+            },
+        )
+        .unwrap_err()
+    };
+    assert_eq!(refusal, RestoreRefusal::Transcript);
+    assert_eq!(
+        steps(&held).last(),
+        Some(&RecoveryStep::PhysicalRebindOutcome)
+    );
+    assert!(restore_started(&held.transcript, "drill-1"));
+    assert_eq!(gate(&fixture, &new_root), Err(RevocationPending));
+    let mut resumed = read_back(&text);
+    assert_eq!(resumed.transcript, held.transcript);
+
+    // 接手：拿人手里那份读回来，照常写一份新的完整文本。Auth 没开始过，按清单水位核过再撤权，版本恰好加一。
+    let mut lines = text_of(&resumed.transcript);
+    let mut resume = request(&restored, &new_root, true, sessions(&fixture));
+    resume.resume_interrupted = true;
+    let report = restore_into_new_root(&mut resumed, resume, &mut written(&mut lines)).unwrap();
+    assert_eq!(report.invalidation.epoch, old_epoch + 1);
+    assert_eq!(gate(&fixture, &new_root), Ok(()));
+    assert_eq!(read_back(&lines).transcript, resumed.transcript);
+
+    // 最终切换：还没开始就完成、拿别的恢复标识，都是次序不对；开始只记一次。
+    let mut held = read_back(&lines);
+    assert_eq!(
+        finish_cutover(
+            &mut held,
+            cutover(&fixture, &new_root),
+            &mut written(&mut lines)
+        )
+        .unwrap_err(),
+        CutoverRefusal::Sequence
+    );
+    let foreign = Cutover {
+        restore_id: "drill-2",
+        ..cutover(&fixture, &new_root)
+    };
+    assert_eq!(
+        begin_cutover(&mut held, foreign, &mut written(&mut lines)).unwrap_err(),
+        CutoverRefusal::Sequence
+    );
+    begin_cutover(
+        &mut held,
+        cutover(&fixture, &new_root),
+        &mut written(&mut lines),
+    )
+    .unwrap();
+    assert_eq!(steps(&held).last(), Some(&RecoveryStep::FinalCutoverIntent));
+    assert_eq!(
+        begin_cutover(
+            &mut held,
+            cutover(&fixture, &new_root),
+            &mut written(&mut lines)
+        )
+        .unwrap_err(),
+        CutoverRefusal::Sequence
+    );
+    // 主人还没在新根上登录过：完成拒绝，记录不多一行。
+    let before = held.transcript.entries.len();
+    assert_eq!(
+        finish_cutover(
+            &mut held,
+            cutover(&fixture, &new_root),
+            &mut written(&mut lines)
+        )
+        .unwrap_err(),
+        CutoverRefusal::NotReauthenticated
+    );
+    assert_eq!(held.transcript.entries.len(), before);
+    // 登录一次之后完成：签发代次就是撤权之后的身份版本，只有人侧三件，没有身份库和策略库要核。
+    login(&fixture, &new_root).await;
+    let facts = finish_cutover(
+        &mut held,
+        cutover(&fixture, &new_root),
+        &mut written(&mut lines),
+    )
+    .unwrap();
+    assert!(facts.reauthenticated && facts.old_sessions_invalidated && facts.l3_invalidated);
+    assert_eq!(
+        facts.issuance_generation,
+        u64::try_from(report.invalidation.epoch).unwrap()
+    );
+    assert!(!facts.agent_store_included && !facts.policy_included);
+    assert_eq!(
+        steps(&held).last(),
+        Some(&RecoveryStep::FinalCutoverOutcome)
+    );
+    assert_eq!(
+        finish_cutover(
+            &mut held,
+            cutover(&fixture, &new_root),
+            &mut written(&mut lines)
+        )
+        .unwrap_err(),
+        CutoverRefusal::Sequence
+    );
+    // 人手里的文本和内存里那份一模一样，链自洽。
+    assert_eq!(read_back(&lines).transcript, held.transcript);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -515,7 +754,7 @@ async fn six_owner_checkpoint_restores_and_invalidates_every_board_owner() {
     let restored = RestoredCheckpoint::open(&fetched, fact.source(), deadline()).unwrap();
     let new_root = target(fixture, "new-root");
     let mut held = grant(fact.source());
-    let report = restore_into_new_root(
+    let report = restore(
         &mut held,
         request(&restored, &new_root, true, sessions(fixture)),
     )
@@ -595,5 +834,12 @@ async fn six_owner_checkpoint_restores_and_invalidates_every_board_owner() {
     assert_eq!(control.live_attempts().unwrap().leased, 0);
     drop(control);
     assert_eq!(gate(fixture, &new_root), Ok(()));
+    // 最终切换按恢复记录里的名单核：身份库、策略库都在名单里，它们的失效都记过才完成。
+    begin_cutover(&mut held, cutover(fixture, &new_root), &mut |_| Ok(())).unwrap();
+    login(fixture, &new_root).await;
+    let facts = finish_cutover(&mut held, cutover(fixture, &new_root), &mut |_| Ok(())).unwrap();
+    assert!(facts.agent_store_included && facts.agent_type_tokens_invalidated);
+    assert!(facts.agent_instances_invalidated);
+    assert!(facts.policy_included && facts.policy_revocations_reconciled);
     stage.assembled.workbench.shutdown().await.unwrap();
 }

@@ -34,7 +34,7 @@ const COMPILE_TIME_READS: [&str; 5] = [
 ];
 
 /// 依赖闭包里允许的命中，路径相对仓库根，命中序列按源码次序；多一处或少一处都红。
-const ALLOWED_ENVIRONMENT_READS: [(&str, &[&str]); 8] = [
+const ALLOWED_ENVIRONMENT_READS: [(&str, &[&str]); 9] = [
     // 唯一的秘密种子装配点：读当前与替换两个 TOTP 种子槽。
     (
         "crates/local-server/src/startup/factor_input.rs",
@@ -42,6 +42,8 @@ const ALLOWED_ENVIRONMENT_READS: [(&str, &[&str]); 8] = [
     ),
     // 只判断 SMTP 配置在不在，不留值。
     ("crates/observability/src/alert/transport.rs", &["env::var"]),
+    // 新根恢复命令行（T-212）：只看 SSH_CONNECTION／SSH_CLIENT／SSH_TTY 在不在，判断是不是远程登录，不留值。
+    ("crates/local-server/src/restore_main.rs", &["var_os"]),
     // 显式 --deliver 的告警入口经过秘密驻留面加固后才构造；通道只读固定配置槽。
     ("crates/observability/src/alert/push.rs", &["env::var"]),
     // 出站门铃（ADR-033）：显式 --deliver 且加固后才构造；只读收件地址、签名密钥、可选链接三个固定槽。
