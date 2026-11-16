@@ -88,6 +88,11 @@ impl Regular {
         fs::fchmod(&self.file, Mode::RUSR).map_err(error)?;
         self.file.sync_all().map_err(|_| StagingError::Unavailable)
     }
+    /// 恢复到新目录的文件要保持属主可写（各库接下来还要在上面写）：只落盘，不改成只读。
+    pub fn finish_writable(self) -> Result<()> {
+        self.access.require_writer()?;
+        self.file.sync_all().map_err(|_| StagingError::Unavailable)
+    }
     pub(super) fn grant_reader(self, reader_gid: u32) -> Result<()> {
         self.access.require_writer()?;
         self.require_readonly()?;

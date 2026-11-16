@@ -13,15 +13,15 @@ use studiolo_backup::{
 };
 use studiolo_core::checkpoint::InstantMillis;
 
-struct Stage {
-    assembled: Assembled,
-    producer: Arc<BackupProducer>,
-    parent: std::path::PathBuf,
-    reader_gid: u32,
+pub(super) struct Stage {
+    pub(super) assembled: Assembled,
+    pub(super) producer: Arc<BackupProducer>,
+    pub(super) parent: std::path::PathBuf,
+    pub(super) reader_gid: u32,
 }
 impl Stage {
     /// `shared` 为 false 时封存父目录保持 0700：读取组条件不满足，封存一定做不成。
-    async fn new(shared: bool) -> Self {
+    pub(super) async fn new(shared: bool) -> Self {
         let assembled = Assembled::new().await;
         let parent = target(&assembled.fixture, "staging");
         if shared {
@@ -57,7 +57,7 @@ impl Stage {
             reader_gid,
         }
     }
-    fn ask(&self, command: QueueCommand) -> QueueAnswer {
+    pub(super) fn ask(&self, command: QueueCommand) -> QueueAnswer {
         let request = BackupQueueRequest::new(TARGET, command);
         request
             .decode_reply(&self.producer.dispatch(&request.encode().unwrap()).unwrap())

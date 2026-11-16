@@ -1,6 +1,7 @@
 //! 清单与视图的摘要一并绑定；最终目录仅接受登记过的四个文件/目录。
 mod metadata;
 mod read;
+mod restored;
 use super::catalog::CatalogEntry;
 use super::{
     Result, SealedInventory, SourceCatalog, StagingArea, StagingError, check_deadline, digest, tree,
@@ -13,6 +14,7 @@ use crate::checkpoint::{
     },
 };
 use metadata::{read, write};
+pub use restored::{Placement, RestoredCheckpoint};
 use serde::{Deserialize, Serialize};
 use std::{
     path::{Path, PathBuf},

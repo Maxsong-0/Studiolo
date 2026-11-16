@@ -30,6 +30,7 @@ use studiolo_supply::AgentStore;
 
 mod fixture;
 mod producer;
+mod restore;
 mod seal;
 use fixture::Setup;
 

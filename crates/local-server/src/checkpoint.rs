@@ -1,6 +1,7 @@
 //! 七个实际 owner 的总窗口：先排空完整操作，再按固定顺序冻结；全体原事件核对后才导出。
 mod assembly;
 mod export;
+mod restore;
 use crate::{
     CanonicalWorkbench, FrozenWorkbench, PolicyPlane,
     board::BoardPlane,
@@ -9,6 +10,7 @@ use crate::{
 };
 pub use assembly::CheckpointInputs;
 pub use export::{CheckpointExports, CheckpointTimes, OwnerExportPaths, trusted_catalog};
+pub use restore::{NewRootRestore, RestoreRefusal, RestoreReport, restore_into_new_root};
 use std::{
     sync::Arc,
     time::{Duration, Instant},

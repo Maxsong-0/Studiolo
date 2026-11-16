@@ -2,6 +2,7 @@
 pub(super) mod fixture;
 mod housekeeping;
 mod lifecycle;
+mod restored;
 mod shared;
 use fixture::*;
 use std::{

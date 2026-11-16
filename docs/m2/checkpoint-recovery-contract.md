@@ -147,8 +147,8 @@ Transport 原实例与固定状态导出见 [Transport checkpoint](../contracts/
 BoardPlane 与 SyncPlane，监听时把同一组源注入可信路由；无 canonical 写者不提供
 封存能力。备份请求绑定 owner 时，从实际 Board/Policy 取得身份库及固定附属审计链，
 两处都有时必须核对原目录与数据库 inode；换根、漏库或来源不一致均拒绝。
-这里没有新增公开端点、自动冻结或备份调度。生产来源标签、worker IPC/常驻运行、
-完整恢复及部署演练仍未完成，不能把启动源接线记作整条 Rust 链已可用。
+这里没有新增公开端点。（2026-11-15 更新：按固定间隔的调度、worker IPC 和常驻入口已接上，见文末的
+契约链接；完整恢复只做到不带黑板的部署，部署演练仍未完成，不能把启动源接线记作整条 Rust 链已可用。）
 Control schema 4 增加不可变 `artifact_policies`：批准与 runtime audit outbox 同事务，
 外键绑定原 task/attempt/fence/snapshot，首次写入只允许有效租约且尚未挂接执行体。
 `ArtifactProvenance` 保存原来源/策略引用、完整标签、期限和原批准摘要，当前正文管线
@@ -196,4 +196,6 @@ checkpoint 核对批准与原审计事实，ACK 后仍须实际账本验证才�
 单作业事件、原 Intent 前提与有界 UDS 消息见 [备份审计通信](../contracts/backup-audit.md)；
 固定监听器、按固定间隔的调度、过期暂存回收见 [备份生产者](../contracts/backup-producer.md)，独立 worker 主循环见
 [worker 进程边界](../contracts/backup-worker-process.md)「服务入口」（2026-11-15 接入，真机部署没验证）；
-全 owner 新根恢复仍待接入。
+新根恢复的取回副本核验、逐字节放置和按名单的编排见 [新根恢复](../contracts/new-root-restore.md)：现在只有
+不带黑板的部署（名单里只有 Broker、Auth、Audit）能走完，Control、Bridge、AgentStore、Policy 在场时整次拒绝，
+它们各自的新根恢复协议仍待补。
