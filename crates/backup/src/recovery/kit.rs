@@ -1,7 +1,8 @@
 //! recovery kit：仅本机 TTY/localhost 的一次性、有期限恢复身份。
 //!
-//! kit 独立加密保存，不进入普通 checkpoint。任何恢复写入之前先建立 transcript；
-//! 先在同步与真实执行 Adapter 禁用下完成前置检查，再恢复主人与密钥映射。
+//! kit 不进入普通 checkpoint。kit 里没有秘密（只有「有什么、去哪拿」），内容都能从已核验的封存副本推出来，
+//! 所以新根恢复时当场生成、立即兑换（[`RecoveryKit::for_restored`]，T-212），不单独保存。任何恢复写入之前
+//! 先建立 transcript；先在同步与真实执行 Adapter 禁用下完成前置检查，再恢复主人与密钥映射。
 //! 前置检查、失效与核对事实、启用门禁在 `checks` 子模块，仍经本模块原路径导出。
 
 mod checks;
@@ -10,6 +11,8 @@ pub use checks::{AuthRestoreInvalidation, BidirectionalSyncGate, CutoverState, P
 
 use super::transcript::{RecoveryTranscript, TranscriptError, WriteAuthorization};
 use crate::checkpoint::manifest::SecretReference;
+#[cfg(unix)]
+use crate::checkpoint::staging::RestoredCheckpoint;
 use serde::{Deserialize, Serialize};
 use studiolo_core::checkpoint::{CheckpointId, InstantMillis};
 
@@ -65,6 +68,30 @@ pub struct RecoveryGrant {
 }
 
 impl RecoveryKit {
+    /// 新根恢复时当场生成的 kit（T-212）：只取已核验取回副本里的事实——checkpoint、可信封存引用里的
+    /// 封存摘要（当作固定包摘要，记进第一条恢复记录）、清单里的脱敏秘密引用。一次性身份由调用方给、
+    /// 只该短期有效，生成后马上兑换；不带同步端到端资料（新根恢复不恢复同步，按引导流程从零重新打开）。
+    #[cfg(unix)]
+    #[must_use]
+    pub fn for_restored(
+        restored: &RestoredCheckpoint,
+        identity_id: String,
+        expires_at: InstantMillis,
+    ) -> Self {
+        Self {
+            checkpoint_id: restored.reference().checkpoint_id.clone(),
+            identity: RecoveryIdentity {
+                identity_id,
+                expires_at,
+                redeemed: false,
+            },
+            package_digest: restored.reference().seal_sha256.clone(),
+            secret_references: restored.manifest().secret_references.clone(),
+            sync_recovery_material: false,
+            stored_outside_ordinary_checkpoint: true,
+        }
+    }
+
     /// 兑换恢复身份：只允许本机 TTY/localhost，一次性且有期限。
     ///
     /// 兑换成功即建立 transcript，并在其中记下第一条 `KitOpened`。
