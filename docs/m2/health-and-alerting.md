@@ -35,7 +35,7 @@
 
 ## 2. 健康页：本地只读聚合
 
-七节固定检查项，机器码稳定（T-205）：
+八节固定检查项，机器码稳定（T-205；`backup-jobs` 2026-11-16 T-207 加）：
 
 | 机器码 | 中文标题 | 判定 |
 |---|---|---|
@@ -46,6 +46,26 @@
 | `whitelist-diagnosis` | 白名单诊断 | 见 §4 |
 | `sync-bridge` | 双向 Bridge | T-132 P1 契约 `docs/contracts/health-sync-bridge.md`；平面未装配即未知 |
 | `manual-sync-quota` | 账号配额（人工记录） | 人工用量达到七成预警；超过24小时未知，不是实时读数；见同步健康契约 §6 |
+| `backup-jobs` | 备份作业 | 见 §2.1；生产者没启用或这一次没读到账本即未知 |
+
+### 2.1 备份作业一节（T-207，2026-11-16）
+
+事实全部来自主服务启动保留的原账本里的 `backup.snapshot` 事件，由备份生产者经只读探针
+（`crates/local-server/src/backup/evidence.rs` 的 `BackupJobsProbe`）给出：不写账本、不补失败结果、不安排封存。
+阈值来自私有配置的固定值，请求里没有能改它的参数：
+
+- **卡住**：最早一条没收口的作业（有原意图、没有结果）挂得比封存正文的保留期（`source_retention_millis`）还久——
+  过了保留期 worker 已经传不了。正好等于保留期不算。
+- **逾期**：离最近一次成功超过两倍最小间隔（`schedule.interval_millis` 的两倍）。从没成功过的，从开始服务和账本里第一次尝试
+  中较早的那个起算，所以重启不会把「一直没成功」重新算成刚开始。正好等于两倍间隔不算。
+- **成功**：结果事件写着 `result: "succeeded"`，而且写明 `objects_complete` 和 `checksum_verified` 都为真；
+  只写了成功、没写明校验通过的，和读不出来的结果一样不当成功。`failed`、`unverified` 都算没成功，原因按账本里的固定机器码。
+- 只认收口了这里那条作业的结果：别的目标类别、对不上原键的结果既不算成功也不算失败。
+
+结论从重到轻：卡住、逾期、最近收口的作业没成功（降级）＞ 本地时钟早于要比的账本时刻、读不到起算时刻（未知）＞
+还没成功过、也没到逾期线（未知）＞ 正常。已知的问题排在判断不了前面。明细在响应的 `backup` 字段（见 §10.4 下的说明），
+和本节结论出自同一次读账本；前端按同一顺序重算一遍，对不上就整份丢掉、本节降为未知。
+恢复点年龄仍是未知：恢复点和 seed 校验只在 worker 自己的状态库里，主服务读不到（§10.4）。
 
 三态与汇总规则：`Degraded`（2）＞ `Unknown`（1）＞ `Normal`（0），
 整体取最重的一节。于是——
@@ -193,7 +213,7 @@ sha256 校验和。
 | 项 | 原因 | 解除条件 |
 |---|---|---|
 | 告警实际送达 | 发送端未配置，且本轮未装配真实 SMTP 客户端 | 主人给 SMTP 通道，经环境变量注入；再补真实 `deliver` 实现与实机送达验收 |
-| 真实恢复点年龄 | 依赖 B1 的 checkpoint／BackupWorker 产出 | B1 落地后由装配层把真实证据接进 `HealthEvidence` |
+| 真实恢复点年龄 | 恢复点和 seed 校验只在 worker 自己的状态库里，主服务读不到；备份作业一节已接（§2.1），它只说作业，不说恢复点 | worker 的恢复点状态经固定只读通道交给主服务后接进 `HealthEvidence` |
 | 真实磁盘读数 | 需要持文件系统权限的 Broker 公开只读剩余容量查询（Sync 读数已由 Bridge 平面接线，T-132 P1） | Broker 接线 |
 | 健康页端到端鉴权验收 | 路由由组合根挂载，需整套装配 | root 接线后跑 local-server 整套契约 |
 | 实际两周 headless 试跑 | 只能真实等待 | 不接受模拟时间 |
@@ -240,8 +260,9 @@ let app = studiolo_local_server::health::with_health_evidence(app, health_input:
 
 ### 10.4 当前每一节证据的真实可得性
 
-组合根（`crates/local-server/src/startup/health_input.rs`）目前只有双向 Bridge 平面（T-132 P1）一个证据源：
-装配了它才有第六节、`sync-transport` 活性与 Sync 配额读数；其余各节仍显式"未知"，整体因此仍不是绿。逐条现状：
+组合根（`crates/local-server/src/startup/health_input.rs`）目前有两个证据源：双向 Bridge 平面（T-132 P1），
+装配了它才有第六节、`sync-transport` 活性与 Sync 配额读数；备份生产者（T-207），私有配置里有备份那两段才有，
+给「备份作业」一节。其余各节仍显式"未知"，整体因此仍不是绿。逐条现状：
 
 | 节 | 现状 | 为什么 | 解除条件 |
 |---|---|---|---|
@@ -251,6 +272,20 @@ let app = studiolo_local_server::health::with_health_evidence(app, health_input:
 | Sync 配额 | 平面装配后按镜像字节数对人工配额判定：上限＝审批 `manual_quota.account_limit_bytes`、预警七成，正文带「非账号用量」；未装配或缺人工配额仍未知 | 机器读不到 Obsidian 账号用量，只能拿镜像字节数比人抄的上限（ADR-025 D11） | 无；这就是 D11 的最终形态 |
 | 白名单诊断 | 未知 | `host-config` 只公开 `observation_selection`（保护前缀与生成区已被并成一张 `excluded` 表），没有公开人侧可写范围与 `human_content` 登记；用半份快照诊断会凭空造出"搬运范围覆盖保护前缀"这类假冲突 | `host-config` 公开分开的保护前缀／生成区／可写范围／`human_content` 登记 |
 | 双向 Bridge | 平面装配后按 D11 十个字段判定，第一批闭合前是未知；未装配即未知 | 契约与字段来源见 `docs/contracts/health-sync-bridge.md` | 无 |
+| 备份作业 | 生产者装配后按 §2.1 判定；没装配报「备份生产者没有启用」，装配了但这一次没读完账本或本地时钟不可用报「没读到」，都是未知 | 事实只从原账本的备份事件算，不连远端、不读正文 | 无 |
+
+响应体的 `backup` 字段（读到了才有，否则 `null`），u64 一律十进制字符串、时刻是 RFC 3339：
+
+| 字段 | 含义 |
+|---|---|
+| `state`、`verdict` | 本节状态和结论：`healthy`、`stuck`、`overdue`、`latest_failed`、`clock_behind`、`no_success_yet` |
+| `as_of` | 这一次判断用的本地时刻 |
+| `last_success` | `{sequence, at}`，从没成功过为 `null` |
+| `outstanding` | 最早一条没收口的作业 `{sequence, since, admitted, stuck}`；`admitted` 是已封存、等 worker 上传，`stuck` 判断不了为 `null` |
+| `overdue`、`overdue_since` | 是否逾期（判断不了为 `null`）和逾期从哪一刻起算 |
+| `latest_failed` | 最近收口的那条作业没成功 |
+| `last_failure` | 最近一次没成功的作业 `{sequence, at, result, reason}`：`result` 是 `failed`、`unverified` 或 `unrecognized`（后者 `reason` 为 `null`）；之后成功过也留着 |
+| `stuck_after_seconds`、`overdue_after_seconds` | 两条线：保留期、两倍最小间隔 |
 
 **绝不为了页面好看而假装正常**：`EvidenceSnapshot::unknown` 的每一节都会被只读聚合判成
 `Unknown`，整体取最重一节，因此永远不可能显示绿。

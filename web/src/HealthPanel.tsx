@@ -1,6 +1,8 @@
+import { BACKUP_JOBS } from './healthApi';
 import type { HealthReport, HealthState } from './healthApi';
 import { StatusMark } from './ui';
 import type { StatusState } from './ui';
+import { BackupDetails } from './health/BackupDetails';
 import { BridgeDetails, ManualQuotaDetails } from './health/BridgeDetails';
 import './styles/health.css';
 
@@ -66,6 +68,9 @@ export function HealthPanel({ report }: { report: HealthReport }) {
             ) : null}
             {section.code === 'manual-sync-quota' ? (
               <ManualQuotaDetails value={report.manualSyncQuota} />
+            ) : null}
+            {section.code === BACKUP_JOBS ? (
+              <BackupDetails value={report.backup} />
             ) : null}
           </li>
         ))}

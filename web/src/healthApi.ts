@@ -3,8 +3,10 @@ import {
   bridgeCanBeNormal,
   keys,
   object,
+  parseBackupJobs,
   parseBridge,
   parseManualQuota,
+  type BackupJobs,
   type BridgeHealth,
   type ManualQuota,
 } from './health/model';
@@ -25,7 +27,12 @@ export interface HealthReport {
   sections: HealthSection[];
   bridge?: BridgeHealth | null;
   manualSyncQuota?: ManualQuota | null;
+  /** 备份作业明细；和「备份作业」一节对不上时整份丢掉，那一节降为未知。 */
+  backup?: BackupJobs | null;
 }
+
+/** 「备份作业」一节的机器码，和后端 `BACKUP_JOBS_CODE` 一致。 */
+export const BACKUP_JOBS = 'backup-jobs';
 
 /** 未建立恢复点时后端固定给出的正文；前端据此显示灰而不是绿。 */
 export const NO_RECOVERY_POINT = '尚未建立灾难恢复点';
@@ -73,6 +80,7 @@ export function parseHealth(value: unknown): HealthReport {
         'sections',
         'bridge',
         'manual_sync_quota',
+        'backup',
       ].includes(key),
     ) &&
     typeof record.evidence_complete === 'boolean' &&
@@ -111,7 +119,22 @@ export function parseHealth(value: unknown): HealthReport {
         (section) =>
           section.code === 'manual-sync-quota' && section.state === quota.state,
       ));
+  const backup = parseBackupJobs(record.backup);
+  const badBackup =
+    record.backup != null &&
+    (backup === null ||
+      !sections.some(
+        (section) =>
+          section.code === BACKUP_JOBS && section.state === backup.state,
+      ));
   for (const section of sections) {
+    // 「备份作业」报正常必须有一份对得上的明细撑着，而且明细自己的结论就是正常。
+    if (
+      section.code === BACKUP_JOBS &&
+      (badBackup ||
+        (section.state === 'normal' && backup?.verdict !== 'healthy'))
+    )
+      section.state = 'unknown';
     if (
       section.code === 'sync-bridge' &&
       (badBridge ||
@@ -127,7 +150,8 @@ export function parseHealth(value: unknown): HealthReport {
     Array.isArray(record.sections) &&
     record.sections.length === sections.length &&
     !badBridge &&
-    !badQuota;
+    !badQuota &&
+    !badBackup;
   let overall = shapeValid ? toState(record.overall) : 'unknown';
   if (sections.some((section) => section.state === 'degraded'))
     overall = 'degraded';
@@ -149,6 +173,7 @@ export function parseHealth(value: unknown): HealthReport {
     sections,
     bridge,
     manualSyncQuota: quota,
+    backup: badBackup ? null : backup,
   };
 }
 

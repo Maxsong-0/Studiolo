@@ -32,6 +32,8 @@ pub struct HealthBody {
     pub bridge: Option<super::BridgeBody>,
     /// 人工账号记录，与镜像读数分别显示。
     pub manual_sync_quota: Option<super::ManualQuotaBody>,
+    /// 备份作业明细；和「备份作业」一节出自同一次读账本，没读到为 `null`。
+    pub backup: Option<super::BackupJobsBody>,
 }
 
 impl HealthBody {
@@ -43,6 +45,10 @@ impl HealthBody {
         body.manual_sync_quota = snapshot
             .manual_sync_quota
             .map(|quota| super::ManualQuotaBody::new(quota, snapshot.now_unix_seconds));
+        body.backup = match &snapshot.backup_jobs {
+            crate::backup::BackupJobsEvidence::Read(jobs) => Some(super::BackupJobsBody::new(jobs)),
+            _ => None,
+        };
         body
     }
 
@@ -52,6 +58,7 @@ impl HealthBody {
         Self {
             bridge: None,
             manual_sync_quota: None,
+            backup: None,
             overall: report.overall().code(),
             evidence_complete: report
                 .sections()

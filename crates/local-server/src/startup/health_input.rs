@@ -1,13 +1,14 @@
 //! 组合根装配健康证据来源：**只如实反映本次装配真正拿到了哪些证据**。
 //!
-//! 健康页的每一节都必须有可指认的证据来源才敢显示"正常"。目前只有双向 Bridge 平面
-//! 提供真实证据（第六节、`sync-transport` 活性、Sync 配额读数，全部经 [`BridgeHealthProbe`]），
+//! 健康页的每一节都必须有可指认的证据来源才敢显示"正常"。目前有两个真实证据源：双向 Bridge 平面
+//! （第六节、`sync-transport` 活性、Sync 配额读数，全部经 [`BridgeHealthProbe`]）和备份生产者
+//! （「备份作业」一节，经 [`BackupJobsProbe`] 只读原账本里的备份事件）；
 //! 其余各节没接上的原因逐条写在 [`AssembledEvidence::snapshot`] 上，一律给出"未知"。
 //! **绝不为了页面好看而假装正常**：`EvidenceSnapshot::unknown` 的每一节都会被只读聚合
 //! 判成 `Unknown`，平面没装配时整体因此永远不是绿。
 //!
 //! 本 Module 不读磁盘、不连网络、不读环境变量，也不持有任何配置或秘密；
-//! 唯一的外部输入是本地墙钟，且只在每次取快照时读。
+//! 外部输入只有本地墙钟（每次取快照时读）和两个探针各自的只读回答。
 
 use std::{
     sync::Arc,
@@ -15,6 +16,7 @@ use std::{
 };
 
 use studiolo_host_config::sync_transport::ManualQuota;
+use studiolo_local_server::backup::{BackupJobsEvidence, BackupJobsProbe};
 use studiolo_local_server::health::{EvidenceSnapshot, HealthEvidence};
 use studiolo_local_server::sync_plane::health::BridgeHealthProbe;
 use studiolo_observability::quota::{QuotaVerdict, SyncQuota, SyncUsage};
@@ -22,10 +24,12 @@ use studiolo_observability::quota::{QuotaVerdict, SyncQuota, SyncUsage};
 /// 本次装配可得的健康证据。
 ///
 /// 只要哪天真有证据源接进组合根，就往这里加字段，加一个字段就多一节能显示真实结论；
-/// 没加的一律留在"未知"。目前只有双向 Bridge 平面（装配了才有）。
+/// 没加的一律留在"未知"。目前有双向 Bridge 平面和备份生产者（各自装配了才有）。
 pub(crate) struct AssembledEvidence {
     /// 双向 Bridge 平面的健康探针；平面未装配即 `None`。
     bridge: Option<Arc<dyn BridgeHealthProbe>>,
+    /// 备份生产者的作业探针；私有配置里没有备份那两段即 `None`。
+    backup: Option<Arc<dyn BackupJobsProbe>>,
 }
 
 impl HealthEvidence for AssembledEvidence {
@@ -52,6 +56,9 @@ impl HealthEvidence for AssembledEvidence {
     /// - **双向 Bridge**：平面装配了才有探针。`probe.bridge()` 进第六节，`probe.liveness()`
     ///   是 `sync-transport` 这一个 owner 的活性回执，`probe.sync_usage()` 配合
     ///   `probe.manual_quota()` 经 [`sync_quota_verdict`] 算 Sync 配额。
+    /// - **备份作业**：生产者装配了才有探针，它从启动保留的原账本读备份事件；没装配报「没有启用」，
+    ///   装配了但这一次没读到（账本没读完、本地时钟不可用）报「没读到」，都是未知。
+    ///   恢复点年龄仍未知：恢复点和 seed 校验只在 worker 自己的状态库里，主服务读不到。
     fn snapshot(&self) -> EvidenceSnapshot {
         let mut snapshot = EvidenceSnapshot::unknown(now_unix_seconds());
         if let Some(probe) = &self.bridge {
@@ -60,13 +67,22 @@ impl HealthEvidence for AssembledEvidence {
             snapshot.manual_sync_quota = probe.manual_quota();
             snapshot.sync = sync_quota_verdict(snapshot.manual_sync_quota, probe.sync_usage());
         }
+        snapshot.backup_jobs = match &self.backup {
+            None => BackupJobsEvidence::Disabled,
+            Some(probe) => now_unix_millis()
+                .and_then(|now| probe.jobs(now))
+                .map_or(BackupJobsEvidence::Unreadable, BackupJobsEvidence::Read),
+        };
         snapshot
     }
 }
 
 /// 构造本次装配的证据来源。
-pub(crate) fn source(bridge: Option<Arc<dyn BridgeHealthProbe>>) -> Arc<dyn HealthEvidence> {
-    Arc::new(AssembledEvidence { bridge })
+pub(crate) fn source(
+    bridge: Option<Arc<dyn BridgeHealthProbe>>,
+    backup: Option<Arc<dyn BackupJobsProbe>>,
+) -> Arc<dyn HealthEvidence> {
+    Arc::new(AssembledEvidence { bridge, backup })
 }
 
 /// `SyncScope` 固定的范围内对象上限（`host-config` 的 `sync_scope/union.rs::MAX_PATHS`，未公开）。
@@ -110,11 +126,20 @@ fn now_unix_seconds() -> i64 {
         .unwrap_or_default()
 }
 
+/// 本地墙钟的 Unix 毫秒；早于纪元或越界为 `None`，备份作业一节就报没读到，不拿兜底值去判断卡住和逾期。
+fn now_unix_millis() -> Option<i64> {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .ok()
+        .and_then(|elapsed| i64::try_from(elapsed.as_millis()).ok())
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{AssembledEvidence, now_unix_seconds, source, sync_quota_verdict};
+    use super::{AssembledEvidence, now_unix_millis, now_unix_seconds, source, sync_quota_verdict};
     use std::sync::Arc;
     use studiolo_host_config::sync_transport::ManualQuota;
+    use studiolo_local_server::backup::{BackupJobs, BackupJobsProbe, JobMark};
     use studiolo_local_server::health::{HealthBody, HealthEvidence, SectionBody};
     use studiolo_local_server::sync_plane::health::{BridgeHealthProbe, OWNER_LABEL};
     use studiolo_observability::health::{
@@ -172,6 +197,28 @@ mod tests {
         }
     }
 
+    /// 生产者探针的替身：`None` 表示这一次没读完账本；有值时最近一次成功在一分钟前。
+    struct FakeBackup(bool);
+
+    impl BackupJobsProbe for FakeBackup {
+        fn jobs(&self, now_ms: i64) -> Option<BackupJobs> {
+            self.0.then_some(BackupJobs {
+                now_ms,
+                serving_since_ms: Some(now_ms - 3_600_000),
+                first_attempt_ms: Some(now_ms - 3_000_000),
+                last_success: Some(JobMark {
+                    sequence: 7,
+                    at_ms: now_ms - 60_000,
+                }),
+                last_failure: None,
+                latest_failed: false,
+                outstanding: None,
+                stuck_after_ms: 86_400_000,
+                overdue_after_ms: 7_200_000,
+            })
+        }
+    }
+
     fn section<'a>(body: &'a HealthBody, code: &str) -> &'a SectionBody {
         body.sections
             .iter()
@@ -184,6 +231,7 @@ mod tests {
         let probe: Arc<dyn BridgeHealthProbe> = Arc::new(FakeProbe);
         let evidence = AssembledEvidence {
             bridge: Some(probe),
+            backup: None,
         };
 
         let body = HealthBody::from_report(&evidence.snapshot().report());
@@ -201,7 +249,55 @@ mod tests {
         assert_eq!(sync.state, "normal");
         assert_eq!(sync.detail, "占用在预警水位以内（非账号用量）");
         assert_eq!(section(&body, "disk-quota").state, "unknown");
-        assert_eq!(body.overall, "unknown", "其余三节仍无证据源");
+        assert_eq!(body.overall, "unknown", "其余几节仍无证据源");
+    }
+
+    #[test]
+    fn 装配了生产者时备份作业一节和明细来自同一次读账本() {
+        let probe: Arc<dyn BackupJobsProbe> = Arc::new(FakeBackup(true));
+        let evidence = AssembledEvidence {
+            bridge: None,
+            backup: Some(probe),
+        };
+
+        let body = HealthBody::from_snapshot(&evidence.snapshot());
+
+        let jobs = section(&body, "backup-jobs");
+        assert_eq!(jobs.state, "normal");
+        assert_eq!(jobs.detail, "最近一次成功是 1 分钟前的第 7 号");
+        let value = serde_json::to_value(&body).expect("响应必须可序列化");
+        assert_eq!(value["backup"]["verdict"], "healthy");
+        assert_eq!(value["backup"]["last_success"]["sequence"], "7");
+        assert_eq!(value["backup"]["overdue_after_seconds"], "7200");
+        assert_eq!(body.overall, "unknown", "别的节没有证据源，整体仍不是绿");
+    }
+
+    #[test]
+    fn 生产者这一次没读到或者没启用时备份作业一节报未知而不是正常() {
+        let unread: Arc<dyn BackupJobsProbe> = Arc::new(FakeBackup(false));
+        let body = HealthBody::from_snapshot(
+            &AssembledEvidence {
+                bridge: None,
+                backup: Some(unread),
+            }
+            .snapshot(),
+        );
+        let jobs = section(&body, "backup-jobs");
+        assert_eq!(jobs.state, "unknown");
+        assert_eq!(jobs.detail, "这一次没读到账本里的备份事件，作业状态未知");
+        assert!(body.backup.is_none());
+
+        let body = HealthBody::from_snapshot(
+            &AssembledEvidence {
+                bridge: None,
+                backup: None,
+            }
+            .snapshot(),
+        );
+        let jobs = section(&body, "backup-jobs");
+        assert_eq!(jobs.state, "unknown");
+        assert!(jobs.detail.starts_with("备份生产者没有启用"));
+        assert!(body.backup.is_none());
     }
 
     #[test]
@@ -259,17 +355,17 @@ mod tests {
 
     #[test]
     fn 组合根尚未接上任何证据源因而健康页整体判未知而不是判正常() {
-        let body = HealthBody::from_report(&AssembledEvidence { bridge: None }.snapshot().report());
+        let body = HealthBody::from_report(&source(None, None).snapshot().report());
 
         assert_eq!(body.overall, "unknown");
         assert!(!body.evidence_complete);
     }
 
     #[test]
-    fn 七节结论一节不少且全部标为未知() {
-        let body = HealthBody::from_report(&AssembledEvidence { bridge: None }.snapshot().report());
+    fn 八节结论一节不少且全部标为未知() {
+        let body = HealthBody::from_report(&source(None, None).snapshot().report());
 
-        assert_eq!(body.sections.len(), 7);
+        assert_eq!(body.sections.len(), 8);
         assert!(
             body.sections
                 .iter()
@@ -281,11 +377,12 @@ mod tests {
     #[test]
     fn 取到的本地时刻落在纪元之后因而不是兜底零值() {
         assert!(now_unix_seconds() > 1_700_000_000);
+        assert!(now_unix_millis().is_some_and(|now| now > 1_700_000_000_000));
     }
 
     #[test]
     fn 同一个证据来源连续取两次都给出同样的未知结论() {
-        let evidence = source(None);
+        let evidence = source(None, None);
 
         let first = HealthBody::from_report(&evidence.snapshot().report());
         let second = HealthBody::from_report(&evidence.snapshot().report());

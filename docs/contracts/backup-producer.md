@@ -67,6 +67,14 @@ T-204，2026-11-15。主服务（人侧 `studiolo-local-server`）里的备份�
 `source_changed_before_seal`，空间不足记 `out_of_space`，其余记 `barrier_not_established`）。
 后台线程结束时（含 panic 展开）一定复位「在忙」，不会让之后的 `schedule` 永远回 `outstanding`。
 
+## 健康页的只读探针
+
+健康页的「备份作业」一节（`docs/m2/health-and-alerting.md` §2.1）经 `BackupJobsProbe` 向生产者要作业事实。
+生产者和 `schedule` 用同一份累计视图，从上次读到的位置接着读账本（同一个扫描预算，读不完这一次就不给结论），
+然后只读地回答：最近一次成功、最近一次没成功和它的原因、最早一条没收口的作业（序号、原意图时刻、封存了没有）、
+第一次尝试的时刻、开始服务的时刻；卡住线取 `source_retention_millis`，逾期线取两倍最小间隔。它不写账本、
+不补孤儿意图的失败结果、不安排封存——补失败结果仍只在 `schedule` 里做。
+
 ## 只回收的周期任务
 
 过期的封存正文（含 Auth 和审计的副本）不能只靠 `schedule` 回收：定时器停了，它们会一直留在盘上。

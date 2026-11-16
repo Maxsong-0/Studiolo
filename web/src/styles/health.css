@@ -148,6 +148,7 @@
 }
 
 .health-bridge-details,
+.health-backup-details,
 .health-quota-detail {
   grid-column: 1 / -1;
   min-width: 0;
@@ -156,26 +157,31 @@
   font-size: var(--type-small);
   overflow-wrap: anywhere;
 }
-.health-bridge-details summary {
+.health-bridge-details summary,
+.health-backup-details summary {
   width: fit-content;
   min-height: var(--control-touch);
   padding-block: var(--space-1-5);
   color: var(--ink);
   cursor: pointer;
 }
-.health-bridge-details dl {
+.health-bridge-details dl,
+.health-backup-details dl {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: var(--space-2) var(--space-4);
   margin: var(--space-2) 0;
 }
-.health-bridge-details dl > div {
+.health-bridge-details dl > div,
+.health-backup-details dl > div {
   min-width: 0;
 }
-.health-bridge-details dt {
+.health-bridge-details dt,
+.health-backup-details dt {
   color: var(--ink-2);
 }
-.health-bridge-details dd {
+.health-bridge-details dd,
+.health-backup-details dd {
   margin: 0;
   color: var(--ink);
 }
@@ -183,7 +189,8 @@
   margin: 0 0 var(--space-1);
 }
 @media (width < 600px) {
-  .health-bridge-details dl {
+  .health-bridge-details dl,
+  .health-backup-details dl {
     grid-template-columns: minmax(0, 1fr);
   }
 }

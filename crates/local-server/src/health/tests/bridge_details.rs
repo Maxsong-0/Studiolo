@@ -45,7 +45,7 @@ fn bridge_counts_are_lossless_closed_and_survive_degraded_summary() {
     assert_eq!(body["bridge"]["unknown_jobs"], u64::MAX.to_string());
     assert_eq!(body["bridge"].as_object().unwrap().len(), 11);
     assert_eq!(body["manual_sync_quota"].as_object().unwrap().len(), 8);
-    assert_eq!(body.as_object().unwrap().len(), 5);
+    assert_eq!(body.as_object().unwrap().len(), 6);
     assert_eq!(body["overall"], "degraded");
     assert_eq!(body["bridge"]["fused"], true);
 }

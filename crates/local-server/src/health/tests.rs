@@ -4,6 +4,7 @@
 //! 真实装配后的端到端鉴权由组合根的整套契约覆盖。
 
 use super::{EvidenceSnapshot, HealthBody, PATH, enabled, routes};
+use crate::backup::{BackupJobs, BackupJobsEvidence, JobMark};
 use axum::{
     Router,
     body::Body,
@@ -40,6 +41,25 @@ fn normal_bridge(now: i64) -> BridgeEvidence {
     }
 }
 
+/// 一分钟前刚成功、没有挂着的作业；最小间隔 1 小时、保留期 1 天。
+fn healthy_jobs(now: i64) -> BackupJobs {
+    let now_ms = now * 1_000;
+    BackupJobs {
+        now_ms,
+        serving_since_ms: Some(now_ms - 7_200_000),
+        first_attempt_ms: Some(now_ms - 7_000_000),
+        last_success: Some(JobMark {
+            sequence: 4,
+            at_ms: now_ms - 60_000,
+        }),
+        last_failure: None,
+        latest_failed: false,
+        outstanding: None,
+        stuck_after_ms: 86_400_000,
+        overdue_after_ms: 7_200_000,
+    }
+}
+
 fn complete(now: i64) -> EvidenceSnapshot {
     EvidenceSnapshot {
         now_unix_seconds: now,
@@ -61,6 +81,7 @@ fn complete(now: i64) -> EvidenceSnapshot {
             used_bytes_manual: 1_000,
             recorded_at_unix: now - 10,
         }),
+        backup_jobs: BackupJobsEvidence::Read(healthy_jobs(now)),
     }
 }
 
@@ -158,7 +179,7 @@ fn 会话门禁具备时装配函数挂载健康页路由() {
 }
 
 #[tokio::test]
-async fn 装配了证据来源时健康页给出封闭json且七节齐全() {
+async fn 装配了证据来源时健康页给出封闭json且八节齐全() {
     let (status, body) = get(served(Some(source(FixedEvidence(10_000)))), PATH).await;
 
     assert_eq!(status, StatusCode::OK);
@@ -166,8 +187,8 @@ async fn 装配了证据来源时健康页给出封闭json且七节齐全() {
     assert_eq!(body["evidence_complete"], true);
     assert_eq!(
         body["sections"].as_array().map(Vec::len),
-        Some(7),
-        "七节必须齐全"
+        Some(8),
+        "八节必须齐全"
     );
 }
 
@@ -213,12 +234,12 @@ async fn 证据一度读不到之后重新可得时健康页自行恢复成正�
 }
 
 #[test]
-fn 证据齐备时响应标记证据完整并给出全部七节() {
+fn 证据齐备时响应标记证据完整并给出全部八节() {
     let body = HealthBody::from_report(&complete(10_000).report());
 
     assert_eq!(body.overall, "normal");
     assert!(body.evidence_complete);
-    assert_eq!(body.sections.len(), 7);
+    assert_eq!(body.sections.len(), 8);
 }
 
 #[test]
@@ -288,3 +309,6 @@ mod probe;
 
 #[path = "tests/bridge_details.rs"]
 mod bridge_details;
+
+#[path = "tests/backup_details.rs"]
+mod backup_details;

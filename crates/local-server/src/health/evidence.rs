@@ -30,6 +30,8 @@ pub struct EvidenceSnapshot {
     pub bridge: Option<BridgeEvidence>,
     /// 账号用量的人工抄录；不拿镜像字节数冒充账号用量。
     pub manual_sync_quota: Option<studiolo_host_config::sync_transport::ManualQuota>,
+    /// 备份作业事实；默认是「没读到」，不是「没启用」，更不是正常。
+    pub backup_jobs: crate::backup::BackupJobsEvidence,
 }
 
 impl EvidenceSnapshot {
@@ -46,6 +48,7 @@ impl EvidenceSnapshot {
             whitelist: None,
             bridge: None,
             manual_sync_quota: None,
+            backup_jobs: crate::backup::BackupJobsEvidence::Unreadable,
         }
     }
 
@@ -93,6 +96,7 @@ impl EvidenceSnapshot {
             self.manual_sync_quota,
             self.now_unix_seconds,
         ));
+        sections.push(super::backup::jobs_section(&self.backup_jobs));
         HealthReport::new(sections)
     }
 }

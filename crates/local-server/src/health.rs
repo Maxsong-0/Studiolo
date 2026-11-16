@@ -12,10 +12,15 @@
 //!
 //! 本 Module 不读磁盘、不查 Sync、不连远端，也不修改任何配置。
 
+mod backup;
 mod bridge;
 mod evidence;
 mod model;
 
+pub use backup::{
+    BACKUP_JOBS_CODE, BackupFailureBody, BackupJobsBody, BackupMarkBody, BackupOpenBody,
+    BackupReasonBody,
+};
 pub use bridge::{BatchBody, BridgeBody, MANUAL_QUOTA_MAX_AGE_SECONDS, ManualQuotaBody};
 pub use evidence::{EvidenceSnapshot, HealthEvidence};
 pub use model::{HealthBody, SectionBody};

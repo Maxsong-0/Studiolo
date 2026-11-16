@@ -223,3 +223,187 @@ export function parseManualQuota(value: unknown): ManualQuota | null {
     reason: expected,
   };
 }
+
+const FAILURE_REASONS = [
+  'barrier_not_established',
+  'source_changed_before_seal',
+  'out_of_space',
+  'upload_rejected',
+  'remote_verification_failed',
+  'final_manifest_commit_failed',
+  'target_unverified',
+  'source_expired',
+] as const;
+const UNVERIFIED_REASONS = [
+  'no_real_repository',
+  'target_unreachable',
+  'immutability_unprovable',
+] as const;
+export type BackupFailureReason = (typeof FAILURE_REASONS)[number];
+export type BackupUnverifiedReason = (typeof UNVERIFIED_REASONS)[number];
+export type BackupVerdict =
+  | 'healthy'
+  | 'stuck'
+  | 'overdue'
+  | 'latest_failed'
+  | 'clock_behind'
+  | 'no_success_yet';
+export type BackupFailure =
+  | { result: 'failed'; reason: BackupFailureReason }
+  | { result: 'unverified'; reason: BackupUnverifiedReason }
+  | { result: 'unrecognized'; reason: null };
+
+/** 备份作业明细：和「备份作业」一节出自同一次读账本；序号和秒数保留十进制字符串。 */
+export interface BackupJobs {
+  state: 'normal' | 'degraded' | 'unknown';
+  verdict: BackupVerdict;
+  asOf: string | null;
+  lastSuccess: { sequence: string; at: string | null } | null;
+  outstanding: {
+    sequence: string;
+    since: string | null;
+    admitted: boolean;
+    stuck: boolean | null;
+  } | null;
+  overdue: boolean | null;
+  overdueSince: string | null;
+  latestFailed: boolean;
+  lastFailure: ({ sequence: string; at: string | null } & BackupFailure) | null;
+  stuckAfterSeconds: string;
+  overdueAfterSeconds: string;
+}
+
+const VERDICT_STATE: Readonly<Record<BackupVerdict, BackupJobs['state']>> = {
+  healthy: 'normal',
+  stuck: 'degraded',
+  overdue: 'degraded',
+  latest_failed: 'degraded',
+  clock_behind: 'unknown',
+  no_success_yet: 'unknown',
+};
+const isBool = (value: unknown) => typeof value === 'boolean';
+
+/** 和后端 `BackupJobs::verdict` 同一个顺序：已知的问题排在判断不了前面。 */
+function expectedVerdict(
+  stuck: boolean | null,
+  overdue: boolean | null,
+  latestFailed: boolean,
+  hasSuccess: boolean,
+): BackupVerdict {
+  if (stuck === true) return 'stuck';
+  if (overdue === true) return 'overdue';
+  if (latestFailed) return 'latest_failed';
+  if (stuck === null || overdue === null) return 'clock_behind';
+  return hasSuccess ? 'healthy' : 'no_success_yet';
+}
+
+function parseFailure(value: unknown): BackupJobs['lastFailure'] | undefined {
+  if (value === null) return null;
+  if (
+    !object(value) ||
+    !keys(value, ['sequence', 'at', 'result', 'reason']) ||
+    !decimal(value.sequence) ||
+    !optional(value.at, timestamp)
+  )
+    return undefined;
+  const mark = {
+    sequence: value.sequence as string,
+    at: value.at as string | null,
+  };
+  if (value.result === 'failed' && oneOf(value.reason, FAILURE_REASONS))
+    return { ...mark, result: 'failed', reason: value.reason };
+  if (value.result === 'unverified' && oneOf(value.reason, UNVERIFIED_REASONS))
+    return { ...mark, result: 'unverified', reason: value.reason };
+  if (value.result === 'unrecognized' && value.reason === null)
+    return { ...mark, result: 'unrecognized', reason: null };
+  return undefined;
+}
+
+/**
+ * 备份作业明细的封闭解析。形状不对、原因认不出、结论和明细对不上，整份都不认：
+ * 调用方据此把「备份作业」一节降为未知，不让一份自相矛盾的明细撑起「正常」。
+ */
+export function parseBackupJobs(value: unknown): BackupJobs | null {
+  if (
+    !object(value) ||
+    !keys(value, [
+      'state',
+      'verdict',
+      'as_of',
+      'last_success',
+      'outstanding',
+      'overdue',
+      'overdue_since',
+      'latest_failed',
+      'last_failure',
+      'stuck_after_seconds',
+      'overdue_after_seconds',
+    ]) ||
+    !oneOf(value.verdict, Object.keys(VERDICT_STATE) as BackupVerdict[]) ||
+    value.state !== VERDICT_STATE[value.verdict] ||
+    !optional(value.as_of, timestamp) ||
+    !optional(value.overdue, isBool) ||
+    !optional(value.overdue_since, timestamp) ||
+    !isBool(value.latest_failed) ||
+    !decimal(value.stuck_after_seconds) ||
+    !decimal(value.overdue_after_seconds)
+  )
+    return null;
+  const success = value.last_success;
+  if (
+    success !== null &&
+    (!object(success) ||
+      !keys(success, ['sequence', 'at']) ||
+      !decimal(success.sequence) ||
+      !optional(success.at, timestamp))
+  )
+    return null;
+  const open = value.outstanding;
+  if (
+    open !== null &&
+    (!object(open) ||
+      !keys(open, ['sequence', 'since', 'admitted', 'stuck']) ||
+      !decimal(open.sequence) ||
+      !optional(open.since, timestamp) ||
+      !isBool(open.admitted) ||
+      !optional(open.stuck, isBool))
+  )
+    return null;
+  const failure = parseFailure(value.last_failure);
+  if (failure === undefined) return null;
+  const verdict = value.verdict as BackupVerdict;
+  const latestFailed = value.latest_failed as boolean;
+  const overdue = value.overdue as boolean | null;
+  const held = open as Record<string, unknown> | null;
+  const stuck = held === null ? false : (held.stuck as boolean | null);
+  if (
+    (latestFailed && failure === null) ||
+    verdict !== expectedVerdict(stuck, overdue, latestFailed, success !== null)
+  )
+    return null;
+  const done = success as Record<string, unknown> | null;
+  return {
+    state: VERDICT_STATE[verdict],
+    verdict,
+    asOf: value.as_of as string | null,
+    lastSuccess:
+      done === null
+        ? null
+        : { sequence: done.sequence as string, at: done.at as string | null },
+    outstanding:
+      held === null
+        ? null
+        : {
+            sequence: held.sequence as string,
+            since: held.since as string | null,
+            admitted: held.admitted as boolean,
+            stuck: held.stuck as boolean | null,
+          },
+    overdue,
+    overdueSince: value.overdue_since as string | null,
+    latestFailed,
+    lastFailure: failure,
+    stuckAfterSeconds: value.stuck_after_seconds as string,
+    overdueAfterSeconds: value.overdue_after_seconds as string,
+  };
+}
