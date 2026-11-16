@@ -845,6 +845,64 @@ async fn a_stop_mid_journal_resumes_from_the_delivered_text_and_cutover_needs_a_
     assert_eq!(read_back(&lines).transcript, held.transcript);
 }
 
+/// Auth 撤权的两个断点（Codex 复看修复时指出没有用例）：改完正式名、完成那条交不出去时停下，和撤权做完、还没
+/// 改名就停下（用改回暂用名模拟）。前一种撤权已经生效，启动闸门放行，这是「失败就起不来」唯一的例外，但最终
+/// 切换要那一条、开始不了；后一种按正式路径起不来。两种都拿人手里的记录接手做完：撤权幂等、身份版本不再加，
+/// 完成那条只记一次。
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn auth_resumes_after_its_invalidation_and_after_its_rename() {
+    let (fixture, _human, sealed, old_epoch) = human_only().await;
+    let fetched = target(&fixture, "fetched").join("copy");
+    fetch(&sealed.ticket().transfer_source.root, &fetched);
+    let restored = RestoredCheckpoint::open(&fetched, sealed.reference(), deadline()).unwrap();
+    for renamed in [true, false] {
+        let new_root = target(&fixture, if renamed { "renamed" } else { "not-renamed" });
+        let mut held = grant(sealed.reference());
+        let mut text = text_of(&held.transcript);
+        let refusal = {
+            let mut deliver = written(&mut text);
+            restore_into_new_root(
+                &mut held,
+                request(&restored, &new_root, true, sessions(&fixture)),
+                &mut |entry: &TranscriptEntry| {
+                    if entry.step == RecoveryStep::AuthInvalidated {
+                        return Err(());
+                    }
+                    deliver(entry)
+                },
+            )
+            .unwrap_err()
+        };
+        assert_eq!(refusal, RestoreRefusal::Transcript);
+        assert_eq!(steps(&held).last(), Some(&RecoveryStep::OwnerRestoreIntent));
+        assert_eq!(names(&new_root), ["audit", "auth", "data", "vault"]);
+        if renamed {
+            assert_eq!(gate(&fixture, &new_root), Startup::Serves);
+            assert_eq!(
+                begin_cutover(&mut held, cutover(&fixture, &new_root), &mut |_| Ok(()))
+                    .unwrap_err(),
+                CutoverRefusal::Sequence
+            );
+        } else {
+            fs::rename(new_root.join("auth"), new_root.join("auth.held")).unwrap();
+            assert_eq!(gate(&fixture, &new_root), Startup::AuthMissing);
+        }
+        let mut resumed = read_back(&text);
+        let mut resume = request(&restored, &new_root, true, sessions(&fixture));
+        resume.resume_interrupted = true;
+        let report = restore(&mut resumed, resume).unwrap();
+        assert_eq!(report.invalidation.epoch, old_epoch + 1);
+        assert_eq!(names(&new_root), ["audit", "auth", "data", "vault"]);
+        assert_eq!(gate(&fixture, &new_root), Startup::Serves);
+        let completed = steps(&resumed)
+            .into_iter()
+            .filter(|step| *step == RecoveryStep::AuthInvalidated)
+            .count();
+        assert_eq!(completed, 1);
+        begin_cutover(&mut resumed, cutover(&fixture, &new_root), &mut |_| Ok(())).unwrap();
+    }
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn six_owner_checkpoint_restores_and_invalidates_every_board_owner() {
     // 真实六 owner 经生产者封存：Control、AgentStore、Policy 各按自己的协议失效，Auth 撤权最后做。
@@ -983,6 +1041,26 @@ async fn restoring_a_restored_roots_checkpoint_links_the_lineage_and_refuses_reu
     assert_eq!(ancestor.checkpoint_id, "an-older-checkpoint");
     assert_eq!(names(&first), ["audit", "auth.held", "data", "vault"]);
     assert!(FsVaultBroker::open_existing(&first.join("vault"), &first.join("data")).is_err());
+    assert_eq!(gate(&fixture, &first), Startup::AuthMissing);
+    // 接手解决不了：重绑定前重核已放好的组件照样通过（一个字节都没动过），到 Broker 照样按那一串拒绝。
+    let mut resume = request_as(&restored, &first, sessions(&fixture), "drill-0");
+    resume.resume_interrupted = true;
+    assert_eq!(
+        restore(&mut held, resume).unwrap_err(),
+        RestoreRefusal::RestoreIdUsed
+    );
+    assert_eq!(
+        steps(&held).last(),
+        Some(&RecoveryStep::PhysicalRebindIntent)
+    );
+    assert_eq!(
+        read_restore_lineage(&first.join("data"))
+            .unwrap()
+            .unwrap()
+            .restore_id
+            .as_deref(),
+        Some("drill-0")
+    );
     assert_eq!(gate(&fixture, &first), Startup::AuthMissing);
 
     // 只在 Auth 里有的 drill-9：重绑定做完了，Auth 撤权开始之前按 Auth 自己的记录拒绝，「开始」不记。这时
@@ -1149,5 +1227,73 @@ async fn six_owner_resumes_a_partial_placement_and_never_skips_a_failed_check() 
     }
     assert_eq!(gate(fixture, &tampered), Startup::AuthMissing);
     assert!(tampered.join("agent.held").is_dir() && !tampered.join("agent").exists());
+    stage.assembled.workbench.shutdown().await.unwrap();
+}
+
+/// 身份库的两个断点：改完正式名、完成那条交不出去时停下，和吊销做完、还没改名就停下（用改回暂用名模拟，接入方
+/// 账本跟着它走）。Auth 还没撤权，两种都按正式路径起不来；都拿人手里的记录接手做完：吊销幂等，完成那条只记一次。
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn agent_store_resumes_after_its_invalidation_and_after_its_rename() {
+    let stage = Stage::with_owner_factor().await;
+    assert_eq!(stage.ask(QueueCommand::Schedule), QueueAnswer::Started);
+    stage.producer.settle();
+    let QueueAnswer::Pending(record) = stage.ask(QueueCommand::NextPending) else {
+        panic!("封存完成后必须有待办");
+    };
+    let fact = AdmissionFact::from_receipt(&record).unwrap();
+    let source: PathBuf = SealedCheckpoint::root_path(&stage.parent, &fact.key().checkpoint_id);
+    let fixture = &stage.assembled.fixture;
+    let fetched = target(fixture, "fetched").join("copy");
+    fetch(&source, &fetched);
+    let restored = RestoredCheckpoint::open(&fetched, fact.source(), deadline()).unwrap();
+    let all = [
+        "agent", "audit", "auth", "control", "data", "policy", "vault",
+    ];
+    for renamed in [true, false] {
+        let new_root = target(
+            fixture,
+            if renamed {
+                "agent-renamed"
+            } else {
+                "agent-not-renamed"
+            },
+        );
+        let mut held = grant(fact.source());
+        let mut text = text_of(&held.transcript);
+        let refusal = {
+            let mut deliver = written(&mut text);
+            restore_into_new_root(
+                &mut held,
+                request(&restored, &new_root, true, sessions(fixture)),
+                &mut |entry: &TranscriptEntry| {
+                    if entry.step == RecoveryStep::AgentCredentialsInvalidated {
+                        return Err(());
+                    }
+                    deliver(entry)
+                },
+            )
+            .unwrap_err()
+        };
+        assert_eq!(refusal, RestoreRefusal::Transcript);
+        assert_eq!(steps(&held).last(), Some(&RecoveryStep::OwnerRestoreIntent));
+        assert!(new_root.join("agent/audit").is_dir() && !new_root.join("agent.held").exists());
+        if !renamed {
+            fs::rename(new_root.join("agent"), new_root.join("agent.held")).unwrap();
+        }
+        assert_eq!(gate(fixture, &new_root), Startup::AuthMissing);
+        let mut resumed = read_back(&text);
+        let mut resume = request(&restored, &new_root, true, sessions(fixture));
+        resume.resume_interrupted = true;
+        let report = restore(&mut resumed, resume).unwrap();
+        assert!(report.invalidation.audit_confirmed);
+        assert_eq!(names(&new_root), all);
+        assert!(new_root.join("agent/audit").is_dir());
+        assert_eq!(gate(fixture, &new_root), Startup::Serves);
+        let completed = steps(&resumed)
+            .into_iter()
+            .filter(|step| *step == RecoveryStep::AgentCredentialsInvalidated)
+            .count();
+        assert_eq!(completed, 1);
+    }
     stage.assembled.workbench.shutdown().await.unwrap();
 }

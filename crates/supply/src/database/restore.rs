@@ -15,9 +15,10 @@ pub struct RestoredIdentities {
     pub instances: Vec<String>,
 }
 
-/// 新根恢复第一次做身份库这一步之前的核对（只读）：只打开封存里放出来的已有库（不建、不迁移），按封存时
+/// 新根恢复第一次做身份库这一步之前的核对：只打开封存里放出来的已有库（不建、不迁移、不改内容），按封存时
 /// 同一套规则重算水位，和清单里的 `expected` 逐项相等才算过。核过了编排才把「开始」交出去、再调
-/// [`invalidate_restored_identities`]；核不过什么都不动，恢复记录里也没有「开始」，接手时照旧先核。
+/// [`invalidate_restored_identities`]；核不过不吊销任何东西，恢复记录里也没有「开始」，接手时照旧先核。
+/// 打开走的是这个库唯一的打开入口，会把封存导出时的 DELETE 模式切回平时运行的 WAL；这一项不进水位。
 pub fn verify_restored_identities(
     private_directory: &Path,
     expected: &OwnerWatermark,
