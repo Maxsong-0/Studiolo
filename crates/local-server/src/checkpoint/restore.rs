@@ -65,6 +65,9 @@ pub enum RestoreRefusal {
     Roster,
     /// 新根里已经有固定名字，而调用方没有声明接手上一次的恢复。
     AlreadyPlaced,
+    /// 新根里留着上一次放置中途失败的 `<名字>.restoring`：由人看过、清掉再来。写任何东西之前就拒绝，
+    /// 声明接手也一样。
+    CleanupRequired,
     /// 封存内容没能逐字节放到新根。
     Placement,
     /// Broker 的新根重绑定没有完成。
@@ -115,7 +118,8 @@ pub fn restore_into_new_root(
 }
 
 /// 顺序：核恢复记录和前置检查 → 按名单定能不能恢复（不能就在这里拒绝，还没写任何东西）→ Auth 的
-/// 撤权没接上就拒绝 → 逐字节核对着放置四个组件 → Broker 重绑定 → 重开人侧账本并核链尾。
+/// 撤权没接上就拒绝 → 新根里有 `.restoring` 半成品就拒绝 → 逐字节核对着放置四个组件 → Broker 重绑定
+/// → 重开人侧账本并核链尾。
 /// 每一步都记进恢复记录。成功返回后还剩两步，都不在这里做：Auth 废止旧凭据，然后人做最终切换。
 pub(crate) fn restore_with(
     grant: &mut RecoveryGrant,
@@ -136,6 +140,12 @@ pub(crate) fn restore_with(
     }
     let mut present = 0;
     for (_, name) in LAYOUT {
+        // 半成品放置那一步一定会拒；先在这里拒，免得恢复记录已经追加、前几个组件已经放好（D2-F3）。
+        if RestoredCheckpoint::interrupted(request.new_root, name)
+            .map_err(|_| RestoreRefusal::Placement)?
+        {
+            return Err(RestoreRefusal::CleanupRequired);
+        }
         if RestoredCheckpoint::placed(request.new_root, name)
             .map_err(|_| RestoreRefusal::Placement)?
         {

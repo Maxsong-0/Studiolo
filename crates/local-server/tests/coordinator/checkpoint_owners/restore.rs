@@ -207,6 +207,20 @@ async fn human_side_checkpoint_is_refused_until_auth_revocation_exists() {
     assert_eq!(fs::read_dir(&new_root).unwrap().count(), 0);
     assert_eq!(steps(&held), [RecoveryStep::KitOpened]);
 
+    // 上一次放置中途失败留下的 `.restoring`：写任何东西之前就拒，声明接手也一样；人清掉才往下走（D2-F3）。
+    fs::create_dir(new_root.join("auth.restoring")).unwrap();
+    for resume in [false, true] {
+        let mut leftover = request(&restored, &new_root, true);
+        leftover.resume_interrupted = resume;
+        assert_eq!(
+            restore_with(&mut held, leftover, AuthRevocation::PlacementOnly).unwrap_err(),
+            RestoreRefusal::CleanupRequired
+        );
+    }
+    assert_eq!(fs::read_dir(&new_root).unwrap().count(), 1);
+    assert_eq!(steps(&held), [RecoveryStep::KitOpened]);
+    fs::remove_dir(new_root.join("auth.restoring")).unwrap();
+
     // 下面只有测试能走：越过 Auth 那道拒绝，验放置、重绑定、核链尾，撤权编排补上之后复用。
     let report = restore_with(
         &mut held,

@@ -91,6 +91,11 @@ impl RestoredCheckpoint {
     pub fn placed(target_parent: &Path, name: &str) -> Result<bool> {
         Directory::open(target_parent, true)?.exists(name)
     }
+    /// 上一次放置 `name` 中途失败留下的 `<name>.restoring` 还在不在（不跟随链接）。它在场时
+    /// [`Self::extract`] 一定拒绝，所以编排要在写任何东西之前先问这一句。
+    pub fn interrupted(target_parent: &Path, name: &str) -> Result<bool> {
+        Directory::open(target_parent, true)?.exists(&partial_name(name))
+    }
     /// 把 `data/<component>` 逐字节核对着复制成 `target_parent/<name>`。
     ///
     /// 写的每个文件都对着已核验视图里的摘要和长度，副本里多一个、少一个节点都失败。先写进
@@ -112,7 +117,7 @@ impl RestoredCheckpoint {
         if target.exists(name)? {
             return Ok(Placement::AlreadyPresent);
         }
-        let partial = format!("{name}.restoring");
+        let partial = partial_name(name);
         if target.exists(&partial)? {
             return Err(StagingError::CleanupRequired);
         }
@@ -151,6 +156,11 @@ impl RestoredCheckpoint {
         target.check_path(target_parent)?;
         Ok(Placement::Extracted)
     }
+}
+
+/// 放置 `name` 时先写进的半成品目录名；全部落盘后才改名成 `name`。
+fn partial_name(name: &str) -> String {
+    format!("{name}.restoring")
 }
 
 /// 一次放置用的遍历状态；只认已核验视图里登记过的节点。
