@@ -182,6 +182,7 @@ pub(crate) fn restore_with(
         expected_vault_uuid: plan.vault_uuid,
         expected_pair_id: plan.pair_id,
         checkpoint_id: checkpoint.as_str().to_owned(),
+        restore_id: request.restore_id,
         parent_lineage: request.parent_lineage,
         resume_interrupted: request.resume_interrupted,
     })

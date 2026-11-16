@@ -136,6 +136,7 @@ fn checkpoint_checks_file_operation_and_completed_maintenance_receipts() {
         expected_vault_uuid: vault_uuid,
         expected_pair_id: pair_id,
         checkpoint_id: "checkpoint-maintenance".into(),
+        restore_id: "restore-maintenance",
         parent_lineage: None,
         resume_interrupted: false,
     })

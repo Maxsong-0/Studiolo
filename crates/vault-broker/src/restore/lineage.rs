@@ -65,11 +65,15 @@ pub struct RestoreLineage {
     pub restored_data: Option<PhysicalId>,
     /// 上一次恢复的 lineage 标识，形成可追溯的链。
     pub parent_lineage: Option<String>,
+    /// 这次恢复的标识（第 2 版起必有，T-212）：主服务启动时要求 Auth 里有同一标识的撤权记录。
+    /// 第 1 版没有这个字段，启动闸门一律当「撤权没做」拒绝。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub restore_id: Option<String>,
 }
 
 impl RestoreLineage {
-    /// 本记录格式版本。
-    pub(super) const FORMAT_VERSION: u32 = 1;
+    /// 本记录格式版本：第 2 版加了 `restore_id`（T-212）；第 1 版仍然读得进来。
+    pub(super) const FORMAT_VERSION: u32 = 2;
 
     /// 该 lineage 是否代表一次已完成、可服务的恢复。
     #[must_use]

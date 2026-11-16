@@ -71,7 +71,16 @@ pub(super) fn read_lineage(data: &Dir) -> Result<Option<RestoreLineage>, Restore
         return Ok(None);
     };
     let lineage: RestoreLineage = disk::decode(&bytes).map_err(broker)?;
-    if lineage.format_version != RestoreLineage::FORMAT_VERSION {
+    // 第 1 版没有恢复标识；第 2 版必须有、而且合法。别的版本、两版混写都按未知版本拒绝。
+    let consistent = match lineage.format_version {
+        1 => lineage.restore_id.is_none(),
+        RestoreLineage::FORMAT_VERSION => lineage
+            .restore_id
+            .as_deref()
+            .is_some_and(super::valid_restore_id),
+        _ => false,
+    };
+    if !consistent {
         return Err(RestoreError::UnsupportedLineage);
     }
     Ok(Some(lineage))
@@ -88,6 +97,7 @@ pub(super) fn rebind(
     data: &Dir,
     verified: &Verified,
     checkpoint_id: &str,
+    restore_id: &str,
     parent_lineage: Option<String>,
     fault: RestoreFault,
 ) -> Result<Rebound, RestoreError> {
@@ -113,6 +123,7 @@ pub(super) fn rebind(
         restored_canonical: None,
         restored_data: None,
         parent_lineage,
+        restore_id: Some(restore_id.to_owned()),
     };
     write_lineage(data, &control, &lineage)?;
     fault.trip(RestoreFault::AfterLineage)?;
