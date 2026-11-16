@@ -1592,3 +1592,114 @@ fn historical_inline_reservation_migrates_after_durable_staging_and_replays() {
     assert!(replay.replayed);
     assert_eq!(replay.receipt, first.receipt);
 }
+
+/// 升级上来的老库里有 M0 时代的内联预留、又没有原批准（复审 D3-F5）：迁移和前滚对它都做不了，
+/// 但只让它原样留在控制库、记一条待恢复（同一个 attempt 只记一次），启动恢复和周期对账照常把
+/// 别的 attempt 处理完；改之前这里整轮报错，黑板起不来。
+#[test]
+fn legacy_inline_reservation_without_approval_does_not_block_reconciliation() {
+    let temp = TempDir::new_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
+    let mut broker =
+        FsVaultBroker::open(&temp.path().join("vault"), &temp.path().join("broker")).unwrap();
+    let vault = broker.vault_uuid();
+    broker
+        .mutate(Mutation::create(
+            path("input.md"),
+            b"input".to_vec(),
+            "fixture",
+        ))
+        .unwrap();
+    let database = temp.path().join("control.sqlite3");
+    let mut engine = PersistentTaskEngine::new(
+        ControlDb::open(&database, vault).unwrap(),
+        broker,
+        MemoryAuditLedger::new(),
+    );
+    // 第一个任务正常提交一次，之后改成 M0 时代的样子：内联预留，没有原批准。
+    let old = engine.create_task(spec(path("input.md")), 1).unwrap();
+    engine.command(old, TaskCommand::Run, 2).unwrap();
+    let claimed = engine
+        .claim(ClaimRequest {
+            worker_id: "worker".into(),
+            now_ms: 3,
+            lease_until_ms: 1000,
+        })
+        .unwrap()
+        .unwrap();
+    grant_report(&mut engine, &claimed);
+    let report = report_for(&claimed, b"m0 candidate");
+    engine.report("m0-body", report.clone(), 4).unwrap();
+    // 第二个任务认领后租约到期：对账得照常撤销它，不能被第一个挡住。
+    let live = engine.create_task(spec(path("input.md")), 5).unwrap();
+    engine.command(live, TaskCommand::Run, 6).unwrap();
+    let stale = engine
+        .claim(ClaimRequest {
+            worker_id: "worker-2".into(),
+            now_ms: 7,
+            lease_until_ms: 50,
+        })
+        .unwrap()
+        .unwrap();
+    assert_eq!(stale.run_spec.task_id, live);
+    let legacy = studiolo_control_db::TerminalReservation {
+        report_json: serde_json::json!({"event_id":"m0-body","report":report}),
+        artifacts_json: serde_json::json!(
+            report
+                .artifacts
+                .iter()
+                .map(|a| studiolo_vault_broker::ArtifactCandidate {
+                    name: a.name.clone(),
+                    content: a.content.clone()
+                })
+                .collect::<Vec<_>>()
+        ),
+    };
+    let (db, broker, ledger) = engine.into_parts();
+    drop(db);
+    {
+        let raw = rusqlite::Connection::open(&database).unwrap();
+        raw.execute(
+            "UPDATE attempts SET terminal_json=?2 WHERE attempt_id=?1",
+            rusqlite::params![
+                claimed.run_spec.attempt_id.to_string(),
+                serde_json::to_string(&legacy).unwrap()
+            ],
+        )
+        .unwrap();
+        // M0 时代没有原批准：删掉这一行（正常运行时触发器不许删）。
+        raw.execute("DROP TRIGGER artifact_policy_no_delete", [])
+            .unwrap();
+        raw.execute(
+            "DELETE FROM artifact_policies WHERE attempt_id=?1",
+            [claimed.run_spec.attempt_id.to_string()],
+        )
+        .unwrap();
+    }
+    let mut engine =
+        PersistentTaskEngine::new(ControlDb::open(&database, vault).unwrap(), broker, ledger);
+    let periodic = engine.reconcile_periodic(100).unwrap();
+    assert!(
+        periodic
+            .abandoned
+            .iter()
+            .any(|(task, attempt, reason)| *task == live
+                && *attempt == stale.run_spec.attempt_id
+                && reason == "lease_expired"),
+        "{periodic:?}"
+    );
+    engine.reconcile_startup(200).unwrap();
+    engine.reconcile_periodic(300).unwrap();
+    assert_eq!(engine.migrate_terminal_bodies().unwrap(), 0);
+    let left = engine.control_db().legacy_terminal_attempts().unwrap();
+    assert_eq!(left.len(), 1, "做不了的旧预留原样留着");
+    assert_eq!(left[0].attempt_id, claimed.run_spec.attempt_id);
+    assert_eq!(left[0].terminal.as_ref(), Some(&legacy));
+    let (_db, _broker, ledger) = engine.into_parts();
+    let pending = ledger
+        .query(&AuditFilter::default())
+        .unwrap()
+        .iter()
+        .filter(|record| record.event().action() == "task.legacy_reservation_pending")
+        .count();
+    assert_eq!(pending, 1, "同一个 attempt 只记一次");
+}

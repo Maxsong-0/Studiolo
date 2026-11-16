@@ -149,44 +149,77 @@ impl<B: VaultBroker + ArtifactStager, L: AuditLedger> PersistentTaskEngine<B, L>
         Ok(stored)
     }
 
-    /// 返回已安全迁入内容面 staging 的旧预留数量。
+    /// 返回这一轮安全迁入内容面 staging 的旧预留数量。
+    ///
+    /// 逐个迁（复审 D3-F5）：只和某一份预留有关的失败——M0 时代的 attempt 没有原批准、预留内容对不上、
+    /// Broker 拒绝暂存——只让它原样留在控制库、记一条 `task.legacy_reservation_pending`（同一个 attempt
+    /// 只记一次），不挡别的 attempt，也不挡之后的启动恢复和周期对账。控制库或审计本身出错照旧整轮失败。
     pub fn migrate_terminal_bodies(&mut self) -> Result<usize, TaskEngineError> {
         let attempts = self.control_db.legacy_terminal_attempts().map_err(map_db)?;
+        let mut migrated = 0;
         for attempt in &attempts {
-            let prior = attempt
-                .terminal
-                .as_ref()
-                .ok_or_else(|| TaskEngineError::Integrity("legacy reservation missing".into()))?;
-            let identity = prior_identity(attempt);
-            let plan = decode_plan(&identity, prior)?;
-            if plan.staged_provenance.is_some() {
-                return Err(TaskEngineError::Integrity(
-                    "旧内联预留不能自带完整范围".into(),
-                ));
+            match self.migrate_terminal_body(attempt) {
+                Ok(()) => migrated += 1,
+                Err(error) if reservation_specific(&error) => {
+                    self.audit_board(
+                        "task.legacy_reservation_pending",
+                        &(attempt.task_id, attempt.attempt_id),
+                        AuditPhase::Outcome,
+                        Some(false),
+                    )?;
+                }
+                Err(error) => return Err(error),
             }
-            let commit = ArtifactCommit {
-                task_id: attempt.task_id,
-                attempt_id: attempt.attempt_id,
-                fence: attempt.fence,
-                audit_intent: plan.event_id.to_string(),
-                idempotency_key: format!("task-engine:{}:{}", attempt.attempt_id, plan.event_id),
-                artifacts: plan.artifacts,
-                provenance: self.bound_provenance(&identity)?,
-            };
-            let pointer = self
-                .broker
-                .stage_artifact_commit(&commit)
-                .map_err(TaskEngineError::Broker)?;
-            self.control_db
-                .migrate_terminal_pointer(
-                    attempt.attempt_id,
-                    prior,
-                    &pointer_reservation(&commit, &pointer)?,
-                )
-                .map_err(map_db)?;
         }
-        Ok(attempts.len())
+        Ok(migrated)
     }
+
+    fn migrate_terminal_body(&mut self, attempt: &AttemptRecord) -> Result<(), TaskEngineError> {
+        let prior = attempt
+            .terminal
+            .as_ref()
+            .ok_or_else(|| TaskEngineError::Integrity("legacy reservation missing".into()))?;
+        let identity = prior_identity(attempt);
+        let plan = decode_plan(&identity, prior)?;
+        if plan.staged_provenance.is_some() {
+            return Err(TaskEngineError::Integrity(
+                "旧内联预留不能自带完整范围".into(),
+            ));
+        }
+        let commit = ArtifactCommit {
+            task_id: attempt.task_id,
+            attempt_id: attempt.attempt_id,
+            fence: attempt.fence,
+            audit_intent: plan.event_id.to_string(),
+            idempotency_key: format!("task-engine:{}:{}", attempt.attempt_id, plan.event_id),
+            artifacts: plan.artifacts,
+            provenance: self.bound_provenance(&identity)?,
+        };
+        let pointer = self
+            .broker
+            .stage_artifact_commit(&commit)
+            .map_err(TaskEngineError::Broker)?;
+        self.control_db
+            .migrate_terminal_pointer(
+                attempt.attempt_id,
+                prior,
+                &pointer_reservation(&commit, &pointer)?,
+            )
+            .map_err(map_db)
+    }
+}
+
+/// 只和某一个 attempt 的预留有关的失败：预留或暂存内容对不上、旧格式缺原批准、暂存读不出、Broker 拒绝
+/// 提交。这种失败只让那个 attempt 停在待恢复，不能挡住别的 attempt；控制库、审计账本本身出错不算，
+/// 那是整轮的问题。
+pub(super) fn reservation_specific(error: &TaskEngineError) -> bool {
+    matches!(
+        error,
+        TaskEngineError::Integrity(_)
+            | TaskEngineError::Json(_)
+            | TaskEngineError::Broker(_)
+            | TaskEngineError::CommitFailed(_)
+    )
 }
 
 fn pointer_reservation(

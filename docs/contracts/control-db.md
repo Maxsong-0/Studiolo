@@ -176,7 +176,8 @@ TaskEngine/Broker 完成。`create_board_task_by_instance`、原 `claim` 路径�
 显式 retry_on、max_attempts 与最多两次重试约束下排入退避队列。
 
 历史 v1/v2 inline reservation 不在 SQLite migration 中删除。`legacy_terminal_attempts`
-供 Engine 耐久 staging，成功后 `migrate_terminal_pointer` CAS 替换；失败保留原恢复计划。
+供 Engine 耐久 staging，成功后 `migrate_terminal_pointer` CAS 替换；失败保留原恢复计划，
+只记那一个 attempt 待恢复，不挡别的 attempt 和整轮对账（M0 时代没有原批准的预留迁不了，原样留着）。
 新 `reserve_terminal` 拒绝 inline 字节数组。历史磁盘页/WAL/备份不是逻辑迁移的擦除承诺。
 更多输入与投影边界见 [M5 黑板](../m5/blackboard.md)。
 
