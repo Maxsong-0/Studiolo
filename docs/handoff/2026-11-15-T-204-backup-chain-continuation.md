@@ -205,8 +205,43 @@ raised. The code was changed accordingly on the same branch; the contracts named
    the ledger-tail check stay, tested only through a test-only bypass. Restoring is therefore unavailable until a
    follow-up task adds the revocation entry and the gate.
 3. Expired, never-started candidate commits are **no longer failed by reconciliation**. They stay pending with their
-   staged bodies kept; only the owner entry `discard_expired_commit` (task engine, covers board and non-board tasks, not yet exposed over HTTP or in
-   the cockpit) settles them as failed and discards the staging. Until the owner acts, control-db export and the whole
-   seal stay blocked; the user accepted that cost.
+   staged bodies kept; only the owner entry `discard_expired_commit` (task engine, covers board and non-board tasks; since
+   2026-11-16 also over HTTP and in the cockpit, see below) settles them as failed and discards the staging. Until the
+   owner acts, control-db export and the whole seal stay blocked; the user accepted that cost.
 4. Version-1 attempt directories and pre-upgrade staging stay rejected; before go-live, run a read-only check on the
    production vault from the Mac (see `deploy/backup-worker/README.md`).
+
+## Follow-ups done on the same branch (2026-11-16, fifth batch)
+
+- The owner discards an expired commit from the cockpit; the board list shows "commit expired" live (`048240f`).
+- A legacy inline reservation that cannot be migrated or rolled forward now blocks only its own attempt, not the
+  whole startup recovery or periodic reconciliation; the checkpoint still refuses to export it (`04b90bf`).
+- The health page has a "backup jobs" section: stuck, overdue and the last failure are visible (`abe2ed4`).
+- Opening the Broker moves atomic-write residue from `.workbench/` and the writer data root into a quarantine that
+  sealing skips; residue anywhere else is still rejected (`d861300`).
+- A new-root restore refuses before writing anything when a `.restoring` leftover of an earlier placement exists,
+  also when it claims to take over (`fcbbfda`).
+- The go-live read-only check is one command, `scripts/check-backup-preflight.py`, with rules copied from the sealing
+  code and parity tests against a real Broker and control database (`584e7d5`).
+- GitHub CI is gone. Before merging into main, run the testbox `ci` suite from `.testbox.toml` (local sessions only;
+  cloud VMs cannot reach the test box): see `AGENTS.md` section 5 (`1a468e2`, `db4ad71`). The environment script
+  tightens the sandbox's group-writable `/var/tmp`, which otherwise fails the private-directory ancestor checks
+  (`eb624a4`).
+- An independent review of this batch (eight agents) raised 19 findings; all are fixed (targeted run on the x86_64
+  test box `20261116-114242-25d4`, all passed). Behaviour worth knowing:
+  - Only reservation-level failures are isolated per attempt. Broker-wide failures (writer busy, identity or root
+    changed, storage full, read-only file system, permission denied) fail the whole reconciliation round again, so
+    the service stops where someone sees it. One failed commit check no longer turns the whole board list into a
+    503; that row shows as still committing and a rate-limited log line says how many could not be checked. The
+    "recovery pending" audit is written once per attempt (`03b1454`). The cockpit's discard button works even when
+    the execution status cannot be read (`6371bf0`).
+  - The health page counts a backup as successful only when it also references this checkpoint as a pair; the
+    `interrupted` placement is pinned in all four shapes (`d208b56`).
+  - The quarantine is reused only when it is a directory owned by the service user with no group or other
+    permissions. The preflight script counts both trees against one limit, stops at the limit, reports unreadable
+    files and an unsafe quarantine, exits 2 when it could not finish, and must run as the main service account
+    (`cc788c9`).
+  - The architecture guard pins each gated step's environment line and allows only gates and five diagnostic lines
+    (tool versions, memory-lock limit) ahead of the last gate; the remaining regressions and the Worker steps are
+    pinned too. The environment script refuses a `rustc` that differs from `rust-toolchain.toml` and a sandbox
+    without `python3.12` (`2d3e450`).
