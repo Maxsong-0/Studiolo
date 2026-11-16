@@ -1,0 +1,399 @@
+#!/usr/bin/env python3
+"""上线前备份只读核查脚本的用例：规则和 Rust 源码逐字对照，逐类造出会挡封存的现存数据。
+
+真实 Broker、真实控制库上「脚本说挡 ⇔ 封存真的拒绝」的对照在 Rust 用例里：
+crates/vault-broker/tests/broker/preflight_script.rs、crates/control-db/tests/backup_preflight_script.rs。
+"""
+import contextlib
+import importlib.util
+import io
+import json
+import os
+from pathlib import Path
+import re
+import shutil
+import sqlite3
+import subprocess
+import sys
+import tempfile
+import unittest
+
+sys.dont_write_bytecode = True
+SCRIPT = Path(__file__).resolve().with_name("check-backup-preflight.py")
+spec = importlib.util.spec_from_file_location("check_backup_preflight", SCRIPT)
+preflight = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(preflight)
+
+REPOSITORY = SCRIPT.parent.parent
+TASK = "01J00000000000000000000000"
+ATTEMPT = "01J00000000000000000000001"
+ATTEMPT_DIR = f"sources/attempts/{TASK}/{ATTEMPT}/"
+PROVENANCE = {"source_policy": {"id": "fixture"}, "retain_until_unix_seconds": 4_000_000_000}
+
+
+def rust(relative):
+    return (REPOSITORY / relative).read_text(encoding="utf-8")
+
+
+def rust_constant(relative, name):
+    """取 `const NAME: … = 值;` 的值：字符串原样，数字算出乘积。"""
+    match = re.search(rf"const {name}: [^=]+= ([^;]+);", rust(relative))
+    assert match, f"{relative} 里找不到常量 {name}"
+    value = match.group(1).strip()
+    if value.startswith('"'):
+        return json.loads(value)
+    product = 1
+    for factor in value.split("*"):
+        product *= int(factor.strip().replace("_", ""))
+    return product
+
+
+def string_literals(text):
+    return [json.loads(literal) for literal in re.findall(r'"(?:[^"\\]|\\.)*"', text)]
+
+
+def write(root, relative, data=b"x"):
+    path = Path(root) / relative
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(data if isinstance(data, bytes) else data.encode("utf-8"))
+    return path
+
+
+def manifest(version=2, provenance=True, artifacts=(f"{ATTEMPT_DIR}result.md",)):
+    document = {"format_version": version, "artifacts": [{"path": path} for path in artifacts]}
+    if provenance:
+        document["provenance"] = PROVENANCE
+    return json.dumps(document)
+
+
+def staged(provenance=True):
+    document = {"task_id": TASK, "attempt_id": ATTEMPT, "artifacts": []}
+    if provenance:
+        document["provenance"] = PROVENANCE
+    return json.dumps(document)
+
+
+class SourceParity(unittest.TestCase):
+    """脚本里的常量和 SQL 要和 Rust 源码逐字一致；Rust 改了规则，这里先红。"""
+
+    def test_name_and_limit_constants_match_the_rust_sources(self):
+        pairs = [
+            ("crates/vault-broker/src/fs/rooted.rs", "TEMPORARY_MARKER", preflight.TEMPORARY_MARKER),
+            ("crates/vault-broker/src/residue.rs", "QUARANTINE", preflight.QUARANTINE),
+            ("crates/vault-broker/src/artifact_stage.rs", "NAME_PREFIX", preflight.STAGED_PREFIX),
+            ("crates/vault-broker/src/artifact_stage.rs", "NAME_SUFFIX", preflight.STAGED_SUFFIX),
+            ("crates/vault-broker/src/trusted_export.rs", "ATTEMPTS", preflight.ATTEMPTS),
+            ("crates/vault-broker/src/trusted_export.rs", "MANIFEST_NAME", preflight.MANIFEST_NAME),
+            ("crates/vault-broker/src/trusted_export.rs", "MANIFEST_LIMIT", preflight.MANIFEST_LIMIT),
+            ("crates/vault-broker/src/trusted_export.rs", "STAGED_LIMIT", preflight.STAGED_LIMIT),
+            ("crates/vault-broker/src/trusted_export.rs", "MAX_FILES", preflight.EXPORT_MAX_FILES),
+            ("crates/vault-broker/src/trusted_export.rs", "MAX_DEPTH", preflight.MAX_DIRECTORY_NESTING + 1),
+            ("crates/vault-broker/src/checkpoint/tree.rs", "MAX_NODES", preflight.TREE_MAX_NODES),
+            ("crates/vault-broker/src/checkpoint/tree.rs", "MAX_BYTES", preflight.TREE_MAX_BYTES),
+        ]
+        for relative, name, value in pairs:
+            with self.subTest(name=name):
+                self.assertEqual(rust_constant(relative, name), value)
+        residue = rust("crates/vault-broker/src/residue.rs")
+        self.assertIn('VAULT_QUARANTINE: &[&str] = &[".workbench", QUARANTINE];', residue)
+        self.assertIn("DATA_QUARANTINE: &[&str] = &[QUARANTINE];", residue)
+        self.assertEqual(preflight.WORKBENCH, ".workbench")
+
+    def test_combining_mark_ranges_match_vault_path(self):
+        source = rust("crates/core/src/vault_path.rs")
+        body = source[source.index("fn is_unicode_combining_mark"):]
+        body = body[: body.index("\n}\n")]
+        ranges = tuple((int(lo, 16), int(hi, 16)) for lo, hi in re.findall(r"0x([0-9a-f]+)\.\.=0x([0-9a-f]+)", body))
+        self.assertEqual(ranges, preflight.COMBINING_MARKS)
+
+    def test_control_queries_are_the_checkpoint_validation_verbatim(self):
+        source = rust("crates/control-db/src/checkpoint/validate.rs")
+        block = source[source.index("    for query in ["):]
+        block = block[: block.index("    ] {")]
+        self.assertEqual(string_literals(block), [query for _, _, query in preflight.CONTROL_ZERO_CHECKS])
+        self.assertIn(json.dumps(preflight.CONTROL_FENCE[2]), source)
+        policies = rust("crates/control-db/src/artifact_policies.rs")
+        self.assertIn(json.dumps(preflight.CONTROL_POLICY_ORPHAN[2]), policies)
+
+    def test_every_attempts_or_tasks_count_query_lists_its_rows(self):
+        for kind, _, query in preflight.CONTROL_ZERO_CHECKS:
+            table = re.match(r"SELECT count\(\*\) FROM (\w+)", query).group(1)
+            if table in ("attempts", "tasks", "artifact_commits"):
+                with self.subTest(kind=kind):
+                    self.assertIsNotNone(preflight.listing_query(query))
+
+
+class NameRules(unittest.TestCase):
+    def test_exact_temporary_names_follow_the_rust_cases(self):
+        # crates/vault-broker/tests/residue_private/mod.rs `only_the_exact_atomic_write_shape_counts_as_residue`
+        for name in (".a.studiolo-tmp-1-1", ".note.md.studiolo-tmp-4242-18446744073709551615",
+                     "..hidden.studiolo-tmp-1-2", ".a.studiolo-tmp-x.studiolo-tmp-1-2"):
+            with self.subTest(name=name):
+                self.assertTrue(preflight.is_exact_temporary_name(name))
+                self.assertTrue(preflight.is_temporary_name(name))
+        for name in (".studiolo-tmp-1-1", ".a.studiolo-tmp-1", ".a.studiolo-tmp-1-", ".a.studiolo-tmp--1",
+                     ".a.studiolo-tmp-1-2-3", ".a.studiolo-tmp-x-1", ".a.studiolo-tmp-1-123456789012345678901",
+                     "a.studiolo-tmp-1-1"):
+            with self.subTest(name=name):
+                self.assertFalse(preflight.is_exact_temporary_name(name))
+        self.assertTrue(preflight.is_temporary_name(".a.studiolo-tmp-1"))
+        self.assertFalse(preflight.is_temporary_name("a.studiolo-tmp-1-1"))
+
+    def test_vault_path_rules(self):
+        self.assertIsNone(preflight.vault_path_problem("canonical/笔记/今天.md"))
+        for raw in ("", "a\\b", "a\x01b", "e\u0301.md", "C:/x", "a%2Eb", "a%2fb", "/abs", "a//b", "a/./b", "a/../b"):
+            with self.subTest(raw=raw):
+                self.assertIsNotNone(preflight.vault_path_problem(raw))
+
+    def test_attempt_manifest_level(self):
+        self.assertEqual(preflight.attempt_manifest_directory(f"{ATTEMPT_DIR}manifest.json"), ATTEMPT_DIR)
+        self.assertIsNone(preflight.attempt_manifest_directory(f"{ATTEMPT_DIR}nested/manifest.json"))
+        self.assertIsNone(preflight.attempt_manifest_directory(f"sources/attempts/{TASK}/manifest.json"))
+
+
+class Fixture(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.root = Path(self.temp.name)
+        self.vault = self.root / "vault"
+        self.data = self.root / "data"
+        write(self.vault, "notes/plain.md", "正文")
+        write(self.vault, ".workbench/vault.json", "{}")
+        write(self.vault, f"{ATTEMPT_DIR}manifest.json", manifest())
+        write(self.vault, f"{ATTEMPT_DIR}result.md", "结果")
+        write(self.data, "writer-state.json", "{}")
+        write(self.data, f"artifact-candidate-{'ab' * 32}.json", staged())
+
+    def tearDown(self):
+        self.temp.cleanup()
+
+    def check(self, *extra):
+        arguments = ["--vault", str(self.vault), "--data", str(self.data), "--json", *extra]
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            code = preflight.main(arguments)
+        return code, json.loads(output.getvalue())
+
+    def kinds(self, *extra):
+        code, result = self.check(*extra)
+        kinds = sorted({finding["kind"] for finding in result["findings"]})
+        self.assertEqual(code, 1 if kinds else 0, result)
+        return kinds, result
+
+
+class FileSystemChecks(Fixture):
+    def test_current_layout_is_clean(self):
+        kinds, result = self.kinds()
+        self.assertEqual(kinds, [])
+        self.assertEqual(len(result["checked"]), 2)
+
+    def test_old_missing_and_unlisted_attempt_contents(self):
+        write(self.vault, f"{ATTEMPT_DIR}manifest.json", manifest(version=1, provenance=False))
+        self.assertEqual(self.kinds()[0], ["old_manifest"])
+        write(self.vault, f"{ATTEMPT_DIR}manifest.json", manifest(provenance=False))
+        self.assertEqual(self.kinds()[0], ["old_manifest"])
+        write(self.vault, f"{ATTEMPT_DIR}manifest.json", manifest())
+        write(self.vault, f"{ATTEMPT_DIR}extra.md")
+        write(self.vault, f"sources/attempts/{TASK}/stray.md")
+        kinds, result = self.kinds()
+        self.assertEqual(kinds, ["unlisted_attempt_file"])
+        self.assertEqual(len(result["findings"]), 2)
+        (self.vault / f"{ATTEMPT_DIR}extra.md").unlink()
+        (self.vault / f"sources/attempts/{TASK}/stray.md").unlink()
+        write(self.vault, f"sources/attempts/{TASK}/other/a.md")
+        write(self.vault, f"sources/attempts/{TASK}/other/b.md")
+        kinds, result = self.kinds()
+        self.assertEqual(kinds, ["missing_manifest"])
+        self.assertIn("2 个文件", result["findings"][0]["detail"])
+
+    def test_broken_manifests(self):
+        write(self.vault, f"{ATTEMPT_DIR}manifest.json", "{not json")
+        self.assertEqual(self.kinds()[0], ["manifest_unreadable"])
+        write(self.vault, f"{ATTEMPT_DIR}manifest.json", manifest(artifacts=("notes/plain.md",)))
+        self.assertEqual(self.kinds()[0], ["manifest_outside"])
+        write(self.vault, f"{ATTEMPT_DIR}manifest.json",
+              manifest(artifacts=(f"{ATTEMPT_DIR}result.md", f"{ATTEMPT_DIR}result.md")))
+        self.assertEqual(self.kinds()[0], ["double_claim"])
+        # 更深处叫 manifest.json 的是产物：清单列了它就不算问题。
+        write(self.vault, f"{ATTEMPT_DIR}manifest.json",
+              manifest(artifacts=(f"{ATTEMPT_DIR}result.md", f"{ATTEMPT_DIR}nested/manifest.json", f"{ATTEMPT_DIR}gone.md")))
+        write(self.vault, f"{ATTEMPT_DIR}nested/manifest.json", "an artifact")
+        self.assertEqual(self.kinds()[0], [])
+
+    def test_staged_bodies(self):
+        name = f"artifact-candidate-{'cd' * 32}.json"
+        write(self.data, name, staged(provenance=False))
+        self.assertEqual(self.kinds()[0], ["staged_legacy"])
+        (self.data / name).unlink()
+        write(self.data, "artifact-candidate-oops.json", staged())
+        self.assertEqual(self.kinds()[0], ["staged_unreadable"])
+        (self.data / "artifact-candidate-oops.json").unlink()
+        write(self.data, f"nested/artifact-candidate-{'ef' * 32}.json", staged())
+        self.assertEqual(self.kinds()[0], ["staged_misplaced"])
+
+    def test_residue_hints_follow_where_the_sweep_reaches(self):
+        swept = write(self.vault, ".workbench/.vault.json.studiolo-tmp-12-3")
+        data_swept = write(self.data, ".writer-state.json.studiolo-tmp-12-4")
+        stuck = write(self.vault, "notes/.plain.md.studiolo-tmp-12-5")
+        near_miss = write(self.data, ".x.studiolo-tmp-12")
+        kinds, result = self.kinds()
+        self.assertEqual(kinds, ["residue"])
+        hints = {finding["where"]: finding["detail"] for finding in result["findings"]}
+        self.assertIn("挪进隔离区", hints[str(swept)])
+        self.assertIn("挪进隔离区", hints[str(data_swept)])
+        self.assertIn("要人看过", hints[str(stuck)])
+        self.assertIn("要人看过", hints[str(near_miss)])
+
+    def test_quarantine_is_skipped_only_at_its_two_places(self):
+        write(self.vault, ".workbench/residue-quarantine/1-2-3/.a.studiolo-tmp-1-1")
+        write(self.data, "residue-quarantine/1-2-3/.b.studiolo-tmp-1-1")
+        kinds, result = self.kinds()
+        self.assertEqual(kinds, [])
+        self.assertEqual(len(result["notes"]), 2)
+        write(self.vault, "notes/residue-quarantine/.c.studiolo-tmp-1-1")
+        self.assertEqual(self.kinds()[0], ["residue"])
+
+    def test_nodes_the_capture_refuses(self):
+        os.symlink("plain.md", self.vault / "notes/link.md")
+        os.link(self.vault / "notes/plain.md", self.vault / "notes/hard.md")
+        os.mkfifo(self.data / "pipe")
+        write(self.vault, "notes/a%2e.md")
+        (self.vault / "notes/bad\x07dir").mkdir()
+        kinds, result = self.kinds()
+        self.assertEqual(kinds, ["bad_name", "hard_link", "special_node"])
+        # 硬链接的两个名字都算。
+        self.assertEqual(sum(f["kind"] == "hard_link" for f in result["findings"]), 2)
+
+    def test_owner_is_compared_against_the_running_account_or_uid_flag(self):
+        kinds, result = self.kinds("--uid", str(os.geteuid() + 1))
+        self.assertEqual(kinds, ["foreign_owner"])
+        self.assertEqual(result["uid"], os.geteuid() + 1)
+
+    def test_bad_roots_and_arguments_exit_two(self):
+        with contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(preflight.main(["--vault", str(self.root / "missing")]), 2)
+            os.symlink(self.vault, self.root / "vault-link")
+            self.assertEqual(preflight.main(["--vault", str(self.root / "vault-link")]), 2)
+            with self.assertRaises(SystemExit) as raised:
+                preflight.main([])
+        self.assertEqual(raised.exception.code, 2)
+
+    def test_nothing_under_the_roots_changes(self):
+        before = snapshot(self.root)
+        self.kinds()
+        self.assertEqual(snapshot(self.root), before)
+
+    def test_runs_from_standard_input_like_over_ssh(self):
+        with SCRIPT.open("rb") as source:
+            completed = subprocess.run(
+                [sys.executable, "-I", "-", "--vault", str(self.vault), "--data", str(self.data)],
+                stdin=source, capture_output=True, check=False)
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertIn("没发现会挡封存的现存数据", completed.stdout.decode("utf-8"))
+
+
+def snapshot(root):
+    """每个路径的类型、大小、修改时间；用来证明核查没写任何东西。"""
+    result = {}
+    for directory, directories, files in os.walk(root):
+        for name in directories + files:
+            info = os.lstat(os.path.join(directory, name))
+            result[os.path.relpath(os.path.join(directory, name), root)] = (info.st_mode, info.st_size, info.st_mtime_ns)
+    return result
+
+
+CONTROL_SCHEMA = """
+CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY);
+CREATE TABLE vault_binding(singleton INTEGER PRIMARY KEY, vault_uuid TEXT NOT NULL);
+CREATE TABLE fence_counter(singleton INTEGER PRIMARY KEY, next_fence INTEGER NOT NULL);
+CREATE TABLE snapshots(snapshot_id TEXT PRIMARY KEY, vault_uuid TEXT NOT NULL);
+CREATE TABLE tasks(task_id TEXT PRIMARY KEY, status TEXT, created_at_ms INTEGER, updated_at_ms INTEGER,
+                   active_attempt TEXT, last_attempt TEXT);
+CREATE TABLE attempts(attempt_id TEXT PRIMARY KEY, task_id TEXT, phase TEXT, fence INTEGER,
+                      created_at_ms INTEGER, updated_at_ms INTEGER, terminal_json TEXT);
+CREATE TABLE projection_outbox(sequence INTEGER PRIMARY KEY, delivered_at_ms INTEGER);
+CREATE TABLE terminal_audit_outbox(attempt_id TEXT PRIMARY KEY, delivered_at_ms INTEGER);
+CREATE TABLE runtime_audit_outbox(event_id TEXT PRIMARY KEY, action TEXT, delivered INTEGER, sequence INTEGER);
+CREATE TABLE artifact_commits(attempt_id TEXT PRIMARY KEY);
+CREATE TABLE artifact_policies(approval_event_id TEXT PRIMARY KEY);
+INSERT INTO schema_migrations VALUES (1), (2);
+INSERT INTO vault_binding VALUES (1, 'v');
+INSERT INTO fence_counter VALUES (1, 10);
+INSERT INTO tasks VALUES ('t1', 'needs_review', 1, 2, NULL, 'a1');
+"""
+TERMINAL = json.dumps({"report_json": {"format": 3}, "artifacts_json": {"id": "a", "sha256": "b"}})
+
+
+class ControlChecks(unittest.TestCase):
+    """手搭的最小结构只验脚本自己的逻辑；真实控制库上的对照在 control-db 的 Rust 用例里。"""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.directory = Path(self.temp.name)
+        self.path = self.directory / "control.sqlite3"
+        self.writer = sqlite3.connect(self.path)
+        self.writer.execute("PRAGMA journal_mode=WAL")
+        self.writer.executescript(CONTROL_SCHEMA)
+        self.writer.execute("INSERT INTO attempts VALUES ('a1','t1','completed',3,1,2,?)", (TERMINAL,))
+        self.writer.commit()
+
+    def tearDown(self):
+        self.writer.close()
+        self.temp.cleanup()
+
+    def kinds(self):
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            code = preflight.main(["--control", str(self.path), "--json"])
+        result = json.loads(output.getvalue())
+        kinds = sorted({finding["kind"] for finding in result["findings"]})
+        self.assertEqual(code, 1 if kinds else 0, result)
+        return kinds, result
+
+    def test_clean_committing_and_legacy_terminal(self):
+        self.assertEqual(self.kinds()[0], [])
+        self.writer.execute("UPDATE attempts SET phase='committing', terminal_json=NULL")
+        self.writer.commit()
+        kinds, result = self.kinds()
+        self.assertEqual(kinds, ["control_committing"])
+        self.assertEqual(result["findings"][0]["where"], "t1/a1")
+        legacy = json.dumps({"report_json": {"format": 3}, "artifacts_json": []})
+        self.writer.execute("UPDATE attempts SET phase='completed', terminal_json=?", (legacy,))
+        self.writer.commit()
+        self.assertEqual(self.kinds()[0], ["control_terminal_shape"])
+        self.writer.execute("UPDATE attempts SET terminal_json=?", (TERMINAL,))
+        self.writer.execute("UPDATE fence_counter SET next_fence=3")
+        self.writer.commit()
+        self.assertEqual(self.kinds()[0], ["control_fence"])
+
+    def test_reading_never_creates_or_changes_files_with_or_without_the_server(self):
+        # 写连接开着（主服务在跑）：-wal、-shm 在，只读模式共享它们。
+        self.assertTrue(Path(f"{self.path}-shm").exists())
+        before = snapshot(self.directory)
+        self.kinds()
+        self.assertEqual(snapshot(self.directory), before)
+        # 关掉（主服务停了）：-wal、-shm 被收掉，按不可变方式读主文件，也不能再建出来。
+        self.writer.close()
+        self.writer = sqlite3.connect(":memory:")
+        self.assertFalse(Path(f"{self.path}-shm").exists())
+        before = snapshot(self.directory)
+        self.kinds()
+        self.assertEqual(snapshot(self.directory), before)
+
+    def test_wal_without_shm_is_refused_untouched(self):
+        copy = self.directory / "copy"
+        copy.mkdir()
+        self.writer.execute("PRAGMA wal_autocheckpoint=0")
+        self.writer.execute("INSERT INTO tasks VALUES ('t2','queued',1,2,NULL,NULL)")
+        self.writer.commit()
+        shutil.copy(self.path, copy / "control.sqlite3")
+        shutil.copy(f"{self.path}-wal", copy / "control.sqlite3-wal")
+        before = snapshot(copy)
+        with contextlib.redirect_stderr(io.StringIO()) as error:
+            self.assertEqual(preflight.main(["--control", str(copy / "control.sqlite3")]), 2)
+        self.assertIn("先让主服务正常开一次库", error.getvalue())
+        self.assertEqual(snapshot(copy), before)
+
+
+if __name__ == "__main__":
+    unittest.main()

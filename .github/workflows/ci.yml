@@ -86,6 +86,7 @@ jobs:
           python3 -I -B scripts/test-human-offline.py
           python3 scripts/test-check-agent-policy.py
           python3 scripts/test-check-policy-revocation.py
+          python3 -I -B scripts/test-check-backup-preflight.py
           python3 scripts/test-preview-package.py
           python3 scripts/test-check-agent-http.py
           python3 scripts/test-check-agent.py
