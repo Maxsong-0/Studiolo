@@ -70,6 +70,15 @@ pub struct RecoveryTranscript {
     pub entries: Vec<TranscriptEntry>,
 }
 
+/// 恢复记录逐行文本的第一行：只有 checkpoint 标识，之后每行一条记录，都是 JSON。命令行边做边写这种文本
+/// （每追加一条就写一行），接手和最终切换时再整份读回来。
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TranscriptHeader {
+    /// 本次恢复所基于的 checkpoint。
+    pub checkpoint_id: CheckpointId,
+}
+
 /// transcript 已建立的凭证；没有它就不允许发生任何恢复写入。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct WriteAuthorization {
@@ -135,6 +144,39 @@ impl RecoveryTranscript {
             previous = entry.entry_hash.clone();
         }
         Ok(())
+    }
+
+    /// 逐行文本的第一行（[`TranscriptHeader`]）。
+    pub fn header_line(&self) -> Result<String, TranscriptError> {
+        serde_json::to_string(&TranscriptHeader {
+            checkpoint_id: self.checkpoint_id.clone(),
+        })
+        .map_err(|_| TranscriptError::BrokenChain)
+    }
+
+    /// 一条记录在逐行文本里的那一行。
+    pub fn entry_line(entry: &TranscriptEntry) -> Result<String, TranscriptError> {
+        serde_json::to_string(entry).map_err(|_| TranscriptError::BrokenChain)
+    }
+
+    /// 从逐行文本整份读回：第一行是头，之后每行一条记录（空行跳过）。每条载荷照追加时一样查秘密字段，
+    /// 整条链必须自洽；行不完整、多字段、少字段都拒绝。
+    pub fn from_lines(text: &str) -> Result<Self, TranscriptError> {
+        let mut lines = text.lines().filter(|line| !line.trim().is_empty());
+        let header: TranscriptHeader = lines
+            .next()
+            .and_then(|line| serde_json::from_str(line).ok())
+            .ok_or(TranscriptError::BrokenChain)?;
+        let entries = lines
+            .map(serde_json::from_str::<TranscriptEntry>)
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|_| TranscriptError::BrokenChain)?;
+        let transcript = Self {
+            checkpoint_id: header.checkpoint_id,
+            entries,
+        };
+        transcript.verify()?;
+        Ok(transcript)
     }
 
     /// 取得恢复写入授权；必须已经记下 `KitOpened` 且整条链自洽。
