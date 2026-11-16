@@ -243,7 +243,12 @@ raised. The code was changed accordingly on the same branch; the contracts named
     through maintenance, which needs the running service, so failing the round would crash-loop startup instead.
     The board first asks the control database (read-only) whether a commit's approval deadline has passed and spends
     its budget of 16 Broker checks only on those. `task.reconcile` still writes one write-ahead audit row per round
-    (about 11,500 a day, no ledger retention); that predates this batch and is a registered follow-up.
+    (about 11,500 a day, no ledger retention); that predates this batch and is registered as T-213.
+  - A read-only Codex second opinion on that increment raised three more minor points, fixed in `36a98c8`:
+    `commit_awaiting_discard` now returns proof errors instead of folding them into false, so the board counts and
+    logs them as unchecked; a test with two committing attempts pins that a parked attempt does not hold up the
+    other in the same round; the preflight reports read errors as unreadable files and keeps a partially checked
+    tree's counts against the shared budget. Each fix was mutation-checked: reverting it turns its test red.
   - The health page counts a backup as successful only when it also references this checkpoint as a pair; the
     `interrupted` placement is pinned in all four shapes (`d208b56`).
   - The quarantine is reused only when it is a directory owned by the service user with no group or other
