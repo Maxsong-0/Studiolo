@@ -192,3 +192,33 @@ fn extraction_writes_only_verified_bytes_and_never_overwrites() {
     );
     assert!(!target.join("late").exists());
 }
+
+/// 上一次放置中途留下的 `<名字>.restoring`，不管是目录、普通文件还是悬空的符号链接都算在场，编排据此在写任何
+/// 东西之前拒绝；不存在才算没被打断（复审 A2-F2）。判断不跟随链接：悬空链接要是被当成不存在，前面的组件写完了
+/// 才在 extract 里撞上。
+#[test]
+fn an_interrupted_placement_is_seen_in_every_shape_without_following_links() {
+    let f = Fixture::new();
+    let parent = f.temp.path().join("placement");
+    private_dir(&parent);
+    let partial = parent.join("auth.restoring");
+    let interrupted = || RestoredCheckpoint::interrupted(&parent, "auth").unwrap();
+    assert!(!interrupted(), "不存在");
+
+    fs::create_dir(&partial).unwrap();
+    assert!(interrupted(), "目录");
+    fs::remove_dir(&partial).unwrap();
+
+    private_file(&partial, b"half written");
+    assert!(interrupted(), "普通文件");
+    fs::remove_file(&partial).unwrap();
+
+    std::os::unix::fs::symlink(parent.join("missing"), &partial).unwrap();
+    assert!(fs::metadata(&partial).is_err(), "夹具：链接确实是悬空的");
+    assert!(interrupted(), "悬空符号链接");
+    assert!(
+        !RestoredCheckpoint::interrupted(&parent, "audit").unwrap(),
+        "别的名字不受影响"
+    );
+    assert!(!RestoredCheckpoint::placed(&parent, "auth").unwrap());
+}

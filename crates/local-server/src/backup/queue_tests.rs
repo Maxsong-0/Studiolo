@@ -67,7 +67,8 @@ fn succeed(ledger: &MemoryAuditLedger, key: &JobKey, verified: bool) -> AuditRec
     outcome(
         ledger,
         key,
-        json!({"result":"succeeded","objects_complete":true,"checksum_verified":verified}),
+        json!({"result":"succeeded","objects_complete":true,"checksum_verified":verified,
+            "paired_checkpoint_reference":true}),
     )
 }
 fn at(record: &AuditRecord) -> i64 {
@@ -239,6 +240,32 @@ fn a_success_without_verified_objects_or_an_unreadable_result_is_not_a_success()
     );
     assert!(queue.latest_failed());
     assert!(!queue.outstanding(), "照样收口，不会一直挂着");
+
+    // 最终清单没写明成对引用了这次检查点：worker 自己都不认它是恢复点（复审 A2-F1）。
+    for paired in [json!(false), json!(null), json!("true")] {
+        let ledger = MemoryAuditLedger::new();
+        intent(&ledger, &key(1), TARGET);
+        outcome(
+            &ledger,
+            &key(1),
+            json!({"result":"succeeded","objects_complete":true,"checksum_verified":true,
+                "paired_checkpoint_reference":paired}),
+        );
+        intent(&ledger, &key(2), TARGET);
+        outcome(
+            &ledger,
+            &key(2),
+            json!({"result":"succeeded","objects_complete":true,"checksum_verified":true}),
+        );
+        let queue = view(&ledger);
+        assert_eq!(queue.last_success(), None, "{paired} 不算成对引用");
+        assert_eq!(
+            queue
+                .last_failure()
+                .map(|mark| (mark.sequence, mark.failure)),
+            Some((2, JobFailure::Unrecognized))
+        );
+    }
 
     intent(&ledger, &key(2), TARGET);
     outcome(

@@ -178,15 +178,18 @@ impl Queue {
     }
 }
 
-/// 结果事件说的是不是成功；`None` 是成功。成功必须写明对象齐全、校验通过，
-/// 否则和读不出来的结果一样不当成功（未验证永远不写成已通过）。
+/// 结果事件说的是不是成功；`None` 是成功。成功必须写明对象齐全、校验通过、最终清单成对引用了这次检查点，
+/// 和 worker 认「可恢复点」的判据（`RemoteVerification::is_recoverable`）一样（复审 A2-F1）；
+/// 少一条就和读不出来的结果一样不当成功（未验证永远不写成已通过）。
 fn failure_of(event: &AuditEvent) -> Option<JobFailure> {
     let value = event.payload().as_value();
     let reason = || value.get("reason").cloned();
+    let proven = |name: &str| value.get(name) == Some(&serde_json::Value::Bool(true));
     match value.get("result").and_then(serde_json::Value::as_str) {
         Some("succeeded")
-            if value.get("objects_complete") == Some(&serde_json::Value::Bool(true))
-                && value.get("checksum_verified") == Some(&serde_json::Value::Bool(true)) =>
+            if proven("objects_complete")
+                && proven("checksum_verified")
+                && proven("paired_checkpoint_reference") =>
         {
             None
         }
