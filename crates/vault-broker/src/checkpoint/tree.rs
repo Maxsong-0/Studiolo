@@ -1,4 +1,5 @@
 //! 目录与文件都有固定预算；封存摘要覆盖名字、目录结构、空目录及全部文件字节。
+//! 唯一跳过的是开库清扫的隔离区（`crate::residue`）：它不在配对布局里，里面的残留备份也归不了类。
 use crate::{
     BrokerError, FsVaultBroker,
     writer::{Identity, directory},
@@ -30,13 +31,24 @@ pub(super) fn check_pair(left: &TreeSeal, right: &TreeSeal) -> Result<(), Broker
     }
     Ok(())
 }
-pub(super) fn scan(root: &Dir, deadline: Instant) -> Result<TreeSeal, BrokerError> {
-    run(root, None, deadline)
+/// `skip` 是要跳过的隔离区，从根起逐段写（`residue::VAULT_QUARANTINE`／`DATA_QUARANTINE`）。
+pub(super) fn scan(root: &Dir, skip: &[&str], deadline: Instant) -> Result<TreeSeal, BrokerError> {
+    run(root, None, skip, deadline)
 }
-pub(super) fn copy(root: &Dir, target: &Dir, deadline: Instant) -> Result<TreeSeal, BrokerError> {
-    run(root, Some(target), deadline)
+pub(super) fn copy(
+    root: &Dir,
+    target: &Dir,
+    skip: &[&str],
+    deadline: Instant,
+) -> Result<TreeSeal, BrokerError> {
+    run(root, Some(target), skip, deadline)
 }
-fn run(root: &Dir, target: Option<&Dir>, deadline: Instant) -> Result<TreeSeal, BrokerError> {
+fn run(
+    root: &Dir,
+    target: Option<&Dir>,
+    skip: &[&str],
+    deadline: Instant,
+) -> Result<TreeSeal, BrokerError> {
     let mut walk = Walk {
         device: Identity::directory(root)?.dev,
         deadline,
@@ -44,7 +56,7 @@ fn run(root: &Dir, target: Option<&Dir>, deadline: Instant) -> Result<TreeSeal, 
         bytes: 0,
         buffer: vec![0; 256 * 1024],
     };
-    let hash = walk.dir(root, target, 0)?;
+    let hash = walk.dir(root, target, skip, 0)?;
     Ok(TreeSeal {
         hash,
         nodes: walk.nodes,
@@ -63,6 +75,7 @@ impl Walk {
         &mut self,
         source: &Dir,
         target: Option<&Dir>,
+        skip: &[&str],
         depth: usize,
     ) -> Result<[u8; 32], BrokerError> {
         super::check_deadline(self.deadline)?;
@@ -78,7 +91,7 @@ impl Walk {
         {
             return Err(BrokerError::IncompleteCapture);
         }
-        let names = names(source, MAX_NODES - self.nodes, self.deadline)?;
+        let names = listed(source, skip, MAX_NODES - self.nodes, self.deadline)?;
         self.nodes += names.len() as u64;
         let mut hash = Sha256::new();
         hash.update(b"studiolo-broker-tree-v1\0");
@@ -97,7 +110,7 @@ impl Walk {
                 }
                 let copied = target.map(|dir| super::copy::dir(dir, name)).transpose()?;
                 hash.update([1]);
-                hash.update(self.dir(&child, copied.as_ref(), depth + 1)?);
+                hash.update(self.dir(&child, copied.as_ref(), within(skip, name), depth + 1)?);
                 if Identity::directory(&directory(source, name)?)? != Identity::file(&meta) {
                     return Err(BrokerError::CaptureChanged);
                 }
@@ -129,7 +142,7 @@ impl Walk {
             || before.ctime_nsec() != after.ctime_nsec()
             || before.mtime() != after.mtime()
             || before.mtime_nsec() != after.mtime_nsec()
-            || names != self::names(source, MAX_NODES, self.deadline)?
+            || names != listed(source, skip, MAX_NODES, self.deadline)?
         {
             return Err(BrokerError::CaptureChanged);
         }
@@ -139,6 +152,31 @@ impl Walk {
         super::check_deadline(self.deadline)?;
         Ok(hash.finalize().into())
     }
+}
+/// 往下一层时还要跳过的路径：只有正走在跳过路径上才往下传。
+fn within<'a>(skip: &'a [&'a str], name: &str) -> &'a [&'a str] {
+    match skip {
+        [first, rest @ ..] if *first == name && !rest.is_empty() => rest,
+        _ => &[],
+    }
+}
+/// 一层目录的名字，去掉跳过路径落在这一层的那个隔离区。只跳过真目录：
+/// 同名的文件照常进封存，同名的链接照旧让封存失败。
+fn listed(
+    dir: &Dir,
+    skip: &[&str],
+    remaining: u64,
+    deadline: Instant,
+) -> Result<Vec<String>, BrokerError> {
+    let mut names = names(dir, remaining, deadline)?;
+    if let [last] = skip
+        && dir
+            .symlink_metadata(last)
+            .is_ok_and(|metadata| metadata.is_dir())
+    {
+        names.retain(|name| name != last);
+    }
+    Ok(names)
 }
 fn names(dir: &Dir, remaining: u64, deadline: Instant) -> Result<Vec<String>, BrokerError> {
     let mut names = Vec::new();

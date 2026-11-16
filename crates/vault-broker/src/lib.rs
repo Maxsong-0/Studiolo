@@ -48,6 +48,7 @@ mod readonly;
 mod recorded;
 mod recovery;
 mod replay_read;
+mod residue;
 mod restore;
 mod writer;
 
