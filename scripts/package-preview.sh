@@ -27,7 +27,7 @@ STUDIOLO_INPUTS=(
   examples/m1-vault scripts/package-preview.sh scripts/check-preview.py scripts/test-check-preview.py
   scripts/test-check-preview-exercise.py
   scripts/test-linux.sh scripts/run-preview-tests.sh scripts/test-preview-package.py
-  scripts/test-release-package.py scripts/test-install-package.py .github/workflows/ci.yml .config/nextest.toml
+  scripts/test-release-package.py scripts/test-install-package.py .testbox.toml .config/nextest.toml
   deploy/preview/studiolo-preview.service.in
   deploy/preview/studiolo-access.service.in deploy/preview/studiolo-tunnel.service
   deploy/preview/install-runtime-package.sh docs/m3/release-packaging.md

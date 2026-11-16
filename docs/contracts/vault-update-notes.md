@@ -15,7 +15,7 @@
 | 5 最小垂直链 | `crates/studiolo/tests/` 中真实 Fs Broker + SQLite + Stub 测试 | 日志记录 task→manifest→投影结果 |
 | 6 Linux 路径负向 | `crates/vault-broker/tests/linux_path_security.rs` | 只根据实际 Linux 运行记录通过 |
 | 7 toolchain 与 crate 锁定 | `rust-toolchain.toml`、`Cargo.toml`、`Cargo.lock` | 技术栈逐项对应最终依赖 |
-| 8 Linux CI | `.github/workflows/ci.yml`、`scripts/test-linux.sh` | 使用方式写同一组命令；推送后才能产生 CI 运行证据 |
+| 8 Linux CI | `.testbox.toml` 的 ci 套（2026-11-16 起取代已删的 `.github/workflows/ci.yml`）、`scripts/test-linux.sh` | 使用方式写同一组命令；合进 main 之前交测试箱跑 ci 套才产生运行证据（AGENTS.md 第五节） |
 | 9 敏感动作枚举 | 既有 `01-框架/敏感动作枚举表.md` | 保留 M2–M4 端点范围；区分 M0 审计 action 与未来端点事件候选 |
 | 10 写路径架构图 | `00-overview.md`、`vertical-chain.md`、架构测试 | 按下节修正旧候选设计 |
 | 11 中英文别名 | `vault-index.md`、常量与对照测试 | 现权威表保留，不做全库回填 |

@@ -667,3 +667,49 @@ async fn historical_holder_cannot_cancel_a_successor_after_handoff() {
     );
     f.stop().await;
 }
+
+#[tokio::test]
+async fn discarding_an_expired_commit_is_session_csrf_and_l3_guarded() {
+    let f = TestBoard::new().await;
+    let http = &f.writer.http;
+    let login = http.issue().await;
+    let (task, _) = f.create_claim("discard-expired").await;
+    let list = "/api/v1/board?project=%E9%A1%B9%E7%9B%AE%2FStudiolo";
+    // 黑板列表实时带上「提交已过期、等你决定」：不在提交中的任务一律 false。
+    let before = f.writer.get(list, &login.cookie, 200).await;
+    assert_eq!(before[0]["commit_expired"], json!(false));
+    let command = "/api/v1/execution/command";
+    let body = json!({"operation":"discard_expired","task_id":task}).to_string();
+    // 缺 CSRF：门禁先挡，不进引擎、不记执行审计。
+    http.send(
+        http.request("POST", command, Some(&login.cookie), &body),
+        403,
+    )
+    .await;
+    assert!(http.events("execution.discard_expired").is_empty());
+    // 多带字段（比如自己报时间）：请求不合法，同样不进引擎。
+    let extra = json!({"operation":"discard_expired","task_id":task,"now":1}).to_string();
+    let mut request = http.request("POST", command, Some(&login.cookie), &extra);
+    request
+        .headers_mut()
+        .insert("x-csrf-token", login.csrf.parse().unwrap());
+    http.send(request, 400).await;
+    assert!(http.events("execution.discard_expired").is_empty());
+    // 会话和 CSRF 都对、没有当前 L3：拒绝在引擎之前，意图和结果两条审计都在，任务原样。
+    let mut request = http.request("POST", command, Some(&login.cookie), &body);
+    request
+        .headers_mut()
+        .insert("x-csrf-token", login.csrf.parse().unwrap());
+    let denial = support::json(http.send(request, 409).await).await;
+    assert!(denial["error"].as_str().unwrap().contains("二次认证"));
+    assert_eq!(http.events("execution.discard_expired").len(), 2);
+    let after = f.writer.get(list, &login.cookie, 200).await;
+    assert_eq!(after[0]["task"]["status"], before[0]["task"]["status"]);
+    assert_eq!(after[0]["commit_expired"], json!(false));
+    // AI 的私有黑板入口没有这个操作。
+    let refused = f
+        .call("discard_expired", json!({"task_id":task}), 409)
+        .await;
+    assert!(refused["error"].is_string());
+    f.stop().await;
+}

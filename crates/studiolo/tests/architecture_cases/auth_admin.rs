@@ -36,7 +36,7 @@ fn shared_configuration_adapter_is_read_only_and_local() {
 #[test]
 fn admin_production_build_is_explicit_in_verification() {
     let root = workspace_root();
-    for path in ["scripts/test-linux.sh", ".github/workflows/ci.yml"] {
+    for path in ["scripts/test-linux.sh", ".testbox.toml"] {
         let source = std::fs::read_to_string(root.join(path)).unwrap();
         assert!(source.contains("-p studiolo-auth-admin --features production"));
     }

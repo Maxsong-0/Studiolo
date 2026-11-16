@@ -205,8 +205,59 @@ raised. The code was changed accordingly on the same branch; the contracts named
    the ledger-tail check stay, tested only through a test-only bypass. Restoring is therefore unavailable until a
    follow-up task adds the revocation entry and the gate.
 3. Expired, never-started candidate commits are **no longer failed by reconciliation**. They stay pending with their
-   staged bodies kept; only the owner entry `discard_expired_commit` (task engine, covers board and non-board tasks, not yet exposed over HTTP or in
-   the cockpit) settles them as failed and discards the staging. Until the owner acts, control-db export and the whole
-   seal stay blocked; the user accepted that cost.
+   staged bodies kept; only the owner entry `discard_expired_commit` (task engine, covers board and non-board tasks; since
+   2026-11-16 also over HTTP and in the cockpit, see below) settles them as failed and discards the staging. Until the
+   owner acts, control-db export and the whole seal stay blocked; the user accepted that cost.
 4. Version-1 attempt directories and pre-upgrade staging stay rejected; before go-live, run a read-only check on the
    production vault from the Mac (see `deploy/backup-worker/README.md`).
+
+## Follow-ups done on the same branch (2026-11-16, fifth batch)
+
+- The owner discards an expired commit from the cockpit; the board list shows "commit expired" live (`048240f`).
+- A legacy inline reservation that cannot be migrated or rolled forward now blocks only its own attempt, not the
+  whole startup recovery or periodic reconciliation; the checkpoint still refuses to export it (`04b90bf`).
+- The health page has a "backup jobs" section: stuck, overdue and the last failure are visible (`abe2ed4`).
+- Opening the Broker moves atomic-write residue from `.workbench/` and the writer data root into a quarantine that
+  sealing skips; residue anywhere else is still rejected (`d861300`).
+- A new-root restore refuses before writing anything when a `.restoring` leftover of an earlier placement exists,
+  also when it claims to take over (`fcbbfda`).
+- The go-live read-only check is one command, `scripts/check-backup-preflight.py`, with rules copied from the sealing
+  code and parity tests against a real Broker and control database (`584e7d5`).
+- GitHub CI is gone. Before merging into main, run the testbox `ci` suite from `.testbox.toml` (local sessions only;
+  cloud VMs cannot reach the test box): see `AGENTS.md` section 5 (`1a468e2`, `db4ad71`). The environment script
+  tightens the sandbox's group-writable `/var/tmp`, which otherwise fails the private-directory ancestor checks
+  (`eb624a4`).
+- An independent review of this batch (eight agents) raised 19 findings; all are fixed (targeted run on the x86_64
+  test box `20261116-114242-25d4`, all passed). Behaviour worth knowing:
+  - Only reservation-level failures are isolated per attempt. Broker-wide failures that can only be handled outside
+    the service (writer busy, writer state or binding record corrupt, Vault identity corrupt or root changed, storage
+    full, quota exceeded, read-only file system) fail the whole reconciliation round again, so the service stops
+    where someone sees it. One failed commit check no longer turns the whole board list into a 503; that row shows
+    as still committing and a rate-limited log line says how many could not be checked. The "recovery pending" audit
+    is written once per attempt (`03b1454`). The cockpit's discard button works even when the execution status
+    cannot be read (`6371bf0`).
+  - A second review round (two agents) found the 19 fixes in place and raised five minor points, handled in
+    `ae795f2` and `14f4278`. The Broker classification now lists every error explicitly, so a new one does not
+    compile until it is placed. Permission denied moved back to per attempt (permissions are per path). Unresolved,
+    indeterminate or cancelled writer mutations and the writer limit stay per attempt on purpose: they are settled
+    through maintenance, which needs the running service, so failing the round would crash-loop startup instead.
+    The board first asks the control database (read-only) whether a commit's approval deadline has passed and spends
+    its budget of 16 Broker checks only on those. `task.reconcile` still writes one write-ahead audit row per round
+    (about 11,500 a day, no ledger retention); that predates this batch and is registered as T-213.
+  - A read-only Codex second opinion on that increment raised three more minor points, fixed in `36a98c8`:
+    `commit_awaiting_discard` now returns proof errors instead of folding them into false, so the board counts and
+    logs them as unchecked; a test with two committing attempts pins that a parked attempt does not hold up the
+    other in the same round; the preflight reports read errors as unreadable files and keeps a partially checked
+    tree's counts against the shared budget. Each fix was mutation-checked: reverting it turns its test red.
+  - The health page counts a backup as successful only when it also references this checkpoint as a pair; the
+    `interrupted` placement is pinned in all four shapes (`d208b56`).
+  - The quarantine is reused only when it is a directory owned by the service user with no group or other
+    permissions. The preflight script counts both trees against one limit, stops at the limit, reports unreadable
+    files and an unsafe quarantine, and must run as the main service account (`cc788c9`). A part it cannot check
+    (unreadable root, wrong account for the control database, unexpected error) is named in the output and makes the
+    exit code 2, while the other parts are still checked and their findings still listed; the quarantine count is
+    bounded and counts files and directories (`14f4278`).
+  - The architecture guard pins each gated step's environment line and allows only gates and five diagnostic lines
+    (tool versions, memory-lock limit) ahead of the last gate; the remaining regressions and the Worker steps are
+    pinned too. The environment script refuses a `rustc` that differs from `rust-toolchain.toml` and a sandbox
+    without `python3.12` (`2d3e450`).

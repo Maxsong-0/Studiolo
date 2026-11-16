@@ -36,7 +36,7 @@ agent-server 的 `serve --board-socket <相同socket> --policy <既有策略目�
 
 可选 `--runner-config <私有0600配置>` 必须同时配置 board 与真实因子 Unix 入口；缺配置时执行页返回 `configured=false,frozen=true`。Gateway 长期凭据由独立 UID 进程持有，详见 [M6 装配](../m6/integration.md)。
 
-`POST /api/v1/execution/command` 仅接受固定操作：`freeze`、`start`、`cancel`、`land`、`review`。全部重验当前应用会话与 CSRF、写入意图/结果审计；解除冻结、代码落地与候选验收额外要求当前 L3。AI 的 board 工具没有这些人侧入口。`review` 必须带完整 `BoardReceipt`、真实候选指针、逐条验收和 closeout；CLI 退出成功只产生 `NeedsReview`，不自动完成任务。
+`POST /api/v1/execution/command` 仅接受固定操作：`freeze`、`start`、`cancel`、`land`、`review`、`discard_expired`。全部重验当前应用会话与 CSRF、写入意图/结果审计；解除冻结、代码落地、候选验收与丢弃过期的提交额外要求当前 L3（丢弃复用候选验收那一道）。`discard_expired` 只带 `task_id`，时间由服务器取，成功回 `{task_id,status}`（`failed` 或 `cancelled`）；它只经黑板、不需要执行体，没配执行服务的部署也能用。AI 的 board 工具没有这些人侧入口。`review` 必须带完整 `BoardReceipt`、真实候选指针、逐条验收和 closeout；CLI 退出成功只产生 `NeedsReview`，不自动完成任务。
 
 只读状态 `GET /api/v1/execution` 与黑板一起表达执行视图。`candidate_retained` 表示本地候选已保留但尚未成功封存，不能从该状态伪造验收。原始响应、长期密钥、短期 bearer 和候选正文均不进入 Control DB 或这些监督 JSON。
 
@@ -44,4 +44,4 @@ agent-server 的 `serve --board-socket <相同socket> --policy <既有策略目�
 
 仓库验证只证明合成库和本地契约；线上策略发布、身份迁移、服务启动、真实 Sync 往返、本机两种 CLI 的订阅派发验收各需单独证据。开发完成不能替代这些发布门槛。
 
-人侧黑板投影追加 `instance_lineages`，只返回已登记的同类型父链元数据。项目时间回放 `/api/v1/board/timeline` 使用当前会话，按项目与最多31天窗口连接有界审计页及新鲜日志指针；全局扫描游标即使空页也前进，不含审计 payload 或日志正文，不伪造历史状态快照。
+人侧黑板投影追加 `instance_lineages`，只返回已登记的同类型父链元数据；另追加 `commit_expired`（布尔）：提交中的任务由服务端当场问 Broker「原批准是否已过期、一篇正文都没写」，别的状态一律 false。这一项随时间变，只在这个人侧列表里实时算，不进任务页投影、回放快照和 AI 的 board 工具。项目时间回放 `/api/v1/board/timeline` 使用当前会话，按项目与最多31天窗口连接有界审计页及新鲜日志指针；全局扫描游标即使空页也前进，不含审计 payload 或日志正文，不伪造历史状态快照。

@@ -20,8 +20,24 @@ const TEMPORARY_MARKER: &str = ".studiolo-tmp-";
 
 /// 文件名是不是原子写留下的临时文件。崩溃在写到一半时会留下这种残留，
 /// 里面可能是任何文件的半截或全文，导出扫描没法给它归类，只能拒绝。
+/// 这是宽的判断，只用来拒绝；开库挪走残留用严格的 [`is_exact_temporary_name`]。
 pub(crate) fn is_temporary_name(file_name: &str) -> bool {
     file_name.starts_with('.') && file_name.contains(TEMPORARY_MARKER)
+}
+
+/// 名字和原子写起的临时文件名逐段对得上：`.` 加非空的原文件名、固定标记、进程号、`-`、序号，
+/// 进程号和序号都是十进制数字。差一点的都不算，开库清扫只挪对得上的。
+pub(crate) fn is_exact_temporary_name(file_name: &str) -> bool {
+    let decimal = |value: &str| {
+        !value.is_empty() && value.len() <= 20 && value.bytes().all(|b| b.is_ascii_digit())
+    };
+    file_name
+        .strip_prefix('.')
+        .and_then(|rest| rest.rsplit_once(TEMPORARY_MARKER))
+        .and_then(|(original, tail)| Some((original, tail.split_once('-')?)))
+        .is_some_and(|(original, (process, sequence))| {
+            !original.is_empty() && decimal(process) && decimal(sequence)
+        })
 }
 
 impl FsVaultBroker {

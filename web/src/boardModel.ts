@@ -70,6 +70,11 @@ export type BoardItem = {
   } | null;
   holder: string | null;
   instanceLineages: { id: string; agentType: string }[][];
+  /**
+   * 提交的原批准已过期、一篇正文都没写，等你决定丢不丢。只有黑板列表接口实时给（服务端问过
+   * Broker），回放快照、审阅回应里没有这一项，一律当 false。
+   */
+  commitExpired: boolean;
   paths: string[];
   criteria: string[];
   oldPolicy: boolean;
@@ -262,12 +267,14 @@ function handoff(value: unknown) {
   });
 }
 function item(value: unknown, expectedProject?: string): BoardItem {
+  // 列表接口额外带两项：实例链与「提交已过期」；单条快照没有，键集按实际出现的收紧。
+  const has = (key: string) =>
+    Object.prototype.hasOwnProperty.call(value, key) ? ` ${key}` : '';
   const v = object(
     value,
     'task board uses_old_policy holder progress attempt candidate_stages candidate_receipt' +
-      (Object.prototype.hasOwnProperty.call(value, 'instance_lineages')
-        ? ' instance_lineages'
-        : ''),
+      has('instance_lineages') +
+      has('commit_expired'),
   );
   const task = object(
     v.task,
@@ -378,6 +385,10 @@ function item(value: unknown, expectedProject?: string): BoardItem {
     (active !== null)
   )
     return invalid();
+  const commitExpired =
+    v.commit_expired === undefined ? false : bool(v.commit_expired);
+  // 只有提交中的任务才可能「提交已过期」；别的状态带 true 是服务端出错。
+  if (commitExpired && status !== 'committing') return invalid();
   const progress = nullable(v.progress, (entry) => {
     const p = object(entry, 'tool_calls edits last_progress_ms');
     return {
@@ -454,6 +465,7 @@ function item(value: unknown, expectedProject?: string): BoardItem {
               return invalid();
             return nodes;
           }),
+    commitExpired,
     paths,
     criteria,
     oldPolicy: bool(v.uses_old_policy),

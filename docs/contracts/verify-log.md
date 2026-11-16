@@ -134,7 +134,7 @@ scripts/test-linux.sh
 ```
 
 若 `scripts/test-linux.sh` 未运行或 Linux 专属用例被 skip，必须把路径安全结论写成未验证。
-GitHub Actions 只有在用户决定推送后才产生证据，不得用 workflow 文件存在代替运行结果。
+合并门禁的证据是测试箱 ci 套的实际运行结果（2026-11-16 起取代 GitHub Actions，AGENTS.md 第五节），不得用 `.testbox.toml` 里写了步骤代替运行结果。
 
 ## 3. 行为验收清单
 

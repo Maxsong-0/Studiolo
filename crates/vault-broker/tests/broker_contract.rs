@@ -6,6 +6,9 @@ mod artifacts;
 mod granted;
 #[path = "broker/paths.rs"]
 mod paths;
+#[cfg(unix)]
+#[path = "broker/preflight_script.rs"]
+mod preflight_script;
 #[path = "broker/provenance.rs"]
 mod provenance;
 #[path = "broker/snapshots.rs"]

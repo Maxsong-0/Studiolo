@@ -149,6 +149,13 @@ export function taskStep(
 ): ExecutionStep {
   if (task.receipt)
     return at(9, `回执：${receiptLabels[task.receipt.status]}。`, false, true);
+  // 黑板列表实时核实过的「提交已过期」比执行服务里的 run 状态更具体：停在提交候选这一段，等你定。
+  if (task.status === 'committing' && task.commitExpired)
+    return at(
+      7,
+      '提交已过期：原批准到期前一篇正文都没写进 Vault，等你决定丢不丢。',
+      true,
+    );
   const own = run !== undefined && run.task_id === task.id ? run : undefined;
   const matched =
     own !== undefined &&

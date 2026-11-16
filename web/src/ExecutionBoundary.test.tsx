@@ -38,10 +38,15 @@ let status = {
   frozen: false,
   runs: [] as ReturnType<typeof executionRun>[],
 };
+/** 执行状态接口回 503（runner 回放出错之类）。 */
+let statusUnavailable = false;
 function mockReads() {
   const fetch = vi.fn(async (input: RequestInfo | URL) => {
     const url = String(input);
-    if (url === '/api/v1/execution') return executionResponse(status);
+    if (url === '/api/v1/execution')
+      return statusUnavailable
+        ? executionResponse({ error: '执行服务暂不可用' }, 503)
+        : executionResponse(status);
     if (url.startsWith('/api/v1/board?'))
       return executionResponse([currentBoard]);
     if (url.startsWith('/api/v1/board/replay?'))
@@ -70,6 +75,7 @@ beforeEach(() => {
   vi.setSystemTime(Date.UTC(2026, 8, 20, 10));
   currentBoard = executionBoard();
   status = { configured: true, frozen: false, runs: [] };
+  statusUnavailable = false;
 });
 afterEach(() => {
   cleanup();
@@ -533,5 +539,124 @@ describe('执行九步的阶段表', () => {
         true,
       ),
     ).toMatchObject({ note: '代码候选：先核对 HEAD 并落地，再逐项审阅。' });
+  });
+});
+
+describe('丢弃过期的提交', () => {
+  const expired = () =>
+    Object.assign(executionBoard('committing'), { commit_expired: true });
+  const discard = () => screen.getByRole('button', { name: '丢弃过期的提交' });
+  const acknowledge = () =>
+    screen.getByRole('checkbox', {
+      name: '我知道丢掉之后候选正文不再保留，任务落成失败。',
+    });
+
+  it('stops at step 7 waiting on you, ahead of whatever the run says', () => {
+    const task = boardItem(expired(), executionProject);
+    const run = runSummary(executionRun('candidate_retained'));
+    for (const own of [undefined, run])
+      expect(taskStep(task, own, null, true)).toMatchObject({
+        known: true,
+        step: 7,
+        halted: true,
+        note: '提交已过期：原批准到期前一篇正文都没写进 Vault，等你决定丢不丢。',
+      });
+  });
+
+  it('needs an explicit acknowledgement and sends only the task id', async () => {
+    currentBoard = expired();
+    mockReads();
+    const writer = vi.fn(async (body: unknown, signal: AbortSignal) => {
+      void signal;
+      currentBoard = executionBoard('failed');
+      return {
+        task_id: (body as { task_id: string }).task_id,
+        status: 'failed',
+      };
+    });
+    uninstall = installExecutionWriter(writer);
+    await mount();
+    expect(discard()).toBeDisabled();
+    await click(acknowledge());
+    await click(discard());
+    expect(writer).toHaveBeenCalledTimes(1);
+    expect(writer.mock.calls[0]?.[0]).toEqual({
+      operation: 'discard_expired',
+      task_id: executionId(),
+    });
+    expect(
+      screen.getByText('服务器已接受操作，正在重新核对状态。'),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: '丢弃过期的提交' }),
+    ).not.toBeInTheDocument();
+  });
+
+  it('still works when no execution service is configured', async () => {
+    status = { configured: false, frozen: true, runs: [] };
+    currentBoard = expired();
+    mockReads();
+    const writer = vi.fn(async (body: unknown, signal: AbortSignal) => {
+      void signal;
+      return {
+        task_id: (body as { task_id: string }).task_id,
+        status: 'cancelled',
+      };
+    });
+    uninstall = installExecutionWriter(writer);
+    await mount();
+    await click(acknowledge());
+    await click(discard());
+    expect(writer).toHaveBeenCalledTimes(1);
+  });
+
+  it('still works when the execution status cannot be read', async () => {
+    statusUnavailable = true;
+    currentBoard = expired();
+    mockReads();
+    const writer = vi.fn(async (body: unknown, signal: AbortSignal) => {
+      void signal;
+      return {
+        task_id: (body as { task_id: string }).task_id,
+        status: 'failed',
+      };
+    });
+    uninstall = installExecutionWriter(writer);
+    await mount();
+    await click(acknowledge());
+    await click(discard());
+    expect(writer).toHaveBeenCalledTimes(1);
+    expect(
+      screen.getByText('服务器已接受操作，正在重新核对状态。'),
+    ).toBeInTheDocument();
+  });
+
+  it('is not offered for a commit the server has not shown to be expired', async () => {
+    currentBoard = executionBoard('committing');
+    mockReads();
+    await mount();
+    expect(
+      screen.queryByRole('button', { name: '丢弃过期的提交' }),
+    ).not.toBeInTheDocument();
+  });
+
+  it('an L3 refusal explains reauthentication and is not retried', async () => {
+    currentBoard = expired();
+    mockReads();
+    const writer = vi.fn(async (body: unknown, signal: AbortSignal) => {
+      void body;
+      void signal;
+      throw new ApiError('请先完成二次认证（One-time Code）', 409);
+    });
+    uninstall = installExecutionWriter(writer);
+    await mount();
+    await click(acknowledge());
+    await click(discard());
+    expect(writer).toHaveBeenCalledTimes(1);
+    expect(
+      screen.getByText(
+        '本次未完成：请先在「账户」完成二次认证（One-time Code），然后重新提交。不会自动重试。',
+      ),
+    ).toBeInTheDocument();
   });
 });

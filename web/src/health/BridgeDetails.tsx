@@ -1,4 +1,4 @@
-import { bytes } from './format';
+import { bytes, localTime as time } from './format';
 import type { BridgeHealth, ManualQuota } from './model';
 
 const EXIT = {
@@ -16,10 +16,6 @@ const RECOVERY = {
 };
 const count = (value: string | null) =>
   value === null ? '未知' : BigInt(value).toLocaleString('zh-CN');
-const time = (value: string | null) =>
-  value === null
-    ? '未知'
-    : new Date(value).toLocaleString('zh-CN', { hour12: false });
 const flag = (value: boolean | null, yes: string, no: string) =>
   value === null ? '未知' : value ? yes : no;
 /** 明细始终来自同一次健康快照；即使本批熔断，仍可看其他已知证据。 */

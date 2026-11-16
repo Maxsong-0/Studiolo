@@ -250,7 +250,13 @@ where
     // 装上去。不装则健康页一律回 404，因此这一行是"健康页可用"的唯一开关。
     let app = studiolo_local_server::health::with_health_evidence(
         app,
-        health_input::source(sync_plane.as_ref().map(|plane| plane.health_probe())),
+        health_input::source(
+            sync_plane.as_ref().map(|plane| plane.health_probe()),
+            backup.as_ref().map(|prepared| {
+                Arc::clone(&prepared.producer)
+                    as Arc<dyn studiolo_local_server::backup::BackupJobsProbe>
+            }),
+        ),
     );
     let prepared = PreparedServer {
         app,

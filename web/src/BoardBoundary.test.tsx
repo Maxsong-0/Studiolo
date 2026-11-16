@@ -156,6 +156,25 @@ it('shows queued work and only the backend needs_review status as awaiting revie
   ).not.toBeInTheDocument();
 });
 
+it('says an expired commit is waiting on you, and only when the server says so', async () => {
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async () =>
+      response([
+        Object.assign(row(1, 'committing'), { commit_expired: true }),
+        Object.assign(row(2, 'committing'), { commit_expired: false }),
+      ]),
+    ),
+  );
+  await mount();
+  expect(screen.getByRole('article', { name: '工作项 1' })).toHaveTextContent(
+    '提交已过期，等你决定丢不丢',
+  );
+  const live = screen.getByRole('article', { name: '工作项 2' });
+  expect(live).toHaveTextContent('写回中');
+  expect(live).not.toHaveTextContent('提交已过期');
+});
+
 it('expires a displayed lease without waiting for the next server poll', async () => {
   const value = row();
   value.attempt!.lease_until_ms = now + 1000;

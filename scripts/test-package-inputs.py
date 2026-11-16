@@ -206,7 +206,7 @@ class ArchitectureRuntimeInputsTests(unittest.TestCase):
     """架构守卫运行时读的仓库文件必须随两个运行包走；从清单删掉其中一个，必须红并点名。"""
 
     # 守卫必须认得出这些（一个都认不出的「全绿」不算数）。
-    KNOWN = (".config/nextest.toml", ".github/workflows/ci.yml", "scripts/test-linux.sh", "Cargo.toml")
+    KNOWN = (".config/nextest.toml", ".testbox.toml", "scripts/test-linux.sh", "Cargo.toml")
 
     def test_both_manifests_carry_every_file_the_architecture_guards_read(self):
         named = architecture_inputs(ROOT)

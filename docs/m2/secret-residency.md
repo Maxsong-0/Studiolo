@@ -158,11 +158,12 @@ Linux 上 `mlockall` 受 `RLIMIT_MEMLOCK` 约束。上限不足时 `harden()` �
   阶段实例同样会被 memlock 卡住，漏了它阶段验收会先挂）。
   **升级线上 `studiolo-agent` 时必须先让新单元生效，否则服务起不来**——
   这不是重启顺序问题，是部署前置。
-- CI 同理，且**每个 `run` 步骤是独立 shell**，上一步抬高的上限不会传到下一步：
-  `.github/workflows/ci.yml` 在「Workspace 测试」「Python 副本发布与真实 MCP 管线」
-  「本地登记工具生产特征构建」三个步骤里各抬一次
-  （`sudo prlimit --pid $$ --memlock=unlimited:unlimited`）；
-  `scripts/test-linux.sh` 的 docker 用 `--ulimit memlock=-1` 一次覆盖整个容器。
+- 合并门禁同理，且**每一步是独立 shell**，上一步抬高的上限不会传到下一步。原来的 GitHub CI
+  在「Workspace 测试」「Python 副本发布与真实 MCP 管线」「本地登记工具生产特征构建」三个步骤里
+  各抬一次（`sudo prlimit --pid $$ --memlock=unlimited:unlimited`）；2026-11-16 起合并门禁是测试箱的
+  ci 套（`.testbox.toml`），沙盒本来就是 unlimited，`scripts/testbox-ci-env.sh` 在每一步开头核对，
+  不是就直接失败、不降级。`scripts/test-linux.sh` 在 githubci 上原生跑（2026-09-19 起不用 Docker），
+  靠服务器上一次性抬高的上限，开跑前同样先核对。
 - 发布包验收 `scripts/run-agent-tests.sh` 在服务器上以普通用户跑，抬不了自己的硬上限，
   因此它**先检查 `ulimit -l` 再开跑**：低于 64 MiB 直接以明确原因退出，
   免得整片红被误读成代码坏了。

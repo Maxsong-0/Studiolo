@@ -6,7 +6,10 @@ mod replays;
 mod roots;
 mod tree;
 
-use crate::{BrokerError, FsVaultBroker};
+use crate::{
+    BrokerError, FsVaultBroker,
+    residue::{DATA_QUARANTINE, VAULT_QUARANTINE},
+};
 pub use audit::{BrokerCheckpointAudit, BrokerCheckpointCoverage};
 use std::{path::Path, time::Instant};
 use studiolo_core::checkpoint::{
@@ -75,12 +78,22 @@ impl FrozenBroker {
         }
         let target = roots::Targets::new(&self.broker, vault, data)?;
         target.check()?;
-        let actual_vault = tree::copy(&self.broker.root, &target.vault, self.deadline)?;
-        let actual_data = tree::copy(&self.broker.data, &target.data, self.deadline)?;
+        let actual_vault = tree::copy(
+            &self.broker.root,
+            &target.vault,
+            VAULT_QUARANTINE,
+            self.deadline,
+        )?;
+        let actual_data = tree::copy(
+            &self.broker.data,
+            &target.data,
+            DATA_QUARANTINE,
+            self.deadline,
+        )?;
         if &actual_vault != expected_vault
             || &actual_data != expected_data
-            || tree::scan(&target.vault, self.deadline)? != actual_vault
-            || tree::scan(&target.data, self.deadline)? != actual_data
+            || tree::scan(&target.vault, VAULT_QUARANTINE, self.deadline)? != actual_vault
+            || tree::scan(&target.data, DATA_QUARANTINE, self.deadline)? != actual_data
             || self.source_seals()? != (actual_vault, actual_data)
             || self.watermark()? != watermark
         {
@@ -110,8 +123,8 @@ impl FrozenBroker {
             .writer
             .check(&self.broker.root, &self.broker.data)?;
         let result = (
-            tree::scan(&self.broker.root, self.deadline)?,
-            tree::scan(&self.broker.data, self.deadline)?,
+            tree::scan(&self.broker.root, VAULT_QUARANTINE, self.deadline)?,
+            tree::scan(&self.broker.data, DATA_QUARANTINE, self.deadline)?,
         );
         tree::check_pair(&result.0, &result.1)?;
         self.broker

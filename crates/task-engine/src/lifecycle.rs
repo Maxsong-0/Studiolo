@@ -47,19 +47,26 @@ impl<B: VaultBroker + ArtifactStager, L: AuditLedger> PersistentTaskEngine<B, L>
         )?;
         self.deliver_pending_outcomes(None, now)?;
         for attempt in self.control_db.committing_attempts().map_err(map_db)? {
-            let reservation = attempt.terminal.as_ref().ok_or_else(|| {
-                TaskEngineError::Integrity("committing attempt has no reservation".into())
-            })?;
-            match self.roll_forward(&prior_identity(&attempt), reservation, now) {
-                Ok(_) => {}
-                Err(TaskEngineError::CommitFailed(_)) => {
-                    // 单个被保留的发布不能挡住其他租约的处理；它的预留仍是
-                    // Committing，因此新持有者和成功回执都无法胜出。
+            let result = match attempt.terminal.as_ref() {
+                Some(reservation) => self
+                    .roll_forward(&prior_identity(&attempt), reservation, now)
+                    .map(|_| ()),
+                None => Err(TaskEngineError::Integrity(
+                    "committing attempt has no reservation".into(),
+                )),
+            };
+            match result {
+                Ok(()) => {}
+                Err(error) if super::terminal_staging::reservation_specific(&error) => {
+                    // 单个被保留的发布、或者一份坏掉的预留（旧内联格式缺原批准、内容对不上，复审 D3-F5）
+                    // 不能挡住其他租约的处理；它的预留仍是 Committing，因此新持有者和成功回执都无法胜出。
                     // 原批准过期、一篇正文都没写出去的提交也停在这里、保留暂存，对账不替主人丢：
                     // 只有主人经 `discard_expired_commit` 决定（2026-11-16 用户拍板）。
+                    // 同一个 attempt 只记一次（请求里不带时间，账本按幂等键重放）：主人几天不处理时，
+                    // 每 15 秒一条会让审计无界增长（复审 A1-F4）。
                     self.audit_board(
                         "task.candidate_recovery_pending",
-                        &(attempt.task_id, attempt.attempt_id, now),
+                        &(attempt.task_id, attempt.attempt_id),
                         AuditPhase::Outcome,
                         Some(false),
                     )?;

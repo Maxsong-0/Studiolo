@@ -2,7 +2,7 @@
 //! 那一行换成 nextest 加文档测试，其余门禁一条不少、顺序不变；不认识的值直接拒绝，不悄悄走默认。
 //!
 //! 用脚本自己的「只打印清单」模式（`STUDIOLO_TEST_PRINT_RUN=1`）核对，不连服务器。
-//! 默认清单逐条等于 CI 的那部分由 `ci.rs` 管，这里只管开关换掉的是不是恰好那一行。
+//! 默认清单逐条等于 ci 套门禁的那部分由 `ci.rs` 管，这里只管开关换掉的是不是恰好那一行。
 
 use crate::support::workspace_root;
 use std::process::Command;

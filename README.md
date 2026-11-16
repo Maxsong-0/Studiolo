@@ -150,8 +150,8 @@ crates/
   policy/            # M4 策略平面：policy.sqlite3、三类母本 desired→校验→diff→L3 发布→effective、版本 / 回滚、三级吊销（T-069）
   agent-server/      # M3 `studiolo-agent`：rmcp Streamable HTTP 主外壳（仅 loopback）与 admin 子命令；M4 起 `--policy` 复核能力集与吊销
 docs/                # M0 契约与 M1/M2/M3 分片实现、运行与验收说明
-scripts/             # test-linux.sh（同步到 CI 服务器原生跑与 CI 相同的检查）、打包与 Python 管线检查
-.github/workflows/   # CI（Linux x86_64，action 按 SHA 钉死）：Rust 作业 + 前端作业
+scripts/             # test-linux.sh（同步到 githubci 原生跑与 ci 套相同的 Rust 门禁）、testbox-ci-env.sh（ci 套的沙盒环境）、打包与 Python 管线检查
+.testbox.toml        # 测试箱步骤单：ci 套是合并门禁（2026-11-16 起取代 GitHub CI，原三个作业原样搬来）
 web/                 # Vite + TypeScript + React 工作台：只读视图、M2 会话入口与人侧 Markdown 编辑器（未发布）
 examples/            # 纯虚构示例库（M1 只读工作台与 M3 图 2 四组），不含真实用户笔记
 deploy/              # agent/：M3 服务器单元与升级脚本；preview/：M1 示例的用户服务模板
@@ -170,16 +170,20 @@ M1 的 `workbench` 只消费内存文档与 M0 索引；`local-server` 按启动
 
 ## 开发
 
-**测试与编译在哪跑按机器分**（细则见 `AGENTS.md` 第四、五、七节）：**Mac 一律不在本机跑**（2026-09-23 用户硬约束），`cargo test`／`fmt`／`clippy`／`build`、Python 契约、
-前端检查、真实管线都经 `scripts/test-linux.sh <命令>`（同步到 `githubci` 原生跑，可带参数跑任意定向命令）或 CI；
-**DGX（`max-spark`）由主会话在本机原生跑**（2026-10-04 用户拍板，子 agent 不跑），做法见本节末「DGX 本机跑」。
-下面列出的命令是 CI 执行的内容，供对照与复现，不是让你在 Mac 上跑。
+**合并门禁是测试箱的 ci 套**（工作树根的 `.testbox.toml`，2026-11-16 起取代 GitHub CI，spark-testbox 项目 T-078、vault ADR-036）：合进 main 之前交一次
+`testbox submit --project studiolo --recipe full --steps ci --arch x86_64 --memory 20G --cpu 8 --wait`（Mac 上在 `testbox` 后面加 `--remote testbox@max-spark`；放后台等）。
+它逐步照搬原来 `ci.yml` 的 rust、frontend、alerts-worker 三个作业，命令一字不改，门禁由架构守卫逐行钉住；细则见 `AGENTS.md` 第五节。
 
-下面这组命令覆盖 CI `rust` 作业里的编译类检查，**不是它的全集**（权威始终是
-`.github/workflows/ci.yml`，缺的部分列在本节后面「上面那组之外」一段）：
+**测试与编译在哪跑按机器分**（细则见 `AGENTS.md` 第四、五、七节）：**Mac 一律不在本机跑**（2026-09-23 用户硬约束），`cargo test`／`fmt`／`clippy`／`build`、Python 契约、
+前端检查、真实管线都经测试箱（`testbox --remote testbox@max-spark submit --arch x86_64 …`）或 `scripts/test-linux.sh <命令>`（同步到 `githubci` 原生跑，可带参数跑任意定向命令）；
+**DGX（`max-spark`）由主会话经测试箱提交**（先 108、其次 DGX；子 agent 不跑），测试箱不可用时才按本节末「DGX 本机跑」手动跑。
+下面列出的命令是 ci 套执行的内容，供对照与复现，不是让你在 Mac 上跑。
+
+下面这组命令覆盖 ci 套里 Rust 的编译类检查，**不是它的全集**（权威始终是 `.testbox.toml`，
+缺的部分列在本节后面「上面那组之外」一段）：
 
 Mac 上若装了 Homebrew Rust（2026-09-22 为 1.98.1；DGX 只有 rustup 的 cargo，不用这一步），`/opt/homebrew/bin/cargo` 排在 PATH 前面时
-不认 `rust-toolchain.toml`，clippy 结果会与 CI 不一致。先把 rustup 的钉死版本放到最前：
+不认 `rust-toolchain.toml`，clippy 结果会与 ci 套不一致。先把 rustup 的钉死版本放到最前：
 
 ```bash
 export PATH="$HOME/.rustup/toolchains/1.97.1-$(rustc -vV | sed -n 's/^host: //p')/bin:$PATH"
@@ -196,7 +200,7 @@ cargo --locked build -p studiolo-auth-admin --features production
 cargo --locked build -p studiolo-vault-admin
 ```
 
-可选用 cargo-nextest 跑测试（T-187；CI 和默认回路不变，换不换由用户定）：`cargo nextest run --locked --workspace`，
+可选用 cargo-nextest 跑测试（T-187；ci 套和默认回路不变，换不换由用户定）：`cargo nextest run --locked --workspace`，
 再加 `cargo --locked test --workspace --doc`（nextest 不跑文档测试）。nextest 每个测试一个进程，vault-broker 那把进程内的
 大文件闸门管不到，所以 `.config/nextest.toml` 用测试组把进闸门的测试排成一次只跑一个；进闸门的测试增减时名单要跟着改，
 架构守卫 `nextest_large_io_group_lists_exactly_the_tests_that_enter_the_gate` 会核对两边一致。
@@ -206,7 +210,7 @@ Mac 上经服务器跑时用 `STUDIOLO_TEST_RUNNER=nextest scripts/test-linux.sh
 根 `Cargo.toml` 给 `sha2` 单独开了优化（`[profile.dev.package.sha2]`，只影响 dev／test 构建，发行包走 `--release` 不受影响）：
 vault-broker 的大文件测试要对几百 MiB 的正文算 SHA-256，不开时库测试在 108 上要 939 秒，开了 84 秒（T-187 实测，2026-11-15）。
 
-前端（CI 原生运行，`setup-node` 钉死 Node 22.17.0，工作目录 `web`）：
+前端（ci 套钉死 Node 22.17.0，工作目录 `web`）：
 
 ```bash
 npm --prefix web ci --ignore-scripts && npm --prefix web run build
@@ -220,7 +224,7 @@ npm --prefix web test && npm --prefix web run lint && npm --prefix web run forma
 四项私有存储先用 `studiolo-maintain sync-init`（任一已存在即拒绝）显式建立，已不再排除的文件夹在镜像视图里的残留
 用 `studiolo-maintain sync-purge-residue --folder <名>` 清除（须先停 `studiolo-human`）；设计见 `docs/m2/sync-plane-design.md`。
 
-上面那组之外，CI `rust` 作业还会做四件事（2026-09-22 按 `ci.yml` 逐条核对）：
+上面那组之外，ci 套的 Rust 部分还会做四件事（照搬原 `ci.yml` 的 rust 作业，2026-09-22 逐条核对过）：
 
 - 对**八个显式列名**的脚本跑 `bash -n`：`scripts/` 下的 `package-agent.sh`、
   `run-agent-tests.sh`、`sync-agent-vault.sh`、`package-preview.sh`、`run-preview-tests.sh`，
@@ -242,7 +246,7 @@ scripts/test-linux.sh   # fmt / clippy / workspace 与恢复探针测试 / 路�
 ```
 
 `scripts/test-linux.sh` **不包含**上面的 `bash -n`、逐条列名的 Python 契约脚本、两条管线检查，
-也不含前端作业；要复跑那些得自己按 `ci.yml` 逐条执行。
+也不含前端作业；要复跑那些交测试箱的 ci 套。
 
 ### DGX 本机跑
 
@@ -275,16 +279,16 @@ flock -n -E 75 "$HOME/.cache/studiolo-locks/local-full.lock" bash -euo pipefail 
 '
 ```
 
-- 按 `ci.yml` 补跑 `bash -n`、Python 契约、两条管线和前端作业时，也包在同一把锁里（`flock -n -E 75 "$HOME/.cache/studiolo-locks/local-full.lock" …`）。
+- 按 `.testbox.toml` 的 ci 套补跑 `bash -n`、Python 契约、两条管线和前端作业时，也包在同一把锁里（`flock -n -E 75 "$HOME/.cache/studiolo-locks/local-full.lock" …`）。
 - 工具链（2026-10-04 实测）：rustup 已装，`rust-toolchain.toml` 钉的 1.97.1 与 rustfmt／clippy 已就位；缺工具时怎么办见 `AGENTS.md` 第七节。
-- 前端：系统 `node` 是 24.x，满足 `web/package.json` 的 `>=22.12.0`；CI 钉 22.17.0，结果有出入以 CI 为准。
-- DGX 是 aarch64：本机通过只说明 Linux aarch64 上通过，合并门槛仍是 CI（x86_64）。
+- 前端：系统 `node` 是 24.x，满足 `web/package.json` 的 `>=22.12.0`；ci 套钉 22.17.0，结果有出入以 ci 套为准。
+- DGX 是 aarch64：本机通过只说明 Linux aarch64 上通过，合并门槛仍是 ci 套（交 108，x86_64）。
   `scripts/run-agent-tests.sh`、`scripts/run-preview-tests.sh` 只认 Linux x86_64，在 DGX 上按设计拒绝。
 
 ## 纪律
 
 - 真实密钥只经环境变量或 secret mount 注入，永不入库。
 - 提交信息中文，带 Conventional Commits 前缀。
-- CI（Linux x86_64）跑路径安全测试，结果为准；快速回路是 Mac 会话的 `scripts/test-linux.sh`（githubci）与 DGX（Linux aarch64）主会话的本机回路，Mac 本机不跑。
+- 合并门禁（测试箱的 ci 套，Linux x86_64）跑路径安全测试，结果为准；快速回路是 Mac 会话的 `scripts/test-linux.sh`（githubci）与 DGX（Linux aarch64）主会话的本机回路，Mac 本机不跑。
 - 进程内只有 VaultBroker 可写 canonical Vault；架构测试枚举全部写入口。
 - 文档不得冒称完成度：没有实跑证据的一律写「未验证 / 未验收」，不用「构建成功」代替发布证据。

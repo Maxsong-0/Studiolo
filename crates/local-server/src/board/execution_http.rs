@@ -17,7 +17,7 @@ use std::sync::Arc;
 use studiolo_audit_ledger::{AuditEvent, AuditEventId, AuditPhase, AuditSubject, SanitizedPayload};
 use studiolo_auth::SensitiveAction;
 use studiolo_core::TaskId;
-use studiolo_task_engine::TaskEngine;
+use studiolo_task_engine::{TaskEngine, TaskEngineError};
 
 pub(super) fn routes(routes: Router<AppState>) -> Router<AppState> {
     routes
@@ -114,6 +114,18 @@ fn event(
         .map_err(|_| "权威审计不可用；结果需核验")?;
     Ok(())
 }
+/// 引擎拒绝丢弃时的说法：证实不了、没有待丢的提交、找不到任务都是「什么都没改」，给主人一句人话；
+/// 其余错误（审计、Broker、控制库）照原文，结果要刷新核对。
+fn discard_refusal(error: TaskEngineError) -> String {
+    match error {
+        TaskEngineError::InvalidTaskSpec(_) => {
+            "这次提交现在不能丢：核实不了原批准已过期且一篇正文都没写，或者已经没有待丢的提交。什么都没改，刷新后再看。"
+                .to_owned()
+        }
+        TaskEngineError::NotFound(_) => "工作项或它的 attempt 不存在，什么都没改。".to_owned(),
+        other => other.to_string(),
+    }
+}
 fn execute(
     board: &BoardPlane,
     runner: Option<&RunnerPlane>,
@@ -133,6 +145,7 @@ fn execute(
         Input::Cancel { task_id } => ("execution.cancel", Some(*task_id)),
         Input::Review { task_id, .. } => ("execution.review", Some(*task_id)),
         Input::Land { task_id, .. } => ("execution.land", Some(*task_id)),
+        Input::DiscardExpired { task_id } => ("execution.discard_expired", Some(*task_id)),
     };
     let id = format!("execution:{}", ulid::Ulid::generate());
     event(board, &id, action, task, AuditPhase::Intent, "requested")?;
@@ -206,6 +219,30 @@ fn execute(
                     .board_detail(task_id, &hash)
                     .map_err(|e| e.to_string())?,
             )
+        }
+        Input::DiscardExpired { task_id } => {
+            // 和审阅候选同一道 L3：丢掉之后候选正文不再保留，任务落成失败或取消。
+            let mut engine = board.engine.lock().map_err(|_| "黑板不可用")?;
+            principal.verify()?;
+            principal.sensitive(SensitiveAction::ApproveCandidate)?;
+            // 每次传当前时间：引擎的审计身份是请求摘要，重试要换一个时间。
+            let status = engine
+                .discard_expired_commit(task_id, jiff::Timestamp::now().as_millisecond())
+                .map_err(discard_refusal)?;
+            let hash = board
+                .policy
+                .effective()
+                .map_err(|_| "已丢弃，策略状态暂不可用")?
+                .effective_hash;
+            // 只有黑板任务有任务页投影；别的任务（stub 等）没有可投的。
+            let project = engine
+                .board_detail(task_id, &hash)
+                .map_err(|_| "已丢弃，黑板状态暂不可读")?
+                .map(|view| view.task.spec.project);
+            if let Some(project) = project {
+                board.project(&mut engine, &project, &hash)?;
+            }
+            Ok(json!({"task_id": task_id, "status": status}))
         }
     })();
     event(

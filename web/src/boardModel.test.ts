@@ -143,6 +143,23 @@ describe('BoardView decoder', () => {
     expect(boardLease(boardItems([view(1, 'queued')])[0], now)).toBe('none');
   });
 
+  it('reads the live commit-expired flag, and only on a committing item', () => {
+    const expired = { ...view(1, 'committing'), commit_expired: true };
+    expect(boardItems([expired])[0].commitExpired).toBe(true);
+    // 回放快照和审阅回应不带这一项：当成没过期。
+    expect(boardItems([view(1, 'committing')])[0].commitExpired).toBe(false);
+    expect(
+      boardItems([{ ...view(1, 'committing'), commit_expired: false }])[0]
+        .commitExpired,
+    ).toBe(false);
+    expect(() =>
+      boardItems([{ ...view(1, 'running'), commit_expired: true }]),
+    ).toThrow();
+    expect(() =>
+      boardItems([{ ...view(1, 'committing'), commit_expired: 'yes' }]),
+    ).toThrow();
+  });
+
   it('builds a real parent-child tree independently of response order', () => {
     const rows = [
       view(2, 'running', id(1), 1),

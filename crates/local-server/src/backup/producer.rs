@@ -4,7 +4,13 @@
 //! 请求里没有任何可以影响结果的参数。序号由这里发，原意图在冻结之前落账。
 //! 回收过期暂存和总封存都在后台线程里做，连接只拿到「做了／还有没做完的／还没到」。
 //! 回收另外由监听循环按固定周期触发（`reclaim`）：只回收、不冻结，定时器停了也不会让过期副本一直留在盘上。
-use super::{admission::BackupAdmission, audit::BackupAuditPort, queue::Queue};
+//! 健康页经 [`BackupJobsProbe`] 只读账本里的备份事件：不写账本、不补失败结果、不安排封存。
+use super::{
+    admission::BackupAdmission,
+    audit::BackupAuditPort,
+    evidence::{BackupJobs, BackupJobsProbe},
+    queue::Queue,
+};
 use crate::checkpoint::{CheckpointInputs, CheckpointTimes, OwnerExportPaths, trusted_catalog};
 use std::{
     num::NonZeroU64,
@@ -72,6 +78,8 @@ pub struct BackupProducer {
     plan: ProducerPlan,
     state: Mutex<State>,
     background: Mutex<Option<JoinHandle<()>>>,
+    /// 开始服务的时刻；账本里从没有成功时，逾期从它和第一次尝试里较早的那个起算。
+    serving_since_ms: Option<i64>,
 }
 
 impl BackupProducer {
@@ -87,6 +95,7 @@ impl BackupProducer {
             plan,
             state: Mutex::new(State::default()),
             background: Mutex::new(None),
+            serving_since_ms: now_millis().ok(),
         })
     }
 
@@ -339,6 +348,26 @@ impl BackupProducer {
         BackupAdmission::approve(self.ledger.clone(), key.clone(), TARGET, &sealed)
             .map(|_| ())
             .map_err(barrier)
+    }
+}
+
+impl BackupJobsProbe for BackupProducer {
+    /// 和 `schedule` 读同一份累计视图：从上次读到的位置接着读，读不完（超过扫描预算）就这一次不给结论。
+    fn jobs(&self, now_ms: i64) -> Option<BackupJobs> {
+        let mut state = self.state.lock().ok()?;
+        self.refresh(&mut state.queue).ok()?;
+        let queue = &state.queue;
+        Some(BackupJobs {
+            now_ms,
+            serving_since_ms: self.serving_since_ms,
+            first_attempt_ms: queue.first_attempt_ms(),
+            last_success: queue.last_success(),
+            last_failure: queue.last_failure(),
+            latest_failed: queue.latest_failed(),
+            outstanding: queue.oldest_open(),
+            stuck_after_ms: self.plan.source_retention_millis,
+            overdue_after_ms: self.plan.min_interval_millis.saturating_mul(2),
+        })
     }
 }
 

@@ -1,13 +1,15 @@
 #!/usr/bin/env bash
-# 在 Linux x86_64 服务器上**原生**跑与 CI 相同的检查（ADR-008：本机快速回路，CI 结果为准）。
+# 在 Linux x86_64 服务器上**原生**跑与合并门禁相同的检查（ADR-008：本机快速回路；合并门禁是测试箱的 ci 套，
+# 见 .testbox.toml，2026-11-16 起取代 GitHub CI，结果以它为准）。
 # 2026-09-19（T-081）起不再用 Docker：本机 Docker 回路两次把守护进程拖死、一次把磁盘写满，
-# 而 amd64 仿真让一轮构建要几小时。现在把工作树同步到 CI 服务器（githubci，原生 x86_64）后在那里跑，
-# 与 CI 用同一台机器、同一套工具链，只是不占 runner 的队列。
+# 而 amd64 仿真让一轮构建要几小时。现在把工作树同步到原来的 CI 服务器（githubci，原生 x86_64）后在那里跑；
+# GitHub CI 弃用后这台机器只剩这个用途。
 #
 # 路径安全负向测试依赖 Linux 语义（openat2 RESOLVE_BENEATH、magic link），macOS 上会被 cfg 跳过。
 # 秘密驻留面加固在 Linux 上用 mlockall；RLIMIT_MEMLOCK 不足时它按设计失败关闭并终止进程
-# （不得改成尽力而为），因此服务器上必须先由 deploy/ci-runner/bootstrap-root.sh 抬高该上限。
-# CARGO_PROFILE_DEV_DEBUG=line-tables-only：与 ci.yml 同一设置，只丢完整调试信息，保留 panic 回溯的文件与行号。
+# （不得改成尽力而为），因此服务器上必须先抬高该上限：原来由 deploy/ci-runner/bootstrap-root.sh 做，
+# 2026-11-16 随 GitHub CI 弃用从仓库删掉，要用时 `git show 584e7d5:deploy/ci-runner/bootstrap-root.sh`。
+# CARGO_PROFILE_DEV_DEBUG=line-tables-only：与 ci 套同一设置，只丢完整调试信息，保留 panic 回溯的文件与行号。
 # umask 022：捕获端与接收器按设计拒绝组可写节点，而部分测试夹具按默认权限建目录（T-079）。
 #
 # 用法：scripts/test-linux.sh            # fmt + clippy + test + 路径安全 + 生产构建
@@ -100,7 +102,7 @@ mkdir -p "$CARGO_TARGET_DIR" "$HOME/.cache/studiolo-locks"
 limit="$(ulimit -l)"
 if [ "$limit" != unlimited ] && { ! [ "$limit" -gt 65536 ] 2>/dev/null; }; then
   printf '可锁定内存上限过低（ulimit -l = %s KB）：秘密驻留面加固会失败关闭，测试无法判定。\n' "$limit" >&2
-  printf '请在服务器上执行一次 sudo bash ~/ci-runner/bootstrap-root.sh 抬高该上限后重试。\n' >&2
+  printf '请在服务器上执行一次 sudo bash ~/ci-runner/bootstrap-root.sh 抬高该上限后重试（仓库里的原件在 git 历史 584e7d5:deploy/ci-runner/bootstrap-root.sh）。\n' >&2
   exit 1
 fi
 command -v rustup >/dev/null || { printf '服务器上没有 rustup；先 curl https://sh.rustup.rs | sh -s -- -y --profile minimal\n' >&2; exit 1; }

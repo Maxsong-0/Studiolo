@@ -86,7 +86,7 @@ fn deployment_and_ci_require_the_production_auth_feature() {
     for path in [
         "scripts/package-preview.sh",
         "scripts/test-linux.sh",
-        ".github/workflows/ci.yml",
+        ".testbox.toml",
     ] {
         let source = std::fs::read_to_string(root.join(path)).unwrap();
         assert!(

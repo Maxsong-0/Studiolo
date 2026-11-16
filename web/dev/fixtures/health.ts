@@ -2,7 +2,8 @@
  * `/api/v1/health`：整体「降级」，因为同步驱动上次超时，正在退避。
  *
  * 前五节与后端 `crates/observability/src/health/aggregate.rs` 的 code、标题与措辞逐字一致；
- * Bridge与人工配额使用真实接口形状；副本与会话仍为标题栏夹具——界面拿不到时必须显示「—」
+ * Bridge、人工配额与备份作业使用真实接口形状（备份作业的正文按 `crates/local-server/src/health/backup.rs`
+ * 的写法）；副本与会话仍为标题栏夹具——界面拿不到时必须显示「—」
  * 并写明原因，不能依赖它们一定存在。解码器（`parseHealth`）对未知 code 照单全收。
  */
 export function healthBody() {
@@ -31,6 +32,29 @@ export function healthBody() {
       max_age_seconds: 86400,
       state: 'normal',
       reason: 'within',
+    },
+    backup: {
+      state: 'normal',
+      verdict: 'healthy',
+      as_of: '2026-11-13T12:00:00Z',
+      last_success: { sequence: '42', at: '2026-11-13T11:20:00Z' },
+      outstanding: {
+        sequence: '43',
+        since: '2026-11-13T11:55:00Z',
+        admitted: true,
+        stuck: false,
+      },
+      overdue: false,
+      overdue_since: '2026-11-13T11:20:00Z',
+      latest_failed: false,
+      last_failure: {
+        sequence: '41',
+        at: '2026-11-13T10:20:00Z',
+        result: 'failed',
+        reason: 'source_changed_before_seal',
+      },
+      stuck_after_seconds: '86400',
+      overdue_after_seconds: '7200',
     },
     sections: [
       {
@@ -80,6 +104,13 @@ export function healthBody() {
         title: '账号配额（人工记录）',
         state: 'normal',
         detail: '人工记录低于70%预警；这是抄录时的值，实时账号用量未知',
+      },
+      {
+        code: 'backup-jobs',
+        title: '备份作业',
+        state: 'normal',
+        detail:
+          '最近一次成功是 40 分钟前的第 42 号；第 43 号作业在做，已挂 5 分钟',
       },
       {
         code: 'session',
