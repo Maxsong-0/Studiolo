@@ -266,6 +266,27 @@ fn a_restored_control_reopens_without_migrating_and_revokes_every_live_attempt()
     assert!(ControlDb::open_existing(empty.path(), vault).is_err());
     assert_eq!(std::fs::read_dir(empty.path()).unwrap().count(), 0);
 
+    // 只开、不迁移、不切 journal mode：另一份库改成 DELETE 模式、删掉迁移每次都会补的那一行，
+    // 恢复专用打开之后两样都还是原样（正常打开会把它们改回去）。
+    let untouched = tempfile::tempdir().unwrap();
+    let untouched_path = untouched.path().join("control.sqlite3");
+    drop(ControlDb::open(&untouched_path, vault).unwrap());
+    let raw = rusqlite::Connection::open(&untouched_path).unwrap();
+    raw.execute_batch("PRAGMA journal_mode=DELETE; DELETE FROM fence_counter;")
+        .unwrap();
+    drop(raw);
+    let reopened = ControlDb::open_existing(untouched.path(), vault).unwrap();
+    assert_eq!(reopened.pragma("journal_mode").unwrap(), "delete");
+    drop(reopened);
+    let raw = rusqlite::Connection::open(&untouched_path).unwrap();
+    let counters: i64 = raw
+        .query_row("SELECT count(*) FROM fence_counter", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(counters, 0);
+    drop(raw);
+    let migrated = ControlDb::open(&untouched_path, vault).unwrap();
+    assert_eq!(migrated.pragma("journal_mode").unwrap(), "wal");
+
     let mut db = ControlDb::open_existing(temp.path(), vault).unwrap();
     assert_eq!(db.restored_watermark().unwrap(), expected);
     assert_eq!(

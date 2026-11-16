@@ -35,6 +35,19 @@ impl ControlDb {
         connection: Connection,
         vault_uuid: VaultUuid,
     ) -> Result<Self, DbError> {
+        let mut db = Self::configured(connection, vault_uuid)?;
+        db.migrate()?;
+        db.connection.execute_batch("PRAGMA journal_mode=WAL;")?;
+        db.bind_vault(vault_uuid)?;
+        Ok(db)
+    }
+
+    /// 只做连接级设置和新版库守卫：不迁移、不切持久 journal mode、不写 Vault 绑定。正常打开在它之后
+    /// 再迁移和绑定；新根恢复只开已有库（`open_existing`），到这里为止。
+    pub(crate) fn configured(
+        connection: Connection,
+        vault_uuid: VaultUuid,
+    ) -> Result<Self, DbError> {
         // 这些设置只影响当前连接；新版库判定前不切换持久 journal mode。
         connection.execute_batch(
             "PRAGMA synchronous=FULL;
@@ -43,15 +56,11 @@ impl ControlDb {
              PRAGMA trusted_schema=OFF;",
         )?;
         schema_guard::require_supported_version(&connection)?;
-        let mut db = Self {
+        Ok(Self {
             connection,
             vault_uuid,
             checkpoint_source: None,
-        };
-        db.migrate()?;
-        db.connection.execute_batch("PRAGMA journal_mode=WAL;")?;
-        db.bind_vault(vault_uuid)?;
-        Ok(db)
+        })
     }
 
     fn bind_vault(&mut self, requested: VaultUuid) -> Result<(), DbError> {

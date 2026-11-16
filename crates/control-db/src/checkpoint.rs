@@ -94,8 +94,9 @@ impl FrozenControl {
     }
 }
 impl ControlDb {
-    /// 新根恢复专用（T-212）：只打开封存里放出来的固定 `control.sqlite3`。不建库（文件不在就失败）、不迁移：
-    /// schema 必须已经是当前版本、Vault 绑定必须已经在库里且等于 `vault_uuid`，都核过才走正常的连接配置。
+    /// 新根恢复专用（T-212）：只打开封存里放出来的固定 `control.sqlite3`。不建库（文件不在就失败）、不迁移、
+    /// 不切持久 journal mode、不写 Vault 绑定：只做连接级设置，再核 schema 已经是当前版本、Vault 绑定已经在
+    /// 库里且等于 `vault_uuid`。水位要核的是放出来的原样，迁移的补建、补行和 WAL 切换都不能先于核对发生。
     pub fn open_existing(root: &Path, vault_uuid: VaultUuid) -> Result<Self, DbError> {
         let connection = rusqlite::Connection::open_with_flags(
             root.join("control.sqlite3"),
@@ -103,22 +104,13 @@ impl ControlDb {
                 | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX
                 | rusqlite::OpenFlags::SQLITE_OPEN_NOFOLLOW,
         )?;
-        let version: i64 = connection.query_row(
-            "SELECT COALESCE(MAX(version),0) FROM schema_migrations",
-            [],
-            |row| row.get(0),
-        )?;
-        let stored: String = connection.query_row(
-            "SELECT vault_uuid FROM vault_binding WHERE singleton=1",
-            [],
-            |row| row.get(0),
-        )?;
-        if version != crate::migration::SCHEMA_VERSION
-            || crate::types::parse_vault_uuid(&stored)? != vault_uuid
+        let db = Self::configured(connection, vault_uuid)?;
+        if db.schema_version()? != crate::migration::SCHEMA_VERSION
+            || db.bound_vault_uuid()? != vault_uuid
         {
             return Err(problem(Error::Invalid));
         }
-        Self::from_connection(connection, vault_uuid)
+        Ok(db)
     }
 
     /// 按封存时同一套规则在这个库上重算 Control 水位（schema、Vault 绑定、各 outbox 排空、没有提交中的
