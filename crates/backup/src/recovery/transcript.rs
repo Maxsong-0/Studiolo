@@ -22,6 +22,18 @@ pub enum RecoveryStep {
     PhysicalRebindIntent,
     /// 新目录物理重绑定的 Outcome。
     PhysicalRebindOutcome,
+    /// 开始对一个 owner 做恢复后的失效（载荷写是哪个 owner、哪次恢复）。接手上一次时据此知道它的库已经动过，
+    /// 不再按封存水位重核，只核失效之后该有的状态。
+    OwnerRestoreIntent,
+    /// Control 里拿着租约的 attempt（已认领、运行中）全部收回：没有未结束子任务的直接放弃，
+    /// 有的转成取消中（工具能力收回，只等子任务结束）。
+    ControlLeasesRevoked,
+    /// 策略库全局吊销，只能由主人经 L3 解除。
+    PolicyGloballyRevoked,
+    /// AgentStore 全部类型 token 吊销，全部实例在策略库记实例吊销。
+    AgentCredentialsInvalidated,
+    /// 双向同步保持关闭：Bridge 的运行状态没有恢复，只能按引导流程从零重新打开。
+    SyncLeftClosed,
     /// Auth 旧会话、L3 与恢复码失效。
     AuthInvalidated,
     /// 最终切换的 Intent。
