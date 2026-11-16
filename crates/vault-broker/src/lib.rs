@@ -83,6 +83,7 @@ pub use recovery::{
 pub use restore::{
     BindingCoverage, LineageState, MaintenanceCoverage, NewRootRebind, PhysicalId, RebindCoverage,
     RestoreError, RestoreLineage, RestoreReceipt, read_restore_lineage, rebind_new_roots,
+    valid_restore_id,
 };
 pub use writer::WriterStatus;
 
