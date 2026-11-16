@@ -70,6 +70,11 @@ fn zero_sessions_keeps_factor_and_clock_and_reuses_id_after_retention() {
     let h = RecoveryHarness::new(3600, 7200);
     let before = preserved(&h.h.manager);
     h.h.clock.set(CHANGE);
+    // 两个只读查询（T-212 启动闸门和恢复编排用）不改库。
+    let untouched = whole(&h.h.manager);
+    assert_eq!(h.h.manager.identity_epoch().unwrap(), 1);
+    assert!(!h.h.manager.restore_completed("zero-1").unwrap());
+    assert_eq!(whole(&h.h.manager), untouched);
     let first =
         h.h.manager
             .invalidate_restored_credentials("zero-1")
