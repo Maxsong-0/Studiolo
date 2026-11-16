@@ -219,6 +219,45 @@
   overflow-wrap: anywhere;
   tab-size: 2;
 }
+/* 逐行归属（T-210）：行号左边一条窄带。每段第一行写缩写，同一段后面的行只留线；
+   来源靠线型加缩写区分，不靠颜色。 */
+.source-lines--blame {
+  --line-blame-width: 36px;
+  max-width: calc(var(--line-blame-width) + var(--line-number-width) + 72ch);
+}
+.line-blame {
+  flex: 0 0 var(--line-blame-width);
+  align-self: stretch;
+  border-left: 3px solid transparent;
+  color: var(--ink-2);
+  font-size: var(--type-label);
+  line-height: calc(var(--type-body) * 1.75);
+  text-align: center;
+  user-select: none;
+}
+.line-blame--human {
+  border-left-color: var(--ink);
+}
+.line-blame--agent {
+  border-left-color: var(--ink);
+  border-left-style: double;
+}
+.line-blame--obsidian {
+  border-left-color: var(--ink);
+  border-left-style: dashed;
+}
+.line-blame--unknown,
+.line-blame--untracked,
+.line-blame--beyond {
+  border-left-color: var(--ink-2);
+  border-left-style: dotted;
+}
+.document-blame-note {
+  margin: 0;
+  padding: var(--space-2) var(--space-5);
+  color: var(--ink-2);
+  font-size: var(--type-label);
+}
 /* 定位行：整行抬高，行号黑底反白（选中＝黑底反白，不靠颜色单独表意） */
 .source-lines .target-line {
   background: var(--paper-raised);

@@ -677,6 +677,13 @@ export function createFixtureApi(options: { now?: () => number } = {}) {
   ): FixtureResponse {
     const session = sessions.find((item) => item.id === current)!;
     switch (pathname) {
+      case '/api/v1/changes/head': {
+        if (!only(query, ['vault_uuid'])) return error(400, '变更查询无效。');
+        return ok({
+          vault_uuid: VAULT_UUID,
+          through: changesFixture(start, committed, null, '', false).through,
+        });
+      }
       case '/api/v1/changes': {
         if (!only(query, ['limit', 'project', 'before', 'vault_uuid']))
           return error(400, '变更查询无效。');

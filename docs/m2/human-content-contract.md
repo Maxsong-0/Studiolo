@@ -76,6 +76,34 @@ GET `/api/v1/history?vault_uuid=...&path=...&limit=20&cursor=...` 返回有界�
 GET `/api/v1/history/file?vault_uuid=...&path=...&revision=...` 返回精确历史UTF-8正文，
 网页预览仍限制256KiB；大版本可列出，但网页不加载或恢复其正文。
 
+### 逐行归属（T-210，2026-11-15）
+
+GET `/api/v1/history/blame?path=...`（可带 `vault_uuid` 核对当前绑定库）返回当前正文每一行最后是哪一版写的。
+只读、L2，和历史页同一套范围检查；只算 Markdown，保护路径不提供；结果不缓存，每次请求先后重验会话与根绑定。
+
+算法：从当前正文沿版本链（和历史页同一份、最新优先，最多回看 50 版）往回走，相邻两版按行比对，
+一行在哪一版第一次出现就归那一版。**不猜**：
+
+- `origin: "version"`：带 `history_id`、`revision`、`author`、`authored_at_ms`；那一版作者未知时 `author` 是 null，
+  不拿归档主体或磁盘时间顶上。
+- `origin: "untracked"`：当前正文不在历史里（库外直接改的文件），这些行是那次改动带来的。
+- `origin: "beyond_history"`：一直存在到可查历史的最早一版，而那一版不是创建——更早的版本没有记录或已按保留策略清理。
+  只有 Broker 的原请求或原批次终态证明某一版是装到当时不存在的路径上（`FsVaultBroker::history_lineage` 的 `created`），
+  留到那一版的行才归它的主体；删除、改名、从墓碑恢复、旧格式和「之前的版本」都不算创建。
+
+响应封闭字段：`vault_uuid, path, revision, content_sha256, lines, versions, more_history, runs`；`runs` 从第 1 行起首尾相接、
+盖满全部行，每段 `from_line, to_line, origin, history_id, revision, author, authored_at_ms`。行按 `\n` 切、行尾的 `\r` 不算内容。
+`content_sha256` 是当前正文的普通 SHA-256：网页的阅读器看的是工作台快照，两边摘要相同才画，不同就说明「不是同一版」。
+
+失败关闭，不给半截结果：当前正文或任一历史版本超过 256 KiB、超过 2 万行、比对量超出上限时回 413 `too_large`；
+不是有效 UTF-8 回 422；算的过程中正文被换掉回 409 `history_changed`；写入在途时和历史页一样不可读。
+计算放在专用派生线程上（`deriver`，BUG-034：几十版正文的临时分配不上阻塞线程池），一次只留两版正文在内存里。
+
+网页：阅读器工具条上的「显示每行是谁改的」，默认关，打开才请求一次；行号左边一条窄带，每段第一行写缩写
+（人、AI、Ob、?、外、早）并可聚焦，整句在提示里，来源靠线型加缩写区分、不靠颜色。
+
+没做的：从窄带点进那一版的历史；附件的逐行归属；开发假数据接口没有这个端点（预览里显示「不提供」）。
+
 恢复使用同一POST路径的封闭JSON：
 
 ```json

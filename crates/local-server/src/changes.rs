@@ -12,6 +12,7 @@ use serde::Deserialize;
 use studiolo_core::{VaultPath, VaultUuid};
 pub(crate) const PATH: &str = "/api/v1/changes";
 pub(crate) const SEEN: &str = "/api/v1/changes/seen";
+pub(crate) const HEAD: &str = "/api/v1/changes/head";
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct PageQuery {
@@ -20,6 +21,12 @@ pub(crate) struct PageQuery {
     pub(crate) before: Option<String>,
     #[serde(default = "limit")]
     pub(crate) limit: usize,
+}
+/// 只问水位（T-210）：库身份可以不带，带了就核对。
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct HeadQuery {
+    pub(crate) vault_uuid: Option<VaultUuid>,
 }
 fn limit() -> usize {
     50
@@ -105,6 +112,40 @@ pub(crate) async fn page(
     match tokio::task::spawn_blocking(move || {
         let _permit = permit;
         owner.changes_page(&principal, query)
+    })
+    .await
+    {
+        Ok(Ok(v)) => Json(v).into_response(),
+        Ok(Err(e)) => e.into_response(),
+        Err(_) => Problem::unavailable().into_response(),
+    }
+}
+/// 当前水位，不带任何条目：页面拿它判断「该不该重读列表」。每次请求照常重验会话和根绑定。
+pub(crate) async fn head(
+    State(state): State<AppState>,
+    query: Result<Query<HeadQuery>, QueryRejection>,
+    mut request: Request,
+) -> Response {
+    let Ok(Query(query)) = query else {
+        return invalid().into_response();
+    };
+    let Some(CanonicalSource::Writer(owner)) = state.canonical else {
+        return Problem::unavailable().into_response();
+    };
+    let Some(auth) = state.sessions else {
+        return Problem::unavailable().into_response();
+    };
+    let principal = match auth.content_reader(&mut request) {
+        Ok(v) => v,
+        Err(r) => return *r,
+    };
+    let permit = match state.queries.try_acquire_owned() {
+        Ok(v) => v,
+        Err(_) => return busy(),
+    };
+    match tokio::task::spawn_blocking(move || {
+        let _permit = permit;
+        owner.changes_head(&principal, query.vault_uuid)
     })
     .await
     {

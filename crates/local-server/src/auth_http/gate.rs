@@ -74,8 +74,10 @@ pub(super) fn headers(request: &Request, origin: &str, factors: bool) -> Result<
         | FACTOR_STATE
         | crate::canonical::PATH
         | crate::changes::PATH
+        | crate::changes::HEAD
         | crate::history::PATH
         | crate::history::FILE
+        | crate::history::BLAME
         | crate::file_operations::TOMBSTONES => request.method() == Method::GET,
         SESSIONS => matches!(*request.method(), Method::GET | Method::POST),
         REVOKE | crate::changes::SEEN | super::execution::COMMAND => {
@@ -94,8 +96,10 @@ pub(super) fn headers(request: &Request, origin: &str, factors: bool) -> Result<
             | FACTOR_STATE
             | crate::canonical::PATH
             | crate::changes::PATH
+            | crate::changes::HEAD
             | crate::history::PATH
             | crate::history::FILE
+            | crate::history::BLAME
             | crate::file_operations::TOMBSTONES => "GET",
             SESSIONS => "GET, POST",
             REVOKE | crate::changes::SEEN | super::execution::COMMAND => "POST",

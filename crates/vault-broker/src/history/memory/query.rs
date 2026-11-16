@@ -1,5 +1,7 @@
 use super::*;
-use crate::{ChangePage, HistoryContent, HistoryPage, MemoryVaultBroker};
+use crate::{
+    ChangePage, HistoryContent, HistoryLineage, HistoryLineageEntry, HistoryPage, MemoryVaultBroker,
+};
 impl MemoryVaultBroker {
     /// 内存替身的单页历史，游标仍绑定路径和当前目录摘要。
     pub fn list_history(
@@ -36,6 +38,41 @@ impl MemoryVaultBroker {
             entries: items[offset..end].to_vec(),
             next_cursor: (end < items.len()).then(|| format!("h1:{path_hash}:{digest}:{end}")),
         })
+    }
+    /// 和磁盘实现同一份契约的版本链；「创建」从同一份变化记录里认。
+    pub fn history_lineage(
+        &self,
+        path: &VaultPath,
+        limit: usize,
+    ) -> Result<HistoryLineage, BrokerError> {
+        if path.is_protected() {
+            return Err(BrokerError::ProtectedPath(path.clone()));
+        }
+        if !(1..=100).contains(&limit) {
+            return Err(BrokerError::WriterLimitExceeded);
+        }
+        let items = self
+            .change_history
+            .entries
+            .get(path)
+            .cloned()
+            .unwrap_or_default();
+        let more = items.len() > limit;
+        let entries = items
+            .into_iter()
+            .take(limit)
+            .map(|entry| {
+                let created = self.change_history.changes.iter().any(|change| {
+                    change.id == entry.id
+                        && &change.path == path
+                        && matches!(change.kind, ChangeKind::Created | ChangeKind::Batch)
+                        && change.previous_revision.is_none()
+                        && change.revision == Some(entry.revision)
+                });
+                HistoryLineageEntry { entry, created }
+            })
+            .collect();
+        Ok(HistoryLineage { entries, more })
     }
     /// 只读取该路径仍可查询的历史原字节。
     pub fn read_history(

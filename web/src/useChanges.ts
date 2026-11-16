@@ -6,6 +6,7 @@ import {
 import { useCallback, useLayoutEffect, useRef, useState } from 'react';
 import { ApiError } from './sessionHttp';
 import { readChanges, markChangesSeen } from './changesApi';
+import { readChangesHead, sameChanges } from './changesHead';
 import type { ChangesPage } from './changesModel';
 interface State {
   page: ChangesPage | null;
@@ -15,6 +16,8 @@ interface State {
   expired: boolean;
   unavailable: boolean;
   message: string;
+  /** 水位变了：别处有了新变化，手里这一页已经不是最新（T-210）。 */
+  behind: boolean;
 }
 const initial: State = {
   page: null,
@@ -24,6 +27,7 @@ const initial: State = {
   expired: false,
   unavailable: false,
   message: '',
+  behind: false,
 };
 const message = (error: unknown) =>
   error instanceof Error ? error.message : '变更读取失败，请重试。';
@@ -99,6 +103,47 @@ export function useChanges(project: string | null, active = true) {
     },
     [project],
   );
+  const headGone = useRef(false);
+  /**
+   * 只问水位（T-210）：变了就亮「有新变化」，不替人重读，免得翻到一半的列表被换掉。
+   * 水位没变不读列表；已经亮着提示就不再问。
+   */
+  const watch = useCallback<Revalidate>(
+    async (signal) => {
+      const now = latest.current;
+      const page = now.page;
+      if (
+        !active ||
+        headGone.current ||
+        !page ||
+        now.loading ||
+        now.marking ||
+        now.behind ||
+        write.current !== null
+      )
+        return REVALIDATED;
+      const started = revision.current;
+      try {
+        const head = await readChangesHead(page.vault_uuid, signal);
+        if (signal.aborted || started !== revision.current) return REVALIDATED;
+        if (!sameChanges(head.through, page.through))
+          setState((s) => (s.page === page ? { ...s, behind: true } : s));
+        return REVALIDATED;
+      } catch (error) {
+        if (signal.aborted || started !== revision.current) return REVALIDATED;
+        // 旧服务没有这个接口：不再问，手动「重新读取」照旧能用。
+        if (
+          error instanceof ApiError &&
+          [404, 405, 501].includes(error.status)
+        ) {
+          headGone.current = true;
+          return REVALIDATED;
+        }
+        return revalidationFailed(message(error));
+      }
+    },
+    [active],
+  );
   const mark = async () => {
     if (!state.page || state.loading || state.marking) return;
     revision.current += 1;
@@ -131,6 +176,7 @@ export function useChanges(project: string | null, active = true) {
     ...state,
     reload,
     revalidate,
+    watch,
     next: () =>
       state.page?.next_cursor
         ? load(state.page.next_cursor, state.page)

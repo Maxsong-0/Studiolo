@@ -13,6 +13,7 @@ mod rename;
 pub(crate) use file_operation::complete as complete_file_operation;
 mod evidence;
 mod legacy;
+mod lineage;
 mod prune;
 mod query;
 mod schema;
@@ -63,6 +64,25 @@ pub struct HistoryContent {
     pub revision: Revision,
     /// 已重新核验 revision 与调用方字节预算的完整历史正文。
     pub content: Vec<u8>,
+}
+
+/// 逐行归属用的版本链条目：历史条目本身，加上这一版是不是「创建」。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HistoryLineageEntry {
+    /// 历史条目本身，和 [`HistoryPage`] 里的是同一份。
+    pub entry: HistoryEntry,
+    /// 这一版是装到当时不存在的路径上的。只认绑定了原请求或原批次的条目；
+    /// 删除、改名、从墓碑恢复、旧格式和「之前的版本」一律为 false，不猜。
+    pub created: bool,
+}
+
+/// 最新优先的版本链；不分页，只给调用方要的头几条。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HistoryLineage {
+    /// 和历史列表同一套可见性与排序的头几条。
+    pub entries: Vec<HistoryLineageEntry>,
+    /// 后面还有更早的可见条目没有列进来。
+    pub more: bool,
 }
 
 /// 保守解释：同时超过版本数量和天数才可淘汰；未知时间不会按龄删除。

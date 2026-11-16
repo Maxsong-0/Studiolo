@@ -90,7 +90,7 @@ const kinds: ChangeKind[] = [
 function invalid(): never {
   throw new Error('变更流响应格式无效，请重新读取。');
 }
-function through(v: unknown): v is ChangesThrough {
+export function changesThrough(v: unknown): v is ChangesThrough {
   return (
     record(v) &&
     exact(v, ['sequence', 'epoch', 'observation', 'generation']) &&
@@ -128,7 +128,7 @@ export function changesPage(
       (!uuid(value.next_cursor) ||
         value.next_cursor !== value.snapshot ||
         value.next_cursor === before)) ||
-    !through(value.through) ||
+    !changesThrough(value.through) ||
     typeof value.history_incomplete !== 'boolean' ||
     typeof value.retired !== 'boolean' ||
     typeof value.seen_complete !== 'boolean'
@@ -261,7 +261,7 @@ export function seenReceipt(value: unknown, page: ChangesPage): void {
     value.status !== 'seen' ||
     value.vault_uuid !== page.vault_uuid ||
     value.project !== page.project ||
-    !through(value.through)
+    !changesThrough(value.through)
   )
     invalid();
   const upper = value.through;

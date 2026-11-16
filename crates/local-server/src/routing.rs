@@ -244,6 +244,7 @@ fn assemble(
     if state.sessions.is_some() && matches!(state.canonical, Some(CanonicalSource::Writer(_))) {
         routes = routes
             .route(crate::changes::PATH, get(crate::changes::page))
+            .route(crate::changes::HEAD, get(crate::changes::head))
             .route(
                 crate::changes::SEEN,
                 axum::routing::post(crate::changes::mark),
@@ -252,7 +253,8 @@ fn assemble(
     if crate::editing::enabled(&state) {
         routes = routes
             .route(crate::history::PATH, get(crate::history::page))
-            .route(crate::history::FILE, get(crate::history::file));
+            .route(crate::history::FILE, get(crate::history::file))
+            .route(crate::history::BLAME, get(crate::history::blame));
         routes = routes.route(
             crate::editing::PATH,
             axum::routing::post(crate::editing::handle),

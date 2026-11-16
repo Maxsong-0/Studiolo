@@ -1,4 +1,5 @@
 //! L0 查询只接收路径、版本及不透明游标；不暴露私有存储路径或安装能力。
+pub(crate) mod blame;
 mod response;
 use crate::{AppState, CanonicalSource, editing::Problem};
 use axum::{
@@ -13,6 +14,7 @@ use studiolo_vault_broker::BrokerError;
 
 pub(crate) const PATH: &str = "/api/v1/history";
 pub(crate) const FILE: &str = "/api/v1/history/file";
+pub(crate) const BLAME: &str = "/api/v1/history/blame";
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -33,6 +35,14 @@ pub(crate) struct FileQuery {
     vault_uuid: VaultUuid,
     path: VaultPath,
     revision: String,
+}
+
+/// 逐行归属只要路径；库身份可以不带，带了就核对。
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct BlameQuery {
+    vault_uuid: Option<VaultUuid>,
+    path: VaultPath,
 }
 
 fn valid_path(path: &VaultPath) -> bool {
@@ -147,6 +157,41 @@ pub(crate) async fn file(
         Ok(Ok(value)) => Json(value).into_response(),
         Ok(Err(problem)) => problem.into_response(),
         Err(_) => Problem::unavailable().into_response(),
+    }
+}
+
+/// 当前正文每一行最后是哪一版写的（T-210）。只读，L2；结果不缓存，每次请求重验会话和根绑定。
+pub(crate) async fn blame(
+    State(state): State<AppState>,
+    query: Result<Query<BlameQuery>, QueryRejection>,
+    mut request: Request,
+) -> Response {
+    let Ok(Query(query)) = query else {
+        return bad_query();
+    };
+    if !valid_path(&query.path) {
+        return bad_query();
+    }
+    let Some(CanonicalSource::Writer(workbench)) = state.canonical else {
+        return Problem::unavailable().into_response();
+    };
+    let Some(auth) = state.sessions else {
+        return Problem::unavailable().into_response();
+    };
+    let principal = match auth.content_reader(&mut request) {
+        Ok(principal) => principal,
+        Err(response) => return *response,
+    };
+    let _permit = match state.queries.try_acquire_owned() {
+        Ok(permit) => permit,
+        Err(_) => return busy(),
+    };
+    match workbench
+        .history_blame(principal, query.vault_uuid, query.path)
+        .await
+    {
+        Ok(value) => Json(value).into_response(),
+        Err(problem) => problem.into_response(),
     }
 }
 

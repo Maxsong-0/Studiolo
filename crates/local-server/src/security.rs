@@ -40,8 +40,10 @@ pub(crate) async fn guard(
         | crate::bootstrap::PATH
         | crate::canonical::PATH
         | crate::changes::PATH
+        | crate::changes::HEAD
         | crate::history::PATH
         | crate::history::FILE
+        | crate::history::BLAME
         | crate::health::PATH
         | crate::file_operations::TOMBSTONES => "GET",
         crate::auth_http::SESSIONS => "GET, POST",

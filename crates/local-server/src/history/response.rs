@@ -3,7 +3,7 @@ use serde_json::{Value, json};
 use studiolo_core::{VaultPath, VaultUuid};
 use studiolo_vault_broker::{HistoryPage, MutationActor};
 
-fn actor(value: Option<MutationActor>) -> Value {
+pub(super) fn actor(value: Option<MutationActor>) -> Value {
     match value {
         Some(MutationActor::Human { issuer, subject }) => {
             json!({"kind":"human", "issuer":issuer, "subject":subject})

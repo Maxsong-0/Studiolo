@@ -136,3 +136,86 @@ it('安静重读更新第一页，失败保留已显示事实，晚到响应不�
     uninstall();
   }
 });
+const isHead = (url: string) => url.startsWith('/api/v1/changes/head');
+it('只问水位：没变不重读列表，代次号变了不算，变了只亮提示，重读后提示收起', async () => {
+  const page = changesFixture(Date.now(), 21, null, snapshot, false);
+  let through = { ...page.through };
+  const reader = vi.fn(async (url: string) =>
+    isHead(url) ? { vault_uuid: page.vault_uuid, through } : page,
+  );
+  const uninstall = installSessionReader(reader);
+  try {
+    const { result } = renderHook(() => useChanges(null));
+    await waitFor(() => expect(result.current.page).not.toBeNull());
+    const signal = new AbortController().signal;
+    const watch = () =>
+      act(async () => void (await result.current.watch(signal)));
+    await watch();
+    expect(result.current.behind).toBe(false);
+    through = { ...page.through, generation: '999' };
+    await watch();
+    expect(result.current.behind).toBe(false);
+    through = { ...page.through, sequence: '22' };
+    await watch();
+    expect(result.current.behind).toBe(true);
+    // 列表只在挂载时读过一次；亮着提示就不再问水位。
+    await watch();
+    expect(reader.mock.calls.filter(([url]) => !isHead(url))).toHaveLength(1);
+    expect(reader.mock.calls.filter(([url]) => isHead(url))).toHaveLength(3);
+    await act(async () => result.current.reload());
+    expect(result.current.behind).toBe(false);
+    expect(reader.mock.calls.filter(([url]) => !isHead(url))).toHaveLength(2);
+  } finally {
+    uninstall();
+  }
+});
+it('水位格式不对算没读成，旧服务没有这个接口就不再问，两种都不动列表', async () => {
+  const page = changesFixture(Date.now(), 21, null, snapshot, false);
+  let gone = false;
+  const reader = vi.fn(async (url: string) => {
+    if (!isHead(url)) return page;
+    if (gone) throw new ApiError('没有这个接口', 404);
+    return { vault_uuid: page.vault_uuid, through: page.through, entries: [] };
+  });
+  const uninstall = installSessionReader(reader);
+  try {
+    const { result } = renderHook(() => useChanges(null));
+    await waitFor(() => expect(result.current.page).not.toBeNull());
+    const signal = new AbortController().signal;
+    let outcome: unknown;
+    const watch = () =>
+      act(async () => {
+        outcome = await result.current.watch(signal);
+      });
+    await watch();
+    expect(outcome).toEqual({
+      ok: false,
+      message: '变更水位响应格式无效，请重新读取。',
+    });
+    gone = true;
+    await watch();
+    expect(outcome).toEqual({ ok: true });
+    await watch();
+    expect(reader.mock.calls.filter(([url]) => isHead(url))).toHaveLength(2);
+    expect(result.current.behind).toBe(false);
+    expect(result.current.page?.snapshot).toBe(page.snapshot);
+  } finally {
+    uninstall();
+  }
+});
+it('面板没开着时不问水位', async () => {
+  const reader = vi.fn(async () =>
+    changesFixture(Date.now(), 21, null, snapshot, false),
+  );
+  const uninstall = installSessionReader(reader);
+  try {
+    const { result } = renderHook(() => useChanges(null, false));
+    await act(
+      async () =>
+        void (await result.current.watch(new AbortController().signal)),
+    );
+    expect(reader).not.toHaveBeenCalled();
+  } finally {
+    uninstall();
+  }
+});
