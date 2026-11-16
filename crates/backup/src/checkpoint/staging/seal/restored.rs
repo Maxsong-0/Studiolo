@@ -96,6 +96,16 @@ impl RestoredCheckpoint {
     pub fn interrupted(target_parent: &Path, name: &str) -> Result<bool> {
         Directory::open(target_parent, true)?.exists(&partial_name(name))
     }
+    /// 新根恢复（T-212）：把先放在暂用名 `held` 下的组件改成正式名 `name`。同一父目录里原子改名，正式名
+    /// 已经在就失败、不覆盖，改完同步父目录，再核父目录还是同一个。
+    ///
+    /// 带凭据的库（Auth、身份库）先放在暂用名下：它的 owner 把旧凭据全部作废之前，按正式路径谁都打不开
+    /// （包括不经启动闸门的只读模式和 agent-server）。这里不核内容：暂用名下的库这时已经被它的 owner 改过。
+    pub fn publish_held(target_parent: &Path, held: &str, name: &str) -> Result<()> {
+        let parent = Directory::open(target_parent, true)?;
+        parent.publish(held, name)?;
+        parent.check_path(target_parent)
+    }
     /// 把 `data/<component>` 逐字节核对着复制成 `target_parent/<name>`。
     ///
     /// 写的每个文件都对着已核验视图里的摘要和长度，副本里多一个、少一个节点都失败。先写进

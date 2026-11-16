@@ -193,6 +193,36 @@ fn extraction_writes_only_verified_bytes_and_never_overwrites() {
     assert!(!target.join("late").exists());
 }
 
+/// 带凭据的库先放在暂用名下，owner 做完失效才改成正式名（T-212，Codex 第二意见第 2 条）：改名原子、正式名
+/// 已经在就拒绝且两边都不动，暂用名不在也拒绝；改完正式名下是原来那份内容。
+#[test]
+fn held_components_are_published_once_and_never_over_an_existing_name() {
+    let f = Fixture::new();
+    let sealed = sealed(&f);
+    let copy = fetched(&f, &sealed, "fetched");
+    let restored = RestoredCheckpoint::open(&copy, sealed.reference(), deadline()).unwrap();
+    let target = f.temp.path().join("new-root");
+    private_dir(&target);
+    assert_eq!(
+        restored.extract("canonical", &target, "vault.held", deadline()),
+        Ok(Placement::Extracted)
+    );
+    // 正式名被别人先建出来（比如在新根上初始化了一个空库）：不覆盖，暂用名原样留着。
+    private_dir(&target.join("vault"));
+    assert!(RestoredCheckpoint::publish_held(&target, "vault.held", "vault").is_err());
+    assert!(target.join("vault.held/note").exists());
+    assert_eq!(fs::read_dir(target.join("vault")).unwrap().count(), 0);
+    fs::remove_dir(target.join("vault")).unwrap();
+
+    RestoredCheckpoint::publish_held(&target, "vault.held", "vault").unwrap();
+    assert!(!target.join("vault.held").exists());
+    assert_eq!(fs::read(target.join("vault/note")).unwrap(), b"note bytes");
+    // 改过名了，暂用名不在：再来一次拒绝，正式名不动。
+    assert!(RestoredCheckpoint::publish_held(&target, "vault.held", "vault").is_err());
+    assert_eq!(fs::read(target.join("vault/note")).unwrap(), b"note bytes");
+    assert!(RestoredCheckpoint::publish_held(&target, "vault.held", "a/b").is_err());
+}
+
 /// 上一次放置中途留下的 `<名字>.restoring`，不管是目录、普通文件还是悬空的符号链接都算在场，编排据此在写任何
 /// 东西之前拒绝；不存在才算没被打断（复审 A2-F2）。判断不跟随链接：悬空链接要是被当成不存在，前面的组件写完了
 /// 才在 extract 里撞上。
