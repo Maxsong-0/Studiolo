@@ -114,4 +114,27 @@ impl SessionManager {
             prior.events.len() == 2 && prior.events.iter().all(|(_, receipt)| receipt.is_some())
         }))
     }
+
+    /// 这个恢复标识的撤权提交之后，主人有没有重新登录过：有会话在撤权之后的身份版本里激活过（拿到了准入
+    /// 回执），只读。之后又退出、过期或被撤的也算登录过。最终切换用它核「主人已重新认证」（T-212）。
+    /// 撤权没提交过、不合法的标识一律答「没有」。
+    pub fn reauthenticated_after_restore(&self, restore_id: &str) -> Result<bool, SessionError> {
+        if !valid_id(restore_id) {
+            return Ok(false);
+        }
+        self.database.transaction(|db| {
+            let Some(prior) = audit::read(db, restore_id)? else {
+                return Ok(false);
+            };
+            // 撤权把身份版本加一并撤掉全部旧会话；版本不低于它的会话只能是撤权之后签发的。
+            let activated: i64 = db
+                .query_row(
+                    "SELECT count(*) FROM sessions WHERE epoch>=?1 AND activated_at IS NOT NULL",
+                    [prior.report.epoch],
+                    |row| row.get(0),
+                )
+                .map_err(super::database::required_row)?;
+            Ok(activated > 0)
+        })
+    }
 }
