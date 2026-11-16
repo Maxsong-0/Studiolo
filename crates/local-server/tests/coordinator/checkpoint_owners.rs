@@ -29,6 +29,7 @@ use studiolo_policy::PolicyStore;
 use studiolo_supply::AgentStore;
 
 mod fixture;
+mod producer;
 mod seal;
 use fixture::Setup;
 

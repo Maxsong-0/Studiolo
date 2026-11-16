@@ -11,6 +11,7 @@ mod contract {
     mod final_manifest;
     mod inclusion;
     mod manifest;
+    mod queue_message;
     mod recovery_kit;
     mod recovery_point;
     mod restic;

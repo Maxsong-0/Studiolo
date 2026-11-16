@@ -7,9 +7,11 @@
 //! 「声明了不可变保护」永远不等于「具备不可变保护」，后者由运行侧另行证明。
 
 mod document;
+pub mod producer;
 mod types;
 
 pub use document::{BackupApproval, decode};
+pub use producer::{BackupProducerSettings, DeploymentPin, PackagePin};
 pub use types::{
     BackupTargetShape, CredentialReference, ResticPin, RetentionPolicy, ScheduleBudget,
 };

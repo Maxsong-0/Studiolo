@@ -7,12 +7,14 @@
 //! 按职责分文件的 impl；失败模式（`error` 子模块）仍经本模块原路径导出，
 //! 审计载荷在 `payload` 子模块。
 
+mod accept;
 mod error;
 mod finalize;
 mod followup;
 pub(super) mod payload;
 mod run;
 
+pub use accept::JobPosition;
 pub use error::{AuditError2, WorkerError};
 
 use super::recovery_point::BackupTargetKind;
@@ -86,6 +88,37 @@ pub fn backup_intent(key: &JobKey, target: BackupTargetKind) -> Result<AuditEven
     ))
 }
 
+/// 从账本里的一条备份作业事件读回原作业键；事件键和载荷对不上就不算。
+///
+/// 准入事件用的是另一种事件键，这里一律读不出来，要用 `AdmissionFact::from_receipt`。
+pub fn backup_event_key(event: &AuditEvent) -> Option<JobKey> {
+    if event.action() != BACKUP_AUDIT_ACTION {
+        return None;
+    }
+    let value = event.payload().as_value();
+    let sequence = NonZeroU64::new(value.get("job_sequence")?.as_u64()?)?;
+    let checkpoint_id = CheckpointId::parse(value.get("checkpoint_id")?.as_str()?).ok()?;
+    let key = JobKey {
+        sequence,
+        checkpoint_id,
+    };
+    (event.event_id().as_str() == payload::event_id_text(&key)).then_some(key)
+}
+
+/// 生产者在封存没做成时补的固定失败结果；和 worker 写的是同一个形状。
+pub fn backup_failure(key: &JobKey, reason: FailureReason) -> Result<AuditEvent, WorkerError> {
+    let id = AuditEventId::parse(payload::event_id_text(key))
+        .map_err(|error| WorkerError::Audit(error.into()))?;
+    let payload = SanitizedPayload::try_from(payload::outcome_failed(key, reason))
+        .map_err(|error| WorkerError::Audit(error.into()))?;
+    Ok(AuditEvent::new(
+        id,
+        AuditPhase::Outcome,
+        BACKUP_AUDIT_ACTION,
+        payload,
+    ))
+}
+
 impl<'a> BackupWorker<'a> {
     /// 组装 Worker；持有者不是 BackupWorker 即拒绝。
     pub fn new(
@@ -144,31 +177,7 @@ impl<'a> BackupWorker<'a> {
     /// 排队一次备份：先持久 Intent，再持久排队记录。审计失败即失败关闭。
     pub fn enqueue(&self, checkpoint_id: &CheckpointId) -> Result<JobKey, WorkerError> {
         let mut state = self.state()?;
-        if state
-            .jobs
-            .iter()
-            .filter(|j| j.state == JobState::Queued)
-            .count()
-            >= MAX_QUEUED
-        {
-            return Err(StoreError::LimitExceeded.into());
-        }
-        if state.jobs.len() == MAX_JOBS {
-            let last = state.last_final.as_ref().map(|r| r.draft().key());
-            let oldest = state
-                .jobs
-                .iter()
-                .position(|j| {
-                    j.state.is_terminal()
-                        && Some(&j.key) != last
-                        && state
-                            .pending_failure
-                            .as_ref()
-                            .is_none_or(|pending| pending.key != j.key)
-                })
-                .ok_or(StoreError::LimitExceeded)?;
-            state.jobs.remove(oldest);
-        }
+        make_room(&mut state)?;
         let next_sequence = state
             .next_sequence
             .checked_add(1)
@@ -216,4 +225,34 @@ impl<'a> BackupWorker<'a> {
     fn record_outcome(&self, key: &JobKey, payload: serde_json::Value) -> Result<(), WorkerError> {
         self.append(key, AuditPhase::Outcome, payload)
     }
+}
+
+/// 排队前腾位置：等待队列有上限；记录满了就回收最旧的终态，保留最近成功和待补记的那条。
+fn make_room(state: &mut PersistedState) -> Result<(), WorkerError> {
+    if state
+        .jobs
+        .iter()
+        .filter(|j| j.state == JobState::Queued)
+        .count()
+        >= MAX_QUEUED
+    {
+        return Err(StoreError::LimitExceeded.into());
+    }
+    if state.jobs.len() == MAX_JOBS {
+        let last = state.last_final.as_ref().map(|r| r.draft().key());
+        let oldest = state
+            .jobs
+            .iter()
+            .position(|j| {
+                j.state.is_terminal()
+                    && Some(&j.key) != last
+                    && state
+                        .pending_failure
+                        .as_ref()
+                        .is_none_or(|pending| pending.key != j.key)
+            })
+            .ok_or(StoreError::LimitExceeded)?;
+        state.jobs.remove(oldest);
+    }
+    Ok(())
 }

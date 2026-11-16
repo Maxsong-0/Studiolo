@@ -1,6 +1,6 @@
 //! 已装配、尚未监听的服务器与生产唯一入口；组合顺序在 `startup.rs`，收尾在 `serving.rs`。
 
-use super::{StartupError, factor_input, prepare_composed};
+use super::{StartupError, backup_input, factor_input, prepare_composed};
 use std::{future::Future, sync::Arc};
 use studiolo_auth::{AccessConfig, AccessError, AccessVerifier};
 use studiolo_host_config::ServingRoots;
@@ -24,6 +24,7 @@ pub(crate) struct PreparedServer {
     pub(super) board_plane: Option<Arc<studiolo_local_server::board::BoardPlane>>,
     pub(super) sync_plane: Option<Arc<studiolo_local_server::sync_plane::SyncPlane>>,
     pub(super) checkpoint: Option<Arc<studiolo_local_server::checkpoint::CheckpointInputs>>,
+    pub(super) backup: Option<backup_input::Prepared>,
 }
 
 impl PreparedServer {

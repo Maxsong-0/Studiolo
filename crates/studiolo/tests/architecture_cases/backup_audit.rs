@@ -104,3 +104,59 @@ fn backup_audit_socket_identity_and_native_connection_are_closed_capabilities() 
         );
     }
 }
+#[test]
+fn producer_socket_and_schedule_are_closed_capabilities() {
+    let crate_name = "studiolo-local-server";
+    let path = Path::new("crates/local-server/src/backup/listener.rs");
+    let source = fs::read_to_string(workspace_root().join(path)).unwrap();
+    assert!(source_violations(crate_name, path, &source).is_empty());
+    // 父目录 0750、socket 0660、已有节点拒绝、单一名字：和 worker 一侧的核对一一对应。
+    for anchor in [
+        "0o750",
+        "0o660",
+        "Err(Errno::NOENT)",
+        "stat.st_nlink != 1",
+        "identity(&stat) == self.identity",
+    ] {
+        assert!(source.contains(anchor), "{anchor}");
+        assert!(
+            !source_violations(crate_name, path, &source.replacen(anchor, "removed", 1)).is_empty(),
+            "{anchor}"
+        );
+    }
+    for changed in [
+        format!("{source}\nUnixListener::bind(other)?;"),
+        format!("{source}\nstd::fs::write(other, bytes)?;"),
+        format!("{source}\nlet _ = unlinkat(&other, name, AtFlags::empty());"),
+        format!("{source}\nchmodat(&other, name, Mode::from_raw_mode(0o666), AtFlags::empty())?;"),
+    ] {
+        assert!(!source_violations(crate_name, path, &changed).is_empty());
+    }
+    // 换一个文件名就拿不到放行。
+    assert!(
+        !source_violations(
+            crate_name,
+            Path::new("crates/local-server/src/backup/other.rs"),
+            &source
+        )
+        .is_empty()
+    );
+
+    let path = Path::new("crates/local-server/src/backup/producer.rs");
+    let source = fs::read_to_string(workspace_root().join(path)).unwrap();
+    assert!(source_violations(crate_name, path, &source).is_empty());
+    for anchor in [
+        "self.plan.worker_uid == rustix::process::geteuid().as_raw()",
+        "AuditSocket::new(stream, self.plan.worker_uid, deadline)",
+        "request.target() != TARGET",
+        "BackupAdmission::resume(self.ledger.clone(), request.key(), TARGET)",
+        "queue.outstanding()",
+        "drop(frozen);",
+    ] {
+        assert!(source.contains(anchor), "{anchor}");
+        assert!(
+            !source_violations(crate_name, path, &source.replacen(anchor, "removed", 1)).is_empty(),
+            "{anchor}"
+        );
+    }
+}

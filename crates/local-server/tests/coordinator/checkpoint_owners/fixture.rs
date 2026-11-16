@@ -9,8 +9,16 @@ pub(super) struct Setup {
     pub(super) owners: CheckpointOwners,
     pub(super) key: JobKey,
 }
-impl Setup {
-    pub(super) async fn new(intent: bool) -> Self {
+/// 真实装配、还没固定成一次作业的原实例；生产者测试直接拿它当启动层保留的那一组。
+pub(super) struct Assembled {
+    pub(super) fixture: Fixture,
+    pub(super) workbench: Arc<crate::CanonicalWorkbench>,
+    pub(super) human: Arc<SqliteAuditLedger>,
+    pub(super) agent: SqliteAuditLedger,
+    pub(super) inputs: CheckpointInputs,
+}
+impl Assembled {
+    pub(super) async fn new() -> Self {
         let fixture = Fixture::new();
         let (mut broker, human) = source(&fixture);
         flush_content(&mut broker, &human, 0);
@@ -50,15 +58,37 @@ impl Setup {
             human.clone(),
         )
         .unwrap();
-        let owners = CheckpointOwners::new(CheckpointInputs {
+        let inputs = CheckpointInputs {
             workbench: workbench.clone(),
             sessions,
             audit: human.clone(),
             board: Some(board),
             bridge: None,
             policy: Some(policy),
-        })
-        .unwrap();
+        };
+        Self {
+            fixture,
+            workbench,
+            human,
+            agent,
+            inputs,
+        }
+    }
+    /// 六个库现在能不能写：冻结期间都不能，放开之后都能。
+    pub(super) fn writable(&self, expected: bool) {
+        writable(&self.fixture, expected);
+    }
+}
+impl Setup {
+    pub(super) async fn new(intent: bool) -> Self {
+        let Assembled {
+            fixture,
+            workbench,
+            human,
+            agent,
+            inputs,
+        } = Assembled::new().await;
+        let owners = CheckpointOwners::new(inputs).unwrap();
         let key = JobKey {
             sequence: NonZeroU64::new(1).unwrap(),
             checkpoint_id: CheckpointId::parse("actual-owners").unwrap(),
@@ -92,21 +122,24 @@ impl Setup {
         paths
     }
     pub(super) fn writable(&self, expected: bool) {
-        for relative in [
-            "auth/auth.sqlite3",
-            "control/control.sqlite3",
-            "agent/agent.sqlite3",
-            "policy/policy.sqlite3",
-            "audit/audit.sqlite3",
-            "agent/audit/audit.sqlite3",
-        ] {
-            let db = rusqlite::Connection::open(self.fixture.root.join(relative)).unwrap();
-            db.busy_timeout(Duration::ZERO).unwrap();
-            let result = db.execute_batch("BEGIN IMMEDIATE");
-            assert_eq!(result.is_ok(), expected, "{relative}");
-            if result.is_ok() {
-                db.execute_batch("ROLLBACK").unwrap();
-            }
+        writable(&self.fixture, expected);
+    }
+}
+fn writable(fixture: &Fixture, expected: bool) {
+    for relative in [
+        "auth/auth.sqlite3",
+        "control/control.sqlite3",
+        "agent/agent.sqlite3",
+        "policy/policy.sqlite3",
+        "audit/audit.sqlite3",
+        "agent/audit/audit.sqlite3",
+    ] {
+        let db = rusqlite::Connection::open(fixture.root.join(relative)).unwrap();
+        db.busy_timeout(Duration::ZERO).unwrap();
+        let result = db.execute_batch("BEGIN IMMEDIATE");
+        assert_eq!(result.is_ok(), expected, "{relative}");
+        if result.is_ok() {
+            db.execute_batch("ROLLBACK").unwrap();
         }
     }
 }

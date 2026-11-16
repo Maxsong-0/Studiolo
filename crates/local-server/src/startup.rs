@@ -1,5 +1,6 @@
 //! 进程组合根：检查全部成功后才允许监听；HTTP不持有配置或初始化能力。
 
+mod backup_input;
 mod canonical_input;
 mod checkpoint_input;
 mod error;
@@ -60,6 +61,7 @@ where
     let mut repository = repository_input::open(&options)?;
     let mut content_audit: Option<Arc<dyn studiolo_audit_ledger::AuditLedger>> = None;
     let mut checkpoint_audit = None;
+    let mut backup_approved = None;
     let mut board_protected = Vec::new();
     let (sessions, roots, access_config, factors, writer_roots, sync_scope) =
         if let Some(session) = &options.session {
@@ -74,6 +76,8 @@ where
                     .to_owned(),
             ]);
             repository = repository_input::approved(&options, &config)?;
+            // 备份生产者的批准同样来自这份私有配置；缺任何一段即关闭。
+            backup_approved = backup_input::approved(&config, &options)?;
             let access = config
                 .access(&session.origin)
                 .map_err(|_| StartupError::Configuration)?;
@@ -229,6 +233,7 @@ where
         &board_protected,
     );
     let sync_plane = or_shutdown(sync, workbench.as_ref()).await?;
+    let backup_ledger = checkpoint_audit.clone();
     let checkpoint = checkpoint_input::sources(
         workbench.clone(),
         sessions,
@@ -238,6 +243,9 @@ where
         policy_plane,
     );
     let checkpoint = or_shutdown(checkpoint, workbench.as_ref()).await?;
+    // 备份生产者用的就是上面这一组原实例；这里只装配，监听和别的入口一起在 serving 里起停。
+    let backup = backup_input::prepare(backup_approved, backup_ledger, checkpoint.as_ref());
+    let backup = or_shutdown(backup, workbench.as_ref()).await?;
     // 健康页的路由已在 router 装配期挂好（且在鉴权那一层之内）；这里只把证据来源
     // 装上去。不装则健康页一律回 404，因此这一行是"健康页可用"的唯一开关。
     let app = studiolo_local_server::health::with_health_evidence(
@@ -258,6 +266,7 @@ where
         runner_plane,
         sync_plane,
         checkpoint,
+        backup,
     };
     if let Err(error) = prepared.revalidate() {
         canonical_input::shutdown(prepared.workbench.as_ref()).await?;
