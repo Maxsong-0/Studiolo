@@ -226,3 +226,73 @@ fn shared_identity_assembly_also_requires_the_same_original_audit() {
     assert!(pair.same_origin(&replacement).is_err());
     assert!(replacement.same_origin(&pair).is_err());
 }
+
+#[test]
+fn restored_identities_lose_every_old_token_and_hand_back_every_instance() {
+    let dir = directory();
+    let store = AgentStore::open(dir.path()).unwrap();
+    let codex = store.issue_type("codex", NOW).unwrap();
+    store.issue_type("claude", NOW).unwrap();
+    let first = store.register_instance("codex", "session-1", NOW).unwrap();
+    let second = store.register_instance("claude", "session-2", NOW).unwrap();
+    // 封存时同一套规则算出来的水位，就是恢复要对着核的那一份。
+    let expected = {
+        let view = AgentIdentityView::open_existing(dir.path()).unwrap();
+        let frozen = view
+            .checkpoint_source()
+            .unwrap()
+            .freeze(deadline())
+            .unwrap();
+        frozen.watermark().clone()
+    };
+    drop(store);
+    // 水位对不上（这里拿另一个库的）就什么都不动。
+    let other = directory();
+    let foreign = AgentStore::open(other.path()).unwrap();
+    foreign.issue_type("codex", NOW).unwrap();
+    let foreign_mark = {
+        let view = AgentIdentityView::open_existing(other.path()).unwrap();
+        let frozen = view
+            .checkpoint_source()
+            .unwrap()
+            .freeze(deadline())
+            .unwrap();
+        frozen.watermark().clone()
+    };
+    assert!(
+        studiolo_supply::invalidate_restored_identities(dir.path(), Some(&foreign_mark), NOW)
+            .is_err()
+    );
+    let untouched = AgentStore::open_existing(dir.path()).unwrap();
+    assert_eq!(
+        untouched.authenticate(&codex.token).unwrap(),
+        Some("codex".into())
+    );
+    drop(untouched);
+
+    let done =
+        studiolo_supply::invalidate_restored_identities(dir.path(), Some(&expected), NOW).unwrap();
+    assert_eq!(done.types_revoked, 2);
+    assert_eq!(done.types_total, 2);
+    let mut ids = vec![first.id.clone(), second.id.clone()];
+    ids.sort();
+    assert_eq!(done.instances, ids);
+    let reopened = AgentStore::open_existing(dir.path()).unwrap();
+    assert_eq!(reopened.authenticate(&codex.token).unwrap(), None);
+    assert!(
+        reopened
+            .types()
+            .unwrap()
+            .iter()
+            .all(|(_, _, revoked)| *revoked)
+    );
+    drop(reopened);
+    // 接手时库已经改过，不再给水位；再做一遍什么都不变。
+    let again = studiolo_supply::invalidate_restored_identities(dir.path(), None, NOW).unwrap();
+    assert_eq!(again.types_revoked, 0);
+    assert_eq!(again.instances, ids);
+    // 不建库：目录里没有库就失败，也不留下新文件。
+    let empty = directory();
+    assert!(studiolo_supply::invalidate_restored_identities(empty.path(), None, NOW).is_err());
+    assert_eq!(fs::read_dir(empty.path()).unwrap().count(), 0);
+}
