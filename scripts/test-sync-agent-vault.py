@@ -18,6 +18,13 @@ from replica_archive import transfer_deadline
 from replica_capture import capture
 from replica_client import accept_response
 from replica_common import ALLOW, Invalid, digest, encode
+import importlib.util
+
+# 夹具项目取上线探针的金丝雀项目，它总在注册表生成的 ALLOW 里（BUG-038：写死的旧名改名后落到白名单外）。
+_SPEC = importlib.util.spec_from_file_location("agent_check", Path(__file__).with_name("check-agent.py"))
+_CHECK = importlib.util.module_from_spec(_SPEC)
+_SPEC.loader.exec_module(_CHECK)
+PROJECT = _CHECK.PROJECT
 
 SCRIPT = Path(__file__).absolute().with_name("sync-agent-vault.sh")
 
@@ -31,7 +38,7 @@ class SyncAgentVaultTests(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
         self.vault = self.root / "Owner's Vault"
-        self.project = self.vault / "项目/Studiolo"
+        self.project = self.vault / PROJECT
         # 同 test-replica-receiver：目录清单从 ALLOW 派生，扩白名单时无需改夹具。
         for allow in ALLOW:
             (self.vault / allow).mkdir(parents=True, exist_ok=True)
@@ -71,6 +78,50 @@ class SyncAgentVaultTests(unittest.TestCase):
         self.assertFalse(self.log.exists())
         self.assertFalse(self.server.exists())
 
+    def last_status(self, result):
+        return json.loads(result.stderr.strip().splitlines()[-1])
+
+    def test_a_registered_directory_missing_from_the_vault_is_reported_as_such(self):
+        # 库里改名或删掉登记的目录（BUG-038）：什么都不发，日志直接说是登记目录不在，而不是笼统的校验失败。
+        (self.project / "note.md").unlink()
+        self.project.rmdir()
+        for args in ([], ["--dry-run"]):
+            with self.subTest(args=args):
+                status = self.last_status(self.run_sync(args, code=1))
+                self.assertEqual(status, {"status": "failed", "last_error": "registered_directory_missing",
+                                          "missing": 1})
+                self.assertFalse(self.log.exists())
+                self.assertFalse(self.server.exists())
+
+    def test_only_an_absent_registered_directory_counts_as_missing(self):
+        # 登记处是链接（危险节点）时仍按校验失败报，不能说成「目录不在」。
+        elsewhere = self.root / "elsewhere"
+        elsewhere.mkdir()
+        (self.project / "note.md").unlink()
+        self.project.rmdir()
+        self.project.symlink_to(elsewhere)
+        status = self.last_status(self.run_sync(["--dry-run"], code=1))
+        self.assertEqual(status, {"status": "failed", "last_error": "validation_failed"})
+
+    def test_non_project_entries_are_checked_too_and_every_missing_one_is_counted(self):
+        # _规则 这类非项目条目和项目目录走同一个核对；缺几个就报几个。
+        (self.vault / "_规则").rmdir()
+        status = self.last_status(self.run_sync(["--dry-run"], code=1))
+        self.assertEqual(status, {"status": "failed", "last_error": "registered_directory_missing", "missing": 1})
+        (self.project / "note.md").unlink()
+        self.project.rmdir()
+        status = self.last_status(self.run_sync(["--dry-run"], code=1))
+        self.assertEqual(status, {"status": "failed", "last_error": "registered_directory_missing", "missing": 2})
+
+    def test_an_unreadable_directory_is_a_validation_failure_not_a_missing_one(self):
+        if os.geteuid() == 0:
+            self.skipTest("root 不受目录权限限制，造不出读不了的目录")
+        parent = self.vault / "项目"
+        parent.chmod(0)
+        self.addCleanup(parent.chmod, 0o755)
+        status = self.last_status(self.run_sync(["--dry-run"], code=1))
+        self.assertEqual(status, {"status": "failed", "last_error": "validation_failed"})
+
     def test_real_run_transfers_verified_generation_in_one_ssh_call(self):
         result = json.loads(self.run_sync().stdout)
         calls = [json.loads(line) for line in self.log.read_text().splitlines()]
@@ -78,7 +129,7 @@ class SyncAgentVaultTests(unittest.TestCase):
         self.assertIn("BatchMode=yes", calls[0])
         self.assertIn("StrictHostKeyChecking=yes", calls[0])
         self.assertEqual(result["status"], "ready")
-        path = self.server / "releases" / result["receipt"]["generation"] / "vault/项目/Studiolo/note.md"
+        path = self.server / "releases" / result["receipt"]["generation"] / f"vault/{PROJECT}/note.md"
         self.assertEqual(path.read_text(), "private fixture text")
         self.assertEqual(path.stat().st_mode & 0o777, 0o600)
 
@@ -113,7 +164,7 @@ class SyncAgentVaultTests(unittest.TestCase):
         (self.project / "attachment.bin").write_bytes(os.urandom(self.ATTACHMENT))
         first = json.loads(self.run_sync().stdout)
         self.assertEqual(first["mode"], "full")
-        self.assertIn("vault/项目/Studiolo/attachment.bin", members())
+        self.assertIn(f"vault/{PROJECT}/attachment.bin", members())
         self.assertEqual(self.base_file().stat().st_mode & 0o777, 0o600)
         second = json.loads(self.run_sync().stdout)
         self.assertEqual(second["mode"], "confirm")
@@ -130,8 +181,8 @@ class SyncAgentVaultTests(unittest.TestCase):
         (self.project / "note.md").write_text("private fixture edit", encoding="utf-8")
         value = json.loads(self.run_sync().stdout)
         self.assertEqual(value["mode"], "delta")
-        self.assertEqual(members(), ["manifest.json", "request.json", "vault/项目/Studiolo/note.md"])
-        current = self.server / "releases" / value["receipt"]["generation"] / "vault/项目/Studiolo"
+        self.assertEqual(members(), ["manifest.json", "request.json", f"vault/{PROJECT}/note.md"])
+        current = self.server / "releases" / value["receipt"]["generation"] / "vault" / PROJECT
         self.assertEqual((current / "note.md").read_text(), "private fixture edit")
         self.assertEqual((current / "attachment.bin").read_bytes(),
                          (self.project / "attachment.bin").read_bytes())

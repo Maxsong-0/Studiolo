@@ -14,7 +14,7 @@ import tempfile
 import uuid
 
 from replica_archive import transfer_deadline
-from replica_capture import archive, capture, transfer_mode
+from replica_capture import archive, capture, missing_registered, transfer_mode
 from replica_common import (MAX_MANIFEST, Invalid, check_node, digest, encode, integer, load_json,
                             manifest, open_root, read_file, require)
 
@@ -178,6 +178,14 @@ def main(argv=None):
             save_base(state_fd, base_name, manifest_raw)
             status = {**response, **summary}
         else:
+            missing = missing_registered(source)
+            if missing:
+                # 整批照旧不发，只把原因和个数说清楚；逐个列出缺哪些、怎么改：
+                # python3 scripts/project_registry.py check --vault <库根>（docs/m3/replica-operations.md）。
+                status = {"status": "failed", "last_error": "registered_directory_missing",
+                          "missing": len(missing)}
+                print(json.dumps(status, separators=(",", ":")), file=sys.stderr)
+                return 1
             captured = capture(source)
             raw, bodies, expected, observed = captured
             binding = os.stat(name, dir_fd=state_fd, follow_symlinks=False)
