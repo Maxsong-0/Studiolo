@@ -46,7 +46,7 @@
 
 M2 包含真实人侧身份、CAS 编辑与 L0、双向 Obsidian Sync、附件 / 冲突 / 删除保护、
 一致备份恢复、健康告警和实际两周 headless 试跑。**完整 M2 未完成、未发布**；
-分片通过不等于里程碑通过。下表标「T-048 实施中」的是本轮收尾正在写的代码，**尚未验收**。
+分片通过不等于里程碑通过。T-048 的代码已合入 main（`297f126`／`25210bc`，PR #5、#6），但备份、告警、OwnedRun 的**生产启用与真实环境验收仍未做**，现状以根 README「当前状态」为准。
 
 ### 状态与缺口
 
@@ -89,7 +89,7 @@ M2 包含真实人侧身份、CAS 编辑与 L0、双向 Obsidian Sync、附件 /
 | [`m2/sync-scope.md`](m2/sync-scope.md) | 整文件同步范围的私有配置与范围核对；不是实际 SyncTransport |
 | [`m2/headless-execution-contract.md`](m2/headless-execution-contract.md) | Obsidian Headless 0.0.14 的静态核查；**未安装、未运行、未登录、未同步真实 Vault** |
 | [`m2/owned-run-design.md`](m2/owned-run-design.md) | OwnedRun 的实施候选与 Linux 静止证明要求 |
-| [`m2/owned-run.md`](m2/owned-run.md) | T-048 SyncTransportOwner 实施记录；**T-048 实施中，无受控隔离即 `UnsupportedContainment`** |
+| [`m2/owned-run.md`](m2/owned-run.md) | T-048 SyncTransportOwner 实施记录；T-048 已合入 main（`297f126`／`25210bc`）；无受控隔离即 `UnsupportedContainment`，真实隔离运行未验收 |
 | [`m2/bridge-planner.md`](m2/bridge-planner.md) | 双向 Bridge 三方规划契约；仅元数据规划，未持久化、未接真实同步 |
 | [`m2/bridge-state.md`](m2/bridge-state.md) | Bridge 持久状态契约 |
 | [`m2/bridge-executor.md`](m2/bridge-executor.md) | MirrorCAS 与双向 Bridge 执行器顺序核；不做任何 IO，**生产未接线** |
@@ -99,10 +99,10 @@ M2 包含真实人侧身份、CAS 编辑与 L0、双向 Obsidian Sync、附件 /
 | 文件 | 内容 |
 |---|---|
 | [`m2/checkpoint-recovery-contract.md`](m2/checkpoint-recovery-contract.md) | 一致 checkpoint 与新目录恢复契约（冻结实现边界） |
-| [`m2/backup-worker.md`](m2/backup-worker.md) | checkpoint 协调器、独立 BackupWorker 与恢复 kit 的实施记录；**T-048 实施中，未验收** |
-| [`contracts/change-feed.md`](contracts/change-feed.md) | 可信内容变更来源、批量历史与有界全库索引；T-206 人侧接线进行中、未部署 |
+| [`m2/backup-worker.md`](m2/backup-worker.md) | checkpoint 协调器、独立 BackupWorker 与恢复 kit 的实施记录；T-048 已合入 main，生产未启用、真实环境未验收 |
+| [`contracts/change-feed.md`](contracts/change-feed.md) | 可信内容变更来源、批量历史与有界全库索引；T-206 已随 T-207 第一批 `8e67c72` 合入 main，未部署 |
 | [`contracts/doorbell.md`](contracts/doorbell.md) | 出站事件门铃（Webhook）：事件白名单、请求与签名、回执怎么算、审计与状态；候选，未部署（ADR-033） |
-| [`m2/health-and-alerting.md`](m2/health-and-alerting.md) | 健康页、配额、白名单诊断、带外告警与死人开关；**T-048 实施中，生产未启用** |
+| [`m2/health-and-alerting.md`](m2/health-and-alerting.md) | 健康页、配额、白名单诊断、带外告警与死人开关；T-048 已合入 main，生产未启用 |
 
 ### 浏览器验收（均使用虚构夹具）
 
@@ -126,8 +126,7 @@ M2 包含真实人侧身份、CAS 编辑与 L0、双向 Obsidian Sync、附件 /
 M3 包含有界冷启动读取、MCP / HTTP 类型与实例身份、白名单及读取审计、资料同步 / 新鲜度、
 客户端投影实装、持久派生索引，以及图 2 的目录职责 / 漂移、声明架构、依赖与人工设计路径。
 T-033～T-040 已合并 main 并上线；**T-041～T-046 已随 PR #5 合并 `origin/main`（`297f126`）
-但没有部署、没有整体验收**，线上跑的仍是 T-040 版本；**T-048、T-063 只在收尾分支上，
-未合并、未部署**；**真实客户端安装与图 2 生产绑定未完成**。
+但没有部署、没有整体验收**（写作时点 2026-09-17；之后 M4～M6 已上线，当前线上 agent 为 `t182-8008d75-20261016`，见根 README「当前状态」）；**T-048、T-063 已随 PR #5、#6（`297f126`／`25210bc`）合入 main**；**真实客户端安装与图 2 生产绑定未完成**。
 
 | 文件 | 内容 | 发布状态 |
 |---|---|---|
@@ -145,7 +144,7 @@ T-033～T-040 已合并 main 并上线；**T-041～T-046 已随 PR #5 合并 `or
 | [`m3/rust-call-links.md`](m3/rust-call-links.md) | T-045 同文件自由函数的受限词法关联与反向引用 | 已合并 main，未部署 |
 | [`m3/mcp-session-boundaries.md`](m3/mcp-session-boundaries.md) | T-046 MCP 会话身份连续性、凭据轮换与资源边界 | 已合并 main，未部署 |
 | [`m3/repository-approval.md`](m3/repository-approval.md) | T-046 图 2 生产仓库的私有配置批准契约 | 已合并 main，未部署；**真实生产配置未验收** |
-| [`m3/release-packaging.md`](m3/release-packaging.md) | T-063 local-server 运行包内容、本机出包与自检、服务器安装与回滚步骤 | 仅开发分支（文件尚未提交）；**真实服务器部署与公网复验未做**，以该文件「已验证与未验证」一节为准 |
+| [`m3/release-packaging.md`](m3/release-packaging.md) | T-063 local-server 运行包内容、本机出包与自检、服务器安装与回滚步骤 | 已在 main（文件自 `740b5c9c` 起，T-063 随 PR #6 `25210bc` 合入）；**真实服务器部署与公网复验未做**，以该文件「已验证与未验证」一节为准 |
 
 供给面契约本身在 [`contracts/agent-supply.md`](contracts/agent-supply.md)。
 `m3/client-projection.example.json` 是投影输出的示例，不含真实资料；
@@ -154,11 +153,11 @@ T-033～T-040 已合并 main 并上线；**T-041～T-046 已随 PR #5 合并 `or
 ## m4/ — 策略平面与权限中枢
 
 M4 把规则母本、skills 与各 AI 类型的能力集升入策略平面：desired → 校验 → diff（扩大项标红）→ L3 One-time Code → effective，
-版本与回滚，实例／类型／全局三级吊销。**代码已实现；macOS 全工作区 182 目标 2293 项通过，Linux 以 PR #10 的 CI（x86_64）为准；线上未启用**（agent 未给 `--policy`，人侧因子模式未部署）。
+版本与回滚，实例／类型／全局三级吊销。**代码已实现并合入 main（PR #10 `21b16c0`）；2026-09-19 上线 `m4-t084-20260919-audit03`、2026-09-20 由 T-087 接入并验收；T-160 一期已在生产发布能力集 claude v14／codex v15**（测试数字是 2026-09-18 写作时的 macOS 结果，已删）。
 
 | 文件 | 内容 | 发布状态 |
 |---|---|---|
-| [`m4/README.md`](m4/README.md) | T-069 实现范围、本机运行方式、二元验收证据、明确未做与启用前置 | 已在开发分支，未部署 |
+| [`m4/README.md`](m4/README.md) | T-069 实现范围、本机运行方式、二元验收证据、明确未做与启用前置 | 已合入 main 并上线（2026-09-19～20） |
 | [`contracts/policy-plane.md`](contracts/policy-plane.md) | 策略平面契约：私有库、三类母本形状与恒定约束、发布链路与审计顺序、三级吊销、接入方视角、错误模式、契约测试清单 | 同上 |
 | [`contracts/policy-checkpoint.md`](contracts/policy-checkpoint.md) | T-204 策略跨进程写屏障、核验导出与真实接线边界 |
 
