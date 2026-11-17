@@ -43,6 +43,10 @@ R8_MANIFEST_SHA = '85ecbfd4eb8472c2aafc1a9f9d83c0bb7c6c11b6b4097af58f8e0734d7e6c
 WEB_PREFIX = 'web/'
 # 沿用黑板装配标识；Bridge 接线仍受固定现场摘要约束。
 ASSEMBLY = 'canonical-board-consumer-only'
+# agent 单元里必须还在的读取范围（黑板首建时的三个范围）。库里项目目录 2026-10-23 起都带 -Docs（BUG-038）：
+# agent 先按新名发布、线上单元换成新名之后本装配才认，没先发 agent 就在这里失败。
+# test_assembly 核对它们都在注册表里给 AI 看，下次改名先在测试里报。
+AGENT_READ_SCOPES = frozenset({'项目/Studiolo-Docs', '项目/Tillerwright-Docs', '_规则'})
 
 
 def replace_once(text, old, new):
@@ -78,7 +82,7 @@ def agent_unit(text):
     exec_start = lines[indexes[0]]
     if ('--board-socket ' + BOARD_SOCKET) not in exec_start:
         raise ValueError('board socket missing')
-    if not {'项目/Studiolo', '项目/Tillerwright', '_规则'} <= allow_scopes(exec_start):
+    if not AGENT_READ_SCOPES <= allow_scopes(exec_start):
         raise ValueError('read allowlist changed')
     return text
 

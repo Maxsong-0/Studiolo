@@ -12,6 +12,7 @@ AI 要读到一个项目，原来得手改三处，漏一处就读不到。现�
   python3 scripts/project_registry.py check [--vault <库根目录>]
   python3 scripts/project_registry.py sync [--dry-run]
   python3 scripts/project_registry.py desired --capability <现行能力集.json> [--grant <路径>]... [--grant-all]
+                                              [--rename <旧名> <新名>]...
 """
 import argparse
 import json
@@ -195,14 +196,47 @@ def sync(root=ROOT, dry_run=False):
     return [path.relative_to(root).as_posix() for path in sorted(changes)], []
 
 
+def under(path, root):
+    """path 是 root 本身或在它下面（按路径段比，`项目/甲` 不算在 `项目/甲乙`、`项目/甲-Docs` 下面）。"""
+    return path == root or path.startswith(root + "/")
+
+
 def overlaps(prefix, allow):
     """白名单前缀和部署上限有没有交集：相等、在某一项之下、或是某一项的上级。"""
-    return any(prefix == path or prefix.startswith(path + "/") or path.startswith(prefix + "/") for path in allow)
+    return any(under(prefix, path) or under(path, prefix) for path in allow)
 
 
-def desired(capability, entries, grants=(), grant_all=False):
+def renamed(path, renames):
+    """库里改过名的目录：旧名本身和它下面的子路径都换成新名；不相干的原样返回。"""
+    for old, new in renames:
+        if under(path, old):
+            return new + path[len(old):]
+    return path
+
+
+def check_renames(renames, allow):
+    """改名对照要一一对应、互不嵌套，新名必须已登记给 AI 看；不对就整份拒绝，不猜。"""
+    olds = [old for old, _ in renames]
+    if len(set(olds)) != len(olds):
+        fail("同一个旧名给了两个新名")
+    if len({new for _, new in renames}) != len(renames):
+        fail("两个旧名改成了同一个新名：两个项目会被悄悄并成一个")
+    for index, (old, new) in enumerate(renames):
+        if old == new:
+            fail(f"改名两边一样：{old!r}")
+        if new not in allow:
+            fail(f"改名后的 {new!r} 不在注册表给 AI 看的范围里，先登记")
+        # 每条路径只换第一个对上的那对：旧名嵌在别的旧名里、或接在别的新名后面（串联），结果就取决于参数顺序。
+        for other, (other_old, other_new) in enumerate(renames):
+            if other != index and (under(old, other_old) or under(old, other_new)):
+                fail(f"旧名 {old!r} 落在另一对 {other_old!r} → {other_new!r} 里，换名结果会取决于参数顺序")
+
+
+def desired(capability, entries, grants=(), grant_all=False, renames=()):
     """对着注册表改一份能力集的读取白名单；返回 (新能力集或 None, 说明)。只生成，不提交。
 
+    - renames 是 (旧名, 新名) 对：库里改过目录名时，读取白名单和黑板写项目里的旧名（含它下面的子路径）
+      换成新名。几份能力集共用一张对照表，旧名不在这份能力集里就跳过；
     - 和部署上限没有交集的前缀删掉（留着也读不到），同名的黑板写项目一并删；
     - grants 点名的路径加进去；grant_all 时把注册表里给 AI 看的全加上。
     能力集是按 AI 类型收窄用的，所以默认不自动扩大，要加哪个必须点名。
@@ -220,21 +254,34 @@ def desired(capability, entries, grants=(), grant_all=False):
     for grant in grants:
         if grant not in allow:
             fail(f"{grant!r} 不在注册表给 AI 看的范围里，先登记")
+    check_renames(renames, allow)
+    # 旧名手误时一项都对不上，旧名随后会当成部署上限之外删掉；单独提示一行，方便和「删掉」对照。
+    hints = [f"提示：对照表里的 {old} 这份能力集没有（几份能力集共用一张表时正常）" for old, _ in renames
+             if not any(under(item, old) for item in whitelist + board)]
+    notes = [f"改名：{prefix} → {renamed(prefix, renames)}" for prefix in whitelist if renamed(prefix, renames) != prefix]
+    notes += [f"黑板写项目改名：{project} → {renamed(project, renames)}" for project in board
+              if renamed(project, renames) != project]
+    whitelist = [renamed(prefix, renames) for prefix in whitelist]
+    board = list(dict.fromkeys(renamed(project, renames) for project in board))
     dead = sorted(prefix for prefix in whitelist if not overlaps(prefix, allow))
     kept = [prefix for prefix in whitelist if prefix not in dead]
     wanted = allow if grant_all else list(grants)
-    added = sorted(path for path in wanted if not any(path == p or path.startswith(p + "/") for p in kept))
+    added = sorted(path for path in wanted if not any(under(path, p) for p in kept))
     updated = sorted(set(kept) | set(added))
     board_dead = sorted(project for project in board if not overlaps(project, allow))
-    notes = [f"删掉（部署上限之外）：{prefix}" for prefix in dead]
+    notes += [f"删掉（部署上限之外）：{prefix}" for prefix in dead]
     notes += [f"加上：{path}" for path in added]
     notes += [f"黑板写项目同步删掉：{project}" for project in board_dead]
     if not notes:
-        return None, ["读取白名单已经和注册表对得上，不用提案"]
+        return None, ["读取白名单已经和注册表对得上，不用提案"] + hints
+    left = [project for project in board if project not in board_dead]
+    # 黑板写入开着时 board_projects 不能为空（策略平面会拒收）；删光多半是库里改了名却没给 --rename。
+    if write.get("board") is True and board and not left:
+        fail("黑板写入开着，黑板写项目却全删光了：库里改了目录名的话，用 --rename 旧名 新名 把它们换成新名")
     result = json.loads(json.dumps(capability))
     result["read"]["project_whitelist"] = updated
-    result["write"]["board_projects"] = [project for project in board if project not in board_dead]
-    return result, notes
+    result["write"]["board_projects"] = left
+    return result, notes + hints
 
 
 def main(argv=None):
@@ -248,6 +295,8 @@ def main(argv=None):
     proposer.add_argument("--capability", required=True, help="现行能力集的 JSON 文件")
     proposer.add_argument("--grant", action="append", default=[], help="要加进读取白名单的路径，可重复")
     proposer.add_argument("--grant-all", action="store_true", help="把注册表里给 AI 看的全加上")
+    proposer.add_argument("--rename", action="append", nargs=2, default=[], metavar=("旧名", "新名"),
+                          help="库里改过名的目录：白名单和黑板写项目里的旧名换成新名，可重复")
     args = parser.parse_args(argv)
     try:
         if args.command == "check":
@@ -270,7 +319,8 @@ def main(argv=None):
                   file=sys.stderr)
             return 0
         capability = load_json(Path(args.capability).read_bytes())
-        result, notes = desired(capability, load_registry(ROOT), args.grant, args.grant_all)
+        renames = [(old, new) for old, new in args.rename]
+        result, notes = desired(capability, load_registry(ROOT), args.grant, args.grant_all, renames)
         for line in notes:
             print(line, file=sys.stderr)
         if result is not None:
