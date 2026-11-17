@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 """验收已部署的四个 HTTP 文本入口及拒绝门禁，不改变服务配置。
 用法：python3 scripts/check-agent-http.py <HTTP(S) origin> <token 文件>
-只输出已验证的新鲜度摘要。退出码 2 表示回执切换，可由调用方有限重试；其他失败为 1。
+同目录需要 check-agent.py（金丝雀项目与 INDEX 路径从那里取）。只输出已验证的新鲜度摘要。退出码 2 表示回执切换，可由调用方有限重试；其他失败为 1。
 """
 import argparse
 import http.client
+import importlib.util
 import json
+from pathlib import Path
 import re
 import sys
 import time
@@ -13,8 +15,13 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-PROJECT = "项目/Studiolo"
-INDEX_PATH = PROJECT + "/00-总览/INDEX.md"
+# 金丝雀项目只在 check-agent.py 定义一处（BUG-038：改名时漏改了写死的几份）；发行包里两者总在同一目录。
+sys.dont_write_bytecode = True
+_SPEC = importlib.util.spec_from_file_location("agent_check", Path(__file__).with_name("check-agent.py"))
+_CHECK = importlib.util.module_from_spec(_SPEC)
+_SPEC.loader.exec_module(_CHECK)
+PROJECT = _CHECK.PROJECT
+INDEX_PATH = _CHECK.INDEX_PATH
 MAX_RESPONSE_BYTES = 4 * 1024 * 1024 + 2048
 ULID = r"[0-7][0-9A-HJKMNP-TV-Z]{25}"
 FRESHNESS = re.compile(

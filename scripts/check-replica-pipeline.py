@@ -24,10 +24,13 @@ sys.dont_write_bytecode = True
 from replica_capture import archive, capture
 
 SCRIPTS = Path(__file__).resolve().parent
-INDEX = "项目/Studiolo/00-总览/INDEX.md"
 SPEC = importlib.util.spec_from_file_location("agent_check", SCRIPTS / "check-agent.py")
 CHECK = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(CHECK)
+# 夹具用上线探针的金丝雀项目：它不在 ALLOW 里时捕获不到，下面的四工具读取就会失败，
+# 这条管线因此也守着「探针项目必须在注册表里给 AI 看」（BUG-038）。
+PROJECT = CHECK.PROJECT
+INDEX = CHECK.INDEX_PATH
 
 
 def require(ok, message):
@@ -47,14 +50,14 @@ class Pipeline:
         self.source, self.remote, self.data = (root / name for name in ("source", "remote", "data"))
         self.proc = None
         write(self.source / INDEX, "# Studiolo · 总览\n\nFIRST_CONTENT\n")
-        write(self.source / "项目/Studiolo/remove.md", "# 待删除\n")
+        write(self.source / PROJECT / "remove.md", "# 待删除\n")
         write(self.source / "_规则/rules.md", "# 规则\n")
         # 捕获端对 ALLOW 里每个目录都 open_dir，缺一个即整批失败；从 ALLOW 派生避免漏建。
         for allow in ALLOW:
             (self.source / allow).mkdir(mode=0o700, parents=True, exist_ok=True)
-        (self.source / "项目/Studiolo/empty").mkdir(mode=0o700)
+        (self.source / PROJECT / "empty").mkdir(mode=0o700)
         write(self.source / "School/private.md", "DO_NOT_SEND\n")
-        write(self.source / "项目/Studiolo/.hidden", "DO_NOT_SEND\n")
+        write(self.source / PROJECT / ".hidden", "DO_NOT_SEND\n")
         (self.data / "audit").mkdir(mode=0o700, parents=True)
         self.data.chmod(0o700)
         self.admin("init")
@@ -231,8 +234,8 @@ class Pipeline:
 
     def four(self, receipt, content):
         texts = [self.call("handshake"), self.call("read_note", {"path": INDEX}),
-                 self.call("list_entries", {"project": "项目/Studiolo"}),
-                 self.call("search", {"project": "项目/Studiolo", "text": content})]
+                 self.call("list_entries", {"project": PROJECT}),
+                 self.call("search", {"project": PROJECT, "text": content})]
         for text in texts:
             require(receipt["generation"] in text and receipt["source_digest"] in text,
                     "四工具未绑定同一完整批次")
@@ -278,8 +281,8 @@ def run(binary):
             print("通过：上线探针（check-agent 三种凭据、副本回执、HTTP 外壳）对真实二进制全过")
 
             write(pipeline.source / INDEX, "# Studiolo · 总览\n\nSECOND_CONTENT\n")
-            (pipeline.source / "项目/Studiolo/remove.md").unlink()
-            write(pipeline.source / "项目/Studiolo/new.md", "# 新增\n")
+            (pipeline.source / PROJECT / "remove.md").unlink()
+            write(pipeline.source / PROJECT / "new.md", "# 新增\n")
             second = pipeline.push()
             second_texts = pipeline.four(second["receipt"], "SECOND_CONTENT")
             require("remove.md" not in second_texts[2] and "new.md" in second_texts[2], "新增/删除未生效")
@@ -308,8 +311,8 @@ def run(binary):
             before = live.read_bytes()
             live.write_bytes(before.replace(b"SECOND_CONTENT", b"TAMPER_CONTENT"))
             for name, args in (("handshake", {}), ("read_note", {"path": INDEX}),
-                               ("list_entries", {"project": "项目/Studiolo"}),
-                               ("search", {"project": "项目/Studiolo", "text": "CONTENT"})):
+                               ("list_entries", {"project": PROJECT}),
+                               ("search", {"project": PROJECT, "text": "CONTENT"})):
                 pipeline.call(name, args, denied=True)
             print("通过：同大小字节漂移立即阻断四工具供给")
             repaired = pipeline.push()

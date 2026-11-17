@@ -29,8 +29,9 @@ POLICY_SKILL = "摘要：演示\n触发：新功能\n\n# 演示\n正文。\n"
 LISTING_BREAKS = re.compile("[\x00-\x1f\x7f-\x9f\u2028\u2029]")
 
 
-def fixture_config(client="claude", url="http://127.0.0.1:4400/read"):
-    return {"schema_version": 1, "client": client, "project": "项目/Studiolo",
+def fixture_config(client="claude", url="http://127.0.0.1:4400/read", project="项目/Studiolo"):
+    # 单元测试用假服务，项目名随意；连真实 agent 的两条管线传探针的金丝雀项目，它必须在 ALLOW 里。
+    return {"schema_version": 1, "client": client, "project": project,
             "source_url": url, "token_env": "STUDIOLO_FIXTURE_TOKEN",
             "rules": ["_规则/rules.md"], "skills": []}
 

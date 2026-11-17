@@ -76,8 +76,8 @@ def run(binary):
         root = Path(tmp).resolve()
         p = PIPE.Pipeline(binary, root)
         try:
-            PIPE.write(p.source / "项目/Studiolo/CLAUDE.md", "# 项目规则\n只读参考。\n")
-            PIPE.write(p.source / "项目/Studiolo/04-协调/TASKS.md", "# BLACKBOARD_PRIVATE_STATE\n")
+            PIPE.write(p.source / PIPE.PROJECT / "CLAUDE.md", "# 项目规则\n只读参考。\n")
+            PIPE.write(p.source / PIPE.PROJECT / "04-协调/TASKS.md", "# BLACKBOARD_PRIVATE_STATE\n")
             PIPE.write(p.source / "_规则/skills/demo/SKILL.md",
                        "---\nname: demo\ndescription: 虚构参考\n---\n读取 references/detail.md。\n")
             PIPE.write(p.source / "_规则/skills/demo/references/detail.md", "# 技能细则\nFIRST_RULE\n")
@@ -93,8 +93,8 @@ def run(binary):
             require(p.token not in probe.stdout + probe.stderr, "HTTP探针泄露凭据")
             require(probe.returncode == 0, "真实 HTTP 发布探针失败：" + probe.stderr.strip())
             token_path.unlink()
-            cfg = fixture_config(url=p.url.replace("/mcp", "/read"))
-            cfg["rules"].append("项目/Studiolo/CLAUDE.md")
+            cfg = fixture_config(url=p.url.replace("/mcp", "/read"), project=PIPE.PROJECT)
+            cfg["rules"].append(PIPE.PROJECT + "/CLAUDE.md")
             cfg["skills"] = ["_规则/skills/demo"]
             cfg_path, out, target = (root / name for name in ("config.json", "bundle", "client"))
             PIPE.write(cfg_path, json.dumps(cfg, ensure_ascii=False))

@@ -19,6 +19,8 @@ from replica_store import Store
 spec = importlib.util.spec_from_file_location("receiver_tests", Path(__file__).with_name("test-replica-receiver.py"))
 fixtures = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(fixtures)
+# 反例必须落在白名单里的项目下，否则会因「不在白名单」被拒而空过，验不到要验的那条规则。
+PROJECT = fixtures.PROJECT
 
 
 class BoundaryTests(unittest.TestCase):
@@ -28,12 +30,12 @@ class BoundaryTests(unittest.TestCase):
     state = fixtures.ReceiverTests.state
     def test_archive_paths_types_and_duplicate_members_rejected(self):
         cases = (("../../escape", tarfile.REGTYPE), ("/tmp/escape", tarfile.REGTYPE),
-                 ("vault/项目/Studiolo/.hidden", tarfile.REGTYPE),
-                 ("vault/项目/Studiolo/link", tarfile.SYMTYPE),
-                 ("vault/项目/Studiolo/hard", tarfile.LNKTYPE),
-                 ("vault/项目/Studiolo/fifo", tarfile.FIFOTYPE),
+                 (f"vault/{PROJECT}/.hidden", tarfile.REGTYPE),
+                 (f"vault/{PROJECT}/link", tarfile.SYMTYPE),
+                 (f"vault/{PROJECT}/hard", tarfile.LNKTYPE),
+                 (f"vault/{PROJECT}/fifo", tarfile.FIFOTYPE),
                  ("manifest.json", tarfile.REGTYPE),
-                 ("vault/项目/Studiolo/encoded%2e", tarfile.REGTYPE))
+                 (f"vault/{PROJECT}/encoded%2e", tarfile.REGTYPE))
         for name, kind in cases:
             with self.subTest(path=name, kind=kind):
                 def edit(member, body):
@@ -50,18 +52,18 @@ class BoundaryTests(unittest.TestCase):
         variants = []
         duplicate = encode(value).replace(b'"schema_version":1', b'"schema_version":1,"schema_version":1')
         variants.append(duplicate)
-        for update in (lambda v: v.update(allow=["项目/Studiolo"]),
+        for update in (lambda v: v.update(allow=[PROJECT]),
                        lambda v: v["entries"][-1].update(bytes=129 * 1024 * 1024),
                        lambda v: v["entries"][-1].update(sha256="A" * 64),
                        lambda v: v["entries"][-1].update(bytes=True),
                        lambda v: v["entries"].reverse(),
-                       lambda v: v["entries"][-1].update(path="项目/Studiolo/NFD-e\u0301.md")):
+                       lambda v: v["entries"][-1].update(path=f"{PROJECT}/NFD-e\u0301.md")):
             copy_value = json.loads(encode(value))
             update(copy_value)
             variants.append(encode(copy_value))
         collision = {"schema_version": 1, "allow": value["allow"], "entries": [
-            {"path": "项目/Studiolo/A.md", "kind": "file", "bytes": 0, "sha256": digest(b"")},
-            {"path": "项目/Studiolo/a.md", "kind": "file", "bytes": 0, "sha256": digest(b"")} ]}
+            {"path": f"{PROJECT}/A.md", "kind": "file", "bytes": 0, "sha256": digest(b"")},
+            {"path": f"{PROJECT}/a.md", "kind": "file", "bytes": 0, "sha256": digest(b"")} ]}
         variants.append(encode(collision))
         for raw in variants:
             with self.subTest(raw=raw[:40]):

@@ -15,12 +15,19 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "scripts"))
 from replica_common import ALLOW  # noqa: E402
+import importlib.util
 import tempfile
 import time
 import types
 import unittest
 
 TOOL = Path(__file__).with_name("pack_offline.py")
+# 夹具项目取上线探针的金丝雀项目，它总在注册表生成的 ALLOW 里（BUG-038：写死的旧名改名后落到白名单外）。
+_SPEC = importlib.util.spec_from_file_location(
+    "agent_check", Path(__file__).resolve().parents[3] / "scripts/check-agent.py")
+_CHECK = importlib.util.module_from_spec(_SPEC)
+_SPEC.loader.exec_module(_CHECK)
+PROJECT = _CHECK.PROJECT
 SOURCE = None
 
 
@@ -57,7 +64,7 @@ class OfflineTests(unittest.TestCase):
         self.write(self.replica / "sync.lock", b"")
         raw = b"fictional note\n"
         manifest = {"schema_version": 1, "allow": list(ALLOW), "entries": [
-            {"path": "项目/Studiolo/note.md", "kind": "file", "bytes": len(raw), "sha256": hashlib.sha256(raw).hexdigest()}]}
+            {"path": f"{PROJECT}/note.md", "kind": "file", "bytes": len(raw), "sha256": hashlib.sha256(raw).hexdigest()}]}
         encoded = json.dumps(manifest, ensure_ascii=False).encode()
         for generation in ("a" * 32, "b" * 32):
             release = self.replica / "releases" / generation
@@ -67,7 +74,7 @@ class OfflineTests(unittest.TestCase):
             for allow in ALLOW:
                 (release / "vault" / allow).mkdir(mode=0o700, parents=True, exist_ok=True)
             self.write(release / "manifest.json", encoded)
-            self.write(release / "vault/项目/Studiolo/note.md", raw)
+            self.write(release / f"vault/{PROJECT}/note.md", raw)
         now = time.time_ns() // 1_000_000
         state = {"schema_version": 1, "status": "ready", "last_attempt_at_ms": now, "last_error": None,
                  "receipt": {"generation": "a" * 32, "source_digest": hashlib.sha256(encoded).hexdigest(),
