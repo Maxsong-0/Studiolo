@@ -7,7 +7,9 @@ use super::backup::span;
 use crate::backup::{
     CheckMark, CheckProblem, CheckVerdict, RepositoryCheckEvidence, RepositoryChecks,
 };
-use studiolo_backup::worker::repository_check::{CHECK_BUCKETS, CheckResult, IncompleteReason};
+use studiolo_backup::worker::repository_check::{
+    CHECK_BUCKETS, CHECK_WINDOW, CheckResult, IncompleteReason,
+};
 use studiolo_observability::health::{HealthSection, HealthState};
 
 /// 本节的稳定机器码。
@@ -52,18 +54,25 @@ fn state(verdict: CheckVerdict) -> HealthState {
 }
 
 fn detail(checks: &RepositoryChecks) -> String {
+    // 「多久之前」；时刻晚于本地时钟（时钟早于账本）时直说，不编时长。
     let ago = |at_ms: i64| {
-        u64::try_from(checks.now_ms.saturating_sub(at_ms))
-            .map_or_else(|_| "未知时长".to_owned(), span)
+        u64::try_from(checks.now_ms.saturating_sub(at_ms)).map_or_else(
+            |_| "在晚于本地时钟的时刻".to_owned(),
+            |gap| format!("{}前", span(gap)),
+        )
     };
     let running = checks.running.map_or_else(String::new, |running| {
         format!("；第 {} 组正在查", running.bucket)
     });
+    let (hours, days) = (
+        RepositoryChecks::FRESHNESS_HOURS,
+        RepositoryChecks::COVERAGE_DAYS,
+    );
     match checks.verdict() {
         CheckVerdict::Problem => problem_text(checks, &ago),
         CheckVerdict::Stale => {
             let base = match checks.last_clean_ms() {
-                Some(at) => format!("最近一次干净的检查是 {}前，超过 72 小时", ago(at)),
+                Some(at) => format!("最近一次干净的检查是 {}，超过 {hours} 小时", ago(at)),
                 None => format!(
                     "从开始服务或第一次尝试算起已经 {}，还没有一次干净的检查",
                     checks
@@ -76,7 +85,7 @@ fn detail(checks: &RepositoryChecks) -> String {
         CheckVerdict::CoverageOverdue => {
             let overdue = checks.overdue_buckets();
             format!(
-                "首轮之后每组 32 天内都要读一遍：{}超过 32 天没读干净",
+                "首轮之后每组 {days} 天内都要读一遍：{}超过 {days} 天没读干净",
                 bucket_list(&overdue)
             )
         }
@@ -84,22 +93,21 @@ fn detail(checks: &RepositoryChecks) -> String {
             "本地时钟早于账本里的检查时刻，或者读不到起算时刻，判断不了".to_owned()
         }
         CheckVerdict::NotYet => {
-            let left = checks.since_clean_ms().map_or_else(
-                || "未知时长".to_owned(),
-                |gap| span((72 * 3_600_000_u64).saturating_sub(gap)),
-            );
+            let left = checks
+                .freshness_left_ms()
+                .map_or_else(|| "未知时长".to_owned(), span);
             format!(
-                "还没有干净的检查，离 72 小时的期限还有 {left}{}{running}",
+                "还没有干净的检查，离 {hours} 小时的期限还有 {left}{}{running}",
                 latest_text(checks.latest, &ago)
             )
         }
         CheckVerdict::Healthy => {
             let last = checks
                 .last_clean_ms()
-                .map_or_else(|| "未知时长".to_owned(), ago);
+                .map_or_else(|| "未知时刻".to_owned(), ago);
             let coverage = if checks.first_cycle_done() == Some(true) {
                 format!(
-                    "32 天内 {CHECK_BUCKETS} 组都读过，最久的一组 {}前",
+                    "{days} 天内 {CHECK_BUCKETS} 组都读过，最久的一组 {}前",
                     checks
                         .oldest_clean_ms()
                         .map_or_else(|| "未知时长".to_owned(), span)
@@ -110,7 +118,7 @@ fn detail(checks: &RepositoryChecks) -> String {
                     checks.fresh_buckets()
                 )
             };
-            format!("最近一次干净的检查是 {last}前；{coverage}{running}")
+            format!("最近一次干净的检查是 {last}；{coverage}{running}")
         }
     }
 }
@@ -149,7 +157,7 @@ fn problem_text(checks: &RepositoryChecks, ago: &dyn Fn(i64) -> String) -> Strin
         String::new()
     };
     format!(
-        "第 {bucket} 组 {}前{what}{repeated}{more}；同一组重查干净前一直显示",
+        "第 {bucket} 组 {}{what}{repeated}{more}；同一组重查干净前一直显示",
         ago(at_ms)
     )
 }
@@ -165,21 +173,21 @@ fn latest_text(latest: Option<CheckMark>, ago: &dyn Fn(i64) -> String) -> String
         CheckResult::Incomplete => format!("没做完（{}）", reason_text(mark.reason)),
     };
     format!(
-        "；最近一次是 {}前第 {} 组，{result}",
+        "；最近一次是 {}第 {} 组，{result}",
         ago(mark.at_ms),
         mark.bucket
     )
 }
 
-fn reason_text(reason: Option<IncompleteReason>) -> &'static str {
+fn reason_text(reason: Option<IncompleteReason>) -> String {
     match reason {
-        Some(IncompleteReason::Preempted) => "让给了备份作业",
-        Some(IncompleteReason::Deadline) => "超过 20 分钟",
-        Some(IncompleteReason::OutputLimit) => "输出超过上限",
-        Some(IncompleteReason::Protocol) => "输出和固定版本对不上",
-        Some(IncompleteReason::Unavailable) => "没装配起来",
-        Some(IncompleteReason::Abandoned) => "worker 中途没了",
-        None => "原因不明",
+        Some(IncompleteReason::Preempted) => "让给了备份作业".to_owned(),
+        Some(IncompleteReason::Deadline) => format!("超过 {} 分钟", CHECK_WINDOW.as_secs() / 60),
+        Some(IncompleteReason::OutputLimit) => "输出超过上限".to_owned(),
+        Some(IncompleteReason::Protocol) => "输出和固定版本对不上".to_owned(),
+        Some(IncompleteReason::Unavailable) => "没装配起来".to_owned(),
+        Some(IncompleteReason::Abandoned) => "worker 中途没了".to_owned(),
+        None => "原因不明".to_owned(),
     }
 }
 

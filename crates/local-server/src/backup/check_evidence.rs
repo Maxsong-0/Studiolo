@@ -3,7 +3,12 @@
 //! 降级：有组最近一次有结论的结果是查出问题（一次就算，直到同一组重查干净）；超过 72 小时没有
 //! 一次干净的检查；首轮之后有组超过 32 天没读干净。未知：本地时钟早于账本、还没有干净的检查且
 //! 不满 72 小时。其余正常，首轮里也正常，正文写明读了几组。
-use super::checks::{COVERAGE_MS, Checks, Conclusive, FRESHNESS_MS};
+//!
+//! 本地时钟早于账本时，算出来的间隔只会偏短：据此判出的过期、覆盖逾期一定成立，照样报降级；
+//! 判不出问题时才说未知，不说正常。
+use super::checks::{
+    COVERAGE_DAYS, COVERAGE_MS, Checks, Conclusive, FRESHNESS_HOURS, FRESHNESS_MS,
+};
 use studiolo_backup::worker::repository_check::{CHECK_BUCKETS, CheckResult, IncompleteReason};
 
 const BUCKETS: usize = CHECK_BUCKETS as usize;
@@ -76,7 +81,7 @@ pub enum CheckVerdict {
     Stale,
     /// 首轮之后有组超过 32 天没读干净。
     CoverageOverdue,
-    /// 本地时钟早于账本里的抽查时刻，或读不到起算点。
+    /// 本地时钟早于账本里的抽查时刻，或读不到起算点；能证实的过期、覆盖逾期排在它前面。
     ClockBehind,
     /// 还没有干净的检查，也还没到 72 小时。
     NotYet,
@@ -85,6 +90,11 @@ pub enum CheckVerdict {
 }
 
 impl RepositoryChecks {
+    /// 超过多少小时没有一次干净的检查算降级；正文和判断用同一个常量。
+    pub const FRESHNESS_HOURS: i64 = FRESHNESS_HOURS;
+    /// 首轮之后，一组超过多少天没读干净算降级；正文和判断用同一个常量。
+    pub const COVERAGE_DAYS: i64 = COVERAGE_DAYS;
+
     /// 由生产者的账本视图算出；`anchor_ms` 由生产者从开始服务和账本里的第一次尝试算好传进来。
     pub(super) fn from_view(now_ms: i64, anchor_ms: Option<i64>, checks: &Checks) -> Self {
         let mut last_clean_ms = [None; BUCKETS];
@@ -138,17 +148,29 @@ impl RepositoryChecks {
         elapsed(self.now_ms, self.last_clean_ms().or(self.anchor_ms)?)
     }
 
+    /// 离「超过 72 小时没有干净的检查」还剩多久；时钟早于起算点、读不到起算点为 `None`。
+    #[must_use]
+    pub fn freshness_left_ms(&self) -> Option<u64> {
+        self.since_clean_ms()
+            .map(|gap| span(FRESHNESS_MS).saturating_sub(gap))
+    }
+
     /// 首轮读完了没有：当前仓库有结果满 32 天。还没有结果、时钟早于它为 `None`。
     #[must_use]
     pub fn first_cycle_done(&self) -> Option<bool> {
         elapsed(self.now_ms, self.repository_since_ms?).map(|gap| gap > span(COVERAGE_MS))
     }
 
-    /// 超过 32 天没读干净（含从没读干净）的组号。
+    /// 超过 32 天没读干净（含从没读干净）的组号。读干净的时刻晚于本地时钟的那组判断不了，不算。
     #[must_use]
     pub fn overdue_buckets(&self) -> Vec<u8> {
-        self.bucket_ages()
-            .filter(|(_, age)| age.is_none_or(|age| age > span(COVERAGE_MS)))
+        (1..=CHECK_BUCKETS)
+            .zip(&self.last_clean_ms)
+            .filter(|(_, at)| {
+                at.is_none_or(|at| {
+                    elapsed(self.now_ms, at).is_some_and(|age| age > span(COVERAGE_MS))
+                })
+            })
             .map(|(bucket, _)| bucket)
             .collect()
     }
@@ -167,26 +189,28 @@ impl RepositoryChecks {
         self.bucket_ages().filter_map(|(_, age)| age).max()
     }
 
-    /// 已知的问题排在判断不了前面。
+    /// 已知的问题排在判断不了前面。本地时钟早于账本时算出的间隔只会偏短，所以按它判出的过期、
+    /// 覆盖逾期一定成立；判不出问题时才因为时钟说未知，不说正常也不说还没到期。
     #[must_use]
     pub fn verdict(&self) -> CheckVerdict {
         if !self.problems.is_empty() {
             return CheckVerdict::Problem;
         }
-        if self
-            .latest_record_ms
-            .is_some_and(|latest| self.now_ms < latest)
+        let since_clean = self.since_clean_ms();
+        if since_clean.is_some_and(|gap| gap > span(FRESHNESS_MS)) {
+            return CheckVerdict::Stale;
+        }
+        if self.first_cycle_done() == Some(true) && !self.overdue_buckets().is_empty() {
+            return CheckVerdict::CoverageOverdue;
+        }
+        if since_clean.is_none()
+            || self
+                .latest_record_ms
+                .is_some_and(|latest| self.now_ms < latest)
         {
             return CheckVerdict::ClockBehind;
         }
-        let Some(since_clean) = self.since_clean_ms() else {
-            return CheckVerdict::ClockBehind;
-        };
-        if since_clean > span(FRESHNESS_MS) {
-            CheckVerdict::Stale
-        } else if self.first_cycle_done() == Some(true) && !self.overdue_buckets().is_empty() {
-            CheckVerdict::CoverageOverdue
-        } else if self.last_clean_ms().is_none() {
+        if self.last_clean_ms().is_none() {
             CheckVerdict::NotYet
         } else {
             CheckVerdict::Healthy

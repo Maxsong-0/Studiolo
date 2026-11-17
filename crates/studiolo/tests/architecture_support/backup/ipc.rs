@@ -45,11 +45,14 @@ pub(super) fn fixed_binding(path: &Path, source: &str) -> bool {
             "ifletOk(request)=RepositoryCheckReport::decode(bytes){ifrequest.target()!=TARGET{returnErr(AuditError::Serialization);}returnself.report_check(&request);}",
         ]
     } else if path.ends_with("crates/local-server/src/backup/producer/check.rs") {
-        // 抽查只在空闲时派：在封存、有作业没收口、上一组还在查都不派。结果要在账本里找到同一检查键、
-        // 本目标的原意图才落账；原意图只取一条，多了就是账本坏了。
+        // 抽查只在空闲时派：在封存、有作业没收口、上一组还在查都不派。挂满时限的原意图先由生产者补
+        // 「中途没了」，生产入口只用真实时钟。结果要在账本里找到同一检查键、本目标的原意图才落账；
+        // 原意图只取一条，多了就是账本坏了。
         &[
+            "pub(super)fnrepository_check(&self)->Result<QueueAnswer,AuditError>{self.repository_check_with(now_millis)}",
             "ifstate.busy{returnOk(QueueAnswer::Outstanding);}",
             "ifstate.queue.outstanding(){returnOk(QueueAnswer::Outstanding);}",
+            "letabandoned=state.queue.checks().abandoned(now);forkeyin&abandoned{self.ledger.append(check_abandoned(key).map_err(|_|AuditError::Serialization)?)?;}",
             "ifchecks.running(now).is_some(){returnOk(QueueAnswer::Outstanding);}",
             "ifrecord.event()!=&expected{returnErr(AuditError::CorruptStore);}",
             ".check_intent_record(&event)?.ok_or(AuditError::Unavailable)?;",

@@ -14,7 +14,7 @@ use studiolo_audit_ledger::AuditPhase;
 use studiolo_audit_ledger::AuditRecord;
 type Result<T> = std::result::Result<T, AuditMessageError>;
 
-/// 队列命令；和带键的审计消息字段不同，两种消息互相解不出来。
+/// 队列命令；和带键的审计消息、抽查结果上报字段都不同，三种消息互相解不出来。
 pub struct BackupQueueRequest(Fields);
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

@@ -168,7 +168,7 @@ struct Streams<'a, S> {
     input: Option<&'a [u8]>,
     /// stderr 最多收多少字节，超了算输出越界。
     stderr_limit: u64,
-    /// 等输出时每一轮都问；报错就结束整组进程，返回这个错误。
+    /// 子进程还没退出的每一轮都问；报错就结束整组进程，返回这个错误。退出以后只剩读空管道，不再问。
     interrupt: &'a dyn Fn() -> Result<()>,
 }
 fn execute_with<S: Sink>(
@@ -243,12 +243,14 @@ fn capture<S: Sink>(
             return Err(ProcessError::Deadline);
         }
         check_source_time()?;
-        interrupt()?;
         let input_progress = input.write()?;
         let stdout_progress = stdout.read()?;
         let stderr_progress = stderr.read()?;
-        if child.exited()? {
-            // 即使 leader 正常退出，也先结束可能继承输出管道的子孙，防止永远等 EOF。
+        // 还在跑才问要不要让路：退出以后只剩读空管道，查完的结果不会因为刚好来了作业被丢掉。
+        // 退出了也先结束可能继承输出管道的子孙，防止永远等 EOF。
+        if !child.exited()? {
+            interrupt()?;
+        } else {
             child.kill_group()?;
             if stdout.eof && stderr.eof {
                 if !input.finished() {

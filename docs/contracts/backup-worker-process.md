@@ -139,8 +139,9 @@ restic 的出口：
 
 没有待办作业时，常驻循环先交上一次没交上的抽查结果，再用队列命令 `repository_check` 问生产者要不要查一组；
 派下来就由 `repository_check` 执行器跑 `check --no-lock --read-data-subset <n>/30`。它不碰正文和封存、不需要作业准入，
-和作业共用固定包、凭据、空环境、进程组回收和时钟检查（`Runtime::check_subset`），一次最多 20 分钟。
-等输出时每 30 秒问一次「下一个待办」，有就结束整组进程让路（`ProcessError::Interrupted`）；这个回调只在等输出时问，
-跑完之后不再问，已经查完的结果不会因为刚好来了作业被丢掉。结果经 `RepositoryCheckReport` 交给生产者落账，
+和作业共用固定包、凭据、空环境、进程组回收和时钟检查（`Runtime::check_subset`），一次最多 20 分钟（共用包的
+`CHECK_WINDOW`）。等输出时每 30 秒问一次「下一个待办」，有就结束整组进程让路（`ProcessError::Interrupted`）；
+这个回调只在子进程还没退出时问，退出以后只剩读空管道、不再问，已经查完的结果不会因为刚好来了作业被丢掉
+（`a_check_whose_leader_has_exited_is_not_asked_to_yield_while_its_output_drains`）。结果经 `RepositoryCheckReport` 交给生产者落账，
 交不上留在内存里、留满 1 小时放弃。清理没能证实照旧让 worker 退出，不上报。
 节奏、组号、结果分类和维护围栏见[仓库抽查契约](backup-repository-check.md)。

@@ -1,18 +1,15 @@
 //! 仓库每日轮流抽查的执行器：只跑生产者派下的那一组 `check --no-lock --read-data-subset n/30`。
 //!
 //! 不碰正文和封存，也不需要作业准入；固定包、凭据和进程边界和作业共用 [`Runtime`]。一次最多
-//! 20 分钟，`interrupt` 报有作业进队就停下让路。所有失败都归成「没做完」交回生产者落账，
-//! 只有子进程清理没能证实时不上报、由调用方让整个 worker 退出。
+//! 20 分钟（共用包的 `CHECK_WINDOW`），`interrupt` 报有作业进队就停下让路。所有失败都归成「没做完」
+//! 交回生产者落账，只有子进程清理没能证实时不上报、由调用方让整个 worker 退出。
 use crate::{ProcessError, ResticCredentials, WorkerConfig, runtime::Runtime};
-use std::time::{Duration, Instant};
+use std::time::Instant;
 use studiolo_backup::worker::{
     repository_check::{CheckAssignment, CheckOutcome, IncompleteReason, classify_check_output},
     restic::{CredentialHolder, ResticCommand, ResticIdentity, ResticInvocation},
 };
 use studiolo_process_safety::Residency;
-
-/// 一次抽查的最长时间；超了算没做完，不让检查长时间挡住备份。
-pub(crate) const CHECK_WINDOW: Duration = Duration::from_secs(20 * 60);
 
 /// 跑一次抽查的结局。
 #[derive(Debug, PartialEq, Eq)]
@@ -30,7 +27,8 @@ pub(crate) fn run(
     assignment: &CheckAssignment,
     interrupt: &dyn Fn() -> crate::Result<()>,
 ) -> Checked {
-    let deadline = Instant::now() + CHECK_WINDOW;
+    // 写全路径：生产者判断「中途没了」的时限也从这个常量算，本地同名常量顶替不了它。
+    let deadline = Instant::now() + studiolo_backup::worker::repository_check::CHECK_WINDOW;
     let output = ResticCredentials::load(residency, config, deadline)
         .and_then(|credentials| Runtime::open(config, credentials, deadline))
         .and_then(|runtime| {

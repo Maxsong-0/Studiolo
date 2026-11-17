@@ -17,6 +17,15 @@ impl BackupProducer {
     /// 空闲的 worker 问该不该抽查：有作业没收口、在封存就先做作业；先补中途没了的原意图，
     /// 再按账本定节奏和组号，到期就把原意图落账，回它的回执。
     pub(super) fn repository_check(&self) -> Result<QueueAnswer, AuditError> {
+        self.repository_check_with(now_millis)
+    }
+
+    /// 同上，当前时刻由 `clock` 给，拿到状态锁、读完账本之后才取。生产只经上面那个入口用真实时钟；
+    /// 测试用它把时间往后推，账本里的时刻照样是真实的落账时刻。
+    pub(crate) fn repository_check_with(
+        &self,
+        clock: impl FnOnce() -> Result<i64, AuditError>,
+    ) -> Result<QueueAnswer, AuditError> {
         let mut state = self.state.lock().map_err(|_| AuditError::Unavailable)?;
         if state.busy {
             return Ok(QueueAnswer::Outstanding);
@@ -25,7 +34,7 @@ impl BackupProducer {
         if state.queue.outstanding() {
             return Ok(QueueAnswer::Outstanding);
         }
-        let now = now_millis()?;
+        let now = clock()?;
         let abandoned = state.queue.checks().abandoned(now);
         for key in &abandoned {
             self.ledger

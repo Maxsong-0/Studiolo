@@ -17,8 +17,8 @@ use studiolo_audit_ledger::AuditRecord;
 use studiolo_backup::worker::{
     recovery_point::BackupTargetKind,
     repository_check::{
-        CheckBucket, CheckEvent, CheckKey, CheckOutcome, CheckPurpose, CheckRecorder, CheckResult,
-        RepositoryDigest, read_check_event,
+        CHECK_WINDOW, CheckBucket, CheckEvent, CheckKey, CheckOutcome, CheckPurpose, CheckRecorder,
+        CheckResult, RepositoryDigest, read_check_event,
     },
 };
 
@@ -31,12 +31,17 @@ pub(super) const FIRST_RETRY_AFTER_MS: i64 = HOUR_MS;
 pub(super) const REPEAT_RETRY_AFTER_MS: i64 = 24 * HOUR_MS;
 /// 两次重查的原意图之间至少隔多久。
 pub(super) const RETRY_SPACING_MS: i64 = HOUR_MS;
-/// 原意图挂了多久算 worker 中途没了：一次检查最多 20 分钟，再留 10 分钟余量。
-pub(super) const ABANDON_AFTER_MS: i64 = 30 * 60_000;
-/// 健康页：超过这么久没有一次干净的检查算降级。
-pub(super) const FRESHNESS_MS: i64 = 72 * HOUR_MS;
-/// 健康页：首轮之后，一组超过这么久没读干净算降级（一圈 30 天，留 2 天余量）。
-pub(super) const COVERAGE_MS: i64 = 32 * 24 * HOUR_MS;
+/// 原意图挂了多久算 worker 中途没了：worker 一次最多查 `CHECK_WINDOW`（20 分钟），再留 10 分钟余量，
+/// 共 30 分钟。时限比窗口短的话，还在查的那组会被补成「中途没了」，worker 交来的结果被拒。
+pub(super) const ABANDON_AFTER_MS: i64 = CHECK_WINDOW.as_millis() as i64 + 10 * 60_000;
+/// 健康页：超过这么多小时没有一次干净的检查算降级。
+pub(super) const FRESHNESS_HOURS: i64 = 72;
+/// 同上，换成毫秒；判断和正文都从 `FRESHNESS_HOURS` 来。
+pub(super) const FRESHNESS_MS: i64 = FRESHNESS_HOURS * HOUR_MS;
+/// 健康页：首轮之后，一组超过这么多天没读干净算降级（一圈 30 天，留 2 天余量）。
+pub(super) const COVERAGE_DAYS: i64 = 32;
+/// 同上，换成毫秒；判断和正文都从 `COVERAGE_DAYS` 来。
+pub(super) const COVERAGE_MS: i64 = COVERAGE_DAYS * 24 * HOUR_MS;
 
 /// 有原意图、还没有结果的一次检查。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

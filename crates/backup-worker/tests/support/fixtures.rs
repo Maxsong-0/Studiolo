@@ -177,6 +177,48 @@ fn repository_checks_yield_on_request_and_bound_stderr_at_four_mebibytes() {
 }
 
 #[test]
+fn a_check_whose_leader_has_exited_is_not_asked_to_yield_while_its_output_drains() {
+    let temp = tempfile::tempdir().unwrap();
+    let package = package();
+    let credentials = ResticCredentials::fixture(&temp.path().join("password"));
+    let leader = temp.path().join("leader-pid");
+    // 领头进程退出后（回收之前是 zombie）又被问了几次让路。判断退出和问让路之间那一瞬最多碰上一次；
+    // 这里只计数、不报错，免得那一瞬让用例偶发失败。
+    let asked_after_exit = std::cell::Cell::new(0_u32);
+    let started = Instant::now();
+    let output = process::run_check(
+        &package,
+        &args("child_exits_before_output_closes"),
+        &credentials,
+        temp.path(),
+        deadline(),
+        &|| Ok(()),
+        &|| {
+            let exited = fs::read_to_string(&leader)
+                .ok()
+                .and_then(|pid| fs::read_to_string(format!("/proc/{}/stat", pid.trim())).ok())
+                .is_some_and(|stat| {
+                    stat.rsplit_once(") ")
+                        .is_some_and(|(_, rest)| rest.starts_with('Z'))
+                });
+            if exited {
+                asked_after_exit.set(asked_after_exit.get() + 1);
+            }
+            Ok(())
+        },
+    )
+    .unwrap();
+    assert!(output.success);
+    // 输出管道由另一个进程组拿着 1.5 秒：确实有一段「领头已退出、还在读空管道」的时间。
+    assert!(started.elapsed() >= Duration::from_secs(1));
+    assert!(
+        asked_after_exit.get() <= 1,
+        "领头进程退出后又问了 {} 次让路",
+        asked_after_exit.get()
+    );
+}
+
+#[test]
 #[ignore = "由父测试作为真实独立子进程调用"]
 fn child_environment() {
     assert!(std::env::var_os("STUDIOLO_INHERITED_POISON").is_none());
@@ -222,6 +264,29 @@ fn child_leaves_descendant() {
     println!("descendant={}", child.id());
     std::io::stdout().flush().unwrap();
     std::mem::forget(child);
+}
+#[test]
+#[ignore = "由父测试作为真实独立子进程调用"]
+fn child_exits_before_output_closes() {
+    use std::os::unix::process::CommandExt as _;
+    let temporary = std::env::var_os("TMPDIR").unwrap();
+    fs::write(
+        Path::new(&temporary).join("leader-pid"),
+        std::process::id().to_string(),
+    )
+    .unwrap();
+    // 自成一个进程组：领头进程退出后结束原进程组也收不到它，输出管道要等它自己退出才读到 EOF。
+    let holder = Command::new(std::env::current_exe().unwrap())
+        .args(args("child_holds_output"))
+        .process_group(0)
+        .spawn()
+        .unwrap();
+    std::mem::forget(holder);
+}
+#[test]
+#[ignore = "由父测试作为真实独立子进程调用"]
+fn child_holds_output() {
+    std::thread::sleep(Duration::from_millis(1500));
 }
 #[test]
 #[ignore = "由父测试作为真实独立子进程调用"]

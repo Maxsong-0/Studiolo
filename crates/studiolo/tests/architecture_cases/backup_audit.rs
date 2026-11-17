@@ -182,4 +182,22 @@ fn producer_socket_and_schedule_are_closed_capabilities() {
             "{anchor}"
         );
     }
+    // 挂满时限的原意图由生产者补「中途没了」，不能删掉这一步；生产入口不能换成假时钟。
+    for (before, after) in [
+        (
+            "for key in &abandoned {",
+            "for key in &Vec::<CheckKey>::new() {",
+        ),
+        ("check_abandoned(key)", "check_intent(&assignment, TARGET)"),
+        (
+            "self.repository_check_with(now_millis)",
+            "self.repository_check_with(|| Ok(0))",
+        ),
+    ] {
+        assert!(source.contains(before), "{before}");
+        assert!(
+            !source_violations(crate_name, path, &source.replacen(before, after, 1)).is_empty(),
+            "{before}"
+        );
+    }
 }

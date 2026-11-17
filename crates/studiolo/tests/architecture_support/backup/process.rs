@@ -200,7 +200,8 @@ pub(super) fn remainder(path: &Path, source: &str) -> String {
                 "child.kill_group()?;",
                 "ifInstant::now()>=deadline",
                 "letresult=capture(&mutchild,deadline,check_source_time,streams);",
-                "check_source_time()?;interrupt()?;",
+                // 让路只在子进程还没退出时问；退出了先结束整组，再等两根管道读空。
+                "if!child.exited()?{interrupt()?;}else{child.kill_group()?;",
                 "Capture::new(child.stderr()?,Discarded::new(streams.stderr_limit))?",
                 "constSTDERR_LIMIT:u64=64*1024;",
                 "constCHECK_STDERR_LIMIT:u64=4*1024*1024;",
@@ -215,6 +216,8 @@ pub(super) fn remainder(path: &Path, source: &str) -> String {
                     "command.args(argv).env_clear().env(\"TMPDIR\",temporary).current_dir(\"/\").stdin(ifstreams.input.is_some(){Stdio::piped()}else{Stdio::null()}).stdout(Stdio::piped()).stderr(Stdio::piped()).process_group(0)",
                     1,
                 ),
+                // 只有上面那一处问让路；别处再加一次（比如挪回每轮开头）就判红。
+                ("interrupt()", 1),
             ],
         );
     }

@@ -54,11 +54,14 @@ pub(super) fn fixed_binding(path: &Path, source: &str) -> bool {
             "self.source.deadline(),&source_time",
             "self.source.check()?;parse_output(&output)",
         ]
+    } else if path.ends_with("crates/backup/src/worker/repository_check.rs") {
+        // 抽查窗口只定在这一处：worker 的截止时间、生产者补「中途没了」的时限、健康页正文都从它算。
+        &["pubconstCHECK_WINDOW:Duration=Duration::from_secs(20*60);"]
     } else if path.ends_with("crates/backup-worker/src/repository_check.rs") {
-        // 抽查只跑派下的那一组、只用追加身份、最多 20 分钟；清理没能证实必须退出，不能归成没做完。
+        // 抽查只跑派下的那一组、只用追加身份、最多 20 分钟（共用包的窗口，写全路径，本地同名常量顶替不了）；
+        // 清理没能证实必须退出，不能归成没做完。
         &[
-            "CHECK_WINDOW:Duration=Duration::from_secs(20*60);",
-            "letdeadline=Instant::now()+CHECK_WINDOW;",
+            "letdeadline=Instant::now()+studiolo_backup::worker::repository_check::CHECK_WINDOW;",
             "&ResticCommand::CheckSubset{bucket:assignment.key.bucket}",
             "CredentialHolder::BackupWorker,ResticIdentity::Append",
             "runtime.check_subset(invocation.argv(),interrupt)",

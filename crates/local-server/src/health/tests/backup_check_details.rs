@@ -143,6 +143,41 @@ fn buckets_unread_for_32_days_after_the_first_cycle_are_listed() {
 }
 
 #[test]
+fn a_clock_behind_the_ledger_still_shows_what_it_can_prove_and_says_so() {
+    // 时钟早于账本时算出的间隔只会偏短：已经超过 72 小时就照样降级；晚于本地时钟的时刻直说，不编时长。
+    let (state, detail) = read(|checks| {
+        checks.last_clean_ms[0] = Some(NOW_MS - 73 * HOUR);
+        checks.latest_record_ms = Some(NOW_MS + MINUTE);
+        checks.latest = Some(CheckMark {
+            bucket: 4,
+            at_ms: NOW_MS + MINUTE,
+            result: CheckResult::Incomplete,
+            reason: Some(IncompleteReason::Deadline),
+        });
+    });
+    assert_eq!(state, "degraded");
+    assert_eq!(
+        detail,
+        "最近一次干净的检查是 3 天 1 小时前，超过 72 小时；最近一次是 在晚于本地时钟的时刻第 4 组，没做完（超过 20 分钟）"
+    );
+    let (state, detail) = read(|checks| {
+        checks.latest_record_ms = Some(NOW_MS + MINUTE);
+        checks.problems.push(CheckProblem {
+            bucket: 5,
+            at_ms: NOW_MS + MINUTE,
+            errors: 2,
+            broken_packs: 0,
+            times: 1,
+        });
+    });
+    assert_eq!(state, "degraded");
+    assert!(
+        detail.starts_with("第 5 组 在晚于本地时钟的时刻检查没通过（报错 2 处）"),
+        "{detail}"
+    );
+}
+
+#[test]
 fn unknown_cases_never_read_as_normal() {
     let (state, detail) = read(|checks| checks.latest_record_ms = Some(NOW_MS + MINUTE));
     assert_eq!(state, "unknown");

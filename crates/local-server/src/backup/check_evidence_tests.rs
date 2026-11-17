@@ -94,3 +94,38 @@ fn a_clock_behind_the_ledger_cannot_judge_freshness_or_coverage() {
     facts.latest_record_ms = Some(NOW + 1);
     assert_eq!(facts.verdict(), CheckVerdict::ClockBehind);
 }
+
+#[test]
+fn a_clock_behind_the_ledger_still_reports_what_it_can_prove() {
+    // 本地时钟早于账本时算出的间隔只会偏短：上次干净已经算出超过 72 小时，就一定过期。
+    let mut facts = read(5, 3, 1);
+    facts.last_clean_ms[0] = Some(NOW - 73 * HOUR);
+    facts.last_clean_ms[1] = Some(NOW - 80 * HOUR);
+    facts.last_clean_ms[2] = None;
+    facts.latest_record_ms = Some(NOW + HOUR);
+    assert_eq!(facts.verdict(), CheckVerdict::Stale);
+    // 上次干净的时刻本身晚于本地时钟：过期判断不了。
+    facts.last_clean_ms[2] = Some(NOW + HOUR);
+    assert_eq!(facts.verdict(), CheckVerdict::ClockBehind);
+
+    // 首轮早就读完、有组从没读干净：覆盖逾期照样成立；读干净的时刻晚于本地时钟的那组不算逾期。
+    let mut facts = read(40, 30, 1);
+    facts.latest_record_ms = Some(NOW + HOUR);
+    facts.last_clean_ms[4] = Some(NOW + HOUR);
+    assert_eq!(facts.verdict(), CheckVerdict::ClockBehind);
+    assert!(facts.overdue_buckets().is_empty());
+    facts.last_clean_ms[9] = None;
+    assert_eq!(facts.overdue_buckets(), vec![10]);
+    assert_eq!(facts.verdict(), CheckVerdict::CoverageOverdue);
+}
+
+#[test]
+fn the_text_thresholds_are_the_judgement_thresholds() {
+    assert_eq!(RepositoryChecks::FRESHNESS_HOURS * HOUR, FRESHNESS_MS);
+    assert_eq!(RepositoryChecks::COVERAGE_DAYS * DAY, COVERAGE_MS);
+    let mut facts = facts();
+    facts.anchor_ms = Some(NOW - 2 * HOUR);
+    assert_eq!(facts.freshness_left_ms(), Some(70 * 3_600_000));
+    facts.anchor_ms = Some(NOW + 1);
+    assert_eq!(facts.freshness_left_ms(), None);
+}

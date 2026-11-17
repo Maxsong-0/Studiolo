@@ -17,12 +17,15 @@ pub use output::classify_check_output;
 use super::restic::RepositoryRef;
 use serde::{Deserialize, Deserializer, Serialize};
 use sha2::{Digest, Sha256};
-use std::num::NonZeroU64;
+use std::{num::NonZeroU64, time::Duration};
 
 /// 抽查事件沿用备份的 L2 动作名前缀；和备份作业的事件键互不重叠。
 pub const REPOSITORY_CHECK_ACTION: &str = "backup.repository_check";
 /// 一圈分几组；restic 要求 `t ≤ 256`。
 pub const CHECK_BUCKETS: u8 = 30;
+/// worker 一次抽查最多跑多久，超了算「没做完（超时）」，不让检查长时间挡住备份。
+/// 生产者判断原意图挂多久算 worker 中途没了、健康页正文写超时多久，都从这一个常量算。
+pub const CHECK_WINDOW: Duration = Duration::from_secs(20 * 60);
 
 /// 组号 1～30：第 `n` 组读数据包 ID 第一个字节对 30 取余等于 `n-1` 的那些包。
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
