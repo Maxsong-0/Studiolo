@@ -58,14 +58,16 @@ export async function readAttachment(
     generation: String(generation),
   });
   const blob = await getBlob(`/api/attachment?${query}`, signal, size);
+  // 类型由服务端按文件头字节判定（crates/local-server/src/attachments/media.rs），前端只认响应头，
+  // 所以标签写明是服务端核的；判不出的一律 octet-stream，走下面的仅下载。
   if (IMAGES.has(blob.type))
     return {
       blob,
       kind: 'image',
-      label: `${blob.type.slice(6).toUpperCase()} 图片（已按字节校验）`,
+      label: `${blob.type.slice(6).toUpperCase()} 图片（服务端已按字节校验）`,
     };
   if (blob.type === 'application/pdf')
-    return { blob, kind: 'pdf', label: 'PDF（已按字节校验）' };
+    return { blob, kind: 'pdf', label: 'PDF（服务端已按字节校验）' };
   // 文本只插入文本节点；下载使用惰性类型，不让扩展名或未知响应类型成为可执行文档。
   const safe = blob.slice(0, blob.size, 'application/octet-stream');
   if (blob.type === 'text/plain; charset=utf-8') {
@@ -79,7 +81,7 @@ export async function readAttachment(
       blob: safe,
       kind: 'text',
       text: await blob.text(),
-      label: 'UTF-8 纯文本（已按字节校验）',
+      label: 'UTF-8 纯文本（服务端已按字节校验）',
     };
   }
   return { blob: safe, kind: 'download', label: '此类型仅提供下载' };

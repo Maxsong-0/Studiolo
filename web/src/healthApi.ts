@@ -128,7 +128,9 @@ export function parseHealth(value: unknown): HealthReport {
           section.code === BACKUP_JOBS && section.state === backup.state,
       ));
   for (const section of sections) {
-    // 「备份作业」报正常必须有一份对得上的明细撑着，而且明细自己的结论就是正常。
+    // 三节同一口径：报正常必须有一份对得上的明细撑着，明细缺了或自己的结论不是正常就降为未知。
+    // 后端没有明细时这三节本来就报未知（observability bridge_section、local-server quota_section），
+    // 所以这里只拦前后不一致的响应，不会把真的正常显示成灰。
     if (
       section.code === BACKUP_JOBS &&
       (badBackup ||
@@ -138,10 +140,14 @@ export function parseHealth(value: unknown): HealthReport {
     if (
       section.code === 'sync-bridge' &&
       (badBridge ||
-        (bridge && section.state === 'normal' && !bridgeCanBeNormal(bridge)))
+        (section.state === 'normal' &&
+          (bridge === null || !bridgeCanBeNormal(bridge))))
     )
       section.state = 'unknown';
-    if (section.code === 'manual-sync-quota' && badQuota)
+    if (
+      section.code === 'manual-sync-quota' &&
+      (badQuota || (section.state === 'normal' && quota === null))
+    )
       section.state = 'unknown';
   }
   const shapeValid =

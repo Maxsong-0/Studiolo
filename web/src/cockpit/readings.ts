@@ -107,6 +107,10 @@ function sessionCell(health: HealthStatus): Reading {
   const found = healthSection(health, HEALTH_SESSION);
   if ('reason' in found) return missing(label, found.reason);
   const { section } = found;
+  // 状态未知（后端缺证据，或 parseHealth 把坏节降成 unknown）时正文只是原因，不是读数：
+  // 当读数显示会让汇总写成「都正常」。与 syncCell 同一口径，记成读不到。
+  if (section.state === 'unknown')
+    return missing(label, section.detail || '健康报告的会话一节状态未知。');
   const first = section.detail.split(/[，,；;。]/)[0]?.trim();
   if (!first) return missing(label, '健康报告的会话一节没有正文。');
   return section.state === 'degraded'
