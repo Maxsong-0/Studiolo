@@ -53,7 +53,8 @@ deploy/doorbell/systemd/*
 
 ## 验收顺序
 
-1. 不带 `--deliver` 跑一次，只应输出 `dry_run_no_delivery`。
+1. 不带 `--deliver` 跑一次，只应输出 `dry_run_no_delivery`。这一步只核对参数，不打开审计库和状态目录，
+   通过了也不代表投递时起得来；路径、属主和状态由第 2、3 步核。
 2. `systemd-analyze verify` 两个单元；核对两个私有目录的属主和权限。
 3. 带 `--deliver` 手动跑第一次，应输出 `enabled`（记下启用位置，什么都不发）。
 4. 在网页上做一件表里的事（例如建一个任务），再跑一次，应输出 `caught_up delivered=1 expired=0`，收件方收到一条能验签的请求。

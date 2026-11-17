@@ -20,7 +20,7 @@ python3 -B scripts/prepare-m4-policy.py \
 生成的 `policy.service` 只比原单元多 `--policy /home/maxsong/.local/share/studiolo-agent-policy`
 和对应 `ReadWritePaths`；身份、隔离、memlock、程序路径均保持。清单绑定每份操作文件。
 
-当前已核验的有效类型只有 `claude`。首版能力集保留 `项目/Studiolo`、`_规则`；默认拒绝其他读取；
+当前已核验的有效类型只有 `claude`。首版能力集保留 `项目/Studiolo-Docs`、`_规则`（库里项目目录 2026-10-23 起带 `-Docs`，BUG-038）；默认拒绝其他读取；
 禁止直接写正文、写黑板与发布策略；允许提交永不自动生效的 desired；目前没有已发布的 skill，硬绑定为空。
 操作前再次查询有效类型，出现其他类型就拒绝，先重做能力集材料。不会签发或轮换真实 token。
 

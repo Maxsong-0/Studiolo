@@ -79,17 +79,18 @@ impl CanonicalWorkbench {
 
     /// 逐行归属要把几十版正文逐版读进来做差分：交给专用派生线程串行做，临时分配都落在
     /// 同一个 arena 里，不随阻塞池换线程（见 `deriver`，BUG-034）。调用方不持有任何锁。
+    /// 查询许可交进来随作业释放：投递后客户端断开，作业仍会跑完，许可不能先还。
     pub(crate) fn history_blame(
         self: &Arc<Self>,
         principal: ContentPrincipal,
         vault: Option<VaultUuid>,
         path: VaultPath,
+        permit: tokio::sync::OwnedSemaphorePermit,
     ) -> impl Future<Output = Result<serde_json::Value, Problem>> + Send + use<> {
         let workbench = Arc::clone(self);
-        let work = self
-            .core
-            .deriver
-            .run(move |_on| workbench.blame_now(&principal, vault, &path));
+        let work = self.core.deriver.run_leased(permit, move |_on| {
+            workbench.blame_now(&principal, vault, &path)
+        });
         async move { work.await.map_err(|_| Problem::unavailable())? }
     }
 

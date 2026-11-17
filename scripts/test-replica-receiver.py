@@ -18,8 +18,15 @@ from replica_archive import MAX_DEADLINE, MIN_RATE, transfer_deadline
 from replica_capture import archive, capture
 from replica_common import ALLOW, digest, encode
 from replica_store import Store
+import importlib.util
 
 RECEIVER = Path(__file__).absolute().with_name("replica_receiver.py")
+# 夹具项目取上线探针的金丝雀项目（check-agent.py），它总在注册表生成的 ALLOW 里。写死项目名的话，
+# 库里一改名夹具就落到白名单外，边界反例也会因「不在白名单」被拒而空过（BUG-038）。
+_SPEC = importlib.util.spec_from_file_location("agent_check", Path(__file__).with_name("check-agent.py"))
+_CHECK = importlib.util.module_from_spec(_SPEC)
+_SPEC.loader.exec_module(_CHECK)
+PROJECT = _CHECK.PROJECT
 
 
 def rewrite(raw, transform):
@@ -44,7 +51,8 @@ class ReceiverTests(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
         self.vault = self.root / "vault"
-        self.project = self.vault / "项目/Studiolo"
+        self.assertIn(PROJECT, ALLOW, "夹具项目必须在注册表给 AI 看的范围里")
+        self.project = self.vault / PROJECT
         # 捕获端对 ALLOW 里每个目录都 open_dir，缺一个即整批失败；
         # 从 ALLOW 派生而不是逐个硬编码，避免扩白名单时漏建。
         for allow in ALLOW:
@@ -82,15 +90,15 @@ class ReceiverTests(unittest.TestCase):
         (self.project / "empty").rename(self.project / "renamed")
         second = self.run_receive()
         self.assertNotEqual(first["receipt"]["generation"], second["receipt"]["generation"])
-        new = self.current_vault() / "项目/Studiolo"
+        new = self.current_vault() / PROJECT
         self.assertEqual((new / "note.md").read_text(), "second version")
         self.assertTrue((new / "added.md").is_file())
         self.assertTrue((new / "renamed").is_dir())
         self.assertFalse((new / "empty").exists())
-        self.assertEqual((old / "项目/Studiolo/note.md").read_text(), "private fixture text")
+        self.assertEqual((old / f"{PROJECT}/note.md").read_text(), "private fixture text")
         (self.project / "note.md").unlink()
         self.run_receive()
-        self.assertFalse((self.current_vault() / "项目/Studiolo/note.md").exists())
+        self.assertFalse((self.current_vault() / f"{PROJECT}/note.md").exists())
         self.assertEqual(len(list((self.server / "releases").iterdir())), 2)
 
     def test_same_digest_reuses_fully_validated_generation_and_refreshes_receipt(self):
@@ -146,13 +154,13 @@ class ReceiverTests(unittest.TestCase):
         (self.project / "empty").rmdir()
         payload = self.payload(base)
         names = self.members(payload)
-        self.assertIn("vault/项目/Studiolo/note.md", names)
-        self.assertIn("vault/项目/Studiolo/added.md", names)
-        self.assertNotIn("vault/项目/Studiolo/keep.bin", names)
+        self.assertIn(f"vault/{PROJECT}/note.md", names)
+        self.assertIn(f"vault/{PROJECT}/added.md", names)
+        self.assertNotIn(f"vault/{PROJECT}/keep.bin", names)
         self.assertNotIn(b"attachment", payload)
         second = self.run_receive(payload)
         self.assertFalse(second["reused"])
-        new = self.current_vault() / "项目/Studiolo"
+        new = self.current_vault() / PROJECT
         self.assertEqual((new / "keep.bin").read_bytes(), attachment)
         self.assertEqual((new / "keep.bin").stat().st_mode & 0o777, 0o600)
         self.assertEqual((new / "note.md").read_text(), "second version")
@@ -174,20 +182,20 @@ class ReceiverTests(unittest.TestCase):
 
     def test_corrupt_current_generation_fails_confirm_and_is_recorded_until_full_repair(self):
         first = self.run_receive()
-        (self.current_vault() / "项目/Studiolo/note.md").write_text("private fixture edit")
+        (self.current_vault() / f"{PROJECT}/note.md").write_text("private fixture edit")
         self.assertEqual(self.run_receive(self.payload(self.base_of())), {"status": "base_mismatch"})
         self.assertEqual(self.state()["status"], "failed")
         self.assertEqual(self.state()["last_error"], "validation_failed")
         self.assertEqual(self.state()["receipt"], first["receipt"])
         self.run_receive()
         self.assertEqual(self.state()["status"], "ready")
-        self.assertEqual((self.current_vault() / "项目/Studiolo/note.md").read_text(), "private fixture text")
+        self.assertEqual((self.current_vault() / f"{PROJECT}/note.md").read_text(), "private fixture text")
 
     def test_corrupt_unchanged_file_fails_delta_copy_and_is_recorded(self):
         (self.project / "keep.md").write_text("keep this")
         first = self.run_receive()
         base = self.base_of()
-        (self.current_vault() / "项目/Studiolo/keep.md").write_text("keep that")
+        (self.current_vault() / f"{PROJECT}/keep.md").write_text("keep that")
         (self.project / "note.md").write_text("second version")
         self.assertEqual(self.run_receive(self.payload(base)), {"status": "base_mismatch"})
         self.assertEqual(self.state()["last_error"], "validation_failed")
@@ -227,11 +235,11 @@ class ReceiverTests(unittest.TestCase):
 
     def test_same_source_repairs_same_size_drift_using_new_generation(self):
         first = self.run_receive()
-        (self.current_vault() / "项目/Studiolo/note.md").write_text("private fixture edit")
+        (self.current_vault() / f"{PROJECT}/note.md").write_text("private fixture edit")
         second = self.run_receive()
         self.assertFalse(second["reused"])
         self.assertNotEqual(first["receipt"]["generation"], second["receipt"]["generation"])
-        self.assertEqual((self.current_vault() / "项目/Studiolo/note.md").read_text(), "private fixture text")
+        self.assertEqual((self.current_vault() / f"{PROJECT}/note.md").read_text(), "private fixture text")
 
     def test_corrupt_file_preserves_previous_receipt_and_recovers(self):
         self.run_receive()
@@ -334,7 +342,7 @@ class ReceiverTests(unittest.TestCase):
         (self.project / "note.md").unlink()
         (self.project / "empty").rmdir()
         self.run_receive()
-        self.assertTrue((self.current_vault() / "项目/Studiolo").is_dir())
+        self.assertTrue((self.current_vault() / PROJECT).is_dir())
 
     def test_maximum_logical_depth_roundtrip_and_extra_level_rejected(self):
         path = self.project

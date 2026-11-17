@@ -105,6 +105,24 @@ fn number_allocation_is_atomic_and_survives_restart() {
     assert_eq!(values, vec![43, 44]);
     let mut db = ControlDb::open(path, vault).unwrap();
     assert_eq!(db.reserve_board_number("next", task, "adr", 5).unwrap(), 45);
+    // 只读重放和预留认同一份登记：发过的号原样给，命名空间或工作项换了就拒绝，没发过的是 None。
+    assert_eq!(
+        db.board_number_replay("next", task, "adr").unwrap(),
+        Some(45)
+    );
+    assert_eq!(db.board_number_replay("never", task, "adr").unwrap(), None);
+    assert!(matches!(
+        db.board_number_replay("next", task, "bug"),
+        Err(DbError::IdempotencyMismatch)
+    ));
+    assert!(matches!(
+        db.board_number_replay("next", TaskId::new(), "adr"),
+        Err(DbError::IdempotencyMismatch)
+    ));
+    assert!(matches!(
+        db.reserve_board_number("next", task, "bug", 0),
+        Err(DbError::IdempotencyMismatch)
+    ));
 }
 #[test]
 fn expired_lease_cannot_heartbeat_report_or_authorize_gateway_before_sweep() {

@@ -29,13 +29,14 @@ SKILL = {"name": SKILL_NAME,
                      "\tprint(\"你好，\\\"世界\\\" 🚀\")\n```\n\n末段：结束。\n"}
 # 落盘是客户端从规范 JSON 渲染的三段文本（摘要、触发、空行加正文），与改前的落盘格式逐字节相同。
 SKILL_TEXT = f"摘要：{SKILL['summary']}\n触发：{' | '.join(SKILL['triggers'])}\n\n{SKILL['markdown']}"
-# 类型名须与 Pipeline 签发的类型一致；只读投影不需要任何写或提案能力。规则名单只列投影所选的规则
-# （ADR-026 D4：缺字段即零规则）；后发布的新增规则不在名单内，照样改变策略版本。
-CAPABILITY = {"ai_type": "fixture",
-              "read": {"project_whitelist": ["项目/Studiolo"], "deny_by_default": True,
-                       "rules_whitelist": [RULE]},
-              "write": {"board": False, "content_patch_only": False, "content_direct": False},
-              "policy": {"propose_desired": False, "activate": False}, "hard_bound_skills": []}
+def capability(project):
+    """类型名须与 Pipeline 签发的类型一致；只读投影不需要任何写或提案能力。规则名单只列投影所选的规则
+    （ADR-026 D4：缺字段即零规则）；后发布的新增规则不在名单内，照样改变策略版本。
+    读取白名单用管线的金丝雀项目：它在部署上限（ALLOW）之外就成了读不到任何东西的死前缀。"""
+    return {"ai_type": "fixture",
+            "read": {"project_whitelist": [project], "deny_by_default": True, "rules_whitelist": [RULE]},
+            "write": {"board": False, "content_patch_only": False, "content_direct": False},
+            "policy": {"propose_desired": False, "activate": False}, "hard_bound_skills": []}
 # 格式唯一来源：crates/agent-server/src/admin/policy.rs `bootstrap` 的控制终端回显。
 BOOTSTRAPPED = re.compile(r"已 bootstrap：([a-z_]+) (.+?) → 版本 ([1-9][0-9]*)，effective ([a-f0-9]{64})")
 
@@ -110,7 +111,8 @@ def run_policy(binary, pipe, cli):
             policy.mkdir(mode=0o700)
             p.admin("policy-init", "--policy", str(policy), data=False)
             versions = {}
-            for kind, subject, body in (("capability_set", "fixture", json.dumps(CAPABILITY, ensure_ascii=False)),
+            for kind, subject, body in (("capability_set", "fixture",
+                                         json.dumps(capability(pipe.PROJECT), ensure_ascii=False)),
                                         ("rules", RULE, RULE_BODY),
                                         ("skills", SKILL_NAME, json.dumps(SKILL, ensure_ascii=False))):
                 versions[(kind, subject)], effective = bootstrap(pipe, p, policy, kind, subject, body)
@@ -122,8 +124,8 @@ def run_policy(binary, pipe, cli):
             p.push()
             p.start(policy_dir=policy)
             short = effective[:12]
-            cfg = dict(fixture_config(url=p.url.replace("/mcp", "/read")), rules_source="policy",
-                       rules=[RULE], skills=[SKILL_NAME])
+            cfg = dict(fixture_config(url=p.url.replace("/mcp", "/read"), project=pipe.PROJECT),
+                       rules_source="policy", rules=[RULE], skills=[SKILL_NAME])
             cfg_path, out, target = (root / name for name in ("config.json", "bundle", "client"))
             pipe.write(cfg_path, json.dumps(cfg, ensure_ascii=False))
             generated = cli("generate", "--config", cfg_path, "--out", out, token=p.token)

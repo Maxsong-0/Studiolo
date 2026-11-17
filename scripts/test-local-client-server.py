@@ -12,7 +12,7 @@ from unittest.mock import patch
 import urllib.error
 import urllib.request
 
-from local_client.config import load, new_token, private_create
+from local_client.config import BOARD_PROJECT, load, new_token, private_create, private_read
 from local_client.mcp import McpError
 from local_client.server import Companion, Conflict, Handler, ThreadingHTTPServer
 
@@ -52,7 +52,7 @@ class ServerTests(unittest.TestCase):
         self.root.chmod(0o700)
         self.cfg = {'port': 4318, 'origin': 'http://127.0.0.1:5173', 'pairing_token': 'p' * 43,
                     'state_directory': self.root, 'clients': [{'id': 'c', 'provider': 'codex', 'mode': 'codex-queue',
-                    'project': '项目/Studiolo', 'cwd': str(self.root), 'mcp_endpoint': 'http://127.0.0.1:4319/mcp',
+                    'project': BOARD_PROJECT, 'cwd': str(self.root), 'mcp_endpoint': 'http://127.0.0.1:4319/mcp',
                     'mcp_token_file': str(self.root / 'upstream'), 'bridge_token': 'b' * 43}]}
         self.up = patch('local_client.server.McpClient', Upstream)
         self.auth = patch('local_client.server.subscription_status', return_value={'ready': True, 'reason': 'test'})
@@ -124,12 +124,14 @@ class ServerTests(unittest.TestCase):
         def call(project, tid, op='claim'):
             return self.app.proxy('c', {'method': 'tools/call', 'params': {'name': 'board', 'arguments': {
                 'project': project, 'operation': op, 'request': {'task_id': tid}}}})
-        with self.assertRaises(Conflict): call('项目/Studiolo', TASK)
+        with self.assertRaises(Conflict): call(BOARD_PROJECT, TASK)
         self.dispatch()
-        self.assertIn('content', call('项目/Studiolo', TASK))
+        self.assertIn('content', call(BOARD_PROJECT, TASK))
         with self.assertRaises(ValueError): call('项目/Other', TASK)
-        with self.assertRaises(Conflict): call('项目/Studiolo', OTHER)
-        with self.assertRaises(ValueError): call('项目/Studiolo', TASK, 'create')
+        # 改名前的旧项目名也算别的项目，不能借它写。
+        with self.assertRaises(ValueError): call('项目/Studiolo', TASK)
+        with self.assertRaises(Conflict): call(BOARD_PROJECT, OTHER)
+        with self.assertRaises(ValueError): call(BOARD_PROJECT, TASK, 'create')
         tools = self.app.proxy('c', {'method': 'tools/list', 'params': {}})['tools']
         self.assertNotIn('propose_desired', [t['name'] for t in tools])
 
@@ -212,6 +214,29 @@ class RegistrationTests(unittest.TestCase):
             duplicate = subprocess.run(cli + ['add-client', '--client', 'claude', '--provider', 'claude'] + common, capture_output=True)
             self.assertNotEqual(duplicate.returncode, 0)
             self.assertEqual(len(load(config)['clients']), 2)
+
+    def test_a_config_registered_before_the_rename_is_refused_with_the_fix(self):
+        import subprocess
+        import sys
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            root.chmod(0o700)
+            secret = root / 'studiolo.token'
+            private_create(secret, 'scoped-studiolo-test-token\n')
+            config = root / 'config.json'
+            cli = [sys.executable, str(Path(__file__).with_name('studiolo-local.py')), '--config', str(config)]
+            done = subprocess.run(cli + ['init', '--client', 'claude', '--provider', 'claude', '--binary', '/bin/echo',
+                '--cwd', str(root), '--endpoint', 'http://127.0.0.1:4321/mcp', '--studiolo-token-file', str(secret),
+                '--paid-usage-disabled', '--origin', 'http://127.0.0.1:5173'], capture_output=True)
+            self.assertEqual(done.returncode, 0, done.stderr)
+            self.assertEqual(load(config)['clients'][0]['project'], BOARD_PROJECT)
+            # 2026-10-23 改名之前登记的配置还写着旧名（BUG-038）：拒绝加载，报错里写明要改成什么。
+            raw = json.loads(private_read(config))
+            raw['clients'][0]['project'] = '项目/Studiolo'
+            config.unlink()
+            private_create(config, json.dumps(raw, ensure_ascii=False))
+            with self.assertRaisesRegex(ValueError, BOARD_PROJECT):
+                load(config)
 
 
 if __name__ == '__main__':

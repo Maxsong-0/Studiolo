@@ -198,8 +198,8 @@ manifest 最后写与重放，以及 symlink、magic link、encoded separator、
 这个指针，`load_staged_artifact_commit` 重验 Vault 绑定和内容摘要后装载正文。既有
 `ArtifactCommit`/manifest-last 接口保持可用。
 
-`NumberingScanner` 从完整可信文件名扫描返回范围内最大编号，控制面仍须通过数据库事务
-串行预留。以上三个 trait 均由 Fs/Memory 实现，没有扩大原 `VaultBroker` supertrait。
+`NumberingScanner` 从完整可信文件名扫描返回范围内最大编号（范围目录不存在时报 `NotFound`），
+控制面仍须通过数据库事务串行预留。以上三个 trait 均由 Fs/Memory 实现，没有扩大原 `VaultBroker` supertrait。
 完整限制、恢复状态与验收边界见 [M5 批量写回](../m5/batch-write.md)。
 
 ## 9. M6 独立 Gateway 调用封存

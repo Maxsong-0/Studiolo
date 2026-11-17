@@ -4,7 +4,7 @@ use studiolo_audit_ledger::MemoryAuditLedger;
 use studiolo_control_db::{ControlDb, TaskStatus};
 use studiolo_core::{Fence, VaultPath, VaultUuid};
 use studiolo_task_engine::*;
-use studiolo_vault_broker::{MemoryVaultBroker, Mutation, VaultReader, VaultWriter};
+use studiolo_vault_broker::{BrokerError, MemoryVaultBroker, Mutation, VaultReader, VaultWriter};
 const HASH: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 type Engine = PersistentTaskEngine<MemoryVaultBroker, MemoryAuditLedger>;
 fn path(value: &str) -> VaultPath {
@@ -316,6 +316,58 @@ fn number_uses_real_filename_max_and_durable_reservations() {
         e.reserve_number("n2", id, &path("notes"), "ADR-").unwrap(),
         11
     );
+}
+#[test]
+fn number_in_a_missing_scope_is_refused_and_replays_keep_their_number() {
+    // 范围目录不在库里就报 NotFound、不从 1 起算；发过的号重放先查登记，库变了也拿回原号（BUG-038）。
+    let vault = VaultUuid::new();
+    let mut broker = MemoryVaultBroker::with_uuid(vault);
+    broker
+        .mutate(Mutation::create(
+            path("notes/ADR-009-last.md"),
+            b"x".to_vec(),
+            "fixture",
+        ))
+        .unwrap();
+    let mut e = Engine::new(
+        ControlDb::open_in_memory(vault).unwrap(),
+        broker,
+        MemoryAuditLedger::new(),
+    );
+    let id = e.create_board_task("t", spec(&[]), HASH, 0).unwrap();
+    assert_eq!(
+        e.reserve_number("n1", id, &path("notes"), "ADR-").unwrap(),
+        10
+    );
+    assert!(matches!(
+        e.reserve_number("n2", id, &path("fresh"), "ADR-"),
+        Err(TaskEngineError::Broker(BrokerError::NotFound(scope))) if scope == path("fresh")
+    ));
+    // 扫描失败不记 Outcome：目录建好后同一请求还要能成功，不能撞上账本里先记的一条 rejected。
+    let (db, mut broker, ledger) = e.into_parts();
+    broker
+        .mutate(Mutation::create(
+            path("fresh/ADR-001-first.md"),
+            b"x".to_vec(),
+            "fixture-fresh",
+        ))
+        .unwrap();
+    let mut e = Engine::new(db, broker, ledger);
+    assert_eq!(
+        e.reserve_number("n2", id, &path("fresh"), "ADR-").unwrap(),
+        2
+    );
+    // 换成一个空库（notes 没了）：重放 n1 不扫库、仍是 10；新请求要扫，报 NotFound。
+    let (db, _broker, ledger) = e.into_parts();
+    let mut e = Engine::new(db, MemoryVaultBroker::with_uuid(vault), ledger);
+    assert_eq!(
+        e.reserve_number("n1", id, &path("notes"), "ADR-").unwrap(),
+        10
+    );
+    assert!(matches!(
+        e.reserve_number("n3", id, &path("notes"), "ADR-"),
+        Err(TaskEngineError::Broker(BrokerError::NotFound(_)))
+    ));
 }
 #[test]
 fn forged_revision_hash_and_conflict_markers_fail_before_terminal() {

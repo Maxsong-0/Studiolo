@@ -11,6 +11,26 @@ from replica_common import (ALLOW, MAX_ENTRIES, MAX_FILE, MAX_MANIFEST, MAX_NOTE
                             logical_path_ok, manifest, open_root, read_file, require)
 
 
+def missing_registered(path):
+    """注册表登记给 AI 看、库里却不存在的目录（按 ALLOW 顺序）。
+
+    捕获对清单里每个目录逐个打开，缺一个整批失败（有意的失败关闭）。这里先把「目录不在」这一种原因
+    单独找出来，同步日志才说得清是库里改了名或删了目录（BUG-038），而不是笼统的校验失败。
+    库根打不开、登记处是链接或文件等其他异常照常抛出，由调用方按校验失败处理。
+    """
+    root = open_root(path)
+    try:
+        missing = []
+        for allow in ALLOW:
+            try:
+                os.close(descend(root, allow, private=False))
+            except FileNotFoundError:
+                missing.append(allow)
+        return missing
+    finally:
+        os.close(root)
+
+
 def scan(root_fd, keep=True):
     entries, bodies, snapshots, folded = [], {}, {}, set()
     total, inspected, notes_total = 0, 0, 0

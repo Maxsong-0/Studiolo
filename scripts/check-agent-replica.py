@@ -133,8 +133,8 @@ def check(url, token, expected):
     ages = [reference["age_secs"]]
     for name, arguments in (
         ("handshake", {}), ("read_note", {"path": CHECK.INDEX_PATH}),
-        ("list_entries", {"project": "项目/Studiolo"}),
-        ("search", {"project": "项目/Studiolo", "text": "00-总览 INDEX.md", "mode": "path"}),
+        ("list_entries", {"project": CHECK.PROJECT}),
+        ("search", {"project": CHECK.PROJECT, "text": "00-总览 INDEX.md", "mode": "path"}),
     ):
         text = client.call(name, arguments)
         value = freshness(text, name, expected)

@@ -39,6 +39,8 @@ fn another_process_cannot_open_until_the_original_worker_drops_its_lease() {
     let private = Private::new();
     let store = private.open(true).unwrap();
     assert_eq!(private.open(false).err(), Some(StoreError::Busy));
+    // 有写者在用时再初始化：建锁之前就看到状态文件，报已存在，不去抢锁、不碰状态文件。
+    assert_eq!(private.open(true).err(), Some(StoreError::AlreadyExists));
     assert!(child(&private, "busy").output().unwrap().status.success());
     drop(store);
     assert!(

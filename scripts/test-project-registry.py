@@ -54,6 +54,18 @@ class RealRepositoryTests(unittest.TestCase):
         self.assertEqual((done.returncode, done.stdout), (0, ""), done.stderr)
         self.assertIn("一致", done.stderr)
 
+    def test_project_names_written_into_code_are_registered(self):
+        """本机客户端和网页能力集草稿模板各写死了项目名：库里改名后漏改，这里先红（BUG-038）。"""
+        allow = set(registry.allow_of(registry.load_registry(ROOT)))
+        from local_client.config import BOARD_PROJECT
+        self.assertIn(BOARD_PROJECT, allow, "scripts/local_client/config.py 的 BOARD_PROJECT")
+        source = (ROOT / "web/src/policy/submitDraft.ts").read_text(encoding="utf-8")
+        found = re.findall(r"project_whitelist:\s*\[([^\]]*)\]", source)
+        self.assertEqual(len(found), 1, "submitDraft.ts 里找不到唯一的能力集模板 project_whitelist")
+        paths = re.findall(r"'([^']*)'", found[0])
+        self.assertTrue(paths, "能力集模板的 project_whitelist 是空的")
+        self.assertLessEqual(set(paths), allow, "web/src/policy/submitDraft.ts 的能力集模板")
+
 
 class CopiedRepositoryTests(unittest.TestCase):
     """把注册表、副本清单和部署模板复制进临时目录再改，不动真实仓库。"""
@@ -259,6 +271,56 @@ class DesiredProposalTests(unittest.TestCase):
             with self.subTest(broken=broken), self.assertRaises(Invalid):
                 registry.desired(broken, self.entries)
 
+    def test_a_rename_moves_whitelist_and_board_projects_to_the_new_name(self):
+        entries = registry.parse_registry(raw([entry("_规则"), entry("项目/甲-Docs"), entry("项目/乙")]))
+        self.capability["read"]["project_whitelist"] += ["项目/甲/01-框架"]
+        # 几份能力集共用一张对照表：这份里没有的旧名跳过。
+        renames = [("项目/甲", "项目/甲-Docs"), ("项目/这份里没有", "项目/乙")]
+        result, notes = registry.desired(self.capability, entries, renames=renames)
+        self.assertEqual(result["read"]["project_whitelist"], ["_规则", "项目/甲-Docs", "项目/甲-Docs/01-框架"])
+        self.assertEqual(result["write"]["board_projects"], ["项目/甲-Docs"])
+        self.assertEqual(notes, ["改名：项目/甲 → 项目/甲-Docs", "改名：项目/甲/01-框架 → 项目/甲-Docs/01-框架",
+                                 "黑板写项目改名：项目/甲 → 项目/甲-Docs",
+                                 "提示：对照表里的 项目/这份里没有 这份能力集没有（几份能力集共用一张表时正常）"])
+
+    def test_a_rename_only_moves_whole_path_segments(self):
+        # 真实对照表就有这种形状：项目/Semiment → 项目/Semiment-网站-Docs，旁边的 项目/Semiment-Docs 不能跟着变。
+        entries = registry.parse_registry(raw([entry("_规则"), entry("项目/甲-Docs"), entry("项目/甲-网站-Docs"),
+                                               entry("项目/甲乙")]))
+        self.capability["read"]["project_whitelist"] = ["项目/甲", "项目/甲-Docs", "项目/甲乙", "_规则"]
+        result, notes = registry.desired(self.capability, entries, renames=[("项目/甲", "项目/甲-网站-Docs")])
+        self.assertEqual(result["read"]["project_whitelist"], ["_规则", "项目/甲-Docs", "项目/甲-网站-Docs", "项目/甲乙"])
+        self.assertEqual(result["write"]["board_projects"], ["项目/甲-网站-Docs"])
+        self.assertEqual(notes, ["改名：项目/甲 → 项目/甲-网站-Docs", "黑板写项目改名：项目/甲 → 项目/甲-网站-Docs"])
+
+    def test_without_the_rename_a_renamed_board_project_is_refused_not_emptied(self):
+        entries = registry.parse_registry(raw([entry("_规则"), entry("项目/甲-Docs")]))
+        with self.assertRaisesRegex(Invalid, "--rename"):
+            registry.desired(self.capability, entries)
+
+    def test_with_board_writes_off_dropping_every_board_project_is_allowed(self):
+        # 黑板写入关着（先批只读能力集那一支）时，写项目删光是正常结果，不拒绝。
+        entries = registry.parse_registry(raw([entry("_规则"), entry("项目/甲-Docs")]))
+        self.capability["write"]["board"] = False
+        result, notes = registry.desired(self.capability, entries)
+        self.assertEqual(result["read"]["project_whitelist"], ["_规则"])
+        self.assertEqual(result["write"]["board_projects"], [])
+        self.assertEqual(notes, ["删掉（部署上限之外）：项目/甲", "黑板写项目同步删掉：项目/甲"])
+
+    def test_a_bad_rename_table_is_refused(self):
+        cases = {
+            "新名没登记": [("项目/甲", "项目/没登记")],
+            "新名不给 AI 看": [("项目/甲", "项目/丙")],
+            "两边一样": [("项目/甲", "项目/甲")],
+            "旧名重复": [("项目/甲", "项目/乙"), ("项目/甲", "_规则")],
+            "新名重复": [("项目/甲", "项目/乙"), ("项目/戊", "项目/乙")],
+            "旧名嵌套": [("项目/甲", "项目/乙"), ("项目/甲/01-框架", "_规则")],
+            "串联": [("项目/甲", "项目/乙"), ("项目/乙", "_规则")],
+        }
+        for case, renames in cases.items():
+            with self.subTest(case=case), self.assertRaises(Invalid):
+                registry.desired(self.capability, self.entries, renames=renames)
+
     def test_the_real_initial_capability_sets_need_no_proposal(self):
         entries = registry.load_registry(ROOT)
         for name in ("claude.json", "codex.json"):
@@ -283,13 +345,30 @@ class CommandLineTests(unittest.TestCase):
             shutil.copy(ROOT / "docs/m5/initial-capabilities/claude.json", path)
             quiet = self.run_cli("desired", "--capability", str(path))
             self.assertEqual((quiet.returncode, quiet.stdout), (0, ""), quiet.stderr)
-            granted = self.run_cli("desired", "--capability", str(path), "--grant", "项目/Tillerwright")
+            granted = self.run_cli("desired", "--capability", str(path), "--grant", "项目/Tillerwright-Docs")
             self.assertEqual(granted.returncode, 0, granted.stderr)
             body = json.loads(granted.stdout)
-            self.assertIn("项目/Tillerwright", body["read"]["project_whitelist"])
+            self.assertIn("项目/Tillerwright-Docs", body["read"]["project_whitelist"])
             self.assertIn("由人批准后才生效", granted.stderr)
             refused = self.run_cli("desired", "--capability", str(path), "--grant", "项目/没登记")
             self.assertEqual((refused.returncode, refused.stdout), (2, ""))
+
+    def test_desired_takes_renames_as_old_new_pairs(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "claude.json"
+            capability = json.loads((ROOT / "docs/m5/initial-capabilities/claude.json").read_text(encoding="utf-8"))
+            capability["read"]["project_whitelist"] = ["项目/Studiolo", "_规则"]
+            capability["write"]["board_projects"] = ["项目/Studiolo"]
+            path.write_text(json.dumps(capability, ensure_ascii=False), encoding="utf-8")
+            refused = self.run_cli("desired", "--capability", str(path))
+            self.assertEqual((refused.returncode, refused.stdout), (2, ""))
+            self.assertIn("--rename", refused.stderr)
+            done = self.run_cli("desired", "--capability", str(path), "--rename", "项目/Studiolo", "项目/Studiolo-Docs")
+            self.assertEqual(done.returncode, 0, done.stderr)
+            body = json.loads(done.stdout)
+            self.assertEqual(body["read"]["project_whitelist"], ["_规则", "项目/Studiolo-Docs"])
+            self.assertEqual(body["write"]["board_projects"], ["项目/Studiolo-Docs"])
+            self.assertIn("改名：项目/Studiolo → 项目/Studiolo-Docs", done.stderr)
 
     def test_the_module_loads_without_side_effects(self):
         spec = importlib.util.spec_from_file_location("registry_probe", SCRIPTS / "project_registry.py")

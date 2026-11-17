@@ -273,6 +273,34 @@ describe('系统读数：会话一节降级、要看几项', () => {
     expect(all['双向同步'].alert).toBeUndefined();
   });
 
+  it('会话一节状态未知时记成读不到，汇总不能写成「都正常」', () => {
+    // 后端缺证据，或 parseHealth 把重复、坏形状的节降成 unknown：正文只是原因，不是读数。
+    const unknownSession: HealthStatus = {
+      kind: 'ready',
+      report: {
+        ...data.health,
+        sections: data.health.sections.map((section) =>
+          section.code === 'session'
+            ? { ...section, state: 'unknown' as const, detail: '证据缺失。' }
+            : { ...section, state: 'normal' as const },
+        ),
+      },
+    };
+    const all = readings({ workbench: caughtUp, health: unknownSession });
+    expect(all.find((cell) => cell.label === '会话')).toEqual({
+      label: '会话',
+      value: null,
+      reason: '证据缺失。',
+    });
+    // 其余各格都补成有读数，只剩会话这一格：仍是「读不到」。
+    const othersRead = all.map((cell) =>
+      cell.label !== '会话' && cell.value === null
+        ? { ...cell, value: '0' }
+        : cell,
+    );
+    expect(readingsSummary(othersRead)).toBe('8 项里 1 项读不到');
+  });
+
   it('标题右侧的一句：有要看的先说几项要看，没有再说几项读不到，都没有就是都正常', () => {
     // 假数据：副本没追平、同步降级两格要看。
     expect(readingsSummary(readings())).toBe('8 项里 2 项要看');

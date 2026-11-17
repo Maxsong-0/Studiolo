@@ -7,6 +7,7 @@ import sys
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+from local_client.config import BOARD_PROJECT
 from local_client.contract import make_board_tool, OPERATIONS
 
 try:
@@ -14,7 +15,7 @@ try:
 except ImportError:
     Draft202012Validator = None
 
-PROJECT = "项目/Studiolo"
+PROJECT = BOARD_PROJECT
 TASK = "01M2YH2E6QAV58N0Q4XK22VBDP"
 IDENTITY = {"task_id": TASK, "attempt_id": "A-01M2YH3BQ84032CNBEXTDR1FPJ", "fence": 1}
 RECEIPT = {"status": "completed", "artifacts": [], "conflicts": [], "unlanded": [],

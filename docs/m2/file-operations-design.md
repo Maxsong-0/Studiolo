@@ -28,7 +28,7 @@
 
 ## 1. 权威要求与本片边界
 
-权威根：vault 下的 `项目/Studiolo/`（Mac 与 DGX 上都是 `~/Documents/Max's Secret Place/项目/Studiolo/`）。
+权威根：vault 下的 `项目/Studiolo-Docs/`（Mac 与 DGX 上都是 `~/Documents/Max's Secret Place/项目/Studiolo-Docs/`）。
 
 | 依据 | 必须保持的结论 |
 |---|---|

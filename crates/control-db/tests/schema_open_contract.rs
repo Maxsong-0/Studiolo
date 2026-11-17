@@ -218,3 +218,29 @@ fn a_view_cannot_substitute_for_the_migration_ledger() {
     ));
     assert!(fs::read(&path).unwrap() == before);
 }
+
+/// 线上人侧上一发行 r15（程序源 `e2e9e20`）的控制库只认到 schema 3：记录的版本比 3 大就拒绝打开。
+/// 回滚到 r15 时不会把新库当旧库用，全靠这一发行写出的库版本号比 3 大；上面那些用例用的是伪造的
+/// 99，这里拿这一发行真建出来的库核对。
+const R15_SUPPORTED_SCHEMA: i64 = 3;
+
+#[test]
+fn a_database_written_by_this_release_is_refused_by_the_previous_release() {
+    let temp = TempDir::new().unwrap();
+    let path = temp.path().join("control.sqlite3");
+    let db = ControlDb::open(&path, VaultUuid::new()).expect("新建控制库");
+    assert_eq!(db.schema_version().unwrap(), 4);
+    drop(db);
+
+    let raw = Connection::open_with_flags(&path, OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
+    let recorded: i64 = raw
+        .query_row("SELECT MAX(version) FROM schema_migrations", [], |row| {
+            row.get(0)
+        })
+        .unwrap();
+    assert_eq!(recorded, 4);
+    assert!(
+        recorded > R15_SUPPORTED_SCHEMA,
+        "r15 回滚后打开这份库必须被它的版本守卫拒绝"
+    );
+}

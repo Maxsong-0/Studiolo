@@ -14,7 +14,10 @@ import urllib.error
 import urllib.request
 
 PROTOCOL = "2025-11-25"
-INDEX_PATH = "项目/Studiolo/00-总览/INDEX.md"
+# 探针拿这个项目当金丝雀：它必须在注册表里给 AI 看（scripts/project_registry.json），INDEX 必须存在。
+# 库里项目目录 2026-10-23 统一加了 -Docs（BUG-038）；改名时这里和注册表一起改，别的探针和管线测试都从这里取。
+PROJECT = "项目/Studiolo-Docs"
+INDEX_PATH = PROJECT + "/00-总览/INDEX.md"
 READ_TOOLS = {"handshake", "list_entries", "read_note", "search"}
 # T-182 起 tools/list 恒为八个（M5 为七个）；未装配的策略或黑板调用失败关闭，清单必须恰好相等。
 POLICY_TOOLS = {"policy_read", "propose_desired", "list_proposals"}
@@ -152,9 +155,9 @@ def check(base, token, mode):
     note = call(4, "read_note", {"path": INDEX_PATH})
     require(note.startswith("revision ") and "Studiolo · 总览" in note,
             "INDEX.md 正文或 revision 不符合预期")
-    entries = call(5, "list_entries", {"project": "项目/Studiolo"})
+    entries = call(5, "list_entries", {"project": PROJECT})
     require(f"note\t{INDEX_PATH}\t" in entries, "list_entries 未包含 INDEX.md")
-    found = call(6, "search", {"project": "项目/Studiolo", "text": "00-总览 INDEX.md", "mode": "path"})
+    found = call(6, "search", {"project": PROJECT, "text": "00-总览 INDEX.md", "mode": "path"})
     require(f"{INDEX_PATH}:" in found, "search 未找到 INDEX.md")
     _, denied = rpc(7, "tools/call", {"name": "read_note", "arguments": {"path": "School/x.md"}},
                     session, allow_error=True)

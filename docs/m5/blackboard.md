@@ -34,7 +34,11 @@ claim 获取新 fence 并审计 handoff.accepted，信息出现在返回的 Boar
 
 编号通过 `NumberingScanner` 扫 canonical 文件名：scope 内 prefix+数字 后跟 `-` 或 `.`，
 再在 DB 同一事务取 `max(真实文件最大号, 已保留最大号)+1` 并占用。客户端不能提交 max。
-request id 重放保持原号，历史空号不回填。扫描失败不会退回只看登记表发号。
+request id 重放先查登记、不再扫库，保持原号（库里的范围目录后来没了也一样）；历史空号不回填。新请求扫描失败
+不会退回只看登记表发号，也不记 Outcome 审计：条件满足后同一请求还要能成功，审计按「请求＋阶段」去重，先记一条
+rejected 会让那次成功写不进去。scope 目录在 canonical 里不存在（或是个文件）时报 `NotFound`，不按 0 起算
+（2026-11-16 起，BUG-038，见 [批量写回](batch-write.md)「编号」）。所以取号的 scope 要用已经存在的目录：扫描是递归的，
+按项目惯例用骨架文件夹（如 `项目/X-Docs/06-BUG`），不用还没建的子目录；预留按「scope＋前缀」分开登记，同一类编号始终用同一个 scope。
 
 正文始终在 Broker 内容平面或 staging。新 terminal reservation 只保存事件/attempt metadata
 和 `StagedArtifactCommit {id,sha256}`；DB 拒绝新建 inline artifact 数组。打开 v3 DB 不会

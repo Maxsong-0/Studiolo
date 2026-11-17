@@ -2,7 +2,7 @@
   "ai_type": "claude",
   "read": {
     "project_whitelist": [
-      "项目/Studiolo"
+      "项目/Studiolo-Docs"
     ],
     "deny_by_default": true,
     "rules_whitelist": [
@@ -13,7 +13,7 @@
   "write": {
     "board": true,
     "board_projects": [
-      "项目/Studiolo"
+      "项目/Studiolo-Docs"
     ],
     "content_patch_only": true,
     "content_direct": false

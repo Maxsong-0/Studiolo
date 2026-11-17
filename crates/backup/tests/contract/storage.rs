@@ -74,6 +74,46 @@ fn initializing_an_existing_store_is_refused_instead_of_overwriting_it() {
 }
 
 #[test]
+fn initialization_refused_for_residue_leaves_no_lock_and_can_be_rerun() {
+    // 目录里有残留（这里是临时清单）时，建锁之前就拒绝：不留下一个没有状态文件的空锁，
+    // 因为显式初始化不接管旧锁，留下的锁会让清掉残留后的重跑也被挡住。
+    let private = Private::new();
+    let residue = private.root.join(MANIFEST_TEMP_FILE);
+    fs::write(&residue, b"leftover").expect("residue");
+    fs::set_permissions(&residue, fs::Permissions::from_mode(0o600)).expect("chmod");
+    assert_eq!(private.open(true).err(), Some(StoreError::AlreadyExists));
+    assert!(!private.root.join("backup.lock").exists(), "拒绝时不建锁");
+    assert!(!private.root.join(STATE_FILE).exists());
+    assert_eq!(private.open(false).err(), Some(StoreError::MissingStore));
+
+    fs::remove_file(&residue).expect("clear residue");
+    let store = private.open(true).expect("清掉残留后重跑初始化");
+    assert_eq!(
+        store.load_state().expect("load"),
+        Some(PersistedState::initial())
+    );
+    drop(store);
+    // 已经建好的存储，再初始化照旧拒绝。
+    assert_eq!(private.open(true).err(), Some(StoreError::AlreadyExists));
+}
+
+#[test]
+fn a_lock_left_without_state_is_not_taken_over_by_initialization() {
+    // 写状态文件时失败（磁盘满、IO 错误）会留下空锁：显式初始化不接管旧锁，普通打开也找不到存储，
+    // 要人工确认没人持锁后删掉 backup.lock 再初始化（docs/contracts/backup-worker-store.md）。
+    let private = Private::new();
+    let lock = private.root.join("backup.lock");
+    fs::write(&lock, b"").expect("lock");
+    fs::set_permissions(&lock, fs::Permissions::from_mode(0o600)).expect("chmod");
+    assert_eq!(private.open(true).err(), Some(StoreError::AlreadyExists));
+    assert_eq!(private.open(false).err(), Some(StoreError::MissingStore));
+    assert!(!private.root.join(STATE_FILE).exists(), "不写状态文件");
+
+    fs::remove_file(&lock).expect("人工清掉空锁");
+    assert!(private.open(true).is_ok());
+}
+
+#[test]
 fn a_world_readable_directory_is_not_a_private_store() {
     let private = Private::new();
     private.open(true).expect("initialize");

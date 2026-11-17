@@ -1,5 +1,6 @@
 """黑板形状发行（当前 r14→r15）的固定变更面；夹具不接触生产或凭据。"""
 import ast
+import importlib.util
 from pathlib import Path
 import unittest
 import assembly as a
@@ -88,17 +89,26 @@ class AssemblyTests(unittest.TestCase):
     def test_agent_unit_is_carried_over_byte_for_byte(self):
         for quoted in (False, True):
             scope = (lambda s: '"' + s + '"') if quoted else (lambda s: s)
-            old = ('[Service]\nExecStart=/binary serve --allow ' + scope('项目/Studiolo')
-                   + ' --allow ' + scope('项目/Tillerwright') + ' --allow ' + scope('_规则')
+            old = ('[Service]\nExecStart=/binary serve --allow ' + scope('项目/Studiolo-Docs')
+                   + ' --allow ' + scope('项目/Tillerwright-Docs') + ' --allow ' + scope('_规则')
                    + ' --port 4400 --board-socket ' + a.BOARD_SOCKET + '\nProtectSystem=strict\n')
             with self.subTest(quoted=quoted):
                 # 线上单元的范围是带引号的；带不带引号都必须认得出同一组范围。
                 self.assertEqual(a.agent_unit(old), old)
+                # 还是改名前的旧单元（agent 没先按新名发布）也要拒，见 AGENT_READ_SCOPES 的注释。
+                renamed_back = old.replace('-Docs', '')
                 for bad in (old.replace(' --board-socket ' + a.BOARD_SOCKET, ''),
-                            old.replace(' --allow ' + scope('项目/Tillerwright'), ''), old + old,
-                            old.replace('/binary', a.OLD_RELEASE + '/bin/studiolo-agent')):
+                            old.replace(' --allow ' + scope('项目/Tillerwright-Docs'), ''), old + old,
+                            old.replace('/binary', a.OLD_RELEASE + '/bin/studiolo-agent'), renamed_back):
                     with self.assertRaises(ValueError):
                         a.agent_unit(bad)
+
+    def test_required_agent_scopes_are_visible_in_the_project_registry(self):
+        # 部署上限（agent 的 --allow）由注册表生成；这里要的范围不在注册表里，agent 单元就永远凑不齐。
+        spec = importlib.util.spec_from_file_location('project_registry', ROOT / 'scripts/project_registry.py')
+        registry = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(registry)
+        self.assertLessEqual(set(a.AGENT_READ_SCOPES), set(registry.allow_of(registry.load_registry(ROOT))))
 
 
 if __name__ == '__main__':

@@ -12,7 +12,7 @@
 
 ## 协议 v1（源端、接收端、Rust 消费端共用）
 
-- 默认白名单仅 `项目/Studiolo`、`_规则`；隐藏项完全不捕获；拒绝链接、特殊文件、非 NFC 路径、重复/大小写碰撞、越界路径。
+- 白名单由项目注册表 `scripts/project_registry.json` 生成到 `replica_common.ALLOW`（T-209；当初只有 `项目/Studiolo`、`_规则` 两项），登记的目录缺一个即整批失败；隐藏项完全不捕获；拒绝链接、特殊文件、非 NFC 路径、重复/大小写碰撞、越界路径。
 - 默认服务器根 `/home/maxsong/.local/share/studiolo-agent-replica`，与既有副本分开；目录 0700、文件 0600，同 owner 且拒绝符号/硬链接。
 - `control/state.json` 是唯一发布指针；`releases/<generation>/manifest.json` 与 `releases/<generation>/vault/<allow>/…` 是完整不可变内容；generation 为 32 位小写十六进制 UUID。
 - manifest 为 UTF-8 JSON：`{"schema_version":1,"allow":[...],"entries":[...]}`。allow 与 entries 按路径排序，entries 包括白名单根以下所有可见文件/目录，不含白名单根本身；中间目录（如 `项目`）仅用于容纳白名单。条目为 `{"path":"...","kind":"file|dir","bytes":整数,"sha256":"64位小写hex"或null}`，目录 bytes=0、sha256=null。文件摘要覆盖原始字节，`source_digest` 覆盖 manifest 文件原始字节。

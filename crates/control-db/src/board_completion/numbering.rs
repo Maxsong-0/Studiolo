@@ -1,9 +1,20 @@
 //! 编号预留：一个写事务内取受信任扫描结果与已持久预留的较大者加一，按 request_id 幂等。
 use crate::{ControlDb, DbError, runtime_audit};
-use rusqlite::{OptionalExtension as _, TransactionBehavior, params};
+use rusqlite::{Connection, OptionalExtension as _, TransactionBehavior, params};
 use studiolo_core::TaskId;
 
 impl ControlDb {
+    /// 这个请求以前预留过的号，只读；没预留过是 `None`，命名空间或工作项对不上报 `IdempotencyMismatch`。
+    /// TaskEngine 重放先查它，不必再扫库：库里的范围目录后来没了，重放也拿回原号（BUG-038）。
+    pub fn board_number_replay(
+        &self,
+        request_id: &str,
+        task_id: TaskId,
+        namespace: &str,
+    ) -> Result<Option<u64>, DbError> {
+        prior_number(&self.connection, request_id, task_id, namespace)
+    }
+
     /// 在一个写事务内取 max(受信任的文件名扫描结果, 已持久预留的最大号)+1。
     /// 只有受信任的 TaskEngine 调用方可以提供 `file_max`，外部客户端永远不能。
     pub fn reserve_board_number(
@@ -16,19 +27,8 @@ impl ControlDb {
         let tx = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
-        let prior: Option<(String, String, i64)> = tx
-            .query_row(
-                "SELECT namespace,task_id,number FROM board_numbers WHERE request_id=?1",
-                [request_id],
-                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
-            )
-            .optional()?;
-        if let Some((stored_ns, owner, number)) = prior {
-            if stored_ns != namespace || owner != task_id.to_string() {
-                return Err(DbError::IdempotencyMismatch);
-            }
-            return u64::try_from(number)
-                .map_err(|_| DbError::Corrupt("negative reserved number".into()));
+        if let Some(number) = prior_number(&tx, request_id, task_id, namespace)? {
+            return Ok(number);
         }
         let reserved: i64 = tx.query_row(
             "SELECT COALESCE(MAX(number),0) FROM board_numbers WHERE namespace=?1",
@@ -54,4 +54,29 @@ impl ControlDb {
         tx.commit()?;
         Ok(number as u64)
     }
+}
+
+/// 同一 request_id 只认第一次的命名空间和工作项；预留和只读重放共用这一份判断。
+fn prior_number(
+    db: &Connection,
+    request_id: &str,
+    task_id: TaskId,
+    namespace: &str,
+) -> Result<Option<u64>, DbError> {
+    let prior: Option<(String, String, i64)> = db
+        .query_row(
+            "SELECT namespace,task_id,number FROM board_numbers WHERE request_id=?1",
+            [request_id],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )
+        .optional()?;
+    let Some((stored_ns, owner, number)) = prior else {
+        return Ok(None);
+    };
+    if stored_ns != namespace || owner != task_id.to_string() {
+        return Err(DbError::IdempotencyMismatch);
+    }
+    u64::try_from(number)
+        .map(Some)
+        .map_err(|_| DbError::Corrupt("negative reserved number".into()))
 }

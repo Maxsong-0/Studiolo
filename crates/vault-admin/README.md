@@ -9,7 +9,7 @@ studiolo-vault-admin plan \
   --writer-data /srv/studiolo/writer-data \
   --assets /srv/studiolo/release/web \
   --source-snapshot /srv/studiolo/frozen-source \
-  --allow 项目/Studiolo --allow _规则
+  --allow 项目/Studiolo-Docs --allow _规则
 
 studiolo-vault-admin initialize \
   --config /srv/studiolo/private/owner.json \
@@ -17,7 +17,7 @@ studiolo-vault-admin initialize \
   --writer-data /srv/studiolo/writer-data \
   --assets /srv/studiolo/release/web \
   --source-snapshot /srv/studiolo/frozen-source \
-  --allow 项目/Studiolo --allow _规则 \
+  --allow 项目/Studiolo-Docs --allow _规则 \
   --expected-plan '<刚审核的 plan_digest：64 位十六进制>'
 ```
 

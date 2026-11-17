@@ -12,7 +12,7 @@ fn run() -> Result<(), String> {
     let parsed = parse(std::env::args_os().skip(1).take(142).collect())
         .map_err(|error| error.to_string())?;
     let output = match parsed {
-        None => "studiolo-vault-admin plan --config ABS --vault ABS --writer-data ABS --assets ABS --source-snapshot ABS --allow 项目/Studiolo [--allow _规则]\nstudiolo-vault-admin initialize <同一组参数> --expected-plan SHA256\n源必须为操作者冻结的私有快照；两次扫描不是跨文件原子快照。目标须已存在且为空。失败后保留现场，禁止自动重试或清理。".into(),
+        None => "studiolo-vault-admin plan --config ABS --vault ABS --writer-data ABS --assets ABS --source-snapshot ABS --allow 项目/Studiolo-Docs [--allow _规则]\nstudiolo-vault-admin initialize <同一组参数> --expected-plan SHA256\n源必须为操作者冻结的私有快照；两次扫描不是跨文件原子快照。目标须已存在且为空。失败后保留现场，禁止自动重试或清理。".into(),
         Some((command, options)) => match command {
             Command::Plan => serde_json::to_string(&plan(&options).map_err(|e| e.to_string())?),
             Command::Initialize { expected_plan } => serde_json::to_string(

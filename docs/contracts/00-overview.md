@@ -1,6 +1,6 @@
 # M0 契约总览
 
-> 状态：M0 设计冻结。产品范围以 vault `项目/Studiolo/` 的 `功能清单.md` 与
+> 状态：M0 设计冻结。产品范围以 vault `项目/Studiolo-Docs/` 的 `功能清单.md` 与
 > `roadmap.md` 为准；M0 退出标准以归档
 > `04-协调/归档/2026-09-04-M0-实施计划.md` 为准。PRD v1.1
 > 尚未回写的五 Module、Syncthing 与旧里程碑编号均不得覆盖后续 ADR。

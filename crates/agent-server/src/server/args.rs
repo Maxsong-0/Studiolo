@@ -4,7 +4,7 @@
 #[derive(Debug, serde::Deserialize, rmcp::schemars::JsonSchema)]
 #[schemars(crate = "rmcp::schemars")]
 pub struct ListEntriesArgs {
-    /// 白名单项目前缀，例如 `项目/Studiolo`。
+    /// 白名单项目前缀，例如 `项目/Studiolo-Docs`。
     pub project: String,
 }
 
@@ -12,7 +12,7 @@ pub struct ListEntriesArgs {
 #[derive(Debug, serde::Deserialize, rmcp::schemars::JsonSchema)]
 #[schemars(crate = "rmcp::schemars")]
 pub struct ReadNoteArgs {
-    /// 相对 vault 根的逻辑路径，例如 `项目/Studiolo/00-总览/INDEX.md`。
+    /// 相对 vault 根的逻辑路径，例如 `项目/Studiolo-Docs/00-总览/INDEX.md`。
     pub path: String,
 }
 

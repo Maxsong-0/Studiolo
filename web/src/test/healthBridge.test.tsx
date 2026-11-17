@@ -113,6 +113,35 @@ describe('同步健康结构与人工记录', () => {
       expect(parseHealth(body).evidenceComplete).toBe(false);
     }
   });
+  it('同步桥或人工额度报正常却没有明细时降为未知，与备份作业同一口径', () => {
+    const normal = (code: string) => ({
+      code,
+      title: code,
+      state: 'normal',
+      detail: '正常',
+    });
+    const base = { overall: 'normal', evidence_complete: true };
+    for (const extra of [
+      { bridge: null, manual_sync_quota: null, backup: null },
+      {},
+    ]) {
+      const report = parseHealth({
+        ...base,
+        ...extra,
+        sections: [normal('sync-bridge'), normal('manual-sync-quota')],
+      });
+      expect(report.sections.map((section) => section.state)).toEqual([
+        'unknown',
+        'unknown',
+      ]);
+      expect(report.overall).toBe('unknown');
+      expect(report.evidenceComplete).toBe(false);
+    }
+    // 对照：别的节没有对应明细，报正常照旧是正常。
+    expect(
+      parseHealth({ ...base, sections: [normal('disk-quota')] }).overall,
+    ).toBe('normal');
+  });
   it('已有降级证据优先展示，不被未知项洗掉', () => {
     const body = copy();
     body.bridge = { ...body.bridge, unknown_jobs: 'not_a_number' };

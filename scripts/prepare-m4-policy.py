@@ -66,7 +66,7 @@ def prepare(unit_file, binary_sha, output):
                 'claude.json': (json.dumps({
                     'ai_type': 'claude',
                     # 缺 rules_whitelist＝一条规则都读不到（ADR-026 D4）；首批规则与 docs/m5 初始能力集一致。
-                    'read': {'project_whitelist': ['项目/Studiolo', '_规则'], 'deny_by_default': True,
+                    'read': {'project_whitelist': ['项目/Studiolo-Docs', '_规则'], 'deny_by_default': True,
                              'rules_whitelist': ['通用工作规则.md', 'CLAUDE.md']},
                     'write': {'board': False, 'content_patch_only': True, 'content_direct': False},
                     'policy': {'propose_desired': True, 'activate': False},
