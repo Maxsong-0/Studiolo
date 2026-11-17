@@ -1,4 +1,5 @@
-//! 追加角色只接受 HTTPS REST 仓库和 Backup/Check 的封闭计划；其余身份另行装配。
+//! 追加角色的作业执行器只接受 HTTPS REST 仓库和本作业的 Backup 封闭计划；仓库抽查走
+//! `repository_check`，其余身份另行装配。
 pub(crate) mod final_record;
 pub(crate) mod inspect;
 mod probe;
@@ -44,7 +45,7 @@ impl AppendRunner {
 
     /// 返回固定错误分类；CleanupFailed 须令外层停止服务，不能当成可重试上传。
     pub fn execute(&self, invocation: &ResticInvocation) -> Result<ResticOutcome> {
-        let backup = self.source.accepts(invocation)?;
+        self.source.accepts(invocation)?;
         self.source.check()?;
         self.verified.borrow_mut().take();
         let source_time = || self.source.check_time();
@@ -55,7 +56,7 @@ impl AppendRunner {
             &source_time,
         )?;
         self.source.check()?;
-        parse_output(&output, backup)
+        parse_output(&output)
     }
     /// 已核验封存，只能用于此 runner 的同一作业。
     #[must_use]
@@ -82,7 +83,8 @@ impl ResticRunner for AppendRunner {
             .map_err(|_| ResticError::ExecutionFailed)
     }
 }
-pub(crate) fn parse_output(output: &process::Output, backup: bool) -> Result<ResticOutcome> {
+/// 备份调用的输出：恰好一个 summary，带处理文件数和 64 位快照 ID。
+pub(crate) fn parse_output(output: &process::Output) -> Result<ResticOutcome> {
     if !output.success {
         return Ok(ResticOutcome::Exited {
             status_zero: false,
@@ -98,7 +100,7 @@ pub(crate) fn parse_output(output: &process::Output, backup: bool) -> Result<Res
     {
         let value: serde_json::Value =
             serde_json::from_slice(line).map_err(|_| ProcessError::Protocol)?;
-        if backup && value.get("message_type").and_then(|v| v.as_str()) == Some("summary") {
+        if value.get("message_type").and_then(|v| v.as_str()) == Some("summary") {
             summaries += 1;
             count = value
                 .get("total_files_processed")
@@ -117,7 +119,7 @@ pub(crate) fn parse_output(output: &process::Output, backup: bool) -> Result<Res
             }
         }
     }
-    if backup && summaries != 1 {
+    if summaries != 1 {
         return Err(ProcessError::Protocol);
     }
     Ok(ResticOutcome::Exited {

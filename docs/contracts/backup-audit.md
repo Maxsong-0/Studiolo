@@ -4,6 +4,8 @@ T-204，2026-11-13 起，2026-11-15 更新。已实现封闭消息、单作业�
 原生 WorkerAuditClient 已接固定 root 配置的 socket，生产者已实现原账本上的持久准入。
 2026-11-15 接上了固定路径监听器、不带键的队列命令和按固定间隔的调度（见[备份生产者](backup-producer.md)），
 以及 worker 的常驻入口（见[worker 进程边界](backup-worker-process.md)「服务入口」）。
+2026-11-17（T-214）同一个 socket 上加了仓库抽查的队列命令和结果上报消息，和本文件的带键请求互相解不出，
+见[仓库抽查契约](backup-repository-check.md)。
 **没有验证的**：两个系统账号之间的真实连接、systemd 下的起停、真实 restic 仓库。
 本文件不作为整条 Rust 备份链已在生产运行的证明。
 

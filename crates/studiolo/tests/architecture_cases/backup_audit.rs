@@ -152,10 +152,33 @@ fn producer_socket_and_schedule_are_closed_capabilities() {
         "BackupAdmission::resume(self.ledger.clone(), request.key(), TARGET)",
         "queue.outstanding()",
         "drop(frozen);",
+        "QueueCommand::RepositoryCheck => self.repository_check()?",
+        "return self.report_check(&request);",
     ] {
         assert!(source.contains(anchor), "{anchor}");
         assert!(
             !source_violations(crate_name, path, &source.replacen(anchor, "removed", 1)).is_empty(),
+            "{anchor}"
+        );
+    }
+
+    // 抽查只在空闲时派；结果要有同一检查键、本目标的唯一原意图才落账。
+    let path = Path::new("crates/local-server/src/backup/producer/check.rs");
+    let source = fs::read_to_string(workspace_root().join(path)).unwrap();
+    assert!(source_violations(crate_name, path, &source).is_empty());
+    for anchor in [
+        "if state.busy {",
+        "if state.queue.outstanding() {",
+        "if checks.running(now).is_some() {",
+        "if record.event() != &expected {",
+        "if assignment.key == *request.key() && target == TARGET",
+        "if !same {",
+        "if records.len() > 1 {",
+    ] {
+        assert!(source.contains(anchor), "{anchor}");
+        assert!(
+            !source_violations(crate_name, path, &source.replacen(anchor, "if false {", 1))
+                .is_empty(),
             "{anchor}"
         );
     }

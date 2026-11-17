@@ -146,6 +146,37 @@ fn timeout_and_exit_with_inherited_pipe_kill_group_before_reaping_leader() {
 }
 
 #[test]
+fn repository_checks_yield_on_request_and_bound_stderr_at_four_mebibytes() {
+    let temp = tempfile::tempdir().unwrap();
+    let package = package();
+    let credentials = ResticCredentials::fixture(&temp.path().join("password"));
+    let check = |name: &str, interrupt: &dyn Fn() -> crate::Result<()>| {
+        process::run_check(
+            &package,
+            &args(name),
+            &credentials,
+            temp.path(),
+            deadline(),
+            &|| Ok(()),
+            interrupt,
+        )
+    };
+    // 让路：回调一报错就结束整组进程，原样返回让路错误，不等到截止时间。
+    let started = Instant::now();
+    assert!(matches!(
+        check("child_hangs", &|| Err(ProcessError::Interrupted)),
+        Err(ProcessError::Interrupted)
+    ));
+    assert!(started.elapsed() < Duration::from_secs(4));
+    // 普通调用 64 KiB 就越界的 stderr，抽查容得下；超过 4 MiB 照样越界。
+    assert!(check("child_stderr_overflow", &|| Ok(())).unwrap().success);
+    assert!(matches!(
+        check("child_stderr_flood", &|| Ok(())),
+        Err(ProcessError::OutputLimit)
+    ));
+}
+
+#[test]
 #[ignore = "由父测试作为真实独立子进程调用"]
 fn child_environment() {
     assert!(std::env::var_os("STUDIOLO_INHERITED_POISON").is_none());
@@ -167,6 +198,13 @@ fn child_stdout_overflow() {
 fn child_stderr_overflow() {
     std::io::stderr()
         .write_all(&vec![b'x'; 128 * 1024])
+        .unwrap();
+}
+#[test]
+#[ignore = "由父测试作为真实独立子进程调用"]
+fn child_stderr_flood() {
+    std::io::stderr()
+        .write_all(&vec![b'x'; 5 * 1024 * 1024])
         .unwrap();
 }
 #[test]

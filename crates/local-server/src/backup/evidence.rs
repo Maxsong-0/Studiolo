@@ -180,6 +180,10 @@ fn elapsed(now: i64, since: i64) -> Option<u64> {
 pub trait BackupJobsProbe: Send + Sync {
     /// 读一次账本里的备份事件，按固定配置给出作业事实；这一次没读完返回 `None`。
     fn jobs(&self, now_ms: i64) -> Option<BackupJobs>;
+
+    /// 读一次账本里的抽查事件，给出「备份仓库检查」一节的事实；这一次没读完返回 `None`。
+    /// 只读：不补「没做完」、不派检查。
+    fn repository_checks(&self, now_ms: i64) -> Option<super::RepositoryChecks>;
 }
 
 /// 健康页拿到的备份作业证据。默认是「没读到」：什么都不知道时不能说成没启用，更不能说成正常。

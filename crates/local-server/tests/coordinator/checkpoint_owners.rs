@@ -31,6 +31,7 @@ use studiolo_supply::AgentStore;
 mod drill;
 mod fixture;
 mod producer;
+mod producer_check;
 mod restore;
 mod restore_plan;
 mod seal;

@@ -102,6 +102,34 @@ fn backup_worker_cannot_detach_job_source_or_expiry_from_execution() {
             "\"dump\".into()",
             "\"forget\".into()",
         ),
+        // 抽查：清理没能证实必须退出；最多 20 分钟；遇到待办作业要让路；作业优先于抽查。
+        (
+            "repository_check.rs",
+            "ProcessError::CleanupFailed => return Checked::Shutdown,",
+            "ProcessError::CleanupFailed => IncompleteReason::Unavailable,",
+        ),
+        (
+            "repository_check.rs",
+            "Duration::from_secs(20 * 60)",
+            "Duration::from_secs(7200)",
+        ),
+        (
+            "repository_check.rs",
+            "CredentialHolder::BackupWorker",
+            "CredentialHolder::App",
+        ),
+        (
+            "serve.rs",
+            "Ok(Some(_)) => Err(ProcessError::Interrupted),",
+            "Ok(Some(_)) => Ok(()),",
+        ),
+        (
+            "serve.rs",
+            "Ok(None) => return idle(residency, config, held),",
+            "Ok(None) => return Ok(Round::Waiting),",
+        ),
+        ("process.rs", "interrupt()?;", ""),
+        ("runtime.rs", "&|| self.window.check(),", "&|| Ok(()),"),
     ] {
         let path = std::path::PathBuf::from("crates/backup-worker/src").join(file);
         let source = fs::read_to_string(workspace_root().join(&path)).unwrap();

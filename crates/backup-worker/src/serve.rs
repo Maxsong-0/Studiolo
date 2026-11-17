@@ -1,11 +1,14 @@
 //! 进程入口用的三件事：常驻循环、请生产者安排一次封存、显式初始化状态目录。
 //!
-//! 全部用固定路径和固定身份，没有任何参数。常驻循环只做一件事：问生产者「下一个待办」，
-//! 对它走状态机的一步（决策表在 `BackupWorker::advance`）。不装信号处理：状态机本来就按
-//! 崩溃恢复设计，被终止和崩溃走同一条恢复路径。
+//! 全部用固定路径和固定身份，没有任何参数。常驻循环每一轮先问生产者「下一个待办」，有就对它走
+//! 状态机的一步（决策表在 `BackupWorker::advance`）；没有待办时才轮到仓库抽查：先交上一次没交上
+//! 的结果，再问生产者要不要查一组（执行器在 `repository_check`）。抽查时每 30 秒问一次有没有
+//! 待办作业，有就停下让路。不装信号处理：状态机本来就按崩溃恢复设计，被终止和崩溃走同一条恢复
+//! 路径；抽查做到一半没了，由生产者过 30 分钟补记「中途没了」。
 use crate::{
     AppendRunner, ApprovedJob, FinalManifestProbe, ProcessError, ResticCredentials, WorkerConfig,
     WorkerQueueClient,
+    repository_check::{self, Checked},
 };
 use std::{
     cell::Cell,
@@ -17,7 +20,7 @@ use studiolo_backup::{
     checkpoint::staging::SealedCheckpoint,
     store::storage::BackupStore,
     worker::{
-        audit::QueueAnswer,
+        audit::{QueueAnswer, RepositoryCheckReport},
         final_manifest::{
             FinalManifestDraft, FinalManifestLookup, FinalManifestReader, FinalManifestWriter,
         },
@@ -25,6 +28,7 @@ use studiolo_backup::{
             Advance, BackupWorker, JobOutcome, JobPorts, PortUnavailable, RemoteProbe, Transfer,
         },
         recovery_point::BackupTargetKind,
+        repository_check::RepositoryDigest,
         restic::{CredentialHolder, ResticError, ResticRunner},
     },
 };
@@ -40,6 +44,10 @@ const JOB: Duration = Duration::from_secs(7200);
 const WAITING: Duration = Duration::from_secs(30);
 /// 一个作业收口之后，过多久看下一个。
 const SETTLED: Duration = Duration::from_secs(1);
+/// 抽查时多久问一次有没有待办作业。
+const YIELD_POLL: Duration = Duration::from_secs(30);
+/// 抽查结果交不上时最多留多久；放弃之后原意图由生产者补记「中途没了」，那一组之后重查。
+const REPORT_HOLD: Duration = Duration::from_secs(3600);
 
 /// 进程入口看到的固定失败类别；不带路径、键和子进程输出。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -103,8 +111,10 @@ pub fn run() -> ServeError {
     if recovered.is_err() {
         return ServeError::State;
     }
+    // 只在内存里留：进程没了就丢，由生产者补记。
+    let mut held: Option<HeldReport> = None;
     loop {
-        let pause = match round(&residency, &config, &store) {
+        let pause = match round(&residency, &config, &store, &mut held) {
             Ok(Round::Settled) => SETTLED,
             Ok(Round::Waiting) => WAITING,
             Err(stop) => return stop,
@@ -114,7 +124,7 @@ pub fn run() -> ServeError {
 }
 
 enum Round {
-    /// 一个作业收口了，可以马上看下一个。
+    /// 一个作业收口了、或一次抽查交上了，可以马上看下一个。
     Settled,
     /// 没有待办，或者这一步还没收口。
     Waiting,
@@ -124,12 +134,13 @@ fn round(
     residency: &Residency,
     config: &WorkerConfig,
     store: &BackupStore,
+    held: &mut Option<HeldReport>,
 ) -> Result<Round, ServeError> {
     let pending = WorkerQueueClient::new(config, Instant::now() + SHORT)
         .and_then(|queue| queue.next_pending());
     let key = match pending {
         Ok(Some(key)) => key,
-        Ok(None) => return Ok(Round::Waiting),
+        Ok(None) => return idle(residency, config, held),
         Err(_) => return Ok(waiting("生产者暂不可达")),
     };
     // 队列给的原键只是线索：这里用带键的准入请求重新取得批准，自报的键不能代替它。
@@ -177,6 +188,96 @@ fn round(
 fn waiting(reason: &str) -> Round {
     eprintln!("备份 worker 等下一轮：{reason}");
     Round::Waiting
+}
+
+/// 还没交上去的抽查结果。
+struct HeldReport {
+    report: RepositoryCheckReport,
+    since: Instant,
+}
+
+/// 没有待办作业时：先交上一次没交上的抽查结果；没有的话再问生产者要不要查一组。
+fn idle(
+    residency: &Residency,
+    config: &WorkerConfig,
+    held: &mut Option<HeldReport>,
+) -> Result<Round, ServeError> {
+    if let Some(pending) = held.take() {
+        return Ok(deliver(config, pending, held));
+    }
+    let assigned = WorkerQueueClient::new(config, Instant::now() + SHORT)
+        .and_then(|queue| queue.repository_check());
+    let assignment = match assigned {
+        Ok(Some(assignment)) => assignment,
+        Ok(None) => return Ok(Round::Waiting),
+        Err(_) => return Ok(waiting("仓库抽查没派下来")),
+    };
+    let yielding = Yield {
+        config,
+        asked: Cell::new(Instant::now()),
+    };
+    let outcome = match repository_check::run(config, residency, &assignment, &|| yielding.check())
+    {
+        Checked::Outcome(outcome) => outcome,
+        Checked::Shutdown => return Err(ServeError::Shutdown),
+    };
+    eprintln!(
+        "仓库抽查第 {} 组：{:?}",
+        assignment.key.bucket.get(),
+        outcome.result()
+    );
+    let Ok(report) = RepositoryCheckReport::new(
+        BackupTargetKind::DedicatedAppendOnlyTarget,
+        assignment.key,
+        outcome,
+        RepositoryDigest::of(config.repository()),
+    ) else {
+        return Ok(waiting("抽查结果组不成上报"));
+    };
+    Ok(deliver(
+        config,
+        HeldReport {
+            report,
+            since: Instant::now(),
+        },
+        held,
+    ))
+}
+
+/// 交一次抽查结果；交不上留到下一轮，留满一小时就放弃。
+fn deliver(config: &WorkerConfig, pending: HeldReport, held: &mut Option<HeldReport>) -> Round {
+    let sent = WorkerQueueClient::new(config, Instant::now() + SHORT)
+        .and_then(|queue| queue.report_check(&pending.report));
+    match sent {
+        Ok(_) => Round::Settled,
+        Err(_) if pending.since.elapsed() >= REPORT_HOLD => {
+            waiting("抽查结果一小时没交上，放弃；生产者会补记中途没了")
+        }
+        Err(_) => {
+            *held = Some(pending);
+            waiting("抽查结果这一轮没交上")
+        }
+    }
+}
+
+/// 抽查时每 30 秒问一次生产者有没有待办作业，有就让路；问不到当成没有（生产者不在，作业也起不来）。
+struct Yield<'a> {
+    config: &'a WorkerConfig,
+    asked: Cell<Instant>,
+}
+impl Yield<'_> {
+    fn check(&self) -> Result<(), ProcessError> {
+        if self.asked.get().elapsed() < YIELD_POLL {
+            return Ok(());
+        }
+        self.asked.set(Instant::now());
+        let pending = WorkerQueueClient::new(self.config, Instant::now() + SHORT)
+            .and_then(|queue| queue.next_pending());
+        match pending {
+            Ok(Some(_)) => Err(ProcessError::Interrupted),
+            Ok(None) | Err(_) => Ok(()),
+        }
+    }
 }
 
 /// 启动恢复只改本地状态，不需要账本；任何账本调用都拒绝，免得被当成「已落账」。

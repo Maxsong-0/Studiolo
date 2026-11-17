@@ -120,6 +120,24 @@ impl Runtime {
         );
         self.after(result)
     }
+    /// 仓库抽查：同一条执行边界，截止时间就是打开时给的窗口；`interrupt` 见 [`process::run_check`]。
+    pub fn check_subset(
+        &self,
+        argv: &[String],
+        interrupt: &dyn Fn() -> Result<()>,
+    ) -> Result<process::Output> {
+        self.check()?;
+        let result = process::run_check(
+            &self.package,
+            argv,
+            &self.credentials,
+            self.temporary.path(),
+            self.window.deadline(),
+            &|| self.window.check(),
+            interrupt,
+        );
+        self.after(result)
+    }
     fn after<T>(&self, result: Result<T>) -> Result<T> {
         if matches!(result, Err(ProcessError::CleanupFailed)) {
             self.poisoned.set(true);

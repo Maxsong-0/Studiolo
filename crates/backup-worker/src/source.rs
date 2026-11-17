@@ -73,7 +73,7 @@ impl Source {
         source.check_time()?;
         Ok(source)
     }
-    pub fn accepts(&self, invocation: &ResticInvocation) -> Result<bool> {
+    pub fn accepts(&self, invocation: &ResticInvocation) -> Result<()> {
         self.binding.accepts(invocation)
     }
     pub fn repository(&self) -> &studiolo_backup::worker::restic::RepositoryRef {

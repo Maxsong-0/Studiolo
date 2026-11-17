@@ -9,6 +9,7 @@ use studiolo_backup::worker::{
     audit::{BackupAuditRequest, BackupQueueRequest, QueueAnswer, QueueCommand},
     job::{backup_event_key, backup_failure, backup_intent},
     recovery_point::BackupTargetKind,
+    repository_check::{CheckAssignment, CheckBucket, CheckKey, CheckPurpose, check_intent},
     state::{FailureReason, JobKey},
 };
 use studiolo_core::checkpoint::CheckpointId;
@@ -40,12 +41,29 @@ fn admission(ledger: &MemoryAuditLedger, target: BackupTargetKind) -> AuditRecor
         ))
         .unwrap()
 }
+/// 一条抽查原意图的回执。
+pub(super) fn check_assigned(ledger: &MemoryAuditLedger, target: BackupTargetKind) -> QueueAnswer {
+    let assignment = CheckAssignment {
+        key: CheckKey {
+            sequence: NonZeroU64::new(3).unwrap(),
+            bucket: CheckBucket::new(5).unwrap(),
+        },
+        purpose: CheckPurpose::Rotation,
+    };
+    QueueAnswer::CheckAssigned(Box::new(
+        ledger
+            .append(check_intent(&assignment, target).unwrap())
+            .unwrap(),
+    ))
+}
 #[test]
 fn each_command_roundtrips_and_only_accepts_its_own_answers() {
     let ledger = MemoryAuditLedger::new();
     let pending = QueueAnswer::Pending(Box::new(admission(&ledger, TARGET)));
+    let assigned = check_assigned(&ledger, TARGET);
     let next = BackupQueueRequest::new(TARGET, QueueCommand::NextPending);
     let schedule = BackupQueueRequest::new(TARGET, QueueCommand::Schedule);
+    let check = BackupQueueRequest::new(TARGET, QueueCommand::RepositoryCheck);
     for (request, allowed, refused) in [
         (
             &next,
@@ -54,6 +72,7 @@ fn each_command_roundtrips_and_only_accepts_its_own_answers() {
                 QueueAnswer::Started,
                 QueueAnswer::Outstanding,
                 QueueAnswer::NotDue,
+                assigned.clone(),
             ],
         ),
         (
@@ -63,7 +82,16 @@ fn each_command_roundtrips_and_only_accepts_its_own_answers() {
                 QueueAnswer::Outstanding,
                 QueueAnswer::NotDue,
             ],
-            vec![pending.clone(), QueueAnswer::Idle],
+            vec![pending.clone(), QueueAnswer::Idle, assigned.clone()],
+        ),
+        (
+            &check,
+            vec![
+                assigned.clone(),
+                QueueAnswer::Outstanding,
+                QueueAnswer::NotDue,
+            ],
+            vec![pending.clone(), QueueAnswer::Idle, QueueAnswer::Started],
         ),
     ] {
         let bytes = request.encode().unwrap();

@@ -32,6 +32,8 @@ pub struct EvidenceSnapshot {
     pub manual_sync_quota: Option<studiolo_host_config::sync_transport::ManualQuota>,
     /// 备份作业事实；默认是「没读到」，不是「没启用」，更不是正常。
     pub backup_jobs: crate::backup::BackupJobsEvidence,
+    /// 备份仓库抽查事实；默认同样是「没读到」。
+    pub backup_checks: crate::backup::RepositoryCheckEvidence,
 }
 
 impl EvidenceSnapshot {
@@ -49,6 +51,7 @@ impl EvidenceSnapshot {
             bridge: None,
             manual_sync_quota: None,
             backup_jobs: crate::backup::BackupJobsEvidence::Unreadable,
+            backup_checks: crate::backup::RepositoryCheckEvidence::Unreadable,
         }
     }
 
@@ -97,6 +100,7 @@ impl EvidenceSnapshot {
             self.now_unix_seconds,
         ));
         sections.push(super::backup::jobs_section(&self.backup_jobs));
+        sections.push(super::backup_check::check_section(&self.backup_checks));
         HealthReport::new(sections)
     }
 }

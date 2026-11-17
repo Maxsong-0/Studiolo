@@ -15,6 +15,7 @@ pub use arguments::{JobTag, RepositoryRef, SnapshotRef};
 pub use error::ResticError;
 pub use runner::{ResticOutcome, ResticRunner, UnconfiguredResticRunner, UnverifiedReason};
 
+use super::repository_check::CheckBucket;
 use arguments::{absolute_argument, is_closed_token};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -64,8 +65,15 @@ pub enum ResticCommand {
         /// 只读传输源根目录（绝对路径）。
         source_root: PathBuf,
     },
-    /// 读取并校验仓库全部数据。此命令没有单快照筛选，不能冒充配对引用证明。
-    CheckRepository,
+    /// 读一组数据包并照常检查全部快照的树（`check --read-data-subset=n/30`）。
+    ///
+    /// 带 `--no-lock`：检查只读，不写仓库；带独占锁时被到点或让出结束会留下陈旧锁，restic 拿锁时
+    /// 不跳过陈旧锁，之后所有备份都会被挡住。代价是有人同时用管理员身份 prune 时可能误报，
+    /// 所以维护前要先停 worker（见部署说明）。没有单快照筛选，不能冒充配对引用证明。
+    CheckSubset {
+        /// 读哪一组。
+        bucket: CheckBucket,
+    },
     /// 恢复到新目录。
     Restore {
         /// 目标快照。
@@ -85,7 +93,7 @@ impl ResticCommand {
     #[must_use]
     pub fn identity(&self) -> ResticIdentity {
         match self {
-            Self::Backup { .. } | Self::CheckRepository => ResticIdentity::Append,
+            Self::Backup { .. } | Self::CheckSubset { .. } => ResticIdentity::Append,
             Self::Restore { .. } => ResticIdentity::Restore,
             Self::Forget { .. } => ResticIdentity::RetentionCleanup,
         }
@@ -141,9 +149,11 @@ impl ResticInvocation {
                 argv.push("--one-file-system".to_owned());
                 argv.push(absolute_argument(source_root)?);
             }
-            ResticCommand::CheckRepository => {
+            ResticCommand::CheckSubset { bucket } => {
                 argv.push("check".to_owned());
-                argv.push("--read-data".to_owned());
+                argv.push("--no-lock".to_owned());
+                argv.push("--read-data-subset".to_owned());
+                argv.push(bucket.subset());
             }
             ResticCommand::Restore {
                 snapshot,
