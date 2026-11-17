@@ -182,12 +182,13 @@ pub(crate) async fn blame(
         Ok(principal) => principal,
         Err(response) => return *response,
     };
-    let _permit = match state.queries.try_acquire_owned() {
+    let permit = match state.queries.try_acquire_owned() {
         Ok(permit) => permit,
         Err(_) => return busy(),
     };
+    // 许可交给派生作业：客户端断开时作业仍在派生线程上跑完，额度到那时才还（与 page、file 同一口径）。
     match workbench
-        .history_blame(principal, query.vault_uuid, query.path)
+        .history_blame(principal, query.vault_uuid, query.path, permit)
         .await
     {
         Ok(value) => Json(value).into_response(),

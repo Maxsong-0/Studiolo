@@ -113,6 +113,24 @@ impl Deriver {
         }
     }
 
+    /// 带着查询许可投递：许可随作业结束才归还，不随等结果的 future。客户端断开只丢掉 future，
+    /// 已投递的作业照样在这条线程上跑完；额度在那之前不能放给新请求，否则并发上限对它不成立
+    /// （与 `queries::run_query` 同一口径）。
+    pub(crate) fn run_leased<T, F>(
+        &self,
+        permit: tokio::sync::OwnedSemaphorePermit,
+        work: F,
+    ) -> impl Future<Output = Result<T, LocalError>> + Send + use<T, F>
+    where
+        T: Send + 'static,
+        F: FnOnce(&OnDeriveThread) -> T + Send + 'static,
+    {
+        self.run(move |on| {
+            let _permit = permit;
+            work(on)
+        })
+    }
+
     /// 同步装配（只读副本的启动建模）用：阻塞当前线程等结果。在专用线程自己的任务里调用，
     /// 等的就是自己、永远等不到，所以直接拒绝。
     pub(crate) fn run_blocking<T, F>(&self, work: F) -> Result<T, LocalError>
@@ -128,5 +146,42 @@ impl Deriver {
             let _ = reply.send(work(on));
         })?;
         result.recv().map_err(|_| LocalError::Unavailable)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::{sync::Arc, time::Duration};
+
+    #[tokio::test]
+    async fn a_leased_job_keeps_its_query_slot_until_it_finishes_even_if_the_caller_goes_away() {
+        let deriver = Deriver::start().unwrap();
+        let budget = Arc::new(tokio::sync::Semaphore::new(1));
+        // 先占住派生线程，后面那件带许可的作业只能排队。
+        let (started_tx, started_rx) = mpsc::channel::<()>();
+        let (release_tx, release_rx) = mpsc::channel::<()>();
+        deriver
+            .submit(move |_| {
+                let _ = started_tx.send(());
+                // 发送端因断言失败被丢弃时也退出，不留下卡住的线程。
+                let _ = release_rx.recv();
+            })
+            .unwrap();
+        started_rx.recv().unwrap();
+        let permit = Arc::clone(&budget).try_acquire_owned().unwrap();
+        // 客户端断开：等结果的 future 被丢弃，作业已经投递出去。
+        drop(deriver.run_leased(permit, |_| 7));
+        assert_eq!(budget.available_permits(), 0, "作业还没跑，额度不能先还");
+        assert!(Arc::clone(&budget).try_acquire_owned().is_err());
+        release_tx.send(()).unwrap();
+        // 作业跑完、闭包析构时才还额度。
+        let returned =
+            tokio::time::timeout(Duration::from_secs(10), Arc::clone(&budget).acquire_owned())
+                .await
+                .expect("作业跑完后额度要还回来")
+                .unwrap();
+        drop(returned);
+        assert_eq!(budget.available_permits(), 1);
     }
 }
