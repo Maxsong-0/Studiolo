@@ -55,43 +55,29 @@ impl BackupStore {
         let root_path = root;
         let root = walk(root_path)?;
         check_directory(&root, owner)?;
+        if initialize {
+            // 建锁之前先只读核一遍：建好过或有残留就在这里拒绝，不留下一个没有状态文件的空锁。
+            // 显式初始化不接管旧锁，留下的空锁只能人工清（见 docs/contracts/backup-worker-store.md）。
+            refuse_initialized(&root, owner)?;
+        }
         let lease = lease::Lease::acquire(root_path, &root, initialize)?;
         let store = Self {
             root,
             lease,
             _single_writer: std::marker::PhantomData,
         };
-        let present = store.stat_optional(STATE_FILE, STATE_MAX_BYTES, owner)?;
         if initialize {
-            if present {
-                return Err(StoreError::AlreadyExists);
-            }
-            for name in [STATE_TEMP_FILE, MANIFEST_FILE, MANIFEST_TEMP_FILE] {
-                if store.stat_optional(name, MANIFEST_MAX_BYTES, owner)? {
-                    return Err(StoreError::AlreadyExists);
-                }
-            }
+            // 建锁之前那一遍没有锁保护，拿到锁再核一遍才算数。
+            refuse_initialized(&store.root, owner)?;
             store.replace(
                 STATE_FILE,
                 STATE_TEMP_FILE,
                 &encode(&PersistedState::initial(), STATE_MAX_BYTES)?,
             )?;
-        } else if !present {
+        } else if !present(&store.root, STATE_FILE, STATE_MAX_BYTES, owner)? {
             return Err(StoreError::MissingStore);
         }
         Ok(store)
-    }
-
-    fn stat_optional(&self, name: &str, max: u64, owner: u32) -> Result<bool, StoreError> {
-        let flags = OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::NONBLOCK | OFlags::CLOEXEC;
-        match openat(&self.root, name, flags, Mode::empty()) {
-            Ok(file) => {
-                check_regular(&file, owner, max)?;
-                Ok(true)
-            }
-            Err(rustix::io::Errno::NOENT) => Ok(false),
-            Err(_) => Err(StoreError::UnsafeStorage),
-        }
     }
 
     fn read(&self, name: &str, max: u64) -> Result<Option<Vec<u8>>, StoreError> {
@@ -170,6 +156,39 @@ impl BackupStore {
             }
         }
         Ok(())
+    }
+}
+
+/// 状态文件、它的临时名或清单任一已在：这个目录建过存储，或上次初始化留下了残留，都不能再初始化。
+#[cfg(unix)]
+fn refuse_initialized(root: &rustix::fd::OwnedFd, owner: u32) -> Result<(), StoreError> {
+    if present(root, STATE_FILE, STATE_MAX_BYTES, owner)? {
+        return Err(StoreError::AlreadyExists);
+    }
+    for name in [STATE_TEMP_FILE, MANIFEST_FILE, MANIFEST_TEMP_FILE] {
+        if present(root, name, MANIFEST_MAX_BYTES, owner)? {
+            return Err(StoreError::AlreadyExists);
+        }
+    }
+    Ok(())
+}
+
+/// 固定名字的普通文件在不在；在就核属主、权限和大小，是链接或别的类型一律当不安全。
+#[cfg(unix)]
+fn present(
+    root: &rustix::fd::OwnedFd,
+    name: &str,
+    max: u64,
+    owner: u32,
+) -> Result<bool, StoreError> {
+    let flags = OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::NONBLOCK | OFlags::CLOEXEC;
+    match openat(root, name, flags, Mode::empty()) {
+        Ok(file) => {
+            check_regular(&file, owner, max)?;
+            Ok(true)
+        }
+        Err(rustix::io::Errno::NOENT) => Ok(false),
+        Err(_) => Err(StoreError::UnsafeStorage),
     }
 }
 
