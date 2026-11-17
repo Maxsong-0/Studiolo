@@ -18,7 +18,7 @@ Studiolo 黑板 → 本机派发面板 → 已配对的 loopback 连接程序
 - `web/src/LocalDispatch.tsx`：黑板内的「本机 Codex / Claude Code」面板，创建只读工作项或向指定客户端派发现有工作项。涉及写入的工作项由已有 M5 接口定义独占路径后派发。
 - `crates/local-server/src/security.rs`：CSP 只额外允许字面 `http://127.0.0.1:*`；本机服务仍要求固定 Origin 和配对码。未开放 LAN 或任意网站。
 
-任务书只保存在权威黑板。通知只含项目、工作项 ID、通知 ID 和固定取任务说明，不传任意 shell 命令。仅登记的 Claude/Codex 可写 `项目/Studiolo`，未指定的类型维持只读。
+任务书只保存在权威黑板。通知只含项目、工作项 ID、通知 ID 和固定取任务说明，不传任意 shell 命令。仅登记的 Claude/Codex 可写 `项目/Studiolo-Docs`（2026-10-23 前叫 `项目/Studiolo`，下面的验收记录保留旧名；项目名只在 `scripts/local_client/config.py` 的 `BOARD_PROJECT` 一处，改名前登记的配置会被拒绝加载，要把各客户端的 `project` 改成新名），未指定的类型维持只读。
 
 ## 真实验收（2026-09-20）
 

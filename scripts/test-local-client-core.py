@@ -17,6 +17,7 @@ import urllib.request
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from local_client.mcp import (MAX_BYTES, PROTOCOL, McpClient, McpError,
                               _NoRedirect, _response_message)
+from local_client.config import BOARD_PROJECT
 from local_client.store import Store
 from local_client import store as store_module
 
@@ -130,14 +131,14 @@ class McpTests(PrivateFixture):
     def test_board_decodes_only_board_text_json(self):
         client, opener = self.client(lambda message: rpc(message, {
             "content": [{"type": "text", "text": '{"task_id":"T-42"}'}], "isError": False}))
-        self.assertEqual({"task_id": "T-42"}, client.board("项目/Studiolo", "get", {"task_id": "T-42"}))
+        self.assertEqual({"task_id": "T-42"}, client.board(BOARD_PROJECT, "get", {"task_id": "T-42"}))
         self.assertEqual("board", opener.messages[-1]["params"]["name"])
-        self.assertEqual("项目/Studiolo", opener.messages[-1]["params"]["arguments"]["project"])
+        self.assertEqual(BOARD_PROJECT, opener.messages[-1]["params"]["arguments"]["project"])
 
     def test_tool_error_is_safe(self):
         client, _ = self.client(lambda message: rpc(message, {
             "content": [{"type": "text", "text": "SECRET"}], "isError": True}))
-        self.assertCode("tool_error", client.board, "项目/Studiolo", "get", {})
+        self.assertCode("tool_error", client.board, BOARD_PROJECT, "get", {})
 
     def test_lost_write_reply_is_never_retried(self):
         applied = []
@@ -147,7 +148,7 @@ class McpTests(PrivateFixture):
             raise urllib.error.URLError("SECRET token and remote diagnostic")
 
         client, opener = self.client(commit_then_disconnect)
-        self.assertCode("transport_error", client.board, "项目/Studiolo", "create", {"title": "test"})
+        self.assertCode("transport_error", client.board, BOARD_PROJECT, "create", {"title": "test"})
         self.assertEqual(1, len(applied))
         self.assertEqual(1, sum(message["method"] == "tools/call" for message in opener.messages))
         self.assertEqual(2, json.loads(self.state.read_text())["counter"])
@@ -187,7 +188,7 @@ class McpTests(PrivateFixture):
     def test_invalid_board_content_is_safe(self):
         for content in [[], [{"type": "image", "text": "{}"}], [{"type": "text", "text": "SECRET invalid"}]]:
             client, _ = self.client(lambda message: rpc(message, {"content": content}))
-            self.assertCode("invalid_board_response", client.board, "项目/Studiolo", "list", {})
+            self.assertCode("invalid_board_response", client.board, BOARD_PROJECT, "list", {})
 
     def test_all_calls_share_state_lock_across_instances_and_threads(self):
         opener = FakeOpener()

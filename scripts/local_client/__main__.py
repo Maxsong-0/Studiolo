@@ -6,7 +6,7 @@ from pathlib import Path
 import sys
 import subprocess
 
-from .config import load, new_token, private_create, private_read
+from .config import BOARD_PROJECT, load, new_token, private_create, private_read
 
 
 def main():
@@ -71,7 +71,7 @@ def main():
         new_token(bridge)
         c = {"id": args.client, "provider": args.provider,
             "mode": "codex-queue" if args.provider == "codex" else "claude-channel",
-            "binary": str(args.binary), "cwd": str(args.cwd), "project": "项目/Studiolo",
+            "binary": str(args.binary), "cwd": str(args.cwd), "project": BOARD_PROJECT,
             "mcp_endpoint": args.endpoint, "mcp_token_file": str(args.studiolo_token_file),
             "bridge_token_file": str(bridge), "included_quota_only": True,
             "paid_usage_disabled": args.paid_usage_disabled}

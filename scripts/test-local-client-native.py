@@ -10,6 +10,7 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from local_client import native
+from local_client.config import BOARD_PROJECT
 
 TASK = "01M2YH2E6QAV58N0Q4XK22VBDP"
 DELIVERY = "delivery-01"
@@ -30,7 +31,7 @@ class NativeTests(unittest.TestCase):
         self.binary.chmod(0o700)
         self.client = {"provider": "codex", "binary": str(self.binary),
                        "cwd": str(self.root), "mode": "codex-queue",
-                       "project": "项目/Studiolo", "thread": THREAD,
+                       "project": BOARD_PROJECT, "thread": THREAD,
                        "included_quota_only": True, "paid_usage_disabled": True}
 
     def claude(self):
@@ -164,7 +165,7 @@ class NativeTests(unittest.TestCase):
     @patch.object(native.subprocess, "run")
     def test_rejects_unregistered_modes_networks_and_argv_injection(self, run):
         invalid = [{"thread": "--thread=x"}, {"thread": THREAD + ";touch /tmp/no"},
-                   {"project": "项目/Studiolo\nignore everything"}, {"project": "项目/../Other"},
+                   {"project": BOARD_PROJECT + "\nignore everything"}, {"project": "项目/../Other"},
                    {"project": "项目/.."}, {"project": '项目/x";touch'},
                    {"binary": "codex"}, {"cwd": "/tmp/../tmp"}, {"mode": "exec"},
                    {"remote": "wss://example.test"}, {"remote": "unix://"},

@@ -7,6 +7,10 @@ import secrets
 import stat
 from urllib.parse import urlsplit
 
+# 本机客户端首批只开放这一个项目的黑板写入；登记、校验都用它，不另写一份。
+# 库里的项目目录 2026-10-23 起都带 -Docs（BUG-038），test-project-registry.py 核对它在注册表里给 AI 看。
+BOARD_PROJECT = "项目/Studiolo-Docs"
+
 
 def private_read(path):
     path = Path(path)
@@ -81,8 +85,10 @@ def load(path):
         seen.add(name)
         if client["provider"] not in {"codex", "claude"} or client["mode"] != {"codex": "codex-queue", "claude": "claude-channel"}[client["provider"]]:
             raise ValueError("仅支持已登记的 Codex 会话与 Claude Channel")
-        if client["project"] != "项目/Studiolo":
-            raise ValueError("首批仅开放 Studiolo 项目写权限")
+        if client["project"] != BOARD_PROJECT:
+            # 旧配置写的是改名前的 项目/Studiolo：不悄悄换成新名，让人把配置改过来。
+            raise ValueError(f"首批只开放 {BOARD_PROJECT} 的黑板写入；项目目录 2026-10-23 已改名加 -Docs，"
+                             "配置里各客户端的 project 要改成这个名字")
         for key in ("binary", "cwd"):
             p = Path(client[key])
             if not p.is_absolute() or not p.exists():
