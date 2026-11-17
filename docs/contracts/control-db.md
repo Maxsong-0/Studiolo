@@ -171,6 +171,9 @@ TaskEngine/Broker 完成。`create_board_task_by_instance`、原 `claim` 路径�
 不能 claim 或终态；不存在父子免锁。层级与路径检查和创建/claim 同事务，防止并发 TOCTOU。
 
 周期 `reconcile_leases(now,false)` 不撤销健康租约；启动 `true` 要求组合根已隔离旧运行体。
+任务引擎不直接调它，而是先 `plan_lease_reconciliation` 预演（改动随事务回滚）、再 `apply_lease_plan` 照单执行：
+写事务里重做的结果和清单不同就回滚、返回 `None`（T-213，ADR-037）。同深度按任务和 attempt 标识排序，库没变时
+两次得到逐条相同的清单；已是取消中、只在等子任务的 attempt 不进清单、不改时间戳。
 `heartbeat_progress` 强制单调、未过期租约；执行体十分钟零进度且 edits=0 判 stalled。
 取消仅 stopped 回执可在三分钟内结束，超时 system abandoned。`launch_failed` 在零工具调用、
 显式 retry_on、max_attempts 与最多两次重试约束下排入退避队列。
@@ -182,6 +185,16 @@ Broker 整体出问题、只能在服务外面处理（写者被占、写者状�
 整轮报错（复审 A1-F3）；写者未决、没有权限、预算超限按单个 attempt 算（复审 R2-F1，理由见 [任务引擎](task-engine.md)）。
 新 `reserve_terminal` 拒绝 inline 字节数组。历史磁盘页/WAL/备份不是逻辑迁移的擦除承诺。
 更多输入与投影边界见 [M5 黑板](../m5/blackboard.md)。
+
+新根恢复（T-212，2026-11-16，见[新根恢复](new-root-restore.md)）：`ControlDb::open_existing(目录, vault_uuid)`
+只打开封存里放出来的 `control.sqlite3`，只设连接级 pragma（`synchronous`、`foreign_keys`、`busy_timeout`、
+`trusted_schema`）和新版库守卫：不建库、不迁移、不切持久的 journal mode、不写 Vault 绑定（Codex 第二意见第 6 条；
+以前它走普通打开的整条路，核水位之前库就可能被改过）。schema 必须已经是当前版本、Vault 绑定必须已经在库里且
+相等，否则拒绝；有用例：放出来的库是 DELETE 模式、fence 计数行被删，`open_existing` 之后两样都原样，普通打开才
+切到 WAL。`restored_watermark()` 按封存时同一套规则在这个库上重算 Control 水位（schema、Vault 绑定、各 outbox
+排空、没有提交中的 attempt、完整性检查），只读；`live_attempts()` 只读地数拿着租约的（已认领、运行中）和取消中的
+attempt。编排第一次先核水位，核过了才记「开始」，再按启动巡检调 `reconcile_leases(now, true)`，之后拿着租约的
+必须是 0。
 
 Runner 候选继续复用 `reserve_board_runner_candidates` → `finalize_terminal(NeedsReview)`
 的原 T1/T2；board 的普通 reserve/report 与直接 Succeeded 被拒。NeedsReview 不算子项终态，

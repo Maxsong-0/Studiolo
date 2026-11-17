@@ -146,6 +146,7 @@ fn probe(options: &Options) -> Result<Value> {
         expected_vault_uuid: options.ids[0],
         expected_pair_id: options.ids[1],
         checkpoint_id: options.checkpoint.clone(),
+        restore_id: "t132-probe",
         parent_lineage: None,
         resume_interrupted: false,
     })

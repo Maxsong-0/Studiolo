@@ -80,6 +80,13 @@ impl FrozenAgentStore {
         })
     }
 }
+/// 按封存时同一套规则在一个已打开的身份库上重算水位（类型 token 摘要、实例数、schema），只读。
+/// 新根恢复用它核「放出来的库就是清单里那一份」（T-212）。
+pub(super) fn restored_watermark(store: &AgentStore) -> Result<OwnerWatermark, SupplyError> {
+    let connection = store.lock()?;
+    validate::snapshot(&connection).map_err(problem)
+}
+
 fn problem(error: Error) -> SupplyError {
     match error {
         Error::UnsafeStorage => SupplyError::UnsafeStorage,

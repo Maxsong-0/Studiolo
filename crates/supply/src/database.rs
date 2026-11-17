@@ -11,6 +11,8 @@ mod checkpoint;
 mod children;
 pub use checkpoint::{AgentCheckpointAssembly, AgentCheckpointSource, FrozenAgentStore};
 mod identity;
+mod restore;
+pub use restore::{RestoredIdentities, invalidate_restored_identities, verify_restored_identities};
 mod view;
 pub use view::{AgentIdentityView, IdentitySnapshot, InstanceIdentity, TypeIdentity};
 mod outage;

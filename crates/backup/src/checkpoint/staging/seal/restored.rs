@@ -96,6 +96,16 @@ impl RestoredCheckpoint {
     pub fn interrupted(target_parent: &Path, name: &str) -> Result<bool> {
         Directory::open(target_parent, true)?.exists(&partial_name(name))
     }
+    /// 新根恢复（T-212）：把先放在暂用名 `held` 下的组件改成正式名 `name`。同一父目录里原子改名，正式名
+    /// 已经在就失败、不覆盖，改完同步父目录，再核父目录还是同一个。
+    ///
+    /// 带凭据的库（Auth、身份库）先放在暂用名下：它的 owner 把旧凭据全部作废之前，按正式路径谁都打不开
+    /// （包括不经启动闸门的只读模式和 agent-server）。这里不核内容：暂用名下的库这时已经被它的 owner 改过。
+    pub fn publish_held(target_parent: &Path, held: &str, name: &str) -> Result<()> {
+        let parent = Directory::open(target_parent, true)?;
+        parent.publish(held, name)?;
+        parent.check_path(target_parent)
+    }
     /// 把 `data/<component>` 逐字节核对着复制成 `target_parent/<name>`。
     ///
     /// 写的每个文件都对着已核验视图里的摘要和长度，副本里多一个、少一个节点都失败。先写进
@@ -155,6 +165,51 @@ impl RestoredCheckpoint {
         target.publish(&partial, name)?;
         target.check_path(target_parent)?;
         Ok(Placement::Extracted)
+    }
+    /// 接手上一次时重核已经放好的 `target_parent/<name>`（D2-F2）：和 [`Self::extract`] 对着同一份
+    /// 已核验视图，多一个、少一个节点或改了一个字节都失败（[`StagingError::Changed`]）。`nested` 是放在它
+    /// 第一层里的别的组件的名字（接入方账本放在身份库目录里的 `audit`），只跳过这些名字本身。只读。
+    pub fn verify_placed(
+        &self,
+        component: &str,
+        target_parent: &Path,
+        name: &str,
+        nested: &[&str],
+        deadline: Instant,
+    ) -> Result<()> {
+        check_deadline(deadline)?;
+        if !self.view.directories.contains(component) {
+            return Err(StagingError::Catalog);
+        }
+        let parent = Directory::open(target_parent, true)?;
+        let placed = parent.child(name)?;
+        let mut check = Placed {
+            expected: &self.view,
+            deadline,
+            buffer: vec![0; 256 * 1024],
+            directories: 0,
+            files: 0,
+        };
+        check.directory(&placed, component, nested, 0)?;
+        let prefix = format!("{component}/");
+        let directories = self
+            .view
+            .directories
+            .iter()
+            .filter(|path| path.starts_with(&prefix))
+            .count();
+        let files = self
+            .view
+            .files
+            .keys()
+            .filter(|path| path.as_str().starts_with(&prefix))
+            .count();
+        if check.directories != directories || check.files != files {
+            return Err(StagingError::Changed);
+        }
+        placed.check_child(&parent, name)?;
+        parent.check_path(target_parent)?;
+        check_deadline(deadline)
     }
 }
 
@@ -244,5 +299,80 @@ impl Replica<'_> {
             return Err(StagingError::Changed);
         }
         output.finish_writable()
+    }
+}
+
+/// 重核已放置组件用的只读遍历状态；只认已核验视图里登记过的节点，不写任何东西。
+struct Placed<'a> {
+    expected: &'a TreeProof,
+    deadline: Instant,
+    buffer: Vec<u8>,
+    directories: usize,
+    files: usize,
+}
+impl Placed<'_> {
+    fn directory(
+        &mut self,
+        current: &Directory,
+        prefix: &str,
+        skip: &[&str],
+        depth: usize,
+    ) -> Result<()> {
+        check_deadline(self.deadline)?;
+        if depth > 64 {
+            return Err(StagingError::Limit);
+        }
+        let names = current.names(MAX_NODES)?;
+        for name in names.iter().filter(|name| !skip.contains(&name.as_str())) {
+            check_deadline(self.deadline)?;
+            let path = format!("{prefix}/{name}");
+            if current.is_directory(name)? {
+                if !self.expected.directories.contains(&path) {
+                    return Err(StagingError::Changed);
+                }
+                self.directories += 1;
+                let child = current.child(name)?;
+                self.directory(&child, &path, &[], depth + 1)?;
+                child.check_child(current, name)?;
+            } else {
+                let path = VaultPath::parse(path).map_err(|_| StagingError::Catalog)?;
+                let proof = self
+                    .expected
+                    .files
+                    .get(&path)
+                    .ok_or(StagingError::Changed)?;
+                self.file(current, name, proof)?;
+                self.files += 1;
+            }
+        }
+        if current.names(MAX_NODES)? != names {
+            return Err(StagingError::Changed);
+        }
+        Ok(())
+    }
+    fn file(&mut self, parent: &Directory, name: &str, expected: &FileProof) -> Result<()> {
+        let mut input = Regular::open(parent, name)?;
+        if input.len() != expected.bytes {
+            return Err(StagingError::Changed);
+        }
+        let mut hash = Sha256::new();
+        let mut size = 0_u64;
+        loop {
+            check_deadline(self.deadline)?;
+            let count = input.read(&mut self.buffer)?;
+            if count == 0 {
+                break;
+            }
+            size = size.checked_add(count as u64).ok_or(StagingError::Limit)?;
+            if size > expected.bytes {
+                return Err(StagingError::Changed);
+            }
+            hash.update(&self.buffer[..count]);
+        }
+        input.check(parent, name)?;
+        if size != expected.bytes || hex(&hash.finalize()) != expected.sha256 {
+            return Err(StagingError::Changed);
+        }
+        Ok(())
     }
 }

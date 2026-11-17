@@ -65,11 +65,35 @@ pub struct RestoreLineage {
     pub restored_data: Option<PhysicalId>,
     /// 上一次恢复的 lineage 标识，形成可追溯的链。
     pub parent_lineage: Option<String>,
+    /// 这次恢复的标识（第 2 版起必有，T-212）：主服务启动时要求 Auth 里有同一标识的撤权记录。
+    /// 第 1 版没有这个字段，启动闸门一律当「撤权没做」拒绝。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub restore_id: Option<String>,
+    /// 这份数据之前经历过的全部恢复标识，按先后（第 3 版起，T-212）。Auth 里留着这些恢复的撤权记录：新的
+    /// 恢复再用其中任何一个，启动闸门就会把那条旧记录当成这次的撤权放行，所以重绑定拒绝复用
+    /// （[`super::RestoreError::RestoreIdReused`]）。第 1、2 版没有这一项。
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub earlier_restores: Vec<String>,
 }
 
 impl RestoreLineage {
-    /// 本记录格式版本。
-    pub(super) const FORMAT_VERSION: u32 = 1;
+    /// 本记录格式版本：第 2 版加了 `restore_id`，第 3 版加了 `earlier_restores`（都是 T-212）；
+    /// 第 1、2 版仍然读得进来。
+    pub(super) const FORMAT_VERSION: u32 = 3;
+    /// `earlier_restores` 最多记多少个：lineage 整份要在单条记录的大小上限之内。
+    pub(super) const MAX_EARLIER_RESTORES: usize = 256;
+
+    /// 在这份 lineage 所在的数据上再做一次恢复时，新 lineage 要记的「之前用过的恢复标识」：已完成的（它是被
+    /// 封存的那个根自己的 lineage）是它的那一串再加上它自己的；停在重绑定中途的（同一次恢复要接手）沿用它
+    /// 第一次算好的那一串。
+    #[must_use]
+    pub(super) fn earlier_for_next(&self) -> Vec<String> {
+        let mut earlier = self.earlier_restores.clone();
+        if self.state == LineageState::Completed {
+            earlier.extend(self.restore_id.clone());
+        }
+        earlier
+    }
 
     /// 该 lineage 是否代表一次已完成、可服务的恢复。
     #[must_use]

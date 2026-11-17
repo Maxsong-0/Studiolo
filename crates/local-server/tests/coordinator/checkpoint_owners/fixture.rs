@@ -19,21 +19,44 @@ pub(super) struct Assembled {
 }
 impl Assembled {
     pub(super) async fn new() -> Self {
+        Self::build(false).await
+    }
+    /// 主人登记过 TOTP（Auth 建在 v4）、登记过一个接入方实例：新根恢复的用例用它。撤权要挂上主人登记过的
+    /// 因子，身份库那一步要有实例可吊销。
+    pub(super) async fn with_owner_factor() -> Self {
+        Self::build(true).await
+    }
+    async fn build(owner_factor: bool) -> Self {
         let fixture = Fixture::new();
         let (mut broker, human) = source(&fixture);
         flush_content(&mut broker, &human, 0);
         let workbench = start(&fixture, broker, human.clone()).await;
         let config = Config::load(&fixture.config).unwrap();
+        let auth = fixture.root.join("auth");
         let sessions = Arc::new(
-            SessionManager::open(
-                &fixture.root.join("auth"),
-                config.sessions().unwrap(),
-                human.clone(),
-                Arc::new(SystemSessionClock),
-                Arc::new(OsSessionRandom),
-            )
+            if owner_factor {
+                // 撤权只认 v4（恢复码存储）：新目录经 v3→v4 的迁移入口一次建到 v4。
+                SessionManager::migrate_v3(
+                    &auth,
+                    config.sessions().unwrap(),
+                    human.clone(),
+                    Arc::new(SystemSessionClock),
+                    Arc::new(OsSessionRandom),
+                )
+            } else {
+                SessionManager::open(
+                    &auth,
+                    config.sessions().unwrap(),
+                    human.clone(),
+                    Arc::new(SystemSessionClock),
+                    Arc::new(OsSessionRandom),
+                )
+            }
             .unwrap(),
         );
+        if owner_factor {
+            super::restore::enroll(&sessions);
+        }
         let policy_path = target(&fixture, "policy");
         let policy = Arc::new(PolicyPlane::new(
             PolicyStore::open(&policy_path).unwrap(),
@@ -44,6 +67,11 @@ impl Assembled {
         agent_store
             .issue_type("codex", "2026-11-13T20:00:00Z")
             .unwrap();
+        if owner_factor {
+            agent_store
+                .register_instance("codex", "restore-drill-session", "2026-11-13T20:00:00Z")
+                .unwrap();
+        }
         let audit_path = agent_path.join("audit");
         fs::create_dir(&audit_path).unwrap();
         fs::set_permissions(&audit_path, fs::Permissions::from_mode(0o700)).unwrap();

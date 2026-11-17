@@ -32,6 +32,7 @@ mod drill;
 mod fixture;
 mod producer;
 mod restore;
+mod restore_plan;
 mod seal;
 use fixture::Setup;
 
@@ -39,7 +40,21 @@ use fixture::Setup;
 async fn checkpoint_actual_owners_export_with_two_cutoffs_and_keep_every_barrier_until_drop() {
     let f = Setup::new(true).await;
     let paths = f.targets();
-    // 实际启动恢复也会落账；截止点取冻结前原链，不能只数本测试手工 append 的三条。
+    // 直接追加、没有持久 ACK 的事件（有动作的租约对账、黑板操作的意图都是这样落账的）。以前空的启动对账
+    // 每次都会落一对；T-213 起没事可做的对账不再落账，这里手工追加一条代替，保住下面「完整验链覆盖它、
+    // 但不虚增 ACK 计数」的检查。
+    f.human
+        .append(studiolo_audit_ledger::AuditEvent::new(
+            studiolo_audit_ledger::AuditEventId::parse("board:task.reconcile:direct").unwrap(),
+            studiolo_audit_ledger::AuditPhase::Intent,
+            "task.reconcile",
+            studiolo_audit_ledger::SanitizedPayload::try_from(
+                serde_json::json!({"request_hash": "0".repeat(64)}),
+            )
+            .unwrap(),
+        ))
+        .unwrap();
+    // 截止点取冻结前原链，不能只数带 ACK 的三条。
     let records = f
         .human
         .query(&studiolo_audit_ledger::AuditFilter::default())

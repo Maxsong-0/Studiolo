@@ -9,6 +9,7 @@ mod health_input;
 mod plane_input;
 mod prepared;
 mod repository_input;
+mod restore_gate;
 mod router_input;
 mod runner_input;
 mod serving;
@@ -124,6 +125,8 @@ where
                 Arc::new(SystemSessionClock),
                 Arc::new(OsSessionRandom),
             )?);
+            // 新根恢复的启动闸门（T-212）：撤权没做完的恢复新根不许起服务。
+            restore_gate::check(options.writer_data.as_deref(), &manager)?;
             manager.require_http_ready()?;
             let factors = factor_input
                 .map(|inputs| inputs.attach(Arc::clone(&manager)))

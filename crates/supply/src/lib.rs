@@ -22,7 +22,8 @@ pub use budget::{
 pub use database::{
     AgentCheckpointAssembly, AgentCheckpointSource, AgentIdentityView, AgentStore,
     FrozenAgentStore, IdentitySnapshot, Instance, InstanceIdentity, IssuedToken, ReadQuery,
-    ReadRecord, TypeIdentity, validate_type_name,
+    ReadRecord, RestoredIdentities, TypeIdentity, invalidate_restored_identities,
+    validate_type_name, verify_restored_identities,
 };
 pub use error::SupplyError;
 pub use roots::{Entry, EntryKind, Note, Snapshot, SupplyRoots};

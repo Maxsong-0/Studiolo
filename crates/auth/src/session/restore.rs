@@ -77,4 +77,64 @@ impl SessionManager {
             ..result
         })
     }
+
+    /// 当前身份版本（`auth_meta.epoch`），只读。恢复编排用它核「撤权之后版本严格变大」（T-212）。
+    pub fn identity_epoch(&self) -> Result<i64, SessionError> {
+        self.database.transaction(|db| {
+            db.query_row("SELECT epoch FROM auth_meta WHERE id=1", [], |row| {
+                row.get(0)
+            })
+            .map_err(super::database::required_row)
+        })
+    }
+
+    /// 这个恢复标识的撤权已经提交过的话，返回当时提交的身份版本；没有返回 `None`，只读。
+    /// 恢复编排接手上一次时用它核「这次答复的版本就是当时那次」（T-212）。
+    pub fn restored_epoch(&self, restore_id: &str) -> Result<Option<i64>, SessionError> {
+        if !valid_id(restore_id) {
+            return Ok(None);
+        }
+        Ok(self
+            .database
+            .transaction(|db| audit::read(db, restore_id))?
+            .map(|prior| prior.report.epoch))
+    }
+
+    /// 这个恢复标识的撤权有没有提交、两条恢复事件是不是都已投进账本（都有回执），只读。
+    /// 主服务启动闸门用它：新根带着这个标识的 lineage 时，没做完就不许起服务（T-212）。
+    /// 不合法的标识一律答「没有」。
+    pub fn restore_completed(&self, restore_id: &str) -> Result<bool, SessionError> {
+        if !valid_id(restore_id) {
+            return Ok(false);
+        }
+        let prior = self
+            .database
+            .transaction(|db| audit::read(db, restore_id))?;
+        Ok(prior.is_some_and(|prior| {
+            prior.events.len() == 2 && prior.events.iter().all(|(_, receipt)| receipt.is_some())
+        }))
+    }
+
+    /// 这个恢复标识的撤权提交之后，主人有没有重新登录过：有会话在撤权之后的身份版本里激活过（拿到了准入
+    /// 回执），只读。之后又退出、过期或被撤的也算登录过。最终切换用它核「主人已重新认证」（T-212）。
+    /// 撤权没提交过、不合法的标识一律答「没有」。
+    pub fn reauthenticated_after_restore(&self, restore_id: &str) -> Result<bool, SessionError> {
+        if !valid_id(restore_id) {
+            return Ok(false);
+        }
+        self.database.transaction(|db| {
+            let Some(prior) = audit::read(db, restore_id)? else {
+                return Ok(false);
+            };
+            // 撤权把身份版本加一并撤掉全部旧会话；版本不低于它的会话只能是撤权之后签发的。
+            let activated: i64 = db
+                .query_row(
+                    "SELECT count(*) FROM sessions WHERE epoch>=?1 AND activated_at IS NOT NULL",
+                    [prior.report.epoch],
+                    |row| row.get(0),
+                )
+                .map_err(super::database::required_row)?;
+            Ok(activated > 0)
+        })
+    }
 }

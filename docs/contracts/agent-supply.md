@@ -225,6 +225,21 @@
   `crates/policy/tests/rules_whitelist_contract.rs`（能力集字段校验与扩大／收窄项）。
 
 
+## 新根恢复（T-212，2026-11-16）
+
+两个入口，都只打开封存里放出来的已有 `agent.sqlite3`（不建、不迁移）：
+
+- `verify_restored_identities(目录, 清单水位)`：不改库的内容，按封存时同一套规则重算水位，逐项相等才算过。编排
+  第一次做这一步之前调它，核过了才在恢复记录里记「开始」（Codex 第二意见第 3 条：以前核对和吊销是同一个调用，
+  「开始」记在核对之前，核不过的库在接手时会被当成核过的直接吊销）。它走身份库唯一的打开入口，会把封存导出时
+  的 DELETE 模式切回平时运行的 WAL；这一项不进水位。
+- `invalidate_restored_identities(目录, now)`：吊销全部类型（旧类型 token 一律失效），核「没有一个类型还有效」，
+  交回全部实例标识，由编排在策略库逐个记实例吊销。同一份库再做一遍什么都不变，接手时只做这一步。
+
+之后由主人在现有界面重新签发类型 token、AI 重新登记。身份库在新根上先放在 `agent.held` 下，吊销做完才改名成
+`agent`：之前 agent-server 按正式路径打不开它。接入方账本（`<agent 私有目录>/audit`）在恢复里只核链尾、不写。
+见[新根恢复](new-root-restore.md)。
+
 ## 人侧身份视图与管理输出（T202）
 
 人侧列表经 `AgentIdentityView` 只读观察身份库，不取得 token 或会话摘要。`session_digest` 绑定的是服务端随机 `session_ref` 的 SHA-256，非客户端提供的会话标识。`studiolo-agent admin instances` 保留原四列顺序并在末尾增加父实例号（无父为 `—`）；读取改用只读视图。网页契约见 [接入方列表](agents-list.md)。

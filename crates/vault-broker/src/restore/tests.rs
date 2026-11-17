@@ -6,6 +6,7 @@
 mod behaviour;
 mod drift;
 mod failures;
+mod restore_id;
 
 use super::{NewRootRebind, RestoreError, RestoreFault, RestoreReceipt};
 use crate::writer::Binding;
@@ -72,6 +73,7 @@ impl Fixture {
             expected_vault_uuid: binding.vault_uuid,
             expected_pair_id: binding.pair_id,
             checkpoint_id: "cp-2026-09-17-0001".to_owned(),
+            restore_id: "restore-0001",
             parent_lineage: None,
             resume_interrupted: false,
         }

@@ -144,3 +144,61 @@ fn tampering_with_any_transcript_entry_breaks_the_integrity_chain() {
         Some(TranscriptError::BrokenChain)
     );
 }
+
+#[test]
+fn the_line_text_reads_back_the_same_chain_and_refuses_edits_and_secrets() {
+    let mut kit = kit();
+    let mut grant = kit
+        .redeem(BootstrapChannel::LocalTty, InstantMillis::from_millis(1))
+        .expect("redeem");
+    grant
+        .transcript
+        .append(
+            RecoveryStep::PhysicalRebindIntent,
+            serde_json::json!({ "restore": "drill-1", "owners": ["broker", "auth", "audit"] }),
+        )
+        .expect("append");
+    // 命令行的写法：头一行，之后每条一行；末尾换行和空行不影响读回。
+    let mut text = grant.transcript.header_line().expect("头一行");
+    text.push('\n');
+    for entry in &grant.transcript.entries {
+        text.push_str(&RecoveryTranscript::entry_line(entry).expect("一行"));
+        text.push_str("\n\n");
+    }
+    let back = RecoveryTranscript::from_lines(&text).expect("读回");
+    assert_eq!(back, grant.transcript);
+    back.authorize_write()
+        .expect("读回的记录照样能取得写入授权");
+
+    // 只有头一行：读回一份空记录，取不到写入授权。
+    let header_only = RecoveryTranscript::from_lines(text.lines().next().expect("头")).expect("空");
+    assert_eq!(
+        header_only.authorize_write().err(),
+        Some(TranscriptError::TranscriptNotEstablished)
+    );
+    // 改了一条的载荷、少了一条、头换成别的 checkpoint：链都断了。
+    let edited = text.replace("drill-1", "drill-2");
+    assert_eq!(
+        RecoveryTranscript::from_lines(&edited).err(),
+        Some(TranscriptError::BrokenChain)
+    );
+    let mut lines: Vec<&str> = text.lines().filter(|line| !line.is_empty()).collect();
+    lines.remove(1);
+    assert_eq!(
+        RecoveryTranscript::from_lines(&lines.join("\n")).err(),
+        Some(TranscriptError::BrokenChain)
+    );
+    let foreign = text.replacen("cp-0001", "cp-0002", 1);
+    assert_eq!(
+        RecoveryTranscript::from_lines(&foreign).err(),
+        Some(TranscriptError::BrokenChain)
+    );
+    // 空文本、头不是 JSON、载荷里塞了像秘密的字段：都拒绝。
+    let secret = text.replace("\"owners\"", "\"password\"");
+    for broken in ["", "not json", secret.as_str()] {
+        assert_eq!(
+            RecoveryTranscript::from_lines(broken).err(),
+            Some(TranscriptError::BrokenChain)
+        );
+    }
+}

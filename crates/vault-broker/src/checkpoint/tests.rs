@@ -127,6 +127,7 @@ fn checkpoint_keeps_original_lease_and_independent_complete_copy() {
         expected_vault_uuid: vault_uuid,
         expected_pair_id: pair_id,
         checkpoint_id: "checkpoint-real-copy".into(),
+        restore_id: "restore-real-copy",
         parent_lineage: None,
         resume_interrupted: false,
     })

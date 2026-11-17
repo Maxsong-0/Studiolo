@@ -83,6 +83,24 @@ CLI只输出这些五个非秘密字段。`audit_confirmed=false`仍输出JSON�
 每个新ID占用两条安全事件；当前共享安全outbox上限8192，容量不足返回`SessionError::Capacity`。
 不能通过删除历史锚点、清库或复用别人的ID腾空间；8192不是可完成8192次恢复的承诺。
 
+## 新根恢复的调用方与只读查询（T-212，2026-11-16）
+
+主服务的新根恢复编排（`checkpoint::restore_into_new_root`，见[新根恢复](new-root-restore.md)）在同一进程里按
+CLI 同样的顺序调本入口：`open_existing_for_restore` → `Totp::attach`、`Recovery::attach` →
+`invalidate_restored_credentials`，不经 `studiolo-auth-admin`（演练工具照旧只认演练布局，不放宽）。编排要求
+第一次撤权把身份版本恰好加一、`audit_confirmed` 为真，否则新根照旧起不来。
+
+四个只读查询，都不推进时钟、不签发任何凭据；不合法的恢复 ID 一律答「没有」：
+
+| 查询 | 答什么 | 谁用 |
+|---|---|---|
+| `identity_epoch()` | 当前 `auth_meta.epoch` | 编排核「撤权之后恰好加一」 |
+| `restored_epoch(id)` | 这个恢复 ID 的撤权提交时的身份版本；没提交过为 `None` | 编排接手时核同一次；最终切换核恢复记录里的版本 |
+| `restore_completed(id)` | 撤权已提交，而且两条恢复事件都已有回执 | 主服务启动闸门、最终切换 |
+| `reauthenticated_after_restore(id)` | 撤权之后的身份版本里有激活过的会话（之后又退出、过期或被撤的也算） | 最终切换核「主人已重新认证」 |
+
+108 `20261116-142629-07b1`：Auth 全部 265+3 通过。
+
 ## 程序兼容与实际验收边界
 
 持久库版本仍为v4，但增加封闭`scope=restore`事件语义及epoch/retention验证规则。

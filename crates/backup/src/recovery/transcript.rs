@@ -22,6 +22,18 @@ pub enum RecoveryStep {
     PhysicalRebindIntent,
     /// 新目录物理重绑定的 Outcome。
     PhysicalRebindOutcome,
+    /// 开始对一个 owner 做恢复后的失效（载荷写是哪个 owner、哪次恢复）。接手上一次时据此知道它的库已经动过，
+    /// 不再按封存水位重核，只核失效之后该有的状态。
+    OwnerRestoreIntent,
+    /// Control 里拿着租约的 attempt（已认领、运行中）全部收回：没有未结束子任务的直接放弃，
+    /// 有的转成取消中（工具能力收回，只等子任务结束）。
+    ControlLeasesRevoked,
+    /// 策略库全局吊销，只能由主人经 L3 解除。
+    PolicyGloballyRevoked,
+    /// AgentStore 全部类型 token 吊销，全部实例在策略库记实例吊销。
+    AgentCredentialsInvalidated,
+    /// 双向同步保持关闭：Bridge 的运行状态没有恢复，只能按引导流程从零重新打开。
+    SyncLeftClosed,
     /// Auth 旧会话、L3 与恢复码失效。
     AuthInvalidated,
     /// 最终切换的 Intent。
@@ -56,6 +68,15 @@ pub struct RecoveryTranscript {
     pub checkpoint_id: CheckpointId,
     /// 逐条记录。
     pub entries: Vec<TranscriptEntry>,
+}
+
+/// 恢复记录逐行文本的第一行：只有 checkpoint 标识，之后每行一条记录，都是 JSON。命令行边做边写这种文本
+/// （每追加一条就写一行），接手和最终切换时再整份读回来。
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TranscriptHeader {
+    /// 本次恢复所基于的 checkpoint。
+    pub checkpoint_id: CheckpointId,
 }
 
 /// transcript 已建立的凭证；没有它就不允许发生任何恢复写入。
@@ -123,6 +144,39 @@ impl RecoveryTranscript {
             previous = entry.entry_hash.clone();
         }
         Ok(())
+    }
+
+    /// 逐行文本的第一行（[`TranscriptHeader`]）。
+    pub fn header_line(&self) -> Result<String, TranscriptError> {
+        serde_json::to_string(&TranscriptHeader {
+            checkpoint_id: self.checkpoint_id.clone(),
+        })
+        .map_err(|_| TranscriptError::BrokenChain)
+    }
+
+    /// 一条记录在逐行文本里的那一行。
+    pub fn entry_line(entry: &TranscriptEntry) -> Result<String, TranscriptError> {
+        serde_json::to_string(entry).map_err(|_| TranscriptError::BrokenChain)
+    }
+
+    /// 从逐行文本整份读回：第一行是头，之后每行一条记录（空行跳过）。每条载荷照追加时一样查秘密字段，
+    /// 整条链必须自洽；行不完整、多字段、少字段都拒绝。
+    pub fn from_lines(text: &str) -> Result<Self, TranscriptError> {
+        let mut lines = text.lines().filter(|line| !line.trim().is_empty());
+        let header: TranscriptHeader = lines
+            .next()
+            .and_then(|line| serde_json::from_str(line).ok())
+            .ok_or(TranscriptError::BrokenChain)?;
+        let entries = lines
+            .map(serde_json::from_str::<TranscriptEntry>)
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|_| TranscriptError::BrokenChain)?;
+        let transcript = Self {
+            checkpoint_id: header.checkpoint_id,
+            entries,
+        };
+        transcript.verify()?;
+        Ok(transcript)
     }
 
     /// 取得恢复写入授权；必须已经记下 `KitOpened` 且整条链自洽。

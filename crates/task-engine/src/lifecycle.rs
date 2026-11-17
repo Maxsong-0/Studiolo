@@ -34,17 +34,10 @@ impl<B: VaultBroker + ArtifactStager, L: AuditLedger> PersistentTaskEngine<B, L>
     pub fn reconcile_periodic(&mut self, now: i64) -> Result<LeaseReconciliation, TaskEngineError> {
         self.verify_vault_binding()?;
         self.migrate_terminal_bodies()?;
-        self.audit_board("task.reconcile", &(now, false), AuditPhase::Intent, None)?;
-        let report = self
-            .control_db
-            .reconcile_leases(now, false)
-            .map_err(map_db)?;
-        self.audit_board(
-            "task.reconcile",
-            &(now, false),
-            AuditPhase::Outcome,
-            Some(true),
-        )?;
+        // 账本中断后没投出去的运行时结果每轮补投一次。以前它顺带在每轮的 `task.reconcile` 结果审计里做，
+        // 没事可做的轮次不再记审计之后（T-213）要单独调，补投节奏不变。
+        self.deliver_runtime_audits()?;
+        let report = self.reconcile_leases_audited(now, false)?;
         self.deliver_pending_outcomes(None, now)?;
         for attempt in self.control_db.committing_attempts().map_err(map_db)? {
             let result = match attempt.terminal.as_ref() {
@@ -81,19 +74,36 @@ impl<B: VaultBroker + ArtifactStager, L: AuditLedger> PersistentTaskEngine<B, L>
     pub fn reconcile_startup(&mut self, now: i64) -> Result<LeaseReconciliation, TaskEngineError> {
         self.verify_vault_binding()?;
         self.migrate_terminal_bodies()?;
-        self.audit_board("task.reconcile", &(now, true), AuditPhase::Intent, None)?;
-        let report = self
-            .control_db
-            .reconcile_leases(now, true)
-            .map_err(map_db)?;
-        self.audit_board(
-            "task.reconcile",
-            &(now, true),
-            AuditPhase::Outcome,
-            Some(true),
-        )?;
+        let report = self.reconcile_leases_audited(now, true)?;
         self.reconcile_periodic(now)?;
         Ok(report)
+    }
+
+    /// 先预演、有事可做才记意图再照单执行（T-213）。意图仍先于动作落账，请求里带这一轮的整张清单，
+    /// 所以账本里的意图覆盖了这一轮做的每一步；没事可做的轮次不动控制库，也不记审计，
+    /// 常驻每 15 秒一轮不再让账本空转增长。
+    fn reconcile_leases_audited(
+        &mut self,
+        now: i64,
+        startup: bool,
+    ) -> Result<LeaseReconciliation, TaskEngineError> {
+        let plan = self
+            .control_db
+            .plan_lease_reconciliation(now, startup)
+            .map_err(map_db)?;
+        if plan.is_empty() {
+            return Ok(LeaseReconciliation::default());
+        }
+        let request = (now, startup, &plan);
+        self.audit_board("task.reconcile", &request, AuditPhase::Intent, None)?;
+        let applied = self
+            .control_db
+            .apply_lease_plan(now, startup, &plan)
+            .map_err(map_db);
+        let done = matches!(applied, Ok(Some(_)));
+        self.audit_board("task.reconcile", &request, AuditPhase::Outcome, Some(done))?;
+        // 预演之后库变了的那一轮什么都没做（结果记成没成），下一轮重新预演。
+        Ok(applied?.unwrap_or_default())
     }
 
     /// 结构化的工具调用前启动失败可以重试；任务本身的失败从不重试。

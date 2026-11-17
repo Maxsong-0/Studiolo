@@ -188,3 +188,122 @@ fn restart_revokes_live_board_attempt_and_keeps_auditable_reason() {
     assert!(!db.pending_runtime_audits().unwrap().is_empty());
     assert!(db.reconcile_leases(4, true).unwrap().abandoned.is_empty());
 }
+#[test]
+fn lease_plan_is_a_dry_run_and_a_database_changed_since_voids_it() {
+    let vault = VaultUuid::new();
+    let mut db = ControlDb::open_in_memory(vault).unwrap();
+    let first = TaskId::new();
+    db.create_task(first, &json!({"adapter":"consumer"}), 0)
+        .unwrap();
+    db.queue_task(first, 1).unwrap();
+    let a = db
+        .claim(first, "worker", snapshot(vault, "one"), 2, 100)
+        .unwrap();
+    // claim 自己也会留待投的运行时结果；预演前后条数不变才算没留改动。
+    let pending = db.pending_runtime_audits().unwrap().len();
+    let plan = db.plan_lease_reconciliation(200, false).unwrap();
+    assert_eq!(
+        plan,
+        vec![LeaseStep {
+            task_id: first,
+            attempt_id: a.attempt_id,
+            action: LeaseAction::Abandon,
+            reason: "lease_expired".into(),
+        }]
+    );
+    assert_eq!(
+        db.task(first).unwrap().unwrap().status,
+        TaskStatus::Running,
+        "预演不留改动"
+    );
+    assert_eq!(db.pending_runtime_audits().unwrap().len(), pending);
+    // 预演之后又有一个租约到期：照旧清单执行会多做一步意图里没写的事，所以整轮不做。
+    let second = TaskId::new();
+    db.create_task(second, &json!({"adapter":"consumer"}), 3)
+        .unwrap();
+    db.queue_task(second, 4).unwrap();
+    db.claim(second, "worker", snapshot(vault, "two"), 5, 150)
+        .unwrap();
+    let pending = db.pending_runtime_audits().unwrap().len();
+    assert_eq!(db.apply_lease_plan(200, false, &plan).unwrap(), None);
+    assert_eq!(db.task(first).unwrap().unwrap().status, TaskStatus::Running);
+    assert_eq!(db.pending_runtime_audits().unwrap().len(), pending);
+    let plan = db.plan_lease_reconciliation(200, false).unwrap();
+    assert_eq!(plan.len(), 2);
+    let done = db.apply_lease_plan(200, false, &plan).unwrap().unwrap();
+    assert_eq!(done.abandoned.len(), 2);
+    assert_eq!(
+        db.task(first).unwrap().unwrap().status,
+        TaskStatus::Abandoned
+    );
+    assert!(db.plan_lease_reconciliation(300, false).unwrap().is_empty());
+}
+#[test]
+fn a_restored_control_reopens_without_migrating_and_revokes_every_live_attempt() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("control.sqlite3");
+    let vault = VaultUuid::new();
+    let task = TaskId::new();
+    let expected = {
+        let mut db = ControlDb::open(&path, vault).unwrap();
+        db.create_task(task, &json!({"adapter":"consumer"}), 0)
+            .unwrap();
+        db.queue_task(task, 1).unwrap();
+        db.claim(task, "worker", snapshot(vault, "one"), 2, 1_000_000)
+            .unwrap();
+        // 封存前各 outbox 都已排空：这时的水位就是清单里会记的那一份。
+        for record in db.pending_runtime_audits().unwrap() {
+            db.acknowledge_runtime_audit(&record.event_id).unwrap();
+        }
+        for record in db.pending_outbox().unwrap() {
+            db.mark_outbox_delivered(record.sequence, 3).unwrap();
+        }
+        db.restored_watermark().unwrap()
+    };
+    // 只开已有库：Vault 绑定不同、目录里没有库，都拒绝，也不建出新文件。
+    assert!(ControlDb::open_existing(temp.path(), VaultUuid::new()).is_err());
+    let empty = tempfile::tempdir().unwrap();
+    assert!(ControlDb::open_existing(empty.path(), vault).is_err());
+    assert_eq!(std::fs::read_dir(empty.path()).unwrap().count(), 0);
+
+    // 只开、不迁移、不切 journal mode：另一份库改成 DELETE 模式、删掉迁移每次都会补的那一行，
+    // 恢复专用打开之后两样都还是原样（正常打开会把它们改回去）。
+    let untouched = tempfile::tempdir().unwrap();
+    let untouched_path = untouched.path().join("control.sqlite3");
+    drop(ControlDb::open(&untouched_path, vault).unwrap());
+    let raw = rusqlite::Connection::open(&untouched_path).unwrap();
+    raw.execute_batch("PRAGMA journal_mode=DELETE; DELETE FROM fence_counter;")
+        .unwrap();
+    drop(raw);
+    let reopened = ControlDb::open_existing(untouched.path(), vault).unwrap();
+    assert_eq!(reopened.pragma("journal_mode").unwrap(), "delete");
+    drop(reopened);
+    let raw = rusqlite::Connection::open(&untouched_path).unwrap();
+    let counters: i64 = raw
+        .query_row("SELECT count(*) FROM fence_counter", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(counters, 0);
+    drop(raw);
+    let migrated = ControlDb::open(&untouched_path, vault).unwrap();
+    assert_eq!(migrated.pragma("journal_mode").unwrap(), "wal");
+
+    let mut db = ControlDb::open_existing(temp.path(), vault).unwrap();
+    assert_eq!(db.restored_watermark().unwrap(), expected);
+    assert_eq!(
+        db.live_attempts().unwrap(),
+        LiveAttempts {
+            leased: 1,
+            cancel_requested: 0
+        }
+    );
+    // 租约远没到期，启动巡检照样撤销；撤销之后再来一遍什么都不变。
+    assert_eq!(db.reconcile_leases(10, true).unwrap().abandoned.len(), 1);
+    assert_eq!(db.live_attempts().unwrap().leased, 0);
+    assert!(db.reconcile_leases(11, true).unwrap().abandoned.is_empty());
+    assert_eq!(
+        db.task(task).unwrap().unwrap().status,
+        TaskStatus::Abandoned
+    );
+    // 撤销留下了待投的运行时结果，库已经不是封存那一份：水位核对不再相等。
+    assert!(db.restored_watermark().is_err());
+}

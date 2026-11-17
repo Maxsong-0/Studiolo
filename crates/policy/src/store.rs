@@ -56,4 +56,12 @@ impl PolicyStore {
             db: Database::open(private_directory, CreatePolicy::ExistingOnly)?,
         })
     }
+
+    /// 按封存时同一套规则重算这个库的 Policy 水位，只读；新根恢复核「放出来的库就是清单里那一份」（T-212）。
+    pub fn restored_watermark(
+        &self,
+        deadline: std::time::Instant,
+    ) -> Result<studiolo_core::checkpoint::OwnerWatermark, PolicyError> {
+        crate::checkpoint::watermark(&self.db, deadline)
+    }
 }

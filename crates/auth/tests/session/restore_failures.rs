@@ -56,6 +56,9 @@ fn append_failure_before_or_after_commit_keeps_revocation_and_retries_original_p
                 .unwrap();
         assert!(!first.audit_confirmed);
         assert_eq!(first.epoch, 2);
+        // 撤权已提交、恢复事件还没都投进账本：启动闸门照样不放行（T-212）。
+        assert_eq!(h.h.manager.identity_epoch().unwrap(), 2);
+        assert!(!h.h.manager.restore_completed("fault").unwrap());
         assert_eq!(
             scalar(&h.h.manager, "SELECT count(*) FROM recovery_codes"),
             0
@@ -76,6 +79,9 @@ fn append_failure_before_or_after_commit_keeps_revocation_and_retries_original_p
                 .unwrap(),
             first
         );
+        assert!(h.h.manager.restore_completed("fault").unwrap());
+        assert!(!h.h.manager.restore_completed("another").unwrap());
+        assert!(!h.h.manager.restore_completed("not valid").unwrap());
         h.h.manager.check(&identity(), &fresh.token).unwrap();
         let events =
             h.h.audit

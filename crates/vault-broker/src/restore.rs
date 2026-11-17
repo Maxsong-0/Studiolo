@@ -68,6 +68,8 @@ pub struct NewRootRebind<'a> {
     pub expected_pair_id: VaultUuid,
     /// 本次恢复所基于的 checkpoint 标识。
     pub checkpoint_id: String,
+    /// 本次恢复的标识，写进 lineage；和 Auth 撤权用的是同一个（1～55 个字母、数字或 `-`）。
+    pub restore_id: &'a str,
     /// 上一次恢复的 lineage 标识。
     pub parent_lineage: Option<String>,
     /// 是否明确接手上一次中途失败留下的新目录。
@@ -143,6 +145,13 @@ pub enum RestoreError {
     UnsupportedLineage,
     /// checkpoint 标识不合法。
     InvalidCheckpointId,
+    /// 恢复标识不合法。
+    InvalidRestoreId,
+    /// 接手上一次中途失败的恢复时，恢复标识和 lineage 里记的不是同一个。
+    RestoreIdMismatch,
+    /// 这个恢复标识这份数据以前用过（在它 lineage 记的那一串里）：Auth 里留着那次的撤权记录，再用一次
+    /// 启动闸门会认旧记录。动手之前拒绝，什么都不写。
+    RestoreIdReused,
     /// 测试中断点触发。
     InterruptedByFault,
 }
@@ -165,12 +174,24 @@ impl std::fmt::Display for RestoreError {
             Self::Interrupted => formatter.write_str("上一次恢复中途失败，需要显式接手"),
             Self::UnsupportedLineage => formatter.write_str("恢复 lineage 版本未知"),
             Self::InvalidCheckpointId => formatter.write_str("checkpoint 标识不合法"),
+            Self::InvalidRestoreId => formatter.write_str("恢复标识不合法"),
+            Self::RestoreIdMismatch => formatter.write_str("接手的恢复标识和 lineage 里的不同"),
+            Self::RestoreIdReused => formatter.write_str("这个恢复标识这份数据以前用过"),
             Self::InterruptedByFault => formatter.write_str("恢复在注入的中断点停止"),
         }
     }
 }
 
 impl std::error::Error for RestoreError {}
+
+/// 恢复标识的格式：1～55 个 ASCII 字母、数字或 `-`，和 Auth 撤权记录用的同一套规则。
+#[must_use]
+pub fn valid_restore_id(id: &str) -> bool {
+    (1..=55).contains(&id.len())
+        && id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+}
 
 /// 读取新 data 根上的恢复 lineage；没有恢复过返回 `None`。
 pub fn read_restore_lineage(new_data_root: &Path) -> Result<Option<RestoreLineage>, RestoreError> {
@@ -204,6 +225,9 @@ pub(crate) fn run(
     {
         return Err(RestoreError::InvalidCheckpointId);
     }
+    if !valid_restore_id(request.restore_id) {
+        return Err(RestoreError::InvalidRestoreId);
+    }
     let vault_path = paths::absolute(request.new_vault_root)?;
     let data_path = paths::absolute(request.new_data_root)?;
     paths::disjoint(&vault_path, &data_path)?;
@@ -212,10 +236,33 @@ pub(crate) fn run(
     let _lease = paths::acquire(&root)?;
     let data = paths::walk(&data_path)?;
 
-    let interrupted = rebind::read_lineage(&data)?
+    let existing = rebind::read_lineage(&data)?;
+    let interrupted = existing
+        .as_ref()
         .is_some_and(|existing| existing.state == LineageState::Rebinding);
     if interrupted && !request.resume_interrupted {
         return Err(RestoreError::Interrupted);
+    }
+    // 接手只接同一次恢复：换了恢复标识，前一次的撤权记录就对不上新根（T-212）。
+    if interrupted
+        && existing
+            .as_ref()
+            .and_then(|existing| existing.restore_id.as_deref())
+            != Some(request.restore_id)
+    {
+        return Err(RestoreError::RestoreIdMismatch);
+    }
+    // 这份数据之前用过的恢复标识（封存的那个根本身是恢复出来的，就有一串）：这次的不许是其中任何一个
+    // （T-212，Codex 第二意见第 1 条）。在写任何东西之前拒绝。
+    let earlier = existing
+        .as_ref()
+        .map(RestoreLineage::earlier_for_next)
+        .unwrap_or_default();
+    if earlier.iter().any(|id| id == request.restore_id) {
+        return Err(RestoreError::RestoreIdReused);
+    }
+    if earlier.len() > RestoreLineage::MAX_EARLIER_RESTORES {
+        return Err(RestoreError::UnsupportedLineage);
     }
 
     let verified = verify::verify(
@@ -229,8 +276,12 @@ pub(crate) fn run(
         &root,
         &data,
         &verified,
-        &request.checkpoint_id,
-        request.parent_lineage.clone(),
+        rebind::RestoreChain {
+            checkpoint_id: &request.checkpoint_id,
+            restore_id: request.restore_id,
+            parent_lineage: request.parent_lineage.clone(),
+            earlier_restores: earlier,
+        },
         fault,
     )?;
     Ok(RestoreReceipt {

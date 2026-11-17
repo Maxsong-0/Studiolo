@@ -22,6 +22,7 @@ fn restore(frozen: &FrozenBroker, fixture: &Fixture) -> FsVaultBroker {
         expected_vault_uuid: vault_uuid,
         expected_pair_id: pair_id,
         checkpoint_id: "checkpoint-optional-layouts".into(),
+        restore_id: "restore-optional-layouts",
         parent_lineage: None,
         resume_interrupted: false,
     })

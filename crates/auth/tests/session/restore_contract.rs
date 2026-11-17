@@ -70,6 +70,12 @@ fn zero_sessions_keeps_factor_and_clock_and_reuses_id_after_retention() {
     let h = RecoveryHarness::new(3600, 7200);
     let before = preserved(&h.h.manager);
     h.h.clock.set(CHANGE);
+    // 这几个只读查询（T-212 启动闸门、恢复编排和最终切换用）不改库。
+    let untouched = whole(&h.h.manager);
+    assert_eq!(h.h.manager.identity_epoch().unwrap(), 1);
+    assert!(!h.h.manager.restore_completed("zero-1").unwrap());
+    assert!(!h.h.manager.reauthenticated_after_restore("zero-1").unwrap());
+    assert_eq!(whole(&h.h.manager), untouched);
     let first =
         h.h.manager
             .invalidate_restored_credentials("zero-1")
@@ -85,8 +91,17 @@ fn zero_sessions_keeps_factor_and_clock_and_reuses_id_after_retention() {
         }
     );
     assert_eq!(preserved(&h.h.manager), before);
+    // 撤权之后还没人登录过：最终切换不能把「主人已重新认证」当成立。
+    assert!(!h.h.manager.reauthenticated_after_restore("zero-1").unwrap());
     h.h.manager.maintain_retention().unwrap();
     let fresh = h.h.manager.issue(&identity()).unwrap();
+    assert!(h.h.manager.reauthenticated_after_restore("zero-1").unwrap());
+    assert!(!h.h.manager.reauthenticated_after_restore("zero-2").unwrap());
+    assert!(
+        !h.h.manager
+            .reauthenticated_after_restore("not valid")
+            .unwrap()
+    );
     let second =
         h.h.manager
             .invalidate_restored_credentials("zero-1")

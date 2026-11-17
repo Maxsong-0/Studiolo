@@ -6,11 +6,15 @@ use studiolo_core::checkpoint::{
     AuditChainCutoff, OwnerAssembly, OwnerWatermark, SealedOwnerCheckpoint,
 };
 
-/// 新根恢复要放回去的四个组件在封存里的目录名；导出布局和恢复共用这一份。
+/// 新根恢复要放回去的组件在封存里的目录名；导出布局和恢复共用这一份。
 pub(super) const CANONICAL: &str = "canonical";
 pub(super) const WRITER_DATA: &str = "writer-data";
 pub(super) const AUTH: &str = "auth";
 pub(super) const AUDIT: &str = "audit";
+pub(super) const CONTROL: &str = "control";
+pub(super) const AGENTS: &str = "agent";
+pub(super) const AGENT_AUDIT: &str = "agent-audit";
+pub(super) const POLICY: &str = "policy";
 
 /// 协调器在专用 staging 里预建的固定子目录；后续总封存将覆盖整个布局。
 #[derive(Clone)]
@@ -34,15 +38,15 @@ impl OwnerExportPaths {
         Self {
             vault: root.join(CANONICAL),
             writer: root.join(WRITER_DATA),
-            control: root.join("control"),
+            control: root.join(CONTROL),
             auth: root.join(AUTH),
             bridge: root.join("bridge"),
             transport: root.join("transport"),
             plane: root.join("plane"),
-            agents: root.join("agent"),
-            policy: root.join("policy"),
+            agents: root.join(AGENTS),
+            policy: root.join(POLICY),
             audit: root.join(AUDIT),
-            agent_audit: root.join("agent-audit"),
+            agent_audit: root.join(AGENT_AUDIT),
         }
     }
     /// 固定目录集；不允许调用方扩展任意目标名。
