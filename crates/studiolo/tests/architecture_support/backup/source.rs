@@ -49,10 +49,33 @@ pub(super) fn fixed_binding(path: &Path, source: &str) -> bool {
             "job.check_live()?;letsource=Source::open(job.config(),job.key().clone(),job.fact().source(),job.deadline()",
             "job.fact().verify_sealed(source.sealed())",
             "Runtime::open(job.config(),credentials,source.deadline())?",
-            "letbackup=self.source.accepts(invocation)?;self.source.check()?;",
+            "self.source.accepts(invocation)?;self.source.check()?;",
             "letsource_time=||self.source.check_time();",
             "self.source.deadline(),&source_time",
-            "self.source.check()?;parse_output(&output,backup)",
+            "self.source.check()?;parse_output(&output)",
+        ]
+    } else if path.ends_with("crates/backup/src/worker/repository_check.rs") {
+        // 抽查窗口只定在这一处：worker 的截止时间、生产者补「中途没了」的时限、健康页正文都从它算。
+        &["pubconstCHECK_WINDOW:Duration=Duration::from_secs(20*60);"]
+    } else if path.ends_with("crates/backup-worker/src/repository_check.rs") {
+        // 抽查只跑派下的那一组、只用追加身份、最多 20 分钟（共用包的窗口，写全路径，本地同名常量顶替不了）；
+        // 清理没能证实必须退出，不能归成没做完。
+        &[
+            "letdeadline=Instant::now()+studiolo_backup::worker::repository_check::CHECK_WINDOW;",
+            "&ResticCommand::CheckSubset{bucket:assignment.key.bucket}",
+            "CredentialHolder::BackupWorker,ResticIdentity::Append",
+            "runtime.check_subset(invocation.argv(),interrupt)",
+            "ProcessError::CleanupFailed=>returnChecked::Shutdown",
+            "ProcessError::Interrupted=>IncompleteReason::Preempted",
+        ]
+    } else if path.ends_with("crates/backup-worker/src/serve.rs") {
+        // 作业优先：没有待办时才轮到抽查，抽查遇到待办作业就让路；清理没能证实就退出。
+        &[
+            "Ok(None)=>returnidle(residency,config,held)",
+            "ifletSome(pending)=held.take(){returnOk(deliver(config,pending,held));}",
+            "Ok(Some(_))=>Err(ProcessError::Interrupted)",
+            "Checked::Shutdown=>returnErr(ServeError::Shutdown)",
+            "YIELD_POLL:Duration=Duration::from_secs(30);",
         ]
     } else if path.ends_with("crates/backup-worker/src/job.rs") {
         &[
@@ -66,8 +89,7 @@ pub(super) fn fixed_binding(path: &Path, source: &str) -> bool {
             "key.checkpoint_id!=reference.checkpoint_id||sealed.reference()!=reference",
             "tag:JobTag::for_job(&key)",
             "source_root:sealed.ticket().transfer_source.root.clone()",
-            "ifinvocation==&self.backup",
-            "elseifinvocation==&self.check",
+            "ifinvocation==&self.backup{Ok(())}else{Err(ProcessError::Configuration)}",
             "reopened.reference()!=self.sealed.reference()||reopened.ticket()!=self.sealed.ticket()||reopened.manifest()!=self.sealed.manifest()",
             "reopened.inventory()!=self.sealed.inventory()",
         ]
@@ -103,6 +125,7 @@ pub(super) fn fixed_binding(path: &Path, source: &str) -> bool {
             "self.window.check()?;source_time()",
             "self.temporary.check()",
             "ResticPackage::open(config.restic_sha256(),deadline)?",
+            "process::run_check(&self.package,argv,&self.credentials,self.temporary.path(),self.window.deadline(),&||self.window.check(),interrupt)",
         ]
     } else if path.ends_with("crates/backup-worker/src/runner/final_record.rs") {
         &[

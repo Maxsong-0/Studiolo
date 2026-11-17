@@ -16,7 +16,7 @@ use std::{
 };
 
 use studiolo_host_config::sync_transport::ManualQuota;
-use studiolo_local_server::backup::{BackupJobsEvidence, BackupJobsProbe};
+use studiolo_local_server::backup::{BackupJobsEvidence, BackupJobsProbe, RepositoryCheckEvidence};
 use studiolo_local_server::health::{EvidenceSnapshot, HealthEvidence};
 use studiolo_local_server::sync_plane::health::BridgeHealthProbe;
 use studiolo_observability::quota::{QuotaVerdict, SyncQuota, SyncUsage};
@@ -72,6 +72,14 @@ impl HealthEvidence for AssembledEvidence {
             Some(probe) => now_unix_millis()
                 .and_then(|now| probe.jobs(now))
                 .map_or(BackupJobsEvidence::Unreadable, BackupJobsEvidence::Read),
+        };
+        snapshot.backup_checks = match &self.backup {
+            None => RepositoryCheckEvidence::Disabled,
+            Some(probe) => now_unix_millis()
+                .and_then(|now| probe.repository_checks(now))
+                .map_or(RepositoryCheckEvidence::Unreadable, |checks| {
+                    RepositoryCheckEvidence::Read(Box::new(checks))
+                }),
         };
         snapshot
     }
@@ -139,7 +147,7 @@ mod tests {
     use super::{AssembledEvidence, now_unix_millis, now_unix_seconds, source, sync_quota_verdict};
     use std::sync::Arc;
     use studiolo_host_config::sync_transport::ManualQuota;
-    use studiolo_local_server::backup::{BackupJobs, BackupJobsProbe, JobMark};
+    use studiolo_local_server::backup::{BackupJobs, BackupJobsProbe, JobMark, RepositoryChecks};
     use studiolo_local_server::health::{HealthBody, HealthEvidence, SectionBody};
     use studiolo_local_server::sync_plane::health::{BridgeHealthProbe, OWNER_LABEL};
     use studiolo_observability::health::{
@@ -197,7 +205,8 @@ mod tests {
         }
     }
 
-    /// 生产者探针的替身：`None` 表示这一次没读完账本；有值时最近一次成功在一分钟前。
+    /// 生产者探针的替身：`None` 表示这一次没读完账本；有值时最近一次成功在一分钟前，
+    /// 首轮抽查里第 1 组一小时前读干净。
     struct FakeBackup(bool);
 
     impl BackupJobsProbe for FakeBackup {
@@ -215,6 +224,21 @@ mod tests {
                 outstanding: None,
                 stuck_after_ms: 86_400_000,
                 overdue_after_ms: 7_200_000,
+            })
+        }
+
+        fn repository_checks(&self, now_ms: i64) -> Option<RepositoryChecks> {
+            let mut last_clean_ms = [None; 30];
+            last_clean_ms[0] = Some(now_ms - 3_600_000);
+            self.0.then_some(RepositoryChecks {
+                now_ms,
+                anchor_ms: Some(now_ms - 86_400_000),
+                repository_since_ms: Some(now_ms - 3_600_000),
+                latest_record_ms: Some(now_ms - 3_600_000),
+                running: None,
+                latest: None,
+                last_clean_ms,
+                problems: Vec::new(),
             })
         }
     }
@@ -265,6 +289,12 @@ mod tests {
         let jobs = section(&body, "backup-jobs");
         assert_eq!(jobs.state, "normal");
         assert_eq!(jobs.detail, "最近一次成功是 1 分钟前的第 7 号");
+        let checks = section(&body, "backup-repository-check");
+        assert_eq!(checks.state, "normal");
+        assert_eq!(
+            checks.detail,
+            "最近一次干净的检查是 1 小时前；首轮还在读，30 组里读过 1 组"
+        );
         let value = serde_json::to_value(&body).expect("响应必须可序列化");
         assert_eq!(value["backup"]["verdict"], "healthy");
         assert_eq!(value["backup"]["last_success"]["sequence"], "7");
@@ -286,6 +316,9 @@ mod tests {
         assert_eq!(jobs.state, "unknown");
         assert_eq!(jobs.detail, "这一次没读到账本里的备份事件，作业状态未知");
         assert!(body.backup.is_none());
+        let checks = section(&body, "backup-repository-check");
+        assert_eq!(checks.state, "unknown");
+        assert_eq!(checks.detail, "这一次没读到账本里的仓库检查事件，状态未知");
 
         let body = HealthBody::from_snapshot(
             &AssembledEvidence {
@@ -298,6 +331,9 @@ mod tests {
         assert_eq!(jobs.state, "unknown");
         assert!(jobs.detail.starts_with("备份生产者没有启用"));
         assert!(body.backup.is_none());
+        let checks = section(&body, "backup-repository-check");
+        assert_eq!(checks.state, "unknown");
+        assert!(checks.detail.starts_with("备份生产者没有启用"));
     }
 
     #[test]
@@ -362,10 +398,10 @@ mod tests {
     }
 
     #[test]
-    fn 八节结论一节不少且全部标为未知() {
+    fn 九节结论一节不少且全部标为未知() {
         let body = HealthBody::from_report(&source(None, None).snapshot().report());
 
-        assert_eq!(body.sections.len(), 8);
+        assert_eq!(body.sections.len(), 9);
         assert!(
             body.sections
                 .iter()

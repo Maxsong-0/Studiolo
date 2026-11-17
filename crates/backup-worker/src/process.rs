@@ -7,7 +7,7 @@ use crate::{ProcessError, ResticCredentials, ResticPackage, Result};
 use child::OwnedChild;
 use pipe::Capture;
 use sha2::Digest;
-use sink::{Buffered, Hashed, Sink};
+use sink::{Buffered, Discarded, Hashed, Sink};
 use std::{
     os::unix::process::CommandExt,
     path::Path,
@@ -16,9 +16,20 @@ use std::{
 };
 use zeroize::Zeroizing;
 
+/// JSON 输出的上限。
+const STDOUT_LIMIT: usize = 8 * 1024 * 1024;
+/// 普通调用 stderr 的上限；内容不留，只界定输出量。
+const STDERR_LIMIT: u64 = 64 * 1024;
+/// 仓库抽查 stderr 的上限：仓库坏得多时 restic 每处错误打一行，64 KiB 不够；超了算输出越界。
+const CHECK_STDERR_LIMIT: u64 = 4 * 1024 * 1024;
+
 pub(crate) struct Output {
     pub success: bool,
     pub stdout: Zeroizing<Vec<u8>>,
+}
+/// 不需要中途让路的调用。
+fn uninterrupted() -> Result<()> {
+    Ok(())
 }
 pub(crate) fn run_scoped(
     package: &ResticPackage,
@@ -36,8 +47,10 @@ pub(crate) fn run_scoped(
         deadline,
         check_source_time,
         Streams {
-            sink: Buffered::new(8 * 1024 * 1024),
+            sink: Buffered::new(STDOUT_LIMIT),
             input: None,
+            stderr_limit: STDERR_LIMIT,
+            interrupt: &uninterrupted,
         },
     )?;
     Ok(Output {
@@ -62,8 +75,10 @@ pub(crate) fn run_input(
         deadline,
         check_source_time,
         Streams {
-            sink: Buffered::new(8 * 1024 * 1024),
+            sink: Buffered::new(STDOUT_LIMIT),
             input: Some(bytes),
+            stderr_limit: STDERR_LIMIT,
+            interrupt: &uninterrupted,
         },
     )?;
     Ok(Output {
@@ -103,6 +118,8 @@ pub(crate) fn verify_digest(
         Streams {
             sink: Hashed::new(expected.bytes),
             input: None,
+            stderr_limit: STDERR_LIMIT,
+            interrupt: &uninterrupted,
         },
     )?;
     let hash = stdout
@@ -116,9 +133,43 @@ pub(crate) fn verify_digest(
     }
     Ok(())
 }
+/// 仓库抽查：stderr 上限放宽到 4 MiB；`interrupt` 只在等输出的循环里问（抽查让给备份作业），
+/// 跑完之后不再问，所以已经查完的结果不会因为刚好来了作业被丢掉。
+pub(crate) fn run_check(
+    package: &ResticPackage,
+    argv: &[String],
+    credentials: &ResticCredentials,
+    temporary: &Path,
+    deadline: Instant,
+    check_source_time: &impl Fn() -> Result<()>,
+    interrupt: &dyn Fn() -> Result<()>,
+) -> Result<Output> {
+    let (success, stdout, _) = execute_with(
+        package,
+        argv,
+        Some(credentials),
+        temporary,
+        deadline,
+        check_source_time,
+        Streams {
+            sink: Buffered::new(STDOUT_LIMIT),
+            input: None,
+            stderr_limit: CHECK_STDERR_LIMIT,
+            interrupt,
+        },
+    )?;
+    Ok(Output {
+        success,
+        stdout: stdout.bytes,
+    })
+}
 struct Streams<'a, S> {
     sink: S,
     input: Option<&'a [u8]>,
+    /// stderr 最多收多少字节，超了算输出越界。
+    stderr_limit: u64,
+    /// 子进程还没退出的每一轮都问；报错就结束整组进程，返回这个错误。退出以后只剩读空管道，不再问。
+    interrupt: &'a dyn Fn() -> Result<()>,
 }
 fn execute_with<S: Sink>(
     package: &ResticPackage,
@@ -183,9 +234,10 @@ fn capture<S: Sink>(
     } else {
         None
     };
+    let interrupt = streams.interrupt;
     let mut input = input::Input::new(pipe, streams.input)?;
     let mut stdout = Capture::new(child.stdout()?, streams.sink)?;
-    let mut stderr = Capture::new(child.stderr()?, Buffered::new(64 * 1024))?;
+    let mut stderr = Capture::new(child.stderr()?, Discarded::new(streams.stderr_limit))?;
     loop {
         if Instant::now() >= deadline {
             return Err(ProcessError::Deadline);
@@ -194,8 +246,11 @@ fn capture<S: Sink>(
         let input_progress = input.write()?;
         let stdout_progress = stdout.read()?;
         let stderr_progress = stderr.read()?;
-        if child.exited()? {
-            // 即使 leader 正常退出，也先结束可能继承输出管道的子孙，防止永远等 EOF。
+        // 还在跑才问要不要让路：退出以后只剩读空管道，查完的结果不会因为刚好来了作业被丢掉。
+        // 退出了也先结束可能继承输出管道的子孙，防止永远等 EOF。
+        if !child.exited()? {
+            interrupt()?;
+        } else {
             child.kill_group()?;
             if stdout.eof && stderr.eof {
                 if !input.finished() {

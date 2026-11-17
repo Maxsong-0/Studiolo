@@ -5,6 +5,10 @@
 //! 回收过期暂存和总封存都在后台线程里做，连接只拿到「做了／还有没做完的／还没到」。
 //! 回收另外由监听循环按固定周期触发（`reclaim`）：只回收、不冻结，定时器停了也不会让过期副本一直留在盘上。
 //! 健康页经 [`BackupJobsProbe`] 只读账本里的备份事件：不写账本、不补失败结果、不安排封存。
+//! 仓库抽查（`check` 子模块）：worker 空闲时问该不该查，生产者按账本定节奏和组号、先落原意图；
+//! worker 跑完交结果，生产者核原意图再落账。
+mod check;
+
 use super::{
     admission::BackupAdmission,
     audit::BackupAuditPort,
@@ -26,7 +30,10 @@ use studiolo_backup::{
         staging::{StagingArea, StagingError, reclaim_staging},
     },
     worker::{
-        audit::{BackupAuditRequest, BackupQueueRequest, QueueAnswer, QueueCommand},
+        audit::{
+            BackupAuditRequest, BackupQueueRequest, QueueAnswer, QueueCommand,
+            RepositoryCheckReport,
+        },
         job::{backup_failure, backup_intent},
         recovery_point::BackupTargetKind,
         state::{FailureReason, JobKey},
@@ -132,10 +139,17 @@ impl BackupProducer {
             let answer = match request.command() {
                 QueueCommand::NextPending => self.next_pending()?,
                 QueueCommand::Schedule => self.schedule()?,
+                QueueCommand::RepositoryCheck => self.repository_check()?,
             };
             return request
                 .encode_reply(&answer)
                 .map_err(|_| AuditError::CorruptStore);
+        }
+        if let Ok(request) = RepositoryCheckReport::decode(bytes) {
+            if request.target() != TARGET {
+                return Err(AuditError::Serialization);
+            }
+            return self.report_check(&request);
         }
         let request = BackupAuditRequest::decode(bytes).map_err(|_| AuditError::Serialization)?;
         if request.target() != TARGET {
@@ -368,6 +382,10 @@ impl BackupJobsProbe for BackupProducer {
             stuck_after_ms: self.plan.source_retention_millis,
             overdue_after_ms: self.plan.min_interval_millis.saturating_mul(2),
         })
+    }
+
+    fn repository_checks(&self, now_ms: i64) -> Option<super::RepositoryChecks> {
+        self.repository_checks_at(now_ms)
     }
 }
 

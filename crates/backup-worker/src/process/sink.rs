@@ -1,4 +1,4 @@
-//! JSON 输出有界保存，文件复验只流式保留摘要；两者共用管道、期限和清理。
+//! JSON 输出有界保存，文件复验只流式保留摘要，stderr 只计数；三者共用管道、期限和清理。
 use sha2::{Digest, Sha256};
 use zeroize::Zeroizing;
 
@@ -25,6 +25,21 @@ impl Sink for Buffered {
     fn append(&mut self, bytes: &[u8]) {
         self.bytes.extend_from_slice(bytes);
     }
+}
+/// stderr 只计数、不留内容：内容从来不读，上限只用来界定输出量。
+pub(super) struct Discarded {
+    limit: u64,
+}
+impl Discarded {
+    pub fn new(limit: u64) -> Self {
+        Self { limit }
+    }
+}
+impl Sink for Discarded {
+    fn limit(&self) -> u64 {
+        self.limit
+    }
+    fn append(&mut self, _: &[u8]) {}
 }
 pub(super) struct Hashed {
     pub digest: Sha256,

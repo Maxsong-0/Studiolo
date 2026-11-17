@@ -5,13 +5,15 @@
 //! 不碰配置。
 //!
 //! 生产者只在私有配置里有 `backup` 和 `backup_producer` 两段时才启用：它在固定路径上
-//! 监听一个只对独立 worker 账号开放的 Unix socket，答「下一个待办」和「该不该做一次封存」，
-//! 并把带键的审计请求交给原准入端口；审计端口只使用启动保留的原账本。
+//! 监听一个只对独立 worker 账号开放的 Unix socket，答「下一个待办」「该不该做一次封存」和
+//! 「该不该抽查仓库」，收抽查结果，并把带键的审计请求交给原准入端口；只使用启动保留的原账本。
 //!
-//! 健康页的「备份作业」一节经 `BackupJobsProbe` 从生产者取作业事实：只读原账本里的备份事件。
+//! 健康页的「备份作业」「备份仓库检查」两节经 `BackupJobsProbe` 从生产者取事实：只读原账本。
 
 pub mod admission;
 pub mod audit;
+mod check_evidence;
+mod checks;
 mod evidence;
 #[cfg(target_os = "linux")]
 mod listener;
@@ -21,6 +23,9 @@ mod queue;
 #[cfg(target_os = "linux")]
 mod service;
 
+pub use check_evidence::{
+    CheckMark, CheckProblem, CheckVerdict, RepositoryCheckEvidence, RepositoryChecks, RunningCheck,
+};
 pub use evidence::{
     BackupEvidence, BackupJobs, BackupJobsEvidence, BackupJobsProbe, BackupSnapshot, FailureMark,
     JobFailure, JobMark, JobsVerdict, OpenJob,

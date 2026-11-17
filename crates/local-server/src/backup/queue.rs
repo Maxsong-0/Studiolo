@@ -3,6 +3,8 @@
 //!
 //! 这里只有纯逻辑，按账本顺序一条条喂记录；读账本和写账本都在 `producer.rs`。
 //! 没有单独的队列文件：进程重启后把账本里的备份事件重读一遍就得到同样的结论。
+//! 仓库抽查的事件转给 [`Checks`]，和作业共用同一个读到的位置。
+use super::checks::Checks;
 use super::evidence::{FailureMark, JobFailure, JobMark, OpenJob};
 use std::collections::BTreeMap;
 use studiolo_audit_ledger::{AuditEvent, AuditPhase, AuditRecord};
@@ -10,6 +12,7 @@ use studiolo_backup::worker::{
     audit::AdmissionFact,
     job::{BACKUP_AUDIT_ACTION, backup_event_key, backup_intent},
     recovery_point::BackupTargetKind,
+    repository_check::REPOSITORY_CHECK_ACTION,
     state::JobKey,
 };
 
@@ -34,6 +37,8 @@ pub(super) struct Queue {
     last_failure: Option<FailureMark>,
     /// 最近收口的那条作业没成功。
     latest_failed: bool,
+    /// 仓库抽查的累计视图。
+    checks: Checks,
 }
 
 impl Queue {
@@ -46,6 +51,10 @@ impl Queue {
     pub(super) fn absorb(&mut self, target: BackupTargetKind, record: &AuditRecord) {
         self.scanned = self.scanned.max(record.offset());
         let event = record.event();
+        if event.action() == REPOSITORY_CHECK_ACTION {
+            self.checks.absorb(target, record);
+            return;
+        }
         if event.action() != BACKUP_AUDIT_ACTION {
             return;
         }
@@ -94,6 +103,11 @@ impl Queue {
             open.admission = Some(record.clone());
             self.last_admission_ms = Some(at);
         }
+    }
+
+    /// 仓库抽查的累计视图。
+    pub(super) fn checks(&self) -> &Checks {
+        &self.checks
     }
 
     /// 下一个可用的序号；单调递增，不复用。

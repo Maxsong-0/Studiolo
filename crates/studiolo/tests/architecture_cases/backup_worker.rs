@@ -102,6 +102,41 @@ fn backup_worker_cannot_detach_job_source_or_expiry_from_execution() {
             "\"dump\".into()",
             "\"forget\".into()",
         ),
+        // 抽查：清理没能证实必须退出；最多 20 分钟；遇到待办作业要让路；作业优先于抽查。
+        (
+            "repository_check.rs",
+            "ProcessError::CleanupFailed => return Checked::Shutdown,",
+            "ProcessError::CleanupFailed => IncompleteReason::Unavailable,",
+        ),
+        (
+            "repository_check.rs",
+            "studiolo_backup::worker::repository_check::CHECK_WINDOW",
+            "CHECK_WINDOW",
+        ),
+        (
+            "repository_check.rs",
+            "CredentialHolder::BackupWorker",
+            "CredentialHolder::App",
+        ),
+        (
+            "serve.rs",
+            "Ok(Some(_)) => Err(ProcessError::Interrupted),",
+            "Ok(Some(_)) => Ok(()),",
+        ),
+        (
+            "serve.rs",
+            "Ok(None) => return idle(residency, config, held),",
+            "Ok(None) => return Ok(Round::Waiting),",
+        ),
+        ("process.rs", "interrupt()?;", ""),
+        // 把让路挪回每轮开头：子进程退出、正在读空管道时也会问，查完的结果可能被丢掉。
+        (
+            "process.rs",
+            "        check_source_time()?;\n        let input_progress",
+            "        check_source_time()?;\n        interrupt()?;\n        let input_progress",
+        ),
+        ("process.rs", "if !child.exited()? {", "if true {"),
+        ("runtime.rs", "&|| self.window.check(),", "&|| Ok(()),"),
     ] {
         let path = std::path::PathBuf::from("crates/backup-worker/src").join(file);
         let source = fs::read_to_string(workspace_root().join(&path)).unwrap();
@@ -120,4 +155,18 @@ fn backup_worker_cannot_detach_job_source_or_expiry_from_execution() {
             "{file}"
         );
     }
+    // 抽查窗口只在共用包定一处，最多 20 分钟：放宽到作业的两小时窗口就判红。
+    let path = std::path::PathBuf::from("crates/backup/src/worker/repository_check.rs");
+    let source = fs::read_to_string(workspace_root().join(&path)).unwrap();
+    assert!(source_violations("studiolo-backup", &path, &source).is_empty());
+    let before = "Duration::from_secs(20 * 60)";
+    assert!(source.contains(before));
+    assert!(
+        !source_violations(
+            "studiolo-backup",
+            &path,
+            &source.replace(before, "Duration::from_secs(7200)")
+        )
+        .is_empty()
+    );
 }

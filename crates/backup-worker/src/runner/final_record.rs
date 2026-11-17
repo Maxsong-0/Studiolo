@@ -112,7 +112,7 @@ impl AppendRunner {
             &|| self.source.check_time(),
         )?;
         if !matches!(
-            super::parse_output(&output, true)?,
+            super::parse_output(&output)?,
             ResticOutcome::Exited {
                 status_zero: true,
                 ..

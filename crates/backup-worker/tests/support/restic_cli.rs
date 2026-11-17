@@ -1,6 +1,10 @@
 use super::*;
-use studiolo_backup::worker::restic::{
-    CredentialHolder, JobTag, RepositoryRef, ResticCommand, ResticInvocation, ResticOutcome,
+use studiolo_backup::worker::{
+    repository_check::{CheckBucket, CheckOutcome, classify_check_output},
+    restic::{
+        CredentialHolder, JobTag, RepositoryRef, ResticCommand, ResticIdentity, ResticInvocation,
+        ResticOutcome,
+    },
 };
 
 #[test]
@@ -44,79 +48,95 @@ fn official_restic_executes_from_original_fd_and_uses_only_explicit_credentials(
     let relative = studiolo_core::VaultPath::parse("中文 note;$.txt").unwrap();
     let expected_file = source.join(relative.as_str());
     fs::write(&expected_file, vec![0x5a; 16 * 1024 * 1024]).unwrap();
-    let commands = [
-        ResticCommand::Backup {
+    let backup = ResticInvocation::plan(
+        repository.clone(),
+        &ResticCommand::Backup {
             tag: JobTag::parse("fixed-process-fixture").unwrap(),
             source_root: source.clone(),
         },
-        ResticCommand::CheckRepository,
-    ];
-    for (i, command) in commands.iter().enumerate() {
-        let plan = ResticInvocation::plan(
-            repository.clone(),
-            command,
-            CredentialHolder::BackupWorker,
-            command.identity(),
-        )
+        CredentialHolder::BackupWorker,
+        ResticIdentity::Append,
+    )
+    .unwrap();
+    let output = process::run(
+        &package,
+        backup.argv(),
+        Some(&credentials),
+        temp.path(),
+        deadline(),
+    )
+    .unwrap();
+    assert_eq!(
+        crate::runner::parse_output(&output).unwrap(),
+        ResticOutcome::Exited {
+            status_zero: true,
+            reported_objects: 1
+        }
+    );
+    let summary: serde_json::Value = output
+        .stdout
+        .split(|b| *b == b'\n')
+        .filter(|line| !line.is_empty())
+        .filter_map(|line| serde_json::from_slice::<serde_json::Value>(line).ok())
+        .find(|value| value["message_type"] == "summary")
         .unwrap();
-        let output = process::run(
+    let snapshot = studiolo_backup::worker::restic::SnapshotRef::parse(
+        summary["snapshot_id"].as_str().unwrap(),
+    )
+    .unwrap();
+    let argv =
+        crate::runner::inspect::plan::file(&repository, &snapshot, &source, &relative).unwrap();
+    let digest = hash(&expected_file);
+    let bytes = fs::metadata(&expected_file).unwrap().len();
+    for (size, expected, succeeds) in [
+        (bytes, digest.as_str(), true),
+        (
+            bytes,
+            "0000000000000000000000000000000000000000000000000000000000000000",
+            false,
+        ),
+        (bytes - 1, digest.as_str(), false),
+        (bytes + 1, digest.as_str(), false),
+    ] {
+        let result = process::verify_digest(
             &package,
-            plan.argv(),
-            Some(&credentials),
+            &argv,
+            &credentials,
             temp.path(),
             deadline(),
+            &|| Ok(()),
+            process::DigestExpectation {
+                bytes: size,
+                sha256: expected,
+            },
+        );
+        assert_eq!(result.is_ok(), succeeds);
+    }
+    // 仓库抽查走 worker 自己的执行入口：不加锁的 `check --read-data-subset`，30 组都归成干净。
+    for bucket in CheckBucket::all() {
+        let check = ResticInvocation::plan(
+            repository.clone(),
+            &ResticCommand::CheckSubset { bucket },
+            CredentialHolder::BackupWorker,
+            ResticIdentity::Append,
         )
         .unwrap();
-        let parsed = crate::runner::parse_output(&output, i == 0).unwrap();
+        let output = process::run_check(
+            &package,
+            check.argv(),
+            &credentials,
+            temp.path(),
+            deadline(),
+            &|| Ok(()),
+            &|| Ok(()),
+        )
+        .unwrap();
         assert_eq!(
-            parsed,
-            ResticOutcome::Exited {
-                status_zero: true,
-                reported_objects: if i == 0 { 1 } else { 0 }
-            }
+            classify_check_output(output.success, &output.stdout),
+            CheckOutcome::clean(),
+            "第 {} 组",
+            bucket.get()
         );
-        if i == 0 {
-            let summary: serde_json::Value = output
-                .stdout
-                .split(|b| *b == b'\n')
-                .filter(|line| !line.is_empty())
-                .filter_map(|line| serde_json::from_slice::<serde_json::Value>(line).ok())
-                .find(|value| value["message_type"] == "summary")
-                .unwrap();
-            let snapshot = studiolo_backup::worker::restic::SnapshotRef::parse(
-                summary["snapshot_id"].as_str().unwrap(),
-            )
-            .unwrap();
-            let argv =
-                crate::runner::inspect::plan::file(&repository, &snapshot, &source, &relative)
-                    .unwrap();
-            let digest = hash(&expected_file);
-            let bytes = fs::metadata(&expected_file).unwrap().len();
-            for (size, expected, succeeds) in [
-                (bytes, digest.as_str(), true),
-                (
-                    bytes,
-                    "0000000000000000000000000000000000000000000000000000000000000000",
-                    false,
-                ),
-                (bytes - 1, digest.as_str(), false),
-                (bytes + 1, digest.as_str(), false),
-            ] {
-                let result = process::verify_digest(
-                    &package,
-                    &argv,
-                    &credentials,
-                    temp.path(),
-                    deadline(),
-                    &|| Ok(()),
-                    process::DigestExpectation {
-                        bytes: size,
-                        sha256: expected,
-                    },
-                );
-                assert_eq!(result.is_ok(), succeeds);
-            }
-        }
     }
 }
 
@@ -240,7 +260,7 @@ fn official_restic_snapshot_and_complete_tree_match_real_sealed_inventory() {
         )
         .unwrap();
         assert!(matches!(
-            crate::runner::parse_output(&output, true).unwrap(),
+            crate::runner::parse_output(&output).unwrap(),
             ResticOutcome::Exited {
                 status_zero: true,
                 reported_objects: 1

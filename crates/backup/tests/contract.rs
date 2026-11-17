@@ -7,6 +7,7 @@ mod contract {
     #[cfg(target_os = "linux")]
     mod audit_transport;
     mod barrier;
+    mod check_message;
     #[cfg(unix)]
     mod final_manifest;
     mod inclusion;
@@ -14,6 +15,7 @@ mod contract {
     mod queue_message;
     mod recovery_kit;
     mod recovery_point;
+    mod repository_check;
     mod restic;
     #[cfg(unix)]
     mod staging;

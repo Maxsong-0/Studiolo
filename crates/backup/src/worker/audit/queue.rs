@@ -1,14 +1,20 @@
-//! 没有作业键的两条封闭命令：问「下一个待办」，和请求按固定策略安排一次封存。
+//! 没有作业键的三条封闭命令：问「下一个待办」，请求按固定策略安排一次封存，和空闲时问
+//! 「该不该抽查仓库、查哪组」。
 //!
 //! 答复自洽不等于授权：`pending` 只把原准入回执递给 worker，worker 还要拿着其中的原键
-//! 再走一遍带键的准入查询；`schedule` 做不做完全由生产者按自己的固定配置判断。
+//! 再走一遍带键的准入查询；`schedule` 做不做完全由生产者按自己的固定配置判断；
+//! `repository_check` 查不查、查哪组也只由生产者按账本定，worker 拿到的是已经落账的原意图。
 use super::{AdmissionFact, AuditMessageError, codec};
-use crate::worker::recovery_point::BackupTargetKind;
+use crate::worker::{
+    recovery_point::BackupTargetKind,
+    repository_check::{CheckEvent, read_check_event},
+};
 use serde::{Deserialize, Serialize};
+use studiolo_audit_ledger::AuditPhase;
 use studiolo_audit_ledger::AuditRecord;
 type Result<T> = std::result::Result<T, AuditMessageError>;
 
-/// 队列命令；和带键的审计消息字段不同，两种消息互相解不出来。
+/// 队列命令；和带键的审计消息、抽查结果上报字段都不同，三种消息互相解不出来。
 pub struct BackupQueueRequest(Fields);
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -17,7 +23,7 @@ struct Fields {
     target: BackupTargetKind,
     queue: QueueCommand,
 }
-/// 两条命令都不带参数：没有路径、序号或时间可以由 worker 指定。
+/// 三条命令都不带参数：没有路径、序号、组号或时间可以由 worker 指定。
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum QueueCommand {
@@ -25,6 +31,8 @@ pub enum QueueCommand {
     NextPending,
     /// 请求安排一次封存；生产者先回收过期暂存，再按固定策略决定做不做。
     Schedule,
+    /// 没有待办时问该不该抽查仓库、查哪组；生产者到期就先把原意图落账再答。
+    RepositoryCheck,
 }
 /// 生产者的固定答复。
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -39,6 +47,8 @@ pub enum QueueAnswer {
     Outstanding,
     /// 距上次不够间隔，这次不做。
     NotDue,
+    /// 派下一次抽查：已经落账的原意图回执。
+    CheckAssigned(Box<AuditRecord>),
 }
 #[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -48,6 +58,7 @@ enum Kind {
     Started,
     Outstanding,
     NotDue,
+    CheckAssigned,
 }
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -99,6 +110,9 @@ impl BackupQueueRequest {
             QueueAnswer::Started => (Kind::Started, None),
             QueueAnswer::Outstanding => (Kind::Outstanding, None),
             QueueAnswer::NotDue => (Kind::NotDue, None),
+            QueueAnswer::CheckAssigned(record) => {
+                (Kind::CheckAssigned, Some(record.as_ref().clone()))
+            }
         };
         codec::encode(&Reply {
             schema: 1,
@@ -123,6 +137,7 @@ impl BackupQueueRequest {
             (Kind::Started, None) => QueueAnswer::Started,
             (Kind::Outstanding, None) => QueueAnswer::Outstanding,
             (Kind::NotDue, None) => QueueAnswer::NotDue,
+            (Kind::CheckAssigned, Some(record)) => QueueAnswer::CheckAssigned(Box::new(record)),
             _ => return Err(AuditMessageError::Invalid),
         };
         self.check(&answer)?;
@@ -143,6 +158,17 @@ impl BackupQueueRequest {
                 QueueCommand::Schedule,
                 QueueAnswer::Started | QueueAnswer::Outstanding | QueueAnswer::NotDue,
             ) => true,
+            (QueueCommand::RepositoryCheck, QueueAnswer::CheckAssigned(record)) => {
+                record
+                    .verify_integrity()
+                    .map_err(|_| AuditMessageError::Invalid)?;
+                record.event().phase() == AuditPhase::Intent
+                    && matches!(
+                        read_check_event(record.event()),
+                        Some(CheckEvent::Intent { target, .. }) if target == self.0.target
+                    )
+            }
+            (QueueCommand::RepositoryCheck, QueueAnswer::Outstanding | QueueAnswer::NotDue) => true,
             _ => false,
         };
         if fits {

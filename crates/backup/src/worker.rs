@@ -6,5 +6,6 @@ pub mod audit;
 pub mod final_manifest;
 pub mod job;
 pub mod recovery_point;
+pub mod repository_check;
 pub mod restic;
 pub mod state;

@@ -152,11 +152,52 @@ fn producer_socket_and_schedule_are_closed_capabilities() {
         "BackupAdmission::resume(self.ledger.clone(), request.key(), TARGET)",
         "queue.outstanding()",
         "drop(frozen);",
+        "QueueCommand::RepositoryCheck => self.repository_check()?",
+        "return self.report_check(&request);",
     ] {
         assert!(source.contains(anchor), "{anchor}");
         assert!(
             !source_violations(crate_name, path, &source.replacen(anchor, "removed", 1)).is_empty(),
             "{anchor}"
+        );
+    }
+
+    // 抽查只在空闲时派；结果要有同一检查键、本目标的唯一原意图才落账。
+    let path = Path::new("crates/local-server/src/backup/producer/check.rs");
+    let source = fs::read_to_string(workspace_root().join(path)).unwrap();
+    assert!(source_violations(crate_name, path, &source).is_empty());
+    for anchor in [
+        "if state.busy {",
+        "if state.queue.outstanding() {",
+        "if checks.running(now).is_some() {",
+        "if record.event() != &expected {",
+        "if assignment.key == *request.key() && target == TARGET",
+        "if !same {",
+        "if records.len() > 1 {",
+    ] {
+        assert!(source.contains(anchor), "{anchor}");
+        assert!(
+            !source_violations(crate_name, path, &source.replacen(anchor, "if false {", 1))
+                .is_empty(),
+            "{anchor}"
+        );
+    }
+    // 挂满时限的原意图由生产者补「中途没了」，不能删掉这一步；生产入口不能换成假时钟。
+    for (before, after) in [
+        (
+            "for key in &abandoned {",
+            "for key in &Vec::<CheckKey>::new() {",
+        ),
+        ("check_abandoned(key)", "check_intent(&assignment, TARGET)"),
+        (
+            "self.repository_check_with(now_millis)",
+            "self.repository_check_with(|| Ok(0))",
+        ),
+    ] {
+        assert!(source.contains(before), "{before}");
+        assert!(
+            !source_violations(crate_name, path, &source.replacen(before, after, 1)).is_empty(),
+            "{before}"
         );
     }
 }

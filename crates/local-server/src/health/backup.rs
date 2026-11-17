@@ -234,7 +234,7 @@ fn failure_text(failure: JobFailure) -> &'static str {
 }
 
 /// 时长的中文说法：一天以上精确到小时，一天以内精确到分钟，不到一分钟单独说。
-fn span(millis: u64) -> String {
+pub(super) fn span(millis: u64) -> String {
     let minutes = millis / 60_000;
     let (days, hours, rest) = (minutes / 1_440, minutes / 60 % 24, minutes % 60);
     match (days, hours, rest) {

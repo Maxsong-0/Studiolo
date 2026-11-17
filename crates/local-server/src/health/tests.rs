@@ -4,7 +4,9 @@
 //! 真实装配后的端到端鉴权由组合根的整套契约覆盖。
 
 use super::{EvidenceSnapshot, HealthBody, PATH, enabled, routes};
-use crate::backup::{BackupJobs, BackupJobsEvidence, JobMark};
+use crate::backup::{
+    BackupJobs, BackupJobsEvidence, JobMark, RepositoryCheckEvidence, RepositoryChecks,
+};
 use axum::{
     Router,
     body::Body,
@@ -60,6 +62,23 @@ fn healthy_jobs(now: i64) -> BackupJobs {
     }
 }
 
+/// 首轮抽查里第 1 组十分钟前读干净：正常。
+fn healthy_checks(now: i64) -> RepositoryChecks {
+    let now_ms = now * 1_000;
+    let mut last_clean_ms = [None; 30];
+    last_clean_ms[0] = Some(now_ms - 600_000);
+    RepositoryChecks {
+        now_ms,
+        anchor_ms: Some(now_ms - 7_200_000),
+        repository_since_ms: Some(now_ms - 600_000),
+        latest_record_ms: Some(now_ms - 600_000),
+        running: None,
+        latest: None,
+        last_clean_ms,
+        problems: Vec::new(),
+    }
+}
+
 fn complete(now: i64) -> EvidenceSnapshot {
     EvidenceSnapshot {
         now_unix_seconds: now,
@@ -82,6 +101,7 @@ fn complete(now: i64) -> EvidenceSnapshot {
             recorded_at_unix: now - 10,
         }),
         backup_jobs: BackupJobsEvidence::Read(healthy_jobs(now)),
+        backup_checks: RepositoryCheckEvidence::Read(Box::new(healthy_checks(now))),
     }
 }
 
@@ -179,7 +199,7 @@ fn 会话门禁具备时装配函数挂载健康页路由() {
 }
 
 #[tokio::test]
-async fn 装配了证据来源时健康页给出封闭json且八节齐全() {
+async fn 装配了证据来源时健康页给出封闭json且九节齐全() {
     let (status, body) = get(served(Some(source(FixedEvidence(10_000)))), PATH).await;
 
     assert_eq!(status, StatusCode::OK);
@@ -187,8 +207,8 @@ async fn 装配了证据来源时健康页给出封闭json且八节齐全() {
     assert_eq!(body["evidence_complete"], true);
     assert_eq!(
         body["sections"].as_array().map(Vec::len),
-        Some(8),
-        "八节必须齐全"
+        Some(9),
+        "九节必须齐全"
     );
 }
 
@@ -234,12 +254,12 @@ async fn 证据一度读不到之后重新可得时健康页自行恢复成正�
 }
 
 #[test]
-fn 证据齐备时响应标记证据完整并给出全部八节() {
+fn 证据齐备时响应标记证据完整并给出全部九节() {
     let body = HealthBody::from_report(&complete(10_000).report());
 
     assert_eq!(body.overall, "normal");
     assert!(body.evidence_complete);
-    assert_eq!(body.sections.len(), 8);
+    assert_eq!(body.sections.len(), 9);
 }
 
 #[test]
@@ -312,3 +332,6 @@ mod bridge_details;
 
 #[path = "tests/backup_details.rs"]
 mod backup_details;
+
+#[path = "tests/backup_check_details.rs"]
+mod backup_check_details;

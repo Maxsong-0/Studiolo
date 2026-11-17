@@ -2,6 +2,7 @@
 //! 恢复与保留清理使用独立身份，任何 shell 形态的参数都进不来。
 
 use std::path::PathBuf;
+use studiolo_backup::worker::repository_check::CheckBucket;
 use studiolo_backup::worker::restic::{
     CredentialHolder, JobTag, RESTIC_PACKAGE_NAME, RESTIC_PACKAGE_VERSION,
     RESTIC_SECRET_ENVIRONMENT, RepositoryRef, ResticCommand, ResticError, ResticIdentity,
@@ -57,26 +58,63 @@ fn a_backup_invocation_pins_the_package_version_and_a_closed_argument_vector() {
 }
 
 #[test]
-fn checking_is_repository_wide_and_does_not_claim_a_snapshot_filter() {
-    let invocation = ResticInvocation::plan(
-        repository(),
-        &ResticCommand::CheckRepository,
-        CredentialHolder::BackupWorker,
-        ResticIdentity::Append,
-    )
-    .unwrap();
-    assert_eq!(
-        invocation.argv(),
-        [
-            "--json",
-            "--no-cache",
-            "--repo",
-            "/srv/backup/repo",
-            "check",
-            "--read-data"
-        ]
+fn checking_reads_one_of_thirty_buckets_without_a_lock_and_claims_no_snapshot_filter() {
+    let plan = |bucket| {
+        ResticInvocation::plan(
+            repository(),
+            &ResticCommand::CheckSubset { bucket },
+            CredentialHolder::BackupWorker,
+            ResticIdentity::Append,
+        )
+        .unwrap()
+    };
+    for (bucket, subset) in [(1, "1/30"), (17, "17/30"), (30, "30/30")] {
+        let invocation = plan(CheckBucket::new(bucket).unwrap());
+        assert_eq!(
+            invocation.argv(),
+            [
+                "--json",
+                "--no-cache",
+                "--repo",
+                "/srv/backup/repo",
+                "check",
+                "--no-lock",
+                "--read-data-subset",
+                subset,
+            ]
+        );
+        assert_eq!(invocation.version(), "0.19.1");
+        assert_eq!(invocation.identity(), ResticIdentity::Append);
+    }
+    // 组号只能是 1～30：0、31 和越界的值连组号都造不出来，持久化的值也绕不过。
+    for value in [0, 31, 255] {
+        assert!(CheckBucket::new(value).is_none());
+        assert!(serde_json::from_str::<CheckBucket>(&value.to_string()).is_err());
+    }
+    assert_eq!(serde_json::from_str::<CheckBucket>("7").unwrap().get(), 7);
+    // 追加身份以外的持有者和身份照样不能组装抽查。
+    assert!(
+        ResticInvocation::plan(
+            repository(),
+            &ResticCommand::CheckSubset {
+                bucket: CheckBucket::FIRST
+            },
+            CredentialHolder::App,
+            ResticIdentity::Append,
+        )
+        .is_err()
     );
-    assert_eq!(invocation.version(), "0.19.1");
+    assert!(
+        ResticInvocation::plan(
+            repository(),
+            &ResticCommand::CheckSubset {
+                bucket: CheckBucket::FIRST
+            },
+            CredentialHolder::BackupWorker,
+            ResticIdentity::Restore,
+        )
+        .is_err()
+    );
 }
 
 #[test]

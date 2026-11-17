@@ -2,8 +2,10 @@
 mod admission;
 mod codec;
 mod queue;
+mod report;
 pub use admission::AdmissionFact;
 pub use queue::{BackupQueueRequest, QueueAnswer, QueueCommand};
+pub use report::RepositoryCheckReport;
 #[cfg(target_os = "linux")]
 pub mod transport;
 mod validation;

@@ -16,16 +16,19 @@ fn job_key_reference_repository_tag_and_source_are_one_binding() {
             &key,
             &binding.sealed.ticket().transfer_source.root
         )),
-        Ok(true)
+        Ok(())
     );
+    // 仓库抽查有自己的执行器，作业绑定一律不收，哪一组都不行。
     let check = ResticInvocation::plan(
         repo(),
-        &ResticCommand::CheckRepository,
+        &ResticCommand::CheckSubset {
+            bucket: studiolo_backup::worker::repository_check::CheckBucket::FIRST,
+        },
         CredentialHolder::BackupWorker,
         ResticIdentity::Append,
     )
     .unwrap();
-    assert_eq!(binding.accepts(&check), Ok(false));
+    assert_eq!(binding.accepts(&check), Err(ProcessError::Configuration));
     for invocation in [
         plan(
             repo(),

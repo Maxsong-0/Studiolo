@@ -6,6 +6,7 @@ use std::{
     process::{Command, Output},
 };
 use studiolo_backup::worker::{
+    repository_check::{CheckBucket, CheckOutcome, CheckResult, classify_check_output},
     restic::{
         CredentialHolder, JobTag, RepositoryRef, ResticCommand, ResticIdentity, ResticInvocation,
         SnapshotRef,
@@ -32,6 +33,38 @@ fn plan(repository: &RepositoryRef, command: &ResticCommand) -> ResticInvocation
     )
     .unwrap()
 }
+/// 30 组逐组抽查，返回每组的归类结果；命令由封闭计划组装，和 worker 用的是同一形态。
+fn check_every_bucket(
+    binary: &Path,
+    repository: &RepositoryRef,
+    temporary: &Path,
+) -> Vec<(CheckBucket, CheckOutcome, String)> {
+    CheckBucket::all()
+        .map(|bucket| {
+            let check = plan(repository, &ResticCommand::CheckSubset { bucket });
+            let output = invoke(binary, check.argv(), temporary);
+            let outcome = classify_check_output(output.status.success(), &output.stdout);
+            let shown = format!(
+                "stdout={} stderr={}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+            (bucket, outcome, shown)
+        })
+        .collect()
+}
+/// 不可压缩的固定伪随机内容：让数据包明显大于树包，好认出要弄坏的是哪个数据包。
+fn incompressible(length: usize) -> Vec<u8> {
+    let mut state: u64 = 0x9e37_79b9_7f4a_7c15;
+    (0..length)
+        .map(|_| {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            state.to_le_bytes()[0]
+        })
+        .collect()
+}
 fn require_success(output: Output) -> Vec<u8> {
     assert!(
         output.status.success(),
@@ -42,7 +75,7 @@ fn require_success(output: Output) -> Vec<u8> {
 }
 #[test]
 #[ignore = "仅在 108 用核验官方发行摘要后的 STUDIOLO_RESTIC_TEST_BINARY 运行"]
-fn pinned_cli_creates_checks_and_restores_a_real_repository_with_planned_arguments() {
+fn pinned_cli_creates_checks_every_bucket_and_restores_a_real_repository_with_planned_arguments() {
     let binary = std::env::var_os("STUDIOLO_RESTIC_TEST_BINARY").expect("必须提供已核验的固定 CLI");
     let binary = Path::new(&binary);
     let temporary = tempfile::tempdir().unwrap();
@@ -70,8 +103,9 @@ fn pinned_cli_creates_checks_and_restores_a_real_repository_with_planned_argumen
     ));
     let source = root.join("sealed");
     fs::create_dir(&source).unwrap();
-    let content = b"fictional sealed object; no production data";
-    fs::write(source.join("evidence.txt"), content).unwrap();
+    // 虚构内容：2MiB 不可压缩字节，不含生产数据。
+    let content = incompressible(2 * 1024 * 1024);
+    fs::write(source.join("evidence.txt"), &content).unwrap();
     let tag = JobTag::for_job(&JobKey {
         sequence: std::num::NonZeroU64::new(1).unwrap(),
         checkpoint_id: CheckpointId::parse("cli-checkpoint").unwrap(),
@@ -115,8 +149,15 @@ fn pinned_cli_creates_checks_and_restores_a_real_repository_with_planned_argumen
     let snapshots: serde_json::Value = serde_json::from_slice(&snapshots).unwrap();
     assert_eq!(snapshots.as_array().unwrap().len(), 1);
     assert_eq!(snapshots[0]["id"], snapshot.as_str());
-    let check = plan(&repository, &ResticCommand::CheckRepository);
-    require_success(invoke(binary, check.argv(), root));
+    // 完好的仓库：30 组全部干净（结构检查每组都跑，数据包按 ID 第一个字节分到各组）。
+    for (bucket, outcome, shown) in check_every_bucket(binary, &repository, root) {
+        assert_eq!(
+            outcome,
+            CheckOutcome::clean(),
+            "第 {} 组：{shown}",
+            bucket.get()
+        );
+    }
     let restored = root.join("restored");
     let restore = plan(
         &repository,
@@ -132,16 +173,32 @@ fn pinned_cli_creates_checks_and_restores_a_real_repository_with_planned_argumen
     assert_eq!(fs::read(restored_file).unwrap(), content);
 
     // 在本测试生成的私有仓库模拟盘损坏，生产仓库及其权限不参与此测试。
+    // 弄坏最大的那个包（装着 2MiB 内容的数据包），它按 ID 第一个字节落在第 byte%30+1 组。
     let pack = fs::read_dir(repo.join("data"))
         .unwrap()
         .flat_map(|dir| fs::read_dir(dir.unwrap().path()).unwrap())
-        .next()
-        .unwrap()
-        .unwrap()
-        .path();
+        .map(|entry| entry.unwrap().path())
+        .max_by_key(|path| fs::metadata(path).unwrap().len())
+        .unwrap();
+    let name = pack.file_name().unwrap().to_str().unwrap().to_owned();
+    assert_eq!(name.len(), 64);
+    let damaged = CheckBucket::new(u8::from_str_radix(&name[..2], 16).unwrap() % 30 + 1).unwrap();
     let mut bytes = fs::read(&pack).unwrap();
     bytes[16] ^= 1;
     fs::set_permissions(&pack, fs::Permissions::from_mode(0o600)).unwrap();
     fs::write(pack, bytes).unwrap();
-    assert!(!invoke(binary, check.argv(), root).status.success());
+    for (bucket, outcome, shown) in check_every_bucket(binary, &repository, root) {
+        if bucket == damaged {
+            assert_eq!(outcome.result(), CheckResult::Problem, "{shown}");
+            assert_eq!(outcome.broken_packs(), 1, "{shown}");
+            assert!(outcome.errors() >= 1, "{shown}");
+        } else {
+            assert_eq!(
+                outcome,
+                CheckOutcome::clean(),
+                "第 {} 组：{shown}",
+                bucket.get()
+            );
+        }
+    }
 }

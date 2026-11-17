@@ -25,11 +25,11 @@ pub(super) fn fixed_binding(path: &Path, source: &str) -> bool {
         ]
     } else if path.ends_with("crates/local-server/src/backup/producer.rs") {
         // 生产者只认固定目标和批准的 worker 账号；带键的请求每次都从账本重开原准入。
-        // 队列命令和带键请求两条路各核一次目标，少一处都不行。
+        // 队列命令、抽查结果上报和带键请求三条路各核一次目标，少一处都不行。
         if source
             .matches("ifrequest.target()!=TARGET{returnErr(AuditError::Serialization);}")
             .count()
-            != 2
+            != 3
         {
             return false;
         }
@@ -41,6 +41,34 @@ pub(super) fn fixed_binding(path: &Path, source: &str) -> bool {
             "ifqueue.outstanding(){returnOk((QueueAnswer::Outstanding,None));}",
             "self.ledger.append(backup_intent(&key,TARGET).map_err(|_|AuditError::Serialization)?)?;",
             "drop(frozen);letsealed=sealed.map_err(staging_reason)?;BackupAdmission::approve(self.ledger.clone(),key.clone(),TARGET,&sealed)",
+            "QueueCommand::RepositoryCheck=>self.repository_check()?",
+            "ifletOk(request)=RepositoryCheckReport::decode(bytes){ifrequest.target()!=TARGET{returnErr(AuditError::Serialization);}returnself.report_check(&request);}",
+        ]
+    } else if path.ends_with("crates/local-server/src/backup/producer/check.rs") {
+        // 抽查只在空闲时派：在封存、有作业没收口、上一组还在查都不派。挂满时限的原意图先由生产者补
+        // 「中途没了」，生产入口只用真实时钟。结果要在账本里找到同一检查键、本目标的原意图才落账；
+        // 原意图只取一条，多了就是账本坏了。
+        &[
+            "pub(super)fnrepository_check(&self)->Result<QueueAnswer,AuditError>{self.repository_check_with(now_millis)}",
+            "ifstate.busy{returnOk(QueueAnswer::Outstanding);}",
+            "ifstate.queue.outstanding(){returnOk(QueueAnswer::Outstanding);}",
+            "letabandoned=state.queue.checks().abandoned(now);forkeyin&abandoned{self.ledger.append(check_abandoned(key).map_err(|_|AuditError::Serialization)?)?;}",
+            "ifchecks.running(now).is_some(){returnOk(QueueAnswer::Outstanding);}",
+            "ifrecord.event()!=&expected{returnErr(AuditError::CorruptStore);}",
+            ".check_intent_record(&event)?.ok_or(AuditError::Unavailable)?;",
+            "ifassignment.key==*request.key()&&target==TARGET",
+            "if!same{returnErr(AuditError::CorruptStore);}",
+            ".with_phase(AuditPhase::Intent).with_limit(2)",
+            "ifrecords.len()>1{returnErr(AuditError::CorruptStore);}",
+        ]
+    } else if path.ends_with("crates/backup/src/worker/audit/report.rs") {
+        // 上报只能导出唯一一条结果事件，「中途没了」只能由生产者补；回执要绑定请求摘要和这条事件。
+        &[
+            "#[serde(deny_unknown_fields)]",
+            "self.0.outcome.reason()==Some(IncompleteReason::Abandoned)",
+            "&CheckRecorder::Worker(self.0.repository.clone())",
+            "reply.request_sha256!=codec::digest(&self.encode()?)",
+            "self.check_record(&reply.record)?;",
         ]
     } else if path.ends_with("crates/local-server/src/backup/listener.rs") {
         PRODUCER_SOCKET

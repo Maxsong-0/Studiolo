@@ -7,6 +7,7 @@ mod credentials;
 mod job;
 mod package;
 mod process;
+mod repository_check;
 mod runner;
 mod runtime;
 pub mod serve;
@@ -41,6 +42,8 @@ pub enum ProcessError {
     CleanupFailed,
     /// 子进程输出与固定版本的协议不符。
     Protocol,
+    /// 调用方要求让路（仓库抽查遇到待办的备份作业），已终止并回收本次进程组。
+    Interrupted,
 }
 impl std::fmt::Display for ProcessError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
