@@ -4,7 +4,7 @@
 //! 状态机的一步（决策表在 `BackupWorker::advance`）；没有待办时才轮到仓库抽查：先交上一次没交上
 //! 的结果，再问生产者要不要查一组（执行器在 `repository_check`）。抽查时每 30 秒问一次有没有
 //! 待办作业，有就停下让路。不装信号处理：状态机本来就按崩溃恢复设计，被终止和崩溃走同一条恢复
-//! 路径；抽查做到一半没了，由生产者过 30 分钟补记「中途没了」。
+//! 路径；抽查做到一半没了，原意图挂满时限（抽查窗口加 10 分钟）后由生产者补记「中途没了」。
 use crate::{
     AppendRunner, ApprovedJob, FinalManifestProbe, ProcessError, ResticCredentials, WorkerConfig,
     WorkerQueueClient,

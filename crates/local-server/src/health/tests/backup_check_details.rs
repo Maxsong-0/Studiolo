@@ -84,7 +84,7 @@ fn only_broken_packs_are_called_damage_and_problems_stay_until_a_clean_recheck()
     assert_eq!(state, "degraded");
     assert_eq!(
         detail,
-        "第 5 组 2 小时前检查没通过（报错 2 处），可能是仓库损坏，也可能是连不上或凭据不对；同一组重查干净前一直显示"
+        "第 5 组（2 小时前）检查没通过（报错 2 处），可能是仓库损坏，也可能是连不上或凭据不对；同一组重查干净前一直显示"
     );
     let (state, detail) = read(|checks| {
         checks.problems.push(problem(5, 2, 0, 1));
@@ -93,7 +93,7 @@ fn only_broken_packs_are_called_damage_and_problems_stay_until_a_clean_recheck()
     assert_eq!(state, "degraded");
     assert_eq!(
         detail,
-        "第 9 组 2 小时前读到 1 个损坏的数据包，要用管理员身份按维护步骤修，从上次干净以来第 2 次；另有 1 组也没通过；同一组重查干净前一直显示"
+        "第 9 组（2 小时前）读到 1 个损坏的数据包，要用管理员身份按维护步骤修，从上次干净以来第 2 次；另有 1 组也没通过；同一组重查干净前一直显示"
     );
 }
 
@@ -111,7 +111,7 @@ fn no_clean_check_for_72_hours_degrades_and_says_why_the_last_one_failed() {
     assert_eq!(state, "degraded");
     assert_eq!(
         detail,
-        "最近一次干净的检查是 3 天 1 小时前，超过 72 小时；最近一次是 30 分钟前第 4 组，没做完（让给了备份作业）"
+        "最近一次干净的检查是 3 天 1 小时前，超过 72 小时；最近一次是第 4 组（30 分钟前），没做完（让给了备份作业）"
     );
     let (state, detail) = read(|checks| {
         checks.last_clean_ms[0] = None;
@@ -158,7 +158,7 @@ fn a_clock_behind_the_ledger_still_shows_what_it_can_prove_and_says_so() {
     assert_eq!(state, "degraded");
     assert_eq!(
         detail,
-        "最近一次干净的检查是 3 天 1 小时前，超过 72 小时；最近一次是 在晚于本地时钟的时刻第 4 组，没做完（超过 20 分钟）"
+        "最近一次干净的检查是 3 天 1 小时前，超过 72 小时；最近一次是第 4 组（时刻晚于本地时钟），没做完（超过 20 分钟）"
     );
     let (state, detail) = read(|checks| {
         checks.latest_record_ms = Some(NOW_MS + MINUTE);
@@ -171,9 +171,9 @@ fn a_clock_behind_the_ledger_still_shows_what_it_can_prove_and_says_so() {
         });
     });
     assert_eq!(state, "degraded");
-    assert!(
-        detail.starts_with("第 5 组 在晚于本地时钟的时刻检查没通过（报错 2 处）"),
-        "{detail}"
+    assert_eq!(
+        detail,
+        "第 5 组（时刻晚于本地时钟）检查没通过（报错 2 处），可能是仓库损坏，也可能是连不上或凭据不对；同一组重查干净前一直显示"
     );
 }
 

@@ -54,10 +54,11 @@ fn state(verdict: CheckVerdict) -> HealthState {
 }
 
 fn detail(checks: &RepositoryChecks) -> String {
-    // 「多久之前」；时刻晚于本地时钟（时钟早于账本）时直说，不编时长。
-    let ago = |at_ms: i64| {
+    // 「什么时候」：一般是「多久之前」，时刻晚于本地时钟（时钟早于账本）时直说，不编时长。
+    // 两种说法都放进括号里；只有过期、正常两支直接接在「是」后面，判定保证它们的时刻不晚于本地时钟。
+    let when = |at_ms: i64| {
         u64::try_from(checks.now_ms.saturating_sub(at_ms)).map_or_else(
-            |_| "在晚于本地时钟的时刻".to_owned(),
+            |_| "时刻晚于本地时钟".to_owned(),
             |gap| format!("{}前", span(gap)),
         )
     };
@@ -69,10 +70,10 @@ fn detail(checks: &RepositoryChecks) -> String {
         RepositoryChecks::COVERAGE_DAYS,
     );
     match checks.verdict() {
-        CheckVerdict::Problem => problem_text(checks, &ago),
+        CheckVerdict::Problem => problem_text(checks, &when),
         CheckVerdict::Stale => {
             let base = match checks.last_clean_ms() {
-                Some(at) => format!("最近一次干净的检查是 {}，超过 {hours} 小时", ago(at)),
+                Some(at) => format!("最近一次干净的检查是 {}，超过 {hours} 小时", when(at)),
                 None => format!(
                     "从开始服务或第一次尝试算起已经 {}，还没有一次干净的检查",
                     checks
@@ -80,7 +81,7 @@ fn detail(checks: &RepositoryChecks) -> String {
                         .map_or_else(|| "未知时长".to_owned(), span)
                 ),
             };
-            format!("{base}{}{running}", latest_text(checks.latest, &ago))
+            format!("{base}{}{running}", latest_text(checks.latest, &when))
         }
         CheckVerdict::CoverageOverdue => {
             let overdue = checks.overdue_buckets();
@@ -98,13 +99,13 @@ fn detail(checks: &RepositoryChecks) -> String {
                 .map_or_else(|| "未知时长".to_owned(), span);
             format!(
                 "还没有干净的检查，离 {hours} 小时的期限还有 {left}{}{running}",
-                latest_text(checks.latest, &ago)
+                latest_text(checks.latest, &when)
             )
         }
         CheckVerdict::Healthy => {
             let last = checks
                 .last_clean_ms()
-                .map_or_else(|| "未知时刻".to_owned(), ago);
+                .map_or_else(|| "未知时刻".to_owned(), when);
             let coverage = if checks.first_cycle_done() == Some(true) {
                 format!(
                     "{days} 天内 {CHECK_BUCKETS} 组都读过，最久的一组 {}前",
@@ -124,7 +125,7 @@ fn detail(checks: &RepositoryChecks) -> String {
 }
 
 /// 先说读到损坏数据包的组；同一组重查干净之前一直显示。
-fn problem_text(checks: &RepositoryChecks, ago: &dyn Fn(i64) -> String) -> String {
+fn problem_text(checks: &RepositoryChecks, when: &dyn Fn(i64) -> String) -> String {
     let Some(first) = checks
         .problems
         .iter()
@@ -157,13 +158,13 @@ fn problem_text(checks: &RepositoryChecks, ago: &dyn Fn(i64) -> String) -> Strin
         String::new()
     };
     format!(
-        "第 {bucket} 组 {}{what}{repeated}{more}；同一组重查干净前一直显示",
-        ago(at_ms)
+        "第 {bucket} 组（{}）{what}{repeated}{more}；同一组重查干净前一直显示",
+        when(at_ms)
     )
 }
 
 /// 最近一次结果的补充说明。
-fn latest_text(latest: Option<CheckMark>, ago: &dyn Fn(i64) -> String) -> String {
+fn latest_text(latest: Option<CheckMark>, when: &dyn Fn(i64) -> String) -> String {
     let Some(mark) = latest else {
         return String::new();
     };
@@ -173,9 +174,9 @@ fn latest_text(latest: Option<CheckMark>, ago: &dyn Fn(i64) -> String) -> String
         CheckResult::Incomplete => format!("没做完（{}）", reason_text(mark.reason)),
     };
     format!(
-        "；最近一次是 {}第 {} 组，{result}",
-        ago(mark.at_ms),
-        mark.bucket
+        "；最近一次是第 {} 组（{}），{result}",
+        mark.bucket,
+        when(mark.at_ms)
     )
 }
 

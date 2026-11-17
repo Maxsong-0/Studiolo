@@ -7,8 +7,8 @@
 //!   结果好坏都往下轮：一组一直不干净也不会卡住整圈，它另走重查。
 //! - 重查：一组最近一次结果不干净，第一次不干净 1 小时后重查，连续两次以上不干净后每 24 小时
 //!   重查一次，直到干净；几组都要重查时先查结果最早的那组；两次重查的原意图之间至少隔 1 小时。
-//! - 重查和轮转同时到期先重查。挂着的原意图没过 30 分钟算还在查（worker 一次最多查 20 分钟），
-//!   过了就由生产者补「没做完」。worker 只在空闲、手里没有没交出去的结果时才问，
+//! - 重查和轮转同时到期先重查。挂着的原意图没挂满 `ABANDON_AFTER_MS`（抽查窗口加 10 分钟余量）
+//!   算还在查，挂满了就由生产者补「没做完」。worker 只在空闲、手里没有没交出去的结果时才问，
 //!   所以它来问时挂着的原意图只可能是上一个进程中途没了留下的。
 //! - 换了仓库（worker 上报的仓库摘要变了），旧仓库各组的结果不再算。
 use std::collections::BTreeMap;
@@ -203,7 +203,7 @@ impl Checks {
         self.highest.checked_add(1).and_then(NonZeroU64::new)
     }
 
-    /// 挂着超过 30 分钟的原意图：worker 中途没了，要补「没做完」。
+    /// 挂满 `ABANDON_AFTER_MS` 的原意图：worker 中途没了，要补「没做完」。
     pub(super) fn abandoned(&self, now_ms: i64) -> Vec<CheckKey> {
         self.open
             .values()
@@ -212,7 +212,7 @@ impl Checks {
             .collect()
     }
 
-    /// 还在查的那次：挂着、还没过 30 分钟的原意图（时钟早于它也算还在查）。
+    /// 还在查的那次：挂着、还没挂满 `ABANDON_AFTER_MS` 的原意图（时钟早于它也算还在查）。
     pub(super) fn running(&self, now_ms: i64) -> Option<OpenCheck> {
         self.open
             .values()
