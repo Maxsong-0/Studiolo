@@ -15,19 +15,15 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "scripts"))
 from replica_common import ALLOW  # noqa: E402
-import importlib.util
 import tempfile
 import time
 import types
 import unittest
 
 TOOL = Path(__file__).with_name("pack_offline.py")
-# 夹具项目取上线探针的金丝雀项目，它总在注册表生成的 ALLOW 里（BUG-038：写死的旧名改名后落到白名单外）。
-_SPEC = importlib.util.spec_from_file_location(
-    "agent_check", Path(__file__).resolve().parents[3] / "scripts/check-agent.py")
-_CHECK = importlib.util.module_from_spec(_SPEC)
-_SPEC.loader.exec_module(_CHECK)
-PROJECT = _CHECK.PROJECT
+# 夹具项目直接取注册表生成的 ALLOW 里的第一个项目，不写死名字（BUG-038：写死的旧名改名后落到白名单外）。
+# 不从 check-agent.py 取：run_snapshot_tests.py 只把固定的一组源文件复制到私有目录里跑，那组里没有探针。
+PROJECT = next(entry for entry in ALLOW if entry.startswith("项目/"))
 SOURCE = None
 
 
