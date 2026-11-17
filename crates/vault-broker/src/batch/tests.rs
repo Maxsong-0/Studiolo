@@ -282,4 +282,18 @@ fn numbering_uses_scoped_recursive_file_names() {
             .unwrap();
     }
     assert_eq!(broker.scan_number_max(&path("tasks"), "T-").unwrap(), 10);
+    // 范围目录不存在、或指向的是文件：报 NotFound，不当成空目录从 1 开始（BUG-038）。
+    for scope in ["missing", "tasks/T-003-task.md"] {
+        assert!(matches!(
+            broker.scan_number_max(&path(scope), "T-"),
+            Err(crate::BrokerError::NotFound(_))
+        ));
+    }
+    // 真实存在、只是还没有编号文件的目录照常从 0 算。
+    use std::os::unix::fs::DirBuilderExt as _;
+    fs::DirBuilder::new()
+        .mode(0o700)
+        .create(fixture.vault.join("empty"))
+        .unwrap();
+    assert_eq!(broker.scan_number_max(&path("empty"), "T-").unwrap(), 0);
 }
