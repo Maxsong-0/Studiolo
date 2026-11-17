@@ -1,6 +1,6 @@
 # handoff/ — 给读不到 vault 的会话的交接快照
 
-项目档案（任务协调、计划、ADR、日志）的权威在用户的 Obsidian vault `项目/Studiolo/`，只在用户的 Mac 上。
+项目档案（任务协调、计划、ADR、日志）的权威在用户的 Obsidian vault `项目/Studiolo-Docs/`（2026-10-23 前叫 `项目/Studiolo/`），只在用户的 Mac 上。
 Cursor Cloud 这类云端会话读不到它，所以把**当前在推进的工作**所需的文档快照放在这里（用户 2026-09-28 指示）。
 
 ## 规矩

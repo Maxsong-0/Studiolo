@@ -60,7 +60,7 @@ impl fmt::Display for PolicyKind {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ReadCaps {
-    /// 白名单前缀（逻辑路径，如 `项目/Studiolo`）；供给视图＝部署上限 ∩ 本清单。
+    /// 白名单前缀（逻辑路径，如 `项目/Studiolo-Docs`）；供给视图＝部署上限 ∩ 本清单。
     pub project_whitelist: Vec<String>,
     /// 必须为 true：白名单之外不进入计算。
     pub deny_by_default: bool,

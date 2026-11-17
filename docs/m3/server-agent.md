@@ -9,7 +9,8 @@ T-046 另补 AgentStore 严格开库：已存在数据库按当前合法格式0�
 
 T-034：用户于 2026-09-07 指定部署到 `maxsong@192.168.100.169`，把 M3 首片（[供给面与 MCP 外壳](../contracts/agent-supply.md)）
 从 Mac 上的临时进程变成服务器常驻服务，并经专用 Tunnel 给出一个公网 URL。
-真实 vault 仍在 Mac：服务器只持有**白名单子树的只读副本**（`项目/Studiolo`、`_规则`），
+真实 vault 仍在 Mac：服务器只持有**白名单子树的只读副本**（当时是 `项目/Studiolo`、`_规则`；现在的白名单由
+项目注册表 `scripts/project_registry.json` 生成，见 [副本运维](replica-operations.md)「加一个新项目」），
 不复制 vault 其他内容，不提供写入，不改变 M2 未完成的事实。副本会陈旧，见「副本同步」。
 
 **2026-09-11 更新（T-040）**：已上线 `m3-t040-20260910-read01`，同一系统服务新增 HTTP 文本入口和独立持久索引，系统及公网 MCP/HTTP 正反验收通过；客户端投影 CLI 随源码包发布。当前版本、验收和恢复 T-036 系统单元的备份见 [读取供给发布](read-supply-release.md)。

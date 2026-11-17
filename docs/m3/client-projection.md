@@ -44,10 +44,10 @@ Linux（如 DGX）的 `/tmp` 是实目录；下例用 `pwd -P` 取临时目录�
 {
   "schema_version": 1,
   "client": "claude",
-  "project": "项目/Studiolo",
+  "project": "项目/Studiolo-Docs",
   "source_url": "https://studiolo-agent.maxsong.me/read",
   "token_env": "STUDIOLO_CLAUDE_TOKEN",
-  "rules": ["_规则/通用工作规则.md", "项目/Studiolo/CLAUDE.md"],
+  "rules": ["_规则/通用工作规则.md", "项目/Studiolo-Docs/CLAUDE.md"],
   "skills": []
 }
 ```

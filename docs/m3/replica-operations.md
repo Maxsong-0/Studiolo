@@ -13,9 +13,13 @@ bash scripts/sync-agent-vault.sh
 
 `--dry-run` 只在本地校验白名单并显示摘要，不连接或改动服务器。实际同步使用现有 SSH 主机信任与非交互认证，
 目标为 `maxsong@192.168.100.169:/home/maxsong/.local/share/studiolo-agent-replica`。
-可通过 `STUDIOLO_VAULT`、`STUDIOLO_HOST`、`STUDIOLO_REMOTE_REPLICA` 显式覆盖，白名单仍固定为 `项目/Studiolo` 和 `_规则`。
+可通过 `STUDIOLO_VAULT`、`STUDIOLO_HOST`、`STUDIOLO_REMOTE_REPLICA` 显式覆盖；白名单不能覆盖，由项目注册表
+`scripts/project_registry.json` 生成（见下文「加一个新项目」）。
 
-只传输这两个目录的可见内容。脚本不会修改本地笔记，也不会覆盖旧 `studiolo-agent-vault` 副本或任何 systemd 服务。
+只传输白名单里目录的可见内容。脚本不会修改本地笔记，也不会覆盖旧 `studiolo-agent-vault` 副本或任何 systemd 服务。
+登记给 AI 看的目录在库里不存在时（库里改名或删了目录，BUG-038），整批不发，报
+`{"status":"failed","last_error":"registered_directory_missing","missing":<个数>}`；
+用 `python3 scripts/project_registry.py check --vault <库根目录>` 逐个列出，按库里的现名改注册表再 `sync`。
 只有接收端验证全部字节与清单成功才发布；失败保留上一完整批次。源机断网或休眠时，服务器能判断副本已经过期，不能知道本地最新笔记内容。
 
 ## 2. 更新 MCP 服务（服务器）
@@ -53,6 +57,15 @@ python3 scripts/project_registry.py desired --capability <现行能力集.json> 
 
 两道门都还在：`sync` 之后仍要重发 Mac 副本包、发行并重启 agent（主人在场，顺序见上：副本先变新、agent 最后重启）；
 `desired` 只打印提案正文，照旧经策略平面提交、由人批准后才生效。注册表不记代码仓库地址。
+
+**库里改了目录名（BUG-038，2026-11-16）**：注册表里把旧名改成新名、`sync`、`check --vault` 通过之后，能力集提案用
+`desired --capability <现行能力集.json> --rename <旧名> <新名>`（可重复）：读取白名单和黑板写项目里的旧名，连同它下面的子路径，
+一起换成新名（按路径段整段换，`项目/甲` 不会动到 `项目/甲-Docs`）；几份能力集可以共用同一组 `--rename`，这份里没有的旧名跳过、
+说明里提示一行。对照表里旧名重复、新名重复、互相嵌套或串联都整份拒绝。不给 `--rename` 时旧名会当成部署上限之外的前缀删掉；
+黑板写入开着、黑板写项目却被删光时 `desired` 直接拒绝（策略平面也不收空的黑板写项目）。
+仓库里另有两处写死项目名：本机客户端 `scripts/local_client/config.py` 的 `BOARD_PROJECT`、网页能力集草稿模板
+`web/src/policy/submitDraft.ts`，由 `scripts/test-project-registry.py` 核对在注册表里。
+人侧 canonical 里的目录名不归注册表管：黑板编号的范围目录在 canonical 里不存在时报错，不从 1 起算（见 [M5 批量写回](../m5/batch-write.md)「编号」）。
 
 必须先由系统管理器使用相同隔离参数，在独立回环端口（例如 4401）启动新程序，验证实际 PID/UID/二进制、initialize、四工具与匿名 401；
 确认新鲜度、版本和读取审计后，再安装 `/etc/systemd/system/studiolo-agent.service`，停止并禁用旧用户级 MCP 单元，启用系统级单元。网页和 Tunnel 无需调整。

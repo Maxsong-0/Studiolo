@@ -96,7 +96,7 @@ headers = {"Authorization": "Bearer " + os.environ["STUDIOLO_AGENT_TOKEN"]}
 with opener.open(urllib.request.Request(base + "/handshake", headers=headers), timeout=15) as response:
     headers["Studiolo-Session-Id"] = response.headers["Studiolo-Session-Id"]
     print(read_text(response))
-query = urllib.parse.urlencode({"path": "项目/Studiolo/00-总览/INDEX.md"})
+query = urllib.parse.urlencode({"path": "项目/Studiolo-Docs/00-总览/INDEX.md"})
 with opener.open(urllib.request.Request(base + "/note?" + query, headers=headers), timeout=15) as response:
     print(read_text(response))
 ```

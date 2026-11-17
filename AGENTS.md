@@ -1,7 +1,7 @@
 # Studiolo 仓库 agent 约定（AGENTS.md）
 
 > 适用于在本仓库工作的一切 AI 会话与其子 agent：Claude Code 经根 `CLAUDE.md` 引入本文件，Codex 直接读本文件。
-> 本文件只管**派发任务书**与**回执**的格式。并发协作 SOP、预算纪律、模型与 effort 分档一律以全局 `~/.claude/CLAUDE.md` 为准；项目档案在 Obsidian vault `项目/Studiolo/`，开工先读 `00-总览/INDEX.md` 与 `04-协调/TASKS.md`。
+> 本文件只管**派发任务书**与**回执**的格式。并发协作 SOP、预算纪律、模型与 effort 分档一律以全局 `~/.claude/CLAUDE.md` 为准；项目档案在 Obsidian vault `项目/Studiolo-Docs/`，开工先读 `00-总览/INDEX.md` 与 `04-协调/TASKS.md`。
 > 来源：2026-09-17 借鉴 Droppy Code Hydra 的任务书与回执纪律（vault `03-记忆/Droppy-Hydra多agent协同机制要点.md`）；机器约束版见 ADR-017。黑板上线前，本文件是过渡性的文本约定。
 
 ## 一、派发任务书（给每个子 agent 的 prompt 必含，缺一项不派）
@@ -82,7 +82,7 @@
   agent 无法登录（service token 也过不了应用层）。界面验证用上面的本机示例或假数据。
 - 环境安装脚本（保存在 Cursor 面板，不在仓库）已备好 1.97.1 ＋ rustfmt／clippy、GNU `time`（内存测量用例调 `/usr/bin/time`）、`web/node_modules` 与 cargo 依赖缓存，
   并在 `$CARGO_HOME/config.toml` 设 `[profile.dev] debug = "line-tables-only"`，与 ci 套、`test-linux.sh` 同一设置。
-- vault `项目/Studiolo/` 与全局 `~/.claude/CLAUDE.md` 不在 VM 上。GitHub 上已没有 CI（第五节）：推送不触发检查，合并门禁 ci 套只能由本机会话交测试箱，VM 里连不到。
+- vault `项目/Studiolo-Docs/` 与全局 `~/.claude/CLAUDE.md` 不在 VM 上。GitHub 上已没有 CI（第五节）：推送不触发检查，合并门禁 ci 套只能由本机会话交测试箱，VM 里连不到。
 - 在推进工作的交接快照放在 `docs/handoff/`（vault 为准，可能滞后）。验证在 VM 里一律用上面的 `test-cursor-cloud.sh`，合并前的 ci 套写明「交本机会话」；要登录 107／108／169、读写 vault 或用 studiolo MCP 的步骤云端做不了，停下写明「交本机会话」（其中登录 107／108／169 的只能交 Mac 会话：DGX 同样连不到家里 192.168.100.x 网段），不要索要或注入内网／SSH 凭据。
 
 ## 七、DGX（`max-spark`，2026-10-04 起）

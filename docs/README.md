@@ -1,6 +1,6 @@
 # docs
 
-面向实现者的技术方案。产品需求与决策以 vault `项目/Studiolo/` 为权威（PRD 分册、ADR、功能清单、roadmap），本目录不重复它们；与 vault 冲突时以 vault 为准并回写本目录。
+面向实现者的技术方案。产品需求与决策以 vault `项目/Studiolo-Docs/` 为权威（PRD 分册、ADR、功能清单、roadmap），本目录不重复它们；与 vault 冲突时以 vault 为准并回写本目录。
 
 **看状态先看这两处**：仓库总口径在根 [README](../README.md)「当前状态」，
 逐工作域的验收台账在 [M2、M3 整体收尾](m2/m2-m3-closeout.md)。本目录里的分片文档
