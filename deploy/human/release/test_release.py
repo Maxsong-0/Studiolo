@@ -237,5 +237,41 @@ class ControlTests(unittest.TestCase):
             self.assertLessEqual(times[-1], 0.2)
 
 
+class SnapshotLimitTests(unittest.TestCase):
+    """激活三库快照的大小上限与边读边算摘要（2026-11-18 审计库 650 MiB 超出原 512 MiB）。"""
+
+    def setUp(self):
+        self.mask = os.umask(0o077)
+        self.temp = tempfile.TemporaryDirectory(prefix='.studiolo-snapshot-limit-', dir=Path.home())
+        self.path = Path(self.temp.name) / 'audit.sqlite3'
+        # 跨过多个 1 MiB 读块，末尾不对齐。
+        self.data = bytes(range(256)) * (3 * 4096) + b'fictional tail'
+        c.new_file(self.path, self.data)
+
+    def tearDown(self):
+        self.temp.cleanup()
+        os.umask(self.mask)
+
+    def test_worker_limit_matches_release_common_and_exceeds_release_files(self):
+        import snapshot_worker as worker
+        self.assertEqual(worker.LIMIT, c.SNAPSHOT_FILE)
+        self.assertGreater(c.SNAPSHOT_FILE, c.MAX_FILE)
+        self.assertGreaterEqual(worker.TOTAL_LIMIT, worker.LIMIT)
+
+    def test_digest_streams_to_the_same_result_as_read(self):
+        uid = os.getuid()
+        expected = (len(self.data), c.sha(self.data))
+        self.assertEqual(c.digest(self.path, uid, 0o600, limit=c.SNAPSHOT_FILE), expected)
+        self.assertEqual((len(c.read(self.path, uid, 0o600)), c.sha(c.read(self.path, uid, 0o600))), expected)
+
+    def test_digest_rejects_files_over_its_limit_and_wrong_mode(self):
+        uid = os.getuid()
+        with self.assertRaises(ValueError):
+            c.digest(self.path, uid, 0o600, limit=len(self.data) - 1)
+        with self.assertRaises(ValueError):
+            c.digest(self.path, uid, 0o640, limit=c.SNAPSHOT_FILE)
+        self.assertEqual(c.digest(self.path, uid, 0o600, limit=len(self.data))[0], len(self.data))
+
+
 if __name__ == '__main__':
     unittest.main()

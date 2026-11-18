@@ -15,6 +15,9 @@ RELEASE = Path('/home/maxsong/.local/share/studiolo-human-releases') / BUILD
 UID = 1000
 MAX_FILE = 512 * 1024 * 1024
 MAX_TOTAL = 2 * 1024 * 1024 * 1024
+# 激活自带三库快照（auth、audit、policy）的单个文件上限，与发行文件的 MAX_FILE 分开：审计库只增不减，
+# 2026-11-18 已到 650 MiB，r16 激活在 512 MiB 上被拒。snapshot_worker.py 的 LIMIT 与它相等（test_release 守卫）。
+SNAPSHOT_FILE = 2 * 1024 * 1024 * 1024
 BINARIES = {'bin/studiolo-local-server', 'bin/studiolo-auth-admin', 'bin/studiolo-sync-launcher'}
 REQUIRED = BINARIES | {'launch-human.py', 'studiolo-human.service', 'web/index.html'}
 
@@ -65,7 +68,7 @@ def ancestors(path, uid):
         require(stat.S_IMODE(s.st_mode) & 0o7022 == 0)
 
 
-def inspect(path, uid, mode=None, directory=False):
+def inspect(path, uid, mode=None, directory=False, limit=MAX_FILE):
     path = absolute(path)
     ancestors(path, uid)
     s = path.lstat()
@@ -75,7 +78,7 @@ def inspect(path, uid, mode=None, directory=False):
     if mode is not None:
         require(stat.S_IMODE(s.st_mode) == mode)
     if not directory:
-        require(s.st_size <= MAX_FILE)
+        require(s.st_size <= limit)
     return s
 
 
@@ -89,6 +92,25 @@ def read(path, uid, mode=None):
         require(len(raw) == before.st_size and mark(os.fstat(fd)) == mark(before))
         require(mark(inspect(path, uid, mode)) == mark(before))
         return raw
+    finally:
+        os.close(fd)
+
+
+def digest(path, uid, mode=None, limit=MAX_FILE):
+    """与 read 同样的核验，但边读边算：返回 (字节数, sha256)，不把整份读进内存（快照文件用）。"""
+    before = inspect(path, uid, mode, limit=limit)
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC)
+    try:
+        require(mark(os.fstat(fd)) == mark(before))
+        hasher, total = hashlib.sha256(), 0
+        with os.fdopen(fd, 'rb', closefd=False) as stream:
+            while chunk := stream.read(1024 * 1024):
+                total += len(chunk)
+                require(total <= before.st_size)
+                hasher.update(chunk)
+        require(total == before.st_size and mark(os.fstat(fd)) == mark(before))
+        require(mark(inspect(path, uid, mode, limit=limit)) == mark(before))
+        return total, hasher.hexdigest()
     finally:
         os.close(fd)
 

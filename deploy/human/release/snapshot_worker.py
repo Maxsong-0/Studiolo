@@ -12,7 +12,11 @@ ROOT = Path('/home/maxsong/.local/share')
 DATABASES = ((ROOT / 'studiolo-human-auth/auth.sqlite3', 4),
              (ROOT / 'studiolo-human-audit/audit.sqlite3', 2),
              (ROOT / 'studiolo-agent-policy/policy.sqlite3', 1))
-LIMIT = 512 * 1024 * 1024
+# 单库与三库合计的快照上限。单库与 release_common.SNAPSHOT_FILE 相等（本 worker 以 -I -S 单独执行，不能 import，
+# 由 test_release 守卫）。2026-11-18 审计库 650 MiB 超出原 512 MiB；169 实测 650 MiB 备份＋检查＋序列化共 2 秒、
+# 进程峰值约 2 GiB（整库进内存，峰值约为库大小的 3 倍），离 25 秒时限很远。
+LIMIT = 2 * 1024 * 1024 * 1024
+TOTAL_LIMIT = 3 * 1024 * 1024 * 1024
 
 
 def require(ok):
@@ -98,7 +102,7 @@ def run(mode, descriptors):
                     require(not memory.execute('PRAGMA foreign_key_check').fetchall())
                     raw = memory.serialize()
                     total += len(raw)
-                    require(len(raw) <= LIMIT and total <= 1024 * 1024 * 1024)
+                    require(len(raw) <= LIMIT and total <= TOTAL_LIMIT)
                     with os.fdopen(descriptors[index], 'wb', closefd=False) as out:
                         out.write(raw)
                         out.flush()

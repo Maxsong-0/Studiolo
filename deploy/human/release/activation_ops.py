@@ -100,15 +100,16 @@ class Operations:
                 os.close(fd)
         files = {}
         for path in paths:
-            c.inspect(path, 0, 0o600)
+            c.inspect(path, 0, 0o600, limit=c.SNAPSHOT_FILE)
             db = sqlite3.connect(path.as_uri() + '?mode=ro&immutable=1', uri=True)
             try:
                 c.require(db.execute('PRAGMA quick_check').fetchall() == [('ok',)])
                 c.require(not db.execute('PRAGMA foreign_key_check').fetchall())
             finally:
                 db.close()
-            raw = c.read(path, 0, 0o600)
-            files[path.name] = {'bytes': len(raw), 'sha256': c.sha(raw)}
+            # 快照文件可超过发行文件上限（审计库只增不减），边读边算，不整份进内存。
+            size, digest = c.digest(path, 0, 0o600, limit=c.SNAPSHOT_FILE)
+            files[path.name] = {'bytes': size, 'sha256': digest}
         for name in ('human.before.service', 'owner.before.json'):
             raw = c.read(self.record / name, 0, 0o600)
             files[name] = {'bytes': len(raw), 'sha256': c.sha(raw)}
