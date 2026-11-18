@@ -87,7 +87,9 @@ sudo -n /usr/bin/python3 -I -B -S /ABS/TRUSTED/TOOLS/activate.py \
 python3 -I -B -S deploy/human/release/test_release.py
 ```
 
-入口包含 `test_snapshot_worker.py`。夹具在当前用户 HOME 下新建独有 `0700` 目录；
+入口经 `load_tests` 整模块载入 `test_snapshot_worker.py`，那边新加的用例类不用再到入口登记。
+合并门禁 ci 套经 `scripts/test-human-offline.py`（`.testbox.toml` 的 `deploy-scripts` 一步）跑本入口，
+那一步日志里本入口打出的 `Ran N tests` 就是全部用例数（2026-11-18 为 24）。夹具在当前用户 HOME 下新建独有 `0700` 目录；
 HOME 祖先必须满足同样的不可组/其他写约束。测试不会放宽产品门禁。
 服务操作使用注入式替身；SQLite 使用真实虚构数据库，worker 的固定生产路径/身份及
 root 输出 FD 元数据仅在测试中替换。覆盖 WAL 内容、全库先锁后读、失败释放锁、版本拒绝、

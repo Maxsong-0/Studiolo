@@ -15,7 +15,7 @@ from activation_ops import Operations
 import package
 import release_common as c
 import runtime_checks as runtime
-from test_snapshot_worker import SnapshotTests, SourceDirectoryTests
+import test_snapshot_worker
 
 
 class PackageTests(unittest.TestCase):
@@ -271,6 +271,12 @@ class SnapshotLimitTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             c.digest(self.path, uid, 0o640, limit=c.SNAPSHOT_FILE)
         self.assertEqual(c.digest(self.path, uid, 0o600, limit=len(self.data))[0], len(self.data))
+
+
+def load_tests(loader, tests, pattern):
+    """整模块载入 test_snapshot_worker：按类名 import 时，那边新加的用例类不会进合并门禁。"""
+    tests.addTests(loader.loadTestsFromModule(test_snapshot_worker))
+    return tests
 
 
 if __name__ == '__main__':
