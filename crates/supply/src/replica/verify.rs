@@ -4,7 +4,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use sha2::{Digest, Sha256};
 use studiolo_core::VaultPath;
-use studiolo_vault_broker::{ReadBatch, ReadEntryKind, ReadOnlyVault, ScanLimits};
+use studiolo_vault_broker::{ReadEntry, ReadEntryKind, ReadNote, ReadOnlyVault, ScanLimits};
 
 use super::{
     Receipt, ReplicaError,
@@ -164,16 +164,22 @@ fn capture(
             return Err(ReplicaError::Drift("tree_mismatch"));
         }
     }
+    // 扫描结果按路径排好序，清单也严格按路径递增（`validate` 核过），所以两边的 Markdown 一一对应、
+    // 顺着走一遍即可；每篇扫描读到的正文只交出一次，快照直接接手，不再复制一份。
+    let mut notes = batch.notes.into_iter();
     let mut snapshot = Snapshot::default();
     for entry in &manifest.entries {
-        append(vault, &batch, entry, &mut snapshot)?;
+        append(&batch.entries, &mut notes, entry, &mut snapshot)?;
+    }
+    if notes.next().is_some() {
+        return Err(ReplicaError::Drift("extra_note"));
     }
     Ok(snapshot)
 }
 
 fn append(
-    vault: &ReadOnlyVault,
-    batch: &ReadBatch,
+    scanned_entries: &[ReadEntry],
+    scanned_notes: &mut impl Iterator<Item = ReadNote>,
     entry: &ManifestEntry,
     snapshot: &mut Snapshot,
 ) -> Result<(), ReplicaError> {
@@ -182,27 +188,26 @@ fn append(
         EntryKind::Directory
     } else if markdown(&entry.path) {
         // 笔记正文会对外供给：每次请求都整读并核 SHA-256，同大小字节漂移立即阻断。
-        let data = vault
-            .read_file(&path, protocol::FILE_LIMIT)
-            .map_err(|_| ReplicaError::Drift("file_read_failed"))?;
-        if data.content.len() as u64 != entry.bytes
-            || Some(digest(&data.content)).as_ref() != entry.sha256.as_ref()
+        // 正文用的是同一次安全扫描读到的字节。扫描已把每层目录的名字枚举一遍、查过大小写撞名，
+        // 并按不跟随链接、不跨设备、私有权限、读前读后元数据不变的规矩读了每一篇；之后整轮捕获再做一遍、
+        // 两轮逐字节比对。不再按路径单独重读（T-215，vault BUG-039）：那条路每读一篇都从根重新解析路径，
+        // 把沿途每层目录的名字整个枚举两遍，一次校验的耗时是「每篇所在目录的条目数」之和，
+        // 同一目录篇数一多就成了平方级（108 实测 4000 篇挤在一个目录时单次校验 23.8 秒，其中 94% 在这里）。
+        let note = scanned_notes
+            .next()
+            .filter(|note| note.path == path)
+            .ok_or(ReplicaError::Drift("missing_note"))?;
+        if note.content.len() as u64 != entry.bytes
+            || Some(digest(&note.content)).as_ref() != entry.sha256.as_ref()
         {
             return Err(ReplicaError::Drift("file_digest"));
         }
-        let index = batch
-            .notes
-            .binary_search_by(|note| note.path.cmp(&path))
-            .map_err(|_| ReplicaError::Drift("missing_note"))?;
-        let scanned = &batch.notes[index];
-        if scanned.content != data.content {
-            return Err(ReplicaError::Drift("note_changed_during_scan"));
-        }
         snapshot.notes.push(Note {
             path: path.clone(),
-            revision: data.revision,
-            content: String::from_utf8(data.content)
-                .map_err(|_| ReplicaError::Drift("non_utf8_note"))?,
+            revision: note.revision,
+            content: String::from_utf8(note.content)
+                .map_err(|_| ReplicaError::Drift("non_utf8_note"))?
+                .into(),
         });
         EntryKind::Markdown
     } else {
@@ -210,11 +215,10 @@ fn append(
         // 得到的类型与字节长度，不整读、不算哈希。附件字节的完整性由接收端在副本到达时
         // 逐文件核 SHA-256 保证（scripts/replica_store.py）。整读附件曾让纳入 199 MB 的
         // 项目后每次请求多出约 1.5 秒。
-        let index = batch
-            .entries
+        let index = scanned_entries
             .binary_search_by(|scanned| scanned.path.cmp(&path))
             .map_err(|_| ReplicaError::Drift("missing_attachment"))?;
-        let scanned = &batch.entries[index];
+        let scanned = &scanned_entries[index];
         if scanned.kind != ReadEntryKind::Attachment || scanned.size_bytes != Some(entry.bytes) {
             return Err(ReplicaError::Drift("attachment_size"));
         }

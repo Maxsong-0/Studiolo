@@ -47,6 +47,12 @@ const PRODUCTION: [&str; 2] = [
     "cargo --locked build -p studiolo-auth-admin --features production",
 ];
 
+/// 只在 ci 套里钉住、要 release 构建才量得准的容量契约（T-215，vault BUG-039）：Markdown 合计上限满额时
+/// 16 路并发读的时延与常驻内存。debug 下它标为忽略，Workspace 测试那一步跑不到它；删掉这一行，上限调高了
+/// 扛不住、或者整读校验又变成随篇数超线性增长，就没有任何一步会拦。
+const RELEASE: [&str; 1] =
+    ["cargo --locked test --release -p studiolo-agent-server --test replica_capacity_contract"];
+
 /// 前端：不跑安装脚本的固定依赖安装，以及构建、测试、规范、格式四道门，都在 `web` 目录里跑。
 const FRONTEND: [&str; 5] = [
     "npm ci --ignore-scripts",
@@ -139,6 +145,7 @@ fn pinned() -> impl Iterator<Item = (Option<&'static str>, &'static str)> {
     let root = SHARED
         .into_iter()
         .chain(PRODUCTION)
+        .chain(RELEASE)
         .chain(REGRESSIONS)
         .map(|command| (None, command));
     root.chain(FRONTEND.into_iter().map(|command| (Some(WEB), command)))

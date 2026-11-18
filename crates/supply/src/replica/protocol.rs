@@ -8,12 +8,16 @@ use super::ReplicaError;
 pub(super) const MANIFEST_LIMIT: u64 = 4 * 1024 * 1024;
 pub(super) const FILE_LIMIT: u64 = 16 * 1024 * 1024;
 pub(super) const NOTE_LIMIT: u64 = 4 * 1024 * 1024;
-/// 与 scripts/replica_common.py 的 MAX_NOTES_TOTAL 逐项相等（test-replica-boundaries.py 守卫）；
-/// 2026-11-18 由 16 MiB 上调（vault BUG-039：真实库涨到 21 MiB，同步整批失败）。每次内容请求都整读校验
-/// 全部 Markdown，耗时随篇数超线性增长：108 上 release 构建跑 T-185 内存探针（16 路并发读、客户端 20 秒超时），
-/// 24 MiB／2200 篇通过（常驻峰值约 271 MiB），24 MiB／2580 篇与 32 MiB／2730 篇都超时。
-/// 再上调先改校验路径，不能只改这个数。
-pub(super) const NOTES_TOTAL_LIMIT: u64 = 24 * 1024 * 1024;
+/// Markdown 合计上限。与 scripts/replica_common.py 的 MAX_NOTES_TOTAL 逐项相等（test-replica-boundaries.py 守卫）。
+///
+/// 沿革（vault BUG-039）：2026-11-18 由 16 MiB 调到 24 MiB（真实库涨到 21 MiB，同步整批失败）；同日 T-215 修掉
+/// 校验里随篇数平方增长的逐篇重读、让快照与读模型共用正文后调到 40 MiB。agent 每次内容请求都整读校验全部
+/// Markdown，上限能多大由 `crates/agent-server/tests/replica_capacity_contract.rs` 说了算：满额副本（真实篇幅分布、
+/// 全挤一个目录）在 `mlockall` 下 16 路并发读、连换几次代次，最慢请求不超过 10 秒、常驻匿名内存不超过 384 MiB
+/// （单元 `MemoryMax=512M` 的四分之三）。108 实测（release）：40 MiB 最慢 1.7 秒、常驻 301 MiB；48 MiB 常驻 380 MiB，
+/// 余量不到 5 MiB。再往上调，先压常驻内存（剩下的大头是两轮捕获同时在手、`mlockall` 后堆顶只升不降），
+/// 改完让这条契约在新值下照样通过，不能只改这个数。
+pub const NOTES_TOTAL_LIMIT: u64 = 40 * 1024 * 1024;
 /// 与 scripts/replica_common.py 的 MAX_TOTAL 逐项相等（test-replica-boundaries.py 守卫）；
 /// 2026-09-22 T-108 由 128 MiB 上调。附件每次请求只核大小（ADR-023），所以总量上调不增加每请求的哈希开销。
 pub(super) const TOTAL_LIMIT: u64 = 512 * 1024 * 1024;

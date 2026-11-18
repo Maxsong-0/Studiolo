@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use serde::Serialize;
 
 /// 输入 Markdown 文档中的位置，行号从 1 起。
@@ -94,8 +96,9 @@ pub struct DocumentView {
     pub path: String,
     /// M0 VaultIndex 选定的展示标题。
     pub title: String,
-    /// 原样输入的 Markdown，不是渲染后的 HTML。
-    pub content: String,
+    /// 原样输入的 Markdown，不是渲染后的 HTML。与构建输入共享同一块内存，克隆只加引用计数
+    /// （T-215）；序列化照旧是字符串。
+    pub content: Arc<str>,
 }
 
 /// 一整个输入代次的确定性视图；数据全部自持，不借用读模型。

@@ -1,6 +1,6 @@
 //! 索引输入与查询结果；只表示派生事实，不授予文件或授权能力。
 
-use std::fmt;
+use std::{fmt, sync::Arc};
 
 use crate::{
     FrontmatterWarning, Heading, HeadingNode, NormalizedFrontmatter, OutgoingLink, SourceProfile,
@@ -11,7 +11,9 @@ use studiolo_core::VaultPath;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MarkdownDocument {
     path: VaultPath,
-    contents: String,
+    /// 共享不可变正文：调用方的快照、本输入与读模型可以指向同一块内存，克隆只加引用计数
+    /// （T-215：agent 换代次时同一份正文原先同时存三四份）。
+    contents: Arc<str>,
     unavailable: Option<DocumentUnavailable>,
 }
 
@@ -19,9 +21,15 @@ impl MarkdownDocument {
     /// 创建一篇输入笔记，不触碰文件系统。
     #[must_use]
     pub fn new(path: VaultPath, contents: impl Into<String>) -> Self {
+        Self::shared(path, Arc::from(contents.into()))
+    }
+
+    /// 用调用方已经持有的共享正文创建输入，不复制字节（T-215：agent 的快照与读模型共用同一份正文）。
+    #[must_use]
+    pub fn shared(path: VaultPath, contents: Arc<str>) -> Self {
         Self {
             path,
-            contents: contents.into(),
+            contents,
             unavailable: None,
         }
     }
@@ -34,7 +42,7 @@ impl MarkdownDocument {
     pub fn unavailable(path: VaultPath, reason: DocumentUnavailable) -> Self {
         Self {
             path,
-            contents: String::new(),
+            contents: Arc::from(""),
             unavailable: Some(reason),
         }
     }
@@ -54,6 +62,12 @@ impl MarkdownDocument {
     /// 返回原始 Markdown 文本。
     #[must_use]
     pub fn contents(&self) -> &str {
+        &self.contents
+    }
+
+    /// 返回共享的原始 Markdown 文本；派生视图要留存正文时克隆它，不复制字节。
+    #[must_use]
+    pub fn shared_contents(&self) -> &Arc<str> {
         &self.contents
     }
 }

@@ -38,7 +38,9 @@ fn finish_read(
     before: Metadata,
     mut open: impl FnMut() -> Result<File, BrokerError>,
 ) -> Result<ReadNote, BrokerError> {
-    let mut content = Vec::new();
+    // 按打开时的长度一次分配到位：从空缓冲倍增读满，平均多占四成多，整读校验时每份正文都带着这些余量
+    // （T-215：24 MiB 正文的快照实占 34.7 MiB）。长度变了后面的稳定性检查照样拒绝，这里只是初始容量。
+    let mut content = Vec::with_capacity(usize::try_from(before.len().min(max_bytes)).unwrap_or(0));
     (&mut file)
         .take(max_bytes.saturating_add(1))
         .read_to_end(&mut content)

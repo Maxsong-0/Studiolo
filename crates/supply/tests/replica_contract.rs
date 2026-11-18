@@ -172,6 +172,58 @@ fn same_size_attachment_bytes_are_left_to_arrival_verification() {
 }
 
 #[test]
+fn note_bodies_are_hashed_from_the_scan_and_unsafe_shapes_still_drift() {
+    // T-215：正文直接用同一次安全扫描读到的字节核 SHA-256，不再按路径逐篇重读。逐篇重读原先顺带做的
+    // 那几项检查（同大小改字节、同层大小写撞名、链接冒充笔记）都必须仍由扫描与哈希拦下。
+    let original = fs::read(ReplicaFixture::new().file("project/note.md")).unwrap();
+    let mut same_size = original.clone();
+    same_size[2] ^= 0x20;
+    let f = ReplicaFixture::new();
+    write(&f.file("project/note.md"), &same_size);
+    assert!(matches!(
+        root(&f).verify(f.observed + 1000, None),
+        Err(ReplicaError::Drift("file_digest"))
+    ));
+
+    let f = ReplicaFixture::new();
+    fs::remove_file(f.file("project/note.md")).unwrap();
+    std::os::unix::fs::symlink(
+        f.file("project/00-总览/INDEX.md"),
+        f.file("project/note.md"),
+    )
+    .unwrap();
+    assert!(matches!(
+        root(&f).verify(f.observed + 1000, None),
+        Err(ReplicaError::Drift(_))
+    ));
+
+    // 清单摘要与字节都对得上、但正文不是 UTF-8：照样拒绝，不对外供给。
+    let f = ReplicaFixture::new();
+    let invalid = b"# \xff\xfe broken\n".to_vec();
+    write(&f.file("project/note.md"), &invalid);
+    f.rewrite_manifest(|manifest| {
+        let entry = &mut manifest["entries"][4];
+        assert_eq!(entry["path"], json!("project/note.md"));
+        entry["bytes"] = json!(invalid.len());
+        entry["sha256"] = json!(replica_support::digest(&invalid));
+    });
+    assert!(matches!(
+        root(&f).verify(f.observed + 1000, None),
+        Err(ReplicaError::Drift("non_utf8_note"))
+    ));
+
+    // 大小写不敏感的文件系统上建不出两个只差大小写的名字，只在 Linux 上验。
+    if cfg!(target_os = "linux") {
+        let f = ReplicaFixture::new();
+        write(&f.file("project/Note.md"), &original);
+        assert!(matches!(
+            root(&f).verify(f.observed + 1000, None),
+            Err(ReplicaError::Drift("incomplete_or_extra_entries"))
+        ));
+    }
+}
+
+#[test]
 fn malformed_and_out_of_scope_manifests_fail_even_with_matching_raw_digest() {
     for action in 0..7 {
         let f = ReplicaFixture::new();

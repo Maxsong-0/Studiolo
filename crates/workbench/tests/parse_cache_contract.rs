@@ -78,7 +78,7 @@ fn changed_source_body_and_project_status_replace_previous_derived_values() {
         }
     );
     assert_eq!(
-        model.document(current[0].path()).unwrap().content,
+        &*model.document(current[0].path()).unwrap().content,
         current[0].contents()
     );
     assert_eq!(

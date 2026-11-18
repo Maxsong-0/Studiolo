@@ -80,7 +80,7 @@ fn reads_outside_the_allow_list_are_rejected_without_touching_the_filesystem() {
     let note = roots
         .read_note(&path("项目/Alpha/00-总览/INDEX.md"), 1 << 20)
         .unwrap();
-    assert_eq!(note.content, "# Alpha\n");
+    assert_eq!(&*note.content, "# Alpha\n");
     assert_eq!(note.path.as_str(), "项目/Alpha/00-总览/INDEX.md");
 }
 

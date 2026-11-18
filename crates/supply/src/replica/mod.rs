@@ -9,8 +9,8 @@ use studiolo_core::VaultPath;
 use studiolo_vault_broker::ReadOnlyVault;
 
 use crate::Snapshot;
-pub use protocol::Receipt;
 use protocol::State;
+pub use protocol::{NOTES_TOTAL_LIMIT, Receipt};
 
 /// 固定原因，不含源文件内容、宿主路径或底层错误。
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
@@ -94,6 +94,28 @@ impl Freshness {
             receipt: Some(self.receipt.clone()),
         }
     }
+}
+
+/// Markdown 合计用到上限的这个百分比起，路牌上提醒（T-215，vault BUG-039：越线那天 Mac 同步整批失败、
+/// 副本停在越线前，之前没有任何提前量，等发现时已经停了一个月）。按每月约 5 MiB 的增长留出两个月左右。
+pub const NOTES_TOTAL_WARN_PERCENT: u64 = 80;
+
+/// 路牌上给人看的容量提醒：Markdown 合计到了上限的 [`NOTES_TOTAL_WARN_PERCENT`] 才有。
+///
+/// 只放在路牌上（每个 AI 会话开头都会读到，会转告用户），不放进逐次的内容响应。
+#[must_use]
+pub fn capacity_notice(notes_bytes: u64) -> Option<String> {
+    let percent = notes_bytes.saturating_mul(100) / NOTES_TOTAL_LIMIT;
+    (percent >= NOTES_TOTAL_WARN_PERCENT).then(|| {
+        let mib = |bytes: u64| bytes as f64 / (1024.0 * 1024.0);
+        format!(
+            "⚠ 副本 Markdown 合计 {:.1} MiB，已到上限 {:.0} MiB 的 {percent}%：涨过上限后 Mac 同步会整批失败、\
+             这里的资料停在越线前（vault BUG-039）。请提醒用户趁早调高上限（两端常量，见 docs/m3/replica-freshness.md）\
+             或精简白名单。",
+            mib(notes_bytes),
+            mib(NOTES_TOTAL_LIMIT),
+        )
+    })
 }
 
 /// 机器行下面那句给人看的提示；`ready` 没有。
@@ -216,7 +238,7 @@ impl ReplicaRoot {
 
 #[cfg(test)]
 mod tests {
-    use super::{elapsed, notice};
+    use super::{NOTES_TOTAL_LIMIT, NOTES_TOTAL_WARN_PERCENT, capacity_notice, elapsed, notice};
 
     const SECOND_MS: i64 = 1000;
     const MINUTE_MS: i64 = 60 * SECOND_MS;
@@ -250,6 +272,24 @@ mod tests {
             Some(
                 "⚠ 最近一次同步失败，下面是最后一次校验通过的资料：停在 2026-09-21 13:31 UTC（1 小时前）；涉及进度的结论先向用户核实。"
             )
+        );
+    }
+
+    #[test]
+    fn capacity_notice_starts_at_the_warning_percent_of_the_limit() {
+        let at = |percent: u64| (NOTES_TOTAL_LIMIT * percent).div_ceil(100);
+        assert_eq!(capacity_notice(0), None);
+        assert_eq!(capacity_notice(at(NOTES_TOTAL_WARN_PERCENT) - 1), None);
+        let warned = capacity_notice(at(NOTES_TOTAL_WARN_PERCENT)).expect("到线就提醒");
+        assert!(
+            warned.contains(&format!("的 {NOTES_TOTAL_WARN_PERCENT}%")),
+            "{warned}"
+        );
+        let full = capacity_notice(NOTES_TOTAL_LIMIT).expect("满额也提醒");
+        assert!(full.starts_with("⚠ 副本 Markdown 合计 "), "{full}");
+        assert!(
+            full.contains("的 100%") && full.contains("BUG-039"),
+            "{full}"
         );
     }
 

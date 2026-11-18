@@ -226,10 +226,11 @@ fn document_reads_preserve_original_content_and_duplicate_paths_reject_the_build
     let input = note("项目/甲/原文.md", text);
     let model = WorkbenchReadModel::build(std::slice::from_ref(&input)).unwrap();
     let mut copy = model.document(input.path()).unwrap();
-    assert_eq!(copy.content, text);
+    assert_eq!(&*copy.content, text);
     assert_eq!(copy.title, "标题");
-    copy.content.clear();
-    assert_eq!(model.document(input.path()).unwrap().content, text);
+    // 正文是共享的不可变 `Arc<str>`：调用方只能换掉自己手里的那份，本代次不受影响。
+    copy.content = "".into();
+    assert_eq!(&*model.document(input.path()).unwrap().content, text);
     assert!(
         model
             .document(&VaultPath::parse("项目/甲/不存在.md").unwrap())
