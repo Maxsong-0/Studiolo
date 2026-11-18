@@ -8,7 +8,12 @@ use super::ReplicaError;
 pub(super) const MANIFEST_LIMIT: u64 = 4 * 1024 * 1024;
 pub(super) const FILE_LIMIT: u64 = 16 * 1024 * 1024;
 pub(super) const NOTE_LIMIT: u64 = 4 * 1024 * 1024;
-pub(super) const NOTES_TOTAL_LIMIT: u64 = 16 * 1024 * 1024;
+/// 与 scripts/replica_common.py 的 MAX_NOTES_TOTAL 逐项相等（test-replica-boundaries.py 守卫）；
+/// 2026-11-18 由 16 MiB 上调（vault BUG-039：真实库涨到 21 MiB，同步整批失败）。每次内容请求都整读校验
+/// 全部 Markdown，耗时随篇数超线性增长：108 上 release 构建跑 T-185 内存探针（16 路并发读、客户端 20 秒超时），
+/// 24 MiB／2200 篇通过（常驻峰值约 271 MiB），24 MiB／2580 篇与 32 MiB／2730 篇都超时。
+/// 再上调先改校验路径，不能只改这个数。
+pub(super) const NOTES_TOTAL_LIMIT: u64 = 24 * 1024 * 1024;
 /// 与 scripts/replica_common.py 的 MAX_TOTAL 逐项相等（test-replica-boundaries.py 守卫）；
 /// 2026-09-22 T-108 由 128 MiB 上调。附件每次请求只核大小（ADR-023），所以总量上调不增加每请求的哈希开销。
 pub(super) const TOTAL_LIMIT: u64 = 512 * 1024 * 1024;

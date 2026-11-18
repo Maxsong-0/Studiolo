@@ -239,10 +239,12 @@ mod tests {
 
     #[test]
     fn serialized_manifest_caps_retained_markdown_before_reading_bodies() {
-        let entries = (0..5)
+        // 篇篇顶到单篇上限、合计刚好超出总量上限一篇；弹掉一篇就刚好等于上限。按常量推，上限调整时不必改这里。
+        const { assert!(protocol::NOTES_TOTAL_LIMIT.is_multiple_of(protocol::NOTE_LIMIT)) };
+        let entries = (0..=protocol::NOTES_TOTAL_LIMIT / protocol::NOTE_LIMIT)
             .map(|n| {
                 serde_json::json!({
-                    "path": format!("P/{n}.md"), "kind": "file", "bytes": 4 * 1024 * 1024,
+                    "path": format!("P/{n}.md"), "kind": "file", "bytes": protocol::NOTE_LIMIT,
                     "sha256": "0".repeat(64)
                 })
             })

@@ -40,7 +40,9 @@ MAX_FILE = 16 * 1024 * 1024
 # 总量上限 512 MiB（2026-09-22 T-108 由 128 MiB 上调以纳入 项目/Semiment-Docs 的 199 MB 附件）。
 # 与 crates/supply/src/replica/protocol.rs 的 TOTAL_LIMIT 逐项相等，由 test-replica-boundaries.py 守卫。
 MAX_TOTAL = 512 * 1024 * 1024
-MAX_NOTES_TOTAL = 16 * 1024 * 1024
+# Markdown 合计上限 24 MiB（2026-11-18 由 16 MiB 上调，vault BUG-039）。agent 每次读请求都整读校验全部 Markdown，
+# 再上调前先改校验路径（理由与实测见 protocol.rs 的 NOTES_TOTAL_LIMIT）。两端逐项相等，由 test-replica-boundaries.py 守卫。
+MAX_NOTES_TOTAL = 24 * 1024 * 1024
 DIR_FLAGS = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
 FILE_FLAGS = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK
 
