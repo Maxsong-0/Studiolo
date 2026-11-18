@@ -190,8 +190,11 @@ async fn probe() {
         if change > 0 {
             // 换上下一代次：同接收端一样先写好再原子替换控制文件。
             let staged = root.join("control/state-next.json");
-            fs::copy(path(NEXT_STATES).join(format!("next-{change}.json")), &staged)
-                .expect("暂存下一代次的控制文件");
+            fs::copy(
+                path(NEXT_STATES).join(format!("next-{change}.json")),
+                &staged,
+            )
+            .expect("暂存下一代次的控制文件");
             fs::set_permissions(&staged, fs::Permissions::from_mode(0o600)).expect("收紧权限");
             fs::rename(&staged, root.join("control/state.json")).expect("换上下一代次");
         }

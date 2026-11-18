@@ -60,17 +60,15 @@ impl AgentSession {
         let generation = self.generation(instance, "handshake").await?;
         let mut freshness = Self::freshness(&generation)?;
         // 副本快到 Markdown 合计上限时只在路牌上提醒（T-215）；内容响应逐次带的新鲜度行不重复它。
-        if generation.freshness.is_some() {
-            let notes_bytes = generation
-                .snapshot
-                .notes
-                .iter()
-                .map(|note| note.content.len() as u64)
-                .sum();
-            if let Some(notice) = studiolo_supply::replica::capacity_notice(notes_bytes) {
-                freshness.push_str(&notice);
-                freshness.push('\n');
-            }
+        // 合计是全副本的数，只给读得到每一篇的接入方，判定与读取路径同一个 `grant.allows`。
+        if generation.freshness.is_some()
+            && let Some(notice) =
+                studiolo_supply::replica::capacity_notice_for(&generation.snapshot.notes, |path| {
+                    grant.allows(path)
+                })
+        {
+            freshness.push_str(&notice);
+            freshness.push('\n');
         }
         let policy = self.policy_signpost(grant)?;
         let principal = Principal {

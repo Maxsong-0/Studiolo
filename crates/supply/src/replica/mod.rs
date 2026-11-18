@@ -8,7 +8,7 @@ use std::path::Path;
 use studiolo_core::VaultPath;
 use studiolo_vault_broker::ReadOnlyVault;
 
-use crate::Snapshot;
+use crate::{Note, Snapshot};
 use protocol::State;
 pub use protocol::{NOTES_TOTAL_LIMIT, Receipt};
 
@@ -100,11 +100,29 @@ impl Freshness {
 /// 副本停在越线前，之前没有任何提前量，等发现时已经停了一个月）。按每月约 5 MiB 的增长留出两个月左右。
 pub const NOTES_TOTAL_WARN_PERCENT: u64 = 80;
 
-/// 路牌上给人看的容量提醒：Markdown 合计到了上限的 [`NOTES_TOTAL_WARN_PERCENT`] 才有。
+/// 路牌上给人看的容量提醒：副本 Markdown 合计到了上限的 [`NOTES_TOTAL_WARN_PERCENT`] 才有，
+/// 而且只给读得到副本里**每一篇**的接入方（`readable` 是这个接入方的读授权）。
 ///
+/// 合计是全副本的数：只读得到一部分的接入方拿到它，减去自己读得到的篇幅，就能推出读不到的项目
+/// 和名单外规则有多大。所以读不全就不给，宁可少提醒，也不越过供给视图（T-215 外部审查发现）。
 /// 只放在路牌上（每个 AI 会话开头都会读到，会转告用户），不放进逐次的内容响应。
 #[must_use]
-pub fn capacity_notice(notes_bytes: u64) -> Option<String> {
+pub fn capacity_notice_for(
+    notes: &[Note],
+    mut readable: impl FnMut(&VaultPath) -> bool,
+) -> Option<String> {
+    let mut total = 0u64;
+    for note in notes {
+        if !readable(&note.path) {
+            return None;
+        }
+        total = total.saturating_add(note.content.len() as u64);
+    }
+    capacity_notice(total)
+}
+
+/// 提醒的文字；不看授权，只供 [`capacity_notice_for`] 调用。
+fn capacity_notice(notes_bytes: u64) -> Option<String> {
     let percent = notes_bytes.saturating_mul(100) / NOTES_TOTAL_LIMIT;
     (percent >= NOTES_TOTAL_WARN_PERCENT).then(|| {
         let mib = |bytes: u64| bytes as f64 / (1024.0 * 1024.0);
@@ -238,7 +256,15 @@ impl ReplicaRoot {
 
 #[cfg(test)]
 mod tests {
-    use super::{NOTES_TOTAL_LIMIT, NOTES_TOTAL_WARN_PERCENT, capacity_notice, elapsed, notice};
+    use std::sync::Arc;
+
+    use studiolo_core::{Revision, VaultPath, VaultUuid};
+
+    use super::{
+        NOTES_TOTAL_LIMIT, NOTES_TOTAL_WARN_PERCENT, capacity_notice, capacity_notice_for, elapsed,
+        notice,
+    };
+    use crate::Note;
 
     const SECOND_MS: i64 = 1000;
     const MINUTE_MS: i64 = 60 * SECOND_MS;
@@ -290,6 +316,47 @@ mod tests {
         assert!(
             full.contains("的 100%") && full.contains("BUG-039"),
             "{full}"
+        );
+    }
+
+    #[test]
+    fn capacity_notice_is_withheld_from_a_reader_who_cannot_read_every_note() {
+        let note = |path: &str, bytes: u64| {
+            let path = VaultPath::parse(path).unwrap();
+            let content: Arc<str> = "x".repeat(usize::try_from(bytes).unwrap()).into();
+            Note {
+                // 修订值与这里的判断无关，不对 40 MiB 正文做哈希。
+                revision: Revision::compute(VaultUuid::new(), &path, b""),
+                path,
+                content,
+            }
+        };
+        // 读得到的只有 1 KiB，读不到的那篇把合计推过提醒线。
+        let half = NOTES_TOTAL_LIMIT / 2;
+        let notes = [
+            note("_规则/通用工作规则.md", 1024),
+            note("项目/Public/a.md", half),
+            note("项目/Secret/b.md", half),
+        ];
+        let everything = capacity_notice_for(&notes, |_| true).expect("读全的接入方看得到提醒");
+        assert!(
+            everything.starts_with("⚠ 副本 Markdown 合计 "),
+            "{everything}"
+        );
+        assert_eq!(
+            capacity_notice_for(&notes, |path| !path.as_str().starts_with("项目/Secret/")),
+            None,
+            "只读得到一部分的接入方不能拿到全副本的合计"
+        );
+        assert_eq!(
+            capacity_notice_for(&notes, |path| path.as_str() != "_规则/通用工作规则.md"),
+            None,
+            "规则名单外的一篇也算读不全"
+        );
+        assert_eq!(
+            capacity_notice_for(&notes[..1], |_| true),
+            None,
+            "没到线不提醒"
         );
     }
 

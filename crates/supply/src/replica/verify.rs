@@ -244,11 +244,13 @@ mod tests {
     #[test]
     fn serialized_manifest_caps_retained_markdown_before_reading_bodies() {
         // 篇篇顶到单篇上限、合计刚好超出总量上限一篇；弹掉一篇就刚好等于上限。按常量推，上限调整时不必改这里。
+        // 文件名补零：清单要求路径按字节序严格递增，`P/10.md` 排在 `P/9.md` 前面，篇数一到两位数
+        // 就会先撞上顺序检查（T-215 上限调到 40 MiB、11 篇时踩到）。
         const { assert!(protocol::NOTES_TOTAL_LIMIT.is_multiple_of(protocol::NOTE_LIMIT)) };
         let entries = (0..=protocol::NOTES_TOTAL_LIMIT / protocol::NOTE_LIMIT)
             .map(|n| {
                 serde_json::json!({
-                    "path": format!("P/{n}.md"), "kind": "file", "bytes": protocol::NOTE_LIMIT,
+                    "path": format!("P/{n:05}.md"), "kind": "file", "bytes": protocol::NOTE_LIMIT,
                     "sha256": "0".repeat(64)
                 })
             })
