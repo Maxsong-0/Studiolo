@@ -15,7 +15,7 @@ from activation_ops import Operations
 import package
 import release_common as c
 import runtime_checks as runtime
-from test_snapshot_worker import SnapshotTests
+from test_snapshot_worker import SnapshotTests, SourceDirectoryTests
 
 
 class PackageTests(unittest.TestCase):

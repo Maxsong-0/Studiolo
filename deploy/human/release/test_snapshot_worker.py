@@ -105,3 +105,83 @@ class SnapshotTests(unittest.TestCase):
         with self.fictional_identity(), self.assertRaises(ValueError):
             worker.run('snapshot', self.descriptors)
         self.assertTrue(all(os.fstat(fd).st_size == 0 for fd in self.descriptors))
+
+
+class SourceDirectoryTests(unittest.TestCase):
+    """库目录白名单：只有审计库目录认准入锁，而且锁必须是空文件（vault BUG-040）。"""
+
+    def setUp(self):
+        self.mask = os.umask(0o077)
+        self.temp = tempfile.TemporaryDirectory(prefix='.studiolo-r8-source-', dir=Path.home())
+        self.root = Path(self.temp.name)
+
+    def tearDown(self):
+        self.temp.cleanup()
+        os.umask(self.mask)
+
+    def database(self, name):
+        directory = self.root / name
+        directory.mkdir(mode=0o700)
+        path = directory / (name + '.sqlite3')
+        db = sqlite3.connect(path)
+        db.execute('CREATE TABLE fixture (value TEXT)')
+        db.commit()
+        db.close()
+        return path
+
+    @contextlib.contextmanager
+    def owned_by_1000(self):
+        # 测试箱里的 UID 不一定是 1000，临时目录的祖先也可能带 sticky 位；只换属主、去掉祖先的放宽位，
+        # 名字、类型、大小、链接数、设备号都用真值。
+        real = Path.lstat
+        def lstat(path):
+            s = real(path)
+            inside = path == self.root or self.root in path.parents
+            return types.SimpleNamespace(st_mode=s.st_mode if inside else s.st_mode & ~0o7022,
+                st_uid=1000, st_nlink=s.st_nlink, st_size=s.st_size, st_dev=s.st_dev, st_ino=s.st_ino)
+        with patch.object(Path, 'lstat', autospec=True, side_effect=lstat):
+            yield
+
+    def identity(self, path):
+        s = path.stat()
+        return s.st_dev, s.st_ino
+
+    def test_gate_name_is_known_only_to_the_audit_directory(self):
+        self.assertIn(worker.AUDIT_GATE, worker.expected_names(Path('/x/audit.sqlite3')))
+        for name in ('auth.sqlite3', 'policy.sqlite3'):
+            self.assertNotIn(worker.AUDIT_GATE, worker.expected_names(Path('/x') / name))
+
+    def test_audit_directory_accepts_an_empty_gate_and_rejects_a_written_one(self):
+        audit = self.database('audit')
+        with self.owned_by_1000():
+            self.assertEqual(worker.source(audit), self.identity(audit))
+        gate = audit.parent / worker.AUDIT_GATE
+        gate.touch(mode=0o600)
+        with self.owned_by_1000():
+            self.assertEqual(worker.source(audit), self.identity(audit))
+        gate.write_bytes(b'x')
+        with self.owned_by_1000(), self.assertRaises(ValueError):
+            worker.source(audit)
+
+    def test_gate_must_be_private(self):
+        audit = self.database('audit')
+        gate = audit.parent / worker.AUDIT_GATE
+        gate.touch(mode=0o600)
+        gate.chmod(0o640)
+        with self.owned_by_1000(), self.assertRaises(ValueError):
+            worker.source(audit)
+
+    def test_gate_is_foreign_outside_the_audit_directory(self):
+        auth = self.database('auth')
+        (auth.parent / worker.AUDIT_GATE).touch(mode=0o600)
+        with self.owned_by_1000(), self.assertRaises(ValueError):
+            worker.source(auth)
+
+    def test_other_stray_names_stay_rejected(self):
+        audit = self.database('audit')
+        for name in (worker.AUDIT_GATE + '.tmp', 'notes.md', 'auth.sqlite3'):
+            stray = audit.parent / name
+            stray.touch(mode=0o600)
+            with self.subTest(name=name), self.owned_by_1000(), self.assertRaises(ValueError):
+                worker.source(audit)
+            stray.unlink()

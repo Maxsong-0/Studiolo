@@ -16,12 +16,18 @@ const FLAGS: OFlags = OFlags::RDONLY
     .union(OFlags::NONBLOCK)
     .union(OFlags::CLOEXEC);
 
-#[derive(Clone, Copy)]
+/// 审计库开库后在同目录建的操作准入锁，与 `studiolo-audit-ledger` 的 `sqlite/storage/operation.rs`
+/// 里 `GATE` 同名（那里由架构守卫逐字钉住；本模块测试用真实 ledger 开库核对）。空文件，锁只活在 FD 上。
+/// 恢复流程先开审计库再复核布局，不认它就会在开库后的第一次复核失败（vault BUG-040）。
+const AUDIT_GATE: &str = "checkpoint-operations.lock";
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Kind {
     Ancestor,
     Directory,
     Database,
     Config,
+    Gate,
 }
 
 struct Pin {
@@ -75,8 +81,24 @@ fn permissions(mode: u32, owner: u32, links: u64, kind: Kind) -> bool {
             // 固定 /var/lib 布局没有临时目录祖先，不接受 sticky 放宽。
             Kind::Ancestor => links > 0 && mode & 0o022 == 0,
             Kind::Directory => links > 0 && mode & 0o7777 == 0o700,
-            Kind::Database | Kind::Config => links == 1 && mode & 0o7777 == 0o600,
+            Kind::Database | Kind::Config | Kind::Gate => links == 1 && mode & 0o7777 == 0o600,
         }
+}
+
+/// 准入锁不承载数据，写进任何字节都说明它不是 ledger 建的那一个。
+fn size_allowed(kind: Kind, length: u64) -> bool {
+    !matches!(kind, Kind::Gate) || length == 0
+}
+
+/// auth/audit 目录里每个名字该按哪类核：库文件和 SQLite 旁文件按库核；准入锁只在审计目录认；其余一律拒。
+fn entry_kind(directory: &str, name: &std::ffi::OsStr) -> Option<Kind> {
+    if directory == "audit" && name == AUDIT_GATE {
+        return Some(Kind::Gate);
+    }
+    ["", "-wal", "-shm", "-journal"]
+        .iter()
+        .any(|suffix| name == format!("{directory}.sqlite3{suffix}").as_str())
+        .then_some(Kind::Database)
 }
 
 fn inspect(metadata: &Metadata, kind: Kind, device: u64) -> Result<(), AdminError> {
@@ -86,6 +108,7 @@ fn inspect(metadata: &Metadata, kind: Kind, device: u64) -> Result<(), AdminErro
         || (directory && !metadata.is_dir())
         || (!directory && !metadata.is_file())
         || !permissions(metadata.mode(), metadata.uid(), metadata.nlink(), kind)
+        || !size_allowed(kind, metadata.len())
     {
         return Err(AdminError::RestoreGate);
     }
@@ -248,18 +271,13 @@ impl Guard {
                 .ok_or(AdminError::RestoreGate)?;
             for entry in entries(&base)? {
                 let name = entry.file_name();
-                if !["", "-wal", "-shm", "-journal"]
-                    .iter()
-                    .any(|suffix| name == format!("{directory}.sqlite3{suffix}").as_str())
-                {
-                    return Err(AdminError::RestoreGate);
-                }
+                let kind = entry_kind(directory, &name).ok_or(AdminError::RestoreGate)?;
                 let file = File::from(
                     openat(&pinned.file, &name, FLAGS, Mode::empty())
                         .map_err(|_| AdminError::RestoreGate)?,
                 );
                 let metadata = file.metadata().map_err(|_| AdminError::RestoreGate)?;
-                inspect(&metadata, Kind::Database, pinned.before.dev())?;
+                inspect(&metadata, kind, pinned.before.dev())?;
                 if identity(&metadata)
                     != identity(
                         &fs::symlink_metadata(entry.path()).map_err(|_| AdminError::RestoreGate)?,

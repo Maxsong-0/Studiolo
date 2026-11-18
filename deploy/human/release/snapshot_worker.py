@@ -17,11 +17,21 @@ DATABASES = ((ROOT / 'studiolo-human-auth/auth.sqlite3', 4),
 # 进程峰值约 2 GiB（整库进内存，峰值约为库大小的 3 倍），离 25 秒时限很远。
 LIMIT = 2 * 1024 * 1024 * 1024
 TOTAL_LIMIT = 3 * 1024 * 1024 * 1024
+# 审计库开库后在同目录建的操作准入锁（crates/audit-ledger 的 sqlite/storage/operation.rs GATE，名字由架构守卫钉住）：
+# 空文件，锁只活在 FD 上，不是库数据，不进快照。2026-11-18 人侧 r16 首次启动后出现，旧白名单把它当异物，
+# 激活验收与自动回滚都被拒（vault BUG-040）。
+AUDIT_GATE = 'checkpoint-operations.lock'
 
 
 def require(ok):
     if not ok:
         raise ValueError('rejected')
+
+
+def expected_names(path):
+    """库目录里允许出现的名字：库本身和 SQLite 旁文件；只有审计库目录另认准入锁。"""
+    names = {path.name + suffix for suffix in ('', '-wal', '-shm', '-journal')}
+    return (names | {AUDIT_GATE}) if path.name == 'audit.sqlite3' else names
 
 
 def source(path):
@@ -30,12 +40,12 @@ def source(path):
         require(stat.S_ISDIR(s.st_mode) and s.st_uid in (0, 1000) and s.st_mode & 0o7022 == 0)
     parent = path.parent.lstat()
     require(parent.st_uid == 1000 and stat.S_IMODE(parent.st_mode) == 0o700)
-    allowed = {path.name + suffix for suffix in ('', '-wal', '-shm', '-journal')}
-    require({p.name for p in path.parent.iterdir()} <= allowed)
+    require({p.name for p in path.parent.iterdir()} <= expected_names(path))
     for p in path.parent.iterdir():
         s = p.lstat()
         require(stat.S_ISREG(s.st_mode) and s.st_uid == 1000 and s.st_nlink == 1)
         require(stat.S_IMODE(s.st_mode) == 0o600 and s.st_dev == parent.st_dev and s.st_size <= LIMIT)
+        require(p.name != AUDIT_GATE or s.st_size == 0)
     s = path.lstat()
     require(s.st_size > 0)
     return s.st_dev, s.st_ino
