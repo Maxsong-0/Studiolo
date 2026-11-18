@@ -93,5 +93,9 @@ r12本身尚无批内关停点，激活前必须取得空闲plane.lock并持有�
 上一版固定 r13→r14（2026-10-01）：BUG-026只增加同步失败步骤与固定错误类别日志，不改变同步协议和权限。
 人侧程序更新，网页、agent和root launcher字节沿用；r13路径/单元/manifest钉住后按官方事务切换，仍须持空闲plane.lock避免新轮插入。
 
-本版固定 r14→r15（2026-10-01）：BUG-027将Bridge文件检查改为不跟随链接的元数据查询，避免关闭临时FD释放SQLite进程锁。
+上一版固定 r14→r15（2026-10-01，已激活）：BUG-027将Bridge文件检查改为不跟随链接的元数据查询，避免关闭临时FD释放SQLite进程锁。
 数据库版本及外部写入检测保持；只替换人侧程序和发行路径，沿用r14网页、agent、root launcher与认证/同步配置，使用同一空闲plane.lock切换流程。
+
+本版固定 r15→r16（2026-11-18，T-207）：发行 main 上 BUG-038 项目目录改名与 T-207 各批人侧改动；启动器加 `--agent-data`，
+装配要求 agent 单元的读取范围已含新名（`AGENT_READ_SCOPES`）。人侧程序、网页、maintain 与 sync-launcher 一起换，`prepare.py` 带全部参数；
+控制库 schema 3→4、单向（见上文「r15→r16 是单向的」），要留退路先做恢复点。现场摘要：human 单元 `edb0c1f5…c71c7`、agent 单元 `15b39395…45b9`（t207-c09b065、新名 `--allow`）、r15 manifest `2f24ad58…a6d5`。
