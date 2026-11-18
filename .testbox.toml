@@ -151,6 +151,15 @@ cargo --locked test -p studiolo-vault-broker --test linux_path_security
 timeout_sec = 1200
 
 [[suites.ci.steps]]
+name = "replica-capacity"
+title = "托管副本满额时的并发读时延与常驻内存（release，T-215）"
+run = '''
+source scripts/testbox-ci-env.sh
+cargo --locked test --release -p studiolo-agent-server --test replica_capacity_contract
+'''
+timeout_sec = 1800
+
+[[suites.ci.steps]]
 name = "production-build"
 title = "生产身份特征构建（禁止混入虚构测试验证器）"
 run = '''

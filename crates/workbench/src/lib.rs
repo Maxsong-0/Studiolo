@@ -124,7 +124,7 @@ impl WorkbenchReadModel {
                 DocumentView {
                     path: input.path().as_str().to_owned(),
                     title: parsed.title.text.clone(),
-                    content: input.contents().to_owned(),
+                    content: input.shared_contents().clone(),
                 },
             );
             inputs.insert(input.path().as_str().to_owned(), (input, parsed));

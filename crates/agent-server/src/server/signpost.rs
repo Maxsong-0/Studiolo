@@ -58,7 +58,20 @@ impl AgentSession {
     pub(super) async fn signpost(&self, grant: &Grant) -> Result<String, McpError> {
         let instance = &grant.instance;
         let generation = self.generation(instance, "handshake").await?;
-        let freshness = Self::freshness(&generation)?;
+        let mut freshness = Self::freshness(&generation)?;
+        // 副本快到 Markdown 合计上限时只在路牌上提醒（T-215）；内容响应逐次带的新鲜度行不重复它。
+        if generation.freshness.is_some() {
+            let notes_bytes = generation
+                .snapshot
+                .notes
+                .iter()
+                .map(|note| note.content.len() as u64)
+                .sum();
+            if let Some(notice) = studiolo_supply::replica::capacity_notice(notes_bytes) {
+                freshness.push_str(&notice);
+                freshness.push('\n');
+            }
+        }
         let policy = self.policy_signpost(grant)?;
         let principal = Principal {
             agent_type: instance.agent_type.clone(),

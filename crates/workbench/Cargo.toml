@@ -12,7 +12,8 @@ publish = false
 workspace = true
 
 [dependencies]
-serde.workspace = true
+# rc：`Arc<str>` 正文（DocumentView）照旧序列化成字符串。
+serde = { workspace = true, features = ["rc"] }
 thiserror.workspace = true
 toml_edit.workspace = true
 tree-sitter.workspace = true

@@ -1,6 +1,6 @@
 //! 白名单只读根：每个允许的目录各开一个 `ReadOnlyVault`，未列入的目录从一开始不进入任何计算。
 
-use std::path::Path;
+use std::{path::Path, sync::Arc};
 
 use studiolo_core::{Revision, VaultPath};
 use studiolo_vault_broker::{BrokerError, ReadEntryKind, ReadOnlyVault, ScanLimits};
@@ -37,8 +37,9 @@ pub struct Note {
     pub path: VaultPath,
     /// 路径与内容指纹（只读命名空间，不是 canonical 身份）。
     pub revision: Revision,
-    /// UTF-8 正文。
-    pub content: String,
+    /// UTF-8 正文。不可变、共享：快照、建模用的文档表与读模型指向同一块内存，克隆只加引用计数
+    /// （T-215：agent 换代次时同一份正文原先同时存三四份，Markdown 合计上限因此调不上去）。
+    pub content: Arc<str>,
 }
 
 /// 一次完整扫描得到的白名单视图；`diagnostics` 非空表示批次不完整，但不拒绝供给。
@@ -58,7 +59,7 @@ impl Snapshot {
     pub fn documents(&self) -> Vec<MarkdownDocument> {
         self.notes
             .iter()
-            .map(|note| MarkdownDocument::new(note.path.clone(), note.content.clone()))
+            .map(|note| MarkdownDocument::shared(note.path.clone(), note.content.clone()))
             .collect()
     }
 
@@ -141,7 +142,7 @@ impl SupplyRoots {
                     Ok(content) => snapshot.notes.push(Note {
                         path,
                         revision: note.revision,
-                        content,
+                        content: content.into(),
                     }),
                     Err(_) => snapshot.diagnostics.push(format!("{path}: 不是 UTF-8")),
                 }
@@ -175,7 +176,7 @@ impl SupplyRoots {
         Ok(Note {
             path: path.clone(),
             revision: note.revision,
-            content,
+            content: content.into(),
         })
     }
 
