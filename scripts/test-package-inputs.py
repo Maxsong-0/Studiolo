@@ -19,6 +19,13 @@ CI 整仓检出一路全绿，运行包却只带白名单里的文件，包里�
 守卫在运行时按仓库根读文件。源码里点名的、crates/ 以外的仓库文件必须在两份清单里；漏带时那条守卫在包里
 读不到文件。口径：架构守卫源码（crates/studiolo/tests 下的 architecture.rs、architecture_cases、
 architecture_support）里的字符串字面量，恰好是仓库里一个已有的普通文件、且不在 crates/ 下的，都算。
+
+第三类（2026-11-17，T-207 部署）：vault-broker 的 preflight_script 用例运行时按
+`concat!(env!("CARGO_MANIFEST_DIR"), "/../../scripts/check-backup-preflight.py")` 调脚本，两份清单都没带；
+测试箱整仓检出一路全绿，agent 运行包到 169 原生自检才红。口径：打包脚本随包带测试的 crate（`cargo test --workspace`
+就是全部 crate，否则按 STUDIOLO_TEST_PACKAGES 的 `-p`）里，代码位置（注释、字符串里的不算）每一处
+`env!("CARGO_MANIFEST_DIR")` 都必须写成 `concat!(env!(…), "/相对路径")` 或 `Path|PathBuf::new|from(env!(…))`
+后接零到多个 `.join("字面量")`；拼出的路径要留在仓库里、真实存在、落在 STUDIOLO_INPUTS 里。别的写法一律判红。
 """
 import ast
 import os
@@ -244,6 +251,194 @@ class ArchitectureRuntimeInputsTests(unittest.TestCase):
                         self.assertEqual(len(gaps), 1, gaps)
                         self.assertIn(f"要读 {name}，", gaps[0])
                 (root / script).write_text(original, encoding="utf-8")
+
+
+# 第三类守卫的词法：注释和字符串、字符字面量整段认出来，落在里面的 env! 不是真依赖。
+# 转义写 \\[\s\S] 而不是 \\.：字符串里的 `\` 接换行（续行）也是转义，`.` 不匹配换行会让后面的引号全部错位。
+RUST_MASKED = re.compile(r'//[^\n]*|/\*[\s\S]*?\*/|r(#*)"[\s\S]*?"\1|b?"(?:\\[\s\S]|[^"\\])*"'
+                         r"|b?'(?:\\[\s\S]|[^'\\])'")
+MANIFEST_DIR = re.compile(r'env!\(\s*"CARGO_MANIFEST_DIR"\s*\)')
+CONCAT_FORM = re.compile(r'concat!\(\s*env!\(\s*"CARGO_MANIFEST_DIR"\s*\)\s*,\s*"([^"\\]*)"\s*,?\s*\)')
+JOIN_FORM = re.compile(r'\b(?:Path|PathBuf)::(?:new|from)\(\s*env!\(\s*"CARGO_MANIFEST_DIR"\s*\)\s*\)'
+                       r'((?:\s*\.join\(\s*"[^"\\]*"\s*\))*)')
+JOIN_PART = re.compile(r'\.join\(\s*"([^"\\]*)"\s*\)')
+
+
+def tested_crates(root, text):
+    """打包脚本随包带哪些 crate 的测试；返回 (crate 目录列表, 读不懂的写法)。"""
+    names = {}
+    for manifest in sorted((root / "crates").glob("*/Cargo.toml")):
+        package = manifest.read_text(encoding="utf-8").split("[package]", 1)[-1].split("\n[", 1)[0]
+        found = re.search(r'^name\s*=\s*"([^"]+)"', package, re.M)
+        if found:
+            names[found.group(1)] = manifest.parent
+    if re.search(r"\bcargo test --workspace\b", text):
+        return sorted(names.values()), []
+    block = re.search(r"^STUDIOLO_TEST_PACKAGES=\(\n(.*?)\n\)", text, re.S | re.M)
+    if block is None:
+        return [], ["既没有 `cargo test --workspace` 也没有 STUDIOLO_TEST_PACKAGES，认不出随包带哪些 crate 的测试"]
+    picked = re.findall(r"-p\s+(\S+)", block.group(1))
+    unknown = [f"STUDIOLO_TEST_PACKAGES 里的 {name} 不是工作区 crate" for name in picked if name not in names]
+    if not picked:
+        unknown.append("STUDIOLO_TEST_PACKAGES 是空的")
+    return sorted({names[name] for name in picked if name in names}), unknown
+
+
+def manifest_dir_inputs(root, crates):
+    """随包 crate 的代码按 CARGO_MANIFEST_DIR 拼出的仓库路径；返回 ({仓库相对路径: [引用它的源码]}, 读不懂的写法)。"""
+    named, problems = {}, []
+    for crate in crates:
+        for source in sorted(path for path in crate.rglob("*.rs") if "target" not in path.relative_to(crate).parts):
+            text = source.read_text(encoding="utf-8")
+            where = source.relative_to(root).as_posix()
+            masked = [match.span() for match in RUST_MASKED.finditer(text)]
+            in_code = lambda start: not any(low <= start < high for low, high in masked)
+            resolved = []  # (位置, 路径段或 None, 拼不出时的原因)
+            for match in CONCAT_FORM.finditer(text):
+                if in_code(match.start()):
+                    literal = match.group(1)
+                    resolved.append((match.span(), literal[1:].split("/"), None) if literal.startswith("/") else
+                                    (match.span(), None, "concat! 里的路径字面量要以 / 开头（它直接接在 crate 目录后面）"))
+            for match in JOIN_FORM.finditer(text):
+                if in_code(match.start()):
+                    parts = JOIN_PART.findall(match.group(1))
+                    resolved.append((match.span(), None, "join 了绝对路径，会丢掉 crate 目录") if any(
+                        part.startswith("/") for part in parts) else (match.span(), parts, None))
+            for match in MANIFEST_DIR.finditer(text):
+                if in_code(match.start()) and not any(low <= match.start() < high for (low, high), _, _ in resolved):
+                    line = text.count("\n", 0, match.start()) + 1
+                    problems.append(f"{where}:{line} 的 env!(\"CARGO_MANIFEST_DIR\") 写法认不出，"
+                                    "改成 concat!(env!(…), \"/相对路径\") 或 Path::new(env!(…)).join(\"字面量\")")
+            for _, parts, reason in resolved:
+                target = Path(os.path.normpath(crate.joinpath(*parts))) if parts is not None else None
+                if target is None:
+                    problems.append(f"{where}：{reason}")
+                elif not target.is_relative_to(root):
+                    problems.append(f"{where} 按 CARGO_MANIFEST_DIR 拼出的路径跑出了仓库")
+                elif not target.exists():
+                    problems.append(f"{where} 按 CARGO_MANIFEST_DIR 拼出的 {target.relative_to(root).as_posix()} 不存在")
+                else:
+                    named.setdefault(target.relative_to(root).as_posix(), []).append(where)
+    return named, problems
+
+
+def manifest_dir_gaps(root, script, text=None):
+    """一个打包脚本漏带的、随包测试运行时按 CARGO_MANIFEST_DIR 要读的文件；返回 (引用表, 缺口)。"""
+    root = Path(root).resolve()
+    text = (root / script).read_text(encoding="utf-8") if text is None else text
+    entries, problems = manifest_entries(text)
+    crates, trouble = tested_crates(root, text)
+    named, unreadable = manifest_dir_inputs(root, crates)
+    covered = lambda name: any(name == entry or name.startswith(entry + "/") for entry in entries)
+    gaps = [f"{script}: {item}" for item in problems + trouble + unreadable]
+    gaps += [f"{script}: {'、'.join(sorted(set(sources)))} 运行时按 CARGO_MANIFEST_DIR 读 {name}，它不在 STUDIOLO_INPUTS 里"
+             for name, sources in named.items() if not problems and not covered(name)]
+    return named, sorted(gaps)
+
+
+class ManifestDirRuntimeInputsTests(unittest.TestCase):
+    """真实仓库：两份清单都带齐随包测试按 CARGO_MANIFEST_DIR 读的文件；从清单删掉预检脚本，必须红并点名。"""
+
+    # 守卫必须认得出这些（一个都认不出的「全绿」不算数）：跑出 crate 的 concat、crate 内的 concat、Path::new 后 join。
+    KNOWN = {"scripts/package-agent.sh": ("scripts/check-backup-preflight.py",
+                                          "crates/agent-server/tests/support/admin_terminal.py",
+                                          "crates/agent-server/src"),
+             "scripts/package-preview.sh": ("scripts/check-backup-preflight.py",
+                                            "crates/auth-admin/tests/support/terminal_pty.py")}
+
+    def test_both_manifests_carry_every_file_read_through_cargo_manifest_dir(self):
+        for script, known in self.KNOWN.items():
+            with self.subTest(script=script):
+                named, gaps = manifest_dir_gaps(ROOT, script)
+                self.assertEqual(gaps, [], "随包测试运行时要读的文件不在打包清单里，到服务器原生自检才会红")
+                for name in known:
+                    self.assertIn(name, named, "守卫没认出应有的引用，解析逻辑失效")
+        # agent 运行包只带 STUDIOLO_TEST_PACKAGES 的测试：control-db、auth-admin 不随包，它们的引用不该算进来。
+        agent = manifest_dir_gaps(ROOT, "scripts/package-agent.sh")[0]
+        self.assertNotIn("crates/auth-admin/tests/support/terminal_pty.py", agent)
+        self.assertEqual(agent["scripts/check-backup-preflight.py"],
+                         ["crates/vault-broker/tests/broker/preflight_script.rs"])
+
+    def test_dropping_the_preflight_script_from_either_manifest_is_red(self):
+        name = "scripts/check-backup-preflight.py"
+        for script in self.KNOWN:
+            with self.subTest(script=script):
+                original = (ROOT / script).read_text(encoding="utf-8")
+                mutated, count = re.subn(rf"(?<!\S){re.escape(name)}(?!\S)", "", original)
+                self.assertEqual(count, 1, f"{script} 里没有唯一一处 {name}，变异没生效")
+                gaps = manifest_dir_gaps(ROOT, script, mutated)[1]
+                self.assertEqual(len(gaps), 1, gaps)
+                self.assertIn(f"读 {name}，", gaps[0])
+                self.assertIn("crates/vault-broker/tests/broker/preflight_script.rs", gaps[0])
+
+
+class SyntheticManifestDirTests(unittest.TestCase):
+    """虚构的小仓库逐条钉住第三类口径：两种写法、注释与字符串不算、认不出就红、只看随包的 crate。"""
+
+    def setUp(self):
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        self.root = Path(temp.name).resolve()
+        self.write("crates/demo/Cargo.toml", '[package]\nname = "studiolo-demo"\n')
+        self.write("crates/other/Cargo.toml", '[package]\nname = "studiolo-other"\n')
+        self.write("crates/demo/tests/data.json", "{}\n")
+        self.write("scripts/tool.py", "print('虚构工具')\n")
+
+    def write(self, relative, text):
+        path = self.root / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+
+    def gaps(self, body, *entries, packages=None):
+        self.write("crates/demo/tests/probe.rs", body)
+        block = "\n".join(f"  {entry}" for entry in entries)
+        tests = ("cargo test --workspace --no-run\n" if packages is None
+                 else f"STUDIOLO_TEST_PACKAGES=(\n  {packages}\n)\n")
+        text = f'STUDIOLO_INPUTS=(\n{block}\n)\ntar -cf - "${{STUDIOLO_INPUTS[@]}}"\n{tests}'
+        return manifest_dir_gaps(self.root, "scripts/package.sh", text)[1]
+
+    def test_concat_and_join_forms_resolve_and_must_be_covered(self):
+        concat = 'const S: &str = concat!(\n    env!("CARGO_MANIFEST_DIR"),\n    "/../../scripts/tool.py"\n);\n'
+        join = 'fn d() -> std::path::PathBuf { std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests").join("data.json") }\n'
+        bare = 'fn r() -> PathBuf { PathBuf::from(env!("CARGO_MANIFEST_DIR")) }\n'
+        self.assertEqual(self.gaps(concat + join + bare, "crates", "scripts/tool.py"), [])
+        gaps = self.gaps(concat, "crates")
+        self.assertEqual(len(gaps), 1, gaps)
+        self.assertIn("crates/demo/tests/probe.rs 运行时按 CARGO_MANIFEST_DIR 读 scripts/tool.py，", gaps[0])
+        # 前面有转义引号的字符串、字符字面量 '"'、带续行（`\` 接换行）的字符串，后面的引用照样认得出。
+        # 续行那段放最后：转义写成 \\. 时它的收尾引号会被当成新字符串的开头，把后面的 concat! 吞进去。
+        prelude = 'fn m() { let _ = "转义 \\" 引号"; let _q = \'"\'; let _ = "第一行\\\n  第二行"; }\n'
+        gaps = self.gaps(prelude + concat, "crates")
+        self.assertEqual(len(gaps), 1, gaps)
+        self.assertIn("读 scripts/tool.py，", gaps[0])
+        self.assertEqual(len(self.gaps(join, "scripts/tool.py")), 1)
+
+    def test_comments_and_string_literals_do_not_count(self):
+        body = ('// concat!(env!("CARGO_MANIFEST_DIR"), "/missing.txt")\n'
+                '/* Path::new(env!("CARGO_MANIFEST_DIR")).join("nowhere") */\n'
+                'const DOC: &str = "env!(\\"CARGO_MANIFEST_DIR\\")";\n'
+                'const RAW: &str = r#"concat!(env!("CARGO_MANIFEST_DIR"), "/x")"#;\n')
+        self.assertEqual(self.gaps(body, "crates"), [])
+
+    def test_unreadable_missing_or_escaping_paths_are_red(self):
+        for body in ['fn a() { let d = env!("CARGO_MANIFEST_DIR"); let _ = Path::new(d).join("x"); }\n',
+                     'fn b() -> String { format!("{}/x", env!("CARGO_MANIFEST_DIR")) }\n',
+                     'fn c() { let _ = Path::new(env!("CARGO_MANIFEST_DIR")).join("/etc/passwd"); }\n',
+                     'const D: &str = concat!(env!("CARGO_MANIFEST_DIR"), "tests/data.json");\n',
+                     'const E: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/missing.txt");\n',
+                     'const F: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../../outside");\n']:
+            with self.subTest(body=body):
+                gaps = self.gaps(body, "crates", "scripts")
+                self.assertEqual(len(gaps), 1, gaps)
+
+    def test_only_crates_whose_tests_ship_are_scanned(self):
+        body = 'const S: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../scripts/tool.py");\n'
+        self.assertEqual(self.gaps(body, "crates", packages="-p studiolo-other"), [])
+        self.assertEqual(len(self.gaps(body, "crates", packages="-p studiolo-demo")), 1)
+        self.assertEqual(len(self.gaps(body, "crates", packages="-p studiolo-missing")), 1)
+        self.write("crates/demo/tests/probe.rs", body)
+        text = 'STUDIOLO_INPUTS=(\n  crates\n)\ntar -cf - "${STUDIOLO_INPUTS[@]}"\n'
+        self.assertEqual(len(manifest_dir_gaps(self.root, "scripts/package.sh", text)[1]), 1)
 
 
 class RealManifestTests(unittest.TestCase):

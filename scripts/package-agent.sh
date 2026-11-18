@@ -47,6 +47,9 @@ STUDIOLO_INPUTS=(
   scripts/client_projection_test_support.py scripts/client_projection_policy_pipeline.py scripts/sync-agent-client.py
   scripts/test-client-projection-schema.py scripts/test-client-projection-fetch.py scripts/test-client-projection-store.py
   scripts/test-agent-package.py
+  # vault-broker 的 preflight_script 用例运行时按 CARGO_MANIFEST_DIR 调它（T-207 部署时 169 原生自检才红；
+  # test-package-inputs.py 第三类守卫拦同类）。
+  scripts/check-backup-preflight.py
   deploy/agent deploy/agent/upgrade-read-supply.sh.in docs/m3
   # 随包测试在**编译期** `include_str!` 的虚构夹具（workbench 的 Cargo 依赖与项目运作图契约）。
   # 缺了它们 `cargo test --no-run` 直接编译失败；新增同类引用由 test-agent-package.py 的守卫拦住。

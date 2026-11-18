@@ -32,6 +32,8 @@ STUDIOLO_INPUTS=(
   deploy/preview/studiolo-access.service.in deploy/preview/studiolo-tunnel.service
   deploy/preview/install-runtime-package.sh docs/m3/release-packaging.md
   deploy/sync-bridge
+  # vault-broker、control-db 的预检用例运行时按 CARGO_MANIFEST_DIR 调它（test-package-inputs.py 第三类守卫）。
+  scripts/check-backup-preflight.py
 )
 COPYFILE_DISABLE=1 tar -cf - "${STUDIOLO_INPUTS[@]}" |
   tar -xf - -C "$STUDIOLO_OUT/source"
