@@ -13,9 +13,21 @@ use std::{fs, os::unix::fs::PermissionsExt, sync::Arc};
 use studiolo_agent_server::{
     index::{ModelSource, Persistence},
     serve,
+    state::Generation,
 };
 use studiolo_core::VaultPath;
 use studiolo_supply::WorkbenchReadModel;
+
+/// 两个代次快照里的正文是不是同一块内存（不只是内容相同）。
+fn shares_bodies(a: &Generation, b: &Generation) -> bool {
+    !a.snapshot.notes.is_empty()
+        && a.snapshot.notes.len() == b.snapshot.notes.len()
+        && a.snapshot
+            .notes
+            .iter()
+            .zip(&b.snapshot.notes)
+            .all(|(x, y)| Arc::ptr_eq(&x.content, &y.content))
+}
 
 #[test]
 fn cold_memory_restart_and_incremental_models_match_current_source() {
@@ -34,6 +46,8 @@ fn cold_memory_restart_and_incremental_models_match_current_source() {
     state.rescan().unwrap();
     let warm = state.current();
     assert!(Arc::ptr_eq(&first.model, &warm.model));
+    // 复用读模型时快照也用上一代那份正文，不另存一份（T-215 复查）。
+    assert!(shares_bodies(&first, &warm));
     assert_eq!(warm.index_status.source, ModelSource::Memory);
     assert_eq!((warm.index_status.parsed, warm.index_status.reused), (0, 3));
     drop(state);
@@ -53,6 +67,7 @@ fn cold_memory_restart_and_incremental_models_match_current_source() {
     state.rescan().unwrap();
     let updated = state.current();
     assert!(!Arc::ptr_eq(&restored.model, &updated.model));
+    assert!(!shares_bodies(&restored, &updated), "正文变了就是新的一份");
     assert_eq!(updated.index_status.source, ModelSource::Incremental);
     assert_eq!(
         (updated.index_status.parsed, updated.index_status.reused),
@@ -164,6 +179,7 @@ async fn cached_replica_rechecks_receipts_sync_status_and_source_tampering() {
     replica.publish(SECOND, "oldmarker", replica.observed + 1000);
     let confirmed = state.verified().await.unwrap();
     assert!(Arc::ptr_eq(&before.model, &confirmed.model));
+    assert!(shares_bodies(&before, &confirmed));
     assert_eq!(confirmed.index_status.source, ModelSource::Memory);
     assert_ne!(confirmed.freshness, before.freshness);
     assert_eq!(confirmed.index_status.parsed, 0);

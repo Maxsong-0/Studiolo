@@ -56,6 +56,8 @@ python3 scripts/project_registry.py desired --capability <现行能力集.json> 
 ```
 
 两道门都还在：`sync` 之后仍要重发 Mac 副本包、发行并重启 agent（主人在场，顺序见上：副本先变新、agent 最后重启）；
+调高协议上限（`replica_common.py` 与 `protocol.rs` 两端常量）顺序正好相反：agent 先换上（或同时），Mac 包后换。反过来，
+库一旦超过 agent 的旧上限，agent 会拒绝整个新代次（`manifest_*_limit`），连握手路牌也拿不到，不只是资料变旧（T-215 复查）；
 `desired` 只打印提案正文，照旧经策略平面提交、由人批准后才生效。注册表不记代码仓库地址。
 
 **库里改了目录名（BUG-038，2026-11-16）**：注册表里把旧名改成新名、`sync`、`check --vault` 通过之后，能力集提案用

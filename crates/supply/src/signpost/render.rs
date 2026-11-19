@@ -32,6 +32,9 @@ pub(super) fn render(
         input.principal.agent_type, input.principal.instance_id, input.principal.registered_at
     );
     out.push_str("## 2 项目状态\n");
+    if let Some(capacity) = input.capacity {
+        let _ = writeln!(out, "{capacity}");
+    }
     if projects.is_empty() {
         out.push_str("白名单内没有带 00-总览/INDEX.md 的项目。\n");
     }

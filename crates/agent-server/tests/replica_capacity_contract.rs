@@ -9,28 +9,29 @@
 //! 子进程像生产一样先 `mlockall`、开索引缓存，打 2 轮 16 路并发读；再像 Mac 每 60 秒推来小改动那样连换
 //! [`CHANGES`] 个各改了几十篇的新代次（每次都触发重新校验加增量重建读模型），每换一次再打 2 轮。mlockall 之后
 //! 堆顶只升不降，连换几次才看得出常驻内存会不会一路往上爬。最慢的一个请求不超过 [`LATENCY_BUDGET_MS`]、
-//! 常驻匿名内存不超过 [`MEMORY_BUDGET_KIB`]。上限往上调、或者校验又变成随篇数超线性增长，它先红。
+//! 常驻匿名内存（每代打完时的读数和进程峰值的估计）不超过 [`MEMORY_BUDGET_KIB`]，每一代的派生索引缓存都写得进去
+//! （`persistence: Ready`，部署脚本 `upgrade-read-supply.sh` 按这个验收）。上限往上调、或者校验又变成随篇数超线性
+//! 增长，它先红。
 //!
 //! 只在 release 构建里跑：debug 构建的解析与建模慢一个数量级，量不出生产时延。ci 套的 `replica-capacity`
 //! 一步用 `cargo --locked test --release -p studiolo-agent-server --test replica_capacity_contract` 跑它。
+//! agent 运行包不带它（`scripts/package-agent.sh` 的 `PACKAGE_EXCLUDED_TESTS`）：部署验收在生产主机上原生跑
+//! 运行包里的测试，满额负载不该和线上服务抢内存（T-215 复查）。
 #![cfg(target_os = "linux")]
 
 #[path = "../../supply/tests/replica_support/mod.rs"]
 mod replica_support;
 #[allow(dead_code)]
+mod residency_probe;
+#[allow(dead_code)]
 #[path = "http_text/support.rs"]
 mod support;
 
-use std::{
-    fs,
-    os::unix::fs::PermissionsExt,
-    path::PathBuf,
-    process::Command,
-    time::{Duration, Instant},
-};
+use std::{fs, os::unix::fs::PermissionsExt, path::PathBuf, time::Duration};
 
 use replica_support::{ReplicaFixture, private_dir};
-use studiolo_agent_server::options::ServeOptions;
+use residency_probe::{harden_then_block_on, status_kib, timed};
+use studiolo_agent_server::{index::Persistence, options::ServeOptions};
 use studiolo_supply::replica::NOTES_TOTAL_LIMIT;
 
 /// 置位后本测试二进制作为探针运行；产品源码没有这个入口。
@@ -50,8 +51,9 @@ const BURSTS: usize = 2;
 const CHANGES: usize = 3;
 /// 最慢一个请求的时延上限：测试客户端超时（`http_text/support.rs` 的 20 秒）的一半，留出慢一倍的主机的余量。
 const LATENCY_BUDGET_MS: u128 = 10_000;
-/// 常驻匿名内存上限：单元 `MemoryMax=512M` 的四分之三。mlockall 之后释放的页退不回去，
-/// 读数就是进程起来以来的最高水位；剩下的四分之一留给锁定的程序文件页与连接突发。
+/// 常驻匿名内存上限：单元 `MemoryMax=512M` 的四分之三；剩下的四分之一留给锁定的程序文件页与连接突发。
+/// mlockall 之后 glibc 释放的堆页退不回去，但整块 `mmap` 出来的大分配释放时会还给系统，所以每代打完时的
+/// `RssAnon` 不一定是峰值：峰值另按 `VmHWM − RssFile` 估（程序文件页启动时就全部锁入，之后不变），两个都要在上限内。
 const MEMORY_BUDGET_KIB: u64 = 384 * 1024;
 
 /// 换代次时改动的篇数间隔：第 k 次换代改编号除以它余 k 的那些篇（满额约四十来篇），同大小改字节，合计不变。
@@ -77,55 +79,30 @@ const INDEX_NOTE: &str =
 )]
 fn notes_limit_replica_answers_concurrent_reads_within_budget() {
     let corpus = Corpus::publish();
-    let mut probe = Command::new(std::env::current_exe().expect("取得测试二进制路径"));
-    probe
-        .args([
-            "--exact",
-            "replica_capacity_probe",
-            "--nocapture",
-            "--test-threads=1",
-        ])
-        .env(PROBE, "1")
-        .env(ROOT, &corpus.fixture.root)
-        .env(NEXT_STATES, &corpus.next_states)
-        .env(DATA, corpus.fixture.temp.path().join("agent-data"))
-        .env(INDEX, &corpus.index);
-    // glibc 的 malloc 调参会改变 arena 行为，探针一律不继承（同 T-185 内存探针）。
-    for (key, _) in std::env::vars_os() {
-        if key
-            .to_str()
-            .is_some_and(|key| key.starts_with("MALLOC_") || key == "GLIBC_TUNABLES")
-        {
-            probe.env_remove(key);
-        }
-    }
-    let output = probe.output().expect("启动探针子进程");
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(output.status.success(), "探针失败：\n{stdout}\n{stderr}");
-    // libtest 会把探针的第一行输出接在「test replica_capacity_probe ... 」后面，所以按「键=」切分。
-    let reading = |key: &str| -> u64 {
-        stdout
-            .lines()
-            .find_map(|line| line.split_once(&format!("{key}=")))
-            .and_then(|(_, value)| value.trim().parse().ok())
-            .unwrap_or_else(|| panic!("探针没有报告 {key}：\n{stdout}\n{stderr}"))
-    };
-    let slowest = u128::from(reading("SLOWEST_MS"));
-    let rss_anon = reading("RSS_ANON_KIB");
-    let trajectory = stdout
-        .lines()
-        .find_map(|line| line.split_once("RSS_TRAJECTORY_KIB="))
-        .map_or("", |(_, value)| value.trim());
+    let data = corpus.fixture.temp.path().join("agent-data");
+    let readings = residency_probe::run(
+        "replica_capacity_probe",
+        PROBE,
+        &[
+            (ROOT, corpus.fixture.root.as_os_str()),
+            (NEXT_STATES, corpus.next_states.as_os_str()),
+            (DATA, data.as_os_str()),
+            (INDEX, corpus.index.as_os_str()),
+        ],
+    );
+    let slowest = u128::from(readings.number("SLOWEST_MS"));
+    let rss_anon = readings.number("RSS_ANON_KIB");
+    let rss_file = readings.number("RSS_FILE_KIB");
+    let peak_anon = readings.number("VM_HWM_KIB").saturating_sub(rss_file);
     eprintln!(
         "副本容量自证：上限 {} KiB，满额 {} 篇 {} KiB；{} 个代次各 {BURSTS} 轮 {CONCURRENCY} 路并发读，\
-         最慢 {slowest} ms（上限 {LATENCY_BUDGET_MS} ms）；常驻匿名内存 {rss_anon} KiB（上限 {MEMORY_BUDGET_KIB} KiB，\
-         每个代次打完时 {trajectory}），锁定程序文件页 {} KiB",
+         最慢 {slowest} ms（上限 {LATENCY_BUDGET_MS} ms）；常驻匿名内存 {rss_anon} KiB、峰值估计 {peak_anon} KiB\
+         （上限都是 {MEMORY_BUDGET_KIB} KiB；每个代次打完时 {}），锁定程序文件页 {rss_file} KiB",
         NOTES_TOTAL_LIMIT / 1024,
         corpus.notes,
         corpus.bytes / 1024,
         CHANGES + 1,
-        reading("RSS_FILE_KIB"),
+        readings.text("RSS_TRAJECTORY_KIB"),
     );
     assert!(
         slowest <= LATENCY_BUDGET_MS,
@@ -137,6 +114,11 @@ fn notes_limit_replica_answers_concurrent_reads_within_budget() {
         "满额副本让常驻匿名内存到了 {rss_anon} KiB，超过 {MEMORY_BUDGET_KIB} KiB（单元 MemoryMax=512M）：\
          上限调高了就得先压内存"
     );
+    assert!(
+        peak_anon <= MEMORY_BUDGET_KIB,
+        "满额副本的匿名内存峰值估计 {peak_anon} KiB（VmHWM − RssFile），超过 {MEMORY_BUDGET_KIB} KiB：\
+         校验进行中的瞬时峰值比打完时高出这么多，上限调高了就得先压内存"
+    );
 }
 
 /// 探针：在一次性子进程里与生产一样加固，再起真实 HTTP 服务、打并发读请求并报告读数。
@@ -145,18 +127,7 @@ fn replica_capacity_probe() {
     if std::env::var_os(PROBE).is_none() {
         return;
     }
-    let residency = studiolo_process_safety::harden().unwrap_or_else(|refusal| {
-        panic!(
-            "与生产一样锁定地址空间失败（memlock 上限不足时按设计拒绝，不得据此跳过）：{refusal}"
-        )
-    });
-    eprintln!("秘密驻留面：{residency}");
-    tokio::runtime::Builder::new_multi_thread()
-        .worker_threads(4)
-        .enable_all()
-        .build()
-        .expect("建立运行时")
-        .block_on(probe());
+    harden_then_block_on(probe());
 }
 
 async fn probe() {
@@ -175,9 +146,9 @@ async fn probe() {
     })
     .await;
     let (session, _, signpost) = server.handshake().await;
-    // 满额副本早过了提醒线：路牌上必须有容量提醒（vault BUG-039 的提前量）。
+    // 满额副本早过了提醒线：路牌第 2 节开头必须有容量提醒（vault BUG-039 的提前量）。
     assert!(
-        signpost.contains("⚠ 副本 Markdown 合计 "),
+        signpost.contains("\n## 2 项目状态\n⚠ 副本快到协议上限：Markdown 合计 "),
         "满额副本的路牌没有容量提醒：\n{signpost}"
     );
     let (status, _) = timed(server.get(&route(0), Some(&session)))
@@ -202,21 +173,21 @@ async fn probe() {
             slowest = slowest.max(burst(&server, &session).await);
         }
         trajectory.push(status_kib("RssAnon:").to_string());
+        // 满额时派生索引缓存（上限 32 MiB）也得写得进去：写不进去时供给照常，但重启要全量重新解析，
+        // 部署脚本 `upgrade-read-supply.sh` 也按 `persistence: Ready` 验收。
+        let current = server.state.current();
+        assert_eq!(
+            current.index_status.persistence,
+            Persistence::Ready,
+            "满额副本第 {change} 次换代后派生索引缓存写不进去：{:?}",
+            current.index_status
+        );
     }
     println!("SLOWEST_MS={}", slowest.as_millis());
     println!("RSS_TRAJECTORY_KIB={}", trajectory.join(","));
     println!("RSS_ANON_KIB={}", status_kib("RssAnon:"));
     println!("RSS_FILE_KIB={}", status_kib("RssFile:"));
-}
-
-/// 本进程 `/proc/self/status` 里的一项（KiB）。锁定后释放的堆页仍算在 `RssAnon` 里，cgroup 记账看的也是它。
-fn status_kib(name: &str) -> u64 {
-    std::fs::read_to_string("/proc/self/status")
-        .expect("读取 /proc/self/status")
-        .lines()
-        .find_map(|line| line.strip_prefix(name))
-        .and_then(|value| value.split_whitespace().next()?.parse().ok())
-        .unwrap_or_else(|| panic!("/proc/self/status 里有 {name}"))
+    println!("VM_HWM_KIB={}", status_kib("VmHWM:"));
 }
 
 /// 16 路同时读不同的笔记，全部要 200；返回最慢那一个的时延。
@@ -234,17 +205,6 @@ async fn burst(server: &support::HttpServer, session: &str) -> Duration {
         slowest = slowest.max(took);
     }
     slowest
-}
-
-/// 发请求并读完响应体（像真实客户端一样让服务端把这次供给完整走完），返回状态码与时延。
-async fn timed(
-    request: reqwest::RequestBuilder,
-) -> reqwest::Result<(reqwest::StatusCode, Duration)> {
-    let start = Instant::now();
-    let response = request.send().await?;
-    let status = response.status();
-    response.bytes().await?;
-    Ok((status, start.elapsed()))
 }
 
 fn route(note: usize) -> String {

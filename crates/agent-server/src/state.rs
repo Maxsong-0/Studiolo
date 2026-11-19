@@ -212,7 +212,14 @@ impl AppState {
             .number
             .checked_add(1)
             .ok_or_else(|| "代次溢出".to_owned())?;
-        let (snapshot, freshness) = self.source.scan(self.limits, previous.freshness.as_ref())?;
+        let (mut snapshot, freshness) =
+            self.source.scan(self.limits, previous.freshness.as_ref())?;
+        // 正文和上一代逐字节相同（绝大多数请求、每 60 秒的重扫都是这样）时，快照改用上一代那份，只加引用计数：
+        // 读模型这时复用上一代的，指向的正是上一代的正文；不换的话快照和读模型各持一份，常驻多出一整份正文
+        // （T-215 复查）。这些字节本次已经完整校验过、又和上一代逐字节比过，换的只是同内容的哪一块内存。
+        if snapshot.notes == previous.snapshot.notes {
+            snapshot.notes = previous.snapshot.notes.clone();
+        }
         let (model, index_status) = self.index.build(&snapshot, Some(&previous))?;
         let generation = Arc::new(Generation {
             number: next,

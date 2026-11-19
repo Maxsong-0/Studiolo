@@ -43,6 +43,8 @@ MAX_TOTAL = 512 * 1024 * 1024
 # Markdown 合计上限 40 MiB（vault BUG-039：2026-11-18 由 16 MiB 调到 24 MiB，同日 T-215 修好 agent 校验后调到 40 MiB）。
 # agent 每次读请求都整读校验全部 Markdown，上限由 agent 的容量契约（replica_capacity_contract.rs）定，再上调先让它在
 # 新值下通过（理由与实测见 protocol.rs 的 NOTES_TOTAL_LIMIT）。两端逐项相等，由 test-replica-boundaries.py 守卫。
+# 调高任一上限时 agent 先部署（或同时），Mac 包后换：反过来，库一旦超过 agent 的旧上限，agent 拒绝整个新代次，
+# 连握手路牌都拿不到，不只是资料变旧。
 MAX_NOTES_TOTAL = 40 * 1024 * 1024
 DIR_FLAGS = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
 FILE_FLAGS = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK

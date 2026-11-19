@@ -74,6 +74,9 @@ pub struct SignpostInput<'a> {
     pub generated_at: &'a str,
     /// 与当前副本绑定的新鲜度说明，计入所有裁剪等级的硬预算。
     pub freshness: Option<&'a str>,
+    /// 副本快到协议上限的提醒（`replica::capacity_notice_for`），写在第 2 节开头、各裁剪等级都保留。
+    /// 不放在新鲜度后面：部署验收和客户端投影按固定行号找身份段（第 3 或第 4 行），多一行就判路牌无效。
+    pub capacity: Option<&'a str>,
     /// 本外壳暴露的 tool 名与一句说明。
     pub tools: &'a [(&'a str, &'a str)],
     /// 策略平面派生项；`None` ＝ 未接入。

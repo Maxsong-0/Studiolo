@@ -7,7 +7,7 @@ use studiolo_core::VaultPath;
 use studiolo_vault_broker::{ReadEntry, ReadEntryKind, ReadNote, ReadOnlyVault, ScanLimits};
 
 use super::{
-    Receipt, ReplicaError,
+    Receipt, ReplicaError, Usage,
     protocol::{self, Manifest, ManifestEntry},
 };
 use crate::{Entry, EntryKind, Note, Snapshot};
@@ -16,7 +16,7 @@ pub(super) fn generation(
     root: &ReadOnlyVault,
     allow: &[VaultPath],
     receipt: &Receipt,
-) -> Result<Snapshot, ReplicaError> {
+) -> Result<(Snapshot, Usage), ReplicaError> {
     let release_path = VaultPath::parse(format!("releases/{}", receipt.generation))
         .map_err(|_| ReplicaError::Invalid("generation_path"))?;
     let release = root
@@ -32,7 +32,8 @@ pub(super) fn generation(
     }
     let manifest: Manifest =
         serde_json::from_slice(&raw).map_err(|_| ReplicaError::Invalid("manifest_json"))?;
-    let expected = validate(&manifest, allow)?;
+    let (expected, mut usage) = validate(&manifest, allow)?;
+    usage.manifest_bytes = raw.len() as u64;
     let vault = release
         .open_directory(&VaultPath::parse("vault").expect("fixed path"))
         .map_err(|_| ReplicaError::Drift("unreadable_vault"))?;
@@ -47,7 +48,7 @@ pub(super) fn generation(
     if raw != after.content {
         return Err(ReplicaError::Drift("manifest_changed"));
     }
-    Ok(first)
+    Ok((first, usage))
 }
 
 fn digest(bytes: &[u8]) -> String {
@@ -57,10 +58,11 @@ fn digest(bytes: &[u8]) -> String {
         .collect()
 }
 
+/// 核清单的形状与各条上限；顺带交出这一代用了各条上限多少（清单字节由调用方填），供路牌提前提醒。
 fn validate(
     manifest: &Manifest,
     allow: &[VaultPath],
-) -> Result<BTreeMap<String, bool>, ReplicaError> {
+) -> Result<(BTreeMap<String, bool>, Usage), ReplicaError> {
     let allowed = allow.iter().map(|path| path.as_str()).collect::<Vec<_>>();
     if manifest.schema_version != 1
         || manifest
@@ -140,7 +142,13 @@ fn validate(
             return Err(ReplicaError::Invalid("missing_manifest_parent"));
         }
     }
-    Ok(expected)
+    let usage = Usage {
+        manifest_bytes: 0,
+        entries: manifest.entries.len(),
+        total_bytes: total,
+        notes_bytes: notes_total,
+    };
+    Ok((expected, usage))
 }
 
 fn capture(
@@ -265,14 +273,31 @@ mod tests {
             Err(ReplicaError::Invalid("manifest_notes_total_limit"))
         ));
         manifest.entries.pop();
-        assert!(validate(&manifest, &allow).is_ok());
-        // 附件总额与常驻正文预算分开；合法附件不挤占 Markdown 内存限额。
+        let (_, usage) = validate(&manifest, &allow).unwrap();
+        let notes = manifest.entries.len();
+        // 用量与越线判定同一组数：刚好等于上限时 Markdown 合计就是上限。
+        assert_eq!(
+            usage,
+            super::Usage {
+                manifest_bytes: 0,
+                entries: notes,
+                total_bytes: protocol::NOTES_TOTAL_LIMIT,
+                notes_bytes: protocol::NOTES_TOTAL_LIMIT,
+            }
+        );
+        // 附件总额与常驻正文预算分开；合法附件不挤占 Markdown 内存限额，只算进文件总量和条目数。
         manifest.entries.push(ManifestEntry {
             path: "P/attachment.bin".into(),
             kind: "file".into(),
             bytes: 16 * 1024 * 1024,
             sha256: Some("0".repeat(64)),
         });
-        assert!(validate(&manifest, &allow).is_ok());
+        let (_, usage) = validate(&manifest, &allow).unwrap();
+        assert_eq!(usage.notes_bytes, protocol::NOTES_TOTAL_LIMIT);
+        assert_eq!(
+            usage.total_bytes,
+            protocol::NOTES_TOTAL_LIMIT + 16 * 1024 * 1024
+        );
+        assert_eq!(usage.entries, notes + 1);
     }
 }

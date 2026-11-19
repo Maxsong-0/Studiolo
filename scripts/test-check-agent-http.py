@@ -47,9 +47,9 @@ def response(status=200, text="", headers=None):
     return status, metadata, text
 
 
-def replies(blank="\n"):
+def replies(blank="\n", section_two=""):
     return [response(text="# Studiolo 路牌（代次 1，今天）\n" + fresh() + "\n" + blank
-                     + "## 1 我是谁\n类型 claude · 实例 " + INSTANCE + " · 注册 今天\n" + PRIVATE),
+                     + "## 1 我是谁\n类型 claude · 实例 " + INSTANCE + " · 注册 今天\n" + section_two + PRIVATE),
             response(text=fresh() + f"\n# 代次 1 · 1 条\nnote\t{probe.INDEX_PATH}\t123"),
             response(text="revision " + "c" * 64 + "\n" + fresh() + "\n# Studiolo · 总览\n" + PRIVATE),
             response(text=fresh() + f"\n# 代次 1 · 1 条\n{probe.INDEX_PATH}:1\t" + PRIVATE),
@@ -127,6 +127,12 @@ class HttpProbeTests(unittest.TestCase):
             self.assertEqual([r.get_header("Authorization") for r in requests[4:6]],
                              [None, "Bearer sag1_" + "0" * 64])
             self.assertTrue(all(r.get_header("Studiolo-session-id") is None for r in requests[12:15]))
+
+    def test_capacity_notice_opening_section_two_keeps_the_signpost_valid(self):
+        # 副本快到上限时 agent 把提醒写在路牌第 2 节开头（T-215 复查）；接在机器行下面就挤掉身份段的行位。
+        notice = "⚠ 副本快到协议上限：Markdown 合计 32.0 MiB，上限 40.0 MiB 的 80%。\n"
+        self.assertEqual(self.run_probe(replies(section_two="## 2 项目状态\n" + notice))[0], 0)
+        self.assertEqual(self.run_probe(replies(blank=notice + "\n"))[0], 1)
 
     def test_receipt_change_is_the_only_retryable_failure(self):
         for index in range(1, 4):

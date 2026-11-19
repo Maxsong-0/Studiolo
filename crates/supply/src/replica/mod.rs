@@ -8,8 +8,8 @@ use std::path::Path;
 use studiolo_core::VaultPath;
 use studiolo_vault_broker::ReadOnlyVault;
 
-use crate::{Note, Snapshot};
-use protocol::State;
+use crate::Snapshot;
+use protocol::{ENTRY_LIMIT, MANIFEST_LIMIT, State, TOTAL_LIMIT};
 pub use protocol::{NOTES_TOTAL_LIMIT, Receipt};
 
 /// 固定原因，不含源文件内容、宿主路径或底层错误。
@@ -26,7 +26,23 @@ pub enum ReplicaError {
     Superseded,
 }
 
-/// 与已验证内存快照绑定的新鲜度；重扫时间不覆盖来源时间。
+/// 一个代次用了副本协议各条上限多少。校验时按清单算，与越线判定是同一组数。
+///
+/// 四条上限都会被库的自然增长顶穿，越线那天 Mac 同步整批失败、副本停在越线前（vault BUG-039 越的是
+/// Markdown 合计；T-215 复查指出另外三条同样没有提前量），所以四条一起看。
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Usage {
+    /// 清单原始字节。
+    pub manifest_bytes: u64,
+    /// 清单条目数。只含可见项：Mac 端捕获时连隐藏项一起数（`replica_capture.py` 的 `inspected`），实际更多。
+    pub entries: usize,
+    /// 全部文件字节（Markdown 与附件）。
+    pub total_bytes: u64,
+    /// Markdown 合计字节。
+    pub notes_bytes: u64,
+}
+
+/// 与已验证内存快照绑定的来源状态；重扫时间不覆盖来源时间。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Freshness {
     /// 本批来源回执。
@@ -37,6 +53,8 @@ pub struct Freshness {
     pub last_error: Option<String>,
     /// 超过此秒数显示 stale。
     pub max_age_secs: u64,
+    /// 本代次用了各条协议上限多少；只供路牌的容量提醒（[`capacity_notice_for`]）。
+    pub usage: Usage,
 }
 
 impl Freshness {
@@ -96,44 +114,95 @@ impl Freshness {
     }
 }
 
-/// Markdown 合计用到上限的这个百分比起，路牌上提醒（T-215，vault BUG-039：越线那天 Mac 同步整批失败、
+/// 任一条协议上限用到这个百分比起，路牌上提醒（T-215，vault BUG-039：越线那天 Mac 同步整批失败、
 /// 副本停在越线前，之前没有任何提前量，等发现时已经停了一个月）。按每月约 5 MiB 的增长留出两个月左右。
-pub const NOTES_TOTAL_WARN_PERCENT: u64 = 80;
+pub const CAPACITY_WARN_PERCENT: u64 = 80;
 
-/// 路牌上给人看的容量提醒：副本 Markdown 合计到了上限的 [`NOTES_TOTAL_WARN_PERCENT`] 才有，
-/// 而且只给读得到副本里**每一篇**的接入方（`readable` 是这个接入方的读授权）。
+/// 路牌上给人看的容量提醒：这一代用到某条协议上限的 [`CAPACITY_WARN_PERCENT`] 才有，
+/// 而且只给读得到副本里**每一个条目**的接入方（`readable` 是这个接入方的读授权）。
 ///
-/// 合计是全副本的数：只读得到一部分的接入方拿到它，减去自己读得到的篇幅，就能推出读不到的项目
-/// 和名单外规则有多大。所以读不全就不给，宁可少提醒，也不越过供给视图（T-215 外部审查发现）。
+/// 用量是全副本的数：只读得到一部分的接入方拿到它，减去自己读得到的部分，就能推出读不到的项目
+/// 和名单外规则有多大、有多少附件。所以读不全就不给，宁可少提醒，也不越过供给视图（T-215 外部审查发现）。
 /// 只放在路牌上（每个 AI 会话开头都会读到，会转告用户），不放进逐次的内容响应。
 #[must_use]
 pub fn capacity_notice_for(
-    notes: &[Note],
+    snapshot: &Snapshot,
+    usage: &Usage,
     mut readable: impl FnMut(&VaultPath) -> bool,
 ) -> Option<String> {
-    let mut total = 0u64;
-    for note in notes {
-        if !readable(&note.path) {
-            return None;
-        }
-        total = total.saturating_add(note.content.len() as u64);
+    if !snapshot.entries.iter().all(|entry| readable(&entry.path)) {
+        return None;
     }
-    capacity_notice(total)
+    capacity_notice(usage)
 }
 
-/// 提醒的文字；不看授权，只供 [`capacity_notice_for`] 调用。
-fn capacity_notice(notes_bytes: u64) -> Option<String> {
-    let percent = notes_bytes.saturating_mul(100) / NOTES_TOTAL_LIMIT;
-    (percent >= NOTES_TOTAL_WARN_PERCENT).then(|| {
-        let mib = |bytes: u64| bytes as f64 / (1024.0 * 1024.0);
+/// 提醒的文字；不看授权，只供 [`capacity_notice_for`] 调用。四条上限里到线的逐条列出。
+fn capacity_notice(usage: &Usage) -> Option<String> {
+    let gauges = [
+        Gauge::bytes("Markdown 合计", usage.notes_bytes, NOTES_TOTAL_LIMIT),
+        Gauge::bytes("文件总量", usage.total_bytes, TOTAL_LIMIT),
+        // 只数可见项，Mac 端连隐藏项一起数（`Usage::entries`），所以这条按偏少的数提醒。
+        Gauge::count("可见条目", usage.entries as u64, ENTRY_LIMIT as u64),
+        Gauge::bytes("清单", usage.manifest_bytes, MANIFEST_LIMIT),
+    ];
+    let reached = gauges.iter().filter_map(Gauge::reached).collect::<Vec<_>>();
+    (!reached.is_empty()).then(|| {
         format!(
-            "⚠ 副本 Markdown 合计 {:.1} MiB，已到上限 {:.0} MiB 的 {percent}%：涨过上限后 Mac 同步会整批失败、\
-             这里的资料停在越线前（vault BUG-039）。请提醒用户趁早调高上限（两端常量，见 docs/m3/replica-freshness.md）\
-             或精简白名单。",
-            mib(notes_bytes),
-            mib(NOTES_TOTAL_LIMIT),
+            "⚠ 副本快到协议上限：{}。涨过任一条上限后 Mac 同步会整批失败、这里的资料停在越线前（vault BUG-039）。\
+             请提醒用户趁早调高上限（两端常量，见 docs/m3/replica-freshness.md）或精简白名单。",
+            reached.join("；")
         )
     })
+}
+
+/// 一条协议上限的用量。
+struct Gauge {
+    name: &'static str,
+    used: u64,
+    limit: u64,
+    /// 按字节（显示成 MiB）还是按个数。
+    in_bytes: bool,
+}
+
+impl Gauge {
+    fn bytes(name: &'static str, used: u64, limit: u64) -> Self {
+        Self {
+            name,
+            used,
+            limit,
+            in_bytes: true,
+        }
+    }
+
+    fn count(name: &'static str, used: u64, limit: u64) -> Self {
+        Self {
+            name,
+            used,
+            limit,
+            in_bytes: false,
+        }
+    }
+
+    /// 到了提醒线就给出这一条：用了多少、上限多少、百分之几（向下取整）。
+    fn reached(&self) -> Option<String> {
+        let percent = self.used.saturating_mul(100) / self.limit;
+        (percent >= CAPACITY_WARN_PERCENT).then(|| {
+            format!(
+                "{} {}，上限 {} 的 {percent}%",
+                self.name,
+                self.show(self.used),
+                self.show(self.limit)
+            )
+        })
+    }
+
+    fn show(&self, value: u64) -> String {
+        if self.in_bytes {
+            format!("{:.1} MiB", value as f64 / (1024.0 * 1024.0))
+        } else {
+            value.to_string()
+        }
+    }
 }
 
 /// 机器行下面那句给人看的提示；`ready` 没有。
@@ -232,13 +301,15 @@ impl ReplicaRoot {
             if before != after {
                 continue;
             }
+            let (snapshot, usage) = verified?;
             return Ok(VerifiedReplica {
-                snapshot: verified?,
+                snapshot,
                 freshness: Freshness {
                     receipt: receipt.clone(),
                     last_attempt_at_ms: state.last_attempt_at_ms,
                     last_error: state.last_error,
                     max_age_secs: self.max_age_secs,
+                    usage,
                 },
             });
         }
@@ -256,15 +327,13 @@ impl ReplicaRoot {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
-
-    use studiolo_core::{Revision, VaultPath, VaultUuid};
+    use studiolo_core::VaultPath;
 
     use super::{
-        NOTES_TOTAL_LIMIT, NOTES_TOTAL_WARN_PERCENT, capacity_notice, capacity_notice_for, elapsed,
-        notice,
+        CAPACITY_WARN_PERCENT, ENTRY_LIMIT, MANIFEST_LIMIT, NOTES_TOTAL_LIMIT, TOTAL_LIMIT, Usage,
+        capacity_notice, capacity_notice_for, elapsed, notice,
     };
-    use crate::Note;
+    use crate::{Entry, EntryKind, Snapshot};
 
     const SECOND_MS: i64 = 1000;
     const MINUTE_MS: i64 = 60 * SECOND_MS;
@@ -301,60 +370,106 @@ mod tests {
         );
     }
 
+    /// 改 [`Usage`] 里的一项。
+    type SetUsage = fn(&mut Usage, u64);
+
+    /// 用量刚好到某个百分比（向上取整）。
+    fn at(limit: u64, percent: u64) -> u64 {
+        (limit * percent).div_ceil(100)
+    }
+
     #[test]
-    fn capacity_notice_starts_at_the_warning_percent_of_the_limit() {
-        let at = |percent: u64| (NOTES_TOTAL_LIMIT * percent).div_ceil(100);
-        assert_eq!(capacity_notice(0), None);
-        assert_eq!(capacity_notice(at(NOTES_TOTAL_WARN_PERCENT) - 1), None);
-        let warned = capacity_notice(at(NOTES_TOTAL_WARN_PERCENT)).expect("到线就提醒");
+    fn capacity_notice_starts_at_the_warning_percent_of_each_limit() {
+        assert_eq!(capacity_notice(&Usage::default()), None);
+        // 四条上限各自到线就提醒，差一点不提醒；提醒里点名是哪一条。
+        let cases: [(&str, SetUsage, u64); 4] = [
+            ("Markdown 合计", |u, v| u.notes_bytes = v, NOTES_TOTAL_LIMIT),
+            ("文件总量", |u, v| u.total_bytes = v, TOTAL_LIMIT),
+            (
+                "可见条目",
+                |u, v| u.entries = usize::try_from(v).unwrap(),
+                ENTRY_LIMIT as u64,
+            ),
+            ("清单", |u, v| u.manifest_bytes = v, MANIFEST_LIMIT),
+        ];
+        for (name, set, limit) in cases {
+            let mut usage = Usage::default();
+            set(&mut usage, at(limit, CAPACITY_WARN_PERCENT) - 1);
+            assert_eq!(capacity_notice(&usage), None, "{name} 差一点到线");
+            set(&mut usage, at(limit, CAPACITY_WARN_PERCENT));
+            let warned = capacity_notice(&usage).unwrap_or_else(|| panic!("{name} 到线就提醒"));
+            assert!(
+                warned.starts_with("⚠ 副本快到协议上限：")
+                    && warned.contains(&format!("{name} "))
+                    && warned.contains(&format!("的 {CAPACITY_WARN_PERCENT}%"))
+                    && warned.contains("BUG-039"),
+                "{warned}"
+            );
+            set(&mut usage, limit);
+            let full = capacity_notice(&usage).expect("满额也提醒");
+            assert!(full.contains("的 100%"), "{full}");
+        }
+        // 同时到线的逐条列出。
+        let both = capacity_notice(&Usage {
+            notes_bytes: NOTES_TOTAL_LIMIT,
+            total_bytes: TOTAL_LIMIT,
+            ..Usage::default()
+        })
+        .expect("两条都到线");
         assert!(
-            warned.contains(&format!("的 {NOTES_TOTAL_WARN_PERCENT}%")),
-            "{warned}"
-        );
-        let full = capacity_notice(NOTES_TOTAL_LIMIT).expect("满额也提醒");
-        assert!(full.starts_with("⚠ 副本 Markdown 合计 "), "{full}");
-        assert!(
-            full.contains("的 100%") && full.contains("BUG-039"),
-            "{full}"
+            both.contains("Markdown 合计 40.0 MiB，上限 40.0 MiB 的 100%；文件总量 "),
+            "{both}"
         );
     }
 
     #[test]
-    fn capacity_notice_is_withheld_from_a_reader_who_cannot_read_every_note() {
-        let note = |path: &str, bytes: u64| {
-            let path = VaultPath::parse(path).unwrap();
-            let content: Arc<str> = "x".repeat(usize::try_from(bytes).unwrap()).into();
-            Note {
-                // 修订值与这里的判断无关，不对 40 MiB 正文做哈希。
-                revision: Revision::compute(VaultUuid::new(), &path, b""),
-                path,
-                content,
-            }
+    fn capacity_notice_is_withheld_from_a_reader_who_cannot_read_every_entry() {
+        let entry = |path: &str, kind: EntryKind| Entry {
+            path: VaultPath::parse(path).unwrap(),
+            kind,
+            size_bytes: (kind != EntryKind::Directory).then_some(1),
         };
-        // 读得到的只有 1 KiB，读不到的那篇把合计推过提醒线。
-        let half = NOTES_TOTAL_LIMIT / 2;
-        let notes = [
-            note("_规则/通用工作规则.md", 1024),
-            note("项目/Public/a.md", half),
-            note("项目/Secret/b.md", half),
-        ];
-        let everything = capacity_notice_for(&notes, |_| true).expect("读全的接入方看得到提醒");
+        let snapshot = Snapshot {
+            entries: vec![
+                entry("_规则/通用工作规则.md", EntryKind::Markdown),
+                entry("项目/Public/a.md", EntryKind::Markdown),
+                entry("项目/Secret", EntryKind::Directory),
+                entry("项目/Secret/b.md", EntryKind::Markdown),
+                entry("项目/Secret/c.pdf", EntryKind::Attachment),
+            ],
+            ..Snapshot::default()
+        };
+        let full = Usage {
+            notes_bytes: NOTES_TOTAL_LIMIT,
+            ..Usage::default()
+        };
+        let everything =
+            capacity_notice_for(&snapshot, &full, |_| true).expect("读全的接入方看得到提醒");
         assert!(
-            everything.starts_with("⚠ 副本 Markdown 合计 "),
+            everything.starts_with("⚠ 副本快到协议上限："),
             "{everything}"
         );
         assert_eq!(
-            capacity_notice_for(&notes, |path| !path.as_str().starts_with("项目/Secret/")),
+            capacity_notice_for(&snapshot, &full, |path| !path
+                .as_str()
+                .starts_with("项目/Secret")),
             None,
-            "只读得到一部分的接入方不能拿到全副本的合计"
+            "只读得到一部分的接入方不能拿到全副本的用量"
         );
         assert_eq!(
-            capacity_notice_for(&notes, |path| path.as_str() != "_规则/通用工作规则.md"),
+            capacity_notice_for(&snapshot, &full, |path| path.as_str()
+                != "_规则/通用工作规则.md"),
             None,
             "规则名单外的一篇也算读不全"
         );
         assert_eq!(
-            capacity_notice_for(&notes[..1], |_| true),
+            capacity_notice_for(&snapshot, &full, |path| path.as_str()
+                != "项目/Secret/c.pdf"),
+            None,
+            "读不到的附件也算读不全：文件总量和条目数会泄露它"
+        );
+        assert_eq!(
+            capacity_notice_for(&snapshot, &Usage::default(), |_| true),
             None,
             "没到线不提醒"
         );

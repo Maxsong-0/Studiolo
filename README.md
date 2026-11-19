@@ -268,7 +268,7 @@ npm --prefix web test && npm --prefix web run lint && npm --prefix web run forma
 四项私有存储先用 `studiolo-maintain sync-init`（任一已存在即拒绝）显式建立，已不再排除的文件夹在镜像视图里的残留
 用 `studiolo-maintain sync-purge-residue --folder <名>` 清除（须先停 `studiolo-human`）；设计见 `docs/m2/sync-plane-design.md`。
 
-上面那组之外，ci 套的 Rust 部分还会做四件事（照搬原 `ci.yml` 的 rust 作业，2026-09-22 逐条核对过）：
+上面那组之外，ci 套的 Rust 部分还会做五件事（前四件照搬原 `ci.yml` 的 rust 作业，2026-09-22 逐条核对过；第五件是 T-215 新加的）：
 
 - 对**八个显式列名**的脚本跑 `bash -n`：`scripts/` 下的 `package-agent.sh`、
   `run-agent-tests.sh`、`sync-agent-vault.sh`、`package-preview.sh`、`run-preview-tests.sh`，
@@ -282,6 +282,9 @@ npm --prefix web test && npm --prefix web run lint && npm --prefix web run forma
   `scripts/check-replica-pipeline.py`、`scripts/check-client-projection-pipeline.py` 两条真实管线。
 - 生产 `studiolo-auth-admin` 构建之后再跑
   `python3 crates/auth-admin/tests/support/cli_process.py target/debug/studiolo-auth-admin`。
+- `replica-capacity` 一步用 release 构建跑 `cargo --locked test --release -p studiolo-agent-server --test replica_capacity_contract`
+  （T-215，vault BUG-039）：满额副本 16 路并发读的时延与常驻内存。只在 Linux 跑，debug 下标为忽略，所以上面那组里的
+  workspace 测试跑不到它；agent 运行包也不带它。
 
 Mac 会话在 Linux 服务器上原生跑 Rust 那一半（把工作树同步到 `githubci` 后在那里跑；2026-09-19 起不再用 Docker；DGX 见下面「DGX 本机跑」）：
 
@@ -289,7 +292,7 @@ Mac 会话在 Linux 服务器上原生跑 Rust 那一半（把工作树同步到
 scripts/test-linux.sh   # fmt / clippy / workspace 与恢复探针测试 / 路径安全 / 两个生产特征构建与 vault-admin 构建 / 登记工具进程检查
 ```
 
-`scripts/test-linux.sh` **不包含**上面的 `bash -n`、逐条列名的 Python 契约脚本、两条管线检查，
+`scripts/test-linux.sh` **不包含**上面的 `bash -n`、逐条列名的 Python 契约脚本、两条管线检查、release 的容量契约，
 也不含前端作业；要复跑那些交测试箱的 ci 套。
 
 ### DGX 本机跑

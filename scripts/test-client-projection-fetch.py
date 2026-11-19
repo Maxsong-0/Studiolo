@@ -46,6 +46,20 @@ class FetchTests(unittest.TestCase):
         self.fixture.mutate = lambda route, text, h: text.replace("\n\n## 1 我是谁", "\n\n\n## 1 我是谁")
         self.rejected()
 
+    def test_capacity_notice_opening_section_two_is_accepted(self):
+        # 副本快到上限时 agent 把提醒写在路牌第 2 节开头（T-215 复查），身份段的行位不动。
+        notice = "## 2 项目状态\n⚠ 副本快到协议上限：Markdown 合计 32.0 MiB，上限 40.0 MiB 的 80%。\n"
+        for blank in (False, True):
+            self.fixture = Fixture()
+            self.fixture.blank_line = blank
+            self.fixture.mutate = lambda route, text, h: text.replace("其他项目绝密路牌", notice + "其他项目绝密路牌")
+            self.assertEqual(self.fixture.fetch()["identity"]["instance"], INSTANCE)
+        # 接在机器行下面（T-215 第一版的位置）就挤掉了身份段的行位。
+        self.fixture = Fixture()
+        self.fixture.mutate = lambda route, text, h: text.replace(
+            "\n## 1 我是谁", "\n⚠ 副本快到协议上限：Markdown 合计 32.0 MiB。\n## 1 我是谁")
+        self.rejected()
+
     def test_stale_failed_missing_and_false_age_are_rejected(self):
         for before, after in (("副本状态 ready", "副本状态 stale"), ("stale=false", "stale=true"),
                               ("副本状态 ready", "副本状态 sync_failed"), ("age_secs=1；", "age_secs=400；"),

@@ -83,6 +83,7 @@ fn derive(projects: &[Project]) -> Signpost {
         generation: 1,
         generated_at: "2026-11-12T01:00:00Z",
         freshness: None,
+        capacity: None,
         tools: TOOLS,
         policy: None,
         rules_whitelist: None,

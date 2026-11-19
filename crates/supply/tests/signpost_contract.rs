@@ -78,6 +78,7 @@ fn signpost_has_six_sections_and_is_derived_from_index_tasks_and_rules() {
         generation: 7,
         generated_at: "2026-09-07T01:00:00Z",
         freshness: None,
+        capacity: None,
         tools: TOOLS,
         policy: None,
         rules_whitelist: None,
@@ -164,6 +165,7 @@ fn missing_skeleton_shows_unavailable_and_rules_absent_is_stated() {
         generation: 1,
         generated_at: "2026-09-07T01:00:00Z",
         freshness: None,
+        capacity: None,
         tools: TOOLS,
         policy: None,
         rules_whitelist: None,
@@ -226,6 +228,7 @@ fn oversized_material_is_trimmed_then_fails_closed_past_the_hard_budget() {
         generation: 1,
         generated_at: "2026-09-07T01:00:00Z",
         freshness: None,
+        capacity: None,
         tools: TOOLS,
         policy: None,
         rules_whitelist: None,
@@ -247,10 +250,58 @@ fn freshness_is_never_trimmed_out_of_the_hard_handshake_budget() {
         generation: 1,
         generated_at: "2026-09-09T00:00:00Z",
         freshness: Some(&freshness),
+        capacity: None,
         tools: TOOLS,
         policy: None,
         rules_whitelist: None,
     })
     .unwrap_err();
     assert!(error.tokens > HARD_BUDGET_TOKENS);
+}
+
+/// 容量提醒不能挪动身份段：部署验收（`scripts/check-agent-http.py`）和客户端投影（`scripts/client_projection_fetch.py`）
+/// 只认「第 2 行机器行、第 3 或第 4 行是 `## 1 我是谁`」。T-215 复查发现提醒原先接在新鲜度后面，正好占了第 3 行。
+#[test]
+fn capacity_notice_opens_section_two_and_leaves_the_identity_lines_in_place() {
+    let temp = TempDir::new_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
+    write_project(temp.path(), "Alpha", "T-033 冷启动", true);
+    let allow = ["项目/Alpha"];
+    let roots = SupplyRoots::open(temp.path(), &allow).unwrap();
+    let snapshot = roots.scan(ScanLimits::default()).unwrap();
+    let allow = allow.map(|value| VaultPath::parse(value).unwrap());
+    let capacity = "⚠ 副本快到协议上限：Markdown 合计 32.0 MiB，上限 40.0 MiB 的 80%。";
+    let principal = principal();
+    // agent 托管模式交来的新鲜度自带一个换行（`server/freshness.rs`），身份段因此落在第 4 行；不带时在第 3 行。
+    for (freshness, identity) in [
+        ("副本状态 ready；stale=false\n", 3usize),
+        ("副本状态 ready；stale=false", 2),
+    ] {
+        let input = |capacity| SignpostInput {
+            snapshot: &snapshot,
+            allow: &allow,
+            principal: &principal,
+            generation: 7,
+            generated_at: "2026-09-07T01:00:00Z",
+            freshness: Some(freshness),
+            capacity,
+            tools: TOOLS,
+            policy: None,
+            rules_whitelist: None,
+        };
+        let plain = signpost::derive(&input(None)).unwrap().text;
+        let warned = signpost::derive(&input(Some(capacity))).unwrap().text;
+        let lines = warned.split('\n').collect::<Vec<_>>();
+        assert_eq!(lines[1], "副本状态 ready；stale=false", "{warned}");
+        assert_eq!(lines[identity], "## 1 我是谁", "{warned}");
+        assert!(
+            lines[identity + 1].starts_with("类型 claude · 实例 "),
+            "{warned}"
+        );
+        assert_eq!(lines[identity + 2], "## 2 项目状态", "{warned}");
+        assert_eq!(lines[identity + 3], capacity, "{warned}");
+        // 前几行和不带提醒时一字不差，只多了第 2 节开头那一行。
+        let plain_lines = plain.split('\n').collect::<Vec<_>>();
+        assert_eq!(lines[..=identity + 2], plain_lines[..=identity + 2]);
+        assert_eq!(lines.len(), plain_lines.len() + 1, "{warned}");
+    }
 }

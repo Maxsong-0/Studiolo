@@ -63,6 +63,20 @@ class CargoManifestTests(unittest.TestCase):
         self.assertEqual(len(names), 23)
         self.assertEqual(len(set(names)), 23)
 
+    def test_full_load_capacity_contract_is_built_but_not_shipped(self):
+        # 部署验收在生产主机上原生跑运行包里的每个测试；满额负载的容量契约只在 ci 套跑（T-215 复查）。
+        capacity = artifact("agent-server", "replica_capacity_contract")
+        memory = artifact("agent-server", "replica_memory_contract")
+        same_name_elsewhere = artifact("supply", "replica_capacity_contract")
+        code, names = self.collect(self.complete() + [capacity, memory, same_name_elsewhere])
+        self.assertEqual(code, 0)
+        shipped = lambda item: "tests/" + Path(item["executable"]).name in names
+        self.assertFalse(shipped(capacity))
+        # 只排除这一个包的这一个目标：同包别的内存契约、别的包同名目标照旧随包。
+        self.assertTrue(shipped(memory))
+        self.assertTrue(shipped(same_name_elsewhere))
+        self.assertEqual(len(names), 25)
+
     def test_transport_gate_cannot_be_missing_or_satisfied_by_another_crate(self):
         items = [item for item in self.complete() if item["target"]["name"] != "mcp_transport_contract"]
         for replacement in [[], [artifact("supply", "mcp_transport_contract")]]:

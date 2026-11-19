@@ -64,6 +64,7 @@ fn signpost_text(root: &Path, rules: Option<&[String]>) -> String {
         generation: 1,
         generated_at: "2026-09-26T01:00:00Z",
         freshness: None,
+        capacity: None,
         tools: TOOLS,
         policy: None,
         rules_whitelist: rules,
