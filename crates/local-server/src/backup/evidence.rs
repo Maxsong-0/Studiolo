@@ -1,29 +1,10 @@
-//! 备份证据的注入口；服务端自己不去取证，只接收可信启动层给的快照。
+//! 备份事实的类型和只读探针口；健康页只经 `BackupJobsProbe` 取事实，自己不读账本。
 //!
 //! 作业事实（`BackupJobs`）由主服务里的生产者从原账本的备份事件算出来，健康页的「备份作业」和
 //! 「恢复点年龄」两节都用它：恢复点取成功作业准入里的内容截止，判据和 worker 认「可恢复点」一样。
-//! `BackupSnapshot` 是早先设想的「接 worker 状态库」那条路，目前没有生产调用者。
 
-use studiolo_backup::worker::recovery_point::RecoveryPointStatus;
 use studiolo_backup::worker::restic::UnverifiedReason;
-use studiolo_backup::worker::state::{FailureReason, JobState};
-
-/// 一次备份状态快照。没有快照就只能显示未知，不能显示绿色。
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct BackupSnapshot {
-    /// 恢复点整体判定。
-    pub status: RecoveryPointStatus,
-    /// 主人是否已批准备份配置。
-    pub approved: bool,
-    /// 最近一次作业的状态；没有作业为 `None`。
-    pub last_job: Option<JobState>,
-}
-
-/// 由可信启动层实现；本 Module 不自己发起任何 IO。
-pub trait BackupEvidence: Send + Sync {
-    /// 取一次只读快照；取不到返回 `None`。
-    fn snapshot(&self) -> Option<BackupSnapshot>;
-}
+use studiolo_backup::worker::state::FailureReason;
 
 /// 一条已收口作业的序号和结果落账的时刻（Unix 毫秒）。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
