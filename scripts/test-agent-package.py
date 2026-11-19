@@ -2,6 +2,7 @@
 """用虚构 Cargo 输出和源码树校验打包门槛；不构建、不联网、不运行服务。"""
 import json
 from pathlib import Path
+import re
 import subprocess
 import sys
 import tempfile
@@ -308,6 +309,73 @@ class CompileTimeInputsTests(unittest.TestCase):
         self.assertIn("policy", closure)
         self.assertLessEqual(closure, self.packaged_crates(),
                              "agent 链接了这些工作区 crate，但 package-agent.sh 没有随包携带它们的测试")
+
+
+# debug 下忽略、只在 release 跑的测试（如满额容量契约）：release 打包时照跑，所以必须在排除名单里。
+RELEASE_ONLY = re.compile(r"cfg_attr\(\s*debug_assertions\s*,\s*ignore\b")
+
+
+def excluded_tests(script, label):
+    """从打包脚本的 Node 段取出 PACKAGE_EXCLUDED_TESTS 的字面量；找不到返回 None。"""
+    literal = re.search(r"const PACKAGE_EXCLUDED_TESTS = new Set\(\[(.*?)\]\);", embedded(script, label), re.S)
+    return set(re.findall(r"'([^']+)'", literal.group(1))) if literal else None
+
+
+def exclusion_problems(agent, preview, root, testbox):
+    """两个运行包的排除名单要逐项相等；每一项都对应一个真实的集成测试目标，并在 ci 套里另有专门的一步；
+    凡是只在 release 跑的集成测试目标都必须在名单里（不然 release 打包时它随包上生产主机）。"""
+    if agent is None or preview is None:
+        return ["打包脚本里找不到 PACKAGE_EXCLUDED_TESTS"]
+    problems = []
+    if agent != preview:
+        problems.append(f"两个运行包的排除名单不一致：{sorted(agent ^ preview)}")
+    for entry in sorted(agent | preview):
+        crate, target = entry.split("/", 1)
+        tests = root / "crates" / crate / "tests"
+        if not ((tests / f"{target}.rs").is_file() or (tests / target / "main.rs").is_file()):
+            problems.append(f"排除名单里的 {entry} 没有对应的测试目标")
+        package = "studiolo" if crate == "studiolo" else f"studiolo-{crate}"
+        if f"-p {package} --test {target}" not in testbox:
+            problems.append(f"排除名单里的 {entry} 在 ci 套里没有专门跑它的一步")
+    sources = sorted([*(root / "crates").glob("*/tests/*.rs"), *(root / "crates").glob("*/tests/*/main.rs")])
+    for path in sources:
+        if RELEASE_ONLY.search(path.read_text(encoding="utf-8")):
+            tests = next(parent for parent in path.parents if parent.name == "tests")
+            target = path.stem if path.parent == tests else path.parent.name
+            entry = f"{tests.parent.name}/{target}"
+            if entry not in agent or entry not in preview:
+                problems.append(f"{entry} 只在 release 跑，却会随运行包上生产主机")
+    return problems
+
+
+class ExcludedTestsGuardTests(unittest.TestCase):
+    """T-215 复查：排除名单按字符串匹配。目标改名、两个包各写一份对不上、新加只在 release 跑的测试，
+    都会让满额负载悄悄回到生产主机的部署验收里，而别的检查照样全绿。"""
+    ROOT = SCRIPTS.parent
+    PREVIEW = (SCRIPTS / "package-preview.sh").read_text(encoding="utf-8")
+    TESTBOX = (SCRIPTS.parent / ".testbox.toml").read_text(encoding="utf-8")
+
+    def names(self):
+        return excluded_tests(PACKAGE, "NODE_TESTS"), excluded_tests(self.PREVIEW, "NODE")
+
+    def test_both_packages_exclude_exactly_the_release_only_targets(self):
+        agent, preview = self.names()
+        self.assertEqual(agent, {"agent-server/replica_capacity_contract"})
+        self.assertEqual(exclusion_problems(agent, preview, self.ROOT, self.TESTBOX), [])
+
+    def test_renamed_mismatched_or_unrun_exclusions_are_reported(self):
+        agent, preview = self.names()
+        renamed = {"agent-server/replica_capacity_contract_v2"}
+        cases = {
+            "改名后名单失效": (renamed, renamed, self.TESTBOX),
+            "两个包对不上": (agent, set(), self.TESTBOX),
+            "ci 套里没有专门一步": (agent, preview,
+                               self.TESTBOX.replace("--test replica_capacity_contract", "--test other")),
+            "名单整个没了": (None, preview, self.TESTBOX),
+        }
+        for case, (a, p, testbox) in cases.items():
+            with self.subTest(case=case):
+                self.assertNotEqual(exclusion_problems(a, p, self.ROOT, testbox), [])
 
 
 if __name__ == "__main__":

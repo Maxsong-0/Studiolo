@@ -27,7 +27,7 @@ T-039 持久派生索引已于 2026-09-11 随 T-040 发布，系统切换与公�
 
 随包 Rust 构建须具备按 crate/target 指定的 17 个关键目标，不能用其他 crate 的同名目标充数。
 服务器以普通用户从记录的 `source` 目录运行 `bash ../run-agent-tests.sh`，先验证解压源码集合和摘要，
-再运行所有独立 Rust 程序、10 组 Python 契约，以及两条虚构资料真实 MCP/HTTP 管线。
+再运行 test-list 里的全部 Rust 程序（满额容量契约编译但不随包，见 `docs/m3/server-agent.md`）、10 组 Python 契约，以及两条虚构资料真实 MCP/HTTP 管线。
 此步骤不操作线上资料或凭据，不需要服务器 Rust、Node 或 Docker。
 
 ## 系统服务升级与回滚

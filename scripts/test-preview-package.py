@@ -62,6 +62,20 @@ class CargoCollectionTests(unittest.TestCase):
         self.assertEqual(len(set(listing)), expected)
         self.assertTrue(any("maintenance_contract" in name for name in listing))
 
+    def test_full_load_capacity_contract_is_built_but_not_shipped(self):
+        # 部署验收在生产主机上原生跑运行包里的每个测试；满额负载的容量契约只在 ci 套跑（T-215 复查）。
+        capacity = artifact("agent-server", "replica_capacity_contract")
+        memory = artifact("agent-server", "replica_memory_contract")
+        same_name_elsewhere = artifact("supply", "replica_capacity_contract")
+        status, listing = self.collect(self.complete() + [capacity, memory, same_name_elsewhere])
+        self.assertEqual(status, 0)
+        shipped = lambda item: "tests/" + Path(item["executable"]).name in listing
+        self.assertFalse(shipped(capacity))
+        # 只排除这一个包的这一个目标：同包别的内存契约、别的包同名目标照旧随包。
+        self.assertTrue(shipped(memory))
+        self.assertTrue(shipped(same_name_elsewhere))
+        self.assertEqual(len(listing), len(REQUIRED) + len(LIBRARIES) + 2)
+
     def test_each_required_target_is_mandatory_and_failure_publishes_no_list(self):
         for missing in REQUIRED:
             with self.subTest(missing=missing):

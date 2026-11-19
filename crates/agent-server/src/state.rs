@@ -9,8 +9,11 @@ use studiolo_core::VaultPath;
 use studiolo_policy::PolicyAgentStore;
 use studiolo_supply::{
     AgentStore, ScanLimits, Snapshot, SupplyRoots, WorkbenchReadModel,
-    replica::{Freshness, ReplicaRoot},
+    replica::{Freshness, ReplicaRoot, Usage},
 };
+
+/// 托管副本模式下与快照绑定的来源回执和协议上限用量；直接 Vault 模式两样都没有。
+type ReplicaState = (Freshness, Usage);
 
 /// 一次完整扫描得到的不可变代次。
 pub struct Generation {
@@ -26,6 +29,8 @@ pub struct Generation {
     pub generated_at: String,
     /// 副本来源状态；直接 Vault 模式没有可声明的同步回执。
     pub freshness: Option<Freshness>,
+    /// 本代次用了副本协议各条上限多少（路牌容量提醒用）；直接 Vault 模式没有。
+    pub replica_usage: Option<Usage>,
 }
 
 /// 审计不可用窗口。
@@ -91,7 +96,7 @@ impl SupplySource {
         &self,
         limits: ScanLimits,
         previous: Option<&Freshness>,
-    ) -> Result<(Snapshot, Option<Freshness>), String> {
+    ) -> Result<(Snapshot, Option<ReplicaState>), String> {
         match self {
             Self::Direct(roots) => roots
                 .scan(limits)
@@ -99,7 +104,7 @@ impl SupplySource {
                 .map_err(|error| format!("白名单扫描失败：{error}")),
             Self::Replica(root) => root
                 .verify(now_ms(), previous)
-                .map(|batch| (batch.snapshot, Some(batch.freshness)))
+                .map(|batch| (batch.snapshot, Some((batch.freshness, batch.usage))))
                 .map_err(|error| error.to_string()),
         }
     }
@@ -168,6 +173,7 @@ pub fn build_generation(
         model: Arc::new(model),
         generated_at: now(),
         freshness: None,
+        replica_usage: None,
     })
 }
 
@@ -194,6 +200,7 @@ pub fn replica_generation(
         model: Arc::new(model),
         generated_at: now(),
         freshness: Some(replica.freshness),
+        replica_usage: Some(replica.usage),
     })
 }
 
@@ -212,8 +219,8 @@ impl AppState {
             .number
             .checked_add(1)
             .ok_or_else(|| "代次溢出".to_owned())?;
-        let (mut snapshot, freshness) =
-            self.source.scan(self.limits, previous.freshness.as_ref())?;
+        let (mut snapshot, replica) = self.source.scan(self.limits, previous.freshness.as_ref())?;
+        let (freshness, replica_usage) = replica.unzip();
         // 正文和上一代逐字节相同（绝大多数请求、每 60 秒的重扫都是这样）时，快照改用上一代那份，只加引用计数：
         // 读模型这时复用上一代的，指向的正是上一代的正文；不换的话快照和读模型各持一份，常驻多出一整份正文
         // （T-215 复查）。这些字节本次已经完整校验过、又和上一代逐字节比过，换的只是同内容的哪一块内存。
@@ -228,6 +235,7 @@ impl AppState {
             index_status,
             generated_at: now(),
             freshness,
+            replica_usage,
         });
         *self
             .current

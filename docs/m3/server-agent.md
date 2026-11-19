@@ -87,6 +87,7 @@ ssh maxsong@192.168.100.108 'git clone -q --branch <分支> ~/agent.bundle ~/age
 （supply、agent-server、vault-broker、core、audit-ledger、vault-index、workbench、process-safety、policy）加 `studiolo` 架构守卫；
 随包测试在编译期 `include_str!` 的虚构夹具（`examples/m3-cargo-dependencies`、`examples/m3-project-operations`）一并进白名单；
 「cargo 包列表 ＝ Node 段接受的包集合 ⊇ agent 的工作区依赖闭包」与「include 宏目标都在白名单内」由 `scripts/test-agent-package.py` 守卫；
+`PACKAGE_EXCLUDED_TESTS` 列的目标编译但不随包：现在只有 agent-server 的满额容量契约 `replica_capacity_contract`，只在 ci 套 `replica-capacity` 一步跑（T-215，生产主机上不跑满额负载；与 `package-preview.sh` 的同名名单逐项相等，同一守卫核对）；
 解析步骤要求 `architecture`、`linux_path_security`、`mcp_contract`、`roots_contract`、`signpost_contract`、`agent_store_contract` 六个目标齐全。
 local-server 等未随包发布的 crate 测试由合并门禁（测试箱 ci 套）与各自运行包负责。
 

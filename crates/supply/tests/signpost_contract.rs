@@ -259,6 +259,28 @@ fn freshness_is_never_trimmed_out_of_the_hard_handshake_budget() {
     assert!(error.tokens > HARD_BUDGET_TOKENS);
 }
 
+/// 容量提醒和新鲜度一样计入硬预算：超长时握手失败关闭，不会为了塞下它去裁别的段（T-215 复查）。
+#[test]
+fn capacity_notice_counts_against_the_hard_handshake_budget() {
+    let snapshot = studiolo_supply::Snapshot::default();
+    let principal = principal();
+    let capacity = "required capacity notice ".repeat(3000);
+    let error = signpost::derive(&SignpostInput {
+        snapshot: &snapshot,
+        allow: &[],
+        principal: &principal,
+        generation: 1,
+        generated_at: "2026-09-09T00:00:00Z",
+        freshness: None,
+        capacity: Some(&capacity),
+        tools: TOOLS,
+        policy: None,
+        rules_whitelist: None,
+    })
+    .unwrap_err();
+    assert!(error.tokens > HARD_BUDGET_TOKENS);
+}
+
 /// 容量提醒不能挪动身份段：部署验收（`scripts/check-agent-http.py`）和客户端投影（`scripts/client_projection_fetch.py`）
 /// 只认「第 2 行机器行、第 3 或第 4 行是 `## 1 我是谁`」。T-215 复查发现提醒原先接在新鲜度后面，正好占了第 3 行。
 #[test]

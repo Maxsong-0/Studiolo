@@ -42,7 +42,7 @@ pub struct Usage {
     pub notes_bytes: u64,
 }
 
-/// 与已验证内存快照绑定的来源状态；重扫时间不覆盖来源时间。
+/// 与已验证内存快照绑定的新鲜度；重扫时间不覆盖来源时间。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Freshness {
     /// 本批来源回执。
@@ -53,8 +53,6 @@ pub struct Freshness {
     pub last_error: Option<String>,
     /// 超过此秒数显示 stale。
     pub max_age_secs: u64,
-    /// 本代次用了各条协议上限多少；只供路牌的容量提醒（[`capacity_notice_for`]）。
-    pub usage: Usage,
 }
 
 impl Freshness {
@@ -250,6 +248,8 @@ pub struct VerifiedReplica {
     pub snapshot: Snapshot,
     /// 与快照绑定的来源状态。
     pub freshness: Freshness,
+    /// 本代次用了各条协议上限多少；只供路牌的容量提醒（[`capacity_notice_for`]）。
+    pub usage: Usage,
 }
 
 /// 在启动时固定的私有副本根；白名单必须与每次发布清单完全一致。
@@ -309,8 +309,8 @@ impl ReplicaRoot {
                     last_attempt_at_ms: state.last_attempt_at_ms,
                     last_error: state.last_error,
                     max_age_secs: self.max_age_secs,
-                    usage,
                 },
+                usage,
             });
         }
         Err(ReplicaError::Superseded)
@@ -416,8 +416,12 @@ mod tests {
             ..Usage::default()
         })
         .expect("两条都到线");
+        // 按常量推，以后调上限不用改这里。
+        let mib = NOTES_TOTAL_LIMIT as f64 / (1024.0 * 1024.0);
         assert!(
-            both.contains("Markdown 合计 40.0 MiB，上限 40.0 MiB 的 100%；文件总量 "),
+            both.contains(&format!(
+                "Markdown 合计 {mib:.1} MiB，上限 {mib:.1} MiB 的 100%；文件总量 "
+            )),
             "{both}"
         );
     }

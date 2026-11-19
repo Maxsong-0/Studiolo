@@ -32,8 +32,7 @@ pub(super) fn generation(
     }
     let manifest: Manifest =
         serde_json::from_slice(&raw).map_err(|_| ReplicaError::Invalid("manifest_json"))?;
-    let (expected, mut usage) = validate(&manifest, allow)?;
-    usage.manifest_bytes = raw.len() as u64;
+    let (expected, usage) = validate(&manifest, allow, raw.len() as u64)?;
     let vault = release
         .open_directory(&VaultPath::parse("vault").expect("fixed path"))
         .map_err(|_| ReplicaError::Drift("unreadable_vault"))?;
@@ -58,10 +57,11 @@ fn digest(bytes: &[u8]) -> String {
         .collect()
 }
 
-/// 核清单的形状与各条上限；顺带交出这一代用了各条上限多少（清单字节由调用方填），供路牌提前提醒。
+/// 核清单的形状与各条上限；顺带交出这一代用了各条上限多少（`manifest_bytes` 是清单原始字节数），供路牌提前提醒。
 fn validate(
     manifest: &Manifest,
     allow: &[VaultPath],
+    manifest_bytes: u64,
 ) -> Result<(BTreeMap<String, bool>, Usage), ReplicaError> {
     let allowed = allow.iter().map(|path| path.as_str()).collect::<Vec<_>>();
     if manifest.schema_version != 1
@@ -143,7 +143,7 @@ fn validate(
         }
     }
     let usage = Usage {
-        manifest_bytes: 0,
+        manifest_bytes,
         entries: manifest.entries.len(),
         total_bytes: total,
         notes_bytes: notes_total,
@@ -269,17 +269,17 @@ mod tests {
         .unwrap();
         let allow = vec![VaultPath::parse("P").unwrap()];
         assert!(matches!(
-            validate(&manifest, &allow),
+            validate(&manifest, &allow, 0),
             Err(ReplicaError::Invalid("manifest_notes_total_limit"))
         ));
         manifest.entries.pop();
-        let (_, usage) = validate(&manifest, &allow).unwrap();
+        let (_, usage) = validate(&manifest, &allow, 123).unwrap();
         let notes = manifest.entries.len();
         // 用量与越线判定同一组数：刚好等于上限时 Markdown 合计就是上限。
         assert_eq!(
             usage,
             super::Usage {
-                manifest_bytes: 0,
+                manifest_bytes: 123,
                 entries: notes,
                 total_bytes: protocol::NOTES_TOTAL_LIMIT,
                 notes_bytes: protocol::NOTES_TOTAL_LIMIT,
@@ -292,7 +292,7 @@ mod tests {
             bytes: 16 * 1024 * 1024,
             sha256: Some("0".repeat(64)),
         });
-        let (_, usage) = validate(&manifest, &allow).unwrap();
+        let (_, usage) = validate(&manifest, &allow, 123).unwrap();
         assert_eq!(usage.notes_bytes, protocol::NOTES_TOTAL_LIMIT);
         assert_eq!(
             usage.total_bytes,

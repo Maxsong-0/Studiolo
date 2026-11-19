@@ -284,7 +284,7 @@ npm --prefix web test && npm --prefix web run lint && npm --prefix web run forma
   `python3 crates/auth-admin/tests/support/cli_process.py target/debug/studiolo-auth-admin`。
 - `replica-capacity` 一步用 release 构建跑 `cargo --locked test --release -p studiolo-agent-server --test replica_capacity_contract`
   （T-215，vault BUG-039）：满额副本 16 路并发读的时延与常驻内存。只在 Linux 跑，debug 下标为忽略，所以上面那组里的
-  workspace 测试跑不到它；agent 运行包也不带它。
+  workspace 测试跑不到它；两个运行包（`package-agent.sh`、`package-preview.sh`）也都不带它。
 
 Mac 会话在 Linux 服务器上原生跑 Rust 那一半（把工作树同步到 `githubci` 后在那里跑；2026-09-19 起不再用 Docker；DGX 见下面「DGX 本机跑」）：
 

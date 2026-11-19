@@ -89,7 +89,8 @@ fn first_generation(
     index: &IndexRuntime,
     limits: ScanLimits,
 ) -> Result<Generation, String> {
-    let (snapshot, freshness) = source.scan(limits, None)?;
+    let (snapshot, replica) = source.scan(limits, None)?;
+    let (freshness, replica_usage) = replica.unzip();
     let (model, index_status) = index.build(&snapshot, None)?;
     Ok(Generation {
         number: 1,
@@ -98,6 +99,7 @@ fn first_generation(
         index_status,
         generated_at: now(),
         freshness,
+        replica_usage,
     })
 }
 

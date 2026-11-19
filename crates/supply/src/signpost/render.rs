@@ -328,6 +328,40 @@ mod tests {
         assert!(take(&[], 8).is_empty());
     }
 
+    /// 容量提醒和新鲜度一样不可裁剪：每个裁剪等级都在第 2 节开头（T-215 复查）。
+    #[test]
+    fn capacity_notice_opens_section_two_at_every_trim_level() {
+        use super::{RulesSummary, SignpostInput, render};
+        use crate::{Snapshot, signpost::Principal};
+        let snapshot = Snapshot::default();
+        let principal = Principal {
+            agent_type: "claude".into(),
+            instance_id: "01JT3STUDIOLO0000000000001".into(),
+            registered_at: "2026-09-07T01:00:00Z".into(),
+        };
+        let capacity = "⚠ 副本快到协议上限：Markdown 合计 32.0 MiB，上限 40.0 MiB 的 80%。";
+        let input = SignpostInput {
+            snapshot: &snapshot,
+            allow: &[],
+            principal: &principal,
+            generation: 1,
+            generated_at: "2026-09-07T01:00:00Z",
+            freshness: Some("副本状态 ready"),
+            capacity: Some(capacity),
+            tools: &[],
+            policy: None,
+            rules_whitelist: None,
+        };
+        let projects = [project("项目/A", &["a1"])];
+        for level in 0..=3 {
+            let text = render(&input, &projects, &RulesSummary::default(), level, "tools");
+            assert!(
+                text.contains(&format!("## 2 项目状态\n{capacity}\n")),
+                "裁剪等级 {level}：\n{text}"
+            );
+        }
+    }
+
     #[test]
     fn a_single_project_keeps_its_original_order() {
         let projects = [project("A", &["a1", "a2", "a3"])];

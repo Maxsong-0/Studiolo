@@ -15,7 +15,7 @@
 //!
 //! 只在 release 构建里跑：debug 构建的解析与建模慢一个数量级，量不出生产时延。ci 套的 `replica-capacity`
 //! 一步用 `cargo --locked test --release -p studiolo-agent-server --test replica_capacity_contract` 跑它。
-//! agent 运行包不带它（`scripts/package-agent.sh` 的 `PACKAGE_EXCLUDED_TESTS`）：部署验收在生产主机上原生跑
+//! 两个运行包都不带它（`scripts/package-agent.sh`、`scripts/package-preview.sh` 的 `PACKAGE_EXCLUDED_TESTS`）：部署验收在生产主机上原生跑
 //! 运行包里的测试，满额负载不该和线上服务抢内存（T-215 复查）。
 #![cfg(target_os = "linux")]
 
@@ -53,7 +53,8 @@ const CHANGES: usize = 3;
 const LATENCY_BUDGET_MS: u128 = 10_000;
 /// 常驻匿名内存上限：单元 `MemoryMax=512M` 的四分之三；剩下的四分之一留给锁定的程序文件页与连接突发。
 /// mlockall 之后 glibc 释放的堆页退不回去，但整块 `mmap` 出来的大分配释放时会还给系统，所以每代打完时的
-/// `RssAnon` 不一定是峰值：峰值另按 `VmHWM − RssFile` 估（程序文件页启动时就全部锁入，之后不变），两个都要在上限内。
+/// `RssAnon` 不一定是峰值：峰值另按 `VmHWM − 起点 RssFile` 估，两个都要在上限内。加固用的是 `MCL_ONFAULT`，程序文件页
+/// 执行到才锁入，`RssFile` 只增不减，所以减加固后、起服务前的读数得到匿名峰值的上界（多算的只是之后新锁入的程序页）。
 const MEMORY_BUDGET_KIB: u64 = 384 * 1024;
 
 /// 换代次时改动的篇数间隔：第 k 次换代改编号除以它余 k 的那些篇（满额约四十来篇），同大小改字节，合计不变。
@@ -93,7 +94,9 @@ fn notes_limit_replica_answers_concurrent_reads_within_budget() {
     let slowest = u128::from(readings.number("SLOWEST_MS"));
     let rss_anon = readings.number("RSS_ANON_KIB");
     let rss_file = readings.number("RSS_FILE_KIB");
-    let peak_anon = readings.number("VM_HWM_KIB").saturating_sub(rss_file);
+    let peak_anon = readings
+        .number("VM_HWM_KIB")
+        .saturating_sub(readings.number("RSS_FILE_START_KIB"));
     eprintln!(
         "副本容量自证：上限 {} KiB，满额 {} 篇 {} KiB；{} 个代次各 {BURSTS} 轮 {CONCURRENCY} 路并发读，\
          最慢 {slowest} ms（上限 {LATENCY_BUDGET_MS} ms）；常驻匿名内存 {rss_anon} KiB、峰值估计 {peak_anon} KiB\
@@ -116,7 +119,7 @@ fn notes_limit_replica_answers_concurrent_reads_within_budget() {
     );
     assert!(
         peak_anon <= MEMORY_BUDGET_KIB,
-        "满额副本的匿名内存峰值估计 {peak_anon} KiB（VmHWM − RssFile），超过 {MEMORY_BUDGET_KIB} KiB：\
+        "满额副本的匿名内存峰值估计 {peak_anon} KiB（VmHWM − 起点 RssFile，上界），超过 {MEMORY_BUDGET_KIB} KiB：\
          校验进行中的瞬时峰值比打完时高出这么多，上限调高了就得先压内存"
     );
 }
@@ -131,6 +134,8 @@ fn replica_capacity_probe() {
 }
 
 async fn probe() {
+    // 加固之后、起服务之前的程序文件页：`RssFile` 只增不减，这是最小值（见 `MEMORY_BUDGET_KIB`）。
+    println!("RSS_FILE_START_KIB={}", status_kib("RssFile:"));
     let path = |key: &str| PathBuf::from(std::env::var_os(key).unwrap_or_else(|| panic!("{key}")));
     let root = path(ROOT);
     let server = support::spawn(ServeOptions {

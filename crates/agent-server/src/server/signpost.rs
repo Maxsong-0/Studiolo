@@ -62,12 +62,10 @@ impl AgentSession {
         // 副本快到协议上限时只在路牌上提醒（T-215）；内容响应逐次带的新鲜度行不重复它。
         // 用量是全副本的数，只给读得到每个条目的接入方，判定与读取路径同一个 `grant.allows`。
         // 提醒写在路牌第 2 节开头，不接在新鲜度后面（会挤掉身份段的固定行位，见 `SignpostInput::capacity`）。
-        let capacity = generation.freshness.as_ref().and_then(|freshness| {
-            studiolo_supply::replica::capacity_notice_for(
-                &generation.snapshot,
-                &freshness.usage,
-                |path| grant.allows(path),
-            )
+        let capacity = generation.replica_usage.as_ref().and_then(|usage| {
+            studiolo_supply::replica::capacity_notice_for(&generation.snapshot, usage, |path| {
+                grant.allows(path)
+            })
         });
         let policy = self.policy_signpost(grant)?;
         let principal = Principal {

@@ -6,11 +6,30 @@ use serde_json::json;
 use std::fs;
 use studiolo_supply::{
     EntryKind,
-    replica::{ReplicaError, ReplicaRoot},
+    replica::{ReplicaError, ReplicaRoot, Usage},
 };
 
 fn root(f: &ReplicaFixture) -> ReplicaRoot {
     ReplicaRoot::open(&f.root, &["project".into()], 300).unwrap()
+}
+
+#[test]
+fn verified_usage_counts_what_the_published_manifest_actually_holds() {
+    // 路牌容量提醒按这四项判（T-215 复查）；清单字节这一路原先没有任何测试。
+    let f = ReplicaFixture::new();
+    let replica = root(&f).verify(f.observed + 1000, None).unwrap();
+    let manifest = fs::read(f.release(FIRST).join("manifest.json")).unwrap();
+    let size = |relative: &str| fs::metadata(f.file(relative)).unwrap().len();
+    let notes = size("project/00-总览/INDEX.md") + size("project/note.md");
+    assert_eq!(
+        replica.usage,
+        Usage {
+            manifest_bytes: manifest.len() as u64,
+            entries: 5,
+            total_bytes: notes + size("project/image.bin"),
+            notes_bytes: notes,
+        }
+    );
 }
 
 #[test]
