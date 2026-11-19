@@ -100,6 +100,11 @@ def integer(value):
     return type(value) is int
 
 
+def markdown(path):
+    """算进 Markdown 合计的条目：后缀 .md，不分大小写（同 agent 的 replica::verify::markdown）。"""
+    return path.lower().endswith(".md")
+
+
 def digest(raw):
     return hashlib.sha256(raw).hexdigest()
 
@@ -235,7 +240,7 @@ def manifest(raw):
         require(p > previous and any(p.startswith(a + "/") for a in ALLOW))
         require("vault/" + p.lower() not in seen)
         seen.add("vault/" + p.lower())
-        require(integer(size) and 0 <= size <= (MAX_MANIFEST if p.lower().endswith(".md") else MAX_FILE))
+        require(integer(size) and 0 <= size <= (MAX_MANIFEST if markdown(p) else MAX_FILE))
         require(kind in ("dir", "file"))
         if kind == "dir":
             require(size == 0 and sha is None)
@@ -243,7 +248,7 @@ def manifest(raw):
             require(isinstance(sha, str) and re.fullmatch("[a-f0-9]{64}", sha))
         expected["vault/" + p] = (kind, size, sha)
         previous, total = p, total + size
-        if p.lower().endswith(".md"):
+        if markdown(p):
             notes_total += size
     require(total <= MAX_TOTAL)
     require(notes_total <= MAX_NOTES_TOTAL)

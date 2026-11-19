@@ -6,7 +6,7 @@ import re
 import tarfile
 
 from replica_common import (MAX_ENTRIES, MAX_MANIFEST, MAX_TOTAL, descend, digest,
-                            integer, load_json, manifest, path_ok, require, write_file)
+                            integer, load_json, manifest, markdown, path_ok, require, write_file)
 
 # 传输包上限随总量上限派生（tar 头、填充与清单的余量），不再单独写死一个会被忘改的数。
 MAX_WIRE = 2 * MAX_TOTAL
@@ -127,7 +127,7 @@ def receive(stream, stage):
                                   0o600, dir_fd=fd)
                     try:
                         remaining, actual = size, hashlib.sha256()
-                        decoder = codecs.getincrementaldecoder("utf-8")() if path.lower().endswith(".md") else None
+                        decoder = codecs.getincrementaldecoder("utf-8")() if markdown(path) else None
                         with os.fdopen(out, "wb", closefd=False) as target:
                             while remaining:
                                 chunk = reader.read(min(65536, remaining))

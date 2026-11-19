@@ -111,7 +111,7 @@ class ReceiverTests(unittest.TestCase):
 
     def base_of(self):
         """源端基线：上一轮被服务器确认的清单摘要与 expected。"""
-        raw, _, expected, _ = capture(str(self.vault))
+        raw, _, expected, _, _ = capture(str(self.vault))
         return digest(raw), expected
 
     @staticmethod

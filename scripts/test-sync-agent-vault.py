@@ -15,6 +15,7 @@ from unittest.mock import patch
 
 sys.dont_write_bytecode = True
 from replica_archive import transfer_deadline
+from replica_capacity import GAUGES, LIMITS, LimitExceeded
 from replica_capture import capture
 from replica_client import accept_response
 from replica_common import ALLOW, Invalid, digest, encode
@@ -54,14 +55,24 @@ class SyncAgentVaultTests(unittest.TestCase):
                         "    f.write(json.dumps(sys.argv[:-1]) + '\\n')\n"
                         "sys.exit(subprocess.call(['/bin/sh', '-c', sys.argv[-1]]))\n")
         stub.chmod(0o755)
+        # 系统通知的替身（T-217）：只把参数记下来，退出码由 STUDIOLO_TEST_NOTIFY_EXIT 定。每个用例都带着它，
+        # 在 Mac 上跑也不会真的弹通知。
+        self.notify_log = self.root / "notify.jsonl"
+        notifier = bin_dir / "osascript"
+        notifier.write_text("#!/usr/bin/env python3\nimport os, sys, json\n"
+                            "with open(os.environ['STUDIOLO_TEST_NOTIFY_LOG'], 'a', encoding='utf-8') as f:\n"
+                            "    f.write(json.dumps(sys.argv[1:], ensure_ascii=False) + '\\n')\n"
+                            "sys.exit(int(os.environ.get('STUDIOLO_TEST_NOTIFY_EXIT', '0')))\n")
+        notifier.chmod(0o755)
         self.env = dict(os.environ, PATH=str(bin_dir) + os.pathsep + os.environ["PATH"],
                         STUDIOLO_VAULT=str(self.vault), STUDIOLO_REMOTE_REPLICA=str(self.server),
                         STUDIOLO_SYNC_STATE_DIR=str(self.state), STUDIOLO_TEST_LOG=str(self.log),
+                        STUDIOLO_TEST_NOTIFY_LOG=str(self.notify_log),
                         STUDIOLO_PYTHON=sys.executable, PYTHONDONTWRITEBYTECODE="1")
 
-    def run_sync(self, args=(), code=0):
+    def run_sync(self, args=(), code=0, timeout=10):
         result = subprocess.run(["bash", str(SCRIPT), *args], env=self.env,
-                                capture_output=True, text=True, timeout=10)
+                                capture_output=True, text=True, timeout=timeout)
         self.assertEqual(result.returncode, code, result.stderr)
         self.assertNotIn("private fixture text", result.stdout + result.stderr)
         return result
@@ -475,6 +486,41 @@ class SyncAgentVaultTests(unittest.TestCase):
             (self.project / (".hidden" + str(n))).touch()
         with patch("replica_capture.MAX_ENTRIES", 5), self.assertRaises(Invalid):
             capture(str(self.vault))
+
+    def test_every_run_reports_the_usage_of_all_four_limits(self):
+        # 用量写进同步结果（T-217）：预演与实际同步都有，离提醒线很远时不带提醒、不发通知。
+        for args in (["--dry-run"], []):
+            with self.subTest(args=args):
+                value = json.loads(self.run_sync(args).stdout)
+                capacity = value["capacity"]
+                self.assertEqual(set(capacity), {key for key, _, _ in GAUGES})
+                self.assertEqual(capacity["notes_bytes"], {"used": len("private fixture text"),
+                                                           "limit": LIMITS["notes_bytes"], "percent": 0})
+                self.assertEqual(capacity["total_bytes"]["used"], len("private fixture text"))
+                self.assertEqual(capacity["entries"]["visible"], 1)
+                self.assertGreaterEqual(capacity["entries"]["used"], 1)
+                self.assertGreater(capacity["manifest_bytes"]["used"], 0)
+                self.assertNotIn("capacity_notice", value)
+                self.assertNotIn("capacity_alert", value)
+        self.assertFalse(self.notify_log.exists())
+
+    def test_capture_reports_usage_and_names_the_limit_it_crosses(self):
+        (self.project / "attachment.bin").write_bytes(b"12345")
+        (self.project / "UPPER.MD").write_bytes(b"abc")
+        (self.project / ".hidden").touch()
+        raw, _, _, _, usage = capture(str(self.vault))
+        note = len("private fixture text")
+        self.assertEqual(usage, {"manifest_bytes": len(raw), "entries": 4, "visible_entries": 3,
+                                 "total_bytes": note + 5 + 3, "notes_bytes": note + 3})
+        # 越线时整批失败照旧（仍是 Invalid），并点名是哪一条；清单那条按清单原文的字节数算。
+        for name, value, gauge in (("MAX_ENTRIES", 3, "entries"), ("MAX_TOTAL", note + 7, "total_bytes"),
+                                   ("MAX_NOTES_TOTAL", note + 2, "notes_bytes"),
+                                   ("MAX_MANIFEST", len(raw) - 1, "manifest_bytes")):
+            with self.subTest(limit=name), patch("replica_capture." + name, value):
+                with self.assertRaises(LimitExceeded) as caught:
+                    capture(str(self.vault))
+                self.assertEqual(caught.exception.gauge, gauge)
+                self.assertIsInstance(caught.exception, Invalid)
 
     def test_total_markdown_budget_and_utf8_are_checked_at_source(self):
         (self.project / "note.md").write_bytes(b"one!")

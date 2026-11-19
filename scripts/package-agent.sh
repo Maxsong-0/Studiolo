@@ -37,7 +37,7 @@ STUDIOLO_INPUTS=(
   scripts/check-agent-replica.py scripts/test-check-agent-replica.py
   scripts/check-agent-http.py scripts/test-check-agent-http.py
   scripts/sync-agent-vault.sh scripts/test-linux.sh .testbox.toml .config/nextest.toml
-  scripts/replica_archive.py scripts/replica_capture.py scripts/replica_cleanup.py
+  scripts/replica_archive.py scripts/replica_capacity.py scripts/replica_capture.py scripts/replica_cleanup.py
   scripts/replica_client.py scripts/replica_common.py scripts/replica_receiver.py scripts/replica_store.py
   scripts/test-replica-receiver.py scripts/test-replica-boundaries.py
   scripts/prepare-agent-sync.py scripts/test-prepare-agent-sync.py

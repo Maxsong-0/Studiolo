@@ -6,9 +6,10 @@ import tarfile
 import tempfile
 import time
 
+from replica_capacity import measure, within
 from replica_common import (ALLOW, MAX_ENTRIES, MAX_FILE, MAX_MANIFEST, MAX_NOTES_TOTAL, MAX_TOTAL,
                             check_node, descend, digest, encode, fingerprint,
-                            logical_path_ok, manifest, open_root, read_file, require)
+                            logical_path_ok, manifest, markdown, open_root, read_file, require)
 
 
 def missing_registered(path):
@@ -32,6 +33,7 @@ def missing_registered(path):
 
 
 def scan(root_fd, keep=True):
+    """返回 (条目, 正文, 指纹, 连隐藏项一起数的名字个数)。四条协议上限越线时以那一条的名义整批失败。"""
     entries, bodies, snapshots, folded = [], {}, {}, set()
     total, inspected, notes_total = 0, 0, 0
 
@@ -43,14 +45,15 @@ def scan(root_fd, keep=True):
         with os.scandir(fd) as iterator:
             for node in iterator:
                 inspected += 1
-                require(inspected <= MAX_ENTRIES)
+                within("entries", inspected, MAX_ENTRIES)
                 if not node.name.startswith("."):
                     names.append(node.name)
         names.sort()
         for name in names:
             p = path + "/" + name
             logical_path_ok(p)
-            require(p.lower() not in folded and len(entries) < MAX_ENTRIES)
+            require(p.lower() not in folded)
+            within("entries", len(entries) + 1, MAX_ENTRIES)
             folded.add(p.lower())
             st = os.stat(name, dir_fd=fd, follow_symlinks=False)
             if stat.S_ISDIR(st.st_mode):
@@ -64,14 +67,14 @@ def scan(root_fd, keep=True):
                     os.close(child)
             else:
                 check_node(st, False)
-                raw, fp = read_file(fd, name, MAX_MANIFEST if p.lower().endswith(".md") else MAX_FILE, False)
+                raw, fp = read_file(fd, name, MAX_MANIFEST if markdown(p) else MAX_FILE, False)
                 require(fp == fingerprint(st))
                 total += len(raw)
-                require(total <= MAX_TOTAL)
-                if p.lower().endswith(".md"):
+                within("total_bytes", total, MAX_TOTAL)
+                if markdown(p):
                     raw.decode("utf-8")
                     notes_total += len(raw)
-                    require(notes_total <= MAX_NOTES_TOTAL)
+                    within("notes_bytes", notes_total, MAX_NOTES_TOTAL)
                 entries.append({"path": p, "kind": "file", "bytes": len(raw), "sha256": digest(raw)})
                 snapshots[p] = fp
                 if keep:
@@ -85,17 +88,18 @@ def scan(root_fd, keep=True):
         finally:
             os.close(fd)
     entries.sort(key=lambda item: item["path"])
-    return entries, bodies, snapshots
+    return entries, bodies, snapshots, inspected
 
 
 def capture(path, between_scans=None):
+    """双读白名单，返回 (清单原文, 正文, expected, 观察时间, 用量)；用量见 replica_capacity.measure。"""
     root = open_root(path)
     try:
         before = fingerprint(os.fstat(root))
-        entries, bodies, snapshots = scan(root)
+        entries, bodies, snapshots, inspected = scan(root)
         if between_scans is not None:
             between_scans()
-        second, _, latest = scan(root, keep=False)
+        second, _, latest, inspected_again = scan(root, keep=False)
         require(entries == second and snapshots == latest)
         require(before == fingerprint(os.fstat(root)))
         # 重新解析绝对路径，捕获祖先/根在扫描期间被替换的情况。
@@ -105,9 +109,11 @@ def capture(path, between_scans=None):
         finally:
             os.close(check)
         raw = encode({"schema_version": 1, "allow": ALLOW, "entries": entries})
+        within("manifest_bytes", len(raw), MAX_MANIFEST)
         _, expected = manifest(raw)
         observed = time.time_ns() // 1_000_000
-        return raw, bodies, expected, observed
+        # 隐藏项不进清单，两遍之间变了不拦；按多的那遍算，提醒宁早不晚。
+        return raw, bodies, expected, observed, measure(raw, entries, max(inspected, inspected_again))
     finally:
         os.close(root)
 
@@ -121,7 +127,7 @@ def transfer_mode(captured, base):
 
 def archive(captured, base=None):
     """整份：全部条目；确认：只有清单与请求；增量：全部目录＋与基线不同的文件（ADR-024）。"""
-    raw, bodies, expected, observed = captured
+    raw, bodies, expected, observed, _ = captured
     mode = transfer_mode(captured, base)
     base_digest, base_expected = base if base is not None else (None, None)
     output = tempfile.TemporaryFile()

@@ -191,6 +191,24 @@ class BoundaryTests(unittest.TestCase):
                       if rust(r) != getattr(replica_common, p)}
         self.assertEqual(mismatched, {}, "Rust 与 Python 的副本上限不一致（Rust 值, Python 值）")
 
+    def test_python_and_rust_capacity_warning_percent_agree(self):
+        """Mac 同步端的容量通知（replica_capacity.py）与 agent 路牌的容量提醒用同一个百分比（T-217）。
+
+        只改一端，两处提醒就不在同一天出现：用户在一处看到「快到上限」，另一处却说没事。
+        """
+        import re
+        import replica_capacity
+        import replica_common
+        source = (Path(__file__).resolve().parent.parent
+                  / "crates/supply/src/replica/mod.rs").read_text(encoding="utf-8")
+        found = re.findall(r"^pub const CAPACITY_WARN_PERCENT: u64 = ([0-9_]+);$", source, re.MULTILINE)
+        self.assertEqual(len(found), 1, "mod.rs 里应恰好有一处 CAPACITY_WARN_PERCENT")
+        self.assertEqual(int(found[0].replace("_", "")), replica_capacity.CAPACITY_WARN_PERCENT)
+        # 四条上限也对得上：Python 的提醒只认这四条，且各自等于 replica_common 里的常量（上一条守着与 Rust 相等）。
+        self.assertEqual(replica_capacity.LIMITS, {
+            "notes_bytes": replica_common.MAX_NOTES_TOTAL, "total_bytes": replica_common.MAX_TOTAL,
+            "entries": replica_common.MAX_ENTRIES, "manifest_bytes": replica_common.MAX_MANIFEST})
+
 
 if __name__ == "__main__":
     suite = unittest.TestSuite(BoundaryTests(name) for name in BoundaryTests.__dict__ if name.startswith("test_"))

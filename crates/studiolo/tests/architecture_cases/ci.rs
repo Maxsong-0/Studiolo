@@ -66,7 +66,7 @@ const WEB: &str = "web";
 
 /// 仓库根的其余回归（部署脚本、告警监控、副本管线、本地登记工具 CLI），逐行钉住：删掉一条
 /// 就少验一类东西，合并照样过。新加的回归放在这一步最后一条钉住的行之后不用改这里；要放在前面就先钉上。
-const REGRESSIONS: [&str; 48] = [
+const REGRESSIONS: [&str; 49] = [
     "for script in scripts/package-agent.sh scripts/run-agent-tests.sh scripts/sync-agent-vault.sh scripts/package-preview.sh scripts/run-preview-tests.sh deploy/agent/install-t036-system.sh deploy/agent/upgrade-read-supply.sh.in deploy/agent/enable-m4-policy.sh.in; do",
     "bash -n \"$script\"",
     "done",
@@ -87,6 +87,8 @@ const REGRESSIONS: [&str; 48] = [
     "python3 scripts/test-prepare-agent-sync.py",
     "python3 scripts/test-replica-receiver.py",
     "python3 scripts/test-replica-boundaries.py",
+    // Mac 同步端容量通知（T-217）：四条上限 80% 两侧、越线点名、去重与预演；端到端夹具几十 MiB，不随运行包。
+    "python3 scripts/test-replica-capacity.py",
     "python3 scripts/test-check-preview.py",
     "python3 scripts/test-check-preview-exercise.py",
     "python3 scripts/test-package-inputs.py",

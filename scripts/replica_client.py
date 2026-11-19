@@ -9,11 +9,14 @@ import re
 import shlex
 import shutil
 import signal
+import subprocess
 import sys
 import tempfile
+import time
 import uuid
 
 from replica_archive import transfer_deadline
+import replica_capacity as capacity
 from replica_capture import archive, capture, missing_registered, transfer_mode
 from replica_common import (MAX_MANIFEST, Invalid, check_node, digest, encode, integer, load_json,
                             manifest, open_root, read_file, require)
@@ -25,6 +28,12 @@ MODULES = ("replica_common", "replica_archive", "replica_cleanup", "replica_stor
 DEFAULT_VAULT = str(Path.home() / "Documents" / "Max's Secret Place")
 DEFAULT_HOST = "maxsong@192.168.100.169"
 DEFAULT_REMOTE = "/home/maxsong/.local/share/studiolo-agent-replica"  # 服务器 169 上的路径，不随本机变
+# 容量提醒的去重状态（state/capacity-<key>.json）最大字节数；四条各一小段，远用不完。
+ALERT_STATE_LIMIT = 4096
+# 发一条系统通知最多等多久；通知发不出去不拦同步，下一轮再试。
+NOTIFY_TIMEOUT_SECS = 10
+# osascript 的脚本固定这三行，标题和正文只作为参数交给 run 处理器：文字里有引号或 AppleScript 也不会被执行。
+NOTIFY_SCRIPT = ("on run argv", "display notification (item 2 of argv) with title (item 1 of argv)", "end run")
 
 
 def remote_command(root, deadline):
@@ -55,8 +64,9 @@ def load_base(state_fd, name):
     return digest(raw), expected
 
 
-def save_base(state_fd, name, raw):
-    temp = ".base-" + uuid.uuid4().hex
+def save_private(state_fd, name, raw):
+    """在私有状态目录里原子替换一个 0600 文件（基线、容量提醒状态共用）。"""
+    temp = ".state-" + uuid.uuid4().hex
     try:
         with private_file(state_fd, temp, "wb") as output:
             output.write(raw)
@@ -79,6 +89,56 @@ def drop_base(state_fd, name):
         pass
 
 
+def notify(title, body):
+    """给 Mac 用户发一条系统通知，返回 sent／failed／unavailable；不抛异常，通知失败不拦同步。
+
+    osascript 按 PATH 找（launchd 任务的 PATH 以 /usr/bin 开头，同 SSH 的找法）；不是 macOS 就是 unavailable。
+    """
+    program = shutil.which("osascript")
+    if program is None:
+        return "unavailable"
+    command = [program, *(part for line in NOTIFY_SCRIPT for part in ("-e", line)), title, body]
+    try:
+        done = subprocess.run(command, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                              stderr=subprocess.DEVNULL, timeout=NOTIFY_TIMEOUT_SECS, check=False)
+    except (OSError, subprocess.SubprocessError):
+        return "failed"
+    return "sent" if done.returncode == 0 else "failed"
+
+
+def load_alert_state(state_fd, name):
+    """上一轮记下的容量提醒状态。文件本身不安全（链接、权限、大小）照常报错；内容读不懂当作从没提醒过。"""
+    try:
+        raw, _ = read_file(state_fd, name, ALERT_STATE_LIMIT)
+    except FileNotFoundError:
+        return {}
+    try:
+        return capacity.parse_state(load_json(raw))
+    except (ValueError, RecursionError):  # 嵌套很深的 JSON 抛的是 RecursionError
+        return {}
+
+
+def alert(state_fd, name, observed, notice, now_ms, dry_run, send=notify):
+    """按去重状态决定这一轮发不发容量提醒，返回写进结果的 capacity_alert；一条都没到线时为 None。
+
+    observed、notice 见 replica_capacity.plan 与 warn_notice／exceeded_notice。预演只说会不会发
+    （would_send／suppressed），不发、不写状态。真发时：sent 才记下这次提醒；failed／unavailable 不记，
+    下一轮重试，但退到线下的那几条照样忘掉。
+    """
+    state = load_alert_state(state_fd, name)
+    due, updated = capacity.plan(state, observed, now_ms)
+    if dry_run:
+        return None if notice is None else "would_send" if due else "suppressed"
+    outcome = None if notice is None else "suppressed"
+    if due:
+        outcome = send(*notice)
+        if outcome != "sent":
+            updated = capacity.forget(state, observed)
+    if updated != state:
+        save_private(state_fd, name, encode(capacity.dump_state(updated)))
+    return outcome
+
+
 def expired(_signal, _frame):
     raise TimeoutError("transfer_failed")
 
@@ -95,6 +155,13 @@ def accept_response(response, sha, observed):
     require(receipt["source_observed_at_ms"] == observed)
     require(integer(receipt["received_at_ms"]) and receipt["received_at_ms"] >= observed)
     return response
+
+
+def require_lock_binding(state_fd, name, lock_fd):
+    """捕获完再核一次：状态目录里那把锁仍是本进程持有的同一个文件，之后才写状态目录。"""
+    binding = os.stat(name, dir_fd=state_fd, follow_symlinks=False)
+    check_node(binding, False, private=True)
+    require((binding.st_dev, binding.st_ino) == (os.fstat(lock_fd).st_dev, os.fstat(lock_fd).st_ino))
 
 
 def private_file(directory, name, mode):
@@ -136,6 +203,7 @@ def main(argv=None):
         key = digest(encode([source, host, remote]))[:32]
         name = "sync-" + key + ".lock"
         base_name = "base-" + key + ".json"
+        alert_name = "capacity-" + key + ".json"
         lock_fd = os.open(name, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK,
                           0o600, dir_fd=state_fd)
         check_node(os.fstat(lock_fd), False, private=True)
@@ -175,7 +243,7 @@ def main(argv=None):
             with private_file(work_fd, "manifest.json", "rb") as saved:
                 manifest_raw = saved.read(MAX_MANIFEST + 1)
             require(len(manifest_raw) <= MAX_MANIFEST and digest(manifest_raw) == summary["source_digest"])
-            save_base(state_fd, base_name, manifest_raw)
+            save_private(state_fd, base_name, manifest_raw)
             status = {**response, **summary}
         else:
             missing = missing_registered(source)
@@ -186,14 +254,30 @@ def main(argv=None):
                           "missing": len(missing)}
                 print(json.dumps(status, separators=(",", ":")), file=sys.stderr)
                 return 1
-            captured = capture(source)
-            raw, bodies, expected, observed = captured
-            binding = os.stat(name, dir_fd=state_fd, follow_symlinks=False)
-            check_node(binding, False, private=True)
-            require((binding.st_dev, binding.st_ino) == (os.fstat(lock_fd).st_dev, os.fstat(lock_fd).st_ino))
+            try:
+                captured = capture(source)
+            except capacity.LimitExceeded as over:
+                # 越线（BUG-039）：整批照旧不发，日志点名是哪一条，并给 Mac 用户发系统通知（T-217）。
+                require_lock_binding(state_fd, name, lock_fd)
+                notice = capacity.exceeded_notice(over.gauge)
+                status = {"status": "failed", "last_error": "capacity_exceeded", "exceeded": over.gauge,
+                          "capacity_notice": notice[1],
+                          "capacity_alert": alert(state_fd, alert_name, {over.gauge: "exceeded"}, notice,
+                                                  time.time_ns() // 1_000_000, args.dry_run)}
+                print(json.dumps(status, ensure_ascii=False, separators=(",", ":")), file=sys.stderr)
+                return 1
+            raw, bodies, expected, observed, usage = captured
+            require_lock_binding(state_fd, name, lock_fd)
             summary = {"source_digest": digest(raw), "source_observed_at_ms": observed,
                        "files": len(bodies), "bytes": sum(len(b) for b in bodies.values()),
-                       "directories": sum(v[0] == "dir" for v in expected.values())}
+                       "directories": sum(v[0] == "dir" for v in expected.values()),
+                       "capacity": capacity.report(usage)}
+            # 四条上限到 80% 起：结果里写一句提醒，并按去重给 Mac 用户发系统通知（T-217，不经 agent 的读授权）。
+            notice = capacity.warn_notice(summary["capacity"])
+            outcome = alert(state_fd, alert_name, capacity.levels(summary["capacity"]), notice, observed,
+                            args.dry_run)
+            if notice is not None:
+                summary.update(capacity_notice=notice[1], capacity_alert=outcome)
             if args.dry_run:
                 status = {"status": "dry_run", **summary}
             else:

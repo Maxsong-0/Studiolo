@@ -20,6 +20,7 @@ bash scripts/sync-agent-vault.sh
 登记给 AI 看的目录在库里不存在时（库里改名或删了目录，BUG-038），整批不发，报
 `{"status":"failed","last_error":"registered_directory_missing","missing":<个数>}`；
 用 `python3 scripts/project_registry.py check --vault <库根目录>` 逐个列出，按库里的现名改注册表再 `sync`。
+预演和实际同步的结果都带四条协议上限的用量 `capacity`；任一条到 80% 会多一句 `capacity_notice` 并给 Mac 用户发系统通知，越线时整批不发、报 `capacity_exceeded`（第 3 节「T-217」）。
 只有接收端验证全部字节与清单成功才发布；失败保留上一完整批次。源机断网或休眠时，服务器能判断副本已经过期，不能知道本地最新笔记内容。
 
 ## 2. 更新 MCP 服务（服务器）
@@ -143,6 +144,43 @@ SSH 失败只报告数字 `ssh_exit_code`；超时报告 `transfer_timeout`，�
 - **整份**：没有基线（首次运行、基线已清、白名单变了）时，与旧行为相同。
 
 服务器回 `base_mismatch`（现代次不是这份基线，或现代次已损坏）时，同步报 `{"status":"failed","last_error":"base_mismatch"}` 并清掉基线，下一轮自动整份推送。现代次损坏时服务器另记 `validation_failed`，agent 状态会如实显示。同步结果 JSON 多两个字段：`mode`（full／delta／confirm）和 `sent_bytes`。需要强制整份推送时，删除 `state/base-*.json` 即可。
+
+### T-217：快到协议上限时给 Mac 用户发系统通知
+
+agent 路牌的容量提醒只给读得到全副本的接入方，生产上可能谁也收不到（vault BUG-039 那次越线 27 天后才发现），
+所以同步端每轮捕获时自己算同样四条（纯逻辑在 `scripts/replica_capacity.py`，发通知和去重状态在 `scripts/replica_client.py`）：
+
+- **用量**：同步成功（`ready`）和 `--dry-run` 的结果带 `capacity`。越线失败只带 `exceeded`（捕获停在越线处，用量不全）；
+  传输阶段失败的那一行（`transfer_failed`、`transfer_timeout`、`transfer_interrupted`、`base_mismatch`）照旧只有原因码，
+  有的由入口 bash 直接写、带不全，用量在捕获时已经算过、通知照发。格式：
+  `{"notes_bytes":{"used":…,"limit":…,"percent":…},"total_bytes":{…},"entries":{…,"visible":可见条目数},"manifest_bytes":{…}}`，
+  `percent` 向下取整。`entries.used` 连隐藏项一起数（Mac 捕获按这个数拦），比 agent 路牌只数可见项的多。
+- **到线**（任一条 ≥80%）：结果多 `capacity_notice`（哪条、用了多少、上限多少、该怎么办）和 `capacity_alert`：
+  `sent` 发出了；`suppressed` 按去重这一轮不发；`failed`／`unavailable` 没发出去（`osascript` 出错、超时 10 秒或不在 macOS），
+  不拦同步、不记下，下一轮再试（退到线下的那几条照样忘掉）。预演只报 `would_send` 或 `suppressed`，不发、不写状态。
+- **越线**：整批不发、不连 SSH，`stderr` 报
+  `{"status":"failed","last_error":"capacity_exceeded","exceeded":"notes_bytes|total_bytes|entries|manifest_bytes","capacity_notice":…,"capacity_alert":…}`，
+  同样发通知。以前这种情况只报笼统的 `validation_failed`。
+- **去重**：状态在运行目录 `state/capacity-<key>.json`（0600，原子替换），每条记最近一次提醒的级别和时间。第一次到线、从到线变越线马上发；
+  之后到线每 7 天、越线每 24 小时至多再提醒一次（时钟往回拨算到期）；退回 80% 以下就删掉那条，下次到线重新提醒。
+  想马上再收到一次就删掉这个文件。文件权限或类型不对时同步失败关闭（同基线文件）；内容读不懂当作没提醒过。
+- 通知用 `osascript` 的 `display notification`，标题和正文只作为参数交给固定的三行脚本，不拼进脚本；内容只有用量数字，没有文件名和正文。
+- **收到之后**：调高两端上限（`scripts/replica_common.py` 与 `crates/supply/src/replica/protocol.rs`，agent 先部署或同时、Mac 包紧跟，理由见第 2 节）
+  或精简白名单（`scripts/project_registry.json`）。
+
+**启用（主人在场）**：它随 Mac 同步包生效，已装的旧包不会自己更新。
+
+1. 终端里确认这台 Mac 显示得出 `osascript` 的通知：
+
+   ```bash
+   osascript -e 'display notification "Studiolo 容量通知测试" with title "Studiolo"'
+   ```
+
+   没弹出来时，到「系统设置 → 通知」找「脚本编辑器」（Script Editor），打开「允许通知」再试。
+2. 按上面「生成并启用自动任务」用新的输出目录（例如 `…/studiolo-agent-sync/t217`）生成，`plutil -lint` 后在仓库根跑
+   `bash scripts/sync-agent-vault.sh --dry-run`，确认结果里有 `capacity`。
+3. 停旧任务、把 `~/Library/LaunchAgents/me.studiolo.agent-sync.plist` 链接换到新目录、再 `bootstrap`。新目录没有旧基线，第一轮整份推送。
+4. 新目录 `logs/stdout.log` 连续两轮 `ready`、每行带 `capacity`，且服务器 `check-agent-replica.py --expected ready` 通过，才算换好；不行就换回旧链接和旧目录。
 
 遇到 `launchd` 连续 `transfer_failed`、但交互 shell 成功时，检查实际运行的冻结包是否包含这项修复。
 不要仅以手工推送成功判定恢复：新包必须由 launchd 定时触发、连续至少两轮退出码 0，
