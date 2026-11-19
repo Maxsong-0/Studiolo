@@ -1,4 +1,6 @@
-//! 备份生产者的固定事实：只从私有配置的两段和启动选项里算；没配就不启用，配了但条件不齐就拒绝启动。
+//! 备份生产者的固定事实：只从 `--backup-config` 指向的私有备份配置（两段）和启动选项里算；
+//! 没给这个参数就不启用，给了但文件或条件不齐就拒绝启动。备份两段不放进主人配置：
+//! 主人配置整份字节是 Bridge `scope_hash` 的输入，改它会让人侧起不来（T-216）。
 //! 这里不建目录、不绑 socket、不碰任何 owner：监听在 `serving.rs` 里和别的入口一起起停。
 use super::StartupError;
 use crate::options::Options;
@@ -9,7 +11,10 @@ use studiolo_backup::checkpoint::manifest::{
     SecretSource,
 };
 use studiolo_core::checkpoint::FreezeBudget;
-use studiolo_host_config::{Config, backup::BackupTargetShape};
+use studiolo_host_config::{
+    Config,
+    backup::{BackupConfig, BackupTargetShape},
+};
 use studiolo_local_server::{
     backup::{BackupProducer, ProducerPlan},
     checkpoint::CheckpointInputs,
@@ -27,14 +32,16 @@ pub(super) struct Prepared {
     pub(super) producer: Arc<BackupProducer>,
 }
 
-/// 两段配置都在才启用。原生 worker 只接专用的仅追加目标，别的目标形态在这里就拒绝。
+/// 给了备份配置才启用，文件里两段必须成对。原生 worker 只接专用的仅追加目标，别的目标形态在这里就拒绝。
 pub(super) fn approved(
     config: &Config,
     options: &Options,
 ) -> Result<Option<Approved>, StartupError> {
-    let Some((approval, settings)) = config.backup_producer() else {
+    let Some(path) = &options.backup_config else {
         return Ok(None);
     };
+    let backup = BackupConfig::load(path, config).map_err(|_| StartupError::Configuration)?;
+    let (approval, settings) = (backup.approval(), backup.producer());
     if approval.target_shape() != BackupTargetShape::DedicatedAppendOnlyTarget {
         return Err(StartupError::Configuration);
     }
@@ -105,6 +112,7 @@ pub(super) fn approved(
             ephemeral_root: settings.ephemeral_root().to_owned(),
             source_roots,
             min_interval_millis: approval.schedule().interval_millis(),
+            rpo_millis: approval.schedule().rpo_millis(),
             source_retention_millis: settings.source_retention_millis(),
             freeze_budget,
             manifest,

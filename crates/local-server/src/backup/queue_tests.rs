@@ -21,13 +21,22 @@ fn key(sequence: u64) -> JobKey {
 fn intent(ledger: &MemoryAuditLedger, key: &JobKey, target: BackupTargetKind) -> AuditRecord {
     ledger.append(backup_intent(key, target).unwrap()).unwrap()
 }
-/// 形状完整的准入事件：以原意图那条记录为审计截止点。
+/// 形状完整的准入事件：以原意图那条记录为审计截止点，内容截止在 0 时刻。
 fn admit(ledger: &MemoryAuditLedger, key: &JobKey, cutoff: &AuditRecord) -> AuditRecord {
+    admit_at(ledger, key, cutoff, 0)
+}
+/// 同上，内容截止在 `content_cutoff_ms`。
+fn admit_at(
+    ledger: &MemoryAuditLedger,
+    key: &JobKey,
+    cutoff: &AuditRecord,
+    content_cutoff_ms: i64,
+) -> AuditRecord {
     let hash = IntegrityHash::sha256(key.checkpoint_id.as_str().as_bytes()).to_hex();
     let body = json!({
         "schema":1,"key":key,"target":TARGET,
         "source":{"checkpoint_id":key.checkpoint_id,"seal_sha256":"ab".repeat(32)},
-        "content_cutoff":0,"expires_at":i64::MAX,
+        "content_cutoff":content_cutoff_ms,"expires_at":i64::MAX,
         "audit_offset":cutoff.offset(),"audit_hash":cutoff.record_hash().to_hex(),
     });
     ledger
@@ -328,4 +337,73 @@ fn outcomes_that_close_nothing_here_are_neither_success_nor_failure() {
         })
     );
     assert_eq!(queue.first_attempt_ms(), Some(at(&mine)));
+}
+
+#[test]
+fn only_an_admitted_job_that_succeeded_moves_the_recovery_point_and_it_never_goes_back() {
+    let ledger = MemoryAuditLedger::new();
+    // 成功了却没有准入：算一次成功，但不知道内容截止到哪，不当恢复点。
+    intent(&ledger, &key(1), TARGET);
+    succeed(&ledger, &key(1), true);
+    let queue = view(&ledger);
+    assert!(queue.last_success().is_some());
+    assert_eq!(queue.recovery_point(), None);
+
+    // 准入了，结果是失败、认不出（没写明校验通过）、未验证：都不推进。
+    let second = intent(&ledger, &key(2), TARGET);
+    admit_at(&ledger, &key(2), &second, 2_000);
+    fail(&ledger, &key(2));
+    let third = intent(&ledger, &key(3), TARGET);
+    admit_at(&ledger, &key(3), &third, 3_000);
+    succeed(&ledger, &key(3), false);
+    let fourth = intent(&ledger, &key(4), TARGET);
+    admit_at(&ledger, &key(4), &fourth, 4_000);
+    outcome(
+        &ledger,
+        &key(4),
+        json!({"result":"unverified","reason":"target_unreachable"}),
+    );
+    assert_eq!(view(&ledger).recovery_point(), None);
+
+    // 准入且成功：恢复点就是准入里的内容截止，不是结果落账的时刻。
+    let fifth = intent(&ledger, &key(5), TARGET);
+    admit_at(&ledger, &key(5), &fifth, 5_000);
+    succeed(&ledger, &key(5), true);
+    let five = Some(RecoveryMark {
+        sequence: 5,
+        content_cutoff_ms: 5_000,
+    });
+    assert_eq!(view(&ledger).recovery_point(), five);
+
+    // 之后再失败：恢复点留着，它仍是能恢复到的那一点。
+    let sixth = intent(&ledger, &key(6), TARGET);
+    admit_at(&ledger, &key(6), &sixth, 6_000);
+    fail(&ledger, &key(6));
+    assert_eq!(view(&ledger).recovery_point(), five);
+
+    // 两条同时挂着、后收口的那条内容截止更早：恢复点只往前走，不倒退。
+    let seventh = intent(&ledger, &key(7), TARGET);
+    admit_at(&ledger, &key(7), &seventh, 8_000);
+    let eighth = intent(&ledger, &key(8), TARGET);
+    admit_at(&ledger, &key(8), &eighth, 7_000);
+    succeed(&ledger, &key(7), true);
+    succeed(&ledger, &key(8), true);
+    let queue = view(&ledger);
+    assert_eq!(
+        queue.recovery_point(),
+        Some(RecoveryMark {
+            sequence: 7,
+            content_cutoff_ms: 8_000,
+        })
+    );
+    assert_eq!(queue.last_success().map(|mark| mark.sequence), Some(8));
+}
+
+#[test]
+fn another_targets_success_does_not_establish_a_recovery_point_here() {
+    let ledger = MemoryAuditLedger::new();
+    let other = intent(&ledger, &key(1), BackupTargetKind::LocalTemporaryRepository);
+    admit_at(&ledger, &key(1), &other, 1_000);
+    succeed(&ledger, &key(1), true);
+    assert_eq!(view(&ledger).recovery_point(), None);
 }

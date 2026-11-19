@@ -2,14 +2,15 @@
 //! 白名单诊断结论。
 //!
 //! 三条纪律写在类型里：证据缺失一律"未知"而不是"正常"；未建立恢复点固定显示
-//! [`NO_RECOVERY_POINT`] 且不显示绿；对外公开摘要结构上装不下路径、主人身份或秘密。
+//! [`NO_RECOVERY_POINT`]、备份没启用固定显示 [`BACKUP_DISABLED`]，都不显示绿；
+//! 对外公开摘要结构上装不下路径、主人身份或秘密。
 
 mod aggregate;
 mod bridge;
 mod diagnostics;
 mod model;
 
-pub use aggregate::{HealthInputs, NO_RECOVERY_POINT, aggregate};
+pub use aggregate::{BACKUP_DISABLED, HealthInputs, NO_RECOVERY_POINT, aggregate};
 pub use bridge::{
     BRIDGE_SECTION_CODE, BRIDGE_SECTION_TITLE, BatchStamp, BridgeEvidence, ExitClass, ModeLabel,
     RESIDUE_BLOCKED, RecoveryState, ResidueGuard, bridge_section,

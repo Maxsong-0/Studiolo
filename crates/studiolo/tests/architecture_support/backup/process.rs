@@ -83,7 +83,9 @@ pub(super) fn remainder(path: &Path, source: &str) -> String {
             &[
                 ".union(OFlags::NOFOLLOW)",
                 "[None,Some(\"etc\"),Some(\"studiolo\")]",
-                "read_checked(open_config()?,0,deadline)?",
+                "read_checked(open_root_file(file)?,0,deadline)?",
+                // T-216：仓库 CA 和配置同一目录链；交给 restic 的绝对路径钉成同一个文件。
+                "pub(super)constCA_PATH:&str=\"/etc/studiolo/backup-worker-ca.pem\";",
                 "stat.st_uid!=0||stat.st_mode&0o7022!=0",
                 "!same(&pin,&reopened)",
                 "pin.len()>16*1024",
@@ -98,6 +100,10 @@ pub(super) fn remainder(path: &Path, source: &str) -> String {
                 ("fs::fstat(&directory)", 1),
                 (
                     "fs::openat(&directory,\"backup-worker.json\",OFlags::RDONLY|OFlags::NOFOLLOW|OFlags::CLOEXEC|OFlags::NONBLOCK,Mode::empty())",
+                    1,
+                ),
+                (
+                    "fs::openat(&directory,\"backup-worker-ca.pem\",OFlags::RDONLY|OFlags::NOFOLLOW|OFlags::CLOEXEC|OFlags::NONBLOCK,Mode::empty())",
                     1,
                 ),
                 ("File::from(fd)", 1),

@@ -1,6 +1,8 @@
-//! 备份的两段配置在整份私有配置里的契约：成对才启用，路径不和 Auth／Audit 私有目录互相嵌套。
+//! 备份两段的契约：放在单独的私有备份配置文件里、成对才启用，路径不和 Auth／Audit 私有目录互相嵌套；
+//! 写进主人配置一律拒绝（主人配置的整份字节是 Bridge `scope_hash` 的输入，T-216）。
 
 use super::*;
+use studiolo_host_config::backup::BackupConfig;
 
 fn approval() -> Value {
     json!({
@@ -40,35 +42,93 @@ fn producer(root: &Path) -> Value {
     })
 }
 
-#[test]
-fn backup_is_off_by_default_and_needs_both_sections_to_turn_on() {
-    let fixture = Fixture::new();
-    assert!(
-        Config::load(&fixture.path)
-            .unwrap()
-            .backup_producer()
-            .is_none()
-    );
+/// 成对的备份配置文件内容。
+fn both(root: &Path) -> Value {
+    json!({ "version": 1, "backup": approval(), "backup_producer": producer(root) })
+}
 
-    let mut both = fixture.value.clone();
-    both["backup"] = approval();
-    both["backup_producer"] = producer(&fixture.root);
-    fixture.write(&both);
-    let config = Config::load(&fixture.path).unwrap();
-    let (approved, settings) = config.backup_producer().expect("两段都在才启用");
-    assert_eq!(approved.schedule().interval_millis(), 600_000);
-    assert_eq!(settings.worker_uid(), 2101);
+/// 备份配置文件和主人配置放在同一个 0700 目录里，0600。
+fn backup_path(fixture: &Fixture) -> PathBuf {
+    fixture.root.join("config/backup.json")
+}
+
+fn write_backup(fixture: &Fixture, value: &Value) -> PathBuf {
+    let path = backup_path(fixture);
+    fs::write(&path, serde_json::to_vec(value).unwrap()).unwrap();
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
+    path
+}
+
+fn load(
+    fixture: &Fixture,
+    value: &Value,
+) -> Result<BackupConfig, studiolo_host_config::ConfigError> {
+    let path = write_backup(fixture, value);
+    BackupConfig::load(&path, &Config::load(&fixture.path).unwrap())
+}
+
+#[test]
+fn backup_sections_in_the_owner_config_are_rejected_so_the_bridge_binding_never_moves() {
+    let fixture = Fixture::new();
+    for sections in [
+        vec!["backup", "backup_producer"],
+        vec!["backup"],
+        vec!["backup_producer"],
+    ] {
+        let mut value = fixture.value.clone();
+        for section in sections {
+            value[section] = both(&fixture.root)[section].clone();
+        }
+        fixture.rejects(&value);
+    }
+}
+
+#[test]
+fn the_separate_backup_file_needs_both_sections_and_nothing_else() {
+    let fixture = Fixture::new();
+    let loaded = load(&fixture, &both(&fixture.root)).expect("两段都在才启用");
+    assert_eq!(loaded.approval().schedule().interval_millis(), 600_000);
+    assert_eq!(loaded.approval().schedule().rpo_millis(), 900_000);
+    assert_eq!(loaded.producer().worker_uid(), 2101);
     assert_eq!(
-        settings.staging_parent(),
+        loaded.producer().staging_parent(),
         fixture.root.join("backup-staging")
     );
 
-    // 只有审批没有部署事实，或者反过来，都在加载时拒绝：不留「批了但不知道往哪放」的半开状态。
-    for missing in ["backup", "backup_producer"] {
-        let mut half = both.clone();
+    // 只有审批没有部署事实，或者反过来，都拒绝：不留「批了但不知道往哪放」的半开状态。
+    for missing in ["backup", "backup_producer", "version"] {
+        let mut half = both(&fixture.root);
         half.as_object_mut().unwrap().remove(missing);
-        fixture.rejects(&half);
+        assert!(load(&fixture, &half).is_err(), "缺 {missing}");
     }
+    for (key, value) in [
+        ("version", json!(2)),
+        ("backup", Value::Null),
+        ("backup_producer", Value::Null),
+        ("sync_scope", json!({})),
+    ] {
+        let mut changed = both(&fixture.root);
+        changed[key] = value;
+        assert!(load(&fixture, &changed).is_err(), "{key}");
+    }
+}
+
+#[test]
+fn the_separate_backup_file_is_read_with_the_same_private_file_rules() {
+    let fixture = Fixture::new();
+    let path = write_backup(&fixture, &both(&fixture.root));
+    let owner = Config::load(&fixture.path).unwrap();
+    for mode in [0o640, 0o644, 0o660] {
+        fs::set_permissions(&path, fs::Permissions::from_mode(mode)).unwrap();
+        assert!(BackupConfig::load(&path, &owner).is_err(), "{mode:o}");
+    }
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
+    assert!(BackupConfig::load(&path, &owner).is_ok());
+    // 不是 JSON 对象、超过 16 KiB 都拒绝。
+    fs::write(&path, b"[]").unwrap();
+    assert!(BackupConfig::load(&path, &owner).is_err());
+    fs::write(&path, vec![b' '; 16_385]).unwrap();
+    assert!(BackupConfig::load(&path, &owner).is_err());
 }
 
 #[test]
@@ -79,16 +139,12 @@ fn backup_paths_may_not_nest_with_the_private_auth_or_audit_directories() {
         ("staging_parent", "audit/staging"),
         ("ephemeral_root", "auth/ephemeral"),
     ] {
-        let mut value = fixture.value.clone();
-        value["backup"] = approval();
-        value["backup_producer"] = producer(&fixture.root);
+        let mut value = both(&fixture.root);
         value["backup_producer"][key] = json!(fixture.root.join(inside));
-        fixture.rejects(&value);
+        assert!(load(&fixture, &value).is_err(), "{key}");
     }
     // 反方向：封存父目录是私有目录的上级。
-    let mut value = fixture.value.clone();
-    value["backup"] = approval();
-    value["backup_producer"] = producer(&fixture.root);
+    let mut value = both(&fixture.root);
     value["backup_producer"]["staging_parent"] = json!(fixture.root);
-    fixture.rejects(&value);
+    assert!(load(&fixture, &value).is_err());
 }

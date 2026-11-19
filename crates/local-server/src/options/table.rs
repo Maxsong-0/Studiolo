@@ -101,6 +101,10 @@ pub(super) const PARAMS: &[(&str, Arity)] = &[
         "--sync-transport",
         Arity::Value(|raw, value| set(&mut raw.sync_transport, value.into())),
     ),
+    (
+        "--backup-config",
+        Arity::Value(|raw, value| set(&mut raw.backup_config, value.into())),
+    ),
     ("--help", Arity::Flag(|raw| raw.help = true)),
 ];
 

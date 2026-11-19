@@ -62,6 +62,11 @@ impl AdmissionFact {
     pub fn source(&self) -> &SealedReference {
         &self.source
     }
+    /// 原封存的内容截止时刻；这次作业成功后恢复点的年龄从它算起
+    /// （worker 收口时记的 `checkpoint_at` 是最终清单里的同一个值，`verify_draft` 核过二者相等）。
+    pub fn content_cutoff(&self) -> InstantMillis {
+        self.content_cutoff
+    }
     /// 原正文销毁期限。
     pub fn expires_at(&self) -> InstantMillis {
         self.expires_at

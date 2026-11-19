@@ -34,13 +34,18 @@ T-204。本目录是候选发布源，**尚未安装到任何机器**。专用�
    - `studiolo-backup-worker`：在 108 用 `cargo --locked build --release -p studiolo-backup-worker` 构建；
    - `restic-0.19.1`：官方发布包里的可执行文件，摘要写进配置的 `restic_sha256`。本仓库不下载它。
 3. `/etc/studiolo/backup-worker.json`（root 所有，0644 或 0444），字段见进程边界契约；`producer_socket` 和
-   `sealed_parent` 要和主服务私有配置 `backup_producer` 段里的 `socket`、`staging_parent` 是同一组路径，
+   `sealed_parent` 要和主服务私有备份配置 `backup_producer` 段里的 `socket`、`staging_parent` 是同一组路径，
    `restic_sha256` 和 `restic_digest` 是同一个值。
+   仓库是自签证书（NAS 上的 rest-server 就是）：把它的 CA 证书放到 `/etc/studiolo/backup-worker-ca.pem`（root 所有，0644），
+   在配置里写 `repository_ca_sha256`（这份文件的 `sha256sum`）。摘要对不上 worker 拒绝启动；不改 169 的系统信任库。
 4. `systemd/studiolo-backup.tmpfiles.conf` 里的两个目录（属主主服务账号、属组读取组、0750）。主服务不建它们。
 5. `/etc/studiolo/backup-worker-credentials/`（root 所有，0700）里三个文件（0600）：`repository-password`、
    `rest-username`、`rest-password`。由用户经安全输入写入，不从聊天或日志里复制；单元用 `LoadCredential` 交给
    worker，worker 只从 `/run/credentials/studiolo-backup-worker.service` 读，所以**服务单元名不能改**。
-6. 主服务私有配置里加 `backup` 和 `backup_producer` 两段（成对）。主服务单元（`deploy/human/studiolo-human.service`）
+6. 主服务私有备份配置：和主人配置同目录（0700）放一份 `backup.json`（0600，主服务账号所有），内容
+   `{"version": 1, "backup": {…}, "backup_producer": {…}}`，两段成对，字段见 `docs/contracts/backup-producer.md`；
+   人侧启动器加 `--backup-config <这份文件的绝对路径>`。**不要把两段写进 owner.json**：那会改 Bridge 绑定的
+   `scope_hash`，人侧起不来（owner.json 里出现这两段会在加载时被拒）。主服务单元（`deploy/human/studiolo-human.service`）
    同时改两处，再重启主服务：
    - 单元是 `ProtectSystem=strict`：给备份 socket 的父目录和封存父目录各加一行 `ReadWritePaths=`（路径和第 4 步
      tmpfiles 片段里的一致）。不加的话绑不上 socket、建不了封存，配了生产者的主服务会拒绝启动。
@@ -85,8 +90,9 @@ T-204。本目录是候选发布源，**尚未安装到任何机器**。专用�
 4. 启动 `studiolo-backup-worker.service`，日志里应出现「备份作业已收口：Succeeded」，人侧账本里这个原键有一条
    成功结果。再打开主服务健康页（登录后 `/api/v1/health`，或工作台「本机健康」）：「备份作业」一节应为
    正常，正文是「最近一次成功是 … 前的第 N 号」，N 就是这个原键的序号；展开「查看备份作业」能看到同一个序号
-   和成功时刻，「挂着的作业」为「没有」。健康页只说作业，恢复点年龄那一节照旧是未知（恢复点只在 worker
-   自己的状态库里，主服务读不到）。
+   和成功时刻，「挂着的作业」为「没有」。「恢复点年龄」一节也应为正常，正文是「最新恢复点 … 秒前的内容，
+   已在预算内」：年龄从这次作业封存时的内容截止算起，预算是审批里的 `rpo_millis`（主服务从同一次读账本推出，
+   不读 worker 的状态库）。第一次成功之前这一节固定显示「尚未建立灾难恢复点」。
 5. worker 空闲时应派出第 1 组抽查：日志里出现「仓库抽查第 1 组：Clean」，健康页「备份仓库检查」一节为正常，
    正文是「最近一次干净的检查是 … 前；首轮还在读，30 组里读过 1 组」。
 6. 停掉 worker 再触发一次封存，过了保留期再启动：应记一条 `source_expired` 失败，不重传。
@@ -104,7 +110,7 @@ T-204。本目录是候选发布源，**尚未安装到任何机器**。专用�
 | 降级：「第 N 号作业挂了 … 还没收口，超过保留期 …，算卡住」 | 有原意图、没有结果的作业挂得比 `source_retention_millis` 还久；展开明细能看到它封存了没有 | 封存过了（「已封存，等 worker 上传」）：看 worker 单元在不在跑、日志里是不是反复「备份 worker 等下一轮」或「备份作业这一步被拒绝」；没封存：看主服务日志里「备份封存未完成」 |
 | 降级：「… 超过两倍最小间隔 …，算逾期」 | 离最近一次成功超过两倍 `schedule_interval_millis`；从没成功过的从开始服务和第一次尝试里较早的那个算起 | 定时器在不在跑（worker 没触发 `schedule` 就什么都不会发生），以及最近失败的原因 |
 | 降级：「最近收口的第 N 号作业没成功：…」 | 最近一条作业记了失败或未验证；原因是账本里的固定类别（如「磁盘空间不够」「封存前来源变了」）。写着成功、却没写明对象齐全、校验通过、成对引用这次检查点三项的，也算没成功 | 按原因处理；失败之后要等满批准的间隔才重试，失败不缩短间隔（2026-11-16 用户拍板） |
-| 未知：「备份生产者没有启用」 | 私有配置里没有 `backup` 和 `backup_producer` 两段 | 是不是有意不启用 |
+| 未知：「备份生产者没有启用」 | 人侧启动器没有带 `--backup-config` | 是不是有意不启用 |
 | 未知：「这一次没读到账本里的备份事件」 | 账本没在扫描预算（5 秒）里读完，或本地时钟不可用 | 刷新再看；一直这样就看主服务日志 |
 | 未知：「还没有成功的备份，离逾期线还有 …」 | 刚开始服务，还没成功过，也还没到逾期线 | 等；到了线还没成功会变成逾期 |
 

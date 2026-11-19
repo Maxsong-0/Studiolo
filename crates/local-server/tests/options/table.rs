@@ -71,6 +71,8 @@ const SESSION: &[&str] = &[
     "/fixture/runner.json",
     "--sync-transport",
     "/fixture/sync-approval.json",
+    "--backup-config",
+    "/fixture/backup.json",
 ];
 
 const CANONICAL: &[&str] = &[
@@ -125,7 +127,7 @@ fn table_names_are_unique_and_only_three_switches_take_no_value() {
     assert_eq!(switches, ["--canonical", "--cargo-dependencies", "--help"]);
     assert_eq!(valued().count() + switches.len(), PARAMS.len());
     // 参数总数是显式登记的：新增参数必须同时补成功用例与落字段断言，不能只加表项。
-    assert_eq!(PARAMS.len(), 24, "参数表总数变了");
+    assert_eq!(PARAMS.len(), 25, "参数表总数变了");
 }
 
 #[test]
@@ -191,6 +193,10 @@ fn session_writer_factor_board_and_runner_values_land_in_their_own_fields() {
     assert_eq!(
         options.sync_transport.unwrap(),
         Path::new("/fixture/sync-approval.json")
+    );
+    assert_eq!(
+        options.backup_config.unwrap(),
+        Path::new("/fixture/backup.json")
     );
     assert_eq!(options.port, 4317);
     assert!(!options.canonical && options.access.is_none());

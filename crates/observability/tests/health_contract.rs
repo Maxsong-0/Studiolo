@@ -1,9 +1,9 @@
 //! 健康页聚合的行为／失败／恢复三类契约。
 
 use studiolo_observability::health::{
-    BatchStamp, BridgeEvidence, ExitClass, HealthInputs, HealthSection, HealthState, Instant,
-    ModeLabel, NO_RECOVERY_POINT, OwnerLabel, OwnerLiveness, RecoveryPointEvidence, RecoveryState,
-    ResidueGuard, aggregate, diagnose,
+    BACKUP_DISABLED, BatchStamp, BridgeEvidence, ExitClass, HealthInputs, HealthSection,
+    HealthState, Instant, ModeLabel, NO_RECOVERY_POINT, OwnerLabel, OwnerLiveness,
+    RecoveryPointEvidence, RecoveryState, ResidueGuard, aggregate, diagnose,
 };
 
 /// 全字段齐备且无异常的 Bridge 证据；`&NORMAL_BRIDGE` 可直接放进 `HealthInputs`。
@@ -81,6 +81,20 @@ fn 尚未建立恢复点时该节固定显示既定中文并且整体不显示�
     assert_eq!(recovery.detail(), NO_RECOVERY_POINT);
     assert_eq!(recovery.state(), HealthState::Unknown);
     assert_ne!(report.overall(), HealthState::Normal);
+}
+
+#[test]
+fn 备份没有启用时恢复点一节说没启用而不是说证据不可读且不显示绿() {
+    let owners = [owner("backup-worker", Some(9_950), 600)];
+    let mut inputs = healthy_inputs(&owners);
+    inputs.recovery_point = Some(RecoveryPointEvidence::Disabled);
+
+    let report = aggregate(&inputs).expect("固定正文必须可构造");
+
+    let recovery = section(report.sections(), "recovery-point");
+    assert_eq!(recovery.detail(), BACKUP_DISABLED);
+    assert_eq!(recovery.state(), HealthState::Unknown);
+    assert_eq!(report.overall(), HealthState::Unknown);
 }
 
 #[test]

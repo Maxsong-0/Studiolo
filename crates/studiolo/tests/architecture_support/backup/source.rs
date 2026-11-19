@@ -125,7 +125,7 @@ pub(super) fn fixed_binding(path: &Path, source: &str) -> bool {
             "self.window.check()?;source_time()",
             "self.temporary.check()",
             "ResticPackage::open(config.restic_sha256(),deadline)?",
-            "process::run_check(&self.package,argv,&self.credentials,self.temporary.path(),self.window.deadline(),&||self.window.check(),interrupt)",
+            "process::run_check(&self.package,&self.arguments(argv),&self.credentials,self.temporary.path(),self.window.deadline(),&||self.window.check(),interrupt)",
         ]
     } else if path.ends_with("crates/backup-worker/src/runner/final_record.rs") {
         &[

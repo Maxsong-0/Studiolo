@@ -9,6 +9,9 @@ use crate::quota::QuotaVerdict;
 /// 未建立恢复点时健康页固定显示的正文；这一节永远不是绿。
 pub const NO_RECOVERY_POINT: &str = "尚未建立灾难恢复点";
 
+/// 备份没有启用时恢复点一节的固定正文；同样未知、不是绿。
+pub const BACKUP_DISABLED: &str = "备份没有启用，没有灾难恢复点";
+
 /// Sync 配额一节正文固定的后缀：读数是 Studiolo 侧镜像字节数，不是 Obsidian 账号用量（ADR-025 D11）。
 const SYNC_QUOTA_DETAIL_SUFFIX: &str = "（非账号用量）";
 
@@ -56,6 +59,7 @@ fn recovery_point_section(inputs: &HealthInputs<'_>) -> Result<HealthSection, Se
             HealthState::Unknown,
             "恢复点证据不可读，无法判断灾难恢复能力".to_owned(),
         ),
+        Some(RecoveryPointEvidence::Disabled) => (HealthState::Unknown, BACKUP_DISABLED.to_owned()),
         Some(RecoveryPointEvidence::NotEstablished) => {
             (HealthState::Unknown, NO_RECOVERY_POINT.to_owned())
         }

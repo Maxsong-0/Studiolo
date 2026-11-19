@@ -8,6 +8,12 @@
 
 私有schema1文档必含 `worker_uid`、`producer_uid`、`reader_gid`、`sealed_parent`、`producer_socket`、`repository`、`restic_sha256`。未知/重复/缺失字段拒绝，秘密值不属于此文档。当前worker必须为文档指定的非root UID，且不同于producer；producer和读取GID不能为root/无效身份，实际进程必须已加入读取组。路径只允许规范化绝对ASCII字母/数字及 `/_-.`，socket路径最多100字节；封存和审计socket不得覆盖worker状态、运行目录或凭据目录，二者不得互相包含。
 
+可选字段 `repository_ca_sha256`（T-216，2026-11-18）：仓库用自签证书时（如 NAS 上的 rest-server），批准的 CA 证书文件的小写 SHA-256。
+给了它，`WorkerConfig::load` 就按上面同一套 root 目录链规则读固定文件 `/etc/studiolo/backup-worker-ca.pem`（单链接普通文件、0644 或 0444、1 字节～16 KiB），
+核字节摘要相同、内容是 PEM 证书外形且不含私钥，不符即拒绝启动，不退回系统信任库；之后每一次连仓库的 restic 调用都由 `Runtime` 在最前面加
+`--cacert /etc/studiolo/backup-worker-ca.pem`（子进程环境是清空的，系统信任库里没有这张自签证书）。只信这一张证书，不改整机信任库。
+不给就用系统信任库，和以前一样。
+
 仓库沿用HTTPS REST约束，包摘要必须为完整小写SHA-256。配置保留原JSON字节摘要供部署证据使用。`AppendRunner::new` 以已核验的WorkerConfig选择仓库及包摘要，并要求同作业键和外部封存引用；不会把调用方自报的repository/digest当成配置。真实socket的peer UID仍须由后续审计代理边界核验。
 
 108 `20261113-160800-e359`：配置定向3项（字段/身份/路径/未知秘密字段/重复字段、原文件权限/硬链接/预算/截止）及严格Clippy、66项架构检查通过。实际root配置文件未在生产创建。

@@ -63,6 +63,8 @@ pub struct ProducerPlan {
     pub source_roots: Vec<PathBuf>,
     /// 两次尝试之间的最小间隔：从上一次准入或上一次尝试（含失败的）算起，取较晚的那个。
     pub min_interval_millis: u64,
+    /// 主人批准的 RPO：健康页「恢复点年龄」超过它算降级。
+    pub rpo_millis: u64,
     /// 封存正文从内容截止起保留多久。
     pub source_retention_millis: u64,
     /// 一次冻结窗口的预算。
@@ -381,6 +383,8 @@ impl BackupJobsProbe for BackupProducer {
             outstanding: queue.oldest_open(),
             stuck_after_ms: self.plan.source_retention_millis,
             overdue_after_ms: self.plan.min_interval_millis.saturating_mul(2),
+            recovery_point: queue.recovery_point(),
+            recovery_point_budget_ms: self.plan.rpo_millis,
         })
     }
 

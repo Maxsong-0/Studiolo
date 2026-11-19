@@ -17,6 +17,8 @@ fn jobs(now_ms: i64) -> BackupJobs {
         outstanding: None,
         stuck_after_ms: DAY.unsigned_abs(),
         overdue_after_ms: (2 * HOUR).unsigned_abs(),
+        recovery_point: None,
+        recovery_point_budget_ms: (3 * HOUR).unsigned_abs(),
     }
 }
 

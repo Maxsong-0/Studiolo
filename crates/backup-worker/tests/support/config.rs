@@ -90,3 +90,55 @@ fn config_rejects_identity_confusion_secrets_and_unbounded_or_unsafe_locations()
             .replacen("{", "{\"worker_uid\":1001,", 1);
     assert!(WorkerConfig::parse(duplicate.as_bytes(), 1001).is_err());
 }
+
+/// 一份虚构的 PEM 证书外形；只核外形和摘要，不解析证书本身（那是 restic 的事）。
+const FICTIONAL_CA: &[u8] =
+    b"-----BEGIN CERTIFICATE-----\nZmljdGlvbmFsIGNh\n-----END CERTIFICATE-----\n";
+
+#[test]
+fn a_repository_ca_is_optional_and_only_its_digest_lives_in_the_config() {
+    let raw = serde_json::to_vec(&document()).unwrap();
+    let config = WorkerConfig::parse(&raw, 1001).unwrap();
+    assert_eq!(config.repository_ca_sha256(), None);
+    assert_eq!(config.repository_ca(), None);
+
+    let digest = hex(&Sha256::digest(FICTIONAL_CA));
+    let mut doc = document();
+    doc["repository_ca_sha256"] = serde_json::json!(digest);
+    let config = WorkerConfig::parse(&serde_json::to_vec(&doc).unwrap(), 1001).unwrap();
+    assert_eq!(config.repository_ca_sha256(), Some(digest.as_str()));
+    // 文件只在 load 里读过、核过摘要之后才交给 restic；只解析配置不算数。
+    assert_eq!(config.repository_ca(), None);
+
+    for bad in [
+        serde_json::json!("AB".repeat(32)),
+        serde_json::json!("ab".repeat(31)),
+        serde_json::json!(""),
+        serde_json::json!(null),
+        serde_json::json!(1),
+    ] {
+        let mut doc = document();
+        doc["repository_ca_sha256"] = bad.clone();
+        // `null` 等于没给（serde 的 Option），其余都拒绝。
+        let parsed = WorkerConfig::parse(&serde_json::to_vec(&doc).unwrap(), 1001);
+        assert_eq!(parsed.is_ok(), bad.is_null(), "{bad}");
+    }
+}
+
+#[test]
+fn the_ca_file_must_match_the_approved_digest_and_look_like_a_certificate() {
+    let digest = hex(&Sha256::digest(FICTIONAL_CA));
+    assert!(verify_ca(FICTIONAL_CA, &digest).is_ok());
+    // 换了一个字节：摘要对不上就拒绝，不退回系统信任库。
+    let mut tampered = FICTIONAL_CA.to_vec();
+    tampered[30] ^= 1;
+    assert!(verify_ca(&tampered, &digest).is_err());
+    for wrong in [
+        &b"not a certificate"[..],
+        &b"-----BEGIN CERTIFICATE-----\n"[..],
+        &b"-----BEGIN PRIVATE KEY-----\n-----BEGIN CERTIFICATE-----\n-----END CERTIFICATE-----\n"[..],
+        &[0xff, 0xfe][..],
+    ] {
+        assert!(verify_ca(wrong, &hex(&Sha256::digest(wrong))).is_err());
+    }
+}

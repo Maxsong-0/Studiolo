@@ -77,8 +77,12 @@ where
                     .to_owned(),
             ]);
             repository = repository_input::approved(&options, &config)?;
-            // 备份生产者的批准同样来自这份私有配置；缺任何一段即关闭。
+            // 备份生产者的批准来自 `--backup-config` 指向的单独私有文件，路径按这份主人配置核对；
+            // 没给即关闭。它所在的目录和主人配置的目录一样，不许黑板碰。
             backup_approved = backup_input::approved(&config, &options)?;
+            if let Some(path) = &options.backup_config {
+                board_protected.push(path.parent().ok_or(StartupError::Configuration)?.to_owned());
+            }
             let access = config
                 .access(&session.origin)
                 .map_err(|_| StartupError::Configuration)?;

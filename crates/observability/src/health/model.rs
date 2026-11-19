@@ -105,6 +105,8 @@ pub enum AgeEvidence {
 /// 灾难恢复点证据。上传返回 0 只是中间证据，这里只接受已核验的内容截止时刻。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RecoveryPointEvidence {
+    /// 备份没有启用：确实没有恢复点，但这不是故障判断，照样未知、不显示绿。
+    Disabled,
     /// 首次 seed 校验尚未通过；健康页固定显示"尚未建立灾难恢复点"。
     NotEstablished,
     /// 已核验的恢复点，时刻按内容截止时刻记，不按上传完成时刻记。
