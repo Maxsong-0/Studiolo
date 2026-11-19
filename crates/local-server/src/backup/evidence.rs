@@ -1,7 +1,8 @@
 //! 备份证据的注入口；服务端自己不去取证，只接收可信启动层给的快照。
 //!
-//! 两种证据分开：恢复点快照（`BackupSnapshot`）要等 worker 的状态库接进来才有；
-//! 作业事实（`BackupJobs`）由主服务里的生产者从原账本的备份事件算出来，健康页的「备份作业」一节用它。
+//! 作业事实（`BackupJobs`）由主服务里的生产者从原账本的备份事件算出来，健康页的「备份作业」和
+//! 「恢复点年龄」两节都用它：恢复点取成功作业准入里的内容截止，判据和 worker 认「可恢复点」一样。
+//! `BackupSnapshot` 是早先设想的「接 worker 状态库」那条路，目前没有生产调用者。
 
 use studiolo_backup::worker::recovery_point::RecoveryPointStatus;
 use studiolo_backup::worker::restic::UnverifiedReason;
@@ -31,6 +32,15 @@ pub struct JobMark {
     pub sequence: u64,
     /// 结果落账的时刻。
     pub at_ms: i64,
+}
+
+/// 最新的灾难恢复点：成功收口的作业里内容截止最晚的那一条。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RecoveryMark {
+    /// 作业序号。
+    pub sequence: u64,
+    /// 这次作业准入里的内容截止时刻（Unix 毫秒）；恢复点年龄从它算，不从上传完成算。
+    pub content_cutoff_ms: i64,
 }
 
 /// 没成功的结果。
@@ -87,6 +97,10 @@ pub struct BackupJobs {
     pub stuck_after_ms: u64,
     /// 这么久没有成功算逾期：两倍最小间隔。
     pub overdue_after_ms: u64,
+    /// 最新的灾难恢复点；从没有成功过（或成功的都没有准入记录）为 `None`，健康页显示「尚未建立」。
+    pub recovery_point: Option<RecoveryMark>,
+    /// 恢复点年龄预算：主人批准的 RPO。
+    pub recovery_point_budget_ms: u64,
 }
 
 /// 备份作业的结论，从重到轻排。
@@ -189,7 +203,7 @@ pub trait BackupJobsProbe: Send + Sync {
 /// 健康页拿到的备份作业证据。默认是「没读到」：什么都不知道时不能说成没启用，更不能说成正常。
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum BackupJobsEvidence {
-    /// 私有配置里没有备份那两段，生产者没启用。
+    /// 启动时没有给备份配置（`--backup-config`），生产者没启用。
     Disabled,
     /// 生产者启用了，但这一次没读到：账本没读完、锁坏了或本地时钟不可用。
     #[default]

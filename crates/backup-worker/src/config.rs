@@ -20,6 +20,9 @@ struct Document {
     producer_socket: PathBuf,
     repository: String,
     restic_sha256: String,
+    /// 仓库用自签证书时，批准的 CA 文件摘要；不给就用系统信任库。
+    #[serde(default)]
+    repository_ca_sha256: Option<String>,
 }
 /// 经原 root 文件核验的独立 worker 部署配置；不实现反序列化或公开字段构造。
 pub struct WorkerConfig {
@@ -31,17 +34,25 @@ pub struct WorkerConfig {
     producer_socket: PathBuf,
     repository: RepositoryRef,
     restic_sha256: String,
+    repository_ca_sha256: Option<String>,
+    /// 摘要核对过的 CA 文件路径；只有 [`WorkerConfig::load`] 读过文件后才有。
+    repository_ca: Option<&'static str>,
     digest: String,
 }
 impl WorkerConfig {
     /// 仅读取 /etc/studiolo/backup-worker.json；缺失、链接、权限或身份不符即拒绝。
+    /// 配置里批准了 CA 摘要时，同样按 root 文件规则读 /etc/studiolo/backup-worker-ca.pem 并核摘要。
     pub fn load(deadline: Instant) -> Result<Self> {
-        let config = Self::parse(&input::read(deadline)?, rustix::process::geteuid().as_raw())?;
+        let mut config = Self::parse(&input::read(deadline)?, rustix::process::geteuid().as_raw())?;
         let groups = rustix::process::getgroups().map_err(|_| ProcessError::Configuration)?;
         if rustix::process::getegid().as_raw() != config.reader_gid
             && !groups.iter().any(|gid| gid.as_raw() == config.reader_gid)
         {
             return Err(ProcessError::Configuration);
+        }
+        if let Some(expected) = &config.repository_ca_sha256 {
+            verify_ca(&input::read_ca(deadline)?, expected)?;
+            config.repository_ca = Some(input::CA_PATH);
         }
         Ok(config)
     }
@@ -84,11 +95,11 @@ impl WorkerConfig {
         {
             return Err(ProcessError::Configuration);
         }
-        if document.restic_sha256.len() != 64
-            || !document
-                .restic_sha256
-                .bytes()
-                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+        if !is_sha256_hex(&document.restic_sha256)
+            || document
+                .repository_ca_sha256
+                .as_deref()
+                .is_some_and(|digest| !is_sha256_hex(digest))
         {
             return Err(ProcessError::Configuration);
         }
@@ -104,10 +115,9 @@ impl WorkerConfig {
             producer_socket: document.producer_socket,
             repository,
             restic_sha256: document.restic_sha256,
-            digest: Sha256::digest(bytes)
-                .iter()
-                .map(|b| format!("{b:02x}"))
-                .collect(),
+            repository_ca_sha256: document.repository_ca_sha256,
+            repository_ca: None,
+            digest: hex(&Sha256::digest(bytes)),
         })
     }
     /// 本 worker 的非 root UID，已与当前实际进程核对。
@@ -155,6 +165,38 @@ impl WorkerConfig {
     pub fn digest(&self) -> &str {
         &self.digest
     }
+    /// 批准的仓库 CA 文件摘要；不用自签证书的仓库为 `None`。
+    #[must_use]
+    pub fn repository_ca_sha256(&self) -> Option<&str> {
+        self.repository_ca_sha256.as_deref()
+    }
+    /// 摘要已核对的 CA 文件路径，交给 restic 的 `--cacert`；配置没批准 CA 时为 `None`。
+    #[must_use]
+    pub fn repository_ca(&self) -> Option<&'static str> {
+        self.repository_ca
+    }
+}
+/// 64 位小写十六进制。
+fn is_sha256_hex(value: &str) -> bool {
+    value.len() == 64
+        && value
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+}
+fn hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+/// CA 文件必须是批准的那一份（字节摘要相同），且看起来是 PEM 证书；不是就拒绝启动，不退回系统信任库。
+fn verify_ca(bytes: &[u8], expected: &str) -> Result<()> {
+    let text = std::str::from_utf8(bytes).map_err(|_| ProcessError::Configuration)?;
+    if hex(&Sha256::digest(bytes)) != expected
+        || !text.contains("-----BEGIN CERTIFICATE-----")
+        || !text.contains("-----END CERTIFICATE-----")
+        || text.contains("PRIVATE KEY")
+    {
+        return Err(ProcessError::Configuration);
+    }
+    Ok(())
 }
 fn approved_path(path: &Path, limit: usize) -> Result<()> {
     let text = path.to_str().ok_or(ProcessError::Configuration)?;

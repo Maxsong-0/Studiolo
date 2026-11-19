@@ -1,11 +1,11 @@
 //! 待办以账本为准：从备份事件里算出下一个序号、没做完的原键、最近两次的时间，
-//! 以及健康页要看的最近成功、最近失败和挂着的作业。
+//! 以及健康页要看的最近成功、最近失败、挂着的作业和最新的灾难恢复点。
 //!
 //! 这里只有纯逻辑，按账本顺序一条条喂记录；读账本和写账本都在 `producer.rs`。
 //! 没有单独的队列文件：进程重启后把账本里的备份事件重读一遍就得到同样的结论。
 //! 仓库抽查的事件转给 [`Checks`]，和作业共用同一个读到的位置。
 use super::checks::Checks;
-use super::evidence::{FailureMark, JobFailure, JobMark, OpenJob};
+use super::evidence::{FailureMark, JobFailure, JobMark, OpenJob, RecoveryMark};
 use std::collections::BTreeMap;
 use studiolo_audit_ledger::{AuditEvent, AuditPhase, AuditRecord};
 use studiolo_backup::worker::{
@@ -22,6 +22,8 @@ struct Open {
     /// 原意图落账的时刻。
     since_ms: i64,
     admission: Option<AuditRecord>,
+    /// 准入里的内容截止时刻（Unix 毫秒）；还没准入为 `None`。
+    content_cutoff_ms: Option<i64>,
 }
 
 /// 账本里备份事件的累计视图。
@@ -37,6 +39,8 @@ pub(super) struct Queue {
     last_failure: Option<FailureMark>,
     /// 最近收口的那条作业没成功。
     latest_failed: bool,
+    /// 成功收口、有准入的作业里内容截止最晚的那条。
+    recovery_point: Option<RecoveryMark>,
     /// 仓库抽查的累计视图。
     checks: Checks,
 }
@@ -74,6 +78,7 @@ impl Queue {
                                 key,
                                 since_ms: at,
                                 admission: None,
+                                content_cutoff_ms: None,
                             },
                         );
                     }
@@ -81,8 +86,11 @@ impl Queue {
                 AuditPhase::Outcome => {
                     // 只认收口了这里的作业的结果：别的目标类别、对不上原键的结果不算成功也不算失败。
                     if self.open.get(&sequence).is_some_and(|open| open.key == key) {
-                        self.open.remove(&sequence);
-                        self.close(sequence, at, event);
+                        let cutoff = self
+                            .open
+                            .remove(&sequence)
+                            .and_then(|open| open.content_cutoff_ms);
+                        self.close(sequence, at, cutoff, event);
                     }
                 }
             }
@@ -101,6 +109,7 @@ impl Queue {
             && &open.key == fact.key()
         {
             open.admission = Some(record.clone());
+            open.content_cutoff_ms = Some(fact.content_cutoff().millis());
             self.last_admission_ms = Some(at);
         }
     }
@@ -164,6 +173,11 @@ impl Queue {
         self.latest_failed
     }
 
+    /// 最新的灾难恢复点；失败、未验证、认不出的结果和别的目标类别都不推进它。
+    pub(super) fn recovery_point(&self) -> Option<RecoveryMark> {
+        self.recovery_point
+    }
+
     /// 还没收口的作业里序号最小、也就是最早的那条；序号单调递增。
     pub(super) fn oldest_open(&self) -> Option<OpenJob> {
         self.open.iter().next().map(|(sequence, open)| OpenJob {
@@ -173,12 +187,30 @@ impl Queue {
         })
     }
 
-    /// 一条作业收口：按结果记成最近成功或最近失败。
-    fn close(&mut self, sequence: u64, at_ms: i64, event: &AuditEvent) {
+    /// 一条作业收口：按结果记成最近成功或最近失败；成功且有准入的推进恢复点。
+    fn close(
+        &mut self,
+        sequence: u64,
+        at_ms: i64,
+        content_cutoff_ms: Option<i64>,
+        event: &AuditEvent,
+    ) {
         match failure_of(event) {
             None => {
                 self.last_success = Some(JobMark { sequence, at_ms });
                 self.latest_failed = false;
+                // 没有准入就不知道内容截止到哪：照样算一次成功，但不当恢复点（年龄算不出来）。
+                // 取截止最晚的：恢复点只往前走，不因后收口的旧作业倒退。
+                if let Some(cutoff) = content_cutoff_ms
+                    && self
+                        .recovery_point
+                        .is_none_or(|mark| cutoff > mark.content_cutoff_ms)
+                {
+                    self.recovery_point = Some(RecoveryMark {
+                        sequence,
+                        content_cutoff_ms: cutoff,
+                    });
+                }
             }
             Some(failure) => {
                 self.last_failure = Some(FailureMark {

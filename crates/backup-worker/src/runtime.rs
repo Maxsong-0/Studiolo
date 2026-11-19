@@ -1,4 +1,6 @@
 //! 固定包、凭据、仓库及进程回收共用一条边界；不含正文源路径或重开能力。
+//! 连仓库的每一次调用都在这里加上批准的 CA（`--cacert`）：子进程环境是清空的，
+//! 自签证书的仓库在系统信任库里没有，不加就连不上；加在这一层，任何调用都漏不掉。
 use crate::{
     ProcessError, ResticCredentials, ResticPackage, Result, WorkerConfig, process,
     source::window::{Window, utc_now},
@@ -16,6 +18,8 @@ pub(crate) struct Runtime {
     credentials: ResticCredentials,
     temporary: Temporary,
     repository: RepositoryRef,
+    /// 摘要核对过的仓库 CA 文件；配置没批准时为 `None`，用系统信任库。
+    repository_ca: Option<&'static str>,
     window: Window,
     poisoned: Cell<bool>,
 }
@@ -59,9 +63,14 @@ impl Runtime {
             credentials,
             temporary,
             repository: config.repository().clone(),
+            repository_ca: config.repository_ca(),
             window,
             poisoned: Cell::new(false),
         })
+    }
+    /// 交给 restic 的完整参数：批准了 CA 就在最前面加 `--cacert <路径>`（restic 的全局参数）。
+    fn arguments(&self, argv: &[String]) -> Vec<String> {
+        with_ca(self.repository_ca, argv)
     }
     pub fn capture(
         &self,
@@ -76,10 +85,11 @@ impl Runtime {
             source_time()
         };
         let deadline = deadline.min(self.window.deadline());
+        let argv = self.arguments(argv);
         let result = match input {
             Some(bytes) => process::run_input(
                 &self.package,
-                argv,
+                &argv,
                 &self.credentials,
                 self.temporary.path(),
                 deadline,
@@ -88,7 +98,7 @@ impl Runtime {
             ),
             None => process::run_scoped(
                 &self.package,
-                argv,
+                &argv,
                 Some(&self.credentials),
                 self.temporary.path(),
                 deadline,
@@ -111,7 +121,7 @@ impl Runtime {
         };
         let result = process::verify_digest(
             &self.package,
-            argv,
+            &self.arguments(argv),
             &self.credentials,
             self.temporary.path(),
             deadline.min(self.window.deadline()),
@@ -129,7 +139,7 @@ impl Runtime {
         self.check()?;
         let result = process::run_check(
             &self.package,
-            argv,
+            &self.arguments(argv),
             &self.credentials,
             self.temporary.path(),
             self.window.deadline(),
@@ -165,5 +175,34 @@ impl Runtime {
     }
     pub fn poisoned(&self) -> bool {
         self.poisoned.get()
+    }
+}
+
+/// 纯逻辑：批准了 CA 就把 `--cacert <路径>` 放在参数最前面，其余参数原样不动。
+fn with_ca(ca: Option<&str>, argv: &[String]) -> Vec<String> {
+    ca.map(|path| ["--cacert".to_owned(), path.to_owned()])
+        .into_iter()
+        .flatten()
+        .chain(argv.iter().cloned())
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::with_ca;
+
+    #[test]
+    fn an_approved_ca_is_passed_first_and_the_rest_is_untouched() {
+        let argv = vec!["--json".to_owned(), "snapshots".to_owned()];
+        assert_eq!(with_ca(None, &argv), argv);
+        assert_eq!(
+            with_ca(Some("/etc/studiolo/backup-worker-ca.pem"), &argv),
+            [
+                "--cacert",
+                "/etc/studiolo/backup-worker-ca.pem",
+                "--json",
+                "snapshots"
+            ]
+        );
     }
 }

@@ -25,6 +25,8 @@ pub(crate) struct Options {
     pub(crate) runner_config: Option<PathBuf>,
     /// 双向 Bridge 传输审批文档（ADR-025 D1）；缺席即平面不装配。
     pub(crate) sync_transport: Option<PathBuf>,
+    /// 私有备份配置（备份审批＋生产者部署事实）；缺席即备份生产者不启用。
+    pub(crate) backup_config: Option<PathBuf>,
 }
 
 pub(crate) struct BoardOptions {
@@ -70,6 +72,7 @@ struct Raw {
     board_data: Option<PathBuf>,
     board_agent_data: Option<PathBuf>,
     sync_transport: Option<PathBuf>,
+    backup_config: Option<PathBuf>,
 }
 
 pub(crate) fn parse(mut args: impl Iterator<Item = String>) -> Result<Option<Options>, String> {
@@ -214,6 +217,15 @@ pub(crate) fn parse(mut args: impl Iterator<Item = String>) -> Result<Option<Opt
     {
         return Err("双向 Bridge 审批文档必须为绝对路径，并配合会话配置与 canonical 写者".into());
     }
+    // 备份生产者要冻结 canonical 写者、读权威账本，备份配置的路径也要按会话配置核对：缺一即拒绝，
+    // 不能给了备份配置却在别的模式下被悄悄忽略。
+    if raw
+        .backup_config
+        .as_ref()
+        .is_some_and(|p| !p.is_absolute() || raw.writer_data.is_none() || session.is_none())
+    {
+        return Err("备份配置必须为绝对路径，并配合会话配置与 canonical 写者".into());
+    }
     Ok(Some(Options {
         vault: raw
             .vault
@@ -234,6 +246,7 @@ pub(crate) fn parse(mut args: impl Iterator<Item = String>) -> Result<Option<Opt
         board,
         runner_config: raw.runner_config,
         sync_transport: raw.sync_transport,
+        backup_config: raw.backup_config,
     }))
 }
 
@@ -268,3 +281,7 @@ mod table_tests;
 #[cfg(test)]
 #[path = "../tests/options/sync_transport.rs"]
 mod sync_transport_tests;
+
+#[cfg(test)]
+#[path = "../tests/options/backup_config.rs"]
+mod backup_config_tests;

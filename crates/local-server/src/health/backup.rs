@@ -113,7 +113,7 @@ pub(super) fn jobs_section(evidence: &BackupJobsEvidence) -> HealthSection {
     let (state, detail) = match evidence {
         BackupJobsEvidence::Disabled => (
             HealthState::Unknown,
-            "备份生产者没有启用：私有配置里没有备份那两段，看不到作业".to_owned(),
+            "备份生产者没有启用：启动时没有给备份配置，看不到作业".to_owned(),
         ),
         BackupJobsEvidence::Unreadable => (
             HealthState::Unknown,

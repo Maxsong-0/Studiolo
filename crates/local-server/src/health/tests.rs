@@ -5,7 +5,8 @@
 
 use super::{EvidenceSnapshot, HealthBody, PATH, enabled, routes};
 use crate::backup::{
-    BackupJobs, BackupJobsEvidence, JobMark, RepositoryCheckEvidence, RepositoryChecks,
+    BackupJobs, BackupJobsEvidence, JobMark, RecoveryMark, RepositoryCheckEvidence,
+    RepositoryChecks,
 };
 use axum::{
     Router,
@@ -59,6 +60,11 @@ fn healthy_jobs(now: i64) -> BackupJobs {
         outstanding: None,
         stuck_after_ms: 86_400_000,
         overdue_after_ms: 7_200_000,
+        recovery_point: Some(RecoveryMark {
+            sequence: 4,
+            content_cutoff_ms: now_ms - 100_000,
+        }),
+        recovery_point_budget_ms: 3_600_000,
     }
 }
 

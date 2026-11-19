@@ -58,10 +58,8 @@ struct Document {
     sync_scope: Option<sync_scope::Document>,
     #[serde(default, deserialize_with = "file_operations::decode")]
     file_operations: Option<file_operations::Document>,
-    #[serde(default, deserialize_with = "backup::decode")]
-    backup: Option<backup::BackupApproval>,
-    #[serde(default, deserialize_with = "backup::producer::decode")]
-    backup_producer: Option<backup::BackupProducerSettings>,
+    // 备份两段不在这里：它们改了会改整份文件的 `scope_hash`，见 `backup::BackupConfig`。
+    // 未知字段失败关闭，所以把备份写进主人配置会在加载时被拒，不会悄悄改掉 Bridge 绑定。
 }
 
 #[derive(Deserialize)]
@@ -190,19 +188,6 @@ impl Config {
             .transpose()
     }
 
-    /// 主人的备份审批加生产者部署事实；两段都缺即未启用，只给一段在加载时就已拒绝。
-    ///
-    /// 这里只交出已校验的值：不打开 socket、不建目录，也不代表目标真的可达。
-    #[must_use]
-    pub fn backup_producer(
-        &self,
-    ) -> Option<(&backup::BackupApproval, &backup::BackupProducerSettings)> {
-        self.document
-            .backup
-            .as_ref()
-            .zip(self.document.backup_producer.as_ref())
-    }
-
     /// 人侧删除/最近删除恢复的显式批准；缺省不启用。
     pub fn file_operation_policy(&self) -> Result<Option<FileOperationPolicy>, ConfigError> {
         self.document
@@ -237,25 +222,6 @@ impl Config {
         }
         if let Some(scope) = &document.sync_scope {
             scope.validate(document.human_content.as_ref())?;
-        }
-        if let Some(producer) = &document.backup_producer {
-            // 审批和部署事实必须成对；备份路径不能落在 Auth／Audit 私有目录里，反过来也不行。
-            if document.backup.is_none() {
-                return Err(ConfigError);
-            }
-            for path in [
-                producer.socket(),
-                producer.staging_parent(),
-                producer.ephemeral_root(),
-            ] {
-                for private in [self.auth_directory(), self.audit_directory()] {
-                    if path.starts_with(private) || private.starts_with(path) {
-                        return Err(ConfigError);
-                    }
-                }
-            }
-        } else if document.backup.is_some() {
-            return Err(ConfigError);
         }
         if let Some(policy) = &document.file_operations {
             policy.validate(

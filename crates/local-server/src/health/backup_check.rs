@@ -23,7 +23,7 @@ pub(super) fn check_section(evidence: &RepositoryCheckEvidence) -> HealthSection
     let (state, detail) = match evidence {
         RepositoryCheckEvidence::Disabled => (
             HealthState::Unknown,
-            "备份生产者没有启用：私有配置里没有备份那两段，看不到仓库检查".to_owned(),
+            "备份生产者没有启用：启动时没有给备份配置，看不到仓库检查".to_owned(),
         ),
         RepositoryCheckEvidence::Unreadable => (
             HealthState::Unknown,

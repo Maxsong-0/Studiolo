@@ -1,4 +1,5 @@
 //! 固定文件、只读原 FD、有界内容与再次路径核验；不创建缺失的配置。
+//! 配置文件和仓库 CA 文件都在 `/etc/studiolo/` 下，按同一套 root 目录链规则读。
 use crate::{ProcessError, Result};
 use rustix::fs::{self, Mode, OFlags};
 use std::{
@@ -12,9 +13,29 @@ const FLAGS: OFlags = OFlags::RDONLY
     .union(OFlags::DIRECTORY)
     .union(OFlags::NOFOLLOW)
     .union(OFlags::CLOEXEC);
+/// worker 只读 `/etc/studiolo/` 下这两个固定文件。文件名只写在 [`open_root_file`] 的打开处，
+/// 没有「按名字打开任意文件」的入口（架构守卫逐行钉住两处打开）。
+#[derive(Clone, Copy)]
+enum RootFile {
+    /// 部署配置。
+    Config,
+    /// 仓库 CA 证书；restic 经 `--cacert` 按 [`CA_PATH`] 再读一次。
+    RepositoryCa,
+}
+/// 交给 restic 的 CA 绝对路径；必须和 [`RootFile::RepositoryCa`] 打开的是同一个文件。
+pub(super) const CA_PATH: &str = "/etc/studiolo/backup-worker-ca.pem";
+
+/// 读部署配置。
 pub(super) fn read(deadline: Instant) -> Result<Vec<u8>> {
-    let (bytes, pin) = read_checked(open_config()?, 0, deadline)?;
-    let reopened = open_config()?
+    read_root_file(RootFile::Config, deadline)
+}
+/// 读仓库 CA 证书；和配置同样要求 root 所有、单链接、0644 或 0444、1 字节～16 KiB。
+pub(super) fn read_ca(deadline: Instant) -> Result<Vec<u8>> {
+    read_root_file(RootFile::RepositoryCa, deadline)
+}
+fn read_root_file(file: RootFile, deadline: Instant) -> Result<Vec<u8>> {
+    let (bytes, pin) = read_checked(open_root_file(file)?, 0, deadline)?;
+    let reopened = open_root_file(file)?
         .metadata()
         .map_err(|_| ProcessError::Configuration)?;
     if !same(&pin, &reopened) {
@@ -25,7 +46,7 @@ pub(super) fn read(deadline: Instant) -> Result<Vec<u8>> {
     }
     Ok(bytes)
 }
-fn open_config() -> Result<File> {
+fn open_root_file(file: RootFile) -> Result<File> {
     let mut directory =
         fs::open("/", FLAGS, Mode::empty()).map_err(|_| ProcessError::Configuration)?;
     for name in [None, Some("etc"), Some("studiolo")] {
@@ -38,12 +59,20 @@ fn open_config() -> Result<File> {
             return Err(ProcessError::Configuration);
         }
     }
-    let fd = fs::openat(
-        &directory,
-        "backup-worker.json",
-        OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::CLOEXEC | OFlags::NONBLOCK,
-        Mode::empty(),
-    )
+    let fd = match file {
+        RootFile::Config => fs::openat(
+            &directory,
+            "backup-worker.json",
+            OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::CLOEXEC | OFlags::NONBLOCK,
+            Mode::empty(),
+        ),
+        RootFile::RepositoryCa => fs::openat(
+            &directory,
+            "backup-worker-ca.pem",
+            OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::CLOEXEC | OFlags::NONBLOCK,
+            Mode::empty(),
+        ),
+    }
     .map_err(|_| ProcessError::Configuration)?;
     Ok(File::from(fd))
 }

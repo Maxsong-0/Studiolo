@@ -61,6 +61,9 @@ async fn run() -> Result<(), String> {
         println!(
             "\n接入方列表：--policy-data </绝对路径/策略库> --agent-data </绝对路径/身份库>；需要会话入口。\n身份库只读、必须已存在且与内容/静态资源/其它私有目录隔离；同给 --board-agent-data 时两值必须一致。"
         );
+        println!(
+            "\n备份生产者：--backup-config </绝对路径/backup.json>；需要会话入口与 canonical 写者，不给即不启用。\n文件 0600、父目录 0700，backup 与 backup_producer 两段成对；不写进 owner.json（会改 Bridge 绑定）。"
+        );
         return Ok(());
     };
     startup::PreparedServer::prepare(options)

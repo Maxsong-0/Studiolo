@@ -55,6 +55,7 @@ impl Stage {
                 ephemeral_root: ephemeral,
                 source_roots,
                 min_interval_millis: 3_600_000,
+                rpo_millis: 4_500_000,
                 source_retention_millis: retention_millis,
                 freeze_budget: FreezeBudget::new(30_000).unwrap(),
                 manifest: manifest(),
