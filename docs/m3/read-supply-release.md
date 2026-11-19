@@ -25,9 +25,11 @@ T-039 持久派生索引已于 2026-09-11 随 T-040 发布，系统切换与公�
 外层 `SHA256SUMS` 覆盖二进制、测试程序、源码压缩包、系统单元及内部清单。
 除原有脚本外，白名单包含所有客户端投影模块、测试、两个真实管线和新 HTTP 探针。
 
-随包 Rust 构建须具备按 crate/target 指定的 17 个关键目标，不能用其他 crate 的同名目标充数。
+随包 Rust 构建须具备 `scripts/package-agent.sh` 里 `required` 列表按 crate/target 点名的全部关键目标
+（个数以该列表为准，文档不写死），缺任何一个都拒绝出包，也不能用其他 crate 的同名目标充数。
 服务器以普通用户从记录的 `source` 目录运行 `bash ../run-agent-tests.sh`，先验证解压源码集合和摘要，
-再运行 test-list 里的全部 Rust 程序（满额容量契约编译但不随包，见 `docs/m3/server-agent.md`）、10 组 Python 契约，以及两条虚构资料真实 MCP/HTTP 管线。
+再运行 test-list 里的全部 Rust 程序（满额容量契约编译但不随包，见 `docs/m3/server-agent.md`）、
+脚本里 `STUDIOLO_PYTHON_TESTS` 点名的全部 Python 契约，以及脚本点名的虚构资料真实 MCP/HTTP 管线。
 此步骤不操作线上资料或凭据，不需要服务器 Rust、Node 或 Docker。
 
 ## 系统服务升级与回滚
