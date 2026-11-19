@@ -1,6 +1,6 @@
 //! 服务共享状态：白名单只读根、当前代次、私有库、审计账本与降级窗口。
 
-use crate::index::{IndexRuntime, IndexStatus, ModelSource, Persistence};
+use crate::index::{IndexRuntime, IndexStatus};
 
 use std::sync::{Arc, Mutex, RwLock};
 
@@ -148,60 +148,6 @@ pub fn now() -> String {
 /// 当前时间（Unix 毫秒）。
 pub fn now_ms() -> i64 {
     jiff::Timestamp::now().as_millisecond()
-}
-
-/// 扫描白名单并构建一个新代次；扫描或建模失败返回错误。
-pub fn build_generation(
-    roots: &SupplyRoots,
-    limits: ScanLimits,
-    number: u64,
-) -> Result<Generation, String> {
-    let snapshot = roots
-        .scan(limits)
-        .map_err(|error| format!("白名单扫描失败：{error}"))?;
-    let model = WorkbenchReadModel::build(&snapshot.documents())
-        .map_err(|error| format!("读模型构建失败：{error}"))?;
-    Ok(Generation {
-        number,
-        index_status: IndexStatus {
-            source: ModelSource::Rebuilt,
-            parsed: snapshot.notes.len(),
-            reused: 0,
-            persistence: Persistence::Disabled,
-        },
-        snapshot,
-        model: Arc::new(model),
-        generated_at: now(),
-        freshness: None,
-        replica_usage: None,
-    })
-}
-
-/// 从一个完整校验的来源回执构建读模型。
-pub fn replica_generation(
-    root: &ReplicaRoot,
-    previous: Option<&Freshness>,
-    number: u64,
-) -> Result<Generation, String> {
-    let replica = root
-        .verify(now_ms(), previous)
-        .map_err(|error| error.to_string())?;
-    let model = WorkbenchReadModel::build(&replica.snapshot.documents())
-        .map_err(|_| "副本读模型构建失败".to_owned())?;
-    Ok(Generation {
-        number,
-        index_status: IndexStatus {
-            source: ModelSource::Rebuilt,
-            parsed: replica.snapshot.notes.len(),
-            reused: 0,
-            persistence: Persistence::Disabled,
-        },
-        snapshot: replica.snapshot,
-        model: Arc::new(model),
-        generated_at: now(),
-        freshness: Some(replica.freshness),
-        replica_usage: Some(replica.usage),
-    })
 }
 
 impl AppState {
