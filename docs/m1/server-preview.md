@@ -26,7 +26,8 @@ bash scripts/package-preview.sh "$PWD/target/preview-packages/<唯一发布名>"
 ```
 
 脚本将当前工作区白名单源码存档，在独立源码快照构建前端并跑测试；随后在 Linux amd64
-构建 release 服务与全部 Rust 单元/集成测试程序，后者必须在服务器原生执行。
+构建 release 服务与全部 Rust 单元/集成测试程序（`PACKAGE_EXCLUDED_TESTS` 列的编译但不随包，见 `docs/m3/release-packaging.md`），
+后者必须在服务器原生执行。
 Mac 的 amd64 仿真已实测不支持 openat2，不能作为路径安全通过证据。
 `payload/` 含二进制、网页、虚构示例库、原生测试程序与执行清单、
 `source.tar.gz`、基线提交信息、构建镜像/运行库信息与 `SHA256SUMS`。

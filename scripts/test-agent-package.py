@@ -311,14 +311,50 @@ class CompileTimeInputsTests(unittest.TestCase):
                              "agent 链接了这些工作区 crate，但 package-agent.sh 没有随包携带它们的测试")
 
 
-# debug 下忽略、只在 release 跑的测试（如满额容量契约）：release 打包时照跑，所以必须在排除名单里。
-RELEASE_ONLY = re.compile(r"cfg_attr\(\s*debug_assertions\s*,\s*ignore\b")
+# debug 下不跑、只在 release 跑的测试（如满额容量契约）：release 打包时照跑，所以必须在排除名单里。
+# 认两种编译期写法：`cfg_attr(debug_assertions, ignore…)` 与 `cfg(not(debug_assertions))`。
+RELEASE_ONLY = re.compile(r"cfg_attr\(\s*debug_assertions\s*,\s*ignore\b|\bcfg\(\s*not\(\s*debug_assertions\s*\)\s*\)")
+# 运行时的 `cfg!(debug_assertions)` 守卫分不清是「debug 下提前返回」还是换个阈值，测试里一律不许用。
+RUNTIME_DEBUG_CHECK = re.compile(r"\bcfg!\(\s*debug_assertions\s*\)")
 
 
 def excluded_tests(script, label):
     """从打包脚本的 Node 段取出 PACKAGE_EXCLUDED_TESTS 的字面量；找不到返回 None。"""
     literal = re.search(r"const PACKAGE_EXCLUDED_TESTS = new Set\(\[(.*?)\]\);", embedded(script, label), re.S)
     return set(re.findall(r"'([^']+)'", literal.group(1))) if literal else None
+
+
+# 守卫的报错文字：测试按这几个函数逐条断言是哪一条，免得一条检查坏了、别的检查碰巧报红把它盖住。
+def missing_target(entry):
+    return f"排除名单里的 {entry} 没有对应的测试目标（crates/<包>/tests/<目标>.rs 或 <目标>/main.rs）"
+
+
+def unrun_exclusion(entry, package, target):
+    return (f"排除名单里的 {entry} 在 ci 套里没有专门跑它的一步："
+            f"要有一行 `cargo --locked test --release -p {package} --test {target}`")
+
+
+def shipped_release_only(entry):
+    return f"{entry} 只在 release 跑，却会随运行包上生产主机：把它加进两个打包脚本的 PACKAGE_EXCLUDED_TESTS"
+
+
+def release_only_in_module(relative):
+    return (f"{relative} 有只在 release 跑的用例，但它是测试目标的子模块：排除名单按目标排，"
+            "把这些用例挪进独立的测试目标，再把目标加进排除名单")
+
+
+def runtime_debug_check(relative):
+    return (f"{relative} 用了运行时的 cfg!(debug_assertions)：守卫分不清它是不是只在 release 跑，"
+            "改用 #[cfg_attr(debug_assertions, ignore = \"…\")] 写明")
+
+
+def target_of(path, tests):
+    """集成测试目标的根文件（tests/<目标>.rs 或 tests/<目标>/main.rs）返回目标名，子模块返回 None。"""
+    if path.parent == tests:
+        return path.stem
+    if path.name == "main.rs" and path.parent.parent == tests:
+        return path.parent.name
+    return None
 
 
 def exclusion_problems(agent, preview, root, testbox):
@@ -333,49 +369,105 @@ def exclusion_problems(agent, preview, root, testbox):
         crate, target = entry.split("/", 1)
         tests = root / "crates" / crate / "tests"
         if not ((tests / f"{target}.rs").is_file() or (tests / target / "main.rs").is_file()):
-            problems.append(f"排除名单里的 {entry} 没有对应的测试目标")
+            problems.append(missing_target(entry))
         package = "studiolo" if crate == "studiolo" else f"studiolo-{crate}"
-        if f"-p {package} --test {target}" not in testbox:
-            problems.append(f"排除名单里的 {entry} 在 ci 套里没有专门跑它的一步")
-    sources = sorted([*(root / "crates").glob("*/tests/*.rs"), *(root / "crates").glob("*/tests/*/main.rs")])
-    for path in sources:
-        if RELEASE_ONLY.search(path.read_text(encoding="utf-8")):
-            tests = next(parent for parent in path.parents if parent.name == "tests")
-            target = path.stem if path.parent == tests else path.parent.name
-            entry = f"{tests.parent.name}/{target}"
-            if entry not in agent or entry not in preview:
-                problems.append(f"{entry} 只在 release 跑，却会随运行包上生产主机")
+        step = rf"^cargo --locked test --release -p {re.escape(package)} --test {re.escape(target)}$"
+        if not re.search(step, testbox, re.M):
+            problems.append(unrun_exclusion(entry, package, target))
+    for path in sorted((root / "crates").glob("*/tests/**/*.rs")):
+        text = path.read_text(encoding="utf-8")
+        relative = path.relative_to(root).as_posix()
+        if RUNTIME_DEBUG_CHECK.search(text):
+            problems.append(runtime_debug_check(relative))
+        if not RELEASE_ONLY.search(text):
+            continue
+        tests = next(parent for parent in path.parents if parent.name == "tests")
+        target = target_of(path, tests)
+        if target is None:
+            problems.append(release_only_in_module(relative))
+            continue
+        entry = f"{tests.parent.name}/{target}"
+        if entry not in agent or entry not in preview:
+            problems.append(shipped_release_only(entry))
     return problems
 
 
 class ExcludedTestsGuardTests(unittest.TestCase):
     """T-215 复查：排除名单按字符串匹配。目标改名、两个包各写一份对不上、新加只在 release 跑的测试，
-    都会让满额负载悄悄回到生产主机的部署验收里，而别的检查照样全绿。"""
+    都会让满额负载悄悄回到生产主机的部署验收里，而别的检查照样全绿。每个反例断言恰好报哪几条。"""
     ROOT = SCRIPTS.parent
     PREVIEW = (SCRIPTS / "package-preview.sh").read_text(encoding="utf-8")
     TESTBOX = (SCRIPTS.parent / ".testbox.toml").read_text(encoding="utf-8")
+    ENTRY = "agent-server/replica_capacity_contract"
+    PACKAGE = "studiolo-agent-server"
 
     def names(self):
         return excluded_tests(PACKAGE, "NODE_TESTS"), excluded_tests(self.PREVIEW, "NODE")
 
+    def sandbox(self, files):
+        """临时仓库：排除名单里那个目标照样存在（带 release 专用属性），再加上 files 里的文件。"""
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        root = Path(temp.name)
+        files = {"crates/agent-server/tests/replica_capacity_contract.rs":
+                 "#[cfg_attr(debug_assertions, ignore = \"release\")]\nfn slow() {}\n", **files}
+        for relative, text in files.items():
+            path = root / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(text, encoding="utf-8")
+        return root
+
     def test_both_packages_exclude_exactly_the_release_only_targets(self):
         agent, preview = self.names()
-        self.assertEqual(agent, {"agent-server/replica_capacity_contract"})
+        self.assertEqual(agent, {self.ENTRY})
         self.assertEqual(exclusion_problems(agent, preview, self.ROOT, self.TESTBOX), [])
 
     def test_renamed_mismatched_or_unrun_exclusions_are_reported(self):
         agent, preview = self.names()
-        renamed = {"agent-server/replica_capacity_contract_v2"}
+        renamed = "agent-server/replica_capacity_contract_v2"
         cases = {
-            "改名后名单失效": (renamed, renamed, self.TESTBOX),
-            "两个包对不上": (agent, set(), self.TESTBOX),
-            "ci 套里没有专门一步": (agent, preview,
-                               self.TESTBOX.replace("--test replica_capacity_contract", "--test other")),
-            "名单整个没了": (None, preview, self.TESTBOX),
+            "改名后名单失效": (({renamed}, {renamed}, self.TESTBOX),
+                        [missing_target(renamed),
+                         unrun_exclusion(renamed, self.PACKAGE, "replica_capacity_contract_v2"),
+                         shipped_release_only(self.ENTRY)]),
+            "两个包对不上": ((agent, set(), self.TESTBOX),
+                       [f"两个运行包的排除名单不一致：{[self.ENTRY]}", shipped_release_only(self.ENTRY)]),
+            "ci 套里那一步不是 release": ((agent, preview, self.TESTBOX.replace(
+                "test --release -p studiolo-agent-server --test replica_capacity_contract",
+                "test -p studiolo-agent-server --test replica_capacity_contract")),
+                [unrun_exclusion(self.ENTRY, self.PACKAGE, "replica_capacity_contract")]),
+            "ci 套里只有名字更长的一步": ((agent, preview, self.TESTBOX.replace(
+                "--test replica_capacity_contract", "--test replica_capacity_contract_full")),
+                [unrun_exclusion(self.ENTRY, self.PACKAGE, "replica_capacity_contract")]),
+            "名单整个没了": ((None, preview, self.TESTBOX), ["打包脚本里找不到 PACKAGE_EXCLUDED_TESTS"]),
         }
-        for case, (a, p, testbox) in cases.items():
+        for case, ((a, p, testbox), expected) in cases.items():
             with self.subTest(case=case):
-                self.assertNotEqual(exclusion_problems(a, p, self.ROOT, testbox), [])
+                self.assertEqual(exclusion_problems(a, p, self.ROOT, testbox), expected)
+
+    def test_each_release_only_shape_is_reported_on_its_own(self):
+        agent, preview = self.names()
+        cases = {
+            "名单里的目标不存在": (None, [missing_target(self.ENTRY)]),
+            "新加 cfg_attr 忽略的目标": ({"crates/x/tests/y.rs": "#[cfg_attr(\n    debug_assertions,\n    ignore\n)]\n"},
+                                [shipped_release_only("x/y")]),
+            "目录式目标用 cfg(not(debug_assertions))": ({"crates/x/tests/y/main.rs": "#[cfg(not(debug_assertions))]\n"},
+                                                    [shipped_release_only("x/y")]),
+            "写在子模块里": ({"crates/x/tests/support/slow.rs": "#[cfg_attr(debug_assertions, ignore)]\n"},
+                       [release_only_in_module("crates/x/tests/support/slow.rs")]),
+            "运行时 cfg!": ({"crates/x/tests/y.rs": "if cfg!(debug_assertions) { return; }\n"},
+                         [runtime_debug_check("crates/x/tests/y.rs")]),
+            "只在 debug 下忽略的不算": ({"crates/x/tests/y.rs": "#[cfg_attr(not(debug_assertions), ignore)]\n"}, []),
+        }
+        for case, (files, expected) in cases.items():
+            with self.subTest(case=case):
+                if files is None:
+                    temp = tempfile.TemporaryDirectory()
+                    self.addCleanup(temp.cleanup)
+                    root = Path(temp.name)
+                else:
+                    root = self.sandbox(files)
+                self.assertEqual(exclusion_problems(agent, preview, root, self.TESTBOX), expected)
 
 
 if __name__ == "__main__":

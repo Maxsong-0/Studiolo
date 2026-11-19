@@ -94,13 +94,14 @@ fn notes_limit_replica_answers_concurrent_reads_within_budget() {
     let slowest = u128::from(readings.number("SLOWEST_MS"));
     let rss_anon = readings.number("RSS_ANON_KIB");
     let rss_file = readings.number("RSS_FILE_KIB");
-    let peak_anon = readings
-        .number("VM_HWM_KIB")
-        .saturating_sub(readings.number("RSS_FILE_START_KIB"));
+    let vm_hwm = readings.number("VM_HWM_KIB");
+    let rss_file_start = readings.number("RSS_FILE_START_KIB");
+    let peak_anon = vm_hwm.saturating_sub(rss_file_start);
     eprintln!(
         "副本容量自证：上限 {} KiB，满额 {} 篇 {} KiB；{} 个代次各 {BURSTS} 轮 {CONCURRENCY} 路并发读，\
          最慢 {slowest} ms（上限 {LATENCY_BUDGET_MS} ms）；常驻匿名内存 {rss_anon} KiB、峰值估计 {peak_anon} KiB\
-         （上限都是 {MEMORY_BUDGET_KIB} KiB；每个代次打完时 {}），锁定程序文件页 {rss_file} KiB",
+         （VmHWM {vm_hwm} KiB − 起点 RssFile {rss_file_start} KiB；上限都是 {MEMORY_BUDGET_KIB} KiB；\
+         每个代次打完时 {}），锁定程序文件页 {rss_file} KiB",
         NOTES_TOTAL_LIMIT / 1024,
         corpus.notes,
         corpus.bytes / 1024,
@@ -119,7 +120,8 @@ fn notes_limit_replica_answers_concurrent_reads_within_budget() {
     );
     assert!(
         peak_anon <= MEMORY_BUDGET_KIB,
-        "满额副本的匿名内存峰值估计 {peak_anon} KiB（VmHWM − 起点 RssFile，上界），超过 {MEMORY_BUDGET_KIB} KiB：\
+        "满额副本的匿名内存峰值估计 {peak_anon} KiB（VmHWM {vm_hwm} KiB − 起点 RssFile {rss_file_start} KiB，上界），\
+         超过 {MEMORY_BUDGET_KIB} KiB：\
          校验进行中的瞬时峰值比打完时高出这么多，上限调高了就得先压内存"
     );
 }

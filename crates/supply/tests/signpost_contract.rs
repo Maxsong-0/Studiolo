@@ -259,7 +259,8 @@ fn freshness_is_never_trimmed_out_of_the_hard_handshake_budget() {
     assert!(error.tokens > HARD_BUDGET_TOKENS);
 }
 
-/// 容量提醒和新鲜度一样计入硬预算：超长时握手失败关闭，不会为了塞下它去裁别的段（T-215 复查）。
+/// 容量提醒和新鲜度一样不可裁剪、计入硬预算：三级裁剪后仍超硬预算就握手失败关闭，不会删掉提醒去凑预算；
+/// 在目标预算与硬预算之间时，照常逐级裁剪其它段（T-215 复查）。
 #[test]
 fn capacity_notice_counts_against_the_hard_handshake_budget() {
     let snapshot = studiolo_supply::Snapshot::default();

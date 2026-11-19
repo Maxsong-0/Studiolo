@@ -25,6 +25,9 @@
 - `runtime-libraries.txt`、`auth-admin-runtime-libraries.txt`、`maintain-runtime-libraries.txt`：
   三个程序打包时的 `ldd` 清单；打包阶段出现 `not found` 即拒绝出包。
 - `tests/` 与 `test-list`：按 crate 与测试目标收集的独立 Rust 测试程序，仅编译不执行。
+  `PACKAGE_EXCLUDED_TESTS` 列的目标编译但不随包：现在只有 agent-server 的满额容量契约 `replica_capacity_contract`，
+  只在 ci 套 `replica-capacity` 一步跑（T-215，生产主机上不跑满额负载）；与 `package-agent.sh` 的同名名单逐项相等，
+  名单里的目标必须存在，凡是只在 release 跑的测试目标都必须在名单里，`test-agent-package.py` 守着。
 - `source.tar.gz`、`expected-source-root`、`base-commit.txt`、`provenance.txt`、`build-image.txt`、
   `rust-version.txt`：源码快照、记录的运行时路径、来源提交与构建镜像 digest。
 - `web/`、`example-vault/`、`check-preview.py`、三个 `.service` 单元、
@@ -62,7 +65,7 @@ bash scripts/package-preview.sh /绝对路径/m3-t049-20260917-runtime01
 不出包只想自检时，单独跑：
 
 ```bash
-python3 scripts/test-preview-package.py   # 13 项：测试收集与原生产品门禁
+python3 scripts/test-preview-package.py   # 14 项：测试收集与原生产品门禁
 python3 scripts/test-release-package.py   # 16 项：生产构建门禁与整包验收门禁
 python3 scripts/test-install-package.py   # 18 项：安装器三段逻辑（Linux 上含 2 项整脚本端到端）
 for s in scripts/package-preview.sh scripts/run-preview-tests.sh \

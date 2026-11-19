@@ -57,8 +57,9 @@ python3 scripts/project_registry.py desired --capability <现行能力集.json> 
 
 两道门都还在：`sync` 之后仍要重发 Mac 副本包、发行并重启 agent（主人在场，顺序见上：副本先变新、agent 最后重启）；
 调高协议上限（`replica_common.py` 与 `protocol.rs` 两端常量）顺序正好相反：agent 先换上（或同时），Mac 包后换。反过来，
-库一旦超过 agent 的旧上限，每个请求的校验都不过（`replica_invalid: …`，各条上限各有原因码，如 `manifest_notes_total_limit`、
-`manifest_total_limit`、`manifest_entry_limit`；清单本身超限读不进来报 `unreadable_manifest`），连握手路牌也拿不到，不只是资料变旧（T-215 复查）。
+库一旦超过 agent 的旧上限，每个请求的校验都不过（`replica_invalid: …`：Markdown 合计 `manifest_notes_total_limit`、文件总量 `manifest_total_limit`、
+条目数 `manifest_entry_limit`、单篇笔记 `manifest_note_limit`；单个文件超限和条目类型不合法共用 `manifest_entry_type`；
+清单本身超限读不进来报 `unreadable_manifest`），连握手路牌也拿不到，不只是资料变旧（T-215 复查）。
 Mac 包要紧跟着 agent 换：在那之前路牌提醒按 agent 的新上限算，对 Mac 端仍在生效的旧上限没有提前量。
 
 `desired` 只打印提案正文，照旧经策略平面提交、由人批准后才生效。注册表不记代码仓库地址。

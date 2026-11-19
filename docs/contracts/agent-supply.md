@@ -163,11 +163,12 @@
   只在 release 构建里跑，ci 套 `replica-capacity` 一步）：按 `NOTES_TOTAL_LIMIT` 生成满额副本（真实库的篇幅分布、
   标题与 wikilink 密度，正文虚构，全挤在一个目录），一次性子进程先 `mlockall`、开索引缓存，打 2 轮 16 路并发
   `/read/note`，再连换 3 个各改几十篇的新代次、每次再打 2 轮。最慢一个请求不超过 10 秒、常驻匿名内存不超过 384 MiB
-  （单元 `MemoryMax=512M` 的四分之三；每代打完时的 `RssAnon` 和按 `VmHWM − RssFile` 估的峰值都算），每一代的派生
+  （单元 `MemoryMax=512M` 的四分之三；每代打完时的 `RssAnon` 和峰值上界都算：峰值按 `VmHWM` 减加固后、起服务前读的 `RssFile` 估，`MCL_ONFAULT` 下 `RssFile` 只增不减），每一代的派生
   索引缓存都写得进去（`persistence: Ready`），路牌第 2 节开头带容量提醒。上限往上调、或者整读校验又变成随篇数超线性，
   它先红：旧的逐篇重读在 24 MiB 时最慢 16.2 秒（红），修后 1.0 秒。两个运行包（`scripts/package-agent.sh`、
   `scripts/package-preview.sh`）都不带它：两处的 `PACKAGE_EXCLUDED_TESTS` 逐项相等，名单里的目标必须存在、在 ci 套里有专门一步，
-  凡是 debug 下忽略、只在 release 跑的测试目标都必须在名单里（`test-agent-package.py` 守着）。部署验收在生产主机上原生跑
+  凡是 debug 下不跑、只在 release 跑的测试目标都必须在名单里（`test-agent-package.py` 守着：认 `cfg_attr(debug_assertions, ignore…)`
+  与 `cfg(not(debug_assertions))` 两种写法，这类用例不许写在测试目标的子模块里，测试里不许用运行时 `cfg!(debug_assertions)`）。部署验收在生产主机上原生跑
   运行包里的测试，满额负载不该和线上服务抢内存。
 - 白名单：读 `School/...` 或 `../` → 拒绝＋审计；`list_entries` 只列白名单项目。
 - 审计先于返回：注入失败账本 → `read_note` 拒绝且无正文返回；降级握手不含 vault 内容。

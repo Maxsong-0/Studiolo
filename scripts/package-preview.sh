@@ -122,7 +122,8 @@ const targets = new Set();
 const libraries = new Set();
 // 编译但不随包：部署验收在生产主机上原生跑运行包里的每个测试程序，满额负载测试不该和线上服务抢内存。
 // 容量契约只在 ci 套的 replica-capacity 一步跑（T-215 复查）。与 package-agent.sh 的同名常量逐项相等，
-// 凡是 debug 下忽略、只在 release 跑的测试目标都要列在这里（test-agent-package.py 有守卫）。
+// 凡是 debug 下不跑、只在 release 跑的测试目标都要列在这里（test-agent-package.py 有守卫：认
+// `cfg_attr(debug_assertions, ignore…)` 与 `cfg(not(debug_assertions))`，这类用例不许写在子模块里，测试里不许用运行时 `cfg!(debug_assertions)`）。
 const PACKAGE_EXCLUDED_TESTS = new Set(['agent-server/replica_capacity_contract']);
 let complete = false;
 for (const line of fs.readFileSync(path.join(out, 'build-meta/tests.jsonl'), 'utf8').split('\n')) {
