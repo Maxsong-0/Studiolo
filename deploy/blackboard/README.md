@@ -64,7 +64,7 @@ r2 之后每次发行只做「上一发行 → 本发行」：换网页，可选
   --local-server <暂存>/bin/studiolo-local-server --local-server-sha256 <64 位摘要> --human-source-commit <40 位提交>
 ```
 
-   只换网页时省略后三个参数（三件套要么全给要么全不给），程序逐字节沿用上一发行、manifest 照抄其来源；`assembly.REQUIRES_NEW_HUMAN_PROGRAM` 为真的发行（如 r17）必须给，否则不出候选。T-132 r10 同时传入 `--maintain <程序> --maintain-sha256 <摘要> --sync-launcher <程序> --sync-launcher-sha256 <摘要>`；四项必须全给，并与上述人侧程序来自同一提交。manifest 新增 `sync_program_source_commit`，两个程序均为 ELF/0755；之后省略四项会原样保留，禁止静默移除、缺一程序或保留来源却换字节。工具随包交付不自动置备、配对或启用 Bridge。输出 `manifest_sha256`、`human_binary_reused`、`services_changed: false`。
+   只换网页时省略后三个参数（三件套要么全给要么全不给），程序逐字节沿用上一发行、manifest 照抄其来源；`assembly.REQUIRES_NEW_HUMAN_PROGRAM` 为真的发行（如 r17）必须给，而且给的程序要和上一发行字节不同、字节里有本版新参数的字面量（`NEW_HUMAN_PROGRAM_LITERALS`），否则不出候选。T-132 r10 同时传入 `--maintain <程序> --maintain-sha256 <摘要> --sync-launcher <程序> --sync-launcher-sha256 <摘要>`；四项必须全给，并与上述人侧程序来自同一提交。manifest 新增 `sync_program_source_commit`，两个程序均为 ELF/0755；之后省略四项会原样保留，禁止静默移除、缺一程序或保留来源却换字节。工具随包交付不自动置备、配对或启用 Bridge。输出 `manifest_sha256`、`human_binary_reused`、`services_changed: false`。
 6. **激活**（用户本人 root）：`sudo /usr/bin/python3 -I -B -S <暂存>/deploy/blackboard/activate.py --manifest-sha256 <上一步的摘要>`。已激活后重复执行会在预检被拒（现场已不是上一发行），无副作用。
 
 **r15→r16 是单向的**（2026-11-16 部署前复查）。r16 一启动就把控制库（黑板目录里的 `control.sqlite3`）从
@@ -101,14 +101,16 @@ r12本身尚无批内关停点，激活前必须取得空闲plane.lock并持有�
 控制库 schema 3→4、单向（见上文「r15→r16 是单向的」），要留退路先做恢复点。现场摘要：human 单元 `edb0c1f5…c71c7`、agent 单元 `15b39395…45b9`（t207-c09b065、新名 `--allow`）、r15 manifest `2f24ad58…a6d5`。
 
 本版固定 r16→r17（2026-11-20，T-216）：启用备份生产者。启动器在同步审批后面加 `--backup-config`（和主人配置同目录的 `backup.json`），
-人侧单元加备份 socket 父目录、封存父目录两行 `ReadWritePaths=`，停止超时 90→170 秒（备份收尾和 Bridge 停止是串行的两段，逐项相加，
-算法在 `assembly.py` 的常量注释里）；这三处由装配一次换上，激活失败一起退回。激活脚本停服务的命令时限同步调到 190 秒。
+人侧单元加备份 socket 父目录、封存父目录两行 `ReadWritePaths=`，停止超时 90→190 秒（备份收尾和 Bridge 停止是串行的两段，逐项相加，
+算法在 `assembly.py` 的常量注释里）；这三处由装配一次换上，激活失败一起退回。激活脚本停服务的命令时限按停止超时加 20 秒算（210 秒）。
 **激活前要备好**（`deploy/backup-worker/README.md`「安装前要有的东西」）：读取组和人侧账号的组成员、tmpfiles 建的两个目录、
 `backup.json`、临时数据根。缺读取组成员、两个目录或 `backup.json`，人侧起不来；缺临时数据根人侧照常起，第一次封存才失败。
-两类都由激活预检在停服之前拦下（`activation_ops.backup_ready`，另核备份 socket 没有残留、冻结预算和 Bridge 停止宽限不超过
-装配假设）：预检不过就不停服务，现场不动。人侧程序必须一起换（上一发行的程序不认 `--backup-config`；`REQUIRES_NEW_HUMAN_PROGRAM`
-为真，出候选和预检都拒绝沿用旧程序），网页、maintain 与 sync-launcher 也一起换，`prepare.py` 带全部参数；agent 单元沿用 T-215
-换过发布名之后的现场。r16 之后没有改数据库或状态的版本号，激活失败可以退回 r16（退回后启动器不带 `--backup-config`，`backup.json`
+两类都由激活预检在停服之前拦下（`activation_ops.backup_ready`，另核 `backup.json` 的键名和两处 `version`、备份 socket 没有残留、
+冻结预算和 Bridge 停止宽限在程序接受的下限和装配假设的上限之间）：预检不过就不停服务，现场不动。`backup.json` 各字段的取值规则
+（审批段内容、worker 账号、保留期、清单、路径互不嵌套等）预检不重核，只由程序启动时核：写错了会在停服之后启动失败、退回 r16。
+人侧程序必须一起换（上一发行的程序不认 `--backup-config`；`REQUIRES_NEW_HUMAN_PROGRAM` 为真，出候选和预检都要求候选程序
+和 r16 字节不同、字节里有 `--backup-config` 这个字面量，只填一个新的来源提交号过不了），网页、maintain 与 sync-launcher 也一起换，
+`prepare.py` 带全部参数；agent 单元沿用 T-215 换过发布名之后的现场。r16 之后没有改数据库或状态的版本号，激活失败可以退回 r16（退回后启动器不带 `--backup-config`，`backup.json`
 留着不碍事；人侧要是被强杀的，`/run/studiolo-backup` 里可能留下 socket 节点，重试激活时预检会拒，要人看过再删）。
 装配钉的摘要：human 单元 `11827335…a143`（r16 激活写下的，2026-11-20 回读的现场值）、r16 manifest `437d75a8…7b4e`（同上）、
 agent 单元 `394ffe6f…0117`（**预算值**：线上单元里的发布名两处换成 `t215-116f5d7-20261120` 之后应有的摘要，换之前是

@@ -20,9 +20,19 @@ AUTH = '/home/maxsong/.local/share/studiolo-human-auth'
 AUDIT = '/home/maxsong/.local/share/studiolo-human-audit'
 UNIT_ROOT = Path('/etc/systemd/system')
 NAMES = ('studiolo-human', 'studiolo-agent')
-# 停服务的命令时限（秒）：必须比人侧单元的停止超时（assembly.STOP_TIMEOUT_SECONDS）长，留出 systemd 到点强杀之后的收尾；
-# 否则慢关停会让激活和回滚在这条命令上超时。agent 单元自己的停止超时是 20 秒，共用这个上限。test_activation 钉这个关系。
-STOP_COMMAND_SECONDS = 190
+# 停服务的命令时限 = 人侧单元的停止超时（assembly.STOP_TIMEOUT_SECONDS）+ 这个余量（秒）：留给 systemd 到点强杀之后的收尾。
+# 命令时限比停止超时短的话，慢关停会让激活和回滚在这条命令上超时。agent 单元自己的停止超时是 20 秒，共用这个上限。
+STOP_COMMAND_MARGIN_SECONDS = 20
+# backup.json 的键名，和程序解析它的两个结构一一对应（crates/host-config/src/backup/file.rs、producer.rs 的 Document，
+# 都是多一个少一个键就拒绝）；test_activation 对着源码钉。
+BACKUP_DOCUMENT_KEYS = frozenset({'version', 'backup', 'backup_producer'})
+BACKUP_PRODUCER_KEYS = frozenset({
+    'version', 'worker_uid', 'reader_gid', 'socket', 'staging_parent', 'ephemeral_root', 'source_retention_millis',
+    'freeze_budget_millis', 'application_packages', 'restic_digest', 'deployment'})
+# 程序接受的下限（producer.rs 的 FREEZE_MILLIS、sync_transport/document/validate.rs 的 stop_grace_seconds）：
+# 比它小的程序启动时就拒绝，预检不能放过。上限用装配里算停止超时的那两个值。test_activation 对着源码钉。
+FREEZE_BUDGET_FLOOR_MILLIS = 1000
+STOP_GRACE_FLOOR_SECONDS = 1
 # 人侧单元 PrivateTmp=yes：宿主这两处事先建好的目录，服务里看不见。
 PRIVATE_TMP = (Path('/tmp'), Path('/var/tmp'))
 
@@ -137,9 +147,21 @@ class Operations(SnapshotOperations):
     def backup_ready(self):
         """人侧带 --backup-config 启动要的东西，在停服之前核完（T-216）。
         私有配置、两个目录、读取组成员、socket 残留：缺一样人侧起不来。临时数据根、冻结预算、Bridge 停止宽限：
-        配错了人侧照常起，要到封存或慢关停才出事，所以也在这里拦。ACL 不在这里核，程序打开目录时自己核。"""
+        配错了人侧照常起，要到封存或慢关停才出事，所以也在这里拦。ACL 不在这里核，程序打开目录时自己核。
+
+        backup.json 只核到这一层：键名齐不齐（拼错键、漏段是手写时最常见的错）、两处 version、和部署有关的几个值。
+        其余字段的取值规则（审批段内容、worker 账号、保留期、清单里的包和摘要、路径互不嵌套、socket 路径长度）
+        不在这里重写一遍，由程序启动时核：那些错了，会在停服之后启动失败、退回上一发行。"""
         c, a = self.c, self.a
-        producer = c.document(c.read(Path(a.BACKUP_CONFIG), c.UID, 0o600))['backup_producer']
+        document = c.document(c.read(Path(a.BACKUP_CONFIG), c.UID, 0o600))
+        c.require(type(document) is dict and set(document) == BACKUP_DOCUMENT_KEYS)
+        approval, producer = document['backup'], document['backup_producer']
+        c.require(type(document['version']) is int and document['version'] == 1)
+        c.require(type(approval) is dict and bool(approval))
+        c.require(type(producer) is dict and set(producer) == BACKUP_PRODUCER_KEYS)
+        c.require(type(producer['version']) is int and producer['version'] == 1)
+        # 这两条路径下面要按路径解析：先核是字符串（封存父目录只做相等比较，类型不对自然不等）。
+        c.require(all(type(producer[key]) is str for key in ('socket', 'ephemeral_root')))
         socket, reader = c.absolute(producer['socket']), producer['reader_gid']
         c.require(type(reader) is int and reader > 0 and reader in self.owner_groups())
         c.require(str(socket.parent) == a.BACKUP_RUNTIME and producer['staging_parent'] == a.BACKUP_STAGING)
@@ -155,9 +177,12 @@ class Operations(SnapshotOperations):
         c.inspect(ephemeral, c.UID, 0o700, True)
         # 单元的停止超时按这两个预算算出来（assembly.STOP_TIMEOUT_SECONDS）：现场配得更大就得先改装配。
         freeze = producer['freeze_budget_millis']
-        c.require(type(freeze) is int and 0 < freeze <= a.BACKUP_FREEZE_BUDGET_SECONDS * 1000)
-        grace = c.document(c.read(Path(a.SYNC_APPROVAL), c.UID, 0o600))['budget']['stop_grace_seconds']
-        c.require(type(grace) is int and 0 <= grace <= a.BRIDGE_STOP_GRACE_SECONDS)
+        c.require(type(freeze) is int
+                  and FREEZE_BUDGET_FLOOR_MILLIS <= freeze <= a.BACKUP_FREEZE_BUDGET_SECONDS * 1000)
+        transport = c.document(c.read(Path(a.SYNC_APPROVAL), c.UID, 0o600))
+        budget = transport.get('budget') if type(transport) is dict else None
+        grace = budget.get('stop_grace_seconds') if type(budget) is dict else None
+        c.require(type(grace) is int and STOP_GRACE_FLOOR_SECONDS <= grace <= a.BRIDGE_STOP_GRACE_SECONDS)
 
     def preflight(self):
         c, a = self.c, self.a
@@ -226,8 +251,9 @@ class Operations(SnapshotOperations):
 
     def stop(self):
         self.known_units()
-        self.runtime.command(['systemctl', 'stop', 'studiolo-agent.service'], STOP_COMMAND_SECONDS)
-        self.runtime.command(['systemctl', 'stop', 'studiolo-human.service'], STOP_COMMAND_SECONDS)
+        limit = self.a.STOP_TIMEOUT_SECONDS + STOP_COMMAND_MARGIN_SECONDS
+        self.runtime.command(['systemctl', 'stop', 'studiolo-agent.service'], limit)
+        self.runtime.command(['systemctl', 'stop', 'studiolo-human.service'], limit)
         self.stopped()
 
     def install(self):

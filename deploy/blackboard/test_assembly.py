@@ -111,6 +111,7 @@ class AssemblyTests(unittest.TestCase):
             self.assertIn('d ' + path + ' 0750 ', tmpfiles)
         self.assertEqual(new.count('TimeoutStopSec='), 1)
         self.assertEqual(new.count(new_stop), 1)
+        self.assertEqual(new_stop, 'TimeoutStopSec=190\n')
         # 拒绝：已转换过的；停止超时不是钉住的旧值、多出一行（不管值是多少）；已带备份路径；黑板或 Bridge 接线缺了；
         # 发行路径不是两处。
         for bad in (new, old.replace(old_stop, 'TimeoutStopSec=120\n'), old + old_stop, old + 'TimeoutStopSec=120\n',
@@ -128,25 +129,50 @@ class AssemblyTests(unittest.TestCase):
     def test_stop_timeout_covers_the_serial_backup_and_bridge_shutdown(self):
         # 关停是串行的两段：备份收尾做完才通知 Bridge 停（crates/local-server/src/startup/serving.rs），所以逐项相加；
         # 哪天改成并行，相加仍然够用，只是偏保守。
-        # 上限（激活脚本停服务的命令时限必须更长）在 test_activation 的 OperationTests 里钉。
-        backup = a.BACKUP_CONNECTION_WINDOW_SECONDS + a.BACKUP_RECLAIM_SECONDS + a.BACKUP_FREEZE_BUDGET_SECONDS
+        # 激活脚本停服务的命令时限按这个值加余量算，在 test_activation 的 OperationTests 里钉。
+        request = a.BACKUP_SCAN_BUDGET_SECONDS * a.BACKUP_REQUEST_SCANS
+        backup = (a.BACKUP_CONNECTION_WINDOW_SECONDS + request
+                  + a.BACKUP_RECLAIM_SECONDS + a.BACKUP_FREEZE_BUDGET_SECONDS)
         bridge = a.BRIDGE_STOP_GRACE_SECONDS + a.BRIDGE_STOP_MARGIN_SECONDS
-        self.assertGreaterEqual(a.STOP_TIMEOUT_SECONDS, backup + bridge)
+        self.assertEqual(a.STOP_TIMEOUT_SECONDS, backup + bridge + a.UNBUDGETED_STEPS_SECONDS)
+        # 结果本身也钉住：任一项改了，这里先红，提醒把文档里的数字和算法一起看。
+        self.assertEqual(a.STOP_TIMEOUT_SECONDS, 190)
+        self.assertGreaterEqual(a.UNBUDGETED_STEPS_SECONDS, 10)
         self.assertGreater(a.STOP_TIMEOUT_SECONDS, a.OLD_STOP_TIMEOUT_SECONDS)
-        # 前两项是程序里的常量：程序改了这里先红，免得装配还按旧值算。
+        # 程序里的三个常量：程序改了这里先红，免得装配还按旧值算。
+        producer = 'crates/local-server/src/backup/producer.rs'
         self.assertEqual(a.BACKUP_CONNECTION_WINDOW_SECONDS,
                          rust_seconds('crates/local-server/src/backup/service.rs', 'WINDOW'))
-        self.assertEqual(a.BACKUP_RECLAIM_SECONDS,
-                         rust_seconds('crates/local-server/src/backup/producer.rs', 'RECLAIM_BUDGET'))
+        self.assertEqual(a.BACKUP_RECLAIM_SECONDS, rust_seconds(producer, 'RECLAIM_BUDGET'))
+        self.assertEqual(a.BACKUP_SCAN_BUDGET_SECONDS, rust_seconds(producer, 'SCAN_BUDGET'))
+        # 处理一次封存请求读几次账本：schedule 里两次、它调的 decide 里一次，再加等状态锁时别人正在读的那一次。
+        source = (ROOT / producer).read_text()
+
+        def scans(name):
+            found = re.findall(r'^    fn ' + name + r'\(.*?^    }$', source, re.MULTILINE | re.DOTALL)
+            self.assertEqual(len(found), 1, name)
+            return found[0].count('self.refresh(')
+        self.assertEqual((scans('schedule'), scans('decide')), (2, 1))
+        self.assertEqual(a.BACKUP_REQUEST_SCANS, scans('schedule') + scans('decide') + 1)
         # Bridge 段的 60 秒是同步部署文档的要求，文档改了这里先红。
         bridge_readme = (ROOT / 'deploy/sync-bridge/README.md').read_text()
         self.assertEqual(bridge_readme.count(
             '审批 `budget.stop_grace_seconds` 加 %d s' % a.BRIDGE_STOP_MARGIN_SECONDS), 1)
 
     def test_this_release_requires_the_new_human_program(self):
-        # 启动器加了上一发行的程序不认的参数，这个开关就必须开着（出候选和激活预检靠它拒绝沿用旧程序）。
-        self.assertIn('--backup-config', a.launcher(board_launcher()))
+        # 启动器加了上一发行的程序不认的参数，就必须换人侧程序（出候选和激活预检靠这两个常量拒绝沿用旧程序）。
+        old = board_launcher()
+        new = a.launcher(old)
         self.assertIs(a.REQUIRES_NEW_HUMAN_PROGRAM, True)
+        self.assertEqual(a.NEW_HUMAN_PROGRAM_LITERALS, (b'--backup-config',))
+        for literal in a.NEW_HUMAN_PROGRAM_LITERALS:
+            name = literal.decode()
+            # 确实是本版启动器新带的参数：上一发行的启动器里没有，新的里有。
+            self.assertNotIn(name, old)
+            self.assertEqual(new.count('"' + name + '"'), 1)
+            # 新程序认它，而且参数名在源码里是原样的字符串字面量（编进程序后能按字节找到）。
+            table = (ROOT / 'crates/local-server/src/options/table.rs').read_text()
+            self.assertEqual(table.count('"' + name + '"'), 1)
 
     def test_agent_unit_is_carried_over_byte_for_byte(self):
         for quoted in (False, True):

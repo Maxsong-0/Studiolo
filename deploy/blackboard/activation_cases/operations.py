@@ -91,11 +91,11 @@ class OperationTests(unittest.TestCase):
             ops.stop()
         self.assertEqual([call.args[0] for call in ops.runtime.command.call_args_list], [
             ['systemctl', 'stop', 'studiolo-agent.service'], ['systemctl', 'stop', 'studiolo-human.service']])
-        # 停服务的命令时限必须比人侧单元的停止超时长（留出 systemd 到点强杀后的收尾）：
-        # 否则慢关停会让激活和回滚都在这条命令上超时。装配把停止超时调大时，这里先红。
+        # 停服务的命令时限按人侧单元的停止超时再加余量算（留出 systemd 到点强杀后的收尾），不另写一个数：
+        # 命令时限比停止超时短的话，慢关停会让激活和回滚都在这条命令上超时。
         self.assertEqual([call.args[1] for call in ops.runtime.command.call_args_list],
-                         [ops_module.STOP_COMMAND_SECONDS] * 2)
-        self.assertGreaterEqual(ops_module.STOP_COMMAND_SECONDS - assembly.STOP_TIMEOUT_SECONDS, 10)
+                         [assembly.STOP_TIMEOUT_SECONDS + ops_module.STOP_COMMAND_MARGIN_SECONDS] * 2)
+        self.assertGreaterEqual(ops_module.STOP_COMMAND_MARGIN_SECONDS, 10)
 
     def test_worker_uses_original_code_as_unprivileged_isolated_stdin(self):
         ops = self.operation()
@@ -186,6 +186,39 @@ class OperationTests(unittest.TestCase):
         backup.assert_called_once_with()
         units.assert_not_called()
         ops.runtime.command.assert_not_called()
+
+    def test_private_tmp_names_the_directories_the_unit_hides(self):
+        # BackupReadyTests 把这个值换成沙盒里的目录来测逻辑；真实取值在这里钉。
+        self.assertEqual(ops_module.PRIVATE_TMP, (Path('/tmp'), Path('/var/tmp')))
+        # 依据：人侧单元 PrivateTmp=yes（发行单元从这份模板逐字派生，装配不动这一行）。
+        unit = (HERE.parent / 'human/current-v2/studiolo-human.service').read_text()
+        self.assertEqual(unit.count('PrivateTmp=yes\n'), 1)
+
+    def test_backup_document_keys_and_floors_match_the_program(self):
+        """预检核 backup.json 的键名和两个下限：对着程序解析它的源码钉，程序改了这里先红。"""
+        def fields(relative):
+            text = (HERE.parent.parent / relative).read_text()
+            # 两个结构都是「多一个少一个键就拒绝」，预检才敢按「恰好这些键」核。
+            head = '#[serde(deny_unknown_fields)]\nstruct Document {\n'
+            self.assertEqual(text.count(head), 1)
+            body = text.split(head, 1)[1].split('\n}\n', 1)[0]
+            return {name for name in re.findall(r'^    (\w+):', body, re.MULTILINE)}
+        self.assertEqual(fields('crates/host-config/src/backup/file.rs'), ops_module.BACKUP_DOCUMENT_KEYS)
+        self.assertEqual(fields('crates/host-config/src/backup/producer.rs'), ops_module.BACKUP_PRODUCER_KEYS)
+        producer = (HERE.parent.parent / 'crates/host-config/src/backup/producer.rs').read_text()
+        freeze = re.findall(r'^const FREEZE_MILLIS: std::ops::RangeInclusive<u32> = ([\d_]+)\.\.=([\d_]+);$',
+                            producer, re.MULTILINE)
+        self.assertEqual(len(freeze), 1)
+        floor, ceiling = (int(value.replace('_', '')) for value in freeze[0])
+        self.assertEqual(floor, ops_module.FREEZE_BUDGET_FLOOR_MILLIS)
+        # 装配假设的冻结预算要落在程序接受的范围里，不然「全备好」的现场程序也不收。
+        self.assertTrue(floor <= assembly.BACKUP_FREEZE_BUDGET_SECONDS * 1000 <= ceiling)
+        validate = (HERE.parent.parent / 'crates/host-config/src/sync_transport/document/validate.rs').read_text()
+        grace = re.findall(r'\((\d+)\.\.=(\d+)\)\.contains\(&document\.stop_grace_seconds\)', validate)
+        self.assertEqual(len(grace), 1)
+        floor, ceiling = (int(value) for value in grace[0])
+        self.assertEqual(floor, ops_module.STOP_GRACE_FLOOR_SECONDS)
+        self.assertTrue(floor <= assembly.BRIDGE_STOP_GRACE_SECONDS <= ceiling)
 
     def test_owner_groups_come_from_the_account_database(self):
         ops = self.operation()

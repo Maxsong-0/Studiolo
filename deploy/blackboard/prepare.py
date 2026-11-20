@@ -50,13 +50,17 @@ def prepare(args, a, c, ops):
         c.require(re.fullmatch('[0-9a-f]{40}', args.human_source_commit))
         human = c.read(c.absolute(args.local_server), c.UID)
         c.require(human.startswith(b'\x7fELF') and c.sha(human) == args.local_server_sha256)
-    # 本版必须换人侧程序时（assembly.REQUIRES_NEW_HUMAN_PROGRAM），没给程序就不出候选，也不留半成品目录。
-    c.require(human is not None or not a.REQUIRES_NEW_HUMAN_PROGRAM)
+    # 本版必须换人侧程序时（assembly.REQUIRES_NEW_HUMAN_PROGRAM）：没给程序、给的程序不认本版新参数，
+    # 或者其实就是上一发行那份文件（下面核），都不出候选，也不留半成品目录。
+    if a.REQUIRES_NEW_HUMAN_PROGRAM:
+        c.require(human is not None and all(literal in human for literal in a.NEW_HUMAN_PROGRAM_LITERALS))
     from board_sync_tools import read_inputs
     tools = read_inputs(args, c)
     old = Path(a.OLD_RELEASE)
     # 上一发行是黑板形状的 manifest，用同一套闭集核验，而不是 r8 时代的 verifier。
     old_manifest = ops.verify_previous(a, c)
+    if a.REQUIRES_NEW_HUMAN_PROGRAM:
+        c.require(c.sha(human) != old_manifest['files']['bin/studiolo-local-server']['sha256'])
     units = {name: c.read(Path('/etc/systemd/system') / (name + '.service'), 0, 0o644)
              for name in ('studiolo-human', 'studiolo-agent')}
     c.require(c.sha(units['studiolo-human']) == a.HUMAN_SHA)

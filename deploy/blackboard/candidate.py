@@ -60,8 +60,6 @@ def verify_candidate(a, c, expected_sha):
     c.require(manifest['bootstrap_source_commit'] == old['bootstrap_source_commit'])
     # 人侧程序：来源提交没变就必须逐字节沿用；来源变了才允许换（仍须是 ELF，见下）。
     program_changed = manifest['human_program_source_commit'] != old['human_program_source_commit']
-    # 本版启动器带了上一发行的程序不认的参数时，沿用旧程序的候选必然起不来：不等到停服之后才发现。
-    c.require(program_changed or not a.REQUIRES_NEW_HUMAN_PROGRAM)
     c.require(manifest['r8_manifest_sha256'] == a.R8_MANIFEST_SHA)
     c.require(manifest['before_units'] == dict(zip(NAMES, (a.HUMAN_SHA, a.AGENT_SHA))))
     files = manifest['files']
@@ -97,7 +95,14 @@ def verify_candidate(a, c, expected_sha):
     for name in TOOLS & set(files):
         c.require(c.read(root / name, c.UID, 0o755).startswith(b'\x7fELF'))
     c.require(c.read(root / 'bin/studiolo-vault-admin', c.UID, 0o755).startswith(b'\x7fELF'))
-    c.require(c.read(root / 'bin/studiolo-local-server', c.UID, 0o755).startswith(b'\x7fELF'))
+    human = c.read(root / 'bin/studiolo-local-server', c.UID, 0o755)
+    c.require(human.startswith(b'\x7fELF'))
+    # 本版启动器带了上一发行的程序不认的参数时，沿用旧程序的候选必然起不来：不等到停服之后才发现。
+    # 核的是文件本身（摘要和上一发行不同、字节里有新参数的字面量），不是来源提交号：号可以填新的而文件还是旧的。
+    # 提交号没变却换了文件的，上面「没变就逐字节沿用」已经拒了。
+    if a.REQUIRES_NEW_HUMAN_PROGRAM:
+        c.require(files['bin/studiolo-local-server'] != old['files']['bin/studiolo-local-server'])
+        c.require(all(literal in human for literal in a.NEW_HUMAN_PROGRAM_LITERALS))
     c.require(c.read(root / 'manifest.json', c.UID, 0o600) == raw)
     return manifest
 

@@ -143,18 +143,31 @@ class CandidateTests(FilesBase):
         # 同一个候选（沿用上一发行的人侧程序）：装配不要求换程序时通过，要求时拒绝。
         a, digest = self.candidate()
         self.check(a, digest)
-        a.REQUIRES_NEW_HUMAN_PROGRAM = True
+        # 夹具里上一发行的程序是 b'\x7fELFfictional human'：先用它本来就有的字面量，把「字节必须不同」单独隔出来。
+        a.REQUIRES_NEW_HUMAN_PROGRAM, a.NEW_HUMAN_PROGRAM_LITERALS = True, (b'fictional',)
         with self.assertRaises(ValueError):
             self.check(a, digest)
-        # 换了程序并声明新来源的候选，在要求换程序的发行里通过。
         root = Path(a.RELEASE)
         path = root / 'manifest.json'
-        doc = json.loads(path.read_bytes())
-        program = b'\x7fELFnew human build'
-        (root / 'bin/studiolo-local-server').write_bytes(program)
-        doc['files']['bin/studiolo-local-server'] = {'bytes': len(program), 'sha256': c.sha(program)}
-        doc['human_program_source_commit'] = '7' * 40
-        raw = json.dumps(doc).encode()
-        path.write_bytes(raw)
-        self.assertEqual(self.check(a, c.sha(raw))['human_program_source_commit'], '7' * 40)
+
+        def resign(program, commit):
+            doc = json.loads(path.read_bytes())
+            (root / 'bin/studiolo-local-server').write_bytes(program)
+            doc['files']['bin/studiolo-local-server'] = {'bytes': len(program), 'sha256': c.sha(program)}
+            doc['human_program_source_commit'] = commit
+            raw = json.dumps(doc).encode()
+            path.write_bytes(raw)
+            return c.sha(raw)
+        # 来源提交号填了新的、文件还是上一发行那份：不要求换程序时这是合法候选，要求时拒绝。
+        stale = resign(b'\x7fELFfictional human', '7' * 40)
+        with self.assertRaises(ValueError):
+            self.check(a, stale)
+        a.REQUIRES_NEW_HUMAN_PROGRAM, a.NEW_HUMAN_PROGRAM_LITERALS = False, ()
+        self.assertEqual(self.check(a, stale)['human_program_source_commit'], '7' * 40)
+        # 文件换了、但不认本版新参数（字节里没有那个字面量）：拒绝；有了才通过。
+        a.REQUIRES_NEW_HUMAN_PROGRAM, a.NEW_HUMAN_PROGRAM_LITERALS = True, (b'--new-flag',)
+        with self.assertRaises(ValueError):
+            self.check(a, resign(b'\x7fELFnew human build', '7' * 40))
+        accepted = resign(b'\x7fELFnew human build --new-flag', '7' * 40)
+        self.assertEqual(self.check(a, accepted)['human_program_source_commit'], '7' * 40)
 

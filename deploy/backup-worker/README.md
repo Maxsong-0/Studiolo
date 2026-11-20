@@ -49,22 +49,29 @@ T-204。本目录是候选发布源，**尚未安装到任何机器**。专用�
    同时改两处，再重启主服务：
    - 单元是 `ProtectSystem=strict`：给备份 socket 的父目录和封存父目录各加一行 `ReadWritePaths=`（路径和第 4 步
      tmpfiles 片段里的一致）。不加的话绑不上 socket、建不了封存，配了生产者的主服务会拒绝启动。
-   - 停止超时：主服务收到退出信号先等备份收尾，做完才通知同步 Bridge 停，两段是串行的，要相加：
-     备份段 = 在途连接窗口 10 秒 + 一次回收最多 30 秒 + 一次封存（冻结和导出在一个冻结预算之内，预算上限 120 秒）；
+   - 停止超时：主服务收到退出信号先等备份收尾，做完才通知同步 Bridge 停，两段是串行的，要相加。
+     备份段等的是在途的那一个连接整个处理完，再等它起的后台线程：收发窗口 10 秒；处理请求不受这个窗口管，
+     要先等状态锁（健康页或抽查正拿着它读账本）、自己再读最多三次账本，每次不超过 5 秒，按 20 秒算；
+     一次回收最多 30 秒；一次封存（冻结和导出在一个冻结预算之内，预算上限 120 秒）。
      Bridge 段 = 同步审批的 `budget.stop_grace_seconds` + 60 秒（`deploy/sync-bridge/README.md`）。没接 Bridge 的部署只算
-     备份段，再留出原来关停链的时间。r16 及之前单元里的 `TimeoutStopSec=90` 不够。超时被强杀时 socket 节点会留下，
-     下次启动按设计拒绝（不清理也不接管），要人看过再删。
+     备份段，再留出原来关停链的时间。r16 及之前单元里的 `TimeoutStopSec=90` 不够。
+   - socket 残留：正常关停的第一步就把备份 socket 删了，停止超时到点时它一般已经不在。会留下节点的是主服务崩溃、
+     内存超限被杀，或者还没走到那一步就被强杀；留下之后下次启动按设计拒绝（不清理也不接管），要人看过再删。
 
    生产 169 上不手改线上单元：启动器的 `--backup-config`、这两行 `ReadWritePaths=` 和停止超时由人侧发行 r17 的装配一次换上
-   （`deploy/blackboard/assembly.py`，2026-11-20），激活失败时一起退回。停止超时是 170 秒：备份段 10＋30＋30（批准的冻结预算
-   是 30 秒），Bridge 段 30＋60（169 的 `stop_grace_seconds` 是 30），合计 160，另留 10 秒给建暂存区、写准入这些不受预算管的小步骤。
+   （`deploy/blackboard/assembly.py`，2026-11-20），激活失败时一起退回。停止超时是 190 秒：备份段 10＋20＋30＋30（批准的冻结预算
+   是 30 秒），Bridge 段 30＋60（169 的 `stop_grace_seconds` 是 30），合计 180，另留 10 秒给建暂存区、写准入或失败结果这些
+   不受任何预算管的小步骤（`assembly.UNBUDGETED_STEPS_SECONDS`）。
    所以第 1～6 项里别的东西（账号和读取组、两个目录、`backup.json`、下面这个临时数据根）要在激活 r17 **之前**备好：
    启动器一带上 `--backup-config`，读不到配置或绑不上 socket，人侧就拒绝启动。激活预检在停服之前核这些
-   （`deploy/blackboard/activation_ops.py` 的 `backup_ready`）：私有配置、人侧账号在读取组里、两个目录的属主属组和权限、
-   socket 没有残留、临时数据根、冻结预算和 Bridge 停止宽限没有配得比装配假设的大；缺一样就不停服务。
-   以后把冻结预算或 `stop_grace_seconds` 调大，要一起改装配里的停止超时（`assembly.STOP_TIMEOUT_SECONDS`，`test_assembly.py`
-   钉它不小于各项之和）和激活脚本停服务的命令时限（190 秒，`activation_ops.STOP_COMMAND_SECONDS`，`test_activation.py`
-   钉它比停止超时长）。
+   （`deploy/blackboard/activation_ops.py` 的 `backup_ready`）：私有配置的权限、键名齐不齐和两处 `version`、
+   人侧账号在读取组里、两个目录的属主属组和权限、socket 没有残留、临时数据根、冻结预算和 Bridge 停止宽限落在程序接受的
+   下限和装配假设的上限之间；缺一样就不停服务。**预检不重核 `backup.json` 各字段的取值规则**（审批段内容、worker 账号、
+   保留期、清单里的包和摘要、三条路径互不嵌套、socket 路径长度）：那些只由程序启动时核，写错了要到停服之后启动失败、
+   退回上一发行才知道，所以 `backup.json` 写好后先对着 `docs/contracts/backup-producer.md` 的表逐项看一遍。
+   以后把冻结预算或 `stop_grace_seconds` 调大，要改装配里对应的那一项（`assembly.BACKUP_FREEZE_BUDGET_SECONDS`、
+   `BRIDGE_STOP_GRACE_SECONDS`），停止超时由各项相加得出（`STOP_TIMEOUT_SECONDS`，`test_assembly.py` 钉算法和结果）；
+   激活脚本停服务的命令时限按停止超时再加 20 秒算（现在是 210 秒，`activation_ops.STOP_COMMAND_MARGIN_SECONDS`）。
    - `backup_producer.ephemeral_root` 指的目录也要事先建好：主服务账号私有（属主是主服务账号、0700、不带 ACL），和 socket
      父目录、封存父目录、各数据根互不嵌套。主服务只读打开它，**不用**加进 `ReadWritePaths=`；不要放在 `/tmp`、`/var/tmp` 下
      （单元是 `PrivateTmp=yes`，服务里看不见宿主的这两处），路径上不要有符号链接。169 上用
@@ -157,6 +164,10 @@ T-204。本目录是候选发布源，**尚未安装到任何机器**。专用�
 要连监听也停掉，人侧启动器得去掉 `--backup-config` 并重启（`backup.json` 可以留着，不给这个参数就不启用）。
 **生产 169 上不要就地改启动器**：发行目录里的 `launch-human.py` 由 `manifest.json` 逐字节钉住，改了之后下一次出候选和激活
 都会在核验上一发行时被拒。169 上停 worker 和定时器就够；非要停监听，走一次去掉这个参数的新发行，或者就地改完、
-在出下一个候选之前把字节原样改回（改之前留一份原件，改回后对 `manifest.json` 里的摘要）。
+在出下一个候选之前把字节原样改回（改之前留一份原件，**放在发行目录以外**：发行目录里多出一个文件，核验上一发行时
+同样会被拒；改回后对 `manifest.json` 里的摘要）。
+r17 起人侧单元把 `/run/studiolo-backup`、`/var/lib/studiolo-backup-staging` 写成必须存在的写根：停用备份时
+tmpfiles 片段和这两个目录都要留着，启动器不带 `--backup-config` 也一样，删了人侧单元就起不来；要彻底撤掉，
+走一次去掉这两行的新发行。
 不要去改 owner.json：备份两段本来就不在里面，改它的字节会让 Bridge 绑定对不上、人侧起不来。
 已经上传的快照、worker 状态目录和账本里的记录都不删。

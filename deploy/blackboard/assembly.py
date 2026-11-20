@@ -20,7 +20,7 @@ r14→r15（BUG-027：只查元数据，保留SQLite进程锁与版本守卫，�
 r15→r16（T-207：BUG-038 项目目录改名、T-181/T-183/T-185/T-211～T-214 等，人侧启动器加 --agent-data；
 控制库 schema 3→4，单向，见 README「r15→r16 是单向的」，已激活）；
 本版 r16→r17（T-216：启用备份生产者。启动器加 --backup-config；人侧单元加备份 socket 父目录、封存父目录两个写根，
-停止超时 90→170 秒；人侧程序必须一起换，上一发行的程序不认 --backup-config。数据库与状态的版本号不变）。
+停止超时 90→190 秒；人侧程序必须一起换，上一发行的程序不认 --backup-config。数据库与状态的版本号不变）。
 """
 import shlex
 from pathlib import Path
@@ -44,22 +44,35 @@ BOARD_SOCKET = BOARD_RUNTIME + '/board.sock'
 BACKUP_CONFIG = '/home/maxsong/.config/studiolo-human/backup.json'
 BACKUP_RUNTIME = '/run/studiolo-backup'
 BACKUP_STAGING = '/var/lib/studiolo-backup-staging'
-# 本版启动器多了 --backup-config，上一发行的人侧程序不认它：沿用旧程序的候选必然起不来，出候选和激活预检都拒。
-REQUIRES_NEW_HUMAN_PROGRAM = True
+# 本版启动器新带的参数：上一发行的人侧程序不认它，沿用旧程序的候选必然起不来。
+# 非空就表示本版必须换人侧程序：出候选和候选核验（激活预检也跑它）都要求候选程序的字节和上一发行不同，
+# 并且字节里有这些字面量（参数名在程序里是原样的字符串，crates/local-server/src/options/table.rs；
+# 169 上 r16 的程序里没有 --backup-config，2026-11-20 只读核过）。只看来源提交号不够：号可以填新的、文件却是旧的。
+NEW_HUMAN_PROGRAM_LITERALS = (b'--backup-config',)
+REQUIRES_NEW_HUMAN_PROGRAM = bool(NEW_HUMAN_PROGRAM_LITERALS)
 # 人侧停止超时（秒）。关停是串行的两段（crates/local-server/src/startup/serving.rs）：收到退出信号先等备份收尾，
-# 做完才通知 Bridge 停，所以两段要相加：
-#   备份段 = 在途连接窗口 + 一次回收 + 一次封存（冻结和导出在一个冻结预算之内；这里按批准的 30 秒算）；
-#   Bridge 段 = 同步审批的 stop_grace_seconds（169 现行 30）+ 60（deploy/sync-bridge/README.md 的要求）。
-# 逐项相加是 160，另留 10 秒给建暂存区、写准入这些不受预算管的小步骤。
-# 前两项是程序里的常量，test_assembly 对着源码钉；后两项来自 backup.json 和同步审批，激活预检核对现场没有配得更大。
-# 上限在激活脚本那头：停服务的命令时限（activation_ops.STOP_COMMAND_SECONDS）必须比它长，test_activation 钉。
+# 做完才通知 Bridge 停，所以两段要相加。备份段等的是在途的那一个连接整个处理完，再等它起的后台线程：
+#   收发窗口：socket 收发的期限（service.rs 的 WINDOW）；
+#   处理请求：不受收发窗口管。先等状态锁（健康页或抽查正拿着它读一次账本），自己再读最多三次账本
+#             （producer.rs 的 schedule：读一次、补完失败结果再读、写完原意图再读），每次不超过 SCAN_BUDGET；
+#   一次回收（RECLAIM_BUDGET）加一次封存（冻结和导出在一个冻结预算之内；这里按批准的 30 秒算）。
+# Bridge 段 = 同步审批的 stop_grace_seconds（169 现行 30）+ 60（deploy/sync-bridge/README.md 的要求）。
+# 最后一项是余量：建暂存区、写准入或失败结果这些不受任何预算管的小步骤。
+# 程序里的三个常量由 test_assembly 对着源码钉；冻结预算和停止宽限来自 backup.json 和同步审批，激活预检核对现场没有配得更大。
+# 停服务的命令时限在激活脚本那头按这个值再加余量算（activation_ops.STOP_COMMAND_MARGIN_SECONDS），不另写一个数。
 BACKUP_CONNECTION_WINDOW_SECONDS = 10
+BACKUP_SCAN_BUDGET_SECONDS = 5
+BACKUP_REQUEST_SCANS = 4
 BACKUP_RECLAIM_SECONDS = 30
 BACKUP_FREEZE_BUDGET_SECONDS = 30
 BRIDGE_STOP_GRACE_SECONDS = 30
 BRIDGE_STOP_MARGIN_SECONDS = 60
+UNBUDGETED_STEPS_SECONDS = 10
 OLD_STOP_TIMEOUT_SECONDS = 90
-STOP_TIMEOUT_SECONDS = 170
+# 10 + 5×4 + 30 + 30 + 30 + 60 + 10 = 190；test_assembly 钉这个结果，任一项改了要一起看。
+STOP_TIMEOUT_SECONDS = (BACKUP_CONNECTION_WINDOW_SECONDS + BACKUP_SCAN_BUDGET_SECONDS * BACKUP_REQUEST_SCANS
+                        + BACKUP_RECLAIM_SECONDS + BACKUP_FREEZE_BUDGET_SECONDS
+                        + BRIDGE_STOP_GRACE_SECONDS + BRIDGE_STOP_MARGIN_SECONDS + UNBUDGETED_STEPS_SECONDS)
 # 固定摘要防止覆盖其他发布。human：2026-11-20 回读的现场值（r16 激活写下的单元，已接 Bridge、带 --agent-data）。
 # agent：预算值，不是回读来的。写这一版时线上 agent 还是 t207-c09b065-20261118（单元摘要 15b39395…45b9）；
 # T-215 部署只把单元里的发布名两处换成 t215-116f5d7-20261120，这里钉的是换完之后应有的摘要。

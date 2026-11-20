@@ -41,17 +41,33 @@ class PrepareTests(FilesBase):
 
     def test_release_that_requires_a_new_program_refuses_to_prepare_without_one(self):
         a, args = self.preparation()
-        a.REQUIRES_NEW_HUMAN_PROGRAM = True
-        # 没给程序三件套：不出候选，也不留半成品目录。
-        with self.assertRaises(ValueError):
-            self.run_prepare(a, args)
-        self.assertFalse(Path(a.RELEASE).exists())
-        # 同一组参数只补上程序三件套就能出，候选也过得了同一发行的核验。
-        program = b'\x7fELFnew human build'
-        self.write(self.root / 'local-server', program)
-        args.local_server = str(self.root / 'local-server')
-        args.local_server_sha256 = c.sha(program)
-        args.human_source_commit = '6' * 40
+        # 夹具里上一发行的程序是 b'\x7fELFfictional human'：先用它本来就有的字面量，把「不能是上一发行那份文件」单独隔出来。
+        a.REQUIRES_NEW_HUMAN_PROGRAM, a.NEW_HUMAN_PROGRAM_LITERALS = True, (b'fictional',)
+
+        def refused():
+            # 不出候选，也不留半成品目录。
+            with self.assertRaises(ValueError):
+                self.run_prepare(a, args)
+            self.assertFalse(Path(a.RELEASE).exists())
+
+        def supply(program):
+            path = self.root / 'local-server'
+            if path.exists():
+                path.unlink()
+            self.write(path, program)
+            args.local_server, args.local_server_sha256 = str(path), c.sha(program)
+            args.human_source_commit = '6' * 40
+        # 没给程序三件套。
+        refused()
+        # 给了三件套、填了新提交号，文件却是上一发行那一份。
+        supply(b'\x7fELFfictional human')
+        refused()
+        # 文件是新的，但不认本版新参数（字节里没有那个字面量）。
+        a.NEW_HUMAN_PROGRAM_LITERALS = (b'--new-flag',)
+        supply(b'\x7fELFnew human build')
+        refused()
+        # 认得新参数的新程序：能出，候选也过得了同一发行的核验。
+        supply(b'\x7fELFnew human build --new-flag')
         result = self.run_prepare(a, args)
         self.assertFalse(result['human_binary_reused'])
         self.assertEqual(self.check(a, result['manifest_sha256'])['human_program_source_commit'], '6' * 40)
