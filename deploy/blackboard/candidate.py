@@ -60,11 +60,13 @@ def verify_candidate(a, c, expected_sha):
     c.require(manifest['bootstrap_source_commit'] == old['bootstrap_source_commit'])
     # 人侧程序：来源提交没变就必须逐字节沿用；来源变了才允许换（仍须是 ELF，见下）。
     program_changed = manifest['human_program_source_commit'] != old['human_program_source_commit']
+    # 本版启动器带了上一发行的程序不认的参数时，沿用旧程序的候选必然起不来：不等到停服之后才发现。
+    c.require(program_changed or not a.REQUIRES_NEW_HUMAN_PROGRAM)
     c.require(manifest['r8_manifest_sha256'] == a.R8_MANIFEST_SHA)
     c.require(manifest['before_units'] == dict(zip(NAMES, (a.HUMAN_SHA, a.AGENT_SHA))))
     files = manifest['files']
     c.require(isinstance(files, dict))
-    # 这三份按现场重新派生：启动器与人侧单元改发行路径，agent 单元照抄现场
+    # 这三份按现场重新派生，内容由 activation_ops.preflight 用 assembly 的三个变换函数逐字比对；agent 单元照抄现场
     # （读取范围可能在两次发行之间被 L3 改过，必须以现场为准而不是上一发行的存档）。
     changed = {'launch-human.py', 'studiolo-human.service', 'studiolo-agent.service'}
     if program_changed:

@@ -111,7 +111,9 @@ class FilesBase(unittest.TestCase):
         self.write(old / 'manifest.json', raw)
         a = types.SimpleNamespace(OLD_RELEASE=str(old), RELEASE=str(new), BUILD=assembly.BUILD,
             R8_MANIFEST_SHA=c.sha(raw), HUMAN_SHA=c.sha(b'old human'), AGENT_SHA=c.sha(b'old agent'),
-            WEB_PREFIX=assembly.WEB_PREFIX, ASSEMBLY=assembly.ASSEMBLY)
+            WEB_PREFIX=assembly.WEB_PREFIX, ASSEMBLY=assembly.ASSEMBLY,
+            # 夹具默认是「只换网页」的发行；要求一起换人侧程序的版本由用例自己打开。
+            REQUIRES_NEW_HUMAN_PROGRAM=False)
         new_content = dict(shared, **{'launch-human.py': b'new launcher',
                                       'studiolo-human.service': b'new human',
                                       # agent 单元以现场为准：两次发行之间读取范围可能被改过。

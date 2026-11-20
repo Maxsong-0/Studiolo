@@ -20,6 +20,11 @@ AUTH = '/home/maxsong/.local/share/studiolo-human-auth'
 AUDIT = '/home/maxsong/.local/share/studiolo-human-audit'
 UNIT_ROOT = Path('/etc/systemd/system')
 NAMES = ('studiolo-human', 'studiolo-agent')
+# 停服务的命令时限（秒）：必须比人侧单元的停止超时（assembly.STOP_TIMEOUT_SECONDS）长，留出 systemd 到点强杀之后的收尾；
+# 否则慢关停会让激活和回滚在这条命令上超时。agent 单元自己的停止超时是 20 秒，共用这个上限。test_activation 钉这个关系。
+STOP_COMMAND_SECONDS = 190
+# 人侧单元 PrivateTmp=yes：宿主这两处事先建好的目录，服务里看不见。
+PRIVATE_TMP = (Path('/tmp'), Path('/var/tmp'))
 
 
 class Operations(SnapshotOperations):
@@ -125,11 +130,41 @@ class Operations(SnapshotOperations):
     def units(self):
         return {name: self.c.read(UNIT_ROOT / (name + '.service'), 0, 0o644) for name in NAMES}
 
+    def owner_groups(self):
+        account = pwd.getpwnam('maxsong')
+        return set(os.getgrouplist(account.pw_name, account.pw_gid))
+
+    def backup_ready(self):
+        """人侧带 --backup-config 启动要的东西，在停服之前核完（T-216）。
+        私有配置、两个目录、读取组成员、socket 残留：缺一样人侧起不来。临时数据根、冻结预算、Bridge 停止宽限：
+        配错了人侧照常起，要到封存或慢关停才出事，所以也在这里拦。ACL 不在这里核，程序打开目录时自己核。"""
+        c, a = self.c, self.a
+        producer = c.document(c.read(Path(a.BACKUP_CONFIG), c.UID, 0o600))['backup_producer']
+        socket, reader = c.absolute(producer['socket']), producer['reader_gid']
+        c.require(type(reader) is int and reader > 0 and reader in self.owner_groups())
+        c.require(str(socket.parent) == a.BACKUP_RUNTIME and producer['staging_parent'] == a.BACKUP_STAGING)
+        for path in (a.BACKUP_RUNTIME, a.BACKUP_STAGING):
+            s = os.lstat(path)
+            c.require(stat.S_ISDIR(s.st_mode) and (s.st_uid, s.st_gid) == (c.UID, reader)
+                      and stat.S_IMODE(s.st_mode) == 0o750)
+        # 上一发行（r16）不监听备份 socket：此刻它必须不存在，残留的由人看过再删（程序不清理也不接管）。
+        # 起点已带备份监听的发行要改成像 board_ready 那样核活的 socket，「必须不存在」挪到 stopped()。
+        c.require(not os.path.lexists(socket))
+        ephemeral = c.absolute(producer['ephemeral_root'])
+        c.require(not any(ephemeral.is_relative_to(private) for private in PRIVATE_TMP))
+        c.inspect(ephemeral, c.UID, 0o700, True)
+        # 单元的停止超时按这两个预算算出来（assembly.STOP_TIMEOUT_SECONDS）：现场配得更大就得先改装配。
+        freeze = producer['freeze_budget_millis']
+        c.require(type(freeze) is int and 0 < freeze <= a.BACKUP_FREEZE_BUDGET_SECONDS * 1000)
+        grace = c.document(c.read(Path(a.SYNC_APPROVAL), c.UID, 0o600))['budget']['stop_grace_seconds']
+        c.require(type(grace) is int and 0 <= grace <= a.BRIDGE_STOP_GRACE_SECONDS)
+
     def preflight(self):
         c, a = self.c, self.a
         c.require(sys.platform == 'linux' and os.getuid() == os.geteuid() == 0)
         c.require(pwd.getpwnam('maxsong').pw_uid == c.UID == 1000)
         self.manifest = verify_candidate(a, c, self.manifest_sha)
+        self.backup_ready()
         self.old_units = self.units()
         c.require({name: c.sha(raw) for name, raw in self.old_units.items()} == self.old_shas)
         self.new_units = {name: c.read(Path(a.RELEASE) / (name + '.service'), c.UID, 0o600) for name in NAMES}
@@ -191,8 +226,8 @@ class Operations(SnapshotOperations):
 
     def stop(self):
         self.known_units()
-        self.runtime.command(['systemctl', 'stop', 'studiolo-agent.service'], 110)
-        self.runtime.command(['systemctl', 'stop', 'studiolo-human.service'], 110)
+        self.runtime.command(['systemctl', 'stop', 'studiolo-agent.service'], STOP_COMMAND_SECONDS)
+        self.runtime.command(['systemctl', 'stop', 'studiolo-human.service'], STOP_COMMAND_SECONDS)
         self.stopped()
 
     def install(self):

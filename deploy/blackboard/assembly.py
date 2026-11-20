@@ -1,7 +1,7 @@
 """从已激活发行派生候选的固定装配；不读取凭据、不操作服务或数据库。
 
 黑板接线沿用 r2，Bridge 接线与只读身份库参数沿用已激活 r16；本版替换发行路径，并按 T-216 已批准范围接上备份生产者。
-写根、认证、配对和同步范围保持现场原值。
+已有写根、认证、配对和同步范围保持现场原值，本版另加备份的两个写根。
 变换只接受钉住的上一发行形状；额外差异由现场摘要和逐字变换核验拒绝。
 
 沿革：r8→r2 的装配逻辑见本文件在 main `40fdf8d` 及更早的版本（一次性迁移，已激活）；
@@ -20,7 +20,7 @@ r14→r15（BUG-027：只查元数据，保留SQLite进程锁与版本守卫，�
 r15→r16（T-207：BUG-038 项目目录改名、T-181/T-183/T-185/T-211～T-214 等，人侧启动器加 --agent-data；
 控制库 schema 3→4，单向，见 README「r15→r16 是单向的」，已激活）；
 本版 r16→r17（T-216：启用备份生产者。启动器加 --backup-config；人侧单元加备份 socket 父目录、封存父目录两个写根，
-停止超时 90→100 秒。数据库与状态的版本号不变）。
+停止超时 90→170 秒；人侧程序必须一起换，上一发行的程序不认 --backup-config。数据库与状态的版本号不变）。
 """
 import shlex
 from pathlib import Path
@@ -40,16 +40,30 @@ BOARD_RUNTIME = '/run/studiolo-board'
 BOARD_SOCKET = BOARD_RUNTIME + '/board.sock'
 # 备份生产者（T-216）。私有备份配置和主人配置同目录；两个目录由 deploy/backup-worker 的 tmpfiles 片段建，主服务不建。
 # 三样都要在激活之前备好：启动器一带上 --backup-config，读不到配置或绑不上 socket 人侧就拒绝启动。
+# 激活预检在停服之前核这些前置（activation_ops.backup_ready），缺了就不停服务。
 BACKUP_CONFIG = '/home/maxsong/.config/studiolo-human/backup.json'
 BACKUP_RUNTIME = '/run/studiolo-backup'
 BACKUP_STAGING = '/var/lib/studiolo-backup-staging'
-# 关停要等在途的回收（最多 30 秒）和封存（最多一个冻结预算，批准的是 30 秒）做完，所以不短于 90 秒；
-# 激活脚本停人侧服务的命令时限是 110 秒（activation_ops.stop），所以要比它短。test_assembly 两头都钉。
-STOP_TIMEOUT_OLD = 'TimeoutStopSec=90\n'
-STOP_TIMEOUT = 'TimeoutStopSec=100\n'
-# 2026-11-20 现场：human r16（已接 Bridge、带 --agent-data）、agent t215-116f5d7；固定摘要防止覆盖其他发布。
-# agent 那个是把线上单元里的发布名 t207-c09b065-20261118 两处换成 t215-116f5d7-20261120 之后的摘要
-# （换之前是 15b39395…45b9；T-215 部署只换这两处）。
+# 本版启动器多了 --backup-config，上一发行的人侧程序不认它：沿用旧程序的候选必然起不来，出候选和激活预检都拒。
+REQUIRES_NEW_HUMAN_PROGRAM = True
+# 人侧停止超时（秒）。关停是串行的两段（crates/local-server/src/startup/serving.rs）：收到退出信号先等备份收尾，
+# 做完才通知 Bridge 停，所以两段要相加：
+#   备份段 = 在途连接窗口 + 一次回收 + 一次封存（冻结和导出在一个冻结预算之内；这里按批准的 30 秒算）；
+#   Bridge 段 = 同步审批的 stop_grace_seconds（169 现行 30）+ 60（deploy/sync-bridge/README.md 的要求）。
+# 逐项相加是 160，另留 10 秒给建暂存区、写准入这些不受预算管的小步骤。
+# 前两项是程序里的常量，test_assembly 对着源码钉；后两项来自 backup.json 和同步审批，激活预检核对现场没有配得更大。
+# 上限在激活脚本那头：停服务的命令时限（activation_ops.STOP_COMMAND_SECONDS）必须比它长，test_activation 钉。
+BACKUP_CONNECTION_WINDOW_SECONDS = 10
+BACKUP_RECLAIM_SECONDS = 30
+BACKUP_FREEZE_BUDGET_SECONDS = 30
+BRIDGE_STOP_GRACE_SECONDS = 30
+BRIDGE_STOP_MARGIN_SECONDS = 60
+OLD_STOP_TIMEOUT_SECONDS = 90
+STOP_TIMEOUT_SECONDS = 170
+# 固定摘要防止覆盖其他发布。human：2026-11-20 回读的现场值（r16 激活写下的单元，已接 Bridge、带 --agent-data）。
+# agent：预算值，不是回读来的。写这一版时线上 agent 还是 t207-c09b065-20261118（单元摘要 15b39395…45b9）；
+# T-215 部署只把单元里的发布名两处换成 t215-116f5d7-20261120，这里钉的是换完之后应有的摘要。
+# agent 换完要回读一致；不一致就改这里重出候选（出候选和激活预检都会因摘要不符而拒绝，不会带着错值上线）。
 HUMAN_SHA = '1182733562520035376756620584cc2fc38538609a98f1309150cc87e46fa143'
 AGENT_SHA = '394ffe6f55823e7ac8cf7cad02fcb2c34cbee0d284afd3c706d13afe54f50117'
 # 键名沿用早期协议，内容钉住当前 r16 manifest。
@@ -70,6 +84,11 @@ def replace_once(text, old, new):
     return text.replace(old, new)
 
 
+def stop_timeout_line(seconds):
+    """单元里停止超时那一整行。"""
+    return 'TimeoutStopSec=%d\n' % seconds
+
+
 def human_unit(text):
     """上一发行的人侧单元已带黑板与 Bridge 接线；本版指到新发行、加备份的两个写根、放宽停止超时，其余必须逐字不变。"""
     if text.count(OLD_RELEASE) != 2 or RELEASE in text:
@@ -82,7 +101,7 @@ def human_unit(text):
     # 上一发行还没接备份：出现任何备份路径、或停止超时不是原来那一行，都说明现场不是钉住的形状。
     if 'studiolo-backup' in text or text.count('TimeoutStopSec=') != 1:
         raise ValueError('unexpected backup wiring')
-    text = replace_once(text, STOP_TIMEOUT_OLD, STOP_TIMEOUT)
+    text = replace_once(text, stop_timeout_line(OLD_STOP_TIMEOUT_SECONDS), stop_timeout_line(STOP_TIMEOUT_SECONDS))
     last_root = 'ReadWritePaths=' + TRANSPORT_ROOT + '\n'
     text = replace_once(text, last_root, last_root + ''.join(
         'ReadWritePaths=' + path + '\n' for path in (BACKUP_RUNTIME, BACKUP_STAGING)))

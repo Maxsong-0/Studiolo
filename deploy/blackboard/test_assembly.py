@@ -2,6 +2,7 @@
 import ast
 import importlib.util
 from pathlib import Path
+import re
 import unittest
 import assembly as a
 
@@ -27,7 +28,8 @@ def board_launcher():
 
 
 def board_unit():
-    """把 r7/r8 那份人侧单元补成黑板形状：带黑板 RuntimeDirectory 与五个写根。"""
+    """把 r7/r8 那份人侧单元补成上一发行（r16）的形状：黑板 RuntimeDirectory，黑板五个写根加 Bridge 两个写根，
+    都在 [Service] 节里、顺序和线上一致。"""
     text = (ROOT / 'deploy/human/current-v2/studiolo-human.service').read_text().replace(
         'm4-t092-20260920-r7', a.OLD_RELEASE.rsplit('/', 1)[1])
     text = text.replace('RuntimeDirectory=studiolo-human\n',
@@ -35,7 +37,16 @@ def board_unit():
     return text.replace('ReadWritePaths=/run/studiolo-human\n',
                         'ReadWritePaths=/run/studiolo-human\n' + ''.join(
                             'ReadWritePaths=' + path + '\n'
-                            for path in (a.VAULT, a.WRITER, a.BOARD, a.AGENT, a.BOARD_RUNTIME)))
+                            for path in (a.VAULT, a.WRITER, a.BOARD, a.AGENT, a.BOARD_RUNTIME,
+                                         a.BRIDGE_ROOT, a.TRANSPORT_ROOT)))
+
+
+def rust_seconds(relative, name):
+    """从 Rust 源码读一个 `const NAME: Duration = Duration::from_secs(N);`，读不到或不止一处就失败。"""
+    found = re.findall(r'^const ' + name + r': Duration = Duration::from_secs\((\d+)\);$',
+                       (ROOT / relative).read_text(), re.MULTILINE)
+    assert len(found) == 1, (relative, name, found)
+    return int(found[0])
 
 
 class AssemblyTests(unittest.TestCase):
@@ -78,11 +89,19 @@ class AssemblyTests(unittest.TestCase):
 
     def test_human_unit_repoints_the_release_and_wires_the_backup_producer(self):
         old = board_unit()
-        old += ''.join('ReadWritePaths=' + path + '\n' for path in (a.BRIDGE_ROOT, a.TRANSPORT_ROOT))
+        old_stop, new_stop = (a.stop_timeout_line(n) for n in (a.OLD_STOP_TIMEOUT_SECONDS, a.STOP_TIMEOUT_SECONDS))
+        self.assertEqual(old.count(old_stop), 1)
         new = a.human_unit(old)
         added = ''.join('ReadWritePaths=' + path + '\n' for path in (a.BACKUP_RUNTIME, a.BACKUP_STAGING))
-        restored = new.replace(a.RELEASE, a.OLD_RELEASE).replace(added, '').replace(a.STOP_TIMEOUT, a.STOP_TIMEOUT_OLD)
+        restored = new.replace(a.RELEASE, a.OLD_RELEASE).replace(added, '').replace(new_stop, old_stop)
         self.assertEqual(restored, old)
+        # 发行路径恰好两处（启动器、工作目录）都指到新发行，旧发行名一处不剩：只看「还原后相等」的话，
+        # 忘了换路径的变换也能过（还原是空操作）。
+        self.assertEqual(new.count(a.RELEASE), 2)
+        self.assertNotIn(a.OLD_RELEASE, new)
+        self.assertEqual(new.count(added), 1)
+        # 新写根要落在 [Service] 节里，写到 [Install] 节 systemd 不认。
+        self.assertLess(new.index(added), new.index('[Install]'))
         self.assertIn('LoadCredentialEncrypted=totp-next:', new)
         self.assertIn('RuntimeDirectory=studiolo-human studiolo-board\n', new)
         # 备份的两个写根紧跟在 Bridge 传输根后面，路径和 worker 部署模板里 tmpfiles 建的两个目录是同一组。
@@ -91,8 +110,11 @@ class AssemblyTests(unittest.TestCase):
         for path in (a.BACKUP_RUNTIME, a.BACKUP_STAGING):
             self.assertIn('d ' + path + ' 0750 ', tmpfiles)
         self.assertEqual(new.count('TimeoutStopSec='), 1)
-        self.assertIn(a.STOP_TIMEOUT, new)
-        for bad in (new, old.replace(a.STOP_TIMEOUT_OLD, 'TimeoutStopSec=120\n'), old + a.STOP_TIMEOUT_OLD,
+        self.assertEqual(new.count(new_stop), 1)
+        # 拒绝：已转换过的；停止超时不是钉住的旧值、多出一行（不管值是多少）；已带备份路径；黑板或 Bridge 接线缺了；
+        # 发行路径不是两处。
+        for bad in (new, old.replace(old_stop, 'TimeoutStopSec=120\n'), old + old_stop, old + 'TimeoutStopSec=120\n',
+                    old.replace(old_stop, ''),
                     old + 'ReadWritePaths=' + a.BACKUP_RUNTIME + '\n', old + '# studiolo-backup\n',
                     old.replace('ReadWritePaths=' + a.BOARD + '\n', ''),
                     old.replace('ReadWritePaths=' + a.BRIDGE_ROOT + '\n', ''),
@@ -103,15 +125,28 @@ class AssemblyTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 a.human_unit(bad)
 
-    def test_stop_timeout_covers_backup_shutdown_and_fits_the_activation_stop_window(self):
-        seconds = int(a.STOP_TIMEOUT.strip().split('=', 1)[1])
-        # 下限：在途的回收最多 30 秒，加上封存最多一个冻结预算（批准的是 30 秒），再留 30 秒给原来的关停链。
-        self.assertGreaterEqual(seconds, 90)
-        # 上限：激活脚本停人侧服务的命令时限。单元的停止超时比它长的话，慢关停会让激活和回滚在这条命令上超时。
-        stop = "self.runtime.command(['systemctl', 'stop', 'studiolo-human.service'], 110)"
-        self.assertEqual((ROOT / 'deploy/blackboard/activation_ops.py').read_text().count(stop), 1)
-        self.assertLess(seconds, 110)
-        self.assertNotEqual(a.STOP_TIMEOUT, a.STOP_TIMEOUT_OLD)
+    def test_stop_timeout_covers_the_serial_backup_and_bridge_shutdown(self):
+        # 关停是串行的两段：备份收尾做完才通知 Bridge 停（crates/local-server/src/startup/serving.rs），所以逐项相加；
+        # 哪天改成并行，相加仍然够用，只是偏保守。
+        # 上限（激活脚本停服务的命令时限必须更长）在 test_activation 的 OperationTests 里钉。
+        backup = a.BACKUP_CONNECTION_WINDOW_SECONDS + a.BACKUP_RECLAIM_SECONDS + a.BACKUP_FREEZE_BUDGET_SECONDS
+        bridge = a.BRIDGE_STOP_GRACE_SECONDS + a.BRIDGE_STOP_MARGIN_SECONDS
+        self.assertGreaterEqual(a.STOP_TIMEOUT_SECONDS, backup + bridge)
+        self.assertGreater(a.STOP_TIMEOUT_SECONDS, a.OLD_STOP_TIMEOUT_SECONDS)
+        # 前两项是程序里的常量：程序改了这里先红，免得装配还按旧值算。
+        self.assertEqual(a.BACKUP_CONNECTION_WINDOW_SECONDS,
+                         rust_seconds('crates/local-server/src/backup/service.rs', 'WINDOW'))
+        self.assertEqual(a.BACKUP_RECLAIM_SECONDS,
+                         rust_seconds('crates/local-server/src/backup/producer.rs', 'RECLAIM_BUDGET'))
+        # Bridge 段的 60 秒是同步部署文档的要求，文档改了这里先红。
+        bridge_readme = (ROOT / 'deploy/sync-bridge/README.md').read_text()
+        self.assertEqual(bridge_readme.count(
+            '审批 `budget.stop_grace_seconds` 加 %d s' % a.BRIDGE_STOP_MARGIN_SECONDS), 1)
+
+    def test_this_release_requires_the_new_human_program(self):
+        # 启动器加了上一发行的程序不认的参数，这个开关就必须开着（出候选和激活预检靠它拒绝沿用旧程序）。
+        self.assertIn('--backup-config', a.launcher(board_launcher()))
+        self.assertIs(a.REQUIRES_NEW_HUMAN_PROGRAM, True)
 
     def test_agent_unit_is_carried_over_byte_for_byte(self):
         for quoted in (False, True):

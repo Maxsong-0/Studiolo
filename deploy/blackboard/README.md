@@ -52,7 +52,7 @@ sudo /usr/bin/python3 -I -B -S /可信工具目录/deploy/blackboard/activate.py
 
 r2 之后每次发行只做「上一发行 → 本发行」：换网页，可选换人侧程序，其余逐字节沿用（`assembly.py` 文件头有沿革，r5→r6 见 T-159）。
 
-1. **改常量**（`assembly.py`）：`OLD_RELEASE`＝上一发行目录、`BUILD`＝新发行号；`HUMAN_SHA`／`AGENT_SHA` 取 169 现场 `/etc/systemd/system/studiolo-{human,agent}.service` 的 sha256；`R8_MANIFEST_SHA` 取上一发行 `manifest.json` 的 sha256。`test_assembly.py` 的发行号断言同步。三个变换函数不改。
+1. **改常量**（`assembly.py`）：`OLD_RELEASE`＝上一发行目录、`BUILD`＝新发行号；`HUMAN_SHA`／`AGENT_SHA` 取 169 现场 `/etc/systemd/system/studiolo-{human,agent}.service` 的 sha256；`R8_MANIFEST_SHA` 取上一发行 `manifest.json` 的 sha256。`test_assembly.py` 的发行号断言同步。三个变换函数通常不改；本发行要动启动器参数、单元写根或停止超时（如 r17 接备份）时，改对应的变换函数和它的测试，新前置放进激活预检，新参数旧程序不认的把 `REQUIRES_NEW_HUMAN_PROGRAM` 设为真。
 2. **服务器上验工具**：`scripts/test-linux.sh bash -c 'python3 deploy/blackboard/test_assembly.py && python3 deploy/blackboard/test_freeze.py && python3 deploy/blackboard/test_activation.py'`（本机不跑测试）。
 3. **构建**：人侧程序在 githubci 原生 `cargo --locked build --release -p studiolo-local-server --features studiolo-auth/production`；网页在 108 用同一提交 `npm ci && npm run build`。来源提交须已过 CI。
 4. **暂存**（169，UID1000，0700/0600，程序 0755，不用 `/tmp`）：`bin/studiolo-local-server`、`web-dist/`、本目录 `{activate,activation_ops,assembly,prepare,candidate,binding,snapshot,sync_tools}.py` 与 `deploy/human/release/{activation_ops,release_common,runtime_checks,snapshot_worker}.py`，保持仓库相对布局。
@@ -64,7 +64,7 @@ r2 之后每次发行只做「上一发行 → 本发行」：换网页，可选
   --local-server <暂存>/bin/studiolo-local-server --local-server-sha256 <64 位摘要> --human-source-commit <40 位提交>
 ```
 
-   只换网页时省略后三个参数（三件套要么全给要么全不给），程序逐字节沿用上一发行、manifest 照抄其来源。T-132 r10 同时传入 `--maintain <程序> --maintain-sha256 <摘要> --sync-launcher <程序> --sync-launcher-sha256 <摘要>`；四项必须全给，并与上述人侧程序来自同一提交。manifest 新增 `sync_program_source_commit`，两个程序均为 ELF/0755；之后省略四项会原样保留，禁止静默移除、缺一程序或保留来源却换字节。工具随包交付不自动置备、配对或启用 Bridge。输出 `manifest_sha256`、`human_binary_reused`、`services_changed: false`。
+   只换网页时省略后三个参数（三件套要么全给要么全不给），程序逐字节沿用上一发行、manifest 照抄其来源；`assembly.REQUIRES_NEW_HUMAN_PROGRAM` 为真的发行（如 r17）必须给，否则不出候选。T-132 r10 同时传入 `--maintain <程序> --maintain-sha256 <摘要> --sync-launcher <程序> --sync-launcher-sha256 <摘要>`；四项必须全给，并与上述人侧程序来自同一提交。manifest 新增 `sync_program_source_commit`，两个程序均为 ELF/0755；之后省略四项会原样保留，禁止静默移除、缺一程序或保留来源却换字节。工具随包交付不自动置备、配对或启用 Bridge。输出 `manifest_sha256`、`human_binary_reused`、`services_changed: false`。
 6. **激活**（用户本人 root）：`sudo /usr/bin/python3 -I -B -S <暂存>/deploy/blackboard/activate.py --manifest-sha256 <上一步的摘要>`。已激活后重复执行会在预检被拒（现场已不是上一发行），无副作用。
 
 **r15→r16 是单向的**（2026-11-16 部署前复查）。r16 一启动就把控制库（黑板目录里的 `control.sqlite3`）从
@@ -101,9 +101,16 @@ r12本身尚无批内关停点，激活前必须取得空闲plane.lock并持有�
 控制库 schema 3→4、单向（见上文「r15→r16 是单向的」），要留退路先做恢复点。现场摘要：human 单元 `edb0c1f5…c71c7`、agent 单元 `15b39395…45b9`（t207-c09b065、新名 `--allow`）、r15 manifest `2f24ad58…a6d5`。
 
 本版固定 r16→r17（2026-11-20，T-216）：启用备份生产者。启动器在同步审批后面加 `--backup-config`（和主人配置同目录的 `backup.json`），
-人侧单元加备份 socket 父目录、封存父目录两行 `ReadWritePaths=`，停止超时 90→100 秒；这三处由装配一次换上，激活失败一起退回。
+人侧单元加备份 socket 父目录、封存父目录两行 `ReadWritePaths=`，停止超时 90→170 秒（备份收尾和 Bridge 停止是串行的两段，逐项相加，
+算法在 `assembly.py` 的常量注释里）；这三处由装配一次换上，激活失败一起退回。激活脚本停服务的命令时限同步调到 190 秒。
 **激活前要备好**（`deploy/backup-worker/README.md`「安装前要有的东西」）：读取组和人侧账号的组成员、tmpfiles 建的两个目录、
-`backup.json`、临时数据根；缺了人侧起不来，激活会在启动这一步失败并退回 r16。人侧程序、网页、maintain 与 sync-launcher 一起换，
-`prepare.py` 带全部参数；agent 单元沿用 T-215 换过发布名之后的现场。r16 之后没有改数据库或状态的版本号，激活失败可以退回 r16
-（退回后启动器不带 `--backup-config`，`backup.json` 留着不碍事）。现场摘要：human 单元 `11827335…a143`（r16 激活写下的）、
-agent 单元 `394ffe6f…0117`（t215-116f5d7，只换发布名两处；换之前 `15b39395…45b9`）、r16 manifest `437d75a8…7b4e`。
+`backup.json`、临时数据根。缺读取组成员、两个目录或 `backup.json`，人侧起不来；缺临时数据根人侧照常起，第一次封存才失败。
+两类都由激活预检在停服之前拦下（`activation_ops.backup_ready`，另核备份 socket 没有残留、冻结预算和 Bridge 停止宽限不超过
+装配假设）：预检不过就不停服务，现场不动。人侧程序必须一起换（上一发行的程序不认 `--backup-config`；`REQUIRES_NEW_HUMAN_PROGRAM`
+为真，出候选和预检都拒绝沿用旧程序），网页、maintain 与 sync-launcher 也一起换，`prepare.py` 带全部参数；agent 单元沿用 T-215
+换过发布名之后的现场。r16 之后没有改数据库或状态的版本号，激活失败可以退回 r16（退回后启动器不带 `--backup-config`，`backup.json`
+留着不碍事；人侧要是被强杀的，`/run/studiolo-backup` 里可能留下 socket 节点，重试激活时预检会拒，要人看过再删）。
+装配钉的摘要：human 单元 `11827335…a143`（r16 激活写下的，2026-11-20 回读的现场值）、r16 manifest `437d75a8…7b4e`（同上）、
+agent 单元 `394ffe6f…0117`（**预算值**：线上单元里的发布名两处换成 `t215-116f5d7-20261120` 之后应有的摘要，换之前是
+`15b39395…45b9`；T-215 的 agent 换完、回读一致才算现场值，不一致就改 `AGENT_SHA` 重出候选）。
+下一发行的起点已经带备份监听：预检里「备份 socket 必须不存在」那一条届时要改成核活的 socket，「必须不存在」挪到停服之后。

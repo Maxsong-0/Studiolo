@@ -91,6 +91,11 @@ class OperationTests(unittest.TestCase):
             ops.stop()
         self.assertEqual([call.args[0] for call in ops.runtime.command.call_args_list], [
             ['systemctl', 'stop', 'studiolo-agent.service'], ['systemctl', 'stop', 'studiolo-human.service']])
+        # 停服务的命令时限必须比人侧单元的停止超时长（留出 systemd 到点强杀后的收尾）：
+        # 否则慢关停会让激活和回滚都在这条命令上超时。装配把停止超时调大时，这里先红。
+        self.assertEqual([call.args[1] for call in ops.runtime.command.call_args_list],
+                         [ops_module.STOP_COMMAND_SECONDS] * 2)
+        self.assertGreaterEqual(ops_module.STOP_COMMAND_SECONDS - assembly.STOP_TIMEOUT_SECONDS, 10)
 
     def test_worker_uses_original_code_as_unprivileged_isolated_stdin(self):
         ops = self.operation()
@@ -159,10 +164,37 @@ class OperationTests(unittest.TestCase):
                 patch.object(os, 'geteuid', return_value=0), patch.object(ops_module.pwd, 'getpwnam',
                 return_value=types.SimpleNamespace(pw_uid=1000)), \
                 patch.object(ops_module, 'verify_candidate', return_value={}), \
+                patch.object(ops, 'backup_ready') as backup, \
                 patch.object(ops, 'units', return_value={'studiolo-human': b'wrong', 'studiolo-agent': b'wrong'}):
             with self.assertRaises(ValueError):
                 ops.preflight()
+        backup.assert_called_once_with()
         ops.runtime.command.assert_not_called()
+
+    def test_preflight_stops_at_missing_backup_prerequisites_before_any_service_command(self):
+        # 备份前置没备好：核完候选包就停，不读现场单元、不碰任何服务命令（更谈不上停服）。
+        ops = self.operation()
+        with patch.object(ops_module.sys, 'platform', 'linux'), patch.object(os, 'getuid', return_value=0), \
+                patch.object(os, 'geteuid', return_value=0), patch.object(ops_module.pwd, 'getpwnam',
+                return_value=types.SimpleNamespace(pw_uid=1000)), \
+                patch.object(ops_module, 'verify_candidate', return_value={}) as candidate, \
+                patch.object(ops, 'backup_ready', side_effect=ValueError('rejected')) as backup, \
+                patch.object(ops, 'units') as units:
+            with self.assertRaises(ValueError):
+                ops.preflight()
+        candidate.assert_called_once()
+        backup.assert_called_once_with()
+        units.assert_not_called()
+        ops.runtime.command.assert_not_called()
+
+    def test_owner_groups_come_from_the_account_database(self):
+        ops = self.operation()
+        account = types.SimpleNamespace(pw_name='maxsong', pw_gid=1000)
+        with patch.object(ops_module.pwd, 'getpwnam', return_value=account) as lookup, \
+                patch.object(os, 'getgrouplist', return_value=[1000, 27, 994]) as groups:
+            self.assertEqual(ops.owner_groups(), {1000, 27, 994})
+        lookup.assert_called_once_with('maxsong')
+        groups.assert_called_once_with('maxsong', 1000)
 
     def test_stopped_refuses_lingering_socket_without_removing_it(self):
         ops = self.operation()

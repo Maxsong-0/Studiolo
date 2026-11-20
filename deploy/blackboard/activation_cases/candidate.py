@@ -139,3 +139,22 @@ class CandidateTests(FilesBase):
         path.write_bytes(raw)
         self.assertEqual(self.check(a, c.sha(raw))['human_program_source_commit'], '7' * 40)
 
+    def test_release_that_requires_a_new_program_rejects_a_carried_over_one(self):
+        # 同一个候选（沿用上一发行的人侧程序）：装配不要求换程序时通过，要求时拒绝。
+        a, digest = self.candidate()
+        self.check(a, digest)
+        a.REQUIRES_NEW_HUMAN_PROGRAM = True
+        with self.assertRaises(ValueError):
+            self.check(a, digest)
+        # 换了程序并声明新来源的候选，在要求换程序的发行里通过。
+        root = Path(a.RELEASE)
+        path = root / 'manifest.json'
+        doc = json.loads(path.read_bytes())
+        program = b'\x7fELFnew human build'
+        (root / 'bin/studiolo-local-server').write_bytes(program)
+        doc['files']['bin/studiolo-local-server'] = {'bytes': len(program), 'sha256': c.sha(program)}
+        doc['human_program_source_commit'] = '7' * 40
+        raw = json.dumps(doc).encode()
+        path.write_bytes(raw)
+        self.assertEqual(self.check(a, c.sha(raw))['human_program_source_commit'], '7' * 40)
+

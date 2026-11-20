@@ -50,6 +50,8 @@ def prepare(args, a, c, ops):
         c.require(re.fullmatch('[0-9a-f]{40}', args.human_source_commit))
         human = c.read(c.absolute(args.local_server), c.UID)
         c.require(human.startswith(b'\x7fELF') and c.sha(human) == args.local_server_sha256)
+    # 本版必须换人侧程序时（assembly.REQUIRES_NEW_HUMAN_PROGRAM），没给程序就不出候选，也不留半成品目录。
+    c.require(human is not None or not a.REQUIRES_NEW_HUMAN_PROGRAM)
     from board_sync_tools import read_inputs
     tools = read_inputs(args, c)
     old = Path(a.OLD_RELEASE)

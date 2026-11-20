@@ -39,6 +39,23 @@ class PrepareTests(FilesBase):
         # 其余程序照旧逐字节沿用。
         self.assertEqual((root / 'bin/studiolo-auth-admin').read_bytes(), b'fictional admin')
 
+    def test_release_that_requires_a_new_program_refuses_to_prepare_without_one(self):
+        a, args = self.preparation()
+        a.REQUIRES_NEW_HUMAN_PROGRAM = True
+        # 没给程序三件套：不出候选，也不留半成品目录。
+        with self.assertRaises(ValueError):
+            self.run_prepare(a, args)
+        self.assertFalse(Path(a.RELEASE).exists())
+        # 同一组参数只补上程序三件套就能出，候选也过得了同一发行的核验。
+        program = b'\x7fELFnew human build'
+        self.write(self.root / 'local-server', program)
+        args.local_server = str(self.root / 'local-server')
+        args.local_server_sha256 = c.sha(program)
+        args.human_source_commit = '6' * 40
+        result = self.run_prepare(a, args)
+        self.assertFalse(result['human_binary_reused'])
+        self.assertEqual(self.check(a, result['manifest_sha256'])['human_program_source_commit'], '6' * 40)
+
     def test_prepare_rejects_partial_program_arguments_and_bad_program(self):
         a, args = self.preparation()
         program = b'\x7fELFnew human build'
