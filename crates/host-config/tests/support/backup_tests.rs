@@ -2,6 +2,7 @@
 //! 写进主人配置一律拒绝（主人配置的整份字节是 Bridge `scope_hash` 的输入，T-216）。
 
 use super::*;
+use std::os::unix::fs::symlink;
 use studiolo_host_config::backup::BackupConfig;
 
 fn approval() -> Value {
@@ -129,6 +130,36 @@ fn the_separate_backup_file_is_read_with_the_same_private_file_rules() {
     assert!(BackupConfig::load(&path, &owner).is_err());
     fs::write(&path, vec![b' '; 16_385]).unwrap();
     assert!(BackupConfig::load(&path, &owner).is_err());
+}
+
+#[test]
+fn a_missing_linked_or_exposed_backup_file_is_rejected_and_never_taken_as_not_enabled() {
+    let fixture = Fixture::new();
+    let path = write_backup(&fixture, &both(&fixture.root));
+    let owner = Config::load(&fixture.path).unwrap();
+    assert!(BackupConfig::load(&path, &owner).is_ok());
+
+    // 相对路径：不按当前目录去找。
+    assert!(BackupConfig::load(Path::new("config/backup.json"), &owner).is_err());
+
+    // 末级是符号链接：指向的那份内容和权限都合格也拒绝。
+    let real = fixture.root.join("config/backup-real.json");
+    fs::rename(&path, &real).unwrap();
+    symlink(&real, &path).unwrap();
+    assert!(BackupConfig::load(&path, &owner).is_err());
+    fs::remove_file(&path).unwrap();
+
+    // 文件不存在：给了路径却读不到是错误，不能当成「没启用」。
+    assert!(BackupConfig::load(&path, &owner).is_err());
+    fs::rename(&real, &path).unwrap();
+    assert!(BackupConfig::load(&path, &owner).is_ok());
+
+    // 父目录不是 0700。
+    let parent = fixture.root.join("config");
+    fs::set_permissions(&parent, fs::Permissions::from_mode(0o750)).unwrap();
+    assert!(BackupConfig::load(&path, &owner).is_err());
+    fs::set_permissions(&parent, fs::Permissions::from_mode(0o700)).unwrap();
+    assert!(BackupConfig::load(&path, &owner).is_ok());
 }
 
 #[test]

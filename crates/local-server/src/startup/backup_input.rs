@@ -20,7 +20,7 @@ use studiolo_local_server::{
     checkpoint::CheckpointInputs,
 };
 
-/// 从私有配置读出来的部分；等写者和各平面装好之后才能配上原实例。
+/// 从私有备份配置（`--backup-config`）读出来的部分；等写者和各平面装好之后才能配上原实例。
 pub(super) struct Approved {
     socket: PathBuf,
     plan: ProducerPlan,

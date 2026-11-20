@@ -148,6 +148,38 @@ fn backup_worker_cannot_detach_job_source_or_expiry_from_execution() {
         ),
         ("process.rs", "if !child.exited()? {", "if true {"),
         ("runtime.rs", "&|| self.window.check(),", "&|| Ok(()),"),
+        // T-216：批准的仓库 CA 必须带到每一次连仓库的调用——配置到 Runtime、Runtime 到参数、
+        // 三处调用各断一次都判红；多出一处不带 CA 的调用也判红。
+        (
+            "runtime.rs",
+            "repository_ca: config.repository_ca(),",
+            "repository_ca: None,",
+        ),
+        (
+            "runtime.rs",
+            "with_ca(self.repository_ca, argv)",
+            "argv.to_vec()",
+        ),
+        (
+            "runtime.rs",
+            "let argv = self.arguments(argv);",
+            "let argv = argv.to_vec();",
+        ),
+        (
+            "runtime.rs",
+            "process::verify_digest(\n            &self.package,\n            &self.arguments(argv),",
+            "process::verify_digest(\n            &self.package,\n            argv,",
+        ),
+        (
+            "runtime.rs",
+            "process::run_check(\n            &self.package,\n            &self.arguments(argv),",
+            "process::run_check(\n            &self.package,\n            argv,",
+        ),
+        (
+            "runtime.rs",
+            "    pub fn now(&self)",
+            "    pub fn raw(&self, argv: &[String]) -> Result<process::Output> {\n        process::run_scoped(&self.package, argv, None, self.temporary.path(), self.window.deadline(), &|| self.window.check())\n    }\n    pub fn now(&self)",
+        ),
     ] {
         let path = std::path::PathBuf::from("crates/backup-worker/src").join(file);
         let source = fs::read_to_string(workspace_root().join(&path)).unwrap();

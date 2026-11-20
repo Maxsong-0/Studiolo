@@ -436,6 +436,26 @@ class CapacitySyncTests(unittest.TestCase):
         self.assertEqual(again["capacity_alert"], "suppressed")
         self.assertEqual(len(self.notifications()), 1)
 
+    def test_crossing_a_limit_is_still_named_when_the_alert_state_cannot_be_used(self):
+        # 去重状态文件不安全：越线的原因和点名照旧，不退回笼统的 validation_failed；通知记成 state_error。
+        self.fill_notes(MAX_NOTES_TOTAL + 1)
+        first = self.last_status(self.run_sync(code=1, timeout=self.TIMEOUT))
+        self.assertEqual(first["capacity_alert"], "sent")
+        (state_file,) = self.alert_files()
+        state_file.chmod(0o644)
+        _, body = exceeded_notice("notes_bytes")
+        for args in ([], ["--dry-run"]):
+            with self.subTest(args=args):
+                status = self.last_status(self.run_sync(args, code=1, timeout=self.TIMEOUT))
+                self.assertEqual(status, {"status": "failed", "last_error": "capacity_exceeded",
+                                          "exceeded": "notes_bytes", "capacity_notice": body,
+                                          "capacity_alert": "state_error"})
+        self.assertEqual(len(self.notifications()), 1, "状态用不了就没法去重，这两轮都不发")
+        # 对照：文件改回私有的，同一份状态照常去重——上面的 state_error 确实出在文件不安全上。
+        state_file.chmod(0o600)
+        again = self.last_status(self.run_sync(code=1, timeout=self.TIMEOUT))
+        self.assertEqual(again["capacity_alert"], "suppressed")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -260,10 +260,15 @@ def main(argv=None):
                 # 越线（BUG-039）：整批照旧不发，日志点名是哪一条，并给 Mac 用户发系统通知（T-217）。
                 require_lock_binding(state_fd, name, lock_fd)
                 notice = capacity.exceeded_notice(over.gauge)
+                # 先把原因定下来再碰去重状态：状态文件不安全或写不了时，结果照样点名哪一条越线，
+                # 不被外层兜成笼统的 validation_failed（那正是 BUG-039 看不出原因的样子）。
                 status = {"status": "failed", "last_error": "capacity_exceeded", "exceeded": over.gauge,
-                          "capacity_notice": notice[1],
-                          "capacity_alert": alert(state_fd, alert_name, {over.gauge: "exceeded"}, notice,
-                                                  time.time_ns() // 1_000_000, args.dry_run)}
+                          "capacity_notice": notice[1]}
+                try:
+                    status["capacity_alert"] = alert(state_fd, alert_name, {over.gauge: "exceeded"}, notice,
+                                                     time.time_ns() // 1_000_000, args.dry_run)
+                except (OSError, ValueError):
+                    status["capacity_alert"] = "state_error"
                 print(json.dumps(status, ensure_ascii=False, separators=(",", ":")), file=sys.stderr)
                 return 1
             raw, bodies, expected, observed, usage = captured

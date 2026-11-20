@@ -121,11 +121,16 @@ Outcome 的载荷显式带 `recorded_after_checkpoint_cutoff: true`，
 当前时刻早于内容截止时刻即判为时钟回退，显示未知；缺时间证据同样显示未知，
 都不显示 0，也不显示绿色。
 默认 10 分钟调度 + 5 分钟完成预算 = 15 分钟，刚好满足 RPO；相加溢出判不满足。
-首次完整 seed 校验通过前一律显示「尚未建立灾难恢复点」，
+首次完整 seed 校验通过前一律判为「尚未建立灾难恢复点」，
 而 `mark_seed_verified` 要求确实存在成功作业与已提交清单。
 每日追加／不可变恢复点单独计龄。
-普通 SMB/NFS 目录与本机临时仓库**永远**显示「未证明具备不可变保护」，
-主人配置里对这两种形态声明 `claims_immutability` 会被配置层直接拒绝。
+普通 SMB/NFS 目录与本机临时仓库**永远**判为「未证明具备不可变保护」
+（`ImmutabilityCapability::NotProven`），
+备份配置（`--backup-config` 指的那份，不是 owner.json）里对这两种形态声明 `claims_immutability` 会被配置层直接拒绝。
+
+以上是 `studiolo-backup` 这个包里的判定。健康页上实际显示什么，以 `docs/m2/health-and-alerting.md` §2.1 为准（T-216，2026-11-18）：
+「恢复点年龄」一节从人侧账本里成功收口的作业推出，不读 worker 的状态库；生产 worker 现在不调 `mark_seed_verified`、
+也不写每日不可变恢复点，所以健康页目前**不显示**不可变保护这一项，等每日不可变恢复点接上再显示。
 
 ## 新目录恢复
 

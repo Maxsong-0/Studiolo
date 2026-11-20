@@ -49,7 +49,7 @@ const SCAN_BUDGET: Duration = Duration::from_secs(5);
 /// 回收过期暂存的时间预算。
 const RECLAIM_BUDGET: Duration = Duration::from_secs(30);
 
-/// 可信启动层从私有配置算出来的固定事实；运行期间不变。
+/// 可信启动层从私有备份配置（`--backup-config`）和启动选项算出来的固定事实；运行期间不变。
 pub struct ProducerPlan {
     /// 独立 worker 的系统账号；只有它能连备份 socket。
     pub worker_uid: u32,

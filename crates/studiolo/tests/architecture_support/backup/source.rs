@@ -126,6 +126,12 @@ pub(super) fn fixed_binding(path: &Path, source: &str) -> bool {
             "self.temporary.check()",
             "ResticPackage::open(config.restic_sha256(),deadline)?",
             "process::run_check(&self.package,&self.arguments(argv),&self.credentials,self.temporary.path(),self.window.deadline(),&||self.window.check(),interrupt)",
+            // T-216：批准的仓库 CA 从配置一路带到每一次连仓库的 restic 调用，哪一环断了都判红
+            // （`with_ca` 本身的行为由 runtime.rs 的单测守）。调用点总数另由 `RUNTIME_PROCESS_CALLS` 钉住。
+            "repository_ca:config.repository_ca()",
+            "fnarguments(&self,argv:&[String])->Vec<String>{with_ca(self.repository_ca,argv)}",
+            "letargv=self.arguments(argv);letresult=matchinput{Some(bytes)=>process::run_input(&self.package,&argv,&self.credentials,self.temporary.path(),deadline,&check,bytes),None=>process::run_scoped(&self.package,&argv,Some(&self.credentials),self.temporary.path(),deadline,&check)};",
+            "process::verify_digest(&self.package,&self.arguments(argv),&self.credentials,self.temporary.path(),deadline.min(self.window.deadline()),&check,expected)",
         ]
     } else if path.ends_with("crates/backup-worker/src/runner/final_record.rs") {
         &[
@@ -163,4 +169,24 @@ pub(super) fn fixed_binding(path: &Path, source: &str) -> bool {
         &[]
     };
     anchors.iter().all(|anchor| source.contains(anchor))
+        && (!path.ends_with("crates/backup-worker/src/runtime.rs")
+            || process_calls(&source) == RUNTIME_PROCESS_CALLS)
+}
+
+/// `runtime.rs` 里起 restic 的调用点个数：不连仓库的 `version` 一处，连仓库的四处（上面逐处钉成带批准的 CA）。
+/// 多出一处没钉的调用，就可能不带 `--cacert` 去连自签证书的仓库（T-216）。
+const RUNTIME_PROCESS_CALLS: usize = 5;
+
+/// 形如 `process::名字(` 的调用点个数；类型（`process::Output`）和文档里的引用不算。
+fn process_calls(source: &str) -> usize {
+    source
+        .match_indices("process::")
+        .filter(|(at, token)| {
+            source[at + token.len()..]
+                .trim_start_matches(|c: char| {
+                    c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_'
+                })
+                .starts_with('(')
+        })
+        .count()
 }

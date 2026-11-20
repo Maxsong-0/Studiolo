@@ -53,7 +53,7 @@
 
 事实全部来自主服务启动保留的原账本里的 `backup.snapshot` 事件，由备份生产者经只读探针
 （`crates/local-server/src/backup/evidence.rs` 的 `BackupJobsProbe`）给出：不写账本、不补失败结果、不安排封存。
-阈值来自私有配置的固定值，请求里没有能改它的参数：
+阈值来自私有备份配置（`--backup-config` 指的那份）的固定值，请求里没有能改它的参数：
 
 - **卡住**：最早一条没收口的作业（有原意图、没有结果）挂得比封存正文的保留期（`source_retention_millis`）还久——
   过了保留期 worker 已经传不了。正好等于保留期不算。
