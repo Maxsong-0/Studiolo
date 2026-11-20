@@ -99,3 +99,11 @@ r12本身尚无批内关停点，激活前必须取得空闲plane.lock并持有�
 本版固定 r15→r16（2026-11-18，T-207）：发行 main 上 BUG-038 项目目录改名与 T-207 各批人侧改动；启动器加 `--agent-data`，
 装配要求 agent 单元的读取范围已含新名（`AGENT_READ_SCOPES`）。人侧程序、网页、maintain 与 sync-launcher 一起换，`prepare.py` 带全部参数；
 控制库 schema 3→4、单向（见上文「r15→r16 是单向的」），要留退路先做恢复点。现场摘要：human 单元 `edb0c1f5…c71c7`、agent 单元 `15b39395…45b9`（t207-c09b065、新名 `--allow`）、r15 manifest `2f24ad58…a6d5`。
+
+本版固定 r16→r17（2026-11-20，T-216）：启用备份生产者。启动器在同步审批后面加 `--backup-config`（和主人配置同目录的 `backup.json`），
+人侧单元加备份 socket 父目录、封存父目录两行 `ReadWritePaths=`，停止超时 90→100 秒；这三处由装配一次换上，激活失败一起退回。
+**激活前要备好**（`deploy/backup-worker/README.md`「安装前要有的东西」）：读取组和人侧账号的组成员、tmpfiles 建的两个目录、
+`backup.json`、临时数据根；缺了人侧起不来，激活会在启动这一步失败并退回 r16。人侧程序、网页、maintain 与 sync-launcher 一起换，
+`prepare.py` 带全部参数；agent 单元沿用 T-215 换过发布名之后的现场。r16 之后没有改数据库或状态的版本号，激活失败可以退回 r16
+（退回后启动器不带 `--backup-config`，`backup.json` 留着不碍事）。现场摘要：human 单元 `11827335…a143`（r16 激活写下的）、
+agent 单元 `394ffe6f…0117`（t215-116f5d7，只换发布名两处；换之前 `15b39395…45b9`）、r16 manifest `437d75a8…7b4e`。
