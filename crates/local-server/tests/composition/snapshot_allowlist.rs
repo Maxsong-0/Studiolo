@@ -3,10 +3,14 @@
 //! 白名单的值（库文件名、SQLite 旁文件后缀、审计库另认的准入锁）跟着 Python 走，不在这里另抄一份；
 //! 核对的写法（白名单由哪个函数给、三个库是不是都过一遍、准入锁只认空文件）按原样钉住：
 //! Python 那边改了写法，这里先红，改的人回来核对这条测试还管不管用（vault BUG-040）。
-use std::{collections::BTreeSet, path::Path};
+use std::collections::BTreeSet;
 
-/// 相对仓库根的路径。
-const SOURCE: &str = "deploy/human/release/snapshot_worker.py";
+/// 只能写成 `concat!` 字面量：人侧运行包在服务器上原生跑这批测试，`scripts/test-package-inputs.py`
+/// 按这个写法认出要读的文件，核对它在 `scripts/package-preview.sh` 的打包清单里。
+const SOURCE: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../deploy/human/release/snapshot_worker.py"
+);
 
 /// 原样钉住的核对语句：库目录里的名字是 `expected_names` 的子集；三个库都经 `source` 核对；准入锁只认空文件。
 const PINNED: [&str; 3] = [
@@ -30,10 +34,7 @@ pub(super) struct Allowlist {
 impl Allowlist {
     /// 读仓库里的 `snapshot_worker.py`；写法对不上就 panic，说明哪一处变了。
     pub(super) fn load() -> Self {
-        let path = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../..")
-            .join(SOURCE);
-        let source = std::fs::read_to_string(&path)
+        let source = std::fs::read_to_string(SOURCE)
             .unwrap_or_else(|error| panic!("读不到 {SOURCE}：{error}"));
         Self::parse(&source)
     }
