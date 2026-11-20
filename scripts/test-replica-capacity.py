@@ -27,6 +27,8 @@ SYNC = importlib.util.module_from_spec(_SPEC)
 _SPEC.loader.exec_module(SYNC)
 
 NAMES = {key: name for key, name, _ in GAUGES}
+# 去重状态文件的大小上限。故意写死成文档（docs/m3/replica-operations.md）里的数，不跟着代码里的常量走。
+STATE_LIMIT = 4096
 IN_BYTES = {key: in_bytes for key, _, in_bytes in GAUGES}
 
 
@@ -306,6 +308,23 @@ class CapacityAlertTests(unittest.TestCase):
         with self.assertRaises(OSError):
             self.alert({"notes_bytes": "warn"})
 
+    def test_a_state_file_over_the_size_limit_fails_closed(self):
+        # 正好到上限还读得进来（内容读不懂，当作从没提醒过）；多一个字节就是文件本身不安全，失败关闭。
+        self.file.write_bytes(b" " * STATE_LIMIT)
+        self.file.chmod(0o600)
+        self.assertEqual(self.alert({"notes_bytes": "warn"}), "sent")
+        self.file.write_bytes(b" " * (STATE_LIMIT + 1))
+        with self.assertRaises(Invalid):
+            self.alert({"notes_bytes": "warn"}, now=self.NOW + REMIND_AFTER_MS["warn"])
+
+    def test_a_state_write_failure_is_raised_after_the_notification_went_out(self):
+        # 通知先发、状态后写：写不了照常报错，但那条通知已经发出去了，下一轮没法靠状态去重。
+        send = Sender()
+        with patch("replica_client.save_private", side_effect=OSError), self.assertRaises(OSError):
+            self.alert({"notes_bytes": "warn"}, send=send)
+        self.assertEqual(len(send.calls), 1)
+        self.assertFalse(self.file.exists())
+
 
 class NotifyTests(unittest.TestCase):
     def setUp(self):
@@ -442,19 +461,51 @@ class CapacitySyncTests(unittest.TestCase):
         first = self.last_status(self.run_sync(code=1, timeout=self.TIMEOUT))
         self.assertEqual(first["capacity_alert"], "sent")
         (state_file,) = self.alert_files()
-        state_file.chmod(0o644)
+        good = state_file.read_bytes()
         _, body = exceeded_notice("notes_bytes")
-        for args in ([], ["--dry-run"]):
-            with self.subTest(args=args):
-                status = self.last_status(self.run_sync(args, code=1, timeout=self.TIMEOUT))
-                self.assertEqual(status, {"status": "failed", "last_error": "capacity_exceeded",
-                                          "exceeded": "notes_bytes", "capacity_notice": body,
-                                          "capacity_alert": "state_error"})
-        self.assertEqual(len(self.notifications()), 1, "状态用不了就没法去重，这两轮都不发")
-        # 对照：文件改回私有的，同一份状态照常去重——上面的 state_error 确实出在文件不安全上。
-        state_file.chmod(0o600)
-        again = self.last_status(self.run_sync(code=1, timeout=self.TIMEOUT))
-        self.assertEqual(again["capacity_alert"], "suppressed")
+
+        def exposed():  # 权限不对：读的时候报 Invalid（ValueError 一支）
+            state_file.chmod(0o644)
+
+        def linked():  # 换成符号链接：打开时报 OSError
+            state_file.unlink()
+            state_file.symlink_to(self.state / "elsewhere.json")
+
+        def oversized():  # 权限没动，只是超过大小上限：Invalid
+            state_file.write_bytes(b" " * (STATE_LIMIT + 1))
+
+        for spoil in (exposed, linked, oversized):
+            spoil()
+            for args in ([], ["--dry-run"]):
+                with self.subTest(spoil=spoil.__name__, args=args):
+                    status = self.last_status(self.run_sync(args, code=1, timeout=self.TIMEOUT))
+                    self.assertEqual(status, {"status": "failed", "last_error": "capacity_exceeded",
+                                              "exceeded": "notes_bytes", "capacity_notice": body,
+                                              "capacity_alert": "state_error"})
+            # 对照：换回原来那份私有状态，照常去重——上面的 state_error 确实出在文件不安全上。
+            state_file.unlink()
+            state_file.write_bytes(good)
+            state_file.chmod(0o600)
+            with self.subTest(spoil=spoil.__name__, restored=True):
+                again = self.last_status(self.run_sync(code=1, timeout=self.TIMEOUT))
+                self.assertEqual(again["capacity_alert"], "suppressed")
+        self.assertEqual(len(self.notifications()), 1, "状态用不了就没法去重，那几轮都不发")
+
+    def test_an_unsafe_alert_state_fails_the_round_that_only_reached_the_line(self):
+        # 到线（没越线）那一轮：去重状态文件本身不安全就整轮失败关闭，同基线文件的口径；换回来照常同步。
+        self.ready_receipt_ssh()
+        self.fill_notes(at(MAX_NOTES_TOTAL, CAPACITY_WARN_PERCENT))
+        first = json.loads(self.run_sync(timeout=self.TIMEOUT).stdout)
+        self.assertEqual((first["status"], first["capacity_alert"]), ("ready", "sent"))
+        (state_file,) = self.alert_files()
+        good = state_file.read_bytes()
+        state_file.write_bytes(b" " * (STATE_LIMIT + 1))
+        status = self.last_status(self.run_sync(code=1, timeout=self.TIMEOUT))
+        self.assertEqual(status, {"status": "failed", "last_error": "validation_failed"})
+        state_file.write_bytes(good)
+        again = json.loads(self.run_sync(timeout=self.TIMEOUT).stdout)
+        self.assertEqual((again["status"], again["capacity_alert"]), ("ready", "suppressed"))
+        self.assertEqual(len(self.notifications()), 1)
 
 
 if __name__ == "__main__":

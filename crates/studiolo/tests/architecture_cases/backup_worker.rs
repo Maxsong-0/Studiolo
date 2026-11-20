@@ -149,7 +149,8 @@ fn backup_worker_cannot_detach_job_source_or_expiry_from_execution() {
         ("process.rs", "if !child.exited()? {", "if true {"),
         ("runtime.rs", "&|| self.window.check(),", "&|| Ok(()),"),
         // T-216：批准的仓库 CA 必须带到每一次连仓库的调用——配置到 Runtime、Runtime 到参数、
-        // 三处调用各断一次都判红；多出一处不带 CA 的调用也判红。
+        // 三处调用各断一次都判红（`run_check` 那一处原来就有钉子，这里留着作对照）；
+        // `runtime.rs` 里多出一处不带 CA 的调用也判红，不管写成直接调用、函数指针、直接引入还是别名。
         (
             "runtime.rs",
             "repository_ca: config.repository_ca(),",
@@ -180,6 +181,48 @@ fn backup_worker_cannot_detach_job_source_or_expiry_from_execution() {
             "    pub fn now(&self)",
             "    pub fn raw(&self, argv: &[String]) -> Result<process::Output> {\n        process::run_scoped(&self.package, argv, None, self.temporary.path(), self.window.deadline(), &|| self.window.check())\n    }\n    pub fn now(&self)",
         ),
+        // 函数指针：没有 `process::名字(` 这种写法，照样多出一处函数引用。
+        (
+            "runtime.rs",
+            "    pub fn now(&self)",
+            "    pub fn raw(&self) -> usize {\n        let run = process::run_scoped;\n        std::mem::size_of_val(&run)\n    }\n    pub fn now(&self)",
+        ),
+        // 同一行后面带注释：只截掉注释，这一行前面的函数引用照样数。
+        (
+            "runtime.rs",
+            "    pub fn now(&self)",
+            "    pub fn raw(&self) -> usize { std::mem::size_of_val(&process::run_scoped) } // 说明\n    pub fn now(&self)",
+        ),
+        // 一处类型换成函数引用：`process::` 的出现总数不变，函数引用多一处。
+        (
+            "runtime.rs",
+            "expected: process::DigestExpectation<'_>,",
+            "expected: process::run_scoped,",
+        ),
+        // 直接引入函数名再调用。
+        (
+            "runtime.rs",
+            "use std::{",
+            "use crate::process::run_scoped;\nuse std::{",
+        ),
+        // 花括号引入：函数引用个数不变，`process::` 的出现总数多一次。
+        (
+            "runtime.rs",
+            "use std::{",
+            "use crate::process::{run_input};\nuse std::{",
+        ),
+        // 给模块起别名：两个个数都不变，单独判红。
+        (
+            "runtime.rs",
+            "use std::{",
+            "use crate::process as raw;\nuse std::{",
+        ),
+        // 不连仓库的 `version` 那一处换成别的调用：个数不变，钉子对不上。
+        (
+            "runtime.rs",
+            "&[\"version\".into()],\n            None,",
+            "&[\"snapshots\".into()],\n            None,",
+        ),
     ] {
         let path = std::path::PathBuf::from("crates/backup-worker/src").join(file);
         let source = fs::read_to_string(workspace_root().join(&path)).unwrap();
@@ -198,6 +241,14 @@ fn backup_worker_cannot_detach_job_source_or_expiry_from_execution() {
             "{file}"
         );
     }
+    // 对照：注释和文档里提到 `process::名字(` 不算调用点，不判红。
+    let path = std::path::PathBuf::from("crates/backup-worker/src/runtime.rs");
+    let source = fs::read_to_string(workspace_root().join(&path)).unwrap();
+    let before = "    pub fn now(&self)";
+    let commented = "    // 见 process::run_check(…)\n    /// 也见 `process::run_scoped(`\n    pub fn now(&self)";
+    assert!(source.contains(before));
+    let harmless = source.replace(before, commented);
+    assert!(source_violations("studiolo-backup-worker", &path, &harmless).is_empty());
     // 抽查窗口只在共用包定一处，最多 20 分钟：放宽到作业的两小时窗口就判红。
     let path = std::path::PathBuf::from("crates/backup/src/worker/repository_check.rs");
     let source = fs::read_to_string(workspace_root().join(&path)).unwrap();

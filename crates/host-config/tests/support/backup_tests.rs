@@ -139,7 +139,8 @@ fn a_missing_linked_or_exposed_backup_file_is_rejected_and_never_taken_as_not_en
     let owner = Config::load(&fixture.path).unwrap();
     assert!(BackupConfig::load(&path, &owner).is_ok());
 
-    // 相对路径：不按当前目录去找。
+    // 相对路径一律拒绝。这一条单独证明不了是哪条规则拦的（当前目录下本来也没有这个文件）；
+    // `--backup-config` 给相对路径在选项层另有测试（local-server 的 `a_relative_backup_config_path_is_rejected`）。
     assert!(BackupConfig::load(Path::new("config/backup.json"), &owner).is_err());
 
     // 末级是符号链接：指向的那份内容和权限都合格也拒绝。
