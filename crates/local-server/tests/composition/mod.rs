@@ -1,6 +1,9 @@
 //! 生产装配顺序的私有Seam测试；固定公钥Adapter不进入production构建。
 
 mod backup_config;
+// 备份 socket 的监听只在 Linux 上有：别的平台配了生产者就拒绝启动，这条用例跑不起来。
+#[cfg(target_os = "linux")]
+mod backup_directories;
 mod canonical;
 mod checkpoint;
 mod factors;
@@ -8,6 +11,8 @@ mod fixture;
 mod repository;
 mod repository_approved;
 mod residency;
+#[cfg(target_os = "linux")]
+mod snapshot_allowlist;
 mod sync_plane;
 #[path = "../access/test_support.rs"]
 mod test_support;
