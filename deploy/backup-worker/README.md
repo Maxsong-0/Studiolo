@@ -51,27 +51,33 @@ T-204。本目录是候选发布源，**尚未安装到任何机器**。专用�
      tmpfiles 片段里的一致）。不加的话绑不上 socket、建不了封存，配了生产者的主服务会拒绝启动。
    - 停止超时：主服务收到退出信号先等备份收尾，做完才通知同步 Bridge 停，两段是串行的，要相加。
      备份段等的是在途的那一个连接整个处理完，再等它起的后台线程：收发窗口 10 秒；处理请求不受这个窗口管，
-     要先等状态锁（健康页或抽查正拿着它读账本）、自己再读最多三次账本，每次不超过 5 秒，按 20 秒算；
+     要拿状态锁读账本，每次读按 5 秒算：自己最多读三次；等锁时别人读两次（会同时拿这把锁的只有健康页，
+     一次健康页快照先后拿两次锁、各读一次），合起来按 25 秒算；
      一次回收最多 30 秒；一次封存（冻结和导出在一个冻结预算之内，预算上限 120 秒）。
      Bridge 段 = 同步审批的 `budget.stop_grace_seconds` + 60 秒（`deploy/sync-bridge/README.md`）。没接 Bridge 的部署只算
      备份段，再留出原来关停链的时间。r16 及之前单元里的 `TimeoutStopSec=90` 不够。
+   - 这样算出来的停止超时是预算，不是保证。没有逐项算的：读账本是读完一页才看预算，单次可能多出一页的时间；
+     同时在途的健康页快照不止一个；停止信号到达时正好排着的连接可能还会被处理（`docs/contracts/backup-producer.md`
+     「已知限制」）。这些靠余量吸收。真超了被强杀：封存做到一半的，下一次 `schedule` 先给留下的原意图补失败结果；
+     Bridge 那一段被杀是安全的（`deploy/sync-bridge/README.md`）。
    - socket 残留：正常关停的第一步就把备份 socket 删了，停止超时到点时它一般已经不在。会留下节点的是主服务崩溃、
      内存超限被杀，或者还没走到那一步就被强杀；留下之后下次启动按设计拒绝（不清理也不接管），要人看过再删。
 
    生产 169 上不手改线上单元：启动器的 `--backup-config`、这两行 `ReadWritePaths=` 和停止超时由人侧发行 r17 的装配一次换上
-   （`deploy/blackboard/assembly.py`，2026-11-20），激活失败时一起退回。停止超时是 190 秒：备份段 10＋20＋30＋30（批准的冻结预算
-   是 30 秒），Bridge 段 30＋60（169 的 `stop_grace_seconds` 是 30），合计 180，另留 10 秒给建暂存区、写准入或失败结果这些
-   不受任何预算管的小步骤（`assembly.UNBUDGETED_STEPS_SECONDS`）。
+   （`deploy/blackboard/assembly.py`，2026-11-20），激活失败时一起退回。停止超时是 195 秒：备份段 10＋25＋30＋30（批准的冻结预算
+   是 30 秒），Bridge 段 30＋60（169 的 `stop_grace_seconds` 是 30），合计 185，另留 10 秒给建暂存区、写准入或失败结果这些
+   不受任何预算管的小步骤和上面没有逐项算的那几样（`assembly.UNBUDGETED_STEPS_SECONDS`）。
    所以第 1～6 项里别的东西（账号和读取组、两个目录、`backup.json`、下面这个临时数据根）要在激活 r17 **之前**备好：
    启动器一带上 `--backup-config`，读不到配置或绑不上 socket，人侧就拒绝启动。激活预检在停服之前核这些
    （`deploy/blackboard/activation_ops.py` 的 `backup_ready`）：私有配置的权限、键名齐不齐和两处 `version`、
    人侧账号在读取组里、两个目录的属主属组和权限、socket 没有残留、临时数据根、冻结预算和 Bridge 停止宽限落在程序接受的
    下限和装配假设的上限之间；缺一样就不停服务。**预检不重核 `backup.json` 各字段的取值规则**（审批段内容、worker 账号、
    保留期、清单里的包和摘要、三条路径互不嵌套、socket 路径长度）：那些只由程序启动时核，写错了要到停服之后启动失败、
-   退回上一发行才知道，所以 `backup.json` 写好后先对着 `docs/contracts/backup-producer.md` 的表逐项看一遍。
+   退回上一发行才知道，所以 `backup.json` 写好后先对着 `docs/contracts/backup-producer.md` 的表逐项看一遍
+   （顶层和 `backup_producer` 段各有一个 `version`，都是 1）。
    以后把冻结预算或 `stop_grace_seconds` 调大，要改装配里对应的那一项（`assembly.BACKUP_FREEZE_BUDGET_SECONDS`、
    `BRIDGE_STOP_GRACE_SECONDS`），停止超时由各项相加得出（`STOP_TIMEOUT_SECONDS`，`test_assembly.py` 钉算法和结果）；
-   激活脚本停服务的命令时限按停止超时再加 20 秒算（现在是 210 秒，`activation_ops.STOP_COMMAND_MARGIN_SECONDS`）。
+   激活脚本停服务的命令时限按停止超时再加 20 秒算（现在是 215 秒，`activation_ops.STOP_COMMAND_MARGIN_SECONDS`）。
    - `backup_producer.ephemeral_root` 指的目录也要事先建好：主服务账号私有（属主是主服务账号、0700、不带 ACL），和 socket
      父目录、封存父目录、各数据根互不嵌套。主服务只读打开它，**不用**加进 `ReadWritePaths=`；不要放在 `/tmp`、`/var/tmp` 下
      （单元是 `PrivateTmp=yes`，服务里看不见宿主的这两处），路径上不要有符号链接。169 上用

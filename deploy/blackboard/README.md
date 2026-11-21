@@ -52,7 +52,7 @@ sudo /usr/bin/python3 -I -B -S /可信工具目录/deploy/blackboard/activate.py
 
 r2 之后每次发行只做「上一发行 → 本发行」：换网页，可选换人侧程序，其余逐字节沿用（`assembly.py` 文件头有沿革，r5→r6 见 T-159）。
 
-1. **改常量**（`assembly.py`）：`OLD_RELEASE`＝上一发行目录、`BUILD`＝新发行号；`HUMAN_SHA`／`AGENT_SHA` 取 169 现场 `/etc/systemd/system/studiolo-{human,agent}.service` 的 sha256；`R8_MANIFEST_SHA` 取上一发行 `manifest.json` 的 sha256。`test_assembly.py` 的发行号断言同步。三个变换函数通常不改；本发行要动启动器参数、单元写根或停止超时（如 r17 接备份）时，改对应的变换函数和它的测试，新前置放进激活预检，新参数旧程序不认的把 `REQUIRES_NEW_HUMAN_PROGRAM` 设为真。
+1. **改常量**（`assembly.py`）：`OLD_RELEASE`＝上一发行目录、`BUILD`＝新发行号；`HUMAN_SHA`／`AGENT_SHA` 取 169 现场 `/etc/systemd/system/studiolo-{human,agent}.service` 的 sha256；`R8_MANIFEST_SHA` 取上一发行 `manifest.json` 的 sha256。`test_assembly.py` 的发行号断言同步。三个变换函数通常不改；本发行要动启动器参数、单元写根或停止超时（如 r17 接备份）时，改对应的变换函数和它的测试，新前置放进激活预检，新参数旧程序不认的，把参数名的字节字面量写进 `NEW_HUMAN_PROGRAM_LITERALS`（`REQUIRES_NEW_HUMAN_PROGRAM` 由它派生，不直接改）；下一发行不再要求换程序时清空它。
 2. **服务器上验工具**：`scripts/test-linux.sh bash -c 'python3 deploy/blackboard/test_assembly.py && python3 deploy/blackboard/test_freeze.py && python3 deploy/blackboard/test_activation.py'`（本机不跑测试）。
 3. **构建**：人侧程序在 githubci 原生 `cargo --locked build --release -p studiolo-local-server --features studiolo-auth/production`；网页在 108 用同一提交 `npm ci && npm run build`。来源提交须已过 CI。
 4. **暂存**（169，UID1000，0700/0600，程序 0755，不用 `/tmp`）：`bin/studiolo-local-server`、`web-dist/`、本目录 `{activate,activation_ops,assembly,prepare,candidate,binding,snapshot,sync_tools}.py` 与 `deploy/human/release/{activation_ops,release_common,runtime_checks,snapshot_worker}.py`，保持仓库相对布局。
@@ -101,8 +101,8 @@ r12本身尚无批内关停点，激活前必须取得空闲plane.lock并持有�
 控制库 schema 3→4、单向（见上文「r15→r16 是单向的」），要留退路先做恢复点。现场摘要：human 单元 `edb0c1f5…c71c7`、agent 单元 `15b39395…45b9`（t207-c09b065、新名 `--allow`）、r15 manifest `2f24ad58…a6d5`。
 
 本版固定 r16→r17（2026-11-20，T-216）：启用备份生产者。启动器在同步审批后面加 `--backup-config`（和主人配置同目录的 `backup.json`），
-人侧单元加备份 socket 父目录、封存父目录两行 `ReadWritePaths=`，停止超时 90→190 秒（备份收尾和 Bridge 停止是串行的两段，逐项相加，
-算法在 `assembly.py` 的常量注释里）；这三处由装配一次换上，激活失败一起退回。激活脚本停服务的命令时限按停止超时加 20 秒算（210 秒）。
+人侧单元加备份 socket 父目录、封存父目录两行 `ReadWritePaths=`，停止超时 90→195 秒（备份收尾和 Bridge 停止是串行的两段，逐项相加，
+算法在 `assembly.py` 的常量注释里）；这三处由装配一次换上，激活失败一起退回。激活脚本停服务的命令时限按停止超时加 20 秒算（215 秒）。
 **激活前要备好**（`deploy/backup-worker/README.md`「安装前要有的东西」）：读取组和人侧账号的组成员、tmpfiles 建的两个目录、
 `backup.json`、临时数据根。缺读取组成员、两个目录或 `backup.json`，人侧起不来；缺临时数据根人侧照常起，第一次封存才失败。
 两类都由激活预检在停服之前拦下（`activation_ops.backup_ready`，另核 `backup.json` 的键名和两处 `version`、备份 socket 没有残留、

@@ -20,7 +20,7 @@ r14→r15（BUG-027：只查元数据，保留SQLite进程锁与版本守卫，�
 r15→r16（T-207：BUG-038 项目目录改名、T-181/T-183/T-185/T-211～T-214 等，人侧启动器加 --agent-data；
 控制库 schema 3→4，单向，见 README「r15→r16 是单向的」，已激活）；
 本版 r16→r17（T-216：启用备份生产者。启动器加 --backup-config；人侧单元加备份 socket 父目录、封存父目录两个写根，
-停止超时 90→190 秒；人侧程序必须一起换，上一发行的程序不认 --backup-config。数据库与状态的版本号不变）。
+停止超时 90→195 秒；人侧程序必须一起换，上一发行的程序不认 --backup-config。数据库与状态的版本号不变）。
 """
 import shlex
 from pathlib import Path
@@ -53,23 +53,35 @@ REQUIRES_NEW_HUMAN_PROGRAM = bool(NEW_HUMAN_PROGRAM_LITERALS)
 # 人侧停止超时（秒）。关停是串行的两段（crates/local-server/src/startup/serving.rs）：收到退出信号先等备份收尾，
 # 做完才通知 Bridge 停，所以两段要相加。备份段等的是在途的那一个连接整个处理完，再等它起的后台线程：
 #   收发窗口：socket 收发的期限（service.rs 的 WINDOW）；
-#   处理请求：不受收发窗口管。先等状态锁（健康页或抽查正拿着它读一次账本），自己再读最多三次账本
-#             （producer.rs 的 schedule：读一次、补完失败结果再读、写完原意图再读），每次不超过 SCAN_BUDGET；
+#   处理请求：不受收发窗口管，要拿状态锁读账本，每次读按 SCAN_BUDGET 算。
+#             自己最多读三次：安排封存（producer.rs 的 schedule 两次加它调的 decide 一次）和安排抽查
+#             （producer/check.rs 的 repository_check_with）都是三次，别的请求更少；
+#             等锁时别人读两次：会同时拿这把锁的只有健康页（worker 的请求在同一个接受循环里一个个处理，
+#             service.rs），一次健康页快照先后拿两次锁、各读一次（startup/health_input.rs：备份作业、仓库抽查）；
 #   一次回收（RECLAIM_BUDGET）加一次封存（冻结和导出在一个冻结预算之内；这里按批准的 30 秒算）。
 # Bridge 段 = 同步审批的 stop_grace_seconds（169 现行 30）+ 60（deploy/sync-bridge/README.md 的要求）。
-# 最后一项是余量：建暂存区、写准入或失败结果这些不受任何预算管的小步骤。
-# 程序里的三个常量由 test_assembly 对着源码钉；冻结预算和停止宽限来自 backup.json 和同步审批，激活预检核对现场没有配得更大。
+# 最后一项是余量，给没有逐项算的东西：建暂存区、写准入或失败结果这些不受预算管的小步骤；读账本是读完一页才看预算，
+# 单次可能多出一页的时间；同时在途的健康页快照不止一个；接受循环没有规定先看停止信号，信号到达时正好排着的连接
+# 可能还会被处理（程序里另案修，见 docs/contracts/backup-producer.md「已知限制」）。
+# 这个数是预算，不是保证。读账本的各处共用一个读位置：积压大到让别人每次都读满时，请求自己第一次读也会超预算、
+# 直接失败，不起回收和封存，所以实际用时通常远小于它。真超了，systemd 到点强杀：备份 socket 在接受循环结束时就删了
+# （一般在头几十秒），那之后被杀不会留下节点；封存做到一半被杀，下一次 schedule 先给留下的原意图补失败结果；
+# Bridge 那一段被杀是安全的（deploy/sync-bridge/README.md）。
+# test_assembly 对着源码钉：程序里的三个常量、读账本的每一处在哪个函数里各几次、健康页快照调哪两个探针。
+# 冻结预算和停止宽限来自 backup.json 和同步审批，激活预检核对现场没有配得更大。
 # 停服务的命令时限在激活脚本那头按这个值再加余量算（activation_ops.STOP_COMMAND_MARGIN_SECONDS），不另写一个数。
 BACKUP_CONNECTION_WINDOW_SECONDS = 10
 BACKUP_SCAN_BUDGET_SECONDS = 5
-BACKUP_REQUEST_SCANS = 4
+BACKUP_REQUEST_OWN_SCANS = 3
+BACKUP_SNAPSHOT_SCANS = 2
+BACKUP_REQUEST_SCANS = BACKUP_REQUEST_OWN_SCANS + BACKUP_SNAPSHOT_SCANS
 BACKUP_RECLAIM_SECONDS = 30
 BACKUP_FREEZE_BUDGET_SECONDS = 30
 BRIDGE_STOP_GRACE_SECONDS = 30
 BRIDGE_STOP_MARGIN_SECONDS = 60
 UNBUDGETED_STEPS_SECONDS = 10
 OLD_STOP_TIMEOUT_SECONDS = 90
-# 10 + 5×4 + 30 + 30 + 30 + 60 + 10 = 190；test_assembly 钉这个结果，任一项改了要一起看。
+# 10 + 5×(3+2) + 30 + 30 + 30 + 60 + 10 = 195；test_assembly 钉这个结果，任一项改了要一起看。
 STOP_TIMEOUT_SECONDS = (BACKUP_CONNECTION_WINDOW_SECONDS + BACKUP_SCAN_BUDGET_SECONDS * BACKUP_REQUEST_SCANS
                         + BACKUP_RECLAIM_SECONDS + BACKUP_FREEZE_BUDGET_SECONDS
                         + BRIDGE_STOP_GRACE_SECONDS + BRIDGE_STOP_MARGIN_SECONDS + UNBUDGETED_STEPS_SECONDS)

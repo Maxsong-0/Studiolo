@@ -49,6 +49,23 @@ def rust_seconds(relative, name):
     return int(found[0])
 
 
+def rust_calls(relative, needle):
+    """一份 Rust 源码里 `needle` 出现在哪些方法里、各几次：{方法名: 次数}。只认 impl 块里缩进四格的方法；
+    出现在方法以外就失败（那是这个助手不认识的写法，要人来看）。"""
+    counts, name = {}, None
+    for line in (ROOT / relative).read_text().splitlines():
+        head = re.match(r'    (?:pub(?:\([a-z]+\))? )?fn (\w+)[(<]', line)
+        if head:
+            name = head.group(1)
+        elif line.startswith('}'):
+            name = None
+        found = line.count(needle)
+        if found:
+            assert name is not None, (relative, needle, line)
+            counts[name] = counts.get(name, 0) + found
+    return counts
+
+
 class AssemblyTests(unittest.TestCase):
     def test_r17_upgrades_the_activated_r16(self):
         self.assertEqual(a.BUILD, 'm5m6-board-20260920-r17')
@@ -111,7 +128,7 @@ class AssemblyTests(unittest.TestCase):
             self.assertIn('d ' + path + ' 0750 ', tmpfiles)
         self.assertEqual(new.count('TimeoutStopSec='), 1)
         self.assertEqual(new.count(new_stop), 1)
-        self.assertEqual(new_stop, 'TimeoutStopSec=190\n')
+        self.assertEqual(new_stop, 'TimeoutStopSec=195\n')
         # 拒绝：已转换过的；停止超时不是钉住的旧值、多出一行（不管值是多少）；已带备份路径；黑板或 Bridge 接线缺了；
         # 发行路径不是两处。
         for bad in (new, old.replace(old_stop, 'TimeoutStopSec=120\n'), old + old_stop, old + 'TimeoutStopSec=120\n',
@@ -136,7 +153,7 @@ class AssemblyTests(unittest.TestCase):
         bridge = a.BRIDGE_STOP_GRACE_SECONDS + a.BRIDGE_STOP_MARGIN_SECONDS
         self.assertEqual(a.STOP_TIMEOUT_SECONDS, backup + bridge + a.UNBUDGETED_STEPS_SECONDS)
         # 结果本身也钉住：任一项改了，这里先红，提醒把文档里的数字和算法一起看。
-        self.assertEqual(a.STOP_TIMEOUT_SECONDS, 190)
+        self.assertEqual(a.STOP_TIMEOUT_SECONDS, 195)
         self.assertGreaterEqual(a.UNBUDGETED_STEPS_SECONDS, 10)
         self.assertGreater(a.STOP_TIMEOUT_SECONDS, a.OLD_STOP_TIMEOUT_SECONDS)
         # 程序里的三个常量：程序改了这里先红，免得装配还按旧值算。
@@ -145,15 +162,31 @@ class AssemblyTests(unittest.TestCase):
                          rust_seconds('crates/local-server/src/backup/service.rs', 'WINDOW'))
         self.assertEqual(a.BACKUP_RECLAIM_SECONDS, rust_seconds(producer, 'RECLAIM_BUDGET'))
         self.assertEqual(a.BACKUP_SCAN_BUDGET_SECONDS, rust_seconds(producer, 'SCAN_BUDGET'))
-        # 处理一次封存请求读几次账本：schedule 里两次、它调的 decide 里一次，再加等状态锁时别人正在读的那一次。
-        source = (ROOT / producer).read_text()
 
-        def scans(name):
-            found = re.findall(r'^    fn ' + name + r'\(.*?^    }$', source, re.MULTILINE | re.DOTALL)
-            self.assertEqual(len(found), 1, name)
-            return found[0].count('self.refresh(')
-        self.assertEqual((scans('schedule'), scans('decide')), (2, 1))
-        self.assertEqual(a.BACKUP_REQUEST_SCANS, scans('schedule') + scans('decide') + 1)
+    def test_request_scans_count_every_ledger_read_in_the_program(self):
+        # 「处理请求」按读几次账本算。读账本的每一处都在这里点名：哪个函数里、几次。多一处、少一处、挪到别的函数，
+        # 这里先红，提醒把 assembly.py 里的算法重看一遍（三轮复查各发现过一条当时没数到的路径，不再靠人去数）。
+        producer = 'crates/local-server/src/backup/producer.rs'
+        check = 'crates/local-server/src/backup/producer/check.rs'
+        own, checks = rust_calls(producer, 'self.refresh('), rust_calls(check, 'self.refresh(')
+        self.assertEqual(own, {'next_pending': 1, 'schedule': 2, 'decide': 1, 'jobs': 1})
+        self.assertEqual(checks, {'repository_check_with': 3, 'report_check': 1, 'repository_checks_at': 1})
+        # 一个请求自己最多读几次：四种请求里最多的那个。decide 只被 schedule 调一次，所以算在安排封存里。
+        self.assertEqual(rust_calls(producer, 'self.decide('), {'schedule': 1})
+        self.assertEqual(rust_calls(check, 'self.repository_check_with('), {'repository_check': 1})
+        requests = (own['next_pending'], own['schedule'] + own['decide'],
+                    checks['repository_check_with'], checks['report_check'])
+        self.assertEqual(a.BACKUP_REQUEST_OWN_SCANS, max(requests))
+        # 等状态锁时别人读几次：健康页一次快照调两个探针（备份作业、仓库抽查），各拿一次锁、各读一次。
+        # 别处没有人调这两个探针；worker 的请求在同一个接受循环里一个个处理，不会互相等锁。
+        health = 'crates/local-server/src/startup/health_input.rs'
+        self.assertEqual(rust_calls(health, 'probe.jobs('), {'snapshot': 1})
+        self.assertEqual(rust_calls(health, 'probe.repository_checks('), {'snapshot': 1})
+        self.assertEqual(rust_calls(producer, 'self.repository_checks_at('), {'repository_checks': 1})
+        self.assertEqual(a.BACKUP_SNAPSHOT_SCANS, own['jobs'] + checks['repository_checks_at'])
+        self.assertEqual(a.BACKUP_REQUEST_SCANS, a.BACKUP_REQUEST_OWN_SCANS + a.BACKUP_SNAPSHOT_SCANS)
+
+    def test_bridge_stop_margin_matches_the_sync_deployment_document(self):
         # Bridge 段的 60 秒是同步部署文档的要求，文档改了这里先红。
         bridge_readme = (ROOT / 'deploy/sync-bridge/README.md').read_text()
         self.assertEqual(bridge_readme.count(

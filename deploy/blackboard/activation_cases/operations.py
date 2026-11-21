@@ -95,7 +95,9 @@ class OperationTests(unittest.TestCase):
         # 命令时限比停止超时短的话，慢关停会让激活和回滚都在这条命令上超时。
         self.assertEqual([call.args[1] for call in ops.runtime.command.call_args_list],
                          [assembly.STOP_TIMEOUT_SECONDS + ops_module.STOP_COMMAND_MARGIN_SECONDS] * 2)
-        self.assertGreaterEqual(ops_module.STOP_COMMAND_MARGIN_SECONDS, 10)
+        # 余量和算出来的时限也钉住：两份 README 写了「加 20 秒」「215 秒」，改数要连文档一起改。
+        self.assertEqual(ops_module.STOP_COMMAND_MARGIN_SECONDS, 20)
+        self.assertEqual(assembly.STOP_TIMEOUT_SECONDS + ops_module.STOP_COMMAND_MARGIN_SECONDS, 215)
 
     def test_worker_uses_original_code_as_unprivileged_isolated_stdin(self):
         ops = self.operation()
@@ -202,6 +204,11 @@ class OperationTests(unittest.TestCase):
             head = '#[serde(deny_unknown_fields)]\nstruct Document {\n'
             self.assertEqual(text.count(head), 1)
             body = text.split(head, 1)[1].split('\n}\n', 1)[0]
+            # 字段名就是 JSON 键名、每个键都必填，靠的是字段上没有会改键名或让键可缺的属性
+            # （rename、alias、default、flatten 这些）；现在只有两段各自的解码函数。多出别的属性这里先红。
+            attributes = {part.split('=')[0].strip()
+                          for group in re.findall(r'#\[serde\(([^\]]*)\)\]', body) for part in group.split(',')}
+            self.assertLessEqual(attributes, {'deserialize_with'}, relative)
             return {name for name in re.findall(r'^    (\w+):', body, re.MULTILINE)}
         self.assertEqual(fields('crates/host-config/src/backup/file.rs'), ops_module.BACKUP_DOCUMENT_KEYS)
         self.assertEqual(fields('crates/host-config/src/backup/producer.rs'), ops_module.BACKUP_PRODUCER_KEYS)
