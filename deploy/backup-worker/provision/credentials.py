@@ -10,6 +10,8 @@
 三份凭据要么都写好、要么一份都不留：先在旁边的临时目录（正式目录名加 .writing）里写齐，再一次换成正式的名字；
 写到一半出错或被打断（Ctrl-C、终端断开）会把这一次写的全部删掉。被强杀、断电，或者收尾自己又出了错，才会留下那个临时目录
 （正好死在把它换成正式名字的那一下，还会多留一个空的正式目录）。下次跑会先停下，说清留下了什么、怎么收拾；预演也会报。
+不带 sudo 的预演看不进正式目录（root 0700）：临时目录它报得出，空的正式目录它只能提醒「可能有」，
+带 sudo 跑预演（sudo python3 -I -B credentials.py，不带 --apply）才看得清。
 """
 import getpass
 import hashlib
@@ -152,24 +154,40 @@ def write_credentials(directory, values):
     sync_directory(os.path.dirname(directory))
 
 
-def empty_directory(path):
-    """是个真目录（不是链接），里面什么都没有。看不了（不在、没权限）就算不是。"""
+def directory_inside(path):
+    """正式目录里面现在是哪一种：'empty' 是个真目录（不是链接），里面什么都没有；'unseen' 是个真目录，但这个身份看不了里面
+    （正式目录是 root 0700，不带 sudo 的预演就是这样）；'other' 其余（不在、不是真目录、里面有东西）。
+    看不了不能当成「不是空的」：那样不带 sudo 的预演会把上一次留下的空目录漏掉。"""
     try:
-        return stat.S_ISDIR(os.lstat(path).st_mode) and not os.listdir(path)
+        if not stat.S_ISDIR(os.lstat(path).st_mode):
+            return 'other'
     except OSError:
-        return False
+        return 'other'
+    try:
+        return 'other' if os.listdir(path) else 'empty'
+    except PermissionError:
+        return 'unseen'
+    except OSError:
+        return 'other'
+
+
+# 不带 sudo 的预演看不进正式目录时接在后面的一句：是不是上一次留下的空目录说不准，照实说。
+UNSEEN = ' 也在，这个身份看不了里面：要是空的，也是那一次留下的，--apply 还会停下叫你 sudo rmdir 它；带 sudo 跑预演看得清'
 
 
 def leftover():
     """上一次录到一半被强杀或断电留下的东西：有就给一句「是什么、怎么收拾」，没有给 None。
     留下的是临时目录（里面可能有那一次输的口令）；正好死在「占住正式名字」和「把临时目录换上去」之间的话，
-    还多一个空的正式目录。只删了临时目录，剩下的就是那个空目录：这两种都得说到，不然人要撞两回。"""
-    hollow = empty_directory(DIRECTORY)
+    还多一个空的正式目录。只删了临时目录，剩下的就是那个空目录：这两种都得说到，不然人要撞两回。
+    正式目录在、里面看不了（不带 sudo 的预演）：临时目录也在就把这一层说上；只有它自己时这里不报
+    （三份都写好的正常现场也是这个样子），由 main 在「凭据目录现在」那一行说明要带 sudo 才看得清。"""
+    inside = directory_inside(DIRECTORY)
     if os.path.lexists(DIRECTORY + WRITING):
-        also = '、sudo rmdir ' + DIRECTORY + '（空的，也是那一次留下的）' if hollow else ''
+        also = '、sudo rmdir ' + DIRECTORY + '（空的，也是那一次留下的）' if inside == 'empty' else ''
+        unseen = '。' + DIRECTORY + UNSEEN if inside == 'unseen' else ''
         return (DIRECTORY + WRITING + ' 还在：上一次录到一半被强杀或断电留下的，里面可能有那一次输的口令。'
-                '确认没有别的 credentials.py 在跑，sudo rm -r 它' + also + '之后重跑')
-    if hollow:
+                '确认没有别的 credentials.py 在跑，sudo rm -r 它' + also + '之后重跑' + unseen)
+    if inside == 'empty':
         return (DIRECTORY + ' 已经在，但是空的：多半是上一次录到一半被强杀或断电留下的。'
                 '确认没有别的 credentials.py 在跑，sudo rmdir 它之后重跑')
     return None
@@ -272,7 +290,9 @@ def main(argv, out=print):
         out('凭据目录现在：' + {'absent': '还没有', 'complete': '三份都在', 'partial': '在，但不完整（要人看）'}[
             credentials_state(DIRECTORY)])
     else:
-        out('凭据目录现在：' + ('还没有' if not os.path.lexists(DIRECTORY) else '已经在（里面要 root 才看得到）'))
+        # 不带 sudo 看不进正式目录（root 0700）：三份写好的和上一次留下的空目录在这里是一个样子，照实说，并说怎么看清。
+        out('凭据目录现在：' + ('还没有' if not os.path.lexists(DIRECTORY) else
+                          '已经在（里面要 root 才看得到：三份齐不齐、是不是上一次留下的空目录，带 sudo 跑预演才看得清）'))
     stale = leftover()
     if stale is not None:
         out('--apply 会先停在这一条上：' + stale)

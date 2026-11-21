@@ -45,8 +45,10 @@ class PreconditionTests(unittest.TestCase):
         self.addCleanup(scratch.cleanup)
         self.directory = os.path.join(scratch.name, 'credentials')
 
-    def main(self, argv, settled=SETTLED, endpoint='TLSv1.3', platform='linux', euid=1000):
-        """返回（打出来的行，走到了哪几步）。settled、endpoint 给异常就是那一步失败。"""
+    def main(self, argv, settled=SETTLED, endpoint='TLSv1.3', platform='linux', euid=1000, listing=None):
+        """返回（打出来的行，走到了哪几步）。settled、endpoint 给异常就是那一步失败。
+        listing 给异常：列正式目录时抛它。真现场的正式目录是 root 0700，不带 sudo 列不了；用例的临时目录谁都列得了，
+        只换 geteuid 的话这一层差别就被盖住了。"""
         lines, calls = [], []
 
         def step(name, outcome):
@@ -56,11 +58,18 @@ class PreconditionTests(unittest.TestCase):
                     raise outcome
                 return outcome
             return call
+        real_listing = os.listdir
+
+        def listdir(path='.'):
+            if listing is not None and os.fspath(path) == self.directory:
+                raise listing
+            return real_listing(path)
         streams = types.SimpleNamespace(platform=platform)
         with patch.object(prereq, 'settled', step('settled', settled)), \
                 patch.object(credentials, 'endpoint', step('endpoint', endpoint)), \
                 patch.object(credentials, 'apply', step('apply', None)), patch.object(credentials, 'sys', streams), \
                 patch.object(credentials.os, 'geteuid', return_value=euid), \
+                patch.object(credentials.os, 'listdir', listdir), \
                 patch.object(credentials, 'DIRECTORY', self.directory):
             try:
                 credentials.main(argv, out=lines.append)
@@ -78,10 +87,11 @@ class PreconditionTests(unittest.TestCase):
             '预演结束：没问口令、没写任何东西。带 sudo 和 --apply 再跑一遍才录入。'])
         self.assertFalse(os.path.lexists(self.directory))
         closing = lines[-1]
-        # 不是 root 时凭据目录里看不到东西：只说在不在。
+        # 不是 root 时凭据目录里看不到东西：只说在不在，并说怎么才看得清。
         os.mkdir(self.directory)
         Path(self.directory, 'rest-username').write_bytes(b'x\n')
-        self.assertEqual(self.main([])[0][2:], ['凭据目录现在：已经在（里面要 root 才看得到）', closing])
+        self.assertEqual(self.main([])[0][2:], [
+            '凭据目录现在：已经在（里面要 root 才看得到：三份齐不齐、是不是上一次留下的空目录，带 sudo 跑预演才看得清）', closing])
         self.assertEqual(self.main([], euid=0)[0][2:], ['凭据目录现在：在，但不完整（要人看）', closing])
         os.unlink(os.path.join(self.directory, 'rest-username'))
         os.rmdir(self.directory)
@@ -112,6 +122,42 @@ class PreconditionTests(unittest.TestCase):
         self.assertEqual(self.main([], euid=0)[0][2:], ['凭据目录现在：在，但不完整（要人看）', closing])
         self.assertEqual(os.listdir(self.directory), ['rest-username'])
         self.assertFalse(os.path.lexists(writing))
+
+    def test_a_preview_without_sudo_says_what_it_cannot_see_inside_the_directory(self):
+        """真现场的正式目录是 root 0700，不带 sudo 的预演列不了它。「看不了」不能当成「不是空的」把残留漏掉，
+        也不能说成一定是残留（三份写好的正常现场，不带 sudo 看也是这个样子）。"""
+        closing = '预演结束：没问口令、没写任何东西。带 sudo 和 --apply 再跑一遍才录入。'
+        writing = self.directory + '.writing'
+        stops = '--apply 会先停在这一条上：'
+        remove = writing + ' 还在：上一次录到一半被强杀或断电留下的，里面可能有那一次输的口令。确认没有别的 credentials.py 在跑，sudo rm -r 它'
+        there = '凭据目录现在：已经在（里面要 root 才看得到：三份齐不齐、是不是上一次留下的空目录，带 sudo 跑预演才看得清）'
+        maybe = ('。' + self.directory + ' 也在，这个身份看不了里面：要是空的，也是那一次留下的，'
+                 '--apply 还会停下叫你 sudo rmdir 它；带 sudo 跑预演看得清')
+        hollow = (self.directory + ' 已经在，但是空的：多半是上一次录到一半被强杀或断电留下的。'
+                  '确认没有别的 credentials.py 在跑，sudo rmdir 它之后重跑')
+        denied = PermissionError(13, 'Permission denied')
+        # 临时目录和空的正式目录都留下了，正式目录看不进去：临时目录照报，正式目录那一层照实说「可能也是」。
+        os.mkdir(writing)
+        os.mkdir(self.directory)
+        self.assertEqual(self.main([], listing=denied)[0][2:], [there, stops + remove + '之后重跑' + maybe, closing])
+        # 同一个现场带 sudo 就看得清：两样一并叫人删。
+        self.assertEqual(self.main([], euid=0)[0][2:], [
+            '凭据目录现在：在，但不完整（要人看）',
+            stops + remove + '、sudo rmdir ' + self.directory + '（空的，也是那一次留下的）之后重跑', closing])
+        # 列不了是因为别的错（不是没权限）：既不当成空的叫人删，也不说成「看不了里面」。
+        self.assertEqual(self.main([], listing=OSError(5, 'Input/output error'))[0][2:],
+                         [there, stops + remove + '之后重跑', closing])
+        # 人只删了临时目录，剩下看不进去的正式目录：不报成残留，那一行已经说了带 sudo 才看得清。
+        os.rmdir(writing)
+        self.assertEqual(self.main([], listing=denied)[0][2:], [there, closing])
+        # 不是 root 但看得进去、而且是空的（目录权限不对的现场）：照样点出来，不因为不是 root 就不说。
+        self.assertEqual(self.main([])[0][2:], [there, stops + hollow, closing])
+        # 正式目录不在：没有看不了的东西，不多说那半句。
+        os.rmdir(self.directory)
+        os.mkdir(writing)
+        self.assertEqual(self.main([], listing=denied)[0][2:], ['凭据目录现在：还没有', stops + remove + '之后重跑', closing])
+        # 预演一样东西都没动。
+        self.assertEqual(sorted(os.listdir(os.path.dirname(self.directory))), ['credentials.writing'])
 
     def test_apply_is_reached_only_after_every_precondition_holds(self):
         self.assertEqual(self.main(['--apply']), ([

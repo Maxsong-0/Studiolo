@@ -55,7 +55,9 @@ T-204。本目录是候选发布源，**尚未安装到任何机器**。专用�
   写三份凭据文件，以 worker 账号初始化仓库并读回。三份凭据先在旁边的 `backup-worker-credentials.writing` 里写齐，
   再一次换成正式目录：被打断的话要么三份都在、要么一份不留。`.writing` 还在就停下（上一次被强杀或断电留下的，
   里面可能有那一次输的口令）：确认没有别的 `credentials.py` 在跑，`sudo rm -r` 它之后重跑。正好在换上正式目录的那一下
-  被强杀，还会多留一个空的正式目录，要一并 `sudo rmdir`；该删哪几样，停下时的那句话和预演都会写明。
+  被强杀，还会多留一个空的正式目录，要一并 `sudo rmdir`；该删哪几样，停下时的那句话会写明，预演也会报。
+  不带 sudo 的预演看不进正式目录（root 0700）：`.writing` 它报得出，空的正式目录它只能提醒「可能有」，
+  带 sudo 跑预演（`sudo python3 -I -B credentials.py`，不带 `--apply`）才看得清。
 
 顺序：核过 NAS 的主机钥匙 → NAS `check` → NAS `add` → `prereq.py --apply` → `credentials.py --apply`；
 NAS `unit` 在 worker 上线之前哪一步做都行。
