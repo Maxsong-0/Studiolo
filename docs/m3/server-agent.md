@@ -168,10 +168,11 @@ systemctl --user daemon-reload && systemctl --user enable --now studiolo-agent.s
 `bin/studiolo-agent admin audit-upgrade --data ~/.local/share/studiolo-agent`。
 系统服务的升级安装器会自己做这一步，无须手工执行；手工执行只用于人工排查。
 
-运维：`systemctl --user status studiolo-agent.service --no-pager`、`journalctl --user -u studiolo-agent.service -n 30 --no-pager`；
+运维（现行的是系统级单元，所以不带 `--user`；`--user` 只属于上面第 5 步装的旧用户服务）：
+`systemctl status studiolo-agent.service --no-pager`、`journalctl -u studiolo-agent.service -n 30 --no-pager`；
 读取审计查询在服务器上执行 `bin/studiolo-agent admin reads --data ~/.local/share/studiolo-agent …`（数据库只在服务器）。
-更新发布：新发布名重跑打包与第 2–3 步，替换单元里的发布名后 `systemctl --user restart studiolo-agent.service`；
-`agent.sqlite3` 与账本跨发布沿用。停止：`systemctl --user disable --now studiolo-agent.service`。
+更新发布：按上面「安装到生产」和「切换单元」做（含冻结和重启），不照本节第 2–3 步（没有冻结这一步）；
+`agent.sqlite3` 与账本跨发布沿用。停止：`sudo systemctl disable --now studiolo-agent.service`（sudo 由主人本人敲）。
 吊销/轮换 `claude` 类型：`admin type-revoke --type claude` 后在交互式终端重新 `type-issue`（同样不能重定向），再按第 4 步的办法更新两端 token 文件。
 
 ## 接入（Mac 上的 Claude Code）
