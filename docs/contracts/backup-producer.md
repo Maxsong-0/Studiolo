@@ -74,7 +74,7 @@ owner.json 里写了 `backup` 或 `backup_producer` 会按未知字段在加载�
    不会让工作台反复冻结；代价是失败那段时间少一次备份（2026-11-16 用户拍板）。
 5. 否则发下一个序号、写原意图，回 `started`。
 
-每次 `schedule` 都会起一个后台线程：先回收过期暂存（`reclaim_staging`，回收不成只记一行固定类别的
+除了第 1 步回 `outstanding`（后台线程还在忙，什么都不起）和中途出错、没给出回答的几次，每次 `schedule` 都会起一个后台线程：先回收过期暂存（`reclaim_staging`，回收不成只记一行固定类别的
 日志），第 5 步安排了封存的话接着做一次总封存：建暂存 → 冻结全部 owner → 取内容截止时刻 → 导出并
 封存 → 放开全部屏障 → 写准入。任何一步失败都由生产者写一条失败结果（来源变化记
 `source_changed_before_seal`，空间不足记 `out_of_space`，其余记 `barrier_not_established`）。

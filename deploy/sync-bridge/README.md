@@ -50,7 +50,7 @@ launcher 把启动事实（固定 pins、镜像根、配置根、操作）预写
    （0600，父目录 0700）；`private_root` 先 `mkdir -m 0700`；`plane_root` 固定为视图里的 `/var/lib/studiolo-owner/bridge/plane`（置备已建，与 `owner_view_root` 同一条 idmapped bind——外 stage 对象要 `renameat` 进镜像，跨挂载必 EXDEV），`owner_view_root` 必须就是第 3 步视图里的 `mirror/`。`backend.payload_uid`／`payload_gid` 改成 `provision.sh` 打印的真实数字（样例里的 999／983 只是示例）。字段见第 4 节。
 7. **初始化平面（human 必须处于停止状态）**：`studiolo-maintain sync-init … --sync-transport <审批文档>` 在 `plane_root` 建
    `plane-state.json`、`plane.lock`、`bridge/`（BridgeState）与 `stage/`，并初始化传输私有存储；四项任一已存在即整体拒绝。
-   它要拿 Broker 写者租约与 `plane.lock`，human 在跑时必拒——所以先 `systemctl --user stop studiolo-human`，做完再到第 8 步。
+   它要拿 Broker 写者租约与 `plane.lock`，human 在跑时必拒——所以先 `sudo systemctl stop studiolo-human.service`（系统级单元，sudo 由主人本人敲），做完再到第 8 步。
    平面状态文件撕裂时同样停 human 后重建，不自动重置。
 8. **human 服务单元**（登记到待重启区，由用户执行）：`ReadWritePaths=` 加 `/var/lib/studiolo-owner/bridge`（视图整条，含 `mirror/` 与 `plane/`）、
    `private_root`；`ExecStart` 参数加 `--sync-transport /home/maxsong/.config/studiolo-human/sync-transport.json`；
@@ -142,7 +142,7 @@ headless 一旦不再排除 X，下一次 RunOnce 就会把残留当新内容上
 |---|---|---|
 | ① | 审批文档 `excluded_folders` 去掉 X，重启 human 使之生效（审批只在启动时读取） | 见 ② |
 | ② | 等下一轮：headless 仍排除 X | 有残留→健康节「排除项清除前有镜像残留」（`ResidueBlocked`）；已无残留→「headless 配置与审批文档不一致」（`ConfigMismatch`）。两种都不跑 RunOnce，残留不会被当新内容上传 |
-| ③ | `systemctl --user stop studiolo-human`（purge 要 `plane.lock` 与 Broker 写者租约） | 不跑 |
+| ③ | `sudo systemctl stop studiolo-human.service`（系统级单元，sudo 由主人本人敲；purge 要 `plane.lock` 与 Broker 写者租约） | 不跑 |
 | ④ | `studiolo-maintain sync-purge-residue [相同根参数] --sync-transport <审批文档> --folder X`：只删镜像视图内的 X，canonical 不动；走审计：权威账本先后记 `sync.purge-residue` 的 Intent 与 Outcome | 不跑 |
 | ⑤ | 在 headless 侧（`studiolo-sync` 身份，同第 2 节第 5 步的环境）把 X 从排除项里去掉 | 不跑 |
 | ⑥ | 起 human | 核对一致、守卫放行，正常轮；X 从上次核验集合里去掉 |
@@ -164,7 +164,7 @@ purge 只在三条同时成立时动手：X 在上次核验集合里、不在当
 
 ### 8.1 安全配置变更与 `sync-rebind`
 
-1. 先 `systemctl --user stop studiolo-human`，等待服务完整退出。若传输仍有 active／待补审计、平面有
+1. 先 `sudo systemctl stop studiolo-human.service`（系统级单元，sudo 由主人本人敲），等待服务完整退出。若传输仍有 active／待补审计、平面有
    `started_sequence`／未完成 purge，或 Bridge 有 pending／待补审计，先按原配置和原键恢复闭合。
    `sync-rebind` 不会取消、补审计、清槽或假造静止证明。
 2. 准备新运行时／launcher 固定配置，再修改审批文档的安全字段；目录改名或移动必须保留原目录实体，
