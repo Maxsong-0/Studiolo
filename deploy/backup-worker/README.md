@@ -29,6 +29,16 @@ T-204。本目录是候选发布源，**尚未安装到任何机器**。专用�
 
 ## 安装前要有的东西
 
+169 和 NAS 上的这几项有现成的置备脚本，在 `provision/`（都先预演，带 `--apply` 或 `add` 才动手；sudo 和口令录入由用户本人做）：
+
+- `prereq.py`：第 1～4、6 项和三个单元。已经对的跳过，在但不对的停下不覆盖；两份配置由它生成，生成的样子
+  `fixtures/` 里各有一份，由程序的真实解析读过（`crates/host-config`、`crates/backup-worker` 的测试）。
+- `nas-account.command`（在 Mac 终端跑，NAS 一侧是 `nas_account.py`）：给 worker 在 NAS 的 rest-server 上加只追加账号。
+- `credentials.py`：第 5 项。不回显地录入两个口令，写三份凭据文件，再以 worker 账号初始化仓库并读回。
+
+顺序：NAS `check` → NAS `add` → `prereq.py --apply` → `credentials.py --apply`。人侧发行换了候选、worker 重建过，
+先改 `prereq.py` 里「发行相关的值」那一段。下面是这几项各自的要求（手工做也照这个）。
+
 1. 专用账号 `studiolo-backup` 和读取组；主服务账号和 worker 账号都在读取组里。
 2. `/usr/lib/studiolo-backup-worker/`（root 所有、不可组写）里放：
    - `studiolo-backup-worker`：在 108 用 `cargo --locked build --release -p studiolo-backup-worker` 构建；

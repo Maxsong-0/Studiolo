@@ -1,0 +1,67 @@
+{
+ "version": 1,
+ "backup": {
+  "version": 1,
+  "target_shape": "dedicated_append_only_target",
+  "claims_immutability": false,
+  "restic_package": "restic",
+  "restic_version": "0.19.1",
+  "schedule_interval_millis": 600000,
+  "completion_budget_millis": 300000,
+  "rpo_millis": 900000,
+  "keep_last": 30,
+  "keep_daily": 14,
+  "credentials": [
+   {
+    "logical_name": "restic_repository_password",
+    "environment_variable": "RESTIC_PASSWORD_FILE"
+   },
+   {
+    "logical_name": "restic_rest_username",
+    "environment_variable": "RESTIC_REST_USERNAME"
+   },
+   {
+    "logical_name": "restic_rest_password",
+    "environment_variable": "RESTIC_REST_PASSWORD"
+   }
+  ]
+ },
+ "backup_producer": {
+  "version": 1,
+  "worker_uid": 64001,
+  "reader_gid": 64002,
+  "socket": "/run/studiolo-backup/producer.sock",
+  "staging_parent": "/var/lib/studiolo-backup-staging",
+  "ephemeral_root": "/home/maxsong/.local/share/studiolo-backup-ephemeral",
+  "source_retention_millis": 3600000,
+  "freeze_budget_millis": 30000,
+  "application_packages": [
+   {
+    "name": "studiolo-local-server",
+    "version": "2df75ca",
+    "digest": "adb868bb52f79f924f5392c3020f80434c31f67f55978d43450d223460979286"
+   },
+   {
+    "name": "studiolo-maintain",
+    "version": "2df75ca",
+    "digest": "38354e0081a52e704cafd3c4d7d3f55044bddc6f198d331b136745d24deb7652"
+   },
+   {
+    "name": "studiolo-backup-worker",
+    "version": "2df75ca",
+    "digest": "84945a8a0f1ea068fa9a86c1265a165281c3eb7986e934705c1982f2ce74d37d"
+   }
+  ],
+  "restic_digest": "20d4142678d0d95ec11a4759def1b73fd9190abc9ca19e4b62d067c0b387e639",
+  "deployment": [
+   {
+    "unit": "studiolo-human.service",
+    "revision": "m5m6-board-20260920-r17"
+   },
+   {
+    "unit": "studiolo-backup-worker.service",
+    "revision": "2df75ca"
+   }
+  ]
+ }
+}

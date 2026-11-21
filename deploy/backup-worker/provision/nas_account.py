@@ -3,10 +3,12 @@
 
     sudo -n python3 -I -B nas_account.py check      只读：备份服务的状态、几个文件的属主权限、现有账号名、端口
     sudo -n python3 -I -B nas_account.py append     从标准输入读一行 bcrypt（账号名固定），原子地加进账号文件
+                                                    （同一时间只许一处在改；中途失败不留半份文件）
     sudo -n python3 -I -B nas_account.py restart    重启备份服务，等它开始监听
 rest-server 的装法见 deploy/sync-bridge/recovery/README.md「NAS 追加备份」。NAS 上是 Python 3.8，这里只用它认得的写法。
 不读、不打印任何口令或账号文件里的散列；清理权限照旧只在 NAS 管理员手里，不给这个账号。
 """
+import fcntl
 import hashlib
 import os
 from pathlib import Path
@@ -35,19 +37,39 @@ def accounts(raw):
 
 
 def write_new(path, data):
+    """只新建。没写完整就删掉：半份副本会让下次重跑对不上，半份新文件里还带着新账号的散列。"""
     descriptor = os.open(str(path), os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o640)
-    with os.fdopen(descriptor, 'wb') as stream:
-        os.fchown(stream.fileno(), *ACCOUNT_FILE_OWNER)
-        os.fchmod(stream.fileno(), 0o640)
-        stream.write(data)
-        stream.flush()
-        os.fsync(stream.fileno())
+    try:
+        with os.fdopen(descriptor, 'wb') as stream:
+            os.fchown(stream.fileno(), *ACCOUNT_FILE_OWNER)
+            os.fchmod(stream.fileno(), 0o640)
+            stream.write(data)
+            stream.flush()
+            os.fsync(stream.fileno())
+    except BaseException:
+        os.unlink(str(path))
+        raise
 
 
 def append(raw):
     """旧内容一字不动，新账号加在最后；先留一份改之前的副本，再用改名一次换上。"""
     if not LINE.fullmatch(raw):
         raise ValueError('账号行的格式不对')
+    # 从读旧内容到换上新文件整段只许一处在做：两处同时做，各自都会「成功」，后换上的那个悄悄盖掉前一个。
+    # 锁加在目录本身上（不另建锁文件），进程一结束就放开。
+    directory = os.open(str(ROOT), os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        try:
+            fcntl.flock(directory, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            raise ValueError('另一处正在改账号文件：等它结束再跑')
+        append_locked(raw)
+        os.fsync(directory)
+    finally:
+        os.close(directory)
+
+
+def append_locked(raw):
     target = ROOT / 'backup.htpasswd'
     status = os.lstat(str(target))
     if not (stat.S_ISREG(status.st_mode) and (status.st_uid, status.st_gid) == ACCOUNT_FILE_OWNER
@@ -65,12 +87,11 @@ def append(raw):
         write_new(keep, old)
     fresh = ROOT / ('backup.htpasswd.new-' + str(os.getpid()))
     write_new(fresh, old + (b'' if old.endswith(b'\n') or not old else b'\n') + raw)
-    os.replace(str(fresh), str(target))
-    descriptor = os.open(str(ROOT), os.O_RDONLY)
     try:
-        os.fsync(descriptor)
-    finally:
-        os.close(descriptor)
+        os.replace(str(fresh), str(target))
+    except BaseException:
+        os.unlink(str(fresh))
+        raise
 
 
 def listening():
@@ -102,6 +123,11 @@ def check(out):
         out('现有账号：' + '、'.join(accounts((ROOT / 'backup.htpasswd').read_bytes())))
     except OSError:
         out('现有账号：读不到账号文件')
+    try:
+        beside = sorted(name for name in os.listdir(str(ROOT)) if name.startswith('backup.htpasswd.'))
+        out('账号文件旁边的其他文件（只列名字）：' + ('、'.join(beside) or '没有'))
+    except OSError:
+        out('账号文件旁边的其他文件：列不出来')
     try:
         certificate = ssl.PEM_cert_to_DER_cert((ROOT / 'tls.crt').read_text())
         out('证书摘要（sha256，公开信息）：' + hashlib.sha256(certificate).hexdigest())

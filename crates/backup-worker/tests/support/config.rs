@@ -36,6 +36,33 @@ fn fixed_schema_binds_independent_identities_repository_and_original_bytes() {
     assert_ne!(config.digest(), pretty.digest());
     assert_eq!(config.digest().len(), 64);
 }
+/// 置备脚本（`deploy/backup-worker/provision/prereq.py`）生成的配置，原样交给真实解析。
+///
+/// 脚本里那套取值规则是照抄的：抄漏一条，要到 worker 启动失败才知道。夹具和脚本输出逐字节相同，
+/// 由 `deploy/backup-worker/provision/test_provision.py` 钉住（账号和读取组的号码用占位值）。
+#[test]
+fn the_config_the_provisioning_script_generates_is_accepted_byte_for_byte() {
+    let raw =
+        include_bytes!("../../../../deploy/backup-worker/provision/fixtures/backup-worker.json");
+    let config = WorkerConfig::parse(raw, 64001).unwrap();
+    assert_eq!(config.producer_uid(), 1000);
+    assert_eq!(config.reader_gid(), 64002);
+    assert_eq!(
+        config.sealed_parent(),
+        Path::new("/var/lib/studiolo-backup-staging")
+    );
+    assert_eq!(
+        config.producer_socket(),
+        Path::new("/run/studiolo-backup/producer.sock")
+    );
+    assert_eq!(
+        config.repository().as_str(),
+        "rest:https://192.168.100.111:18443/studiolo-backup-worker/main/"
+    );
+    assert_eq!(config.repository_ca_sha256().map(str::len), Some(64));
+    // 号码是按账号核的：换一个账号来读就拒绝。
+    assert!(WorkerConfig::parse(raw, 64003).is_err());
+}
 #[test]
 fn config_rejects_identity_confusion_secrets_and_unbounded_or_unsafe_locations() {
     for (key, value) in [

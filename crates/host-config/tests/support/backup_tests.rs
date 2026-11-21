@@ -114,6 +114,41 @@ fn the_separate_backup_file_needs_both_sections_and_nothing_else() {
     }
 }
 
+/// 置备脚本（`deploy/backup-worker/provision/prereq.py`）生成的私有备份配置，原样交给这里的真实解析。
+///
+/// 脚本里那套取值规则是照抄的：抄漏一条，要到停服之后人侧启动失败才知道。夹具和脚本输出逐字节相同，
+/// 由 `deploy/backup-worker/provision/test_provision.py` 钉住（账号和读取组的号码用占位值）。
+#[test]
+fn the_backup_file_the_provisioning_script_generates_is_accepted_byte_for_byte() {
+    let fixture = Fixture::new();
+    let path = backup_path(&fixture);
+    let generated =
+        include_bytes!("../../../../deploy/backup-worker/provision/fixtures/backup.json");
+    fs::write(&path, generated).unwrap();
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
+    let loaded = BackupConfig::load(&path, &Config::load(&fixture.path).unwrap())
+        .expect("置备脚本生成的配置");
+    let (approval, producer) = (loaded.approval(), loaded.producer());
+    assert!(!approval.claims_immutability());
+    assert_eq!(approval.schedule().interval_millis(), 600_000);
+    assert_eq!(approval.schedule().rpo_millis(), 900_000);
+    assert_eq!(approval.credentials().len(), 3);
+    assert_eq!(producer.worker_uid(), 64001);
+    assert_eq!(producer.reader_gid(), 64002);
+    assert_eq!(
+        producer.socket(),
+        Path::new("/run/studiolo-backup/producer.sock")
+    );
+    assert_eq!(
+        producer.staging_parent(),
+        Path::new("/var/lib/studiolo-backup-staging")
+    );
+    assert_eq!(producer.source_retention_millis(), 3_600_000);
+    assert_eq!(producer.freeze_budget_millis(), 30_000);
+    assert_eq!(producer.application_packages().len(), 3);
+    assert_eq!(producer.deployment().len(), 2);
+}
+
 #[test]
 fn the_separate_backup_file_is_read_with_the_same_private_file_rules() {
     let fixture = Fixture::new();

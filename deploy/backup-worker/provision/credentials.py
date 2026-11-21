@@ -5,7 +5,7 @@
     python3 -I -B credentials.py                 预演：只核前提（不问口令、不写文件；对 NAS 只做一次不带凭据的 TLS 握手）
     sudo python3 -I -B credentials.py --apply    录入两个口令 → 写三份凭据文件 → 以 worker 账号初始化仓库并读回一次
 先跑完同目录的 prereq.py，并在 NAS 上加好账号（nas-account.command）。已经写好的凭据不会被覆盖：
-三份都在就跳过录入、直接做初始化和读回；只有一部分就停下，由人看过再处理。
+三份都在、内容也合 worker 的规则，就跳过录入、直接做初始化和读回；只有一部分、或内容 worker 不会认，就停下，由人看过再处理。
 """
 import getpass
 import hashlib
@@ -66,6 +66,27 @@ def credentials_state(directory):
                 and entry.st_nlink == 1 and 0 < entry.st_size <= SECRET_LIMIT + 1):
             return 'partial'
     return 'complete'
+
+
+def read_credentials(directory):
+    """读回三份凭据，按 worker 读它们时的规则核内容（crates/backup-worker/src/credentials/file.rs 的 parse）：
+    只去掉结尾的一个换行，剩下的照 validate_secret；账号名还得是这个仓库路径开头的那个。
+    为什么要核内容：restic 经 shell 读到的值会去掉结尾全部换行，多一个换行它照样连得上，worker 却会拒绝启动。
+    不回显内容，不合规则只说是哪一份。"""
+    values = {}
+    for name in NAMES:
+        descriptor = os.open(os.path.join(directory, name), os.O_RDONLY | os.O_NOFOLLOW)
+        with os.fdopen(descriptor, 'rb') as stream:
+            raw = stream.read(SECRET_LIMIT + 2)
+        raw = raw[:-1] if raw.endswith(b'\n') else raw
+        try:
+            value = raw.decode('utf-8')
+        except UnicodeDecodeError:
+            raise Refused(name + ' 这一份不是 UTF-8 文本。不覆盖，先由人看过')
+        values[name] = validate_secret(value, 1, name + ' 这一份的内容 worker 不会认（不覆盖，先由人看过）：')
+    require(values['rest-username'] == site.REST_USERNAME,
+            'rest-username 里不是 ' + site.REST_USERNAME + '（仓库路径以这个账号名开头）。不覆盖，先由人看过')
+    return values
 
 
 def write_credentials(directory, values):
@@ -155,10 +176,12 @@ def apply(out, run=subprocess.run, ask=getpass.getpass):
     state = credentials_state(DIRECTORY)
     require(state != 'partial', DIRECTORY + ' 已经在，但不是完整的三份 root 0600 文件。不覆盖，先由人看过')
     if state == 'complete':
-        out('[已有] 三份凭据文件已在，不重新录入')
+        read_credentials(DIRECTORY)
+        out('[已有] 三份凭据文件已在，内容合 worker 的规则，不重新录入')
     else:
         write_credentials(DIRECTORY, prompt(ask))
         require(credentials_state(DIRECTORY) == 'complete', '凭据文件写完之后核对不过')
+        read_credentials(DIRECTORY)
         out('[做完] 三份凭据文件已写好（root，目录 0700、文件 0600）')
     out('以 ' + site.WORKER + ' 账号初始化仓库 ' + site.REPOSITORY + ' ……')
     if run(restic_command('init')).returncode != 0:

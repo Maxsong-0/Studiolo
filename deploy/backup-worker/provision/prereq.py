@@ -5,6 +5,7 @@
     python3 -I -B prereq.py            预演：只读。逐项说现在怎样、会做什么，把要写的两份配置原样打出来
     python3 -I -B prereq.py --apply    照做：每一步做完当场核对，不对就停
 重复跑是安全的：已经对的跳过，在但不对的停下（不覆盖、不删除），缺的才建。
+要 root 放的文件由本脚本的 --place 入口放（只由本脚本自己经 sudo 调用）：只新建，目标已经在就失败。
 不碰凭据（见同目录 credentials.py），不启用、不启动任何单元，不动人侧服务。
 
 「发行相关的值」那一段跟着人侧发行走：候选重出、worker 重建，都要改这里再重跑。
@@ -18,7 +19,6 @@ import pwd
 import stat
 import subprocess
 import sys
-import tempfile
 
 HERE = Path(__file__).resolve().parent
 TEMPLATES = HERE.parent / 'systemd'
@@ -43,6 +43,12 @@ CA = '/etc/studiolo/backup-worker-ca.pem'
 TMPFILES = '/etc/tmpfiles.d/studiolo-backup.conf'
 UNIT_DIRECTORY = '/etc/systemd/system'
 UNITS = ('studiolo-backup-worker.service', 'studiolo-backup-schedule.service', 'studiolo-backup-schedule.timer')
+# 要 root 放的文件和各自的权限：--place 只认这几个目标。
+PLACED = {TMPFILES: 0o644, WORKER_BINARY: 0o755, RESTIC: 0o555, CA: 0o644, WORKER_CONFIG: 0o644}
+PLACED.update({UNIT_DIRECTORY + '/' + name: 0o644 for name in UNITS})
+PLACED_OWNER = (0, 0)
+# 账号还没建时预演用的占位号码；fixtures/ 里给 Rust 解析用的两份夹具也用这一组。
+PLACEHOLDER_NUMBERS = (64001, 64002)
 # NAS 的 rest-server 开着 --private-repos：仓库路径必须以账号名开头。
 REST_USERNAME = 'studiolo-backup-worker'
 REPOSITORY = 'rest:https://192.168.100.111:18443/' + REST_USERNAME + '/main/'
@@ -266,6 +272,46 @@ def has(path, kind, uid, gid, modes):
             and stat.S_IMODE(status.st_mode) in modes and (stat.S_ISDIR(status.st_mode) or status.st_nlink == 1))
 
 
+def chain(path, uid, top='/'):
+    """path 上面的每一级目录都得是真目录（不是链接）、属主是 root 或 uid、组和其他人不可写。
+    和用它们的一方逐级核的规则一致：激活预检（deploy/human/release/release_common.py 的 ancestors）、
+    人侧读私有配置（crates/host-config/src/config_file.rs）、worker 打开 /etc/studiolo 和程序目录。
+    只看最后一级的话，中间有一级是链接也能置备成功，要到停服之后才被拒。top 只给用例用。"""
+    for node in reversed(Path(path).parents):
+        if not node.is_relative_to(top):
+            continue
+        try:
+            status = os.lstat(node)
+        except FileNotFoundError:
+            raise Refused(str(node) + ' 不在')
+        require(stat.S_ISDIR(status.st_mode) and status.st_uid in (0, uid) and stat.S_IMODE(status.st_mode) & 0o7022 == 0,
+                str(node) + ' 不是真目录（路径上不能有链接），或者属主不对、组和其他人可写')
+
+
+def place(destination, mode, stream):
+    """root 一侧：把 stream 的内容放成一个新文件。目标已经在（哪怕是个悬空链接）就失败，不覆盖；中途失败不留半个文件。
+    先在同一个目录里写好临时文件，再用硬链接起正式的名字（名字已在时链接失败），最后删掉临时名。"""
+    directory, name = os.path.split(destination)
+    scratch = os.path.join(directory, '.' + name + '.placing-' + str(os.getpid()))
+    descriptor = os.open(scratch, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+    try:
+        with os.fdopen(descriptor, 'wb') as out:
+            for block in iter(lambda: stream.read(1 << 20), b''):
+                out.write(block)
+            os.fchown(out.fileno(), *PLACED_OWNER)
+            os.fchmod(out.fileno(), mode)
+            out.flush()
+            os.fsync(out.fileno())
+        os.link(scratch, destination, follow_symlinks=False)
+    finally:
+        os.unlink(scratch)
+    descriptor = os.open(directory, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
 # ---------------------------------------------------------------- 现场：会改东西的步骤
 class Provision:
     def __init__(self, apply, run=subprocess.run, out=print):
@@ -291,26 +337,32 @@ class Provision:
             require(verify(), title + '：做完之后核对不过')
             self.out('    核对通过')
 
-    def root_file(self, title, path, content, mode):
-        def install():
-            if not self.apply:  # 预演不落任何文件，连临时文件也不建
-                self.out('    sudo install -o root -g root -m ' + oct(mode)[2:].zfill(4) + ' <内容见末尾或仓库模板> ' + path)
-                return
-            with tempfile.TemporaryDirectory(prefix='studiolo-backup-prereq.') as scratch:
-                staged = Path(scratch) / 'content'
-                staged.write_bytes(content)
-                self.root('install', '-o', 'root', '-g', 'root', '-m', oct(mode)[2:].zfill(4), str(staged), path)
+    def place(self, path, source, **stdin):
+        """经 sudo 调本脚本的 --place：只新建。从检查「不在」到真正去放之间目标被别人建了，这里失败，不覆盖。"""
+        argv = ['/usr/bin/python3', '-I', '-B', str(HERE / 'prereq.py'), '--place', path]
+        self.out('    sudo ' + ' '.join(argv) + ' < ' + source + '    （权限 ' + oct(PLACED[path])[2:].zfill(4) + '，已经在就失败）')
+        if self.apply:
+            self.run(['sudo', '--'] + argv, check=True, **stdin)
 
+    def root_file(self, title, path, content):
         def state():
-            present = has(path, stat.S_ISREG, 0, 0, (mode,))
+            present = has(path, stat.S_ISREG, 0, 0, (PLACED[path],))
             return present if not present else Path(path).read_bytes() == content
-        self.step(title, state, install, state)
+        # 内容走标准输入：不落临时文件，预演和照做都一样。
+        self.step(title, state, lambda: self.place(path, '<内容见末尾或仓库模板>', input=content), state)
 
-    def root_copy(self, title, source, path, digest, mode, modes):
+    def root_copy(self, title, source, path, digest):
         def state():
-            present = has(path, stat.S_ISREG, 0, 0, modes)
+            present = has(path, stat.S_ISREG, 0, 0, (PLACED[path],))
             return present if not present else sha(path) == digest
-        self.step(title, state, lambda: self.root('install', '-o', 'root', '-g', 'root', '-m', mode, source, path), state)
+
+        def copy():
+            if not self.apply:
+                self.place(path, source)
+                return
+            with open(source, 'rb') as stream:
+                self.place(path, source, stdin=stream)
+        self.step(title, state, copy, state)
 
     def identities(self):
         self.step('读取组 ' + READERS, lambda: True if group(READERS) else None,
@@ -338,10 +390,10 @@ class Provision:
         entry, readers = account(WORKER), group(READERS)
         if entry and readers:
             return entry.pw_uid, readers.gr_gid, True
-        return 64001, 64002, False
+        return PLACEHOLDER_NUMBERS + (False,)
 
     def directories(self, reader_gid):
-        self.root_file('tmpfiles 片段 ' + TMPFILES, TMPFILES, tmpfiles_text().encode(), 0o644)
+        self.root_file('tmpfiles 片段 ' + TMPFILES, TMPFILES, tmpfiles_text().encode())
 
         def state():
             found = [has(path, stat.S_ISDIR, OWNER_UID, reader_gid, (0o750,)) for path in (RUNTIME, STAGING)]
@@ -351,16 +403,17 @@ class Provision:
 
     def programs(self):
         self.step('程序目录 ' + PROGRAMS, lambda: has(PROGRAMS, stat.S_ISDIR, 0, 0, (0o755,)),
-                  lambda: self.root('install', '-d', '-o', 'root', '-g', 'root', '-m', '0755', PROGRAMS),
+                  # mkdir 遇到已经在的目录会失败；install -d 会把已有目录的属主权限改掉。
+                  lambda: self.root('mkdir', '-m', '0755', PROGRAMS),
                   lambda: has(PROGRAMS, stat.S_ISDIR, 0, 0, (0o755,)))
-        self.root_copy('worker 程序', WORKER_SOURCE, WORKER_BINARY, PACKAGES[2][1], '0755', (0o755,))
-        self.root_copy('restic 0.19.1', RESTIC_SOURCE, RESTIC, RESTIC_SHA, '0555', (0o555,))
-        self.root_copy('NAS 证书 ' + CA, CA_SOURCE, CA, CA_SHA, '0644', (0o644,))
+        self.root_copy('worker 程序', WORKER_SOURCE, WORKER_BINARY, PACKAGES[2][1])
+        self.root_copy('restic 0.19.1', RESTIC_SOURCE, RESTIC, RESTIC_SHA)
+        self.root_copy('NAS 证书 ' + CA, CA_SOURCE, CA, CA_SHA)
 
     def units(self):
         before = self.pending
         for name in UNITS:
-            self.root_file('单元 ' + name, UNIT_DIRECTORY + '/' + name, (TEMPLATES / name).read_bytes(), 0o644)
+            self.root_file('单元 ' + name, UNIT_DIRECTORY + '/' + name, (TEMPLATES / name).read_bytes())
         if self.pending > before:
             self.root('systemctl', 'daemon-reload')
         if self.apply:
@@ -410,7 +463,13 @@ class Provision:
         require(has('/etc/studiolo', stat.S_ISDIR, 0, 0, (0o755,)), '/etc/studiolo 不是 root 的 0755 目录')
         require(has(str(Path(BACKUP_CONFIG).parent), stat.S_ISDIR, OWNER_UID, OWNER_UID, (0o700,)),
                 '人侧私有配置目录不是 ' + OWNER + ' 的 0700 目录')
-        self.out('[已核] 要拷的三样都在、摘要对得上；候选里的两个人侧程序和清单登记的一致；/etc/studiolo 和人侧私有配置目录的属主权限对')
+        # 上面两条只看最后一级；每个要建的东西，它上面的整条目录链也照使用方的规则核一遍。
+        for path in (BACKUP_CONFIG, EPHEMERAL):
+            chain(path, OWNER_UID)
+        for path in (WORKER_CONFIG, PROGRAMS, TMPFILES, UNIT_DIRECTORY + '/' + UNITS[0], RUNTIME, STAGING):
+            chain(path, 0)
+        self.out('[已核] 要拷的三样都在、摘要对得上；候选里的两个人侧程序和清单登记的一致；'
+                 '/etc/studiolo 和人侧私有配置目录的属主权限对；各条目录链上没有链接、没有别人可写的目录')
 
     def everything(self):
         self.sources()
@@ -425,7 +484,7 @@ class Provision:
             self.out('（账号还没建：下面两份配置里的 64001、64002 是占位的号码，照做时换成真号码）')
         self.directories(reader_gid)
         self.programs()
-        self.root_file('worker 配置 ' + WORKER_CONFIG, WORKER_CONFIG, worker, 0o644)
+        self.root_file('worker 配置 ' + WORKER_CONFIG, WORKER_CONFIG, worker)
         self.private(backup)
         # 单元放最后：语法核对万一报问题，前面的东西都已经就位，不用重做。
         self.units()
@@ -435,6 +494,11 @@ class Provision:
 
 
 def main(argv):
+    if argv[:1] == ['--place']:
+        require(len(argv) == 2 and argv[1] in PLACED and os.geteuid() == 0 and not sys.stdin.isatty(),
+                '--place 只由本脚本自己经 sudo 调用，目标只能是它要放的那几个文件')
+        place(argv[1], PLACED[argv[1]], sys.stdin.buffer)
+        return
     require(argv in ([], ['--apply']), __doc__)
     provision = Provision(apply=argv == ['--apply'])
     pending = provision.everything()
@@ -452,4 +516,7 @@ if __name__ == '__main__':
         sys.exit(1)
     except subprocess.CalledProcessError as failure:
         print('停下：命令失败（退出码 ' + str(failure.returncode) + '）：' + ' '.join(map(str, failure.cmd)), file=sys.stderr)
+        sys.exit(1)
+    except OSError as failure:
+        print('停下：' + type(failure).__name__ + '：' + str(failure), file=sys.stderr)
         sys.exit(1)
