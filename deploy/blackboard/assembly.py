@@ -51,7 +51,9 @@ BACKUP_STAGING = '/var/lib/studiolo-backup-staging'
 NEW_HUMAN_PROGRAM_LITERALS = (b'--backup-config',)
 REQUIRES_NEW_HUMAN_PROGRAM = bool(NEW_HUMAN_PROGRAM_LITERALS)
 # 人侧停止超时（秒）。关停是串行的两段（crates/local-server/src/startup/serving.rs）：收到退出信号先等备份收尾，
-# 做完才通知 Bridge 停，所以两段要相加。备份段等的是在途的那一个连接整个处理完，再等它起的后台线程：
+# 做完才通知 Bridge 停，所以两段要相加。备份段等的是在途的那一个连接整个处理完，再等它起的后台线程
+# （只等一个，靠的是接受循环先看停止信号：信号一到，排着的连接不再接、到点的回收不再起。
+#  service.rs 的 accept_until_stopped，同目录 service_tests.rs 钉着）：
 #   收发窗口：socket 收发的期限（service.rs 的 WINDOW）；
 #   处理请求：不受收发窗口管，要拿状态锁读账本，每次读按 SCAN_BUDGET 算。
 #             自己最多读三次：安排封存（producer.rs 的 schedule 两次加它调的 decide 一次）和安排抽查
@@ -65,10 +67,7 @@ REQUIRES_NEW_HUMAN_PROGRAM = bool(NEW_HUMAN_PROGRAM_LITERALS)
 #
 # 这个数是各项按上限相加的预算，不是保证；程序里也没有一个关停总期限兜着。下面这些没有算进去：
 #   - 读账本是读完一页才看预算，单次可能多出一页的时间；
-#   - 后台线程收尾时要拿一下状态锁把 busy 复位，关停时会跟着等健康页的那次读完；同时在途的健康页快照也可能不止一个；
-#   - 接受循环没有规定先看停止信号：信号到达时正好排着的连接可能还会被处理。每多处理一个，按上面的算法就多一个
-#     收发窗口加几次读账本（35 秒）；后台空闲时它还会再起一次回收，到期的话再加一次封存
-#     （程序里另案修，见 docs/contracts/backup-producer.md「已知限制」）。
+#   - 后台线程收尾时要拿一下状态锁把 busy 复位，关停时会跟着等健康页的那次读完；同时在途的健康页快照也可能不止一个。
 # 余量吸收不了这些。能兜住的是各项很少同时顶到上限：读账本的各处共用一个读位置，别人读掉的积压请求就不用再读，
 # 请求自己的第二、三次读只读上一次读完之后新追加的（一般就是它自己刚写的几条），所以实际用时通常远小于这个数。
 #
