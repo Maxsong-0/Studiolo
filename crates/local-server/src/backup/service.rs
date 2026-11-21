@@ -5,11 +5,12 @@ use super::{
     producer::BackupProducer,
 };
 use std::{
+    os::unix::net::UnixStream,
     path::Path,
     sync::Arc,
     time::{Duration, Instant},
 };
-use tokio::{sync::watch, task::JoinHandle};
+use tokio::{net::UnixListener, sync::watch, task::JoinHandle};
 
 /// 单个连接的窗口；传输层自己还会再压到十秒以内。
 const WINDOW: Duration = Duration::from_secs(10);
@@ -34,42 +35,24 @@ impl BackupService {
         listener
             .set_nonblocking(true)
             .map_err(|_| ListenError::Unavailable)?;
-        let listener =
-            tokio::net::UnixListener::from_std(listener).map_err(|_| ListenError::Unavailable)?;
-        let (stop, mut stopped) = watch::channel(false);
+        let listener = UnixListener::from_std(listener).map_err(|_| ListenError::Unavailable)?;
+        let (stop, stopped) = watch::channel(false);
+        let reclaiming = Arc::clone(&producer);
         let serving = Arc::clone(&producer);
         let acceptor = tokio::spawn(async move {
             // 清理责任跟着接受循环走：循环结束才删 socket。
             let _claim = claim;
-            // 第一次 tick 立刻到：起来先回收一次。
-            let mut tidy = tokio::time::interval(RECLAIM_EVERY);
-            tidy.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-            loop {
-                let stream = tokio::select! {
-                    _ = stopped.changed() => break,
-                    _ = tidy.tick() => {
-                        let producer = Arc::clone(&serving);
-                        let _ = tokio::task::spawn_blocking(move || producer.reclaim()).await;
-                        continue;
-                    }
-                    accepted = listener.accept() => match accepted {
-                        Ok((stream, _)) => stream,
-                        Err(_) => {
-                            tokio::time::sleep(BACKOFF).await;
-                            continue;
-                        }
-                    },
-                };
-                let Ok(stream) = stream.into_std() else {
-                    continue;
-                };
-                let producer = Arc::clone(&serving);
+            accept_until_stopped(
+                listener,
+                stopped,
+                RECLAIM_EVERY,
+                move || reclaiming.reclaim(),
                 // 对端身份、帧和期限都在连接里核；这里不看结果，失败的连接直接丢掉。
-                let _ = tokio::task::spawn_blocking(move || {
-                    producer.serve_connection(stream, Instant::now() + WINDOW)
-                })
-                .await;
-            }
+                move |stream| {
+                    let _ = serving.serve_connection(stream, Instant::now() + WINDOW);
+                },
+            )
+            .await;
         });
         Ok(Self {
             stop,
@@ -88,3 +71,53 @@ impl BackupService {
         let _ = tokio::task::spawn_blocking(move || producer.settle()).await;
     }
 }
+
+/// 接受循环：回收和每个连接都在后台线程里做完才回到循环顶上，一次只做一件。
+///
+/// 停止信号（发了值，或者发送端没了）一到，回到循环顶上就退出：backlog 里排着的连接不再接，
+/// 到点的回收也不再起；停止信号到达时正在做的那一个连接或那一次回收照旧做完。
+async fn accept_until_stopped<R, S>(
+    listener: UnixListener,
+    mut stopped: watch::Receiver<bool>,
+    reclaim_every: Duration,
+    reclaim: R,
+    serve: S,
+) where
+    R: Fn() + Send + Sync + 'static,
+    S: Fn(UnixStream) + Send + Sync + 'static,
+{
+    let (reclaim, serve) = (Arc::new(reclaim), Arc::new(serve));
+    // 第一次 tick 立刻到：起来先回收一次。
+    let mut tidy = tokio::time::interval(reclaim_every);
+    tidy.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    loop {
+        let stream = tokio::select! {
+            // 按书写顺序看各分支：不加 `biased;` 时 Tokio 随机先看一个，停止信号已到、
+            // 又排着连接或回收到点时，多半会先接连接或先回收，关停就要多等一轮。
+            biased;
+            // `changed()` 出错（发送端没了）也匹配 `_`，同样按停止处理。
+            _ = stopped.changed() => break,
+            _ = tidy.tick() => {
+                let reclaim = Arc::clone(&reclaim);
+                let _ = tokio::task::spawn_blocking(move || reclaim()).await;
+                continue;
+            }
+            accepted = listener.accept() => match accepted {
+                Ok((stream, _)) => stream,
+                Err(_) => {
+                    tokio::time::sleep(BACKOFF).await;
+                    continue;
+                }
+            },
+        };
+        let Ok(stream) = stream.into_std() else {
+            continue;
+        };
+        let serve = Arc::clone(&serve);
+        let _ = tokio::task::spawn_blocking(move || serve(stream)).await;
+    }
+}
+
+#[cfg(test)]
+#[path = "service_tests.rs"]
+mod tests;
