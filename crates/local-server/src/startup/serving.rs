@@ -145,27 +145,22 @@ impl PreparedServer {
             }
             let app = studiolo_local_server::board::private_board_router(plane.clone());
             let (stop, mut stopped) = tokio::sync::watch::channel(false);
-            let mut maintenance =
+            let maintenance =
                 tokio::spawn(plane.maintain_until_with_runner(stopped.clone(), runner.clone()));
-            let mut worker = tokio::spawn(async move {
+            let worker = tokio::spawn(async move {
                 listener
                     .serve_shutdown(app, async move {
                         let _ = stopped.changed().await;
                     })
                     .await
             });
-            let mut result = tokio::select! {
-                result=Box::pin(self.serve_bound_until(shutdown))=>result,
-                _=&mut maintenance=>Err(StartupError::Serve),
-                _=&mut worker=>Err(StartupError::Serve),
-            };
-            let _ = stop.send(true);
-            if !worker.is_finished() && !matches!(worker.await, Ok(Ok(()))) {
-                result = Err(StartupError::Serve);
-            }
-            if !maintenance.is_finished() && !matches!(maintenance.await, Ok(Ok(()))) {
-                result = Err(StartupError::Serve);
-            }
+            let mut result = settle_board(
+                Box::pin(self.serve_bound_until(shutdown)),
+                maintenance,
+                worker,
+                stop,
+            )
+            .await;
             if let Some(runner) = runner
                 && !matches!(
                     tokio::task::spawn_blocking(move || runner.shutdown()).await,
@@ -192,6 +187,40 @@ impl PreparedServer {
             .await
             .map_err(|_| StartupError::Serve)
     }
+}
+
+/// board 三方（内层服务、租约巡检、board 监听）谁先结束都走同一条收尾：通知另外两方停下，
+/// 再收回没赢 `select!` 的句柄、逐个检查结果；任何一方出错，结果就是错误。
+async fn settle_board<S, M, W>(
+    inner: S,
+    mut maintenance: tokio::task::JoinHandle<Result<(), M>>,
+    mut worker: tokio::task::JoinHandle<Result<(), W>>,
+    stop: tokio::sync::watch::Sender<bool>,
+) -> Result<(), StartupError>
+where
+    S: Future<Output = Result<(), StartupError>>,
+{
+    #[derive(PartialEq, Eq)]
+    enum First {
+        Inner,
+        Maintenance,
+        Worker,
+    }
+    let (mut result, first) = tokio::select! {
+        result = inner => (result, First::Inner),
+        _ = &mut maintenance => (Err(StartupError::Serve), First::Maintenance),
+        _ = &mut worker => (Err(StartupError::Serve), First::Worker),
+    };
+    let _ = stop.send(true);
+    // 只跳过赢了 select 的那个（结果已取走，再 poll 会 panic）；不能用 `is_finished()` 判断：
+    // 它分不清「已取走」和「结束了还没取」，同时就绪或收尾途中出的错会被它跳过吞掉。
+    if first != First::Worker && !matches!(worker.await, Ok(Ok(()))) {
+        result = Err(StartupError::Serve);
+    }
+    if first != First::Maintenance && !matches!(maintenance.await, Ok(Ok(()))) {
+        result = Err(StartupError::Serve);
+    }
+    result
 }
 
 /// 关闭链只走一遍：先通知并等待 Bridge 安全收尾，写者仍可用；再停止刷新并排空 HTTP。
@@ -259,3 +288,7 @@ impl Shutdown {
 #[cfg(test)]
 #[path = "../../tests/startup/shutdown_order.rs"]
 mod shutdown_order;
+
+#[cfg(test)]
+#[path = "../../tests/startup/board_settle.rs"]
+mod board_settle;
