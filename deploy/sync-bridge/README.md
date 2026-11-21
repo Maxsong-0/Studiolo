@@ -58,8 +58,8 @@ launcher 把启动事实（固定 pins、镜像根、配置根、操作）预写
    `bridge/` 不存在（没做第 7 步）同样报 `SyncPlane`。关停时平面在最近的安全停点结束：正在跑的 headless 被
    `request_stop(OwnerRequested)` 停下并回收，所以单元的 `TimeoutStopSec=` 要不小于审批 `budget.stop_grace_seconds` 加 60 s
    （r16 及之前的单元 90 s 对样例 30 s 足够）。启用备份生产者之后（r17 起），主服务收到退出信号先等备份收尾、做完才通知平面停，
-   两段是串行的，还要再加备份那一段：算法见 `deploy/backup-worker/README.md`，r17 的单元是 195 s，由 `deploy/blackboard/assembly.py`
-   逐项相加并由 `test_assembly.py` 钉住。执行段不打断，恰在执行时收到关停、超时被 SIGKILL 也安全（执行器按原键续做），只丢本轮健康回填。
+   两段是串行的，还要再加备份那一段：算法见 `deploy/backup-worker/README.md`，r17 的单元是 300 s（逐项相加 185 s，另加余量），由 `deploy/blackboard/assembly.py`
+   算出并由 `test_assembly.py` 钉住。执行段不打断，恰在执行时收到关停、超时被 SIGKILL 也安全（执行器按原键续做），只丢本轮健康回填。
    这里的「安全」说的是 Bridge 自己的数据：人侧被强杀会留下入口 socket 节点，下次启动按设计拒绝、要人看过再删
    （见 `deploy/backup-worker/README.md`），所以停止超时仍要留够。
 

@@ -95,9 +95,9 @@ class OperationTests(unittest.TestCase):
         # 命令时限比停止超时短的话，慢关停会让激活和回滚都在这条命令上超时。
         self.assertEqual([call.args[1] for call in ops.runtime.command.call_args_list],
                          [assembly.STOP_TIMEOUT_SECONDS + ops_module.STOP_COMMAND_MARGIN_SECONDS] * 2)
-        # 余量和算出来的时限也钉住：两份 README 写了「加 20 秒」「215 秒」，改数要连文档一起改。
+        # 余量和算出来的时限也钉住：两份 README 写了「加 20 秒」「320 秒」，改数要连文档一起改。
         self.assertEqual(ops_module.STOP_COMMAND_MARGIN_SECONDS, 20)
-        self.assertEqual(assembly.STOP_TIMEOUT_SECONDS + ops_module.STOP_COMMAND_MARGIN_SECONDS, 215)
+        self.assertEqual(assembly.STOP_TIMEOUT_SECONDS + ops_module.STOP_COMMAND_MARGIN_SECONDS, 320)
 
     def test_worker_uses_original_code_as_unprivileged_isolated_stdin(self):
         ops = self.operation()

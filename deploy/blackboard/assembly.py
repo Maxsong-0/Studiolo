@@ -20,7 +20,7 @@ r14→r15（BUG-027：只查元数据，保留SQLite进程锁与版本守卫，�
 r15→r16（T-207：BUG-038 项目目录改名、T-181/T-183/T-185/T-211～T-214 等，人侧启动器加 --agent-data；
 控制库 schema 3→4，单向，见 README「r15→r16 是单向的」，已激活）；
 本版 r16→r17（T-216：启用备份生产者。启动器加 --backup-config；人侧单元加备份 socket 父目录、封存父目录两个写根，
-停止超时 90→195 秒；人侧程序必须一起换，上一发行的程序不认 --backup-config。数据库与状态的版本号不变）。
+停止超时 90→300 秒；人侧程序必须一起换，上一发行的程序不认 --backup-config。数据库与状态的版本号不变）。
 """
 import shlex
 from pathlib import Path
@@ -63,13 +63,17 @@ REQUIRES_NEW_HUMAN_PROGRAM = bool(NEW_HUMAN_PROGRAM_LITERALS)
 #             （startup/health_input.rs：备份作业、仓库抽查）；
 #   一次回收（RECLAIM_BUDGET）加一次封存（冻结和导出在一个冻结预算之内；这里按批准的 30 秒算）。
 # Bridge 段 = 同步审批的 stop_grace_seconds（169 现行 30）+ 60（deploy/sync-bridge/README.md 的要求）。
-# 最后一项是余量，只给不受预算管的小步骤：建暂存区、写准入或失败结果。
+# 后面两项是余量。UNBUDGETED_STEPS_SECONDS 只给不受预算管的小步骤：建暂存区、写准入或失败结果。
+# STOP_SAFETY_MARGIN_SECONDS 是保险余量，给下面没算进去的几样和还没数到的路径。
 #
-# 这个数是各项按上限相加的预算，不是保证；程序里也没有一个关停总期限兜着。下面这些没有算进去：
+# 前面各项按上限相加是预算（185 秒），不是保证；程序里也没有一个关停总期限兜着。下面这些没有逐项算：
 #   - 读账本是读完一页才看预算，单次可能多出一页的时间；
 #   - 后台线程收尾时要拿一下状态锁把 busy 复位，关停时会跟着等健康页的那次读完；同时在途的健康页快照也可能不止一个。
-# 余量吸收不了这些。能兜住的是各项很少同时顶到上限：读账本的各处共用一个读位置，别人读掉的积压请求就不用再读，
-# 请求自己的第二、三次读只读上一次读完之后新追加的（一般就是它自己刚写的几条），所以实际用时通常远小于这个数。
+# 小步骤那 10 秒吸收不了这些，靠保险余量兜。保险余量取 105 秒的来历：这个数经过四轮独立复查，每轮都查出一条漏算的路径
+# （Bridge 段、处理请求、等锁时别人读账本、排着的连接），最大的一条 95 秒；105 秒够再漏一条同样大的，
+# 外加后台线程收尾等锁的 10 秒。合计 300 秒是用户 2026-11-20 定的。代价：人侧真挂死时要等满 300 秒才被强杀。
+# 各项很少同时顶到上限（读账本的各处共用一个读位置，别人读掉的积压请求就不用再读，请求自己的第二、三次读只读
+# 上一次读完之后新追加的，一般就是它自己刚写的几条），所以实际用时通常远小于这个数。
 #
 # 超时不是无害的。systemd 到点强杀时关停链还没走完：人侧 HTTP 入口（/run/studiolo-human/http.sock）和黑板入口
 # （BOARD_SOCKET）要到最后、排空 HTTP 和停黑板之后才删（serving.rs 的 drain、unix_ingress.rs），单元又是
@@ -77,7 +81,7 @@ REQUIRES_NEW_HUMAN_PROGRAM = bool(NEW_HUMAN_PROGRAM_LITERALS)
 # （activation_ops.Operations.stopped）也拒绝，激活和回滚都停下来等人看过再删。备份自己这边：socket 在接受循环结束时
 # 就删了；封存做到一半被杀，留下的原意图下一次 schedule 补失败结果，暂存一般由下次启动的第一轮回收收走，但正好在
 # 「建目录」和「登记落盘」之间被杀的话回收会失败关闭、之后的封存全部失败，也要人处理。
-# 所以这个数宁大勿小；调它之前先看上面没算进去的那几样。
+# 所以这个数宁大勿小；想调小保险余量之前，先看上面没逐项算的那几样。
 #
 # test_assembly 对着源码钉：程序里的三个常量、生产者源码里读账本和拿状态锁的每一处、请求怎么分派、健康页快照调哪两个探针
 # （钉的是源码文本，认不出的写法见那条用例的说明）。
@@ -93,11 +97,13 @@ BACKUP_FREEZE_BUDGET_SECONDS = 30
 BRIDGE_STOP_GRACE_SECONDS = 30
 BRIDGE_STOP_MARGIN_SECONDS = 60
 UNBUDGETED_STEPS_SECONDS = 10
+STOP_SAFETY_MARGIN_SECONDS = 105
 OLD_STOP_TIMEOUT_SECONDS = 90
-# 10 + 5×(3+2) + 30 + 30 + 30 + 60 + 10 = 195；test_assembly 钉这个结果，任一项改了要一起看。
+# 10 + 5×(3+2) + 30 + 30 + 30 + 60 = 185，再加 10 + 105 = 300；test_assembly 钉这两个结果，任一项改了要一起看。
 STOP_TIMEOUT_SECONDS = (BACKUP_CONNECTION_WINDOW_SECONDS + BACKUP_SCAN_BUDGET_SECONDS * BACKUP_REQUEST_SCANS
                         + BACKUP_RECLAIM_SECONDS + BACKUP_FREEZE_BUDGET_SECONDS
-                        + BRIDGE_STOP_GRACE_SECONDS + BRIDGE_STOP_MARGIN_SECONDS + UNBUDGETED_STEPS_SECONDS)
+                        + BRIDGE_STOP_GRACE_SECONDS + BRIDGE_STOP_MARGIN_SECONDS
+                        + UNBUDGETED_STEPS_SECONDS + STOP_SAFETY_MARGIN_SECONDS)
 # 固定摘要防止覆盖其他发布。human：2026-11-20 回读的现场值（r16 激活写下的单元，已接 Bridge、带 --agent-data）。
 # agent：预算值，不是回读来的。写这一版时线上 agent 还是 t207-c09b065-20261118（单元摘要 15b39395…45b9）；
 # T-215 部署只把单元里的发布名两处换成 t215-116f5d7-20261120，这里钉的是换完之后应有的摘要。

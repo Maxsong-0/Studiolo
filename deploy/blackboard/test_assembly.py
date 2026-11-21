@@ -139,7 +139,7 @@ class AssemblyTests(unittest.TestCase):
             self.assertIn('d ' + path + ' 0750 ', tmpfiles)
         self.assertEqual(new.count('TimeoutStopSec='), 1)
         self.assertEqual(new.count(new_stop), 1)
-        self.assertEqual(new_stop, 'TimeoutStopSec=195\n')
+        self.assertEqual(new_stop, 'TimeoutStopSec=300\n')
         # 拒绝：已转换过的；停止超时不是钉住的旧值、多出一行（不管值是多少）；已带备份路径；黑板或 Bridge 接线缺了；
         # 发行路径不是两处。
         for bad in (new, old.replace(old_stop, 'TimeoutStopSec=120\n'), old + old_stop, old + 'TimeoutStopSec=120\n',
@@ -162,10 +162,15 @@ class AssemblyTests(unittest.TestCase):
         backup = (a.BACKUP_CONNECTION_WINDOW_SECONDS + request
                   + a.BACKUP_RECLAIM_SECONDS + a.BACKUP_FREEZE_BUDGET_SECONDS)
         bridge = a.BRIDGE_STOP_GRACE_SECONDS + a.BRIDGE_STOP_MARGIN_SECONDS
-        self.assertEqual(a.STOP_TIMEOUT_SECONDS, backup + bridge + a.UNBUDGETED_STEPS_SECONDS)
+        margins = a.UNBUDGETED_STEPS_SECONDS + a.STOP_SAFETY_MARGIN_SECONDS
+        self.assertEqual(a.STOP_TIMEOUT_SECONDS, backup + bridge + margins)
         # 结果本身也钉住：任一项改了，这里先红，提醒把文档里的数字和算法一起看。
-        self.assertEqual(a.STOP_TIMEOUT_SECONDS, 195)
+        # 预算（各项按上限相加）和总数分开钉：拿余量去补一项漏掉的预算，总数不变也会红。
+        self.assertEqual(backup + bridge, 185)
+        self.assertEqual(a.STOP_TIMEOUT_SECONDS, 300)
         self.assertGreaterEqual(a.UNBUDGETED_STEPS_SECONDS, 10)
+        # 保险余量（用户 2026-11-20 定）：超时被强杀要人处理，所以它不能悄悄变小。
+        self.assertEqual(a.STOP_SAFETY_MARGIN_SECONDS, 105)
         self.assertGreater(a.STOP_TIMEOUT_SECONDS, a.OLD_STOP_TIMEOUT_SECONDS)
         # 程序里的三个常量：程序改了这里先红，免得装配还按旧值算。
         producer = 'crates/local-server/src/backup/producer.rs'
