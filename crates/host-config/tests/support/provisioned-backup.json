@@ -38,18 +38,18 @@
   "application_packages": [
    {
     "name": "studiolo-local-server",
-    "version": "2df75ca",
-    "digest": "adb868bb52f79f924f5392c3020f80434c31f67f55978d43450d223460979286"
+    "version": "0784ae9",
+    "digest": "7410097f97f8e5d54cf08099f5732d46b20935dea618d3c1343a772e8067ce98"
    },
    {
     "name": "studiolo-maintain",
-    "version": "2df75ca",
-    "digest": "38354e0081a52e704cafd3c4d7d3f55044bddc6f198d331b136745d24deb7652"
+    "version": "0784ae9",
+    "digest": "b3ff850750c021da237337ba5c8acd19873898475fe25f16030a6648ebbe6420"
    },
    {
     "name": "studiolo-backup-worker",
-    "version": "2df75ca",
-    "digest": "84945a8a0f1ea068fa9a86c1265a165281c3eb7986e934705c1982f2ce74d37d"
+    "version": "0784ae9",
+    "digest": "0b85b10423e9f3aac8c5906295a411ddea4454075ed133a4b6a8f02943ac313f"
    }
   ],
   "restic_digest": "20d4142678d0d95ec11a4759def1b73fd9190abc9ca19e4b62d067c0b387e639",
@@ -60,7 +60,7 @@
    },
    {
     "unit": "studiolo-backup-worker.service",
-    "revision": "2df75ca"
+    "revision": "0784ae9"
    }
   ]
  }
