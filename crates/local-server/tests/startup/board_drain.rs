@@ -1,5 +1,6 @@
 //! board 一侧先退出的收尾契约：内层服务不被丢弃，board 故障照退出信号走完整收尾链
-//! （等 Bridge 收尾 → 停刷新 → 排空 HTTP），在途请求做完之后才轮到清理写者，退出状态是错误。
+//! （停备份 → 等 Bridge 收尾 → 停刷新 → 排空 HTTP），在途请求做完、`drain` 返回之后才轮到
+//! 等写者收尾和进程退出，退出状态是错误。
 use super::{StartupError, drain, settle_board, shutdown_requested};
 use axum::{Router, routing::get};
 use std::{
@@ -115,11 +116,12 @@ async fn board_exit_drains_in_flight_request(side: Side) {
     // 外层照 `serve_until` 接：board 故障经 `shutdown_requested` 进关停；退出信号这里永远不来。
     let (fault, faulted) = oneshot::channel();
     let (writer_stopping, mut writer_stopped) = mpsc::unbounded_channel();
-    let (logged, stop_logged) = (events.clone(), events.clone());
+    let (logged, backup_logged, stop_logged) = (events.clone(), events.clone(), events.clone());
     let mut run = tokio::spawn(async move {
         let result = drain(
             settle_board(inner, maintenance, worker, board_stop, fault),
             shutdown_requested(std::future::pending(), faulted),
+            async move { record(&backup_logged, "backup-stopped") },
             Some(driver),
             bridge_stop,
             http_stop,
@@ -129,8 +131,9 @@ async fn board_exit_drains_in_flight_request(side: Side) {
             },
         )
         .await;
-        // 对应 `serve_until` 在 `drain` 之后的 `canonical_input::shutdown`：等作业、放 Broker 租约。
-        record(&logged, "writer-cleanup");
+        // 对应 `serve_until` 在 `drain` 之后的 `canonical_input::shutdown`：等写者的清理作业做完
+        // （停刷新时写者若空闲就已开始清理、放掉 Broker，之后的请求拿到「不可用」），随后进程退出。
+        record(&logged, "writer-shutdown");
         result
     });
 
@@ -163,11 +166,12 @@ async fn board_exit_drains_in_flight_request(side: Side) {
         *events.lock().unwrap(),
         [
             "request-start",
+            "backup-stopped",
             "bridge-done",
             "writer-stop",
             "request-done",
             "http-drained",
-            "writer-cleanup",
+            "writer-shutdown",
         ],
         "{side:?} 先退出：收尾顺序和退出信号那条链不一样"
     );

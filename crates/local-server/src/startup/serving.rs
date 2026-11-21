@@ -96,19 +96,17 @@ impl PreparedServer {
             .map(backup_input::Listening::start)
             .transpose()
         {
-            Ok(listening) => listening.map(Arc::new),
+            Ok(listening) => listening,
             Err(error) => {
                 canonical_input::shutdown(workbench.as_ref()).await?;
                 return Err(error);
             }
         };
-        // 收到退出信号或 board 一侧报故障，都先停备份：在途的封存还握着全部 owner 的冻结屏障，
-        // 要等它放开才能动写者。board 故障和退出信号走的是同一条收尾链。
-        let settling = backup.clone();
+        // 退出信号或 board 一侧报故障都触发关停，走同一条收尾链；收尾链第一步停备份（见 `drain`）。
         let (board_fault, board_faulted) = tokio::sync::oneshot::channel();
-        let shutdown = async move {
-            shutdown_requested(shutdown, board_faulted).await;
-            if let Some(backup) = &settling {
+        let shutdown = shutdown_requested(shutdown, board_faulted);
+        let stop_backup = async move {
+            if let Some(backup) = &backup {
                 backup.shutdown().await;
             }
         };
@@ -124,16 +122,20 @@ impl PreparedServer {
             },
             board_fault,
         );
-        let result = drain(server, shutdown, driver, stop, http_stop, move || {
-            if let Some(workbench) = stopping {
-                workbench.stop();
-            }
-        })
+        let result = drain(
+            server,
+            shutdown,
+            stop_backup,
+            driver,
+            stop,
+            http_stop,
+            move || {
+                if let Some(workbench) = stopping {
+                    workbench.stop();
+                }
+            },
+        )
         .await;
-        // 监听失败或驱动异常退出没经过上面那条路：这里补一次，重复调用无害。
-        if let Some(backup) = &backup {
-            backup.shutdown().await;
-        }
         canonical_input::shutdown(workbench.as_ref()).await?;
         result
     }
@@ -213,9 +215,9 @@ impl PreparedServer {
 /// 再收回没赢 `select!` 的句柄、逐个检查结果；任何一方出错，结果就是错误。
 ///
 /// 内层服务手里有在途请求，不能随 `select!` 丢掉：axum 的连接各自在后台任务里跑，丢掉外层
-/// future 就没人等它们排空，外层随后清理写者时请求可能还在跑。board 一侧先结束时把故障经
-/// `fault` 报给外层，外层照关停走完整收尾链（停备份、等 Bridge、停刷新、送来内层的关停信号），
-/// 这里一直等到内层排空才返回。
+/// future 就没人等它们排空，外层随后等写者收尾、进程退出时请求可能还在跑、被截断。board 一侧
+/// 先结束时把故障经 `fault` 报给外层，外层照关停走完整收尾链（停备份、等 Bridge、停刷新、送来
+/// 内层的关停信号），这里一直等到内层排空才返回。
 async fn settle_board<S, M, W>(
     inner: S,
     mut maintenance: tokio::task::JoinHandle<Result<(), M>>,
@@ -268,12 +270,17 @@ where
     }
 }
 
-/// 关闭链只走一遍：先通知并等待 Bridge 安全收尾，写者仍可用；再停止刷新并排空 HTTP。
-/// 监听失败、驱动异常退出或 board 一侧报故障（经 `shutdown` 进来）同样走完整收尾，
+/// 关闭链只走一遍：先停备份（在途的封存握着全部 owner 的冻结屏障，要等它放开才能动写者）；
+/// 再通知并等待 Bridge 安全收尾，写者仍可用；再停止刷新并排空 HTTP。
+/// 退出信号、board 一侧报故障（都经 `shutdown` 进来）、监听失败、驱动异常退出，哪一支先到都走完整收尾，
 /// 不能丢弃尚在处理请求的服务 future。
-async fn drain<S, F, W>(
+///
+/// 停备份不放进 `select!`：放在关停那一支里，别的分支先到就会把它中途丢掉，备份已经把要等的
+/// 句柄取走了，事后再调也等不到在途的连接和封存。
+async fn drain<S, F, B, W>(
     server: S,
     shutdown: F,
+    stop_backup: B,
     mut driver: Option<tokio::task::JoinHandle<Result<(), String>>>,
     stop: tokio::sync::watch::Sender<bool>,
     http_stop: tokio::sync::oneshot::Sender<()>,
@@ -282,10 +289,11 @@ async fn drain<S, F, W>(
 where
     S: Future<Output = Result<(), StartupError>>,
     F: Future<Output = ()>,
+    B: Future<Output = ()>,
     W: FnOnce(),
 {
     let mut server = Box::pin(server);
-    let (mut result, served, joined) = tokio::select! {
+    let (mut result, mut served, joined) = tokio::select! {
         () = shutdown => (Ok(()), false, false),
         result = &mut server => (result, true, false),
         _ = async {
@@ -295,6 +303,23 @@ where
             }
         } => (Err(StartupError::Serve), false, true),
     };
+    // 停备份期间服务照旧在跑、能接新连接；服务这时先结束只记下结果，不打断停备份。
+    let mut stop_backup = std::pin::pin!(stop_backup);
+    let mut backup_stopped = false;
+    if !served {
+        tokio::select! {
+            () = &mut stop_backup => backup_stopped = true,
+            early = &mut server => {
+                served = true;
+                if let Err(error) = early {
+                    result = Err(error);
+                }
+            }
+        }
+    }
+    if !backup_stopped {
+        stop_backup.await;
+    }
     let _ = stop.send(true);
     if !joined
         && let Some(driver) = driver
