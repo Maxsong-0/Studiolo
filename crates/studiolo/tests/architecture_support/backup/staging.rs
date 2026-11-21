@@ -55,6 +55,8 @@ pub(super) fn remainder(path: &Path, source: &str) -> String {
                     "fs::flock(&fd,fs::FlockOperation::NonBlockingLockExclusive)",
                     1,
                 ),
+                // 析构显式解锁：并发起的子进程在 exec 前握着描述副本时，租约也立即结束（BUG-041）。
+                ("fs::flock(&self.fd,fs::FlockOperation::Unlock)", 1),
                 (
                     "fs::statat(&parent.fd,NAME,fs::AtFlags::SYMLINK_NOFOLLOW)",
                     1,

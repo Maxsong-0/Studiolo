@@ -3,7 +3,9 @@ use super::{fixture::*, *};
 use std::{
     io::{BufRead, BufReader, Write},
     process::{Command, Stdio},
+    sync::atomic::{AtomicBool, Ordering},
 };
+use studiolo_backup::checkpoint::staging::reclaim_staging;
 const CHILD: &str = "contract::staging::lifecycle::child_holds_original_area";
 #[test]
 #[ignore = "仅由生命周期父测试在虚构目录内启动"]
@@ -111,4 +113,39 @@ fn legacy_orphans_and_replaced_lock_fail_closed_without_deleting_them() {
     private_file(&f.parent.join(".producer-lease"), b"");
     assert_eq!(area.abort(), Err(StagingError::CleanupFailed));
     assert_eq!(f.try_area("new").err(), Some(StagingError::CleanupRequired));
+}
+/// 人侧备份生产者先回收、紧接着建暂存，同一进程里看板执行器可能正在起子进程（BUG-041）。
+/// 子进程到 exec 之前握着持锁描述的副本，放下的租约必须立即可重拿；析构只关 FD 时，
+/// 这里约六成轮次报 `Busy`（测试箱 x86_64 实测）。
+#[test]
+fn reclaim_then_create_never_sees_busy_while_other_threads_spawn_children() {
+    const ROUNDS: usize = 400;
+    let f = Fixture::new();
+    f.area("seed").abort().unwrap();
+    let stop = AtomicBool::new(false);
+    let failures: Vec<StagingError> = std::thread::scope(|s| {
+        for _ in 0..2 {
+            s.spawn(|| {
+                while !stop.load(Ordering::Relaxed) {
+                    Command::new("true").status().unwrap();
+                }
+            });
+        }
+        // 循环里不许 panic：先停掉起子进程的线程再断言，否则 scope 等不到它们退出。
+        let failures = (0..ROUNDS)
+            .filter_map(|_| {
+                let reclaimed = reclaim_staging(&f.parent, None, deadline()).err();
+                let created = f.try_area("round").and_then(StagingArea::abort).err();
+                reclaimed.or(created)
+            })
+            .collect();
+        stop.store(true, Ordering::Relaxed);
+        failures
+    });
+    assert!(
+        failures.is_empty(),
+        "{ROUNDS} 轮里 {} 轮失败，前几个：{:?}",
+        failures.len(),
+        &failures[..failures.len().min(5)]
+    );
 }

@@ -90,6 +90,18 @@ impl Drop for Serial<'_> {
     }
 }
 
+/// 门铃独占的目录锁跟着打开的文件描述走：同进程别的线程起子进程时，子进程到 exec 之前一直
+/// 拿着这个描述的副本，只关本 FD 会让锁活到子进程 exec，紧接着再打开就报 `Busy`（BUG-041）。
+/// 放下时显式解锁，立即让位；没独占时本描述上平常没有锁（替换期间的锁由 `Serial` 放）。
+#[cfg(unix)]
+impl Drop for Root {
+    fn drop(&mut self) {
+        if self.exclusive {
+            let _ = flock(&self.root, FlockOperation::Unlock);
+        }
+    }
+}
+
 #[cfg(unix)]
 impl DeadmanStore {
     /// 绑定已存在的私有目录；不创建目录，也不修复权限。
@@ -388,3 +400,7 @@ impl DoorbellStore {
         Err(StoreError::UnsupportedPlatform)
     }
 }
+
+#[cfg(all(test, unix))]
+#[path = "../../tests/private/store_lock.rs"]
+mod tests;
