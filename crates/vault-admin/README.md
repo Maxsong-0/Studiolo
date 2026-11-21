@@ -41,7 +41,7 @@ studiolo-vault-admin initialize \
 
 这只建立快照当时的 canonical 正文。后续原 Obsidian 文件变化不会自动进入该库；持续同步必须另行配置和验收。黑板的消费者写权限仍由真实 effective policy、身份和 L3 发布裁决，本 CLI 不批准这些权限。
 
-定向验收（在哪跑按机器分：Mac 上每条前加 `scripts/test-linux.sh`，送到 `githubci` 跑；DGX 由主会话先按根 `README.md`「开发」段「DGX 本机跑」设好构建目录再直接跑；子 agent 不在本机跑。构建目录由这两种入口按工作树隔离，不再单独指定）：
+定向验收（Mac 本机不跑：每条前加 `scripts/test-linux.sh`，送到 `githubci` 跑；DGX 2026-11-20 起不再用来开发和测试，见根 `AGENTS.md` 第七节。构建目录由这个入口按工作树隔离，不再单独指定）：
 
 ```sh
 cargo --locked test -p studiolo-vault-admin

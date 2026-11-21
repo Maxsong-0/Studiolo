@@ -1,6 +1,6 @@
 # 测试箱步骤单（testbox guide「步骤单」）。GitHub CI 2026-11-16 弃用（spark-testbox 项目 T-078 的 Studiolo 份，ADR-036），合进 main 之前必过 ci 套：
 #   testbox submit --project studiolo --recipe full --steps ci --arch x86_64 --memory 20G --cpu 8 --wait
-# Mac 上在 testbox 后面加 --remote testbox@max-spark；一步失败 --wait 马上返回，任务照跑完剩下的步骤（--wait-all 等全部）。
+# 在 Mac 上交，testbox 后面加 --remote testbox@testbox-ctl（DGX 2026-11-20 起退出测试箱，执行节点只剩 x86_64 的 108）；一步失败 --wait 马上返回，任务照跑完剩下的步骤（--wait-all 等全部）。
 # --recipe full 取 full 档（上限 60 分钟、64 GiB）；默认的 targeted 档只有 30 分钟，整套跑不完时会被停。
 #
 # ci 套逐步照搬原来 .github/workflows/ci.yml 的三个作业（rust、frontend、alerts-worker），命令一字不改；

@@ -17,9 +17,9 @@
 | `web/` | 「策略平面」视图：effective 与现行各项、提交 desired 并看报告（扩大项标红）、发布（就地弹 One-time Code 窗口，认证通过后自动继续这一次发布，不必去账户页再回来重来）、待处理 desired（含 AI 提案）、版本列表与回滚、三级吊销 |
 | `auth` | `FactorRuntime::require_l3` 门面透出（T-026 复审 #19 的 M4 前置） |
 
-## 在 DGX 或 Linux 服务器上跑一遍（全部虚构材料；Mac 本机不跑 cargo）
+## 在 Linux 服务器上跑一遍（全部虚构材料；Mac 本机不跑 cargo）
 
-在 DGX 上由主会话跑，构建环境先按根 `README.md`「开发」段「DGX 本机跑」设好（子 agent 不跑）。
+原来在 DGX 上由主会话跑；DGX 2026-11-20 起不再用来开发和测试（根 `AGENTS.md` 第七节），现在没有指定跑这一遍的 Linux 机器，要实跑先问用户在哪跑（子 agent 不跑）。
 
 ```bash
 # 0. 私有演示根：取临时目录的物理路径（账本拒绝路径里有符号链接；macOS 的 /tmp、$TMPDIR 都经过符号链接，Linux 上就是 /tmp）

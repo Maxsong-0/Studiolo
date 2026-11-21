@@ -40,7 +40,7 @@
 
 - 只做任务书里的这一件，不扩范围；任务书没点名的文件非改不可时，最小改动并在回执里说明。
 - 工作树里有别人的未提交改动是正常的：不 stash、不 checkout、不 reset、不 restore、不 clean；不用 `git status`／`git diff` 判断「谁改了什么」。
-- 用**最窄的证明**自检，但测试与编译**在哪跑看你在哪台机器**（对照表见第七节）。**Mac：所有测试与编译检查一律不在本机跑**（2026-09-23 用户硬约束），定向测试、fmt、clippy、build 都用 `scripts/test-linux.sh <命令>`（如 `scripts/test-linux.sh cargo --locked test -p <包> --test <目标>`）在服务器上跑，前端检查以第五节的 ci 套为准。**DGX：子 agent 不跑任何测试与编译**（2026-10-04 用户拍板），把要跑的命令写进回执「验收自评」并标 `unverified`，由主会话最后统一跑；主会话在 DGX 上经本机登记的隔离测试入口（`testbox submit --project studiolo …`）提交，不在登录 shell 里裸跑（ADR-028）。Cursor Cloud VM 见第六节。全量回归留给派发方；全量命令见 `README.md`「开发」段。
+- 用**最窄的证明**自检，但测试与编译**在哪跑看你在哪台机器**（对照表见第七节）。**Mac：所有测试与编译检查一律不在本机跑**（2026-09-23 用户硬约束），定向测试、fmt、clippy、build 都用 `scripts/test-linux.sh <命令>`（如 `scripts/test-linux.sh cargo --locked test -p <包> --test <目标>`）在服务器上跑，前端检查以第五节的 ci 套为准。**DGX 2026-11-20 起不再用来开发和测试**（第七节），不在上面跑任何测试与编译。Cursor Cloud VM 见第六节。全量回归留给派发方；全量命令见 `README.md`「开发」段。
 - 被卡就在回执里写明阻塞，不猜、不绕、不伪造闭环。
 - 临时产物放会话 scratchpad，用完清理自己产生的。
 
@@ -49,10 +49,10 @@
 - **GitHub CI 和自托管 runner 已弃用**（2026-11-16，spark-testbox 项目 T-078 的 Studiolo 份，用户拍板）：`.github/workflows/ci.yml`、`deploy/ci-runner/` 从仓库删掉，
   GitHub 上的 runner 注销、仓库变量 `CI_RUNNER_LABELS` 删掉。原来那份工作流的三个作业（rust、frontend、alerts-worker）命令一字不改，
   搬进工作树根 `.testbox.toml` 的 `ci` 套。推送和 PR 不再触发任何检查。
-- **合进 main 之前必过 ci 套**：DGX 上 `testbox submit --project studiolo --recipe full --steps ci --arch x86_64 --memory 20G --cpu 8 --wait`，Mac 上在 `testbox` 后面加
-  `--remote testbox@max-spark`，整条放后台等。一步失败 `--wait` 马上返回并点名那一步，任务照跑完其余步骤（要一次拿全用 `--wait-all`）。
+- **合进 main 之前必过 ci 套**：在 Mac 上交 `testbox --remote testbox@testbox-ctl submit --project studiolo --recipe full --steps ci --arch x86_64 --memory 20G --cpu 8 --wait`，
+  整条放后台等（控制端是 Mac Studio 上的虚拟机 `testbox-ctl`，执行节点只剩 x86_64 的 x86-1，即 108；旧写法 `testbox@max-spark` 也指到控制端，不再用）。一步失败 `--wait` 马上返回并点名那一步，任务照跑完其余步骤（要一次拿全用 `--wait-all`）。
   全量同一时间只许一个会话跑：交之前先看 `testbox status` 有没有别的 studiolo 全量在跑。
-- **ci 套是门槛，不是调试器**：改的过程中用定向命令（`testbox submit --project studiolo --arch x86_64 --cmd '…'`）验，攒成一批再交 ci 套。
+- **ci 套是门槛，不是调试器**：改的过程中用定向命令（`testbox --remote testbox@testbox-ctl submit --project studiolo --arch x86_64 --cmd '…'`）验，攒成一批再交 ci 套。
   Mac 本机不跑任何测试与编译检查（`cargo test`／`fmt`／`clippy`／`build`、Python 契约、前端 tsc／lint／vitest／build、真实管线都算，2026-09-23 用户硬约束）。
 - 门禁命令由架构守卫逐行钉住（`crates/studiolo/tests/architecture_cases/ci.rs`）：删掉、注释、改参数、吞失败、关 errexit、换目录、
   改成后台服务都判红；有门禁的那一步第一行必须是对应目录的 `source …testbox-ci-env.sh`，最后一条门禁之前只许有别的门禁和几行版本诊断
@@ -67,7 +67,7 @@
 
 ## 六、Cursor Cloud 云端 VM（2026-09-27 起）
 
-- 云端 VM 是一次性的 Ubuntu 24.04 x86_64（不是第四节写的 Mac，也不是第七节的 DGX），与测试箱同为原生 Linux，但连不到 `githubci` 和测试箱，`scripts/test-linux.sh` 在这里不可用。
+- 云端 VM 是一次性的 Ubuntu 24.04 x86_64（不是第四节写的 Mac），与测试箱同为原生 Linux，但连不到 `githubci` 和测试箱，`scripts/test-linux.sh` 在这里不可用。
   改用 **`scripts/test-cursor-cloud.sh <命令>`** 原生跑（对应 `test-linux.sh` 带参数的用法）；默认回路按 `test-linux.sh` 里的清单逐条跑，其余步骤照 `.testbox.toml` 的 ci 套。
 - 必须经这个脚本跑。所有云端 VM 的可锁定内存上限都只有 8 MiB，普通用户抬不动，秘密驻留面加固（mlockall）会失败关闭（如 `studiolo-local-server` 二进制里的 `startup::tests` 集体红）；
   没有环境构建、从默认镜像启动的 VM 根文件系统还是 overlayfs，目录与文件的 `st_dev` 不同，vault-broker 与 Python 副本／快照／发行工具的同设备检查对 `/tmp`、`$HOME` 下的夹具会失败关闭（从环境构建启动的是普通 ext4）。
@@ -83,21 +83,19 @@
 - 环境安装脚本（保存在 Cursor 面板，不在仓库）已备好 1.97.1 ＋ rustfmt／clippy、GNU `time`（内存测量用例调 `/usr/bin/time`）、`web/node_modules` 与 cargo 依赖缓存，
   并在 `$CARGO_HOME/config.toml` 设 `[profile.dev] debug = "line-tables-only"`，与 ci 套、`test-linux.sh` 同一设置。
 - vault `项目/Studiolo-Docs/` 与全局 `~/.claude/CLAUDE.md` 不在 VM 上。GitHub 上已没有 CI（第五节）：推送不触发检查，合并门禁 ci 套只能由本机会话交测试箱，VM 里连不到。
-- 在推进工作的交接快照放在 `docs/handoff/`（vault 为准，可能滞后）。验证在 VM 里一律用上面的 `test-cursor-cloud.sh`，合并前的 ci 套写明「交本机会话」；要登录 107／108／169、读写 vault 或用 studiolo MCP 的步骤云端做不了，停下写明「交本机会话」（其中登录 107／108／169 的只能交 Mac 会话：DGX 同样连不到家里 192.168.100.x 网段），不要索要或注入内网／SSH 凭据。
+- 在推进工作的交接快照放在 `docs/handoff/`（vault 为准，可能滞后）。验证在 VM 里一律用上面的 `test-cursor-cloud.sh`，合并前的 ci 套写明「交本机会话」；要登录 107／108／169、读写 vault 或用 studiolo MCP 的步骤云端做不了，停下写明「交本机会话」（其中登录 107／108／169 的只能交 Mac 会话），不要索要或注入内网／SSH 凭据。
 
-## 七、DGX（`max-spark`，2026-10-04 起）
+## 七、在哪台机器上干活（DGX 2026-11-20 起退出开发与测试）
 
-| | Mac | DGX（`max-spark`） | Cursor Cloud VM（第六节） |
-|---|---|---|---|
-| 系统 | macOS arm64 | Ubuntu 24.04 aarch64 | Ubuntu 24.04 x86_64，一次性 |
-| 本机跑测试与编译 | 不跑（2026-09-23） | 主会话可以跑，子 agent 不跑（2026-10-04） | 可以；除前端检查外都经 `scripts/test-cursor-cloud.sh` |
-| 连得到 `githubci` 与家里 192.168.100.x | 经 Tailscale 子网路由 | 连不到（不收子网路由，也没有登录密钥） | 连不到 |
-| Linux 回路入口 | `scripts/test-linux.sh [命令]`（同步到 `githubci` 跑） | 手动，按 `README.md`「开发」段「DGX 本机跑」 | `scripts/test-cursor-cloud.sh <命令>` |
+| | Mac（MacBook、Mac Studio） | Cursor Cloud VM（第六节） |
+|---|---|---|
+| 系统 | macOS arm64 | Ubuntu 24.04 x86_64，一次性 |
+| 本机跑测试与编译 | 不跑（2026-09-23） | 可以；除前端检查外都经 `scripts/test-cursor-cloud.sh` |
+| 连得到 `githubci` 与家里 192.168.100.x | 经 Tailscale 子网路由 | 连不到 |
+| Linux 回路入口 | `scripts/test-linux.sh [命令]`（同步到 `githubci` 跑）；测试箱 `testbox --remote testbox@testbox-ctl …`（第五节） | `scripts/test-cursor-cloud.sh <命令>` |
 
-- DGX 是用户自己的 DGX Spark，仓库在 `~/All-Project/studiolo`（2026-10-03 从 Mac 原样拷来，之后两边各自干活、经 GitHub 推拉）。本地 `main` 可能落后，开工先 `git fetch`，从 `origin/main` 开分支。
-- 主会话经本机登记的隔离测试入口（testbox，ADR-028）提交：结果要和合并门禁同架构的交 x86_64 节点（`--arch x86_64`），要 aarch64 的留在 DGX；入口不可用时才按 `README.md`「开发」段「DGX 本机跑」手动跑：umask 022、每个工作树一份 `CARGO_TARGET_DIR`（不用共享 `target/`）；
-  **全量回路整机一把锁**（`flock -n`，别的会话占着就退出，不等、不抢；锁文件与命令都在那一段）。`scripts/test-linux.sh` 的本机模式另有任务，落地前一律照那段手动跑。
-- DGX 不用第六节的 `scripts/test-cursor-cloud.sh`：`ulimit -l` 为 unlimited、`/tmp` 与家目录在同一块 ext4 上（2026-10-04 实测），那两类环境失败在这里不会出现；
-  它还要免密 sudo，而 DGX 的 sudo 只有用户本人能输。缺工具就停下报告用户，不要自己下载执行安装脚本；工具链现状、aarch64 与 ci 套的差别见 README 那一段。
-- 要进家里 192.168.100.x 网段的事（登录 107／108／169、打包发布、vault 副本推送到 169）DGX 做不了，交 Mac 会话。
-  部署与发布只在 Mac 做（DGX 不放部署凭据），vault 副本也只由 Mac 推（均为 2026-10-04 用户拍板）。
+- **DGX（`max-spark`）不再用来开发和测试**：2026-10-04～11-20 它曾是第二台开发机和测试机（ADR-028，已被取代）。用户 2026-11-16 定开发搬到 Mac Studio、DGX 只当测试机和跑大模型（spark-testbox ADR-025），
+  2026-11-20 又把它从测试箱彻底摘掉、整台留给大模型（spark-testbox ADR-026）。不在 DGX 上开发、跑测试或编译，也不往那里派活；原来 `README.md`「开发」段的「DGX 本机跑」随之删掉（最后一版见提交 `f2e8639`）。
+- 测试箱只剩 x86_64 节点 x86-1（108）：不带 `--arch` 的任务落 108，`--arch aarch64` 提交即被拒。本仓库在 aarch64 上没有地方跑测试，
+  需要时如实写「aarch64 没地方跑」，不改派到 x86_64 冒充；108 掉线时没有备用，任务排队等它回来。
+- 部署与发布只在 Mac 做，vault 副本也只由 Mac 推（2026-10-04 用户拍板）。
