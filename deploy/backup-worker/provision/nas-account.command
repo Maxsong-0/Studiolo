@@ -29,9 +29,11 @@ scratch=''
 link=''
 read -r -a nas <<< "${STUDIOLO_NAS_SSH:--J studiolo-108-ts maxsong@192.168.100.111}"
 # 每一次 ssh 都带这几项：NAS 的主机钥匙只认仓库里钉住的那一把（不看这台 Mac 自己记的，也不往任何地方记新的）。
+# 最后两项关掉另外两个钥匙来源：这台 Mac 的 ssh 配置里要是写了 KnownHostsCommand（由一条命令给出钥匙）或
+# VerifyHostKeyDNS（信 DNS 里登记的指纹），不关的话它们给的钥匙也会被认。
 # 默认经 108 跳：跳板那一段照旧用这台 Mac 自己的 ssh 配置和已知主机（命令行上的 -o 管不到跳板）。
 pin=(-o StrictHostKeyChecking=yes -o "UserKnownHostsFile=\"$known_hosts\"" -o GlobalKnownHostsFile=/dev/null
-     -o HostKeyAlias=studiolo-nas -o UpdateHostKeys=no)
+     -o HostKeyAlias=studiolo-nas -o UpdateHostKeys=no -o KnownHostsCommand=none -o VerifyHostKeyDNS=no)
 [[ -f "$helper" ]] || { echo "找不到 $helper"; exit 1; }
 [[ -f "$known_hosts" ]] || { echo "找不到 $known_hosts"; exit 1; }
 # 追加账号、换单元这两步，标准输入里先是帮手脚本、后面跟着要交给它的内容（账号行，或者单元文件）：

@@ -12,9 +12,11 @@ import os
 from pathlib import Path
 import re
 import shutil
+import signal
 import socket
 import stat
 import subprocess
+import sys
 import tempfile
 import types
 import unittest
@@ -366,6 +368,32 @@ class StepTests(unittest.TestCase):
                 prereq.place(os.path.join(scratch, 'fifth'), 0o644, io.BytesIO(b'whole'), owner, digest(b'whole'))
             self.assertEqual(sorted(os.listdir(scratch)),
                              ['.fifth.placing', '.fourth.placing', 'file', 'file.link', 'file.own', 'file.owned', 'file.third'])
+            # 临时名怎么拼只写在 placing 一处；leftover 看的就是它（悬空链接也算在）。
+            self.assertEqual(prereq.placing(os.path.join(scratch, 'fourth')), leftover)
+            self.assertEqual([prereq.leftover(os.path.join(scratch, name)) for name in ('fourth', 'fifth', 'file', 'sixth')],
+                             [True, True, False, False])
+
+    def test_a_leftover_temporary_name_is_reported_before_the_file_itself_is_judged(self):
+        """真的文件系统上造那种现场：正式名已经起了、临时名还没删就被强杀，一个文件留下两个名字。
+        只说「不是预期的样子」的话，人不知道该删哪一个；这里先点出临时名。"""
+        for apply in (False, True):
+            provision = self.provision(apply)
+            with self.subTest(apply=apply), tempfile.TemporaryDirectory() as scratch, \
+                    patch.dict(prereq.PLACED, {scratch + '/file': 0o644}):
+                path, twin = scratch + '/file', scratch + '/.file.placing'
+                Path(path).write_bytes(b'content')
+                os.link(path, twin)
+                told = twin + ' 已经在：上一次放到一半被强杀留下的，或者另一处正在放。确认没有别的 prereq.py 在跑，删掉它再重跑'
+                for attempt in (lambda: provision.root_file('文件', path, b'content'),
+                                lambda: provision.root_copy('拷贝', scratch + '/origin', path, 'ab' * 32)):
+                    with self.assertRaises(prereq.Refused) as refusal:
+                        attempt()
+                    self.assertEqual(str(refusal.exception), told)
+                self.assertEqual((self.ran, sorted(os.listdir(scratch)), os.lstat(path).st_nlink),
+                                 ([], ['.file.placing', 'file'], 2))
+                # 临时名删掉之后，不再拦在这一步。
+                os.unlink(twin)
+                provision.unfinished(path)
 
     def test_place_leaves_no_temporary_name_when_it_is_interrupted_at_any_point(self):
         """每一步上被打断（Ctrl-C，或者终端断开、被要求结束变成的同一种异常）都不留临时名，也不留半份正式文件。
@@ -855,6 +883,58 @@ class NasAccountTests(unittest.TestCase):
         self.assertEqual(self.target.read_bytes(), OLD + LINE)
         self.assertEqual(self.files(), ['backup.htpasswd', keep])
 
+    def test_what_a_killed_replace_left_behind_stops_the_next_run_and_is_never_touched(self):
+        """换到一半被强杀（这里真的在子进程里杀）：带着新账号散列的临时文件留在账号文件旁边，名字是固定的。
+        下一次认得出来、停下：不删它、不接着用、不盖掉，连改之前的副本都不新写。check 把它点出来。"""
+        keep, stale = 'backup.htpasswd.before-studiolo-backup-worker', self.root / 'backup.htpasswd.new'
+        told = str(stale) + ' 已经在：上一次换到一半被强杀或断电留下的，里面是那一次要换上的内容。不删它、也不接着用：在 NAS 上看过之后 sudo rm 它，再重跑'
+        script = ('import importlib.util, os, signal, sys\n'
+                  'from pathlib import Path\n'
+                  'spec = importlib.util.spec_from_file_location("nas_account", sys.argv[1])\n'
+                  'nas = importlib.util.module_from_spec(spec)\n'
+                  'spec.loader.exec_module(nas)\n'
+                  'nas.ROOT = Path(sys.argv[2])\n'
+                  'status = os.lstat(str(nas.ROOT / "backup.htpasswd"))\n'
+                  'nas.ACCOUNT_FILE_OWNER = (status.st_uid, status.st_gid)\n'
+                  'nas.os.replace = lambda *names: os.kill(os.getpid(), signal.SIGKILL)\n'
+                  'nas.append(sys.stdin.buffer.read())\n')
+        killed = subprocess.run([sys.executable, '-I', '-B', '-c', script, str(HERE / 'nas_account.py'), str(self.root)],
+                                input=LINE)
+        self.assertEqual(killed.returncode, -signal.SIGKILL)
+        self.assertEqual(self.files(), ['backup.htpasswd', keep, 'backup.htpasswd.new'])
+        self.assertEqual((self.target.read_bytes(), stale.read_bytes()), (OLD, OLD + LINE))
+
+        def refused():
+            with self.assertRaises(ValueError) as refusal:
+                nas.append(LINE)
+            self.assertEqual(str(refusal.exception), told)
+        refused()
+        self.assertEqual(self.files(), ['backup.htpasswd', keep, 'backup.htpasswd.new'])
+        self.assertEqual((self.target.read_bytes(), stale.read_bytes()), (OLD, OLD + LINE))
+        # 没有副本的现场、临时名是悬空链接，也一样；停下之前连副本都不新写。
+        os.unlink(str(self.root / keep))
+        os.unlink(str(stale))
+        os.symlink('/nonexistent/studiolo-test', str(stale))
+        refused()
+        self.assertEqual((self.files(), self.target.read_bytes(), os.readlink(str(stale))),
+                         (['backup.htpasswd', 'backup.htpasswd.new'], OLD, '/nonexistent/studiolo-test'))
+        # check 把两处的残留都点出来（单元旁边的那一份同理）。
+        beside_unit = self.unit.parent / (nas.SERVICE + '.new')
+        beside_unit.write_bytes(b'')
+        lines = []
+        with patch.object(nas, 'state', return_value='inactive'), patch.object(nas, 'listening', return_value=False):
+            nas.check(lines.append)
+        self.assertIn('换到一半留下的临时文件：' + str(stale) + '、' + str(beside_unit) + '（add、unit 会停在它上面：看过之后 sudo rm）', lines)
+        # 人看过、删掉之后照常做完，不再留临时文件。
+        os.unlink(str(stale))
+        os.unlink(str(beside_unit))
+        nas.append(LINE)
+        self.assertEqual((self.files(), self.target.read_bytes()), (['backup.htpasswd', keep], OLD + LINE))
+        lines.clear()
+        with patch.object(nas, 'state', return_value='inactive'), patch.object(nas, 'listening', return_value=False):
+            nas.check(lines.append)
+        self.assertIn('换到一半留下的临时文件：没有', lines)
+
     def test_only_one_append_runs_at_a_time(self):
         """第一处读完旧内容、还没换上新文件，第二处进来：第二处被拒，第一处照常做完。"""
         real, seen = nas.append_locked, []
@@ -1258,6 +1338,24 @@ class NasUnitTests(unittest.TestCase):
         self.assertNotIn('restart ' + nas.SERVICE, systemd.verbs())
         self.assertEqual(systemd.verbs()[-1], 'reset-failed ' + nas.REHEARSAL_UNIT.name)
 
+    def test_what_a_killed_replace_left_behind_stops_the_unit_change_before_anything_is_done(self):
+        """换单元换到一半被强杀或断电留下的临时文件：下一次先停下，演练都不开始；那一份和现场的单元都不动。"""
+        stale = self.unit.parent / (nas.SERVICE + '.new')
+        told = str(stale) + ' 已经在：上一次换到一半被强杀或断电留下的，里面是那一次要换上的内容。不删它、也不接着用：在 NAS 上看过之后 sudo rm 它，再重跑'
+        stale.write_bytes(UNIT_NOW)
+        systemd, said = self.install()
+        self.assertEqual((str(said[-1]), systemd.calls), (told, []))
+        self.assertEqual((self.unit.read_bytes(), stale.read_bytes()), (UNIT_BEFORE, UNIT_NOW))
+        # 现场已经是这一版也一样先停下：那一份是哪来的得由人看。
+        self.put(UNIT_NOW)
+        systemd, said = self.install()
+        self.assertEqual((str(said[-1]), systemd.calls), (told, []))
+        # 人看过、删掉之后照常换上，不再留临时文件。
+        self.put(UNIT_BEFORE)
+        os.unlink(str(stale))
+        systemd, said = self.install()
+        self.assertEqual((said[-1], self.unit.read_bytes(), self.leftovers()), ('nas_unit=installed', UNIT_NOW, ['units/' + nas.SERVICE]))
+
     def test_the_replacement_is_made_durable_in_the_units_own_directory(self):
         real, synced = os.fsync, []
 
@@ -1432,6 +1530,9 @@ class EntryTests(unittest.TestCase):
             for case in cases:
                 self.assertIs(globals()[case.__name__], case)
                 self.assertTrue(unittest.defaultTestLoader.getTestCaseNames(case), case.__name__ + ' 里没有用例')
+        # 每个用例类在这个文件里只挂在一个名字下：unittest 按名字一个个加载，多挂一个名字，那个类的用例就跑两遍、条数虚高。
+        bound = [value for value in globals().values() if isinstance(value, type) and issubclass(value, unittest.TestCase)]
+        self.assertEqual(sorted(case.__name__ for case in bound), sorted(case.__name__ for case in set(bound)))
 
 
 # 其余用例按脚本分在同目录的几个文件里。合并门禁只跑这一份（.testbox.toml），所以在这里把它们并进来一起跑；
@@ -1443,6 +1544,8 @@ for _part in PARTS:
         if isinstance(_value, type) and issubclass(_value, unittest.TestCase):
             assert _name not in globals(), _name + '：两份用例文件里有同名的类'
             globals()[_name] = LOADED[_name] = _value
+# 循环变量不留在模块里：留着的话，最后一个用例类还挂在 _value 这个名字下，会被多加载一遍。
+del _part, _name, _value
 
 
 if __name__ == '__main__':

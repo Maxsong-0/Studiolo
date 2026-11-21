@@ -318,15 +318,24 @@ def groups_of(name, gid):
 
 
 def system_range(kind, path=None):
-    """系统账号（kind 是 'UID'）或系统组（'GID'）的号码范围，和 useradd、groupadd 的 --system 取法一致：
-    login.defs 里的 SYS_<kind>_MIN、SYS_<kind>_MAX；没写就用 shadow 的默认值（101 到 <kind>_MIN - 1，<kind>_MIN 默认 1000）。"""
-    found = {}
+    """系统账号（kind 是 'UID'）或系统组（'GID'）的号码范围，照 useradd、groupadd 的 --system 的取法：
+    login.defs 里的 SYS_<kind>_MIN、SYS_<kind>_MAX；没写就用 shadow 的默认值（101 到 <kind>_MIN - 1，<kind>_MIN 默认 1000）。
+    一行怎么读也照 shadow 自己的（lib/getdef.c 的 def_load，4.13 和 169 上的 4.17.4 一样）：「名字 空白 值」，
+    # 只有在行首才是注释，只有名字没有值的不算，同一个名字写了几次取最后一次。
+    值不是一个十进制数（带引号、后面跟着行内注释、八进制、十六进制、别的字）的，shadow 读出来的东西随写法和版本不同
+    （行内注释不会被去掉，整个值读不成数，它退回默认值）：这里不猜，停下由人看。"""
+    wanted = ('SYS_' + kind + '_MIN', 'SYS_' + kind + '_MAX', kind + '_MIN')
+    source, found = path or LOGIN_DEFINITIONS, {}
     try:
-        with open(path or LOGIN_DEFINITIONS, encoding='utf-8', errors='replace') as stream:
+        with open(source, encoding='utf-8', errors='replace') as stream:
             for line in stream:
-                words = line.split('#', 1)[0].split()
-                if len(words) == 2 and words[1].isdigit():
-                    found[words[0]] = int(words[1])
+                words = line.split(None, 1)
+                if len(words) == 2 and words[0] in wanted:
+                    value = words[1].strip()
+                    require(value.isascii() and value.isdigit() and (value == '0' or value[0] != '0'),
+                            source + ' 里 ' + words[0] + ' 那一行的值不是一个十进制数（' + value[:40]
+                            + '）：useradd 会把它读成什么这里说不准，先由人看过')
+                    found[words[0]] = int(value)
     except FileNotFoundError:
         pass
     return found.get('SYS_' + kind + '_MIN', 101), found.get('SYS_' + kind + '_MAX', found.get(kind + '_MIN', 1000) - 1)
@@ -358,14 +367,27 @@ def chain(path, uid, top='/'):
                 str(node) + ' 不是真目录（路径上不能有链接），或者属主不对、组和其他人可写')
 
 
+def placing(destination):
+    """放文件时用的临时名：和正式名在同一个目录里，名字是固定的。"""
+    directory, name = os.path.split(destination)
+    return os.path.join(directory, '.' + name + '.placing')
+
+
+def leftover(destination):
+    """放这个文件用的临时名现在在不在（在的话，是上一次被强杀留下的，或者另一处正在放）。"""
+    return os.path.lexists(placing(destination))
+
+
+LEFTOVER = ' 已经在：上一次放到一半被强杀留下的，或者另一处正在放。确认没有别的 prereq.py 在跑，删掉它再重跑'
+
+
 def place(destination, mode, stream, owner, digest):
     """把 stream 的内容放成一个新文件。目标已经在（哪怕是个悬空链接）就失败，不覆盖；中途失败不留半个文件；
     内容的 sha256 不是 digest 就不放：调用方核过的是哪一份，放上去的就得是哪一份。
     先在同一个目录里写好临时文件，再用硬链接起正式的名字（名字已在时链接失败），最后删掉临时名。
     临时名是固定的：上一次被强杀留下的、或者另一处正在放的，这里会撞上并停下，不会悄悄攒下一堆。
     owner 给 (uid, gid) 就改属主（root 一侧放文件），给 None 就保持当前账号（主服务账号写自己的私有配置）。"""
-    directory, name = os.path.split(destination)
-    scratch = os.path.join(directory, '.' + name + '.placing')
+    directory, scratch = os.path.dirname(destination), placing(destination)
     # 先记下「临时名是这一次建的」再去建：反过来的话，建好之后、记下之前被打断，收尾就不知道该删它。
     # 建的时候发现已经在（别人的）才改回去，那一份不动。
     mine = True
@@ -374,8 +396,7 @@ def place(destination, mode, stream, owner, digest):
             descriptor = os.open(scratch, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
         except FileExistsError:
             mine = False
-            raise Refused(scratch + ' 已经在：上一次放到一半被强杀留下的，或者另一处正在放。'
-                          '确认没有别的 prereq.py 在跑，删掉它再重跑')
+            raise Refused(scratch + LEFTOVER)
         seen = hashlib.sha256()
         with os.fdopen(descriptor, 'wb') as out:
             for block in iter(lambda: stream.read(1 << 20), b''):
@@ -438,10 +459,16 @@ class Provision:
         if self.apply:
             self.run(['sudo', '--'] + argv, check=True, **stdin)
 
+    def unfinished(self, path):
+        """放 path 用的临时名还在，就先停在这里把话说清楚。不然有一种现场只会得到一句「不是预期的样子」：
+        上一次正式名已经起了、临时名还没删就被强杀，正式文件多了一个名字（链接数是 2）。"""
+        require(not leftover(path), placing(path) + LEFTOVER)
+
     def root_file(self, title, path, raw):
         def state():
             present = has(path, stat.S_ISREG, 0, 0, (PLACED[path],))
             return present if not present else content(path) == raw
+        self.unfinished(path)
         # 内容走标准输入：不落临时文件，预演和照做都一样。
         self.step(title, state,
                   lambda: self.place(path, '<内容见末尾或仓库模板>', hashlib.sha256(raw).hexdigest(), input=raw), state)
@@ -457,6 +484,7 @@ class Provision:
                 return
             with reading(source) as stream:
                 self.place(path, source, digest, stdin=stream)
+        self.unfinished(path)
         self.step(title, state, copy, state)
 
     def identities(self):
@@ -516,17 +544,25 @@ class Provision:
         self.root_copy('restic 0.19.1', RESTIC_SOURCE, RESTIC, RESTIC_SHA)
         self.root_copy('NAS 证书 ' + CA, CA_SOURCE, CA, CA_SHA)
 
+    def verify_units(self):
+        """三个单元的语法核对。只读；只看这三个单元自己的问题：它们依赖的别的单元（人侧、网络）有告警不算在这里。"""
+        self.run(['systemd-analyze', 'verify', '--recursive-errors=no']
+                 + [UNIT_DIRECTORY + '/' + name for name in UNITS], check=True)
+
     def units(self):
         for name in UNITS:
             self.root_file('单元 ' + name, UNIT_DIRECTORY + '/' + name, (TEMPLATES / name).read_bytes())
         if self.audit:
+            # 只读核对也核语法：照做要是停在语法核对上，三个单元文件已经都放好了，只看文件会把它当成做完了。
+            try:
+                self.verify_units()
+            except subprocess.CalledProcessError:
+                raise Refused('三个单元的语法核对没过（上面是 systemd-analyze 的原话）。先把 prereq.py --apply 跑通')
             return
         # 每次都重新加载一遍：上一次要是停在「单元放好了、还没重新加载」，这里补上（多加载一次没有代价）。
         self.root('systemctl', 'daemon-reload')
         if self.apply:
-            # 只看这三个单元自己的问题：它们依赖的别的单元（人侧、网络）有告警不算在这里。
-            self.run(['systemd-analyze', 'verify', '--recursive-errors=no']
-                     + [UNIT_DIRECTORY + '/' + name for name in UNITS], check=True)
+            self.verify_units()
             for name in ('studiolo-backup-worker.service', 'studiolo-backup-schedule.timer'):
                 enabled = self.run(['systemctl', 'is-enabled', name], capture_output=True, text=True).stdout.strip()
                 active = self.run(['systemctl', 'is-active', name], capture_output=True, text=True).stdout.strip()
@@ -550,6 +586,7 @@ class Provision:
             # 和 root 放文件同一个写法：先写临时名、落盘，再起正式的名字；写到一半出错或被打断不留半份。
             if self.apply:
                 place(BACKUP_CONFIG, 0o600, io.BytesIO(backup), None, hashlib.sha256(backup).hexdigest())
+        self.unfinished(BACKUP_CONFIG)
         self.step('私有备份配置 ' + BACKUP_CONFIG + '（不用 sudo，0600）', state, write, state)
 
     def sources(self):
@@ -603,11 +640,12 @@ class Provision:
         return self.products()
 
 
-def settled(out=lambda line: None):
+def settled(out=lambda line: None, run=subprocess.run):
     """只读：prereq.py 的每一样产物都已经在、而且对；缺一样、或者有一样不对，就停下。返回核过的项数。
     给 credentials.py 用：它以 root 跑，过不了 sources() 的「以主服务账号跑」，也不该再去看要拷的来源。
+    三个单元的语法核对照跑（只读的那一条命令，和照做时是同一条）：照做停在这一步的话，文件都已经在了。
     不核「三个单元没启用、没在跑」：那是置备当时的条件，credentials.py 自己另核 worker 没在跑。"""
-    audit = Provision(apply=False, out=out, audit=True)
+    audit = Provision(apply=False, run=run, out=out, audit=True)
     audit.ground()
     audit.products()
     return audit.settled

@@ -5,7 +5,8 @@
     sudo -n python3 -I -B nas_account.py check      只读：备份服务的状态、几个文件的属主权限、现有账号名、端口、
                                                     这次开机和已装单元的情况
     sudo -n python3 -I -B nas_account.py append     从标准输入读一行 bcrypt（账号名固定），原子地加进账号文件
-                                                    （同一时间只许一处在改；中途失败不留半份文件）
+                                                    （同一时间只许一处在改；中途失败不留半份文件；被强杀或断电
+                                                    留下的临时文件 <正式名>.new，下一次会认出来并停下，不删它）
     sudo -n python3 -I -B nas_account.py restart    重启备份服务，等它开始监听
     sudo -n python3 -I -B nas_account.py unit       从标准输入读新的单元文件：先在用完即删的临时单元上演一遍
                                                     「没准备好就隔一会儿再试」，再换上、重新加载、重启；
@@ -97,10 +98,27 @@ def write_new(path, data, owner, mode):
         raise
 
 
+def replacing(target):
+    """换文件时用的临时名：和正式名在同一个目录里，名字是固定的。"""
+    return target.parent / (target.name + '.new')
+
+
+STALE = (' 已经在：上一次换到一半被强杀或断电留下的，里面是那一次要换上的内容。'
+         '不删它、也不接着用：在 NAS 上看过之后 sudo rm 它，再重跑')
+
+
+def refuse_stale(target):
+    """换 target 用的临时名还在就停下，什么都不动。走到这里时锁在这边手里，没有别的 nas_account.py 在改：
+    它只可能是留下来的（账号文件旁边的那一份里带着新账号的散列）。"""
+    if os.path.lexists(str(replacing(target))):
+        raise ValueError(str(replacing(target)) + STALE)
+
+
 def replace_with(target, data, owner, mode):
     """同目录写一份完整的新文件，再用改名一次换上，并把所在目录落盘（不然断电后换上的那一下可能不算数）；
-    换不上就删掉新写的那份。"""
-    fresh = target.parent / (target.name + '.new-' + str(os.getpid()))
+    换不上就删掉新写的那份。临时名是固定的、只新建：被强杀或断电留下的那一份，下一次认得出来（见 refuse_stale），
+    不会带着各不相同的名字一份份攒下去。"""
+    fresh = replacing(target)
     write_new(fresh, data, owner, mode)
     try:
         os.replace(str(fresh), str(target))
@@ -146,6 +164,7 @@ def append_locked(raw):
     old = target.read_bytes()
     if USER in accounts(old):
         raise ValueError('这个账号已经在了')
+    refuse_stale(target)
     keep = ROOT / ('backup.htpasswd.before-' + USER)
     if os.path.lexists(str(keep)):
         if keep.read_bytes() != old:
@@ -221,6 +240,8 @@ def check(out):
         out('账号文件旁边的其他文件（只列名字）：' + ('、'.join(beside) or '没有'))
     except OSError:
         out('账号文件旁边的其他文件：列不出来')
+    stale = [str(replacing(target)) for target in (ROOT / 'backup.htpasswd', UNIT) if os.path.lexists(str(replacing(target)))]
+    out('换到一半留下的临时文件：' + ('、'.join(stale) + '（add、unit 会停在它上面：看过之后 sudo rm）' if stale else '没有'))
     try:
         certificate = ssl.PEM_cert_to_DER_cert((ROOT / 'tls.crt').read_text())
         out('证书摘要（sha256，公开信息）：' + hashlib.sha256(certificate).hexdigest())
@@ -344,6 +365,7 @@ def install_unit(raw, out):
     if not (stat.S_ISREG(status.st_mode) and (status.st_uid, status.st_gid) == UNIT_OWNER and status.st_nlink == 1
             and not status.st_mode & 0o022 and status.st_size <= UNIT_LIMIT):
         raise ValueError('现场的单元文件不是预期的样子')
+    refuse_stale(UNIT)
     old = UNIT.read_bytes()
     if old == raw:
         # 上一次可能正好停在「文件换上了，还没重新加载、没重启」：这里补上。服务没在跑就起它，起不来照实报错。

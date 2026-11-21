@@ -121,8 +121,12 @@ class World:
     def groups_of(self, name, gid):
         return [gid] + sorted(self.members.get(name, ()))
 
+    def leftover(self, destination):
+        return prereq.placing(destination) in self.nodes
+
     def place(self, destination, mode, stream, owner, wanted):
-        """和真的 place 同一个约定：已经在就失败；内容的摘要不是给的那个就不放。"""
+        """和真的 place 同一个约定：临时名已经在就停下；已经在就失败；内容的摘要不是给的那个就不放。"""
+        prereq.require(not self.leftover(destination), prereq.placing(destination) + prereq.LEFTOVER)
         raw = stream.read()
         if destination in self.nodes:
             raise FileExistsError(destination)
@@ -134,7 +138,7 @@ class World:
     def installed(self, uid=prereq.OWNER_UID, euid=prereq.OWNER_UID, platform='linux'):
         with contextlib.ExitStack() as stack:
             for name in ('has', 'sha', 'content', 'matches', 'reading', 'make_directory', 'chain', 'group_numbered',
-                         'groups_of', 'place'):
+                         'groups_of', 'place', 'leftover'):
                 stack.enter_context(patch.object(prereq, name, getattr(self, name)))
             for name, value in (('account', self.accounts.get), ('group', self.groups.get),
                                 ('system_range', lambda kind: (100, 999)), ('PACKAGES', PACKAGES),
@@ -144,6 +148,10 @@ class World:
             stack.enter_context(patch.object(prereq.os, 'getuid', return_value=uid))
             stack.enter_context(patch.object(prereq.os, 'geteuid', return_value=euid))
             yield self
+
+    def settled(self, out=lambda line: None):
+        """只读核对那一路（credentials.py 用）：它也要跑一条命令（语法核对），给它这个现场的命令替身。"""
+        return prereq.settled(out, run=self.run)
 
     # ---- 命令的替身
     def run(self, argv, **options):
@@ -289,7 +297,7 @@ class ProvisionTests(unittest.TestCase):
         before = world.snapshot()
         with world.installed():
             with self.assertRaises(prereq.Refused) as refusal:
-                prereq.settled()
+                world.settled()
             self.assertEqual(str(refusal.exception), '读取组 ' + READERS + '（系统组）' + MISSING)
             self.assertEqual(world.snapshot(), before)
             self.assertEqual(self.provision(world).everything(), STEPS)
@@ -326,11 +334,12 @@ class ProvisionTests(unittest.TestCase):
             self.assertEqual(self.provision(world).everything(), 0)
             self.assertEqual((world.snapshot(), [label(argv) for argv in world.ran], world.reloads), (built, GATE, 2))
             self.assertEqual(len([line for line in self.lines if line.startswith('[已有] ')]), STEPS)
-            # 只读地核全部产物：一样不少，什么命令都不跑。
+            # 只读地核全部产物：一样不少；跑的命令只有语法核对那一条（只读），不重新加载、不问启用没启用。
             world.ran.clear()
             said = []
-            self.assertEqual(prereq.settled(said.append), STEPS)
-            self.assertEqual((world.snapshot(), world.ran, len(said)), (built, [], STEPS))
+            self.assertEqual(world.settled(said.append), STEPS)
+            self.assertEqual((world.snapshot(), [label(argv) for argv in world.ran], len(said)), (built, GATE[1:2], STEPS))
+            world.ran.clear()
             # 置备之后的预演：还差 0 步。
             self.assertEqual(self.provision(world, apply=False).everything(), 0)
             self.assertEqual((world.snapshot(), world.ran), (built, []))
@@ -395,7 +404,7 @@ class ProvisionTests(unittest.TestCase):
                 self.assertEqual(self.refused(world), told)
                 # 只读核对那一路（credentials.py 用）同样先看落脚的地方。
                 with world.installed(), self.assertRaises(prereq.Refused) as refusal:
-                    prereq.settled()
+                    world.settled()
                 self.assertEqual(str(refusal.exception), told)
         # 主服务账号自己的目录链上，属主是它自己或 root 都行；root 的那几条链上只认 root。
         world = fresh()
@@ -478,7 +487,7 @@ class ProvisionTests(unittest.TestCase):
                 vars(world.nodes[path]).update(change)
                 broken = world.snapshot()
                 with world.installed():
-                    for check in (lambda: self.provision(world).everything(), prereq.settled):
+                    for check in (lambda: self.provision(world).everything(), world.settled):
                         with self.assertRaises(prereq.Refused) as refusal:
                             check()
                         self.assertEqual(str(refusal.exception), titles[path] + WRONG)
@@ -491,12 +500,12 @@ class ProvisionTests(unittest.TestCase):
                 del world.nodes[path]
                 with world.installed():
                     with self.assertRaises(prereq.Refused) as refusal:
-                        prereq.settled()
+                        world.settled()
                     self.assertEqual(str(refusal.exception), titles[path] + MISSING)
                     if path == prereq.PROGRAMS:
                         continue  # 目录没了、里面的文件还在，这种现场造不出来：只看只读核对那一侧
                     self.assertEqual(self.provision(world).everything(), 1)
-                    self.assertEqual(prereq.settled(), STEPS)
+                    self.assertEqual(world.settled(), STEPS)
                 self.assertEqual(world.snapshot(), complete)
 
     def test_identities_that_drift_after_provisioning_are_caught_by_both_paths(self):
@@ -504,7 +513,7 @@ class ProvisionTests(unittest.TestCase):
         world = self.built()
         world.accounts[WORKER].pw_shell = '/bin/sh'
         with world.installed():
-            for check in (lambda: self.provision(world).everything(), prereq.settled):
+            for check in (lambda: self.provision(world).everything(), world.settled):
                 with self.assertRaises(prereq.Refused) as refusal:
                     check()
                 self.assertEqual(str(refusal.exception), account + WRONG)
@@ -514,15 +523,15 @@ class ProvisionTests(unittest.TestCase):
                 world.members[name].clear()
                 with world.installed():
                     with self.assertRaises(prereq.Refused) as refusal:
-                        prereq.settled()
+                        world.settled()
                     self.assertEqual(str(refusal.exception), name + ' 加进读取组' + MISSING)
                     self.assertEqual(self.provision(world).everything(), 1)
-                    self.assertEqual(prereq.settled(), STEPS)
+                    self.assertEqual(world.settled(), STEPS)
         # 账号重建过、号码变了：两份配置里写的还是旧号码，内容对不上。
         world = self.built()
         world.accounts[WORKER].pw_uid += 1
         with world.installed(), self.assertRaises(prereq.Refused) as refusal:
-            prereq.settled()
+            world.settled()
         self.assertEqual(str(refusal.exception), 'worker 配置 ' + prereq.WORKER_CONFIG + WRONG)
 
     def test_units_must_verify_and_must_not_be_enabled_or_running(self):
@@ -531,6 +540,18 @@ class ProvisionTests(unittest.TestCase):
         with world.installed(), self.assertRaises(subprocess.CalledProcessError):
             self.provision(world).everything()
         self.assertEqual([label(argv) for argv in world.ran], FIRST_RUN + GATE[:2])
+        # 照做停在语法核对上：十六样产物的文件都已经在了。只读核对（credentials.py 录口令之前用的那一路）
+        # 也得停在同一处，不能只看文件就当成置备做完了。
+        stopped = world.snapshot()
+        world.ran.clear()
+        with world.installed():
+            with self.assertRaises(prereq.Refused) as refusal:
+                world.settled()
+            self.assertEqual(str(refusal.exception), '三个单元的语法核对没过（上面是 systemd-analyze 的原话）。先把 prereq.py --apply 跑通')
+            self.assertEqual(([label(argv) for argv in world.ran], world.snapshot()), (GATE[1:2], stopped))
+            # 单元修好之后（语法核对能过了）就放行。
+            world.verify_fails = False
+            self.assertEqual(world.settled(), STEPS)
         for name in GATED:
             for verb, answer in (('is-enabled', 'enabled'), ('is-active', 'active'), ('is-enabled', 'enabled-runtime'),
                                  ('is-active', 'activating'), ('is-active', 'failed'), ('is-enabled', '')):
@@ -542,11 +563,11 @@ class ProvisionTests(unittest.TestCase):
                             self.provision(world).everything()
                         self.assertEqual(str(refusal.exception), name + ' 不该是启用或在跑的')
                         self.assertNotIn('    三个单元语法核过，都没启用、没在跑', self.lines)
-                        # 只读核对不看这一条（置备当时的条件）；预演也不问 systemd。
+                        # 只读核对不看这一条（置备当时的条件），只跑语法核对；预演不问 systemd。
                         world.ran.clear()
-                        self.assertEqual(prereq.settled(), STEPS)
+                        self.assertEqual(world.settled(), STEPS)
                         self.assertEqual(self.provision(world, apply=False).everything(), 0)
-                        self.assertEqual(world.ran, [])
+                        self.assertEqual([label(argv) for argv in world.ran], GATE[1:2])
         # 由定时器带起来的那个服务单元不在这道闸里（它平时就是 static、间歇地跑）。
         world = self.built()
         world.units['studiolo-backup-schedule.service'] = {'is-enabled': 'static', 'is-active': 'active'}
@@ -586,7 +607,41 @@ class ProvisionTests(unittest.TestCase):
             # 换回来之后重跑，从停下的地方接着做完。
             world.swapped.clear()
             self.assertEqual(self.provision(world).everything(), STEPS - 8)
-            self.assertEqual(prereq.settled(), STEPS)
+            self.assertEqual(world.settled(), STEPS)
+
+    def test_a_leftover_temporary_name_stops_every_path_before_anything_runs(self):
+        """放文件用的临时名还在（上一次被强杀，或者另一处正在放）：预演、照做、只读核对都先停在这里，把话说清楚。
+        两种现场：正式名已经起了、临时名还没删（正式文件多了一个名字）；正式名还没起。"""
+        placed = [prereq.TMPFILES, prereq.WORKER_BINARY, prereq.RESTIC, prereq.CA, prereq.WORKER_CONFIG, prereq.BACKUP_CONFIG]
+        placed += UNIT_PATHS
+        # 这份脚本会放的文件都在这张单子里：以后多放一样，这里跟着红。
+        self.assertEqual(sorted(placed), sorted(list(prereq.PLACED) + [prereq.BACKUP_CONFIG]))
+        for path in placed:
+            scratch = os.path.join(os.path.dirname(path), '.' + os.path.basename(path) + '.placing')
+            told = scratch + ' 已经在：上一次放到一半被强杀留下的，或者另一处正在放。确认没有别的 prereq.py 在跑，删掉它再重跑'
+            for linked in (True, False):
+                with self.subTest(path=path, linked=linked):
+                    world = self.built()
+                    node = world.nodes[path]
+                    if linked:
+                        node.links = 2
+                        world.nodes[scratch] = node  # 同一个文件的两个名字
+                    else:
+                        del world.nodes[path]
+                        world.file(scratch, b'half', node.uid, node.gid, 0o600)
+                    left = world.snapshot()
+                    with world.installed():
+                        for check in (lambda: self.provision(world).everything(),
+                                      lambda: self.provision(world, apply=False).everything(), world.settled):
+                            with self.assertRaises(prereq.Refused) as refusal:
+                                check()
+                            self.assertEqual(str(refusal.exception), told)
+                        self.assertEqual((world.snapshot(), world.ran), (left, []))
+                        # 人看过、把临时名删掉之后照常往下走：正式名已经起了的不用再放，没起的补放这一样。
+                        del world.nodes[scratch]
+                        node.links = 1
+                        self.assertEqual(self.provision(world).everything(), 0 if linked else 1)
+                        self.assertEqual(world.settled(), STEPS)
 
 
 class LookupTests(unittest.TestCase):
@@ -612,18 +667,35 @@ class LookupTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as scratch:
             path = os.path.join(scratch, 'login.defs')
             cases = (
-                ('SYS_UID_MIN 201\nSYS_UID_MAX\t899\nUID_MIN 1000\nSYS_GID_MIN   100 # 注释\nSYS_GID_MAX 999\n',
+                ('SYS_UID_MIN 201\nSYS_UID_MAX\t899\nUID_MIN 1000\n  SYS_GID_MIN   100  \nSYS_GID_MAX 999\n',
                  (201, 899), (100, 999)),
-                # 没写系统范围：从 101 到普通账号起始号的前一个。
+                # 没写系统范围：从 101 到普通账号起始号的前一个。169 上现在就是这样（系统范围那四行是注释掉的）。
                 ('UID_MIN 500\nGID_MIN 600\n', (101, 499), (101, 599)),
-                # 注释掉的、值不是数字的、多一个词的，都不算。
-                ('#SYS_UID_MIN 5\nSYS_UID_MAX abc\nSYS_GID_MIN 7 8\n', (101, 999), (101, 999)),
+                ('UID_MIN\t\t 1000\n#SYS_UID_MIN\t\t  101\n#SYS_UID_MAX\t\t  999\nGID_MIN\t\t 1000\n#SYS_GID_MIN\t\t  101\n',
+                 (101, 999), (101, 999)),
+                # 行首是 # 的整行是注释；只有名字没有值的不算；同一个名字写了几次，取最后一次；0 也是个数。
+                ('#SYS_UID_MIN 5\n # SYS_UID_MAX 6\nSYS_GID_MIN\nSYS_GID_MAX 7\nSYS_GID_MAX 800\nSYS_UID_MIN 0\n', (0, 999), (101, 800)),
+                # 别的名字的值写成什么样都不管（这里只读这几个名字）。
+                ('UMASK 022\nENV_PATH PATH=/usr/bin # 说明\nENCRYPT_METHOD "yescrypt"\nUID_MAX 60000 # 上限\n', (101, 999), (101, 999)),
                 ('', (101, 999), (101, 999)),
             )
             for text, users, groups in cases:
                 with self.subTest(text[:20]):
                     Path(path).write_text(text, encoding='utf-8')
                     self.assertEqual((prereq.system_range('UID', path), prereq.system_range('GID', path)), (users, groups))
+            # 这几个名字的值不是一个十进制数：shadow 自己读出来的随写法不同（行内注释不会被去掉，它读不成数、退回默认值；
+            # 引号会被去掉；0 开头按八进制）。这里不猜，停下；只挡用到这个名字的那一种，另一种照常。
+            odd = {'SYS_UID_MIN 100 # 注释': '100 # 注释', 'SYS_UID_MAX "999"': '"999"', 'UID_MIN 0100': '0100',
+                   'SYS_UID_MIN 0x64': '0x64', 'SYS_UID_MAX abc': 'abc', 'SYS_UID_MIN 7 8': '7 8', 'UID_MIN +1000': '+1000',
+                   'SYS_UID_MIN -1': '-1', 'SYS_UID_MAX ９９９': '９９９', 'SYS_UID_MIN ' + '1' * 50 + 'x': '1' * 40}
+            for line, shown in odd.items():
+                with self.subTest(line):
+                    Path(path).write_text('GID_MIN 1000\n' + line + '\n', encoding='utf-8')
+                    with self.assertRaises(prereq.Refused) as refusal:
+                        prereq.system_range('UID', path)
+                    self.assertEqual(str(refusal.exception), path + ' 里 ' + line.split()[0] + ' 那一行的值不是一个十进制数（' + shown
+                                     + '）：useradd 会把它读成什么这里说不准，先由人看过')
+                    self.assertEqual(prereq.system_range('GID', path), (101, 999))
             os.unlink(path)
             self.assertEqual(prereq.system_range('UID', path), (101, 999))
         self.assertEqual(prereq.LOGIN_DEFINITIONS, '/etc/login.defs')
@@ -728,9 +800,15 @@ class ScriptEntryTests(unittest.TestCase):
             self.addCleanup(signal.signal, number, signal.getsignal(number))
 
     def outcome(self, module, raised):
+        watched, seen = (signal.SIGHUP, signal.SIGTERM, signal.SIGINT), []
+
         def main(argv):
+            # 走进 main 的时候三个信号就得已经接好：接在后面的话，main 里写到一半终端断开，进程直接没了，收尾不跑。
+            seen.extend(signal.getsignal(number) for number in watched)
             if raised is not None:
                 raise raised
+        for number in watched:
+            signal.signal(number, signal.default_int_handler if number == signal.SIGINT else signal.SIG_DFL)
         said = io.StringIO()
         with patch.object(module, 'main', main), contextlib.redirect_stderr(said):
             try:
@@ -738,6 +816,9 @@ class ScriptEntryTests(unittest.TestCase):
             except KeyboardInterrupt:
                 # 不让它一路传上去：那样整套用例会被当成「用户按了 Ctrl-C」直接中断，看不到是哪一条没过。
                 self.fail('入口没有接住「被打断」')
+        self.assertEqual(len(seen), 3)
+        for handler in seen:
+            self.assertNotIn(handler, (signal.SIG_DFL, signal.SIG_IGN, signal.default_int_handler))
         return code, said.getvalue()
 
     def test_prereq_turns_every_expected_stop_into_one_line_and_exit_code_one(self):
@@ -756,8 +837,6 @@ class ScriptEntryTests(unittest.TestCase):
         self.assertEqual(self.outcome(prereq, None), (0, ''))
         with self.assertRaises(ZeroDivisionError):
             self.outcome(prereq, ZeroDivisionError())
-        # 入口先把三个信号接成「被打断」。
-        self.assertNotIn(signal.getsignal(signal.SIGHUP), (signal.SIG_DFL, signal.SIG_IGN))
 
     def test_the_nas_helper_turns_every_expected_stop_into_one_line_and_exit_code_one(self):
         failed = subprocess.CalledProcessError(1, ['/usr/bin/systemctl', 'restart', nas.SERVICE])
@@ -775,8 +854,6 @@ class ScriptEntryTests(unittest.TestCase):
         self.assertEqual(self.outcome(nas, None), (0, ''))
         with self.assertRaises(ZeroDivisionError):
             self.outcome(nas, ZeroDivisionError())
-        # 入口先把三个信号接成「被打断」（ssh 断了的时候，写到一半的文件才收得走）。
-        self.assertNotIn(signal.getsignal(signal.SIGHUP), (signal.SIG_DFL, signal.SIG_IGN))
 
     def test_the_scripts_themselves_exit_with_one_and_one_line_when_they_refuse(self):
         """真的把脚本当程序跑一遍（参数不认识，在碰任何东西之前就被拒）：退出码 1，标准输出是空的，没有回溯。"""

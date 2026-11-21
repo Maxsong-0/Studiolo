@@ -72,21 +72,50 @@ class PreconditionTests(unittest.TestCase):
         lines, calls = self.main([])
         self.assertEqual(calls, ['settled', 'endpoint'])
         self.assertEqual(lines, [
-            '[已核] prereq.py 的 16 样产物都在、都对（账号和组、目录、程序和证书、两份配置、三个单元）',
+            '[已核] prereq.py 的 16 样产物都在、都对（账号和组、目录、程序和证书、两份配置、三个单元），单元的语法核对也过了',
             '[已核] NAS 备份服务连得上（TLSv1.3），证书就是批准的那一张',
             '凭据目录现在：还没有',
             '预演结束：没问口令、没写任何东西。带 sudo 和 --apply 再跑一遍才录入。'])
         self.assertFalse(os.path.lexists(self.directory))
+        closing = lines[-1]
         # 不是 root 时凭据目录里看不到东西：只说在不在。
         os.mkdir(self.directory)
-        self.assertEqual(self.main([])[0][2], '凭据目录现在：已经在（里面要 root 才看得到）')
-        self.assertEqual(self.main([], euid=0)[0][2], '凭据目录现在：在，但不完整（要人看）')
+        Path(self.directory, 'rest-username').write_bytes(b'x\n')
+        self.assertEqual(self.main([])[0][2:], ['凭据目录现在：已经在（里面要 root 才看得到）', closing])
+        self.assertEqual(self.main([], euid=0)[0][2:], ['凭据目录现在：在，但不完整（要人看）', closing])
+        os.unlink(os.path.join(self.directory, 'rest-username'))
         os.rmdir(self.directory)
-        self.assertEqual(self.main([], euid=0)[0][2], '凭据目录现在：还没有')
+        self.assertEqual(self.main([], euid=0)[0][2:], ['凭据目录现在：还没有', closing])
+
+    def test_a_preview_reports_what_a_killed_run_left_behind(self):
+        """上一次录到一半被强杀留下的东西，预演就报出来（照做会停在这一条上）：不用等到带 sudo 跑才知道。"""
+        closing = '预演结束：没问口令、没写任何东西。带 sudo 和 --apply 再跑一遍才录入。'
+        writing = self.directory + '.writing'
+        stops = '--apply 会先停在这一条上：'
+        remove = writing + ' 还在：上一次录到一半被强杀或断电留下的，里面可能有那一次输的口令。确认没有别的 credentials.py 在跑，sudo rm -r 它'
+        hollow = (self.directory + ' 已经在，但是空的：多半是上一次录到一半被强杀或断电留下的。'
+                  '确认没有别的 credentials.py 在跑，sudo rmdir 它之后重跑')
+        # 只留下临时目录。
+        os.mkdir(writing)
+        self.assertEqual(self.main([], euid=0)[0][2:], ['凭据目录现在：还没有', stops + remove + '之后重跑', closing])
+        self.assertEqual(self.main([])[0][2:], ['凭据目录现在：还没有', stops + remove + '之后重跑', closing])
+        # 正好死在「占住正式名字」和「把临时目录换上去」之间：还多一个空的正式目录，两样一并说到。
+        os.mkdir(self.directory)
+        self.assertEqual(self.main([], euid=0)[0][2:], [
+            '凭据目录现在：在，但不完整（要人看）',
+            stops + remove + '、sudo rmdir ' + self.directory + '（空的，也是那一次留下的）之后重跑', closing])
+        # 人只删了临时目录：剩下的空目录照样点出来。
+        os.rmdir(writing)
+        self.assertEqual(self.main([], euid=0)[0][2:], ['凭据目录现在：在，但不完整（要人看）', stops + hollow, closing])
+        # 正式目录里有东西就不是这一类；什么都没留下就什么都不多说。预演一样东西都没动。
+        Path(self.directory, 'rest-username').write_bytes(b'x\n')
+        self.assertEqual(self.main([], euid=0)[0][2:], ['凭据目录现在：在，但不完整（要人看）', closing])
+        self.assertEqual(os.listdir(self.directory), ['rest-username'])
+        self.assertFalse(os.path.lexists(writing))
 
     def test_apply_is_reached_only_after_every_precondition_holds(self):
         self.assertEqual(self.main(['--apply']), ([
-            '[已核] prereq.py 的 16 样产物都在、都对（账号和组、目录、程序和证书、两份配置、三个单元）',
+            '[已核] prereq.py 的 16 样产物都在、都对（账号和组、目录、程序和证书、两份配置、三个单元），单元的语法核对也过了',
             '[已核] NAS 备份服务连得上（TLSv1.3），证书就是批准的那一张'], ['settled', 'endpoint', 'apply']))
 
     def test_each_failed_precondition_stops_before_the_next_step_in_both_modes(self):
@@ -356,6 +385,39 @@ class AtomicWriteTests(unittest.TestCase):
                          '确认没有别的 credentials.py 在跑，sudo rm -r 它之后重跑')
         # 留下的原样不动（不自动删：里面是什么得由人看）；正式目录没有出现。
         self.assertEqual((self.left(), os.listdir(self.writing)), (['credentials.writing'], ['rest-password']))
+        # 正好死在「占住正式名字」和「把临时目录换上去」之间：还多一个空的正式目录。两样一并说到，不让人撞两回。
+        os.mkdir(self.directory, 0o700)
+        with self.assertRaises(credentials.Refused) as refusal:
+            self.apply([3], ask=self.fail)
+        self.assertEqual(str(refusal.exception), self.writing + ' 还在：上一次录到一半被强杀或断电留下的，里面可能有那一次输的口令。'
+                         '确认没有别的 credentials.py 在跑，sudo rm -r 它、sudo rmdir ' + self.directory
+                         + '（空的，也是那一次留下的）之后重跑')
+        self.assertEqual((self.left(), os.listdir(self.directory), os.listdir(self.writing)),
+                         (['credentials', 'credentials.writing'], [], ['rest-password']))
+        # 人只删了临时目录：剩下的空目录照样点出来（不拿一句「不完整」打发），也不接着用它。
+        os.rename(self.writing, self.directory + '.aside')
+        with self.assertRaises(credentials.Refused) as refusal:
+            self.apply([3], ask=self.fail)
+        self.assertEqual(str(refusal.exception), self.directory + ' 已经在，但是空的：多半是上一次录到一半被强杀或断电留下的。'
+                         '确认没有别的 credentials.py 在跑，sudo rmdir 它之后重跑')
+        self.assertEqual((self.left(), os.listdir(self.directory)), (['credentials', 'credentials.aside'], []))
+        # 正式目录里有东西（不完整的凭据）是另一回事：不叫人删，由人看。
+        Path(self.directory, 'rest-username').write_bytes(b'x\n')
+        with self.assertRaises(credentials.Refused) as refusal:
+            self.apply([3], ask=self.fail)
+        self.assertEqual(str(refusal.exception), self.directory + ' 已经在，但不是完整的三份 root 0600 文件。不覆盖，先由人看过')
+        self.assertEqual(os.listdir(self.directory), ['rest-username'])
+        os.unlink(os.path.join(self.directory, 'rest-username'))
+        os.rmdir(self.directory)
+        # 正式名字是个指向空目录的链接：那不是上一次留下的空目录，不叫人 rmdir。
+        os.mkdir(self.directory + '.elsewhere', 0o700)
+        os.symlink(self.directory + '.elsewhere', self.directory)
+        with self.assertRaises(credentials.Refused) as refusal:
+            self.apply([3], ask=self.fail)
+        self.assertEqual(str(refusal.exception), self.directory + ' 已经在，但不是完整的三份 root 0600 文件。不覆盖，先由人看过')
+        os.unlink(self.directory)
+        os.rmdir(self.directory + '.elsewhere')
+        os.rename(self.directory + '.aside', self.writing)
         # 悬空链接占着这个名字也一样。
         os.unlink(os.path.join(self.writing, 'rest-password'))
         os.rmdir(self.writing)
@@ -387,9 +449,15 @@ class CredentialEntryTests(unittest.TestCase):
             self.addCleanup(signal.signal, number, signal.getsignal(number))
 
     def outcome(self, raised):
+        watched, seen = (signal.SIGHUP, signal.SIGTERM, signal.SIGINT), []
+
         def main(argv):
+            # 走进 main 的时候三个信号就得已经接好：接在后面的话，main 里写到一半终端断开，进程直接没了，收尾不跑。
+            seen.extend(signal.getsignal(number) for number in watched)
             if raised is not None:
                 raise raised
+        for number in watched:
+            signal.signal(number, signal.default_int_handler if number == signal.SIGINT else signal.SIG_DFL)
         said = io.StringIO()
         with patch.object(credentials, 'main', main), contextlib.redirect_stderr(said):
             try:
@@ -397,6 +465,9 @@ class CredentialEntryTests(unittest.TestCase):
             except KeyboardInterrupt:
                 # 不让它一路传上去：那样整套用例会被当成「用户按了 Ctrl-C」直接中断，看不到是哪一条没过。
                 self.fail('入口没有接住「被打断」')
+        self.assertEqual(len(seen), 3)
+        for handler in seen:
+            self.assertNotIn(handler, (signal.SIG_DFL, signal.SIG_IGN, signal.default_int_handler))
         return code, said.getvalue()
 
     def test_every_expected_stop_is_one_line_and_exit_code_one(self):
@@ -413,9 +484,6 @@ class CredentialEntryTests(unittest.TestCase):
         self.assertEqual(self.outcome(None), (0, ''))
         with self.assertRaises(ZeroDivisionError):
             self.outcome(ZeroDivisionError())
-        # 入口先把终端断开、被要求结束接成「被打断」：不然收尾不跑，写到一半的临时目录会留下。
-        self.assertNotIn(signal.getsignal(signal.SIGHUP), (signal.SIG_DFL, signal.SIG_IGN))
-        self.assertNotIn(signal.getsignal(signal.SIGTERM), (signal.SIG_DFL, signal.SIG_IGN))
 
 
 if __name__ == '__main__':

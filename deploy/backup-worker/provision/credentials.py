@@ -8,8 +8,8 @@
 已经写好的凭据不会被覆盖：三份都在、内容也合 worker 的规则，就跳过录入、直接做初始化和读回；
 只有一部分、或内容 worker 不会认，就停下，由人看过再处理。
 三份凭据要么都写好、要么一份都不留：先在旁边的临时目录（正式目录名加 .writing）里写齐，再一次换成正式的名字；
-写到一半出错或被打断（Ctrl-C、终端断开）会把这一次写的全部删掉。被强杀、断电，或者收尾自己又出了错，才会留下那个临时目录，
-下次跑会先停下说明。
+写到一半出错或被打断（Ctrl-C、终端断开）会把这一次写的全部删掉。被强杀、断电，或者收尾自己又出了错，才会留下那个临时目录
+（正好死在把它换成正式名字的那一下，还会多留一个空的正式目录）。下次跑会先停下，说清留下了什么、怎么收拾；预演也会报。
 """
 import getpass
 import hashlib
@@ -152,6 +152,29 @@ def write_credentials(directory, values):
     sync_directory(os.path.dirname(directory))
 
 
+def empty_directory(path):
+    """是个真目录（不是链接），里面什么都没有。看不了（不在、没权限）就算不是。"""
+    try:
+        return stat.S_ISDIR(os.lstat(path).st_mode) and not os.listdir(path)
+    except OSError:
+        return False
+
+
+def leftover():
+    """上一次录到一半被强杀或断电留下的东西：有就给一句「是什么、怎么收拾」，没有给 None。
+    留下的是临时目录（里面可能有那一次输的口令）；正好死在「占住正式名字」和「把临时目录换上去」之间的话，
+    还多一个空的正式目录。只删了临时目录，剩下的就是那个空目录：这两种都得说到，不然人要撞两回。"""
+    hollow = empty_directory(DIRECTORY)
+    if os.path.lexists(DIRECTORY + WRITING):
+        also = '、sudo rmdir ' + DIRECTORY + '（空的，也是那一次留下的）' if hollow else ''
+        return (DIRECTORY + WRITING + ' 还在：上一次录到一半被强杀或断电留下的，里面可能有那一次输的口令。'
+                '确认没有别的 credentials.py 在跑，sudo rm -r 它' + also + '之后重跑')
+    if hollow:
+        return (DIRECTORY + ' 已经在，但是空的：多半是上一次录到一半被强杀或断电留下的。'
+                '确认没有别的 credentials.py 在跑，sudo rmdir 它之后重跑')
+    return None
+
+
 # 在 worker 账号下，把三份凭据接成 restic 认的环境变量再执行；口令只在这个子进程的环境里，不进任何命令行。
 SHELL = ('set -eu; d="$CREDENTIALS_DIRECTORY"; '
          'RESTIC_PASSWORD_FILE="$d/repository-password"; export RESTIC_PASSWORD_FILE; '
@@ -188,10 +211,10 @@ def endpoint():
 
 def preconditions(out):
     require(sys.platform == 'linux', '只在 169 上跑')
-    # prereq.py 的每一样产物（账号和组、目录、程序和证书、两份配置的内容、三个单元）都得已经在、而且对：
-    # 它停在半路的话，这里不录口令、不初始化仓库。
+    # prereq.py 的每一样产物（账号和组、目录、程序和证书、两份配置的内容、三个单元）都得已经在、而且对，
+    # 三个单元的语法核对也得过（它停在那一步的话，文件都已经放好了）：它停在半路，这里不录口令、不初始化仓库。
     count = prereq.settled()
-    out('[已核] prereq.py 的 ' + str(count) + ' 样产物都在、都对（账号和组、目录、程序和证书、两份配置、三个单元）')
+    out('[已核] prereq.py 的 ' + str(count) + ' 样产物都在、都对（账号和组、目录、程序和证书、两份配置、三个单元），单元的语法核对也过了')
     try:
         out('[已核] NAS 备份服务连得上（' + endpoint() + '），证书就是批准的那一张')
     except (OSError, ssl.SSLError) as failure:
@@ -213,10 +236,9 @@ def apply(out, run=subprocess.run, ask=getpass.getpass):
     require(all(stream.isatty() for stream in (sys.stdin, sys.stdout, sys.stderr)), '要在用户自己的终端里跑')
     require(run(['systemctl', 'is-active', '--quiet', SERVICE]).returncode != 0, 'worker 正在跑：先停掉再动凭据')
     os.umask(0o077)
-    # 先看有没有上一次留下的临时目录，再问口令：有的话问了也白问。
-    require(not os.path.lexists(DIRECTORY + WRITING),
-            DIRECTORY + WRITING + ' 还在：上一次录到一半被强杀或断电留下的，里面可能有那一次输的口令。'
-            '确认没有别的 credentials.py 在跑，sudo rm -r 它之后重跑')
+    # 先看有没有上一次留下的东西，再问口令：有的话问了也白问。
+    stale = leftover()
+    require(stale is None, stale)
     state = credentials_state(DIRECTORY)
     require(state != 'partial', DIRECTORY + ' 已经在，但不是完整的三份 root 0600 文件。不覆盖，先由人看过')
     if state == 'complete':
@@ -251,6 +273,9 @@ def main(argv, out=print):
             credentials_state(DIRECTORY)])
     else:
         out('凭据目录现在：' + ('还没有' if not os.path.lexists(DIRECTORY) else '已经在（里面要 root 才看得到）'))
+    stale = leftover()
+    if stale is not None:
+        out('--apply 会先停在这一条上：' + stale)
     out('预演结束：没问口令、没写任何东西。带 sudo 和 --apply 再跑一遍才录入。')
 
 

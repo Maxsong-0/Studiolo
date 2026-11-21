@@ -54,7 +54,8 @@ LIMIT = 30
 BOOT = re.search(r"^boot='([^'\n]+)'$", TEXT, re.M).group(1)
 REMOTE = 'sudo -n python3 -I -B '
 PIN = ['-o', 'StrictHostKeyChecking=yes', '-o', 'UserKnownHostsFile="' + str(KNOWN_HOSTS) + '"',
-       '-o', 'GlobalKnownHostsFile=/dev/null', '-o', 'HostKeyAlias=studiolo-nas', '-o', 'UpdateHostKeys=no']
+       '-o', 'GlobalKnownHostsFile=/dev/null', '-o', 'HostKeyAlias=studiolo-nas', '-o', 'UpdateHostKeys=no',
+       '-o', 'KnownHostsCommand=none', '-o', 'VerifyHostKeyDNS=no']
 NAS = ['-J', 'studiolo-108-ts', 'maxsong@192.168.100.111']
 
 # 虚构值。散列那一段只是 53 个形状对的字符，不是任何密码的散列。
@@ -545,6 +546,47 @@ class CommandRuleTests(unittest.TestCase):
                        'UserKnownHostsFile=/dev/null', ' -b ', '-tt', 'eval '):
             self.assertNotIn(banned, CODE)
 
+    def test_a_missing_file_next_to_the_script_stops_it_before_any_connection(self):
+        """入口脚本靠同目录的三样东西：帮手脚本、钉住的主机钥匙、（换单元时）仓库里的单元文件。
+        缺哪一样就停在哪一样上，一次 ssh 都不发；缺的是钥匙文件时尤其不能照常去连。三样都在就照常走到登录。"""
+        fakes = ('ssh() { printf x >> "$LOG/ssh.calls"; return 1; }\n')
+
+        def run(present, *arguments):
+            with tempfile.TemporaryDirectory() as scratch:
+                home = Path(scratch, 'deploy', 'backup-worker', 'provision')
+                home.mkdir(parents=True)
+                unit = Path(scratch, 'deploy', 'sync-bridge', 'recovery', 'studiolo-rest-backup.service')
+                unit.parent.mkdir(parents=True)
+                shutil.copy(str(COMMAND), str(home / COMMAND.name))
+                for name, target in (('nas_account.py', home / 'nas_account.py'), ('nas_known_hosts', home / 'nas_known_hosts'),
+                                     ('unit', unit)):
+                    if name in present:
+                        target.write_bytes(b'placeholder\n')
+                Path(scratch, 'fakes.sh').write_text(fakes, encoding='ascii')
+                done = subprocess.run([BASH, str(home / COMMAND.name)] + list(arguments),
+                                      env={'PATH': TOOLS, 'LOG': scratch, 'BASH_ENV': str(Path(scratch, 'fakes.sh'))},
+                                      stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+                called = Path(scratch, 'ssh.calls')
+                # 脚本自己把路径写成「所在目录/…」，这里换回短名字好比对（临时目录的路径上有链接时两种写法都认）。
+                said = done.stdout.decode()
+                for spelling in sorted({str(home), str(home.resolve())}, key=len, reverse=True):
+                    said = said.replace(spelling, '<这里>')
+                return done.returncode, said.splitlines(), len(called.read_text()) if called.exists() else 0
+        everything = {'nas_account.py', 'nas_known_hosts', 'unit'}
+        unit_path = '<这里>/../../sync-bridge/recovery/studiolo-rest-backup.service'
+        for argument in ('check', 'add', 'restart', 'unit', 'nonsense'):
+            with self.subTest(argument):
+                self.assertEqual(run(everything - {'nas_account.py'}, argument), (1, ['找不到 <这里>/nas_account.py'], 0))
+                self.assertEqual(run(everything - {'nas_known_hosts'}, argument), (1, ['找不到 <这里>/nas_known_hosts'], 0))
+        self.assertEqual(run(everything - {'unit'}, 'unit'), (1, ['找不到 ' + unit_path], 0))
+        # 单元文件只有换单元才用：别的子命令不因为它不在而停。三样都在：照常走到登录
+        # （这里的替身让登录失败，所以是两次 ssh：登录那一次，和收尾退出登录那一次）。
+        greeting = GREETING.format(' '.join(NAS))
+        self.assertEqual(run(everything - {'unit'}, 'check'), (1, [greeting], 2))
+        for argument in ('check', 'unit'):
+            with self.subTest(present=argument):
+                self.assertEqual(run(everything, argument), (1, [greeting], 2))
+
 
 class HostKeyTests(unittest.TestCase):
     """NAS 的主机钥匙只认仓库里钉住的那一把。"""
@@ -577,6 +619,13 @@ class HostKeyTests(unittest.TestCase):
                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE)
             self.assertEqual(found.returncode, code, found.stderr.decode())
             self.assertEqual(keys[0] in found.stdout.decode(), code == 0)
+        # README 里「不登录、直接问 NAS 要钥匙」那条命令的后半截：ssh-keyscan 给出的是「地址 类型 公钥」一行，
+        # 从标准输入交给 ssh-keygen，认到的是同一个指纹。
+        scanned = subprocess.run([keygen, '-l', '-f', '-'], input=('192.168.100.111 ssh-ed25519 ' + blob + '\n').encode(),
+                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        self.assertEqual((scanned.returncode, scanned.stdout.decode().split()),
+                         (0, ['256', FINGERPRINT, '192.168.100.111', '(ED25519)']), scanned.stderr.decode())
+        self.assertIn('ssh-keyscan -t ed25519 192.168.100.111 2>/dev/null | ssh-keygen -lf -', README.read_text(encoding='utf-8'))
 
     def test_ssh_takes_the_pinned_options_over_whatever_its_own_configuration_says(self):
         """这台机器自己的 ssh 配置写得再松，命令行上钉的那几项照样作数（用 ssh -G 看它实际会用的设置，不连任何机器）。"""
@@ -584,27 +633,35 @@ class HostKeyTests(unittest.TestCase):
             loose = os.path.join(scratch, 'config')
             Path(loose).write_text('Host *\n  StrictHostKeyChecking no\n  UserKnownHostsFile /dev/null\n'
                                    '  GlobalKnownHostsFile /etc/ssh/ssh_known_hosts\n  HostKeyAlias somebody-else\n'
-                                   '  UpdateHostKeys yes\n', encoding='ascii')
+                                   '  UpdateHostKeys yes\n  KnownHostsCommand /bin/echo somebody-else ssh-ed25519 AAAA\n'
+                                   '  VerifyHostKeyDNS yes\n', encoding='ascii')
+
+            names = ('stricthostkeychecking', 'userknownhostsfile', 'globalknownhostsfile', 'hostkeyalias', 'updatehostkeys',
+                     'knownhostscommand', 'verifyhostkeydns')
 
             def settings(options):
                 done = subprocess.run([self.tool('ssh'), '-G', '-F', loose] + options + NAS, stdin=subprocess.DEVNULL,
                                       stdout=subprocess.PIPE, stderr=subprocess.PIPE)
                 self.assertEqual(done.returncode, 0, done.stderr.decode())
                 found = dict(line.split(' ', 1) for line in done.stdout.decode().splitlines() if ' ' in line)
-                return [found.get(key) for key in ('stricthostkeychecking', 'userknownhostsfile', 'globalknownhostsfile',
-                                                   'hostkeyalias', 'updatehostkeys', 'hostname', 'user', 'proxyjump')]
+                # 开关打成 yes/no 还是 true/false 随 ssh 的版本：统一成 yes/no。没有这一项就是 None。
+                return [{'true': 'yes', 'false': 'no', 'off': 'no'}.get(found.get(key), found.get(key))
+                        for key in names + ('hostname', 'user', 'proxyjump')]
             where = ['192.168.100.111', 'maxsong', 'studiolo-108-ts']
-            strict, *pinned = settings(PIN)
-            self.assertIn(strict, ('true', 'yes'))
-            self.assertEqual(pinned[:3], [str(KNOWN_HOSTS), '/dev/null', 'studiolo-nas'])
-            self.assertIn(pinned[3], ('false', 'no'))
-            self.assertEqual(pinned[4:], where)
+            # 钉住的七项：只认仓库里那个文件里的钥匙；另外两个钥匙来源（由命令给出、DNS 里登记的指纹）关着。
+            tight = settings(PIN)
+            self.assertEqual(tight, ['yes', str(KNOWN_HOSTS), '/dev/null', 'studiolo-nas', 'no', None, 'no'] + where)
             # 对照：不带那几项，这份松的配置就真的生效（说明上面看的确实是会被配置改掉的设置）。
-            strict, *loosened = settings([])
-            self.assertIn(strict, ('false', 'no', 'off'))
-            self.assertEqual(loosened[:3], ['/dev/null', '/etc/ssh/ssh_known_hosts', 'somebody-else'])
-            self.assertIn(loosened[3], ('true', 'yes'))
-            self.assertEqual(loosened[4:], where)
+            slack = settings([])
+            self.assertEqual(slack, ['no', '/dev/null', '/etc/ssh/ssh_known_hosts', 'somebody-else', 'yes',
+                                     '/bin/echo somebody-else ssh-ed25519 AAAA', 'yes'] + where)
+            # 七项各管各的：从钉住的里面拿掉哪一项，松配置里对应的那一条就回来，别的不变（哪一项都少不得）。
+            self.assertEqual(len(PIN), 2 * len(names))
+            for index, name in enumerate(names):
+                with self.subTest(dropped=name):
+                    expected = list(tight)
+                    expected[index] = slack[index]
+                    self.assertEqual(settings(PIN[:2 * index] + PIN[2 * index + 2:]), expected)
 
 
 if __name__ == '__main__':
