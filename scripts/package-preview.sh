@@ -34,6 +34,8 @@ STUDIOLO_INPUTS=(
   deploy/sync-bridge
   # vault-broker、control-db 的预检用例运行时按 CARGO_MANIFEST_DIR 调它（test-package-inputs.py 第三类守卫）。
   scripts/check-backup-preflight.py
+  # local-server 的库目录白名单用例运行时按 CARGO_MANIFEST_DIR 读它的白名单（同一类守卫，T-216）。
+  deploy/human/release/snapshot_worker.py
 )
 COPYFILE_DISABLE=1 tar -cf - "${STUDIOLO_INPUTS[@]}" |
   tar -xf - -C "$STUDIOLO_OUT/source"

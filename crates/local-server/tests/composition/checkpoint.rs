@@ -29,7 +29,12 @@ fn identities(f: &Fixture, name: &str) -> PathBuf {
     drop(SqliteAuditLedger::open(&root.join("audit")).unwrap());
     root
 }
-fn policy(f: &Fixture, options: &mut crate::options::Options, agents: bool, board: bool) {
+pub(super) fn policy(
+    f: &Fixture,
+    options: &mut crate::options::Options,
+    agents: bool,
+    board: bool,
+) {
     let path = directory(f, "policy");
     drop(PolicyStore::open(&path).unwrap());
     options.policy_data = Some(path);

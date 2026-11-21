@@ -5,7 +5,7 @@ use super::{Fixture, StartupError, prepare_with, test_support};
 use std::{fs, os::unix::fs::PermissionsExt, path::Path, sync::Arc};
 
 /// 内容合格的备份配置（两段成对）；路径都在夹具目录里，不和 Auth／Audit 私有目录互相嵌套。
-fn approved(root: &Path) -> Vec<u8> {
+pub(super) fn approved(root: &Path) -> Vec<u8> {
     serde_json::to_vec(&serde_json::json!({
         "version": 1,
         "backup": {
