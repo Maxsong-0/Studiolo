@@ -1,6 +1,13 @@
 //! 先完整核对所有登记，再按原身份回收中断副本与过期封存；没有隐式初始化或按名称删除。
+//! 删登记目录先原子改名、身份记录最后删；上一轮删到一半的，按改名时写进名字的原 inode 认出来接着删。
 mod plan;
-use super::{ReaderIdentity, Result, StagingError, check_deadline, io::Directory, journal};
+use super::{
+    ReaderIdentity, Result, StagingError,
+    budget::Budget,
+    check_deadline,
+    io::{Directory, JournalFile},
+    journal,
+};
 use std::{
     path::Path,
     time::{Duration, Instant},
@@ -16,6 +23,8 @@ pub struct CleanupSummary {
     pub expired: u32,
     /// 尚未到期且仍被保留的封存数。
     pub retained: u32,
+    /// 上一轮删登记目录删到一半（已改成 `removing-…`）、这一轮接着删完的数目。
+    pub resumed: u32,
     /// 最近的尚未到期时刻；调用方必须安排再次回收。
     pub next_expiry: Option<InstantMillis>,
 }
@@ -28,7 +37,16 @@ pub fn reclaim_staging(
     deadline: Instant,
 ) -> Result<CleanupSummary> {
     let deadline = deadline.min(Instant::now() + Duration::from_secs(30));
-    check_deadline(deadline)?;
+    reclaim(parent_path, reader_gid, &mut Budget::until(deadline))
+}
+/// 回收本体；删除的每一步记在给定的预算里（私有测试用它停在任意一步）。
+pub(super) fn reclaim(
+    parent_path: &Path,
+    reader_gid: Option<u32>,
+    budget: &mut Budget,
+) -> Result<CleanupSummary> {
+    budget.check()?;
+    let deadline = budget.deadline();
     let reader = reader_gid.map(ReaderIdentity::producer).transpose()?;
     let parent = match reader {
         Some(id) => Directory::publisher(parent_path, id)?,
@@ -39,7 +57,7 @@ pub fn reclaim_staging(
     let plans = plan::read_all(&parent, reader, started, deadline)?;
     let mut result = CleanupSummary::default();
     for plan in plans {
-        check_deadline(deadline)?;
+        budget.check()?;
         parent.check_path(parent_path)?;
         lease.check(&parent)?;
         plan.check(&parent)?;
@@ -56,14 +74,17 @@ pub fn reclaim_staging(
         }
         for (name, root) in &plan.roots {
             plan.check(&parent)?;
-            root.discard_until(&parent, name, reader, deadline)?;
+            root.discard_within(&parent, name, reader, budget)?;
         }
         parent.check_path(parent_path)?;
         lease.check(&parent)?;
         plan.check(&parent)?;
+        let last = JournalFile::Identity.names().0;
         plan.marker
-            .discard_until(&parent, &plan.name, None, deadline)?;
-        if plan.expires_at.is_some() {
+            .retire(&parent, &plan.name, &plan.removing, last, budget)?;
+        if plan.resumed {
+            result.resumed += 1;
+        } else if plan.expires_at.is_some() {
             result.expired += 1;
         } else {
             result.interrupted += 1;
@@ -71,7 +92,7 @@ pub fn reclaim_staging(
     }
     parent.check_path(parent_path)?;
     lease.check(&parent)?;
-    check_deadline(deadline)?;
+    budget.check()?;
     if journal::now()? < started {
         return Err(StagingError::Expired);
     }

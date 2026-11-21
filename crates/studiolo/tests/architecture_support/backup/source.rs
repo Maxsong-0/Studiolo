@@ -22,8 +22,10 @@ pub(super) fn fixed_binding(path: &Path, raw: &str) -> bool {
             "parent.check_path(parent_path)?;",
             "plan.check(&parent)?;",
             "expiry>now",
-            "root.discard_until(&parent,name,reader,deadline)?;",
-            "plan.marker.discard_until(&parent,&plan.name,None,deadline)?;",
+            // 原根和登记目录的每一步删除都记在同一份预算里；登记目录先改成带原 inode 的「删除中」名字再删。
+            "root.discard_within(&parent,name,reader,budget)?;",
+            "plan.marker.retire(&parent,&plan.name,&plan.removing,last,budget)?;",
+            "letlast=JournalFile::Identity.names().0;",
         ]
     } else if path.ends_with("crates/backup/src/checkpoint/staging/housekeeping/plan.rs") {
         &[
@@ -32,6 +34,9 @@ pub(super) fn fixed_binding(path: &Path, raw: &str) -> bool {
             "ifknown!=covered",
             "self.marker.read_journal(*kind)?!=*expected",
             "ifretained&&prefix!=\"sealed\"",
+            // 删到一半的登记只按名字里写的原 inode 认，身份记录只在别的都删完之后才许缺。
+            "ifmarker.identity().1!=inode{returnErr(StagingError::Changed);}",
+            "Noneiffiles.is_empty()=>{}None=>returnErr(StagingError::CleanupRequired)",
         ]
     } else if path.ends_with("crates/backup-worker/src/source.rs") {
         &[

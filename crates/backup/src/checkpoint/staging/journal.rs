@@ -1,4 +1,5 @@
 //! 原身份登记只包含逻辑引用、inode 和期限；缺失或损坏不能推定拥有某个目录。
+//! 登记目录自己删到一半时，靠改名时写进名字的原 inode 认出来（见 `removing_name`）。
 use super::{
     ReaderIdentity, Result, SealedCheckpoint, SealedReference, StagingError, digest,
     io::{Directory, JournalFile},
@@ -97,6 +98,19 @@ impl Retained {
         }
         Ok(())
     }
+}
+/// 删登记目录之前先原子改成的名字的前缀。
+pub(super) const REMOVING: &str = "removing-";
+/// 删登记目录之前先把它原子改成这个名字，名字里带上它自己的 inode：改名之后不管删到哪一步停下，
+/// 回收都只认名字和 inode 对得上的这一个目录，删到只剩空目录也一样。
+pub(super) fn removing_name(key: &str, marker: (u64, u64)) -> String {
+    format!("{REMOVING}{key}-{}", marker.1)
+}
+/// `removing_name` 的反解；只认它写出来的那种规范写法（十进制、没有前导零或正号）。
+pub(super) fn parse_removing(name: &str) -> Option<(&str, u64)> {
+    let (key, inode) = name.strip_prefix(REMOVING)?.split_once('-')?;
+    let inode = inode.parse().ok()?;
+    (removing_name(key, (0, inode)) == name).then_some((key, inode))
 }
 pub(super) fn save(directory: &Directory, file: JournalFile, value: &impl Serialize) -> Result<()> {
     let mut bytes = Limited(Vec::new());

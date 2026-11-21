@@ -14,10 +14,17 @@ pub(super) fn remainder(path: &Path, source: &str) -> String {
                 "child.cleanup_binding(self,name,reader)?;",
                 "st.st_uid!=rustix::process::geteuid().as_raw()",
                 "(st.st_dev,st.st_ino)!=self.pin",
-                "crate::checkpoint::staging::check_deadline(deadline)?;",
+                "budget.check()?;",
                 "super::acl::require_no_acl(&self.fd,true)",
             ],
             &[
+                // 每一次改名、删文件、删目录之前都先花一步预算：期限到了停在两步之间，下一轮能接着删。
+                ("budget.spend()?;fs::unlinkat(", 3),
+                // 登记目录只在原 inode 核过之后改名成带 inode 的「删除中」名字（NOREPLACE），再删。
+                (
+                    "self.cleanup_binding(parent,name,None)?;budget.spend()?;parent.publish(name,removing)?;",
+                    1,
+                ),
                 ("fs::unlinkat(&parent.fd,name,fs::AtFlags::REMOVEDIR)", 1),
                 ("fs::fchmod(&self.fd,Mode::RWXU)", 1),
                 ("fs::statat(&self.fd,name,fs::AtFlags::SYMLINK_NOFOLLOW)", 1),
@@ -187,7 +194,11 @@ pub(super) fn remainder(path: &Path, source: &str) -> String {
             source,
             &[
                 "parent.acquire_lease()?;",
-                "name.starts_with(\"incomplete-\")||name.starts_with(\"export-\")||name.starts_with(\"pending-\")",
+                // 上一轮删到一半的登记（`removing-`）还在时，新的尝试不开始。
+                "name.starts_with(\"incomplete-\")||name.starts_with(\"export-\")||name.starts_with(\"pending-\")||name.starts_with(journal::REMOVING)",
+                // 删到一半的登记只在已经开始删之后才认，身份记录只在目录已删空时才许缺。
+                "(false,false,true)ifself.removing_marker=>Ok(Some(&self.removing)),",
+                "name==self.removing&&identity.is_none()&&self.marker.names(8)?.is_empty();",
                 "returnErr(StagingError::CleanupRequired)",
                 "self.lease.check(parent)?;",
                 "self.marker.check_child(parent,name)?;",

@@ -155,7 +155,10 @@ fn marker_removal_is_idempotent_after_its_directory_entry_has_already_disappeare
         )
         .unwrap();
     lifecycle
-        .finish(&parent, Instant::now() + Duration::from_secs(30))
+        .finish(
+            &parent,
+            &mut Budget::until(Instant::now() + Duration::from_secs(30)),
+        )
         .unwrap();
     assert!(lifecycle.finished);
 }

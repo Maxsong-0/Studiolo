@@ -1,16 +1,19 @@
 //! 所有根与日志先核对完再允许删除；中途已删除的原根可沿原登记继续回收。
+//! 已改名成 `removing-<key>-<inode>` 的登记是上一轮删到一半停下的：名字里的 inode 要对得上，
+//! 身份记录还在就整份核对，不在了目录只能已经删空；别的残缺照旧拒绝，不按名字猜。
 use super::*;
-use crate::checkpoint::staging::{
-    io::JournalFile,
-    journal::{Identity, Retained, RootIdentity},
-};
+use crate::checkpoint::staging::journal::{self, Identity, Retained, RootIdentity};
 use std::collections::BTreeSet;
 
 pub(super) struct Plan {
     pub name: String,
+    /// 删登记目录之前先改成的名字；上一轮已经改过名的就是 `name` 本身。
+    pub removing: String,
     pub marker: Directory,
     pub roots: Vec<(String, Directory)>,
     pub expires_at: Option<InstantMillis>,
+    /// 上一轮删到一半、这一轮接着删的登记。
+    pub resumed: bool,
     files: Vec<String>,
     proof: Vec<(JournalFile, Option<Vec<u8>>)>,
 }
@@ -42,6 +45,33 @@ fn load<T: serde::de::DeserializeOwned>(
     proof.push((kind, bytes));
     Ok(record)
 }
+enum Kind {
+    Incomplete,
+    Retained,
+    /// 已改名、删到一半；带着名字里写的原 inode。
+    Removing(u64),
+}
+/// 认登记目录的名字；前缀对、后面不是规范写法的，一律当成要人看的残留。
+fn classify(name: &str) -> Result<Option<(&str, Kind)>> {
+    let (key, kind) = if let Some(key) = name.strip_prefix("incomplete-") {
+        (key, Kind::Incomplete)
+    } else if let Some(key) = name.strip_prefix("retained-") {
+        (key, Kind::Retained)
+    } else if name.starts_with(journal::REMOVING) {
+        let (key, inode) = journal::parse_removing(name).ok_or(StagingError::CleanupRequired)?;
+        (key, Kind::Removing(inode))
+    } else {
+        return Ok(None);
+    };
+    if key.len() != 64
+        || !key
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+    {
+        return Err(StagingError::CleanupRequired);
+    }
+    Ok(Some((key, kind)))
+}
 pub(super) fn read_all(
     parent: &Directory,
     reader: Option<ReaderIdentity>,
@@ -50,30 +80,63 @@ pub(super) fn read_all(
 ) -> Result<Vec<Plan>> {
     let names = parent.names(1 + 5 * 256)?;
     let known: BTreeSet<_> = names.iter().cloned().collect();
+    let scan = Scan {
+        parent,
+        reader,
+        now,
+        known: &known,
+    };
     let mut covered = BTreeSet::from([".producer-lease".to_owned()]);
     let mut keys = BTreeSet::new();
     let mut plans = Vec::new();
     for name in &names {
         check_deadline(deadline)?;
-        let (key, retained) = if let Some(key) = name.strip_prefix("incomplete-") {
-            (key, false)
-        } else if let Some(key) = name.strip_prefix("retained-") {
-            (key, true)
-        } else {
+        let Some((key, kind)) = classify(name)? else {
             continue;
         };
-        if plans.len() == 256
-            || key.len() != 64
-            || !key
-                .bytes()
-                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
-            || !keys.insert(key.to_owned())
-        {
+        // 同一个 key 只能有一份登记，不管它叫哪个名字。
+        if plans.len() == 256 || !keys.insert(key.to_owned()) {
             return Err(StagingError::CleanupRequired);
         }
         let marker = parent.child(name)?;
         marker.check_journal_layout()?;
         let files = marker.names(8)?;
+        let plan = match kind {
+            Kind::Incomplete => scan.registered(name, key, false, marker, files)?,
+            Kind::Retained => scan.registered(name, key, true, marker, files)?,
+            Kind::Removing(inode) => scan.removing(name, key, inode, marker, files)?,
+        };
+        covered.extend(plan.roots.iter().map(|(root, _)| root.clone()));
+        covered.insert(name.clone());
+        plans.push(plan);
+    }
+    if known != covered {
+        return Err(StagingError::CleanupRequired);
+    }
+    Ok(plans)
+}
+struct Scan<'a> {
+    parent: &'a Directory,
+    reader: Option<ReaderIdentity>,
+    now: InstantMillis,
+    known: &'a BTreeSet<String>,
+}
+impl Scan<'_> {
+    /// 还叫原名（`incomplete-`、`retained-`）的登记：日志齐全、身份对得上，原根按登记的 inode 认。
+    fn registered(
+        &self,
+        name: &str,
+        key: &str,
+        retained: bool,
+        marker: Directory,
+        files: Vec<String>,
+    ) -> Result<Plan> {
+        let Self {
+            parent,
+            reader,
+            now,
+            known,
+        } = *self;
         let committed = [
             "identity.json",
             "export.json",
@@ -128,24 +191,64 @@ pub(super) fn read_all(
                 }
                 let proof = proof.ok_or(StagingError::CleanupRequired)?;
                 let root = parent.reclaim_child(&root_name, proof.directory, reader)?;
-                roots.push((root_name.clone(), root));
-                covered.insert(root_name);
+                roots.push((root_name, root));
             } else if prefix == "sealed" && expires_at.is_some_and(|expiry| expiry > now) {
                 return Err(StagingError::Changed);
             }
         }
-        covered.insert(name.clone());
-        plans.push(Plan {
-            name: name.clone(),
+        Ok(Plan {
+            name: name.to_owned(),
+            removing: journal::removing_name(key, marker.identity()),
             marker,
             roots,
             expires_at,
+            resumed: false,
             files,
             proof,
-        });
+        })
     }
-    if known != covered {
-        return Err(StagingError::CleanupRequired);
+    /// 已改名、删到一半的登记。名字里的 inode 要对得上这个目录；身份记录最后删，它还在就整份核对，
+    /// 不在了目录只能已经删空。改名之前同一个 key 的原根都已删完，所以它不认领任何原根：
+    /// 这时还有同一个 key 的原根，就落在最后「每个名字都有人认领」那道检查上。
+    fn removing(
+        &self,
+        name: &str,
+        key: &str,
+        inode: u64,
+        marker: Directory,
+        files: Vec<String>,
+    ) -> Result<Plan> {
+        let Self {
+            parent,
+            reader,
+            now,
+            ..
+        } = *self;
+        if marker.identity().1 != inode {
+            return Err(StagingError::Changed);
+        }
+        let mut proof = Vec::new();
+        let identity: Option<Identity> = load(&marker, JournalFile::Identity, &mut proof)?;
+        match &identity {
+            Some(identity) => identity.validate(parent, &marker, key, reader, now)?,
+            None if files.is_empty() => {}
+            None => return Err(StagingError::CleanupRequired),
+        }
+        let _: Option<RootIdentity> = load(&marker, JournalFile::Export, &mut proof)?;
+        let _: Option<RootIdentity> = load(&marker, JournalFile::Pending, &mut proof)?;
+        let sealed: Option<Retained> = load(&marker, JournalFile::Sealed, &mut proof)?;
+        if let (Some(identity), Some(record)) = (&identity, &sealed) {
+            record.validate(identity, now)?;
+        }
+        Ok(Plan {
+            name: name.to_owned(),
+            removing: name.to_owned(),
+            marker,
+            roots: Vec::new(),
+            expires_at: None,
+            resumed: true,
+            files,
+            proof,
+        })
     }
-    Ok(plans)
 }

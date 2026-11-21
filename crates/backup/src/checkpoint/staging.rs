@@ -1,4 +1,5 @@
 //! 隔离 owner 导出、按真实字节过滤、视图和清单一次原子发布。
+mod budget;
 mod catalog;
 mod creation;
 mod housekeeping;
