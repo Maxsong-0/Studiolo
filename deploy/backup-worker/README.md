@@ -35,10 +35,13 @@ T-204。本目录是候选发布源，**尚未安装到任何机器**。专用�
   一份夹具，由程序的真实解析读过（`crates/host-config/tests/support/provisioned-backup.json`、
   `crates/backup-worker/tests/support/provisioned-config.json`）。
 - `nas-account.command`（在 Mac 终端跑，NAS 一侧是 `nas_account.py`）：给 worker 在 NAS 的 rest-server 上加只追加账号。
+  它的 `unit` 用法换 NAS 上备份服务的单元：原来那版在开机时存储卷还没挂上就被跳过、之后一直不起来
+  （2026-10-24 那次开机之后停了四周，没人发现），新版没准备好会每 5 秒再试。worker 上线之前要换好，
+  不然 NAS 一重启备份就全部失败（见 `deploy/sync-bridge/recovery/README.md`「NAS 追加备份」）。
 - `credentials.py`：第 5 项。不回显地录入两个口令，写三份凭据文件，再以 worker 账号初始化仓库并读回。
 
-顺序：NAS `check` → NAS `add` → `prereq.py --apply` → `credentials.py --apply`。人侧发行换了候选、worker 重建过，
-先改 `prereq.py` 里「发行相关的值」那一段。下面是这几项各自的要求（手工做也照这个）。
+顺序：NAS `check` → NAS `add` → `prereq.py --apply` → `credentials.py --apply`；NAS `unit` 在 worker 上线之前哪一步做都行。
+人侧发行换了候选、worker 重建过，先改 `prereq.py` 里「发行相关的值」那一段。下面是这几项各自的要求（手工做也照这个）。
 
 1. 专用账号 `studiolo-backup` 和读取组；主服务账号和 worker 账号都在读取组里。
 2. `/usr/lib/studiolo-backup-worker/`（root 所有、不可组写）里放：
@@ -80,6 +83,8 @@ T-204。本目录是候选发布源，**尚未安装到任何机器**。专用�
      Bridge 那边，`deploy/sync-bridge/README.md` 保证的是执行段被杀后执行器能按原键续做，不保证人侧能自己起来。
    - socket 残留：正常关停的第一步就把备份 socket 删了，停止超时到点时它一般已经不在。会留下节点的是主服务崩溃、
      内存超限被杀，或者还没走到那一步就被强杀；留下之后下次启动按设计拒绝（不清理也不接管），要人看过再删。
+   - 上面这几种残留怎么看、怎么确认是死的、删哪一个，照 `deploy/human/RECOVERY.md` 做（含激活脚本停在
+     `blocked_requires_operator`、暂存回收失败关闭两种情形）。
 
    生产 169 上不手改线上单元：启动器的 `--backup-config`、这两行 `ReadWritePaths=` 和停止超时由人侧发行 r17 的装配一次换上
    （`deploy/blackboard/assembly.py`，2026-11-20），激活失败时一起退回。停止超时是 300 秒：备份段 10＋25＋30＋30（批准的冻结预算

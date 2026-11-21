@@ -1,15 +1,17 @@
 [Unit]
 Description=Studiolo append-only recovery storage
 After=network.target
-ConditionPathIsMountPoint=/volume1
-ConditionPathExists=/volume1/studiolo-dr/rest-server/backup.htpasswd
-ConditionPathExists=/volume1/studiolo-dr/rest-server/tls.key
 
 [Service]
 Type=simple
+# 开机时存储卷可能还没挂上。这里不用 Condition…=：条件不成立只是跳过、之后不再试，服务会一直停到有人手工启动
+# （2026-10-24 那次开机就是这样）。改成启动前检查：没准备好算启动失败，由 Restart= 每隔 RestartSec 再试，
+# 直到存储卷挂上、认证文件和私钥都在。StartLimitInterval=0 关掉「短时间内启动太多次就不再启动」。
+ExecStartPre=/bin/sh -c 'grep -q " /volume1 " /proc/mounts && test -f /volume1/studiolo-dr/rest-server/backup.htpasswd && test -f /volume1/studiolo-dr/rest-server/tls.key'
 ExecStart=/usr/bin/chroot --userspec=61032:61032 --groups=61032 /volume1/studiolo-dr/rest-server /rest-server --path /data --listen 192.168.100.111:18443 --append-only --private-repos --htpasswd-file /backup.htpasswd --tls --tls-cert /tls.crt --tls-key /tls.key --tls-min-ver 1.3
-Restart=on-failure
+Restart=always
 RestartSec=5
+StartLimitInterval=0
 UMask=0077
 NoNewPrivileges=yes
 CapabilityBoundingSet=CAP_SYS_CHROOT CAP_SETUID CAP_SETGID

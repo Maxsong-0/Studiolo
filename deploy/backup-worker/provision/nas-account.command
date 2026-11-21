@@ -1,8 +1,11 @@
 #!/bin/bash
 # 用户在自己的 Mac 终端运行；不要通过 agent 工具执行本文件。
-# 给备份 worker 在 NAS 的 rest-server 上加一个只追加账号（README「安装前要有的东西」第 5 项的 NAS 一侧）。
-#   nas-account.command check   只读：NAS 上备份服务、账号文件、证书的现状，不写任何东西
+# NAS 上备份服务（rest-server）的两件事：给备份 worker 加一个只追加账号（README「安装前要有的东西」第 5 项的 NAS 一侧）；
+# 换上开机后会接着试的服务单元（原来那版在开机时存储卷还没挂上就被跳过，之后一直不起来）。
+#   nas-account.command check   只读：NAS 上备份服务、账号文件、证书、这次开机和已装单元的现状，不写任何东西
 #   nas-account.command add     设新账号的密码 → 加进 NAS 的账号文件 → 重启备份服务 → 再看一遍现状
+#   nas-account.command unit    换服务单元：先在用完即删的临时单元上演一遍「没准备好就隔一会儿再试」→ 换上 → 重启备份服务
+#                               → 再看一遍现状；服务没起来就换回旧的。不问任何密码（登录 NAS 那一下除外）
 # 怎么连 NAS：默认经 108 跳过去；人在家里局域网上可以先 export STUDIOLO_NAS_SSH="maxsong@192.168.100.111" 直连。
 # 登录 NAS 由 ssh 自己办：这台 Mac 的钥匙在 NAS 上就直接过；不在，ssh 会在终端里问 NAS 的登录密码（本脚本不经手）。
 # 一次运行只登录一回，后面几步共用这一条连接。NAS 上要 root 的几步用 sudo -n：sudo 要密码的话脚本做不了，会在改任何东西之前停下。
@@ -15,12 +18,14 @@ export PATH=/usr/bin:/bin:/usr/sbin
 unset BASH_ENV ENV CDPATH
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 helper="$here/nas_account.py"
+unit_file="$here/../../sync-bridge/recovery/studiolo-rest-backup.service"
 account=studiolo-backup-worker
 scratch=''
 link=''
 read -r -a nas <<< "${STUDIOLO_NAS_SSH:--J studiolo-108-ts maxsong@192.168.100.111}"
 [[ -f "$helper" ]] || { echo "找不到 $helper"; exit 1; }
-# 追加那一步，标准输入里先是帮手脚本、后面跟着账号行：按字节数读出脚本来执行，剩下的那一行留给脚本自己读。
+# 追加账号、换单元这两步，标准输入里先是帮手脚本、后面跟着要交给它的内容（账号行，或者单元文件）：
+# 按字节数读出脚本来执行，剩下的留给脚本自己读。
 boot='import sys; exec(compile(sys.stdin.buffer.read(int(sys.argv.pop())), "nas_account.py", "exec"))'
 
 # worker 读凭据时拒绝首尾空白和控制字符（crates/backup-worker/src/credentials/file.rs）。这里收得更紧，
@@ -46,6 +51,14 @@ remote() {
   ssh -T -S "$link" "${nas[@]}" "sudo -n python3 -I -B - $1" < "$helper"
 }
 
+# send <模式> <文件>：帮手脚本后面跟着那个文件的内容，走同一条标准输入。
+send() {
+  local size
+  size=$(( $(wc -c < "$helper") ))
+  { cat "$helper"; cat "$2"; } \
+    | ssh -T -S "$link" "${nas[@]}" "sudo -n python3 -I -B -c '$boot' $1 $size"
+}
+
 cleanup() {
   [[ -n "$scratch" ]] || return 0
   [[ -z "$link" ]] || ssh -S "$link" -O exit "${nas[@]}" 2>/dev/null || true
@@ -54,7 +67,7 @@ cleanup() {
 }
 
 add() {
-  local password again size
+  local password again
   [[ -t 0 && -t 1 && -t 2 ]] || { echo '需要用户自己的终端'; exit 1; }
   connect
   echo "给 NAS 上的新账号 $account 定一个密码（只能追加备份，不能删改）。先存进密码管理器，再到这里输入。"
@@ -66,12 +79,19 @@ add() {
   # printf 是 bash 自带的，密码只经管道到 htpasswd，不出现在任何进程的命令行里。
   printf '%s\n' "$password" | /usr/sbin/htpasswd -c -i -B -C 12 "$scratch/line" "$account"
   unset password again
-  size=$(( $(wc -c < "$helper") ))
-  { cat "$helper"; cat "$scratch/line"; } \
-    | ssh -T -S "$link" "${nas[@]}" "sudo -n python3 -I -B -c '$boot' append $size"
+  send append "$scratch/line"
   remote restart
   remote check
   echo 'NAS 账号加好了。只回复「NAS 账号加好了」，不要发密码或账号文件的内容。'
+}
+
+# 单元文件里没有秘密，这一步不问任何东西；帮手脚本只认仓库里这一版的内容。
+replace_unit() {
+  [[ -f "$unit_file" ]] || { echo "找不到 $unit_file"; exit 1; }
+  connect
+  send unit "$unit_file"
+  remote check
+  echo '服务单元换好了。下一次重启 NAS 之后再跑一遍 check：「现在」应该是 active，端口有人监听。'
 }
 
 main() {
@@ -81,8 +101,9 @@ main() {
       remote check
       ;;
     add) add ;;
+    unit) replace_unit ;;
     *)
-      echo '用法：nas-account.command check | add'
+      echo '用法：nas-account.command check | add | unit'
       exit 2
       ;;
   esac
