@@ -318,7 +318,37 @@ class CredentialTests(unittest.TestCase):
 
     def test_partial_or_loose_credentials_are_never_touched(self):
         self.assertEqual(credentials.credentials_state(self.directory), 'absent')
-        credentials.write_credentials(self.directory, {name: 'value-of-' + name for name in credentials.NAMES})
+        values = {name: 'value-of-' + name for name in credentials.NAMES}
+        # 目录先被别人建好（哪怕是空的）也不接着用：只认自己这一次新建的。
+        os.mkdir(self.directory, 0o755)
+        with self.assertRaises(FileExistsError):
+            credentials.write_credentials(self.directory, values)
+        self.assertEqual(os.listdir(self.directory), [])
+        os.rmdir(self.directory)
+        # 权限位不靠调用方的 umask：放开 umask 写，目录仍是 0700、文件仍是 0600。
+        loosened = os.umask(0)
+        try:
+            credentials.write_credentials(self.directory, values)
+        finally:
+            os.umask(loosened)
+        self.assertEqual([stat.S_IMODE(os.lstat(self.directory).st_mode)]
+                         + [stat.S_IMODE(os.lstat(os.path.join(self.directory, name)).st_mode)
+                            for name in credentials.NAMES], [0o700, 0o600, 0o600, 0o600])
+        self.assertEqual(credentials.credentials_state(self.directory), 'complete')
+        # 目录被放开、多一个硬链接、或者有一份是空的，都不算完整。
+        os.chmod(self.directory, 0o750)
+        self.assertEqual(credentials.credentials_state(self.directory), 'partial')
+        os.chmod(self.directory, 0o700)
+        second = os.path.join(os.path.dirname(self.directory), 'second-name')
+        os.link(os.path.join(self.directory, 'rest-username'), second)
+        self.assertEqual(credentials.credentials_state(self.directory), 'partial')
+        os.unlink(second)
+        self.assertEqual(credentials.credentials_state(self.directory), 'complete')
+        username = Path(self.directory, 'rest-username')
+        kept = username.read_bytes()
+        username.write_bytes(b'')
+        self.assertEqual(credentials.credentials_state(self.directory), 'partial')
+        username.write_bytes(kept)
         self.assertEqual(credentials.credentials_state(self.directory), 'complete')
         with self.assertRaises(FileExistsError):
             credentials.write_credentials(self.directory, {name: 'other' for name in credentials.NAMES})
