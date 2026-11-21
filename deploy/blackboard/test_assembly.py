@@ -1,5 +1,6 @@
 """黑板形状发行（当前 r16→r17）的固定变更面；夹具不接触生产或凭据。"""
 import ast
+import collections
 import importlib.util
 from pathlib import Path
 import re
@@ -49,21 +50,31 @@ def rust_seconds(relative, name):
     return int(found[0])
 
 
-def rust_calls(relative, needle):
-    """一份 Rust 源码里 `needle` 出现在哪些方法里、各几次：{方法名: 次数}。只认 impl 块里缩进四格的方法；
-    出现在方法以外就失败（那是这个助手不认识的写法，要人来看）。"""
-    counts, name = {}, None
-    for line in (ROOT / relative).read_text().splitlines():
-        head = re.match(r'    (?:pub(?:\([a-z]+\))? )?fn (\w+)[(<]', line)
-        if head:
-            name = head.group(1)
-        elif line.startswith('}'):
-            name = None
-        found = line.count(needle)
-        if found:
-            assert name is not None, (relative, needle, line)
-            counts[name] = counts.get(name, 0) + found
-    return counts
+METHOD_HEAD = re.compile(r'^    (?:pub(?:\([a-z]+\))? )?(?:(?:async|const|unsafe) )*fn (\w+)\b', re.MULTILINE)
+
+
+def rust_code(path):
+    """一份 Rust 源码的非测试部分，去掉行注释（注释里提到的调用不算数）。
+    只切掉写在文件里的测试模块（`#[cfg(test)]` 后面跟着 `mod 名字 {`）；`mod tests;` 这种声明不切，后面的代码照样看。"""
+    return re.sub(r'//[^\n]*', '', re.split(r'\n#\[cfg\(test\)\]\nmod \w+ \{', path.read_text(), maxsplit=1)[0])
+
+
+def rust_calls(paths, receiver, method=r'\w+'):
+    """这些源码里 `<receiver>.<method>(` 写在哪些方法里：[(所在方法, 被调的名字), …]，按出现顺序。
+    receiver 给 None 就不限接收者。点号前后允许换行和空白（rustfmt 会把长链拆成几行）。
+    只认 impl 块里缩进四格的方法；写在方法以外就失败（那是这个助手不认识的写法，要人来看）。"""
+    chain = '' if receiver is None else r'\b' + r'\s*\.\s*'.join(re.escape(part) for part in receiver.split('.')) + r'\s*'
+    pattern = re.compile(chain + r'\.\s*(' + method + r')\s*\(')
+    found = []
+    for path in paths:
+        text = rust_code(path)
+        heads = [(match.start(), match.group(1)) for match in METHOD_HEAD.finditer(text)]
+        ends = [match.start() for match in re.finditer(r'^}', text, re.MULTILINE)]
+        for call in pattern.finditer(text):
+            inside = [(at, name) for at, name in heads if at < call.start()]
+            assert inside and not any(inside[-1][0] < end < call.start() for end in ends), (str(path), call.group(0))
+            found.append((inside[-1][1], call.group(1)))
+    return found
 
 
 class AssemblyTests(unittest.TestCase):
@@ -164,26 +175,48 @@ class AssemblyTests(unittest.TestCase):
         self.assertEqual(a.BACKUP_SCAN_BUDGET_SECONDS, rust_seconds(producer, 'SCAN_BUDGET'))
 
     def test_request_scans_count_every_ledger_read_in_the_program(self):
-        # 「处理请求」按读几次账本算。读账本的每一处都在这里点名：哪个函数里、几次。多一处、少一处、挪到别的函数，
-        # 这里先红，提醒把 assembly.py 里的算法重看一遍（三轮复查各发现过一条当时没数到的路径，不再靠人去数）。
-        producer = 'crates/local-server/src/backup/producer.rs'
-        check = 'crates/local-server/src/backup/producer/check.rs'
-        own, checks = rust_calls(producer, 'self.refresh('), rust_calls(check, 'self.refresh(')
-        self.assertEqual(own, {'next_pending': 1, 'schedule': 2, 'decide': 1, 'jobs': 1})
-        self.assertEqual(checks, {'repository_check_with': 3, 'report_check': 1, 'repository_checks_at': 1})
+        # 「处理请求」按读几次账本算。这里把生产者源码（producer.rs 和 producer/ 下全部文件：refresh 和状态锁是私有的，
+        # 只有它们调得到）里读账本、拿状态锁的每一处按所在方法点名，再钉请求怎么分派、谁调健康页的两个探针。
+        # 对不上就先红，提醒把 assembly.py 里的算法重看一遍：四轮复查各发现过一条当时没数到的路径。
+        # 钉的是源码文本，有它认不出的：把读账本放进循环或递归（字面次数不变，执行次数变多）、宏生成的调用、
+        # 拿到锁之后新加的别的慢操作。所以它只是提醒，不是证明：改这几个文件的人仍要自己看一眼关停要等多久。
+        backup = ROOT / 'crates/local-server/src/backup'
+        sources = [backup / 'producer.rs'] + sorted((backup / 'producer').rglob('*.rs'))
+
+        def where(receiver, method):
+            return dict(collections.Counter(name for name, _ in rust_calls(sources, receiver, method)))
+        reads = where('self', 'refresh')
+        self.assertEqual(reads, {'next_pending': 1, 'schedule': 2, 'decide': 1, 'jobs': 1,
+                                 'repository_check_with': 3, 'report_check': 1, 'repository_checks_at': 1})
+        # 拿状态锁的每一处：新加一个拿着锁干活的地方（哪怕不读账本），请求和后台线程都会跟着等。
+        # 后台线程收尾复位 busy 也拿这把锁（Idle 的 drop），assembly.py 把它列在没算进去的那几样里。
+        self.assertEqual(where('self.state', 'lock'), dict.fromkeys(
+            ('next_pending', 'schedule', 'reclaim', 'launch', 'jobs',
+             'repository_check_with', 'report_check', 'repository_checks_at'), 1))
+        self.assertEqual(where('self.0', 'lock'), {'drop': 1})
+        # 请求怎么分派：四种请求各走一个方法、各调一次，dispatch 里没有别的 self 方法调用。
+        dispatched = sorted(called for name, called in rust_calls(sources, 'self') if name == 'dispatch')
+        self.assertEqual(dispatched, ['next_pending', 'report_check', 'repository_check', 'schedule'])
+        for method in dispatched:
+            self.assertEqual(where('self', method), {'dispatch': 1}, method)
         # 一个请求自己最多读几次：四种请求里最多的那个。decide 只被 schedule 调一次，所以算在安排封存里。
-        self.assertEqual(rust_calls(producer, 'self.decide('), {'schedule': 1})
-        self.assertEqual(rust_calls(check, 'self.repository_check_with('), {'repository_check': 1})
-        requests = (own['next_pending'], own['schedule'] + own['decide'],
-                    checks['repository_check_with'], checks['report_check'])
+        self.assertEqual(where('self', 'decide'), {'schedule': 1})
+        self.assertEqual(where('self', 'repository_check_with'), {'repository_check': 1})
+        requests = (reads['next_pending'], reads['schedule'] + reads['decide'],
+                    reads['repository_check_with'], reads['report_check'])
         self.assertEqual(a.BACKUP_REQUEST_OWN_SCANS, max(requests))
         # 等状态锁时别人读几次：健康页一次快照调两个探针（备份作业、仓库抽查），各拿一次锁、各读一次。
-        # 别处没有人调这两个探针；worker 的请求在同一个接受循环里一个个处理，不会互相等锁。
-        health = 'crates/local-server/src/startup/health_input.rs'
-        self.assertEqual(rust_calls(health, 'probe.jobs('), {'snapshot': 1})
-        self.assertEqual(rust_calls(health, 'probe.repository_checks('), {'snapshot': 1})
-        self.assertEqual(rust_calls(producer, 'self.repository_checks_at('), {'repository_checks': 1})
-        self.assertEqual(a.BACKUP_SNAPSHOT_SCANS, own['jobs'] + checks['repository_checks_at'])
+        # 整个 crate 的非测试代码里，调这两个探针的只有那一处（不限接收者叫什么；别的类型起了同名方法也会红，来看一眼）。
+        crate = ROOT / 'crates/local-server/src'
+        code = [path for path in sorted(crate.rglob('*.rs'))
+                if 'tests' not in path.relative_to(crate).parts and path.stem != 'tests'
+                and not path.name.endswith('_tests.rs')]
+        for probe in ('jobs', 'repository_checks'):
+            callers = [(str(path.relative_to(crate)), name)
+                       for path in code for name, _ in rust_calls([path], None, probe)]
+            self.assertEqual(callers, [('startup/health_input.rs', 'snapshot')], probe)
+        self.assertEqual(where('self', 'repository_checks_at'), {'repository_checks': 1})
+        self.assertEqual(a.BACKUP_SNAPSHOT_SCANS, reads['jobs'] + reads['repository_checks_at'])
         self.assertEqual(a.BACKUP_REQUEST_SCANS, a.BACKUP_REQUEST_OWN_SCANS + a.BACKUP_SNAPSHOT_SCANS)
 
     def test_bridge_stop_margin_matches_the_sync_deployment_document(self):

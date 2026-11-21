@@ -111,7 +111,9 @@ r12本身尚无批内关停点，激活前必须取得空闲plane.lock并持有�
 人侧程序必须一起换（上一发行的程序不认 `--backup-config`；`REQUIRES_NEW_HUMAN_PROGRAM` 为真，出候选和预检都要求候选程序
 和 r16 字节不同、字节里有 `--backup-config` 这个字面量，只填一个新的来源提交号过不了），网页、maintain 与 sync-launcher 也一起换，
 `prepare.py` 带全部参数；agent 单元沿用 T-215 换过发布名之后的现场。r16 之后没有改数据库或状态的版本号，激活失败可以退回 r16（退回后启动器不带 `--backup-config`，`backup.json`
-留着不碍事；人侧要是被强杀的，`/run/studiolo-backup` 里可能留下 socket 节点，重试激活时预检会拒，要人看过再删）。
+留着不碍事）。人侧要是被强杀的（停服超过停止超时也算），`/run/studiolo-human/http.sock`、黑板入口 `/run/studiolo-board/board.sock`
+和 `/run/studiolo-backup` 里的 socket 节点都可能留下：前两个会让激活脚本停服后的核对当场拒绝，激活和回滚都停下来等人处理；
+后一个在重试激活时被预检拒。都要人看过再删。
 装配钉的摘要：human 单元 `11827335…a143`（r16 激活写下的，2026-11-20 回读的现场值）、r16 manifest `437d75a8…7b4e`（同上）、
 agent 单元 `394ffe6f…0117`（**预算值**：线上单元里的发布名两处换成 `t215-116f5d7-20261120` 之后应有的摘要，换之前是
 `15b39395…45b9`；T-215 的 agent 换完、回读一致才算现场值，不一致就改 `AGENT_SHA` 重出候选）。

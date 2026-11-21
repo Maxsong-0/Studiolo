@@ -201,14 +201,17 @@ class OperationTests(unittest.TestCase):
         def fields(relative):
             text = (HERE.parent.parent / relative).read_text()
             # 两个结构都是「多一个少一个键就拒绝」，预检才敢按「恰好这些键」核。
-            head = '#[serde(deny_unknown_fields)]\nstruct Document {\n'
-            self.assertEqual(text.count(head), 1)
+            # 结构体上只有派生和「多一个键就拒绝」两行属性，再上面是空行：多挂一行（比如 rename_all、default）这里先红。
+            head = '\n\n#[derive(Deserialize)]\n#[serde(deny_unknown_fields)]\nstruct Document {\n'
+            self.assertEqual(text.count(head), 1, relative)
+            self.assertEqual(text.count('struct Document {'), 1, relative)
             body = text.split(head, 1)[1].split('\n}\n', 1)[0]
             # 字段名就是 JSON 键名、每个键都必填，靠的是字段上没有会改键名或让键可缺的属性
-            # （rename、alias、default、flatten 这些）；现在只有两段各自的解码函数。多出别的属性这里先红。
-            attributes = {part.split('=')[0].strip()
-                          for group in re.findall(r'#\[serde\(([^\]]*)\)\]', body) for part in group.split(',')}
-            self.assertLessEqual(attributes, {'deserialize_with'}, relative)
+            # （rename、alias、default、flatten，或者包在 cfg_attr 里的）。字段上只许有一种属性：两段各自的解码函数，
+            # 整行照这个样子写；别的属性、换了写法的都先红。
+            for line in body.splitlines():
+                if line.lstrip().startswith('#'):
+                    self.assertRegex(line.strip(), r'^#\[serde\(deserialize_with = "[\w:]+"\)\]$', relative)
             return {name for name in re.findall(r'^    (\w+):', body, re.MULTILINE)}
         self.assertEqual(fields('crates/host-config/src/backup/file.rs'), ops_module.BACKUP_DOCUMENT_KEYS)
         self.assertEqual(fields('crates/host-config/src/backup/producer.rs'), ops_module.BACKUP_PRODUCER_KEYS)
