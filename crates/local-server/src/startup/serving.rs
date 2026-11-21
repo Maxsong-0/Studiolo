@@ -102,10 +102,12 @@ impl PreparedServer {
                 return Err(error);
             }
         };
-        // 收到退出信号后先停备份：在途的封存还握着全部 owner 的冻结屏障，要等它放开才能动写者。
+        // 收到退出信号或 board 一侧报故障，都先停备份：在途的封存还握着全部 owner 的冻结屏障，
+        // 要等它放开才能动写者。board 故障和退出信号走的是同一条收尾链。
         let settling = backup.clone();
+        let (board_fault, board_faulted) = tokio::sync::oneshot::channel();
         let shutdown = async move {
-            shutdown.await;
+            shutdown_requested(shutdown, board_faulted).await;
             if let Some(backup) = &settling {
                 backup.shutdown().await;
             }
@@ -116,9 +118,12 @@ impl PreparedServer {
             .take()
             .map(|plane| tokio::spawn(plane.drive_until(stopped)));
         let (http_stop, http_stopped) = tokio::sync::oneshot::channel();
-        let server = self.serve_bound_until(async move {
-            let _ = http_stopped.await;
-        });
+        let server = self.serve_bound_until(
+            async move {
+                let _ = http_stopped.await;
+            },
+            board_fault,
+        );
         let result = drain(server, shutdown, driver, stop, http_stop, move || {
             if let Some(workbench) = stopping {
                 workbench.stop();
@@ -133,7 +138,13 @@ impl PreparedServer {
         result
     }
 
-    async fn serve_bound_until<F>(mut self, shutdown: F) -> Result<(), StartupError>
+    /// 有 board 时连同租约巡检、board 监听一起服务。board 一侧先结束时经 `board_fault` 报给外层，
+    /// 由外层照关停走完整收尾链；内层照旧等 `shutdown` 送来再排空，不在这里被丢弃。
+    async fn serve_bound_until<F>(
+        mut self,
+        shutdown: F,
+        board_fault: tokio::sync::oneshot::Sender<()>,
+    ) -> Result<(), StartupError>
     where
         F: Future<Output = ()> + Send + 'static,
     {
@@ -155,10 +166,11 @@ impl PreparedServer {
                     .await
             });
             let mut result = settle_board(
-                Box::pin(self.serve_bound_until(shutdown)),
+                self.serve_listener_until(shutdown),
                 maintenance,
                 worker,
                 stop,
+                board_fault,
             )
             .await;
             if let Some(runner) = runner
@@ -171,6 +183,14 @@ impl PreparedServer {
             }
             return result;
         }
+        self.serve_listener_until(shutdown).await
+    }
+
+    /// 内层服务：可信 Unix 入口或本机 TCP；`shutdown` 一到就停止接新连接，在途请求排空后才返回。
+    async fn serve_listener_until<F>(self, shutdown: F) -> Result<(), StartupError>
+    where
+        F: Future<Output = ()> + Send + 'static,
+    {
         if self.ingress.is_some() {
             let (listener, app) = self.bind_unix()?;
             println!("Studiolo：可信Unix入口（Access、应用会话及二次认证；按 Ctrl-C 停止）");
@@ -191,11 +211,17 @@ impl PreparedServer {
 
 /// board 三方（内层服务、租约巡检、board 监听）谁先结束都走同一条收尾：通知另外两方停下，
 /// 再收回没赢 `select!` 的句柄、逐个检查结果；任何一方出错，结果就是错误。
+///
+/// 内层服务手里有在途请求，不能随 `select!` 丢掉：axum 的连接各自在后台任务里跑，丢掉外层
+/// future 就没人等它们排空，外层随后清理写者时请求可能还在跑。board 一侧先结束时把故障经
+/// `fault` 报给外层，外层照关停走完整收尾链（停备份、等 Bridge、停刷新、送来内层的关停信号），
+/// 这里一直等到内层排空才返回。
 async fn settle_board<S, M, W>(
     inner: S,
     mut maintenance: tokio::task::JoinHandle<Result<(), M>>,
     mut worker: tokio::task::JoinHandle<Result<(), W>>,
     stop: tokio::sync::watch::Sender<bool>,
+    fault: tokio::sync::oneshot::Sender<()>,
 ) -> Result<(), StartupError>
 where
     S: Future<Output = Result<(), StartupError>>,
@@ -206,12 +232,19 @@ where
         Maintenance,
         Worker,
     }
+    let mut inner = std::pin::pin!(inner);
     let (mut result, first) = tokio::select! {
-        result = inner => (result, First::Inner),
+        result = &mut inner => (result, First::Inner),
         _ = &mut maintenance => (Err(StartupError::Serve), First::Maintenance),
         _ = &mut worker => (Err(StartupError::Serve), First::Worker),
     };
     let _ = stop.send(true);
+    if first != First::Inner {
+        // 外层若已因退出信号开始收尾，接收端就已经不在了，发不出去也无妨：内层的关停信号照样会来。
+        let _ = fault.send(());
+        // 结果已经是错误，内层自己的结果不再改写它；但必须等它排空在途请求。
+        let _ = inner.await;
+    }
     // 只跳过赢了 select 的那个（结果已取走，再 poll 会 panic）；不能用 `is_finished()` 判断：
     // 它分不清「已取走」和「结束了还没取」，同时就绪或收尾途中出的错会被它跳过吞掉。
     if first != First::Worker && !matches!(worker.await, Ok(Ok(()))) {
@@ -223,8 +256,21 @@ where
     result
 }
 
+/// 关停从这里开始：退出信号或 board 一侧报的故障，先到的为准。发送端没报就丢下了
+/// （没有 board，或者 board 正常收尾）不算故障，那一支停用，只等退出信号。
+async fn shutdown_requested<F>(signal: F, board_faulted: tokio::sync::oneshot::Receiver<()>)
+where
+    F: Future<Output = ()>,
+{
+    tokio::select! {
+        () = signal => {}
+        Ok(()) = board_faulted => {}
+    }
+}
+
 /// 关闭链只走一遍：先通知并等待 Bridge 安全收尾，写者仍可用；再停止刷新并排空 HTTP。
-/// 监听失败或驱动异常退出同样走完整收尾，不能丢弃尚在处理请求的服务 future。
+/// 监听失败、驱动异常退出或 board 一侧报故障（经 `shutdown` 进来）同样走完整收尾，
+/// 不能丢弃尚在处理请求的服务 future。
 async fn drain<S, F, W>(
     server: S,
     shutdown: F,
@@ -292,3 +338,7 @@ mod shutdown_order;
 #[cfg(test)]
 #[path = "../../tests/startup/board_settle.rs"]
 mod board_settle;
+
+#[cfg(test)]
+#[path = "../../tests/startup/board_drain.rs"]
+mod board_drain;
