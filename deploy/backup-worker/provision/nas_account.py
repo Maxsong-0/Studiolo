@@ -18,6 +18,7 @@ import hashlib
 import os
 from pathlib import Path
 import re
+import signal
 import socket
 import ssl
 import stat
@@ -54,6 +55,23 @@ REHEARSAL = ("[Service]\nType=simple\nExecStartPre=/bin/sh -c 'test -f {flag}'\n
 # 那时已经试过不止 5 次，还在试才说明 StartLimitInterval=0 真把次数上限关掉了。
 REHEARSAL_WAIT_SECONDS = 8
 JOURNALCTL = ('/usr/bin/journalctl', '/bin/journalctl')
+
+
+class Interrupted(KeyboardInterrupt):
+    """收到 SIGHUP、SIGTERM（ssh 断了、被要求结束）：和 Ctrl-C 一样当成被打断，让收尾照常跑。"""
+
+
+def interruptible():
+    """这几个信号的默认动作是直接结束进程，finally 不跑：写到一半的文件、演练用的临时单元会留下。
+    改成抛异常；收到第一个之后其余的都不再理，免得收尾做到一半又被打断。"""
+    watched = (signal.SIGHUP, signal.SIGTERM, signal.SIGINT)
+
+    def stop(number, frame):
+        for other in watched:
+            signal.signal(other, signal.SIG_IGN)
+        raise Interrupted(signal.Signals(number).name)
+    for number in watched:
+        signal.signal(number, stop)
 
 
 def accounts(raw):
@@ -368,9 +386,20 @@ def main(argv, out=print):
         restart(out)
 
 
-if __name__ == '__main__':
+def entry(argv):
+    """把失败变成一句话和退出码 1；被打断时让收尾照常跑完。"""
+    interruptible()
     try:
-        main(sys.argv[1:])
+        main(argv)
     except (ValueError, OSError, subprocess.CalledProcessError) as failure:
         print('nas_account=failed：' + str(failure), file=sys.stderr)
-        sys.exit(1)
+    except KeyboardInterrupt:
+        print('nas_account=interrupted：被打断。写到一半的文件、演练用的临时单元已经收走；'
+              '单元要是已经换上，重跑 unit 会补上重新加载和重启', file=sys.stderr)
+    else:
+        return 0
+    return 1
+
+
+if __name__ == '__main__':
+    sys.exit(entry(sys.argv[1:]))

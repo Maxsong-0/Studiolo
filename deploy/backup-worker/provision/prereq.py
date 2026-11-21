@@ -5,17 +5,20 @@
     python3 -I -B prereq.py            预演：只读。逐项说现在怎样、会做什么，把要写的两份配置原样打出来
     python3 -I -B prereq.py --apply    照做：每一步做完当场核对，不对就停
 重复跑是安全的：已经对的跳过，在但不对的停下（不覆盖、不删除），缺的才建。
-要 root 放的文件由本脚本的 --place 入口放（只由本脚本自己经 sudo 调用）：只新建，目标已经在就失败。
+要 root 放的文件由本脚本的 --place 入口放（只由本脚本自己经 sudo 调用）：只新建，目标已经在就失败；
+内容和调用方核过的那一份不一样就不放。被打断（Ctrl-C、终端断开）时正在放的那一份不留半个文件。
 不碰凭据（见同目录 credentials.py），不启用、不启动任何单元，不动人侧服务。
 
 「发行相关的值」那一段跟着人侧发行走：候选重出、worker 重建，都要改这里再重跑。
 """
 import grp
 import hashlib
+import io
 import json
 import os
 from pathlib import Path
 import pwd
+import signal
 import stat
 import subprocess
 import sys
@@ -27,7 +30,12 @@ TEMPLATES = HERE.parent / 'systemd'
 OWNER = 'maxsong'
 OWNER_UID = 1000
 WORKER = 'studiolo-backup'
+# 专用账号建的时候给的家目录和 shell（没有家目录、不能登录）；已有的账号也得是这个样子才算对。
+WORKER_HOME = '/nonexistent'
+WORKER_SHELL = '/usr/sbin/nologin'
 READERS = 'studiolo-backup-read'
+# useradd、groupadd 的 --system 从这里取系统账号和系统组的号码范围。
+LOGIN_DEFINITIONS = '/etc/login.defs'
 RUNTIME = '/run/studiolo-backup'
 STAGING = '/var/lib/studiolo-backup-staging'
 SOCKET = RUNTIME + '/producer.sock'
@@ -83,6 +91,23 @@ class Refused(Exception):
 def require(condition, message):
     if not condition:
         raise Refused(message)
+
+
+class Interrupted(KeyboardInterrupt):
+    """收到 SIGHUP、SIGTERM（终端断开、被要求结束）：和 Ctrl-C 一样当成被打断，让 finally 里的收尾照常跑。"""
+
+
+def interruptible():
+    """这几个信号的默认动作是直接结束进程，finally 不跑：做到一半的临时文件、临时目录会留下。
+    改成抛异常；收到第一个之后其余的都不再理，免得收尾做到一半又被打断。"""
+    watched = (signal.SIGHUP, signal.SIGTERM, signal.SIGINT)
+
+    def stop(number, frame):
+        for other in watched:
+            signal.signal(other, signal.SIG_IGN)
+        raise Interrupted(signal.Signals(number).name)
+    for number in watched:
+        signal.signal(number, stop)
 
 
 # ---------------------------------------------------------------- 纯逻辑：两份配置和它们的取值规则
@@ -249,6 +274,23 @@ def sha(path):
     return digest.hexdigest()
 
 
+def content(path):
+    return Path(path).read_bytes()
+
+
+def matches(path, digest):
+    """在、是普通文件、摘要对。"""
+    return os.path.isfile(path) and sha(path) == digest
+
+
+def reading(path):
+    return open(path, 'rb')
+
+
+def make_directory(path, mode):
+    os.mkdir(path, mode)
+
+
 def account(name):
     try:
         return pwd.getpwnam(name)
@@ -261,6 +303,33 @@ def group(name):
         return grp.getgrnam(name)
     except KeyError:
         return None
+
+
+def group_numbered(gid):
+    """按号码找组；账号的主组号在组表里查不到时给 None（不让 KeyError 变成一屏回溯）。"""
+    try:
+        return grp.getgrgid(gid)
+    except KeyError:
+        return None
+
+
+def groups_of(name, gid):
+    return os.getgrouplist(name, gid)
+
+
+def system_range(kind, path=None):
+    """系统账号（kind 是 'UID'）或系统组（'GID'）的号码范围，和 useradd、groupadd 的 --system 取法一致：
+    login.defs 里的 SYS_<kind>_MIN、SYS_<kind>_MAX；没写就用 shadow 的默认值（101 到 <kind>_MIN - 1，<kind>_MIN 默认 1000）。"""
+    found = {}
+    try:
+        with open(path or LOGIN_DEFINITIONS, encoding='utf-8', errors='replace') as stream:
+            for line in stream:
+                words = line.split('#', 1)[0].split()
+                if len(words) == 2 and words[1].isdigit():
+                    found[words[0]] = int(words[1])
+    except FileNotFoundError:
+        pass
+    return found.get('SYS_' + kind + '_MIN', 101), found.get('SYS_' + kind + '_MAX', found.get(kind + '_MIN', 1000) - 1)
 
 
 def has(path, kind, uid, gid, modes):
@@ -289,23 +358,42 @@ def chain(path, uid, top='/'):
                 str(node) + ' 不是真目录（路径上不能有链接），或者属主不对、组和其他人可写')
 
 
-def place(destination, mode, stream):
-    """root 一侧：把 stream 的内容放成一个新文件。目标已经在（哪怕是个悬空链接）就失败，不覆盖；中途失败不留半个文件。
-    先在同一个目录里写好临时文件，再用硬链接起正式的名字（名字已在时链接失败），最后删掉临时名。"""
+def place(destination, mode, stream, owner, digest):
+    """把 stream 的内容放成一个新文件。目标已经在（哪怕是个悬空链接）就失败，不覆盖；中途失败不留半个文件；
+    内容的 sha256 不是 digest 就不放：调用方核过的是哪一份，放上去的就得是哪一份。
+    先在同一个目录里写好临时文件，再用硬链接起正式的名字（名字已在时链接失败），最后删掉临时名。
+    临时名是固定的：上一次被强杀留下的、或者另一处正在放的，这里会撞上并停下，不会悄悄攒下一堆。
+    owner 给 (uid, gid) 就改属主（root 一侧放文件），给 None 就保持当前账号（主服务账号写自己的私有配置）。"""
     directory, name = os.path.split(destination)
-    scratch = os.path.join(directory, '.' + name + '.placing-' + str(os.getpid()))
-    descriptor = os.open(scratch, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+    scratch = os.path.join(directory, '.' + name + '.placing')
+    # 先记下「临时名是这一次建的」再去建：反过来的话，建好之后、记下之前被打断，收尾就不知道该删它。
+    # 建的时候发现已经在（别人的）才改回去，那一份不动。
+    mine = True
     try:
+        try:
+            descriptor = os.open(scratch, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+        except FileExistsError:
+            mine = False
+            raise Refused(scratch + ' 已经在：上一次放到一半被强杀留下的，或者另一处正在放。'
+                          '确认没有别的 prereq.py 在跑，删掉它再重跑')
+        seen = hashlib.sha256()
         with os.fdopen(descriptor, 'wb') as out:
             for block in iter(lambda: stream.read(1 << 20), b''):
+                seen.update(block)
                 out.write(block)
-            os.fchown(out.fileno(), *PLACED_OWNER)
+            if owner is not None:
+                os.fchown(out.fileno(), *owner)
             os.fchmod(out.fileno(), mode)
             out.flush()
             os.fsync(out.fileno())
+        require(seen.hexdigest() == digest, destination + ' 要放的内容和核过的那一份不一样（来源在核对之后被换了）。什么都没放')
         os.link(scratch, destination, follow_symlinks=False)
     finally:
-        os.unlink(scratch)
+        if mine:
+            try:
+                os.unlink(scratch)
+            except FileNotFoundError:
+                pass
     descriptor = os.open(directory, os.O_RDONLY | os.O_DIRECTORY)
     try:
         os.fsync(descriptor)
@@ -315,9 +403,11 @@ def place(destination, mode, stream):
 
 # ---------------------------------------------------------------- 现场：会改东西的步骤
 class Provision:
-    def __init__(self, apply, run=subprocess.run, out=print):
-        self.apply, self.run, self.out = apply, run, out
-        self.pending = 0
+    """apply：照做还是只预演。audit：只读地核「每一样产物都已经在、而且对」，缺一样就停下（见 settled）。"""
+
+    def __init__(self, apply, run=subprocess.run, out=print, audit=False):
+        self.apply, self.run, self.out, self.audit = apply, run, out, audit
+        self.pending = self.settled = 0
 
     def root(self, *argv):
         self.out('    sudo ' + ' '.join(argv))
@@ -329,8 +419,10 @@ class Provision:
         current = state()
         require(current is not False, title + '：已经在，但不是预期的样子。不覆盖，先由人看过')
         if current:
+            self.settled += 1
             self.out('[已有] ' + title)
             return
+        require(not self.audit, title + '：还没做好。先跑完 prereq.py --apply')
         self.pending += 1
         self.out(('[现在做] ' if self.apply else '[要做] ') + title)
         action()
@@ -338,19 +430,21 @@ class Provision:
             require(verify(), title + '：做完之后核对不过')
             self.out('    核对通过')
 
-    def place(self, path, source, **stdin):
-        """经 sudo 调本脚本的 --place：只新建。从检查「不在」到真正去放之间目标被别人建了，这里失败，不覆盖。"""
-        argv = ['/usr/bin/python3', '-I', '-B', str(HERE / 'prereq.py'), '--place', path]
+    def place(self, path, source, digest, **stdin):
+        """经 sudo 调本脚本的 --place：只新建，内容的摘要不是 digest 就不放。
+        从检查「不在」到真正去放之间目标被别人建了，这里失败，不覆盖。"""
+        argv = ['/usr/bin/python3', '-I', '-B', str(HERE / 'prereq.py'), '--place', path, digest]
         self.out('    sudo ' + ' '.join(argv) + ' < ' + source + '    （权限 ' + oct(PLACED[path])[2:].zfill(4) + '，已经在就失败）')
         if self.apply:
             self.run(['sudo', '--'] + argv, check=True, **stdin)
 
-    def root_file(self, title, path, content):
+    def root_file(self, title, path, raw):
         def state():
             present = has(path, stat.S_ISREG, 0, 0, (PLACED[path],))
-            return present if not present else Path(path).read_bytes() == content
+            return present if not present else content(path) == raw
         # 内容走标准输入：不落临时文件，预演和照做都一样。
-        self.step(title, state, lambda: self.place(path, '<内容见末尾或仓库模板>', input=content), state)
+        self.step(title, state,
+                  lambda: self.place(path, '<内容见末尾或仓库模板>', hashlib.sha256(raw).hexdigest(), input=raw), state)
 
     def root_copy(self, title, source, path, digest):
         def state():
@@ -359,31 +453,42 @@ class Provision:
 
         def copy():
             if not self.apply:
-                self.place(path, source)
+                self.place(path, source, digest)
                 return
-            with open(source, 'rb') as stream:
-                self.place(path, source, stdin=stream)
+            with reading(source) as stream:
+                self.place(path, source, digest, stdin=stream)
         self.step(title, state, copy, state)
 
     def identities(self):
-        self.step('读取组 ' + READERS, lambda: True if group(READERS) else None,
-                  lambda: self.root('groupadd', '--system', READERS), lambda: group(READERS) is not None)
+        def readers_state():
+            found = group(READERS)
+            if found is None:
+                return None
+            low, high = system_range('GID')
+            return low <= found.gr_gid <= high
+        self.step('读取组 ' + READERS + '（系统组）', readers_state,
+                  lambda: self.root('groupadd', '--system', READERS), readers_state)
 
         def worker_state():
+            """已有的同名账号得和新建出来的一个样：系统账号（号码在系统范围里）、主组是同名的系统组、
+            不能登录、家目录是建的时候给的那个。普通账号占了这个名字不算数。"""
             entry = account(WORKER)
             if entry is None:
                 return None
-            return (entry.pw_uid not in (0, OWNER_UID) and grp.getgrgid(entry.pw_gid).gr_name == WORKER
-                    and entry.pw_shell.endswith('/nologin'))
+            primary = group_numbered(entry.pw_gid)
+            (low, high), (group_low, group_high) = system_range('UID'), system_range('GID')
+            return (entry.pw_uid not in (0, OWNER_UID) and low <= entry.pw_uid <= high
+                    and primary is not None and primary.gr_name == WORKER and group_low <= primary.gr_gid <= group_high
+                    and entry.pw_shell.endswith('/nologin') and entry.pw_dir == WORKER_HOME)
         self.step('专用账号 ' + WORKER + '（系统账号，不能登录）', worker_state,
                   lambda: self.root('useradd', '--system', '--user-group', '--no-create-home', '--home-dir',
-                                    '/nonexistent', '--shell', '/usr/sbin/nologin', WORKER), worker_state)
+                                    WORKER_HOME, '--shell', WORKER_SHELL, WORKER), worker_state)
         for name in (WORKER, OWNER):
             def member(name=name):
                 entry, readers = account(name), group(READERS)
                 if entry is None or readers is None:
                     return None
-                return True if readers.gr_gid in os.getgrouplist(name, entry.pw_gid) else None
+                return True if readers.gr_gid in groups_of(name, entry.pw_gid) else None
             self.step(name + ' 加进读取组', member, lambda name=name: self.root('usermod', '-aG', READERS, name), member)
 
     def numbers(self):
@@ -412,11 +517,12 @@ class Provision:
         self.root_copy('NAS 证书 ' + CA, CA_SOURCE, CA, CA_SHA)
 
     def units(self):
-        before = self.pending
         for name in UNITS:
             self.root_file('单元 ' + name, UNIT_DIRECTORY + '/' + name, (TEMPLATES / name).read_bytes())
-        if self.pending > before:
-            self.root('systemctl', 'daemon-reload')
+        if self.audit:
+            return
+        # 每次都重新加载一遍：上一次要是停在「单元放好了、还没重新加载」，这里补上（多加载一次没有代价）。
+        self.root('systemctl', 'daemon-reload')
         if self.apply:
             # 只看这三个单元自己的问题：它们依赖的别的单元（人侧、网络）有告警不算在这里。
             self.run(['systemd-analyze', 'verify', '--recursive-errors=no']
@@ -433,21 +539,17 @@ class Provision:
 
         def make():
             if self.apply:
-                os.mkdir(EPHEMERAL, 0o700)
+                make_directory(EPHEMERAL, 0o700)
         self.step('临时数据根 ' + EPHEMERAL + '（' + OWNER + ' 私有 0700）', ephemeral, make, ephemeral)
 
         def state():
             present = has(BACKUP_CONFIG, stat.S_ISREG, OWNER_UID, OWNER_UID, (0o600,))
-            return present if not present else Path(BACKUP_CONFIG).read_bytes() == backup
+            return present if not present else content(BACKUP_CONFIG) == backup
 
         def write():
-            if not self.apply:
-                return
-            descriptor = os.open(BACKUP_CONFIG, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
-            with os.fdopen(descriptor, 'wb') as stream:
-                stream.write(backup)
-                stream.flush()
-                os.fsync(stream.fileno())
+            # 和 root 放文件同一个写法：先写临时名、落盘，再起正式的名字；写到一半出错或被打断不留半份。
+            if self.apply:
+                place(BACKUP_CONFIG, 0o600, io.BytesIO(backup), None, hashlib.sha256(backup).hexdigest())
         self.step('私有备份配置 ' + BACKUP_CONFIG + '（不用 sudo，0600）', state, write, state)
 
     def sources(self):
@@ -456,11 +558,17 @@ class Provision:
                 '要在 169 上以 ' + OWNER + ' 跑，不要用 sudo 起这个脚本')
         for path, digest, what in ((WORKER_SOURCE, PACKAGES[2][1], 'worker 程序'), (RESTIC_SOURCE, RESTIC_SHA, 'restic'),
                                    (CA_SOURCE, CA_SHA, 'NAS 证书')):
-            require(os.path.isfile(path) and sha(path) == digest, what + ' 的来源 ' + path + ' 不在或摘要不对')
+            require(matches(path, digest), what + ' 的来源 ' + path + ' 不在或摘要不对')
         # 清单里登记的人侧程序要就是候选里的那两个：候选重出过而这里没跟着改，就在这儿拦下。
         for name, digest in PACKAGES[:2]:
             path = RELEASE_DIRECTORY + '/' + HUMAN_RELEASE + '/bin/' + name
-            require(os.path.isfile(path) and sha(path) == digest, '候选里的 ' + name + ' 不在或摘要和这里登记的不一样')
+            require(matches(path, digest), '候选里的 ' + name + ' 不在或摘要和这里登记的不一样')
+        self.ground()
+        self.out('[已核] 要拷的三样都在、摘要对得上；候选里的两个人侧程序和清单登记的一致；'
+                 '/etc/studiolo 和人侧私有配置目录的属主权限对；各条目录链上没有链接、没有别人可写的目录')
+
+    def ground(self):
+        """要建的东西落脚的地方：所在目录的属主权限，和它上面的整条目录链。"""
         require(has('/etc/studiolo', stat.S_ISDIR, 0, 0, (0o755,)), '/etc/studiolo 不是 root 的 0755 目录')
         require(has(str(Path(BACKUP_CONFIG).parent), stat.S_ISDIR, OWNER_UID, OWNER_UID, (0o700,)),
                 '人侧私有配置目录不是 ' + OWNER + ' 的 0700 目录')
@@ -469,11 +577,8 @@ class Provision:
             chain(path, OWNER_UID)
         for path in (WORKER_CONFIG, PROGRAMS, TMPFILES, UNIT_DIRECTORY + '/' + UNITS[0], RUNTIME, STAGING):
             chain(path, 0)
-        self.out('[已核] 要拷的三样都在、摘要对得上；候选里的两个人侧程序和清单登记的一致；'
-                 '/etc/studiolo 和人侧私有配置目录的属主权限对；各条目录链上没有链接、没有别人可写的目录')
 
-    def everything(self):
-        self.sources()
+    def products(self):
         self.identities()
         worker_uid, reader_gid, real = self.numbers()
         backup_document_ = backup_document(worker_uid, reader_gid)
@@ -489,16 +594,30 @@ class Provision:
         self.private(backup)
         # 单元放最后：语法核对万一报问题，前面的东西都已经就位，不用重做。
         self.units()
-        if not self.apply:
+        if not (self.apply or self.audit):
             self.out('\n---- ' + WORKER_CONFIG + '\n' + worker.decode() + '---- ' + BACKUP_CONFIG + '\n' + backup.decode())
         return self.pending
+
+    def everything(self):
+        self.sources()
+        return self.products()
+
+
+def settled(out=lambda line: None):
+    """只读：prereq.py 的每一样产物都已经在、而且对；缺一样、或者有一样不对，就停下。返回核过的项数。
+    给 credentials.py 用：它以 root 跑，过不了 sources() 的「以主服务账号跑」，也不该再去看要拷的来源。
+    不核「三个单元没启用、没在跑」：那是置备当时的条件，credentials.py 自己另核 worker 没在跑。"""
+    audit = Provision(apply=False, out=out, audit=True)
+    audit.ground()
+    audit.products()
+    return audit.settled
 
 
 def main(argv):
     if argv[:1] == ['--place']:
-        require(len(argv) == 2 and argv[1] in PLACED and os.geteuid() == 0 and not sys.stdin.isatty(),
-                '--place 只由本脚本自己经 sudo 调用，目标只能是它要放的那几个文件')
-        place(argv[1], PLACED[argv[1]], sys.stdin.buffer)
+        require(len(argv) == 3 and argv[1] in PLACED and is_digest(argv[2]) and os.geteuid() == 0
+                and not sys.stdin.isatty(), '--place 只由本脚本自己经 sudo 调用，目标只能是它要放的那几个文件')
+        place(argv[1], PLACED[argv[1]], sys.stdin.buffer, PLACED_OWNER, argv[2])
         return
     require(argv in ([], ['--apply']), __doc__)
     provision = Provision(apply=argv == ['--apply'])
@@ -509,15 +628,23 @@ def main(argv):
         print('预演结束：没改任何东西。还差 ' + str(pending) + ' 步；带 --apply 再跑一遍才照做。')
 
 
-if __name__ == '__main__':
+def entry(argv):
+    """把「停下」变成一句话和退出码 1；被打断时让收尾照常跑完。"""
+    interruptible()
     try:
-        main(sys.argv[1:])
+        main(argv)
     except Refused as refusal:
         print('停下：' + str(refusal), file=sys.stderr)
-        sys.exit(1)
     except subprocess.CalledProcessError as failure:
         print('停下：命令失败（退出码 ' + str(failure.returncode) + '）：' + ' '.join(map(str, failure.cmd)), file=sys.stderr)
-        sys.exit(1)
     except OSError as failure:
         print('停下：' + type(failure).__name__ + '：' + str(failure), file=sys.stderr)
-        sys.exit(1)
+    except KeyboardInterrupt:
+        print('\n停下：被打断。正在放的文件不留半份，已经做完的步骤留着；重跑会从现状接着做。', file=sys.stderr)
+    else:
+        return 0
+    return 1
+
+
+if __name__ == '__main__':
+    sys.exit(entry(sys.argv[1:]))

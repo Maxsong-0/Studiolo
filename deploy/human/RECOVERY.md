@@ -2,16 +2,27 @@
 
 适用：`studiolo-human.service` 被强杀（停止超时到点、内存超限、`kill -9`）或崩溃之后起不来；
 或者激活、回滚脚本停下，回执里写着 `program_recovery: blocked_requires_operator`。
-在生产机上做，要 sudo 的命令由主人本人敲。整机重启不算：`/run` 重启后是空的，不会有下面说的残留节点。
+在生产机上做，要 sudo 的命令由主人本人敲。整机重启、断电之后 `/run` 是空的，第 1～3 节说的残留节点不会有；
+第 4 节的暂存区在 `/var/lib` 下，重启之后东西还在，照样适用。
 
 程序对上一次留下的东西一律「不清理、不接管」，所以恢复就是三件事：看清留下了什么 → 确认它确实是死的 → 只删那一个节点。
 看不清就停下，不删。数据库和它旁边的 `-wal`、`-shm`、Bridge 的状态文件、`.producer-lease` 都不要动：下次启动自己接着用。
 
-依据的代码（改了它们要回来对这份步骤）：启动器 `deploy/human/current-v2/launch-human.py`（已有 `http.sock` 就拒绝）、
-`crates/local-server/src/unix_ingress/layout.rs` 的 `revalidate`、`crates/local-server/src/backup/listener.rs`
-（已有同名节点一律拒绝）、`deploy/blackboard/activation_ops.py` 的 `stopped` 和 `backup_ready`、
-`crates/backup/src/checkpoint/staging/housekeeping/plan.rs` 和同目录的 `lifecycle.rs`。
-第 1～3 节的命令没有在真机上演练过整套；第 4 节的手工修法是从代码的不变量推出来的，没有现成工具。
+依据的代码（改了它们要回来对这份步骤）：
+
+- 启动器 `deploy/human/current-v2/launch-human.py`（已有 `http.sock` 就拒绝）和同目录的单元模板
+  `studiolo-human.service`（重试几次、`UMask`）；
+- `crates/local-server/src/unix_ingress/layout.rs` 的 `revalidate`、`crates/local-server/src/backup/listener.rs`
+  （已有同名节点一律拒绝；先建节点、再改属组和权限）、`crates/local-server/src/startup/serving.rs`（三个监听谁先谁后）、
+  同目录的 `error.rs`（启动报错的原文）；
+- `crates/local-server/src/backup/producer.rs`（回收和封存的日志原文、回收失败不挡封存）、
+  `crates/local-server/src/health/backup.rs`（健康页的说法）；
+- `deploy/blackboard/activation_ops.py` 的 `stopped` 和 `backup_ready`；
+- `crates/backup/src/checkpoint/staging/` 下的 `creation.rs`（建目录和登记谁先谁后）、`lifecycle.rs`、`housekeeping.rs`、
+  `housekeeping/plan.rs`（回收的先后、哪种残缺报哪个错）、`io/cleanup.rs`（登记文件按名字顺序一个个删）、
+  `io.rs` 的 `capacity`（剩余空间下限）。
+
+第 1～3 节的命令没有在真机上演练过整套；第 4 节的手工修法是从代码的不变量推出来的，没有现成工具，也没有演练过。
 
 ## 1. 先看现象（只读）
 
@@ -47,7 +58,9 @@ ls -la /run/studiolo-human /run/studiolo-board /run/studiolo-backup
 2. `http.sock`、`board.sock` 还要人侧停着（只有人侧起不来时才需要删它们）：第 1 节第一条命令里，人侧是
    `ActiveState=inactive` 或 `failed`，`MainPID=0`。还在反复重试（`activating`）就先停住它：
    `sudo systemctl stop studiolo-human.service`，再看一遍。
-   `producer.sock` 不要求人侧停着：回滚到不带备份的旧发行之后，旧人侧在跑、这个节点却留着，第 1 条没有输出就是没人用它。
+   `producer.sock` 看人侧现在的状态：人侧没在跑（带备份的新发行自己起不来，挡着它的可能正是这个节点），和另外两个一样，
+   先确认它停住了；人侧在跑（`active`）而第 1 条没有输出，说明这个节点没人用（回滚到不带备份的旧发行之后就是这样），
+   不用停人侧。
 3. 节点是预期的样子：类型是 socket，属主 maxsong，链接数 1；`http.sock`、`board.sock` 权限 600，
    `producer.sock` 权限 660、属组 `studiolo-backup-read`。把还在的那个路径填进去：
 
@@ -55,13 +68,17 @@ ls -la /run/studiolo-human /run/studiolo-board /run/studiolo-backup
    stat -c '%F %U:%G %a 链接数=%h %n' /run/studiolo-human/http.sock
    ```
 
+   类型、属主、链接数三样都对，只有权限或属组不是上面的值：这是程序刚建好节点、还没来得及改权限就被杀
+   （按单元的 `UMask=0077` 推，这时权限是 700，属组是 maxsong 自己的组），照样算残留，往下做。
+   三样里有一样不对就停下，把这条命令的输出交给开发会话。
 4. 用 maxsong 账号删这一个节点。不带 `-r`，不删目录（三个目录都要留着）：
 
    ```bash
    rm -- /run/studiolo-human/http.sock
    ```
 
-删的是 `http.sock` 或 `board.sock` 的话，接着启动人侧。先清掉「试太多次」的记录，不然 systemd 不肯再起：
+删完再跑一遍第 1 节第一条命令。不管删的是哪一个节点，人侧是 `failed` 或 `inactive`（`MainPID=0`）就把它起回来；
+人侧本来就在跑的（回滚之后只删 `producer.sock`）不用起。先清掉「试太多次」的记录，不然 systemd 不肯再起：
 
 ```bash
 sudo systemctl reset-failed studiolo-human.service
@@ -71,7 +88,9 @@ sudo systemctl reset-failed studiolo-human.service
 sudo systemctl start studiolo-human.service
 ```
 
-再跑一遍第 1 节第一条命令：人侧应是 `ActiveState=active`、`NRestarts=0`，三个 socket 都回来了；网页和健康页能开。
+再跑一遍第 1 节第一条命令：人侧应是 `ActiveState=active`、`NRestarts=0`。socket 用第 1 节第三条命令看：
+起来的是带备份的新发行就有三个；是旧发行（第 3 节 `stop-old` 那种情形）就只有 `http.sock`、`board.sock` 两个。
+网页和健康页能开。
 agent 服务（`studiolo-agent.service`）要是也停了，人侧起来之后再用同样两条命令起它。
 
 ## 3. 激活或回滚脚本停在 `blocked_requires_operator`
@@ -92,15 +111,33 @@ sha256sum /etc/systemd/system/studiolo-human.service /etc/systemd/system/studiol
 - 回滚成功了（旧程序在跑），只留下 `producer.sock`：它不挡回滚，挡的是**下一次**激活的预检。
   照第 2 节的第 1、3、4 条删掉它（不用停人侧），再重试激活。
 
-## 4. 封存做到一半被杀（备份暂存区）
+## 4. 封存或回收做到一半被杀（备份暂存区）
 
 多数情况不用管：人侧下次启动的第一轮回收会把登记过的半成品收走；没做完的那一次，下一次定时备份会补一条失败记录，
 健康页显示「最近收口的第 N 号作业没成功：冻结、导出或准入没做成（跨 owner 屏障没有建立）」（已经逾期的先显示
 「逾期」）；失败不缩短间隔，等满批准的间隔、下一次备份成功之后恢复正常。
 
-要人处理的是回收自己过不去的时候。日志里是 `备份暂存回收未完成：CleanupRequired`，之后每一次都是
-`备份封存未完成：BarrierNotEstablished`，健康页显示「冻结、导出或准入没做成（跨 owner 屏障没有建立）」。
-人侧照常启动、照常服务，只是备份一直失败。原因是暂存区里有一样东西对不上登记。先停掉定时器和 worker，
+要人处理的是回收自己过不去的时候，有两种样子。两种人侧都照常启动、照常服务：
+
+- 日志里是 `备份暂存回收未完成：CleanupRequired`，之后每一次都是 `备份封存未完成：BarrierNotEstablished`，
+  健康页显示「冻结、导出或准入没做成（跨 owner 屏障没有建立）」：备份一直失败。
+- 日志里每一轮都是 `备份暂存回收未完成：Changed`，封存却照常成功、健康页也正常：到期的副本不再被收走，暂存区一直涨
+  （正常只留保留期之内的几份 `retained-`：现在批准的是留 1 小时、10 分钟一份，6～7 份），涨到所在的盘剩不到 2 GiB，
+  封存开始失败，健康页显示「磁盘空间不够」。健康页正常的这段时间只有日志和暂存区的大小看得出来：
+
+```bash
+journalctl -u studiolo-human.service --since "2 hours ago" --no-pager | grep -F 备份暂存回收未完成
+```
+
+```bash
+du -sh /var/lib/studiolo-backup-staging
+```
+
+```bash
+df -h /var/lib/studiolo-backup-staging
+```
+
+原因都是暂存区里有一样东西对不上登记。先停掉定时器和 worker，
 等正在跑的那一次定时请求结束（第二条命令输出 `inactive` 或 `failed` 才往下），再看：
 
 ```bash
@@ -120,22 +157,31 @@ systemctl show studiolo-human.service -p ActiveEnterTimestamp
 ```
 
 人侧还在跑，所以先确认要动的不是它**正在做**的那一次封存，两条都成立才算残留：日志里已经出现过
-`备份暂存回收未完成：CleanupRequired`（回收和封存拿同一把锁，它拒绝过就说明当时没有封存在做）；要动的目录的时间
-早于人侧这次启动的时间（上面最后一条）。拿不准就先把人侧停下再看
+`备份暂存回收未完成：CleanupRequired` 或 `…：Changed`（回收和封存拿同一把锁，回收读到了、拒绝了，说明那一刻没有封存在做）；
+要动的目录的时间早于人侧这次启动的时间（上面最后一条）。拿不准就先把人侧停下再看
 （`sudo systemctl stop studiolo-human.service`，最长等 300 秒），修完照第 2 节末尾起回来。
+目录的时间晚于这次启动也按拿不准办：回收超时或出错正好停在删登记文件中间，留下的东西和被杀一样。
 
-目录名是 `前缀-<64 位十六进制>`，同一次封存的几个目录后面那一串相同。下面三种是「刚建好目录、登记还没落盘就被杀」，
-按代码的顺序它们一定是空的，所以只用 `rmdir`（目录不空它会拒绝，那就停下）：
+目录名是 `前缀-<64 位十六进制>`，同一次封存的几个目录后面那一串相同；`incomplete-`、`retained-` 是登记目录，里面只放
+登记文件。下表前两行是「刚建好目录、登记还没落盘就被杀」，按代码的顺序它们正常是空的，所以只用 `rmdir`
+（目录不空它会拒绝，那就停下）。后两行是登记目录自己不完整：封存刚开头就被杀（里面最多一个 `identity.new`），
+或者回收删登记目录删到一半就停了（程序按名字顺序一个个删，`export.json`、`identity.json` 先没，排在后面的还在）。
+登记文件用 `rm --` 一个个删，不带 `-r`，删完再 `rmdir`：
 
-| 看到的 | 怎么判断 | 怎么修 |
+| 看到的 | 还要成立 | 怎么修 |
 |---|---|---|
-| `export-<K>` 在，`incomplete-<K>/` 里没有 `export.json` | `ls -la` 两个目录 | `rmdir` 这个 `export-<K>` |
+| `export-<K>` 在，`incomplete-<K>/` 里没有 `export.json` | `ls -la` 两个目录看过 | `rmdir` 这个 `export-<K>` |
 | `pending-<K>` 在，`incomplete-<K>/` 里没有 `pending.json` | 同上 | `rmdir` 这个 `pending-<K>` |
-| `incomplete-<K>/` 里没有 `identity.json`，同一个 `<K>` 的 `export-`、`pending-`、`sealed-` 都不在 | 同上 | 删掉里面的 `identity.new`（有的话），再 `rmdir` 这个 `incomplete-<K>` |
+| `incomplete-<K>/` 里没有 `identity.json` | 同一个 `<K>` 的 `export-`、`pending-`、`sealed-` 都不在；里面剩下的都是普通文件，名字只在 `identity.new`、`pending.json`、`pending.new`、`sealed.json`、`sealed.new` 这五个里（空目录也算） | 删掉这几个文件，再 `rmdir` 这个 `incomplete-<K>` |
+| `retained-<K>/` 里不满四份（齐全是 `export.json`、`identity.json`、`pending.json`、`sealed.json`） | 日志是 `Changed`；`sealed-<K>` 不在；worker 停着；里面剩下的都是普通文件，名字只在 `identity.json`、`pending.json`、`sealed.json` 这三个里（空目录也算） | 删掉这几个文件，再 `rmdir` 这个 `retained-<K>` |
+
+后两行靠手工，是因为程序有个缺陷：回收删登记目录删到一半之后，自己续不上
+（2026-11-21 独立复查发现，已上报、还没修；修好之后这两行应该用不上）。
 
 别的情况都不要自己删，把 `ls -laR /var/lib/studiolo-backup-staging` 的输出交给开发会话：
-没有 `identity.json` 的 `incomplete-<K>` 旁边还有同一个 `<K>` 的目录；名字不是上面这几种前缀的东西；`retained-<K>`
-（这是做完的封存，到期自己会被收走，worker 可能正要读它）。`.producer-lease` 任何时候都不删。
+没有 `identity.json` 的 `incomplete-<K>` 旁边还有同一个 `<K>` 的目录；登记目录里有表里没列的名字，或者不是普通文件；
+名字不是上面这几种前缀的东西；四份齐全的 `retained-<K>`（这是做完的封存，回收正常时到期会被收走，worker 可能正要读它；
+日志是 `Changed` 而每个 `retained-` 都四份齐全，也交开发会话）。`.producer-lease` 任何时候都不删。
 
 修完把两个单元起回来，等下一次定时备份（定时器每 5 分钟问一次，批准的间隔是 10 分钟）：
 
@@ -143,5 +189,6 @@ systemctl show studiolo-human.service -p ActiveEnterTimestamp
 sudo systemctl start studiolo-backup-worker.service studiolo-backup-schedule.timer
 ```
 
-健康页「备份」一节最近一次应是成功；还是 `CleanupRequired` 就停下，不要再删。暂存区里只有导出的副本，
-原始数据不在这里：删错的代价是这一次备份重做，不会丢库里的内容。
+健康页「备份」一节最近一次应是成功；日志里还是 `CleanupRequired` 或 `Changed` 就停下，不要再删。
+`Changed` 那种修好之后，积压的到期副本由之后的几轮回收收走（一轮最多做 30 秒），`du` 看到的大小应该降回去。
+暂存区里只有导出的副本，原始数据不在这里：删错的代价是这一次备份重做，不会丢库里的内容。

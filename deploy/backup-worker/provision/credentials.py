@@ -4,15 +4,18 @@
 只由用户本人在自己的终端跑。口令只经不回显的提示输入：不进命令行参数、不进本脚本的输出、不进日志。
     python3 -I -B credentials.py                 预演：只核前提（不问口令、不写文件；对 NAS 只做一次不带凭据的 TLS 握手）
     sudo python3 -I -B credentials.py --apply    录入两个口令 → 写三份凭据文件 → 以 worker 账号初始化仓库并读回一次
-先跑完同目录的 prereq.py，并在 NAS 上加好账号（nas-account.command）。已经写好的凭据不会被覆盖：
-三份都在、内容也合 worker 的规则，就跳过录入、直接做初始化和读回；只有一部分、或内容 worker 不会认，就停下，由人看过再处理。
+先跑完同目录的 prereq.py（这里会把它的每一样产物只读地核一遍，缺一样就停下），并在 NAS 上加好账号（nas-account.command）。
+已经写好的凭据不会被覆盖：三份都在、内容也合 worker 的规则，就跳过录入、直接做初始化和读回；
+只有一部分、或内容 worker 不会认，就停下，由人看过再处理。
+三份凭据要么都写好、要么一份都不留：先在旁边的临时目录（正式目录名加 .writing）里写齐，再一次换成正式的名字；
+写到一半出错或被打断（Ctrl-C、终端断开）会把这一次写的全部删掉。被强杀、断电，或者收尾自己又出了错，才会留下那个临时目录，
+下次跑会先停下说明。
 """
 import getpass
 import hashlib
 import importlib.util
 import os
 from pathlib import Path
-import pwd
 import socket
 import ssl
 import stat
@@ -22,6 +25,8 @@ import unicodedata
 
 HERE = Path(__file__).resolve().parent
 DIRECTORY = '/etc/studiolo/backup-worker-credentials'
+# 写到一半用的临时目录：正式目录名后面加这一段（和正式目录在同一个父目录里，才能一次改名换上）。
+WRITING = '.writing'
 # 文件名和 worker 的三个槽位一一对应（crates/backup-worker/src/credentials/file.rs）。
 NAMES = ('repository-password', 'rest-username', 'rest-password')
 SECRET_LIMIT = 4096
@@ -38,9 +43,9 @@ def load(name):
     return module
 
 
-site = load('prereq')
-Refused = site.Refused
-require = site.require
+prereq = load('prereq')
+Refused = prereq.Refused
+require = prereq.require
 
 
 def validate_secret(value, minimum, what):
@@ -84,26 +89,67 @@ def read_credentials(directory):
         except UnicodeDecodeError:
             raise Refused(name + ' 这一份不是 UTF-8 文本。不覆盖，先由人看过')
         values[name] = validate_secret(value, 1, name + ' 这一份的内容 worker 不会认（不覆盖，先由人看过）：')
-    require(values['rest-username'] == site.REST_USERNAME,
-            'rest-username 里不是 ' + site.REST_USERNAME + '（仓库路径以这个账号名开头）。不覆盖，先由人看过')
+    require(values['rest-username'] == prereq.REST_USERNAME,
+            'rest-username 里不是 ' + prereq.REST_USERNAME + '（仓库路径以这个账号名开头）。不覆盖，先由人看过')
     return values
 
 
-def write_credentials(directory, values):
-    """目录和三份文件都是新建（已存在就失败），root 所有，目录 0700、文件 0600，内容后面带一个换行。"""
-    os.mkdir(directory, 0o700)
-    for name in NAMES:
-        descriptor = os.open(os.path.join(directory, name),
-                             os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
-        with os.fdopen(descriptor, 'wb') as stream:
-            stream.write(values[name].encode() + b'\n')
-            stream.flush()
-            os.fsync(stream.fileno())
-    descriptor = os.open(directory, os.O_RDONLY | os.O_DIRECTORY)
+def sync_directory(path):
+    descriptor = os.open(path, os.O_RDONLY | os.O_DIRECTORY)
     try:
         os.fsync(descriptor)
     finally:
         os.close(descriptor)
+
+
+def make_own(path, mine):
+    """新建一个目录，并在 mine 里记下「这是这一次建的」。先记再建：反过来的话，建好之后、记下之前被打断，
+    收尾就不知道该删它。建的时候发现已经在（别人的）才把这一笔划掉，那一个不动。"""
+    mine.append(path)
+    try:
+        os.mkdir(path, 0o700)
+    except FileExistsError:
+        mine.remove(path)
+        raise
+
+
+def write_credentials(directory, values):
+    """三份凭据要么都在、要么一份都不留。目录和三份文件都是新建（已存在就失败，空目录也不接着用），
+    root 所有，目录 0700、文件 0600，内容后面带一个换行。
+    先在旁边的临时目录里写齐、落盘；再建出正式的目录占住名字（已经有人建了就失败），把临时目录一次改名换上去：
+    别人看到的正式目录要么是空的那一瞬，要么是完整的三份。中途出错或被打断，这一次建的东西全部删掉。"""
+    if os.path.lexists(directory):
+        raise FileExistsError(directory)
+    scratch = directory + WRITING
+    made, mine = [], []
+    try:
+        make_own(scratch, mine)
+        for name in NAMES:
+            path = os.path.join(scratch, name)
+            # 临时目录是这一次新建的，里面的文件只可能是这一次写的：同样先记再建。
+            made.append(path)
+            descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+            with os.fdopen(descriptor, 'wb') as stream:
+                stream.write(values[name].encode() + b'\n')
+                stream.flush()
+                os.fsync(stream.fileno())
+        sync_directory(scratch)
+        make_own(directory, mine)
+        os.rename(scratch, directory)
+    except BaseException:
+        for path in made:
+            try:
+                os.unlink(path)
+            except FileNotFoundError:
+                pass
+        for path in mine:
+            try:
+                # 只删得掉空目录：改名已经成功的话，正式目录里是完整的三份，这里删不动，留着。
+                os.rmdir(path)
+            except OSError:
+                pass
+        raise
+    sync_directory(os.path.dirname(directory))
 
 
 # 在 worker 账号下，把三份凭据接成 restic 认的环境变量再执行；口令只在这个子进程的环境里，不进任何命令行。
@@ -116,42 +162,36 @@ SHELL = ('set -eu; d="$CREDENTIALS_DIRECTORY"; '
 
 def restic_command(*subcommand):
     """和正式的 worker 单元同一条链：专用账号、systemd 的 LoadCredential、批准的 CA、固定的 restic。"""
-    properties = ['User=' + site.WORKER, 'Group=' + site.WORKER, 'UMask=0077', 'NoNewPrivileges=yes']
+    properties = ['User=' + prereq.WORKER, 'Group=' + prereq.WORKER, 'UMask=0077', 'NoNewPrivileges=yes']
     properties += ['LoadCredential=' + name + ':' + DIRECTORY + '/' + name for name in NAMES]
     argv = ['systemd-run', '--quiet', '--wait', '--collect', '--pipe']
     for entry in properties:
         argv += ['-p', entry]
-    return argv + ['/bin/sh', '-c', SHELL, 'sh', site.RESTIC, '--cacert', site.CA, '--no-cache',
-                   '--repo', site.REPOSITORY] + list(subcommand)
+    return argv + ['/bin/sh', '-c', SHELL, 'sh', prereq.RESTIC, '--cacert', prereq.CA, '--no-cache',
+                   '--repo', prereq.REPOSITORY] + list(subcommand)
 
 
 def endpoint():
     """不带凭据连一次：证书要能用批准的那张 CA 验过，而且就是那一张（自签，服务端证书和 CA 是同一张）。"""
-    address = site.REPOSITORY[len('rest:https://'):].split('/')[0]
+    address = prereq.REPOSITORY[len('rest:https://'):].split('/')[0]
     host, port = address.rsplit(':', 1)
     context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
-    context.load_verify_locations(site.CA)
+    context.load_verify_locations(prereq.CA)
     with socket.create_connection((host, int(port)), timeout=10) as raw:
         with context.wrap_socket(raw, server_hostname=host) as secured:
             served = hashlib.sha256(secured.getpeercert(binary_form=True)).hexdigest()
             version = secured.version()
-    approved = hashlib.sha256(ssl.PEM_cert_to_DER_cert(Path(site.CA).read_text(encoding='ascii'))).hexdigest()
+    approved = hashlib.sha256(ssl.PEM_cert_to_DER_cert(Path(prereq.CA).read_text(encoding='ascii'))).hexdigest()
     require(served == approved, 'NAS 现在用的证书不是批准的那一张（指纹 ' + served + '）')
     return version
 
 
 def preconditions(out):
     require(sys.platform == 'linux', '只在 169 上跑')
-    require(site.has(site.RESTIC, stat.S_ISREG, 0, 0, (0o555, 0o755, 0o500)) and site.sha(site.RESTIC) == site.RESTIC_SHA,
-            '固定的 restic 不在或摘要不对：先跑 prereq.py --apply')
-    require(site.has(site.CA, stat.S_ISREG, 0, 0, (0o644, 0o444)) and site.sha(site.CA) == site.CA_SHA,
-            'NAS 证书不在或摘要不对：先跑 prereq.py --apply')
-    require(site.has(site.WORKER_CONFIG, stat.S_ISREG, 0, 0, (0o644, 0o444)), 'worker 配置不在：先跑 prereq.py --apply')
-    try:
-        pwd.getpwnam(site.WORKER)
-    except KeyError:
-        raise Refused('专用账号 ' + site.WORKER + ' 不在：先跑 prereq.py --apply')
-    out('[已核] restic、NAS 证书、worker 配置、专用账号都在')
+    # prereq.py 的每一样产物（账号和组、目录、程序和证书、两份配置的内容、三个单元）都得已经在、而且对：
+    # 它停在半路的话，这里不录口令、不初始化仓库。
+    count = prereq.settled()
+    out('[已核] prereq.py 的 ' + str(count) + ' 样产物都在、都对（账号和组、目录、程序和证书、两份配置、三个单元）')
     try:
         out('[已核] NAS 备份服务连得上（' + endpoint() + '），证书就是批准的那一张')
     except (OSError, ssl.SSLError) as failure:
@@ -160,12 +200,12 @@ def preconditions(out):
 
 
 def prompt(ask=getpass.getpass):
-    rest = validate_secret(ask('NAS 上 ' + site.REST_USERNAME + ' 这个账号的密码（刚在 NAS 那一步设的）：'), 1, '账号密码')
+    rest = validate_secret(ask('NAS 上 ' + prereq.REST_USERNAME + ' 这个账号的密码（刚在 NAS 那一步设的）：'), 1, '账号密码')
     repository = validate_secret(ask('给新仓库定一个加密口令（至少 16 位；先存进密码管理器，丢了这个仓库就读不回来）：'),
                                  REPOSITORY_PASSWORD_MINIMUM, '仓库口令')
     require(repository == ask('再输一遍仓库口令：'), '两次输入的仓库口令不一样')
     require(rest != repository, '仓库口令不能和 NAS 账号密码一样')
-    return {'repository-password': repository, 'rest-username': site.REST_USERNAME, 'rest-password': rest}
+    return {'repository-password': repository, 'rest-username': prereq.REST_USERNAME, 'rest-password': rest}
 
 
 def apply(out, run=subprocess.run, ask=getpass.getpass):
@@ -173,6 +213,10 @@ def apply(out, run=subprocess.run, ask=getpass.getpass):
     require(all(stream.isatty() for stream in (sys.stdin, sys.stdout, sys.stderr)), '要在用户自己的终端里跑')
     require(run(['systemctl', 'is-active', '--quiet', SERVICE]).returncode != 0, 'worker 正在跑：先停掉再动凭据')
     os.umask(0o077)
+    # 先看有没有上一次留下的临时目录，再问口令：有的话问了也白问。
+    require(not os.path.lexists(DIRECTORY + WRITING),
+            DIRECTORY + WRITING + ' 还在：上一次录到一半被强杀或断电留下的，里面可能有那一次输的口令。'
+            '确认没有别的 credentials.py 在跑，sudo rm -r 它之后重跑')
     state = credentials_state(DIRECTORY)
     require(state != 'partial', DIRECTORY + ' 已经在，但不是完整的三份 root 0600 文件。不覆盖，先由人看过')
     if state == 'complete':
@@ -183,7 +227,7 @@ def apply(out, run=subprocess.run, ask=getpass.getpass):
         require(credentials_state(DIRECTORY) == 'complete', '凭据文件写完之后核对不过')
         read_credentials(DIRECTORY)
         out('[做完] 三份凭据文件已写好（root，目录 0700、文件 0600）')
-    out('以 ' + site.WORKER + ' 账号初始化仓库 ' + site.REPOSITORY + ' ……')
+    out('以 ' + prereq.WORKER + ' 账号初始化仓库 ' + prereq.REPOSITORY + ' ……')
     if run(restic_command('init')).returncode != 0:
         # 没成功有两种：仓库早就初始化过（那就看这套凭据打不打得开），或者真的失败。
         require(run(restic_command('cat', 'config'), stdout=subprocess.DEVNULL).returncode == 0,
@@ -210,12 +254,21 @@ def main(argv, out=print):
     out('预演结束：没问口令、没写任何东西。带 sudo 和 --apply 再跑一遍才录入。')
 
 
-if __name__ == '__main__':
+def entry(argv):
+    """把「停下」变成一句话和退出码 1；被打断时让收尾照常跑完。报错里只有路径和错误类别，没有口令。"""
+    prereq.interruptible()
     try:
-        main(sys.argv[1:])
+        main(argv)
     except Refused as refusal:
         print('停下：' + str(refusal), file=sys.stderr)
-        sys.exit(1)
+    except OSError as failure:
+        print('停下：' + type(failure).__name__ + '：' + str(failure), file=sys.stderr)
     except KeyboardInterrupt:
-        print('\n停下：被打断。已经写下的文件没有回退，重跑会从现状接着做。', file=sys.stderr)
-        sys.exit(1)
+        print('\n停下：被打断。三份凭据要么都写好了、要么一份都没留；重跑会从现状接着做（写好的不会再问）。', file=sys.stderr)
+    else:
+        return 0
+    return 1
+
+
+if __name__ == '__main__':
+    sys.exit(entry(sys.argv[1:]))

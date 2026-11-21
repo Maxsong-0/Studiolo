@@ -1,0 +1,3 @@
+# NAS（192.168.100.111）的 ssh 主机钥匙。nas-account.command 只认这一把（HostKeyAlias=studiolo-nas），不认识或对不上就连不上。
+# 指纹：SHA256:Hkpz7ou4/hH99ZGBZH/vuP+Hm8ipHWpXEr+cLdVf1L8（ED25519）。核对方法、NAS 换了钥匙之后怎么改，见 ../README.md「NAS 的主机钥匙」。
+studiolo-nas ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAICf5H49e0YMzzTNG65yGNye6lnW5YhJag55Pu3j729+x

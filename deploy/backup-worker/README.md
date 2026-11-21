@@ -29,18 +29,30 @@ T-204。本目录是候选发布源，**尚未安装到任何机器**。专用�
 
 ## 安装前要有的东西
 
-169 和 NAS 上的这几项有现成的置备脚本，在 `provision/`（都先预演，带 `--apply` 或 `add` 才动手；sudo 和口令录入由用户本人做）：
+169 和 NAS 上的这几项有现成的置备脚本，在 `provision/`（sudo 和口令录入由用户本人做）。`prereq.py`、`credentials.py`
+默认只预演，带 `--apply` 才动手；`nas-account.command` 的 `check` 只读，`add`、`restart`、`unit` 一跑就动手，没有预演开关
+（`unit` 先在临时单元上演练，换上后起不来就换回旧的）。
 
 - `prereq.py`：第 1～4、6 项和三个单元。已经对的跳过，在但不对的停下不覆盖；两份配置由它生成，生成的样子各留了
   一份夹具，由程序的真实解析读过（`crates/host-config/tests/support/provisioned-backup.json`、
-  `crates/backup-worker/tests/support/provisioned-config.json`）。
-- `nas-account.command`（在 Mac 终端跑，NAS 一侧是 `nas_account.py`）：给 worker 在 NAS 的 rest-server 上加只追加账号。
-  它的 `unit` 用法换 NAS 上备份服务的单元：原来那版在开机时存储卷还没挂上就被跳过、之后一直不起来
+  `crates/backup-worker/tests/support/provisioned-config.json`）。放文件先写到同目录的 `.<文件名>.placing`，内容的摘要
+  和核过的那一份相同才起正式名；被打断不留半份。那个临时名已经在就停下（上一次被强杀留下的，或者另一处正在放）：
+  确认没有别的 `prereq.py` 在跑，删掉它再重跑。每次 `--apply` 都会让 systemd 重新加载一次单元。
+- `nas-account.command`（在 Mac 终端跑，NAS 一侧是 `nas_account.py`）：`add` 给 worker 在 NAS 的 rest-server 上加只追加账号。
+  新账号的密码 16 到 72 个可见 ASCII 字符、不含空格（上限 72 是 bcrypt 只用前 72 个字节）；散列只经管道传到 NAS，
+  本机不落文件。`add` 把账号加上了、备份服务却没起来时，不要再跑 `add`（账号已经在，会被拒绝），查明原因后跑 `restart`。
+  登录 NAS 的那条连接闲着超过 10 分钟会自己断：输密码花得太久，脚本会在改任何东西之前停下，重跑一遍。
+  它只认钉在仓库里的 NAS 主机钥匙，见下面「NAS 的主机钥匙」。
+  `unit` 换 NAS 上备份服务的单元：原来那版在开机时存储卷还没挂上就被跳过、之后一直不起来
   （2026-10-24 那次开机之后停了四周，没人发现），新版没准备好会每 5 秒再试。worker 上线之前要换好，
   不然 NAS 一重启备份就全部失败（见 `deploy/sync-bridge/recovery/README.md`「NAS 追加备份」）。
-- `credentials.py`：第 5 项。不回显地录入两个口令，写三份凭据文件，再以 worker 账号初始化仓库并读回。
+- `credentials.py`：第 5 项。先把 `prereq.py` 的全部产物重核一遍（有一样不在或不对就不问口令），再不回显地录入两个口令，
+  写三份凭据文件，以 worker 账号初始化仓库并读回。三份凭据先在旁边的 `backup-worker-credentials.writing` 里写齐，
+  再一次换成正式目录：被打断的话要么三份都在、要么一份不留。`.writing` 还在就停下（上一次被强杀或断电留下的，
+  里面可能有那一次输的口令）：确认没有别的 `credentials.py` 在跑，`sudo rm -r` 它之后重跑。
 
-顺序：NAS `check` → NAS `add` → `prereq.py --apply` → `credentials.py --apply`；NAS `unit` 在 worker 上线之前哪一步做都行。
+顺序：核过 NAS 的主机钥匙 → NAS `check` → NAS `add` → `prereq.py --apply` → `credentials.py --apply`；
+NAS `unit` 在 worker 上线之前哪一步做都行。
 人侧发行换了候选、worker 重建过，先改 `prereq.py` 里「发行相关的值」那一段。下面是这几项各自的要求（手工做也照这个）。
 
 1. 专用账号 `studiolo-backup` 和读取组；主服务账号和 worker 账号都在读取组里。
@@ -80,6 +92,7 @@ T-204。本目录是候选发布源，**尚未安装到任何机器**。专用�
      `RuntimeDirectoryPreserve=yes`，两个节点都会留下。留下之后人侧下次启动按设计拒绝，激活脚本停服后的核对也拒绝，
      激活和回滚都停下来等人看过再删。封存做到一半被杀：留下的原意图下一次 `schedule` 补失败结果；暂存一般由下次启动的
      第一轮回收收走，但正好在「建目录」和「登记落盘」之间被杀的话，回收会失败关闭，之后的封存全部失败，也要人处理。
+     回收自己删到一半被杀也续不上（程序的缺陷，已上报）：轻的是到期副本不再回收、暂存区一直涨，同样要人处理。
      Bridge 那边，`deploy/sync-bridge/README.md` 保证的是执行段被杀后执行器能按原键续做，不保证人侧能自己起来。
    - socket 残留：正常关停的第一步就把备份 socket 删了，停止超时到点时它一般已经不在。会留下节点的是主服务崩溃、
      内存超限被杀，或者还没走到那一步就被强杀；留下之后下次启动按设计拒绝（不清理也不接管），要人看过再删。
@@ -137,6 +150,32 @@ T-204。本目录是候选发布源，**尚未安装到任何机器**。专用�
    - 没核的（由封存本身把关，第一次封存失败会写明原因）：历史目录对历史正文的认领、暂存正文的内容和名字是否
      对得上、清单里原批准的内部字段、控制库表结构清单和产物批准的逐条核对、ACL 和安全模块对读权限的限制
      （这里只看权限位）、导出里别的 owner 的文件数。
+
+## NAS 的主机钥匙
+
+`nas-account.command` 连 NAS 时只认 `provision/nas_known_hosts` 里钉住的那一把 ssh 主机钥匙（ED25519，指纹
+`SHA256:Hkpz7ou4/hH99ZGBZH/vuP+Hm8ipHWpXEr+cLdVf1L8`）：不看这台 Mac 自己记的，不认识或对不上就连不上，不会在终端里问
+「要不要信任」，也不往任何地方记新钥匙。默认经 108 跳过去时，108 那一段照旧用这台 Mac 自己的 ssh 配置和已知主机
+（命令行上的选项管不到跳板）。
+
+这把钥匙是 2026-11-20 Mac Studio 第一次连 NAS 时在终端里答 yes 收下的那一把，**入库时还没有经第二条渠道核过**。
+跑 `add`（要输 NAS 的登录密码）之前先核一次，指纹要和上面逐字相同，任选一条：
+
+- 在另一台早先连过 NAS 的机器上（比如 MacBook）看它记的那一把，取 ED25519 那一行：
+
+  ```bash
+  ssh-keygen -l -F 192.168.100.111
+  ```
+
+- 人在家里局域网上，从另一台机器不经 108 直连 NAS，在 NAS 上看它自己的钥匙：
+
+  ```bash
+  ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub
+  ```
+
+对不上就不要连，把两边的输出交给开发会话。核过之后在这一节补一句哪天、经哪条渠道核的。
+NAS 重装或换了钥匙之后：用上面第二条的办法在 NAS 上取新的公钥，把 `nas_known_hosts` 里那一行改成
+`studiolo-nas ssh-ed25519 <公钥>`，文件头注释、这一节和 `provision/test_provision_command.py` 里的指纹一起改。
 
 ## 验收顺序
 

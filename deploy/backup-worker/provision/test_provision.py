@@ -15,7 +15,6 @@ import shutil
 import socket
 import stat
 import subprocess
-import sys
 import tempfile
 import types
 import unittest
@@ -32,7 +31,7 @@ def load(name, path=None):
     return module
 
 
-site, credentials, nas = load('prereq'), load('credentials'), load('nas_account')
+prereq, credentials, nas = load('prereq'), load('credentials'), load('nas_account')
 assembly = load('assembly', ROOT / 'deploy' / 'blackboard' / 'assembly.py')
 COMMAND = (HERE / 'nas-account.command').read_text(encoding='utf-8')
 WORKER_UID, READER_GID = 2101, 2102
@@ -48,8 +47,8 @@ def fields(path, struct):
 
 
 def documents():
-    backup = site.backup_document(WORKER_UID, READER_GID)
-    return backup, site.worker_document(WORKER_UID, READER_GID)
+    backup = prereq.backup_document(WORKER_UID, READER_GID)
+    return backup, prereq.worker_document(WORKER_UID, READER_GID)
 
 
 class ConfigurationTests(unittest.TestCase):
@@ -69,10 +68,10 @@ class ConfigurationTests(unittest.TestCase):
 
     def test_generated_documents_pass_the_copied_rules_and_agree_with_each_other(self):
         backup, worker = documents()
-        site.check_backup_document(backup)
-        site.check_worker_document(worker, backup)
-        self.assertTrue(site.encode(backup).endswith(b'}\n'))
-        self.assertLess(len(site.encode(backup)), 16 * 1024)
+        prereq.check_backup_document(backup)
+        prereq.check_worker_document(worker, backup)
+        self.assertTrue(prereq.encode(backup).endswith(b'}\n'))
+        self.assertLess(len(prereq.encode(backup)), 16 * 1024)
         # 批准的数字（2026-11-18 Q2）和审批里「间隔加完成预算不超过 RPO」这一条正好顶格。
         approval = backup['backup']
         self.assertEqual((approval['schedule_interval_millis'], approval['completion_budget_millis'],
@@ -83,117 +82,182 @@ class ConfigurationTests(unittest.TestCase):
 
     def test_fixtures_the_rust_parsers_read_are_exactly_what_the_script_generates(self):
         """抄来的规则只能证明「脚本自己觉得对」。两份夹具另由程序的真实解析读一遍，这里钉住夹具就是脚本的输出。"""
-        backup = site.backup_document(*site.PLACEHOLDER_NUMBERS)
-        worker = site.worker_document(*site.PLACEHOLDER_NUMBERS)
+        backup = prereq.backup_document(*prereq.PLACEHOLDER_NUMBERS)
+        worker = prereq.worker_document(*prereq.PLACEHOLDER_NUMBERS)
         # 夹具放在各自的 crate 里（发行包只带 crates/ 和点名的几个目录，编译期读的文件得在包里）。
         for directory, test, name, generated, number in (
                 ('crates/host-config/tests/support/', 'backup_tests.rs', 'provisioned-backup.json', backup, 'worker_uid(), 64001'),
                 ('crates/backup-worker/tests/support/', 'config.rs', 'provisioned-config.json', worker, 'parse(raw, 64001)')):
-            self.assertEqual((ROOT / directory / name).read_bytes(), site.encode(generated))
+            self.assertEqual((ROOT / directory / name).read_bytes(), prereq.encode(generated))
             reader = source(directory + test)
             self.assertIn('include_bytes!("' + name + '")', reader)
             self.assertIn(number, reader)
         # 预演在账号还没建时打出来的，也是这一组占位号码。
-        with patch.object(site, 'account', return_value=None):
-            self.assertEqual(site.Provision(False, run=self.fail, out=self.fail).numbers(),
-                             site.PLACEHOLDER_NUMBERS + (False,))
+        with patch.object(prereq, 'account', return_value=None):
+            self.assertEqual(prereq.Provision(False, run=self.fail, out=self.fail).numbers(),
+                             prereq.PLACEHOLDER_NUMBERS + (False,))
 
     def test_each_rule_refuses_its_own_violation(self):
         def broken(change):
             backup, _ = documents()
             change(backup['backup'], backup['backup_producer'], backup)
             return backup
+        # 每一条都要是被它自己的那条规则拦下的（核拒绝的原话）：只核「被拒了」的话，规则删掉、被别的规则顺带拦住也看不出来。
+        top, number = '顶层键或版本不对', '部署段版本或账号号码不对'
+        shape, restic, credential_count = '审批段版本或目标形态不对', 'restic 包名或版本不对', '凭据引用条数不对'
+        retention, freeze = '封存保留期不在 10 分钟到 24 小时之间', '冻结预算不在 1 秒到 120 秒之间'
+        paths, nesting = '三条路径不规范或 socket 路径太长', '路径互相嵌套'
         cases = {
-            'rpo': lambda a, p, d: a.update(rpo_millis=899_999),
-            'zero interval': lambda a, p, d: a.update(schedule_interval_millis=0),
-            'shape': lambda a, p, d: a.update(target_shape='plain_smb_or_nfs_directory'),
-            'restic name': lambda a, p, d: a.update(restic_package='restic2'),
-            'restic version': lambda a, p, d: a.update(restic_version='0.19.1-rc'),
-            'keep': lambda a, p, d: a.update(keep_daily=0),
-            'variable': lambda a, p, d: a['credentials'][0].update(environment_variable='restic_password'),
-            'logical': lambda a, p, d: a['credentials'][0].update(logical_name='Restic'),
-            'no credentials': lambda a, p, d: a.update(credentials=[]),
-            'extra approval key': lambda a, p, d: a.update(note='x'),
-            'extra top key': lambda a, p, d: d.update(owner={}),
-            'top version': lambda a, p, d: d.update(version=2),
-            'missing producer key': lambda a, p, d: p.pop('ephemeral_root'),
-            'worker is root': lambda a, p, d: p.update(worker_uid=0),
-            'worker is owner': lambda a, p, d: p.update(worker_uid=site.OWNER_UID),
-            'reader max': lambda a, p, d: p.update(reader_gid=0xFFFF_FFFF),
-            'retention low': lambda a, p, d: p.update(source_retention_millis=599_999),
-            'retention high': lambda a, p, d: p.update(source_retention_millis=86_400_001),
-            'freeze low': lambda a, p, d: p.update(freeze_budget_millis=999),
-            'freeze high': lambda a, p, d: p.update(freeze_budget_millis=120_001),
-            'digest case': lambda a, p, d: p.update(restic_digest='AB' * 32),
-            'relative': lambda a, p, d: p.update(ephemeral_root='home/x'),
-            'dotdot': lambda a, p, d: p.update(staging_parent='/var/lib/../lib/x'),
-            'long socket': lambda a, p, d: p.update(socket='/run/' + 'x' * 96),
-            'socket in staging': lambda a, p, d: p.update(socket=site.STAGING + '/producer.sock'),
-            'ephemeral in auth': lambda a, p, d: p.update(ephemeral_root=site.PRIVATE[0] + '/tmp'),
-            'audit in staging': lambda a, p, d: p.update(staging_parent=str(Path(site.PRIVATE[1]).parent)),
-            'no packages': lambda a, p, d: p.update(application_packages=[]),
-            'many units': lambda a, p, d: p.update(deployment=p['deployment'] * 9),
-            'label': lambda a, p, d: p['deployment'][0].update(unit='studiolo human.service'),
-            'package digest': lambda a, p, d: p['application_packages'][0].update(digest='0' * 63),
+            'rpo': (lambda a, p, d: a.update(rpo_millis=899_999), '间隔加完成预算超过了 RPO'),
+            'zero interval': (lambda a, p, d: a.update(schedule_interval_millis=0), '间隔加完成预算超过了 RPO'),
+            'shape': (lambda a, p, d: a.update(target_shape='plain_smb_or_nfs_directory'), shape),
+            'approval version': (lambda a, p, d: a.update(version=2), shape),
+            'immutability text': (lambda a, p, d: a.update(claims_immutability='false'), 'claims_immutability 不是布尔值'),
+            'immutability number': (lambda a, p, d: a.update(claims_immutability=0), 'claims_immutability 不是布尔值'),
+            'restic name': (lambda a, p, d: a.update(restic_package='restic2'), restic),
+            'restic version': (lambda a, p, d: a.update(restic_version='0.19.1-rc'), restic),
+            'keep': (lambda a, p, d: a.update(keep_daily=0), '保留个数不对'),
+            'variable': (lambda a, p, d: a['credentials'][0].update(environment_variable='restic_password'), '凭据变量名不对'),
+            'logical': (lambda a, p, d: a['credentials'][0].update(logical_name='Restic'), '凭据逻辑名不对'),
+            'credential extra key': (lambda a, p, d: a['credentials'][0].update(note='x'), '凭据引用的键不对'),
+            'no credentials': (lambda a, p, d: a.update(credentials=[]), credential_count),
+            'many credentials': (lambda a, p, d: a.update(credentials=a['credentials'] * 3), credential_count),
+            'extra approval key': (lambda a, p, d: a.update(note='x'), '审批段的键不对'),
+            'extra top key': (lambda a, p, d: d.update(owner={}), top),
+            'top version': (lambda a, p, d: d.update(version=2), top),
+            'missing producer key': (lambda a, p, d: p.pop('ephemeral_root'), '部署段的键不对'),
+            'producer version': (lambda a, p, d: p.update(version=2), number),
+            'worker is root': (lambda a, p, d: p.update(worker_uid=0), number),
+            'worker is owner': (lambda a, p, d: p.update(worker_uid=prereq.OWNER_UID), 'worker 账号不能就是主服务账号'),
+            'reader max': (lambda a, p, d: p.update(reader_gid=0xFFFF_FFFF), number),
+            'retention low': (lambda a, p, d: p.update(source_retention_millis=599_999), retention),
+            'retention high': (lambda a, p, d: p.update(source_retention_millis=86_400_001), retention),
+            'freeze low': (lambda a, p, d: p.update(freeze_budget_millis=999), freeze),
+            'freeze high': (lambda a, p, d: p.update(freeze_budget_millis=120_001), freeze),
+            'freeze text': (lambda a, p, d: p.update(freeze_budget_millis='30000'), freeze),
+            'digest case': (lambda a, p, d: p.update(restic_digest='AB' * 32), 'restic 摘要不对'),
+            'relative': (lambda a, p, d: p.update(ephemeral_root='home/x'), paths),
+            'dotdot': (lambda a, p, d: p.update(staging_parent='/var/lib/../lib/x'), paths),
+            'long socket': (lambda a, p, d: p.update(socket='/run/' + 'x' * 96), paths),
+            'socket in staging': (lambda a, p, d: p.update(socket=prereq.STAGING + '/producer.sock'), nesting),
+            'ephemeral in auth': (lambda a, p, d: p.update(ephemeral_root=prereq.PRIVATE[0] + '/tmp'), nesting),
+            'audit in staging': (lambda a, p, d: p.update(staging_parent=str(Path(prereq.PRIVATE[1]).parent)), nesting),
+            'no packages': (lambda a, p, d: p.update(application_packages=[]), 'application_packages 条数不对'),
+            'many units': (lambda a, p, d: p.update(deployment=p['deployment'] * 9), 'deployment 条数不对'),
+            'package extra key': (lambda a, p, d: p['application_packages'][0].update(note='x'), 'application_packages 的键不对'),
+            'unit extra key': (lambda a, p, d: p['deployment'][0].update(note='x'), 'deployment 的键不对'),
+            'label': (lambda a, p, d: p['deployment'][0].update(unit='studiolo human.service'), 'deployment 的取值不对'),
+            'package digest': (lambda a, p, d: p['application_packages'][0].update(digest='0' * 63),
+                               'application_packages 的取值不对'),
         }
-        for name, change in cases.items():
-            with self.subTest(name), self.assertRaises(site.Refused):
-                site.check_backup_document(broken(change))
+        for name, (change, message) in cases.items():
+            with self.subTest(name):
+                with self.assertRaises(prereq.Refused) as refusal:
+                    prereq.check_backup_document(broken(change))
+                self.assertEqual(str(refusal.exception), message)
+        # 顶格的值放过：保留期和冻结预算的两头、正好 100 个字节的 socket 路径、8 条凭据引用、16 个单元。
+        edges = {
+            'retention low': lambda a, p, d: p.update(source_retention_millis=600_000),
+            'retention high': lambda a, p, d: p.update(source_retention_millis=86_400_000),
+            'freeze low': lambda a, p, d: p.update(freeze_budget_millis=1_000),
+            'freeze high': lambda a, p, d: p.update(freeze_budget_millis=120_000),
+            'socket': lambda a, p, d: p.update(socket='/run/' + 'x' * 95),
+            'credentials': lambda a, p, d: a.update(credentials=(a['credentials'] * 3)[:8]),
+            'units': lambda a, p, d: p.update(deployment=p['deployment'] * 8),
+            'immutability': lambda a, p, d: a.update(claims_immutability=True),
+        }
+        for name, change in edges.items():
+            with self.subTest('放过：' + name):
+                prereq.check_backup_document(broken(change))
 
     def test_worker_rules_refuse_their_own_violations(self):
-        backup, worker = documents()
+        """每条规则各自拦下自己的违例。两份配置都提到的字段（账号号码、两条路径、restic 摘要）两份一起改：
+        只改 worker 这一份的话，先被「两份配置对不上」拦下，被测的那条规则删掉了用例也看不出来。"""
+        shared = {'worker_uid': 'worker_uid', 'reader_gid': 'reader_gid', 'sealed_parent': 'staging_parent',
+                  'producer_socket': 'socket', 'restic_sha256': 'restic_digest'}
+
+        def verdict(change, together=True):
+            backup, worker = documents()
+            worker.update(change)
+            if together:
+                backup['backup_producer'].update({shared[key]: value for key, value in change.items() if key in shared})
+            try:
+                prereq.check_worker_document(worker, backup)
+            except prereq.Refused as refusal:
+                return str(refusal)
+            return '放过'
+        number, path, own = 'worker 配置的版本或账号号码不对', 'worker 配置的路径不对', '路径落在 worker 自己的目录里'
+        digest, address = 'worker 配置的摘要不对', '仓库地址不是规范的 rest:https:// 写法'
         cases = {
-            'schema': {'schema': 2},
-            'same account': {'worker_uid': site.OWNER_UID},
-            'other reader': {'reader_gid': READER_GID + 1},
-            'other parent': {'sealed_parent': '/var/lib/other'},
-            'own state': {'sealed_parent': '/var/lib/studiolo-backup-worker/sealed'},
-            'credentials': {'producer_socket': '/run/credentials/x.sock'},
-            'other restic': {'restic_sha256': 'ab' * 32},
-            'ca digest': {'repository_ca_sha256': 'xyz'},
-            'userinfo': {'repository': 'rest:https://user:pass@192.168.100.111:18443/a/b/'},
-            'plain http': {'repository': 'rest:http://192.168.100.111:18443/a/b/'},
-            'query': {'repository': 'rest:https://192.168.100.111:18443/a/b/?x=1'},
-            'default port': {'repository': 'rest:https://192.168.100.111:443/a/b/'},
-            'parent segment': {'repository': 'rest:https://192.168.100.111:18443/a/../b/'},
-            'no slash': {'repository': 'rest:https://192.168.100.111:18443/a/b'},
-            'upper host': {'repository': 'rest:https://NAS:18443/a/b/'},
+            'extra key': ({'note': 'x'}, 'worker 配置的键不对'),
+            'schema': ({'schema': 2}, number),
+            'same account': ({'worker_uid': prereq.OWNER_UID}, number),
+            'worker is root': ({'worker_uid': 0}, number),
+            'producer is root': ({'producer_uid': 0}, number),
+            'reader max': ({'reader_gid': 0xFFFF_FFFF}, number),
+            'relative parent': ({'sealed_parent': 'var/lib/x'}, path),
+            'dotted socket': ({'producer_socket': '/run/./x.sock'}, path),
+            'long socket': ({'producer_socket': '/run/' + 'x' * 96}, path),
+            'own state': ({'sealed_parent': '/var/lib/studiolo-backup-worker/sealed'}, own),
+            'above own state': ({'sealed_parent': '/var/lib'}, own),
+            'own runtime': ({'producer_socket': '/run/studiolo-backup-worker/p.sock'}, own),
+            'credentials': ({'producer_socket': '/run/credentials/x.sock'}, own),
+            'socket in parent': ({'producer_socket': prereq.STAGING + '/p.sock'}, '封存父目录和 socket 互相嵌套'),
+            'restic digest': ({'restic_sha256': 'AB' * 32}, digest),
+            'ca digest': ({'repository_ca_sha256': 'xyz'}, digest),
+            'userinfo': ({'repository': 'rest:https://user:pass@192.168.100.111:18443/a/b/'}, address),
+            'plain http': ({'repository': 'rest:http://192.168.100.111:18443/a/b/'}, address),
+            'query': ({'repository': 'rest:https://192.168.100.111:18443/a/b/?x=1'}, address),
+            'default port': ({'repository': 'rest:https://192.168.100.111:443/a/b/'}, address),
+            'parent segment': ({'repository': 'rest:https://192.168.100.111:18443/a/../b/'}, address),
+            'empty segment': ({'repository': 'rest:https://192.168.100.111:18443/a//b/'}, address),
+            'no slash': ({'repository': 'rest:https://192.168.100.111:18443/a/b'}, address),
+            'upper host': ({'repository': 'rest:https://NAS:18443/a/b/'}, address),
+            'too long': ({'repository': 'rest:https://192.168.100.111:18443/' + 'a' * 500 + '/'}, address),
         }
-        for name, change in cases.items():
-            with self.subTest(name), self.assertRaises(site.Refused):
-                site.check_worker_document(dict(worker, **change), backup)
-        extra = dict(worker, note='x')
-        with self.assertRaises(site.Refused):
-            site.check_worker_document(extra, backup)
+        for name, (change, message) in cases.items():
+            with self.subTest(name):
+                self.assertEqual(verdict(change), message)
+        # 两份配置说的得是同一组东西：只改 worker 这一份里的任何一项（值本身都合规则），就对不上。
+        for change in ({'worker_uid': WORKER_UID + 1}, {'reader_gid': READER_GID + 1}, {'sealed_parent': '/var/lib/other'},
+                       {'producer_socket': '/run/other/p.sock'}, {'restic_sha256': 'ab' * 32},
+                       {'producer_uid': prereq.OWNER_UID + 1}):
+            with self.subTest('对不上：' + next(iter(change))):
+                self.assertEqual(verdict(change, together=False), '两份配置对不上')
+        # 两份一起改成另一组合规则的值，就放过：上面那些拒绝不是「只要动了就拒」。
+        for change in ({'worker_uid': WORKER_UID + 1}, {'reader_gid': READER_GID + 1}, {'sealed_parent': '/var/lib/other'},
+                       {'producer_socket': '/run/' + 'x' * 95}, {'restic_sha256': 'ab' * 32}):
+            with self.subTest('放过：' + next(iter(change))):
+                self.assertEqual(verdict(change), '放过')
 
     def test_site_values_match_the_assembly_the_units_and_the_worker_source(self):
-        self.assertEqual((site.BACKUP_CONFIG, site.RUNTIME, site.STAGING, site.HUMAN_RELEASE),
+        self.assertEqual((prereq.BACKUP_CONFIG, prereq.RUNTIME, prereq.STAGING, prereq.HUMAN_RELEASE),
                          (assembly.BACKUP_CONFIG, assembly.BACKUP_RUNTIME, assembly.BACKUP_STAGING, assembly.BUILD))
-        self.assertLessEqual(site.FREEZE_MILLIS, assembly.BACKUP_FREEZE_BUDGET_SECONDS * 1000)
+        self.assertLessEqual(prereq.FREEZE_MILLIS, assembly.BACKUP_FREEZE_BUDGET_SECONDS * 1000)
         operations = source('deploy/blackboard/activation_ops.py')
-        for private in site.PRIVATE:
+        for private in prereq.PRIVATE:
             self.assertIn("'" + private + "'", operations)
-        self.assertIn('"' + site.RESTIC + '"', source('crates/backup-worker/src/package.rs'))
+        self.assertIn('"' + prereq.RESTIC + '"', source('crates/backup-worker/src/package.rs'))
         reader = source('crates/backup-worker/src/config/input.rs')
-        self.assertIn('"' + site.CA + '"', reader)
+        self.assertIn('"' + prereq.CA + '"', reader)
         # 配置文件名只写在打开处，目录写在同一个文件里：两段都要对得上。
-        self.assertIn('"' + Path(site.WORKER_CONFIG).name + '"', reader)
-        self.assertEqual(Path(site.WORKER_CONFIG).parent, Path(site.CA).parent)
+        self.assertIn('"' + Path(prereq.WORKER_CONFIG).name + '"', reader)
+        self.assertEqual(Path(prereq.WORKER_CONFIG).parent, Path(prereq.CA).parent)
         self.assertIn('RESTIC_PACKAGE_VERSION: &str = "0.19.1"', source('crates/backup/src/worker/restic.rs'))
-        self.assertTrue(site.REPOSITORY.startswith('rest:https://192.168.100.111:18443/' + site.REST_USERNAME + '/'))
-        worker_unit = (site.TEMPLATES / 'studiolo-backup-worker.service').read_text(encoding='utf-8')
-        self.assertIn('ExecStart=' + site.WORKER_BINARY + ' run', worker_unit)
-        self.assertIn('User=' + site.WORKER + '\n', worker_unit)
-        self.assertIn('SupplementaryGroups=' + site.READERS + '\n', worker_unit)
+        self.assertTrue(prereq.REPOSITORY.startswith('rest:https://192.168.100.111:18443/' + prereq.REST_USERNAME + '/'))
+        worker_unit = (prereq.TEMPLATES / 'studiolo-backup-worker.service').read_text(encoding='utf-8')
+        self.assertIn('ExecStart=' + prereq.WORKER_BINARY + ' run', worker_unit)
+        self.assertIn('User=' + prereq.WORKER + '\n', worker_unit)
+        self.assertIn('SupplementaryGroups=' + prereq.READERS + '\n', worker_unit)
         self.assertEqual(re.findall(r'^LoadCredential=(.*)$', worker_unit, re.M),
                          [name + ':' + credentials.DIRECTORY + '/' + name for name in credentials.NAMES])
         slots = source('crates/backup-worker/src/credentials/file.rs')
         for name in credentials.NAMES:
             self.assertIn('"' + name + '"', slots)
-        for name in site.UNITS:
-            self.assertTrue((site.TEMPLATES / name).is_file())
-        self.assertEqual(credentials.SERVICE, site.UNITS[0])
-        self.assertEqual(site.tmpfiles_text(),
+        for name in prereq.UNITS:
+            self.assertTrue((prereq.TEMPLATES / name).is_file())
+        self.assertEqual(credentials.SERVICE, prereq.UNITS[0])
+        self.assertEqual(prereq.tmpfiles_text(),
                          'd /run/studiolo-backup 0750 maxsong studiolo-backup-read -\n'
                          'd /var/lib/studiolo-backup-staging 0750 maxsong studiolo-backup-read -\n')
 
@@ -205,33 +269,37 @@ class StepTests(unittest.TestCase):
         def run(argv, **options):
             self.ran.append(argv)
             self.options = options
-        return site.Provision(apply, run=run, out=self.lines.append)
+        return prereq.Provision(apply, run=run, out=self.lines.append)
 
     def test_dry_run_prints_the_command_and_changes_nothing(self):
         provision = self.provision(False)
         provision.step('示例', lambda: None, lambda: provision.root('groupadd', '--system', 'x'), self.fail)
-        with tempfile.TemporaryDirectory() as scratch, patch.dict(site.PLACED, {scratch + '/file': 0o644}):
+        with tempfile.TemporaryDirectory() as scratch, patch.dict(prereq.PLACED, {scratch + '/file': 0o644}):
             provision.root_file('文件', scratch + '/file', b'x')
             # 预演连要拷的来源都不打开（这里故意给一个不存在的）。
             provision.root_copy('拷贝', scratch + '/missing-source', scratch + '/file', 'ab' * 32)
             self.assertEqual(os.listdir(scratch), [])
-            self.assertTrue(any('--place ' + scratch + '/file < ' in line for line in self.lines))
+            # 两条放文件的命令都带着核过的那份内容的摘要。
+            for digest in (hashlib.sha256(b'x').hexdigest(), 'ab' * 32):
+                self.assertTrue(any('--place ' + scratch + '/file ' + digest + ' < ' in line for line in self.lines))
         self.assertEqual(self.ran, [])
         self.assertEqual(provision.pending, 3)
         self.assertIn('    sudo groupadd --system x', self.lines)
 
     def test_apply_places_root_files_through_the_create_only_entry(self):
         provision = self.provision(True)
-        with tempfile.TemporaryDirectory() as scratch, patch.dict(site.PLACED, {scratch + '/file': 0o644}):
+        with tempfile.TemporaryDirectory() as scratch, patch.dict(prereq.PLACED, {scratch + '/file': 0o644}):
             path, origin = scratch + '/file', scratch + '/origin'
             Path(origin).write_bytes(b'binary')
             entry = ['sudo', '--', '/usr/bin/python3', '-I', '-B', str(HERE / 'prereq.py'), '--place', path]
-            with self.assertRaises(site.Refused):  # 替身什么都没放：做完核对不过
+            written = hashlib.sha256(b'content').hexdigest()
+            with self.assertRaises(prereq.Refused):  # 替身什么都没放：做完核对不过
                 provision.root_file('文件', path, b'content')
-            self.assertEqual((self.ran, self.options), ([entry], {'check': True, 'input': b'content'}))
-            with self.assertRaises(site.Refused):
+            # 命令最后带的是要放的那份内容的摘要：root 一侧放之前再核一遍。
+            self.assertEqual((self.ran, self.options), ([entry + [written]], {'check': True, 'input': b'content'}))
+            with self.assertRaises(prereq.Refused):
                 provision.root_copy('拷贝', origin, path, 'ab' * 32)
-            self.assertEqual(self.ran, [entry, entry])
+            self.assertEqual(self.ran, [entry + [written], entry + ['ab' * 32]])
             self.assertEqual((self.options['check'], self.options['stdin'].name), (True, origin))
             self.assertEqual(os.listdir(scratch), ['origin'])
         # 不用 install：它会盖掉已有的文件，-d 还会改掉已有目录的属主权限。
@@ -239,50 +307,112 @@ class StepTests(unittest.TestCase):
         self.assertIn("self.root('mkdir', '-m', '0755', PROGRAMS)", source('deploy/backup-worker/provision/prereq.py'))
 
     def test_place_only_creates_and_leaves_nothing_behind_when_it_fails(self):
+        def digest(raw):
+            return hashlib.sha256(raw).hexdigest()
         with tempfile.TemporaryDirectory() as scratch:
             path = os.path.join(scratch, 'file')
             Path(path + '.probe').write_bytes(b'')
             probe = os.lstat(path + '.probe')
             os.unlink(path + '.probe')
-            with patch.object(site, 'PLACED_OWNER', (probe.st_uid, probe.st_gid)):
-                loosened = os.umask(0)  # 权限位不靠调用方的 umask
-                try:
-                    site.place(path, 0o555, io.BytesIO(b'content'))
-                finally:
-                    os.umask(loosened)
-                made = os.lstat(path)
-                self.assertEqual((stat.S_IMODE(made.st_mode), made.st_nlink, Path(path).read_bytes()),
-                                 (0o555, 1, b'content'))
-                with self.assertRaises(FileExistsError):
-                    site.place(path, 0o644, io.BytesIO(b'other'))
-                self.assertEqual((stat.S_IMODE(os.lstat(path).st_mode), Path(path).read_bytes()), (0o555, b'content'))
-                os.symlink('/nonexistent/studiolo-test', path + '.link')  # 悬空链接也算「已经在」
-                with self.assertRaises(FileExistsError):
-                    site.place(path + '.link', 0o644, io.BytesIO(b'other'))
+            owner = (probe.st_uid, probe.st_gid)
+            loosened = os.umask(0)  # 权限位不靠调用方的 umask
+            try:
+                prereq.place(path, 0o555, io.BytesIO(b'content'), owner, digest(b'content'))
+            finally:
+                os.umask(loosened)
+            made = os.lstat(path)
+            self.assertEqual((stat.S_IMODE(made.st_mode), made.st_nlink, Path(path).read_bytes()), (0o555, 1, b'content'))
+            with self.assertRaises(FileExistsError):
+                prereq.place(path, 0o644, io.BytesIO(b'other'), owner, digest(b'other'))
+            self.assertEqual((stat.S_IMODE(os.lstat(path).st_mode), Path(path).read_bytes()), (0o555, b'content'))
+            os.symlink('/nonexistent/studiolo-test', path + '.link')  # 悬空链接也算「已经在」
+            with self.assertRaises(FileExistsError):
+                prereq.place(path + '.link', 0o644, io.BytesIO(b'other'), owner, digest(b'other'))
 
-                def unreadable(size):
-                    raise OSError('读到一半断了')
-                with self.assertRaises(OSError):
-                    site.place(path + '.second', 0o644, types.SimpleNamespace(read=unreadable))
+            def unreadable(size):
+                raise OSError('读到一半断了')
+            with self.assertRaises(OSError):
+                prereq.place(path + '.second', 0o644, types.SimpleNamespace(read=unreadable), owner, digest(b''))
             self.assertEqual(sorted(os.listdir(scratch)), ['file', 'file.link'])
+            # 送来的内容不是核过的那一份（来源在核对之后被换了）：不放，也不留临时名。大于一个读块的内容照样算整份的摘要。
+            large = b'\x5a' * ((1 << 20) + 17)
+            for raw, claimed in ((b'swapped', digest(b'content')), (large, digest(large[:-1])), (b'', digest(b'x'))):
+                with self.assertRaises(prereq.Refused) as refusal:
+                    prereq.place(path + '.third', 0o644, io.BytesIO(raw), owner, claimed)
+                self.assertIn('要放的内容和核过的那一份不一样', str(refusal.exception))
+            self.assertEqual(sorted(os.listdir(scratch)), ['file', 'file.link'])
+            prereq.place(path + '.third', 0o644, io.BytesIO(large), owner, digest(large))
+            self.assertEqual(Path(path + '.third').read_bytes(), large)
+            # owner 给 None：不改属主（主服务账号写自己的私有配置），权限照样是给的那个。
+            with patch.object(prereq.os, 'fchown', self.fail):
+                prereq.place(path + '.own', 0o600, io.BytesIO(b'private'), None, digest(b'private'))
+            self.assertEqual((stat.S_IMODE(os.lstat(path + '.own').st_mode), Path(path + '.own').read_bytes()),
+                             (0o600, b'private'))
+            # 给了 owner 就真的去改属主。
+            changed = []
+            with patch.object(prereq.os, 'fchown', lambda descriptor, uid, gid: changed.append((uid, gid))):
+                prereq.place(path + '.owned', 0o644, io.BytesIO(b'x'), (0, 0), digest(b'x'))
+            self.assertEqual(changed, [(0, 0)])
+            # 临时名已经在（上一次被强杀留下的，或者另一处正在放）：停下，那一份原样留着，正式的名字不出现。
+            leftover = os.path.join(scratch, '.fourth.placing')
+            Path(leftover).write_bytes(b'half')
+            with self.assertRaises(prereq.Refused) as refusal:
+                prereq.place(os.path.join(scratch, 'fourth'), 0o644, io.BytesIO(b'whole'), owner, digest(b'whole'))
+            self.assertIn(leftover + ' 已经在', str(refusal.exception))
+            self.assertEqual(Path(leftover).read_bytes(), b'half')
+            self.assertFalse(os.path.lexists(os.path.join(scratch, 'fourth')))
+            os.symlink('/nonexistent/studiolo-test', os.path.join(scratch, '.fifth.placing'))  # 临时名是悬空链接也一样
+            with self.assertRaises(prereq.Refused):
+                prereq.place(os.path.join(scratch, 'fifth'), 0o644, io.BytesIO(b'whole'), owner, digest(b'whole'))
+            self.assertEqual(sorted(os.listdir(scratch)),
+                             ['.fifth.placing', '.fourth.placing', 'file', 'file.link', 'file.own', 'file.owned', 'file.third'])
+
+    def test_place_leaves_no_temporary_name_when_it_is_interrupted_at_any_point(self):
+        """每一步上被打断（Ctrl-C，或者终端断开、被要求结束变成的同一种异常）都不留临时名，也不留半份正式文件。
+        连「临时名刚建好」那一下也算：先记下是这一次建的，再去建。"""
+        raw = b'content'
+        digest = hashlib.sha256(raw).hexdigest()
+
+        def interrupted_after(real):
+            def step(*arguments, **options):
+                real(*arguments, **options)
+                raise prereq.Interrupted('SIGTERM')
+            return step
+        for name in ('open', 'fchmod', 'fsync', 'link'):
+            with self.subTest(name), tempfile.TemporaryDirectory() as scratch:
+                path = os.path.join(scratch, 'file')
+                with patch.object(prereq.os, name, interrupted_after(getattr(os, name))), \
+                        self.assertRaises(KeyboardInterrupt):
+                    prereq.place(path, 0o644, io.BytesIO(raw), None, digest)
+                # 起正式名字那一步已经做成的话，留下的是完整的一份；别的步骤上什么都不留。
+                self.assertEqual(os.listdir(scratch), ['file'] if name == 'link' else [])
+                if name == 'link':
+                    self.assertEqual(Path(path).read_bytes(), raw)
 
     def test_place_entry_only_serves_root_and_the_files_this_script_installs(self):
         piped = types.SimpleNamespace(isatty=lambda: False, buffer=io.BytesIO(b'x'))
         terminal = types.SimpleNamespace(isatty=lambda: True, buffer=io.BytesIO(b'x'))
-        cases = ((0, piped, ['--place', '/etc/passwd']), (1000, piped, ['--place', site.CA]),
-                 (0, terminal, ['--place', site.CA]), (0, piped, ['--place', site.CA, 'extra']), (0, piped, ['--place']))
+        digest = hashlib.sha256(b'x').hexdigest()
+        cases = ((0, piped, ['--place', '/etc/passwd', digest]), (1000, piped, ['--place', prereq.CA, digest]),
+                 (0, terminal, ['--place', prereq.CA, digest]), (0, piped, ['--place', prereq.CA, digest, 'extra']),
+                 (0, piped, ['--place', prereq.CA]), (0, piped, ['--place']),
+                 # 摘要得是 64 位小写十六进制：别的写法一律不认。
+                 (0, piped, ['--place', prereq.CA, digest.upper()]), (0, piped, ['--place', prereq.CA, digest[:-1]]),
+                 (0, piped, ['--place', prereq.CA, '']))
         for euid, stdin, argv in cases:
-            with self.subTest(argv=argv, euid=euid), patch.object(site.os, 'geteuid', return_value=euid), \
-                    patch.object(site.sys, 'stdin', stdin), patch.object(site, 'place', self.fail), \
-                    self.assertRaises(site.Refused):
-                site.main(argv)
+            with self.subTest(argv=argv, euid=euid), patch.object(prereq.os, 'geteuid', return_value=euid), \
+                    patch.object(prereq.sys, 'stdin', stdin), patch.object(prereq, 'place', self.fail), \
+                    self.assertRaises(prereq.Refused):
+                prereq.main(argv)
         placed = []
-        with patch.object(site.os, 'geteuid', return_value=0), patch.object(site.sys, 'stdin', piped), \
-                patch.object(site, 'place', lambda *arguments: placed.append(arguments)):
-            site.main(['--place', site.RESTIC])
-        self.assertEqual(placed, [(site.RESTIC, 0o555, piped.buffer)])
-        self.assertEqual(site.PLACED[site.WORKER_BINARY], 0o755)
-        self.assertEqual({site.PLACED[site.UNIT_DIRECTORY + '/' + name] for name in site.UNITS}, {0o644})
+        with patch.object(prereq.os, 'geteuid', return_value=0), patch.object(prereq.sys, 'stdin', piped), \
+                patch.object(prereq, 'place', lambda *arguments: placed.append(arguments)):
+            prereq.main(['--place', prereq.RESTIC, digest])
+        # 权限和属主由脚本自己定（root:root），调用方只给目标和摘要。
+        self.assertEqual(placed, [(prereq.RESTIC, 0o555, piped.buffer, (0, 0), digest)])
+        self.assertEqual(prereq.PLACED_OWNER, (0, 0))
+        self.assertEqual(prereq.PLACED[prereq.WORKER_BINARY], 0o755)
+        self.assertEqual({prereq.PLACED[prereq.UNIT_DIRECTORY + '/' + name] for name in prereq.UNITS}, {0o644})
 
     def test_chain_refuses_links_and_writable_directories_anywhere_above(self):
         with tempfile.TemporaryDirectory() as scratch:
@@ -290,43 +420,43 @@ class StepTests(unittest.TestCase):
             os.makedirs(top + '/a/b')
             for node in (top, top + '/a', top + '/a/b'):
                 os.chmod(node, 0o755)
-            site.chain(top + '/a/b/file', me, top=top)
+            prereq.chain(top + '/a/b/file', me, top=top)
             os.symlink(top + '/a', top + '/alias')
-            with self.assertRaises(site.Refused):
-                site.chain(top + '/alias/b/file', me, top=top)
+            with self.assertRaises(prereq.Refused):
+                prereq.chain(top + '/alias/b/file', me, top=top)
             for mode in (0o775, 0o757, 0o1755):
                 os.chmod(top + '/a', mode)
-                with self.subTest(oct(mode)), self.assertRaises(site.Refused):
-                    site.chain(top + '/a/b/file', me, top=top)
+                with self.subTest(oct(mode)), self.assertRaises(prereq.Refused):
+                    prereq.chain(top + '/a/b/file', me, top=top)
             os.chmod(top + '/a', 0o755)
-            with self.assertRaises(site.Refused):
-                site.chain(top + '/a/missing/file', me, top=top)
+            with self.assertRaises(prereq.Refused):
+                prereq.chain(top + '/a/missing/file', me, top=top)
             Path(top + '/a/plain').write_bytes(b'')
             os.chmod(top + '/a/plain', 0o644)
-            with self.assertRaises(site.Refused):  # 中间一级是普通文件
-                site.chain(top + '/a/plain/file', me, top=top)
+            with self.assertRaises(prereq.Refused):  # 中间一级是普通文件
+                prereq.chain(top + '/a/plain/file', me, top=top)
             if me != 0:  # 属主既不是 root 也不是指定账号
-                with self.assertRaises(site.Refused):
-                    site.chain(top + '/a/b/file', me + 1, top=top)
-            site.chain(top + '/a/b/file', me, top=top)
+                with self.assertRaises(prereq.Refused):
+                    prereq.chain(top + '/a/b/file', me + 1, top=top)
+            prereq.chain(top + '/a/b/file', me, top=top)
         # 每个要建的东西都核了它上面的目录链。
-        prereq = source('deploy/backup-worker/provision/prereq.py')
-        self.assertIn('for path in (BACKUP_CONFIG, EPHEMERAL):\n            chain(path, OWNER_UID)', prereq)
+        text = source('deploy/backup-worker/provision/prereq.py')
+        self.assertIn('for path in (BACKUP_CONFIG, EPHEMERAL):\n            chain(path, OWNER_UID)', text)
         self.assertIn("for path in (WORKER_CONFIG, PROGRAMS, TMPFILES, UNIT_DIRECTORY + '/' + UNITS[0], RUNTIME, STAGING):\n"
-                      '            chain(path, 0)', prereq)
+                      '            chain(path, 0)', text)
 
     def test_apply_runs_through_sudo_and_refuses_a_failed_verification(self):
         provision = self.provision(True)
         provision.step('示例', lambda: None, lambda: provision.root('groupadd', '--system', 'x'), lambda: True)
         self.assertEqual(self.ran, [['sudo', '--', 'groupadd', '--system', 'x']])
-        with self.assertRaises(site.Refused):
+        with self.assertRaises(prereq.Refused):
             provision.step('示例', lambda: None, lambda: None, lambda: False)
 
     def test_present_is_skipped_and_wrong_is_never_overwritten(self):
         for apply in (False, True):
             provision = self.provision(apply)
             provision.step('已有', lambda: True, self.fail, self.fail)
-            with self.assertRaises(site.Refused):
+            with self.assertRaises(prereq.Refused):
                 provision.step('不对', lambda: False, self.fail, self.fail)
             self.assertEqual((self.ran, provision.pending), ([], 0))
 
@@ -334,16 +464,16 @@ class StepTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as scratch:
             path = os.path.join(scratch, 'file')
             me, mine = os.getuid(), os.lstat(scratch).st_gid
-            self.assertIsNone(site.has(path, stat.S_ISREG, me, mine, (0o600,)))
+            self.assertIsNone(prereq.has(path, stat.S_ISREG, me, mine, (0o600,)))
             descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
             os.close(descriptor)
             mine = os.lstat(path).st_gid
-            self.assertTrue(site.has(path, stat.S_ISREG, me, mine, (0o600,)))
-            self.assertFalse(site.has(path, stat.S_ISREG, me, mine, (0o644,)))
-            self.assertFalse(site.has(path, stat.S_ISDIR, me, mine, (0o600,)))
-            self.assertFalse(site.has(path, stat.S_ISREG, me + 1, mine, (0o600,)))
+            self.assertTrue(prereq.has(path, stat.S_ISREG, me, mine, (0o600,)))
+            self.assertFalse(prereq.has(path, stat.S_ISREG, me, mine, (0o644,)))
+            self.assertFalse(prereq.has(path, stat.S_ISDIR, me, mine, (0o600,)))
+            self.assertFalse(prereq.has(path, stat.S_ISREG, me + 1, mine, (0o600,)))
             os.link(path, path + '.second')
-            self.assertFalse(site.has(path, stat.S_ISREG, me, mine, (0o600,)))
+            self.assertFalse(prereq.has(path, stat.S_ISREG, me, mine, (0o600,)))
 
 
 SECRETS = {'rest': 'fictional-rest-password', 'repository': 'fictional-repository-password'}
@@ -389,7 +519,7 @@ class CredentialTests(unittest.TestCase):
 
     def test_prompt_refuses_mismatch_reuse_and_short_repository_password(self):
         good = credentials.prompt(self.answers('rest-secret', 'r' * 16, 'r' * 16))
-        self.assertEqual(good, {'repository-password': 'r' * 16, 'rest-username': site.REST_USERNAME,
+        self.assertEqual(good, {'repository-password': 'r' * 16, 'rest-username': prereq.REST_USERNAME,
                                 'rest-password': 'rest-secret'})
         for answers in (('rest-secret', 'r' * 16, 'r' * 15 + 'x'), ('r' * 16, 'r' * 16, 'r' * 16),
                         ('rest-secret', 'short', 'short')):
@@ -399,7 +529,7 @@ class CredentialTests(unittest.TestCase):
     def test_first_run_writes_three_private_files_and_initializes_as_the_worker(self):
         self.run_apply([3, 0, 0])
         self.assertEqual(stat.S_IMODE(os.lstat(self.directory).st_mode), 0o700)
-        for name, value in (('repository-password', SECRETS['repository']), ('rest-username', site.REST_USERNAME),
+        for name, value in (('repository-password', SECRETS['repository']), ('rest-username', prereq.REST_USERNAME),
                             ('rest-password', SECRETS['rest'])):
             path = os.path.join(self.directory, name)
             self.assertEqual(stat.S_IMODE(os.lstat(path).st_mode), 0o600)
@@ -414,12 +544,12 @@ class CredentialTests(unittest.TestCase):
         argv = credentials.restic_command('snapshots', '--json')
         self.assertEqual(argv[:5], ['systemd-run', '--quiet', '--wait', '--collect', '--pipe'])
         properties = [argv[index + 1] for index, word in enumerate(argv) if word == '-p']
-        self.assertEqual(properties[:2], ['User=' + site.WORKER, 'Group=' + site.WORKER])
+        self.assertEqual(properties[:2], ['User=' + prereq.WORKER, 'Group=' + prereq.WORKER])
         self.assertEqual(properties[4:], ['LoadCredential=' + name + ':' + self.directory + '/' + name
                                           for name in credentials.NAMES])
         tail = argv[argv.index('/bin/sh'):]
-        self.assertEqual(tail, ['/bin/sh', '-c', credentials.SHELL, 'sh', site.RESTIC, '--cacert',
-                                              site.CA, '--no-cache', '--repo', site.REPOSITORY, 'snapshots', '--json'])
+        self.assertEqual(tail, ['/bin/sh', '-c', credentials.SHELL, 'sh', prereq.RESTIC, '--cacert',
+                                              prereq.CA, '--no-cache', '--repo', prereq.REPOSITORY, 'snapshots', '--json'])
         # 口令只能从 systemd 给的凭据目录进环境变量：脚本里不许回显、不许开跟踪、不许写别的文件。
         for forbidden in ('echo', 'set -x', 'printf', '>', 'tee'):
             self.assertNotIn(forbidden, credentials.SHELL)
@@ -433,7 +563,7 @@ class CredentialTests(unittest.TestCase):
         self.assertEqual(before, {name: os.lstat(os.path.join(self.directory, name)).st_ino for name in credentials.NAMES})
         self.assertIn('[已有] 仓库早就初始化过，这套凭据打得开，不重复初始化', self.lines)
         self.assertEqual([argv[-2:] for argv in self.ran[1:]],
-                         [[site.REPOSITORY, 'init'], ['cat', 'config'], ['snapshots', '--json']])
+                         [[prereq.REPOSITORY, 'init'], ['cat', 'config'], ['snapshots', '--json']])
 
     def test_failed_initialization_stops_and_leaves_the_files_for_a_person(self):
         with self.assertRaises(credentials.Refused):
@@ -445,7 +575,7 @@ class CredentialTests(unittest.TestCase):
 
     def test_existing_credentials_the_worker_would_reject_stop_before_restic_runs(self):
         """restic 经 shell 读到的值会去掉结尾全部换行，多一个换行它照样连得上；worker 只去一个，会拒绝启动。"""
-        good = {'repository-password': SECRETS['repository'], 'rest-username': site.REST_USERNAME,
+        good = {'repository-password': SECRETS['repository'], 'rest-username': prereq.REST_USERNAME,
                 'rest-password': SECRETS['rest']}
         cases = {
             'two newlines': ('rest-password', SECRETS['rest'].encode() + b'\n\n'),
@@ -453,7 +583,7 @@ class CredentialTests(unittest.TestCase):
             'trailing space': ('repository-password', SECRETS['repository'].encode() + b' \n'),
             'not text': ('repository-password', b'\xff\xfe-not-text\n'),
             'other account': ('rest-username', b'studiolo-backup\n'),
-            'colon': ('rest-username', site.REST_USERNAME.encode() + b':x\n'),
+            'colon': ('rest-username', prereq.REST_USERNAME.encode() + b':x\n'),
         }
         for label, (name, raw) in cases.items():
             with self.subTest(label):
@@ -481,7 +611,7 @@ class CredentialTests(unittest.TestCase):
         """真的用 /bin/sh 跑一遍那段脚本：三份凭据原样进环境变量（不被 shell 再展开一次），读不到就不执行后面的命令。"""
         awkward = 'fic$HOME `id` "q" \\ \'s\' * end'
         credentials.write_credentials(self.directory, {'repository-password': SECRETS['repository'],
-                                                       'rest-username': site.REST_USERNAME, 'rest-password': awkward})
+                                                       'rest-username': prereq.REST_USERNAME, 'rest-password': awkward})
 
         def handed_over():
             return subprocess.run(['/bin/sh', '-c', credentials.SHELL, 'sh', '/usr/bin/env'],
@@ -492,7 +622,7 @@ class CredentialTests(unittest.TestCase):
         environment = dict(line.split('=', 1) for line in done.stdout.decode().splitlines() if '=' in line)
         self.assertEqual((environment['RESTIC_PASSWORD_FILE'], environment['RESTIC_REST_USERNAME'],
                           environment['RESTIC_REST_PASSWORD']),
-                         (self.directory + '/repository-password', site.REST_USERNAME, awkward))
+                         (self.directory + '/repository-password', prereq.REST_USERNAME, awkward))
         os.unlink(os.path.join(self.directory, 'rest-password'))
         done = handed_over()
         self.assertNotEqual(done.returncode, 0)
@@ -640,6 +770,65 @@ class NasAccountTests(unittest.TestCase):
             nas.append(LINE)
         self.assertEqual(self.files(), ['backup.htpasswd'])
         self.assertEqual(self.target.read_bytes(), OLD)
+
+    def test_an_account_file_that_is_not_one_plain_private_file_is_refused_untouched(self):
+        """账号文件得是一个普通文件、只有一个名字、属主属组都对、不超过上限：差一样就不读、不改。"""
+        elsewhere = self.root / 'elsewhere'
+        padded = OLD + b'#' * (nas.ACCOUNT_FILE_LIMIT - len(OLD) - 1) + b'\n'
+
+        def directory():
+            os.unlink(str(self.target))
+            self.target.mkdir()
+
+        def link():
+            os.rename(str(self.target), str(elsewhere))
+            os.symlink(str(elsewhere), str(self.target))
+
+        def listening():
+            # 属主、权限、链接数、大小都和账号文件一样，只是不是普通文件：只有「是不是普通文件」那一条拦得住。
+            os.unlink(str(self.target))
+            listener = socket.socket(socket.AF_UNIX)
+            self.addCleanup(listener.close)
+            listener.bind(str(self.target))
+            os.chmod(str(self.target), 0o640)
+        cases = {
+            '属组不对': lambda: None,
+            '多一个硬链接': lambda: os.link(str(self.target), str(elsewhere)),
+            '是个链接': link,
+            '是个目录': directory,
+            '是个 socket': listening,
+            '超过上限': lambda: self.install(padded + b'#'),
+            '别人可写': lambda: self.install(OLD, mode=0o642),
+        }
+        for name, arrange in cases.items():
+            with self.subTest(name):
+                for path in (self.target, elsewhere):
+                    if path.is_dir() and not path.is_symlink():
+                        path.rmdir()
+                    elif os.path.lexists(str(path)):
+                        os.unlink(str(path))
+                self.install(OLD)
+                arrange()
+                owner = nas.ACCOUNT_FILE_OWNER
+                wrong = (owner[0], owner[1] + 1) if name == '属组不对' else owner
+                with patch.object(nas, 'ACCOUNT_FILE_OWNER', wrong), self.assertRaises(ValueError) as refusal:
+                    nas.append(LINE)
+                self.assertEqual(str(refusal.exception), '账号文件不是预期的样子')
+                # 没留副本、没留新文件；原来的内容一个字节没动。
+                self.assertEqual([name for name in self.files() if name.startswith('backup.htpasswd.')], [])
+                if name not in ('是个目录', '是个 socket', '超过上限'):
+                    kept = elsewhere if name == '是个链接' else self.target
+                    self.assertEqual(kept.read_bytes(), OLD)
+        for path in (self.target, elsewhere):
+            if path.is_dir() and not path.is_symlink():
+                path.rmdir()
+            elif os.path.lexists(str(path)):
+                os.unlink(str(path))
+        # 正好到上限的照常追加：上面「超过上限」拦的是大小，不是这份内容。
+        self.install(padded)
+        self.assertEqual(os.lstat(str(self.target)).st_size, nas.ACCOUNT_FILE_LIMIT)
+        nas.append(LINE)
+        self.assertEqual(self.target.read_bytes(), padded + LINE)
 
     def test_a_rerun_after_an_interrupted_attempt_checks_the_leftover_copy(self):
         keep = self.root / 'backup.htpasswd.before-studiolo-backup-worker'
@@ -1216,100 +1405,44 @@ class EntryTests(unittest.TestCase):
         ast.parse((HERE / 'nas_account.py').read_text(encoding='utf-8'), feature_version=(3, 8))
 
     def test_names_are_the_same_on_all_three_machines(self):
-        self.assertEqual(nas.USER, site.REST_USERNAME)
+        self.assertEqual(nas.USER, prereq.REST_USERNAME)
         self.assertTrue(nas.LINE.pattern.startswith(nas.USER.encode() + b':'))
         self.assertIn('account=' + nas.USER + '\n', COMMAND)
         self.assertIn('helper="$here/nas_account.py"', COMMAND)
         self.assertEqual('rest:https://' + nas.ADDRESS[0] + ':' + str(nas.ADDRESS[1]) + '/' + nas.USER + '/main/',
-                         site.REPOSITORY)
+                         prereq.REPOSITORY)
         recovery = source('deploy/sync-bridge/recovery/studiolo-rest-backup.service')
         self.assertIn('--listen ' + nas.ADDRESS[0] + ':' + str(nas.ADDRESS[1]) + ' ', recovery)
         self.assertIn('--userspec=' + str(nas.RUNTIME_ID) + ':' + str(nas.RUNTIME_ID), recovery)
         self.assertIn(str(nas.ROOT) + ' /rest-server', recovery)
         self.assertIn('--append-only --private-repos --htpasswd-file /backup.htpasswd', recovery)
 
-    def test_command_is_valid_shell_asks_on_the_terminal_and_never_traces(self):
-        subprocess.run(['bash', '-n', str(HERE / 'nas-account.command')], check=True)
-        code = [line for line in COMMAND.splitlines() if not line.lstrip().startswith('#')]
-        # 密码先在本机核规则，再只经管道给 htpasswd：不用 -b（那样密码会进命令行）。
-        self.assertIn('  valid_password "$password" || { echo \'密码不合上面的要求。什么都没改。\'; exit 1; }', code)
-        self.assertIn('  printf \'%s\\n\' "$password" | /usr/sbin/htpasswd -c -i -B -C 12 "$scratch/line" "$account"', code)
-        self.assertLess(code.index('  valid_password "$password" || { echo \'密码不合上面的要求。什么都没改。\'; exit 1; }'),
-                        code.index('  printf \'%s\\n\' "$password" | /usr/sbin/htpasswd -c -i -B -C 12 "$scratch/line" "$account"'))
-        self.assertNotRegex(COMMAND, r'htpasswd[^\n]* -b\b')
-        self.assertEqual(COMMAND.count('htpasswd -'), 1)
-        self.assertIn("[[ -t 0 && -t 1 && -t 2 ]]", COMMAND)
-        self.assertIn('trap cleanup EXIT', COMMAND)
-        self.assertNotIn('set -x', COMMAND)
-        # 登录由 ssh 自己办（这台 Mac 的钥匙不在 NAS 上时它在终端里问登录密码），所以不加 BatchMode；一次运行只登录一回。
-        self.assertNotIn('BatchMode', COMMAND)
-        calls = [line.strip() for line in code if re.search(r'\bssh ', line)]
-        self.assertEqual(calls[0], 'ssh -M -S "$link" -o ControlPersist=no -f -N "${nas[@]}"')
-        self.assertIn('[[ -z "$link" ]] || ssh -S "$link" -O exit "${nas[@]}" 2>/dev/null || true', calls)
-        # 其余每一次 ssh 都走那一条连接、都不要远端终端（有终端会把输入回显出来）。
-        commands = [line for line in calls if '-O exit' not in line and '-f -N' not in line]
-        self.assertEqual(len(commands), 3)
-        for line in commands:
-            self.assertIn('ssh -T -S "$link" "${nas[@]}" ', line)
-        # NAS 上 sudo 要密码的话，在问新密码、改任何东西之前就停下。
-        self.assertIn('  ssh -T -S "$link" "${nas[@]}" \'sudo -n true\' \\\n'
-                      '    || { echo \'NAS 上 maxsong 的 sudo 要密码，这个脚本做不了要 root 的那几步。什么都没改。\'; exit 1; }\n}\n', COMMAND)
-        add = code[code.index('add() {'):]
-        self.assertLess(add.index('  connect'), add.index("  IFS= read -r -s -p '密码（不回显）：' password; echo"))
-        self.assertIn('    check)\n      connect\n      remote check\n      ;;\n', COMMAND)
-        # 换单元：先登录（同样先探 sudo），帮手脚本和单元文件走同一条标准输入，换完再看一遍现状；不问任何东西。
-        self.assertIn('unit_file="$here/../../sync-bridge/recovery/studiolo-rest-backup.service"\n', COMMAND)
-        self.assertTrue((HERE / '../../sync-bridge/recovery/studiolo-rest-backup.service').resolve().is_file())
-        self.assertIn('replace_unit() {\n  [[ -f "$unit_file" ]] || { echo "找不到 $unit_file"; exit 1; }\n  connect\n'
-                      '  send unit "$unit_file"\n  remote check\n', COMMAND)
-        self.assertIn('    unit) replace_unit ;;\n', COMMAND)
-        replace_unit = code[code.index('replace_unit() {'):code.index('main() {')]
-        self.assertFalse([line for line in replace_unit if 'read ' in line or 'htpasswd' in line])
-        # NAS 上不落文件，所以没有往远端写、从远端删的命令。
-        for forbidden in ('cat >', 'scp ', 'rm -f $'):
-            self.assertNotIn(forbidden, COMMAND)
-        done = subprocess.run(['bash', str(HERE / 'nas-account.command')], stdout=subprocess.PIPE)
-        self.assertEqual(done.returncode, 2)
-        self.assertIn('用法', done.stdout.decode())
-
-    def test_password_rule_is_inside_what_the_worker_accepts(self):
-        """NAS 上加了账号、169 却不认这个密码，就得去 NAS 上手工删行：所以本机这条规则只许比 worker 的更紧。"""
-        def accepted(value):
-            return subprocess.run(['bash', '-c', 'source "$1"; valid_password "$2"', 'probe',
-                                   str(HERE / 'nas-account.command'), value]).returncode == 0
-        # 按字节判断，不跟着本机的语言环境走（有的语言环境里字符范围按排序规则算）。
-        self.assertIn('valid_password() {\n  local LC_ALL=C\n  [[ ${#1} -ge 16 && ${#1} -le 1024 && $1 =~ ^[!-~]+$ ]]\n}\n', COMMAND)
-        for value in ('fictional-Password_123', 'a' * 16, '!~' * 8, 'x' * 1024, '$`"\\\'*?[]{}()<>|&;#=' + 'z' * 16):
-            with self.subTest(value[:12]):
-                self.assertTrue(accepted(value))
-                self.assertEqual(credentials.validate_secret(value, 1, '口令'), value)
-        for value in ('', 'a' * 15, 'x' * 1025, 'with space inside 123', 'trailing-space-12345 ', ' leading-space-12345',
-                      'tab\tinside-123456789', 'unicode-密码-1234567890', 'nbsp-at-the-end-123\u00a0'):
-            with self.subTest(value[:12]):
-                self.assertFalse(accepted(value))
-
-    def test_append_reads_the_helper_and_leaves_exactly_the_account_line_on_stdin(self):
-        """追加那一步帮手脚本和账号行走同一条标准输入：先按字节数读出脚本来执行，剩下的正好是那一行。"""
-        boot = re.search(r"^boot='(.*)'$", COMMAND, re.M).group(1)
-        self.assertIn('send() {\n  local size\n  size=$(( $(wc -c < "$helper") ))\n  { cat "$helper"; cat "$2"; } \\\n'
-                      '    | ssh -T -S "$link" "${nas[@]}" "sudo -n python3 -I -B -c \'$boot\' $1 $size"\n}\n', COMMAND)
-        self.assertIn('  send append "$scratch/line"\n  remote restart\n  remote check\n', COMMAND)
-        stand_in = b'import sys\nsys.stdout.write(repr((sys.argv[1:], __name__, sys.stdin.buffer.read(256))))\n'
-        done = subprocess.run([sys.executable, '-I', '-B', '-c', boot, 'append', str(len(stand_in))],
-                              input=stand_in + LINE, stdout=subprocess.PIPE, check=True)
-        self.assertEqual(done.stdout.decode(), repr((['append'], '__main__', LINE)))
-        # 真的帮手脚本经这条路也是从自己的入口进去的（这里不是 root，或者没有 NAS 那个目录，都在入口被拒）。
-        helper = (HERE / 'nas_account.py').read_bytes()
-        done = subprocess.run([sys.executable, '-I', '-B', '-c', boot, 'append', str(len(helper))],
-                              input=helper + LINE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        self.assertEqual((done.returncode, done.stdout), (1, b''))
-        self.assertIn('nas_account=failed', done.stderr.decode())
-        self.assertNotIn('B' * 53, done.stderr.decode())
-
     def test_scripts_refuse_unknown_arguments_before_touching_anything(self):
-        for module in (site, credentials):
+        for module in (prereq, credentials):
             with self.subTest(module.__name__), self.assertRaises(module.Refused):
                 module.main(['--force'])
+
+    def test_every_part_of_this_suite_is_loaded_by_the_one_file_the_gate_runs(self):
+        """合并门禁只跑 test_provision.py 这一份：同目录别的用例文件都得在 PARTS 里，不然它们的用例谁也不跑。"""
+        self.assertIn('\npython3 -I -B deploy/backup-worker/provision/test_provision.py\n', source('.testbox.toml'))
+        self.assertEqual(sorted(path.stem for path in HERE.glob('test_*.py')), sorted(PARTS + ('test_provision',)))
+        for part in PARTS:
+            cases = [case for case in LOADED.values() if case.__module__ == part]
+            self.assertTrue(cases, part + ' 没有并进来任何用例')
+            for case in cases:
+                self.assertIs(globals()[case.__name__], case)
+                self.assertTrue(unittest.defaultTestLoader.getTestCaseNames(case), case.__name__ + ' 里没有用例')
+
+
+# 其余用例按脚本分在同目录的几个文件里。合并门禁只跑这一份（.testbox.toml），所以在这里把它们并进来一起跑；
+# -I 下脚本所在的目录不在 sys.path 里，按路径加载。各份自己加载被测的脚本，互不共用打过补丁的模块。
+PARTS = ('test_provision_prereq', 'test_provision_credentials', 'test_provision_command')
+LOADED = {}
+for _part in PARTS:
+    for _name, _value in vars(load(_part)).items():
+        if isinstance(_value, type) and issubclass(_value, unittest.TestCase):
+            assert _name not in globals(), _name + '：两份用例文件里有同名的类'
+            globals()[_name] = LOADED[_name] = _value
 
 
 if __name__ == '__main__':
