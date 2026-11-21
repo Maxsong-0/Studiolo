@@ -17,6 +17,8 @@ mod ci;
 mod dependencies;
 #[path = "architecture_cases/factor_http.rs"]
 mod factor_http;
+#[path = "architecture_cases/file_lock_release.rs"]
+mod file_lock_release;
 #[path = "architecture_cases/maintenance.rs"]
 mod maintenance;
 #[path = "architecture_cases/nextest_groups.rs"]

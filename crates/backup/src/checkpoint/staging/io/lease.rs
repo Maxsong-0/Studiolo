@@ -64,6 +64,14 @@ impl Lease {
         Ok(())
     }
 }
+/// 锁跟着打开的文件描述走：同进程别的线程起子进程时，子进程到 exec 之前一直拿着这个描述的副本
+/// （`CLOEXEC` 到 exec 才关），只关本 FD 会让锁活到子进程 exec，紧接着重拿就报 `Busy`（BUG-041）。
+/// 放下时显式解锁，立即结束租约；Drop 不能报告错误。
+impl Drop for Lease {
+    fn drop(&mut self) {
+        let _ = fs::flock(&self.fd, fs::FlockOperation::Unlock);
+    }
+}
 fn validate(fd: &OwnedFd) -> Result<(u64, u64)> {
     let st = fs::fstat(fd).map_err(error)?;
     if FileType::from_raw_mode(st.st_mode) != FileType::RegularFile
@@ -77,3 +85,6 @@ fn validate(fd: &OwnedFd) -> Result<(u64, u64)> {
     acl::require_no_acl(fd, false)?;
     Ok((st.st_dev, st.st_ino))
 }
+#[cfg(test)]
+#[path = "../../../../tests/private/staging_lease.rs"]
+mod tests;

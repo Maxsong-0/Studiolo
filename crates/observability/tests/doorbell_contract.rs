@@ -5,7 +5,10 @@ use std::{
     fs,
     os::unix::fs::PermissionsExt,
     path::{Path, PathBuf},
-    sync::Mutex,
+    sync::{
+        Mutex,
+        atomic::{AtomicBool, Ordering},
+    },
 };
 use studiolo_audit_ledger::{
     AuditEvent, AuditEventId, AuditFilter, AuditLedger, AuditPhase, SanitizedPayload,
@@ -263,4 +266,35 @@ fn 同一个状态目录同一时间只让一个门铃进程打开() {
     drop(first);
     let second = DoorbellStore::open(&fixture.state).expect("放下之后可以再打开");
     assert_eq!(second.load(), Ok(Some(sample())));
+}
+
+/// 定时器进程里别的线程起子进程时（BUG-041）：子进程到 exec 之前握着持锁描述的副本，
+/// 放下的门铃存储必须立即可再打开；析构只关 FD 时，这里会有成批的轮次报 `Busy`。
+#[test]
+fn 别的线程不停起子进程时放下的门铃存储立即可再打开() {
+    const ROUNDS: usize = 400;
+    let fixture = fixture();
+    drop(DoorbellStore::open(&fixture.state).expect("私有目录必须可绑定"));
+    let stop = AtomicBool::new(false);
+    let failures: Vec<StoreError> = std::thread::scope(|s| {
+        for _ in 0..2 {
+            s.spawn(|| {
+                while !stop.load(Ordering::Relaxed) {
+                    std::process::Command::new("true").status().unwrap();
+                }
+            });
+        }
+        // 循环里不许 panic：先停掉起子进程的线程再断言，否则 scope 等不到它们退出。
+        let failures = (0..ROUNDS)
+            .filter_map(|_| DoorbellStore::open(&fixture.state).err())
+            .collect();
+        stop.store(true, Ordering::Relaxed);
+        failures
+    });
+    assert!(
+        failures.is_empty(),
+        "{ROUNDS} 轮里 {} 轮失败，前几个：{:?}",
+        failures.len(),
+        &failures[..failures.len().min(5)]
+    );
 }
