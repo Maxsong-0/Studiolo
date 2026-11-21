@@ -18,8 +18,10 @@
 - `crates/local-server/src/backup/producer.rs`（回收和封存的日志原文、回收失败不挡封存）、
   `crates/local-server/src/health/backup.rs`（健康页的说法）；
 - `deploy/blackboard/activation_ops.py` 的 `stopped` 和 `backup_ready`；
-- `crates/backup/src/checkpoint/staging/` 下的 `creation.rs`（建目录和登记谁先谁后）、`lifecycle.rs`、`housekeeping.rs`、
-  `housekeeping/plan.rs`（回收的先后、哪种残缺报哪个错）、`io/cleanup.rs`（登记文件按名字顺序一个个删）、
+- `crates/backup/src/checkpoint/staging/` 下的 `creation.rs`（建目录和登记谁先谁后）、`lifecycle.rs`（`begin` 见到
+  `removing-` 就不开始，`finish` 删登记目录）、`housekeeping.rs`、`housekeeping/plan.rs`（回收的先后、哪种残缺报哪个错、
+  怎么认删到一半的 `removing-`）、`io/cleanup.rs` 的 `retire`（登记目录先改名、`identity.json` 最后删）、
+  `journal.rs` 的 `removing_name`（`removing-` 名字的写法）、`budget.rs`（每一步删除之前先看期限）、
   `io.rs` 的 `capacity`（剩余空间下限）。
 
 第 1～3 节的命令没有在真机上演练过整套；第 4 节的手工修法是从代码的不变量推出来的，没有现成工具，也没有演练过。
@@ -160,12 +162,19 @@ systemctl show studiolo-human.service -p ActiveEnterTimestamp
 `备份暂存回收未完成：CleanupRequired` 或 `…：Changed`（回收和封存拿同一把锁，回收读到了、拒绝了，说明那一刻没有封存在做）；
 要动的目录的时间早于人侧这次启动的时间（上面最后一条）。拿不准就先把人侧停下再看
 （`sudo systemctl stop studiolo-human.service`，最长等 300 秒），修完照第 2 节末尾起回来。
-目录的时间晚于这次启动也按拿不准办：回收超时或出错正好停在删登记文件中间，留下的东西和被杀一样。
+目录的时间晚于这次启动也按拿不准办：旧版回收超时或出错正好停在删登记文件中间，留下的东西和被杀一样（新版、旧版见表后）。
 
 目录名是 `前缀-<64 位十六进制>`，同一次封存的几个目录后面那一串相同；`incomplete-`、`retained-` 是登记目录，里面只放
-登记文件。下表前两行是「刚建好目录、登记还没落盘就被杀」，按代码的顺序它们正常是空的，所以只用 `rmdir`
-（目录不空它会拒绝，那就停下）。后两行是登记目录自己不完整：封存刚开头就被杀（里面最多一个 `identity.new`），
-或者回收删登记目录删到一半就停了（程序按名字顺序一个个删，`export.json`、`identity.json` 先没，排在后面的还在）。
+登记文件。新版还有第三种登记目录 `removing-<K>-<一串数字>`：程序删登记目录之前先把它原子改成这个名字
+（数字是这个目录自己的 inode 号，`ls -lid` 打出来的第一列），再删里面的登记文件，`identity.json` 留到最后，最后删目录。
+不管停在哪一步（期限到、出错、被杀），下一轮回收都按名字里的 inode 认出它、接着删完，日志里不报错。它还在的时候
+新的封存不开始；定时请求总是先回收、再封存，所以通常同一次请求里回收先把它删完、封存照常，回收这一轮又没删完时
+这一次封存记一条失败，下一轮接着删。**它不用人管，不要手工删。**
+
+下表前两行是「刚建好目录、登记还没落盘就被杀」，按代码的顺序它们正常是空的，所以只用 `rmdir`
+（目录不空它会拒绝，那就停下）。后两行是登记目录自己不完整：封存刚开头、`identity.json` 还没落盘就被杀
+（里面最多一个 `identity.new`，新版旧版都会有）；或者旧版回收删登记目录删到一半就停了（旧版按名字顺序一个个删，
+`export.json`、`identity.json` 先没，排在后面的还在），只有旧版会留下。
 登记文件用 `rm --` 一个个删，不带 `-r`，删完再 `rmdir`：
 
 | 看到的 | 还要成立 | 怎么修 |
@@ -175,13 +184,21 @@ systemctl show studiolo-human.service -p ActiveEnterTimestamp
 | `incomplete-<K>/` 里没有 `identity.json` | 同一个 `<K>` 的 `export-`、`pending-`、`sealed-` 都不在；里面剩下的都是普通文件，名字只在 `identity.new`、`pending.json`、`pending.new`、`sealed.json`、`sealed.new` 这五个里（空目录也算） | 删掉这几个文件，再 `rmdir` 这个 `incomplete-<K>` |
 | `retained-<K>/` 里不满四份（齐全是 `export.json`、`identity.json`、`pending.json`、`sealed.json`） | 日志是 `Changed`；`sealed-<K>` 不在；worker 停着；里面剩下的都是普通文件，名字只在 `identity.json`、`pending.json`、`sealed.json` 这三个里（空目录也算） | 删掉这几个文件，再 `rmdir` 这个 `retained-<K>` |
 
-后两行靠手工，是因为程序有个缺陷：回收删登记目录删到一半之后，自己续不上
-（2026-11-21 独立复查发现，已上报、还没修；修好之后这两行应该用不上）。
+新版、旧版：「回收删登记目录删到一半之后自己续不上」这个缺陷 2026-11-21 独立复查发现，同日在 main 上修好
+（T-216 F16，提交 `a2174fd`）。169 上跑的人侧发行物换成带这个修法的版本之前都是旧版，开头那两种样子照旧会因为它出现，
+照后两行手工删。换上之后：删到一半停下的由下一轮回收接着删完，不会再因为它出现；换上之前旧版已经留下的半截登记目录，
+新版回收照样认不出（不按名字猜着删），还是 `CleanupRequired` 或 `Changed`，照后两行手工删一次就不再有。
+新版还会碰到的只有前两行和第三行里「最多一个 `identity.new`」那种（都是建目录和写登记之间被杀），照表删。
+旧版另有一种先别动：封存把登记改名成 `retained-<K>` 之后、交出引用之前出错，回滚先删了 `sealed-<K>`、没删完登记，
+留下四份齐全的 `retained-<K>` 而 `sealed-<K>` 不在，日志每轮 `Changed`；到期（保留期，现在批准的是 1 小时）之后
+回收自己收走，不用手工删，过了保留期还在才交开发会话。新版回滚先把它改回 `incomplete-<K>` 再删，不会再这样。
 
 别的情况都不要自己删，把 `ls -laR /var/lib/studiolo-backup-staging` 的输出交给开发会话：
 没有 `identity.json` 的 `incomplete-<K>` 旁边还有同一个 `<K>` 的目录；登记目录里有表里没列的名字，或者不是普通文件；
 名字不是上面这几种前缀的东西；四份齐全的 `retained-<K>`（这是做完的封存，回收正常时到期会被收走，worker 可能正要读它；
-日志是 `Changed` 而每个 `retained-` 都四份齐全，也交开发会话）。`.producer-lease` 任何时候都不删。
+日志是 `Changed` 而每个 `retained-` 都四份齐全，也交开发会话，只有 `sealed-<K>` 不在的那种先照上一段等过保留期）；一直不消失的 `removing-<K>-<数字>`（每一轮日志都是
+`CleanupRequired` 或 `Changed`，说明里面有程序没留下过的东西：名字不是程序写的那种、数字和 `ls -lid` 对不上、
+`identity.json` 没了还剩别的文件、有表外的名字，或者同一个 `<K>` 旁边还有别的目录）。`.producer-lease` 任何时候都不删。
 
 修完把两个单元起回来，等下一次定时备份（定时器每 5 分钟问一次，批准的间隔是 10 分钟）：
 
