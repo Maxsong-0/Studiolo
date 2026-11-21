@@ -38,12 +38,12 @@ fn fixed_schema_binds_independent_identities_repository_and_original_bytes() {
 }
 /// 置备脚本（`deploy/backup-worker/provision/prereq.py`）生成的配置，原样交给真实解析。
 ///
-/// 脚本里那套取值规则是照抄的：抄漏一条，要到 worker 启动失败才知道。夹具和脚本输出逐字节相同，
+/// 脚本里那套取值规则是照抄的：抄漏一条，要到 worker 启动失败才知道。同目录的夹具和脚本输出逐字节相同，
 /// 由 `deploy/backup-worker/provision/test_provision.py` 钉住（账号和读取组的号码用占位值）。
+/// 夹具放在本 crate 里：随包测试编译期读的文件得在发行包的源码白名单内（`scripts/test-agent-package.py`）。
 #[test]
 fn the_config_the_provisioning_script_generates_is_accepted_byte_for_byte() {
-    let raw =
-        include_bytes!("../../../../deploy/backup-worker/provision/fixtures/backup-worker.json");
+    let raw = include_bytes!("provisioned-config.json");
     let config = WorkerConfig::parse(raw, 64001).unwrap();
     assert_eq!(config.producer_uid(), 1000);
     assert_eq!(config.reader_gid(), 64002);

@@ -116,14 +116,14 @@ fn the_separate_backup_file_needs_both_sections_and_nothing_else() {
 
 /// 置备脚本（`deploy/backup-worker/provision/prereq.py`）生成的私有备份配置，原样交给这里的真实解析。
 ///
-/// 脚本里那套取值规则是照抄的：抄漏一条，要到停服之后人侧启动失败才知道。夹具和脚本输出逐字节相同，
+/// 脚本里那套取值规则是照抄的：抄漏一条，要到停服之后人侧启动失败才知道。同目录的夹具和脚本输出逐字节相同，
 /// 由 `deploy/backup-worker/provision/test_provision.py` 钉住（账号和读取组的号码用占位值）。
+/// 夹具放在本 crate 里：随包测试编译期读的文件得在发行包的源码白名单内（`scripts/test-agent-package.py`）。
 #[test]
 fn the_backup_file_the_provisioning_script_generates_is_accepted_byte_for_byte() {
     let fixture = Fixture::new();
     let path = backup_path(&fixture);
-    let generated =
-        include_bytes!("../../../../deploy/backup-worker/provision/fixtures/backup.json");
+    let generated = include_bytes!("provisioned-backup.json");
     fs::write(&path, generated).unwrap();
     fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
     let loaded = BackupConfig::load(&path, &Config::load(&fixture.path).unwrap())

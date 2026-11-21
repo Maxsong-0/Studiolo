@@ -82,13 +82,13 @@ class ConfigurationTests(unittest.TestCase):
         """抄来的规则只能证明「脚本自己觉得对」。两份夹具另由程序的真实解析读一遍，这里钉住夹具就是脚本的输出。"""
         backup = site.backup_document(*site.PLACEHOLDER_NUMBERS)
         worker = site.worker_document(*site.PLACEHOLDER_NUMBERS)
-        self.assertEqual((HERE / 'fixtures' / 'backup.json').read_bytes(), site.encode(backup))
-        self.assertEqual((HERE / 'fixtures' / 'backup-worker.json').read_bytes(), site.encode(worker))
-        self.assertEqual(sorted(os.listdir(HERE / 'fixtures')), ['backup-worker.json', 'backup.json'])
-        for test, name, number in (('crates/host-config/tests/support/backup_tests.rs', 'backup.json', 'worker_uid(), 64001'),
-                                   ('crates/backup-worker/tests/support/config.rs', 'backup-worker.json', 'parse(raw, 64001)')):
-            reader = source(test)
-            self.assertIn('include_bytes!("../../../../deploy/backup-worker/provision/fixtures/' + name + '")', reader)
+        # 夹具放在各自的 crate 里（发行包只带 crates/ 和点名的几个目录，编译期读的文件得在包里）。
+        for directory, test, name, generated, number in (
+                ('crates/host-config/tests/support/', 'backup_tests.rs', 'provisioned-backup.json', backup, 'worker_uid(), 64001'),
+                ('crates/backup-worker/tests/support/', 'config.rs', 'provisioned-config.json', worker, 'parse(raw, 64001)')):
+            self.assertEqual((ROOT / directory / name).read_bytes(), site.encode(generated))
+            reader = source(directory + test)
+            self.assertIn('include_bytes!("' + name + '")', reader)
             self.assertIn(number, reader)
         # 预演在账号还没建时打出来的，也是这一组占位号码。
         with patch.object(site, 'account', return_value=None):
@@ -725,11 +725,23 @@ class EntryTests(unittest.TestCase):
         self.assertIn("[[ -t 0 && -t 1 && -t 2 ]]", COMMAND)
         self.assertIn('trap cleanup EXIT', COMMAND)
         self.assertNotIn('set -x', COMMAND)
-        # 每一次 ssh 都不要远端终端（有终端会把输入回显出来）；NAS 上不落文件，所以没有往远端写、从远端删的命令。
-        calls = [line for line in code if re.search(r'\bssh ', line)]
-        self.assertEqual(len(calls), 2)
-        for line in calls:
-            self.assertIn('ssh -T -o BatchMode=yes "${nas[@]}" "sudo -n python3 -I -B -', line)
+        # 登录由 ssh 自己办（这台 Mac 的钥匙不在 NAS 上时它在终端里问登录密码），所以不加 BatchMode；一次运行只登录一回。
+        self.assertNotIn('BatchMode', COMMAND)
+        calls = [line.strip() for line in code if re.search(r'\bssh ', line)]
+        self.assertEqual(calls[0], 'ssh -M -S "$link" -o ControlPersist=no -f -N "${nas[@]}"')
+        self.assertIn('[[ -z "$link" ]] || ssh -S "$link" -O exit "${nas[@]}" 2>/dev/null || true', calls)
+        # 其余每一次 ssh 都走那一条连接、都不要远端终端（有终端会把输入回显出来）。
+        commands = [line for line in calls if '-O exit' not in line and '-f -N' not in line]
+        self.assertEqual(len(commands), 3)
+        for line in commands:
+            self.assertIn('ssh -T -S "$link" "${nas[@]}" ', line)
+        # NAS 上 sudo 要密码的话，在问新密码、改任何东西之前就停下。
+        self.assertIn('  ssh -T -S "$link" "${nas[@]}" \'sudo -n true\' \\\n'
+                      '    || { echo \'NAS 上 maxsong 的 sudo 要密码，这个脚本做不了要 root 的那几步。什么都没改。\'; exit 1; }\n}\n', COMMAND)
+        add = code[code.index('add() {'):]
+        self.assertLess(add.index('  connect'), add.index("  IFS= read -r -s -p '密码（不回显）：' password; echo"))
+        self.assertIn('    check)\n      connect\n      remote check\n      ;;\n', COMMAND)
+        # NAS 上不落文件，所以没有往远端写、从远端删的命令。
         for forbidden in ('cat >', 'scp ', 'rm -f $'):
             self.assertNotIn(forbidden, COMMAND)
         done = subprocess.run(['bash', str(HERE / 'nas-account.command')], stdout=subprocess.PIPE)
@@ -756,7 +768,7 @@ class EntryTests(unittest.TestCase):
         """追加那一步帮手脚本和账号行走同一条标准输入：先按字节数读出脚本来执行，剩下的正好是那一行。"""
         boot = re.search(r"^boot='(.*)'$", COMMAND, re.M).group(1)
         self.assertIn('  size=$(( $(wc -c < "$helper") ))\n  { cat "$helper"; cat "$scratch/line"; } \\\n'
-                      '    | ssh -T -o BatchMode=yes "${nas[@]}" "sudo -n python3 -I -B -c \'$boot\' append $size"\n', COMMAND)
+                      '    | ssh -T -S "$link" "${nas[@]}" "sudo -n python3 -I -B -c \'$boot\' append $size"\n', COMMAND)
         stand_in = b'import sys\nsys.stdout.write(repr((sys.argv[1:], __name__, sys.stdin.buffer.read(256))))\n'
         done = subprocess.run([sys.executable, '-I', '-B', '-c', boot, 'append', str(len(stand_in))],
                               input=stand_in + LINE, stdout=subprocess.PIPE, check=True)

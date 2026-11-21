@@ -31,8 +31,9 @@ T-204。本目录是候选发布源，**尚未安装到任何机器**。专用�
 
 169 和 NAS 上的这几项有现成的置备脚本，在 `provision/`（都先预演，带 `--apply` 或 `add` 才动手；sudo 和口令录入由用户本人做）：
 
-- `prereq.py`：第 1～4、6 项和三个单元。已经对的跳过，在但不对的停下不覆盖；两份配置由它生成，生成的样子
-  `fixtures/` 里各有一份，由程序的真实解析读过（`crates/host-config`、`crates/backup-worker` 的测试）。
+- `prereq.py`：第 1～4、6 项和三个单元。已经对的跳过，在但不对的停下不覆盖；两份配置由它生成，生成的样子各留了
+  一份夹具，由程序的真实解析读过（`crates/host-config/tests/support/provisioned-backup.json`、
+  `crates/backup-worker/tests/support/provisioned-config.json`）。
 - `nas-account.command`（在 Mac 终端跑，NAS 一侧是 `nas_account.py`）：给 worker 在 NAS 的 rest-server 上加只追加账号。
 - `credentials.py`：第 5 项。不回显地录入两个口令，写三份凭据文件，再以 worker 账号初始化仓库并读回。
 

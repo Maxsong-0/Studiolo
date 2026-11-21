@@ -47,7 +47,8 @@ UNITS = ('studiolo-backup-worker.service', 'studiolo-backup-schedule.service', '
 PLACED = {TMPFILES: 0o644, WORKER_BINARY: 0o755, RESTIC: 0o555, CA: 0o644, WORKER_CONFIG: 0o644}
 PLACED.update({UNIT_DIRECTORY + '/' + name: 0o644 for name in UNITS})
 PLACED_OWNER = (0, 0)
-# 账号还没建时预演用的占位号码；fixtures/ 里给 Rust 解析用的两份夹具也用这一组。
+# 账号还没建时预演用的占位号码；给程序真实解析读的两份夹具也用这一组
+# （crates/host-config/tests/support/provisioned-backup.json、crates/backup-worker/tests/support/provisioned-config.json）。
 PLACEHOLDER_NUMBERS = (64001, 64002)
 # NAS 的 rest-server 开着 --private-repos：仓库路径必须以账号名开头。
 REST_USERNAME = 'studiolo-backup-worker'
