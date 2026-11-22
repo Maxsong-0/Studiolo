@@ -25,7 +25,8 @@ fn event(offset: u64) -> AuditEvent {
     )
 }
 
-/// 建一本三个封存段、打开段里一条的账本，返回目录与打开它的实例；先做一次追加，让缓存进入「只核链尾」。
+/// 建一本三个封存段、打开段里一条的账本，返回目录与打开它的实例。账本由这个实例自己逐条追加出来，
+/// 缓存已处在「只核链尾」：末尾断言最后一次追加读的段摘要行不超过 2。
 fn ledger() -> (tempfile::TempDir, std::path::PathBuf, SqliteAuditLedger) {
     let directory = support::private_dir();
     let root = directory.path().canonicalize().unwrap();

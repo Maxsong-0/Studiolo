@@ -231,10 +231,16 @@ fn an_open_read_view_fails_closed_once_another_connection_rewrites_or_rolls_back
     const SEALED: u64 = 3;
     let (_source, source_root, receipts) = bulk::ledger_with(SEALED * AUDIT_SEGMENT_RECORDS + 1);
     let newest = |view: &AuditReadView| view.scan_page(None, |record| Ok(Some(record.offset())));
-    // 读窗口的写者在别的进程，每次读都可能撞上别的连接的提交：先读最新一页，让它核过整条段链。
+    // 读窗口的写者在别的进程，每次读都可能撞上别的连接的提交。整条段链打开时已从创世核过；
+    // 先读最新一页，确认读窗口正常（这一次只续核链尾）。
     let (_rewritten, root) = bulk::clone_into_private_dir(&source_root);
     let view = AuditReadView::open_existing(&root).unwrap();
-    assert!(newest(&view).is_ok());
+    let page = newest(&view).unwrap();
+    // 下面的篡改能不能区分「按 data_version 全算」，全看这一页碰不碰首段：碰到了，读段时的摘要行比对也会发现。
+    assert!(
+        page.next_before.unwrap() > AUDIT_SEGMENT_RECORDS,
+        "最新一页读到了首段，这条用例就钉不住 data_version 判据"
+    );
     // 改的是首段：最新一页只读第 1～3 段，读不到它，只有按 `data_version` 判据从创世全算才发现得了。
     bulk::tamper(
         &root,
