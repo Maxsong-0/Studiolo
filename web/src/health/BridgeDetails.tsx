@@ -38,7 +38,7 @@ export function BridgeDetails({
         ? '未知'
         : value.deletesBlocked === '0'
           ? '没有'
-          : `远端删了 ${count(value.deletesBlocked)} 个文件，主库没开文件操作，同步整批暂停`,
+          : `远端删了 ${count(value.deletesBlocked)} 个文件（改名也算），主库没开文件操作，同步整批暂停`,
     ],
     ['删除保护', flag(value.fused, '熔断生效，后续批次阻断', '未熔断')],
     ['终态未知动作', count(value.unknownJobs)],

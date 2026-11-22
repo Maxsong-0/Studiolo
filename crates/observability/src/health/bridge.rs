@@ -157,7 +157,7 @@ fn judge(evidence: &BridgeEvidence) -> (HealthState, String) {
         return (
             HealthState::Degraded,
             format!(
-                "远端删了 {count} 个文件，主库没开文件操作，同步整批暂停：到远端恢复这些文件后自动接着跑"
+                "远端删了 {count} 个文件（改名也算），主库没开文件操作，同步整批暂停：到远端恢复这些文件或开文件操作后接着跑"
             ),
         );
     }
