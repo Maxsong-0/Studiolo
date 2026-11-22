@@ -22,6 +22,7 @@ describe('同步健康结构与人工记录', () => {
       { ...copy().bridge, arbitrary: true },
       { ...copy().bridge, unknown_jobs: '18446744073709551616' },
       { ...copy().bridge, unknown_jobs: 2 },
+      { ...copy().bridge, deletes_blocked: -1 },
       { ...copy().bridge, last_exit: 'probably_ok' },
       {
         ...copy().bridge,
@@ -45,6 +46,27 @@ describe('同步健康结构与人工记录', () => {
       report.sections.find((section) => section.code === 'sync-bridge')?.state,
     ).toBe('unknown');
     expect(report.bridge?.fused).toBe(true);
+  });
+  it('正常声明与删除被挡矛盾时降为未知；没证明过不单独挡正常', () => {
+    const body = copy();
+    body.overall = 'normal';
+    body.sections = body.sections.map((section) => ({
+      ...section,
+      state: 'normal',
+    }));
+    // 夹具本身是退避中的降级快照；先把其余证据都摆成正常，只看删除被挡这一项。
+    body.bridge.quiescence_valid = true;
+    body.bridge.last_exit = 'clean';
+    body.bridge.recovery = 'idle';
+    const bridge = (report: ReturnType<typeof parseHealth>) =>
+      report.sections.find((section) => section.code === 'sync-bridge')?.state;
+    expect(bridge(parseHealth(body))).toBe('normal');
+    (body.bridge as Record<string, unknown>).deletes_blocked = null;
+    expect(bridge(parseHealth(body))).toBe('normal');
+    body.bridge.deletes_blocked = '1';
+    const blocked = parseHealth(body);
+    expect(bridge(blocked)).toBe('unknown');
+    expect(blocked.bridge?.deletesBlocked).toBe('1');
   });
   it('70%边界、过期和未来记录都必须匹配结论，不能伪装成正常', () => {
     const quota = {
@@ -160,6 +182,7 @@ describe('同步健康结构与人工记录', () => {
     fireEvent.click(screen.getByText('查看同步证据'));
     expect(screen.getByText('终态未知动作')).toBeInTheDocument();
     expect(screen.getByText('冲突副本')).toBeInTheDocument();
+    expect(screen.getByText('删除被挡')).toBeInTheDocument();
     expect(screen.getByText('1.1 GiB（非账号用量）')).toBeInTheDocument();
     expect(
       screen.queryByText('非零退出', { exact: true }),

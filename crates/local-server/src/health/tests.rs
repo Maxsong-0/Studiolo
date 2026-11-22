@@ -41,6 +41,7 @@ fn normal_bridge(now: i64) -> BridgeEvidence {
         residue_guard: Some(ResidueGuard::Clear),
         mode: Some(ModeLabel::MirrorRemote),
         config_matches: Some(true),
+        deletes_blocked: Some(0),
     }
 }
 

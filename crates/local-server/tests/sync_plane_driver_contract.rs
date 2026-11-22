@@ -2,6 +2,8 @@
 //! 未知终态不重放与熔断停点，并证明 `deletion_fuse_blocked` 与纯规划器同结论。不碰真实 headless。
 //! 排除项安全顺序、双向冲突保全与关停停点各在 `sync_plane_driver/{guard,preserve,shutdown}.rs`。
 
+#[path = "sync_plane_driver/delete_gate.rs"]
+mod delete_gate;
 #[path = "sync_plane_driver/fake_ports.rs"]
 mod fake_ports;
 #[path = "sync_plane_driver/fixture.rs"]

@@ -163,8 +163,9 @@ fn 静止证据过期时第六节判未知而不是判降级或正常() {
 }
 
 #[test]
-fn 多项异常并存时按熔断残留未知终态退出恢复静止的固定顺序取第一项() {
+fn 多项异常并存时按删除被挡熔断残留未知终态退出恢复静止的固定顺序取第一项() {
     let mut evidence = BridgeEvidence {
+        deletes_blocked: Some(2),
         fused: Some(true),
         residue_guard: Some(ResidueGuard::Blocked),
         config_matches: Some(false),
@@ -175,6 +176,7 @@ fn 多项异常并存时按熔断残留未知终态退出恢复静止的固定�
         ..NORMAL_BRIDGE
     };
     let expected = [
+        "远端删了 2 个文件，主库没开文件操作，同步整批暂停：到远端恢复这些文件后自动接着跑",
         "删除熔断生效，本批与后续批次全部阻断",
         "排除项清除前有镜像残留",
         "headless 配置与审批文档不一致，本轮未同步",
@@ -186,16 +188,45 @@ fn 多项异常并存时按熔断残留未知终态退出恢复静止的固定�
     for (index, detail) in expected.iter().enumerate() {
         assert_eq!(judge(&evidence).1, *detail, "第 {index} 项");
         match index {
-            0 => evidence.fused = Some(false),
-            1 => evidence.residue_guard = Some(ResidueGuard::Clear),
-            2 => evidence.config_matches = Some(true),
-            3 => evidence.unknown_jobs = Some(0),
-            4 => evidence.last_exit = Some(ExitClass::Clean),
-            5 => evidence.recovery = Some(RecoveryState::Idle),
+            0 => evidence.deletes_blocked = Some(0),
+            1 => evidence.fused = Some(false),
+            2 => evidence.residue_guard = Some(ResidueGuard::Clear),
+            3 => evidence.config_matches = Some(true),
+            4 => evidence.unknown_jobs = Some(0),
+            5 => evidence.last_exit = Some(ExitClass::Clean),
+            6 => evidence.recovery = Some(RecoveryState::Idle),
             _ => evidence.quiescence_valid = Some(true),
         }
     }
     assert_eq!(judge(&evidence).0, HealthState::Normal);
+}
+
+/// BUG-046：被挡的那几轮不走执行段，重启后「最近一批」等字段一直是空的；
+/// 删除被挡有正证据就要报出来，不能被「证据不完整」盖住。
+#[test]
+fn 删除被挡有正证据就判降级不等别的字段齐() {
+    let after_restart = BridgeEvidence {
+        deletes_blocked: Some(1),
+        ..BridgeEvidence::default()
+    };
+    let (state, detail) = judge(&after_restart);
+
+    assert_eq!(state, HealthState::Degraded);
+    assert_eq!(
+        detail,
+        "远端删了 1 个文件，主库没开文件操作，同步整批暂停：到远端恢复这些文件后自动接着跑"
+    );
+}
+
+/// 「还没有一轮证明过」不等于被挡：别的字段齐备时不因它判未知（批次闭合、空闲轮会把它写成 0）。
+#[test]
+fn 删除被挡没证明过时不单独阻止正常() {
+    let unproven = BridgeEvidence {
+        deletes_blocked: None,
+        ..NORMAL_BRIDGE
+    };
+
+    assert_eq!(judge(&unproven).0, HealthState::Normal);
 }
 
 #[test]

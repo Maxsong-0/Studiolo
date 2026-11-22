@@ -51,6 +51,12 @@ pub enum RoundOutcome {
         /// 计划序号。
         sequence: u64,
     },
+    /// 主库没开文件操作，新批次里却有主库侧删除：整批暂停，什么都不预留、不解决（BUG-046）。
+    /// 远端恢复这些文件或开了文件操作之后，下一轮照常规划。
+    DeletesBlocked {
+        /// 被挡的主库删除数（含镜像为准时预解决要做的删除）。
+        count: u64,
+    },
 }
 
 /// headless 一次运行的分类结果；驱动器只看退出码与静止证据，不解析 stderr。
@@ -110,6 +116,10 @@ pub trait RoundPorts {
     fn quiescent(&mut self) -> Result<(), PlaneError>;
     /// 上一批是否仍有未知终态的动作；有则返回其计划序号（第 10 步的续做守卫）。
     fn unresolved(&mut self) -> Result<Option<u64>, PlaneError>;
+    /// Bridge 是否已有没闭合的批次：有就由执行段续做它、不重新规划，删除守卫据此放行（BUG-046）。
+    fn pending(&mut self) -> Result<bool, PlaneError>;
+    /// 主库写者有没有开文件操作（删除只能经它）；没开时新批次里有主库删除就整批暂停（BUG-046）。
+    fn deletes_enabled(&mut self) -> Result<bool, PlaneError>;
     /// 两侧完整观察并核准范围，组成冻结输入（第 8 步）。
     fn observe(&mut self, mode: SyncMode) -> Result<(Input, Inventory, Inventory), PlaneError>;
     /// 按规划结果回收冲突首次戳（第 9 步之前每轮都调）；假端口可不实现。
@@ -283,6 +293,21 @@ fn has_conflicts(decision: &Decision) -> bool {
         Decision::Ready(plan) => !plan.conflicts().is_empty(),
         Decision::FuseBlocked(blocked) => !blocked.conflicts.is_empty(),
     }
+}
+
+/// 本批要在主库上做的删除数（BUG-046 守卫用）：规划出的主库侧删除，加上镜像为准时预解决要做的删除。
+/// 熔断冻结的批次同样按统计算，被挡的批次不该先留下解不开的熔断。
+#[must_use]
+pub fn canonical_deletions(decision: &Decision, mode: SyncMode) -> u64 {
+    let (planned, conflicts) = match decision {
+        Decision::Ready(plan) => (plan.stats().canonical, plan.conflicts()),
+        Decision::FuseBlocked(blocked) => (blocked.stats.canonical, blocked.conflicts.as_slice()),
+    };
+    let preresolved = match mode {
+        SyncMode::MirrorRemote => resolve::preresolve_deletions(conflicts),
+        SyncMode::Bidirectional => 0,
+    };
+    planned.saturating_add(preresolved)
 }
 
 /// 删除熔断的同一判据（>5 或 >原基线存活路径 10% 即阻断，等号可过）；

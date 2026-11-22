@@ -19,6 +19,7 @@ pub(crate) enum Step {
     Observe,
     Plan,
     RetainConflicts,
+    DeleteGate,
     Preresolve,
     Preserve,
     Execute,

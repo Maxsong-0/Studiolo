@@ -21,6 +21,8 @@ pub enum Call {
     Save,
     Quiescent,
     Unresolved,
+    Pending,
+    DeletesEnabled,
     Observe(SyncMode),
     Preresolve,
     Preserve,
@@ -47,6 +49,10 @@ pub struct FakePorts {
     pub quiescent: bool,
     /// 上一批仍有未知终态的计划序号。
     pub unresolved: Option<u64>,
+    /// Bridge 是否已有没闭合的批次（执行段会续做它）。
+    pub pending: bool,
+    /// 主库写者有没有开文件操作；`Err` 模拟查不出。
+    pub deletes_enabled: Result<bool, PlaneError>,
     /// `observe` 返回的冻结输入。
     pub input: Input,
     /// `preserve_conflicts` 的结论。
@@ -80,6 +86,8 @@ impl FakePorts {
             run_once_exit: 0,
             quiescent: true,
             unresolved: None,
+            pending: false,
+            deletes_enabled: Ok(true),
             input: fixture::empty_input(),
             preserve_result: Ok(0),
             execute_result: Ok(RoundOutcome::Settled {
@@ -173,6 +181,16 @@ impl RoundPorts for FakePorts {
     fn unresolved(&mut self) -> Result<Option<u64>, PlaneError> {
         self.calls.push(Call::Unresolved);
         Ok(self.unresolved)
+    }
+
+    fn pending(&mut self) -> Result<bool, PlaneError> {
+        self.calls.push(Call::Pending);
+        Ok(self.pending)
+    }
+
+    fn deletes_enabled(&mut self) -> Result<bool, PlaneError> {
+        self.calls.push(Call::DeletesEnabled);
+        self.deletes_enabled
     }
 
     fn observe(&mut self, mode: SyncMode) -> Result<(Input, Inventory, Inventory), PlaneError> {

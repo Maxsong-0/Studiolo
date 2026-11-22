@@ -43,7 +43,8 @@ fn bridge_counts_are_lossless_closed_and_survive_degraded_summary() {
     bridge.mirror_bytes = Some(u64::MAX);
     let body = serde_json::to_value(HealthBody::from_snapshot(&snapshot)).unwrap();
     assert_eq!(body["bridge"]["unknown_jobs"], u64::MAX.to_string());
-    assert_eq!(body["bridge"].as_object().unwrap().len(), 11);
+    assert_eq!(body["bridge"]["deletes_blocked"], "0");
+    assert_eq!(body["bridge"].as_object().unwrap().len(), 12);
     assert_eq!(body["manual_sync_quota"].as_object().unwrap().len(), 8);
     assert_eq!(body.as_object().unwrap().len(), 6);
     assert_eq!(body["overall"], "degraded");

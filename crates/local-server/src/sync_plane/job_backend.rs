@@ -5,7 +5,8 @@
 //! 拿不到就是 `JobOutcome::Unknown`，绝不用退出码或「内容碰巧相同」补成成功。
 
 use super::driver::content::{
-    MirrorWriteError, RoundContext, preserve_canonical, replay_from_stage, write_from_mirror,
+    MirrorWriteError, RoundContext, delete_canonical, preserve_canonical, replay_from_stage,
+    write_from_mirror,
 };
 use super::driver::evidence::{hex, revision_digest, revision_from_digest, sha256};
 use super::mirror::stage::StageStore;
@@ -51,13 +52,8 @@ impl<'a> PlaneJobBackend<'a> {
         match &action.change {
             Change::Delete { target_expected } => {
                 let expected = Self::revision(target_expected);
-                let deleted = workbench.bridge_delete(
-                    path,
-                    expected,
-                    &job.external_key,
-                    &hex(&self.binding.scope_hash),
-                    self.binding.scope_epoch,
-                );
+                let deleted =
+                    delete_canonical(workbench, path, expected, &job.external_key, &self.binding);
                 match deleted {
                     Ok(receipt) => SeamVerdict::Outcome(match receipt.outcome {
                         FileOperationOutcome::Committed => JobOutcome::Committed {

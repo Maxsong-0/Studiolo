@@ -22,6 +22,7 @@ export function healthBody() {
       residue_guard: 'clear',
       mode: 'mirror-remote',
       config_matches: true,
+      deletes_blocked: '0',
     },
     manual_sync_quota: {
       account_limit_bytes: '10737418240',

@@ -18,6 +18,8 @@ export interface BridgeHealth {
   residueGuard: 'clear' | 'blocked' | null;
   mode: 'mirror-remote' | 'bidirectional' | null;
   configMatches: boolean | null;
+  /** 主库没开文件操作、整批暂停时被挡的删除数；null 即还没有一轮证明过（BUG-046）。 */
+  deletesBlocked: string | null;
 }
 export interface ManualQuota {
   accountLimitBytes: string;
@@ -76,6 +78,7 @@ export function parseBridge(value: unknown): BridgeHealth | null {
       'residue_guard',
       'mode',
       'config_matches',
+      'deletes_blocked',
     ])
   )
     return null;
@@ -92,9 +95,12 @@ export function parseBridge(value: unknown): BridgeHealth | null {
     ![value.fused, value.quiescence_valid, value.config_matches].every((item) =>
       optional(item, (v) => typeof v === 'boolean'),
     ) ||
-    ![value.unknown_jobs, value.conflict_copies, value.mirror_bytes].every(
-      (item) => optional(item, decimal),
-    )
+    ![
+      value.unknown_jobs,
+      value.conflict_copies,
+      value.mirror_bytes,
+      value.deletes_blocked,
+    ].every((item) => optional(item, decimal))
   )
     return null;
   if (
@@ -134,6 +140,7 @@ export function parseBridge(value: unknown): BridgeHealth | null {
     residueGuard: value.residue_guard as BridgeHealth['residueGuard'],
     mode: value.mode as BridgeHealth['mode'],
     configMatches: value.config_matches as boolean | null,
+    deletesBlocked: value.deletes_blocked as string | null,
   };
 }
 /** “正常”必须与每项证据一致；其他状态仍保留后端的已知降级原因。 */
@@ -150,7 +157,9 @@ export function bridgeCanBeNormal(value: BridgeHealth): boolean {
     value.recovery === 'idle' &&
     value.residueGuard === 'clear' &&
     value.mode !== null &&
-    value.configMatches === true
+    value.configMatches === true &&
+    // 没证明过不单独挡正常（与后端同一口径）；有被挡的删除就不能是正常。
+    (value.deletesBlocked ?? '0') === '0'
   );
 }
 export function parseManualQuota(value: unknown): ManualQuota | null {

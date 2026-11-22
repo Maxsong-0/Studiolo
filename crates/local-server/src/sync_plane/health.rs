@@ -106,6 +106,7 @@ impl PlaneHealth {
                     evidence.fused = None;
                 }
             }
+            Ok(RoundOutcome::DeletesBlocked { .. }) => {}
             Ok(RoundOutcome::Skipped) | Err(PlaneError::Backoff) => {
                 evidence.recovery = Some(RecoveryState::Backoff);
             }

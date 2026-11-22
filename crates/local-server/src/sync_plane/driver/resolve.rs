@@ -10,13 +10,15 @@
 
 use super::super::witness::seam_error;
 use super::super::{PlaneError, naming};
-use super::content::{MirrorWriteError, RoundContext, preserve_canonical, write_from_mirror};
+use super::content::{
+    MirrorWriteError, RoundContext, delete_canonical, preserve_canonical, write_from_mirror,
+};
 use super::deletion_fuse_blocked;
 use super::evidence::{hex, revision_from_digest};
 use super::preserve::{conflict_key, preserved};
 use crate::coordinator::sync_bridge::{BridgePrecondition, BridgeSeamError};
 use std::collections::BTreeMap;
-use studiolo_sync_bridge::{Decision, Presence};
+use studiolo_sync_bridge::{Conflict, Decision, Presence};
 
 /// 按「镜像为准」预解决本轮的冲突（按路径序至多 `MAX_CONFLICT_STAMPS` 条）；返回是否改动过
 /// canonical（改过就必须重观察）。`stamps` 是端口已落盘的首次戳。
@@ -38,16 +40,8 @@ pub fn preresolve_conflicts(
     if conflicts.is_empty() {
         return Ok(false);
     }
-    // 先算整批删除：镜像缺失而 canonical 存在的冲突都是删除，越熔断则整批不解决。
-    let deletions = conflicts
-        .iter()
-        .filter(|conflict| {
-            matches!(
-                (&conflict.observed.canonical, &conflict.observed.mirror),
-                (Presence::Present(_), Presence::Missing)
-            )
-        })
-        .count() as u64;
+    // 先算整批删除，越熔断则整批不解决。
+    let deletions = preresolve_deletions(conflicts);
     if deletions > 0 && deletion_fuse_blocked(deletions, live) {
         return Err(PlaneError::Fused);
     }
@@ -98,15 +92,14 @@ pub fn preresolve_conflicts(
                     )
                     .map(|_| ())
                     .map_err(MirrorWriteError::seam),
-                    Presence::Missing => workbench
-                        .bridge_delete(
-                            &conflict.path,
-                            expected,
-                            &resolve,
-                            &hex(&context.binding.scope_hash),
-                            context.binding.scope_epoch,
-                        )
-                        .map(|_| ()),
+                    Presence::Missing => delete_canonical(
+                        workbench,
+                        &conflict.path,
+                        expected,
+                        &resolve,
+                        &context.binding,
+                    )
+                    .map(|_| ()),
                 }
             }
         };
@@ -118,4 +111,18 @@ pub fn preresolve_conflicts(
         }
     }
     Ok(changed)
+}
+
+/// 预解决要在 canonical 上做的删除数：镜像缺失而 canonical 还在的冲突，「镜像为准」就是删掉 canonical。
+#[must_use]
+pub fn preresolve_deletions(conflicts: &[Conflict]) -> u64 {
+    conflicts
+        .iter()
+        .filter(|conflict| {
+            matches!(
+                (&conflict.observed.canonical, &conflict.observed.mirror),
+                (Presence::Present(_), Presence::Missing)
+            )
+        })
+        .count() as u64
 }

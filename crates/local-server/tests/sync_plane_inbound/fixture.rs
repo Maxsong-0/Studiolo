@@ -16,7 +16,7 @@ use studiolo_local_server::sync_plane::mirror::MirrorView;
 use studiolo_local_server::sync_plane::mirror::stage::StageStore;
 use studiolo_sync_bridge::executor::{MirrorContent, TransferFault};
 use studiolo_sync_bridge::{FileVersion, Side};
-use studiolo_vault_broker::FsVaultBroker;
+use studiolo_vault_broker::{FileOperationLimits, FsVaultBroker};
 
 pub const NOW: i64 = 1_790_000_000;
 pub const SEQUENCE: u64 = 7;
@@ -137,6 +137,23 @@ impl Fixture {
         CanonicalWorkbench::prepare_with_audit(broker, Arc::new(roots), self.audit.clone())
             .await
             .unwrap()
+    }
+
+    /// 同一写者，但 Broker 先显式开了文件操作（删除只能经它）；限额取够本夹具用的小值。
+    pub async fn writer_with_file_operations(&self) -> Arc<CanonicalWorkbench> {
+        let mut broker =
+            FsVaultBroker::open_existing(&self.root.join("vault"), &self.root.join("data"))
+                .unwrap();
+        broker
+            .enable_file_operations(FileOperationLimits {
+                effective_object_limit: 1 << 20,
+                max_tombstones: 16,
+                retained_bytes_limit: 1 << 26,
+                minimum_free_bytes: 1,
+            })
+            .unwrap();
+        drop(broker);
+        self.writer().await
     }
 
     pub fn stage(&self) -> StageStore {

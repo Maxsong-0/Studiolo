@@ -94,6 +94,8 @@ pub struct BridgeEvidence {
     pub mode: Option<ModeLabel>,
     /// headless 本地配置（模式／排除项／文件类型）是否与审批文档一致；不一致本轮不跑 RunOnce。
     pub config_matches: Option<bool>,
+    /// 主库没开文件操作、本轮整批暂停时被挡的主库删除数（BUG-046）；0 即没挡，`None` 即还没有一轮证明过。
+    pub deletes_blocked: Option<u64>,
 }
 
 /// 聚合第六节；缺证据一律未知。

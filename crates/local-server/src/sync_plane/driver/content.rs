@@ -6,14 +6,14 @@ use super::super::mirror::{MirrorView, PlaneContent};
 use super::super::witness::seam_error;
 use super::super::{PlaneError, SyncPlane, naming, quiescence};
 use super::evidence::{hex, revision_digest, sha256};
-pub use crate::coordinator::sync_bridge::BridgePrecondition;
-use crate::coordinator::sync_bridge::BridgeSeamError;
+use crate::CanonicalWorkbench;
+pub use crate::coordinator::sync_bridge::{BridgePrecondition, BridgeSeamError};
 use std::cell::RefCell;
-use studiolo_core::VaultPath;
+use studiolo_core::{Revision, VaultPath};
 use studiolo_sync_bridge::executor::{MirrorContent, ObjectId};
 use studiolo_sync_bridge::{Binding, FileVersion, Side};
 use studiolo_sync_transport::owned_run::{QuiescentMirror, SyncMode};
-use studiolo_vault_broker::{BlobIdentity, BlobSource, MutationReceipt};
+use studiolo_vault_broker::{BlobIdentity, BlobSource, FileOperationReceipt, MutationReceipt};
 
 #[path = "inbound.rs"]
 pub mod inbound;
@@ -143,6 +143,36 @@ pub fn write_bytes(
     plane
         .workbench()
         .bridge_write_stream(path, source, identity, precondition, key)
+}
+
+/// 主库写者有没有开文件操作：删除只能经文件操作协议，没开就一条也删不了（BUG-046）。
+/// 新批次的删除守卫与接缝预检共用这一个判据。
+///
+/// # Errors
+/// 写者接不上是 `NotAttempted`，查不出是 `Unavailable`。
+pub fn canonical_deletes_enabled(workbench: &CanonicalWorkbench) -> Result<bool, BridgeSeamError> {
+    workbench.bridge_deletes_enabled()
+}
+
+/// 按冻结前置条件删除 canonical 上的一个文件（走文件操作协议，删掉的进最近删除）。
+/// 作业后端和预解决都走这里：幂等键、范围摘要与代次的拼法只此一处。
+///
+/// # Errors
+/// 分类同接缝：`Rejected`／`Unknown`／`Audit`／`Unavailable`；写者没开文件操作是 `NotAttempted`。
+pub fn delete_canonical(
+    workbench: &CanonicalWorkbench,
+    path: &VaultPath,
+    expected: Revision,
+    key: &str,
+    binding: &Binding,
+) -> Result<FileOperationReceipt, BridgeSeamError> {
+    workbench.bridge_delete(
+        path,
+        expected,
+        key,
+        &hex(&binding.scope_hash),
+        binding.scope_epoch,
+    )
 }
 
 /// 把 canonical 上的冻结版本保全成范围外副本（D5 `ops/bridge-rollback/`、D6 `ops/bridge-conflicts/`）。

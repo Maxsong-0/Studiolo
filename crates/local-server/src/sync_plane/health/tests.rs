@@ -280,5 +280,37 @@ fn 模式回填与传输模式枚举一一对应() {
     assert_eq!(health.bridge().mode, Some(ModeLabel::Bidirectional));
 }
 
+/// BUG-046：删除被挡那一轮取到了静止票据但没走执行段；刚重启、别的字段都还空着也要报出被挡。
+#[test]
+fn 删除被挡轮记下个数并让第六节降级即使刚重启() {
+    let health = PlaneHealth::new(None);
+
+    health.record_round(10_000, &Ok(RoundOutcome::DeletesBlocked { count: 3 }));
+
+    let evidence = health.bridge();
+    assert_eq!(evidence.deletes_blocked, Some(3));
+    assert_eq!(evidence.quiescence_valid, Some(true));
+    assert_eq!(evidence.last_batch, None, "没有批次闭合，不盖序号");
+    assert_eq!(state(&health), HealthState::Degraded);
+}
+
+#[test]
+fn 批次闭合或空闲轮把删除被挡复位为零而未知终态轮不动它() {
+    for (outcome, expected) in [
+        (settled(2), Some(0)),
+        (Ok(RoundOutcome::Idle), Some(0)),
+        (unknown(2), Some(3)),
+        (blocked(2), Some(3)),
+        (Err(PlaneError::Unavailable), Some(3)),
+    ] {
+        let health = after_clean_batch();
+        health.record_round(10_100, &Ok(RoundOutcome::DeletesBlocked { count: 3 }));
+
+        health.record_round(10_400, &outcome);
+
+        assert_eq!(health.bridge().deletes_blocked, expected, "{outcome:?}");
+    }
+}
+
 #[path = "../../../tests/sync_plane_health/restart.rs"]
 mod restart;

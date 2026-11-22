@@ -32,6 +32,14 @@ export function BridgeDetails({
         ? `第 ${count(value.lastBatch.sequence)} 批 · ${time(value.lastBatch.closedAt)}`
         : '未知',
     ],
+    [
+      '删除被挡',
+      value.deletesBlocked === null
+        ? '未知'
+        : value.deletesBlocked === '0'
+          ? '没有'
+          : `远端删了 ${count(value.deletesBlocked)} 个文件，主库没开文件操作，同步整批暂停`,
+    ],
     ['删除保护', flag(value.fused, '熔断生效，后续批次阻断', '未熔断')],
     ['终态未知动作', count(value.unknownJobs)],
     ['静止证据', flag(value.quiescenceValid, '有效', '已过期，等待重新取得')],

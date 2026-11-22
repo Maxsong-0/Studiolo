@@ -110,6 +110,15 @@ impl RoundPorts for RealPorts<'_> {
         Ok((unknown > 0).then_some(sequence).flatten())
     }
 
+    fn pending(&mut self) -> Result<bool, PlaneError> {
+        Ok(self.pending_unknown()?.0.is_some())
+    }
+
+    fn deletes_enabled(&mut self) -> Result<bool, PlaneError> {
+        crate::sync_plane::driver::content::canonical_deletes_enabled(self.plane.workbench())
+            .map_err(crate::sync_plane::witness::seam_error)
+    }
+
     fn observe(&mut self, mode: SyncMode) -> Result<(Input, Inventory, Inventory), PlaneError> {
         self.mode = mode;
         let observed = observe::observe_both(&self.context()?)?;

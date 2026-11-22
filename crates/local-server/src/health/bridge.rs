@@ -29,6 +29,7 @@ pub struct BridgeBody {
     pub(super) residue_guard: Option<&'static str>,
     pub(super) mode: Option<&'static str>,
     pub(super) config_matches: Option<bool>,
+    pub(super) deletes_blocked: Option<String>,
 }
 impl BridgeBody {
     pub(super) fn from_evidence(value: BridgeEvidence) -> Self {
@@ -61,6 +62,7 @@ impl BridgeBody {
             }),
             mode: value.mode.map(|value| value.label()),
             config_matches: value.config_matches,
+            deletes_blocked: value.deletes_blocked.map(|n| n.to_string()),
         }
     }
 }

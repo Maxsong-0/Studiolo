@@ -189,6 +189,15 @@ impl CanonicalWorkbench {
         result.map_err(|error| install_error(broker, error))
     }
 
+    /// 写者有没有开文件操作：删除只能经文件操作协议，没开就一条也删不了（BUG-046）。
+    /// 读的是写者持久状态里的开关，不是人侧配置；查不出来是 `Unavailable`。
+    pub(crate) fn bridge_deletes_enabled(&self) -> Result<bool, BridgeSeamError> {
+        let _operation = self.core.operation().map_err(|_| BridgeSeamError::Audit)?;
+        let owner = self.attach()?;
+        let broker = owner.as_ref().ok_or(BridgeSeamError::NotAttempted)?;
+        deletes_enabled(broker)
+    }
+
     /// 条件删除走文件操作协议（保全进墓碑可恢复）：准备 → Intent 追加并确认 → 提交 → 冲刷 outbox；已有终态的原键在准备阶段就拿回固定票据。
     pub(crate) fn bridge_delete(
         &self,
@@ -255,4 +264,12 @@ impl CanonicalWorkbench {
         let files = self.core.flush_file_operation_audit(broker).map(|_| ());
         content.and(files).map_err(|()| BridgeSeamError::Audit)
     }
+}
+
+/// 删除能不能执行的唯一判据：写者持久状态里文件操作开没开（有限额即开了）。
+fn deletes_enabled(broker: &FsVaultBroker) -> Result<bool, BridgeSeamError> {
+    broker
+        .file_operation_limits()
+        .map(|limits| limits.is_some())
+        .map_err(|_| BridgeSeamError::Unavailable)
 }
