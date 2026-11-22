@@ -28,6 +28,10 @@ mod configuration_tests;
 #[path = "../tests/support/planning.rs"]
 mod planning_tests;
 
+#[cfg(test)]
+#[path = "../tests/support/scale.rs"]
+mod scale_tests;
+
 use crate::{
     AuditError, AuditEvent, AuditFilter, AuditLedger, AuditRecord, AuditSegmentSummary,
     AuditVerificationCost, codec,
