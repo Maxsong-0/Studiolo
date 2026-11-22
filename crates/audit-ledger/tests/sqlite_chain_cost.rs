@@ -75,7 +75,11 @@ fn a_commit_from_another_connection_makes_the_next_operation_recompute_from_gene
     let other = SqliteAuditLedger::open_existing(&root).unwrap();
     other.append(bulk::event(next + 1)).unwrap();
     ledger.append(bulk::event(next + 2)).unwrap();
-    assert_eq!(reads(&ledger), SEALED, "别的连接提交过，下一次操作没有从创世全算");
+    assert_eq!(
+        reads(&ledger),
+        SEALED,
+        "别的连接提交过，下一次操作没有从创世全算"
+    );
     // 全算过一次之后，只要别的连接没再提交，又回到只核链尾。
     ledger.append(bulk::event(next + 3)).unwrap();
     assert!(reads(&ledger) <= 2, "全算之后没有回到只核链尾");

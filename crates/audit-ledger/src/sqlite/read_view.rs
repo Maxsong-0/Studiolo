@@ -36,13 +36,14 @@ impl AuditReadView {
         mut project: impl FnMut(&AuditRecord) -> Result<Option<T>, AuditError>,
     ) -> Result<AuditPage<T>, AuditError> {
         self.ledger.storage.check()?;
-        let mut session = self.ledger.lock()?;
+        let mut guard = self.ledger.lock()?;
+        let session = &mut *guard;
         let tx = session
             .connection
             .transaction_with_behavior(TransactionBehavior::Deferred)
             .map_err(unavailable)?;
         schema::validate(&tx, schema::VERSION)?;
-        let anchored = verify::anchor(&tx)?;
+        let anchored = session.chain.anchor(&tx)?;
         let upper = before.map_or(anchored.last_offset, |n| {
             n.saturating_sub(1).min(anchored.last_offset)
         });

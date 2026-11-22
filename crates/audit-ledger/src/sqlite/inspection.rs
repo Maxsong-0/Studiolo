@@ -44,19 +44,20 @@ impl SqliteAuditLedger {
     /// 才会发现**；把它编排成定期巡检是部署方的责任，本 Adapter 不自行调度。
     pub fn verify_all(&self) -> Result<AuditVerificationCost, AuditError> {
         self.storage.check()?;
-        let mut session = self.lock()?;
+        let mut guard = self.lock()?;
+        let session = &mut *guard;
         let transaction = session
             .connection
             .transaction_with_behavior(TransactionBehavior::Deferred)
             .map_err(unavailable)?;
-        let cost = verify::all(&transaction)?;
+        let cost = verify::all_with(&transaction, &mut session.chain)?;
         self.storage.check()?;
         transaction.commit().map_err(unavailable)?;
         session.cost = cost;
         Ok(cost)
     }
 
-    /// 验证单独一段的记录链，并把它锚回整条段链；段号超出已封存范围返回 `Ok(None)`。
+    /// 验证单独一段的记录链与它的摘要行，并把它锚回整条段链；段号超出已封存范围返回 `Ok(None)`。
     ///
     /// 用于中断后按段续验：调用方可以在重启后从任意段号继续，而不必从头重扫整个账本。
     pub fn verify_segment(
@@ -64,13 +65,14 @@ impl SqliteAuditLedger {
         segment_index: u64,
     ) -> Result<Option<AuditSegmentSummary>, AuditError> {
         self.storage.check()?;
-        let mut session = self.lock()?;
+        let mut guard = self.lock()?;
+        let session = &mut *guard;
         let transaction = session
             .connection
             .transaction_with_behavior(TransactionBehavior::Deferred)
             .map_err(unavailable)?;
         schema::validate(&transaction, schema::VERSION)?;
-        let anchored = verify::anchor(&transaction)?;
+        let anchored = session.chain.anchor(&transaction)?;
         let mut cost = anchored.cost;
         // 段号超出已封存范围（包括在 32 位平台上超出 usize）不是损坏，只是没有这一段。
         let summary = match usize::try_from(segment_index)
@@ -95,20 +97,23 @@ impl SqliteAuditLedger {
         Ok(summary)
     }
 
-    /// 返回已验证的全部封存段摘要；只重算段链，不走读段内记录。
+    /// 返回已验证的全部封存段摘要；从创世重算整条段链并与本实例核过的前缀比对，不走读段内记录。
+    ///
+    /// 不论别的连接提交过没有都全算：它是只读全部摘要行的显式入口，成本 O(段数)。
     pub fn segments(&self) -> Result<Vec<AuditSegmentSummary>, AuditError> {
         self.storage.check()?;
-        let mut session = self.lock()?;
+        let mut guard = self.lock()?;
+        let session = &mut *guard;
         let transaction = session
             .connection
             .transaction_with_behavior(TransactionBehavior::Deferred)
             .map_err(unavailable)?;
         schema::validate(&transaction, schema::VERSION)?;
-        let anchored = verify::anchor(&transaction)?;
+        let anchored = session.chain.anchor_from_genesis(&transaction)?;
         self.storage.check()?;
         transaction.commit().map_err(unavailable)?;
         session.cost = anchored.cost;
-        Ok(anchored.summaries)
+        Ok(anchored.summaries.to_vec())
     }
 
     /// 返回最近一次成功操作实际读入并重算的规模；用于核对分段成本，不是完整性结论。

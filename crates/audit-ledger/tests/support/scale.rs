@@ -16,8 +16,7 @@
 use super::support_tests as support;
 use super::{SqliteAuditLedger, codec, segment};
 use crate::{
-    AuditEvent, AuditEventId, AuditFilter, AuditLedger, AuditPhase, IntegrityHash,
-    SanitizedPayload,
+    AuditEvent, AuditEventId, AuditFilter, AuditLedger, AuditPhase, IntegrityHash, SanitizedPayload,
 };
 use jiff::Timestamp;
 use rusqlite::params;
