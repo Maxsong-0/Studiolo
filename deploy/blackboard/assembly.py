@@ -54,7 +54,8 @@ BACKUP_SOCKET = BACKUP_RUNTIME + '/producer.sock'
 # 字节和上一发行不同，并且字节里有这些字面量。只看来源提交号不够：号可以填新的、文件却是旧的。
 # 本版（r18）的启动器没有新参数，要换程序是因为修复都在程序里；取的是这次新加的两句日志的开头
 # （crates/local-server/src/backup/producer.rs 的 stuck_line 和 window_line，编进程序后是原样的 UTF-8 字节）。
-# 第二句是 BUG-045 的修法才有的：r18 第一次构建（53bc502）的程序里没有它，带着它才是窗口只定格的那一版。
+# 第二句是 BUG-045 的修法才有的：r18 前两次构建（493c9a2、53bc502）的程序里没有它，带着它才是窗口只定格的那一版
+# （现在从 a902f66 构建，见 prereq.py 的 SOURCE_COMMIT）。
 # 169 上 r17 的程序里没有第一句，2026-11-21 只读核过（按字节数，0 处）；第二句在暂存 r18 时一并核。
 NEW_HUMAN_PROGRAM_LITERALS = ('备份封存卡在：'.encode(), '备份封存冻结窗口：'.encode())
 REQUIRES_NEW_HUMAN_PROGRAM = bool(NEW_HUMAN_PROGRAM_LITERALS)

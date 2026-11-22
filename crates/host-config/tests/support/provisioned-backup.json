@@ -38,18 +38,18 @@
   "application_packages": [
    {
     "name": "studiolo-local-server",
-    "version": "53bc502",
-    "digest": "f19a1b06da61264dd13d2b76e1100ae57dc23ccd3becd2dc60d4322331e6816d"
+    "version": "a902f66",
+    "digest": "e57b0c85093b9f351248163d70e3e0e9d9eda7b873f3b5e271ee9f55c683f133"
    },
    {
     "name": "studiolo-maintain",
-    "version": "53bc502",
-    "digest": "5eb4aea070a6aa2a0c942c5167d77a0e6cf1441e948a774c3c1970ae9395ff03"
+    "version": "a902f66",
+    "digest": "76003b1c805c8bedf3a0f55f3e38e97789985cf18f7866fdcc4251029a4a614f"
    },
    {
     "name": "studiolo-backup-worker",
-    "version": "53bc502",
-    "digest": "d7f8e0e7ec96223204ec7366341669100b70c1c7bb122e793b628510957c7eee"
+    "version": "a902f66",
+    "digest": "2f1be9dc4801105afda4f6daf061c3146dfe5449e28b2355b4312b34c43fe7b3"
    }
   ],
   "restic_digest": "20d4142678d0d95ec11a4759def1b73fd9190abc9ca19e4b62d067c0b387e639",
@@ -60,7 +60,7 @@
    },
    {
     "unit": "studiolo-backup-worker.service",
-    "revision": "53bc502"
+    "revision": "a902f66"
    }
   ]
  }
