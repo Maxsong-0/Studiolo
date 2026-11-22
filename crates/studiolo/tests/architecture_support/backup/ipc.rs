@@ -43,7 +43,7 @@ pub(super) fn fixed_binding(path: &Path, source: &str) -> bool {
             // 冻结窗口只定格（BUG-045）：放开全部屏障之后马上标记窗口已过（关停只等到这里），
             // 定格的连接和句柄关掉之后才写准入。
             "letmutreleased=frozen.release(deadline).map_err(stuck)?;self.window.close();",
-            "drop(released);letsealed=sealed.map_err(staging_reason)?;BackupAdmission::approve(self.ledger.clone(),key.clone(),TARGET,&sealed)",
+            "drop(released);letsealed=sealed.map_err(after_release)?;BackupAdmission::approve(self.ledger.clone(),key.clone(),TARGET,&sealed)",
             "QueueCommand::RepositoryCheck=>self.repository_check()?",
             "ifletOk(request)=RepositoryCheckReport::decode(bytes){ifrequest.target()!=TARGET{returnErr(AuditError::Serialization);}returnself.report_check(&request);}",
         ]

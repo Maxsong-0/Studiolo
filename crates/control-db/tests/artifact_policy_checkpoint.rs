@@ -67,7 +67,7 @@ fn actual_checkpoint_requires_exact_original_policy_audit_and_rejects_corruption
         for record in db.pending_outbox().unwrap() {
             db.mark_outbox_delivered(record.sequence, 5).unwrap();
         }
-        assert!(source.freeze(deadline()).is_err());
+        assert!(source.freeze(deadline()).unwrap().validate().is_err());
         let ledger = SqliteAuditLedger::open(audit.path()).unwrap();
         for event in db.pending_runtime_audits().unwrap() {
             ledger.append(event.audit_event().unwrap()).unwrap();
@@ -76,9 +76,10 @@ fn actual_checkpoint_requires_exact_original_policy_audit_and_rejects_corruption
         if damage {
             let raw = rusqlite::Connection::open(&path).unwrap();
             raw.execute("UPDATE runtime_audit_outbox SET payload_json='{}' WHERE action='task.artifacts.authorized'", []).unwrap();
-            assert!(source.freeze(deadline()).is_err());
+            assert!(source.freeze(deadline()).unwrap().validate().is_err());
         } else {
             let mut frozen = source.freeze(deadline()).unwrap();
+            frozen.validate().unwrap();
             let audit = ledger
                 .checkpoint_source()
                 .unwrap()

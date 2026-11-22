@@ -3,7 +3,7 @@ use super::CanonicalWorkbench;
 use crate::LocalError;
 use std::{sync::Arc, time::Instant};
 use studiolo_audit_ledger::FrozenAudit;
-use studiolo_core::checkpoint::OwnerWatermark;
+use studiolo_core::checkpoint::{CheckpointError, CheckpointOwner, OwnerWatermark};
 use studiolo_vault_broker::{
     BrokerCapture, BrokerCheckpointAudit, BrokerCheckpointCoverage, BrokerError, FrozenBroker,
 };
@@ -75,14 +75,15 @@ impl FrozenWorkbench {
             .map_err(|_| LocalError::Unavailable)
     }
     /// 复用线上唯一事件映射，再按持久 offset/hash 与完整原事件核对真实人侧账本。
+    /// 失败只分两类：超过固定上限（定格时文件数超过可同时打开文件数的一半）和不可用。
     pub fn verify_audit(
         &mut self,
         audit: &FrozenAudit,
-    ) -> Result<BrokerCheckpointCoverage, LocalError> {
-        self.source()?;
+    ) -> Result<BrokerCheckpointCoverage, CheckpointError> {
+        self.source().map_err(|_| broker_failure(None))?;
         self.broker
             .as_mut()
-            .ok_or(LocalError::Unavailable)?
+            .ok_or_else(|| broker_failure(None))?
             .verify_audit(|candidate, offset, hash| {
                 let expected = match candidate {
                     BrokerCheckpointAudit::Content(value) => crate::editing::audit::event(value)
@@ -107,7 +108,7 @@ impl FrozenWorkbench {
                     .map(|_| ())
                     .map_err(|_| BrokerError::CorruptWriterState)
             })
-            .map_err(|_| LocalError::Unavailable)
+            .map_err(|error| broker_failure(Some(&error)))
     }
     /// 交出经原账本核验过的定格（两棵树的文件句柄，BUG-045）；之后丢掉本窗口就把写者还回工作台，
     /// 拷贝在窗口之外从定格做（`studiolo_vault_broker::BrokerCapture::export`）。原根身份在交出前后复验。
@@ -123,6 +124,15 @@ impl FrozenWorkbench {
         Ok(capture)
     }
 }
+/// 写者在窗口里失败的类别。定格要同时开着两棵树的每个文件，超过上限时单独报出来，
+/// 现场才知道该去调打开文件数，而不是和别的写者故障混成一句「不可用」（BUG-045）。
+fn broker_failure(error: Option<&BrokerError>) -> CheckpointError {
+    let owner = CheckpointOwner::Broker;
+    match error {
+        Some(BrokerError::WriterLimitExceeded) => CheckpointError::LimitExceeded { owner },
+        _ => CheckpointError::OwnerUnavailable { owner },
+    }
+}
 impl Drop for FrozenWorkbench {
     fn drop(&mut self) {
         let mut owner = self
@@ -133,6 +143,26 @@ impl Drop for FrozenWorkbench {
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         if owner.is_none() {
             *owner = self.broker.take().map(FrozenBroker::thaw);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{BrokerError, CheckpointError, CheckpointOwner, broker_failure};
+
+    #[test]
+    fn a_writer_over_the_open_file_limit_is_reported_apart_from_other_failures() {
+        let owner = CheckpointOwner::Broker;
+        assert_eq!(
+            broker_failure(Some(&BrokerError::WriterLimitExceeded)),
+            CheckpointError::LimitExceeded { owner }
+        );
+        for other in [Some(&BrokerError::CaptureChanged), None] {
+            assert_eq!(
+                broker_failure(other),
+                CheckpointError::OwnerUnavailable { owner }
+            );
         }
     }
 }

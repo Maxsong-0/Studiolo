@@ -16,6 +16,9 @@ pub(super) fn raise_open_files() -> Result<Option<u64>, StartupError> {
 }
 
 /// 软上限低于有限的硬上限时抬到硬上限；已经是无限、已经等于硬上限，或硬上限是无限（无法给出确数）时不动。
+/// Linux 上打开文件数的硬上限不会是无限：内核拒绝设成大于 `fs.nr_open` 的值（`prlimit` 返回 EPERM），
+/// 无限比它大。所以「软有限、硬无限」只在别的系统上出现，那里不运行人侧；真出现了照旧不抬，
+/// 定格按软上限的一半失败关闭、日志写「超过固定上限」。
 fn raised(limit: &Rlimit) -> Option<Rlimit> {
     match (limit.current, limit.maximum) {
         (Some(current), Some(maximum)) if current < maximum => Some(Rlimit {

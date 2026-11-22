@@ -62,6 +62,7 @@ fn both_identity_formats_preserve_tokens_lineages_and_real_read_receipts() {
         let view = AgentIdentityView::open_existing(dir.path()).unwrap();
         let source = view.checkpoint_source().unwrap();
         let mut frozen = source.freeze(deadline()).unwrap();
+        frozen.validate().unwrap();
         assert!(frozen.export(target.path()).is_err());
         let audit = ledger
             .checkpoint_source()
@@ -104,13 +105,13 @@ fn an_open_outage_or_damaged_identity_blocks_the_checkpoint() {
         .record_outage_started("outage-1", NOW, "audit_unavailable")
         .unwrap();
     store.record_outage_denial("outage-1").unwrap();
-    assert!(source.freeze(deadline()).is_err());
+    assert!(source.freeze(deadline()).unwrap().validate().is_err());
     store.record_outage_ended("outage-1", NOW).unwrap();
-    drop(source.freeze(deadline()).unwrap());
+    source.freeze(deadline()).unwrap().validate().unwrap();
     let raw = rusqlite::Connection::open(dir.path().join("agent.sqlite3")).unwrap();
     raw.execute("UPDATE agent_type SET token_sha256=?1", ["X".repeat(64)])
         .unwrap();
-    assert!(source.freeze(deadline()).is_err());
+    assert!(source.freeze(deadline()).unwrap().validate().is_err());
 }
 
 #[test]
@@ -169,6 +170,7 @@ fn paired_checkpoint_uses_only_fixed_agent_audit_and_original_operation_gate() {
     let human_operation = human.enter_operation().unwrap();
     drop(human_operation);
     let mut frozen = pair.freeze_store(deadline()).unwrap();
+    frozen.validate().unwrap();
     let wrong = human
         .checkpoint_source()
         .unwrap()
@@ -238,12 +240,12 @@ fn restored_identities_lose_every_old_token_and_hand_back_every_instance() {
     // 封存时同一套规则算出来的水位，就是恢复要对着核的那一份。
     let expected = {
         let view = AgentIdentityView::open_existing(dir.path()).unwrap();
-        let frozen = view
+        let mut frozen = view
             .checkpoint_source()
             .unwrap()
             .freeze(deadline())
             .unwrap();
-        frozen.watermark().clone()
+        frozen.validate().unwrap().clone()
     };
     drop(store);
     // 水位对不上（这里拿另一个库的）核对不过；核对只读，什么都不动。
@@ -252,12 +254,12 @@ fn restored_identities_lose_every_old_token_and_hand_back_every_instance() {
     foreign.issue_type("codex", NOW).unwrap();
     let foreign_mark = {
         let view = AgentIdentityView::open_existing(other.path()).unwrap();
-        let frozen = view
+        let mut frozen = view
             .checkpoint_source()
             .unwrap()
             .freeze(deadline())
             .unwrap();
-        frozen.watermark().clone()
+        frozen.validate().unwrap().clone()
     };
     assert!(studiolo_supply::verify_restored_identities(dir.path(), &foreign_mark).is_err());
     studiolo_supply::verify_restored_identities(dir.path(), &expected).unwrap();

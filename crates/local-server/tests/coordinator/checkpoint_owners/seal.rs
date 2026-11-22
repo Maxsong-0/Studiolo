@@ -1,6 +1,6 @@
 //! 实际六 owner 导出接原子封存；所有内容均为专门生成并显式批准 Full 的测试数据。
 use super::*;
-use crate::checkpoint::CheckpointTimes;
+use crate::checkpoint::{CheckpointTimes, SealFailure};
 use std::os::unix::fs::MetadataExt as _;
 use std::path::Path;
 use studiolo_backup::checkpoint::{
@@ -121,7 +121,10 @@ async fn checkpoint_actual_owners_release_every_gate_before_the_atomic_readonly_
         );
         assert_eq!(result.is_err(), reject);
         if mode == 2 {
-            assert!(matches!(result, Err(StagingError::Expired)));
+            assert!(matches!(
+                result,
+                Err(SealFailure::Staging(StagingError::Expired))
+            ));
         }
         assert!(!exports_path.exists(), "原始导出必须在成功和失败后都已回收");
         f.writable(true);

@@ -120,7 +120,7 @@ fn script_and_checkpoint_freeze_agree_on_a_real_control_database() {
         before,
         "脚本不能建或改库旁边的文件"
     );
-    assert!(source.freeze(deadline()).is_err());
+    assert!(source.freeze(deadline()).unwrap().validate().is_err());
 
     // 提交完、审计都投递：两边都通过。
     let receipt = json!({"manifest_path":VaultPath::parse("artifacts/preflight.json").unwrap(),"manifest_revision":Revision::from_bytes([7;32]),"artifacts":[]});
@@ -146,7 +146,11 @@ fn script_and_checkpoint_freeze_agree_on_a_real_control_database() {
         db.acknowledge_runtime_audit(&event.event_id).unwrap();
     }
     assert_eq!(preflight(&path), (0, vec![]));
-    drop(source.freeze(deadline()).expect("干净的库应该能冻结"));
+    source
+        .freeze(deadline())
+        .expect("干净的库应该能冻结")
+        .validate()
+        .expect("干净的库应该校验得过");
 
     // 旧格式的终态（旧内联预留：产物是数组）：两边都拒绝；改回来两边都恢复。
     let raw = rusqlite::Connection::open(&path).unwrap();
@@ -167,14 +171,18 @@ fn script_and_checkpoint_freeze_agree_on_a_real_control_database() {
         preflight(&path),
         (1, vec!["control_terminal_shape".to_owned()])
     );
-    assert!(source.freeze(deadline()).is_err());
+    assert!(source.freeze(deadline()).unwrap().validate().is_err());
     raw.execute(
         "UPDATE attempts SET terminal_json=?1 WHERE attempt_id=?2",
         rusqlite::params![original, id],
     )
     .unwrap();
     assert_eq!(preflight(&path), (0, vec![]));
-    drop(source.freeze(deadline()).expect("改回来以后应该能冻结"));
+    source
+        .freeze(deadline())
+        .expect("改回来以后应该能冻结")
+        .validate()
+        .expect("改回来以后应该校验得过");
 
     // 主服务停了（连接全关，-wal、-shm 被收掉）：照样读得出，也不会把它们建出来。
     drop(raw);

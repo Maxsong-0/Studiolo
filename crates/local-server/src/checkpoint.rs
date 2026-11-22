@@ -16,7 +16,7 @@ use crate::{
 };
 pub use assembly::CheckpointInputs;
 pub use export::{CheckpointExports, CheckpointTimes, OwnerExportPaths, trusted_catalog};
-pub use released::ReleasedOwners;
+pub use released::{ReleasedOwners, SealFailure};
 pub use restore::{
     Cutover, CutoverRefusal, Journal, NewRootRestore, RestoreRefusal, RestoreReport,
     RevocationPending, begin_cutover, finish_cutover, require_restore_revoked,
@@ -228,12 +228,10 @@ impl FrozenOwners {
             .map_err(|_| unavailable(Owner::Audit))?;
         // 只有实际核验成功才累计，包括本作业在副作用前已落账的 Intent。
         let mut checked = 1_u64;
+        // 写者自己分得清「超过固定上限」和「不可用」，原样带上（BUG-045）。
         add(
             &mut checked,
-            self.broker
-                .verify_audit(&self.audit)
-                .map_err(|_| unavailable(Owner::Broker))?
-                .checked(),
+            self.broker.verify_audit(&self.audit)?.checked(),
         )?;
         if let Some(bridge) = &mut self.bridge {
             add(

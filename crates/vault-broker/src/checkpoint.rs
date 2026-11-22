@@ -95,8 +95,14 @@ impl FrozenBroker {
             .map(|(_, capture)| capture)
             .ok_or(BrokerError::IncompleteCapture)
     }
-    /// 不先解冻、直接在窗口里从定格导出；协调器走 `take_capture` → 解冻 → [`BrokerCapture::export`]。
-    pub fn export(&self, vault: &Path, data: &Path) -> Result<SealedOwnerCheckpoint, BrokerError> {
+    /// 不先解冻、直接在窗口里从定格导出，只给本 crate 的用例用：生产路径这样调就把整树拷贝放回了冻结窗口
+    /// （BUG-045）。协调器走 `take_capture` → 解冻 → [`BrokerCapture::export`]。
+    #[cfg(test)]
+    pub(crate) fn export(
+        &self,
+        vault: &Path,
+        data: &Path,
+    ) -> Result<SealedOwnerCheckpoint, BrokerError> {
         let (_, capture) = self
             .verified
             .as_ref()

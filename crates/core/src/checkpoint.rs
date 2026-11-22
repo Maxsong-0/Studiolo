@@ -290,4 +290,10 @@ pub enum CheckpointError {
         /// 不可用的 owner。
         owner: CheckpointOwner,
     },
+    /// 超过固定上限：例如写者两棵树的文件数超过可同时打开文件数的一半，定格不半拍（BUG-045）。
+    #[error("owner {owner:?} 超过固定上限")]
+    LimitExceeded {
+        /// 超过上限的 owner。
+        owner: CheckpointOwner,
+    },
 }

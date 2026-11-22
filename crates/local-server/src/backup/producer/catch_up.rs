@@ -9,10 +9,11 @@ use studiolo_audit_ledger::{AuditFilter, AuditLedger};
 
 /// 后台追账本一页读多少条，比请求那条路的一页（`PAGE`，512 条）大得多。
 ///
-/// 账本每次查询都要先重算整条段链，这笔固定成本跟着账本总量涨；页越小、查询次数越多，付得越多，
-/// 追完整本账本的用时就按账本大小的平方涨。108 上实测（T-219，512 条一页）：10 万条 1.6 秒、20 万条 4.1 秒，
-/// 推到 70 万条约 31 秒，其中四分之三花在重算段链上。8192 条一页把这部分压到十六分之一。
-/// 代价是一页读得久一些：账本的锁一次多占一会儿（70 万条时约 0.1～0.2 秒），关停也最多多等这么久。
+/// 每次查询有一笔固定成本（核段链、读 head、走读打开段），页越小、查询次数越多，付得越多。
+/// 定这个值时账本每次查询都从创世重算整条段链，108 上 512 条一页追 70 万条推算约 31 秒；T-220 之后每次查询
+/// 只核链尾，这笔成本不再随账本涨，两种页差得不多了（108，T-219 合入 T-220 后：70 万条 512 条一页 8.62 秒、
+/// 8192 条一页 7.68 秒）。大页仍省掉大部分查询，留着。
+/// 代价是一页读得久一些：账本的锁一次多占一会儿，关停也最多多等这么久。
 /// 请求那条路不跟着改：它拿着状态锁读，页小一点别的请求等得短。
 const CATCH_UP_PAGE: usize = 8192;
 
@@ -25,20 +26,21 @@ impl BackupProducer {
     /// `catch_up` 的本体，页大小由调用方给：用例拿小页来走「读满一页接着读下一页」。
     ///
     /// 账本在状态锁之外读，拿锁只做内存里的记账：请求和健康页等这把锁，等不到它头上。
-    /// 读账本出错就收手，留给之后的请求照旧自己读。
+    /// 读账本出错就收手，留给之后的请求照旧自己读；收手写一行固定类别的日志，
+    /// 不然请求又要一页页从头推、现场却看不出为什么（BUG-042 的老样子）。
     pub(crate) fn catch_up_by(&self, stop: &AtomicBool, size: usize) {
         while !stop.load(Ordering::Acquire) {
             let Ok(from) = self.state.lock().map(|state| state.queue.scanned()) else {
-                return;
+                return abandoned("状态锁不可用");
             };
             let Ok(page) = self
                 .ledger
                 .query(&AuditFilter::default().after_offset(from).with_limit(size))
             else {
-                return;
+                return abandoned("读账本失败");
             };
             let Ok(mut state) = self.state.lock() else {
-                return;
+                return abandoned("状态锁不可用");
             };
             // 这一页是在锁外读的：这期间有请求自己往前读过，这一页就作废，从新位置重读。
             if state.queue.scanned() != from {
@@ -58,4 +60,9 @@ impl BackupProducer {
     pub(crate) fn scanned_offset(&self) -> u64 {
         self.state.lock().map_or(0, |state| state.queue.scanned())
     }
+}
+
+/// 后台追账本没读到末尾就收手：固定类别，不含路径和内容。
+fn abandoned(reason: &str) {
+    eprintln!("备份队列后台追账本中止：{reason}");
 }

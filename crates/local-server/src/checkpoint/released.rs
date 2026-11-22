@@ -1,9 +1,10 @@
 //! 冻结窗口放开之后（BUG-045）：各库只剩定格在冻结那一刻的读连接，写者只剩两棵树的文件句柄，
-//! 业务照常读写。这里核剩下的回执、逐项导出、登记来源、封存暂存区；读到的全是冻结那一刻。
+//! 业务照常读写。这里校验登录、控制、接入方库的定格（排空、结构，随表变大），核剩下的回执、逐项导出、
+//! 登记来源、封存暂存区；读到的全是冻结那一刻。
 //! 没有屏障可以放开：丢弃只关定格的连接和句柄，失败不出票，留下的暂存由暂存层回收。
 use super::{
-    CheckpointExports, CheckpointTimes, OwnerExportPaths, PolicyParticipant, Result, add,
-    check_deadline, unavailable,
+    CheckpointError, CheckpointExports, CheckpointTimes, OwnerExportPaths, PolicyParticipant,
+    Result, add, check_deadline, unavailable,
 };
 use std::{path::Path, time::Instant};
 use studiolo_audit_ledger::FrozenAudit;
@@ -38,6 +39,35 @@ pub struct ReleasedOwners {
     pub(super) checked: u64,
     pub(super) deadline: Instant,
 }
+/// 放开之后哪一步没做成（BUG-045）：生产者照它写一行日志，账本里照旧只记固定原因。
+/// 每一类只带库名和固定类别，不带路径和内容。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum SealFailure {
+    /// 校验定格或核回执（登录、控制、接入方库）。
+    Verify(CheckpointError),
+    /// 逐项导出（含副本上的整本验链和校验）。
+    Export(CheckpointError),
+    /// 登记来源、过滤视图、封存暂存区。
+    Staging(StagingError),
+}
+impl SealFailure {
+    /// 记进账本的那一类：校验、导出没做成都按暂存区不可用算（和放开之前一样），暂存层的照它自己的分类。
+    pub fn staging(&self) -> StagingError {
+        match self {
+            Self::Verify(_) | Self::Export(_) => StagingError::Unavailable,
+            Self::Staging(error) => *error,
+        }
+    }
+}
+impl std::fmt::Display for SealFailure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Verify(error) => write!(f, "校验与核回执：{error}"),
+            Self::Export(error) => write!(f, "导出：{error}"),
+            Self::Staging(error) => write!(f, "封存暂存区：{error:?}"),
+        }
+    }
+}
 impl ReleasedOwners {
     /// 逐项导出，过滤视图与本地清单原子封存、重开复验；暂存区的截止时间不能晚于放开时给的截止时间。
     pub fn seal(
@@ -49,47 +79,54 @@ impl ReleasedOwners {
         ) -> std::result::Result<SourceCatalog, StagingError>,
         mut manifest: ManifestInputs,
         times: CheckpointTimes,
-    ) -> std::result::Result<SealedCheckpoint, StagingError> {
+    ) -> std::result::Result<SealedCheckpoint, SealFailure> {
         let started = Instant::now();
         if self.paths.directories() != OwnerExportPaths::under(area.export_root()).directories()
             || area.deadline() > self.deadline
         {
-            return Err(StagingError::UnsafeRoot);
+            return Err(SealFailure::Staging(StagingError::UnsafeRoot));
         }
-        let exports = self.export().map_err(|_| StagingError::Unavailable)?;
+        let coverage = self.verify_audit().map_err(SealFailure::Verify)?;
+        let exports = self.export_owners(coverage).map_err(SealFailure::Export)?;
         // 只在真实副本已经形成之后计算当前登记；不得按路径补默认标签。
-        let catalog = catalog(area.export_root(), &exports)?;
+        let catalog = catalog(area.export_root(), &exports).map_err(SealFailure::Staging)?;
         let CheckpointExports {
             roster,
             owners,
             audit_coverage,
         } = exports;
         manifest.audit_coverage = audit_coverage;
-        let elapsed =
-            i64::try_from(started.elapsed().as_millis()).map_err(|_| StagingError::Expired)?;
+        let expired = || SealFailure::Staging(StagingError::Expired);
+        let elapsed = i64::try_from(started.elapsed().as_millis()).map_err(|_| expired())?;
         let now = times
             .now
             .millis()
             .checked_add(elapsed)
-            .ok_or(StagingError::Expired)?;
-        let sealed = area.seal(
-            &catalog,
-            SealInputs {
-                roster,
-                owners,
-                manifest,
-                content_cutoff: times.content_cutoff,
-                expires_at: times.expires_at,
-                now: InstantMillis::from_millis(now),
-            },
-        )?;
-        check_deadline(self.deadline, Owner::Audit).map_err(|_| StagingError::Expired)?;
+            .ok_or_else(expired)?;
+        let sealed = area
+            .seal(
+                &catalog,
+                SealInputs {
+                    roster,
+                    owners,
+                    manifest,
+                    content_cutoff: times.content_cutoff,
+                    expires_at: times.expires_at,
+                    now: InstantMillis::from_millis(now),
+                },
+            )
+            .map_err(SealFailure::Staging)?;
+        check_deadline(self.deadline, Owner::Audit).map_err(|_| expired())?;
         Ok(sealed)
     }
-    /// 先核剩下的回执（登录、控制、接入方库，都读各自定格的库和定格的账本），再按固定顺序逐项导出，
-    /// 汇总两个独立审计截止点。账本的整本验链在它自己的导出里、在副本上做。
+    /// 先校验登录、控制、接入方库的定格并核剩下的回执（都读各自定格的库和定格的账本），
+    /// 再按固定顺序逐项导出，汇总两个独立审计截止点。账本的整本验链在它自己的导出里、在副本上做。
     pub fn export(&mut self) -> Result<CheckpointExports> {
         let coverage = self.verify_audit()?;
+        self.export_owners(coverage)
+    }
+    /// 按固定顺序逐项导出；回执已经核过。
+    fn export_owners(&mut self, coverage: AuditCoverageProof) -> Result<CheckpointExports> {
         let p = &self.paths;
         let mut owners = vec![
             self.broker
@@ -176,10 +213,13 @@ impl ReleasedOwners {
             audit_coverage: coverage,
         })
     }
-    /// 窗口里核过的加上这里核的；只有实际核验成功才累计。
+    /// 先校验定格（排空、结构、业务引用），再核回执；窗口里核过的加上这里核的，只有实际核验成功才累计。
     fn verify_audit(&mut self) -> Result<AuditCoverageProof> {
         let mut checked = self.checked;
         if let Some(control) = &mut self.control {
+            control
+                .validate()
+                .map_err(|_| unavailable(Owner::Control))?;
             add(
                 &mut checked,
                 control
@@ -188,6 +228,7 @@ impl ReleasedOwners {
                     .checked(),
             )?;
         }
+        self.auth.validate().map_err(|_| unavailable(Owner::Auth))?;
         add(
             &mut checked,
             self.auth
@@ -196,13 +237,18 @@ impl ReleasedOwners {
                 .checked(),
         )?;
         match (&mut self.agents, &self.agent_audit) {
-            (Some(agent), Some(audit)) => add(
-                &mut checked,
+            (Some(agent), Some(audit)) => {
                 agent
-                    .verify_audit(audit)
-                    .map_err(|_| unavailable(Owner::AgentStore))?
-                    .checked(),
-            )?,
+                    .validate()
+                    .map_err(|_| unavailable(Owner::AgentStore))?;
+                add(
+                    &mut checked,
+                    agent
+                        .verify_audit(audit)
+                        .map_err(|_| unavailable(Owner::AgentStore))?
+                        .checked(),
+                )?;
+            }
             (None, None) => {}
             _ => return Err(unavailable(Owner::AgentStore)),
         }

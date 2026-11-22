@@ -10,7 +10,7 @@
 
 取许可之前先把登录库自己补得掉的待办补完（`checkpoint/settle.rs` 的 `settle_auth`，BUG-044）：补记待发的审计事件（启用两步验证时经 `FactorRuntime::flush_audit`，否则经 `SessionManager::flush_audit`），再跑一轮保留期维护，最多 4 轮，和整个窗口用同一个截止时间。别的库各有周期任务替它们清，登录库的补记平时只在登录、吊销时顺带做，所以由要求它清空的封存入口先清。补记要取完整操作许可，必须在排空之前做。补完到登录库冻结之间仍有一小段窗口（普通的会话检查不取许可就能让新的过期、拒绝事件入队）：撞上了这一轮照旧在 Auth 失败、下一轮再试，不在这里重试。封存卡住时人侧日志写明是哪个 owner、是超时还是不可用（「备份封存卡在：…」），账本里记的原因不变。
 
-全部冻结后核对各 owner 持久 ACK 的完整原事件；Transport 的最后运行事件、AgentStore 的读取派生索引也使用各自实际原链。窗口里核本作业 Intent、写者的重放与回执（读活的写者实例，条数有上限）、Bridge 与 Transport；Bridge 每次写前写后都要求 WAL 截断干净、截不掉就封掉实例，放开之后不能留着它的定格读事务，所以 Bridge 库连同传输、平面文件在窗口里整份导出（库有页数上限，是固定大小的状态）。Control、Auth、AgentStore 的回执在放开之后对着定格的库和定格的账本核。计数只增加真实核验过的引用及本作业 Intent，不把链中没有持久 ACK 引用的直接事件虚算为 ACK；Audit 自身仍完整验证整条链。
+全部冻结后核对各 owner 持久 ACK 的完整原事件；Transport 的最后运行事件、AgentStore 的读取派生索引也使用各自实际原链。窗口里核本作业 Intent、写者的重放与回执（读活的写者实例，条数有上限）、Bridge 与 Transport；Bridge 每次写前写后都要求 WAL 截断干净、截不掉就封掉实例，放开之后不能留着它的定格读事务，所以 Bridge 库连同传输、平面文件在窗口里整份导出（库有页数上限，是固定大小的状态）。Control、Auth、AgentStore 在窗口里只定格：它们的排空与结构校验（整表计数、`quick_check`、逐条解码回执、逐行核类型与实例）随表变大，放开之后先在定格上做（`validate`，得出水位），再对着定格的库和定格的账本核回执；冻结窗口里不再因为它们没排空而失败，失败挪到放开之后、照样不出票。计数只增加真实核验过的引用及本作业 Intent，不把链中没有持久 ACK 引用的直接事件虚算为 ACK；Audit 自身仍完整验证整条链。
 
 固定目标布局包含 canonical、writer-data、control、auth、bridge、transport、plane、agent、policy、audit、agent-audit。各 owner 只写自己的独立目标，Audit 主水位显式带附属链截止点。除 Bridge 之外的导出都在放开之后从定格做；账本副本整本验链、锚点必须等于冻结时那一个，写者副本从句柄拷、拷前拷后逐个 fstat 核对没被原地改过（改了报 `CaptureChanged`，不出票）。`CheckpointExports` 只是中间结果，不是可交给 worker 的最终 SealTicket。inclusion、整体同步与原子封存必须在此后完成。
 

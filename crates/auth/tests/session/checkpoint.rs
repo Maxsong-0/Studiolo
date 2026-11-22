@@ -29,6 +29,8 @@ fn auth_requires_real_audit_coverage_before_sealing() {
     let _quiescence = ledger.quiesce_operations(deadline()).unwrap();
     let mut frozen_auth = auth_source.freeze(deadline()).unwrap();
     let frozen_audit = audit_source.freeze(deadline()).unwrap();
+    // 校验了定格、还没核回执：照样不能导出。
+    frozen_auth.validate().unwrap();
     assert!(frozen_auth.export(target.path()).is_err());
     let wrong = SqliteAuditLedger::open(wrong_audit.path()).unwrap();
     let wrong = wrong
@@ -59,7 +61,8 @@ fn pending_auth_does_not_count_as_drained_and_retry_is_possible() {
         .store(true, std::sync::atomic::Ordering::SeqCst);
     assert!(h.manager.issue(&identity()).is_err());
     let source = h.manager.checkpoint_source().unwrap();
-    assert!(source.freeze(deadline()).is_err());
+    // 冻结窗口里只定格（BUG-045）：没排空照样定得住，放开之后在定格上校验时拒绝。
+    assert!(source.freeze(deadline()).unwrap().validate().is_err());
     h.audit
         .fail
         .store(false, std::sync::atomic::Ordering::SeqCst);
@@ -68,6 +71,7 @@ fn pending_auth_does_not_count_as_drained_and_retry_is_possible() {
     h.clock.set(1_200_000);
     h.manager.run(|_, _| Ok(Ok(()))).unwrap();
     h.manager.flush_audit(256).unwrap();
-    let frozen = source.freeze(deadline()).unwrap();
+    let mut frozen = source.freeze(deadline()).unwrap();
+    frozen.validate().unwrap();
     assert!(frozen.export(directory().path()).is_err());
 }

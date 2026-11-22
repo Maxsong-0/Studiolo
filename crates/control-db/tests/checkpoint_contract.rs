@@ -46,6 +46,7 @@ fn actual_private_owner_is_pinned_before_initialization_and_export_is_independen
     );
     let source = db.checkpoint_source().unwrap();
     let mut frozen = source.freeze(deadline()).unwrap();
+    frozen.validate().unwrap();
     assert!(frozen.export(target.path()).is_err());
     let audit = ledger
         .checkpoint_source()
@@ -84,11 +85,11 @@ fn projections_and_runtime_audits_must_be_drained_and_acknowledged_in_original_l
     let source = db.checkpoint_source().unwrap();
     db.create_task(TaskId::new(), &json!({"title":"test"}), 1)
         .unwrap();
-    assert!(source.freeze(deadline()).is_err());
+    assert!(source.freeze(deadline()).unwrap().validate().is_err());
     drain_projection(&mut db);
     let raw = rusqlite::Connection::open(dir.path().join("control.sqlite3")).unwrap();
     raw.execute("INSERT INTO runtime_audit_outbox(event_id,action,payload_json) VALUES('checkpoint-runtime','task.test','{}')",[]).unwrap();
-    assert!(source.freeze(deadline()).is_err());
+    assert!(source.freeze(deadline()).unwrap().validate().is_err());
     let ledger = SqliteAuditLedger::open(audit.path()).unwrap();
     let record = RuntimeAuditRecord {
         event_id: "checkpoint-runtime".into(),
@@ -98,6 +99,7 @@ fn projections_and_runtime_audits_must_be_drained_and_acknowledged_in_original_l
     ledger.append(record.audit_event().unwrap()).unwrap();
     db.acknowledge_runtime_audit(&record.event_id).unwrap();
     let mut frozen = source.freeze(deadline()).unwrap();
+    frozen.validate().unwrap();
     let wrong = SqliteAuditLedger::open(empty.path())
         .unwrap()
         .checkpoint_source()
@@ -144,7 +146,7 @@ fn terminal_commit_requires_durable_outcome_and_checks_complete_event() {
     db.reserve_terminal(task, attempt.attempt_id, attempt.fence, &reservation, 4)
         .unwrap();
     drain_projection(&mut db);
-    assert!(source.freeze(deadline()).is_err());
+    assert!(source.freeze(deadline()).unwrap().validate().is_err());
     let path = VaultPath::parse("artifacts/checkpoint.json").unwrap();
     let receipt = json!({"manifest_path":path,"manifest_revision":Revision::from_bytes([7;32]),"artifacts":[]});
     db.finalize_terminal(
@@ -157,7 +159,7 @@ fn terminal_commit_requires_durable_outcome_and_checks_complete_event() {
     )
     .unwrap();
     drain_projection(&mut db);
-    assert!(source.freeze(deadline()).is_err());
+    assert!(source.freeze(deadline()).unwrap().validate().is_err());
     let ledger = SqliteAuditLedger::open(audit.path()).unwrap();
     for outcome in db.pending_terminal_audits().unwrap() {
         ledger.append(outcome.audit_event().unwrap()).unwrap();
@@ -169,6 +171,7 @@ fn terminal_commit_requires_durable_outcome_and_checks_complete_event() {
         db.acknowledge_runtime_audit(&event.event_id).unwrap();
     }
     let mut frozen = source.freeze(deadline()).unwrap();
+    frozen.validate().unwrap();
     let audit = ledger
         .checkpoint_source()
         .unwrap()
