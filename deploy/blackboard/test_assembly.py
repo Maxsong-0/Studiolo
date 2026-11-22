@@ -1,4 +1,4 @@
-"""黑板形状发行（当前 r17→r18）的固定变更面；夹具不接触生产或凭据。"""
+"""黑板形状发行（当前 r18→r19）的固定变更面；夹具不接触生产或凭据。"""
 import ast
 import collections
 import importlib.util
@@ -11,7 +11,7 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 def board_launcher():
-    """把 r7/r8 那份启动器补成上一发行（r17）的形状：带黑板常量与参数、只读身份目录参数、备份配置参数，
+    """把 r7/r8 那份启动器补成上一发行（r18，接线沿用 r17）的形状：带黑板常量与参数、只读身份目录参数、备份配置参数，
     RELEASE 指向上一发行。"""
     text = (ROOT / 'deploy/human/current-v2/launch-human.py').read_text().replace(
         'm4-t092-20260920-r7', a.OLD_RELEASE.rsplit('/', 1)[1]).replace(
@@ -31,7 +31,7 @@ def board_launcher():
 
 
 def board_unit():
-    """把 r7/r8 那份人侧单元补成上一发行（r17）的形状：黑板 RuntimeDirectory，黑板五个写根、Bridge 两个写根、
+    """把 r7/r8 那份人侧单元补成上一发行（r18，接线沿用 r17）的形状：黑板 RuntimeDirectory，黑板五个写根、Bridge 两个写根、
     备份两个写根，都在 [Service] 节里、顺序和线上一致；停止超时是按预算算出来的那一行。"""
     text = (ROOT / 'deploy/human/current-v2/studiolo-human.service').read_text().replace(
         'm4-t092-20260920-r7', a.OLD_RELEASE.rsplit('/', 1)[1])
@@ -82,10 +82,10 @@ def rust_calls(paths, receiver, method=r'\w+'):
 
 
 class AssemblyTests(unittest.TestCase):
-    def test_r18_upgrades_the_activated_r17(self):
-        self.assertEqual(a.BUILD, 'm5m6-board-20260920-r18')
+    def test_r19_upgrades_the_activated_r18(self):
+        self.assertEqual(a.BUILD, 'm5m6-board-20260920-r19')
         self.assertEqual(a.RELEASE.rsplit('/', 1)[1], a.BUILD)
-        self.assertTrue(a.OLD_RELEASE.endswith('/m5m6-board-20260920-r17'))
+        self.assertTrue(a.OLD_RELEASE.endswith('/m5m6-board-20260920-r18'))
         self.assertEqual(a.WEB_PREFIX, 'web/')
 
     def test_launcher_preserves_the_approved_bridge_wiring(self):
@@ -253,14 +253,14 @@ class AssemblyTests(unittest.TestCase):
         # 本版的修复都在人侧程序里，必须换程序（出候选和激活预检靠这两个常量拒绝沿用旧程序）。
         self.assertIs(a.REQUIRES_NEW_HUMAN_PROGRAM, True)
         self.assertEqual(a.NEW_HUMAN_PROGRAM_LITERALS,
-                         ('备份封存卡在：'.encode(), '备份封存冻结窗口：'.encode()))
+                         (b'studiolo_bridge step=DeleteGate outcome=deletes_blocked count=',))
         # 只看编进程序的那部分源码（测试模块和注释不算）。
-        producer = rust_code(ROOT / 'crates/local-server/src/backup/producer.rs')
+        diagnostics = rust_code(ROOT / 'crates/local-server/src/sync_plane/driver/diagnostics.rs')
         for literal in a.NEW_HUMAN_PROGRAM_LITERALS:
-            # 这几个字在源码里是一句格式串的开头，原样的字符串字面量（编进程序后能按字节找到），只此一处；
+            # 这一段在源码里是一句格式串的开头，原样的字符串字面量（编进程序后能按字节找到），只此一处；
             # 后面紧跟着占位符，所以程序里连续的字节就到这里为止。上一发行的程序里没有它，在 169 上只读核过。
-            self.assertEqual(producer.count('format!("' + literal.decode() + '{'), 1)
-            self.assertEqual(producer.count(literal.decode()), 1)
+            self.assertEqual(diagnostics.count('"' + literal.decode() + '{count}"'), 1)
+            self.assertEqual(diagnostics.count(literal.decode()), 1)
 
     def test_agent_unit_is_carried_over_byte_for_byte(self):
         for quoted in (False, True):

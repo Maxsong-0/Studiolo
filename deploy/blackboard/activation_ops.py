@@ -171,7 +171,7 @@ class Operations(SnapshotOperations):
             s = os.lstat(path)
             c.require(stat.S_ISDIR(s.st_mode) and (s.st_uid, s.st_gid) == (c.UID, reader)
                       and stat.S_IMODE(s.st_mode) == 0o750)
-        # 上一发行（r17）已经在监听备份 socket：此刻它必须是活的那一个（程序建的样子：主服务账号、读取组、0660、
+        # 上一发行（r17 起每一版）已经在监听备份 socket：此刻它必须是活的那一个（程序建的样子：主服务账号、读取组、0660、
         # 单链接，crates/local-server/src/backup/listener.rs）。不在、或者是别的东西，说明现场不是钉住的上一发行，
         # 由人看过。「必须不存在」在停服之后核（stopped）：残留的节点程序不清理也不接管。
         node = os.lstat(socket)

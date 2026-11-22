@@ -234,7 +234,7 @@ class BackupReadyTests(FilesBase):
                     self.rejected()
 
     def test_the_previous_release_must_be_listening_on_the_backup_socket(self):
-        """起点（r17）已经在监听：节点必须在，而且是程序建的那个样子。不对的不动它，由人看过。"""
+        """起点（r17 起每一版）已经在监听：节点必须在，而且是程序建的那个样子。不对的不动它，由人看过。"""
         self.node.unlink()
         self.rejected(ABSENT)
         self.write(self.node, b'not a socket', 0o660)

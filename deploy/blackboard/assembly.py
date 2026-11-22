@@ -1,7 +1,7 @@
 """从已激活发行派生候选的固定装配；不读取凭据、不操作服务或数据库。
 
-黑板接线沿用 r2，Bridge 接线与只读身份库参数沿用 r16，备份生产者接线（启动器参数、两个写根、停止超时）沿用已激活 r17；
-本版只替换发行路径和人侧程序，写根、认证、配对和同步范围保持现场原值。
+黑板接线沿用 r2，Bridge 接线与只读身份库参数沿用 r16，备份生产者接线（启动器参数、两个写根、停止超时）沿用 r17
+（r18 原样沿用，已激活）；本版只替换发行路径和人侧程序，写根、认证、配对和同步范围保持现场原值。
 变换只接受钉住的上一发行形状；额外差异由现场摘要和逐字变换核验拒绝。
 
 沿革：r8→r2 的装配逻辑见本文件在 main `40fdf8d` 及更早的版本（一次性迁移，已激活）；
@@ -21,15 +21,17 @@ r15→r16（T-207：BUG-038 项目目录改名、T-181/T-183/T-185/T-211～T-214
 控制库 schema 3→4，单向，见 README「r15→r16 是单向的」，已激活）；
 r16→r17（T-216：启用备份生产者。启动器加 --backup-config；人侧单元加备份 socket 父目录、封存父目录两个写根，
 停止超时 90→300 秒；人侧程序必须一起换，上一发行的程序不认 --backup-config。数据库与状态的版本号不变，已激活）；
-本版 r17→r18（T-219：备份首跑三处缺陷的修复，BUG-042 队列自己追账本、BUG-044 封存前补记登录库，
+r17→r18（T-219：备份首跑三处缺陷的修复，BUG-042 队列自己追账本、BUG-044 封存前补记登录库，
 加 BUG-045 封存的冻结窗口只定格、拷贝和校验挪到放开之后；只换人侧程序，启动器和单元的接线一个字不动。起点已带备份监听：激活预检核的是活的备份 socket，停服之后核它已经删掉。
-数据库与状态的版本号不变）。
+数据库与状态的版本号不变，已激活）；
+本版 r18→r19（T-222：BUG-046 主库没开文件操作时，Bridge 碰到主库删除整批暂停，不再记成终态未知；
+只换人侧程序，启动器和单元的接线一个字不动。数据库与状态的版本号不变：Bridge 库不加表、不改编码）。
 """
 import shlex
 from pathlib import Path
 
-OLD_RELEASE = '/home/maxsong/.local/share/studiolo-human-releases/m5m6-board-20260920-r17'
-BUILD = 'm5m6-board-20260920-r18'
+OLD_RELEASE = '/home/maxsong/.local/share/studiolo-human-releases/m5m6-board-20260920-r18'
+BUILD = 'm5m6-board-20260920-r19'
 BRIDGE_ROOT = '/var/lib/studiolo-owner/bridge'
 TRANSPORT_ROOT = '/home/maxsong/.local/share/studiolo-sync-transport'
 SYNC_APPROVAL = '/home/maxsong/.config/studiolo-human/sync-transport.json'
@@ -48,16 +50,14 @@ BACKUP_CONFIG = '/home/maxsong/.config/studiolo-human/backup.json'
 BACKUP_RUNTIME = '/run/studiolo-backup'
 BACKUP_STAGING = '/var/lib/studiolo-backup-staging'
 # 备份监听的 socket：置备脚本写进 backup.json 的就是这一个（deploy/backup-worker/provision/prereq.py 的 SOCKET）。
-# 起点（r17）已经在监听它：激活预检核它是活的，停服之后核它已经删掉（activation_ops）。
+# 起点（r17 起每一版）已经在监听它：激活预检核它是活的，停服之后核它已经删掉（activation_ops）。
 BACKUP_SOCKET = BACKUP_RUNTIME + '/producer.sock'
 # 本版必须换的人侧程序里才有的字节：非空就表示本版必须换人侧程序。出候选和候选核验（激活预检也跑它）都要求候选程序的
 # 字节和上一发行不同，并且字节里有这些字面量。只看来源提交号不够：号可以填新的、文件却是旧的。
-# 本版（r18）的启动器没有新参数，要换程序是因为修复都在程序里；取的是这次新加的两句日志的开头
-# （crates/local-server/src/backup/producer.rs 的 stuck_line 和 window_line，编进程序后是原样的 UTF-8 字节）。
-# 第二句是 BUG-045 的修法才有的：r18 前两次构建（493c9a2、53bc502）的程序里没有它，带着它才是窗口只定格的那一版
-# （现在从 02d1a37 构建，见 prereq.py 的 SOURCE_COMMIT）。
-# 169 上 r17 的程序里没有第一句，2026-11-21 只读核过（按字节数，0 处）；第二句在暂存 r18 时一并核。
-NEW_HUMAN_PROGRAM_LITERALS = ('备份封存卡在：'.encode(), '备份封存冻结窗口：'.encode())
+# 本版（r19）的启动器没有新参数，要换程序是因为修复都在程序里；取的是这次新加的那行同步日志到占位符为止的一段
+# （crates/local-server/src/sync_plane/driver/diagnostics.rs 的 deletes_blocked，编进程序后是原样的字节）。
+# 169 上 r18 的程序（02d1a37 构建，摘要 33803b17…1353）里没有它，2026-11-22 只读核过（按字节数，0 处）。
+NEW_HUMAN_PROGRAM_LITERALS = (b'studiolo_bridge step=DeleteGate outcome=deletes_blocked count=',)
 REQUIRES_NEW_HUMAN_PROGRAM = bool(NEW_HUMAN_PROGRAM_LITERALS)
 # 人侧停止超时（秒）。关停是串行的两段（crates/local-server/src/startup/serving.rs）：收到退出信号先等备份收尾，
 # 做完才通知 Bridge 停，所以两段要相加。备份段等的是在途的那一个连接整个处理完，再等它起的后台线程
@@ -117,13 +117,13 @@ STOP_TIMEOUT_SECONDS = (BACKUP_CONNECTION_WINDOW_SECONDS + BACKUP_SCAN_BUDGET_SE
                         + BACKUP_RECLAIM_SECONDS + BACKUP_FREEZE_BUDGET_SECONDS
                         + BRIDGE_STOP_GRACE_SECONDS + BRIDGE_STOP_MARGIN_SECONDS
                         + UNBUDGETED_STEPS_SECONDS + STOP_SAFETY_MARGIN_SECONDS)
-# 固定摘要防止覆盖其他发布。两个都是 2026-11-21 从 169 只读回读的现场值：human 是 r17 激活写下的单元
-# （已接备份：两个写根、停止超时 300 秒）；agent 是 T-215 部署之后的单元（发布名 t215-116f5d7-20261120），
-# 和上一版预算的摘要一致。
-HUMAN_SHA = '92db3c46f7d1e8f32cb87e92ab8f4d128454fe739f22ccd6402e692beb509058'
+# 固定摘要防止覆盖其他发布。两个都是 2026-11-22 从 169 只读回读的现场值：human 是 r18 激活写下的单元
+# （已接备份：两个写根、停止超时 300 秒；和 r18 发行目录里那份逐字节相同）；agent 是 T-215 部署之后的单元
+# （发布名 t215-116f5d7-20261120），r18 没动它，和上一版钉的一致。
+HUMAN_SHA = 'd8da14e8cac32c471f12128bd04644212d3a68c8d4db9915495332a279ae49e0'
 AGENT_SHA = '394ffe6f55823e7ac8cf7cad02fcb2c34cbee0d284afd3c706d13afe54f50117'
-# 键名沿用早期协议，内容钉住当前 r17 manifest（2026-11-21 从 169 只读回读）。
-R8_MANIFEST_SHA = '8aef1b279f75b74642142471c10a6e05e55bcc106d23218d7c4b23c327f5faeb'
+# 键名沿用早期协议，内容钉住当前 r18 manifest（2026-11-22 从 169 只读回读）。
+R8_MANIFEST_SHA = '55c39dd46b4337e1b6726f06622473d1e4075edf95ba8cee7cadd89bec3d6ae7'
 # 发行目录里属于网页的前缀：本次唯一允许整体更换的部分。
 WEB_PREFIX = 'web/'
 # 沿用黑板装配标识；Bridge 接线仍受固定现场摘要约束。
@@ -154,7 +154,7 @@ def human_unit(text):
     for path in (VAULT, WRITER, BOARD, AGENT, BOARD_RUNTIME, BRIDGE_ROOT, TRANSPORT_ROOT):
         if 'ReadWritePaths=' + path + '\n' not in text:
             raise ValueError('board wiring missing')
-    # 上一发行（r17）已接备份：两个写根各恰好一行、紧跟在 Bridge 传输根后面，别处不再提备份路径；
+    # 上一发行（r18，接线沿用 r17）已接备份：两个写根各恰好一行、紧跟在 Bridge 传输根后面，别处不再提备份路径；
     # 停止超时恰好是按预算算出来的那一行。少了、多了、值不对，都说明现场不是钉住的形状。
     wired = 'ReadWritePaths=' + TRANSPORT_ROOT + '\n' + ''.join(
         'ReadWritePaths=' + path + '\n' for path in (BACKUP_RUNTIME, BACKUP_STAGING))
@@ -198,7 +198,7 @@ def launcher(text):
         raise ValueError('bridge wiring missing')
     if text.count('"--board-agent-data", AGENT, "--agent-data", AGENT,') != 1 or text.count('"--agent-data"') != 1:
         raise ValueError('agents wiring missing')
-    # 上一发行（r17）已带备份配置参数：恰好一处，紧跟在同步审批后面，路径是写死的那一份。
+    # 上一发行（r18，接线沿用 r17）已带备份配置参数：恰好一处，紧跟在同步审批后面，路径是写死的那一份。
     approval = '"--sync-transport", "' + SYNC_APPROVAL + '",'
     if (text.count(approval + ' "--backup-config", "' + BACKUP_CONFIG + '",') != 1
             or text.count('--backup-config') != 1):
