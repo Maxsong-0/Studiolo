@@ -1,19 +1,24 @@
-//! 在同一 SQLite 快照内按段验链：段链全查，记录链只走实际读到的段，两者用摘要衔接。
+//! 在同一 SQLite 快照内按段验链：段链核到链尾，记录链只走实际读到的段，两者用摘要衔接。
 //!
-//! 每次操作都做三件事：重算整条段链、走读当前打开段、核对 head。因此段被删除、
-//! 段号或段边界被改写、摘要被替换、尾部记录被增删改都当场失败关闭。**已封存段的
-//! 内部改写只有在走读该段时才发现**（`all`、`segment`，或读到该段的查询）；这是分段
-//! 的代价，已在契约文档中逐条写明，不在此处假装覆盖。
+//! 每次操作都做三件事：把段链核到链尾（本连接核过、别的连接没动过的前缀只重读链尾那一行，
+//! 见 `chain.rs`；否则从创世重算）、走读当前打开段、核对 head。因此段被删除、段号或段边界
+//! 被改写、摘要被替换、尾部记录被增删改，只要经别的 SQLite 连接提交，都当场失败关闭。
+//! **已封存段的内部改写只有在走读该段时才发现**（`all`、`segment`，或读到该段的查询）；读到
+//! 某段时连该段的摘要行一起重读比对。这是分段的代价，已在契约文档中逐条写明，不在此处假装覆盖。
 
-use super::{schema, segment, unavailable};
+use super::{chain, schema, segment, unavailable};
 use crate::{
     AuditError, AuditRecord, AuditSegmentSummary, AuditVerificationCost, IntegrityHash, codec,
 };
 use rusqlite::{Connection, params};
+use std::sync::Arc;
 
 /// 已把 head 锚定到段链与打开段的结果。
 pub(super) struct Anchored {
-    pub(super) summaries: Vec<AuditSegmentSummary>,
+    /// 核过的全部封存段摘要；与本连接的段链缓存共用一份，不按操作复制。
+    pub(super) summaries: Arc<Vec<AuditSegmentSummary>>,
+    /// 段号小于它的摘要行这次快照里没重读（沿用本连接早先核过的那份）；读到这些段时要逐行比对。
+    pub(super) reverified_from: u64,
     pub(super) last_offset: u64,
     pub(super) last_hash: IntegrityHash,
     pub(super) cost: AuditVerificationCost,
@@ -35,9 +40,21 @@ pub(super) const BOUNDS: [&str; 2] = [
 ];
 
 /// 重算段链、走读打开段并核对 head；成本为 O(段数 + 打开段记录数)，与账本总量无关。
+///
+/// 上一句的「与账本总量无关」只指与记录总字节无关，段数仍随总量涨。这是没有段链缓存的一次性连接
+/// （封存核对、升级）用的入口，从创世全算；常规操作走 `chain::VerifiedChain::anchor`，别的连接没提交过时只核链尾。
 pub(super) fn anchor(connection: &Connection) -> Result<Anchored, AuditError> {
+    chain::VerifiedChain::default().anchor_from_genesis(connection)
+}
+
+/// 段链已核到 `summaries` 之后，读 head、核打开段位置与首尾边界、走读打开段；成本为 O(打开段记录数)。
+pub(super) fn settle(
+    connection: &Connection,
+    summaries: Arc<Vec<AuditSegmentSummary>>,
+    mut cost: AuditVerificationCost,
+    reverified_from: u64,
+) -> Result<Anchored, AuditError> {
     let (last_offset, head_hash) = schema::head(connection, schema::VERSION)?;
-    let (summaries, mut cost) = segment::verify(connection)?;
     let sealed = u64::try_from(summaries.len()).map_err(|_| AuditError::CorruptStore)?;
     let open_first = segment::first_offset(sealed)?;
     // 打开段必须紧接最后一段且尚未写满；否则该段本应已封存，或 head 落在段链之前。
@@ -73,6 +90,7 @@ pub(super) fn anchor(connection: &Connection) -> Result<Anchored, AuditError> {
     }
     Ok(Anchored {
         summaries,
+        reverified_from,
         last_offset,
         last_hash,
         cost,
@@ -80,6 +98,9 @@ pub(super) fn anchor(connection: &Connection) -> Result<Anchored, AuditError> {
 }
 
 /// 走读一整段并把其中每条已验证记录交给 visitor；段尾哈希必须与摘要或 head 一致。
+///
+/// 这一段的摘要行这次快照里没重读过（沿用本连接早先核过的那份）时，先重读它逐字段比对：读到哪段，
+/// 那段的记录和摘要行都当场核过。
 pub(super) fn segment_records(
     connection: &Connection,
     anchored: &Anchored,
@@ -88,8 +109,12 @@ pub(super) fn segment_records(
 ) -> Result<AuditVerificationCost, AuditError> {
     let first = segment::first_offset(index)?;
     let open = anchored.open_index()?;
+    let mut cost = AuditVerificationCost::default();
     let (last, expected_hash) = if index < open {
         let summary = summary_at(anchored, index)?;
+        if index < anchored.reverified_from {
+            cost.merge(segment::recheck(connection, summary)?);
+        }
         (summary.last_offset(), summary.last_hash())
     } else if index == open {
         (anchored.last_offset, anchored.last_hash)
@@ -100,10 +125,11 @@ pub(super) fn segment_records(
         None => IntegrityHash::genesis(),
         Some(earlier) => summary_at(anchored, earlier)?.last_hash(),
     };
-    let (_, actual, cost) = walk(connection, first, last, previous, visitor)?;
+    let (_, actual, walked) = walk(connection, first, last, previous, visitor)?;
     if actual != expected_hash {
         return Err(AuditError::CorruptStore);
     }
+    cost.merge(walked);
     Ok(cost)
 }
 
@@ -134,11 +160,19 @@ pub(super) fn record_at(
 /// 全量验证：物理结构检查、行数与 offset 边界、段链、每一段的记录链与打开段。
 ///
 /// 这是本 Adapter 对「账本完整」的完整定义，成本与账本总量成正比，因此是显式入口，
-/// 不放进 append/query 的热路径。
+/// 不放进 append/query 的热路径。没有段链缓存的一次性连接（封存核对）用它。
 pub(super) fn all(connection: &Connection) -> Result<AuditVerificationCost, AuditError> {
+    all_with(connection, &mut chain::VerifiedChain::default())
+}
+
+/// 同 [`all`]，段链从创世全算后与本连接核过的前缀比对，并刷新它。
+pub(super) fn all_with(
+    connection: &Connection,
+    chain: &mut chain::VerifiedChain,
+) -> Result<AuditVerificationCost, AuditError> {
     schema::validate(connection, schema::VERSION)?;
     schema::integrity_check(connection)?;
-    let anchored = anchor(connection)?;
+    let anchored = chain.anchor_from_genesis(connection)?;
     // 全量验证才付得起的整表统计：连续 offset 下行数必须正好等于 head，任何缺行都要发现。
     let count: i64 = connection
         .query_row("SELECT count(*) FROM audit_events", [], |row| row.get(0))

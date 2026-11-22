@@ -1,5 +1,6 @@
 //! 真实 SQLite Adapter：写事务串行分配 offset，提交后才返回成功，失败不泄漏底层路径。
 
+mod chain;
 mod checkpoint;
 mod inspection;
 pub use checkpoint::{
@@ -28,6 +29,14 @@ mod configuration_tests;
 #[path = "../tests/support/planning.rs"]
 mod planning_tests;
 
+#[cfg(test)]
+#[path = "../tests/support/scale.rs"]
+mod scale_tests;
+
+#[cfg(test)]
+#[path = "../tests/support/chain.rs"]
+mod chain_tests;
+
 use crate::{
     AuditError, AuditEvent, AuditFilter, AuditLedger, AuditRecord, AuditSegmentSummary,
     AuditVerificationCost, codec,
@@ -43,8 +52,9 @@ pub const AUDIT_SEGMENT_RECORDS: u64 = segment::SEGMENT_RECORDS;
 /// Unix 私有本地目录中的权威审计账本；不共享或暴露 SQLite 连接。
 ///
 /// 多实例通过 BEGIN IMMEDIATE 串行追加。账本按 [`AUDIT_SEGMENT_RECORDS`] 条固定分段，
-/// 每次 append/query 重算整条段链、走读当前打开段并核对 head，再只验证实际读到的段，
-/// 因此成本是 O(段数 + 读到的段 × 段大小) 而不是 O(完整账本字节数)；
+/// 每次 append/query 把段链核到链尾、走读当前打开段并核对 head，再只验证实际读到的段。
+/// 本连接核过的段链留在内存：别的连接没提交过时只重读链尾那一行，提交过就从创世重算，
+/// 因此本实例独自读写时成本是 O(新封存段 + 读到的段 × 段大小)，与账本总量无关；
 /// 全量验证由 [`SqliteAuditLedger::verify_all`] 提供。单条规范记录最多 1 MiB。
 /// 目录须位于 Vault 外，父目录可信。
 pub struct SqliteAuditLedger {
@@ -52,9 +62,10 @@ pub struct SqliteAuditLedger {
     storage: Storage,
 }
 
-/// 连接与「最近一次验证规模」一起上锁，保证读到的计数与该次操作对得上。
+/// 连接、它核过的段链与「最近一次验证规模」一起上锁，保证读到的计数与该次操作对得上。
 struct Session {
     connection: Connection,
+    chain: chain::VerifiedChain,
     cost: AuditVerificationCost,
 }
 
@@ -90,6 +101,7 @@ impl SqliteAuditLedger {
         let storage = Storage::prepare(private_directory, policy)?;
         let mut connection = connect_mode(&storage, read_only)?;
         check_configuration(&connection)?;
+        let mut chain = chain::VerifiedChain::default();
         let cost = {
             let transaction = connection
                 .transaction_with_behavior(if read_only {
@@ -99,7 +111,7 @@ impl SqliteAuditLedger {
                 })
                 .map_err(unavailable)?;
             schema::initialize(&transaction, storage.created)?;
-            let anchored = verify::anchor(&transaction)?;
+            let anchored = chain.anchor_from_genesis(&transaction)?;
             storage.check()?;
             transaction.commit().map_err(unavailable)?;
             anchored.cost
@@ -129,7 +141,11 @@ impl SqliteAuditLedger {
             );
         }
         Ok(Self {
-            connection: Mutex::new(Session { connection, cost }),
+            connection: Mutex::new(Session {
+                connection,
+                chain,
+                cost,
+            }),
             storage,
         })
     }
@@ -147,7 +163,8 @@ impl AuditLedger for SqliteAuditLedger {
             return Err(AuditError::RecordTooLarge);
         }
         self.storage.check()?;
-        let mut session = self.lock()?;
+        let mut guard = self.lock()?;
+        let session = &mut *guard;
         let transaction = session
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
@@ -159,7 +176,7 @@ impl AuditLedger for SqliteAuditLedger {
             event.event_id().as_str(),
             codec::phase(event.phase()),
         )?;
-        let anchored = verify::anchor(&transaction)?;
+        let anchored = session.chain.anchor(&transaction)?;
         let mut cost = anchored.cost;
         if let Some(offset) = replay {
             let (record, replayed) = verify::record_at(&transaction, &anchored, offset)?;
@@ -230,13 +247,14 @@ impl AuditLedger for SqliteAuditLedger {
 
     fn query(&self, filter: &AuditFilter) -> Result<Vec<AuditRecord>, AuditError> {
         self.storage.check()?;
-        let mut session = self.lock()?;
+        let mut guard = self.lock()?;
+        let session = &mut *guard;
         let transaction = session
             .connection
             .transaction_with_behavior(TransactionBehavior::Deferred)
             .map_err(unavailable)?;
         schema::validate(&transaction, schema::VERSION)?;
-        let anchored = verify::anchor(&transaction)?;
+        let anchored = session.chain.anchor(&transaction)?;
         let mut cost = anchored.cost;
         let (records, queried) = query::run(&transaction, &anchored, filter)?;
         cost.merge(queried);
