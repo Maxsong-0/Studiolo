@@ -208,15 +208,15 @@ class AssemblyTests(unittest.TestCase):
                                  'repository_check_with': 3, 'report_check': 1, 'repository_checks_at': 1})
         # 拿状态锁的每一处：新加一个拿着锁干活的地方（哪怕不读账本），请求和后台线程都会跟着等。
         # 后台线程收尾复位 busy 也拿这把锁（Idle 的 drop），assembly.py 把它列在没算进去的那几样里。
-        # 后台读账本的线程（producer/catch_up.rs，T-219）每页拿两次：取读到哪儿、把读回的一页记进队列。
+        # 后台读账本的线程（producer/catch_up.rs 的 catch_up_by，T-219）每页拿两次：取读到哪儿、把读回的一页记进队列。
         # 它读账本在锁外，拿着锁只做内存里的记账，所以不算进「等锁时别人读账本」。scanned_offset 只在测试构建里有。
         self.assertEqual(where('self.state', 'lock'), dict.fromkeys(
             ('next_pending', 'schedule', 'reclaim', 'launch', 'jobs', 'repository_check_with',
-             'report_check', 'repository_checks_at', 'scanned_offset'), 1) | {'catch_up': 2})
+             'report_check', 'repository_checks_at', 'scanned_offset'), 1) | {'catch_up_by': 2})
         # 不经 refresh 直接读账本的每一处：refresh 自己；后台读账本的线程（一次一页、在状态锁之外，关停最多等这一页）；
         # 抽查上报核原意图（按事件键取，最多两条）。新加一处要先想清楚它拿没拿着状态锁、关停要不要等它。
         self.assertEqual(where('self.ledger', 'query'),
-                         {'refresh': 1, 'catch_up': 1, 'check_intent_record': 1})
+                         {'refresh': 1, 'catch_up_by': 1, 'check_intent_record': 1})
         self.assertEqual(where('self.0', 'lock'), {'drop': 1})
         # 请求怎么分派：四种请求各走一个方法、各调一次，dispatch 里没有别的 self 方法调用。
         dispatched = sorted(called for name, called in rust_calls(sources, 'self') if name == 'dispatch')
