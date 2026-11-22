@@ -91,3 +91,26 @@ fn only_fully_pushed_down_filters_may_carry_the_limit_into_sqlite() {
     .unwrap();
     assert!(unindexed.ends_with("ORDER BY offset"), "{unindexed}");
 }
+
+#[test]
+fn head_boundary_lookups_never_scan_the_whole_ledger() {
+    let directory = support::private_dir();
+    let ledger = SqliteAuditLedger::open(&directory.path().canonicalize().unwrap()).unwrap();
+    let session = ledger.connection.lock().unwrap();
+    // 每次读写账本都先核首尾边界：这里出现 SCAN，就是每次操作都把整本账本的索引扫一遍（BUG-042，
+    // 70 万条时每次约 72 毫秒）。`min`、`max` 写在同一句里就会这样，所以逐句核对。
+    for sql in super::verify::BOUNDS {
+        let mut statement = session
+            .connection
+            .prepare(&format!("EXPLAIN QUERY PLAN {sql}"))
+            .unwrap();
+        let plan = statement
+            .query_map([], |row| row.get::<_, String>(3))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap()
+            .join(";");
+        assert!(plan.contains("SEARCH audit_events"), "{sql} -> {plan}");
+        assert!(!plan.contains("SCAN"), "{sql} -> {plan}");
+    }
+}
