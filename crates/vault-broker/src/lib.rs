@@ -25,6 +25,7 @@ mod capture;
 mod checkpoint;
 pub use checkpoint::{
     BrokerCapture, BrokerCheckpointAudit, BrokerCheckpointCoverage, FrozenBroker,
+    raise_open_file_limit,
 };
 mod check_precondition;
 mod content_audit;

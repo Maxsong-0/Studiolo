@@ -59,7 +59,7 @@ impl Unchanged {
 }
 
 /// 两棵树一共能同时开着多少个文件：本进程打开文件数软上限的一半，另一半留给其余的连接和库。
-/// 人侧启动时把软上限抬到硬上限（`local-server` 的 `startup/limits.rs`）；不够就定格失败，不半拍。
+/// 人侧启动时把软上限抬到硬上限（[`super::open_files`]）；不够就定格失败，不半拍。
 pub(super) struct Budget {
     files: u64,
     limit: u64,

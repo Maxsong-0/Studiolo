@@ -4,6 +4,7 @@ pub(crate) mod audit;
 mod capture;
 mod copy;
 mod files;
+mod open_files;
 mod replays;
 mod roots;
 mod tree;
@@ -13,6 +14,7 @@ use crate::{
     residue::{DATA_QUARANTINE, VAULT_QUARANTINE},
 };
 pub use audit::{BrokerCheckpointAudit, BrokerCheckpointCoverage};
+pub use open_files::raise_open_file_limit;
 use std::{path::Path, time::Instant};
 use studiolo_core::checkpoint::{
     CheckpointOwner, OwnerWatermark, SealedOwnerCheckpoint, WalCheckpointProof,

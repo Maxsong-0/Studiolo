@@ -131,8 +131,9 @@ pub(super) fn prepare(
     };
     let ledger = ledger.ok_or(StartupError::Audit)?;
     let inputs = inputs.ok_or(StartupError::Configuration)?;
-    // 封存定格要同时开着写者的每个文件；只写抬完的上限，不写路径。
-    let open_files = super::limits::raise_open_files()?;
+    // 封存定格要同时开着写者的每个文件：上限的抬法和定格的额度都归写者（BUG-045）。只写抬完的上限，不写路径。
+    let open_files =
+        studiolo_vault_broker::raise_open_file_limit().map_err(|_| StartupError::Process)?;
     eprintln!(
         "备份封存可同时打开文件数上限：{}",
         open_files.map_or_else(|| "无限".to_owned(), |limit| limit.to_string())
