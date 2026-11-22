@@ -121,7 +121,7 @@ async fn the_listener_catches_up_on_its_own_and_stops_reading_on_shutdown() {
 /// 量测，不进门禁（造一本大账本要很久）：要数字时手工跑
 /// `STUDIOLO_MEASURE_LEDGER=700000 cargo test --release -p studiolo-local-server --lib measure_ -- --ignored --nocapture`。
 /// 打出来的行以 `MEASURE` 开头。账本每满 10 万条量一轮：首尾查询改前改后各一次的耗时、单次追加、
-/// 重启后把账本追完要多久；到头再做一次封存。分几个点量而不是只量终点：造账本每条追加都落盘同步，
+/// 整本账本完整校验一遍、重启后把账本追完要多久；到头再做一次封存。分几个点量而不是只量终点：造账本每条追加都落盘同步，
 /// 很慢，测试箱单任务又有时限。下一轮估计做不完（`STUDIOLO_MEASURE_BUDGET_SECONDS`，默认 48 分钟）就不再往下造，
 /// 直接去量封存，前面几轮的数照样留下。
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -218,6 +218,15 @@ fn measure_round(stage: &Stage, last: u64) -> u64 {
     println!(
         "MEASURE records={last} append_ms_avg={:.3}",
         started.elapsed().as_secs_f64() * 1000.0 / 100.0
+    );
+
+    // 整本账本完整校验一遍（逐条重算记录链）要多久：一次封存在冻结窗口里对人侧账本要做四遍
+    // （冻结时一遍，导出前、导出后各核一遍源库，导出的副本再一遍），是封存用时里随账本涨的大头。
+    let started = Instant::now();
+    stage.assembled.human.verify_all().unwrap();
+    println!(
+        "MEASURE records={last} verify_all_seconds={:.2}",
+        started.elapsed().as_secs_f64()
     );
 
     // 人侧重启：队列进度从零开始，后台线程把整本账本读到末尾要多久。小页（请求那条路的页大小）和真跑时的大页各量一次。
