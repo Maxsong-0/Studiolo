@@ -122,7 +122,19 @@ async fn measure_catch_up_append_and_seal_over_a_large_ledger() {
         .unwrap_or(700_000);
     let stage = Stage::new(true).await;
     let started = Instant::now();
-    let last = fill(&stage, "bulk", count);
+    // 每 5 万条报一次：造到一半被时限掐掉也留得下数，还看得出追加是不是越来越慢。
+    let mut last = 0;
+    for (index, start) in (0..count).step_by(50_000).enumerate() {
+        let chunk = Instant::now();
+        let size = 50_000.min(count - start);
+        last = fill(&stage, &format!("bulk{index}-"), size);
+        println!(
+            "MEASURE fill progress={} chunk_ms_avg={:.3} seconds={:.1}",
+            start + size,
+            chunk.elapsed().as_secs_f64() * 1000.0 / size as f64,
+            started.elapsed().as_secs_f64()
+        );
+    }
     println!(
         "MEASURE fill records={count} last_offset={last} seconds={:.1}",
         started.elapsed().as_secs_f64()

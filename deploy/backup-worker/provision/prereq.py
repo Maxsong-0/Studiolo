@@ -71,20 +71,19 @@ KEEP_LAST, KEEP_DAILY = 30, 14
 RETENTION_MILLIS = 3_600_000
 
 # ---------------------------------------------------------------- 发行相关的值（跟着 r18 候选和 108 的构建走）
-# 待填（T-219）：SOURCE_COMMIT、PACKAGES 的三个摘要、WORKER_SOURCE 这三样等 r18 在 108 上构建出来再填，现在还是 r17 的值。
-# 填之前跑不坏东西：候选 r18 里的程序和这里登记的摘要对不上，sources() 在动任何东西之前就停下。
-SOURCE_COMMIT = '0784ae9'
+# r18：108 上从提交 493c9a2 构建（2026-11-21，产物 ~/r18-493c9a2-20261121-out）。SOURCE_COMMIT 写的是构建提交，不是改这几行的那个提交。
+SOURCE_COMMIT = '493c9a2'
 HUMAN_RELEASE = 'm5m6-board-20260920-r18'
 RELEASE_DIRECTORY = '/home/maxsong/.local/share/studiolo-human-releases'
 PACKAGES = (
-    ('studiolo-local-server', '7410097f97f8e5d54cf08099f5732d46b20935dea618d3c1343a772e8067ce98'),
-    ('studiolo-maintain', 'b3ff850750c021da237337ba5c8acd19873898475fe25f16030a6648ebbe6420'),
-    ('studiolo-backup-worker', '0b85b10423e9f3aac8c5906295a411ddea4454075ed133a4b6a8f02943ac313f'),
+    ('studiolo-local-server', '733194c549124610b31d1d34ca43cdd3dc7e343957de5d2381fa89398ac5d989'),
+    ('studiolo-maintain', '0cab1d0a916cb895c15a619b8a57128f01bdfcdea985a48dcb6495e76eda9062'),
+    ('studiolo-backup-worker', 'd7f8e0e7ec96223204ec7366341669100b70c1c7bb122e793b628510957c7eee'),
 )
 RESTIC_SHA = '20d4142678d0d95ec11a4759def1b73fd9190abc9ca19e4b62d067c0b387e639'
 CA_SHA = '4577693009b4c680420b7ff895970a4e8b2838e451cad0bb8a0dfe7c64e8c269'
 # 要拷的三样现在放在哪（都在 169 上）：108 构建的 worker、P3 时装的 restic、P3 时取回的 NAS 公开证书。
-WORKER_SOURCE = '/home/maxsong/studiolo-t216-r17-20261121-0784ae9e-worker/studiolo-backup-worker'
+WORKER_SOURCE = '/home/maxsong/studiolo-t219-r18-20261121-493c9a2c-worker/studiolo-backup-worker'
 RESTIC_SOURCE = '/usr/local/bin/studiolo-restic'
 CA_SOURCE = '/home/maxsong/.config/studiolo-backup/ca.pem'
 # 上一版发行：169 上已经照它置备过的那一组值，键是 commit、release、packages（和上面三个同形）。换发行时把上面
