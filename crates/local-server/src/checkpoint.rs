@@ -2,6 +2,7 @@
 mod assembly;
 mod export;
 mod restore;
+mod settle;
 use crate::{
     CanonicalWorkbench, FrozenWorkbench, PolicyPlane,
     board::BoardPlane,
@@ -25,7 +26,7 @@ use std::{
 use studiolo_audit_ledger::{
     AuditCheckpointAccess, AuditEvent, AuditQuiescence, FrozenAudit, SqliteAuditLedger,
 };
-use studiolo_auth::{AuthCheckpointSource, FrozenAuth, SessionManager};
+use studiolo_auth::{AuthCheckpointSource, FactorRuntime, FrozenAuth, SessionManager};
 use studiolo_backup::{
     checkpoint::manifest::AuditCoverageProof,
     worker::{job::backup_intent, recovery_point::BackupTargetKind, state::JobKey},
@@ -41,6 +42,9 @@ type Result<T> = std::result::Result<T, CheckpointError>;
 pub struct CheckpointOwners {
     workbench: Arc<CanonicalWorkbench>,
     auth: AuthCheckpointSource,
+    /// 冻结之前补记登录库待发审计用的原实例（`settle` 子模块）；冻结本身只用上面的固定源。
+    sessions: Arc<SessionManager>,
+    factors: Option<Arc<FactorRuntime>>,
     audit: AuditCheckpointAccess,
     control: Option<ControlCheckpointSource>,
     bridge: Option<Arc<SyncPlane>>,
@@ -86,6 +90,8 @@ impl CheckpointOwners {
                 })
                 .transpose()?,
             workbench: input.workbench,
+            sessions: input.sessions,
+            factors: input.factors,
             bridge: input.bridge,
             agents,
             policy: input.policy,
@@ -104,6 +110,8 @@ impl CheckpointOwners {
         }
         let intent = backup_intent(key, target).map_err(|_| unavailable(Owner::Audit))?;
         let deadline = Instant::now() + Duration::from_millis(u64::from(request.budget.millis()));
+        // 登录库自己补得掉的待办先补完：补记要取完整操作许可，所以只能在排空之前做。
+        self.settle_auth(deadline)?;
         // 接入方可嵌套调用人侧黑板，反向无完整操作嵌套：必须先排空接入方。
         let agent_quiet = self
             .agents

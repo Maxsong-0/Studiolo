@@ -1,9 +1,9 @@
 //! 三槽来自同一原根；读取后和每次执行前后都核验原文件与原路径。
 use super::{
+    fault::Result,
     file::{SecretFile, Slot},
     root::Root,
 };
-use crate::Result;
 use std::time::Instant;
 use zeroize::Zeroizing;
 

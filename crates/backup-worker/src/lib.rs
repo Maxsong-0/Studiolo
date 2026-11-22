@@ -16,7 +16,7 @@ mod temporary;
 
 pub use audit::{WorkerAuditClient, WorkerQueueClient};
 pub use config::WorkerConfig;
-pub use credentials::ResticCredentials;
+pub use credentials::{CredentialFault, ResticCredentials};
 pub use job::ApprovedJob;
 pub use package::ResticPackage;
 pub use runner::{AppendRunner, FinalManifestProbe};

@@ -1,4 +1,4 @@
-"""黑板形状发行（当前 r16→r17）的固定变更面；夹具不接触生产或凭据。"""
+"""黑板形状发行（当前 r17→r18）的固定变更面；夹具不接触生产或凭据。"""
 import ast
 import collections
 import importlib.util
@@ -11,7 +11,8 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 def board_launcher():
-    """把 r7/r8 那份启动器补成上一发行（r16）的形状：带黑板常量与参数、只读身份目录参数，RELEASE 指向上一发行。"""
+    """把 r7/r8 那份启动器补成上一发行（r17）的形状：带黑板常量与参数、只读身份目录参数、备份配置参数，
+    RELEASE 指向上一发行。"""
     text = (ROOT / 'deploy/human/current-v2/launch-human.py').read_text().replace(
         'm4-t092-20260920-r7', a.OLD_RELEASE.rsplit('/', 1)[1]).replace(
         '服务器示例库', '正式黑板库 · Obsidian 同步试跑')
@@ -25,21 +26,24 @@ def board_launcher():
                         '"--factor-socket", SOCKET, "--policy-data", POLICY,\n'
                         '        "--canonical-writer-data", WRITER, "--board-data", BOARD,\n'
                         '        "--board-agent-data", AGENT, "--agent-data", AGENT, "--board-socket", BOARD_SOCKET,\n'
-                        '        "--sync-transport", "' + a.SYNC_APPROVAL + '",')
+                        '        "--sync-transport", "' + a.SYNC_APPROVAL + '",'
+                        ' "--backup-config", "' + a.BACKUP_CONFIG + '",')
 
 
 def board_unit():
-    """把 r7/r8 那份人侧单元补成上一发行（r16）的形状：黑板 RuntimeDirectory，黑板五个写根加 Bridge 两个写根，
-    都在 [Service] 节里、顺序和线上一致。"""
+    """把 r7/r8 那份人侧单元补成上一发行（r17）的形状：黑板 RuntimeDirectory，黑板五个写根、Bridge 两个写根、
+    备份两个写根，都在 [Service] 节里、顺序和线上一致；停止超时是按预算算出来的那一行。"""
     text = (ROOT / 'deploy/human/current-v2/studiolo-human.service').read_text().replace(
         'm4-t092-20260920-r7', a.OLD_RELEASE.rsplit('/', 1)[1])
     text = text.replace('RuntimeDirectory=studiolo-human\n',
                         'RuntimeDirectory=studiolo-human studiolo-board\n')
+    assert text.count('TimeoutStopSec=90\n') == 1
+    text = text.replace('TimeoutStopSec=90\n', a.stop_timeout_line(a.STOP_TIMEOUT_SECONDS))
     return text.replace('ReadWritePaths=/run/studiolo-human\n',
                         'ReadWritePaths=/run/studiolo-human\n' + ''.join(
                             'ReadWritePaths=' + path + '\n'
                             for path in (a.VAULT, a.WRITER, a.BOARD, a.AGENT, a.BOARD_RUNTIME,
-                                         a.BRIDGE_ROOT, a.TRANSPORT_ROOT)))
+                                         a.BRIDGE_ROOT, a.TRANSPORT_ROOT, a.BACKUP_RUNTIME, a.BACKUP_STAGING)))
 
 
 def rust_seconds(relative, name):
@@ -78,18 +82,20 @@ def rust_calls(paths, receiver, method=r'\w+'):
 
 
 class AssemblyTests(unittest.TestCase):
-    def test_r17_upgrades_the_activated_r16(self):
-        self.assertEqual(a.BUILD, 'm5m6-board-20260920-r17')
+    def test_r18_upgrades_the_activated_r17(self):
+        self.assertEqual(a.BUILD, 'm5m6-board-20260920-r18')
         self.assertEqual(a.RELEASE.rsplit('/', 1)[1], a.BUILD)
-        self.assertTrue(a.OLD_RELEASE.endswith('/m5m6-board-20260920-r16'))
+        self.assertTrue(a.OLD_RELEASE.endswith('/m5m6-board-20260920-r17'))
         self.assertEqual(a.WEB_PREFIX, 'web/')
 
     def test_launcher_preserves_the_approved_bridge_wiring(self):
         old = board_launcher()
         new = a.launcher(old)
         backup = ' "--backup-config", "' + a.BACKUP_CONFIG + '",'
-        restored = new.replace(a.RELEASE, a.OLD_RELEASE).replace(backup, '')
+        # 本版只换发行路径：换回去就是上一发行的那一份，一个字不差。
+        restored = new.replace(a.RELEASE, a.OLD_RELEASE)
         self.assertEqual(restored, old)
+        self.assertNotIn(a.OLD_RELEASE, new)
         self.assertEqual(new.count('"--backup-config"'), 1)
         self.assertEqual(new.count('"--agent-data"'), 1)
         self.assertEqual(new.count('"--sync-transport"'), 1)
@@ -104,8 +110,12 @@ class AssemblyTests(unittest.TestCase):
         self.assertEqual(functions(old), functions(restored))
         self.assertIn('"--canonical-writer-data", WRITER', new)
         self.assertIn('"STUDIOLO_TOTP_SEED_HEX": credential()', new)
-        # 已转换的启动器不能再过一遍；接线或标签漂移也拒绝；还没带只读身份目录参数的（r15 形状）也拒绝。
+        # 已转换的启动器不能再过一遍；接线或标签漂移也拒绝；还没带只读身份目录参数的（r15 形状）、
+        # 还没带备份配置参数的（r16 形状）、备份配置指到别处或多出一处的也拒绝。
         for bad in (new, old + '\n# "--backup-config"\n', old + '\n# "--agent-data"\n',
+                    old.replace(backup, ''), old.replace(a.BACKUP_CONFIG, '/foreign/backup.json'),
+                    old.replace(backup, '').replace('"--board-socket", BOARD_SOCKET,',
+                                                    '"--board-socket", BOARD_SOCKET,' + backup),
                     old.replace(' "--agent-data", AGENT,', ''),
                     old.replace('"--board-socket", BOARD_SOCKET,', ''),
                     old.replace('"--sync-transport"', '"--foreign"'),
@@ -115,13 +125,14 @@ class AssemblyTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 a.launcher(bad)
 
-    def test_human_unit_repoints_the_release_and_wires_the_backup_producer(self):
+    def test_human_unit_only_repoints_the_release_and_keeps_the_backup_wiring(self):
         old = board_unit()
-        old_stop, new_stop = (a.stop_timeout_line(n) for n in (a.OLD_STOP_TIMEOUT_SECONDS, a.STOP_TIMEOUT_SECONDS))
-        self.assertEqual(old.count(old_stop), 1)
+        new_stop = a.stop_timeout_line(a.STOP_TIMEOUT_SECONDS)
+        self.assertEqual(old.count(new_stop), 1)
         new = a.human_unit(old)
         added = ''.join('ReadWritePaths=' + path + '\n' for path in (a.BACKUP_RUNTIME, a.BACKUP_STAGING))
-        restored = new.replace(a.RELEASE, a.OLD_RELEASE).replace(added, '').replace(new_stop, old_stop)
+        # 本版只换发行路径：换回去就是上一发行的那一份，一个字不差。
+        restored = new.replace(a.RELEASE, a.OLD_RELEASE)
         self.assertEqual(restored, old)
         # 发行路径恰好两处（启动器、工作目录）都指到新发行，旧发行名一处不剩：只看「还原后相等」的话，
         # 忘了换路径的变换也能过（还原是空操作）。
@@ -140,10 +151,13 @@ class AssemblyTests(unittest.TestCase):
         self.assertEqual(new.count('TimeoutStopSec='), 1)
         self.assertEqual(new.count(new_stop), 1)
         self.assertEqual(new_stop, 'TimeoutStopSec=300\n')
-        # 拒绝：已转换过的；停止超时不是钉住的旧值、多出一行（不管值是多少）；已带备份路径；黑板或 Bridge 接线缺了；
-        # 发行路径不是两处。
-        for bad in (new, old.replace(old_stop, 'TimeoutStopSec=120\n'), old + old_stop, old + 'TimeoutStopSec=120\n',
-                    old.replace(old_stop, ''),
+        # 拒绝：已转换过的；停止超时不是算出来的那个值（含还没接备份的 90 秒）、多出一行（不管值是多少）、没有；
+        # 备份的写根缺一个、多一处、不在 Bridge 传输根后面、别处又提到备份路径；黑板或 Bridge 接线缺了；发行路径不是两处。
+        for bad in (new, old.replace(new_stop, 'TimeoutStopSec=120\n'), old.replace(new_stop, 'TimeoutStopSec=90\n'),
+                    old + new_stop, old + 'TimeoutStopSec=120\n', old.replace(new_stop, ''),
+                    old.replace(added, ''), old.replace('ReadWritePaths=' + a.BACKUP_STAGING + '\n', ''),
+                    old.replace(added, '').replace('ReadWritePaths=' + a.BOARD + '\n',
+                                                   'ReadWritePaths=' + a.BOARD + '\n' + added),
                     old + 'ReadWritePaths=' + a.BACKUP_RUNTIME + '\n', old + '# studiolo-backup\n',
                     old.replace('ReadWritePaths=' + a.BOARD + '\n', ''),
                     old.replace('ReadWritePaths=' + a.BRIDGE_ROOT + '\n', ''),
@@ -171,7 +185,6 @@ class AssemblyTests(unittest.TestCase):
         self.assertGreaterEqual(a.UNBUDGETED_STEPS_SECONDS, 10)
         # 保险余量（用户 2026-11-20 定）：超时被强杀要人处理，所以它不能悄悄变小。
         self.assertEqual(a.STOP_SAFETY_MARGIN_SECONDS, 105)
-        self.assertGreater(a.STOP_TIMEOUT_SECONDS, a.OLD_STOP_TIMEOUT_SECONDS)
         # 程序里的三个常量：程序改了这里先红，免得装配还按旧值算。
         producer = 'crates/local-server/src/backup/producer.rs'
         self.assertEqual(a.BACKUP_CONNECTION_WINDOW_SECONDS,
@@ -195,9 +208,15 @@ class AssemblyTests(unittest.TestCase):
                                  'repository_check_with': 3, 'report_check': 1, 'repository_checks_at': 1})
         # 拿状态锁的每一处：新加一个拿着锁干活的地方（哪怕不读账本），请求和后台线程都会跟着等。
         # 后台线程收尾复位 busy 也拿这把锁（Idle 的 drop），assembly.py 把它列在没算进去的那几样里。
+        # 后台读账本的线程（producer/catch_up.rs，T-219）每页拿两次：取读到哪儿、把读回的一页记进队列。
+        # 它读账本在锁外，拿着锁只做内存里的记账，所以不算进「等锁时别人读账本」。scanned_offset 只在测试构建里有。
         self.assertEqual(where('self.state', 'lock'), dict.fromkeys(
-            ('next_pending', 'schedule', 'reclaim', 'launch', 'jobs',
-             'repository_check_with', 'report_check', 'repository_checks_at'), 1))
+            ('next_pending', 'schedule', 'reclaim', 'launch', 'jobs', 'repository_check_with',
+             'report_check', 'repository_checks_at', 'scanned_offset'), 1) | {'catch_up': 2})
+        # 不经 refresh 直接读账本的每一处：refresh 自己；后台读账本的线程（一次一页、在状态锁之外，关停最多等这一页）；
+        # 抽查上报核原意图（按事件键取，最多两条）。新加一处要先想清楚它拿没拿着状态锁、关停要不要等它。
+        self.assertEqual(where('self.ledger', 'query'),
+                         {'refresh': 1, 'catch_up': 1, 'check_intent_record': 1})
         self.assertEqual(where('self.0', 'lock'), {'drop': 1})
         # 请求怎么分派：四种请求各走一个方法、各调一次，dispatch 里没有别的 self 方法调用。
         dispatched = sorted(called for name, called in rust_calls(sources, 'self') if name == 'dispatch')
@@ -231,19 +250,16 @@ class AssemblyTests(unittest.TestCase):
             '审批 `budget.stop_grace_seconds` 加 %d s' % a.BRIDGE_STOP_MARGIN_SECONDS), 1)
 
     def test_this_release_requires_the_new_human_program(self):
-        # 启动器加了上一发行的程序不认的参数，就必须换人侧程序（出候选和激活预检靠这两个常量拒绝沿用旧程序）。
-        old = board_launcher()
-        new = a.launcher(old)
+        # 本版的修复都在人侧程序里，必须换程序（出候选和激活预检靠这两个常量拒绝沿用旧程序）。
         self.assertIs(a.REQUIRES_NEW_HUMAN_PROGRAM, True)
-        self.assertEqual(a.NEW_HUMAN_PROGRAM_LITERALS, (b'--backup-config',))
+        self.assertEqual(a.NEW_HUMAN_PROGRAM_LITERALS, ('备份封存卡在：'.encode(),))
+        # 只看编进程序的那部分源码（测试模块和注释不算）。
+        producer = rust_code(ROOT / 'crates/local-server/src/backup/producer.rs')
         for literal in a.NEW_HUMAN_PROGRAM_LITERALS:
-            name = literal.decode()
-            # 确实是本版启动器新带的参数：上一发行的启动器里没有，新的里有。
-            self.assertNotIn(name, old)
-            self.assertEqual(new.count('"' + name + '"'), 1)
-            # 新程序认它，而且参数名在源码里是原样的字符串字面量（编进程序后能按字节找到）。
-            table = (ROOT / 'crates/local-server/src/options/table.rs').read_text()
-            self.assertEqual(table.count('"' + name + '"'), 1)
+            # 这几个字在源码里是一句格式串的开头，原样的字符串字面量（编进程序后能按字节找到），只此一处；
+            # 后面紧跟着占位符，所以程序里连续的字节就到这里为止。上一发行的程序里没有它，在 169 上只读核过。
+            self.assertEqual(producer.count('format!("' + literal.decode() + '{'), 1)
+            self.assertEqual(producer.count(literal.decode()), 1)
 
     def test_agent_unit_is_carried_over_byte_for_byte(self):
         for quoted in (False, True):

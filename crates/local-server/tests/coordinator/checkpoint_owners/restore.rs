@@ -186,13 +186,17 @@ fn cutover<'a>(fixture: &Fixture, new_root: &'a Path) -> Cutover<'a> {
         sessions: sessions(fixture),
     }
 }
-/// 主人在新根上重新登录一次：像服务那样打开新根的 Auth，拿 Access 夹具签的令牌签发会话。
-async fn login(fixture: &Fixture, new_root: &Path) {
-    let identity = access_fixture::verifier()
+/// 主人经 Access 验过的身份：夹具签的令牌走完整验证，一小时后到期。
+pub(super) async fn owner_identity() -> studiolo_auth::AccessIdentity {
+    access_fixture::verifier()
         .await
         .verify(&access_fixture::signed(&access_fixture::claims()))
         .await
-        .unwrap();
+        .unwrap()
+}
+/// 主人在新根上重新登录一次：像服务那样打开新根的 Auth，拿 Access 夹具签的令牌签发会话。
+async fn login(fixture: &Fixture, new_root: &Path) {
+    let identity = owner_identity().await;
     let ledger = Arc::new(SqliteAuditLedger::open_existing(&new_root.join("audit")).unwrap());
     let manager = SessionManager::open_existing(
         &new_root.join("auth"),
@@ -313,6 +317,7 @@ async fn seal_human(
     let inputs = CheckpointInputs {
         workbench,
         sessions,
+        factors: None,
         audit: human.clone(),
         board: None,
         bridge: None,

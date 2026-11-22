@@ -26,6 +26,14 @@ impl Anchored {
     }
 }
 
+/// 取账本首、尾偏移的两句 SQL，必须各写一句：单独一个 `min` 或 `max` 走一次 rowid 主键查找；两个聚合写进
+/// 同一句，SQLite 就不走这条捷径，改成把唯一索引整个扫一遍，70 万条时每次约 72 毫秒，而这里是每次读写
+/// 账本都要过的（BUG-042）。执行计划用例逐句核对它们不扫整本账本。
+pub(super) const BOUNDS: [&str; 2] = [
+    "SELECT min(offset) FROM audit_events",
+    "SELECT max(offset) FROM audit_events",
+];
+
 /// 重算段链、走读打开段并核对 head；成本为 O(段数 + 打开段记录数)，与账本总量无关。
 pub(super) fn anchor(connection: &Connection) -> Result<Anchored, AuditError> {
     let (last_offset, head_hash) = schema::head(connection, schema::VERSION)?;
@@ -38,15 +46,14 @@ pub(super) fn anchor(connection: &Connection) -> Result<Anchored, AuditError> {
     {
         return Err(AuditError::CorruptStore);
     }
-    // 记录行必须正好落在 [1, last_offset]：rowid 主键让这两次取值都是 O(1)，
+    // 记录行必须正好落在 [1, last_offset]：首、尾各查一次，都走 rowid 主键（见 `BOUNDS`），
     // 因此整条账本的首尾边界每次操作都核对，只有中间段的缺行要靠走读该段发现。
-    let (minimum, maximum): (Option<i64>, Option<i64>) = connection
-        .query_row(
-            "SELECT min(offset), max(offset) FROM audit_events",
-            [],
-            |row| Ok((row.get(0)?, row.get(1)?)),
-        )
-        .map_err(unavailable)?;
+    let bound = |sql: &str| -> Result<Option<i64>, AuditError> {
+        connection
+            .query_row(sql, [], |row| row.get(0))
+            .map_err(unavailable)
+    };
+    let (minimum, maximum) = (bound(BOUNDS[0])?, bound(BOUNDS[1])?);
     let observed = match maximum {
         None => 0,
         Some(value) => u64::try_from(value).map_err(|_| AuditError::CorruptStore)?,

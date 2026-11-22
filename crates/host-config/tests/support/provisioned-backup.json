@@ -56,7 +56,7 @@
   "deployment": [
    {
     "unit": "studiolo-human.service",
-    "revision": "m5m6-board-20260920-r17"
+    "revision": "m5m6-board-20260920-r18"
    },
    {
     "unit": "studiolo-backup-worker.service",

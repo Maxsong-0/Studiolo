@@ -7,6 +7,9 @@
 重复跑是安全的：已经对的跳过，在但不对的停下（不覆盖、不删除），缺的才建。
 要 root 放的文件由本脚本的 --place 入口放（只由本脚本自己经 sudo 调用）：只新建，目标已经在就失败；
 内容和调用方核过的那一份不一样就不放。被打断（Ctrl-C、终端断开）时正在放的那一份不留半个文件。
+换发行：跟着发行走的只有 worker 程序和私有备份配置两样。现场的那一份认得出正好是登记的上一版（PREVIOUS）才换成
+这一版，上一版改名留在原地（名字后面加 RETIRED_SUFFIX）；不是上一版也不是这一版的，照旧停下。换 worker 程序之前
+worker 和定时器必须停着。
 不碰凭据（见同目录 credentials.py），不启用、不启动任何单元，不动人侧服务。
 
 「发行相关的值」那一段跟着人侧发行走：候选重出、worker 重建，都要改这里再重跑。
@@ -67,9 +70,11 @@ KEEP_LAST, KEEP_DAILY = 30, 14
 # 封存副本只在到期后回收：保留期乘上数据量就是暂存区的盘占用（169 上每份约 1.1G，一小时约 8G）。
 RETENTION_MILLIS = 3_600_000
 
-# ---------------------------------------------------------------- 发行相关的值（跟着 r17 候选和 108 的构建走）
+# ---------------------------------------------------------------- 发行相关的值（跟着 r18 候选和 108 的构建走）
+# 待填（T-219）：SOURCE_COMMIT、PACKAGES 的三个摘要、WORKER_SOURCE 这三样等 r18 在 108 上构建出来再填，现在还是 r17 的值。
+# 填之前跑不坏东西：候选 r18 里的程序和这里登记的摘要对不上，sources() 在动任何东西之前就停下。
 SOURCE_COMMIT = '0784ae9'
-HUMAN_RELEASE = 'm5m6-board-20260920-r17'
+HUMAN_RELEASE = 'm5m6-board-20260920-r18'
 RELEASE_DIRECTORY = '/home/maxsong/.local/share/studiolo-human-releases'
 PACKAGES = (
     ('studiolo-local-server', '7410097f97f8e5d54cf08099f5732d46b20935dea618d3c1343a772e8067ce98'),
@@ -82,6 +87,20 @@ CA_SHA = '4577693009b4c680420b7ff895970a4e8b2838e451cad0bb8a0dfe7c64e8c269'
 WORKER_SOURCE = '/home/maxsong/studiolo-t216-r17-20261121-0784ae9e-worker/studiolo-backup-worker'
 RESTIC_SOURCE = '/usr/local/bin/studiolo-restic'
 CA_SOURCE = '/home/maxsong/.config/studiolo-backup/ca.pem'
+# 上一版发行：169 上已经照它置备过的那一组值，键是 commit、release、packages（和上面三个同形）。换发行时把上面
+# 三个值原样搬进来再填新值；没有上一版（第一次置备）就是 None。上一版那份私有备份配置要能照这组值原样生成出来
+# （见 backup_document）：这次要是还改了别的字段，把旧值一起搬进来，不然现场那一份认不出来、会停下。
+# 现在登记的是 r17（提交 0784ae9 构建，2026-11-21 在 169 上置备、激活）。
+PREVIOUS = {
+    'commit': '0784ae9', 'release': 'm5m6-board-20260920-r17',
+    'packages': (
+        ('studiolo-local-server', '7410097f97f8e5d54cf08099f5732d46b20935dea618d3c1343a772e8067ce98'),
+        ('studiolo-maintain', 'b3ff850750c021da237337ba5c8acd19873898475fe25f16030a6648ebbe6420'),
+        ('studiolo-backup-worker', '0b85b10423e9f3aac8c5906295a411ddea4454075ed133a4b6a8f02943ac313f'),
+    ),
+}
+# 换下来的上一版留在原地用的名字后缀：跟着这一版的发行号走。
+RETIRED_SUFFIX = '.before-' + HUMAN_RELEASE.rsplit('-', 1)[1]
 
 
 class Refused(Exception):
@@ -119,7 +138,9 @@ def worker_document(worker_uid, reader_gid):
     }
 
 
-def backup_document(worker_uid, reader_gid):
+def backup_document(worker_uid, reader_gid, release=None):
+    """release 不给就是这一版；给上一版那组值（PREVIOUS），生成的就是上一版置备时写下的那一份。"""
+    release = release or {'commit': SOURCE_COMMIT, 'release': HUMAN_RELEASE, 'packages': PACKAGES}
     return {
         'version': 1,
         'backup': {
@@ -139,11 +160,11 @@ def backup_document(worker_uid, reader_gid):
             'version': 1, 'worker_uid': worker_uid, 'reader_gid': reader_gid,
             'socket': SOCKET, 'staging_parent': STAGING, 'ephemeral_root': EPHEMERAL,
             'source_retention_millis': RETENTION_MILLIS, 'freeze_budget_millis': FREEZE_MILLIS,
-            'application_packages': [{'name': name, 'version': SOURCE_COMMIT, 'digest': digest}
-                                     for name, digest in PACKAGES],
+            'application_packages': [{'name': name, 'version': release['commit'], 'digest': digest}
+                                     for name, digest in release['packages']],
             'restic_digest': RESTIC_SHA,
-            'deployment': [{'unit': 'studiolo-human.service', 'revision': HUMAN_RELEASE},
-                           {'unit': 'studiolo-backup-worker.service', 'revision': SOURCE_COMMIT}],
+            'deployment': [{'unit': 'studiolo-human.service', 'revision': release['release']},
+                           {'unit': 'studiolo-backup-worker.service', 'revision': release['commit']}],
         },
     }
 
@@ -387,6 +408,13 @@ def place(destination, mode, stream, owner, digest):
     先在同一个目录里写好临时文件，再用硬链接起正式的名字（名字已在时链接失败），最后删掉临时名。
     临时名是固定的：上一次被强杀留下的、或者另一处正在放的，这里会撞上并停下，不会悄悄攒下一堆。
     owner 给 (uid, gid) 就改属主（root 一侧放文件），给 None 就保持当前账号（主服务账号写自己的私有配置）。"""
+    install(destination, mode, stream, owner, digest,
+            lambda scratch: os.link(scratch, destination, follow_symlinks=False))
+
+
+def install(destination, mode, stream, owner, digest, publish):
+    """place 和 replace 共用的那一段：同目录的固定临时名里写好完整的一份、核过摘要，再交给 publish 起正式的名字；
+    不管成没成，临时名都收走（publish 把它改名用掉了就没有可收的），最后把所在目录落盘。"""
     directory, scratch = os.path.dirname(destination), placing(destination)
     # 先记下「临时名是这一次建的」再去建：反过来的话，建好之后、记下之前被打断，收尾就不知道该删它。
     # 建的时候发现已经在（别人的）才改回去，那一份不动。
@@ -408,7 +436,7 @@ def place(destination, mode, stream, owner, digest):
             out.flush()
             os.fsync(out.fileno())
         require(seen.hexdigest() == digest, destination + ' 要放的内容和核过的那一份不一样（来源在核对之后被换了）。什么都没放')
-        os.link(scratch, destination, follow_symlinks=False)
+        publish(scratch)
     finally:
         if mine:
             try:
@@ -420,6 +448,67 @@ def place(destination, mode, stream, owner, digest):
         os.fsync(descriptor)
     finally:
         os.close(descriptor)
+
+
+def retired(destination):
+    """换发行时，换下来的上一版留在原地用的名字。"""
+    return destination + RETIRED_SUFFIX
+
+
+def superseded(path, uid, gid, mode, digest):
+    """path 是不是认得出的上一版：普通文件（不是链接）、属主权限对、内容的摘要正好是 digest。
+    链接数通常是 1；是 2 也认，条件是另一个名字正好是它留下用的那个名字：上一次换到一半被打断就是这个样子。"""
+    try:
+        descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+    except OSError:
+        return False
+    with os.fdopen(descriptor, 'rb') as stream:
+        status = os.fstat(stream.fileno())
+        if not (stat.S_ISREG(status.st_mode) and (status.st_uid, status.st_gid) == (uid, gid)
+                and stat.S_IMODE(status.st_mode) == mode and status.st_nlink in (1, 2)):
+            return False
+        if status.st_nlink == 2 and not same_file(status, retired(path)):
+            return False
+        seen = hashlib.sha256()
+        for block in iter(lambda: stream.read(1 << 20), b''):
+            seen.update(block)
+    return seen.hexdigest() == digest
+
+
+def same_file(status, other):
+    try:
+        return os.path.samestat(status, os.lstat(other))
+    except FileNotFoundError:
+        return False
+
+
+def occupied(path):
+    """上一版留下用的名字已经被别的东西占着（不是现场这一份自己）：这种现场不换，先由人看过。"""
+    keep = retired(path)
+    return os.path.lexists(keep) and not same_file(os.lstat(path), keep)
+
+
+OCCUPIED = ' 已经在，而且不是现场这一份上一版。不覆盖，先由人看过'
+
+
+def replace(destination, mode, stream, owner, previous, digest):
+    """把认得出是上一版的 destination 换成 stream 的内容，上一版改名留在原地（见 retired）。
+    现场的内容不是 previous 就不动；要放的内容不是 digest 就不放；留下用的名字被别的东西占着就不动。
+    新内容先写进同目录的临时文件（和 place 同一个固定临时名）；给上一版起好留下用的名字之后，用改名一次换上：
+    正式的名字任何时刻都指着完整的一份，不是上一版就是这一版。起好名字、还没换上就被打断的话，上一版多一个名字，
+    重跑时认得出来（见 superseded），接着换完。
+    owner 给 (uid, gid) 就改属主，给 None 就保持当前账号；现场那一份也得属这个账号。"""
+    held = owner if owner is not None else (os.geteuid(), os.getegid())
+    require(superseded(destination, held[0], held[1], mode, previous), destination + ' 不是登记的上一版。什么都没换，先由人看过')
+    keep = retired(destination)
+
+    def publish(scratch):
+        try:
+            os.link(destination, keep, follow_symlinks=False)
+        except FileExistsError:
+            require(not occupied(destination), keep + OCCUPIED)
+        os.replace(scratch, destination)
+    install(destination, mode, stream, owner, digest, publish)
 
 
 # ---------------------------------------------------------------- 现场：会改东西的步骤
@@ -459,6 +548,36 @@ class Provision:
         if self.apply:
             self.run(['sudo', '--'] + argv, check=True, **stdin)
 
+    def replace(self, path, source, previous, digest, **stdin):
+        """经 sudo 调本脚本的 --replace：现场正好是上一版才换，上一版改名留在原地；内容的摘要不是 digest 就不换。"""
+        argv = ['/usr/bin/python3', '-I', '-B', str(HERE / 'prereq.py'), '--replace', path, previous, digest]
+        self.out('    sudo ' + ' '.join(argv) + ' < ' + source + '    （上一版留在 ' + retired(path) + '）')
+        if self.apply:
+            self.run(['sudo', '--'] + argv, check=True, **stdin)
+
+    def supersede(self, title, path, held, previous, action, verify):
+        """现场认得出是上一版（见 superseded）就换成这一版、回 True；不是就什么都不做、回 False，由调用方照旧走 step。
+        held 是现场那一份该有的 (uid, gid, 权限)；previous 是上一版内容的摘要，没有上一版给 None。"""
+        if previous is None or not superseded(path, held[0], held[1], held[2], previous):
+            return False
+        require(not self.audit, title + '：现场还是上一版。先跑完 prereq.py --apply')
+        require(not occupied(path), retired(path) + OCCUPIED)
+        self.pending += 1
+        self.out(('[现在换] ' if self.apply else '[要换] ') + title + '（现场是上一版；换上这一版，上一版留在 '
+                 + retired(path) + '）')
+        action()
+        if self.apply:
+            require(verify() is True, title + '：换完之后核对不过')
+            self.out('    核对通过')
+        return True
+
+    def gated(self, message):
+        """worker 和定时器都没启用、没在跑（只读两条 systemctl）；不是就停下，原因用 message。"""
+        for name in ('studiolo-backup-worker.service', 'studiolo-backup-schedule.timer'):
+            enabled = self.run(['systemctl', 'is-enabled', name], capture_output=True, text=True).stdout.strip()
+            active = self.run(['systemctl', 'is-active', name], capture_output=True, text=True).stdout.strip()
+            require(enabled == 'disabled' and active == 'inactive', name + message)
+
     def unfinished(self, path):
         """放 path 用的临时名还在，就先停在这里把话说清楚。不然有一种现场只会得到一句「不是预期的样子」：
         上一次正式名已经起了、临时名还没删就被强杀，正式文件多了一个名字（链接数是 2）。"""
@@ -473,19 +592,21 @@ class Provision:
         self.step(title, state,
                   lambda: self.place(path, '<内容见末尾或仓库模板>', hashlib.sha256(raw).hexdigest(), input=raw), state)
 
-    def root_copy(self, title, source, path, digest):
+    def root_copy(self, title, source, path, digest, previous=None):
+        """previous：上一版内容的摘要。给了，而且现场正好是上一版，就换（上一版留在原地）；别的情况照旧。"""
         def state():
             present = has(path, stat.S_ISREG, 0, 0, (PLACED[path],))
             return present if not present else sha(path) == digest
 
-        def copy():
+        def copy(put=self.place, *extra):
             if not self.apply:
-                self.place(path, source, digest)
+                put(path, source, *extra, digest)
                 return
             with reading(source) as stream:
-                self.place(path, source, digest, stdin=stream)
+                put(path, source, *extra, digest, stdin=stream)
         self.unfinished(path)
-        self.step(title, state, copy, state)
+        if not self.supersede(title, path, (0, 0, PLACED[path]), previous, lambda: copy(self.replace, previous), state):
+            self.step(title, state, copy, state)
 
     def identities(self):
         def readers_state():
@@ -540,7 +661,12 @@ class Provision:
                   # mkdir 遇到已经在的目录会失败；install -d 会把已有目录的属主权限改掉。
                   lambda: self.root('mkdir', '-m', '0755', PROGRAMS),
                   lambda: has(PROGRAMS, stat.S_ISDIR, 0, 0, (0o755,)))
-        self.root_copy('worker 程序', WORKER_SOURCE, WORKER_BINARY, PACKAGES[2][1])
+        previous = PREVIOUS['packages'][2][1] if PREVIOUS else None
+        if not self.audit and previous is not None and superseded(WORKER_BINARY, 0, 0, PLACED[WORKER_BINARY], previous):
+            # 定时器拉起的那条命令用的也是这个程序：两个都得停着才换。预演时也看（只读），早点把话说清楚。
+            # 只读核对那一路不问这个：现场还是上一版，它本来就会停下（见 supersede）。
+            self.gated(' 还启用着或在跑：换 worker 程序之前先停掉（sudo systemctl disable --now 加这两个单元的名字）')
+        self.root_copy('worker 程序', WORKER_SOURCE, WORKER_BINARY, PACKAGES[2][1], previous)
         self.root_copy('restic 0.19.1', RESTIC_SOURCE, RESTIC, RESTIC_SHA)
         self.root_copy('NAS 证书 ' + CA, CA_SOURCE, CA, CA_SHA)
 
@@ -563,13 +689,11 @@ class Provision:
         self.root('systemctl', 'daemon-reload')
         if self.apply:
             self.verify_units()
-            for name in ('studiolo-backup-worker.service', 'studiolo-backup-schedule.timer'):
-                enabled = self.run(['systemctl', 'is-enabled', name], capture_output=True, text=True).stdout.strip()
-                active = self.run(['systemctl', 'is-active', name], capture_output=True, text=True).stdout.strip()
-                require(enabled == 'disabled' and active == 'inactive', name + ' 不该是启用或在跑的')
+            self.gated(' 不该是启用或在跑的')
             self.out('    三个单元语法核过，都没启用、没在跑')
 
-    def private(self, backup):
+    def private(self, backup, previous=None):
+        """previous：上一版那份私有备份配置的原样内容（没有上一版给 None）。"""
         def ephemeral():
             return has(EPHEMERAL, stat.S_ISDIR, OWNER_UID, OWNER_UID, (0o700,))
 
@@ -586,8 +710,16 @@ class Provision:
             # 和 root 放文件同一个写法：先写临时名、落盘，再起正式的名字；写到一半出错或被打断不留半份。
             if self.apply:
                 place(BACKUP_CONFIG, 0o600, io.BytesIO(backup), None, hashlib.sha256(backup).hexdigest())
+
+        def swap():
+            if self.apply:
+                replace(BACKUP_CONFIG, 0o600, io.BytesIO(backup), None, hashlib.sha256(previous).hexdigest(),
+                        hashlib.sha256(backup).hexdigest())
+        title = '私有备份配置 ' + BACKUP_CONFIG + '（不用 sudo，0600）'
         self.unfinished(BACKUP_CONFIG)
-        self.step('私有备份配置 ' + BACKUP_CONFIG + '（不用 sudo，0600）', state, write, state)
+        if not self.supersede(title, BACKUP_CONFIG, (OWNER_UID, OWNER_UID, 0o600),
+                              hashlib.sha256(previous).hexdigest() if previous is not None else None, swap, state):
+            self.step(title, state, write, state)
 
     def sources(self):
         entry = account(OWNER)
@@ -628,7 +760,8 @@ class Provision:
         self.directories(reader_gid)
         self.programs()
         self.root_file('worker 配置 ' + WORKER_CONFIG, WORKER_CONFIG, worker)
-        self.private(backup)
+        # 上一版的那一份照同样的号码原样生成出来，拿它认现场；号码还是占位的（账号没建）就谈不上上一版。
+        self.private(backup, encode(backup_document(worker_uid, reader_gid, PREVIOUS)) if PREVIOUS and real else None)
         # 单元放最后：语法核对万一报问题，前面的东西都已经就位，不用重做。
         self.units()
         if not (self.apply or self.audit):
@@ -656,6 +789,13 @@ def main(argv):
         require(len(argv) == 3 and argv[1] in PLACED and is_digest(argv[2]) and os.geteuid() == 0
                 and not sys.stdin.isatty(), '--place 只由本脚本自己经 sudo 调用，目标只能是它要放的那几个文件')
         place(argv[1], PLACED[argv[1]], sys.stdin.buffer, PLACED_OWNER, argv[2])
+        return
+    if argv[:1] == ['--replace']:
+        # 跟着发行换、又要 root 放的只有 worker 程序；两个摘要都只认本脚本登记的那两个。
+        require(len(argv) == 4 and argv[1] == WORKER_BINARY and PREVIOUS is not None
+                and (argv[2], argv[3]) == (PREVIOUS['packages'][2][1], PACKAGES[2][1]) and os.geteuid() == 0
+                and not sys.stdin.isatty(), '--replace 只由本脚本自己经 sudo 调用，只换 worker 程序，只从登记的上一版换到这一版')
+        replace(argv[1], PLACED[argv[1]], sys.stdin.buffer, PLACED_OWNER, argv[2], argv[3])
         return
     require(argv in ([], ['--apply']), __doc__)
     provision = Provision(apply=argv == ['--apply'])

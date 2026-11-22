@@ -1,8 +1,12 @@
 //! 凭据不实现 Debug/Clone；只向固定子进程的三个环境槽位借出。
+mod acl;
+mod fault;
 mod file;
 mod input;
+mod mount;
 mod root;
-use crate::{Result, WorkerConfig};
+use crate::{ProcessError, Result, WorkerConfig};
+pub use fault::CredentialFault;
 #[cfg(test)]
 use std::path::Path;
 use std::{process::Command, time::Instant};
@@ -23,7 +27,12 @@ enum Origin {
 }
 impl ResticCredentials {
     /// 只读固定 systemd 凭据根的三个槽位；不接受环境或请求中的路径/凭据。
-    pub fn load(_residency: &Residency, config: &WorkerConfig, deadline: Instant) -> Result<Self> {
+    /// 取不到时回固定类别（哪一道检查没过），调用方打进日志；类别里没有路径和内容。
+    pub fn load(
+        _residency: &Residency,
+        config: &WorkerConfig,
+        deadline: Instant,
+    ) -> std::result::Result<Self, CredentialFault> {
         let values = input::Input::load(config.worker_uid(), deadline)?;
         Ok(Self {
             password_file: Zeroizing::new(format!("{}/repository-password", root::ROOT)),
@@ -42,7 +51,7 @@ impl ResticCredentials {
     }
     pub(crate) fn check(&self, deadline: Instant) -> Result<()> {
         match &self.origin {
-            Origin::Fixed(input) => input.check(deadline),
+            Origin::Fixed(input) => input.check(deadline).map_err(ProcessError::from),
             #[cfg(test)]
             Origin::Fixture => Ok(()),
         }

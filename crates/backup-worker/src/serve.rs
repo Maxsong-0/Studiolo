@@ -56,6 +56,8 @@ pub enum ServeError {
     Residency,
     /// 固定配置文件不可用，或当前账号不是配置里的 worker。
     Configuration,
+    /// 固定系统凭据取不到；卡在哪一道检查上见紧挨着的上一行日志。
+    Credentials,
     /// 状态目录不可用、被别的进程占着，或初始化时已经有状态。
     State,
     /// 生产者不可达或答复不合规。
@@ -96,6 +98,12 @@ pub fn run() -> ServeError {
     let Ok(config) = WorkerConfig::load(Instant::now() + SHORT) else {
         return ServeError::Configuration;
     };
+    // 凭据取不到就不常驻：以前照样显示在运行，等到第一次要用 restic 才把每个作业、每次抽查都悄悄归成
+    // 「不可用」（BUG-043）。这里读一遍只为验明取得到，读到的值当场丢掉；之后每次装配照旧现读。
+    if let Err(fault) = ResticCredentials::load(&residency, &config, Instant::now() + SHORT) {
+        eprintln!("{fault}");
+        return ServeError::Credentials;
+    }
     let Ok(store) = BackupStore::open(Path::new(STATE_ROOT), false) else {
         return ServeError::State;
     };
@@ -221,11 +229,19 @@ fn idle(
         Checked::Outcome(outcome) => outcome,
         Checked::Shutdown => return Err(ServeError::Shutdown),
     };
-    eprintln!(
-        "仓库抽查第 {} 组：{:?}",
-        assignment.key.bucket.get(),
-        outcome.result()
-    );
+    // 没做完时带上固定原因（让路、超时、没装配起来……），不用再去人侧账本里翻。
+    match outcome.reason() {
+        Some(reason) => eprintln!(
+            "仓库抽查第 {} 组：{:?}（{reason:?}）",
+            assignment.key.bucket.get(),
+            outcome.result()
+        ),
+        None => eprintln!(
+            "仓库抽查第 {} 组：{:?}",
+            assignment.key.bucket.get(),
+            outcome.result()
+        ),
+    }
     let Ok(report) = RepositoryCheckReport::new(
         BackupTargetKind::DedicatedAppendOnlyTarget,
         assignment.key,
@@ -299,8 +315,13 @@ struct Ports<'a, 'c> {
 }
 impl Ports<'_, '_> {
     fn credentials(&self) -> Result<ResticCredentials, PortUnavailable> {
-        ResticCredentials::load(self.residency, self.job.config(), self.job.deadline())
-            .map_err(|_| PortUnavailable)
+        ResticCredentials::load(self.residency, self.job.config(), self.job.deadline()).map_err(
+            |fault| {
+                // 固定类别，不带路径和内容。
+                eprintln!("{fault}");
+                PortUnavailable
+            },
+        )
     }
     /// 清理没能证实的错误要让整个进程退出，不能当成「这一轮没装配起来」。
     fn refuse<T>(&self, result: Result<T, ProcessError>) -> Result<T, PortUnavailable> {

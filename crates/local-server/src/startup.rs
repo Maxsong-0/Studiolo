@@ -198,7 +198,7 @@ where
         port: options.port,
         access,
         sessions: sessions.clone(),
-        factors,
+        factors: factors.clone(),
         canonical: canonical.clone(),
         workbench: workbench.clone(),
     })
@@ -244,6 +244,8 @@ where
     let checkpoint = checkpoint_input::sources(
         workbench.clone(),
         sessions,
+        // 封存冻结之前用它补记登录库的待发审计（`checkpoint/settle.rs`）。
+        factors,
         checkpoint_audit,
         board_plane.clone(),
         sync_plane.clone(),

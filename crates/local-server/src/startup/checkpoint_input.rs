@@ -2,7 +2,7 @@
 use super::StartupError;
 use std::sync::Arc;
 use studiolo_audit_ledger::SqliteAuditLedger;
-use studiolo_auth::SessionManager;
+use studiolo_auth::{FactorRuntime, SessionManager};
 use studiolo_local_server::{
     CanonicalWorkbench, PolicyPlane, board::BoardPlane, checkpoint::CheckpointInputs,
     sync_plane::SyncPlane,
@@ -11,6 +11,7 @@ use studiolo_local_server::{
 pub(super) fn sources(
     workbench: Option<Arc<CanonicalWorkbench>>,
     sessions: Option<Arc<SessionManager>>,
+    factors: Option<Arc<FactorRuntime>>,
     audit: Option<Arc<SqliteAuditLedger>>,
     board: Option<Arc<BoardPlane>>,
     bridge: Option<Arc<SyncPlane>>,
@@ -22,6 +23,7 @@ pub(super) fn sources(
     Ok(Some(Arc::new(CheckpointInputs {
         workbench,
         sessions: sessions.ok_or(StartupError::Configuration)?,
+        factors,
         audit: audit.ok_or(StartupError::Audit)?,
         board,
         bridge,

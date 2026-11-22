@@ -5,8 +5,11 @@
 //! 回收过期暂存和总封存都在后台线程里做，连接只拿到「做了／还有没做完的／还没到」。
 //! 回收另外由监听循环按固定周期触发（`reclaim`）：只回收、不冻结，定时器停了也不会让过期副本一直留在盘上。
 //! 健康页经 [`BackupJobsProbe`] 只读账本里的备份事件：不写账本、不补失败结果、不安排封存。
+//! 队列的进度只在内存里，每次启动从账本第一条读起：监听起来后由后台线程把它读到末尾（`catch_up` 子模块），
+//! 请求不用从头推。
 //! 仓库抽查（`check` 子模块）：worker 空闲时问该不该查，生产者按账本定节奏和组号、先落原意图；
 //! worker 跑完交结果，生产者核原意图再落账。
+mod catch_up;
 mod check;
 
 use super::{
@@ -39,7 +42,9 @@ use studiolo_backup::{
         state::{FailureReason, JobKey},
     },
 };
-use studiolo_core::checkpoint::{CheckpointId, FreezeBudget, FreezeRequest, InstantMillis};
+use studiolo_core::checkpoint::{
+    CheckpointError, CheckpointId, FreezeBudget, FreezeRequest, InstantMillis,
+};
 
 /// 原生 worker 只接专用的仅追加目标；生产者和它用同一个固定类别。
 pub const TARGET: BackupTargetKind = BackupTargetKind::DedicatedAppendOnlyTarget;
@@ -330,7 +335,7 @@ impl BackupProducer {
             deadline,
         )
         .map_err(staging_reason)?;
-        let sources = self.inputs.bind().map_err(barrier)?;
+        let sources = self.inputs.bind().map_err(stuck)?;
         let frozen = sources
             .freeze(
                 FreezeRequest {
@@ -341,7 +346,7 @@ impl BackupProducer {
                 TARGET,
                 OwnerExportPaths::under(area.export_root()),
             )
-            .map_err(barrier)?;
+            .map_err(stuck)?;
         // 全部 owner 冻结之后才取内容截止时刻：此后到封存结束，内容不会再变。
         let cutoff = now_millis().map_err(barrier)?;
         let retention = i64::try_from(self.plan.source_retention_millis).map_err(barrier)?;
@@ -417,6 +422,18 @@ fn barrier<E>(_: E) -> FailureReason {
     FailureReason::BarrierNotEstablished
 }
 
+/// 绑定、冻结没做成：账本里照旧记同一个固定原因，日志里多说一句卡在哪个库、哪一类。
+/// 只有这一句能分清是七个库里的哪一个；没有它，现场只能靠看文件访问顺序去猜（BUG-044）。
+fn stuck(error: CheckpointError) -> FailureReason {
+    eprintln!("{}", stuck_line(&error));
+    barrier(error)
+}
+
+/// 固定类别：哪个库、没排空还是超时还是不可用；错误类型自己的说法里没有路径和内容。
+fn stuck_line(error: &CheckpointError) -> String {
+    format!("备份封存卡在：{error}")
+}
+
 fn staging_reason(error: StagingError) -> FailureReason {
     match error {
         StagingError::Changed => FailureReason::SourceChangedBeforeSeal,
@@ -435,8 +452,9 @@ fn now_millis() -> Result<i64, AuditError> {
 
 #[cfg(test)]
 mod tests {
-    use super::{Idle, State, due};
+    use super::{Idle, State, due, stuck_line};
     use std::sync::Mutex;
+    use studiolo_core::checkpoint::{CheckpointError, CheckpointOwner};
 
     const HOUR: i64 = 3_600_000;
 
@@ -458,6 +476,31 @@ mod tests {
         ));
         // 时钟回退按「还没到」处理。
         assert!(!due(failed_at - 1, HOUR, None, Some(failed_at)));
+    }
+
+    #[test]
+    fn the_log_line_for_a_seal_that_got_stuck_names_the_owner_and_the_kind() {
+        // 七个库各有自己的名字；同一个库的三种失败说法不一样，现场一眼分得清。
+        for owner in CheckpointOwner::FREEZE_ORDER {
+            let lines = [
+                stuck_line(&CheckpointError::OwnerUnavailable { owner }),
+                stuck_line(&CheckpointError::NotDrained { owner }),
+                stuck_line(&CheckpointError::FreezeTimeout { owner }),
+            ];
+            for line in &lines {
+                assert!(line.starts_with("备份封存卡在："), "{line}");
+                assert!(line.contains(&format!("{owner:?}")), "{line}");
+                assert!(!line.contains('/'), "{line}");
+            }
+            assert!(lines[0] != lines[1] && lines[1] != lines[2] && lines[0] != lines[2]);
+        }
+        let auth = stuck_line(&CheckpointError::OwnerUnavailable {
+            owner: CheckpointOwner::Auth,
+        });
+        let audit = stuck_line(&CheckpointError::OwnerUnavailable {
+            owner: CheckpointOwner::Audit,
+        });
+        assert_ne!(auth, audit);
     }
 
     #[test]

@@ -16,7 +16,7 @@ use std::{
     time::{Duration, Instant},
 };
 use studiolo_audit_ledger::{AuditLedger, SqliteAuditLedger};
-use studiolo_auth::{OsSessionRandom, SessionManager, SystemSessionClock};
+use studiolo_auth::{OsSessionRandom, SessionClock, SessionManager, SystemSessionClock};
 use studiolo_backup::worker::{
     job::backup_intent, recovery_point::BackupTargetKind, state::JobKey,
 };
@@ -31,6 +31,8 @@ use studiolo_supply::AgentStore;
 mod drill;
 mod fixture;
 mod producer;
+mod producer_auth_backlog;
+mod producer_catch_up;
 mod producer_check;
 mod restore;
 mod restore_plan;
@@ -177,6 +179,7 @@ async fn checkpoint_minimal_actual_assembly_does_not_invent_optional_stores_or_s
     let owners = CheckpointOwners::new(CheckpointInputs {
         workbench: workbench.clone(),
         sessions,
+        factors: None,
         audit: audit.clone(),
         board: None,
         bridge: None,

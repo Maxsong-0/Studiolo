@@ -28,9 +28,20 @@
 
 ## 环境、输出与截止时间
 
-`ResticCredentials::load` 只在持有共同process-safety加固结果后读取固定 `/run/credentials/studiolo-backup-worker.service`，不接受 `CREDENTIALS_DIRECTORY`、请求路径或调用者直接传入秘密。固定三槽为 `repository-password`、`rest-username`、`rest-password`。父路径逐级root所有、无组/其他写权、nofollow且无ACL；实际unit目录须worker所有0500，文件须同UID、0400、单链接普通文件，无ACL。目录和文件还必须实测为只读ramfs，普通目录、可写挂载和可能换出的其他文件系统均拒绝。代码不创建目录、不装载/轮换秘密、不替管理员修权限。
+`ResticCredentials::load` 只在持有共同process-safety加固结果后读取固定 `/run/credentials/studiolo-backup-worker.service`，不接受 `CREDENTIALS_DIRECTORY`、请求路径或调用者直接传入秘密。固定三槽为 `repository-password`、`rest-username`、`rest-password`。父路径逐级root所有、无组/其他写权、nofollow且无ACL。实际unit目录和三个文件必须「除了root只有worker账号读得到」，只认下面两种形态，逐项核对，多一条少一条都拒绝（2026-11-21，BUG-043，用户定「两种形态都认」）：
 
-该部署选择依据[systemd官方凭据说明](https://www.freedesktop.org/software/systemd/man/257/systemd.exec.html)及[v255固定实现](https://github.com/systemd/systemd/blob/v255/src/core/exec-credential.c)：systemd可能采用ACL或文件所有权授予读取，也可能降级存储；本worker只接受其中可实际证明的只读ramfs/所有权形态，不能仅凭使用了LoadCredential便宣称满足隔离。
+| | 属主 | 权限位 | 访问ACL | 默认ACL |
+|---|---|---|---|---|
+| 所有权形态（不支持ACL的文件系统，如老内核上的ramfs） | worker | 目录0500、文件0400 | 没有 | 没有 |
+| ACL形态（systemd 259在tmpfs上给的就是它） | root | 目录0550、文件0440（组位显示的是掩码） | 恰好五条：属主、指名用户=worker、属组无权限、掩码、其他人无权限；目录是读加进入，文件只读 | 没有 |
+
+别的指名用户、指名组、更宽的掩码、属组或其他人有权限、条目顺序或长度不对、读ACL出别的错，都拒绝。文件另须是单链接普通文件。
+
+存储另外核，和访问形态互不代替：目录和每个文件所在的挂载必须只读，而且是ramfs，或者是挂载时带 `noswap` 的tmpfs。`statfs` 看不出 `noswap`，所以用 `statx` 向内核取挂载号，到 `/proc/self/mountinfo` 里找那一行（必须唯一、类型是tmpfs、超级块选项里同时有 `ro` 和 `noswap`）；挂载表必须真的来自procfs，最多读1 MiB。普通目录、可写挂载、不带 `noswap` 的tmpfs和其他文件系统均拒绝。因此单元不能把 `/proc/self/mountinfo` 挡掉（现行单元没有相关设置；以后加 `InaccessiblePaths`、`TemporaryFileSystem` 这类设置时不能盖住 `/proc`）。代码不创建目录、不装载/轮换秘密、不替管理员修权限。
+
+取不到凭据时只回固定类别（账号不对、上级目录不合规、打不开、目录形态、存储、文件形态、内容、核对期间变了、超时），打进worker日志，不带路径和内容；交给作业和抽查的结果照旧只有「配置不符」和「超时」两种。`run` 启动时先取一次验明取得到（读到的值当场丢掉），取不到就打印类别并以失败退出，由服务管理器按重启策略重试，不再是「显示在运行、每个作业都不可用」。
+
+该部署选择依据[systemd官方凭据说明](https://www.freedesktop.org/software/systemd/man/257/systemd.exec.html)及[v255固定实现](https://github.com/systemd/systemd/blob/v255/src/core/exec-credential.c)：systemd可能采用ACL或文件所有权授予读取，也可能降级存储；本worker只接受上面逐项核得出的两种访问形态和两种存储，不能仅凭使用了LoadCredential便宣称满足隔离。ACL形态和带 `noswap` 的tmpfs是2026-11-22在169（systemd 259.5、内核7.0）上逐级实测到的：最初只认所有权形态加ramfs，并注明「真实部署将验证」，首次真机启用时一次凭据都读不到（BUG-043）。
 
 仓库密码和REST密码各最多4096字节、用户名最多256字节，另允许一个录入工具留下的末尾LF；拒绝空值、非法UTF-8、其他控制字符、首尾空白和用户名中的冒号。流式读取的固定容量缓冲和块都零化，不在增长时遗留重分配副本。父进程仅核仓库密码格式后立即释放其正文，restic读取固定只读文件；用户名/REST密码保留于Zeroizing字符串。原根每级身份、原文件FD与路径重开身份在装配和每次执行前后都核对；异常仅返回固定分类。
 

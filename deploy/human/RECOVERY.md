@@ -62,7 +62,8 @@ ls -la /run/studiolo-human /run/studiolo-board /run/studiolo-backup
    `sudo systemctl stop studiolo-human.service`，再看一遍。
    `producer.sock` 看人侧现在的状态：人侧没在跑（带备份的新发行自己起不来，挡着它的可能正是这个节点），和另外两个一样，
    先确认它停住了；人侧在跑（`active`）而第 1 条没有输出，说明这个节点没人用（回滚到不带备份的旧发行之后就是这样），
-   不用停人侧。
+   不用停人侧。起点和终点都带备份的发行（r17→r18 起）不会出现后一种：带备份的人侧一启动就自己监听这个节点，
+   节点留着它就起不来，和另外两个一样处理。
 3. 节点是预期的样子：类型是 socket，属主 maxsong，链接数 1；`http.sock`、`board.sock` 权限 600，
    `producer.sock` 权限 660、属组 `studiolo-backup-read`。把还在的那个路径填进去：
 
@@ -106,11 +107,13 @@ sha256sum /etc/systemd/system/studiolo-human.service /etc/systemd/system/studiol
 再用 sudo 读记录目录里的 `preflight.json`（把回执里的目录填进去），里面的 `old_units`、`new_units` 是换之前、换之后两个单元的摘要。
 
 - `stage` 是 `stop-old`，两个单元的摘要都等于 `old_units`：旧程序停服时被强杀，新单元还没装，数据库没动。
-  停服之后的核对看到 `http.sock` 或 `board.sock` 还在就拒绝，回滚再停一次也过不了同一条核对，所以两个服务都停着。
+  停服之后的核对看到 `http.sock`、`board.sock` 或 `producer.sock`（r18 的激活脚本起核这一个：上一发行 r17 已在监听它，
+  正常关停会删掉）还在就拒绝，回滚再停一次也过不了同一条核对，所以两个服务都停着。
   照第 2 节删节点、起人侧，再起 agent：现场就回到激活之前。要不要重试激活另外定；重试时预检会把全部前提再核一遍。
 - 别的 `stage`，或者单元的摘要不是 `old_units` 那一对：不要手工换单元，也不要手工启动。
   把回执、`preflight.json`、记录目录里的 `failed.json` 和上面两个摘要交给开发会话判断。
-- 回滚成功了（旧程序在跑），只留下 `producer.sock`：它不挡回滚，挡的是**下一次**激活的预检。
+- 回滚成功了（旧程序在跑），只留下 `producer.sock`（只在回滚到不带备份的发行、r16 及更早时才有这种现场；
+  从 r18 回滚到 r17 时它留着的话停服后的核对就先拒绝了，见上一条）：它不挡回滚，挡的是**下一次**激活的预检。
   照第 2 节的第 1、3、4 条删掉它（不用停人侧），再重试激活。
 - 回滚成功了，换回来的旧程序带备份、又是提交 `a2174fd` 之前构建的，换下去的是 `a2174fd` 起的新版：
   看一眼 `ls /var/lib/studiolo-backup-staging`，有 `removing-` 开头的目录就照第 4 节「新版回滚到旧版」处理，

@@ -236,6 +236,12 @@ class ConfigurationTests(unittest.TestCase):
         self.assertEqual((prereq.BACKUP_CONFIG, prereq.RUNTIME, prereq.STAGING, prereq.HUMAN_RELEASE),
                          (assembly.BACKUP_CONFIG, assembly.BACKUP_RUNTIME, assembly.BACKUP_STAGING, assembly.BUILD))
         self.assertLessEqual(prereq.FREEZE_MILLIS, assembly.BACKUP_FREEZE_BUDGET_SECONDS * 1000)
+        # 换发行：这里登记的上一版就是装配的起点；socket 也是装配认的那一个（激活预检按它核）。
+        self.assertEqual(prereq.PREVIOUS['release'], assembly.OLD_RELEASE.rsplit('/', 1)[1])
+        self.assertEqual(prereq.RETIRED_SUFFIX, '.before-' + assembly.BUILD.rsplit('-', 1)[1])
+        self.assertEqual(prereq.SOCKET, assembly.BACKUP_SOCKET)
+        self.assertEqual([name for name, _ in prereq.PREVIOUS['packages']], [name for name, _ in prereq.PACKAGES])
+        self.assertTrue(all(prereq.is_digest(digest) for _, digest in prereq.PREVIOUS['packages']))
         operations = source('deploy/blackboard/activation_ops.py')
         for private in prereq.PRIVATE:
             self.assertIn("'" + private + "'", operations)
@@ -1537,7 +1543,7 @@ class EntryTests(unittest.TestCase):
 
 # 其余用例按脚本分在同目录的几个文件里。合并门禁只跑这一份（.testbox.toml），所以在这里把它们并进来一起跑；
 # -I 下脚本所在的目录不在 sys.path 里，按路径加载。各份自己加载被测的脚本，互不共用打过补丁的模块。
-PARTS = ('test_provision_prereq', 'test_provision_credentials', 'test_provision_command')
+PARTS = ('test_provision_prereq', 'test_provision_release', 'test_provision_credentials', 'test_provision_command')
 LOADED = {}
 for _part in PARTS:
     for _name, _value in vars(load(_part)).items():
