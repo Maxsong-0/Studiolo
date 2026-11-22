@@ -7,7 +7,10 @@
 //! 1. 本连接自己的追加、查询、按段续验，读的段摘要行数不随已封存段数涨（以前红：读的行数就是段数）；
 //! 2. 别的连接提交过（合法追加也好、篡改也好），下一次操作就从创世全算，打开之后被改的摘要行照样当场失败关闭；
 //! 3. 别的连接把账本退回到更早、自身自洽的一版，或退回后再写成同样长的另一条链，本连接也认得出来
-//!    （以前认不出：改过之后的账本自己是自洽的）。
+//!    （以前认不出：改过之后的账本自己是自洽的）；本实例自己刚封存的那一段被退回掉，同样认得出来。
+//!    只读的读窗口（人侧读 agent 账本那条路）也一样。
+//!
+//! 另钉一条读的顺序：`audit_meta` 标着别的版本、段链又同时坏了，先报版本不对，与 T-220 之前一致。
 
 #![cfg(unix)]
 
@@ -18,7 +21,8 @@ mod bulk;
 
 use std::path::Path;
 use studiolo_audit_ledger::{
-    AUDIT_SEGMENT_RECORDS, AuditError, AuditFilter, AuditLedger, AuditRecord, SqliteAuditLedger,
+    AUDIT_SEGMENT_RECORDS, AuditError, AuditFilter, AuditLedger, AuditReadView, AuditRecord,
+    SqliteAuditLedger,
 };
 
 /// 打开一本有 `sealed` 个封存段、打开段里差两条写满的账本，依次做一遍常规操作，返回每一步读的段摘要行数。
@@ -161,6 +165,11 @@ fn rolling_the_ledger_back_to_an_earlier_consistent_version_is_caught_by_the_ope
         ledger.query(&AuditFilter::default()).unwrap_err(),
         AuditError::CorruptStore
     );
+    assert_eq!(
+        ledger.verify_segment(0).unwrap_err(),
+        AuditError::CorruptStore
+    );
+    assert_eq!(ledger.segments().unwrap_err(), AuditError::CorruptStore);
     // 新打开的连接没见过退回之前的样子，分不出来：这是没有外部可信锚时的已知边界，契约第 7 节写明。
     let fresh = SqliteAuditLedger::open_existing(&root).unwrap();
     assert_eq!(fresh.segments().unwrap().len(), 2);
@@ -191,5 +200,76 @@ fn replacing_the_history_with_an_equally_long_consistent_chain_is_caught_by_the_
     assert_eq!(
         ledger.query(&AuditFilter::default()).unwrap_err(),
         AuditError::CorruptStore
+    );
+}
+
+#[test]
+fn rolling_back_the_segment_this_instance_just_sealed_is_caught_by_its_next_operation() {
+    const SEALED: u64 = 3;
+    let before_seal = SEALED * AUDIT_SEGMENT_RECORDS + AUDIT_SEGMENT_RECORDS - 1;
+    let (_source, source_root, receipts) = bulk::ledger_with(before_seal);
+    let (_directory, root) = bulk::clone_into_private_dir(&source_root);
+    let ledger = SqliteAuditLedger::open_existing(&root).unwrap();
+    // 这一次追加写满并封存一段，提交成功，回执已交给调用方。
+    ledger.append(bulk::event(before_seal + 1)).unwrap();
+    // 别的连接把刚封存的这一段连同最后那条记录抹掉，退回到封存之前自洽的样子。
+    roll_back_to(&root, &receipts, before_seal);
+    assert_eq!(
+        ledger.append(bulk::event(before_seal + 2)).unwrap_err(),
+        AuditError::CorruptStore
+    );
+    assert_eq!(
+        ledger
+            .query(&AuditFilter::default().with_limit(1))
+            .unwrap_err(),
+        AuditError::CorruptStore
+    );
+}
+
+#[test]
+fn an_open_read_view_fails_closed_once_another_connection_rewrites_or_rolls_back_the_chain() {
+    const SEALED: u64 = 3;
+    let (_source, source_root, receipts) = bulk::ledger_with(SEALED * AUDIT_SEGMENT_RECORDS + 1);
+    let newest = |view: &AuditReadView| view.scan_page(None, |record| Ok(Some(record.offset())));
+    // 读窗口的写者在别的进程，每次读都可能撞上别的连接的提交：先读一页，让它核过整条段链。
+    let (_rewritten, root) = bulk::clone_into_private_dir(&source_root);
+    let view = AuditReadView::open_existing(&root).unwrap();
+    assert!(newest(&view).is_ok());
+    bulk::tamper(
+        &root,
+        "UPDATE audit_segments SET segment_hash=(SELECT segment_hash FROM audit_segments
+            WHERE segment_index=0) WHERE segment_index=1",
+    );
+    assert!(matches!(newest(&view), Err(AuditError::CorruptStore)));
+    // 退回到更早、自身自洽的两段：读窗口核过三段，同样失败关闭。
+    let (_rolled_back, root) = bulk::clone_into_private_dir(&source_root);
+    let view = AuditReadView::open_existing(&root).unwrap();
+    assert!(newest(&view).is_ok());
+    roll_back_to(&root, &receipts, 2 * AUDIT_SEGMENT_RECORDS + 1);
+    assert!(matches!(newest(&view), Err(AuditError::CorruptStore)));
+}
+
+#[test]
+fn a_wrong_schema_version_is_reported_before_a_broken_segment_chain() {
+    const SEALED: u64 = 3;
+    let (_source, source_root, _) = bulk::ledger_with(SEALED * AUDIT_SEGMENT_RECORDS + 1);
+    let (_directory, root) = bulk::clone_into_private_dir(&source_root);
+    let ledger = SqliteAuditLedger::open_existing(&root).unwrap();
+    // audit_meta 标着别的版本，段链同时少了一段：先报版本不对（要升级），与 T-220 之前的读取顺序一致。
+    bulk::tamper(
+        &root,
+        "UPDATE audit_meta SET schema_version=99 WHERE id=1;
+         DELETE FROM audit_segments WHERE segment_index=1;",
+    );
+    assert_eq!(
+        ledger
+            .append(bulk::event(SEALED * AUDIT_SEGMENT_RECORDS + 2))
+            .unwrap_err(),
+        AuditError::UnsupportedSchema
+    );
+    drop(ledger);
+    assert_eq!(
+        SqliteAuditLedger::open_existing(&root).err(),
+        Some(AuditError::UnsupportedSchema)
     );
 }

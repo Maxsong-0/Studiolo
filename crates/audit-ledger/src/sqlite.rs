@@ -212,6 +212,7 @@ impl AuditLedger for SqliteAuditLedger {
             .map_err(unavailable)?;
         // 写满一段就在同一事务里封存它；段摘要与最后一条记录要么一起可见，要么都不可见。
         let index = segment::index_of(offset)?;
+        let mut sealed = None;
         if offset == segment::last_offset(index)? {
             let previous_segment = anchored
                 .summaries
@@ -228,6 +229,7 @@ impl AuditLedger for SqliteAuditLedger {
                 previous_segment,
             )?;
             segment::seal(&transaction, &summary)?;
+            sealed = Some(summary);
         }
         let changed = transaction
             .execute(
@@ -240,6 +242,12 @@ impl AuditLedger for SqliteAuditLedger {
         }
         self.storage.check()?;
         transaction.commit().map_err(unavailable)?;
+        // 提交成功，刚封存的段已在库里：放进本连接核过的段链，之后别的连接把它退回掉也认得出来。
+        // 先放掉本次锚定结果对段链的那份引用，放进去时就不必整份复制。
+        drop(anchored);
+        if let Some(summary) = sealed {
+            session.chain.sealed(summary);
+        }
         self.storage.check()?;
         session.cost = cost;
         Ok(record)

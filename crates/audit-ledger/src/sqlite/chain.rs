@@ -10,19 +10,22 @@
 //! 不经 SQLite、直接改文件字节的改动不在这条判据之内（以前每次全算也可能命中页缓存而读不到它）；这类改动由读到
 //! 该段时的摘要行比对（`verify::segment_records`）、`verify_all`、`segments()` 和重新打开时的全算发现，见契约第 8 节。
 
-use super::{segment, unavailable, verify};
+use super::{schema, segment, unavailable, verify};
 use crate::{AuditError, AuditSegmentSummary};
 use rusqlite::Connection;
 use std::sync::Arc;
 
 /// 本连接已核过的段链前缀，以及核它时所在快照的 `data_version`。
 ///
-/// 只放从已提交快照里读出并核过的行，本连接自己在事务里刚写下、还没提交的封存行不放：下一次操作从库里读它、
-/// 照段链公式核过才进来，所以事务回滚不会让这里多出库里没有的段。
+/// 只放已提交的行：从已提交快照里读出并核过的行，以及本连接自己封存、提交成功之后的那一段（`sealed`）。
+/// 事务里刚写下、还没提交的封存行不放，所以事务回滚不会让这里多出库里没有的段。
+///
+/// 锚定失败只作废 `data_version`，已放进来的段留着，当作下一次全算必须满足的前缀；其中可能有这次按段链
+/// 公式核过、还没来得及锚定到 head 的行（同样读自已提交的快照），所以失败之后只会更严，不会放过什么。
 #[derive(Default)]
 pub(super) struct VerifiedChain {
     summaries: Arc<Vec<AuditSegmentSummary>>,
-    /// `None`：还没核过，或上一次锚定没走完（失败、读不到）。下一次一律从创世全算。
+    /// `None`：还没核过，或上一次锚定没走完（失败、读不到）。下一次一律从创世全算，并核 `summaries` 这段前缀。
     data_version: Option<i64>,
 }
 
@@ -35,10 +38,11 @@ impl VerifiedChain {
         // 先作废再干活：从读 `data_version` 起任何一步失败，下一次都一律全算；只有整次锚定走完才重新记下版本。
         let known = self.data_version.take();
         let version = data_version(connection)?;
+        let head = head(connection)?;
         let anchored = if known == Some(version) {
-            self.extend(connection)?
+            self.extend(connection, head)?
         } else {
-            self.recompute(connection)?
+            self.recompute(connection, head)?
         };
         self.data_version = Some(version);
         Ok(anchored)
@@ -51,12 +55,30 @@ impl VerifiedChain {
     ) -> Result<verify::Anchored, AuditError> {
         self.data_version = None;
         let version = data_version(connection)?;
-        let anchored = self.recompute(connection)?;
+        let head = head(connection)?;
+        let anchored = self.recompute(connection, head)?;
         self.data_version = Some(version);
         Ok(anchored)
     }
 
-    fn extend(&mut self, connection: &Connection) -> Result<verify::Anchored, AuditError> {
+    /// 本连接刚封存、提交已经成功的那一段：放进核过的段链，此后别的连接把它退回掉，下一次操作也认得出来。
+    ///
+    /// 只在提交返回成功之后调用。本连接自己的提交不改变 `data_version`，追加又一直握着写锁，所以放进来以后
+    /// 缓存仍与库里已提交的内容逐行一致。段号接不上（不该发生）就作废，下一次全算。
+    pub(super) fn sealed(&mut self, summary: AuditSegmentSummary) {
+        let next = usize::try_from(summary.index()).ok() == Some(self.summaries.len());
+        if self.data_version.is_some() && next {
+            Arc::make_mut(&mut self.summaries).push(summary);
+        } else {
+            self.data_version = None;
+        }
+    }
+
+    fn extend(
+        &mut self,
+        connection: &Connection,
+        head: (u64, String),
+    ) -> Result<verify::Anchored, AuditError> {
         let summaries = Arc::make_mut(&mut self.summaries);
         // 链尾那一行这次要重读；它之前的行这次不读，读到它们所在的段时再逐行比对。
         let reverified_from = u64::try_from(summaries.len().saturating_sub(1))
@@ -64,13 +86,18 @@ impl VerifiedChain {
         let cost = segment::extend(connection, summaries)?;
         verify::settle(
             connection,
+            head,
             Arc::clone(&self.summaries),
             cost,
             reverified_from,
         )
     }
 
-    fn recompute(&mut self, connection: &Connection) -> Result<verify::Anchored, AuditError> {
+    fn recompute(
+        &mut self,
+        connection: &Connection,
+        head: (u64, String),
+    ) -> Result<verify::Anchored, AuditError> {
         let mut fresh = Vec::new();
         let cost = segment::extend(connection, &mut fresh)?;
         // 段链只能往后长：本连接核过的每一段都必须原样还在，否则库被改短、改掉或整条换过。
@@ -78,8 +105,14 @@ impl VerifiedChain {
             return Err(AuditError::CorruptStore);
         }
         self.summaries = Arc::new(fresh);
-        verify::settle(connection, Arc::clone(&self.summaries), cost, 0)
+        verify::settle(connection, head, Arc::clone(&self.summaries), cost, 0)
     }
+}
+
+/// 先读 head，再核段链：`audit_meta` 标着别的版本或 codec 时先报 `UnsupportedSchema`（要升级），
+/// 与 T-220 之前的顺序一致；和 `data_version`、段链读的是同一个快照。
+fn head(connection: &Connection) -> Result<(u64, String), AuditError> {
+    schema::head(connection, schema::VERSION)
 }
 
 /// 在当前事务的快照里读 `data_version`；读它本身就会开始读事务，因此和随后的段链读取是同一个快照。

@@ -39,22 +39,25 @@ pub(super) const BOUNDS: [&str; 2] = [
     "SELECT max(offset) FROM audit_events",
 ];
 
-/// 重算段链、走读打开段并核对 head；成本为 O(段数 + 打开段记录数)，与账本总量无关。
+/// 读 head、从创世重算段链、走读打开段并核对 head；成本为 O(段数 + 打开段记录数)：与记录总字节无关，
+/// 但段数仍随总量涨。
 ///
-/// 上一句的「与账本总量无关」只指与记录总字节无关，段数仍随总量涨。这是没有段链缓存的一次性连接
-/// （封存核对、升级）用的入口，从创世全算；常规操作走 `chain::VerifiedChain::anchor`，别的连接没提交过时只核链尾。
+/// 这是没有段链缓存的一次性连接（封存核对、升级）用的入口；常规操作走 `chain::VerifiedChain::anchor`，
+/// 别的连接没提交过时只核链尾。
 pub(super) fn anchor(connection: &Connection) -> Result<Anchored, AuditError> {
     chain::VerifiedChain::default().anchor_from_genesis(connection)
 }
 
-/// 段链已核到 `summaries` 之后，读 head、核打开段位置与首尾边界、走读打开段；成本为 O(打开段记录数)。
+/// 段链已核到 `summaries` 之后，核 head 与段链、打开段位置与首尾边界，走读打开段；成本为 O(打开段记录数)。
+///
+/// `head` 由调用方在核段链之前、同一快照里用 `schema::head` 读好：版本或 codec 不对先报 `UnsupportedSchema`。
 pub(super) fn settle(
     connection: &Connection,
+    (last_offset, head_hash): (u64, String),
     summaries: Arc<Vec<AuditSegmentSummary>>,
     mut cost: AuditVerificationCost,
     reverified_from: u64,
 ) -> Result<Anchored, AuditError> {
-    let (last_offset, head_hash) = schema::head(connection, schema::VERSION)?;
     let sealed = u64::try_from(summaries.len()).map_err(|_| AuditError::CorruptStore)?;
     let open_first = segment::first_offset(sealed)?;
     // 打开段必须紧接最后一段且尚未写满；否则该段本应已封存，或 head 落在段链之前。
