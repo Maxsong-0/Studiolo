@@ -139,17 +139,18 @@ impl Fixture {
             .unwrap()
     }
 
-    /// 同一写者，但 Broker 先显式开了文件操作（删除只能经它）；限额取够本夹具用的小值。
+    /// 同一写者，但 Broker 先显式开了文件操作（删除只能经它）。一条删除按最坏情况预留
+    /// 「正文两倍＋三个对象上限」，保留预算要放得下，限额与 `tests/coordinator/checkpoint.rs` 同一组。
     pub async fn writer_with_file_operations(&self) -> Arc<CanonicalWorkbench> {
         let mut broker =
             FsVaultBroker::open_existing(&self.root.join("vault"), &self.root.join("data"))
                 .unwrap();
         broker
             .enable_file_operations(FileOperationLimits {
-                effective_object_limit: 1 << 20,
-                max_tombstones: 16,
-                retained_bytes_limit: 1 << 26,
-                minimum_free_bytes: 1,
+                effective_object_limit: 256 * 1024 * 1024,
+                max_tombstones: 64,
+                retained_bytes_limit: 8 * 1024 * 1024 * 1024,
+                minimum_free_bytes: 1024 * 1024,
             })
             .unwrap();
         drop(broker);

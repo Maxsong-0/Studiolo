@@ -67,6 +67,7 @@ impl PlaneHealth {
     ///
     /// 只写本轮结论能证明的字段：`Settled` 证明整轮干净走完，把熔断、终态计数一并复位；
     /// `Idle`／`Unknown`／`Blocked` 只证明跑到了执行段（守卫放行、RunOnce 干净回收、协议空闲）；
+    /// `DeletesBlocked` 证明同样多、外加被挡的删除数，`Settled`／`Idle` 把它复位为 0（BUG-046）；
     /// 每种 `PlaneError` 只落到它对应的那一个字段，其余保持原值。`quiescence_valid` 按
     /// 「本轮是否取到静止票据」置位：除 `Skipped` 外的 `Ok` 都出现在取票之后，任何 `Err`
     /// 与 `Skipped` 都没有新票据，第六节至少落到未知，失败轮不可能被上一轮的绿盖住。
@@ -82,15 +83,20 @@ impl PlaneHealth {
             Ok(RoundOutcome::Idle
                 | RoundOutcome::Settled { .. }
                 | RoundOutcome::Unknown { .. }
-                | RoundOutcome::Blocked { .. })
+                | RoundOutcome::Blocked { .. }
+                | RoundOutcome::DeletesBlocked { .. })
         ));
         match outcome {
             Ok(RoundOutcome::Settled { sequence, .. }) => {
                 stamp(evidence, *sequence, now_unix);
                 evidence.fused = Some(false);
                 evidence.unknown_jobs = Some(0);
+                evidence.deletes_blocked = Some(0);
             }
-            Ok(RoundOutcome::Idle) => reached_execution(evidence),
+            Ok(RoundOutcome::Idle) => {
+                reached_execution(evidence);
+                evidence.deletes_blocked = Some(0);
+            }
             Ok(RoundOutcome::Unknown { sequence }) => {
                 stamp(evidence, *sequence, now_unix);
                 // 执行段报了本批的数就以它为准，没报至少有一条。
@@ -106,7 +112,11 @@ impl PlaneHealth {
                     evidence.fused = None;
                 }
             }
-            Ok(RoundOutcome::DeletesBlocked { .. }) => {}
+            // 守卫放行、RunOnce 干净回收之后才轮到删除守卫；没有批次闭合，不盖序号。
+            Ok(RoundOutcome::DeletesBlocked { count }) => {
+                reached_execution(evidence);
+                evidence.deletes_blocked = Some(*count);
+            }
             Ok(RoundOutcome::Skipped) | Err(PlaneError::Backoff) => {
                 evidence.recovery = Some(RecoveryState::Backoff);
             }

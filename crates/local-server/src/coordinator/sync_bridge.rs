@@ -199,6 +199,7 @@ impl CanonicalWorkbench {
     }
 
     /// 条件删除走文件操作协议（保全进墓碑可恢复）：准备 → Intent 追加并确认 → 提交 → 冲刷 outbox；已有终态的原键在准备阶段就拿回固定票据。
+    /// 写者没开文件操作时什么都不碰，直接答 `NotAttempted`（BUG-046）。
     pub(crate) fn bridge_delete(
         &self,
         path: &VaultPath,
@@ -210,6 +211,12 @@ impl CanonicalWorkbench {
         let _operation = self.core.operation().map_err(|_| BridgeSeamError::Audit)?;
         let mut owner = self.attach()?;
         let broker = owner.as_mut().ok_or(BridgeSeamError::NotAttempted)?;
+        // 开关只会从关变开，没开时写者状态里也不许有文件操作记录：没开就证明这条删除从没发生过，
+        // 首次执行和按原键重放都答「没尝试」，重开核对据此核成无效果，批次才能闭合。
+        // 查询本身失败证明不了什么，按 `Unavailable` 交原键核对。
+        if !deletes_enabled(broker)? {
+            return Err(BridgeSeamError::NotAttempted);
+        }
         let ledger = self.ledger()?;
         let request = FileOperationRequest::Delete {
             path: path.clone(),

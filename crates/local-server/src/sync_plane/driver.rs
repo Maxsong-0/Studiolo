@@ -236,6 +236,19 @@ pub fn run_round_with(
         plan(input.clone(), None).map_err(|_| PlaneError::Observation),
     )?;
     at(Step::RetainConflicts, ports.retain_conflicts(&decision))?;
+    // 9′ 删除守卫（BUG-046）：主库没开文件操作时删除一条也执行不了。新批次里只要有主库删除
+    // （含镜像为准时预解决要做的删除）就整批暂停：不预解决、不保全、不预留，也不留解不开的熔断。
+    // 上一批没闭合则跳过预解决（它的删除同样会被拒，整轮报错就再也走不到续做），直接交执行段续做：
+    // 没发出的删除走到接缝会被确定拒成无效果，旧批次照常闭合。
+    let deletions = canonical_deletions(&decision, mode);
+    if deletions > 0 && !at(Step::DeleteGate, ports.deletes_enabled())? {
+        if !at(Step::DeleteGate, ports.pending())? {
+            diagnostics::deletes_blocked(deletions);
+            return Ok(RoundOutcome::DeletesBlocked { count: deletions });
+        }
+        halt(ports)?;
+        return at(Step::Execute, ports.execute(input));
+    }
     if has_conflicts(&decision) {
         match mode {
             SyncMode::MirrorRemote => {

@@ -40,7 +40,12 @@ fn tree(root: &Path) -> BTreeMap<String, Vec<u8>> {
             if kind.is_dir() {
                 pending.push(entry.path());
             } else if kind.is_file() {
-                let name = entry.path().strip_prefix(root).unwrap().display().to_string();
+                let name = entry
+                    .path()
+                    .strip_prefix(root)
+                    .unwrap()
+                    .display()
+                    .to_string();
                 files.insert(name, fs::read(entry.path()).unwrap());
             }
         }
@@ -57,7 +62,11 @@ async fn deleting_without_file_operations_is_not_attempted_and_touches_nothing()
 
     for attempt in ["首次执行", "按原键重放"] {
         let deleted = delete_canonical(&owner, &path(), f.previous, KEY, &binding());
-        assert_eq!(deleted.err(), Some(BridgeSeamError::NotAttempted), "{attempt}");
+        assert_eq!(
+            deleted.err(),
+            Some(BridgeSeamError::NotAttempted),
+            "{attempt}"
+        );
     }
 
     assert_eq!(
@@ -69,8 +78,14 @@ async fn deleting_without_file_operations_is_not_attempted_and_touches_nothing()
         reason: NoEffectCause::CancelledBeforeInstall,
         terminal_id: format!("not-attempted:{KEY}"),
     };
-    assert_eq!(first_attempt_outcome(SeamVerdict::NotAttempted, KEY), no_effect);
-    assert_eq!(replay_outcome(SeamVerdict::NotAttempted, true, KEY), no_effect);
+    assert_eq!(
+        first_attempt_outcome(SeamVerdict::NotAttempted, KEY),
+        no_effect
+    );
+    assert_eq!(
+        replay_outcome(SeamVerdict::NotAttempted, true, KEY),
+        no_effect
+    );
     owner.shutdown().await.unwrap();
 }
 

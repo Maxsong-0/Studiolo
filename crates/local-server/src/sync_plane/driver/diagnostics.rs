@@ -28,6 +28,14 @@ pub(crate) enum Step {
     Approve,
 }
 
+/// 删除守卫挡下本轮时留一行固定日志（BUG-046）：不登录健康页也能从服务日志看出同步在等人处理；只有个数，不带路径。
+pub(crate) fn deletes_blocked(count: u64) {
+    let _ = writeln!(
+        std::io::stderr().lock(),
+        "studiolo_bridge step=DeleteGate outcome=deletes_blocked count={count}"
+    );
+}
+
 pub(crate) fn at<T>(step: Step, result: Result<T, PlaneError>) -> Result<T, PlaneError> {
     if let Err(error) = result.as_ref() {
         let _ = writeln!(

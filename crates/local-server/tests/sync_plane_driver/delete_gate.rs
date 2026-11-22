@@ -6,7 +6,9 @@ use super::fake_ports::{Call, FakePorts};
 use super::fixture;
 use studiolo_core::VaultPath;
 use studiolo_local_server::sync_plane::PlaneError;
-use studiolo_local_server::sync_plane::driver::{RoundOutcome, canonical_deletions, run_round_with};
+use studiolo_local_server::sync_plane::driver::{
+    RoundOutcome, canonical_deletions, run_round_with,
+};
 use studiolo_sync_bridge::{Input, Presence, plan};
 use studiolo_sync_transport::owned_run::SyncMode;
 
@@ -38,12 +40,19 @@ fn new_batches_with_canonical_deletes_pause_whole_when_file_operations_are_off()
 
         let outcome = run_round_with(&mut ports, mode, NOW);
 
-        assert_eq!(outcome, Ok(RoundOutcome::DeletesBlocked { count: 1 }), "{mode:?}");
+        assert_eq!(
+            outcome,
+            Ok(RoundOutcome::DeletesBlocked { count: 1 }),
+            "{mode:?}"
+        );
         assert_eq!(ports.count(&Call::Execute), 0, "{mode:?}");
         assert_eq!(ports.count(&Call::Preresolve), 0, "{mode:?}");
         assert_eq!(ports.count(&Call::Preserve), 0, "{mode:?}");
         let tail = &ports.calls[ports.calls.len() - 3..];
-        assert_eq!(tail, &[Call::Observe(mode), Call::Pending, Call::DeletesEnabled]);
+        assert_eq!(
+            tail,
+            &[Call::Observe(mode), Call::DeletesEnabled, Call::Pending]
+        );
     }
 }
 
@@ -78,7 +87,10 @@ fn mirror_remote_delete_conflicts_pause_before_any_preservation() {
 
     let outcome = run_round_with(&mut ports, SyncMode::Bidirectional, NOW);
 
-    assert!(matches!(outcome, Ok(RoundOutcome::Settled { .. })), "{outcome:?}");
+    assert!(
+        matches!(outcome, Ok(RoundOutcome::Settled { .. })),
+        "{outcome:?}"
+    );
     assert_eq!(ports.count(&Call::DeletesEnabled), 0);
     assert_eq!(ports.count(&Call::Preserve), 1);
     assert_eq!(ports.count(&Call::Execute), 1);
@@ -87,14 +99,27 @@ fn mirror_remote_delete_conflicts_pause_before_any_preservation() {
 #[test]
 fn an_unsettled_batch_is_still_resumed_by_execute_with_file_operations_off() {
     // 续做的批次里没发出的删除会在接缝被确定拒成无效果，批次照常闭合；守卫挡它只会再卡死一次。
-    let mut ports = gated(SyncMode::MirrorRemote, fixture::deletion_input(1, 60));
-    ports.pending = true;
+    for (mode, input) in [
+        (SyncMode::MirrorRemote, fixture::deletion_input(1, 60)),
+        (SyncMode::Bidirectional, fixture::deletion_input(1, 60)),
+        // 镜像为准的删除冲突：预解决里的删除同样会被拒、整轮报错，那就永远走不到续做，所以跳过预解决。
+        (SyncMode::MirrorRemote, delete_conflict_input(2)),
+    ] {
+        let mut ports = gated(mode, input);
+        ports.pending = true;
 
-    let outcome = run_round_with(&mut ports, SyncMode::MirrorRemote, NOW);
+        let outcome = run_round_with(&mut ports, mode, NOW);
 
-    assert!(matches!(outcome, Ok(RoundOutcome::Settled { .. })), "{outcome:?}");
-    assert_eq!(ports.count(&Call::Execute), 1);
-    assert_eq!(ports.count(&Call::DeletesEnabled), 0);
+        assert!(
+            matches!(outcome, Ok(RoundOutcome::Settled { .. })),
+            "{mode:?} {outcome:?}"
+        );
+        assert_eq!(ports.count(&Call::Preresolve), 0, "{mode:?}");
+        assert_eq!(ports.count(&Call::Preserve), 0, "{mode:?}");
+        assert_eq!(ports.count(&Call::Execute), 1, "{mode:?}");
+        let tail = &ports.calls[ports.calls.len() - 3..];
+        assert_eq!(tail, &[Call::DeletesEnabled, Call::Pending, Call::Execute]);
+    }
 }
 
 #[test]
@@ -105,8 +130,12 @@ fn with_file_operations_on_deletes_go_to_execute_as_before() {
 
         let outcome = run_round_with(&mut ports, mode, NOW);
 
-        assert!(matches!(outcome, Ok(RoundOutcome::Settled { .. })), "{mode:?}");
+        assert!(
+            matches!(outcome, Ok(RoundOutcome::Settled { .. })),
+            "{mode:?}"
+        );
         assert_eq!(ports.count(&Call::DeletesEnabled), 1, "{mode:?}");
+        assert_eq!(ports.count(&Call::Pending), 0, "开了就不用看有没有旧批次");
         assert_eq!(ports.count(&Call::Execute), 1, "{mode:?}");
     }
     // 没有主库删除就不查：每轮都锁写者问一次没有必要。
@@ -135,9 +164,17 @@ fn canonical_deletions_counts_planned_deletes_and_mirror_remote_preresolve_delet
     };
     for mode in MODES {
         assert_eq!(count(fixture::empty_input(), mode), 0);
-        assert_eq!(count(fixture::conflict_input(2), mode), 0, "两侧都改不是删除");
+        assert_eq!(
+            count(fixture::conflict_input(2), mode),
+            0,
+            "两侧都改不是删除"
+        );
         assert_eq!(count(fixture::deletion_input(3, 60), mode), 3);
-        assert_eq!(count(fixture::deletion_input(6, 60), mode), 6, "熔断冻结的批次照样算");
+        assert_eq!(
+            count(fixture::deletion_input(6, 60), mode),
+            6,
+            "熔断冻结的批次照样算"
+        );
     }
     assert_eq!(count(delete_conflict_input(2), SyncMode::MirrorRemote), 2);
     assert_eq!(count(delete_conflict_input(2), SyncMode::Bidirectional), 0);

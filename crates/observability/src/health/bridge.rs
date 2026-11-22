@@ -100,8 +100,8 @@ pub struct BridgeEvidence {
 
 /// 聚合第六节；缺证据一律未知。
 ///
-/// 判定顺序固定：缺字段 → 删除熔断 → 排除项残留 → 配置不符 → 终态未知 → 非干净退出 → 恢复协议进行中 →
-/// 静止证据过期 → 正常。驱动平面未装配（默认关闭）时也是「未知」：与恢复点、白名单两节同一口径，
+/// 判定顺序固定：删除被挡（有正证据就报，不等别的字段齐）→ 缺字段 → 删除熔断 → 排除项残留 → 配置不符 →
+/// 终态未知 → 非干净退出 → 恢复协议进行中 → 静止证据过期 → 正常。删除被挡还没证明过（`None`）不算缺字段。驱动平面未装配（默认关闭）时也是「未知」：与恢复点、白名单两节同一口径，
 /// 没启用的能力不显示绿。
 ///
 /// # 错误
@@ -152,6 +152,15 @@ fn complete(evidence: &BridgeEvidence) -> Result<Complete, &'static str> {
 }
 
 fn judge(evidence: &BridgeEvidence) -> (HealthState, String) {
+    // 删除被挡的那几轮不走执行段，重启后别的字段一直补不齐；有正证据就先报，不被「证据不完整」盖住。
+    if let Some(count) = evidence.deletes_blocked.filter(|count| *count > 0) {
+        return (
+            HealthState::Degraded,
+            format!(
+                "远端删了 {count} 个文件，主库没开文件操作，同步整批暂停：到远端恢复这些文件后自动接着跑"
+            ),
+        );
+    }
     let full = match complete(evidence) {
         Ok(full) => full,
         Err(missing) => {
