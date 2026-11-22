@@ -3,6 +3,7 @@
 pub(crate) mod changes;
 mod checkpoint;
 pub use checkpoint::FrozenWorkbench;
+pub(crate) use checkpoint::broker_failure;
 mod content;
 mod content_audit;
 mod file_operations;

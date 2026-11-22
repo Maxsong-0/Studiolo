@@ -75,7 +75,7 @@ impl FrozenWorkbench {
             .map_err(|_| LocalError::Unavailable)
     }
     /// 复用线上唯一事件映射，再按持久 offset/hash 与完整原事件核对真实人侧账本。
-    /// 失败只分两类：超过固定上限（定格时文件数超过可同时打开文件数的一半）和不可用。
+    /// 失败的类别见 `broker_failure`。
     pub fn verify_audit(
         &mut self,
         audit: &FrozenAudit,
@@ -124,12 +124,14 @@ impl FrozenWorkbench {
         Ok(capture)
     }
 }
-/// 写者在窗口里失败的类别。定格要同时开着两棵树的每个文件，超过上限时单独报出来，
-/// 现场才知道该去调打开文件数，而不是和别的写者故障混成一句「不可用」（BUG-045）。
-fn broker_failure(error: Option<&BrokerError>) -> CheckpointError {
+/// 写者定格、核对（窗口里）和从定格导出（放开之后）失败的类别，两处共用（BUG-045）。
+/// 超过固定上限（打开文件数、目录深度、节点数、字节数、重放条数、目标可用空间）和定格之后被改过各自单独报，
+/// 现场才知道该去调上限、查盘，还是查谁原地改了文件，而不是和别的写者故障混成一句「不可用」。
+pub(crate) fn broker_failure(error: Option<&BrokerError>) -> CheckpointError {
     let owner = CheckpointOwner::Broker;
     match error {
         Some(BrokerError::WriterLimitExceeded) => CheckpointError::LimitExceeded { owner },
+        Some(BrokerError::CaptureChanged) => CheckpointError::SourceChanged { owner },
         _ => CheckpointError::OwnerUnavailable { owner },
     }
 }
@@ -152,13 +154,17 @@ mod tests {
     use super::{BrokerError, CheckpointError, CheckpointOwner, broker_failure};
 
     #[test]
-    fn a_writer_over_the_open_file_limit_is_reported_apart_from_other_failures() {
+    fn a_writer_over_a_limit_or_changed_after_capture_is_reported_apart_from_other_failures() {
         let owner = CheckpointOwner::Broker;
         assert_eq!(
             broker_failure(Some(&BrokerError::WriterLimitExceeded)),
             CheckpointError::LimitExceeded { owner }
         );
-        for other in [Some(&BrokerError::CaptureChanged), None] {
+        assert_eq!(
+            broker_failure(Some(&BrokerError::CaptureChanged)),
+            CheckpointError::SourceChanged { owner }
+        );
+        for other in [Some(&BrokerError::IncompleteCapture), None] {
             assert_eq!(
                 broker_failure(other),
                 CheckpointError::OwnerUnavailable { owner }

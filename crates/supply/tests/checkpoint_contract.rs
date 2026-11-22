@@ -95,6 +95,29 @@ fn both_identity_formats_preserve_tokens_lineages_and_real_read_receipts() {
     }
 }
 #[test]
+fn receipts_checked_without_validating_the_frozen_moment_do_not_export() {
+    let dir = directory();
+    let audit_dir = directory();
+    let target = directory();
+    let store = AgentStore::open(dir.path()).unwrap();
+    store.issue_type("codex", NOW).unwrap();
+    let ledger = SqliteAuditLedger::open(audit_dir.path()).unwrap();
+    let view = AgentIdentityView::open_existing(dir.path()).unwrap();
+    let source = view.checkpoint_source().unwrap();
+    let mut frozen = source.freeze(deadline()).unwrap();
+    let audit = ledger
+        .checkpoint_source()
+        .unwrap()
+        .freeze(deadline())
+        .unwrap();
+    // 回执核过、定格没校验：水位只由放开之后的校验得出（BUG-045），不能导出，目标也不动；
+    // 校验之后同一个定格、同一个目标导得出。
+    assert_eq!(frozen.verify_audit(&audit).unwrap().checked(), 0);
+    assert!(frozen.export(target.path()).is_err());
+    frozen.validate().unwrap();
+    frozen.export(target.path()).unwrap();
+}
+#[test]
 fn an_open_outage_or_damaged_identity_blocks_the_checkpoint() {
     let dir = directory();
     let store = AgentStore::open(dir.path()).unwrap();

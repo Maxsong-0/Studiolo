@@ -6,6 +6,7 @@ use super::{
     CheckpointError, CheckpointExports, CheckpointTimes, OwnerExportPaths, PolicyParticipant,
     Result, add, check_deadline, unavailable,
 };
+use crate::coordinator::broker_failure;
 use std::{path::Path, time::Instant};
 use studiolo_audit_ledger::FrozenAudit;
 use studiolo_auth::FrozenAuth;
@@ -45,7 +46,7 @@ pub struct ReleasedOwners {
 pub enum SealFailure {
     /// 校验定格或核回执（登录、控制、接入方库）。
     Verify(CheckpointError),
-    /// 逐项导出（含副本上的整本验链和校验）。
+    /// 逐项导出（含副本上的整本验链和校验）。写者分得出超过固定上限、定格之后被改过（`broker_failure`）。
     Export(CheckpointError),
     /// 登记来源、过滤视图、封存暂存区。
     Staging(StagingError),
@@ -128,10 +129,11 @@ impl ReleasedOwners {
     /// 按固定顺序逐项导出；回执已经核过。
     fn export_owners(&mut self, coverage: AuditCoverageProof) -> Result<CheckpointExports> {
         let p = &self.paths;
+        // 写者分得清超过固定上限、定格之后被改过和别的故障，和窗口里同一套类别（BUG-045）。
         let mut owners = vec![
             self.broker
                 .export(&p.vault, &p.writer, self.deadline)
-                .map_err(|_| unavailable(Owner::Broker))?,
+                .map_err(|error| broker_failure(Some(&error)))?,
         ];
         if let Some(control) = &self.control {
             owners.push(

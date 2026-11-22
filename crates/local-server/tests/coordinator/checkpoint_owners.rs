@@ -10,6 +10,7 @@ use crate::{
 };
 use std::{
     fs,
+    io::Write as _,
     num::NonZeroU64,
     os::unix::fs::PermissionsExt as _,
     sync::Arc,
@@ -21,8 +22,8 @@ use studiolo_backup::worker::{
     job::backup_intent, recovery_point::BackupTargetKind, state::JobKey,
 };
 use studiolo_core::checkpoint::{
-    CheckpointId, CheckpointOwner as Owner, FreezeBudget, FreezeRequest, OwnerAssembly,
-    OwnerWatermark,
+    CheckpointError, CheckpointId, CheckpointOwner as Owner, FreezeBudget, FreezeRequest,
+    OwnerAssembly, OwnerWatermark,
 };
 use studiolo_host_config::Config;
 use studiolo_policy::PolicyStore;
@@ -132,6 +133,39 @@ async fn checkpoint_actual_owners_export_the_frozen_moment_with_two_cutoffs_afte
     assert!(expected_main > 3);
     assert_eq!(exports.audit_coverage.acked_events_checked, 3);
     assert!(released.export().is_err());
+    drop(released);
+    f.writable(true);
+    f.workbench.shutdown().await.unwrap();
+}
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn checkpoint_a_note_rewritten_in_place_after_release_fails_the_export_as_changed() {
+    let f = Setup::new(true).await;
+    let frozen = f
+        .owners
+        .freeze(
+            f.request(30_000),
+            &f.key,
+            BackupTargetKind::LocalTemporaryRepository,
+            f.targets(),
+        )
+        .unwrap();
+    let mut released = frozen
+        .release(Instant::now() + Duration::from_secs(60))
+        .unwrap();
+    // 原地改（不新建再改名）：写者自己从不这样做，只能是别的同用户进程。定格的句柄指着的就是这个 inode。
+    fs::OpenOptions::new()
+        .append(true)
+        .open(f.fixture.root.join("vault/note.md"))
+        .unwrap()
+        .write_all("放开之后追加".as_bytes())
+        .unwrap();
+    // 和别的写者故障分开报（BUG-045）：人侧日志写「导出：owner Broker 定格之后被改过」，不出票。
+    assert_eq!(
+        released.export().err(),
+        Some(CheckpointError::SourceChanged {
+            owner: Owner::Broker
+        })
+    );
     drop(released);
     f.writable(true);
     f.workbench.shutdown().await.unwrap();

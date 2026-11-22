@@ -398,7 +398,7 @@ impl BackupProducer {
         eprintln!("{}", window_line(window.elapsed()));
         #[cfg(test)]
         self.hold_after_release();
-        let now = now_millis().map_err(barrier)?;
+        let now = now_millis().map_err(after_release_step("取当前时间"))?;
         let sealed = released.seal(
             area,
             trusted_catalog,
@@ -414,7 +414,7 @@ impl BackupProducer {
         let sealed = sealed.map_err(after_release)?;
         BackupAdmission::approve(self.ledger.clone(), key.clone(), TARGET, &sealed)
             .map(|_| ())
-            .map_err(barrier)
+            .map_err(after_release_step("写准入"))
     }
 }
 
@@ -521,8 +521,17 @@ fn after_release(failure: SealFailure) -> FailureReason {
     staging_reason(failure.staging())
 }
 
+/// 放开之后、`seal` 以外的两步（取当前时间、写准入）没做成：同样写一行，只有固定的步骤名；
+/// 账本里照旧是同一个固定原因。
+fn after_release_step<E>(step: &'static str) -> impl FnOnce(E) -> FailureReason {
+    move |error| {
+        eprintln!("{}", released_line(&step));
+        barrier(error)
+    }
+}
+
 /// 固定类别：哪一步、哪个库或暂存层的哪一类；不含路径和内容。
-fn released_line(failure: &SealFailure) -> String {
+fn released_line(failure: &dyn std::fmt::Display) -> String {
     format!("备份封存放开之后卡在：{failure}")
 }
 
@@ -579,13 +588,14 @@ mod tests {
 
     #[test]
     fn the_log_line_for_a_seal_that_got_stuck_names_the_owner_and_the_kind() {
-        // 七个库各有自己的名字；同一个库的四种失败说法不一样，现场一眼分得清。
+        // 七个库各有自己的名字；同一个库的五种失败说法不一样，现场一眼分得清。
         for owner in CheckpointOwner::FREEZE_ORDER {
             let lines = [
                 stuck_line(&CheckpointError::OwnerUnavailable { owner }),
                 stuck_line(&CheckpointError::NotDrained { owner }),
                 stuck_line(&CheckpointError::FreezeTimeout { owner }),
                 stuck_line(&CheckpointError::LimitExceeded { owner }),
+                stuck_line(&CheckpointError::SourceChanged { owner }),
             ];
             for line in &lines {
                 assert!(line.starts_with("备份封存卡在："), "{line}");
@@ -608,6 +618,7 @@ mod tests {
     #[test]
     fn the_log_line_after_release_names_the_step_and_the_owner_without_paths() {
         let owner = CheckpointOwner::Control;
+        let broker = CheckpointOwner::Broker;
         let lines = [
             released_line(&SealFailure::Verify(CheckpointError::OwnerUnavailable {
                 owner,
@@ -616,13 +627,25 @@ mod tests {
                 owner,
             })),
             released_line(&SealFailure::Staging(StagingError::Changed)),
+            released_line(&SealFailure::Export(CheckpointError::SourceChanged {
+                owner: broker,
+            })),
+            released_line(&SealFailure::Export(CheckpointError::LimitExceeded {
+                owner: broker,
+            })),
+            released_line(&"取当前时间"),
+            released_line(&"写准入"),
         ];
         for line in &lines {
             assert!(line.starts_with("备份封存放开之后卡在："), "{line}");
             assert!(!line.contains('/'), "{line}");
         }
+        for (i, left) in lines.iter().enumerate() {
+            assert!(lines[i + 1..].iter().all(|right| right != left), "{left}");
+        }
         assert!(lines[0].contains("Control") && lines[1].contains("Control"));
-        assert!(lines[0] != lines[1] && lines[2].contains("Changed"));
+        assert!(lines[2].contains("Changed"));
+        assert!(lines[3].contains("Broker") && lines[4].contains("Broker"));
         // 账本里的固定原因照旧：导出没做成按暂存区不可用算，暂存层的照它自己的分类。
         let export = SealFailure::Export(CheckpointError::OwnerUnavailable { owner });
         assert_eq!(export.staging(), StagingError::Unavailable);

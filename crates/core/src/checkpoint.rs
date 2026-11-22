@@ -290,10 +290,18 @@ pub enum CheckpointError {
         /// 不可用的 owner。
         owner: CheckpointOwner,
     },
-    /// 超过固定上限：例如写者两棵树的文件数超过可同时打开文件数的一半，定格不半拍（BUG-045）。
+    /// 超过固定上限，不半拍（BUG-045）。写者报这一类的来源不止一处：定格时文件数超过可同时打开文件数的一半，
+    /// 目录深度、节点数、字节数、重放条数超过固定预算，导出时目标可用空间不够；现场先查打开文件数和目标盘空间。
     #[error("owner {owner:?} 超过固定上限")]
     LimitExceeded {
         /// 超过上限的 owner。
+        owner: CheckpointOwner,
+    },
+    /// 源在定格之后被改过：例如写者某个文件被别的进程原地改写（写者自己只新建再改名，从不原地改），
+    /// 导出整份失败、不出票（BUG-045）。
+    #[error("owner {owner:?} 定格之后被改过")]
+    SourceChanged {
+        /// 被改过的 owner。
         owner: CheckpointOwner,
     },
 }

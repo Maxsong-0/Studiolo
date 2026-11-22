@@ -54,6 +54,33 @@ fn auth_requires_real_audit_coverage_before_sealing() {
     assert!(frozen_auth.export(directory().path()).is_err());
 }
 #[test]
+fn receipts_checked_without_validating_the_frozen_moment_do_not_export() {
+    let auth = directory();
+    let audit = directory();
+    let target = directory();
+    let ledger = Arc::new(SqliteAuditLedger::open(audit.path()).unwrap());
+    let manager = SessionManager::open(
+        auth.path(),
+        config(10, 100),
+        ledger.clone(),
+        Arc::new(TestClock(AtomicI64::new(1_000_000))),
+        Arc::new(TestRandom::default()),
+    )
+    .unwrap();
+    manager.issue(&identity()).unwrap();
+    let auth_source = manager.checkpoint_source().unwrap();
+    let audit_source = ledger.checkpoint_source().unwrap();
+    let _quiescence = ledger.quiesce_operations(deadline()).unwrap();
+    let mut frozen_auth = auth_source.freeze(deadline()).unwrap();
+    let frozen_audit = audit_source.freeze(deadline()).unwrap();
+    // 回执核过、定格没校验：水位只由放开之后的校验得出（BUG-045），不能导出，目标也不动；
+    // 校验之后同一个定格、同一个目标导得出。
+    assert!(frozen_auth.verify_audit(&frozen_audit).unwrap().checked() >= 2);
+    assert!(frozen_auth.export(target.path()).is_err());
+    frozen_auth.validate().unwrap();
+    frozen_auth.export(target.path()).unwrap();
+}
+#[test]
 fn pending_auth_does_not_count_as_drained_and_retry_is_possible() {
     let h = Harness::new(10, 100);
     h.audit
