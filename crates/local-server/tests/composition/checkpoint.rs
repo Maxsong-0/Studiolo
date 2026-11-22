@@ -78,7 +78,11 @@ fn export(f: &Fixture, inputs: &CheckpointInputs, agent: bool, policy: bool, boa
             paths,
         )
         .unwrap();
-    let result = frozen.export().unwrap();
+    let result = frozen
+        .release(std::time::Instant::now() + std::time::Duration::from_secs(60))
+        .unwrap()
+        .export()
+        .unwrap();
     for (owner, present) in [
         (Owner::Broker, true),
         (Owner::Auth, true),

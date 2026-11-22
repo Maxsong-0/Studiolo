@@ -23,7 +23,8 @@ struct Present {
 struct Lease {
     request: FreezeRequest,
     deadline: Instant,
-    _permits: OwnedSemaphorePermit,
+    /// 冻结期间占满策略 HTTP 的许可；放开之后是 None，HTTP 照常处理（BUG-045）。
+    permits: Option<OwnedSemaphorePermit>,
 }
 
 /// 必须由实际PolicyPlane构造；不会用另一条源路径与许可池错配。
@@ -62,6 +63,24 @@ impl PolicyParticipant {
             inner: None,
             lease: Mutex::new(None),
         }
+    }
+
+    /// 放开写屏障和 HTTP 许可（BUG-045）：定格的读连接留着，之后的导出读的仍是冻结那一刻、受 `deadline` 约束。
+    /// 只能放开一次；没冻结就拒绝。
+    pub(crate) fn release(&self, deadline: Instant) -> Result<(), CheckpointError> {
+        let inner = self
+            .inner
+            .as_ref()
+            .ok_or(CheckpointError::OwnerUnavailable { owner: OWNER })?;
+        let mut guard = self.lock_until(deadline)?;
+        let lease = guard
+            .as_mut()
+            .filter(|lease| lease.permits.is_some())
+            .ok_or(CheckpointError::NotDrained { owner: OWNER })?;
+        inner.handle.release(deadline).map_err(problem)?;
+        lease.permits = None;
+        lease.deadline = deadline;
+        Ok(())
     }
 
     fn lock_until(
@@ -126,7 +145,7 @@ impl CheckpointParticipant for PolicyParticipant {
         *lease = Some(Lease {
             request: request.clone(),
             deadline,
-            _permits: permits,
+            permits: Some(permits),
         });
         Ok(FreezeReceipt {
             owner: OWNER,
@@ -148,14 +167,27 @@ impl CheckpointParticipant for PolicyParticipant {
         let deadline = self
             .global_deadline
             .map_or(deadline, |global| global.min(deadline));
-        let guard = self.lock_until(deadline)?;
+        // 放开之后冻结窗口的截止时间早过了：不拿它等锁，拿得到就直接用。
+        let guard = match self.lease.try_lock() {
+            Ok(guard) => guard,
+            Err(TryLockError::Poisoned(_)) => {
+                return Err(CheckpointError::OwnerUnavailable { owner: OWNER });
+            }
+            Err(TryLockError::WouldBlock) => self.lock_until(deadline)?,
+        };
         let lease = guard
             .as_ref()
             .filter(|lease| lease.request == *request)
             .ok_or(CheckpointError::NotDrained { owner: OWNER })?;
+        // 放开之后只受放开时给的截止时间约束；没放开照旧受冻结窗口约束。
+        let deadline = if lease.permits.is_none() {
+            lease.deadline
+        } else {
+            lease.deadline.min(deadline)
+        };
         inner
             .handle
-            .export(&inner.target, lease.deadline.min(deadline))
+            .export(&inner.target, deadline)
             .map_err(problem)
     }
     fn thaw(&self) -> Result<(), CheckpointError> {

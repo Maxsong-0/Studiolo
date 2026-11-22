@@ -165,14 +165,18 @@ class Operations(SnapshotOperations):
         c.require(all(type(producer[key]) is str for key in ('socket', 'ephemeral_root')))
         socket, reader = c.absolute(producer['socket']), producer['reader_gid']
         c.require(type(reader) is int and reader > 0 and reader in self.owner_groups())
-        c.require(str(socket.parent) == a.BACKUP_RUNTIME and producer['staging_parent'] == a.BACKUP_STAGING)
+        c.require(str(socket) == a.BACKUP_SOCKET and str(socket.parent) == a.BACKUP_RUNTIME
+                  and producer['staging_parent'] == a.BACKUP_STAGING)
         for path in (a.BACKUP_RUNTIME, a.BACKUP_STAGING):
             s = os.lstat(path)
             c.require(stat.S_ISDIR(s.st_mode) and (s.st_uid, s.st_gid) == (c.UID, reader)
                       and stat.S_IMODE(s.st_mode) == 0o750)
-        # 上一发行（r16）不监听备份 socket：此刻它必须不存在，残留的由人看过再删（程序不清理也不接管）。
-        # 起点已带备份监听的发行要改成像 board_ready 那样核活的 socket，「必须不存在」挪到 stopped()。
-        c.require(not os.path.lexists(socket))
+        # 上一发行（r17）已经在监听备份 socket：此刻它必须是活的那一个（程序建的样子：主服务账号、读取组、0660、
+        # 单链接，crates/local-server/src/backup/listener.rs）。不在、或者是别的东西，说明现场不是钉住的上一发行，
+        # 由人看过。「必须不存在」在停服之后核（stopped）：残留的节点程序不清理也不接管。
+        node = os.lstat(socket)
+        c.require(stat.S_ISSOCK(node.st_mode) and (node.st_uid, node.st_gid) == (c.UID, reader)
+                  and stat.S_IMODE(node.st_mode) == 0o660 and node.st_nlink == 1)
         ephemeral = c.absolute(producer['ephemeral_root'])
         c.require(not any(ephemeral.is_relative_to(private) for private in PRIVATE_TMP))
         c.inspect(ephemeral, c.UID, 0o700, True)
@@ -238,7 +242,8 @@ class Operations(SnapshotOperations):
             states = [self.properties(name) for name in NAMES]
             if all(p['ActiveState'] in ('inactive', 'failed') and p['MainPID'] == '0' for p in states):
                 self.c.require(not os.path.lexists(self.runtime.SOCKET)
-                               and not os.path.lexists(self.a.BOARD_SOCKET))
+                               and not os.path.lexists(self.a.BOARD_SOCKET)
+                               and not os.path.lexists(self.a.BACKUP_SOCKET))
                 return
             self.c.require(time.monotonic() < deadline)
             time.sleep(0.1)

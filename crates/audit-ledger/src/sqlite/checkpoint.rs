@@ -1,4 +1,5 @@
-//! Audit 最后冻结；全量验链后提供截止点内逐条原事件核对，不向协调器暴露连接。
+//! Audit 最后冻结；冻结时只核首尾锚点并定格，提供截止点内逐条原事件核对，导出时在副本上整本验链；
+//! 不向协调器暴露连接。
 mod access;
 pub use access::AuditCheckpointAccess;
 mod coverage;
@@ -13,7 +14,8 @@ use studiolo_core::checkpoint::{CheckpointOwner, OwnerWatermark, SealedOwnerChec
 pub struct AuditCheckpointSource {
     source: Source,
 }
-/// 已全量验链、仍被冻结的原账本；外部只能核对既有回执和导出。
+/// 定格在冻结那一刻的原账本（首尾锚点已核）；外部只能核对既有回执、放开写锁和导出。
+/// 整本验链在导出时做，验不过不出票。
 pub struct FrozenAudit {
     frozen: FrozenSqlite,
     watermark: OwnerWatermark,
@@ -35,14 +37,15 @@ impl SqliteAuditLedger {
 }
 impl AuditCheckpointSource {
     /// 必须在所有上游操作与补记排空之后调用；库锁自身不能证明语义排空。
+    /// 冻结窗口里只核首尾锚点（和每次读写一样的成本）；整本验链按条数涨，放到导出时在副本上做（BUG-045）。
     pub fn freeze(&self, deadline: Instant) -> Result<FrozenAudit, AuditError> {
         let frozen = self.source.freeze(deadline).map_err(problem)?;
-        let watermark = frozen.inspect(snapshot).map_err(problem)?;
+        let watermark = frozen.inspect(anchored).map_err(problem)?;
         Ok(FrozenAudit { frozen, watermark })
     }
 }
 impl FrozenAudit {
-    /// 在已全量验链且写屏障仍持有的截止点内，读取一条原记录供派生索引逐字段核对。
+    /// 在定格的截止点内读取一条原记录供派生索引逐字段核对（放开写锁前后读到的都一样）。
     pub fn read_record(&self, offset: u64) -> Result<AuditRecord, AuditError> {
         self.record(offset)
     }
@@ -80,7 +83,13 @@ impl FrozenAudit {
         }
         Ok(VerifiedReceipt { offset })
     }
-    /// 已完整验链且 RESERVED 锁仍在，逐条定位只需读该条；不重复扫描整段。
+    /// 放开写锁，人侧从此可以照常追加；定格的读连接留着，回执核对和导出读到的仍是冻结那一刻。
+    /// 之后的读取和导出受 `deadline` 约束。只能放开一次。
+    pub fn release(&mut self, deadline: Instant) -> Result<(), AuditError> {
+        self.frozen.release(deadline).map_err(problem)
+    }
+    /// 读定格那一刻里的一条：只读该条、核它自己的完整性，不重复扫描整段。
+    /// 链有没有断由导出时在副本上整本验链兜底，验不过就不出票。
     fn record(&self, offset: u64) -> Result<AuditRecord, AuditError> {
         let OwnerWatermark::Audit { last_offset, .. } = self.watermark else {
             return Err(AuditError::CorruptStore);
@@ -101,11 +110,11 @@ impl FrozenAudit {
             Ok(record)
         }).map_err(problem)
     }
-    /// 独立主文件、完整验链、全内容摘要与 fsync 全部成立后才返回票据。
+    /// 独立主文件、副本整本验链（锚点必须等于冻结时那一个）、全内容摘要与 fsync 全部成立后才返回票据。
     pub fn export(&self, target: &Path) -> Result<SealedOwnerCheckpoint, AuditError> {
         let wal = self
             .frozen
-            .export(target, &self.watermark, snapshot)
+            .export(target, &self.watermark, verified)
             .map_err(problem)?;
         Ok(SealedOwnerCheckpoint {
             owner: CheckpointOwner::Audit,
@@ -119,8 +128,14 @@ impl FrozenAudit {
         })
     }
 }
-fn snapshot(db: &rusqlite::Connection) -> Result<OwnerWatermark, Error> {
+/// 副本上用：整本验链之后再取锚点。
+fn verified(db: &rusqlite::Connection) -> Result<OwnerWatermark, Error> {
     verify::all(db).map_err(invalid)?;
+    anchored(db)
+}
+/// 冻结窗口里用：schema 和首尾锚点（打开段逐条、封口段核段摘要），不走读封口段里的每一条。
+fn anchored(db: &rusqlite::Connection) -> Result<OwnerWatermark, Error> {
+    schema::validate(db, schema::VERSION).map_err(invalid)?;
     let anchor = verify::anchor(db).map_err(invalid)?;
     Ok(OwnerWatermark::Audit {
         last_offset: anchor.last_offset,

@@ -15,7 +15,25 @@ fn backup_worker_process_capabilities_are_fixed_and_cannot_move_to_another_file(
         ("package.rs", "OFlags::NOFOLLOW", "OFlags::empty()"),
         ("source/parents.rs", "OFlags::NOFOLLOW", "OFlags::empty()"),
         ("credentials/root.rs", "0x8584_58f6", "0"),
+        // BUG-043：tmpfs 不查 noswap 就放行、目录或文件不核「只有 root 和 worker 读得到」、挂载表换个来源，都要红。
+        (
+            "credentials/root.rs",
+            "0x0102_1994 => mount::noswap(fd),",
+            "0x0102_1994 => true,",
+        ),
+        (
+            "credentials/root.rs",
+            "mode & 0o7777, access, uid",
+            "mode & 0o7777, None, uid",
+        ),
+        (
+            "credentials/mount.rs",
+            "File::open(\"/proc/self/mountinfo\")",
+            "File::open(\"/proc/self/mounts\")",
+        ),
+        ("credentials/mount.rs", "has(\"noswap\")", "true"),
         ("credentials/file.rs", "OFlags::NOFOLLOW", "OFlags::empty()"),
+        ("credentials/file.rs", "private(file, &pin, uid)?;", ""),
         ("config/input.rs", "backup-worker.json", "other.json"),
         // 带引号只命中打开处那一个字面量，不命中 CA_PATH。
         (

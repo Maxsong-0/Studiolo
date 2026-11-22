@@ -10,22 +10,24 @@ T-204（接续 T-147），2026-11-13。策略库机制与真实人侧许可池�
 既有文件、符号链接、非私有目录和源身份变化全部拒绝，不覆盖或收养其他文件。
 
 冻结先取得人侧全部许可，等包括审计在内的完整操作结束，再在独立连接上
-`BEGIN IMMEDIATE`，持锁至 `thaw`。其他进程写者仍等待5秒后返回 `PolicyError::Busy`；
+`BEGIN IMMEDIATE`，持锁至放开（`release`）或 `thaw`。其他进程写者仍等待5秒后返回 `PolicyError::Busy`；
 HTTP 为503 `store_busy`，`Retry-After: 5`；MCP说明尚未提交、可稍后重试。
 既有库校验采用 Deferred，冻结期间读及读句柄重启不等待写屏障。
 上游 AgentStore 的完整接入方调用仍必须先排空；本参与者不能代替该证明。
 
-导出在另一连接执行 PASSIVE checkpoint，必须 `busy=0` 且全部WAL帧已回写；
-旧快照读者阻塞时只等到截止时间，不以“快照大概完整”绕过证据。
-随后用参数绑定的 `VACUUM INTO` 导出，明确同步原目标FD和父目录，
-通过唯一打开点重开并验证schema、quick_check、外键、effective水位与全表逻辑摘要。
+冻结时（BUG-045，2026-11-22）持锁之后在另一连接执行 PASSIVE checkpoint，必须 `busy=0` 且全部WAL帧已回写；
+旧快照读者阻塞时只等到冻结截止时间，不以“快照大概完整”绕过证据。随后经唯一打开点再开一条连接、开读事务读一页，
+把库定格在这一刻。`PolicyParticipant::release` 放开写锁、归还 HTTP 许可，定格的读连接留着；之后的导出只受放开时
+给的截止时间约束，读的仍是冻结那一刻。导出先在定格的读事务里算全表逻辑摘要，再用 SQLite Backup API 从定格连接
+拷进独占创建的目标（不再用 `VACUUM INTO`：它要自己开读事务，在已开着读事务的定格连接上做不了），明确同步原目标FD
+和父目录，通过唯一打开点重开并验证schema、quick_check、外键、effective水位与全表逻辑摘要。
 草案按rowid排序加入摘要但不比较rowid数值，保留入库先后语义。
 最后关闭副本再同步，复核源和目标绑定，所有证据成立才返回封存票据。
 
 截止时间在SQLite VM的progress hook内、行遍历及操作前后核对；取消不留到下一次查询。
 系统调用本身（例如fsync）不声称可被VM hook中断，超时后不签成功票据。
-冻结/导出串行持有状态锁；请求ID和预算必须与冻结窗口相同。
-解冻先释放SQLite连接再归还HTTP许可，失败及Drop也释放；重复解冻无副作用。
+冻结/放开/导出串行持有状态锁；请求ID必须与冻结窗口相同，放开只能一次。
+解冻先释放SQLite连接再归还HTTP许可（放开时已归还的不重复），失败及Drop也释放；重复解冻无副作用。
 失败导出可留下不可用残片，调用方必须使用新目标，机制不递归删除用户目录。
 
 七owner清单 `MANIFEST_SCHEMA_VERSION=2`；v1及未知版本拒绝，不隐式迁移。
@@ -40,5 +42,5 @@ HTTP与MCP Busy各1项、清单23项、架构58项及Clippy通过；
 （`open_existing`），第一次先核水位等于清单里的，再一律全局吊销（2026-11-16 用户拍板），只能由主人经 L3 解除；
 封存截止点时已经全局吊销的，原记录保留、不再加一条。AgentStore 的每个实例在这里记实例吊销（不可恢复）。
 
-SQLite语义依据：[VACUUM](https://www.sqlite.org/lang_vacuum.html)、
-[WAL checkpoint](https://www.sqlite.org/c3ref/wal_checkpoint_v2.html)。
+SQLite语义依据：[Online Backup API](https://www.sqlite.org/backup.html)、
+[WAL checkpoint](https://www.sqlite.org/c3ref/wal_checkpoint_v2.html)、[WAL 读事务快照隔离](https://www.sqlite.org/wal.html)。

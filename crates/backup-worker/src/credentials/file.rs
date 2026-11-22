@@ -1,6 +1,9 @@
 //! 单链接只读凭据、有界零化读取；文件名只能来自三个固定槽位。
-use super::root::{Root, check_deadline, no_acl, readonly_memory};
-use crate::{ProcessError, Result};
+use super::{
+    acl::Kind,
+    fault::{CredentialFault, Result},
+    root::{Root, check_deadline, exclusive_access, readonly_memory},
+};
 use rustix::fs::{self, Mode, OFlags};
 use std::{
     fs::{File, Metadata},
@@ -48,16 +51,13 @@ impl SecretFile {
     pub fn check(&self, root: &Root, deadline: Instant) -> Result<()> {
         check_deadline(deadline)?;
         readonly_memory(&self.file)?;
-        no_acl(&self.file)?;
-        let after = self
-            .file
-            .metadata()
-            .map_err(|_| ProcessError::Configuration)?;
+        let after = self.file.metadata().map_err(|_| CredentialFault::Changed)?;
+        private(&self.file, &after, root.uid())?;
         let reopened = open_slot(root, self.slot)?
             .metadata()
-            .map_err(|_| ProcessError::Configuration)?;
+            .map_err(|_| CredentialFault::Changed)?;
         if !same(&self.pin, &after) || !same(&self.pin, &reopened) {
-            return Err(ProcessError::Configuration);
+            return Err(CredentialFault::Changed);
         }
         check_deadline(deadline)
     }
@@ -69,10 +69,20 @@ fn open_slot(root: &Root, slot: Slot) -> Result<File> {
         OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::CLOEXEC | OFlags::NONBLOCK,
         Mode::empty(),
     )
-    .map_err(|_| ProcessError::Configuration)?;
+    .map_err(|_| CredentialFault::Missing)?;
     readonly_memory(&fd)?;
-    no_acl(&fd)?;
     Ok(File::from(fd))
+}
+/// 单链接的普通文件，而且只有 root 和 worker 读得到（两种形态，逐项核，见 `acl.rs`）。
+fn private(file: &File, pin: &Metadata, uid: u32) -> Result<()> {
+    if pin.is_file()
+        && pin.nlink() == 1
+        && exclusive_access(file, Kind::File, pin.uid(), pin.mode(), uid)
+    {
+        Ok(())
+    } else {
+        Err(CredentialFault::FileAccess)
+    }
 }
 fn read_checked(
     mut file: &File,
@@ -81,16 +91,11 @@ fn read_checked(
     deadline: Instant,
 ) -> Result<(Zeroizing<String>, Metadata)> {
     check_deadline(deadline)?;
-    let pin = file.metadata().map_err(|_| ProcessError::Configuration)?;
+    let pin = file.metadata().map_err(|_| CredentialFault::Missing)?;
+    private(file, &pin, uid)?;
     let limit = slot.limit();
-    if !pin.is_file()
-        || pin.uid() != uid
-        || pin.nlink() != 1
-        || pin.mode() & 0o7777 != 0o400
-        || pin.len() == 0
-        || pin.len() > (limit + 1) as u64
-    {
-        return Err(ProcessError::Configuration);
+    if pin.len() == 0 || pin.len() > (limit + 1) as u64 {
+        return Err(CredentialFault::Content);
     }
     let mut bytes = Zeroizing::new(Vec::with_capacity(limit + 1));
     let mut block = Zeroizing::new([0_u8; 512]);
@@ -98,18 +103,18 @@ fn read_checked(
         check_deadline(deadline)?;
         let count = file
             .read(&mut *block)
-            .map_err(|_| ProcessError::Configuration)?;
+            .map_err(|_| CredentialFault::Missing)?;
         if count == 0 {
             break;
         }
         if count > limit + 1 - bytes.len() {
-            return Err(ProcessError::Configuration);
+            return Err(CredentialFault::Content);
         }
         bytes.extend_from_slice(&block[..count]);
     }
-    let after = file.metadata().map_err(|_| ProcessError::Configuration)?;
+    let after = file.metadata().map_err(|_| CredentialFault::Changed)?;
     if bytes.len() as u64 != pin.len() || !same(&pin, &after) {
-        return Err(ProcessError::Configuration);
+        return Err(CredentialFault::Changed);
     }
     let value = parse(&bytes, slot)?;
     check_deadline(deadline)?;
@@ -118,14 +123,14 @@ fn read_checked(
 fn parse(bytes: &[u8], slot: Slot) -> Result<Zeroizing<String>> {
     // 允许录入工具留下一个 LF；其余控制字符/首尾空白拒绝，避免与 restic 解读不一致。
     let bytes = bytes.strip_suffix(b"\n").unwrap_or(bytes);
-    let value = std::str::from_utf8(bytes).map_err(|_| ProcessError::Configuration)?;
+    let value = std::str::from_utf8(bytes).map_err(|_| CredentialFault::Content)?;
     if value.is_empty()
         || value.len() > slot.limit()
         || value.trim() != value
         || value.chars().any(char::is_control)
         || (matches!(slot, Slot::Username) && value.contains(':'))
     {
-        return Err(ProcessError::Configuration);
+        return Err(CredentialFault::Content);
     }
     Ok(Zeroizing::new(value.to_owned()))
 }

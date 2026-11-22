@@ -1,21 +1,55 @@
 //! 目录与文件都有固定预算；封存摘要覆盖名字、目录结构、空目录及全部文件字节。
 //! 唯一跳过的是开库清扫的隔离区（`crate::residue`）：它不在配对布局里，里面的残留备份也归不了类。
 use crate::{
-    BrokerError, FsVaultBroker,
+    BrokerError,
     writer::{Identity, directory},
 };
 use cap_std::fs::{Dir, MetadataExt as _};
 use sha2::{Digest, Sha256};
-use std::{path::Path, time::Instant};
-const MAX_NODES: u64 = 1_000_000;
-const MAX_BYTES: u64 = 512 * 1024 * 1024 * 1024;
-const MAX_DEPTH: usize = 64;
+use std::time::Instant;
+pub(super) const MAX_NODES: u64 = 1_000_000;
+pub(super) const MAX_BYTES: u64 = 512 * 1024 * 1024 * 1024;
+pub(super) const MAX_DEPTH: usize = 64;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct TreeSeal {
     hash: [u8; 32],
     nodes: u64,
     bytes: u64,
+}
+impl TreeSeal {
+    /// 定格拷贝（`capture.rs`）按同一套摘要算出来的封存值。
+    pub(super) fn new(hash: [u8; 32], nodes: u64, bytes: u64) -> Self {
+        Self { hash, nodes, bytes }
+    }
+}
+/// 一层目录的摘要：名字、目录结构、文件长度和字节摘要按固定写法拼。扫描、拷贝、定格拷贝共用这一份写法。
+pub(super) struct DirHasher(Sha256);
+impl DirHasher {
+    pub(super) fn new(entries: usize) -> Self {
+        let mut hash = Sha256::new();
+        hash.update(b"studiolo-broker-tree-v1\0");
+        hash.update((entries as u64).to_be_bytes());
+        Self(hash)
+    }
+    pub(super) fn directory(&mut self, name: &str, child: [u8; 32]) {
+        self.name(name);
+        self.0.update([1]);
+        self.0.update(child);
+    }
+    pub(super) fn file(&mut self, name: &str, length: u64, digest: [u8; 32]) {
+        self.name(name);
+        self.0.update([2]);
+        self.0.update(length.to_be_bytes());
+        self.0.update(digest);
+    }
+    fn name(&mut self, name: &str) {
+        self.0.update((name.len() as u64).to_be_bytes());
+        self.0.update(name.as_bytes());
+    }
+    pub(super) fn finish(self) -> [u8; 32] {
+        self.0.finalize().into()
+    }
 }
 pub(super) fn check_pair(left: &TreeSeal, right: &TreeSeal) -> Result<(), BrokerError> {
     if left
@@ -31,24 +65,9 @@ pub(super) fn check_pair(left: &TreeSeal, right: &TreeSeal) -> Result<(), Broker
     }
     Ok(())
 }
-/// `skip` 是要跳过的隔离区，从根起逐段写（`residue::VAULT_QUARANTINE`／`DATA_QUARANTINE`）。
+/// 扫描一棵树算封存值（只读）。`skip` 是要跳过的隔离区，从根起逐段写（`residue::VAULT_QUARANTINE`／`DATA_QUARANTINE`）。
+/// 定格拷贝在 `capture.rs`：导出之后用这里重扫目标，核对拷对了。
 pub(super) fn scan(root: &Dir, skip: &[&str], deadline: Instant) -> Result<TreeSeal, BrokerError> {
-    run(root, None, skip, deadline)
-}
-pub(super) fn copy(
-    root: &Dir,
-    target: &Dir,
-    skip: &[&str],
-    deadline: Instant,
-) -> Result<TreeSeal, BrokerError> {
-    run(root, Some(target), skip, deadline)
-}
-fn run(
-    root: &Dir,
-    target: Option<&Dir>,
-    skip: &[&str],
-    deadline: Instant,
-) -> Result<TreeSeal, BrokerError> {
     let mut walk = Walk {
         device: Identity::directory(root)?.dev,
         deadline,
@@ -56,7 +75,7 @@ fn run(
         bytes: 0,
         buffer: vec![0; 256 * 1024],
     };
-    let hash = walk.dir(root, target, skip, 0)?;
+    let hash = walk.dir(root, skip, 0)?;
     Ok(TreeSeal {
         hash,
         nodes: walk.nodes,
@@ -71,13 +90,7 @@ struct Walk {
     buffer: Vec<u8>,
 }
 impl Walk {
-    fn dir(
-        &mut self,
-        source: &Dir,
-        target: Option<&Dir>,
-        skip: &[&str],
-        depth: usize,
-    ) -> Result<[u8; 32], BrokerError> {
+    fn dir(&mut self, source: &Dir, skip: &[&str], depth: usize) -> Result<[u8; 32], BrokerError> {
         super::check_deadline(self.deadline)?;
         if depth > MAX_DEPTH {
             return Err(BrokerError::WriterLimitExceeded);
@@ -93,24 +106,19 @@ impl Walk {
         }
         let names = listed(source, skip, MAX_NODES - self.nodes, self.deadline)?;
         self.nodes += names.len() as u64;
-        let mut hash = Sha256::new();
-        hash.update(b"studiolo-broker-tree-v1\0");
-        hash.update((names.len() as u64).to_be_bytes());
+        let mut hash = DirHasher::new(names.len());
         for name in &names {
             super::check_deadline(self.deadline)?;
             let meta = source
                 .symlink_metadata(name)
                 .map_err(|e| BrokerError::io("核对封存节点", e))?;
-            hash.update((name.len() as u64).to_be_bytes());
-            hash.update(name.as_bytes());
             if meta.is_dir() && !meta.file_type().is_symlink() {
                 let child = directory(source, name)?;
                 if Identity::directory(&child)? != Identity::file(&meta) {
                     return Err(BrokerError::CaptureChanged);
                 }
-                let copied = target.map(|dir| super::copy::dir(dir, name)).transpose()?;
-                hash.update([1]);
-                hash.update(self.dir(&child, copied.as_ref(), within(skip, name), depth + 1)?);
+                let child_hash = self.dir(&child, within(skip, name), depth + 1)?;
+                hash.directory(name, child_hash);
                 if Identity::directory(&directory(source, name)?)? != Identity::file(&meta) {
                     return Err(BrokerError::CaptureChanged);
                 }
@@ -118,16 +126,13 @@ impl Walk {
                 let (digest, length) = super::files::stream(
                     source,
                     name,
-                    target,
                     self.device,
                     MAX_BYTES - self.bytes,
                     self.deadline,
                     &mut self.buffer,
                 )?;
                 self.bytes += length;
-                hash.update([2]);
-                hash.update(length.to_be_bytes());
-                hash.update(digest);
+                hash.file(name, length, digest);
             } else {
                 return Err(BrokerError::IncompleteCapture);
             }
@@ -146,15 +151,12 @@ impl Walk {
         {
             return Err(BrokerError::CaptureChanged);
         }
-        if let Some(target) = target {
-            FsVaultBroker::sync_directory(target, Path::new("."))?;
-        }
         super::check_deadline(self.deadline)?;
-        Ok(hash.finalize().into())
+        Ok(hash.finish())
     }
 }
 /// 往下一层时还要跳过的路径：只有正走在跳过路径上才往下传。
-fn within<'a>(skip: &'a [&'a str], name: &str) -> &'a [&'a str] {
+pub(super) fn within<'a>(skip: &'a [&'a str], name: &str) -> &'a [&'a str] {
     match skip {
         [first, rest @ ..] if *first == name && !rest.is_empty() => rest,
         _ => &[],
@@ -162,7 +164,7 @@ fn within<'a>(skip: &'a [&'a str], name: &str) -> &'a [&'a str] {
 }
 /// 一层目录的名字，去掉跳过路径落在这一层的那个隔离区。只跳过真目录：
 /// 同名的文件照常进封存，同名的链接照旧让封存失败。
-fn listed(
+pub(super) fn listed(
     dir: &Dir,
     skip: &[&str],
     remaining: u64,

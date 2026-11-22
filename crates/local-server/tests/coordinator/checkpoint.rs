@@ -188,8 +188,17 @@ async fn checkpoint_real_audit_covers_content_file_operations_and_maintenance() 
     assert_eq!(coverage.max_offset(), 6);
     let vault = target(&f, "export-vault");
     let data = target(&f, "export-data");
-    assert!(frozen.export(&vault, &data).unwrap().is_verified());
+    // 交出定格、把写者还回工作台，再从定格导出（BUG-045）。
+    let capture = frozen.take_capture().unwrap();
+    assert!(frozen.take_capture().is_err());
     drop(frozen);
+    assert!(workbench.core.owner.lock().unwrap().is_some());
+    assert!(
+        capture
+            .export(&vault, &data, deadline())
+            .unwrap()
+            .is_verified()
+    );
     assert_eq!(
         workbench
             .core
@@ -223,11 +232,8 @@ async fn checkpoint_same_id_wrong_full_event_or_hash_cannot_export() {
             .freeze(deadline())
             .unwrap();
         assert!(frozen.verify_audit(&original).is_err());
-        assert!(
-            frozen
-                .export(&target(&f, "bad-vault"), &target(&f, "bad-data"))
-                .is_err()
-        );
+        // 回执没核过就没有定格可交，也就导不出来。
+        assert!(frozen.take_capture().is_err());
         drop(frozen);
         assert!(workbench.core.owner.lock().unwrap().is_some());
         drop(original);

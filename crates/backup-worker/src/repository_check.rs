@@ -30,6 +30,11 @@ pub(crate) fn run(
     // 写全路径：生产者判断「中途没了」的时限也从这个常量算，本地同名常量顶替不了它。
     let deadline = Instant::now() + studiolo_backup::worker::repository_check::CHECK_WINDOW;
     let output = ResticCredentials::load(residency, config, deadline)
+        .map_err(|fault| {
+            // 固定类别，不带路径和内容；少了这一行，现场只看得到一句「unavailable」（BUG-043）。
+            eprintln!("{fault}");
+            ProcessError::from(fault)
+        })
         .and_then(|credentials| Runtime::open(config, credentials, deadline))
         .and_then(|runtime| {
             let invocation = ResticInvocation::plan(

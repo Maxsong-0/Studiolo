@@ -117,7 +117,12 @@ fn sqlite_checkpoint(path: &Path, source: &str) -> String {
                 "connection.busy_timeout(Duration::ZERO)",
                 "connection.progress_handler(1000,Some(move||Instant::now()>=deadline))",
                 "reserve.execute_batch(\"BEGINIMMEDIATE\")",
+                // 冻结只定格（BUG-045）：写锁在手先把 WAL 全部回写，再在只读连接上开读事务、真读一页取快照；
+                // 放开写锁之后导出读的仍是这一刻。少一句，放开之后就可能读到冻结之后的内容。
+                "letwal=checkpoint(&binding,deadline)?;",
                 "source=connect(&binding,true,deadline)?",
+                "source.execute_batch(\"PRAGMAquery_only=ON;BEGIN\")",
+                "source.query_row(\"SELECTcount(*)FROMsqlite_schema\"",
             ],
             &[(
                 "Connection::open_with_flags(&binding.path,access|OpenFlags::SQLITE_OPEN_NO_MUTEX|OpenFlags::SQLITE_OPEN_NOFOLLOW|OpenFlags::SQLITE_OPEN_PRIVATE_CACHE)",

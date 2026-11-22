@@ -10,19 +10,20 @@ use crate::{
 };
 use std::{
     fs,
+    io::Write as _,
     num::NonZeroU64,
     os::unix::fs::PermissionsExt as _,
     sync::Arc,
     time::{Duration, Instant},
 };
 use studiolo_audit_ledger::{AuditLedger, SqliteAuditLedger};
-use studiolo_auth::{OsSessionRandom, SessionManager, SystemSessionClock};
+use studiolo_auth::{OsSessionRandom, SessionClock, SessionManager, SystemSessionClock};
 use studiolo_backup::worker::{
     job::backup_intent, recovery_point::BackupTargetKind, state::JobKey,
 };
 use studiolo_core::checkpoint::{
-    CheckpointId, CheckpointOwner as Owner, FreezeBudget, FreezeRequest, OwnerAssembly,
-    OwnerWatermark,
+    CheckpointError, CheckpointId, CheckpointOwner as Owner, FreezeBudget, FreezeRequest,
+    OwnerAssembly, OwnerWatermark,
 };
 use studiolo_host_config::Config;
 use studiolo_policy::PolicyStore;
@@ -31,14 +32,18 @@ use studiolo_supply::AgentStore;
 mod drill;
 mod fixture;
 mod producer;
+mod producer_auth_backlog;
+mod producer_catch_up;
 mod producer_check;
+mod producer_window;
 mod restore;
 mod restore_plan;
 mod seal;
 use fixture::Setup;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn checkpoint_actual_owners_export_with_two_cutoffs_and_keep_every_barrier_until_drop() {
+async fn checkpoint_actual_owners_export_the_frozen_moment_with_two_cutoffs_after_every_barrier_is_released()
+ {
     let f = Setup::new(true).await;
     let paths = f.targets();
     // 直接追加、没有持久 ACK 的事件（有动作的租约对账、黑板操作的意图都是这样落账的）。以前空的启动对账
@@ -72,7 +77,27 @@ async fn checkpoint_actual_owners_export_with_two_cutoffs_and_keep_every_barrier
         .unwrap();
     f.writable(false);
     assert!(f.workbench.core.owner.lock().unwrap().is_none());
-    let exports = frozen.export().unwrap();
+    // 放开（BUG-045）：各库写锁、写者、两边的完整操作准入全部还回去，导出从定格做。
+    let mut released = frozen
+        .release(Instant::now() + Duration::from_secs(60))
+        .unwrap();
+    f.writable(true);
+    assert!(f.human.enter_operation().is_ok());
+    assert!(f.agent.enter_operation().is_ok());
+    assert!(f.workbench.core.owner.lock().unwrap().is_some());
+    // 放开之后追加的不进这次封存：截止点仍是冻结那一刻。
+    f.human
+        .append(studiolo_audit_ledger::AuditEvent::new(
+            studiolo_audit_ledger::AuditEventId::parse("board:task.reconcile:after").unwrap(),
+            studiolo_audit_ledger::AuditPhase::Intent,
+            "task.reconcile",
+            studiolo_audit_ledger::SanitizedPayload::try_from(
+                serde_json::json!({"request_hash": "1".repeat(64)}),
+            )
+            .unwrap(),
+        ))
+        .unwrap();
+    let exports = released.export().unwrap();
     assert_eq!(exports.owners.len(), 6);
     assert_eq!(
         exports.roster.assembly(Owner::Bridge),
@@ -107,13 +132,42 @@ async fn checkpoint_actual_owners_export_with_two_cutoffs_and_keep_every_barrier
     // 启动对账直接追加的事件没有持久 ACK；完整验链覆盖它们，但不能虚增 ACK 计数。
     assert!(expected_main > 3);
     assert_eq!(exports.audit_coverage.acked_events_checked, 3);
-    assert!(frozen.export().is_err());
-    f.writable(false);
-    drop(frozen);
+    assert!(released.export().is_err());
+    drop(released);
     f.writable(true);
-    assert!(f.human.enter_operation().is_ok());
-    assert!(f.agent.enter_operation().is_ok());
-    assert!(f.workbench.core.owner.lock().unwrap().is_some());
+    f.workbench.shutdown().await.unwrap();
+}
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn checkpoint_a_note_rewritten_in_place_after_release_fails_the_export_as_changed() {
+    let f = Setup::new(true).await;
+    let frozen = f
+        .owners
+        .freeze(
+            f.request(30_000),
+            &f.key,
+            BackupTargetKind::LocalTemporaryRepository,
+            f.targets(),
+        )
+        .unwrap();
+    let mut released = frozen
+        .release(Instant::now() + Duration::from_secs(60))
+        .unwrap();
+    // 原地改（不新建再改名）：写者自己从不这样做，只能是别的同用户进程。定格的句柄指着的就是这个 inode。
+    fs::OpenOptions::new()
+        .append(true)
+        .open(f.fixture.root.join("vault/note.md"))
+        .unwrap()
+        .write_all("放开之后追加".as_bytes())
+        .unwrap();
+    // 和别的写者故障分开报（BUG-045）：人侧日志写「导出：owner Broker 定格之后被改过」，不出票。
+    assert_eq!(
+        released.export().err(),
+        Some(CheckpointError::SourceChanged {
+            owner: Owner::Broker
+        })
+    );
+    drop(released);
+    f.writable(true);
     f.workbench.shutdown().await.unwrap();
 }
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -177,6 +231,7 @@ async fn checkpoint_minimal_actual_assembly_does_not_invent_optional_stores_or_s
     let owners = CheckpointOwners::new(CheckpointInputs {
         workbench: workbench.clone(),
         sessions,
+        factors: None,
         audit: audit.clone(),
         board: None,
         bridge: None,
@@ -206,7 +261,10 @@ async fn checkpoint_minimal_actual_assembly_does_not_invent_optional_stores_or_s
             paths,
         )
         .unwrap();
-    let exports = frozen.export().unwrap();
+    let mut released = frozen
+        .release(Instant::now() + Duration::from_secs(60))
+        .unwrap();
+    let exports = released.export().unwrap();
     assert_eq!(exports.owners.len(), 3);
     for owner in [
         Owner::Control,
@@ -223,6 +281,6 @@ async fn checkpoint_minimal_actual_assembly_does_not_invent_optional_stores_or_s
             ..
         }
     ));
-    drop(frozen);
+    drop(released);
     workbench.shutdown().await.unwrap();
 }

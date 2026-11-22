@@ -10,7 +10,10 @@ use std::{
     time::{Duration, Instant},
 };
 
-use rusqlite::{Connection, OpenFlags, Transaction, TransactionBehavior};
+use rusqlite::{
+    Connection, OpenFlags, Transaction, TransactionBehavior,
+    backup::{Backup, StepResult},
+};
 
 use crate::{
     PolicyError,
@@ -33,12 +36,7 @@ impl Database {
         deadline: Option<Instant>,
     ) -> Result<Self, PolicyError> {
         let storage = Storage::prepare(directory, policy)?;
-        let flags = OpenFlags::SQLITE_OPEN_READ_WRITE
-            | OpenFlags::SQLITE_OPEN_NO_MUTEX
-            | OpenFlags::SQLITE_OPEN_NOFOLLOW
-            | OpenFlags::SQLITE_OPEN_PRIVATE_CACHE;
-        let mut connection =
-            Connection::open_with_flags(&storage.database, flags).map_err(unavailable)?;
+        let mut connection = connect(&storage)?;
         let timeout = deadline.map_or(Duration::from_secs(5), |until| {
             until
                 .saturating_duration_since(Instant::now())
@@ -146,24 +144,63 @@ impl Database {
             .map_err(unavailable)
     }
 
-    pub(crate) fn vacuum_into(
+    /// 开读事务并真读一页，把本连接定在这一刻；之后别的连接写的、回写的都看不见（BUG-045）。
+    /// 只给封存定格用：定格之后这个连接不再走 read/write，只做 [`Self::backup_into`] 和摘要读。
+    pub(crate) fn pin(&self, deadline: Instant) -> Result<(), PolicyError> {
+        self.until(deadline, |connection| {
+            if !connection.is_autocommit() {
+                return Err(PolicyError::StoreUnavailable);
+            }
+            connection.execute_batch("BEGIN").map_err(unavailable)?;
+            connection
+                .query_row("SELECT count(*) FROM sqlite_schema", [], |row| {
+                    row.get::<_, i64>(0)
+                })
+                .map_err(unavailable)?;
+            Ok(())
+        })
+    }
+
+    /// 从定格的连接把整库拷进刚建好的空目标；backup 用定格的读事务读，不另开、不因别人写了而重来。
+    pub(crate) fn backup_into(
         &self,
         target: &Storage,
         deadline: Instant,
     ) -> Result<(), PolicyError> {
         self.until(deadline, |connection| {
-            if !connection.is_autocommit() {
+            if connection.is_autocommit() {
                 return Err(PolicyError::StoreUnavailable);
             }
-            let path = target
-                .database
-                .to_str()
-                .ok_or(PolicyError::CheckpointTarget)?;
-            connection
-                .execute("VACUUM INTO ?1", [path])
-                .map_err(unavailable)?;
-            Ok(())
+            target.check()?;
+            let mut destination = connect(target)?;
+            {
+                let backup = Backup::new(connection, &mut destination).map_err(unavailable)?;
+                loop {
+                    if Instant::now() >= deadline {
+                        return Err(PolicyError::Busy);
+                    }
+                    match backup.step(64).map_err(unavailable)? {
+                        StepResult::Done => break,
+                        StepResult::More => {}
+                        StepResult::Busy | StepResult::Locked => std::thread::sleep(
+                            deadline
+                                .saturating_duration_since(Instant::now())
+                                .min(Duration::from_millis(5)),
+                        ),
+                        _ => return Err(PolicyError::StoreUnavailable),
+                    }
+                }
+            }
+            destination
+                .close()
+                .map_err(|_| PolicyError::StoreUnavailable)?;
+            target.check()
         })
+    }
+
+    /// 定格的连接上是不是还开着读事务；没有了就不再是冻结那一刻。
+    pub(crate) fn pinned(&self) -> Result<bool, PolicyError> {
+        Ok(!self.lock()?.is_autocommit())
     }
 
     /// SQLite VM 内和操作返回后都核对截止时间；不遗留影响下一次操作的 hook。
@@ -216,6 +253,15 @@ impl Database {
         transaction.commit().map_err(unavailable)?;
         Ok(value)
     }
+}
+
+/// 本库唯一的打开点：只开固定私有目录里已经备好（或刚独占建出）的 `policy.sqlite3`。
+fn connect(storage: &Storage) -> Result<Connection, PolicyError> {
+    let flags = OpenFlags::SQLITE_OPEN_READ_WRITE
+        | OpenFlags::SQLITE_OPEN_NO_MUTEX
+        | OpenFlags::SQLITE_OPEN_NOFOLLOW
+        | OpenFlags::SQLITE_OPEN_PRIVATE_CACHE;
+    Connection::open_with_flags(&storage.database, flags).map_err(unavailable)
 }
 
 pub(crate) fn unavailable(error: rusqlite::Error) -> PolicyError {

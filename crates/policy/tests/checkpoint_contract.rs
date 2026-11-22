@@ -121,18 +121,45 @@ fn old_reader_blocks_wal_proof_and_expiry_does_not_create_a_target_file() {
         .unwrap();
     submit(&store, "读者之后的变更");
     let handle = store.checkpoint_handle().unwrap();
-    handle.freeze(until(1000)).unwrap();
     let target = private(temp.path(), "copy");
+    // WAL 整个回写主库是冻结的一步（定格之前做）：旧读者挡着就冻结不成，到点放开写锁，没有可导出的东西。
     let start = Instant::now();
-    assert_eq!(
-        handle.export(&target, until(120)).unwrap_err(),
-        PolicyError::Busy
-    );
+    assert_eq!(handle.freeze(until(120)).unwrap_err(), PolicyError::Busy);
     assert!(start.elapsed() < Duration::from_secs(1));
+    assert_eq!(
+        handle.export(&target, until(1000)).unwrap_err(),
+        PolicyError::StoreUnavailable
+    );
     assert_eq!(fs::read_dir(&target).unwrap().count(), 0);
+    submit(&store, "冻结失败之后写屏障已放开");
     reader.execute_batch("ROLLBACK").unwrap();
+    handle.freeze(until(2000)).unwrap();
     assert!(handle.export(&target, until(2000)).unwrap().is_verified());
     handle.thaw().unwrap();
+}
+
+/// 定格之后放开写锁（BUG-045）：别的连接照常提交策略变更，导出的副本仍是冻结那一刻。
+#[test]
+fn released_freeze_exports_the_frozen_moment_while_the_store_keeps_changing() {
+    let (temp, _directory, store) = fixture();
+    submit(&store, "冻结之前");
+    let before = ids(&store);
+    let handle = store.checkpoint_handle().unwrap();
+    handle.freeze(until(3000)).unwrap();
+    handle.release(until(3000)).unwrap();
+    assert_eq!(
+        handle.release(until(3000)).unwrap_err(),
+        PolicyError::StoreUnavailable
+    );
+    for index in 0..20 {
+        submit(&store, &format!("放开之后 {index}"));
+    }
+    assert_eq!(ids(&store).len(), before.len() + 20);
+    let target = private(temp.path(), "export");
+    assert!(handle.export(&target, until(3000)).unwrap().is_verified());
+    assert_eq!(ids(&PolicyStore::open_existing(&target).unwrap()), before);
+    handle.thaw().unwrap();
+    submit(&store, "解冻之后");
 }
 
 #[test]

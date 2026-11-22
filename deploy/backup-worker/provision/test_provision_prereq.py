@@ -134,11 +134,35 @@ class World:
         uid, gid = owner if owner is not None else (prereq.OWNER_UID, prereq.OWNER_UID)
         self.file(destination, raw, uid, gid, mode)
 
+    # ---- 换发行用的三个函数的替身（真的那三个在 test_provision_release.py 里对着真文件系统测）
+    def superseded(self, path, uid, gid, mode, wanted):
+        node, kept = self.nodes.get(path), self.nodes.get(prereq.retired(path))
+        return (node is not None and node.kind == 'file' and (node.uid, node.gid, node.mode) == (uid, gid, mode)
+                and (node.links == 1 or (node.links == 2 and kept is node)) and digest(node.raw) == wanted)
+
+    def occupied(self, path):
+        kept = self.nodes.get(prereq.retired(path))
+        return kept is not None and kept is not self.nodes[path]
+
+    def replace(self, destination, mode, stream, owner, previous, wanted):
+        """和真的 replace 同一个约定：现场不是上一版不动；内容的摘要不对不换；留下用的名字被占着不动。"""
+        prereq.require(not self.leftover(destination), prereq.placing(destination) + prereq.LEFTOVER)
+        uid, gid = owner if owner is not None else (prereq.OWNER_UID, prereq.OWNER_UID)
+        prereq.require(self.superseded(destination, uid, gid, mode, previous),
+                       destination + ' 不是登记的上一版。什么都没换，先由人看过')
+        raw = stream.read()
+        prereq.require(digest(raw) == wanted, destination + ' 要放的内容和核过的那一份不一样（来源在核对之后被换了）。什么都没放')
+        prereq.require(not self.occupied(destination), prereq.retired(destination) + prereq.OCCUPIED)
+        old = self.nodes[destination]
+        old.links = 1
+        self.nodes[prereq.retired(destination)] = old
+        self.file(destination, raw, uid, gid, mode)
+
     @contextlib.contextmanager
     def installed(self, uid=prereq.OWNER_UID, euid=prereq.OWNER_UID, platform='linux'):
         with contextlib.ExitStack() as stack:
             for name in ('has', 'sha', 'content', 'matches', 'reading', 'make_directory', 'chain', 'group_numbered',
-                         'groups_of', 'place', 'leftover'):
+                         'groups_of', 'place', 'leftover', 'superseded', 'occupied', 'replace'):
                 stack.enter_context(patch.object(prereq, name, getattr(self, name)))
             for name, value in (('account', self.accounts.get), ('group', self.groups.get),
                                 ('system_range', lambda kind: (100, 999)), ('PACKAGES', PACKAGES),
@@ -198,13 +222,13 @@ class World:
             if self.interrupt_at == 'daemon-reload':
                 raise prereq.Interrupted('SIGHUP')
             self.reloads += 1
-        elif argv[:5] == ['/usr/bin/python3', '-I', '-B', str(HERE / 'prereq.py'), '--place']:
+        elif argv[:4] == ['/usr/bin/python3', '-I', '-B', str(HERE / 'prereq.py')] and argv[4] in ('--place', '--replace'):
             self.as_root_place(argv, options)
         else:
             raise AssertionError('没预料到的 sudo 命令：' + ' '.join(argv))
 
     def as_root_place(self, argv, options):
-        """root 一侧走的是脚本自己真的 --place 入口（只换掉身份、标准输入和最后落盘的那一下）；
+        """root 一侧走的是脚本自己真的 --place、--replace 入口（只换掉身份、标准输入和最后落盘的那一下）；
         它停下就是退出码 1，这一侧看到的是命令失败。"""
         self.before_place.pop(argv[5], lambda: None)()
         stream = io.BytesIO(options['input']) if 'input' in options else options['stdin']
@@ -241,8 +265,9 @@ def label(argv):
     """一条命令的短名字：只为了核先后顺序。"""
     if argv[:2] != ['sudo', '--']:
         return ' '.join(argv[:3]) if argv[0] == 'systemctl' else ' '.join(argv[:2])
-    if '--place' in argv:
-        return 'place ' + argv[argv.index('--place') + 1]
+    for verb in ('place', 'replace'):
+        if '--' + verb in argv:
+            return verb + ' ' + argv[argv.index('--' + verb) + 1]
     return ' '.join(argv[2:4]) if argv[2] in ('usermod', 'systemctl') else argv[2]
 
 

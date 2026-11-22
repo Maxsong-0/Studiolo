@@ -54,14 +54,19 @@ fn sealing(broker: FsVaultBroker) -> (FsVaultBroker, bool) {
         fs::set_permissions(&path, fs::Permissions::from_mode(0o700)).unwrap();
     }
     let uuid = broker.vault_uuid();
-    let mut frozen = broker.freeze_checkpoint(Instant::now() + Duration::from_secs(60));
+    let deadline = Instant::now() + Duration::from_secs(60);
+    let mut frozen = broker.freeze_checkpoint(deadline);
+    // 和协调器同一条路：核对、交出定格，再从定格导出（BUG-045）。
     let passed = frozen.verify_audit(|_, _, _| Ok(())).is_ok()
-        && frozen
-            .export(
-                &target.path().join("canonical"),
-                &target.path().join("writer-data"),
-            )
-            .is_ok()
+        && frozen.take_capture().is_ok_and(|capture| {
+            capture
+                .export(
+                    &target.path().join("canonical"),
+                    &target.path().join("writer-data"),
+                    deadline,
+                )
+                .is_ok()
+        })
         && read_trusted_export(target.path(), uuid).is_ok();
     (frozen.thaw(), passed)
 }

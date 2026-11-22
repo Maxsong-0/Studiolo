@@ -42,6 +42,7 @@ fn recovery_embedded_proofs_are_checked_against_the_frozen_original_ledger() {
     let _quiet = ledger.quiesce_operations(deadline()).unwrap();
     let mut frozen = source.freeze(deadline()).unwrap();
     let audit = audit_source.freeze(deadline()).unwrap();
+    frozen.validate().unwrap();
     let coverage = frozen.verify_audit(&audit).unwrap();
     assert!(coverage.checked() >= count);
     assert_eq!(coverage.maximum_offset(), count);

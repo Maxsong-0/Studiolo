@@ -101,15 +101,12 @@ fn old_reader_prevents_complete_wal_proof_and_no_target_is_published() {
     assert_eq!(water(&reader).unwrap(), 2);
     db.execute("INSERT INTO values_table(name) VALUES('new')", [])
         .unwrap();
-    let frozen = source
-        .freeze(Instant::now() + Duration::from_millis(100))
-        .unwrap();
-    assert_eq!(
-        frozen.export(target.path(), &3, water),
+    // WAL 整个回写主库是冻结的一步（定格之前做）：旧读者挡着就冻结不成，也就没有可导出的东西。
+    assert!(matches!(
+        source.freeze(Instant::now() + Duration::from_millis(100)),
         Err(Error::Deadline)
-    );
+    ));
     assert_eq!(fs::read_dir(target.path()).unwrap().count(), 0);
-    drop(frozen);
     reader.execute_batch("ROLLBACK").unwrap();
     let frozen = source.freeze(deadline()).unwrap();
     assert!(
@@ -141,10 +138,20 @@ fn busy_and_expired_freezes_do_not_leave_reserved_locks() {
 #[test]
 fn existing_target_wrong_owner_value_and_source_replacement_are_rejected() {
     let (dir, _db, source) = database();
+    let rejected = private();
     let target = private();
     let frozen = source.freeze(deadline()).unwrap();
-    assert_eq!(frozen.export(target.path(), &9, water), Err(Error::Invalid));
-    assert_eq!(fs::read_dir(target.path()).unwrap().count(), 0);
+    // owner 校验只在副本上做（源只读一遍，BUG-045）：值不对照样拒绝、不出票，副本残片留在目标里，
+    // 不清理、不能当票据（暂存层失败时整份回收）。
+    assert_eq!(
+        frozen.export(rejected.path(), &9, water),
+        Err(Error::Invalid)
+    );
+    assert_eq!(fs::read_dir(rejected.path()).unwrap().count(), 1);
+    assert_eq!(
+        frozen.export(rejected.path(), &2, water),
+        Err(Error::UnsafeStorage)
+    );
     frozen.export(target.path(), &2, water).unwrap();
     assert_eq!(
         frozen.export(target.path(), &2, water),
@@ -164,17 +171,98 @@ fn target_validation_cannot_substitute_different_content() {
     let target = private();
     let frozen = source.freeze(deadline()).unwrap();
     let visits = std::sync::atomic::AtomicUsize::new(0);
+    // owner 校验只在副本上跑一次（定格的源不会变，不再前后各核一遍）：副本校验得出别的值就不出票。
     let result = frozen.export(target.path(), &2, |db| {
         let index = visits.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-        if index == 1 {
+        if index == 0 {
             return Ok(3);
         }
         water(db)
     });
     assert_eq!(result, Err(Error::Invalid));
+    assert_eq!(visits.load(std::sync::atomic::Ordering::SeqCst), 1);
     // 失败残片不能被下一次封存覆盖。
     assert_eq!(
         frozen.export(target.path(), &2, water),
         Err(Error::UnsafeStorage)
     );
+}
+
+/// 定格之后放开写锁（BUG-045）：别人照常写、提交、做 checkpoint，导出的副本和摘要仍是冻结那一刻。
+#[test]
+fn released_freeze_still_exports_the_frozen_moment_while_others_write() {
+    let (dir, db, source) = database();
+    let target = private();
+    let mut frozen = source.freeze(deadline()).unwrap();
+    let second = Connection::open(dir.path().join("control.sqlite3")).unwrap();
+    second.busy_timeout(Duration::ZERO).unwrap();
+    assert!(second.execute_batch("BEGIN IMMEDIATE").is_err());
+    frozen.release(deadline()).unwrap();
+    // 写满几百页，逼出自动 checkpoint；再手工各种 checkpoint 都试一遍。定格的读者挡着，回写不了它还在读的页。
+    for index in 0..40 {
+        second
+            .execute(
+                "INSERT INTO values_table(name, body) VALUES(?1, zeroblob(65536))",
+                [format!("after-{index}")],
+            )
+            .unwrap();
+    }
+    second
+        .execute(
+            "UPDATE values_table SET body=x'ffff' WHERE name='first'",
+            [],
+        )
+        .unwrap();
+    second
+        .execute("DELETE FROM keyed WHERE name='second'", [])
+        .unwrap();
+    for mode in ["PASSIVE", "FULL", "RESTART", "TRUNCATE"] {
+        let _ = second.query_row(&format!("PRAGMA wal_checkpoint({mode})"), [], |row| {
+            row.get::<_, i64>(0)
+        });
+    }
+    assert_eq!(water(&db).unwrap(), 42);
+    assert_eq!(frozen.inspect(water).unwrap(), 2);
+    assert!(
+        frozen
+            .export(target.path(), &2, water)
+            .unwrap()
+            .is_complete()
+    );
+    let copy = Connection::open(target.path().join("control.sqlite3")).unwrap();
+    assert_eq!(water(&copy).unwrap(), 2);
+    let body: Vec<u8> = copy
+        .query_row(
+            "SELECT body FROM values_table WHERE name='first'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(body, vec![0x00, 0x01]);
+    assert_eq!(
+        copy.query_row("SELECT sum(value) FROM keyed", [], |r| r.get::<_, i64>(0))
+            .unwrap(),
+        3
+    );
+    drop(frozen);
+    assert_eq!(water(&db).unwrap(), 42);
+}
+
+/// 放开只有一次；放开之后的截止时间到了，读和导出都停，不出票。
+#[test]
+fn release_is_once_and_the_new_deadline_bounds_the_export() {
+    let (_dir, _db, source) = database();
+    let target = private();
+    let mut frozen = source.freeze(deadline()).unwrap();
+    frozen
+        .release(Instant::now() + Duration::from_millis(50))
+        .unwrap();
+    assert_eq!(frozen.release(deadline()), Err(Error::Invalid));
+    std::thread::sleep(Duration::from_millis(80));
+    assert_eq!(frozen.inspect(water), Err(Error::Deadline));
+    assert_eq!(
+        frozen.export(target.path(), &2, water),
+        Err(Error::Deadline)
+    );
+    assert_eq!(fs::read_dir(target.path()).unwrap().count(), 0);
 }

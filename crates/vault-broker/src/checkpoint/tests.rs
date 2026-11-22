@@ -1,6 +1,7 @@
 //! 实际目录/唯一租约/复制契约；此处回调是显式模拟账本，真实 Audit 接线在组合根验证。
 mod audits;
 mod restore;
+mod thawed;
 use super::*;
 use crate::{
     ContentAuditPhase, Mutation, MutationActor, MutationKind, MutationMetadata, VaultPath,

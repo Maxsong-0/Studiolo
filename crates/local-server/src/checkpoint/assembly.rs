@@ -8,6 +8,8 @@ pub struct CheckpointInputs {
     pub workbench: Arc<CanonicalWorkbench>,
     /// 实际 Auth 管理器及原主人绑定。
     pub sessions: Arc<SessionManager>,
+    /// 实际的两步验证运行时；没启用因子模式就是 None。冻结之前靠它（没有就靠 `sessions`）补记登录库的待发审计。
+    pub factors: Option<Arc<FactorRuntime>>,
     /// 实际人侧权威账本与完整操作门禁。
     pub audit: Arc<SqliteAuditLedger>,
     /// 实际黑板，None 仅表示没有装配。

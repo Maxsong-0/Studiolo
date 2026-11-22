@@ -112,3 +112,41 @@ fn original_global_deadline_cannot_be_extended_by_later_export_or_refreeze() {
         2
     );
 }
+
+/// 放开（BUG-045）：HTTP 许可马上还回去，写屏障放开；冻结窗口过了期，导出照样按放开时给的截止时间做。
+#[test]
+fn release_returns_http_permits_and_export_runs_by_the_released_deadline() {
+    let temp = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
+    for name in ["policy", "audit", "copy"] {
+        let path = temp.path().join(name);
+        fs::create_dir(&path).unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o700)).unwrap();
+    }
+    let plane = crate::PolicyPlane::new(
+        PolicyStore::open(&temp.path().join("policy")).unwrap(),
+        Arc::new(SqliteAuditLedger::open(&temp.path().join("audit")).unwrap()),
+    );
+    let participant = plane
+        .checkpoint(temp.path().join("copy"))
+        .unwrap()
+        .before(Instant::now() + Duration::from_millis(300));
+    let request = FreezeRequest {
+        checkpoint_id: CheckpointId::parse("released").unwrap(),
+        budget: FreezeBudget::new(1000).unwrap(),
+    };
+    let permits = participant.inner.as_ref().unwrap().permits.clone();
+    participant.freeze(&request).unwrap();
+    assert_eq!(permits.available_permits(), 0);
+    participant
+        .release(Instant::now() + Duration::from_secs(10))
+        .unwrap();
+    assert_eq!(permits.available_permits(), 2);
+    assert!(matches!(
+        participant.release(Instant::now() + Duration::from_secs(10)),
+        Err(CheckpointError::NotDrained { .. })
+    ));
+    std::thread::sleep(Duration::from_millis(350));
+    assert!(participant.export(&request).unwrap().is_verified());
+    participant.thaw().unwrap();
+    assert_eq!(permits.available_permits(), 2);
+}

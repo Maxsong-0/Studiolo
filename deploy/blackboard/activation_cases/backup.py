@@ -1,8 +1,10 @@
-"""激活预检里的备份前置核对（T-216，r17 起）：缺口要在停服之前拦下。
+"""激活预检里的备份前置核对（T-216，r17 起；r18 起上一发行已在监听备份 socket）：缺口要在停服之前拦下。
 
 每条拒绝用例都从同一份「全备好」的现场出发、只改一处，并写明拒绝时该是哪一种异常；全备好能过由第一条用例证明。
 两个目录的属主、属组普通账号改不了：这几条用 `reported` 只替换预检看到的那两个目录的 stat，别的路径照常。
 """
+import stat
+
 from .fixture import *
 
 ABSENT = FileNotFoundError
@@ -23,6 +25,8 @@ class BackupReadyTests(FilesBase):
         self.directory(self.staging, 0o750)
         self.directory(self.ephemeral, 0o700)
         self.directory(self.private, 0o700)
+        self.node = self.runtime_dir / 'producer.sock'
+        self.listening()
         self.groups = {self.reader}
         # 预检看到的两个目录的 stat 里要替换的字段；空着就是真实的。
         self.reported = {}
@@ -31,10 +35,18 @@ class BackupReadyTests(FilesBase):
             BACKUP_CONFIG=str(self.config / 'backup.json'),
             SYNC_APPROVAL=str(self.config / 'sync-transport.json'),
             BACKUP_RUNTIME=str(self.runtime_dir), BACKUP_STAGING=str(self.staging),
+            BACKUP_SOCKET=str(self.node),
             BACKUP_FREEZE_BUDGET_SECONDS=assembly.BACKUP_FREEZE_BUDGET_SECONDS,
             BRIDGE_STOP_GRACE_SECONDS=assembly.BRIDGE_STOP_GRACE_SECONDS)
         self.backup(self.producer())
         self.approval(assembly.BRIDGE_STOP_GRACE_SECONDS)
+
+    def listening(self, mode=0o660):
+        """上一发行留下的活的备份 socket，和程序建的同一个样子：socket 类型的节点、读取组、0660。
+        用 mknod 建（普通账号建得了 socket 节点），不真的绑定：预检只看节点，不连它；路径也不受 sun_path 长度限制。"""
+        os.mknod(self.node, stat.S_IFSOCK | 0o600)
+        self.node.chmod(mode)
+        self.regroup(self.node)
 
     def regroup(self, path):
         if self.reader is not None and path.lstat().st_gid != self.reader:
@@ -75,13 +87,14 @@ class BackupReadyTests(FilesBase):
 
     def ready(self):
         ops = Operations('0' * 64, self.a, c, Mock(), legacy)
-        real, targets = os.lstat, {str(self.runtime_dir), str(self.staging)}
+        real, targets = os.lstat, {str(self.runtime_dir), str(self.staging), str(self.node)}
 
         def lstat(path, *args, **kwargs):
             actual = real(path, *args, **kwargs)
             if not self.reported or os.fspath(path) not in targets:
                 return actual
-            fields = dict(st_mode=actual.st_mode, st_uid=actual.st_uid, st_gid=actual.st_gid)
+            fields = dict(st_mode=actual.st_mode, st_uid=actual.st_uid, st_gid=actual.st_gid,
+                          st_nlink=actual.st_nlink)
             fields.update(self.reported)
             return types.SimpleNamespace(**fields)
         # 测试目录本身就在 /tmp 下：把「服务里看不见的目录」换成沙盒里的一处，核对逻辑不变
@@ -210,6 +223,9 @@ class BackupReadyTests(FilesBase):
         self.rejected()
         self.backup(self.producer(socket='run-backup/producer.sock'))
         self.rejected()
+        # 目录对、名字不是置备脚本写的那一个：停服之后要核它删掉没有，认不出的名字不行。
+        self.backup(self.producer(socket=str(self.runtime_dir / 'other.sock')))
+        self.rejected()
         # 路径写成了别的类型：按核对没过拒绝，不让类型错误冒出来。
         for name in ('socket', 'staging_parent', 'ephemeral_root'):
             for bad in (7, ['/x'], True):
@@ -217,12 +233,26 @@ class BackupReadyTests(FilesBase):
                     self.backup(self.producer(**{name: bad}))
                     self.rejected()
 
-    def test_leftover_socket_node_is_rejected_and_left_alone(self):
-        node = self.runtime_dir / 'producer.sock'
-        self.write(node, b'leftover')
+    def test_the_previous_release_must_be_listening_on_the_backup_socket(self):
+        """起点（r17）已经在监听：节点必须在，而且是程序建的那个样子。不对的不动它，由人看过。"""
+        self.node.unlink()
+        self.rejected(ABSENT)
+        self.write(self.node, b'not a socket', 0o660)
+        self.regroup(self.node)
         self.rejected()
-        self.assertEqual(node.read_bytes(), b'leftover')
-        node.unlink()
+        self.assertEqual(self.node.read_bytes(), b'not a socket')
+        self.node.unlink()
+        for mode in (0o600, 0o666, 0o640):
+            with self.subTest(mode=oct(mode)):
+                self.listening(mode)
+                self.rejected()
+                self.node.unlink()
+        # 多一个名字（链接数 2）。
+        self.listening()
+        alias = self.runtime_dir / 'alias.sock'
+        os.link(self.node, alias)
+        self.rejected()
+        alias.unlink()
         self.ready()
 
     def test_ephemeral_root_must_exist_private_and_visible_to_the_service(self):

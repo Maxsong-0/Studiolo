@@ -55,8 +55,38 @@ fn frozen_ledger_checks_original_event_and_exports_an_independent_cutoff() {
     drop(quiescence);
     writer.execute_batch("BEGIN IMMEDIATE;ROLLBACK").unwrap();
 }
+/// 冻结窗口里只核首尾锚点（BUG-045）：整本验链按账本条数涨，窗口里人侧的写请求都在等。
+/// 链中间坏了一条，冻结照常成功；导出要在副本上整本验链，坏的那条在那里被查出来，不出票。
 #[test]
-fn source_capability_rejects_replacement_and_freeze_verifies_the_entire_chain() {
+fn freeze_checks_only_the_anchor_and_export_still_verifies_the_whole_chain() {
+    let source = support::private_dir();
+    let target = support::private_dir();
+    let ledger = SqliteAuditLedger::open(source.path()).unwrap();
+    // 放满两段多：第 5 条落在已经封口的第一段里，首尾锚点（打开段逐条走、封口段只核段摘要）碰不到它。
+    for index in 0..300 {
+        ledger
+            .append(AuditEvent::new(
+                AuditEventId::parse(format!("checkpoint-test-{index}")).unwrap(),
+                AuditPhase::Outcome,
+                "checkpoint.test",
+                SanitizedPayload::try_from(json!({"decision": "allow"})).unwrap(),
+            ))
+            .unwrap();
+    }
+    let handle = ledger.checkpoint_source().unwrap();
+    let writer = rusqlite::Connection::open(source.path().join("audit.sqlite3")).unwrap();
+    writer
+        .execute(
+            "UPDATE audit_events SET record_json=replace(record_json,'allow','deny') WHERE offset=5",
+            [],
+        )
+        .unwrap();
+    drop(writer);
+    let frozen = handle.freeze(deadline()).unwrap();
+    assert!(frozen.export(target.path()).is_err());
+}
+#[test]
+fn source_capability_rejects_replacement_and_freeze_verifies_the_open_segment() {
     let source = support::private_dir();
     let ledger = SqliteAuditLedger::open(source.path()).unwrap();
     ledger.append(event("allow")).unwrap();

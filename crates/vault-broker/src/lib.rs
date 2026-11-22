@@ -23,7 +23,10 @@ pub use sync_observation::{
 mod canonical;
 mod capture;
 mod checkpoint;
-pub use checkpoint::{BrokerCheckpointAudit, BrokerCheckpointCoverage, FrozenBroker};
+pub use checkpoint::{
+    BrokerCapture, BrokerCheckpointAudit, BrokerCheckpointCoverage, FrozenBroker,
+    raise_open_file_limit,
+};
 mod check_precondition;
 mod content_audit;
 pub(crate) mod file_operation;

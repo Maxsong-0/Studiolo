@@ -7,7 +7,10 @@ use super::{
 use std::{
     os::unix::net::UnixStream,
     path::Path,
-    sync::Arc,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
     time::{Duration, Instant},
 };
 use tokio::{net::UnixListener, sync::watch, task::JoinHandle};
@@ -24,6 +27,9 @@ const RECLAIM_EVERY: Duration = Duration::from_secs(15 * 60);
 pub struct BackupService {
     stop: watch::Sender<bool>,
     acceptor: tokio::sync::Mutex<Option<JoinHandle<()>>>,
+    /// 后台读账本的线程和叫停它的标志（`BackupProducer::catch_up`）。
+    halt: Arc<AtomicBool>,
+    chaser: tokio::sync::Mutex<Option<JoinHandle<()>>>,
     producer: Arc<BackupProducer>,
 }
 
@@ -54,21 +60,34 @@ impl BackupService {
             )
             .await;
         });
+        // 监听一起来就在后台把账本读到末尾：队列进度只在内存里，不这样做，重启后要靠 worker 的请求
+        // 一页一页推，账本长了头十几分钟答不上来（BUG-042）。
+        let halt = Arc::new(AtomicBool::new(false));
+        let (chasing, halted) = (Arc::clone(&producer), Arc::clone(&halt));
+        let chaser = tokio::task::spawn_blocking(move || chasing.catch_up(&halted));
         Ok(Self {
             stop,
             acceptor: tokio::sync::Mutex::new(Some(acceptor)),
+            halt,
+            chaser: tokio::sync::Mutex::new(Some(chaser)),
             producer,
         })
     }
 
-    /// 可以重复调用：停接受循环（顺带删掉自己的 socket），再等后台线程做完。
+    /// 可以重复调用：叫停读账本的线程，停接受循环（顺带删掉自己的 socket），再等后台线程走出冻结窗口。
+    /// 不等放开之后的拷贝和发布（BUG-045）：那一段只读定格，进程退出时丢下，下次启动回收暂存。
     pub async fn shutdown(&self) {
+        // 先置标志：读账本的线程读完手上这一页就停，和下面等接受循环同时进行。
+        self.halt.store(true, Ordering::Release);
         let _ = self.stop.send(true);
         if let Some(acceptor) = self.acceptor.lock().await.take() {
             let _ = acceptor.await;
         }
+        if let Some(chaser) = self.chaser.lock().await.take() {
+            let _ = chaser.await;
+        }
         let producer = Arc::clone(&self.producer);
-        let _ = tokio::task::spawn_blocking(move || producer.settle()).await;
+        let _ = tokio::task::spawn_blocking(move || producer.settle_window()).await;
     }
 }
 

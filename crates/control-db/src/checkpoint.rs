@@ -15,10 +15,11 @@ pub struct ControlCheckpointSource {
     source: Source,
     vault: VaultUuid,
 }
-/// 同时阻止所有 SQLite 写者的窗口；原审计确认前不能签出副本。
+/// 同时阻止所有 SQLite 写者的窗口；定格校验过、原审计确认过才能签出副本。
 pub struct FrozenControl {
     frozen: FrozenSqlite,
-    watermark: OwnerWatermark,
+    vault: VaultUuid,
+    watermark: Option<OwnerWatermark>,
     coverage: Option<ReceiptCoverage>,
 }
 impl ControlDb {
@@ -36,23 +37,37 @@ impl ControlDb {
     }
 }
 impl ControlCheckpointSource {
-    /// 要求投影、终态和运行时审计 outbox 均已排空；不在锁内执行外部副作用。
+    /// 冻结窗口里只定格，不在锁内执行外部副作用。排空与完整校验要读整张表、随使用变大（BUG-045），
+    /// 放开之后由 [`FrozenControl::validate`] 在定格上做，读到的仍是冻结那一刻。
     pub fn freeze(&self, deadline: Instant) -> Result<FrozenControl, DbError> {
         let frozen = self.source.freeze(deadline).map_err(problem)?;
-        let watermark = frozen
-            .inspect(|db| validate::snapshot(db, self.vault))
-            .map_err(problem)?;
         Ok(FrozenControl {
             frozen,
-            watermark,
+            vault: self.vault,
+            watermark: None,
             coverage: None,
         })
     }
 }
 impl FrozenControl {
-    /// Control 自身的投影 outbox 水位与 Vault 绑定。
-    pub fn watermark(&self) -> &OwnerWatermark {
-        &self.watermark
+    /// 在定格那一刻上做完整校验：投影、终态和运行时审计 outbox 均已排空，结构、业务引用与 Vault 绑定都对；
+    /// 得出 Control 水位。失败撤销此前的结果。
+    pub fn validate(&mut self) -> Result<&OwnerWatermark, DbError> {
+        self.watermark = None;
+        let watermark = self
+            .frozen
+            .inspect(|db| validate::snapshot(db, self.vault))
+            .map_err(problem)?;
+        Ok(self.watermark.insert(watermark))
+    }
+    /// Control 自身的投影 outbox 水位与 Vault 绑定；[`Self::validate`] 通过之后才有。
+    pub fn watermark(&self) -> Option<&OwnerWatermark> {
+        self.watermark.as_ref()
+    }
+    /// 放开写锁，控制库从此可以照常写；定格的读连接留着，回执核对和导出读到的仍是冻结那一刻（BUG-045）。
+    /// 之后的读取和导出受 `deadline` 约束；只能放开一次。
+    pub fn release(&mut self, deadline: Instant) -> Result<(), DbError> {
+        self.frozen.release(deadline).map_err(problem)
     }
     /// 对所有已投递运行时与终态结果核对完整原事件，而非只比较序号。
     pub fn verify_audit(&mut self, audit: &FrozenAudit) -> Result<ReceiptCoverage, DbError> {
@@ -64,22 +79,19 @@ impl FrozenControl {
         self.coverage = Some(coverage);
         Ok(coverage)
     }
-    /// 完整核验及 fsync 后返回封存票据；仍保持写屏障直到整个窗口释放。
+    /// 定格校验过、原审计确认过，副本完整核验及 fsync 后返回封存票据。
     pub fn export(&self, target: &Path) -> Result<SealedOwnerCheckpoint, DbError> {
         self.coverage.ok_or_else(|| problem(Error::Invalid))?;
-        let OwnerWatermark::Control {
-            vault_uuid,
-            schema_version,
-            ..
-        } = self.watermark
-        else {
+        let watermark = self
+            .watermark
+            .as_ref()
+            .ok_or_else(|| problem(Error::Invalid))?;
+        let OwnerWatermark::Control { schema_version, .. } = *watermark else {
             return Err(problem(Error::Invalid));
         };
         let wal = self
             .frozen
-            .export(target, &self.watermark, |db| {
-                validate::snapshot(db, vault_uuid)
-            })
+            .export(target, watermark, |db| validate::snapshot(db, self.vault))
             .map_err(problem)?;
         Ok(SealedOwnerCheckpoint {
             owner: CheckpointOwner::Control,
@@ -89,7 +101,7 @@ impl FrozenControl {
             parent_directory_synced: true,
             reopen_verified: true,
             source_binding_stable: true,
-            watermark: self.watermark.clone(),
+            watermark: watermark.clone(),
         })
     }
 }

@@ -246,5 +246,18 @@ class OperationTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 ops.stopped()
         unlink.assert_not_called()
+        # 三个入口各自留下都拒绝：人侧 HTTP、黑板、备份监听（r17 起人侧在监听它，正常关停会删掉）。
+        for lingering in (ops.runtime.SOCKET, assembly.BOARD_SOCKET, assembly.BACKUP_SOCKET):
+            with self.subTest(lingering=lingering), \
+                    patch.object(ops, 'properties', return_value={'ActiveState': 'inactive', 'MainPID': '0'}), \
+                    patch.object(os.path, 'lexists', side_effect=lambda path: path == lingering), \
+                    patch.object(os, 'unlink') as unlink:
+                with self.assertRaises(ValueError):
+                    ops.stopped()
+            unlink.assert_not_called()
+        with patch.object(ops, 'properties', return_value={'ActiveState': 'inactive', 'MainPID': '0'}), \
+                patch.object(os.path, 'lexists', return_value=False):
+            ops.stopped()
+        self.assertEqual(assembly.BACKUP_SOCKET, assembly.BACKUP_RUNTIME + '/producer.sock')
 
 

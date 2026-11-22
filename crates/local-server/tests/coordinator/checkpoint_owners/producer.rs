@@ -18,6 +18,7 @@ pub(super) struct Stage {
     pub(super) producer: Arc<BackupProducer>,
     pub(super) parent: std::path::PathBuf,
     pub(super) reader_gid: u32,
+    retention_millis: u64,
 }
 impl Stage {
     /// `shared` 为 false 时封存父目录保持 0700：读取组条件不满足，封存一定做不成。
@@ -32,41 +33,30 @@ impl Stage {
     pub(super) async fn with_owner_factor() -> Self {
         Self::assemble(Assembled::with_owner_factor().await, true, 600_000)
     }
-    fn assemble(assembled: Assembled, shared: bool, retention_millis: u64) -> Self {
+    pub(super) fn assemble(assembled: Assembled, shared: bool, retention_millis: u64) -> Self {
         let parent = target(&assembled.fixture, "staging");
         if shared {
             fs::set_permissions(&parent, fs::Permissions::from_mode(0o750)).unwrap();
         }
         let reader_gid = fs::metadata(&parent).unwrap().gid();
-        let ephemeral = target(&assembled.fixture, "ephemeral");
-        let source_roots = [
-            "vault", "data", "auth", "control", "agent", "policy", "audit",
-        ]
-        .map(|name| assembled.fixture.root.join(name))
-        .to_vec();
-        let producer = BackupProducer::new(
-            assembled.human.clone(),
-            Arc::new(assembled.inputs.clone()),
-            ProducerPlan {
-                // 对端核对只在真实连接上做；这里不走 socket。
-                worker_uid: u32::MAX - 1,
-                reader_gid,
-                staging_parent: parent.clone(),
-                ephemeral_root: ephemeral,
-                source_roots,
-                min_interval_millis: 3_600_000,
-                rpo_millis: 4_500_000,
-                source_retention_millis: retention_millis,
-                freeze_budget: FreezeBudget::new(30_000).unwrap(),
-                manifest: manifest(),
-            },
-        );
+        target(&assembled.fixture, "ephemeral");
+        let producer = produce(&assembled, &parent, reader_gid, retention_millis);
         Self {
             assembled,
             producer,
             parent,
             reader_gid,
+            retention_millis,
         }
+    }
+    /// 人侧重启之后的生产者：同一本账本、同一组 owner、同一份固定配置，内存里的队列进度从零开始。
+    pub(super) fn restarted(&self) -> Arc<BackupProducer> {
+        produce(
+            &self.assembled,
+            &self.parent,
+            self.reader_gid,
+            self.retention_millis,
+        )
     }
     pub(super) fn ask(&self, command: QueueCommand) -> QueueAnswer {
         let request = BackupQueueRequest::new(TARGET, command);
@@ -86,6 +76,36 @@ impl Stage {
             })
             .count()
     }
+}
+
+fn produce(
+    assembled: &Assembled,
+    parent: &std::path::Path,
+    reader_gid: u32,
+    retention_millis: u64,
+) -> Arc<BackupProducer> {
+    let source_roots = [
+        "vault", "data", "auth", "control", "agent", "policy", "audit",
+    ]
+    .map(|name| assembled.fixture.root.join(name))
+    .to_vec();
+    BackupProducer::new(
+        assembled.human.clone(),
+        Arc::new(assembled.inputs.clone()),
+        ProducerPlan {
+            // 对端核对只在真实连接上做；这里不走 socket。
+            worker_uid: u32::MAX - 1,
+            reader_gid,
+            staging_parent: parent.to_owned(),
+            ephemeral_root: assembled.fixture.root.join("ephemeral"),
+            source_roots,
+            min_interval_millis: 3_600_000,
+            rpo_millis: 4_500_000,
+            source_retention_millis: retention_millis,
+            freeze_budget: FreezeBudget::new(30_000).unwrap(),
+            manifest: manifest(),
+        },
+    )
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

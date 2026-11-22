@@ -1,7 +1,10 @@
 //! 实际唯一 Broker 整体进入封存窗口；原租约与全部可变接口一并保留，解冻返还原实例。
+//! 窗口里只核回执、定格两棵树（打开文件留句柄，不读内容）；拷贝和摘要在解冻之后从定格做（BUG-045）。
 pub(crate) mod audit;
+mod capture;
 mod copy;
 mod files;
+mod open_files;
 mod replays;
 mod roots;
 mod tree;
@@ -11,6 +14,7 @@ use crate::{
     residue::{DATA_QUARANTINE, VAULT_QUARANTINE},
 };
 pub use audit::{BrokerCheckpointAudit, BrokerCheckpointCoverage};
+pub use open_files::raise_open_file_limit;
 use std::{path::Path, time::Instant};
 use studiolo_core::checkpoint::{
     CheckpointOwner, OwnerWatermark, SealedOwnerCheckpoint, WalCheckpointProof,
@@ -20,7 +24,15 @@ use studiolo_core::checkpoint::{
 pub struct FrozenBroker {
     broker: FsVaultBroker,
     deadline: Instant,
-    verified: Option<(tree::TreeSeal, tree::TreeSeal, BrokerCheckpointCoverage)>,
+    verified: Option<(BrokerCheckpointCoverage, BrokerCapture)>,
+}
+/// 冻结那一刻的两棵树：目录结构和每个文件的句柄，外加当时的水位和两个源根的身份。
+/// 不引用写者实例：写者解冻、照常改文件之后，从这里导出的仍是冻结那一刻（BUG-045）。
+pub struct BrokerCapture {
+    vault: capture::Captured,
+    data: capture::Captured,
+    watermark: OwnerWatermark,
+    sources: roots::Sources,
 }
 impl FsVaultBroker {
     /// 交出完整实例并保留原租约。构造不丢弃 owner；检查失败仍能经 thaw 返还。
@@ -49,60 +61,123 @@ impl FrozenBroker {
     }
     /// 可信组合根须用原 FrozenAudit 完整核对事件、offset 和 hash，不能只接受正整数。
     /// 核对覆盖已清理 outbox 的永久 ACK；失败会撤销先前的导出资格。
+    ///
+    /// 先定格两棵树（逐层列目录、逐个打开文件留句柄、记身份，不读内容），再核重放和回执，核完逐个 stat
+    /// 确认两棵树和定格时一样：核过的就是定格的那一刻。重放和回执都有固定上限（`writer::disk` 的
+    /// `REPLAY_COUNT`），这一步在窗口里不随历史变长（BUG-045）；拷贝在窗口之外从定格做。
     pub fn verify_audit(
         &mut self,
         mut verify: impl FnMut(BrokerCheckpointAudit<'_>, u64, &str) -> Result<(), BrokerError>,
     ) -> Result<BrokerCheckpointCoverage, BrokerError> {
         self.verified = None;
         let watermark = self.watermark()?;
-        let before = self.source_seals()?;
+        let capture = self.capture(watermark)?;
         replays::verify(&self.broker, self.deadline)?;
         let coverage = audit::verify(&self.broker, self.deadline, &mut verify)?;
-        if before != self.source_seals()? || watermark != self.watermark()? {
+        self.broker
+            .writer
+            .check(&self.broker.root, &self.broker.data)?;
+        capture
+            .vault
+            .matches(&self.broker.root, VAULT_QUARANTINE, self.deadline)?;
+        capture
+            .data
+            .matches(&self.broker.data, DATA_QUARANTINE, self.deadline)?;
+        if capture.watermark != self.watermark()? {
             return Err(BrokerError::CaptureChanged);
         }
-        self.verified = Some((before.0, before.1, coverage));
+        self.verified = Some((coverage, capture));
         Ok(coverage)
     }
-    /// 导出到两个已批准、私有、空且不与源重叠的目录；没有覆写或隐式清理。
-    /// 全量物化保留逻辑/物理绑定原字节；恢复只能再走 owner 的新根重绑定协议。
-    /// 本票据不替代组合根逐对象 inclusion plan 与最终传输源封存。
-    pub fn export(&self, vault: &Path, data: &Path) -> Result<SealedOwnerCheckpoint, BrokerError> {
-        let (expected_vault, expected_data, _) = self
+    /// 交出核对过的定格；之后可以解冻写者，在窗口之外用 [`BrokerCapture::export`] 导出。只能交出一次。
+    pub fn take_capture(&mut self) -> Result<BrokerCapture, BrokerError> {
+        check_deadline(self.deadline)?;
+        self.verified
+            .take()
+            .map(|(_, capture)| capture)
+            .ok_or(BrokerError::IncompleteCapture)
+    }
+    /// 不先解冻、直接在窗口里从定格导出，只给本 crate 的用例用：生产路径这样调就把整树拷贝放回了冻结窗口
+    /// （BUG-045）。协调器走 `take_capture` → 解冻 → [`BrokerCapture::export`]。
+    #[cfg(test)]
+    pub(crate) fn export(
+        &self,
+        vault: &Path,
+        data: &Path,
+    ) -> Result<SealedOwnerCheckpoint, BrokerError> {
+        let (_, capture) = self
             .verified
             .as_ref()
             .ok_or(BrokerError::IncompleteCapture)?;
-        let watermark = self.watermark()?;
-        if self.source_seals()? != (expected_vault.clone(), expected_data.clone()) {
-            return Err(BrokerError::CaptureChanged);
-        }
-        let target = roots::Targets::new(&self.broker, vault, data)?;
-        target.check()?;
-        let actual_vault = tree::copy(
+        capture.export(vault, data, self.deadline)
+    }
+    fn capture(&self, watermark: OwnerWatermark) -> Result<BrokerCapture, BrokerError> {
+        self.broker
+            .writer
+            .check(&self.broker.root, &self.broker.data)?;
+        let mut budget = capture::Budget::from_process();
+        let vault = capture::capture(
             &self.broker.root,
-            &target.vault,
             VAULT_QUARANTINE,
+            &mut budget,
             self.deadline,
         )?;
-        let actual_data = tree::copy(
+        let data = capture::capture(
             &self.broker.data,
-            &target.data,
             DATA_QUARANTINE,
+            &mut budget,
             self.deadline,
         )?;
-        if &actual_vault != expected_vault
-            || &actual_data != expected_data
-            || tree::scan(&target.vault, VAULT_QUARANTINE, self.deadline)? != actual_vault
-            || tree::scan(&target.data, DATA_QUARANTINE, self.deadline)? != actual_data
-            || self.source_seals()? != (actual_vault, actual_data)
-            || self.watermark()? != watermark
+        capture::check_pair(&vault, &data)?;
+        self.broker
+            .writer
+            .check(&self.broker.root, &self.broker.data)?;
+        let (source_vault, source_data) = self.broker.writer.checkpoint_paths();
+        let sources = roots::Sources::new(
+            source_vault,
+            &self.broker.root,
+            source_data,
+            &self.broker.data,
+        )?;
+        check_deadline(self.deadline)?;
+        Ok(BrokerCapture {
+            vault,
+            data,
+            watermark,
+            sources,
+        })
+    }
+    /// 无论冻结/核对/导出在哪一步失败，都返还原 owner；不重开、不恢复或清理源。
+    #[must_use]
+    pub fn thaw(self) -> FsVaultBroker {
+        self.broker
+    }
+}
+impl BrokerCapture {
+    /// 导出到两个已批准、私有、空且不与源重叠的目录；没有覆写或隐式清理。
+    /// 全量物化保留逻辑/物理绑定原字节；恢复只能再走 owner 的新根重绑定协议。
+    /// 本票据不替代组合根逐对象 inclusion plan 与最终传输源封存。
+    pub fn export(
+        &self,
+        vault: &Path,
+        data: &Path,
+        deadline: Instant,
+    ) -> Result<SealedOwnerCheckpoint, BrokerError> {
+        let target = roots::Targets::new(&self.sources, vault, data)?;
+        target.check()?;
+        self.vault.unchanged(deadline)?;
+        self.data.unchanged(deadline)?;
+        let actual_vault = self.vault.copy(&target.vault, deadline)?;
+        let actual_data = self.data.copy(&target.data, deadline)?;
+        if tree::scan(&target.vault, VAULT_QUARANTINE, deadline)? != actual_vault
+            || tree::scan(&target.data, DATA_QUARANTINE, deadline)? != actual_data
         {
             return Err(BrokerError::CaptureChanged);
         }
         target.check()?;
         FsVaultBroker::sync_directory(&target.vault, Path::new("."))?;
         FsVaultBroker::sync_directory(&target.data, Path::new("."))?;
-        check_deadline(self.deadline)?;
+        check_deadline(deadline)?;
         Ok(SealedOwnerCheckpoint {
             owner: CheckpointOwner::Broker,
             schema_version: 1,
@@ -115,28 +190,8 @@ impl FrozenBroker {
             parent_directory_synced: true,
             reopen_verified: true,
             source_binding_stable: true,
-            watermark,
+            watermark: self.watermark.clone(),
         })
-    }
-    fn source_seals(&self) -> Result<(tree::TreeSeal, tree::TreeSeal), BrokerError> {
-        self.broker
-            .writer
-            .check(&self.broker.root, &self.broker.data)?;
-        let result = (
-            tree::scan(&self.broker.root, VAULT_QUARANTINE, self.deadline)?,
-            tree::scan(&self.broker.data, DATA_QUARANTINE, self.deadline)?,
-        );
-        tree::check_pair(&result.0, &result.1)?;
-        self.broker
-            .writer
-            .check(&self.broker.root, &self.broker.data)?;
-        check_deadline(self.deadline)?;
-        Ok(result)
-    }
-    /// 无论冻结/核对/导出在哪一步失败，都返还原 owner；不重开、不恢复或清理源。
-    #[must_use]
-    pub fn thaw(self) -> FsVaultBroker {
-        self.broker
     }
 }
 pub(crate) fn check_deadline(deadline: Instant) -> Result<(), BrokerError> {

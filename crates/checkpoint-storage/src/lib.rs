@@ -78,7 +78,8 @@ impl Source {
             binding: Arc::new(paths::Binding::source(root, file)?),
         })
     }
-    /// 独立连接持有 RESERVED 写锁；另一只读连接用于导出，不在写事务上执行 backup。
+    /// 独立连接持有 RESERVED 写锁，WAL 整个回写主库之后，在另一只读连接上开读事务把库定在这一刻；
+    /// backup 从这个定格的读连接做，不在写事务上执行。
     /// 调用者须先取得完整语义操作屏障；冻结本身不能证明跨库已排空。
     pub fn freeze(&self, deadline: Instant) -> Result<FrozenSqlite, Error> {
         sqlite::freeze(self.binding.clone(), deadline)
@@ -93,17 +94,21 @@ impl Source {
     }
 }
 
-/// 一个仍持有 RESERVED 锁的单库窗口；丢弃会关闭连接并回滚，不遗留持久锁。
-/// 类型不 Clone、不暴露写锁连接；owner 必须把它保留到整个跨库窗口结束。
+/// 一个单库窗口：先持有 RESERVED 写锁（挡住别的写者），同时一条只读连接开着读事务，把库定在冻结那一刻。
+/// [`FrozenSqlite::release`] 放开写锁之后，定格的读连接还在，导出读到的仍是冻结那一刻（BUG-045：
+/// 拷贝和校验挪到放开之后做，冻结窗口里只定格）。丢弃会关闭连接并回滚，不遗留持久锁。
+/// 类型不 Clone、不暴露写锁连接；owner 必须把它保留到导出结束。
 pub struct FrozenSqlite {
-    // 先关闭连接再关闭身份 pin。
-    reserve: Connection,
+    // 先关闭连接再关闭身份 pin。放开之后写锁连接是 None。
+    reserve: Option<Connection>,
     source: Connection,
     binding: Arc<paths::Binding>,
     deadline: Instant,
+    wal: WalCheckpointProof,
 }
 impl FrozenSqlite {
     /// 由 owner 读取固定 schema、pending、业务水位及原 ACK；连接仅活在回调中。
+    /// 放开写锁之后读到的仍是冻结那一刻。
     pub fn inspect<T>(
         &self,
         inspect: impl FnOnce(&Connection) -> Result<T, Error>,
@@ -114,7 +119,17 @@ impl FrozenSqlite {
         self.check()?;
         Ok(value)
     }
-    /// 导出到新空0700目录；原截止时间不重置。源、目标均经过 owner 校验及完整内容摘要核对。
+    /// 放开写锁，别的写者从此可以写；定格的读连接留着，之后的读取和导出用新的截止时间。
+    /// 只能放开一次；调用者须同时放开跨库的语义屏障，二者都由组合根按逆序做。
+    pub fn release(&mut self, deadline: Instant) -> Result<(), Error> {
+        let reserve = self.reserve.take().ok_or(Error::Invalid)?;
+        drop(reserve);
+        self.deadline = deadline;
+        sqlite::limit(&self.source, deadline)?;
+        self.check()
+    }
+    /// 导出到新空0700目录。读的是冻结那一刻的定格；放开写锁前后都可以调。
+    /// 副本经 owner 校验及完整内容摘要核对（和定格的源逐表比）；WAL 证明是冻结时取的。
     /// 目标残片不覆盖、不清理；只有返回成功时才可加入封存清单。
     pub fn export<T: Eq>(
         &self,
@@ -126,7 +141,13 @@ impl FrozenSqlite {
     }
     fn check(&self) -> Result<(), Error> {
         sqlite::check_deadline(self.deadline)?;
-        if self.reserve.is_autocommit() {
+        // 读事务没了就不再是定格：任何一次读都可能读到冻结之后的内容。
+        if self.source.is_autocommit()
+            || self
+                .reserve
+                .as_ref()
+                .is_some_and(|reserve| reserve.is_autocommit())
+        {
             return Err(Error::Invalid);
         }
         self.binding.check()

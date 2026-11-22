@@ -1,4 +1,5 @@
-//! 封存只能从完整冻结窗口导出；目标独占创建，失败残片不作为成功票据。
+//! 封存只从冻结时定格的读连接导出；目标独占创建，失败残片不作为成功票据。
+//! 导出可以在放开写锁之后做（BUG-045）：定格的读事务读到的始终是冻结那一刻，别人之后写的、回写的都看不见。
 use crate::{Error, FrozenSqlite, digest, paths::Binding, sqlite};
 use rusqlite::{
     Connection,
@@ -14,9 +15,6 @@ pub(crate) fn export<T: Eq>(
     inspect: impl Fn(&Connection) -> Result<T, Error>,
 ) -> Result<WalCheckpointProof, Error> {
     frozen.check()?;
-    if &frozen.inspect(&inspect)? != expected {
-        return Err(Error::Invalid);
-    }
     let result = perform(frozen, target, expected, inspect);
     result.map_err(|error| sqlite::deadline_error(error, frozen.deadline))
 }
@@ -26,29 +24,12 @@ fn perform<T: Eq>(
     expected: &T,
     inspect: impl Fn(&Connection) -> Result<T, Error>,
 ) -> Result<WalCheckpointProof, Error> {
-    let checkpoint = sqlite::connect(&frozen.binding, false, frozen.deadline)?;
-    let wal = loop {
-        frozen.check()?;
-        let proof = checkpoint.query_row("PRAGMA wal_checkpoint(PASSIVE)", [], |row| {
-            Ok(WalCheckpointProof {
-                busy: row.get(0)?,
-                log_frames: row.get(1)?,
-                checkpointed_frames: row.get(2)?,
-            })
-        });
-        match proof {
-            Ok(proof) if proof.is_complete() => break proof,
-            Ok(_) => sqlite::pause(frozen.deadline)?,
-            Err(error) if sqlite::busy(&error) => sqlite::pause(frozen.deadline)?,
-            Err(error) => return Err(sqlite::error(error)),
-        }
-    };
-    drop(checkpoint);
-    integrity(&frozen.source)?;
+    // 定格的源只读一遍全内容摘要；完整性、owner 校验都在副本上做，副本和源逐表摘要相同才算拷对。
     let expected_digest = digest::read(&frozen.source, frozen.deadline)?;
     let target = Binding::target(target, &frozen.binding)?;
     let mut destination = sqlite::connect(&target, false, frozen.deadline)?;
     {
+        // 源连接开着读事务：backup 用这个事务读，不自己另开、也不因别人写了而从头重来。
         let backup = Backup::new(&frozen.source, &mut destination).map_err(sqlite::error)?;
         loop {
             frozen.check()?;
@@ -81,16 +62,11 @@ fn perform<T: Eq>(
         return Err(Error::Invalid);
     }
     reopened.close().map_err(|_| Error::Unavailable)?;
-    // 业务验证/复制可能很久，返回前再核源，不能把替换对象误当同一库。
+    // 拷贝和校验可能很久：返回前再核源身份没换、定格的读事务还在。
     frozen.check()?;
-    if frozen.inspect(inspect)? != *expected
-        || digest::read(&frozen.source, frozen.deadline)? != expected_digest
-    {
-        return Err(Error::Invalid);
-    }
     target.sync()?;
     sqlite::check_deadline(frozen.deadline)?;
-    Ok(wal)
+    Ok(frozen.wal)
 }
 fn integrity(db: &Connection) -> Result<(), Error> {
     let result: String = db

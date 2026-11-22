@@ -19,14 +19,18 @@ pub(super) struct Assembled {
 }
 impl Assembled {
     pub(super) async fn new() -> Self {
-        Self::build(false).await
+        Self::build(false, Arc::new(SystemSessionClock)).await
+    }
+    /// 会话时钟由用例拨：演练「会话过了空闲期」用。
+    pub(super) async fn with_clock(clock: Arc<dyn SessionClock>) -> Self {
+        Self::build(false, clock).await
     }
     /// 主人登记过 TOTP（Auth 建在 v4）、登记过一个接入方实例：新根恢复的用例用它。撤权要挂上主人登记过的
     /// 因子，身份库那一步要有实例可吊销。
     pub(super) async fn with_owner_factor() -> Self {
-        Self::build(true).await
+        Self::build(true, Arc::new(SystemSessionClock)).await
     }
-    async fn build(owner_factor: bool) -> Self {
+    async fn build(owner_factor: bool, clock: Arc<dyn SessionClock>) -> Self {
         let fixture = Fixture::new();
         let (mut broker, human) = source(&fixture);
         flush_content(&mut broker, &human, 0);
@@ -40,7 +44,7 @@ impl Assembled {
                     &auth,
                     config.sessions().unwrap(),
                     human.clone(),
-                    Arc::new(SystemSessionClock),
+                    clock,
                     Arc::new(OsSessionRandom),
                 )
             } else {
@@ -48,7 +52,7 @@ impl Assembled {
                     &auth,
                     config.sessions().unwrap(),
                     human.clone(),
-                    Arc::new(SystemSessionClock),
+                    clock,
                     Arc::new(OsSessionRandom),
                 )
             }
@@ -89,6 +93,7 @@ impl Assembled {
         let inputs = CheckpointInputs {
             workbench: workbench.clone(),
             sessions,
+            factors: None,
             audit: human.clone(),
             board: Some(board),
             bridge: None,

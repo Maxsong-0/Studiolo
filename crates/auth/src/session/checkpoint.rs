@@ -12,11 +12,13 @@ pub struct AuthCheckpointSource {
     source: Source,
     config: SessionConfig,
 }
-/// 仍持写屏障的 Auth 快照；完整 ACK 覆盖成立前不允许导出。
+/// 定格的 Auth 快照；定格校验与完整 ACK 覆盖都成立前不允许导出。
 pub struct FrozenAuth {
     frozen: FrozenSqlite,
     config: String,
-    watermark: OwnerWatermark,
+    /// 主人绑定的摘要，冻结时由配置算出；校验和导出都按它核。
+    owner: String,
+    watermark: Option<OwnerWatermark>,
     coverage: Option<ReceiptCoverage>,
 }
 impl SessionManager {
@@ -29,28 +31,42 @@ impl SessionManager {
     }
 }
 impl AuthCheckpointSource {
-    /// 只接受已完成补记和业务回写的库；待处理记录不能冒充已排空。
+    /// 冻结窗口里只定格。排空与回执的完整校验要读整张表、随使用变大（BUG-045），
+    /// 放开之后由 [`FrozenAuth::validate`] 在定格上做，读到的仍是冻结那一刻。
     pub fn freeze(&self, deadline: Instant) -> Result<FrozenAuth, SessionError> {
         let frozen = self.source.freeze(deadline).map_err(problem)?;
         let config = self.config.encoded()?;
         let owner =
             serde_json::to_vec(&self.config.owner).map_err(|_| SessionError::Configuration)?;
         let owner = super::secrets::hex(&Sha256::digest(owner));
-        let watermark = frozen
-            .inspect(|db| snapshot(db, &config, &owner))
-            .map_err(problem)?;
         Ok(FrozenAuth {
             frozen,
             config,
-            watermark,
+            owner,
+            watermark: None,
             coverage: None,
         })
     }
 }
 impl FrozenAuth {
-    /// 本库独立的业务水位；不等同于审计尾部。
-    pub fn watermark(&self) -> &OwnerWatermark {
-        &self.watermark
+    /// 在定格那一刻上做完整校验：只接受已完成补记和业务回写的库，待处理记录不能冒充已排空；
+    /// 得出本库水位。失败撤销此前的结果。
+    pub fn validate(&mut self) -> Result<&OwnerWatermark, SessionError> {
+        self.watermark = None;
+        let watermark = self
+            .frozen
+            .inspect(|db| snapshot(db, &self.config, &self.owner))
+            .map_err(problem)?;
+        Ok(self.watermark.insert(watermark))
+    }
+    /// 本库独立的业务水位，不等同于审计尾部；[`Self::validate`] 通过之后才有。
+    pub fn watermark(&self) -> Option<&OwnerWatermark> {
+        self.watermark.as_ref()
+    }
+    /// 放开写锁，登录库从此可以照常写；定格的读连接留着，回执核对和导出读到的仍是冻结那一刻（BUG-045）。
+    /// 之后的读取和导出受 `deadline` 约束；只能放开一次。
+    pub fn release(&mut self, deadline: Instant) -> Result<(), SessionError> {
+        self.frozen.release(deadline).map_err(problem)
     }
     /// 扫描所有持久回执，包括恢复控制 JSON 内的原证明；一次失败撤销此前确认。
     pub fn verify_audit(&mut self, audit: &FrozenAudit) -> Result<ReceiptCoverage, SessionError> {
@@ -73,18 +89,14 @@ impl FrozenAuth {
     /// 只有完整结构、排空和原账本核对通过，才能签出独立可重开的副本。
     pub fn export(&self, target: &Path) -> Result<SealedOwnerCheckpoint, SessionError> {
         self.coverage.ok_or(SessionError::AuditUnavailable)?;
-        let OwnerWatermark::Auth {
-            schema_version,
-            owner_binding_digest,
-            ..
-        } = &self.watermark
-        else {
+        let watermark = self.watermark.as_ref().ok_or(SessionError::CorruptStore)?;
+        let OwnerWatermark::Auth { schema_version, .. } = watermark else {
             return Err(SessionError::CorruptStore);
         };
         let wal = self
             .frozen
-            .export(target, &self.watermark, |db| {
-                snapshot(db, &self.config, owner_binding_digest)
+            .export(target, watermark, |db| {
+                snapshot(db, &self.config, &self.owner)
             })
             .map_err(problem)?;
         Ok(SealedOwnerCheckpoint {
@@ -95,7 +107,7 @@ impl FrozenAuth {
             parent_directory_synced: true,
             reopen_verified: true,
             source_binding_stable: true,
-            watermark: self.watermark.clone(),
+            watermark: watermark.clone(),
         })
     }
 }
