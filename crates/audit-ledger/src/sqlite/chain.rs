@@ -17,7 +17,7 @@ use std::sync::Arc;
 
 /// 本连接已核过的段链前缀，以及核它时所在快照的 `data_version`。
 ///
-/// 只放已提交的行：从已提交快照里读出并核过的行，以及本连接自己封存、提交成功之后的那一段（`sealed`）。
+/// 只放已提交的行：从已提交快照里读出并核过的行，以及本连接自己封存、提交成功之后的那一段（`push_committed_seal`）。
 /// 事务里刚写下、还没提交的封存行不放，所以事务回滚不会让这里多出库里没有的段。
 ///
 /// 锚定失败只作废 `data_version`，已放进来的段留着，当作下一次全算必须满足的前缀；其中可能有这次按段链
@@ -63,9 +63,10 @@ impl VerifiedChain {
 
     /// 本连接刚封存、提交已经成功的那一段：放进核过的段链，此后别的连接把它退回掉，下一次操作也认得出来。
     ///
-    /// 只在提交返回成功之后调用。本连接自己的提交不改变 `data_version`，追加又一直握着写锁，所以放进来以后
-    /// 缓存仍与库里已提交的内容逐行一致。段号接不上（不该发生）就作废，下一次全算。
-    pub(super) fn sealed(&mut self, summary: AuditSegmentSummary) {
+    /// 只在提交返回成功之后调用。本连接自己的提交不改变 `data_version`。写锁已随提交放掉，提交之后到这里
+    /// 之间若有别的连接提交，`data_version` 会变，下一次锚定从创世全算，并要求新链以含这一段的前缀开头，
+    /// 所以放进来的这一段掩盖不了别人对它的改动。段号接不上（不该发生）就作废 `data_version`，下一次全算。
+    pub(super) fn push_committed_seal(&mut self, summary: AuditSegmentSummary) {
         let next = usize::try_from(summary.index()).ok() == Some(self.summaries.len());
         if self.data_version.is_some() && next {
             Arc::make_mut(&mut self.summaries).push(summary);

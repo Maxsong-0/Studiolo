@@ -231,14 +231,15 @@ fn an_open_read_view_fails_closed_once_another_connection_rewrites_or_rolls_back
     const SEALED: u64 = 3;
     let (_source, source_root, receipts) = bulk::ledger_with(SEALED * AUDIT_SEGMENT_RECORDS + 1);
     let newest = |view: &AuditReadView| view.scan_page(None, |record| Ok(Some(record.offset())));
-    // 读窗口的写者在别的进程，每次读都可能撞上别的连接的提交：先读一页，让它核过整条段链。
+    // 读窗口的写者在别的进程，每次读都可能撞上别的连接的提交：先读最新一页，让它核过整条段链。
     let (_rewritten, root) = bulk::clone_into_private_dir(&source_root);
     let view = AuditReadView::open_existing(&root).unwrap();
     assert!(newest(&view).is_ok());
+    // 改的是首段：最新一页只读第 1～3 段，读不到它，只有按 `data_version` 判据从创世全算才发现得了。
     bulk::tamper(
         &root,
         "UPDATE audit_segments SET segment_hash=(SELECT segment_hash FROM audit_segments
-            WHERE segment_index=0) WHERE segment_index=1",
+            WHERE segment_index=1) WHERE segment_index=0",
     );
     assert!(matches!(newest(&view), Err(AuditError::CorruptStore)));
     // 退回到更早、自身自洽的两段：读窗口核过三段，同样失败关闭。
