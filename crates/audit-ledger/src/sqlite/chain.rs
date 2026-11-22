@@ -32,12 +32,16 @@ impl VerifiedChain {
         &mut self,
         connection: &Connection,
     ) -> Result<verify::Anchored, AuditError> {
+        // 先作废再干活：从读 `data_version` 起任何一步失败，下一次都一律全算；只有整次锚定走完才重新记下版本。
+        let known = self.data_version.take();
         let version = data_version(connection)?;
-        if self.data_version == Some(version) {
-            self.extend(connection, version)
+        let anchored = if known == Some(version) {
+            self.extend(connection)?
         } else {
-            self.recompute(connection, version)
-        }
+            self.recompute(connection)?
+        };
+        self.data_version = Some(version);
+        Ok(anchored)
     }
 
     /// 显式入口（打开、`verify_all`、`segments()`、一次性连接）：不看 `data_version`，从创世全算。
@@ -45,37 +49,28 @@ impl VerifiedChain {
         &mut self,
         connection: &Connection,
     ) -> Result<verify::Anchored, AuditError> {
+        self.data_version = None;
         let version = data_version(connection)?;
-        self.recompute(connection, version)
+        let anchored = self.recompute(connection)?;
+        self.data_version = Some(version);
+        Ok(anchored)
     }
 
-    fn extend(
-        &mut self,
-        connection: &Connection,
-        version: i64,
-    ) -> Result<verify::Anchored, AuditError> {
-        self.data_version = None;
+    fn extend(&mut self, connection: &Connection) -> Result<verify::Anchored, AuditError> {
         let summaries = Arc::make_mut(&mut self.summaries);
         // 链尾那一行这次要重读；它之前的行这次不读，读到它们所在的段时再逐行比对。
         let reverified_from = u64::try_from(summaries.len().saturating_sub(1))
             .map_err(|_| AuditError::CorruptStore)?;
         let cost = segment::extend(connection, summaries)?;
-        let anchored = verify::settle(
+        verify::settle(
             connection,
             Arc::clone(&self.summaries),
             cost,
             reverified_from,
-        )?;
-        self.data_version = Some(version);
-        Ok(anchored)
+        )
     }
 
-    fn recompute(
-        &mut self,
-        connection: &Connection,
-        version: i64,
-    ) -> Result<verify::Anchored, AuditError> {
-        self.data_version = None;
+    fn recompute(&mut self, connection: &Connection) -> Result<verify::Anchored, AuditError> {
         let mut fresh = Vec::new();
         let cost = segment::extend(connection, &mut fresh)?;
         // 段链只能往后长：本连接核过的每一段都必须原样还在，否则库被改短、改掉或整条换过。
@@ -83,9 +78,7 @@ impl VerifiedChain {
             return Err(AuditError::CorruptStore);
         }
         self.summaries = Arc::new(fresh);
-        let anchored = verify::settle(connection, Arc::clone(&self.summaries), cost, 0)?;
-        self.data_version = Some(version);
-        Ok(anchored)
+        verify::settle(connection, Arc::clone(&self.summaries), cost, 0)
     }
 }
 

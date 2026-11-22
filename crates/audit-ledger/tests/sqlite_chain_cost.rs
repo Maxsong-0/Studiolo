@@ -6,7 +6,8 @@
 //!
 //! 1. 本连接自己的追加、查询、按段续验，读的段摘要行数不随已封存段数涨（以前红：读的行数就是段数）；
 //! 2. 别的连接提交过（合法追加也好、篡改也好），下一次操作就从创世全算，打开之后被改的摘要行照样当场失败关闭；
-//! 3. 别的连接把账本退回到更早、自身自洽的一版，本连接也认得出来（以前认不出：退回后的账本自己是自洽的）。
+//! 3. 别的连接把账本退回到更早、自身自洽的一版，或退回后再写成同样长的另一条链，本连接也认得出来
+//!    （以前认不出：改过之后的账本自己是自洽的）。
 
 #![cfg(unix)]
 
@@ -15,8 +16,9 @@ mod support;
 #[path = "support/bulk.rs"]
 mod bulk;
 
+use std::path::Path;
 use studiolo_audit_ledger::{
-    AUDIT_SEGMENT_RECORDS, AuditError, AuditFilter, AuditLedger, SqliteAuditLedger,
+    AUDIT_SEGMENT_RECORDS, AuditError, AuditFilter, AuditLedger, AuditRecord, SqliteAuditLedger,
 };
 
 /// 打开一本有 `sealed` 个封存段、打开段里差两条写满的账本，依次做一遍常规操作，返回每一步读的段摘要行数。
@@ -125,6 +127,21 @@ fn a_summary_changed_after_open_is_caught_by_the_very_next_operation() {
     }
 }
 
+/// 经别的连接把账本退回到只有前 `kept` 条记录的那一版：记录、段摘要、head 三处一起改，退回后的账本自己是自洽的。
+fn roll_back_to(root: &Path, receipts: &[AuditRecord], kept: u64) {
+    let sealed = kept / AUDIT_SEGMENT_RECORDS;
+    let head = receipts[usize::try_from(kept - 1).unwrap()].record_hash();
+    bulk::tamper(
+        root,
+        &format!(
+            "DELETE FROM audit_segments WHERE segment_index >= {sealed};
+             DELETE FROM audit_events WHERE offset > {kept};
+             UPDATE audit_meta SET last_offset={kept}, last_hash='{}' WHERE id=1;",
+            head.to_hex()
+        ),
+    );
+}
+
 #[test]
 fn rolling_the_ledger_back_to_an_earlier_consistent_version_is_caught_by_the_open_connection() {
     const SEALED: u64 = 3;
@@ -132,18 +149,9 @@ fn rolling_the_ledger_back_to_an_earlier_consistent_version_is_caught_by_the_ope
     let (_directory, root) = bulk::clone_into_private_dir(&source_root);
     let ledger = SqliteAuditLedger::open_existing(&root).unwrap();
     assert_eq!(ledger.segments().unwrap().len() as u64, SEALED);
-    // 退回到只有两个封存段、打开段里一条的那一版：记录、段摘要、head 三处一起改，退回后的账本自己是自洽的。
+    // 退回到只有两个封存段、打开段里一条的那一版。
     let kept = 2 * AUDIT_SEGMENT_RECORDS + 1;
-    let head = receipts[usize::try_from(kept - 1).unwrap()].record_hash();
-    bulk::tamper(
-        &root,
-        &format!(
-            "DELETE FROM audit_segments WHERE segment_index >= 2;
-             DELETE FROM audit_events WHERE offset > {kept};
-             UPDATE audit_meta SET last_offset={kept}, last_hash='{}' WHERE id=1;",
-            head.to_hex()
-        ),
-    );
+    roll_back_to(&root, &receipts, kept);
     // 正在用的连接核过三个段，库里却只剩两个：段链只能往后长，变短就失败关闭。
     assert_eq!(
         ledger.append(bulk::event(kept + 1)).unwrap_err(),
@@ -156,4 +164,32 @@ fn rolling_the_ledger_back_to_an_earlier_consistent_version_is_caught_by_the_ope
     // 新打开的连接没见过退回之前的样子，分不出来：这是没有外部可信锚时的已知边界，契约第 7 节写明。
     let fresh = SqliteAuditLedger::open_existing(&root).unwrap();
     assert_eq!(fresh.segments().unwrap().len(), 2);
+}
+
+#[test]
+fn replacing_the_history_with_an_equally_long_consistent_chain_is_caught_by_the_open_connection() {
+    const SEALED: u64 = 3;
+    let records = SEALED * AUDIT_SEGMENT_RECORDS + 1;
+    let (_source, source_root, receipts) = bulk::ledger_with(records);
+    let (_directory, root) = bulk::clone_into_private_dir(&source_root);
+    let ledger = SqliteAuditLedger::open_existing(&root).unwrap();
+    assert_eq!(ledger.segments().unwrap().len() as u64, SEALED);
+    // 退回到两个封存段，再经别的实例写上另一批事件，长回同样三个封存段：段数没变，第 2 段整段换了内容。
+    // 只比段数、不比内容的检查放得过它。
+    let kept = 2 * AUDIT_SEGMENT_RECORDS + 1;
+    roll_back_to(&root, &receipts, kept);
+    let other = SqliteAuditLedger::open_existing(&root).unwrap();
+    for offset in kept + 1..=records {
+        other.append(bulk::event(offset + 10_000)).unwrap();
+    }
+    assert_eq!(other.segments().unwrap().len() as u64, SEALED);
+    drop(other);
+    assert_eq!(
+        ledger.append(bulk::event(records + 1)).unwrap_err(),
+        AuditError::CorruptStore
+    );
+    assert_eq!(
+        ledger.query(&AuditFilter::default()).unwrap_err(),
+        AuditError::CorruptStore
+    );
 }

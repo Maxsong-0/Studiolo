@@ -2,9 +2,9 @@
 //!
 //! 别的连接提交过，`data_version` 就变，下一次操作从创世全算（集成用例 `sqlite_chain_cost.rs`）。
 //! 看不见的改动（不经 SQLite 直接改文件字节）在用例里造不出来，这里用被测连接**自己**改库来模拟：
-//! 本连接自己的提交不改变 `data_version`，下一次常规操作只核链尾。钉住两件事：链尾那一行被删当场失败关闭；
+//! 本连接自己的提交不改变 `data_version`，下一次常规操作只核链尾。钉住三件事：链尾那一行被删或任一列被改当场失败关闭；
 //! 中间一行被改，常规追加照常成功（契约第 8 节写明的检测时机变化），但读到那一段、`segments()`、
-//! `verify_all()` 和重新打开都失败关闭。
+//! `verify_all()` 和重新打开都失败关闭；封存行随事务回滚，缓存里也不会多出这一段。
 
 #![cfg(unix)]
 
@@ -43,6 +43,12 @@ fn rewrite_through_own_connection(ledger: &SqliteAuditLedger, sql: &str) {
     assert_eq!(session.connection.execute(sql, []).unwrap(), 1);
 }
 
+/// 用被测连接自己执行一段语句（建、删临时触发器），不看改动行数。
+fn batch_through_own_connection(ledger: &SqliteAuditLedger, sql: &str) {
+    let session = ledger.connection.lock().unwrap();
+    session.connection.execute_batch(sql).unwrap();
+}
+
 #[test]
 fn an_unseen_change_to_the_chain_tip_fails_the_very_next_operation() {
     let tip = SEALED - 1;
@@ -53,6 +59,11 @@ fn an_unseen_change_to_the_chain_tip_fails_the_very_next_operation() {
                 WHERE segment_index=0) WHERE segment_index={tip}"
         ),
         format!("UPDATE audit_segments SET last_offset=last_offset-1 WHERE segment_index={tip}"),
+        // 只换 last_hash、segment_hash 原样不动：链尾比对必须逐列比，不能只看 segment_hash。
+        format!(
+            "UPDATE audit_segments SET last_hash=(SELECT last_hash FROM audit_segments
+                WHERE segment_index=0) WHERE segment_index={tip}"
+        ),
     ] {
         let (_directory, _root, ledger) = ledger();
         rewrite_through_own_connection(&ledger, &change);
@@ -103,4 +114,31 @@ fn an_unseen_rewrite_of_a_middle_summary_is_caught_when_that_segment_is_read() {
         SqliteAuditLedger::open_existing(&root).err(),
         Some(AuditError::CorruptStore)
     );
+}
+
+#[test]
+fn a_seal_rolled_back_with_its_transaction_never_enters_the_cache() {
+    let directory = support::private_dir();
+    let root = directory.path().canonicalize().unwrap();
+    let ledger = SqliteAuditLedger::open(&root).unwrap();
+    let sealing = (SEALED + 1) * SEGMENT_RECORDS;
+    for offset in 1..sealing {
+        ledger.append(event(offset)).unwrap();
+    }
+    // 写满并封存的这次追加：封存行已写进事务，再让更新 head 那一句失败，整个事务回滚。
+    batch_through_own_connection(
+        &ledger,
+        "CREATE TEMP TRIGGER refuse_head BEFORE UPDATE ON audit_meta
+         BEGIN SELECT RAISE(ABORT, 'injected'); END;",
+    );
+    assert_eq!(
+        ledger.append(event(sealing)).unwrap_err(),
+        AuditError::Unavailable
+    );
+    batch_through_own_connection(&ledger, "DROP TRIGGER temp.refuse_head");
+    // 缓存里没有回滚掉的那一段：重试照常只核链尾，并把这一段真正封存。
+    let receipt = ledger.append(event(sealing)).unwrap();
+    assert_eq!(receipt.offset(), sealing);
+    assert!(ledger.last_verification_cost().unwrap().summaries() <= 2);
+    assert_eq!(ledger.segments().unwrap().len() as u64, SEALED + 1);
 }
