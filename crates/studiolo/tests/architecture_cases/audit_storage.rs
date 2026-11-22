@@ -31,6 +31,21 @@ fn checkpoint_storage_has_only_fixed_database_io_and_is_not_a_coordinator_capabi
         source_violations("studiolo-checkpoint-storage", path, &other)
             .contains(&AuthorityViolation::DatabaseOpen)
     );
+    // 定格的三句少任何一句都拿不到豁免（BUG-045）。
+    for changed in [
+        source.replace(
+            "let wal = checkpoint(&binding, deadline)?;",
+            "let wal = WalCheckpointProof::default();",
+        ),
+        source.replace("PRAGMA query_only=ON; BEGIN", "PRAGMA query_only=ON;"),
+        source.replace("SELECT count(*) FROM sqlite_schema", "SELECT 1"),
+    ] {
+        assert_ne!(changed, source);
+        assert!(
+            source_violations("studiolo-checkpoint-storage", path, &changed)
+                .contains(&AuthorityViolation::DatabaseOpen)
+        );
+    }
     let path = Path::new("crates/checkpoint-storage/src/lib.rs");
     let source = std::fs::read_to_string(root.join(path)).unwrap();
     assert!(source_violations("studiolo-checkpoint-storage", path, &source).is_empty());

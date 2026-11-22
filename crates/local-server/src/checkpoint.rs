@@ -1,6 +1,11 @@
 //! 七个实际 owner 的总窗口：先排空完整操作，再按固定顺序冻结；全体原事件核对后才导出。
+//!
+//! 冻结窗口只定格（BUG-045）：窗口里各库定在同一刻、核要读活对象的回执、导出有固定上限的小状态，
+//! 然后按逆序放开全部屏障（[`FrozenOwners::release`]）；随数据涨的回执核对、拷贝、整本验链、
+//! 过滤视图和发布都在放开之后从定格做（[`ReleasedOwners`]），写请求不再等它们。
 mod assembly;
 mod export;
+mod released;
 mod restore;
 mod settle;
 use crate::{
@@ -11,6 +16,7 @@ use crate::{
 };
 pub use assembly::CheckpointInputs;
 pub use export::{CheckpointExports, CheckpointTimes, OwnerExportPaths, trusted_catalog};
+pub use released::ReleasedOwners;
 pub use restore::{
     Cutover, CutoverRefusal, Journal, NewRootRestore, RestoreRefusal, RestoreReport,
     RevocationPending, begin_cutover, finish_cutover, require_restore_revoked,
@@ -27,9 +33,8 @@ use studiolo_audit_ledger::{
     AuditCheckpointAccess, AuditEvent, AuditQuiescence, FrozenAudit, SqliteAuditLedger,
 };
 use studiolo_auth::{AuthCheckpointSource, FactorRuntime, FrozenAuth, SessionManager};
-use studiolo_backup::{
-    checkpoint::manifest::AuditCoverageProof,
-    worker::{job::backup_intent, recovery_point::BackupTargetKind, state::JobKey},
+use studiolo_backup::worker::{
+    job::backup_intent, recovery_point::BackupTargetKind, state::JobKey,
 };
 use studiolo_control_db::{ControlCheckpointSource, FrozenControl};
 use studiolo_core::checkpoint::{
@@ -52,6 +57,7 @@ pub struct CheckpointOwners {
     policy: Option<Arc<PolicyPlane>>,
 }
 /// 字段按逆冻结顺序析构；SQL/唯一 owner 先释放，最后才恢复人侧和接入方完整操作准入。
+/// 正常路径不靠析构：[`FrozenOwners::release`] 在窗口里收尾后按同一顺序放开，交出 [`ReleasedOwners`]。
 pub struct FrozenOwners {
     audit: FrozenAudit,
     agent_audit: Option<FrozenAudit>,
@@ -66,7 +72,8 @@ pub struct FrozenOwners {
     request: FreezeRequest,
     paths: OwnerExportPaths,
     intent: AuditEvent,
-    coverage: Option<AuditCoverageProof>,
+    /// 窗口里核过的回执数（本作业的 Intent、写者、Bridge 与传输）；其余各库的回执在放开之后核。
+    checked: Option<u64>,
     deadline: Instant,
 }
 impl CheckpointOwners {
@@ -203,7 +210,7 @@ impl CheckpointOwners {
             request,
             paths,
             intent,
-            coverage: None,
+            checked: None,
             deadline,
         };
         frozen.verify_audit()?;
@@ -211,8 +218,11 @@ impl CheckpointOwners {
     }
 }
 impl FrozenOwners {
+    /// 窗口里要核的回执：本作业的 Intent、写者的重放与回执（读活的写者实例，条数有上限）、
+    /// Bridge 的持久 ACK 与传输最后一次运行（Bridge 整份在窗口里导出，见 [`FrozenOwners::release`]）。
+    /// 登录、控制、接入方库的回执只读各自定格的库，放开之后再核（[`ReleasedOwners`]）。
     fn verify_audit(&mut self) -> Result<()> {
-        self.coverage = None;
+        self.checked = None;
         self.audit
             .verify_event(&self.intent)
             .map_err(|_| unavailable(Owner::Audit))?;
@@ -225,22 +235,6 @@ impl FrozenOwners {
                 .map_err(|_| unavailable(Owner::Broker))?
                 .checked(),
         )?;
-        if let Some(control) = &mut self.control {
-            add(
-                &mut checked,
-                control
-                    .verify_audit(&self.audit)
-                    .map_err(|_| unavailable(Owner::Control))?
-                    .checked(),
-            )?;
-        }
-        add(
-            &mut checked,
-            self.auth
-                .verify_audit(&self.audit)
-                .map_err(|_| unavailable(Owner::Auth))?
-                .checked(),
-        )?;
         if let Some(bridge) = &mut self.bridge {
             add(
                 &mut checked,
@@ -249,24 +243,93 @@ impl FrozenOwners {
                     .map_err(|_| unavailable(Owner::Bridge))?,
             )?;
         }
-        match (&mut self.agents, &self.agent_audit) {
-            (Some(agent), Some(audit)) => add(
-                &mut checked,
-                agent
-                    .verify_audit(audit)
-                    .map_err(|_| unavailable(Owner::AgentStore))?
-                    .checked(),
-            )?,
-            (None, None) => {}
-            _ => return Err(unavailable(Owner::AgentStore)),
-        }
         check_deadline(self.deadline, Owner::Audit)?;
-        self.coverage = Some(AuditCoverageProof {
-            acked_events_checked: checked,
-            acked_events_matched: checked,
-            offset_comparison_only: false,
-        });
+        self.checked = Some(checked);
         Ok(())
+    }
+    /// 窗口里收尾，再按冻结的逆序放开全部屏障（BUG-045）。
+    ///
+    /// 窗口里只做两件要读活对象、又不随数据涨的事：交出写者的定格（两棵树的文件句柄），
+    /// Bridge 库连同传输、平面文件整份导出——Bridge 每次写前写后都要求 WAL 截断干净、截不掉就封掉实例，
+    /// 放开之后不能再留着它的定格读事务；它的库有页数上限，和传输、平面文件一样是固定大小的状态。
+    /// 然后放开两本账本、策略、接入方库的写锁，放开 Bridge、登录、控制库（定格的读连接留着），
+    /// 把写者还回工作台，最后恢复人侧和接入方的完整操作准入。之后的活都受 `deadline` 约束。
+    /// 任何一步失败，剩下的屏障随返回值析构照样按逆序放开。
+    pub fn release(mut self, deadline: Instant) -> Result<ReleasedOwners> {
+        // 全程在 self 上做：中途失败时整个结构按字段声明顺序析构，先放库屏障、最后才恢复准入。
+        let checked = self.checked.ok_or_else(|| unavailable(Owner::Audit))?;
+        let capture = self
+            .broker
+            .take_capture()
+            .map_err(|_| unavailable(Owner::Broker))?;
+        let bridged = self
+            .bridge
+            .as_ref()
+            .map(|bridge| {
+                bridge
+                    .export(&self.paths.bridge, &self.paths.transport, &self.paths.plane)
+                    .map_err(|_| unavailable(Owner::Bridge))
+            })
+            .transpose()?;
+        check_deadline(self.deadline, Owner::Audit)?;
+        self.audit
+            .release(deadline)
+            .map_err(|_| unavailable(Owner::Audit))?;
+        if let Some(secondary) = &mut self.agent_audit {
+            secondary
+                .release(deadline)
+                .map_err(|_| unavailable(Owner::Audit))?;
+        }
+        if let Some(participant) = &self.policy {
+            participant.release(deadline)?;
+        }
+        if let Some(store) = &mut self.agents {
+            store
+                .release(deadline)
+                .map_err(|_| unavailable(Owner::AgentStore))?;
+        }
+        drop(self.bridge.take());
+        self.auth
+            .release(deadline)
+            .map_err(|_| unavailable(Owner::Auth))?;
+        if let Some(board) = &mut self.control {
+            board
+                .release(deadline)
+                .map_err(|_| unavailable(Owner::Control))?;
+        }
+        // 之后没有会失败的步骤：拆开，写者还回工作台，最后恢复人侧和接入方的完整操作准入。
+        let FrozenOwners {
+            audit,
+            agent_audit,
+            policy,
+            agents,
+            bridge: _,
+            auth,
+            control,
+            broker,
+            _human_quiet: human_quiet,
+            _agent_quiet: agent_quiet,
+            request,
+            paths,
+            ..
+        } = self;
+        drop(broker);
+        drop(human_quiet);
+        drop(agent_quiet);
+        Ok(ReleasedOwners {
+            audit,
+            agent_audit,
+            policy,
+            agents,
+            bridge: bridged,
+            auth,
+            control,
+            broker: capture,
+            request,
+            paths,
+            checked,
+            deadline,
+        })
     }
 }
 fn add(total: &mut u64, count: u64) -> Result<()> {

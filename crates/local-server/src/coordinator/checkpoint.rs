@@ -1,11 +1,11 @@
 //! 原工作台写者的封存入口；不重开 Broker、不提供普通 mutation 能力，失败退出返还原实例。
 use super::CanonicalWorkbench;
 use crate::LocalError;
-use std::{path::Path, sync::Arc, time::Instant};
+use std::{sync::Arc, time::Instant};
 use studiolo_audit_ledger::FrozenAudit;
-use studiolo_core::checkpoint::{OwnerWatermark, SealedOwnerCheckpoint};
+use studiolo_core::checkpoint::OwnerWatermark;
 use studiolo_vault_broker::{
-    BrokerCheckpointAudit, BrokerCheckpointCoverage, BrokerError, FrozenBroker,
+    BrokerCapture, BrokerCheckpointAudit, BrokerCheckpointCoverage, BrokerError, FrozenBroker,
 };
 
 /// 保留原工作台与唯一写者的窗口；全局操作屏障由上层协调器持有。
@@ -109,14 +109,18 @@ impl FrozenWorkbench {
             })
             .map_err(|_| LocalError::Unavailable)
     }
-    /// 只导出经原账本核验后的独立副本；原根身份在复制前后复验。
-    pub fn export(&self, vault: &Path, writer: &Path) -> Result<SealedOwnerCheckpoint, LocalError> {
-        let sealed = self
-            .source()?
-            .export(vault, writer)
+    /// 交出经原账本核验过的定格（两棵树的文件句柄，BUG-045）；之后丢掉本窗口就把写者还回工作台，
+    /// 拷贝在窗口之外从定格做（`studiolo_vault_broker::BrokerCapture::export`）。原根身份在交出前后复验。
+    pub fn take_capture(&mut self) -> Result<BrokerCapture, LocalError> {
+        self.source()?;
+        let capture = self
+            .broker
+            .as_mut()
+            .ok_or(LocalError::Unavailable)?
+            .take_capture()
             .map_err(|_| LocalError::Unavailable)?;
         self.source()?;
-        Ok(sealed)
+        Ok(capture)
     }
 }
 impl Drop for FrozenWorkbench {

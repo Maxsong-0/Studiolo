@@ -252,7 +252,8 @@ class AssemblyTests(unittest.TestCase):
     def test_this_release_requires_the_new_human_program(self):
         # 本版的修复都在人侧程序里，必须换程序（出候选和激活预检靠这两个常量拒绝沿用旧程序）。
         self.assertIs(a.REQUIRES_NEW_HUMAN_PROGRAM, True)
-        self.assertEqual(a.NEW_HUMAN_PROGRAM_LITERALS, ('备份封存卡在：'.encode(),))
+        self.assertEqual(a.NEW_HUMAN_PROGRAM_LITERALS,
+                         ('备份封存卡在：'.encode(), '备份封存冻结窗口：'.encode()))
         # 只看编进程序的那部分源码（测试模块和注释不算）。
         producer = rust_code(ROOT / 'crates/local-server/src/backup/producer.rs')
         for literal in a.NEW_HUMAN_PROGRAM_LITERALS:

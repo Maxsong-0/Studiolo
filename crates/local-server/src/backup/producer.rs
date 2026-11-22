@@ -22,7 +22,7 @@ use crate::checkpoint::{CheckpointInputs, CheckpointTimes, OwnerExportPaths, tru
 use std::{
     num::NonZeroU64,
     path::PathBuf,
-    sync::{Arc, Mutex, PoisonError},
+    sync::{Arc, Condvar, Mutex, PoisonError},
     thread::JoinHandle,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
@@ -53,6 +53,9 @@ const PAGE: usize = 512;
 const SCAN_BUDGET: Duration = Duration::from_secs(5);
 /// 回收过期暂存的时间预算。
 const RECLAIM_BUDGET: Duration = Duration::from_secs(30);
+/// 冻结窗口放开之后，剩下的回执核对、导出、整本验链、过滤视图和发布一共能用多久（BUG-045）。
+/// 比最短封存间隔短；169 上推算 40～60 秒。另受封存正文保留期约束，不会做到副本过期以后。
+const SEAL_BUDGET: Duration = Duration::from_secs(300);
 
 /// 可信启动层从私有备份配置（`--backup-config`）和启动选项算出来的固定事实；运行期间不变。
 pub struct ProducerPlan {
@@ -92,6 +95,11 @@ pub struct BackupProducer {
     plan: ProducerPlan,
     state: Mutex<State>,
     background: Mutex<Option<JoinHandle<()>>>,
+    /// 后台线程还可能进入或正在冻结窗口里：线程起来前置上，窗口放开或线程结束时复位（`settle_window` 等它）。
+    window: Window,
+    /// 用例用：封存放开冻结窗口之后停在这里，等用例放行（演练关停时封存正在放开之后那段）。
+    #[cfg(test)]
+    pub(crate) hold_after_release: Mutex<Option<std::sync::mpsc::Receiver<()>>>,
     /// 开始服务的时刻；账本里从没有成功时，逾期从它和第一次尝试里较早的那个起算。
     serving_since_ms: Option<i64>,
 }
@@ -109,6 +117,9 @@ impl BackupProducer {
             plan,
             state: Mutex::new(State::default()),
             background: Mutex::new(None),
+            window: Window::default(),
+            #[cfg(test)]
+            hold_after_release: Mutex::new(None),
             serving_since_ms: now_millis().ok(),
         })
     }
@@ -166,11 +177,30 @@ impl BackupProducer {
         BackupAuditPort::new(admission).dispatch(bytes)
     }
 
-    /// 等后台线程做完；关停时先停掉监听，再调用它，最后才停写者。
+    /// 等后台线程整个做完，含放开之后的导出和发布。关停不用它（只等窗口，见 `settle_window`）。
     pub fn settle(&self) {
         let handle = self.background.lock().ok().and_then(|mut slot| slot.take());
         if let Some(handle) = handle {
             let _ = handle.join();
+        }
+    }
+
+    /// 关停用：等后台线程放开冻结窗口（或做完）就返回，不等放开之后的拷贝和发布（BUG-045）。
+    /// 那一段随进程退出丢下，和「封存做到一半被杀」走同一条路：暂存由下次启动回收，
+    /// 没写结果的原意图由下一次 `schedule` 补失败结果。
+    pub fn settle_window(&self) {
+        self.window.wait();
+    }
+
+    #[cfg(test)]
+    fn hold_after_release(&self) {
+        let gate = self
+            .hold_after_release
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take();
+        if let Some(gate) = gate {
+            let _ = gate.recv();
         }
     }
 
@@ -247,6 +277,8 @@ impl BackupProducer {
     /// 起后台线程（回收，`job` 有值时接着做这一次封存）。调用前 busy 已经置上。
     fn launch(self: &Arc<Self>, job: Option<JobKey>) -> Result<(), AuditError> {
         let producer = Arc::clone(self);
+        // 线程起来之前置上：关停这时来问，也要等这个线程走过窗口。
+        self.window.open();
         let spawned = std::thread::Builder::new()
             .name("backup-producer".to_owned())
             .spawn(move || producer.housekeep(job));
@@ -260,6 +292,7 @@ impl BackupProducer {
             }
             Err(_) => {
                 // 线程没起来：已写的原意图留在账本里，下一次 `schedule` 会给它补失败结果。
+                self.window.close();
                 if let Ok(mut state) = self.state.lock() {
                     state.busy = false;
                 }
@@ -302,6 +335,8 @@ impl BackupProducer {
     fn housekeep(&self, job: Option<JobKey>) {
         // 正常返回和 panic 展开都要复位 busy，否则之后的 `schedule` 永远回 `outstanding`。
         let _idle = Idle(&self.state);
+        // 同样：线程不管怎么结束，关停都不能一直等窗口。
+        let _window = Closing(&self.window);
         // 回收不成不挡后面：登记损坏或别的进程占着时，新封存自己会被暂存层拒绝并记失败。
         if let Err(error) = reclaim_staging(
             &self.plan.staging_parent,
@@ -322,10 +357,11 @@ impl BackupProducer {
         }
     }
 
-    /// 一次总封存：建暂存、冻结全部 owner、导出并封存、放开屏障、写准入。
+    /// 一次总封存：建暂存、冻结全部 owner 定格、放开屏障，再从定格导出并封存、写准入（BUG-045）。
     fn seal(&self, key: &JobKey) -> Result<(), FailureReason> {
         let budget = self.plan.freeze_budget;
-        let deadline = Instant::now() + Duration::from_millis(u64::from(budget.millis()));
+        let retention = Duration::from_millis(self.plan.source_retention_millis);
+        let deadline = Instant::now() + SEAL_BUDGET.min(retention);
         let area = StagingArea::create_for_reader(
             &self.plan.staging_parent,
             key.checkpoint_id.clone(),
@@ -336,6 +372,8 @@ impl BackupProducer {
         )
         .map_err(staging_reason)?;
         let sources = self.inputs.bind().map_err(stuck)?;
+        // 冻结窗口自己的截止时间由冻结预算定（`CheckpointOwners::freeze`），这里只量它多长。
+        let window = Instant::now();
         let frozen = sources
             .freeze(
                 FreezeRequest {
@@ -347,24 +385,30 @@ impl BackupProducer {
                 OwnerExportPaths::under(area.export_root()),
             )
             .map_err(stuck)?;
-        // 全部 owner 冻结之后才取内容截止时刻：此后到封存结束，内容不会再变。
+        // 全部 owner 冻结之后、放开之前取内容截止时刻：导出的就是这一刻，之后的改动不进这次封存。
         let cutoff = now_millis().map_err(barrier)?;
         let retention = i64::try_from(self.plan.source_retention_millis).map_err(barrier)?;
         let expires = cutoff
             .checked_add(retention)
             .ok_or(FailureReason::BarrierNotEstablished)?;
-        let sealed = frozen.seal(
+        let mut released = frozen.release(deadline).map_err(stuck)?;
+        self.window.close();
+        eprintln!("{}", window_line(window.elapsed()));
+        #[cfg(test)]
+        self.hold_after_release();
+        let now = now_millis().map_err(barrier)?;
+        let sealed = released.seal(
             area,
             trusted_catalog,
             self.plan.manifest.clone(),
             CheckpointTimes {
                 content_cutoff: InstantMillis::from_millis(cutoff),
                 expires_at: InstantMillis::from_millis(expires),
-                now: InstantMillis::from_millis(cutoff),
+                now: InstantMillis::from_millis(now),
             },
         );
-        // 先放开全部屏障再写准入：准入要在冻结窗口之外追加进人侧账本。
-        drop(frozen);
+        // 定格的连接和句柄先关掉再写准入。
+        drop(released);
         let sealed = sealed.map_err(staging_reason)?;
         BackupAdmission::approve(self.ledger.clone(), key.clone(), TARGET, &sealed)
             .map(|_| ())
@@ -408,6 +452,40 @@ impl Drop for Idle<'_> {
     }
 }
 
+/// 后台线程还可能进入或正在冻结窗口里（BUG-045）：关停只等这一段。
+#[derive(Default)]
+struct Window {
+    open: Mutex<bool>,
+    changed: Condvar,
+}
+
+impl Window {
+    fn open(&self) {
+        *self.open.lock().unwrap_or_else(PoisonError::into_inner) = true;
+    }
+    fn close(&self) {
+        *self.open.lock().unwrap_or_else(PoisonError::into_inner) = false;
+        self.changed.notify_all();
+    }
+    fn wait(&self) {
+        let open = self.open.lock().unwrap_or_else(PoisonError::into_inner);
+        drop(
+            self.changed
+                .wait_while(open, |open| *open)
+                .unwrap_or_else(PoisonError::into_inner),
+        );
+    }
+}
+
+/// 后台线程结束时复位窗口标志的守卫（含 panic 展开）。
+struct Closing<'a>(&'a Window);
+
+impl Drop for Closing<'_> {
+    fn drop(&mut self) {
+        self.0.close();
+    }
+}
+
 /// 到没到下一次尝试：距上一次准入、距上一次尝试（含失败的）都要满批准的最小间隔。
 /// 失败不缩短间隔，确定性的失败也只会按间隔重试。时钟回退时差值为负，按「还没到」处理。
 fn due(now: i64, interval: i64, last_admission: Option<i64>, last_attempt: Option<i64>) -> bool {
@@ -434,6 +512,11 @@ fn stuck_line(error: &CheckpointError) -> String {
     format!("备份封存卡在：{error}")
 }
 
+/// 每次放开冻结窗口写一行：固定格式，只有毫秒数；真机看它判断窗口有没有随数据变长（BUG-045）。
+fn window_line(window: Duration) -> String {
+    format!("备份封存冻结窗口：{} 毫秒", window.as_millis())
+}
+
 fn staging_reason(error: StagingError) -> FailureReason {
     match error {
         StagingError::Changed => FailureReason::SourceChangedBeforeSeal,
@@ -452,8 +535,8 @@ fn now_millis() -> Result<i64, AuditError> {
 
 #[cfg(test)]
 mod tests {
-    use super::{Idle, State, due, stuck_line};
-    use std::sync::Mutex;
+    use super::{Idle, State, due, stuck_line, window_line};
+    use std::{sync::Mutex, time::Duration};
     use studiolo_core::checkpoint::{CheckpointError, CheckpointOwner};
 
     const HOUR: i64 = 3_600_000;
@@ -501,6 +584,14 @@ mod tests {
             owner: CheckpointOwner::Audit,
         });
         assert_ne!(auth, audit);
+    }
+
+    #[test]
+    fn the_freeze_window_log_line_has_only_the_milliseconds() {
+        assert_eq!(
+            window_line(Duration::from_micros(1_234_567)),
+            "备份封存冻结窗口：1234 毫秒"
+        );
     }
 
     #[test]

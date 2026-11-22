@@ -74,7 +74,8 @@ impl BackupService {
         })
     }
 
-    /// 可以重复调用：叫停读账本的线程，停接受循环（顺带删掉自己的 socket），再等后台线程做完。
+    /// 可以重复调用：叫停读账本的线程，停接受循环（顺带删掉自己的 socket），再等后台线程走出冻结窗口。
+    /// 不等放开之后的拷贝和发布（BUG-045）：那一段只读定格，进程退出时丢下，下次启动回收暂存。
     pub async fn shutdown(&self) {
         // 先置标志：读账本的线程读完手上这一页就停，和下面等接受循环同时进行。
         self.halt.store(true, Ordering::Release);
@@ -86,7 +87,7 @@ impl BackupService {
             let _ = chaser.await;
         }
         let producer = Arc::clone(&self.producer);
-        let _ = tokio::task::spawn_blocking(move || producer.settle()).await;
+        let _ = tokio::task::spawn_blocking(move || producer.settle_window()).await;
     }
 }
 

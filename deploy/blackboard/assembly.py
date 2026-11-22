@@ -21,8 +21,8 @@ r15→r16（T-207：BUG-038 项目目录改名、T-181/T-183/T-185/T-211～T-214
 控制库 schema 3→4，单向，见 README「r15→r16 是单向的」，已激活）；
 r16→r17（T-216：启用备份生产者。启动器加 --backup-config；人侧单元加备份 socket 父目录、封存父目录两个写根，
 停止超时 90→300 秒；人侧程序必须一起换，上一发行的程序不认 --backup-config。数据库与状态的版本号不变，已激活）；
-本版 r17→r18（T-219：备份首跑三处缺陷的修复，BUG-042 队列自己追账本、BUG-044 封存前补记登录库；只换人侧程序，
-启动器和单元的接线一个字不动。起点已带备份监听：激活预检核的是活的备份 socket，停服之后核它已经删掉。
+本版 r17→r18（T-219：备份首跑三处缺陷的修复，BUG-042 队列自己追账本、BUG-044 封存前补记登录库，
+加 BUG-045 封存的冻结窗口只定格、拷贝和校验挪到放开之后；只换人侧程序，启动器和单元的接线一个字不动。起点已带备份监听：激活预检核的是活的备份 socket，停服之后核它已经删掉。
 数据库与状态的版本号不变）。
 """
 import shlex
@@ -52,10 +52,11 @@ BACKUP_STAGING = '/var/lib/studiolo-backup-staging'
 BACKUP_SOCKET = BACKUP_RUNTIME + '/producer.sock'
 # 本版必须换的人侧程序里才有的字节：非空就表示本版必须换人侧程序。出候选和候选核验（激活预检也跑它）都要求候选程序的
 # 字节和上一发行不同，并且字节里有这些字面量。只看来源提交号不够：号可以填新的、文件却是旧的。
-# 本版（r18）的启动器没有新参数，要换程序是因为修复都在程序里；取的是这次新加的一句日志的开头
-# （crates/local-server/src/backup/producer.rs 的 stuck_line，编进程序后是原样的 UTF-8 字节）。
-# 169 上 r17 的程序里没有这几个字，2026-11-21 只读核过（按字节数，0 处）。
-NEW_HUMAN_PROGRAM_LITERALS = ('备份封存卡在：'.encode(),)
+# 本版（r18）的启动器没有新参数，要换程序是因为修复都在程序里；取的是这次新加的两句日志的开头
+# （crates/local-server/src/backup/producer.rs 的 stuck_line 和 window_line，编进程序后是原样的 UTF-8 字节）。
+# 第二句是 BUG-045 的修法才有的：r18 第一次构建（53bc502）的程序里没有它，带着它才是窗口只定格的那一版。
+# 169 上 r17 的程序里没有第一句，2026-11-21 只读核过（按字节数，0 处）；第二句在暂存 r18 时一并核。
+NEW_HUMAN_PROGRAM_LITERALS = ('备份封存卡在：'.encode(), '备份封存冻结窗口：'.encode())
 REQUIRES_NEW_HUMAN_PROGRAM = bool(NEW_HUMAN_PROGRAM_LITERALS)
 # 人侧停止超时（秒）。关停是串行的两段（crates/local-server/src/startup/serving.rs）：收到退出信号先等备份收尾，
 # 做完才通知 Bridge 停，所以两段要相加。备份段等的是在途的那一个连接整个处理完，再等它起的后台线程
@@ -68,7 +69,9 @@ REQUIRES_NEW_HUMAN_PROGRAM = bool(NEW_HUMAN_PROGRAM_LITERALS)
 #             等锁时别人读两次：别的会拿着这把锁读账本的只有健康页（worker 的请求在同一个接受循环里一个个处理，
 #             service.rs；后台线程只在收尾时拿一下），一次健康页快照先后拿两次锁、各读一次
 #             （startup/health_input.rs：备份作业、仓库抽查）；
-#   一次回收（RECLAIM_BUDGET）加一次封存（冻结和导出在一个冻结预算之内；这里按批准的 30 秒算）。
+#   一次回收（RECLAIM_BUDGET）加一次封存的冻结窗口（一个冻结预算之内；这里按批准的 30 秒算）。关停只等到窗口放开
+#   （producer.rs 的 settle_window）：放开之后从定格导出、发布那一段（BUG-045，另给 SEAL_BUDGET）关停不等，
+#   进程退出时丢下，和「封存做到一半被杀」同一条回收路，所以这一项不用加。
 # Bridge 段 = 同步审批的 stop_grace_seconds（169 现行 30）+ 60（deploy/sync-bridge/README.md 的要求）。
 # 后面两项是余量。UNBUDGETED_STEPS_SECONDS 只给不受预算管的小步骤：建暂存区、写准入或失败结果。
 # STOP_SAFETY_MARGIN_SECONDS 是保险余量，给下面没算进去的几样和还没数到的路径。

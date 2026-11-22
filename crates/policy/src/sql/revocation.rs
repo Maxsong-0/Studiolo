@@ -8,8 +8,9 @@ use crate::{
     store::{RevocationLevel, RevocationRecord},
 };
 
+/// 只读：普通读写事务和封存定格的连接（本来就开着读事务）都用它。
 pub(crate) fn revoked(
-    tx: &Transaction<'_>,
+    tx: &rusqlite::Connection,
     level: RevocationLevel,
     target: &str,
 ) -> Result<bool, PolicyError> {

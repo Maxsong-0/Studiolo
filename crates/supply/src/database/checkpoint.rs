@@ -48,6 +48,11 @@ impl FrozenAgentStore {
     pub fn watermark(&self) -> &OwnerWatermark {
         &self.watermark
     }
+    /// 放开写锁，身份库从此可以照常写；定格的读连接留着，索引核对和导出读到的仍是冻结那一刻（BUG-045）。
+    /// 之后的读取和导出受 `deadline` 约束；只能放开一次。
+    pub fn release(&mut self, deadline: Instant) -> Result<(), SupplyError> {
+        self.frozen.release(deadline).map_err(problem)
+    }
     /// 必须传入接入方自己的审计账本，不得用人侧同名 offset 替代。
     pub fn verify_audit(&mut self, audit: &FrozenAudit) -> Result<ReceiptCoverage, SupplyError> {
         self.coverage = None;

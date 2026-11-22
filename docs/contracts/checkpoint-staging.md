@@ -1,6 +1,6 @@
 # 原子过滤封存
 
-`StagingArea` 是专用副本目录的唯一写者。`FrozenOwners::seal` 在原七 owner 冻结窗口中完成实际导出、可信来源登记、过滤、清单与视图原子发布；返回后调用方仍持有冻结窗口。此能力不打开任何 owner 的数据库，不读取备份仓库凭据。
+`StagingArea` 是专用副本目录的唯一写者。`ReleasedOwners::seal` 在七 owner 冻结窗口放开之后（BUG-045，2026-11-22：窗口里只定格），从各 owner 的定格完成实际导出、可信来源登记、过滤、清单与视图原子发布；暂存区的截止时间不得晚于放开时给的截止时间（生产者 5 分钟，不超过正文保留期）。此能力不打开任何 owner 的数据库，不读取备份仓库凭据。
 
 ## 真实文件边界
 
@@ -20,7 +20,7 @@
 
 同一父目录以固定 `.producer-lease` 空文件的内核排他锁限定一个生产者；锁为当前生产者所有、0600、单链接、无 ACL，原 inode 每次复核，正常流程从不删除锁文件。复制正文前先创建并同步 `incomplete-<checkpoint 摘要>` 标记。构造未完成时的错误、显式 `abort`、封存失败和展开都会尝试回收本次原 export/pending；rename 已生效但 fsync 或后续复验失败时，还核原 inode 回收本次 sealed。已经部分或全部改成读取组权限的根，也只能由原生产者按固定读取组回收；不扩展 worker 的删除权限。
 
-失败回收最多 30 秒，并受原冻结/封存截止时间进一步限制，不能为清理重置窗口；每个原根最多 100 万节点及 64 层，先收回目录组可读性再删除；每一次改名、删文件、删目录之前都先核截止时间，截止一到就停在两步之间。只有全部原目录确认回收才移除未完成标记。移除标记（含已改名的 `retained-*`）时先核原 inode，以 NOREPLACE 原子改名为 `removing-<checkpoint 摘要>-<标记原 inode>`，再删其中日志，`identity.json` 最后删，最后删目录；改名之后不论停在哪一步（截止、I/O 错误、进程被杀），同一进程再次收尾或下一轮 `reclaim_staging` 都按名字里的原 inode 认出并续删。`removing-*` 存在时新尝试返回 `CleanupRequired`。`removing-*` 是提交 `a2174fd` 起才有的盘上名字，此前构建的版本不认得它：它的回收见到这个名字整轮返回 `CleanupRequired`，新尝试却不拦；把生产者换回此前的版本之前，要先让回收把 `removing-*` 删完（`deploy/human/RECOVERY.md` 第 4 节「新版回滚到旧版」）。标记已改名为 `retained-*` 而引用未返还（改名后父目录 fsync 或复验失败）时，失败回收删原根之前先把它 NOREPLACE 改回 `incomplete-*`：未到期的 `retained-*` 要求 sealed 根在场，先删根会让下一轮回收拒绝到期满为止。截止已到或无法确认时返回 `CleanupFailed`，保留原登记，待调用方释放业务冻结后由独立回收入口续办；下一作业返回 `CleanupRequired`。进程被杀后即使内核锁已释放，也不能越过未完成标记；旧版本遗留的 export/pending 同样阻塞。
+失败回收最多 30 秒，并受原封存截止时间进一步限制，不能为清理重置窗口；每个原根最多 100 万节点及 64 层，先收回目录组可读性再删除；每一次改名、删文件、删目录之前都先核截止时间，截止一到就停在两步之间。只有全部原目录确认回收才移除未完成标记。移除标记（含已改名的 `retained-*`）时先核原 inode，以 NOREPLACE 原子改名为 `removing-<checkpoint 摘要>-<标记原 inode>`，再删其中日志，`identity.json` 最后删，最后删目录；改名之后不论停在哪一步（截止、I/O 错误、进程被杀），同一进程再次收尾或下一轮 `reclaim_staging` 都按名字里的原 inode 认出并续删。`removing-*` 存在时新尝试返回 `CleanupRequired`。`removing-*` 是提交 `a2174fd` 起才有的盘上名字，此前构建的版本不认得它：它的回收见到这个名字整轮返回 `CleanupRequired`，新尝试却不拦；把生产者换回此前的版本之前，要先让回收把 `removing-*` 删完（`deploy/human/RECOVERY.md` 第 4 节「新版回滚到旧版」）。标记已改名为 `retained-*` 而引用未返还（改名后父目录 fsync 或复验失败）时，失败回收删原根之前先把它 NOREPLACE 改回 `incomplete-*`：未到期的 `retained-*` 要求 sealed 根在场，先删根会让下一轮回收拒绝到期满为止。截止已到或无法确认时返回 `CleanupFailed`，保留原登记，待调用方释放业务冻结后由独立回收入口续办；下一作业返回 `CleanupRequired`。进程被杀后即使内核锁已释放，也不能越过未完成标记；旧版本遗留的 export/pending 同样阻塞。
 
 未完成目录先写原父目录/标记目录身份，再逐项登记 export/pending 的设备号和 inode，登记持久之前不写该目录的正文。日志仅允许 `identity.json`、`export.json`、`pending.json`、`sealed.json` 与对应 `.new`；每文件最多 16 KiB，先同步 0400 临时文件再 NOREPLACE 发布。完整封存复验后，保存原 SealedReference 及原 seal 的规范字节，期限必须从该摘要绑定的 seal 推导，不能另填一个到期数字。原标记最后原子改名为 `retained-*`，再返还引用。
 
@@ -38,6 +38,6 @@ Linux 上私有和共享节点都拒绝 POSIX access/default ACL，避免 chmod 
 
 ## 验证与未接线范围
 
-真实文件契约覆盖过滤/独立 inode/只读权限/内容篡改/多余文件/链接/硬链接/缺元数据/revision/过期/错误引用，以及共享父目录、错误组、同 UID worker、access/default ACL 拒绝。实际六 owner + 双 Audit 集成在私有和共享封存及失败回收期间检查 SQL 屏障和两端语义门禁；Bridge 明确 absent，不代替真实 cgroup 平台演练。测试箱仅映射一个 UID，未把单 UID 的权限检查冒充两个生产账号的实际读取演练。
+真实文件契约覆盖过滤/独立 inode/只读权限/内容篡改/多余文件/链接/硬链接/缺元数据/revision/过期/错误引用，以及共享父目录、错误组、同 UID worker、access/default ACL 拒绝。实际六 owner + 双 Audit 集成检查放开之后封存期间各库照常可写、两端完整操作排得空，导出仍是冻结那一刻；Bridge 明确 absent，不代替真实 cgroup 平台演练。测试箱仅映射一个 UID，未把单 UID 的权限检查冒充两个生产账号的实际读取演练。
 
 生产来源登记仍须接可信元数据提供方；当前 TaskEngine 输入只存 restricted 分类，不是完整 DataLabels，测试里的 Full fixture 工厂不得用于生产默认分类。原生独立执行器与远端最终记录机制已实现，见 [最终记录契约](backup-finalization.md)。实际 startup/调度、审计 IPC、回收定时器与完整新根恢复仍在 T147/T204 后续写域；本文件不表示整条 Rust 备份链已经完成。

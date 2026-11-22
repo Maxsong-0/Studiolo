@@ -13,15 +13,23 @@ use std::{
     thread,
     time::{Duration, Instant},
 };
-use studiolo_core::checkpoint::{CheckpointOwner, SealedOwnerCheckpoint};
+use studiolo_core::checkpoint::{CheckpointOwner, SealedOwnerCheckpoint, WalCheckpointProof};
 
-/// 每次冻结使用独立连接持有 SQLite RESERVED 锁，进程退出即释放。
+/// 每次冻结使用独立连接持有 SQLite RESERVED 锁，进程退出即释放；另一条连接开着读事务，把库定在冻结那一刻。
 /// 调用方须先排空上游 owner 和人侧完整操作（含审计），再进入本屏障。
+/// [`Self::release`] 放开写锁之后，导出读的仍是定格那一刻（BUG-045：拷贝和校验挪到放开之后）。
 /// 导出失败的目标留作不可用残片，绝不自动覆盖或删除。
 pub struct PolicyCheckpointHandle {
     directory: PathBuf,
     source: Database,
-    barrier: Mutex<Option<Database>>,
+    barrier: Mutex<Option<Frozen>>,
+}
+
+/// 一次冻结：写锁连接（放开之后是 None）、定格的读连接、冻结时取的 WAL 证明。
+struct Frozen {
+    reserved: Option<Database>,
+    pinned: Database,
+    wal: WalCheckpointProof,
 }
 
 impl PolicyCheckpointHandle {
@@ -34,7 +42,8 @@ impl PolicyCheckpointHandle {
         })
     }
 
-    /// 在截止时间前取得跨进程写屏障；重复 freeze 拒绝，不收养别的窗口。
+    /// 在截止时间前取得跨进程写屏障，把 WAL 整个回写主库，再在另一条连接上定格；
+    /// 重复 freeze 拒绝，不收养别的窗口。
     pub fn freeze(&self, deadline: Instant) -> Result<(), PolicyError> {
         let mut barrier = self.lock_until(deadline)?;
         if barrier.is_some() {
@@ -51,23 +60,7 @@ impl PolicyCheckpointHandle {
                 Err(error) => return Err(error),
             }
         }
-        self.source.storage().check()?;
-        check_deadline(deadline)?;
-        *barrier = Some(connection);
-        Ok(())
-    }
-
-    /// 目标必须是新的空0700目录；成功票据包含WAL、全内容、草案顺序及持久化证明。
-    pub fn export(
-        &self,
-        directory: &Path,
-        deadline: Instant,
-    ) -> Result<SealedOwnerCheckpoint, PolicyError> {
-        // 整个导出期间持有状态锁，thaw不能提前释放写屏障。
-        let barrier = self.lock_until(deadline)?;
-        let reserved = barrier.as_ref().ok_or(PolicyError::StoreUnavailable)?;
-        reserved.storage().check()?;
-        self.source.storage().check()?;
+        // 写锁在手、没有别的写者：WAL 回写完再定格，定格之后旧读者挡不住的就只剩冻结之后的新帧。
         let wal = loop {
             check_deadline(deadline)?;
             match self.source.wal_checkpoint() {
@@ -76,9 +69,45 @@ impl PolicyCheckpointHandle {
                 Err(error) => return Err(error),
             }
         };
-        let expected = snapshot::read(&self.source, deadline)?;
+        let pinned =
+            Database::open_until(&self.directory, CreatePolicy::ExistingOnly, Some(deadline))?;
+        pinned.pin(deadline)?;
+        self.source.storage().check()?;
+        check_deadline(deadline)?;
+        *barrier = Some(Frozen {
+            reserved: Some(connection),
+            pinned,
+            wal,
+        });
+        Ok(())
+    }
+
+    /// 放开写锁，别的进程从此可以写策略；定格的读连接留着，之后的导出读到的仍是冻结那一刻。
+    /// 只能放开一次；没冻结就拒绝。
+    pub fn release(&self, deadline: Instant) -> Result<(), PolicyError> {
+        let mut barrier = self.lock_until(deadline)?;
+        let frozen = barrier.as_mut().ok_or(PolicyError::StoreUnavailable)?;
+        let reserved = frozen
+            .reserved
+            .take()
+            .ok_or(PolicyError::StoreUnavailable)?;
+        reserved.release()
+    }
+
+    /// 目标必须是新的空0700目录；成功票据包含WAL、全内容、草案顺序及持久化证明。
+    /// 读的是定格那一刻，放开写锁前后都可以调。
+    pub fn export(
+        &self,
+        directory: &Path,
+        deadline: Instant,
+    ) -> Result<SealedOwnerCheckpoint, PolicyError> {
+        // 整个导出期间持有状态锁，thaw不能提前关掉定格的连接。
+        let barrier = self.lock_until(deadline)?;
+        let frozen = barrier.as_ref().ok_or(PolicyError::StoreUnavailable)?;
+        self.check(frozen)?;
+        let expected = snapshot::read(&frozen.pinned, deadline)?;
         let target = Storage::checkpoint_target(directory)?;
-        self.source.vacuum_into(&target, deadline)?;
+        frozen.pinned.backup_into(&target, deadline)?;
         target.sync_created()?;
         check_deadline(deadline)?;
         let copy = Database::open_until(directory, CreatePolicy::ExistingOnly, Some(deadline))?;
@@ -87,13 +116,12 @@ impl PolicyCheckpointHandle {
         }
         drop(copy);
         target.sync_created()?;
-        reserved.storage().check()?;
-        self.source.storage().check()?;
+        self.check(frozen)?;
         check_deadline(deadline)?;
         Ok(SealedOwnerCheckpoint {
             owner: CheckpointOwner::Policy,
             schema_version: 1,
-            wal,
+            wal: frozen.wal,
             target_synced: true,
             parent_directory_synced: true,
             reopen_verified: true,
@@ -110,6 +138,7 @@ impl PolicyCheckpointHandle {
         };
         let released = barrier
             .take()
+            .and_then(|frozen| frozen.reserved)
             .map_or(Ok(()), |connection| connection.release());
         if poisoned {
             return Err(PolicyError::StoreUnavailable);
@@ -117,10 +146,19 @@ impl PolicyCheckpointHandle {
         released
     }
 
-    fn lock_until(
-        &self,
-        deadline: Instant,
-    ) -> Result<MutexGuard<'_, Option<Database>>, PolicyError> {
+    /// 源身份没换、写锁（放开之前）和定格的读事务都还在。
+    fn check(&self, frozen: &Frozen) -> Result<(), PolicyError> {
+        if let Some(reserved) = &frozen.reserved {
+            reserved.storage().check()?;
+        }
+        self.source.storage().check()?;
+        if !frozen.pinned.pinned()? {
+            return Err(PolicyError::StoreUnavailable);
+        }
+        Ok(())
+    }
+
+    fn lock_until(&self, deadline: Instant) -> Result<MutexGuard<'_, Option<Frozen>>, PolicyError> {
         loop {
             check_deadline(deadline)?;
             match self.barrier.try_lock() {

@@ -8,7 +8,8 @@ pub(crate) fn empty_effective_hash() -> String {
     sha256_hex(b"")
 }
 
-pub(crate) fn effective_hash(tx: &Transaction<'_>) -> Result<String, PolicyError> {
+/// 只读一项：普通读写事务和封存定格的连接（本来就开着读事务）都用它。
+pub(crate) fn effective_hash(tx: &rusqlite::Connection) -> Result<String, PolicyError> {
     tx.query_row(
         "SELECT value FROM policy_meta WHERE key = 'effective_hash'",
         [],

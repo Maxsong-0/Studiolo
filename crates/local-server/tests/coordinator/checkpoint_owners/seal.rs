@@ -14,7 +14,7 @@ use studiolo_core::{
 };
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn checkpoint_actual_owners_hold_all_gates_through_atomic_readonly_seal() {
+async fn checkpoint_actual_owners_release_every_gate_before_the_atomic_readonly_seal() {
     // 第 4 种不用夹具登记，走生产用的来源目录：Broker 扫描这份真实导出，备份层组装。
     for mode in 0..5 {
         let reject = matches!(mode, 1 | 2);
@@ -63,19 +63,25 @@ async fn checkpoint_actual_owners_hold_all_gates_through_atomic_readonly_seal() 
                 OwnerExportPaths::under(area.export_root()),
             )
             .unwrap();
-        let result = frozen.seal(
+        f.writable(false);
+        // 封存（导出、登记、过滤视图、发布）在放开全部屏障之后做（BUG-045）：这时各库照常可写，
+        // 两边的完整操作都排得空。
+        let mut released = frozen
+            .release(Instant::now() + Duration::from_secs(30))
+            .unwrap();
+        let result = released.seal(
             area,
             |root, exported| {
-                f.writable(false);
+                f.writable(true);
                 assert!(
                     f.human
-                        .quiesce_operations(Instant::now() + Duration::from_millis(2))
-                        .is_err()
+                        .quiesce_operations(Instant::now() + Duration::from_millis(200))
+                        .is_ok()
                 );
                 assert!(
                     f.agent
-                        .quiesce_operations(Instant::now() + Duration::from_millis(2))
-                        .is_err()
+                        .quiesce_operations(Instant::now() + Duration::from_millis(200))
+                        .is_ok()
                 );
                 if mode == 1 {
                     return Err(StagingError::Catalog);
@@ -118,7 +124,7 @@ async fn checkpoint_actual_owners_hold_all_gates_through_atomic_readonly_seal() 
             assert!(matches!(result, Err(StagingError::Expired)));
         }
         assert!(!exports_path.exists(), "原始导出必须在成功和失败后都已回收");
-        f.writable(false);
+        f.writable(true);
         if let Ok(sealed) = &result {
             assert_eq!(sealed.manifest().audit_coverage.acked_events_checked, 3);
             let reopened = if mode == 3 {
@@ -150,7 +156,7 @@ async fn checkpoint_actual_owners_hold_all_gates_through_atomic_readonly_seal() 
                 assert!(root.join("data").join(path).is_file(), "{path}");
             }
         }
-        drop(frozen);
+        drop(released);
         f.writable(true);
         assert!(f.human.enter_operation().is_ok());
         assert!(f.agent.enter_operation().is_ok());

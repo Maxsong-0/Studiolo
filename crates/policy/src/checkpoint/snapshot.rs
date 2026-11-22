@@ -16,11 +16,24 @@ pub(super) struct Snapshot {
     digest: [u8; 32],
 }
 
+/// 读一份快照。普通连接上开一个 DEFERRED 读事务读；封存定格的连接本来就开着读事务（冻结那一刻），
+/// 直接在那个事务里读，读到的是定格那一刻（BUG-045）。
 pub(super) fn read(database: &Database, deadline: Instant) -> Result<Snapshot, PolicyError> {
     database.until(deadline, |connection| {
+        if !connection.is_autocommit() {
+            return digest(connection, deadline);
+        }
         let tx = connection
             .transaction_with_behavior(TransactionBehavior::Deferred)
             .map_err(unavailable)?;
+        let snapshot = digest(&tx, deadline)?;
+        tx.commit().map_err(unavailable)?;
+        Ok(snapshot)
+    })
+}
+
+fn digest(tx: &rusqlite::Connection, deadline: Instant) -> Result<Snapshot, PolicyError> {
+    {
         let version: i64 = tx
             .query_row(
                 "SELECT COALESCE(MAX(version),0) FROM policy_version",
@@ -32,8 +45,8 @@ pub(super) fn read(database: &Database, deadline: Instant) -> Result<Snapshot, P
             schema_version: u32::try_from(schema::USER_VERSION)
                 .map_err(|_| PolicyError::CorruptStore)?,
             effective_version: u64::try_from(version).map_err(|_| PolicyError::CorruptStore)?,
-            effective_hash: sql::effective_hash(&tx)?,
-            global_revoked: sql::revoked(&tx, RevocationLevel::Global, GLOBAL_TARGET)?,
+            effective_hash: sql::effective_hash(tx)?,
+            global_revoked: sql::revoked(tx, RevocationLevel::Global, GLOBAL_TARGET)?,
         };
         let mut hash = Sha256::new();
         // 固定schema下SELECT *列序固定；顺序/长度/类型均入摘要，不拼接有歧义的字符串。
@@ -81,10 +94,9 @@ pub(super) fn read(database: &Database, deadline: Instant) -> Result<Snapshot, P
                 }
             }
         }
-        tx.commit().map_err(unavailable)?;
         Ok(Snapshot {
             watermark,
             digest: hash.finalize().into(),
         })
-    })
+    }
 }

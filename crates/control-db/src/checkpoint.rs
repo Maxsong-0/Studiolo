@@ -54,6 +54,11 @@ impl FrozenControl {
     pub fn watermark(&self) -> &OwnerWatermark {
         &self.watermark
     }
+    /// 放开写锁，控制库从此可以照常写；定格的读连接留着，回执核对和导出读到的仍是冻结那一刻（BUG-045）。
+    /// 之后的读取和导出受 `deadline` 约束；只能放开一次。
+    pub fn release(&mut self, deadline: Instant) -> Result<(), DbError> {
+        self.frozen.release(deadline).map_err(problem)
+    }
     /// 对所有已投递运行时与终态结果核对完整原事件，而非只比较序号。
     pub fn verify_audit(&mut self, audit: &FrozenAudit) -> Result<ReceiptCoverage, DbError> {
         self.coverage = None;

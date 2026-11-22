@@ -2,17 +2,28 @@
 //!
 //! 人侧每次启动，队列的进度都从零开始；账本有 70 万条时，以前只有 worker、定时器、健康页的请求推它往前读，
 //! 一条请求最多读 5 秒，头十几分钟备份 socket 一条都答不上来。
-use super::{producer::Stage, *};
-use std::sync::atomic::AtomicBool;
+use super::{producer::Stage, seal::manifest, *};
+use crate::{
+    backup::producer::TARGET,
+    checkpoint::{CheckpointTimes, trusted_catalog},
+};
+use std::{
+    sync::atomic::AtomicBool,
+    time::{SystemTime, UNIX_EPOCH},
+};
 use studiolo_audit_ledger::{AuditEvent, AuditEventId, AuditPhase, SanitizedPayload};
-use studiolo_backup::worker::audit::{QueueAnswer, QueueCommand};
+use studiolo_backup::{
+    checkpoint::staging::StagingArea,
+    worker::audit::{QueueAnswer, QueueCommand},
+};
+use studiolo_core::checkpoint::InstantMillis;
 
 /// 用例给后台追账本用的页大小；账本要放满两页多，才分得清「读了一页」和「读完了」。
 /// 真跑时的一页（`catch_up.rs` 的 `CATCH_UP_PAGE`）大得多，用例里的账本装不满它。
 const PAGE: usize = 512;
 
 /// 往人侧账本里追加 `count` 条和备份无关的记录，返回末条的偏移。人侧跑久了，账本里绝大多数都是这种。
-fn fill(stage: &Stage, label: &str, count: usize) -> u64 {
+pub(super) fn fill(stage: &Stage, label: &str, count: usize) -> u64 {
     let mut last = 0;
     for index in 0..count {
         let event = AuditEvent::new(
@@ -121,9 +132,9 @@ async fn the_listener_catches_up_on_its_own_and_stops_reading_on_shutdown() {
 /// 量测，不进门禁（造一本大账本要很久）：要数字时手工跑
 /// `STUDIOLO_MEASURE_LEDGER=700000 cargo test --release -p studiolo-local-server --lib measure_ -- --ignored --nocapture`。
 /// 打出来的行以 `MEASURE` 开头。账本每满 10 万条量一轮：首尾查询改前改后各一次的耗时、单次追加、
-/// 整本账本完整校验一遍、重启后把账本追完要多久；到头再做一次封存。分几个点量而不是只量终点：造账本每条追加都落盘同步，
-/// 很慢，测试箱单任务又有时限。下一轮估计做不完（`STUDIOLO_MEASURE_BUDGET_SECONDS`，默认 48 分钟）就不再往下造，
-/// 直接去量封存，前面几轮的数照样留下。
+/// 整本账本完整校验一遍、重启后把账本追完要多久、一次封存的冻结窗口和放开之后各要多久（BUG-045）。
+/// 分几个点量而不是只量终点：造账本每条追加都落盘同步，很慢，测试箱单任务又有时限。
+/// 下一轮估计做不完（`STUDIOLO_MEASURE_BUDGET_SECONDS`，默认 48 分钟）就不再往下造，前面几轮的数照样留下。
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "量测：造一本大账本要很久，只在要数字时手工跑"]
 async fn measure_catch_up_append_and_seal_over_a_large_ledger() {
@@ -164,24 +175,6 @@ async fn measure_catch_up_append_and_seal_over_a_large_ledger() {
         last = measure_round(&stage, last);
         previous = began.elapsed();
     }
-
-    // 一次封存（冻结全部库、导出、封存；夹具的冻结预算和生产一样是 30 秒，不含同步平面）。
-    let restarted = stage.restarted();
-    restarted.catch_up(&AtomicBool::new(false));
-    let started = Instant::now();
-    assert_eq!(
-        restarted_ask(&restarted, QueueCommand::Schedule),
-        QueueAnswer::Started
-    );
-    restarted.settle();
-    let sealed = matches!(
-        restarted_ask(&restarted, QueueCommand::NextPending),
-        QueueAnswer::Pending(_)
-    );
-    println!(
-        "MEASURE seal records={last} seconds={:.2} sealed={sealed}",
-        started.elapsed().as_secs_f64()
-    );
     stage.assembled.workbench.shutdown().await.unwrap();
 }
 
@@ -220,8 +213,8 @@ fn measure_round(stage: &Stage, last: u64) -> u64 {
         started.elapsed().as_secs_f64() * 1000.0 / 100.0
     );
 
-    // 整本账本完整校验一遍（逐条重算记录链）要多久：一次封存在冻结窗口里对人侧账本要做四遍
-    // （冻结时一遍，导出前、导出后各核一遍源库，导出的副本再一遍），是封存用时里随账本涨的大头。
+    // 整本账本完整校验一遍（逐条重算记录链）要多久：一次封存在放开冻结窗口之后、在导出的副本上做一遍
+    // （以前在窗口里做四遍，BUG-045），是放开之后那段用时里随账本涨的大头。
     let started = Instant::now();
     stage.assembled.human.verify_all().unwrap();
     println!(
@@ -245,18 +238,81 @@ fn measure_round(stage: &Stage, last: u64) -> u64 {
         timed(Some(PAGE)),
         timed(None)
     );
+
+    // 一次封存：冻结窗口要多久（写请求只等这一段），放开之后从定格导出、封存又要多久。
+    let (window, after) = seal_once(stage, last);
+    println!(
+        "MEASURE records={last} seal window_ms={} after_release_seconds={:.2}",
+        window.as_millis(),
+        after.as_secs_f64()
+    );
     last
 }
 
-fn restarted_ask(
-    producer: &std::sync::Arc<crate::backup::producer::BackupProducer>,
-    command: QueueCommand,
-) -> QueueAnswer {
-    let request = studiolo_backup::worker::audit::BackupQueueRequest::new(
-        crate::backup::producer::TARGET,
-        command,
-    );
-    request
-        .decode_reply(&producer.dispatch(&request.encode().unwrap()).unwrap())
+/// 按生产者同样的几步封存一次：建暂存、冻结全部库并定格、放开、从定格导出并封存（夹具的冻结预算和生产一样是 30 秒，
+/// 不含同步平面）。返回冻结窗口和放开之后各用了多久。不经生产者：它一小时只封一次，这里每一轮都要封；也不写准入。
+fn seal_once(stage: &Stage, records: u64) -> (Duration, Duration) {
+    let key = JobKey {
+        sequence: NonZeroU64::new(records.max(1)).unwrap(),
+        checkpoint_id: CheckpointId::parse(format!("measure-{records}")).unwrap(),
+    };
+    stage
+        .assembled
+        .human
+        .append(backup_intent(&key, TARGET).unwrap())
+        .unwrap();
+    let root = &stage.assembled.fixture.root;
+    let sources = [
+        "vault", "data", "auth", "control", "agent", "policy", "audit",
+    ]
+    .map(|name| root.join(name));
+    let deadline = Instant::now() + Duration::from_secs(300);
+    let area = StagingArea::create_for_reader(
+        &stage.parent,
+        key.checkpoint_id.clone(),
+        &sources,
+        &root.join("ephemeral"),
+        stage.reader_gid,
+        deadline,
+    )
+    .unwrap();
+    let started = Instant::now();
+    let frozen = stage
+        .assembled
+        .inputs
+        .bind()
         .unwrap()
+        .freeze(
+            FreezeRequest {
+                checkpoint_id: key.checkpoint_id.clone(),
+                budget: FreezeBudget::new(30_000).unwrap(),
+            },
+            &key,
+            TARGET,
+            OwnerExportPaths::under(area.export_root()),
+        )
+        .unwrap();
+    let mut released = frozen.release(deadline).unwrap();
+    let window = started.elapsed();
+    let now = i64::try_from(
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_millis(),
+    )
+    .unwrap();
+    released
+        .seal(
+            area,
+            trusted_catalog,
+            manifest(),
+            CheckpointTimes {
+                content_cutoff: InstantMillis::from_millis(now),
+                expires_at: InstantMillis::from_millis(now + 600_000),
+                now: InstantMillis::from_millis(now),
+            },
+        )
+        .unwrap();
+    drop(released);
+    (window, started.elapsed() - window)
 }

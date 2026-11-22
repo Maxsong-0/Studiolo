@@ -1,16 +1,17 @@
-//! 流式读同一 FD，前后重开路径核对 inode/时间/长度；任何替换或增长都拒绝整份封存。
+//! 流式读同一 FD 算摘要，前后重开路径核对 inode/时间/长度；任何替换或增长都拒绝整份封存。
+//! 拷贝不在这里：放开之后从定格的句柄拷（`capture.rs`），这里只给扫描（核对导出的目标）用。
 use crate::BrokerError;
 use cap_std::fs::Dir;
 use rustix::fs::{Mode, OFlags, openat};
 use sha2::{Digest, Sha256};
 use std::{
     fs::{File, Metadata},
-    io::{Read, Write},
+    io::Read,
     os::unix::fs::MetadataExt as _,
     time::Instant,
 };
 
-fn open(parent: &Dir, name: &str) -> Result<File, BrokerError> {
+pub(super) fn open(parent: &Dir, name: &str) -> Result<File, BrokerError> {
     let fd = openat(
         parent,
         name,
@@ -20,7 +21,7 @@ fn open(parent: &Dir, name: &str) -> Result<File, BrokerError> {
     .map_err(|e| BrokerError::io("重开封存源文件", e.into()))?;
     Ok(File::from(fd))
 }
-fn metadata(file: &File, device: u64) -> Result<Metadata, BrokerError> {
+pub(super) fn metadata(file: &File, device: u64) -> Result<Metadata, BrokerError> {
     let value = file
         .metadata()
         .map_err(|e| BrokerError::io("核对封存文件身份", e))?;
@@ -49,7 +50,6 @@ fn same(left: &Metadata, right: &Metadata) -> bool {
 pub(super) fn stream(
     parent: &Dir,
     name: &str,
-    target: Option<&Dir>,
     device: u64,
     remaining: u64,
     deadline: Instant,
@@ -61,9 +61,6 @@ pub(super) fn stream(
     if before.len() > remaining {
         return Err(BrokerError::WriterLimitExceeded);
     }
-    let mut output = target
-        .map(|dir| super::copy::file(dir, name, before.len()))
-        .transpose()?;
     let mut hash = Sha256::new();
     let mut total = 0u64;
     loop {
@@ -81,21 +78,11 @@ pub(super) fn stream(
             return Err(BrokerError::CaptureChanged);
         }
         hash.update(&buffer[..read]);
-        if let Some(output) = &mut output {
-            output
-                .write_all(&buffer[..read])
-                .map_err(|e| BrokerError::io("流式写入封存副本", e))?;
-        }
     }
     let after = metadata(&source, device)?;
     let current = metadata(&open(parent, name)?, device)?;
     if total != before.len() || !same(&before, &after) || !same(&after, &current) {
         return Err(BrokerError::CaptureChanged);
-    }
-    if let Some(output) = output {
-        output
-            .sync_all()
-            .map_err(|e| BrokerError::io("同步封存文件", e))?;
     }
     super::check_deadline(deadline)?;
     Ok((hash.finalize().into(), total))

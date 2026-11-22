@@ -34,13 +34,15 @@ mod producer;
 mod producer_auth_backlog;
 mod producer_catch_up;
 mod producer_check;
+mod producer_window;
 mod restore;
 mod restore_plan;
 mod seal;
 use fixture::Setup;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn checkpoint_actual_owners_export_with_two_cutoffs_and_keep_every_barrier_until_drop() {
+async fn checkpoint_actual_owners_export_the_frozen_moment_with_two_cutoffs_after_every_barrier_is_released()
+ {
     let f = Setup::new(true).await;
     let paths = f.targets();
     // 直接追加、没有持久 ACK 的事件（有动作的租约对账、黑板操作的意图都是这样落账的）。以前空的启动对账
@@ -74,7 +76,27 @@ async fn checkpoint_actual_owners_export_with_two_cutoffs_and_keep_every_barrier
         .unwrap();
     f.writable(false);
     assert!(f.workbench.core.owner.lock().unwrap().is_none());
-    let exports = frozen.export().unwrap();
+    // 放开（BUG-045）：各库写锁、写者、两边的完整操作准入全部还回去，导出从定格做。
+    let mut released = frozen
+        .release(Instant::now() + Duration::from_secs(60))
+        .unwrap();
+    f.writable(true);
+    assert!(f.human.enter_operation().is_ok());
+    assert!(f.agent.enter_operation().is_ok());
+    assert!(f.workbench.core.owner.lock().unwrap().is_some());
+    // 放开之后追加的不进这次封存：截止点仍是冻结那一刻。
+    f.human
+        .append(studiolo_audit_ledger::AuditEvent::new(
+            studiolo_audit_ledger::AuditEventId::parse("board:task.reconcile:after").unwrap(),
+            studiolo_audit_ledger::AuditPhase::Intent,
+            "task.reconcile",
+            studiolo_audit_ledger::SanitizedPayload::try_from(
+                serde_json::json!({"request_hash": "1".repeat(64)}),
+            )
+            .unwrap(),
+        ))
+        .unwrap();
+    let exports = released.export().unwrap();
     assert_eq!(exports.owners.len(), 6);
     assert_eq!(
         exports.roster.assembly(Owner::Bridge),
@@ -109,13 +131,9 @@ async fn checkpoint_actual_owners_export_with_two_cutoffs_and_keep_every_barrier
     // 启动对账直接追加的事件没有持久 ACK；完整验链覆盖它们，但不能虚增 ACK 计数。
     assert!(expected_main > 3);
     assert_eq!(exports.audit_coverage.acked_events_checked, 3);
-    assert!(frozen.export().is_err());
-    f.writable(false);
-    drop(frozen);
+    assert!(released.export().is_err());
+    drop(released);
     f.writable(true);
-    assert!(f.human.enter_operation().is_ok());
-    assert!(f.agent.enter_operation().is_ok());
-    assert!(f.workbench.core.owner.lock().unwrap().is_some());
     f.workbench.shutdown().await.unwrap();
 }
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -209,7 +227,10 @@ async fn checkpoint_minimal_actual_assembly_does_not_invent_optional_stores_or_s
             paths,
         )
         .unwrap();
-    let exports = frozen.export().unwrap();
+    let mut released = frozen
+        .release(Instant::now() + Duration::from_secs(60))
+        .unwrap();
+    let exports = released.export().unwrap();
     assert_eq!(exports.owners.len(), 3);
     for owner in [
         Owner::Control,
@@ -226,6 +247,6 @@ async fn checkpoint_minimal_actual_assembly_does_not_invent_optional_stores_or_s
             ..
         }
     ));
-    drop(frozen);
+    drop(released);
     workbench.shutdown().await.unwrap();
 }

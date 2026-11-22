@@ -355,7 +355,10 @@ async fn seal_human(
         )
         .unwrap();
     let now = wall();
-    let sealed = frozen
+    let mut released = frozen
+        .release(Instant::now() + Duration::from_secs(30))
+        .unwrap();
+    let sealed = released
         .seal(
             area,
             trusted_catalog,
@@ -367,7 +370,7 @@ async fn seal_human(
             },
         )
         .unwrap();
-    drop(frozen);
+    drop(released);
     (fixture, human, sealed, epoch)
 }
 

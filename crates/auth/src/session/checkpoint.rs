@@ -52,6 +52,11 @@ impl FrozenAuth {
     pub fn watermark(&self) -> &OwnerWatermark {
         &self.watermark
     }
+    /// 放开写锁，登录库从此可以照常写；定格的读连接留着，回执核对和导出读到的仍是冻结那一刻（BUG-045）。
+    /// 之后的读取和导出受 `deadline` 约束；只能放开一次。
+    pub fn release(&mut self, deadline: Instant) -> Result<(), SessionError> {
+        self.frozen.release(deadline).map_err(problem)
+    }
     /// 扫描所有持久回执，包括恢复控制 JSON 内的原证明；一次失败撤销此前确认。
     pub fn verify_audit(&mut self, audit: &FrozenAudit) -> Result<ReceiptCoverage, SessionError> {
         self.coverage = None;

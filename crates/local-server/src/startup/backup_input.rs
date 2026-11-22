@@ -131,6 +131,12 @@ pub(super) fn prepare(
     };
     let ledger = ledger.ok_or(StartupError::Audit)?;
     let inputs = inputs.ok_or(StartupError::Configuration)?;
+    // 封存定格要同时开着写者的每个文件；只写抬完的上限，不写路径。
+    let open_files = super::limits::raise_open_files()?;
+    eprintln!(
+        "备份封存可同时打开文件数上限：{}",
+        open_files.map_or_else(|| "无限".to_owned(), |limit| limit.to_string())
+    );
     Ok(Some(Prepared {
         socket,
         producer: BackupProducer::new(ledger, Arc::clone(inputs), plan),

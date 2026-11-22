@@ -10,6 +10,8 @@
 
 `FrozenSyncPlane::verify_audit` 复核 Bridge 的全部持久 ACK，并通过原事件映射在实际 FrozenAudit 中查验 Transport 最后运行的 intent/outcome。Bridge 数据库、transport 固定文件、plane-state/stage 三个目标全部通过才返回同一个 Bridge 签封回执。辅助复制结束后再次核对原门禁和 Bridge 源。
 
+封存窗口只定格之后（BUG-045，2026-11-22），别的 owner 的导出挪到放开屏障之后做，SyncPlane 仍整份在冻结窗口里核对和导出，放开时析构：Bridge 每次写前、写后都要求 WAL 截断干净（`mutations.rs` 的 `checkpoint`），截不掉就封掉实例；放开之后再留着定格读事务，同步一写就失败。Bridge 库有页数上限，传输与平面文件也是固定上限的状态，留在窗口里不会让窗口随使用变长。
+
 108 `20261113-141439-0034`：平面契约 37（含新封存 6）、入站 10、Bridge 定向 5、严格 Clippy、架构 62 全过。第一轮导出夹具误用容器小容量 `/tmp`，改用作业 TMPDIR；生产空间门槛未降低。真实文件、原平面租约和对象验证有运行证据；SyncPlane 实际受控 cgroup 后端尚无本轮平台演练，不能把这些测试称为完整生产同步冻结验收。
 
 七 owner 协调器、inclusion plan、原子总封存、独立 worker 和恢复启动接线仍在实施。Bridge 独立 DELETE 副本保留旧物理 binding，普通打开继续拒绝；恢复必须显式验证并重新绑定，不能直接启用旧镜像基线。
