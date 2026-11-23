@@ -70,32 +70,32 @@ KEEP_LAST, KEEP_DAILY = 30, 14
 # 封存副本只在到期后回收：保留期乘上数据量就是暂存区的盘占用（169 上每份约 1.1G，一小时约 8G）。
 RETENTION_MILLIS = 3_600_000
 
-# ---------------------------------------------------------------- 发行相关的值（跟着 r19 候选和 108 的构建走）
-# r19：108 上从提交 bbaae89 构建（2026-11-22，产物 ~/r19-bbaae89-20261122-out；afb8d3d、0a0fb13、b5a191f 那三次的作废）。SOURCE_COMMIT 写的是构建提交，不是改这几行的那个提交。
-SOURCE_COMMIT = 'bbaae89'
-HUMAN_RELEASE = 'm5m6-board-20260920-r19'
+# ---------------------------------------------------------------- 发行相关的值（跟着 r20 候选和 108 的构建走）
+# r20：108 上从提交 8498d25 构建（2026-11-22，产物 ~/r20-8498d25-20261122-out）。SOURCE_COMMIT 写的是构建提交，不是改这几行的那个提交。
+SOURCE_COMMIT = '8498d25'
+HUMAN_RELEASE = 'm5m6-board-20260920-r20'
 RELEASE_DIRECTORY = '/home/maxsong/.local/share/studiolo-human-releases'
 PACKAGES = (
-    ('studiolo-local-server', 'c62370d619fd8d753ec6bda6e06dd5a61cb3f2c072d078982a1a46ff719ec289'),
-    ('studiolo-maintain', '49e03d2bffbd1013bfbab04fa079285852e7a159d7e5ebea510eb8cf6983b28b'),
-    ('studiolo-backup-worker', '94ed227eb810c43dd1350a56c9cba9098535b6c8f7cb690542faef7d80e7489e'),
+    ('studiolo-local-server', '4f195885d89a7bae50d82c9916955c1a7c5db0d536a9c90c98538868df95d45f'),
+    ('studiolo-maintain', '367106ac34d38b5bfeb5fc84bbfafa0fccd0699527cbc16b7622e8cc7499b16b'),
+    ('studiolo-backup-worker', '5151f732cae89551a25c84a9d89c40dada9c6a7d5316e20b10099f1a1ffad2e4'),
 )
 RESTIC_SHA = '20d4142678d0d95ec11a4759def1b73fd9190abc9ca19e4b62d067c0b387e639'
 CA_SHA = '4577693009b4c680420b7ff895970a4e8b2838e451cad0bb8a0dfe7c64e8c269'
 # 要拷的三样现在放在哪（都在 169 上）：108 构建的 worker、P3 时装的 restic、P3 时取回的 NAS 公开证书。
-WORKER_SOURCE = '/home/maxsong/studiolo-t222-r19-20261122-bbaae89f-worker/studiolo-backup-worker'
+WORKER_SOURCE = '/home/maxsong/studiolo-t226-r20-20261122-8498d25c-worker/studiolo-backup-worker'
 RESTIC_SOURCE = '/usr/local/bin/studiolo-restic'
 CA_SOURCE = '/home/maxsong/.config/studiolo-backup/ca.pem'
 # 上一版发行：169 上已经照它置备过的那一组值，键是 commit、release、packages（和上面三个同形）。换发行时把上面
 # 三个值原样搬进来再填新值；没有上一版（第一次置备）就是 None。上一版那份私有备份配置要能照这组值原样生成出来
 # （见 backup_document）：这次要是还改了别的字段，把旧值一起搬进来，不然现场那一份认不出来、会停下。
-# 现在登记的是 r18（提交 02d1a37 构建，2026-11-22 在 169 上置备、激活）。
+# 现在登记的是 r19（提交 bbaae89 构建，2026-11-22 在 169 上置备、激活）。
 PREVIOUS = {
-    'commit': '02d1a37', 'release': 'm5m6-board-20260920-r18',
+    'commit': 'bbaae89', 'release': 'm5m6-board-20260920-r19',
     'packages': (
-        ('studiolo-local-server', '33803b17ebc8695c07ae83497a617f90f973696fe332f488700205130d441353'),
-        ('studiolo-maintain', '6f1403c5a1af2147357b4df1b6db1bfd5fb91487a0d8d1f38120c1617207f43d'),
-        ('studiolo-backup-worker', '2f1be9dc4801105afda4f6daf061c3146dfe5449e28b2355b4312b34c43fe7b3'),
+        ('studiolo-local-server', 'c62370d619fd8d753ec6bda6e06dd5a61cb3f2c072d078982a1a46ff719ec289'),
+        ('studiolo-maintain', '49e03d2bffbd1013bfbab04fa079285852e7a159d7e5ebea510eb8cf6983b28b'),
+        ('studiolo-backup-worker', '94ed227eb810c43dd1350a56c9cba9098535b6c8f7cb690542faef7d80e7489e'),
     ),
 }
 # 换下来的上一版留在原地用的名字后缀：跟着这一版的发行号走。

@@ -133,7 +133,7 @@ r17→r18（2026-11-21，T-219，已激活）：备份首跑三处缺陷的修�
 装配钉的摘要（都是 2026-11-21 从 169 只读回读的现场值）：human 单元 `92db3c46…9058`（r17 激活写下的）、r17 manifest `8aef1b27…faeb`、
 agent 单元 `394ffe6f…0117`（和上一版预算的一致）。
 
-本版固定 r18→r19（2026-11-22，T-222）：BUG-046，主库没开文件操作时，Bridge 碰到主库删除就整批暂停，不再记成「终态未知」
+r18→r19（2026-11-22，T-222，已激活）：BUG-046，主库没开文件操作时，Bridge 碰到主库删除就整批暂停，不再记成「终态未知」
 （169 的同步从 2026-10-02 起卡在计划 11，封存冻结 Bridge 也一直被它挡住）。**只换人侧程序**，启动器和人侧单元除了发行路径一个字不动，
 装配的核对和 r18 一样。人侧程序必须换：候选程序要和 r18 字节不同、字节里有 `studiolo_bridge step=DeleteGate outcome=deletes_blocked count=`
 （本版新加的一行同步日志到占位符为止；169 上 r18 的程序里没有，2026-11-22 只读核过）。
@@ -142,3 +142,20 @@ agent 单元 `394ffe6f…0117`（和上一版预算的一致）。
 **激活前还要做的**：和 r18 一样，先停 worker 和定时器、跑 `prereq.py --apply` 把 worker 程序和私有备份配置从 r18 换成 r19
 （上一版留 `.before-r19` 副本），再激活。装配钉的摘要（都是 2026-11-22 从 169 只读回读的现场值）：human 单元 `d8da14e8…49e0`
 （r18 激活写下的）、r18 manifest `55c39dd4…6ae7`、agent 单元 `394ffe6f…0117`（没变）。
+
+本版固定 r19→r20（2026-11-22，T-226，合版带 T-224）：BUG-047，同步一轮能比对的路径数从 4096 提到 16384
+（169 的三方并集已到 4108 条，r19 每轮观察都失败），健康页同步节加「路径用量」「比对内容」两项预警；
+T-224 的同步状态回执 `sync-status.json` 也从这一版起写。**只换人侧程序**，启动器和人侧单元除了发行路径一个字不动，
+装配的核对和 r19 一样。人侧程序必须换：候选程序要和 r19 字节不同、字节里有四段新字节
+（`studiolo_bridge component=capacity from=`、`studiolo_bridge step=Observe outcome=path_budget_exceeded used=`、
+`studiolo_bridge step=Approve outcome=byte_budget_exceeded used=`、`sync-status.json`；169 上 r19 的程序里各 0 处，2026-11-22 只读核过）。
+网页（健康页同步节多两行）、maintain 与 sync-launcher 一起换，`prepare.py` 带全部参数；agent 单元原样沿用。
+**激活前还要做的**：和 r19 一样，先停 worker 和定时器、跑 `prereq.py --apply` 把 worker 程序和私有备份配置从 r19 换成 r20
+（上一版留 `.before-r20` 副本），再激活。装配钉的摘要（都是 2026-11-22 从 169 只读回读的现场值）：human 单元 `5eaacbbb…15e2`
+（r19 激活写下的）、r19 manifest `4df263c1…9e7b`、agent 单元 `394ffe6f…0117`（没变）。
+
+**r19→r20 对 Bridge 库是单向的**。Bridge 库不加表、不改编码，但 r20 的人侧一启动就把库里存的路径预算从 4096 升到 16384
+（服务日志有一行 `studiolo_bridge component=capacity from=4096 to=16384`）；r19 打开这样的库判预算超限，人侧直接起不来、不监听。
+`activate.py` 失败时只换回程序、不动数据库，所以 r20 启动过之后激活再出故障，换回的 r19 也起不来。要留退路：激活前停人侧，
+把 Bridge 库目录 `/var/lib/studiolo-owner/bridge/plane/bridge` 整份拷一份，再起人侧、立即激活；退回时停人侧、换回这份拷贝、再起 r19
+（拷贝之后 Bridge 记下的东西全部丢失；r19 本来每轮都在观察阶段失败，这段时间不会有新的批次）。做不做、怎么拷，按当次执行单，由用户在场定。
