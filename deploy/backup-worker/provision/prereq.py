@@ -9,7 +9,7 @@
 内容和调用方核过的那一份不一样就不放。被打断（Ctrl-C、终端断开）时正在放的那一份不留半个文件。
 换发行：跟着发行走的只有 worker 程序和私有备份配置两样。现场的那一份认得出正好是登记的上一版（PREVIOUS）才换成
 这一版，上一版改名留在原地（名字后面加 RETIRED_SUFFIX）；不是上一版也不是这一版的，照旧停下。换 worker 程序之前
-worker 和定时器必须停着。
+worker 和定时器必须停着。上一版和这一版一字不差的那一样（两版的 worker 从同样的源码编出来）不算要换，照旧记「已有」。
 不碰凭据（见同目录 credentials.py），不启用、不启动任何单元，不动人侧服务。
 
 「发行相关的值」那一段跟着人侧发行走：候选重出、worker 重建，都要改这里再重跑。
@@ -554,12 +554,16 @@ class Provision:
         if self.apply:
             self.run(['sudo', '--'] + argv, check=True, **stdin)
 
-    def supersede(self, title, path, held, previous, action, verify):
-        """现场认得出是上一版（见 superseded）就换成这一版、回 True；不是就什么都不做、回 False，由调用方照旧走 step。
-        held 是现场那一份该有的 (uid, gid, 权限)；previous 是上一版内容的摘要，没有上一版给 None。"""
-        if previous is None or not superseded(path, held[0], held[1], held[2], previous):
+    def supersede(self, title, path, held, previous, action, verify, gate=lambda: None):
+        """现场认得出是上一版（见 superseded）、又还不是这一版，就换成这一版、回 True；不然什么都不做、回 False，
+        由调用方照旧走 step。held 是现场那一份该有的 (uid, gid, 权限)；previous 是上一版内容的摘要，没有上一版给 None。
+        上一版和这一版一字不差时，现场那一份已经就是这一版：没有可换的，不能当成上一版去换（换了会留下一个
+        和现场一样的「上一版」，重跑时它占着留下用的名字，只读核对也会一直说「现场还是上一版」）。
+        gate：真要换之前核的前提（只读，预演时也核，早点把话说清楚）；只读核对那一路不核，现场还是上一版它本来就停下。"""
+        if previous is None or verify() is True or not superseded(path, held[0], held[1], held[2], previous):
             return False
         require(not self.audit, title + '：现场还是上一版。先跑完 prereq.py --apply')
+        gate()
         require(not occupied(path), retired(path) + OCCUPIED)
         self.pending += 1
         self.out(('[现在换] ' if self.apply else '[要换] ') + title + '（现场是上一版；换上这一版，上一版留在 '
@@ -591,8 +595,9 @@ class Provision:
         self.step(title, state,
                   lambda: self.place(path, '<内容见末尾或仓库模板>', hashlib.sha256(raw).hexdigest(), input=raw), state)
 
-    def root_copy(self, title, source, path, digest, previous=None):
-        """previous：上一版内容的摘要。给了，而且现场正好是上一版，就换（上一版留在原地）；别的情况照旧。"""
+    def root_copy(self, title, source, path, digest, previous=None, gate=lambda: None):
+        """previous：上一版内容的摘要。给了，而且现场正好是上一版，就换（上一版留在原地）；别的情况照旧。
+        gate：真要换之前核的前提，见 supersede。"""
         def state():
             present = has(path, stat.S_ISREG, 0, 0, (PLACED[path],))
             return present if not present else sha(path) == digest
@@ -604,7 +609,8 @@ class Provision:
             with reading(source) as stream:
                 put(path, source, *extra, digest, stdin=stream)
         self.unfinished(path)
-        if not self.supersede(title, path, (0, 0, PLACED[path]), previous, lambda: copy(self.replace, previous), state):
+        if not self.supersede(title, path, (0, 0, PLACED[path]), previous, lambda: copy(self.replace, previous), state,
+                              gate):
             self.step(title, state, copy, state)
 
     def identities(self):
@@ -661,11 +667,10 @@ class Provision:
                   lambda: self.root('mkdir', '-m', '0755', PROGRAMS),
                   lambda: has(PROGRAMS, stat.S_ISDIR, 0, 0, (0o755,)))
         previous = PREVIOUS['packages'][2][1] if PREVIOUS else None
-        if not self.audit and previous is not None and superseded(WORKER_BINARY, 0, 0, PLACED[WORKER_BINARY], previous):
-            # 定时器拉起的那条命令用的也是这个程序：两个都得停着才换。预演时也看（只读），早点把话说清楚。
-            # 只读核对那一路不问这个：现场还是上一版，它本来就会停下（见 supersede）。
-            self.gated(' 还启用着或在跑：换 worker 程序之前先停掉（sudo systemctl disable --now 加这两个单元的名字）')
-        self.root_copy('worker 程序', WORKER_SOURCE, WORKER_BINARY, PACKAGES[2][1], previous)
+        # 定时器拉起的那条命令用的也是这个程序：真要换的时候两个都得停着（见 supersede 的 gate）。
+        self.root_copy('worker 程序', WORKER_SOURCE, WORKER_BINARY, PACKAGES[2][1], previous,
+                       lambda: self.gated(' 还启用着或在跑：换 worker 程序之前先停掉'
+                                          '（sudo systemctl disable --now 加这两个单元的名字）'))
         self.root_copy('restic 0.19.1', RESTIC_SOURCE, RESTIC, RESTIC_SHA)
         self.root_copy('NAS 证书 ' + CA, CA_SOURCE, CA, CA_SHA)
 

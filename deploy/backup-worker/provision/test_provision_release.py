@@ -116,6 +116,41 @@ class ReleaseChangeTests(unittest.TestCase):
             self.assertEqual((world.snapshot(), [label(argv) for argv in world.ran]), (swapped, site.GATE))
             self.assertEqual(world.settled(), site.STEPS)
 
+    def test_a_worker_program_identical_to_the_previous_release_is_left_alone_and_only_the_config_is_swapped(self):
+        # 两版的 worker 程序从同样的源码编出来、一字不差（r21→r22 就是这样）：现场那一份已经是这一版，
+        # 没有可换的。不换、不留上一版的名字、不问单元停没停；只读核对那一路也认它是这一版。
+        same = dict(BEFORE, packages=BEFORE['packages'][:2] + (('studiolo-backup-worker', site.PACKAGES[2][1]),))
+        world = self.previous_site()
+        world.nodes[prereq.WORKER_BINARY].raw = site.FICTION['worker']
+        with self.changing(world, same):
+            numbers = (world.accounts[WORKER].pw_uid, world.groups[READERS].gr_gid)
+            old_config = prereq.encode(prereq.backup_document(*numbers, same))
+            world.nodes[prereq.BACKUP_CONFIG].raw = old_config
+            before = world.snapshot()
+            self.assertEqual(self.provision(world, apply=False).everything(), 1)
+            self.assertEqual((world.snapshot(), world.ran), (before, []))
+            self.assertIn('[已有] ' + PROGRAM, self.lines)
+            self.assertIn('[要换] ' + CONFIG + '（现场是上一版；换上这一版，上一版留在 '
+                          + kept(prereq.BACKUP_CONFIG) + '）', self.lines)
+            with self.assertRaises(prereq.Refused) as refusal:
+                world.settled()
+            self.assertEqual(str(refusal.exception), CONFIG + '：现场还是上一版。先跑完 prereq.py --apply')
+            world.ran.clear()
+            self.assertEqual(self.provision(world).everything(), 1)
+            nodes = world.snapshot()[0]
+            self.assertEqual(nodes[prereq.WORKER_BINARY], ('file', 0, 0, 0o755, site.FICTION['worker'], 1))
+            owned = ('file', prereq.OWNER_UID, prereq.OWNER_UID, 0o600)
+            self.assertEqual(nodes[prereq.BACKUP_CONFIG], owned + (self.new_config, 1))
+            self.assertEqual(nodes[kept(prereq.BACKUP_CONFIG)], owned + (old_config, 1))
+            self.assertEqual(sorted(set(nodes) - set(before[0])), [kept(prereq.BACKUP_CONFIG)])
+            self.assertEqual([label(argv) for argv in world.ran], site.GATE)
+            # 第二遍一步都不用做，只读核对认全部。
+            swapped = world.snapshot()
+            world.ran.clear()
+            self.assertEqual(self.provision(world).everything(), 0)
+            self.assertEqual((world.snapshot(), [label(argv) for argv in world.ran]), (swapped, site.GATE))
+            self.assertEqual(world.settled(), site.STEPS)
+
     def test_nothing_is_swapped_unless_the_site_is_exactly_the_registered_previous_release(self):
         cases = [
             ('别的内容', prereq.WORKER_BINARY, {'raw': b'neither release'}, BEFORE, PROGRAM),
