@@ -354,3 +354,6 @@ fn 没走到删除守卫的轮次不动被挡的个数() {
 
 #[path = "../../../tests/sync_plane_health/restart.rs"]
 mod restart;
+
+#[path = "../../../tests/sync_plane_health/status.rs"]
+mod status;

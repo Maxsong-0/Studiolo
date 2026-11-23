@@ -16,6 +16,7 @@ pub mod mirror;
 pub mod naming;
 pub mod quiescence;
 pub mod recovery;
+pub mod status;
 pub mod witness;
 use crate::CanonicalWorkbench;
 pub use crate::sync_transport_config::{
@@ -138,6 +139,9 @@ impl SyncPlane {
             return Err(PlaneError::Audit);
         }
         health.record_conflicts(state.state().conflict_stamps.len() as u64);
+        // 接上上一个进程的同步状态回执，立刻写一份：第一轮要等一个轮间隔，探针不能这段时间读不到（T-224）。
+        resume_status(&state, &health, health::now_unix_seconds());
+        publish_status(&state, &health);
         let status = inputs
             .transport
             .inspect()
@@ -235,6 +239,11 @@ impl SyncPlane {
                 let now = health::now_unix_seconds();
                 let outcome = driver::run_round(&plane, now, &flag);
                 plane.health.record_round(now, &outcome);
+                publish_round_status(
+                    plane.audit.enter_operation().ok(),
+                    &plane.plane_root,
+                    &plane.health,
+                );
             });
             let stopped = tokio::select! {
                 joined = &mut round => {
@@ -251,4 +260,56 @@ impl SyncPlane {
             }
         }
     }
+}
+
+/// 一轮收口后写一份同步状态回执（T-224）：`permit` 是调用方刚取的全局操作许可，许可在手才短暂重开平面租约、
+/// 做一次原子替换。备份冻结要等全部许可排空才去拿 `plane.lock`，所以有许可就不会和冻结抢租约、让冻结失败
+/// （复查 F10）；冻结正占着（取不到许可）或租约打不开，就跳过这一轮，回执停在上一份，探针照旧按它判。
+pub(crate) fn publish_round_status<P>(
+    permit: Option<P>,
+    plane_root: &std::path::Path,
+    facts: &health::PlaneHealth,
+) {
+    // 具名绑定，许可活到函数结束；写成 `_` 会当场释放。
+    let Some(_permit) = permit else {
+        status_log("skipped");
+        return;
+    };
+    match PlaneStateStore::open(plane_root) {
+        Ok(store) => publish_status(&store, facts),
+        Err(_) => status_log("skipped"),
+    }
+}
+
+/// 开平面时读上一份同步状态回执，接上「最后对上」起点与删除被挡数（规则见 `status::resume`）。
+pub(crate) fn resume_status(store: &PlaneStateStore, facts: &health::PlaneHealth, now: i64) {
+    let previous = match store.read_status() {
+        Ok(None) => status::Previous::Absent,
+        Ok(Some(bytes)) => {
+            status::decode(&bytes).map_or(status::Previous::Corrupt, status::Previous::Valid)
+        }
+        Err(_) => status::Previous::Corrupt,
+    };
+    facts.resume_status(status::resume(&previous, now));
+}
+
+/// 按此刻的健康累积写一份同步状态回执；失败只留一行固定日志，不影响装配和本轮结论。
+pub(crate) fn publish_status(store: &PlaneStateStore, facts: &health::PlaneHealth) {
+    let receipt = facts.status_receipt(health::now_unix_seconds());
+    if status::encode(&receipt)
+        .and_then(|bytes| store.write_status(&bytes))
+        .is_err()
+    {
+        status_log("unwritten");
+    }
+}
+
+/// 回执这一轮没写的固定日志行：`skipped` 是冻结或租约占着、照规矩跳过，`unwritten` 是真的写失败；
+/// 不带路径、正文或错误细节。写日志失败不改变任何结果。
+fn status_log(outcome: &'static str) {
+    use std::io::Write as _;
+    let _ = writeln!(
+        std::io::stderr().lock(),
+        "studiolo_bridge component=sync_status outcome={outcome}"
+    );
 }

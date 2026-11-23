@@ -1,6 +1,7 @@
 //! 非正常退出恢复协议与退避（ADR-025 D9）、排除项守卫（D10）的持久小状态
 //! `<plane_root>/plane-state.json`：固定名、原子替换、失败关闭（编解码在 `state.rs`）；
-//! `plane.lock` 是平面排他租约。
+//! `plane.lock` 是平面排他租约。同步状态回执 `sync-status.json`（T-224）也经这里整读、原子替换，
+//! 内容编解码在 `status.rs`；它和 `plane-state.json` 互不牵连。
 //!
 //! 规则：上次未干净回收（含断电）→ 先 `SetMode(MirrorRemote)` 加一次 `RunOnce`，
 //! 成功后才允许回到审批模式；任何非 `Code(0)`＋静止确认的运行之后下一次 `RunOnce`
@@ -26,6 +27,7 @@ pub use state::PlaneState;
 
 use super::PlaneError;
 use super::mirror::stage;
+use super::status;
 use rustix::fd::{AsFd, OwnedFd};
 use rustix::fs::{CWD, FlockOperation, Mode, OFlags, Stat, flock, fstat, openat};
 use rustix::io::Errno;
@@ -39,6 +41,10 @@ pub const PLANE_STATE_FILE: &str = "plane-state.json";
 pub const PLANE_STATE_STAGE_FILE: &str = "plane-state.json.new";
 /// 平面排他租约文件名。
 pub const PLANE_LOCK: &str = "plane.lock";
+/// 同步状态回执的固定名（T-224）：F4 探针读它；「两边最后一次对上」跨重启也只落在这里。
+pub const SYNC_STATUS_FILE: &str = "sync-status.json";
+/// 同步状态回执的唯一暂存件名。
+pub const SYNC_STATUS_STAGE_FILE: &str = "sync-status.json.new";
 /// 状态文件字节上限。
 pub const PLANE_STATE_MAX_BYTES: usize = 64 * 1024;
 /// 非干净退出后的最短间隔。
@@ -190,6 +196,40 @@ impl PlaneStateStore {
         .map_err(|_| PlaneError::Storage)?;
         self.state = next;
         Ok(())
+    }
+
+    /// 整读同步状态回执（T-224）；不存在 `Ok(None)`。不是本人 0600 单链接、超过上限或读到一半被改返回 `Storage`。
+    ///
+    /// # Errors
+    /// 见上。
+    pub fn read_status(&self) -> Result<Option<Vec<u8>>, PlaneError> {
+        let euid = stage::caller()?;
+        let Some((file, length)) =
+            stage::open_regular_at(self.root.as_fd(), SYNC_STATUS_FILE, euid, status::MAX_BYTES)
+                .map_err(|_| PlaneError::Storage)?
+        else {
+            return Ok(None);
+        };
+        stage::read_fully(file.as_fd(), length)
+            .map(Some)
+            .map_err(|_| PlaneError::Storage)
+    }
+
+    /// 完整替换同步状态回执（与 `save` 同一个原子替换助手）；不碰 `plane-state.json`。
+    ///
+    /// # Errors
+    /// 超过上限或 IO 失败返回 `Storage`。
+    pub fn write_status(&self, bytes: &[u8]) -> Result<(), PlaneError> {
+        if bytes.len() > status::MAX_BYTES {
+            return Err(PlaneError::Storage);
+        }
+        stage::replace_file(
+            self.root.as_fd(),
+            SYNC_STATUS_STAGE_FILE,
+            SYNC_STATUS_FILE,
+            bytes,
+        )
+        .map_err(|_| PlaneError::Storage)
     }
 }
 

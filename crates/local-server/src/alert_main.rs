@@ -33,6 +33,9 @@ fn parse(args: &[String]) -> Result<Request, &'static str> {
         "A03" => "A03",
         "A04" => "A04",
         "A06" => "A06",
+        // T-224：同步两边没对上满 6 小时、删除被挡整批暂停（deploy/alerts/watch_state.py）。
+        "A07" => "A07",
+        "A08" => "A08",
         _ => return Err("告警代号无效"),
     };
     let episode: u64 = args[3].parse().map_err(|_| "情节号无效")?;
@@ -139,5 +142,16 @@ mod tests {
         );
         assert_eq!(fake.0.load(Ordering::SeqCst), 1);
         assert!(!parse(&args[..5]).unwrap().deliver);
+    }
+
+    #[test]
+    fn only_the_registered_codes_are_accepted() {
+        let args = |code: &str| ["/private/audit", "warning", code, "7", "9"].map(str::to_owned);
+        for code in ["A01", "A02", "A03", "A04", "A06", "A07", "A08"] {
+            assert_eq!(parse(&args(code)).unwrap().message.code(), code);
+        }
+        for code in ["A05", "A09", "A108", "a07", "A07 ", ""] {
+            assert!(parse(&args(code)).is_err(), "{code:?}");
+        }
     }
 }

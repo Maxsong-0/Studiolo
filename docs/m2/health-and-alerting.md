@@ -178,6 +178,12 @@ fn deliver(&self, message: &AlertMessage) -> Result<DeliveryReceipt, TransportEr
 > **待接线**：固定动作 `observability.alert.dispatch` 需要登记进
 > Vault `01-框架/敏感动作枚举表.md`（root 统一处理）。
 
+**同步停摆告警（T-224，BUG-046 防回归）**：健康页要登录，带外看不到第六节。人侧 Bridge 平面因此每轮在平面根写一份
+同步状态回执 `sync-status.json`（两边最后一次对上的时刻、删除被挡数和证明它的那一轮时刻），F4 的 169 探针读它：两边没对上满 6 小时报 A07，
+删除守卫 1 小时内证明过被挡、同步整批暂停报 A08（不另报 A07），都是 warning、没恢复就每天一次（每个代号单独算，互换或被打断不重新算）。人侧只写事实，阈值在探针里；
+回执读不到或坏了按 A07 报。字段、写出时机与读法见 [sync-status-receipt](../contracts/sync-status-receipt.md)，
+投递与心跳见 `deploy/alerts/README.md`。健康页 JSON 和第六节判定不因此改变。
+
 ## 6. 死人开关
 
 参数：`period_seconds`（约定回执周期）、`debounce_seconds`（去抖）、
@@ -238,6 +244,7 @@ sha256 校验和。
 | 项 | 原因 | 解除条件 |
 |---|---|---|
 | 告警实际送达 | 发送端未配置，且本轮未装配真实 SMTP 客户端 | 主人给 SMTP 通道，经环境变量注入；再补真实 `deliver` 实现与实机送达验收 |
+| 同步停摆告警（A07／A08）的生产送达 | 人侧回执从 r20 起才写；F4 还没装到生产（T-224 进行中） | 169 上 r20 激活、回执每 5 分钟更新；F4 两台装好，iPhone 收到 A08 |
 | 真实恢复点年龄的生产验收 | 代码已从人侧账本推出（T-216，§2.1 末段）；生产上备份生产者和 worker 还没启用，健康页显示「备份没有启用」 | worker 首次上传成功后按 `deploy/backup-worker/README.md` 验收第 4 步回读 |
 | 真实磁盘读数 | 需要持文件系统权限的 Broker 公开只读剩余容量查询（Sync 读数已由 Bridge 平面接线，T-132 P1） | Broker 接线 |
 | 健康页端到端鉴权验收 | 路由由组合根挂载，需整套装配 | root 接线后跑 local-server 整套契约 |
