@@ -92,7 +92,7 @@ studiolo-human（uid 1000）                      root                          
 | `<transport_private>/{transport.lock,state.json,state.json.publish}` | owner 0600／根 0700 | 64 KiB | sync-transport `store/publish.rs`（不变） |
 | `<plane_root>/plane.lock` | owner 0600 | 4 KiB | `sync_plane/recovery.rs`；flock 按打开文件描述计，租约守卫析构时显式解锁（并发 fork 在 exec 前继承的描述符不延长租约） |
 | `<plane_root>/plane-state.json`（+`.new`） | owner 0600 | 64 KiB，版本 1，校验和；追加字段 `headless_excluded`（headless 最近一次核对报的排除集合）、`conflict_stamps`（冲突身份→首次保全分钟戳，≤512 条）、`pending_purge`（清除审计日记），为空时不写出、非空才进校验和，旧文件照常解码 | `sync_plane/recovery.rs` |
-| `<plane_root>/sync-status.json`（+`.new`） | owner 0600 | 4 KiB，版本 1，闭合四字段 | `sync_plane/recovery.rs`（编解码 `sync_plane/status.rs`）；开平面与每轮收口各写一次，F4 探针读，契约 `docs/contracts/sync-status-receipt.md`（T-224）；不进 `plane-state.json`、备份不导出 |
+| `<plane_root>/sync-status.json`（+`.new`） | owner 0600 | 4 KiB，版本 1，闭合五字段 | `sync_plane/recovery.rs`（编解码 `sync_plane/status.rs`）；开平面与每轮收口各写一次，F4 探针读，契约 `docs/contracts/sync-status-receipt.md`（T-224）；不进 `plane-state.json`、备份不导出 |
 | `<plane_root>/stage/objects/<sha256 hex>` | owner 0600 | 单对象 256 MiB，合计 512 MiB，4096 项（含孤儿） | `sync_plane/mirror/stage.rs` |
 | `<plane_root>/stage/index.json`（+`.new`）、`stage/objects/{receiving.partial,installing.partial}` | owner 0600 | 1 MiB | `sync_plane/mirror/stage.rs` |
 | `<plane_root>/bridge/{bridge.sqlite3,bridge.lock}` | owner 0600 | 主库 256 MiB | sync-bridge `sqlite/storage.rs`（不变） |

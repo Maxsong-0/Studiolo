@@ -239,7 +239,11 @@ impl SyncPlane {
                 let now = health::now_unix_seconds();
                 let outcome = driver::run_round(&plane, now, &flag);
                 plane.health.record_round(now, &outcome);
-                plane.publish_round_status();
+                publish_round_status(
+                    plane.audit.enter_operation().ok(),
+                    &plane.plane_root,
+                    &plane.health,
+                );
             });
             let stopped = tokio::select! {
                 joined = &mut round => {
@@ -256,14 +260,24 @@ impl SyncPlane {
             }
         }
     }
+}
 
-    /// 一轮收口后写一份同步状态回执：短暂重开平面租约，只做一次原子替换（T-224）。
-    /// 租约正被备份冻结占着或 `plane-state.json` 打不开就跳过这一轮，回执停在上一份，探针照旧按它判。
-    fn publish_round_status(&self) {
-        match PlaneStateStore::open(&self.plane_root) {
-            Ok(store) => publish_status(&store, &self.health),
-            Err(_) => status_unwritten(),
-        }
+/// 一轮收口后写一份同步状态回执（T-224）：`permit` 是调用方刚取的全局操作许可，许可在手才短暂重开平面租约、
+/// 做一次原子替换。备份冻结要等全部许可排空才去拿 `plane.lock`，所以有许可就不会和冻结抢租约、让冻结失败
+/// （复查 F10）；冻结正占着（取不到许可）或租约打不开，就跳过这一轮，回执停在上一份，探针照旧按它判。
+pub(crate) fn publish_round_status<P>(
+    permit: Option<P>,
+    plane_root: &std::path::Path,
+    facts: &health::PlaneHealth,
+) {
+    // 具名绑定，许可活到函数结束；写成 `_` 会当场释放。
+    let Some(_permit) = permit else {
+        status_log("skipped");
+        return;
+    };
+    match PlaneStateStore::open(plane_root) {
+        Ok(store) => publish_status(&store, facts),
+        Err(_) => status_log("skipped"),
     }
 }
 
@@ -286,15 +300,16 @@ pub(crate) fn publish_status(store: &PlaneStateStore, facts: &health::PlaneHealt
         .and_then(|bytes| store.write_status(&bytes))
         .is_err()
     {
-        status_unwritten();
+        status_log("unwritten");
     }
 }
 
-/// 回执没写成的固定日志行：不带路径、正文或错误细节。写日志失败不改变任何结果。
-fn status_unwritten() {
+/// 回执这一轮没写的固定日志行：`skipped` 是冻结或租约占着、照规矩跳过，`unwritten` 是真的写失败；
+/// 不带路径、正文或错误细节。写日志失败不改变任何结果。
+fn status_log(outcome: &'static str) {
     use std::io::Write as _;
     let _ = writeln!(
         std::io::stderr().lock(),
-        "studiolo_bridge component=sync_status outcome=unwritten"
+        "studiolo_bridge component=sync_status outcome={outcome}"
     );
 }

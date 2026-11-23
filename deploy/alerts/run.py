@@ -20,7 +20,7 @@ for name in ("residency", "bounded_process", "private_state", "heartbeat", "watc
 
 from heartbeat import ping
 from private_state import locked_state
-from watch_state import CODES, failure_code, initial, observe
+from watch_state import CODES, delivered, failure_code, initial, observe
 from residency import child_environment, harden
 from bounded_process import output
 
@@ -44,8 +44,7 @@ def tick(state, code, now, send):
     state.save(updated)
     if fire:
         if send(updated):
-            updated["sent"] = now
-            state.save(updated)
+            state.save(delivered(updated, now))
         else:
             return False
     return True

@@ -19,11 +19,12 @@ STATE = "/home/maxsong/.local/share/studiolo-alert/probe"
 RECEIPT = "/home/maxsong/.local/share/studiolo-alert/probe-receipt"
 # 人侧每轮写的同步状态回执（T-224，契约 docs/contracts/sync-status-receipt.md）；人侧只写事实，两条线在这里。
 SYNC_STATUS = "/var/lib/studiolo-owner/bridge/plane/sync-status.json"
-SYNC_STATUS_FIELDS = {"schema", "written_at", "last_aligned_at", "deletes_blocked"}
+SYNC_STATUS_FIELDS = {"schema", "written_at", "last_aligned_at", "deletes_blocked", "deletes_checked_at"}
 SYNC_STATUS_MAX_BYTES = 4096
 # 两边没对上满 6 小时报 A07（用户 2026-11-22 定）。
 UNALIGNED_AFTER = 6 * 3600
-# 回执 15 分钟（三个轮间隔）内写过，「删除被挡」才算数：人侧卡住时别让它一直盖住停摆。
+# 删除守卫 15 分钟（三个轮间隔）内证明过，「删除被挡」才算数：人侧卡住、或轮次走不到守卫时，
+# 旧的被挡数不能一直盖住停摆（按证明时刻判，不按写出时刻：回执每轮都会刷新写出时刻）。
 STATUS_FRESH = 900
 
 
@@ -122,12 +123,16 @@ def read_sync_status(path=SYNC_STATUS):
     value = json.loads(raw, object_pairs_hook=closed_object, parse_constant=reject_constant)
     if not isinstance(value, dict) or set(value) != SYNC_STATUS_FIELDS or not whole_int(value["schema"], 1, 1):
         raise ValueError("sync_status_invalid")
-    written, aligned, blocked = value["written_at"], value["last_aligned_at"], value["deletes_blocked"]
+    written, aligned = value["written_at"], value["last_aligned_at"]
+    blocked, checked = value["deletes_blocked"], value["deletes_checked_at"]
     if not whole_int(written, 0, 2**63 - 1):
         raise ValueError("sync_status_invalid")
     if aligned is not None and not whole_int(aligned, 0, written):
         raise ValueError("sync_status_invalid")
-    if blocked is not None and not whole_int(blocked, 0, 2**64 - 1):
+    # 被挡数和证明它的那一轮时刻成对：要么都空，要么都有。
+    if (blocked is None) != (checked is None):
+        raise ValueError("sync_status_invalid")
+    if blocked is not None and not (whole_int(blocked, 0, 2**64 - 1) and whole_int(checked, 0, written)):
         raise ValueError("sync_status_invalid")
     return value
 
@@ -136,11 +141,12 @@ def sync_flags(status, now):
     """(两边没对上满 6 小时, 删除被挡)；回执读不到、坏了或写出时刻在未来，按没对上报、不算被挡。"""
     if status is None or status["written_at"] > now:
         return True, False
+    # 读进来时已核过 aligned、checked ≤ written，上面又排除了 written 在未来，这里只剩距今多久。
     aligned = status["last_aligned_at"]
-    unaligned = aligned is None or aligned > now or now - aligned >= UNALIGNED_AFTER
-    blocked = status["deletes_blocked"]
-    fresh = now - status["written_at"] <= STATUS_FRESH
-    return unaligned, fresh and blocked is not None and blocked > 0
+    unaligned = aligned is None or now - aligned >= UNALIGNED_AFTER
+    blocked, checked = status["deletes_blocked"], status["deletes_checked_at"]
+    proven = checked is not None and now - checked <= STATUS_FRESH
+    return unaligned, proven and blocked > 0
 
 
 def probe():

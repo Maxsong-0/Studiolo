@@ -56,8 +56,11 @@ struct Inner {
     /// 两边最后一次对上（一轮以 `Idle`／`Settled` 结束）的那一轮时刻；开平面时由同步状态回执给起点，
     /// `None` 即说不清（上一份回执坏了）。只进回执，不进第六节（T-224）。
     last_aligned_unix: Option<i64>,
-    /// 上一个进程回执里的删除被挡数：本进程的删除守卫跑过之前，回执沿用它（重启不让 A08 断一下又重报）。
-    carried_deletes_blocked: Option<u64>,
+    /// 本轮删除守卫的结论，`record_round` 收口时连同本轮时刻落成 `deletes_gate`；没走到守卫的轮次不写。
+    pending_gate: Option<u64>,
+    /// 回执里成对写的「被挡数，证明它的那一轮时刻」：开平面时接上一个进程的（重启不让 A08 断一下又重报），
+    /// 之后只在走到守卫的轮次换新。时刻不随轮次刷新，探针才分得出它是不是旧的（T-224 复查 F5）。
+    deletes_gate: Option<(u64, i64)>,
 }
 
 impl PlaneHealth {
@@ -78,7 +81,8 @@ impl PlaneHealth {
     /// 每种 `PlaneError` 只落到它对应的那一个字段，其余保持原值。`quiescence_valid` 按
     /// 「本轮是否取到静止票据」置位：除 `Skipped` 外的 `Ok` 都出现在取票之后，任何 `Err`
     /// 与 `Skipped` 都没有新票据，第六节至少落到未知，失败轮不可能被上一轮的绿盖住。
-    /// 「最后对上」只在 `Idle`／`Settled` 时前移到本轮时刻（`status::aligned`），别的结论不动它。
+    /// 「最后对上」只在 `Idle`／`Settled` 时前移到本轮时刻（`status::aligned`），别的结论不动它；
+    /// 本轮走到了删除守卫，回执的被挡数连同本轮时刻换新，没走到就留着上一次证明的那一对。
     pub fn record_round(&self, now_unix: i64, outcome: &Result<RoundOutcome, PlaneError>) {
         let Ok(mut inner) = self.inner.lock() else {
             return;
@@ -86,6 +90,9 @@ impl PlaneHealth {
         inner.last_round_unix = Some(now_unix);
         if status::aligned(outcome) {
             inner.last_aligned_unix = Some(now_unix);
+        }
+        if let Some(blocked) = inner.pending_gate.take() {
+            inner.deletes_gate = Some((blocked, now_unix));
         }
         let executed = inner.executed_sequence;
         let evidence = &mut inner.evidence;
@@ -158,6 +165,7 @@ impl PlaneHealth {
     pub fn record_delete_gate(&self, blocked: u64) {
         if let Ok(mut inner) = self.inner.lock() {
             inner.evidence.deletes_blocked = Some(blocked);
+            inner.pending_gate = Some(blocked);
         }
     }
 
@@ -255,29 +263,27 @@ impl PlaneHealth {
     pub fn resume_status(&self, resumed: status::Resumed) {
         if let Ok(mut inner) = self.inner.lock() {
             inner.last_aligned_unix = resumed.last_aligned_at;
-            inner.carried_deletes_blocked = resumed.deletes_blocked;
+            inner.deletes_gate = resumed.deletes_gate;
         }
     }
 
-    /// 此刻要写出的同步状态回执：删除被挡取本进程守卫的结论，守卫还没跑过才沿用上一个进程的。
-    /// 锁中毒时如实写「说不清」：对上时刻为空，探针按停摆报。对上时刻晚于写出时刻（时钟回拨）同样写空，
+    /// 此刻要写出的同步状态回执：被挡数和证明它的那一轮时刻成对写，守卫还没跑过就是上一个进程的那一对。
+    /// 锁中毒时如实写「说不清」：对上时刻为空，探针按停摆报。任何时刻晚于写出时刻（时钟回拨）同样写空，
     /// 不写出一份自己都读不回的回执。
     #[must_use]
     pub fn status_receipt(&self, written_at: i64) -> status::StatusReceipt {
-        let (last_aligned_at, deletes_blocked) = self.inner.lock().map_or((None, None), |inner| {
+        let (last_aligned_at, gate) = self.inner.lock().map_or((None, None), |inner| {
             (
                 inner.last_aligned_unix.filter(|at| *at <= written_at),
-                inner
-                    .evidence
-                    .deletes_blocked
-                    .or(inner.carried_deletes_blocked),
+                inner.deletes_gate.filter(|(_, at)| *at <= written_at),
             )
         });
         status::StatusReceipt {
             schema: status::SCHEMA,
             written_at,
             last_aligned_at,
-            deletes_blocked,
+            deletes_blocked: gate.map(|(blocked, _)| blocked),
+            deletes_checked_at: gate.map(|(_, at)| at),
         }
     }
 }
