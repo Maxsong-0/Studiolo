@@ -49,7 +49,7 @@ studiolo-human（uid 1000）                      root                          
 | 7 | `OwnerQuiescence::take`（`quiescent()`，窗口 1800 s） | 无静止证明→`Quiescence` | 下一轮重跑 RunOnce |
 | 8 | `observe_both`：canonical 经接缝完整观察，镜像经视图完整观察（镜像观察、搬运读、核对读每次都先 `quiescence::verify` 复验第 7 步的票据），`approve_union` → `Input` | 任一侧不完整／范围未批→`Observation` | 下一轮重观察 |
 | 9 | 观察后一律 `plan` 试算，先过第 9′ 步删除守卫。MirrorRemote 有冲突→`preresolve_conflicts`（D6）→ 重做第 8 步一次；Bidirectional 有冲突（含熔断冻结的批）→ `driver/preserve.rs` 先把戳写进 `plane-state.json`，再把双方现存版本各保全一份到 `ops/bridge-conflicts/`，然后照常执行（执行器对冲突路径不动、闭合时不推进基线）；同时 `conflict_copy_count` 数出两侧观察里的冲突副本回填健康 | 预解决删除越熔断→`Fused`（不解决，健康降级）；保全写入失败→按接缝分类停在执行之前 | 预解决：人在界面选边（后续任务）；保全：下一轮沿用已落盘的戳、同一路径与幂等键续写，不另生一份 |
-| 9′ | 删除守卫（BUG-046，在本轮预解决与保全之前）：`canonical_deletions(plan, mode)`＝规划出的主库删除＋MirrorRemote 预解决要做的删除；大于 0 且主库写者没开文件操作（`deletes_enabled()`，读写者持久状态里的开关）时，Bridge 没有未闭合批次→本轮 `DeletesBlocked{n}` 收工，不预留、不熔断、不保全；有→跳过预解决与保全，直接交第 10 步续做 | 查不出开关→`Unavailable`，不发动作 | 远端恢复那些文件或开了文件操作后，下一轮照常规划；续做批次里没发出的删除在接缝被预检拒成 `NotAttempted`→NoEffect，批次照常闭合 |
+| 9′ | 删除守卫（BUG-046，在本轮预解决与保全之前）：`canonical_deletions(plan, mode)`＝规划出的主库删除＋MirrorRemote 预解决要做的删除；大于 0 且主库写者没开文件操作（`deletes_enabled()`，读写者持久状态里的开关）时，Bridge 没有未闭合批次→本轮 `DeletesBlocked{n}` 收工，不预留、不熔断、不保全；有→本轮照常交第 10 步续做旧批次（用冻结的旧输入，本轮规划出的删除不发），只在 MirrorRemote 预解决要当场删除时跳过预解决，别的冲突照原流程预解决或保全。守卫每轮把结论（被挡 n／放行 0）交健康 `record_delete_gate` | 查不出开关→`Unavailable`，不发动作 | 远端恢复那些文件或开了文件操作后，下一轮照常规划；续做批次里没发出的删除在接缝被预检拒成 `NotAttempted`→NoEffect，批次照常闭合 |
 | 10 | `bridge.reserve(version, input)`：Fused→`Fused` 停；Ready→`StateJournal`＋`execute(plan, ports, now, deadline)` | 逐动作 Issued 后未知→`Unknown`，本批不闭合 | 下一轮第 10 步 `reconcile::reconcile_pending` 只取仍未知的原键：canonical 侧由冻结前置直接还原原 `Revision`（Bridge 证据的 `revision` 就是它的 32 字节原值，`driver/evidence.rs::revision_from_digest`），经 `PlaneJobBackend::canonical_verdict` 按原键重建首次请求走接缝——有原回执照收（接缝绝不二次安装）、无回执才由接缝首次安装，CAS 拒绝→NoEffect，`NotAttempted` 且写者此刻接得上（原键已取消／受保护路径／预算）→NoEffect；镜像侧在同一视图的静止票据下逐字节比对目标：等于冻结源→Committed，Delete 且已不存在→Committed，仍是冻结前置（CreateOnly 即不存在）→NoEffect，读完复验静止失败则作废；核出的经 `StateJournal::record_outcome` 写回执，其余保持未知、本批不闭合。已安装的 canonical Replace／Delete 同样按原键核对（前置跨轮可还原，2026-09-26 起）；但入站源在镜像上已变或读不出时重建不出首次请求（内联写的指纹含正文），只能保持未知、不能记成无效果（评审 2026-09-28 P1-1；让核对不依赖镜像当前内容另立任务） |
 | 11 | `execute` 内部：Intent 审计→逐动作 保全→Issued→apply→回执→Outcome/Summary 审计→settle→退休 | 任一审计推不动→`Audit` | 下一轮 `deliver_audit` 继续 |
 | 12 | `stage.sweep(now, retired_through)`：保留期到且计划已退休的保全对象回收；孤儿回收 | IO 失败→`Storage`（不影响本批结论） | 下一轮再扫 |
@@ -105,7 +105,7 @@ studiolo-human（uid 1000）                      root                          
 
 节 `sync-bridge`／「双向 Bridge」：`last_batch{sequence,unix_seconds}`、`fused`、`unknown_jobs`、`quiescence_valid`、
 `conflict_copies`、`mirror_bytes`、`last_exit`（clean／non_zero／signal／deadline_exceeded／owner_stopped／unconfirmed）、
-`recovery`（idle／forced_mirror_remote／backoff）、`residue_guard`（clear／blocked）、`mode`、`config_matches`。任一 `None` → 未知；`deletes_blocked`（BUG-046）不在必备之列，大于 0 时先于缺字段判降级；
+`recovery`（idle／forced_mirror_remote／backoff）、`residue_guard`（clear／blocked）、`mode`、`config_matches`。任一 `None` → 未知；`deletes_blocked`（BUG-046）不在必备之列，大于 0 时先于缺字段判降级（`fused==true` 时让给熔断）；
 `fused==true`／`unknown_jobs>0`／`residue_guard==blocked`／`last_exit≠clean`／`recovery≠idle` → 降级；`quiescence_valid==false` → 未知。
 `conflict_copies`＝最近一次完整观察里两侧命名为冲突副本的路径数（headless 与 `studiolo-canonical` 两种设备名都识别）
 ＋持久 `conflict_stamps` 当前条数（含正在续写副本的冲突，非历史副本文件总数）；`owner_stopped`＝headless 在 owner 关停时被 `request_stop` 停下。

@@ -120,6 +120,9 @@ pub trait RoundPorts {
     fn pending(&mut self) -> Result<bool, PlaneError>;
     /// 主库写者有没有开文件操作（删除只能经它）；没开时新批次里有主库删除就整批暂停（BUG-046）。
     fn deletes_enabled(&mut self) -> Result<bool, PlaneError>;
+    /// 删除守卫的结论交健康节（BUG-046）：本轮被挡的主库删除数，放行即 0。只有走到守卫的轮次才报；
+    /// 没观察的轮次（退避、强制恢复、上一批仍有未知终态、守卫之前失败）不报，健康节沿用上次证明过的值。
+    fn record_delete_gate(&mut self, blocked: u64);
     /// 两侧完整观察并核准范围，组成冻结输入（第 8 步）。
     fn observe(&mut self, mode: SyncMode) -> Result<(Input, Inventory, Inventory), PlaneError>;
     /// 按规划结果回收冲突首次戳（第 9 步之前每轮都调）；假端口可不实现。
@@ -238,16 +241,26 @@ pub fn run_round_with(
     at(Step::RetainConflicts, ports.retain_conflicts(&decision))?;
     // 9′ 删除守卫（BUG-046）：主库没开文件操作时删除一条也执行不了。新批次里只要有主库删除
     // （含镜像为准时预解决要做的删除）就整批暂停：不预解决、不保全、不预留，也不留解不开的熔断。
-    // 上一批没闭合则跳过预解决（它的删除同样会被拒，整轮报错就再也走不到续做），直接交执行段续做：
-    // 没发出的删除走到接缝会被确定拒成无效果，旧批次照常闭合。
+    // 上一批没闭合时执行段只续做它（用冻结的旧输入），本轮规划出的删除这一轮不会发出；当场就删的
+    // 只有镜像为准的预解决，它会被拒、整轮报错，旧批次就再也续不上，所以只跳过它，其余照原流程走。
+    // 旧批次里没发出的删除走到接缝会被确定拒成无效果，旧批次照常闭合。
     let deletions = canonical_deletions(&decision, mode);
-    if deletions > 0 && !at(Step::DeleteGate, ports.deletes_enabled())? {
+    let blocked = if deletions > 0 && !at(Step::DeleteGate, ports.deletes_enabled())? {
+        deletions
+    } else {
+        0
+    };
+    // 续做旧批次的那一轮也照报被挡的个数：旧批次一闭合，下一轮就要整批暂停。
+    ports.record_delete_gate(blocked);
+    if blocked > 0 {
         if !at(Step::DeleteGate, ports.pending())? {
-            diagnostics::deletes_blocked(deletions);
-            return Ok(RoundOutcome::DeletesBlocked { count: deletions });
+            diagnostics::deletes_blocked(blocked);
+            return Ok(RoundOutcome::DeletesBlocked { count: blocked });
         }
-        halt(ports)?;
-        return at(Step::Execute, ports.execute(input));
+        if preresolved_deletions(&decision, mode) > 0 {
+            halt(ports)?;
+            return at(Step::Execute, ports.execute(input));
+        }
     }
     if has_conflicts(&decision) {
         match mode {
@@ -312,15 +325,23 @@ fn has_conflicts(decision: &Decision) -> bool {
 /// 熔断冻结的批次同样按统计算，被挡的批次不该先留下解不开的熔断。
 #[must_use]
 pub fn canonical_deletions(decision: &Decision, mode: SyncMode) -> u64 {
-    let (planned, conflicts) = match decision {
-        Decision::Ready(plan) => (plan.stats().canonical, plan.conflicts()),
-        Decision::FuseBlocked(blocked) => (blocked.stats.canonical, blocked.conflicts.as_slice()),
+    let planned = match decision {
+        Decision::Ready(plan) => plan.stats().canonical,
+        Decision::FuseBlocked(blocked) => blocked.stats.canonical,
     };
-    let preresolved = match mode {
+    planned.saturating_add(preresolved_deletions(decision, mode))
+}
+
+/// 镜像为准时预解决要当场在主库上做的删除数；双向模式不预解决，恒为 0。
+fn preresolved_deletions(decision: &Decision, mode: SyncMode) -> u64 {
+    let conflicts = match decision {
+        Decision::Ready(plan) => plan.conflicts(),
+        Decision::FuseBlocked(blocked) => blocked.conflicts.as_slice(),
+    };
+    match mode {
         SyncMode::MirrorRemote => resolve::preresolve_deletions(conflicts),
         SyncMode::Bidirectional => 0,
-    };
-    planned.saturating_add(preresolved)
+    }
 }
 
 /// 删除熔断的同一判据（>5 或 >原基线存活路径 10% 即阻断，等号可过）；

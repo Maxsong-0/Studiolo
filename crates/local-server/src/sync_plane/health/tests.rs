@@ -285,30 +285,70 @@ fn 模式回填与传输模式枚举一一对应() {
 fn 删除被挡轮记下个数并让第六节降级即使刚重启() {
     let health = PlaneHealth::new(None);
 
+    health.record_delete_gate(3);
     health.record_round(10_000, &Ok(RoundOutcome::DeletesBlocked { count: 3 }));
 
     let evidence = health.bridge();
     assert_eq!(evidence.deletes_blocked, Some(3));
     assert_eq!(evidence.quiescence_valid, Some(true));
     assert_eq!(evidence.last_batch, None, "没有批次闭合，不盖序号");
+    // 守卫之前 RunOnce 已干净回收、恢复协议空闲、排除项守卫放行，和空闲轮证明的一样多。
+    assert_eq!(evidence.last_exit, Some(ExitClass::Clean));
+    assert_eq!(evidence.recovery, Some(RecoveryState::Idle));
+    assert_eq!(evidence.residue_guard, Some(ResidueGuard::Clear));
     assert_eq!(state(&health), HealthState::Degraded);
 }
 
+/// 被挡的个数只由守卫回填写：过了守卫的轮次（闭合、空闲、终态未知、冻结、熔断）守卫报 0 就复位，
+/// 不会留着上一轮的旧数压住真实原因；续做旧批次的那一轮守卫仍挡，闭合了也照样报个数。
 #[test]
-fn 批次闭合或空闲轮把删除被挡复位为零而未知终态轮不动它() {
-    for (outcome, expected) in [
-        (settled(2), Some(0)),
-        (Ok(RoundOutcome::Idle), Some(0)),
-        (unknown(2), Some(3)),
-        (blocked(2), Some(3)),
-        (Err(PlaneError::Unavailable), Some(3)),
+fn 删除被挡只按守卫回填写而轮末结论不改它() {
+    for outcome in [
+        settled(2),
+        Ok(RoundOutcome::Idle),
+        unknown(2),
+        blocked(2),
+        Err(PlaneError::Fused),
     ] {
         let health = after_clean_batch();
+        health.record_delete_gate(3);
+        health.record_round(10_100, &Ok(RoundOutcome::DeletesBlocked { count: 3 }));
+
+        health.record_delete_gate(0);
+        health.record_round(10_400, &outcome);
+        assert_eq!(
+            health.bridge().deletes_blocked,
+            Some(0),
+            "放行后 {outcome:?}"
+        );
+
+        health.record_delete_gate(5);
+        health.record_round(10_700, &outcome);
+        assert_eq!(
+            health.bridge().deletes_blocked,
+            Some(5),
+            "续做时仍挡 {outcome:?}"
+        );
+    }
+}
+
+/// 没走到守卫的轮次（退避、强制恢复、上一批仍有未知终态、守卫之前失败）沿用上次证明过的值。
+#[test]
+fn 没走到删除守卫的轮次不动被挡的个数() {
+    for outcome in [
+        Ok(RoundOutcome::Skipped),
+        Ok(RoundOutcome::Recovered),
+        unknown(2),
+        Err(PlaneError::Unavailable),
+        Err(PlaneError::Observation),
+    ] {
+        let health = after_clean_batch();
+        health.record_delete_gate(3);
         health.record_round(10_100, &Ok(RoundOutcome::DeletesBlocked { count: 3 }));
 
         health.record_round(10_400, &outcome);
 
-        assert_eq!(health.bridge().deletes_blocked, expected, "{outcome:?}");
+        assert_eq!(health.bridge().deletes_blocked, Some(3), "{outcome:?}");
     }
 }
 

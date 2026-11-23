@@ -163,7 +163,7 @@ fn 静止证据过期时第六节判未知而不是判降级或正常() {
 }
 
 #[test]
-fn 多项异常并存时按删除被挡熔断残留未知终态退出恢复静止的固定顺序取第一项() {
+fn 多项异常并存时按熔断删除被挡残留未知终态退出恢复静止的固定顺序取第一项() {
     let mut evidence = BridgeEvidence {
         deletes_blocked: Some(2),
         fused: Some(true),
@@ -175,9 +175,10 @@ fn 多项异常并存时按删除被挡熔断残留未知终态退出恢复静�
         quiescence_valid: Some(false),
         ..NORMAL_BRIDGE
     };
+    // 熔断已证实生效时让给熔断（它持久、开了文件操作也照样挡）；熔断解除后删除被挡排第一。
     let expected = [
-        "远端删了 2 个文件（改名也算），主库没开文件操作，同步整批暂停：到远端恢复这些文件或开文件操作后接着跑",
         "删除熔断生效，本批与后续批次全部阻断",
+        "远端删了 2 个文件（改名也算），主库没开文件操作，同步整批暂停：到远端恢复这些文件或开文件操作后接着跑",
         "排除项清除前有镜像残留",
         "headless 配置与审批文档不一致，本轮未同步",
         "有 1 条动作终态未知，等待原键核对",
@@ -188,8 +189,8 @@ fn 多项异常并存时按删除被挡熔断残留未知终态退出恢复静�
     for (index, detail) in expected.iter().enumerate() {
         assert_eq!(judge(&evidence).1, *detail, "第 {index} 项");
         match index {
-            0 => evidence.deletes_blocked = Some(0),
-            1 => evidence.fused = Some(false),
+            0 => evidence.fused = Some(false),
+            1 => evidence.deletes_blocked = Some(0),
             2 => evidence.residue_guard = Some(ResidueGuard::Clear),
             3 => evidence.config_matches = Some(true),
             4 => evidence.unknown_jobs = Some(0),
@@ -218,7 +219,7 @@ fn 删除被挡有正证据就判降级不等别的字段齐() {
     );
 }
 
-/// 「还没有一轮证明过」不等于被挡：别的字段齐备时不因它判未知（批次闭合、空闲轮会把它写成 0）。
+/// 「还没有一轮证明过」不等于被挡：别的字段齐备时不因它判未知（每轮走到删除守卫都会写成 0 或被挡的个数）。
 #[test]
 fn 删除被挡没证明过时不单独阻止正常() {
     let unproven = BridgeEvidence {

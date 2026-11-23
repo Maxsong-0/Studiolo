@@ -53,6 +53,8 @@ pub struct FakePorts {
     pub pending: bool,
     /// 主库写者有没有开文件操作；`Err` 模拟查不出。
     pub deletes_enabled: Result<bool, PlaneError>,
+    /// 删除守卫每次交健康节的结论（被挡的个数，放行为 0）；不进 `calls`，免得改动别的调用序列断言。
+    pub delete_gate: Vec<u64>,
     /// `observe` 返回的冻结输入。
     pub input: Input,
     /// `preserve_conflicts` 的结论。
@@ -88,6 +90,7 @@ impl FakePorts {
             unresolved: None,
             pending: false,
             deletes_enabled: Ok(true),
+            delete_gate: Vec::new(),
             input: fixture::empty_input(),
             preserve_result: Ok(0),
             execute_result: Ok(RoundOutcome::Settled {
@@ -191,6 +194,10 @@ impl RoundPorts for FakePorts {
     fn deletes_enabled(&mut self) -> Result<bool, PlaneError> {
         self.calls.push(Call::DeletesEnabled);
         self.deletes_enabled
+    }
+
+    fn record_delete_gate(&mut self, blocked: u64) {
+        self.delete_gate.push(blocked);
     }
 
     fn observe(&mut self, mode: SyncMode) -> Result<(Input, Inventory, Inventory), PlaneError> {

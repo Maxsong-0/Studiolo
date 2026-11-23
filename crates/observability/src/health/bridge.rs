@@ -94,15 +94,18 @@ pub struct BridgeEvidence {
     pub mode: Option<ModeLabel>,
     /// headless 本地配置（模式／排除项／文件类型）是否与审批文档一致；不一致本轮不跑 RunOnce。
     pub config_matches: Option<bool>,
-    /// 主库没开文件操作、本轮整批暂停时被挡的主库删除数（BUG-046）；0 即没挡，`None` 即还没有一轮证明过。
+    /// 最近一次走到删除守卫的那一轮，主库没开文件操作而被挡的主库删除数（BUG-046）；0 即放行，`None` 即还没有一轮走到过守卫。
     pub deletes_blocked: Option<u64>,
 }
 
 /// 聚合第六节；缺证据一律未知。
 ///
-/// 判定顺序固定：删除被挡（有正证据就报，不等别的字段齐）→ 缺字段 → 删除熔断 → 排除项残留 → 配置不符 →
-/// 终态未知 → 非干净退出 → 恢复协议进行中 → 静止证据过期 → 正常。删除被挡还没证明过（`None`）不算缺字段。驱动平面未装配（默认关闭）时也是「未知」：与恢复点、白名单两节同一口径，
-/// 没启用的能力不显示绿。
+/// 判定顺序固定：删除被挡（有正证据就报，不等别的字段齐；熔断已证实生效时让给熔断）→ 缺字段 → 删除熔断 →
+/// 排除项残留 → 配置不符 → 终态未知 → 非干净退出 → 恢复协议进行中 → 静止证据过期 → 正常。
+///
+/// 删除被挡还没证明过（`None`）不算缺字段。
+///
+/// 驱动平面未装配（默认关闭）时也是「未知」：与恢复点、白名单两节同一口径，没启用的能力不显示绿。
 ///
 /// # 错误
 /// 只可能是内部正文越界，属实现缺陷。
@@ -153,7 +156,11 @@ fn complete(evidence: &BridgeEvidence) -> Result<Complete, &'static str> {
 
 fn judge(evidence: &BridgeEvidence) -> (HealthState, String) {
     // 删除被挡的那几轮不走执行段，重启后别的字段一直补不齐；有正证据就先报，不被「证据不完整」盖住。
-    if let Some(count) = evidence.deletes_blocked.filter(|count| *count > 0) {
+    // 熔断已证实生效时让给熔断：它持久、没有解除入口，开了文件操作也照样挡，是更该先处理的那一个。
+    if let Some(count) = evidence
+        .deletes_blocked
+        .filter(|count| *count > 0 && evidence.fused != Some(true))
+    {
         return (
             HealthState::Degraded,
             format!(

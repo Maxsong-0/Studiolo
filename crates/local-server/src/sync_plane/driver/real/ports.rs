@@ -119,6 +119,10 @@ impl RoundPorts for RealPorts<'_> {
             .map_err(crate::sync_plane::witness::seam_error)
     }
 
+    fn record_delete_gate(&mut self, blocked: u64) {
+        self.plane.health.record_delete_gate(blocked);
+    }
+
     fn observe(&mut self, mode: SyncMode) -> Result<(Input, Inventory, Inventory), PlaneError> {
         self.mode = mode;
         let observed = observe::observe_both(&self.context()?)?;
