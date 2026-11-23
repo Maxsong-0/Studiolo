@@ -105,7 +105,7 @@ studiolo-human（uid 1000）                      root                          
 
 节 `sync-bridge`／「双向 Bridge」：`last_batch{sequence,unix_seconds}`、`fused`、`unknown_jobs`、`quiescence_valid`、
 `conflict_copies`、`mirror_bytes`、`last_exit`（clean／non_zero／signal／deadline_exceeded／owner_stopped／unconfirmed）、
-`recovery`（idle／forced_mirror_remote／backoff）、`residue_guard`（clear／blocked）、`mode`、`config_matches`。任一 `None` → 未知；`deletes_blocked`（BUG-046）不在必备之列，大于 0 时先于缺字段判降级（`fused==true` 时让给熔断）；
+`recovery`（idle／forced_mirror_remote／backoff）、`residue_guard`（clear／blocked）、`mode`、`config_matches`。任一 `None` → 未知；`deletes_blocked`（BUG-046）不在必备之列，大于 0 时先于缺字段判降级（`fused==true` 且必备字段齐、熔断报得出来时让给熔断）；
 `fused==true`／`unknown_jobs>0`／`residue_guard==blocked`／`last_exit≠clean`／`recovery≠idle` → 降级；`quiescence_valid==false` → 未知。
 `conflict_copies`＝最近一次完整观察里两侧命名为冲突副本的路径数（headless 与 `studiolo-canonical` 两种设备名都识别）
 ＋持久 `conflict_stamps` 当前条数（含正在续写副本的冲突，非历史副本文件总数）；`owner_stopped`＝headless 在 owner 关停时被 `request_stop` 停下。

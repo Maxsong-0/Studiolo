@@ -217,6 +217,19 @@ fn 删除被挡有正证据就判降级不等别的字段齐() {
         detail,
         "远端删了 1 个文件（改名也算），主库没开文件操作，同步整批暂停：到远端恢复这些文件或开文件操作后接着跑"
     );
+    // 复查第 2 轮：重启后熔断冻结着旧批次、续做那一轮守卫仍挡。字段不齐时熔断报不出来，不让位，照报被挡。
+    let fused_after_restart = BridgeEvidence {
+        deletes_blocked: Some(2),
+        fused: Some(true),
+        ..BridgeEvidence::default()
+    };
+    let (state, detail) = judge(&fused_after_restart);
+
+    assert_eq!(state, HealthState::Degraded);
+    assert_eq!(
+        detail,
+        "远端删了 2 个文件（改名也算），主库没开文件操作，同步整批暂停：到远端恢复这些文件或开文件操作后接着跑"
+    );
 }
 
 /// 「还没有一轮证明过」不等于被挡：别的字段齐备时不因它判未知（每轮走到删除守卫都会写成 0 或被挡的个数）。

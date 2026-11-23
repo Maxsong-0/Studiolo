@@ -128,7 +128,7 @@ launcher 把启动事实（固定 pins、镜像根、配置根、操作）预写
 `recovery`（idle／forced_mirror_remote／backoff）、`residue_guard`（clear／blocked）、`mode`。任一 `None` → 未知；
 `fused`、`unknown_jobs>0`、`residue_guard=blocked`、`last_exit≠clean`、`recovery≠idle` → 降级；`quiescence_valid=false` → 未知。
 `conflict_copies`＝最近一次完整观察里两侧命名为冲突副本的路径数＋持久 `conflict_stamps` 的当前条数（含正在续写副本的冲突，非历史副本文件总数）。
-`deletes_blocked`（BUG-046）：主库没开文件操作、远端却删了（或改名了）笔记时，同步整批暂停，本项记最近一次走到删除守卫时被挡的删除数（放行即 0），健康节降级并写明「远端删了 n 个文件（改名也算）…到远端恢复这些文件或开文件操作后接着跑」；它有正证据就先报，不等别的字段齐（删除熔断已生效时先报熔断）。处理：到 Obsidian 远端恢复这些文件，或者等文件操作开好（要先做范围摘要迁移，另起任务）；远端改名在 Bridge 看来是「旧名删除＋新名新建」，大批改名（如 2026-10-23 项目目录加 `-Docs`，169 上约 1300 个）只能等文件操作，不要在远端退回改名；不要为此改审批文档或 owner.json。
+`deletes_blocked`（BUG-046）：主库没开文件操作、远端却删了（或改名了）笔记时，同步整批暂停，本项记最近一次走到删除守卫时被挡的删除数（放行即 0），健康节降级并写明「远端删了 n 个文件（改名也算）…到远端恢复这些文件或开文件操作后接着跑」；它有正证据就先报，不等别的字段齐（删除熔断已生效、健康节别的字段也齐时先报熔断）。处理：到 Obsidian 远端恢复这些文件，或者等文件操作开好（要先做范围摘要迁移，另起任务）；远端改名在 Bridge 看来是「旧名删除＋新名新建」，大批改名（如 2026-10-23 项目目录加 `-Docs`，169 上约 1300 个）只能等文件操作，不要在远端退回改名；不要为此改审批文档或 owner.json。
 平面未装配时整节未知（没启用的能力不显示绿）。`sync-quota`：镜像字节对 `manual_quota.account_limit_bytes`，七成预警。
 `owner-liveness` 多一项 `sync-transport`（最近一轮时刻，周期 600 s）。
 `plane-state.json` 新增的 `headless_excluded`、`conflict_stamps`、`pending_purge` 字段向后兼容：旧文件照常读、字段为空时不写出，不需要重建。

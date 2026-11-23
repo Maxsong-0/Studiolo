@@ -100,7 +100,7 @@ pub struct BridgeEvidence {
 
 /// 聚合第六节；缺证据一律未知。
 ///
-/// 判定顺序固定：删除被挡（有正证据就报，不等别的字段齐；熔断已证实生效时让给熔断）→ 缺字段 → 删除熔断 →
+/// 判定顺序固定：删除被挡（有正证据就报，不等别的字段齐；熔断已证实生效且字段齐、报得出来时让给熔断）→ 缺字段 → 删除熔断 →
 /// 排除项残留 → 配置不符 → 终态未知 → 非干净退出 → 恢复协议进行中 → 静止证据过期 → 正常。
 ///
 /// 删除被挡还没证明过（`None`）不算缺字段。
@@ -156,10 +156,13 @@ fn complete(evidence: &BridgeEvidence) -> Result<Complete, &'static str> {
 
 fn judge(evidence: &BridgeEvidence) -> (HealthState, String) {
     // 删除被挡的那几轮不走执行段，重启后别的字段一直补不齐；有正证据就先报，不被「证据不完整」盖住。
-    // 熔断已证实生效时让给熔断：它持久、没有解除入口，开了文件操作也照样挡，是更该先处理的那一个。
+    // 熔断已证实生效、而且下面报得出来（字段齐）时让给熔断：它持久、没有解除入口，开了文件操作也照样挡，
+    // 是更该先处理的那一个。字段不齐时熔断也报不出来，照报被挡，免得两个原因都被「证据不完整」盖住。
+    let checked = complete(evidence);
+    let fuse_reported = checked.as_ref().is_ok_and(|full| full.fused);
     if let Some(count) = evidence
         .deletes_blocked
-        .filter(|count| *count > 0 && evidence.fused != Some(true))
+        .filter(|count| *count > 0 && !fuse_reported)
     {
         return (
             HealthState::Degraded,
@@ -168,7 +171,7 @@ fn judge(evidence: &BridgeEvidence) -> (HealthState, String) {
             ),
         );
     }
-    let full = match complete(evidence) {
+    let full = match checked {
         Ok(full) => full,
         Err(missing) => {
             let mut detail = format!("Bridge 证据不完整：缺{missing}");
