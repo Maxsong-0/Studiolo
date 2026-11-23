@@ -126,11 +126,13 @@ launcher 把启动事实（固定 pins、镜像根、配置根、操作）预写
 `last_batch{sequence,unix_seconds}`、`fused`（熔断）、`unknown_jobs`（Issued 后未知的动作数）、`quiescence_valid`、
 `conflict_copies`、`mirror_bytes`、`last_exit`（clean／non_zero／signal／deadline_exceeded／owner_stopped／unconfirmed）、
 `recovery`（idle／forced_mirror_remote／backoff）、`residue_guard`（clear／blocked）、`mode`、`config_matches`（headless 配置与审批一致）。
-有正证据就降级，不等别的字段齐（T-223）：`fused`、`deletes_blocked>0`、`residue_guard=blocked`、`config_matches=false`、`unknown_jobs>0`、
-`last_exit≠clean`、`recovery≠idle`，按这个顺序报第一条，其余列在「另有：」之后，字段还缺再接「证据不完整：缺…」。所以人侧刚重启、
-「最近一批」还没补上时，已知的非干净退出或恢复协议进行中也直接显示降级。没有正证据时：除 `deletes_blocked` 外任一 `None` → 未知；`quiescence_valid=false` → 未知。
+有正证据就降级，不等别的字段齐（T-223）：`path_usage` 超上限、`fused`、`deletes_blocked>0`、`residue_guard=blocked`、`config_matches=false`、`unknown_jobs>0`、
+`last_exit≠clean`、`recovery≠idle`、`path_usage` 到八成，按这个顺序报第一条，其余列在「另有：」之后，字段还缺再接「证据不完整：缺…」。所以人侧刚重启、
+「最近一批」还没补上时，已知的非干净退出或恢复协议进行中也直接显示降级。没有正证据时：除 `deletes_blocked`、`path_usage` 外任一 `None` → 未知；`quiescence_valid=false` → 未知。
 `conflict_copies`＝最近一次完整观察里两侧命名为冲突副本的路径数＋持久 `conflict_stamps` 的当前条数（含正在续写副本的冲突，非历史副本文件总数）。
-`deletes_blocked`（BUG-046）：主库没开文件操作、远端却删了（或改名了）笔记时，同步整批暂停，本项记最近一次走到删除守卫时被挡的删除数（放行即 0），健康节降级并写明「远端删了 n 个文件（改名也算）…到远端恢复这些文件或开文件操作后接着跑」；它有正证据就报，不等别的字段齐；删除熔断也生效时先报熔断，被挡列在「另有」里。处理：到 Obsidian 远端恢复这些文件，或者等文件操作开好（要先做范围摘要迁移，另起任务）；远端改名在 Bridge 看来是「旧名删除＋新名新建」，大批改名（如 2026-10-23 项目目录加 `-Docs`，169 上约 1300 个）只能等文件操作，不要在远端退回改名；不要为此改审批文档或 owner.json。
+`deletes_blocked`（BUG-046）：主库没开文件操作、远端却删了（或改名了）笔记时，同步整批暂停，本项记最近一次走到删除守卫时被挡的删除数（放行即 0），健康节降级并写明「远端删了 n 个文件（改名也算）…到远端恢复这些文件或开文件操作后接着跑」；它有正证据就报，不等别的字段齐；删除熔断也生效时先报熔断，被挡列在「另有」里。处理：到 Obsidian 远端恢复这些文件，或者等文件操作开好（要先做范围摘要迁移，另起任务）；远端改名在 Bridge 看来是「旧名删除＋新名新建」，大批改名（如 2026-10-23 项目目录加 `-Docs`，169 上约 1300 个）只能等文件操作，不要在远端退回改名；不要为此改审批文档或 owner.json。`path_usage{used,budget}`（BUG-047）：最近一次算出的三方并集路径数与同步路径预算（16384），正常正文里显示「；路径 n／N」；
+到八成降级「该安排提高上限」，超了这一轮观察停住，服务日志有 `studiolo_bridge step=Observe outcome=path_budget_exceeded used=… budget=…`，
+健康节第一条写「超过上限、同步停住：要出新版提高上限」。处理只有出新版提高预算，不要删远端文件或改审批范围来凑数。
 平面未装配时整节未知（没启用的能力不显示绿）。`sync-quota`：镜像字节对 `manual_quota.account_limit_bytes`，七成预警。
 `owner-liveness` 多一项 `sync-transport`（最近一轮时刻，周期 600 s）。
 `plane-state.json` 新增的 `headless_excluded`、`conflict_stamps`、`pending_purge` 字段向后兼容：旧文件照常读、字段为空时不写出，不需要重建。
@@ -192,6 +194,9 @@ purge 只在三条同时成立时动手：X 在上次核验集合里、不在当
 
 ## 9 回滚
 
+- **BUG-047 的新版升过 Bridge 持久预算，退回旧版要换回库目录**：新版人侧启动时把 Bridge 持久预算从 4096 升到 16384，
+  打一行 `studiolo_bridge component=capacity from=4096 to=16384`；旧版认不出升过的库，同步平面起不来。所以上线前先停人侧、
+  把 Bridge 库目录整份复制一份；要退回旧版：停人侧 → 换回复制件 → 激活旧版。
 - **换回旧二进制前先关平面**：新版会写出旧版不认识的 `plane-state.json` 字段（审批排除项非空就有），批准配置摘要与 Bridge 证据里 canonical 版本的投影也在 2026-09 改过；旧 human 读新状态会以 `StartupError::SyncPlane` 起不来。回退前把审批 `enabled` 改 false；要让旧版重新接管 Bridge，只能重新置备私有存储。
 - 关平面：审批文档 `enabled` 改 false（或去掉 `--sync-transport`）后重启 human；镜像盘、视图、launcher 都可以留着。
 - 停 launcher：`sudo systemctl disable --now studiolo-sync-launcher.service`；transient unit 名固定为

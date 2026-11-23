@@ -8,6 +8,7 @@ mod checkpoint;
 pub use checkpoint::{BridgeCheckpointGate, BridgeCheckpointSource, FrozenBridge};
 mod cancellation;
 mod capacity;
+mod capacity_raise;
 mod codec;
 mod configuration;
 mod database;
@@ -42,7 +43,8 @@ pub use opening::BridgeState;
 pub(crate) const INPUT_MAX: usize = 16 * 1024 * 1024;
 pub(crate) const STATE_MAX: usize = 64 * 1024 * 1024;
 pub(crate) const RECEIPT_MAX: usize = 8192;
-pub(crate) const MAX_PATHS: usize = 4096;
+/// 一批的路径数与动作数上限，就是同步路径预算（BUG-047）。
+pub(crate) const MAX_PATHS: usize = studiolo_core::SYNC_PATH_BUDGET;
 
 #[cfg(test)]
 #[path = "../../tests/sqlite_private/mod.rs"]

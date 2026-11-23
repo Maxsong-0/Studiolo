@@ -23,6 +23,13 @@ describe('同步健康结构与人工记录', () => {
       { ...copy().bridge, unknown_jobs: '18446744073709551616' },
       { ...copy().bridge, unknown_jobs: 2 },
       { ...copy().bridge, deletes_blocked: -1 },
+      { ...copy().bridge, path_usage: '4108' },
+      { ...copy().bridge, path_usage: { used: 4108, budget: '16384' } },
+      {
+        ...copy().bridge,
+        path_usage: { used: '4108', budget: '16384', extra: '1' },
+      },
+      { ...copy().bridge, path_usage: { used: '4108' } },
       { ...copy().bridge, last_exit: 'probably_ok' },
       {
         ...copy().bridge,
@@ -68,6 +75,34 @@ describe('同步健康结构与人工记录', () => {
     expect(bridge(blocked)).toBe('unknown');
     expect(blocked.bridge?.deletesBlocked).toBe('1');
   });
+  it('正常声明与路径用量到八成矛盾时降为未知；差一条不到八成、没算到过照常正常', () => {
+    const body = copy();
+    body.overall = 'normal';
+    body.sections = body.sections.map((section) => ({
+      ...section,
+      state: 'normal',
+    }));
+    body.bridge.quiescence_valid = true;
+    body.bridge.last_exit = 'clean';
+    body.bridge.recovery = 'idle';
+    const bridge = (report: ReturnType<typeof parseHealth>) =>
+      report.sections.find((section) => section.code === 'sync-bridge')?.state;
+    body.bridge.path_usage = { used: '13107', budget: '16384' };
+    expect(bridge(parseHealth(body))).toBe('normal');
+    (body.bridge as Record<string, unknown>).path_usage = null;
+    expect(bridge(parseHealth(body))).toBe('normal');
+    // 恰好八成也算（预算 16384 没有整数恰好落在八成上，换个能整除的预算）。
+    body.bridge.path_usage = { used: '7', budget: '10' };
+    expect(bridge(parseHealth(body))).toBe('normal');
+    body.bridge.path_usage = { used: '8', budget: '10' };
+    expect(bridge(parseHealth(body))).toBe('unknown');
+    for (const used of ['13108', '16384', '16385']) {
+      body.bridge.path_usage = { used, budget: '16384' };
+      const report = parseHealth(body);
+      expect(bridge(report)).toBe('unknown');
+      expect(report.bridge?.pathUsage).toEqual({ used, budget: '16384' });
+    }
+  });
   it('重启后明细只有正证据、其余为空时，后端报的降级照样显示，不被洗成未知', () => {
     const body = copy();
     // 后端 T-223 口径：有正证据就降级，不等十一项齐；这里只留两条正证据，别的明细都还没取得。
@@ -84,6 +119,7 @@ describe('同步健康结构与人工记录', () => {
       mode: null,
       config_matches: null,
       deletes_blocked: null,
+      path_usage: null,
     } as unknown as typeof body.bridge;
     const detail =
       '上次 headless 运行在 owner 关停时被停止；另有：恢复协议进行中；证据不完整：缺最近一批';
@@ -227,6 +263,16 @@ describe('同步健康结构与人工记录', () => {
     expect(screen.getByText('终态未知动作')).toBeInTheDocument();
     expect(screen.getByText('冲突副本')).toBeInTheDocument();
     expect(screen.getByText('删除被挡')).toBeInTheDocument();
+    expect(screen.getByText('4,108 / 16,384 条（25%）')).toBeInTheDocument();
+  });
+  it('路径超上限时明细直接说同步停住', () => {
+    const body = copy();
+    body.bridge.path_usage = { used: '16385', budget: '16384' };
+    render(<HealthPanel report={parseHealth(body)} />);
+    fireEvent.click(screen.getByText('查看同步证据'));
+    expect(
+      screen.getByText('要比对 16,385 条，超过上限 16,384 条，同步停住'),
+    ).toBeInTheDocument();
     expect(screen.getByText('1.1 GiB（非账号用量）')).toBeInTheDocument();
     expect(
       screen.queryByText('非零退出', { exact: true }),

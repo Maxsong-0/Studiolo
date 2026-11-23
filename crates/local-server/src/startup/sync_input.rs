@@ -8,12 +8,15 @@
 
 use super::StartupError;
 use crate::options::Options;
+use std::io::Write as _;
 use std::{path::Path, sync::Arc};
 use studiolo_audit_ledger::AuditLedger;
 use studiolo_host_config::SyncScope;
 use studiolo_host_config::sync_transport::{ApprovedTransport, SyncTransportApproval};
 use studiolo_local_server::CanonicalWorkbench;
-use studiolo_local_server::sync_plane::{BRIDGE_DIR, PlaneInputs, SyncPlane, bridge_binding};
+use studiolo_local_server::sync_plane::{
+    BRIDGE_DIR, PlaneInputs, SyncPlane, bridge_binding, bridge_limits,
+};
 use studiolo_sync_bridge::sqlite::BridgeState;
 use studiolo_sync_transport::linux::verify_backend;
 use studiolo_sync_transport::owned_run::{PinnedRuntime, SyncTransportOwner};
@@ -60,11 +63,24 @@ pub(super) fn assemble(
     let transport = SyncTransportOwner::open_existing(approved, runtime, backend)
         .map_err(|_| StartupError::SyncPlane)?;
     let roots = approved.roots();
-    let bridge = BridgeState::open_existing(
+    let mut bridge = BridgeState::open_existing(
         &roots.plane_root().join(BRIDGE_DIR),
         bridge_binding(approved, canonical_identity),
     )
     .map_err(|_| StartupError::SyncPlane)?;
+    // BUG-047：旧链 `sync-init` 时冻结的路径预算升到本发行的同步路径预算；只升不降，已是目标值不写库。
+    // 升了之后旧发行认不出这份持久预算（超过它的上限），退回旧发行前要换回升级前复制的 Bridge 库。
+    let limits = bridge_limits(scope);
+    if let Some(previous) = bridge
+        .raise_capacity(limits)
+        .map_err(|_| StartupError::SyncPlane)?
+    {
+        let _ = writeln!(
+            std::io::stderr().lock(),
+            "studiolo_bridge component=capacity from={previous} to={}",
+            limits.max_paths
+        );
+    }
     let plane = SyncPlane::open(PlaneInputs {
         approval: approved,
         transport,

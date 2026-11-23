@@ -102,7 +102,7 @@ fn load_actions(db: &Connection, sequence: i64) -> Result<Vec<Progress>> {
     while let Some(row) = rows.next().map_err(error)? {
         let i: i64 = row.get(0).map_err(error)?;
         let bytes: Option<Vec<u8>> = row.get(1).map_err(error)?;
-        if i != out.len() as i64 || out.len() >= 4096 {
+        if i != out.len() as i64 || out.len() >= super::MAX_PATHS {
             return Err(BridgeError::CorruptStore);
         }
         out.push(state_codec::decode_progress(

@@ -1,7 +1,16 @@
 //! 打开/完整更新验证全部关系，单动作验证自身；拒绝损坏而不降级空状态。
 
 use super::{BridgeError, MAX_PATHS, audit, input_codec, model::*, receipts};
-use crate::{Decision, Presence};
+use crate::{Decision, Limits, Presence};
+
+/// 冻结的 pending／last／fuse 可以停在持久预算升级之前的旧值（BUG-047）：两个容量字段不大于持久预算，
+/// 删除阈值与单文件上限必须相等。它们照旧用自己的输入与预算重算，所以结果不变。
+pub(super) fn frozen_limits_fit(frozen: Limits, current: Limits) -> bool {
+    frozen.max_paths <= current.max_paths
+        && frozen.max_outputs <= current.max_outputs
+        && frozen.max_file_bytes == current.max_file_bytes
+        && frozen.deletion == current.deletion
+}
 
 pub(crate) fn state(s: &State) -> Result<()> {
     if s.binding != s.cursor.binding
@@ -65,7 +74,7 @@ pub(crate) fn state(s: &State) -> Result<()> {
         input_codec::encode(&f.input)?;
         if f.input.scope.binding != s.binding
             || f.input.baseline != s.baseline
-            || f.input.limits != s.limits
+            || !frozen_limits_fit(f.input.limits, s.limits)
             || f.input.plan_sequence != s.cursor.last_plan_sequence
             || f.input.plan_sequence <= latest
             || f.input.canonical.sequence != s.cursor.last_canonical_observation
@@ -100,7 +109,7 @@ pub(crate) fn state(s: &State) -> Result<()> {
 fn pending(p: &Pending, s: &State) -> Result<()> {
     input_codec::encode(&p.input)?;
     if p.input.scope.binding != s.binding
-        || p.input.limits != s.limits
+        || !frozen_limits_fit(p.input.limits, s.limits)
         || p.actions.len() > MAX_PATHS
     {
         return Err(BridgeError::CorruptStore);

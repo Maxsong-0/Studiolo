@@ -16,10 +16,10 @@ pub(super) fn same_content(left: &Presence, right: &Presence) -> bool {
 pub(super) fn validate(input: &Input) -> Result<(), PlanError> {
     let limits = input.limits;
     if limits.max_paths == 0
-        || limits.max_paths > 4096
+        || limits.max_paths > studiolo_core::SYNC_PATH_BUDGET
         || limits.max_outputs == 0
-        || limits.max_outputs > 4096
-        || limits.deletion.max_count > 4096
+        || limits.max_outputs > studiolo_core::SYNC_PATH_BUDGET
+        || limits.deletion.max_count > studiolo_core::SYNC_PATH_BUDGET as u64
         || limits.deletion.max_basis_points > 10000
         || input.scope.paths.len() > limits.max_paths
         || input.scope.paths.len() > limits.max_outputs

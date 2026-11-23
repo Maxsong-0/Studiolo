@@ -26,10 +26,27 @@ fn whole_union_and_total_outputs_are_bounded_without_partial_success() {
     assert_eq!(plan(data, None), Err(PlanError::Budget));
 }
 
+/// 保守预算就是同步路径预算（BUG-047）：169 那样 4108 条的整批照常规划，恰好预算条也可以。
+#[test]
+fn conservative_limits_cover_the_whole_sync_path_budget() {
+    let budget = studiolo_core::SYNC_PATH_BUDGET;
+    assert_eq!(Limits::conservative(1000).max_paths, budget);
+    assert_eq!(Limits::conservative(1000).max_outputs, budget);
+    assert_eq!(ready(baseline_paths(4108)).agreements().len(), 4108);
+    assert_eq!(ready(baseline_paths(budget)).agreements().len(), budget);
+    assert_eq!(
+        plan(baseline_paths(budget + 1), None),
+        Err(PlanError::Budget)
+    );
+}
+
 #[test]
 fn hard_count_ceiling_cannot_be_raised_by_caller_limits() {
     let mut data = input(None, present(1), Presence::Missing);
-    data.limits.max_paths = 4097;
+    data.limits.max_paths = studiolo_core::SYNC_PATH_BUDGET + 1;
+    assert_eq!(plan(data, None), Err(PlanError::Budget));
+    let mut data = input(None, present(1), Presence::Missing);
+    data.limits.max_outputs = studiolo_core::SYNC_PATH_BUDGET + 1;
     assert_eq!(plan(data, None), Err(PlanError::Budget));
     let mut data = input(None, present(1), Presence::Missing);
     data.limits.max_outputs = 0;

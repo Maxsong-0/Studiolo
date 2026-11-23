@@ -31,5 +31,7 @@ mod supply_storage;
 mod support;
 #[path = "architecture_cases/sync_bridge.rs"]
 mod sync_bridge;
+#[path = "architecture_cases/sync_path_budget.rs"]
+mod sync_path_budget;
 #[path = "architecture_cases/test_linux_runner.rs"]
 mod test_linux_runner;

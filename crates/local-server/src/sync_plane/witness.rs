@@ -3,6 +3,8 @@
 //!
 //! 本文件不持有 Broker 类型、不开文件；证据投影在 `driver::evidence`；镜像观察前先复验静止票据。
 
+mod budget;
+
 use super::driver::diagnostics::{Step, at};
 use super::driver::evidence::{
     baseline_evidence, inventory_evidence, parse_digest, read_selection, revision_digest,
@@ -154,13 +156,15 @@ impl<'a> PlaneWitness<'a> {
         let mut union = required.clone();
         union.extend(canonical.entries.keys().cloned());
         let mirror = at(Step::Mirror, self.observe_mirror(&union))?;
-        if mirror
+        let grown = mirror
             .inventory
             .entries
             .keys()
-            .any(|path| !canonical.entries.contains_key(path))
-        {
-            union.extend(mirror.inventory.entries.keys().cloned());
+            .any(|path| !canonical.entries.contains_key(path));
+        union.extend(mirror.inventory.entries.keys().cloned());
+        // 三方并集先和路径预算比，超了不再去观察 canonical（BUG-047）。
+        budget::check(&self.plane.health, union.len())?;
+        if grown {
             canonical = at(Step::Canonical, self.observe_canonical(&union))?;
         }
         if !canonical.entries.keys().eq(mirror.inventory.entries.keys()) {

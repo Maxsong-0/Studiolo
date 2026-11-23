@@ -25,7 +25,7 @@ pub(crate) fn finish(
     mut survey: Survey,
     additional: &[VaultPath],
 ) -> Result<Prepared, BrokerError> {
-    if additional.len() > 4096 {
+    if additional.len() > studiolo_core::SYNC_PATH_BUDGET {
         return Err(BrokerError::WriterLimitExceeded);
     }
     // 额外输入自身不得重复；与初始路径重合允许，便于两侧直接交完整并集。
@@ -41,7 +41,7 @@ pub(crate) fn finish(
             return Err(super::invalid());
         }
         survey.paths.insert(path.clone());
-        if survey.paths.len() > 4096 {
+        if survey.paths.len() > studiolo_core::SYNC_PATH_BUDGET {
             return Err(BrokerError::WriterLimitExceeded);
         }
     }

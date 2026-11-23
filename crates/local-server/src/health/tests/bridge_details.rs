@@ -1,6 +1,7 @@
 use super::{HealthBody, complete};
-use serde_json::Value;
+use serde_json::{Value, json};
 use studiolo_host_config::sync_transport::ManualQuota;
+use studiolo_observability::health::PathUsage;
 
 fn body(used: u64, recorded: i64) -> Value {
     let mut snapshot = complete(100_000);
@@ -44,11 +45,29 @@ fn bridge_counts_are_lossless_closed_and_survive_degraded_summary() {
     let body = serde_json::to_value(HealthBody::from_snapshot(&snapshot)).unwrap();
     assert_eq!(body["bridge"]["unknown_jobs"], u64::MAX.to_string());
     assert_eq!(body["bridge"]["deletes_blocked"], "0");
-    assert_eq!(body["bridge"].as_object().unwrap().len(), 12);
+    assert_eq!(body["bridge"].as_object().unwrap().len(), 13);
     assert_eq!(body["manual_sync_quota"].as_object().unwrap().len(), 8);
     assert_eq!(body.as_object().unwrap().len(), 6);
     assert_eq!(body["overall"], "degraded");
     assert_eq!(body["bridge"]["fused"], true);
+}
+/// 路径用量（BUG-047）按十进制字符串传两个数；还没算到过就是 `null`，超上限时整页判降级。
+#[test]
+fn path_usage_is_two_lossless_counts_or_null() {
+    let mut snapshot = complete(100_000);
+    let body = serde_json::to_value(HealthBody::from_snapshot(&snapshot)).unwrap();
+    assert!(body["bridge"]["path_usage"].is_null());
+
+    snapshot.bridge.as_mut().unwrap().path_usage = Some(PathUsage {
+        used: u64::MAX,
+        budget: 16_384,
+    });
+    let body = serde_json::to_value(HealthBody::from_snapshot(&snapshot)).unwrap();
+    assert_eq!(
+        body["bridge"]["path_usage"],
+        json!({"used": u64::MAX.to_string(), "budget": "16384"})
+    );
+    assert_eq!(body["overall"], "degraded");
 }
 #[test]
 fn missing_probe_or_manual_record_does_not_create_normal_evidence() {

@@ -20,6 +20,12 @@ export interface BridgeHealth {
   configMatches: boolean | null;
   /** 主库没开文件操作、整批暂停时被挡的删除数；null 即还没有一轮证明过（BUG-046）。 */
   deletesBlocked: string | null;
+  /** 一轮要比对的路径数与上限；null 即还没有一轮算到过（BUG-047）。 */
+  pathUsage: PathUsage | null;
+}
+export interface PathUsage {
+  used: string;
+  budget: string;
 }
 export interface ManualQuota {
   accountLimitBytes: string;
@@ -79,10 +85,20 @@ export function parseBridge(value: unknown): BridgeHealth | null {
       'mode',
       'config_matches',
       'deletes_blocked',
+      'path_usage',
     ])
   )
     return null;
   const batch = value.last_batch;
+  const paths = value.path_usage;
+  if (
+    paths !== null &&
+    (!object(paths) ||
+      !keys(paths, ['used', 'budget']) ||
+      !decimal(paths.used) ||
+      !decimal(paths.budget))
+  )
+    return null;
   if (
     batch !== null &&
     (!object(batch) ||
@@ -141,7 +157,18 @@ export function parseBridge(value: unknown): BridgeHealth | null {
     mode: value.mode as BridgeHealth['mode'],
     configMatches: value.config_matches as boolean | null,
     deletesBlocked: value.deletes_blocked as string | null,
+    pathUsage:
+      paths === null
+        ? null
+        : {
+            used: (paths as Record<string, unknown>).used as string,
+            budget: (paths as Record<string, unknown>).budget as string,
+          },
   };
+}
+/** 路径用量到了上限的八成（含用满、超过）：后端据此降级（BUG-047），与 `bridge.rs` 同一口径。 */
+export function pathsNearBudget(value: PathUsage): boolean {
+  return BigInt(value.used) * 5n >= BigInt(value.budget) * 4n;
 }
 /**
  * “正常”必须与每项证据一致：十一项必备证据都已取得，而且没有任何一条正证据
@@ -163,7 +190,9 @@ export function bridgeCanBeNormal(value: BridgeHealth): boolean {
     value.mode !== null &&
     value.configMatches === true &&
     // 没证明过不单独挡正常（与后端同一口径）；有被挡的删除就不能是正常。
-    (value.deletesBlocked ?? '0') === '0'
+    (value.deletesBlocked ?? '0') === '0' &&
+    // 路径用量同理：没算到过不挡；到八成或超上限就不能是正常。
+    (value.pathUsage === null || !pathsNearBudget(value.pathUsage))
   );
 }
 export function parseManualQuota(value: unknown): ManualQuota | null {

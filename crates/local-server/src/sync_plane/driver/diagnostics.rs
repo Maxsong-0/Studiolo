@@ -36,6 +36,14 @@ pub(crate) fn deletes_blocked(count: u64) {
     );
 }
 
+/// 三方并集超过同步路径预算、这一轮观察停住时留一行固定日志（BUG-047）：只有两个数，不带路径。
+pub(crate) fn path_budget_exceeded(used: u64, budget: u64) {
+    let _ = writeln!(
+        std::io::stderr().lock(),
+        "studiolo_bridge step=Observe outcome=path_budget_exceeded used={used} budget={budget}"
+    );
+}
+
 pub(crate) fn at<T>(step: Step, result: Result<T, PlaneError>) -> Result<T, PlaneError> {
     if let Err(error) = result.as_ref() {
         let _ = writeln!(

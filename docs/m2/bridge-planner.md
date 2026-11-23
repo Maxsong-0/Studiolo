@@ -28,7 +28,8 @@ PRD04 第 29–30 行，以及仓库 docs/m2/sync-transport-design.md 第 45–8
   `FuseBlocked` 没有动作字段；本批普通复制也不先执行，后续持久层必须先保存熔断。
 - 输出按 VaultPath 排序，每路径最多一个动作/冲突/共同观察。现存共同基线的存活
   路径数是比例分母；新建文件、已经共同 Missing 的路径不能扩大分母。
-- 默认每批最多 4096 路径/输出，单路径最多 1024 UTF-8 字节。
+- 默认每批最多 16384 路径/输出（同步路径预算 `studiolo_core::SYNC_PATH_BUDGET`，BUG-047 之前是 4096），
+  单路径最多 1024 UTF-8 字节。
   这里没有正文，接入层须在分配集合前施加同等解码预算。
   `Limits::conservative(max_file_bytes)` 必须显式传入实际字节上限，没有 200MB 换算。
   copy_bytes 采用有检查的加法；传输队列总量、并发、stage 与磁盘预算仍待接入。

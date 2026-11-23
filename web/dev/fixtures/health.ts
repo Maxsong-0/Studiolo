@@ -23,6 +23,7 @@ export function healthBody() {
       mode: 'mirror-remote',
       config_matches: true,
       deletes_blocked: '0',
+      path_usage: { used: '4108', budget: '16384' },
     },
     manual_sync_quota: {
       account_limit_bytes: '10737418240',

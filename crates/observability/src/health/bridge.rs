@@ -69,6 +69,15 @@ pub enum ModeLabel {
     Bidirectional,
 }
 
+/// 一轮同步要比对的路径数（基线、canonical、镜像三方合计的不同路径）与上限（BUG-047）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PathUsage {
+    /// 最近一次算出三方并集时的不同路径数。
+    pub used: u64,
+    /// 同步路径预算。
+    pub budget: u64,
+}
+
 /// 第六节的全部证据；`None` 一律走「未知」。
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct BridgeEvidence {
@@ -96,15 +105,18 @@ pub struct BridgeEvidence {
     pub config_matches: Option<bool>,
     /// 最近一次走到删除守卫的那一轮，主库没开文件操作而被挡的主库删除数（BUG-046）；0 即放行，`None` 即还没有一轮走到过守卫。
     pub deletes_blocked: Option<u64>,
+    /// 最近一次算出的三方并集路径数与预算（BUG-047）；`None` 即还没有一轮算到过，不算缺字段。
+    pub path_usage: Option<PathUsage>,
 }
 
 /// 聚合第六节；缺证据一律未知。
 ///
-/// 有正证据就降级，不等别的字段齐（T-223）：删除熔断 → 删除被挡 → 排除项残留 → 配置不符 → 终态未知 →
-/// 非干净退出 → 恢复协议进行中，正文以第一条的整句开头，其余按同一顺序列在「另有：」之后，
-/// 还缺字段就再接「证据不完整：缺<第一个缺的字段>」。没有正证据时：缺字段 → 静止证据过期 → 正常。
+/// 有正证据就降级，不等别的字段齐（T-223）：路径超上限 → 删除熔断 → 删除被挡 → 排除项残留 → 配置不符 →
+/// 终态未知 → 非干净退出 → 恢复协议进行中 → 路径接近上限，正文以第一条的整句开头，其余按同一顺序列在
+/// 「另有：」之后，还缺字段就再接「证据不完整：缺<第一个缺的字段>」。没有正证据时：缺字段 → 静止证据过期 → 正常。
 ///
-/// 删除被挡还没证明过（`None`）不算缺字段。
+/// 删除被挡、路径用量还没证明过（`None`）都不算缺字段。路径超上限时整轮观察停住、别的证据都不会再更新，
+/// 所以它永远排第一；接近上限（到预算的八成）只是提前提醒，排最后（BUG-047）。
 ///
 /// 驱动平面未装配（默认关闭）时也是「未知」：与恢复点、白名单两节同一口径，没启用的能力不显示绿。
 ///
@@ -157,6 +169,7 @@ fn complete(evidence: &BridgeEvidence) -> Result<Complete, &'static str> {
 /// 一条已证实的问题（降级级别的正证据）；变体按判定顺序排。
 #[derive(Clone, Copy)]
 enum Problem {
+    PathsExceeded(PathUsage),
     Fused,
     DeletesBlocked(u64),
     ResidueBlocked,
@@ -164,12 +177,17 @@ enum Problem {
     UnknownJobs(u64),
     UncleanExit(ExitClass),
     Recovering(RecoveryState),
+    PathsNear(PathUsage),
 }
 
 impl Problem {
     /// 排在第一条时的整句。
     fn sentence(self) -> String {
         match self {
+            Self::PathsExceeded(usage) => format!(
+                "这一轮要比对 {} 条路径，超过上限 {} 条，同步停住：要出新版提高上限",
+                usage.used, usage.budget
+            ),
             Self::Fused => "删除熔断生效，本批与后续批次全部阻断".to_owned(),
             Self::DeletesBlocked(count) => format!(
                 "远端删了 {count} 个文件（改名也算），主库没开文件操作，同步整批暂停：到远端恢复这些文件或开文件操作后接着跑"
@@ -179,12 +197,19 @@ impl Problem {
             Self::UnknownJobs(count) => format!("有 {count} 条动作终态未知，等待原键核对"),
             Self::UncleanExit(exit) => format!("上次 headless 运行{}", exit.label()),
             Self::Recovering(state) => format!("恢复协议进行中：{}", state.label()),
+            Self::PathsNear(usage) => format!(
+                "路径用量 {}／{}，已到上限的 {}%：该安排提高上限",
+                usage.used,
+                usage.budget,
+                usage.percent()
+            ),
         }
     }
 
     /// 列在「另有：」之后的短名；细节看结构化明细。
     const fn short(self) -> &'static str {
         match self {
+            Self::PathsExceeded(_) => "路径超上限",
             Self::Fused => "删除熔断",
             Self::DeletesBlocked(_) => "删除被挡",
             Self::ResidueBlocked => "排除项残留",
@@ -192,17 +217,44 @@ impl Problem {
             Self::UnknownJobs(_) => "终态未知动作",
             Self::UncleanExit(_) => "非干净退出",
             Self::Recovering(_) => "恢复协议进行中",
+            Self::PathsNear(_) => "路径接近上限",
+        }
+    }
+}
+
+impl PathUsage {
+    /// 用量超过预算：这一轮观察已经停住。
+    const fn exceeded(self) -> bool {
+        self.used > self.budget
+    }
+
+    /// 用量到预算的八成（含恰好用满）但没超；用 u128 算，极端值不溢出。
+    const fn near(self) -> bool {
+        !self.exceeded() && (self.used as u128) * 5 >= (self.budget as u128) * 4
+    }
+
+    /// 已用的百分比，向下取整；预算为 0 时按 100。
+    const fn percent(self) -> u128 {
+        if self.budget == 0 {
+            100
+        } else {
+            (self.used as u128) * 100 / (self.budget as u128)
         }
     }
 }
 
 /// 按判定顺序列出全部已证实的问题，别的字段齐不齐都照列，顺序也不变。
 ///
-/// 删除熔断排第一：它持久、没有解除入口，开了文件操作也照样挡，是更该先处理的那一个（T-222；
+/// 路径超上限总在最前（BUG-047）：这一轮观察已经停住，别的证据都不会再更新，提高上限之前其余问题都处理不了。
+/// 其后删除熔断：它持久、没有解除入口，开了文件操作也照样挡，是更该先处理的那一个（T-222；
 /// 原来还要求十一个字段都齐，因为字段不齐时熔断报不出来，T-223 之后报得出来，这个条件用户定去掉）。
-/// 删除被挡其次（被挡的那几轮不走执行段，重启后别的字段一直补不齐，BUG-046）。
+/// 删除被挡再次（被挡的那几轮不走执行段，重启后别的字段一直补不齐，BUG-046）。路径接近上限只是提醒，排最后。
 fn problems(evidence: &BridgeEvidence) -> Vec<Problem> {
     [
+        evidence
+            .path_usage
+            .filter(|usage| usage.exceeded())
+            .map(Problem::PathsExceeded),
         (evidence.fused == Some(true)).then_some(Problem::Fused),
         evidence
             .deletes_blocked
@@ -222,6 +274,10 @@ fn problems(evidence: &BridgeEvidence) -> Vec<Problem> {
             .recovery
             .filter(|state| *state != RecoveryState::Idle)
             .map(Problem::Recovering),
+        evidence
+            .path_usage
+            .filter(|usage| usage.near())
+            .map(Problem::PathsNear),
     ]
     .into_iter()
     .flatten()
@@ -260,10 +316,14 @@ fn judge(evidence: &BridgeEvidence) -> (HealthState, String) {
             "静止证据已过期，等待下一轮重新取得".to_owned(),
         );
     }
+    let paths = evidence
+        .path_usage
+        .map(|usage| format!("；路径 {}／{}", usage.used, usage.budget))
+        .unwrap_or_default();
     (
         HealthState::Normal,
         format!(
-            "第 {} 批于 {} 闭合；冲突副本 {}；镜像 {} 字节（非账号用量）；模式 {}",
+            "第 {} 批于 {} 闭合；冲突副本 {}；镜像 {} 字节（非账号用量）{paths}；模式 {}",
             full.last_batch.sequence,
             full.last_batch.unix_seconds,
             full.conflict_copies,

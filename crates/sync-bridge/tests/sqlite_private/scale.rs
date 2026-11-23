@@ -8,9 +8,12 @@ fn near_budget_terminal_outcomes_use_individual_rows_without_rewriting_input() {
     let f = Fixture::new();
     let mut store = f.init();
     let ledger = MemoryAuditLedger::new();
-    let original = input(&store, 1800, Presence::Missing, present(9));
+    // 基线按 `max_paths × 1178` 字节预留（预算 16384 时约 18.4 MiB），每动作 32 KiB；
+    // 1400 个动作的一批落在状态预算的九成到满额之间（BUG-047 前预算 4096 时这里是 1800）。
+    let count = 1400;
+    let original = input(&store, count, Presence::Missing, present(9));
     let actions = reserve(&mut store, original.clone());
-    assert_eq!(actions.len(), 1800);
+    assert_eq!(actions.len(), count);
     let reserved = super::super::capacity::reserved_bytes(&store.cache).unwrap();
     assert!(reserved > super::super::STATE_MAX * 9 / 10 && reserved <= super::super::STATE_MAX);
     let before = store.statistics();
@@ -40,7 +43,7 @@ fn near_budget_terminal_outcomes_use_individual_rows_without_rewriting_input() {
     let after = store.statistics();
     assert_eq!(after.full_loads, before.full_loads);
     assert_eq!(after.full_writes, before.full_writes);
-    assert_eq!(after.action_writes, 7200);
+    assert_eq!(after.action_writes, 4 * count);
     let read = rusqlite::Connection::open(f.root.join("bridge.sqlite3")).unwrap();
     let same: Vec<u8> = read
         .query_row(
@@ -53,7 +56,7 @@ fn near_budget_terminal_outcomes_use_individual_rows_without_rewriting_input() {
     let rows: i64 = read
         .query_row("SELECT count(*) FROM bridge_actions", [], |r| r.get(0))
         .unwrap();
-    assert_eq!(rows, 1800);
+    assert_eq!(rows, count as i64);
     drop(read);
     assert_eq!(
         std::fs::metadata(f.root.join("bridge.sqlite3-wal"))
@@ -70,7 +73,7 @@ fn near_budget_terminal_outcomes_use_individual_rows_without_rewriting_input() {
             Some(common(&store, &original, present(9))),
         )
         .unwrap();
-    assert_eq!(store.view().unwrap().baseline.entries.len(), 1800);
+    assert_eq!(store.view().unwrap().baseline.entries.len(), count);
     for view in actions {
         assert!(matches!(
             store.lookup(&view.action.key).unwrap().status,

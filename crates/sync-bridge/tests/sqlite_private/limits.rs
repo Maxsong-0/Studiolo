@@ -88,7 +88,8 @@ fn decoder_rejects_huge_count_before_allocating_collection() {
     let original = input(&store, 1, present(9), present(9));
     let mut bytes = super::super::input_codec::encode(&original).unwrap();
     let count_offset = 8 + 16 + 16 + 16 + 32 + 32 + 32 + 8;
-    bytes[count_offset..count_offset + 8].copy_from_slice(&4097u64.to_be_bytes());
+    let over = studiolo_core::SYNC_PATH_BUDGET as u64 + 1;
+    bytes[count_offset..count_offset + 8].copy_from_slice(&over.to_be_bytes());
     assert_eq!(
         super::super::input_codec::decode(&bytes),
         Err(BridgeError::Budget)
@@ -103,7 +104,7 @@ fn decoder_rejects_huge_count_before_allocating_collection() {
 fn invalid_storage_budget_never_initializes() {
     let f = Fixture::new();
     let mut limits = Limits::conservative(1_000_000);
-    limits.max_paths = 4097;
+    limits.max_paths = studiolo_core::SYNC_PATH_BUDGET + 1;
     assert!(matches!(
         BridgeState::initialize(&f.root, binding(), limits),
         Err(BridgeError::Budget)

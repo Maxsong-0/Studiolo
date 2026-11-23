@@ -125,13 +125,16 @@ fn original_selection_is_owned_and_additional_missing_is_bounded_after_union() {
         reader.finish_scoped_observation(survey, &[path("notes/generated.md")]),
         Err(BrokerError::InvalidArtifact(reason)) if reason == INVALID
     ));
-    let original: Vec<_> = (0..2048)
+    // 初始与补充各一半，合起来恰好预算条缺失，再加 fixture 里一个真实对象就超一条。
+    let budget = studiolo_core::SYNC_PATH_BUDGET;
+    let half = budget / 2;
+    let original: Vec<_> = (0..half)
         .map(|i| path(&format!("notes/missing-{i}")))
         .collect();
     let survey = reader
         .begin_scoped_observation(&selection(), &original)
         .unwrap();
-    let additional: Vec<_> = (2048..4096)
+    let additional: Vec<_> = (half..budget)
         .map(|i| path(&format!("notes/missing-{i}")))
         .collect();
     reset();
@@ -139,7 +142,32 @@ fn original_selection_is_owned_and_additional_missing_is_bounded_after_union() {
         reader.finish_scoped_observation(survey, &additional),
         Err(BrokerError::WriterLimitExceeded)
     ));
-    assert_eq!(count(1), 0, "4096 个缺失加一个真实对象必须在首个正文前拒绝");
+    assert_eq!(count(1), 0, "预算条缺失加一个真实对象必须在首个正文前拒绝");
+}
+
+/// 补充集合自己的上限也是同步路径预算（BUG-047）：初始只有那个真实对象时，
+/// 补充预算减一条缺失恰好用满；补充比预算多一条，在核对任何路径之前就拒绝。
+#[test]
+fn additional_missing_alone_may_fill_the_whole_sync_path_budget() {
+    let f = Fixture::new();
+    f.write("notes/a", b"a");
+    let reader = ReadOnlyVault::open(&f.root).unwrap();
+    let budget = studiolo_core::SYNC_PATH_BUDGET;
+    let missing = |end: usize| {
+        (0..end)
+            .map(|i| path(&format!("notes/missing-{i}")))
+            .collect::<Vec<_>>()
+    };
+    let survey = reader.begin_scoped_observation(&selection(), &[]).unwrap();
+    let full = reader
+        .finish_scoped_observation(survey, &missing(budget - 1))
+        .unwrap();
+    assert_eq!(full.entries().len(), budget);
+    let survey = reader.begin_scoped_observation(&selection(), &[]).unwrap();
+    assert!(matches!(
+        reader.finish_scoped_observation(survey, &missing(budget + 1)),
+        Err(BrokerError::WriterLimitExceeded)
+    ));
 }
 
 #[test]

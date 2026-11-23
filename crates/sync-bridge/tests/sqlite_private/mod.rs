@@ -1,5 +1,6 @@
 //! 真实临时 SQLite 契约草稿；未运行。内存审计用例不代表生产身份验收。
 
+mod capacity_raise;
 mod checkpoint;
 mod corruption;
 mod deadlines;

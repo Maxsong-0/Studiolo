@@ -6,8 +6,10 @@ use super::{
 };
 use std::collections::{BTreeMap, BTreeSet};
 
-const MAX_PATHS: usize = 4096;
-const MAX_PATH_BYTES: usize = 1024 * 1024;
+/// 三方合计的不同路径数：同步路径预算（BUG-047）。
+const MAX_PATHS: usize = studiolo_core::SYNC_PATH_BUDGET;
+/// 并集路径文字总长：按每条 256 字节随路径预算放大（预算 4096 时是 1 MiB）。
+const MAX_PATH_BYTES: usize = MAX_PATHS * 256;
 const MAX_OBSERVED_BYTES: u64 = 4 * 1024 * 1024 * 1024;
 
 pub(super) fn approve(

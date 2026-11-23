@@ -24,7 +24,7 @@ pub(super) fn capture(
     let mut inspected = 0_usize;
     let mut bytes = 0_usize;
     while let Some(prefix) = pending.pop() {
-        if directories.len() >= 4096 {
+        if directories.len() >= studiolo_core::SYNC_PATH_BUDGET {
             return Err(BrokerError::WriterLimitExceeded);
         }
         let dir = directory(root, if prefix.is_empty() { "." } else { &prefix })?;
@@ -106,7 +106,7 @@ pub(super) fn capture(
             } else if selection.needed_directory(&path) {
                 return Err(crate::sync_observation::invalid());
             } else if selection.file_limit(&path).is_some() {
-                if files.len() >= 4096 {
+                if files.len() >= studiolo_core::SYNC_PATH_BUDGET {
                     return Err(BrokerError::WriterLimitExceeded);
                 }
                 crate::readonly::sync::check_file(&metadata, private)?;
@@ -134,7 +134,7 @@ pub(super) fn capture(
     let mut paths: BTreeSet<VaultPath> = files.keys().cloned().collect();
     paths.extend(selection.files.iter().map(|rule| rule.path.clone()));
     paths.extend(required.iter().cloned());
-    if paths.len() > 4096 {
+    if paths.len() > studiolo_core::SYNC_PATH_BUDGET {
         return Err(BrokerError::WriterLimitExceeded);
     }
     let mut candidates = BTreeMap::new();

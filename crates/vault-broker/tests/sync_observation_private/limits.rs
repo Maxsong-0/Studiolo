@@ -62,27 +62,63 @@ fn exact_256_mib_sparse_object_is_streamed_and_one_extra_byte_is_rejected() {
 
 #[test]
 fn object_and_required_path_caps_are_not_per_directory_budgets() {
+    let budget = studiolo_core::SYNC_PATH_BUDGET;
     let f = Fixture::new();
     let mut broker = f.broker();
     fs::create_dir(f.root.join("notes")).unwrap();
-    let required: Vec<_> = (0..4097)
+    let required: Vec<_> = (0..=budget)
         .map(|i| path(&format!("notes/missing-{i}")))
         .collect();
+    assert!(
+        broker
+            .capture_sync_observation(&selection(), &required[..budget])
+            .is_ok(),
+        "恰好预算条必查路径必须通过"
+    );
     reset();
     assert!(matches!(
         broker.capture_sync_observation(&selection(), &required),
         Err(BrokerError::WriterLimitExceeded)
     ));
     assert_eq!(count(0), 0);
-    for i in 0..4097 {
+    for i in 0..budget {
         fs::File::create(f.root.join(format!("notes/file-{i}"))).unwrap();
     }
+    assert!(
+        broker.capture_sync_observation(&selection(), &[]).is_ok(),
+        "恰好预算个文件必须通过"
+    );
+    fs::File::create(f.root.join("notes/file-extra")).unwrap();
     reset();
     assert!(matches!(
         broker.capture_sync_observation(&selection(), &[]),
         Err(BrokerError::WriterLimitExceeded)
     ));
     assert_eq!(count(1), 0);
+}
+
+/// BUG-047：169 第二次主库观察带「基线∪主库∪镜像」4108 条必查路径，旧的 4096 在这里报写者上限。
+#[test]
+fn union_of_4108_required_paths_seen_on_169_is_observed() {
+    let f = Fixture::new();
+    let mut broker = f.broker();
+    fs::create_dir(f.root.join("notes")).unwrap();
+    for i in 0..1556 {
+        fs::File::create(f.root.join(format!("notes/present-{i}"))).unwrap();
+    }
+    let required: Vec<_> = (0..4108)
+        .map(|i| {
+            if i < 1556 {
+                path(&format!("notes/present-{i}"))
+            } else {
+                path(&format!("notes/remote-only-{i}"))
+            }
+        })
+        .collect();
+    let proof = broker
+        .capture_sync_observation(&selection(), &required)
+        .unwrap();
+    assert_eq!(proof.entries().len(), 4108);
 }
 
 #[test]
@@ -106,9 +142,13 @@ fn directory_depth_and_full_name_bytes_are_independently_bounded() {
     let f = Fixture::new();
     let mut broker = f.broker();
     fs::create_dir(f.root.join("notes")).unwrap();
-    for i in 0..4095 {
+    // 根、notes 与子目录合计恰好预算个目录可过，再多一个即拒绝。
+    let budget = studiolo_core::SYNC_PATH_BUDGET;
+    for i in 0..budget - 2 {
         fs::create_dir(f.root.join(format!("notes/dir-{i}"))).unwrap();
     }
+    assert!(broker.capture_sync_observation(&selection(), &[]).is_ok());
+    fs::create_dir(f.root.join("notes/dir-extra")).unwrap();
     assert!(matches!(
         broker.capture_sync_observation(&selection(), &[]),
         Err(BrokerError::WriterLimitExceeded)

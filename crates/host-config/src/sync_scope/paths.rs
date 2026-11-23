@@ -96,7 +96,10 @@ impl Index {
                     .bytes
                     .checked_add(key.len() + prefix.len())
                     .ok_or(SyncScopeError::Budget)?;
-                if self.prefixes.len() >= 16_384 || self.bytes > 4 * 1024 * 1024 {
+                // 每条路径约四个前缀、1 KiB 索引字节，随同步路径预算放大（预算 4096 时是 16384 个、4 MiB）。
+                if self.prefixes.len() >= 4 * studiolo_core::SYNC_PATH_BUDGET
+                    || self.bytes > studiolo_core::SYNC_PATH_BUDGET * 1024
+                {
                     return Err(SyncScopeError::Budget);
                 }
                 self.prefixes.insert(key, prefix.clone());

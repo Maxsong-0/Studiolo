@@ -131,9 +131,9 @@ pub struct DeleteLimits {
 /// 纯规划的元数据与实际对象大小预算。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Limits {
-    /// 不超过 4096 的整批路径上限。
+    /// 整批路径上限，不超过同步路径预算 `studiolo_core::SYNC_PATH_BUDGET`。
     pub max_paths: usize,
-    /// 不超过 4096 的全部输出项上限。
+    /// 全部输出项上限，不超过同步路径预算。
     pub max_outputs: usize,
     /// 装配显式给出的实际字节上限，没有隐含套餐单位。
     pub max_file_bytes: u64,
@@ -145,8 +145,8 @@ impl Limits {
     /// 保守删除默认；附件大小必须显式给出。
     pub fn conservative(max_file_bytes: u64) -> Self {
         Self {
-            max_paths: 4096,
-            max_outputs: 4096,
+            max_paths: studiolo_core::SYNC_PATH_BUDGET,
+            max_outputs: studiolo_core::SYNC_PATH_BUDGET,
             max_file_bytes,
             deletion: DeleteLimits {
                 max_count: 5,

@@ -116,16 +116,16 @@ fn recovery_point(jobs: &BackupJobsEvidence) -> (Option<RecoveryPointEvidence>, 
     }
 }
 
-/// `SyncScope` 固定的范围内对象上限（`host-config` 的 `sync_scope/union.rs::MAX_PATHS`，未公开）。
-const SYNC_SCOPE_MAX_OBJECTS: u64 = 4096;
+/// 范围内对象上限就是同步路径预算（BUG-047）：镜像观察、范围并集都按它截止。
+const SYNC_SCOPE_MAX_OBJECTS: u64 = studiolo_core::SYNC_PATH_BUDGET as u64;
 
 /// 预警水位：上限的七成，整数截断；乘法越界即 `None`。
 fn seven_tenths(limit: u64) -> Option<u64> {
     limit.checked_mul(7).map(|value| value / 10)
 }
 
-/// 用镜像读数对人工配额下结论（ADR-025 D11）：字节上限＝账号套餐上限、对象上限＝`SyncScope`
-/// 固定的 4096，预警各取七成。人工配额缺失、水位不自洽或读数缺失一律未知，不算正常。
+/// 用镜像读数对人工配额下结论（ADR-025 D11）：字节上限＝账号套餐上限、对象上限＝同步路径预算
+/// （`studiolo_core::SYNC_PATH_BUDGET`），预警各取七成。人工配额缺失、水位不自洽或读数缺失一律未知，不算正常。
 fn sync_quota_verdict(quota: Option<ManualQuota>, usage: Option<SyncUsage>) -> QuotaVerdict {
     let Some(quota) = quota else {
         return QuotaVerdict::Unknown;
@@ -208,6 +208,7 @@ mod tests {
                 mode: Some(ModeLabel::MirrorRemote),
                 config_matches: Some(true),
                 deletes_blocked: Some(0),
+                path_usage: None,
             }
         }
 
@@ -460,16 +461,18 @@ mod tests {
     }
 
     #[test]
-    fn sync配额对象维度取范围固定上限4096与其七成() {
+    fn sync配额对象维度取同步路径预算与其七成() {
         let verdict = |objects| {
             let usage = SyncUsage { objects, bytes: 1 };
             sync_quota_verdict(Some(QUOTA), Some(usage))
         };
 
-        assert_eq!(verdict(2_866), QuotaVerdict::Normal);
-        assert_eq!(verdict(2_867), QuotaVerdict::Warning);
-        assert_eq!(verdict(4_096), QuotaVerdict::Warning);
-        assert_eq!(verdict(4_097), QuotaVerdict::Exceeded);
+        // 预算 16384 的七成截断为 11468（BUG-047 之前是 4096 与 2867）。
+        assert_eq!(verdict(4_097), QuotaVerdict::Normal, "旧上限之上不再误报");
+        assert_eq!(verdict(11_467), QuotaVerdict::Normal);
+        assert_eq!(verdict(11_468), QuotaVerdict::Warning);
+        assert_eq!(verdict(16_384), QuotaVerdict::Warning);
+        assert_eq!(verdict(16_385), QuotaVerdict::Exceeded);
     }
 
     #[test]

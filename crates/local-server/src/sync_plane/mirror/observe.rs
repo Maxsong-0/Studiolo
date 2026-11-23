@@ -14,8 +14,8 @@ use studiolo_host_config::{SyncObservationSelection, SyncTraversalRule};
 use studiolo_observability::quota::SyncUsage;
 use studiolo_sync_bridge::{Binding, FileVersion, Inventory, Presence, Side};
 
-/// 观察里最多接受的文件数；与规划器的整批路径上限一致。
-const FILE_LIMIT: usize = 4096;
+/// 观察里最多接受的文件数：同步路径预算，与规划器的整批路径上限同一个值（BUG-047）。
+const FILE_LIMIT: usize = studiolo_core::SYNC_PATH_BUDGET;
 /// 路径分量上限；与范围索引一致。
 const DEPTH_LIMIT: usize = 64;
 

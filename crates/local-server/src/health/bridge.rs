@@ -15,6 +15,13 @@ pub struct BatchBody {
     pub(super) closed_at: Option<String>,
 }
 
+/// 一轮要比对的路径数与上限（BUG-047）；两个数都按十进制字符串传输。
+#[derive(Debug, Serialize)]
+pub struct PathUsageBody {
+    pub(super) used: String,
+    pub(super) budget: String,
+}
+
 /// 不含路径、凭证、远端地址或stderr的Bridge投影；u64按十进制字符串传输。
 #[derive(Debug, Serialize)]
 pub struct BridgeBody {
@@ -30,6 +37,7 @@ pub struct BridgeBody {
     pub(super) mode: Option<&'static str>,
     pub(super) config_matches: Option<bool>,
     pub(super) deletes_blocked: Option<String>,
+    pub(super) path_usage: Option<PathUsageBody>,
 }
 impl BridgeBody {
     pub(super) fn from_evidence(value: BridgeEvidence) -> Self {
@@ -63,6 +71,10 @@ impl BridgeBody {
             mode: value.mode.map(|value| value.label()),
             config_matches: value.config_matches,
             deletes_blocked: value.deletes_blocked.map(|n| n.to_string()),
+            path_usage: value.path_usage.map(|usage| PathUsageBody {
+                used: usage.used.to_string(),
+                budget: usage.budget.to_string(),
+            }),
         }
     }
 }

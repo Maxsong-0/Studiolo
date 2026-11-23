@@ -2,7 +2,7 @@
 
 use studiolo_observability::health::{
     BACKUP_DISABLED, BatchStamp, BridgeEvidence, ExitClass, HealthInputs, HealthSection,
-    HealthState, Instant, ModeLabel, NO_RECOVERY_POINT, OwnerLabel, OwnerLiveness,
+    HealthState, Instant, ModeLabel, NO_RECOVERY_POINT, OwnerLabel, OwnerLiveness, PathUsage,
     RecoveryPointEvidence, RecoveryState, ResidueGuard, aggregate, diagnose,
 };
 
@@ -23,6 +23,7 @@ const NORMAL_BRIDGE: BridgeEvidence = BridgeEvidence {
     mode: Some(ModeLabel::MirrorRemote),
     config_matches: Some(true),
     deletes_blocked: Some(0),
+    path_usage: None,
 };
 use studiolo_observability::quota::QuotaVerdict;
 

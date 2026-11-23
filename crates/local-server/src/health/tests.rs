@@ -42,6 +42,7 @@ fn normal_bridge(now: i64) -> BridgeEvidence {
         mode: Some(ModeLabel::MirrorRemote),
         config_matches: Some(true),
         deletes_blocked: Some(0),
+        path_usage: None,
     }
 }
 

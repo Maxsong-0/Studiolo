@@ -169,6 +169,15 @@ impl PlaneHealth {
         }
     }
 
+    /// 观察回填（`witness::budget::check` 调，BUG-047）：最近一次算出的三方并集路径数与预算；
+    /// 超了也照实记，健康页才说得出超了多少。轮末收口不动它，重启后下一次观察即恢复。
+    pub fn record_path_usage(&self, used: u64, budget: u64) {
+        if let Ok(mut inner) = self.inner.lock() {
+            inner.evidence.path_usage =
+                Some(studiolo_observability::health::PathUsage { used, budget });
+        }
+    }
+
     /// 执行段回填（驱动器在 `reserve_and_execute` 之后调）：本批序号、终态未知的动作数、
     /// 删除熔断是否生效；冲突副本数＝最近一次完整观察里两侧命名为冲突副本的路径数
     /// ＋持久 `conflict_stamps` 中当前待解决的冲突数（饱和加）。

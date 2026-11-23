@@ -8,7 +8,7 @@ impl SyncReadSelection {
         if self.folders.len() > 64
             || self.files.len() > 128
             || self.excluded_prefixes.len() > 320
-            || required.len() > 4096
+            || required.len() > studiolo_core::SYNC_PATH_BUDGET
             || (self.folders.is_empty() && self.files.is_empty())
         {
             return Err(BrokerError::WriterLimitExceeded);

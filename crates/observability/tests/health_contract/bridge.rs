@@ -466,3 +466,135 @@ fn 重启后证据仍不完整时已知的非干净退出判降级且不假报�
     assert_eq!(state, HealthState::Unknown);
     assert_eq!(detail, "Bridge 证据不完整：缺最近一批");
 }
+
+/// BUG-047：三方并集超过路径预算时观察整轮失败、同步停住；这条排在所有正证据前面，也不等别的字段齐。
+#[test]
+fn 路径超上限排在所有正证据前面且不等字段齐() {
+    let over = BridgeEvidence {
+        path_usage: Some(PathUsage {
+            used: 4108,
+            budget: 4096,
+        }),
+        deletes_blocked: Some(2),
+        fused: Some(true),
+        ..BridgeEvidence::default()
+    };
+
+    assert_eq!(
+        judge(&over),
+        (
+            HealthState::Degraded,
+            "这一轮要比对 4108 条路径，超过上限 4096 条，同步停住：要出新版提高上限；另有：删除熔断、删除被挡；证据不完整：缺最近一批".to_owned()
+        )
+    );
+    let full = BridgeEvidence {
+        path_usage: over.path_usage,
+        fused: Some(true),
+        ..NORMAL_BRIDGE
+    };
+    assert_eq!(
+        judge(&full).1,
+        "这一轮要比对 4108 条路径，超过上限 4096 条，同步停住：要出新版提高上限；另有：删除熔断",
+        "字段齐时也排在熔断前面"
+    );
+    let exact = variant(|e| {
+        e.path_usage = Some(PathUsage {
+            used: 4096,
+            budget: 4096,
+        })
+    });
+    assert_eq!(judge(&exact).0, HealthState::Degraded, "恰好用满算接近上限");
+    assert!(
+        judge(&exact)
+            .1
+            .starts_with("路径用量 4096／4096，已到上限的 100%")
+    );
+}
+
+/// 到预算的八成就降级提前报（BUG-047），排在别的正证据后面；差一条不到八成照常正常。
+#[test]
+fn 路径用量到八成判降级并排在其余正证据之后() {
+    let near = variant(|e| {
+        e.path_usage = Some(PathUsage {
+            used: 13_108,
+            budget: 16_384,
+        })
+    });
+    assert_eq!(
+        judge(&near),
+        (
+            HealthState::Degraded,
+            "路径用量 13108／16384，已到上限的 80%：该安排提高上限".to_owned()
+        )
+    );
+    let below = variant(|e| {
+        e.path_usage = Some(PathUsage {
+            used: 13_107,
+            budget: 16_384,
+        })
+    });
+    assert_eq!(judge(&below).0, HealthState::Normal);
+    // 恰好八成（预算 16384 时没有整数恰好落在八成上，换个能整除的预算钉住「含等号」）。
+    let eight = variant(|e| e.path_usage = Some(PathUsage { used: 8, budget: 10 }));
+    assert_eq!(
+        judge(&eight),
+        (
+            HealthState::Degraded,
+            "路径用量 8／10，已到上限的 80%：该安排提高上限".to_owned()
+        )
+    );
+    let seven = variant(|e| e.path_usage = Some(PathUsage { used: 7, budget: 10 }));
+    assert_eq!(judge(&seven).0, HealthState::Normal);
+    let with_unknown = BridgeEvidence {
+        unknown_jobs: Some(1),
+        ..near
+    };
+    assert_eq!(
+        judge(&with_unknown).1,
+        "有 1 条动作终态未知，等待原键核对；另有：路径接近上限"
+    );
+}
+
+/// 正常正文带路径用量，放在模式之前；还没算到过（`None`）不算缺字段、不阻止正常（BUG-047）。
+#[test]
+fn 正常正文带路径用量且没算到过时不阻止正常() {
+    let normal = variant(|e| {
+        e.path_usage = Some(PathUsage {
+            used: 4108,
+            budget: 16_384,
+        })
+    });
+    let (state, detail) = judge(&normal);
+    assert_eq!(state, HealthState::Normal);
+    assert!(
+        detail.ends_with("；路径 4108／16384；模式 mirror-remote"),
+        "{detail}"
+    );
+    let unproven = variant(|e| e.path_usage = None);
+    assert_eq!(judge(&unproven).0, HealthState::Normal);
+    assert!(!judge(&unproven).1.contains("路径"));
+}
+
+#[test]
+fn 路径超上限与其余正证据全部并存且缺字段时正文仍在长度预算内() {
+    let worst = BridgeEvidence {
+        path_usage: Some(PathUsage {
+            used: u64::MAX,
+            budget: u64::MAX - 1,
+        }),
+        deletes_blocked: Some(u64::MAX),
+        fused: Some(true),
+        residue_guard: Some(ResidueGuard::Blocked),
+        config_matches: Some(false),
+        unknown_jobs: Some(u64::MAX),
+        last_exit: Some(ExitClass::OwnerStopped),
+        recovery: Some(RecoveryState::ForcedMirrorRemote),
+        ..BridgeEvidence::default()
+    };
+
+    let (state, detail) = judge(&worst);
+
+    assert_eq!(state, HealthState::Degraded);
+    assert!(detail.starts_with("这一轮要比对 18446744073709551615 条路径"));
+    assert!(detail.chars().count() <= 200, "{}", detail.chars().count());
+}

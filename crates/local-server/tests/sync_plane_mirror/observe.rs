@@ -179,6 +179,27 @@ fn observe_rejects_oversized_files() {
     assert_eq!(limit.usage.bytes, 65_536 + 5);
 }
 
+/// 文件数上限就是同步路径预算（BUG-047）：恰好预算个文件完整，再多一个即不完整。
+#[test]
+fn observe_accepts_budget_files_and_one_more_is_incomplete() {
+    let fixture = ScopeFixture::new();
+    let scope = fixture.scope();
+    let selection = selection(&scope);
+    let mirror = private_dir();
+    let budget = studiolo_core::SYNC_PATH_BUDGET;
+    fs::create_dir_all(mirror.path().join("笔记")).unwrap();
+    for i in 0..budget {
+        fs::write(mirror.path().join(format!("笔记/{i}.md")), b"x").unwrap();
+    }
+    let exact = observe(&view(mirror.path()), &selection, &binding(), 1, &[]).unwrap();
+    assert!(exact.inventory.complete, "恰好预算个文件可以");
+    // 精确文件规则 `附件/手册` 缺失时另记一条 Missing，所以按对象数核。
+    assert_eq!(exact.usage.objects, budget as u64);
+    fs::write(mirror.path().join("笔记/extra.md"), b"x").unwrap();
+    let over = observe(&view(mirror.path()), &selection, &binding(), 2, &[]).unwrap();
+    assert!(!over.inventory.complete, "超过预算个文件即不完整");
+}
+
 #[test]
 fn observe_skips_hard_excluded_names_like_scope() {
     let fixture = ScopeFixture::new();
