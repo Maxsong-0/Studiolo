@@ -180,7 +180,7 @@ fn deliver(&self, message: &AlertMessage) -> Result<DeliveryReceipt, TransportEr
 
 **同步停摆告警（T-224，BUG-046 防回归）**：健康页要登录，带外看不到第六节。人侧 Bridge 平面因此每轮在平面根写一份
 同步状态回执 `sync-status.json`（两边最后一次对上的时刻、删除被挡数和证明它的那一轮时刻），F4 的 169 探针读它：两边没对上满 6 小时报 A07，
-删除守卫 15 分钟内证明过被挡、同步整批暂停报 A08（不另报 A07），都是 warning、没恢复就每天一次（每个代号单独算，互换或被打断不重新算）。人侧只写事实，阈值在探针里；
+删除守卫 1 小时内证明过被挡、同步整批暂停报 A08（不另报 A07），都是 warning、没恢复就每天一次（每个代号单独算，互换或被打断不重新算）。人侧只写事实，阈值在探针里；
 回执读不到或坏了按 A07 报。字段、写出时机与读法见 [sync-status-receipt](../contracts/sync-status-receipt.md)，
 投递与心跳见 `deploy/alerts/README.md`。健康页 JSON 和第六节判定不因此改变。
 

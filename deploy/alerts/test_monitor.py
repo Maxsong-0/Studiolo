@@ -328,7 +328,7 @@ class MonitorTests(unittest.TestCase):
                     PROBE.read_sync_status(path)
             self.assertEqual(PROBE.read_sync_status(path)["deletes_blocked"], 1309)
 
-    def test_sync_flags_six_hours_and_fifteen_minute_freshness(self):
+    def test_sync_flags_six_hours_and_one_hour_proof_freshness(self):
         now = 1_800_000_000
         def status(written, aligned, blocked, checked):
             return {"schema": 1, "written_at": written, "last_aligned_at": aligned,
@@ -340,18 +340,20 @@ class MonitorTests(unittest.TestCase):
         # 回执没写出来（读不到、坏了）或写出时刻在未来（时钟回拨）：按没对上报，不算被挡。
         self.assertEqual(PROBE.sync_flags(None, now), (True, False))
         self.assertEqual(PROBE.sync_flags(status(now + 1, now, 1309, now), now), (True, False))
-        # 被挡只在守卫 15 分钟内证明过才算数；0 和 null 不算被挡。
-        self.assertEqual(PROBE.sync_flags(status(now, now - 900, 1309, now - 900), now), (False, True))
-        self.assertEqual(PROBE.sync_flags(status(now, now - 901, 1309, now - 901), now), (False, False))
+        # 被挡只在守卫 1 小时内证明过才算数；0 和 null 不算被挡。
+        self.assertEqual(PROBE.sync_flags(status(now, now - 3600, 1309, now - 3600), now), (False, True))
+        self.assertEqual(PROBE.sync_flags(status(now, now - 3601, 1309, now - 3601), now), (False, False))
+        # 慢轮次：证明在轮末才换新，两轮各 10 分钟时换新前已经旧了 25 分钟，仍算被挡，不一轮一掉（R2-F1）。
+        self.assertEqual(PROBE.sync_flags(status(now - 5, now - 3000, 1309, now - 1500), now), (False, True))
         self.assertEqual(PROBE.sync_flags(status(now, now - 7 * 3600, 1309, now - 300), now), (True, True))
         self.assertEqual(PROBE.sync_flags(status(now, now, 0, now), now), (False, False))
         self.assertEqual(PROBE.sync_flags(status(now, now, None, None), now), (False, False))
-        # 人侧还在每轮写回执、但轮次走不到守卫（观察阶段就失败）：写出时刻是新的、证明是 20 分钟前的，
+        # 人侧还在每轮写回执、但轮次走不到守卫（观察阶段就失败）：写出时刻是新的、证明是 2 小时前的，
         # 不再报被挡，按没对上报（复查 F5）。
-        stale_proof = status(now - 30, now - 7 * 3600, 1309, now - 1200)
+        stale_proof = status(now - 30, now - 7 * 3600, 1309, now - 7200)
         self.assertEqual(PROBE.sync_flags(stale_proof, now), (True, False))
-        # 卡住的人侧：回执停在 20 分钟前、还记着被挡，最后对上在 7 小时前 → 同样按没对上报。
-        stuck = status(now - 1200, now - 7 * 3600, 1309, now - 1200)
+        # 卡住的人侧：回执停在 2 小时前、还记着被挡，最后对上在 7 小时前 → 同样按没对上报。
+        stuck = status(now - 7200, now - 7 * 3600, 1309, now - 7200)
         flags = PROBE.sync_flags(stuck, now)
         self.assertEqual(flags, (True, False))
         probe = dict(services_ok=True, clock_ok=True, mcp_ok=True, replica_stale=False, memory_high=False,
