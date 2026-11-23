@@ -2,6 +2,7 @@
 mod boundaries;
 mod drift;
 mod facts;
+mod index_budget;
 mod limits;
 mod local_boundaries;
 mod local_drift;

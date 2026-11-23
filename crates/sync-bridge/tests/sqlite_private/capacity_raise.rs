@@ -148,6 +148,31 @@ fn raised_capacity_keeps_a_fuse_frozen_in_the_old_budget() {
     assert!(store.view().unwrap().fused, "升级不解除熔断");
 }
 
+/// 基线按 `max_paths × 1178` 字节预留：旧预算下装得下的一大批，升到新预算后会超出 64 MiB 状态预算。
+/// 这种升级整体拒绝，库保持原样（人侧启动因此失败关闭，不丢这一批）。
+#[test]
+fn a_raise_that_no_longer_fits_the_state_budget_is_rejected_and_changes_nothing() {
+    let f = Fixture::new();
+    let mut store = old_chain(&f);
+    let mut large = input(&store, 1700, Presence::Missing, present(9));
+    large.limits = old_limits();
+    assert_eq!(reserve(&mut store, large.clone()).len(), 1700);
+    let version = store.view().unwrap().version;
+    let refused = store.raise_capacity(new_limits());
+    assert_eq!(refused, Err(BridgeError::Budget));
+    assert_eq!(store.view().unwrap().version, version);
+    drop(store);
+
+    let mut store = f.reopen();
+    assert_eq!(store.view().unwrap().version, version);
+    assert_eq!(store.frozen_pending().unwrap(), Some(large));
+    assert_eq!(
+        store.raise_capacity(old_limits()),
+        Ok(None),
+        "库里仍是旧预算"
+    );
+}
+
 #[test]
 fn only_a_pure_capacity_raise_is_accepted() {
     let f = Fixture::new();

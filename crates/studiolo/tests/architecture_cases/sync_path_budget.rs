@@ -9,10 +9,11 @@ use std::{fs, path::Path};
 const DEFINITION: &str = "crates/core/src/sync_budget.rs";
 
 /// 同步链上按路径预算截止的每一处；都必须引用常量（或由它派生的 `MAX_PATHS`）。
-const BUDGETED: [&str; 12] = [
+const BUDGETED: [&str; 13] = [
     "crates/vault-broker/src/sync_observation/selection.rs",
     "crates/vault-broker/src/sync_observation/kernel.rs",
     "crates/vault-broker/src/sync_observation/metadata.rs",
+    "crates/vault-broker/src/sync_observation/paths.rs",
     "crates/host-config/src/sync_scope/union.rs",
     "crates/host-config/src/sync_scope/paths.rs",
     "crates/sync-bridge/src/validation.rs",

@@ -166,11 +166,28 @@ fn directory_depth_and_full_name_bytes_are_independently_bounded() {
         broker.capture_sync_observation(&selection(), &[]),
         Err(BrokerError::WriterLimitExceeded)
     ));
+    // 名字累计字节按每条预算路径 1 KiB 截止（BUG-047 复查前固定 4 MiB）；被排除的隐藏名字也计入。
     let names = Fixture::new();
     let mut broker = names.broker();
-    fs::create_dir(names.root.join("notes")).unwrap();
-    for i in 0..19_000 {
-        fs::File::create(names.root.join(format!("notes/.{i}{}", "x".repeat(220)))).unwrap();
+    let deep = names
+        .root
+        .join("notes")
+        .join("a".repeat(250))
+        .join("b".repeat(250))
+        .join("c".repeat(250));
+    fs::create_dir_all(&deep).unwrap();
+    // 每个隐藏名字的完整路径 1014 字节。
+    let hidden = |i: usize| deep.join(format!(".{i:05}{}", "x".repeat(249)));
+    let fit = budget * 1024 / 1014 - 200;
+    for i in 0..fit {
+        fs::File::create(hidden(i)).unwrap();
+    }
+    assert!(
+        broker.capture_sync_observation(&selection(), &[]).is_ok(),
+        "名字累计低于上限必须通过"
+    );
+    for i in fit..fit + 400 {
+        fs::File::create(hidden(i)).unwrap();
     }
     assert!(matches!(
         broker.capture_sync_observation(&selection(), &[]),

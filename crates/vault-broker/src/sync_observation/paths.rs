@@ -38,6 +38,14 @@ pub(super) fn hard(path: &VaultPath) -> bool {
         Some("tasks.md" | "index.md" | "dashboard.md" | "claude.md" | "agents.md" | "skill.md")
     )
 }
+/// 索引项上限：枚举到的全部名字，加规则与排除前缀（64＋128＋320），再加必查路径里磁盘上没有的前缀
+/// （与范围并集的派生前缀同一比例：每条预算路径 4 个）。预算 4096 时这里是 66,048，
+/// 并集的前缀上限随预算放大后会先在这里触顶（BUG-047 复查）。
+const INDEX_ENTRIES: usize =
+    super::metadata::NAME_LIMIT + 512 + 4 * studiolo_core::SYNC_PATH_BUDGET;
+/// 索引字节上限：折叠键与原文各记一份，取名字累计字节上限的两倍（预算 4096 时是 8 MiB）。
+const INDEX_BYTES: usize = 2 * super::metadata::NAME_BYTES;
+
 #[derive(Default)]
 pub(super) struct Index {
     values: BTreeMap<String, String>,
@@ -75,7 +83,7 @@ impl Index {
                     .bytes
                     .checked_add(key.len() + prefix.len())
                     .ok_or(BrokerError::WriterLimitExceeded)?;
-                if self.values.len() >= 66_048 || self.bytes > 8 * 1024 * 1024 {
+                if self.values.len() >= INDEX_ENTRIES || self.bytes > INDEX_BYTES {
                     return Err(BrokerError::WriterLimitExceeded);
                 }
                 self.values.insert(key, prefix.clone());

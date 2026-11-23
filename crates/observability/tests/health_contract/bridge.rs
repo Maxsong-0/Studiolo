@@ -535,7 +535,12 @@ fn 路径用量到八成判降级并排在其余正证据之后() {
     });
     assert_eq!(judge(&below).0, HealthState::Normal);
     // 恰好八成（预算 16384 时没有整数恰好落在八成上，换个能整除的预算钉住「含等号」）。
-    let eight = variant(|e| e.path_usage = Some(PathUsage { used: 8, budget: 10 }));
+    let eight = variant(|e| {
+        e.path_usage = Some(PathUsage {
+            used: 8,
+            budget: 10,
+        })
+    });
     assert_eq!(
         judge(&eight),
         (
@@ -543,7 +548,12 @@ fn 路径用量到八成判降级并排在其余正证据之后() {
             "路径用量 8／10，已到上限的 80%：该安排提高上限".to_owned()
         )
     );
-    let seven = variant(|e| e.path_usage = Some(PathUsage { used: 7, budget: 10 }));
+    let seven = variant(|e| {
+        e.path_usage = Some(PathUsage {
+            used: 7,
+            budget: 10,
+        })
+    });
     assert_eq!(judge(&seven).0, HealthState::Normal);
     let with_unknown = BridgeEvidence {
         unknown_jobs: Some(1),

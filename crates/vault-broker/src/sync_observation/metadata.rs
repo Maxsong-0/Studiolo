@@ -11,6 +11,12 @@ use crate::{
 use cap_std::fs::{Dir, MetadataExt as _};
 use std::collections::{BTreeMap, BTreeSet};
 
+/// 全体枚举的名字数：触及即拒绝，不为了探测 EOF 多取一个。
+pub(super) const NAME_LIMIT: usize = 65_536;
+/// 枚举到的名字累计字节：每条预算路径 1 KiB，随同步路径预算放大（预算 4096 时是 4 MiB）。
+/// 范围并集允许路径文字合计到每条 256 字节；主库的文件加目录不能先在这里触顶（BUG-047 复查）。
+pub(super) const NAME_BYTES: usize = studiolo_core::SYNC_PATH_BUDGET * 1024;
+
 pub(super) fn capture(
     root: &Dir,
     private: bool,
@@ -47,7 +53,7 @@ pub(super) fn capture(
                 .checked_add(1)
                 .ok_or(BrokerError::WriterLimitExceeded)?;
             // 触及上限即失败；不为了探测 EOF 再取第 65,537 个名字。
-            if inspected >= 65_536 {
+            if inspected >= NAME_LIMIT {
                 return Err(BrokerError::WriterLimitExceeded);
             }
             let name = entry.file_name();
@@ -60,7 +66,7 @@ pub(super) fn capture(
             bytes = bytes
                 .checked_add(raw.len())
                 .ok_or(BrokerError::WriterLimitExceeded)?;
-            if bytes > 4 * 1024 * 1024 {
+            if bytes > NAME_BYTES {
                 return Err(BrokerError::WriterLimitExceeded);
             }
             let path = VaultPath::parse(raw).map_err(|_| crate::sync_observation::invalid())?;
