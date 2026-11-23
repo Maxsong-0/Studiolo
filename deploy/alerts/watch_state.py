@@ -1,6 +1,11 @@
 """看门狗纯状态机：连续两次失败、成功投递后冷却，失败下一轮重试。"""
 
-CODES = {"A01": "critical", "A02": "critical", "A03": "warning", "A04": "warning", "A06": "critical"}
+CODES = {"A01": "critical", "A02": "critical", "A03": "warning", "A04": "warning", "A06": "critical",
+         "A07": "warning", "A08": "warning"}
+# 发送成功后隔多久再报：同步两项（A07 没对上、A08 删除被挡）按天提醒（用户 2026-11-22 定），其余 600 秒。
+REPEAT_SECONDS = {"A07": 86400, "A08": 86400}
+DEFAULT_REPEAT_SECONDS = 600
+PROBE_FIELDS = {"services_ok", "clock_ok", "mcp_ok", "replica_stale", "memory_high", "sync_unaligned", "sync_deletes_blocked"}
 FIELDS = {"schema", "observed", "code", "failures", "episode", "round", "sent"}
 
 
@@ -35,7 +40,8 @@ def observe(previous, code, now):
         state.update(failures=0, sent=None)
         return state, False
     state["failures"] = min(state["failures"] + 1, 2)
-    fire = rollback or (state["failures"] >= 2 and (state["sent"] is None or now - state["sent"] >= 600))
+    repeat = REPEAT_SECONDS.get(code, DEFAULT_REPEAT_SECONDS)
+    fire = rollback or (state["failures"] >= 2 and (state["sent"] is None or now - state["sent"] >= repeat))
     if fire:
         state["round"] += 1
     validate(state)
@@ -43,8 +49,7 @@ def observe(previous, code, now):
 
 
 def failure_code(probe):
-    fields = {"services_ok", "clock_ok", "mcp_ok", "replica_stale", "memory_high"}
-    if not isinstance(probe, dict) or set(probe) != fields or any(type(value) is not bool for value in probe.values()):
+    if not isinstance(probe, dict) or set(probe) != PROBE_FIELDS or any(type(value) is not bool for value in probe.values()):
         return "A01"
     if not probe["clock_ok"]:
         return "A06"
@@ -54,4 +59,9 @@ def failure_code(probe):
         return "A03"
     if probe["memory_high"]:
         return "A04"
+    # 删除被挡时同步本来就整批暂停，原因已知：报 A08，不再另报 A07。
+    if probe["sync_deletes_blocked"]:
+        return "A08"
+    if probe["sync_unaligned"]:
+        return "A07"
     return None

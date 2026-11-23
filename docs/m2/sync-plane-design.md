@@ -30,7 +30,7 @@ studiolo-human（uid 1000）                      root                          
 - 镜像视图：owner 只经 idmapped bind 视图读写（审批 `owner_view_root`，Rust 访问器叫 `mirror_view_root`——
   local-server 的写者边界词法门禁禁止任何 `.owner` 记号）。`RootPins.mirror_root` 是 payload 视图内的真实路径，只进 argv；
   `mirror_identity` 经视图观察（bind 同 inode），launcher 在最终视图内 stat 真实根后必须报回同一 `(dev,ino)`。
-- 新私有根 `plane_root`（审批文档新增）：`stage/`、`plane-state.json`、`plane.lock`、`bridge/`（BridgeState）。
+- 新私有根 `plane_root`（审批文档新增）：`stage/`、`plane-state.json`、`plane.lock`、`bridge/`（BridgeState）；T-224 起另有同步状态回执 `sync-status.json`（见第 5 节）。
   与 transport 私有根、视图根、canonical、writer-data、Auth/Audit 两两不重叠（`ApprovedTransport::approve`）。
   **必须与 `owner_view_root` 在同一条 vfsmount 上**：安装是 stage 对象 `renameat` 进镜像，跨挂载必 EXDEV；
   置备把 `bridge/{mirror,plane}` 作为一个父目录 idmapped bind 到 `/var/lib/studiolo-owner/bridge`，
@@ -92,6 +92,7 @@ studiolo-human（uid 1000）                      root                          
 | `<transport_private>/{transport.lock,state.json,state.json.publish}` | owner 0600／根 0700 | 64 KiB | sync-transport `store/publish.rs`（不变） |
 | `<plane_root>/plane.lock` | owner 0600 | 4 KiB | `sync_plane/recovery.rs`；flock 按打开文件描述计，租约守卫析构时显式解锁（并发 fork 在 exec 前继承的描述符不延长租约） |
 | `<plane_root>/plane-state.json`（+`.new`） | owner 0600 | 64 KiB，版本 1，校验和；追加字段 `headless_excluded`（headless 最近一次核对报的排除集合）、`conflict_stamps`（冲突身份→首次保全分钟戳，≤512 条）、`pending_purge`（清除审计日记），为空时不写出、非空才进校验和，旧文件照常解码 | `sync_plane/recovery.rs` |
+| `<plane_root>/sync-status.json`（+`.new`） | owner 0600 | 4 KiB，版本 1，闭合四字段 | `sync_plane/recovery.rs`（编解码 `sync_plane/status.rs`）；开平面与每轮收口各写一次，F4 探针读，契约 `docs/contracts/sync-status-receipt.md`（T-224）；不进 `plane-state.json`、备份不导出 |
 | `<plane_root>/stage/objects/<sha256 hex>` | owner 0600 | 单对象 256 MiB，合计 512 MiB，4096 项（含孤儿） | `sync_plane/mirror/stage.rs` |
 | `<plane_root>/stage/index.json`（+`.new`）、`stage/objects/{receiving.partial,installing.partial}` | owner 0600 | 1 MiB | `sync_plane/mirror/stage.rs` |
 | `<plane_root>/bridge/{bridge.sqlite3,bridge.lock}` | owner 0600 | 主库 256 MiB | sync-bridge `sqlite/storage.rs`（不变） |

@@ -1,6 +1,7 @@
-"""169 本机只读探针：固定三个单元、对时、内存水位与复用会话的 MCP 握手。"""
+"""169 本机只读探针：固定三个单元、对时、内存水位、复用会话的 MCP 握手与 Bridge 同步状态回执。"""
 import importlib.util
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -8,7 +9,7 @@ import time
 import uuid
 import urllib.request
 
-from private_state import locked_state, read_secret
+from private_state import closed_object, locked_state, private_directory, private_file, read_secret, reject_constant
 from bounded_process import output as command_output
 from residency import child_environment
 
@@ -16,6 +17,14 @@ UNITS = ("studiolo-agent.service", "studiolo-human.service", "studiolo-tunnel.se
 TOKEN = "/home/maxsong/.config/studiolo-alert/agent-token"
 STATE = "/home/maxsong/.local/share/studiolo-alert/probe"
 RECEIPT = "/home/maxsong/.local/share/studiolo-alert/probe-receipt"
+# 人侧每轮写的同步状态回执（T-224，契约 docs/contracts/sync-status-receipt.md）；人侧只写事实，两条线在这里。
+SYNC_STATUS = "/var/lib/studiolo-owner/bridge/plane/sync-status.json"
+SYNC_STATUS_FIELDS = {"schema", "written_at", "last_aligned_at", "deletes_blocked"}
+SYNC_STATUS_MAX_BYTES = 4096
+# 两边没对上满 6 小时报 A07（用户 2026-11-22 定）。
+UNALIGNED_AFTER = 6 * 3600
+# 回执 15 分钟（三个轮间隔）内写过，「删除被挡」才算数：人侧卡住时别让它一直盖住停摆。
+STATUS_FRESH = 900
 
 
 def boot_id():
@@ -93,8 +102,50 @@ def mcp_probe(token_path=TOKEN, state_path=STATE):
         return receipt["status"] == "stale"
 
 
+def whole_int(value, low, high):
+    # bool 是 int 的子类，不能冒充整数。
+    return type(value) is int and low <= value <= high
+
+
+def read_sync_status(path=SYNC_STATUS):
+    """读人侧同步状态回执；不是本人 0600 单链接、超限、不闭合或数值不对一律抛错，不纠正、不猜。"""
+    parent = private_directory(str(Path(path).parent))
+    try:
+        fd = os.open(Path(path).name, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC | os.O_NONBLOCK, dir_fd=parent)
+        with os.fdopen(fd, "rb") as source:
+            private_file(source.fileno())
+            raw = source.read(SYNC_STATUS_MAX_BYTES + 1)
+    finally:
+        os.close(parent)
+    if len(raw) > SYNC_STATUS_MAX_BYTES:
+        raise ValueError("sync_status_too_large")
+    value = json.loads(raw, object_pairs_hook=closed_object, parse_constant=reject_constant)
+    if not isinstance(value, dict) or set(value) != SYNC_STATUS_FIELDS or not whole_int(value["schema"], 1, 1):
+        raise ValueError("sync_status_invalid")
+    written, aligned, blocked = value["written_at"], value["last_aligned_at"], value["deletes_blocked"]
+    if not whole_int(written, 0, 2**63 - 1):
+        raise ValueError("sync_status_invalid")
+    if aligned is not None and not whole_int(aligned, 0, written):
+        raise ValueError("sync_status_invalid")
+    if blocked is not None and not whole_int(blocked, 0, 2**64 - 1):
+        raise ValueError("sync_status_invalid")
+    return value
+
+
+def sync_flags(status, now):
+    """(两边没对上满 6 小时, 删除被挡)；回执读不到、坏了或写出时刻在未来，按没对上报、不算被挡。"""
+    if status is None or status["written_at"] > now:
+        return True, False
+    aligned = status["last_aligned_at"]
+    unaligned = aligned is None or aligned > now or now - aligned >= UNALIGNED_AFTER
+    blocked = status["deletes_blocked"]
+    fresh = now - status["written_at"] <= STATUS_FRESH
+    return unaligned, fresh and blocked is not None and blocked > 0
+
+
 def probe():
-    result = dict(services_ok=False, clock_ok=False, mcp_ok=False, replica_stale=True, memory_high=True)
+    result = dict(services_ok=False, clock_ok=False, mcp_ok=False, replica_stale=True, memory_high=True,
+                  sync_unaligned=True, sync_deletes_blocked=False)
     try:
         result["services_ok"], result["memory_high"] = service_metrics()
     except Exception:
@@ -108,4 +159,9 @@ def probe():
         result["mcp_ok"] = True
     except Exception:
         pass
+    try:
+        status = read_sync_status()
+    except Exception:
+        status = None
+    result["sync_unaligned"], result["sync_deletes_blocked"] = sync_flags(status, int(time.time()))
     return result
