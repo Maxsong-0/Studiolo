@@ -76,8 +76,15 @@ pub(crate) struct Terminal {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub committed: Option<Active>,
 }
-fn name(id: &str) -> String {
-    format!("batch-{}.json", crate::sha256(id.as_bytes()))
+const NAME_PREFIX: &str = "batch-";
+const NAME_SUFFIX: &str = ".json";
+/// 终态记录的文件名：写者数据根这一层的 `batch-<批次号的 SHA-256>.json`。导出扫描也按它核（`trusted_export`）。
+pub(crate) fn name(id: &str) -> String {
+    format!("{NAME_PREFIX}{}{NAME_SUFFIX}", crate::sha256(id.as_bytes()))
+}
+/// 写者数据根这一层名字像终态记录的文件；读它时还要核名字等于 `name(批次号)`。
+pub(crate) fn looks_like_terminal(name: &str) -> bool {
+    name.starts_with(NAME_PREFIX) && name.ends_with(NAME_SUFFIX)
 }
 pub(super) fn terminal(broker: &FsVaultBroker, id: &str) -> Result<Option<Active>, BrokerError> {
     Ok(load_terminal(broker, id)?.map(|t| t.active))
@@ -165,10 +172,7 @@ pub(crate) fn protected(
     {
         let entry = entry.map_err(|e| BrokerError::io("inspect batch receipt", e))?;
         let name = entry.file_name();
-        let Some(name) = name
-            .to_str()
-            .filter(|n| n.starts_with("batch-") && n.ends_with(".json"))
-        else {
+        let Some(name) = name.to_str().filter(|n| looks_like_terminal(n)) else {
             continue;
         };
         count += 1;
@@ -180,7 +184,7 @@ pub(crate) fn protected(
         let record: Terminal = disk::decode(&bytes)?;
         let active =
             terminal(broker, &record.active.batch_id)?.ok_or(BrokerError::CorruptWriterState)?;
-        if name != format!("batch-{}.json", crate::sha256(active.batch_id.as_bytes())) {
+        if name != self::name(&active.batch_id) {
             return Err(BrokerError::CorruptWriterState);
         }
         for item in active.items.iter().filter(|item| &item.path == path) {

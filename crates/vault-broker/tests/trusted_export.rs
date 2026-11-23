@@ -82,9 +82,13 @@ fn history(root: &Path, document: &str, entries: &[u8], garbage: &[u8]) {
     }
 }
 
-/// 写一份批次终态记录（文件名是批次号的摘要，和真实布局一样），只带扫描用得到的字段。
+/// 写一份已完成的批次终态记录（文件名是批次号的摘要，和真实布局一样），只带扫描用得到的字段。
 /// 每项是（文档路径、原文、新文）；新建的那项没有原文。正文另外写。
 fn batch(root: &Path, id: &str, items: &[(&str, Option<u8>, u8)]) {
+    batch_in_phase(root, id, "completed", items);
+}
+
+fn batch_in_phase(root: &Path, id: &str, phase: &str, items: &[(&str, Option<u8>, u8)]) {
     let revision = |byte: u8| vec![byte; 32];
     write(
         root,
@@ -93,6 +97,7 @@ fn batch(root: &Path, id: &str, items: &[(&str, Option<u8>, u8)]) {
             "pair": VaultUuid::new(),
             "active": {
                 "batch_id": id,
+                "phase": phase,
                 "items": items
                     .iter()
                     .map(|(path, previous, target)| serde_json::json!({
@@ -372,7 +377,7 @@ fn anything_that_cannot_be_classified_rejects_the_whole_export() {
         },
         "两篇文档认领",
     );
-    // 批次记录：读不出来、文件名不是批次号的摘要（写者自己也这样核）、
+    // 批次记录：读不出来、文件名不是批次号的摘要（写者自己也这样核）、不是完成的终态（写者读到也报坏）、
     // 认领了另一篇文档目录里的正文。
     reject(
         &|root| {
@@ -407,6 +412,13 @@ fn anything_that_cannot_be_classified_rejects_the_whole_export() {
             .unwrap();
         },
         "批次记录的文件名对不上",
+    );
+    reject(
+        &|root| {
+            batch_in_phase(root, "half", "installing", &[("notes/a.md", None, 0x38)]);
+            write(root, &body(0x38), b"new");
+        },
+        "批次记录不是完成的终态",
     );
     reject(
         &|root| {

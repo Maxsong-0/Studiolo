@@ -16,7 +16,7 @@
 //!
 //! 本模块按路径读文件，自己不防并发替换：导出根是封存窗口里刚写出的私有目录，
 //! 封存时还会按这里算出的 revision 逐个文件复验，中途被换掉的文件过不了那一关。
-use crate::{BrokerError, sha256};
+use crate::{BrokerError, mutation::record::Phase, sha256};
 use serde::Deserialize;
 use std::{collections::BTreeMap, fs, path::Path};
 use studiolo_core::{
@@ -35,9 +35,6 @@ const HISTORY_METADATA: &str = "meta-v1";
 const HISTORY_CATALOGS: &str = "writer-data/history/meta-v1/catalogs/";
 const MANIFEST_NAME: &str = "manifest.json";
 const WRITER_DATA: &str = "writer-data/";
-/// 写者数据根这一层以这两段开头结尾的文件，写者都当批次终态记录读（`batch::record::protected`）。
-const BATCH_RECORD_PREFIX: &str = "batch-";
-const BATCH_RECORD_SUFFIX: &str = ".json";
 /// 写者读终态记录的上限，超过它写者自己就报坏。
 const BATCH_RECORD_LIMIT: u64 = crate::writer::disk::RECORD_LIMIT as u64;
 /// 暂存正文的上限是 8 MiB（`artifact_stage::LIMIT`），这里留一点余量，超过就拒绝。
@@ -183,8 +180,8 @@ fn history_owners(
     for path in files.keys() {
         if let Some(stem) = history_catalog_stem(path) {
             catalog_claims(export_root, path, stem, &mut owners)?;
-        } else if let Some(stem) = batch_record_stem(path) {
-            batch_claims(export_root, path, stem, &mut owners)?;
+        } else if let Some(name) = batch_record_name(path) {
+            batch_claims(export_root, path, name, &mut owners)?;
         }
     }
     Ok(owners)
@@ -220,15 +217,19 @@ fn catalog_claims(
 fn batch_claims(
     export_root: &Path,
     path: &VaultPath,
-    stem: &str,
+    name: &str,
     owners: &mut BTreeMap<VaultPath, VaultPath>,
 ) -> Result<(), BrokerError> {
     let bytes = read_limited(export_root, path, BATCH_RECORD_LIMIT)?;
     let record: BatchRecord =
         serde_json::from_slice(&bytes).map_err(|_| rejected(path, "批次记录读不出来"))?;
     // 文件名就是批次号的摘要，写者读终态时也这样核；对不上说明这份记录被挪过。
-    if sha256(record.active.batch_id.as_bytes()) != stem {
+    if crate::batch::record::name(&record.active.batch_id) != name {
         return Err(rejected(path, "批次记录的文件名对不上"));
+    }
+    // 写者只把完成了的批次写成终态记录，读到别的阶段就报坏；这里也不拿它认领。
+    if record.active.phase != Phase::Completed {
+        return Err(rejected(path, "批次记录不是完成的终态"));
     }
     for item in &record.active.items {
         claim_body(owners, item.target_revision, &item.path, path)?;
@@ -310,14 +311,12 @@ fn history_catalog_stem(path: &VaultPath) -> Option<&str> {
         })
 }
 
-/// 批次终态记录只在写者数据根这一层，名字是 `batch-<批次号的 SHA-256>.json`。
-/// 名字不合格的也当批次记录交给 `batch_claims`：写者照样会读它、核不过就报坏，这里也拒绝。
-fn batch_record_stem(path: &VaultPath) -> Option<&str> {
+/// 批次终态记录只在写者数据根这一层，名字是 `batch-<批次号的 SHA-256>.json`；返回文件名。
+/// 名字像、却不合格的也当批次记录交给 `batch_claims`：写者照样会读它、核不过就报坏，这里也拒绝。
+fn batch_record_name(path: &VaultPath) -> Option<&str> {
     path.as_str()
         .strip_prefix(WRITER_DATA)
-        .filter(|name| !name.contains('/'))?
-        .strip_prefix(BATCH_RECORD_PREFIX)?
-        .strip_suffix(BATCH_RECORD_SUFFIX)
+        .filter(|name| !name.contains('/') && crate::batch::record::looks_like_terminal(name))
 }
 
 fn walk(
@@ -436,7 +435,9 @@ struct HistoryEntry {
     revision: Revision,
 }
 
-/// 批次终态记录里本模块用得到的字段；其余字段的校验是批次模块自己的事。
+/// 批次终态记录里本模块用得到的字段；其余字段的校验是批次模块自己的事。不用写者那份严格的类型：
+/// 9 月写下的记录少几个后来加的字段，字段集以后再变，也不该因此挡住整批封存（真写者布局由用例钉住）。
+/// 不核记录属于本写者（`pair`）：扫描拿不到写者的配对身份，和历史目录一侧一样。
 /// 已回滚的批次另有 `committed`，指向同样的原文和新文，和写者的 `protected` 一样只读 `active`。
 #[derive(Deserialize)]
 struct BatchRecord {
@@ -446,6 +447,7 @@ struct BatchRecord {
 #[derive(Deserialize)]
 struct BatchActive {
     batch_id: String,
+    phase: Phase,
     items: Vec<BatchItem>,
 }
 
