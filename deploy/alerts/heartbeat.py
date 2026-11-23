@@ -4,6 +4,9 @@ import re
 import urllib.parse
 import urllib.request
 
+# workers.dev 前面的 Cloudflare 按 urllib 默认的 Python-urllib 标识拦成 403（error code 1010），两路都显式报自己的名字。
+USER_AGENT = "studiolo-alert-heartbeat/1"
+
 
 class NoRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, req, fp, code, msg, headers, newurl):
@@ -37,7 +40,7 @@ def ping(node, environment=None, opener=None):
         try:
             if not valid_endpoint(kind, url, headers, node):
                 raise ValueError("heartbeat_configuration")
-            request = urllib.request.Request(url, method="POST", headers=headers)
+            request = urllib.request.Request(url, method="POST", headers={**headers, "User-Agent": USER_AGENT})
             with opener.open(request, timeout=8) as response:
                 accepted = response.status in (200, 204) and len(response.read(1025)) <= 1024
             outcomes.append(accepted)

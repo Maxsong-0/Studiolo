@@ -1,5 +1,7 @@
 """告警状态与私有落盘契约；外部服务全部用本地假对象，无真实投递。"""
+import email.message
 import importlib.util
+import io
 import json
 import os
 from pathlib import Path
@@ -9,6 +11,8 @@ from unittest.mock import patch
 import resource
 import subprocess
 import sys
+import urllib.request
+import urllib.response
 
 SPEC = importlib.util.spec_from_file_location("alert_run", Path(__file__).with_name("run.py"))
 RUN = importlib.util.module_from_spec(SPEC)
@@ -405,6 +409,30 @@ class MonitorTests(unittest.TestCase):
         self.assertTrue(all(request.get_method() == "POST" and request.data is None for request in opener.requests))
         environment["STUDIOLO_HEALTHCHECKS_URL"] = "http://bad.invalid/"
         self.assertEqual(HB.ping("n108", environment, Opener()), [False, True])
+
+    def test_heartbeats_name_themselves_instead_of_python_urllib(self):
+        environment = {"STUDIOLO_HEALTHCHECKS_URL": "https://hc-ping.com/" + "a" * 36,
+                       "STUDIOLO_WORKER_HEARTBEAT_URL": "https://heartbeat.example.com/heartbeat/n169",
+                       "STUDIOLO_WORKER_HEARTBEAT_TOKEN": "test-only"}
+        class Capture(urllib.request.BaseHandler):
+            # 排在默认 HTTPSHandler（500）之前接管：请求已走完 urllib 自己补请求头的那一步，再截下来，不出网。
+            handler_order = 100
+            def __init__(self): self.sent = []
+            def https_open(self, request):
+                self.sent.append((request.full_url, dict(request.header_items())))
+                reply = urllib.response.addinfourl(io.BytesIO(b""), email.message.Message(), request.full_url, 204)
+                reply.msg = "No Content"  # urllib 的错误处理器要读 msg，真响应才有
+                return reply
+        capture = Capture()
+        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), HB.NoRedirect(), capture)
+        self.assertEqual(HB.ping("n169", environment, opener), [True, True])
+        self.assertEqual([url for url, _ in capture.sent], [environment["STUDIOLO_HEALTHCHECKS_URL"],
+                                                           environment["STUDIOLO_WORKER_HEARTBEAT_URL"]])
+        for _, headers in capture.sent:
+            self.assertEqual(headers.get("User-agent"), HB.USER_AGENT)
+            self.assertFalse(any("python-urllib" in value.lower() for value in headers.values()))
+        self.assertNotIn("Authorization", capture.sent[0][1])
+        self.assertEqual(capture.sent[1][1].get("Authorization"), "Bearer test-only")
 
 
 if __name__ == "__main__":
