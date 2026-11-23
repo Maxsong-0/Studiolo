@@ -1241,7 +1241,7 @@ private struct AboutSettingsPage: View {
     /// lives and why it launches at all (see the Debug config's hardened-runtime note).
     private static var buildDescription: String {
         AppInfo.isDevelopment
-            ? "Debug. Self-signed; hardened runtime off so the debug dylib loads."
+            ? "Debug. Ad hoc signed (no Team ID); hardened runtime off so the debug dylib loads."
             : "Release. Self-signed, hardened runtime on."
     }
 

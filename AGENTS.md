@@ -41,6 +41,7 @@
 - 只做任务书里的这一件，不扩范围；任务书没点名的文件非改不可时，最小改动并在回执里说明。
 - 工作树里有别人的未提交改动是正常的：不 stash、不 checkout、不 reset、不 restore、不 clean；不用 `git status`／`git diff` 判断「谁改了什么」。
 - 用**最窄的证明**自检，但测试与编译**在哪跑看你在哪台机器**（对照表见第七节）。**Mac：所有测试与编译检查一律不在本机跑**（2026-09-23 用户硬约束），定向测试、fmt、clippy、build 都用 `scripts/test-linux.sh <命令>`（如 `scripts/test-linux.sh cargo --locked test -p <包> --test <目标>`）在服务器上跑，前端检查以第五节的 ci 套为准。**DGX 2026-11-20 起不再用来开发和测试**（第七节），不在上面跑任何测试与编译。Cursor Cloud VM 见第六节。全量回归留给派发方；全量命令见 `README.md`「开发」段。
+- **例外只有 Bottega**（`bottega/`，原生 Mac App；以后的 Bottega 桥、P3 的 iPhone App 同样，2026-11-22 用户定，vault ADR-043）：只在 Mac Studio 上、一律经 `scripts/bottega-local` 本机编译、测试，108 编不了；细则见 `CLAUDE.md`「Bottega 在 Mac Studio 本机编译、测试」一节和 `bottega/AGENTS.md`。网页、169 那一侧照旧按上一条。
 - 被卡就在回执里写明阻塞，不猜、不绕、不伪造闭环。
 - 临时产物放会话 scratchpad，用完清理自己产生的。
 
@@ -90,7 +91,7 @@
 | | Mac（MacBook、Mac Studio） | Cursor Cloud VM（第六节） |
 |---|---|---|
 | 系统 | macOS arm64 | Ubuntu 24.04 x86_64，一次性 |
-| 本机跑测试与编译 | 不跑（2026-09-23） | 可以；除前端检查外都经 `scripts/test-cursor-cloud.sh` |
+| 本机跑测试与编译 | 不跑（2026-09-23）；只有 Bottega 例外：Mac Studio 经 `scripts/bottega-local`（第四节） | 可以；除前端检查外都经 `scripts/test-cursor-cloud.sh` |
 | 连得到 `githubci` 与家里 192.168.100.x | 经 Tailscale 子网路由 | 连不到 |
 | Linux 回路入口 | `scripts/test-linux.sh [命令]`（同步到 `githubci` 跑）；测试箱 `testbox --remote testbox@testbox-ctl …`（第五节） | `scripts/test-cursor-cloud.sh <命令>` |
 

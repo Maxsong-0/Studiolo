@@ -8,8 +8,9 @@
 # A Debug build is "Bottega Dev" (bundle id me.studiolo.bottega.dev). It
 # runs beside BOTH the upstream Droppy Code installed from getdroppycode.app and
 # this build's own Release, each with its own library, settings, Keychain items
-# and worktrees: storage is keyed on AppInfo.storageName ("Bottega") and
-# AppInfo.stateDirectoryName (~/.bottega-dev), never on the display name.
+# and worktrees: storage is keyed on AppInfo.storageName ("Bottega Dev" for Debug,
+# "Bottega" for Release) and AppInfo.stateDirectoryName (~/.bottega-dev for Debug),
+# never on the display name.
 #
 # xcode-select on this Mac points at the Command Line Tools, so DEVELOPER_DIR is set
 # per-invocation (found below) rather than switching the machine's toolchain.

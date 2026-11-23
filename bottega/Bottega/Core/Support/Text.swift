@@ -10,15 +10,13 @@ enum AppInfo {
     /// What the app calls itself on disk: its Application Support folder, its Keychain
     /// service, its log folder, its state directory.
     ///
-    /// Deliberately not derived from `name`. This build keeps the upstream display name,
-    /// so storage keyed on the display name would land in the same files as an installed
-    /// Bottega and the two would overwrite each other's library, threads and accounts.
-    /// Everything that touches disk or the Keychain goes through here, never through `name`.
+    /// Deliberately not derived from `name`: the display name is what the user sees and may
+    /// change, while storage keyed on it would make two copies that share a display name land in
+    /// the same files and overwrite each other's library, threads and accounts. Everything that
+    /// touches disk or the Keychain goes through here, never through `name`.
     ///
-    /// Debug and Release are kept apart here too. Upstream got that for free, because its
-    /// storage followed a display name that already differed between the two; this build
-    /// keeps one display name, so without the split a Debug and a Release copy running at
-    /// once would write the same library.json over each other.
+    /// Debug and Release are kept apart here too ("Bottega Dev" and "Bottega"), so a Debug and
+    /// a Release copy running at once never write the same library.json over each other.
     static let storageName = isDevelopment ? "Bottega Dev" : "Bottega"
     /// The Keychain service every provider account lives under. Follows storage, not display.
     static let keychainService = storageName

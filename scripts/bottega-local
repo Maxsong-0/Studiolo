@@ -11,7 +11,8 @@
 #   scripts/bottega-local test                   编 Debug 版并跑 BottegaTests；全量跑之前先在 vault TASKS 登记占用
 #   scripts/bottega-local run                    编 Debug 版并打开它（不装进 /Applications）
 #   scripts/bottega-local xcodebuild <参数…>      在 bottega/ 里原样跑 xcodebuild（Release 不许）
-#   scripts/bottega-local swift <参数…>           在 bottega/ 里原样跑 swift（swift test、swift build 这类）
+#   scripts/bottega-local swift <参数…>           在 bottega/ 里原样跑 swift（swift test、swift build 这类）；
+#                                                现在 bottega/ 还没有 Package.swift，留给 P3 和 iPhone App 共用的核心包
 #
 # 只编 Debug：发布版由用户本人签（ADR-043「不变的」），这里拒绝 Release。
 # 只在 Mac Studio 上放行：换一台机器（比如 MacBook）直接拒绝。例外是这台机器的，不跟着仓库走。
@@ -32,8 +33,13 @@ die() {
 # 机器判断：只认 macOS 上 Model Name 是 Mac Studio 的那台。uname、system_profiler 按 PATH 找，
 # 自检时可以在 PATH 前面放假的同名程序，看它是不是被拒（「假装成别的机器」）。
 [ "$(uname -s)" = Darwin ] || die "只在 Mac Studio 上跑（ADR-043）。这台不是 macOS。"
-system_profiler SPHardwareDataType 2>/dev/null | grep -q 'Model Name: Mac Studio' ||
-  die "只在 Mac Studio 上跑（ADR-043）。这台不是，Bottega 的编译和测试不在这里做。"
+# 先整份读进变量再找：直接接 `| grep -q` 时 grep 找到就退出，system_profiler 可能挨 SIGPIPE，
+# pipefail 下整条管道算失败，真的 Mac Studio 也会被偶发判成「不是」。读不到就是空，照样拒绝。
+hardware="$(system_profiler SPHardwareDataType 2>/dev/null || true)"
+case "$hardware" in
+  *'Model Name: Mac Studio'*) ;;
+  *) die "只在 Mac Studio 上跑（ADR-043）。这台不是，Bottega 的编译和测试不在这里做。" ;;
+esac
 [ -f "$app_dir/project.yml" ] || die "$root 不像 Studiolo 的仓库（没有 bottega/project.yml）。"
 
 # Xcode 找出来而不是写死：xcode-select 可能指着 Command Line Tools；显式给的 DEVELOPER_DIR 优先。
@@ -47,18 +53,26 @@ if [ -z "${DEVELOPER_DIR:-}" ]; then
 fi
 [ -n "${DEVELOPER_DIR:-}" ] || die "/Applications 下找不到 Xcode；设好 DEVELOPER_DIR 再跑。"
 
-# 拒绝 Release：参数里点名 Release 配置的一律不跑。
+# 只许 Debug（白名单，不是只拦 Release 一种写法）：-configuration 的值、CONFIGURATION= 构建设置的值都必须
+# 是 Debug；换配置的旁门（-xcconfig 整份换设置）、archive 和导出发布版的动作一律不跑。
 refuse_release() {
   local previous=""
   for word in "$@"; do
-    if [ "$previous" = "-configuration" ] && [ "$word" = Release ]; then
-      die "只编 Debug：发布版由用户本人签（ADR-043），这里不编 Release。"
+    if [ "$previous" = "-configuration" ] && [ "$word" != Debug ]; then
+      die "只编 Debug：发布版由用户本人签（ADR-043），这里不编「$word」配置。"
     fi
     case "$word" in
-      archive | -exportArchive) die "只编 Debug：archive、导出发布版由用户本人做（ADR-043）。" ;;
+      CONFIGURATION=Debug) ;;
+      [Cc][Oo][Nn][Ff][Ii][Gg][Uu][Rr][Aa][Tt][Ii][Oo][Nn]=*)
+        die "只编 Debug：发布版由用户本人签（ADR-043），这里不接受「$word」。" ;;
+      -configuration=* | -xcconfig | -xcconfig=*)
+        die "只编 Debug：这里不接受「$word」（要换配置就是要编发布版，那由用户本人做，ADR-043）。" ;;
+      archive | -exportArchive | -exportNotarizedApp)
+        die "只编 Debug：archive、导出发布版由用户本人做（ADR-043）。" ;;
     esac
     previous="$word"
   done
+  [ "$previous" != "-configuration" ] || die "-configuration 后面缺配置名（只许 Debug）。"
 }
 
 generate() {

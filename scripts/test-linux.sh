@@ -79,10 +79,11 @@ REMOTE=".cache/studiolo-tests/$NAME"
 # rsync 不会建多级父目录，先建好（-p 幂等）。
 ssh -o BatchMode=yes -o ConnectTimeout=15 "$HOST" "mkdir -p '$REMOTE'"
 
-# 只同步已跟踪文件加未跟踪且未忽略的改动：构建产物、node_modules、.git 一律不过网。
+# 只同步已跟踪文件加未跟踪且未忽略的改动：构建产物（含 Bottega 在 Mac 上编出的 bottega/build.noindex）、node_modules、.git 一律不过网。
 rsync -a --delete --delete-excluded \
   --exclude '.git/' --exclude 'target/' --exclude 'node_modules/' --exclude 'web/dist/' \
   --exclude '.claude/' --exclude '*.log' \
+  --exclude 'build.noindex/' \
   -e 'ssh -o BatchMode=yes -o ConnectTimeout=15' \
   "$ROOT"/ "$HOST:$REMOTE/"
 
