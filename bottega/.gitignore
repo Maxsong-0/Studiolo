@@ -9,3 +9,5 @@ build.noindex/
 
 # Left beside scripts/*.py when they run.
 __pycache__/
+# SwiftPM 的构建目录（scripts/bottega-local swift …；P3 的核心包）。
+.build/
