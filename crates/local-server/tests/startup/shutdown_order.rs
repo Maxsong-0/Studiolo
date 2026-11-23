@@ -138,7 +138,7 @@ async fn driver_failure_still_stops_backup_then_writer_and_drains_http() {
         |_| {},
     )
     .await;
-    assert!(matches!(result, Err(StartupError::Serve)));
+    assert!(matches!(result, Err(StartupError::SyncDriver)));
     assert_eq!(
         *events.lock().unwrap(),
         ["backup-stopped", "writer-stop", "http-drained"]
@@ -237,7 +237,10 @@ async fn driver_failure_during_backup_stop_does_not_cut_it_short() {
     );
     release.send(()).unwrap();
     let result = tokio::time::timeout(WAIT, &mut run).await.unwrap().unwrap();
-    assert!(matches!(result, Err(StartupError::Serve)), "驱动失败要报错");
+    assert!(
+        matches!(result, Err(StartupError::SyncDriver)),
+        "驱动失败要报错"
+    );
     assert_eq!(
         *events.lock().unwrap(),
         ["backup-start", "backup-done", "writer-stop", "http-drained"]
@@ -359,7 +362,7 @@ async fn the_cause_of_shutdown_is_logged() {
             lines.sink(),
         )
         .await;
-        assert!(matches!(result, Err(StartupError::Serve)));
+        assert!(matches!(result, Err(StartupError::SyncDriver)));
         assert_eq!(lines.taken(), [expected]);
     }
 
@@ -388,6 +391,28 @@ async fn the_cause_of_shutdown_is_logged() {
         )]
     );
 
+    // 内层交回的是看板一侧折出来的错（`settle_board` 已打过具体那一行）：起因不说成「HTTP服务先结束」。
+    let (stop, _) = watch::channel(false);
+    let (http_stop, _) = oneshot::channel();
+    let result = drain(
+        async { Err(StartupError::Board) },
+        std::future::pending(),
+        async {},
+        None,
+        Teardown {
+            stop,
+            stop_workbench: || {},
+            http_stop,
+        },
+        lines.sink(),
+    )
+    .await;
+    assert!(matches!(result, Err(StartupError::Board)));
+    assert_eq!(
+        lines.taken(),
+        ["关停起因：看板一侧先结束或收尾出错（见上方看板那一行）"]
+    );
+
     // 退出信号先到；收尾时同步驱动出错，另打一行。
     let (stop, mut stopped) = watch::channel(false);
     let (http_stop, http_stopped) = oneshot::channel::<()>();
@@ -412,7 +437,7 @@ async fn the_cause_of_shutdown_is_logged() {
         lines.sink(),
     )
     .await;
-    assert!(matches!(result, Err(StartupError::Serve)));
+    assert!(matches!(result, Err(StartupError::SyncDriver)));
     assert_eq!(
         lines.taken(),
         ["关停起因：退出信号", "关停收尾出错：同步驱动（出错）"]
@@ -458,4 +483,104 @@ async fn the_cause_of_shutdown_is_logged() {
         assert_eq!(result.err().map(|error| error.to_string()), failed);
         assert_eq!(lines.taken(), expected);
     }
+}
+
+/// 收到失败通知才以监听失败结束的服务。
+async fn failing_server(failing: oneshot::Receiver<()>) -> Result<(), StartupError> {
+    let _ = failing.await;
+    Err(StartupError::Listen)
+}
+
+/// 停备份一开始就让服务失败，再停一会儿：服务一定在停备份途中结束。
+async fn failing_during_backup(fail: oneshot::Sender<()>) {
+    let _ = fail.send(());
+    tokio::time::sleep(HOLD).await;
+}
+
+/// 结果是先出的那个错，后出的只打一行：进程最后打的就是结果，要指向起因。
+#[tokio::test]
+async fn the_first_error_stays_the_result() {
+    let lines = Lines::default();
+    let driver_first = "关停起因：同步驱动先结束（出错）".to_owned();
+    let listen_failed = format!("关停收尾出错：HTTP服务（{}）", StartupError::Listen);
+
+    // 同步驱动先结束；最后排空 HTTP 时服务出错。
+    let (stop, _) = watch::channel(false);
+    let (http_stop, http_stopped) = oneshot::channel::<()>();
+    let result = drain(
+        async move {
+            let _ = http_stopped.await;
+            Err(StartupError::Listen)
+        },
+        std::future::pending(),
+        async {},
+        Some(tokio::spawn(async { Err("失败夹具".to_owned()) })),
+        Teardown {
+            stop,
+            stop_workbench: || {},
+            http_stop,
+        },
+        lines.sink(),
+    )
+    .await;
+    assert!(
+        matches!(result, Err(StartupError::SyncDriver)),
+        "最后排空时的出错改写了先出的错"
+    );
+    assert_eq!(lines.taken(), [driver_first.clone(), listen_failed.clone()]);
+
+    // 同步驱动先结束；停备份途中服务出错。
+    let (stop, _) = watch::channel(false);
+    let (fail, failing) = oneshot::channel();
+    let result = drain(
+        failing_server(failing),
+        std::future::pending(),
+        failing_during_backup(fail),
+        Some(tokio::spawn(async { Err("失败夹具".to_owned()) })),
+        Teardown {
+            stop,
+            stop_workbench: || {},
+            http_stop: oneshot::channel().0,
+        },
+        lines.sink(),
+    )
+    .await;
+    assert!(
+        matches!(result, Err(StartupError::SyncDriver)),
+        "停备份途中服务出错改写了先出的错"
+    );
+    assert_eq!(lines.taken(), [driver_first, listen_failed.clone()]);
+
+    // 退出信号先到；停备份途中服务出错，收尾时同步驱动也出错。
+    let (stop, mut stopped) = watch::channel(false);
+    let (fail, failing) = oneshot::channel();
+    let driver = tokio::spawn(async move {
+        let _ = stopped.changed().await;
+        Err::<(), String>("失败夹具".to_owned())
+    });
+    let result = drain(
+        failing_server(failing),
+        async { ShutdownCause::Signal },
+        failing_during_backup(fail),
+        Some(driver),
+        Teardown {
+            stop,
+            stop_workbench: || {},
+            http_stop: oneshot::channel().0,
+        },
+        lines.sink(),
+    )
+    .await;
+    assert!(
+        matches!(result, Err(StartupError::Listen)),
+        "同步驱动收尾出错改写了先出的错"
+    );
+    assert_eq!(
+        lines.taken(),
+        [
+            "关停起因：退出信号".to_owned(),
+            listen_failed,
+            "关停收尾出错：同步驱动（出错）".to_owned(),
+        ]
+    );
 }

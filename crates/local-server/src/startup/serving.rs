@@ -157,7 +157,8 @@ impl PreparedServer {
             let runner = self.runner_plane.take();
             let listener = board.bind().map_err(|_| StartupError::Ingress)?;
             if let Some(runner) = &runner {
-                runner.serve().map_err(|_| StartupError::Serve)?;
+                // Runner 的入口也是可信 Unix 入口；起不来不能说成「HTTP服务已停止」（BUG-050）。
+                runner.serve().map_err(|_| StartupError::Ingress)?;
             }
             let app = studiolo_local_server::board::private_board_router(plane.clone());
             let (stop, mut stopped) = tokio::sync::watch::channel(false);
@@ -170,7 +171,7 @@ impl PreparedServer {
                     })
                     .await
             });
-            let mut result = settle_board(
+            let result = settle_board(
                 self.serve_listener_until(shutdown),
                 maintenance,
                 worker,
@@ -179,14 +180,17 @@ impl PreparedServer {
                 |line| eprintln!("{line}"),
             )
             .await;
-            if let Some(runner) = runner {
-                let ended = tokio::task::spawn_blocking(move || runner.shutdown()).await;
-                if !matches!(ended, Ok(Ok(()))) {
-                    eprintln!("看板收尾出错：Runner（{}）", task_ending(&ended));
-                    result = Err(StartupError::Board);
+            return match runner {
+                Some(runner) => {
+                    settle_runner(
+                        move || runner.shutdown(),
+                        result,
+                        |line| eprintln!("{line}"),
+                    )
+                    .await
                 }
-            }
-            return result;
+                None => result,
+            };
         }
         self.serve_listener_until(shutdown).await
     }
@@ -222,7 +226,10 @@ impl PreparedServer {
 /// 内层服务手里有在途请求，不能随 `select!` 丢掉：axum 的连接各自在后台任务里跑，丢掉外层
 /// future 就没人等它们排空，外层随后等写者收尾、进程退出时请求可能还在跑、被截断。board 一侧
 /// 先结束时把故障经 `fault` 报给外层，外层照关停走完整收尾链（停备份、等 Bridge、停刷新、送来
-/// 内层的关停信号），这里一直等到内层排空才返回。
+/// 内层的关停信号），这里一直等到内层排空才返回；排空时内层出错也打一行。
+///
+/// 结果是先出的那个错：内层先以错误结束、随后收尾时 board 一侧也出错，结果仍是内层的错，board 那边只打日志
+/// （不然外层会把它说成「HTTP服务先结束（看板一侧…）」，HTTP 自己的原因也丢了）。
 async fn settle_board<S, M, W, L>(
     inner: S,
     mut maintenance: tokio::task::JoinHandle<Result<(), M>>,
@@ -258,8 +265,12 @@ where
     if first != First::Inner {
         // 外层若已因退出信号开始收尾，接收端就已经不在了，发不出去也无妨：内层的关停信号照样会来。
         let _ = fault.send(());
-        // 结果已经是错误，内层自己的结果不再改写它；但必须等它排空在途请求。
-        let _ = inner.await;
+        // 结果已经是错误，内层自己的结果不再改写它；但必须等它排空在途请求，排空出错要留一行。
+        if let Err(error) = inner.await
+            && let Some(line) = server_failed(&error)
+        {
+            log(line);
+        }
     }
     // 只跳过赢了 select 的那个（结果已取走，再 poll 会 panic）；不能用 `is_finished()` 判断：
     // 它分不清「已取走」和「结束了还没取」，同时就绪或收尾途中出的错会被它跳过吞掉。
@@ -267,7 +278,7 @@ where
         let ended = worker.await;
         if !matches!(ended, Ok(Ok(()))) {
             log(format!("看板收尾出错：看板监听（{}）", task_ending(&ended)));
-            result = Err(StartupError::Board);
+            result = result.and(Err(StartupError::Board));
         }
     }
     if first != First::Maintenance {
@@ -277,10 +288,30 @@ where
                 "看板收尾出错：租约巡检（{}）",
                 maintenance_ending(&ended)
             ));
-            result = Err(StartupError::Board);
+            result = result.and(Err(StartupError::Board));
         }
     }
     result
+}
+
+/// Runner 在阻塞线程里收尾（撤准入、隔离在跑的进程、停入口线程）。没收干净打一行固定类别（底层错误
+/// 可能带路径，只记类别），结果折成 board 一侧的错；前面已经出过错的，结果仍是先出的那个。
+async fn settle_runner<F, E, L>(
+    shutdown: F,
+    result: Result<(), StartupError>,
+    log: L,
+) -> Result<(), StartupError>
+where
+    F: FnOnce() -> Result<(), E> + Send + 'static,
+    E: Send + 'static,
+    L: Fn(String),
+{
+    let ended = tokio::task::spawn_blocking(shutdown).await;
+    if matches!(ended, Ok(Ok(()))) {
+        return result;
+    }
+    log(format!("看板收尾出错：Runner（{}）", task_ending(&ended)));
+    result.and(Err(StartupError::Board))
 }
 
 /// 租约巡检怎么结束的：巡检自己的原因已是固定类别（`MaintenanceFault`），原样带上。
@@ -343,6 +374,7 @@ struct Teardown<W> {
 /// 句柄取走了，事后再调也等不到在途的连接和封存。
 ///
 /// 关停从哪一支开始、收尾时同步驱动或 HTTP 服务出没出错，各经 `log` 打一行固定类别（BUG-050）。
+/// 结果是先出的那个错（进程最后打的就是它，要指向起因）；后出的错只打日志。
 async fn drain<S, F, B, W, L>(
     server: S,
     shutdown: F,
@@ -368,11 +400,7 @@ where
             (Ok(()), false, false)
         }
         result = &mut server => {
-            let how = match &result {
-                Ok(()) => "正常结束".to_owned(),
-                Err(error) => error.to_string(),
-            };
-            log(format!("关停起因：HTTP服务先结束（{how}）"));
+            log(server_first(&result));
             (result, true, false)
         }
         ended = async {
@@ -382,7 +410,7 @@ where
             }
         } => {
             log(format!("关停起因：同步驱动先结束（{}）", task_ending(&ended)));
-            (Err(StartupError::Serve), false, true)
+            (Err(StartupError::SyncDriver), false, true)
         }
     };
     // 停备份期间服务照旧在跑、能接新连接；服务这时先结束只记下结果，不打断停备份。
@@ -397,7 +425,7 @@ where
                     if let Some(line) = server_failed(&error) {
                         log(line);
                     }
-                    result = Err(error);
+                    result = result.and(Err(error));
                 }
             }
         }
@@ -415,7 +443,7 @@ where
         let ended = driver.await;
         if !matches!(ended, Ok(Ok(()))) {
             log(format!("关停收尾出错：同步驱动（{}）", task_ending(&ended)));
-            result = Err(StartupError::Serve);
+            result = result.and(Err(StartupError::SyncDriver));
         }
     }
     stop_workbench();
@@ -424,7 +452,7 @@ where
         if let Some(line) = server_failed(&error) {
             log(line);
         }
-        result = Err(error);
+        result = result.and(Err(error));
     }
     result
 }
@@ -433,6 +461,18 @@ where
 /// （`StartupError::Board`）是 `settle_board` 折出来的，具体那一行它已经打过，这里不再回声成「HTTP服务」。
 fn server_failed(error: &StartupError) -> Option<String> {
     (!matches!(error, StartupError::Board)).then(|| format!("关停收尾出错：HTTP服务（{error}）"))
+}
+
+/// 内层服务（连同 board 一侧）先交回结果时的起因那一行。看板一侧的错是 `settle_board` 折出来的，
+/// 具体哪一方、什么原因它已经打过一行，这里不说成「HTTP服务先结束」。
+fn server_first(result: &Result<(), StartupError>) -> String {
+    match result {
+        Ok(()) => "关停起因：HTTP服务先结束（正常结束）".to_owned(),
+        Err(StartupError::Board) => {
+            "关停起因：看板一侧先结束或收尾出错（见上方看板那一行）".to_owned()
+        }
+        Err(error) => format!("关停起因：HTTP服务先结束（{error}）"),
+    }
 }
 
 struct Shutdown {

@@ -1,6 +1,6 @@
 //! board 收尾契约：租约巡检或监听任务的出错，不因 `select!` 选中哪一支而被吞掉；
 //! board 一侧先结束时把故障报给外层，并等内层服务结束才返回。
-use super::{StartupError, settle_board};
+use super::{StartupError, settle_board, settle_runner};
 use std::{
     sync::{
         Arc, Mutex,
@@ -326,4 +326,99 @@ async fn errors_during_settle_are_logged_and_a_clean_settle_is_quiet() {
     .await;
     assert!(result.is_ok());
     assert!(lines.taken().is_empty(), "三方都正常收尾不该打日志");
+}
+
+/// 内层先以错误结束、收尾时 board 一侧也出错：结果仍是内层的错（先出的为准），board 那边只打一行。
+#[tokio::test]
+async fn an_inner_error_is_not_overwritten_by_a_later_board_error() {
+    let lines = Lines::default();
+    for (maintenance_fails, expected) in [
+        (true, "看板收尾出错：租约巡检（租约对账失败）"),
+        (false, "看板收尾出错：看板监听（出错）"),
+    ] {
+        let (stop, stopped) = watch::channel(false);
+        let maintenance = until_stopped(
+            stopped.clone(),
+            if maintenance_fails {
+                Err("租约对账失败".to_owned())
+            } else {
+                Ok(())
+            },
+        );
+        let worker = until_stopped(
+            stopped,
+            if maintenance_fails {
+                Ok(())
+            } else {
+                Err("监听失败夹具 /私有/路径")
+            },
+        );
+        let result = settle_board(
+            async { Err(StartupError::Listen) },
+            maintenance,
+            worker,
+            stop,
+            unheard(),
+            lines.sink(),
+        )
+        .await;
+        assert!(
+            matches!(result, Err(StartupError::Listen)),
+            "{expected}：board 收尾出错改写了内层先出的错"
+        );
+        assert_eq!(lines.taken(), [expected]);
+    }
+}
+
+/// board 一侧先结束、内层排空时自己也出错：HTTP 服务的错是固定说法，照原样另打一行，不被丢掉。
+#[tokio::test]
+async fn an_inner_error_while_draining_after_the_board_ended_is_logged() {
+    let lines = Lines::default();
+    let (stop, stopped) = watch::channel(false);
+    let maintenance = finished(Err("审计不可用".to_owned())).await;
+    let worker = until_stopped(stopped, Ok::<(), &str>(()));
+    let (fault, faulted) = oneshot::channel();
+    let inner = async move {
+        let _ = faulted.await;
+        Err(StartupError::Listen)
+    };
+    let settled = settle_board(inner, maintenance, worker, stop, fault, lines.sink());
+    let result = tokio::time::timeout(WAIT, settled)
+        .await
+        .expect("board 一侧先结束后收尾卡住了");
+    assert!(matches!(result, Err(StartupError::Board)));
+    assert_eq!(
+        lines.taken(),
+        [
+            "看板一侧先结束：租约巡检（审计不可用）".to_owned(),
+            format!("关停收尾出错：HTTP服务（{}）", StartupError::Listen),
+        ]
+    );
+}
+
+/// Runner 收尾没收干净：打一行固定类别（底层错误可能带路径，只记类别），结果折成 board 一侧的错；
+/// 前面已经出过错的，结果仍是先出的那个。收干净就不打。
+#[tokio::test]
+async fn the_runner_teardown_is_logged_and_folded() {
+    let lines = Lines::default();
+    let result = settle_runner(|| Ok::<(), String>(()), Ok(()), lines.sink()).await;
+    assert!(result.is_ok());
+    assert!(lines.taken().is_empty(), "Runner 收干净不该打日志");
+
+    let failing = || Err::<(), _>("Runner失败夹具 /私有/路径".to_owned());
+    let result = settle_runner(failing, Ok(()), lines.sink()).await;
+    assert!(matches!(result, Err(StartupError::Board)));
+    assert_eq!(lines.taken(), ["看板收尾出错：Runner（出错）"]);
+
+    let panicking = || -> Result<(), String> { panic!("Runner panic 夹具") };
+    let result = settle_runner(panicking, Ok(()), lines.sink()).await;
+    assert!(matches!(result, Err(StartupError::Board)));
+    assert_eq!(lines.taken(), ["看板收尾出错：Runner（异常退出）"]);
+
+    let result = settle_runner(failing, Err(StartupError::Listen), lines.sink()).await;
+    assert!(
+        matches!(result, Err(StartupError::Listen)),
+        "Runner 收尾出错改写了先出的错"
+    );
+    assert_eq!(lines.taken(), ["看板收尾出错：Runner（出错）"]);
 }
