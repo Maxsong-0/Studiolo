@@ -1,0 +1,115 @@
+name: Bottega
+options:
+  bundleIdPrefix: me.studiolo
+  deploymentTarget:
+    macOS: "26.0"
+  developmentLanguage: en
+packages:
+  SwiftTerm:
+    url: https://github.com/migueldeicaza/SwiftTerm
+    exactVersion: 1.20.0
+settings:
+  base:
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+    ARCHS: arm64
+    EXCLUDED_ARCHS: x86_64
+    SWIFT_VERSION: "6.0"
+    SWIFT_APPROACHABLE_CONCURRENCY: YES
+    MACOSX_DEPLOYMENT_TARGET: "26.0"
+targets:
+  Bottega:
+    type: application
+    platform: macOS
+    sources:
+      - path: Bottega
+        type: syncedFolder
+      # Pure, dependency-free code the tests compile in too (StorageNames); kept out of the synced
+      # folder because XcodeGen cannot hand one file of a synced folder to a second target.
+      - path: Shared
+      # The license and Droppy's notices travel with every copy of the app (LICENSE section 7(a));
+      # About shows them under Licenses.
+      - path: LICENSE
+        buildPhase: resources
+      - path: THIRD_PARTY_NOTICES.md
+        buildPhase: resources
+      - path: TRADEMARK.md
+        buildPhase: resources
+    dependencies:
+      - package: SwiftTerm
+    settings:
+      base:
+        PRODUCT_NAME: "Bottega"
+        PRODUCT_MODULE_NAME: Bottega
+        PRODUCT_BUNDLE_IDENTIFIER: me.studiolo.bottega
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_CFBundleDisplayName: "Bottega"
+        INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.developer-tools
+        INFOPLIST_KEY_NSHumanReadableCopyright: "Bottega, a modified version of Droppy Code. Droppy Code by Jordy Spruit (Droppy), https://getdroppycode.app. GNU AGPL v3 with additional terms."
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ENABLE_HARDENED_RUNTIME: YES
+        # Release signs with a self-signed certificate from the local Keychain, not with the
+        # upstream developer account; only the user signs a release (Studiolo ADR-043), and
+        # before the first one swaps this for Bottega's own fixed certificate in its locked
+        # keychain (vault Bottega-7, "开工前要先有的"). Agents only build Debug.
+        CODE_SIGN_STYLE: Manual
+        CODE_SIGN_IDENTITY: "AI Quota Flow Signing"
+        DEAD_CODE_STRIPPING: YES
+        SWIFT_OBJC_BRIDGING_HEADER: Bottega/App/Window/Bottega-Bridging-Header.h
+      configs:
+        Debug:
+          PRODUCT_NAME: "Bottega Dev"
+          PRODUCT_BUNDLE_IDENTIFIER: me.studiolo.bottega.dev
+          INFOPLIST_KEY_CFBundleDisplayName: "Bottega Dev"
+          # Debug is signed ad hoc, so building it never touches a Keychain identity
+          # (ADR-043: local builds use no release keys). P1 brings a test certificate.
+          CODE_SIGN_IDENTITY: "-"
+          # A Debug build ships its code in "Bottega Dev.debug.dylib" beside the
+          # executable. The hardened runtime turns on library validation, which only
+          # loads a library signed with the same Team ID as the process — and a
+          # self-signed certificate has no Team ID at all, so dyld killed the app at
+          # launch with "different Team IDs". Release links its code in and never hits
+          # this, so it keeps the hardened runtime.
+          ENABLE_HARDENED_RUNTIME: NO
+        Release:
+          # The .app file name only. The display name stays "Bottega" through the base
+          # INFOPLIST_KEY_CFBundleDisplayName, so the Dock and the menu read as before —
+          # this just stops the bundle from colliding with an installed
+          # /Applications/Bottega.app.
+          PRODUCT_NAME: "Bottega"
+  BottegaTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - path: BottegaTests
+        type: syncedFolder
+      # Pure code the app and the tests both compile, so the tests check it as the app runs it.
+      - path: Shared
+    dependencies:
+      - target: Bottega
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: me.studiolo.bottega.tests
+        GENERATE_INFOPLIST_FILE: YES
+        CODE_SIGN_STYLE: Manual
+        CODE_SIGN_IDENTITY: "-"
+        # Not hosted: the tests read the built Bottega Dev.app (Info.plist, resources) without
+        # launching it, so they never touch the real Studiolo vault, Keychain or agent CLIs the
+        # app reaches for at launch (ADR-043: tests touch no real run directories or keys). Left
+        # unset, XcodeGen would host them in the app because the target depends on it.
+        TEST_HOST: ""
+        BUNDLE_LOADER: ""
+schemes:
+  Bottega:
+    build:
+      targets:
+        Bottega: all
+        BottegaTests: [test]
+    run:
+      config: Debug
+    test:
+      config: Debug
+      targets:
+        - BottegaTests
+    archive:
+      config: Release

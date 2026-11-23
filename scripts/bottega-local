@@ -1,0 +1,195 @@
+#!/usr/bin/env bash
+# Bottega 在 Mac Studio 上本机编译、测试的入口（vault ADR-043，全局「Mac 上不编译」的例外）。
+#
+# 范围：Bottega（仓库 bottega/），以后的 Bottega 桥和 P3 的 iPhone App 也经这里；网页和 169 那一侧照旧交 108。
+# 这台的本机测试入口登记（~/.claude/max-core/local-test-entry.json 的 allow_commands）按命令名放行 bottega-local，
+# 所以 Bottega 的编译、测试一律经这个脚本，不裸跑 xcodebuild、swift。
+#
+# 用法（在仓库根或任何一个 worktree 里）：
+#   scripts/bottega-local generate               按 bottega/project.yml 重新生成 Bottega.xcodeproj（xcodegen）
+#   scripts/bottega-local build                  编 Debug 版（Bottega Dev.app），产物在 bottega/build.noindex/dev
+#   scripts/bottega-local test                   编 Debug 版并跑 BottegaTests；全量跑之前先在 vault TASKS 登记占用
+#   scripts/bottega-local run                    编 Debug 版并打开它（不装进 /Applications）
+#   scripts/bottega-local xcodebuild <参数…>      在 bottega/ 里原样跑 xcodebuild（Release 不许）
+#   scripts/bottega-local swift <参数…>           在 bottega/ 里原样跑 swift（swift test、swift build 这类）；
+#                                                现在 bottega/ 还没有 Package.swift，留给 P3 和 iPhone App 共用的核心包
+#
+# 只编 Debug：发布版由用户本人签（ADR-043「不变的」），这里拒绝 Release。
+# 只在 Mac Studio 上放行：换一台机器（比如 MacBook）直接拒绝。例外是这台机器的，不跟着仓库走。
+set -euo pipefail
+
+root="$(cd "$(dirname "$0")/.." && pwd)"
+app_dir="$root/bottega"
+project="$app_dir/Bottega.xcodeproj"
+scheme="Bottega"
+derived="$app_dir/build.noindex/dev"
+usage="用法：bottega-local generate | build | test | run | xcodebuild <参数…> | swift <参数…>"
+
+die() {
+  printf 'bottega-local: %s\n' "$1" >&2
+  exit 2
+}
+
+# 机器判断：只认 macOS 上 Model Name 是 Mac Studio 的那台。uname、system_profiler 按 PATH 找，
+# 自检时可以在 PATH 前面放假的同名程序，看它是不是被拒（「假装成别的机器」）。
+[ "$(uname -s)" = Darwin ] || die "只在 Mac Studio 上跑（ADR-043）。这台不是 macOS。"
+# 先整份读进变量再找：直接接 `| grep -q` 时 grep 找到就退出，system_profiler 可能挨 SIGPIPE，
+# pipefail 下整条管道算失败，真的 Mac Studio 也会被偶发判成「不是」。读不到就是空，照样拒绝。
+hardware="$(system_profiler SPHardwareDataType 2>/dev/null || true)"
+case "$hardware" in
+  *'Model Name: Mac Studio'*) ;;
+  *) die "只在 Mac Studio 上跑（ADR-043）。这台不是，Bottega 的编译和测试不在这里做。" ;;
+esac
+[ -f "$app_dir/project.yml" ] || die "$root 不像 Studiolo 的仓库（没有 bottega/project.yml）。"
+
+# Xcode 找出来而不是写死：xcode-select 可能指着 Command Line Tools；显式给的 DEVELOPER_DIR 优先。
+if [ -z "${DEVELOPER_DIR:-}" ]; then
+  for candidate in /Applications/Xcode.app /Applications/Xcode-beta.app /Applications/Xcode*.app; do
+    if [ -d "$candidate/Contents/Developer" ]; then
+      export DEVELOPER_DIR="$candidate/Contents/Developer"
+      break
+    fi
+  done
+fi
+[ -n "${DEVELOPER_DIR:-}" ] || die "/Applications 下找不到 Xcode；设好 DEVELOPER_DIR 再跑。"
+
+# 只许 Debug（白名单，不是只拦 Release 一种写法）：-configuration 的值、CONFIGURATION= 构建设置的值都必须
+# 是 Debug；换配置的旁门（-xcconfig 整份换设置）、archive 和导出发布版的动作一律不跑。
+#
+# 签名也只许 Debug 自己那一套（临时签名）：命令行上的构建设置比工程设置优先，
+# `CODE_SIGN_IDENTITY="AI Quota Flow Signing"` 这类覆盖能让 Debug 版用发布版的签名身份签，所以签名、团队、
+# 描述文件相关的构建设置和让 xcodebuild 去碰开发者账号的参数一律不收。
+refuse_release() {
+  local previous="" word name
+  for word in "$@"; do
+    if [ "$previous" = "-configuration" ] && [ "$word" != Debug ]; then
+      die "只编 Debug：发布版由用户本人签（ADR-043），这里不编「$word」配置。"
+    fi
+    case "$word" in
+      CONFIGURATION=Debug) ;;
+      [Cc][Oo][Nn][Ff][Ii][Gg][Uu][Rr][Aa][Tt][Ii][Oo][Nn]=*)
+        die "只编 Debug：发布版由用户本人签（ADR-043），这里不接受「$word」。" ;;
+      -configuration=* | --configuration* | -xcconfig | -xcconfig=* | --xcconfig*)
+        die "只编 Debug：这里不接受「$word」（要换配置就是要编发布版，那由用户本人做，ADR-043）。" ;;
+      archive | -exportArchive | -exportNotarizedApp)
+        die "只编 Debug：archive、导出发布版由用户本人做（ADR-043）。" ;;
+      -allowProvisioningUpdates | -allowProvisioningDeviceRegistration | -authenticationKey*)
+        die "只编 Debug：这里不碰开发者账号和描述文件（「$word」，ADR-043）。" ;;
+      *=*)
+        name="$(printf '%s' "${word%%=*}" | tr '[:lower:]' '[:upper:]')"
+        # 名字里含这些词就拒（不只看开头）：EXPANDED_CODE_SIGN_IDENTITY 这类中间带词的也是签名设置。
+        case "$name" in
+          *CODE_SIGN* | *DEVELOPMENT_TEAM* | *PROVISIONING*)
+            die "只编 Debug：签名由 project.yml 定（Debug 是临时签名），这里不接受「${word%%=*}=…」（发布版签名由用户本人做，ADR-043）。" ;;
+          # bundle id、产品名也由 project.yml 定：Debug 靠 bundle id 的 .dev 后缀和 Release 分开存储
+          # （bottega/Shared/StorageNames.swift），改掉它 Debug 版就会读写 Release 的库和钥匙串。
+          # Info.plist 相关的也算：INFOPLIST_FILE= 指一份写死了 CFBundleIdentifier 的 plist，同样能换掉 bundle id。
+          PRODUCT_BUNDLE_IDENTIFIER* | PRODUCT_NAME* | *INFOPLIST*)
+            die "只编 Debug：「${word%%=*}」由 project.yml 定，这里不接受覆盖（改了 Debug 版会和 Release 共用存储）。" ;;
+        esac
+        ;;
+    esac
+    previous="$word"
+  done
+  [ "$previous" != "-configuration" ] || die "-configuration 后面缺配置名（只许 Debug）。"
+}
+
+# swift 只许 debug：-c／--configuration 的值、--configuration=… 写法只认 debug。
+# -Xswiftc、-Xcc、-Xlinker 这类 -X… 后面的那个词是原样交给编译器、链接器的值（如 -cxx-interoperability-mode=…），
+# 不是 swift 自己的选项，不拿来比。
+refuse_swift_release() {
+  local previous="" word
+  for word in "$@"; do
+    case "$previous" in
+      -X*)
+        previous=""
+        continue ;;
+    esac
+    case "$previous" in
+      -c | --configuration)
+        [ "$word" = debug ] || die "只编 debug：发布版由用户本人签（ADR-043），这里不编「$word」配置。" ;;
+    esac
+    case "$word" in
+      # 粘写的 -crelease 不用管：swift 自己就不认（实测 -crelease、-cdebug 都报 Unknown option、退出码 64，
+      # 编不出东西）。别再加 `-c?*`：它会把 -X… 之外以 -c 开头的合法选项一起误拒（第 3 轮复查 R3-F1）。
+      --configuration=debug | -c=debug) ;;
+      --configuration=* | -c=*) die "只编 debug：这里不接受「$word」（ADR-043）。" ;;
+    esac
+    previous="$word"
+  done
+  case "$previous" in
+    -c | --configuration) die "$previous 后面缺配置名（只许 debug）。" ;;
+  esac
+}
+
+# 参数里有没有 -configuration：有就不再补（refuse_release 保证它只能是 Debug），xcodebuild 不许它出现两次。
+has_configuration() {
+  local word
+  for word in "$@"; do
+    [ "$word" != "-configuration" ] || return 0
+  done
+  return 1
+}
+
+# 环境变量 XCODE_XCCONFIG_FILE 会给 xcodebuild 整份换构建设置（等于参数里的 -xcconfig），一律不带进来。
+unset XCODE_XCCONFIG_FILE
+
+generate() {
+  command -v xcodegen >/dev/null || die "没装 xcodegen：brew install xcodegen。"
+  (cd "$app_dir" && xcodegen generate --quiet)
+}
+
+# 一次 Debug 的 xcodebuild：工程先按 project.yml 生成，免得新加的源文件、资源没进工程。
+debug_build() {
+  local action="$1"
+  shift
+  generate
+  cd "$app_dir"
+  # 跳过插件、宏的「信任」校验：命令行构建没人能点 Xcode 里的信任框，SwiftTerm 的构建插件会让整次构建失败
+  # （Tillerwright 的 quick_run.sh 一样这么跑）；依赖版本由 Package.resolved 钉死。
+  has_configuration "$@" || set -- -configuration Debug "$@"
+  exec xcodebuild -project "$project" -scheme "$scheme" \
+    -destination 'platform=macOS' -derivedDataPath "$derived" \
+    -clonedSourcePackagesDirPath "$app_dir/build.noindex/spm" \
+    -skipPackagePluginValidation -skipMacroValidation "$@" "$action"
+}
+
+mode="${1:-}"
+[ -n "$mode" ] || die "$usage"
+shift
+
+case "$mode" in
+  generate)
+    [ "$#" -eq 0 ] || die "generate 不带参数。"
+    generate
+    ;;
+  build | test)
+    refuse_release "$@"
+    debug_build "$mode" "$@"
+    ;;
+  run)
+    [ "$#" -eq 0 ] || die "run 不带参数。"
+    (debug_build build -quiet)
+    app="$derived/Build/Products/Debug/Bottega Dev.app"
+    [ -d "$app" ] || die "编完了却找不到 $app。"
+    exec open "$app"
+    ;;
+  xcodebuild)
+    refuse_release "$@"
+    cd "$app_dir"
+    # 一律钉上 -configuration Debug，不靠工程或 scheme 的默认配置（那可能被改成 Release），也不为哪种参数
+    # 跳过：-version、-showsdks、-list、-usage 带着它照常跑（实测），跳过的判断反倒是可钻的口子。
+    # 用户给了就不补（只能是 Debug，见 refuse_release；xcodebuild 不许它出现两次）。
+    has_configuration "$@" || set -- -configuration Debug "$@"
+    exec xcodebuild "$@"
+    ;;
+  swift)
+    [ "$#" -gt 0 ] || die "swift 要给参数（比如 swift test）。"
+    refuse_swift_release "$@"
+    cd "$app_dir"
+    exec swift "$@"
+    ;;
+  *)
+    die "不认识的用法「$mode」。$usage"
+    ;;
+esac

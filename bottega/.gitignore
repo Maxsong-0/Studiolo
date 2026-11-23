@@ -1,0 +1,13 @@
+.DS_Store
+build/
+DerivedData/
+xcuserdata/
+*.xcuserstate
+build.noindex/
+# An Xcode explicit-modules build once wrote its compiler cache into Bottega.xcodeproj/-Xcc.
+-Xcc/
+
+# Left beside scripts/*.py when they run.
+__pycache__/
+# SwiftPM 的构建目录（scripts/bottega-local swift …；P3 的核心包）。
+.build/
