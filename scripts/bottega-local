@@ -83,7 +83,8 @@ refuse_release() {
             die "只编 Debug：签名由 project.yml 定（Debug 是临时签名），这里不接受「${word%%=*}=…」（发布版签名由用户本人做，ADR-043）。" ;;
           # bundle id、产品名也由 project.yml 定：Debug 靠 bundle id 的 .dev 后缀和 Release 分开存储
           # （bottega/Shared/StorageNames.swift），改掉它 Debug 版就会读写 Release 的库和钥匙串。
-          PRODUCT_BUNDLE_IDENTIFIER* | PRODUCT_NAME*)
+          # Info.plist 相关的也算：INFOPLIST_FILE= 指一份写死了 CFBundleIdentifier 的 plist，同样能换掉 bundle id。
+          PRODUCT_BUNDLE_IDENTIFIER* | PRODUCT_NAME* | *INFOPLIST*)
             die "只编 Debug：「${word%%=*}」由 project.yml 定，这里不接受覆盖（改了 Debug 版会和 Release 共用存储）。" ;;
         esac
         ;;
@@ -109,7 +110,8 @@ refuse_swift_release() {
         [ "$word" = debug ] || die "只编 debug：发布版由用户本人签（ADR-043），这里不编「$word」配置。" ;;
     esac
     case "$word" in
-      # 粘写的 -crelease 不用管：swift 自己就不认（实测 -cdebug 报 Unknown option）。
+      # 粘写的 -crelease 不用管：swift 自己就不认（实测 -crelease、-cdebug 都报 Unknown option、退出码 64，
+      # 编不出东西）。别再加 `-c?*`：它会把 -X… 之外以 -c 开头的合法选项一起误拒（第 3 轮复查 R3-F1）。
       --configuration=debug | -c=debug) ;;
       --configuration=* | -c=*) die "只编 debug：这里不接受「$word」（ADR-043）。" ;;
     esac
