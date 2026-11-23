@@ -149,11 +149,9 @@ case "$mode" in
   xcodebuild)
     refuse_release "$@"
     cd "$app_dir"
-    # 自己钉上 -configuration Debug：不靠工程或 scheme 的默认配置（那可能被改成 Release）。用户给了就不补
-    # （只能是 Debug，见 refuse_release）。查版本、列 SDK 这类不编译的不加。
-    case " $* " in
-      *' -version '* | *' -showsdks '* | *' -list '* | *' -help '* | *' -usage '*) exec xcodebuild "$@" ;;
-    esac
+    # 一律钉上 -configuration Debug，不靠工程或 scheme 的默认配置（那可能被改成 Release），也不为哪种参数
+    # 跳过：-version、-showsdks、-list、-usage 带着它照常跑（实测），跳过的判断反倒是可钻的口子。
+    # 用户给了就不补（只能是 Debug，见 refuse_release；xcodebuild 不许它出现两次）。
     has_configuration "$@" || set -- -configuration Debug "$@"
     exec xcodebuild "$@"
     ;;
