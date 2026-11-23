@@ -48,13 +48,17 @@ fn write(root: &Path, relative: &str, bytes: &[u8]) {
     fs::write(path, bytes).unwrap();
 }
 
+fn digest(text: &str) -> String {
+    Sha256::digest(text.as_bytes())
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
 /// 给一篇文档写历史目录（文件名是逻辑路径的摘要，和真实布局一样）和对应的历史正文。
 /// 每个字节值代表一个 revision；同一个值出现两次就是「改回旧内容」。
 fn history(root: &Path, document: &str, entries: &[u8], garbage: &[u8]) {
-    let name: String = Sha256::digest(document.as_bytes())
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect();
+    let name = digest(document);
     let revision = |byte: &u8| vec![*byte; 32];
     write(
         root,
@@ -76,6 +80,31 @@ fn history(root: &Path, document: &str, entries: &[u8], garbage: &[u8]) {
     for byte in entries.iter().chain(garbage) {
         write(root, &body(*byte), b"old");
     }
+}
+
+/// 写一份批次终态记录（文件名是批次号的摘要，和真实布局一样），只带扫描用得到的字段。
+/// 每项是（文档路径、原文、新文）；新建的那项没有原文。正文另外写。
+fn batch(root: &Path, id: &str, items: &[(&str, Option<u8>, u8)]) {
+    let revision = |byte: u8| vec![byte; 32];
+    write(
+        root,
+        &format!("writer-data/batch-{}.json", digest(id)),
+        &serde_json::to_vec(&serde_json::json!({
+            "pair": VaultUuid::new(),
+            "active": {
+                "batch_id": id,
+                "items": items
+                    .iter()
+                    .map(|(path, previous, target)| serde_json::json!({
+                        "path": path,
+                        "previous_revision": previous.map(revision),
+                        "target_revision": revision(*target),
+                    }))
+                    .collect::<Vec<_>>(),
+            },
+        }))
+        .unwrap(),
+    );
 }
 
 fn body(byte: u8) -> String {
@@ -186,6 +215,57 @@ fn every_file_gets_exactly_one_fact_by_owner_directory_manifest_or_history_catal
     }
 }
 
+/// 2026-11-13 以前的批次只在终态记录里登记过每项的原文和新文（回滚要读原文），历史目录里没有（BUG-052）。
+/// 这两份正文跟着该项的文档走，和目录认领的一样：普通笔记的是完整范围 L0，尝试正文的带原批准。
+#[test]
+fn a_batch_record_claims_the_old_and_new_bodies_of_its_items_for_their_documents() {
+    let root = tempfile::tempdir().unwrap();
+    let root = root.path();
+    let result = format!("{ATTEMPT}/result.md");
+    write(
+        root,
+        &format!("canonical/{ATTEMPT}/manifest.json"),
+        &manifest(2, true, &[&result]),
+    );
+    // 原文在目录里、新文只有批次认领（169 上 1 批是这样）。
+    history(root, "notes/plain.md", &[0x41], &[]);
+    batch(root, "first", &[("notes/plain.md", Some(0x41), 0x42)]);
+    // 原文、新文都只有批次认领（另外 10 批）；新建的那项没有原文。
+    batch(
+        root,
+        "second",
+        &[
+            ("notes/other.md", Some(0x43), 0x44),
+            (result.as_str(), None, 0x45),
+        ],
+    );
+    for byte in [0x42, 0x43, 0x44, 0x45] {
+        write(root, &body(byte), b"old");
+    }
+    // 只有写者数据根这一层的文件才是批次记录；子目录里的（目录名也以 batch- 开头）照普通写者状态归类。
+    write(root, "writer-data/batch-old/batch-x.json", b"not a record");
+
+    let facts = scan(root).unwrap();
+    assert_eq!(facts.len(), walkdir(root), "每个文件恰好一条事实");
+    for byte in [0x41, 0x42, 0x43, 0x44] {
+        let fact = fact(&facts, &body(byte));
+        assert_eq!(fact.class, TrustedExportClass::FullScopeL0, "{byte:#x}");
+        assert!(fact.provenance.is_none(), "{byte:#x}");
+    }
+    let material = fact(&facts, &body(0x45));
+    assert_eq!(material.class, TrustedExportClass::SourceMaterial);
+    assert_eq!(material.provenance, Some(provenance()));
+    for path in [
+        format!("writer-data/batch-{}.json", digest("first")),
+        format!("writer-data/batch-{}.json", digest("second")),
+        "writer-data/batch-old/batch-x.json".to_owned(),
+    ] {
+        let fact = fact(&facts, &path);
+        assert_eq!(fact.class, TrustedExportClass::Canonical, "{path}");
+        assert!(fact.provenance.is_none(), "{path}");
+    }
+}
+
 fn walkdir(directory: &Path) -> usize {
     fs::read_dir(directory)
         .unwrap()
@@ -267,7 +347,10 @@ fn anything_that_cannot_be_classified_rejects_the_whole_export() {
         "认领了两次",
     );
     // 历史：没人认领的正文、尝试正文的历史却找不到清单、目录文件名和内容对不上。
-    reject(&|root| write(root, &body(0x31), b"orphan"), "没有目录认领");
+    reject(
+        &|root| write(root, &body(0x31), b"orphan"),
+        "没有目录或批次记录认领",
+    );
     reject(&|root| history(root, &result, &[0x32], &[]), "找不到原清单");
     reject(
         &|root| {
@@ -286,6 +369,49 @@ fn anything_that_cannot_be_classified_rejects_the_whole_export() {
         &|root| {
             history(root, "notes/a.md", &[0x34], &[]);
             history(root, "notes/b.md", &[0x34], &[]);
+        },
+        "两篇文档认领",
+    );
+    // 批次记录：读不出来、文件名不是批次号的摘要（写者自己也这样核）、
+    // 认领了另一篇文档目录里的正文。
+    reject(
+        &|root| {
+            write(
+                root,
+                &format!("writer-data/batch-{}.json", digest("x")),
+                b"{",
+            )
+        },
+        "批次记录读不出来",
+    );
+    reject(
+        &|root| {
+            batch(root, "moved", &[("notes/a.md", None, 0x35)]);
+            write(root, &body(0x35), b"new");
+            fs::rename(
+                root.join(format!("writer-data/batch-{}.json", digest("moved"))),
+                root.join(format!("writer-data/batch-{}.json", digest("other"))),
+            )
+            .unwrap();
+        },
+        "批次记录的文件名对不上",
+    );
+    reject(
+        &|root| {
+            batch(root, "odd", &[("notes/a.md", None, 0x36)]);
+            write(root, &body(0x36), b"new");
+            fs::rename(
+                root.join(format!("writer-data/batch-{}.json", digest("odd"))),
+                root.join("writer-data/batch-odd.json"),
+            )
+            .unwrap();
+        },
+        "批次记录的文件名对不上",
+    );
+    reject(
+        &|root| {
+            history(root, "notes/a.md", &[0x37], &[]);
+            batch(root, "elsewhere", &[("notes/b.md", None, 0x37)]);
         },
         "两篇文档认领",
     );

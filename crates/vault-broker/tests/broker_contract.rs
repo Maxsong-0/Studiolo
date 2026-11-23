@@ -2,6 +2,8 @@
 
 #[path = "broker/artifacts.rs"]
 mod artifacts;
+#[path = "broker/batch_history.rs"]
+mod batch_history;
 #[path = "common/provenance.rs"]
 mod granted;
 #[path = "broker/paths.rs"]
