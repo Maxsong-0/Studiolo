@@ -24,6 +24,9 @@ targets:
     sources:
       - path: Bottega
         type: syncedFolder
+      # Pure, dependency-free code the tests compile in too (StorageNames); kept out of the synced
+      # folder because XcodeGen cannot hand one file of a synced folder to a second target.
+      - path: Shared
       # The license and Droppy's notices travel with every copy of the app (LICENSE section 7(a));
       # About shows them under Licenses.
       - path: LICENSE
@@ -80,6 +83,8 @@ targets:
     sources:
       - path: BottegaTests
         type: syncedFolder
+      # Pure code the app and the tests both compile, so the tests check it as the app runs it.
+      - path: Shared
     dependencies:
       - target: Bottega
     settings:

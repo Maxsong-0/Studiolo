@@ -3,9 +3,10 @@ import Foundation
 import Testing
 
 /// Smoke tests for the move out of Tillerwright (Studiolo T-225). They read the built Debug app
-/// next to this test bundle without launching it: a launched app reaches for the real Studiolo
-/// vault, the Keychain and the agent CLIs, and an ad hoc signed build re-asks macOS for each of
-/// those, which hangs an unattended run (ADR-043: tests touch no real run directories or keys).
+/// next to this test bundle, plus the pure StorageNames.swift compiled in, without launching it:
+/// a launched app reaches for the real Studiolo vault, the Keychain and the agent CLIs, and an ad
+/// hoc signed build re-asks macOS for each of those, which hangs an unattended run (ADR-043:
+/// tests touch no real run directories or keys).
 struct IdentityTests {
     /// The attribution LICENSE section 7(a) asks every modified copy to keep, word for word.
     static let attribution = "Droppy Code by Jordy Spruit (Droppy), https://getdroppycode.app"
@@ -27,11 +28,28 @@ struct IdentityTests {
         #expect(app.object(forInfoDictionaryKey: "CFBundleName") as? String == "Bottega Dev")
     }
 
-    /// Storage, Keychain and state directory follow the bundle id's `.dev` suffix (`AppInfo` in
-    /// Core/Support/Text.swift), so this checks the compiled code carries no Tillerwright name a
-    /// path, service or setting could still be built from — the still-installed Tillerwright
-    /// Dev.app and this build must never read each other's data.
-    @Test func compiledCodeCarriesNoOldName() throws {
+    /// Storage, Keychain and state directory, as `AppInfo` computes them (bottega/Shared/StorageNames.swift
+    /// is compiled into these tests): Bottega's own, Debug and Release apart, and the built app is
+    /// the Debug flavor. The still-installed Tillerwright Dev.app and this build must never read
+    /// each other's data, and a Debug and a Release copy must never share a library.
+    @Test func storageNamesAreBottegasOwn() throws {
+        #expect(StorageNames.storage(isDevelopment: true) == "Bottega Dev")
+        #expect(StorageNames.storage(isDevelopment: false) == "Bottega")
+        #expect(StorageNames.stateDirectory(isDevelopment: true) == ".bottega-dev")
+        #expect(StorageNames.stateDirectory(isDevelopment: false) == ".bottega")
+        #expect(StorageNames.isDevelopment(bundleIdentifier: try Self.app().bundleIdentifier))
+        #expect(!StorageNames.isDevelopment(bundleIdentifier: "me.studiolo.bottega"))
+        for name in [true, false].flatMap({ [StorageNames.storage(isDevelopment: $0), StorageNames.stateDirectory(isDevelopment: $0)] }) {
+            #expect(!name.localizedCaseInsensitiveContains("tillerwright"))
+        }
+    }
+
+    /// A net for the rename, not proof of it: the string constants in the Debug build's code
+    /// (Bottega Dev.debug.dylib, where a Debug build keeps all of its Swift) carry no Tillerwright
+    /// spelling except the one allowed above. Only literals stored as strings are seen; a short one
+    /// the compiler folds into instructions would slip past, which is why the storage names have
+    /// their own test.
+    @Test func debugDylibCarriesNoOldName() throws {
         let app = try Self.app()
         let code = app.bundleURL.appendingPathComponent("Contents/MacOS/Bottega Dev.debug.dylib")
         let bytes = try Data(contentsOf: code)

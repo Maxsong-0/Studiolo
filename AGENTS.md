@@ -54,7 +54,7 @@
   整条放后台等（控制端是 Mac Studio 上的虚拟机 `testbox-ctl`，执行节点只剩 x86_64 的 x86-1，即 108；旧写法 `testbox@max-spark` 也指到控制端，不再用）。一步失败 `--wait` 马上返回并点名那一步，任务照跑完其余步骤（要一次拿全用 `--wait-all`）。
   全量同一时间只许一个会话跑：交之前先看 `testbox status` 有没有别的 studiolo 全量在跑。
 - **ci 套是门槛，不是调试器**：改的过程中用定向命令（`testbox --remote testbox@testbox-ctl submit --project studiolo --arch x86_64 --cmd '…'`）验，攒成一批再交 ci 套。
-  Mac 本机不跑任何测试与编译检查（`cargo test`／`fmt`／`clippy`／`build`、Python 契约、前端 tsc／lint／vitest／build、真实管线都算，2026-09-23 用户硬约束）。
+  Mac 本机不跑任何测试与编译检查（`cargo test`／`fmt`／`clippy`／`build`、Python 契约、前端 tsc／lint／vitest／build、真实管线都算，2026-09-23 用户硬约束）。唯一的例外是 Bottega（`bottega/`），只在 Mac Studio 上经 `scripts/bottega-local` 本机编译、测试，见第四节；它不在 ci 套里。
 - 门禁命令由架构守卫逐行钉住（`crates/studiolo/tests/architecture_cases/ci.rs`）：删掉、注释、改参数、吞失败、关 errexit、换目录、
   改成后台服务都判红；有门禁的那一步第一行必须是对应目录的 `source …testbox-ci-env.sh`，最后一条门禁之前只许有别的门禁和几行版本诊断
   （插 `exit`、`if`、`cd`、改 PATH、同名函数也判红）。新加的回归放在那一步最后一条钉住的行之后，或者先在守卫里钉上。

@@ -4,9 +4,8 @@ import Foundation
 enum AppInfo {
     /// What the app calls itself on screen: the menu item, the window titles, About.
     static let name = Bundle.main.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String ?? "Bottega"
-    /// The Debug build, told apart by its bundle id's suffix rather than one hard-coded id,
-    /// so renaming the bundle does not silently make the dev build look like the release one.
-    static let isDevelopment = Bundle.main.bundleIdentifier?.hasSuffix(".dev") == true
+    /// The Debug build, told apart by its bundle id's suffix (see `StorageNames`).
+    static let isDevelopment = StorageNames.isDevelopment(bundleIdentifier: Bundle.main.bundleIdentifier)
     /// What the app calls itself on disk: its Application Support folder, its Keychain
     /// service, its log folder, its state directory.
     ///
@@ -17,13 +16,13 @@ enum AppInfo {
     ///
     /// Debug and Release are kept apart here too ("Bottega Dev" and "Bottega"), so a Debug and
     /// a Release copy running at once never write the same library.json over each other.
-    static let storageName = isDevelopment ? "Bottega Dev" : "Bottega"
+    static let storageName = StorageNames.storage(isDevelopment: isDevelopment)
     /// The Keychain service every provider account lives under. Follows storage, not display.
     static let keychainService = storageName
     /// The subsystem every `Logger` and `OSLog` in the app reports under, so this build's
     /// entries are told apart from an installed Bottega's in Console and `log stream`.
     static let logSubsystem = Bundle.main.bundleIdentifier ?? "me.studiolo.bottega"
-    static let stateDirectoryName = isDevelopment ? ".bottega-dev" : ".bottega"
+    static let stateDirectoryName = StorageNames.stateDirectory(isDevelopment: isDevelopment)
     static let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.0.0"
     static let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "1"
 }

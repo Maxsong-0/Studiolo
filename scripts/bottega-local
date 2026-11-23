@@ -55,8 +55,12 @@ fi
 
 # 只许 Debug（白名单，不是只拦 Release 一种写法）：-configuration 的值、CONFIGURATION= 构建设置的值都必须
 # 是 Debug；换配置的旁门（-xcconfig 整份换设置）、archive 和导出发布版的动作一律不跑。
+#
+# 签名也只许 Debug 自己那一套（临时签名）：命令行上的构建设置比工程设置优先，
+# `CODE_SIGN_IDENTITY="AI Quota Flow Signing"` 这类覆盖能让 Debug 版用发布版的签名身份签，所以签名、团队、
+# 描述文件相关的构建设置和让 xcodebuild 去碰开发者账号的参数一律不收。
 refuse_release() {
-  local previous=""
+  local previous="" word name
   for word in "$@"; do
     if [ "$previous" = "-configuration" ] && [ "$word" != Debug ]; then
       die "只编 Debug：发布版由用户本人签（ADR-043），这里不编「$word」配置。"
@@ -65,10 +69,19 @@ refuse_release() {
       CONFIGURATION=Debug) ;;
       [Cc][Oo][Nn][Ff][Ii][Gg][Uu][Rr][Aa][Tt][Ii][Oo][Nn]=*)
         die "只编 Debug：发布版由用户本人签（ADR-043），这里不接受「$word」。" ;;
-      -configuration=* | -xcconfig | -xcconfig=*)
+      -configuration=* | --configuration* | -xcconfig | -xcconfig=* | --xcconfig*)
         die "只编 Debug：这里不接受「$word」（要换配置就是要编发布版，那由用户本人做，ADR-043）。" ;;
       archive | -exportArchive | -exportNotarizedApp)
         die "只编 Debug：archive、导出发布版由用户本人做（ADR-043）。" ;;
+      -allowProvisioningUpdates | -allowProvisioningDeviceRegistration | -authenticationKey*)
+        die "只编 Debug：这里不碰开发者账号和描述文件（「$word」，ADR-043）。" ;;
+      *=*)
+        name="$(printf '%s' "${word%%=*}" | tr '[:lower:]' '[:upper:]')"
+        case "$name" in
+          CODE_SIGN* | OTHER_CODE_SIGN_FLAGS | DEVELOPMENT_TEAM* | PROVISIONING_* | *PROVISIONING_PROFILE*)
+            die "只编 Debug：签名由 project.yml 定（Debug 是临时签名），这里不接受「${word%%=*}=…」（发布版签名由用户本人做，ADR-043）。" ;;
+        esac
+        ;;
     esac
     previous="$word"
   done
@@ -77,15 +90,15 @@ refuse_release() {
 
 # swift 只许 debug：-c／--configuration 的值、--configuration=… 写法只认 debug。
 refuse_swift_release() {
-  local previous=""
+  local previous="" word
   for word in "$@"; do
     case "$previous" in
       -c | --configuration)
         [ "$word" = debug ] || die "只编 debug：发布版由用户本人签（ADR-043），这里不编「$word」配置。" ;;
     esac
     case "$word" in
-      --configuration=debug | -c=debug) ;;
-      --configuration=* | -c=*) die "只编 debug：这里不接受「$word」（ADR-043）。" ;;
+      --configuration=debug | -c=debug | -cdebug) ;;
+      --configuration=* | -c=* | -c?*) die "只编 debug：这里不接受「$word」（ADR-043）。" ;;
     esac
     previous="$word"
   done

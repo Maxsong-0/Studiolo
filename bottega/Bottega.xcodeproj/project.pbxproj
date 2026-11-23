@@ -7,10 +7,12 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		12E8A9928ADBFF87B16AE019 /* StorageNames.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4C59D7639E8BEC97111AE0EE /* StorageNames.swift */; };
 		67975FD65086058D3A16B33C /* TRADEMARK.md in Resources */ = {isa = PBXBuildFile; fileRef = AFBF8BEC22DC876CAE2B6212 /* TRADEMARK.md */; };
 		69C6D2E2AABE980524E092DA /* SwiftTerm in Frameworks */ = {isa = PBXBuildFile; productRef = 78361FE681954CEB65443F08 /* SwiftTerm */; };
 		6E960A2B8E13C620FA2987F0 /* THIRD_PARTY_NOTICES.md in Resources */ = {isa = PBXBuildFile; fileRef = 8C68422EF6B40DED38B755AF /* THIRD_PARTY_NOTICES.md */; };
 		74CDB3275B2F0DE5C1B5A959 /* LICENSE in Resources */ = {isa = PBXBuildFile; fileRef = 9CEFE377695509681A421595 /* LICENSE */; };
+		AC1653A05AD0DBA6E29F8399 /* StorageNames.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4C59D7639E8BEC97111AE0EE /* StorageNames.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -25,6 +27,7 @@
 
 /* Begin PBXFileReference section */
 		2B0321B5D75D36B0AE1BC37B /* BottegaTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = BottegaTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		4C59D7639E8BEC97111AE0EE /* StorageNames.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StorageNames.swift; sourceTree = "<group>"; };
 		8C68422EF6B40DED38B755AF /* THIRD_PARTY_NOTICES.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = THIRD_PARTY_NOTICES.md; sourceTree = "<group>"; };
 		9CEFE377695509681A421595 /* LICENSE */ = {isa = PBXFileReference; path = LICENSE; sourceTree = "<group>"; };
 		ADB8D5EDD0BA45DA23A00CBF /* Bottega.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Bottega.app; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -72,8 +75,17 @@
 				AFBF8BEC22DC876CAE2B6212 /* TRADEMARK.md */,
 				66CA2D79DE708B894FB3C1F6 /* Bottega */,
 				6CE98C6F57D08428C81845A5 /* BottegaTests */,
+				BB1B886172ABA63D19B3399D /* Shared */,
 				D08AE2B2BF9E163A6F8D41D9 /* Products */,
 			);
+			sourceTree = "<group>";
+		};
+		BB1B886172ABA63D19B3399D /* Shared */ = {
+			isa = PBXGroup;
+			children = (
+				4C59D7639E8BEC97111AE0EE /* StorageNames.swift */,
+			);
+			path = Shared;
 			sourceTree = "<group>";
 		};
 		D08AE2B2BF9E163A6F8D41D9 /* Products */ = {
@@ -198,6 +210,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				12E8A9928ADBFF87B16AE019 /* StorageNames.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -205,6 +218,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				AC1653A05AD0DBA6E29F8399 /* StorageNames.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
