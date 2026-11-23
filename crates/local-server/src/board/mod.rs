@@ -181,16 +181,20 @@ impl BoardPlane {
         stop: tokio::sync::watch::Receiver<bool>,
         runner: Option<Arc<RunnerPlane>>,
     ) -> Result<(), MaintenanceFault> {
-        self.maintain_every(MAINTENANCE_INTERVAL, stop, runner)
+        self.maintain_every(MAINTENANCE_INTERVAL, MAX_FROZEN, stop, runner)
             .await
     }
-    /// 每隔 `interval` 巡检一轮，直到收到停止；冻结以外的故障结束循环。间隔只有用例会改。
+    /// 每隔 `interval` 巡检一轮，直到收到停止；冻结以外的故障结束循环。冻结中跳过，但从第一次遇到冻结算起
+    /// 连续超过 `max_frozen` 还冻着，就按「备份冻结超过上限」结束。两个时长只有用例会改。
     pub(crate) async fn maintain_every(
         self: Arc<Self>,
         interval: std::time::Duration,
+        max_frozen: std::time::Duration,
         mut stop: tokio::sync::watch::Receiver<bool>,
         runner: Option<Arc<RunnerPlane>>,
     ) -> Result<(), MaintenanceFault> {
+        // 中间照常巡检过一轮，就重新算。
+        let mut frozen_since = None;
         loop {
             tokio::select! {
                 _=stop.changed()=>return Ok(()),
@@ -204,8 +208,15 @@ impl BoardPlane {
             let tick = tokio::task::spawn_blocking(move || plane.maintain_once(runner.as_deref()))
                 .await
                 .map_err(|_| MaintenanceFault::Interrupted)??;
-            if tick == MaintenanceTick::SkippedFrozen {
-                eprintln!("看板租约巡检：备份冻结中，这一轮跳过");
+            match tick {
+                MaintenanceTick::Done => frozen_since = None,
+                MaintenanceTick::SkippedFrozen => {
+                    let since = *frozen_since.get_or_insert_with(std::time::Instant::now);
+                    if since.elapsed() > max_frozen {
+                        return Err(MaintenanceFault::FrozenTooLong);
+                    }
+                    eprintln!("看板租约巡检：备份冻结中，这一轮跳过");
+                }
             }
         }
     }
@@ -264,6 +275,11 @@ impl BoardPlane {
 
 /// 租约巡检的间隔。
 const MAINTENANCE_INTERVAL: std::time::Duration = std::time::Duration::from_secs(15);
+/// 巡检连续遇到冻结的封顶时长（BUG-050）。一次封存从开始到放开冻结都在封存预算之内，再加一分钟余量：
+/// 正常的封存再慢也碰不到。封存卡死、冻结一直不放时，巡检按「备份冻结超过上限」结束，人侧走完整关停、
+/// 由 systemd 拉起，不会活着却一直写不进去（改前是取许可等满 5 秒就结束）。
+pub(crate) const MAX_FROZEN: std::time::Duration =
+    std::time::Duration::from_secs(crate::backup::producer::SEAL_BUDGET.as_secs() + 60);
 
 /// 一轮租约巡检的结果。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -301,6 +317,9 @@ pub enum MaintenanceFault {
     /// 巡检线程异常退出（panic）。
     #[error("巡检线程异常退出")]
     Interrupted,
+    /// 备份冻结一直不放，连续超过 `MAX_FROZEN`（封存卡死）。
+    #[error("备份冻结超过上限")]
+    FrozenTooLong,
 }
 
 /// 人侧监督面只读路由，必须挂在既有会话门禁内。

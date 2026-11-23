@@ -3,7 +3,7 @@
 //! 169 上冻结窗口 26 秒：巡检取完整操作许可等满 5 秒失败，整个巡检循环结束，人侧照「board 一侧先结束」
 //! 走完整关停、以退出码 1 退出，封存后半段随进程丢掉。冻结以外的错误照旧失败关闭。
 use super::{fixture::Assembled, *};
-use crate::board::{MaintenanceFault, MaintenanceTick};
+use crate::board::{MAX_FROZEN, MaintenanceFault, MaintenanceTick};
 use studiolo_audit_ledger::AuditQuiescence;
 
 /// 冻结中的一轮巡检要当场返回；改前要等满 5 秒。
@@ -12,6 +12,10 @@ const PROMPT: Duration = Duration::from_secs(1);
 const INTERVAL: Duration = Duration::from_millis(20);
 /// 冻结占着的时长：比取许可最多等的 5 秒长，改前巡检在这期间就报错结束了。
 const LONG_FREEZE: Duration = Duration::from_millis(5_500);
+/// 用例里的连续冻结封顶时长：比冻结短得多，巡检循环该在冻结放开之前结束。
+const SHORT_CAP: Duration = Duration::from_millis(300);
+/// 循环该结束的情形下，最多等它这么久；远比间隔和封顶长，不会因为机器慢误报。
+const ENDS_WITHIN: Duration = Duration::from_secs(5);
 
 fn plane(assembled: &Assembled) -> Arc<BoardPlane> {
     assembled.inputs.board.clone().expect("装配里有黑板")
@@ -55,7 +59,7 @@ async fn the_maintenance_loop_keeps_going_through_a_freeze() {
     let plane = plane(&assembled);
     let (stop, stopped) = tokio::sync::watch::channel(false);
     let frozen = freeze(&assembled.human);
-    let maintenance = tokio::spawn(plane.maintain_every(INTERVAL, stopped, None));
+    let maintenance = tokio::spawn(plane.maintain_every(INTERVAL, MAX_FROZEN, stopped, None));
     tokio::time::sleep(LONG_FREEZE).await;
     assert!(!maintenance.is_finished(), "冻结期间巡检循环结束了");
     drop(frozen);
@@ -67,6 +71,38 @@ async fn the_maintenance_loop_keeps_going_through_a_freeze() {
         .expect("收到停止之后巡检没及时结束")
         .unwrap();
     assert_eq!(ended, Ok(()));
+    assembled.workbench.shutdown().await.unwrap();
+}
+
+/// 冻结一直不放（封存卡死）：连续跳过超过封顶时长，巡检循环按「备份冻结超过上限」结束、失败关闭，
+/// 不让人侧活着却一直写不进去。
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_freeze_that_never_lets_go_ends_the_loop() {
+    let assembled = Assembled::new().await;
+    let plane = plane(&assembled);
+    let (_stop, stopped) = tokio::sync::watch::channel(false);
+    let frozen = freeze(&assembled.human);
+    let maintenance = tokio::spawn(plane.maintain_every(INTERVAL, SHORT_CAP, stopped, None));
+    let ended = tokio::time::timeout(ENDS_WITHIN, maintenance).await;
+    drop(frozen);
+    let ended = ended.expect("冻结超过封顶时长，巡检循环没结束").unwrap();
+    assert_eq!(ended, Err(MaintenanceFault::FrozenTooLong));
+    assembled.workbench.shutdown().await.unwrap();
+}
+
+/// 冻结以外的故障（控制目录权限被改）结束的是整个巡检循环，不只是这一轮：人侧照旧走完整关停。
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_fault_ends_the_maintenance_loop() {
+    let assembled = Assembled::new().await;
+    let plane = plane(&assembled);
+    let (_stop, stopped) = tokio::sync::watch::channel(false);
+    let control = assembled.fixture.root.join("control");
+    fs::set_permissions(&control, fs::Permissions::from_mode(0o750)).unwrap();
+    let maintenance = tokio::spawn(plane.maintain_every(INTERVAL, MAX_FROZEN, stopped, None));
+    let ended = tokio::time::timeout(ENDS_WITHIN, maintenance).await;
+    fs::set_permissions(&control, fs::Permissions::from_mode(0o700)).unwrap();
+    let ended = ended.expect("故障之后巡检循环没结束").unwrap();
+    assert_eq!(ended, Err(MaintenanceFault::Storage));
     assembled.workbench.shutdown().await.unwrap();
 }
 

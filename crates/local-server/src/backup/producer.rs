@@ -57,7 +57,8 @@ const SCAN_BUDGET: Duration = Duration::from_secs(5);
 const RECLAIM_BUDGET: Duration = Duration::from_secs(30);
 /// 冻结窗口放开之后，剩下的回执核对、导出、整本验链、过滤视图和发布一共能用多久（BUG-045）。
 /// 比最短封存间隔短；169 上推算 40～60 秒。另受封存正文保留期约束，不会做到副本过期以后。
-const SEAL_BUDGET: Duration = Duration::from_secs(300);
+/// 截止时间从封存开始算，冻结窗口也在它之内；看板巡检连续遇到冻结的封顶时长按它定（`board::MAX_FROZEN`）。
+pub(crate) const SEAL_BUDGET: Duration = Duration::from_secs(300);
 
 /// 可信启动层从私有备份配置（`--backup-config`）和启动选项算出来的固定事实；运行期间不变。
 pub struct ProducerPlan {
@@ -102,6 +103,9 @@ pub struct BackupProducer {
     /// 用例用：封存放开冻结窗口之后停在这里，等用例放行（演练关停时封存正在放开之后那段）。
     #[cfg(test)]
     pub(crate) hold_after_release: Mutex<Option<std::sync::mpsc::Receiver<()>>>,
+    /// 用例用：封存打出的分步日志行另收一份，核生产者把同一份分步接到了日志里（BUG-050）。
+    #[cfg(test)]
+    pub(crate) seal_lines: Mutex<Vec<String>>,
     /// 开始服务的时刻；账本里从没有成功时，逾期从它和第一次尝试里较早的那个起算。
     serving_since_ms: Option<i64>,
 }
@@ -122,6 +126,8 @@ impl BackupProducer {
             window: Window::default(),
             #[cfg(test)]
             hold_after_release: Mutex::new(None),
+            #[cfg(test)]
+            seal_lines: Mutex::new(Vec::new()),
             serving_since_ms: now_millis().ok(),
         })
     }
@@ -204,6 +210,16 @@ impl BackupProducer {
         if let Some(gate) = gate {
             let _ = gate.recv();
         }
+    }
+
+    /// 封存成功路上的分步日志行（窗口那一行、放开之后那一行）：打进 stderr，用例里另收一份。
+    fn seal_line(&self, line: String) {
+        eprintln!("{line}");
+        #[cfg(test)]
+        self.seal_lines
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push(line);
     }
 
     fn next_pending(&self) -> Result<QueueAnswer, AuditError> {
@@ -403,7 +419,7 @@ impl BackupProducer {
             .release_timed(deadline, &mut steps)
             .map_err(|error| stuck(error, &steps))?;
         self.window.close();
-        eprintln!("{}", window_line(window.elapsed(), &steps));
+        self.seal_line(window_line(window.elapsed(), &steps));
         #[cfg(test)]
         self.hold_after_release();
         // 放开之后另起一份分步：导出、验链、封存各用了多久（BUG-050）。
@@ -427,7 +443,7 @@ impl BackupProducer {
         BackupAdmission::approve(self.ledger.clone(), key.clone(), TARGET, &sealed)
             .map_err(after_release_step("写准入", &after))?;
         after.mark("写准入");
-        eprintln!("{}", released_done_line(opened.elapsed(), &after));
+        self.seal_line(released_done_line(opened.elapsed(), &after));
         Ok(())
     }
 }

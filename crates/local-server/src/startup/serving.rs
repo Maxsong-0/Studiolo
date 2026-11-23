@@ -127,12 +127,14 @@ impl PreparedServer {
             shutdown,
             stop_backup,
             driver,
-            stop,
-            http_stop,
-            move || {
-                if let Some(workbench) = stopping {
-                    workbench.stop();
-                }
+            Teardown {
+                stop,
+                stop_workbench: move || {
+                    if let Some(workbench) = stopping {
+                        workbench.stop();
+                    }
+                },
+                http_stop,
             },
             |line| eprintln!("{line}"),
         )
@@ -302,16 +304,35 @@ fn task_ending<E>(ended: &Result<Result<(), E>, tokio::task::JoinError>) -> &'st
     }
 }
 
+/// 关停从哪一支开始（BUG-050：日志要分得清是正常停服务还是看板出了事）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ShutdownCause {
+    /// 收到退出信号（systemctl stop、Ctrl-C）。
+    Signal,
+    /// board 一侧（看板监听或租约巡检）先结束、报了故障。
+    Board,
+}
+
 /// 关停从这里开始：退出信号或 board 一侧报的故障，先到的为准。发送端没报就丢下了
 /// （没有 board，或者 board 正常收尾）不算故障，那一支停用，只等退出信号。
-async fn shutdown_requested<F>(signal: F, board_faulted: tokio::sync::oneshot::Receiver<()>)
+async fn shutdown_requested<F>(
+    signal: F,
+    board_faulted: tokio::sync::oneshot::Receiver<()>,
+) -> ShutdownCause
 where
     F: Future<Output = ()>,
 {
     tokio::select! {
-        () = signal => {}
-        Ok(()) = board_faulted => {}
+        () = signal => ShutdownCause::Signal,
+        Ok(()) = board_faulted => ShutdownCause::Board,
     }
+}
+
+/// 收尾链后半段依次要停的三样：通知同步驱动停、停刷新（工作台）、通知 HTTP 排空。
+struct Teardown<W> {
+    stop: tokio::sync::watch::Sender<bool>,
+    stop_workbench: W,
+    http_stop: tokio::sync::oneshot::Sender<()>,
 }
 
 /// 关闭链只走一遍：先停备份（在途的封存握着全部 owner 的冻结屏障，要等它放开才能动写者）；
@@ -322,29 +343,29 @@ where
 /// 停备份不放进 `select!`：放在关停那一支里，别的分支先到就会把它中途丢掉，备份已经把要等的
 /// 句柄取走了，事后再调也等不到在途的连接和封存。
 ///
-/// 关停从哪一支开始、收尾时同步驱动出没出错，各经 `log` 打一行固定类别（BUG-050）。
-#[allow(clippy::too_many_arguments)]
+/// 关停从哪一支开始、收尾时同步驱动或 HTTP 服务出没出错，各经 `log` 打一行固定类别（BUG-050）。
 async fn drain<S, F, B, W, L>(
     server: S,
     shutdown: F,
     stop_backup: B,
     mut driver: Option<tokio::task::JoinHandle<Result<(), String>>>,
-    stop: tokio::sync::watch::Sender<bool>,
-    http_stop: tokio::sync::oneshot::Sender<()>,
-    stop_workbench: W,
+    teardown: Teardown<W>,
     log: L,
 ) -> Result<(), StartupError>
 where
     S: Future<Output = Result<(), StartupError>>,
-    F: Future<Output = ()>,
+    F: Future<Output = ShutdownCause>,
     B: Future<Output = ()>,
     W: FnOnce(),
     L: Fn(String),
 {
     let mut server = Box::pin(server);
     let (mut result, mut served, joined) = tokio::select! {
-        () = shutdown => {
-            log("关停起因：退出信号或看板一侧先结束".to_owned());
+        cause = shutdown => {
+            log(match cause {
+                ShutdownCause::Signal => "关停起因：退出信号",
+                ShutdownCause::Board => "关停起因：看板一侧先结束",
+            }.to_owned());
             (Ok(()), false, false)
         }
         result = &mut server => {
@@ -374,6 +395,7 @@ where
             early = &mut server => {
                 served = true;
                 if let Err(error) = early {
+                    log(server_failed(&error));
                     result = Err(error);
                 }
             }
@@ -382,6 +404,11 @@ where
     if !backup_stopped {
         stop_backup.await;
     }
+    let Teardown {
+        stop,
+        stop_workbench,
+        http_stop,
+    } = teardown;
     let _ = stop.send(true);
     if !joined && let Some(driver) = driver {
         let ended = driver.await;
@@ -393,9 +420,15 @@ where
     stop_workbench();
     let _ = http_stop.send(());
     if !served && let Err(error) = server.await {
+        log(server_failed(&error));
         result = Err(error);
     }
     result
+}
+
+/// 关停收尾途中 HTTP 服务出错：它的错误是固定说法，照原样带上。
+fn server_failed(error: &StartupError) -> String {
+    format!("关停收尾出错：HTTP服务（{error}）")
 }
 
 struct Shutdown {

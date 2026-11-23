@@ -1,6 +1,6 @@
 //! 停机顺序契约：不论哪一支先到都先停备份；Bridge 收尾时写者与 HTTP 仍可用，异常退出也排空 HTTP；
 //! 停备份途中驱动失败或监听失败，都不能把它截断。
-use super::{StartupError, board_settle::Lines, drain};
+use super::{ShutdownCause, StartupError, Teardown, board_settle::Lines, drain};
 use std::{
     sync::{Arc, Mutex},
     time::Duration,
@@ -68,12 +68,15 @@ async fn shutdown_stops_backup_then_waits_for_bridge_before_writer_and_http() {
         server,
         async {
             let _ = requested.await;
+            ShutdownCause::Signal
         },
         backup_held(&events, backup_started, backup_released),
         Some(driver),
-        stop,
-        http_stop,
-        move || record(&logged, "writer-stop"),
+        Teardown {
+            stop,
+            stop_workbench: move || record(&logged, "writer-stop"),
+            http_stop,
+        },
         |_| {},
     ));
     shutdown.send(()).unwrap();
@@ -127,9 +130,11 @@ async fn driver_failure_still_stops_backup_then_writer_and_drains_http() {
         std::future::pending(),
         backup_stops(&events),
         Some(driver),
-        stop,
-        http_stop,
-        move || record(&logged, "writer-stop"),
+        Teardown {
+            stop,
+            stop_workbench: move || record(&logged, "writer-stop"),
+            http_stop,
+        },
         |_| {},
     )
     .await;
@@ -157,9 +162,11 @@ async fn listener_failure_reaps_driver_and_preserves_the_original_error() {
         std::future::pending(),
         backup_stops(&events),
         Some(driver),
-        stop,
-        http_stop,
-        move || record(&logged, "writer-stop"),
+        Teardown {
+            stop,
+            stop_workbench: move || record(&logged, "writer-stop"),
+            http_stop,
+        },
         |_| {},
     )
     .await;
@@ -198,14 +205,17 @@ async fn driver_failure_during_backup_stop_does_not_cut_it_short() {
         server,
         async {
             let _ = requested.await;
+            ShutdownCause::Signal
         },
         backup_held(&events, started, released),
         Some(driver),
-        stop,
-        http_stop,
-        move || {
-            record(&logged, "writer-stop");
-            let _ = writer_stopping.send(());
+        Teardown {
+            stop,
+            stop_workbench: move || {
+                record(&logged, "writer-stop");
+                let _ = writer_stopping.send(());
+            },
+            http_stop,
         },
         |_| {},
     ));
@@ -254,20 +264,24 @@ async fn listener_failure_during_backup_stop_does_not_cut_it_short() {
     };
     let (writer_stopping, mut writer_stopped) = mpsc::unbounded_channel();
     let logged = events.clone();
+    let lines = Lines::default();
     let mut run = tokio::spawn(drain(
         server,
         async {
             let _ = requested.await;
+            ShutdownCause::Signal
         },
         backup_held(&events, started, released),
         None,
-        stop,
-        http_stop,
-        move || {
-            record(&logged, "writer-stop");
-            let _ = writer_stopping.send(());
+        Teardown {
+            stop,
+            stop_workbench: move || {
+                record(&logged, "writer-stop");
+                let _ = writer_stopping.send(());
+            },
+            http_stop,
         },
-        |_| {},
+        lines.sink(),
     ));
     shutdown.send(()).unwrap();
     tokio::time::timeout(WAIT, &mut starting)
@@ -300,6 +314,13 @@ async fn listener_failure_during_backup_stop_does_not_cut_it_short() {
             "writer-stop"
         ]
     );
+    assert_eq!(
+        lines.taken(),
+        [
+            "关停起因：退出信号".to_owned(),
+            format!("关停收尾出错：HTTP服务（{}）", StartupError::Listen),
+        ]
+    );
 }
 
 /// 关停链从哪一支开始的、收尾时谁出错，各打一行（BUG-050：169 上人侧退出时日志里看不出起因）。
@@ -330,9 +351,11 @@ async fn the_cause_of_shutdown_is_logged() {
             std::future::pending(),
             async {},
             Some(driver),
-            stop,
-            http_stop,
-            || {},
+            Teardown {
+                stop,
+                stop_workbench: || {},
+                http_stop,
+            },
             lines.sink(),
         )
         .await;
@@ -348,9 +371,11 @@ async fn the_cause_of_shutdown_is_logged() {
         std::future::pending(),
         async {},
         None,
-        stop,
-        http_stop,
-        || {},
+        Teardown {
+            stop,
+            stop_workbench: || {},
+            http_stop,
+        },
         lines.sink(),
     )
     .await;
@@ -363,7 +388,7 @@ async fn the_cause_of_shutdown_is_logged() {
         )]
     );
 
-    // 关停信号先到（退出信号或看板一侧故障）；收尾时同步驱动出错，另打一行。
+    // 退出信号先到；收尾时同步驱动出错，另打一行。
     let (stop, mut stopped) = watch::channel(false);
     let (http_stop, http_stopped) = oneshot::channel::<()>();
     let driver = tokio::spawn(async move {
@@ -376,21 +401,56 @@ async fn the_cause_of_shutdown_is_logged() {
     };
     let result = drain(
         server,
-        async {},
+        async { ShutdownCause::Signal },
         async {},
         Some(driver),
-        stop,
-        http_stop,
-        || {},
+        Teardown {
+            stop,
+            stop_workbench: || {},
+            http_stop,
+        },
         lines.sink(),
     )
     .await;
     assert!(matches!(result, Err(StartupError::Serve)));
     assert_eq!(
         lines.taken(),
-        [
-            "关停起因：退出信号或看板一侧先结束",
-            "关停收尾出错：同步驱动（出错）",
-        ]
+        ["关停起因：退出信号", "关停收尾出错：同步驱动（出错）"]
     );
+
+    // 看板一侧先结束、报了故障：和退出信号分开写；收尾干净就只有这一行。
+    // 收尾最后排空 HTTP 时服务出错：带它自己的固定说法，另打一行。
+    for (outcome, failed, expected) in [
+        (Ok(()), false, vec!["关停起因：看板一侧先结束".to_owned()]),
+        (
+            Err(StartupError::Listen),
+            true,
+            vec![
+                "关停起因：看板一侧先结束".to_owned(),
+                format!("关停收尾出错：HTTP服务（{}）", StartupError::Listen),
+            ],
+        ),
+    ] {
+        let (stop, _) = watch::channel(false);
+        let (http_stop, http_stopped) = oneshot::channel::<()>();
+        let server = async move {
+            let _ = http_stopped.await;
+            outcome
+        };
+        let result = drain(
+            server,
+            async { ShutdownCause::Board },
+            async {},
+            None,
+            Teardown {
+                stop,
+                stop_workbench: || {},
+                http_stop,
+            },
+            lines.sink(),
+        )
+        .await;
+        assert_eq!(matches!(result, Err(StartupError::Listen)), failed);
+        assert_eq!(lines.taken(), expected);
+    }
 }

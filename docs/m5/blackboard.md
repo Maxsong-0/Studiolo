@@ -50,8 +50,10 @@ rejected 会让那次成功写不进去。scope 目录在 canonical 里不存在
 过期、执行体 stalled、取消宽限到期的 attempt，健康任务继续运行。常驻巡检每 15 秒一轮
 （`BoardPlane::maintain_once`），每轮先不等待地试取人侧完整操作许可（`AuditLedger::try_enter_operation`）：
 备份封存正冻结着就这一轮跳过，下一轮照常（BUG-050，2026-11-23：以前等满 5 秒报错，整个巡检结束、
-带着人侧退出）。冻结以外的错误（审计不可用、控制目录被换、对账失败等）照旧结束巡检，原因是固定类别
-`MaintenanceFault`，人侧照「board 一侧先结束」走完整关停。包装真实账本的 Adapter 必须连同试取一起转发，
+带着人侧退出）。从第一次遇到冻结算起连续超过「封存总预算 300 秒＋60 秒」还冻着（封存卡死），巡检按
+「备份冻结超过上限」结束，人侧走完整关停、由 systemd 拉起；正常的封存再慢也碰不到这个上限
+（`board::MAX_FROZEN`）。冻结以外的错误（审计不可用、控制目录被换、对账失败等）照旧结束巡检，原因是固定类别
+`MaintenanceFault`，人侧照「board 一侧先结束」走完整关停。包装真实账本的 Adapter 必须连同试取一起转发，试取里不许转调阻塞的许可，
 架构守卫 `audit_permit_forwarding` 钉着。执行体（非 consumer）
 连续 10 分钟 tool_calls/edits 不变且 edits=0 算 stalled；计数下降拒绝。CancelRequested
 立即撤销工具能力，3 分钟内只收 stopped，过时由对账保存 system abandoned receipt，未验

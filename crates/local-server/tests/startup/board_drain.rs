@@ -1,7 +1,7 @@
 //! board 一侧先退出的收尾契约：内层服务不被丢弃，board 故障照退出信号走完整收尾链
 //! （停备份 → 等 Bridge 收尾 → 停刷新 → 排空 HTTP），在途请求做完、`drain` 返回之后才轮到
 //! 等写者收尾和进程退出，退出状态是错误。
-use super::{StartupError, drain, settle_board, shutdown_requested};
+use super::{ShutdownCause, StartupError, Teardown, drain, settle_board, shutdown_requested};
 use axum::{Router, routing::get};
 use std::{
     future::Future,
@@ -123,11 +123,13 @@ async fn board_exit_drains_in_flight_request(side: Side) {
             shutdown_requested(std::future::pending(), faulted),
             async move { record(&backup_logged, "backup-stopped") },
             Some(driver),
-            bridge_stop,
-            http_stop,
-            move || {
-                record(&stop_logged, "writer-stop");
-                let _ = writer_stopping.send(());
+            Teardown {
+                stop: bridge_stop,
+                stop_workbench: move || {
+                    record(&stop_logged, "writer-stop");
+                    let _ = writer_stopping.send(());
+                },
+                http_stop,
             },
             |_| {},
         )
@@ -196,11 +198,11 @@ async fn only_a_reported_fault_or_the_signal_starts_shutdown() {
         "board 一侧没报故障就开始关停了"
     );
     signal.send(()).unwrap();
-    within(requested).await;
+    assert_eq!(within(requested).await, ShutdownCause::Signal);
 
-    // 报了故障，不等退出信号就开始关停。
+    // 报了故障，不等退出信号就开始关停；起因记成看板一侧，和退出信号分开。
     let (fault, faulted) = oneshot::channel();
     let requested = shutdown_requested(std::future::pending(), faulted);
     fault.send(()).unwrap();
-    within(requested).await;
+    assert_eq!(within(requested).await, ShutdownCause::Board);
 }

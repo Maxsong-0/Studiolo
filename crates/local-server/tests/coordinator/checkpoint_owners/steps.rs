@@ -2,9 +2,12 @@
 //! Bridge）也照样记一步，日志的形状固定；冻结半路失败时，已走过的步照样留着、没走到的不记。
 //!
 //! 169 上冻结窗口 26 秒，日志里只有一个总数，分不清是哪一步慢。
-use super::{seal::manifest, *};
+use super::{producer::Stage, seal::manifest, *};
 use crate::checkpoint::{CheckpointTimes, StepTimes, trusted_catalog};
-use studiolo_backup::checkpoint::staging::StagingArea;
+use studiolo_backup::{
+    checkpoint::staging::StagingArea,
+    worker::audit::{QueueAnswer, QueueCommand},
+};
 use studiolo_core::checkpoint::InstantMillis;
 
 /// 冻结窗口里的步骤：补记、排空、定格、冻结、窗口里核的三类回执、交出定格、Bridge 导出、放开。
@@ -92,13 +95,14 @@ async fn a_seal_records_every_step_in_order() {
 }
 
 /// 人侧有一个完整操作一直不放，冻结排不空人侧、在预算到时失败：前两步记下了，后面的没有。
+/// 前两步和排空人侧共用这一个预算：给 2 秒，测试机满载时前两步也走得完；失败本来就要等满预算。
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_freeze_that_fails_halfway_keeps_the_steps_it_took() {
     let f = Setup::new(true).await;
     let held = f.human.enter_operation().unwrap();
     let mut steps = StepTimes::start();
     let result = f.owners.freeze_timed(
-        f.request(300),
+        f.request(2_000),
         &f.key,
         BackupTargetKind::LocalTemporaryRepository,
         f.targets(),
@@ -109,4 +113,31 @@ async fn a_freeze_that_fails_halfway_keeps_the_steps_it_took() {
     drop(result);
     assert_eq!(steps.names(), ["补记登录库", "排空接入方"]);
     f.workbench.shutdown().await.unwrap();
+}
+
+/// 经生产者走一次完整封存：窗口那一行、放开之后那一行带的分步，和直接调 `CheckpointOwners` 记下的一样，
+/// 写准入记在放开之后的最后一步。生产者要是换了一份新计时、漏了一步，这里就红。
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_producer_logs_every_step_on_both_lines() {
+    let stage = Stage::new(true).await;
+    assert_eq!(stage.ask(QueueCommand::Schedule), QueueAnswer::Started);
+    stage.producer.settle();
+    let lines = stage.producer.seal_lines.lock().unwrap().clone();
+    assert_eq!(lines.len(), 2, "封存要成功、打出两行：{lines:?}");
+    assert_eq!(logged_steps(&lines[0], "备份封存冻结窗口："), WINDOW);
+    let mut after = AFTER.to_vec();
+    after.push("写准入");
+    assert_eq!(logged_steps(&lines[1], "备份封存放开之后："), after);
+    stage.assembled.workbench.shutdown().await.unwrap();
+}
+
+/// 日志行「前缀N 毫秒（分步：名 毫秒、名 毫秒）」里的步名，按顺序。
+fn logged_steps<'a>(line: &'a str, prefix: &str) -> Vec<&'a str> {
+    assert!(line.starts_with(prefix), "{line}");
+    let (_, steps) = line.split_once("（分步：").expect(line);
+    let steps = steps.strip_suffix('）').expect(line);
+    steps
+        .split('、')
+        .map(|step| step.rsplit_once(' ').expect(step).0)
+        .collect()
 }
