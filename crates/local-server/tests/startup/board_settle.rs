@@ -64,7 +64,7 @@ async fn maintenance_error_ready_alongside_shutdown_is_reported() {
         )
         .await;
         assert!(
-            matches!(result, Err(StartupError::Serve)),
+            matches!(result, Err(StartupError::Board)),
             "第 {round} 轮：巡检出错和关停同时就绪，出错被吞"
         );
     }
@@ -86,7 +86,7 @@ async fn worker_error_ready_alongside_shutdown_is_reported() {
         )
         .await;
         assert!(
-            matches!(result, Err(StartupError::Serve)),
+            matches!(result, Err(StartupError::Board)),
             "第 {round} 轮：监听出错和关停同时就绪，出错被吞"
         );
     }
@@ -123,7 +123,7 @@ async fn errors_finishing_during_settle_are_reported() {
             )
             .await;
             assert!(
-                matches!(result, Err(StartupError::Serve)),
+                matches!(result, Err(StartupError::Board)),
                 "第 {round} 轮：收到停止后才出错（巡检 {maintenance_fails}，监听 {worker_fails}），出错被吞"
             );
         }
@@ -163,7 +163,7 @@ async fn early_exit_reports_fault_and_waits_for_inner() {
                 "监听"
             };
             assert!(
-                matches!(result, Err(StartupError::Serve)),
+                matches!(result, Err(StartupError::Board)),
                 "{side}提前结束（{outcome:?}）：结果不是错误"
             );
             assert!(
@@ -280,7 +280,7 @@ async fn the_board_side_that_ended_first_and_why_is_logged() {
         let result = tokio::time::timeout(WAIT, settled)
             .await
             .expect("board 一侧先结束后收尾卡住了");
-        assert!(matches!(result, Err(StartupError::Serve)), "{case}");
+        assert!(matches!(result, Err(StartupError::Board)), "{case}");
         assert_eq!(lines.taken(), [expected], "{case}");
     }
 }
@@ -301,7 +301,7 @@ async fn errors_during_settle_are_logged_and_a_clean_settle_is_quiet() {
         lines.sink(),
     )
     .await;
-    assert!(matches!(result, Err(StartupError::Serve)));
+    assert!(matches!(result, Err(StartupError::Board)));
     let mut logged = lines.taken();
     logged.sort();
     assert_eq!(

@@ -7,7 +7,9 @@
 //!
 //! 规则按记号判（注释、字符串不算）：`src/` 下每个 `impl … AuditLedger for …` 块里有
 //! `fn enter_operation` 就必须有 `fn try_enter_operation`，它的方法体里不许出现 `enter_operation`，
-//! 并且要么转发给不等待的试取（`try_enter_operation`、真账本的 `try_operation_permit`），要么显式返回 `Err`。
+//! 并且要么转发给不等待的试取（方法体里有 `try_enter_operation` 或真账本的 `try_operation_permit`），
+//! 要么整个方法体就是一个 `Err(…)`（显式拒绝，如 worker 的跨进程客户端）。
+//! 这是按记号的启发式：只认这两种形状，经自家 helper、宏转发的写法要让转发的记号出现在方法体里才过。
 //! 不覆盖许可的 Adapter（内存、测试用）不管，默认实现对它们是对的。`src/` 下 `tests` 目录和 `*tests.rs` 里的测试夹具不算。
 
 use crate::support::{
@@ -17,8 +19,8 @@ use crate::support::{
 };
 use std::fs;
 
-/// 试取的方法体里出现这些记号之一，才算转发给了不等待的试取或显式拒绝。
-const NON_BLOCKING: [&str; 3] = ["try_enter_operation", "try_operation_permit", "Err"];
+/// 试取的方法体里出现这些记号之一，才算转发给了不等待的试取。
+const FORWARDS: [&str; 2] = ["try_enter_operation", "try_operation_permit"];
 /// 至少这几处覆盖了许可的 Adapter 在扫描范围里：真账本、看板的包装层、worker 的跨进程客户端。
 const KNOWN_ADAPTERS: [&str; 3] = [
     "crates/audit-ledger/src/sqlite.rs",
@@ -39,10 +41,12 @@ fn ledger_impls(source: &str) -> (usize, usize) {
         .filter(|body| match method(body, "try_enter_operation") {
             None => true,
             Some(try_body) => {
-                try_body.iter().any(|token| token == "enter_operation")
-                    || !try_body
-                        .iter()
-                        .any(|token| NON_BLOCKING.contains(&token.as_str()))
+                // 块体第一个记号是 `{`，第二个是 `Err`：整个方法体就是显式拒绝。
+                let refuses = try_body.get(1).is_some_and(|token| token == "Err");
+                let forwards = try_body
+                    .iter()
+                    .any(|token| FORWARDS.contains(&token.as_str()));
+                try_body.iter().any(|token| token == "enter_operation") || !(refuses || forwards)
             }
         })
         .count();
@@ -96,7 +100,7 @@ fn every_ledger_adapter_that_overrides_the_permit_also_overrides_the_try() {
     assert!(
         violations.is_empty(),
         "这些账本 Adapter 覆盖了 enter_operation，却没覆盖 try_enter_operation 或试取里会等（转调 enter_operation、\
-         没转发给 try_enter_operation／try_operation_permit 也没显式返回 Err），冻结时试取会等满 5 秒报错：{violations:?}"
+         没转发给 try_enter_operation／try_operation_permit，方法体也不只是一个 Err(…)），冻结时试取会等满 5 秒报错：{violations:?}"
     );
     // 扫不到这几处说明遍历坏了，守卫形同虚设。
     for known in KNOWN_ADAPTERS {
@@ -164,6 +168,13 @@ fn a_try_that_still_waits_is_flagged_and_real_shapes_pass() {
         unforwarded(&with_try(
             "match self.0.try_enter_operation()? { Some(permit) => Ok(Some(permit)), \
              None => self.0.enter_operation().map(Some) }"
+        )),
+        1
+    );
+    // 只有某一支返回 Err、另一支照样等：不算显式拒绝。
+    assert_eq!(
+        unforwarded(&with_try(
+            "if self.ready() { Err(AuditError::Unavailable) } else { self.0.wait().map(Some) }"
         )),
         1
     );

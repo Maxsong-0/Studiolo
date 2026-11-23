@@ -16,6 +16,11 @@ const LONG_FREEZE: Duration = Duration::from_millis(5_500);
 const SHORT_CAP: Duration = Duration::from_millis(300);
 /// 循环该结束的情形下，最多等它这么久；远比间隔和封顶长，不会因为机器慢误报。
 const ENDS_WITHIN: Duration = Duration::from_secs(5);
+/// 「中间照常巡检过一轮就重新算」用例：封顶、每段冻结、两段之间放开的时长。
+/// 每段比封顶短 0.8 秒、两段合计比封顶长；放开期间按 20 毫秒一轮能照常巡检十几轮。
+const RESET_CAP: Duration = Duration::from_secs(2);
+const STRETCH: Duration = Duration::from_millis(1_200);
+const GAP: Duration = Duration::from_millis(300);
 
 fn plane(assembled: &Assembled) -> Arc<BoardPlane> {
     assembled.inputs.board.clone().expect("装配里有黑板")
@@ -87,6 +92,32 @@ async fn a_freeze_that_never_lets_go_ends_the_loop() {
     drop(frozen);
     let ended = ended.expect("冻结超过封顶时长，巡检循环没结束").unwrap();
     assert_eq!(ended, Err(MaintenanceFault::FrozenTooLong));
+    assembled.workbench.shutdown().await.unwrap();
+}
+
+/// 两次冻结之间照常巡检过：连续冻结从头算，两段合计超过封顶也不结束（每次封存各算各的）。
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_normal_tick_between_freezes_starts_the_count_over() {
+    let assembled = Assembled::new().await;
+    let plane = plane(&assembled);
+    let (stop, stopped) = tokio::sync::watch::channel(false);
+    let maintenance = tokio::spawn(plane.maintain_every(INTERVAL, RESET_CAP, stopped, None));
+    for _ in 0..2 {
+        let frozen = freeze(&assembled.human);
+        tokio::time::sleep(STRETCH).await;
+        drop(frozen);
+        tokio::time::sleep(GAP).await;
+    }
+    assert!(
+        !maintenance.is_finished(),
+        "两段冻结中间照常巡检过，却按合计时长结束了"
+    );
+    stop.send(true).unwrap();
+    let ended = tokio::time::timeout(ENDS_WITHIN, maintenance)
+        .await
+        .expect("收到停止之后巡检没及时结束")
+        .unwrap();
+    assert_eq!(ended, Ok(()));
     assembled.workbench.shutdown().await.unwrap();
 }
 

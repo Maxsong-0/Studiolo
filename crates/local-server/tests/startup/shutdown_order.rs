@@ -419,18 +419,23 @@ async fn the_cause_of_shutdown_is_logged() {
     );
 
     // 看板一侧先结束、报了故障：和退出信号分开写；收尾干净就只有这一行。
-    // 收尾最后排空 HTTP 时服务出错：带它自己的固定说法，另打一行。
-    for (outcome, failed, expected) in [
-        (Ok(()), false, vec!["关停起因：看板一侧先结束".to_owned()]),
+    // 收尾最后排空 HTTP 时服务自己出错：带它自己的固定说法，另打一行。
+    // 内层交回的是看板一侧折出来的错（`settle_board` 已打过具体那一行）：不再回声成「HTTP服务」。
+    for (outcome, expected) in [
+        (Ok(()), vec!["关停起因：看板一侧先结束".to_owned()]),
         (
             Err(StartupError::Listen),
-            true,
             vec![
                 "关停起因：看板一侧先结束".to_owned(),
                 format!("关停收尾出错：HTTP服务（{}）", StartupError::Listen),
             ],
         ),
+        (
+            Err(StartupError::Board),
+            vec!["关停起因：看板一侧先结束".to_owned()],
+        ),
     ] {
+        let failed = outcome.as_ref().err().map(ToString::to_string);
         let (stop, _) = watch::channel(false);
         let (http_stop, http_stopped) = oneshot::channel::<()>();
         let server = async move {
@@ -450,7 +455,7 @@ async fn the_cause_of_shutdown_is_logged() {
             lines.sink(),
         )
         .await;
-        assert_eq!(matches!(result, Err(StartupError::Listen)), failed);
+        assert_eq!(result.err().map(|error| error.to_string()), failed);
         assert_eq!(lines.taken(), expected);
     }
 }

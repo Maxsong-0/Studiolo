@@ -179,13 +179,12 @@ impl PreparedServer {
                 |line| eprintln!("{line}"),
             )
             .await;
-            if let Some(runner) = runner
-                && !matches!(
-                    tokio::task::spawn_blocking(move || runner.shutdown()).await,
-                    Ok(Ok(()))
-                )
-            {
-                result = Err(StartupError::Serve);
+            if let Some(runner) = runner {
+                let ended = tokio::task::spawn_blocking(move || runner.shutdown()).await;
+                if !matches!(ended, Ok(Ok(()))) {
+                    eprintln!("看板收尾出错：Runner（{}）", task_ending(&ended));
+                    result = Err(StartupError::Board);
+                }
             }
             return result;
         }
@@ -248,11 +247,11 @@ where
         result = &mut inner => (result, First::Inner),
         ended = &mut maintenance => {
             log(format!("看板一侧先结束：租约巡检（{}）", maintenance_ending(&ended)));
-            (Err(StartupError::Serve), First::Maintenance)
+            (Err(StartupError::Board), First::Maintenance)
         }
         ended = &mut worker => {
             log(format!("看板一侧先结束：看板监听（{}）", task_ending(&ended)));
-            (Err(StartupError::Serve), First::Worker)
+            (Err(StartupError::Board), First::Worker)
         }
     };
     let _ = stop.send(true);
@@ -268,7 +267,7 @@ where
         let ended = worker.await;
         if !matches!(ended, Ok(Ok(()))) {
             log(format!("看板收尾出错：看板监听（{}）", task_ending(&ended)));
-            result = Err(StartupError::Serve);
+            result = Err(StartupError::Board);
         }
     }
     if first != First::Maintenance {
@@ -278,7 +277,7 @@ where
                 "看板收尾出错：租约巡检（{}）",
                 maintenance_ending(&ended)
             ));
-            result = Err(StartupError::Serve);
+            result = Err(StartupError::Board);
         }
     }
     result
@@ -395,7 +394,9 @@ where
             early = &mut server => {
                 served = true;
                 if let Err(error) = early {
-                    log(server_failed(&error));
+                    if let Some(line) = server_failed(&error) {
+                        log(line);
+                    }
                     result = Err(error);
                 }
             }
@@ -420,15 +421,18 @@ where
     stop_workbench();
     let _ = http_stop.send(());
     if !served && let Err(error) = server.await {
-        log(server_failed(&error));
+        if let Some(line) = server_failed(&error) {
+            log(line);
+        }
         result = Err(error);
     }
     result
 }
 
-/// 关停收尾途中 HTTP 服务出错：它的错误是固定说法，照原样带上。
-fn server_failed(error: &StartupError) -> String {
-    format!("关停收尾出错：HTTP服务（{error}）")
+/// 关停收尾途中内层服务交回了错误：HTTP 服务自己的错是固定说法，照原样带上打一行。看板一侧的错
+/// （`StartupError::Board`）是 `settle_board` 折出来的，具体那一行它已经打过，这里不再回声成「HTTP服务」。
+fn server_failed(error: &StartupError) -> Option<String> {
+    (!matches!(error, StartupError::Board)).then(|| format!("关停收尾出错：HTTP服务（{error}）"))
 }
 
 struct Shutdown {

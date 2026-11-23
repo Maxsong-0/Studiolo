@@ -1,7 +1,10 @@
 //! board 一侧先退出的收尾契约：内层服务不被丢弃，board 故障照退出信号走完整收尾链
 //! （停备份 → 等 Bridge 收尾 → 停刷新 → 排空 HTTP），在途请求做完、`drain` 返回之后才轮到
 //! 等写者收尾和进程退出，退出状态是错误。
-use super::{ShutdownCause, StartupError, Teardown, drain, settle_board, shutdown_requested};
+use super::{
+    ShutdownCause, StartupError, Teardown, board_settle::Lines, drain, settle_board,
+    shutdown_requested,
+};
 use axum::{Router, routing::get};
 use std::{
     future::Future,
@@ -117,9 +120,11 @@ async fn board_exit_drains_in_flight_request(side: Side) {
     let (fault, faulted) = oneshot::channel();
     let (writer_stopping, mut writer_stopped) = mpsc::unbounded_channel();
     let (logged, backup_logged, stop_logged) = (events.clone(), events.clone(), events.clone());
+    let lines = Lines::default();
+    let (settle_log, drain_log) = (lines.sink(), lines.sink());
     let mut run = tokio::spawn(async move {
         let result = drain(
-            settle_board(inner, maintenance, worker, board_stop, fault, |_| {}),
+            settle_board(inner, maintenance, worker, board_stop, fault, settle_log),
             shutdown_requested(std::future::pending(), faulted),
             async move { record(&backup_logged, "backup-stopped") },
             Some(driver),
@@ -131,7 +136,7 @@ async fn board_exit_drains_in_flight_request(side: Side) {
                 },
                 http_stop,
             },
-            |_| {},
+            drain_log,
         )
         .await;
         // 对应 `serve_until` 在 `drain` 之后的 `canonical_input::shutdown`：等写者的清理作业做完
@@ -160,7 +165,7 @@ async fn board_exit_drains_in_flight_request(side: Side) {
     release.send(true).unwrap();
     let result = within(run).await.unwrap();
     assert!(
-        matches!(result, Err(StartupError::Serve)),
+        matches!(result, Err(StartupError::Board)),
         "{side:?} 先退出必须以错误收场"
     );
     let (status, body) = within(request).await.unwrap().expect("在途请求被截断");
@@ -177,6 +182,16 @@ async fn board_exit_drains_in_flight_request(side: Side) {
             "writer-shutdown",
         ],
         "{side:?} 先退出：收尾顺序和退出信号那条链不一样"
+    );
+    // 日志：看板那一行说清是谁、为什么，关停起因一行；看板折出来的错不再回声成「关停收尾出错：HTTP服务」。
+    let first = match side {
+        Side::Maintenance => "看板一侧先结束：租约巡检（board 一侧失败夹具）",
+        Side::Worker => "看板一侧先结束：看板监听（出错）",
+    };
+    assert_eq!(
+        lines.taken(),
+        [first, "关停起因：看板一侧先结束"],
+        "{side:?} 先退出：日志不对"
     );
 }
 
