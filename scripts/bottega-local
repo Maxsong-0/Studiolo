@@ -1,0 +1,116 @@
+#!/usr/bin/env bash
+# Bottega 在 Mac Studio 上本机编译、测试的入口（vault ADR-043，全局「Mac 上不编译」的例外）。
+#
+# 范围：Bottega（仓库 bottega/），以后的 Bottega 桥和 P3 的 iPhone App 也经这里；网页和 169 那一侧照旧交 108。
+# 这台的本机测试入口登记（~/.claude/max-core/local-test-entry.json 的 allow_commands）按命令名放行 bottega-local，
+# 所以 Bottega 的编译、测试一律经这个脚本，不裸跑 xcodebuild、swift。
+#
+# 用法（在仓库根或任何一个 worktree 里）：
+#   scripts/bottega-local generate               按 bottega/project.yml 重新生成 Bottega.xcodeproj（xcodegen）
+#   scripts/bottega-local build                  编 Debug 版（Bottega Dev.app），产物在 bottega/build.noindex/dev
+#   scripts/bottega-local test                   编 Debug 版并跑 BottegaTests；全量跑之前先在 vault TASKS 登记占用
+#   scripts/bottega-local run                    编 Debug 版并打开它（不装进 /Applications）
+#   scripts/bottega-local xcodebuild <参数…>      在 bottega/ 里原样跑 xcodebuild（Release 不许）
+#   scripts/bottega-local swift <参数…>           在 bottega/ 里原样跑 swift（swift test、swift build 这类）
+#
+# 只编 Debug：发布版由用户本人签（ADR-043「不变的」），这里拒绝 Release。
+# 只在 Mac Studio 上放行：换一台机器（比如 MacBook）直接拒绝。例外是这台机器的，不跟着仓库走。
+set -euo pipefail
+
+root="$(cd "$(dirname "$0")/.." && pwd)"
+app_dir="$root/bottega"
+project="$app_dir/Bottega.xcodeproj"
+scheme="Bottega"
+derived="$app_dir/build.noindex/dev"
+usage="用法：bottega-local generate | build | test | run | xcodebuild <参数…> | swift <参数…>"
+
+die() {
+  printf 'bottega-local: %s\n' "$1" >&2
+  exit 2
+}
+
+# 机器判断：只认 macOS 上 Model Name 是 Mac Studio 的那台。uname、system_profiler 按 PATH 找，
+# 自检时可以在 PATH 前面放假的同名程序，看它是不是被拒（「假装成别的机器」）。
+[ "$(uname -s)" = Darwin ] || die "只在 Mac Studio 上跑（ADR-043）。这台不是 macOS。"
+system_profiler SPHardwareDataType 2>/dev/null | grep -q 'Model Name: Mac Studio' ||
+  die "只在 Mac Studio 上跑（ADR-043）。这台不是，Bottega 的编译和测试不在这里做。"
+[ -f "$app_dir/project.yml" ] || die "$root 不像 Studiolo 的仓库（没有 bottega/project.yml）。"
+
+# Xcode 找出来而不是写死：xcode-select 可能指着 Command Line Tools；显式给的 DEVELOPER_DIR 优先。
+if [ -z "${DEVELOPER_DIR:-}" ]; then
+  for candidate in /Applications/Xcode.app /Applications/Xcode-beta.app /Applications/Xcode*.app; do
+    if [ -d "$candidate/Contents/Developer" ]; then
+      export DEVELOPER_DIR="$candidate/Contents/Developer"
+      break
+    fi
+  done
+fi
+[ -n "${DEVELOPER_DIR:-}" ] || die "/Applications 下找不到 Xcode；设好 DEVELOPER_DIR 再跑。"
+
+# 拒绝 Release：参数里点名 Release 配置的一律不跑。
+refuse_release() {
+  local previous=""
+  for word in "$@"; do
+    if [ "$previous" = "-configuration" ] && [ "$word" = Release ]; then
+      die "只编 Debug：发布版由用户本人签（ADR-043），这里不编 Release。"
+    fi
+    case "$word" in
+      archive | -exportArchive) die "只编 Debug：archive、导出发布版由用户本人做（ADR-043）。" ;;
+    esac
+    previous="$word"
+  done
+}
+
+generate() {
+  command -v xcodegen >/dev/null || die "没装 xcodegen：brew install xcodegen。"
+  (cd "$app_dir" && xcodegen generate --quiet)
+}
+
+# 一次 Debug 的 xcodebuild：工程先按 project.yml 生成，免得新加的源文件、资源没进工程。
+debug_build() {
+  local action="$1"
+  shift
+  generate
+  cd "$app_dir"
+  # 跳过插件、宏的「信任」校验：命令行构建没人能点 Xcode 里的信任框，SwiftTerm 的构建插件会让整次构建失败
+  # （Tillerwright 的 quick_run.sh 一样这么跑）；依赖版本由 Package.resolved 钉死。
+  exec xcodebuild -project "$project" -scheme "$scheme" -configuration Debug \
+    -destination 'platform=macOS' -derivedDataPath "$derived" \
+    -clonedSourcePackagesDirPath "$app_dir/build.noindex/spm" \
+    -skipPackagePluginValidation -skipMacroValidation "$@" "$action"
+}
+
+mode="${1:-}"
+[ -n "$mode" ] || die "$usage"
+shift
+
+case "$mode" in
+  generate)
+    [ "$#" -eq 0 ] || die "generate 不带参数。"
+    generate
+    ;;
+  build | test)
+    refuse_release "$@"
+    debug_build "$mode" "$@"
+    ;;
+  run)
+    [ "$#" -eq 0 ] || die "run 不带参数。"
+    (debug_build build -quiet)
+    app="$derived/Build/Products/Debug/Bottega Dev.app"
+    [ -d "$app" ] || die "编完了却找不到 $app。"
+    exec open "$app"
+    ;;
+  xcodebuild)
+    refuse_release "$@"
+    cd "$app_dir"
+    exec xcodebuild "$@"
+    ;;
+  swift)
+    [ "$#" -gt 0 ] || die "swift 要给参数（比如 swift test）。"
+    cd "$app_dir"
+    exec swift "$@"
+    ;;
+  *)
+    die "不认识的用法「$mode」。$usage"
+    ;;
+esac
