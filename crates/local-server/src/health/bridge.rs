@@ -2,7 +2,7 @@
 use serde::Serialize;
 use studiolo_host_config::sync_transport::ManualQuota;
 use studiolo_observability::health::{
-    BridgeEvidence, ExitClass, HealthSection, HealthState, RecoveryState, ResidueGuard,
+    BridgeEvidence, BudgetUsage, ExitClass, HealthSection, HealthState, RecoveryState, ResidueGuard,
 };
 
 /// 人工账号记录有效期；过期仍展示旧记录，但健康结论必须未知。
@@ -15,11 +15,19 @@ pub struct BatchBody {
     pub(super) closed_at: Option<String>,
 }
 
-/// 一轮要比对的路径数与上限（BUG-047）；两个数都按十进制字符串传输。
+/// 一项同步预算的用量与上限（BUG-047：路径条数、比对内容字节数）；两个数都按十进制字符串传输。
 #[derive(Debug, Serialize)]
-pub struct PathUsageBody {
+pub struct UsageBody {
     pub(super) used: String,
     pub(super) budget: String,
+}
+impl From<BudgetUsage> for UsageBody {
+    fn from(usage: BudgetUsage) -> Self {
+        Self {
+            used: usage.used.to_string(),
+            budget: usage.budget.to_string(),
+        }
+    }
 }
 
 /// 不含路径、凭证、远端地址或stderr的Bridge投影；u64按十进制字符串传输。
@@ -37,7 +45,8 @@ pub struct BridgeBody {
     pub(super) mode: Option<&'static str>,
     pub(super) config_matches: Option<bool>,
     pub(super) deletes_blocked: Option<String>,
-    pub(super) path_usage: Option<PathUsageBody>,
+    pub(super) path_usage: Option<UsageBody>,
+    pub(super) byte_usage: Option<UsageBody>,
 }
 impl BridgeBody {
     pub(super) fn from_evidence(value: BridgeEvidence) -> Self {
@@ -71,10 +80,8 @@ impl BridgeBody {
             mode: value.mode.map(|value| value.label()),
             config_matches: value.config_matches,
             deletes_blocked: value.deletes_blocked.map(|n| n.to_string()),
-            path_usage: value.path_usage.map(|usage| PathUsageBody {
-                used: usage.used.to_string(),
-                budget: usage.budget.to_string(),
-            }),
+            path_usage: value.path_usage.map(UsageBody::from),
+            byte_usage: value.byte_usage.map(UsageBody::from),
         }
     }
 }

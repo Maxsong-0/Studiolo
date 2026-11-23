@@ -32,10 +32,11 @@ survey 保存不可替换的 selection、初始 required、全部访问名字/�
 required 合并后再完整校验，包括与已访问隐藏/排除名字的冲突；规则变更、被排除路径、单次额外列表内重复及超限整体拒绝。
 额外列表与已发现/原 required/精确规则重合允许，取集合并，调用方可以直接提交完整 U。
 
-元数据阶段零正文，首个正文打开前确认全批预算；单对象不超过规则与 256MiB 较小值，所选正文累计不超过 4GiB。
+元数据阶段零正文，首个正文打开前确认全批预算；单对象不超过规则与 256MiB 较小值，所选正文累计不超过 4GiB（`studiolo_core::SYNC_BYTE_BUDGET`，与范围并集同一个常量）。
 字节阶段固定 64KiB 缓冲、完整摘要和跨块 UTF-8 事实，不保留正文，不额外读探测字节。
 旧 blob transfer 的超限探测/安装行为保持；可复用 facts 的可选 namespace，不伪造 canonical 身份。
-`SyncScope::approve_union` 仍另行执行 baseline+canonical+mirror 三组 Present 合计 4GiB 及联合路径预算。
+`SyncScope::approve_union` 仍另行执行 baseline+canonical+mirror 三组 Present 合计 4GiB 及联合路径预算；
+人侧在调它之前先按同一口径比一次三组合计、把用量记进健康节（`byte_usage`）。
 
 每一步及最终复核全部目录 stamp、对象/父链、Missing 证明；拒链接、非普通/多链接/跨设备、截断/增长/换 inode。
 只读 reader 的 proof 绑定同一打开实例，重开同一路径也不能接管旧 proof；不暴露 FD。

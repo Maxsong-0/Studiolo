@@ -107,11 +107,12 @@ studiolo-human（uid 1000）                      root                          
 节 `sync-bridge`／「双向 Bridge」：`last_batch{sequence,unix_seconds}`、`fused`、`unknown_jobs`、`quiescence_valid`、
 `conflict_copies`、`mirror_bytes`、`last_exit`（clean／non_zero／signal／deadline_exceeded／owner_stopped／unconfirmed）、
 `recovery`（idle／forced_mirror_remote／backoff）、`residue_guard`（clear／blocked）、`mode`、`config_matches`；
-另有两个不在必备之列的字段 `deletes_blocked`（BUG-046）与 `path_usage{used,budget}`（BUG-047：最近一轮三方并集的路径数与同步路径预算）。
-有正证据就降级、不等别的字段齐（T-223），按固定顺序：`path_usage.used>budget`（BUG-047）→ `fused==true` → `deletes_blocked>0`（BUG-046）→ `residue_guard==blocked` → `config_matches==false` →
-`unknown_jobs>0` → `last_exit≠clean` → `recovery≠idle` → `path_usage.used` 到预算八成，顺序不看字段齐不齐（熔断排第一沿用 T-222，原来「字段齐」的条件 T-223 去掉）。正文是第一条的整句，
+另有三个不在必备之列的字段 `deletes_blocked`（BUG-046）、`path_usage{used,budget}`（BUG-047：最近一轮三方并集的路径数与同步路径预算）
+与 `byte_usage{used,budget}`（最近一轮走到批准之前算出的比对内容字节数——基线、canonical、镜像三方「存在」内容各算一遍——与字节预算 4 GiB）。
+有正证据就降级、不等别的字段齐（T-223），按固定顺序：`path_usage.used>budget`（BUG-047）→ `byte_usage.used>budget` → `fused==true` → `deletes_blocked>0`（BUG-046）→ `residue_guard==blocked` → `config_matches==false` →
+`unknown_jobs>0` → `last_exit≠clean` → `recovery≠idle` → `path_usage.used` 到预算八成 → `byte_usage.used` 到预算八成，顺序不看字段齐不齐（熔断排第一沿用 T-222，原来「字段齐」的条件 T-223 去掉）。正文是第一条的整句，
 其余列在「另有：」之后，必备字段还缺就再接「证据不完整：缺<字段>」。没有正证据时：任一必备字段 `None` → 未知；`quiescence_valid==false` → 未知；
-其余 → 正常，正文末尾带「路径 n／N」。`deletes_blocked` 与 `path_usage` 不在必备之列，`None` 不算缺字段。判定表与正文模板见契约 `docs/contracts/health-sync-bridge.md` 第 2 节。
+其余 → 正常，正文末尾带「路径 n／N；比对内容 p%」。`deletes_blocked`、`path_usage`、`byte_usage` 不在必备之列，`None` 不算缺字段。判定表与正文模板见契约 `docs/contracts/health-sync-bridge.md` 第 2 节。
 `conflict_copies`＝最近一次完整观察里两侧命名为冲突副本的路径数（headless 与 `studiolo-canonical` 两种设备名都识别）
 ＋持久 `conflict_stamps` 当前条数（含正在续写副本的冲突，非历史副本文件总数）；`owner_stopped`＝headless 在 owner 关停时被 `request_stop` 停下。
 平面未装配（默认关闭）时本节也是未知：与恢复点、白名单两节同一口径，没启用的能力不显示绿。

@@ -30,6 +30,20 @@ describe('同步健康结构与人工记录', () => {
         path_usage: { used: '4108', budget: '16384', extra: '1' },
       },
       { ...copy().bridge, path_usage: { used: '4108' } },
+      { ...copy().bridge, byte_usage: '675858741' },
+      {
+        ...copy().bridge,
+        byte_usage: { used: 675858741, budget: '4294967296' },
+      },
+      {
+        ...copy().bridge,
+        byte_usage: { used: '675858741', budget: '4294967296', extra: '1' },
+      },
+      { ...copy().bridge, byte_usage: { used: '675858741' } },
+      // 整个键缺了也不认：新旧两端字段对不上时宁可显示未知。
+      Object.fromEntries(
+        Object.entries(copy().bridge).filter(([key]) => key !== 'byte_usage'),
+      ),
       { ...copy().bridge, last_exit: 'probably_ok' },
       {
         ...copy().bridge,
@@ -103,6 +117,39 @@ describe('同步健康结构与人工记录', () => {
       expect(report.bridge?.pathUsage).toEqual({ used, budget: '16384' });
     }
   });
+  it('正常声明与比对内容到八成矛盾时降为未知；差一个字节不到八成、没算到过照常正常', () => {
+    const body = copy();
+    body.overall = 'normal';
+    body.sections = body.sections.map((section) => ({
+      ...section,
+      state: 'normal',
+    }));
+    body.bridge.quiescence_valid = true;
+    body.bridge.last_exit = 'clean';
+    body.bridge.recovery = 'idle';
+    const bridge = (report: ReturnType<typeof parseHealth>) =>
+      report.sections.find((section) => section.code === 'sync-bridge')?.state;
+    // 4 GiB 的八成是 3,435,973,836.8 字节。
+    body.bridge.byte_usage = { used: '3435973836', budget: '4294967296' };
+    expect(bridge(parseHealth(body))).toBe('normal');
+    expect(parseHealth(body).bridge?.byteUsage).toEqual({
+      used: '3435973836',
+      budget: '4294967296',
+    });
+    (body.bridge as Record<string, unknown>).byte_usage = null;
+    expect(bridge(parseHealth(body))).toBe('normal');
+    expect(parseHealth(body).bridge?.byteUsage).toBeNull();
+    body.bridge.byte_usage = { used: '7', budget: '10' };
+    expect(bridge(parseHealth(body))).toBe('normal');
+    body.bridge.byte_usage = { used: '8', budget: '10' };
+    expect(bridge(parseHealth(body))).toBe('unknown');
+    for (const used of ['3435973837', '4294967296', '4294967297']) {
+      body.bridge.byte_usage = { used, budget: '4294967296' };
+      const report = parseHealth(body);
+      expect(bridge(report)).toBe('unknown');
+      expect(report.bridge?.byteUsage).toEqual({ used, budget: '4294967296' });
+    }
+  });
   it('重启后明细只有正证据、其余为空时，后端报的降级照样显示，不被洗成未知', () => {
     const body = copy();
     // 后端 T-223 口径：有正证据就降级，不等十一项齐；这里只留两条正证据，别的明细都还没取得。
@@ -120,6 +167,7 @@ describe('同步健康结构与人工记录', () => {
       config_matches: null,
       deletes_blocked: null,
       path_usage: null,
+      byte_usage: null,
     } as unknown as typeof body.bridge;
     const detail =
       '上次 headless 运行在 owner 关停时被停止；另有：恢复协议进行中；证据不完整：缺最近一批';
@@ -264,6 +312,22 @@ describe('同步健康结构与人工记录', () => {
     expect(screen.getByText('冲突副本')).toBeInTheDocument();
     expect(screen.getByText('删除被挡')).toBeInTheDocument();
     expect(screen.getByText('4,108 / 16,384 条（25%）')).toBeInTheDocument();
+    expect(screen.getByText('比对内容')).toBeInTheDocument();
+    expect(screen.getByText('644.5 MiB / 4.0 GiB（15%）')).toBeInTheDocument();
+  });
+  it('比对内容超上限时明细直接说同步停住；没算到过写未知', () => {
+    const body = copy();
+    body.bridge.byte_usage = { used: '4294967297', budget: '4294967296' };
+    const { unmount } = render(<HealthPanel report={parseHealth(body)} />);
+    fireEvent.click(screen.getByText('查看同步证据'));
+    const stopped = '要比对 4,294,967,297 字节，超过上限 4.0 GiB，同步停住';
+    expect(screen.getByText(stopped)).toBeInTheDocument();
+    unmount();
+    (body.bridge as Record<string, unknown>).byte_usage = null;
+    render(<HealthPanel report={parseHealth(body)} />);
+    fireEvent.click(screen.getByText('查看同步证据'));
+    const row = screen.getByText('比对内容').nextElementSibling;
+    expect(row).toHaveTextContent('未知');
   });
   it('路径超上限时明细直接说同步停住', () => {
     const body = copy();

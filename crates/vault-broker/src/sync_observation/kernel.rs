@@ -89,7 +89,7 @@ fn budget(survey: &Survey) -> Result<(), BrokerError> {
             total = total
                 .checked_add(node.file.bytes)
                 .ok_or(BrokerError::WriterLimitExceeded)?;
-            if total > 4 * 1024 * 1024 * 1024 {
+            if total > studiolo_core::SYNC_BYTE_BUDGET {
                 return Err(BrokerError::WriterLimitExceeded);
             }
         }

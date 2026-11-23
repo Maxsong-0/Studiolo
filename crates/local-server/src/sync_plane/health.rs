@@ -174,7 +174,16 @@ impl PlaneHealth {
     pub fn record_path_usage(&self, used: u64, budget: u64) {
         if let Ok(mut inner) = self.inner.lock() {
             inner.evidence.path_usage =
-                Some(studiolo_observability::health::PathUsage { used, budget });
+                Some(studiolo_observability::health::BudgetUsage { used, budget });
+        }
+    }
+
+    /// 批准前回填（`witness::budget::check_bytes` 调）：最近一次算出的比对内容字节数与预算——基线、
+    /// canonical、镜像三方「存在」内容各算一遍的合计；超了也照实记。轮末收口不动它。
+    pub fn record_byte_usage(&self, used: u64, budget: u64) {
+        if let Ok(mut inner) = self.inner.lock() {
+            inner.evidence.byte_usage =
+                Some(studiolo_observability::health::BudgetUsage { used, budget });
         }
     }
 

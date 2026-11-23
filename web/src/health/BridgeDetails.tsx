@@ -1,5 +1,5 @@
 import { bytes, localTime as time } from './format';
-import type { BridgeHealth, ManualQuota, PathUsage } from './model';
+import type { BridgeHealth, ManualQuota, BudgetUsage } from './model';
 
 const EXIT = {
   clean: '干净退出',
@@ -18,15 +18,26 @@ const count = (value: string | null) =>
   value === null ? '未知' : BigInt(value).toLocaleString('zh-CN');
 const flag = (value: boolean | null, yes: string, no: string) =>
   value === null ? '未知' : value ? yes : no;
-/** 超上限时同步已停住，直接说；否则给用量和百分比（向下取整，与后端同一算法）。 */
-const paths = (value: PathUsage | null) => {
+/** 已用的百分比，向下取整，与后端同一算法。 */
+const percent = (used: bigint, budget: bigint) =>
+  budget === 0n ? '比例未知' : `${(used * 100n) / budget}%`;
+/** 超上限时同步已停住，直接说；否则给用量和百分比。 */
+const paths = (value: BudgetUsage | null) => {
   if (value === null) return '未知';
   const used = BigInt(value.used),
     budget = BigInt(value.budget);
   if (used > budget)
     return `要比对 ${count(value.used)} 条，超过上限 ${count(value.budget)} 条，同步停住`;
-  const percent = budget === 0n ? '比例未知' : `${(used * 100n) / budget}%`;
-  return `${count(value.used)} / ${count(value.budget)} 条（${percent}）`;
+  return `${count(value.used)} / ${count(value.budget)} 条（${percent(used, budget)}）`;
+};
+/** 比对内容（基线、主库、镜像三方各算一遍的字节合计）。超上限时写确切字节数：只超一点时两个数按 GiB 取整后一样。 */
+const content = (value: BudgetUsage | null) => {
+  if (value === null) return '未知';
+  const used = BigInt(value.used),
+    budget = BigInt(value.budget);
+  if (used > budget)
+    return `要比对 ${count(value.used)} 字节，超过上限 ${bytes(value.budget)}，同步停住`;
+  return `${bytes(value.used)} / ${bytes(value.budget)}（${percent(used, budget)}）`;
 };
 /** 明细始终来自同一次健康快照；即使本批熔断，仍可看其他已知证据。 */
 export function BridgeDetails({
@@ -43,6 +54,7 @@ export function BridgeDetails({
         : '未知',
     ],
     ['路径用量', paths(value.pathUsage)],
+    ['比对内容', content(value.byteUsage)],
     [
       '删除被挡',
       value.deletesBlocked === null

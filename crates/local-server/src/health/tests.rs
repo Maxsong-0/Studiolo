@@ -43,6 +43,7 @@ fn normal_bridge(now: i64) -> BridgeEvidence {
         config_matches: Some(true),
         deletes_blocked: Some(0),
         path_usage: None,
+        byte_usage: None,
     }
 }
 

@@ -36,7 +36,9 @@ None表示该路径正文不获批准；错误不转成None。它不证明路径
 
 所有三方合计最多16384个不同路径（同步路径预算 `studiolo_core::SYNC_PATH_BUDGET`，
 BUG-047 之前是4096），联合路径文字按每条256字节计共4MiB，逐路径1024字节/64层；
-派生前缀最多65536项/16MiB（同样随预算放大），三方实际Present字节合计不超过4GiB。
+派生前缀最多65536项/16MiB（同样随预算放大），三方实际Present字节合计不超过4GiB
+（比对内容字节预算 `studiolo_core::SYNC_BYTE_BUDGET`：同一份文件在基线、canonical、镜像各算一遍；
+人侧交批准之前先比一次、把用量记进健康节，到八成降级提醒，见契约 `docs/contracts/health-sync-bridge.md`）。
 写者观察、镜像观察、范围并集、规划器与 Bridge 状态全部引用同一个常量，只放宽一处会把失败挪到下一处。
 大小写、NFC、保守Unicode大小写别名、文件与子路径冲突一并检查。
 

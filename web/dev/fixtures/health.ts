@@ -24,6 +24,7 @@ export function healthBody() {
       config_matches: true,
       deletes_blocked: '0',
       path_usage: { used: '4108', budget: '16384' },
+      byte_usage: { used: '675858741', budget: '4294967296' },
     },
     manual_sync_quota: {
       account_limit_bytes: '10737418240',

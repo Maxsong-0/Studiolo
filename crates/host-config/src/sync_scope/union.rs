@@ -10,7 +10,8 @@ use std::collections::{BTreeMap, BTreeSet};
 const MAX_PATHS: usize = studiolo_core::SYNC_PATH_BUDGET;
 /// 并集路径文字总长：按每条 256 字节随路径预算放大（预算 4096 时是 1 MiB）。
 const MAX_PATH_BYTES: usize = MAX_PATHS * 256;
-const MAX_OBSERVED_BYTES: u64 = 4 * 1024 * 1024 * 1024;
+/// 基线、canonical、镜像三组「存在」内容各算一遍的字节合计：同步的比对内容字节预算。
+const MAX_OBSERVED_BYTES: u64 = studiolo_core::SYNC_BYTE_BUDGET;
 
 pub(super) fn approve(
     scope: &SyncScope,

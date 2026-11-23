@@ -209,6 +209,7 @@ mod tests {
                 config_matches: Some(true),
                 deletes_blocked: Some(0),
                 path_usage: None,
+                byte_usage: None,
             }
         }
 

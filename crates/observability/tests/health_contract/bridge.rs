@@ -471,7 +471,7 @@ fn 重启后证据仍不完整时已知的非干净退出判降级且不假报�
 #[test]
 fn 路径超上限排在所有正证据前面且不等字段齐() {
     let over = BridgeEvidence {
-        path_usage: Some(PathUsage {
+        path_usage: Some(BudgetUsage {
             used: 4108,
             budget: 4096,
         }),
@@ -498,7 +498,7 @@ fn 路径超上限排在所有正证据前面且不等字段齐() {
         "字段齐时也排在熔断前面"
     );
     let exact = variant(|e| {
-        e.path_usage = Some(PathUsage {
+        e.path_usage = Some(BudgetUsage {
             used: 4096,
             budget: 4096,
         })
@@ -515,7 +515,7 @@ fn 路径超上限排在所有正证据前面且不等字段齐() {
 #[test]
 fn 路径用量到八成判降级并排在其余正证据之后() {
     let near = variant(|e| {
-        e.path_usage = Some(PathUsage {
+        e.path_usage = Some(BudgetUsage {
             used: 13_108,
             budget: 16_384,
         })
@@ -528,7 +528,7 @@ fn 路径用量到八成判降级并排在其余正证据之后() {
         )
     );
     let below = variant(|e| {
-        e.path_usage = Some(PathUsage {
+        e.path_usage = Some(BudgetUsage {
             used: 13_107,
             budget: 16_384,
         })
@@ -536,7 +536,7 @@ fn 路径用量到八成判降级并排在其余正证据之后() {
     assert_eq!(judge(&below).0, HealthState::Normal);
     // 恰好八成（预算 16384 时没有整数恰好落在八成上，换个能整除的预算钉住「含等号」）。
     let eight = variant(|e| {
-        e.path_usage = Some(PathUsage {
+        e.path_usage = Some(BudgetUsage {
             used: 8,
             budget: 10,
         })
@@ -549,7 +549,7 @@ fn 路径用量到八成判降级并排在其余正证据之后() {
         )
     );
     let seven = variant(|e| {
-        e.path_usage = Some(PathUsage {
+        e.path_usage = Some(BudgetUsage {
             used: 7,
             budget: 10,
         })
@@ -569,7 +569,7 @@ fn 路径用量到八成判降级并排在其余正证据之后() {
 #[test]
 fn 正常正文带路径用量且没算到过时不阻止正常() {
     let normal = variant(|e| {
-        e.path_usage = Some(PathUsage {
+        e.path_usage = Some(BudgetUsage {
             used: 4108,
             budget: 16_384,
         })
@@ -588,7 +588,7 @@ fn 正常正文带路径用量且没算到过时不阻止正常() {
 #[test]
 fn 路径超上限与其余正证据全部并存且缺字段时正文仍在长度预算内() {
     let worst = BridgeEvidence {
-        path_usage: Some(PathUsage {
+        path_usage: Some(BudgetUsage {
             used: u64::MAX,
             budget: u64::MAX - 1,
         }),
@@ -606,5 +606,169 @@ fn 路径超上限与其余正证据全部并存且缺字段时正文仍在长�
 
     assert_eq!(state, HealthState::Degraded);
     assert!(detail.starts_with("这一轮要比对 18446744073709551615 条路径"));
+    assert!(detail.chars().count() <= 200, "{}", detail.chars().count());
+}
+
+/// 比对内容（基线、主库、镜像三方「存在」内容各算一遍的字节合计）超上限：这一轮在批准前停住，
+/// 只排在路径超上限之后（路径那道检查更早），其余正证据都退进「另有」。
+#[test]
+fn 比对内容超上限时降级且只排在路径超上限之后() {
+    let over = variant(|e| {
+        e.byte_usage = Some(BudgetUsage {
+            used: 4_294_967_297,
+            budget: 4_294_967_296,
+        })
+    });
+    let sentence = "这一轮要比对的内容合计 4294967297 字节，超过上限 4294967296 字节，同步停住：要出新版提高上限，或移走范围里的大文件";
+    assert_eq!(judge(&over), (HealthState::Degraded, sentence.to_owned()));
+    let with_fuse = BridgeEvidence {
+        fused: Some(true),
+        deletes_blocked: Some(3),
+        ..over
+    };
+    assert_eq!(
+        judge(&with_fuse).1,
+        format!("{sentence}；另有：删除熔断、删除被挡")
+    );
+    let with_paths = BridgeEvidence {
+        path_usage: Some(BudgetUsage {
+            used: 16_385,
+            budget: 16_384,
+        }),
+        ..with_fuse
+    };
+    assert_eq!(
+        judge(&with_paths).1,
+        "这一轮要比对 16385 条路径，超过上限 16384 条，同步停住：要出新版提高上限；另有：比对内容超上限、删除熔断、删除被挡"
+    );
+}
+
+/// 到上限的八成（含恰好用满）只是提前提醒，排在所有问题最后，路径接近上限之后。
+#[test]
+fn 比对内容到八成时降级提醒且排在最后() {
+    let near = variant(|e| {
+        e.byte_usage = Some(BudgetUsage {
+            used: 8,
+            budget: 10,
+        })
+    });
+    assert_eq!(
+        judge(&near),
+        (
+            HealthState::Degraded,
+            "比对内容 8／10 字节，已到上限的 80%：该安排提高上限，或移走范围里的大文件".to_owned()
+        )
+    );
+    let below = variant(|e| {
+        e.byte_usage = Some(BudgetUsage {
+            used: 7,
+            budget: 10,
+        })
+    });
+    assert_eq!(judge(&below).0, HealthState::Normal);
+    let full = variant(|e| {
+        e.byte_usage = Some(BudgetUsage {
+            used: 4_294_967_296,
+            budget: 4_294_967_296,
+        })
+    });
+    assert_eq!(
+        judge(&full).1,
+        "比对内容 4294967296／4294967296 字节，已到上限的 100%：该安排提高上限，或移走范围里的大文件"
+    );
+    let both_near = BridgeEvidence {
+        path_usage: Some(BudgetUsage {
+            used: 8,
+            budget: 10,
+        }),
+        ..near
+    };
+    assert_eq!(
+        judge(&both_near).1,
+        "路径用量 8／10，已到上限的 80%：该安排提高上限；另有：比对内容接近上限"
+    );
+    let with_unknown = BridgeEvidence {
+        unknown_jobs: Some(1),
+        ..both_near
+    };
+    assert_eq!(
+        judge(&with_unknown).1,
+        "有 1 条动作终态未知，等待原键核对；另有：路径接近上限、比对内容接近上限"
+    );
+}
+
+/// 正常正文在路径用量之后带比对内容的百分比（两个字节数太长，会挤爆 200 字的正文上限）；
+/// 还没算到过（`None`）不算缺字段、不阻止正常。
+#[test]
+fn 正常正文带比对内容的百分比且没算到过时不阻止正常() {
+    let normal = variant(|e| {
+        e.path_usage = Some(BudgetUsage {
+            used: 4118,
+            budget: 16_384,
+        });
+        e.byte_usage = Some(BudgetUsage {
+            used: 675_858_741,
+            budget: 4_294_967_296,
+        });
+    });
+    let (state, detail) = judge(&normal);
+    assert_eq!(state, HealthState::Normal);
+    assert!(
+        detail.ends_with("；路径 4118／16384；比对内容 15%；模式 mirror-remote"),
+        "{detail}"
+    );
+    let unproven = variant(|e| e.byte_usage = None);
+    assert_eq!(judge(&unproven).0, HealthState::Normal);
+    assert!(!judge(&unproven).1.contains("比对内容"));
+}
+
+#[test]
+fn 带上比对内容后最坏情况的正文仍在长度预算内() {
+    let worst = BridgeEvidence {
+        byte_usage: Some(BudgetUsage {
+            used: u64::MAX,
+            budget: u64::MAX - 1,
+        }),
+        path_usage: Some(BudgetUsage {
+            used: u64::MAX,
+            budget: u64::MAX,
+        }),
+        deletes_blocked: Some(u64::MAX),
+        fused: Some(true),
+        residue_guard: Some(ResidueGuard::Blocked),
+        config_matches: Some(false),
+        unknown_jobs: Some(u64::MAX),
+        last_exit: Some(ExitClass::OwnerStopped),
+        recovery: Some(RecoveryState::ForcedMirrorRemote),
+        ..BridgeEvidence::default()
+    };
+    let (state, detail) = judge(&worst);
+    assert_eq!(state, HealthState::Degraded);
+    assert!(detail.starts_with("这一轮要比对的内容合计 18446744073709551615 字节"));
+    assert!(detail.contains("恢复协议进行中、路径接近上限；证据不完整"));
+    assert!(detail.chars().count() <= 200, "{}", detail.chars().count());
+
+    // 正常正文：每个数都取最长，两项用量都压在八成以下。
+    let longest_normal = BridgeEvidence {
+        last_batch: Some(BatchStamp {
+            sequence: u64::MAX,
+            unix_seconds: i64::MIN,
+        }),
+        conflict_copies: Some(u64::MAX),
+        mirror_bytes: Some(u64::MAX),
+        mode: Some(ModeLabel::Bidirectional),
+        path_usage: Some(BudgetUsage {
+            used: u64::MAX / 5 * 3,
+            budget: u64::MAX,
+        }),
+        byte_usage: Some(BudgetUsage {
+            used: 79,
+            budget: 100,
+        }),
+        ..NORMAL_BRIDGE
+    };
+    let (state, detail) = judge(&longest_normal);
+    assert_eq!(state, HealthState::Normal);
+    assert!(detail.contains("；比对内容 79%；模式 bidirectional"));
     assert!(detail.chars().count() <= 200, "{}", detail.chars().count());
 }

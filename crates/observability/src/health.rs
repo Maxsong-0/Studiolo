@@ -12,8 +12,8 @@ mod model;
 
 pub use aggregate::{BACKUP_DISABLED, HealthInputs, NO_RECOVERY_POINT, aggregate};
 pub use bridge::{
-    BRIDGE_SECTION_CODE, BRIDGE_SECTION_TITLE, BatchStamp, BridgeEvidence, ExitClass, ModeLabel,
-    PathUsage, RESIDUE_BLOCKED, RecoveryState, ResidueGuard, bridge_section,
+    BRIDGE_SECTION_CODE, BRIDGE_SECTION_TITLE, BatchStamp, BridgeEvidence, BudgetUsage, ExitClass,
+    ModeLabel, RESIDUE_BLOCKED, RecoveryState, ResidueGuard, bridge_section,
 };
 pub use diagnostics::{
     DiagnosticsError, WhitelistDiagnosis, WhitelistFinding, WhitelistFindingKind,

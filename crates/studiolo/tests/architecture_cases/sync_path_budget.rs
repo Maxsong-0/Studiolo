@@ -1,6 +1,7 @@
 //! 同步路径预算只有一处定义（BUG-047）：原来五个 crate 各写一份 4096，只放宽一处会把失败挪到下一处。
 //! 这里钉住四件事：常量只在 `studiolo-core` 定义一次；链上各环节引用它、不再出现裸的预算字面量；
 //! 人侧在第二次 canonical 观察之前先拿三方并集和预算比；人侧启动打开 Bridge 后、组装平面前先把持久预算升上去。
+//! 比对内容的字节预算（4 GiB）照同一办法钉：一处定义、按它截止的三处都引用、人侧交范围批准之前先比。
 use crate::support::rust_lexer::lex;
 use crate::support::{rust_sources, workspace_root};
 use std::{fs, path::Path};
@@ -23,6 +24,22 @@ const BUDGETED: [&str; 13] = [
     "crates/sync-bridge/src/sqlite/validate.rs",
     "crates/local-server/src/sync_plane/mirror/observe.rs",
     "crates/local-server/src/startup/health_input.rs",
+];
+
+/// 按比对内容字节预算截止的每一处：范围并集（三方合计）、写者观察（canonical 一侧）、人侧批准前的比对。
+const BYTE_BUDGETED: [&str; 3] = [
+    "crates/host-config/src/sync_scope/union.rs",
+    "crates/vault-broker/src/sync_observation/kernel.rs",
+    "crates/local-server/src/sync_plane/witness/budget.rs",
+];
+
+/// 4 GiB 的几种裸写法（数字先剥掉下划线和类型后缀）。
+const BARE_BYTE_BUDGETS: [&[&str]; 5] = [
+    &["4", "*", "1024", "*", "1024", "*", "1024"],
+    &["1024", "*", "1024", "*", "1024", "*", "4"],
+    &["4294967296"],
+    &["1", "<", "<", "32"],
+    &["4", "<", "<", "30"],
 ];
 
 /// 人侧观察两侧的那个文件；第二次 canonical 观察前必须先比预算。
@@ -55,6 +72,52 @@ fn bare_budget_literals(source: &str) -> Vec<String> {
                 && (digits == "4096" || digits == "16384")
         })
         .collect()
+}
+
+/// 产品代码里有没有裸写的字节预算。
+fn has_bare_byte_budget(source: &str) -> bool {
+    let tokens: Vec<String> = lex(production(source))
+        .into_iter()
+        .map(|token| {
+            if !token.starts_with(|c: char| c.is_ascii_digit()) {
+                return token;
+            }
+            let body = INTEGER_SUFFIXES
+                .iter()
+                .find_map(|suffix| token.strip_suffix(suffix))
+                .unwrap_or(&token);
+            body.replace('_', "")
+        })
+        .collect();
+    BARE_BYTE_BUDGETS.iter().any(|spelling| {
+        tokens
+            .windows(spelling.len())
+            .any(|window| window == *spelling)
+    })
+}
+
+/// 产品代码有没有引用字节预算常量。
+fn references_byte_budget(source: &str) -> bool {
+    lex(production(source))
+        .iter()
+        .any(|token| token == "SYNC_BYTE_BUDGET")
+}
+
+/// 交范围批准之前有没有先拿三方字节合计和预算比；返回违规说明。
+fn approve_violation(source: &str) -> Option<&'static str> {
+    let compact = production(source).split_whitespace().collect::<String>();
+    let sum =
+        compact.find("letbytes=budget::observed_bytes([&baseline,&on_canonical,&on_mirror]);");
+    let check = compact.find("budget::check_bytes(&self.plane.health,bytes)?;");
+    let approve =
+        compact.find(".approve_union(approval.binding(),&baseline,&on_canonical,&on_mirror)");
+    match (sum, check, approve) {
+        (None, _, _) => Some("approve 里没有按三方证据算字节合计"),
+        (_, None, _) => Some("approve 里没有 budget::check_bytes"),
+        (_, _, None) => Some("approve 里找不到用同三组证据的 approve_union"),
+        (Some(sum), Some(check), Some(approve)) if sum < check && check < approve => None,
+        _ => Some("budget::check_bytes 必须在算出合计之后、approve_union 之前"),
+    }
 }
 
 /// 产品代码有没有引用预算常量（或 Bridge 库里由它派生的 `MAX_PATHS`）。
@@ -118,22 +181,113 @@ fn startup_raises_the_persisted_bridge_budget_before_assembling_the_plane() {
 }
 
 #[test]
-fn sync_path_budget_is_defined_once_in_core() {
+fn sync_budgets_are_defined_once_in_core() {
     let root = workspace_root();
-    let mut definitions = Vec::new();
-    for path in rust_sources(&root.join("crates")) {
-        let tokens = lex(&fs::read_to_string(&path).unwrap());
-        if tokens
-            .windows(2)
-            .any(|pair| pair[0] == "const" && pair[1] == "SYNC_PATH_BUDGET")
-        {
-            definitions.push(path.strip_prefix(&root).unwrap().to_path_buf());
-        }
+    let sources: Vec<_> = rust_sources(&root.join("crates"))
+        .into_iter()
+        .map(|path| (lex(&fs::read_to_string(&path).unwrap()), path))
+        .collect();
+    for name in ["SYNC_PATH_BUDGET", "SYNC_BYTE_BUDGET"] {
+        let definitions: Vec<_> = sources
+            .iter()
+            .filter(|(tokens, _)| {
+                tokens
+                    .windows(2)
+                    .any(|pair| pair[0] == "const" && pair[1] == name)
+            })
+            .map(|(_, path)| path.strip_prefix(&root).unwrap().to_path_buf())
+            .collect();
+        assert_eq!(
+            definitions,
+            vec![Path::new(DEFINITION).to_path_buf()],
+            "{name} 只许在 studiolo-core 定义一次，其余地方引用 studiolo_core::{name}"
+        );
     }
+}
+
+#[test]
+fn every_byte_budgeted_step_references_the_constant_and_has_no_bare_limit() {
+    let root = workspace_root();
+    for path in BYTE_BUDGETED {
+        let source = fs::read_to_string(root.join(path)).unwrap();
+        assert!(
+            references_byte_budget(&source),
+            "{path} 按比对内容字节预算截止，必须引用 studiolo_core::SYNC_BYTE_BUDGET"
+        );
+        assert!(
+            !has_bare_byte_budget(&source),
+            "{path} 不许裸写 4 GiB；改引用 studiolo_core::SYNC_BYTE_BUDGET"
+        );
+    }
+}
+
+#[test]
+fn bare_byte_budget_detection_catches_spellings_but_not_comments_or_other_sizes() {
+    for planted in [
+        "const MAX: u64 = 4 * 1024 * 1024 * 1024;",
+        "if total > 4*1024*1024*1024 { }",
+        "const MAX: u64 = 1024 * 1024 * 1024 * 4;",
+        "let limit = 4_294_967_296u64;",
+        "let limit = 4294967296;",
+        "const MAX: u64 = 1 << 32;",
+        "const MAX: u64 = 4_u64 << 30;",
+    ] {
+        assert!(has_bare_byte_budget(planted), "应当拦下：{planted}");
+    }
+    for allowed in [
+        "// 上限 4 * 1024 * 1024 * 1024 字节",
+        "let text = \"4294967296\";",
+        "const RULE: u64 = 256 * 1024 * 1024;",
+        "const OTHER: u64 = 64 * 1024 * 1024 * 1024;",
+        "fn f() {}\n#[cfg(test)]\nmod tests { const N: u64 = 4 * 1024 * 1024 * 1024; }",
+    ] {
+        assert!(!has_bare_byte_budget(allowed), "不该拦：{allowed}");
+    }
+    assert!(references_byte_budget(
+        "if bytes > studiolo_core::SYNC_BYTE_BUDGET {}"
+    ));
+    assert!(!references_byte_budget(
+        "// SYNC_BYTE_BUDGET\nconst MAX: u64 = 4 * 1024 * 1024 * 1024;"
+    ));
+}
+
+#[test]
+fn witness_checks_observed_bytes_against_the_budget_before_scope_approval() {
+    let root = workspace_root();
+    let source = fs::read_to_string(root.join(WITNESS)).unwrap();
+    assert_eq!(approve_violation(&source), None);
+
+    let check = "budget::check_bytes(&self.plane.health, bytes)?;";
+    assert!(source.contains(check), "{WITNESS} 的写法变了，守卫要跟着改");
+    let removed = source.replace(check, "");
     assert_eq!(
-        definitions,
-        vec![Path::new(DEFINITION).to_path_buf()],
-        "同步路径预算只许在 studiolo-core 定义一次，其余地方引用 studiolo_core::SYNC_PATH_BUDGET"
+        approve_violation(&removed),
+        Some("approve 里没有 budget::check_bytes"),
+        "去掉比对要拦下"
+    );
+    let swallowed = source.replace(check, &check.replace("?;", ".ok();"));
+    assert_eq!(
+        approve_violation(&swallowed),
+        Some("approve 里没有 budget::check_bytes"),
+        "吞掉比对结果要拦下"
+    );
+    let anchor = ".map_err(|_| PlaneError::Observation)?;";
+    assert_eq!(removed.matches(anchor).count(), 1, "{WITNESS} 的写法变了");
+    let moved = removed.replace(anchor, &format!("{anchor}\n{check}"));
+    assert_eq!(
+        approve_violation(&moved),
+        Some("budget::check_bytes 必须在算出合计之后、approve_union 之前"),
+        "挪到范围批准之后要拦下"
+    );
+    let two_groups = source.replace(
+        "budget::observed_bytes([&baseline, &on_canonical, &on_mirror])",
+        "budget::observed_bytes([&baseline, &on_canonical, &[]])",
+    );
+    assert_ne!(two_groups, source);
+    assert_eq!(
+        approve_violation(&two_groups),
+        Some("approve 里没有按三方证据算字节合计"),
+        "少算一方要拦下"
     );
 }
 

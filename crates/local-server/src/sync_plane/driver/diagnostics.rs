@@ -44,6 +44,14 @@ pub(crate) fn path_budget_exceeded(used: u64, budget: u64) {
     );
 }
 
+/// 比对内容超过字节预算、这一轮在批准前停住时留一行固定日志：只有两个数，不带路径。
+pub(crate) fn byte_budget_exceeded(used: u64, budget: u64) {
+    let _ = writeln!(
+        std::io::stderr().lock(),
+        "studiolo_bridge step=Approve outcome=byte_budget_exceeded used={used} budget={budget}"
+    );
+}
+
 pub(crate) fn at<T>(step: Step, result: Result<T, PlaneError>) -> Result<T, PlaneError> {
     if let Err(error) = result.as_ref() {
         let _ = writeln!(

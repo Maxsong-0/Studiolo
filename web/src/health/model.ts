@@ -21,9 +21,11 @@ export interface BridgeHealth {
   /** 主库没开文件操作、整批暂停时被挡的删除数；null 即还没有一轮证明过（BUG-046）。 */
   deletesBlocked: string | null;
   /** 一轮要比对的路径数与上限；null 即还没有一轮算到过（BUG-047）。 */
-  pathUsage: PathUsage | null;
+  pathUsage: BudgetUsage | null;
+  /** 一轮要比对的内容字节数（基线、主库、镜像三方各算一遍）与上限；null 即还没有一轮算到过。 */
+  byteUsage: BudgetUsage | null;
 }
-export interface PathUsage {
+export interface BudgetUsage {
   used: string;
   budget: string;
 }
@@ -69,6 +71,18 @@ const oneOf = <T extends string>(
   choices: readonly T[],
 ): value is T => typeof value === 'string' && choices.includes(value as T);
 
+/** 一项用量：`null`，或恰好两个 u64 十进制字符串；形状不对返回 `undefined`。 */
+function usage(value: unknown): BudgetUsage | null | undefined {
+  if (value === null) return null;
+  if (
+    !object(value) ||
+    !keys(value, ['used', 'budget']) ||
+    !decimal(value.used) ||
+    !decimal(value.budget)
+  )
+    return undefined;
+  return { used: value.used, budget: value.budget };
+}
 export function parseBridge(value: unknown): BridgeHealth | null {
   if (
     !object(value) ||
@@ -86,19 +100,14 @@ export function parseBridge(value: unknown): BridgeHealth | null {
       'config_matches',
       'deletes_blocked',
       'path_usage',
+      'byte_usage',
     ])
   )
     return null;
   const batch = value.last_batch;
-  const paths = value.path_usage;
-  if (
-    paths !== null &&
-    (!object(paths) ||
-      !keys(paths, ['used', 'budget']) ||
-      !decimal(paths.used) ||
-      !decimal(paths.budget))
-  )
-    return null;
+  const paths = usage(value.path_usage),
+    content = usage(value.byte_usage);
+  if (paths === undefined || content === undefined) return null;
   if (
     batch !== null &&
     (!object(batch) ||
@@ -157,17 +166,12 @@ export function parseBridge(value: unknown): BridgeHealth | null {
     mode: value.mode as BridgeHealth['mode'],
     configMatches: value.config_matches as boolean | null,
     deletesBlocked: value.deletes_blocked as string | null,
-    pathUsage:
-      paths === null
-        ? null
-        : {
-            used: (paths as Record<string, unknown>).used as string,
-            budget: (paths as Record<string, unknown>).budget as string,
-          },
+    pathUsage: paths,
+    byteUsage: content,
   };
 }
-/** 路径用量到了上限的八成（含用满、超过）：后端据此降级（BUG-047），与 `bridge.rs` 同一口径。 */
-export function pathsNearBudget(value: PathUsage): boolean {
+/** 一项用量（路径条数或比对内容字节数）到了上限的八成（含用满、超过）：后端据此降级（BUG-047），与 `bridge.rs` 同一口径。 */
+export function nearBudget(value: BudgetUsage): boolean {
   return BigInt(value.used) * 5n >= BigInt(value.budget) * 4n;
 }
 /**
@@ -191,8 +195,9 @@ export function bridgeCanBeNormal(value: BridgeHealth): boolean {
     value.configMatches === true &&
     // 没证明过不单独挡正常（与后端同一口径）；有被挡的删除就不能是正常。
     (value.deletesBlocked ?? '0') === '0' &&
-    // 路径用量同理：没算到过不挡；到八成或超上限就不能是正常。
-    (value.pathUsage === null || !pathsNearBudget(value.pathUsage))
+    // 路径用量、比对内容用量同理：没算到过不挡；到八成或超上限就不能是正常。
+    (value.pathUsage === null || !nearBudget(value.pathUsage)) &&
+    (value.byteUsage === null || !nearBudget(value.byteUsage))
   );
 }
 export function parseManualQuota(value: unknown): ManualQuota | null {

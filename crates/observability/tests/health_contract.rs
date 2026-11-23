@@ -1,8 +1,8 @@
 //! 健康页聚合的行为／失败／恢复三类契约。
 
 use studiolo_observability::health::{
-    BACKUP_DISABLED, BatchStamp, BridgeEvidence, ExitClass, HealthInputs, HealthSection,
-    HealthState, Instant, ModeLabel, NO_RECOVERY_POINT, OwnerLabel, OwnerLiveness, PathUsage,
+    BACKUP_DISABLED, BatchStamp, BridgeEvidence, BudgetUsage, ExitClass, HealthInputs,
+    HealthSection, HealthState, Instant, ModeLabel, NO_RECOVERY_POINT, OwnerLabel, OwnerLiveness,
     RecoveryPointEvidence, RecoveryState, ResidueGuard, aggregate, diagnose,
 };
 
@@ -24,6 +24,7 @@ const NORMAL_BRIDGE: BridgeEvidence = BridgeEvidence {
     config_matches: Some(true),
     deletes_blocked: Some(0),
     path_usage: None,
+    byte_usage: None,
 };
 use studiolo_observability::quota::QuotaVerdict;
 

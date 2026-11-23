@@ -1,7 +1,7 @@
 use super::{HealthBody, complete};
 use serde_json::{Value, json};
 use studiolo_host_config::sync_transport::ManualQuota;
-use studiolo_observability::health::PathUsage;
+use studiolo_observability::health::BudgetUsage;
 
 fn body(used: u64, recorded: i64) -> Value {
     let mut snapshot = complete(100_000);
@@ -45,7 +45,7 @@ fn bridge_counts_are_lossless_closed_and_survive_degraded_summary() {
     let body = serde_json::to_value(HealthBody::from_snapshot(&snapshot)).unwrap();
     assert_eq!(body["bridge"]["unknown_jobs"], u64::MAX.to_string());
     assert_eq!(body["bridge"]["deletes_blocked"], "0");
-    assert_eq!(body["bridge"].as_object().unwrap().len(), 13);
+    assert_eq!(body["bridge"].as_object().unwrap().len(), 14);
     assert_eq!(body["manual_sync_quota"].as_object().unwrap().len(), 8);
     assert_eq!(body.as_object().unwrap().len(), 6);
     assert_eq!(body["overall"], "degraded");
@@ -58,7 +58,7 @@ fn path_usage_is_two_lossless_counts_or_null() {
     let body = serde_json::to_value(HealthBody::from_snapshot(&snapshot)).unwrap();
     assert!(body["bridge"]["path_usage"].is_null());
 
-    snapshot.bridge.as_mut().unwrap().path_usage = Some(PathUsage {
+    snapshot.bridge.as_mut().unwrap().path_usage = Some(BudgetUsage {
         used: u64::MAX,
         budget: 16_384,
     });
@@ -67,6 +67,25 @@ fn path_usage_is_two_lossless_counts_or_null() {
         body["bridge"]["path_usage"],
         json!({"used": u64::MAX.to_string(), "budget": "16384"})
     );
+    assert_eq!(body["overall"], "degraded");
+}
+/// 比对内容用量同样是两个十进制字符串；还没算到过就是 `null`，超上限时整页判降级。
+#[test]
+fn byte_usage_is_two_lossless_counts_or_null() {
+    let mut snapshot = complete(100_000);
+    let body = serde_json::to_value(HealthBody::from_snapshot(&snapshot)).unwrap();
+    assert!(body["bridge"]["byte_usage"].is_null());
+
+    snapshot.bridge.as_mut().unwrap().byte_usage = Some(BudgetUsage {
+        used: u64::MAX,
+        budget: 4_294_967_296,
+    });
+    let body = serde_json::to_value(HealthBody::from_snapshot(&snapshot)).unwrap();
+    assert_eq!(
+        body["bridge"]["byte_usage"],
+        json!({"used": u64::MAX.to_string(), "budget": "4294967296"})
+    );
+    assert!(body["bridge"]["path_usage"].is_null());
     assert_eq!(body["overall"], "degraded");
 }
 #[test]

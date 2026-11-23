@@ -174,6 +174,7 @@ impl<'a> PlaneWitness<'a> {
     }
 
     /// 经 `SyncScope::approve_union` 核准基线与两侧观察的完整联合路径，并记为当前范围。
+    /// 交核准之前先拿三方「存在」内容的字节合计和预算比、记进健康节；核准里同一道检查留作兜底。
     ///
     /// # Errors
     /// 任一路径未批准、类型不可批准或超预算返回 `Observation`。
@@ -183,14 +184,14 @@ impl<'a> PlaneWitness<'a> {
         mirror: &Inventory,
     ) -> Result<ApprovedScope, PlaneError> {
         let approval = self.plane.approval();
+        let baseline = baseline_evidence(&self.context.baseline)?;
+        let on_canonical = inventory_evidence(canonical, &self.utf8)?;
+        let on_mirror = inventory_evidence(mirror, &self.utf8)?;
+        let bytes = budget::observed_bytes([&baseline, &on_canonical, &on_mirror]);
+        budget::check_bytes(&self.plane.health, bytes)?;
         let union = approval
             .scope()
-            .approve_union(
-                approval.binding(),
-                &baseline_evidence(&self.context.baseline)?,
-                &inventory_evidence(canonical, &self.utf8)?,
-                &inventory_evidence(mirror, &self.utf8)?,
-            )
+            .approve_union(approval.binding(), &baseline, &on_canonical, &on_mirror)
             .map_err(|_| PlaneError::Observation)?;
         self.context.approved = ApprovedScope {
             binding: self.context.binding.clone(),

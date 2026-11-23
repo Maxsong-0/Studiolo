@@ -25,6 +25,6 @@ pub use permission::{PermissionSet, ToolId};
 pub use revision::Revision;
 pub use revision_hasher::RevisionHasher;
 pub use source_policy::{SourcePolicyError, SourcePolicyRef};
-pub use sync_budget::SYNC_PATH_BUDGET;
+pub use sync_budget::{SYNC_BYTE_BUDGET, SYNC_PATH_BUDGET};
 pub use trusted_export::{TrustedExportClass, TrustedExportFact};
 pub use vault_path::VaultPath;
