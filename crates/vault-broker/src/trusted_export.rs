@@ -6,7 +6,8 @@
 //!   列出的，来源就是清单里的原批准。旧清单、没被清单列出的文件，整批拒绝。
 //! - 历史正文跟着它所属的那篇文档走：文档是来源资料，旧版本也是来源资料（同一份原批准、
 //!   同一个期限）；文档是普通 canonical 内容（哪怕已经删掉），旧版本是完整范围 L0。
-//!   没有目录认领的历史正文拒绝。
+//!   所属文档由认领它的记录给出：历史目录（条目和待删清单），或批次终态记录（每项的原文和新文，
+//!   回滚要读原文；2026-11-13 以前的批次只在这里登记过，BUG-052）。没人认领的历史正文拒绝。
 //! - 暂存正文（`writer-data/artifact-candidate-<id>.json`）装着还没发布、或被黑板留作候选的产物全文，
 //!   它是来源资料，带它自己那份原批准和期限。按顶层目录归成普通写者状态的话，期限对它就不起作用了。
 //!   升级前留下、没有原批准的暂存读不出来，整批拒绝。
@@ -34,6 +35,11 @@ const HISTORY_METADATA: &str = "meta-v1";
 const HISTORY_CATALOGS: &str = "writer-data/history/meta-v1/catalogs/";
 const MANIFEST_NAME: &str = "manifest.json";
 const WRITER_DATA: &str = "writer-data/";
+/// 写者数据根这一层以这两段开头结尾的文件，写者都当批次终态记录读（`batch::record::protected`）。
+const BATCH_RECORD_PREFIX: &str = "batch-";
+const BATCH_RECORD_SUFFIX: &str = ".json";
+/// 写者读终态记录的上限，超过它写者自己就报坏。
+const BATCH_RECORD_LIMIT: u64 = crate::writer::disk::RECORD_LIMIT as u64;
 /// 暂存正文的上限是 8 MiB（`artifact_stage::LIMIT`），这里留一点余量，超过就拒绝。
 const STAGED_LIMIT: u64 = 9 * 1024 * 1024;
 
@@ -79,7 +85,7 @@ fn classify(
     if is_history_body(path) {
         let document = owners
             .get(path)
-            .ok_or_else(|| rejected(path, "历史正文没有目录认领"))?;
+            .ok_or_else(|| rejected(path, "历史正文没有目录或批次记录认领"))?;
         return match approvals.get(document) {
             // 来源资料的旧版本仍是来源资料：跟着原批准的策略和期限走，到期一样只留非正文记录。
             // 归进「完整范围 L0」的话它就成了必含类别，期限对它不起作用。
@@ -168,43 +174,89 @@ fn claim(
     Ok(())
 }
 
-/// 每份历史正文（导出路径）属于哪篇文档（逻辑路径）。
+/// 每份历史正文（导出路径）属于哪篇文档（逻辑路径）。认领它的是历史目录或批次终态记录。
 fn history_owners(
     export_root: &Path,
     files: &BTreeMap<VaultPath, Revision>,
 ) -> Result<BTreeMap<VaultPath, VaultPath>, BrokerError> {
     let mut owners = BTreeMap::new();
     for path in files.keys() {
-        let Some(stem) = history_catalog_stem(path) else {
-            continue;
-        };
-        let bytes = read_limited(export_root, path, CATALOG_LIMIT)?;
-        let catalog: HistoryCatalog =
-            serde_json::from_slice(&bytes).map_err(|_| rejected(path, "历史目录读不出来"))?;
-        // 目录的文件名就是所属文档路径的摘要；对不上说明这份目录被挪给了别的文档。
-        if !matches!(catalog.version, 1..=5) || sha256(catalog.path.as_str().as_bytes()) != stem {
-            return Err(rejected(path, "历史目录的版本或文件名对不上"));
-        }
-        // 等待删除的旧正文可能还在盘上，仍算这篇文档的；文件已经删掉的那几条不会被用到。
-        let revisions = catalog
-            .entries
-            .iter()
-            .map(|item| item.entry.revision)
-            .chain(catalog.garbage.iter().copied());
-        for revision in revisions {
-            let body = VaultPath::parse(format!("{HISTORY}{revision}"))
-                .map_err(|_| rejected(path, "历史正文的名字不合法"))?;
-            // 同一篇文档改回旧内容时，会有两条记录指向同一份正文（真实目录只要求记录编号不重复）；
-            // 指向另一篇文档才是不一致。
-            if owners
-                .insert(body, catalog.path.clone())
-                .is_some_and(|previous| previous != catalog.path)
-            {
-                return Err(rejected(path, "同一份历史正文被两篇文档认领"));
-            }
+        if let Some(stem) = history_catalog_stem(path) {
+            catalog_claims(export_root, path, stem, &mut owners)?;
+        } else if let Some(stem) = batch_record_stem(path) {
+            batch_claims(export_root, path, stem, &mut owners)?;
         }
     }
     Ok(owners)
+}
+
+fn catalog_claims(
+    export_root: &Path,
+    path: &VaultPath,
+    stem: &str,
+    owners: &mut BTreeMap<VaultPath, VaultPath>,
+) -> Result<(), BrokerError> {
+    let bytes = read_limited(export_root, path, CATALOG_LIMIT)?;
+    let catalog: HistoryCatalog =
+        serde_json::from_slice(&bytes).map_err(|_| rejected(path, "历史目录读不出来"))?;
+    // 目录的文件名就是所属文档路径的摘要；对不上说明这份目录被挪给了别的文档。
+    if !matches!(catalog.version, 1..=5) || sha256(catalog.path.as_str().as_bytes()) != stem {
+        return Err(rejected(path, "历史目录的版本或文件名对不上"));
+    }
+    // 等待删除的旧正文可能还在盘上，仍算这篇文档的；文件已经删掉的那几条不会被用到。
+    let revisions = catalog
+        .entries
+        .iter()
+        .map(|item| item.entry.revision)
+        .chain(catalog.garbage.iter().copied());
+    for revision in revisions {
+        claim_body(owners, revision, &catalog.path, path)?;
+    }
+    Ok(())
+}
+
+/// 批次每一项的原文和新文都在 `history/` 下：回滚按原文恢复，写者整理历史时也把这两份留着。
+/// 2026-11-13 起批次完成时还会补历史目录条目，之前的只在终态记录里（BUG-052）。
+fn batch_claims(
+    export_root: &Path,
+    path: &VaultPath,
+    stem: &str,
+    owners: &mut BTreeMap<VaultPath, VaultPath>,
+) -> Result<(), BrokerError> {
+    let bytes = read_limited(export_root, path, BATCH_RECORD_LIMIT)?;
+    let record: BatchRecord =
+        serde_json::from_slice(&bytes).map_err(|_| rejected(path, "批次记录读不出来"))?;
+    // 文件名就是批次号的摘要，写者读终态时也这样核；对不上说明这份记录被挪过。
+    if sha256(record.active.batch_id.as_bytes()) != stem {
+        return Err(rejected(path, "批次记录的文件名对不上"));
+    }
+    for item in &record.active.items {
+        claim_body(owners, item.target_revision, &item.path, path)?;
+        if let Some(previous) = item.previous_revision {
+            claim_body(owners, previous, &item.path, path)?;
+        }
+    }
+    Ok(())
+}
+
+/// 记下 `revision` 这份正文属于 `document`；`source` 是认领它的那份目录或批次记录。
+fn claim_body(
+    owners: &mut BTreeMap<VaultPath, VaultPath>,
+    revision: Revision,
+    document: &VaultPath,
+    source: &VaultPath,
+) -> Result<(), BrokerError> {
+    let body = VaultPath::parse(format!("{HISTORY}{revision}"))
+        .map_err(|_| rejected(source, "历史正文的名字不合法"))?;
+    // 同一篇文档改回旧内容时会有两条记录指向同一份正文（真实目录只要求记录编号不重复），
+    // 2026-11-13 以后的批次正文也同时被目录和批次记录认领；指向另一篇文档才是不一致。
+    if owners
+        .insert(body, document.clone())
+        .is_some_and(|previous| &previous != document)
+    {
+        return Err(rejected(source, "同一份历史正文被两篇文档认领"));
+    }
+    Ok(())
 }
 
 fn owner_class(path: &VaultPath) -> Option<TrustedExportClass> {
@@ -256,6 +308,16 @@ fn history_catalog_stem(path: &VaultPath) -> Option<&str> {
                     .bytes()
                     .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
         })
+}
+
+/// 批次终态记录只在写者数据根这一层，名字是 `batch-<批次号的 SHA-256>.json`。
+/// 名字不合格的也当批次记录交给 `batch_claims`：写者照样会读它、核不过就报坏，这里也拒绝。
+fn batch_record_stem(path: &VaultPath) -> Option<&str> {
+    path.as_str()
+        .strip_prefix(WRITER_DATA)
+        .filter(|name| !name.contains('/'))?
+        .strip_prefix(BATCH_RECORD_PREFIX)?
+        .strip_suffix(BATCH_RECORD_SUFFIX)
 }
 
 fn walk(
@@ -372,4 +434,25 @@ struct HistoryItem {
 #[derive(Deserialize)]
 struct HistoryEntry {
     revision: Revision,
+}
+
+/// 批次终态记录里本模块用得到的字段；其余字段的校验是批次模块自己的事。
+/// 已回滚的批次另有 `committed`，指向同样的原文和新文，和写者的 `protected` 一样只读 `active`。
+#[derive(Deserialize)]
+struct BatchRecord {
+    active: BatchActive,
+}
+
+#[derive(Deserialize)]
+struct BatchActive {
+    batch_id: String,
+    items: Vec<BatchItem>,
+}
+
+#[derive(Deserialize)]
+struct BatchItem {
+    path: VaultPath,
+    #[serde(default)]
+    previous_revision: Option<Revision>,
+    target_revision: Revision,
 }
