@@ -176,7 +176,7 @@ fn 字段齐时多项异常并存按固定顺序报第一条并列出其余() {
         quiescence_valid: Some(false),
         ..NORMAL_BRIDGE
     };
-    // 熔断已证实生效、字段也齐时让给熔断（T-222：它持久、开了文件操作也照样挡）；熔断解除后删除被挡排第一。
+    // 熔断生效就排第一（T-222：它持久、开了文件操作也照样挡；字段齐不齐都一样）；熔断解除后删除被挡排第一。
     // 静止证据过期只是「未知」级别，不进「另有」，正证据全部解除后才轮到它。
     let expected = [
         (
@@ -241,7 +241,8 @@ fn 删除被挡有正证据就判降级不等别的字段齐() {
         detail,
         "远端删了 1 个文件（改名也算），主库没开文件操作，同步整批暂停：到远端恢复这些文件或开文件操作后接着跑；证据不完整：缺最近一批"
     );
-    // 复查第 2 轮：重启后熔断冻结着旧批次、续做那一轮守卫仍挡。字段不齐时不让位，被挡排第一、熔断跟在「另有」里。
+    // 复查第 2 轮：重启后熔断冻结着旧批次、续做那一轮守卫仍挡。T-223 起熔断不齐也报得出来，
+    // 「字段齐才让位」的条件用户定去掉：熔断照样排第一，被挡跟在「另有」里，两个原因都看得见。
     let fused_after_restart = BridgeEvidence {
         deletes_blocked: Some(2),
         fused: Some(true),
@@ -252,7 +253,7 @@ fn 删除被挡有正证据就判降级不等别的字段齐() {
     assert_eq!(state, HealthState::Degraded);
     assert_eq!(
         detail,
-        "远端删了 2 个文件（改名也算），主库没开文件操作，同步整批暂停：到远端恢复这些文件或开文件操作后接着跑；另有：删除熔断；证据不完整：缺最近一批"
+        "删除熔断生效，本批与后续批次全部阻断；另有：删除被挡；证据不完整：缺最近一批"
     );
 }
 
@@ -343,12 +344,12 @@ fn 重启后多条正证据并存且字段不齐时按固定顺序报出并点�
     );
 }
 
-/// 正文上限 200 字（`HealthSection::new` 越界即整页聚合失败）：七条正证据全部并存、计数取 u64 上限、还缺字段，也要在预算内。
+/// 正文上限 200 字（`HealthSection::new` 越界即整页聚合失败）：正证据全部并存、计数取 u64 上限、还缺字段，也要在预算内。
+/// 最长的是删除被挡排第一（熔断未生效）的那种；七条都在时熔断排第一，被挡退进「另有」。
 #[test]
 fn 正证据全部并存且缺字段时正文仍在长度预算内() {
-    let worst = BridgeEvidence {
+    let longest = BridgeEvidence {
         deletes_blocked: Some(u64::MAX),
-        fused: Some(true),
         residue_guard: Some(ResidueGuard::Blocked),
         config_matches: Some(false),
         unknown_jobs: Some(u64::MAX),
@@ -356,15 +357,27 @@ fn 正证据全部并存且缺字段时正文仍在长度预算内() {
         recovery: Some(RecoveryState::ForcedMirrorRemote),
         ..BridgeEvidence::default()
     };
+    let all_seven = BridgeEvidence {
+        fused: Some(true),
+        ..longest
+    };
+    let cases = [
+        (
+            longest,
+            "远端删了 18446744073709551615 个文件（改名也算），主库没开文件操作，同步整批暂停：到远端恢复这些文件或开文件操作后接着跑；另有：排除项残留、配置不符、终态未知动作、非干净退出、恢复协议进行中；证据不完整：缺最近一批",
+        ),
+        (
+            all_seven,
+            "删除熔断生效，本批与后续批次全部阻断；另有：删除被挡、排除项残留、配置不符、终态未知动作、非干净退出、恢复协议进行中；证据不完整：缺最近一批",
+        ),
+    ];
+    for (evidence, expected) in cases {
+        let (state, detail) = judge(&evidence);
 
-    let (state, detail) = judge(&worst);
-
-    assert_eq!(state, HealthState::Degraded);
-    assert_eq!(
-        detail,
-        "远端删了 18446744073709551615 个文件（改名也算），主库没开文件操作，同步整批暂停：到远端恢复这些文件或开文件操作后接着跑；另有：删除熔断、排除项残留、配置不符、终态未知动作、非干净退出、恢复协议进行中；证据不完整：缺最近一批"
-    );
-    assert!(detail.chars().count() <= 200, "{}", detail.chars().count());
+        assert_eq!(state, HealthState::Degraded);
+        assert_eq!(detail, expected);
+        assert!(detail.chars().count() <= 200, "{}", detail.chars().count());
+    }
 }
 
 /// 「还没有一轮证明过」不等于被挡：别的字段齐备时不因它判未知（每轮走到删除守卫都会写成 0 或被挡的个数）。

@@ -100,10 +100,9 @@ pub struct BridgeEvidence {
 
 /// 聚合第六节；缺证据一律未知。
 ///
-/// 有正证据就降级，不等别的字段齐（T-223）：删除被挡 → 删除熔断 → 排除项残留 → 配置不符 → 终态未知 →
+/// 有正证据就降级，不等别的字段齐（T-223）：删除熔断 → 删除被挡 → 排除项残留 → 配置不符 → 终态未知 →
 /// 非干净退出 → 恢复协议进行中，正文以第一条的整句开头，其余按同一顺序列在「另有：」之后，
-/// 还缺字段就再接「证据不完整：缺<第一个缺的字段>」。熔断已证实生效、而且十一个字段都齐时，
-/// 删除熔断排到删除被挡前面（T-222）。没有正证据时：缺字段 → 静止证据过期 → 正常。
+/// 还缺字段就再接「证据不完整：缺<第一个缺的字段>」。没有正证据时：缺字段 → 静止证据过期 → 正常。
 ///
 /// 删除被挡还没证明过（`None`）不算缺字段。
 ///
@@ -155,11 +154,11 @@ fn complete(evidence: &BridgeEvidence) -> Result<Complete, &'static str> {
     })
 }
 
-/// 一条已证实的问题（降级级别的正证据）。
+/// 一条已证实的问题（降级级别的正证据）；变体按判定顺序排。
 #[derive(Clone, Copy)]
 enum Problem {
-    DeletesBlocked(u64),
     Fused,
+    DeletesBlocked(u64),
     ResidueBlocked,
     ConfigMismatch,
     UnknownJobs(u64),
@@ -171,10 +170,10 @@ impl Problem {
     /// 排在第一条时的整句。
     fn sentence(self) -> String {
         match self {
+            Self::Fused => "删除熔断生效，本批与后续批次全部阻断".to_owned(),
             Self::DeletesBlocked(count) => format!(
                 "远端删了 {count} 个文件（改名也算），主库没开文件操作，同步整批暂停：到远端恢复这些文件或开文件操作后接着跑"
             ),
-            Self::Fused => "删除熔断生效，本批与后续批次全部阻断".to_owned(),
             Self::ResidueBlocked => RESIDUE_BLOCKED.to_owned(),
             Self::ConfigMismatch => CONFIG_MISMATCH.to_owned(),
             Self::UnknownJobs(count) => format!("有 {count} 条动作终态未知，等待原键核对"),
@@ -186,8 +185,8 @@ impl Problem {
     /// 列在「另有：」之后的短名；细节看结构化明细。
     const fn short(self) -> &'static str {
         match self {
-            Self::DeletesBlocked(_) => "删除被挡",
             Self::Fused => "删除熔断",
+            Self::DeletesBlocked(_) => "删除被挡",
             Self::ResidueBlocked => "排除项残留",
             Self::ConfigMismatch => "配置不符",
             Self::UnknownJobs(_) => "终态未知动作",
@@ -197,22 +196,18 @@ impl Problem {
     }
 }
 
-/// 按判定顺序列出全部已证实的问题；别的字段齐不齐都照列，只有下面这一处排序的例外看它。
+/// 按判定顺序列出全部已证实的问题，别的字段齐不齐都照列，顺序也不变。
 ///
-/// 删除被挡默认排第一（被挡的那几轮不走执行段，重启后别的字段一直补不齐，BUG-046）；
-/// 熔断已证实生效、而且十一个字段都齐时让熔断排第一（T-222）：它持久、没有解除入口，开了文件操作也照样挡。
-fn problems(evidence: &BridgeEvidence, fields_complete: bool) -> Vec<Problem> {
-    let fused = (evidence.fused == Some(true)).then_some(Problem::Fused);
-    let deletes = evidence
-        .deletes_blocked
-        .filter(|count| *count > 0)
-        .map(Problem::DeletesBlocked);
-    let (first, second) = if fused.is_some() && fields_complete {
-        (fused, deletes)
-    } else {
-        (deletes, fused)
-    };
-    let rest = [
+/// 删除熔断排第一：它持久、没有解除入口，开了文件操作也照样挡，是更该先处理的那一个（T-222；
+/// 原来还要求十一个字段都齐，因为字段不齐时熔断报不出来，T-223 之后报得出来，这个条件用户定去掉）。
+/// 删除被挡其次（被挡的那几轮不走执行段，重启后别的字段一直补不齐，BUG-046）。
+fn problems(evidence: &BridgeEvidence) -> Vec<Problem> {
+    [
+        (evidence.fused == Some(true)).then_some(Problem::Fused),
+        evidence
+            .deletes_blocked
+            .filter(|count| *count > 0)
+            .map(Problem::DeletesBlocked),
         (evidence.residue_guard == Some(ResidueGuard::Blocked)).then_some(Problem::ResidueBlocked),
         (evidence.config_matches == Some(false)).then_some(Problem::ConfigMismatch),
         evidence
@@ -227,13 +222,15 @@ fn problems(evidence: &BridgeEvidence, fields_complete: bool) -> Vec<Problem> {
             .recovery
             .filter(|state| *state != RecoveryState::Idle)
             .map(Problem::Recovering),
-    ];
-    [first, second].into_iter().chain(rest).flatten().collect()
+    ]
+    .into_iter()
+    .flatten()
+    .collect()
 }
 
 fn judge(evidence: &BridgeEvidence) -> (HealthState, String) {
     let checked = complete(evidence);
-    let found = problems(evidence, checked.is_ok());
+    let found = problems(evidence);
     // 有正证据就降级，不被「证据不完整」盖住；并存的其余问题和缺的字段跟在后面，一条也不藏。
     if let Some((first, others)) = found.split_first() {
         let mut detail = first.sentence();
