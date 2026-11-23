@@ -119,7 +119,7 @@ async fn board_exit_drains_in_flight_request(side: Side) {
     let (logged, backup_logged, stop_logged) = (events.clone(), events.clone(), events.clone());
     let mut run = tokio::spawn(async move {
         let result = drain(
-            settle_board(inner, maintenance, worker, board_stop, fault),
+            settle_board(inner, maintenance, worker, board_stop, fault, |_| {}),
             shutdown_requested(std::future::pending(), faulted),
             async move { record(&backup_logged, "backup-stopped") },
             Some(driver),
@@ -129,6 +129,7 @@ async fn board_exit_drains_in_flight_request(side: Side) {
                 record(&stop_logged, "writer-stop");
                 let _ = writer_stopping.send(());
             },
+            |_| {},
         )
         .await;
         // 对应 `serve_until` 在 `drain` 之后的 `canonical_input::shutdown`：等写者的清理作业做完

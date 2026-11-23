@@ -1,5 +1,7 @@
 //! 可执行的模块依赖与文件权限边界。
 
+#[path = "architecture_cases/audit_permit_forwarding.rs"]
+mod audit_permit_forwarding;
 #[path = "architecture_cases/audit_storage.rs"]
 mod audit_storage;
 

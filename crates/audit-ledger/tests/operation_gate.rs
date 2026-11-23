@@ -140,6 +140,37 @@ fn an_outage_does_not_let_operations_past_a_freeze_held_elsewhere() {
     let _operation = worker.enter_operation().unwrap();
 }
 
+/// 经 `dyn AuditLedger` 试取许可也不等待（BUG-050）：冻结占着时当场返回 `None`，放开后取得到。
+/// 只拿得到 trait 对象的后台巡检靠它跳过这一轮；落回默认的话要等满 5 秒再报错，巡检就整个停了。
+#[test]
+fn trying_through_the_trait_object_does_not_wait_out_a_freeze() {
+    let dir = support::private_dir();
+    let freezer = SqliteAuditLedger::open(dir.path()).unwrap();
+    let ledger: std::sync::Arc<dyn AuditLedger> =
+        std::sync::Arc::new(SqliteAuditLedger::open_existing(dir.path()).unwrap());
+    let frozen = freezer.quiesce_operations(deadline()).unwrap();
+    let started = Instant::now();
+    let tried = ledger.try_enter_operation();
+    let waited = started.elapsed();
+    drop(frozen);
+    assert!(
+        matches!(tried, Ok(None)),
+        "冻结占着时应当场返回 None，实际 {:?}",
+        tried.map(|permit| permit.is_some())
+    );
+    assert!(
+        waited < Duration::from_secs(1),
+        "试取等了 {} 毫秒",
+        waited.as_millis()
+    );
+    let permit = ledger.try_enter_operation().unwrap();
+    assert!(permit.is_some(), "放开之后应取得到");
+    // 持着试取到的许可，冻结排不空；放下之后才排得空。
+    assert!(freezer.quiesce_operations(deadline()).is_err());
+    drop(permit);
+    let _frozen = freezer.quiesce_operations(deadline()).unwrap();
+}
+
 /// 被拒绝的目录里不留下准入文件；合法库在第一次打开后才有它。
 #[test]
 fn the_gate_file_appears_only_after_the_store_is_accepted() {

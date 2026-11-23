@@ -134,6 +134,7 @@ impl PreparedServer {
                     workbench.stop();
                 }
             },
+            |line| eprintln!("{line}"),
         )
         .await;
         canonical_input::shutdown(workbench.as_ref()).await?;
@@ -173,6 +174,7 @@ impl PreparedServer {
                 worker,
                 stop,
                 board_fault,
+                |line| eprintln!("{line}"),
             )
             .await;
             if let Some(runner) = runner
@@ -213,20 +215,25 @@ impl PreparedServer {
 
 /// board 三方（内层服务、租约巡检、board 监听）谁先结束都走同一条收尾：通知另外两方停下，
 /// 再收回没赢 `select!` 的句柄、逐个检查结果；任何一方出错，结果就是错误。
+/// board 一侧先结束、收尾时出错，各经 `log` 打一行，只带固定类别（BUG-050：169 上人侧退出时
+/// 日志里只有「HTTP服务已停止」，看不出是租约巡检先停的、为什么停）。
 ///
 /// 内层服务手里有在途请求，不能随 `select!` 丢掉：axum 的连接各自在后台任务里跑，丢掉外层
 /// future 就没人等它们排空，外层随后等写者收尾、进程退出时请求可能还在跑、被截断。board 一侧
 /// 先结束时把故障经 `fault` 报给外层，外层照关停走完整收尾链（停备份、等 Bridge、停刷新、送来
 /// 内层的关停信号），这里一直等到内层排空才返回。
-async fn settle_board<S, M, W>(
+async fn settle_board<S, M, W, L>(
     inner: S,
     mut maintenance: tokio::task::JoinHandle<Result<(), M>>,
     mut worker: tokio::task::JoinHandle<Result<(), W>>,
     stop: tokio::sync::watch::Sender<bool>,
     fault: tokio::sync::oneshot::Sender<()>,
+    log: L,
 ) -> Result<(), StartupError>
 where
     S: Future<Output = Result<(), StartupError>>,
+    M: std::fmt::Display,
+    L: Fn(String),
 {
     #[derive(PartialEq, Eq)]
     enum First {
@@ -237,8 +244,14 @@ where
     let mut inner = std::pin::pin!(inner);
     let (mut result, first) = tokio::select! {
         result = &mut inner => (result, First::Inner),
-        _ = &mut maintenance => (Err(StartupError::Serve), First::Maintenance),
-        _ = &mut worker => (Err(StartupError::Serve), First::Worker),
+        ended = &mut maintenance => {
+            log(format!("看板一侧先结束：租约巡检（{}）", maintenance_ending(&ended)));
+            (Err(StartupError::Serve), First::Maintenance)
+        }
+        ended = &mut worker => {
+            log(format!("看板一侧先结束：看板监听（{}）", task_ending(&ended)));
+            (Err(StartupError::Serve), First::Worker)
+        }
     };
     let _ = stop.send(true);
     if first != First::Inner {
@@ -249,13 +262,44 @@ where
     }
     // 只跳过赢了 select 的那个（结果已取走，再 poll 会 panic）；不能用 `is_finished()` 判断：
     // 它分不清「已取走」和「结束了还没取」，同时就绪或收尾途中出的错会被它跳过吞掉。
-    if first != First::Worker && !matches!(worker.await, Ok(Ok(()))) {
-        result = Err(StartupError::Serve);
+    if first != First::Worker {
+        let ended = worker.await;
+        if !matches!(ended, Ok(Ok(()))) {
+            log(format!("看板收尾出错：看板监听（{}）", task_ending(&ended)));
+            result = Err(StartupError::Serve);
+        }
     }
-    if first != First::Maintenance && !matches!(maintenance.await, Ok(Ok(()))) {
-        result = Err(StartupError::Serve);
+    if first != First::Maintenance {
+        let ended = maintenance.await;
+        if !matches!(ended, Ok(Ok(()))) {
+            log(format!(
+                "看板收尾出错：租约巡检（{}）",
+                maintenance_ending(&ended)
+            ));
+            result = Err(StartupError::Serve);
+        }
     }
     result
+}
+
+/// 租约巡检怎么结束的：巡检自己的原因已是固定类别（`MaintenanceFault`），原样带上。
+fn maintenance_ending<M: std::fmt::Display>(
+    ended: &Result<Result<(), M>, tokio::task::JoinError>,
+) -> String {
+    match ended {
+        Ok(Ok(())) => "正常结束".to_owned(),
+        Ok(Err(fault)) => fault.to_string(),
+        Err(_) => "异常退出".to_owned(),
+    }
+}
+
+/// 看板监听、同步驱动怎么结束的：底层错误可能带路径，只记类别。
+fn task_ending<E>(ended: &Result<Result<(), E>, tokio::task::JoinError>) -> &'static str {
+    match ended {
+        Ok(Ok(())) => "正常结束",
+        Ok(Err(_)) => "出错",
+        Err(_) => "异常退出",
+    }
 }
 
 /// 关停从这里开始：退出信号或 board 一侧报的故障，先到的为准。发送端没报就丢下了
@@ -277,7 +321,10 @@ where
 ///
 /// 停备份不放进 `select!`：放在关停那一支里，别的分支先到就会把它中途丢掉，备份已经把要等的
 /// 句柄取走了，事后再调也等不到在途的连接和封存。
-async fn drain<S, F, B, W>(
+///
+/// 关停从哪一支开始、收尾时同步驱动出没出错，各经 `log` 打一行固定类别（BUG-050）。
+#[allow(clippy::too_many_arguments)]
+async fn drain<S, F, B, W, L>(
     server: S,
     shutdown: F,
     stop_backup: B,
@@ -285,23 +332,38 @@ async fn drain<S, F, B, W>(
     stop: tokio::sync::watch::Sender<bool>,
     http_stop: tokio::sync::oneshot::Sender<()>,
     stop_workbench: W,
+    log: L,
 ) -> Result<(), StartupError>
 where
     S: Future<Output = Result<(), StartupError>>,
     F: Future<Output = ()>,
     B: Future<Output = ()>,
     W: FnOnce(),
+    L: Fn(String),
 {
     let mut server = Box::pin(server);
     let (mut result, mut served, joined) = tokio::select! {
-        () = shutdown => (Ok(()), false, false),
-        result = &mut server => (result, true, false),
-        _ = async {
+        () = shutdown => {
+            log("关停起因：退出信号或看板一侧先结束".to_owned());
+            (Ok(()), false, false)
+        }
+        result = &mut server => {
+            let how = match &result {
+                Ok(()) => "正常结束".to_owned(),
+                Err(error) => error.to_string(),
+            };
+            log(format!("关停起因：HTTP服务先结束（{how}）"));
+            (result, true, false)
+        }
+        ended = async {
             match driver.as_mut() {
-                Some(driver) => { let _ = driver.await; }
-                None => std::future::pending::<()>().await,
+                Some(driver) => driver.await,
+                None => std::future::pending().await,
             }
-        } => (Err(StartupError::Serve), false, true),
+        } => {
+            log(format!("关停起因：同步驱动先结束（{}）", task_ending(&ended)));
+            (Err(StartupError::Serve), false, true)
+        }
     };
     // 停备份期间服务照旧在跑、能接新连接；服务这时先结束只记下结果，不打断停备份。
     let mut stop_backup = std::pin::pin!(stop_backup);
@@ -321,11 +383,12 @@ where
         stop_backup.await;
     }
     let _ = stop.send(true);
-    if !joined
-        && let Some(driver) = driver
-        && !matches!(driver.await, Ok(Ok(())))
-    {
-        result = Err(StartupError::Serve);
+    if !joined && let Some(driver) = driver {
+        let ended = driver.await;
+        if !matches!(ended, Ok(Ok(()))) {
+            log(format!("关停收尾出错：同步驱动（{}）", task_ending(&ended)));
+            result = Err(StartupError::Serve);
+        }
     }
     stop_workbench();
     let _ = http_stop.send(());

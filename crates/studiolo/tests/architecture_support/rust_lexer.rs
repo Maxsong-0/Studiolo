@@ -91,3 +91,28 @@ fn word_len(rest: &[char], tokens: &mut Vec<String>) -> usize {
         }
     }
 }
+
+/// 以 `open` 开头的记号串里，到配对的 `close` 为止（含两端）；没配上就到末尾。
+pub(crate) fn enclosed<'a>(tokens: &'a [String], open: &str, close: &str) -> &'a [String] {
+    let mut depth = 0usize;
+    for (index, token) in tokens.iter().enumerate() {
+        if token == open {
+            depth += 1;
+        } else if token == close {
+            depth = depth.saturating_sub(1);
+            if depth == 0 {
+                return &tokens[..=index];
+            }
+        }
+    }
+    tokens
+}
+
+/// 头部之后第一个 `{` 到配对 `}` 的块体。
+pub(crate) fn block(tokens: &[String]) -> &[String] {
+    let start = tokens
+        .iter()
+        .position(|token| token == "{")
+        .unwrap_or(tokens.len());
+    enclosed(&tokens[start..], "{", "}")
+}

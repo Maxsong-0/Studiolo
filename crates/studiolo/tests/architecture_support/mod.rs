@@ -85,6 +85,17 @@ pub(crate) fn workspace_dependency_closure(root: &Path, package: &str) -> Vec<Pa
     closure
 }
 
+/// `src/` 下的测试夹具：路径里有 `tests` 目录，或文件名以 `tests.rs` 结尾。扫生产源码的守卫跳过它们。
+pub(crate) fn is_test_fixture(relative: &Path) -> bool {
+    relative
+        .components()
+        .any(|part| part.as_os_str() == "tests")
+        || relative
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| name.ends_with("tests.rs"))
+}
+
 pub(crate) fn rust_sources(root: &Path) -> Vec<PathBuf> {
     fn visit(directory: &Path, output: &mut Vec<PathBuf>) {
         let mut entries = fs::read_dir(directory)

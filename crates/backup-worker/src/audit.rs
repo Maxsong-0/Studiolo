@@ -87,6 +87,10 @@ impl AuditLedger for WorkerAuditClient<'_> {
     fn enter_operation(&self) -> Result<OperationPermit, AuditError> {
         Err(AuditError::Unavailable)
     }
+    // 不等待的试取同样不伪造（BUG-050：覆盖了上面一个就要连这个一起写明）。
+    fn try_enter_operation(&self) -> Result<Option<OperationPermit>, AuditError> {
+        Err(AuditError::Unavailable)
+    }
     fn append(&self, event: AuditEvent) -> Result<AuditRecord, AuditError> {
         let request = BackupAuditRequest::append(self.key.clone(), self.target, event)
             .map_err(|_| AuditError::Serialization)?;

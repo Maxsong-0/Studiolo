@@ -34,6 +34,12 @@ impl AuditLedger for SharedAudit {
         self.0.enter_operation()
     }
 
+    fn try_enter_operation(
+        &self,
+    ) -> Result<Option<studiolo_audit_ledger::OperationPermit>, AuditError> {
+        self.0.try_enter_operation()
+    }
+
     fn append(&self, event: AuditEvent) -> Result<AuditRecord, AuditError> {
         self.0.append(event)
     }
@@ -166,66 +172,135 @@ impl BoardPlane {
     pub async fn maintain_until(
         self: Arc<Self>,
         stop: tokio::sync::watch::Receiver<bool>,
-    ) -> Result<(), String> {
+    ) -> Result<(), MaintenanceFault> {
         self.maintain_until_with_runner(stop, None).await
     }
     /// 同一维护循环监督可选Runner，先采进度后执行租约对账。
     pub async fn maintain_until_with_runner(
         self: Arc<Self>,
+        stop: tokio::sync::watch::Receiver<bool>,
+        runner: Option<Arc<RunnerPlane>>,
+    ) -> Result<(), MaintenanceFault> {
+        self.maintain_every(MAINTENANCE_INTERVAL, stop, runner)
+            .await
+    }
+    /// 每隔 `interval` 巡检一轮，直到收到停止；冻结以外的故障结束循环。间隔只有用例会改。
+    pub(crate) async fn maintain_every(
+        self: Arc<Self>,
+        interval: std::time::Duration,
         mut stop: tokio::sync::watch::Receiver<bool>,
         runner: Option<Arc<RunnerPlane>>,
-    ) -> Result<(), String> {
+    ) -> Result<(), MaintenanceFault> {
         loop {
             tokio::select! {
                 _=stop.changed()=>return Ok(()),
-                _=tokio::time::sleep(std::time::Duration::from_secs(15))=>{}
+                _=tokio::time::sleep(interval)=>{}
             }
             if *stop.borrow() {
                 return Ok(());
             }
             let plane = self.clone();
             let runner = runner.clone();
-            tokio::task::spawn_blocking(move || {
-                let _operation = plane
-                    .audit
-                    .enter_operation()
-                    .map_err(|_| "备份冻结或审计不可用".to_owned())?;
-                if let Some(runner) = runner {
-                    runner.tick()?;
-                }
-                plane.storage.check().map_err(str::to_owned)?;
-                let mut engine = plane.engine.lock().map_err(|_| "黑板不可用".to_owned())?;
-                engine
-                    .reconcile_periodic(jiff::Timestamp::now().as_millisecond())
-                    .map_err(|e| e.to_string())?;
-                let hash = plane
-                    .policy
-                    .effective()
-                    .map_err(|_| "策略不可用".to_owned())?
-                    .effective_hash;
-                let mut projects = std::collections::BTreeSet::new();
-                for board in engine
-                    .control_db()
-                    .board_tasks()
-                    .map_err(|e| e.to_string())?
-                {
-                    if let Some(view) = engine
-                        .board_detail(board.task_id, &hash)
-                        .map_err(|e| e.to_string())?
-                    {
-                        projects.insert(view.task.spec.project);
-                    }
-                }
-                // 单个损坏的人工页保留pending，不阻塞其他项目的租约与投影。
-                for project in projects {
-                    let _ = plane.project(&mut engine, &project, &hash);
-                }
-                Ok::<_, String>(())
-            })
-            .await
-            .map_err(|_| "黑板巡检中断".to_owned())??;
+            let tick = tokio::task::spawn_blocking(move || plane.maintain_once(runner.as_deref()))
+                .await
+                .map_err(|_| MaintenanceFault::Interrupted)??;
+            if tick == MaintenanceTick::SkippedFrozen {
+                eprintln!("看板租约巡检：备份冻结中，这一轮跳过");
+            }
         }
     }
+    /// 巡检一轮：先采 Runner 进度，再做租约对账、刷新各项目的投影。须在阻塞线程里、引擎锁之外调用。
+    ///
+    /// 备份封存正冻结着审计时，这一轮跳过、下一轮照常（BUG-050：以前取许可等满 5 秒报错，
+    /// 整个巡检循环结束，人侧照「board 一侧先结束」走完整关停退出）。冻结以外的错误照旧失败关闭。
+    pub(crate) fn maintain_once(
+        &self,
+        runner: Option<&RunnerPlane>,
+    ) -> Result<MaintenanceTick, MaintenanceFault> {
+        // 冻结中只认这一种「取不到」；准入文件被换、权限被改这类照旧是审计不可用。
+        let Some(_operation) = self
+            .audit
+            .try_enter_operation()
+            .map_err(|_| MaintenanceFault::Audit)?
+        else {
+            return Ok(MaintenanceTick::SkippedFrozen);
+        };
+        // 下面 Runner 采进度时嵌套取同一把共享许可：手里已有一把，冻结方排不进来，嵌套的不会等。
+        if let Some(runner) = runner {
+            runner.tick().map_err(|_| MaintenanceFault::Runner)?;
+        }
+        self.storage
+            .check()
+            .map_err(|_| MaintenanceFault::Storage)?;
+        let mut engine = self.engine.lock().map_err(|_| MaintenanceFault::Engine)?;
+        engine
+            .reconcile_periodic(jiff::Timestamp::now().as_millisecond())
+            .map_err(|_| MaintenanceFault::Reconcile)?;
+        let hash = self
+            .policy
+            .effective()
+            .map_err(|_| MaintenanceFault::Policy)?
+            .effective_hash;
+        let mut projects = std::collections::BTreeSet::new();
+        for board in engine
+            .control_db()
+            .board_tasks()
+            .map_err(|_| MaintenanceFault::Control)?
+        {
+            if let Some(view) = engine
+                .board_detail(board.task_id, &hash)
+                .map_err(|_| MaintenanceFault::Control)?
+            {
+                projects.insert(view.task.spec.project);
+            }
+        }
+        // 单个损坏的人工页保留pending，不阻塞其他项目的租约与投影。
+        for project in projects {
+            let _ = self.project(&mut engine, &project, &hash);
+        }
+        Ok(MaintenanceTick::Done)
+    }
+}
+
+/// 租约巡检的间隔。
+const MAINTENANCE_INTERVAL: std::time::Duration = std::time::Duration::from_secs(15);
+
+/// 一轮租约巡检的结果。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MaintenanceTick {
+    /// 照常巡检完一轮。
+    Done,
+    /// 备份封存正冻结着审计：这一轮跳过，下一轮照常（BUG-050）。
+    SkippedFrozen,
+}
+
+/// 租约巡检结束循环的原因：固定类别，进日志，不带路径、正文和底层错误。
+#[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
+pub enum MaintenanceFault {
+    /// 冻结以外的取许可失败。
+    #[error("审计不可用")]
+    Audit,
+    /// Runner 监管失败。
+    #[error("Runner 监管失败")]
+    Runner,
+    /// 控制目录或控制库被换、权限不对。
+    #[error("控制目录或控制库不可用")]
+    Storage,
+    /// 黑板引擎锁中毒。
+    #[error("黑板不可用")]
+    Engine,
+    /// 租约对账失败。
+    #[error("租约对账失败")]
+    Reconcile,
+    /// 策略库不可用。
+    #[error("策略不可用")]
+    Policy,
+    /// 读控制库里的任务失败。
+    #[error("控制库读取失败")]
+    Control,
+    /// 巡检线程异常退出（panic）。
+    #[error("巡检线程异常退出")]
+    Interrupted,
 }
 
 /// 人侧监督面只读路由，必须挂在既有会话门禁内。

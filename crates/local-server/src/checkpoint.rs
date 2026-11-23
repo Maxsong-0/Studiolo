@@ -8,6 +8,7 @@ mod export;
 mod released;
 mod restore;
 mod settle;
+mod steps;
 use crate::{
     CanonicalWorkbench, FrozenWorkbench, PolicyPlane,
     board::BoardPlane,
@@ -29,6 +30,7 @@ use std::{
     sync::Arc,
     time::{Duration, Instant},
 };
+pub use steps::StepTimes;
 use studiolo_audit_ledger::{
     AuditCheckpointAccess, AuditEvent, AuditQuiescence, FrozenAudit, SqliteAuditLedger,
 };
@@ -104,13 +106,26 @@ impl CheckpointOwners {
             policy: input.policy,
         })
     }
-    /// Intent 必须已由独立作业方落账；整个窗口共用一个原截止时间，任何失败按逆序释放。
-    pub fn freeze(
+    /// 不记分步的冻结，只给用例用；生产封存用 [`Self::freeze_timed`]。
+    #[cfg(test)]
+    pub(crate) fn freeze(
         &self,
         request: FreezeRequest,
         key: &JobKey,
         target: BackupTargetKind,
         paths: OwnerExportPaths,
+    ) -> Result<FrozenOwners> {
+        self.freeze_timed(request, key, target, paths, &mut StepTimes::start())
+    }
+    /// Intent 必须已由独立作业方落账；整个窗口共用一个原截止时间，任何失败按逆序释放。
+    /// 走过的每一步记进 `steps`，失败时已走过的照样留着，生产者照它写日志（BUG-050）。
+    pub fn freeze_timed(
+        &self,
+        request: FreezeRequest,
+        key: &JobKey,
+        target: BackupTargetKind,
+        paths: OwnerExportPaths,
+        steps: &mut StepTimes,
     ) -> Result<FrozenOwners> {
         if request.checkpoint_id != key.checkpoint_id {
             return Err(unavailable(Owner::Audit));
@@ -119,6 +134,7 @@ impl CheckpointOwners {
         let deadline = Instant::now() + Duration::from_millis(u64::from(request.budget.millis()));
         // 登录库自己补得掉的待办先补完：补记要取完整操作许可，所以只能在排空之前做。
         self.settle_auth(deadline)?;
+        steps.mark("补记登录库");
         // 接入方可嵌套调用人侧黑板，反向无完整操作嵌套：必须先排空接入方。
         let agent_quiet = self
             .agents
@@ -129,15 +145,18 @@ impl CheckpointOwners {
                     .map_err(|_| unavailable(Owner::AgentStore))
             })
             .transpose()?;
+        steps.mark("排空接入方");
         let human_quiet = self
             .audit
             .quiesce(deadline)
             .map_err(|_| unavailable(Owner::Audit))?;
+        steps.mark("排空人侧");
         check_deadline(deadline, Owner::Broker)?;
         let broker = self
             .workbench
             .freeze_checkpoint(deadline)
             .map_err(|_| unavailable(Owner::Broker))?;
+        steps.mark("写者定格");
         let control = self
             .control
             .as_ref()
@@ -196,6 +215,8 @@ impl CheckpointOwners {
             .audit
             .freeze(deadline)
             .map_err(|_| unavailable(Owner::Audit))?;
+        // 控制、登录、Bridge、接入方、策略和两本账本，没装的也照样记这一步，日志形状固定。
+        steps.mark("各库冻结");
         let mut frozen = FrozenOwners {
             audit,
             agent_audit,
@@ -213,7 +234,7 @@ impl CheckpointOwners {
             checked: None,
             deadline,
         };
-        frozen.verify_audit()?;
+        frozen.verify_audit(steps)?;
         Ok(frozen)
     }
 }
@@ -221,11 +242,12 @@ impl FrozenOwners {
     /// 窗口里要核的回执：本作业的 Intent、写者的重放与回执（读活的写者实例，条数有上限）、
     /// Bridge 的持久 ACK 与传输最后一次运行（Bridge 整份在窗口里导出，见 [`FrozenOwners::release`]）。
     /// 登录、控制、接入方库的回执只读各自定格的库，放开之后再核（[`ReleasedOwners`]）。
-    fn verify_audit(&mut self) -> Result<()> {
+    fn verify_audit(&mut self, steps: &mut StepTimes) -> Result<()> {
         self.checked = None;
         self.audit
             .verify_event(&self.intent)
             .map_err(|_| unavailable(Owner::Audit))?;
+        steps.mark("核 Intent");
         // 只有实际核验成功才累计，包括本作业在副作用前已落账的 Intent。
         let mut checked = 1_u64;
         // 写者自己分得清「超过固定上限」和「不可用」，原样带上（BUG-045）。
@@ -233,6 +255,7 @@ impl FrozenOwners {
             &mut checked,
             self.broker.verify_audit(&self.audit)?.checked(),
         )?;
+        steps.mark("核写者回执");
         if let Some(bridge) = &mut self.bridge {
             add(
                 &mut checked,
@@ -241,9 +264,15 @@ impl FrozenOwners {
                     .map_err(|_| unavailable(Owner::Bridge))?,
             )?;
         }
+        steps.mark("核 Bridge 回执");
         check_deadline(self.deadline, Owner::Audit)?;
         self.checked = Some(checked);
         Ok(())
+    }
+    /// 不记分步的放开，只给用例用；生产封存用 [`Self::release_timed`]。
+    #[cfg(test)]
+    pub(crate) fn release(self, deadline: Instant) -> Result<ReleasedOwners> {
+        self.release_timed(deadline, &mut StepTimes::start())
     }
     /// 窗口里收尾，再按冻结的逆序放开全部屏障（BUG-045）。
     ///
@@ -253,13 +282,19 @@ impl FrozenOwners {
     /// 然后放开两本账本、策略、接入方库的写锁，放开 Bridge、登录、控制库（定格的读连接留着），
     /// 把写者还回工作台，最后恢复人侧和接入方的完整操作准入。之后的活都受 `deadline` 约束。
     /// 任何一步失败，剩下的屏障随返回值析构照样按逆序放开。
-    pub fn release(mut self, deadline: Instant) -> Result<ReleasedOwners> {
+    /// 走过的每一步接着记进冻结时那一份 `steps`（BUG-050）。
+    pub fn release_timed(
+        mut self,
+        deadline: Instant,
+        steps: &mut StepTimes,
+    ) -> Result<ReleasedOwners> {
         // 全程在 self 上做：中途失败时整个结构按字段声明顺序析构，先放库屏障、最后才恢复准入。
         let checked = self.checked.ok_or_else(|| unavailable(Owner::Audit))?;
         let capture = self
             .broker
             .take_capture()
             .map_err(|_| unavailable(Owner::Broker))?;
+        steps.mark("交出写者定格");
         let bridged = self
             .bridge
             .as_ref()
@@ -269,6 +304,7 @@ impl FrozenOwners {
                     .map_err(|_| unavailable(Owner::Bridge))
             })
             .transpose()?;
+        steps.mark("Bridge 导出");
         check_deadline(self.deadline, Owner::Audit)?;
         self.audit
             .release(deadline)
@@ -314,6 +350,7 @@ impl FrozenOwners {
         drop(broker);
         drop(human_quiet);
         drop(agent_quiet);
+        steps.mark("放开");
         Ok(ReleasedOwners {
             audit,
             agent_audit,

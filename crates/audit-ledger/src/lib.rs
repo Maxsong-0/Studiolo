@@ -84,6 +84,16 @@ pub trait AuditLedger: Send + Sync {
         Ok(OperationPermit::uncoordinated())
     }
 
+    /// 试取一次完整操作的许可、不等待：备份冻结正占着时返回 `Ok(None)`。
+    ///
+    /// 给到点就跑、错过一轮也无妨的后台巡检用：冻结期间这一轮跳过，不等 5 秒、不当故障（BUG-050）。
+    /// 默认转 [`Self::enter_operation`]：内存/测试 Adapter 本来就不等。真实 SQLite owner 覆盖成
+    /// 不等待的试取；包装真实 owner 的 Adapter 必须和 `enter_operation` 一起转发本方法，
+    /// 只转发前者的话，这里会落回默认、等满 5 秒再报错。
+    fn try_enter_operation(&self) -> Result<Option<OperationPermit>, AuditError> {
+        self.enter_operation().map(Some)
+    }
+
     /// 追加一条事件；完全相同的重试直接返回既有记录。
     fn append(&self, event: AuditEvent) -> Result<AuditRecord, AuditError>;
 

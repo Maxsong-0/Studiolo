@@ -11,7 +11,7 @@ use studiolo_core::checkpoint::{
 };
 use studiolo_local_server::{
     PolicyPlane,
-    checkpoint::{CheckpointInputs, OwnerExportPaths},
+    checkpoint::{CheckpointInputs, OwnerExportPaths, StepTimes},
 };
 use studiolo_policy::PolicyStore;
 use studiolo_supply::{AgentIdentityView, AgentStore};
@@ -67,8 +67,9 @@ fn export(f: &Fixture, inputs: &CheckpointInputs, agent: bool, policy: bool, boa
         fs::set_permissions(path, fs::Permissions::from_mode(0o700)).unwrap();
     }
     let owners = inputs.bind().unwrap();
+    let mut steps = StepTimes::start();
     let frozen = owners
-        .freeze(
+        .freeze_timed(
             FreezeRequest {
                 checkpoint_id: key.checkpoint_id.clone(),
                 budget: FreezeBudget::new(30_000).unwrap(),
@@ -76,10 +77,14 @@ fn export(f: &Fixture, inputs: &CheckpointInputs, agent: bool, policy: bool, boa
             &key,
             BackupTargetKind::LocalTemporaryRepository,
             paths,
+            &mut steps,
         )
         .unwrap();
     let result = frozen
-        .release(std::time::Instant::now() + std::time::Duration::from_secs(60))
+        .release_timed(
+            std::time::Instant::now() + std::time::Duration::from_secs(60),
+            &mut steps,
+        )
         .unwrap()
         .export()
         .unwrap();

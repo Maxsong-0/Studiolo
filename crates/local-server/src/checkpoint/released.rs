@@ -4,7 +4,7 @@
 //! 没有屏障可以放开：丢弃只关定格的连接和句柄，失败不出票，留下的暂存由暂存层回收。
 use super::{
     CheckpointError, CheckpointExports, CheckpointTimes, OwnerExportPaths, PolicyParticipant,
-    Result, add, check_deadline, unavailable,
+    Result, StepTimes, add, check_deadline, unavailable,
 };
 use crate::coordinator::broker_failure;
 use std::{path::Path, time::Instant};
@@ -70,8 +70,23 @@ impl std::fmt::Display for SealFailure {
     }
 }
 impl ReleasedOwners {
+    /// 不记分步的封存，只给用例用；生产封存用 [`Self::seal_timed`]。
+    #[cfg(test)]
+    pub(crate) fn seal(
+        &mut self,
+        area: StagingArea,
+        catalog: impl FnOnce(
+            &Path,
+            &CheckpointExports,
+        ) -> std::result::Result<SourceCatalog, StagingError>,
+        manifest: ManifestInputs,
+        times: CheckpointTimes,
+    ) -> std::result::Result<SealedCheckpoint, SealFailure> {
+        self.seal_timed(area, catalog, manifest, times, &mut StepTimes::start())
+    }
     /// 逐项导出，过滤视图与本地清单原子封存、重开复验；暂存区的截止时间不能晚于放开时给的截止时间。
-    pub fn seal(
+    /// 走过的每一步记进 `steps`；失败时已走过的照样留着，生产者照它写日志（BUG-050）。
+    pub fn seal_timed(
         &mut self,
         area: StagingArea,
         catalog: impl FnOnce(
@@ -80,6 +95,7 @@ impl ReleasedOwners {
         ) -> std::result::Result<SourceCatalog, StagingError>,
         mut manifest: ManifestInputs,
         times: CheckpointTimes,
+        steps: &mut StepTimes,
     ) -> std::result::Result<SealedCheckpoint, SealFailure> {
         let started = Instant::now();
         if self.paths.directories() != OwnerExportPaths::under(area.export_root()).directories()
@@ -88,9 +104,13 @@ impl ReleasedOwners {
             return Err(SealFailure::Staging(StagingError::UnsafeRoot));
         }
         let coverage = self.verify_audit().map_err(SealFailure::Verify)?;
-        let exports = self.export_owners(coverage).map_err(SealFailure::Export)?;
+        steps.mark("校验与核回执");
+        let exports = self
+            .export_owners(coverage, steps)
+            .map_err(SealFailure::Export)?;
         // 只在真实副本已经形成之后计算当前登记；不得按路径补默认标签。
         let catalog = catalog(area.export_root(), &exports).map_err(SealFailure::Staging)?;
+        steps.mark("登记来源");
         let CheckpointExports {
             roster,
             owners,
@@ -118,16 +138,21 @@ impl ReleasedOwners {
             )
             .map_err(SealFailure::Staging)?;
         check_deadline(self.deadline, Owner::Audit).map_err(|_| expired())?;
+        steps.mark("封存暂存区");
         Ok(sealed)
     }
     /// 先校验登录、控制、接入方库的定格并核剩下的回执（都读各自定格的库和定格的账本），
     /// 再按固定顺序逐项导出，汇总两个独立审计截止点。账本的整本验链在它自己的导出里、在副本上做。
     pub fn export(&mut self) -> Result<CheckpointExports> {
         let coverage = self.verify_audit()?;
-        self.export_owners(coverage)
+        self.export_owners(coverage, &mut StepTimes::start())
     }
-    /// 按固定顺序逐项导出；回执已经核过。
-    fn export_owners(&mut self, coverage: AuditCoverageProof) -> Result<CheckpointExports> {
+    /// 按固定顺序逐项导出；回执已经核过。写者、其余各库、两本账本（副本上整本验链）各记一步。
+    fn export_owners(
+        &mut self,
+        coverage: AuditCoverageProof,
+        steps: &mut StepTimes,
+    ) -> Result<CheckpointExports> {
         let p = &self.paths;
         // 写者分得清超过固定上限、定格之后被改过和别的故障，和窗口里同一套类别（BUG-045）。
         let mut owners = vec![
@@ -135,6 +160,7 @@ impl ReleasedOwners {
                 .export(&p.vault, &p.writer, self.deadline)
                 .map_err(|error| broker_failure(Some(&error)))?,
         ];
+        steps.mark("写者导出");
         if let Some(control) = &self.control {
             owners.push(
                 control
@@ -160,6 +186,7 @@ impl ReleasedOwners {
         if let Some(policy) = &self.policy {
             owners.push(policy.export(&self.request)?);
         }
+        steps.mark("其余导出");
         let mut audit = self
             .audit
             .export(&p.audit)
@@ -209,6 +236,7 @@ impl ReleasedOwners {
         })))
         .map_err(|_| unavailable(Owner::Audit))?;
         check_deadline(self.deadline, Owner::Audit)?;
+        steps.mark("账本导出与验链");
         Ok(CheckpointExports {
             roster,
             owners,

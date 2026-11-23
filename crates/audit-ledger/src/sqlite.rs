@@ -156,6 +156,10 @@ impl AuditLedger for SqliteAuditLedger {
         self.operation_permit()
     }
 
+    fn try_enter_operation(&self) -> Result<Option<crate::OperationPermit>, AuditError> {
+        self.try_operation_permit()
+    }
+
     fn append(&self, event: AuditEvent) -> Result<AuditRecord, AuditError> {
         // 在取得写锁前拒绝明显过大的事件；完整记录仍在提交前二次检查。
         event.payload().validate()?;

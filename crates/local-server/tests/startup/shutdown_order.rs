@@ -1,6 +1,6 @@
 //! 停机顺序契约：不论哪一支先到都先停备份；Bridge 收尾时写者与 HTTP 仍可用，异常退出也排空 HTTP；
 //! 停备份途中驱动失败或监听失败，都不能把它截断。
-use super::{StartupError, drain};
+use super::{StartupError, board_settle::Lines, drain};
 use std::{
     sync::{Arc, Mutex},
     time::Duration,
@@ -74,6 +74,7 @@ async fn shutdown_stops_backup_then_waits_for_bridge_before_writer_and_http() {
         stop,
         http_stop,
         move || record(&logged, "writer-stop"),
+        |_| {},
     ));
     shutdown.send(()).unwrap();
     tokio::time::timeout(WAIT, &mut backup_starting)
@@ -129,6 +130,7 @@ async fn driver_failure_still_stops_backup_then_writer_and_drains_http() {
         stop,
         http_stop,
         move || record(&logged, "writer-stop"),
+        |_| {},
     )
     .await;
     assert!(matches!(result, Err(StartupError::Serve)));
@@ -158,6 +160,7 @@ async fn listener_failure_reaps_driver_and_preserves_the_original_error() {
         stop,
         http_stop,
         move || record(&logged, "writer-stop"),
+        |_| {},
     )
     .await;
     assert!(matches!(result, Err(StartupError::Listen)));
@@ -204,6 +207,7 @@ async fn driver_failure_during_backup_stop_does_not_cut_it_short() {
             record(&logged, "writer-stop");
             let _ = writer_stopping.send(());
         },
+        |_| {},
     ));
     shutdown.send(()).unwrap();
     tokio::time::timeout(WAIT, &mut starting)
@@ -263,6 +267,7 @@ async fn listener_failure_during_backup_stop_does_not_cut_it_short() {
             record(&logged, "writer-stop");
             let _ = writer_stopping.send(());
         },
+        |_| {},
     ));
     shutdown.send(()).unwrap();
     tokio::time::timeout(WAIT, &mut starting)
@@ -293,6 +298,99 @@ async fn listener_failure_during_backup_stop_does_not_cut_it_short() {
             "listener-failed",
             "backup-done",
             "writer-stop"
+        ]
+    );
+}
+
+/// 关停链从哪一支开始的、收尾时谁出错，各打一行（BUG-050：169 上人侧退出时日志里看不出起因）。
+/// 同步驱动的错误可能带路径，只记类别；HTTP 服务的错误是固定说法，照原样带上。
+#[tokio::test]
+async fn the_cause_of_shutdown_is_logged() {
+    let lines = Lines::default();
+
+    // 同步驱动先结束（出错、异常退出）。
+    for (driver, expected) in [
+        (
+            tokio::spawn(async { Err("失败夹具 /私有/路径".to_owned()) }),
+            "关停起因：同步驱动先结束（出错）",
+        ),
+        (
+            tokio::spawn(async { panic!("驱动 panic 夹具") }),
+            "关停起因：同步驱动先结束（异常退出）",
+        ),
+    ] {
+        let (stop, _) = watch::channel(false);
+        let (http_stop, http_stopped) = oneshot::channel::<()>();
+        let server = async move {
+            let _ = http_stopped.await;
+            Ok(())
+        };
+        let result = drain(
+            server,
+            std::future::pending(),
+            async {},
+            Some(driver),
+            stop,
+            http_stop,
+            || {},
+            lines.sink(),
+        )
+        .await;
+        assert!(matches!(result, Err(StartupError::Serve)));
+        assert_eq!(lines.taken(), [expected]);
+    }
+
+    // HTTP 服务先结束（出错）：带它自己的固定说法。
+    let (stop, _) = watch::channel(false);
+    let (http_stop, _) = oneshot::channel();
+    let result = drain(
+        async { Err(StartupError::Listen) },
+        std::future::pending(),
+        async {},
+        None,
+        stop,
+        http_stop,
+        || {},
+        lines.sink(),
+    )
+    .await;
+    assert!(matches!(result, Err(StartupError::Listen)));
+    assert_eq!(
+        lines.taken(),
+        [format!(
+            "关停起因：HTTP服务先结束（{}）",
+            StartupError::Listen
+        )]
+    );
+
+    // 关停信号先到（退出信号或看板一侧故障）；收尾时同步驱动出错，另打一行。
+    let (stop, mut stopped) = watch::channel(false);
+    let (http_stop, http_stopped) = oneshot::channel::<()>();
+    let driver = tokio::spawn(async move {
+        let _ = stopped.changed().await;
+        Err::<(), String>("失败夹具 /私有/路径".to_owned())
+    });
+    let server = async move {
+        let _ = http_stopped.await;
+        Ok(())
+    };
+    let result = drain(
+        server,
+        async {},
+        async {},
+        Some(driver),
+        stop,
+        http_stop,
+        || {},
+        lines.sink(),
+    )
+    .await;
+    assert!(matches!(result, Err(StartupError::Serve)));
+    assert_eq!(
+        lines.taken(),
+        [
+            "关停起因：退出信号或看板一侧先结束",
+            "关停收尾出错：同步驱动（出错）",
         ]
     );
 }

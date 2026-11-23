@@ -29,6 +29,7 @@ use studiolo_host_config::Config;
 use studiolo_policy::PolicyStore;
 use studiolo_supply::AgentStore;
 
+mod board_freeze;
 mod drill;
 mod fixture;
 mod producer;
@@ -39,6 +40,7 @@ mod producer_window;
 mod restore;
 mod restore_plan;
 mod seal;
+mod steps;
 use fixture::Setup;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

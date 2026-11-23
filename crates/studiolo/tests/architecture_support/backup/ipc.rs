@@ -42,8 +42,9 @@ pub(super) fn fixed_binding(path: &Path, source: &str) -> bool {
             "self.ledger.append(backup_intent(&key,TARGET).map_err(|_|AuditError::Serialization)?)?;",
             // 冻结窗口只定格（BUG-045）：放开全部屏障之后马上标记窗口已过（关停只等到这里），
             // 定格的连接和句柄关掉之后才写准入。
-            "letmutreleased=frozen.release(deadline).map_err(stuck)?;self.window.close();",
-            "drop(released);letsealed=sealed.map_err(after_release)?;BackupAdmission::approve(self.ledger.clone(),key.clone(),TARGET,&sealed)",
+            // 带分步用时的写法（BUG-050）：放开和标记窗口已过之间、定格关掉和写准入之间都不许插别的。
+            "letmutreleased=frozen.release_timed(deadline,&mutsteps).map_err(|error|stuck(error,&steps))?;self.window.close();",
+            "drop(released);letsealed=sealed.map_err(|failure|after_release(failure,&after))?;BackupAdmission::approve(self.ledger.clone(),key.clone(),TARGET,&sealed)",
             "QueueCommand::RepositoryCheck=>self.repository_check()?",
             "ifletOk(request)=RepositoryCheckReport::decode(bytes){ifrequest.target()!=TARGET{returnErr(AuditError::Serialization);}returnself.report_check(&request);}",
         ]

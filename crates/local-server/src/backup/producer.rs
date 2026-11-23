@@ -19,7 +19,7 @@ use super::{
     queue::Queue,
 };
 use crate::checkpoint::{
-    CheckpointInputs, CheckpointTimes, OwnerExportPaths, SealFailure, trusted_catalog,
+    CheckpointInputs, CheckpointTimes, OwnerExportPaths, SealFailure, StepTimes, trusted_catalog,
 };
 use std::{
     num::NonZeroU64,
@@ -373,11 +373,16 @@ impl BackupProducer {
             deadline,
         )
         .map_err(staging_reason)?;
-        let sources = self.inputs.bind().map_err(stuck)?;
-        // 冻结窗口自己的截止时间由冻结预算定（`CheckpointOwners::freeze`），这里只量它多长。
+        let sources = self
+            .inputs
+            .bind()
+            .map_err(|error| stuck(error, &StepTimes::start()))?;
+        // 冻结窗口自己的截止时间由冻结预算定（`CheckpointOwners::freeze_timed`），这里只量它多长，
+        // 连同窗口里每一步各用了多久（BUG-050）。
         let window = Instant::now();
+        let mut steps = StepTimes::start();
         let frozen = sources
-            .freeze(
+            .freeze_timed(
                 FreezeRequest {
                     checkpoint_id: key.checkpoint_id.clone(),
                     budget,
@@ -385,21 +390,27 @@ impl BackupProducer {
                 key,
                 TARGET,
                 OwnerExportPaths::under(area.export_root()),
+                &mut steps,
             )
-            .map_err(stuck)?;
+            .map_err(|error| stuck(error, &steps))?;
         // 全部 owner 冻结之后、放开之前取内容截止时刻：导出的就是这一刻，之后的改动不进这次封存。
         let cutoff = now_millis().map_err(barrier)?;
         let retention_millis = i64::try_from(self.plan.source_retention_millis).map_err(barrier)?;
         let expires = cutoff
             .checked_add(retention_millis)
             .ok_or(FailureReason::BarrierNotEstablished)?;
-        let mut released = frozen.release(deadline).map_err(stuck)?;
+        let mut released = frozen
+            .release_timed(deadline, &mut steps)
+            .map_err(|error| stuck(error, &steps))?;
         self.window.close();
-        eprintln!("{}", window_line(window.elapsed()));
+        eprintln!("{}", window_line(window.elapsed(), &steps));
         #[cfg(test)]
         self.hold_after_release();
-        let now = now_millis().map_err(after_release_step("取当前时间"))?;
-        let sealed = released.seal(
+        // 放开之后另起一份分步：导出、验链、封存各用了多久（BUG-050）。
+        let opened = Instant::now();
+        let mut after = StepTimes::start();
+        let now = now_millis().map_err(after_release_step("取当前时间", &after))?;
+        let sealed = released.seal_timed(
             area,
             trusted_catalog,
             self.plan.manifest.clone(),
@@ -408,13 +419,16 @@ impl BackupProducer {
                 expires_at: InstantMillis::from_millis(expires),
                 now: InstantMillis::from_millis(now),
             },
+            &mut after,
         );
         // 定格的连接和句柄先关掉再写准入。
         drop(released);
-        let sealed = sealed.map_err(after_release)?;
+        let sealed = sealed.map_err(|failure| after_release(failure, &after))?;
         BackupAdmission::approve(self.ledger.clone(), key.clone(), TARGET, &sealed)
-            .map(|_| ())
-            .map_err(after_release_step("写准入"))
+            .map_err(after_release_step("写准入", &after))?;
+        after.mark("写准入");
+        eprintln!("{}", released_done_line(opened.elapsed(), &after));
+        Ok(())
     }
 }
 
@@ -504,41 +518,62 @@ fn barrier<E>(_: E) -> FailureReason {
 
 /// 绑定、冻结没做成：账本里照旧记同一个固定原因，日志里多说一句卡在哪个库、哪一类。
 /// 只有这一句能分清是七个库里的哪一个；没有它，现场只能靠看文件访问顺序去猜（BUG-044）。
-fn stuck(error: CheckpointError) -> FailureReason {
-    eprintln!("{}", stuck_line(&error));
+fn stuck(error: CheckpointError, steps: &StepTimes) -> FailureReason {
+    eprintln!("{}", stuck_line(&error, steps));
     barrier(error)
 }
 
 /// 固定类别：哪个库、没排空还是超时还是不可用；错误类型自己的说法里没有路径和内容。
-fn stuck_line(error: &CheckpointError) -> String {
-    format!("备份封存卡在：{error}")
+/// 带上窗口里已走过的步和用时（BUG-050）。
+fn stuck_line(error: &CheckpointError, steps: &StepTimes) -> String {
+    format!("备份封存卡在：{error}（已走：{}）", steps.render())
 }
 
 /// 放开之后没做成：账本里照旧记暂存层的固定原因，日志里多说一句是哪一步、哪个库（BUG-045）。
 /// 最慢的几步挪到了放开之后，不在这里写，现场就又分不清卡在哪了（BUG-044 要消除的）。
-fn after_release(failure: SealFailure) -> FailureReason {
-    eprintln!("{}", released_line(&failure));
+fn after_release(failure: SealFailure, steps: &StepTimes) -> FailureReason {
+    eprintln!("{}", released_line(&failure, steps));
     staging_reason(failure.staging())
 }
 
-/// 放开之后、`seal` 以外的两步（取当前时间、写准入）没做成：同样写一行，只有固定的步骤名；
+/// 放开之后、`seal_timed` 以外的两步（取当前时间、写准入）没做成：同样写一行，只有固定的步骤名；
 /// 账本里照旧是同一个固定原因。
-fn after_release_step<E>(step: &'static str) -> impl FnOnce(E) -> FailureReason {
+fn after_release_step<'a, E>(
+    step: &'static str,
+    steps: &'a StepTimes,
+) -> impl FnOnce(E) -> FailureReason + 'a {
     move |error| {
-        eprintln!("{}", released_line(&step));
+        eprintln!("{}", released_line(&step, steps));
         barrier(error)
     }
 }
 
-/// 固定类别：哪一步、哪个库或暂存层的哪一类；不含路径和内容。
-fn released_line(failure: &dyn std::fmt::Display) -> String {
-    format!("备份封存放开之后卡在：{failure}")
+/// 固定类别：哪一步、哪个库或暂存层的哪一类；不含路径和内容。带上放开之后已走过的步（BUG-050）。
+fn released_line(failure: &dyn std::fmt::Display, steps: &StepTimes) -> String {
+    format!(
+        "备份封存放开之后卡在：{failure}（已走：{}）",
+        steps.render()
+    )
 }
 
-/// 每次放开冻结窗口写一行：固定格式，只有毫秒数；真机看它判断窗口有没有随数据变长（BUG-045）。
-/// 从补记登录库算起：补记要取完整操作许可，那时写请求也在等；到全部屏障放开为止。
-fn window_line(window: Duration) -> String {
-    format!("备份封存冻结窗口：{} 毫秒", window.as_millis())
+/// 每次放开冻结窗口写一行：固定格式，毫秒数加窗口里每一步的毫秒数；真机看它判断窗口有没有随数据
+/// 变长、是哪一步变长（BUG-045、BUG-050）。从补记登录库算起：补记要取完整操作许可，那时写请求也在等；
+/// 到全部屏障放开为止。
+fn window_line(window: Duration, steps: &StepTimes) -> String {
+    format!(
+        "备份封存冻结窗口：{} 毫秒（分步：{}）",
+        window.as_millis(),
+        steps.render()
+    )
+}
+
+/// 放开之后到写完准入，整段做成时写一行：总毫秒数和每一步的毫秒数（BUG-050）。
+fn released_done_line(total: Duration, steps: &StepTimes) -> String {
+    format!(
+        "备份封存放开之后：{} 毫秒（分步：{}）",
+        total.as_millis(),
+        steps.render()
+    )
 }
 
 fn staging_reason(error: StagingError) -> FailureReason {
@@ -559,7 +594,10 @@ fn now_millis() -> Result<i64, AuditError> {
 
 #[cfg(test)]
 mod tests {
-    use super::{Idle, SealFailure, State, due, released_line, stuck_line, window_line};
+    use super::{
+        Idle, SealFailure, State, StepTimes, due, released_done_line, released_line, stuck_line,
+        window_line,
+    };
     use std::{sync::Mutex, time::Duration};
     use studiolo_backup::checkpoint::staging::StagingError;
     use studiolo_core::checkpoint::{CheckpointError, CheckpointOwner};
@@ -589,13 +627,14 @@ mod tests {
     #[test]
     fn the_log_line_for_a_seal_that_got_stuck_names_the_owner_and_the_kind() {
         // 七个库各有自己的名字；同一个库的五种失败说法不一样，现场一眼分得清。
+        let none = StepTimes::start();
         for owner in CheckpointOwner::FREEZE_ORDER {
             let lines = [
-                stuck_line(&CheckpointError::OwnerUnavailable { owner }),
-                stuck_line(&CheckpointError::NotDrained { owner }),
-                stuck_line(&CheckpointError::FreezeTimeout { owner }),
-                stuck_line(&CheckpointError::LimitExceeded { owner }),
-                stuck_line(&CheckpointError::SourceChanged { owner }),
+                stuck_line(&CheckpointError::OwnerUnavailable { owner }, &none),
+                stuck_line(&CheckpointError::NotDrained { owner }, &none),
+                stuck_line(&CheckpointError::FreezeTimeout { owner }, &none),
+                stuck_line(&CheckpointError::LimitExceeded { owner }, &none),
+                stuck_line(&CheckpointError::SourceChanged { owner }, &none),
             ];
             for line in &lines {
                 assert!(line.starts_with("备份封存卡在："), "{line}");
@@ -606,12 +645,18 @@ mod tests {
                 assert!(lines[i + 1..].iter().all(|right| right != left), "{left}");
             }
         }
-        let auth = stuck_line(&CheckpointError::OwnerUnavailable {
-            owner: CheckpointOwner::Auth,
-        });
-        let audit = stuck_line(&CheckpointError::OwnerUnavailable {
-            owner: CheckpointOwner::Audit,
-        });
+        let auth = stuck_line(
+            &CheckpointError::OwnerUnavailable {
+                owner: CheckpointOwner::Auth,
+            },
+            &none,
+        );
+        let audit = stuck_line(
+            &CheckpointError::OwnerUnavailable {
+                owner: CheckpointOwner::Audit,
+            },
+            &none,
+        );
         assert_ne!(auth, audit);
     }
 
@@ -619,22 +664,27 @@ mod tests {
     fn the_log_line_after_release_names_the_step_and_the_owner_without_paths() {
         let owner = CheckpointOwner::Control;
         let broker = CheckpointOwner::Broker;
+        let none = StepTimes::start();
         let lines = [
-            released_line(&SealFailure::Verify(CheckpointError::OwnerUnavailable {
-                owner,
-            })),
-            released_line(&SealFailure::Export(CheckpointError::OwnerUnavailable {
-                owner,
-            })),
-            released_line(&SealFailure::Staging(StagingError::Changed)),
-            released_line(&SealFailure::Export(CheckpointError::SourceChanged {
-                owner: broker,
-            })),
-            released_line(&SealFailure::Export(CheckpointError::LimitExceeded {
-                owner: broker,
-            })),
-            released_line(&"取当前时间"),
-            released_line(&"写准入"),
+            released_line(
+                &SealFailure::Verify(CheckpointError::OwnerUnavailable { owner }),
+                &none,
+            ),
+            released_line(
+                &SealFailure::Export(CheckpointError::OwnerUnavailable { owner }),
+                &none,
+            ),
+            released_line(&SealFailure::Staging(StagingError::Changed), &none),
+            released_line(
+                &SealFailure::Export(CheckpointError::SourceChanged { owner: broker }),
+                &none,
+            ),
+            released_line(
+                &SealFailure::Export(CheckpointError::LimitExceeded { owner: broker }),
+                &none,
+            ),
+            released_line(&"取当前时间", &none),
+            released_line(&"写准入", &none),
         ];
         for line in &lines {
             assert!(line.starts_with("备份封存放开之后卡在："), "{line}");
@@ -655,11 +705,40 @@ mod tests {
         );
     }
 
+    /// 窗口那一行：原字面量「备份封存冻结窗口：N 毫秒」不变（发行装配按它核新程序），后面跟窗口里
+    /// 每一步的毫秒数（BUG-050：169 上 26 秒只有一个总数，分不清是哪一步慢）。
     #[test]
-    fn the_freeze_window_log_line_has_only_the_milliseconds() {
+    fn the_freeze_window_log_line_has_the_milliseconds_and_every_step() {
+        let steps = StepTimes::of(&[("补记登录库", 3), ("核写者回执", 1200)]);
         assert_eq!(
-            window_line(Duration::from_micros(1_234_567)),
-            "备份封存冻结窗口：1234 毫秒"
+            window_line(Duration::from_micros(1_234_567), &steps),
+            "备份封存冻结窗口：1234 毫秒（分步：补记登录库 3、核写者回执 1200）"
+        );
+        assert_eq!(
+            window_line(Duration::from_millis(7), &StepTimes::start()),
+            "备份封存冻结窗口：7 毫秒（分步：无）"
+        );
+    }
+
+    /// 放开之后整段做成：总毫秒数和每一步；没做成的那两种行带上已走过的步。
+    #[test]
+    fn the_lines_after_release_and_for_a_stuck_seal_carry_the_steps_taken() {
+        let after = StepTimes::of(&[("校验与核回执", 10), ("写准入", 2)]);
+        assert_eq!(
+            released_done_line(Duration::from_millis(5_678), &after),
+            "备份封存放开之后：5678 毫秒（分步：校验与核回执 10、写准入 2）"
+        );
+        assert_eq!(
+            released_line(&"写准入", &after),
+            "备份封存放开之后卡在：写准入（已走：校验与核回执 10、写准入 2）"
+        );
+        let error = CheckpointError::NotDrained {
+            owner: CheckpointOwner::Audit,
+        };
+        let window = StepTimes::of(&[("补记登录库", 3), ("排空接入方", 0)]);
+        assert_eq!(
+            stuck_line(&error, &window),
+            format!("备份封存卡在：{error}（已走：补记登录库 3、排空接入方 0）")
         );
     }
 

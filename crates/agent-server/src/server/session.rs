@@ -5,6 +5,7 @@ use super::{AgentSession, grant::identity_unavailable};
 use crate::state::{AppState, now};
 use rmcp::ErrorData as McpError;
 use std::sync::{Arc, OnceLock};
+use studiolo_audit_ledger::AuditLedger as _;
 use studiolo_supply::{
     Instance, SupplyError,
     audit::{self, Actor},

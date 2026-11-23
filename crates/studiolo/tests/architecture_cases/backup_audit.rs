@@ -152,7 +152,7 @@ fn producer_socket_and_schedule_are_closed_capabilities() {
         "BackupAdmission::resume(self.ledger.clone(), request.key(), TARGET)",
         "queue.outstanding()",
         // `self.window.close();` 在别处还有一处：连同前一句一起认，删掉放开之后那一处才算数。
-        "let mut released = frozen.release(deadline).map_err(stuck)?;\n        self.window.close();",
+        "let mut released = frozen\n            .release_timed(deadline, &mut steps)\n            .map_err(|error| stuck(error, &steps))?;\n        self.window.close();",
         "drop(released);",
         "QueueCommand::RepositoryCheck => self.repository_check()?",
         "return self.report_check(&request);",

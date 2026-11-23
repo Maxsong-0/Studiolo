@@ -11,7 +11,11 @@
 //! `lock()`／`try_lock()` 与 Mutex 同名，只认接收者叫 `file` 的调用，所以 std 文件锁的句柄变量叫 `file`。
 //! `src/` 下 `tests` 目录和 `*tests.rs` 里是测试夹具，手动加解锁，不算。
 
-use crate::support::{crate_directories, rust_lexer::lex, rust_sources, workspace_root};
+use crate::support::{
+    crate_directories, is_test_fixture,
+    rust_lexer::{block, enclosed, lex},
+    rust_sources, workspace_root,
+};
 use std::{fs, path::Path};
 
 /// 加锁在前一个文件，包住锁的守卫类型（带析构解锁）在后一个文件。
@@ -68,15 +72,6 @@ fn is_drop_impl(tokens: &[String]) -> bool {
     header.windows(2).any(|pair| pair == ["Drop", "for"])
 }
 
-/// 头部之后第一个 `{` 到配对 `}` 的块体。
-fn block(tokens: &[String]) -> &[String] {
-    let start = tokens
-        .iter()
-        .position(|token| token == "{")
-        .unwrap_or(tokens.len());
-    enclosed(&tokens[start..], "{", "}")
-}
-
 /// 块体里有显式解锁：`flock(…Unlock…)` 或 `.unlock()`。
 fn releases(body: &[String]) -> bool {
     body.iter().enumerate().any(|(index, token)| {
@@ -84,32 +79,6 @@ fn releases(body: &[String]) -> bool {
         (token == "flock" && at(1) == Some("(") && unlocks_call(&body[index + 1..]))
             || (token == "." && at(1) == Some("unlock") && at(2) == Some("("))
     })
-}
-
-/// 以 `open` 开头的记号串里，到配对的 `close` 为止（含两端）；没配上就到末尾。
-fn enclosed<'a>(tokens: &'a [String], open: &str, close: &str) -> &'a [String] {
-    let mut depth = 0usize;
-    for (index, token) in tokens.iter().enumerate() {
-        if token == open {
-            depth += 1;
-        } else if token == close {
-            depth = depth.saturating_sub(1);
-            if depth == 0 {
-                return &tokens[..=index];
-            }
-        }
-    }
-    tokens
-}
-
-fn is_test_fixture(relative: &Path) -> bool {
-    relative
-        .components()
-        .any(|part| part.as_os_str() == "tests")
-        || relative
-            .file_name()
-            .and_then(|name| name.to_str())
-            .is_some_and(|name| name.ends_with("tests.rs"))
 }
 
 fn read(root: &Path, relative: &str) -> String {

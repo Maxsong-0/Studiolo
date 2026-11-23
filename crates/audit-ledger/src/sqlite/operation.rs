@@ -14,9 +14,10 @@ impl SqliteAuditLedger {
 
     /// 试取一次完整操作的共享许可、不等待：备份冻结正占着时返回 `None`。
     ///
-    /// 给不能停住线程的调用方用（异步服务在自己这边短睡重试）；同步调用方用
+    /// 经 [`crate::AuditLedger::try_enter_operation`] 给出：不能停住线程的调用方（异步服务在自己这边
+    /// 短睡重试）和到点就跑、错过一轮无妨的后台巡检用（BUG-050）；同步调用方用
     /// [`crate::AuditLedger::enter_operation`]，它最多等 5 秒。
-    pub fn try_enter_operation(&self) -> Result<Option<OperationPermit>, AuditError> {
+    pub(super) fn try_operation_permit(&self) -> Result<Option<OperationPermit>, AuditError> {
         Ok(self
             .storage
             .try_operation_lease(false)?
