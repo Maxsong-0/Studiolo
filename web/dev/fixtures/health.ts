@@ -98,7 +98,7 @@ export function healthBody() {
         code: 'sync-bridge',
         title: '双向 Bridge',
         state: 'degraded',
-        detail: '上次 headless 运行超过时限被停止',
+        detail: '上次 headless 运行超过时限被停止；另有：恢复协议进行中',
       },
       {
         code: 'manual-sync-quota',

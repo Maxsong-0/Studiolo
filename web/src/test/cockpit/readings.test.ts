@@ -63,7 +63,8 @@ describe('系统读数', () => {
       label: '双向同步',
       value: '需处理',
       alert: true,
-      reason: '双向 Bridge：上次 headless 运行超过时限被停止',
+      reason:
+        '双向 Bridge：上次 headless 运行超过时限被停止；另有：恢复协议进行中',
     });
     expect(all['会话']).toEqual({
       label: '会话',

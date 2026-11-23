@@ -162,8 +162,9 @@ fn 静止证据过期时第六节判未知而不是判降级或正常() {
     assert_eq!(detail, "静止证据已过期，等待下一轮重新取得");
 }
 
+/// 字段齐、多条正证据并存：第一条写整句，其余按同一顺序列在「另有：」之后；逐条解除，顺序不变。
 #[test]
-fn 多项异常并存时按熔断删除被挡残留未知终态退出恢复静止的固定顺序取第一项() {
+fn 字段齐时多项异常并存按固定顺序报第一条并列出其余() {
     let mut evidence = BridgeEvidence {
         deletes_blocked: Some(2),
         fused: Some(true),
@@ -175,19 +176,42 @@ fn 多项异常并存时按熔断删除被挡残留未知终态退出恢复静�
         quiescence_valid: Some(false),
         ..NORMAL_BRIDGE
     };
-    // 熔断已证实生效时让给熔断（它持久、开了文件操作也照样挡）；熔断解除后删除被挡排第一。
+    // 熔断已证实生效、字段也齐时让给熔断（T-222：它持久、开了文件操作也照样挡）；熔断解除后删除被挡排第一。
+    // 静止证据过期只是「未知」级别，不进「另有」，正证据全部解除后才轮到它。
     let expected = [
-        "删除熔断生效，本批与后续批次全部阻断",
-        "远端删了 2 个文件（改名也算），主库没开文件操作，同步整批暂停：到远端恢复这些文件或开文件操作后接着跑",
-        "排除项清除前有镜像残留",
-        "headless 配置与审批文档不一致，本轮未同步",
-        "有 1 条动作终态未知，等待原键核对",
-        "上次 headless 运行被信号终止",
-        "恢复协议进行中：退避等待",
-        "静止证据已过期，等待下一轮重新取得",
+        (
+            HealthState::Degraded,
+            "删除熔断生效，本批与后续批次全部阻断；另有：删除被挡、排除项残留、配置不符、终态未知动作、非干净退出、恢复协议进行中",
+        ),
+        (
+            HealthState::Degraded,
+            "远端删了 2 个文件（改名也算），主库没开文件操作，同步整批暂停：到远端恢复这些文件或开文件操作后接着跑；另有：排除项残留、配置不符、终态未知动作、非干净退出、恢复协议进行中",
+        ),
+        (
+            HealthState::Degraded,
+            "排除项清除前有镜像残留；另有：配置不符、终态未知动作、非干净退出、恢复协议进行中",
+        ),
+        (
+            HealthState::Degraded,
+            "headless 配置与审批文档不一致，本轮未同步；另有：终态未知动作、非干净退出、恢复协议进行中",
+        ),
+        (
+            HealthState::Degraded,
+            "有 1 条动作终态未知，等待原键核对；另有：非干净退出、恢复协议进行中",
+        ),
+        (
+            HealthState::Degraded,
+            "上次 headless 运行被信号终止；另有：恢复协议进行中",
+        ),
+        (HealthState::Degraded, "恢复协议进行中：退避等待"),
+        (HealthState::Unknown, "静止证据已过期，等待下一轮重新取得"),
     ];
-    for (index, detail) in expected.iter().enumerate() {
-        assert_eq!(judge(&evidence).1, *detail, "第 {index} 项");
+    for (index, (state, detail)) in expected.iter().enumerate() {
+        assert_eq!(
+            judge(&evidence),
+            (*state, (*detail).to_owned()),
+            "第 {index} 项"
+        );
         match index {
             0 => evidence.fused = Some(false),
             1 => evidence.deletes_blocked = Some(0),
@@ -215,9 +239,9 @@ fn 删除被挡有正证据就判降级不等别的字段齐() {
     assert_eq!(state, HealthState::Degraded);
     assert_eq!(
         detail,
-        "远端删了 1 个文件（改名也算），主库没开文件操作，同步整批暂停：到远端恢复这些文件或开文件操作后接着跑"
+        "远端删了 1 个文件（改名也算），主库没开文件操作，同步整批暂停：到远端恢复这些文件或开文件操作后接着跑；证据不完整：缺最近一批"
     );
-    // 复查第 2 轮：重启后熔断冻结着旧批次、续做那一轮守卫仍挡。字段不齐时熔断报不出来，不让位，照报被挡。
+    // 复查第 2 轮：重启后熔断冻结着旧批次、续做那一轮守卫仍挡。字段不齐时不让位，被挡排第一、熔断跟在「另有」里。
     let fused_after_restart = BridgeEvidence {
         deletes_blocked: Some(2),
         fused: Some(true),
@@ -228,8 +252,119 @@ fn 删除被挡有正证据就判降级不等别的字段齐() {
     assert_eq!(state, HealthState::Degraded);
     assert_eq!(
         detail,
-        "远端删了 2 个文件（改名也算），主库没开文件操作，同步整批暂停：到远端恢复这些文件或开文件操作后接着跑"
+        "远端删了 2 个文件（改名也算），主库没开文件操作，同步整批暂停：到远端恢复这些文件或开文件操作后接着跑；另有：删除熔断；证据不完整：缺最近一批"
     );
+}
+
+/// T-223：重启后「最近一批」等字段要等执行段闭合一次才补得齐；只要有一条正证据，就报那一条而不是「证据不完整」。
+#[test]
+fn 重启后只有一条正证据别的字段都空时报那条正证据() {
+    let cases: [(Change, &str); 7] = [
+        (
+            |e| e.deletes_blocked = Some(4),
+            "远端删了 4 个文件（改名也算），主库没开文件操作，同步整批暂停：到远端恢复这些文件或开文件操作后接着跑",
+        ),
+        (
+            |e| e.fused = Some(true),
+            "删除熔断生效，本批与后续批次全部阻断",
+        ),
+        (
+            |e| e.residue_guard = Some(ResidueGuard::Blocked),
+            "排除项清除前有镜像残留",
+        ),
+        (
+            |e| e.config_matches = Some(false),
+            "headless 配置与审批文档不一致，本轮未同步",
+        ),
+        (
+            |e| e.unknown_jobs = Some(1),
+            "有 1 条动作终态未知，等待原键核对",
+        ),
+        (
+            |e| e.last_exit = Some(ExitClass::Unconfirmed),
+            "上次 headless 运行退出结果未确认",
+        ),
+        (
+            |e| e.recovery = Some(RecoveryState::ForcedMirrorRemote),
+            "恢复协议进行中：强制只下载恢复一次",
+        ),
+    ];
+    for (only, sentence) in cases {
+        let mut evidence = BridgeEvidence::default();
+        only(&mut evidence);
+
+        let (state, detail) = judge(&evidence);
+
+        assert_eq!(state, HealthState::Degraded, "{sentence}");
+        assert_eq!(detail, format!("{sentence}；证据不完整：缺最近一批"));
+    }
+}
+
+/// 另一侧：重启后已知的值都不是问题（未熔断、0 条未知、守卫放行、配置一致、干净退出、协议空闲、放行 0 个）时，
+/// 仍是「证据不完整」的未知，不冒报降级。
+#[test]
+fn 重启后已知的值都不是问题时仍判未知不冒报降级() {
+    let cases: [Change; 7] = [
+        |e| e.deletes_blocked = Some(0),
+        |e| e.fused = Some(false),
+        |e| e.residue_guard = Some(ResidueGuard::Clear),
+        |e| e.config_matches = Some(true),
+        |e| e.unknown_jobs = Some(0),
+        |e| e.last_exit = Some(ExitClass::Clean),
+        |e| e.recovery = Some(RecoveryState::Idle),
+    ];
+    for only in cases {
+        let mut evidence = BridgeEvidence::default();
+        only(&mut evidence);
+
+        let (state, detail) = judge(&evidence);
+
+        assert_eq!(state, HealthState::Unknown, "{evidence:?}");
+        assert_eq!(detail, "Bridge 证据不完整：缺最近一批", "{evidence:?}");
+    }
+}
+
+/// 重启后最常见的一种：上次 headless 在 owner 关停时被停下，恢复协议要强制只下载一次，别的字段都还空着。
+#[test]
+fn 重启后多条正证据并存且字段不齐时按固定顺序报出并点名缺的字段() {
+    let evidence = BridgeEvidence {
+        last_exit: Some(ExitClass::OwnerStopped),
+        recovery: Some(RecoveryState::ForcedMirrorRemote),
+        unknown_jobs: Some(3),
+        ..BridgeEvidence::default()
+    };
+
+    let (state, detail) = judge(&evidence);
+
+    assert_eq!(state, HealthState::Degraded);
+    assert_eq!(
+        detail,
+        "有 3 条动作终态未知，等待原键核对；另有：非干净退出、恢复协议进行中；证据不完整：缺最近一批"
+    );
+}
+
+/// 正文上限 200 字（`HealthSection::new` 越界即整页聚合失败）：七条正证据全部并存、计数取 u64 上限、还缺字段，也要在预算内。
+#[test]
+fn 正证据全部并存且缺字段时正文仍在长度预算内() {
+    let worst = BridgeEvidence {
+        deletes_blocked: Some(u64::MAX),
+        fused: Some(true),
+        residue_guard: Some(ResidueGuard::Blocked),
+        config_matches: Some(false),
+        unknown_jobs: Some(u64::MAX),
+        last_exit: Some(ExitClass::OwnerStopped),
+        recovery: Some(RecoveryState::ForcedMirrorRemote),
+        ..BridgeEvidence::default()
+    };
+
+    let (state, detail) = judge(&worst);
+
+    assert_eq!(state, HealthState::Degraded);
+    assert_eq!(
+        detail,
+        "远端删了 18446744073709551615 个文件（改名也算），主库没开文件操作，同步整批暂停：到远端恢复这些文件或开文件操作后接着跑；另有：删除熔断、排除项残留、配置不符、终态未知动作、非干净退出、恢复协议进行中；证据不完整：缺最近一批"
+    );
+    assert!(detail.chars().count() <= 200, "{}", detail.chars().count());
 }
 
 /// 「还没有一轮证明过」不等于被挡：别的字段齐备时不因它判未知（每轮走到删除守卫都会写成 0 或被挡的个数）。
@@ -290,8 +425,9 @@ fn 第六节正常时正文带序号与非账号用量字样() {
     assert!(bridge.detail().ends_with("模式 mirror-remote"));
 }
 
+/// T-223 起非干净退出是正证据：重启后只知道它时判降级、先报退出分类，再点名缺的字段；干净退出照旧是未知。
 #[test]
-fn 重启后证据仍不完整但已知退出分类可见且不假报正常() {
+fn 重启后证据仍不完整时已知的非干净退出判降级且不假报正常() {
     for exit in [
         ExitClass::OwnerStopped,
         ExitClass::NonZero,
@@ -304,13 +440,10 @@ fn 重启后证据仍不完整但已知退出分类可见且不假报正常() {
             ..BridgeEvidence::default()
         };
         let (state, detail) = judge(&evidence);
-        assert_eq!(state, HealthState::Unknown);
+        assert_eq!(state, HealthState::Degraded);
         assert_eq!(
             detail,
-            format!(
-                "Bridge 证据不完整：缺最近一批；上次 headless 运行{}",
-                exit.label()
-            )
+            format!("上次 headless 运行{}；证据不完整：缺最近一批", exit.label())
         );
     }
     let (state, detail) = judge(&BridgeEvidence {

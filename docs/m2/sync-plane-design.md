@@ -105,8 +105,11 @@ studiolo-human（uid 1000）                      root                          
 
 节 `sync-bridge`／「双向 Bridge」：`last_batch{sequence,unix_seconds}`、`fused`、`unknown_jobs`、`quiescence_valid`、
 `conflict_copies`、`mirror_bytes`、`last_exit`（clean／non_zero／signal／deadline_exceeded／owner_stopped／unconfirmed）、
-`recovery`（idle／forced_mirror_remote／backoff）、`residue_guard`（clear／blocked）、`mode`、`config_matches`。任一 `None` → 未知；`deletes_blocked`（BUG-046）不在必备之列，大于 0 时先于缺字段判降级（`fused==true` 且必备字段齐、熔断报得出来时让给熔断）；
-`fused==true`／`unknown_jobs>0`／`residue_guard==blocked`／`last_exit≠clean`／`recovery≠idle` → 降级；`quiescence_valid==false` → 未知。
+`recovery`（idle／forced_mirror_remote／backoff）、`residue_guard`（clear／blocked）、`mode`、`config_matches`。
+有正证据就降级、不等别的字段齐（T-223），按固定顺序：`deletes_blocked>0`（BUG-046）→ `fused==true` → `residue_guard==blocked` → `config_matches==false` →
+`unknown_jobs>0` → `last_exit≠clean` → `recovery≠idle`；`fused==true` 且十一个必备字段都齐时熔断排到删除被挡前面（T-222）。正文是第一条的整句，
+其余列在「另有：」之后，必备字段还缺就再接「证据不完整：缺<字段>」。没有正证据时：任一必备字段 `None` → 未知；`quiescence_valid==false` → 未知；
+其余 → 正常。`deletes_blocked` 不在必备之列，`None` 不算缺字段。判定表与正文模板见契约 `docs/contracts/health-sync-bridge.md` 第 2 节。
 `conflict_copies`＝最近一次完整观察里两侧命名为冲突副本的路径数（headless 与 `studiolo-canonical` 两种设备名都识别）
 ＋持久 `conflict_stamps` 当前条数（含正在续写副本的冲突，非历史副本文件总数）；`owner_stopped`＝headless 在 owner 关停时被 `request_stop` 停下。
 平面未装配（默认关闭）时本节也是未知：与恢复点、白名单两节同一口径，没启用的能力不显示绿。

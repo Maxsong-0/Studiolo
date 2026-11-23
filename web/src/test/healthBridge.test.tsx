@@ -68,6 +68,50 @@ describe('同步健康结构与人工记录', () => {
     expect(bridge(blocked)).toBe('unknown');
     expect(blocked.bridge?.deletesBlocked).toBe('1');
   });
+  it('重启后明细只有正证据、其余为空时，后端报的降级照样显示，不被洗成未知', () => {
+    const body = copy();
+    // 后端 T-223 口径：有正证据就降级，不等十一项齐；这里只留两条正证据，别的明细都还没取得。
+    body.bridge = {
+      last_batch: null,
+      fused: null,
+      unknown_jobs: null,
+      quiescence_valid: null,
+      conflict_copies: null,
+      mirror_bytes: null,
+      last_exit: 'owner_stopped',
+      recovery: 'forced_mirror_remote',
+      residue_guard: null,
+      mode: null,
+      config_matches: null,
+      deletes_blocked: null,
+    } as unknown as typeof body.bridge;
+    const detail =
+      '上次 headless 运行在 owner 关停时被停止；另有：恢复协议进行中；证据不完整：缺最近一批';
+    body.sections = body.sections.map((section) =>
+      section.code === 'sync-bridge'
+        ? { ...section, state: 'degraded', detail }
+        : section,
+    );
+    const report = parseHealth(body);
+    const bridge = report.sections.find(
+      (section) => section.code === 'sync-bridge',
+    );
+    expect(bridge?.state).toBe('degraded');
+    expect(bridge?.detail).toBe(detail);
+    expect(report.overall).toBe('degraded');
+    expect(report.bridge?.lastExit).toBe('owner_stopped');
+    // 另一侧：同样的明细配「正常」结论，与证据矛盾，降为未知。
+    body.sections = body.sections.map((section) =>
+      section.code === 'sync-bridge'
+        ? { ...section, state: 'normal' }
+        : section,
+    );
+    expect(
+      parseHealth(body).sections.find(
+        (section) => section.code === 'sync-bridge',
+      )?.state,
+    ).toBe('unknown');
+  });
   it('70%边界、过期和未来记录都必须匹配结论，不能伪装成正常', () => {
     const quota = {
       ...copy().manual_sync_quota,

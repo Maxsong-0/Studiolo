@@ -143,7 +143,11 @@ export function parseBridge(value: unknown): BridgeHealth | null {
     deletesBlocked: value.deletes_blocked as string | null,
   };
 }
-/** “正常”必须与每项证据一致；其他状态仍保留后端的已知降级原因。 */
+/**
+ * “正常”必须与每项证据一致：十一项必备证据都已取得，而且没有任何一条正证据
+ * （与后端 `bridge.rs::judge` 同一口径，T-223）。其他状态仍保留后端的结论：
+ * 后端有正证据就报降级、不等字段齐，明细不全时这里也不把降级改成未知。
+ */
 export function bridgeCanBeNormal(value: BridgeHealth): boolean {
   return (
     value.lastBatch !== null &&

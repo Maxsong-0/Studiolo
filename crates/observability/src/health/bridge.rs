@@ -100,8 +100,10 @@ pub struct BridgeEvidence {
 
 /// 聚合第六节；缺证据一律未知。
 ///
-/// 判定顺序固定：删除被挡（有正证据就报，不等别的字段齐；熔断已证实生效且字段齐、报得出来时让给熔断）→ 缺字段 → 删除熔断 →
-/// 排除项残留 → 配置不符 → 终态未知 → 非干净退出 → 恢复协议进行中 → 静止证据过期 → 正常。
+/// 有正证据就降级，不等别的字段齐（T-223）：删除被挡 → 删除熔断 → 排除项残留 → 配置不符 → 终态未知 →
+/// 非干净退出 → 恢复协议进行中，正文以第一条的整句开头，其余按同一顺序列在「另有：」之后，
+/// 还缺字段就再接「证据不完整：缺<第一个缺的字段>」。熔断已证实生效、而且十一个字段都齐时，
+/// 删除熔断排到删除被挡前面（T-222）。没有正证据时：缺字段 → 静止证据过期 → 正常。
 ///
 /// 删除被挡还没证明过（`None`）不算缺字段。
 ///
@@ -122,95 +124,139 @@ pub fn bridge_section(
     HealthSection::new(BRIDGE_SECTION_CODE, BRIDGE_SECTION_TITLE, state, detail)
 }
 
-/// 全字段齐备的证据；由 [`complete`] 从 `Option` 逐项取出。
+/// 十一个字段都齐时，正常正文和静止判定要用的那几项；由 [`complete`] 取出。
 struct Complete {
     last_batch: BatchStamp,
-    fused: bool,
-    unknown_jobs: u64,
     quiescence_valid: bool,
     conflict_copies: u64,
     mirror_bytes: u64,
-    last_exit: ExitClass,
-    recovery: RecoveryState,
-    residue_guard: ResidueGuard,
     mode: ModeLabel,
-    config_matches: bool,
 }
 
-/// 第一个缺失字段的中文名作为 `Err`，正文里只报字段名，不报数值。
+/// 按固定顺序核十一个字段，第一个缺失字段的中文名作为 `Err`；正文里只报字段名，不报数值。
 fn complete(evidence: &BridgeEvidence) -> Result<Complete, &'static str> {
+    let last_batch = evidence.last_batch.ok_or("最近一批")?;
+    evidence.fused.ok_or("删除熔断")?;
+    evidence.unknown_jobs.ok_or("终态未知动作数")?;
+    let quiescence_valid = evidence.quiescence_valid.ok_or("静止证据")?;
+    let conflict_copies = evidence.conflict_copies.ok_or("冲突副本数")?;
+    let mirror_bytes = evidence.mirror_bytes.ok_or("镜像字节数")?;
+    evidence.last_exit.ok_or("退出分类")?;
+    evidence.recovery.ok_or("恢复协议状态")?;
+    evidence.residue_guard.ok_or("排除项守卫")?;
+    let mode = evidence.mode.ok_or("镜像模式")?;
+    evidence.config_matches.ok_or("配置核对")?;
     Ok(Complete {
-        last_batch: evidence.last_batch.ok_or("最近一批")?,
-        fused: evidence.fused.ok_or("删除熔断")?,
-        unknown_jobs: evidence.unknown_jobs.ok_or("终态未知动作数")?,
-        quiescence_valid: evidence.quiescence_valid.ok_or("静止证据")?,
-        conflict_copies: evidence.conflict_copies.ok_or("冲突副本数")?,
-        mirror_bytes: evidence.mirror_bytes.ok_or("镜像字节数")?,
-        last_exit: evidence.last_exit.ok_or("退出分类")?,
-        recovery: evidence.recovery.ok_or("恢复协议状态")?,
-        residue_guard: evidence.residue_guard.ok_or("排除项守卫")?,
-        mode: evidence.mode.ok_or("镜像模式")?,
-        config_matches: evidence.config_matches.ok_or("配置核对")?,
+        last_batch,
+        quiescence_valid,
+        conflict_copies,
+        mirror_bytes,
+        mode,
     })
 }
 
-fn judge(evidence: &BridgeEvidence) -> (HealthState, String) {
-    // 删除被挡的那几轮不走执行段，重启后别的字段一直补不齐；有正证据就先报，不被「证据不完整」盖住。
-    // 熔断已证实生效、而且下面报得出来（字段齐）时让给熔断：它持久、没有解除入口，开了文件操作也照样挡，
-    // 是更该先处理的那一个。字段不齐时熔断也报不出来，照报被挡，免得两个原因都被「证据不完整」盖住。
-    let checked = complete(evidence);
-    let fuse_reported = checked.as_ref().is_ok_and(|full| full.fused);
-    if let Some(count) = evidence
-        .deletes_blocked
-        .filter(|count| *count > 0 && !fuse_reported)
-    {
-        return (
-            HealthState::Degraded,
-            format!(
+/// 一条已证实的问题（降级级别的正证据）。
+#[derive(Clone, Copy)]
+enum Problem {
+    DeletesBlocked(u64),
+    Fused,
+    ResidueBlocked,
+    ConfigMismatch,
+    UnknownJobs(u64),
+    UncleanExit(ExitClass),
+    Recovering(RecoveryState),
+}
+
+impl Problem {
+    /// 排在第一条时的整句。
+    fn sentence(self) -> String {
+        match self {
+            Self::DeletesBlocked(count) => format!(
                 "远端删了 {count} 个文件（改名也算），主库没开文件操作，同步整批暂停：到远端恢复这些文件或开文件操作后接着跑"
             ),
-        );
+            Self::Fused => "删除熔断生效，本批与后续批次全部阻断".to_owned(),
+            Self::ResidueBlocked => RESIDUE_BLOCKED.to_owned(),
+            Self::ConfigMismatch => CONFIG_MISMATCH.to_owned(),
+            Self::UnknownJobs(count) => format!("有 {count} 条动作终态未知，等待原键核对"),
+            Self::UncleanExit(exit) => format!("上次 headless 运行{}", exit.label()),
+            Self::Recovering(state) => format!("恢复协议进行中：{}", state.label()),
+        }
+    }
+
+    /// 列在「另有：」之后的短名；细节看结构化明细。
+    const fn short(self) -> &'static str {
+        match self {
+            Self::DeletesBlocked(_) => "删除被挡",
+            Self::Fused => "删除熔断",
+            Self::ResidueBlocked => "排除项残留",
+            Self::ConfigMismatch => "配置不符",
+            Self::UnknownJobs(_) => "终态未知动作",
+            Self::UncleanExit(_) => "非干净退出",
+            Self::Recovering(_) => "恢复协议进行中",
+        }
+    }
+}
+
+/// 按判定顺序列出全部已证实的问题；别的字段齐不齐都照列，只有下面这一处排序的例外看它。
+///
+/// 删除被挡默认排第一（被挡的那几轮不走执行段，重启后别的字段一直补不齐，BUG-046）；
+/// 熔断已证实生效、而且十一个字段都齐时让熔断排第一（T-222）：它持久、没有解除入口，开了文件操作也照样挡。
+fn problems(evidence: &BridgeEvidence, fields_complete: bool) -> Vec<Problem> {
+    let fused = (evidence.fused == Some(true)).then_some(Problem::Fused);
+    let deletes = evidence
+        .deletes_blocked
+        .filter(|count| *count > 0)
+        .map(Problem::DeletesBlocked);
+    let (first, second) = if fused.is_some() && fields_complete {
+        (fused, deletes)
+    } else {
+        (deletes, fused)
+    };
+    let rest = [
+        (evidence.residue_guard == Some(ResidueGuard::Blocked)).then_some(Problem::ResidueBlocked),
+        (evidence.config_matches == Some(false)).then_some(Problem::ConfigMismatch),
+        evidence
+            .unknown_jobs
+            .filter(|count| *count > 0)
+            .map(Problem::UnknownJobs),
+        evidence
+            .last_exit
+            .filter(|exit| *exit != ExitClass::Clean)
+            .map(Problem::UncleanExit),
+        evidence
+            .recovery
+            .filter(|state| *state != RecoveryState::Idle)
+            .map(Problem::Recovering),
+    ];
+    [first, second].into_iter().chain(rest).flatten().collect()
+}
+
+fn judge(evidence: &BridgeEvidence) -> (HealthState, String) {
+    let checked = complete(evidence);
+    let found = problems(evidence, checked.is_ok());
+    // 有正证据就降级，不被「证据不完整」盖住；并存的其余问题和缺的字段跟在后面，一条也不藏。
+    if let Some((first, others)) = found.split_first() {
+        let mut detail = first.sentence();
+        if !others.is_empty() {
+            let names: Vec<&str> = others.iter().map(|problem| problem.short()).collect();
+            detail.push_str("；另有：");
+            detail.push_str(&names.join("、"));
+        }
+        if let Err(missing) = checked {
+            detail.push_str("；证据不完整：缺");
+            detail.push_str(missing);
+        }
+        return (HealthState::Degraded, detail);
     }
     let full = match checked {
         Ok(full) => full,
         Err(missing) => {
-            let mut detail = format!("Bridge 证据不完整：缺{missing}");
-            if let Some(exit) = evidence.last_exit.filter(|exit| *exit != ExitClass::Clean) {
-                detail.push_str(&format!("；上次 headless 运行{}", exit.label()));
-            }
-            return (HealthState::Unknown, detail);
+            return (
+                HealthState::Unknown,
+                format!("Bridge 证据不完整：缺{missing}"),
+            );
         }
     };
-    if full.fused {
-        return (
-            HealthState::Degraded,
-            "删除熔断生效，本批与后续批次全部阻断".to_owned(),
-        );
-    }
-    if full.residue_guard == ResidueGuard::Blocked {
-        return (HealthState::Degraded, RESIDUE_BLOCKED.to_owned());
-    }
-    if !full.config_matches {
-        return (HealthState::Degraded, CONFIG_MISMATCH.to_owned());
-    }
-    if full.unknown_jobs > 0 {
-        return (
-            HealthState::Degraded,
-            format!("有 {} 条动作终态未知，等待原键核对", full.unknown_jobs),
-        );
-    }
-    if full.last_exit != ExitClass::Clean {
-        return (
-            HealthState::Degraded,
-            format!("上次 headless 运行{}", full.last_exit.label()),
-        );
-    }
-    if full.recovery != RecoveryState::Idle {
-        return (
-            HealthState::Degraded,
-            format!("恢复协议进行中：{}", full.recovery.label()),
-        );
-    }
     if !full.quiescence_valid {
         return (
             HealthState::Unknown,
