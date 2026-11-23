@@ -75,6 +75,37 @@ refuse_release() {
   [ "$previous" != "-configuration" ] || die "-configuration 后面缺配置名（只许 Debug）。"
 }
 
+# swift 只许 debug：-c／--configuration 的值、--configuration=… 写法只认 debug。
+refuse_swift_release() {
+  local previous=""
+  for word in "$@"; do
+    case "$previous" in
+      -c | --configuration)
+        [ "$word" = debug ] || die "只编 debug：发布版由用户本人签（ADR-043），这里不编「$word」配置。" ;;
+    esac
+    case "$word" in
+      --configuration=debug | -c=debug) ;;
+      --configuration=* | -c=*) die "只编 debug：这里不接受「$word」（ADR-043）。" ;;
+    esac
+    previous="$word"
+  done
+  case "$previous" in
+    -c | --configuration) die "$previous 后面缺配置名（只许 debug）。" ;;
+  esac
+}
+
+# 参数里有没有 -configuration：有就不再补（refuse_release 保证它只能是 Debug），xcodebuild 不许它出现两次。
+has_configuration() {
+  local word
+  for word in "$@"; do
+    [ "$word" != "-configuration" ] || return 0
+  done
+  return 1
+}
+
+# 环境变量 XCODE_XCCONFIG_FILE 会给 xcodebuild 整份换构建设置（等于参数里的 -xcconfig），一律不带进来。
+unset XCODE_XCCONFIG_FILE
+
 generate() {
   command -v xcodegen >/dev/null || die "没装 xcodegen：brew install xcodegen。"
   (cd "$app_dir" && xcodegen generate --quiet)
@@ -88,7 +119,8 @@ debug_build() {
   cd "$app_dir"
   # 跳过插件、宏的「信任」校验：命令行构建没人能点 Xcode 里的信任框，SwiftTerm 的构建插件会让整次构建失败
   # （Tillerwright 的 quick_run.sh 一样这么跑）；依赖版本由 Package.resolved 钉死。
-  exec xcodebuild -project "$project" -scheme "$scheme" -configuration Debug \
+  has_configuration "$@" || set -- -configuration Debug "$@"
+  exec xcodebuild -project "$project" -scheme "$scheme" \
     -destination 'platform=macOS' -derivedDataPath "$derived" \
     -clonedSourcePackagesDirPath "$app_dir/build.noindex/spm" \
     -skipPackagePluginValidation -skipMacroValidation "$@" "$action"
@@ -117,10 +149,17 @@ case "$mode" in
   xcodebuild)
     refuse_release "$@"
     cd "$app_dir"
+    # 自己钉上 -configuration Debug：不靠工程或 scheme 的默认配置（那可能被改成 Release）。用户给了就不补
+    # （只能是 Debug，见 refuse_release）。查版本、列 SDK 这类不编译的不加。
+    case " $* " in
+      *' -version '* | *' -showsdks '* | *' -list '* | *' -help '* | *' -usage '*) exec xcodebuild "$@" ;;
+    esac
+    has_configuration "$@" || set -- -configuration Debug "$@"
     exec xcodebuild "$@"
     ;;
   swift)
     [ "$#" -gt 0 ] || die "swift 要给参数（比如 swift test）。"
+    refuse_swift_release "$@"
     cd "$app_dir"
     exec swift "$@"
     ;;

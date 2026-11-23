@@ -283,7 +283,7 @@
 		6E4D6166BED36E1B8D9C828B /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				BUNDLE_LOADER = "$(TEST_HOST)";
+				BUNDLE_LOADER = "";
 				CODE_SIGN_IDENTITY = "-";
 				CODE_SIGN_STYLE = Manual;
 				COMBINE_HIDPI_IMAGES = YES;
@@ -295,7 +295,7 @@
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = me.studiolo.bottega.tests;
 				SDKROOT = macosx;
-				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Bottega Dev.app/Contents/MacOS/Bottega Dev";
+				TEST_HOST = "";
 			};
 			name = Debug;
 		};
@@ -420,7 +420,7 @@
 		E56108CB7EB0256CB0971CE7 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				BUNDLE_LOADER = "$(TEST_HOST)";
+				BUNDLE_LOADER = "";
 				CODE_SIGN_IDENTITY = "-";
 				CODE_SIGN_STYLE = Manual;
 				COMBINE_HIDPI_IMAGES = YES;
@@ -432,7 +432,7 @@
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = me.studiolo.bottega.tests;
 				SDKROOT = macosx;
-				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Bottega Dev.app/Contents/MacOS/Bottega Dev";
+				TEST_HOST = "";
 			};
 			name = Release;
 		};

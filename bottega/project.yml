@@ -88,8 +88,12 @@ targets:
         GENERATE_INFOPLIST_FILE: YES
         CODE_SIGN_STYLE: Manual
         CODE_SIGN_IDENTITY: "-"
-        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/Bottega Dev.app/Contents/MacOS/Bottega Dev"
-        BUNDLE_LOADER: "$(TEST_HOST)"
+        # Not hosted: the tests read the built Bottega Dev.app (Info.plist, resources) without
+        # launching it, so they never touch the real Studiolo vault, Keychain or agent CLIs the
+        # app reaches for at launch (ADR-043: tests touch no real run directories or keys). Left
+        # unset, XcodeGen would host them in the app because the target depends on it.
+        TEST_HOST: ""
+        BUNDLE_LOADER: ""
 schemes:
   Bottega:
     build:
