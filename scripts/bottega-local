@@ -77,9 +77,14 @@ refuse_release() {
         die "只编 Debug：这里不碰开发者账号和描述文件（「$word」，ADR-043）。" ;;
       *=*)
         name="$(printf '%s' "${word%%=*}" | tr '[:lower:]' '[:upper:]')"
+        # 名字里含这些词就拒（不只看开头）：EXPANDED_CODE_SIGN_IDENTITY 这类中间带词的也是签名设置。
         case "$name" in
-          CODE_SIGN* | OTHER_CODE_SIGN_FLAGS | DEVELOPMENT_TEAM* | PROVISIONING_* | *PROVISIONING_PROFILE*)
+          *CODE_SIGN* | *DEVELOPMENT_TEAM* | *PROVISIONING*)
             die "只编 Debug：签名由 project.yml 定（Debug 是临时签名），这里不接受「${word%%=*}=…」（发布版签名由用户本人做，ADR-043）。" ;;
+          # bundle id、产品名也由 project.yml 定：Debug 靠 bundle id 的 .dev 后缀和 Release 分开存储
+          # （bottega/Shared/StorageNames.swift），改掉它 Debug 版就会读写 Release 的库和钥匙串。
+          PRODUCT_BUNDLE_IDENTIFIER* | PRODUCT_NAME*)
+            die "只编 Debug：「${word%%=*}」由 project.yml 定，这里不接受覆盖（改了 Debug 版会和 Release 共用存储）。" ;;
         esac
         ;;
     esac
@@ -89,16 +94,24 @@ refuse_release() {
 }
 
 # swift 只许 debug：-c／--configuration 的值、--configuration=… 写法只认 debug。
+# -Xswiftc、-Xcc、-Xlinker 这类 -X… 后面的那个词是原样交给编译器、链接器的值（如 -cxx-interoperability-mode=…），
+# 不是 swift 自己的选项，不拿来比。
 refuse_swift_release() {
   local previous="" word
   for word in "$@"; do
+    case "$previous" in
+      -X*)
+        previous=""
+        continue ;;
+    esac
     case "$previous" in
       -c | --configuration)
         [ "$word" = debug ] || die "只编 debug：发布版由用户本人签（ADR-043），这里不编「$word」配置。" ;;
     esac
     case "$word" in
-      --configuration=debug | -c=debug | -cdebug) ;;
-      --configuration=* | -c=* | -c?*) die "只编 debug：这里不接受「$word」（ADR-043）。" ;;
+      # 粘写的 -crelease 不用管：swift 自己就不认（实测 -cdebug 报 Unknown option）。
+      --configuration=debug | -c=debug) ;;
+      --configuration=* | -c=*) die "只编 debug：这里不接受「$word」（ADR-043）。" ;;
     esac
     previous="$word"
   done
