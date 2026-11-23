@@ -1,4 +1,4 @@
-"""黑板形状发行（当前 r19→r20）的固定变更面；夹具不接触生产或凭据。"""
+"""黑板形状发行（当前 r20→r21）的固定变更面；夹具不接触生产或凭据。"""
 import ast
 import collections
 import importlib.util
@@ -11,7 +11,7 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 def board_launcher():
-    """把 r7/r8 那份启动器补成上一发行（r19，接线沿用 r17）的形状：带黑板常量与参数、只读身份目录参数、备份配置参数，
+    """把 r7/r8 那份启动器补成上一发行（r20，接线沿用 r17）的形状：带黑板常量与参数、只读身份目录参数、备份配置参数，
     RELEASE 指向上一发行。"""
     text = (ROOT / 'deploy/human/current-v2/launch-human.py').read_text().replace(
         'm4-t092-20260920-r7', a.OLD_RELEASE.rsplit('/', 1)[1]).replace(
@@ -31,7 +31,7 @@ def board_launcher():
 
 
 def board_unit():
-    """把 r7/r8 那份人侧单元补成上一发行（r19，接线沿用 r17）的形状：黑板 RuntimeDirectory，黑板五个写根、Bridge 两个写根、
+    """把 r7/r8 那份人侧单元补成上一发行（r20，接线沿用 r17）的形状：黑板 RuntimeDirectory，黑板五个写根、Bridge 两个写根、
     备份两个写根，都在 [Service] 节里、顺序和线上一致；停止超时是按预算算出来的那一行。"""
     text = (ROOT / 'deploy/human/current-v2/studiolo-human.service').read_text().replace(
         'm4-t092-20260920-r7', a.OLD_RELEASE.rsplit('/', 1)[1])
@@ -82,10 +82,10 @@ def rust_calls(paths, receiver, method=r'\w+'):
 
 
 class AssemblyTests(unittest.TestCase):
-    def test_r20_upgrades_the_activated_r19(self):
-        self.assertEqual(a.BUILD, 'm5m6-board-20260920-r20')
+    def test_r21_upgrades_the_activated_r20(self):
+        self.assertEqual(a.BUILD, 'm5m6-board-20260920-r21')
         self.assertEqual(a.RELEASE.rsplit('/', 1)[1], a.BUILD)
-        self.assertTrue(a.OLD_RELEASE.endswith('/m5m6-board-20260920-r19'))
+        self.assertTrue(a.OLD_RELEASE.endswith('/m5m6-board-20260920-r20'))
         self.assertEqual(a.WEB_PREFIX, 'web/')
 
     def test_launcher_preserves_the_approved_bridge_wiring(self):
@@ -252,28 +252,24 @@ class AssemblyTests(unittest.TestCase):
     def test_this_release_requires_the_new_human_program(self):
         # 本版的修复都在人侧程序里，必须换程序（出候选和激活预检靠这两个常量拒绝沿用旧程序）。
         self.assertIs(a.REQUIRES_NEW_HUMAN_PROGRAM, True)
-        # 每段字节：在哪份源码里、原样写成什么样。前三段是一句格式串的开头，后面紧跟着占位符，所以程序里连续的字节
-        # 就到这里为止；最后一段是同步状态回执的文件名常量（T-224）。上一发行的程序里都没有，在 169 上只读核过。
-        diagnostics = 'crates/local-server/src/sync_plane/driver/diagnostics.rs'
+        # 每段字节：在哪份源码里、原样写成什么样。每段都从一个字符串字面量的开头引号起，后面紧跟着占位符或结尾引号，
+        # 所以程序里连续的字节就到这里为止（中文按 UTF-8 编码后比）。上一发行的程序里都没有，在 169 上只读核过。
+        serving = 'crates/local-server/src/startup/serving.rs'
         pinned = (
-            (b'studiolo_bridge component=capacity from=', 'crates/local-server/src/startup/sync_input.rs',
-             '"studiolo_bridge component=capacity from={previous} to={}"'),
-            (b'studiolo_bridge step=Observe outcome=path_budget_exceeded used=', diagnostics,
-             '"studiolo_bridge step=Observe outcome=path_budget_exceeded used={used} budget={budget}"'),
-            (b'studiolo_bridge step=Approve outcome=byte_budget_exceeded used=', diagnostics,
-             '"studiolo_bridge step=Approve outcome=byte_budget_exceeded used={used} budget={budget}"'),
-            (b'sync-status.json', 'crates/local-server/src/sync_plane/recovery.rs',
-             'pub const SYNC_STATUS_FILE: &str = "sync-status.json";'),
+            ('看板租约巡检：备份冻结中，这一轮跳过', 'crates/local-server/src/board/mod.rs',
+             'eprintln!("看板租约巡检：备份冻结中，这一轮跳过");'),
+            ('看板一侧先结束：租约巡检（', serving, 'format!("看板一侧先结束：租约巡检（{}）"'),
+            ('关停起因：同步驱动先结束（', serving, 'format!("关停起因：同步驱动先结束（{}）"'),
+            ('备份封存放开之后：', 'crates/local-server/src/backup/producer.rs',
+             '"备份封存放开之后：{} 毫秒（分步：{}）"'),
         )
-        self.assertEqual(a.NEW_HUMAN_PROGRAM_LITERALS, tuple(literal for literal, _, _ in pinned))
+        self.assertEqual(a.NEW_HUMAN_PROGRAM_LITERALS, tuple(literal.encode() for literal, _, _ in pinned))
         for literal, path, written in pinned:
             # 只看编进程序的那部分源码（测试模块和注释不算）：原样的字符串字面量，只此一处。
             code = rust_code(ROOT / path)
             self.assertEqual(code.count(written), 1, written)
-            if written.startswith('"' + literal.decode() + '{'):
-                self.assertEqual(code.count(literal.decode()), 1, written)
-            else:
-                self.assertTrue(written.endswith('"' + literal.decode() + '";'), written)
+            self.assertEqual(code.count(literal), 1, written)
+            self.assertTrue(written.split('"' + literal, 1)[1].startswith(('{', '"')), written)
 
     def test_agent_unit_is_carried_over_byte_for_byte(self):
         for quoted in (False, True):
