@@ -12,15 +12,12 @@ fn receipt(last_aligned_at: Option<i64>, gate: Option<(u64, i64)>) -> StatusRece
     }
 }
 
-/// 契约第 2 节的示例行：Rust 写出的字节、探针（`deploy/alerts/test_monitor.py`）读进的字节都钉在它上面，
-/// 三处的字段名、顺序、形状改一处另两处就红。
-fn contract_example() -> &'static [u8] {
-    const CONTRACT: &str = include_str!("../../../../docs/contracts/sync-status-receipt.md");
-    let line = CONTRACT
-        .lines()
-        .find_map(|line| line.strip_prefix("例：`"))
-        .expect("契约第 2 节要有一行「例：`…`」");
-    line.split('`').next().unwrap().as_bytes()
+/// 两侧共用的回执样本（同目录 `sync-status-example.json`）：Rust 写出的字节钉在它上面；探针用例
+/// （`deploy/alerts/test_monitor.py`）读进同一个文件，并核契约第 2 节的示例行和它逐字节相同。
+/// 三处的字段名、顺序、形状改一处另两处就红。样本放在 crate 里、不直接读 `docs/`：随包 crate 编译期读的
+/// 文件必须在打包白名单内（`scripts/test-agent-package.py` 的守卫），`crates/` 整个目录在里面。
+fn shared_example() -> &'static [u8] {
+    include_bytes!("sync-status-example.json").trim_ascii_end()
 }
 
 #[test]
@@ -33,8 +30,8 @@ fn 写出的字节固定五个字段空值也写出来() {
     let full = receipt(Some(1_799_990_000), Some((1309, 1_799_999_700)));
     assert_eq!(decode(&encode(&full).unwrap()), Some(full));
     assert_eq!(decode(&bytes), Some(receipt(None, None)));
-    let example = decode(contract_example()).expect("契约示例必须读得进");
-    assert_eq!(encode(&example).unwrap(), contract_example());
+    let example = decode(shared_example()).expect("共用样本必须读得进");
+    assert_eq!(encode(&example).unwrap(), shared_example());
 }
 
 #[test]

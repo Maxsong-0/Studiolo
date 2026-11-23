@@ -37,7 +37,8 @@ T-224，2026-11-22（BUG-046 防回归）。人侧 Bridge 驱动平面每轮写�
 
 例：`{"schema":1,"written_at":1800000000,"last_aligned_at":1799999700,"deletes_blocked":0,"deletes_checked_at":1799999700}`
 
-上面这一行是两侧用例共用的样本：Rust 写出的字节必须与它逐字节相同，探针必须读得进（见第 6 节），改字段要连它一起改。
+上面这一行和 `crates/local-server/tests/sync_plane_private/sync-status-example.json` 逐字节相同，那个文件是两侧用例共用的样本：
+Rust 写出的字节必须与它相同，探针必须读得进，探针用例另核这一行和它一致（见第 6 节）。改字段要三处一起改。
 
 缺字段、多字段、重复键、类型不对（含 `true` 冒充整数、小数、负数）、版本不是 1、`last_aligned_at` 或 `deletes_checked_at` 晚于 `written_at`、
 被挡数和证明时刻不成对、超过 4096 字节：两边都判读不出来（正好 4096 字节读得进）。
@@ -93,10 +94,10 @@ A07、A08 的发送时刻每个代号单独记：中间被更高优先级的代�
 
 ## 6. 用例
 
-- `crates/local-server/tests/sync_plane_private/status.rs`：编解码两侧（含正好上限、成对、契约示例逐字节）、对上判据、重启起点。
+- `crates/local-server/tests/sync_plane_private/status.rs`：编解码两侧（含正好上限、成对、共用样本逐字节）、对上判据、重启起点。
 - `crates/local-server/tests/sync_plane_health/status.rs`：只在对上时前移、被挡只在走到守卫的轮次换新、真实目录里首装／重启／坏文件／不碰 `plane-state.json`、
   没有操作许可或租约被占时跳过。
 - `crates/studiolo/tests/architecture_support/sync_plane.rs`：`recovery.rs` 的登记形态含两个回执固定名；`status.rs` 没有 IO。
 - `crates/local-server/src/alert_main.rs`（`tests`）：发送程序只认登记的代号。
-- `deploy/alerts/test_monitor.py`：读取两侧（含父目录、属主、正好上限、契约示例）、6 小时与 1 小时边界、慢轮次不掉、证明时刻陈旧、优先级、
+- `deploy/alerts/test_monitor.py`：读取两侧（含父目录、属主、正好上限、共用样本与契约示例行一致）、6 小时与 1 小时边界、慢轮次不掉、证明时刻陈旧、优先级、
   按天重发（含换代号、恢复、回拨）、读不到失败关闭。

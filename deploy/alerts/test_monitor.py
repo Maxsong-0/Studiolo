@@ -254,11 +254,15 @@ class MonitorTests(unittest.TestCase):
         target.chmod(mode)
         return str(target)
 
-    def contract_example(self):
-        # 契约第 2 节的示例行：Rust 写出的字节也钉在它上面（sync_plane_private/status.rs），三处改一处另两处就红。
-        contract = Path(__file__).resolve().parents[2] / "docs" / "contracts" / "sync-status-receipt.md"
-        line = next(line for line in contract.read_text(encoding="utf-8").splitlines() if line.startswith("例：`"))
-        return line[len("例：`"):].split("`")[0].encode()
+    def shared_example(self):
+        # 两侧共用的回执样本：Rust 写出的字节钉在这个文件上（sync_plane_private/status.rs 编译期读它），
+        # 这里读同一个文件，并核契约第 2 节的示例行和它逐字节相同。三处改一处另两处就红。
+        root = Path(__file__).resolve().parents[2]
+        sample = (root / "crates/local-server/tests/sync_plane_private/sync-status-example.json").read_bytes().rstrip()
+        contract = (root / "docs/contracts/sync-status-receipt.md").read_text(encoding="utf-8")
+        line = next(line for line in contract.splitlines() if line.startswith("例：`"))
+        self.assertEqual(line[len("例：`"):].split("`")[0].encode(), sample, "契约示例行要和共用样本逐字节相同")
+        return sample
 
     def test_sync_status_reader_accepts_only_the_closed_private_receipt(self):
         good = b'{"schema":1,"written_at":1000,"last_aligned_at":900,"deletes_blocked":1309,"deletes_checked_at":700}'
@@ -268,7 +272,7 @@ class MonitorTests(unittest.TestCase):
                                                             "deletes_blocked": 1309, "deletes_checked_at": 700})
             nulls = b'{"schema":1,"written_at":1000,"last_aligned_at":null,"deletes_blocked":null,"deletes_checked_at":null}'
             self.assertIsNone(PROBE.read_sync_status(self.write_status(directory, nulls))["last_aligned_at"])
-            example = PROBE.read_sync_status(self.write_status(directory, self.contract_example()))
+            example = PROBE.read_sync_status(self.write_status(directory, self.shared_example()))
             self.assertEqual(set(example), PROBE.SYNC_STATUS_FIELDS)
             # 补空白到正好 4096 字节仍是合法回执；多一个字节就拒：两侧都钉住上限。
             padded = good[:1] + b" " * (PROBE.SYNC_STATUS_MAX_BYTES - len(good)) + good[1:]
