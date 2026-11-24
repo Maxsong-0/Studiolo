@@ -24,6 +24,8 @@ const STDOUT_LIMIT: usize = 8 * 1024 * 1024;
 const STDERR_LIMIT: u64 = 64 * 1024;
 /// 仓库抽查 stderr 的上限：仓库坏得多时 restic 每处错误打一行，64 KiB 不够；超了算输出越界。
 const CHECK_STDERR_LIMIT: u64 = 4 * 1024 * 1024;
+/// 单个文件的上限：单文件读回和整份封存读回都按它核期望。
+const FILE_LIMIT: u64 = 512 * 1024 * 1024 * 1024;
 
 pub(crate) struct Output {
     pub success: bool,
@@ -124,8 +126,6 @@ pub(crate) fn verify_digest(
     }
     Ok(())
 }
-/// 单个文件的上限：单文件读回和整份封存读回都按它核期望。
-const FILE_LIMIT: u64 = 512 * 1024 * 1024 * 1024;
 
 /// SHA-256 的文本写法：64 个小写十六进制字符。
 fn digest_text(text: &str) -> bool {

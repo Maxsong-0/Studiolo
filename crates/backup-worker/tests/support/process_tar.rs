@@ -264,6 +264,22 @@ fn every_wrong_shape_of_the_stream_fails_the_read_back() {
         "PAX 正文超过 64 KiB",
         instead_of_seal(seal_with_pax_body(&pax_of_length(64 * 1024 + 1))),
     ));
+    // 空的 PAX 头（正文 0 字节）也是「挂着一个头等下一项」：后面直接结尾、再来一个 PAX 头都不对。
+    let mut out = stream(&good);
+    let tail = out.split_off(out.len() - 1024);
+    out.extend(builder::pax_body(b""));
+    out.extend(tail);
+    cases.push(("空 PAX 头后面直接结尾", out));
+    cases.push((
+        "空 PAX 头后面又一个 PAX 头",
+        instead_of_seal(
+            [
+                builder::pax_body(b""),
+                custom(&[("path", seal.as_str())], b"{}"),
+            ]
+            .concat(),
+        ),
+    ));
     cases.push((
         "两个 PAX 头连着",
         instead_of_seal(
