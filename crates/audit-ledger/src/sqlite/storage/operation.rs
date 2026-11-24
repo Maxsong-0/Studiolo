@@ -5,10 +5,7 @@
 //! 健康，审计中断（库文件或目录权限被改、目录被挪走）就会把「照常读、落待补记」的既有
 //! 行为一并挡掉。冻结方（独占）仍必须面对健康的审计库，前后各核一次。
 use super::Storage;
-use crate::{
-    AuditError,
-    operation::{Lease, OPERATION_RETRY},
-};
+use crate::{AuditError, operation::Lease};
 use std::time::Instant;
 
 #[cfg(unix)]
@@ -46,6 +43,7 @@ impl Storage {
         exclusive: bool,
         deadline: Instant,
     ) -> Result<Lease, AuditError> {
+        use crate::operation::OPERATION_RETRY;
         use std::thread;
         loop {
             if Instant::now() >= deadline {

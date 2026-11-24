@@ -274,7 +274,7 @@ async fn waiting_for_the_human_side_stops_when_told_to_and_fails_on_an_unhealthy
     let spans = Mutex::new(Vec::new());
     assert_eq!(
         f.owners
-            .await_human_idle(Instant::now() + Duration::from_millis(200), |span| {
+            .await_human_idle(Instant::now() + Duration::from_secs(1), |span| {
                 spans.lock().unwrap().push(span);
                 nap(span)
             }),
@@ -283,12 +283,17 @@ async fn waiting_for_the_human_side_stops_when_told_to_and_fails_on_an_unhealthy
         })
     );
     drop(slow);
-    // 契约写死的数：一来就看一眼，之后每次最多睡 5 毫秒再看；排空自己的重试也是这个数（同一个常量）。
+    // 契约写死的数：一来就看一眼，之后每次睡 5 毫秒再看（贴着上限的最后一次可以更短）；
+    // 排空自己的重试也是这个数（同一个常量）。
     let spans = spans.into_inner().unwrap();
-    assert_eq!(spans.first(), Some(&Duration::ZERO));
-    assert!(spans.len() > 2, "200 毫秒里只看了 {} 眼", spans.len());
+    let every = Duration::from_millis(5);
+    let [first, middle @ .., last] = &spans[..] else {
+        panic!("1 秒里只看了 {} 眼", spans.len());
+    };
+    assert_eq!(*first, Duration::ZERO);
+    assert!(!middle.is_empty(), "1 秒里只看了 {} 眼", spans.len());
     assert!(
-        spans.iter().all(|span| *span <= Duration::from_millis(5)),
+        middle.iter().all(|span| *span == every) && *last <= every,
         "{spans:?}"
     );
     let audit = f.fixture.root.join("audit");

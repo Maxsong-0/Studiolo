@@ -1,7 +1,8 @@
 //! 拷大文件写到一半要落盘（BUG-054）：没落盘的页在有内存上限的服务里回收不了，落不落盘从结果上看不出来，
 //! 行为用例只数得到「该落的时候到了」，真的调没调 `sync_data` 靠这里守。
 //!
-//! 按记号比（`rust_lexer`）：注释掉的、写进字符串的都不算数；连着前后文一起比，挪进循环、夹一个 `#[cfg]` 也算没有。
+//! 按记号比（`rust_lexer`）：注释掉的、写进字符串的都不算数；和它前面那次写连着一起比，包进条件、挪进循环、
+//! 夹一个 `#[cfg]` 也算没有。计数只许新建一处（`Flush::`）：半路归零、另起一份都算没有。
 use crate::support::{rust_lexer::lex, workspace_root};
 use std::fs;
 
@@ -9,7 +10,10 @@ use std::fs;
 const FLUSH_POINTS: [(&str, &[&str]); 4] = [
     (
         "crates/checkpoint-storage/src/export.rs",
-        &["StepResult::More => flush.written(step_bytes, || target.flush())?,"],
+        &[
+            "Flush::",
+            "StepResult::More => flush.written(step_bytes, || target.flush())?,",
+        ],
     ),
     (
         "crates/checkpoint-storage/src/paths.rs",
@@ -18,7 +22,9 @@ const FLUSH_POINTS: [(&str, &[&str]); 4] = [
     (
         "crates/backup/src/checkpoint/staging/io/files.rs",
         &[
-            "let file = &self.file; self.flush.written(bytes.len() as u64, || flush(file)) }",
+            "Flush::",
+            "self.file.write_all(bytes).map_err(|_| StagingError::Unavailable)?; \
+             let file = &self.file; self.flush.written(bytes.len() as u64, || flush(file)) }",
             "fn flush(file: &File) -> Result<()> { \
              file.sync_data().map_err(|_| StagingError::Unavailable)?;",
         ],
@@ -26,6 +32,7 @@ const FLUSH_POINTS: [(&str, &[&str]); 4] = [
     (
         "crates/vault-broker/src/checkpoint/capture.rs",
         &[
+            "Flush::",
             "let mut flush = Flush::default(); loop {",
             "output.write_all(&self.buffer[..read]).map_err(|e| BrokerError::io(\"\", e))?; \
              flush.written(read as u64, || flush_halfway(&output))?; }",
@@ -72,6 +79,8 @@ fn every_way_of_losing_a_flush_is_caught() {
     const STAGED_SYNC: &str = "file.sync_data().map_err(|_| StagingError::Unavailable)?;";
     const COPIED: &str = "flush.written(read as u64, || flush_halfway(&output))?;";
     const COUNTED: &str = "let mut flush = Flush::default();\n        loop {";
+    const STAGED_WRITE: &str =
+        "let file = &self.file;\n        self.flush.written(bytes.len() as u64, || flush(file))";
     for (file, before, after) in [
         (
             0,
@@ -123,6 +132,26 @@ fn every_way_of_losing_a_flush_is_caught() {
             3,
             COUNTED,
             "loop {\n            let mut flush = Flush::default();",
+        ),
+        (
+            0,
+            "frozen.check()?;\n            target.check()?;\n            match backup",
+            "frozen.check()?;\n            flush = Flush::default();\n            target.check()?;\n            match backup",
+        ),
+        (
+            2,
+            STAGED_WRITE,
+            "if false { let file = &self.file; self.flush.written(bytes.len() as u64, || flush(file)) } else { Ok(()) }",
+        ),
+        (
+            2,
+            STAGED_WRITE,
+            "self.flush = Flush::default();\n        let file = &self.file;\n        self.flush.written(bytes.len() as u64, || flush(file))",
+        ),
+        (
+            3,
+            "hash.update(&self.buffer[..read]);\n            output",
+            "hash.update(&self.buffer[..read]);\n            flush = Flush::every(1 << 40);\n            output",
         ),
         (
             3,
