@@ -171,22 +171,61 @@ async fn a_seal_that_starts_after_shutdown_began_never_freezes() {
     stage.assembled.workbench.shutdown().await.unwrap();
 }
 
+/// 等到了人侧空闲、还没开始冻结的时候来的关停：同样不再开始，关停不等一整个冻结窗口。
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_seal_told_to_stop_between_the_wait_and_the_freeze_never_freezes() {
+    let stage = Stage::new(true).await;
+    let (open, gate) = mpsc::channel();
+    *stage.producer.hold_before_freeze.lock().unwrap() = Some(gate);
+    assert_eq!(stage.ask(QueueCommand::Schedule), QueueAnswer::Started);
+    // 封存走到这里才把闸拿走。
+    let begun = Instant::now();
+    while stage.producer.hold_before_freeze.lock().unwrap().is_some() {
+        assert!(
+            begun.elapsed() < Duration::from_secs(60),
+            "封存没走到冻结之前"
+        );
+        thread::sleep(Duration::from_millis(2));
+    }
+    let producer = stage.producer.clone();
+    let (settled, window) = mpsc::channel();
+    thread::spawn(move || {
+        producer.settle_window();
+        let _ = settled.send(());
+    });
+    assert!(
+        window.recv_timeout(Duration::from_millis(500)).is_err(),
+        "封存线程还停着，关停要等它"
+    );
+    open.send(()).unwrap();
+    assert!(window.recv_timeout(Duration::from_secs(60)).is_ok());
+    stage.producer.settle();
+    assert_eq!(stage.outcomes(1), 1, "放弃的这次有失败结果");
+    assert_eq!(stage.ask(QueueCommand::NextPending), QueueAnswer::Idle);
+    assert_eq!(
+        *stage.producer.seal_lines.lock().unwrap(),
+        Vec::<String>::new(),
+        "关停叫停之后不该再冻结"
+    );
+    stage.assembled.workbench.shutdown().await.unwrap();
+}
+
 /// 等有上限：到上限这次封存照旧失败、补失败结果、占满间隔；一路上接入方没被挡过，什么都没冻。
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_seal_gives_up_when_the_human_side_never_goes_idle() {
     let stage = Stage::new(true).await;
-    *stage.producer.idle_budget.lock().unwrap() = Duration::from_secs(1);
+    *stage.producer.idle_budget.lock().unwrap() = Duration::from_millis(2_500);
     let slow = stage.assembled.human.enter_operation().unwrap();
-    let started = Instant::now();
     assert_eq!(stage.ask(QueueCommand::Schedule), QueueAnswer::Started);
-    let agents = refused(&stage.assembled.agent, Duration::from_millis(2_500));
+    let agents = refused(&stage.assembled.agent, Duration::from_secs(1));
+    assert_eq!(stage.outcomes(1), 0, "没等满上限就放弃了");
+    let agents = agents + refused(&stage.assembled.agent, Duration::from_secs(2));
     assert!(
         within(Duration::from_secs(20), &stage.producer, |producer| {
             producer.settle();
         }),
         "到上限要放弃，不能一直等"
     );
-    assert!(started.elapsed() >= Duration::from_secs(1), "没等满上限");
     assert_eq!(agents, 0, "等不到就放弃，接入方一路都不该被挡");
     assert_eq!(stage.outcomes(1), 1);
     assert_eq!(stage.ask(QueueCommand::NextPending), QueueAnswer::Idle);
@@ -206,9 +245,11 @@ async fn a_seal_gives_up_when_the_human_side_never_goes_idle() {
 async fn waiting_for_the_human_side_stops_when_told_to_and_fails_on_an_unhealthy_ledger() {
     let f = Setup::new(true).await;
     let far = || Instant::now() + Duration::from_secs(60);
+    // 等过了头就叫停：上限没守住时这里报错，不把用例挂住。
+    let until = far();
     let nap = |span| {
         thread::sleep(span);
-        false
+        Instant::now() >= until
     };
     assert_eq!(f.owners.await_human_idle(far(), nap), Ok(HumanSide::Idle));
     assert_eq!(

@@ -69,8 +69,8 @@ async fn writes_wait_only_for_the_freeze_window_not_for_the_whole_seal() {
 }
 
 /// 关停等冻结窗口放开（`settle_window`），不等放开之后的拷贝和发布；那一段进程退出时丢下，
-/// 留下的暂存由下次启动回收（和「封存做到一半被杀」同一条路）。用例里先让封存卡在窗口里（接入方有一个
-/// 操作没做完），关停这时要等；窗口过去、封存停在放开之后，关停要能返回、写操作拿得到许可、准入还没写；
+/// 留下的暂存由下次启动回收（和「封存做到一半被杀」同一条路）。用例里先让封存卡在窗口里（控制库
+/// 有一个写事务没做完），关停这时要等；窗口过去、封存停在放开之后，关停要能返回、写操作拿得到许可、准入还没写；
 /// 放行之后封存照样做完。封存还没开始冻结时关停会叫它放弃，不在这里（`human_idle`）。
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn shutdown_waits_for_the_freeze_window_but_not_for_the_copy_after_it() {
@@ -78,18 +78,22 @@ async fn shutdown_waits_for_the_freeze_window_but_not_for_the_copy_after_it() {
     fill(&stage, "shutdown-", 100);
     let (open, gate) = std::sync::mpsc::channel();
     *stage.producer.hold_after_release.lock().unwrap() = Some(gate);
-    let agent = stage.assembled.agent.enter_operation().unwrap();
+    let control = stage.assembled.fixture.root.join("control/control.sqlite3");
+    let writer = rusqlite::Connection::open(control).unwrap();
+    writer.execute_batch("BEGIN IMMEDIATE").unwrap();
     assert_eq!(stage.ask(QueueCommand::Schedule), QueueAnswer::Started);
-    // 封存的暂存目录建出来了：等人侧空闲那一步已经过去，接着就去排空接入方。
-    let exporting = || {
-        fs::read_dir(&stage.parent).unwrap().any(|entry| {
-            let name = entry.unwrap().file_name();
-            name.to_string_lossy().starts_with("export-")
-        })
-    };
+    // 封存已经在窗口里：人侧许可连着 100 毫秒都拿不到（看一眼人侧空不空只占一瞬，不算）。
     let begun = Instant::now();
-    while !exporting() {
-        assert!(begun.elapsed() < Duration::from_secs(60), "封存没开始");
+    let mut blocked_since = None;
+    while blocked_since.is_none_or(|since: Instant| since.elapsed() < Duration::from_millis(100)) {
+        assert!(
+            begun.elapsed() < Duration::from_secs(20),
+            "封存没进冻结窗口"
+        );
+        blocked_since = match stage.assembled.human.try_enter_operation().unwrap() {
+            Some(_) => None,
+            None => blocked_since.or_else(|| Some(Instant::now())),
+        };
         std::thread::sleep(Duration::from_millis(2));
     }
     let producer = stage.producer.clone();
@@ -102,7 +106,7 @@ async fn shutdown_waits_for_the_freeze_window_but_not_for_the_copy_after_it() {
         window.recv_timeout(Duration::from_millis(300)).is_err(),
         "封存还在冻结窗口里，关停要等"
     );
-    drop(agent);
+    drop(writer);
     assert!(
         window.recv_timeout(Duration::from_secs(60)).is_ok(),
         "封存停在放开之后时，关停要能返回"

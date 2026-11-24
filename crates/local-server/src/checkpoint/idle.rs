@@ -8,8 +8,9 @@
 //! 空下来到真排空之间仍有一小段：撞上了照旧在排空那一步等、用冻结预算，不在这里重试。
 use super::*;
 
-/// 隔多久看一次。看一次要核一遍审计库，所以比排空自己的重试疏得多。
-const LOOK_EVERY: Duration = Duration::from_millis(50);
+/// 隔多久看一次：和排空自己的重试一样勤（`quiesce` 每 5 毫秒试一次），它看得到的空当这里也看得到——
+/// 操作密、空当短的时候，不会因为先等这一步反而等不到。
+const LOOK_EVERY: Duration = Duration::from_millis(5);
 
 /// 等的结果：空下来了，或者被叫停了（进程在关停）。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

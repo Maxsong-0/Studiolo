@@ -108,6 +108,9 @@ pub struct BackupProducer {
     background: Mutex<Option<JoinHandle<()>>>,
     /// 后台线程还可能进入或正在冻结窗口里：线程起来前置上，窗口放开或线程结束时复位（`settle_window` 等它）。
     window: Window,
+    /// 用例用：封存等到了人侧空闲、建好了暂存，开始冻结之前停在这里，等用例放行（演练这时来的关停）。
+    #[cfg(test)]
+    pub(crate) hold_before_freeze: Mutex<Option<std::sync::mpsc::Receiver<()>>>,
     /// 用例用：封存放开冻结窗口之后停在这里，等用例放行（演练关停时封存正在放开之后那段）。
     #[cfg(test)]
     pub(crate) hold_after_release: Mutex<Option<std::sync::mpsc::Receiver<()>>>,
@@ -135,6 +138,8 @@ impl BackupProducer {
             state: Mutex::new(State::default()),
             background: Mutex::new(None),
             window: Window::default(),
+            #[cfg(test)]
+            hold_before_freeze: Mutex::new(None),
             #[cfg(test)]
             hold_after_release: Mutex::new(None),
             #[cfg(test)]
@@ -209,18 +214,14 @@ impl BackupProducer {
     /// 关停用：等后台线程放开冻结窗口（或做完）就返回，不等放开之后的拷贝和发布（BUG-045）。
     /// 那一段随进程退出丢下，和「封存做到一半被杀」走同一条路：暂存由下次启动回收，
     /// 没写结果的原意图由下一次 `schedule` 补失败结果。
-    /// 还在等人侧空闲、没开始冻结的封存马上放弃，不用等它（BUG-056）。
+    /// 还没开始冻结的封存（在等人侧空闲，或者刚等到）马上放弃，不用等它（BUG-056）。
     pub fn settle_window(&self) {
         self.window.wind_down();
     }
 
     #[cfg(test)]
-    fn hold_after_release(&self) {
-        let gate = self
-            .hold_after_release
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .take();
+    fn hold(gate: &Mutex<Option<std::sync::mpsc::Receiver<()>>>) {
+        let gate = gate.lock().unwrap_or_else(PoisonError::into_inner).take();
         if let Some(gate) = gate {
             let _ = gate.recv();
         }
@@ -403,12 +404,9 @@ impl BackupProducer {
         let until = since + self.idle_budget();
         match sources.await_human_idle(until, |span| self.window.closing_within(span)) {
             Ok(HumanSide::Idle) => {}
-            Ok(HumanSide::Stopped) => {
-                eprintln!("{}", idle_stuck_line(&"正在关停"));
-                return Err(FailureReason::BarrierNotEstablished);
-            }
+            Ok(HumanSide::Stopped) => return Err(closing_down()),
             Err(error) => {
-                eprintln!("{}", idle_stuck_line(&error));
+                eprintln!("{}", unstarted_line(&format_args!("等人侧空闲：{error}")));
                 return Err(barrier(error));
             }
         }
@@ -453,6 +451,12 @@ impl BackupProducer {
             deadline,
         )
         .map_err(staging_reason)?;
+        #[cfg(test)]
+        Self::hold(&self.hold_before_freeze);
+        // 从这里起算开始冻结：在这之前来的关停不再让它开始，之后来的等它放开（`settle_window`，BUG-056）。
+        if self.window.closing_within(Duration::ZERO) {
+            return Err(closing_down());
+        }
         // 冻结窗口自己的截止时间由冻结预算定（`CheckpointOwners::freeze_timed`），这里只量它多长，
         // 连同窗口里每一步各用了多久（BUG-050）。
         let window = Instant::now();
@@ -481,7 +485,7 @@ impl BackupProducer {
         self.window.close();
         self.seal_line(window_line(window.elapsed(), &steps));
         #[cfg(test)]
-        self.hold_after_release();
+        Self::hold(&self.hold_after_release);
         // 放开之后另起一份分步：导出、验链、封存各用了多久（BUG-050）。
         let opened = Instant::now();
         let mut after = StepTimes::start();
@@ -569,7 +573,7 @@ impl Window {
         self.state().open = false;
         self.changed.notify_all();
     }
-    /// 关停：先叫停还在等人侧空闲的封存，再等窗口放开。
+    /// 关停：先叫停还没开始冻结的封存，再等窗口放开。
     fn wind_down(&self) {
         let mut state = self.state();
         state.closing = true;
@@ -642,12 +646,18 @@ fn idle_line(waited: Duration) -> String {
     format!("备份封存先等人侧空闲：{} 毫秒", waited.as_millis())
 }
 
-/// 没等到人侧空闲：和冻结开始之后的同一个开头，步骤写「无」——什么都还没挡住。
-fn idle_stuck_line(why: &dyn std::fmt::Display) -> String {
+/// 没开始冻结就放弃：和冻结开始之后的同一个开头，步骤写「无」——什么都还没挡住。
+fn unstarted_line(why: &dyn std::fmt::Display) -> String {
     format!(
-        "备份封存卡在：等人侧空闲：{why}（已走：{}）",
+        "备份封存卡在：{why}（已走：{}）",
         StepTimes::start().render()
     )
+}
+
+/// 进程在关停，封存不再开始；账本里照旧是同一个固定原因。
+fn closing_down() -> FailureReason {
+    eprintln!("{}", unstarted_line(&"正在关停，没开始冻结"));
+    FailureReason::BarrierNotEstablished
 }
 
 /// 放开之后没做成：账本里照旧记暂存层的固定原因，日志里多说一句是哪一步、哪个库（BUG-045）。
@@ -717,7 +727,7 @@ fn now_millis() -> Result<i64, AuditError> {
 mod tests {
     use super::{
         IDLE_BUDGET, Idle, SEAL_BUDGET, SealFailure, State, StepTimes, due, idle_line,
-        idle_stuck_line, released_done_line, released_line, stuck_line, window_line,
+        released_done_line, released_line, stuck_line, unstarted_line, window_line,
     };
     use std::{sync::Mutex, time::Duration};
     use studiolo_backup::checkpoint::staging::StagingError;
@@ -942,13 +952,14 @@ mod tests {
         );
     }
 
-    /// 等人侧空闲加上封存总预算，不超过 169 批准的间隔（10 分钟）：一次封存拖不过下一次该开始的时候（BUG-056）。
+    /// 等人侧空闲和封存总预算两项加起来不超过 169 批准的间隔（10 分钟，BUG-056）。只是这两项的上限：
+    /// 前面的回收、后面 worker 的上传另算，真拖过了，下一格由 `outstanding` 挡着、再下一格补上。
     #[test]
-    fn waiting_for_the_human_side_still_fits_in_the_approved_interval() {
+    fn waiting_for_the_human_side_and_sealing_fit_in_the_approved_interval() {
         assert!(IDLE_BUDGET + SEAL_BUDGET <= Duration::from_secs(600));
     }
 
-    /// 等人侧空闲那两行：等到了只有毫秒数；没等到和冻结开始之后的同一个开头，步骤写「无」（BUG-056）。
+    /// 等人侧空闲的几行：等到了只有毫秒数；没等到、关停叫停和冻结开始之后的同一个开头，步骤写「无」（BUG-056）。
     #[test]
     fn the_lines_about_waiting_for_the_human_side_are_fixed() {
         assert_eq!(
@@ -959,12 +970,12 @@ mod tests {
             owner: CheckpointOwner::Audit,
         };
         assert_eq!(
-            idle_stuck_line(&error),
+            unstarted_line(&format_args!("等人侧空闲：{error}")),
             "备份封存卡在：等人侧空闲：owner Audit 在预算内未排空（已走：无）"
         );
         assert_eq!(
-            idle_stuck_line(&"正在关停"),
-            "备份封存卡在：等人侧空闲：正在关停（已走：无）"
+            unstarted_line(&"正在关停，没开始冻结"),
+            "备份封存卡在：正在关停，没开始冻结（已走：无）"
         );
     }
 
