@@ -92,6 +92,50 @@ fn word_len(rest: &[char], tokens: &mut Vec<String>) -> usize {
     }
 }
 
+/// 产品代码的记号：只去掉 `#[cfg(test)]` 的测试模块本身（声明或内联）。测试模块的声明常在文件中间，
+/// 从那里一刀切到文件末尾会漏掉后面的产品代码。
+pub(crate) fn lex_product(source: &str) -> Vec<String> {
+    let tokens = lex(source);
+    let (mut product, mut index) = (Vec::new(), 0);
+    while index < tokens.len() {
+        match test_module_len(&tokens[index..]) {
+            Some(len) => index += len,
+            None => {
+                product.push(tokens[index].clone());
+                index += 1;
+            }
+        }
+    }
+    product
+}
+
+/// 从 `#[cfg(test)]` 起到测试模块收尾的记号数；别的 `cfg(test)` 项不算，照样当产品代码看。
+fn test_module_len(tokens: &[String]) -> Option<usize> {
+    const TEST_ONLY: [&str; 7] = ["#", "[", "cfg", "(", "test", ")", "]"];
+    if *tokens.get(..TEST_ONLY.len())? != TEST_ONLY {
+        return None;
+    }
+    let mut index = TEST_ONLY.len();
+    while tokens.get(index)? == "#" {
+        index += 1 + enclosed(&tokens[index + 1..], "[", "]").len();
+    }
+    if tokens.get(index)? == "pub" {
+        index += 1;
+        if tokens.get(index)? == "(" {
+            index += enclosed(&tokens[index..], "(", ")").len();
+        }
+    }
+    if tokens.get(index)? != "mod" {
+        return None;
+    }
+    let body = index + 2;
+    match tokens.get(body)?.as_str() {
+        ";" => Some(body + 1),
+        "{" => Some(body + enclosed(&tokens[body..], "{", "}").len()),
+        _ => None,
+    }
+}
+
 /// 以 `open` 开头的记号串里，到配对的 `close` 为止（含两端）；没配上就到末尾。
 pub(crate) fn enclosed<'a>(tokens: &'a [String], open: &str, close: &str) -> &'a [String] {
     let mut depth = 0usize;
@@ -115,4 +159,37 @@ pub(crate) fn block(tokens: &[String]) -> &[String] {
         .position(|token| token == "{")
         .unwrap_or(tokens.len());
     enclosed(&tokens[start..], "{", "}")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::lex_product;
+
+    /// 只去测试模块自己：后面的产品代码、别的 `cfg(test)` 项、条件不只是 `test` 的模块都留着。
+    #[test]
+    fn only_the_test_modules_themselves_are_dropped() {
+        for (source, expected) in [
+            ("#[cfg(test)] mod t; fn a() {}", "fna(){}"),
+            ("#[cfg(test)] mod t { fn b() {} } fn a() {}", "fna(){}"),
+            (
+                "#[cfg(test)] #[path = \"x.rs\"] mod t; fn a() {}",
+                "fna(){}",
+            ),
+            ("#[cfg(test)] pub mod t; fn a() {}", "fna(){}"),
+            ("#[cfg(test)] pub(crate) mod t; fn a() {}", "fna(){}"),
+            ("fn a() {} #[cfg(test)] mod t;", "fna(){}"),
+            ("#[cfg(test)] fn b() {}", "#[cfg(test)]fnb(){}"),
+            ("#[cfg(test)] use b;", "#[cfg(test)]useb;"),
+            ("#[cfg(test)] struct B {}", "#[cfg(test)]structB{}"),
+            ("#[cfg(unix)] mod t;", "#[cfg(unix)]modt;"),
+            (
+                "#[cfg(any(test, unix))] mod t;",
+                "#[cfg(any(test,unix))]modt;",
+            ),
+            ("#[cfg(not(test))] mod t;", "#[cfg(not(test))]modt;"),
+            ("fn a() {} #[cfg(test)]", "fna(){}#[cfg(test)]"),
+        ] {
+            assert_eq!(lex_product(source).concat(), expected, "{source}");
+        }
+    }
 }
