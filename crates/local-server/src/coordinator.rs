@@ -11,6 +11,8 @@ mod history;
 mod observation;
 mod preparation;
 mod scheduler;
+mod sole;
+pub(crate) use sole::SoleInstance;
 // 驱动平面（`sync_plane`）要按名字匹配接缝的失败分类与前置条件，故模块本身 crate 内可见；
 // 接缝方法仍只挂在 `CanonicalWorkbench` 上，不导出任何 Broker 类型。
 pub(crate) mod sync_bridge;

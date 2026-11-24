@@ -85,8 +85,9 @@ pub(super) fn board(
             )
             .map_err(|_| StartupError::Configuration)?;
             isolated.push(board.data.as_path());
-            let ingress = PreparedUnixIngress::prepare(&board.socket, &isolated)
-                .map_err(|_| StartupError::Ingress)?;
+            let ingress =
+                PreparedUnixIngress::prepare_over_leftover(&board.socket, &isolated, "黑板入口")
+                    .map_err(|_| StartupError::Ingress)?;
             Ok((Some(ingress), Some(plane)))
         }
         (None, _, _, _) => Ok((None, None)),

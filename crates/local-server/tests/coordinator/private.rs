@@ -3,6 +3,8 @@
 mod checkpoint;
 mod checkpoint_owners;
 mod fixture;
+#[cfg(target_os = "linux")]
+mod leftover;
 mod lifecycle;
 #[cfg(target_os = "linux")]
 mod memory;

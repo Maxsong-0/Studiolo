@@ -16,6 +16,7 @@ use studiolo_host_config::{
     backup::{BackupConfig, BackupTargetShape},
 };
 use studiolo_local_server::{
+    CanonicalWorkbench,
     backup::{BackupProducer, ProducerPlan},
     checkpoint::CheckpointInputs,
 };
@@ -150,11 +151,20 @@ pub(super) struct Listening(studiolo_local_server::backup::BackupService);
 
 #[cfg(target_os = "linux")]
 impl Listening {
-    /// 配了就必须起得来：父目录、属组、权限任何一样不符，或者同名节点已在，都算入口错误。
-    pub(super) fn start(prepared: Prepared) -> Result<Self, StartupError> {
-        studiolo_local_server::backup::BackupService::start(prepared.producer, &prepared.socket)
-            .map(Self)
-            .map_err(|_| StartupError::Ingress)
+    /// 配了就必须起得来：父目录、属组、权限任何一样不符，或者同名节点已在、又不是判得死的残留，都算入口错误。
+    /// 装得出生产者就一定有写者（`prepare` 要全部 owner 的原实例），没有时同样按入口错误拒绝。
+    pub(super) fn start(
+        prepared: Prepared,
+        workbench: Option<&CanonicalWorkbench>,
+    ) -> Result<Self, StartupError> {
+        let workbench = workbench.ok_or(StartupError::Ingress)?;
+        studiolo_local_server::backup::BackupService::start(
+            prepared.producer,
+            &prepared.socket,
+            workbench,
+        )
+        .map(Self)
+        .map_err(|_| StartupError::Ingress)
     }
 
     /// 先收监听，再等在途的回收和封存做完；要在停写者之前调用。
@@ -169,7 +179,7 @@ pub(super) struct Listening;
 
 #[cfg(not(target_os = "linux"))]
 impl Listening {
-    pub(super) fn start(_: Prepared) -> Result<Self, StartupError> {
+    pub(super) fn start(_: Prepared, _: Option<&CanonicalWorkbench>) -> Result<Self, StartupError> {
         Err(StartupError::Configuration)
     }
 

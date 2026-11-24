@@ -4,6 +4,7 @@ use super::{
     listener::{self, ListenError},
     producer::BackupProducer,
 };
+use crate::CanonicalWorkbench;
 use std::{
     os::unix::net::UnixStream,
     path::Path,
@@ -34,10 +35,15 @@ pub struct BackupService {
 }
 
 impl BackupService {
-    /// 在固定路径上建立监听并起接受循环；要在 Tokio 运行时里调用。
-    pub fn start(producer: Arc<BackupProducer>, socket: &Path) -> Result<Self, ListenError> {
+    /// 在固定路径上建立监听并起接受循环；要在 Tokio 运行时里调用。`workbench` 是握着主库锁的那个写者，
+    /// 上一任留下的 socket 凭它才接管得了。
+    pub fn start(
+        producer: Arc<BackupProducer>,
+        socket: &Path,
+        workbench: &CanonicalWorkbench,
+    ) -> Result<Self, ListenError> {
         let (_, reader_gid) = producer.identities();
-        let (listener, claim) = listener::bind(socket, reader_gid)?;
+        let (listener, claim) = listener::bind(socket, reader_gid, workbench)?;
         listener
             .set_nonblocking(true)
             .map_err(|_| ListenError::Unavailable)?;

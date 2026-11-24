@@ -43,7 +43,7 @@ thiserror.workspace = true
 notify.workspace = true
 subtle.workspace = true
 zeroize.workspace = true
-rustix = { workspace = true, features = ["process", "termios"] }
+rustix = { workspace = true, features = ["net", "process", "termios"] }
 studiolo-auth.workspace = true
 studiolo-host-config.workspace = true
 studiolo-process-safety.workspace = true

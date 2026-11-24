@@ -209,7 +209,7 @@ async fn settle(producer: &Arc<BackupProducer>) -> Result<(), String> {
 
 /// 照生产写一份备份配置（0600）：读取组用本账号的组；封存父目录和 socket 父目录照暂存层、监听层的要求
 /// 建成 0750、属组是读取组。目录名和 `approved` 里写的一致。
-fn backup_config(f: &Fixture) -> PathBuf {
+pub(super) fn backup_config(f: &Fixture) -> PathBuf {
     let staging = directory(f, "backup-staging", 0o750);
     let reader_gid = fs::metadata(&staging).unwrap().gid();
     assert_ne!(reader_gid, 0, "读取组不许是 0：这条测试要在非 root 组下跑");

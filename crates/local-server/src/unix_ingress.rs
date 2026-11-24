@@ -1,10 +1,12 @@
 //! 同 UID Unix 入口；权限边界不识别具体可执行文件，也不对抗同 UID 或管理员。
 
 mod layout;
+pub(crate) mod leftover;
 mod peer;
 
 pub(crate) use peer::{TrustedNetworkSource, source};
 
+use crate::CanonicalWorkbench;
 use axum::Router;
 use std::{future::Future, os::unix::net::UnixListener, path::Path};
 
@@ -32,18 +34,45 @@ impl PreparedUnixIngress {
     /// 路径最多 103 个 UTF-8 字节，以同时适配 macOS 和 Linux 的 pathname socket。
     pub fn prepare(path: &Path, isolated_roots: &[&Path]) -> Result<Self, IngressError> {
         Ok(Self {
-            layout: layout::Layout::prepare(path, isolated_roots)?,
+            layout: layout::Layout::prepare(path, isolated_roots, None)?,
         })
     }
 
-    /// 重验完整目录身份、权限及目标不存在；不自动修复变化。
+    /// 同 [`PreparedUnixIngress::prepare`]，但容得下上一任被强杀后留下、已经没人监听的 socket：
+    /// 这里仍然只看不动，删它要等 [`PreparedUnixIngress::bind_over_leftover`] 拿到主库锁的凭据。
+    /// `label` 是日志里的叫法，不带路径。
+    pub fn prepare_over_leftover(
+        path: &Path,
+        isolated_roots: &[&Path],
+        label: &'static str,
+    ) -> Result<Self, IngressError> {
+        Ok(Self {
+            layout: layout::Layout::prepare(path, isolated_roots, Some(label))?,
+        })
+    }
+
+    /// 重验完整目录身份、权限及目标不存在（或是容得下的残留）；不自动修复变化。
     pub fn revalidate(&self) -> Result<(), IngressError> {
         self.layout.revalidate()
     }
 
-    /// 建立监听并复核 0600、UID、类型和 inode；不需要 Tokio runtime。
-    pub fn bind(self) -> Result<BoundUnixIngress, IngressError> {
+    /// 先接管判死的残留，再照 [`PreparedUnixIngress::bind`] 建监听；没按容得下残留准备的，有节点照旧拒绝。
+    pub fn bind_over_leftover(
+        self,
+        workbench: &CanonicalWorkbench,
+    ) -> Result<BoundUnixIngress, IngressError> {
         self.revalidate()?;
+        if let Some(entrance) = self.layout.entrance() {
+            entrance
+                .take_over(workbench)
+                .map_err(|_| IngressError::Configuration)?;
+        }
+        self.bind()
+    }
+
+    /// 建立监听并复核 0600、UID、类型和 inode；不需要 Tokio runtime。已有任何同名节点都拒绝。
+    pub fn bind(self) -> Result<BoundUnixIngress, IngressError> {
+        self.layout.vacant()?;
         let listener =
             UnixListener::bind(self.layout.path()).map_err(|_| IngressError::Unavailable)?;
         let cleanup = self.layout.claim()?;

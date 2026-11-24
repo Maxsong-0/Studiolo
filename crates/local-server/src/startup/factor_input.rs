@@ -52,8 +52,17 @@ impl Inputs {
             config_directory,
         ];
         isolated_roots.extend(writer_data);
-        let ingress = PreparedUnixIngress::prepare(&options.socket, &isolated_roots)
-            .map_err(|_| StartupError::Ingress)?;
+        // 有写者才有主库锁，才证明得了自己是唯一一任；没有写者时残留照旧拒绝。
+        let ingress = if writer_data.is_some() {
+            PreparedUnixIngress::prepare_over_leftover(
+                &options.socket,
+                &isolated_roots,
+                "HTTP 入口",
+            )
+        } else {
+            PreparedUnixIngress::prepare(&options.socket, &isolated_roots)
+        }
+        .map_err(|_| StartupError::Ingress)?;
         // 组合根已经在读取任何秘密之前收紧过本进程，这里直接读槽位。
         let (current, replacement) = environment();
         let (current, replacement) = slots(
