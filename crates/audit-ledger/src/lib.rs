@@ -15,7 +15,7 @@ mod verification;
 pub use event::{AuditEvent, AuditEventId, AuditPhase, AuditSubject};
 pub use filter::AuditFilter;
 pub use memory::MemoryAuditLedger;
-pub use operation::{AuditQuiescence, OperationPermit};
+pub use operation::{AuditQuiescence, OPERATION_RETRY, OperationPermit};
 pub use payload::SanitizedPayload;
 pub use record::{AuditRecord, IntegrityHash};
 pub use sqlite::{AUDIT_SEGMENT_RECORDS, AuditPage, AuditReadView, SqliteAuditLedger};

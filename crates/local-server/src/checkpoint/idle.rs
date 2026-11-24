@@ -7,10 +7,7 @@
 //! 只等人侧：接入方的完整操作是一次请求，自己有界；而且人侧不等它，它排空时人侧照常。
 //! 空下来到真排空之间仍有一小段：撞上了照旧在排空那一步等、用冻结预算，不在这里重试。
 use super::*;
-
-/// 隔多久看一次：和排空自己的重试一样勤（`quiesce` 每 5 毫秒试一次），它看得到的空当这里也看得到——
-/// 操作密、空当短的时候，不会因为先等这一步反而等不到。
-const LOOK_EVERY: Duration = Duration::from_millis(5);
+use studiolo_audit_ledger::OPERATION_RETRY;
 
 /// 等的结果：空下来了，或者被叫停了（进程在关停）。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -24,6 +21,7 @@ pub enum HumanSide {
 impl CheckpointOwners {
     /// 等到人侧此刻没有完整操作在做；到 `until` 还等不到就失败。
     ///
+    /// 隔 [`OPERATION_RETRY`] 看一次，和排空自己的重试一样勤，它看得到的空当这里也看得到。
     /// 等的时候不留租约：人侧忙着，试拿不到，什么都没占；看到空的那一眼拿到独占许可、当场还掉，那一瞬（几十微秒）
     /// 别人试取会扑空，各处本来就会重试或跳过一轮。`stop_within` 睡不超过给它的时长，返回真就是叫停；
     /// 每次看之前都先问它，叫停了就不再看。
@@ -46,7 +44,7 @@ impl CheckpointOwners {
                     owner: Owner::Audit,
                 });
             }
-            span = LOOK_EVERY.min(left);
+            span = OPERATION_RETRY.min(left);
         }
     }
 

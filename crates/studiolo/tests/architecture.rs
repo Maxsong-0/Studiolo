@@ -23,6 +23,8 @@ mod dependencies;
 mod factor_http;
 #[path = "architecture_cases/file_lock_release.rs"]
 mod file_lock_release;
+#[path = "architecture_cases/flush_points.rs"]
+mod flush_points;
 #[path = "architecture_cases/maintenance.rs"]
 mod maintenance;
 #[path = "architecture_cases/nextest_groups.rs"]

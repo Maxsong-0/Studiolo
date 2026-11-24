@@ -61,7 +61,7 @@ const RECLAIM_BUDGET: Duration = Duration::from_secs(30);
 pub(crate) const SEAL_BUDGET: Duration = Duration::from_secs(300);
 
 /// 一次封存最多等人侧空下来多久（BUG-056）。在封存总预算和冻结预算之前，不占它们；等的时候网站、
-/// 接入方都照常，等到上限这次封存照旧失败、按间隔再来。比最慢的一轮同步（169 上 73 秒）宽得多，
+/// 接入方都照常，等到上限这次封存照旧失败、按间隔再来。比最慢的一轮同步（169 上 71.6～72.8 秒，按 73 算）宽得多，
 /// 加上封存总预算不超过一个批准的间隔（10 分钟）；前面的回收（[`RECLAIM_BUDGET`]）和后面 worker 的上传另算。
 const IDLE_BUDGET: Duration = Duration::from_secs(300);
 /// 等人侧空闲不到这么久就不打那一行：平时的日志不变。
@@ -113,7 +113,8 @@ pub struct BackupProducer {
     /// 用例用：封存放开冻结窗口之后停在这里，等用例放行（演练关停时封存正在放开之后那段）。
     #[cfg(test)]
     pub(crate) hold_after_release: Mutex<Option<std::sync::mpsc::Receiver<()>>>,
-    /// 用例用：封存打出的日志行（分步、没做成的、等人侧空闲的）另收一份，核生产者真的接到了日志里（BUG-050、BUG-056）。
+    /// 用例用：经 `seal_line` 打的日志行另收一份，核生产者真的接到了日志里（BUG-050、BUG-056）。
+    /// `housekeep` 的两行（暂存回收、封存未完成）不经它。
     #[cfg(test)]
     pub(crate) seal_lines: Mutex<Vec<String>>,
     /// 用例用：把等人侧空闲的上限改短；生产固定 [`IDLE_BUDGET`]。
@@ -489,7 +490,7 @@ impl BackupProducer {
         // 放开之后另起一份分步：导出、验链、封存各用了多久（BUG-050）。
         let opened = Instant::now();
         let mut after = StepTimes::start();
-        let now = now_millis().map_err(after_release_step("取当前时间", &after))?;
+        let now = now_millis().map_err(self.after_release_step("取当前时间", &after))?;
         let sealed = released.seal_timed(
             area,
             trusted_catalog,
@@ -503,9 +504,9 @@ impl BackupProducer {
         );
         // 定格的连接和句柄先关掉再写准入。
         drop(released);
-        let sealed = sealed.map_err(|failure| after_release(failure, &after))?;
+        let sealed = sealed.map_err(|failure| self.after_release(failure, &after))?;
         BackupAdmission::approve(self.ledger.clone(), key.clone(), TARGET, &sealed)
-            .map_err(after_release_step("写准入", &after))?;
+            .map_err(self.after_release_step("写准入", &after))?;
         after.mark("写准入");
         self.seal_line(released_done_line(opened.elapsed(), &after));
         Ok(())
@@ -521,6 +522,26 @@ impl BackupProducer {
     /// 没开始冻结就放弃：步骤写「无」——什么都还没挡住。
     fn unstarted(&self, why: &dyn std::fmt::Display) -> FailureReason {
         self.stuck(why, &StepTimes::start())
+    }
+
+    /// 放开之后没做成：账本里照旧记暂存层的固定原因，日志里多说一句是哪一步、哪个库（BUG-045）。
+    /// 最慢的几步挪到了放开之后，不在这里写，现场就又分不清卡在哪了（BUG-044 要消除的）。
+    fn after_release(&self, failure: SealFailure, steps: &StepTimes) -> FailureReason {
+        self.seal_line(released_line(&failure, steps));
+        staging_reason(failure.staging())
+    }
+
+    /// 放开之后、`seal_timed` 以外的两步（取当前时间、写准入）没做成：同样写一行，只有固定的步骤名；
+    /// 账本里照旧是同一个固定原因。
+    fn after_release_step<'a, E>(
+        &'a self,
+        step: &'static str,
+        steps: &'a StepTimes,
+    ) -> impl FnOnce(E) -> FailureReason + 'a {
+        move |error| {
+            self.seal_line(released_line(&step, steps));
+            barrier(error)
+        }
     }
 }
 
@@ -653,25 +674,6 @@ const CLOSING_DOWN: &str = "正在关停，没开始冻结";
 /// 等人侧空闲等了一会儿才等到：固定格式，只有毫秒数；真机看它知道封存晚了多久、是不是撞上了慢操作（BUG-056）。
 fn idle_line(waited: Duration) -> String {
     format!("备份封存先等人侧空闲：{} 毫秒", waited.as_millis())
-}
-
-/// 放开之后没做成：账本里照旧记暂存层的固定原因，日志里多说一句是哪一步、哪个库（BUG-045）。
-/// 最慢的几步挪到了放开之后，不在这里写，现场就又分不清卡在哪了（BUG-044 要消除的）。
-fn after_release(failure: SealFailure, steps: &StepTimes) -> FailureReason {
-    eprintln!("{}", released_line(&failure, steps));
-    staging_reason(failure.staging())
-}
-
-/// 放开之后、`seal_timed` 以外的两步（取当前时间、写准入）没做成：同样写一行，只有固定的步骤名；
-/// 账本里照旧是同一个固定原因。
-fn after_release_step<'a, E>(
-    step: &'static str,
-    steps: &'a StepTimes,
-) -> impl FnOnce(E) -> FailureReason + 'a {
-    move |error| {
-        eprintln!("{}", released_line(&step, steps));
-        barrier(error)
-    }
 }
 
 /// 固定类别：哪一步、哪个库或暂存层的哪一类；不含路径和内容。带上放开之后已走过的步（BUG-050）。
@@ -949,7 +951,7 @@ mod tests {
 
     /// 等人侧空闲和封存总预算两项加起来不超过 169 批准的间隔（BUG-056；批准的数和部署一致由 `test_units.py` 核）。
     /// 只是这两项的上限：前面的回收、后面 worker 的上传另算，真拖过了，下一格由 `outstanding` 挡着、再下一格补上。
-    /// 反过来，等的上限要比 169 上见过的最慢一轮同步（73 秒）宽一倍以上，不然等了也白等。
+    /// 反过来，等的上限要比 169 上见过的最慢一轮同步（71.6～72.8 秒，按 73 算）宽一倍以上，不然等了也白等。
     #[test]
     fn waiting_for_the_human_side_and_sealing_fit_in_the_approved_interval() {
         let approved = Duration::from_millis(APPROVED.try_into().unwrap());

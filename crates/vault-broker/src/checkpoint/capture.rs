@@ -372,7 +372,7 @@ impl Copying<'_> {
         Ok((hash.finalize().into(), total))
     }
 }
-/// 写到一半先落一次盘。
+/// 写到一半先落一次盘：没落盘的页在有内存上限的服务里回收不了，攒到写完才落，量就跟着文件大小走（BUG-054）。
 fn flush_halfway(output: &File) -> Result<(), BrokerError> {
     output
         .sync_data()

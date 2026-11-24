@@ -84,8 +84,18 @@ async fn the_producer_still_logs_the_window_and_records_the_failure() {
     assert_eq!(stage.ask(QueueCommand::Schedule), QueueAnswer::Started);
     stage.producer.settle();
     let lines = stage.producer.seal_lines.lock().unwrap().clone();
-    assert_eq!(lines.len(), 1, "窗口照常走完、只打窗口那一行：{lines:?}");
+    assert_eq!(
+        lines.len(),
+        2,
+        "窗口照常走完打一行，放开之后卡在哪打一行，没有做成的那行：{lines:?}"
+    );
     assert!(lines[0].starts_with("备份封存冻结窗口："), "{lines:?}");
+    assert!(
+        lines[1].starts_with(
+            "备份封存放开之后卡在：核写者回执：owner Broker 不可用（已走：校验与核回执 "
+        ),
+        "{lines:?}"
+    );
     stage.assembled.writable(true);
     assert!(stage.assembled.human.enter_operation().is_ok());
     assert_eq!(stage.outcomes(1), 1, "没做成要记一条失败结果");

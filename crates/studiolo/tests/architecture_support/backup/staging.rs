@@ -148,9 +148,6 @@ pub(super) fn remainder(path: &Path, source: &str) -> String {
                 "super::acl::require_no_acl(&file,false)?;",
                 "self.access.require_writer()?;",
                 "!same(&self.pin,&after)||!same(&after,&reopened.pin)",
-                // 写到一半按段落盘，没落盘的量不随文件变大（BUG-054）。
-                "self.flush.written(bytes.len()asu64,||flush(file))",
-                "file.sync_data().map_err(|_|StagingError::Unavailable)?;",
             ],
             &[
                 ("fs::{File,Metadata}", 1),

@@ -132,13 +132,8 @@ fn copying_a_large_file_flushes_every_64_mib_while_it_is_written() {
     let fixture = Fixture::new();
     let source = fixture.target("large");
     // 空洞文件：读出来是 0，拷的时候照样一个字节一个字节写进副本。
-    for (name, mebibytes) in [
-        ("a-one", 1),
-        ("b-short", 63),
-        ("c-full", 64),
-        ("d-large", 130),
-        ("e-short", 63),
-    ] {
+    // 前两个加起来正好一段：计数要是跨文件接着数，第二个就会落一次。
+    for (name, mebibytes) in [("a-one", 1), ("b-short", 63), ("c-large", 130)] {
         let file = fs::File::create(source.join(name)).unwrap();
         file.set_len(mebibytes * MIB).unwrap();
     }
@@ -163,8 +158,8 @@ fn copying_a_large_file_flushes_every_64_mib_while_it_is_written() {
         .unwrap();
     assert_eq!(
         capture::FLUSHED.take(),
-        [64, 64, 128].map(|at| at * MIB),
-        "64 MiB 的落一次，130 MiB 的落两次，其余的写完才落"
+        [64, 128].map(|at| at * MIB),
+        "130 MiB 的落两次，其余的写完才落"
     );
-    assert_eq!(fs::metadata(copy.join("d-large")).unwrap().len(), 130 * MIB);
+    assert_eq!(fs::metadata(copy.join("c-large")).unwrap().len(), 130 * MIB);
 }

@@ -10,6 +10,7 @@ use crate::{
 };
 use std::{
     sync::{
+        Mutex,
         atomic::{AtomicBool, AtomicUsize, Ordering},
         mpsc,
     },
@@ -251,7 +252,8 @@ async fn a_seal_gives_up_when_the_human_side_never_goes_idle() {
     stage.assembled.workbench.shutdown().await.unwrap();
 }
 
-/// 等待本身：叫停先于看，看到空就回，等到上限报没排空，审计库不健康当场报不可用、不当成在忙。
+/// 等待本身：叫停先于看，看到空就回，等的时候每 5 毫秒看一眼，等到上限报没排空，
+/// 审计库不健康当场报不可用、不当成在忙。
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn waiting_for_the_human_side_stops_when_told_to_and_fails_on_an_unhealthy_ledger() {
     let f = Setup::new(true).await;
@@ -269,14 +271,26 @@ async fn waiting_for_the_human_side_stops_when_told_to_and_fails_on_an_unhealthy
         "叫停了就不再看，人侧空着也一样"
     );
     let slow = f.human.enter_operation().unwrap();
+    let spans = Mutex::new(Vec::new());
     assert_eq!(
         f.owners
-            .await_human_idle(Instant::now() + Duration::from_millis(200), nap),
+            .await_human_idle(Instant::now() + Duration::from_millis(200), |span| {
+                spans.lock().unwrap().push(span);
+                nap(span)
+            }),
         Err(CheckpointError::NotDrained {
             owner: Owner::Audit
         })
     );
     drop(slow);
+    // 契约写死的数：一来就看一眼，之后每次最多睡 5 毫秒再看；排空自己的重试也是这个数（同一个常量）。
+    let spans = spans.into_inner().unwrap();
+    assert_eq!(spans.first(), Some(&Duration::ZERO));
+    assert!(spans.len() > 2, "200 毫秒里只看了 {} 眼", spans.len());
+    assert!(
+        spans.iter().all(|span| *span <= Duration::from_millis(5)),
+        "{spans:?}"
+    );
     let audit = f.fixture.root.join("audit");
     fs::set_permissions(&audit, fs::Permissions::from_mode(0o750)).unwrap();
     let started = Instant::now();
@@ -293,7 +307,8 @@ async fn waiting_for_the_human_side_stops_when_told_to_and_fails_on_an_unhealthy
     f.workbench.shutdown().await.unwrap();
 }
 
-/// 人侧操作密、空当短也等得到：看得和排空一样勤，空当来了几个就看见了，不会因为先等这一步反而等不到。
+/// 人侧操作密、空当短也等得到：空当来了几个就看见了。真跑一遍的粗核，看得多勤由
+/// `waiting_for_the_human_side_stops_when_told_to_and_fails_on_an_unhealthy_ledger` 按次核。
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn the_wait_catches_a_short_gap_between_human_operations() {
     /// 一次操作占多久、隔多久起下一次；两个数加起来不是常见看法间隔的约数，隔几秒看一次的撞不上空当。
@@ -374,6 +389,8 @@ async fn a_drain_that_runs_out_of_budget_says_so() {
     let (marked, marks) = mpsc::channel();
     let human = f.human.clone();
     let outcome = thread::scope(|scope| {
+        // 冻结要是居然成了，断言在这里面就失败：`finish` 跟着放下，下面那个线程不会一直等。
+        let finish = finish;
         scope.spawn(move || {
             while marks.recv().expect("冻结没走到等人侧空闲") != "等人侧空闲" {}
             let human = human.enter_operation().unwrap();

@@ -47,7 +47,7 @@ pub(super) fn fixed_binding(path: &Path, source: &str) -> bool {
             // 定格的连接和句柄关掉之后才写准入。
             // 带分步用时的写法（BUG-050）：放开和标记窗口已过之间、定格关掉和写准入之间都不许插别的。
             "letmutreleased=frozen.release_timed(deadline,&mutsteps).map_err(|error|self.stuck(&error,&steps))?;self.window.close();",
-            "drop(released);letsealed=sealed.map_err(|failure|after_release(failure,&after))?;BackupAdmission::approve(self.ledger.clone(),key.clone(),TARGET,&sealed)",
+            "drop(released);letsealed=sealed.map_err(|failure|self.after_release(failure,&after))?;BackupAdmission::approve(self.ledger.clone(),key.clone(),TARGET,&sealed)",
             "QueueCommand::RepositoryCheck=>self.repository_check()?",
             "ifletOk(request)=RepositoryCheckReport::decode(bytes){ifrequest.target()!=TARGET{returnErr(AuditError::Serialization);}returnself.report_check(&request);}",
         ]
