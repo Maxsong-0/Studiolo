@@ -1,7 +1,8 @@
 //! 固定 schema 与对象根的 capability 访问；不接受外部磁盘路径或调用方回调。
 use super::{binding::*, limits::FileOperationLimits};
 use crate::{
-    BrokerError, FsVaultBroker,
+    BrokerError,
+    records::WriterRecords,
     writer::{directory, disk},
 };
 use cap_std::fs::Dir;
@@ -20,15 +21,15 @@ fn exists(root: &Dir, name: &str) -> Result<bool, BrokerError> {
     }
 }
 
-pub(crate) fn open(broker: &FsVaultBroker) -> Result<Option<Roots>, BrokerError> {
-    broker.writer.check(&broker.root, &broker.data)?;
-    if exists(&broker.data, PREPARING)? || exists(&broker.root, QUARANTINE_PREPARING)? {
+pub(crate) fn open(source: &dyn WriterRecords) -> Result<Option<Roots>, BrokerError> {
+    source.check()?;
+    if exists(source.data(), PREPARING)? || exists(source.root(), QUARANTINE_PREPARING)? {
         return Err(BrokerError::CorruptWriterState);
     }
-    let present = exists(&broker.data, NAME)?;
-    let quarantined = exists(&broker.root, QUARANTINE)?;
-    let mut pin = broker
-        .file_operation_pin
+    let present = exists(source.data(), NAME)?;
+    let quarantined = exists(source.root(), QUARANTINE)?;
+    let mut pin = source
+        .file_operation_pin()
         .lock()
         .map_err(|_| BrokerError::CorruptWriterState)?;
     if !present && !quarantined {
@@ -41,14 +42,14 @@ pub(crate) fn open(broker: &FsVaultBroker) -> Result<Option<Roots>, BrokerError>
     if present != quarantined {
         return Err(BrokerError::CorruptWriterState);
     }
-    let records = directory(&broker.data, NAME)?;
-    let quarantine = directory(&broker.root, QUARANTINE)?;
+    let records = directory(source.data(), NAME)?;
+    let quarantine = directory(source.root(), QUARANTINE)?;
     if pin.is_none() {
         let (bytes, identity) =
             disk::read_identified(&records, "binding.json", disk::IDENTITY_LIMIT)?
                 .ok_or(BrokerError::CorruptWriterState)?;
         let binding: Binding = disk::decode(&bytes)?;
-        binding.validate(broker, &records, &quarantine)?;
+        binding.validate(source, &records, &quarantine)?;
         *pin = Some(Pin {
             binding,
             file: disk::FilePin::from_read(&bytes, identity),
@@ -58,8 +59,8 @@ pub(crate) fn open(broker: &FsVaultBroker) -> Result<Option<Roots>, BrokerError>
     pinned
         .file
         .check(&records, "binding.json", disk::IDENTITY_LIMIT)?;
-    pinned.binding.validate(broker, &records, &quarantine)?;
-    broker.writer.check(&broker.root, &broker.data)?;
+    pinned.binding.validate(source, &records, &quarantine)?;
+    source.check()?;
     Ok(Some(Roots {
         records,
         quarantine,
@@ -67,21 +68,21 @@ pub(crate) fn open(broker: &FsVaultBroker) -> Result<Option<Roots>, BrokerError>
     }))
 }
 
-pub(crate) fn required(broker: &FsVaultBroker) -> Result<Roots, BrokerError> {
-    open(broker)?.ok_or_else(|| BrokerError::InvalidArtifact("文件操作能力尚未显式启用".into()))
+pub(crate) fn required(source: &dyn WriterRecords) -> Result<Roots, BrokerError> {
+    open(source)?.ok_or_else(|| BrokerError::InvalidArtifact("文件操作能力尚未显式启用".into()))
 }
 
 pub(crate) fn validate_state(
-    broker: &FsVaultBroker,
+    source: &dyn WriterRecords,
     state: &crate::mutation::State,
 ) -> Result<(), BrokerError> {
-    let roots = open(broker)?;
+    let roots = open(source)?;
     if state.file_operations_enabled != roots.is_some() {
         return Err(BrokerError::CorruptWriterState);
     }
     if let Some(active) = &state.file_operation {
         let roots = roots.ok_or(BrokerError::CorruptWriterState)?;
-        if active.frozen.vault_uuid != broker.vault_uuid || active.frozen.limits != roots.limits {
+        if active.frozen.vault_uuid != source.vault_uuid() || active.frozen.limits != roots.limits {
             return Err(BrokerError::CorruptWriterState);
         }
     }

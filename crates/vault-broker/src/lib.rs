@@ -49,6 +49,7 @@ mod memory_namespace;
 mod mutation;
 mod readonly;
 mod recorded;
+mod records;
 mod recovery;
 mod replay_read;
 mod residue;

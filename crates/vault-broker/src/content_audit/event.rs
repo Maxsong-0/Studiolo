@@ -6,7 +6,7 @@ use crate::mutation::{
     replay::Replay,
 };
 use crate::recorded::store::{Envelope, RecordingRef};
-use crate::{BrokerError, FsVaultBroker, Precondition, VaultUuid, sha256, writer::disk};
+use crate::{BrokerError, Precondition, VaultUuid, records::WriterRecords, sha256, writer::disk};
 use serde::{Deserialize, Serialize};
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -86,10 +86,11 @@ pub(crate) fn outcome(terminal: &Terminal) -> ContentAuditOutcome {
     }
 }
 pub(crate) fn terminal(
-    broker: &FsVaultBroker,
+    records: &dyn WriterRecords,
     envelope: &Envelope,
 ) -> Result<Option<Terminal>, BrokerError> {
-    let Some(replay) = mutation::replay::load(&broker.data, &envelope.key_hash, envelope.pair_id)?
+    let Some(replay) =
+        mutation::replay::load(records.data(), &envelope.key_hash, envelope.pair_id)?
     else {
         return Ok(None);
     };
@@ -99,25 +100,25 @@ pub(crate) fn terminal(
     if terminal.recording.as_ref() != Some(&envelope.reference()?) {
         return Err(BrokerError::CorruptWriterState);
     }
-    crate::recorded::validate_terminal(broker, &terminal)?;
+    crate::recorded::validate_terminal(records, &terminal)?;
     Ok(Some(terminal))
 }
 pub(crate) fn outcome_row(
-    broker: &FsVaultBroker,
+    records: &dyn WriterRecords,
     envelope: &Envelope,
 ) -> Result<Option<Row>, BrokerError> {
-    terminal(broker, envelope)?
+    terminal(records, envelope)?
         .as_ref()
         .map(|value| row(envelope, Some(outcome(value))))
         .transpose()
 }
 pub(crate) fn validate_ack(
-    broker: &FsVaultBroker,
+    records: &dyn WriterRecords,
     row: &Row,
     ack: &Ack,
 ) -> Result<(), BrokerError> {
     if ack.version != 1
-        || ack.pair_id != broker.writer.binding.pair_id
+        || ack.pair_id != records.pair_id()
         || ack.event_id != row.event.event_id
         || ack.phase != row.event.phase
         || ack.digest != digest(row)?

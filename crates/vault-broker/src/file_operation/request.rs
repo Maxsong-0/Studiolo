@@ -5,7 +5,7 @@ use super::{
     model::FilePresence,
     record::Active,
 };
-use crate::{BrokerError, FsVaultBroker, writer::disk as codec};
+use crate::{BrokerError, FsVaultBroker, records::WriterRecords, writer::disk as codec};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -34,9 +34,9 @@ impl Request {
                 .transpose()?,
         })
     }
-    pub(crate) fn validate(&self, broker: &FsVaultBroker) -> Result<(), BrokerError> {
-        self.frozen.validate(broker.writer.binding.pair_id)?;
-        if self.frozen.version == 2 && !crate::mutation::load(broker)?.rename_enabled {
+    pub(crate) fn validate(&self, source: &dyn WriterRecords) -> Result<(), BrokerError> {
+        self.frozen.validate(source.pair_id())?;
+        if self.frozen.version == 2 && !crate::mutation::load(source)?.rename_enabled {
             return Err(BrokerError::CorruptWriterState);
         }
         super::record::validate_presence(&self.observed_before)?;
@@ -48,20 +48,20 @@ impl Request {
             || self.sequence == 0
             || self.reserved_bytes == 0
             || self.reserved_bytes > self.frozen.limits.retained_bytes_limit
-            || self.frozen.vault_uuid != broker.vault_uuid
-            || self.frozen.limits != super::store::required(broker)?.limits
+            || self.frozen.vault_uuid != source.vault_uuid()
+            || self.frozen.limits != super::store::required(source)?.limits
         {
             return Err(BrokerError::CorruptWriterState);
         }
         Ok(())
     }
 }
-pub(crate) fn load(broker: &FsVaultBroker, id: &str) -> Result<Option<Request>, BrokerError> {
-    let Some(bytes) = disk::read(broker, Folder::Records, &format!("{id}.json"))? else {
+pub(crate) fn load(source: &dyn WriterRecords, id: &str) -> Result<Option<Request>, BrokerError> {
+    let Some(bytes) = disk::read(source, Folder::Records, &format!("{id}.json"))? else {
         return Ok(None);
     };
     let value: Request = codec::decode(&bytes)?;
-    value.validate(broker)?;
+    value.validate(source)?;
     if value.frozen.operation_id != id {
         return Err(BrokerError::CorruptWriterState);
     }

@@ -1,11 +1,15 @@
 //! 维护仅保留最后一代槽；核对该槽仍引用的全部原记录，不虚构已被替换的历史。
 use super::store;
 use crate::{
-    BrokerError, FsVaultBroker,
+    BrokerError,
     checkpoint::audit::{BrokerCheckpointAudit, Verifier},
+    records::WriterRecords,
 };
-pub(crate) fn verify(broker: &FsVaultBroker, verify: &mut Verifier<'_>) -> Result<(), BrokerError> {
-    let Some(slot) = store::load(broker)? else {
+pub(crate) fn verify(
+    records: &dyn WriterRecords,
+    verify: &mut Verifier<'_>,
+) -> Result<(), BrokerError> {
+    let Some(slot) = store::load(records)? else {
         return Ok(());
     };
     if slot.active() {

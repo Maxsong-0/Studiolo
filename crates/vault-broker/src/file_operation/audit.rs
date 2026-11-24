@@ -4,7 +4,10 @@ use super::{
     disk::{self, Folder},
     request::Request,
 };
-use crate::{BrokerError, ContentAuditPhase, FsVaultBroker, mutation, writer::disk as codec};
+use crate::{
+    BrokerError, ContentAuditPhase, FsVaultBroker, mutation, records::WriterRecords,
+    writer::disk as codec,
+};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -76,10 +79,10 @@ pub(crate) fn confirmed(
     Ok(checkpoint_ack(broker, event)?.is_some())
 }
 pub(super) fn checkpoint_ack(
-    broker: &FsVaultBroker,
+    source: &dyn WriterRecords,
     event: &FileOperationAuditEvent,
 ) -> Result<Option<(u64, String)>, BrokerError> {
-    let Some(bytes) = disk::read(broker, Folder::Acks, &filename(event))? else {
+    let Some(bytes) = disk::read(source, Folder::Acks, &filename(event))? else {
         return Ok(None);
     };
     let value: Ack = codec::decode(&bytes)?;

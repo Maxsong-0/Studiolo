@@ -1,8 +1,8 @@
 //! 不可变的受控元数据与原请求指纹，正文和原 key 不进入旁路记录。
 use super::{MutationActor, MutationKind, MutationMetadata, store::id};
 use crate::{
-    BrokerError, FsVaultBroker, Mutation, Precondition, Revision, VaultPath, VaultUuid, sha256,
-    writer::disk,
+    BrokerError, FsVaultBroker, Mutation, Precondition, Revision, VaultPath, VaultUuid,
+    records::WriterRecords, sha256, writer::disk,
 };
 use serde::{Deserialize, Serialize};
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -38,11 +38,11 @@ impl Envelope {
             digest: sha256(&encode(self)?),
         })
     }
-    pub fn validate(&self, broker: &FsVaultBroker) -> Result<(), BrokerError> {
+    pub fn validate(&self, records: &dyn WriterRecords) -> Result<(), BrokerError> {
         if !matches!(self.version, 1 | 2)
-            || self.pair_id != broker.writer.binding.pair_id
-            || self.vault_uuid != broker.vault_uuid
-            || self.id != id(broker, &self.key_hash)
+            || self.pair_id != records.pair_id()
+            || self.vault_uuid != records.vault_uuid()
+            || self.id != id(records, &self.key_hash)
             || !disk::hex(&self.key_hash)
             || !disk::hex(&self.fingerprint)
             || !disk::hex(&self.sha256)

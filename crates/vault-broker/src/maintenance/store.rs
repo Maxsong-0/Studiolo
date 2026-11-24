@@ -2,6 +2,7 @@
 use super::record::Slot;
 use crate::{
     BrokerError, FsVaultBroker, VaultUuid, mutation,
+    records::WriterRecords,
     writer::{Identity, directory, disk},
 };
 use cap_std::fs::Dir;
@@ -23,18 +24,18 @@ pub(crate) struct Pin {
     slot: disk::FilePin,
 }
 
-fn open(broker: &FsVaultBroker) -> Result<Option<Dir>, BrokerError> {
-    broker.writer.check(&broker.root, &broker.data)?;
-    match broker.data.symlink_metadata(PREPARING) {
+fn open(records: &dyn WriterRecords) -> Result<Option<Dir>, BrokerError> {
+    records.check()?;
+    match records.data().symlink_metadata(PREPARING) {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
         Err(e) => return Err(BrokerError::io("inspect maintenance preparation", e)),
         Ok(_) => return Err(BrokerError::CorruptWriterState),
     }
-    let mut pin = broker
-        .maintenance_pin
+    let mut pin = records
+        .maintenance_pin()
         .lock()
         .map_err(|_| BrokerError::CorruptWriterState)?;
-    let dir = match broker.data.symlink_metadata(NAME) {
+    let dir = match records.data().symlink_metadata(NAME) {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
             if pin.is_some() {
                 return Err(BrokerError::WriterBindingMismatch);
@@ -42,13 +43,13 @@ fn open(broker: &FsVaultBroker) -> Result<Option<Dir>, BrokerError> {
             return Ok(None);
         }
         Err(e) => return Err(BrokerError::io("inspect maintenance schema", e)),
-        Ok(_) => directory(&broker.data, NAME)?,
+        Ok(_) => directory(records.data(), NAME)?,
     };
     if pin.is_none() {
         let (bytes, identity) = disk::read_identified(&dir, "binding.json", disk::IDENTITY_LIMIT)?
             .ok_or(BrokerError::CorruptWriterState)?;
         let binding: Binding = disk::decode(&bytes)?;
-        validate(broker, &dir, &binding)?;
+        validate(records, &dir, &binding)?;
         *pin = Some(Pin {
             binding,
             file: disk::FilePin::from_read(&bytes, identity),
@@ -56,29 +57,29 @@ fn open(broker: &FsVaultBroker) -> Result<Option<Dir>, BrokerError> {
         });
     }
     let pin = pin.as_ref().ok_or(BrokerError::CorruptWriterState)?;
-    validate(broker, &dir, &pin.binding)?;
+    validate(records, &dir, &pin.binding)?;
     pin.file.check(&dir, "binding.json", disk::IDENTITY_LIMIT)?;
     pin.slot.check(&dir, "slot.json", disk::RECORD_LIMIT)?;
-    broker.writer.check(&broker.root, &broker.data)?;
+    records.check()?;
     Ok(Some(dir))
 }
-fn validate(broker: &FsVaultBroker, dir: &Dir, binding: &Binding) -> Result<(), BrokerError> {
+fn validate(records: &dyn WriterRecords, dir: &Dir, binding: &Binding) -> Result<(), BrokerError> {
     if binding.version != 1
-        || binding.pair_id != broker.writer.binding.pair_id
-        || binding.vault_uuid != broker.vault_uuid
-        || binding.root != Identity::directory(dir)?
+        || binding.pair_id != records.pair_id()
+        || binding.vault_uuid != records.vault_uuid()
+        || binding.root != records.bound_identity(dir)?
     {
         Err(BrokerError::WriterBindingMismatch)
     } else {
         Ok(())
     }
 }
-pub(super) fn load(broker: &FsVaultBroker) -> Result<Option<Slot>, BrokerError> {
-    let state = mutation::load(broker)?;
-    if broker.writer.uncertain() {
+pub(super) fn load(records: &dyn WriterRecords) -> Result<Option<Slot>, BrokerError> {
+    let state = mutation::load(records)?;
+    if records.uncertain() {
         return Err(BrokerError::MutationUnresolved);
     }
-    let Some(dir) = open(broker)? else {
+    let Some(dir) = open(records)? else {
         return if state.maintenance_enabled {
             Err(BrokerError::CorruptWriterState)
         } else {
@@ -89,11 +90,11 @@ pub(super) fn load(broker: &FsVaultBroker) -> Result<Option<Slot>, BrokerError> 
         &disk::read(&dir, "slot.json", disk::RECORD_LIMIT)?
             .ok_or(BrokerError::CorruptWriterState)?,
     )?;
-    slot.validate(broker)?;
+    slot.validate(records)?;
     if !state.maintenance_enabled && slot.generation != 0 {
         return Err(BrokerError::CorruptWriterState);
     }
-    open(broker)?;
+    open(records)?;
     Ok(Some(slot))
 }
 pub(super) fn enable(broker: &FsVaultBroker) -> Result<Slot, BrokerError> {

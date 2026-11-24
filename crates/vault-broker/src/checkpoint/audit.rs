@@ -1,6 +1,7 @@
 //! 跨 crate 仅传固定类型事件；实际 Audit owner 的核验由可信组合根适配，Broker 不依赖账本。
 use crate::{
-    BrokerError, ContentAuditEvent, FileOperationAuditEvent, FsVaultBroker, MaintenanceAuditEvent,
+    BrokerError, ContentAuditEvent, FileOperationAuditEvent, MaintenanceAuditEvent,
+    records::WriterRecords,
 };
 use std::time::Instant;
 
@@ -34,7 +35,7 @@ impl BrokerCheckpointCoverage {
 pub(crate) type Verifier<'a> =
     dyn FnMut(BrokerCheckpointAudit<'_>, u64, &str) -> Result<(), BrokerError> + 'a;
 pub(super) fn verify(
-    broker: &FsVaultBroker,
+    records: &dyn WriterRecords,
     deadline: Instant,
     verify: &mut Verifier<'_>,
 ) -> Result<BrokerCheckpointCoverage, BrokerError> {
@@ -49,9 +50,9 @@ pub(super) fn verify(
         coverage.max_offset = coverage.max_offset.max(offset);
         Ok(())
     };
-    crate::content_audit::checkpoint::verify(broker, deadline, &mut record)?;
-    crate::file_operation::checkpoint::verify(broker, deadline, &mut record)?;
-    crate::maintenance::checkpoint::verify(broker, &mut record)?;
+    crate::content_audit::checkpoint::verify(records, deadline, &mut record)?;
+    crate::file_operation::checkpoint::verify(records, deadline, &mut record)?;
+    crate::maintenance::checkpoint::verify(records, &mut record)?;
     super::check_deadline(deadline)?;
     Ok(coverage)
 }

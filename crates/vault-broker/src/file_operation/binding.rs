@@ -2,6 +2,7 @@
 use super::limits::FileOperationLimits;
 use crate::{
     BrokerError, FsVaultBroker, VaultUuid,
+    records::WriterRecords,
     writer::{Identity, directory, disk},
 };
 use cap_std::fs::Dir;
@@ -58,23 +59,25 @@ impl Binding {
     }
     pub(crate) fn validate(
         &self,
-        broker: &FsVaultBroker,
+        source: &dyn WriterRecords,
         root: &Dir,
         quarantine: &Dir,
     ) -> Result<(), BrokerError> {
         self.limits.validate()?;
         if self.version != 1
-            || self.pair_id != broker.writer.binding.pair_id
-            || self.vault_uuid != broker.vault_uuid
-            || self.root != Identity::directory(root)?
-            || self.quarantine != Identity::directory(quarantine)?
-            || self.quarantine.dev != Identity::directory(&broker.root)?.dev
+            || self.pair_id != source.pair_id()
+            || self.vault_uuid != source.vault_uuid()
+            || self.root != source.bound_identity(root)?
+            || self.quarantine != source.bound_identity(quarantine)?
+            || self.quarantine.dev != source.bound_identity(source.root())?.dev
             || self.children.len() != CHILDREN.len()
         {
             return Err(BrokerError::WriterBindingMismatch);
         }
         for ((name, identity), expected) in self.children.iter().zip(CHILDREN) {
-            if name != expected || *identity != Identity::directory(&directory(root, expected)?)? {
+            if name != expected
+                || *identity != source.bound_identity(&directory(root, expected)?)?
+            {
                 return Err(BrokerError::WriterBindingMismatch);
             }
         }

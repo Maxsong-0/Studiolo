@@ -1,26 +1,27 @@
 //! 扫描永久描述符与双 ACK，不以已清空的 outbox 代替历史回执覆盖。
 use super::{event, store};
 use crate::{
-    BrokerError, FsVaultBroker,
+    BrokerError,
     checkpoint::{
         audit::{BrokerCheckpointAudit, Verifier},
         check_deadline,
     },
     history::store as history,
     recorded,
+    records::WriterRecords,
     writer::{directory, disk},
 };
 use std::time::Instant;
 
 pub(crate) fn verify(
-    broker: &FsVaultBroker,
+    records: &dyn WriterRecords,
     deadline: Instant,
     verify: &mut Verifier<'_>,
 ) -> Result<(), BrokerError> {
-    if !store::entries(broker)?.is_empty() {
+    if !store::entries(records)?.is_empty() {
         return Err(BrokerError::MutationUnresolved);
     }
-    let Some(root) = history::open(broker, false)? else {
+    let Some(root) = history::open(records)? else {
         return Ok(());
     };
     let requests = directory(&root, "requests")?;
@@ -41,14 +42,13 @@ pub(crate) fn verify(
         if let Some((id, phase)) = ack_name(&name) {
             // 同时核对孤儿 ACK；不能只枚举描述符后漏掉多余或已失去母本的回执。
             let envelope =
-                recorded::store::load_id(broker, id)?.ok_or(BrokerError::CorruptWriterState)?;
+                recorded::store::load_id(records, id)?.ok_or(BrokerError::CorruptWriterState)?;
             let row = match phase {
                 crate::ContentAuditPhase::Intent => event::row(&envelope, None)?,
-                crate::ContentAuditPhase::Outcome => {
-                    event::outcome_row(broker, &envelope)?.ok_or(BrokerError::MutationUnresolved)?
-                }
+                crate::ContentAuditPhase::Outcome => event::outcome_row(records, &envelope)?
+                    .ok_or(BrokerError::MutationUnresolved)?,
             };
-            let ack = read_ack(broker, &envelope, &row)?;
+            let ack = read_ack(records, &envelope, &row)?;
             verify(
                 BrokerCheckpointAudit::Content(&row.event),
                 ack.offset,
@@ -60,17 +60,17 @@ pub(crate) fn verify(
                 .filter(|id| disk::hex(id))
                 .ok_or(BrokerError::CorruptWriterState)?;
             let envelope =
-                recorded::store::load_id(broker, id)?.ok_or(BrokerError::CorruptWriterState)?;
+                recorded::store::load_id(records, id)?.ok_or(BrokerError::CorruptWriterState)?;
             if envelope.actor.is_some() {
                 let intent = event::row(&envelope, None)?;
-                read_ack(broker, &envelope, &intent)?;
-                let outcome = event::outcome_row(broker, &envelope)?
+                read_ack(records, &envelope, &intent)?;
+                let outcome = event::outcome_row(records, &envelope)?
                     .ok_or(BrokerError::MutationUnresolved)?;
-                read_ack(broker, &envelope, &outcome)?;
+                read_ack(records, &envelope, &outcome)?;
             }
         }
     }
-    history::open(broker, false)?;
+    history::open(records)?;
     check_deadline(deadline)
 }
 fn ack_name(name: &str) -> Option<(&str, crate::ContentAuditPhase)> {
@@ -82,14 +82,14 @@ fn ack_name(name: &str) -> Option<(&str, crate::ContentAuditPhase)> {
         })
 }
 fn read_ack(
-    broker: &FsVaultBroker,
+    records: &dyn WriterRecords,
     envelope: &recorded::store::Envelope,
     row: &event::Row,
 ) -> Result<event::Ack, BrokerError> {
     let path = format!("requests/{}.ack", event::name(envelope, row.event.phase));
-    let bytes =
-        history::read(broker, &path, disk::RECORD_LIMIT)?.ok_or(BrokerError::MutationUnresolved)?;
+    let bytes = history::read(records, &path, disk::RECORD_LIMIT)?
+        .ok_or(BrokerError::MutationUnresolved)?;
     let ack: event::Ack = disk::decode(&bytes)?;
-    event::validate_ack(broker, row, &ack)?;
+    event::validate_ack(records, row, &ack)?;
     Ok(ack)
 }

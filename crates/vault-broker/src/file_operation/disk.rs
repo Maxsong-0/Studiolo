@@ -2,6 +2,7 @@
 use super::{atomic, limits, store};
 use crate::{
     BrokerError, FsVaultBroker,
+    records::WriterRecords,
     writer::{directory, disk},
 };
 use cap_std::fs::{Dir, MetadataExt as _};
@@ -49,12 +50,12 @@ impl Folder {
         Ok(())
     }
 }
-pub(crate) fn parent(broker: &FsVaultBroker, folder: Folder) -> Result<Dir, BrokerError> {
-    directory(&store::required(broker)?.records, folder.name())
+pub(crate) fn parent(source: &dyn WriterRecords, folder: Folder) -> Result<Dir, BrokerError> {
+    directory(&store::required(source)?.records, folder.name())
 }
 
-fn scan(broker: &FsVaultBroker, folder: Folder) -> Result<(Vec<String>, usize), BrokerError> {
-    let root = parent(broker, folder)?;
+fn scan(source: &dyn WriterRecords, folder: Folder) -> Result<(Vec<String>, usize), BrokerError> {
+    let root = parent(source, folder)?;
     let mut result = Vec::new();
     let mut bytes = 0usize;
     let mut temporaries = 0usize;
@@ -102,16 +103,19 @@ fn scan(broker: &FsVaultBroker, folder: Folder) -> Result<(Vec<String>, usize), 
         }
     }
     result.sort();
-    store::required(broker)?;
+    store::required(source)?;
     Ok((result, bytes))
 }
 
-pub(crate) fn names(broker: &FsVaultBroker, folder: Folder) -> Result<Vec<String>, BrokerError> {
-    scan(broker, folder).map(|value| value.0)
+pub(crate) fn names(
+    source: &dyn WriterRecords,
+    folder: Folder,
+) -> Result<Vec<String>, BrokerError> {
+    scan(source, folder).map(|value| value.0)
 }
 
-pub(crate) fn usage(broker: &FsVaultBroker, folder: Folder) -> Result<usize, BrokerError> {
-    scan(broker, folder).map(|v| v.1)
+pub(crate) fn usage(source: &dyn WriterRecords, folder: Folder) -> Result<usize, BrokerError> {
+    scan(source, folder).map(|v| v.1)
 }
 
 pub(crate) fn reserve(
@@ -134,14 +138,14 @@ pub(crate) fn reserve(
 }
 
 pub(crate) fn read(
-    broker: &FsVaultBroker,
+    source: &dyn WriterRecords,
     folder: Folder,
     name: &str,
 ) -> Result<Option<Vec<u8>>, BrokerError> {
     folder.validate_name(name)?;
-    let root = parent(broker, folder)?;
+    let root = parent(source, folder)?;
     let value = disk::read(&root, name, limits::REQUEST_LIMIT)?;
-    store::required(broker)?;
+    store::required(source)?;
     Ok(value)
 }
 

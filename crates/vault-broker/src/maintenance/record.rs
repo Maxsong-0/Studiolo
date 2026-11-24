@@ -1,6 +1,9 @@
 //! 唯一持久槽；保留最后完成代次，旧票据不能消费下一次维护。
 use super::*;
-use crate::{mutation::record::Operation, recorded::store::RecordingRef, writer::disk};
+use crate::{
+    mutation::record::Operation, recorded::store::RecordingRef, records::WriterRecords,
+    writer::disk,
+};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -59,9 +62,9 @@ impl Slot {
                 outcome_confirmed: r.outcome_ack.is_some(),
             })
     }
-    pub fn validate(&self, broker: &FsVaultBroker) -> Result<(), BrokerError> {
+    pub fn validate(&self, records: &dyn WriterRecords) -> Result<(), BrokerError> {
         if !matches!(self.version, 1..=3)
-            || self.pair_id != broker.writer.binding.pair_id
+            || self.pair_id != records.pair_id()
             || (self.generation == 0) != self.record.is_none()
         {
             return Err(BrokerError::CorruptWriterState);
@@ -88,7 +91,7 @@ impl Slot {
             return Err(BrokerError::CorruptWriterState);
         }
         if event.event_id != event_id(self.pair_id, self.generation, event, &r.subject)?
-            || event.vault_uuid != broker.vault_uuid
+            || event.vault_uuid != records.vault_uuid()
             || event.phase != ContentAuditPhase::Intent
             || event.outcome.is_some()
             || event.resolution.is_some()
@@ -108,7 +111,7 @@ impl Slot {
                 return Err(BrokerError::CorruptWriterState);
             }
         }
-        target::validate(broker, &r.subject, &event.target, event.decision)?;
+        target::validate(records, &r.subject, &event.target, event.decision)?;
         if let Some(result) = &r.outcome {
             let kind = result.outcome.ok_or(BrokerError::CorruptWriterState)?;
             let mut expected = super::outcome(event, kind);

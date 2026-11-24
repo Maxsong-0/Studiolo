@@ -8,7 +8,9 @@ mod run;
 mod tests;
 
 use crate::writer::disk;
-use crate::{BrokerError, FsVaultBroker, Mutation, MutationReceipt, VaultUuid};
+use crate::{
+    BrokerError, FsVaultBroker, Mutation, MutationReceipt, VaultUuid, records::WriterRecords,
+};
 pub(crate) use record::State;
 use record::{Outcome, Phase, Terminal};
 
@@ -32,17 +34,17 @@ pub(crate) fn validate_replays(
     replay::scan(data, pair).map(|v| v.0)
 }
 
-pub(crate) fn load(broker: &FsVaultBroker) -> Result<State, BrokerError> {
-    broker.writer.check(&broker.root, &broker.data)?;
-    let bytes = disk::read(&broker.data, "writer-state.json", disk::RECORD_LIMIT)?
+pub(crate) fn load(records: &dyn WriterRecords) -> Result<State, BrokerError> {
+    records.check()?;
+    let bytes = disk::read(records.data(), "writer-state.json", disk::RECORD_LIMIT)?
         .ok_or(BrokerError::CorruptWriterState)?;
     let state: State = disk::decode(&bytes)?;
-    state.validate(broker.writer.binding.pair_id)?;
-    crate::file_operation::store::validate_state(broker, &state)?;
+    state.validate(records.pair_id())?;
+    crate::file_operation::store::validate_state(records, &state)?;
     if let Some(op) = &state.operation
         && let Some(reference) = &op.recording
     {
-        let envelope = crate::recorded::store::load(broker, reference)?;
+        let envelope = crate::recorded::store::load(records, reference)?;
         if (envelope.version == 2 && state.format_version < 4)
             || envelope.path != op.path
             || envelope.precondition != op.precondition
@@ -55,8 +57,8 @@ pub(crate) fn load(broker: &FsVaultBroker) -> Result<State, BrokerError> {
             return Err(BrokerError::CorruptWriterState);
         }
     }
-    broker.writer.check(&broker.root, &broker.data)?;
-    broker.writer.observe_committed(state.committed_through)?;
+    records.check()?;
+    records.observe_committed(state.committed_through)?;
     Ok(state)
 }
 

@@ -5,38 +5,35 @@ use super::envelope::encode;
 pub(crate) use super::envelope::{Envelope, RecordingRef};
 use crate::history::store;
 use crate::writer::disk;
-use crate::{BrokerError, FsVaultBroker, Mutation, Revision, sha256};
+use crate::{BrokerError, FsVaultBroker, Mutation, Revision, records::WriterRecords, sha256};
 
-pub(crate) fn id(broker: &FsVaultBroker, key_hash: &str) -> String {
-    sha256(
-        format!(
-            "studiolo-content-v1:{}:{key_hash}",
-            broker.writer.binding.pair_id
-        )
-        .as_bytes(),
-    )
+pub(crate) fn id(records: &dyn WriterRecords, key_hash: &str) -> String {
+    sha256(format!("studiolo-content-v1:{}:{key_hash}", records.pair_id()).as_bytes())
 }
 
-pub(crate) fn load_id(broker: &FsVaultBroker, id: &str) -> Result<Option<Envelope>, BrokerError> {
+pub(crate) fn load_id(
+    records: &dyn WriterRecords,
+    id: &str,
+) -> Result<Option<Envelope>, BrokerError> {
     if !disk::hex(id) {
         return Err(BrokerError::CorruptWriterState);
     }
-    let Some(bytes) = store::read(broker, &format!("requests/{id}.json"), disk::RECORD_LIMIT)?
+    let Some(bytes) = store::read(records, &format!("requests/{id}.json"), disk::RECORD_LIMIT)?
     else {
         return Ok(None);
     };
     let envelope: Envelope = disk::decode(&bytes)?;
-    envelope.validate(broker)?;
+    envelope.validate(records)?;
     if envelope.id != id || encode(&envelope)? != bytes {
         return Err(BrokerError::CorruptWriterState);
     }
     Ok(Some(envelope))
 }
 pub(crate) fn load(
-    broker: &FsVaultBroker,
+    records: &dyn WriterRecords,
     reference: &RecordingRef,
 ) -> Result<Envelope, BrokerError> {
-    let envelope = load_id(broker, &reference.id)?.ok_or(BrokerError::CorruptWriterState)?;
+    let envelope = load_id(records, &reference.id)?.ok_or(BrokerError::CorruptWriterState)?;
     if envelope.reference()? != *reference {
         return Err(BrokerError::CorruptWriterState);
     }

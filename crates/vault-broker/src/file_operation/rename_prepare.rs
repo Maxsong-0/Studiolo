@@ -27,7 +27,7 @@ pub(crate) fn prepare(
             .identity
             .bytes
     };
-    crate::history::store::open(broker, true)?;
+    crate::history::store::open_or_create(broker)?;
     crate::history::preflight(broker, &frozen.path)?;
     crate::history::preflight(broker, to)?;
     let reserved_bytes = rename_capacity::reserve(broker, body, !rejected)?;

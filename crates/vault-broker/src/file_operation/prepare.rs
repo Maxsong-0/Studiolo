@@ -110,7 +110,7 @@ impl FsVaultBroker {
             matches!(frozen.kind, FileOperationKind::Delete { .. }),
             !rejected,
         )?;
-        crate::history::store::open(self, true)?;
+        crate::history::store::open_or_create(self)?;
         crate::history::preflight(self, &frozen.path)?;
         before.check(self, &frozen.path)?;
         let active = Active {

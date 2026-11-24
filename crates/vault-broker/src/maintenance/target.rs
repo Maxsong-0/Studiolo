@@ -1,6 +1,8 @@
 //! 选择器绑定完整原请求和文件证据；按有限原恢复意图枚举，不扫描无限请求库。
 use super::{record::Subject, *};
-use crate::{content_audit::store as events, mutation, recorded::store as requests};
+use crate::{
+    content_audit::store as events, mutation, recorded::store as requests, records::WriterRecords,
+};
 
 pub(super) enum Review {
     Mutation(Box<crate::PendingMutation>),
@@ -122,13 +124,13 @@ fn restore_target(
     })
 }
 pub(super) fn validate(
-    broker: &FsVaultBroker,
+    records: &dyn WriterRecords,
     subject: &Subject,
     target: &MaintenanceTarget,
     decision: MaintenanceDecision,
 ) -> Result<(), BrokerError> {
     if let Subject::FileOperation { review } = subject {
-        return crate::file_operation::maintenance::validate(broker, review, target, decision);
+        return crate::file_operation::maintenance::validate(records, review, target, decision);
     }
     if target.secondary.is_some()
         || target.file_operation.is_some()
@@ -140,7 +142,7 @@ pub(super) fn validate(
     let (path, previous, revision, fingerprint, kind, sequence) = match subject {
         Subject::FileOperation { .. } => return Err(BrokerError::CorruptWriterState),
         Subject::Mutation { operation: op } => {
-            let mut state = mutation::State::initial(broker.writer.binding.pair_id, false);
+            let mut state = mutation::State::initial(records.pair_id(), false);
             state.format_version = if op.stage.size > crate::writer::disk::CONTENT_LIMIT as u64 {
                 4
             } else {
@@ -171,7 +173,7 @@ pub(super) fn validate(
             )
         }
         Subject::Restore { reference } => {
-            let e = requests::load(broker, reference)?;
+            let e = requests::load(records, reference)?;
             if !matches!(e.kind, Some(crate::MutationKind::Restore { .. }))
                 || target.current != MaintenanceCurrent::NotObserved
                 || target.proposed_available

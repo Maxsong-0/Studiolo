@@ -1,5 +1,5 @@
 //! 历史目录的替换验证原代次及打开对象，避免覆盖另一份已变化的索引。
-use super::store::{CATALOG_BYTES, open};
+use super::store::{CATALOG_BYTES, open, open_or_create};
 use crate::{
     BrokerError, FsVaultBroker,
     writer::{directory, disk},
@@ -17,7 +17,7 @@ pub(crate) fn save_catalog<T: Serialize>(
     if bytes.len() > CATALOG_BYTES {
         return Err(BrokerError::WriterLimitExceeded);
     }
-    let dir = open(broker, true)?.ok_or(BrokerError::CorruptWriterState)?;
+    let dir = open_or_create(broker)?;
     let basename = name
         .strip_prefix("catalogs/")
         .ok_or(BrokerError::CorruptWriterState)?;
@@ -41,7 +41,7 @@ pub(crate) fn save_catalog<T: Serialize>(
         &bytes,
         expected.is_none(),
         || {
-            open(broker, false)?.ok_or(BrokerError::CorruptWriterState)?;
+            open(broker)?.ok_or(BrokerError::CorruptWriterState)?;
             if let Some(pin) = &pin {
                 pin.check(&parent, basename, CATALOG_BYTES)?;
             } else if disk::read(&parent, basename, CATALOG_BYTES)?.is_some() {
@@ -50,6 +50,6 @@ pub(crate) fn save_catalog<T: Serialize>(
             Ok(())
         },
     )?;
-    open(broker, false)?;
+    open(broker)?;
     Ok(())
 }

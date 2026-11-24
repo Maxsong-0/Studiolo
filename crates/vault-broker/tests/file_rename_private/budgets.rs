@@ -28,7 +28,7 @@ fn checked_reservation_accounts_two_l0_stage_quarantine_and_six_roles() {
 #[test]
 fn snapshot_item_reservation_rejects_whole_batch_before_install() {
     let (fixture, mut broker, revision) = setup(b"old");
-    crate::history::store::open(&broker, true).unwrap();
+    crate::history::store::open_or_create(&broker).unwrap();
     let root = fixture.data.join("snapshots");
     for n in 0..49_994 {
         fs::write(root.join(format!("quota-{n}")), b"").unwrap();

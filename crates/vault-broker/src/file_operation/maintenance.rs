@@ -3,16 +3,16 @@ pub(crate) use super::maintenance_review::{Review, capture, target};
 use super::*;
 use crate::{
     BrokerError, FsVaultBroker, MaintenanceDecision, MaintenanceTarget, ReconciliationOutcome,
-    mutation,
+    mutation, records::WriterRecords,
 };
 
 pub(crate) fn validate(
-    broker: &FsVaultBroker,
+    source: &dyn WriterRecords,
     review: &Review,
     observed: &MaintenanceTarget,
     decision: MaintenanceDecision,
 ) -> Result<(), BrokerError> {
-    review.active.validate(broker.writer.binding.pair_id)?;
+    review.active.validate(source.pair_id())?;
     if target(review)? != *observed
         || !matches!(
             (observed.kind, decision),

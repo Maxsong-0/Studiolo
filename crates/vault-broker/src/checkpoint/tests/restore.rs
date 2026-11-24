@@ -37,7 +37,7 @@ fn checkpoint_empty_vault_restores_without_inventing_history_metadata() {
     assert_eq!(frozen.verify_audit(verify).unwrap().checked(), 0);
     let copy = restore(&frozen, &fixture);
     assert_eq!(copy.write_status().unwrap().committed_through, 0);
-    assert!(crate::history::store::open(&copy, false).unwrap().is_none());
+    assert!(crate::history::store::open(&copy).unwrap().is_none());
 }
 fn metadata() -> FileOperationMetadata {
     FileOperationMetadata::new(

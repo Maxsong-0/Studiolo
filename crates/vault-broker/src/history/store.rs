@@ -1,7 +1,7 @@
 //! 版本化私有元数据目录；旧字节保持原名，未知或半初始化 schema 失败关闭。
 
 use crate::writer::{Identity, directory, disk};
-use crate::{BrokerError, FsVaultBroker, VaultUuid};
+use crate::{BrokerError, FsVaultBroker, VaultUuid, records::WriterRecords};
 use cap_std::fs::Dir;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
@@ -28,11 +28,22 @@ pub(crate) struct Pin {
     file: disk::FilePin,
 }
 
-pub(crate) fn open(broker: &FsVaultBroker, create: bool) -> Result<Option<Dir>, BrokerError> {
-    broker.writer.check(&broker.root, &broker.data)?;
-    let history = directory(&broker.data, "history")?;
-    let mut pin = broker
-        .history_pin
+/// 打开已有的元数据目录；没有就是 `None`。
+pub(crate) fn open(records: &dyn WriterRecords) -> Result<Option<Dir>, BrokerError> {
+    open_with(records, None)
+}
+/// 只给写者写入前用：没有元数据目录就先建好。
+pub(crate) fn open_or_create(broker: &FsVaultBroker) -> Result<Dir, BrokerError> {
+    open_with(broker, Some(broker))?.ok_or(BrokerError::CorruptWriterState)
+}
+fn open_with(
+    records: &dyn WriterRecords,
+    create: Option<&FsVaultBroker>,
+) -> Result<Option<Dir>, BrokerError> {
+    records.check()?;
+    let history = directory(records.data(), "history")?;
+    let mut pin = records
+        .history_pin()
         .lock()
         .map_err(|_| BrokerError::CorruptWriterState)?;
     match history.symlink_metadata(NAME) {
@@ -40,9 +51,9 @@ pub(crate) fn open(broker: &FsVaultBroker, create: bool) -> Result<Option<Dir>, 
             if pin.is_some() {
                 return Err(BrokerError::WriterBindingMismatch);
             }
-            if !create {
+            let Some(broker) = create else {
                 return Ok(None);
-            }
+            };
             super::schema::initialize(broker, &history)?;
         }
         Err(error) => return Err(BrokerError::io("inspect history metadata", error)),
@@ -53,7 +64,7 @@ pub(crate) fn open(broker: &FsVaultBroker, create: bool) -> Result<Option<Dir>, 
         let (bytes, identity) = disk::read_identified(&dir, "binding.json", disk::IDENTITY_LIMIT)?
             .ok_or(BrokerError::CorruptWriterState)?;
         let binding: Binding = disk::decode(&bytes)?;
-        validate(broker, &dir, &binding)?;
+        validate(records, &dir, &binding)?;
         *pin = Some(Pin {
             binding,
             file: disk::FilePin::from_read(&bytes, identity),
@@ -61,16 +72,16 @@ pub(crate) fn open(broker: &FsVaultBroker, create: bool) -> Result<Option<Dir>, 
     }
     let pin = pin.as_ref().ok_or(BrokerError::CorruptWriterState)?;
     pin.file.check(&dir, "binding.json", disk::IDENTITY_LIMIT)?;
-    validate(broker, &dir, &pin.binding)?;
-    broker.writer.check(&broker.root, &broker.data)?;
+    validate(records, &dir, &pin.binding)?;
+    records.check()?;
     Ok(Some(dir))
 }
 
-fn validate(broker: &FsVaultBroker, dir: &Dir, binding: &Binding) -> Result<(), BrokerError> {
+fn validate(records: &dyn WriterRecords, dir: &Dir, binding: &Binding) -> Result<(), BrokerError> {
     if binding.version != 1
-        || binding.pair_id != broker.writer.binding.pair_id
-        || binding.vault_uuid != broker.vault_uuid
-        || Identity::directory(dir)? != binding.root
+        || binding.pair_id != records.pair_id()
+        || binding.vault_uuid != records.vault_uuid()
+        || records.bound_identity(dir)? != binding.root
     {
         return Err(BrokerError::WriterBindingMismatch);
     }
@@ -79,7 +90,7 @@ fn validate(broker: &FsVaultBroker, dir: &Dir, binding: &Binding) -> Result<(), 
         ("catalogs", binding.catalogs),
         ("outbox", binding.outbox),
     ] {
-        if Identity::directory(&directory(dir, name)?)? != identity {
+        if records.bound_identity(&directory(dir, name)?)? != identity {
             return Err(BrokerError::WriterBindingMismatch);
         }
     }
@@ -87,15 +98,15 @@ fn validate(broker: &FsVaultBroker, dir: &Dir, binding: &Binding) -> Result<(), 
 }
 
 pub(crate) fn read(
-    broker: &FsVaultBroker,
+    records: &dyn WriterRecords,
     name: &str,
     max: usize,
 ) -> Result<Option<Vec<u8>>, BrokerError> {
-    let Some(dir) = open(broker, false)? else {
+    let Some(dir) = open(records)? else {
         return Ok(None);
     };
     let result = disk::read(&dir, name, max)?;
-    open(broker, false)?;
+    open(records)?;
     Ok(result)
 }
 
@@ -110,7 +121,7 @@ pub(crate) fn save<T: Serialize>(
     if bytes.len() > max {
         return Err(BrokerError::WriterLimitExceeded);
     }
-    let dir = open(broker, true)?.ok_or(BrokerError::CorruptWriterState)?;
+    let dir = open_or_create(broker)?;
     let (folder, basename) = name
         .split_once('/')
         .ok_or(BrokerError::CorruptWriterState)?;
@@ -120,18 +131,18 @@ pub(crate) fn save<T: Serialize>(
     let parent = directory(&dir, folder)?;
     let identity = Identity::directory(&parent)?;
     FsVaultBroker::atomic_write_dir_checked(&parent, Path::new(basename), &bytes, create, || {
-        open(broker, false)?.ok_or(BrokerError::CorruptWriterState)?;
+        open(broker)?.ok_or(BrokerError::CorruptWriterState)?;
         if Identity::directory(&directory(&dir, folder)?)? != identity {
             return Err(BrokerError::WriterBindingMismatch);
         }
         Ok(())
     })?;
-    open(broker, false)?;
+    open(broker)?;
     Ok(())
 }
 
 pub(crate) fn remove(broker: &FsVaultBroker, name: &str) -> Result<(), BrokerError> {
-    let dir = open(broker, false)?.ok_or(BrokerError::CorruptWriterState)?;
+    let dir = open(broker)?.ok_or(BrokerError::CorruptWriterState)?;
     let (folder, basename) = name
         .split_once('/')
         .ok_or(BrokerError::CorruptWriterState)?;
@@ -143,7 +154,7 @@ pub(crate) fn remove(broker: &FsVaultBroker, name: &str) -> Result<(), BrokerErr
         .remove_file(basename)
         .map_err(|e| BrokerError::io("remove history metadata", e))?;
     FsVaultBroker::sync_directory(&parent, Path::new("."))?;
-    open(broker, false)?;
+    open(broker)?;
     Ok(())
 }
 

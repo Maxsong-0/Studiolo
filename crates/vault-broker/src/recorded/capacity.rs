@@ -6,7 +6,7 @@ use crate::{
 };
 
 pub(crate) fn reserve(broker: &FsVaultBroker, incoming: usize) -> Result<(), BrokerError> {
-    let Some(dir) = crate::history::store::open(broker, false)? else {
+    let Some(dir) = crate::history::store::open(broker)? else {
         return Ok(());
     };
     let requests = directory(&dir, "requests")?;
@@ -61,6 +61,6 @@ pub(crate) fn reserve(broker: &FsVaultBroker, incoming: usize) -> Result<(), Bro
     {
         return Err(BrokerError::WriterLimitExceeded);
     }
-    crate::history::store::open(broker, false)?;
+    crate::history::store::open(broker)?;
     Ok(())
 }

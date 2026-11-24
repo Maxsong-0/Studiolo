@@ -6,6 +6,7 @@ use crate::{
         self,
         record::{Outcome, Terminal},
     },
+    records::WriterRecords,
     sha256,
 };
 
@@ -31,13 +32,13 @@ pub(crate) fn check_existing(
 }
 
 pub(crate) fn validate_terminal(
-    broker: &FsVaultBroker,
+    records: &dyn WriterRecords,
     terminal: &Terminal,
 ) -> Result<(), BrokerError> {
     let Some(reference) = &terminal.recording else {
         return Ok(());
     };
-    let envelope = store::load(broker, reference)?;
+    let envelope = store::load(records, reference)?;
     let (path, precondition) = match &terminal.outcome {
         Outcome::Committed { receipt } => (
             &receipt.path,

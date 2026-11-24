@@ -3,15 +3,16 @@ use super::{atomic, disk, record::Terminal};
 use crate::{
     BrokerError, FsVaultBroker,
     mutation::replay::{self, Replay},
+    records::WriterRecords,
     writer::{directory, disk as codec},
 };
 use std::path::Path;
 
 pub(crate) fn load(
-    broker: &FsVaultBroker,
+    source: &dyn WriterRecords,
     frozen: &super::frozen::Frozen,
 ) -> Result<Option<Terminal>, BrokerError> {
-    match replay::load(&broker.data, &frozen.key_hash, frozen.pair_id)? {
+    match replay::load(source.data(), &frozen.key_hash, frozen.pair_id)? {
         Some(Replay::FileOperation(value)) if value.frozen.matches(frozen) => Ok(Some(*value)),
         Some(_) => Err(BrokerError::IdempotencyConflict),
         None => Ok(None),

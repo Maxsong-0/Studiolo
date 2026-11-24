@@ -1,13 +1,14 @@
 //! 逆向核对永久终态的母本引用；整个请求目录被删掉也不能伪装成「没有审计历史」。
 use crate::{
-    BrokerError, FsVaultBroker,
+    BrokerError,
     mutation::replay::{self, Replay},
     recorded,
+    records::WriterRecords,
     writer::{directory, disk},
 };
 use std::time::Instant;
-pub(super) fn verify(broker: &FsVaultBroker, deadline: Instant) -> Result<(), BrokerError> {
-    let directory = directory(&broker.data, "idempotency")?;
+pub(super) fn verify(records: &dyn WriterRecords, deadline: Instant) -> Result<(), BrokerError> {
+    let directory = directory(records.data(), "idempotency")?;
     let mut total = 0usize;
     for (index, entry) in directory
         .entries()
@@ -35,22 +36,22 @@ pub(super) fn verify(broker: &FsVaultBroker, deadline: Instant) -> Result<(), Br
         if total > disk::REPLAY_BYTES {
             return Err(BrokerError::WriterLimitExceeded);
         }
-        match replay::decode(&bytes, Some(broker.writer.binding.pair_id))? {
+        match replay::decode(&bytes, Some(records.pair_id()))? {
             Replay::Legacy(value) if value.receipt.is_none() => {
                 return Err(BrokerError::MutationUnresolved);
             }
             Replay::Legacy(_) => {}
             Replay::Current(value) => {
-                recorded::validate_terminal(broker, &value)?;
+                recorded::validate_terminal(records, &value)?;
                 if let Some(reference) = &value.recording
-                    && recorded::store::load(broker, reference)?.key_hash != key
+                    && recorded::store::load(records, reference)?.key_hash != key
                 {
                     return Err(BrokerError::CorruptWriterState);
                 }
             }
             Replay::FileOperation(value) => {
                 let request =
-                    crate::file_operation::request::load(broker, &value.frozen.operation_id)?
+                    crate::file_operation::request::load(records, &value.frozen.operation_id)?
                         .ok_or(BrokerError::CorruptWriterState)?;
                 if value.frozen.key_hash != key || value.frozen != request.frozen {
                     return Err(BrokerError::CorruptWriterState);

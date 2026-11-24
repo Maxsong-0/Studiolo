@@ -7,10 +7,10 @@ use crate::history::store;
 use crate::mutation::record::Terminal;
 use crate::recorded::store::Envelope;
 use crate::writer::{directory, disk};
-use crate::{BrokerError, FsVaultBroker};
+use crate::{BrokerError, FsVaultBroker, records::WriterRecords};
 
-pub(crate) fn entries(broker: &FsVaultBroker) -> Result<Vec<String>, BrokerError> {
-    let Some(dir) = store::open(broker, false)? else {
+pub(crate) fn entries(records: &dyn WriterRecords) -> Result<Vec<String>, BrokerError> {
+    let Some(dir) = store::open(records)? else {
         return Ok(Vec::new());
     };
     let outbox = directory(&dir, "outbox")?;
@@ -33,7 +33,7 @@ pub(crate) fn entries(broker: &FsVaultBroker) -> Result<Vec<String>, BrokerError
         names.push(name);
     }
     names.sort();
-    store::open(broker, false)?;
+    store::open(records)?;
     Ok(names)
 }
 pub(crate) fn lifecycle(
