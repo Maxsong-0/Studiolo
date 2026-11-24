@@ -17,6 +17,7 @@ use std::{
     path::Path,
     time::Instant,
 };
+use studiolo_core::Flush;
 
 /// 一棵定格的树：目录结构、每个目录和文件冻结时的身份、每个文件的句柄。不引用写者实例。
 pub(super) struct Captured {
@@ -327,6 +328,8 @@ impl Copying<'_> {
         let mut output = copy::file(target, name, held.identity.len)?;
         let mut hash = Sha256::new();
         let mut total = 0u64;
+        // 一个文件一份计数：没落盘的量封顶，不随文件大小涨（BUG-054）。
+        let mut flush = Flush::default();
         loop {
             check_deadline(self.deadline)?;
             let read = held
@@ -344,6 +347,7 @@ impl Copying<'_> {
             output
                 .write_all(&self.buffer[..read])
                 .map_err(|e| BrokerError::io("流式写入封存副本", e))?;
+            flush.written(read as u64, || flush_halfway(&output))?;
         }
         if total != held.identity.len {
             return Err(BrokerError::CaptureChanged);
@@ -368,6 +372,28 @@ impl Copying<'_> {
         Ok((hash.finalize().into(), total))
     }
 }
+/// 写到一半先落一次盘。
+fn flush_halfway(output: &File) -> Result<(), BrokerError> {
+    output
+        .sync_data()
+        .map_err(|e| BrokerError::io("封存副本写到一半落盘", e))?;
+    #[cfg(test)]
+    {
+        let length = output
+            .metadata()
+            .map_err(|e| BrokerError::io("核对封存副本文件", e))?
+            .len();
+        FLUSHED.with_borrow_mut(|lengths| lengths.push(length));
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+thread_local! {
+    /// 用例用：本线程写到一半每次落盘时，文件有多长。
+    pub(super) static FLUSHED: std::cell::RefCell<Vec<u64>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
 /// 句柄指着的 inode 和冻结时一样：没被原地改过。
 fn unchanged(held: &Held) -> Result<(), BrokerError> {
     let now = held

@@ -24,8 +24,9 @@ pub enum HumanSide {
 impl CheckpointOwners {
     /// 等到人侧此刻没有完整操作在做；到 `until` 还等不到就失败。
     ///
-    /// 等的时候什么都不占。`stop_within` 睡不超过给它的时长，返回真就是叫停；每次看之前都先问它，
-    /// 叫停了就不再看。
+    /// 等的时候不留租约：人侧忙着，试拿不到，什么都没占；看到空的那一眼拿到独占许可、当场还掉，那一瞬（几十微秒）
+    /// 别人试取会扑空，各处本来就会重试或跳过一轮。`stop_within` 睡不超过给它的时长，返回真就是叫停；
+    /// 每次看之前都先问它，叫停了就不再看。
     pub fn await_human_idle(
         &self,
         until: Instant,
@@ -61,7 +62,8 @@ impl CheckpointOwners {
 }
 
 /// 排空没做成：到了截止时间的是没排空，别的是账本本身不可用。以前都报「不可用」，
-/// 169 那次失败的日志就看不出是在等别人做完（BUG-056）。
+/// 169 那次失败的日志就看不出是在等别人做完（BUG-056）。两种错在账本那层归成一类，只能看时刻分：
+/// 账本正好在截止那一刻坏掉会被说成没排空，只影响这一行日志，账本里记的原因不变。
 pub(super) fn undrained(owner: Owner, deadline: Instant) -> CheckpointError {
     if Instant::now() >= deadline {
         CheckpointError::NotDrained { owner }

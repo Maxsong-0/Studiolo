@@ -8,6 +8,9 @@ use std::time::{Duration, Instant};
 pub struct StepTimes {
     steps: Vec<(&'static str, Duration)>,
     since: Instant,
+    /// 用例用：每记一步当场报一声，用例照它接着往下演，不靠睡多久去猜走到哪了。
+    #[cfg(test)]
+    watch: Option<std::sync::mpsc::Sender<&'static str>>,
 }
 
 impl StepTimes {
@@ -17,6 +20,8 @@ impl StepTimes {
         Self {
             steps: Vec::new(),
             since: Instant::now(),
+            #[cfg(test)]
+            watch: None,
         }
     }
 
@@ -26,6 +31,19 @@ impl StepTimes {
         self.steps
             .push((step, now.saturating_duration_since(self.since)));
         self.since = now;
+        #[cfg(test)]
+        if let Some(watch) = &self.watch {
+            let _ = watch.send(step);
+        }
+    }
+
+    /// 用例用：从现在开始计时，每记一步往 `watch` 报一声。
+    #[cfg(test)]
+    pub(crate) fn watched(watch: std::sync::mpsc::Sender<&'static str>) -> Self {
+        Self {
+            watch: Some(watch),
+            ..Self::start()
+        }
     }
 
     /// 按走过的顺序列出步名；用例照它核对有没有漏步、顺序对不对。
@@ -55,7 +73,7 @@ impl StepTimes {
                 .iter()
                 .map(|(step, millis)| (*step, Duration::from_millis(*millis)))
                 .collect(),
-            since: Instant::now(),
+            ..Self::start()
         }
     }
 }

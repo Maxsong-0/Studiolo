@@ -5,17 +5,41 @@
 //! 那 30 秒里接入方账本已经被封存独占，AI 侧陪着等。
 use super::{producer::Stage, *};
 use crate::{
-    backup::producer::BackupProducer,
+    backup::{JobFailure, producer::BackupProducer},
     checkpoint::{HumanSide, StepTimes},
 };
-use std::{sync::mpsc, thread};
-use studiolo_backup::worker::audit::{QueueAnswer, QueueCommand};
+use std::{
+    sync::{
+        atomic::{AtomicBool, AtomicUsize, Ordering},
+        mpsc,
+    },
+    thread,
+};
+use studiolo_backup::worker::{
+    audit::{QueueAnswer, QueueCommand},
+    state::FailureReason,
+};
 
 /// 慢操作占着的时长：比给的冻结预算、总预算都久。
-const SLOW: Duration = Duration::from_secs(8);
-/// 给的总预算（正文保留时长）和冻结预算，毫秒。
-const RETENTION: u64 = 7_000;
-const FREEZE: u32 = 3_000;
+const SLOW: Duration = Duration::from_secs(15);
+/// 给的总预算（正文保留时长）和冻结预算，毫秒：比一次封存实际用的宽得多，满载也做得完。
+const RETENTION: u64 = 12_000;
+const FREEZE: u32 = 6_000;
+
+/// 没等到人侧空闲、关停叫停：生产者真的打出来的那一行。
+const TIMED_OUT: &str = "备份封存卡在：等人侧空闲：owner Audit 在预算内未排空（已走：无）";
+const TOLD_TO_STOP: &str = "备份封存卡在：正在关停，没开始冻结（已走：无）";
+
+/// 没开始冻结就放弃：第 1 号作业有一条失败结果、记的是固定原因，日志恰好这一行，什么都没冻、没进待办。
+fn assert_given_up(stage: &Stage, line: &str) {
+    assert_eq!(stage.outcomes(1), 1, "放弃的这次有失败结果");
+    assert_eq!(
+        stage.last_failure(),
+        Some((1, JobFailure::Failed(FailureReason::BarrierNotEstablished)))
+    );
+    assert_eq!(*stage.producer.seal_lines.lock().unwrap(), [line]);
+    assert_eq!(stage.ask(QueueCommand::NextPending), QueueAnswer::Idle);
+}
 
 /// `span` 这段时间里隔一会儿试一次完整操作许可，回有几次拿不到；拿到当场还掉。
 fn refused(ledger: &SqliteAuditLedger, span: Duration) -> usize {
@@ -49,26 +73,18 @@ fn millis(line: &str, prefix: &str) -> u128 {
     rest.split_once(" 毫秒").expect(line).0.parse().expect(line)
 }
 
-/// 慢操作做完之后封存照样成功；等的时候两侧的许可随时拿得到；等的时间另打一行、不算进窗口。
+/// 慢操作做完之后封存照样成功；等的时候接入方的许可随时拿得到；等的时间另打一行、不算进窗口。
+/// 人侧不在这里量：慢操作自己占着共享许可的时候谁也独占不了，量出来一定是 0；看一眼不留租约由
+/// `audit-ledger` 的 `looking_for_idle_neither_waits_nor_keeps_the_gate` 核。
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_seal_outwaits_a_slow_human_operation_without_blocking_anyone() {
     let stage = Stage::with_budgets(RETENTION, FREEZE).await;
     let slow = stage.assembled.human.enter_operation().unwrap();
     assert_eq!(stage.ask(QueueCommand::Schedule), QueueAnswer::Started);
-    let (agents, humans) = thread::scope(|scope| {
-        let humans = scope.spawn(|| refused(&stage.assembled.human, SLOW));
-        (
-            refused(&stage.assembled.agent, SLOW),
-            humans.join().unwrap(),
-        )
-    });
+    let agents = refused(&stage.assembled.agent, SLOW);
     drop(slow);
     stage.producer.settle();
-    assert_eq!(
-        (agents, humans),
-        (0, 0),
-        "等人侧空闲的时候，接入方、人侧的完整操作都不该被挡"
-    );
+    assert_eq!(agents, 0, "等人侧空闲的时候，接入方的完整操作不该被挡");
     assert!(
         matches!(
             stage.ask(QueueCommand::NextPending),
@@ -138,20 +154,17 @@ async fn shutdown_does_not_wait_for_a_seal_that_is_still_waiting() {
     thread::sleep(Duration::from_millis(300));
     let started = Instant::now();
     // 上限给得比 1 秒宽：测试机满载也够，和不看关停时的几分钟分得开；实际用时打出来看。
-    let returned = within(Duration::from_secs(10), &stage.producer, |producer| {
+    let returned = within(Duration::from_secs(3), &stage.producer, |producer| {
         producer.settle_window();
     });
     println!("关停等了 {} 毫秒", started.elapsed().as_millis());
     assert!(returned, "封存还在等人侧空闲，关停要能马上返回");
-    assert_eq!(stage.outcomes(1), 1, "放弃的这次有失败结果");
+    assert_given_up(&stage, TOLD_TO_STOP);
     drop(slow);
     stage.producer.settle();
-    assert_eq!(stage.ask(QueueCommand::NextPending), QueueAnswer::Idle);
-    assert_eq!(
-        *stage.producer.seal_lines.lock().unwrap(),
-        Vec::<String>::new(),
-        "关停之后不该再冻结"
-    );
+    // 慢操作做完了也不再往下做；等的时候就放弃的，连暂存都没建。
+    assert_given_up(&stage, TOLD_TO_STOP);
+    assert_eq!(stage.staged(), 0);
     stage.assembled.workbench.shutdown().await.unwrap();
 }
 
@@ -162,12 +175,8 @@ async fn a_seal_that_starts_after_shutdown_began_never_freezes() {
     stage.producer.settle_window();
     assert_eq!(stage.ask(QueueCommand::Schedule), QueueAnswer::Started);
     stage.producer.settle();
-    assert_eq!(stage.outcomes(1), 1, "放弃的这次有失败结果");
-    assert_eq!(stage.ask(QueueCommand::NextPending), QueueAnswer::Idle);
-    assert_eq!(
-        *stage.producer.seal_lines.lock().unwrap(),
-        Vec::<String>::new()
-    );
+    assert_given_up(&stage, TOLD_TO_STOP);
+    assert_eq!(stage.staged(), 0);
     stage.assembled.workbench.shutdown().await.unwrap();
 }
 
@@ -193,20 +202,19 @@ async fn a_seal_told_to_stop_between_the_wait_and_the_freeze_never_freezes() {
         producer.settle_window();
         let _ = settled.send(());
     });
+    // 等到真的叫停了才放行，不靠睡多久去猜。
+    while !stage.producer.closing() {
+        assert!(begun.elapsed() < Duration::from_secs(60), "关停没叫停");
+        thread::sleep(Duration::from_millis(2));
+    }
     assert!(
-        window.recv_timeout(Duration::from_millis(500)).is_err(),
+        window.recv_timeout(Duration::from_millis(200)).is_err(),
         "封存线程还停着，关停要等它"
     );
     open.send(()).unwrap();
     assert!(window.recv_timeout(Duration::from_secs(60)).is_ok());
     stage.producer.settle();
-    assert_eq!(stage.outcomes(1), 1, "放弃的这次有失败结果");
-    assert_eq!(stage.ask(QueueCommand::NextPending), QueueAnswer::Idle);
-    assert_eq!(
-        *stage.producer.seal_lines.lock().unwrap(),
-        Vec::<String>::new(),
-        "关停叫停之后不该再冻结"
-    );
+    assert_given_up(&stage, TOLD_TO_STOP);
     stage.assembled.workbench.shutdown().await.unwrap();
 }
 
@@ -214,12 +222,19 @@ async fn a_seal_told_to_stop_between_the_wait_and_the_freeze_never_freezes() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_seal_gives_up_when_the_human_side_never_goes_idle() {
     let stage = Stage::new(true).await;
-    *stage.producer.idle_budget.lock().unwrap() = Duration::from_millis(2_500);
+    let budget = Duration::from_secs(5);
+    *stage.producer.idle_budget.lock().unwrap() = budget;
     let slow = stage.assembled.human.enter_operation().unwrap();
+    let begun = Instant::now();
     assert_eq!(stage.ask(QueueCommand::Schedule), QueueAnswer::Started);
     let agents = refused(&stage.assembled.agent, Duration::from_secs(1));
-    assert_eq!(stage.outcomes(1), 0, "没等满上限就放弃了");
-    let agents = agents + refused(&stage.assembled.agent, Duration::from_secs(2));
+    let early = stage.outcomes(1);
+    // 等待不早于 `begun` 开始：这时还没过上限，就一定还没等满；机器慢到已经过了上限，这一条不作数。
+    assert!(
+        begun.elapsed() >= budget || early == 0,
+        "没等满上限就放弃了"
+    );
+    let agents = agents + refused(&stage.assembled.agent, budget);
     assert!(
         within(Duration::from_secs(20), &stage.producer, |producer| {
             producer.settle();
@@ -227,12 +242,8 @@ async fn a_seal_gives_up_when_the_human_side_never_goes_idle() {
         "到上限要放弃，不能一直等"
     );
     assert_eq!(agents, 0, "等不到就放弃，接入方一路都不该被挡");
-    assert_eq!(stage.outcomes(1), 1);
-    assert_eq!(stage.ask(QueueCommand::NextPending), QueueAnswer::Idle);
-    assert_eq!(
-        *stage.producer.seal_lines.lock().unwrap(),
-        Vec::<String>::new()
-    );
+    assert_given_up(&stage, TIMED_OUT);
+    assert_eq!(stage.staged(), 0);
     drop(slow);
     stage.assembled.writable(true);
     assert_eq!(stage.ask(QueueCommand::Schedule), QueueAnswer::NotDue);
@@ -282,13 +293,50 @@ async fn waiting_for_the_human_side_stops_when_told_to_and_fails_on_an_unhealthy
     f.workbench.shutdown().await.unwrap();
 }
 
+/// 人侧操作密、空当短也等得到：看得和排空一样勤，空当来了几个就看见了，不会因为先等这一步反而等不到。
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_wait_catches_a_short_gap_between_human_operations() {
+    /// 一次操作占多久、隔多久起下一次；两个数加起来不是常见看法间隔的约数，隔几秒看一次的撞不上空当。
+    const BUSY: Duration = Duration::from_millis(680);
+    const GAP: Duration = Duration::from_millis(80);
+    let f = Setup::new(true).await;
+    let until = Instant::now() + Duration::from_secs(60);
+    let (gaps, caught) = (AtomicUsize::new(0), AtomicBool::new(false));
+    let first = f.human.enter_operation().unwrap();
+    let outcome = thread::scope(|scope| {
+        scope.spawn(|| {
+            let mut held = first;
+            loop {
+                thread::sleep(BUSY);
+                drop(held);
+                gaps.fetch_add(1, Ordering::AcqRel);
+                thread::sleep(GAP);
+                if caught.load(Ordering::Acquire) || Instant::now() >= until {
+                    break;
+                }
+                held = f.human.enter_operation().unwrap();
+            }
+        });
+        let outcome = f.owners.await_human_idle(until, |span| {
+            thread::sleep(span);
+            false
+        });
+        caught.store(true, Ordering::Release);
+        outcome
+    });
+    assert_eq!(outcome, Ok(HumanSide::Idle));
+    let gaps = gaps.load(Ordering::Acquire);
+    assert!(gaps <= 5, "来了 {gaps} 个空当才看见");
+    f.workbench.shutdown().await.unwrap();
+}
+
 /// 排空等到截止的报「在预算内未排空」，账本本身不健康的当场报「不可用」（以前都报「不可用」）；走过的步照样留着。
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_drain_that_runs_out_of_budget_says_so() {
     let f = Setup::new(true).await;
     let held = f.agent.enter_operation().unwrap();
     assert_eq!(
-        undrained(&f, 1_500),
+        undrained(&f, 1_500, StepTimes::start()),
         (
             CheckpointError::NotDrained {
                 owner: Owner::AgentStore
@@ -307,7 +355,7 @@ async fn a_drain_that_runs_out_of_budget_says_so() {
     .unwrap();
     let started = Instant::now();
     assert_eq!(
-        undrained(&f, 30_000),
+        undrained(&f, 30_000, StepTimes::start()),
         (
             CheckpointError::OwnerUnavailable {
                 owner: Owner::AgentStore
@@ -319,19 +367,21 @@ async fn a_drain_that_runs_out_of_budget_says_so() {
     f.workbench.shutdown().await.unwrap();
 
     // 看过人侧空闲之后、排空人侧之前，人侧又起了一个一直不放的操作：接入方先排着，正好给它插进来的空。
+    // 照冻结自己报的步走，不靠睡多久去猜。
     let f = Setup::new(true).await;
     let agent = f.agent.enter_operation().unwrap();
     let (finish, finished) = mpsc::channel::<()>();
+    let (marked, marks) = mpsc::channel();
     let human = f.human.clone();
     let outcome = thread::scope(|scope| {
         scope.spawn(move || {
-            thread::sleep(Duration::from_millis(1_500));
+            while marks.recv().expect("冻结没走到等人侧空闲") != "等人侧空闲" {}
             let human = human.enter_operation().unwrap();
             drop(agent);
             let _ = finished.recv();
             drop(human);
         });
-        let outcome = undrained(&f, 5_000);
+        let outcome = undrained(&f, 5_000, StepTimes::watched(marked));
         finish.send(()).unwrap();
         outcome
     });
@@ -348,8 +398,7 @@ async fn a_drain_that_runs_out_of_budget_says_so() {
 }
 
 /// 给这么多预算去冻结，一定冻不成：回是哪一类、走过哪几步。
-fn undrained(f: &Setup, millis: u32) -> (CheckpointError, Vec<&'static str>) {
-    let mut steps = StepTimes::start();
+fn undrained(f: &Setup, millis: u32, mut steps: StepTimes) -> (CheckpointError, Vec<&'static str>) {
     let failure = f
         .owners
         .freeze_timed(

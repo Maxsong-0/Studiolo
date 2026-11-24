@@ -1,6 +1,9 @@
 //! 生产者接真实六 owner：收到 `schedule` 才封存，封存完的原键才成为 worker 的待办。
 use super::{fixture::Assembled, seal::manifest, *};
-use crate::backup::producer::{BackupProducer, ProducerPlan, TARGET};
+use crate::backup::{
+    BackupJobsProbe as _, JobFailure,
+    producer::{BackupProducer, ProducerPlan, TARGET},
+};
 use std::os::unix::fs::MetadataExt as _;
 use studiolo_audit_ledger::{AuditFilter, AuditPhase};
 use studiolo_backup::{
@@ -111,6 +114,18 @@ impl Stage {
         request
             .decode_reply(&self.producer.dispatch(&request.encode().unwrap()).unwrap())
             .unwrap()
+    }
+    /// 最近一次没做成的作业：第几号、账本里记的是哪个固定原因（健康页读的就是这一份）。
+    pub(super) fn last_failure(&self) -> Option<(u64, JobFailure)> {
+        self.producer
+            .jobs(0)
+            .unwrap()
+            .last_failure
+            .map(|mark| (mark.sequence, mark.failure))
+    }
+    /// 暂存区里有几样东西：只要建过一次暂存，生产者租约就留在那里，删掉暂存也还在。
+    pub(super) fn staged(&self) -> usize {
+        fs::read_dir(&self.parent).unwrap().count()
     }
     pub(super) fn outcomes(&self, sequence: u64) -> usize {
         self.assembled

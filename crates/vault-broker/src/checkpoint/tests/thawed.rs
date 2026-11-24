@@ -124,3 +124,47 @@ fn capture_fails_closed_when_the_open_file_budget_is_too_small() {
     );
     drop(broker);
 }
+
+/// 拷大文件时没落盘的量封顶（BUG-054）：每写满 64 MiB 落一次盘，不等写完；一个文件一份计数。
+#[test]
+fn copying_a_large_file_flushes_every_64_mib_while_it_is_written() {
+    const MIB: u64 = 1 << 20;
+    let fixture = Fixture::new();
+    let source = fixture.target("large");
+    // 空洞文件：读出来是 0，拷的时候照样一个字节一个字节写进副本。
+    for (name, mebibytes) in [
+        ("a-one", 1),
+        ("b-short", 63),
+        ("c-full", 64),
+        ("d-large", 130),
+        ("e-short", 63),
+    ] {
+        let file = fs::File::create(source.join(name)).unwrap();
+        file.set_len(mebibytes * MIB).unwrap();
+    }
+    let open = |path: &PathBuf| {
+        cap_std::fs::Dir::open_ambient_dir(path, cap_std::ambient_authority()).unwrap()
+    };
+    let captured = capture::capture(
+        &open(&source),
+        &[],
+        &mut capture::Budget::with_limit(1_000),
+        deadline(),
+    )
+    .unwrap();
+    let copy = fixture.target("copy");
+    capture::FLUSHED.take();
+    captured
+        .copy(
+            &open(&copy),
+            &mut super::super::exported::Originals::default(),
+            deadline(),
+        )
+        .unwrap();
+    assert_eq!(
+        capture::FLUSHED.take(),
+        [64, 64, 128].map(|at| at * MIB),
+        "64 MiB 的落一次，130 MiB 的落两次，其余的写完才落"
+    );
+    assert_eq!(fs::metadata(copy.join("d-large")).unwrap().len(), 130 * MIB);
+}

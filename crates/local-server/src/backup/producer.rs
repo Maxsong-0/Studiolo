@@ -45,9 +45,7 @@ use studiolo_backup::{
         state::{FailureReason, JobKey},
     },
 };
-use studiolo_core::checkpoint::{
-    CheckpointError, CheckpointId, FreezeBudget, FreezeRequest, InstantMillis,
-};
+use studiolo_core::checkpoint::{CheckpointId, FreezeBudget, FreezeRequest, InstantMillis};
 
 /// 原生 worker 只接专用的仅追加目标；生产者和它用同一个固定类别。
 pub const TARGET: BackupTargetKind = BackupTargetKind::DedicatedAppendOnlyTarget;
@@ -58,12 +56,13 @@ const SCAN_BUDGET: Duration = Duration::from_secs(5);
 const RECLAIM_BUDGET: Duration = Duration::from_secs(30);
 /// 冻结窗口放开之后，剩下的回执核对、导出、整本验链、过滤视图和发布一共能用多久（BUG-045）。
 /// 比最短封存间隔短；169 上推算 40～60 秒。另受封存正文保留期约束，不会做到副本过期以后。
-/// 截止时间从封存开始算，冻结窗口也在它之内；看板巡检连续遇到冻结的封顶时长按它定（`board::MAX_FROZEN`）。
+/// 截止时间从等到人侧空闲之后算，等的时间不在里面，冻结窗口在它之内；看板巡检连续遇到冻结的封顶时长按它定
+/// （`board::MAX_FROZEN`）。
 pub(crate) const SEAL_BUDGET: Duration = Duration::from_secs(300);
 
 /// 一次封存最多等人侧空下来多久（BUG-056）。在封存总预算和冻结预算之前，不占它们；等的时候网站、
-/// 接入方都照常，等到上限这次封存照旧失败、按间隔再来。比最慢的一轮同步（169 上 72 秒）宽得多，
-/// 加上封存总预算仍在一个批准的间隔（10 分钟）之内。
+/// 接入方都照常，等到上限这次封存照旧失败、按间隔再来。比最慢的一轮同步（169 上 73 秒）宽得多，
+/// 加上封存总预算不超过一个批准的间隔（10 分钟）；前面的回收（[`RECLAIM_BUDGET`]）和后面 worker 的上传另算。
 const IDLE_BUDGET: Duration = Duration::from_secs(300);
 /// 等人侧空闲不到这么久就不打那一行：平时的日志不变。
 const IDLE_NOTICE: Duration = Duration::from_secs(1);
@@ -114,7 +113,7 @@ pub struct BackupProducer {
     /// 用例用：封存放开冻结窗口之后停在这里，等用例放行（演练关停时封存正在放开之后那段）。
     #[cfg(test)]
     pub(crate) hold_after_release: Mutex<Option<std::sync::mpsc::Receiver<()>>>,
-    /// 用例用：封存打出的分步日志行另收一份，核生产者把同一份分步接到了日志里（BUG-050）。
+    /// 用例用：封存打出的日志行（分步、没做成的、等人侧空闲的）另收一份，核生产者真的接到了日志里（BUG-050、BUG-056）。
     #[cfg(test)]
     pub(crate) seal_lines: Mutex<Vec<String>>,
     /// 用例用：把等人侧空闲的上限改短；生产固定 [`IDLE_BUDGET`]。
@@ -214,9 +213,16 @@ impl BackupProducer {
     /// 关停用：等后台线程放开冻结窗口（或做完）就返回，不等放开之后的拷贝和发布（BUG-045）。
     /// 那一段随进程退出丢下，和「封存做到一半被杀」走同一条路：暂存由下次启动回收，
     /// 没写结果的原意图由下一次 `schedule` 补失败结果。
-    /// 还没开始冻结的封存（在等人侧空闲，或者刚等到）马上放弃，不用等它（BUG-056）。
+    /// 还没开始冻结的封存（在等人侧空闲，或者刚等到）马上放弃，不用等它（BUG-056）；还在回收的，等回收走完
+    /// （有上限，[`RECLAIM_BUDGET`]），不再往下封存。
     pub fn settle_window(&self) {
         self.window.wind_down();
+    }
+
+    /// 用例用：关停已经叫停了没有。
+    #[cfg(test)]
+    pub(crate) fn closing(&self) -> bool {
+        self.window.closing_within(Duration::ZERO)
     }
 
     #[cfg(test)]
@@ -227,7 +233,7 @@ impl BackupProducer {
         }
     }
 
-    /// 封存成功路上的分步日志行（窗口那一行、放开之后那一行）：打进 stderr，用例里另收一份。
+    /// 封存的日志行（等人侧空闲、窗口、放开之后、卡在哪一步）：打进 stderr，用例里另收一份。
     fn seal_line(&self, line: String) {
         eprintln!("{line}");
         #[cfg(test)]
@@ -404,11 +410,8 @@ impl BackupProducer {
         let until = since + self.idle_budget();
         match sources.await_human_idle(until, |span| self.window.closing_within(span)) {
             Ok(HumanSide::Idle) => {}
-            Ok(HumanSide::Stopped) => return Err(closing_down()),
-            Err(error) => {
-                eprintln!("{}", unstarted_line(&format_args!("等人侧空闲：{error}")));
-                return Err(barrier(error));
-            }
+            Ok(HumanSide::Stopped) => return Err(self.unstarted(&CLOSING_DOWN)),
+            Err(error) => return Err(self.unstarted(&format_args!("等人侧空闲：{error}"))),
         }
         let waited = since.elapsed();
         if waited >= IDLE_NOTICE {
@@ -433,10 +436,7 @@ impl BackupProducer {
 
     /// 一次总封存：等人侧空下来，建暂存、冻结全部 owner 定格、放开屏障，再从定格导出并封存、写准入（BUG-045）。
     fn seal(&self, key: &JobKey) -> Result<(), FailureReason> {
-        let sources = self
-            .inputs
-            .bind()
-            .map_err(|error| stuck(error, &StepTimes::start()))?;
+        let sources = self.inputs.bind().map_err(|error| self.unstarted(&error))?;
         // 先等再算预算：封存总预算、冻结预算和窗口那一行都不含等的时间（BUG-056）。
         self.await_human_idle(&sources)?;
         let budget = self.plan.freeze_budget;
@@ -455,7 +455,7 @@ impl BackupProducer {
         Self::hold(&self.hold_before_freeze);
         // 从这里起算开始冻结：在这之前来的关停不再让它开始，之后来的等它放开（`settle_window`，BUG-056）。
         if self.window.closing_within(Duration::ZERO) {
-            return Err(closing_down());
+            return Err(self.unstarted(&CLOSING_DOWN));
         }
         // 冻结窗口自己的截止时间由冻结预算定（`CheckpointOwners::freeze_timed`），这里只量它多长，
         // 连同窗口里每一步各用了多久（BUG-050）。
@@ -472,7 +472,7 @@ impl BackupProducer {
                 OwnerExportPaths::under(area.export_root()),
                 &mut steps,
             )
-            .map_err(|error| stuck(error, &steps))?;
+            .map_err(|error| self.stuck(&error, &steps))?;
         // 全部 owner 冻结之后、放开之前取内容截止时刻：导出的就是这一刻，之后的改动不进这次封存。
         let cutoff = now_millis().map_err(barrier)?;
         let retention_millis = i64::try_from(self.plan.source_retention_millis).map_err(barrier)?;
@@ -481,7 +481,7 @@ impl BackupProducer {
             .ok_or(FailureReason::BarrierNotEstablished)?;
         let mut released = frozen
             .release_timed(deadline, &mut steps)
-            .map_err(|error| stuck(error, &steps))?;
+            .map_err(|error| self.stuck(&error, &steps))?;
         self.window.close();
         self.seal_line(window_line(window.elapsed(), &steps));
         #[cfg(test)]
@@ -509,6 +509,18 @@ impl BackupProducer {
         after.mark("写准入");
         self.seal_line(released_done_line(opened.elapsed(), &after));
         Ok(())
+    }
+
+    /// 绑定、冻结没做成，或者没开始就放弃：账本里照旧记同一个固定原因，日志里多说一句卡在哪个库、哪一类。
+    /// 只有这一句能分清是七个库里的哪一个；没有它，现场只能靠看文件访问顺序去猜（BUG-044）。
+    fn stuck(&self, why: &dyn std::fmt::Display, steps: &StepTimes) -> FailureReason {
+        self.seal_line(stuck_line(why, steps));
+        FailureReason::BarrierNotEstablished
+    }
+
+    /// 没开始冻结就放弃：步骤写「无」——什么都还没挡住。
+    fn unstarted(&self, why: &dyn std::fmt::Display) -> FailureReason {
+        self.stuck(why, &StepTimes::start())
     }
 }
 
@@ -548,7 +560,8 @@ impl Drop for Idle<'_> {
     }
 }
 
-/// 后台线程还可能进入或正在冻结窗口里（BUG-045）：关停只等这一段。
+/// 后台线程还可能进入或正在冻结窗口里（BUG-045）：关停等的就是这一段；还没开始冻结的封存关停时叫停，
+/// 不等它等到人侧空闲（BUG-056）。
 #[derive(Default)]
 struct Window {
     state: Mutex<WindowState>,
@@ -628,36 +641,18 @@ fn barrier<E>(_: E) -> FailureReason {
     FailureReason::BarrierNotEstablished
 }
 
-/// 绑定、冻结没做成：账本里照旧记同一个固定原因，日志里多说一句卡在哪个库、哪一类。
-/// 只有这一句能分清是七个库里的哪一个；没有它，现场只能靠看文件访问顺序去猜（BUG-044）。
-fn stuck(error: CheckpointError, steps: &StepTimes) -> FailureReason {
-    eprintln!("{}", stuck_line(&error, steps));
-    barrier(error)
+/// 固定类别：哪个库、没排空还是超时还是不可用，或者在关停；错误类型自己的说法里没有路径和内容。
+/// 带上窗口里已走过的步和用时（BUG-050）。
+fn stuck_line(why: &dyn std::fmt::Display, steps: &StepTimes) -> String {
+    format!("备份封存卡在：{why}（已走：{}）", steps.render())
 }
 
-/// 固定类别：哪个库、没排空还是超时还是不可用；错误类型自己的说法里没有路径和内容。
-/// 带上窗口里已走过的步和用时（BUG-050）。
-fn stuck_line(error: &CheckpointError, steps: &StepTimes) -> String {
-    format!("备份封存卡在：{error}（已走：{}）", steps.render())
-}
+/// 进程在关停，封存不再开始；账本里照旧是同一个固定原因。
+const CLOSING_DOWN: &str = "正在关停，没开始冻结";
 
 /// 等人侧空闲等了一会儿才等到：固定格式，只有毫秒数；真机看它知道封存晚了多久、是不是撞上了慢操作（BUG-056）。
 fn idle_line(waited: Duration) -> String {
     format!("备份封存先等人侧空闲：{} 毫秒", waited.as_millis())
-}
-
-/// 没开始冻结就放弃：和冻结开始之后的同一个开头，步骤写「无」——什么都还没挡住。
-fn unstarted_line(why: &dyn std::fmt::Display) -> String {
-    format!(
-        "备份封存卡在：{why}（已走：{}）",
-        StepTimes::start().render()
-    )
-}
-
-/// 进程在关停，封存不再开始；账本里照旧是同一个固定原因。
-fn closing_down() -> FailureReason {
-    eprintln!("{}", unstarted_line(&"正在关停，没开始冻结"));
-    FailureReason::BarrierNotEstablished
 }
 
 /// 放开之后没做成：账本里照旧记暂存层的固定原因，日志里多说一句是哪一步、哪个库（BUG-045）。
@@ -727,7 +722,7 @@ fn now_millis() -> Result<i64, AuditError> {
 mod tests {
     use super::{
         IDLE_BUDGET, Idle, SEAL_BUDGET, SealFailure, State, StepTimes, due, idle_line,
-        released_done_line, released_line, stuck_line, unstarted_line, window_line,
+        released_done_line, released_line, stuck_line, window_line,
     };
     use std::{sync::Mutex, time::Duration};
     use studiolo_backup::checkpoint::staging::StagingError;
@@ -952,30 +947,22 @@ mod tests {
         );
     }
 
-    /// 等人侧空闲和封存总预算两项加起来不超过 169 批准的间隔（10 分钟，BUG-056）。只是这两项的上限：
-    /// 前面的回收、后面 worker 的上传另算，真拖过了，下一格由 `outstanding` 挡着、再下一格补上。
+    /// 等人侧空闲和封存总预算两项加起来不超过 169 批准的间隔（BUG-056；批准的数和部署一致由 `test_units.py` 核）。
+    /// 只是这两项的上限：前面的回收、后面 worker 的上传另算，真拖过了，下一格由 `outstanding` 挡着、再下一格补上。
+    /// 反过来，等的上限要比 169 上见过的最慢一轮同步（73 秒）宽一倍以上，不然等了也白等。
     #[test]
     fn waiting_for_the_human_side_and_sealing_fit_in_the_approved_interval() {
-        assert!(IDLE_BUDGET + SEAL_BUDGET <= Duration::from_secs(600));
+        let approved = Duration::from_millis(APPROVED.try_into().unwrap());
+        assert!(IDLE_BUDGET + SEAL_BUDGET <= approved);
+        assert!(IDLE_BUDGET >= 2 * Duration::from_secs(73));
     }
 
-    /// 等人侧空闲的几行：等到了只有毫秒数；没等到、关停叫停和冻结开始之后的同一个开头，步骤写「无」（BUG-056）。
+    /// 等到了人侧空闲的那一行只有毫秒数；没等到、关停叫停的两行由 `human_idle.rs` 在真的封存里核（BUG-056）。
     #[test]
-    fn the_lines_about_waiting_for_the_human_side_are_fixed() {
+    fn the_line_about_waiting_for_the_human_side_is_fixed() {
         assert_eq!(
             idle_line(Duration::from_micros(61_234_567)),
             "备份封存先等人侧空闲：61234 毫秒"
-        );
-        let error = CheckpointError::NotDrained {
-            owner: CheckpointOwner::Audit,
-        };
-        assert_eq!(
-            unstarted_line(&format_args!("等人侧空闲：{error}")),
-            "备份封存卡在：等人侧空闲：owner Audit 在预算内未排空（已走：无）"
-        );
-        assert_eq!(
-            unstarted_line(&"正在关停，没开始冻结"),
-            "备份封存卡在：正在关停，没开始冻结（已走：无）"
         );
     }
 

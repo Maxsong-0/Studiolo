@@ -113,8 +113,10 @@ class BackupWorkerUnitTests(unittest.TestCase):
         self.assertGreaterEqual(int(values(SCHEDULE, "TimeoutStartSec")[0]), 10)
 
     def test_triggers_land_on_the_planned_moments_the_producer_compares(self):
-        # 主服务判断间隔前把时刻归到所在的整分钟（BUG-057）：触发要落在整分钟上，晚到加超时不能跨到下一分钟，
+        # 主服务判断间隔前把时刻归到所在的整分钟（BUG-057）：触发要落在整分钟上，晚到加超时不超过一分钟，
         # 批准的间隔要是触发周期的整数倍；少一条，实际间隔就又会多等一格。
+        # 晚到和超时都是够不着的上限（定时器在这之内触发、命令到点被杀），所以合计正好一分钟也到不了下一分钟。
+        # 这里只管定时器这一头：主服务自己排队等状态锁（健康页在读账本）不在里面，真晚过一分钟就多等一格，不会提前。
         calendar = re.fullmatch(r"\*-\*-\* \*:0/(\d+):00", values(TIMER, "OnCalendar")[0])
         self.assertIsNotNone(calendar)
         tick = int(calendar.group(1)) * 60_000
