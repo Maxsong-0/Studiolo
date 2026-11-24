@@ -25,6 +25,10 @@ impl AuditCheckpointAccess {
     pub fn open_existing(root: &Path) -> Result<Self, AuditError> {
         Self::from_ledger(Arc::new(SqliteAuditLedger::open_existing(root)?))
     }
+    /// 此刻该账本根有没有完整业务操作在做；不等待、不留租约。
+    pub fn idle(&self) -> Result<bool, AuditError> {
+        self.ledger.operations_idle()
+    }
     /// 原截止时间内排空该账本根对应的完整业务操作。
     pub fn quiesce(&self, deadline: Instant) -> Result<AuditQuiescence, AuditError> {
         self.ledger.quiesce_operations(deadline)

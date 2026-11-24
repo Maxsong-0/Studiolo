@@ -171,6 +171,41 @@ fn trying_through_the_trait_object_does_not_wait_out_a_freeze() {
     let _frozen = freezer.quiesce_operations(deadline()).unwrap();
 }
 
+/// 「此刻空不空」只看一眼（BUG-056）：有操作在做、冻结占着都不空；看完不留租约，看的时候不挡别人；
+/// 审计库不健康时报错，不当成空、也不当成在忙。
+#[test]
+fn looking_for_idle_neither_waits_nor_keeps_the_gate() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = support::private_dir();
+    let root = dir.path().canonicalize().unwrap();
+    let ledger = SqliteAuditLedger::open(&root).unwrap();
+    let other = SqliteAuditLedger::open_existing(&root).unwrap();
+    assert!(ledger.operations_idle().unwrap());
+    let permit = other.try_enter_operation().unwrap();
+    assert!(permit.is_some(), "看完之后租约还在，别人进不来");
+    let started = Instant::now();
+    assert!(!ledger.operations_idle().unwrap());
+    assert!(
+        started.elapsed() < Duration::from_secs(1),
+        "看一眼不该等：{} 毫秒",
+        started.elapsed().as_millis()
+    );
+    assert!(other.try_enter_operation().unwrap().is_some());
+    drop(permit);
+    assert!(ledger.operations_idle().unwrap());
+    let frozen = other.quiesce_operations(deadline()).unwrap();
+    assert!(!ledger.operations_idle().unwrap());
+    drop(frozen);
+    assert!(ledger.operations_idle().unwrap());
+    drop(other.quiesce_operations(deadline()).unwrap());
+
+    let database = root.join("audit.sqlite3");
+    std::fs::set_permissions(&database, std::fs::Permissions::from_mode(0o400)).unwrap();
+    assert!(ledger.operations_idle().is_err());
+    std::fs::set_permissions(&database, std::fs::Permissions::from_mode(0o600)).unwrap();
+    assert!(ledger.operations_idle().unwrap());
+}
+
 /// 被拒绝的目录里不留下准入文件；合法库在第一次打开后才有它。
 #[test]
 fn the_gate_file_appears_only_after_the_store_is_accepted() {

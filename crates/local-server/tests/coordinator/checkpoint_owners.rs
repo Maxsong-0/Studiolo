@@ -33,6 +33,7 @@ mod board_freeze;
 mod busy_locks;
 mod drill;
 mod fixture;
+mod human_idle;
 mod measure_window;
 mod producer;
 mod producer_auth_backlog;

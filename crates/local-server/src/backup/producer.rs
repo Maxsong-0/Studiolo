@@ -19,12 +19,13 @@ use super::{
     queue::Queue,
 };
 use crate::checkpoint::{
-    CheckpointInputs, CheckpointTimes, OwnerExportPaths, SealFailure, StepTimes, trusted_catalog,
+    CheckpointInputs, CheckpointOwners, CheckpointTimes, HumanSide, OwnerExportPaths, SealFailure,
+    StepTimes, trusted_catalog,
 };
 use std::{
     num::NonZeroU64,
     path::PathBuf,
-    sync::{Arc, Condvar, Mutex, PoisonError},
+    sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError},
     thread::JoinHandle,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
@@ -59,6 +60,13 @@ const RECLAIM_BUDGET: Duration = Duration::from_secs(30);
 /// 比最短封存间隔短；169 上推算 40～60 秒。另受封存正文保留期约束，不会做到副本过期以后。
 /// 截止时间从封存开始算，冻结窗口也在它之内；看板巡检连续遇到冻结的封顶时长按它定（`board::MAX_FROZEN`）。
 pub(crate) const SEAL_BUDGET: Duration = Duration::from_secs(300);
+
+/// 一次封存最多等人侧空下来多久（BUG-056）。在封存总预算和冻结预算之前，不占它们；等的时候网站、
+/// 接入方都照常，等到上限这次封存照旧失败、按间隔再来。比最慢的一轮同步（169 上 72 秒）宽得多，
+/// 加上封存总预算仍在一个批准的间隔（10 分钟）之内。
+const IDLE_BUDGET: Duration = Duration::from_secs(300);
+/// 等人侧空闲不到这么久就不打那一行：平时的日志不变。
+const IDLE_NOTICE: Duration = Duration::from_secs(1);
 
 /// 可信启动层从私有备份配置（`--backup-config`）和启动选项算出来的固定事实；运行期间不变。
 pub struct ProducerPlan {
@@ -106,6 +114,9 @@ pub struct BackupProducer {
     /// 用例用：封存打出的分步日志行另收一份，核生产者把同一份分步接到了日志里（BUG-050）。
     #[cfg(test)]
     pub(crate) seal_lines: Mutex<Vec<String>>,
+    /// 用例用：把等人侧空闲的上限改短；生产固定 [`IDLE_BUDGET`]。
+    #[cfg(test)]
+    pub(crate) idle_budget: Mutex<Duration>,
     /// 开始服务的时刻；账本里从没有成功时，逾期从它和第一次尝试里较早的那个起算。
     serving_since_ms: Option<i64>,
 }
@@ -128,6 +139,8 @@ impl BackupProducer {
             hold_after_release: Mutex::new(None),
             #[cfg(test)]
             seal_lines: Mutex::new(Vec::new()),
+            #[cfg(test)]
+            idle_budget: Mutex::new(IDLE_BUDGET),
             serving_since_ms: now_millis().ok(),
         })
     }
@@ -196,8 +209,9 @@ impl BackupProducer {
     /// 关停用：等后台线程放开冻结窗口（或做完）就返回，不等放开之后的拷贝和发布（BUG-045）。
     /// 那一段随进程退出丢下，和「封存做到一半被杀」走同一条路：暂存由下次启动回收，
     /// 没写结果的原意图由下一次 `schedule` 补失败结果。
+    /// 还在等人侧空闲、没开始冻结的封存马上放弃，不用等它（BUG-056）。
     pub fn settle_window(&self) {
-        self.window.wait();
+        self.window.wind_down();
     }
 
     #[cfg(test)]
@@ -375,8 +389,50 @@ impl BackupProducer {
         }
     }
 
-    /// 一次总封存：建暂存、冻结全部 owner 定格、放开屏障，再从定格导出并封存、写准入（BUG-045）。
+    /// 等人侧空下来（BUG-056）：不在预算里等、什么都不挡。等得久另打一行；关停叫停或等到上限就放弃这次封存。
+    fn await_human_idle(&self, sources: &CheckpointOwners) -> Result<(), FailureReason> {
+        let since = Instant::now();
+        let until = since + self.idle_budget();
+        match sources.await_human_idle(until, |span| self.window.closing_within(span)) {
+            Ok(HumanSide::Idle) => {}
+            Ok(HumanSide::Stopped) => {
+                eprintln!("{}", idle_stuck_line(&"正在关停"));
+                return Err(FailureReason::BarrierNotEstablished);
+            }
+            Err(error) => {
+                eprintln!("{}", idle_stuck_line(&error));
+                return Err(barrier(error));
+            }
+        }
+        let waited = since.elapsed();
+        if waited >= IDLE_NOTICE {
+            self.seal_line(idle_line(waited));
+        }
+        Ok(())
+    }
+
+    fn idle_budget(&self) -> Duration {
+        #[cfg(not(test))]
+        {
+            IDLE_BUDGET
+        }
+        #[cfg(test)]
+        {
+            *self
+                .idle_budget
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+        }
+    }
+
+    /// 一次总封存：等人侧空下来，建暂存、冻结全部 owner 定格、放开屏障，再从定格导出并封存、写准入（BUG-045）。
     fn seal(&self, key: &JobKey) -> Result<(), FailureReason> {
+        let sources = self
+            .inputs
+            .bind()
+            .map_err(|error| stuck(error, &StepTimes::start()))?;
+        // 先等再算预算：封存总预算、冻结预算和窗口那一行都不含等的时间（BUG-056）。
+        self.await_human_idle(&sources)?;
         let budget = self.plan.freeze_budget;
         let retention_span = Duration::from_millis(self.plan.source_retention_millis);
         let deadline = Instant::now() + SEAL_BUDGET.min(retention_span);
@@ -389,10 +445,6 @@ impl BackupProducer {
             deadline,
         )
         .map_err(staging_reason)?;
-        let sources = self
-            .inputs
-            .bind()
-            .map_err(|error| stuck(error, &StepTimes::start()))?;
         // 冻结窗口自己的截止时间由冻结预算定（`CheckpointOwners::freeze_timed`），这里只量它多长，
         // 连同窗口里每一步各用了多久（BUG-050）。
         let window = Instant::now();
@@ -487,25 +539,46 @@ impl Drop for Idle<'_> {
 /// 后台线程还可能进入或正在冻结窗口里（BUG-045）：关停只等这一段。
 #[derive(Default)]
 struct Window {
-    open: Mutex<bool>,
+    state: Mutex<WindowState>,
     changed: Condvar,
 }
 
+#[derive(Default)]
+struct WindowState {
+    open: bool,
+    /// 进程在关停：还没开始冻结的封存不再开始。置上就不复位。
+    closing: bool,
+}
+
 impl Window {
+    fn state(&self) -> MutexGuard<'_, WindowState> {
+        self.state.lock().unwrap_or_else(PoisonError::into_inner)
+    }
     fn open(&self) {
-        *self.open.lock().unwrap_or_else(PoisonError::into_inner) = true;
+        self.state().open = true;
     }
     fn close(&self) {
-        *self.open.lock().unwrap_or_else(PoisonError::into_inner) = false;
+        self.state().open = false;
         self.changed.notify_all();
     }
-    fn wait(&self) {
-        let open = self.open.lock().unwrap_or_else(PoisonError::into_inner);
+    /// 关停：先叫停还在等人侧空闲的封存，再等窗口放开。
+    fn wind_down(&self) {
+        let mut state = self.state();
+        state.closing = true;
+        self.changed.notify_all();
         drop(
             self.changed
-                .wait_while(open, |open| *open)
+                .wait_while(state, |state| state.open)
                 .unwrap_or_else(PoisonError::into_inner),
         );
+    }
+    /// 最多睡 `span`；已经在关停、或者睡着时开始关停，马上返回真。
+    fn closing_within(&self, span: Duration) -> bool {
+        self.changed
+            .wait_timeout_while(self.state(), span, |state| !state.closing)
+            .unwrap_or_else(PoisonError::into_inner)
+            .0
+            .closing
     }
 }
 
@@ -543,6 +616,19 @@ fn stuck(error: CheckpointError, steps: &StepTimes) -> FailureReason {
 /// 带上窗口里已走过的步和用时（BUG-050）。
 fn stuck_line(error: &CheckpointError, steps: &StepTimes) -> String {
     format!("备份封存卡在：{error}（已走：{}）", steps.render())
+}
+
+/// 等人侧空闲等了一会儿才等到：固定格式，只有毫秒数；真机看它知道封存晚了多久、是不是撞上了慢操作（BUG-056）。
+fn idle_line(waited: Duration) -> String {
+    format!("备份封存先等人侧空闲：{} 毫秒", waited.as_millis())
+}
+
+/// 没等到人侧空闲：和冻结开始之后的同一个开头，步骤写「无」——什么都还没挡住。
+fn idle_stuck_line(why: &dyn std::fmt::Display) -> String {
+    format!(
+        "备份封存卡在：等人侧空闲：{why}（已走：{}）",
+        StepTimes::start().render()
+    )
 }
 
 /// 放开之后没做成：账本里照旧记暂存层的固定原因，日志里多说一句是哪一步、哪个库（BUG-045）。
@@ -611,8 +697,8 @@ fn now_millis() -> Result<i64, AuditError> {
 #[cfg(test)]
 mod tests {
     use super::{
-        Idle, SealFailure, State, StepTimes, due, released_done_line, released_line, stuck_line,
-        window_line,
+        IDLE_BUDGET, Idle, SEAL_BUDGET, SealFailure, State, StepTimes, due, idle_line,
+        idle_stuck_line, released_done_line, released_line, stuck_line, window_line,
     };
     use std::{sync::Mutex, time::Duration};
     use studiolo_backup::checkpoint::staging::StagingError;
@@ -743,6 +829,32 @@ mod tests {
         assert_eq!(
             window_line(Duration::from_millis(7), &StepTimes::start()),
             "备份封存冻结窗口：7 毫秒（分步：无）"
+        );
+    }
+
+    /// 等人侧空闲加上封存总预算，不超过 169 批准的间隔（10 分钟）：一次封存拖不过下一次该开始的时候（BUG-056）。
+    #[test]
+    fn waiting_for_the_human_side_still_fits_in_the_approved_interval() {
+        assert!(IDLE_BUDGET + SEAL_BUDGET <= Duration::from_secs(600));
+    }
+
+    /// 等人侧空闲那两行：等到了只有毫秒数；没等到和冻结开始之后的同一个开头，步骤写「无」（BUG-056）。
+    #[test]
+    fn the_lines_about_waiting_for_the_human_side_are_fixed() {
+        assert_eq!(
+            idle_line(Duration::from_micros(61_234_567)),
+            "备份封存先等人侧空闲：61234 毫秒"
+        );
+        let error = CheckpointError::NotDrained {
+            owner: CheckpointOwner::Audit,
+        };
+        assert_eq!(
+            idle_stuck_line(&error),
+            "备份封存卡在：等人侧空闲：owner Audit 在预算内未排空（已走：无）"
+        );
+        assert_eq!(
+            idle_stuck_line(&"正在关停"),
+            "备份封存卡在：等人侧空闲：正在关停（已走：无）"
         );
     }
 

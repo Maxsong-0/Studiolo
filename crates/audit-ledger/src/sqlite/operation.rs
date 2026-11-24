@@ -26,6 +26,14 @@ impl SqliteAuditLedger {
             }))
     }
 
+    /// 此刻有没有完整操作在做：试拿一次独占许可，拿得到就是没有；不等待，拿到当场还掉、不留租约。
+    ///
+    /// 只答「这一刻」，之后随时可能有新的进来；真要排空照旧用 [`Self::quiesce_operations`]。
+    /// 给备份封存用：先看着人侧空下来，再去挡接入方、开始算冻结预算（BUG-056）。
+    pub fn operations_idle(&self) -> Result<bool, AuditError> {
+        Ok(self.storage.try_operation_lease(true)?.is_some())
+    }
+
     /// 在原截止时间前排空所有使用同一审计根的完整操作。
     /// 嵌套共享许可不会被等待中的冻结者阻塞；流量过密时超时失败，不假称已冻结。
     pub fn quiesce_operations(&self, deadline: Instant) -> Result<AuditQuiescence, AuditError> {

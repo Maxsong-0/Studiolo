@@ -6,6 +6,7 @@
 //! 写请求不再等它们。
 mod assembly;
 mod export;
+mod idle;
 mod released;
 mod restore;
 mod settle;
@@ -18,6 +19,8 @@ use crate::{
 };
 pub use assembly::CheckpointInputs;
 pub use export::{CheckpointExports, CheckpointTimes, OwnerExportPaths, trusted_catalog};
+pub use idle::HumanSide;
+use idle::undrained;
 pub use released::{ReleasedOwners, SealFailure};
 pub use restore::{
     Cutover, CutoverRefusal, Journal, NewRootRestore, RestoreRefusal, RestoreReport,
@@ -136,6 +139,9 @@ impl CheckpointOwners {
         // 登录库自己补得掉的待办先补完：补记要取完整操作许可，所以只能在排空之前做。
         self.settle_auth(deadline)?;
         steps.mark("补记登录库");
+        // 人侧有慢操作（一轮同步等外网）时先在这里等：接入方还没被挡住（BUG-056）。
+        self.settle_human(deadline)?;
+        steps.mark("等人侧空闲");
         // 接入方可嵌套调用人侧黑板，反向无完整操作嵌套：必须先排空接入方。
         let agent_quiet = self
             .agents
@@ -143,14 +149,14 @@ impl CheckpointOwners {
             .map(|agent| {
                 agent
                     .quiesce(deadline)
-                    .map_err(|_| unavailable(Owner::AgentStore))
+                    .map_err(|_| undrained(Owner::AgentStore, deadline))
             })
             .transpose()?;
         steps.mark("排空接入方");
         let human_quiet = self
             .audit
             .quiesce(deadline)
-            .map_err(|_| unavailable(Owner::Audit))?;
+            .map_err(|_| undrained(Owner::Audit, deadline))?;
         steps.mark("排空人侧");
         check_deadline(deadline, Owner::Broker)?;
         let broker = self

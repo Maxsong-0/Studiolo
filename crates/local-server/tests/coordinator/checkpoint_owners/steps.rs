@@ -10,10 +10,11 @@ use studiolo_backup::{
 };
 use studiolo_core::checkpoint::InstantMillis;
 
-/// 冻结窗口里的步骤：补记、排空、冻结写者和各库、核 Intent、定格写者两棵树、核 Bridge 回执、交出定格、
-/// Bridge 导出、放开。窗口里不核写者回执（BUG-050）。
-pub(super) const WINDOW: [&str; 11] = [
+/// 冻结窗口里的步骤：补记、等人侧空闲、排空、冻结写者和各库、核 Intent、定格写者两棵树、核 Bridge 回执、
+/// 交出定格、Bridge 导出、放开。窗口里不核写者回执（BUG-050）。
+pub(super) const WINDOW: [&str; 12] = [
     "补记登录库",
+    "等人侧空闲",
     "排空接入方",
     "排空人侧",
     "写者冻结",
@@ -96,13 +97,14 @@ async fn a_seal_records_every_step_in_order() {
     f.workbench.shutdown().await.unwrap();
 }
 
-/// 人侧有一个完整操作一直不放，冻结排不空人侧、在预算到时失败：前两步记下了，后面的没有。
-/// 前两步和排空人侧共用这一个预算：给 2 秒，测试机满载时前两步也走得完；失败本来就要等满预算。
+/// 人侧有一个完整操作一直不放，冻结等不到人侧空闲、在预算到时失败：前一步记下了，后面的没有，
+/// 接入方没被挡过。补记和等人侧空闲共用这一个预算：给 2 秒，测试机满载时补记也走得完；失败本来就要等满预算。
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_freeze_that_fails_halfway_keeps_the_steps_it_took() {
     let f = Setup::new(true).await;
     let held = f.human.enter_operation().unwrap();
     let mut steps = StepTimes::start();
+    let started = Instant::now();
     let result = f.owners.freeze_timed(
         f.request(2_000),
         &f.key,
@@ -111,9 +113,19 @@ async fn a_freeze_that_fails_halfway_keeps_the_steps_it_took() {
         &mut steps,
     );
     drop(held);
-    assert!(result.is_err(), "人侧排不空，冻结不该成");
-    drop(result);
-    assert_eq!(steps.names(), ["补记登录库", "排空接入方"]);
+    assert_eq!(
+        result.err(),
+        Some(CheckpointError::NotDrained {
+            owner: Owner::Audit
+        }),
+        "人侧空不下来，冻结不该成"
+    );
+    assert!(
+        started.elapsed() < Duration::from_secs(20),
+        "等过了冻结预算：{:?}",
+        started.elapsed()
+    );
+    assert_eq!(steps.names(), ["补记登录库"]);
     f.workbench.shutdown().await.unwrap();
 }
 

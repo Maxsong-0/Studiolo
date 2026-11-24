@@ -13,6 +13,9 @@ use studiolo_backup::{
 };
 use studiolo_core::checkpoint::InstantMillis;
 
+/// 夹具里的冻结预算，和 169 批准的一样：30 秒。
+const FREEZE_MILLIS: u32 = 30_000;
+
 pub(super) struct Stage {
     pub(super) assembled: Assembled,
     pub(super) producer: Arc<BackupProducer>,
@@ -29,18 +32,41 @@ impl Stage {
     pub(super) async fn with_retention(shared: bool, retention_millis: u64) -> Self {
         Self::assemble(Assembled::new().await, shared, retention_millis)
     }
+    /// 演练「等得比冻结预算、比整次封存的总预算都久」：总预算取封存总预算和正文保留时长里较短的那个。
+    pub(super) async fn with_budgets(retention_millis: u64, freeze_millis: u32) -> Self {
+        Self::build(
+            Assembled::new().await,
+            true,
+            retention_millis,
+            freeze_millis,
+        )
+    }
     /// 主人登记过 TOTP、有一个接入方实例的六 owner；新根恢复的用例用它。
     pub(super) async fn with_owner_factor() -> Self {
         Self::assemble(Assembled::with_owner_factor().await, true, 600_000)
     }
     pub(super) fn assemble(assembled: Assembled, shared: bool, retention_millis: u64) -> Self {
+        Self::build(assembled, shared, retention_millis, FREEZE_MILLIS)
+    }
+    fn build(
+        assembled: Assembled,
+        shared: bool,
+        retention_millis: u64,
+        freeze_millis: u32,
+    ) -> Self {
         let parent = target(&assembled.fixture, "staging");
         if shared {
             fs::set_permissions(&parent, fs::Permissions::from_mode(0o750)).unwrap();
         }
         let reader_gid = fs::metadata(&parent).unwrap().gid();
         target(&assembled.fixture, "ephemeral");
-        let producer = produce(&assembled, &parent, reader_gid, retention_millis);
+        let producer = produce(
+            &assembled,
+            &parent,
+            reader_gid,
+            retention_millis,
+            freeze_millis,
+        );
         Self {
             assembled,
             producer,
@@ -56,6 +82,7 @@ impl Stage {
             &self.parent,
             self.reader_gid,
             self.retention_millis,
+            FREEZE_MILLIS,
         )
     }
     pub(super) fn ask(&self, command: QueueCommand) -> QueueAnswer {
@@ -83,6 +110,7 @@ fn produce(
     parent: &std::path::Path,
     reader_gid: u32,
     retention_millis: u64,
+    freeze_millis: u32,
 ) -> Arc<BackupProducer> {
     let source_roots = [
         "vault", "data", "auth", "control", "agent", "policy", "audit",
@@ -102,7 +130,7 @@ fn produce(
             min_interval_millis: 3_600_000,
             rpo_millis: 4_500_000,
             source_retention_millis: retention_millis,
-            freeze_budget: FreezeBudget::new(30_000).unwrap(),
+            freeze_budget: FreezeBudget::new(freeze_millis).unwrap(),
             manifest: manifest(),
         },
     )

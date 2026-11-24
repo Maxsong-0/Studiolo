@@ -68,22 +68,41 @@ async fn writes_wait_only_for_the_freeze_window_not_for_the_whole_seal() {
     stage.assembled.workbench.shutdown().await.unwrap();
 }
 
-/// 关停只等冻结窗口放开（`settle_window`），不等放开之后的拷贝和发布；那一段进程退出时丢下，
-/// 留下的暂存由下次启动回收（和「封存做到一半被杀」同一条路）。用例里让封存停在放开之后，
-/// 关停这时要能返回、写操作拿得到许可、准入还没写；放行之后封存照样做完。
+/// 关停等冻结窗口放开（`settle_window`），不等放开之后的拷贝和发布；那一段进程退出时丢下，
+/// 留下的暂存由下次启动回收（和「封存做到一半被杀」同一条路）。用例里先让封存卡在窗口里（接入方有一个
+/// 操作没做完），关停这时要等；窗口过去、封存停在放开之后，关停要能返回、写操作拿得到许可、准入还没写；
+/// 放行之后封存照样做完。封存还没开始冻结时关停会叫它放弃，不在这里（`human_idle`）。
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn shutdown_waits_for_the_freeze_window_but_not_for_the_copy_after_it() {
     let stage = Stage::new(true).await;
     fill(&stage, "shutdown-", 100);
     let (open, gate) = std::sync::mpsc::channel();
     *stage.producer.hold_after_release.lock().unwrap() = Some(gate);
+    let agent = stage.assembled.agent.enter_operation().unwrap();
     assert_eq!(stage.ask(QueueCommand::Schedule), QueueAnswer::Started);
+    // 封存的暂存目录建出来了：等人侧空闲那一步已经过去，接着就去排空接入方。
+    let exporting = || {
+        fs::read_dir(&stage.parent).unwrap().any(|entry| {
+            let name = entry.unwrap().file_name();
+            name.to_string_lossy().starts_with("export-")
+        })
+    };
+    let begun = Instant::now();
+    while !exporting() {
+        assert!(begun.elapsed() < Duration::from_secs(60), "封存没开始");
+        std::thread::sleep(Duration::from_millis(2));
+    }
     let producer = stage.producer.clone();
     let (settled, window) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
         producer.settle_window();
         let _ = settled.send(());
     });
+    assert!(
+        window.recv_timeout(Duration::from_millis(300)).is_err(),
+        "封存还在冻结窗口里，关停要等"
+    );
+    drop(agent);
     assert!(
         window.recv_timeout(Duration::from_secs(60)).is_ok(),
         "封存停在放开之后时，关停要能返回"
