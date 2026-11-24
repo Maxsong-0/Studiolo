@@ -51,6 +51,9 @@ fn flushes() -> u64 {
     FLUSHED.with_borrow(|lengths| lengths.len() as u64)
 }
 
+/// 一步拷的字节数：夹具的库用默认的 4 KiB 一页。
+const STEP_BYTES: u64 = 64 * 4096;
+
 /// 按给定的段长导出约 2 MiB（500 多页）的库：落盘次数和段长对得上，副本照样核过；段长比库大就一次不落。
 #[test]
 fn a_large_export_flushes_once_per_segment() {
@@ -60,13 +63,13 @@ fn a_large_export_flushes_once_per_segment() {
     for (segment, expected) in [
         // 一步一段：最后一步拷完返回 Done，由收尾的 `sync` 落，不另落。
         (1, steps - 1),
-        (2 * u64::from(STEP_PAGES.unsigned_abs()), (steps - 1) / 2),
+        (2 * STEP_BYTES, (steps - 1) / 2),
         (u64::MAX, 0),
     ] {
         let frozen = freeze(&source);
         let target = private();
         perform(&frozen, target.path(), &512, rows, Flush::every(segment)).unwrap();
-        assert_eq!(flushes(), expected, "每 {segment} 页一段");
+        assert_eq!(flushes(), expected, "每 {segment} 字节一段");
     }
 }
 

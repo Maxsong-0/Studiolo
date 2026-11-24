@@ -6,11 +6,13 @@ use std::{
     io::{Read, Write},
     os::unix::fs::MetadataExt,
 };
+use studiolo_core::Flush;
 
 pub(in crate::checkpoint::staging) struct Regular {
     file: File,
     pin: Metadata,
     access: Access,
+    flush: Flush,
 }
 impl Regular {
     pub fn open(parent: &Directory, name: &str) -> Result<Self> {
@@ -47,7 +49,12 @@ impl Regular {
         {
             return Err(StagingError::UnsafeRoot);
         }
-        Ok(Self { file, pin, access })
+        Ok(Self {
+            file,
+            pin,
+            access,
+            flush: Flush::default(),
+        })
     }
     pub fn len(&self) -> u64 {
         self.pin.len()
@@ -67,7 +74,10 @@ impl Regular {
         self.access.require_writer()?;
         self.file
             .write_all(bytes)
-            .map_err(|_| StagingError::Unavailable)
+            .map_err(|_| StagingError::Unavailable)?;
+        // 写大文件时没落盘的量封顶（BUG-054）：账本有几百 MB，攒到 `finish` 才落的话，正在落盘的量就有整个账本那么大。
+        let file = &self.file;
+        self.flush.written(bytes.len() as u64, || flush(file))
     }
     pub fn check(&self, parent: &Directory, name: &str) -> Result<()> {
         let after = self
@@ -106,6 +116,19 @@ impl Regular {
         self.file.sync_all().map_err(|_| StagingError::Unavailable)
     }
 }
+/// 写到一半先落一次盘。
+fn flush(file: &File) -> Result<()> {
+    file.sync_data().map_err(|_| StagingError::Unavailable)?;
+    #[cfg(test)]
+    {
+        let length = file
+            .metadata()
+            .map_err(|_| StagingError::Unavailable)?
+            .len();
+        FLUSHED.with_borrow_mut(|lengths| lengths.push(length));
+    }
+    Ok(())
+}
 fn same(a: &Metadata, b: &Metadata) -> bool {
     a.dev() == b.dev()
         && a.ino() == b.ino()
@@ -119,3 +142,13 @@ fn same(a: &Metadata, b: &Metadata) -> bool {
         && a.ctime() == b.ctime()
         && a.ctime_nsec() == b.ctime_nsec()
 }
+
+#[cfg(test)]
+thread_local! {
+    /// 用例用：本线程写到一半每次落盘时，文件有多长。
+    static FLUSHED: std::cell::RefCell<Vec<u64>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+#[cfg(test)]
+#[path = "../../../../tests/private/staging_flush.rs"]
+mod tests;

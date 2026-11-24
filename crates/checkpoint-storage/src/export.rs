@@ -1,12 +1,12 @@
 //! 封存只从冻结时定格的读连接导出；目标独占创建，失败残片不作为成功票据。
 //! 导出可以在放开写锁之后做（BUG-045）：定格的读事务读到的始终是冻结那一刻，别人之后写的、回写的都看不见。
-use crate::{Error, FrozenSqlite, digest, flush::Flush, paths::Binding, sqlite};
+use crate::{Error, FrozenSqlite, digest, paths::Binding, sqlite};
 use rusqlite::{
     Connection,
     backup::{Backup, StepResult},
 };
 use std::path::Path;
-use studiolo_core::checkpoint::WalCheckpointProof;
+use studiolo_core::{Flush, checkpoint::WalCheckpointProof};
 
 /// 备份一步拷的页数。
 const STEP_PAGES: i32 = 64;
@@ -18,9 +18,8 @@ pub(crate) fn export<T: Eq>(
     inspect: impl Fn(&Connection) -> Result<T, Error>,
 ) -> Result<WalCheckpointProof, Error> {
     frozen.check()?;
-    let result = page_bytes(&frozen.source)
-        .and_then(|bytes| perform(frozen, target, expected, inspect, Flush::new(bytes)));
-    result.map_err(|error| sqlite::deadline_error(error, frozen.deadline))
+    perform(frozen, target, expected, inspect, Flush::default())
+        .map_err(|error| sqlite::deadline_error(error, frozen.deadline))
 }
 fn perform<T: Eq>(
     frozen: &FrozenSqlite,
@@ -31,6 +30,7 @@ fn perform<T: Eq>(
 ) -> Result<WalCheckpointProof, Error> {
     // 定格的源只读一遍全内容摘要；完整性、owner 校验都在副本上做，副本和源逐表摘要相同才算拷对。
     let expected_digest = digest::read(&frozen.source, frozen.deadline)?;
+    let step_bytes = page_bytes(&frozen.source)?.saturating_mul(STEP_PAGES.unsigned_abs().into());
     let target = Binding::target(target, &frozen.binding)?;
     let mut destination = sqlite::connect(&target, false, frozen.deadline)?;
     {
@@ -42,9 +42,7 @@ fn perform<T: Eq>(
             match backup.step(STEP_PAGES).map_err(sqlite::error)? {
                 StepResult::Done => break,
                 // 没落盘的量封顶，不随库变大（BUG-054）；拷完的最后一段由下面的 `sync` 落。
-                StepResult::More => {
-                    flush.copied(STEP_PAGES.unsigned_abs().into(), || target.flush())?
-                }
+                StepResult::More => flush.written(step_bytes, || target.flush())?,
                 StepResult::Busy | StepResult::Locked => sqlite::pause(frozen.deadline)?,
                 _ => return Err(Error::Unavailable),
             }

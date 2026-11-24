@@ -45,6 +45,31 @@ fn checkpoint_staging_keeps_creation_nofollow_and_atomic_no_replace_closed() {
     }
 }
 
+/// 暂存区写大文件按段落盘（BUG-054）：写的时候不数、到了不落盘，都判红。
+#[test]
+fn checkpoint_staging_flushes_large_files_while_they_are_written() {
+    let path = Path::new("crates/backup/src/checkpoint/staging/io/files.rs");
+    let source = fs::read_to_string(workspace_root().join(path)).unwrap();
+    for (anchor, changed) in [
+        (
+            "self.flush.written(bytes.len() as u64, || flush(file))",
+            "Ok(())",
+        ),
+        (
+            "self.flush.written(bytes.len() as u64, || flush(file))",
+            "self.flush.written(0, || flush(file))",
+        ),
+        (
+            "file.sync_data().map_err(|_| StagingError::Unavailable)?;",
+            "",
+        ),
+    ] {
+        assert!(source.contains(anchor), "{anchor}");
+        let changed = source.replacen(anchor, changed, 1);
+        assert!(!source_violations("studiolo-backup", path, &changed).is_empty());
+    }
+}
+
 #[test]
 fn checkpoint_shared_permissions_stay_bound_to_verified_original_descriptors() {
     for (file, anchor) in [
