@@ -70,33 +70,33 @@ KEEP_LAST, KEEP_DAILY = 30, 14
 # 封存副本只在到期后回收：保留期乘上数据量就是暂存区的盘占用（169 上每份约 1.1G，一小时约 8G）。
 RETENTION_MILLIS = 3_600_000
 
-# ---------------------------------------------------------------- 发行相关的值（跟着 r24 候选和 108 的构建走）
-# r24：108 上从提交 ee09773 构建（2026-11-24，产物 ~/r24-ee09773-20261124-out）。SOURCE_COMMIT 写的是构建提交，不是改这几行的那个提交。
-# 这一版换的是人侧程序（BUG-050、BUG-054、BUG-055）；maintain、worker 间接用到改了的 checkpoint-storage，跟着变。
-SOURCE_COMMIT = 'ee09773'
-HUMAN_RELEASE = 'm5m6-board-20260920-r24'
+# ---------------------------------------------------------------- 发行相关的值（跟着 r25 候选和 108 的构建走）
+# r25：108 上从提交 b05d918 构建（2026-11-24，产物 ~/r25-b05d918-20261124-out）。SOURCE_COMMIT 写的是构建提交，不是改这几行的那个提交。
+# 这一版换的是人侧程序（BUG-056、BUG-054 的另一半、BUG-057）；maintain 跟着变（9b19fcc1…8e21），worker 程序间接用到改了的 backup，跟着变（107d1d41…4484）。
+SOURCE_COMMIT = 'b05d918'
+HUMAN_RELEASE = 'm5m6-board-20260920-r25'
 RELEASE_DIRECTORY = '/home/maxsong/.local/share/studiolo-human-releases'
 PACKAGES = (
-    ('studiolo-local-server', 'fddaf10def636faf3bd5bfba4fb4129aa2f64c156681eaed31ef018bbf27c1ef'),
-    ('studiolo-maintain', 'ba3db5a2cdc1cca19d0ab1700c8874798269888b88c3db41230a8b0739a9be79'),
-    ('studiolo-backup-worker', 'd3c96ef9f6b945ac15b719a5db12abc984f48a967c62019277c8a550b3949e57'),
+    ('studiolo-local-server', '4cdf4efa87d62d3c40c98961232383fd730731d573c8f974492773164b920636'),
+    ('studiolo-maintain', '9b19fcc1366faf3cde28560d3b5647728cd21fe0cec86eca2302e97b79808e21'),
+    ('studiolo-backup-worker', '107d1d41abc8303fe1800d577f2874ad20fa1d68ff18d6d75440b57111764484'),
 )
 RESTIC_SHA = '20d4142678d0d95ec11a4759def1b73fd9190abc9ca19e4b62d067c0b387e639'
 CA_SHA = '4577693009b4c680420b7ff895970a4e8b2838e451cad0bb8a0dfe7c64e8c269'
 # 要拷的三样现在放在哪（都在 169 上）：108 构建的 worker、P3 时装的 restic、P3 时取回的 NAS 公开证书。
-WORKER_SOURCE = '/home/maxsong/studiolo-t227-r24-20261124-ee097737-worker/studiolo-backup-worker'
+WORKER_SOURCE = '/home/maxsong/studiolo-t227-r25-20261124-b05d9183-worker/studiolo-backup-worker'
 RESTIC_SOURCE = '/usr/local/bin/studiolo-restic'
 CA_SOURCE = '/home/maxsong/.config/studiolo-backup/ca.pem'
 # 上一版发行：169 上已经照它置备过的那一组值，键是 commit、release、packages（和上面三个同形）。换发行时把上面
 # 三个值原样搬进来再填新值；没有上一版（第一次置备）就是 None。上一版那份私有备份配置要能照这组值原样生成出来
 # （见 backup_document）：这次要是还改了别的字段，把旧值一起搬进来，不然现场那一份认不出来、会停下。
-# 现在登记的是 r23（提交 38bf34a 构建，2026-11-23 在 169 上置备、激活）。
+# 现在登记的是 r24（提交 ee09773 构建，2026-11-24 在 169 上置备、激活）。
 PREVIOUS = {
-    'commit': '38bf34a', 'release': 'm5m6-board-20260920-r23',
+    'commit': 'ee09773', 'release': 'm5m6-board-20260920-r24',
     'packages': (
-        ('studiolo-local-server', '85a941f8942d1b00cf9b6dd7963e7fbbe15e8797b80d3a88177a71551f59001a'),
-        ('studiolo-maintain', '898a8dfe2c8b47ecc3df731805eef36552952676eb77eccb4f9cfbeef2b9c30b'),
-        ('studiolo-backup-worker', 'c70a39f819791e5be37e0f1786b2eccf661a9598eb686f9bfcc0d00f976955b0'),
+        ('studiolo-local-server', 'fddaf10def636faf3bd5bfba4fb4129aa2f64c156681eaed31ef018bbf27c1ef'),
+        ('studiolo-maintain', 'ba3db5a2cdc1cca19d0ab1700c8874798269888b88c3db41230a8b0739a9be79'),
+        ('studiolo-backup-worker', 'd3c96ef9f6b945ac15b719a5db12abc984f48a967c62019277c8a550b3949e57'),
     ),
 }
 # 换下来的上一版留在原地用的名字后缀：跟着这一版的发行号走。
