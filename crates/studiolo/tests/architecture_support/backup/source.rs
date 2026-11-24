@@ -99,12 +99,16 @@ pub(super) fn fixed_binding(path: &Path, raw: &str) -> bool {
             "reopened.inventory()!=self.sealed.inventory()",
         ]
     } else if path.ends_with("crates/backup-worker/src/runner/inspect.rs") {
+        // BUG-053：整份封存只起一个 restic 读回（对封存根一次 `dump --archive tar`），期望照清单逐个目录、
+        // 逐个文件（长度和摘要）造；改回一个文件一个 `dump`，1 万多个文件在封存副本到期前核不完。
         &[
-            "forfileinself.sealed().inventory().files()",
-            "plan::file(self.source.repository(),snapshot,root,file.path())?",
-            "process::DigestExpectation{bytes:file.bytes(),sha256:file.sha256()}",
-            "self.source.check()",
-            "self.runtime.digest(",
+            "self.source.check()?;verify_files(self.source.repository(),snapshot,&self.sealed().ticket().transfer_source.root,self.sealed().inventory(),",
+            "self.runtime.verify_tree(argv,expected,self.source.deadline(),",
+            "self.source.check_time()",
+            "letargv=plan::tree(repository,snapshot,root)?;letmutexpected=process::TreeExpectation::new(root)?;",
+            "fordirectoryininventory.directories(){expected.directory(directory)?;}",
+            "forfileininventory.files(){expected.file(file.path().as_str(),file.bytes(),file.sha256())?;}run(&argv,&expected)",
+            "self.source.check()}",
         ]
     } else if path.ends_with("crates/backup-worker/src/runner/probe.rs") {
         &[
@@ -118,9 +122,10 @@ pub(super) fn fixed_binding(path: &Path, raw: &str) -> bool {
     } else if path.ends_with("crates/backup-worker/src/runner/inspect/plan.rs") {
         &[
             "snapshot.as_str().len()!=64",
-            "root.join(relative.as_str())",
+            "lettext=root.to_str().ok_or(ProcessError::Configuration)?;if!root.is_absolute()",
+            "text.split('/').any(|part|matches!(part,\".\"|\"..\"))",
             "\"snapshots\".into(),\"--tag\".into(),tag.as_str().into()",
-            "\"dump\".into(),snapshot.as_str().into(),text.into()",
+            "\"dump\".into(),\"--archive\".into(),\"tar\".into(),snapshot.as_str().into(),text.into()",
             "\"ls\".into(),snapshot.as_str().into()",
         ]
     } else if path.ends_with("crates/backup-worker/src/runtime.rs") {
@@ -133,12 +138,13 @@ pub(super) fn fixed_binding(path: &Path, raw: &str) -> bool {
             "process::run_check(&self.package,&self.arguments(argv),&self.credentials,self.temporary.path(),self.window.deadline(),&||self.window.check(),interrupt)",
             // T-216：批准的仓库 CA 从配置一路带到每一次连仓库的 restic 调用，哪一环断了都判红
             // （`with_ca` 本身的行为由 runtime.rs 的单测守）。`runtime.rs` 怎么用 `process` 模块另由
-            // `runtime_process_use` 钉住：五处调用（下面这处不连仓库的 `version`，加上连仓库的四处）之外不许再有。
+            // `runtime_process_use` 钉住：六处调用（下面这处不连仓库的 `version`，加上连仓库的五处）之外不许再有。
             "letversion=process::run_scoped(&package,&[\"version\".into()],None,temporary.path(),deadline.min(started+Duration::from_secs(10)),&||window.check())?;",
             "repository_ca:config.repository_ca()",
             "fnarguments(&self,argv:&[String])->Vec<String>{with_ca(self.repository_ca,argv)}",
             "letargv=self.arguments(argv);letresult=matchinput{Some(bytes)=>process::run_input(&self.package,&argv,&self.credentials,self.temporary.path(),deadline,&check,bytes),None=>process::run_scoped(&self.package,&argv,Some(&self.credentials),self.temporary.path(),deadline,&check)};",
             "process::verify_digest(&self.package,&self.arguments(argv),&self.credentials,self.temporary.path(),deadline.min(self.window.deadline()),&check,expected)",
+            "process::verify_tree(&self.package,&self.arguments(argv),&self.credentials,self.temporary.path(),deadline.min(self.window.deadline()),&check,expected)",
         ]
     } else if path.ends_with("crates/backup-worker/src/runner/final_record.rs") {
         &[
@@ -179,15 +185,16 @@ pub(super) fn fixed_binding(path: &Path, raw: &str) -> bool {
         && (!path.ends_with("crates/backup-worker/src/runtime.rs") || runtime_process_use(raw))
 }
 
-/// `runtime.rs` 里引用 `process` 模块函数的地方：不连仓库的 `version` 一处，连仓库的四处，
-/// 五处都在上面逐处钉住（连仓库的钉成带批准的 CA）。
-const RUNTIME_PROCESS_FUNCTIONS: usize = 5;
-/// `runtime.rs` 里 `process::` 一共出现几次：上面五处，加三处类型（`Output` 两处、`DigestExpectation` 一处）。
-const RUNTIME_PROCESS_PATHS: usize = 8;
+/// `runtime.rs` 里引用 `process` 模块函数的地方：不连仓库的 `version` 一处，连仓库的五处，
+/// 六处都在上面逐处钉住（连仓库的钉成带批准的 CA）。
+const RUNTIME_PROCESS_FUNCTIONS: usize = 6;
+/// `runtime.rs` 里 `process::` 一共出现几次：上面六处，加四处类型
+/// （`Output` 两处、`DigestExpectation` 一处、`TreeExpectation` 一处）。
+const RUNTIME_PROCESS_PATHS: usize = 10;
 
 /// `runtime.rs` 多出一处没钉的 restic 调用，就可能不带 `--cacert` 去连自签证书的仓库（T-216）。
 /// 按去掉行注释后的源码数，注释和文档里提到 `process::名字(` 不算：
-/// - 引用 `process::` 里函数的地方恰好五处：调用、拿函数指针、`use crate::process::run_scoped` 这样直接引入都算一处；
+/// - 引用 `process::` 里函数的地方恰好六处：调用、拿函数指针、`use crate::process::run_scoped` 这样直接引入都算一处；
 /// - `process::` 的出现总数钉死：花括号或 `*` 引入会多出一次；
 /// - 不许给模块起别名（`process as p`），起了别名上面两条就数不到。
 ///

@@ -218,6 +218,63 @@ fn a_check_whose_leader_has_exited_is_not_asked_to_yield_while_its_output_drains
     );
 }
 
+/// 整份读回走真进程和管道：子进程的输出一边读一边按 tar 核（BUG-053）。替身是拷进临时目录的 `sh`，
+/// 由它按名字调 `cat`：测试程序自己当子进程时 libtest 会先往标准输出打一行，弄脏 tar 流；
+/// 直接拷 `cat` 也不行，uutils 的 `cat` 是多合一程序，按 argv[0] 认命令，从 `/proc/self/fd/N` 起就认不出。
+#[test]
+fn a_tree_read_back_checks_the_child_output_as_one_tar_stream() {
+    use crate::process::tar::builder;
+    let temp = tempfile::tempdir().unwrap();
+    let shell = temp.path().join("sh");
+    fs::copy("/bin/sh", &shell).unwrap();
+    fs::set_permissions(&shell, fs::Permissions::from_mode(0o500)).unwrap();
+    let package = ResticPackage::fixture(&shell, &hash(&shell), deadline()).unwrap();
+    let password = temp.path().join("password");
+    fs::write(&password, "fictional-restic-repository-only\n").unwrap();
+    fs::set_permissions(&password, fs::Permissions::from_mode(0o600)).unwrap();
+    let credentials = ResticCredentials::fixture(&password);
+    let body = vec![0x5a_u8; 3 * 1024 * 1024 + 17];
+    let mut expected = process::TreeExpectation::new(Path::new("/sealed/root")).unwrap();
+    expected.directory("data").unwrap();
+    expected
+        .file("data/blob", body.len() as u64, &builder::sha(&body))
+        .unwrap();
+    let mut stream = builder::directory("sealed/root/data");
+    stream.extend(builder::file("sealed/root/data/blob", &body));
+    stream.extend(builder::end());
+    let tar = temp.path().join("tree.tar");
+    let run = |bytes: &[u8], path: &Path| {
+        fs::write(&tar, bytes).unwrap();
+        // 子进程的环境是清空的：没有 PATH 时 sh 按它自带的默认搜索路径找 `cat`。
+        process::verify_tree(
+            &package,
+            &[
+                "-c".into(),
+                "exec cat \"$0\"".into(),
+                path.to_str().unwrap().into(),
+            ],
+            &credentials,
+            temp.path(),
+            deadline(),
+            &|| Ok(()),
+            &expected,
+        )
+    };
+    run(&stream, &tar).unwrap();
+    let mut broken = stream.clone();
+    broken[4096] ^= 1;
+    assert_eq!(run(&broken, &tar), Err(ProcessError::Protocol));
+    // 输出比整份封存该有的长：不等读完就停。
+    let mut flood = stream.clone();
+    flood.extend(vec![0_u8; 2 * 1024 * 1024]);
+    assert_eq!(run(&flood, &tar), Err(ProcessError::OutputLimit));
+    // 子进程失败退出：没输出完的流不算读回通过。
+    assert_eq!(
+        run(&stream, &temp.path().join("missing")),
+        Err(ProcessError::Protocol)
+    );
+}
+
 #[test]
 #[ignore = "由父测试作为真实独立子进程调用"]
 fn child_environment() {

@@ -130,6 +130,30 @@ impl Runtime {
         );
         self.after(result)
     }
+    /// 整份封存一次读回，执行边界和 [`Runtime::digest`] 相同；见 [`process::verify_tree`]。
+    pub fn verify_tree(
+        &self,
+        argv: &[String],
+        expected: &process::TreeExpectation,
+        deadline: Instant,
+        source_time: &impl Fn() -> Result<()>,
+    ) -> Result<()> {
+        self.check()?;
+        let check = || {
+            self.window.check()?;
+            source_time()
+        };
+        let result = process::verify_tree(
+            &self.package,
+            &self.arguments(argv),
+            &self.credentials,
+            self.temporary.path(),
+            deadline.min(self.window.deadline()),
+            &check,
+            expected,
+        );
+        self.after(result)
+    }
     /// 仓库抽查：同一条执行边界，截止时间就是打开时给的窗口；`interrupt` 见 [`process::run_check`]。
     pub fn check_subset(
         &self,

@@ -3,7 +3,6 @@ use crate::{ProcessError, Result};
 use std::path::Path;
 use studiolo_backup::worker::restic::{RepositoryRef, SnapshotRef};
 use studiolo_backup::worker::{restic::JobTag, state::JobKey};
-use studiolo_core::VaultPath;
 
 pub(crate) fn snapshots(repository: &RepositoryRef, key: &JobKey) -> Result<Vec<String>> {
     let tag = JobTag::for_job(key).map_err(|_| ProcessError::Configuration)?;
@@ -31,18 +30,18 @@ pub(crate) fn listing(repository: &RepositoryRef, snapshot: &SnapshotRef) -> Res
     ])
 }
 
-pub(crate) fn file(
+/// 整份封存一次读回：对封存根做一次 `dump`，restic 把整棵树写成一条 tar 流（BUG-053）。
+/// 一个文件一个 `dump` 时，每次都要从仓库重新加载索引，1 万多个文件要几个小时。
+pub(crate) fn tree(
     repository: &RepositoryRef,
     snapshot: &SnapshotRef,
     root: &Path,
-    relative: &VaultPath,
 ) -> Result<Vec<String>> {
     if snapshot.as_str().len() != 64 {
         return Err(ProcessError::Configuration);
     }
-    let path = root.join(relative.as_str());
-    let text = path.to_str().ok_or(ProcessError::Configuration)?;
-    if !path.is_absolute()
+    let text = root.to_str().ok_or(ProcessError::Configuration)?;
+    if !root.is_absolute()
         || text.len() > 4096
         || text.chars().any(char::is_control)
         || text.split('/').any(|part| matches!(part, "." | ".."))
@@ -55,6 +54,8 @@ pub(crate) fn file(
         "--repo".into(),
         repository.as_str().into(),
         "dump".into(),
+        "--archive".into(),
+        "tar".into(),
         snapshot.as_str().into(),
         text.into(),
     ])
@@ -64,23 +65,25 @@ pub(crate) fn file(
 mod tests {
     use super::*;
     #[test]
-    fn dump_is_one_absolute_argument_and_requires_full_snapshot() {
+    fn dump_takes_the_absolute_sealed_root_and_requires_full_snapshot() {
         let repository = RepositoryRef::parse("rest:https://backup.example.test/repo/").unwrap();
         let snapshot = SnapshotRef::parse("ab".repeat(32)).unwrap();
-        let relative = VaultPath::parse("data/中文笔记/a b;$.md").unwrap();
-        let argv = file(&repository, &snapshot, Path::new("/sealed"), &relative).unwrap();
-        assert_eq!(argv.len(), 7);
-        assert_eq!(argv[4], "dump");
-        assert_eq!(argv[6], "/sealed/data/中文笔记/a b;$.md");
-        assert!(
-            file(
-                &repository,
-                &SnapshotRef::parse("abcdef12").unwrap(),
-                Path::new("/sealed"),
-                &relative
-            )
-            .is_err()
-        );
-        assert!(file(&repository, &snapshot, Path::new("relative"), &relative).is_err());
+        let argv = tree(&repository, &snapshot, Path::new("/sealed/中文 a;$")).unwrap();
+        assert_eq!(argv.len(), 9);
+        assert_eq!(argv[4..7], ["dump", "--archive", "tar"]);
+        assert_eq!(argv[8], "/sealed/中文 a;$");
+        let short = SnapshotRef::parse("abcdef12").unwrap();
+        assert!(tree(&repository, &short, Path::new("/sealed")).is_err());
+        for root in [
+            "relative",
+            "/sealed/../other",
+            "/sealed/./x",
+            "/sealed/a\nb",
+        ] {
+            assert!(
+                tree(&repository, &snapshot, Path::new(root)).is_err(),
+                "{root}"
+            );
+        }
     }
 }

@@ -121,6 +121,19 @@ fn backup_worker_cannot_detach_job_source_or_expiry_from_execution() {
             "\"--stdin-from-command\".into()",
         ),
         ("runner/inspect.rs", "file.sha256()", "request.digest()"),
+        // BUG-053：读回期望漏掉目录或文件、改回逐个文件读、`dump` 不再整树写 tar，都判红。
+        ("runner/inspect.rs", "expected.directory(directory)?;", ""),
+        (
+            "runner/inspect.rs",
+            "expected.file(file.path().as_str(), file.bytes(), file.sha256())?;",
+            "",
+        ),
+        (
+            "runner/inspect.rs",
+            "let argv = plan::tree(repository, snapshot, root)?;",
+            "let argv = plan::listing(repository, snapshot)?;",
+        ),
+        ("runner/inspect/plan.rs", "\"--archive\".into(),", ""),
         (
             "runner/probe.rs",
             "self.verify_snapshot_files(snapshot)?;",
@@ -167,7 +180,7 @@ fn backup_worker_cannot_detach_job_source_or_expiry_from_execution() {
         ("process.rs", "if !child.exited()? {", "if true {"),
         ("runtime.rs", "&|| self.window.check(),", "&|| Ok(()),"),
         // T-216：批准的仓库 CA 必须带到每一次连仓库的调用——配置到 Runtime、Runtime 到参数、
-        // 三处调用各断一次都判红（`run_check` 那一处原来就有钉子，这里留着作对照）；
+        // 四处调用各断一次都判红（`run_check` 那一处原来就有钉子，这里留着作对照）；
         // `runtime.rs` 里多出一处不带 CA 的调用也判红，不管写成直接调用、函数指针、直接引入还是别名。
         (
             "runtime.rs",
@@ -188,6 +201,11 @@ fn backup_worker_cannot_detach_job_source_or_expiry_from_execution() {
             "runtime.rs",
             "process::verify_digest(\n            &self.package,\n            &self.arguments(argv),",
             "process::verify_digest(\n            &self.package,\n            argv,",
+        ),
+        (
+            "runtime.rs",
+            "process::verify_tree(\n            &self.package,\n            &self.arguments(argv),",
+            "process::verify_tree(\n            &self.package,\n            argv,",
         ),
         (
             "runtime.rs",

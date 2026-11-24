@@ -3,6 +3,7 @@ mod child;
 mod input;
 mod pipe;
 mod sink;
+pub(crate) mod tar;
 use crate::{ProcessError, ResticCredentials, ResticPackage, Result};
 use child::OwnedChild;
 use pipe::Capture;
@@ -14,6 +15,7 @@ use std::{
     process::{Command, Stdio},
     time::{Duration, Instant},
 };
+pub(crate) use tar::TreeExpectation;
 use zeroize::Zeroizing;
 
 /// JSON 输出的上限。
@@ -132,6 +134,35 @@ pub(crate) fn verify_digest(
         return Err(ProcessError::Protocol);
     }
     Ok(())
+}
+/// 整份封存一次读回：一个进程输出整棵树的 tar 流，边读边按清单核（见 [`tar`]）。
+pub(crate) fn verify_tree(
+    package: &ResticPackage,
+    argv: &[String],
+    credentials: &ResticCredentials,
+    temporary: &Path,
+    deadline: Instant,
+    check_source_time: &impl Fn() -> Result<()>,
+    expected: &TreeExpectation,
+) -> Result<()> {
+    let (success, stdout, _) = execute_with(
+        package,
+        argv,
+        Some(credentials),
+        temporary,
+        deadline,
+        check_source_time,
+        Streams {
+            sink: tar::TarCheck::new(expected),
+            input: None,
+            stderr_limit: STDERR_LIMIT,
+            interrupt: &uninterrupted,
+        },
+    )?;
+    if !success {
+        return Err(ProcessError::Protocol);
+    }
+    stdout.finish()
 }
 /// 仓库抽查：stderr 上限放宽到 4 MiB；`interrupt` 只在等输出的循环里问（抽查让给备份作业），
 /// 跑完之后不再问，所以已经查完的结果不会因为刚好来了作业被丢掉。

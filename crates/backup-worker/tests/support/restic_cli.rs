@@ -84,11 +84,11 @@ fn official_restic_executes_from_original_fd_and_uses_only_explicit_credentials(
         summary["snapshot_id"].as_str().unwrap(),
     )
     .unwrap();
-    let argv =
-        crate::runner::inspect::plan::file(&repository, &snapshot, &source, &relative).unwrap();
+    // 读回：对备份根做一次 `dump --archive tar`，整条 tar 流边读边按期望核（BUG-053）。
+    let argv = crate::runner::inspect::plan::tree(&repository, &snapshot, &source).unwrap();
     let digest = hash(&expected_file);
     let bytes = fs::metadata(&expected_file).unwrap().len();
-    for (size, expected, succeeds) in [
+    for (size, expected_digest, succeeds) in [
         (bytes, digest.as_str(), true),
         (
             bytes,
@@ -98,20 +98,110 @@ fn official_restic_executes_from_original_fd_and_uses_only_explicit_credentials(
         (bytes - 1, digest.as_str(), false),
         (bytes + 1, digest.as_str(), false),
     ] {
-        let result = process::verify_digest(
+        let mut expected = process::TreeExpectation::new(&source).unwrap();
+        expected
+            .file(relative.as_str(), size, expected_digest)
+            .unwrap();
+        let result = process::verify_tree(
             &package,
             &argv,
             &credentials,
             temp.path(),
             deadline(),
             &|| Ok(()),
-            process::DigestExpectation {
-                bytes: size,
-                sha256: expected,
-            },
+            &expected,
         );
         assert_eq!(result.is_ok(), succeeds);
     }
+    // 一棵像封存的树：嵌套目录、中文和空格、空文件、放不进 ustar 名字字段的长名字、几百个小文件。
+    // restic 真实写出的 tar 一次读回全对；期望多一份或少一份都不行。
+    let tree = temp.path().join("tree");
+    let mut files: Vec<(String, Vec<u8>)> = vec![
+        ("seal.json".into(), b"{}".to_vec()),
+        (
+            "data/子 目录/中文 note;$.txt".into(),
+            (0..1024 * 1024_u32).map(|n| (n % 251) as u8).collect(),
+        ),
+        ("data/empty".into(), Vec::new()),
+        (format!("data/{}.md", "b".repeat(120)), b"long".to_vec()),
+    ];
+    for index in 0..300 {
+        files.push((
+            format!("data/many/f{index:03}.md"),
+            format!("# {index}\n").into_bytes(),
+        ));
+    }
+    let directories = ["data", "data/子 目录", "data/many"];
+    for directory in directories {
+        fs::create_dir_all(tree.join(directory)).unwrap();
+    }
+    for (path, body) in &files {
+        fs::write(tree.join(path), body).unwrap();
+    }
+    let backup = ResticInvocation::plan(
+        repository.clone(),
+        &ResticCommand::Backup {
+            tag: JobTag::parse("fixed-tree-fixture").unwrap(),
+            source_root: tree.clone(),
+        },
+        CredentialHolder::BackupWorker,
+        ResticIdentity::Append,
+    )
+    .unwrap();
+    let output = process::run(
+        &package,
+        backup.argv(),
+        Some(&credentials),
+        temp.path(),
+        deadline(),
+    )
+    .unwrap();
+    assert!(output.success);
+    let summary: serde_json::Value = output
+        .stdout
+        .split(|b| *b == b'\n')
+        .filter_map(|line| serde_json::from_slice::<serde_json::Value>(line).ok())
+        .find(|value| value["message_type"] == "summary")
+        .unwrap();
+    let tree_snapshot = studiolo_backup::worker::restic::SnapshotRef::parse(
+        summary["snapshot_id"].as_str().unwrap(),
+    )
+    .unwrap();
+    let argv = crate::runner::inspect::plan::tree(&repository, &tree_snapshot, &tree).unwrap();
+    let read_back = |skip: Option<usize>, extra: bool| {
+        let mut expected = process::TreeExpectation::new(&tree).unwrap();
+        for directory in directories {
+            expected.directory(directory).unwrap();
+        }
+        for (index, (path, body)) in files.iter().enumerate() {
+            if skip != Some(index) {
+                expected
+                    .file(path, body.len() as u64, &sha_of(body))
+                    .unwrap();
+            }
+        }
+        if extra {
+            expected.file("data/not-there", 1, &sha_of(b"x")).unwrap();
+        }
+        process::verify_tree(
+            &package,
+            &argv,
+            &credentials,
+            temp.path(),
+            deadline(),
+            &|| Ok(()),
+            &expected,
+        )
+    };
+    let started = Instant::now();
+    read_back(None, false).unwrap();
+    assert!(
+        started.elapsed() < Duration::from_secs(5),
+        "一次读回 {:?}",
+        started.elapsed()
+    );
+    assert_eq!(read_back(Some(7), false), Err(ProcessError::Protocol));
+    assert_eq!(read_back(None, true), Err(ProcessError::Protocol));
     // 仓库抽查走 worker 自己的执行入口：不加锁的 `check --read-data-subset`，30 组都归成干净。
     for bucket in CheckBucket::all() {
         let check = ResticInvocation::plan(
@@ -203,21 +293,25 @@ fn official_restic_snapshot_and_complete_tree_match_real_sealed_inventory() {
         },
     )
     .unwrap();
-    for file in sealed.inventory().files() {
-        process::verify_digest(
-            &package,
-            &plan::file(&repository, &snapshot, root, file.path()).unwrap(),
-            &credentials,
-            temp.path(),
-            deadline(),
-            &|| Ok(()),
-            process::DigestExpectation {
-                bytes: file.bytes(),
-                sha256: file.sha256(),
-            },
-        )
-        .unwrap();
-    }
+    // 生产那条读回路径原样走一遍：清单造期望、一次 `dump` 读回整份真实封存。
+    crate::runner::inspect::verify_files(
+        &repository,
+        &snapshot,
+        root,
+        sealed.inventory(),
+        &|argv, expected| {
+            process::verify_tree(
+                &package,
+                argv,
+                &credentials,
+                temp.path(),
+                deadline(),
+                &|| Ok(()),
+                expected,
+            )
+        },
+    )
+    .unwrap();
     // 最终记录是另一个真实快照，仅 stdin 的固定虚拟文件进入远端。
     use crate::runner::final_record::{plan::Marker, read};
     use studiolo_backup::worker::{final_manifest::FinalManifestDraft, state::RemoteVerification};
@@ -294,4 +388,11 @@ fn official_restic_snapshot_and_complete_tree_match_real_sealed_inventory() {
     call(backup.argv());
     let duplicate = call(&plan::snapshots(&repository, &key).unwrap());
     assert!(snapshot::locate(&duplicate.stdout, &key, root).is_err());
+}
+
+fn sha_of(bytes: &[u8]) -> String {
+    Sha256::digest(bytes)
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect()
 }
