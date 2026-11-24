@@ -28,21 +28,31 @@ pub(crate) fn brief(deadline: Instant) -> Instant {
     deadline.min(Instant::now() + BRIEF)
 }
 
-/// 等到 `deadline` 为止。拿得到就当场返回；到期之后不再试。
+/// 等到 `deadline` 为止：第一次总要试，拿得到就当场返回；等的时候到期就不再试。
 pub(crate) fn lock_until<T>(
     lock: &Mutex<T>,
     deadline: Instant,
+) -> Result<MutexGuard<'_, T>, Fault> {
+    wait(lock, deadline, Instant::now, thread::sleep)
+}
+
+/// 钟和睡眠由外面给，用例里才摆得出「睡醒时已经到期」。
+fn wait<T>(
+    lock: &Mutex<T>,
+    deadline: Instant,
+    now: impl Fn() -> Instant,
+    sleep: impl Fn(Duration),
 ) -> Result<MutexGuard<'_, T>, Fault> {
     loop {
         match lock.try_lock() {
             Ok(guard) => return Ok(guard),
             Err(TryLockError::Poisoned(_)) => return Err(Fault::Poisoned),
             Err(TryLockError::WouldBlock) => {
-                let left = deadline.saturating_duration_since(Instant::now());
-                if left.is_zero() {
+                sleep(deadline.saturating_duration_since(now()).min(POLL));
+                // 睡眠会睡过头：醒来先看期限，到期了就算这时锁空出来也不拿。
+                if now() >= deadline {
                     return Err(Fault::TimedOut);
                 }
-                thread::sleep(left.min(POLL));
             }
         }
     }
@@ -50,8 +60,9 @@ pub(crate) fn lock_until<T>(
 
 #[cfg(test)]
 mod tests {
-    use super::{BRIEF, Fault, brief, lock_until};
+    use super::{BRIEF, Fault, POLL, brief, lock_until, wait};
     use std::{
+        cell::{Cell, RefCell},
         sync::{Arc, Mutex, mpsc},
         thread,
         time::{Duration, Instant},
@@ -101,6 +112,33 @@ mod tests {
         let lock = Mutex::new(7);
         let guard = lock_until(&lock, Instant::now()).unwrap();
         assert_eq!(*guard, 7);
+    }
+
+    /// 等的时候睡过了头：醒来锁已经空出来，但到期了，不拿；没到期的照样拿。
+    #[test]
+    fn a_lock_let_go_only_after_the_deadline_is_not_taken() {
+        for (overslept, expected) in [
+            (POLL - Duration::from_millis(1), None),
+            (POLL, Some(Fault::TimedOut)),
+            (POLL * 20, Some(Fault::TimedOut)),
+        ] {
+            let lock = Mutex::new(7);
+            let held = RefCell::new(Some(lock.lock().unwrap()));
+            let clock = Cell::new(Instant::now());
+            let deadline = clock.get() + POLL;
+            let result = wait(
+                &lock,
+                deadline,
+                || clock.get(),
+                |asked| {
+                    assert_eq!(asked, POLL);
+                    // 睡着的时候持有者放开了锁。
+                    drop(held.borrow_mut().take());
+                    clock.set(clock.get() + overslept);
+                },
+            );
+            assert_eq!(result.err(), expected, "{overslept:?}");
+        }
     }
 
     #[test]
