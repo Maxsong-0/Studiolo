@@ -72,7 +72,7 @@ pub struct ProducerPlan {
     pub ephemeral_root: PathBuf,
     /// 各 owner 正在服务的数据根；只用来核对它们和封存目录互不重叠。
     pub source_roots: Vec<PathBuf>,
-    /// 两次尝试之间的最小间隔：从上一次准入或上一次尝试（含失败的）算起，取较晚的那个。
+    /// 两次尝试之间的最小间隔：从上一次尝试（原意图，含失败的）算起，怎么比见 [`due`]。
     pub min_interval_millis: u64,
     /// 主人批准的 RPO：健康页「恢复点年龄」超过它算降级。
     pub rpo_millis: u64,
@@ -255,6 +255,15 @@ impl BackupProducer {
     }
 
     fn schedule(self: &Arc<Self>) -> Result<QueueAnswer, AuditError> {
+        self.schedule_with(now_millis)
+    }
+
+    /// 同上，当前时刻由 `clock` 给，拿到状态锁、读完账本之后才取。生产只经上面那个入口用真实时钟；
+    /// 测试用它把时间往后推，账本里的时刻照样是真实的落账时刻。
+    pub(crate) fn schedule_with(
+        self: &Arc<Self>,
+        clock: impl FnOnce() -> Result<i64, AuditError>,
+    ) -> Result<QueueAnswer, AuditError> {
         let mut state = self.state.lock().map_err(|_| AuditError::Unavailable)?;
         if state.busy {
             return Ok(QueueAnswer::Outstanding);
@@ -271,7 +280,7 @@ impl BackupProducer {
         if !orphans.is_empty() {
             self.refresh(&mut state.queue)?;
         }
-        let (answer, job) = self.decide(&mut state.queue)?;
+        let (answer, job) = self.decide(&mut state.queue, clock)?;
         state.busy = true;
         drop(state);
         self.launch(job).map(|()| answer)
@@ -320,18 +329,17 @@ impl BackupProducer {
     }
 
     /// 只看账本和固定配置：到期且没有没做完的作业，就发下一个序号并把原意图写进账本。
-    fn decide(&self, queue: &mut Queue) -> Result<(QueueAnswer, Option<JobKey>), AuditError> {
+    fn decide(
+        &self,
+        queue: &mut Queue,
+        clock: impl FnOnce() -> Result<i64, AuditError>,
+    ) -> Result<(QueueAnswer, Option<JobKey>), AuditError> {
         if queue.outstanding() {
             return Ok((QueueAnswer::Outstanding, None));
         }
-        let now = now_millis()?;
+        let now = clock()?;
         let interval = i64::try_from(self.plan.min_interval_millis).unwrap_or(i64::MAX);
-        if !due(
-            now,
-            interval,
-            queue.last_admission_ms(),
-            queue.last_attempt_ms(),
-        ) {
+        if !due(now, interval, queue.last_attempt_ms()) {
             return Ok((QueueAnswer::NotDue, None));
         }
         let sequence = queue
@@ -518,13 +526,24 @@ impl Drop for Closing<'_> {
     }
 }
 
-/// 到没到下一次尝试：距上一次准入、距上一次尝试（含失败的）都要满批准的最小间隔。
+/// 定时器的计划触发时刻都落在整分钟（`studiolo-backup-schedule.timer` 的 `OnCalendar`）；判断间隔之前，
+/// 时刻先归到所在的整分钟。触发最多晚多久、命令最多跑多久，加起来不超过它（`deploy/backup-worker/test_units.py` 核）。
+const TRIGGER_SLOT_MILLIS: i64 = 60_000;
+
+/// 到没到下一次尝试：上一次尝试（含失败的）和现在各自的计划触发时刻之间，要满批准的最小间隔。
 /// 失败不缩短间隔，确定性的失败也只会按间隔重试。时钟回退时差值为负，按「还没到」处理。
-fn due(now: i64, interval: i64, last_admission: Option<i64>, last_attempt: Option<i64>) -> bool {
-    [last_admission, last_attempt]
-        .into_iter()
-        .flatten()
-        .all(|at| now.saturating_sub(at) >= interval)
+///
+/// 从尝试（原意图落账）数，不从准入数：准入要等封存做完，从它数就会把下一次推到定时器的再下一格（BUG-057）；
+/// 上一次还没做完由 `outstanding` 挡着，不会叠。按计划触发时刻比，是因为间隔正好是触发周期的整数倍：
+/// 按实际毫秒比，两次触发晚到的先后差几毫秒就要多等一格。代价是单次最多比批准的间隔短不到一分钟
+/// （只有不在整分钟触发时才会），但不累积：连着多少次，平均都不快于批准的间隔。
+fn due(now: i64, interval: i64, last_attempt: Option<i64>) -> bool {
+    last_attempt.is_none_or(|at| planned(now).saturating_sub(planned(at)) >= interval)
+}
+
+/// 这一刻所属的计划触发时刻：所在的整分钟。
+fn planned(at: i64) -> i64 {
+    at.saturating_sub(at.rem_euclid(TRIGGER_SLOT_MILLIS))
 }
 
 /// 冻结、绑定、准入这些环节的失败都归成同一个固定原因，不带细节。
@@ -624,20 +643,111 @@ mod tests {
     fn a_failed_attempt_waits_the_whole_approved_interval() {
         let failed_at = 10 * HOUR;
         // 没有任何历史：可以做。
-        assert!(due(failed_at, HOUR, None, None));
+        assert!(due(failed_at, HOUR, None));
         // 失败之后一分钟、半小时都不重试，满一个间隔才重试。
-        assert!(!due(failed_at + 61_000, HOUR, None, Some(failed_at)));
-        assert!(!due(failed_at + HOUR / 2, HOUR, None, Some(failed_at)));
-        assert!(due(failed_at + HOUR, HOUR, None, Some(failed_at)));
-        // 准入和尝试取较晚的那个。
-        assert!(!due(
-            failed_at + HOUR,
-            HOUR,
-            Some(failed_at + HOUR / 2),
-            Some(failed_at)
-        ));
+        assert!(!due(failed_at + 61_000, HOUR, Some(failed_at)));
+        assert!(!due(failed_at + HOUR / 2, HOUR, Some(failed_at)));
+        assert!(!due(failed_at + HOUR - 1, HOUR, Some(failed_at)));
+        assert!(due(failed_at + HOUR, HOUR, Some(failed_at)));
         // 时钟回退按「还没到」处理。
-        assert!(!due(failed_at - 1, HOUR, None, Some(failed_at)));
+        assert!(!due(failed_at - 1, HOUR, Some(failed_at)));
+        assert!(!due(failed_at - HOUR, HOUR, Some(failed_at)));
+    }
+
+    #[test]
+    fn the_interval_is_compared_between_planned_trigger_moments() {
+        let planned = 10 * HOUR;
+        // 这一分钟里不管晚到多久落的账，下一次都在整一个间隔之后的那个整分钟；前一毫秒还不到。
+        for late in [0, 1, 8, 30_000, MINUTE - 1] {
+            let attempted = planned + late;
+            assert!(!due(planned + APPROVED - 1, APPROVED, Some(attempted)));
+            assert!(due(planned + APPROVED, APPROVED, Some(attempted)));
+        }
+        // 晚过一分钟就算下一分钟的：退化成多等，不会提前。
+        assert!(!due(planned + APPROVED, APPROVED, Some(planned + MINUTE)));
+        // 间隔不是整分钟时往上取，不往下取。
+        assert!(!due(planned + MINUTE, MINUTE + 1, Some(planned)));
+        assert!(due(planned + 2 * MINUTE, MINUTE + 1, Some(planned)));
+        // 比一分钟短的间隔也至少等到下一个整分钟。
+        assert!(!due(planned + MINUTE - 1, 1, Some(planned)));
+        assert!(due(planned + MINUTE, 1, Some(planned)));
+    }
+
+    #[test]
+    fn asking_at_every_moment_never_makes_seals_more_frequent_than_approved() {
+        // 触发方（worker 账号）一秒问一次、从一分钟的最后一刻开始：单次最多短不到一分钟，但不累积。
+        let first = 10 * HOUR + MINUTE - 1;
+        let mut attempts = vec![first];
+        for now in (first..first + 24 * HOUR).step_by(1_000) {
+            let last = attempts[attempts.len() - 1];
+            if due(now, APPROVED, Some(last)) {
+                assert!(now - last > APPROVED - MINUTE, "{last} → {now}");
+                attempts.push(now);
+            }
+        }
+        let gaps = i64::try_from(attempts.len()).unwrap() - 1;
+        assert!(gaps > 100, "{gaps}");
+        assert!(attempts[attempts.len() - 1] - first > gaps * APPROVED - MINUTE);
+    }
+
+    const MINUTE: i64 = 60_000;
+    /// 169 上批准的间隔和定时器的周期（`deploy/backup-worker` 的用例核它们和部署文件一致）。
+    const APPROVED: i64 = 10 * MINUTE;
+    const TICK: i64 = 5 * MINUTE;
+
+    /// 照 169 的样子走一天：定时器每 5 分钟问一次，每次晚到的毫秒数照 `late` 轮着取；封存成功，worker 在原意图之后
+    /// 3.5 分钟收口，收口之前问到的一律不做。回每次开始的计划触发时刻。
+    fn a_day_of_triggers(late: &[i64]) -> Vec<i64> {
+        const CLOSED_AFTER: i64 = 210_000;
+        // 判断之后要等原意图落账：记下的时刻比判断那一刻晚一点。
+        const APPEND: i64 = 8;
+        let mut started = Vec::new();
+        let mut last: Option<i64> = None;
+        for (n, late) in (0..24 * HOUR / TICK).zip(late.iter().cycle()) {
+            let planned = n * TICK;
+            let now = planned + late;
+            if last.is_some_and(|at| now < at + CLOSED_AFTER) {
+                continue;
+            }
+            if due(now, APPROVED, last) {
+                started.push(planned);
+                last = Some(now + APPEND);
+            }
+        }
+        started
+    }
+
+    #[test]
+    fn every_successful_seal_is_followed_by_the_next_one_exactly_one_approved_interval_later() {
+        // 晚到：一点不晚、越来越早、越来越晚、忽早忽晚、到定时器精度上限。
+        for late in [
+            &[0][..],
+            &[900, 600, 300, 0],
+            &[0, 300, 600, 900],
+            &[40, 3, 700, 12, 2_500, 1],
+            &[30_000, 0, 29_999, 5],
+        ] {
+            let started = a_day_of_triggers(late);
+            assert!(
+                started.windows(2).all(|pair| pair[1] - pair[0] == APPROVED),
+                "{late:?}: {started:?}"
+            );
+            assert_eq!(started.len(), 24 * 6, "{late:?}");
+        }
+    }
+
+    #[test]
+    fn a_trigger_that_is_missed_costs_one_tick_and_the_grid_recovers() {
+        // 第 10 分钟那次没问成（连不上、上一次还没收口）：下一格补上，再下一次又是一个间隔之后。
+        let last = 10 * HOUR + 20;
+        let retried = 10 * HOUR + APPROVED + TICK + 3;
+        assert!(due(retried, APPROVED, Some(last)));
+        assert!(!due(retried + TICK, APPROVED, Some(retried)));
+        assert!(due(
+            10 * HOUR + 2 * APPROVED + TICK,
+            APPROVED,
+            Some(retried)
+        ));
     }
 
     #[test]

@@ -1,4 +1,4 @@
-//! 待办以账本为准：从备份事件里算出下一个序号、没做完的原键、最近两次的时间，
+//! 待办以账本为准：从备份事件里算出下一个序号、没做完的原键、最近一次尝试的时间，
 //! 以及健康页要看的最近成功、最近失败、挂着的作业和最新的灾难恢复点。
 //!
 //! 这里只有纯逻辑，按账本顺序一条条喂记录；读账本和写账本都在 `producer.rs`。
@@ -33,7 +33,6 @@ pub(super) struct Queue {
     highest: u64,
     open: BTreeMap<u64, Open>,
     last_attempt_ms: Option<i64>,
-    last_admission_ms: Option<i64>,
     first_attempt_ms: Option<i64>,
     last_success: Option<JobMark>,
     last_failure: Option<FailureMark>,
@@ -110,7 +109,6 @@ impl Queue {
         {
             open.admission = Some(record.clone());
             open.content_cutoff_ms = Some(fact.content_cutoff().millis());
-            self.last_admission_ms = Some(at);
         }
     }
 
@@ -146,11 +144,6 @@ impl Queue {
     /// 最近一次尝试（原意图）落账的时刻。
     pub(super) fn last_attempt_ms(&self) -> Option<i64> {
         self.last_attempt_ms
-    }
-
-    /// 最近一次封存成功（准入）落账的时刻。
-    pub(super) fn last_admission_ms(&self) -> Option<i64> {
-        self.last_admission_ms
     }
 
     /// 账本里第一次尝试（原意图）落账的时刻。

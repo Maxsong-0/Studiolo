@@ -114,8 +114,7 @@ fn only_an_admitted_key_without_an_outcome_is_pending_and_the_oldest_comes_first
     assert!(queue.next_pending().is_none());
     assert_eq!(queue.orphans(), vec![key(1)]);
     assert_eq!(queue.next_sequence(), Some(2));
-    assert_eq!(queue.last_admission_ms(), None);
-    assert!(queue.last_attempt_ms().is_some());
+    assert_eq!(queue.last_attempt_ms(), Some(at(&first)));
 
     let admitted = admit(&ledger, &key(1), &first);
     let second = intent(&ledger, &key(2), TARGET);
@@ -123,7 +122,8 @@ fn only_an_admitted_key_without_an_outcome_is_pending_and_the_oldest_comes_first
     let queue = view(&ledger);
     assert_eq!(queue.next_pending(), Some(&admitted), "先做最早的那个");
     assert!(queue.orphans().is_empty());
-    assert!(queue.last_admission_ms().is_some());
+    // 间隔从尝试数：准入落账不算一次新的尝试。
+    assert_eq!(queue.last_attempt_ms(), Some(at(&second)));
     assert_eq!(queue.scanned(), 4);
 
     fail(&ledger, &key(1));

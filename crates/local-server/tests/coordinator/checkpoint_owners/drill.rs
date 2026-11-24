@@ -142,7 +142,7 @@ async fn sealed_job_whose_source_expires_is_closed_by_the_worker_over_the_closed
     );
     assert_eq!(stage.outcomes(1), 1);
 
-    // 生产者一侧：这个原键收口了，不再是待办；离上一次准入还不到最小间隔，不会马上再封存一次。
+    // 生产者一侧：这个原键收口了，不再是待办；离上一次尝试还不到最小间隔，不会马上再封存一次。
     assert_eq!(stage.ask(QueueCommand::NextPending), QueueAnswer::Idle);
     assert_eq!(stage.ask(QueueCommand::Schedule), QueueAnswer::NotDue);
     // 这一次 `schedule` 不封存，但照样带起后台回收：过期的封存正文从固定父目录里清掉了。

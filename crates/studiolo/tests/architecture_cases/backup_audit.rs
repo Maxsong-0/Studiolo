@@ -151,6 +151,8 @@ fn producer_socket_and_schedule_are_closed_capabilities() {
         "request.target() != TARGET",
         "BackupAdmission::resume(self.ledger.clone(), request.key(), TARGET)",
         "queue.outstanding()",
+        "self.schedule_with(now_millis)",
+        "if !due(now, interval, queue.last_attempt_ms())",
         // `self.window.close();` 在别处还有一处：连同前一句一起认，删掉放开之后那一处才算数。
         "let mut released = frozen\n            .release_timed(deadline, &mut steps)\n            .map_err(|error| stuck(error, &steps))?;\n        self.window.close();",
         "drop(released);",
