@@ -70,31 +70,32 @@ KEEP_LAST, KEEP_DAILY = 30, 14
 # 封存副本只在到期后回收：保留期乘上数据量就是暂存区的盘占用（169 上每份约 1.1G，一小时约 8G）。
 RETENTION_MILLIS = 3_600_000
 
-# ---------------------------------------------------------------- 发行相关的值（跟着 r22 候选和 108 的构建走）
-# r22：108 上从提交 75a5fa4 构建（2026-11-23，产物 ~/r22-75a5fa4-20261123-out）。SOURCE_COMMIT 写的是构建提交，不是改这几行的那个提交。
-SOURCE_COMMIT = '75a5fa4'
-HUMAN_RELEASE = 'm5m6-board-20260920-r22'
+# ---------------------------------------------------------------- 发行相关的值（跟着 r23 候选和 108 的构建走）
+# r23：108 上从提交 38bf34a 构建（2026-11-23，产物 ~/r23-38bf34a-20261124-out）。SOURCE_COMMIT 写的是构建提交，不是改这几行的那个提交。
+# 这一版只有 worker 程序变了（BUG-053）；local-server、maintain 和 r22 一字不差。
+SOURCE_COMMIT = '38bf34a'
+HUMAN_RELEASE = 'm5m6-board-20260920-r23'
 RELEASE_DIRECTORY = '/home/maxsong/.local/share/studiolo-human-releases'
 PACKAGES = (
     ('studiolo-local-server', '85a941f8942d1b00cf9b6dd7963e7fbbe15e8797b80d3a88177a71551f59001a'),
     ('studiolo-maintain', '898a8dfe2c8b47ecc3df731805eef36552952676eb77eccb4f9cfbeef2b9c30b'),
-    ('studiolo-backup-worker', '1611739fde23b08ef1203eeebd8daf4f856171b9416bacd411a74ef44effe8a8'),
+    ('studiolo-backup-worker', 'c70a39f819791e5be37e0f1786b2eccf661a9598eb686f9bfcc0d00f976955b0'),
 )
 RESTIC_SHA = '20d4142678d0d95ec11a4759def1b73fd9190abc9ca19e4b62d067c0b387e639'
 CA_SHA = '4577693009b4c680420b7ff895970a4e8b2838e451cad0bb8a0dfe7c64e8c269'
 # 要拷的三样现在放在哪（都在 169 上）：108 构建的 worker、P3 时装的 restic、P3 时取回的 NAS 公开证书。
-WORKER_SOURCE = '/home/maxsong/studiolo-t227-r22-20261123-75a5fa45-worker/studiolo-backup-worker'
+WORKER_SOURCE = '/home/maxsong/studiolo-t227-r23-20261123-38bf34aa-worker/studiolo-backup-worker'
 RESTIC_SOURCE = '/usr/local/bin/studiolo-restic'
 CA_SOURCE = '/home/maxsong/.config/studiolo-backup/ca.pem'
 # 上一版发行：169 上已经照它置备过的那一组值，键是 commit、release、packages（和上面三个同形）。换发行时把上面
 # 三个值原样搬进来再填新值；没有上一版（第一次置备）就是 None。上一版那份私有备份配置要能照这组值原样生成出来
 # （见 backup_document）：这次要是还改了别的字段，把旧值一起搬进来，不然现场那一份认不出来、会停下。
-# 现在登记的是 r21（提交 9bdcc1e 构建，2026-11-23 在 169 上置备、激活）。
+# 现在登记的是 r22（提交 75a5fa4 构建，2026-11-23 在 169 上置备、激活）。
 PREVIOUS = {
-    'commit': '9bdcc1e', 'release': 'm5m6-board-20260920-r21',
+    'commit': '75a5fa4', 'release': 'm5m6-board-20260920-r22',
     'packages': (
-        ('studiolo-local-server', '3f20819d44206998ae420f427baabbc1bc380f8c51134ba6ae058206ef949580'),
-        ('studiolo-maintain', '2a7f0bced3a25709efd0665064dee875b3b3729db10e74c156376839724e2b53'),
+        ('studiolo-local-server', '85a941f8942d1b00cf9b6dd7963e7fbbe15e8797b80d3a88177a71551f59001a'),
+        ('studiolo-maintain', '898a8dfe2c8b47ecc3df731805eef36552952676eb77eccb4f9cfbeef2b9c30b'),
         ('studiolo-backup-worker', '1611739fde23b08ef1203eeebd8daf4f856171b9416bacd411a74ef44effe8a8'),
     ),
 }

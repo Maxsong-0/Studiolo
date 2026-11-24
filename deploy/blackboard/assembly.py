@@ -1,7 +1,7 @@
 """从已激活发行派生候选的固定装配；不读取凭据、不操作服务或数据库。
 
 黑板接线沿用 r2，Bridge 接线与只读身份库参数沿用 r16，备份生产者接线（启动器参数、两个写根、停止超时）沿用 r17
-（r18、r19、r20、r21 原样沿用，已激活）；本版只替换发行路径和人侧程序，写根、认证、配对和同步范围保持现场原值。
+（r18～r22 原样沿用，已激活）；本版只替换发行路径和人侧程序（r23 的人侧程序和 r22 一字不差），写根、认证、配对和同步范围保持现场原值。
 变换只接受钉住的上一发行形状；额外差异由现场摘要和逐字变换核验拒绝。
 
 沿革：r8→r2 的装配逻辑见本文件在 main `40fdf8d` 及更早的版本（一次性迁移，已激活）；
@@ -33,14 +33,17 @@ Bridge 库不加表、不改编码，但新程序一启动就把库里存的路�
 r20→r21（T-227：BUG-050 看板租约巡检遇备份冻结跳过这一轮，不再带着人侧退出；关停链打出谁先结束和起因，
 封存打出冻结窗口里和放开之后的分步用时。只换人侧程序，启动器和单元的接线一个字不动。
 数据库与状态的版本号不变：Bridge 库不加表、不改编码，路径预算 r20 已升过，激活失败可以退回 r20，已激活）；
-本版 r21→r22（T-227：BUG-052 封存的导出扫描也认批次终态记录，2026-11-13 以前的批次提交留下的历史正文
-不再让整批封存失败。只换人侧程序，启动器和单元的接线一个字不动。数据库与状态的版本号不变，激活失败可以退回 r21）。
+r21→r22（T-227：BUG-052 封存的导出扫描也认批次终态记录，2026-11-13 以前的批次提交留下的历史正文
+不再让整批封存失败。只换人侧程序，启动器和单元的接线一个字不动。数据库与状态的版本号不变，激活失败可以退回 r21，已激活）；
+本版 r22→r23（T-227：BUG-053 worker 读回整份封存只起一个 restic dump，tar 流边读边按清单核。修复在 worker 程序里，
+人侧程序和 r22 一字不差，不要求换（NEW_HUMAN_PROGRAM_LITERALS 为空）；要出发行、激活，是因为私有备份配置里 worker 的摘要
+和部署版本变了，人侧只在启动时读它。启动器和单元的接线一个字不动。数据库与状态的版本号不变，激活失败可以退回 r22）。
 """
 import shlex
 from pathlib import Path
 
-OLD_RELEASE = '/home/maxsong/.local/share/studiolo-human-releases/m5m6-board-20260920-r21'
-BUILD = 'm5m6-board-20260920-r22'
+OLD_RELEASE = '/home/maxsong/.local/share/studiolo-human-releases/m5m6-board-20260920-r22'
+BUILD = 'm5m6-board-20260920-r23'
 BRIDGE_ROOT = '/var/lib/studiolo-owner/bridge'
 TRANSPORT_ROOT = '/home/maxsong/.local/share/studiolo-sync-transport'
 SYNC_APPROVAL = '/home/maxsong/.config/studiolo-human/sync-transport.json'
@@ -63,15 +66,10 @@ BACKUP_STAGING = '/var/lib/studiolo-backup-staging'
 BACKUP_SOCKET = BACKUP_RUNTIME + '/producer.sock'
 # 本版必须换的人侧程序里才有的字节：非空就表示本版必须换人侧程序。出候选和候选核验（激活预检也跑它）都要求候选程序的
 # 字节和上一发行不同，并且字节里有这些字面量。只看来源提交号不够：号可以填新的、文件却是旧的。
-# 本版（r22）的启动器没有新参数，要换程序是因为修复在程序里（人侧程序封存时调 Broker 的导出扫描）。取三段只有
-# 新程序才有的字节（中文，按 UTF-8 编码后比）：导出扫描拒绝时的三个原因，都在 crates/vault-broker/src/trusted_export.rs，
-# 是完整的字符串字面量。编进程序后都是原样的字节。
-# 169 上 r21 的程序（9bdcc1e 构建，摘要 3f20819d…9580）里三段都没有，2026-11-23 只读核过（按字节数，各 0 处）。
-NEW_HUMAN_PROGRAM_LITERALS = tuple(literal.encode() for literal in (
-    '历史正文没有目录或批次记录认领',
-    '批次记录读不出来',
-    '批次记录的文件名对不上',
-))
+# 本版（r23）不要求换：修复在 worker 程序里。人侧程序 108 从 38bf34a 构建，和 r22（75a5fa4）一字不差
+# （local-server 85a941f8…001a、maintain 898a8dfe…c30b，2026-11-23 核过）；r22 那三段字面量还在程序里，不再拿来分新旧。
+# 下一发行的修复要是又在人侧程序里，照 README「改常量」一节把新字节写回来。
+NEW_HUMAN_PROGRAM_LITERALS = ()
 REQUIRES_NEW_HUMAN_PROGRAM = bool(NEW_HUMAN_PROGRAM_LITERALS)
 # 人侧停止超时（秒）。关停是串行的两段（crates/local-server/src/startup/serving.rs）：收到退出信号先等备份收尾，
 # 做完才通知 Bridge 停，所以两段要相加。备份段等的是在途的那一个连接整个处理完，再等它起的后台线程
@@ -131,13 +129,13 @@ STOP_TIMEOUT_SECONDS = (BACKUP_CONNECTION_WINDOW_SECONDS + BACKUP_SCAN_BUDGET_SE
                         + BACKUP_RECLAIM_SECONDS + BACKUP_FREEZE_BUDGET_SECONDS
                         + BRIDGE_STOP_GRACE_SECONDS + BRIDGE_STOP_MARGIN_SECONDS
                         + UNBUDGETED_STEPS_SECONDS + STOP_SAFETY_MARGIN_SECONDS)
-# 固定摘要防止覆盖其他发布。两个都是 2026-11-23 从 169 只读回读的现场值：human 是 r21 激活写下的单元
-# （已接备份：两个写根、停止超时 300 秒；和 r21 发行目录里那份逐字节相同）；agent 是 T-215 部署之后的单元
-# （发布名 t215-116f5d7-20261120），r21 没动它，和上一版钉的一致。
-HUMAN_SHA = '7a6281d17c6a347761b730ffd1f12b4477abf6d480c0504bdd61511d4d254993'
+# 固定摘要防止覆盖其他发布。两个都是 2026-11-23 从 169 只读回读的现场值：human 是 r22 激活写下的单元
+# （已接备份：两个写根、停止超时 300 秒；和 r22 发行目录里那份逐字节相同）；agent 是 T-215 部署之后的单元
+# （发布名 t215-116f5d7-20261120），r22 没动它，和上一版钉的一致。
+HUMAN_SHA = '628eaf22ae854f2704617e608016600ac9bf1e8ecec0cf8fabbf740b5125f776'
 AGENT_SHA = '394ffe6f55823e7ac8cf7cad02fcb2c34cbee0d284afd3c706d13afe54f50117'
-# 键名沿用早期协议，内容钉住当前 r21 manifest（2026-11-23 从 169 只读回读）。
-R8_MANIFEST_SHA = '86d1eb873de328e59c2b411d46072a06569e039b44746a00a665f4c745e9caf1'
+# 键名沿用早期协议，内容钉住当前 r22 manifest（2026-11-23 从 169 只读回读）。
+R8_MANIFEST_SHA = 'b9d822a2777d067d68f5fc7d0ace6269dadecf800cad1746bb869442ce9fc122'
 # 发行目录里属于网页的前缀：本次唯一允许整体更换的部分。
 WEB_PREFIX = 'web/'
 # 沿用黑板装配标识；Bridge 接线仍受固定现场摘要约束。
@@ -168,7 +166,7 @@ def human_unit(text):
     for path in (VAULT, WRITER, BOARD, AGENT, BOARD_RUNTIME, BRIDGE_ROOT, TRANSPORT_ROOT):
         if 'ReadWritePaths=' + path + '\n' not in text:
             raise ValueError('board wiring missing')
-    # 上一发行（r21，接线沿用 r17）已接备份：两个写根各恰好一行、紧跟在 Bridge 传输根后面，别处不再提备份路径；
+    # 上一发行（r22，接线沿用 r17）已接备份：两个写根各恰好一行、紧跟在 Bridge 传输根后面，别处不再提备份路径；
     # 停止超时恰好是按预算算出来的那一行。少了、多了、值不对，都说明现场不是钉住的形状。
     wired = 'ReadWritePaths=' + TRANSPORT_ROOT + '\n' + ''.join(
         'ReadWritePaths=' + path + '\n' for path in (BACKUP_RUNTIME, BACKUP_STAGING))
@@ -212,7 +210,7 @@ def launcher(text):
         raise ValueError('bridge wiring missing')
     if text.count('"--board-agent-data", AGENT, "--agent-data", AGENT,') != 1 or text.count('"--agent-data"') != 1:
         raise ValueError('agents wiring missing')
-    # 上一发行（r21，接线沿用 r17）已带备份配置参数：恰好一处，紧跟在同步审批后面，路径是写死的那一份。
+    # 上一发行（r22，接线沿用 r17）已带备份配置参数：恰好一处，紧跟在同步审批后面，路径是写死的那一份。
     approval = '"--sync-transport", "' + SYNC_APPROVAL + '",'
     if (text.count(approval + ' "--backup-config", "' + BACKUP_CONFIG + '",') != 1
             or text.count('--backup-config') != 1):

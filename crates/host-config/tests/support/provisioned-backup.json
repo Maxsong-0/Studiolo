@@ -38,29 +38,29 @@
   "application_packages": [
    {
     "name": "studiolo-local-server",
-    "version": "75a5fa4",
+    "version": "38bf34a",
     "digest": "85a941f8942d1b00cf9b6dd7963e7fbbe15e8797b80d3a88177a71551f59001a"
    },
    {
     "name": "studiolo-maintain",
-    "version": "75a5fa4",
+    "version": "38bf34a",
     "digest": "898a8dfe2c8b47ecc3df731805eef36552952676eb77eccb4f9cfbeef2b9c30b"
    },
    {
     "name": "studiolo-backup-worker",
-    "version": "75a5fa4",
-    "digest": "1611739fde23b08ef1203eeebd8daf4f856171b9416bacd411a74ef44effe8a8"
+    "version": "38bf34a",
+    "digest": "c70a39f819791e5be37e0f1786b2eccf661a9598eb686f9bfcc0d00f976955b0"
    }
   ],
   "restic_digest": "20d4142678d0d95ec11a4759def1b73fd9190abc9ca19e4b62d067c0b387e639",
   "deployment": [
    {
     "unit": "studiolo-human.service",
-    "revision": "m5m6-board-20260920-r22"
+    "revision": "m5m6-board-20260920-r23"
    },
    {
     "unit": "studiolo-backup-worker.service",
-    "revision": "75a5fa4"
+    "revision": "38bf34a"
    }
   ]
  }

@@ -1,4 +1,4 @@
-"""黑板形状发行（当前 r21→r22）的固定变更面；夹具不接触生产或凭据。"""
+"""黑板形状发行（当前 r22→r23）的固定变更面；夹具不接触生产或凭据。"""
 import ast
 import collections
 import importlib.util
@@ -11,7 +11,7 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 def board_launcher():
-    """把 r7/r8 那份启动器补成上一发行（r21，接线沿用 r17）的形状：带黑板常量与参数、只读身份目录参数、备份配置参数，
+    """把 r7/r8 那份启动器补成上一发行（r22，接线沿用 r17）的形状：带黑板常量与参数、只读身份目录参数、备份配置参数，
     RELEASE 指向上一发行。"""
     text = (ROOT / 'deploy/human/current-v2/launch-human.py').read_text().replace(
         'm4-t092-20260920-r7', a.OLD_RELEASE.rsplit('/', 1)[1]).replace(
@@ -31,7 +31,7 @@ def board_launcher():
 
 
 def board_unit():
-    """把 r7/r8 那份人侧单元补成上一发行（r21，接线沿用 r17）的形状：黑板 RuntimeDirectory，黑板五个写根、Bridge 两个写根、
+    """把 r7/r8 那份人侧单元补成上一发行（r22，接线沿用 r17）的形状：黑板 RuntimeDirectory，黑板五个写根、Bridge 两个写根、
     备份两个写根，都在 [Service] 节里、顺序和线上一致；停止超时是按预算算出来的那一行。"""
     text = (ROOT / 'deploy/human/current-v2/studiolo-human.service').read_text().replace(
         'm4-t092-20260920-r7', a.OLD_RELEASE.rsplit('/', 1)[1])
@@ -82,10 +82,10 @@ def rust_calls(paths, receiver, method=r'\w+'):
 
 
 class AssemblyTests(unittest.TestCase):
-    def test_r22_upgrades_the_activated_r21(self):
-        self.assertEqual(a.BUILD, 'm5m6-board-20260920-r22')
+    def test_r23_upgrades_the_activated_r22(self):
+        self.assertEqual(a.BUILD, 'm5m6-board-20260920-r23')
         self.assertEqual(a.RELEASE.rsplit('/', 1)[1], a.BUILD)
-        self.assertTrue(a.OLD_RELEASE.endswith('/m5m6-board-20260920-r21'))
+        self.assertTrue(a.OLD_RELEASE.endswith('/m5m6-board-20260920-r22'))
         self.assertEqual(a.WEB_PREFIX, 'web/')
 
     def test_launcher_preserves_the_approved_bridge_wiring(self):
@@ -249,24 +249,11 @@ class AssemblyTests(unittest.TestCase):
         self.assertEqual(bridge_readme.count(
             '审批 `budget.stop_grace_seconds` 加 %d s' % a.BRIDGE_STOP_MARGIN_SECONDS), 1)
 
-    def test_this_release_requires_the_new_human_program(self):
-        # 本版的修复都在人侧程序里，必须换程序（出候选和激活预检靠这两个常量拒绝沿用旧程序）。
-        self.assertIs(a.REQUIRES_NEW_HUMAN_PROGRAM, True)
-        # 每段字节：在哪份源码里、原样写成什么样。每段都从一个字符串字面量的开头引号起，后面紧跟着占位符或结尾引号，
-        # 所以程序里连续的字节就到这里为止（中文按 UTF-8 编码后比）。上一发行的程序里都没有，在 169 上只读核过。
-        export = 'crates/vault-broker/src/trusted_export.rs'
-        pinned = tuple((literal, export, 'rejected(path, "%s")' % literal) for literal in (
-            '历史正文没有目录或批次记录认领',
-            '批次记录读不出来',
-            '批次记录的文件名对不上',
-        ))
-        self.assertEqual(a.NEW_HUMAN_PROGRAM_LITERALS, tuple(literal.encode() for literal, _, _ in pinned))
-        for literal, path, written in pinned:
-            # 只看编进程序的那部分源码（测试模块和注释不算）：原样的字符串字面量，只此一处。
-            code = rust_code(ROOT / path)
-            self.assertEqual(code.count(written), 1, written)
-            self.assertEqual(code.count(literal), 1, written)
-            self.assertTrue(written.split('"' + literal, 1)[1].startswith(('{', '"')), written)
+    def test_this_release_carries_the_human_program_over(self):
+        # 本版（r23）的修复在 worker 程序里，人侧程序和上一发行一字不差：不要求换程序，出候选和激活预检不按字面量拒。
+        # 下一发行的修复要是又在人侧程序里，照 README「改常量」一节把新字节写回 NEW_HUMAN_PROGRAM_LITERALS，这里跟着改回去。
+        self.assertEqual(a.NEW_HUMAN_PROGRAM_LITERALS, ())
+        self.assertIs(a.REQUIRES_NEW_HUMAN_PROGRAM, False)
 
     def test_agent_unit_is_carried_over_byte_for_byte(self):
         for quoted in (False, True):
