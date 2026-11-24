@@ -4,6 +4,7 @@
 mod audit;
 mod config;
 mod credentials;
+mod digest;
 mod job;
 mod package;
 mod process;

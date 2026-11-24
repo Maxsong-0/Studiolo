@@ -4,8 +4,11 @@
 //! 普通文件按清单核路径、字节数和 SHA-256，一份不多、一份不少、不重复；目录只许是封存根或清单里的目录，
 //! 清单里的目录也一个不少（封存根自己 restic 不写，有没有都行）。
 //! 结尾要有两个全零块，之后只许再跟全零字节。任何一处不对就记下，读完由 [`TarCheck::finish`] 报协议错误。
-use super::{FILE_LIMIT, digest_text, hex, sink::Sink};
-use crate::{ProcessError, Result};
+use super::{FILE_LIMIT, sink::Sink};
+use crate::{
+    ProcessError, Result,
+    digest::{hex, is_sha256_hex},
+};
 use sha2::{Digest, Sha256};
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -54,7 +57,7 @@ impl TreeExpectation {
     pub fn file(&mut self, path: &str, bytes: u64, sha256: &str) -> Result<()> {
         if !relative(path)
             || bytes > FILE_LIMIT
-            || !digest_text(sha256)
+            || !is_sha256_hex(sha256)
             || self
                 .files
                 .insert(path.to_owned(), (bytes, sha256.to_owned()))
