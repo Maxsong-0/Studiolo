@@ -171,6 +171,11 @@ fn backup_worker_cannot_detach_job_source_or_expiry_from_execution() {
             "Ok(None) => return Ok(Round::Waiting),",
         ),
         ("process.rs", "interrupt()?;", ""),
+        (
+            "process.rs",
+            "    if !success {\n        return Err(ProcessError::Protocol);\n    }\n    stdout.finish()",
+            "    stdout.finish()",
+        ),
         // 把让路挪回每轮开头：子进程退出、正在读空管道时也会问，查完的结果可能被丢掉。
         (
             "process.rs",

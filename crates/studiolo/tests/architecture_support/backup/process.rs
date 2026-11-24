@@ -255,6 +255,8 @@ pub(super) fn remainder(path: &Path, source: &str) -> String {
                 "if!input.finished(){returnErr(ProcessError::Io);}",
                 "credentials.attach(&mutcommand,deadline)?;",
                 "credentials.check(deadline)?;",
+                // BUG-053：整份读回只有子进程退出 0、流也核完才算通过；流完整而退出码不是 0 也拒绝。
+                "if!success{returnErr(ProcessError::Protocol);}stdout.finish()",
             ],
             &[
                 ("Command::new(&executable)", 1),

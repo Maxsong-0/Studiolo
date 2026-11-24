@@ -101,13 +101,7 @@ pub(crate) fn verify_digest(
     check_source_time: &impl Fn() -> Result<()>,
     expected: DigestExpectation<'_>,
 ) -> Result<()> {
-    if expected.bytes > 512 * 1024 * 1024 * 1024
-        || expected.sha256.len() != 64
-        || !expected
-            .sha256
-            .bytes()
-            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
-    {
+    if expected.bytes > FILE_LIMIT || !digest_text(expected.sha256) {
         return Err(ProcessError::Configuration);
     }
     let (success, stdout, bytes) = execute_with(
@@ -124,17 +118,27 @@ pub(crate) fn verify_digest(
             interrupt: &uninterrupted,
         },
     )?;
-    let hash = stdout
-        .digest
-        .finalize()
-        .iter()
-        .map(|b| format!("{b:02x}"))
-        .collect::<String>();
+    let hash = hex(&stdout.digest.finalize());
     if !success || bytes != expected.bytes || hash != expected.sha256 {
         return Err(ProcessError::Protocol);
     }
     Ok(())
 }
+/// 单个文件的上限：单文件读回和整份封存读回都按它核期望。
+const FILE_LIMIT: u64 = 512 * 1024 * 1024 * 1024;
+
+/// SHA-256 的文本写法：64 个小写十六进制字符。
+fn digest_text(text: &str) -> bool {
+    text.len() == 64
+        && text
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+}
+
+fn hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
 /// 整份封存一次读回：一个进程输出整棵树的 tar 流，边读边按清单核（见 [`tar`]）。
 pub(crate) fn verify_tree(
     package: &ResticPackage,

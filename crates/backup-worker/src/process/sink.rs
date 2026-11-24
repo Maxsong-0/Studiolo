@@ -1,4 +1,5 @@
-//! JSON 输出有界保存，文件复验只流式保留摘要，stderr 只计数；三者共用管道、期限和清理。
+//! JSON 输出有界保存，单文件复验只流式保留摘要，整份封存读回边读边核 tar 流（`tar.rs`），stderr 只计数；
+//! 都共用管道、期限和清理。
 use sha2::{Digest, Sha256};
 use zeroize::Zeroizing;
 

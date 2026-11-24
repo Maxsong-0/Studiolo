@@ -50,26 +50,49 @@ fn split(name: &str) -> Option<(&str, &str)> {
         .find(|(prefix, base)| prefix.len() <= 155 && !base.is_empty() && base.len() <= 100)
 }
 
-/// 一条 PAX 记录「长度 键=值\n」，长度算上它自己的位数。
-pub(crate) fn record(key: &str, value: &str) -> String {
+/// 一条 PAX 记录「长度 键=值\n」，长度算上它自己的位数；键和值是原样字节（扩展属性的值可以不是 UTF-8）。
+pub(crate) fn record(key: &[u8], value: &[u8]) -> Vec<u8> {
     let base = key.len() + value.len() + 3;
     let mut length = base + base.to_string().len();
     if length.to_string().len() > base.to_string().len() {
         length += 1;
     }
-    format!("{length} {key}={value}\n")
+    let mut out = format!("{length} ").into_bytes();
+    out.extend_from_slice(key);
+    out.push(b'=');
+    out.extend_from_slice(value);
+    out.push(b'\n');
+    out
 }
 
 /// 一个 PAX 扩展头（头块加补齐过的正文）。
 pub(crate) fn pax(records: &[(&str, &str)]) -> Vec<u8> {
     let body = records
         .iter()
-        .map(|(key, value)| record(key, value))
-        .collect::<String>();
+        .flat_map(|(key, value)| record(key.as_bytes(), value.as_bytes()))
+        .collect::<Vec<u8>>();
+    pax_body(&body)
+}
+
+/// 一个 PAX 扩展头，正文原样给（可以故意写坏）。
+pub(crate) fn pax_body(body: &[u8]) -> Vec<u8> {
     let mut out = header("PaxHeaders.0/entry", b'x', body.len() as u64).to_vec();
-    out.extend_from_slice(body.as_bytes());
+    out.extend_from_slice(body);
     pad(&mut out);
     out
+}
+
+/// 改一项里的 ustar 头（不是 PAX 头的那一块），改完重算校验和。
+pub(crate) fn retouch(mut entry: Vec<u8>, change: impl Fn(&mut [u8; 512])) -> Vec<u8> {
+    let at = entry
+        .chunks(512)
+        .position(|block| block[156] != b'x' && &block[257..263] == b"ustar\0")
+        .unwrap()
+        * 512;
+    let block: &mut [u8; 512] = (&mut entry[at..at + 512]).try_into().unwrap();
+    change(block);
+    seal(block);
+    entry
 }
 
 /// 一项：要 PAX 就先写 PAX 头，ustar 头里放一个截短的 ASCII 名字（Go 也是这样）。

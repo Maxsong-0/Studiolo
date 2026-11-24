@@ -4,7 +4,7 @@
 //! 普通文件按清单核路径、字节数和 SHA-256，一份不多、一份不少、不重复；目录只许是封存根或清单里的目录，
 //! 清单里的目录也一个不少（封存根自己 restic 不写，有没有都行）。
 //! 结尾要有两个全零块，之后只许再跟全零字节。任何一处不对就记下，读完由 [`TarCheck::finish`] 报协议错误。
-use super::sink::Sink;
+use super::{FILE_LIMIT, digest_text, hex, sink::Sink};
 use crate::{ProcessError, Result};
 use sha2::{Digest, Sha256};
 use std::{
@@ -18,8 +18,6 @@ const BLOCK_BYTES: u64 = BLOCK as u64;
 const PAX_LIMIT: u64 = 64 * 1024;
 /// 结尾两个全零块之后还许跟的全零字节（按 tar 记录补齐的写法）。
 const TAIL_LIMIT: u64 = 20 * BLOCK_BYTES;
-/// 单个文件的上限，和单文件复验一致。
-const FILE_LIMIT: u64 = 512 * 1024 * 1024 * 1024;
 
 /// 一份封存读回时该看到什么：封存根在 tar 里的名字、清单里的目录和文件。
 pub(crate) struct TreeExpectation {
@@ -221,10 +219,8 @@ impl<'a> TarCheck<'a> {
         }
     }
     fn header(&mut self, block: &[u8; BLOCK]) -> std::result::Result<(), ()> {
+        // 全零块之前挂着一个 PAX 头（它后面没有项）：结尾照常走，读完由 `finish` 看 `pending` 拒绝。
         if block.iter().all(|byte| *byte == 0) {
-            if self.pending.is_some() {
-                return Err(());
-            }
             self.state = match self.state {
                 State::Header => State::SecondZero,
                 _ => State::End,
@@ -342,19 +338,8 @@ fn relative(path: &str) -> bool {
             .all(|part| !part.is_empty() && part != "." && part != "..")
 }
 
-fn digest_text(text: &str) -> bool {
-    text.len() == 64
-        && text
-            .bytes()
-            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
-}
-
 fn padded(bytes: u64) -> u64 {
     bytes.div_ceil(BLOCK_BYTES) * BLOCK_BYTES
-}
-
-fn hex(bytes: &[u8]) -> String {
-    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
 /// 头块校验和：校验和字段按 8 个空格算的无符号字节和（Go 写的就是这一种）。
@@ -401,16 +386,16 @@ fn ustar_name(block: &[u8; BLOCK]) -> std::result::Result<String, ()> {
     })
 }
 
-/// PAX 正文：一串「长度 键=值\n」记录。只取 path 和 size；同一个键出现两次、稀疏文件的记录都不认。
+/// PAX 正文：一串「长度 键=值\n」记录。只取 path 和 size：path 要是 UTF-8，size 只许十进制数字；
+/// 键为空、同一个键出现两次、稀疏文件和链接名的记录都不认。别的记录（时间、属主名、扩展属性 `SCHILY.xattr.*`）
+/// 只核记录本身的格式、不看值：Go 的 archive/tar 只禁这些键里有 NUL，扩展属性的值是原样字节，可以不是 UTF-8。
 fn parse_pax(body: &[u8]) -> std::result::Result<Pax, ()> {
     let mut pax = Pax::default();
     let mut rest = body;
     while !rest.is_empty() {
         let space = rest.iter().position(|byte| *byte == b' ').ok_or(())?;
-        let length = std::str::from_utf8(&rest[..space])
-            .ok()
-            .filter(|digits| !digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit()))
-            .and_then(|digits| digits.parse::<usize>().ok())
+        let length = decimal(&rest[..space])
+            .and_then(|length| usize::try_from(length).ok())
             .filter(|length| *length > space + 1 && *length <= rest.len())
             .ok_or(())?;
         let record = &rest[space + 1..length];
@@ -419,27 +404,28 @@ fn parse_pax(body: &[u8]) -> std::result::Result<Pax, ()> {
             return Err(());
         }
         let equals = record.iter().position(|byte| *byte == b'=').ok_or(())?;
-        let key = std::str::from_utf8(&record[..equals]).map_err(|_| ())?;
-        let value = std::str::from_utf8(&record[equals + 1..]).map_err(|_| ())?;
+        let (key, value) = (&record[..equals], &record[equals + 1..]);
         match key {
-            "path" if pax.path.is_none() => pax.path = Some(value.to_owned()),
-            "size" if pax.size.is_none() => {
-                pax.size = Some(
-                    Some(value)
-                        .filter(|digits| {
-                            !digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit())
-                        })
-                        .and_then(|digits| digits.parse().ok())
-                        .ok_or(())?,
-                );
+            b"" => return Err(()),
+            b"path" if pax.path.is_none() => {
+                pax.path = Some(std::str::from_utf8(value).map_err(|_| ())?.to_owned());
             }
-            "path" | "size" => return Err(()),
-            key if key.starts_with("GNU.sparse") || key == "linkpath" => return Err(()),
+            b"size" if pax.size.is_none() => pax.size = Some(decimal(value).ok_or(())?),
+            b"path" | b"size" => return Err(()),
+            key if key.starts_with(b"GNU.sparse") || key == b"linkpath" => return Err(()),
             _ => {}
         }
         rest = &rest[length..];
     }
     Ok(pax)
+}
+
+/// 十进制数字串：非空，只有 ASCII 数字（不带符号、空格）。
+fn decimal(digits: &[u8]) -> Option<u64> {
+    if digits.is_empty() || !digits.iter().all(u8::is_ascii_digit) {
+        return None;
+    }
+    std::str::from_utf8(digits).ok()?.parse().ok()
 }
 
 #[cfg(test)]

@@ -243,16 +243,12 @@ fn a_tree_read_back_checks_the_child_output_as_one_tar_stream() {
     stream.extend(builder::file("sealed/root/data/blob", &body));
     stream.extend(builder::end());
     let tar = temp.path().join("tree.tar");
-    let run = |bytes: &[u8], path: &Path| {
+    let run_script = |script: &str, bytes: &[u8], path: &Path| {
         fs::write(&tar, bytes).unwrap();
         // 子进程的环境是清空的：没有 PATH 时 sh 按它自带的默认搜索路径找 `cat`。
         process::verify_tree(
             &package,
-            &[
-                "-c".into(),
-                "exec cat \"$0\"".into(),
-                path.to_str().unwrap().into(),
-            ],
+            &["-c".into(), script.into(), path.to_str().unwrap().into()],
             &credentials,
             temp.path(),
             deadline(),
@@ -260,6 +256,7 @@ fn a_tree_read_back_checks_the_child_output_as_one_tar_stream() {
             &expected,
         )
     };
+    let run = |bytes: &[u8], path: &Path| run_script("exec cat \"$0\"", bytes, path);
     run(&stream, &tar).unwrap();
     let mut broken = stream.clone();
     broken[4096] ^= 1;
@@ -271,6 +268,11 @@ fn a_tree_read_back_checks_the_child_output_as_one_tar_stream() {
     // 子进程失败退出：没输出完的流不算读回通过。
     assert_eq!(
         run(&stream, &temp.path().join("missing")),
+        Err(ProcessError::Protocol)
+    );
+    // 流完整、摘要都对，退出码却不是 0：也不算读回通过（restic 可能在写完之后才报错）。
+    assert_eq!(
+        run_script("cat \"$0\"; exit 3", &stream, &tar),
         Err(ProcessError::Protocol)
     );
 }
