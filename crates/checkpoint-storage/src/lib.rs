@@ -2,6 +2,7 @@
 //! 本库只保证单库冻结与导出，完整语义操作、pending 和 ACK 必须由 owner 另行排空核验。
 mod digest;
 mod export;
+mod flush;
 mod paths;
 mod sqlite;
 use rusqlite::Connection;

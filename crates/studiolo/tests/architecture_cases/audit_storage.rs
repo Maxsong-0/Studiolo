@@ -16,6 +16,7 @@ fn checkpoint_storage_has_only_fixed_database_io_and_is_not_a_coordinator_capabi
         source.replace("root.join(file.name())", "root.join(other)"),
         source.replace(".create_new(true)", ".create(true)"),
         source.replace("OFlags::NOFOLLOW", "OFlags::empty()"),
+        source.replace("self.file_pin.sync_data().map_err(io)?;", ""),
         format!("{source}\nstd::fs::write(path, bytes)?;"),
     ] {
         assert!(

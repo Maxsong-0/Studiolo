@@ -109,6 +109,14 @@ impl Binding {
         self.root_pin.sync_all().map_err(io)?;
         self.check()
     }
+    /// 把写到一半的目标先落一次盘（BUG-054）：用已经开着的句柄，不另开一个再关——关掉同一个文件的任何一个
+    /// 描述符都会放掉 SQLite 在它上面的锁。
+    pub fn flush(&self) -> Result<(), Error> {
+        self.file_pin.sync_data().map_err(io)?;
+        #[cfg(test)]
+        FLUSHES.set(FLUSHES.get() + 1);
+        Ok(())
+    }
     pub fn has_sidecars(&self) -> Result<bool, Error> {
         for suffix in ["-wal", "-shm", "-journal"] {
             match fs::symlink_metadata(self.root.join(format!("{}{suffix}", self.file.name()))) {
@@ -119,6 +127,12 @@ impl Binding {
         }
         Ok(false)
     }
+}
+
+#[cfg(all(test, unix))]
+thread_local! {
+    /// 用例用：本线程的导出落过几次盘。
+    pub(crate) static FLUSHES: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
 }
 
 #[cfg(unix)]
@@ -202,6 +216,9 @@ impl Binding {
         Err(Error::UnsafeStorage)
     }
     pub fn sync(&self) -> Result<(), Error> {
+        Err(Error::UnsafeStorage)
+    }
+    pub fn flush(&self) -> Result<(), Error> {
         Err(Error::UnsafeStorage)
     }
     pub fn has_sidecars(&self) -> Result<bool, Error> {

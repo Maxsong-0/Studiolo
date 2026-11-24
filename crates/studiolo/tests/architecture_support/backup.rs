@@ -146,6 +146,8 @@ fn sqlite_checkpoint(path: &Path, source: &str) -> String {
                 "metadata.mode()&0o7777!=0o700",
                 "item.file_type().is_symlink()",
                 "letflags=OFlags::RDONLY|OFlags::CLOEXEC|OFlags::NOFOLLOW|OFlags::NONBLOCK;",
+                // 拷到一半按段落盘，没落盘的量不随库变大（BUG-054）。
+                "self.file_pin.sync_data().map_err(io)?;",
             ],
             &[
                 ("fs::{self,File,OpenOptions}", 1),
