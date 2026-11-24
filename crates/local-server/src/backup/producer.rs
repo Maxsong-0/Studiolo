@@ -585,43 +585,44 @@ impl Drop for Idle<'_> {
 /// 不等它等到人侧空闲（BUG-056）。
 #[derive(Default)]
 struct Window {
-    state: Mutex<WindowState>,
+    /// 不叫 `state`：装配的停止超时用例按名字数拿生产者状态锁的每一处，这把不是那把锁。
+    flags: Mutex<WindowFlags>,
     changed: Condvar,
 }
 
 #[derive(Default)]
-struct WindowState {
+struct WindowFlags {
     open: bool,
     /// 进程在关停：还没开始冻结的封存不再开始。置上就不复位。
     closing: bool,
 }
 
 impl Window {
-    fn state(&self) -> MutexGuard<'_, WindowState> {
-        self.state.lock().unwrap_or_else(PoisonError::into_inner)
+    fn flags(&self) -> MutexGuard<'_, WindowFlags> {
+        self.flags.lock().unwrap_or_else(PoisonError::into_inner)
     }
     fn open(&self) {
-        self.state().open = true;
+        self.flags().open = true;
     }
     fn close(&self) {
-        self.state().open = false;
+        self.flags().open = false;
         self.changed.notify_all();
     }
     /// 关停：先叫停还没开始冻结的封存，再等窗口放开。
     fn wind_down(&self) {
-        let mut state = self.state();
-        state.closing = true;
+        let mut flags = self.flags();
+        flags.closing = true;
         self.changed.notify_all();
         drop(
             self.changed
-                .wait_while(state, |state| state.open)
+                .wait_while(flags, |flags| flags.open)
                 .unwrap_or_else(PoisonError::into_inner),
         );
     }
     /// 最多睡 `span`；已经在关停、或者睡着时开始关停，马上返回真。
     fn closing_within(&self, span: Duration) -> bool {
         self.changed
-            .wait_timeout_while(self.state(), span, |state| !state.closing)
+            .wait_timeout_while(self.flags(), span, |flags| !flags.closing)
             .unwrap_or_else(PoisonError::into_inner)
             .0
             .closing

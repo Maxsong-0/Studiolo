@@ -90,7 +90,7 @@ REQUIRES_NEW_HUMAN_PROGRAM = bool(NEW_HUMAN_PROGRAM_LITERALS)
 #  service.rs 的 accept_until_stopped，同目录 service_tests.rs 钉着）：
 #   收发窗口：socket 收发的期限（service.rs 的 WINDOW）；
 #   处理请求：不受收发窗口管，要拿状态锁读账本，每次读按 SCAN_BUDGET 算。
-#             自己最多读三次：安排封存（producer.rs 的 schedule 两次加它调的 decide 一次）和安排抽查
+#             自己最多读三次：安排封存（producer.rs 的 schedule_with 两次加它调的 decide 一次）和安排抽查
 #             （producer/check.rs 的 repository_check_with）都是三次，别的请求更少；
 #             等锁时别人读两次：别的会拿着这把锁读账本的只有健康页（worker 的请求在同一个接受循环里一个个处理，
 #             service.rs；后台线程只在收尾时拿一下），一次健康页快照先后拿两次锁、各读一次

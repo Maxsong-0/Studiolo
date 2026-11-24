@@ -216,14 +216,14 @@ class AssemblyTests(unittest.TestCase):
         def where(receiver, method):
             return dict(collections.Counter(name for name, _ in rust_calls(sources, receiver, method)))
         reads = where('self', 'refresh')
-        self.assertEqual(reads, {'next_pending': 1, 'schedule': 2, 'decide': 1, 'jobs': 1,
+        self.assertEqual(reads, {'next_pending': 1, 'schedule_with': 2, 'decide': 1, 'jobs': 1,
                                  'repository_check_with': 3, 'report_check': 1, 'repository_checks_at': 1})
         # 拿状态锁的每一处：新加一个拿着锁干活的地方（哪怕不读账本），请求和后台线程都会跟着等。
         # 后台线程收尾复位 busy 也拿这把锁（Idle 的 drop），assembly.py 把它列在没算进去的那几样里。
         # 后台读账本的线程（producer/catch_up.rs 的 catch_up_by，T-219）每页拿两次：取读到哪儿、把读回的一页记进队列。
         # 它读账本在锁外，拿着锁只做内存里的记账，所以不算进「等锁时别人读账本」。scanned_offset 只在测试构建里有。
         self.assertEqual(where('self.state', 'lock'), dict.fromkeys(
-            ('next_pending', 'schedule', 'reclaim', 'launch', 'jobs', 'repository_check_with',
+            ('next_pending', 'schedule_with', 'reclaim', 'launch', 'jobs', 'repository_check_with',
              'report_check', 'repository_checks_at', 'scanned_offset'), 1) | {'catch_up_by': 2})
         # 不经 refresh 直接读账本的每一处：refresh 自己；后台读账本的线程（一次一页、在状态锁之外，关停最多等这一页）；
         # 抽查上报核原意图（按事件键取，最多两条）。新加一处要先想清楚它拿没拿着状态锁、关停要不要等它。
@@ -235,10 +235,12 @@ class AssemblyTests(unittest.TestCase):
         self.assertEqual(dispatched, ['next_pending', 'report_check', 'repository_check', 'schedule'])
         for method in dispatched:
             self.assertEqual(where('self', method), {'dispatch': 1}, method)
-        # 一个请求自己最多读几次：四种请求里最多的那个。decide 只被 schedule 调一次，所以算在安排封存里。
-        self.assertEqual(where('self', 'decide'), {'schedule': 1})
+        # 一个请求自己最多读几次：四种请求里最多的那个。decide 只被 schedule_with 调一次，schedule_with 又只被 schedule
+        # 调一次（schedule 只多给一个真实时钟），所以都算在安排封存里；安排抽查同样写法。
+        self.assertEqual(where('self', 'decide'), {'schedule_with': 1})
+        self.assertEqual(where('self', 'schedule_with'), {'schedule': 1})
         self.assertEqual(where('self', 'repository_check_with'), {'repository_check': 1})
-        requests = (reads['next_pending'], reads['schedule'] + reads['decide'],
+        requests = (reads['next_pending'], reads['schedule_with'] + reads['decide'],
                     reads['repository_check_with'], reads['report_check'])
         self.assertEqual(a.BACKUP_REQUEST_OWN_SCANS, max(requests))
         # 等状态锁时别人读几次：健康页一次快照调两个探针（备份作业、仓库抽查），各拿一次锁、各读一次。
