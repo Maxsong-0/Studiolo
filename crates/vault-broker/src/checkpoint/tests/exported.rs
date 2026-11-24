@@ -177,7 +177,7 @@ fn a_changed_maintenance_receipt_is_refused_in_the_window_or_by_both_verificatio
 #[test]
 fn a_copy_that_no_longer_matches_the_capture_gets_no_ticket() {
     type Tamper = fn(&Path, &Path);
-    let samples: [(&str, Tamper); 15] = [
+    let samples: [(&str, Tamper); 17] = [
         ("笔记库侧绑定", |vault, _| {
             edit(&vault.join(".workbench/broker-binding.json"), |b| {
                 bump(&mut b["data"]["ino"]);
@@ -211,6 +211,12 @@ fn a_copy_that_no_longer_matches_the_capture_gets_no_ticket() {
             edit(&data.join("history/meta-v1/binding.json"), |b| {
                 bump(&mut b["requests"]["ino"]);
             });
+        }),
+        ("文件操作目录被换", |_, data| {
+            swap(&data.join("file-operations-v1"));
+        }),
+        ("维护目录被换", |_, data| {
+            swap(&data.join("maintenance-v1"))
         }),
         ("文件操作绑定", |_, data| {
             edit(&data.join("file-operations-v1/binding.json"), |b| {
