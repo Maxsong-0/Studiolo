@@ -2,7 +2,8 @@
 import importlib.util
 import json
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath
+import re
 import subprocess
 import sys
 import time
@@ -28,6 +29,14 @@ UNALIGNED_AFTER = 6 * 3600
 # 换新前它已经旧了「上一轮耗时＋轮间隔 300 秒＋这一轮耗时」：169 实测一轮 7～70 秒，留到 1 小时，
 # 一轮慢到 27 分钟也不会让 A08 每轮掉一次再重报（T-224 复查第 2 轮 R2-F1；原来是 15 分钟，一轮 5 分钟就会掉）。
 STATUS_FRESH = 3600
+CGROUPS = Path("/sys/fs/cgroup")
+CGROUP_FILE_MAX_BYTES = 65536
+# A04 的两条线（T-229）。回收不掉的内存占上限满 80%：离内核 OOM 只剩两成。
+MEMORY_HIGH_PERCENT = 80
+# 最近 5 分钟里整组任务都因缺内存停住的时间满 10%：每分钟一张的快照看不到两次之间的突发，
+# 也看不到没到 80% 却反复重读的抖动，靠这个窗口补。169 封存顶满上限时实测最高 0.15%（2026-11-24，一次完整封存每秒取一次）。
+STALL_HIGH_PERCENT = 10
+STALL_LINE = re.compile(r"full avg10=\S+ avg60=\S+ avg300=([0-9]{1,3}\.[0-9]{2}) total=[0-9]+")
 
 
 def boot_id():
@@ -54,20 +63,78 @@ def output(command):
     return command_output(command, 4, child_environment()).decode().strip()
 
 
+def cgroup_text(directory, name):
+    with open(directory / name, "rb") as source:
+        raw = source.read(CGROUP_FILE_MAX_BYTES + 1)
+    if len(raw) > CGROUP_FILE_MAX_BYTES:
+        raise ValueError("cgroup_file_too_large")
+    return raw.decode("ascii")
+
+
+def byte_count(text):
+    # 无界的上限在内核里写作 max，不是数字，和坏值一起拒。
+    if not text.isdecimal():
+        raise ValueError("cgroup_count_invalid")
+    return int(text)
+
+
+def memory_stat(text):
+    stat = {}
+    for line in text.splitlines():
+        key, value = line.split(" ")
+        if key in stat:
+            raise ValueError("cgroup_stat_duplicate")
+        stat[key] = byte_count(value)
+    return stat
+
+
+def unreclaimable_bytes(current, stat):
+    """总量减去能马上回收的（干净的文件缓存、可回收 slab）；没列到的种类一律算回收不掉。
+
+    脏页和正在回写的页也在文件 LRU 上，落盘之前回收不掉（BUG-054 就是它们加匿名内存占满）；
+    锁住的脏页不在 LRU 上，相减可能为负，已经算在总量里，按没有干净缓存算。
+    """
+    clean_cache = max(0, stat["inactive_file"] + stat["active_file"] - stat["file_dirty"] - stat["file_writeback"])
+    unreclaimable = current - clean_cache - stat["slab_reclaimable"]
+    if unreclaimable < 0:
+        raise ValueError("memory_evidence_contradictory")
+    return unreclaimable
+
+
+def full_stall_percent(text):
+    """memory.pressure 的 full avg300（百分数）；没有或不止一行合格的 full 都算坏证据。"""
+    matches = [match for match in map(STALL_LINE.fullmatch, text.splitlines()) if match]
+    if len(matches) != 1:
+        raise ValueError("memory_pressure_invalid")
+    return float(matches[0][1])
+
+
+def unit_memory_high(unit, control_group):
+    # 无界、缺失、读不到或互相矛盾的内存证据不能冒称在预算内；也不牵连服务在不在的结论。
+    try:
+        path = PurePosixPath(control_group)
+        if ".." in path.parts or path.name != unit:
+            raise ValueError("control_group_invalid")
+        # 相对路径在 relative_to 这里就被拒。
+        directory = CGROUPS / path.relative_to("/")
+        limit = byte_count(cgroup_text(directory, "memory.max").strip())
+        current = byte_count(cgroup_text(directory, "memory.current").strip())
+        stat = memory_stat(cgroup_text(directory, "memory.stat"))
+        stalled = full_stall_percent(cgroup_text(directory, "memory.pressure")) >= STALL_HIGH_PERCENT
+        return stalled or unreclaimable_bytes(current, stat) * 100 >= limit * MEMORY_HIGH_PERCENT
+    except (OSError, ValueError, KeyError):
+        return True
+
+
 def service_metrics():
     active = True
     memory_high = False
     for unit in UNITS:
         fields = dict(line.split("=", 1) for line in output([
-            "systemctl", "show", unit, "--property=ActiveState,MemoryCurrent,MemoryMax"
+            "systemctl", "show", unit, "--property=ActiveState,ControlGroup"
         ]).splitlines())
         active = active and fields.get("ActiveState") == "active"
-        # 无界或缺失的内存证据不能冒称在预算内。
-        current, maximum = fields.get("MemoryCurrent", ""), fields.get("MemoryMax", "")
-        if not current.isdecimal() or not maximum.isdecimal() or int(maximum) <= 0:
-            memory_high = True
-        elif int(current) * 10 >= int(maximum) * 8:
-            memory_high = True
+        memory_high = unit_memory_high(unit, fields.get("ControlGroup", "")) or memory_high
     return active, memory_high
 
 

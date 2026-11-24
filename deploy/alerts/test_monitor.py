@@ -26,6 +26,25 @@ GATE_SPEC = importlib.util.spec_from_file_location("time_gate", Path(__file__).w
 GATE = importlib.util.module_from_spec(GATE_SPEC)
 GATE_SPEC.loader.exec_module(GATE)
 
+MIB = 1024 * 1024
+# 内存样本：169 上 2026-11-24 实测的 memory.current、memory.max 与 memory.stat（只留判据用到的项）。
+# 封存中：memory.current 顶到 2 GiB 上限，干净文件缓存约 1713 MiB、可回收 slab 约 91 MiB，匿名 239 MiB。
+SEAL_PEAK = dict(current=2147262464, max=2147483648, inactive_file=1797238784, active_file=4096,
+                 file_dirty=28672, file_writeback=688128, slab_reclaimable=95129984)
+# 同一天另一次封存最坏的一秒（21:21:48Z，暂存区落盘）：没落盘加正在回写 256 MiB，回收不掉的共 537 MiB。
+SEAL_WORST_DIRTY = dict(current=2145849344, max=2147483648, inactive_file=1754763264, active_file=4096,
+                        file_dirty=234356736, file_writeback=33554432, slab_reclaimable=95753384)
+# 平时（两次封存之间）：约 1513 MiB，其中匿名 277 MiB。
+IDLE_HUMAN = dict(current=1585332224, max=2147483648, inactive_file=1220456448, active_file=12288,
+                  file_dirty=53248, file_writeback=0, slab_reclaimable=72839064)
+IDLE_AGENT = dict(current=170434560, max=536870912, inactive_file=122880, active_file=4096,
+                  file_dirty=0, file_writeback=0, slab_reclaimable=21576)
+# BUG-054：2026-11-24 07:10:55Z 内核 OOM 杀人侧时打进日志的原始数（上限还是 512 MiB）；匿名 294293504 没列。
+BUG_054_OOM = dict(current=536870912, max=536870912, inactive_file=211218432, active_file=0,
+                   file_dirty=146845696, file_writeback=64364544, slab_reclaimable=27538240)
+CALM = ("some avg10=0.00 avg60=0.03 avg300=0.00 total=5443847\n"
+        "full avg10=0.00 avg60=0.03 avg300=0.00 total=5411689\n")
+
 
 class MonitorTests(unittest.TestCase):
     def test_two_failures_delivery_cooldown_and_new_episode(self):
@@ -385,6 +404,139 @@ class MonitorTests(unittest.TestCase):
         with patch.object(PROBE, "read_sync_status", return_value=blocked), patch.object(PROBE.time, "time", return_value=now):
             result = PROBE.probe()
         self.assertEqual((result["sync_unaligned"], result["sync_deletes_blocked"]), (True, True))
+
+    def memory_unit(self, root, unit, sample, pressure=CALM):
+        # 摆一份单元的 cgroup 目录：sample 是 memory.stat 里判据用到的几项，加上 current、max。
+        directory = Path(root, "system.slice", unit)
+        directory.mkdir(parents=True, exist_ok=True)
+        stat_lines = [f"{key} {value}" for key, value in sample.items() if key not in ("current", "max")]
+        for name, text in (("memory.current", f"{sample['current']}\n"), ("memory.max", f"{sample['max']}\n"),
+                           ("memory.stat", "\n".join(["anon 1", *stat_lines, "pgfault 7"]) + "\n"), ("memory.pressure", pressure)):
+            Path(directory, name).write_text(text, encoding="utf-8")
+        return directory
+
+    def metrics(self, root, fields=None):
+        # 假的 systemctl：只回探针要的属性，别的属性（比如改前要的 MemoryCurrent）从 cgroup 文件照抄。
+        def systemctl(command):
+            unit = command[2]
+            directory = Path(root, "system.slice", unit)
+            known = {"ActiveState": "active", "ControlGroup": f"/system.slice/{unit}"}
+            for name, source in (("MemoryCurrent", "memory.current"), ("MemoryMax", "memory.max")):
+                path = Path(directory, source)
+                known[name] = path.read_bytes().decode("latin-1").strip() if path.exists() else "[not set]"
+            known.update((fields or {}).get(unit, {}))
+            wanted = command[3].removeprefix("--property=").split(",")
+            return "\n".join(f"{key}={known[key]}" for key in wanted)
+        with patch.object(PROBE, "output", systemctl), patch.object(PROBE, "CGROUPS", Path(root)):
+            return PROBE.service_metrics()
+
+    def human_metrics(self, sample, pressure=CALM):
+        with tempfile.TemporaryDirectory() as root:
+            for unit in PROBE.UNITS:
+                self.memory_unit(root, unit, IDLE_AGENT)
+            self.memory_unit(root, "studiolo-human.service", sample, pressure)
+            return self.metrics(root)
+
+    def test_memory_alert_ignores_reclaimable_cache_on_real_169_samples(self):
+        # 封存把 memory.current 顶到 2 GiB，绝大部分是干净的文件缓存：不报。
+        for sample in (SEAL_PEAK, SEAL_WORST_DIRTY, IDLE_HUMAN):
+            self.assertEqual(self.human_metrics(sample), (True, False), sample)
+        # BUG-054 内核杀人侧的那一刻：匿名加没落盘的页占满 512 MiB，必须报。
+        self.assertEqual(self.human_metrics(BUG_054_OOM), (True, True))
+
+    def test_memory_alert_fires_when_any_unreclaimable_kind_nears_the_limit(self):
+        limit = 2000 * MIB
+        edge = 1600 * MIB  # 正好 80%
+        def sample(pinned, cache=0, dirty=0, writeback=0, slab=0):
+            return dict(current=pinned + cache + slab, max=limit, inactive_file=cache + dirty + writeback, active_file=0,
+                        file_dirty=dirty, file_writeback=writeback, slab_reclaimable=slab)
+        # 匿名、共享内存、内核内存、套接字都不在可回收的那几项里，合在 current 里算。
+        self.assertEqual(self.human_metrics(sample(edge)), (True, True))
+        self.assertEqual(self.human_metrics(sample(edge - 1)), (True, False))
+        # 剩下的 20% 全是干净缓存和可回收 slab 也照报；不到线的话，缓存占满也不报。
+        self.assertEqual(self.human_metrics(sample(edge, cache=limit - edge - MIB, slab=MIB)), (True, True))
+        self.assertEqual(self.human_metrics(sample(edge - 1, cache=limit - edge + 1 - MIB, slab=MIB)), (True, False))
+        # 脏页、正在回写的页在文件 LRU 上，但一时回收不掉：各自逼近上限都报。
+        self.assertEqual(self.human_metrics(sample(edge, dirty=edge - 300 * MIB)), (True, True))
+        self.assertEqual(self.human_metrics(sample(edge, writeback=edge - 300 * MIB)), (True, True))
+        self.assertEqual(self.human_metrics(sample(edge - 1, dirty=edge - 300 * MIB)), (True, False))
+        # 活跃链表上的干净缓存同样可回收。
+        active = dict(sample(edge - 1, cache=limit - edge + 1), inactive_file=0, active_file=limit - edge + 1)
+        self.assertEqual(self.human_metrics(active), (True, False))
+        # 锁住的脏页不在文件 LRU 上、已经算在回收不掉的里：脏页比 LRU 还多时不许再多加一遍。
+        self.assertEqual(self.human_metrics(dict(sample(edge - 1), file_dirty=400 * MIB)), (True, False))
+        self.assertEqual(self.human_metrics(dict(sample(edge), file_dirty=400 * MIB)), (True, True))
+
+    def test_memory_alert_fires_on_sustained_stall_without_nearing_the_limit(self):
+        def pressure(value):
+            return (f"some avg10=99.00 avg60=99.00 avg300=99.00 total=1\n"
+                    f"full avg10=99.00 avg60=99.00 avg300={value} total=1\n")
+        # 只认 5 分钟窗口的 full：some 和短窗口再高也不算持续卡住。
+        for value, high in (("0.00", False), ("9.99", False), ("10.00", True), ("100.00", True)):
+            self.assertEqual(self.human_metrics(IDLE_HUMAN, pressure(value)), (True, high), value)
+        for bad in ("", "nan", "inf", "-1.00", "10", "1e1", "101.00", "9.999"):
+            self.assertEqual(self.human_metrics(IDLE_HUMAN, pressure(bad)), (True, True), bad)
+        for text in ("", CALM.splitlines()[0] + "\n", CALM + CALM.splitlines()[1] + "\n"):
+            self.assertEqual(self.human_metrics(IDLE_HUMAN, text), (True, True), text)
+
+    def test_missing_unbounded_or_contradictory_memory_evidence_stays_high(self):
+        human = "studiolo-human.service"
+        # 无界、为零、坏值、缺字段、可回收的比总量还多：都不能冒称在预算内，也不牵连服务在不在。
+        for change in (dict(max="max"), dict(max=0), dict(max=""), dict(max="-1"), dict(max="2147483648 1"), dict(max="２１４７４８３６４８"),
+                       dict(current=""), dict(current="max"), dict(current="１２"), dict(slab_reclaimable="x"),
+                       dict(inactive_file="-1"), dict(slab_reclaimable=IDLE_HUMAN["current"] + 1)):
+            self.assertEqual(self.human_metrics(dict(IDLE_HUMAN, **change)), (True, True), change)
+        for key in ("inactive_file", "active_file", "file_dirty", "file_writeback", "slab_reclaimable"):
+            sample = {name: value for name, value in IDLE_HUMAN.items() if name != key}
+            self.assertEqual(self.human_metrics(sample), (True, True), key)
+        with tempfile.TemporaryDirectory() as root:
+            for unit in PROBE.UNITS:
+                self.memory_unit(root, unit, IDLE_AGENT)
+            directory = self.memory_unit(root, human, IDLE_HUMAN)
+            self.assertEqual(self.metrics(root), (True, False))
+            for name in ("memory.current", "memory.max", "memory.stat", "memory.pressure"):
+                saved = Path(directory, name).read_text()
+                Path(directory, name).unlink()
+                self.assertEqual(self.metrics(root), (True, True), name)
+                # 重复的字段、没值的行、超长、非 ASCII 的文件都按坏证据算。
+                for raw in (b"", b"\xff\n", (saved + " " * PROBE.CGROUP_FILE_MAX_BYTES).encode()):
+                    Path(directory, name).write_bytes(raw)
+                    self.assertEqual(self.metrics(root), (True, True), (name, raw[:8]))
+                Path(directory, name).write_text(saved)
+            stat = Path(directory, "memory.stat")
+            saved = stat.read_text()
+            for extra in ("slab_reclaimable 0\n", "lonely\n", "three words here\n"):
+                stat.write_text(saved + extra)
+                self.assertEqual(self.metrics(root), (True, True), extra)
+            stat.write_text(saved)
+            # 单元没有 cgroup、或者给的不是它自己的 cgroup（比如人侧的换成 agent 的）。
+            for group in ("", "/", "/system.slice", "/system.slice/studiolo-agent.service",
+                          "system.slice/" + human, "/system.slice/../system.slice/" + human):
+                self.assertEqual(self.metrics(root, {human: {"ControlGroup": group}}), (True, True), group)
+            # 单元换了 slice 也跟得上。
+            moved = Path(root, "other.slice")
+            moved.mkdir()
+            Path(root, "system.slice", human).rename(moved / human)
+            self.assertEqual(self.metrics(root, {human: {"ControlGroup": "/other.slice/" + human}}), (True, False))
+
+    def test_one_tight_unit_is_enough_and_service_state_stays_separate(self):
+        for tight in PROBE.UNITS:
+            with tempfile.TemporaryDirectory() as root:
+                for unit in PROBE.UNITS:
+                    self.memory_unit(root, unit, BUG_054_OOM if unit == tight else IDLE_AGENT)
+                self.assertEqual(self.metrics(root), (True, True), tight)
+        with tempfile.TemporaryDirectory() as root:
+            for unit in PROBE.UNITS:
+                self.memory_unit(root, unit, IDLE_AGENT)
+            self.assertEqual(self.metrics(root), (True, False))
+            # 停着的单元：内存证据照看，服务不在另算。
+            self.assertEqual(self.metrics(root, {"studiolo-agent.service": {"ActiveState": "failed"}}), (False, False))
+            stopped = {"studiolo-agent.service": {"ActiveState": "inactive", "ControlGroup": ""}}
+            self.assertEqual(self.metrics(root, stopped), (False, True))
+        # systemctl 本身跑不出来：整个内存与服务结论都不成立。
+        with patch.object(PROBE, "output", side_effect=TimeoutError()):
+            result = PROBE.probe()
+        self.assertEqual((result["services_ok"], result["memory_high"]), (False, True))
 
     def test_heartbeats_are_independent_empty_posts_and_bounded(self):
         environment = {"STUDIOLO_HEALTHCHECKS_URL": "https://hc-ping.com/" + "a" * 36,
