@@ -10,7 +10,8 @@ use studiolo_core::{
     checkpoint::{CheckpointOwner, OwnerWatermark, SealedOwnerCheckpoint},
 };
 
-/// 已在服务启动时固定 inode 的控制存储。
+/// 已在服务启动时固定 inode 的控制存储。克隆的是同一份固定身份，不重新开库。
+#[derive(Clone)]
 pub struct ControlCheckpointSource {
     source: Source,
     vault: VaultUuid,
@@ -37,6 +38,10 @@ impl ControlDb {
     }
 }
 impl ControlCheckpointSource {
+    /// 复核固定的目录和库还是启动时那一份；不碰数据库连接，所以不需要黑板的引擎锁（BUG-055）。
+    pub fn check(&self) -> Result<(), DbError> {
+        self.source.check().map_err(problem)
+    }
     /// 冻结窗口里只定格，不在锁内执行外部副作用。排空与完整校验要读整张表、随使用变大（BUG-045），
     /// 放开之后由 [`FrozenControl::validate`] 在定格上做，读到的仍是冻结那一刻。
     pub fn freeze(&self, deadline: Instant) -> Result<FrozenControl, DbError> {

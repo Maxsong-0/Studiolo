@@ -1,5 +1,6 @@
 //! 策略参与者：先排空人侧完整操作，再阻断所有进程的策略事务。
 //! 上游AgentStore参与者必须先排空接入方完整调用；不能单独据此宣称全系统已冻结。
+use crate::bounded_lock::{self, Fault};
 use std::{
     path::PathBuf,
     sync::{Arc, Mutex, MutexGuard, TryLockError},
@@ -87,18 +88,14 @@ impl PolicyParticipant {
         &self,
         deadline: Instant,
     ) -> Result<MutexGuard<'_, Option<Lease>>, CheckpointError> {
-        loop {
-            if Instant::now() >= deadline {
-                return Err(CheckpointError::FreezeTimeout { owner: OWNER });
-            }
-            match self.lease.try_lock() {
-                Ok(guard) => return Ok(guard),
-                Err(TryLockError::Poisoned(_)) => {
-                    return Err(CheckpointError::OwnerUnavailable { owner: OWNER });
-                }
-                Err(TryLockError::WouldBlock) => pause(deadline),
-            }
+        // 到期了就不再试（即使锁空着）：和冻结、导出里别的等待同一个口径。
+        if Instant::now() >= deadline {
+            return Err(CheckpointError::FreezeTimeout { owner: OWNER });
         }
+        bounded_lock::lock_until(&self.lease, deadline).map_err(|fault| match fault {
+            Fault::TimedOut => CheckpointError::FreezeTimeout { owner: OWNER },
+            Fault::Poisoned => CheckpointError::OwnerUnavailable { owner: OWNER },
+        })
     }
 }
 impl CheckpointParticipant for PolicyParticipant {

@@ -1,6 +1,6 @@
 //! 原工作台写者的封存入口；不重开 Broker、不提供普通 mutation 能力，失败退出返还原实例。
 use super::CanonicalWorkbench;
-use crate::LocalError;
+use crate::{LocalError, bounded_lock};
 use std::{sync::Arc, time::Instant};
 use studiolo_audit_ledger::FrozenAudit;
 use studiolo_core::checkpoint::{CheckpointError, CheckpointOwner, OwnerWatermark};
@@ -14,15 +14,14 @@ pub struct FrozenWorkbench {
     broker: Option<FrozenBroker>,
 }
 impl CanonicalWorkbench {
-    /// 只移动正在服务的那个 Broker；忙、关停、根漂移、未决或未交付审计均拒绝。
+    /// 只移动正在服务的那个 Broker；关停、根漂移、未决或未交付审计均拒绝。
+    /// 排空完整操作之后仍可能有不取许可的短暂持有者（网页读一篇笔记、监视回调、就绪检查），
+    /// 所以两把锁都最多等 [`bounded_lock::BRIEF`]（BUG-055）；一直不放的算忙、照旧拒绝。
     pub fn freeze_checkpoint(
         self: &Arc<Self>,
         deadline: Instant,
     ) -> Result<FrozenWorkbench, LocalError> {
-        if self
-            .core
-            .control
-            .try_lock()
+        if bounded_lock::lock_until(&self.core.control, bounded_lock::brief(deadline))
             .map_err(|_| LocalError::Unavailable)?
             .closing
         {
@@ -32,10 +31,7 @@ impl CanonicalWorkbench {
             .roots
             .revalidate()
             .map_err(|_| LocalError::Unavailable)?;
-        let mut owner = self
-            .core
-            .owner
-            .try_lock()
+        let mut owner = bounded_lock::lock_until(&self.core.owner, bounded_lock::brief(deadline))
             .map_err(|_| LocalError::Unavailable)?;
         owner
             .as_ref()

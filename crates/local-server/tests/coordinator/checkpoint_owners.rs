@@ -30,6 +30,7 @@ use studiolo_policy::PolicyStore;
 use studiolo_supply::AgentStore;
 
 mod board_freeze;
+mod busy_locks;
 mod drill;
 mod fixture;
 mod producer;

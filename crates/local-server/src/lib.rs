@@ -6,6 +6,7 @@ mod auth_http;
 pub mod backup;
 pub mod board;
 mod bootstrap;
+mod bounded_lock;
 mod canonical;
 mod changes;
 pub mod checkpoint;

@@ -1,6 +1,6 @@
 //! 实际平面接线：移走唯一传输 owner、持有 plane.lock，Bridge 每次签封都复验同一能力。
 use super::{PlaneError, SyncPlane, bridge_binding, recovery::FrozenPlaneFiles};
-use crate::sync_transport_owner::transport_event;
+use crate::{bounded_lock, sync_transport_owner::transport_event};
 use std::{
     path::Path,
     sync::{Arc, Mutex},
@@ -100,13 +100,13 @@ impl BridgeCheckpointGate for PlaneGate {
 impl SyncPlane {
     /// 全局操作许可排空后，取得真正传输和附属存储门禁，再冻结原 Bridge 数据库。
     /// 任一步失败都返还原实例；不启动新运行，不隐式清理失败现场。
+    /// 传输槽和 Bridge 的持有者都在同步轮次里、轮次先取完整操作许可，排空之后没有人拿着；
+    /// 照写者那两把锁的写法最多等 [`bounded_lock::BRIEF`]，以后多出短暂持有者也不至于整轮失败（BUG-055）。
     pub fn freeze_checkpoint(
         self: &Arc<Self>,
         deadline: Instant,
     ) -> Result<FrozenSyncPlane, PlaneError> {
-        let transport = self
-            .transport
-            .try_lock()
+        let transport = bounded_lock::lock_until(&self.transport, bounded_lock::brief(deadline))
             .map_err(|_| PlaneError::Unavailable)?
             .take()
             .ok_or(PlaneError::Unavailable)?;
@@ -124,9 +124,7 @@ impl SyncPlane {
             files: files.clone(),
             deadline,
         });
-        let source = self
-            .bridge
-            .try_lock()
+        let source = bounded_lock::lock_until(&self.bridge, bounded_lock::brief(deadline))
             .map_err(|_| PlaneError::Unavailable)?
             .checkpoint_source()
             .map_err(|_| PlaneError::Storage)?;

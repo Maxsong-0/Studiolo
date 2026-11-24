@@ -52,6 +52,8 @@ type Engine = PersistentTaskEngine<owner::SharedBroker, SharedAudit>;
 /// 已显式装配的黑板平面；没有可从 HTTP 构造的认证旁路。
 pub struct BoardPlane {
     engine: Mutex<Engine>,
+    /// 启动时固定的控制库源，放在引擎锁外：封存取它不用等谁放开引擎锁（BUG-055）。
+    control_source: studiolo_control_db::ControlCheckpointSource,
     identities: AgentIdentityView,
     policy: PolicyAgentStore,
     audit: Arc<dyn AuditLedger>,
@@ -64,16 +66,20 @@ pub struct BoardPlane {
     commit_check_noted_ms: std::sync::atomic::AtomicI64,
 }
 impl BoardPlane {
-    /// 从实际引擎取得固定 Control 源，不重新开库或执行迁移。
+    /// 交出启动时固定的 Control 源，先复核它还是那一份；不重新开库或执行迁移，也不拿引擎锁：
+    /// 巡检每 15 秒一轮、黑板的每个请求都要拿引擎锁，封存一开头用 `try_lock` 取，撞上就整轮失败（BUG-055）。
     pub fn checkpoint_source(
         &self,
     ) -> Result<studiolo_control_db::ControlCheckpointSource, String> {
-        self.engine
-            .try_lock()
-            .map_err(|_| "黑板正忙".to_owned())?
-            .control_db()
-            .checkpoint_source()
-            .map_err(|_| "黑板封存源不可用".to_owned())
+        self.control_source
+            .check()
+            .map_err(|_| "黑板封存源不可用".to_owned())?;
+        Ok(self.control_source.clone())
+    }
+    /// 用例用：像巡检、黑板请求那样拿着引擎锁。
+    #[cfg(test)]
+    pub(crate) fn hold_engine(&self) -> impl Sized + '_ {
+        self.engine.lock().unwrap()
     }
     /// 只取实际身份视图及其固定附属账本的成对能力。
     pub fn checkpoint_agents(
@@ -129,6 +135,7 @@ impl BoardPlane {
             uuid,
         )
         .map_err(|_| "控制库不可用")?;
+        let control_source = control.checkpoint_source().map_err(|_| "控制库不可用")?;
         let mut engine = PersistentTaskEngine::new(control, broker, SharedAudit(audit.clone()));
         if let Some(config) = runner {
             executor::isolate_persisted(engine.control_db(), config, &isolated_roots)?;
@@ -158,6 +165,7 @@ impl BoardPlane {
             .map_err(|_| "黑板启动恢复失败")?;
         Ok(Arc::new(Self {
             engine: Mutex::new(engine),
+            control_source,
             identities,
             policy,
             audit,
