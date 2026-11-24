@@ -25,7 +25,7 @@
 |---|---|---|
 | 黑板引擎锁（`BoardPlane::checkpoint_source`） | 租约巡检、别的黑板请求 | 不碰了：控制库的固定源打开时就取好存在锁外，封存只核一次再克隆 |
 | 写者的 `control`、`owner`（`CanonicalWorkbench::freeze_checkpoint`） | 网页读笔记、监视回调、就绪检查 | 最多等 1 秒（`bounded_lock::BRIEF`，不超过冻结截止）；到期、中毒照旧按原类别失败 |
-| Bridge 的 `transport`、`bridge`（`SyncPlane::freeze_checkpoint`） | 就绪检查、同步驱动收尾 | 同上 |
+| Bridge 的 `transport`、`bridge`（`SyncPlane::freeze_checkpoint`） | 现在没有：持有者都在同步轮次里，轮次（`run_round`）先取完整操作许可，排空之后没人拿着 | 写法同上，预防性：以后多出短暂持有者也不至于整轮失败 |
 | 策略参与者的 `lease`（`policy_checkpoint.rs`） | 没有外人拿（冻结、放开、导出三步都是同一个线程） | 原来就按截止时间等，行为不变，改用同一个函数 |
 | `FrozenSyncPlane` 自己的 `frozen`、`files` | 没有外人拿 | 不动，照旧 `try_lock` |
 | 各 SQLite 库的写锁、操作门 | 各库自己的写入 | 不动：原来就按截止时间等 |

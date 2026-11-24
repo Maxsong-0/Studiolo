@@ -268,6 +268,85 @@ fn a_copy_that_no_longer_matches_the_capture_gets_no_ticket() {
     }
 }
 
+/// 健康的写者不管长什么样都出票：什么都没启用的最小写者、四样都有的、两处隔离区里有残留的。
+/// 条数和最大 offset 同活的写者上核出来的一样，隔离区不进副本。
+#[test]
+fn every_healthy_writer_gets_a_ticket() {
+    type Shape = fn(&Fixture) -> FsVaultBroker;
+    let shapes: [(&str, u64, Shape); 3] = [
+        ("最小写者", 0, Fixture::open),
+        ("四样都有", 6, full_history),
+        ("隔离区里有残留", 6, |fixture| {
+            drop(full_history(fixture));
+            for left_over in [
+                fixture
+                    .vault
+                    .join(".workbench/.vault.json.studiolo-tmp-4242-1"),
+                fixture.data.join(".writer-state.json.studiolo-tmp-4242-2"),
+            ] {
+                fs::write(left_over, b"half").unwrap();
+            }
+            let broker = FsVaultBroker::open_existing(&fixture.vault, &fixture.data).unwrap();
+            for quarantine in quarantines(&fixture.vault, &fixture.data) {
+                assert!(quarantine.is_dir(), "开库没把残留挪进隔离区");
+            }
+            broker
+        }),
+    ];
+    for (name, checked, shape) in shapes {
+        let fixture = Fixture::new();
+        let broker = shape(&fixture);
+        let live = verify_live(&broker, verify).unwrap_or_else(|e| panic!("{name}：{e}"));
+        let (left, right) = (fixture.target("left"), fixture.target("right"));
+        let mut frozen = broker.freeze_checkpoint(deadline());
+        let (_, copy) = seal(&mut frozen, &left, &right).unwrap_or_else(|e| panic!("{name}：{e}"));
+        assert_eq!(copy.checked(), checked, "{name}");
+        assert_eq!(
+            (copy.checked(), copy.max_offset()),
+            (live.checked(), live.max_offset()),
+            "{name}"
+        );
+        for quarantine in quarantines(&left, &right) {
+            assert!(!quarantine.exists(), "{name}");
+        }
+    }
+}
+/// 两处隔离区：笔记库侧、写者数据侧。
+fn quarantines(vault: &Path, data: &Path) -> [PathBuf; 2] {
+    [
+        VAULT_QUARANTINE
+            .iter()
+            .fold(vault.to_owned(), |p, name| p.join(name)),
+        DATA_QUARANTINE
+            .iter()
+            .fold(data.to_owned(), |p, name| p.join(name)),
+    ]
+}
+
+/// 副本在另一块设备上（暂存区可以在别的盘）：副本节点的设备号和原件不同，照样换回定格的原身份来比，出同样的票。
+#[cfg(target_os = "linux")]
+#[test]
+fn a_copy_on_another_device_gets_the_same_ticket() {
+    let fixture = Fixture::new();
+    let elsewhere = tempfile::tempdir_in("/dev/shm").unwrap();
+    let device = |path: &Path| fs::metadata(path).unwrap().dev();
+    assert_ne!(
+        device(elsewhere.path()),
+        device(fixture.temp.path()),
+        "两边同一块设备，这条用例什么也没测到"
+    );
+    let targets = ["left", "right"].map(|name| {
+        let path = elsewhere.path().join(name);
+        fs::create_dir(&path).unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o700)).unwrap();
+        path
+    });
+    let mut frozen = full_history(&fixture).freeze_checkpoint(deadline());
+    let (sealed, coverage) = seal(&mut frozen, &targets[0], &targets[1]).unwrap();
+    assert!(sealed.is_verified());
+    assert_eq!((coverage.checked(), coverage.max_offset()), (6, 6));
+}
+
 /// 整个目标目录被换成另一个：句柄里读到的还是原来那一份，但路径上已经不是它了，不出票。
 #[test]
 fn a_target_replaced_after_the_export_gets_no_ticket() {

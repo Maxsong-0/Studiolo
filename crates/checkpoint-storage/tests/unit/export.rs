@@ -1,6 +1,6 @@
 //! 导出途中的落盘：够得着没公开的段长和计数，所以挂在 `src/export.rs` 底下编，文件放这里（源码目录不许开库、写文件）。
 use super::{Flush, STEP_PAGES, perform};
-use crate::{DatabaseFile, Error, FrozenSqlite, Source, paths::FLUSHES};
+use crate::{DatabaseFile, Error, FrozenSqlite, Source, paths::FLUSHED};
 use rusqlite::Connection;
 use std::{
     fs,
@@ -41,10 +41,14 @@ fn database(dir: &tempfile::TempDir, rows: u32, bytes: u32) -> (Source, u64) {
     (source, steps)
 }
 fn freeze(source: &Source) -> FrozenSqlite {
-    FLUSHES.set(0);
+    FLUSHED.take();
     source
         .freeze(Instant::now() + Duration::from_secs(60))
         .unwrap()
+}
+
+fn flushes() -> u64 {
+    FLUSHED.with_borrow(|lengths| lengths.len() as u64)
 }
 
 /// 按给定的段长导出约 2 MiB（500 多页）的库：落盘次数和段长对得上，副本照样核过；段长比库大就一次不落。
@@ -62,20 +66,25 @@ fn a_large_export_flushes_once_per_segment() {
         let frozen = freeze(&source);
         let target = private();
         perform(&frozen, target.path(), &512, rows, Flush::every(segment)).unwrap();
-        assert_eq!(FLUSHES.get(), expected, "每 {segment} 页一段");
+        assert_eq!(flushes(), expected, "每 {segment} 页一段");
     }
 }
 
 /// 正式导出用的就是 64 MiB 一段：库刚过一段，中途恰好落一次（BUG-054）；不到一段，一次都不另落（不给小库加活）。
+/// 落的那一刻拷过的页真的在主文件里：目标不走 WAL（走的话页在 `-wal` 里，落主文件等于没落），
+/// 只差 SQLite 自己的页缓存（默认 2 MB）。
 #[test]
 fn the_real_export_flushes_every_64_mib() {
     const MIB: u32 = 1 << 20;
-    for (mebibytes, flushes) in [(0, 0), (1, 0), (65, 1)] {
+    const CACHED: u64 = 4 * MIB as u64;
+    for (mebibytes, expected) in [(0, 0), (1, 0), (65, 1)] {
         let dir = private();
         let (source, _) = database(&dir, mebibytes, MIB);
         freeze(&source)
             .export(private().path(), &i64::from(mebibytes), rows)
             .unwrap();
-        assert_eq!(FLUSHES.get(), flushes, "{mebibytes} MiB");
+        assert_eq!(flushes(), expected, "{mebibytes} MiB");
     }
+    let written = FLUSHED.take();
+    assert!(written[0] + CACHED >= 64 * u64::from(MIB), "{written:?}");
 }

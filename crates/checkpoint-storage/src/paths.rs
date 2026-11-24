@@ -114,7 +114,10 @@ impl Binding {
     pub fn flush(&self) -> Result<(), Error> {
         self.file_pin.sync_data().map_err(io)?;
         #[cfg(test)]
-        FLUSHES.set(FLUSHES.get() + 1);
+        {
+            let length = self.file_pin.metadata().map_err(io)?.len();
+            FLUSHED.with_borrow_mut(|lengths| lengths.push(length));
+        }
         Ok(())
     }
     pub fn has_sidecars(&self) -> Result<bool, Error> {
@@ -131,8 +134,9 @@ impl Binding {
 
 #[cfg(all(test, unix))]
 thread_local! {
-    /// 用例用：本线程的导出落过几次盘。
-    pub(crate) static FLUSHES: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+    /// 用例用：本线程的导出每次落盘时，目标主文件有多长。
+    pub(crate) static FLUSHED: std::cell::RefCell<Vec<u64>> =
+        const { std::cell::RefCell::new(Vec::new()) };
 }
 
 #[cfg(unix)]
