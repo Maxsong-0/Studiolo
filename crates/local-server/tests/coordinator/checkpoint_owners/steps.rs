@@ -10,15 +10,16 @@ use studiolo_backup::{
 };
 use studiolo_core::checkpoint::InstantMillis;
 
-/// 冻结窗口里的步骤：补记、排空、定格、冻结、窗口里核的三类回执、交出定格、Bridge 导出、放开。
-const WINDOW: [&str; 11] = [
+/// 冻结窗口里的步骤：补记、排空、冻结写者和各库、核 Intent、定格写者两棵树、核 Bridge 回执、交出定格、
+/// Bridge 导出、放开。窗口里不核写者回执（BUG-050）。
+pub(super) const WINDOW: [&str; 11] = [
     "补记登录库",
     "排空接入方",
     "排空人侧",
-    "写者定格",
+    "写者冻结",
     "各库冻结",
     "核 Intent",
-    "核写者回执",
+    "定格写者两棵树",
     "核 Bridge 回执",
     "交出写者定格",
     "Bridge 导出",
@@ -26,16 +27,17 @@ const WINDOW: [&str; 11] = [
 ];
 
 /// 放开之后 `seal_timed` 里的步骤；写准入在生产者里另记一步。
-const AFTER: [&str; 6] = [
+pub(super) const AFTER: [&str; 7] = [
     "校验与核回执",
     "写者导出",
+    "核写者回执",
     "其余导出",
     "账本导出与验链",
     "登记来源",
     "封存暂存区",
 ];
 
-fn now_millis() -> i64 {
+pub(super) fn now_millis() -> i64 {
     i64::try_from(
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)

@@ -1,6 +1,6 @@
 //! 实际六 owner 导出接原子封存；所有内容均为专门生成并显式批准 Full 的测试数据。
 use super::*;
-use crate::checkpoint::{CheckpointTimes, SealFailure};
+use crate::checkpoint::CheckpointTimes;
 use std::os::unix::fs::MetadataExt as _;
 use std::path::Path;
 use studiolo_backup::checkpoint::{

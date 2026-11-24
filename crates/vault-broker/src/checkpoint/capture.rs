@@ -4,7 +4,7 @@
 //! 放开之后写者照常删、换，旧 inode 靠这里的句柄留着。放开之后从句柄拷到独立副本、边拷边算同一套树摘要
 //! （`tree.rs` 的 `DirHasher`），每个文件拷之前、拷完都 fstat 核对长度、修改时间、权限没变。
 //! 不建硬链接：写者到处要求文件链接数为 1，硬链接会让放开后的正常读写报错，中途被杀还会让写者起不来。
-use super::{check_deadline, copy, files, tree};
+use super::{check_deadline, copy, exported::Originals, files, tree};
 use crate::{
     BrokerError, FsVaultBroker,
     writer::{Identity, directory},
@@ -18,14 +18,19 @@ use std::{
     time::Instant,
 };
 
-/// 一棵定格的树：目录结构、每个文件的句柄和冻结时的身份。不引用写者实例。
+/// 一棵定格的树：目录结构、每个目录和文件冻结时的身份、每个文件的句柄。不引用写者实例。
 pub(super) struct Captured {
-    root: Vec<(String, Node)>,
+    root: Level,
     nodes: u64,
     bytes: u64,
 }
+/// 一层目录：冻结那一刻的身份（写者的绑定文件里记的就是它），和按名字排好的内容。
+struct Level {
+    identity: Identity,
+    entries: Vec<(String, Node)>,
+}
 enum Node {
-    Directory(Vec<(String, Node)>),
+    Directory(Level),
     File(Held),
 }
 /// 冻结时打开的文件：放开之后原路径可能已经被删、被换，句柄还指着冻结那一刻的 inode。
@@ -121,12 +126,7 @@ struct Walk<'a> {
     budget: &'a mut Budget,
 }
 impl Walk<'_> {
-    fn dir(
-        &mut self,
-        source: &Dir,
-        skip: &[&str],
-        depth: usize,
-    ) -> Result<Vec<(String, Node)>, BrokerError> {
+    fn dir(&mut self, source: &Dir, skip: &[&str], depth: usize) -> Result<Level, BrokerError> {
         check_deadline(self.deadline)?;
         if depth > tree::MAX_DEPTH {
             return Err(BrokerError::WriterLimitExceeded);
@@ -196,13 +196,16 @@ impl Walk<'_> {
             return Err(BrokerError::CaptureChanged);
         }
         check_deadline(self.deadline)?;
-        Ok(entries)
+        Ok(Level {
+            identity: Identity::file(&before),
+            entries,
+        })
     }
 }
 
 impl Captured {
-    /// 窗口里复核：活的树和定格时一样（每层的名字、每个文件的 inode、长度、修改时间、权限），不读内容。
-    /// 回执核对读的是活的文件；核对前后都对得上定格，核过的才是定格的那一刻。
+    /// 窗口里复核：活的树和定格时一样（每层的名字和目录身份、每个文件的 inode、长度、修改时间、权限），不读内容。
+    /// 定格是逐层走的：走完再对一遍，前后两棵树、先后几层才是同一刻。
     pub(super) fn matches(
         &self,
         root: &Dir,
@@ -218,33 +221,40 @@ impl Captured {
     }
     /// 放开之后：把定格的树拷进空的私有目标，返回按 `tree.rs` 同一套写法算的封存值。
     /// 任何一个文件拷之前或拷完和冻结时不一样（长度、修改时间、权限、inode），整份失败。
+    /// 副本里每个目录和文件对应定格时的哪一个记进 `originals`：之后在副本上核绑定文件要用。
     pub(super) fn copy(
         &self,
         target: &Dir,
+        originals: &mut Originals,
         deadline: Instant,
     ) -> Result<tree::TreeSeal, BrokerError> {
-        let mut buffer = vec![0; 256 * 1024];
-        let hash = copy_dir(&self.root, target, deadline, &mut buffer)?;
+        let mut copying = Copying {
+            originals,
+            deadline,
+            buffer: vec![0; 256 * 1024],
+        };
+        let hash = copying.dir(&self.root, target)?;
         Ok(tree::TreeSeal::new(hash, self.nodes, self.bytes))
     }
 }
 fn matches_dir(
-    entries: &[(String, Node)],
+    level: &Level,
     source: &Dir,
     skip: &[&str],
     deadline: Instant,
 ) -> Result<(), BrokerError> {
     check_deadline(deadline)?;
     let names = tree::listed(source, skip, tree::MAX_NODES, deadline)?;
-    if names.len() != entries.len()
+    if Identity::directory(source)? != level.identity
+        || names.len() != level.entries.len()
         || names
             .iter()
-            .zip(entries)
+            .zip(&level.entries)
             .any(|(name, (captured, _))| name != captured)
     {
         return Err(BrokerError::CaptureChanged);
     }
-    for (name, node) in entries {
+    for (name, node) in &level.entries {
         check_deadline(deadline)?;
         match node {
             Node::Directory(children) => {
@@ -268,9 +278,9 @@ fn matches_dir(
     }
     Ok(())
 }
-fn unchanged_dir(entries: &[(String, Node)], deadline: Instant) -> Result<(), BrokerError> {
+fn unchanged_dir(level: &Level, deadline: Instant) -> Result<(), BrokerError> {
     check_deadline(deadline)?;
-    for (_, node) in entries {
+    for (_, node) in &level.entries {
         match node {
             Node::Directory(children) => unchanged_dir(children, deadline)?,
             Node::File(held) => unchanged(held)?,
@@ -278,68 +288,85 @@ fn unchanged_dir(entries: &[(String, Node)], deadline: Instant) -> Result<(), Br
     }
     Ok(())
 }
-fn copy_dir(
-    entries: &[(String, Node)],
-    target: &Dir,
+/// 拷一棵树要带着走的：副本对原件、截止时间、流式缓冲。
+struct Copying<'a> {
+    originals: &'a mut Originals,
     deadline: Instant,
-    buffer: &mut [u8],
-) -> Result<[u8; 32], BrokerError> {
-    check_deadline(deadline)?;
-    let mut hash = tree::DirHasher::new(entries.len());
-    for (name, node) in entries {
-        match node {
-            Node::Directory(children) => {
-                let child = copy::dir(target, name)?;
-                hash.directory(name, copy_dir(children, &child, deadline, buffer)?);
-            }
-            Node::File(held) => {
-                let (digest, length) = copy_file(held, target, name, deadline, buffer)?;
-                hash.file(name, length, digest);
-            }
-        }
-    }
-    FsVaultBroker::sync_directory(target, Path::new("."))?;
-    check_deadline(deadline)?;
-    Ok(hash.finish())
+    buffer: Vec<u8>,
 }
-fn copy_file(
-    held: &Held,
-    target: &Dir,
-    name: &str,
-    deadline: Instant,
-    buffer: &mut [u8],
-) -> Result<([u8; 32], u64), BrokerError> {
-    use sha2::{Digest, Sha256};
-    unchanged(held)?;
-    let mut output = copy::file(target, name, held.identity.len)?;
-    let mut hash = Sha256::new();
-    let mut total = 0u64;
-    loop {
-        check_deadline(deadline)?;
-        let read = held
-            .file
-            .read_at(buffer, total)
-            .map_err(|e| BrokerError::io("从定格句柄读取", e))?;
-        if read == 0 {
-            break;
+impl Copying<'_> {
+    fn dir(&mut self, level: &Level, target: &Dir) -> Result<[u8; 32], BrokerError> {
+        check_deadline(self.deadline)?;
+        self.originals
+            .record(Identity::directory(target)?, level.identity)?;
+        let mut hash = tree::DirHasher::new(level.entries.len());
+        for (name, node) in &level.entries {
+            match node {
+                Node::Directory(children) => {
+                    let child = copy::dir(target, name)?;
+                    hash.directory(name, self.dir(children, &child)?);
+                }
+                Node::File(held) => {
+                    let (digest, length) = self.file(held, target, name)?;
+                    hash.file(name, length, digest);
+                }
+            }
         }
-        total = total
-            .checked_add(read as u64)
-            .filter(|total| *total <= held.identity.len)
-            .ok_or(BrokerError::CaptureChanged)?;
-        hash.update(&buffer[..read]);
+        FsVaultBroker::sync_directory(target, Path::new("."))?;
+        check_deadline(self.deadline)?;
+        Ok(hash.finish())
+    }
+    fn file(
+        &mut self,
+        held: &Held,
+        target: &Dir,
+        name: &str,
+    ) -> Result<([u8; 32], u64), BrokerError> {
+        use sha2::{Digest, Sha256};
+        unchanged(held)?;
+        let mut output = copy::file(target, name, held.identity.len)?;
+        let mut hash = Sha256::new();
+        let mut total = 0u64;
+        loop {
+            check_deadline(self.deadline)?;
+            let read = held
+                .file
+                .read_at(&mut self.buffer, total)
+                .map_err(|e| BrokerError::io("从定格句柄读取", e))?;
+            if read == 0 {
+                break;
+            }
+            total = total
+                .checked_add(read as u64)
+                .filter(|total| *total <= held.identity.len)
+                .ok_or(BrokerError::CaptureChanged)?;
+            hash.update(&self.buffer[..read]);
+            output
+                .write_all(&self.buffer[..read])
+                .map_err(|e| BrokerError::io("流式写入封存副本", e))?;
+        }
+        if total != held.identity.len {
+            return Err(BrokerError::CaptureChanged);
+        }
+        unchanged(held)?;
         output
-            .write_all(&buffer[..read])
-            .map_err(|e| BrokerError::io("流式写入封存副本", e))?;
+            .sync_all()
+            .map_err(|e| BrokerError::io("同步封存文件", e))?;
+        let written = output
+            .metadata()
+            .map_err(|e| BrokerError::io("核对封存副本文件", e))?;
+        self.originals.record(
+            Identity {
+                dev: written.dev(),
+                ino: written.ino(),
+            },
+            Identity {
+                dev: held.identity.dev,
+                ino: held.identity.ino,
+            },
+        )?;
+        Ok((hash.finalize().into(), total))
     }
-    if total != held.identity.len {
-        return Err(BrokerError::CaptureChanged);
-    }
-    unchanged(held)?;
-    output
-        .sync_all()
-        .map_err(|e| BrokerError::io("同步封存文件", e))?;
-    Ok((hash.finalize().into(), total))
 }
 /// 句柄指着的 inode 和冻结时一样：没被原地改过。
 fn unchanged(held: &Held) -> Result<(), BrokerError> {

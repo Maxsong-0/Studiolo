@@ -1,11 +1,13 @@
 //! 实际目录/唯一租约/复制契约；此处回调是显式模拟账本，真实 Audit 接线在组合根验证。
 mod audits;
+mod exported;
 mod restore;
 mod thawed;
 use super::*;
 use crate::{
-    ContentAuditPhase, Mutation, MutationActor, MutationKind, MutationMetadata, VaultPath,
-    VaultReader,
+    ContentAuditPhase, FileOperationLimits, FileOperationMetadata, FileOperationRequest,
+    FileOperationScopeHash, MaintenanceActor, MaintenanceDecision, Mutation, MutationActor,
+    MutationKind, MutationMetadata, VaultPath, VaultReader,
 };
 use std::{
     fs,
@@ -13,6 +15,7 @@ use std::{
     path::PathBuf,
     time::Duration,
 };
+use studiolo_core::checkpoint::SealedOwnerCheckpoint;
 
 struct Fixture {
     temp: tempfile::TempDir,
@@ -67,11 +70,88 @@ fn flush(broker: &mut FsVaultBroker) {
     }
     assert!(broker.pending_content_audit(64).unwrap().is_empty());
 }
+/// 四样都有的写者：一笔正文、一次被维护取消的文件操作、一次完成的维护；回执都落了，没有未决。
+fn full_history(fixture: &Fixture) -> FsVaultBroker {
+    let mut broker = fixture.open();
+    seed(&mut broker);
+    flush(&mut broker);
+    broker
+        .enable_file_operations(FileOperationLimits {
+            effective_object_limit: crate::blob::OBJECT_LIMIT,
+            max_tombstones: 64,
+            retained_bytes_limit: 8 * 1024 * 1024 * 1024,
+            minimum_free_bytes: 1024 * 1024,
+        })
+        .unwrap();
+    let metadata = FileOperationMetadata::new(
+        MutationActor::Obsidian,
+        FileOperationScopeHash::new("1".repeat(64)).unwrap(),
+        1,
+    )
+    .unwrap();
+    let original = broker
+        .prepare_file_operation(
+            FileOperationRequest::Delete {
+                path: path(),
+                expected: broker.read(&path()).unwrap().revision,
+                idempotency_key: "abandoned".into(),
+            },
+            metadata,
+        )
+        .unwrap();
+    broker
+        .confirm_file_operation_intent(&original, 3, &"a".repeat(64))
+        .unwrap();
+    let target = broker.maintenance_inspect(64).unwrap().targets.remove(0);
+    let ticket = broker
+        .prepare_maintenance(
+            &target.review_id,
+            MaintenanceDecision::CancelPrepared,
+            MaintenanceActor::current().unwrap(),
+        )
+        .unwrap();
+    broker
+        .confirm_maintenance_intent(&ticket, 4, &"a".repeat(64))
+        .unwrap();
+    broker.commit_maintenance(ticket).unwrap();
+    for event in broker.pending_file_operation_audit(64).unwrap() {
+        broker
+            .confirm_file_operation_audit(event, 5, &"a".repeat(64))
+            .unwrap();
+    }
+    for event in broker.pending_maintenance_audit(64).unwrap() {
+        broker
+            .confirm_maintenance_audit(event, 6, &"a".repeat(64))
+            .unwrap();
+    }
+    broker
+}
 fn verify(_: BrokerCheckpointAudit<'_>, offset: u64, hash: &str) -> Result<(), BrokerError> {
     if offset == 0 || hash != "a".repeat(64) {
         return Err(BrokerError::CorruptWriterState);
     }
     Ok(())
+}
+/// 和协调器同一条路：窗口里定格，交出定格，从定格导出，在副本上逐条核，核完才有票据。
+/// 用例里写者不必先解冻：导出只认定格。
+fn seal(
+    frozen: &mut FrozenBroker,
+    vault: &Path,
+    data: &Path,
+) -> Result<(SealedOwnerCheckpoint, BrokerCheckpointCoverage), BrokerError> {
+    frozen.capture()?;
+    frozen
+        .take_capture()?
+        .export(vault, data, deadline())?
+        .verify(deadline(), verify)
+}
+/// 同一套核对直接在活的写者上跑一遍：和副本上的结果对照用（以前窗口里就是这样核的）。
+fn verify_live(
+    broker: &FsVaultBroker,
+    mut verify: impl FnMut(BrokerCheckpointAudit<'_>, u64, &str) -> Result<(), BrokerError>,
+) -> Result<BrokerCheckpointCoverage, BrokerError> {
+    replays::verify(broker, deadline())?;
+    audit::verify(broker, deadline(), &mut verify)
 }
 #[test]
 fn checkpoint_keeps_original_lease_and_independent_complete_copy() {
@@ -92,10 +172,13 @@ fn checkpoint_keeps_original_lease_and_independent_complete_copy() {
     frozen = broker.freeze_checkpoint(deadline());
     let target_vault = fixture.target("copy-vault");
     let target_data = fixture.target("copy-data");
-    assert!(frozen.export(&target_vault, &target_data).is_err());
-    let coverage = frozen.verify_audit(verify).unwrap();
+    // 没定格就没有东西可交。
+    assert!(matches!(
+        frozen.take_capture(),
+        Err(BrokerError::IncompleteCapture)
+    ));
+    let (sealed, coverage) = seal(&mut frozen, &target_vault, &target_data).unwrap();
     assert_eq!((coverage.checked(), coverage.max_offset()), (2, 2));
-    let sealed = frozen.export(&target_vault, &target_data).unwrap();
     assert!(sealed.is_verified());
     assert_eq!(
         fs::read(target_vault.join("note.md")).unwrap(),
@@ -109,7 +192,8 @@ fn checkpoint_keeps_original_lease_and_independent_complete_copy() {
         fs::metadata(target_vault.join("note.md")).unwrap().mode() & 0o777,
         0o600
     );
-    assert!(frozen.export(&target_vault, &target_data).is_err());
+    // 目标已经用过、不是空的：再导出一次拒绝，不覆盖。
+    assert!(seal(&mut frozen, &target_vault, &target_data).is_err());
     let broker = frozen.thaw();
     assert_eq!(broker.read(&path()).unwrap().content, "正文".as_bytes());
     // 新根必须使用 owner 重绑定，普通打开不能把旧物理身份静默收养。
@@ -140,28 +224,30 @@ fn checkpoint_keeps_original_lease_and_independent_complete_copy() {
     );
 }
 #[test]
-fn checkpoint_changed_source_and_failed_recheck_revoke_export() {
+fn checkpoint_changed_source_and_failed_recapture_revoke_the_capture() {
     let fixture = Fixture::new();
     let mut broker = fixture.open();
     seed(&mut broker);
     flush(&mut broker);
     let mut frozen = broker.freeze_checkpoint(deadline());
-    frozen.verify_audit(verify).unwrap();
+    frozen.capture().unwrap();
     fs::write(fixture.vault.join("note.md"), b"changed").unwrap();
     let left = fixture.target("left");
     let right = fixture.target("right");
     assert!(matches!(
-        frozen.export(&left, &right),
+        frozen
+            .take_capture()
+            .unwrap()
+            .export(&left, &right, deadline()),
         Err(BrokerError::CaptureChanged)
     ));
-    frozen.verify_audit(verify).unwrap();
-    assert!(
-        frozen
-            .verify_audit(|_, _, _| Err(BrokerError::IncompleteCapture))
-            .is_err()
-    );
+    assert!(fs::read_dir(&left).unwrap().next().is_none());
+    // 先前定格成了，再定格失败：先前那一份也不许再交出去。
+    frozen.capture().unwrap();
+    symlink("/outside", fixture.vault.join("link")).unwrap();
+    assert!(frozen.capture().is_err());
     assert!(matches!(
-        frozen.export(&left, &right),
+        frozen.take_capture(),
         Err(BrokerError::IncompleteCapture)
     ));
     assert!(fs::read_dir(left).unwrap().next().is_none());
@@ -190,17 +276,17 @@ fn checkpoint_deadline_links_targets_and_inode_changes_fail_closed() {
                 fs::create_dir(&fixture.data).unwrap();
             }
         }
-        assert!(frozen.verify_audit(verify).is_err());
+        assert!(frozen.capture().is_err());
+        assert!(frozen.take_capture().is_err());
         drop(frozen.thaw());
     }
     let fixture = Fixture::new();
     let mut frozen = fixture.open().freeze_checkpoint(deadline());
-    frozen.verify_audit(verify).unwrap();
     let left = fixture.target("left");
     let right = fixture.target("right");
     fs::set_permissions(&right, fs::Permissions::from_mode(0o755)).unwrap();
-    assert!(frozen.export(&left, &right).is_err());
+    assert!(seal(&mut frozen, &left, &right).is_err());
     fs::set_permissions(&right, fs::Permissions::from_mode(0o700)).unwrap();
-    assert!(frozen.export(&left, &left).is_err());
+    assert!(seal(&mut frozen, &left, &left).is_err());
     assert!(fs::read_dir(left).unwrap().next().is_none());
 }

@@ -1,9 +1,9 @@
-//! 原工作台 owner 与真实 FrozenAudit 的组合契约；三个事件族沿线上同一映射核验。
+//! 原工作台 owner 与真实 FrozenAudit 的组合契约；三个事件族沿线上同一映射、在导出的副本上核验。
 use super::{
     TIMEOUT,
     fixture::{Fixture, idle},
 };
-use crate::CanonicalWorkbench;
+use crate::{CanonicalWorkbench, coordinator::verify_exported};
 use std::{
     fs,
     os::unix::fs::PermissionsExt as _,
@@ -11,7 +11,10 @@ use std::{
     time::Instant,
 };
 use studiolo_audit_ledger::{AuditEvent, AuditLedger, SqliteAuditLedger};
-use studiolo_core::VaultPath;
+use studiolo_core::{
+    VaultPath,
+    checkpoint::{CheckpointError, CheckpointOwner},
+};
 use studiolo_host_config::Config;
 use studiolo_vault_broker::{
     FileOperationLimits, FileOperationMetadata, FileOperationRequest, FileOperationScopeHash,
@@ -183,22 +186,19 @@ async fn checkpoint_real_audit_covers_content_file_operations_and_maintenance() 
         .unwrap()
         .freeze(deadline())
         .unwrap();
-    let coverage = frozen.verify_audit(&original).unwrap();
-    assert_eq!(coverage.checked(), 6);
-    assert_eq!(coverage.max_offset(), 6);
+    frozen.capture().unwrap();
     let vault = target(&f, "export-vault");
     let data = target(&f, "export-data");
-    // 交出定格、把写者还回工作台，再从定格导出（BUG-045）。
+    // 交出定格、把写者还回工作台，再从定格导出（BUG-045）、在副本上逐条核回执（BUG-050）。
     let capture = frozen.take_capture().unwrap();
     assert!(frozen.take_capture().is_err());
     drop(frozen);
     assert!(workbench.core.owner.lock().unwrap().is_some());
-    assert!(
-        capture
-            .export(&vault, &data, deadline())
-            .unwrap()
-            .is_verified()
-    );
+    let exported = capture.export(&vault, &data, deadline()).unwrap();
+    let (sealed, coverage) = verify_exported(exported, &original, deadline()).unwrap();
+    assert!(sealed.is_verified());
+    assert_eq!(coverage.checked(), 6);
+    assert_eq!(coverage.max_offset(), 6);
     assert_eq!(
         workbench
             .core
@@ -218,7 +218,7 @@ async fn checkpoint_real_audit_covers_content_file_operations_and_maintenance() 
     f.available();
 }
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn checkpoint_same_id_wrong_full_event_or_hash_cannot_export() {
+async fn checkpoint_same_id_wrong_full_event_or_hash_gets_no_ticket() {
     for corrupt in [1, 2] {
         let f = Fixture::new();
         let (mut broker, audit) = source(&f);
@@ -231,11 +231,24 @@ async fn checkpoint_same_id_wrong_full_event_or_hash_cannot_export() {
             .unwrap()
             .freeze(deadline())
             .unwrap();
-        assert!(frozen.verify_audit(&original).is_err());
-        // 回执没核过就没有定格可交，也就导不出来。
-        assert!(frozen.take_capture().is_err());
+        // 定格不读回执，照样交得出来；写者还回去之后才核，核不上就没有票据。
+        frozen.capture().unwrap();
+        let capture = frozen.take_capture().unwrap();
         drop(frozen);
         assert!(workbench.core.owner.lock().unwrap().is_some());
+        let exported = capture
+            .export(
+                &target(&f, "export-vault"),
+                &target(&f, "export-data"),
+                deadline(),
+            )
+            .unwrap();
+        assert_eq!(
+            verify_exported(exported, &original, deadline()).err(),
+            Some(CheckpointError::OwnerUnavailable {
+                owner: CheckpointOwner::Broker
+            })
+        );
         drop(original);
         drop(quiet);
         workbench.shutdown().await.unwrap();

@@ -1,12 +1,12 @@
 //! 冻结窗口放开之后（BUG-045）：各库只剩定格在冻结那一刻的读连接，写者只剩两棵树的文件句柄，
 //! 业务照常读写。这里校验登录、控制、接入方库的定格（排空、结构，随表变大），核剩下的回执、逐项导出、
-//! 登记来源、封存暂存区；读到的全是冻结那一刻。
+//! 在写者的副本上核它的回执（BUG-050）、登记来源、封存暂存区；读到的全是冻结那一刻。
 //! 没有屏障可以放开：丢弃只关定格的连接和句柄，失败不出票，留下的暂存由暂存层回收。
 use super::{
     CheckpointError, CheckpointExports, CheckpointTimes, OwnerExportPaths, PolicyParticipant,
     Result, StepTimes, add, check_deadline, unavailable,
 };
-use crate::coordinator::broker_failure;
+use crate::coordinator::{broker_failure, verify_exported};
 use std::{path::Path, time::Instant};
 use studiolo_audit_ledger::FrozenAudit;
 use studiolo_auth::FrozenAuth;
@@ -46,6 +46,8 @@ pub struct ReleasedOwners {
 pub enum SealFailure {
     /// 校验定格或核回执（登录、控制、接入方库）。
     Verify(CheckpointError),
+    /// 在导出的写者副本上逐条核回执和重放（BUG-050）。
+    Receipts(CheckpointError),
     /// 逐项导出（含副本上的整本验链和校验）。写者分得出超过固定上限、定格之后被改过（`broker_failure`）。
     Export(CheckpointError),
     /// 登记来源、过滤视图、封存暂存区。
@@ -55,7 +57,7 @@ impl SealFailure {
     /// 记进账本的那一类：校验、导出没做成都按暂存区不可用算（和放开之前一样），暂存层的照它自己的分类。
     pub fn staging(&self) -> StagingError {
         match self {
-            Self::Verify(_) | Self::Export(_) => StagingError::Unavailable,
+            Self::Verify(_) | Self::Receipts(_) | Self::Export(_) => StagingError::Unavailable,
             Self::Staging(error) => *error,
         }
     }
@@ -64,6 +66,7 @@ impl std::fmt::Display for SealFailure {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Verify(error) => write!(f, "校验与核回执：{error}"),
+            Self::Receipts(error) => write!(f, "核写者回执：{error}"),
             Self::Export(error) => write!(f, "导出：{error}"),
             Self::Staging(error) => write!(f, "封存暂存区：{error:?}"),
         }
@@ -103,11 +106,9 @@ impl ReleasedOwners {
         {
             return Err(SealFailure::Staging(StagingError::UnsafeRoot));
         }
-        let coverage = self.verify_audit().map_err(SealFailure::Verify)?;
+        let checked = self.verify_audit().map_err(SealFailure::Verify)?;
         steps.mark("校验与核回执");
-        let exports = self
-            .export_owners(coverage, steps)
-            .map_err(SealFailure::Export)?;
+        let exports = self.export_owners(checked, steps)?;
         // 只在真实副本已经形成之后计算当前登记；不得按路径补默认标签。
         let catalog = catalog(area.export_root(), &exports).map_err(SealFailure::Staging)?;
         steps.mark("登记来源");
@@ -141,26 +142,45 @@ impl ReleasedOwners {
         steps.mark("封存暂存区");
         Ok(sealed)
     }
-    /// 先校验登录、控制、接入方库的定格并核剩下的回执（都读各自定格的库和定格的账本），
-    /// 再按固定顺序逐项导出，汇总两个独立审计截止点。账本的整本验链在它自己的导出里、在副本上做。
-    pub fn export(&mut self) -> Result<CheckpointExports> {
-        let coverage = self.verify_audit()?;
-        self.export_owners(coverage, &mut StepTimes::start())
+    /// 先校验登录、控制、接入方库的定格并核它们的回执（都读各自定格的库和定格的账本），
+    /// 再按固定顺序逐项导出，汇总两个独立审计截止点。写者的回执在它导出的副本上核，
+    /// 账本的整本验链在它自己的导出里、在副本上做。
+    pub fn export(&mut self) -> std::result::Result<CheckpointExports, SealFailure> {
+        let checked = self.verify_audit().map_err(SealFailure::Verify)?;
+        self.export_owners(checked, &mut StepTimes::start())
     }
-    /// 按固定顺序逐项导出；回执已经核过。写者、其余各库、两本账本（副本上整本验链）各记一步。
+    /// 写者先导出、在副本上核完回执才有票据，再按固定顺序导出其余各库和两本账本；各记一步。
+    /// `checked` 是前面已经核过的回执数，写者的加上去。
     fn export_owners(
         &mut self,
-        coverage: AuditCoverageProof,
+        checked: u64,
+        steps: &mut StepTimes,
+    ) -> std::result::Result<CheckpointExports, SealFailure> {
+        let p = &self.paths;
+        // 写者分得清超过固定上限、定格之后被改过和别的故障，和窗口里同一套类别（BUG-045）。
+        let exported = self
+            .broker
+            .export(&p.vault, &p.writer, self.deadline)
+            .map_err(|error| SealFailure::Export(broker_failure(Some(&error))))?;
+        steps.mark("写者导出");
+        // 核的是冻结那一刻：副本从定格拷，账本是冻结时定格的那一份（BUG-050）。
+        let (broker, coverage) =
+            verify_exported(exported, &self.audit, self.deadline).map_err(SealFailure::Receipts)?;
+        let mut checked = checked;
+        add(&mut checked, coverage.checked()).map_err(SealFailure::Receipts)?;
+        steps.mark("核写者回执");
+        self.export_rest(broker, checked, steps)
+            .map_err(SealFailure::Export)
+    }
+    /// 写者之外的各库和两本账本（副本上整本验链）；回执都核过了。
+    fn export_rest(
+        &mut self,
+        broker: SealedOwnerCheckpoint,
+        checked: u64,
         steps: &mut StepTimes,
     ) -> Result<CheckpointExports> {
         let p = &self.paths;
-        // 写者分得清超过固定上限、定格之后被改过和别的故障，和窗口里同一套类别（BUG-045）。
-        let mut owners = vec![
-            self.broker
-                .export(&p.vault, &p.writer, self.deadline)
-                .map_err(|error| broker_failure(Some(&error)))?,
-        ];
-        steps.mark("写者导出");
+        let mut owners = vec![broker];
         if let Some(control) = &self.control {
             owners.push(
                 control
@@ -240,11 +260,16 @@ impl ReleasedOwners {
         Ok(CheckpointExports {
             roster,
             owners,
-            audit_coverage: coverage,
+            audit_coverage: AuditCoverageProof {
+                acked_events_checked: checked,
+                acked_events_matched: checked,
+                offset_comparison_only: false,
+            },
         })
     }
     /// 先校验定格（排空、结构、业务引用），再核回执；窗口里核过的加上这里核的，只有实际核验成功才累计。
-    fn verify_audit(&mut self) -> Result<AuditCoverageProof> {
+    /// 写者的回执不在这里，在导出的副本上核（[`Self::export_owners`]）。
+    fn verify_audit(&mut self) -> Result<u64> {
         let mut checked = self.checked;
         if let Some(control) = &mut self.control {
             control
@@ -283,10 +308,6 @@ impl ReleasedOwners {
             _ => return Err(unavailable(Owner::AgentStore)),
         }
         check_deadline(self.deadline, Owner::Audit)?;
-        Ok(AuditCoverageProof {
-            acked_events_checked: checked,
-            acked_events_matched: checked,
-            offset_comparison_only: false,
-        })
+        Ok(checked)
     }
 }

@@ -274,7 +274,7 @@ fn an_exhausted_budget_stops_and_leaves_the_rest_for_the_next_open() {
     );
 }
 
-/// 冻结、核对、导出到 `<名字>/canonical` 和 `<名字>/writer-data`，再交给可信导出扫描。
+/// 冻结、定格、导出到 `<名字>/canonical` 和 `<名字>/writer-data`，在副本上核完，再交给可信导出扫描。
 fn export(
     f: &Fixture,
     broker: FsVaultBroker,
@@ -285,8 +285,14 @@ fn export(
     let data = f.private(&format!("{name}/writer-data"));
     let uuid = broker.vault_uuid();
     let mut frozen = broker.freeze_checkpoint(far());
-    frozen.verify_audit(|_, _, _| Ok(())).unwrap();
-    frozen.export(&vault, &data).unwrap();
+    frozen.capture().unwrap();
+    frozen
+        .take_capture()
+        .unwrap()
+        .export(&vault, &data, far())
+        .unwrap()
+        .verify(far(), |_, _, _| Ok(()))
+        .unwrap();
     let facts = read_trusted_export(&root, uuid).map(|facts| facts.len());
     (frozen.thaw(), root, facts)
 }

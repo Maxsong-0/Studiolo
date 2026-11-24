@@ -19,21 +19,25 @@ pub(super) struct Assembled {
 }
 impl Assembled {
     pub(super) async fn new() -> Self {
-        Self::build(false, Arc::new(SystemSessionClock)).await
+        Self::build(false, Arc::new(SystemSessionClock), 0).await
     }
     /// 会话时钟由用例拨：演练「会话过了空闲期」用。
     pub(super) async fn with_clock(clock: Arc<dyn SessionClock>) -> Self {
-        Self::build(false, clock).await
+        Self::build(false, clock, 0).await
+    }
+    /// 写者那条正文的回执和账本对不上：1 是账本里同一个事件号换了动作，2 是回执记的哈希不对。
+    pub(super) async fn with_bad_receipt(corrupt: u8) -> Self {
+        Self::build(false, Arc::new(SystemSessionClock), corrupt).await
     }
     /// 主人登记过 TOTP（Auth 建在 v4）、登记过一个接入方实例：新根恢复的用例用它。撤权要挂上主人登记过的
     /// 因子，身份库那一步要有实例可吊销。
     pub(super) async fn with_owner_factor() -> Self {
-        Self::build(true, Arc::new(SystemSessionClock)).await
+        Self::build(true, Arc::new(SystemSessionClock), 0).await
     }
-    async fn build(owner_factor: bool, clock: Arc<dyn SessionClock>) -> Self {
+    async fn build(owner_factor: bool, clock: Arc<dyn SessionClock>, corrupt: u8) -> Self {
         let fixture = Fixture::new();
         let (mut broker, human) = source(&fixture);
-        flush_content(&mut broker, &human, 0);
+        flush_content(&mut broker, &human, corrupt);
         let workbench = start(&fixture, broker, human.clone()).await;
         let config = Config::load(&fixture.config).unwrap();
         let auth = fixture.root.join("auth");
@@ -114,13 +118,16 @@ impl Assembled {
 }
 impl Setup {
     pub(super) async fn new(intent: bool) -> Self {
+        Self::of(Assembled::new().await, intent)
+    }
+    pub(super) fn of(assembled: Assembled, intent: bool) -> Self {
         let Assembled {
             fixture,
             workbench,
             human,
             agent,
             inputs,
-        } = Assembled::new().await;
+        } = assembled;
         let owners = CheckpointOwners::new(inputs).unwrap();
         let key = JobKey {
             sequence: NonZeroU64::new(1).unwrap(),

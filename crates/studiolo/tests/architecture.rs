@@ -13,6 +13,8 @@ mod auth_http;
 mod auth_storage;
 #[path = "architecture_cases/authority.rs"]
 mod authority;
+#[path = "architecture_cases/checkpoint_window.rs"]
+mod checkpoint_window;
 #[path = "architecture_cases/ci.rs"]
 mod ci;
 #[path = "architecture_cases/dependencies.rs"]

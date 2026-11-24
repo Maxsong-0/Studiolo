@@ -67,9 +67,9 @@ mod tests {
     #[test]
     fn steps_render_in_order_with_whole_milliseconds() {
         assert_eq!(StepTimes::start().render(), "无");
-        let steps = StepTimes::of(&[("补记登录库", 3), ("核写者回执", 26_000)]);
-        assert_eq!(steps.render(), "补记登录库 3、核写者回执 26000");
-        assert_eq!(steps.names(), ["补记登录库", "核写者回执"]);
+        let steps = StepTimes::of(&[("补记登录库", 3), ("定格写者两棵树", 26_000)]);
+        assert_eq!(steps.render(), "补记登录库 3、定格写者两棵树 26000");
+        assert_eq!(steps.names(), ["补记登录库", "定格写者两棵树"]);
         let mut marked = StepTimes::start();
         marked.mark("甲");
         marked.mark("乙");

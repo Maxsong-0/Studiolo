@@ -10,7 +10,7 @@ fn capture_exports_the_frozen_moment_after_the_writer_thaws_and_rewrites() {
     flush(&mut broker);
     let first = broker.read(&path()).unwrap().revision;
     let mut frozen = broker.freeze_checkpoint(deadline());
-    frozen.verify_audit(verify).unwrap();
+    frozen.capture().unwrap();
     let watermark = frozen.watermark().unwrap();
     let capture = frozen.take_capture().unwrap();
     assert!(frozen.take_capture().is_err());
@@ -25,7 +25,14 @@ fn capture_exports_the_frozen_moment_after_the_writer_thaws_and_rewrites() {
     assert_eq!(broker.read(&path()).unwrap().content, "改过".as_bytes());
     let vault = fixture.target("copy-vault");
     let data = fixture.target("copy-data");
-    let sealed = capture.export(&vault, &data, deadline()).unwrap();
+    // 回执也核的是冻结那一刻：解冻之后那一笔还没落审计，活的写者这时核不过，副本照样核得过。
+    let (sealed, coverage) = capture
+        .export(&vault, &data, deadline())
+        .unwrap()
+        .verify(deadline(), verify)
+        .unwrap();
+    assert_eq!((coverage.checked(), coverage.max_offset()), (2, 2));
+    assert!(verify_live(&broker, verify).is_err());
     assert!(sealed.is_verified());
     assert_eq!(sealed.watermark, watermark);
     assert_eq!(fs::read(vault.join("note.md")).unwrap(), "正文".as_bytes());
@@ -63,7 +70,7 @@ fn capture_rejects_a_file_changed_in_place_after_thaw_without_touching_the_targe
     seed(&mut broker);
     flush(&mut broker);
     let mut frozen = broker.freeze_checkpoint(deadline());
-    frozen.verify_audit(verify).unwrap();
+    frozen.capture().unwrap();
     let capture = frozen.take_capture().unwrap();
     let broker = frozen.thaw();
     // 写者从不原地改；这里绕过写者直接改同一个 inode（长度、修改时间都变了）。

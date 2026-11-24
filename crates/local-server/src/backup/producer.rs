@@ -692,6 +692,10 @@ mod tests {
             ),
             released_line(&SealFailure::Staging(StagingError::Changed), &none),
             released_line(
+                &SealFailure::Receipts(CheckpointError::OwnerUnavailable { owner: broker }),
+                &none,
+            ),
+            released_line(
                 &SealFailure::Export(CheckpointError::SourceChanged { owner: broker }),
                 &none,
             ),
@@ -711,10 +715,16 @@ mod tests {
         }
         assert!(lines[0].contains("Control") && lines[1].contains("Control"));
         assert!(lines[2].contains("Changed"));
-        assert!(lines[3].contains("Broker") && lines[4].contains("Broker"));
-        // 账本里的固定原因照旧：导出没做成按暂存区不可用算，暂存层的照它自己的分类。
-        let export = SealFailure::Export(CheckpointError::OwnerUnavailable { owner });
-        assert_eq!(export.staging(), StagingError::Unavailable);
+        assert!(lines[3..6].iter().all(|line| line.contains("Broker")));
+        assert!(lines[3].contains("核写者回执"));
+        // 账本里的固定原因照旧：核回执、导出没做成按暂存区不可用算，暂存层的照它自己的分类。
+        for failure in [
+            SealFailure::Verify(CheckpointError::OwnerUnavailable { owner }),
+            SealFailure::Receipts(CheckpointError::OwnerUnavailable { owner: broker }),
+            SealFailure::Export(CheckpointError::OwnerUnavailable { owner }),
+        ] {
+            assert_eq!(failure.staging(), StagingError::Unavailable);
+        }
         assert_eq!(
             SealFailure::Staging(StagingError::Changed).staging(),
             StagingError::Changed
@@ -725,10 +735,10 @@ mod tests {
     /// 每一步的毫秒数（BUG-050：169 上 26 秒只有一个总数，分不清是哪一步慢）。
     #[test]
     fn the_freeze_window_log_line_has_the_milliseconds_and_every_step() {
-        let steps = StepTimes::of(&[("补记登录库", 3), ("核写者回执", 1200)]);
+        let steps = StepTimes::of(&[("补记登录库", 3), ("定格写者两棵树", 1200)]);
         assert_eq!(
             window_line(Duration::from_micros(1_234_567), &steps),
-            "备份封存冻结窗口：1234 毫秒（分步：补记登录库 3、核写者回执 1200）"
+            "备份封存冻结窗口：1234 毫秒（分步：补记登录库 3、定格写者两棵树 1200）"
         );
         assert_eq!(
             window_line(Duration::from_millis(7), &StepTimes::start()),

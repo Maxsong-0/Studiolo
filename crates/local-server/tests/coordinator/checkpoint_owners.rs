@@ -6,7 +6,7 @@ use super::{
 use crate::{
     PolicyPlane,
     board::BoardPlane,
-    checkpoint::{CheckpointInputs, CheckpointOwners, OwnerExportPaths},
+    checkpoint::{CheckpointInputs, CheckpointOwners, OwnerExportPaths, SealFailure},
 };
 use std::{
     fs,
@@ -33,6 +33,7 @@ mod board_freeze;
 mod busy_locks;
 mod drill;
 mod fixture;
+mod measure_window;
 mod producer;
 mod producer_auth_backlog;
 mod producer_catch_up;
@@ -42,6 +43,7 @@ mod restore;
 mod restore_plan;
 mod seal;
 mod steps;
+mod writer_receipts;
 use fixture::Setup;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -165,9 +167,9 @@ async fn checkpoint_a_note_rewritten_in_place_after_release_fails_the_export_as_
     // 和别的写者故障分开报（BUG-045）：人侧日志写「导出：owner Broker 定格之后被改过」，不出票。
     assert_eq!(
         released.export().err(),
-        Some(CheckpointError::SourceChanged {
+        Some(SealFailure::Export(CheckpointError::SourceChanged {
             owner: Owner::Broker
-        })
+        }))
     );
     drop(released);
     f.writable(true);

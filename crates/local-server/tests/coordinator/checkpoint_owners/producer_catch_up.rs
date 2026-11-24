@@ -5,7 +5,7 @@
 use super::{producer::Stage, seal::manifest, *};
 use crate::{
     backup::producer::TARGET,
-    checkpoint::{CheckpointTimes, trusted_catalog},
+    checkpoint::{CheckpointTimes, StepTimes, trusted_catalog},
 };
 use std::{
     sync::atomic::AtomicBool,
@@ -240,18 +240,27 @@ fn measure_round(stage: &Stage, last: u64) -> u64 {
     );
 
     // 一次封存：冻结窗口要多久（写请求只等这一段），放开之后从定格导出、封存又要多久。
-    let (window, after) = seal_once(stage, last);
+    let measured = seal_once(stage, last);
     println!(
         "MEASURE records={last} seal window_ms={} after_release_seconds={:.2}",
-        window.as_millis(),
-        after.as_secs_f64()
+        measured.window.as_millis(),
+        measured.after.as_secs_f64()
     );
     last
 }
 
+/// 量一次封存得到的用时：冻结窗口、放开之后，各带分步。
+pub(super) struct Measured {
+    pub(super) window: Duration,
+    pub(super) after: Duration,
+    pub(super) window_steps: StepTimes,
+    pub(super) after_steps: StepTimes,
+}
+
 /// 按生产者同样的几步封存一次：建暂存、冻结全部库并定格、放开、从定格导出并封存（夹具的冻结预算和生产一样是 30 秒，
-/// 不含同步平面）。返回冻结窗口和放开之后各用了多久。不经生产者：它一小时只封一次，这里每一轮都要封；也不写准入。
-fn seal_once(stage: &Stage, records: u64) -> (Duration, Duration) {
+/// 不含同步平面）。返回冻结窗口和放开之后各用了多久、各步用了多久。不经生产者：它一小时只封一次，这里每一轮都要封；也不写准入。
+/// `records` 只用来给这一次封存起名，同一个数不能封两次。
+pub(super) fn seal_once(stage: &Stage, records: u64) -> Measured {
     let key = JobKey {
         sequence: NonZeroU64::new(records.max(1)).unwrap(),
         checkpoint_id: CheckpointId::parse(format!("measure-{records}")).unwrap(),
@@ -277,12 +286,13 @@ fn seal_once(stage: &Stage, records: u64) -> (Duration, Duration) {
     )
     .unwrap();
     let started = Instant::now();
+    let mut window_steps = StepTimes::start();
     let frozen = stage
         .assembled
         .inputs
         .bind()
         .unwrap()
-        .freeze(
+        .freeze_timed(
             FreezeRequest {
                 checkpoint_id: key.checkpoint_id.clone(),
                 budget: FreezeBudget::new(30_000).unwrap(),
@@ -290,10 +300,12 @@ fn seal_once(stage: &Stage, records: u64) -> (Duration, Duration) {
             &key,
             TARGET,
             OwnerExportPaths::under(area.export_root()),
+            &mut window_steps,
         )
         .unwrap();
-    let mut released = frozen.release(deadline).unwrap();
+    let mut released = frozen.release_timed(deadline, &mut window_steps).unwrap();
     let window = started.elapsed();
+    let mut after_steps = StepTimes::start();
     let now = i64::try_from(
         SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -302,7 +314,7 @@ fn seal_once(stage: &Stage, records: u64) -> (Duration, Duration) {
     )
     .unwrap();
     released
-        .seal(
+        .seal_timed(
             area,
             trusted_catalog,
             manifest(),
@@ -311,8 +323,14 @@ fn seal_once(stage: &Stage, records: u64) -> (Duration, Duration) {
                 expires_at: InstantMillis::from_millis(now + 600_000),
                 now: InstantMillis::from_millis(now),
             },
+            &mut after_steps,
         )
         .unwrap();
     drop(released);
-    (window, started.elapsed() - window)
+    Measured {
+        window,
+        after: started.elapsed() - window,
+        window_steps,
+        after_steps,
+    }
 }

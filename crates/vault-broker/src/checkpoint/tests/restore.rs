@@ -1,13 +1,11 @@
 use super::*;
-use crate::{
-    FileOperationLimits, FileOperationMetadata, FileOperationRequest, FileOperationScopeHash,
-    FileOperationTicket, NewRootRebind,
-};
+use crate::{FileOperationTicket, NewRootRebind};
 
-fn restore(frozen: &FrozenBroker, fixture: &Fixture) -> FsVaultBroker {
+fn restore(frozen: &mut FrozenBroker, fixture: &Fixture, checked: u64) -> FsVaultBroker {
     let left = fixture.target("restored-vault");
     let right = fixture.target("restored-data");
-    let sealed = frozen.export(&left, &right).unwrap();
+    let (sealed, coverage) = seal(frozen, &left, &right).unwrap();
+    assert_eq!(coverage.checked(), checked);
     let OwnerWatermark::Broker {
         vault_uuid,
         pair_id,
@@ -34,8 +32,7 @@ fn restore(frozen: &FrozenBroker, fixture: &Fixture) -> FsVaultBroker {
 fn checkpoint_empty_vault_restores_without_inventing_history_metadata() {
     let fixture = Fixture::new();
     let mut frozen = fixture.open().freeze_checkpoint(deadline());
-    assert_eq!(frozen.verify_audit(verify).unwrap().checked(), 0);
-    let copy = restore(&frozen, &fixture);
+    let copy = restore(&mut frozen, &fixture, 0);
     assert_eq!(copy.write_status().unwrap().committed_through, 0);
     assert!(crate::history::store::open(&copy).unwrap().is_none());
 }
@@ -88,8 +85,7 @@ fn checkpoint_deleted_body_restores_from_rebound_file_operation_storage() {
         .unwrap();
     let deleted = complete(&mut broker, &ticket, 3);
     let mut frozen = broker.freeze_checkpoint(deadline());
-    assert_eq!(frozen.verify_audit(verify).unwrap().checked(), 4);
-    let mut copy = restore(&frozen, &fixture);
+    let mut copy = restore(&mut frozen, &fixture, 4);
     assert_eq!(copy.file_operation_limits().unwrap(), Some(limits));
     let ticket = copy
         .prepare_file_operation(

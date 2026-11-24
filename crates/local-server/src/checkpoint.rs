@@ -1,8 +1,9 @@
 //! 七个实际 owner 的总窗口：先排空完整操作，再按固定顺序冻结；全体原事件核对后才导出。
 //!
-//! 冻结窗口只定格（BUG-045）：窗口里各库定在同一刻、核要读活对象的回执、导出有固定上限的小状态，
-//! 然后按逆序放开全部屏障（[`FrozenOwners::release`]）；随数据涨的回执核对、拷贝、整本验链、
-//! 过滤视图和发布都在放开之后从定格做（[`ReleasedOwners`]），写请求不再等它们。
+//! 冻结窗口只定格（BUG-045）：窗口里各库和写者的两棵树定在同一刻、核本作业的 Intent 和 Bridge 的回执、
+//! 导出有固定上限的小状态，然后按逆序放开全部屏障（[`FrozenOwners::release`]）；随数据涨的回执核对
+//! （写者的也在内，BUG-050）、拷贝、整本验链、过滤视图和发布都在放开之后从定格做（[`ReleasedOwners`]），
+//! 写请求不再等它们。
 mod assembly;
 mod export;
 mod released;
@@ -74,7 +75,7 @@ pub struct FrozenOwners {
     request: FreezeRequest,
     paths: OwnerExportPaths,
     intent: AuditEvent,
-    /// 窗口里核过的回执数（本作业的 Intent、写者、Bridge 与传输）；其余各库的回执在放开之后核。
+    /// 窗口里核过的回执数（本作业的 Intent、Bridge 与传输）；写者和其余各库的回执在放开之后核。
     checked: Option<u64>,
     deadline: Instant,
 }
@@ -156,7 +157,7 @@ impl CheckpointOwners {
             .workbench
             .freeze_checkpoint(deadline)
             .map_err(|_| unavailable(Owner::Broker))?;
-        steps.mark("写者定格");
+        steps.mark("写者冻结");
         let control = self
             .control
             .as_ref()
@@ -234,15 +235,16 @@ impl CheckpointOwners {
             checked: None,
             deadline,
         };
-        frozen.verify_audit(steps)?;
+        frozen.pin(steps)?;
         Ok(frozen)
     }
 }
 impl FrozenOwners {
-    /// 窗口里要核的回执：本作业的 Intent、写者的重放与回执（读活的写者实例，条数有上限）、
-    /// Bridge 的持久 ACK 与传输最后一次运行（Bridge 整份在窗口里导出，见 [`FrozenOwners::release`]）。
-    /// 登录、控制、接入方库的回执只读各自定格的库，放开之后再核（[`ReleasedOwners`]）。
-    fn verify_audit(&mut self, steps: &mut StepTimes) -> Result<()> {
+    /// 各库都冻住之后：核本作业的 Intent，定格写者的两棵树，核 Bridge 的持久 ACK 与传输最后一次运行
+    /// （Bridge 整份在窗口里导出，见 [`FrozenOwners::release`]）。
+    /// 写者的重放与回执随编辑数涨，窗口里不读，放开之后在导出的副本上核（BUG-050）；
+    /// 登录、控制、接入方库的回执只读各自定格的库，也在放开之后核（[`ReleasedOwners`]）。
+    fn pin(&mut self, steps: &mut StepTimes) -> Result<()> {
         self.checked = None;
         self.audit
             .verify_event(&self.intent)
@@ -251,11 +253,8 @@ impl FrozenOwners {
         // 只有实际核验成功才累计，包括本作业在副作用前已落账的 Intent。
         let mut checked = 1_u64;
         // 写者自己分得清「超过固定上限」和「不可用」，原样带上（BUG-045）。
-        add(
-            &mut checked,
-            self.broker.verify_audit(&self.audit)?.checked(),
-        )?;
-        steps.mark("核写者回执");
+        self.broker.capture()?;
+        steps.mark("定格写者两棵树");
         if let Some(bridge) = &mut self.bridge {
             add(
                 &mut checked,

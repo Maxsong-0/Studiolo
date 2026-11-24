@@ -27,6 +27,19 @@ impl Binding {
         data: &Dir,
         vault_uuid: VaultUuid,
     ) -> Result<Self, BrokerError> {
+        Self::observe(root, data, vault_uuid, VaultUuid::new(), Ok)
+    }
+
+    /// 按两个根里现在的样子拼一份绑定。`original` 把看到的身份换成绑定该记的：
+    /// 写者原样；封存副本换回定格那一刻的原身份，没见过的就报错。
+    fn observe(
+        root: &Dir,
+        data: &Dir,
+        vault_uuid: VaultUuid,
+        pair_id: VaultUuid,
+        original: impl Fn(Identity) -> Result<Identity, BrokerError>,
+    ) -> Result<Self, BrokerError> {
+        let directory = |dir: &Dir| original(Identity::directory(dir)?);
         let control = lease::child(root, ".workbench")?;
         let (bytes, marker) = disk::read_identified(&control, "vault.json", disk::IDENTITY_LIMIT)?
             .ok_or(BrokerError::CorruptIdentity)?;
@@ -35,16 +48,16 @@ impl Binding {
         }
         Ok(Self {
             format_version: 1,
-            pair_id: VaultUuid::new(),
+            pair_id,
             vault_uuid,
-            canonical: Identity::directory(root)?,
-            data: Identity::directory(data)?,
-            control: Identity::directory(&control)?,
-            marker,
-            staging: Identity::directory(&lease::child(&control, "staging")?)?,
-            history: Identity::directory(&lease::child(data, "history")?)?,
-            idempotency: Identity::directory(&lease::child(data, "idempotency")?)?,
-            snapshots: Identity::directory(&lease::child(data, "snapshots")?)?,
+            canonical: directory(root)?,
+            data: directory(data)?,
+            control: directory(&control)?,
+            marker: original(marker)?,
+            staging: directory(&lease::child(&control, "staging")?)?,
+            history: directory(&lease::child(data, "history")?)?,
+            idempotency: directory(&lease::child(data, "idempotency")?)?,
+            snapshots: directory(&lease::child(data, "snapshots")?)?,
         })
     }
 
@@ -54,12 +67,21 @@ impl Binding {
         data: &Dir,
         uuid: VaultUuid,
     ) -> Result<(), BrokerError> {
+        self.verify_as(root, data, uuid, Ok)
+    }
+
+    /// 同 [`Binding::verify`]，身份先经 `original` 换过再比（见 [`Binding::observe`]）。
+    pub(crate) fn verify_as(
+        &self,
+        root: &Dir,
+        data: &Dir,
+        uuid: VaultUuid,
+        original: impl Fn(Identity) -> Result<Identity, BrokerError>,
+    ) -> Result<(), BrokerError> {
         if self.format_version != 1 {
             return Err(BrokerError::CorruptWriterState);
         }
-        let mut actual = Self::capture(root, data, uuid)?;
-        actual.pair_id = self.pair_id;
-        if *self != actual {
+        if *self != Self::observe(root, data, uuid, self.pair_id, original)? {
             return Err(BrokerError::WriterBindingMismatch);
         }
         Ok(())
