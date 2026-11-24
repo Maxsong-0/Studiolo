@@ -219,7 +219,7 @@ r23 manifest `e41276cd…94a2`、agent 单元 `394ffe6f…0117`（没变）。
 人侧单元除了发行路径一个字不动（内存上限 r24 起已是 2G，装配核它恰好一行），启动器一个字不动，网页（这版没改）、maintain 与 sync-launcher
 从同一提交构建、一起换，`prepare.py` 带全部参数；agent 单元原样沿用。没有改数据库或状态的版本号，激活失败可以退回 r24
 （单元仍是 2G，不用再 `set-property`）。**激活前还要做的**：停封存定时器和 worker、确认没有封存在跑，跑 `prereq.py --apply` 把私有备份配置
-（local-server `fddaf10d…c1ef` → `4cdf4efa…0636`，maintain `ba3db5a2…be79` → `9b19fcc1…8e21`，
+（local-server `fddaf10d…c1ef` → `202b1718…30ee`，maintain `ba3db5a2…be79` → `4223fd42…9a1f`，
 worker `d3c96ef9…9e57` → `107d1d41…4484`）换成 r25（上一版各留 `.before-r25` 副本），再激活；不用 `systemctl revert`。
 装配钉的摘要（都是 2026-11-24 从 169 只读回读的现场值）：human 单元 `87a458e9…7a1b`（r24 激活写下的）、
 r24 manifest `0f15f2a0…e351`、agent 单元 `394ffe6f…0117`（没变）。
