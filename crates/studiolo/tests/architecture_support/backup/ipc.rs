@@ -39,6 +39,9 @@ pub(super) fn fixed_binding(path: &Path, source: &str) -> bool {
             "ifrequest.target()!=TARGET{returnErr(AuditError::Serialization);}",
             "BackupAdmission::resume(self.ledger.clone(),request.key(),TARGET)",
             "ifqueue.outstanding(){returnOk((QueueAnswer::Outstanding,None));}",
+            // 该不该封存：生产入口只用真实时钟，到没到间隔在发序号之前判断（BUG-057）。
+            "fnschedule(self:&Arc<Self>)->Result<QueueAnswer,AuditError>{self.schedule_with(now_millis)}",
+            "if!due(now,interval,queue.last_attempt_ms()){returnOk((QueueAnswer::NotDue,None));}",
             "self.ledger.append(backup_intent(&key,TARGET).map_err(|_|AuditError::Serialization)?)?;",
             // 冻结窗口只定格（BUG-045）：放开全部屏障之后马上标记窗口已过（关停只等到这里），
             // 定格的连接和句柄关掉之后才写准入。

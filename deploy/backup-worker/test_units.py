@@ -17,6 +17,8 @@ PACKAGE = (SOURCE / "package.rs").read_text(encoding="utf-8")
 CREDENTIAL_ROOT = (SOURCE / "credentials" / "root.rs").read_text(encoding="utf-8")
 CREDENTIAL_FILE = (SOURCE / "credentials" / "file.rs").read_text(encoding="utf-8")
 TEMPORARY = (SOURCE / "temporary.rs").read_text(encoding="utf-8")
+PRODUCER = (ROOT / "crates" / "local-server" / "src" / "backup" / "producer.rs").read_text(encoding="utf-8")
+PREREQ = (HERE / "provision" / "prereq.py").read_text(encoding="utf-8")
 LISTENER = (ROOT / "crates" / "local-server" / "src" / "backup" / "listener.rs").read_text(encoding="utf-8")
 
 
@@ -109,6 +111,25 @@ class BackupWorkerUnitTests(unittest.TestCase):
         self.assertEqual(values(TIMER, "OnCalendar"), ["*-*-* *:0/5:00"])
         self.assertEqual(values(TIMER, "WantedBy"), ["timers.target"])
         self.assertGreaterEqual(int(values(SCHEDULE, "TimeoutStartSec")[0]), 10)
+
+    def test_triggers_land_on_the_planned_moments_the_producer_compares(self):
+        # 主服务判断间隔前把时刻归到所在的整分钟（BUG-057）：触发要落在整分钟上，晚到加超时不能跨到下一分钟，
+        # 批准的间隔要是触发周期的整数倍；少一条，实际间隔就又会多等一格。
+        calendar = re.fullmatch(r"\*-\*-\* \*:0/(\d+):00", values(TIMER, "OnCalendar")[0])
+        self.assertIsNotNone(calendar)
+        tick = int(calendar.group(1)) * 60_000
+        approved = int(re.search(r"^INTERVAL_MILLIS, .* = ([\d_]+),", PREREQ, flags=re.MULTILINE).group(1))
+        self.assertEqual(approved % tick, 0)
+        self.assertGreaterEqual(approved, tick)
+        slot = int(re.search(r"^const TRIGGER_SLOT_MILLIS: i64 = ([\d_]+);", PRODUCER, flags=re.MULTILINE).group(1))
+        self.assertEqual(tick % slot, 0)
+        self.assertEqual(slot, 60_000)
+        self.assertEqual(values(TIMER, "RandomizedDelaySec"), [])
+        late = int(values(TIMER, "AccuracySec")[0]) + int(values(SCHEDULE, "TimeoutStartSec")[0])
+        self.assertLessEqual(late * 1000, slot)
+        # 生产者用例里模拟的间隔和周期就是部署的这两个数。
+        self.assertIn(f"const APPROVED: i64 = {approved // 60_000} * MINUTE;", PRODUCER)
+        self.assertIn(f"const TICK: i64 = {tick // 60_000} * MINUTE;", PRODUCER)
 
 
 if __name__ == "__main__":

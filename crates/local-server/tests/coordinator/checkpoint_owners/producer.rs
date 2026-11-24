@@ -15,6 +15,8 @@ use studiolo_core::checkpoint::InstantMillis;
 
 /// 夹具里的冻结预算，和 169 批准的一样：30 秒。
 const FREEZE_MILLIS: u32 = 30_000;
+/// 夹具里批准的间隔：一小时。
+const INTERVAL_MILLIS: u64 = 3_600_000;
 
 pub(super) struct Stage {
     pub(super) assembled: Assembled,
@@ -75,6 +77,25 @@ impl Stage {
             retention_millis,
         }
     }
+    /// 在给定时刻问一次「该不该封存」：生产者按这个时刻判断，账本照样记真实的落账时刻。
+    pub(super) fn schedule_at(&self, now_ms: i64) -> QueueAnswer {
+        self.producer.schedule_with(|| Ok(now_ms)).unwrap()
+    }
+    /// 第 `sequence` 号作业的原意图落账的时刻（Unix 毫秒）。
+    pub(super) fn attempted_at(&self, sequence: u64) -> i64 {
+        self.assembled
+            .human
+            .query(&AuditFilter::default().with_phase(AuditPhase::Intent))
+            .unwrap()
+            .iter()
+            .find(|record| {
+                studiolo_backup::worker::job::backup_event_key(record.event())
+                    .is_some_and(|key| key.sequence.get() == sequence)
+            })
+            .expect("原意图已经落账")
+            .recorded_at()
+            .as_millisecond()
+    }
     /// 人侧重启之后的生产者：同一本账本、同一组 owner、同一份固定配置，内存里的队列进度从零开始。
     pub(super) fn restarted(&self) -> Arc<BackupProducer> {
         produce(
@@ -127,7 +148,7 @@ fn produce(
             staging_parent: parent.to_owned(),
             ephemeral_root: assembled.fixture.root.join("ephemeral"),
             source_roots,
-            min_interval_millis: 3_600_000,
+            min_interval_millis: INTERVAL_MILLIS,
             rpo_millis: 4_500_000,
             source_retention_millis: retention_millis,
             freeze_budget: FreezeBudget::new(freeze_millis).unwrap(),
@@ -197,7 +218,7 @@ async fn producer_seals_only_when_scheduled_and_hands_the_admitted_key_to_the_wo
         "没有准入的键不能借这个端口读写账本"
     );
 
-    // worker 写下结果之后不再是待办；离上一次封存太近，不会马上再做一次。
+    // worker 写下结果之后不再是待办；离上一次尝试太近，不会马上再做一次。
     let failure = BackupAuditRequest::append(
         fact.key().clone(),
         TARGET,
@@ -209,6 +230,39 @@ async fn producer_seals_only_when_scheduled_and_hands_the_admitted_key_to_the_wo
     assert_eq!(stage.ask(QueueCommand::Schedule), QueueAnswer::NotDue);
     stage.producer.settle();
     assert_eq!(stage.outcomes(1), 1);
+    stage.assembled.workbench.shutdown().await.unwrap();
+}
+
+/// 间隔从上一次尝试（原意图落账）那一刻数，不从封存做完（准入落账）重新数：准入总要晚上几分钟，
+/// 从它数就会把下一次推到定时器的再下一格（BUG-057，169 上 10 分钟变成 15 分钟）。
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_next_seal_is_due_one_interval_after_the_last_attempt_not_after_its_admission() {
+    let stage = Stage::new(true).await;
+    assert_eq!(stage.ask(QueueCommand::Schedule), QueueAnswer::Started);
+    let attempted = stage.attempted_at(1);
+    stage.producer.settle();
+    stage.assembled.writable(true);
+    let QueueAnswer::Pending(record) = stage.ask(QueueCommand::NextPending) else {
+        panic!("封存完成后必须有待办");
+    };
+    // 封存做完才落准入，比原意图晚。
+    assert!(record.recorded_at().as_millisecond() > attempted);
+    let fact = AdmissionFact::from_receipt(&record).unwrap();
+    let failure = BackupAuditRequest::append(
+        fact.key().clone(),
+        TARGET,
+        backup_failure(fact.key(), FailureReason::UploadRejected).unwrap(),
+    )
+    .unwrap();
+    stage.producer.dispatch(&failure.encode().unwrap()).unwrap();
+
+    let minute = 60_000;
+    let next = (attempted - attempted % minute) + i64::try_from(INTERVAL_MILLIS).unwrap();
+    // 计划触发时刻的前一毫秒还没到，到了那个整分钟就开始，不管准入多晚落的账。
+    assert_eq!(stage.schedule_at(next - 1), QueueAnswer::NotDue);
+    stage.producer.settle();
+    assert_eq!(stage.schedule_at(next), QueueAnswer::Started);
+    stage.producer.settle();
     stage.assembled.workbench.shutdown().await.unwrap();
 }
 
@@ -225,8 +279,15 @@ async fn a_seal_that_cannot_be_made_is_recorded_as_failed_and_not_retried_before
     assert_eq!(stage.ask(QueueCommand::NextPending), QueueAnswer::Idle);
     assert_eq!(stage.ask(QueueCommand::Schedule), QueueAnswer::NotDue);
     stage.producer.settle();
-    // 失败也不缩短批准的间隔（这里一小时）：到点之前不发新序号，间隔的边界由单元测试钉住。
+    // 失败也占满批准的间隔（这里一小时）：和成功的同一条规则，到点之前不发新序号，到了才发。
+    let attempted = stage.attempted_at(1);
+    let next = (attempted - attempted % 60_000) + i64::try_from(INTERVAL_MILLIS).unwrap();
+    assert_eq!(stage.schedule_at(next - 1), QueueAnswer::NotDue);
+    stage.producer.settle();
     assert_eq!(stage.outcomes(2), 0, "不到批准的间隔不发新序号");
+    assert_eq!(stage.schedule_at(next), QueueAnswer::Started);
+    stage.producer.settle();
+    assert_eq!(stage.outcomes(2), 1, "到点才重试");
     stage.assembled.workbench.shutdown().await.unwrap();
 }
 
