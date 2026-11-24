@@ -1,7 +1,7 @@
 """从已激活发行派生候选的固定装配；不读取凭据、不操作服务或数据库。
 
 黑板接线沿用 r2，Bridge 接线与只读身份库参数沿用 r16，备份生产者接线（启动器参数、两个写根、停止超时）沿用 r17
-（r18～r22 原样沿用，已激活）；本版只替换发行路径和人侧程序（r23 的人侧程序和 r22 一字不差），写根、认证、配对和同步范围保持现场原值。
+（r18～r23 原样沿用，已激活）；本版替换发行路径、人侧程序和人侧单元的内存上限，写根、认证、配对和同步范围保持现场原值。
 变换只接受钉住的上一发行形状；额外差异由现场摘要和逐字变换核验拒绝。
 
 沿革：r8→r2 的装配逻辑见本文件在 main `40fdf8d` 及更早的版本（一次性迁移，已激活）；
@@ -35,15 +35,19 @@ r20→r21（T-227：BUG-050 看板租约巡检遇备份冻结跳过这一轮，�
 数据库与状态的版本号不变：Bridge 库不加表、不改编码，路径预算 r20 已升过，激活失败可以退回 r20，已激活）；
 r21→r22（T-227：BUG-052 封存的导出扫描也认批次终态记录，2026-11-13 以前的批次提交留下的历史正文
 不再让整批封存失败。只换人侧程序，启动器和单元的接线一个字不动。数据库与状态的版本号不变，激活失败可以退回 r21，已激活）；
-本版 r22→r23（T-227：BUG-053 worker 读回整份封存只起一个 restic dump，tar 流边读边按清单核。修复在 worker 程序里，
+r22→r23（T-227：BUG-053 worker 读回整份封存只起一个 restic dump，tar 流边读边按清单核。修复在 worker 程序里，
 人侧程序和 r22 一字不差，不要求换（NEW_HUMAN_PROGRAM_LITERALS 为空）；要出发行、激活，是因为私有备份配置里 worker 的摘要
-和部署版本变了，人侧只在启动时读它。启动器和单元的接线一个字不动。数据库与状态的版本号不变，激活失败可以退回 r22）。
+和部署版本变了，人侧只在启动时读它。启动器和单元的接线一个字不动。数据库与状态的版本号不变，激活失败可以退回 r22，已激活）；
+本版 r23→r24（T-227：BUG-050 封存冻结窗口里不再逐条核写者回执，挪到放开之后、在导出的写者副本上核；BUG-054 封存拷 SQLite 库
+每 64 MiB 落一次盘，人侧单元内存上限 512M→2G；BUG-055 封存开头撞上进程内短暂持有的锁不再整轮失败。换人侧程序；
+单元除了发行路径只改内存上限那一行，启动器一个字不动。数据库与状态的版本号不变，激活失败可以退回 r23——单元也随之退回 512M，
+见 README「r23→r24」一段）。
 """
 import shlex
 from pathlib import Path
 
-OLD_RELEASE = '/home/maxsong/.local/share/studiolo-human-releases/m5m6-board-20260920-r22'
-BUILD = 'm5m6-board-20260920-r23'
+OLD_RELEASE = '/home/maxsong/.local/share/studiolo-human-releases/m5m6-board-20260920-r23'
+BUILD = 'm5m6-board-20260920-r24'
 BRIDGE_ROOT = '/var/lib/studiolo-owner/bridge'
 TRANSPORT_ROOT = '/home/maxsong/.local/share/studiolo-sync-transport'
 SYNC_APPROVAL = '/home/maxsong/.config/studiolo-human/sync-transport.json'
@@ -66,10 +70,15 @@ BACKUP_STAGING = '/var/lib/studiolo-backup-staging'
 BACKUP_SOCKET = BACKUP_RUNTIME + '/producer.sock'
 # 本版必须换的人侧程序里才有的字节：非空就表示本版必须换人侧程序。出候选和候选核验（激活预检也跑它）都要求候选程序的
 # 字节和上一发行不同，并且字节里有这些字面量。只看来源提交号不够：号可以填新的、文件却是旧的。
-# 本版（r23）不要求换：修复在 worker 程序里。人侧程序 108 从 38bf34a 构建，和 r22（75a5fa4）一字不差
-# （local-server 85a941f8…001a、maintain 898a8dfe…c30b，2026-11-23 核过）；r22 那三段字面量还在程序里，不再拿来分新旧。
-# 下一发行的修复要是又在人侧程序里，照 README「改常量」一节把新字节写回来。
-NEW_HUMAN_PROGRAM_LITERALS = ()
+# 本版（r24）的启动器没有新参数，要换程序是因为修复在程序里（封存的冻结窗口和放开之后）。取三段只有新程序才有的字节
+# （中文，按 UTF-8 编码后比）：冻结窗口里改名的两步、放开之后核写者回执没过的那一句，都是完整的字符串字面量（最后一句
+# 到占位符为止）。编进程序后都是原样的字节。
+# 169 上 r23 的程序（38bf34a 构建，摘要 85a941f8…001a）里三段都没有，2026-11-24 只读核过（按字节数，各 0 处）。
+NEW_HUMAN_PROGRAM_LITERALS = tuple(literal.encode() for literal in (
+    '写者冻结',
+    '定格写者两棵树',
+    '核写者回执：',
+))
 REQUIRES_NEW_HUMAN_PROGRAM = bool(NEW_HUMAN_PROGRAM_LITERALS)
 # 人侧停止超时（秒）。关停是串行的两段（crates/local-server/src/startup/serving.rs）：收到退出信号先等备份收尾，
 # 做完才通知 Bridge 停，所以两段要相加。备份段等的是在途的那一个连接整个处理完，再等它起的后台线程
@@ -129,13 +138,19 @@ STOP_TIMEOUT_SECONDS = (BACKUP_CONNECTION_WINDOW_SECONDS + BACKUP_SCAN_BUDGET_SE
                         + BACKUP_RECLAIM_SECONDS + BACKUP_FREEZE_BUDGET_SECONDS
                         + BRIDGE_STOP_GRACE_SECONDS + BRIDGE_STOP_MARGIN_SECONDS
                         + UNBUDGETED_STEPS_SECONDS + STOP_SAFETY_MARGIN_SECONDS)
-# 固定摘要防止覆盖其他发布。两个都是 2026-11-23 从 169 只读回读的现场值：human 是 r22 激活写下的单元
-# （已接备份：两个写根、停止超时 300 秒；和 r22 发行目录里那份逐字节相同）；agent 是 T-215 部署之后的单元
-# （发布名 t215-116f5d7-20261120），r22 没动它，和上一版钉的一致。
-HUMAN_SHA = '628eaf22ae854f2704617e608016600ac9bf1e8ecec0cf8fabbf740b5125f776'
+# 人侧单元的内存上限（BUG-054）：封存要拷 693 MB 的账本，人侧常驻又锁着约 290 MB 内存，512M 装不下——
+# 2026-11-24 拷账本时 cgroup 内存耗尽被杀、停站 31 分钟。程序这一版把没落盘的量封顶，单元同时放宽到 2G，
+# 免得一份封存反复从盘重读（放宽后放开之后那一段 280 秒降到 107～132 秒，同日 169 上量过）。
+# 现场必须恰好一行旧值：多一行、少一行、值不对都不出候选。
+OLD_MEMORY_LINE = 'MemoryMax=512M\n'
+MEMORY_LINE = 'MemoryMax=2G\n'
+# 固定摘要防止覆盖其他发布。两个都是 2026-11-24 从 169 只读回读的现场值：human 是 r23 激活写下的单元
+# （已接备份：两个写根、停止超时 300 秒；和 r23 发行目录里那份逐字节相同）；agent 是 T-215 部署之后的单元
+# （发布名 t215-116f5d7-20261120），r23 没动它，和上一版钉的一致。
+HUMAN_SHA = '2953684239afc7d03ec41106b70b68a1a9d7ef2c96c0211f91d4184be01242f6'
 AGENT_SHA = '394ffe6f55823e7ac8cf7cad02fcb2c34cbee0d284afd3c706d13afe54f50117'
-# 键名沿用早期协议，内容钉住当前 r22 manifest（2026-11-23 从 169 只读回读）。
-R8_MANIFEST_SHA = 'b9d822a2777d067d68f5fc7d0ace6269dadecf800cad1746bb869442ce9fc122'
+# 键名沿用早期协议，内容钉住当前 r23 manifest（2026-11-24 从 169 只读回读）。
+R8_MANIFEST_SHA = 'e41276cdb6860bd211cb2ef877d8bbfef42a6b6c314ecf90476413bf562c94a2'
 # 发行目录里属于网页的前缀：本次唯一允许整体更换的部分。
 WEB_PREFIX = 'web/'
 # 沿用黑板装配标识；Bridge 接线仍受固定现场摘要约束。
@@ -158,7 +173,7 @@ def stop_timeout_line(seconds):
 
 
 def human_unit(text):
-    """上一发行的人侧单元已带黑板、Bridge 与备份接线；本版只指到新发行，其余必须逐字不变。"""
+    """上一发行的人侧单元已带黑板、Bridge 与备份接线；本版指到新发行、放宽内存上限，其余必须逐字不变。"""
     if text.count(OLD_RELEASE) != 2 or RELEASE in text:
         raise ValueError('unrecognized human unit')
     if 'RuntimeDirectory=studiolo-human studiolo-board\n' not in text:
@@ -166,14 +181,17 @@ def human_unit(text):
     for path in (VAULT, WRITER, BOARD, AGENT, BOARD_RUNTIME, BRIDGE_ROOT, TRANSPORT_ROOT):
         if 'ReadWritePaths=' + path + '\n' not in text:
             raise ValueError('board wiring missing')
-    # 上一发行（r22，接线沿用 r17）已接备份：两个写根各恰好一行、紧跟在 Bridge 传输根后面，别处不再提备份路径；
+    # 上一发行（r23，接线沿用 r17）已接备份：两个写根各恰好一行、紧跟在 Bridge 传输根后面，别处不再提备份路径；
     # 停止超时恰好是按预算算出来的那一行。少了、多了、值不对，都说明现场不是钉住的形状。
     wired = 'ReadWritePaths=' + TRANSPORT_ROOT + '\n' + ''.join(
         'ReadWritePaths=' + path + '\n' for path in (BACKUP_RUNTIME, BACKUP_STAGING))
     if (text.count(wired) != 1 or text.count('studiolo-backup') != 2 or text.count('TimeoutStopSec=') != 1
             or text.count(stop_timeout_line(STOP_TIMEOUT_SECONDS)) != 1):
         raise ValueError('backup wiring missing')
-    return text.replace(OLD_RELEASE, RELEASE)
+    # 内存上限恰好一行旧值，独占一行（前面是换行）；只换这一行。
+    if text.count('MemoryMax=') != 1 or text.count('\n' + OLD_MEMORY_LINE) != 1:
+        raise ValueError('memory limit changed')
+    return text.replace(OLD_RELEASE, RELEASE).replace(OLD_MEMORY_LINE, MEMORY_LINE)
 
 
 def allow_scopes(exec_start):
@@ -210,7 +228,7 @@ def launcher(text):
         raise ValueError('bridge wiring missing')
     if text.count('"--board-agent-data", AGENT, "--agent-data", AGENT,') != 1 or text.count('"--agent-data"') != 1:
         raise ValueError('agents wiring missing')
-    # 上一发行（r22，接线沿用 r17）已带备份配置参数：恰好一处，紧跟在同步审批后面，路径是写死的那一份。
+    # 上一发行（r23，接线沿用 r17）已带备份配置参数：恰好一处，紧跟在同步审批后面，路径是写死的那一份。
     approval = '"--sync-transport", "' + SYNC_APPROVAL + '",'
     if (text.count(approval + ' "--backup-config", "' + BACKUP_CONFIG + '",') != 1
             or text.count('--backup-config') != 1):
