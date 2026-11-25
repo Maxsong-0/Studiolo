@@ -327,7 +327,7 @@ struct UntrustedTextTests {
     }
 
     @Test func ordinaryTextIsLeftAlone() {
-        for text in ["给设置页加一个「清空缓存」按钮。", "[link](https://x) **bold** <b>", "👨‍👩‍👧 ❤️ 🇨🇳 👍🏽", "e\u{301}", "naïve — “quotes” +30 −4"] {
+        for text in ["给设置页加一个「清空缓存」按钮。", "[link](https://x) **bold** <b>", "👨‍👩‍👧 ❤️ 🇨🇳 👍🏽 1️⃣ ❤️‍🔥 🏳️‍🌈 ☺︎", "e\u{301}", "naïve — “quotes” +30 −4"] {
             #expect(UntrustedText.clean(text) == text)
             #expect(UntrustedText.revealing(text).text == text)
             #expect(UntrustedText.revealing(text).hidden == 0)
@@ -341,6 +341,18 @@ struct UntrustedTextTests {
         #expect(shown.hidden == 4)
         #expect(UntrustedText.revealing("\u{E0041}").text == "⟨U+E0041⟩")
         #expect(UntrustedText.revealing("把 card-1 合进分支 main？\n改动：2 个文件，+30 −4").hidden == 0)
+    }
+
+    /// Variation selectors can carry bytes nobody sees, and a digit counts as an emoji to Unicode.
+    @Test(arguments: [
+        "a\u{FE0F}", "1\u{FE0F}2", "进\u{E0100}", "❤\u{FE0F}\u{FE0F}", "❤\u{FE01}", "\u{FE0F}", "1\u{200D}2", "#\u{200D}*",
+        "©\u{200D}®", "1\u{FE0F}\u{200D}🔥", "❤\u{200D}", "😀\u{200D}\u{200D}😀",
+    ])
+    func selectorsAndJoinersHideNothing(text: String) {
+        let shown = UntrustedText.revealing(text)
+        #expect(shown.hidden > 0)
+        #expect(shown.hidden == shown.text.split(separator: "⟨U+", omittingEmptySubsequences: false).count - 1)
+        #expect(UntrustedText.clean(text).unicodeScalars.count < text.unicodeScalars.count)
     }
 
     @Test func oneLine() {

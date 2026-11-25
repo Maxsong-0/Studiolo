@@ -521,6 +521,27 @@ struct UnixSocketTests {
 }
 
 struct FileKeepsakeTests {
+    /// A folder that was there already is closed to others first; one that is a link is not written through.
+    @Test func theFolderIsTightened() throws {
+        let files = FileManager.default
+        let root = files.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? files.removeItem(at: root) }
+        let folder = root.appendingPathComponent("open")
+        try files.createDirectory(at: folder, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o755])
+        let url = folder.appendingPathComponent("key")
+        try PrivateFile.write(Data("one".utf8), to: url)
+        try PrivateFile.write(Data("two".utf8), to: url)
+        #expect(try files.attributesOfItem(atPath: folder.path)[.posixPermissions] as? Int == 0o700)
+        #expect(try files.attributesOfItem(atPath: url.path)[.posixPermissions] as? Int == 0o600)
+        #expect(try Data(contentsOf: url) == Data("two".utf8))
+        #expect(try files.contentsOfDirectory(atPath: folder.path) == ["key"])
+
+        let link = root.appendingPathComponent("link")
+        try files.createSymbolicLink(at: link, withDestinationURL: folder)
+        #expect(throws: (any Error).self) { try PrivateFile.write(Data(), to: link.appendingPathComponent("key")) }
+        #expect(try Data(contentsOf: url) == Data("two".utf8))
+    }
+
     @Test func keptPrivately() throws {
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent("keepsake-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: folder) }

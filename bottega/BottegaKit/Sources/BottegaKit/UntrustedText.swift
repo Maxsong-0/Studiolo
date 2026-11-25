@@ -19,7 +19,7 @@ public enum UntrustedText {
                 // "\r\n" is one break; a lone "\r" is one too, so nothing can overprint the line before it.
                 if scalar == "\r", index + 1 < scalars.count, scalars[index + 1] == "\n" { index += 1 }
                 kept.append("\n")
-            } else if scalar == "\t" || !isHidden(scalar) || joinsEmoji(at: index, in: scalars) {
+            } else if scalar == "\t" || isShown(at: index, in: scalars) {
                 kept.append(scalar)
             }
             index += 1
@@ -42,7 +42,7 @@ public enum UntrustedText {
         let scalars = Array(text.unicodeScalars)
         for index in scalars.indices {
             let scalar = scalars[index]
-            if scalar == "\n" || scalar == "\t" || (!isHidden(scalar) && !isLineBreak(scalar)) || joinsEmoji(at: index, in: scalars) {
+            if scalar == "\n" || scalar == "\t" || (!isLineBreak(scalar) && isShown(at: index, in: scalars)) {
                 shown.append(scalar)
             } else {
                 hidden += 1
@@ -62,21 +62,42 @@ public enum UntrustedText {
         }
     }
 
-    private static func isHidden(_ scalar: Unicode.Scalar) -> Bool {
+    /// Whether the reader can see it, by itself or in how it changes the picture it belongs to.
+    private static func isShown(at index: Int, in scalars: [Unicode.Scalar]) -> Bool {
+        let scalar = scalars[index]
         switch scalar.properties.generalCategory {
-        case .control, .format: return true
+        case .control, .format: return scalar == joiner && joinsPictures(at: index, in: scalars)
         default: break
         }
-        // Ignorable by definition though classed as letters or marks (Hangul fillers and the like). Variation
-        // selectors are in here too, but they pick how the character before them is drawn and hide nothing.
-        return scalar.properties.isDefaultIgnorableCodePoint && !scalar.properties.isVariationSelector
+        if scalar.properties.isVariationSelector { return drawsEmoji(at: index, in: scalars) }
+        // Ignorable by definition though classed as letters or marks: Hangul fillers and the like.
+        return !scalar.properties.isDefaultIgnorableCodePoint
     }
 
-    /// A zero-width joiner between two emoji makes them one picture; anywhere else it is just hidden.
-    private static func joinsEmoji(at index: Int, in scalars: [Unicode.Scalar]) -> Bool {
-        guard scalars[index] == "\u{200D}", index > 0, index + 1 < scalars.count else { return false }
-        let before = scalars[index - 1].properties
-        return (before.isEmoji || before.isVariationSelector || before.isEmojiModifier) && scalars[index + 1].properties.isEmoji
+    private static let joiner: Unicode.Scalar = "\u{200D}"
+
+    /// A zero-width joiner between two pictures makes them one; anywhere else it is just hidden.
+    private static func joinsPictures(at index: Int, in scalars: [Unicode.Scalar]) -> Bool {
+        guard index > 0, index + 1 < scalars.count, isPicture(scalars[index + 1]) else { return false }
+        let before = scalars[index - 1]
+        if before.properties.isVariationSelector {
+            return index > 1 && isPicture(scalars[index - 2]) && drawsEmoji(at: index - 1, in: scalars)
+        }
+        return isPicture(before)
+    }
+
+    /// Variation selectors show nothing themselves, and runs of them can carry any bytes. The only ones let through
+    /// pick how an emoji right before them is drawn: one per emoji, and for a digit only as part of a keycap.
+    private static func drawsEmoji(at index: Int, in scalars: [Unicode.Scalar]) -> Bool {
+        guard scalars[index] == "\u{FE0E}" || scalars[index] == "\u{FE0F}", index > 0 else { return false }
+        let base = scalars[index - 1]
+        guard base.properties.isEmoji else { return false }
+        return !base.isASCII || (index + 1 < scalars.count && scalars[index + 1] == "\u{20E3}")
+    }
+
+    /// Unicode also counts digits, `#`, `*`, © and a few letterlike signs as emoji; nothing joins to those.
+    private static func isPicture(_ scalar: Unicode.Scalar) -> Bool {
+        scalar.properties.isEmoji && scalar.value >= 0x2190
     }
 
     /// The index after the escape sequence starting at `start`. An unfinished one costs only its ESC.

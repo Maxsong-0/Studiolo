@@ -70,26 +70,50 @@ public struct FileKeepsakeStore: KeepsakeStore {
 }
 
 public enum PrivateFile {
-    /// Readable by this user only, at every moment: the new file is made 0600 before anything is in it, then takes
-    /// the old one's place.
+    /// Readable by this user only, at every moment: the folder is made so first, the new file is made 0600 and
+    /// empty, and only a finished one takes the old one's place. The folder is this app's alone, so one that was
+    /// there already, with looser permissions, is tightened; someone else's, or a link, is refused.
     public static func write(_ data: Data, to url: URL) throws {
         let folder = url.deletingLastPathComponent()
         try FileManager.default.createDirectory(
             at: folder, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
-        let new = folder.appendingPathComponent(".\(url.lastPathComponent).\(UUID().uuidString)")
-        guard FileManager.default.createFile(atPath: new.path, contents: data, attributes: [.posixPermissions: 0o600]) else {
-            throw CocoaError(.fileWriteUnknown)
-        }
+        let directory = open(folder.path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+        guard directory >= 0 else { throw lastError() }
+        defer { close(directory) }
+        var status = stat()
+        guard fstat(directory, &status) == 0 else { throw lastError() }
+        guard status.st_uid == geteuid() else { throw POSIXError(.EPERM) }
+        if status.st_mode & 0o077 != 0, fchmod(directory, 0o700) != 0 { throw lastError() }
+
+        let new = ".\(url.lastPathComponent).\(UUID().uuidString)"
+        let file = openat(directory, new, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0o600)
+        guard file >= 0 else { throw lastError() }
         do {
-            let file = try FileHandle(forWritingTo: new)
-            try file.synchronize()
-            try file.close()
-            guard rename(new.path, url.path) == 0 else { throw POSIXError(.init(rawValue: errno) ?? .EIO) }
+            defer { close(file) }
+            try writeAll(data, to: file)
+            guard fsync(file) == 0 else { throw lastError() }
+            guard renameat(directory, new, directory, url.lastPathComponent) == 0 else { throw lastError() }
         } catch {
-            try? FileManager.default.removeItem(at: new)
+            unlinkat(directory, new, 0)
             throw error
         }
     }
+
+    private static func writeAll(_ data: Data, to file: Int32) throws {
+        try data.withUnsafeBytes { (bytes: UnsafeRawBufferPointer) in
+            var rest = bytes
+            while !rest.isEmpty {
+                let count = Darwin.write(file, rest.baseAddress, rest.count)
+                if count < 0 {
+                    if errno == EINTR { continue }
+                    throw lastError()
+                }
+                rest = UnsafeRawBufferPointer(rebasing: rest.dropFirst(count))
+            }
+        }
+    }
+
+    private static func lastError() -> POSIXError { POSIXError(.init(rawValue: errno) ?? .EIO) }
 }
 
 /// Keys in memory, no prompt. For tests, and for Debug builds trying out a demo LMAS.
