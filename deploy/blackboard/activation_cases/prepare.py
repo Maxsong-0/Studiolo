@@ -22,6 +22,13 @@ class PrepareTests(FilesBase):
         with self.assertRaises(ValueError):
             self.run_prepare(a, args)
 
+    def test_prepare_refuses_a_previous_launcher_that_is_not_the_pinned_original(self):
+        a, args = self.preparation()
+        a.LAUNCHER_SHA = c.sha(b'drifted launcher')
+        with self.assertRaises(ValueError):
+            self.run_prepare(a, args)
+        self.assertFalse(Path(a.RELEASE).exists())
+
     def test_prepare_can_replace_the_human_program_and_records_its_new_source(self):
         a, args = self.preparation()
         program = b'\x7fELFnew human build'

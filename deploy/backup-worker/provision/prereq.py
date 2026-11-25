@@ -70,11 +70,11 @@ KEEP_LAST, KEEP_DAILY = 30, 14
 # 封存副本只在到期后回收：保留期乘上数据量就是暂存区的盘占用（169 上每份约 1.1G，一小时约 8G）。
 RETENTION_MILLIS = 3_600_000
 
-# ---------------------------------------------------------------- 发行相关的值（跟着 r26 候选和 108 的构建走）
-# r26：108 上从提交 87caf70 构建（2026-11-24，产物 ~/r26-87caf70-20261124-out）。SOURCE_COMMIT 写的是构建提交，不是改这几行的那个提交。
-# 这一版换的是人侧程序和启动器（T-231）；maintain 跟着变（80f3daa0…f95d），worker 程序的摘要判断收成一份，跟着变（f636ed9c…e6f1）。
+# ---------------------------------------------------------------- 发行相关的值（跟着 r27 候选和 108 的构建走）
+# r27 只换启动器（BUG-058），三个程序沿用 r26 的：108 上从提交 87caf70 构建（2026-11-24，产物 ~/r26-87caf70-20261124-out）。
+# SOURCE_COMMIT 写的是构建提交，不是改这几行的那个提交。私有备份配置里只有人侧的部署版本变；worker 程序不换。
 SOURCE_COMMIT = '87caf70'
-HUMAN_RELEASE = 'm5m6-board-20260920-r26'
+HUMAN_RELEASE = 'm5m6-board-20260920-r27'
 RELEASE_DIRECTORY = '/home/maxsong/.local/share/studiolo-human-releases'
 PACKAGES = (
     ('studiolo-local-server', '0fc9d75bf31adcbbbe7d8bff83ebc06ab060cd22a040a90d0fb1b4c1c441b562'),
@@ -90,13 +90,13 @@ CA_SOURCE = '/home/maxsong/.config/studiolo-backup/ca.pem'
 # 上一版发行：169 上已经照它置备过的那一组值，键是 commit、release、packages（和上面三个同形）。换发行时把上面
 # 三个值原样搬进来再填新值；没有上一版（第一次置备）就是 None。上一版那份私有备份配置要能照这组值原样生成出来
 # （见 backup_document）：这次要是还改了别的字段，把旧值一起搬进来，不然现场那一份认不出来、会停下。
-# 现在登记的是 r25（提交 1570a22 构建，2026-11-24 在 169 上置备、激活）。
+# 现在登记的是 r26（提交 87caf70 构建，2026-11-24 在 169 上置备、激活），三个程序和这一版一样。
 PREVIOUS = {
-    'commit': '1570a22', 'release': 'm5m6-board-20260920-r25',
+    'commit': '87caf70', 'release': 'm5m6-board-20260920-r26',
     'packages': (
-        ('studiolo-local-server', '202b17186a8b37de4213ab70ca15a6e88a3e594f4ea5d5cf33b55f47dfda30ee'),
-        ('studiolo-maintain', '4223fd4279f4ca37980920a3469ac7f03890ca47f73930701999fbac9eb69a1f'),
-        ('studiolo-backup-worker', '107d1d41abc8303fe1800d577f2874ad20fa1d68ff18d6d75440b57111764484'),
+        ('studiolo-local-server', '0fc9d75bf31adcbbbe7d8bff83ebc06ab060cd22a040a90d0fb1b4c1c441b562'),
+        ('studiolo-maintain', '80f3daa0c898a8ba0f8e2683e19c09b8ce882cdf34f1491edba72c435745f95d'),
+        ('studiolo-backup-worker', 'f636ed9c95a861dd6d5304b30a79e8ba60758e34abe3ab0f021bd9eb2e5fe6f1'),
     ),
 }
 # 换下来的上一版留在原地用的名字后缀：跟着这一版的发行号走。

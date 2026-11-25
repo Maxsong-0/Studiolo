@@ -1,0 +1,59 @@
+# T-092 candidate: install only after owner enrollment, credentials and release acceptance.
+[Unit]
+Description=Studiolo human L2/L3 policy service (private Unix socket)
+Wants=network-online.target
+After=network-online.target
+StartLimitIntervalSec=60
+StartLimitBurst=3
+
+[Service]
+Type=exec
+User=maxsong
+Group=maxsong
+PrivateUsers=no
+WorkingDirectory=/home/maxsong/.local/share/studiolo-human-releases/m5m6-board-20260920-r26
+ExecStart=/usr/bin/python3 -I -B -S /home/maxsong/.local/share/studiolo-human-releases/m5m6-board-20260920-r26/launch-human.py
+LoadCredentialEncrypted=totp-next:/etc/credstore.encrypted/studiolo-human-totp-v2
+RuntimeDirectory=studiolo-human studiolo-board
+RuntimeDirectoryMode=0700
+# Keep crash leftovers for explicit diagnosis; only the product removes its own socket.
+RuntimeDirectoryPreserve=yes
+Restart=on-failure
+RestartSec=3
+KillSignal=SIGTERM
+TimeoutStopSec=300
+UMask=0077
+LimitCORE=0
+LimitMEMLOCK=infinity
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/maxsong/.local/share/studiolo-human-auth
+ReadWritePaths=/home/maxsong/.local/share/studiolo-human-audit
+ReadWritePaths=/home/maxsong/.local/share/studiolo-agent-policy
+ReadWritePaths=/run/studiolo-human
+ReadWritePaths=/home/maxsong/.local/share/studiolo-canonical
+ReadWritePaths=/home/maxsong/.local/share/studiolo-canonical-writer
+ReadWritePaths=/home/maxsong/.local/share/studiolo-board
+ReadWritePaths=/home/maxsong/.local/share/studiolo-agent
+ReadWritePaths=/run/studiolo-board
+ReadWritePaths=/var/lib/studiolo-owner/bridge
+ReadWritePaths=/home/maxsong/.local/share/studiolo-sync-transport
+ReadWritePaths=/run/studiolo-backup
+ReadWritePaths=/var/lib/studiolo-backup-staging
+PrivateTmp=yes
+# Existing Broker uses openat2, which RestrictSUIDSGID may block.
+RestrictSUIDSGID=no
+LockPersonality=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+SystemCallArchitectures=native
+MemoryMax=2G
+TasksMax=64
+StandardInput=null
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=studiolo-human
+UnsetEnvironment=STUDIOLO_TOTP_SEED_HEX STUDIOLO_TOTP_REPLACEMENT_SEED_HEX PYTHONPATH PYTHONHOME LD_PRELOAD LD_LIBRARY_PATH
+
+[Install]
+WantedBy=multi-user.target

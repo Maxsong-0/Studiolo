@@ -50,7 +50,7 @@ wrapper 从 `CREDENTIALS_DIRECTORY/totp-seed` 逐级使用目录 FD/no-follow �
 1. 发布物先统一验包、核生产特征、记录哈希。产品必须归 maxsong 且0755；启动器及 release 不允许组写/他人写。本材料不重复107上的构建/测试。
 2. owner.json 为0600、单链接、maxsong所有；配置父目录及 Auth/Audit/Policy 为0700，祖先无符号链接/不可信写权限。Auth v4 必须完成真实配对与双审计就绪；三个库必须已存在。wrapper只查元数据，产品再检查实际格式和权威状态；不会初始化或迁移。
 3. 单元仅为 Auth/Audit/Policy/socket 四根开写；公开示例、web、配置、release 保持只读。PrivateTmp 提供进程私有临时目录，不共享业务数据。
-4. `RuntimeDirectory=studiolo-human` 创建0700父目录；`RuntimeDirectoryPreserve=yes` 避免停止/重启时由 systemd 清掉异常旧 socket。wrapper 发现任何已有 http.sock 就拒绝（T-231，r26 起：自己的、只有一个名字的 socket 放过去交给产品判死，别的照旧拒绝）；没有 rm/清理钩子。正常退出由产品核身份后清理自身 socket；被强杀留下的由产品握着主库锁、判死才接管，判不准照旧拒绝，由主线先诊断再决定处置（`RECOVERY.md`）。
+4. `RuntimeDirectory=studiolo-human` 创建0700父目录；`RuntimeDirectoryPreserve=yes` 避免停止/重启时由 systemd 清掉异常旧 socket。wrapper 发现任何已有 http.sock（r2 起线上的还有 board.sock）就拒绝（T-231，r27 起：两个都是自己的、只有一个名字的 socket 就放过去交给产品判死，别的照旧拒绝；r26 只放开了 http.sock，BUG-058）；没有 rm/清理钩子。正常退出由产品核身份后清理自身 socket；被强杀留下的由产品握着主库锁、判死才接管，判不准照旧拒绝，由主线先诊断再决定处置（`RECOVERY.md`）。
 5. 生产机应先用 `systemd-analyze verify /候选目录/studiolo-human.service` 核对其实际 systemd 版本；本地 macOS 没有该工具，静态解析不等于服务器验证。确认密码加载成功后先验证候选 Unix 入口，再切 Tunnel。
 6. Tunnel 需同 maxsong UID，service=`unix:/run/studiolo-human/http.sock`，httpHostHeader=`studiolo.maxsong.me`；保留真实唯一 `CF-Connecting-IP`。不要重启/替换其他服务来让候选“通过”。
 7. 真人 Access 登录 → L2 Cookie/CSRF → 手机真实 TOTP step-up → 人侧发布/回滚/全局恢复与审计，仍是主线验收；`active`、socket存在或 l3_available=true 都不能代替。

@@ -115,7 +115,7 @@ NAS `unit` 在 worker 上线之前哪一步做都行。
      到点的回收不再起（`crates/local-server/src/backup/service.rs` 的 `accept_until_stopped`，同目录 `service_tests.rs` 钉着）。
    - 超时不是无害的，所以停止超时宁大勿小。被服务管理器强杀时关停链还没走完：人侧 HTTP 入口
      `/run/studiolo-human/http.sock` 和黑板入口 `/run/studiolo-board/board.sock` 要到关停链最后才删，单元又是
-     `RuntimeDirectoryPreserve=yes`，两个节点都会留下。留下之后人侧自己重启时会判死接管（T-231，r26 起；r25 和更早的发行是一律拒绝），但激活脚本停服后的核对照旧拒绝，
+     `RuntimeDirectoryPreserve=yes`，两个节点都会留下。留下之后人侧自己重启时会判死接管（T-231、BUG-058，r27 起；r26 见到黑板入口还是拒绝，r25 和更早的发行两个都拒绝），但激活脚本停服后的核对照旧拒绝，
      激活和回滚都停下来等人看过再删。封存做到一半被杀：留下的原意图下一次 `schedule` 补失败结果；暂存一般由下次启动的
      第一轮回收收走，但正好在「建目录」和「登记落盘」之间被杀的话，回收会失败关闭，之后的封存全部失败，也要人处理。
      回收自己删到一半被杀也续不上（程序的缺陷，已上报）：轻的是到期副本不再回收、暂存区一直涨，同样要人处理。

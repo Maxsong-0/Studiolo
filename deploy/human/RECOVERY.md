@@ -5,19 +5,20 @@
 在生产机上做，要 sudo 的命令由主人本人敲。整机重启、断电之后 `/run` 是空的，第 1～3 节说的残留节点不会有；
 第 4 节的暂存区在 `/var/lib` 下，重启之后东西还在，照样适用。
 
-带 T-231 的人侧发行（r26 起，r25 和更早的**没有**；启动器和程序一起换）会自己接管死 socket：程序握着主库锁、连一下没人监听、
+r27 起的人侧发行（T-231、BUG-058）会自己接管死 socket（r26 只做到一半：程序会接管，启动器见到 `board.sock` 还是拒绝，
+强杀之后要人删 `board.sock` 一个再起；r25 和更早的都不会）：程序握着主库锁、连一下没人监听、
 节点类型属主链接数都对、删之前再核还是同一个，才删那一个，日志里有「接管上一任留下的…入口 socket」。所以强杀之后一般几秒内自己起来，
 先看第 1 节的日志：有这几行、人侧是 `active`，就不用往下做，只在下一次激活之前清一下重启计数（第 2 节末尾）。
-它判不准（节点不是预期的样子、有人在监听、主库锁在别人手里）照旧拒绝启动，那时、以及 r25 和更早的发行、以及激活或回滚脚本停下的时候，按下面做。
+它判不准（节点不是预期的样子、有人在监听、主库锁在别人手里）照旧拒绝启动，那时、以及 r26 和更早的发行、以及激活或回滚脚本停下的时候，按下面做。
 
 人工恢复就是三件事：看清留下了什么 → 确认它确实是死的 → 只删那一个节点。
 看不清就停下，不删。数据库和它旁边的 `-wal`、`-shm`、Bridge 的状态文件、`.producer-lease` 都不要动：下次启动自己接着用。
 
 依据的代码（改了它们要回来对这份步骤）：
 
-- 启动器 `deploy/human/current-v2/launch-human.py`（已有 `http.sock` 就拒绝；r26 起由装配换成「自己的、只有一个名字的
-  socket 才放过去交给程序判」）和同目录的单元模板
-  `studiolo-human.service`（重试几次、`UMask`）；
+- 上一发行现装的启动器和人侧单元原文：`deploy/blackboard/activated/` 下的 `launch-human.py`、`studiolo-human.service`
+  （重试几次、`UMask`），和装配换进去的核对 `deploy/blackboard/assembly.py` 的 `INSPECT_LEFTOVER`（`board.sock`、`http.sock` 不在就过；
+  自己的、只有一个名字的 socket 放过去交给程序判；别的拒绝）；
 - `crates/local-server/src/unix_ingress/leftover.rs`（判死和接管，三个入口共用）、`crates/local-server/src/coordinator/sole.rs`
   （握着主库锁的凭据）、`crates/local-server/src/unix_ingress/layout.rs` 的 `revalidate` 和 `vacant`、
   `crates/local-server/src/backup/listener.rs`（接管之后还有同名节点一律拒绝；先建节点、再改属组和权限）、`crates/local-server/src/startup/serving.rs`（三个监听谁先谁后）、
@@ -49,8 +50,8 @@ ls -la /run/studiolo-human /run/studiolo-board /run/studiolo-backup
 
 | 日志里的话 | 挡着启动的节点 |
 |---|---|
-| `studiolo-human: startup rejected` | `/run/studiolo-human/http.sock`（r26 起只在它不是自己的、只有一个名字的 socket 时；启动器别的前置检查没过也是这句：先看这个节点在不在） |
-| `可信Unix入口配置或监听失败；不覆盖既有路径` | 三个里的任一个：r26 起 `/run/studiolo-human/http.sock` 判不准也是这句；`/run/studiolo-board/board.sock`、`/run/studiolo-backup/producer.sock` 一直是这句 |
+| `studiolo-human: startup rejected` | 启动器拒绝。r27 起：`/run/studiolo-human/http.sock`、`/run/studiolo-board/board.sock` 里有一个在、而且不是自己的、只有一个名字的 socket。r26：`board.sock` 在就拒绝，`http.sock` 同 r27。r25 和更早：两个里有一个在就拒绝。启动器别的前置检查没过也是这句：先看这两个节点在不在 |
+| `可信Unix入口配置或监听失败；不覆盖既有路径` | 程序拒绝。三个里的任一个判不准（`http.sock` r26 起、`board.sock` r27 起才走得到这里）；`/run/studiolo-backup/producer.sock` 启动器不看，一直是这句 |
 
 单元是 `Restart=on-failure`、隔 3 秒再试、60 秒内最多 3 次：有节点挡着的话，它试满 3 次就停在 `failed`，不会一直转。
 

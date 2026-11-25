@@ -52,7 +52,7 @@ sudo /usr/bin/python3 -I -B -S /可信工具目录/deploy/blackboard/activate.py
 
 r2 之后每次发行只做「上一发行 → 本发行」：换网页，可选换人侧程序，其余逐字节沿用（`assembly.py` 文件头有沿革，r5→r6 见 T-159）。
 
-1. **改常量**（`assembly.py`）：`OLD_RELEASE`＝上一发行目录、`BUILD`＝新发行号；`HUMAN_SHA`／`AGENT_SHA` 取 169 现场 `/etc/systemd/system/studiolo-{human,agent}.service` 的 sha256；`R8_MANIFEST_SHA` 取上一发行 `manifest.json` 的 sha256。`test_assembly.py` 的发行号断言同步。三个变换函数通常不改；本发行要动启动器参数、单元写根或停止超时（如 r17 接备份）时，改对应的变换函数和它的测试，新前置放进激活预检，新参数旧程序不认的，把参数名的字节字面量写进 `NEW_HUMAN_PROGRAM_LITERALS`（`REQUIRES_NEW_HUMAN_PROGRAM` 由它派生，不直接改）；下一发行不再要求换程序时清空它。
+1. **改常量**（`assembly.py`）：`OLD_RELEASE`＝上一发行目录、`BUILD`＝新发行号；`HUMAN_SHA`／`AGENT_SHA` 取 169 现场 `/etc/systemd/system/studiolo-{human,agent}.service` 的 sha256；`LAUNCHER_SHA` 取上一发行 `launch-human.py` 的 sha256；`R8_MANIFEST_SHA` 取上一发行 `manifest.json` 的 sha256。**`activated/` 里的 `launch-human.py`、`studiolo-human.service` 两份换成从 169 逐字节取回的原文**（用例照它们跑，摘要和上面两个值对不上就红；不许拿仓库里的模板拼，BUG-058）。`test_assembly.py` 的发行号断言同步。三个变换函数通常不改；本发行要动启动器参数、单元写根或停止超时（如 r17 接备份）时，改对应的变换函数和它的测试，新前置放进激活预检，新参数旧程序不认的，把参数名的字节字面量写进 `NEW_HUMAN_PROGRAM_LITERALS`（`REQUIRES_NEW_HUMAN_PROGRAM` 由它派生，不直接改）；下一发行不再要求换程序时清空它。
 2. **服务器上验工具**：`scripts/test-linux.sh bash -c 'python3 deploy/blackboard/test_assembly.py && python3 deploy/blackboard/test_freeze.py && python3 deploy/blackboard/test_activation.py'`（本机不跑测试）。
 3. **构建**：人侧程序在 githubci 原生 `cargo --locked build --release -p studiolo-local-server --features studiolo-auth/production`；网页在 108 用同一提交 `npm ci && npm run build`。来源提交须已过 CI。
 4. **暂存**（169，UID1000，0700/0600，程序 0755，不用 `/tmp`）：`bin/studiolo-local-server`、`web-dist/`、本目录 `{activate,activation_ops,assembly,prepare,candidate,binding,snapshot,sync_tools}.py` 与 `deploy/human/release/{activation_ops,release_common,runtime_checks,snapshot_worker}.py`，保持仓库相对布局。
@@ -65,7 +65,7 @@ r2 之后每次发行只做「上一发行 → 本发行」：换网页，可选
 ```
 
    只换网页时省略后三个参数（三件套要么全给要么全不给），程序逐字节沿用上一发行、manifest 照抄其来源；`assembly.REQUIRES_NEW_HUMAN_PROGRAM` 为真的发行（如 r17）必须给，而且给的程序要和上一发行字节不同、字节里有本版新参数的字面量（`NEW_HUMAN_PROGRAM_LITERALS`），否则不出候选。T-132 r10 同时传入 `--maintain <程序> --maintain-sha256 <摘要> --sync-launcher <程序> --sync-launcher-sha256 <摘要>`；四项必须全给，并与上述人侧程序来自同一提交。manifest 新增 `sync_program_source_commit`，两个程序均为 ELF/0755；之后省略四项会原样保留，禁止静默移除、缺一程序或保留来源却换字节。工具随包交付不自动置备、配对或启用 Bridge。输出 `manifest_sha256`、`human_binary_reused`、`services_changed: false`。
-6. **激活**（用户本人 root）：`sudo /usr/bin/python3 -I -B -S <暂存>/deploy/blackboard/activate.py --manifest-sha256 <上一步的摘要>`。已激活后重复执行会在预检被拒（现场已不是上一发行），无副作用。
+6. **激活**（用户本人 root）：`sudo /usr/bin/python3 -I -B -S <暂存>/deploy/blackboard/activate.py --manifest-sha256 <上一步的摘要>`。已激活后重复执行会在预检被拒（现场已不是上一发行），无副作用。预检在停服之前还会以主服务账号跑一遍候选启动器的 `preflight`（r27 起，BUG-058）：人侧在跑、黑板和 HTTP 两个 socket 都在，启动器看到的和人侧被强杀之后一个样，不放行就不停服。
 
 **r15→r16 是单向的**（2026-11-16 部署前复查）。r16 一启动就把控制库（黑板目录里的 `control.sqlite3`）从
 schema 3 升到 4，r15 见到比 3 新的版本拒绝打开；启动时写者若有没收口的操作，写者状态升到格式 8，r15 只认 1～7；
@@ -224,7 +224,7 @@ worker `d3c96ef9…9e57` → `107d1d41…4484`）换成 r25（上一版各留 `.
 装配钉的摘要（都是 2026-11-24 从 169 只读回读的现场值）：human 单元 `87a458e9…7a1b`（r24 激活写下的）、
 r24 manifest `0f15f2a0…e351`、agent 单元 `394ffe6f…0117`（没变）。
 
-本版固定 r25→r26（2026-11-24，T-231）：人侧被强杀（内存超限、停止超时、崩溃、`kill -9`）之后几秒内自己再起来。程序握着主库锁、连一下没人监听、
+r25→r26（2026-11-24，T-231，已激活；**真强杀没过**，见下一段）：人侧被强杀（内存超限、停止超时、崩溃、`kill -9`）之后几秒内自己再起来。程序握着主库锁、连一下没人监听、
 节点是自己的、只有一个名字、删之前再核还是同一个，才接管上一任留下的 socket（人侧 HTTP、黑板、备份三个入口同一份代码）；判不准照旧拒绝启动，
 照 `deploy/human/RECOVERY.md` 人工处理。启动器原来见到 `http.sock` 就拒绝，本版只放过自己的、只有一个名字的 socket，交给程序判；启动器什么都不删。
 带上 backup-worker 的摘要判断收成一份（T-227，行为不变）。**启动器和人侧程序必须一起换**（旧程序见到死 socket 照旧拒绝）：候选程序要和 r25 字节不同、字节里有三段新字节
@@ -238,3 +238,13 @@ r24 manifest `0f15f2a0…e351`、agent 单元 `394ffe6f…0117`（没变）。
 worker `107d1d41…4484` → `f636ed9c…e6f1`）换成 r26（上一版各留 `.before-r26` 副本），再激活；不用 `systemctl revert`。
 装配钉的摘要（都是 2026-11-24 从 169 只读回读的现场值）：human 单元 `3c89dde4…65b7`（r25 激活写下的）、
 r25 manifest `10749e77…9e21`、agent 单元 `394ffe6f…0117`（没变）。
+
+本版固定 r26→r27（2026-11-24，T-231，BUG-058）：r26 激活后真强杀一次，人侧没有自己起来——现装的启动器另有一处见到 `board.sock` 就拒绝，
+r26 只放开了 `http.sock` 那处（装配的用例夹具是拿仓库里更早的启动器拼的，没有那几行）。本版启动器对两个残留入口用同一处核对：不在就过；
+自己的、只有一个名字的 socket 放过去，由程序判死才接管；别的照旧拒绝，什么都不删。**只换启动器和发行路径**：人侧程序沿用 r26 的
+（`0fc9d75b…b562`，三个入口都会接管），网页、maintain、sync-launcher、worker 一字不差；`prepare.py` 不给程序参数，网页给 r26 的那一份、
+`--web-source-commit` 仍是 r26 的来源提交。装配和用例改成照现场真字节走（`activated/`、`LAUNCHER_SHA`），激活预检停服之前先在现场跑一遍候选启动器的
+`preflight`。没有改数据库或状态的版本号，激活失败可以退回 r26（退回之后强杀仍要人工删 `board.sock`）。**激活前还要做的**：停封存定时器和 worker、
+确认没有封存在跑，跑 `prereq.py --apply` 把私有备份配置里人侧的部署版本换成 r27（程序摘要都不变，worker 程序不换；上一版留 `.before-r27` 副本），再激活。
+装配钉的摘要（都是 2026-11-24 从 169 只读回读的现场值）：human 单元 `b7374320…9baf`（r26 激活写下的）、启动器 `514a91e2…a878`、
+r26 manifest `50601ccb…412e`、agent 单元 `394ffe6f…0117`（没变）。

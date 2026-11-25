@@ -45,6 +45,14 @@ class CandidateTests(FilesBase):
         with self.assertRaises(ValueError):
             self.check(a, digest)
 
+    def test_previous_launcher_must_be_the_pinned_original(self):
+        """BUG-058：启动器的变换和用例照钉住的原文做，现装的不是它就不往下走。"""
+        a, digest = self.candidate()
+        self.check(a, digest)
+        a.LAUNCHER_SHA = c.sha(b'drifted launcher')
+        with self.assertRaises(ValueError):
+            self.check(a, digest)
+
     def test_manifest_hash_and_closed_schema_rejected(self):
         a, digest = self.candidate()
         with self.assertRaises(ValueError):

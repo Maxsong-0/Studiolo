@@ -33,6 +33,8 @@ def verify_previous(a, c):
         c.require(type(item['bytes']) is int and 0 <= item['bytes'] <= c.MAX_FILE)
         c.require(isinstance(item['sha256'], str) and re.fullmatch('[0-9a-f]{64}', item['sha256']))
         directories.update(p.as_posix() for p in path.parents if str(p) != '.')
+    # 启动器的变换和用例都照 activated/ 里那份原文做：现装的就是它，才许往下走（BUG-058）。
+    c.require('launch-human.py' in files and files['launch-human.py']['sha256'] == a.LAUNCHER_SHA)
     actual, dirs = c.scan(root, c.UID)
     c.require(dirs == directories and set(actual) == set(files) | {'manifest.json'})
     c.require(all(actual[name] == item for name, item in files.items()))

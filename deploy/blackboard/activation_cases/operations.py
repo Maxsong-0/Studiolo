@@ -189,11 +189,116 @@ class OperationTests(unittest.TestCase):
         units.assert_not_called()
         ops.runtime.command.assert_not_called()
 
+    def test_preflight_runs_the_candidate_launcher_against_the_live_sockets_before_any_stop(self):
+        """BUG-058：候选启动器在现场不放行，预检就停下，不写回执、不停服。"""
+        ops = self.operation()
+        units = {'studiolo-human': b'old human', 'studiolo-agent': b'ExecStart=/agent/bin/studiolo-agent serve'}
+        ops.old_shas = {name: c.sha(raw) for name, raw in units.items()}
+        manifest = {'files': {'bin/studiolo-local-server': {'sha256': '2' * 64}}}
+        stored = {Path(assembly.RELEASE) / 'studiolo-human.service': b'new human',
+                  Path(assembly.RELEASE) / 'studiolo-agent.service': units['studiolo-agent'],
+                  Path(assembly.OLD_RELEASE) / 'launch-human.py': b'old launcher',
+                  Path(assembly.RELEASE) / 'launch-human.py': b'new launcher',
+                  Path(assembly.OLD_RELEASE) / 'manifest.json': json.dumps(manifest).encode(),
+                  ops_module.CONFIG: json.dumps({'seed_ref': 'studiolo-human-totp-v2', 'auth_directory': ops_module.AUTH,
+                                                 'audit_directory': ops_module.AUDIT}).encode()}
+        events = []
+        ops.a = types.SimpleNamespace(OLD_RELEASE=assembly.OLD_RELEASE, RELEASE=assembly.RELEASE,
+                                      R8_MANIFEST_SHA=c.sha(json.dumps(manifest).encode()),
+                                      human_unit=lambda text: text.replace('old', 'new'), agent_unit=lambda text: text,
+                                      launcher=lambda text: text.replace('old', 'new'))
+        ops.runtime.ready.side_effect = lambda *args: events.append('human-ready')
+
+        def run(accepts):
+            events.clear()
+
+            def probe(code):
+                events.append(('launcher', code))
+                if not accepts:
+                    raise ValueError('rejected')
+            with patch.object(ops_module.sys, 'platform', 'linux'), patch.object(os, 'getuid', return_value=0), \
+                    patch.object(os, 'geteuid', return_value=0), patch.object(c, 'UID', 1000), \
+                    patch.object(ops_module.pwd, 'getpwnam', return_value=types.SimpleNamespace(pw_uid=1000)), \
+                    patch.object(ops_module, 'verify_candidate', return_value=manifest), \
+                    patch.object(ops, 'backup_ready'), patch.object(ops, 'units', return_value=units), \
+                    patch.object(c, 'read', side_effect=lambda path, *rest: stored[path]), \
+                    patch.object(c, 'inspect'), patch.object(ops, 'worker', return_value={}), \
+                    patch.object(ops_module, 'binding', return_value={}), \
+                    patch.object(ops, 'board_ready', side_effect=lambda: events.append('board-ready')), \
+                    patch.object(ops, 'read_agent', return_value=b'agent'), patch.object(ops, 'properties'), \
+                    patch.object(ops, 'agent_ready', side_effect=lambda: events.append('agent-ready')), \
+                    patch.object(ops, 'launcher_accepts', side_effect=probe), \
+                    patch.object(ops, 'receipt', side_effect=lambda name, value: events.append(name)):
+                ops.preflight()
+        run(True)
+        # 候选那一份的字节，人侧两个入口都核过是活的之后才跑，跑过才写回执。
+        self.assertEqual(events, ['board-ready', 'human-ready', 'agent-ready', ('launcher', b'new launcher'), 'preflight'])
+        ops.runtime.command.reset_mock()
+        with self.assertRaises(ValueError):
+            run(False)
+        self.assertEqual(events[-1], ('launcher', b'new launcher'))
+        # 停、起、重载一个都没有，只有只读的单元核验。
+        self.assertEqual([call.args[0][0] for call in ops.runtime.command.call_args_list], ['systemd-analyze'])
+
+    def test_launcher_probe_is_unprivileged_isolated_and_needs_both_live_sockets(self):
+        ops = self.operation()
+        ops.runtime.SOCKET = Path('/run/studiolo-human/http.sock')
+        account = types.SimpleNamespace(pw_uid=1000, pw_gid=1000)
+
+        run = Mock()
+
+        def probe(*, returncode=0, missing=None, regular=None):
+            def lstat(path):
+                if str(path) == missing:
+                    raise FileNotFoundError(path)
+                return types.SimpleNamespace(st_mode=ops_module.stat.S_IFREG if str(path) == regular
+                                             else ops_module.stat.S_IFSOCK)
+            run.reset_mock()
+            run.return_value = types.SimpleNamespace(returncode=returncode)
+            with patch.object(c, 'UID', 1000), patch.object(ops_module.pwd, 'getpwnam', return_value=account), \
+                    patch.object(os, 'lstat', side_effect=lstat), patch.object(ops_module.subprocess, 'run', run):
+                ops.launcher_accepts(b'candidate bytes')
+        probe()
+        call = run.call_args
+        self.assertEqual(call.args[0], ['/usr/bin/python3', '-I', '-B', '-S', '-c', ops_module.LAUNCHER_PROBE])
+        self.assertEqual(call.kwargs['input'], b'candidate bytes')
+        self.assertEqual((call.kwargs['user'], call.kwargs['group'], call.kwargs['extra_groups']), (1000, 1000, []))
+        self.assertEqual((call.kwargs['cwd'], call.kwargs['env'], call.kwargs['timeout']), ('/', ops.runtime.ENV, 20))
+        with self.assertRaises(ValueError):
+            probe(returncode=1)
+        # 主服务账号的号码对不上：不跑。
+        account.pw_uid = 1001
+        with self.assertRaises(ValueError):
+            probe()
+        run.assert_not_called()
+        account.pw_uid = 1000
+        # 两个入口少一个、或者不是 socket：这一步证明不了什么，拒绝，不跑。
+        for path in ('/run/studiolo-human/http.sock', assembly.BOARD_SOCKET):
+            with self.subTest(path=path):
+                with self.assertRaises(FileNotFoundError):
+                    probe(missing=path)
+                run.assert_not_called()
+                with self.assertRaises(ValueError):
+                    probe(regular=path)
+                run.assert_not_called()
+        self.assertEqual(assembly.HUMAN_SOCKET, str(runtime.SOCKET))
+
+    def test_launcher_probe_runs_preflight_only_and_reports_its_verdict(self):
+        """真的跑一遍那段探测代码：只跑 preflight，不跑 main；preflight 抛错就是非零退出。"""
+        def run(body):
+            code = ('def preflight():\n    ' + body + '\n\n\nif __name__ == "__main__":\n    raise SystemExit(0)\n'
+                    'if __name__ != "launcher_probe":\n    raise SystemExit(9)\n').encode()
+            return subprocess.run([sys.executable, '-I', '-B', '-S', '-c', ops_module.LAUNCHER_PROBE], input=code,
+                                  capture_output=True, timeout=30)
+        accepted = run('print("ran")')
+        self.assertEqual((accepted.returncode, accepted.stdout), (0, b'ran\n'))
+        self.assertNotEqual(run('raise RuntimeError("rejected")').returncode, 0)
+
     def test_private_tmp_names_the_directories_the_unit_hides(self):
         # BackupReadyTests 把这个值换成沙盒里的目录来测逻辑；真实取值在这里钉。
         self.assertEqual(ops_module.PRIVATE_TMP, (Path('/tmp'), Path('/var/tmp')))
-        # 依据：人侧单元 PrivateTmp=yes（发行单元从这份模板逐字派生，装配不动这一行）。
-        unit = (HERE.parent / 'human/current-v2/studiolo-human.service').read_text()
+        # 依据：人侧单元 PrivateTmp=yes（看 169 现装的原文，装配不动这一行）。
+        unit = (HERE / 'activated/studiolo-human.service').read_text()
         self.assertEqual(unit.count('PrivateTmp=yes\n'), 1)
 
     def test_backup_document_keys_and_floors_match_the_program(self):
