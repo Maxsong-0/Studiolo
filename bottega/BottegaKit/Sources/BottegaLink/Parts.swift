@@ -41,6 +41,9 @@ public struct SigningRefused: Error, Equatable {
 /// What has to outlive the app: which device this is to that LMAS, and what has not been settled.
 public struct Keepsake: Codable, Equatable, Sendable {
     public var device: String?
+    /// What this Mac was last registered as, or may have been: LMAS gives the same number back only for the same
+    /// name and keys.
+    public var name: String?
     public var outbox = Outbox()
     public init() {}
 }

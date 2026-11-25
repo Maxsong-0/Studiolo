@@ -111,7 +111,7 @@ public enum ClientLine {
     private static func line(_ fields: Fields) throws -> Data {
         var line = try Wire.encoder.encode(fields)
         line.append(UInt8(ascii: "\n"))
-        if line.count > Wire.maxLineBytes { throw TooLong(bytes: line.count) }
+        if line.count - 1 > Wire.maxLineBytes { throw TooLong(bytes: line.count) }
         return line
     }
 

@@ -49,7 +49,7 @@ struct WireTests {
         #expect(requested.last?.merge == "merge-1")
         let echoes = events.compactMap { if case .intentEchoed(let e) = $0 { e } else { nil } }
         #expect(echoes.map(\.outcome) == [
-            .done(message: "msg-7"), .refused(.init(code: "not_on_thread", text: "coder-card-1 不在这条线上")),
+            .done(message: "msg-9"), .refused(.init(code: "not_on_thread", text: "coder-card-1 不在这条线上")),
             .already(number: 1), .done(message: nil),
         ])
         let answered = events.compactMap { if case .askAnswered(let e) = $0 { e.via } else { nil } }
@@ -188,6 +188,13 @@ struct WireTests {
     @Test func aLineLMASWouldDisconnectOnIsNeverWritten() throws {
         var intent = try #require(try Fixtures.vectors().intents.first).intent
         intent.body = String(repeating: "x", count: Wire.maxLineBytes)
+        #expect(throws: ClientLine.TooLong.self) { try ClientLine.request(id: 1, .intent(intent)) }
+        // The newline does not count: the longest line LMAS takes goes through, one byte more does not.
+        intent.body = ""
+        let rest = try ClientLine.request(id: 1, .intent(intent)).count - 1
+        intent.body = String(repeating: "x", count: Wire.maxLineBytes - rest)
+        #expect(try ClientLine.request(id: 1, .intent(intent)).count == Wire.maxLineBytes + 1)
+        intent.body += "x"
         #expect(throws: ClientLine.TooLong.self) { try ClientLine.request(id: 1, .intent(intent)) }
     }
 

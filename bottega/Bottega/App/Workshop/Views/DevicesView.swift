@@ -33,7 +33,6 @@ private struct DeviceBox: View {
                 Image(systemName: device.kind == "mac" ? "macbook" : "iphone").foregroundStyle(.secondary)
                 Text(verbatim: UntrustedText.line(device.name, limit: 64)).font(.headline)
                 if isThisOne {
-                    RegisterAgainButton().controlSize(.small)
                     Text("This Mac").font(.caption).padding(.horizontal, 6).padding(.vertical, 1).background(.quaternary, in: .capsule)
                 }
                 Spacer()
@@ -78,10 +77,10 @@ struct RegisterAgainButton: View {
 
     var body: some View {
         Button("Register Again…") { isAsking = true }
-            .confirmationDialog("Register this Mac again with new keys?", isPresented: $isAsking) {
+            .confirmationDialog("Register this Mac again?", isPresented: $isAsking) {
                 Button("Register Again") { model.forgetDevice() }
             } message: {
-                Text("Needed when the fingers enrolled in Touch ID have changed, or LMAS no longer knows this Mac. LMAS asks you to confirm the new keys.")
+                Text("For when LMAS no longer knows this Mac. Its keys stay the same; an LMAS that has another device refuses.")
             }
     }
 }
@@ -89,13 +88,15 @@ struct RegisterAgainButton: View {
 /// This Mac is not one of LMAS's devices yet.
 struct RegistrationView: View {
     @Environment(WorkshopModel.self) private var model
-    @State private var name = Host.current().localizedName ?? "Mac"
+    @State private var name = RegistrationView.macName
+
+    private static let macName = Host.current().localizedName ?? "Mac"
 
     var body: some View {
         VStack(spacing: 18) {
             Image(systemName: "touchid").font(.system(size: 44)).foregroundStyle(.tint)
             Text("Register This Mac").font(.title2.weight(.semibold))
-            Text("Bottega makes two keys in this Mac's Secure Enclave: one for what you say, and one for what you approve, which needs your finger every time. LMAS asks you to confirm in its own window.")
+            Text("Bottega makes two keys in this Mac's Secure Enclave: one for what you say, and one for what you approve, which needs your finger every time. An LMAS takes one device.")
                 .multilineTextAlignment(.center)
                 .foregroundStyle(.secondary)
                 .frame(maxWidth: 420)
@@ -119,6 +120,8 @@ struct RegistrationView: View {
         }
         .padding(40)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        // LMAS gives the same device number back only under the same name.
+        .onChange(of: model.registeredName, initial: true) { if let known = model.registeredName { name = known } }
     }
 
     private func register() {

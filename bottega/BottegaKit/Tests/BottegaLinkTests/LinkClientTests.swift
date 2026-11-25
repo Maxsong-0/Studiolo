@@ -13,6 +13,7 @@ final class Rig {
     private(set) var statuses: [LinkClient.Status] = []
     private(set) var settled: [Outbox.Settled] = []
     private(set) var registrationFailures: [Why] = []
+    private(set) var registeredNames: [String?] = []
     private(set) var outbox: [Outbox.Item] = []
     private(set) var resets: [UInt64] = []
     private(set) var state = WorkshopState()
@@ -43,6 +44,7 @@ final class Rig {
         case .settled(let item): settled.append(item)
         case .outbox(let items): outbox = items
         case .registrationFailed(let why): registrationFailures.append(why)
+        case .registeredName(let name): registeredNames.append(name)
         case .overview, .welcome, .notice: break
         }
     }
@@ -127,6 +129,35 @@ struct LinkClientTests {
         try await second.registered()
         #expect(second.store.keepsake.device == FakeLMAS.device)
         #expect(second.state.devices.count == 1)
+    }
+
+    /// LMAS gives the same device number back only under the same name, so it is kept before anything is sent.
+    @Test func theNameIsKeptForRegisteringAgain() async throws {
+        let rig = Rig()
+        try await rig.registered()
+        rig.stop()
+        #expect(rig.store.keepsake.name == "书房的 Mac Studio")
+        let again = Rig(lmas: rig.lmas, store: rig.store)
+        defer { again.stop() }
+        try await again.until("is told") { !again.registeredNames.isEmpty }
+        #expect(again.registeredNames == ["书房的 Mac Studio"])
+    }
+
+    /// A refused name is not the one LMAS knows: the one before it stays for the next try.
+    @Test func aRefusedNameDoesNotReplaceTheOneLMASKnows() async throws {
+        let rig = Rig()
+        defer { rig.stop() }
+        try await rig.registered()
+        try await rig.client.forgetDevice()
+        try await rig.until("asks") { rig.status == .needsRegistration }
+        await rig.client.register(name: "别的名字")
+        try await rig.until("fails") { rig.registrationFailures.count == 1 }
+        #expect(rig.registrationFailures.first?.code == "already_registered")
+        #expect(rig.store.keepsake.name == "书房的 Mac Studio")
+        #expect(rig.registeredNames.last == "书房的 Mac Studio")
+        await rig.client.register(name: "书房的 Mac Studio")
+        try await rig.until("live") { rig.isLive }
+        #expect(rig.store.keepsake.device == FakeLMAS.device)
     }
 
     @Test func someoneElsesLMASSaysNo() async throws {
@@ -218,7 +249,8 @@ struct LinkClientTests {
         #expect(chest.timesMade == 1)
         try await rig.client.forgetDevice()
         try await rig.registered()
-        #expect(chest.timesMade == 2)
+        // A device LMAS may still know by its keys: they are not thrown away.
+        #expect(chest.timesMade == 1)
         #expect(rig.state.sessions["a"] == nil)
         #expect(rig.state.through == rig.lmas.through)
     }

@@ -28,7 +28,8 @@ struct WorkshopSidebar: View {
             }
         }
         .listStyle(.sidebar)
-        .safeAreaInset(edge: .bottom, spacing: 0) { SidebarStatus() }
+        .safeAreaBar(edge: .bottom, spacing: 0) { SidebarStatus() }
+        .scrollEdgeEffectStyle(.hard, for: .bottom)
     }
 
     private func row(_ page: Page) -> some View {

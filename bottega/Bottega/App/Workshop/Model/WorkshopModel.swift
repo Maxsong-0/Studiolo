@@ -29,6 +29,8 @@ final class WorkshopModel {
     /// Something went wrong that the user should know and can wave away.
     var notice: Why?
     private(set) var registrationFailure: Why?
+    /// What this Mac was registered as, or may have been.
+    private(set) var registeredName: String?
 
     var page: Page = .dispatcher { didSet { if page != oldValue { detail = nil } } }
     var detail: Detail? { didSet { if detail != nil { showsInspector = true } } }
@@ -104,6 +106,8 @@ final class WorkshopModel {
         status = nil
         overview = nil
         welcome = nil
+        registeredName = nil
+        registrationFailure = nil
         outbox = []
         shown = []
         reportedSeen = 0
@@ -126,8 +130,7 @@ final class WorkshopModel {
         ]
     }
 
-    /// Each LMAS gives this Mac a number of its own, so each gets keys of its own too: registering again with one
-    /// leaves the others alone.
+    /// Each LMAS gives this Mac a number of its own, so each gets keys of its own too.
     private static func tag(_ directory: URL) -> String {
         String(Digest.sha256(directory.standardizedFileURL.path).prefix(16))
     }
@@ -158,6 +161,7 @@ final class WorkshopModel {
         case .records(let records): apply(records)
         case .overview(let overview): self.overview = overview
         case .welcome(let welcome): self.welcome = welcome
+        case .registeredName(let name): registeredName = name
         case .outbox(let items): outbox = items
         case .settled(let settled): take(settled)
         case .notice(let why): notice = why
@@ -234,8 +238,8 @@ final class WorkshopModel {
         Task { await client.register(name: name) }
     }
 
-    /// Back to registering, with new keys: LMAS does not know this Mac any more, or its keys no longer sign. Signs
-    /// nothing and sends nothing, so it passes no gate (the confirmation's own buttons could not); registering does.
+    /// Back to registering, with the same keys: LMAS does not know this Mac any more. Signs nothing and sends nothing,
+    /// so it passes no gate (the confirmation's own buttons could not); registering does.
     func forgetDevice() {
         guard let client else { return }
         Task {

@@ -26,6 +26,8 @@ public actor LinkClient {
         case records([Record])
         case overview(Overview)
         case welcome(Welcome)
+        /// What this Mac was registered as, or may have been. For registering again under the same name.
+        case registeredName(String?)
         case outbox([Outbox.Item])
         case settled(Outbox.Settled)
         /// Something went wrong that changes nothing else.
@@ -63,7 +65,6 @@ public actor LinkClient {
     private var keepsake = Keepsake()
     private var isLoaded = false
     private var keys: (any DeviceKeys)?
-    private var makesNewKeys = false
     /// Asked for and not done yet.
     private var registrationName: String?
 
@@ -138,13 +139,11 @@ public actor LinkClient {
         wake()
     }
 
-    /// Forgets which device this is to that LMAS, so it can be registered again, with new keys: the old ones may be
-    /// why (enrolling another finger retires the approval key).
+    /// Forgets which device this is to that LMAS, so it can be registered again. The keys stay: to an LMAS that still
+    /// knows them they are the same device, and it takes no other until its slice 8.
     public func forgetDevice() throws {
         keepsake.device = nil
         try store.save(keepsake)
-        keys = nil
-        makesNewKeys = true
         reset(start: 1)
         channel?.close()
         wake()
@@ -208,6 +207,7 @@ public actor LinkClient {
             throw Stop(status: .stopped(.init(code: "keepsake", text: "Cannot read this Mac's record of LMAS: \(error.localizedDescription)")))
         }
         isLoaded = true
+        send(.registeredName(keepsake.name))
         let dropped = keepsake.outbox.dropUnsignedDecisions()
         if !dropped.isEmpty { saveOrSay() }
         for settled in dropped { send(.settled(settled)) }
@@ -265,8 +265,7 @@ public actor LinkClient {
     }
 
     private func register(_ name: String) async throws {
-        let keys = try makesNewKeys ? chest.makeKeys() : self.keys ?? chest.keys() ?? chest.makeKeys()
-        makesNewKeys = false
+        let keys = try self.keys ?? chest.keys() ?? chest.makeKeys()
         self.keys = keys
         let (channel, greeting, iterator) = try await greet()
         var lines = iterator
@@ -280,13 +279,28 @@ public actor LinkClient {
             dailySignature: try await keys.sign(preimage, with: .daily, reason: ""),
             approvalSignature: try await keys.sign(
                 preimage, with: .approval, reason: "register “\(name)” with LMAS as a device that can approve"))
+        // Before it is sent: the receipt may be lost. Told no, the name before it still stands.
+        let nameBefore = keepsake.name
+        try keep(name: name)
         try await channel.send(try ClientLine.request(id: newRequest(), .register(registration)))
-        guard case .reply(let reply) = try await handshakeLine(&lines, channel) else { throw ConnectionLost() }
-        let registered: Registered = try reply.read()
+        let registered: Registered
+        do {
+            guard case .reply(let reply) = try await handshakeLine(&lines, channel) else { throw ConnectionLost() }
+            registered = try reply.read()
+        } catch let refusal as WireError {
+            try keep(name: nameBefore)
+            throw refusal
+        }
         // The registration is in LMAS's log, so having to make one means the log is a new one.
         reset(start: 1)
         keepsake.device = registered.device
         try store.save(keepsake)
+    }
+
+    private func keep(name: String?) throws {
+        keepsake.name = name
+        try store.save(keepsake)
+        send(.registeredName(name))
     }
 
     /// One line of the handshake. An error in its place decides whether trying again makes sense.

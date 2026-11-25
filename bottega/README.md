@@ -37,10 +37,13 @@ scripts/bottega-local run
 
 ## 连 LMAS
 
-- Settings 里选 LMAS 的运行目录（里面有 `ui.sock` 的那个）。第一次连要登记：在 Secure Enclave 里做两把钥匙（日常、批准），批准那把每次签都要 Touch ID；LMAS 那边再弹窗确认。每个 LMAS 各用一套钥匙。
+- Settings 里选 LMAS 的运行目录（里面有 `ui.sock` 的那个）。第一次连要登记：在 Secure Enclave 里做两把钥匙（日常、批准），批准那把每次签都要 Touch ID；一个 LMAS 只收一台设备，换钥匙要等 LMAS 片 8。每个 LMAS 各用一套钥匙；回执丢了或设备号丢了，用原来的钥匙再登记一遍拿回同一个号。
 - 事件不落盘，每次连上从头取，断线只在内存里接着取。落盘的只有 Application Support 下 `lmas/`：钥匙的密文（Debug 版；发布版放钥匙串）、这台 Mac 在那个 LMAS 的设备号、还没发出去的话。
 - 凡是要签名的（说话、答、批、拒、登记）只认前台窗口里真键盘、真鼠标的操作，别的程序发来的按键、点击、辅助功能按压都不认，一次按压只算一次，没有绕过的开关。
 - 键位：Return 换行，⌘Return 发送；框空时 ⌘Return 打开等得最久的批准单，看完全文再按一次 ⌘Return 弹 Touch ID。J、K 在时间线、泳道、卡板里移动。⌘1～⌘5 切固定的五页。
+- 连真的 LMAS 试：在 LMAS 仓库里 `scripts/lmas-local demo`（假的 CLI，不花额度；`--dir <短路径>` 停了留着），Bottega 这边 `open --env BOTTEGA_RUN_DIRECTORY=<它打印的 ui.sock 所在的目录> "bottega/build.noindex/dev/Build/Products/Debug/Bottega Dev.app"`。
+- 不用界面、不用指纹地验连接：`scripts/bottega-local swift run --package-path Probe bottega-probe <运行目录> <放钥匙的临时目录> [<把事件录成文件>]`，一行一个命令（`register <名字>`、`state`、`reconnect`、`reload`、`forget`、`seen`、`say <话>`、`wait <毫秒>`、`quit`）。`Probe/` 是单独一个包，进不了 App；它登记的钥匙是软件做的，**只对演示用的 LMAS 用**。测试跑不了这件事：测试进程是 Apple 签的，LMAS 不认。
+- LMAS 正式的 `--bottega` 不认带 `get-task-allow`、关了库校验之类 entitlements 的程序（协议第 2 节）。发布版编好后先看一眼：`codesign -d --entitlements - Bottega.app` 里没有这几样；有 `get-task-allow` 就在 `project.yml` 的 Release 里加 `CODE_SIGN_INJECT_BASE_ENTITLEMENTS: NO`。
 - 只看界面、不连 LMAS：Debug 版 File › Open Recording…，开 `samples/waiting.jsonl` 或 `BottegaKit/Tests/BottegaKitTests/Fixtures/events.jsonl`。只有 Debug 版认这几个环境变量：`BOTTEGA_RECORDING`（事件流文件）、`BOTTEGA_RUN_DIRECTORY`（这一次连哪个运行目录）、`BOTTEGA_PAGE`（`dispatcher`、`waiting`、`board`、`activity`、`devices`、`line:<号>`）、`BOTTEGA_DETAIL`（`card:<号>`、`message:`、`merge:`、`test:`）、`BOTTEGA_LANES=0`。
 - 测试数据是 LMAS `fixtures/bottega/` 的复制品，不手改：`bottega/scripts/sync_lmas_fixtures.sh` 比对，`--apply` 更新。
 

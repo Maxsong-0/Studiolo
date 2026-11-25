@@ -19,7 +19,7 @@ struct RecordedStateTests {
         #expect(state.messages["msg-2"]?.state == .answered(by: "msg-3"))
         #expect(state.messages["msg-4"]?.state == .answered(by: "msg-5"))
         #expect(state.messages["msg-3"]?.state == .queued)
-        #expect(state.messages["msg-7"]?.device == "device-1")
+        #expect(state.messages["msg-9"]?.device == "device-1")
         #expect(state.messages["msg-8"]?.files.first?.name == "草图.md")
         // msg-6 was never queued as far as this log says; its failure is still on record.
         #expect(state.messages["msg-6"] == nil)
@@ -38,8 +38,8 @@ struct RecordedStateTests {
         #expect(state.title(of: first) == "给设置页加一个「清空缓存」按钮。")
         #expect(try state.kind(of: #require(state.threads["msg-4"])) == .agents)
         #expect(try state.title(of: #require(state.threads["msg-4"])) == "Review of card-1")
-        #expect(try state.kind(of: #require(state.threads["msg-7"])) == .dispatcher)
-        #expect(state.threads(of: .dispatcher).map(\.id) == ["msg-7"])
+        #expect(try state.kind(of: #require(state.threads["msg-9"])) == .dispatcher)
+        #expect(state.threads(of: .dispatcher).map(\.id) == ["msg-9"])
     }
 
     @Test func cards() throws {
