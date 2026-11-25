@@ -7,7 +7,7 @@ use crate::store::publish::PublishFault;
 use crate::store::{FilePublisher, StatePublisher};
 use std::{
     fs,
-    os::unix::fs::PermissionsExt,
+    os::unix::fs::{PermissionsExt, symlink},
     path::{Path, PathBuf},
 };
 
@@ -152,12 +152,105 @@ fn a_failed_publish_never_removes_a_temporary_it_did_not_create() {
     fs::remove_file(&residue).expect("可以移走");
     assert_eq!(
         publisher
-            .replace_faulted(&records.second, PublishFault::ReplacedMidWrite)
+            .replace_faulted(&records.second, PublishFault::Tampered(replace_temporary))
             .err(),
-        Some(TransportError::Unavailable)
+        Some(TransportError::UnsafeStorage)
     );
     assert_eq!(fs::read(&residue).expect("别人的原样"), b"");
     assert_eq!(publisher.read().expect("可以读回"), records.first);
+    // 那个名字换成了指回自己文件的符号链接：链接不是自己建的，也不碰。
+    fs::remove_file(&residue).expect("可以移走");
+    assert_eq!(
+        publisher
+            .replace_faulted(&records.second, PublishFault::Tampered(alias_temporary))
+            .err(),
+        Some(TransportError::UnsafeStorage)
+    );
+    assert!(
+        fs::symlink_metadata(&residue)
+            .expect("链接原样")
+            .is_symlink()
+    );
+    assert_eq!(publisher.read().expect("可以读回"), records.first);
+}
+
+/// 发布器认得的临时文件名换成另一个对象；发布器手里的描述符还开着，旧 inode 号不会被复用。
+fn replace_temporary(root: &Path) {
+    let temporary = root.join(paths::STATE_PUBLISH_TEMP);
+    fs::remove_file(&temporary).expect("可以移走");
+    fs::write(&temporary, b"").expect("可以放一份别人的");
+    fs::set_permissions(&temporary, fs::Permissions::from_mode(0o600)).expect("可以设权限");
+}
+
+fn alias_temporary(root: &Path) {
+    let temporary = root.join(paths::STATE_PUBLISH_TEMP);
+    let moved = root.with_file_name("aliased");
+    fs::rename(&temporary, &moved).expect("可以移走");
+    fs::set_permissions(&moved, fs::Permissions::from_mode(0o644)).expect("可以改权限");
+    symlink(&moved, &temporary).expect("可以摆链接");
+}
+
+fn loosen_temporary(root: &Path) {
+    let temporary = root.join(paths::STATE_PUBLISH_TEMP);
+    fs::set_permissions(temporary, fs::Permissions::from_mode(0o644)).expect("可以改权限");
+}
+
+fn lock_temporary(root: &Path) {
+    let temporary = root.join(paths::STATE_PUBLISH_TEMP);
+    fs::set_permissions(temporary, fs::Permissions::from_mode(0o000)).expect("可以改权限");
+}
+
+fn link_temporary(root: &Path) {
+    let temporary = root.join(paths::STATE_PUBLISH_TEMP);
+    fs::hard_link(temporary, root.with_file_name("elsewhere")).expect("可以摆硬链接");
+}
+
+#[test]
+fn a_publish_refused_for_its_own_temporary_shape_still_removes_that_temporary() {
+    for tamper in [loosen_temporary, lock_temporary, link_temporary] as [fn(&Path); 3] {
+        let records = records();
+        let root = Root::new();
+        let mut publisher =
+            FilePublisher::initialize(&root.path, &records.first).expect("可以显式初始化");
+        assert_eq!(
+            publisher
+                .replace_faulted(&records.second, PublishFault::Tampered(tamper))
+                .err(),
+            Some(TransportError::UnsafeStorage),
+            "原错误不被盖住"
+        );
+        assert_eq!(
+            names(&root.path),
+            vec![paths::STATE.to_owned(), paths::TRANSPORT_LOCK.to_owned()]
+        );
+        assert_eq!(publisher.read().expect("可以读回"), records.first);
+        publisher
+            .replace(&records.second)
+            .expect("下一次发布照常能成");
+    }
+}
+
+#[test]
+fn a_failed_directory_sync_reports_failure_with_the_new_record_in_place() {
+    let records = records();
+    let root = Root::new();
+    let mut publisher =
+        FilePublisher::initialize(&root.path, &records.first).expect("可以显式初始化");
+    assert_eq!(
+        publisher
+            .replace_faulted(&records.second, PublishFault::DirSyncFailure)
+            .err(),
+        Some(TransportError::Unavailable)
+    );
+    // 改名已经生效：临时文件那个名字没了，收尾不许再碰任何东西。
+    assert_eq!(publisher.read().expect("可以读回"), records.second);
+    assert_eq!(
+        names(&root.path),
+        vec![paths::STATE.to_owned(), paths::TRANSPORT_LOCK.to_owned()]
+    );
+    publisher
+        .replace(&records.first)
+        .expect("下一次发布照常能成");
 }
 
 #[test]
@@ -172,9 +265,9 @@ fn discarding_rechecks_that_the_root_and_the_residue_are_still_the_opened_ones()
             fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).expect("可以设权限");
         };
         leave(b"opened");
-        let (publisher, residue) =
+        let mut publisher =
             FilePublisher::open_with_residue(&root.path).expect("形态合规的残留可以打开");
-        let residue = residue.expect("有残留");
+        assert!(publisher.has_residue());
         let moved = root.path.with_file_name("moved");
         // 打开着的描述符不放，旧 inode 号不会被新文件复用。
         let expected = match shape {
@@ -195,7 +288,7 @@ fn discarding_rechecks_that_the_root_and_the_residue_are_still_the_opened_ones()
                 TransportError::UnsafeStorage
             }
         };
-        assert_eq!(publisher.discard(&residue).err(), Some(expected), "{shape}");
+        assert_eq!(publisher.discard_residue().err(), Some(expected), "{shape}");
         match shape {
             "replaced" => assert_eq!(fs::read(&path).expect("别人的原样"), b"replaced"),
             "root" => assert_eq!(
@@ -229,7 +322,7 @@ fn a_killed_publish_leaves_a_residue_that_is_never_published_as_authorised_state
             Some(TransportError::TemporaryResidue)
         );
         drop(publisher);
-        // 原始打开照旧不认领残留；核过权威记录之后才丢的入口见 `residue.rs`。
+        // 原始打开照旧不认领残留，也就没有东西可丢；核过权威记录之后才丢的入口见 `residue.rs`。
         assert_eq!(
             FilePublisher::open_existing(&root.path).err(),
             Some(TransportError::TemporaryResidue)

@@ -169,7 +169,8 @@ fn another_owner_holding_the_lease_keeps_the_residue_in_place() {
 }
 
 #[test]
-fn the_offline_rebind_discards_a_residue_only_after_its_own_refusals() {
+fn the_offline_rebind_leaves_the_residue_alone_until_it_is_told_to_discard_it() {
+    // 自己的拒绝项没过：不动。
     let store = Store::new();
     leave(&store, b"uncommitted");
     store.approval.binding.borrow_mut().scope_hash = [9; 32];
@@ -179,12 +180,32 @@ fn the_offline_rebind_discards_a_residue_only_after_its_own_refusals() {
     );
     assert_eq!(fs::read(residue(&store)).expect("残留原样"), b"uncommitted");
 
+    // 打开是只读的；没让丢就提交，发布照旧撞上残留失败关闭。
     let store = Store::new();
     leave(&store, b"uncommitted");
     let old = store.bytes();
-    let pending = TransportRebind::open_existing(&store.approval).expect("核过之后不挡重绑定");
-    assert!(pending.discarded_residue());
+    let pending = TransportRebind::open_existing(&store.approval).expect("残留不挡打开");
+    assert!(pending.has_residue());
+    assert_eq!(fs::read(residue(&store)).expect("残留原样"), b"uncommitted");
+    assert_eq!(pending.commit(), Err(TransportError::TemporaryResidue));
+    assert_eq!(fs::read(residue(&store)).expect("残留原样"), b"uncommitted");
+    assert_eq!(store.bytes(), old);
+
+    // 丢之前再复验一遍：审批已经漂移就不丢。
+    let mut pending = TransportRebind::open_existing(&store.approval).expect("可以重开");
+    *store.approval.fresh.borrow_mut() = false;
+    assert_eq!(
+        pending.discard_residue(),
+        Err(TransportError::ConfigurationChanged)
+    );
+    assert_eq!(fs::read(residue(&store)).expect("残留原样"), b"uncommitted");
+    *store.approval.fresh.borrow_mut() = true;
+
+    assert_eq!(pending.discard_residue(), Ok(true));
+    assert!(!pending.has_residue());
     assert!(!residue(&store).exists());
     assert_eq!(store.bytes(), old);
+    // 再来一次没有东西可丢，也不动磁盘。
+    assert_eq!(pending.discard_residue(), Ok(false));
     pending.commit().expect("可以照常重绑定");
 }

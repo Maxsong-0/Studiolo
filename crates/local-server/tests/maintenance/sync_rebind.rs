@@ -45,7 +45,7 @@ pub(super) fn state_bytes(s: &Sync) -> Vec<u8> {
     fs::read(s.root().join("transport/state.json")).unwrap()
 }
 
-fn run_with(
+pub(super) fn run_with(
     s: &Sync,
     confirm: impl FnMut(&Value, &str) -> Result<(), MaintenanceError>,
 ) -> Result<Value, MaintenanceError> {

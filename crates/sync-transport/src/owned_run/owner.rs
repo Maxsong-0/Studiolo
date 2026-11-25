@@ -31,12 +31,12 @@ impl<'scope> SyncTransportOwner<'scope> {
         runtime: PinnedRuntime,
         backend: VerifiedLinuxBackend,
     ) -> Result<Self> {
-        let (publisher, residue) =
+        let mut publisher =
             FilePublisher::open_with_residue(approval.roots().private_root.as_path())?;
-        if let Some(residue) = &residue {
+        if publisher.has_residue() {
             verified(approval, &runtime, &publisher)?;
-            publisher.discard(residue)?;
         }
+        let discarded_residue = publisher.discard_residue()?;
         Ok(Self {
             inner: RunSession::open(
                 approval,
@@ -44,7 +44,7 @@ impl<'scope> SyncTransportOwner<'scope> {
                 LinuxContainment::new(backend),
                 Box::new(publisher),
             )?,
-            discarded_residue: residue.is_some(),
+            discarded_residue,
         })
     }
 

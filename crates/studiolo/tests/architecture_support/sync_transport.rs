@@ -72,17 +72,12 @@ pub(super) fn remainder(crate_name: &str, path: &Path, source: &str) -> String {
             return rest;
         }
     }
-    // 删除只许对着那一个登记过的临时文件名；换根、换名、换标志都拿不到豁免。
-    if rest.matches("unlinkat(").count()
-        != rest
-            .matches("unlinkat(&self.root,paths::STATE_PUBLISH_TEMP,AtFlags::empty())")
-            .count()
-    {
-        return format!("fs::unexpected_unlink {rest}");
-    }
     for exact in [
         "fs::{File,TryLockError},",
         "userustix::fs::{AtFlags,unlinkat};",
+        "userustix::fs::{AtFlags,fstat,statat,unlinkat};",
+        // 删除只许对着那一个登记过的临时文件名；换根、换名、换标志都拿不到豁免。
+        "unlinkat(&self.root,paths::STATE_PUBLISH_TEMP,AtFlags::empty())",
         "userustix::fs::{Mode,OFlags,openat};",
         "userustix::fs::{Mode,OFlags,openat,renameat};",
         "userustix::fs::{Mode,OFlags,open,openat};",
@@ -94,6 +89,10 @@ pub(super) fn remainder(crate_name: &str, path: &Path, source: &str) -> String {
         "root.sync_all()",
     ] {
         rest = rest.replace(exact, "");
+    }
+    // 登记过的导入和调用都拿掉之后还剩这个词，就是别的删法（改名、当值传、别的目标）。
+    if rest.contains("unlinkat") {
+        return format!("fs::unexpected_unlink {rest}");
     }
     rest
 }
@@ -171,6 +170,10 @@ mod tests {
             "unlinkat(&self.root, name, AtFlags::empty())?;",
             "unlinkat(&other, paths::STATE_PUBLISH_TEMP, AtFlags::empty())?;",
             "unlinkat(&self.root, paths::STATE_PUBLISH_TEMP, AtFlags::REMOVEDIR)?;",
+            "let rm = unlinkat;",
+            "use rustix::fs::unlinkat as rm;",
+            "fs::remove_file(other)?;",
+            "rustix::fs::unlink(other)?;",
         ] {
             assert!(violates(path, &format!("{source}\n{extra}")), "{extra}");
         }

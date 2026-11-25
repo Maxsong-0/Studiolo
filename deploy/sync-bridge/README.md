@@ -197,9 +197,9 @@ purge 只在三条同时成立时动手：X 在上次核验集合里、不在当
 传输拒绝项在打开 Bridge 前检查，所有拒绝都不发布新绑定、不改变业务状态或清理 stage 对象。
 既有 Bridge 的 SQLite 开库可能执行恢复与 checkpoint，不能把这描述成磁盘字节完全不变。
 出现“发布结果未确认”时先重开核验摘要与代次；强杀或断电留下的临时发布残留（`state.json.publish`）
-由本命令过完传输槽全部拒绝项之后自己丢掉并打一行
-`studiolo_bridge component=transport_store outcome=publish_residue_discarded`；拒绝时不丢，形态不合规（不是本人 0600 单链接普通文件）
-一律拒绝、留给人看。不能用 `sync-init` 覆盖历史。
+在确认页写明（`discards_publish_residue` 为真），
+确认并复核全过之后、提交之前才丢，打一行 `studiolo_bridge component=transport_store outcome=publish_residue_discarded`；
+任何拒绝（含在确认处不同意）都不丢。形态不合规（不是本人 0600 单链接普通文件）一律拒绝、留给人看。不能用 `sync-init` 覆盖历史。
 
 ## 9 回滚
 

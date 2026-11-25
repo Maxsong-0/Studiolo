@@ -52,6 +52,15 @@ pub(crate) fn byte_budget_exceeded(used: u64, budget: u64) {
     );
 }
 
+/// 上一个进程在换状态的那一下没了（T-239）：权威记录核过之后丢了它留下的临时文件，留一行固定日志。
+/// 启动与离线重绑定共用；写日志失败（如终端挂断）不改变原结果。
+pub fn publish_residue_discarded() {
+    let _ = writeln!(
+        std::io::stderr().lock(),
+        "studiolo_bridge component=transport_store outcome=publish_residue_discarded"
+    );
+}
+
 /// 上一个进程登记了一次运行、还没发启动就没了：这一轮把它收成「没执行」，留一行固定日志（T-239）。
 pub(crate) fn unlaunched_run_cancelled() {
     let _ = writeln!(

@@ -26,49 +26,55 @@ pub struct TransportRebind<'scope> {
     publisher: Box<dyn StatePublisher>,
     previous: TransportState,
     next: TransportState,
-    discarded_residue: bool,
 }
 
 impl<'scope> TransportRebind<'scope> {
     /// 在新审批路径打开既有槽；旧路径或旧软件不可读并不妨碍读取持久事实。
-    /// 上次发布留下的临时文件，全部拒绝项过了之后才丢。
+    /// 只读：上次发布留下的临时文件只认下、不动，由 [`Self::discard_residue`] 显式丢。
     ///
     /// # 错误
     /// 活动或审计未闭合拒绝；范围、owner 或物理私有根/镜像变更拒绝。
     pub fn open_existing(approval: &'scope dyn ApprovedTransport) -> Result<Self> {
         approval.revalidate()?;
-        let (publisher, residue) =
-            FilePublisher::open_with_residue(&approval.roots().private_root)?;
-        if let Some(residue) = &residue {
-            examine(approval, &publisher)?;
-            publisher.discard(residue)?;
-        }
-        let mut session = Self::open(approval, Box::new(publisher))?;
-        session.discarded_residue = residue.is_some();
-        Ok(session)
+        let publisher = FilePublisher::open_with_residue(&approval.roots().private_root)?;
+        Self::open(approval, Box::new(publisher))
     }
 
     pub(crate) fn open(
         approval: &'scope dyn ApprovedTransport,
         publisher: Box<dyn StatePublisher>,
     ) -> Result<Self> {
-        let (runtime, previous, next) = examine(approval, &*publisher)?;
+        approval.revalidate()?;
+        publisher.check()?;
+        let runtime = PinnedRuntime::from_approval(approval)?;
+        let previous = decode(&publisher.read()?)?;
+        let (uid, gid) = publisher.owner_identity();
+        let next = transition(&previous, approval, &runtime, OwnerIdentity { uid, gid })?;
         let session = Self {
             approval,
             runtime,
             publisher,
             previous,
             next,
-            discarded_residue: false,
         };
         session.revalidate()?;
         Ok(session)
     }
 
-    /// 这次打开时丢掉过上次发布留下的临时文件；维护命令据此留一行日志。
+    /// 有没有上次发布留下的临时文件要丢；确认界面如实展示。
     #[must_use]
-    pub fn discarded_residue(&self) -> bool {
-        self.discarded_residue
+    pub fn has_residue(&self) -> bool {
+        self.publisher.has_residue()
+    }
+
+    /// 主人确认、全部复核过了之后，提交之前显式丢弃上次发布留下的临时文件；返回是否真的丢了。
+    /// 不调用就提交的，发布照旧撞上残留失败关闭。
+    ///
+    /// # 错误
+    /// 复验不过或残留已不是打开时的那一个即拒绝；权威记录此时一个字节没动。
+    pub fn discard_residue(&mut self) -> Result<bool> {
+        self.revalidate()?;
+        self.publisher.discard_residue()
     }
 
     /// 供确认界面使用的固定元数据。
@@ -138,20 +144,6 @@ impl<'scope> TransportRebind<'scope> {
         self.approval.revalidate()?;
         Ok(review)
     }
-}
-
-/// 读取原状态并算出新状态；全部拒绝项都在这里，不写任何东西。
-fn examine(
-    approval: &dyn ApprovedTransport,
-    publisher: &dyn StatePublisher,
-) -> Result<(PinnedRuntime, TransportState, TransportState)> {
-    approval.revalidate()?;
-    publisher.check()?;
-    let runtime = PinnedRuntime::from_approval(approval)?;
-    let previous = decode(&publisher.read()?)?;
-    let (uid, gid) = publisher.owner_identity();
-    let next = transition(&previous, approval, &runtime, OwnerIdentity { uid, gid })?;
-    Ok((runtime, previous, next))
 }
 
 /// 纯状态变换：无 IO、无旧运行时要求；调用方以实际租约 owner 与新批准事实调用。

@@ -137,12 +137,17 @@ OutcomePending 无 Outcome 槽、Closed 未 ACK、已发启动请求却没有 bo
 - 发布 = 建临时文件 → `write_all` → `fsync` → `renameat` → `fsync` 父目录，
   前后各复验一次根身份与租约对象身份。
 - 发布中途**报错**（盘满、写盘失败、核对不过、改名失败）由发布自己收走刚建的临时文件：
-  只删还是同一个 inode 的那一个，收不掉也不盖住原错误。
+  只认名字还指着自己手里那个 (dev, ino)，不看形态（报错的原因可能正是权限或链接数不对）；收不掉也不盖住原错误。
+  改名成功之后目录落盘失败不在此列：磁盘上已是新状态、没有临时文件，照报 `Unavailable`。
 - **强杀或断电**留下的 `state.json.publish` 不是授权状态，任何时候都不会被读成状态或改名发布；
-  丢掉它等于在建它之前一刻被杀。`SyncTransportOwner::open_existing` 和 `TransportRebind::open_existing` 自己丢它，
-  顺序固定：拿到租约 → 残留必须是本人、0600、单链接、不超预算的普通文件（别的一律 `UnsafeStorage`）→
-  `state.json` 解得开、和当前审批逐项对得上（重绑定是过完全部拒绝项）→ 再核一遍租约、根和残留还是打开时的那个 inode →
-  `unlinkat` → `fsync` 父目录。前面任何一步不过就拒绝，两个文件一个字节都不动。
+  丢掉它等于在建它之前一刻被杀。只有两处会丢：
+  - `SyncTransportOwner::open_existing`（人侧启动）：拿到租约 → 残留必须是本人、0600、单链接、不超预算的普通文件
+    （别的一律 `UnsafeStorage`）→ `state.json` 解得开、和当前审批逐项对得上 → 丢。
+  - `sync-rebind`：`TransportRebind::open_existing` 只认下、不动磁盘；主人确认、全部复核过了之后、提交之前，
+    显式 `discard_residue`（先复验一遍）才丢。没丢就提交的，发布照旧撞 `TemporaryResidue` 失败关闭。
+
+  丢的动作是同一处：再核一遍租约、根，和残留还是打开时的那个 inode → `unlinkat` → `fsync` 父目录。
+  前面任何一步不过就拒绝，两个文件一个字节都不动。带残留打开的入口 `open_with_residue` 只在 crate 内可见。
 - `FilePublisher::open_existing` 语义不变：见到残留就是 `TemporaryResidue`，不认领（核封存复制件用它）；
   封存导出在现任 owner 上做，私有根里有残留照旧拒绝导出。
 - `initialize` 是管理员显式动作：三个名字都不存在才建库，并立刻发布首条完整记录。

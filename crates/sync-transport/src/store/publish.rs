@@ -42,7 +42,7 @@ fn lock_error(error: TryLockError) -> TransportError {
 
 /// 仅测试使用的故障注入；产品路径不经过这些分支。
 #[cfg(test)]
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug)]
 pub enum PublishFault {
     /// 只写出一半字节就报错（盘满）。
     ShortWrite,
@@ -52,12 +52,11 @@ pub enum PublishFault {
     KilledMidWrite,
     /// 写全、落了盘、还没改名时进程被杀（断电后改名没落盘也是这个样子）。
     KilledBeforeRename,
-    /// 报错之前，临时文件那个名字已经换成别人的文件。
-    ReplacedMidWrite,
+    /// 改名成功之后，目录落盘报错。
+    DirSyncFailure,
+    /// 写完、核对之前，用例拿着私有根去动临时文件那个名字。
+    Tampered(fn(&Path)),
 }
-
-/// 上次发布留下、形态合规的临时文件；只握着它的身份，从不读它的内容。
-pub struct PublishResidue(File);
 
 /// 固定私有根上的权威状态发布器；持有排他租约。
 pub struct FilePublisher {
@@ -65,54 +64,46 @@ pub struct FilePublisher {
     root_path: PathBuf,
     _lease: HeldLease,
     owner: (u32, u32),
+    /// 打开时认下的残留；只握着它的身份，从不读它的内容。
+    residue: Option<File>,
 }
 
 #[cfg(unix)]
 impl FilePublisher {
     /// 只打开既有存储：不创建目录、不补空 state、不认领临时残留。
     ///
+    /// crate 外只有这一个打开入口，拿不到带着残留的发布器：
+    ///
+    /// ```compile_fail
+    /// let root = std::path::Path::new("/srv/studiolo/transport");
+    /// let _ = studiolo_sync_transport::store::FilePublisher::open_with_residue(root);
+    /// ```
+    ///
     /// # 错误
     /// 固定文件缺失返回 `MissingStore`；残留临时文件返回 `TemporaryResidue`。
     pub fn open_existing(path: &Path) -> Result<Self> {
         let publisher = Self::attach(path, false)?;
-        if publisher.residue()?.is_some() {
+        if publisher.temporary()?.is_some() {
             return Err(TransportError::TemporaryResidue);
         }
         publisher.require_state()?;
         Ok(publisher)
     }
 
-    /// 同 [`Self::open_existing`]，但把形态合规的残留交给调用方：核过权威记录之后才许 [`Self::discard`]。
+    /// 同 [`Self::open_existing`]，但认下形态合规的残留、不动它；核过权威记录之后才许
+    /// [`super::StatePublisher::discard_residue`]。只给 crate 内的 owner 与重绑定用。
     ///
     /// # 错误
     /// 固定文件缺失返回 `MissingStore`；残留不是本人 0600 单链接普通文件返回 `UnsafeStorage`。
-    pub fn open_with_residue(path: &Path) -> Result<(Self, Option<PublishResidue>)> {
-        let publisher = Self::attach(path, false)?;
-        let residue = publisher.residue()?;
+    pub(crate) fn open_with_residue(path: &Path) -> Result<Self> {
+        let mut publisher = Self::attach(path, false)?;
+        publisher.residue = publisher.temporary()?;
         publisher.require_state()?;
-        Ok((publisher, residue))
+        Ok(publisher)
     }
 
-    /// 丢弃上次发布留下的临时文件：它从来不是授权状态，丢了等于在建它之前一刻被杀。
-    /// 删之前再核一遍租约、根和它还是打开时的那一个。
-    ///
-    /// # 错误
-    /// 残留不见了返回 `MissingStore`；已换成别的对象返回 `UnsafeStorage`；落盘失败返回 `Unavailable`。
-    pub fn discard(&self, residue: &PublishResidue) -> Result<()> {
-        use rustix::fs::{AtFlags, unlinkat};
-        self.check()?;
-        let current = self.residue()?.ok_or(TransportError::MissingStore)?;
-        same(&current.0, &residue.0)?;
-        unlinkat(&self.root, paths::STATE_PUBLISH_TEMP, AtFlags::empty()).map_err(storage_error)?;
-        self.root
-            .sync_all()
-            .map_err(|_| TransportError::Unavailable)?;
-        self.check()
-    }
-
-    fn residue(&self) -> Result<Option<PublishResidue>> {
-        let found = probe(&self.root, paths::STATE_PUBLISH_TEMP, self.owner.0)?;
-        Ok(found.map(PublishResidue))
+    fn temporary(&self) -> Result<Option<File>> {
+        probe(&self.root, paths::STATE_PUBLISH_TEMP, self.owner.0)
     }
 
     fn require_state(&self) -> Result<()> {
@@ -178,6 +169,7 @@ impl FilePublisher {
             root_path: path.to_owned(),
             _lease: lease,
             owner,
+            residue: None,
         };
         publisher.check()?;
         Ok(publisher)
@@ -189,7 +181,7 @@ impl FilePublisher {
             return Err(TransportError::Budget);
         }
         self.check()?;
-        if probe(&self.root, paths::STATE_PUBLISH_TEMP, self.owner.0)?.is_some() {
+        if self.temporary()?.is_some() {
             return Err(TransportError::TemporaryResidue);
         }
         let mut temp = File::from(
@@ -235,6 +227,10 @@ impl FilePublisher {
             self.remove_own(&temp);
             return Err(error);
         }
+        #[cfg(test)]
+        if matches!(fault, Some(PublishFault::DirSyncFailure)) {
+            return Err(TransportError::Unavailable);
+        }
         self.root
             .sync_all()
             .map_err(|_| TransportError::Unavailable)?;
@@ -261,50 +257,36 @@ impl FilePublisher {
             .map_err(|_| TransportError::Unavailable)?;
         #[cfg(test)]
         match fault {
-            None | Some(PublishFault::KilledBeforeRename) => {}
-            Some(PublishFault::ReplacedMidWrite) => {
-                self.replace_temporary()?;
-                return Err(TransportError::Unavailable);
-            }
+            None | Some(PublishFault::KilledBeforeRename | PublishFault::DirSyncFailure) => {}
+            Some(PublishFault::Tampered(tamper)) => tamper(&self.root_path),
             Some(_) => return Err(TransportError::Unavailable),
         }
         temp.sync_all().map_err(|_| TransportError::Unavailable)?;
         regular(temp, self.owner.0, paths::STATE_MAX_BYTES)?;
         #[cfg(test)]
-        if fault.is_some() {
+        if matches!(fault, Some(PublishFault::KilledBeforeRename)) {
             return Err(TransportError::Unavailable);
         }
         self.check()
     }
 
-    /// 收走本次发布自己建的临时文件；只认还是同一个对象的那一个，收不掉也不盖住原错误
-    /// （留下的残留由下次打开核过权威记录再丢）。
+    /// 收走本次发布自己建的临时文件：只认名字还指着手里这一个对象，不看形态
+    /// （报错的原因可能正是它的权限或链接数不对）；收不掉也不盖住原错误。
     fn remove_own(&self, temp: &File) {
-        use rustix::fs::{AtFlags, unlinkat};
-        let Ok(Some(current)) = self.residue() else {
+        use rustix::fs::{AtFlags, fstat, statat, unlinkat};
+        let named = statat(
+            &self.root,
+            paths::STATE_PUBLISH_TEMP,
+            AtFlags::SYMLINK_NOFOLLOW,
+        );
+        let (Ok(named), Ok(own)) = (named, fstat(temp)) else {
             return;
         };
-        if same(&current.0, temp).is_ok()
+        if (named.st_dev, named.st_ino) == (own.st_dev, own.st_ino)
             && unlinkat(&self.root, paths::STATE_PUBLISH_TEMP, AtFlags::empty()).is_ok()
         {
             let _ = self.root.sync_all();
         }
-    }
-
-    /// 仅测试：把临时文件那个名字换成另一个对象。
-    #[cfg(test)]
-    fn replace_temporary(&self) -> Result<()> {
-        use rustix::fs::{AtFlags, unlinkat};
-        use rustix::fs::{Mode, OFlags, openat};
-        unlinkat(&self.root, paths::STATE_PUBLISH_TEMP, AtFlags::empty()).map_err(storage_error)?;
-        openat(
-            &self.root,
-            paths::STATE_PUBLISH_TEMP,
-            OFlags::RDWR | OFlags::CREATE | OFlags::EXCL | OFlags::CLOEXEC,
-            Mode::from_raw_mode(0o600),
-        )
-        .map(drop)
-        .map_err(storage_error)
     }
 
     /// 仅测试：带故障注入的发布。
@@ -364,6 +346,28 @@ impl super::StatePublisher for FilePublisher {
 
     fn owner_identity(&self) -> (u32, u32) {
         self.owner
+    }
+
+    fn has_residue(&self) -> bool {
+        self.residue.is_some()
+    }
+
+    /// 删之前再核一遍租约、根，和它还是打开时的那一个。
+    fn discard_residue(&mut self) -> Result<bool> {
+        use rustix::fs::{AtFlags, unlinkat};
+        let Some(opened) = &self.residue else {
+            return Ok(false);
+        };
+        self.check()?;
+        let current = self.temporary()?.ok_or(TransportError::MissingStore)?;
+        same(&current, opened)?;
+        unlinkat(&self.root, paths::STATE_PUBLISH_TEMP, AtFlags::empty()).map_err(storage_error)?;
+        self.root
+            .sync_all()
+            .map_err(|_| TransportError::Unavailable)?;
+        self.residue = None;
+        self.check()?;
+        Ok(true)
     }
 
     fn export_checkpoint(

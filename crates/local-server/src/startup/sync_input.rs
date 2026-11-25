@@ -15,7 +15,7 @@ use studiolo_host_config::SyncScope;
 use studiolo_host_config::sync_transport::{ApprovedTransport, SyncTransportApproval};
 use studiolo_local_server::CanonicalWorkbench;
 use studiolo_local_server::sync_plane::{
-    BRIDGE_DIR, PlaneInputs, SyncPlane, bridge_binding, bridge_limits,
+    BRIDGE_DIR, PlaneInputs, SyncPlane, bridge_binding, bridge_limits, publish_residue_discarded,
 };
 use studiolo_sync_bridge::sqlite::BridgeState;
 use studiolo_sync_transport::linux::verify_backend;
@@ -63,11 +63,7 @@ pub(super) fn assemble(
     let transport = SyncTransportOwner::open_existing(approved, runtime, backend)
         .map_err(|_| StartupError::SyncPlane)?;
     if transport.discarded_residue() {
-        // 上一个进程在换状态的那一下没了（T-239）：丢之前权威记录已核过。只有固定分类，不带路径和内容。
-        let _ = writeln!(
-            std::io::stderr().lock(),
-            "studiolo_bridge component=transport_store outcome=publish_residue_discarded"
-        );
+        publish_residue_discarded();
     }
     let roots = approved.roots();
     let mut bridge = BridgeState::open_existing(
