@@ -175,7 +175,7 @@ fn leftover_removal_keeps_every_judgement_and_grants_nothing_else() {
         "left.st_ctime_nsec == right.st_ctime_nsec",
         "left.st_ino == right.st_ino",
         "let Ok(address) = SocketAddrUnix::new(path) else {\n        return false;",
-        ") else {\n        return false;",
+        "None,\n    ) else {\n        return false;",
         "SocketFlags::NONBLOCK",
         "Err(Errno::CONNREFUSED)",
     ] {
