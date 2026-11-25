@@ -71,9 +71,26 @@ impl IntoResponse for Unrecognized {
     }
 }
 
+/// 认证门守的是哪个入口：装配路由时定，不看请求路径——`/read` 的路由去掉了前缀，`/read/mcp` 到这里也叫 `/mcp`。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Entrance {
+    Mcp,
+    Read,
+}
+
+impl Entrance {
+    /// 没认出类型的拒绝登记在这个名下。
+    fn action(self) -> &'static str {
+        match self {
+            Self::Mcp => "mcp.request",
+            Self::Read => "http.request",
+        }
+    }
+}
+
 /// 认证中间件。
-pub async fn require_bearer(
-    State(state): State<Arc<AppState>>,
+pub(crate) async fn require_bearer(
+    State((state, entrance)): State<(Arc<AppState>, Entrance)>,
     mut request: Request<Body>,
     next: Next,
 ) -> Response {
@@ -84,7 +101,7 @@ pub async fn require_bearer(
             next.run(request).await
         }
         Err(refused) => {
-            note_unrecognized(&state, entrance(&request), refused, Instant::now());
+            note_unrecognized(&state, entrance, refused, Instant::now());
             refused.into_response()
         }
     }
@@ -117,32 +134,19 @@ pub(crate) fn recognize(
     Ok((AgentType(agent_type), CredentialDigest(digest)))
 }
 
-/// 登记在哪个入口名下；只有这两个，不带请求里的路径。
-fn entrance(request: &Request<Body>) -> &'static str {
-    if request.uri().path() == "/mcp" {
-        "mcp.request"
-    } else {
-        "http.request"
-    }
-}
-
 /// 没认出类型的拒绝也进审计，但谁都能触发：同一入口同一原因每分钟最多一条，不逐条写。
 /// 账本写不进也算用掉这一分钟，免得它坏着的时候还替每个匿名请求再试一次；拒绝照常返回。
-fn note_unrecognized(
-    state: &AppState,
-    entrance: &'static str,
-    refused: Unrecognized,
-    now: Instant,
-) {
+fn note_unrecognized(state: &AppState, entrance: Entrance, refused: Unrecognized, now: Instant) {
+    let action = entrance.action();
     let due = state
         .unrecognized
         .lock()
         .unwrap_or_else(PoisonError::into_inner)
-        .due(entrance, refused.reason(), now);
+        .due(action, refused.reason(), now);
     if !due {
         return;
     }
-    if let Ok(event) = audit::action_denied(Actor::anonymous(), entrance, refused.reason()) {
+    if let Ok(event) = audit::action_denied(Actor::anonymous(), action, refused.reason()) {
         let _ = state.audit(event);
     }
 }

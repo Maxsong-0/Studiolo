@@ -3,7 +3,7 @@ mod input;
 mod sessions;
 
 use crate::{
-    auth::{self, AgentType},
+    auth::{self, AgentType, Entrance},
     server::{AgentSession, ListEntriesArgs, PolicyReadArgs, ReadNoteArgs, SearchArgs},
     shutdown::SERVER_STOPPING,
     state::AppState,
@@ -45,7 +45,10 @@ pub(crate) fn router(app: Arc<AppState>) -> Router {
         .route("/policy", any(dispatch))
         .fallback(dispatch)
         .with_state(state)
-        .layer(middleware::from_fn_with_state(app, auth::require_bearer))
+        .layer(middleware::from_fn_with_state(
+            (app, Entrance::Read),
+            auth::require_bearer,
+        ))
         .layer(middleware::from_fn(plain_private));
     Router::new().nest("/read", routes)
 }

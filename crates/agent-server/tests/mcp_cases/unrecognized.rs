@@ -82,6 +82,22 @@ async fn unrecognized_callers_are_recorded_once_per_entrance_with_every_answer_u
 }
 
 #[tokio::test]
+async fn a_read_path_named_like_the_mcp_entrance_does_not_use_up_its_minute() {
+    let f = fixture().await;
+    let anonymous = |entrance: &str| (None, entrance.to_owned(), "unauthenticated".to_owned());
+    let read = f.base.replace("/mcp", "/read/mcp");
+    for _ in 0..3 {
+        assert_eq!(answer(f.client.get(&read)).await.0, 401);
+    }
+    assert_eq!(denials(&f), [anonymous("http.request")]);
+    assert_eq!(answer(f.client.get(&f.base)).await.0, 401);
+    assert_eq!(
+        denials(&f),
+        [anonymous("http.request"), anonymous("mcp.request")]
+    );
+}
+
+#[tokio::test]
 async fn recognized_types_are_still_recorded_every_time_they_are_denied() {
     let f = fixture().await;
     let read = f.base.replace("/mcp", "/read");

@@ -54,7 +54,7 @@ async fn dispatch_then(
                 super::gate::gate,
             ))
             .layer(axum::middleware::from_fn_with_state(
-                app,
+                (app, crate::auth::Entrance::Mcp),
                 crate::auth::require_bearer,
             ))
     })

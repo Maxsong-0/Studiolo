@@ -1,6 +1,6 @@
 //! 没认出类型的拒绝登记（T-241）：同一入口同一原因每分钟最多一条，过一分钟再来又有一条；
 //! 账本写不进也算用掉这一分钟。时刻由用例给，落到真账本上看。
-use super::{Unrecognized, note_unrecognized};
+use super::{Entrance, Unrecognized, note_unrecognized};
 use crate::{options::ServeOptions, serve, state::AppState};
 use serde_json::{Value, json};
 use std::{
@@ -53,24 +53,39 @@ async fn each_entrance_and_reason_is_recorded_once_a_minute_and_again_after_it()
         );
     };
     for millis in [0, 1, 30_000, 59_999] {
-        note("mcp.request", Unauthenticated, millis);
+        note(Entrance::Mcp, Unauthenticated, millis);
     }
     let mut expected = vec![("mcp.request", "unauthenticated")];
     assert_eq!(recorded(&f), pairs(&expected));
     // 另一个原因、另一个入口各算各的，谁也盖不住谁。
-    for (entrance, refused, reason) in [
-        ("mcp.request", Unavailable, "identity_unavailable"),
-        ("http.request", Unauthenticated, "unauthenticated"),
-        ("http.request", Unavailable, "identity_unavailable"),
+    for (entrance, refused, action, reason) in [
+        (
+            Entrance::Mcp,
+            Unavailable,
+            "mcp.request",
+            "identity_unavailable",
+        ),
+        (
+            Entrance::Read,
+            Unauthenticated,
+            "http.request",
+            "unauthenticated",
+        ),
+        (
+            Entrance::Read,
+            Unavailable,
+            "http.request",
+            "identity_unavailable",
+        ),
     ] {
         note(entrance, refused, 59_999);
         note(entrance, refused, 59_999);
-        expected.push((entrance, reason));
+        expected.push((action, reason));
         assert_eq!(recorded(&f), pairs(&expected));
     }
     // 满一分钟再来，又有一条，而且只有一条。
     for millis in [60_000, 60_001, 119_999] {
-        note("mcp.request", Unauthenticated, millis);
+        note(Entrance::Mcp, Unauthenticated, millis);
     }
     expected.push(("mcp.request", "unauthenticated"));
     assert_eq!(recorded(&f), pairs(&expected));
@@ -83,7 +98,7 @@ async fn a_ledger_that_cannot_be_written_is_tried_once_a_minute_not_once_a_reque
     let note = |seconds| {
         note_unrecognized(
             &f.state,
-            "mcp.request",
+            Entrance::Mcp,
             Unrecognized::Unauthenticated,
             start + Duration::from_secs(seconds),
         );

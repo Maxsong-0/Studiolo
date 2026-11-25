@@ -8,7 +8,12 @@ mod pool;
 mod streams;
 mod worker;
 
-use crate::{auth, server::AgentSession, shutdown::DRAIN_LIMIT, state::AppState};
+use crate::{
+    auth::{self, Entrance},
+    server::AgentSession,
+    shutdown::DRAIN_LIMIT,
+    state::AppState,
+};
 use axum::{
     Router,
     body::Body,
@@ -143,7 +148,10 @@ fn assemble(app: Arc<AppState>, limits: Limits) -> (Router, Arc<Manager>) {
     let router = Router::new()
         .route_service("/mcp", service)
         .layer(middleware::from_fn_with_state(state, gate))
-        .layer(middleware::from_fn_with_state(app, auth::require_bearer))
+        .layer(middleware::from_fn_with_state(
+            (app, Entrance::Mcp),
+            auth::require_bearer,
+        ))
         .layer(middleware::from_fn(private));
     (router, manager)
 }
