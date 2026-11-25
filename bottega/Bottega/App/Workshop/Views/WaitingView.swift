@@ -23,7 +23,8 @@ struct WaitingView: View {
                 }
                 .frame(maxWidth: 720)
                 .frame(maxWidth: .infinity)
-                .padding(24)
+                .padding([.horizontal, .bottom], 24)
+                .padding(.top, FloatingTopRoom.reserved)
                 .animation(.easeOut(duration: 0.16), value: items)
             }
         }

@@ -18,7 +18,8 @@ struct DevicesView: View {
                 }
                 .frame(maxWidth: 720)
                 .frame(maxWidth: .infinity)
-                .padding(24)
+                .padding([.horizontal, .bottom], 24)
+                .padding(.top, FloatingTopRoom.reserved)
             }
             .onAppear { model.refreshOverview() }
         }

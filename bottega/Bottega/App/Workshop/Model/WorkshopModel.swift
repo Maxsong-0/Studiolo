@@ -174,10 +174,9 @@ final class WorkshopModel {
             for record in records { try state.apply(record) }
         } catch {
             // The link checks the numbers before it passes records on; if they still do not fit, stop all the same.
-            notice = Why(code: "sequence", text: "The events do not follow on: expected \(error.expected), got \(error.got).")
             client = nil
             for pump in pumps { pump.cancel() }
-            status = .stopped(notice ?? .notSigned)
+            status = .stopped(Why(code: "sequence", text: "The events do not follow on: expected \(error.expected), got \(error.got)."))
         }
     }
 

@@ -34,11 +34,11 @@ struct PageView: View {
     @Environment(WorkshopModel.self) private var model
 
     var body: some View {
-        VStack(spacing: 0) {
+        FloatingTop(makesRoom: isReadOnly) {
+            content.frame(maxWidth: .infinity, maxHeight: .infinity)
+        } over: {
             StatusBanner()
             NoticeBanner()
-            content
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .navigationTitle(title)
         .navigationSubtitle(subtitle)
@@ -58,6 +58,16 @@ struct PageView: View {
                 Button("Inspector", systemImage: "sidebar.trailing") { model.showsInspector.toggle() }
                     .help(model.showsInspector ? "Hide the inspector" : "Show the inspector")
             }
+        }
+    }
+
+    /// Nothing on it is signed or sent. (What lanes have to send with is at the bottom, out of the way.)
+    private var isReadOnly: Bool {
+        guard model.source != .none, !model.needsRegistration else { return false }
+        return switch model.page {
+        case .board, .activity: true
+        case .line: model.showsLanes
+        case .dispatcher, .waiting, .devices: false
         }
     }
 
@@ -161,6 +171,7 @@ struct NoticeBanner: View {
     }
 }
 
+/// Over the page, not part of it (`FloatingTop`).
 struct Banner<Actions: View>: View {
     let symbol: String
     let tint: Color
@@ -176,10 +187,16 @@ struct Banner<Actions: View>: View {
             actions.controlSize(.small)
         }
         .font(.callout)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 7)
+        .background(.regularMaterial, in: .rect(cornerRadius: 10))
+        .overlay { RoundedRectangle(cornerRadius: 10).strokeBorder(.separator) }
+        // A click on it does nothing, and does not reach what is under it.
+        .contentShape(.rect)
+        .onTapGesture {}
+        .frame(maxWidth: 780)
         .padding(.horizontal, 16)
-        .padding(.vertical, 8)
-        .background(.quaternary.opacity(0.5))
-        .overlay(alignment: .bottom) { Divider() }
+        .padding(.top, 8)
     }
 }
 

@@ -57,7 +57,8 @@ struct LineTimeline<Empty: View>: View {
                 .frame(maxWidth: 780, alignment: .leading)
                 .frame(maxWidth: .infinity)
                 .padding(.horizontal, 24)
-                .padding(.vertical, 20)
+                .padding(.top, FloatingTopRoom.reserved)
+                .padding(.bottom, 20)
                 .animation(.smooth(duration: 0.2), value: rows.last?.id)
             }
             .scrollPosition($position)

@@ -8,11 +8,13 @@
 
 /* Begin PBXBuildFile section */
 		12E8A9928ADBFF87B16AE019 /* StorageNames.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4C59D7639E8BEC97111AE0EE /* StorageNames.swift */; };
+		31404D86B08A6A6C6A7DCF41 /* FloatingTop.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4268537DA130217180FC5774 /* FloatingTop.swift */; };
 		65C134EF84B42936D0EAE11B /* BottegaKit in Frameworks */ = {isa = PBXBuildFile; productRef = 81052D4EA631240179AE0E30 /* BottegaKit */; };
 		67975FD65086058D3A16B33C /* TRADEMARK.md in Resources */ = {isa = PBXBuildFile; fileRef = AFBF8BEC22DC876CAE2B6212 /* TRADEMARK.md */; };
 		69C6D2E2AABE980524E092DA /* SwiftTerm in Frameworks */ = {isa = PBXBuildFile; productRef = 78361FE681954CEB65443F08 /* SwiftTerm */; };
 		6E960A2B8E13C620FA2987F0 /* THIRD_PARTY_NOTICES.md in Resources */ = {isa = PBXBuildFile; fileRef = 8C68422EF6B40DED38B755AF /* THIRD_PARTY_NOTICES.md */; };
 		74CDB3275B2F0DE5C1B5A959 /* LICENSE in Resources */ = {isa = PBXBuildFile; fileRef = 9CEFE377695509681A421595 /* LICENSE */; };
+		99A3B53EBAAB9A89502490C3 /* FloatingTop.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4268537DA130217180FC5774 /* FloatingTop.swift */; };
 		AC1653A05AD0DBA6E29F8399 /* StorageNames.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4C59D7639E8BEC97111AE0EE /* StorageNames.swift */; };
 		BAD1D11479AE36CAB510B836 /* BottegaLink in Frameworks */ = {isa = PBXBuildFile; productRef = 7463EE17536B9998B2A93CCD /* BottegaLink */; };
 /* End PBXBuildFile section */
@@ -29,6 +31,7 @@
 
 /* Begin PBXFileReference section */
 		2B0321B5D75D36B0AE1BC37B /* BottegaTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = BottegaTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		4268537DA130217180FC5774 /* FloatingTop.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FloatingTop.swift; sourceTree = "<group>"; };
 		4C59D7639E8BEC97111AE0EE /* StorageNames.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StorageNames.swift; sourceTree = "<group>"; };
 		517A61D27DF0AF10EA93C362 /* BottegaKit */ = {isa = PBXFileReference; lastKnownFileType = folder; name = BottegaKit; path = BottegaKit; sourceTree = SOURCE_ROOT; };
 		8C68422EF6B40DED38B755AF /* THIRD_PARTY_NOTICES.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = THIRD_PARTY_NOTICES.md; sourceTree = "<group>"; };
@@ -97,6 +100,7 @@
 		BB1B886172ABA63D19B3399D /* Shared */ = {
 			isa = PBXGroup;
 			children = (
+				4268537DA130217180FC5774 /* FloatingTop.swift */,
 				4C59D7639E8BEC97111AE0EE /* StorageNames.swift */,
 			);
 			path = Shared;
@@ -227,6 +231,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				31404D86B08A6A6C6A7DCF41 /* FloatingTop.swift in Sources */,
 				12E8A9928ADBFF87B16AE019 /* StorageNames.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -235,6 +240,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				99A3B53EBAAB9A89502490C3 /* FloatingTop.swift in Sources */,
 				AC1653A05AD0DBA6E29F8399 /* StorageNames.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
