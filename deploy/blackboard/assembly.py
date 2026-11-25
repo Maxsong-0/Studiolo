@@ -217,8 +217,26 @@ def agent_unit(text):
     return text
 
 
+# 启动器对 http.sock 的核对（T-231）：上一任被强杀会留下它。以前见到就拒绝；现在自己的、只有一个名字的 socket
+# 放过去，由程序握着主库锁判死才接管（判不准程序自己拒绝）。别的节点照旧拒绝。启动器不删任何东西。
+OLD_SOCKET_CHECK = '''            os.stat("http.sock", dir_fd=parent_fd, follow_symlinks=False)
+        except FileNotFoundError:
+            pass
+        else:
+            raise RuntimeError("rejected")
+'''
+SOCKET_CHECK = '''            node = os.stat("http.sock", dir_fd=parent_fd, follow_symlinks=False)
+        except FileNotFoundError:
+            pass
+        else:
+            # A dead socket of ours goes to the product, which takes it over or refuses.
+            require(stat.S_ISSOCK(node.st_mode) and node.st_uid == os.geteuid()
+                    and node.st_nlink == 1)
+'''
+
+
 def launcher(text):
-    """沿用黑板、Bridge、只读身份目录和备份配置的接线，只换发行路径；仅生成候选，不激活。"""
+    """沿用黑板、Bridge、只读身份目录和备份配置的接线，换发行路径和 http.sock 的核对；仅生成候选，不激活。"""
     if RELEASE in text or text.count('"--sync-transport"') != 1:
         raise ValueError('unrecognized launcher')
     for fragment in ('"--canonical-writer-data", WRITER', '"--board-socket", BOARD_SOCKET',
@@ -238,6 +256,7 @@ def launcher(text):
         raise ValueError('backup wiring missing')
     text = replace_once(text, 'RELEASE = "' + OLD_RELEASE + '"',
                         'RELEASE = "' + RELEASE + '"')
+    text = replace_once(text, OLD_SOCKET_CHECK, SOCKET_CHECK)
     if OLD_RELEASE in text:
         raise ValueError('stale release path retained')
     compile(text, str(Path(RELEASE) / 'launch-human.py'), 'exec')

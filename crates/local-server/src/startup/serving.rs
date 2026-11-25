@@ -52,11 +52,12 @@ impl PreparedServer {
 
     pub(super) fn bind_unix(self) -> Result<(BoundUnixIngress, axum::Router), StartupError> {
         self.revalidate()?;
-        let listener = self
-            .ingress
-            .ok_or(StartupError::Configuration)?
-            .bind()
-            .map_err(|_| StartupError::Ingress)?;
+        let ingress = self.ingress.ok_or(StartupError::Configuration)?;
+        let listener = match &self.workbench {
+            Some(workbench) => ingress.bind_over_leftover(workbench),
+            None => ingress.bind(),
+        }
+        .map_err(|_| StartupError::Ingress)?;
         Ok((
             listener,
             checkpoint_input::attach(self.app, self.checkpoint),
@@ -93,7 +94,7 @@ impl PreparedServer {
         let backup = match self
             .backup
             .take()
-            .map(backup_input::Listening::start)
+            .map(|backup| backup_input::Listening::start(backup, self.workbench.as_deref()))
             .transpose()
         {
             Ok(listening) => listening,
@@ -155,7 +156,11 @@ impl PreparedServer {
     {
         if let (Some(board), Some(plane)) = (self.board_ingress.take(), self.board_plane.take()) {
             let runner = self.runner_plane.take();
-            let listener = board.bind().map_err(|_| StartupError::Ingress)?;
+            let listener = match &self.workbench {
+                Some(workbench) => board.bind_over_leftover(workbench),
+                None => board.bind(),
+            }
+            .map_err(|_| StartupError::Ingress)?;
             if let Some(runner) = &runner {
                 // Runner 的入口也是可信 Unix 入口；起不来不能说成「HTTP服务已停止」（BUG-050）。
                 runner.serve().map_err(|_| StartupError::Ingress)?;

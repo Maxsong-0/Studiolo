@@ -95,6 +95,19 @@ impl Fixture {
         }
     }
 
+    /// 子进程用：接上父进程已经建好的目录，自己什么都不建；端口另占一个。
+    #[cfg(target_os = "linux")]
+    pub fn reopened(root: PathBuf) -> Self {
+        let reservation = loopback_port::Reservation::new();
+        Self {
+            _temp: tempfile::tempdir().unwrap(),
+            config: root.join("config/owner.json"),
+            root,
+            port: reservation.address.port(),
+            _reservation: reservation,
+        }
+    }
+
     pub fn options(&self) -> crate::options::Options {
         crate::options::parse(
             [

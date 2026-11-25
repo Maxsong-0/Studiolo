@@ -111,9 +111,12 @@ async fn the_listener_catches_up_on_its_own_and_stops_reading_on_shutdown() {
     let last = fill(&stage, "listening", 2 * PAGE + 7);
     let run = target(&stage.assembled.fixture, "backup-run");
     fs::set_permissions(&run, fs::Permissions::from_mode(0o750)).unwrap();
-    let service =
-        crate::backup::BackupService::start(stage.producer.clone(), &run.join("producer.sock"))
-            .unwrap();
+    let service = crate::backup::BackupService::start(
+        stage.producer.clone(),
+        &run.join("producer.sock"),
+        &stage.assembled.workbench,
+    )
+    .unwrap();
     let limit = Instant::now() + Duration::from_secs(30);
     while stage.producer.scanned_offset() != last {
         assert!(

@@ -25,6 +25,8 @@ mod factor_http;
 mod file_lock_release;
 #[path = "architecture_cases/flush_points.rs"]
 mod flush_points;
+#[path = "architecture_cases/leftover_sockets.rs"]
+mod leftover_sockets;
 #[path = "architecture_cases/maintenance.rs"]
 mod maintenance;
 #[path = "architecture_cases/nextest_groups.rs"]

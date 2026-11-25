@@ -1,8 +1,10 @@
 //! 备份 socket 的文件系统一侧：父目录属主是本进程、属组是专用读取组、权限 0750；
-//! socket 建好后交给读取组、权限 0660。不建目录，不清已有节点；退出时只删仍是本次 inode 的 socket。
+//! socket 建好后交给读取组、权限 0660。不建目录；同名节点只接管上一任留下、判得死的 socket
+//! （`unix_ingress::leftover`），别的一律拒绝；退出时只删仍是本次 inode 的 socket。
 //!
 //! worker 连接前会按同一组条件核对父目录和 socket（`studiolo-backup-worker` 的 endpoint proof），
 //! 两边条件不一致时 worker 那边拒绝连接，所以这里的数字改动要和它一起改。
+use crate::{CanonicalWorkbench, unix_ingress::leftover::Entrance};
 use rustix::{
     fs::{AtFlags, FileType, Mode, OFlags, Stat, chmodat, chownat, fstat, open, statat, unlinkat},
     io::Errno,
@@ -10,14 +12,17 @@ use rustix::{
 };
 use std::{
     ffi::OsString,
-    os::{fd::OwnedFd, unix::net::UnixListener},
+    os::{
+        fd::{AsFd as _, OwnedFd},
+        unix::net::UnixListener,
+    },
     path::Path,
 };
 
 /// 备份 socket 起不来的固定类别；不带路径。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ListenError {
-    /// 路径、属主、属组或权限不符合约定，或者同名节点已经存在。
+    /// 路径、属主、属组或权限不符合约定，或者同名节点已经存在、又不是判得死的残留。
     Configuration,
     /// 监听没有建立起来。
     Unavailable,
@@ -71,7 +76,11 @@ impl Drop for Claim {
 }
 
 /// 在固定路径上建立监听。任何一步不符就失败，已经建出来的 socket 由 `Claim` 的销毁收走。
-pub(super) fn bind(path: &Path, reader_gid: u32) -> Result<(UnixListener, Claim), ListenError> {
+pub(super) fn bind(
+    path: &Path,
+    reader_gid: u32,
+    workbench: &CanonicalWorkbench,
+) -> Result<(UnixListener, Claim), ListenError> {
     let (Some(directory), Some(name)) = (path.parent(), path.file_name()) else {
         return Err(ListenError::Configuration);
     };
@@ -94,7 +103,16 @@ pub(super) fn bind(path: &Path, reader_gid: u32) -> Result<(UnixListener, Claim)
         parent,
         name: name.to_owned(),
     };
-    // 已有同名节点一律拒绝：不清理，也不接管上一次留下的 socket。
+    // 上一任被强杀后留下、已经没人监听的 socket 先接管；判不准就停在这里，节点原样留着。
+    Entrance {
+        parent: node.parent.as_fd(),
+        name: &node.name,
+        path,
+        label: "备份入口",
+    }
+    .take_over(workbench)
+    .map_err(|_| ListenError::Configuration)?;
+    // 接管之后还有同名节点，一律拒绝。
     if !matches!(node.stat(), Err(Errno::NOENT)) {
         return Err(ListenError::Configuration);
     }

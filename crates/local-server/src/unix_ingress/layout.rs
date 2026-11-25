@@ -1,6 +1,6 @@
 //! 入口文件系统 Adapter；保留父目录 FD，清理不跟随当前路径指向的新父目录。
 
-use super::IngressError;
+use super::{IngressError, leftover::Entrance};
 use rustix::{
     fs::{AtFlags, FileType, Mode, OFlags, Stat, chmodat, open, statat, unlinkat},
     io::Errno,
@@ -9,6 +9,7 @@ use rustix::{
 use std::{
     ffi::OsStr,
     fs::{self, File},
+    os::fd::AsFd as _,
     os::unix::fs::MetadataExt,
     path::{Path, PathBuf},
 };
@@ -56,10 +57,16 @@ pub(super) struct Layout {
     parent: Directory,
     descriptor: File,
     roots: Vec<Directory>,
+    /// 容得下判死的残留时，日志里的叫法；`None` 就是任何同名节点都拒绝。
+    leftover: Option<&'static str>,
 }
 
 impl Layout {
-    pub(super) fn prepare(path: &Path, roots: &[&Path]) -> Result<Self, IngressError> {
+    pub(super) fn prepare(
+        path: &Path,
+        roots: &[&Path],
+        leftover: Option<&'static str>,
+    ) -> Result<Self, IngressError> {
         normal(path)?;
         if path.as_os_str().as_encoded_bytes().len() > 103 || path.file_name().is_none() {
             return Err(IngressError::Configuration);
@@ -82,6 +89,7 @@ impl Layout {
             parent,
             descriptor,
             roots,
+            leftover,
         };
         layout.revalidate()?;
         Ok(layout)
@@ -123,7 +131,29 @@ impl Layout {
         Ok(())
     }
 
+    /// 目录照旧全核；没有节点，或者按约定容得下的残留。
     pub(super) fn revalidate(&self) -> Result<(), IngressError> {
+        self.directories()?;
+        match self.entrance() {
+            Some(entrance) => entrance
+                .acceptable()
+                .map_err(|_| IngressError::Configuration),
+            None => self.vacant(),
+        }
+    }
+
+    /// 没按容得下残留准备的入口没有这一项：残留照旧拒绝。
+    pub(super) fn entrance(&self) -> Option<Entrance<'_>> {
+        self.leftover.map(|label| Entrance {
+            parent: self.descriptor.as_fd(),
+            name: self.name(),
+            path: &self.path,
+            label,
+        })
+    }
+
+    /// 目录照旧全核，而且一个同名节点都没有。
+    pub(super) fn vacant(&self) -> Result<(), IngressError> {
         self.directories()?;
         match statat(&self.descriptor, self.name(), AtFlags::SYMLINK_NOFOLLOW) {
             Err(Errno::NOENT) => Ok(()),

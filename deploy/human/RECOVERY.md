@@ -5,15 +5,22 @@
 在生产机上做，要 sudo 的命令由主人本人敲。整机重启、断电之后 `/run` 是空的，第 1～3 节说的残留节点不会有；
 第 4 节的暂存区在 `/var/lib` 下，重启之后东西还在，照样适用。
 
-程序对上一次留下的东西一律「不清理、不接管」，所以恢复就是三件事：看清留下了什么 → 确认它确实是死的 → 只删那一个节点。
+带 T-231 的人侧发行（r24 **还没有**，从下一版起；启动器和程序一起换）会自己接管死 socket：程序握着主库锁、连一下没人监听、
+节点类型属主链接数都对、删之前再核还是同一个，才删那一个，日志里有「接管上一任留下的…入口 socket」。所以强杀之后一般几秒内自己起来，
+先看第 1 节的日志：有这几行、人侧是 `active`，就不用往下做，只在下一次激活之前清一下重启计数（第 2 节末尾）。
+它判不准（节点不是预期的样子、有人在监听、主库锁在别人手里）照旧拒绝启动，那时、以及 r24 和更早的发行、以及激活或回滚脚本停下的时候，按下面做。
+
+人工恢复就是三件事：看清留下了什么 → 确认它确实是死的 → 只删那一个节点。
 看不清就停下，不删。数据库和它旁边的 `-wal`、`-shm`、Bridge 的状态文件、`.producer-lease` 都不要动：下次启动自己接着用。
 
 依据的代码（改了它们要回来对这份步骤）：
 
-- 启动器 `deploy/human/current-v2/launch-human.py`（已有 `http.sock` 就拒绝）和同目录的单元模板
+- 启动器 `deploy/human/current-v2/launch-human.py`（已有 `http.sock` 就拒绝；带 T-231 的发行由装配换成「自己的、只有一个名字的
+  socket 才放过去交给程序判」）和同目录的单元模板
   `studiolo-human.service`（重试几次、`UMask`）；
-- `crates/local-server/src/unix_ingress/layout.rs` 的 `revalidate`、`crates/local-server/src/backup/listener.rs`
-  （已有同名节点一律拒绝；先建节点、再改属组和权限）、`crates/local-server/src/startup/serving.rs`（三个监听谁先谁后）、
+- `crates/local-server/src/unix_ingress/leftover.rs`（判死和接管，三个入口共用）、`crates/local-server/src/coordinator/sole.rs`
+  （握着主库锁的凭据）、`crates/local-server/src/unix_ingress/layout.rs` 的 `revalidate` 和 `vacant`、
+  `crates/local-server/src/backup/listener.rs`（接管之后还有同名节点一律拒绝；先建节点、再改属组和权限）、`crates/local-server/src/startup/serving.rs`（三个监听谁先谁后）、
   同目录的 `error.rs`（启动报错的原文）；
 - `crates/local-server/src/backup/producer.rs`（回收和封存的日志原文、回收失败不挡封存）、
   `crates/local-server/src/health/backup.rs`（健康页的说法）；
@@ -90,6 +97,9 @@ sudo systemctl reset-failed studiolo-human.service
 ```bash
 sudo systemctl start studiolo-human.service
 ```
+
+人侧自己起回来的（没动过节点）也要跑上面那条 `reset-failed`，但不用 `start`：激活脚本要求 `NRestarts=0`
+（`deploy/blackboard/runtime_checks.py`），systemctl(1) 写明 `reset-failed` 会把它清零，正在跑的服务不受影响。
 
 再跑一遍第 1 节第一条命令：人侧应是 `ActiveState=active`、`NRestarts=0`。socket 用第 1 节第三条命令看：
 起来的是带备份的新发行就有三个；是旧发行（第 3 节 `stop-old` 那种情形）就只有 `http.sock`、`board.sock` 两个。

@@ -2,9 +2,13 @@
 import ast
 import collections
 import importlib.util
+import os
 from pathlib import Path
 import re
+import socket
+import tempfile
 import unittest
+from unittest import mock
 import assembly as a
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -94,9 +98,10 @@ class AssemblyTests(unittest.TestCase):
         old = board_launcher()
         new = a.launcher(old)
         backup = ' "--backup-config", "' + a.BACKUP_CONFIG + '",'
-        # 本版只换发行路径：换回去就是上一发行的那一份，一个字不差。
-        restored = new.replace(a.RELEASE, a.OLD_RELEASE)
+        # 本版只换发行路径和 http.sock 的核对：换回去就是上一发行的那一份，一个字不差。
+        restored = new.replace(a.RELEASE, a.OLD_RELEASE).replace(a.SOCKET_CHECK, a.OLD_SOCKET_CHECK)
         self.assertEqual(restored, old)
+        self.assertEqual((new.count(a.SOCKET_CHECK), new.count(a.OLD_SOCKET_CHECK)), (1, 0))
         self.assertNotIn(a.OLD_RELEASE, new)
         self.assertEqual(new.count('"--backup-config"'), 1)
         self.assertEqual(new.count('"--agent-data"'), 1)
@@ -105,11 +110,13 @@ class AssemblyTests(unittest.TestCase):
         self.assertIn('"--sync-transport", "' + a.SYNC_APPROVAL + '",' + backup, new)
         self.assertEqual(Path(a.BACKUP_CONFIG).parent, Path(a.SYNC_APPROVAL).parent)
 
-        # 所有函数（含 main）的 AST 不变；只有模块级发行路径不同。
+        # 除了 preflight 里那一处核对，所有函数（含 main）的 AST 不变；模块级只有发行路径不同。
         def functions(source):
             return {n.name: ast.dump(n) for n in ast.parse(source).body
                     if isinstance(n, ast.FunctionDef)}
-        self.assertEqual(functions(old), functions(restored))
+        before, after = functions(old), functions(new)
+        self.assertEqual(before.keys(), after.keys())
+        self.assertEqual({name for name in before if before[name] != after[name]}, {'preflight'})
         self.assertIn('"--canonical-writer-data", WRITER', new)
         self.assertIn('"STUDIOLO_TOTP_SEED_HEX": credential()', new)
         # 已转换的启动器不能再过一遍；接线或标签漂移也拒绝；还没带只读身份目录参数的（r15 形状）、
@@ -121,11 +128,59 @@ class AssemblyTests(unittest.TestCase):
                     old.replace(' "--agent-data", AGENT,', ''),
                     old.replace('"--board-socket", BOARD_SOCKET,', ''),
                     old.replace('"--sync-transport"', '"--foreign"'),
+                    # 已经换过核对的、核对被改过的，都不是上一发行的那一份。
+                    old.replace(a.OLD_SOCKET_CHECK, a.SOCKET_CHECK),
+                    old.replace('raise RuntimeError("rejected")\n    finally', 'pass\n    finally'),
                     old.replace(a.SYNC_APPROVAL, '/foreign/approval.json'),
                     old + '\n# "--sync-transport"\n',
                     old.replace('正式黑板库 · Obsidian 同步试跑', '未知标签')):
             with self.assertRaises(ValueError):
                 a.launcher(bad)
+
+    def test_launcher_hands_only_our_own_single_name_socket_to_the_product(self):
+        """T-231：残留的 http.sock 由程序判死；启动器只放过自己的、一个名字的 socket，什么都不删。"""
+        module = {'__name__': 'launcher_under_test'}
+        exec(compile(a.launcher(board_launcher()), 'launch-human.py', 'exec'), module)
+        module['inspect_existing'] = lambda *args, **kwargs: None
+
+        def preflight(directory, uid=None):
+            module['open_directory'] = lambda path, private=False: os.open(
+                directory if path == '/run/studiolo-human' else '/', os.O_RDONLY | os.O_DIRECTORY)
+            with mock.patch.object(os, 'geteuid', return_value=os.getuid() if uid is None else uid):
+                module['preflight']()
+
+        def dead(path):
+            with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as listener:
+                listener.bind(str(path))
+                listener.listen()
+
+        with tempfile.TemporaryDirectory(prefix='stu-l-', dir='/tmp') as root:
+            node = Path(root) / 'http.sock'
+            other = Path(root) / 'other'
+            preflight(root)
+            dead(node)
+            before = node.lstat()
+            preflight(root)
+            self.assertEqual(node.lstat(), before)
+            # 别人的 socket、两个名字的 socket 照旧拒绝，原样留着。
+            with self.assertRaises(RuntimeError):
+                preflight(root, uid=os.getuid() + 1)
+            os.link(node, other)
+            with self.assertRaises(RuntimeError):
+                preflight(root)
+            self.assertTrue(node.is_socket())
+            node.unlink()
+            # 链接（指着一个合格的 socket 也不行）、普通文件、目录、管道。
+            node.symlink_to(other)
+            with self.assertRaises(RuntimeError):
+                preflight(root)
+            node.unlink()
+            for make, remove in ((node.touch, node.unlink), (node.mkdir, node.rmdir),
+                                 (lambda: os.mkfifo(node), node.unlink)):
+                make()
+                with self.assertRaises(RuntimeError):
+                    preflight(root)
+                remove()
 
     def test_human_unit_only_repoints_the_release(self):
         old = board_unit()

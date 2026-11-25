@@ -14,6 +14,9 @@ mod residency;
 #[cfg(target_os = "linux")]
 mod snapshot_allowlist;
 mod sync_plane;
+// 判死靠 Linux 的连接语义，别的平台一律拒绝残留。
+#[cfg(target_os = "linux")]
+mod takeover;
 #[path = "../access/test_support.rs"]
 mod test_support;
 mod writer;
