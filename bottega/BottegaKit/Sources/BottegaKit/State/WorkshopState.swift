@@ -26,7 +26,7 @@ public struct WorkshopState: Sendable {
     /// The card whose TASK a message is.
     public private(set) var cardsByTask: [String: String] = [:]
     /// The agent family (`claude`, `codex`…) a card was given to or is reviewed by, by the session doing it.
-    public private(set) var vendors: [String: String] = [:]
+    public internal(set) var vendors: [String: String] = [:]
     public private(set) var tests: [String: TestRun] = [:]
     public private(set) var merges: [String: Merge] = [:]
     public private(set) var asks: [String: Ask] = [:]
@@ -37,6 +37,16 @@ public struct WorkshopState: Sendable {
     public private(set) var turnsBySession: [String: [String]] = [:]
     /// By the intent's digest.
     public private(set) var echoes: [String: Echo] = [:]
+
+    /// By the line's number or the session's name.
+    public internal(set) var arrangements: [String: Arrangement] = [:]
+    public internal(set) var projects: [String: Project] = [:]
+    /// Lines straight to one agent.
+    public internal(set) var directLines: [String: DirectLine] = [:]
+    /// By vendor.
+    public internal(set) var catalogs: [String: Catalog] = [:]
+    /// By session.
+    public internal(set) var models: [String: SessionModel] = [:]
 
     /// Every event as it happened, in order: the activity log.
     public private(set) var log: [Happening] = []
@@ -76,6 +86,7 @@ public struct WorkshopState: Sendable {
             sessions[event.name] = Session(name: event.name, role: event.role, openedAt: event.atMs)
         case .sessionClosed(let event):
             sessions[event.name, default: Session(name: event.name, role: "", openedAt: event.atMs)].closedAt = event.atMs
+            forgetModelRequest(of: event.name)
         case .messageQueued(let event): queued(event.message, id)
         case .messageHanded(let event):
             messages[event.id]?.handedAt = event.atMs
@@ -183,17 +194,37 @@ public struct WorkshopState: Sendable {
             turn(event.turn, of: event.session) {
                 $0.vendor = event.vendor
                 $0.model = event.model
+                $0.effort = event.effort
                 $0.cliVersion = event.cliVersion
                 $0.messages = event.messages ?? []
                 $0.startedAt = event.atMs
             }
             vendors[event.session] = event.vendor
+            uses(event.session, event.model.map { ModelChoice(model: $0, effort: event.effort) })
         case .turnFinished(let event):
             turn(event.turn, of: event.session) {
                 $0.end = .init(
                     outcome: event.outcome, modelTurns: event.modelTurns, tools: event.tools ?? [:],
                     denied: event.denied, text: event.text, at: event.atMs)
             }
+        case .turnStopRequested(let event): turn(event.turn, of: event.session) { $0.stop = .requested(at: event.atMs) }
+        case .turnNotStopped(let event): turn(event.turn, of: event.session) { $0.stop = .failed(at: event.atMs) }
+        case .lineArranged(let event): arranged(event)
+        case .lineRead(let event): read(event)
+        case .projectAdded(let event):
+            projects[event.project] = Project(name: event.project, path: event.path, addedAt: event.atMs)
+        case .projectRemoved(let event): projects[event.project] = nil
+        case .lineOpened(let event): opened(event)
+        case .lineReady(let event): ready(event)
+        case .lineFailed(let event): directLine(event.line) { $0.failure = .init(why: event.why, at: event.atMs) }
+        case .lineWorker(let event): worker(event)
+        case .modelsListed(let event): catalogs[event.vendor] = .listed(event)
+        case .modelsUnavailable(let event): catalogs[event.vendor] = .unavailable(event.why, at: event.atMs)
+        case .modelRequested(let event):
+            models[event.session, default: SessionModel()].requested = ModelChoice(model: event.model, effort: event.effort)
+            models[event.session]?.refusal = nil
+        case .modelChanged(let event): changed(event)
+        case .modelNotChanged(let event): notChanged(event)
         case .unreadable(let type, let text):
             // It may have been anything, so it is shown where the user looks first.
             show(Row(id: id, at: log.last?.at ?? 0, kind: .unreadable(type: type, text: text)), thread: nil, dispatcher: true)
@@ -259,7 +290,7 @@ public struct WorkshopState: Sendable {
         touch(event.card) {
             $0.work = .init(
                 worker: event.worker, worktree: event.worktree, branch: event.branch, base: event.base,
-                task: event.task, freshStart: event.freshStart, at: event.atMs)
+                task: event.task, gitDir: event.gitDir, freshStart: event.freshStart, at: event.atMs)
             // Without a line of its own the card starts one, and its TASK is that line's first letter.
             if $0.thread == nil { $0.thread = event.task }
         }

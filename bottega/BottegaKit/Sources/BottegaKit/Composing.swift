@@ -92,7 +92,8 @@ extension IntentDraft {
         switch self {
         case .say(_, let thread?, _, _, _): .line(thread)
         case .answer(let message, _, _): .question(message)
-        case .say, .approve, .decline: .dispatcher
+        case .say, .approve, .decline, .arrange, .markRead, .addProject, .removeProject, .openLine, .setModel, .stopTurn:
+            .dispatcher
         }
     }
 }
@@ -133,7 +134,9 @@ extension WorkshopState {
         case (.line(let id), .say(_, let thread, _, _, _)): thread == id
         case (.line(let id), .answer(let message, _, _)): messages[message]?.thread == id
         case (.question(let id), .answer(let message, _, _)): message == id
-        case (_, .say), (_, .answer), (_, .approve), (_, .decline): false
+        case (_, .say), (_, .answer), (_, .approve), (_, .decline), (_, .arrange), (_, .markRead), (_, .addProject),
+            (_, .removeProject), (_, .openLine), (_, .setModel), (_, .stopTurn):
+            false
         }
     }
 

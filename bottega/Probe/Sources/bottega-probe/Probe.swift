@@ -78,6 +78,35 @@ struct Probe {
                     for count in 1...(Int(to[1]) ?? 1) {
                         try await client.submit(.say(to: to[0], thread: nil, text: "第 \(count) 句", files: [], wantsReply: true))
                     }
+                case "name":
+                    let line = parts(1)
+                    try await client.submit(.arrange(line: line[0], title: line[1], pinned: nil, archived: nil))
+                case "pin", "unpin":
+                    try await client.submit(.arrange(line: rest, title: nil, pinned: words[0] == "pin", archived: nil))
+                case "archive", "unarchive":
+                    try await client.submit(.arrange(line: rest, title: nil, pinned: nil, archived: words[0] == "archive"))
+                case "read":
+                    let line = parts(1)
+                    let through = await ledger.through
+                    try await client.submit(.markRead(line: line[0], through: UInt64(line[1]) ?? through))
+                case "add-project":
+                    let project = parts(1)
+                    try await client.submit(.addProject(name: project[0], path: project[1]))
+                case "remove-project": try await client.submit(.removeProject(name: rest))
+                case "open":
+                    let line = parts(5).map { $0 == "-" || $0.isEmpty ? nil : $0 }
+                    try await client.submit(
+                        .openLine(
+                            LineToOpen(
+                                project: line[0] ?? "", vendor: line[1] ?? "", role: line[2] ?? "", model: line[3],
+                                effort: line[4], text: line[5])))
+                case "model":
+                    let change = parts(3)
+                    try await client.submit(
+                        .setModel(line: change[0], session: change[1], model: change[2], effort: change[3].isEmpty ? nil : change[3]))
+                case "stop": try await client.submit(.stopTurn(rest))
+                case "lines": await ledger.tellLines()
+                case "models": await ledger.tellModels()
                 case "cut":
                     connector.losesNextReply.withLock { $0 = true }
                     print("cut: the answer to the next intent gets lost")
@@ -116,6 +145,31 @@ actor Ledger {
     var lastQuestion: String { state.messagesToUser.last { state.messages[$0]?.isOpenQuestion == true } ?? "" }
     var lastAsk: (id: String, text: String) {
         state.asks.values.filter { $0.answer == nil }.max { $0.id < $1.id }.map { ($0.id, $0.text) } ?? ("", "")
+    }
+
+    var through: UInt64 { state.through }
+
+    func tellLines() {
+        for project in state.projectList { print("project: \(project.name) \(project.path)") }
+        for line in state.directLineList {
+            print(
+                "line: \(line.id) \(line.vendor ?? "-") \(line.role ?? "-") in \(line.project ?? "-"):",
+                line.failure.map { "failed \($0.why)" } ?? line.place.map { "ready on \($0.branch) at \($0.worktree)" } ?? "being set up",
+                line.worker.map { "\($0.state) run \($0.run) \($0.why?.code ?? "")" } ?? "")
+        }
+        for (line, arrangement) in state.arrangements.sorted(by: { $0.key < $1.key }) { print("arranged: \(line) \(arrangement)") }
+    }
+
+    func tellModels() {
+        for (vendor, catalog) in state.catalogs.sorted(by: { $0.key < $1.key }) {
+            switch catalog {
+            case .unavailable(let why, _): print("models: \(vendor) \(why)")
+            case .listed(let list):
+                print("models: \(vendor) \(list.roles), default \(list.defaultModel ?? "-") \(list.defaultEffort ?? "-")")
+                for model in list.models { print("  \(model.model) “\(model.name)” \(model.efforts ?? []) default \(model.defaultEffort ?? "-")") }
+            }
+        }
+        for (session, model) in state.models.sorted(by: { $0.key < $1.key }) { print("uses: \(session) \(model)") }
     }
 
     func text(of ask: String) -> String { state.asks[ask]?.text ?? "" }

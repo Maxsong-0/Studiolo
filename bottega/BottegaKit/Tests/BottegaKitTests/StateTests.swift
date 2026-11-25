@@ -8,7 +8,7 @@ import Testing
 struct RecordedStateTests {
     @Test func sessions() throws {
         let state = try Fixtures.state()
-        #expect(state.through == 59)
+        #expect(state.through == 84)
         #expect(state.sessions["dispatcher"]?.role == "dispatcher")
         #expect(state.sessions["dispatcher"]?.isOpen == true)
         #expect(state.sessions["coder-card-1"]?.closedAt == 1764000014000)
@@ -96,10 +96,10 @@ struct RecordedStateTests {
         #expect(byDevice.answer?.word == "approved")
         #expect(byDevice.answer?.via == .init(at: "device", name: nil, device: "device-1"))
         // What was signed is what this code shows.
-        #expect(try Fixtures.vectors().intents.last?.intent.body.contains(byDevice.textDigest) == true)
+        #expect(try Fixtures.vectors().intents.last { $0.intent.kind == "approve" }?.intent.body.contains(byDevice.textDigest) == true)
         let device = try #require(state.devices["device-1"])
         #expect(device.name == "书房的 Mac Studio")
-        #expect(device.intents == 7 && device.refusals == 3)
+        #expect(device.intents == 14 && device.refusals == 3)
         let vectors = try Fixtures.vectors()
         for vector in vectors.intents { #expect(state.echoes[vector.digest]?.number == vector.intent.number) }
         // All three kinds have been answered but the limit, which LMAS never clears.

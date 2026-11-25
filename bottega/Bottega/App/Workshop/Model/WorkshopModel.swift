@@ -416,7 +416,7 @@ final class WorkshopModel {
         outbox.contains { item in
             switch item.draft {
             case .approve(let id, _), .decline(let id): id == ask
-            case .say, .answer: false
+            case .say, .answer, .arrange, .markRead, .addProject, .removeProject, .openLine, .setModel, .stopTurn: false
             }
         }
     }
@@ -429,7 +429,7 @@ final class WorkshopModel {
     private func take(_ settled: Outbox.Settled) {
         let key = origins.removeValue(forKey: settled.item.id)
         switch settled.result {
-        case .done(let message):
+        case .done(let message, _):
             // A line the user just started: go and look at it, unless they have moved on.
             if key == .dispatcher, page == .dispatcher, let message, case .say(let to, nil, _, _, _) = settled.item.draft,
                 state.role(of: to) != "dispatcher"

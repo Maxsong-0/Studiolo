@@ -154,14 +154,18 @@ private struct LetterSummary: View {
     }
 }
 
-/// The line's numbers: how many letters, how far passed on, who writes to each other most.
+/// The line's numbers: how many letters, how far passed on, who writes to each other most; out of how many, where
+/// LMAS tells. The limit between two members is over a while, so it says nothing about how often they wrote in all.
 private struct LanesHeader: View {
+    @Environment(WorkshopModel.self) private var model
     let line: BottegaKit.Line
 
     var body: some View {
         HStack(spacing: 22) {
+            let limits = model.overview?.limits
             fact("Letters", "\(line.messages.count)")
-            fact("Hops", "\(line.deepestHop)")
+            if let limits { fact("Towards its limit", "\(model.state.lettersThatCount(on: line)) of \(limits.threadBudget)") }
+            fact("Hops", limits.map { "\(line.deepestHop) of \($0.maxHop)" } ?? "\(line.deepestHop)")
             if let busiest = line.busiestPair {
                 fact(
                     "Busiest pair",

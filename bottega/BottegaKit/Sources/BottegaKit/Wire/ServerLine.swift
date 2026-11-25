@@ -150,6 +150,10 @@ public struct Overview: Decodable, Equatable, Sendable {
     /// Intents that came under a device's number and were not that device's, or not readable, since LMAS started.
     public var droppedIntents: UInt64?
     public var cards: Cards?
+    /// What the bus allows now. LMAS before it told them has none.
+    public var limits: Limits?
+    /// Set when lines straight to one agent can be opened.
+    public var lines: Lines?
 
     public struct Cards: Decodable, Equatable, Sendable {
         public var repo: String
@@ -157,6 +161,25 @@ public struct Overview: Decodable, Equatable, Sendable {
         public var reviewers: [String]?
         public var tests: Bool
         public var mergeInto: String?
+    }
+
+    /// What the user says counts towards none of these.
+    public struct Limits: Decodable, Equatable, Sendable {
+        /// How far a letter may be passed on.
+        public var maxHop: Int
+        /// Letters on a line.
+        public var threadBudget: Int
+        /// Letters between two members, in a while.
+        public var pairLimit: Int
+        public var pairWindowMs: UInt64
+        /// Letters one member may send, in a while.
+        public var senderRate: Int
+        public var senderWindowMs: UInt64
+    }
+
+    public struct Lines: Decodable, Equatable, Sendable {
+        /// How many of their agents may be up at once.
+        public var max: Int
     }
 }
 

@@ -72,10 +72,16 @@ private struct LineRow: View {
     let waits: Bool
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 2) {
+        let arrangement = model.state.arrangement(of: line.id)
+        return VStack(alignment: .leading, spacing: 2) {
             HStack(spacing: 4) {
                 Text(verbatim: model.state.title(of: line)).lineLimit(1)
                 Spacer(minLength: 4)
+                if arrangement.isArchived {
+                    Image(systemName: "archivebox").foregroundStyle(.secondary).imageScale(.small).accessibilityLabel("Archived")
+                } else if arrangement.isPinned {
+                    Image(systemName: "pin.fill").foregroundStyle(.secondary).imageScale(.small).accessibilityLabel("Pinned")
+                }
                 if waits {
                     Image(systemName: "hand.raised.fill").foregroundStyle(.red).imageScale(.small)
                         .accessibilityLabel("Waiting for you")

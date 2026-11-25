@@ -150,6 +150,63 @@ struct Summary {
             text = "\(word(event.session)) ended \(word(event.turn)): \(outcome.text)"
             isFailure = outcome.isFailure
             detail = .turn(event.turn)
+        case .turnStopRequested(let event):
+            symbol = "stop.circle"
+            text = "You asked \(word(event.session)) to stop \(word(event.turn))"
+            detail = .turn(event.turn)
+        case .turnNotStopped(let event):
+            symbol = "xmark.octagon"
+            text = "\(word(event.session)) did not stop \(word(event.turn)) and goes on"
+            isFailure = true
+            detail = .turn(event.turn)
+
+        case .lineArranged(let event):
+            symbol = "slider.horizontal.3"
+            text = "\(word(event.line)): \(Wording.arrangement(event))"
+        case .lineRead(let event):
+            symbol = "eye"
+            text = "You have read \(word(event.line)) up to event \(event.through)"
+        case .projectAdded(let event):
+            symbol = "folder.badge.plus"
+            text = "Project \(word(event.project, 80)) was added: \(word(event.path, 160))"
+        case .projectRemoved(let event):
+            symbol = "folder.badge.minus"
+            text = "Project \(word(event.project, 80)) was removed"
+        case .lineOpened(let event):
+            symbol = "plus.bubble"
+            text = "\(word(event.line)) was opened in \(word(event.project, 80)) with \(word(event.vendor)) as \(word(event.role))"
+                + (event.model.map { ", \(Wording.model($0, event.effort))" } ?? "")
+                + (event.text.map { ": \(word($0, 160))" } ?? "")
+        case .lineReady(let event):
+            symbol = "checkmark.circle"
+            text = "\(word(event.line)) is ready on \(word(event.branch, 80))"
+        case .lineFailed(let event):
+            symbol = "xmark.octagon"
+            text = "\(word(event.line)) could not be opened. \(word(event.why.text, 200))"
+            isFailure = true
+        case .lineWorker(let event):
+            let state = Wording.lineWorker(event)
+            symbol = state.symbol
+            text = "\(word(event.line)): \(state.text)"
+
+        case .modelsListed(let event):
+            symbol = "list.bullet"
+            text = "\(word(event.vendor)) offers \(Wording.count(event.models.count, "model", "models")): "
+                + word(event.models.map(\.name).joined(separator: ", "), 160)
+        case .modelsUnavailable(let event):
+            symbol = "list.bullet"
+            text = "\(word(event.vendor)) cannot be asked for its models. \(word(event.why.text, 200))"
+        case .modelRequested(let event):
+            symbol = "arrow.left.arrow.right"
+            text = "\(word(event.session)) is to use \(Wording.model(event.model, event.effort)) from its next turn on"
+        case .modelChanged(let event):
+            symbol = "checkmark.circle"
+            text = "\(word(event.session)) uses \(Wording.model(event.model, event.effort))"
+        case .modelNotChanged(let event):
+            symbol = "xmark.octagon"
+            text = "\(word(event.session)) was not changed to \(Wording.model(event.model, event.effort)). \(word(event.why.text, 200))"
+            isFailure = true
+
         case .unreadable(let type, let body):
             symbol = "questionmark.square.dashed"
             text = Self.unreadable(type, body)

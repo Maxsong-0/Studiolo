@@ -26,6 +26,9 @@ struct OutboxTests {
         var box = outbox(say)
         #expect(result(box.take(.done(message: "msg-7"), at: 1, now: 1)) == .done(message: "msg-7"))
         #expect(box.isEmpty)
+        box = outbox(.openLine(.init(project: "p", vendor: "codex", role: "coder", text: "看看")))
+        #expect(box.head?.draft.typed?.text == "看看")
+        #expect(result(box.take(.done(message: nil, line: "line-1"), at: 1, now: 1)) == .done(message: nil, line: "line-1"))
         box = outbox(say)
         #expect(result(box.take(.already(number: 4), at: 1, now: 1)) == .already(number: 4))
         box = outbox(say)
@@ -108,6 +111,16 @@ struct OutboxTests {
         box.add(.decline(ask: "ask-2"), id: "c", at: 1)
         #expect(box.dropUnsignedDecisions().map(\.item.id) == ["a", "c"])
         #expect(box.items.map(\.id) == ["b"])
+        // Nor what was decided about the moment; what means the same later is.
+        box = Outbox()
+        for (index, draft) in [
+            IntentDraft.stopTurn("turn-1"), .setModel(line: "l", session: "s", model: "m", effort: nil),
+            .addProject(name: "p", path: "/p"), .removeProject(name: "p"),
+            .arrange(line: "l", title: "t", pinned: nil, archived: nil), .markRead(line: "l", through: 3),
+            .openLine(.init(project: "p", vendor: "codex", role: "coder")),
+        ].enumerated() { box.add(draft, id: "\(index)", at: 1) }
+        #expect(box.dropUnsignedDecisions().map(\.item.id) == ["0", "1", "2", "3"])
+        #expect(box.items.map(\.id) == ["4", "5", "6"])
         // Signed ones are: they may have been handed in.
         box = outbox(approve)
         #expect(box.dropUnsignedDecisions().isEmpty)
@@ -117,6 +130,8 @@ struct OutboxTests {
     @Test func survivesTheDisk() throws {
         var box = outbox(.answer(message: "msg-3", text: "x", files: [.init(name: "a", content: "b")]), number: 7)
         box.add(say, id: "b", at: 2)
+        box.add(.arrange(line: "l", title: "t", pinned: nil, archived: true), id: "c", at: 2)
+        box.add(.openLine(.init(project: "p", vendor: "codex", role: "coder", text: "x")), id: "d", at: 2)
         let back = try JSONDecoder().decode(Outbox.self, from: JSONEncoder().encode(box))
         #expect(back == box)
         #expect(back.head?.signed?.signature == "7")

@@ -34,6 +34,21 @@ public enum Event: Equatable, Sendable {
     case intentEchoed(IntentEchoed)
     case turnStarted(TurnStarted)
     case turnFinished(TurnFinished)
+    case turnStopRequested(TurnStopRequested)
+    case turnNotStopped(TurnNotStopped)
+    case lineArranged(LineArranged)
+    case lineRead(LineRead)
+    case projectAdded(ProjectAdded)
+    case projectRemoved(ProjectRemoved)
+    case lineOpened(LineOpened)
+    case lineReady(LineReady)
+    case lineFailed(LineFailed)
+    case lineWorker(LineWorker)
+    case modelsListed(ModelsListed)
+    case modelsUnavailable(ModelsUnavailable)
+    case modelRequested(ModelRequested)
+    case modelChanged(ModelChanged)
+    case modelNotChanged(ModelNotChanged)
     /// A `type` this Bottega does not know, or one it knows in a shape it cannot read. The record still counts.
     case unreadable(type: String, text: String?)
 
@@ -50,6 +65,8 @@ public enum Event: Equatable, Sendable {
     }
     public struct CardStarted: Decodable, Equatable, Sendable {
         public var card, worker, worktree, branch, base: String
+        /// The worktree's own git directory. Cards from before LMAS told it have none.
+        public var gitDir: String?
         public var freshStart: FreshStart?
         public var task: String
         public var atMs: UInt64
@@ -157,7 +174,7 @@ public enum Event: Equatable, Sendable {
     /// An agent took up work. What goes on inside comes separately (`Live`, `TurnPage`).
     public struct TurnStarted: Decodable, Equatable, Sendable {
         public var turn, session, vendor: String
-        public var model, cliVersion: String?
+        public var model, effort, cliVersion: String?
         /// The letters pushed into it. Those it fetched itself are not here.
         public var messages: [String]?
         public var atMs: UInt64
@@ -191,20 +208,23 @@ public struct WireMessage: Decodable, Equatable, Sendable {
 
 /// What became of an intent.
 public enum Outcome: Decodable, Equatable, Sendable {
-    /// Done. `message` is the one it became, when it became one.
-    case done(message: String?)
+    /// Done. `message` is the letter it became, when it became one; `line` the line it opened.
+    case done(message: String?, line: String? = nil)
     /// This content was already done, by the device's intent `number`. Not done twice.
     case already(number: UInt64)
     case refused(Why)
     /// A result this Bottega does not know.
     case other(String)
 
-    private enum Key: CodingKey { case result, message, number, why }
+    private enum Key: CodingKey { case result, message, line, number, why }
 
     public init(from decoder: any Decoder) throws {
         let fields = try decoder.container(keyedBy: Key.self)
         switch try fields.decode(String.self, forKey: .result) {
-        case "done": self = .done(message: try fields.decodeIfPresent(String.self, forKey: .message))
+        case "done":
+            self = .done(
+                message: try fields.decodeIfPresent(String.self, forKey: .message),
+                line: try fields.decodeIfPresent(String.self, forKey: .line))
         case "already": self = .already(number: try fields.decode(UInt64.self, forKey: .number))
         case "refused": self = .refused(try fields.decode(Why.self, forKey: .why))
         case let other: self = .other(other)
@@ -263,6 +283,21 @@ extension Event: Decodable {
         case "intent_echoed": .intentEchoed(try .init(from: decoder))
         case "turn_started": .turnStarted(try .init(from: decoder))
         case "turn_finished": .turnFinished(try .init(from: decoder))
+        case "turn_stop_requested": .turnStopRequested(try .init(from: decoder))
+        case "turn_not_stopped": .turnNotStopped(try .init(from: decoder))
+        case "line_arranged": .lineArranged(try .init(from: decoder))
+        case "line_read": .lineRead(try .init(from: decoder))
+        case "project_added": .projectAdded(try .init(from: decoder))
+        case "project_removed": .projectRemoved(try .init(from: decoder))
+        case "line_opened": .lineOpened(try .init(from: decoder))
+        case "line_ready": .lineReady(try .init(from: decoder))
+        case "line_failed": .lineFailed(try .init(from: decoder))
+        case "line_worker": .lineWorker(try .init(from: decoder))
+        case "models_listed": .modelsListed(try .init(from: decoder))
+        case "models_unavailable": .modelsUnavailable(try .init(from: decoder))
+        case "model_requested": .modelRequested(try .init(from: decoder))
+        case "model_changed": .modelChanged(try .init(from: decoder))
+        case "model_not_changed": .modelNotChanged(try .init(from: decoder))
         default: nil
         }
     }
@@ -303,6 +338,21 @@ extension Event {
         case .intentEchoed(let event): event.atMs
         case .turnStarted(let event): event.atMs
         case .turnFinished(let event): event.atMs
+        case .turnStopRequested(let event): event.atMs
+        case .turnNotStopped(let event): event.atMs
+        case .lineArranged(let event): event.atMs
+        case .lineRead(let event): event.atMs
+        case .projectAdded(let event): event.atMs
+        case .projectRemoved(let event): event.atMs
+        case .lineOpened(let event): event.atMs
+        case .lineReady(let event): event.atMs
+        case .lineFailed(let event): event.atMs
+        case .lineWorker(let event): event.atMs
+        case .modelsListed(let event): event.atMs
+        case .modelsUnavailable(let event): event.atMs
+        case .modelRequested(let event): event.atMs
+        case .modelChanged(let event): event.atMs
+        case .modelNotChanged(let event): event.atMs
         case .unreadable: nil
         }
     }

@@ -57,7 +57,7 @@ struct RecordedTurnTests {
         let asked = fetched.items[10]
         #expect(asked.item.kind == "reasoning" && asked.item.title == "第 2 次问模型" && asked.text.pieces.isEmpty)
         #expect(fetched.completeness == .whole)
-        #expect(fetched.head == TurnHead(turn: "turn-1", session: "coder-card-1", vendor: "codex", model: "gpt-5.2-codex", startedAtMs: 1764000050000))
+        #expect(fetched.head == TurnHead(turn: "turn-1", session: "coder-card-1", vendor: "codex", model: "gpt-5.2-codex", effort: "high", startedAtMs: 1764000050000))
         #expect(details["turn-2"]?.completeness == .behind)
     }
 

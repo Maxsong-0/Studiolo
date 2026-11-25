@@ -30,6 +30,18 @@ public enum IntentDraft: Codable, Equatable, Sendable {
     /// Approve what LMAS asked. `textDigest` is the SHA-256 of the text as it was shown.
     case approve(ask: String, textDigest: String)
     case decline(ask: String)
+    /// Name, pin or put away a line. What is nil stays as it is; an empty title takes the title away. `line` is the
+    /// number of its first letter, or a session's name.
+    case arrange(line: String, title: String?, pinned: Bool?, archived: Bool?)
+    /// A line has been read up to this event.
+    case markRead(line: String, through: UInt64)
+    /// Let agents work on copies of a repository.
+    case addProject(name: String, path: String)
+    case removeProject(name: String)
+    case openLine(LineToOpen)
+    /// From its next turn on, `session` uses this. Without `effort`, the model's own default.
+    case setModel(line: String, session: String, model: String, effort: String?)
+    case stopTurn(String)
 
     public var kind: String {
         switch self {
@@ -37,21 +49,28 @@ public enum IntentDraft: Codable, Equatable, Sendable {
         case .answer: "answer"
         case .approve: "approve"
         case .decline: "decline"
+        case .arrange: "arrange"
+        case .markRead: "mark_read"
+        case .addProject: "add_project"
+        case .removeProject: "remove_project"
+        case .openLine: "open_line"
+        case .setModel: "set_model"
+        case .stopTurn: "stop_turn"
         }
     }
 
     public var key: KeyUse {
         switch self {
-        case .approve: .approval
-        case .say, .answer, .decline: .daily
+        case .approve, .addProject, .removeProject: .approval
+        case .say, .answer, .decline, .arrange, .markRead, .openLine, .setModel, .stopTurn: .daily
         }
     }
 
     /// Which key a kind must be signed with, for checking an intent that came from elsewhere.
     public static func key(forKind kind: String) -> KeyUse? {
         switch kind {
-        case "approve": .approval
-        case "say", "answer", "decline", "heartbeat": .daily
+        case "approve", "add_project", "remove_project": .approval
+        case "say", "answer", "decline", "heartbeat", "arrange", "mark_read", "open_line", "set_model", "stop_turn": .daily
         default: nil
         }
     }
@@ -60,11 +79,21 @@ public enum IntentDraft: Codable, Equatable, Sendable {
     public var typed: (text: String, files: [TextFile])? {
         switch self {
         case .say(_, _, let text, let files, _), .answer(_, let text, let files): (text, files)
-        case .approve, .decline: nil
+        case .openLine(let line): line.text.map { ($0, line.files) }
+        case .approve, .decline, .arrange, .markRead, .addProject, .removeProject, .setModel, .stopTurn: nil
         }
     }
 
-    /// The limits LMAS states in section 7. Checked before signing so the user hears about them at the keyboard,
+    /// Whether it means the same when it is signed later, once LMAS is back. What was decided about the moment does
+    /// not: it is dropped rather than done when the user no longer looks.
+    public var keeps: Bool {
+        switch self {
+        case .say, .answer, .openLine, .arrange, .markRead: true
+        case .approve, .decline, .addProject, .removeProject, .setModel, .stopTurn: false
+        }
+    }
+
+    /// The limits LMAS states in sections 7 and 11. Checked before signing so the user hears about them at the keyboard,
     /// not after a round trip.
     public enum Problem: Error, Equatable, Sendable {
         case empty
@@ -74,6 +103,11 @@ public enum IntentDraft: Codable, Equatable, Sendable {
         case filesTooLong(bytes: Int)
         case fileWithoutName
         case newThreadMustWantReply
+        case nothingToArrange
+        case badTitle
+        case badProjectName
+        case badProjectPath
+        case filesWithoutText
     }
 
     public enum Limit {
@@ -81,10 +115,23 @@ public enum IntentDraft: Codable, Equatable, Sendable {
         public static let files = 10
         public static let file = 64 * 1024
         public static let allFiles = 128 * 1024
+        public static let title = 200
+        public static let projectName = 64
     }
 
     public func check() throws(Problem) {
-        if case .say(_, nil, _, _, false) = self { throw .newThreadMustWantReply }
+        switch self {
+        case .say(_, nil, _, _, false): throw .newThreadMustWantReply
+        case .arrange(_, nil, nil, nil): throw .nothingToArrange
+        case .arrange(_, let title?, _, _) where !Self.isTitle(title): throw .badTitle
+        case .openLine(let line):
+            if let title = line.title, !Self.isTitle(title) { throw .badTitle }
+            if line.text == nil, !line.files.isEmpty { throw .filesWithoutText }
+        case .addProject(let name, let path):
+            if !Self.isProjectName(name) { throw .badProjectName }
+            if !path.hasPrefix("/") { throw .badProjectPath }
+        case .say, .answer, .approve, .decline, .arrange, .markRead, .removeProject, .setModel, .stopTurn: break
+        }
         guard let (text, files) = typed else { return }
         if text.allSatisfy(\.isWhitespace) { throw .empty }
         if text.utf8.count > Limit.text { throw .textTooLong(bytes: text.utf8.count) }
@@ -95,6 +142,17 @@ public enum IntentDraft: Codable, Equatable, Sendable {
         }
         let total = files.reduce(0) { $0 + $1.content.utf8.count }
         if total > Limit.allFiles { throw .filesTooLong(bytes: total) }
+    }
+
+    private static func isTitle(_ text: String) -> Bool { text.utf8.count <= Limit.title && !hasControls(text) }
+
+    private static func isProjectName(_ text: String) -> Bool {
+        (1...Limit.projectName).contains(text.utf8.count) && !hasControls(text)
+            && text.first?.isWhitespace == false && text.last?.isWhitespace == false
+    }
+
+    private static func hasControls(_ text: String) -> Bool {
+        text.unicodeScalars.contains { $0.properties.generalCategory == .control }
     }
 
     /// The body to sign. LMAS refuses a field it does not know, so nothing is written that section 7 does not list,
@@ -117,6 +175,35 @@ public enum IntentDraft: Codable, Equatable, Sendable {
             fields.text_sha256 = textDigest
         case .decline(let ask):
             fields.ask = ask
+        case .arrange(let line, let title, let pinned, let archived):
+            fields.line = line
+            fields.title = title
+            fields.pinned = pinned
+            fields.archived = archived
+        case .markRead(let line, let through):
+            fields.line = line
+            fields.through = through
+        case .addProject(let name, let path):
+            fields.project = name
+            fields.path = path
+        case .removeProject(let name):
+            fields.project = name
+        case .openLine(let line):
+            fields.project = line.project
+            fields.vendor = line.vendor
+            fields.role = line.role
+            fields.model = line.model
+            fields.effort = line.effort
+            fields.title = line.title
+            fields.text = line.text
+            fields.files = line.files.isEmpty ? nil : line.files
+        case .setModel(let line, let session, let model, let effort):
+            fields.line = line
+            fields.session = session
+            fields.model = model
+            fields.effort = effort
+        case .stopTurn(let turn):
+            fields.turn = turn
         }
         return String(decoding: try Wire.encoder.encode(fields), as: UTF8.self)
     }
@@ -132,6 +219,35 @@ public enum IntentDraft: Codable, Equatable, Sendable {
         var message: String?
         var ask: String?
         var text_sha256: String?
+        var line, title: String?
+        var pinned, archived: Bool?
+        var through: UInt64?
+        var project, path, vendor, role, model, effort, session, turn: String?
+    }
+}
+
+/// A line straight to one agent, as the user wants it.
+public struct LineToOpen: Codable, Equatable, Sendable {
+    public var project, vendor, role: String
+    /// nil for the vendor's default.
+    public var model, effort: String?
+    public var title: String?
+    /// The first thing said on it, and what goes with that.
+    public var text: String?
+    public var files: [TextFile]
+
+    public init(
+        project: String, vendor: String, role: String, model: String? = nil, effort: String? = nil, title: String? = nil,
+        text: String? = nil, files: [TextFile] = []
+    ) {
+        self.project = project
+        self.vendor = vendor
+        self.role = role
+        self.model = model
+        self.effort = effort
+        self.title = title
+        self.text = text
+        self.files = files
     }
 }
 

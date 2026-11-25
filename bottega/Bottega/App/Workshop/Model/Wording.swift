@@ -145,12 +145,42 @@ enum Wording {
         }
     }
 
+    // MARK: Lines and models
+
+    static func arrangement(_ event: Event.LineArranged) -> String {
+        var parts: [String] = []
+        if let title = event.title {
+            parts.append(title.isEmpty ? "title taken away" : "named “\(UntrustedText.line(title, limit: 80))”")
+        }
+        if let pinned = event.pinned { parts.append(pinned ? "pinned" : "unpinned") }
+        if let archived = event.archived { parts.append(archived ? "archived" : "taken out of the archive") }
+        return parts.isEmpty ? "arranged" : parts.joined(separator: ", ")
+    }
+
+    static func lineWorker(_ event: Event.LineWorker) -> (text: String, symbol: String) {
+        switch event.state {
+        // A later one starts over, with what was said on the line to read.
+        case "up": (event.run == 1 ? "its agent is up" : "its agent is up again, for the \(ordinal(event.run)) time", "bolt.circle")
+        case "down": ("its agent is down. \(event.why.map { UntrustedText.line($0.text, limit: 200) } ?? "")", "moon.circle")
+        default: (UntrustedText.line(event.state, limit: 40), "questionmark.circle")
+        }
+    }
+
+    private static func ordinal(_ number: Int) -> String {
+        NumberFormatter.localizedString(from: number as NSNumber, number: .ordinal)
+    }
+
+    static func model(_ model: String, _ effort: String?) -> String {
+        UntrustedText.line(model, limit: 60) + (effort.map { " · \(UntrustedText.line($0, limit: 24))" } ?? "")
+    }
+
     // MARK: Turns
 
     static func turnOutcome(_ outcome: Why) -> (text: String, symbol: String, isFailure: Bool) {
         switch outcome.code {
         case "completed": ("Finished", "checkmark.circle", false)
         case "stopped": ("Stopped by LMAS", "stop.circle", false)
+        case "stopped_by_user": ("Stopped by you", "stop.circle", false)
         case "session_closed": ("The session was closed", "stop.circle", false)
         case "superseded": ("Another turn began", "arrow.uturn.right.circle", false)
         default: (UntrustedText.line(outcome.text, limit: 200), "xmark.octagon", true)
@@ -249,8 +279,9 @@ enum Wording {
 
     static func outcome(_ outcome: Outcome) -> (text: String, symbol: String) {
         switch outcome {
-        case .done(nil): ("Done", "checkmark.circle")
-        case .done(let message?): ("Done, became \(message)", "checkmark.circle")
+        case .done(_, let line?): ("Done, opened \(UntrustedText.line(line, limit: 40))", "checkmark.circle")
+        case .done(let message?, nil): ("Done, became \(UntrustedText.line(message, limit: 40))", "checkmark.circle")
+        case .done(nil, nil): ("Done", "checkmark.circle")
         case .already(let number): ("Already done by intent \(number)", "equal.circle")
         case .refused(let why): ("Refused. \(UntrustedText.line(why.text))", "xmark.octagon")
         case .other(let word): (UntrustedText.line(word, limit: 40), "questionmark.circle")
@@ -279,6 +310,11 @@ enum Wording {
         case .filesTooLong(let bytes): "The files come to \(bytes / 1024) KiB, at most 128."
         case .fileWithoutName: "A file has no name."
         case .newThreadMustWantReply: "A new line always wants a reply."
+        case .nothingToArrange: "There is nothing to change."
+        case .badTitle: "A title is one line of at most 200 bytes."
+        case .badProjectName: "A project's name is one line of 1 to 64 bytes, without spaces around it."
+        case .badProjectPath: "A project is a folder's whole path."
+        case .filesWithoutText: "Files go with something said."
         }
         return Why(code: "draft", text: text)
     }

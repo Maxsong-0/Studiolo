@@ -6,14 +6,17 @@
 /// The head of a turn.
 public struct TurnHead: Decodable, Equatable, Sendable {
     public var turn, session, vendor: String
-    public var model: String?
+    public var model, effort: String?
     public var startedAtMs: UInt64
 
-    public init(turn: String, session: String, vendor: String, model: String? = nil, startedAtMs: UInt64) {
+    public init(
+        turn: String, session: String, vendor: String, model: String? = nil, effort: String? = nil, startedAtMs: UInt64
+    ) {
         self.turn = turn
         self.session = session
         self.vendor = vendor
         self.model = model
+        self.effort = effort
         self.startedAtMs = startedAtMs
     }
 }

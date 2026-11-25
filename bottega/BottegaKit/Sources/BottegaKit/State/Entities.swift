@@ -62,15 +62,23 @@ public struct Turn: Equatable, Sendable, Identifiable {
     public let session: String
     public internal(set) var vendor: String?
     public internal(set) var model: String?
+    public internal(set) var effort: String?
     public internal(set) var cliVersion: String?
     /// The letters pushed into it.
     public internal(set) var messages: [String] = []
     /// nil when its start was never seen.
     public internal(set) var startedAt: UInt64?
     public internal(set) var end: End?
+    public internal(set) var stop: Stop?
+
+    /// The user wanted it stopped. What came of it shows in `end`, unless it went on.
+    public enum Stop: Equatable, Sendable {
+        case requested(at: UInt64)
+        case failed(at: UInt64)
+    }
 
     public struct End: Equatable, Sendable {
-        /// `completed`, `failed`, `stopped`, `process_exited`, `timed_out`, `restarted`…
+        /// `completed`, `failed`, `stopped`, `stopped_by_user`, `process_exited`, `timed_out`, `restarted`…
         public let outcome: Why
         public let modelTurns: Int
         public let tools: [String: Int]
@@ -183,6 +191,7 @@ public struct Card: Equatable, Sendable, Identifiable {
 
     public struct Work: Equatable, Sendable {
         public let worker, worktree, branch, base, task: String
+        public let gitDir: String?
         public let freshStart: Event.FreshStart?
         public let at: UInt64
     }

@@ -55,7 +55,7 @@ struct VectorTests {
 
     @Test func everyIntent() throws {
         let vectors = try Fixtures.vectors()
-        #expect(vectors.intents.count == 7)
+        #expect(vectors.intents.count == 14)
         for vector in vectors.intents {
             let intent = vector.intent
             #expect(Hex.encode(intent.preimage.bytes) == vector.preimage, "\(intent.kind) \(intent.number)")
@@ -67,12 +67,15 @@ struct VectorTests {
             #expect(!other.verifies(intent.preimage, signature: intent.signature))
             #expect(intent.isSigned(daily: try vectors.daily, approval: try vectors.approval))
         }
-        #expect(Set(vectors.intents.map(\.intent.kind)) == ["say", "answer", "approve", "decline", "heartbeat"])
+        #expect(Set(vectors.intents.map(\.intent.kind)) == [
+            "say", "answer", "approve", "decline", "heartbeat", "arrange", "mark_read", "add_project", "remove_project",
+            "open_line", "set_model", "stop_turn",
+        ])
     }
 
     @Test func everyRefusedIntentIsRefused() throws {
         let vectors = try Fixtures.vectors()
-        #expect(vectors.refused_intents.count == 11)
+        #expect(vectors.refused_intents.count == 12)
         for refused in vectors.refused_intents {
             #expect(
                 !refused.intent.isSigned(daily: try vectors.daily, approval: try vectors.approval), "\(refused.why)")
@@ -106,6 +109,24 @@ struct VectorTests {
         #expect(try IntentDraft.decline(ask: "ask-2").body(contentID: id(5)) == bodies[4])
         let asked = try #require(try Fixtures.state().asks["ask-3"])
         #expect(try IntentDraft.approve(ask: "ask-3", textDigest: asked.textDigest).body(contentID: id(7)) == bodies[6])
+        func hex(_ digit: String) -> String { String(repeating: "0", count: 31) + digit }
+        let rest: [(IntentDraft, String)] = [
+            (.arrange(line: "msg-9", title: "清空缓存", pinned: true, archived: nil), "8"),
+            (.markRead(line: "dispatcher", through: 120), "9"),
+            (.addProject(name: "studio", path: "/Users/max/studio"), "a"),
+            (
+                .openLine(
+                    .init(
+                        project: "studio", vendor: "codex", role: "coder", model: "gpt-6-luna", effort: "high",
+                        text: "看看登录页为什么这么慢。")), "b"
+            ),
+            (.setModel(line: "line-1", session: "line-1", model: "gpt-6.2-sol", effort: "max"), "c"),
+            (.stopTurn("turn-2"), "d"), (.removeProject(name: "studio"), "e"),
+        ]
+        for (offset, (draft, digit)) in rest.enumerated() {
+            #expect(try draft.body(contentID: hex(digit)) == bodies[7 + offset])
+            #expect(draft.kind == (try Fixtures.vectors().intents[7 + offset].intent.kind))
+        }
     }
 
     /// Signing with the vectors' private keys gives something the vectors' public keys take. The signature itself
@@ -189,21 +210,79 @@ struct IntentTests {
         #expect(problem(.decline(ask: "ask-1")) == nil)
     }
 
+    @Test func limitsOfLinesAndProjectsAreCheckedBeforeSigning() {
+        func problem(_ draft: IntentDraft) -> IntentDraft.Problem? {
+            do throws(IntentDraft.Problem) { try draft.check() } catch { return error }
+            return nil
+        }
+        func named(_ title: String) -> IntentDraft { .arrange(line: "msg-1", title: title, pinned: nil, archived: nil) }
+        #expect(problem(.arrange(line: "msg-1", title: nil, pinned: nil, archived: nil)) == .nothingToArrange)
+        #expect(problem(.arrange(line: "msg-1", title: nil, pinned: false, archived: nil)) == nil)
+        #expect(problem(.arrange(line: "msg-1", title: nil, pinned: nil, archived: false)) == nil)
+        #expect(problem(named("")) == nil)
+        #expect(problem(named(String(repeating: "x", count: 200))) == nil)
+        #expect(problem(named(String(repeating: "字", count: 67))) == .badTitle)
+        for bad in ["a\nb", "a\u{7}", "a\u{85}b", "\r\n"] { #expect(problem(named(bad)) == .badTitle, "\(bad.debugDescription)") }
+        func project(_ name: String, _ path: String = "/r") -> IntentDraft { .addProject(name: name, path: path) }
+        #expect(problem(project("studio")) == nil)
+        #expect(problem(project("两个 字")) == nil)
+        #expect(problem(project(String(repeating: "x", count: 64))) == nil)
+        for bad in ["", " a", "a ", "a\tb", String(repeating: "x", count: 65)] {
+            #expect(problem(project(bad)) == .badProjectName, "\(bad.debugDescription)")
+        }
+        #expect(problem(project("studio", "~/r")) == .badProjectPath)
+        #expect(problem(project("studio", "")) == .badProjectPath)
+        let file = TextFile(name: "a", content: "x")
+        func open(title: String? = nil, _ text: String?, _ files: [TextFile] = []) -> IntentDraft {
+            .openLine(.init(project: "p", vendor: "codex", role: "coder", title: title, text: text, files: files))
+        }
+        #expect(problem(open(nil)) == nil)
+        #expect(problem(open("x", [file])) == nil)
+        #expect(problem(open(nil, [file])) == .filesWithoutText)
+        #expect(problem(open(" \n")) == .empty)
+        #expect(problem(open(title: "a\nb", "x")) == .badTitle)
+        #expect(problem(open(String(repeating: "x", count: 64 * 1024 + 1))) == .textTooLong(bytes: 64 * 1024 + 1))
+    }
+
+    /// What is not said is not written; an empty title is said.
+    @Test func whatIsNotSaidIsNotWritten() throws {
+        let id = String(repeating: "0", count: 32)
+        #expect(
+            try IntentDraft.arrange(line: "line-1", title: "", pinned: nil, archived: false).body(contentID: id)
+                == #"{"archived":false,"content_id":"\#(id)","line":"line-1","title":""}"#)
+        #expect(
+            try IntentDraft.setModel(line: "line-1", session: "line-1", model: "m", effort: nil).body(contentID: id)
+                == #"{"content_id":"\#(id)","line":"line-1","model":"m","session":"line-1"}"#)
+        #expect(
+            try IntentDraft.openLine(.init(project: "p", vendor: "agy", role: "reviewer")).body(contentID: id)
+                == #"{"content_id":"\#(id)","project":"p","role":"reviewer","vendor":"agy"}"#)
+        #expect(
+            try IntentDraft.openLine(
+                .init(project: "p", vendor: "agy", role: "reviewer", title: "t", text: "x", files: [.init(name: "a", content: "b")])
+            ).body(contentID: id)
+                == #"{"content_id":"\#(id)","files":[{"content":"b","name":"a"}],"project":"p","role":"reviewer","text":"x","title":"t","vendor":"agy"}"#)
+    }
+
     @Test func contentIDsAreSixteenFreshBytes() {
         let ids = Set((0..<100).map { _ in ContentID.random() })
         #expect(ids.count == 100)
         #expect(ids.allSatisfy { Hex.decode($0, count: 16) != nil })
     }
 
-    @Test func onlyApprovingTakesTheApprovalKey() {
+    @Test func whatLoosensTakesTheApprovalKey() {
         #expect(IntentDraft.approve(ask: "a", textDigest: "").key == .approval)
         #expect(IntentDraft.decline(ask: "a").key == .daily)
         #expect(IntentDraft.answer(message: "m", text: "x", files: []).key == .daily)
         for draft: IntentDraft in [
             .say(to: "d", thread: nil, text: "x", files: [], wantsReply: true), .answer(message: "m", text: "x", files: []),
             .approve(ask: "a", textDigest: ""), .decline(ask: "a"),
+            .arrange(line: "l", title: nil, pinned: true, archived: nil), .markRead(line: "l", through: 1),
+            .addProject(name: "p", path: "/p"), .removeProject(name: "p"),
+            .openLine(.init(project: "p", vendor: "codex", role: "coder")),
+            .setModel(line: "l", session: "s", model: "m", effort: nil), .stopTurn("turn-1"),
         ] {
             #expect(IntentDraft.key(forKind: draft.kind) == draft.key)
+            #expect((draft.key == .approval) == ["approve", "add_project", "remove_project"].contains(draft.kind))
         }
     }
 }

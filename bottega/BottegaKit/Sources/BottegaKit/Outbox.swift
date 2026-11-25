@@ -24,7 +24,7 @@ public struct Outbox: Codable, Equatable, Sendable {
         public let result: Result
 
         public enum Result: Equatable, Sendable {
-            case done(message: String?)
+            case done(message: String?, line: String? = nil)
             /// Done before, by this device's intent of this number.
             case already(number: UInt64)
             /// LMAS handled it and did not do it.
@@ -93,7 +93,7 @@ public struct Outbox: Codable, Equatable, Sendable {
     public mutating func dropUnsignedDecisions() -> [Settled] {
         var dropped: [Settled] = []
         items.removeAll { item in
-            guard item.signed == nil, item.draft.typed == nil else { return false }
+            guard item.signed == nil, !item.draft.keeps else { return false }
             dropped.append(Settled(item: item, result: .notSent(.notSigned)))
             return true
         }
@@ -143,7 +143,7 @@ public struct Outbox: Codable, Equatable, Sendable {
 
     private func result(of outcome: Outcome) -> Settled.Result {
         switch outcome {
-        case .done(let message): .done(message: message)
+        case .done(let message, let line): .done(message: message, line: line)
         case .already(let number): .already(number: number)
         case .refused(let why): .refused(why)
         case .other(let word): .refused(.init(code: word, text: "LMAS answered “\(word)”, which this Bottega does not know."))

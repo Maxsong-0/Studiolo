@@ -47,6 +47,7 @@ private struct TurnHeader: View {
         Facts(
             ("Agent", turn?.vendor ?? head?.vendor, false),
             ("Model", turn?.model ?? head?.model, true),
+            ("Effort", turn?.effort ?? head?.effort, true),
             ("CLI", turn?.cliVersion, true),
             ("Started", (turn?.startedAt ?? head?.startedAtMs).map(Wording.exactTime), false),
             ("Took", turn.flatMap(Wording.took), false),

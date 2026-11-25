@@ -7,7 +7,7 @@ struct WireTests {
     /// Every line of `events.jsonl` is a record this code reads in full, and each follows on from the last.
     @Test func everyRecordedEventIsRead() throws {
         let records = try Fixtures.records()
-        #expect(records.count == 50)
+        #expect(records.count == 66)
         var through: UInt64 = 0
         for record in records {
             #expect(record.seq == through + 1)
@@ -18,7 +18,7 @@ struct WireTests {
                 #expect(event.at != nil)
             }
         }
-        #expect(through == 59)
+        #expect(through == 84)
     }
 
     /// Every `type` in the document is in the recording, and read as its own case.
@@ -31,7 +31,9 @@ struct WireTests {
             "tests_accepted", "tests_finished", "review_started", "review_finished", "review_not_done", "merge_requested",
             "merge_checked", "merge_prepared", "merge_restarted", "merge_landing", "merge_finished", "merge_failed",
             "merge_cleaned", "ask_opened", "ask_answered", "device_registered", "intent_echoed",
-            "turn_started", "turn_finished",
+            "turn_started", "turn_finished", "turn_stop_requested", "turn_not_stopped", "line_arranged", "line_read",
+            "project_added", "project_removed", "line_opened", "line_ready", "line_failed", "line_worker", "models_listed",
+            "models_unavailable", "model_requested", "model_changed", "model_not_changed",
         ])
     }
 
@@ -55,6 +57,8 @@ struct WireTests {
             .refused(.init(code: "already_answered", text: "ask-1 已经答过了（approved），一张只答一次")),
             .refused(.init(code: "already_answered", text: "ask-2 已经答过了（withdrawn），一张只答一次")),
             .done(message: nil), .done(message: nil),
+            .done(message: nil), .done(message: nil), .done(message: nil), .done(message: nil, line: "line-1"),
+            .done(message: nil), .done(message: nil), .done(message: nil),
         ])
         let answered = events.compactMap { if case .askAnswered(let e) = $0 { e.via } else { nil } }
         #expect(answered == [.init(at: "dialog", name: nil, device: nil), .init(at: "session", name: "dispatcher", device: nil), .init(at: "device", name: nil, device: "device-1")])
@@ -171,12 +175,26 @@ struct WireTests {
         let bare: Overview = try reply(#"{"id":1,"ok":{"latest":0,"lmas":"1","now_ms":4,"oldest":1}}"#).read()
         #expect(bare.cards == nil)
         #expect(bare.droppedIntents == nil)
+        #expect(bare.limits == nil && bare.lines == nil)
         let echo: IntentReply = try reply(
             #"{"id":4,"ok":{"repeated":true,"seq":4,"event":{"type":"intent_echoed","device":"d","number":1,"digest":"x","content_id":"y","outcome":{"result":"done","message":"msg-7"},"at_ms":5}}}"#
         ).read()
         #expect(echo.repeated == true)
         #expect(echo.echo?.outcome == .done(message: "msg-7"))
         #expect(throws: (any Error).self) { let _: Overview = try reply(#"{"id":1,"ok":{}}"#).read() }
+    }
+
+    @Test func theOverviewTellsTheLimits() throws {
+        struct Turn: Decodable { var line: JSON }
+        let line = try #require(
+            try Fixtures.lines("session.jsonl").map { try JSONDecoder().decode(Turn.self, from: $0).line }
+                .first { $0["ok"]?["limits"] != nil })
+        guard case .reply(let reply) = try ServerLine.read(JSONEncoder().encode(line)) else { Issue.record("no reply"); return }
+        let overview: Overview = try reply.read()
+        #expect(
+            overview.limits == .init(
+                maxHop: 3, threadBudget: 20, pairLimit: 12, pairWindowMs: 600_000, senderRate: 10, senderWindowMs: 60_000))
+        #expect(overview.lines?.max == 8)
     }
 
     @Test func errorsCarryTheirNumbers() throws {

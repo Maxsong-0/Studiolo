@@ -23,16 +23,27 @@ extension WorkshopState {
         return .agents
     }
 
-    /// Newest first.
+    /// Pinned ones first, put away ones last, newest first among them.
     public func threads(of kind: LineKind) -> [Line] {
-        threads.values.filter { self.kind(of: $0) == kind }
-            .sorted { ($0.lastAt, $0.id) > ($1.lastAt, $1.id) }
+        func rank(_ line: Line) -> Int {
+            let arrangement = arrangement(of: line.id)
+            return arrangement.isArchived ? 0 : arrangement.isPinned ? 2 : 1
+        }
+        return threads.values.filter { self.kind(of: $0) == kind }
+            .sorted { (rank($0), $0.lastAt, $0.id) > (rank($1), $1.lastAt, $1.id) }
+    }
+
+    /// What its limit on letters counts: the user's own do not.
+    public func lettersThatCount(on thread: Line) -> Int {
+        thread.messages.count { id in messages[id].map { !$0.isFromUser } ?? false }
     }
 
     public func role(of session: String) -> String? { sessions[session]?.role }
 
-    /// The line's name: the first line of its first letter, or the title of the card it carries.
+    /// The line's name: the one the user gave it, the title of the card it carries, or the first line of its first
+    /// letter.
     public func title(of thread: Line) -> String {
+        if let title = arrangement(of: thread.id).title { return UntrustedText.line(title, limit: 80) }
         if let title = cardsByTask[thread.id].flatMap({ cards[$0]?.title }) {
             return UntrustedText.line(title, limit: 80)
         }
