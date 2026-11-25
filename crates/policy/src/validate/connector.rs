@@ -4,9 +4,18 @@
 
 use std::collections::BTreeSet;
 
-use crate::model::CapabilitySet;
+use crate::{model::CapabilitySet, visible::invisible};
 
 use super::{Expansion, Problem, Report, capability::project_path};
+
+/// 项目名在读侧（网页、AI）还要原样过一遍长度和可见性，名单和快照两处都按这一条收。
+const MAX_PROJECT_BYTES: usize = 512;
+
+/// 连接器认的项目：完整项目路径，不超长、没有看不见的字符。
+#[must_use]
+pub fn connector_project(value: &str) -> bool {
+    value.len() <= MAX_PROJECT_BYTES && !value.chars().any(invisible) && project_path(value)
+}
 
 /// 一张连接器名单在报告里的写法。
 struct Roster {
@@ -45,6 +54,18 @@ pub(super) fn connector(
         previous.map(|set| set.write.presence_projects.as_slice()),
     );
     if !set.connector_only() {
+        // 名单清空后这一类就成了普通的空能力集，令牌反而开得了 MCP；要停只能撤下或吊销。
+        if let Some(previous) = previous.filter(|set| set.connector_only()) {
+            let path = if previous.read.board_projects.is_empty() {
+                PRESENCE.path
+            } else {
+                BOARD.path
+            };
+            report.problems.push(Problem::new(
+                path,
+                "连接器的名单不能清空，也不能改成普通能力集：要停用就撤下这份能力集，或吊销这个类型",
+            ));
+        }
         return;
     }
     if !set.read.board_projects.is_empty() && !set.write.presence_projects.is_empty() {
@@ -78,7 +99,7 @@ fn roster(report: &mut Report, roster: &Roster, next: &[String], previous: Optio
     let mut seen = BTreeSet::new();
     for (index, project) in next.iter().enumerate() {
         let path = format!("{}[{index}]", roster.path);
-        if !project_path(project) {
+        if !connector_project(project) {
             report
                 .problems
                 .push(Problem::new(path, "必须是合法的完整项目路径"));

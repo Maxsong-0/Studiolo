@@ -1,4 +1,11 @@
-import { useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import {
   REVALIDATED,
   type Revalidate,
@@ -6,11 +13,15 @@ import {
 } from '../live/autoRefresh';
 import { fetchPresence, presenceDisabled } from '../presenceApi';
 import type { Presence } from '../presenceModel';
+import { presenceAt, presenceDeadline } from './presence';
+
+/** 一次读取最多等这么久：要比自动刷新一轮的时限（10 秒）短，超时才由这里自己说。 */
+export const PRESENCE_READ_TIMEOUT_MS = 8_000;
 
 /** 「本机会话」的读取状态；404（本机没装黑板）单列为 disabled。 */
 export type PresenceReadState =
   | { kind: 'loading' }
-  | { kind: 'ready'; presence: Presence }
+  | { kind: 'ready'; presence: Presence; readAt: number }
   | { kind: 'disabled' }
   | { kind: 'error'; message: string };
 
@@ -24,12 +35,43 @@ export interface PresenceRead {
 const message = (error: unknown) =>
   error instanceof Error ? error.message : '本机会话读取失败。';
 
+/** 读一次；到点不等了（底下的请求也叫停），挂着不回的也有个结果。 */
+async function fetchInTime(signal: AbortSignal): Promise<Presence> {
+  const own = new AbortController();
+  const stop = () => own.abort();
+  signal.addEventListener('abort', stop);
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      reject(new Error('本机会话读取超时。'));
+      own.abort();
+    }, PRESENCE_READ_TIMEOUT_MS);
+  });
+  try {
+    return await Promise.race([fetchPresence(own.signal), timeout]);
+  } finally {
+    clearTimeout(timer);
+    signal.removeEventListener('abort', stop);
+  }
+}
+
+/** 到 `now` 为止还算数的状态：满期的去掉，整份满期没重读成就换成「读不到」。 */
+function expire(state: PresenceReadState, now: number): PresenceReadState {
+  if (state.kind !== 'ready') return state;
+  const presence = presenceAt(state.presence, state.readAt, now);
+  if (presence === state.presence) return state;
+  return presence === null
+    ? { kind: 'error', message: '太久没读到新的状态。' }
+    : { ...state, presence };
+}
+
 /**
  * 「在做什么」状态（`/api/v1/board/presence`，T-237）：只有驾驶舱「谁在干活」用，由驾驶舱自己读。
  *
  * - 和本机健康同一拍发出（layout effect），走同一道会话闸门；失败只影响「本机会话」这一组。
  * - 安静重读没读成就把这一组换成「读不到」，不留上一次的：状态满 5 分钟就过期，留着旧的会把
  *   早就没在跑的说成在跑。别的格子不受影响，所以也不算这一轮没读成。
+ * - 没有结果的读取（被中止、一直没重读）也不许留着旧的：每条按自己的岁数在本地到期。
  */
 export function usePresenceRead(): PresenceRead {
   const [state, setState] = useState<PresenceReadState>({ kind: 'loading' });
@@ -45,9 +87,12 @@ export function usePresenceRead(): PresenceRead {
   const read = useCallback(async (signal: AbortSignal): Promise<void> => {
     epoch.current += 1;
     const started = epoch.current;
+    // 睡眠唤醒之后先把早过期的收掉，再等这一次的结果。
+    setState((held) => expire(held, Date.now()));
     let next: PresenceReadState;
     try {
-      next = { kind: 'ready', presence: await fetchPresence(signal) };
+      const presence = await fetchInTime(signal);
+      next = { kind: 'ready', presence, readAt: Date.now() };
     } catch (error) {
       next = presenceDisabled(error)
         ? { kind: 'disabled' }
@@ -61,6 +106,17 @@ export function usePresenceRead(): PresenceRead {
     void read(controller.signal);
     return () => controller.abort();
   }, [read, revision]);
+
+  useEffect(() => {
+    if (state.kind !== 'ready') return undefined;
+    const deadline = presenceDeadline(state.presence, state.readAt);
+    const timer = setTimeout(
+      // 定时器可能早到一点点：至少按到期那一刻算，否则没收成又不会再来。
+      () => setState((held) => expire(held, Math.max(Date.now(), deadline))),
+      Math.max(0, deadline - Date.now()),
+    );
+    return () => clearTimeout(timer);
+  }, [state]);
 
   const reload = useCallback(() => {
     setState({ kind: 'loading' });

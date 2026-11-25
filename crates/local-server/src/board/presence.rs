@@ -8,6 +8,7 @@ use std::{
     time::Duration,
 };
 use studiolo_core::VaultPath;
+use studiolo_policy::{connector_project, invisible};
 
 /// 满这么久没有新快照，这个来源的状态整份消失。
 pub(super) const EXPIRES: Duration = Duration::from_secs(300);
@@ -112,8 +113,7 @@ impl Session {
                 .key
                 .bytes()
                 .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
-            && self.project.as_str().starts_with("项目/")
-            && self.project.as_str().split('/').count() == 2
+            && connector_project(self.project.as_str())
             && self.branch.as_deref().is_none_or(branch_name)
             && self.step.is_none_or(|step| step <= 999)
             && match (self.step, self.total) {
@@ -125,7 +125,7 @@ impl Session {
     }
 }
 
-/// 照 git 引用名的规矩，再挡不可见字符和像密钥的串。
+/// 照 git 引用名的规矩，再挡看不见的字符和像密钥的串。
 fn branch_name(name: &str) -> bool {
     (1..=MAX_BRANCH_BYTES).contains(&name.len())
         && name.chars().all(|character| {
@@ -143,19 +143,6 @@ fn branch_name(name: &str) -> bool {
             .split('/')
             .all(|part| !part.starts_with('.') && !part.ends_with(".lock"))
         && !secret_like(name)
-}
-
-/// 格式字符（Unicode `Cf` 全部）和行段分隔符：看不见，能让界面上的分支名读成别的样子或夹带文字。
-/// 网页那边按同一范围拒（`presenceModel.ts`），这里少收一个，那边就整组读不到。
-fn invisible(character: char) -> bool {
-    matches!(
-        character,
-        '\u{ad}' | '\u{600}'..='\u{605}' | '\u{61c}' | '\u{6dd}' | '\u{70f}'
-            | '\u{890}'..='\u{891}' | '\u{8e2}' | '\u{180e}' | '\u{200b}'..='\u{200f}'
-            | '\u{2028}'..='\u{202e}' | '\u{2060}'..='\u{206f}' | '\u{feff}'
-            | '\u{fff9}'..='\u{fffb}' | '\u{110bd}' | '\u{110cd}' | '\u{13430}'..='\u{1343f}'
-            | '\u{1bca0}'..='\u{1bca3}' | '\u{1d173}'..='\u{1d17a}' | '\u{e0000}'..='\u{e007f}'
-    )
 }
 
 /// 常见密钥前缀后面跟一长串，或一整段无分隔的长串（字母、数字都有）。
@@ -204,8 +191,22 @@ pub(super) enum Refused {
     Stale,
     /// 全部来源合计会超过上限。
     Full,
-    /// 这一小时「新会话」的登记用完了；只含老编号的快照照收。
-    Throttled,
+}
+
+/// 没收的一条：在原快照里的下标和原因；别的条照收。
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+pub(super) struct Rejected {
+    pub index: usize,
+    pub reason: Reason,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(super) enum Reason {
+    /// 项目不在能力集的名单里。
+    ProjectNotAllowed,
+    /// 这一小时「新会话」的登记用完了；老编号照收。
+    TooManyNew,
 }
 
 /// 要登记的一组新会话：同项目、同一家的并成一条。
@@ -220,8 +221,7 @@ pub(super) struct Fresh {
 pub(super) struct Planned {
     seq: u64,
     kept: BTreeMap<String, Session>,
-    /// 没放行的记录在原快照里的下标。
-    pub rejected: Vec<usize>,
+    pub rejected: Vec<Rejected>,
     /// 这次第一次出现的会话；要先登记成功才落下。
     pub fresh: Vec<Fresh>,
 }
@@ -232,8 +232,15 @@ impl Planned {
     }
 }
 
+/// 谁推的这一份：哪个实例、用哪一次签发的令牌。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct Origin {
+    pub instance: String,
+    pub issued_at: String,
+}
+
 struct Source {
-    instance: String,
+    origin: Origin,
     seq: u64,
     received: Duration,
     sessions: BTreeMap<String, Session>,
@@ -291,30 +298,48 @@ impl Presence {
             .retain(|_, time| now.saturating_sub(*time) < DENIAL_EVERY);
     }
 
-    /// 核这份快照能不能收；不改任何状态。`allowed` 是能力集里的项目。
+    /// 核这份快照能不能收；不改任何现行状态。`allowed` 是能力集里的项目。
+    /// 令牌换过一枚的，上一份不算数：`seq` 从头算，编号都当第一次出现。
     pub(super) fn plan(
         &mut self,
         source: &str,
+        issued_at: &str,
         snapshot: Snapshot,
         allowed: &[String],
         now: Duration,
     ) -> Result<Planned, Refused> {
         self.sweep(now);
-        let current = self.sources.get(source);
+        let current = self
+            .sources
+            .get(source)
+            .filter(|current| current.origin.issued_at == issued_at);
         if current.is_some_and(|current| snapshot.seq <= current.seq) {
             return Err(Refused::Stale);
         }
+        let used = self.records.get(source).map_or(0, VecDeque::len);
+        let mut groups = BTreeMap::<(String, Vendor), usize>::new();
         let mut kept = BTreeMap::new();
         let mut rejected = Vec::new();
         for (index, session) in snapshot.sessions.into_iter().enumerate() {
-            if allowed
+            if !allowed
                 .iter()
                 .any(|project| project == session.project.as_str())
             {
-                kept.insert(session.key.clone(), session);
-            } else {
-                rejected.push(index);
+                let reason = Reason::ProjectNotAllowed;
+                rejected.push(Rejected { index, reason });
+                continue;
             }
+            let known = current.is_some_and(|current| current.sessions.contains_key(&session.key));
+            if !known {
+                let group = (session.project.as_str().to_owned(), session.vendor);
+                if !groups.contains_key(&group) && used + groups.len() >= RECORDS_PER_HOUR {
+                    let reason = Reason::TooManyNew;
+                    rejected.push(Rejected { index, reason });
+                    continue;
+                }
+                *groups.entry(group).or_default() += 1;
+            }
+            kept.insert(session.key.clone(), session);
         }
         let others = self
             .sources
@@ -324,18 +349,6 @@ impl Presence {
             .sum::<usize>();
         if others + kept.len() > MAX_TOTAL {
             return Err(Refused::Full);
-        }
-        let mut groups = BTreeMap::<(String, Vendor), usize>::new();
-        for (key, session) in &kept {
-            if !current.is_some_and(|current| current.sessions.contains_key(key)) {
-                *groups
-                    .entry((session.project.as_str().to_owned(), session.vendor))
-                    .or_default() += 1;
-            }
-        }
-        let used = self.records.get(source).map_or(0, VecDeque::len);
-        if used + groups.len() > RECORDS_PER_HOUR {
-            return Err(Refused::Throttled);
         }
         Ok(Planned {
             seq: snapshot.seq,
@@ -361,11 +374,11 @@ impl Presence {
     }
 
     /// 整份替换；快照里没有的当场消失。
-    pub(super) fn commit(&mut self, source: &str, instance: &str, planned: Planned, now: Duration) {
+    pub(super) fn commit(&mut self, source: &str, origin: Origin, planned: Planned, now: Duration) {
         self.sources.insert(
             source.to_owned(),
             Source {
-                instance: instance.to_owned(),
+                origin,
                 seq: planned.seq,
                 received: now,
                 sessions: planned.kept,
@@ -385,11 +398,11 @@ impl Presence {
         }
     }
 
-    /// 现有来源与推它的实例。
-    pub(super) fn sources(&self) -> Vec<(String, String)> {
+    /// 现有来源与推它的身份。
+    pub(super) fn sources(&self) -> Vec<(String, Origin)> {
         self.sources
             .iter()
-            .map(|(name, source)| (name.clone(), source.instance.clone()))
+            .map(|(name, source)| (name.clone(), source.origin.clone()))
             .collect()
     }
 

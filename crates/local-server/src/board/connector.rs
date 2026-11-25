@@ -5,11 +5,11 @@
 //! 「新会话第一次出现」和限频的拒绝，更新与过期不进账本。
 use super::{
     BoardPlane,
-    auth::{Grant, Refusal},
+    auth::{Grant, IDENTITY_UNAVAILABLE, Refusal},
     execute::{Failure as BoardFailure, parse, value},
     http::{busy, unavailable, unconfigured},
     overview::{Item, Lineages, terminal},
-    presence::{EXPIRES, Fresh, Presence, Refused, Snapshot},
+    presence::{EXPIRES, Fresh, Origin, Presence, Reason, Refused, Snapshot},
     requests::{self, Task},
 };
 use crate::editing::Problem;
@@ -22,16 +22,20 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::{
+    collections::BTreeMap,
     sync::{Arc, Mutex, MutexGuard},
     time::{Duration, Instant},
 };
 use studiolo_audit_ledger::{AuditError, AuditEvent, AuditEventId, AuditPhase, SanitizedPayload};
 use studiolo_policy::CapabilitySet;
+use tokio::sync::Semaphore;
 
 /// 一个项目的列表最多给这么多条没结束的。
 const MAX_ITEMS: usize = 200;
 /// 整份列表的正文上限；agent 侧读到 1 MiB 就放弃，这里先收住并标 `truncated`。
 const MAX_LIST_BYTES: usize = 700 * 1024;
+/// 连接器最多同时占这么多个黑板名额（共 4 个）：剩下的留给网页和 MCP，连接器再多也挤不掉。
+const MAX_CONNECTORS: usize = 2;
 
 /// 状态口连同它的钟：从这个进程开黑板算起。
 pub(super) struct PresenceDesk {
@@ -39,6 +43,7 @@ pub(super) struct PresenceDesk {
     /// 内存从几点起攒的；人侧重启后状态空着，读的人要分得清「没有」和「还没推来」。
     since: String,
     state: Mutex<Presence>,
+    connectors: Arc<Semaphore>,
 }
 impl PresenceDesk {
     pub(super) fn open(now: jiff::Timestamp) -> Self {
@@ -46,6 +51,7 @@ impl PresenceDesk {
             started: Instant::now(),
             since: now.to_string(),
             state: Mutex::new(Presence::default()),
+            connectors: Arc::new(Semaphore::new(MAX_CONNECTORS)),
         }
     }
     fn lock(&self) -> Result<MutexGuard<'_, Presence>, Refusal> {
@@ -60,6 +66,8 @@ impl PresenceDesk {
 pub(super) struct Call {
     agent_type: String,
     instance_id: String,
+    /// agent 认的是哪一次签发的令牌；和身份库现值不同就是已经轮换过。
+    issued_at: String,
     operation: Operation,
     request: Value,
 }
@@ -85,8 +93,6 @@ enum Failure {
     Stale,
     /// 字段不合。
     Invalid,
-    /// 新会话登记得太多。
-    Throttled,
     /// 这一刻读不出来、写不了登记。
     Unavailable,
 }
@@ -120,11 +126,6 @@ impl IntoResponse for Failure {
                 StatusCode::UNPROCESSABLE_ENTITY,
                 "connector_invalid",
                 "字段不合，整份没有收，上一份不变。",
-            ),
-            Self::Throttled => (
-                StatusCode::TOO_MANY_REQUESTS,
-                "connector_throttled",
-                "新会话太多，稍后再推。",
             ),
             Self::Unavailable => return unavailable(),
         };
@@ -169,6 +170,9 @@ impl BoardPlane {
         call: &Call,
         roster: fn(&CapabilitySet) -> &[String],
     ) -> Result<Grant, Refusal> {
+        if self.issued_at(&call.agent_type)?.as_deref() != Some(call.issued_at.as_str()) {
+            return Err(Refusal::Denied("令牌已轮换"));
+        }
         self.granted(&call.agent_type, &call.instance_id, |set| {
             if roster(set).is_empty() {
                 Err(Refusal::Denied("能力集没有这个连接器权限"))
@@ -178,31 +182,46 @@ impl BoardPlane {
         })
     }
 
+    /// 这个类型现行令牌的签发时刻；没有这个类型就是没有。
+    fn issued_at(&self, agent_type: &str) -> Result<Option<String>, Refusal> {
+        let types = self
+            .identities
+            .types()
+            .map_err(|_| Refusal::Unavailable(IDENTITY_UNAVAILABLE))?;
+        Ok(types
+            .into_iter()
+            .find_map(|identity| (identity.name == agent_type).then_some(identity.issued_at)))
+    }
+
     fn connector_board(&self, call: &Call) -> Result<Value, Failure> {
         if call.request != json!({}) {
             return Err(Failure::Invalid);
         }
         let grant = self.connector_grant(call, board_roster)?;
         let generated_at = jiff::Timestamp::now().to_string();
-        let mut roster = grant.set.read.board_projects.clone();
-        roster.sort();
-        // 只在读工作项时持有引擎锁；实例链查询不阻塞黑板写入。
-        let views = {
-            let engine = self.engine.lock().map_err(|_| Failure::Unavailable)?;
-            roster
-                .into_iter()
-                .map(|project| {
-                    let views = engine
-                        .board_list(&project, &grant.hash)
-                        .map_err(|_| Failure::Unavailable)?;
-                    Ok((project, views))
-                })
-                .collect::<Result<Vec<_>, Failure>>()?
-        };
+        let mut grouped = grant
+            .set
+            .read
+            .board_projects
+            .iter()
+            .map(|project| (project.clone(), Vec::new()))
+            .collect::<BTreeMap<_, _>>();
+        // 只在读工作项时持有引擎锁，一次读全、出来再分；实例链查询不阻塞黑板写入。
+        let all = self
+            .engine
+            .lock()
+            .map_err(|_| Failure::Unavailable)?
+            .board_list_all(&grant.hash)
+            .map_err(|_| Failure::Unavailable)?;
+        for view in all {
+            if let Some(views) = grouped.get_mut(&view.task.spec.project) {
+                views.push(view);
+            }
+        }
         let mut lineages = Lineages::default();
         let mut budget = MAX_LIST_BYTES;
-        let mut projects = Vec::with_capacity(views.len());
-        for (project, mut views) in views {
+        let mut projects = Vec::with_capacity(grouped.len());
+        for (project, mut views) in grouped {
             let total = views.len();
             views.retain(|view| !terminal(view.task.status));
             views.sort_by_key(|view| view.task.task_id);
@@ -289,13 +308,13 @@ impl BoardPlane {
         let planned = presence
             .plan(
                 &call.agent_type,
+                &call.issued_at,
                 snapshot,
                 &grant.set.write.presence_projects,
                 now,
             )
             .map_err(|refused| match refused {
                 Refused::Stale => Failure::Stale,
-                Refused::Throttled => Failure::Throttled,
                 Refused::Full => Failure::Unavailable,
             })?;
         if !planned.fresh.is_empty() {
@@ -311,17 +330,25 @@ impl BoardPlane {
                 presence.note_record(&call.agent_type, now);
             }
         }
-        if !planned.rejected.is_empty() {
-            self.note_denial(&call, "项目不在名单", &mut presence);
+        for (reason, note) in [
+            (Reason::ProjectNotAllowed, "项目不在名单"),
+            (Reason::TooManyNew, "新会话太多"),
+        ] {
+            if planned.rejected.iter().any(|one| one.reason == reason) {
+                self.note_denial(&call, note, &mut presence);
+            }
         }
         let reply = json!({
             "accepted": planned.accepted(),
-            "rejected": planned.rejected.iter()
-                .map(|index| json!({"index": index, "reason": "project_not_allowed"}))
-                .collect::<Vec<_>>(),
+            "rejected": serde_json::to_value(&planned.rejected)
+                .map_err(|_| Failure::Unavailable)?,
             "expires_in_secs": EXPIRES.as_secs(),
         });
-        presence.commit(&call.agent_type, &call.instance_id, planned, now);
+        let origin = Origin {
+            instance: call.instance_id.clone(),
+            issued_at: call.issued_at.clone(),
+        };
+        presence.commit(&call.agent_type, origin, planned, now);
         Ok(reply)
     }
 
@@ -373,11 +400,15 @@ impl BoardPlane {
         }))
     }
 
-    /// 撤了权的来源整份删掉，收回的项目当场删。
+    /// 撤了权、换了令牌的来源整份删掉，收回的项目当场删。
     fn refresh_presence(&self, presence: &mut Presence, now: Duration) -> Result<(), Refusal> {
         presence.sweep(now);
-        for (source, instance) in presence.sources() {
-            match self.granted(&source, &instance, |_| Ok(())) {
+        for (source, origin) in presence.sources() {
+            if self.issued_at(&source)?.as_ref() != Some(&origin.issued_at) {
+                presence.restrict(&source, None);
+                continue;
+            }
+            match self.granted(&source, &origin.instance, |_| Ok(())) {
                 Ok(grant) => {
                     let roster = presence_roster(&grant.set);
                     presence.restrict(&source, (!roster.is_empty()).then_some(roster));
@@ -413,7 +444,7 @@ fn presence_roster(set: &CapabilitySet) -> &[String] {
     &set.write.presence_projects
 }
 
-/// 私有连接器入口；正文拒绝沿用原提取器的状态码，代码固定，agent 据此换成对外答复。
+/// 私有连接器入口；读不懂的请求一律 422 `connector_invalid`，对外是 400 还是 422 由 agent 按读、推换。
 pub(super) async fn command(
     Extension(plane): Extension<Arc<BoardPlane>>,
     call: Result<Json<Call>, JsonRejection>,
@@ -421,11 +452,14 @@ pub(super) async fn command(
     let Ok(Json(call)) = call else {
         return Failure::Invalid.into_response();
     };
+    let Ok(slot) = plane.presence.connectors.clone().try_acquire_owned() else {
+        return busy();
+    };
     let Ok(permit) = plane.permits.clone().try_acquire_owned() else {
         return busy();
     };
     let result = tokio::task::spawn_blocking(move || {
-        let _permit = permit;
+        let _held = (slot, permit);
         plane.connect(call)
     })
     .await;

@@ -71,6 +71,11 @@ pub(super) const INVALID_SESSIONS: Refusal = Refusal::new(
     "invalid_sessions",
     "字段不合，整份没有收，上一份不变。",
 );
+pub(super) const TIMEOUT: Refusal = Refusal::new(
+    StatusCode::REQUEST_TIMEOUT,
+    "body_timeout",
+    "正文没有在时限内收全。",
+);
 pub(super) const TOO_MANY: Refusal = Refusal::new(
     StatusCode::TOO_MANY_REQUESTS,
     "too_many_requests",

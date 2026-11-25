@@ -66,7 +66,8 @@ def check(base, token, mode):
                "MCP-Protocol-Version": PROTOCOL, "User-Agent": "studiolo-mcp-check/1"}
     if mode != "no-token":
         headers["Authorization"] = "Bearer " + token
-    opener = urllib.request.build_opener(NoRedirect())
+    # 不走环境代理：代理会看到回环上的明文请求，令牌就交出去了。
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect())
 
     def post(body, session=None):
         request_headers = dict(headers)

@@ -11,6 +11,7 @@ use std::{
 };
 use studiolo_audit_ledger::{AuditFilter, AuditLedger};
 use studiolo_policy::{PolicyKind, RevocationLevel};
+use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 
 const PROJECT: &str = "项目/Alpha";
 const OTHER: &str = "项目/Beta";
@@ -290,7 +291,8 @@ async fn the_list_is_audited_per_project_and_an_unchanged_one_is_304_without_aud
     for request in &seen {
         assert_eq!(
             request,
-            &json!({"agent_type":BOARD,"instance_id":instance,"operation":"board","request":{}})
+            &json!({"agent_type":BOARD,"instance_id":instance,"issued_at":NOW,
+                "operation":"board","request":{}})
         );
     }
     assert_eq!(r.registered(), 1);
@@ -367,7 +369,6 @@ async fn a_snapshot_is_forwarded_untouched_and_every_outcome_has_its_own_status(
     for (status, code, outward, outward_code) in [
         (409, "connector_stale", 409, "stale_seq"),
         (422, "connector_invalid", 422, "invalid_sessions"),
-        (429, "connector_throttled", 429, "too_many_requests"),
         (403, "connector_denied", 403, "not_allowed"),
         (429, "board_busy", 503, "unavailable"),
         (503, "board_unavailable", 503, "unavailable"),
@@ -449,6 +450,13 @@ async fn each_token_reaches_only_its_own_entry_and_reads_nothing_anywhere_else()
             assert!(reply.headers.contains_key("www-authenticate"));
         }
     }
+    // 带两份认证头：哪怕有一份是对的也不认。
+    Reply::read(
+        r.request("GET", "/connect/v1/board", &r.board)
+            .header("Authorization", format!("Bearer {}", r.board)),
+    )
+    .await
+    .refused(401, "unauthenticated");
     let claude = r.f.token.clone();
     for token in [&r.status, &claude] {
         for path in ["/connect/v1/board", TASK_URL] {
@@ -667,19 +675,26 @@ async fn each_entry_is_limited_and_repeated_denials_are_recorded_once() {
 }
 
 #[tokio::test]
-async fn at_most_four_requests_are_in_flight() {
+async fn at_most_four_requests_are_in_flight_and_two_of_them_at_the_authority() {
     let r = Arc::new(Rig::new().await);
     let gate = Arc::new(tokio::sync::Semaphore::new(0));
     *r.authority.hold.lock().unwrap() = Some(gate.clone());
     let mut waiting = Vec::new();
-    for _ in 0..4 {
+    for index in 0..4 {
         let r = r.clone();
         let reached = r.authority.reached.clone();
         waiting.push(tokio::spawn(async move {
             r.get("/connect/v1/board", &r.board).await.status
         }));
-        reached.notified().await;
+        if index < 2 {
+            reached.notified().await;
+        }
     }
+    // 后两个在这边排队，不去占权威服务那边和别的 AI 共用的名额。
+    let queued =
+        tokio::time::timeout(Duration::from_millis(500), r.authority.reached.notified()).await;
+    assert!(queued.is_err(), "第三个也到了权威服务");
+    assert_eq!(r.authority.seen.lock().unwrap().len(), 2);
     let refused = r.get(TASK_URL, &r.board).await;
     refused.refused(429, "too_many_requests");
     assert_eq!(refused.retry_after(), 5);
@@ -690,6 +705,133 @@ async fn at_most_four_requests_are_in_flight() {
     }
     r.answer(200, full(PROJECT));
     assert_eq!(r.get(TASK_URL, &r.board).await.status, 200);
+}
+
+#[tokio::test]
+async fn bodies_that_never_finish_hold_no_slot_and_time_out() {
+    let r = Rig::new().await;
+    let address = r.base.strip_prefix("http://").unwrap().to_owned();
+    let mut stuck = Vec::new();
+    for _ in 0..4 {
+        let mut stream = tokio::net::TcpStream::connect(&address).await.unwrap();
+        let head = format!(
+            "PUT /connect/v1/sessions HTTP/1.1\r\nHost: {address}\r\nAuthorization: Bearer {}\r\n\
+             Content-Type: application/json\r\nContent-Length: 1000\r\nConnection: close\r\n\r\n{{\"seq\"",
+            r.status
+        );
+        stream.write_all(head.as_bytes()).await.unwrap();
+        stuck.push(stream);
+    }
+    // 四份半截正文都在等，别的请求照常进。
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert_eq!(r.get("/connect/v1/board", &r.board).await.status, 200);
+    for mut stream in stuck {
+        let mut reply = String::new();
+        tokio::time::timeout(Duration::from_secs(20), stream.read_to_string(&mut reply))
+            .await
+            .expect("半截正文没有时限")
+            .unwrap();
+        assert!(reply.starts_with("HTTP/1.1 408 "), "{reply}");
+        assert!(reply.contains("studiolo-connect: 1"), "{reply}");
+        assert!(reply.contains("\"code\":\"body_timeout\""), "{reply}");
+    }
+    assert_eq!(r.registered(), 1, "半截的推送没登记实例");
+}
+
+#[tokio::test]
+async fn unrecognized_callers_are_recorded_once_a_minute_not_once_a_request() {
+    let r = Rig::new().await;
+    for token in ["", "sag1_wrong"] {
+        for _ in 0..10 {
+            r.get("/connect/v1/board", token)
+                .await
+                .refused(401, "unauthenticated");
+        }
+    }
+    let anonymous = |r: &Rig| {
+        r.events("agent.action_denied")
+            .into_iter()
+            .filter(|event| event["action"] == "connect.request")
+            .map(|event| event["reason"].as_str().unwrap().to_owned())
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(anonymous(&r), ["unauthenticated"]);
+    // 身份库读不出来是另一个原因，也只记一条。
+    r.set_agent_store(0o640);
+    for _ in 0..5 {
+        r.get("/connect/v1/board", &r.board)
+            .await
+            .refused(503, "unavailable");
+    }
+    r.set_agent_store(0o600);
+    assert_eq!(anonymous(&r), ["unauthenticated", "identity_unavailable"]);
+}
+
+#[tokio::test]
+async fn a_frozen_ledger_lets_nothing_into_the_identity_store() {
+    let r = Rig::new().await;
+    let freeze = || {
+        r.f.ledger()
+            .quiesce_operations(Instant::now() + Duration::from_secs(2))
+            .unwrap()
+    };
+    let frozen = freeze();
+    r.get("/connect/v1/board", &r.board)
+        .await
+        .refused(503, "unavailable");
+    assert_eq!(r.registered(), 0, "冻结中登记了实例");
+    drop(frozen);
+    assert_eq!(r.get("/connect/v1/board", &r.board).await.status, 200);
+    let last_seen = |r: &Rig| {
+        r.f.store()
+            .instances(100)
+            .unwrap()
+            .into_iter()
+            .find(|(instance, _)| instance.agent_type == BOARD)
+            .unwrap()
+            .1
+    };
+    let before = last_seen(&r);
+    let reached = r.authority.seen.lock().unwrap().len();
+    let frozen = freeze();
+    r.get("/connect/v1/board", &r.board)
+        .await
+        .refused(503, "unavailable");
+    assert_eq!(last_seen(&r), before, "冻结中改了最近活动");
+    assert_eq!(r.authority.seen.lock().unwrap().len(), reached);
+    drop(frozen);
+}
+
+#[tokio::test]
+async fn failing_to_record_a_registration_never_registers_a_second_instance() {
+    let r = Rig::new().await;
+    // 账本版本对不上：许可取得到，写不进去。
+    let ledger = rusqlite::Connection::open(r.f.data.join("audit/audit.sqlite3")).unwrap();
+    let version: i64 = ledger
+        .query_row("PRAGMA user_version", [], |row| row.get(0))
+        .unwrap();
+    ledger.execute_batch("PRAGMA user_version=999").unwrap();
+    for _ in 0..5 {
+        r.get("/connect/v1/board", &r.board)
+            .await
+            .refused(503, "unavailable");
+    }
+    assert!(r.authority.seen.lock().unwrap().is_empty());
+    assert_eq!(r.registered(), 1);
+    ledger
+        .execute_batch(&format!("PRAGMA user_version={version}"))
+        .unwrap();
+    drop(ledger);
+    for _ in 0..2 {
+        assert_eq!(r.get("/connect/v1/board", &r.board).await.status, 200);
+    }
+    assert_eq!(r.registered(), 1);
+    let registered = r
+        .events("agent_instance.registered")
+        .into_iter()
+        .filter(|event| event["agent_type"] == BOARD)
+        .count();
+    assert_eq!(registered, 1, "补登记的审计恰好一条");
 }
 
 #[tokio::test]

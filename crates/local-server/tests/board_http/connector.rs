@@ -51,6 +51,24 @@ fn publish(policy: &PolicyStore, kind: &str, board: &[&str], presence: &[&str]) 
         .unwrap();
 }
 
+fn retire(policy: &PolicyStore, kind: &str) {
+    let desired = policy
+        .submit_desired(
+            DesiredInput {
+                kind: PolicyKind::CapabilitySet,
+                subject: kind.into(),
+                body: None,
+            },
+            Submitter::Owner,
+            NOW,
+        )
+        .unwrap();
+    let hash = policy.effective().unwrap().effective_hash;
+    policy
+        .activate(&desired.id, &hash, "fixture-owner", NOW)
+        .unwrap();
+}
+
 /// 一块接好两个连接器类型的板。
 struct Connected {
     f: TestBoard,
@@ -105,11 +123,35 @@ impl Connected {
         operation: &str,
         request: Value,
     ) -> (u16, Value) {
+        self.call_issued(kind, instance, &self.issued(kind), operation, request)
+            .await
+    }
+
+    async fn call_issued(
+        &self,
+        kind: &str,
+        instance: &str,
+        issued_at: &str,
+        operation: &str,
+        request: Value,
+    ) -> (u16, Value) {
         self.raw(
-            json!({"agent_type":kind,"instance_id":instance,"operation":operation,"request":request})
-                .to_string(),
+            json!({"agent_type":kind,"instance_id":instance,"issued_at":issued_at,
+                "operation":operation,"request":request})
+            .to_string(),
         )
         .await
+    }
+
+    /// agent 会报的：这个类型现行令牌的签发时刻。
+    fn issued(&self, kind: &str) -> String {
+        self.f
+            .identities
+            .types()
+            .unwrap()
+            .into_iter()
+            .find_map(|(name, issued_at, _)| (name == kind).then_some(issued_at))
+            .unwrap()
     }
 
     async fn list(&self) -> Value {
@@ -306,8 +348,12 @@ async fn each_type_reaches_only_its_own_operation_and_nothing_on_the_ordinary_bo
     }
     // 未知操作、多余字段：固定答复，不回显。
     for body in [
-        json!({"agent_type":BOARD,"instance_id":c.board,"operation":"cards","request":{}}),
-        json!({"agent_type":BOARD,"instance_id":c.board,"operation":"board","request":{},"x":"暗号canary"}),
+        json!({"agent_type":BOARD,"instance_id":c.board,"issued_at":NOW,"operation":"cards",
+            "request":{}}),
+        json!({"agent_type":BOARD,"instance_id":c.board,"issued_at":NOW,"operation":"board",
+            "request":{},"x":"暗号canary"}),
+        // 没带签发时刻的旧 agent：读不懂，不放行。
+        json!({"agent_type":BOARD,"instance_id":c.board,"operation":"board","request":{}}),
     ] {
         let reply = c.raw(body.to_string()).await;
         refused(&reply, 422, "connector_invalid");
@@ -411,8 +457,8 @@ async fn withdrawing_any_grant_removes_the_rows_at_once_and_they_stay_gone() {
     assert_eq!(c.seen().await.len(), 1);
     publish(&c.f.policy, STATUS, &[], &[PROJECT, OTHER]);
     assert_eq!(c.seen().await.len(), 1, "再放开也不许带回来");
-    // 名单清空：整份没有，再推被拒。
-    publish(&c.f.policy, STATUS, &[], &[]);
+    // 撤下能力集：整份没有，再推被拒。
+    retire(&c.f.policy, STATUS);
     assert!(c.seen().await.is_empty());
     refused(&c.push(2, both.clone()).await, 403, "connector_denied");
     publish(&c.f.policy, STATUS, &[], &[PROJECT, OTHER]);
@@ -453,19 +499,60 @@ async fn withdrawing_any_grant_removes_the_rows_at_once_and_they_stay_gone() {
 }
 
 #[tokio::test]
-async fn an_unreadable_policy_store_gives_nothing_and_answers_unavailable() {
+async fn an_unreadable_identity_or_policy_store_gives_nothing_and_answers_unavailable() {
     let c = Connected::new(&[PROJECT], &[PROJECT]).await;
     c.push(1, json!([session(1, PROJECT)])).await;
-    super::identity_outage::set_mode(&c.f, 0o640);
-    c.f.writer.get(PRESENCE, &c.cookie, 503).await;
-    refused(&c.push(2, json!([])).await, 503, "board_unavailable");
+    let issued = [BOARD, STATUS].map(|kind| c.issued(kind));
+    type Break = fn(&TestBoard, u32);
+    for (store, set_mode) in [
+        ("身份库", super::identity_outage::set_mode as Break),
+        ("策略库", super::identity_outage::set_policy_mode),
+    ] {
+        set_mode(&c.f, 0o640);
+        c.f.writer.get(PRESENCE, &c.cookie, 503).await;
+        let snapshot = json!({"seq":2,"sessions":[]});
+        for (kind, instance, issued, operation, request) in [
+            (STATUS, &c.status, &issued[1], "sessions", snapshot),
+            (BOARD, &c.board, &issued[0], "board", json!({})),
+        ] {
+            let reply = c
+                .call_issued(kind, instance, issued, operation, request)
+                .await;
+            assert_eq!(reply.0, 503, "{store}：{}", reply.1);
+            assert_eq!(reply.1["code"], "board_unavailable", "{store}");
+        }
+        set_mode(&c.f, 0o600);
+        // 读不出来不是撤权：恢复后原来那份还在，没有被当成撤权清掉。
+        assert_eq!(c.seen().await.len(), 1, "{store}");
+    }
+    c.f.stop().await;
+}
+
+#[tokio::test]
+async fn reissuing_the_token_clears_the_old_rows_and_starts_the_sequence_over() {
+    let c = Connected::new(&[PROJECT], &[PROJECT]).await;
+    assert_eq!(c.push(50, json!([session(1, PROJECT)])).await.0, 200);
+    let before = c.issued(STATUS);
+    const LATER: &str = "2026-11-25T01:02:03Z";
+    c.f.identities.issue_type(STATUS, LATER).unwrap();
+    assert_eq!(c.issued(STATUS), LATER);
+    assert!(c.seen().await.is_empty(), "换了令牌，旧的那份当场没");
+    // 拿旧令牌那一次签发来推：确定拒绝。
+    let snapshot = json!({"seq":51,"sessions":[session(1, PROJECT)]});
     refused(
-        &c.call(BOARD, &c.board, "board", json!({})).await,
-        503,
-        "board_unavailable",
+        &c.call_issued(STATUS, &c.status, &before, "sessions", snapshot)
+            .await,
+        403,
+        "connector_denied",
     );
-    super::identity_outage::set_mode(&c.f, 0o600);
-    // 读不出来不是撤权：恢复后原来那份还在，没有被当成撤权清掉。
+    assert!(c.seen().await.is_empty());
+    // 新令牌的计数从头来，推得进去；没有人先读过也一样。
+    assert_eq!(c.push(1, json!([session(1, PROJECT)])).await.0, 200);
+    assert_eq!(c.seen().await.len(), 1);
+    c.f.identities
+        .issue_type(STATUS, "2026-11-26T01:02:03Z")
+        .unwrap();
+    assert_eq!(c.push(1, json!([session(2, PROJECT)])).await.0, 200);
     assert_eq!(c.seen().await.len(), 1);
     c.f.stop().await;
 }
@@ -538,5 +625,61 @@ async fn while_the_backup_freezes_the_ledger_only_known_sessions_are_accepted() 
             .0,
         200
     );
+    c.f.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn connectors_never_take_more_than_half_of_the_board_permits() {
+    let c = Connected::new(&[PROJECT], &[PROJECT]).await;
+    let issued = c.issued(STATUS);
+    // 占住账本的写锁：登记新会话的推送停在半路，占着名额不放。
+    let blocker = rusqlite::Connection::open(c.f.writer.http.audit.join("audit.sqlite3")).unwrap();
+    blocker.execute_batch("BEGIN IMMEDIATE").unwrap();
+    let mut pushes = tokio::task::JoinSet::new();
+    for seq in 1..=4u64 {
+        let request =
+            c.f.client
+                .post("http://localhost/internal/connector")
+                .header("cf-connecting-ip", "127.0.0.1")
+                .header("content-type", "application/json")
+                .body(
+                    json!({"agent_type":STATUS,"instance_id":c.status,"issued_at":issued,
+                        "operation":"sessions",
+                        "request":{"seq":seq,"sessions":[session(seq, PROJECT)]}})
+                    .to_string(),
+                );
+        pushes.spawn(async move { request.send().await.unwrap().status().as_u16() });
+    }
+    for _ in 0..2 {
+        let refused = tokio::time::timeout(Duration::from_secs(3), pushes.join_next())
+            .await
+            .expect("第三、四个没有当场拒")
+            .unwrap()
+            .unwrap();
+        assert_eq!(refused, 429);
+    }
+    // 剩下的名额还在：网页照常读得到黑板。
+    let board = "/api/v1/board?project=%E9%A1%B9%E7%9B%AE%2FStudiolo";
+    c.f.writer.get(board, &c.cookie, 200).await;
+    blocker.execute_batch("ROLLBACK").unwrap();
+    while let Some(status) = pushes.join_next().await {
+        assert_ne!(status.unwrap(), 429);
+    }
+    c.f.stop().await;
+}
+
+/// 真的等一轮巡检（15 秒）：没人读的时候撤了权的也清掉，之后再放开不会带回来。
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_periodic_check_drops_withdrawn_rows_even_when_nobody_reads() {
+    let c = Connected::new(&[PROJECT], &[PROJECT]).await;
+    assert_eq!(c.push(1, json!([session(1, PROJECT)])).await.0, 200);
+    retire(&c.f.policy, STATUS);
+    let (stop, stopped) = tokio::sync::watch::channel(false);
+    let checks = tokio::spawn(c.f.plane.clone().maintain_until(stopped));
+    tokio::time::sleep(Duration::from_secs(18)).await;
+    stop.send(true).unwrap();
+    checks.await.unwrap().unwrap();
+    publish(&c.f.policy, STATUS, &[], &[PROJECT]);
+    assert!(c.seen().await.is_empty(), "巡检没有清掉撤了权的");
     c.f.stop().await;
 }

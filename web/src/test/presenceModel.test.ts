@@ -1,6 +1,8 @@
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { presenceBody } from '../../dev/fixtures/presence';
-import { PRESENCE_INVALID, parsePresence } from '../presenceModel';
+import { INVISIBLE, PRESENCE_INVALID, parsePresence } from '../presenceModel';
 
 const NOW = Date.parse('2026-11-24T20:31:00Z');
 type Body = ReturnType<typeof presenceBody>;
@@ -61,6 +63,9 @@ describe('本机会话的封闭解码', () => {
     ['分支带换行', (r) => (r.branch = 'a\nb')],
     ['分支带双向控制符', (r) => (r.branch = 'a‮b')],
     ['分支带零宽符', (r) => (r.branch = 'a​b')],
+    ['分支带谚文填充符', (r) => (r.branch = 'a\u3164b')],
+    ['分支带盲文空格', (r) => (r.branch = 'a\u2800b')],
+    ['项目带变体选择符', (r) => (r.project = '项目/A\ufe0f')],
     ['分支太长', (r) => (r.branch = 'x'.repeat(121))],
     ['项目不是两段', (r) => (r.project = '项目/A/B')],
     ['项目不在「项目」下', (r) => (r.project = '_规则/A')],
@@ -88,5 +93,44 @@ describe('本机会话的封闭解码', () => {
     ],
   ])('%s：整份判无效', (_name, value) => {
     expect(() => parsePresence(value)).toThrow(PRESENCE_INVALID);
+  });
+});
+
+describe('看不见的字符两端同一张表', () => {
+  // 服务端按这张表先拒；网页多拒一个，就会「服务端收了、这一组整个读不到」。
+  const rust = readFileSync(
+    join(import.meta.dirname, '../../../crates/policy/src/visible.rs'),
+    'utf8',
+  );
+  const ranges = Array.from(
+    rust.matchAll(/\(0x([0-9A-F]+), 0x([0-9A-F]+)\)/g),
+    (match) => [parseInt(match[1], 16), parseInt(match[2], 16)] as const,
+  );
+  const listed = (code: number) =>
+    ranges.some(([first, last]) => first <= code && code <= last);
+
+  it('网页拒的，服务端都拒', () => {
+    expect(ranges).toHaveLength(26);
+    const missed: string[] = [];
+    let checked = 0;
+    for (let code = 0; code <= 0x10ffff; code += 1) {
+      if (code >= 0xd800 && code <= 0xdfff) continue;
+      const character = String.fromCodePoint(code);
+      // 控制字符服务端另有一道（char::is_control）。
+      if (!INVISIBLE.test(character) || /\p{Cc}/u.test(character)) continue;
+      checked += 1;
+      if (!listed(code)) missed.push(code.toString(16));
+    }
+    expect(missed).toEqual([]);
+    expect(checked).toBeGreaterThan(4_000);
+  });
+
+  it('表里的网页也都拒', () => {
+    const loose: string[] = [];
+    for (const [first, last] of ranges)
+      for (let code = first; code <= last; code += 1)
+        if (!INVISIBLE.test(String.fromCodePoint(code)))
+          loose.push(code.toString(16));
+    expect(loose).toEqual([]);
   });
 });

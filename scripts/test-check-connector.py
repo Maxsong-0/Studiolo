@@ -99,17 +99,26 @@ class FakeHTTP(urllib.request.HTTPSHandler, urllib.request.HTTPHandler):
 class CheckConnector(unittest.TestCase):
     def run_main(self, batch, *args, base=LOCAL, token=TOKEN):
         transport = FakeHTTP(batch)
-        opener = urllib.request.build_opener(transport, probe.NoRedirect())
+        original_build = urllib.request.build_opener
+        built = []
+
+        def build(*handlers):
+            built.append(handlers)
+            return original_build(*handlers, transport)
+
         out, err = io.StringIO(), io.StringIO()
         with tempfile.NamedTemporaryFile("w", suffix=".token") as file:
             file.write(token + "\n")
             file.flush()
-            with mock.patch.object(probe.urllib.request, "build_opener", return_value=opener), \
+            with mock.patch.object(probe.urllib.request, "build_opener", side_effect=build), \
                     contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
                 code = probe.main([base, file.name, *args])
         printed = out.getvalue() + err.getvalue()
         for secret in (TOKEN, PRIVATE):
             self.assertNotIn(secret, printed)
+        for handlers in built:
+            self.assertTrue(any(isinstance(handler, urllib.request.ProxyHandler) and handler.proxies == {}
+                                for handler in handlers), "走了环境代理")
         return code, printed, transport.requests
 
     def fails(self, batch, *args, says, **kwargs):
@@ -161,12 +170,18 @@ class CheckConnector(unittest.TestCase):
             self.assertNotIn("核对失败", printed)
 
     def test_an_answer_without_the_marker_is_the_edge_whatever_its_status(self):
-        for status in (200, 401, 403, 404, 429, 502, 503):
-            code, printed, _ = self.run_main([unmarked(status)], "board")
+        for status in (200, 401, 403, 404, 429, 502, 503, 504, 519, 520, 522, 530, 531):
+            code, printed, _ = self.run_main([unmarked(status)], "board", base=REMOTE)
             self.assertEqual(code, 3, printed)
             self.assertIn("没有 Studiolo-Connect 头", printed)
-        code, printed, _ = self.run_main([reply(200, {}, {"Studiolo-Connect": "yes"})], "board")
+            self.assertEqual("隧道或源站没起" in printed, status in (502, 504, 520, 522, 530), status)
+        code, printed, _ = self.run_main([reply(200, {}, {"Studiolo-Connect": "yes"})], "board", base=REMOTE)
         self.assertEqual(code, 3, printed)
+
+    def test_on_loopback_a_missing_marker_is_an_old_release_not_the_edge(self):
+        for status in (200, 404, 503):
+            self.fails([unmarked(status)], "board", says="没有连接器入口")
+        self.fails([unmarked(404)], "board", "--no-token", says="没有连接器入口")
 
     def test_wrong_token_or_missing_permission_is_not_called_the_edge(self):
         self.fails([refused(401)], "board", says="HTTP 200")

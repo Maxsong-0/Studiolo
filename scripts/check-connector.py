@@ -10,7 +10,8 @@
 - --no-token／--bad-token：只核 401，不读 token 文件。
 
 应答没有 Studiolo-Connect 头、或带 cf-mitigated 头，就不是 Studiolo 回的：报「被边缘拦了」、退出码 3，不说成令牌错或黑板空。
-不解质询、不重试、不跟重定向。不打印 token、应答正文和工作项内容。
+本机回环上没有边缘，缺这个头只能是 agent 没有这个入口（旧发行）：按核对失败报、退出码 1。
+不解质询、不重试、不跟重定向、不走环境代理。不打印 token、应答正文和工作项内容。
 """
 import argparse
 import http.client
@@ -72,10 +73,16 @@ def origin(base):
     return f"{parts.scheme}://{parts.netloc}", local
 
 
+def origin_down(status):
+    """边缘替源站答的几种：隧道或源站没起时也是没有标记头。"""
+    return status in (502, 504) or 520 <= status <= 530
+
+
 class Client:
-    def __init__(self, base, token):
-        self.base, self.token = base, token
-        self.opener = urllib.request.build_opener(NoRedirect())
+    def __init__(self, base, token, local=False):
+        self.base, self.token, self.local = base, token, local
+        # 不走环境代理：代理会看到回环上的明文请求，令牌就交出去了。
+        self.opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect())
 
     def send(self, method, path, body=None, headers=None):
         """一次请求；只有 2xx 才读正文，且有上限。"""
@@ -103,7 +110,9 @@ class Client:
     def connect(self, method, path, body=None, headers=None):
         status, received, raw = self.send(method, path, body, headers)
         if received.get("Studiolo-Connect") != "1":
-            raise EdgeBlocked(f"{method} {path}: HTTP {status}，应答没有 Studiolo-Connect 头")
+            require(not self.local, f"{path}: HTTP {status}，本机的 agent 没有连接器入口（可能是旧发行）")
+            hint = "；也可能是隧道或源站没起" if origin_down(status) else ""
+            raise EdgeBlocked(f"{method} {path}: HTTP {status}，应答没有 Studiolo-Connect 头{hint}")
         require("no-store" in (received.get("Cache-Control") or ""), f"{path} 缺少 no-store")
         return status, received, raw
 
@@ -207,10 +216,10 @@ def main(argv=None):
     try:
         base, local = origin(args.base_url)
         if args.mode:
-            check_denied(Client(base, "sag1_" + "0" * 64 if args.mode == "bad-token" else ""))
+            check_denied(Client(base, "sag1_" + "0" * 64 if args.mode == "bad-token" else "", local))
             print("凭据拒绝核对通过。")
             return 0
-        client = Client(base, read_token(args.token_path))
+        client = Client(base, read_token(args.token_path), local)
         if args.entry == "board":
             check_board(client, args.project)
         else:

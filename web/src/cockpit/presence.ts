@@ -60,6 +60,38 @@ export interface PresenceGroup {
   waiting: number;
 }
 
+/** 各条在几点到期；`readAt` 是读到这一份的时刻。 */
+function expiries(presence: Presence, readAt: number): number[] {
+  return presence.sessions.map(
+    (session) => readAt + (presence.expiresInSecs - session.ageSecs) * 1000,
+  );
+}
+
+/** 下一次要在几点收拾：最早到期的那条，或整份太久没重读成。 */
+export function presenceDeadline(presence: Presence, readAt: number): number {
+  return Math.min(
+    readAt + presence.expiresInSecs * 1000,
+    ...expiries(presence, readAt),
+  );
+}
+
+/**
+ * 到 `now` 还算数的那一份：满期的条目去掉；整份满期都没重读成就是 null（不知道，不是「没有会话」）。
+ * 什么都没到期时原样返回同一个对象。
+ */
+export function presenceAt(
+  presence: Presence,
+  readAt: number,
+  now: number,
+): Presence | null {
+  if (now >= readAt + presence.expiresInSecs * 1000) return null;
+  const until = expiries(presence, readAt);
+  const sessions = presence.sessions.filter((_, index) => now < until[index]);
+  return sessions.length === presence.sessions.length
+    ? presence
+    : { ...presence, sessions };
+}
+
 /** 多久没动：一分钟以内不写，写成「N 分钟没动」「N 小时没动」。 */
 function idleText(secs: number): string | null {
   const minutes = Math.floor(secs / 60);

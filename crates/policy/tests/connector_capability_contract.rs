@@ -7,8 +7,8 @@ use std::{fs, os::unix::fs::PermissionsExt, path::PathBuf};
 
 use serde_json::{Value, json};
 use studiolo_policy::{
-    CapabilitySet, DesiredInput, DesiredRecord, DesiredStatus, Expansion, PolicyAgentStore,
-    PolicyKind, PolicyStore, Submitter,
+    CapabilitySet, DesiredInput, DesiredRecord, DesiredStatus, Expansion, INVISIBLE,
+    PolicyAgentStore, PolicyKind, PolicyStore, Submitter, connector_project, invisible,
 };
 use tempfile::TempDir;
 
@@ -139,7 +139,7 @@ fn a_connector_set_publishes_and_every_project_is_an_expansion() {
         [(None, Some(STUDIOLO)), (None, Some(HOMELAB))]
     );
 
-    // 换一个项目：一进一出各报一条；撤空名单只报收窄，且不再是连接器类型。
+    // 换一个项目：一进一出各报一条。
     let swapped = submit(&store, &board(&[HOMELAB]));
     let report = swapped.report.as_ref().unwrap();
     assert_eq!(
@@ -150,14 +150,88 @@ fn a_connector_set_publishes_and_every_project_is_an_expansion() {
         items(&report.narrowings, "read.board_projects"),
         [(Some(STUDIOLO), None)]
     );
-    let emptied = submit(&store, &presence(&[]));
-    let report = emptied.report.as_ref().unwrap();
-    assert!(report.ok, "{report:?}");
-    assert!(items(&report.expansions, "write.presence_projects").is_empty());
-    assert_eq!(
-        items(&report.narrowings, "write.presence_projects"),
-        [(Some(STUDIOLO), None), (Some(HOMELAB), None)]
-    );
+}
+
+#[test]
+fn a_live_connector_set_cannot_be_emptied_into_an_ordinary_one() {
+    const REFUSED: &str =
+        "连接器的名单不能清空，也不能改成普通能力集：要停用就撤下这份能力集，或吊销这个类型";
+    let (_temp, dir) = private_dir();
+    let store = PolicyStore::open(&dir).unwrap();
+    publish(&store, &board(&[STUDIOLO]));
+    publish(&store, &presence(&[STUDIOLO, HOMELAB]));
+    let mut ordinary = bare("homelab-board");
+    ordinary["read"]["project_whitelist"] = json!([STUDIOLO]);
+    for (body, path) in [
+        (board(&[]), "read.board_projects"),
+        (ordinary.clone(), "read.board_projects"),
+        (presence(&[]), "write.presence_projects"),
+    ] {
+        let record = submit(&store, &body);
+        assert_eq!(record.status, DesiredStatus::Rejected);
+        assert_eq!(problems(&record), [(path.to_owned(), REFUSED.to_owned())]);
+    }
+    // 收窄到还剩一个项目照常放行；撤下之后再发什么都不受这条管。
+    publish(&store, &presence(&[STUDIOLO]));
+    let retire = store
+        .submit_desired(
+            DesiredInput {
+                kind: PolicyKind::CapabilitySet,
+                subject: "homelab-board".into(),
+                body: None,
+            },
+            Submitter::Owner,
+            NOW,
+        )
+        .unwrap();
+    assert_eq!(retire.status, DesiredStatus::Validated);
+    let hash = store.effective().unwrap().effective_hash;
+    store.activate(&retire.id, &hash, "owner", NOW).unwrap();
+    assert!(store.capability_set("homelab-board").unwrap().is_none());
+    assert_eq!(submit(&store, &ordinary).status, DesiredStatus::Validated);
+}
+
+#[test]
+fn a_connector_project_is_short_and_fully_visible() {
+    assert!(connector_project(STUDIOLO));
+    // 前缀「项目/」七个字节。
+    let at_limit = format!("项目/{}", "x".repeat(505));
+    assert_eq!(at_limit.len(), 512);
+    assert!(connector_project(&at_limit));
+    for bad in [
+        format!("{at_limit}x"),
+        "项目/A\u{200b}B".into(),
+        "项目/A\u{3164}B".into(),
+        "项目/A\u{2800}B".into(),
+        "项目/A\u{e0fff}B".into(),
+        "项目/A/B".into(),
+        "别处/A".into(),
+        ".obsidian/A".into(),
+    ] {
+        assert!(!connector_project(&bad), "{bad:?}");
+    }
+}
+
+#[test]
+fn the_invisible_table_is_sorted_and_matches_at_both_ends_only() {
+    let mut last = 0;
+    for &(first, end) in INVISIBLE {
+        assert!(last < first && first <= end, "{first:x}..{end:x}");
+        last = end;
+        for (code, hidden) in [
+            (first - 1, false),
+            (first, true),
+            (end, true),
+            (end + 1, false),
+        ] {
+            if let Some(character) = char::from_u32(code) {
+                assert_eq!(invisible(character), hidden, "{code:x}");
+            }
+        }
+    }
+    for character in ['a', '中', ' ', '-', '/', '\u{300}', '😀'] {
+        assert!(!invisible(character), "{character:?}");
+    }
 }
 
 #[test]
@@ -226,6 +300,7 @@ fn roster_entries_must_be_unique_full_project_paths() {
         "_规则",
         "../x",
         ".obsidian/x",
+        "项目/A\u{200b}",
         STUDIOLO,
         STUDIOLO,
     ];
@@ -234,14 +309,14 @@ fn roster_entries_must_be_unique_full_project_paths() {
         (submit(&store, &presence(&bad)), "write.presence_projects"),
     ] {
         assert_eq!(record.status, DesiredStatus::Rejected);
-        let expected = (0..6)
+        let expected = (0..7)
             .map(|index| {
                 (
                     format!("{path}[{index}]"),
                     "必须是合法的完整项目路径".to_owned(),
                 )
             })
-            .chain([(format!("{path}[7]"), "重复的项目".to_owned())])
+            .chain([(format!("{path}[8]"), "重复的项目".to_owned())])
             .collect::<Vec<_>>();
         assert_eq!(problems(&record), expected);
     }

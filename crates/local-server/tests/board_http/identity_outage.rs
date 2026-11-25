@@ -19,6 +19,12 @@ pub(super) fn set_mode(f: &TestBoard, mode: u32) {
     fs::set_permissions(database(f), fs::Permissions::from_mode(mode)).unwrap();
 }
 
+/// 同样的办法让策略库读不出来。
+pub(super) fn set_policy_mode(f: &TestBoard, mode: u32) {
+    let path = f.writer.http.root.join("policy/policy.sqlite3");
+    fs::set_permissions(path, fs::Permissions::from_mode(mode)).unwrap();
+}
+
 /// 只让实例表读不出来：类型表照常，`authorize` 先过类型检查，再在实例链这一步出错。
 fn rename_instances(f: &TestBoard, from: &str, to: &str) {
     let connection = rusqlite::Connection::open(database(f)).unwrap();

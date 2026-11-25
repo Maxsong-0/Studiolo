@@ -23,6 +23,7 @@ mod storage;
 mod store;
 mod validate;
 pub mod view;
+mod visible;
 
 pub use agent::{
     AtEffective, Authorization, CapabilityGrant, CurrentEntries, Denial, PolicyAgentStore,
@@ -44,4 +45,5 @@ pub use store::{
     PolicyStore, RevocationLevel, RevocationRecord, Submitter, TypePolicyState, VersionMeta,
     VersionRecord,
 };
-pub use validate::{Expansion, Problem, Report};
+pub use validate::{Expansion, Problem, Report, connector_project};
+pub use visible::{INVISIBLE, invisible};

@@ -16,6 +16,7 @@ use crate::{
 };
 
 use capability::capability_set;
+pub use connector::connector_project;
 use rules::rules;
 use skill::skill;
 pub(crate) use types::Context;

@@ -1,8 +1,8 @@
 import { useId, useMemo } from 'react';
-import { clockLabel } from '../collab/todayLanes';
 import type { Presence } from '../presenceModel';
 import { Button } from '../ui';
 import { presenceGroup, type PresenceRow } from './presence';
+import { dayClock } from './since';
 import type { PresenceReadState } from './usePresenceRead';
 
 function Row({ row }: { row: PresenceRow }) {
@@ -26,9 +26,11 @@ function Row({ row }: { row: PresenceRow }) {
 
 function Sessions({
   presence,
+  readAt,
   titleId,
 }: {
   presence: Presence;
+  readAt: number;
   titleId: string;
 }) {
   const group = useMemo(() => presenceGroup(presence), [presence]);
@@ -53,7 +55,7 @@ function Sessions({
       <p className="cockpit-note">
         {group.hidden > 0 ? `另 ${group.hidden} 条没列出。` : ''}
         {group.rows.length > 0 ? '' : '现在没有推来的会话状态。'}
-        {`只含认得准是你自己开的会话，实际可能更多；${minutes} 分钟没有新状态就不显示。从 ${clockLabel(Date.parse(presence.since))} 起攒。`}
+        {`只含认得准是你自己开的会话，实际可能更多；${minutes} 分钟没有新状态就不显示。从 ${dayClock(Date.parse(presence.since), readAt)} 起攒。`}
       </p>
     </>
   );
@@ -75,7 +77,11 @@ export function PresenceSection({
   return (
     <section className="cockpit-crew__sessions" aria-labelledby={titleId}>
       {state.kind === 'ready' ? (
-        <Sessions presence={state.presence} titleId={titleId} />
+        <Sessions
+          presence={state.presence}
+          readAt={state.readAt}
+          titleId={titleId}
+        />
       ) : (
         <>
           <div className="cockpit-head">

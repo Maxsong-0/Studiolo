@@ -7,11 +7,20 @@ import {
   within,
 } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { presenceBody } from '../../../dev/fixtures/presence';
 import { PresenceSection } from '../../cockpit/PresenceSection';
-import { PRESENCE_ROWS, presenceGroup } from '../../cockpit/presence';
-import { usePresenceRead } from '../../cockpit/usePresenceRead';
+import {
+  PRESENCE_ROWS,
+  presenceAt,
+  presenceDeadline,
+  presenceGroup,
+} from '../../cockpit/presence';
+import {
+  PRESENCE_READ_TIMEOUT_MS,
+  usePresenceRead,
+} from '../../cockpit/usePresenceRead';
+import { AUTO_REFRESH_READ_TIMEOUT_MS } from '../../live/autoRefresh';
 import { parsePresence, type PresenceSession } from '../../presenceModel';
 import { jsonResponse } from '../fixtures';
 
@@ -65,7 +74,7 @@ describe('本机会话一组', () => {
     expect(new Set(group.rows.map((row) => row.key)).size).toBe(PRESENCE_ROWS);
     render(
       <PresenceSection
-        state={{ kind: 'ready', presence: ready(many) }}
+        state={{ kind: 'ready', presence: ready(many), readAt: NOW }}
         onRetry={() => {}}
       />,
     );
@@ -75,7 +84,7 @@ describe('本机会话一组', () => {
   it('只有「等你」标红；说明写清只含认得准的会话', () => {
     render(
       <PresenceSection
-        state={{ kind: 'ready', presence: ready() }}
+        state={{ kind: 'ready', presence: ready(), readAt: NOW }}
         onRetry={() => {}}
       />,
     );
@@ -94,12 +103,57 @@ describe('本机会话一组', () => {
   it('没有会话：写清是现在没有，不列空表', () => {
     render(
       <PresenceSection
-        state={{ kind: 'ready', presence: ready([]) }}
+        state={{ kind: 'ready', presence: ready([]), readAt: NOW }}
         onRetry={() => {}}
       />,
     );
     expect(section()).toHaveTextContent('现在没有推来的会话状态');
     expect(within(section()).queryByRole('list')).toBeNull();
+  });
+
+  it('「从几点起攒」跨天就带上日期', () => {
+    const since = (iso: string) => {
+      const body = { ...presenceBody(NOW), since: iso };
+      const { unmount } = render(
+        <PresenceSection
+          state={{ kind: 'ready', presence: parsePresence(body), readAt: NOW }}
+          onRetry={() => {}}
+        />,
+      );
+      const text = section().textContent ?? '';
+      unmount();
+      return /从 (.+) 起攒/.exec(text)?.[1];
+    };
+    expect(since(new Date(NOW - 60_000).toISOString())).toMatch(
+      /^\d{2}:\d{2}$/,
+    );
+    const day = 24 * 3_600_000;
+    expect(since(new Date(NOW - day).toISOString())).toMatch(
+      /^昨天 \d{2}:\d{2}$/,
+    );
+    expect(since(new Date(NOW - 3 * day).toISOString())).toMatch(
+      /^\d+月\d+日 \d{2}:\d{2}$/,
+    );
+  });
+
+  it('到期：各条按自己的岁数去掉，整份太久没重读就是不知道', () => {
+    const rows = presenceBody(NOW).sessions;
+    const presence = ready([
+      { ...rows[0], age_secs: 290 },
+      { ...rows[1], age_secs: 12 },
+    ]);
+    expect(presenceDeadline(presence, NOW)).toBe(NOW + 10_000);
+    expect(presenceAt(presence, NOW, NOW + 9_999)).toBe(presence);
+    const left = presenceAt(presence, NOW, NOW + 10_000);
+    expect(left?.sessions).toEqual([presence.sessions[1]]);
+    expect(presenceDeadline(left!, NOW)).toBe(NOW + 288_000);
+    expect(presenceAt(left!, NOW, NOW + 288_000)?.sessions).toEqual([]);
+    expect(presenceAt(left!, NOW, NOW + 300_000)).toBeNull();
+    // 一条没有的也会过期：太久没重读，不能一直说「没有」。
+    const empty = ready([]);
+    expect(presenceDeadline(empty, NOW)).toBe(NOW + 300_000);
+    expect(presenceAt(empty, NOW, NOW + 299_999)).toBe(empty);
+    expect(presenceAt(empty, NOW, NOW + 300_000)).toBeNull();
   });
 
   it('读不到：写原因、给重试；没装黑板：整组不出现', async () => {
@@ -187,5 +241,118 @@ describe('本机会话的读取', () => {
       await result.current.revalidate(aborted.signal);
     });
     expect(result.current.state.kind).toBe('ready');
+  });
+});
+
+describe('本机会话的时限', () => {
+  const fetchMock = vi.fn<typeof fetch>();
+  let reply: () => Response | Promise<Response>;
+  const never = () => new Promise<Response>(() => {});
+  beforeEach(() => {
+    vi.useFakeTimers({ now: NOW });
+    fetchMock.mockReset();
+    fetchMock.mockImplementation(async () => reply());
+    vi.stubGlobal('fetch', fetchMock);
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+  const pass = (ms: number) =>
+    act(async () => {
+      await vi.advanceTimersByTimeAsync(ms);
+    });
+  const start = async () => {
+    const hook = renderHook(() => usePresenceRead());
+    await pass(0);
+    return hook.result;
+  };
+
+  it('自己的时限比自动刷新那一轮短', () => {
+    expect(PRESENCE_READ_TIMEOUT_MS).toBeLessThan(AUTO_REFRESH_READ_TIMEOUT_MS);
+  });
+
+  it('首次读取挂着不回：到点换成读不到，下一轮安静重读能救回来', async () => {
+    reply = never;
+    const result = await start();
+    await pass(PRESENCE_READ_TIMEOUT_MS - 1);
+    expect(result.current.state.kind).toBe('loading');
+    await pass(1);
+    expect(result.current.state).toEqual({
+      kind: 'error',
+      message: '本机会话读取超时。',
+    });
+    reply = () => jsonResponse(presenceBody(NOW));
+    await act(async () => {
+      await result.current.revalidate(new AbortController().signal);
+    });
+    expect(result.current.state.kind).toBe('ready');
+  });
+
+  it('安静重读挂着不回：到点换成读不到，底下的请求叫停', async () => {
+    reply = () => jsonResponse(presenceBody(NOW));
+    const result = await start();
+    expect(result.current.state.kind).toBe('ready');
+    reply = never;
+    let pending: Promise<unknown> | undefined;
+    act(() => {
+      pending = result.current.revalidate(new AbortController().signal);
+    });
+    await pass(PRESENCE_READ_TIMEOUT_MS);
+    expect(await pending).toEqual({ ok: true });
+    expect(result.current.state).toEqual({
+      kind: 'error',
+      message: '本机会话读取超时。',
+    });
+    const signal = fetchMock.mock.calls.at(-1)?.[1]?.signal;
+    expect(signal?.aborted).toBe(true);
+  });
+
+  it('读取总被中止、一直没有结果：到期的自己消失，满五分钟换成读不到', async () => {
+    const rows = presenceBody(NOW).sessions;
+    reply = () =>
+      jsonResponse({
+        ...presenceBody(NOW),
+        sessions: [
+          { ...rows[0], age_secs: 280 },
+          { ...rows[1], age_secs: 10 },
+        ],
+      });
+    const result = await start();
+    const states = () =>
+      result.current.state.kind === 'ready'
+        ? result.current.state.presence.sessions.map(({ state }) => state)
+        : result.current.state.kind;
+    expect(states()).toEqual(['waiting', 'running']);
+    reply = never;
+    const aborted = new AbortController();
+    act(() => {
+      void result.current.revalidate(aborted.signal);
+    });
+    aborted.abort();
+    // 自动刷新叫停，底下的请求也跟着停。
+    expect(fetchMock.mock.calls.at(-1)?.[1]?.signal?.aborted).toBe(true);
+    await pass(19_999);
+    expect(states()).toEqual(['waiting', 'running']);
+    await pass(1);
+    expect(states()).toEqual(['running']);
+    await pass(270_000);
+    expect(states()).toEqual([]);
+    await pass(10_000);
+    expect(result.current.state).toEqual({
+      kind: 'error',
+      message: '太久没读到新的状态。',
+    });
+  });
+
+  it('睡了很久醒来：重读一开始就先收掉过期的', async () => {
+    reply = () => jsonResponse(presenceBody(NOW));
+    const result = await start();
+    // 睡眠时定时器不走，钟在走。
+    vi.setSystemTime(NOW + 3_600_000);
+    reply = never;
+    act(() => {
+      void result.current.revalidate(new AbortController().signal);
+    });
+    expect(result.current.state.kind).toBe('error');
   });
 });

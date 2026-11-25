@@ -33,8 +33,6 @@ pub enum ConnectorError {
     Stale,
     /// 字段不合。
     Invalid,
-    /// 新会话太多。
-    Throttled,
     /// 连不上、超时、5xx、名额满、旧的权威服务没有这个入口。
     Unavailable,
 }
@@ -157,7 +155,6 @@ fn classify_connector(
         (404, Some("connector_not_found")) => ConnectorError::NotFound,
         (409, Some("connector_stale")) => ConnectorError::Stale,
         (422, Some("connector_invalid")) => ConnectorError::Invalid,
-        (429, Some("connector_throttled")) => ConnectorError::Throttled,
         _ => ConnectorError::Unavailable,
     })
 }

@@ -72,13 +72,19 @@ function record(
   return row;
 }
 
-/** 非空、有长度上限、不含控制字符与双向／零宽字符（分支名是别处来的文字）。 */
+/**
+ * 看不见的字符：控制、格式、行段分隔、默认可忽略的，和盲文空格。服务端照 `crates/policy/src/visible.rs`
+ * 的表先拒；那张表漏一个，这里就会整组读不到，用例逐码点核对两边。
+ */
+export const INVISIBLE = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}\p{DI}\u2800]/u;
+
+/** 非空、有长度上限、没有看不见的字符（分支名是别处来的文字）。 */
 function text(value: unknown, max: number): string {
   if (
     typeof value !== 'string' ||
     !value.trim() ||
     value.length > max ||
-    /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u.test(value)
+    INVISIBLE.test(value)
   )
     return invalid();
   return value;
