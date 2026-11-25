@@ -1,5 +1,8 @@
 //! 固定安装路径逐级 nofollow；执行原 FD，拒绝版本文件被换掉或原 inode 被改写。
-use crate::{ProcessError, Result};
+use crate::{
+    ProcessError, Result,
+    digest::{hex, is_sha256_hex},
+};
 use rustix::fs::{self, Mode, OFlags};
 use sha2::{Digest, Sha256};
 use std::{
@@ -53,10 +56,7 @@ impl ResticPackage {
             || !matches!(pin.mode() & 0o7777, 0o755 | 0o555 | 0o500)
             || pin.len() == 0
             || pin.len() > MAX_BINARY
-            || hash.len() != 64
-            || !hash
-                .bytes()
-                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+            || !is_sha256_hex(hash)
         {
             return Err(ProcessError::Package);
         }
@@ -80,11 +80,7 @@ impl ResticPackage {
             }
             digest.update(&chunk[..read]);
         }
-        let actual: String = digest
-            .finalize()
-            .iter()
-            .map(|b| format!("{b:02x}"))
-            .collect();
+        let actual = hex(&digest.finalize());
         if bytes != pin.len() || actual != hash {
             return Err(ProcessError::Package);
         }

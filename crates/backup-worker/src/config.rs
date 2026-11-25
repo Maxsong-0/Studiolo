@@ -1,6 +1,9 @@
 //! 配置只有固定 root 文件这一条来源，不能由 HTTP 请求或环境覆盖构造权限。
 mod input;
-use crate::{ProcessError, Result};
+use crate::{
+    ProcessError, Result,
+    digest::{hex, is_sha256_hex},
+};
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use std::{
@@ -175,16 +178,6 @@ impl WorkerConfig {
     pub fn repository_ca(&self) -> Option<&'static str> {
         self.repository_ca
     }
-}
-/// 64 位小写十六进制。
-fn is_sha256_hex(value: &str) -> bool {
-    value.len() == 64
-        && value
-            .bytes()
-            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
-}
-fn hex(bytes: &[u8]) -> String {
-    bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 /// CA 文件必须是批准的那一份（字节摘要相同），且看起来是 PEM 证书；不是就拒绝启动，不退回系统信任库。
 fn verify_ca(bytes: &[u8], expected: &str) -> Result<()> {

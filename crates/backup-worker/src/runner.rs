@@ -4,7 +4,8 @@ pub(crate) mod final_record;
 pub(crate) mod inspect;
 mod probe;
 use crate::{
-    ApprovedJob, ProcessError, ResticCredentials, Result, process, runtime::Runtime, source::Source,
+    ApprovedJob, ProcessError, ResticCredentials, Result, digest::is_sha256_hex, process,
+    runtime::Runtime, source::Source,
 };
 pub use final_record::FinalManifestProbe;
 use std::cell::RefCell;
@@ -110,11 +111,7 @@ pub(crate) fn parse_output(output: &process::Output) -> Result<ResticOutcome> {
                 .get("snapshot_id")
                 .and_then(|v| v.as_str())
                 .ok_or(ProcessError::Protocol)?;
-            if snapshot.len() != 64
-                || !snapshot
-                    .bytes()
-                    .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
-            {
+            if !is_sha256_hex(snapshot) {
                 return Err(ProcessError::Protocol);
             }
         }
