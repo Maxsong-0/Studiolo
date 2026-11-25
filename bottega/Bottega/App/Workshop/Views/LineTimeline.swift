@@ -61,7 +61,7 @@ struct LineTimeline<Empty: View>: View {
                 .animation(.smooth(duration: 0.2), value: rows.last?.id)
             }
             .scrollPosition($position)
-            .defaultScrollAnchor(.bottom)
+            .defaultScrollAnchor(.bottom, for: .initialOffset)
             .onScrollGeometryChange(for: Bool.self) { geometry in
                 geometry.contentSize.height - geometry.visibleRect.maxY + geometry.contentInsets.bottom < 24
             } action: { _, atBottom in

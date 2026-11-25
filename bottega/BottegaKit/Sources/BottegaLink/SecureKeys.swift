@@ -1,19 +1,18 @@
 // Bottega, modified from Droppy Code. Droppy Code by Jordy Spruit (Droppy), https://getdroppycode.app. GNU AGPL v3 with additional terms, see LICENSE.
-import BottegaKit
-import BottegaLink
+public import BottegaKit
 import CryptoKit
-import Foundation
+public import Foundation
 import LocalAuthentication
 import Security
 
 /// The device's keys, in the Secure Enclave. What is stored is a blob only this Mac's Enclave can turn back into a
 /// key: it says nothing by itself, but any program on this Mac that reads the daily key's blob can sign with it. The
 /// approval key needs the enrolled finger each time, so its blob alone is worth nothing.
-struct SecureKeys: DeviceKeys {
+public struct SecureKeys: DeviceKeys {
     private let dailyBlob: Data
     private let approvalBlob: Data
-    let daily: PublicKey
-    let approval: PublicKey
+    public let daily: PublicKey
+    public let approval: PublicKey
 
     init(daily dailyBlob: Data, approval approvalBlob: Data) throws {
         self.dailyBlob = dailyBlob
@@ -22,7 +21,7 @@ struct SecureKeys: DeviceKeys {
         approval = try Self.publicKey(Self.key(approvalBlob, LAContext()))
     }
 
-    func sign(_ preimage: Preimage, with use: KeyUse, reason: String) async throws -> String {
+    public func sign(_ preimage: Preimage, with use: KeyUse, reason: String) async throws -> String {
         let blob = use == .daily ? dailyBlob : approvalBlob
         return try await Self.sign(preimage, blob, reason: use == .approval ? reason : nil)
     }
@@ -86,22 +85,29 @@ struct SecureKeys: DeviceKeys {
 /// Where the blobs are. A release keeps them in the keychain, in items only Bottega may read without macOS asking;
 /// a Debug build is signed ad hoc, differently every time, so its keychain items would ask at every build. It keeps
 /// them in private files instead, under its own name, and never sees the release's.
-struct SecureChest: KeyChest {
-    let isDevelopment: Bool
-    let folder: URL
-    let service: String
+public struct SecureChest: KeyChest {
+    private let isDevelopment: Bool
+    private let folder: URL
+    private let service: String
+
+    /// `folder` is used by a Debug build, `service` by a release.
+    public init(isDevelopment: Bool, folder: URL, service: String) {
+        self.isDevelopment = isDevelopment
+        self.folder = folder
+        self.service = service
+    }
 
     private enum Name: String {
         case daily = "daily-key"
         case approval = "approval-key"
     }
 
-    func keys() throws -> (any DeviceKeys)? {
+    public func keys() throws -> (any DeviceKeys)? {
         guard let daily = try read(.daily), let approval = try read(.approval) else { return nil }
         return try SecureKeys(daily: daily, approval: approval)
     }
 
-    func makeKeys() throws -> any DeviceKeys {
+    public func makeKeys() throws -> any DeviceKeys {
         let (daily, approval) = try SecureKeys.make()
         try write(daily, .daily)
         try write(approval, .approval)

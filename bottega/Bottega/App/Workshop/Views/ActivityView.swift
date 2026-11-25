@@ -27,7 +27,8 @@ struct ActivityView: View {
                 .padding(.horizontal, 20)
                 .padding(.vertical, 12)
             }
-            .defaultScrollAnchor(.bottom)
+            .defaultScrollAnchor(.bottom, for: .initialOffset)
+            .defaultScrollAnchor(.bottom, for: .sizeChanges)
         }
     }
 }
