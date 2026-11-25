@@ -14,6 +14,26 @@ pub struct RecordUsageItem {
     pub limit: u64,
 }
 
+/// 散件用到上限的百分之几就开始打包。
+const PACK_FROM: u64 = 50;
+/// 到八成：健康页预警、打包放小段，是同一条线。
+const NEARLY_FULL: u64 = 80;
+/// 到这里一包也写。不等到写满：按字节算的几处，离顶还差一条就会先拒绝写入。
+const ALMOST_REFUSED: u64 = 95;
+
+impl RecordUsageItem {
+    /// 到上限的八成。
+    #[must_use]
+    pub fn nearly_full(self) -> bool {
+        self.reached(NEARLY_FULL)
+    }
+    /// 用到了上限的百分之几。用乘法比，不因取整少报；没有上限（没启用）的永远没到。
+    fn reached(self, percent: u64) -> bool {
+        self.limit > 0
+            && u128::from(self.used) * 100 >= u128::from(self.limit) * u128::from(percent)
+    }
+}
+
 /// 写者记录各处的用量。打了包的不占散件的名额。
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize)]
 pub struct RecordUsage {
@@ -40,26 +60,24 @@ impl RecordUsage {
     /// 现在该按什么批量打包；没有一处散件到一半就不打。
     #[must_use]
     pub fn archive_batch(&self) -> Option<ArchiveBatch> {
-        if self.filled(4, 5) {
-            Some(ArchiveBatch::Pressed)
-        } else if self.filled(1, 2) {
-            Some(ArchiveBatch::Usual)
-        } else {
-            None
-        }
-    }
-    /// 打包能腾出来的几处里，有一处用到了上限的 `part / whole`。
-    fn filled(&self, part: u64, whole: u64) -> bool {
-        [
+        // 只看打包能腾出来的几处。
+        let places = [
             self.descriptors,
             self.descriptor_bytes,
             self.replays,
             self.replay_bytes,
             self.file_operations,
             self.file_operation_bytes,
-        ]
-        .iter()
-        .any(|item| item.used * whole >= item.limit * part)
+        ];
+        if places.iter().any(|item| item.reached(ALMOST_REFUSED)) {
+            Some(ArchiveBatch::All)
+        } else if places.iter().any(|item| item.nearly_full()) {
+            Some(ArchiveBatch::Pressed)
+        } else if places.iter().any(|item| item.reached(PACK_FROM)) {
+            Some(ArchiveBatch::Usual)
+        } else {
+            None
+        }
     }
 }
 

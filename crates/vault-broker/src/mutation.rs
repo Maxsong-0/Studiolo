@@ -40,9 +40,14 @@ pub(crate) fn load(records: &dyn WriterRecords) -> Result<State, BrokerError> {
         .ok_or(BrokerError::CorruptWriterState)?;
     let state: State = disk::decode(&bytes)?;
     state.validate(records.pair_id())?;
-    // 状态里的段头必须就是内存里核过的那条链，不是就有人在外面换过。
+    // 状态里的段头必须就是内存里核过的那条链，不是就有人在外面换过。只有上一次存状态的结果不明时不算损坏：
+    // 盘上可能已经是接好的新链，照样拒绝，重开定论。
     if records.archive()?.head() != state.archive.as_ref() {
-        return Err(BrokerError::CorruptWriterState);
+        return Err(if records.uncertain() {
+            BrokerError::MutationUnresolved
+        } else {
+            BrokerError::CorruptWriterState
+        });
     }
     crate::file_operation::store::validate_state(records, &state)?;
     if let Some(op) = &state.operation
@@ -72,6 +77,8 @@ pub(crate) fn save(broker: &FsVaultBroker, state: &State) -> Result<(), BrokerEr
     let result = disk::save(&broker.data, "writer-state.json", state, || {
         broker.writer.check(&broker.root, &broker.data)
     })
+    // 状态已经落盘、之后才报错。
+    .and_then(|()| fault(broker, 110))
     .and_then(|()| broker.writer.check(&broker.root, &broker.data))
     .and_then(|()| broker.writer.observe_committed(state.committed_through));
     if result.is_err() {

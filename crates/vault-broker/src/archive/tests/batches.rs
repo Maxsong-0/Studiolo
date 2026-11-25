@@ -229,7 +229,7 @@ fn big_records_fill_a_segment_by_bytes() {
     assert_eq!(all_records(&broker), before);
 }
 
-/// 用量到一半按平时的批量，到八成放小段，不到一半不打。
+/// 用量到一半按平时的批量，到八成放小段，到 95% 一包也写，不到一半不打。
 #[test]
 fn the_batch_follows_the_fullest_place() {
     let at = |used| RecordUsage {
@@ -265,8 +265,29 @@ fn the_batch_follows_the_fullest_place() {
         (50, Some(ArchiveBatch::Usual)),
         (79, Some(ArchiveBatch::Usual)),
         (80, Some(ArchiveBatch::Pressed)),
-        (100, Some(ArchiveBatch::Pressed)),
+        (94, Some(ArchiveBatch::Pressed)),
+        (95, Some(ArchiveBatch::All)),
+        (100, Some(ArchiveBatch::All)),
     ] {
         assert_eq!(at(used).archive_batch(), expected, "{used}");
     }
+}
+
+/// 没有上限的一处（没启用）永远没到；数再大也不溢出。
+#[test]
+fn a_place_without_a_limit_is_never_full_and_huge_numbers_do_not_overflow() {
+    let item = |used, limit| RecordUsageItem { used, limit };
+    assert!(!item(0, 0).nearly_full());
+    assert!(!item(5, 0).nearly_full());
+    assert!(item(u64::MAX, u64::MAX).nearly_full());
+    assert!(!item(u64::MAX / 2, u64::MAX).nearly_full());
+    // 4096 的八成是 3276.8：3277 才算到。
+    assert!(!item(3_276, 4_096).nearly_full());
+    assert!(item(3_277, 4_096).nearly_full());
+    assert_eq!(RecordUsage::default().archive_batch(), None);
+    let huge = RecordUsage {
+        replay_bytes: item(u64::MAX, u64::MAX),
+        ..RecordUsage::default()
+    };
+    assert_eq!(huge.archive_batch(), Some(ArchiveBatch::All));
 }

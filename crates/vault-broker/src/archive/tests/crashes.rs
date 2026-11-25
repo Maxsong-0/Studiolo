@@ -154,6 +154,46 @@ fn an_unknown_state_save_is_settled_only_by_reopening() {
     assert_eq!(pack(&mut broker, later()), 3);
 }
 
+/// 状态已经落盘、存的时候却报了错：写者不知道提交了没有。走一步、单独收口都拒绝，什么都不删
+/// （这时内存里的链是旧的，照它收口会把已经提交的段当孤儿删掉）；重开定论：提交了，接着删散件。
+#[test]
+fn a_state_that_landed_but_reported_an_error_is_settled_only_by_reopening() {
+    let fixture = Fixture::new();
+    let mut broker = fixture.open();
+    notes(&mut broker, 3);
+    let before = all_records(&broker);
+    fault(&broker, 110);
+    assert!(matches!(interrupted(&mut broker), BrokerError::Io { .. }));
+    assert_eq!(fixture.state()["archive"]["packs"], 3);
+    let on_disk = (loose_records(&fixture.data), fixture.segments());
+    assert_eq!((on_disk.0.len(), on_disk.1.len()), (12, 1));
+    for _ in 0..2 {
+        assert!(matches!(
+            interrupted(&mut broker),
+            BrokerError::MutationUnresolved
+        ));
+        assert!(matches!(
+            broker.archive_settle(),
+            Err(BrokerError::MutationUnresolved)
+        ));
+    }
+    assert!(broker.mutate_recorded(note(7), metadata()).is_err());
+    assert_eq!((loose_records(&fixture.data), fixture.segments()), on_disk);
+    assert_eq!(all_records(&broker), before);
+    drop(broker);
+    let mut broker = fixture.reopen();
+    assert!(loose_records(&fixture.data).is_empty());
+    assert_eq!(fixture.segments(), on_disk.1);
+    assert_eq!(all_records(&broker), before);
+    for index in 0..3 {
+        answers(&broker, index);
+    }
+    assert!(!broker.archive_settle().unwrap());
+    assert_eq!(pack(&mut broker, later()), 0);
+    let (_, sealed) = checkpoint(&fixture, broker, "seal");
+    assert_eq!(sealed.unwrap(), 6);
+}
+
 /// 崩溃点 A：段文件的临时文件写完、还没改名，进程就死了。盘上真留着那个临时文件，没有段。
 fn dies_writing_a_segment(broker: &mut FsVaultBroker, fixture: &Fixture) -> PathBuf {
     fault(broker, 109);
@@ -290,6 +330,22 @@ fn settling_alone_clears_an_uncommitted_segment_without_reopening() {
     assert!(!broker.archive_settle().unwrap());
     let (_, sealed) = checkpoint(&fixture, broker, "sealed");
     assert_eq!(sealed.unwrap(), 14);
+}
+
+/// 目录建好、段还没写就出错：已经动过盘，单独收口把空目录清掉。
+#[test]
+fn settling_alone_removes_the_empty_directory_of_a_step_that_failed_early() {
+    let fixture = Fixture::new();
+    let mut broker = fixture.open();
+    notes(&mut broker, 6);
+    fault(&broker, 100);
+    interrupted(&mut broker);
+    assert!(fixture.data.join("archive-v1").exists());
+    assert!(broker.archive_settle().unwrap());
+    assert!(!fixture.data.join("archive-v1").exists());
+    assert!(!broker.archive_settle().unwrap());
+    assert_eq!(pack(&mut broker, later()), 6);
+    assert!(!broker.archive_settle().unwrap());
 }
 
 /// 提交了、散件没删完的，也收得掉。

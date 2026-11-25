@@ -57,11 +57,6 @@ fn percent(item: RecordUsageItem) -> Option<u128> {
     (item.limit > 0).then(|| u128::from(item.used) * 100 / u128::from(item.limit))
 }
 
-/// 到上限的八成；用乘法比，不因取整少报。
-fn near(item: RecordUsageItem) -> bool {
-    item.limit > 0 && u128::from(item.used) * 5 >= u128::from(item.limit) * 4
-}
-
 /// 本节结论；正文越出脱敏边界只可能是实现缺陷，退成未知。
 pub(super) fn records_section(evidence: &RecordUsageEvidence) -> HealthSection {
     let (state, detail) = match evidence {
@@ -98,7 +93,10 @@ fn judge(usage: &RecordUsage) -> (HealthState, String) {
             percent(place.item).unwrap_or(100)
         )
     };
-    let alarmed: Vec<&Place> = places.iter().filter(|place| near(place.item)).collect();
+    let alarmed: Vec<&Place> = places
+        .iter()
+        .filter(|place| place.item.nearly_full())
+        .collect();
     let packed = format!("已打包 {} 条", usage.packs);
     // 最满的那一处；并列取排在前面的。
     let fullest = |among: &[&Place]| {

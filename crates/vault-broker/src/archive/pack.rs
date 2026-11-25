@@ -18,6 +18,7 @@ use crate::{
     sha256,
     writer::directory,
 };
+use cap_std::fs::Dir;
 use std::{
     path::Path,
     sync::{Arc, atomic::Ordering},
@@ -79,9 +80,7 @@ fn write(
     if packs.len() < held.len() && packs.len() < batch.least() {
         return Ok(0);
     }
-    broker.archive_dirty.store(true, Ordering::Release);
     publish(broker, &packs)?;
-    broker.archive_dirty.store(false, Ordering::Release);
     Ok(packs.len())
 }
 
@@ -261,17 +260,17 @@ fn publish(broker: &FsVaultBroker, packs: &[Pack]) -> Result<(), BrokerError> {
         packs,
     )?;
     let name = format::file_name(sequence, &sha256(&bytes));
-    let dir = match broker.data.symlink_metadata(DIRECTORY) {
-        Ok(_) => directory(&broker.data, DIRECTORY)?,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            broker
-                .data
-                .create_dir(DIRECTORY)
-                .map_err(|e| BrokerError::io("create writer archive", e))?;
-            FsVaultBroker::sync_directory(&broker.data, Path::new("."))?;
-            directory(&broker.data, DIRECTORY)?
-        }
+    let existing = match broker.data.symlink_metadata(DIRECTORY) {
+        Ok(_) => Some(directory(&broker.data, DIRECTORY)?),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
         Err(error) => return Err(BrokerError::io("inspect writer archive", error)),
+    };
+    // 从这里起要动盘：断在下面哪一步都留着标志，等收口。上面的失败（段数满了、状态读不出来）什么都没动，
+    // 不留标志，免得下一轮空收口一次、打一行假的「已收口」。
+    broker.archive_dirty.store(true, Ordering::Release);
+    let dir = match existing {
+        Some(dir) => dir,
+        None => create(broker)?,
     };
     mutation::fault(broker, 100)?;
     FsVaultBroker::atomic_write_dir_checked(&dir, Path::new(&name), &bytes, true, || {
@@ -296,7 +295,19 @@ fn publish(broker: &FsVaultBroker, packs: &[Pack]) -> Result<(), BrokerError> {
     drop(archive);
     // 已提交：之后断在哪里都只剩删散件。
     mutation::fault(broker, 102)?;
-    remove(broker, &originals)
+    remove(broker, &originals)?;
+    broker.archive_dirty.store(false, Ordering::Release);
+    Ok(())
+}
+
+/// 第一段：先把目录建好、落盘。
+fn create(broker: &FsVaultBroker) -> Result<Dir, BrokerError> {
+    broker
+        .data
+        .create_dir(DIRECTORY)
+        .map_err(|e| BrokerError::io("create writer archive", e))?;
+    FsVaultBroker::sync_directory(&broker.data, Path::new("."))?;
+    directory(&broker.data, DIRECTORY)
 }
 
 /// 用例用：进程死在这里（恐慌展开，不走出错清理），临时文件原样留在盘上。
