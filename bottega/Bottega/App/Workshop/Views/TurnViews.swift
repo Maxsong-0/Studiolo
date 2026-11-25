@@ -133,7 +133,7 @@ private struct TurnItemView: View {
             Words(text: item.text, isRunning: !what.isOver)
                 .foregroundStyle(what.kind == "text" ? .primary : .secondary)
         case "command":
-            if let input = what.input { PlainBlock(text: input.text, limit: 120).overlay(alignment: .topTrailing) { cutMark(input) } }
+            if let input = what.input { PlainBlock(text: input.text, limit: 120, wraps: true).overlay(alignment: .topTrailing) { cutMark(input) } }
             if let cwd = what.cwd { caption(cwd) }
             Output(text: item.text, isRunning: !what.isOver)
             if let code = what.exitCode { caption("Exit code \(code)") }
@@ -141,6 +141,7 @@ private struct TurnItemView: View {
             ForEach(Array(what.files.enumerated()), id: \.offset) { _, file in FileChangeView(file: file) }
             Output(text: item.text, isRunning: !what.isOver)
         case "plan":
+            if item.text.end > 0 { Words(text: item.text, isRunning: !what.isOver).foregroundStyle(.secondary) }
             ForEach(Array(what.steps.enumerated()), id: \.offset) { _, step in
                 let status = Wording.step(step.status)
                 Label {
@@ -152,7 +153,7 @@ private struct TurnItemView: View {
             }
         default:
             ForEach(what.paths, id: \.self) { caption($0) }
-            if let input = what.input, what.paths.isEmpty { PlainBlock(text: input.text, limit: 120) }
+            if let input = what.input, what.paths.isEmpty { PlainBlock(text: input.text, limit: 120, wraps: true) }
             Output(text: item.text, isRunning: !what.isOver)
         }
     }

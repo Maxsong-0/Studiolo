@@ -237,7 +237,7 @@ enum Wording {
         return switch item.kind {
         case "text": "Writing"
         case "reasoning": "Thinking"
-        case "command": "Running \(UntrustedText.line(item.input?.text ?? "a command", limit: 80))"
+        case "command": "Running \(UntrustedText.line(item.commandInShort ?? "a command", limit: 80))"
         case "edit": "Editing \(item.files.first.map { file($0.path) } ?? "files")"
         case "read": "Reading \(item.paths.first.map(file) ?? "files")"
         case "search": "Searching"

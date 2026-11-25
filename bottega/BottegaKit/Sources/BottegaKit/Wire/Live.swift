@@ -79,6 +79,23 @@ public struct TurnItem: Equatable, Sendable {
 
     public var isOver: Bool { status != "running" }
 
+    /// The command without the shell codex puts around every one. For a few words about it, not for showing what ran.
+    public var commandInShort: String? {
+        guard let command = input?.text else { return nil }
+        for shell in ["zsh", "bash", "sh"] {
+            for flag in ["-lc", "-c"] {
+                let start = "/bin/\(shell) \(flag) "
+                guard command.hasPrefix(start) else { continue }
+                let inner = command.dropFirst(start.count)
+                for quote in ["'", "\""] where inner.count > 2 && inner.hasPrefix(quote) && inner.hasSuffix(quote) {
+                    return String(inner.dropFirst().dropLast())
+                }
+                return inner.isEmpty ? command : String(inner)
+            }
+        }
+        return command
+    }
+
     public init(n: Int, kind: String, status: String, text: CutText? = nil) {
         self.n = n
         self.kind = kind

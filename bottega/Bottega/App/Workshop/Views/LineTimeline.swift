@@ -312,10 +312,11 @@ struct PlainBlock: View {
     let text: String
     var limit: CGFloat = 320
     var monospaced = true
+    /// Prose and commands wrap; output keeps its lines.
+    var wraps: Bool?
 
     var body: some View {
-        // Prose wraps; output keeps its lines.
-        ScrollView(monospaced ? [.vertical, .horizontal] : .vertical) {
+        ScrollView(wraps ?? !monospaced ? .vertical : [.vertical, .horizontal]) {
             Text(verbatim: UntrustedText.clean(text))
                 .font(monospaced ? .callout.monospaced() : .callout)
                 .textSelection(.enabled)

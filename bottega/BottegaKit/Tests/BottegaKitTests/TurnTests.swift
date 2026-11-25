@@ -186,6 +186,18 @@ struct TurnDetailsTests {
             from: Data(#"{"turn":"turn-1","session":"s","vendor":"codex","started_at_ms":1,"state":"\#(state)","items":[\#(items)],"through":\#(through),"last":\#(last)}"#.utf8))
     }
 
+    @Test(arguments: [
+        ("/bin/zsh -lc 'cat README.md && ls'", "cat README.md && ls"), (#"/bin/bash -c "ls""#, "ls"),
+        ("/bin/sh -c ls", "ls"), ("cargo test", "cargo test"), ("/bin/zsh -lc ''", "''"), ("/bin/zsh -lc ", "/bin/zsh -lc "),
+        ("/bin/zsh script", "/bin/zsh script"), ("/bin/zsh -lc 'ls\"", "'ls\""),
+    ])
+    func aCommandInShortHasNoShellAroundIt(command: String, short: String) {
+        var item = TurnItem(n: 1, kind: "command", status: "running")
+        #expect(item.commandInShort == nil)
+        item.input = CutText(text: command)
+        #expect(item.commandInShort == short)
+    }
+
     /// Anything that is no place from 1 on is not taken, whatever it says about itself.
     @Test(arguments: ["-9223372036854775808", "9223372036854775807", "-1", "0", "18446744073709551616", "1.5"])
     func aPlaceThatCannotBeIsNoPlace(n: String) throws {

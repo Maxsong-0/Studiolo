@@ -142,10 +142,11 @@ actor Ledger {
         print("turn: \(id) \(pages.count) pages, \(fetched.completeness), \(fetched.items.count) things")
         for item in fetched.items {
             print("  \(item.item.n) \(item.item.kind) \(item.item.status) \(item.text.end) bytes")
-            guard let seen = inside[id]?.items.first(where: { $0.item.n == item.item.n }) else { print("    not pushed"); continue }
-            if seen.item.kind != item.item.kind || seen.item.status != item.item.status || seen.text.end != item.text.end {
-                print("    pushed as \(seen.item.kind) \(seen.item.status) \(seen.text.end) bytes")
-            }
+        }
+        guard let seen = inside[id] else { return print("  not pushed") }
+        print("  pushed: \(seen.completeness), \(seen.items.count) things, \(seen.items == fetched.items ? "the same" : "NOT THE SAME")")
+        for (pushed, kept) in zip(seen.items, fetched.items) where pushed != kept {
+            print("  pushed \(pushed)\n  kept   \(kept)")
         }
     }
 
@@ -186,7 +187,9 @@ actor Ledger {
         case .settled(let settled): print("settled: \(settled.result), undone \(settled.isUndone)")
         case .notice(let why): print("notice: \(why)")
         case .registrationFailed(let why): print("registration failed: \(why)")
-        case .watching(let running): print("watching: \(running.map { "\($0)" } ?? "no")")
+        case .watching(let running):
+            print("watching: \(running.map { "\($0)" } ?? "no")")
+            for id in inside.keys where running?.contains(id) != true { inside[id]?.fellBehind() }
         case .live(let batch):
             for live in batch {
                 if inside[live.turn] == nil { print("live: \(live.turn)") }
@@ -203,7 +206,7 @@ actor Ledger {
     }
 }
 
-/// Passes everything on, and keeps the lines with records in a file the app can open as a recording.
+/// Passes everything on, and keeps the lines with records and turns in a file the app can open as a recording.
 final class Recorder: Connector {
     let inner: UnixSocketConnector
     let file: URL?
@@ -234,7 +237,7 @@ final class Recorder: Connector {
                     do {
                         for try await line in inner.lines() {
                             if isDeaf.value.withLock({ $0 }) { continue }
-                            if let file, line.starts(with: Data(#"{"record":"#.utf8)) {
+                            if let file, [#"{"record":"#, #"{"live":"#].contains(where: { line.starts(with: Data($0.utf8)) }) {
                                 try file.seekToEnd()
                                 try file.write(contentsOf: line + Data("\n".utf8))
                             }
