@@ -30,8 +30,8 @@ struct RecordedTurnTests {
             #expect(read != .unknown)
             if case .live(let live) = read { #expect(live.what != .unknown && !live.turn.isEmpty) }
         }
-        #expect(try pushed().count == 19)
-        #expect(try pages().map(\.through) == [6, 10])
+        #expect(try pushed().count == 20)
+        #expect(try pages().map(\.through) == [6, 11])
         let errors = try said(by: "lmas").compactMap { if case .error(_, let error) = try read($0) { error.code } else { nil } }
         #expect(errors == ["no_such_turn", "no_details", "already_watching"])
     }
@@ -52,7 +52,10 @@ struct RecordedTurnTests {
         var fetched = TurnDetails()
         fetched.take(try pages())
         #expect(details["turn-1"] == fetched)
-        #expect(fetched.items.map(\.id) == Array(1...10))
+        #expect(fetched.items.map(\.id) == Array(1...11))
+        // The dispatcher's question to its model: a title, and no thoughts.
+        let asked = fetched.items[10]
+        #expect(asked.item.kind == "reasoning" && asked.item.title == "第 2 次问模型" && asked.text.pieces.isEmpty)
         #expect(fetched.completeness == .whole)
         #expect(fetched.head == TurnHead(turn: "turn-1", session: "coder-card-1", vendor: "codex", model: "gpt-5.2-codex", startedAtMs: 1764000050000))
         #expect(details["turn-2"]?.completeness == .behind)
@@ -74,7 +77,7 @@ struct RecordedTurnTests {
 
     @Test func fieldsComeThrough() throws {
         let items = try pages().flatMap(\.items)
-        #expect(items.map(\.kind) == ["reasoning", "read", "search", "command", "edit", "tool", "notice", "plan", "text", "coordinator"])
+        #expect(items.map(\.kind) == ["reasoning", "read", "search", "command", "edit", "tool", "notice", "plan", "text", "coordinator", "reasoning"])
         #expect(Set(items.map(\.status)) == ["done", "failed", "denied", "interrupted"])
         #expect(items[1].paths == ["/Users/max/lmas-worktrees/card-1/src/settings.rs"])
         #expect(items[2].title == "找 cache")

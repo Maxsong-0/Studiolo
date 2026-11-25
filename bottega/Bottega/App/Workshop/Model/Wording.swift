@@ -179,11 +179,12 @@ enum Wording {
         }
     }
 
-    static func turnItem(_ item: TurnItem) -> (text: String, symbol: String, isTrouble: Bool) {
+    static func turnItem(_ item: TurnItem, hasText: Bool = true) -> (text: String, symbol: String, isTrouble: Bool) {
         let tool = item.tool.map { UntrustedText.line($0, limit: 60) }
         return switch item.kind {
         case "text": ("Said", "text.bubble", false)
-        case "reasoning": ("Thought", "brain", false)
+        // The dispatcher's every question to its model is one, thoughts or not.
+        case "reasoning": (hasText || !item.isOver ? "Thought" : "Asked the model", "brain", false)
         case "command": ("Command", "terminal", false)
         case "edit": (item.files.isEmpty ? "Edit" : "Edited \(count(item.files.count, "file", "files"))", "pencil", false)
         case "read": ("Read", "doc.text", false)

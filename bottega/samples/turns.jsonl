@@ -84,6 +84,7 @@
 {"live": {"item": {"ended_at_ms": 1764000050840, "kind": "plan", "n": 8, "started_at_ms": 1764000050800, "status": "done", "steps": [{"status": "done", "text": "加按钮"}, {"status": "running", "text": "跑测试"}, {"status": "pending", "text": "回信"}]}, "turn": "turn-1"}}
 {"live": {"item": {"ended_at_ms": 1764000050940, "kind": "text", "n": 9, "started_at_ms": 1764000050900, "status": "done", "text": {"text": "按钮加好了，测试过了。"}}, "turn": "turn-1"}}
 {"live": {"item": {"ended_at_ms": 1764000051040, "input": {"text": "{\"to\":\"dispatcher\",\"type\":\"RESULT\",\"body\":\"做好了\"}"}, "kind": "coordinator", "n": 10, "started_at_ms": 1764000051000, "status": "interrupted", "text": {"text": "{\"message_id\":\"msg-10\",\"status\":\"accepted\"}"}, "tool": "send_message"}, "turn": "turn-1"}}
+{"live": {"item": {"ended_at_ms": 1764000051140, "kind": "reasoning", "n": 11, "started_at_ms": 1764000051100, "status": "done", "title": "第 2 次问模型"}, "turn": "turn-1"}}
 {"live": {"ended": {"whole": true}, "turn": "turn-1"}}
 {"live": {"turn": "turn-3", "began": {"turn": "turn-3", "session": "coder-card-4", "vendor": "grok", "model": "grok-5-code", "started_at_ms": 1764000380100}}}
 {"live": {"turn": "turn-3", "item": {"n": 1, "kind": "reasoning", "status": "done", "started_at_ms": 1764000381200, "ended_at_ms": 1764000381600, "text": {"text": "只改一句话，先找它在哪。"}}}}

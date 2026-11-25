@@ -106,7 +106,7 @@ private struct TurnItemView: View {
         let what = item.item
         VStack(alignment: .leading, spacing: 6) {
             HStack(alignment: .firstTextBaseline, spacing: 8) {
-                let title = Wording.turnItem(what)
+                let title = Wording.turnItem(what, hasText: item.text.end > 0)
                 Image(systemName: title.symbol).frame(width: 18).foregroundStyle(title.isTrouble ? AnyShapeStyle(.orange) : AnyShapeStyle(.secondary))
                 Text(verbatim: title.text).fontWeight(.medium).lineLimit(2)
                 Spacer(minLength: 6)
@@ -130,8 +130,10 @@ private struct TurnItemView: View {
         let what = item.item
         switch what.kind {
         case "text", "reasoning", "notice":
-            Words(text: item.text, isRunning: !what.isOver)
-                .foregroundStyle(what.kind == "text" ? .primary : .secondary)
+            if item.text.end > 0 {
+                Words(text: item.text, isRunning: !what.isOver)
+                    .foregroundStyle(what.kind == "text" ? .primary : .secondary)
+            }
         case "command":
             if let input = what.input { PlainBlock(text: input.text, limit: 120, wraps: true).overlay(alignment: .topTrailing) { cutMark(input) } }
             if let cwd = what.cwd { caption(cwd) }
