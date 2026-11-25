@@ -16,6 +16,8 @@ mod preserve;
 mod reconcile;
 #[path = "sync_plane_driver/reconcile_support.rs"]
 mod reconcile_support;
+#[path = "sync_plane_driver/settle.rs"]
+mod settle;
 #[path = "sync_plane_driver/shutdown.rs"]
 mod shutdown;
 

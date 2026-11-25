@@ -41,6 +41,7 @@ request_stop(&OwnedRun, StopReason)
 wait(&OwnedRun) -> RunObservation
 recover(run_id) -> RunObservation
 stop_recovered(run_id)
+cancel_recovered(run_id) -> RunObservation  // T-239：重开后仍是 Prepared 的旧运行收成「没执行」
 discarded_residue() -> bool                 // T-239：这次打开丢过上次发布的临时文件，装配方留一行日志
 quiescent() -> QuiescentMirror
 verify_quiescent(&QuiescentMirror)          // 新增：让「作废」可被调用方检验
@@ -101,6 +102,10 @@ cgroup 前缀及真实对象身份、InvocationID、launcher session、隔离与
   - `PayloadCgroupUnpopulated`：入口已关闭 **且** 实测子组身份与记录一致 **且** `populated=0`；
   - `BootChanged`：boot 已改变，能证明旧 boot 的进程不存在，但**原退出结果永远 `NotObserved`**。
 - `MainPID=0`、`ActiveState=inactive`、读不到 unit、`Child.wait`、PGID、pipe EOF **都不算**。
+- 重开后磁盘上仍是 `Prepared`：`LaunchIssued` 必须先可靠落盘才发启动请求，所以它从没执行过。
+  `recover` 照旧只报 `Prepared`，不改记录；`cancel_recovered` 才把它持久成 `Cancelled`、补上 Outcome 审计。
+  别的阶段由状态机拒绝（`PhaseConflict`，不写任何东西）；重开之前发的票据一律作废。
+  这样闭合的运行静止记 `Unconfirmed`：不发静止票据，封存快照和 `sync-rebind` 要等下一次运行真正闭合。
 - 缺 unit / 换 unit（InvocationID 不同）/ cgroup ABA：保持 `ExitUnconfirmed` 语义 ——
   不取 token、不启新运行、`stop_recovered` 拒绝，并且**不假造原成功**。
 

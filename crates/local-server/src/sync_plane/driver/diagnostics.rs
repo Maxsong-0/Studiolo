@@ -52,6 +52,14 @@ pub(crate) fn byte_budget_exceeded(used: u64, budget: u64) {
     );
 }
 
+/// 上一个进程登记了一次运行、还没发启动就没了：这一轮把它收成「没执行」，留一行固定日志（T-239）。
+pub(crate) fn unlaunched_run_cancelled() {
+    let _ = writeln!(
+        std::io::stderr().lock(),
+        "studiolo_bridge component=transport outcome=unlaunched_run_cancelled"
+    );
+}
+
 pub(crate) fn at<T>(step: Step, result: Result<T, PlaneError>) -> Result<T, PlaneError> {
     if let Err(error) = result.as_ref() {
         let _ = writeln!(

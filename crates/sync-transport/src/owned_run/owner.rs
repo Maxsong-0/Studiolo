@@ -137,6 +137,14 @@ impl<'scope> SyncTransportOwner<'scope> {
         self.inner.recover(run_id)
     }
 
+    /// 把重开后仍停在 `Prepared`（从没发过启动请求）的旧运行收成「没执行」。
+    ///
+    /// # 错误
+    /// 没有对应活动运行返回 `NotFound`；已发过启动请求返回 `PhaseConflict`。
+    pub fn cancel_recovered(&mut self, run_id: RunId) -> Result<RunObservation> {
+        self.inner.cancel_recovered(run_id)
+    }
+
     /// 只在完整匹配旧容器时停止。
     ///
     /// # 错误

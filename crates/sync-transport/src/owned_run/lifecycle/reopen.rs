@@ -1,4 +1,4 @@
-//! 重开路径：只观察旧容器、只在完整匹配时停止、跨 boot 收束；绝不重新执行。
+//! 重开路径：只观察旧容器、只在完整匹配时停止、跨 boot 收束、没发过启动的收成没执行；绝不重新执行。
 //! 从 `lifecycle.rs` 拆出只为压住单文件行数；阶段边界与那边完全一致。
 
 use super::observation_of;
@@ -49,6 +49,21 @@ impl<B: ContainmentBackend> RunSession<'_, B> {
                 }
             }
         }
+        observation_of(&self.load()?, run_id)
+    }
+
+    /// 把重开后仍停在 `Prepared` 的旧运行持久收成「没执行」。
+    ///
+    /// `LaunchIssued` 必须先可靠落盘才发启动请求（`start`），所以磁盘上是 `Prepared` 就说明从没发过；
+    /// 别的阶段由状态机拒绝（`PhaseConflict`），不写任何东西。
+    pub(crate) fn cancel_recovered(&mut self, run_id: RunId) -> Result<RunObservation> {
+        let state = self.load()?;
+        let record = state.active.as_ref().ok_or(TransportError::NotFound)?;
+        if record.run_id != run_id {
+            return Err(TransportError::NotFound);
+        }
+        let next = machine::apply(&state, Transition::Cancel)?;
+        self.commit(&next)?;
         observation_of(&self.load()?, run_id)
     }
 

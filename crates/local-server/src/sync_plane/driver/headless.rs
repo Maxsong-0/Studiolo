@@ -47,7 +47,7 @@ pub fn run(
         .map_err(|_| PlaneError::Unavailable)?;
     let transport = slot.as_mut().ok_or(PlaneError::Unavailable)?;
     let ledger: &dyn AuditLedger = plane.audit().as_ref();
-    settle_active(transport, ledger)?;
+    settle_active(&mut OwnerSlot { transport, ledger })?;
     let status = transport.inspect().map_err(transport_error)?;
     let prepared = transport
         .prepare_once(status.next_sequence, operation, millis(now_unix))
@@ -128,25 +128,81 @@ impl HeadlessRun {
     }
 }
 
-/// 第 2 步：补审计；活动槽存在则只观察旧容器（绝不重新执行），仍未闭合即 `Transport`。
-fn settle_active(
-    transport: &mut SyncTransportOwner<'_>,
-    ledger: &dyn AuditLedger,
-) -> Result<(), PlaneError> {
-    flush_transport_audit(transport, ledger, AUDIT_BATCH).map_err(|_| PlaneError::Audit)?;
-    let Some(active) = transport.inspect().map_err(transport_error)?.active else {
+/// 收旧槽要用到的运行槽动作；真实实现是传输 owner 加权威账本，契约测试用假实现。
+pub trait RunSlot {
+    /// 把待补审计推到真实 ACK。
+    ///
+    /// # Errors
+    /// 账本不可用或回执不符返回 `Audit`。
+    fn flush_audit(&mut self) -> Result<(), PlaneError>;
+    /// 活动槽里的运行；空槽是 `None`。
+    ///
+    /// # Errors
+    /// 持久记录读不了返回 `Transport`。
+    fn active(&self) -> Result<Option<RunId>, PlaneError>;
+    /// 只观察旧运行，绝不重新执行。
+    ///
+    /// # Errors
+    /// 传输槽拒绝返回 `Transport`。
+    fn recover(&mut self, run: RunId) -> Result<RunPhase, PlaneError>;
+    /// 把从没发过启动请求的旧运行收成「没执行」。
+    ///
+    /// # Errors
+    /// 已发过启动请求、或传输槽拒绝返回 `Transport`。
+    fn cancel_unlaunched(&mut self, run: RunId) -> Result<RunPhase, PlaneError>;
+}
+
+struct OwnerSlot<'a, 'scope> {
+    transport: &'a mut SyncTransportOwner<'scope>,
+    ledger: &'a dyn AuditLedger,
+}
+
+impl RunSlot for OwnerSlot<'_, '_> {
+    fn flush_audit(&mut self) -> Result<(), PlaneError> {
+        flush_transport_audit(self.transport, self.ledger, AUDIT_BATCH)
+            .map(|_| ())
+            .map_err(|_| PlaneError::Audit)
+    }
+
+    fn active(&self) -> Result<Option<RunId>, PlaneError> {
+        let status = self.transport.inspect().map_err(transport_error)?;
+        Ok(status.active.map(|active| active.run_id))
+    }
+
+    fn recover(&mut self, run: RunId) -> Result<RunPhase, PlaneError> {
+        let observation = self.transport.recover(run).map_err(transport_error)?;
+        Ok(observation.phase)
+    }
+
+    fn cancel_unlaunched(&mut self, run: RunId) -> Result<RunPhase, PlaneError> {
+        let observation = self
+            .transport
+            .cancel_recovered(run)
+            .map_err(transport_error)?;
+        super::diagnostics::unlaunched_run_cancelled();
+        Ok(observation.phase)
+    }
+}
+
+/// 第 2 步：补审计；活动槽存在则只观察旧容器（绝不重新执行），从没发过启动的收成「没执行」，
+/// 仍未闭合即 `Transport`。
+///
+/// # Errors
+/// 审计推不动返回 `Audit`；旧运行还没闭合返回 `Transport`。
+pub fn settle_active(slot: &mut dyn RunSlot) -> Result<(), PlaneError> {
+    slot.flush_audit()?;
+    let Some(run) = slot.active()? else {
         return Ok(());
     };
-    let observation = transport.recover(active.run_id).map_err(transport_error)?;
-    if observation.phase == RunPhase::OutcomePending {
-        flush_transport_audit(transport, ledger, AUDIT_BATCH).map_err(|_| PlaneError::Audit)?;
+    let mut phase = slot.recover(run)?;
+    if phase == RunPhase::Prepared {
+        // 登记了运行、还没发启动，进程就没了（或那一刻写不了审计）：不收掉它，同步和封存会一直停着。
+        phase = slot.cancel_unlaunched(run)?;
     }
-    if transport
-        .inspect()
-        .map_err(transport_error)?
-        .active
-        .is_some()
-    {
+    if matches!(phase, RunPhase::Cancelled | RunPhase::OutcomePending) {
+        slot.flush_audit()?;
+    }
+    if slot.active()?.is_some() {
         return Err(PlaneError::Transport);
     }
     Ok(())
