@@ -77,10 +77,20 @@ async fn prepare(f: &Fixture) -> Result<PreparedServer, StartupError> {
     .await
 }
 
-/// 起到三个入口都在监听，等 `stop`；回来时服务已经收掉。
+/// 三个入口都在监听了才算。不等待地连：有的用例把监听队列塞满，等着连会一直卡住。
+async fn listening(entrances: [PathBuf; 3]) {
+    for path in entrances {
+        while tokio::net::UnixStream::connect(&path).await.is_err() {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    }
+}
+
+/// 起到三个入口都在监听，再正常停掉；回来时服务已经收掉。
+/// 没起来就叫停的话，写者可能先关，接管会被当成「正在关停」拒绝，用例就看谁先跑到了。
 async fn serves(f: &Fixture) -> Result<(), StartupError> {
     let prepared = prepare(f).await?;
-    tokio::time::timeout(WAIT, prepared.serve_until(std::future::ready(())))
+    tokio::time::timeout(WAIT, prepared.serve_until(listening(sockets(&f.root))))
         .await
         .expect("服务没在时限内停下")
 }

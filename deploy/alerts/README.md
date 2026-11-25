@@ -10,7 +10,7 @@
 - 两个节点分别向 Healthchecks.io 和 Worker 发空正文。Worker 180 秒没收到就告警；每节点 45 秒发送租约，只有成功才开始 600 秒冷却。超时可能已被供应商接收，跨供应商不承诺恰好一次。
 - A01：远端探针不可用；A02：服务或 MCP 不可用；A03：AI 副本过期；A04：内存真的不够用或无法确认预算（判法见下一条）；A06：时钟未同步或回拨；A07：Bridge 同步两边没对上满 6 小时（回执读不到或坏了也算）；A08：远端删了文件、主库没开文件操作，同步整批暂停（删除守卫 1 小时内证明过才算，期间不另报 A07）；A09：人侧被 systemd 自动重启过、这一次起来不到 1 小时（判法见再下一条）；A108/A169：对应外部心跳中断。只发代号及可选受登录门禁保护的链接。
 - A04 的判法（T-229）：三个单元各看自己的 cgroup（`systemctl show` 的 `ControlGroup` 下的 `memory.current`、`memory.max`、`memory.stat`、`memory.pressure`），任一单元满足一条就报。
-  ① 回收不掉的内存占上限满 80%。回收不掉的＝`memory.current` 减干净文件缓存（`inactive_file`＋`active_file`－`file_dirty`－`file_writeback`，不足零按零）再减 `slab_reclaimable`；匿名、共享、内核内存、脏页、正在回写的页和没列到的种类都算回收不掉。
+  ① 回收不掉的内存占上限满 80%（前提：单元的 cgroup 没有子组、上级没有更紧的上限，169 上三个单元都是这样；哪天给子组或 slice 设了上限，这里要跟着看）。回收不掉的＝`memory.current` 减干净文件缓存（`inactive_file`＋`active_file`－`file_dirty`－`file_writeback`，不足零按零）再减 `slab_reclaimable`；匿名、共享、内核内存、脏页、正在回写的页和没列到的种类都算回收不掉。
   ② `memory.pressure` 的 `full avg300` 满 10%：最近 5 分钟整组任务因缺内存停住满 30 秒。补的是 ① 每分钟一张快照看不到的突发和反复重读；没有用真实 OOM 校准过，取值按 169 封存时的实测余量。
   ③ 证据不成立：没有 cgroup、cgroup 不是这个单元的、文件或字段缺失、`memory.max` 无界、坏值、可回收的比总量还多。探针单元因此不能加 `ProtectControlGroups=private`、`InaccessiblePaths=/sys/fs/cgroup` 一类遮住 cgroup 的设置，否则 A04 一直报。
   文件缓存顶满上限本身不报：封存每次都会把人侧顶到 `MemoryMax`，内核能马上回收。被 OOM 杀掉、没起来的单元由 A02 报，不另计 OOM 次数；人侧几秒内自己起回来、A02 看不到的由 A09 报。

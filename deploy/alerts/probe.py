@@ -109,11 +109,12 @@ def unreclaimable_bytes(current, stat):
 
 
 def full_stall_percent(text):
-    """memory.pressure 的 full avg300（百分数）；没有或不止一行合格的 full 都算坏证据。"""
-    matches = [match for match in map(STALL_LINE.fullmatch, text.splitlines()) if match]
-    if len(matches) != 1:
+    """memory.pressure 的 full avg300（百分数）；full 行没有、不止一行或写法不对都算坏证据。"""
+    lines = [line for line in text.splitlines() if line.startswith("full")]
+    match = STALL_LINE.fullmatch(lines[0]) if len(lines) == 1 else None
+    if match is None:
         raise ValueError("memory_pressure_invalid")
-    return float(matches[0][1])
+    return float(match[1])
 
 
 def unit_memory_high(unit, control_group):

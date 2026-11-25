@@ -476,7 +476,10 @@ class MonitorTests(unittest.TestCase):
             self.assertEqual(self.human_metrics(IDLE_HUMAN, pressure(value)), (True, high), value)
         for bad in ("", "nan", "inf", "-1.00", "10", "1e1", "101.00", "9.999"):
             self.assertEqual(self.human_metrics(IDLE_HUMAN, pressure(bad)), (True, True), bad)
-        for text in ("", CALM.splitlines()[0] + "\n", CALM + CALM.splitlines()[1] + "\n"):
+        # 没有 full、两行 full（第二行写法不对也算两行）、full 混在别的字里：都是坏证据。
+        for text in ("", CALM.splitlines()[0] + "\n", CALM + CALM.splitlines()[1] + "\n",
+                     CALM + "full avg10=0.00 avg60=0.00 avg300=nan total=1\n", CALM + "full\n",
+                     CALM.replace("full ", "fuller ")):
             self.assertEqual(self.human_metrics(IDLE_HUMAN, text), (True, True), text)
 
     def test_missing_unbounded_or_contradictory_memory_evidence_stays_high(self):

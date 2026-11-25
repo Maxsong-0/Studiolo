@@ -58,10 +58,10 @@ ls -la /run/studiolo-human /run/studiolo-board /run/studiolo-backup
 
 对每一个还在的节点，下面四条都成立才删；有一条不成立就停下。
 
-1. 没有进程在监听它。把节点的路径填进去，这条**没有输出**才算（有输出说明有活的进程在用，它不是残留）：
+1. 没有进程在用它（监听着的、刚绑上还没监听的、连着的都算）。把节点的路径填进去，这条**没有输出**才算（有输出说明有活的进程在用，它不是残留）：
 
    ```bash
-   ss -xl | grep -F /run/studiolo-human/http.sock
+   ss -xa | grep -F /run/studiolo-human/http.sock
    ```
 
 2. `http.sock`、`board.sock` 还要人侧停着（只有人侧起不来时才需要删它们）：第 1 节第一条命令里，人侧是
@@ -99,7 +99,7 @@ sudo systemctl start studiolo-human.service
 ```
 
 人侧自己起回来的（没动过节点）也要跑上面那条 `reset-failed`，但不用 `start`：激活脚本要求 `NRestarts=0`
-（`deploy/blackboard/runtime_checks.py`），systemctl(1) 写明 `reset-failed` 会把它清零，正在跑的服务不受影响。
+（`deploy/human/release/runtime_checks.py`），systemctl(1) 写明 `reset-failed` 会把它清零，正在跑的服务不受影响。
 
 再跑一遍第 1 节第一条命令：人侧应是 `ActiveState=active`、`NRestarts=0`。socket 用第 1 节第三条命令看：
 起来的是带备份的新发行就有三个；是旧发行（第 3 节 `stop-old` 那种情形）就只有 `http.sock`、`board.sock` 两个。
