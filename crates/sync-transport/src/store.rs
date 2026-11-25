@@ -1,6 +1,7 @@
 //! 固定 transport-private 存储：只有 `publish` 做真实 IO，其余保持纯逻辑。
 //!
-//! 初始化是管理员显式动作；`open_existing` 不补目录、不补空 state、不认领残留。
+//! 初始化是管理员显式动作；`open_existing` 不补目录、不补空 state、不认领残留；
+//! 残留只经 `open_with_residue` 加 `discard`，由调用方核过权威记录之后丢。
 
 pub mod paths;
 pub mod publish;

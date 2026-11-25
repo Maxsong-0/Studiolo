@@ -44,11 +44,20 @@ fn lock_error(error: TryLockError) -> TransportError {
 #[cfg(test)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PublishFault {
-    /// 只写出一半字节就中止，模拟短写。
+    /// 只写出一半字节就报错（盘满）。
     ShortWrite,
-    /// 在 fsync 之前失败，模拟持久化失败。
+    /// 在 fsync 处报错（盘坏）。
     SyncFailure,
+    /// 写到一半进程被杀：什么都来不及清。
+    KilledMidWrite,
+    /// 写全、落了盘、还没改名时进程被杀（断电后改名没落盘也是这个样子）。
+    KilledBeforeRename,
+    /// 报错之前，临时文件那个名字已经换成别人的文件。
+    ReplacedMidWrite,
 }
+
+/// 上次发布留下、形态合规的临时文件；只握着它的身份，从不读它的内容。
+pub struct PublishResidue(File);
 
 /// 固定私有根上的权威状态发布器；持有排他租约。
 pub struct FilePublisher {
@@ -66,18 +75,50 @@ impl FilePublisher {
     /// 固定文件缺失返回 `MissingStore`；残留临时文件返回 `TemporaryResidue`。
     pub fn open_existing(path: &Path) -> Result<Self> {
         let publisher = Self::attach(path, false)?;
-        if probe(
-            &publisher.root,
-            paths::STATE_PUBLISH_TEMP,
-            publisher.owner.0,
-        )?
-        .is_some()
-        {
+        if publisher.residue()?.is_some() {
             return Err(TransportError::TemporaryResidue);
         }
-        probe(&publisher.root, paths::STATE, publisher.owner.0)?
-            .ok_or(TransportError::MissingStore)?;
+        publisher.require_state()?;
         Ok(publisher)
+    }
+
+    /// 同 [`Self::open_existing`]，但把形态合规的残留交给调用方：核过权威记录之后才许 [`Self::discard`]。
+    ///
+    /// # 错误
+    /// 固定文件缺失返回 `MissingStore`；残留不是本人 0600 单链接普通文件返回 `UnsafeStorage`。
+    pub fn open_with_residue(path: &Path) -> Result<(Self, Option<PublishResidue>)> {
+        let publisher = Self::attach(path, false)?;
+        let residue = publisher.residue()?;
+        publisher.require_state()?;
+        Ok((publisher, residue))
+    }
+
+    /// 丢弃上次发布留下的临时文件：它从来不是授权状态，丢了等于在建它之前一刻被杀。
+    /// 删之前再核一遍租约、根和它还是打开时的那一个。
+    ///
+    /// # 错误
+    /// 残留不见了返回 `MissingStore`；已换成别的对象返回 `UnsafeStorage`；落盘失败返回 `Unavailable`。
+    pub fn discard(&self, residue: &PublishResidue) -> Result<()> {
+        use rustix::fs::{AtFlags, unlinkat};
+        self.check()?;
+        let current = self.residue()?.ok_or(TransportError::MissingStore)?;
+        same(&current.0, &residue.0)?;
+        unlinkat(&self.root, paths::STATE_PUBLISH_TEMP, AtFlags::empty()).map_err(storage_error)?;
+        self.root
+            .sync_all()
+            .map_err(|_| TransportError::Unavailable)?;
+        self.check()
+    }
+
+    fn residue(&self) -> Result<Option<PublishResidue>> {
+        let found = probe(&self.root, paths::STATE_PUBLISH_TEMP, self.owner.0)?;
+        Ok(found.map(PublishResidue))
+    }
+
+    fn require_state(&self) -> Result<()> {
+        probe(&self.root, paths::STATE, self.owner.0)?
+            .map(|_| ())
+            .ok_or(TransportError::MissingStore)
     }
 
     /// 管理员显式初始化：三个固定名字都不存在时才建库，并立即发布完整首条记录。
@@ -88,21 +129,6 @@ impl FilePublisher {
         let mut publisher = Self::attach(path, true)?;
         publisher.replace(initial)?;
         Ok(publisher)
-    }
-
-    /// 显式丢弃上次发布留下的临时文件；它从来不是授权状态。
-    ///
-    /// # 错误
-    /// 根身份或权限不符返回 `UnsafeStorage`。
-    pub fn discard_residue(path: &Path) -> Result<()> {
-        use rustix::fs::{AtFlags, unlinkat};
-        let publisher = Self::attach(path, false)?;
-        let root = &publisher.root;
-        if probe(root, paths::STATE_PUBLISH_TEMP, publisher.owner.0)?.is_some() {
-            unlinkat(root, paths::STATE_PUBLISH_TEMP, AtFlags::empty()).map_err(storage_error)?;
-            root.sync_all().map_err(|_| TransportError::Unavailable)?;
-        }
-        Ok(())
     }
 
     fn attach(path: &Path, initialize: bool) -> Result<Self> {
@@ -180,9 +206,53 @@ impl FilePublisher {
             )
             .map_err(storage_error)?,
         );
+        // 改名之前任一步失败，权威记录都还是旧的。
+        let installed = self
+            .fill(
+                &mut temp,
+                bytes,
+                #[cfg(test)]
+                fault,
+            )
+            .and_then(|()| {
+                renameat(
+                    &self.root,
+                    paths::STATE_PUBLISH_TEMP,
+                    &self.root,
+                    paths::STATE,
+                )
+                .map_err(storage_error)
+            });
+        if let Err(error) = installed {
+            // 被杀的进程来不及收拾；报错的要收走自己刚建的，否则之后每次发布都卡在残留上。
+            #[cfg(test)]
+            if matches!(
+                fault,
+                Some(PublishFault::KilledMidWrite | PublishFault::KilledBeforeRename)
+            ) {
+                return Err(error);
+            }
+            self.remove_own(&temp);
+            return Err(error);
+        }
+        self.root
+            .sync_all()
+            .map_err(|_| TransportError::Unavailable)?;
+        self.check()
+    }
+
+    /// 写全、落盘，再核一遍临时文件、租约和根；成功后才许改名。
+    fn fill(
+        &self,
+        temp: &mut File,
+        bytes: &[u8],
+        #[cfg(test)] fault: Option<PublishFault>,
+    ) -> Result<()> {
         #[cfg(test)]
         let payload = match fault {
-            Some(PublishFault::ShortWrite) => &bytes[..bytes.len() / 2],
+            Some(PublishFault::ShortWrite | PublishFault::KilledMidWrite) => {
+                &bytes[..bytes.len() / 2]
+            }
             _ => bytes,
         };
         #[cfg(not(test))]
@@ -190,25 +260,51 @@ impl FilePublisher {
         temp.write_all(payload)
             .map_err(|_| TransportError::Unavailable)?;
         #[cfg(test)]
-        if fault.is_some() {
-            // 短写与 fsync 失败都在这里中止：临时文件留在原地，权威记录保持旧版本。
-            return Err(TransportError::Unavailable);
+        match fault {
+            None | Some(PublishFault::KilledBeforeRename) => {}
+            Some(PublishFault::ReplacedMidWrite) => {
+                self.replace_temporary()?;
+                return Err(TransportError::Unavailable);
+            }
+            Some(_) => return Err(TransportError::Unavailable),
         }
         temp.sync_all().map_err(|_| TransportError::Unavailable)?;
-        regular(&temp, self.owner.0, paths::STATE_MAX_BYTES)?;
-        drop(temp);
-        self.check()?;
-        renameat(
+        regular(temp, self.owner.0, paths::STATE_MAX_BYTES)?;
+        #[cfg(test)]
+        if fault.is_some() {
+            return Err(TransportError::Unavailable);
+        }
+        self.check()
+    }
+
+    /// 收走本次发布自己建的临时文件；只认还是同一个对象的那一个，收不掉也不盖住原错误
+    /// （留下的残留由下次打开核过权威记录再丢）。
+    fn remove_own(&self, temp: &File) {
+        use rustix::fs::{AtFlags, unlinkat};
+        let Ok(Some(current)) = self.residue() else {
+            return;
+        };
+        if same(&current.0, temp).is_ok()
+            && unlinkat(&self.root, paths::STATE_PUBLISH_TEMP, AtFlags::empty()).is_ok()
+        {
+            let _ = self.root.sync_all();
+        }
+    }
+
+    /// 仅测试：把临时文件那个名字换成另一个对象。
+    #[cfg(test)]
+    fn replace_temporary(&self) -> Result<()> {
+        use rustix::fs::{AtFlags, unlinkat};
+        use rustix::fs::{Mode, OFlags, openat};
+        unlinkat(&self.root, paths::STATE_PUBLISH_TEMP, AtFlags::empty()).map_err(storage_error)?;
+        openat(
             &self.root,
             paths::STATE_PUBLISH_TEMP,
-            &self.root,
-            paths::STATE,
+            OFlags::RDWR | OFlags::CREATE | OFlags::EXCL | OFlags::CLOEXEC,
+            Mode::from_raw_mode(0o600),
         )
-        .map_err(storage_error)?;
-        self.root
-            .sync_all()
-            .map_err(|_| TransportError::Unavailable)?;
-        self.check()
+        .map(drop)
+        .map_err(storage_error)
     }
 
     /// 仅测试：带故障注入的发布。

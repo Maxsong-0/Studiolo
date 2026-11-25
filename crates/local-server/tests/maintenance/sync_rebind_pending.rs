@@ -85,3 +85,21 @@ fn existing_plane_or_transport_owner_prevents_rebind_and_preserves_bytes() {
     assert!(s.run(Command::SyncRebind, None).is_err());
     assert_eq!(state_bytes(&s), old);
 }
+
+#[test]
+fn a_leftover_publish_is_kept_on_refusal_and_discarded_before_a_permitted_rebind() {
+    use std::{fs, os::unix::fs::PermissionsExt};
+    let s = initialized();
+    let old = state_bytes(&s);
+    let residue = s.root().join("transport/state.json.publish");
+    fs::write(&residue, "uncommitted").unwrap();
+    fs::set_permissions(&residue, fs::Permissions::from_mode(0o644)).unwrap();
+    assert!(s.run(Command::SyncRebind, None).is_err());
+    assert_eq!(fs::read_to_string(&residue).unwrap(), "uncommitted");
+    assert_eq!(state_bytes(&s), old);
+
+    fs::set_permissions(&residue, fs::Permissions::from_mode(0o600)).unwrap();
+    s.run(Command::SyncRebind, None).unwrap();
+    assert!(!residue.exists());
+    assert_ne!(state_bytes(&s), old);
+}

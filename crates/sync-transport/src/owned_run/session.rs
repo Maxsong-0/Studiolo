@@ -62,33 +62,7 @@ impl<'scope, B: ContainmentBackend> RunSession<'scope, B> {
 
     /// 读取并复验完整持久记录。
     pub(crate) fn load(&self) -> Result<TransportState> {
-        self.approval.revalidate()?;
-        self.publisher.check()?;
-        let state = decode(&self.publisher.read()?)?;
-        self.matches_approval(&state)?;
-        self.publisher.check()?;
-        self.approval.revalidate()?;
-        Ok(state)
-    }
-
-    fn matches_approval(&self, state: &TransportState) -> Result<()> {
-        if state.binding != self.approval.binding()? {
-            return Err(TransportError::BindingMismatch);
-        }
-        if state.roots != self.approval.roots() {
-            return Err(TransportError::RootsChanged);
-        }
-        if runtime_digest(&state.runtime) != self.runtime.digest() {
-            return Err(TransportError::RuntimeChanged);
-        }
-        if state.backend != self.approval.backend() {
-            return Err(TransportError::BindingMismatch);
-        }
-        let (uid, gid) = self.publisher.owner_identity();
-        if state.owner.uid != uid || state.owner.gid != gid {
-            return Err(TransportError::UnsafeStorage);
-        }
-        Ok(())
+        verified(self.approval, &self.runtime, &*self.publisher)
     }
 
     /// 完整原子发布一份新记录。
@@ -263,6 +237,45 @@ impl<'scope, B: ContainmentBackend> RunSession<'scope, B> {
     ) -> Result<()> {
         ticket.check(state, self.epoch, self.lease, self.mirror_epoch)
     }
+}
+
+/// 读取完整持久记录，并和当前审批、根、运行时、运行身份逐项核对。
+pub(super) fn verified(
+    approval: &dyn ApprovedTransport,
+    runtime: &PinnedRuntime,
+    publisher: &dyn StatePublisher,
+) -> Result<TransportState> {
+    approval.revalidate()?;
+    publisher.check()?;
+    let state = decode(&publisher.read()?)?;
+    matches_approval(&state, approval, runtime, publisher.owner_identity())?;
+    publisher.check()?;
+    approval.revalidate()?;
+    Ok(state)
+}
+
+fn matches_approval(
+    state: &TransportState,
+    approval: &dyn ApprovedTransport,
+    runtime: &PinnedRuntime,
+    (uid, gid): (u32, u32),
+) -> Result<()> {
+    if state.binding != approval.binding()? {
+        return Err(TransportError::BindingMismatch);
+    }
+    if state.roots != approval.roots() {
+        return Err(TransportError::RootsChanged);
+    }
+    if runtime_digest(&state.runtime) != runtime.digest() {
+        return Err(TransportError::RuntimeChanged);
+    }
+    if state.backend != approval.backend() {
+        return Err(TransportError::BindingMismatch);
+    }
+    if state.owner.uid != uid || state.owner.gid != gid {
+        return Err(TransportError::UnsafeStorage);
+    }
+    Ok(())
 }
 
 pub(crate) fn random(destination: &mut [u8]) -> Result<()> {

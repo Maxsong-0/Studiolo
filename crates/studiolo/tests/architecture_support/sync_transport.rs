@@ -72,6 +72,14 @@ pub(super) fn remainder(crate_name: &str, path: &Path, source: &str) -> String {
             return rest;
         }
     }
+    // 删除只许对着那一个登记过的临时文件名；换根、换名、换标志都拿不到豁免。
+    if rest.matches("unlinkat(").count()
+        != rest
+            .matches("unlinkat(&self.root,paths::STATE_PUBLISH_TEMP,AtFlags::empty())")
+            .count()
+    {
+        return format!("fs::unexpected_unlink {rest}");
+    }
     for exact in [
         "fs::{File,TryLockError},",
         "userustix::fs::{AtFlags,unlinkat};",
@@ -151,6 +159,27 @@ mod tests {
             };
             assert!(violates(path, &source.replace(anchor, "unknown")));
         }
+    }
+
+    #[test]
+    fn the_publisher_only_deletes_its_own_registered_temporary() {
+        let path = Path::new("crates/sync-transport/src/store/publish.rs");
+        let source = fs::read_to_string(workspace_root().join(path)).unwrap();
+        assert!(source_violations(CRATE, path, &source).is_empty());
+        for extra in [
+            "unlinkat(&self.root, paths::STATE, AtFlags::empty())?;",
+            "unlinkat(&self.root, name, AtFlags::empty())?;",
+            "unlinkat(&other, paths::STATE_PUBLISH_TEMP, AtFlags::empty())?;",
+            "unlinkat(&self.root, paths::STATE_PUBLISH_TEMP, AtFlags::REMOVEDIR)?;",
+        ] {
+            assert!(violates(path, &format!("{source}\n{extra}")), "{extra}");
+        }
+        let swapped = source.replacen(
+            "unlinkat(&self.root, paths::STATE_PUBLISH_TEMP,",
+            "unlinkat(&self.root, paths::STATE,",
+            1,
+        );
+        assert!(source != swapped && violates(path, &swapped));
     }
 
     fn violates(path: &Path, source: &str) -> bool {

@@ -8,13 +8,13 @@ use std::{
     os::unix::fs::{MetadataExt, PermissionsExt},
 };
 
-struct Store {
+pub(super) struct Store {
     _temp: tempfile::TempDir,
-    approval: FakeApproval,
+    pub(super) approval: FakeApproval,
 }
 
 impl Store {
-    fn new() -> Self {
+    pub(super) fn new() -> Self {
         let temp = tempfile::tempdir_in(fs::canonicalize("/tmp").unwrap()).unwrap();
         let private = temp.path().join("transport");
         let mirror = temp.path().join("mirror-view");
@@ -40,7 +40,7 @@ impl Store {
         }
     }
 
-    fn bytes(&self) -> Vec<u8> {
+    pub(super) fn bytes(&self) -> Vec<u8> {
         fs::read(self.approval.roots().private_root.join("state.json")).unwrap()
     }
 }
@@ -102,7 +102,7 @@ impl StatePublisher for Faulted {
 }
 
 #[test]
-fn short_write_or_sync_failure_leaves_authoritative_state_old_and_residue_untrusted() {
+fn short_write_or_sync_failure_leaves_authoritative_state_old_and_no_residue() {
     for fault in [PublishFault::ShortWrite, PublishFault::SyncFailure] {
         let store = Store::new();
         let old = store.bytes();
@@ -111,10 +111,12 @@ fn short_write_or_sync_failure_leaves_authoritative_state_old_and_residue_untrus
             TransportRebind::open(&store.approval, Box::new(Faulted(publisher, fault))).unwrap();
         assert_eq!(pending.commit(), Err(TransportError::Unavailable));
         assert_eq!(store.bytes(), old);
-        assert_eq!(
-            TransportRebind::open_existing(&store.approval).err(),
-            Some(TransportError::TemporaryResidue)
-        );
+        // 报错的发布自己收走临时文件：不用人清，重开就能再做一次。
+        TransportRebind::open_existing(&store.approval)
+            .unwrap()
+            .commit()
+            .unwrap();
+        assert_eq!(state::decode(&store.bytes()).unwrap().generation, 2);
     }
 }
 

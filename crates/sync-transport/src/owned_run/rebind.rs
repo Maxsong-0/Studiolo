@@ -26,38 +26,49 @@ pub struct TransportRebind<'scope> {
     publisher: Box<dyn StatePublisher>,
     previous: TransportState,
     next: TransportState,
+    discarded_residue: bool,
 }
 
 impl<'scope> TransportRebind<'scope> {
     /// 在新审批路径打开既有槽；旧路径或旧软件不可读并不妨碍读取持久事实。
+    /// 上次发布留下的临时文件，全部拒绝项过了之后才丢。
     ///
     /// # 错误
     /// 活动或审计未闭合拒绝；范围、owner 或物理私有根/镜像变更拒绝。
     pub fn open_existing(approval: &'scope dyn ApprovedTransport) -> Result<Self> {
         approval.revalidate()?;
-        let publisher = FilePublisher::open_existing(&approval.roots().private_root)?;
-        Self::open(approval, Box::new(publisher))
+        let (publisher, residue) =
+            FilePublisher::open_with_residue(&approval.roots().private_root)?;
+        if let Some(residue) = &residue {
+            examine(approval, &publisher)?;
+            publisher.discard(residue)?;
+        }
+        let mut session = Self::open(approval, Box::new(publisher))?;
+        session.discarded_residue = residue.is_some();
+        Ok(session)
     }
 
     pub(crate) fn open(
         approval: &'scope dyn ApprovedTransport,
         publisher: Box<dyn StatePublisher>,
     ) -> Result<Self> {
-        approval.revalidate()?;
-        publisher.check()?;
-        let runtime = PinnedRuntime::from_approval(approval)?;
-        let previous = decode(&publisher.read()?)?;
-        let (uid, gid) = publisher.owner_identity();
-        let next = transition(&previous, approval, &runtime, OwnerIdentity { uid, gid })?;
+        let (runtime, previous, next) = examine(approval, &*publisher)?;
         let session = Self {
             approval,
             runtime,
             publisher,
             previous,
             next,
+            discarded_residue: false,
         };
         session.revalidate()?;
         Ok(session)
+    }
+
+    /// 这次打开时丢掉过上次发布留下的临时文件；维护命令据此留一行日志。
+    #[must_use]
+    pub fn discarded_residue(&self) -> bool {
+        self.discarded_residue
     }
 
     /// 供确认界面使用的固定元数据。
@@ -127,6 +138,20 @@ impl<'scope> TransportRebind<'scope> {
         self.approval.revalidate()?;
         Ok(review)
     }
+}
+
+/// 读取原状态并算出新状态；全部拒绝项都在这里，不写任何东西。
+fn examine(
+    approval: &dyn ApprovedTransport,
+    publisher: &dyn StatePublisher,
+) -> Result<(PinnedRuntime, TransportState, TransportState)> {
+    approval.revalidate()?;
+    publisher.check()?;
+    let runtime = PinnedRuntime::from_approval(approval)?;
+    let previous = decode(&publisher.read()?)?;
+    let (uid, gid) = publisher.owner_identity();
+    let next = transition(&previous, approval, &runtime, OwnerIdentity { uid, gid })?;
+    Ok((runtime, previous, next))
 }
 
 /// 纯状态变换：无 IO、无旧运行时要求；调用方以实际租约 owner 与新批准事实调用。

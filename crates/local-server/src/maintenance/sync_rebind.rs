@@ -23,6 +23,9 @@ pub(super) fn run(
     // 先完成传输槽全部拒绝项，再打开可能执行 SQLite checkpoint 的 Bridge。
     let transport =
         TransportRebind::open_existing(&approved).map_err(MaintenanceError::SyncRebind)?;
+    if transport.discarded_residue() {
+        eprintln!("studiolo_bridge component=transport_store outcome=publish_residue_discarded");
+    }
     // open 的普通启动语义允许首建锁/缺省状态；维护先拒绝缺失固定物，绝不据此初始化。
     for name in [PLANE_LOCK, PLANE_STATE_FILE] {
         if !std::fs::symlink_metadata(plane_root.join(name))

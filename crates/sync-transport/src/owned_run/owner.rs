@@ -6,7 +6,7 @@
 use super::approval::{ApprovedTransport, PinnedRuntime};
 use super::audit::RunAuditCandidate;
 use super::error::{Result, TransportError};
-use super::session::{RunSession, random};
+use super::session::{RunSession, random, verified};
 use super::state::{OwnerIdentity, SCHEMA_VERSION, TransportState, encode};
 use super::tickets::{OwnedRun, PreparedRun, QuiescentMirror};
 use super::types::{RunId, RunObservation, RunOperation, RunStatus, StopReason};
@@ -16,20 +16,27 @@ use crate::store::{FilePublisher, StatePublisher};
 /// 固定 link 的一次一运行 owner。
 pub struct SyncTransportOwner<'scope> {
     pub(super) inner: RunSession<'scope, LinuxContainment>,
+    discarded_residue: bool,
 }
 
 impl<'scope> SyncTransportOwner<'scope> {
-    /// 打开既有槽；不补目录、不补空 state、不认领残留。
+    /// 打开既有槽；不补目录、不补空 state。上次发布被强杀或断电留下的临时文件，
+    /// 权威记录解得开、又和当前审批逐项对得上之后才丢；对不上就拒绝，两个文件都不动。
     ///
     /// # 错误
     /// 受控隔离前置未满足时不会走到这里（`VerifiedLinuxBackend` 拿不到）；
-    /// 存储缺失返回 `MissingStore`，绑定不符返回 `BindingMismatch`。
+    /// 存储缺失返回 `MissingStore`，绑定不符返回 `BindingMismatch`，残留形态不合规返回 `UnsafeStorage`。
     pub fn open_existing(
         approval: &'scope dyn ApprovedTransport,
         runtime: PinnedRuntime,
         backend: VerifiedLinuxBackend,
     ) -> Result<Self> {
-        let publisher = FilePublisher::open_existing(approval.roots().private_root.as_path())?;
+        let (publisher, residue) =
+            FilePublisher::open_with_residue(approval.roots().private_root.as_path())?;
+        if let Some(residue) = &residue {
+            verified(approval, &runtime, &publisher)?;
+            publisher.discard(residue)?;
+        }
         Ok(Self {
             inner: RunSession::open(
                 approval,
@@ -37,7 +44,14 @@ impl<'scope> SyncTransportOwner<'scope> {
                 LinuxContainment::new(backend),
                 Box::new(publisher),
             )?,
+            discarded_residue: residue.is_some(),
         })
+    }
+
+    /// 这次打开时丢掉过上次发布留下的临时文件；装配方据此留一行日志。
+    #[must_use]
+    pub fn discarded_residue(&self) -> bool {
+        self.discarded_residue
     }
 
     /// 安全逻辑元数据。

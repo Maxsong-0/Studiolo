@@ -19,6 +19,9 @@ mod platform;
 mod rebind;
 mod rebind_store;
 mod recovery;
+// 真实 owner 只能由 Linux 上的探测应答打开，同 `client_lifecycle`。
+#[cfg(target_os = "linux")]
+mod residue;
 mod schema;
 mod store;
 mod support;

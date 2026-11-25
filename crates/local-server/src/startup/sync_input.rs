@@ -62,6 +62,13 @@ pub(super) fn assemble(
     let backend = verify_backend(approved).map_err(|_| StartupError::SyncPlane)?;
     let transport = SyncTransportOwner::open_existing(approved, runtime, backend)
         .map_err(|_| StartupError::SyncPlane)?;
+    if transport.discarded_residue() {
+        // 上一个进程在换状态的那一下没了（T-239）：丢之前权威记录已核过。只有固定分类，不带路径和内容。
+        let _ = writeln!(
+            std::io::stderr().lock(),
+            "studiolo_bridge component=transport_store outcome=publish_residue_discarded"
+        );
+    }
     let roots = approved.roots();
     let mut bridge = BridgeState::open_existing(
         &roots.plane_root().join(BRIDGE_DIR),
