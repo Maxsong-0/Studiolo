@@ -716,14 +716,19 @@ async fn bodies_that_never_finish_hold_no_slot_and_time_out() {
         let mut stream = tokio::net::TcpStream::connect(&address).await.unwrap();
         let head = format!(
             "PUT /connect/v1/sessions HTTP/1.1\r\nHost: {address}\r\nAuthorization: Bearer {}\r\n\
-             Content-Type: application/json\r\nContent-Length: 1000\r\nConnection: close\r\n\r\n{{\"seq\"",
+             Content-Type: application/json\r\nContent-Length: 1000\r\nConnection: close\r\n\
+             Expect: 100-continue\r\n\r\n",
             r.status
         );
         stream.write_all(head.as_bytes()).await.unwrap();
+        // 服务端开始读正文才会回这一行：到这里四份都确实在等正文了。
+        let mut going = [0; 25];
+        stream.read_exact(&mut going).await.unwrap();
+        assert_eq!(&going, b"HTTP/1.1 100 Continue\r\n\r\n");
+        stream.write_all(b"{\"seq\"").await.unwrap();
         stuck.push(stream);
     }
     // 四份半截正文都在等，别的请求照常进。
-    tokio::time::sleep(Duration::from_millis(300)).await;
     assert_eq!(r.get("/connect/v1/board", &r.board).await.status, 200);
     for mut stream in stuck {
         let mut reply = String::new();

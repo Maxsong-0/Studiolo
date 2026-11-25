@@ -76,8 +76,8 @@ export function presenceDeadline(presence: Presence, readAt: number): number {
 }
 
 /**
- * 到 `now` 还算数的那一份：满期的条目去掉；整份满期都没重读成就是 null（不知道，不是「没有会话」）。
- * 什么都没到期时原样返回同一个对象。
+ * 到 `now` 还算数的那一份：满期的条目去掉。整份满期都没重读成、或者原来有的全满期了，就是 null：
+ * 只知道手里的旧了，不知道现在有没有，不能说成「没有会话」。什么都没到期时原样返回同一个对象。
  */
 export function presenceAt(
   presence: Presence,
@@ -87,6 +87,7 @@ export function presenceAt(
   if (now >= readAt + presence.expiresInSecs * 1000) return null;
   const until = expiries(presence, readAt);
   const sessions = presence.sessions.filter((_, index) => now < until[index]);
+  if (sessions.length === 0 && presence.sessions.length > 0) return null;
   return sessions.length === presence.sessions.length
     ? presence
     : { ...presence, sessions };

@@ -28,14 +28,11 @@ use std::{
 };
 use studiolo_audit_ledger::{AuditError, AuditEvent, AuditEventId, AuditPhase, SanitizedPayload};
 use studiolo_policy::CapabilitySet;
-use tokio::sync::Semaphore;
 
 /// 一个项目的列表最多给这么多条没结束的。
 const MAX_ITEMS: usize = 200;
 /// 整份列表的正文上限；agent 侧读到 1 MiB 就放弃，这里先收住并标 `truncated`。
 const MAX_LIST_BYTES: usize = 700 * 1024;
-/// 连接器最多同时占这么多个黑板名额（共 4 个）：剩下的留给网页和 MCP，连接器再多也挤不掉。
-const MAX_CONNECTORS: usize = 2;
 
 /// 状态口连同它的钟：从这个进程开黑板算起。
 pub(super) struct PresenceDesk {
@@ -43,7 +40,6 @@ pub(super) struct PresenceDesk {
     /// 内存从几点起攒的；人侧重启后状态空着，读的人要分得清「没有」和「还没推来」。
     since: String,
     state: Mutex<Presence>,
-    connectors: Arc<Semaphore>,
 }
 impl PresenceDesk {
     pub(super) fn open(now: jiff::Timestamp) -> Self {
@@ -51,7 +47,6 @@ impl PresenceDesk {
             started: Instant::now(),
             since: now.to_string(),
             state: Mutex::new(Presence::default()),
-            connectors: Arc::new(Semaphore::new(MAX_CONNECTORS)),
         }
     }
     fn lock(&self) -> Result<MutexGuard<'_, Presence>, Refusal> {
@@ -452,7 +447,7 @@ pub(super) async fn command(
     let Ok(Json(call)) = call else {
         return Failure::Invalid.into_response();
     };
-    let Ok(slot) = plane.presence.connectors.clone().try_acquire_owned() else {
+    let Ok(slot) = plane.connectors.clone().try_acquire_owned() else {
         return busy();
     };
     let Ok(permit) = plane.permits.clone().try_acquire_owned() else {

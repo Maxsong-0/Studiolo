@@ -39,7 +39,7 @@ const MAX_BODY: usize = 64 * 1024;
 const BODY_WAIT: Duration = Duration::from_secs(10);
 /// 同时在途（含排队）的连接器请求数，再多就 429。
 const MAX_IN_FLIGHT: usize = 4;
-/// 其中同时交给权威服务的；人侧的黑板名额是和所有 AI 共用的，这里只许占一半。
+/// 其中同时交给权威服务的；人侧也只给连接器一半黑板名额（`board/mod.rs` 的 `MAX_CONNECTORS`），超了会被当成忙。
 const MAX_AT_AUTHORITY: usize = 2;
 /// 没认出类型的拒绝登记在这个空名字下。
 const ANONYMOUS: &str = "";
@@ -350,26 +350,13 @@ impl Connect {
         })
     }
 
-    /// 令牌这一刻仍是现行的，连同它的签发时刻。先读时刻、再核令牌：核过了，时刻就不会晚于它。
+    /// 令牌这一刻仍是现行的，连同它的签发时刻。
     fn credential(&self, caller: &Caller, entry: Entry) -> Result<String, Refusal> {
-        let issued_at = self
-            .app
+        self.app
             .store
-            .types()
+            .credential_issued_at(&caller.agent_type, &caller.digest)
             .map_err(|_| UNAVAILABLE)?
-            .into_iter()
-            .find_map(|(name, issued_at, _)| (name == caller.agent_type).then_some(issued_at))
-            .ok_or(UNAVAILABLE)?;
-        let current = self
-            .app
-            .store
-            .credential_is_current(&caller.agent_type, &caller.digest)
-            .map_err(|_| UNAVAILABLE)?;
-        if current {
-            Ok(issued_at)
-        } else {
-            Err(self.refuse(caller, entry, "credential_revoked"))
-        }
+            .ok_or_else(|| self.refuse(caller, entry, "credential_revoked"))
     }
 
     fn recheck(

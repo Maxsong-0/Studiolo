@@ -317,7 +317,7 @@ impl Presence {
             return Err(Refused::Stale);
         }
         let used = self.records.get(source).map_or(0, VecDeque::len);
-        let mut groups = BTreeMap::<(String, Vendor), usize>::new();
+        let mut groups: BTreeMap<(String, Vendor), usize> = BTreeMap::new();
         let mut kept = BTreeMap::new();
         let mut rejected = Vec::new();
         for (index, session) in snapshot.sessions.into_iter().enumerate() {

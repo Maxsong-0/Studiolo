@@ -113,7 +113,11 @@ export function usePresenceRead(): PresenceRead {
     const timer = setTimeout(
       // 定时器可能早到一点点：至少按到期那一刻算，否则没收成又不会再来。
       () => setState((held) => expire(held, Math.max(Date.now(), deadline))),
-      Math.max(0, deadline - Date.now()),
+      // 系统钟往回拨也不多等：最多等满一份的有效期。
+      Math.min(
+        Math.max(0, deadline - Date.now()),
+        state.presence.expiresInSecs * 1000,
+      ),
     );
     return () => clearTimeout(timer);
   }, [state]);

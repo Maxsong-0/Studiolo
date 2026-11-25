@@ -62,6 +62,8 @@ pub struct BoardPlane {
     storage: storage::Storage,
     isolated_roots: Vec<std::path::PathBuf>,
     permits: Arc<tokio::sync::Semaphore>,
+    /// 连接器入口另外排的名额：先取这个再取 `permits`，连接器再多也挤不掉网页和 MCP。
+    connectors: Arc<tokio::sync::Semaphore>,
     /// 跨项目汇总上次看到的审计末条偏移；只是倒扫起点的提示，每次使用前都重新核实。
     overview_tail: std::sync::atomic::AtomicU64,
     /// 黑板列表上次为「提交状态没核对出来」记日志的时刻（毫秒），用来限频。
@@ -175,7 +177,8 @@ impl BoardPlane {
             audit,
             storage,
             isolated_roots,
-            permits: Arc::new(tokio::sync::Semaphore::new(4)),
+            permits: Arc::new(tokio::sync::Semaphore::new(MAX_PERMITS)),
+            connectors: Arc::new(tokio::sync::Semaphore::new(MAX_CONNECTORS)),
             overview_tail: std::sync::atomic::AtomicU64::new(0),
             commit_check_noted_ms: std::sync::atomic::AtomicI64::new(i64::MIN),
             presence: connector::PresenceDesk::open(jiff::Timestamp::now()),
@@ -288,6 +291,10 @@ impl BoardPlane {
     }
 }
 
+/// 同时做的黑板请求数，网页、MCP、连接器合在一起算。
+const MAX_PERMITS: usize = 4;
+/// 其中连接器最多占一半。
+const MAX_CONNECTORS: usize = MAX_PERMITS / 2;
 /// 租约巡检的间隔。
 const MAINTENANCE_INTERVAL: std::time::Duration = std::time::Duration::from_secs(15);
 /// 巡检连续遇到冻结的封顶时长（BUG-050）。一次封存从开始到放开冻结都在封存预算之内，再加一分钟余量：

@@ -147,8 +147,14 @@ describe('本机会话一组', () => {
     const left = presenceAt(presence, NOW, NOW + 10_000);
     expect(left?.sessions).toEqual([presence.sessions[1]]);
     expect(presenceDeadline(left!, NOW)).toBe(NOW + 288_000);
-    expect(presenceAt(left!, NOW, NOW + 288_000)?.sessions).toEqual([]);
-    expect(presenceAt(left!, NOW, NOW + 300_000)).toBeNull();
+    // 原来有的全到期了：不知道现在有没有，不说成「没有」。
+    expect(presenceAt(left!, NOW, NOW + 287_999)).toBe(left);
+    expect(presenceAt(left!, NOW, NOW + 288_000)).toBeNull();
+    const together = ready([
+      { ...rows[0], age_secs: 25 },
+      { ...rows[1], age_secs: 25 },
+    ]);
+    expect(presenceAt(together, NOW, NOW + 275_000)).toBeNull();
     // 一条没有的也会过期：太久没重读，不能一直说「没有」。
     const empty = ready([]);
     expect(presenceDeadline(empty, NOW)).toBe(NOW + 300_000);
@@ -335,13 +341,35 @@ describe('本机会话的时限', () => {
     expect(states()).toEqual(['waiting', 'running']);
     await pass(1);
     expect(states()).toEqual(['running']);
-    await pass(270_000);
-    expect(states()).toEqual([]);
-    await pass(10_000);
+    await pass(269_999);
+    expect(states()).toEqual(['running']);
+    await pass(1);
     expect(result.current.state).toEqual({
       kind: 'error',
       message: '太久没读到新的状态。',
     });
+  });
+
+  it('系统钟往回拨：剩下的最多再留一份的有效期，不会留到拨回来的钟走到那一刻', async () => {
+    const rows = presenceBody(NOW).sessions;
+    reply = () =>
+      jsonResponse({
+        ...presenceBody(NOW),
+        sessions: [
+          { ...rows[0], age_secs: 280 },
+          { ...rows[1], age_secs: 10 },
+        ],
+      });
+    const result = await start();
+    vi.setSystemTime(NOW - 3_600_000);
+    // 第一条到期，定时器照拨过的钟重挂。
+    await pass(20_000);
+    expect(result.current.state).toMatchObject({
+      kind: 'ready',
+      presence: { sessions: [{ state: 'running' }] },
+    });
+    await pass(300_000);
+    expect(result.current.state.kind).toBe('error');
   });
 
   it('睡了很久醒来：重读一开始就先收掉过期的', async () => {

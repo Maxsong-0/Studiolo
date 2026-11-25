@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """check-connector.py 回归：本机回环上的假服务和内存传输，不联网，不使用真实凭据。"""
+import ast
 import contextlib
 from email.message import Message
 import importlib.util
@@ -237,6 +238,41 @@ class CheckConnector(unittest.TestCase):
         self.assertEqual((code, len(requests)), (1, 1))
         self.fails([urllib.error.URLError(PRIVATE)], "board", says="连不上")
         self.fails([], "board", says="token 文件", token="")
+
+
+def leaky(source):
+    """会走环境代理的写法，给出行号：裸 urlopen，或 build_opener 没带 ProxyHandler({})。"""
+    found = []
+    for node in ast.walk(ast.parse(source)):
+        if not isinstance(node, ast.Call):
+            continue
+        name = node.func.attr if isinstance(node.func, ast.Attribute) else getattr(node.func, "id", "")
+        closed = any(ast.unparse(arg) in ("urllib.request.ProxyHandler({})", "ProxyHandler({})") for arg in node.args)
+        if name == "urlopen" or (name == "build_opener" and not closed):
+            found.append(node.lineno)
+    return found
+
+
+class NoEnvironmentProxy(unittest.TestCase):
+    """带令牌的请求经环境代理出去就等于交出令牌（T-237 复查第 1、2 轮各漏过一处）：脚本里一律关掉。"""
+
+    def test_every_script_closes_the_environment_proxy(self):
+        root = Path(__file__).resolve().parent.parent
+        checked = [path for folder in ("scripts", "deploy") for path in sorted((root / folder).rglob("*.py"))
+                   if not path.name.startswith(("test-", "test_"))]
+        self.assertGreater(len(checked), 50, "没找到脚本")
+        found = [f"{path.relative_to(root)}:{line}" for path in checked
+                 for line in leaky(path.read_text(encoding="utf-8"))]
+        self.assertEqual(found, [], "改成 build_opener(urllib.request.ProxyHandler({}), …).open(…)")
+
+    def test_both_sides_of_the_rule(self):
+        for source in ("urllib.request.urlopen(url)", "urlopen(url)", "urllib.request.build_opener()",
+                       "build_opener(NoRedirect())", "urllib.request.build_opener(urllib.request.ProxyHandler())",
+                       "urllib.request.build_opener(urllib.request.ProxyHandler(proxies))"):
+            self.assertEqual(leaky(source), [1], source)
+        for source in ("urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect()).open(url)",
+                       "build_opener(ProxyHandler({}))", "opener.open(url)", "# urlopen(url)", "x = 'urlopen('"):
+            self.assertEqual(leaky(source), [], source)
 
 
 if __name__ == "__main__":

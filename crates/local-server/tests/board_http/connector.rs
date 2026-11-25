@@ -668,7 +668,7 @@ async fn connectors_never_take_more_than_half_of_the_board_permits() {
     c.f.stop().await;
 }
 
-/// 真的等一轮巡检（15 秒）：没人读的时候撤了权的也清掉，之后再放开不会带回来。
+/// 真的等一轮巡检（每 15 秒一轮，多留 10 秒给忙的机器）：没人读的时候撤了权的也清掉，之后再放开不会带回来。
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn the_periodic_check_drops_withdrawn_rows_even_when_nobody_reads() {
     let c = Connected::new(&[PROJECT], &[PROJECT]).await;
@@ -676,7 +676,7 @@ async fn the_periodic_check_drops_withdrawn_rows_even_when_nobody_reads() {
     retire(&c.f.policy, STATUS);
     let (stop, stopped) = tokio::sync::watch::channel(false);
     let checks = tokio::spawn(c.f.plane.clone().maintain_until(stopped));
-    tokio::time::sleep(Duration::from_secs(18)).await;
+    tokio::time::sleep(Duration::from_secs(25)).await;
     stop.send(true).unwrap();
     checks.await.unwrap().unwrap();
     publish(&c.f.policy, STATUS, &[], &[PROJECT]);
