@@ -1,7 +1,7 @@
 """从已激活发行派生候选的固定装配；不读取凭据、不操作服务或数据库。
 
 黑板接线沿用 r2，Bridge 接线与只读身份库参数沿用 r16，备份生产者接线（启动器参数、两个写根、停止超时）沿用 r17
-（r18～r27 原样沿用，已激活）；本版只换发行路径和人侧程序、网页，启动器（含 r27 对两个残留入口的核对）、单元（含 r24 放宽到 2G 的
+（r18～r27 原样沿用，已激活）；本版只换发行路径和发行目录里的人侧程序、maintain、sync-launcher、网页，启动器（含 r27 对两个残留入口的核对）、单元（含 r24 放宽到 2G 的
 内存上限）、写根、认证、配对和同步范围保持现场原值。
 变换只接受钉住的上一发行形状；额外差异由现场摘要和逐字变换核验拒绝。
 
@@ -56,7 +56,8 @@ r26→r27（T-231，BUG-058：启动器对 board.sock、http.sock 两个残留�
 数据库与状态的版本号不变，激活失败可以退回 r26，已激活）；
 本版 r27→r28（T-237：连接器入口 `/internal/connector` 和驾驶舱「本机会话」读口；T-239：传输库发布残留核过权威记录自己丢、
 停在 `Prepared` 的运行收成没执行）。程序从 `af83f0e` 构建，不含 main 上更新的 T-235 写者记录打包（用户 2026-11-25 定）。
-换人侧程序、maintain 和网页，启动器和单元只换发行路径。数据库与状态的版本号不变，激活失败可以退回 r27。
+换发行目录里的人侧程序、maintain、sync-launcher 和网页（root 另装的 sync-launcher 照历次不换），启动器和单元只换发行路径。
+数据库与状态的版本号不变，激活失败可以退回 r27。
 """
 import shlex
 from pathlib import Path
@@ -236,6 +237,8 @@ def agent_unit(text):
 # 启动器对两个残留入口的核对（T-231、BUG-058，r27 换进去的，已激活）：上一任被强杀会留下 board.sock 和 http.sock，两个走同一处——
 # 不在就过；自己的、只有一个名字的 socket 放过去，由程序握着主库锁判死才接管（判不准程序自己拒绝）；别的节点、看不了的一律拒绝。
 # 启动器不删任何东西。备份入口（producer.sock）启动器一直不看，程序自己判。本版原样沿用，少了、多了、改了都不出候选。
+# 连着 preflight 里紧挨着它的上一行一起看：只数核对本身的话，挪出 preflight 也数得到。
+BEFORE_LEFTOVER_CHECKS = '    inspect_existing(WRITER + "/broker-binding.json", 0o600)\n'
 LEFTOVER_CHECKS = '''    for path in (BOARD_SOCKET, SOCKET):
         inspect_leftover(path)
 '''
@@ -277,8 +280,8 @@ def launcher(text):
     if (text.count(approval + ' "--backup-config", "' + BACKUP_CONFIG + '",') != 1
             or text.count('--backup-config') != 1):
         raise ValueError('backup wiring missing')
-    # 两个残留入口的核对恰好各一处、紧挨着 preflight，没有「见到就拒绝」的写法（BUG-058）。
-    if (text.count(LEFTOVER_CHECKS) != 1 or text.count(INSPECT_LEFTOVER + PREFLIGHT) != 1
+    # 两个残留入口的核对恰好各一处：调用在 preflight 里原来的位置，函数紧挨着 preflight；没有「见到就拒绝」的写法（BUG-058）。
+    if (text.count(BEFORE_LEFTOVER_CHECKS + LEFTOVER_CHECKS) != 1 or text.count(INSPECT_LEFTOVER + PREFLIGHT) != 1
             or text.count('inspect_leftover(') != 2 or 'exists(' in text):
         raise ValueError('leftover checks changed')
     text = replace_once(text, 'RELEASE = "' + OLD_RELEASE + '"',
