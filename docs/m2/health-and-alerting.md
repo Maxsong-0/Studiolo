@@ -184,6 +184,10 @@ fn deliver(&self, message: &AlertMessage) -> Result<DeliveryReceipt, TransportEr
 回执读不到或坏了按 A07 报。字段、写出时机与读法见 [sync-status-receipt](../contracts/sync-status-receipt.md)，
 投递与心跳见 `deploy/alerts/README.md`。健康页 JSON 和第六节判定不因此改变。
 
+**人侧自动重启告警（T-231）**：人侧被强杀后握着主库锁自己再起来，几秒就回，A02（连续两轮看到不在）多半看不到，反复崩溃也没声音。
+探针因此另看 systemd 记的自动重启次数：大于 0 且这一次起来不到 1 小时报 A09，warning、每小时最多一条，读不到按 A09 报。只看人侧单元，
+判法、优先级与代价见 `deploy/alerts/README.md`。健康页不因此改变。
+
 ## 6. 死人开关
 
 参数：`period_seconds`（约定回执周期）、`debounce_seconds`（去抖）、
@@ -245,6 +249,7 @@ sha256 校验和。
 |---|---|---|
 | 告警实际送达 | 发送端未配置，且本轮未装配真实 SMTP 客户端 | 主人给 SMTP 通道，经环境变量注入；再补真实 `deliver` 实现与实机送达验收 |
 | 同步停摆告警（A07／A08）的生产送达 | 人侧回执从 r20 起才写；F4 还没装到生产（T-224 进行中） | 169 上 r20 激活、回执每 5 分钟更新；F4 两台装好，iPhone 收到 A08 |
+| 人侧自动重启告警（A09）的生产送达 | 自己起回来的程序和启动器随人侧 r26 上线；F4 还没装到生产 | r26 激活、F4 两台装同一个含 A09 的包；空闲时段真强杀人侧一次，iPhone 收到 A09，一小时后恢复正常 |
 | 真实恢复点年龄的生产验收 | 代码已从人侧账本推出（T-216，§2.1 末段）；生产上备份生产者和 worker 还没启用，健康页显示「备份没有启用」 | worker 首次上传成功后按 `deploy/backup-worker/README.md` 验收第 4 步回读 |
 | 真实磁盘读数 | 需要持文件系统权限的 Broker 公开只读剩余容量查询（Sync 读数已由 Bridge 平面接线，T-132 P1） | Broker 接线 |
 | 健康页端到端鉴权验收 | 路由由组合根挂载，需整套装配 | root 接线后跑 local-server 整套契约 |
