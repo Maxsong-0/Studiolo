@@ -4,11 +4,89 @@ use crate::connector_entry::{
     other_agent_sources, presence_problems, source,
 };
 
+/// agent 那一侧插一句的地方：在取策略之前。
+const AGENT_AT: &str = "let Some(policy) = &self.app.policy else {";
+/// 插进去就越界的一句。
+const AGENT_INSERTS: [&str; 19] = [
+    // 拿供给副本、整个 `AppState`。
+    "let _ = &self.app.allow;",
+    "let whole = &self.app; let _ = &whole.allow;",
+    "let whole = self.app.clone(); let _ = &whole.allow;",
+    "let AppState { allow, .. } = &*self.app;",
+    // 拆开自己的字段拿走整个 `AppState`。
+    "let Connect { app: whole, .. } = self; let _ = &whole.allow;",
+    "let _ = elsewhere(&self.app, 1);",
+    // 从句柄上调名单外的方法、写全路径、带进别的文件。
+    "self.app.store.issue_type(1);",
+    "let store = &self.app.store;",
+    "let board = self.app.board.as_ref().ok_or(UNAVAILABLE)?; board.call(&json!({}));",
+    "let client = self.app.board.as_ref().ok_or(UNAVAILABLE)?; client.call(&json!({}));",
+    "let policy = self.app.policy.clone();",
+    "std::fs::read(a);",
+    "tokio::fs::read(a);",
+    "crate::freshness::now();",
+    "studiolo_supply::ReadOnlyVault::open(a);",
+    "audit::instance_revoked(a);",
+    "AppState::open(a);",
+    "include!(\"escape.rs\");",
+    "fn f(whole: &AppState) {}",
+];
+/// 人侧插一句的地方：在读完工作项之后。
+const HUMAN_AT: &str = "let mut lineages = Lineages::default();";
+const HUMAN_INSERTS: [&str; 29] = [
+    // 改工作项。
+    "let engine = self.engine.lock(); engine.board_cancel(1);",
+    // 从 `self`、`plane` 上调 `BoardPlane` 写工作项的现成方法，或换个名字带走再调。
+    "let _ = self.execute(request);",
+    "let whole = self;",
+    "elsewhere(self, 1);",
+    "elsewhere(&self);",
+    "elsewhere(self);",
+    "BoardPlane::execute(1);",
+    "let _ = Self::execute;",
+    "super::execute::run(1);",
+    "crate::writer::run(1);",
+    // 同一件事的别的写法：解引用、写全路径、放在别的参数位、起别名、从句柄上调写方法、带进别的文件。
+    "(*self).execute(request);",
+    "<Self>::execute(&*self, request);",
+    "elsewhere(&*self, 1);",
+    "elsewhere(1, self);",
+    "let (_, whole) = (0, self); whole.execute(request);",
+    "match self { whole => whole.execute(request) };",
+    "match self { whole if true => whole.execute(request), _ => {} };",
+    "let run = |_: u8, whole: &Self| whole.execute(request);",
+    "studiolo_audit_ledger::AuditLedger::append(&*self.audit, event);",
+    "let ledger = &self.audit;",
+    "let held = self.engine.clone();",
+    "self.identities.issue_type(1);",
+    "std::fs::write(a, b);",
+    "::std::fs::write(a, b);",
+    "tokio::fs::write(a, b);",
+    "include!(\"escape.rs\");",
+    "requests::run(1);",
+    // 另落一份不先登记的状态。
+    "let mut desk = self.presence.lock()?; desk.commit(a, b, c, d);",
+    "self.presence.lock()?.commit(a, b, c, d);",
+];
+
 /// 在真源码上改错一处；改不动就是用例过时了。
 fn changed(path: &str, before: &str, after: &str) -> String {
     let text = source(path);
     assert_eq!(text.matches(before).count(), 1, "{path}：{before}");
     text.replacen(before, after, 1)
+}
+
+#[test]
+fn every_line_that_leaves_the_boundary_is_caught() {
+    for line in AGENT_INSERTS {
+        let mut sources = AGENT.map(source);
+        sources[0] = changed(AGENT[0], AGENT_AT, &format!("{line}\n{AGENT_AT}"));
+        assert!(!agent_problems(&sources).is_empty(), "加上「{line}」没判红");
+    }
+    for line in HUMAN_INSERTS {
+        let human = changed(HUMAN, HUMAN_AT, &format!("{line}\n{HUMAN_AT}"));
+        assert!(!human_problems(&human).is_empty(), "加上「{line}」没判红");
+    }
 }
 
 #[test]
@@ -36,28 +114,8 @@ fn every_way_out_of_the_agent_boundary_is_caught() {
         ),
         (
             0,
-            "let Some(policy) = &self.app.policy else {",
-            "let _ = &self.app.allow;\n        let Some(policy) = &self.app.policy else {",
-        ),
-        (
-            0,
-            "let Some(policy) = &self.app.policy else {",
-            "let whole = &self.app; let _ = &whole.allow;\n        let Some(policy) = &self.app.policy else {",
-        ),
-        (
-            0,
-            "let Some(policy) = &self.app.policy else {",
-            "let whole = self.app.clone(); let _ = &whole.allow;\n        let Some(policy) = &self.app.policy else {",
-        ),
-        (
-            0,
             "use limits::Limits;",
             "use limits::Limits;\nuse super::server::grant;",
-        ),
-        (
-            0,
-            "let Some(policy) = &self.app.policy else {",
-            "let AppState { allow, .. } = &*self.app;\n        let Some(policy) = &self.app.policy else {",
         ),
         (
             0,
@@ -91,17 +149,6 @@ fn every_way_out_of_the_agent_boundary_is_caught() {
             "#[derive(Default)]\npub(super) struct Limits {",
             "mod escape;\n#[derive(Default)]\npub(super) struct Limits {",
         ),
-        // 拆开自己的字段拿走整个 `AppState`。
-        (
-            0,
-            "let Some(policy) = &self.app.policy else {",
-            "let Connect { app: whole, .. } = self; let _ = &whole.allow;\n        let Some(policy) = &self.app.policy else {",
-        ),
-        (
-            0,
-            "let Some(policy) = &self.app.policy else {",
-            "let _ = elsewhere(&self.app, 1);\n        let Some(policy) = &self.app.policy else {",
-        ),
         // 不先收完正文、不排名额、不取操作准入就裁。
         (
             0,
@@ -118,67 +165,6 @@ fn every_way_out_of_the_agent_boundary_is_caught() {
             "Entry::Sessions => match read(body).await {\n            Ok(body) => body,\n            Err(refusal) => return refusal.into_response(),\n        },\n    };",
             "Entry::Sessions => Bytes::new(),\n    };",
         ),
-        // 从句柄上调名单外的方法、写全路径、带进别的文件。
-        (
-            0,
-            "let Some(policy) = &self.app.policy else {",
-            "self.app.store.issue_type(1);\n        let Some(policy) = &self.app.policy else {",
-        ),
-        (
-            0,
-            "let Some(policy) = &self.app.policy else {",
-            "let store = &self.app.store;\n        let Some(policy) = &self.app.policy else {",
-        ),
-        (
-            0,
-            "let Some(policy) = &self.app.policy else {",
-            "let board = self.app.board.as_ref(); board.call(1);\n        let Some(policy) = &self.app.policy else {",
-        ),
-        (
-            0,
-            "let Some(policy) = &self.app.policy else {",
-            "let policy = self.app.policy.clone();\n        let Some(policy) = &self.app.policy else {",
-        ),
-        (
-            0,
-            "let Some(policy) = &self.app.policy else {",
-            "std::fs::read(a);\n        let Some(policy) = &self.app.policy else {",
-        ),
-        (
-            0,
-            "let Some(policy) = &self.app.policy else {",
-            "tokio::fs::read(a);\n        let Some(policy) = &self.app.policy else {",
-        ),
-        (
-            0,
-            "let Some(policy) = &self.app.policy else {",
-            "crate::freshness::now();\n        let Some(policy) = &self.app.policy else {",
-        ),
-        (
-            0,
-            "let Some(policy) = &self.app.policy else {",
-            "studiolo_supply::ReadOnlyVault::open(a);\n        let Some(policy) = &self.app.policy else {",
-        ),
-        (
-            0,
-            "let Some(policy) = &self.app.policy else {",
-            "audit::instance_revoked(a);\n        let Some(policy) = &self.app.policy else {",
-        ),
-        (
-            0,
-            "let Some(policy) = &self.app.policy else {",
-            "AppState::open(a);\n        let Some(policy) = &self.app.policy else {",
-        ),
-        (
-            0,
-            "let Some(policy) = &self.app.policy else {",
-            "include!(\"escape.rs\");\n        let Some(policy) = &self.app.policy else {",
-        ),
-        (
-            0,
-            "let Some(policy) = &self.app.policy else {",
-            "fn f(whole: &AppState) {}\n        let Some(policy) = &self.app.policy else {",
-        ),
         (
             0,
             "        client\n            .connect(&json!({",
@@ -188,6 +174,11 @@ fn every_way_out_of_the_agent_boundary_is_caught() {
             0,
             "        client\n            .connect(&json!({",
             "        client\n            .call(&json!({",
+        ),
+        (
+            0,
+            "ConnectorError::Unavailable => UNAVAILABLE,\n            })",
+            "ConnectorError::Unavailable => UNAVAILABLE,\n            })?;\n        client.call(1)",
         ),
         (
             0,
@@ -252,11 +243,6 @@ fn every_way_of_writing_more_on_the_human_side_is_caught() {
             "if !presence.denial_due(&call.agent_type, reason, now) {\n            return;\n        }",
             "",
         ),
-        // 改工作项。
-        (
-            "let mut lineages = Lineages::default();",
-            "let engine = self.engine.lock();\n            engine.board_cancel(1);\n        let mut lineages = Lineages::default();",
-        ),
         (
             ".board_detail(task_id, &grant.hash)",
             ".board_claim(task_id, &grant.hash)",
@@ -265,46 +251,9 @@ fn every_way_of_writing_more_on_the_human_side_is_caught() {
             ".board_list_all(&grant.hash)",
             ".board_reconcile(&grant.hash)",
         ),
-        // 从 `self`、`plane` 上调 `BoardPlane` 写工作项的现成方法，或换个名字带走再调。
-        (
-            "let mut lineages = Lineages::default();",
-            "let _ = self.execute(request);\n        let mut lineages = Lineages::default();",
-        ),
-        (
-            "let mut lineages = Lineages::default();",
-            "let whole = self;\n        let mut lineages = Lineages::default();",
-        ),
-        (
-            "let mut lineages = Lineages::default();",
-            "elsewhere(self, 1);\n        let mut lineages = Lineages::default();",
-        ),
-        (
-            "let mut lineages = Lineages::default();",
-            "elsewhere(&self);\n        let mut lineages = Lineages::default();",
-        ),
-        (
-            "let mut lineages = Lineages::default();",
-            "elsewhere(self);\n        let mut lineages = Lineages::default();",
-        ),
         (
             "        plane.connect(call)\n",
             "        elsewhere(plane)\n",
-        ),
-        (
-            "let mut lineages = Lineages::default();",
-            "BoardPlane::execute(1);\n        let mut lineages = Lineages::default();",
-        ),
-        (
-            "let mut lineages = Lineages::default();",
-            "let _ = Self::execute;\n        let mut lineages = Lineages::default();",
-        ),
-        (
-            "let mut lineages = Lineages::default();",
-            "super::execute::run(1);\n        let mut lineages = Lineages::default();",
-        ),
-        (
-            "let mut lineages = Lineages::default();",
-            "crate::writer::run(1);\n        let mut lineages = Lineages::default();",
         ),
         (
             "        plane.connect(call)\n",
@@ -321,75 +270,6 @@ fn every_way_of_writing_more_on_the_human_side_is_caught() {
         (
             "fn board_roster(set: &CapabilitySet)",
             "mod escape;\nfn board_roster(set: &CapabilitySet)",
-        ),
-        // 同一件事的别的写法：解引用、写全路径、放在别的参数位、起别名、从句柄上调写方法、带进别的文件。
-        (
-            "let mut lineages = Lineages::default();",
-            "(*self).execute(request);\n        let mut lineages = Lineages::default();",
-        ),
-        (
-            "let mut lineages = Lineages::default();",
-            "<Self>::execute(&*self, request);\n        let mut lineages = Lineages::default();",
-        ),
-        (
-            "let mut lineages = Lineages::default();",
-            "elsewhere(&*self, 1);\n        let mut lineages = Lineages::default();",
-        ),
-        (
-            "let mut lineages = Lineages::default();",
-            "elsewhere(1, self);\n        let mut lineages = Lineages::default();",
-        ),
-        (
-            "let mut lineages = Lineages::default();",
-            "let (_, whole) = (0, self); whole.execute(request);\n        let mut lineages = Lineages::default();",
-        ),
-        (
-            "let mut lineages = Lineages::default();",
-            "match self { whole => whole.execute(request) };\n        let mut lineages = Lineages::default();",
-        ),
-        (
-            "let mut lineages = Lineages::default();",
-            "match self { whole if true => whole.execute(request), _ => {} };\n        let mut lineages = Lineages::default();",
-        ),
-        (
-            "let mut lineages = Lineages::default();",
-            "let run = |_: u8, whole: &Self| whole.execute(request);\n        let mut lineages = Lineages::default();",
-        ),
-        (
-            "let mut lineages = Lineages::default();",
-            "studiolo_audit_ledger::AuditLedger::append(&*self.audit, event);\n        let mut lineages = Lineages::default();",
-        ),
-        (
-            "let mut lineages = Lineages::default();",
-            "let ledger = &self.audit;\n        let mut lineages = Lineages::default();",
-        ),
-        (
-            "let mut lineages = Lineages::default();",
-            "let held = self.engine.clone();\n        let mut lineages = Lineages::default();",
-        ),
-        (
-            "let mut lineages = Lineages::default();",
-            "self.identities.issue_type(1);\n        let mut lineages = Lineages::default();",
-        ),
-        (
-            "let mut lineages = Lineages::default();",
-            "std::fs::write(a, b);\n        let mut lineages = Lineages::default();",
-        ),
-        (
-            "let mut lineages = Lineages::default();",
-            "::std::fs::write(a, b);\n        let mut lineages = Lineages::default();",
-        ),
-        (
-            "let mut lineages = Lineages::default();",
-            "tokio::fs::write(a, b);\n        let mut lineages = Lineages::default();",
-        ),
-        (
-            "let mut lineages = Lineages::default();",
-            "include!(\"escape.rs\");\n        let mut lineages = Lineages::default();",
-        ),
-        (
-            "let mut lineages = Lineages::default();",
-            "requests::run(1);\n        let mut lineages = Lineages::default();",
         ),
         (
             "        plane.connect(call)\n",

@@ -119,7 +119,7 @@ Studiolo**：对方用不上就别取，取了只在内存里留。
 - **撤了就没**：每次读先按此刻的授权收窄。令牌换了一枚、类型或实例被吊销、能力集撤下或收回一个项目，下一次读就没有那些条，不等 300 秒；
   授权读不出来就一条不给。15 秒一轮的巡检顺手清。
 - 前端封闭解码（多一个字段、取值不在枚举里整份作废），读失败只影响这一组、不留旧状态；一次读取最多等 8 秒，没有结果的读取也不留旧的：
-  每条按自己的岁数在本地到期，原来有的全到期了、或整份 300 秒没重读成，就换成「读不到」（不说成「没有」）；不计入「等你处理」的巨号和角标。
+  每条按自己的岁数在本地到期，原来有的全到期了、或整份 300 秒没重读成，就换成「上次读到的已经过期」（不说成「没有」，也不说成「读不到」：读取可能刚成功过），下一次重读给结论；不计入「等你处理」的巨号和角标。
 
 ## 6. 审计
 
@@ -153,6 +153,7 @@ agent 先按令牌、三级吊销、能力集判一遍，连同这枚令牌的�
 
 自动测试：`crates/policy/tests/connector_capability_contract.rs`、`crates/local-server/src/board/presence/tests.rs`（假时钟）、
 `crates/local-server/tests/board_http/connector.rs`、`crates/agent-server/tests/policy_cases/connector.rs`（假权威服务）、
-`web/src/test/{presenceModel.test.ts,cockpit/presence.test.tsx}`、`scripts/test-check-connector.py`。
+`web/src/test/{presenceModel.test.ts,cockpit/presence.test.tsx}`、`scripts/test-check-connector.py`；
+脚本不走环境代理由 `scripts/test-no-environment-proxy.py` 扫全部脚本。
 
 未覆盖：真的 Cloudflare 边缘、HomeLab 那一侧的连接器、生产规模的黑板列表耗时、两个真进程对接的长时间运行；这些在上线那一步核。

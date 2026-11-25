@@ -23,6 +23,8 @@ export type PresenceReadState =
   | { kind: 'loading' }
   | { kind: 'ready'; presence: Presence; readAt: number }
   | { kind: 'disabled' }
+  /** 读成过，但手里的都到期了、还没有新的：不是读取出错，也不知道现在有没有。 */
+  | { kind: 'expired' }
   | { kind: 'error'; message: string };
 
 export interface PresenceRead {
@@ -55,14 +57,12 @@ async function fetchInTime(signal: AbortSignal): Promise<Presence> {
   }
 }
 
-/** 到 `now` 为止还算数的状态：满期的去掉，整份满期没重读成就换成「读不到」。 */
+/** 到 `now` 为止还算数的状态：满期的去掉；原来有的全满期、或整份满期没重读成，就换成「过期了」。 */
 function expire(state: PresenceReadState, now: number): PresenceReadState {
   if (state.kind !== 'ready') return state;
   const presence = presenceAt(state.presence, state.readAt, now);
   if (presence === state.presence) return state;
-  return presence === null
-    ? { kind: 'error', message: '太久没读到新的状态。' }
-    : { ...state, presence };
+  return presence === null ? { kind: 'expired' } : { ...state, presence };
 }
 
 /**

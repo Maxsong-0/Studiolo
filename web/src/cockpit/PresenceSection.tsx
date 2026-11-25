@@ -91,7 +91,11 @@ export function PresenceSection({
             <p className="cockpit-note">正在读取本机会话…</p>
           ) : (
             <>
-              <p className="cockpit-note">本机会话读不到：{state.message}</p>
+              <p className="cockpit-note">
+                {state.kind === 'expired'
+                  ? '上次读到的已经过期，等下一次刷新。'
+                  : `本机会话读不到：${state.message}`}
+              </p>
               <Button
                 variant="text"
                 size="sm"

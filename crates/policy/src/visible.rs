@@ -3,8 +3,9 @@
 //! 网页那边按 Unicode 属性拒（`web/src/presenceModel.ts`），整组读不到；这里少收一个就会出现「服务端收了、
 //! 网页整组读不到」，所以网页用例逐码点读这张表核对「网页拒的，这里都拒」。
 //!
-//! 只管连接器。仓库里另外三份（`vault-broker` 同步路径、`host-config` 同步范围、`workbench` Rust 路径）各有自己的
-//! 口径和用例、范围都比这张窄，没有并过来：改这里不会改到那三处。
+//! 只管连接器。仓库里别处还有几份（`vault-broker` 与 `host-config` 的 `paths.rs`、`workbench` 的 `rust_paths.rs` 与
+//! `operations_parse.rs`、网页 `cargoDependencies.ts` 与 `rustSourceValidation.ts`）：口径、用例各是各的，和这张互有出入
+//! （比如前两份多到 U+13455，并且连控制字符一起拒），没有并过来。改这里不会改到那些，也不能直接拿这张换掉它们。
 
 /// 格式字符（`Cf`）、行段分隔符（`Zl`、`Zp`）、默认可忽略字符（`Default_Ignorable_Code_Point`）和盲文空格，
 /// 按码点升序的闭区间。

@@ -173,6 +173,13 @@ describe('本机会话一组', () => {
     expect(section()).toHaveTextContent('本机会话读不到：黑板暂不可用');
     await userEvent.click(screen.getByRole('button', { name: '重试本机会话' }));
     expect(retry).toHaveBeenCalledTimes(1);
+    // 手里的到期了不是读取出错，也不说成「没有」。
+    rerender(<PresenceSection state={{ kind: 'expired' }} onRetry={retry} />);
+    expect(section()).toHaveTextContent('上次读到的已经过期');
+    expect(section()).not.toHaveTextContent('读不到');
+    expect(section()).not.toHaveTextContent('现在没有');
+    await userEvent.click(screen.getByRole('button', { name: '重试本机会话' }));
+    expect(retry).toHaveBeenCalledTimes(2);
     rerender(<PresenceSection state={{ kind: 'disabled' }} onRetry={retry} />);
     expect(screen.queryByRole('region', { name: '本机会话' })).toBeNull();
   });
@@ -344,10 +351,7 @@ describe('本机会话的时限', () => {
     await pass(269_999);
     expect(states()).toEqual(['running']);
     await pass(1);
-    expect(result.current.state).toEqual({
-      kind: 'error',
-      message: '太久没读到新的状态。',
-    });
+    expect(result.current.state).toEqual({ kind: 'expired' });
   });
 
   it('系统钟往回拨：剩下的最多再留一份的有效期，不会留到拨回来的钟走到那一刻', async () => {
@@ -369,7 +373,28 @@ describe('本机会话的时限', () => {
       presence: { sessions: [{ state: 'running' }] },
     });
     await pass(300_000);
-    expect(result.current.state.kind).toBe('error');
+    expect(result.current.state.kind).toBe('expired');
+  });
+
+  it('读取正常、对方停推：到期那一刻换成「过期了」，下一次重读给结论', async () => {
+    const rows = presenceBody(NOW).sessions;
+    reply = () =>
+      jsonResponse({
+        ...presenceBody(NOW),
+        sessions: rows.map((row) => ({ ...row, age_secs: 290 })),
+      });
+    const result = await start();
+    expect(result.current.state.kind).toBe('ready');
+    await pass(10_000);
+    expect(result.current.state).toEqual({ kind: 'expired' });
+    reply = () => jsonResponse({ ...presenceBody(NOW), sessions: [] });
+    await act(async () => {
+      await result.current.revalidate(new AbortController().signal);
+    });
+    expect(result.current.state).toMatchObject({
+      kind: 'ready',
+      presence: { sessions: [] },
+    });
   });
 
   it('睡了很久醒来：重读一开始就先收掉过期的', async () => {
@@ -381,6 +406,6 @@ describe('本机会话的时限', () => {
     act(() => {
       void result.current.revalidate(new AbortController().signal);
     });
-    expect(result.current.state.kind).toBe('error');
+    expect(result.current.state.kind).toBe('expired');
   });
 });

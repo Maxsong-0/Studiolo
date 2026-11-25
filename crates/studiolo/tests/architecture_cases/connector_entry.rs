@@ -127,6 +127,8 @@ const HUMAN_REACH: Reach = Reach {
         // 参数两处、`impl` 一处；再多就可能拿整个来用。
         ("BoardPlane", 3),
         ("append", 1),
+        // 落下一份只有一处：先登记的那一处。
+        ("commit", 1),
         ("engine", 2),
     ],
 };
@@ -357,9 +359,14 @@ pub(crate) fn agent_problems(sources: &[String; 3]) -> Vec<String> {
     if whole != 0 {
         found.push(format!("另有 {whole} 处拿着整个 AppState"));
     }
-    // 权威服务的客户端只许走连接器那一个方法。
+    // 权威服务的客户端只取一次、只走连接器那一个方法：它另有 MCP 的黑板写入口。
+    found.extend(exactly(&all, "app.board", 1));
+    found.extend(exactly(
+        &all,
+        "let client = self.app.board.as_ref().ok_or(UNAVAILABLE)?; client.connect(&json!({",
+        1,
+    ));
     found.extend(exactly(&all, "client", 2));
-    found.extend(exactly(&all, "client.connect(&json!({", 1));
     // 策略库只许问授权。
     found.extend(exactly(
         &all,
@@ -383,11 +390,7 @@ pub(crate) fn human_problems(source: &str) -> Vec<String> {
             .iter()
             .filter_map(|anchor| exactly(&tokens, anchor, 1)),
     );
-    for (fragment, times) in [
-        ("self.record(", 2),
-        ("self.record_fresh(", 1),
-        ("presence.commit(", 1),
-    ] {
+    for (fragment, times) in [("self.record(", 2), ("self.record_fresh(", 1)] {
         found.extend(exactly(&tokens, fragment, times));
     }
     // 写成类型的只有两个返回值、建状态口的一处；多一个就可能是拿整个 `BoardPlane` 的参数。
