@@ -1,0 +1,264 @@
+{
+  "handshake": {
+    "connection": 7,
+    "digest": "c0c0ac42d1b32ea10e8c4647f1217caf896f0e551dc01f3c63915407abdd93c8",
+    "nonce": "abababababababababababababababababababababababababababababababab",
+    "preimage": "00000014626f74746567612d68616e647368616b652d763100000020abababababababababababababababababababababababababababababababab000000080000000000000007",
+    "signature": "12e6e3275d65c954b3b9665314d238101589140b9f12b137e63f3498078a03da920af296a879c86cdc19e72652fb1aee37e977af063a9ffb44392278e37e2d6a"
+  },
+  "intents": [
+    {
+      "digest": "c0bd902e94064e87c36f4dd2e44c3bc93798c0e00952ea233e72ee14ad26dadb",
+      "intent": {
+        "body": "{\"content_id\":\"00000000000000000000000000000001\",\"text\":\"给设置页加一个「清空缓存」按钮。\",\"to\":\"dispatcher\"}",
+        "created_at_ms": 1764000000001,
+        "device": "device-1",
+        "epoch": 0,
+        "kind": "say",
+        "number": 1,
+        "signature": "a5d1277bc574d611511e61107361a89ba84eaed45f9a0d66451d32a19656ea9bcda9e1fda44c7cf38adfbf0e37b8a476bb5710ec61205a309decd160238e4296"
+      },
+      "key": "daily",
+      "preimage": "00000011626f74746567612d696e74656e742d7631000000086465766963652d31000000080000000000000001000000080000019ab697e801000000080000000000000000000000037361790000007d7b22636f6e74656e745f6964223a223030303030303030303030303030303030303030303030303030303030303031222c2274657874223a22e7bb99e8aebee7bdaee9a1b5e58aa0e4b880e4b8aae3808ce6b885e7a9bae7bc93e5ad98e3808de68c89e992aee38082222c22746f223a2264697370617463686572227d"
+    },
+    {
+      "digest": "8463a5ac8cbcdfbac3ddcd7d616494197ae437e7bfa3f4fca577bb57e9788925",
+      "intent": {
+        "body": "{\"content_id\":\"00000000000000000000000000000002\",\"text\":\"按钮放在最下面。\",\"thread\":\"msg-1\",\"to\":\"coder-card-1\",\"wants_reply\":false}",
+        "created_at_ms": 1764000000002,
+        "device": "device-1",
+        "epoch": 0,
+        "kind": "say",
+        "number": 2,
+        "signature": "89509d86b61734b06a282c65f0b8288b92707085062584ee3dec5468ff9f9b4d93c5a9d709f807812a34e5ad7f2a6ba6fad658410931259404d453cc4bdbe76c"
+      },
+      "key": "daily",
+      "preimage": "00000011626f74746567612d696e74656e742d7631000000086465766963652d31000000080000000000000002000000080000019ab697e802000000080000000000000000000000037361790000008c7b22636f6e74656e745f6964223a223030303030303030303030303030303030303030303030303030303030303032222c2274657874223a22e68c89e992aee694bee59ca8e69c80e4b88be99da2e38082222c22746872656164223a226d73672d31222c22746f223a22636f6465722d636172642d31222c2277616e74735f7265706c79223a66616c73657d"
+    },
+    {
+      "digest": "9f8de1351b712dca4ee3b5cf9278b6307191910689c248a80b5eab7faffad259",
+      "intent": {
+        "body": "{\"content_id\":\"00000000000000000000000000000003\",\"files\":[{\"content\":\"只清 ~/Library/Caches 里的\\n\",\"name\":\"范围.txt\"}],\"message\":\"msg-3\",\"text\":\"清掉图片缓存就行。\"}",
+        "created_at_ms": 1764000000003,
+        "device": "device-1",
+        "epoch": 0,
+        "kind": "answer",
+        "number": 3,
+        "signature": "36159acf6afed9553fd63d20b71d42b2a02559fb076927867f6e859a47dd1db724dc8e29ad9b90df6dbb86bfa2c6a8ddfe1ae3e10198875fdd12feaf9c40154e"
+      },
+      "key": "daily",
+      "preimage": "00000011626f74746567612d696e74656e742d7631000000086465766963652d31000000080000000000000003000000080000019ab697e80300000008000000000000000000000006616e73776572000000b57b22636f6e74656e745f6964223a223030303030303030303030303030303030303030303030303030303030303033222c2266696c6573223a5b7b22636f6e74656e74223a22e58faae6b885207e2f4c6962726172792f43616368657320e9878ce79a845c6e222c226e616d65223a22e88c83e59bb42e747874227d5d2c226d657373616765223a226d73672d33222c2274657874223a22e6b885e68e89e59bbee78987e7bc93e5ad98e5b0b1e8a18ce38082227d"
+    },
+    {
+      "digest": "4de703abac185e7d1cb195d569363b9d9d427145bb9c2312bceb64e5c00e854b",
+      "intent": {
+        "body": "{\"ask\":\"ask-1\",\"content_id\":\"00000000000000000000000000000004\",\"text_sha256\":\"b71bcfa61b74bbee6de7fd4f2469ceed5f5bb86e9eaceda1db62bf2831463bce\"}",
+        "created_at_ms": 1764000000004,
+        "device": "device-1",
+        "epoch": 0,
+        "kind": "approve",
+        "number": 4,
+        "signature": "4a7cce0ce1bd119887836b7c8cbe6c727a7da2024423bb6c216574a43ba7ccd5b35478cd1e13ca41f8a207c5b1da077eee9da68d238a2454e6a3687fb5c21e13"
+      },
+      "key": "approval",
+      "preimage": "00000011626f74746567612d696e74656e742d7631000000086465766963652d31000000080000000000000004000000080000019ab697e80400000008000000000000000000000007617070726f7665000000907b2261736b223a2261736b2d31222c22636f6e74656e745f6964223a223030303030303030303030303030303030303030303030303030303030303034222c22746578745f736861323536223a2262373162636661363162373462626565366465376664346632343639636565643566356262383665396561636564613164623632626632383331343633626365227d"
+    },
+    {
+      "digest": "a38fbdb9070132d6294a29462f5f1f57110c5c29b22ca70fa22b1bb3438dcc97",
+      "intent": {
+        "body": "{\"ask\":\"ask-2\",\"content_id\":\"00000000000000000000000000000005\"}",
+        "created_at_ms": 1764000000005,
+        "device": "device-1",
+        "epoch": 0,
+        "kind": "decline",
+        "number": 5,
+        "signature": "5e464c13f7edd4d0a7d85d0952949ca5f9165ddad3250ffba1f1535444a5238baa15311fbb4888be31ef1a95e58481623237f200e7fada41ff0a2b729c93f293"
+      },
+      "key": "daily",
+      "preimage": "00000011626f74746567612d696e74656e742d7631000000086465766963652d31000000080000000000000005000000080000019ab697e805000000080000000000000000000000076465636c696e650000003f7b2261736b223a2261736b2d32222c22636f6e74656e745f6964223a223030303030303030303030303030303030303030303030303030303030303035227d"
+    },
+    {
+      "digest": "d361be797fa4b9c97215e9c821858c15586d142b18a2bbfdacf69321709c0396",
+      "intent": {
+        "body": "{\"content_id\":\"00000000000000000000000000000006\"}",
+        "created_at_ms": 1764000000006,
+        "device": "device-1",
+        "epoch": 0,
+        "kind": "heartbeat",
+        "number": 6,
+        "signature": "8300b0c782bfc23e83d6cb37f8b1b4034d614bd40a5ae45c5ca491ac25acfb24f1baccf03d502602490443e85fd5894bf7af858ff310154b27c17172d03b3684"
+      },
+      "key": "daily",
+      "preimage": "00000011626f74746567612d696e74656e742d7631000000086465766963652d31000000080000000000000006000000080000019ab697e80600000008000000000000000000000009686561727462656174000000317b22636f6e74656e745f6964223a223030303030303030303030303030303030303030303030303030303030303036227d"
+    }
+  ],
+  "keys": {
+    "approval": {
+      "private": "2222222222222222222222222222222222222222222222222222222222222222",
+      "public": "04d65a93977caa3d1b081852ff57a79e465f1660577304baead505dd3a48589cf350185e895372df6221ea3a137557e473fddb6755f05bd507c3c533fce9c91285"
+    },
+    "daily": {
+      "private": "1111111111111111111111111111111111111111111111111111111111111111",
+      "public": "040217e617f0b6443928278f96999e69a23a4f2c152bdf6d6cdf66e5b80282d4ed194a7debcb97712d2dda3ca85aa8765a56f45fc758599652f2897c65306e5794"
+    }
+  },
+  "note": "只给测试用的钥匙，私钥写在这里。签名每次都可以不一样：拿这里的 signature 验你的验签，拿 preimage 和 digest 验你的拼法。",
+  "refused_intents": [
+    {
+      "intent": {
+        "body": "{\"content_id\":\"00000000000000000000000000000001\",\"text\":\"给设置页加一个「清空缓存」按钮！\",\"to\":\"dispatcher\"}",
+        "created_at_ms": 1764000000001,
+        "device": "device-1",
+        "epoch": 0,
+        "kind": "say",
+        "number": 1,
+        "signature": "a5d1277bc574d611511e61107361a89ba84eaed45f9a0d66451d32a19656ea9bcda9e1fda44c7cf38adfbf0e37b8a476bb5710ec61205a309decd160238e4296"
+      },
+      "why": "内容改了一个字"
+    },
+    {
+      "intent": {
+        "body": "{\"content_id\":\"00000000000000000000000000000001\",\"text\":\"给设置页加一个「清空缓存」按钮。\",\"to\":\"dispatcher\"}",
+        "created_at_ms": 1764000000001,
+        "device": "device-2",
+        "epoch": 0,
+        "kind": "say",
+        "number": 1,
+        "signature": "a5d1277bc574d611511e61107361a89ba84eaed45f9a0d66451d32a19656ea9bcda9e1fda44c7cf38adfbf0e37b8a476bb5710ec61205a309decd160238e4296"
+      },
+      "why": "换了设备号"
+    },
+    {
+      "intent": {
+        "body": "{\"content_id\":\"00000000000000000000000000000001\",\"text\":\"给设置页加一个「清空缓存」按钮。\",\"to\":\"dispatcher\"}",
+        "created_at_ms": 1764000000001,
+        "device": "device-1",
+        "epoch": 0,
+        "kind": "say",
+        "number": 2,
+        "signature": "a5d1277bc574d611511e61107361a89ba84eaed45f9a0d66451d32a19656ea9bcda9e1fda44c7cf38adfbf0e37b8a476bb5710ec61205a309decd160238e4296"
+      },
+      "why": "换了序号"
+    },
+    {
+      "intent": {
+        "body": "{\"content_id\":\"00000000000000000000000000000001\",\"text\":\"给设置页加一个「清空缓存」按钮。\",\"to\":\"dispatcher\"}",
+        "created_at_ms": 1764000000002,
+        "device": "device-1",
+        "epoch": 0,
+        "kind": "say",
+        "number": 1,
+        "signature": "a5d1277bc574d611511e61107361a89ba84eaed45f9a0d66451d32a19656ea9bcda9e1fda44c7cf38adfbf0e37b8a476bb5710ec61205a309decd160238e4296"
+      },
+      "why": "换了创建时间"
+    },
+    {
+      "intent": {
+        "body": "{\"content_id\":\"00000000000000000000000000000001\",\"text\":\"给设置页加一个「清空缓存」按钮。\",\"to\":\"dispatcher\"}",
+        "created_at_ms": 1764000000001,
+        "device": "device-1",
+        "epoch": 0,
+        "kind": "answer",
+        "number": 1,
+        "signature": "a5d1277bc574d611511e61107361a89ba84eaed45f9a0d66451d32a19656ea9bcda9e1fda44c7cf38adfbf0e37b8a476bb5710ec61205a309decd160238e4296"
+      },
+      "why": "换了种类（钥匙一样）"
+    },
+    {
+      "intent": {
+        "body": "{\"content_id\":\"00000000000000000000000000000001\",\"text\":\"给设置页加一个「清空缓存」按钮。\",\"to\":\"dispatcher\"}",
+        "created_at_ms": 1764000000001,
+        "device": "device-1",
+        "epoch": 0,
+        "kind": "say",
+        "number": 1,
+        "signature": "a5d1277bc574d611511e61107361a89ba84eaed45f9a0d66451d32a19656ea9bcda9e1fda44c7cf38adfbf0e37b8a476bb5710ec61205a309decd160238e4290"
+      },
+      "why": "签名改了一位"
+    },
+    {
+      "intent": {
+        "body": "{\"content_id\":\"00000000000000000000000000000001\",\"text\":\"给设置页加一个「清空缓存」按钮。\",\"to\":\"dispatcher\"}",
+        "created_at_ms": 1764000000001,
+        "device": "device-1",
+        "epoch": 0,
+        "kind": "say",
+        "number": 1,
+        "signature": "A5D1277BC574D611511E61107361A89BA84EAED45F9A0D66451D32A19656EA9BCDA9E1FDA44C7CF38ADFBF0E37B8A476BB5710EC61205A309DECD160238E4296"
+      },
+      "why": "签名写成大写"
+    },
+    {
+      "intent": {
+        "body": "{\"content_id\":\"00000000000000000000000000000001\",\"text\":\"给设置页加一个「清空缓存」按钮。\",\"to\":\"dispatcher\"}",
+        "created_at_ms": 1764000000001,
+        "device": "device-1",
+        "epoch": 0,
+        "kind": "say",
+        "number": 1,
+        "signature": "a5d1277bc574d611511e61107361a89ba84eaed45f9a0d66451d32a19656ea9bcda9e1fda44c7cf38adfbf0e37b8a476bb5710ec61205a309decd160238e42"
+      },
+      "why": "签名短了"
+    },
+    {
+      "intent": {
+        "body": "{\"content_id\":\"00000000000000000000000000000001\",\"text\":\"给设置页加一个「清空缓存」按钮。\",\"to\":\"dispatcher\"}",
+        "created_at_ms": 1764000000001,
+        "device": "device-1",
+        "epoch": 0,
+        "kind": "say",
+        "number": 1,
+        "signature": "00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+      },
+      "why": "签名全是零"
+    },
+    {
+      "intent": {
+        "body": "{\"content_id\":\"00000000000000000000000000000001\",\"text\":\"给设置页加一个「清空缓存」按钮。\",\"to\":\"dispatcher\"}",
+        "created_at_ms": 1764000000001,
+        "device": "device-1",
+        "epoch": 0,
+        "kind": "say",
+        "number": 1,
+        "signature": "47c9c8ba05311b412ffd8584876168418c2f8bfc2c68e1c712401c42fab6f23e41081de3d56f88b759b1569829b15137c13e6f06eabf6f7e76a53f494cd45972"
+      },
+      "why": "用批准钥匙签日常的意图"
+    },
+    {
+      "intent": {
+        "body": "{\"ask\":\"ask-1\",\"content_id\":\"00000000000000000000000000000004\",\"text_sha256\":\"b71bcfa61b74bbee6de7fd4f2469ceed5f5bb86e9eaceda1db62bf2831463bce\"}",
+        "created_at_ms": 1764000000004,
+        "device": "device-1",
+        "epoch": 0,
+        "kind": "approve",
+        "number": 4,
+        "signature": "c643934733e59d9da7e2395c60ebfcfb335a80f12df8361d28287a3e3355b46cdf249db289ba55dbbe816d37eccf134ec6f41b938774cfdd428da1979dac2a83"
+      },
+      "why": "用日常钥匙签批准"
+    }
+  ],
+  "register": {
+    "connection": 7,
+    "digest": "de66989922fc8c1e80fd916e4d5ec6339f9b868a05739cbf6389bfee3b0c8a20",
+    "nonce": "abababababababababababababababababababababababababababababababab",
+    "preimage": "00000013626f74746567612d72656769737465722d7631000000036d616300000014e4b9a6e688bfe79a84204d61632053747564696f00000041040217e617f0b6443928278f96999e69a23a4f2c152bdf6d6cdf66e5b80282d4ed194a7debcb97712d2dda3ca85aa8765a56f45fc758599652f2897c65306e57940000004104d65a93977caa3d1b081852ff57a79e465f1660577304baead505dd3a48589cf350185e895372df6221ea3a137557e473fddb6755f05bd507c3c533fce9c9128500000020abababababababababababababababababababababababababababababababab000000080000000000000007",
+    "registration": {
+      "approval_key": "04d65a93977caa3d1b081852ff57a79e465f1660577304baead505dd3a48589cf350185e895372df6221ea3a137557e473fddb6755f05bd507c3c533fce9c91285",
+      "approval_signature": "fc8cbb53ac57eaad0dd9367019408ed5da4159fb626bd7ab6f6c77663d6fcc27ab357418cf13940d0030f1797879bdce6b14f678b960ff8da970bfc209e7b3ed",
+      "daily_key": "040217e617f0b6443928278f96999e69a23a4f2c152bdf6d6cdf66e5b80282d4ed194a7debcb97712d2dda3ca85aa8765a56f45fc758599652f2897c65306e5794",
+      "daily_signature": "98233fc66d8c5a3f4bdbdb0a864fe0d35d9579f976bb4729287ec7475913e19730b1d13d431f97dd8eb220cdd503e589c145a0b429c3064a057048c5e35da587",
+      "kind": "mac",
+      "name": "书房的 Mac Studio"
+    }
+  },
+  "text_sha256": [
+    {
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "text": ""
+    },
+    {
+      "sha256": "b71bcfa61b74bbee6de7fd4f2469ceed5f5bb86e9eaceda1db62bf2831463bce",
+      "text": "把 card-1 合进分支 main？\n改动：2 个文件，+30 −4\n缺：没有审过（这张卡没有审查）"
+    }
+  ]
+}

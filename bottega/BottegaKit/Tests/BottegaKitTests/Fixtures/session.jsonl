@@ -1,0 +1,26 @@
+{"from":"lmas","line":{"connection":7,"lmas":"ui","nonce":"abababababababababababababababababababababababababababababababab","registered":false,"version":1}}
+{"from":"bottega","line":{"hello":"bottega-unregistered","version":1}}
+{"from":"lmas","line":{"register":{"now_ms":1764000000000}}}
+{"from":"bottega","line":{"do":"register","id":1,"registration":{"approval_key":"04d65a93977caa3d1b081852ff57a79e465f1660577304baead505dd3a48589cf350185e895372df6221ea3a137557e473fddb6755f05bd507c3c533fce9c91285","approval_signature":"fc8cbb53ac57eaad0dd9367019408ed5da4159fb626bd7ab6f6c77663d6fcc27ab357418cf13940d0030f1797879bdce6b14f678b960ff8da970bfc209e7b3ed","daily_key":"040217e617f0b6443928278f96999e69a23a4f2c152bdf6d6cdf66e5b80282d4ed194a7debcb97712d2dda3ca85aa8765a56f45fc758599652f2897c65306e5794","daily_signature":"98233fc66d8c5a3f4bdbdb0a864fe0d35d9579f976bb4729287ec7475913e19730b1d13d431f97dd8eb220cdd503e589c145a0b429c3064a057048c5e35da587","kind":"mac","name":"书房的 Mac Studio"}}}
+{"from":"lmas","line":{"id":1,"ok":{"device":"device-1"}}}
+{"from":"lmas","line":{"connection":8,"lmas":"ui","nonce":"abababababababababababababababababababababababababababababababab","registered":true,"version":1}}
+{"from":"bottega","line":{"device":"device-1","hello":"bottega","signature":"fdd796fe4fc904aa3912ad41520685dccc3b638742a9a6e246d7ebbd5b8513e89fcd451955e5cbafbc5134f038062a28d43418170cbaf5a1dcf9be125d48995a","version":1}}
+{"from":"lmas","line":{"welcome":{"device":"device-1","latest":3,"name":"书房的 Mac Studio","next_intent":1,"now_ms":1764000000000}}}
+{"from":"bottega","line":{"do":"overview","id":1}}
+{"from":"lmas","line":{"id":1,"ok":{"cards":{"merge_into":"main","repo":"/Users/max/app","reviewers":["claude"],"tests":true,"vendors":["codex","claude"]},"latest":3,"lmas":"0.0.0","now_ms":1764000000000,"oldest":1}}}
+{"from":"bottega","line":{"do":"events","from":1,"id":2,"limit":2}}
+{"from":"lmas","line":{"id":2,"ok":{"latest":3,"records":[{"events":[{"at_ms":1764000001000,"name":"dispatcher","role":"dispatcher","type":"session_registered"}],"seq":1,"through":1},{"events":[{"at_ms":1764000002000,"name":"planner","role":"planner","type":"session_registered"}],"seq":2,"through":2}],"through":2}}}
+{"from":"bottega","line":{"do":"follow","from":3,"id":3}}
+{"from":"lmas","line":{"id":3,"ok":{"latest":3}}}
+{"from":"lmas","line":{"record":{"events":[{"message":{"at_ms":1764000003000,"body":"给设置页加一个「清空缓存」按钮。","from":"planner","hop":0,"id":"msg-1","kind":"task","thread":"msg-1","to":"dispatcher"},"type":"message_queued"}],"seq":3,"through":3}}}
+{"from":"lmas","line":{"caught_up":{"through":3}}}
+{"from":"bottega","line":{"do":"intent","id":4,"intent":{"body":"{\"content_id\":\"00000000000000000000000000000001\",\"text\":\"给设置页加一个「清空缓存」按钮。\",\"to\":\"dispatcher\"}","created_at_ms":1764000000001,"device":"device-1","epoch":0,"kind":"say","number":1,"signature":"a5d1277bc574d611511e61107361a89ba84eaed45f9a0d66451d32a19656ea9bcda9e1fda44c7cf38adfbf0e37b8a476bb5710ec61205a309decd160238e4296"}}}
+{"from":"lmas","line":{"id":4,"ok":{"event":{"at_ms":1764000040001,"content_id":"00000000000000000000000000000001","device":"device-1","digest":"c0bd902e94064e87c36f4dd2e44c3bc93798c0e00952ea233e72ee14ad26dadb","number":1,"outcome":{"message":"msg-7","result":"done"},"type":"intent_echoed"},"seq":4}}}
+{"from":"lmas","line":{"record":{"events":[{"message":{"at_ms":1764000040001,"body":"给设置页加一个「清空缓存」按钮。","device":"device-1","from":"user","hop":0,"id":"msg-7","kind":"task","thread":"msg-7","to":"dispatcher"},"type":"message_queued"},{"at_ms":1764000040001,"content_id":"00000000000000000000000000000001","device":"device-1","digest":"c0bd902e94064e87c36f4dd2e44c3bc93798c0e00952ea233e72ee14ad26dadb","number":1,"outcome":{"message":"msg-7","result":"done"},"type":"intent_echoed"}],"seq":4,"through":5}}}
+{"from":"bottega","line":{"do":"seen","id":5,"through":5}}
+{"from":"lmas","line":{"id":5,"ok":{"through":5}}}
+{"from":"bottega","line":{"do":"ping","id":6}}
+{"from":"lmas","line":{"id":6,"ok":{"now_ms":1764000000000}}}
+{"from":"bottega","line":{"do":"intent","id":7,"intent":{"body":"{\"ask\":\"ask-1\",\"content_id\":\"00000000000000000000000000000004\",\"text_sha256\":\"b71bcfa61b74bbee6de7fd4f2469ceed5f5bb86e9eaceda1db62bf2831463bce\"}","created_at_ms":1764000000004,"device":"device-1","epoch":0,"kind":"approve","number":4,"signature":"4a7cce0ce1bd119887836b7c8cbe6c727a7da2024423bb6c216574a43ba7ccd5b35478cd1e13ca41f8a207c5b1da077eee9da68d238a2454e6a3687fb5c21e13"}}}
+{"from":"lmas","line":{"error":{"code":"gap","next":2,"text":"序号跳了，该用第 2 号"},"id":7}}
+{"from":"lmas","line":{"error":{"code":"stopping","text":"LMAS 正在停"}}}
