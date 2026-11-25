@@ -234,9 +234,10 @@ final class WorkshopModel {
         Task { await client.register(name: name) }
     }
 
-    /// Back to registering, with new keys: LMAS does not know this Mac any more, or its keys no longer sign.
+    /// Back to registering, with new keys: LMAS does not know this Mac any more, or its keys no longer sign. Signs
+    /// nothing and sends nothing, so it passes no gate (the confirmation's own buttons could not); registering does.
     func forgetDevice() {
-        guard let client, isFromTheUser() else { return }
+        guard let client else { return }
         Task {
             do { try await client.forgetDevice() } catch { notice = Why(code: "disk", text: error.localizedDescription) }
         }
@@ -317,7 +318,7 @@ final class WorkshopModel {
         if let firstAsk { askBeingRead = OpenAsk(id: firstAsk) }
     }
 
-    /// `shown` is the ask as it is on screen: that is what gets signed, not whatever it has become since.
+    /// `shown` is the ask as it was when it came on screen: that is what gets signed, not what it has become since.
     func approve(_ shown: Ask) {
         guard let client, isLive, let ask = state.asks[shown.id], ask.answer == nil else { return }
         guard ask.text == shown.text else {

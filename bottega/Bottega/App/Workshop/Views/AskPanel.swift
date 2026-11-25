@@ -34,13 +34,27 @@ struct AskPanel: View {
     let ask: Ask
     /// ⌘Return approves. Only where all of the text has been on screen.
     var hasShortcut = false
+    /// The text as it was when it came on screen. A number can come to stand for another ask: when LMAS starts a new
+    /// log, or opens it again.
+    @State private var read: String?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             AskText(ask: ask).font(.body)
             if let claim { claim }
-            buttons
+            if ask.answer == nil, let read, read != ask.text {
+                // Where the buttons are not, so that a click meant for them does not land on this.
+                Button("This Has Changed, I Have Read It Again") { self.read = ask.text }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            } else {
+                buttons
+            }
         }
+        .onAppear { read = ask.text }
+    }
+
+    private func approve() {
+        if read == ask.text { model.approve(ask) }
     }
 
     /// What the agent says about its own work, kept apart from what LMAS found out for itself.
@@ -69,7 +83,7 @@ struct AskPanel: View {
                             Button("Decline") { model.decline(ask.id) }
                                 .buttonStyle(.glass)
                             Button {
-                                model.approve(ask)
+                                approve()
                             } label: {
                                 Label("Approve", systemImage: "touchid")
                             }
@@ -126,7 +140,7 @@ struct AskSheet: View {
                     } action: { _, isAtEnd in
                         if isAtEnd { hasReachedEnd = true }
                     }
-                    // Another text to read.
+                    // Another text: its button, not the keys.
                     .onChange(of: ask.text) { hasReachedEnd = false }
                     .frame(maxHeight: 460)
                     .fixedSize(horizontal: false, vertical: true)

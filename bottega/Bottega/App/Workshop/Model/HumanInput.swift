@@ -5,13 +5,26 @@ import os
 
 /// The app, keeping track of the event it is handling. AppKit's own `currentEvent` outlives the handling of it.
 final class WorkshopApplication: NSApplication {
-    /// Events being sent right now; more than one deep while a control tracks the mouse.
-    fileprivate private(set) var sending = 0
+    /// The event being handled right now, as long as handling it has not started waiting for others (a menu, a
+    /// control following the mouse, a modal panel): from then on, what runs need not be its doing.
+    fileprivate private(set) var handling: NSEvent?
+    private var depth = 0
 
     override func sendEvent(_ event: NSEvent) {
-        sending += 1
-        defer { sending -= 1 }
+        depth += 1
+        handling = depth == 1 ? event : nil
+        defer {
+            depth -= 1
+            handling = nil
+        }
         super.sendEvent(event)
+    }
+
+    override func nextEvent(
+        matching mask: NSEvent.EventTypeMask, until expiration: Date?, inMode mode: RunLoop.Mode, dequeue: Bool
+    ) -> NSEvent? {
+        handling = nil
+        return super.nextEvent(matching: mask, until: expiration, inMode: mode, dequeue: dequeue)
     }
 }
 
@@ -37,9 +50,10 @@ enum HumanInput {
     }
 
     private static var current: InputGate.Input? {
-        guard let app = NSApp as? WorkshopApplication, app.sending > 0, let event = app.currentEvent else { return nil }
+        guard let app = NSApp as? WorkshopApplication, let event = app.handling else { return nil }
         let isPress = switch event.type {
-        case .leftMouseDown, .leftMouseUp: true
+        // A button acts when the mouse is let go.
+        case .leftMouseUp: true
         // A key held down repeats: that must not open an ask and approve it in one go.
         case .keyDown: !event.isARepeat
         default: false
