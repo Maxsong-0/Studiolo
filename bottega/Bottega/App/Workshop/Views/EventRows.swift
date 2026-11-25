@@ -153,7 +153,7 @@ struct TripFacts: View {
             }
             .font(.callout)
             HStack {
-                Text("This letter was not sent. Speaking on the line lets it go on: what you say does not count.")
+                Text("This letter was not sent. What you say on the line does not count towards its limits; what the agents answer does.")
                     .font(.caption).foregroundStyle(.secondary)
                 Spacer()
                 if let thread = trip.thread, model.page != .line(thread), model.state.threads[thread] != nil {

@@ -34,7 +34,7 @@ struct AskPanel: View {
     let ask: Ask
     /// ⌘Return approves. Only where all of the text has been on screen.
     var hasShortcut = false
-    /// The text as it was when it came on screen. A number can come to stand for another ask: when LMAS starts a new
+    /// The digest of the text as it was when it came on screen. A number can come to stand for another ask: when LMAS starts a new
     /// log, or opens it again.
     @State private var read: String?
 
@@ -42,19 +42,19 @@ struct AskPanel: View {
         VStack(alignment: .leading, spacing: 12) {
             AskText(ask: ask).font(.body)
             if let claim { claim }
-            if ask.answer == nil, let read, read != ask.text {
+            if ask.answer == nil, let read, read != ask.textDigest {
                 // Where the buttons are not, so that a click meant for them does not land on this.
-                Button("This Has Changed, I Have Read It Again") { self.read = ask.text }
+                Button("This Has Changed, I Have Read It Again") { self.read = ask.textDigest }
                     .frame(maxWidth: .infinity, alignment: .leading)
             } else {
                 buttons
             }
         }
-        .onAppear { read = ask.text }
+        .onAppear { read = ask.textDigest }
     }
 
     private func approve() {
-        if read == ask.text { model.approve(ask) }
+        if read == ask.textDigest { model.approve(ask) }
     }
 
     /// What the agent says about its own work, kept apart from what LMAS found out for itself.
@@ -141,7 +141,7 @@ struct AskSheet: View {
                         if isAtEnd { hasReachedEnd = true }
                     }
                     // Another text: its button, not the keys.
-                    .onChange(of: ask.text) { hasReachedEnd = false }
+                    .onChange(of: ask.textDigest) { hasReachedEnd = false }
                     .frame(maxHeight: 460)
                     .fixedSize(horizontal: false, vertical: true)
             }

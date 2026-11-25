@@ -330,13 +330,13 @@ final class WorkshopModel {
     /// `shown` is the ask as it was when it came on screen: that is what gets signed, not what it has become since.
     func approve(_ shown: Ask) {
         guard let client, isLive, let ask = state.asks[shown.id], ask.answer == nil else { return }
-        guard ask.text == shown.text else {
+        guard ask.textDigest == shown.textDigest else {
             notice = Why(code: "changed", text: "\(shown.id) has changed. Read it again.")
             return
         }
         guard isFromTheUser() else { return }
         let reason = "approve: " + UntrustedText.line(UntrustedText.revealing(shown.text).text, limit: 160)
-        submit(.approve(ask: shown.id, textDigest: Digest.sha256(shown.text)), to: client, touchIDReason: reason)
+        submit(.approve(ask: shown.id, textDigest: shown.textDigest), to: client, touchIDReason: reason)
     }
 
     func decline(_ id: String) {

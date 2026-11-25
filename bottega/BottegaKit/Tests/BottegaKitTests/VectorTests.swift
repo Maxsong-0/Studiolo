@@ -55,7 +55,7 @@ struct VectorTests {
 
     @Test func everyIntent() throws {
         let vectors = try Fixtures.vectors()
-        #expect(vectors.intents.count == 6)
+        #expect(vectors.intents.count == 7)
         for vector in vectors.intents {
             let intent = vector.intent
             #expect(Hex.encode(intent.preimage.bytes) == vector.preimage, "\(intent.kind) \(intent.number)")
@@ -104,6 +104,8 @@ struct VectorTests {
         #expect(
             try IntentDraft.approve(ask: "ask-1", textDigest: Digest.sha256(asks[1].text)).body(contentID: id(4)) == bodies[3])
         #expect(try IntentDraft.decline(ask: "ask-2").body(contentID: id(5)) == bodies[4])
+        let asked = try #require(try Fixtures.state().asks["ask-3"])
+        #expect(try IntentDraft.approve(ask: "ask-3", textDigest: asked.textDigest).body(contentID: id(7)) == bodies[6])
     }
 
     /// Signing with the vectors' private keys gives something the vectors' public keys take. The signature itself

@@ -64,8 +64,12 @@ struct Probe {
                     let to = parts(1)
                     let message = to[0] == "last" ? await ledger.lastQuestion : to[0]
                     try await client.submit(.answer(message: message, text: to[1], files: []))
+                case "approve-unread":
+                    let ask = rest == "last" ? await ledger.lastAsk.id : rest
+                    try await client.submit(.approve(ask: ask, textDigest: Digest.sha256("别的字")))
+                case "asks": await ledger.tellAsks()
                 case "approve", "decline":
-                    let ask = rest == "last" ? await ledger.lastAsk : (id: rest, text: "")
+                    let ask = rest == "last" ? await ledger.lastAsk : (id: rest, text: await ledger.text(of: rest))
                     try await client.submit(
                         words[0] == "approve"
                             ? .approve(ask: ask.id, textDigest: Digest.sha256(ask.text)) : .decline(ask: ask.id))
@@ -109,6 +113,16 @@ actor Ledger {
     var lastQuestion: String { state.messagesToUser.last { state.messages[$0]?.isOpenQuestion == true } ?? "" }
     var lastAsk: (id: String, text: String) {
         state.asks.values.filter { $0.answer == nil }.max { $0.id < $1.id }.map { ($0.id, $0.text) } ?? ("", "")
+    }
+
+    func text(of ask: String) -> String { state.asks[ask]?.text ?? "" }
+
+    func tellAsks() {
+        for ask in state.asks.values.sorted(by: { $0.at < $1.at }) {
+            let answer = ask.answer.map { "\($0.word) at \($0.via.at) \($0.via.device ?? $0.via.name ?? "")" } ?? "open"
+            print("ask: \(ask.id) \(ask.about.kind) by \(ask.by): \(answer): \(UntrustedText.line(ask.text, limit: 70))")
+        }
+        for merge in state.merges.values { print("merge: \(merge.id) \(merge.stage)") }
     }
 
     /// Everything the user said or was told.

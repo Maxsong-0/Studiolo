@@ -1,4 +1,5 @@
 // Bottega, modified from Droppy Code. Droppy Code by Jordy Spruit (Droppy), https://getdroppycode.app. GNU AGPL v3 with additional terms, see LICENSE.
+import CryptoKit
 import Foundation
 import Testing
 @testable import BottegaKit
@@ -7,7 +8,7 @@ import Testing
 struct RecordedStateTests {
     @Test func sessions() throws {
         let state = try Fixtures.state()
-        #expect(state.through == 50)
+        #expect(state.through == 55)
         #expect(state.sessions["dispatcher"]?.role == "dispatcher")
         #expect(state.sessions["dispatcher"]?.isOpen == true)
         #expect(state.sessions["coder-card-1"]?.closedAt == 1764000014000)
@@ -90,11 +91,17 @@ struct RecordedStateTests {
         #expect(state.asks["ask-1"]?.answer?.word == "approved")
         #expect(state.asks["ask-1"]?.text.contains("+30 −4") == true)
         #expect(state.asks["ask-2"]?.answer?.word == "withdrawn")
+        let byDevice = try #require(state.asks["ask-3"])
+        #expect(byDevice.onlyDevice)
+        #expect(byDevice.answer?.word == "approved")
+        #expect(byDevice.answer?.via == .init(at: "device", name: nil, device: "device-1"))
+        // What was signed is what this code shows.
+        #expect(try Fixtures.vectors().intents.last?.intent.body.contains(byDevice.textDigest) == true)
         let device = try #require(state.devices["device-1"])
         #expect(device.name == "书房的 Mac Studio")
-        #expect(device.intents == 4 && device.refusals == 1)
+        #expect(device.intents == 7 && device.refusals == 3)
         let vectors = try Fixtures.vectors()
-        for vector in vectors.intents.prefix(4) { #expect(state.echoes[vector.digest]?.number == vector.intent.number) }
+        for vector in vectors.intents { #expect(state.echoes[vector.digest]?.number == vector.intent.number) }
         // All three kinds have been answered but the limit, which LMAS never clears.
         #expect(state.waiting.map(\.what) == [.trip(RowID(seq: 42, index: 0))])
     }
@@ -281,6 +288,23 @@ struct StateTests {
         #expect(state.recipients.map(\.name) == ["boss", "coder"])
         #expect(state.recipients(on: try #require(state.threads["m"])).map(\.name) == ["coder"])
         #expect(state.kind(of: try #require(state.threads["m"])) == .direct)
+    }
+
+    /// LMAS compares bytes: nothing trimmed, no line ending or accent written another way.
+    @Test func anAskIsItsBytes() throws {
+        func digest(_ json: String) throws -> String {
+            let line = #"{"record":{"seq":1,"through":1,"events":[{"type":"ask_opened","ask":"ask-1","about":{"kind":"question"},"by":"x","text":"\#(json)","at_ms":1}]}}"#
+            guard case .record(let record) = try ServerLine.read(Data(line.utf8)) else { throw ServerLine.Malformed() }
+            var state = WorkshopState()
+            try state.apply(record)
+            return try #require(state.asks["ask-1"]).textDigest
+        }
+        func sha(_ bytes: [UInt8]) -> String { Hex.encode(SHA256.hash(data: bytes)) }
+        #expect(try digest(#" a\r\n\t "#) == sha([0x20, 0x61, 0x0d, 0x0a, 0x09, 0x20]))
+        #expect(try digest("é") == sha([0xc3, 0xa9]))
+        #expect(try digest("e\u{301}") == sha([0x65, 0xcc, 0x81]))
+        #expect(try digest(#"e\u0301"#) == sha([0x65, 0xcc, 0x81]))
+        #expect(try digest(#"\ufeffa\u0000b"#) == sha([0xef, 0xbb, 0xbf, 0x61, 0x00, 0x62]))
     }
 
     /// A letter to the user counts as delivered only once it has been on screen.

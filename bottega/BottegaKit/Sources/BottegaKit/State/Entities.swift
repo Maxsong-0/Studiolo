@@ -247,6 +247,10 @@ public struct Ask: Equatable, Sendable, Identifiable {
     public let at: UInt64
     public internal(set) var answer: Answer?
 
+    /// Of the bytes LMAS sent. Also how to tell whether two texts are the same: `==` on strings calls texts equal
+    /// that Unicode merely writes two ways, and LMAS does not.
+    public var textDigest: String { Digest.sha256(text) }
+
     public struct Answer: Equatable, Sendable {
         /// `approved`, `declined`, `withdrawn`.
         public let word: String
