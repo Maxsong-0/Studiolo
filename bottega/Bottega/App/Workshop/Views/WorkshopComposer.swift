@@ -6,7 +6,7 @@ import UniformTypeIdentifiers
 /// The floating box at the bottom of a conversation.
 ///
 /// On a line with a question to the user it answers that; choosing someone else interjects instead. Return makes a
-/// new line, ⌘Return sends; ⌘Return in an empty box puts up Touch ID for the ask that has waited longest.
+/// new line, ⌘Return sends; ⌘Return in an empty box opens the ask that has waited longest.
 struct WorkshopComposer: View {
     @Environment(WorkshopModel.self) private var model
     let key: DraftKey
@@ -137,7 +137,7 @@ struct SendDraftButton: View {
             .labelStyle(.titleAndIcon)
             .buttonStyle(.glassProminent)
             .keyboardShortcut(hasShortcut ? KeyboardShortcut(.return, modifiers: .command) : nil)
-            .disabled(model[draft: key].isBlank ? !model.canApproveFirst : !model.hasLink || model.target(of: key) == nil)
+            .disabled(model[draft: key].isBlank ? !model.hasAskToRead : !model.hasLink || model.target(of: key) == nil)
             .help("⌘Return")
     }
 

@@ -10,6 +10,8 @@ enum Launch {
         if CommandLine.arguments.contains("-classic") {
             BottegaApp.main()
         } else {
+            // Made first, so that it is the application object everything after this gets.
+            _ = WorkshopApplication.shared
             WorkshopApp.main()
         }
     }

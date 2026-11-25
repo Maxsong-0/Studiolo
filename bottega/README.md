@@ -39,8 +39,8 @@ scripts/bottega-local run
 
 - Settings 里选 LMAS 的运行目录（里面有 `ui.sock` 的那个）。第一次连要登记：在 Secure Enclave 里做两把钥匙（日常、批准），批准那把每次签都要 Touch ID；LMAS 那边再弹窗确认。每个 LMAS 各用一套钥匙。
 - 事件不落盘，每次连上从头取，断线只在内存里接着取。落盘的只有 Application Support 下 `lmas/`：钥匙的密文（Debug 版；发布版放钥匙串）、这台 Mac 在那个 LMAS 的设备号、还没发出去的话。
-- 凡是要签名的（说话、答、批、拒、登记）只认前台窗口里真键盘、真鼠标的操作，别的程序发来的按键、点击、辅助功能按压都不认，没有绕过的开关。
-- 键位：Return 换行，⌘Return 发送；框空时 ⌘Return 给等得最久的批准单弹 Touch ID。J、K 在时间线、泳道、卡板里移动。⌘1～⌘5 切固定的五页。
+- 凡是要签名的（说话、答、批、拒、登记）只认前台窗口里真键盘、真鼠标的操作，别的程序发来的按键、点击、辅助功能按压都不认，一次按压只算一次，没有绕过的开关。
+- 键位：Return 换行，⌘Return 发送；框空时 ⌘Return 打开等得最久的批准单，看完全文再按一次 ⌘Return 弹 Touch ID。J、K 在时间线、泳道、卡板里移动。⌘1～⌘5 切固定的五页。
 - 只看界面、不连 LMAS：Debug 版 File › Open Recording…，开 `samples/waiting.jsonl` 或 `BottegaKit/Tests/BottegaKitTests/Fixtures/events.jsonl`。只有 Debug 版认这几个环境变量：`BOTTEGA_RECORDING`（事件流文件）、`BOTTEGA_RUN_DIRECTORY`（这一次连哪个运行目录）、`BOTTEGA_PAGE`（`dispatcher`、`waiting`、`board`、`activity`、`devices`、`line:<号>`）、`BOTTEGA_DETAIL`（`card:<号>`、`message:`、`merge:`、`test:`）、`BOTTEGA_LANES=0`。
 - 测试数据是 LMAS `fixtures/bottega/` 的复制品，不手改：`bottega/scripts/sync_lmas_fixtures.sh` 比对，`--apply` 更新。
 

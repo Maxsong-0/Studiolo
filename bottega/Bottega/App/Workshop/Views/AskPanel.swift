@@ -32,6 +32,8 @@ struct AskText: View {
 struct AskPanel: View {
     @Environment(WorkshopModel.self) private var model
     let ask: Ask
+    /// ⌘Return approves. Only where all of the text has been on screen.
+    var hasShortcut = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -67,11 +69,12 @@ struct AskPanel: View {
                             Button("Decline") { model.decline(ask.id) }
                                 .buttonStyle(.glass)
                             Button {
-                                model.approve(ask.id)
+                                model.approve(ask)
                             } label: {
                                 Label("Approve", systemImage: "touchid")
                             }
                             .buttonStyle(.glassProminent)
+                            .keyboardShortcut(hasShortcut ? KeyboardShortcut(.return, modifiers: .command) : nil)
                         }
                     }
                     .disabled(!model.isLive)
@@ -107,6 +110,7 @@ struct AskSheet: View {
     @Environment(WorkshopModel.self) private var model
     @Environment(\.dismiss) private var dismiss
     let id: String
+    @State private var hasReachedEnd = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -116,7 +120,14 @@ struct AskSheet: View {
                     Spacer()
                     Text(verbatim: UntrustedText.line(id, limit: 24)).font(.caption.monospaced()).foregroundStyle(.secondary)
                 }
-                ScrollView { AskPanel(ask: ask) }
+                ScrollView { AskPanel(ask: ask, hasShortcut: hasReachedEnd) }
+                    .onScrollGeometryChange(for: Bool.self) { geometry in
+                        geometry.visibleRect.height > 0 && geometry.contentSize.height - geometry.visibleRect.maxY < 8
+                    } action: { _, isAtEnd in
+                        if isAtEnd { hasReachedEnd = true }
+                    }
+                    // Another text to read.
+                    .onChange(of: ask.text) { hasReachedEnd = false }
                     .frame(maxHeight: 460)
                     .fixedSize(horizontal: false, vertical: true)
             }

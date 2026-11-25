@@ -281,13 +281,13 @@ final class WorkshopModel {
 
     /// The one gate in front of everything that gets signed.
     private func isFromTheUser() -> Bool {
-        if HumanInput.isGenuine { return true }
+        if HumanInput.take() { return true }
         notice = Why(code: "synthetic", text: "That did not come from the keyboard or the mouse, so nothing was sent.")
         return false
     }
 
     func send(_ key: DraftKey) {
-        guard !self[draft: key].isBlank else { return approveFirst() }
+        guard !self[draft: key].isBlank else { return readFirstAsk() }
         guard let client, let intent = drafts.intent(for: key, in: state), isFromTheUser() else { return }
         do throws(IntentDraft.Problem) {
             try intent.check()
@@ -306,20 +306,27 @@ final class WorkshopModel {
         }
     }
 
-    var canApproveFirst: Bool { isLive && waiting.contains { if case .ask = $0.what { true } else { false } } }
-
-    /// ⌘Return in an empty composer: the ask that has waited longest. It only puts up the Touch ID prompt, which
-    /// says what is being approved.
-    private func approveFirst() {
-        for item in waiting {
-            if case .ask(let id) = item.what { return approve(id) }
-        }
+    private var firstAsk: String? {
+        waiting.lazy.compactMap { if case .ask(let id) = $0.what { id } else { nil } }.first
     }
 
-    func approve(_ id: String) {
-        guard let client, isLive, let ask = state.asks[id], ask.answer == nil, isFromTheUser() else { return }
-        let reason = "approve: " + UntrustedText.line(UntrustedText.revealing(ask.text).text, limit: 160)
-        submit(.approve(ask: id, textDigest: Digest.sha256(ask.text)), to: client, touchIDReason: reason)
+    var hasAskToRead: Bool { firstAsk != nil }
+
+    /// ⌘Return in an empty composer: up comes the ask that has waited longest, to be read; ⌘Return there approves it.
+    private func readFirstAsk() {
+        if let firstAsk { askBeingRead = OpenAsk(id: firstAsk) }
+    }
+
+    /// `shown` is the ask as it is on screen: that is what gets signed, not whatever it has become since.
+    func approve(_ shown: Ask) {
+        guard let client, isLive, let ask = state.asks[shown.id], ask.answer == nil else { return }
+        guard ask.text == shown.text else {
+            notice = Why(code: "changed", text: "\(shown.id) has changed. Read it again.")
+            return
+        }
+        guard isFromTheUser() else { return }
+        let reason = "approve: " + UntrustedText.line(UntrustedText.revealing(shown.text).text, limit: 160)
+        submit(.approve(ask: shown.id, textDigest: Digest.sha256(shown.text)), to: client, touchIDReason: reason)
     }
 
     func decline(_ id: String) {
