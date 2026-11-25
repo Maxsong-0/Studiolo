@@ -2,7 +2,9 @@
 
 use super::support::*;
 use crate::linux::{ContainmentGap, IdentityMatch};
+use crate::owned_run::checkpoint::snapshot;
 use crate::owned_run::*;
+use std::time::{Duration, Instant};
 
 /// 把一次运行推进到指定发布次数后中断，返回中断时的活动记录。
 fn cut(fixture: &Fixture, publishes_before_failure: u32) -> RunRecord {
@@ -355,8 +357,22 @@ fn a_run_left_prepared_is_closed_as_never_executed_and_the_next_run_can_start() 
             .prepare_once(status.next_sequence, RunOperation::RunOnce, 2)
             .expect("下一次运行照常能准备");
         acknowledge(&mut reopened);
-        reopened.start(&prepared).expect("下一次运行照常能启动");
+        let owned = reopened.start(&prepared).expect("下一次运行照常能启动");
         assert_eq!(reopened.backend.launches, 1);
+        // 真正跑完、审计补齐之后，静止票据和封存快照都照常。
+        reopened.backend.running = false;
+        reopened.backend.populated = false;
+        reopened.backend.exit = ExitObservation::Code(0);
+        reopened.wait(&owned).expect("可以回收");
+        acknowledge(&mut reopened);
+        reopened.quiescent().expect("静止票据照常");
+        let sealed =
+            snapshot(&reopened, Instant::now() + Duration::from_secs(10)).expect("封存快照照常");
+        assert!(sealed.active.is_none());
+        assert_eq!(
+            sealed.last_terminal.expect("闭合摘要").run_id,
+            prepared.run_id()
+        );
     }
 }
 

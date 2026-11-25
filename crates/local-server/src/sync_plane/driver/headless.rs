@@ -47,7 +47,7 @@ pub fn run(
         .map_err(|_| PlaneError::Unavailable)?;
     let transport = slot.as_mut().ok_or(PlaneError::Unavailable)?;
     let ledger: &dyn AuditLedger = plane.audit().as_ref();
-    settle_active(&mut OwnerSlot { transport, ledger })?;
+    settle_active(&mut OwnerSlot::new(transport, ledger))?;
     let status = transport.inspect().map_err(transport_error)?;
     let prepared = transport
         .prepare_once(status.next_sequence, operation, millis(now_unix))
@@ -152,9 +152,18 @@ pub trait RunSlot {
     fn cancel_unlaunched(&mut self, run: RunId) -> Result<RunPhase, PlaneError>;
 }
 
-struct OwnerSlot<'a, 'scope> {
+/// 真实运行槽：传输 owner 加权威账本。
+pub struct OwnerSlot<'a, 'scope> {
     transport: &'a mut SyncTransportOwner<'scope>,
     ledger: &'a dyn AuditLedger,
+}
+
+impl<'a, 'scope> OwnerSlot<'a, 'scope> {
+    /// 借用本轮已持有的 owner 与账本；自己不打开任何存储。
+    #[must_use]
+    pub fn new(transport: &'a mut SyncTransportOwner<'scope>, ledger: &'a dyn AuditLedger) -> Self {
+        Self { transport, ledger }
+    }
 }
 
 impl RunSlot for OwnerSlot<'_, '_> {
