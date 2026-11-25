@@ -16,7 +16,7 @@
 {"generated_at":"2026-11-13T12:00:00Z","outcome":"read","head_offset":1,"scanned":1,"next_before":null,"records":[{"offset":1,"recorded_at":"2026-11-13T11:00:00Z","agent_type":"claude","instance_id":"01K00000000000000000000001","action":"read_note","path":"项目/A/a.md","revision":"版本字符串","reason":null}]}
 ```
 
-外层6字段、记录8字段封闭。成功读取的`path`/`revision`必有、`reason`为空；拒绝的`path`/`revision`恒为空、`reason`必有，`action`为被拒动作。未认证主体保留null；不返回正文、凭据摘要或原始审计JSON。版本可能为内容哈希、策略`v<n>`或`-`，不误当成固定哈希。记录投影字符串长度有界，原始审计正文逐条验证，不累积整页大正文。
+外层6字段、记录8字段封闭。成功读取的`path`/`revision`必有、`reason`为空；拒绝的`path`/`revision`恒为空、`reason`必有，`action`为被拒动作。未认证主体保留null，同一入口同一原因每分钟最多登记一条（T-241），条数不等于请求次数；不返回正文、凭据摘要或原始审计JSON。版本可能为内容哈希、策略`v<n>`或`-`，不误当成固定哈希。记录投影字符串长度有界，原始审计正文逐条验证，不累积整页大正文。
 
 ## 能力与装配
 

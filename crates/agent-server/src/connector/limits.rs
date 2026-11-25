@@ -1,6 +1,6 @@
-//! 连接器的限频：纯逻辑，时刻由调用方传入。每个类型每个入口每分钟 12 次；同一（类型，原因）的拒绝每分钟只登记一条。
+//! 连接器的限频：纯逻辑，时刻由调用方传入。每个类型每个入口每分钟 12 次。
 //!
-//! 键只来自已认证的类型（没认出的共用一个空名字）和固定的入口名，条数有界。
+//! 键只来自已认证的类型和固定的入口名，条数有界。
 use std::{
     collections::{BTreeMap, VecDeque},
     time::{Duration, Instant},
@@ -12,7 +12,6 @@ const MINUTE: Duration = Duration::from_secs(60);
 #[derive(Default)]
 pub(super) struct Limits {
     calls: BTreeMap<(String, &'static str), VecDeque<Instant>>,
-    denials: BTreeMap<(String, &'static str), Instant>,
 }
 
 impl Limits {
@@ -44,23 +43,6 @@ impl Limits {
             }
         }
     }
-
-    /// 这条拒绝要不要登记。
-    pub(super) fn denial_due(
-        &mut self,
-        agent_type: &str,
-        reason: &'static str,
-        now: Instant,
-    ) -> bool {
-        self.denials
-            .retain(|_, time| now.saturating_duration_since(*time) < MINUTE);
-        let slot = (agent_type.to_owned(), reason);
-        if self.denials.contains_key(&slot) {
-            return false;
-        }
-        self.denials.insert(slot, now);
-        true
-    }
 }
 
 #[cfg(test)]
@@ -89,16 +71,5 @@ mod tests {
         );
         assert_eq!(limits.admit("a", "board", at(60)), Ok(()));
         assert_eq!(limits.admit("a", "board", at(60)), Err(1));
-    }
-
-    #[test]
-    fn the_same_denial_is_recorded_once_a_minute() {
-        let mut limits = Limits::default();
-        let start = Instant::now();
-        assert!(limits.denial_due("a", "x", start));
-        assert!(!limits.denial_due("a", "x", start + Duration::from_secs(59)));
-        assert!(limits.denial_due("a", "y", start + Duration::from_secs(59)));
-        assert!(limits.denial_due("b", "x", start + Duration::from_secs(59)));
-        assert!(limits.denial_due("a", "x", start + Duration::from_secs(60)));
     }
 }

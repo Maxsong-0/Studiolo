@@ -38,11 +38,11 @@ async fn authentication_is_required_for_every_route_and_rechecked_after_revocati
         .ledger()
         .query(&AuditFilter::default().with_action("agent.action_denied"))
         .unwrap();
-    assert_eq!(denied_events.len(), 17);
-    assert!(
-        denied_events
-            .iter()
-            .all(|record| record.event().payload().as_value()["reason"] == "unauthenticated")
+    // 17 次拒绝同一入口同一原因，一分钟内只登记一条（T-241）。
+    assert_eq!(denied_events.len(), 1);
+    assert_eq!(
+        denied_events[0].event().payload().as_value()["reason"],
+        "unauthenticated"
     );
 }
 

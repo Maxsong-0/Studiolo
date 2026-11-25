@@ -88,5 +88,6 @@ async fn an_unreadable_identity_store_answers_503_without_a_challenge_and_keeps_
                 .to_owned()
         })
         .collect::<Vec<_>>();
-    assert_eq!(reasons, ["identity_unavailable"; 3]);
+    // 三次拒绝同一入口同一原因，一分钟内只登记一条（T-241）。
+    assert_eq!(reasons, ["identity_unavailable"]);
 }

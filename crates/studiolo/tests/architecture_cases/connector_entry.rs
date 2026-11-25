@@ -18,10 +18,12 @@ use crate::support::{
 };
 use std::{fs, path::Path};
 
-pub(crate) const AGENT: [&str; 3] = [
+pub(crate) const AGENT: [&str; 4] = [
     "crates/agent-server/src/connector.rs",
     "crates/agent-server/src/connector/limits.rs",
     "crates/agent-server/src/connector/reply.rs",
+    // 拒绝登记的限频和认证门共用一份；也只许是纯逻辑。
+    "crates/agent-server/src/denials.rs",
 ];
 pub(crate) const HUMAN: &str = "crates/local-server/src/board/connector.rs";
 pub(crate) const PRESENCE: &str = "crates/local-server/src/board/presence.rs";
@@ -44,11 +46,11 @@ struct Reach {
     words: &'static [(&'static str, usize)],
 }
 
-const AGENT_REACH: [Reach; 3] = [
+const AGENT_REACH: [Reach; 4] = [
     Reach {
         uses: &[
             "use crate::{ auth::{self, AgentType, CredentialDigest, Unrecognized}, \
-             board_client::ConnectorError, http_text::strict_query, shutdown::SERVER_STOPPING, \
+             board_client::ConnectorError, denials::Denials, http_text::strict_query, shutdown::SERVER_STOPPING, \
              state::{AppState, now}, };",
             "use axum::{ Json, Router, body::{Body, Bytes, to_bytes}, extract::State, \
              http::{HeaderMap, HeaderValue, Method, Request, StatusCode, header, request::Parts}, \
@@ -92,6 +94,12 @@ const AGENT_REACH: [Reach; 3] = [
         ],
         paths: &["header", "serde_json::json"],
         macros: &["json"],
+        words: &[("mod", 0), ("AppState", 0)],
+    },
+    Reach {
+        uses: &["use std::{ collections::BTreeMap, time::{Duration, Instant}, };"],
+        paths: &[],
+        macros: &[],
         words: &[("mod", 0), ("AppState", 0)],
     },
 ];
@@ -342,8 +350,8 @@ fn reach(source: &str, reach: &Reach) -> (Vec<String>, Vec<String>) {
     (rest, found)
 }
 
-/// agent 入口的三个文件合起来看。
-pub(crate) fn agent_problems(sources: &[String; 3]) -> Vec<String> {
+/// agent 入口的三个文件和它借来的限频合起来看。
+pub(crate) fn agent_problems(sources: &[String; 4]) -> Vec<String> {
     let (mut all, mut found) = (Vec::new(), Vec::new());
     for (source, limits) in sources.iter().zip(&AGENT_REACH) {
         let (tokens, problems) = reach(source, limits);

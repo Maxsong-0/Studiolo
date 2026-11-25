@@ -1,6 +1,9 @@
 //! 服务共享状态：白名单只读根、当前代次、私有库、审计账本与降级窗口。
 
-use crate::index::{IndexRuntime, IndexStatus};
+use crate::{
+    denials::Denials,
+    index::{IndexRuntime, IndexStatus},
+};
 
 use std::sync::{Arc, Mutex, RwLock};
 
@@ -132,6 +135,8 @@ pub struct AppState {
     pub ledger: SqliteAuditLedger,
     /// 当前代次。
     pub current: RwLock<Arc<Generation>>,
+    /// 没认出类型的拒绝登记到哪了：谁都能触发，按入口和原因限频（`crate::auth`）。
+    pub(crate) unrecognized: Mutex<Denials>,
     /// 当前 outage（审计不可用时）。
     pub outage: Mutex<Option<Outage>>,
     /// 扫描预算。

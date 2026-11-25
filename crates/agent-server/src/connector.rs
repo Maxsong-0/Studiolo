@@ -8,6 +8,7 @@ mod reply;
 use crate::{
     auth::{self, AgentType, CredentialDigest, Unrecognized},
     board_client::ConnectorError,
+    denials::Denials,
     http_text::strict_query,
     shutdown::SERVER_STOPPING,
     state::{AppState, now},
@@ -47,6 +48,7 @@ const ANONYMOUS: &str = "";
 struct Connect {
     app: Arc<AppState>,
     limits: Mutex<Limits>,
+    denials: Mutex<Denials>,
     requests: Semaphore,
     authority: Semaphore,
     /// 本进程起来之后每个连接器类型登记的那一个实例。
@@ -64,6 +66,7 @@ pub(crate) fn router(app: Arc<AppState>) -> Router {
     let state = Arc::new(Connect {
         app,
         limits: Mutex::new(Limits::default()),
+        denials: Mutex::new(Denials::default()),
         requests: Semaphore::new(MAX_IN_FLIGHT),
         authority: Semaphore::new(MAX_AT_AUTHORITY),
         instances: Mutex::new(BTreeMap::new()),
@@ -129,8 +132,7 @@ struct Granted {
     issued_at: String,
 }
 
-/// 认证门：和别的入口同一套认法，只是 401、503 的登记也限频——这组路径在边缘不过人机质询，
-/// 逐条登记等于谁都能往账本里灌。
+/// 认证门：和别的入口同一套认法；401、503 的登记一样限频，只是算在这个入口自己名下。
 async fn gate(
     State(state): State<Arc<Connect>>,
     mut request: Request<Body>,
@@ -474,9 +476,9 @@ impl Connect {
     /// 拒绝登记：同一（类型，原因）每分钟一条；登记不了不改变拒绝的结论。
     fn note_denial(&self, slot: &str, actor: Actor<'_>, action: &str, reason: &'static str) {
         let due = self
-            .limits
+            .denials
             .lock()
-            .is_ok_and(|mut limits| limits.denial_due(slot, reason, Instant::now()));
+            .is_ok_and(|mut denials| denials.due(slot, reason, Instant::now()));
         if !due {
             return;
         }

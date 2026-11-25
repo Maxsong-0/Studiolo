@@ -1,5 +1,5 @@
 //! 真实 loopback 契约：raw JSON-RPC over Streamable HTTP（reqwest 0.12，不引入第二个 reqwest）。
-//! 覆盖：401、初始化路牌与硬预算、tools/list、read_note 正反、list_entries、search（含 100 条名额只数所请求项目）、吊销即刻生效、
+//! 覆盖：401、匿名拒绝限频登记、初始化路牌与硬预算、tools/list、read_note 正反、list_entries、search（含 100 条名额只数所请求项目）、吊销即刻生效、
 //! 审计先于返回与读取索引四维查询、审计不可用时的降级握手。
 
 use std::{
@@ -15,6 +15,7 @@ use tempfile::TempDir;
 // 机械拆分夹具与最长契约，保留原有顶层测试名。
 include!("mcp_contract_support/fixture.rs");
 include!("mcp_cases/read_only.rs");
+include!("mcp_cases/unrecognized.rs");
 
 #[tokio::test]
 async fn unauthenticated_requests_are_rejected_before_any_content_and_audited() {
@@ -33,7 +34,8 @@ async fn unauthenticated_requests_are_rejected_before_any_content_and_audited() 
         .ledger()
         .query(&AuditFilter::default().with_action("agent.action_denied"))
         .unwrap();
-    assert_eq!(denied.len(), 3);
+    // 三次拒绝同一入口同一原因，一分钟内只登记一条（T-241）。
+    assert_eq!(denied.len(), 1);
     assert_eq!(
         denied[0].event().payload().as_value()["reason"],
         "unauthenticated"

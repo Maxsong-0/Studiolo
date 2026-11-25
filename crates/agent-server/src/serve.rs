@@ -11,6 +11,7 @@ use studiolo_core::VaultPath;
 use studiolo_supply::{AgentStore, ScanLimits, SupplyRoots, replica::ReplicaRoot};
 
 use crate::{
+    denials::Denials,
     index::IndexRuntime,
     options::ServeOptions,
     refresh,
@@ -75,6 +76,7 @@ pub fn prepare(options: &ServeOptions) -> Result<Arc<AppState>, String> {
         board,
         ledger,
         current: RwLock::new(Arc::new(first)),
+        unrecognized: Mutex::new(Denials::default()),
         outage: Mutex::new(None),
         limits,
         index,

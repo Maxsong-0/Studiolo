@@ -201,6 +201,32 @@ fn every_way_out_of_the_agent_boundary_is_caught() {
             "use axum::{\n    Json,",
             "use axum::{\n    extract::State,\n    Json,",
         ),
+        // 共用的限频不再是纯逻辑，或者借它带进别的东西。
+        (
+            3,
+            "const MINUTE: Duration",
+            "mod escape;\nconst MINUTE: Duration",
+        ),
+        (
+            3,
+            "const MINUTE: Duration",
+            "include!(\"escape.rs\");\nconst MINUTE: Duration",
+        ),
+        (
+            3,
+            "const MINUTE: Duration",
+            "use crate::state::AppState;\nconst MINUTE: Duration",
+        ),
+        (
+            3,
+            "const MINUTE: Duration",
+            "type Clock = std::time::SystemTime;\nconst MINUTE: Duration",
+        ),
+        (
+            0,
+            "    denials::Denials,\n",
+            "    denials::{self, Denials},\n",
+        ),
         // 没认出的拒绝不限频。
         (
             0,

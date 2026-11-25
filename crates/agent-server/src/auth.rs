@@ -1,7 +1,10 @@
 //! 类型 token 门禁：无 / 错 / 吊销 token 一律 401，不进入任何内容计算；通过后把类型放进请求扩展。
 //! 身份库读不出来时令牌真假未知，回 503、不带 challenge（BUG-030），不能折成 401。
 
-use std::sync::Arc;
+use std::{
+    sync::{Arc, PoisonError},
+    time::Instant,
+};
 
 use axum::{
     body::Body,
@@ -81,7 +84,7 @@ pub async fn require_bearer(
             next.run(request).await
         }
         Err(refused) => {
-            deny(&state, &request, refused.reason());
+            note_unrecognized(&state, entrance(&request), refused, Instant::now());
             refused.into_response()
         }
     }
@@ -114,17 +117,38 @@ pub(crate) fn recognize(
     Ok((AgentType(agent_type), CredentialDigest(digest)))
 }
 
-/// 拒绝本身也进审计；账本不可用时进入降级窗口，但拒绝照常返回。
-fn deny(state: &AppState, request: &Request<Body>, reason: &str) {
-    if let Ok(event) = audit::action_denied(
-        Actor::anonymous(),
-        if request.uri().path() == "/mcp" {
-            "mcp.request"
-        } else {
-            "http.request"
-        },
-        reason,
-    ) {
+/// 登记在哪个入口名下；只有这两个，不带请求里的路径。
+fn entrance(request: &Request<Body>) -> &'static str {
+    if request.uri().path() == "/mcp" {
+        "mcp.request"
+    } else {
+        "http.request"
+    }
+}
+
+/// 没认出类型的拒绝也进审计，但谁都能触发：同一入口同一原因每分钟最多一条，不逐条写。
+/// 账本写不进也算用掉这一分钟，免得它坏着的时候还替每个匿名请求再试一次；拒绝照常返回。
+fn note_unrecognized(
+    state: &AppState,
+    entrance: &'static str,
+    refused: Unrecognized,
+    now: Instant,
+) {
+    let due = state
+        .unrecognized
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .due(entrance, refused.reason(), now);
+    if !due {
+        return;
+    }
+    if let Ok(event) = audit::action_denied(Actor::anonymous(), entrance, refused.reason()) {
         let _ = state.audit(event);
     }
 }
+
+// 共用的 MCP 夹具里有本模块用不到的方法。
+#[cfg(test)]
+#[allow(dead_code)]
+#[path = "../tests/auth_private/unrecognized.rs"]
+mod tests;
