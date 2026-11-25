@@ -4,7 +4,7 @@ import {
   serverDirection,
   type CapabilityComparison,
   type CapabilityRow,
-} from '../../policy/capabilityDiff';
+} from '../../policy/compareCapability';
 import { CAPABILITY_FIELDS } from '../../policy/capabilityLabels';
 
 const BASE = {

@@ -4,7 +4,7 @@
 import { act, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { Ago } from '../../live/Ago';
-import { agoLabel, agoValidFor } from '../../live/ago';
+import { agoLabel, agoValidFor } from '../../live/agoLabel';
 
 const SECOND = 1000;
 const MINUTE = 60 * SECOND;

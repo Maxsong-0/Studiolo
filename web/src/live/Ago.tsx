@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { agoLabel, agoValidFor } from './ago';
+import { agoLabel, agoValidFor } from './agoLabel';
 
 /** 到点后多等这一点再算：有的浏览器把时钟取整，卡着点算会原地空转几次。 */
 const SLACK_MS = 50;

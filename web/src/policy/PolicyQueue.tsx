@@ -5,7 +5,7 @@ import type { ListedDesired, PolicyStatus } from '../policyModel';
 import { KIND_LABEL, STATUS_LABEL, shortId } from '../policyModel';
 import { Button, Cell, CellHeader, GridFrame, StatusMark } from '../ui';
 import { CapabilityDiff } from './CapabilityDiff';
-import { compareCapability } from './capabilityDiff';
+import { compareCapability } from './compareCapability';
 import { DraftPanel } from './DraftPanel';
 import { displayTime, draftSubmitter } from './labels';
 import { PolicyFeedback } from './PolicyFeedback';

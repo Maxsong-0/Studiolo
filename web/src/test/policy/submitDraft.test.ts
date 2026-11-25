@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { compareCapability } from '../../policy/capabilityDiff';
+import { compareCapability } from '../../policy/compareCapability';
 import {
   EMPTY_SUBMIT_DRAFT,
   bodyTemplate,
