@@ -10,6 +10,7 @@ use super::{
 use crate::options::{BoardOptions, FactorOptions, Options};
 use std::{
     fs,
+    io::{Read as _, Write as _},
     os::unix::{
         fs::{FileTypeExt as _, MetadataExt as _, PermissionsExt as _},
         net::{UnixListener, UnixStream},
@@ -110,6 +111,24 @@ fn dead(path: &Path) {
     assert!(fs::symlink_metadata(path).unwrap().file_type().is_socket());
 }
 
+fn connects(path: &Path) -> bool {
+    UnixStream::connect(path).is_ok()
+}
+
+/// 发一个请求，读到回答的第一个字节；答什么不管，答了就是真的在服务。
+fn answers(path: &Path) -> bool {
+    let Ok(mut stream) = UnixStream::connect(path) else {
+        return false;
+    };
+    stream
+        .set_read_timeout(Some(Duration::from_secs(5)))
+        .unwrap();
+    stream
+        .write_all(b"GET / HTTP/1.1\r\nhost: localhost\r\nconnection: close\r\n\r\n")
+        .is_ok()
+        && stream.read_exact(&mut [0; 1]).is_ok()
+}
+
 struct OwnedChild(Child);
 
 impl OwnedChild {
@@ -127,11 +146,14 @@ impl OwnedChild {
         )
     }
 
-    /// 三个入口都连得上才算起来了；残留的死 socket 连不上，不会误判。
+    /// 三个入口都建好了才算起来了；残留的死 socket 连不上，不会误判。
+    /// 光连得上不够：入口先 bind 再把权限收成 0600（`unix_ingress/layout.rs` 的 `claim`），落在中间看到的是没收的权限。
+    /// HTTP 入口最后建，它答了请求，三个就都收完了。
     fn wait_listening(&mut self, f: &Fixture, log: &Path) {
         let limit = Instant::now() + WAIT;
-        for path in sockets(&f.root) {
-            while UnixStream::connect(&path).is_err() {
+        let up: [fn(&Path) -> bool; 3] = [connects, connects, answers];
+        for (path, up) in sockets(&f.root).iter().zip(up) {
+            while !up(path) {
                 let exited = self.0.try_wait().unwrap();
                 assert!(
                     exited.is_none() && Instant::now() < limit,
