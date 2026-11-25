@@ -93,6 +93,7 @@ python3 scripts/tests/test_runner_launch.py
 python3 -I -B deploy/backup-worker/provision/test_provision.py
 python3 scripts/test-check-connector.py
 python3 scripts/test-no-environment-proxy.py
+python3 -I -B deploy/agent/test_install_agent.py
 '''
 timeout_sec = 1800
 

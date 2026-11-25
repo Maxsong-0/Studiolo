@@ -123,6 +123,13 @@ agent 能改写自己的二进制，属加固倒退。
 `sudo cp <单元> ~/studiolo-agent.service.bak-<旧版>-<日期> && sudo sed -i "s#<旧发布名>#<新发布名>#g" <单元>`，
 再 `daemon-reload`、`restart`，核对 `active` 与 `NRestarts=0`，并看 journal 里旧进程的停服是否几秒内 `Deactivated successfully`（旧版早于 T-184 时见上文「边界与已核实环境」最后一条）。
 
+**换发布名用脚本**（T-237，2026-11-25 起）：上面第 3 步的冻结和这里的切换、重启、失败自动换回，都在
+`deploy/agent/t237-install-agent.sh` 里（169 上那份是 `~/t237-install-agent.sh`，一字不差）。它只认这一次发布：
+旧新发布名、换之前和之后的单元摘要、整包清单摘要、人侧发行名都钉在开头。下一次换 agent 改这份文件，不另抄一份：
+文件名、开头的发行值、`T237`／`t237` 标记，还有只有这次才成立的两条探测（旧 agent 在 `/connect/v1/board` 上回 404、
+新 agent 回 401）。改完先跑 `deploy/agent/test_install_agent.py --mutants`（替身用例和改错核对，只在 Linux 上跑，交测试箱；
+ci 套只跑用例）。替身测不到的：真的 sudo、systemd 和冻结后的属主（测试不是 root）。
+
 **同时改 `--allow` 时分两阶段**：先只换程序（白名单不动）验证新程序；再换白名单时，
 **必须让副本先变新、agent 最后重启一次**——运行中的 agent 遇到清单失配只拒绝内容，
 启动时失配会直接退出，几秒内连撞 systemd 启动限流而 `failed`（T-095 踩过）。
