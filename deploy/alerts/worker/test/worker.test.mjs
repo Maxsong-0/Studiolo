@@ -190,7 +190,7 @@ test('主路紧急参数、固定目的地与仅代号正文；可选 HTTPS 链�
   assert.equal(await deliver(env, 'A108', async (url, options) => { calls.push({ url, options }); return accepted(); }), 'pushover');
   assert.deepEqual(timeouts, [8000]); assert.equal(calls.length, 1);
   assert.equal(calls[0].url, 'https://api.pushover.net/1/messages.json');
-  assert.equal(calls[0].options.redirect, 'error'); assert.equal(calls[0].options.method, 'POST');
+  assert.equal(calls[0].options.redirect, 'manual'); assert.equal(calls[0].options.method, 'POST');
   assert.deepEqual(Object.fromEntries(new URLSearchParams(calls[0].options.body)), {
     token: 'test-push-token', user: 'test-user', message: 'Needs attention: code A108',
     priority: '2', retry: '60', expire: '3000', url: 'https://studiolo.example/',
@@ -226,7 +226,7 @@ for (const [name, fail] of failures) {
     assert.equal(await deliver(secrets(), 'A169', async (url, options) => {
       calls.push({ url, options }); return calls.length === 1 ? fail() : json({ code: 200 });
     }), 'bark');
-    assert.equal(calls[1].url, 'https://api.day.app/push'); assert.equal(calls[1].options.redirect, 'error');
+    assert.equal(calls[1].url, 'https://api.day.app/push'); assert.equal(calls[1].options.redirect, 'manual');
     assert.deepEqual(JSON.parse(calls[1].options.body), { device_key: 'test-device', body: 'Needs attention: code A169',
       level: 'critical', volume: 10, call: 1, isArchive: 0 });
     await assert.rejects(deliver(secrets(), 'A169', async () => fail()), { message: 'delivery_failed' });

@@ -49,8 +49,10 @@ async function responseJson(response, signal) {
 
 async function post(url, body, contentType, fetcher) {
   const signal = AbortSignal.timeout(TIMEOUT_MS);
+  // Workers 的 fetch 只认 follow 和 manual，写 error 会当场抛错、请求发不出去；
+  // manual 把 3xx 原样交回，由下面的 response.ok 拒掉，不会跟过去。
   const response = await fetcher(url, {
-    method: 'POST', redirect: 'error', signal,
+    method: 'POST', redirect: 'manual', signal,
     headers: { 'content-type': contentType }, body,
   });
   return responseJson(response, signal);
