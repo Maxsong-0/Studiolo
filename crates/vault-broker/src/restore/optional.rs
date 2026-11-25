@@ -42,6 +42,7 @@ pub(super) fn history(
             || state.operation.is_some()
             || state.file_operation.is_some()
             || state.batch.is_some()
+            || state.archive.is_some()
             || !empty(&history)?
             || !empty(&directory(data, "idempotency").map_err(RestoreError::Broker)?)?
         {

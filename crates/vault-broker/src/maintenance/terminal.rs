@@ -58,7 +58,7 @@ pub(super) fn derive(broker: &FsVaultBroker, slot: &mut Slot) -> Result<bool, Br
             )
         }
     };
-    let Some(replay) = mutation::replay::load(&broker.data, &key, slot.pair_id)? else {
+    let Some(replay) = mutation::replay::load(broker, &key, slot.pair_id)? else {
         if r.outcome.is_some() {
             return Err(BrokerError::CorruptWriterState);
         }

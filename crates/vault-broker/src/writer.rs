@@ -160,14 +160,20 @@ impl FsVaultBroker {
             history_pin: std::sync::Mutex::new(None),
             maintenance_pin: std::sync::Mutex::new(None),
             file_operation_pin: std::sync::Mutex::new(None),
+            archive: std::sync::Mutex::default(),
+            archive_dirty: AtomicBool::new(false),
             read_guard: std::sync::Mutex::new(()),
         };
         // 拿到租约之后、任何写入之前：原子写崩溃留下的临时文件挪进隔离区，出错不挡开库（见 `residue`）。
         crate::residue::sweep(&broker);
+        // 打包的旧记录先核好：下面的收尾要读它们。
+        crate::archive::open(&broker)?;
         crate::maintenance::blocked(&broker)?;
         crate::mutation::reopen(&broker)?;
         crate::maintenance::reopen(&broker)?;
         crate::batch::barrier::clear_if_idle(&broker)?;
+        // 上次打包或还原断在中间的，在这里收口；散件和段核不上就不打开。
+        crate::archive::settle(&broker)?;
         Ok(broker)
     }
 

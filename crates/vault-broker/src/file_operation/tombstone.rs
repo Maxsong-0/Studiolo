@@ -6,7 +6,7 @@ use super::{
 };
 use crate::{
     BrokerError, FsVaultBroker, MutationActor, Revision, VaultPath, blob::file::ContentProof,
-    writer::disk as codec,
+    records::WriterRecords, writer::disk as codec,
 };
 use serde::{Deserialize, Serialize};
 
@@ -182,6 +182,15 @@ pub(crate) fn protected(
             {
                 result.push(load(broker, tombstone_id)?.entry()?.revision);
             }
+        }
+    }
+    // 打了包的改名照样保护：它的目标路径留着目标 revision，源路径留着源 revision。
+    for rename in broker.archive()?.renames() {
+        if &rename.target == path {
+            result.extend(rename.target_revision);
+        }
+        if &rename.source == path {
+            result.extend(rename.source_revision);
         }
     }
     result.sort();

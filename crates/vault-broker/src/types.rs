@@ -260,6 +260,11 @@ pub(crate) fn sha256(bytes: &[u8]) -> String {
     hex(&Sha256::digest(bytes))
 }
 
+/// 原样 32 字节的摘要；内存索引里存它，不存十六进制。
+pub(crate) fn digest(bytes: &[u8]) -> [u8; 32] {
+    Sha256::digest(bytes).into()
+}
+
 pub(crate) fn hex(bytes: &[u8]) -> String {
     use std::fmt::Write as _;
     let mut output = String::with_capacity(bytes.len() * 2);

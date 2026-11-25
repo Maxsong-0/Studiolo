@@ -11,7 +11,7 @@ pub(crate) fn finish(broker: &FsVaultBroker, state: &mut State) -> Result<bool, 
     let Some(op) = state.operation.as_ref() else {
         return Ok(false);
     };
-    let Some(replay) = mutation::replay::load(&broker.data, &op.key_hash, state.pair_id)? else {
+    let Some(replay) = mutation::replay::load(broker, &op.key_hash, state.pair_id)? else {
         return Ok(false);
     };
     let mutation::replay::Replay::Current(terminal) = replay else {

@@ -37,7 +37,7 @@ impl FsVaultBroker {
         let fingerprint = Self::fingerprint(request)?;
         let target = Revision::compute(self.vault_uuid, &request.path, &request.content);
         let hash = sha256(request.idempotency_key.as_bytes());
-        if let Some(previous) = replay::load(&self.data, &hash, state.pair_id)? {
+        if let Some(previous) = replay::load(self, &hash, state.pair_id)? {
             let result = replay::matches(
                 previous,
                 &fingerprint,

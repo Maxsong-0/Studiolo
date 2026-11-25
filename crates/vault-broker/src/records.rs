@@ -3,10 +3,11 @@
 //! 逐条核回执、重放、文件操作和维护槽的读取函数只接它：同一套代码既核活的写者、也核副本，强度不分两份。
 //! 这里没有写入能力；写入函数仍只接 [`FsVaultBroker`]。
 use crate::{
-    BrokerError, FsVaultBroker, VaultUuid, file_operation, history, maintenance, writer::Identity,
+    BrokerError, FsVaultBroker, VaultUuid, archive::Archive, file_operation, history, maintenance,
+    writer::Identity,
 };
 use cap_std::fs::Dir;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 pub(crate) trait WriterRecords {
     /// 笔记库根。
@@ -22,6 +23,8 @@ pub(crate) trait WriterRecords {
     fn history_pin(&self) -> &Mutex<Option<history::store::Pin>>;
     fn maintenance_pin(&self) -> &Mutex<Option<maintenance::store::Pin>>;
     fn file_operation_pin(&self) -> &Mutex<Option<file_operation::binding::Pin>>;
+    /// 打包的旧记录；没打过包就是空的。每次读记录都是散件优先、没有再查它。
+    fn archive(&self) -> Result<Arc<Archive>, BrokerError>;
     /// 有一笔写入不知道落没落成。
     fn uncertain(&self) -> bool;
     /// 每次读到的已完成水位都交给来源：写者拒绝倒退，副本只认定格那一刻的值。
@@ -55,6 +58,12 @@ impl WriterRecords for FsVaultBroker {
     }
     fn file_operation_pin(&self) -> &Mutex<Option<file_operation::binding::Pin>> {
         &self.file_operation_pin
+    }
+    fn archive(&self) -> Result<Arc<Archive>, BrokerError> {
+        self.archive
+            .lock()
+            .map(|archive| Arc::clone(&archive))
+            .map_err(|_| BrokerError::CorruptWriterState)
     }
     fn uncertain(&self) -> bool {
         self.writer.uncertain()

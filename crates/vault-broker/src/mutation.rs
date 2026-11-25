@@ -40,6 +40,10 @@ pub(crate) fn load(records: &dyn WriterRecords) -> Result<State, BrokerError> {
         .ok_or(BrokerError::CorruptWriterState)?;
     let state: State = disk::decode(&bytes)?;
     state.validate(records.pair_id())?;
+    // 状态里的段头必须就是内存里核过的那条链，不是就有人在外面换过。
+    if records.archive()?.head() != state.archive.as_ref() {
+        return Err(BrokerError::CorruptWriterState);
+    }
     crate::file_operation::store::validate_state(records, &state)?;
     if let Some(op) = &state.operation
         && let Some(reference) = &op.recording
@@ -101,7 +105,7 @@ pub(crate) fn finish(broker: &FsVaultBroker, state: &mut State) -> Result<(), Br
         .operation
         .as_ref()
         .filter(|op| op.phase == Phase::Prepared)
-        && let Some(replay) = replay::load(&broker.data, &op.key_hash, state.pair_id)?
+        && let Some(replay) = replay::load(broker, &op.key_hash, state.pair_id)?
     {
         let replay::Replay::Current(terminal) = replay else {
             return Err(BrokerError::CorruptWriterState);
@@ -145,7 +149,7 @@ pub(crate) fn finish(broker: &FsVaultBroker, state: &mut State) -> Result<(), Br
             receipt: op.receipt(),
         },
     };
-    match replay::load(&broker.data, &op.key_hash, state.pair_id)? {
+    match replay::load(broker, &op.key_hash, state.pair_id)? {
         Some(replay::Replay::Current(existing)) => {
             if existing != terminal {
                 return Err(BrokerError::CorruptWriterState);
@@ -168,7 +172,7 @@ pub(crate) fn save_terminal(
 ) -> Result<(), BrokerError> {
     terminal.validate(broker.writer.binding.pair_id)?;
     crate::recorded::validate_terminal(broker, terminal)?;
-    if let Some(existing) = replay::load(&broker.data, key_hash, terminal.pair_id)? {
+    if let Some(existing) = replay::load(broker, key_hash, terminal.pair_id)? {
         match existing {
             replay::Replay::Current(existing) if existing == *terminal => {
                 return crate::content_audit::stage_outcome(broker, terminal);

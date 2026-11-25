@@ -5,6 +5,11 @@ use crate::{
     writer::{directory, disk},
 };
 
+/// 全部描述符（加上给回执留的空）最多这么多字节。
+pub(crate) const DESCRIPTOR_BYTES: usize = 32 * 1024 * 1024;
+/// 每条描述符给两份回执留的空。
+pub(crate) const ACK_BYTES: usize = 2048;
+
 pub(crate) fn reserve(broker: &FsVaultBroker, incoming: usize) -> Result<(), BrokerError> {
     let Some(dir) = crate::history::store::open(broker)? else {
         return Ok(());
@@ -57,7 +62,7 @@ pub(crate) fn reserve(broker: &FsVaultBroker, incoming: usize) -> Result<(), Bro
         }
     }
     if records >= disk::REPLAY_COUNT
-        || bytes.saturating_add((records + 1) * 2048) > 32 * 1024 * 1024
+        || bytes.saturating_add((records + 1) * ACK_BYTES) > DESCRIPTOR_BYTES
     {
         return Err(BrokerError::WriterLimitExceeded);
     }

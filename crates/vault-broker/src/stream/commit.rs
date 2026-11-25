@@ -25,7 +25,7 @@ pub(super) fn check(
     {
         return Err(BrokerError::CaptureChanged);
     }
-    if mutation::replay::load(&broker.data, &op.key_hash, state.pair_id)?.is_some() {
+    if mutation::replay::load(broker, &op.key_hash, state.pair_id)?.is_some() {
         return Err(BrokerError::CaptureChanged);
     }
     let envelope = crate::recorded::store::load(broker, &ticket.reference)?;

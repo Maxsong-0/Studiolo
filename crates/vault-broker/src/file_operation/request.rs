@@ -57,15 +57,22 @@ impl Request {
     }
 }
 pub(crate) fn load(source: &dyn WriterRecords, id: &str) -> Result<Option<Request>, BrokerError> {
-    let Some(bytes) = disk::read(source, Folder::Records, &format!("{id}.json"))? else {
-        return Ok(None);
-    };
-    let value: Request = codec::decode(&bytes)?;
+    disk::read(source, Folder::Records, &format!("{id}.json"))?
+        .map(|bytes| decode(source, id, &bytes))
+        .transpose()
+}
+/// 请求原字节 → 核过的请求。
+pub(crate) fn decode(
+    source: &dyn WriterRecords,
+    id: &str,
+    bytes: &[u8],
+) -> Result<Request, BrokerError> {
+    let value: Request = codec::decode(bytes)?;
     value.validate(source)?;
     if value.frozen.operation_id != id {
         return Err(BrokerError::CorruptWriterState);
     }
-    Ok(Some(value))
+    Ok(value)
 }
 pub(crate) fn ensure(broker: &FsVaultBroker, active: &Active) -> Result<Request, BrokerError> {
     let value = Request::from_active(active)?;

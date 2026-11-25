@@ -13,13 +13,13 @@ pub(crate) mod rename_target;
 pub(crate) mod rename_terminal;
 pub(crate) mod rename_validate;
 
-mod audit;
+pub(crate) mod audit;
 mod audit_model;
 pub(crate) mod binding;
 mod capacity;
 pub(crate) mod checkpoint;
 mod commit;
-mod disk;
+pub(crate) mod disk;
 mod evidence;
 pub(crate) mod finish;
 mod frozen;
@@ -42,7 +42,7 @@ pub(crate) mod terminal;
 mod tests;
 mod ticket;
 pub(crate) mod tombstone;
-mod usage;
+pub(crate) mod usage;
 
 use crate::{BrokerError, FsVaultBroker};
 pub use audit_model::*;
@@ -107,7 +107,7 @@ pub(crate) fn legacy_key(broker: &FsVaultBroker, key: &str) -> Result<(), Broker
         .is_some_and(|op| op.key_hash == key)
         || crate::recorded::store::load_id(broker, &crate::recorded::store::id(broker, key))?
             .is_some()
-        || crate::mutation::replay::load(&broker.data, key, state.pair_id)?.is_some()
+        || crate::mutation::replay::load(broker, key, state.pair_id)?.is_some()
     {
         return Err(BrokerError::IdempotencyConflict);
     }

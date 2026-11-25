@@ -18,7 +18,7 @@ impl FsVaultBroker {
         let fingerprint = Self::fingerprint(request)?;
         let target = Revision::compute(self.vault_uuid, &request.path, &request.content);
         let replay = mutation::replay::load(
-            &self.data,
+            self,
             &sha256(request.idempotency_key.as_bytes()),
             state.pair_id,
         )?;

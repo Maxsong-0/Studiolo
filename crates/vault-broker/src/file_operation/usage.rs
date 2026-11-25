@@ -7,6 +7,7 @@ use super::{
 use crate::{
     BrokerError, FsVaultBroker,
     blob::store as blobs,
+    records::WriterRecords,
     writer::{directory, disk as codec},
 };
 use cap_std::fs::{Dir, MetadataExt as _};
@@ -62,6 +63,18 @@ pub(crate) fn actual(broker: &FsVaultBroker) -> Result<(u64, usize), BrokerError
             );
         }
     }
+    // 打了包的改名照样占墓碑名额、照样保护两头的 revision、照样计它请求和回执的字节。
+    let archive = broker.archive()?;
+    for rename in archive.renames() {
+        candidates += 1;
+        for revision in [rename.source_revision, rename.target_revision]
+            .into_iter()
+            .flatten()
+        {
+            revisions.insert(revision.to_string());
+        }
+    }
+    retained = add(retained, archive.file_bytes())?;
     let roots = super::store::required(broker)?;
     retained = add(
         retained,

@@ -10,7 +10,7 @@ pub(crate) mod capacity;
 pub(crate) mod envelope;
 mod validation;
 pub use restore::RecordedRestore;
-pub(crate) use validation::{check_existing, validate_terminal};
+pub(crate) use validation::{bound, check_existing, validate_terminal};
 
 use crate::{BrokerError, Revision};
 use serde::{Deserialize, Serialize};
@@ -119,8 +119,7 @@ impl crate::FsVaultBroker {
         check_existing(self, request, Some(metadata))?;
         let hash = crate::sha256(request.idempotency_key.as_bytes());
         if store::load_id(self, &store::id(self, &hash))?.is_none()
-            && crate::mutation::replay::load(&self.data, &hash, self.writer.binding.pair_id)?
-                .is_some()
+            && crate::mutation::replay::load(self, &hash, self.writer.binding.pair_id)?.is_some()
         {
             return Err(BrokerError::IdempotencyConflict);
         }

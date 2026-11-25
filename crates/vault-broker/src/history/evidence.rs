@@ -57,9 +57,7 @@ pub(super) fn validate(
     } else {
         return Err(BrokerError::CorruptWriterState);
     }
-    if let Some(replay) =
-        mutation::replay::load(&broker.data, &envelope.key_hash, envelope.pair_id)?
-    {
+    if let Some(replay) = mutation::replay::load(broker, &envelope.key_hash, envelope.pair_id)? {
         let mutation::replay::Replay::Current(terminal) = replay else {
             return Err(BrokerError::CorruptWriterState);
         };

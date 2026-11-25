@@ -35,6 +35,10 @@ pub struct FsVaultBroker {
     pub(crate) history_pin: Mutex<Option<history::store::Pin>>,
     pub(crate) maintenance_pin: Mutex<Option<maintenance::store::Pin>>,
     pub(crate) file_operation_pin: std::sync::Mutex<Option<file_operation::binding::Pin>>,
+    /// 打包的旧记录的内存索引；打开时核过，打包、还原时换新的。
+    pub(crate) archive: Mutex<std::sync::Arc<crate::archive::Archive>>,
+    /// 打包或还原断在中间（没死进程）：下一步之前先收口。
+    pub(crate) archive_dirty: std::sync::atomic::AtomicBool,
     pub(crate) read_guard: Mutex<()>,
 }
 

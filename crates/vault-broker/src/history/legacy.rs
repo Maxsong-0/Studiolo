@@ -6,12 +6,17 @@ use crate::{
     BrokerError, FsVaultBroker, VaultPath,
     mutation::record::Outcome,
     mutation::replay::{self, Replay},
+    records::WriterRecords,
     sha256,
 };
 use std::collections::BTreeMap;
 
 pub(super) fn load(broker: &FsVaultBroker, path: &VaultPath) -> Result<Vec<Item>, BrokerError> {
     broker.writer.check(&broker.root, &broker.data)?;
+    // 打包的都是新格式：已经承诺持久索引，这条路径却没有目录，就是坏的。
+    if broker.archive()?.committed(path) {
+        return Err(BrokerError::CorruptWriterState);
+    }
     let dir = directory(&broker.data, "idempotency")?;
     let history = directory(&broker.data, "history")?;
     let mut found = BTreeMap::new();

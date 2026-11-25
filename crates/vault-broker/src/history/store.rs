@@ -1,5 +1,6 @@
 //! 版本化私有元数据目录；旧字节保持原名，未知或半初始化 schema 失败关闭。
 
+use crate::archive::{self, Part};
 use crate::writer::{Identity, directory, disk};
 use crate::{BrokerError, FsVaultBroker, VaultUuid, records::WriterRecords};
 use cap_std::fs::Dir;
@@ -107,7 +108,17 @@ pub(crate) fn read(
     };
     let result = disk::read(&dir, name, max)?;
     open(records)?;
-    Ok(result)
+    // 请求的描述符和回执可能已经打包：散件优先，没有再查段。
+    match (result, archived(name)) {
+        (None, Some((part, id))) => archive::read(records, part, id),
+        (result, _) => Ok(result),
+    }
+}
+
+/// 这个名字是不是一条可能打了包的记录。
+fn archived(name: &str) -> Option<(Part, &str)> {
+    name.strip_prefix("requests/")
+        .and_then(archive::content_part)
 }
 
 pub(crate) fn save<T: Serialize>(
@@ -120,6 +131,12 @@ pub(crate) fn save<T: Serialize>(
     let bytes = serde_json::to_vec(value).map_err(|_| BrokerError::CorruptWriterState)?;
     if bytes.len() > max {
         return Err(BrokerError::WriterLimitExceeded);
+    }
+    // 已经打包的不许再造一份散件；调用方都先读过，到这里说明前后不一致。
+    if let Some((part, id)) = archived(name)
+        && broker.archive()?.contains(part, id)?
+    {
+        return Err(BrokerError::CorruptWriterState);
     }
     let dir = open_or_create(broker)?;
     let (folder, basename) = name

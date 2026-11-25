@@ -89,19 +89,23 @@ pub(crate) fn terminal(
     records: &dyn WriterRecords,
     envelope: &Envelope,
 ) -> Result<Option<Terminal>, BrokerError> {
-    let Some(replay) =
-        mutation::replay::load(records.data(), &envelope.key_hash, envelope.pair_id)?
+    let Some(replay) = mutation::replay::load(records, &envelope.key_hash, envelope.pair_id)?
     else {
         return Ok(None);
     };
+    let terminal = own(envelope, replay)?;
+    crate::recorded::validate_terminal(records, &terminal)?;
+    Ok(Some(terminal))
+}
+/// 重放里的终态是这条描述符的。
+pub(crate) fn own(envelope: &Envelope, replay: Replay) -> Result<Terminal, BrokerError> {
     let Replay::Current(terminal) = replay else {
         return Err(BrokerError::CorruptWriterState);
     };
     if terminal.recording.as_ref() != Some(&envelope.reference()?) {
         return Err(BrokerError::CorruptWriterState);
     }
-    crate::recorded::validate_terminal(records, &terminal)?;
-    Ok(Some(terminal))
+    Ok(terminal)
 }
 pub(crate) fn outcome_row(
     records: &dyn WriterRecords,

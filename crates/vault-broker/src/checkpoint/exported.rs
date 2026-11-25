@@ -8,12 +8,18 @@ use super::{
     check_deadline, replays, roots,
 };
 use crate::{
-    BrokerError, VaultUuid, file_operation, history, maintenance,
+    BrokerError, VaultUuid,
+    archive::{self, Archive},
+    file_operation, history, maintenance,
     records::WriterRecords,
     writer::{Binding, Identity, directory, disk},
 };
 use cap_std::fs::Dir;
-use std::{collections::HashMap, sync::Mutex, time::Instant};
+use std::{
+    collections::HashMap,
+    sync::{Arc, Mutex},
+    time::Instant,
+};
 use studiolo_core::checkpoint::{
     CheckpointOwner, OwnerWatermark, SealedOwnerCheckpoint, WalCheckpointProof,
 };
@@ -49,6 +55,7 @@ pub struct ExportedBroker {
     history_pin: Mutex<Option<history::store::Pin>>,
     maintenance_pin: Mutex<Option<maintenance::store::Pin>>,
     file_operation_pin: Mutex<Option<file_operation::binding::Pin>>,
+    archive: Mutex<Option<Arc<Archive>>>,
 }
 impl ExportedBroker {
     pub(super) fn new(
@@ -65,6 +72,7 @@ impl ExportedBroker {
             history_pin: Mutex::new(None),
             maintenance_pin: Mutex::new(None),
             file_operation_pin: Mutex::new(None),
+            archive: Mutex::new(None),
         }
     }
     /// 在副本上逐条核重放和回执，核完才有票据。可信组合根须用定格的原 FrozenAudit 完整核对事件、offset
@@ -147,6 +155,23 @@ impl WriterRecords for ExportedBroker {
     }
     fn file_operation_pin(&self) -> &Mutex<Option<file_operation::binding::Pin>> {
         &self.file_operation_pin
+    }
+    /// 副本里的段：第一次用到时整链核一遍，多一段、少一段、改一个字节都拒。
+    fn archive(&self) -> Result<Arc<Archive>, BrokerError> {
+        let mut slot = self
+            .archive
+            .lock()
+            .map_err(|_| BrokerError::CorruptWriterState)?;
+        if let Some(archive) = slot.as_ref() {
+            return Ok(Arc::clone(archive));
+        }
+        let archive = Arc::new(archive::exact(
+            &self.target.data,
+            self.binding.pair_id,
+            self.binding.vault_uuid,
+        )?);
+        *slot = Some(Arc::clone(&archive));
+        Ok(archive)
     }
     /// 定格前后的水位都要求没有未决写入，副本里不会有。
     fn uncertain(&self) -> bool {

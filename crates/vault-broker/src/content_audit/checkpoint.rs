@@ -2,6 +2,7 @@
 use super::{event, store};
 use crate::{
     BrokerError,
+    archive::{Kind, Part, content_part},
     checkpoint::{
         audit::{BrokerCheckpointAudit, Verifier},
         check_deadline,
@@ -21,8 +22,18 @@ pub(crate) fn verify(
     if !store::entries(records)?.is_empty() {
         return Err(BrokerError::MutationUnresolved);
     }
+    let archive = records.archive()?;
     let Some(root) = history::open(records)? else {
-        return Ok(());
+        // 打过正文包的一定有历史元数据目录；目录没了不能当成「没有审计历史」。
+        return if archive
+            .packs()
+            .iter()
+            .any(|pack| pack.kind == Kind::Content)
+        {
+            Err(BrokerError::CorruptWriterState)
+        } else {
+            Ok(())
+        };
     };
     let requests = directory(&root, "requests")?;
     for (index, entry) in requests
@@ -39,57 +50,65 @@ pub(crate) fn verify(
             .file_name()
             .into_string()
             .map_err(|_| BrokerError::CorruptWriterState)?;
-        if let Some((id, phase)) = ack_name(&name) {
-            // 同时核对孤儿 ACK；不能只枚举描述符后漏掉多余或已失去母本的回执。
-            let envelope =
-                recorded::store::load_id(records, id)?.ok_or(BrokerError::CorruptWriterState)?;
-            let row = match phase {
-                crate::ContentAuditPhase::Intent => event::row(&envelope, None)?,
-                crate::ContentAuditPhase::Outcome => event::outcome_row(records, &envelope)?
-                    .ok_or(BrokerError::MutationUnresolved)?,
-            };
-            let ack = read_ack(records, &envelope, &row)?;
-            verify(
-                BrokerCheckpointAudit::Content(&row.event),
-                ack.offset,
-                &ack.record_hash,
-            )?;
-        } else {
-            let id = name
-                .strip_suffix(".json")
-                .filter(|id| disk::hex(id))
-                .ok_or(BrokerError::CorruptWriterState)?;
-            let envelope =
-                recorded::store::load_id(records, id)?.ok_or(BrokerError::CorruptWriterState)?;
-            if envelope.actor.is_some() {
-                let intent = event::row(&envelope, None)?;
-                read_ack(records, &envelope, &intent)?;
-                let outcome = event::outcome_row(records, &envelope)?
-                    .ok_or(BrokerError::MutationUnresolved)?;
-                read_ack(records, &envelope, &outcome)?;
+        let (part, id) = content_part(&name).ok_or(BrokerError::CorruptWriterState)?;
+        // 打包提交了、散件还没删完的那一刻：两份必须逐字节相同，只算一条，在下面核。
+        if let Some(packed) = archive.read(records.data(), part, id)? {
+            if disk::read(&requests, &name, disk::RECORD_LIMIT)?.as_ref() != Some(&packed) {
+                return Err(BrokerError::CorruptWriterState);
+            }
+            continue;
+        }
+        check(records, part, id, verify)?;
+    }
+    for pack in archive.packs() {
+        check_deadline(deadline)?;
+        if pack.kind == Kind::Content {
+            for part in [Part::IntentAck, Part::OutcomeAck, Part::Descriptor] {
+                check(records, part, &pack.id, verify)?;
             }
         }
     }
     history::open(records)?;
     check_deadline(deadline)
 }
-fn ack_name(name: &str) -> Option<(&str, crate::ContentAuditPhase)> {
-    name.strip_suffix("-intent.json.ack")
-        .map(|id| (id, crate::ContentAuditPhase::Intent))
-        .or_else(|| {
-            name.strip_suffix("-outcome.json.ack")
-                .map(|id| (id, crate::ContentAuditPhase::Outcome))
-        })
+
+/// 核一条：回执要有母本、和原事件对得上、账本里有原事件；描述符要有两份回执。散件和打了包的同一个判法。
+fn check(
+    records: &dyn WriterRecords,
+    part: Part,
+    id: &str,
+    verify: &mut Verifier<'_>,
+) -> Result<(), BrokerError> {
+    // 同时核对孤儿 ACK；不能只枚举描述符后漏掉多余或已失去母本的回执。
+    let envelope = recorded::store::load_id(records, id)?.ok_or(BrokerError::CorruptWriterState)?;
+    let outcome = || event::outcome_row(records, &envelope)?.ok_or(BrokerError::MutationUnresolved);
+    match part {
+        Part::IntentAck | Part::OutcomeAck => {
+            let row = if part == Part::IntentAck {
+                event::row(&envelope, None)?
+            } else {
+                outcome()?
+            };
+            let ack = read_ack(records, &envelope, &row)?;
+            verify(
+                BrokerCheckpointAudit::Content(&row.event),
+                ack.offset,
+                &ack.record_hash,
+            )
+        }
+        _ => {
+            if envelope.actor.is_some() {
+                read_ack(records, &envelope, &event::row(&envelope, None)?)?;
+                read_ack(records, &envelope, &outcome()?)?;
+            }
+            Ok(())
+        }
+    }
 }
 fn read_ack(
     records: &dyn WriterRecords,
     envelope: &recorded::store::Envelope,
     row: &event::Row,
 ) -> Result<event::Ack, BrokerError> {
-    let path = format!("requests/{}.ack", event::name(envelope, row.event.phase));
-    let bytes = history::read(records, &path, disk::RECORD_LIMIT)?
-        .ok_or(BrokerError::MutationUnresolved)?;
-    let ack: event::Ack = disk::decode(&bytes)?;
-    event::validate_ack(records, row, &ack)?;
-    Ok(ack)
+    store::ack(records, envelope, row)?.ok_or(BrokerError::MutationUnresolved)
 }

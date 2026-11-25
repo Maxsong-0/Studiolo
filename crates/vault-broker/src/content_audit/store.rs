@@ -1,8 +1,9 @@
 //! 生命周期标记保留到 Outcome ACK；终态之后崩溃也能只读派生原 Outcome。
 
 use super::ContentAuditPhase;
-use super::event::outcome;
-pub(crate) use super::event::{Ack, Row, digest, name, outcome_row, row, terminal, validate_ack};
+pub(crate) use super::event::{
+    Ack, Row, digest, name, outcome, outcome_row, own, row, terminal, validate_ack,
+};
 use crate::history::store;
 use crate::mutation::record::Terminal;
 use crate::recorded::store::Envelope;
@@ -57,13 +58,28 @@ pub(crate) fn acknowledged(
     envelope: &Envelope,
     row: &Row,
 ) -> Result<bool, BrokerError> {
+    Ok(ack(broker, envelope, row)?.is_some())
+}
+/// 这个阶段的回执，核过是它的；没有就是 `None`。
+pub(crate) fn ack(
+    records: &dyn WriterRecords,
+    envelope: &Envelope,
+    row: &Row,
+) -> Result<Option<Ack>, BrokerError> {
     let path = format!("requests/{}.ack", name(envelope, row.event.phase));
-    let Some(bytes) = store::read(broker, &path, disk::RECORD_LIMIT)? else {
-        return Ok(false);
-    };
-    let ack: Ack = disk::decode(&bytes)?;
-    validate_ack(broker, row, &ack)?;
-    Ok(true)
+    store::read(records, &path, disk::RECORD_LIMIT)?
+        .map(|bytes| decode_ack(records, row, &bytes))
+        .transpose()
+}
+/// 回执原字节 → 核过的回执。
+pub(crate) fn decode_ack(
+    records: &dyn WriterRecords,
+    row: &Row,
+    bytes: &[u8],
+) -> Result<Ack, BrokerError> {
+    let ack: Ack = disk::decode(bytes)?;
+    validate_ack(records, row, &ack)?;
+    Ok(ack)
 }
 pub(crate) fn stage_intent(broker: &FsVaultBroker, envelope: &Envelope) -> Result<(), BrokerError> {
     if envelope.actor.is_none() {

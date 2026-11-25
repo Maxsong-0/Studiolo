@@ -28,7 +28,7 @@ impl FsVaultBroker {
         let hash = sha256(key.as_bytes());
         crate::file_operation::guard_legacy_key(self, &hash)?;
         let envelope = store::load_id(self, &store::id(self, &hash))?;
-        let replay = mutation::replay::load(&self.data, &hash, state.pair_id)?;
+        let replay = mutation::replay::load(self, &hash, state.pair_id)?;
         let Some(envelope) = envelope else {
             return if replay.is_some() {
                 Err(BrokerError::IdempotencyConflict)

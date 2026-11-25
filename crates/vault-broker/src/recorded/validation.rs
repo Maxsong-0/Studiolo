@@ -21,7 +21,7 @@ pub(crate) fn check_existing(
         envelope.matches(request, metadata)?;
     }
     if let Some(mutation::replay::Replay::Current(terminal)) =
-        mutation::replay::load(&broker.data, &hash, broker.writer.binding.pair_id)?
+        mutation::replay::load(broker, &hash, broker.writer.binding.pair_id)?
     {
         if metadata.is_some() && terminal.recording.is_none() {
             return Err(BrokerError::IdempotencyConflict);
@@ -38,7 +38,11 @@ pub(crate) fn validate_terminal(
     let Some(reference) = &terminal.recording else {
         return Ok(());
     };
-    let envelope = store::load(records, reference)?;
+    bound(terminal, &store::load(records, reference)?)
+}
+
+/// 终态说的就是这条描述符的请求。
+pub(crate) fn bound(terminal: &Terminal, envelope: &store::Envelope) -> Result<(), BrokerError> {
     let (path, precondition) = match &terminal.outcome {
         Outcome::Committed { receipt } => (
             &receipt.path,

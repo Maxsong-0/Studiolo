@@ -2,6 +2,7 @@
 use super::{atomic, limits, store};
 use crate::{
     BrokerError, FsVaultBroker,
+    archive::{self, Part},
     records::WriterRecords,
     writer::{directory, disk},
 };
@@ -31,6 +32,17 @@ impl Folder {
             Self::Tombstones => (limits::TOMBSTONE_COUNT, limits::TOMBSTONE_BYTES),
             Self::Acks => (limits::RECORD_COUNT * 2, limits::TOMBSTONE_BYTES),
             Self::Evidence => (limits::RECORD_COUNT, limits::TOMBSTONE_BYTES),
+        }
+    }
+    /// 这个名字是不是一条可能打了包的记录；墓碑和证据从不打包。
+    pub(crate) fn archived(self, name: &str) -> Option<(Part, &str)> {
+        match self {
+            Self::Records => Some((Part::FileRequest, name.strip_suffix(".json")?)),
+            Self::Acks => name
+                .strip_suffix("-intent.json")
+                .map(|id| (Part::FileIntentAck, id))
+                .or_else(|| Some((Part::FileOutcomeAck, name.strip_suffix("-outcome.json")?))),
+            Self::Tombstones | Self::Evidence => None,
         }
     }
     fn validate_name(self, name: &str) -> Result<(), BrokerError> {
@@ -146,7 +158,11 @@ pub(crate) fn read(
     let root = parent(source, folder)?;
     let value = disk::read(&root, name, limits::REQUEST_LIMIT)?;
     store::required(source)?;
-    Ok(value)
+    // 改名的请求和回执可能已经打包：散件优先，没有再查段。
+    match (value, folder.archived(name)) {
+        (None, Some((part, id))) => archive::read(source, part, id),
+        (value, _) => Ok(value),
+    }
 }
 
 pub(crate) fn save<T: Serialize>(
@@ -164,6 +180,17 @@ pub(crate) fn save<T: Serialize>(
     let root = parent(broker, folder)?;
     let (entries, current_bytes) = scan(broker, folder)?;
     let existing = disk::read_identified(&root, name, limits::REQUEST_LIMIT)?;
+    // 已经打包的只认一模一样的重来一次，不再造散件。
+    if existing.is_none()
+        && let Some((part, id)) = folder.archived(name)
+        && let Some(old) = archive::read(broker, part, id)?
+    {
+        return if expected.is_none() && old == bytes {
+            Ok(())
+        } else {
+            Err(BrokerError::CaptureChanged)
+        };
+    }
     if expected.is_none() && existing.as_ref().is_some_and(|(old, _)| old == &bytes) {
         let (old, identity) = existing.as_ref().ok_or(BrokerError::CorruptWriterState)?;
         disk::FilePin::from_read(old, *identity).check(&root, name, limits::REQUEST_LIMIT)?;

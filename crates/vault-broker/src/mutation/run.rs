@@ -46,7 +46,7 @@ pub(super) fn apply(
             return Err(BrokerError::MutationUnresolved);
         }
         install::verify_stage(broker, op)?;
-    } else if let Some(previous) = replay::load(&broker.data, &hash, state.pair_id)? {
+    } else if let Some(previous) = replay::load(broker, &hash, state.pair_id)? {
         let result = replay::matches(
             previous,
             &fingerprint,

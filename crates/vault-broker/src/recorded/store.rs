@@ -18,16 +18,22 @@ pub(crate) fn load_id(
     if !disk::hex(id) {
         return Err(BrokerError::CorruptWriterState);
     }
-    let Some(bytes) = store::read(records, &format!("requests/{id}.json"), disk::RECORD_LIMIT)?
-    else {
-        return Ok(None);
-    };
-    let envelope: Envelope = disk::decode(&bytes)?;
+    store::read(records, &format!("requests/{id}.json"), disk::RECORD_LIMIT)?
+        .map(|bytes| decode_id(records, id, &bytes))
+        .transpose()
+}
+/// 描述符原字节 → 核过的描述符；文件名、库和编码都要对得上。
+pub(crate) fn decode_id(
+    records: &dyn WriterRecords,
+    id: &str,
+    bytes: &[u8],
+) -> Result<Envelope, BrokerError> {
+    let envelope: Envelope = disk::decode(bytes)?;
     envelope.validate(records)?;
     if envelope.id != id || encode(&envelope)? != bytes {
         return Err(BrokerError::CorruptWriterState);
     }
-    Ok(Some(envelope))
+    Ok(envelope)
 }
 pub(crate) fn load(
     records: &dyn WriterRecords,

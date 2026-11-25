@@ -78,14 +78,20 @@ pub(crate) fn confirmed(
 ) -> Result<bool, BrokerError> {
     Ok(checkpoint_ack(broker, event)?.is_some())
 }
-pub(super) fn checkpoint_ack(
+pub(crate) fn checkpoint_ack(
     source: &dyn WriterRecords,
     event: &FileOperationAuditEvent,
 ) -> Result<Option<(u64, String)>, BrokerError> {
-    let Some(bytes) = disk::read(source, Folder::Acks, &filename(event))? else {
-        return Ok(None);
-    };
-    let value: Ack = codec::decode(&bytes)?;
+    disk::read(source, Folder::Acks, &filename(event))?
+        .map(|bytes| decode_ack(event, &bytes))
+        .transpose()
+}
+/// 回执原字节 → 核过的 offset 和 hash。
+pub(crate) fn decode_ack(
+    event: &FileOperationAuditEvent,
+    bytes: &[u8],
+) -> Result<(u64, String), BrokerError> {
+    let value: Ack = codec::decode(bytes)?;
     if value.version != 1
         || value.offset == 0
         || !codec::hex(&value.hash)
@@ -93,7 +99,7 @@ pub(super) fn checkpoint_ack(
     {
         return Err(BrokerError::CorruptWriterState);
     }
-    Ok(Some((value.offset, value.hash)))
+    Ok((value.offset, value.hash))
 }
 impl FsVaultBroker {
     /// 仅确认可信 owner 已验证的完整实际 Intent 回执，不开始文件操作。

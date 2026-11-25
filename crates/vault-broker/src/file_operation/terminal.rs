@@ -12,7 +12,7 @@ pub(crate) fn load(
     source: &dyn WriterRecords,
     frozen: &super::frozen::Frozen,
 ) -> Result<Option<Terminal>, BrokerError> {
-    match replay::load(source.data(), &frozen.key_hash, frozen.pair_id)? {
+    match replay::load(source, &frozen.key_hash, frozen.pair_id)? {
         Some(Replay::FileOperation(value)) if value.frozen.matches(frozen) => Ok(Some(*value)),
         Some(_) => Err(BrokerError::IdempotencyConflict),
         None => Ok(None),

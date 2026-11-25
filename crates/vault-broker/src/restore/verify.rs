@@ -109,6 +109,12 @@ pub(super) fn verify(
     state
         .validate(expected_pair)
         .map_err(RestoreError::Broker)?;
+    // 打包的旧记录不绑目录身份，恢复不用重绑定；但整链要先核过，多一段、少一段、改一个字节都不恢复。
+    let archive = crate::archive::exact(data, expected_pair, expected_vault)
+        .map_err(|_| reference("archive-v1"))?;
+    if archive.head() != state.archive.as_ref() {
+        return Err(reference("archive-v1"));
+    }
     let history = super::optional::history(data, &state, expected_vault, expected_pair)?;
     let file_operations =
         super::optional::file_operations(root, data, &state, expected_vault, expected_pair)?;

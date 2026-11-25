@@ -43,12 +43,8 @@ pub(super) fn reviews(broker: &FsVaultBroker, limit: usize) -> Result<Vec<Review
     }
     if let Some(review) = broker.pending_mutation()? {
         let operation = review.maintenance_operation();
-        if mutation::replay::load(
-            &broker.data,
-            &operation.key_hash,
-            broker.writer.binding.pair_id,
-        )?
-        .is_some()
+        if mutation::replay::load(broker, &operation.key_hash, broker.writer.binding.pair_id)?
+            .is_some()
         {
             // 已有固定原终态只待重开整理，不再形成另一笔维护决定。
             return Ok(result);

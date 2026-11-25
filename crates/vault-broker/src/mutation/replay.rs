@@ -1,6 +1,8 @@
 //! 旧完成回执保持原字节，旧 None 只贡献不可清除的全局未知事实。
 
 use super::record::{Outcome, Terminal};
+use crate::archive::{self, Part};
+use crate::records::WriterRecords;
 use crate::writer::{directory, disk};
 use crate::{BrokerError, MutationReceipt, MutationReplay, VaultUuid};
 use cap_std::fs::Dir;
@@ -80,17 +82,25 @@ pub(crate) fn scan(
     Ok((unknown, count, total))
 }
 
-pub(crate) fn load(data: &Dir, hash: &str, pair: VaultUuid) -> Result<Option<Replay>, BrokerError> {
+/// 散件优先，没有再查打包的旧记录：旧键永远答得出原回执。
+pub(crate) fn load(
+    records: &dyn WriterRecords,
+    hash: &str,
+    pair: VaultUuid,
+) -> Result<Option<Replay>, BrokerError> {
     if !disk::hex(hash) {
         return Err(BrokerError::CorruptWriterState);
     }
-    disk::read(
-        data,
+    let loose = disk::read(
+        records.data(),
         &format!("idempotency/{hash}.json"),
         disk::RECORD_LIMIT,
-    )?
-    .map(|bytes| decode(&bytes, Some(pair)))
-    .transpose()
+    )?;
+    let bytes = match loose {
+        Some(bytes) => Some(bytes),
+        None => archive::read(records, Part::Replay, hash)?,
+    };
+    bytes.map(|bytes| decode(&bytes, Some(pair))).transpose()
 }
 
 pub(crate) fn matches(
