@@ -2,6 +2,9 @@
 //! 路牌第 3／5 项改自策略平面、policy_read 进读取审计、propose_desired 永不生效、
 //! 三级吊销即刻生效与恢复方向、handshake.served 记 effective 哈希、HTTP 外壳同一授权。
 
+#[path = "policy_cases/connector.rs"]
+mod connector;
+
 use std::{fs, net::SocketAddr, os::unix::fs::PermissionsExt, path::Path, time::Duration};
 
 use serde_json::{Value, json};

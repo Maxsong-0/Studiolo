@@ -18,6 +18,7 @@ import { planPending } from '../cockpit/pending';
 import { snapshotLine, systemReadings } from '../cockpit/readings';
 import { sinceLastSeen } from '../cockpit/since';
 import { useCockpitReads } from '../cockpit/useCockpitReads';
+import { usePresenceRead } from '../cockpit/usePresenceRead';
 import type { OverviewRead } from '../cockpit/useOverviewRead';
 import type { PolicyPendingRead } from '../cockpit/usePolicyPendingRead';
 import { overviewLabels } from '../collab/executorGrouping';
@@ -89,7 +90,12 @@ export function CockpitView({
 }) {
   const { health, reloadHealth, revalidateHealth } = useCockpitReads();
   // 驾驶舱开着时，本机健康跟着自动刷新一起安静重读，排在 App 那三路后面（T-196）。
-  useAutoRefreshReader(useContext(AutoRefreshContext), revalidateHealth, 3);
+  const autoRefresh = useContext(AutoRefreshContext);
+  useAutoRefreshReader(autoRefresh, revalidateHealth, 3);
+  // 连接器推来的本机会话只有这里看：驾驶舱自己读，最后一个跟着自动刷新（T-237）。
+  const presence = usePresenceRead();
+  const { reload: reloadPresence } = presence;
+  useAutoRefreshReader(autoRefresh, presence.revalidate, 4);
   const board = overview.state;
   const drafts = policy.state;
   const { goTo } = useViewLocation();
@@ -151,9 +157,12 @@ export function CockpitView({
   // 与首次读取同样在提交的同一拍发出，不拖到绘制之后。
   const wasRefreshing = useRef(refreshing);
   useLayoutEffect(() => {
-    if (wasRefreshing.current && !refreshing) reloadHealth();
+    if (wasRefreshing.current && !refreshing) {
+      reloadHealth();
+      reloadPresence();
+    }
     wasRefreshing.current = refreshing;
-  }, [refreshing, reloadHealth]);
+  }, [refreshing, reloadHealth, reloadPresence]);
 
   // 「上次查看」的基线在这次坐下来期间不变；看到新读数就报给记号，离开页面时由它写下。
   // 黑板还在读或读失败时不报：那一刻你没看到黑板的数。
@@ -233,6 +242,7 @@ export function CockpitView({
             state={board}
             onRetry={overview.reload}
             onOpenCollab={openCollab}
+            presence={presence}
           />
         </div>
         <div className="cockpit-sheet__row">

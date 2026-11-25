@@ -56,29 +56,8 @@ impl BoardPlane {
         {
             return Err(Refusal::Denied("必须选择完整项目路径"));
         }
-        if !self
-            .identities
-            .type_is_active(&r.agent_type)
-            .map_err(|_| Refusal::Unavailable(IDENTITY_UNAVAILABLE))?
-        {
-            return Err(Refusal::Denied("类型已失效"));
-        }
-        let chain = lineage(self.identities.instance_lineage(&r.instance_id), "实例无效")?;
-        let mut result = None;
-        for identity in chain {
-            if identity.agent_type != r.agent_type {
-                return Err(Refusal::Denied("实例类型不匹配"));
-            }
-            let a = self
-                .policy
-                .authorization(&r.agent_type, Some(&identity.id))
-                .map_err(|_| Refusal::Unavailable("策略不可用"))?;
-            if a.denial.is_some() {
-                return Err(Refusal::Denied("实例或祖先已失效"));
-            }
-            let grant = a.grant.ok_or(Refusal::Denied("没有有效能力集"))?;
-            if !grant
-                .set
+        self.granted(&r.agent_type, &r.instance_id, |set| {
+            if !set
                 .read
                 .project_whitelist
                 .iter()
@@ -87,10 +66,9 @@ impl BoardPlane {
             {
                 return Err(Refusal::Denied("项目不在白名单"));
             }
-            if !matches!(r.operation.as_str(), "list" | "get")
-                && (!grant.set.write.board
-                    || !grant
-                        .set
+            if !studiolo_policy::board_read_operation(&r.operation)
+                && (!set.write.board
+                    || !set
                         .write
                         .board_projects
                         .iter()
@@ -98,6 +76,38 @@ impl BoardPlane {
             {
                 return Err(Refusal::Denied("未授予黑板写权限"));
             }
+            Ok(())
+        })
+    }
+    /// 类型有效、实例链逐级未吊销且都过得了 `check`；返回实例本身的策略哈希与能力集。
+    pub(super) fn granted(
+        &self,
+        agent_type: &str,
+        instance_id: &str,
+        check: impl Fn(&CapabilitySet) -> Result<(), Refusal>,
+    ) -> Result<Grant, Refusal> {
+        if !self
+            .identities
+            .type_is_active(agent_type)
+            .map_err(|_| Refusal::Unavailable(IDENTITY_UNAVAILABLE))?
+        {
+            return Err(Refusal::Denied("类型已失效"));
+        }
+        let chain = lineage(self.identities.instance_lineage(instance_id), "实例无效")?;
+        let mut result = None;
+        for identity in chain {
+            if identity.agent_type != agent_type {
+                return Err(Refusal::Denied("实例类型不匹配"));
+            }
+            let a = self
+                .policy
+                .authorization(agent_type, Some(&identity.id))
+                .map_err(|_| Refusal::Unavailable("策略不可用"))?;
+            if a.denial.is_some() {
+                return Err(Refusal::Denied("实例或祖先已失效"));
+            }
+            let grant = a.grant.ok_or(Refusal::Denied("没有有效能力集"))?;
+            check(&grant.set)?;
             if result.is_none() {
                 result = Some(Grant {
                     hash: a.effective_hash,

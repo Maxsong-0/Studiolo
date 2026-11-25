@@ -22,6 +22,21 @@ pub enum BoardCallError {
     Unavailable(String),
 }
 
+/// 连接器调用的失败（ADR-046）；只认权威服务给的代码，认不出的一律是这一刻给不出结论。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ConnectorError {
+    /// 身份或策略确定不放行。
+    Denied,
+    /// 没有这条，或不在名单里。
+    NotFound,
+    /// `seq` 不比上一份大。
+    Stale,
+    /// 字段不合。
+    Invalid,
+    /// 连不上、超时、5xx、名额满、旧的权威服务没有这个入口。
+    Unavailable,
+}
+
 /// 通向既有 canonical 单写者的有界连接。
 pub struct BoardClient {
     client: reqwest::Client,
@@ -53,28 +68,52 @@ impl BoardClient {
         if bytes.len() > REQUEST_LIMIT {
             return Err(BoardCallError::Rejected("黑板请求超过上限".into()));
         }
+        let (status, body) = self
+            .post("http://localhost/internal/board", bytes)
+            .await
+            .map_err(|message| BoardCallError::Unavailable(message.into()))?;
+        classify(status, &body)
+    }
+
+    /// 连接器的固定私有入口；同一条连接、同一份尺寸上限。
+    pub async fn connect(
+        &self,
+        request: &serde_json::Value,
+    ) -> Result<serde_json::Value, ConnectorError> {
+        let bytes = serde_json::to_vec(request).map_err(|_| ConnectorError::Invalid)?;
+        if bytes.len() > REQUEST_LIMIT {
+            return Err(ConnectorError::Invalid);
+        }
+        let (status, body) = self
+            .post("http://localhost/internal/connector", bytes)
+            .await
+            .map_err(|_| ConnectorError::Unavailable)?;
+        classify_connector(status, &body)
+    }
+
+    async fn post(
+        &self,
+        entry: &'static str,
+        bytes: Vec<u8>,
+    ) -> Result<(StatusCode, Vec<u8>), &'static str> {
         let mut response = self
             .client
-            .post("http://localhost/internal/board")
+            .post(entry)
             .header("content-type", "application/json")
             .header("cf-connecting-ip", "127.0.0.1")
             .body(bytes)
             .send()
             .await
-            .map_err(|_| BoardCallError::Unavailable("黑板权威服务不可用；停止协作".into()))?;
+            .map_err(|_| "黑板权威服务不可用；停止协作")?;
         let status = response.status();
         let mut body = Vec::new();
-        while let Some(chunk) = response
-            .chunk()
-            .await
-            .map_err(|_| BoardCallError::Unavailable("黑板响应不可用".into()))?
-        {
+        while let Some(chunk) = response.chunk().await.map_err(|_| "黑板响应不可用")? {
             if body.len() + chunk.len() > RESPONSE_LIMIT {
-                return Err(BoardCallError::Unavailable("黑板响应超过上限".into()));
+                return Err("黑板响应超过上限");
             }
             body.extend_from_slice(&chunk);
         }
-        classify(status, &body)
+        Ok((status, body))
     }
 }
 
@@ -95,6 +134,29 @@ fn classify(status: StatusCode, body: &[u8]) -> Result<serde_json::Value, BoardC
     // 5xx 与其余非 2xx（重定向已关）都说明权威服务这一刻给不出结论，不是请求错了。
     let message = message.unwrap_or_else(|| UNAVAILABLE.into());
     Err(BoardCallError::Unavailable(message))
+}
+
+/// 状态码与代码都对得上才算权威服务的结论；只看状态码的话，旧权威服务「没有这个入口」的 404 会被
+/// 当成「没有这条工作项」。
+fn classify_connector(
+    status: StatusCode,
+    body: &[u8],
+) -> Result<serde_json::Value, ConnectorError> {
+    let parsed = serde_json::from_slice::<serde_json::Value>(body).ok();
+    if status.is_success() {
+        return parsed.ok_or(ConnectorError::Unavailable);
+    }
+    let code = parsed
+        .as_ref()
+        .and_then(|value| value.get("code"))
+        .and_then(serde_json::Value::as_str);
+    Err(match (status.as_u16(), code) {
+        (403, Some("connector_denied")) => ConnectorError::Denied,
+        (404, Some("connector_not_found")) => ConnectorError::NotFound,
+        (409, Some("connector_stale")) => ConnectorError::Stale,
+        (422, Some("connector_invalid")) => ConnectorError::Invalid,
+        _ => ConnectorError::Unavailable,
+    })
 }
 
 /// 取正文 `error` 字段的前若干字符；没有或不是字符串就是 `None`。

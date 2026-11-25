@@ -17,6 +17,10 @@ mod authority;
 mod checkpoint_window;
 #[path = "architecture_cases/ci.rs"]
 mod ci;
+#[path = "architecture_cases/connector_entry.rs"]
+mod connector_entry;
+#[path = "architecture_cases/connector_entry_ways.rs"]
+mod connector_entry_ways;
 #[path = "architecture_cases/dependencies.rs"]
 mod dependencies;
 #[path = "architecture_cases/factor_http.rs"]

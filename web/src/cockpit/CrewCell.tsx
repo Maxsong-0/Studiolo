@@ -4,6 +4,8 @@ import { Button, EmptyState, ErrorState, Skeleton } from '../ui';
 import { laneBoxes } from '../ui/geometry';
 import { crew, type Crew, type CrewRow } from './crew';
 import type { OverviewState } from './model';
+import { PresenceSection } from './PresenceSection';
+import type { PresenceRead } from './usePresenceRead';
 import '../styles/cockpit.css';
 
 /** 「最近动态」列几条。 */
@@ -121,10 +123,13 @@ export const CrewCell = memo(function CrewCell({
   state,
   onRetry,
   onOpenCollab,
+  presence,
 }: {
   state: OverviewState;
   onRetry: () => void;
   onOpenCollab: () => void;
+  /** 连接器推来的本机会话，与黑板汇总各读各的、各自成败（T-237）。 */
+  presence: PresenceRead;
 }) {
   const titleId = useId();
   const feedId = useId();
@@ -152,6 +157,7 @@ export const CrewCell = memo(function CrewCell({
         ) : null}
       </div>
       <CrewBody state={state} data={data} onRetry={onRetry} />
+      <PresenceSection state={presence.state} onRetry={presence.reload} />
       {data ? (
         <section className="cockpit-crew__feed" aria-labelledby={feedId}>
           <div className="cockpit-head">

@@ -103,9 +103,12 @@ fn first_generation(
     })
 }
 
-/// `/mcp` 与 `/read/*` 使用同一类型门禁；各自负责协议会话，供给操作共用。
+/// `/mcp`、`/read/*` 与 `/connect/*` 使用同一类型门禁：前两个各自负责协议会话、供给操作共用；
+/// 连接器入口没有会话，也不经供给副本（ADR-046）。
 pub fn router(state: Arc<AppState>) -> Router {
-    crate::mcp_transport::router(state.clone()).merge(crate::http_text::router(state))
+    crate::mcp_transport::router(state.clone())
+        .merge(crate::http_text::router(state.clone()))
+        .merge(crate::connector::router(state))
 }
 
 /// 启动服务直到 Ctrl-C 或 SIGTERM；收到信号后按 [`crate::shutdown`] 的顺序有上限地关停。

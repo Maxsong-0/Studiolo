@@ -18,8 +18,17 @@ fn credential_fingerprint_tracks_type_revocation_rotation_and_store_failure() {
     assert!(store.credential_is_current("claude", &digest).unwrap());
     assert!(!store.credential_is_current("codex", &digest).unwrap());
     assert!(!store.credential_is_current("claude", "invalid").unwrap());
+    assert_eq!(
+        store
+            .credential_issued_at("claude", &digest)
+            .unwrap()
+            .as_deref(),
+        Some("2026-09-12T00:00:00Z")
+    );
+    assert_eq!(store.credential_issued_at("codex", &digest).unwrap(), None);
     store.revoke_type("claude", "2026-09-12T00:00:01Z").unwrap();
     assert!(!store.credential_is_current("claude", &digest).unwrap());
+    assert_eq!(store.credential_issued_at("claude", &digest).unwrap(), None);
     let second = store.issue_type("claude", "2026-09-12T00:00:02Z").unwrap();
     let second_digest: String = Sha256::digest(second.token.as_bytes())
         .iter()
@@ -30,6 +39,15 @@ fn credential_fingerprint_tracks_type_revocation_rotation_and_store_failure() {
         store
             .credential_is_current("claude", &second_digest)
             .unwrap()
+    );
+    // 换了令牌：旧摘要查不到，新摘要带新的签发时刻。
+    assert_eq!(store.credential_issued_at("claude", &digest).unwrap(), None);
+    assert_eq!(
+        store
+            .credential_issued_at("claude", &second_digest)
+            .unwrap()
+            .as_deref(),
+        Some("2026-09-12T00:00:02Z")
     );
     fs::set_permissions(&data, fs::Permissions::from_mode(0o750)).unwrap();
     assert!(

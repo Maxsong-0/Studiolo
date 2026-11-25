@@ -15,8 +15,14 @@ fn database(f: &TestBoard) -> PathBuf {
 }
 
 /// 0640 让身份库的私有存储复核失败，之后每次读都出错；改回 0600 即恢复。
-fn set_mode(f: &TestBoard, mode: u32) {
+pub(super) fn set_mode(f: &TestBoard, mode: u32) {
     fs::set_permissions(database(f), fs::Permissions::from_mode(mode)).unwrap();
+}
+
+/// 同样的办法让策略库读不出来。
+pub(super) fn set_policy_mode(f: &TestBoard, mode: u32) {
+    let path = f.writer.http.root.join("policy/policy.sqlite3");
+    fs::set_permissions(path, fs::Permissions::from_mode(mode)).unwrap();
 }
 
 /// 只让实例表读不出来：类型表照常，`authorize` 先过类型检查，再在实例链这一步出错。

@@ -17,6 +17,7 @@ use axum::{
     response::{IntoResponse, Response},
     routing::any,
 };
+pub(crate) use input::query as strict_query;
 use input::{INSTANCE_HEADER, SESSION_HEADER};
 use rmcp::{ErrorData, model::ErrorCode};
 use sessions::{ReserveError, Sessions};

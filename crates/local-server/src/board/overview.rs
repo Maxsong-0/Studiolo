@@ -101,7 +101,7 @@ struct Overview {
 }
 
 #[derive(Serialize)]
-struct Item {
+pub(super) struct Item {
     id: TaskId,
     title: String,
     project: String,
@@ -178,34 +178,10 @@ fn summarize(plane: &BoardPlane, hours: u32, limits: Limits) -> Result<Overview,
     )?;
     drop(projects);
     let selection = select(views, scanned, limits);
-    let mut chains: HashMap<String, Vec<LineageNode>> = HashMap::new();
+    let mut lineages = Lineages::default();
     let mut items = Vec::with_capacity(selection.views.len());
     for view in selection.views {
-        let lineage = match &view.holder {
-            None => Vec::new(),
-            Some(holder) => match chains.entry(holder.clone()) {
-                Entry::Occupied(known) => known.get().clone(),
-                Entry::Vacant(slot) => {
-                    // 与 `/api/v1/board` 的 instance_lineages 同源：实例库给出叶→根，这里翻成根→叶。
-                    let chain = plane
-                        .identities
-                        .instance_lineage(holder)
-                        .map_err(|_| "实例链不可用")?;
-                    slot.insert(
-                        chain
-                            .iter()
-                            .rev()
-                            .map(|instance| LineageNode {
-                                id: instance.id.clone(),
-                                agent_type: instance.agent_type.clone(),
-                            })
-                            .collect(),
-                    )
-                    .clone()
-                }
-            },
-        };
-        items.push(item(view, lineage)?);
+        items.push(lineages.project(plane, view)?);
     }
     Ok(Overview {
         generated_at: to.to_string(),
@@ -228,6 +204,41 @@ fn summarize(plane: &BoardPlane, hours: u32, limits: Limits) -> Result<Overview,
             .collect(),
         events_truncated: selection.events_truncated,
     })
+}
+
+/// 一次汇总里的实例链缓存：同一持有者只查一次。
+#[derive(Default)]
+pub(super) struct Lineages(HashMap<String, Vec<LineageNode>>);
+
+impl Lineages {
+    /// 把一条 `BoardView` 连同持有者的实例链投影成汇总项（连接器的列表用同一投影）。
+    pub(super) fn project(&mut self, plane: &BoardPlane, view: BoardView) -> Result<Item, String> {
+        let lineage = match &view.holder {
+            None => Vec::new(),
+            Some(holder) => match self.0.entry(holder.clone()) {
+                Entry::Occupied(known) => known.get().clone(),
+                Entry::Vacant(slot) => {
+                    // 与 `/api/v1/board` 的 instance_lineages 同源：实例库给出叶→根，这里翻成根→叶。
+                    let chain = plane
+                        .identities
+                        .instance_lineage(holder)
+                        .map_err(|_| "实例链不可用")?;
+                    slot.insert(
+                        chain
+                            .iter()
+                            .rev()
+                            .map(|instance| LineageNode {
+                                id: instance.id.clone(),
+                                agent_type: instance.agent_type.clone(),
+                            })
+                            .collect(),
+                    )
+                    .clone()
+                }
+            },
+        };
+        item(view, lineage)
+    }
 }
 
 /// 窗口内的一条任务事件；`offset` 只用于同一时刻的稳定排序，不进响应。
@@ -417,7 +428,7 @@ fn select(mut views: Vec<BoardView>, scanned: Scan, limits: Limits) -> Selection
 }
 
 /// 已结束＝成功、失败、取消、放弃；`approved` 与各 `needs_*` 仍算未结束。
-fn terminal(status: TaskStatus) -> bool {
+pub(super) fn terminal(status: TaskStatus) -> bool {
     matches!(
         status,
         TaskStatus::Succeeded | TaskStatus::Failed | TaskStatus::Cancelled | TaskStatus::Abandoned

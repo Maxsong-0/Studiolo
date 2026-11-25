@@ -709,7 +709,8 @@
   font-size: var(--type-small);
   line-height: 1.5;
 }
-.cockpit-crew__name {
+.cockpit-crew__name,
+.cockpit-crew__vendor {
   flex: none;
   max-width: 15ch;
   overflow: hidden;
@@ -784,8 +785,25 @@
   min-width: 0;
   padding-top: var(--space-1-5);
 }
-.cockpit-crew__feed .cockpit-link {
+.cockpit-crew__feed .cockpit-link,
+.cockpit-crew__sessions .cockpit-link {
   align-self: flex-start;
+}
+/* 「本机会话」没有泳道，行与行挨得比上面近 */
+.cockpit-crew__sessions {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2-5);
+  min-width: 0;
+  padding-top: var(--space-1-5);
+}
+.cockpit-crew__sessions .cockpit-crew__list {
+  gap: var(--space-2);
+}
+/* 分支名比任务标题更不该截短：放不下就把「第几条」那段折到下一行 */
+.cockpit-crew__sessions .cockpit-crew__what {
+  flex-wrap: wrap;
+  row-gap: 0;
 }
 .cockpit-feed {
   display: flex;

@@ -4,6 +4,7 @@
 //! 判定只做机器可判的部分；规则母本正文的语义放宽只能标「候选，人工判断」。
 
 mod capability;
+mod connector;
 mod rules;
 mod skill;
 mod types;
@@ -15,6 +16,7 @@ use crate::{
 };
 
 use capability::capability_set;
+pub use connector::connector_project;
 use rules::rules;
 use skill::skill;
 pub(crate) use types::Context;

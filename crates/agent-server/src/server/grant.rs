@@ -170,6 +170,20 @@ impl AgentSession {
         let grant = authorization
             .grant
             .ok_or_else(|| McpError::internal_error("策略库返回不一致", None))?;
+        // 连接器类型（ADR-046）只走 `/connect/v1/*`：MCP 和 `/read/*` 的每一次复核都在这里拒。
+        if grant.set.connector_only() {
+            self.deny(
+                Actor::instance(&instance.agent_type, &instance.id),
+                action,
+                "connector_only",
+            );
+            return Err(McpError::invalid_request(
+                format!(
+                    "{POLICY_DENIED_PREFIX}该类型只能走连接器入口；本次会话所有读取与写入全部拒绝"
+                ),
+                None,
+            ));
+        }
         let whitelist = grant
             .set
             .read

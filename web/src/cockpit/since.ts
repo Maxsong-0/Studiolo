@@ -68,7 +68,7 @@ function named(titles: readonly string[]): string {
 }
 
 /** 「昨天 22:40」「08:05」「11月10日 09:30」：与 `now` 同一天只写钟点。 */
-function dayClock(ms: number, now: number): string {
+export function dayClock(ms: number, now: number): string {
   const day = new Date(ms);
   const today = new Date(now);
   const midnight = (date: Date) =>

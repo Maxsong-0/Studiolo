@@ -23,7 +23,7 @@ agent-server 的 `serve --board-socket <相同socket> --policy <既有策略目�
 
 ## 操作契约
 
-- `list/get`：白名单内只读。
+- `list/get`：白名单内只读。`presence`：同一道只读白名单，给这个项目上「谁的会话在做什么」（[连接器契约](../contracts/connector.md)）。
 - `create/claim/heartbeat/handoff/return/cancel/number`：显式写项目授权，结构和租约受 TaskEngine 校验，参见 [黑板契约](blackboard.md)。
 - `batch.preview/batch.commit/batch.rollback`：当前有效 claim、项目与 `files_owned` 三者交集；批次 ID 按实例和任务命名，预览哈希与全部 revision 一起验证。
 - `memory.preview`：只在本项目 `03-记忆` 下生成结构化条目；重复返回已有条目指针，仍需显式 patch。通用批次入口也执行记忆约束，不能绕过查重。
