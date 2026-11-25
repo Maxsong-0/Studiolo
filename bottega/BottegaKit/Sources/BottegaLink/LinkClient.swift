@@ -187,10 +187,24 @@ public actor LinkClient {
         send(.settled(.init(item: item, result: .notSent(.init(code: "withdrawn", text: "Taken back before it was sent.")))))
     }
 
-    /// Everything up to here has been on the user's screen.
-    public func seen(through: UInt64) async {
-        guard isReady, through > 0 else { return }
-        _ = try? await request(.seen(through: through))
+    /// Everything up to here has been on the user's screen. Whether LMAS took note.
+    public func seen(through: UInt64) async -> Bool {
+        do {
+            _ = try await request(.seen(through: through))
+            return true
+        } catch {
+            return false
+        }
+    }
+
+    /// What LMAS says about itself, anew.
+    public func refreshOverview() async {
+        do {
+            let overview: Overview = try await request(.overview).read()
+            send(.overview(overview))
+        } catch {
+            // Not connected; it comes with the next connection.
+        }
     }
 
     // MARK: One connection
@@ -513,6 +527,7 @@ public actor LinkClient {
         } catch let error as WireError {
             if let next = error.next { nextNumber = next }
             step = keepsake.outbox.take(error)
+            if error.code == "dropped" { Task { await refreshOverview() } }
         }
         try await act(on: step, digest: intent.digest)
     }

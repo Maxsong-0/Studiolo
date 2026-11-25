@@ -15,6 +15,7 @@ final class Rig {
     private(set) var registrationFailures: [Why] = []
     private(set) var registeredNames: [String?] = []
     private(set) var outbox: [Outbox.Item] = []
+    private(set) var overview: Overview?
     private(set) var resets: [UInt64] = []
     private(set) var state = WorkshopState()
     private(set) var brokenSequences = 0
@@ -45,7 +46,8 @@ final class Rig {
         case .outbox(let items): outbox = items
         case .registrationFailed(let why): registrationFailures.append(why)
         case .registeredName(let name): registeredNames.append(name)
-        case .overview, .welcome, .notice: break
+        case .overview(let overview): self.overview = overview
+        case .welcome, .notice: break
         }
     }
 
@@ -259,9 +261,27 @@ struct LinkClientTests {
         let rig = Rig()
         defer { rig.stop() }
         try await rig.registered()
-        await rig.client.seen(through: 0)
-        await rig.client.seen(through: 1)
+        #expect(await rig.client.seen(through: 1))
         #expect(rig.lmas.seen == [1])
+        // Only what LMAS took note of counts as said.
+        #expect(await rig.client.seen(through: 99) == false)
+        rig.lmas.set { $0.isRunning = false }
+        rig.lmas.dropAll()
+        try await rig.until("gone") { !rig.isLive }
+        #expect(await rig.client.seen(through: 1) == false)
+    }
+
+    /// Someone speaking under this device's number shows up, and so does this client's own mistake.
+    @Test func aDroppedIntentIsCounted() async throws {
+        let rig = Rig()
+        defer { rig.stop() }
+        try await rig.registered()
+        try await rig.until("overview") { rig.overview?.droppedIntents == 0 }
+        rig.lmas.forgetKeys()
+        try await rig.client.submit(sayHi)
+        try await rig.until("settled") { rig.settled.count == 1 }
+        #expect(rig.settled.first?.result == .notSent(.init(code: "dropped", text: "dropped")))
+        try await rig.until("counted") { rig.overview?.droppedIntents == 1 }
     }
 
     // MARK: Intents

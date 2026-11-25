@@ -13,13 +13,36 @@ struct DevicesView: View {
         } else {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 14) {
+                    if let dropped = model.overview?.droppedIntents, dropped > 0 { DroppedIntents(count: dropped) }
                     ForEach(devices) { DeviceBox(device: $0, isThisOne: $0.id == model.thisDevice) }
                 }
                 .frame(maxWidth: 720)
                 .frame(maxWidth: .infinity)
                 .padding(24)
             }
+            .onAppear { model.refreshOverview() }
         }
+    }
+}
+
+/// Not red: nothing here waits on the user.
+private struct DroppedIntents: View {
+    let count: UInt64
+
+    var body: some View {
+        Label {
+            VStack(alignment: .leading, spacing: 3) {
+                Text("LMAS dropped ^[\(count) intent](inflect: true) since it started").font(.headline)
+                Text("They came under this device's number, but were not signed with its keys or could not be read. Either this Bottega made a mistake, or another program is trying to speak as you.")
+                    .foregroundStyle(.secondary)
+            }
+        } icon: {
+            Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(.background.secondary, in: .rect(cornerRadius: 12))
+        .overlay { RoundedRectangle(cornerRadius: 12).strokeBorder(.separator) }
     }
 }
 

@@ -120,6 +120,8 @@ public enum ServerLine: Equatable, Sendable {
 public struct Overview: Decodable, Equatable, Sendable {
     public var nowMs, latest, oldest: UInt64
     public var lmas: String
+    /// Intents that came under a device's number and were not that device's, or not readable, since LMAS started.
+    public var droppedIntents: UInt64?
     public var cards: Cards?
 
     public struct Cards: Decodable, Equatable, Sendable {

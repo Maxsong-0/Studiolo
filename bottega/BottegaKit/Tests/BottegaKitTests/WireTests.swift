@@ -159,12 +159,14 @@ struct WireTests {
             return reply
         }
         let overview: Overview = try reply(
-            #"{"id":1,"ok":{"cards":{"merge_into":"main","repo":"/r","reviewers":["claude"],"tests":true,"vendors":["codex"]},"latest":3,"lmas":"0.0.0","now_ms":4,"oldest":1}}"#
+            #"{"id":1,"ok":{"cards":{"merge_into":"main","repo":"/r","reviewers":["claude"],"tests":true,"vendors":["codex"]},"dropped_intents":2,"latest":3,"lmas":"0.0.0","now_ms":4,"oldest":1}}"#
         ).read()
         #expect(overview.cards?.mergeInto == "main")
         #expect(overview.oldest == 1)
+        #expect(overview.droppedIntents == 2)
         let bare: Overview = try reply(#"{"id":1,"ok":{"latest":0,"lmas":"1","now_ms":4,"oldest":1}}"#).read()
         #expect(bare.cards == nil)
+        #expect(bare.droppedIntents == nil)
         let echo: IntentReply = try reply(
             #"{"id":4,"ok":{"repeated":true,"seq":4,"event":{"type":"intent_echoed","device":"d","number":1,"digest":"x","content_id":"y","outcome":{"result":"done","message":"msg-7"},"at_ms":5}}}"#
         ).read()

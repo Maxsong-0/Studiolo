@@ -3,6 +3,7 @@ import BottegaKit
 import BottegaLink
 import CryptoKit
 import Foundation
+import Synchronization
 
 /// `bottega-probe <run directory> <state directory>`, then a command a line. For a throwaway LMAS only, such as
 /// `lmas-local demo`: what it registers is a device whose keys lie in files.
@@ -17,11 +18,11 @@ struct Probe {
         setvbuf(stdout, nil, _IOLBF, 0)
         let run = URL(filePath: arguments[1], directoryHint: .isDirectory)
         let state = URL(filePath: arguments[2], directoryHint: .isDirectory)
+        let connector = Recorder(
+            inner: UnixSocketConnector(path: run.appending(path: "ui.sock").path),
+            file: arguments.count > 3 ? URL(filePath: arguments[3]) : nil)
         let client = LinkClient(
-            connector: Recorder(
-                inner: UnixSocketConnector(path: run.appending(path: "ui.sock").path),
-                file: arguments.count > 3 ? URL(filePath: arguments[3]) : nil),
-            chest: FileChest(folder: state), store: FileKeepsakeStore(url: state.appending(path: "link.json")))
+            connector: connector, chest: FileChest(folder: state), store: FileKeepsakeStore(url: state.appending(path: "link.json")))
         let ledger = Ledger()
         let running = Task { await client.run() }
         let watching = Task { for await update in client.updates { await ledger.take(update) } }
@@ -29,6 +30,11 @@ struct Probe {
         for try await line in FileHandle.standardInput.bytes.lines {
             let words = line.split(separator: " ", maxSplits: 1).map(String.init)
             let rest = words.count > 1 ? words[1] : ""
+            /// The first `count` words of the rest, then what is left of it.
+            func parts(_ count: Int) -> [String] {
+                let parts = rest.split(separator: " ", maxSplits: count).map(String.init)
+                return parts + Array(repeating: "", count: max(0, count + 1 - parts.count))
+            }
             do {
                 switch words.first {
                 case "register": await client.register(name: rest)
@@ -36,10 +42,43 @@ struct Probe {
                 case "reconnect": await client.reconnect()
                 case "reload": await client.reload()
                 case "seen":
-                    await client.seen(through: ledger.through)
-                    print("seen: asked")
+                    if let through = await ledger.seenThrough {
+                        print("seen: \(through), noted \(await client.seen(through: through))")
+                    } else {
+                        print("seen: nothing to say")
+                    }
+                case "seen-at": print("seen: noted \(await client.seen(through: UInt64(rest) ?? 0))")
                 case "say":
-                    try await client.submit(.say(to: "dispatcher", thread: nil, text: rest, files: [], wantsReply: true))
+                    let to = parts(1)
+                    try await client.submit(.say(to: to[0], thread: nil, text: to[1], files: [], wantsReply: true))
+                case "interject", "tell":
+                    let to = parts(2)
+                    let thread = to[0] == "last" ? await ledger.lastLine : to[0]
+                    try await client.submit(
+                        .say(to: to[1], thread: thread, text: to[2], files: [], wantsReply: words[0] == "interject"))
+                case "file":
+                    let to = parts(1)
+                    let files = [TextFile(name: "说明.txt", content: String(repeating: "x", count: Int(to[1]) ?? 10))]
+                    try await client.submit(.say(to: to[0], thread: nil, text: "看附件。", files: files, wantsReply: true))
+                case "answer":
+                    let to = parts(1)
+                    let message = to[0] == "last" ? await ledger.lastQuestion : to[0]
+                    try await client.submit(.answer(message: message, text: to[1], files: []))
+                case "approve", "decline":
+                    let ask = rest == "last" ? await ledger.lastAsk : (id: rest, text: "")
+                    try await client.submit(
+                        words[0] == "approve"
+                            ? .approve(ask: ask.id, textDigest: Digest.sha256(ask.text)) : .decline(ask: ask.id))
+                case "flood":
+                    let to = parts(1)
+                    for count in 1...(Int(to[1]) ?? 1) {
+                        try await client.submit(.say(to: to[0], thread: nil, text: "第 \(count) 句", files: [], wantsReply: true))
+                    }
+                case "cut":
+                    connector.losesNextReply.withLock { $0 = true }
+                    print("cut: the answer to the next intent gets lost")
+                case "overview": await client.refreshOverview()
+                case "mail": await ledger.tellMail()
                 case "state": await ledger.tell()
                 case "wait": try await Task.sleep(for: .milliseconds(Int(rest) ?? 1000))
                 case "quit":
@@ -64,7 +103,22 @@ actor Ledger {
     private var events = 0
     private var unreadable = 0
     private var first: UInt64?
-    var through: UInt64 { state.through }
+    /// With every letter taken as shown.
+    var seenThrough: UInt64? { state.seenThrough(shown: Set(state.messagesToUser)) }
+    var lastLine: String { state.messages.values.filter(\.isFromUser).max { $0.seq < $1.seq }?.thread ?? "" }
+    var lastQuestion: String { state.messagesToUser.last { state.messages[$0]?.isOpenQuestion == true } ?? "" }
+    var lastAsk: (id: String, text: String) {
+        state.asks.values.filter { $0.answer == nil }.max { $0.id < $1.id }.map { ($0.id, $0.text) } ?? ("", "")
+    }
+
+    /// Everything the user said or was told.
+    func tellMail() {
+        for message in state.messages.values.filter({ $0.isFromUser || $0.isToUser }).sorted(by: { $0.seq < $1.seq }) {
+            print(
+                "mail: \(message.seq) \(message.id) [\(message.thread)] \(message.from) → \(message.to) \(message.kind)",
+                "\(message.state) by \(message.device ?? "-") re \(message.replyTo ?? "-"): \(UntrustedText.line(message.body, limit: 70))")
+        }
+    }
 
     func take(_ update: LinkClient.Update) {
         switch update {
@@ -106,28 +160,37 @@ actor Ledger {
 }
 
 /// Passes everything on, and keeps the lines with records in a file the app can open as a recording.
-struct Recorder: Connector {
+final class Recorder: Connector {
     let inner: UnixSocketConnector
     let file: URL?
+    /// Hang up once the next intent has gone out, before its answer is heard.
+    let losesNextReply = Mutex(false)
 
     func connect() async throws -> any LineChannel {
         let channel = try await inner.connect()
-        guard let file else { return channel }
-        if !FileManager.default.fileExists(atPath: file.path) { try Data().write(to: file) }
-        return Channel(inner: channel, file: try FileHandle(forWritingTo: file))
+        if let file, !FileManager.default.fileExists(atPath: file.path) { try Data().write(to: file) }
+        return Channel(inner: channel, file: try file.map(FileHandle.init(forWritingTo:)), recorder: self)
+    }
+
+    init(inner: UnixSocketConnector, file: URL?) {
+        self.inner = inner
+        self.file = file
     }
 
     struct Channel: LineChannel {
         let inner: any LineChannel
-        let file: FileHandle
+        let file: FileHandle?
+        let recorder: Recorder
+        let isDeaf = Flag()
 
         func lines() -> AsyncThrowingStream<Data, any Error> {
-            let (inner, file) = (inner, file)
+            let (inner, file, isDeaf) = (inner, file, isDeaf)
             return AsyncThrowingStream { passed in
                 let copying = Task {
                     do {
                         for try await line in inner.lines() {
-                            if line.starts(with: Data(#"{"record":"#.utf8)) {
+                            if isDeaf.value.withLock({ $0 }) { continue }
+                            if let file, line.starts(with: Data(#"{"record":"#.utf8)) {
                                 try file.seekToEnd()
                                 try file.write(contentsOf: line + Data("\n".utf8))
                             }
@@ -142,9 +205,26 @@ struct Recorder: Connector {
             }
         }
 
-        func send(_ line: Data) async throws { try await inner.send(line) }
+        func send(_ line: Data) async throws {
+            let isIntent = line.range(of: Data(#""do":"intent""#.utf8)) != nil
+            let cuts = isIntent && recorder.losesNextReply.withLock { losing in
+                defer { losing = false }
+                return losing
+            }
+            if cuts { isDeaf.value.withLock { $0 = true } }
+            try await inner.send(line)
+            guard cuts else { return }
+            try await Task.sleep(for: .milliseconds(500))
+            print("cut: hung up without hearing the answer")
+            inner.close()
+        }
+
         func close() { inner.close() }
     }
+}
+
+final class Flag: Sendable {
+    let value = Mutex(false)
 }
 
 /// Keys in private files, no prompt.

@@ -227,6 +227,11 @@ final class WorkshopModel {
         Task { await client.reconnect() }
     }
 
+    func refreshOverview() {
+        guard let client else { return }
+        Task { await client.refreshOverview() }
+    }
+
     func reload() {
         guard let client else { return }
         Task { await client.reload() }
@@ -437,10 +442,9 @@ final class WorkshopModel {
         seenReport = Task {
             try? await Task.sleep(for: .seconds(1))
             seenReport = nil
-            let through = state.seenThrough(shown: shown)
-            guard through > reportedSeen, isLive else { return }
-            reportedSeen = through
-            await client.seen(through: through)
+            guard let through = state.seenThrough(shown: shown), through > reportedSeen, isLive else { return }
+            // Not taken note of, it is said again with the next record or the next connection.
+            if await client.seen(through: through) { reportedSeen = max(reportedSeen, through) }
         }
     }
 }

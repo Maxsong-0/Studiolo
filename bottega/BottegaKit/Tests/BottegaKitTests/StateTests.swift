@@ -290,10 +290,23 @@ struct StateTests {
         try state.apply(record(3, message("b", from: "x", to: "y")))
         try state.apply(record(4, through: 6, message("c", from: "x", to: "user")))
         try state.apply(record(7, through: 7))
-        #expect(state.seenThrough(shown: []) == 0)
+        #expect(state.seenThrough(shown: []) == nil)
         #expect(state.seenThrough(shown: ["a"]) == 3)
-        #expect(state.seenThrough(shown: ["c"]) == 0)
+        #expect(state.seenThrough(shown: ["c"]) == nil)
         #expect(state.seenThrough(shown: ["a", "c"]) == 7)
+    }
+
+    /// After a restart nothing has been on screen yet: what was delivered before does not hold up what came since.
+    @Test func whatIsDeliveredAlreadyDoesNotHoldUpTheRest() throws {
+        var state = WorkshopState()
+        try state.apply(record(1, message("a", from: "x", to: "user")))
+        try state.apply(record(2, .messageHanded(.init(id: "a", atMs: 1))))
+        try state.apply(record(3, message("b", from: "x", to: "user")))
+        #expect(state.seenThrough(shown: []) == nil)
+        #expect(state.seenThrough(shown: ["b"]) == 3)
+        try state.apply(record(4, .messageHanded(.init(id: "b", atMs: 1))))
+        // Nothing waits: there is nothing to say.
+        #expect(state.seenThrough(shown: ["a", "b"]) == nil)
     }
 
     /// Big logs stay quick: each event costs about the same however many came before.

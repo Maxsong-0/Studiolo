@@ -32,6 +32,7 @@ final class FakeLMAS: Connector, Sendable {
         var executed: [(kind: String, body: String)] = []
         var handedIn: [SignedIntent] = []
         var seen: [UInt64] = []
+        var dropped = 0
         var followedFrom: [UInt64] = []
         var open: [FakeChannel] = []
         var refuseOutcome: [String: String] = [:]  // kind → why JSON
@@ -40,6 +41,17 @@ final class FakeLMAS: Connector, Sendable {
     private let books = Mutex(Books())
     static let device = "device-1"
 
+    /// Registered, but with keys nobody has: every intent is dropped.
+    func forgetKeys() {
+        let other = SoftwareKeys()
+        books.withLock { books in
+            books.registration = books.registration.map { old in
+                Registration(
+                    name: old.name, dailyKey: other.daily.hex, approvalKey: other.approval.hex,
+                    dailySignature: old.dailySignature, approvalSignature: old.approvalSignature)
+            }
+        }
+    }
     func set(_ change: (inout Knobs) -> Void) { books.withLock { change(&$0.knobs) } }
     func refuse(_ kind: String, code: String, text: String) {
         books.withLock { $0.refuseOutcome[kind] = #"{"code":"\#(code)","text":"\#(text)"}"# }
@@ -136,12 +148,16 @@ final class FakeLMAS: Connector, Sendable {
         switch json["do"] as? String {
         case "register": register(json, id, channel)
         case "overview":
-            let (latest, oldest) = books.withLock { ($0.through, $0.knobs.oldest) }
-            channel.ok(id, #"{"now_ms":1,"latest":\#(latest),"oldest":\#(oldest),"lmas":"fake"}"#)
+            let (latest, oldest, dropped) = books.withLock { ($0.through, $0.knobs.oldest, $0.dropped) }
+            channel.ok(id, #"{"now_ms":1,"latest":\#(latest),"oldest":\#(oldest),"lmas":"fake","dropped_intents":\#(dropped)}"#)
         case "follow": follow(json["from"] as? UInt64 ?? 0, id, channel)
         case "seen":
             let through = json["through"] as? UInt64 ?? 0
-            books.withLock { $0.seen.append(through) }
+            let latest = books.withLock { books in
+                if through <= books.through { books.seen.append(through) }
+                return books.through
+            }
+            guard through <= latest else { return channel.fail(id, "ahead", #","latest":\#(latest)"#) }
             channel.ok(id, #"{"through":\#(through)}"#)
         case "intent": intent(json["intent"] as? [String: Any] ?? [:], id, channel)
         case "ping": channel.ok(id, #"{"now_ms":1}"#)
@@ -219,7 +235,10 @@ final class FakeLMAS: Connector, Sendable {
                 let registration = books.registration, intent.device == Self.device,
                 let daily = PublicKey(hex: registration.dailyKey), let approval = PublicKey(hex: registration.approvalKey),
                 intent.isSigned(daily: daily, approval: approval)
-            else { return .error("dropped", "") }
+            else {
+                books.dropped += 1
+                return .error("dropped", "")
+            }
             if intent.number < books.next {
                 guard let entry = books.ledger[intent.number] else { return .error("number_too_old", #","next":\#(books.next)"#) }
                 guard entry.digest == intent.digest else { return .error("conflict", #","next":\#(books.next)"#) }

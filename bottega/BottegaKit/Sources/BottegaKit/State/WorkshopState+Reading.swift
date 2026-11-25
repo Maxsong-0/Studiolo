@@ -139,11 +139,15 @@ extension WorkshopState {
     // MARK: Seen
 
     /// Up to which record everything the user has been shown reaches, given the messages to them that have been on
-    /// screen: just before the first one that has not.
-    public func seenThrough(shown: Set<String>) -> UInt64 {
-        for id in messagesToUser where !shown.contains(id) {
-            if let seq = messages[id]?.seq { return max(seq, 1) - 1 }
+    /// screen: just before the first one that waits to be delivered and has not. nil when saying so would deliver
+    /// nothing; what is delivered already counts as shown, whoever showed it.
+    public func seenThrough(shown: Set<String>) -> UInt64? {
+        var delivers = false
+        for id in messagesToUser {
+            guard let message = messages[id], message.state == .queued else { continue }
+            guard shown.contains(id) else { return delivers ? max(message.seq, 1) - 1 : nil }
+            delivers = true
         }
-        return through
+        return delivers ? through : nil
     }
 }
