@@ -18,6 +18,7 @@ pub(super) fn routes(routes: Router<crate::AppState>) -> Router<crate::AppState>
     routes
         .route("/api/v1/board", get(view))
         .route("/api/v1/board/overview", get(super::overview::overview))
+        .route("/api/v1/board/presence", get(super::connector::presence))
         .route("/api/v1/board/replay", get(super::replay::replay))
         .route("/api/v1/board/timeline", get(super::timeline::timeline))
 }
@@ -206,6 +207,7 @@ async fn view(
 pub(super) fn private_router(plane: Arc<BoardPlane>) -> Router {
     Router::new()
         .route("/internal/board", post(command))
+        .route("/internal/connector", post(super::connector::command))
         .layer(DefaultBodyLimit::max(262_144))
         .layer(Extension(plane))
         .layer(middleware::from_fn(peer))

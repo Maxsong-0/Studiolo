@@ -67,6 +67,11 @@ pub struct ReadCaps {
     /// 可读的规则 subject（如 `通用工作规则.md`）；缺省为空＝一条规则都不读（ADR-026 D4）。
     #[serde(default)]
     pub rules_whitelist: Vec<String>,
+    /// 只读黑板的项目（完整路径，ADR-046）；非空即连接器类型，别的权限必须全空。
+    ///
+    /// 空名单不写进规范化正文：不用它的类型正文与摘要不变。
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub board_projects: Vec<String>,
 }
 
 /// 写权限；`board` 由主人显式发布，`content_direct` 永久为 false。
@@ -82,6 +87,9 @@ pub struct WriteCaps {
     pub content_patch_only: bool,
     /// 永久为 false：AI 不整页覆盖人写正文。
     pub content_direct: bool,
+    /// 能推「在做什么」状态的项目（完整路径，ADR-046）；非空即连接器类型，别的权限必须全空。
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub presence_projects: Vec<String>,
 }
 
 /// 策略权限；`activate` 永久为 false（AI 无 One-time Code 路径）。
@@ -119,6 +127,20 @@ pub struct CapabilitySet {
     /// 硬绑定 skills。
     #[serde(default)]
     pub hard_bound_skills: Vec<HardBinding>,
+}
+
+/// 黑板上只要读白名单、不要写权限的操作；人侧与 agent 侧两处裁决共用这一份名单。
+#[must_use]
+pub fn board_read_operation(operation: &str) -> bool {
+    matches!(operation, "list" | "get" | "presence")
+}
+
+impl CapabilitySet {
+    /// 是否为连接器类型（ADR-046）：只走 `/connect/v1/*`，MCP 与 `/read/*` 一律按策略拒绝。
+    #[must_use]
+    pub fn connector_only(&self) -> bool {
+        !self.read.board_projects.is_empty() || !self.write.presence_projects.is_empty()
+    }
 }
 
 /// 一个 skill：名称、一句摘要、索引式触发条件与 Markdown 正文。

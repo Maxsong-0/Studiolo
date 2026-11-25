@@ -32,8 +32,8 @@ pub use diff::{Diff, DiffEntry, DiffOp};
 pub use error::PolicyError;
 pub use model::{
     CapabilitySet, HardBinding, MAX_BODY_BYTES, MAX_PROPOSAL_BYTES, PolicyCaps, PolicyKind,
-    ReadCaps, Skill, WriteCaps, sha256_hex, validate_rules_subject, validate_skill_name,
-    validate_type_name,
+    ReadCaps, Skill, WriteCaps, board_read_operation, sha256_hex, validate_rules_subject,
+    validate_skill_name, validate_type_name,
 };
 pub use proposal::{
     MAX_LISTED_PROPOSALS, Proposal, ProposalInput, ProposalListing, ProposalResult, ProposalSummary,

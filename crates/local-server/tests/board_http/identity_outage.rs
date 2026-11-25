@@ -15,7 +15,7 @@ fn database(f: &TestBoard) -> PathBuf {
 }
 
 /// 0640 让身份库的私有存储复核失败，之后每次读都出错；改回 0600 即恢复。
-fn set_mode(f: &TestBoard, mode: u32) {
+pub(super) fn set_mode(f: &TestBoard, mode: u32) {
     fs::set_permissions(database(f), fs::Permissions::from_mode(mode)).unwrap();
 }
 

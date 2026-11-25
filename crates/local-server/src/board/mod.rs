@@ -1,5 +1,6 @@
 //! M5 黑板组合面：复用 canonical 单写者，身份与策略每次复核，运行正文不进 Control DB。
 mod auth;
+mod connector;
 mod content;
 mod execute;
 mod execution_http;
@@ -7,6 +8,7 @@ mod executor;
 mod http;
 mod overview;
 mod owner;
+mod presence;
 mod replay;
 mod requests;
 pub use executor::{
@@ -64,6 +66,8 @@ pub struct BoardPlane {
     overview_tail: std::sync::atomic::AtomicU64,
     /// 黑板列表上次为「提交状态没核对出来」记日志的时刻（毫秒），用来限频。
     commit_check_noted_ms: std::sync::atomic::AtomicI64,
+    /// 「在做什么」状态（ADR-046）：只在内存、300 秒过期，不进控制库和备份。
+    presence: connector::PresenceDesk,
 }
 impl BoardPlane {
     /// 交出启动时固定的 Control 源，先复核它还是那一份；不重新开库或执行迁移，也不拿引擎锁：
@@ -174,6 +178,7 @@ impl BoardPlane {
             permits: Arc::new(tokio::sync::Semaphore::new(4)),
             overview_tail: std::sync::atomic::AtomicU64::new(0),
             commit_check_noted_ms: std::sync::atomic::AtomicI64::new(i64::MIN),
+            presence: connector::PresenceDesk::open(jiff::Timestamp::now()),
         }))
     }
     /// 独立租约巡检；关闭时等待本轮控制事务结束，不留下后台写者。
@@ -236,6 +241,8 @@ impl BoardPlane {
         &self,
         runner: Option<&RunnerPlane>,
     ) -> Result<MaintenanceTick, MaintenanceFault> {
+        // 过期和撤权的会话状态照样清：只动内存，不取审计许可，封存冻结时也不留。
+        self.sweep_presence();
         // 冻结中只认这一种「取不到」；准入文件被换、权限被改这类照旧是审计不可用。
         let Some(_operation) = self
             .audit

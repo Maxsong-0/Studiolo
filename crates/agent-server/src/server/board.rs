@@ -10,7 +10,7 @@ use studiolo_supply::audit::{self, Actor};
 pub(super) struct BoardArgs {
     /// 白名单中的完整项目路径。
     pub project: String,
-    /// list/get/create/claim/heartbeat/handoff/return/cancel/number。
+    /// list/get/presence/create/claim/heartbeat/handoff/return/cancel/number。
     pub operation: String,
     /// 严格结构化参数；自然语言请求被拒绝。
     pub request: serde_json::Value,
@@ -25,7 +25,7 @@ impl AgentSession {
             .policy
             .as_ref()
             .ok_or_else(|| McpError::invalid_request("黑板需要有效策略平面", None))?;
-        let read = matches!(args.operation.as_str(), "list" | "get");
+        let read = studiolo_policy::board_read_operation(&args.operation);
         if !read
             && (!policy.set.write.board || !policy.set.write.board_projects.contains(&args.project))
         {
@@ -36,6 +36,7 @@ impl AgentSession {
             args.operation.as_str(),
             "list"
                 | "get"
+                | "presence"
                 | "create"
                 | "claim"
                 | "heartbeat"
