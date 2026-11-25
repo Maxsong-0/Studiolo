@@ -265,6 +265,9 @@ where
                 Arc::clone(&prepared.producer)
                     as Arc<dyn studiolo_local_server::backup::BackupJobsProbe>
             }),
+            workbench.as_ref().map(|workbench| {
+                Arc::clone(workbench) as Arc<dyn studiolo_local_server::health::RecordUsageProbe>
+            }),
         ),
     );
     let prepared = PreparedServer {

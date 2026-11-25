@@ -7,7 +7,9 @@
 use super::checks::Checks;
 use super::evidence::{FailureMark, JobFailure, JobMark, OpenJob, RecoveryMark};
 use std::collections::BTreeMap;
-use studiolo_audit_ledger::{AuditEvent, AuditPhase, AuditRecord};
+use studiolo_audit_ledger::{
+    AuditError, AuditEvent, AuditFilter, AuditLedger, AuditPhase, AuditRecord,
+};
 use studiolo_backup::worker::{
     audit::AdmissionFact,
     job::{BACKUP_AUDIT_ACTION, backup_event_key, backup_intent},
@@ -24,6 +26,8 @@ struct Open {
     admission: Option<AuditRecord>,
     /// 准入里的内容截止时刻（Unix 毫秒）；还没准入为 `None`。
     content_cutoff_ms: Option<i64>,
+    /// 准入里的人侧账本截止 offset；还没准入为 `None`。
+    audit_offset: Option<u64>,
 }
 
 /// 账本里备份事件的累计视图。
@@ -40,6 +44,8 @@ pub(super) struct Queue {
     latest_failed: bool,
     /// 成功收口、有准入的作业里内容截止最晚的那条。
     recovery_point: Option<RecoveryMark>,
+    /// 成功收口、有准入的作业里盖到的最大人侧账本 offset（写者旧记录打包的水位，BUG-051）。
+    sealed_offset: Option<u64>,
     /// 仓库抽查的累计视图。
     checks: Checks,
 }
@@ -78,18 +84,17 @@ impl Queue {
                                 since_ms: at,
                                 admission: None,
                                 content_cutoff_ms: None,
+                                audit_offset: None,
                             },
                         );
                     }
                 }
                 AuditPhase::Outcome => {
                     // 只认收口了这里的作业的结果：别的目标类别、对不上原键的结果不算成功也不算失败。
-                    if self.open.get(&sequence).is_some_and(|open| open.key == key) {
-                        let cutoff = self
-                            .open
-                            .remove(&sequence)
-                            .and_then(|open| open.content_cutoff_ms);
-                        self.close(sequence, at, cutoff, event);
+                    if self.open.get(&sequence).is_some_and(|open| open.key == key)
+                        && let Some(open) = self.open.remove(&sequence)
+                    {
+                        self.close(sequence, at, &open, event);
                     }
                 }
             }
@@ -109,6 +114,7 @@ impl Queue {
         {
             open.admission = Some(record.clone());
             open.content_cutoff_ms = Some(fact.content_cutoff().millis());
+            open.audit_offset = Some(fact.audit_offset());
         }
     }
 
@@ -171,6 +177,11 @@ impl Queue {
         self.recovery_point
     }
 
+    /// 最近一次成功封存盖到的人侧账本 offset：写者旧记录打包的水位。失败、未验证的作业不算。
+    pub(super) fn sealed_offset(&self) -> Option<u64> {
+        self.sealed_offset
+    }
+
     /// 还没收口的作业里序号最小、也就是最早的那条；序号单调递增。
     pub(super) fn oldest_open(&self) -> Option<OpenJob> {
         self.open.iter().next().map(|(sequence, open)| OpenJob {
@@ -181,20 +192,15 @@ impl Queue {
     }
 
     /// 一条作业收口：按结果记成最近成功或最近失败；成功且有准入的推进恢复点。
-    fn close(
-        &mut self,
-        sequence: u64,
-        at_ms: i64,
-        content_cutoff_ms: Option<i64>,
-        event: &AuditEvent,
-    ) {
+    fn close(&mut self, sequence: u64, at_ms: i64, open: &Open, event: &AuditEvent) {
         match failure_of(event) {
             None => {
                 self.last_success = Some(JobMark { sequence, at_ms });
                 self.latest_failed = false;
+                self.sealed_offset = self.sealed_offset.max(open.audit_offset);
                 // 没有准入就不知道内容截止到哪：照样算一次成功，但不当恢复点（年龄算不出来）。
                 // 取截止最晚的：恢复点只往前走，不因后收口的旧作业倒退。
-                if let Some(cutoff) = content_cutoff_ms
+                if let Some(cutoff) = open.content_cutoff_ms
                     && self
                         .recovery_point
                         .is_none_or(|mark| cutoff > mark.content_cutoff_ms)
@@ -213,6 +219,25 @@ impl Queue {
                 });
                 self.latest_failed = true;
             }
+        }
+    }
+}
+
+/// 从头读一遍账本，交回最近一次成功封存盖到的人侧账本 offset；离线维护命令用，不占生产者的进度。
+pub(crate) fn sealed_offset(ledger: &dyn AuditLedger) -> Result<Option<u64>, AuditError> {
+    const PAGE: usize = 8192;
+    let mut queue = Queue::default();
+    loop {
+        let page = ledger.query(
+            &AuditFilter::default()
+                .after_offset(queue.scanned())
+                .with_limit(PAGE),
+        )?;
+        for record in &page {
+            queue.absorb(super::producer::TARGET, record);
+        }
+        if page.len() < PAGE {
+            return Ok(queue.sealed_offset());
         }
     }
 }

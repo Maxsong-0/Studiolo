@@ -6,7 +6,7 @@ use crate::{
 };
 
 /// 一处用了多少、上限多少。
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize)]
 pub struct RecordUsageItem {
     /// 现在用了多少。
     pub used: u64,
@@ -15,7 +15,7 @@ pub struct RecordUsageItem {
 }
 
 /// 写者记录各处的用量。打了包的不占散件的名额。
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize)]
 pub struct RecordUsage {
     /// 正文描述符条数。
     pub descriptors: RecordUsageItem,

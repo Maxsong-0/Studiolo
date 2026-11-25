@@ -407,3 +407,37 @@ fn another_targets_success_does_not_establish_a_recovery_point_here() {
     succeed(&ledger, &key(1), true);
     assert_eq!(view(&ledger).recovery_point(), None);
 }
+
+/// 打包的水位：最近一次成功封存准入里的账本 offset。没准入的、失败的、没验证的、还没收口的都不推进，
+/// 后收口的旧作业也不让它倒退。
+#[test]
+fn the_sealed_offset_only_follows_successful_admitted_jobs_and_never_goes_back() {
+    let ledger = MemoryAuditLedger::new();
+    assert_eq!(view(&ledger).sealed_offset(), None);
+    let first = intent(&ledger, &key(1), TARGET);
+    admit(&ledger, &key(1), &first);
+    assert_eq!(view(&ledger).sealed_offset(), None, "封存了还没上传校验");
+    succeed(&ledger, &key(1), false);
+    assert_eq!(view(&ledger).sealed_offset(), None, "没校验不算成功");
+    let second = intent(&ledger, &key(2), TARGET);
+    admit(&ledger, &key(2), &second);
+    let third = intent(&ledger, &key(3), TARGET);
+    admit(&ledger, &key(3), &third);
+    fail(&ledger, &key(3));
+    assert_eq!(view(&ledger).sealed_offset(), None, "失败不算");
+    succeed(&ledger, &key(2), true);
+    assert_eq!(view(&ledger).sealed_offset(), Some(second.offset()));
+    // 没有准入就不知道盖到哪：算成功，但不推进。
+    intent(&ledger, &key(4), TARGET);
+    succeed(&ledger, &key(4), true);
+    assert_eq!(view(&ledger).sealed_offset(), Some(second.offset()));
+    let fifth = intent(&ledger, &key(5), TARGET);
+    admit(&ledger, &key(5), &fifth);
+    let sixth = intent(&ledger, &key(6), TARGET);
+    admit(&ledger, &key(6), &sixth);
+    succeed(&ledger, &key(6), true);
+    succeed(&ledger, &key(5), true);
+    assert_eq!(view(&ledger).sealed_offset(), Some(sixth.offset()));
+    // 离线命令从头读一遍，结论一样。
+    assert_eq!(sealed_offset(&ledger).unwrap(), Some(sixth.offset()));
+}

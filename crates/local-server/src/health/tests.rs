@@ -3,7 +3,7 @@
 //! 这里只覆盖本 Module 自己能独立验收的部分：门禁前置、响应塑形与证据缺失兜底。
 //! 真实装配后的端到端鉴权由组合根的整套契约覆盖。
 
-use super::{EvidenceSnapshot, HealthBody, PATH, enabled, routes};
+use super::{EvidenceSnapshot, HealthBody, PATH, RecordUsageEvidence, enabled, routes};
 use crate::backup::{
     BackupJobs, BackupJobsEvidence, JobMark, RecoveryMark, RepositoryCheckEvidence,
     RepositoryChecks,
@@ -22,6 +22,7 @@ use studiolo_observability::health::{
     RecoveryPointEvidence, RecoveryState, ResidueGuard, WhitelistSnapshot, diagnose,
 };
 use studiolo_observability::quota::QuotaVerdict;
+use studiolo_vault_broker::{RecordUsage, RecordUsageItem};
 use tower::ServiceExt;
 
 /// 全字段齐备、无异常的 Bridge 证据。
@@ -111,6 +112,23 @@ fn complete(now: i64) -> EvidenceSnapshot {
         }),
         backup_jobs: BackupJobsEvidence::Read(healthy_jobs(now)),
         backup_checks: RepositoryCheckEvidence::Read(Box::new(healthy_checks(now))),
+        records: RecordUsageEvidence::Read(roomy_records()),
+    }
+}
+
+/// 各处都还空着一大半的写者记录。
+fn roomy_records() -> RecordUsage {
+    let item = |used, limit| RecordUsageItem { used, limit };
+    RecordUsage {
+        descriptors: item(1_497, 4_096),
+        descriptor_bytes: item(10_000_000, 67_108_864),
+        replays: item(1_635, 4_096),
+        replay_bytes: item(1_000_000, 16_777_216),
+        file_operations: item(0, 4_096),
+        file_operation_bytes: item(0, 67_108_864),
+        tombstones: item(0, 0),
+        segments: item(0, 1_024),
+        packs: 0,
     }
 }
 
@@ -208,7 +226,7 @@ fn 会话门禁具备时装配函数挂载健康页路由() {
 }
 
 #[tokio::test]
-async fn 装配了证据来源时健康页给出封闭json且九节齐全() {
+async fn 装配了证据来源时健康页给出封闭json且十节齐全() {
     let (status, body) = get(served(Some(source(FixedEvidence(10_000)))), PATH).await;
 
     assert_eq!(status, StatusCode::OK);
@@ -216,8 +234,8 @@ async fn 装配了证据来源时健康页给出封闭json且九节齐全() {
     assert_eq!(body["evidence_complete"], true);
     assert_eq!(
         body["sections"].as_array().map(Vec::len),
-        Some(9),
-        "九节必须齐全"
+        Some(10),
+        "十节必须齐全"
     );
 }
 
@@ -263,12 +281,12 @@ async fn 证据一度读不到之后重新可得时健康页自行恢复成正�
 }
 
 #[test]
-fn 证据齐备时响应标记证据完整并给出全部九节() {
+fn 证据齐备时响应标记证据完整并给出全部十节() {
     let body = HealthBody::from_report(&complete(10_000).report());
 
     assert_eq!(body.overall, "normal");
     assert!(body.evidence_complete);
-    assert_eq!(body.sections.len(), 9);
+    assert_eq!(body.sections.len(), 10);
 }
 
 #[test]
@@ -344,3 +362,6 @@ mod backup_details;
 
 #[path = "tests/backup_check_details.rs"]
 mod backup_check_details;
+
+#[path = "tests/records_details.rs"]
+mod records_details;

@@ -23,6 +23,8 @@ fn only_closed_commands_accept_fixed_non_secret_roots() {
     for (name, expected) in [
         ("inspect", Command::Inspect),
         ("audit-flush", Command::AuditFlush),
+        ("archive-pack", Command::ArchivePack),
+        ("archive-unpack", Command::ArchiveUnpack),
     ] {
         let value = parse(args(name)).unwrap().unwrap();
         assert_eq!(value.command, expected);

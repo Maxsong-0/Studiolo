@@ -197,3 +197,74 @@ fn a_rejected_write_is_packed_and_still_answers_its_rejection() {
         Err(BrokerError::RevisionConflict { .. })
     ));
 }
+
+/// 经维护收口的请求照样是一整包：维护记录引用的描述符、重放在段里也查得到，封存逐条核得过，旧键答取消。
+#[test]
+fn a_request_settled_by_maintenance_is_packed_and_its_maintenance_record_still_checks_out() {
+    let fixture = Fixture::new();
+    let mut broker = fixture.open();
+    notes(&mut broker, 1);
+    let path = logical("note-0.md");
+    let first = broker.read(&path).unwrap().revision;
+    let second = broker
+        .mutate_recorded(
+            Mutation::replace(path.clone(), b"two".to_vec(), first, "two"),
+            metadata(),
+        )
+        .unwrap()
+        .revision;
+    flush(&mut broker);
+    let actor = MutationActor::Human {
+        issuer: "https://issuer.test".into(),
+        subject: "human".into(),
+    };
+    drop(
+        broker
+            .prepare_recorded_restore(
+                Mutation::replace(path.clone(), "正文 0".into(), second, "lost"),
+                MutationMetadata::new(
+                    actor.clone(),
+                    MutationKind::Restore {
+                        source_revision: first,
+                    },
+                )
+                .unwrap(),
+            )
+            .unwrap(),
+    );
+    let review = broker.maintenance_inspect(64).unwrap().targets[0]
+        .review_id
+        .clone();
+    let ticket = broker
+        .prepare_maintenance(
+            &review,
+            MaintenanceDecision::CancelRestoreIntent,
+            MaintenanceActor::current().unwrap(),
+        )
+        .unwrap();
+    broker
+        .confirm_maintenance_intent(&ticket, 90, HASH)
+        .unwrap();
+    broker.commit_maintenance(ticket).unwrap();
+    for candidate in broker.pending_maintenance_audit(64).unwrap() {
+        broker
+            .confirm_maintenance_audit(candidate, 91, HASH)
+            .unwrap();
+    }
+    flush(&mut broker);
+    let replay = broker.restore_replay(&path, second, first, "lost", &actor);
+    assert!(replay.is_err() || replay.as_ref().unwrap().is_none());
+    let said = format!("{replay:?}");
+    assert_eq!(pack(&mut broker, later()), 3);
+    assert!(loose_records(&fixture.data).is_empty());
+    assert_eq!(
+        format!(
+            "{:?}",
+            broker.restore_replay(&path, second, first, "lost", &actor)
+        ),
+        said
+    );
+    let (_, sealed) = checkpoint(&fixture, broker, "seal");
+    // 三条请求各两份回执，外加维护的两份。
+    assert_eq!(sealed.unwrap(), 8);
+}

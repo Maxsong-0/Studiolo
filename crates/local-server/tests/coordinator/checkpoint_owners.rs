@@ -36,6 +36,7 @@ mod fixture;
 mod human_idle;
 mod measure_window;
 mod producer;
+mod producer_archive;
 mod producer_auth_backlog;
 mod producer_catch_up;
 mod producer_check;

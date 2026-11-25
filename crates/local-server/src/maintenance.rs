@@ -1,5 +1,6 @@
 //! 离线事务维护：使用实际 OS 权限和 Broker 独占租约，不构造应用身份。
 
+mod archive;
 pub(crate) mod audit;
 mod flush;
 mod inputs;
@@ -39,8 +40,10 @@ pub fn run() -> Result<(), MaintenanceError> {
             "studiolo-maintain sync-init [相同根参数] --sync-transport </绝对路径/sync-approval.json>",
             "studiolo-maintain sync-anchors [相同根参数] --sync-transport </绝对路径/sync-approval.json>",
             "studiolo-maintain sync-rebind [相同根参数] --sync-transport </绝对路径/新sync-approval.json>",
-            "studiolo-maintain sync-purge-residue [相同根参数] --sync-transport </绝对路径/sync-approval.json> --folder <排除文件夹名>"
-        ],"boundary":"仅本机 OS 权限与既有 Broker owner 租约；不是应用身份认证，不自动初始化、取消或停服务。sync-init 经确认建立四项私有存储及批准的空目录；sync-anchors 只准备批准但缺失的空目录，不初始化传输状态；sync-purge-residue 须先停 studiolo-human，只删镜像视图内已不再排除的文件夹残留。"}));
+            "studiolo-maintain sync-purge-residue [相同根参数] --sync-transport </绝对路径/sync-approval.json> --folder <排除文件夹名>",
+            "studiolo-maintain archive-pack [相同根参数]",
+            "studiolo-maintain archive-unpack [相同根参数]"
+        ],"boundary":"仅本机 OS 权限与既有 Broker owner 租约；不是应用身份认证，不自动初始化、取消或停服务。sync-init 经确认建立四项私有存储及批准的空目录；sync-anchors 只准备批准但缺失的空目录，不初始化传输状态；sync-purge-residue 须先停 studiolo-human，只删镜像视图内已不再排除的文件夹残留；archive-pack 把已封存、满 7 天的写者旧记录打包，archive-unpack 全部还原（退回旧程序之前跑），都须先停 studiolo-human，不改正文和任何回执。"}));
     };
     let terminal = terminal::Terminal::open()?;
     let operator = terminal.operator();
@@ -105,6 +108,15 @@ pub enum MaintenanceError {
     /// 已执行的决定未取得可验证结论。
     #[error("维护结果未确认；请重新 inspect，不得按内容哈希推断成功")]
     OutcomeUnknown,
+    /// 打包、还原要求没有任何在途的事。
+    #[error("有未决写入、维护或没投递完的审计；先 inspect、audit-flush 收口，未打包也未还原")]
+    ArchiveBusy,
+    /// 没有水位就判断不了哪些记录已经进过封存。
+    #[error("审计账本里没有一次成功的封存，没有打包的水位；未打包")]
+    ArchiveNoSeal,
+    /// 打包或还原中途失败；散件和段都不手删，重跑同一条命令续做。
+    #[error("写者旧记录的打包或还原没做完；散件和段都别动，查明原因后重跑同一条命令")]
+    Archive,
     /// JSON 输出失败不回显底层错误。
     #[error("维护结果输出失败；请重新 inspect 核验持久状态")]
     Output,

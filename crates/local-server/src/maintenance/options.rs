@@ -19,6 +19,10 @@ pub(super) enum Command {
     SyncRebind,
     /// 清除某个已不再排除的文件夹在镜像视图里的残留；须先停 `studiolo-human`。
     SyncPurgeResidue,
+    /// 把合格的写者旧记录打包（BUG-051）；须先停 `studiolo-human`。
+    ArchivePack,
+    /// 把打包的写者旧记录全部还原成散件，给退回旧程序用；须先停 `studiolo-human`。
+    ArchiveUnpack,
 }
 
 impl Command {
@@ -34,6 +38,8 @@ impl Command {
             Self::SyncAnchors => "sync-anchors",
             Self::SyncRebind => "sync-rebind",
             Self::SyncPurgeResidue => "sync-purge-residue",
+            Self::ArchivePack => "archive-pack",
+            Self::ArchiveUnpack => "archive-unpack",
         }
     }
 
@@ -54,7 +60,7 @@ impl Command {
     /// 每个命令固定的实参个数：命令名、四个根参数对，再加各自专属的参数对；多一个少一个都拒绝。
     fn arity(self) -> usize {
         match self {
-            Self::Inspect | Self::AuditFlush => 9,
+            Self::Inspect | Self::AuditFlush | Self::ArchivePack | Self::ArchiveUnpack => 9,
             Self::CancelPrepared
             | Self::PreserveInstalling
             | Self::CancelRestoreIntent
@@ -96,6 +102,8 @@ pub(super) fn parse(args: Vec<OsString>) -> Result<Option<Options>, MaintenanceE
         Some("sync-anchors") => Command::SyncAnchors,
         Some("sync-rebind") => Command::SyncRebind,
         Some("sync-purge-residue") => Command::SyncPurgeResidue,
+        Some("archive-pack") => Command::ArchivePack,
+        Some("archive-unpack") => Command::ArchiveUnpack,
         _ => return Err(MaintenanceError::Arguments),
     };
     if args.len() != command.arity() {

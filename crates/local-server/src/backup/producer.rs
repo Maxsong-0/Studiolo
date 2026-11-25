@@ -9,6 +9,8 @@
 //! 请求不用从头推。
 //! 仓库抽查（`check` 子模块）：worker 空闲时问该不该查，生产者按账本定节奏和组号、先落原意图；
 //! worker 跑完交结果，生产者核原意图再落账。
+//! 不封存的那一轮回收完，写者的旧记录该打包就打（`archive` 子模块，BUG-051）。
+mod archive;
 mod catch_up;
 mod check;
 
@@ -120,6 +122,9 @@ pub struct BackupProducer {
     /// 用例用：把等人侧空闲的上限改短；生产固定 [`IDLE_BUDGET`]。
     #[cfg(test)]
     pub(crate) idle_budget: Mutex<Duration>,
+    /// 用例用：打包看的「现在」；记录要满 7 天，用例等不了那么久。
+    #[cfg(test)]
+    pub(crate) archive_clock: Mutex<Option<i64>>,
     /// 开始服务的时刻；账本里从没有成功时，逾期从它和第一次尝试里较早的那个起算。
     serving_since_ms: Option<i64>,
 }
@@ -146,6 +151,8 @@ impl BackupProducer {
             seal_lines: Mutex::new(Vec::new()),
             #[cfg(test)]
             idle_budget: Mutex::new(IDLE_BUDGET),
+            #[cfg(test)]
+            archive_clock: Mutex::new(None),
             serving_since_ms: now_millis().ok(),
         })
     }
@@ -303,13 +310,14 @@ impl BackupProducer {
             self.refresh(&mut state.queue)?;
         }
         let (answer, job) = self.decide(&mut state.queue, clock)?;
+        let sealed_offset = state.queue.sealed_offset();
         state.busy = true;
         drop(state);
-        self.launch(job).map(|()| answer)
+        self.launch(job, sealed_offset).map(|()| answer)
     }
 
-    /// 只回收过期暂存：不安排封存、不冻结、不读账本。监听循环起来时做一次，之后按固定周期做；
-    /// 后台线程在忙（回收或封存）就跳过这一轮。
+    /// 只回收过期暂存、顺带打包写者旧记录：不安排封存、不冻结、不读账本。监听循环起来时做一次，
+    /// 之后按固定周期做；后台线程在忙（回收或封存）就跳过这一轮。
     pub fn reclaim(self: &Arc<Self>) {
         let Ok(mut state) = self.state.lock() else {
             return;
@@ -317,20 +325,26 @@ impl BackupProducer {
         if state.busy {
             return;
         }
+        // 打包的水位用已经读到的：没读到末尾只会偏小，少打几包。
+        let sealed_offset = state.queue.sealed_offset();
         state.busy = true;
         drop(state);
         // 线程没起来时 `launch` 已经复位 busy，下一轮再试。
-        let _ = self.launch(None);
+        let _ = self.launch(None, sealed_offset);
     }
 
-    /// 起后台线程（回收，`job` 有值时接着做这一次封存）。调用前 busy 已经置上。
-    fn launch(self: &Arc<Self>, job: Option<JobKey>) -> Result<(), AuditError> {
+    /// 起后台线程（回收；`job` 有值时接着做这一次封存，没有就看要不要打包旧记录）。调用前 busy 已经置上。
+    fn launch(
+        self: &Arc<Self>,
+        job: Option<JobKey>,
+        sealed_offset: Option<u64>,
+    ) -> Result<(), AuditError> {
         let producer = Arc::clone(self);
         // 线程起来之前置上：关停这时来问，也要等这个线程走过窗口。
         self.window.open();
         let spawned = std::thread::Builder::new()
             .name("backup-producer".to_owned())
-            .spawn(move || producer.housekeep(job));
+            .spawn(move || producer.housekeep(job, sealed_offset));
         match spawned {
             Ok(handle) => {
                 // 上一个线程已经复位过 busy（否则走不到这里），它的句柄直接换掉。
@@ -379,8 +393,8 @@ impl BackupProducer {
         Ok((QueueAnswer::Started, Some(key)))
     }
 
-    /// 后台线程：先回收过期暂存，再做这一次封存（如果安排了）。
-    fn housekeep(&self, job: Option<JobKey>) {
+    /// 后台线程：先回收过期暂存，再做这一次封存（如果安排了），没安排就看要不要打包旧记录。
+    fn housekeep(&self, job: Option<JobKey>, sealed_offset: Option<u64>) {
         // 正常返回和 panic 展开都要复位 busy，否则之后的 `schedule` 永远回 `outstanding`。
         let _idle = Idle(&self.state);
         // 同样：线程不管怎么结束，关停都不能一直等窗口。
@@ -394,9 +408,11 @@ impl BackupProducer {
             // 固定类别，不含路径和正文。
             eprintln!("备份暂存回收未完成：{error:?}");
         }
-        if let Some(key) = job
-            && let Err(reason) = self.seal(&key)
-        {
+        let Some(key) = job else {
+            self.archive_records(sealed_offset);
+            return;
+        };
+        if let Err(reason) = self.seal(&key) {
             // 写不进去就留给下一次 `schedule` 补；这里不重试。
             if let Ok(event) = backup_failure(&key, reason) {
                 let _ = self.ledger.append(event);

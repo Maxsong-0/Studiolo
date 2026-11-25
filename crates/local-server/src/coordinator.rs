@@ -1,5 +1,6 @@
 //! 封闭的 canonical 拥有者；公开控制句柄不导出 Broker 或任意写回调。
 
+mod archive;
 pub(crate) mod changes;
 mod checkpoint;
 pub use checkpoint::FrozenWorkbench;
@@ -49,6 +50,8 @@ pub(crate) struct Core {
     pub content_audit_healthy: std::sync::atomic::AtomicBool,
     pub content_restore_pending: std::sync::atomic::AtomicBool,
     pub file_operation_pending: std::sync::atomic::AtomicBool,
+    /// 写者记录各处最近一次量到的用量；健康页和「要不要打包」只读它。
+    pub usage: Mutex<Option<studiolo_vault_broker::RecordUsage>>,
     #[cfg(test)]
     pub probe: crate::coordinator_tests::Probe,
 }

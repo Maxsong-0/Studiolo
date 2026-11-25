@@ -1,7 +1,7 @@
 //! 每一步都复核同一批准根；审计回执确认和维护动作保持显式顺序。
 
 use super::{
-    MaintenanceError, audit, flush,
+    MaintenanceError, archive, audit, flush,
     inputs::Inputs,
     options::{Command, Options},
     presentation, state, sync, sync_anchors, sync_rebind,
@@ -39,8 +39,15 @@ pub(super) fn execute(
     if options.command == Command::SyncPurgeResidue {
         return sync::purge_residue(inputs, options, &mut confirm, &check);
     }
+    // 还原不看账本：退回旧程序时账本不可用也得能还原。
+    if options.command == Command::ArchiveUnpack {
+        return archive::unpack(inputs, &actor, &mut confirm, &check);
+    }
     if inputs.audit.is_none() {
         return Err(MaintenanceError::Audit);
+    }
+    if options.command == Command::ArchivePack {
+        return archive::pack(inputs, &actor, &mut confirm, &check);
     }
     if options.command == Command::AuditFlush {
         let observed = state::observe(inputs, false)?;

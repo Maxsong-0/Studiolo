@@ -89,3 +89,24 @@ fn unpacking_a_store_that_was_never_packed_changes_nothing() {
         state
     );
 }
+
+/// 有没投递完的审计就不还原，什么都不动。
+#[test]
+fn unpacking_waits_until_nothing_is_unresolved() {
+    let fixture = Fixture::new();
+    let mut broker = fixture.open();
+    notes(&mut broker, 2);
+    pack(&mut broker, later());
+    broker.mutate_recorded(note(5), metadata()).unwrap();
+    let before = loose_records(&fixture.data);
+    assert!(matches!(
+        broker.archive_unpack(),
+        Err(BrokerError::MutationUnresolved)
+    ));
+    assert!(matches!(
+        broker.archive_unpack_preview(),
+        Err(BrokerError::MutationUnresolved)
+    ));
+    assert_eq!(loose_records(&fixture.data), before);
+    assert_eq!(fixture.state()["format_version"], 9);
+}

@@ -174,3 +174,30 @@ fn real_pty_wrong_confirmation_refuses_and_a_live_owner_is_not_stopped() {
     assert!(output.contains("已有 owner"), "{output}");
     assert!(!owner.write_status().unwrap().unresolved);
 }
+
+/// 打包、还原两条命令在真终端上也要逐字确认；没有一次成功封存时打包在确认之前就拒绝。
+#[test]
+fn real_pty_archive_commands_need_the_exact_words_and_change_nothing_without_them() {
+    let fixture = Fixture::new(true);
+    let state = fixture.root.join("writer/writer-state.json");
+    let before = fs::read(&state).unwrap();
+    let (status, output) = process_support::output(
+        process_support::script(binary(), &fixture.args("archive-pack")),
+        Some(b"archive-pack\n"),
+    );
+    assert!(!status.success());
+    assert!(output.contains("没有一次成功的封存"), "{output}");
+    let (_, output) = process_support::output(
+        process_support::script(binary(), &fixture.args("archive-unpack")),
+        Some(b"archive-pack\n"),
+    );
+    assert!(output.contains("维护确认已取消、超时或不匹配"), "{output}");
+    let (status, output) = process_support::output(
+        process_support::script(binary(), &fixture.args("archive-unpack")),
+        Some(b"archive-unpack\n"),
+    );
+    assert!(status.success(), "{output}");
+    assert!(output.contains("\"packs\":0"), "{output}");
+    assert_eq!(fs::read(&state).unwrap(), before);
+    assert!(!fixture.root.join("writer/archive-v1").exists());
+}

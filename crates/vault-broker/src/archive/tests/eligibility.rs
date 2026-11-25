@@ -63,6 +63,18 @@ fn nothing_is_packed_while_anything_is_unresolved() {
         Err(BrokerError::MutationUnresolved)
     ));
     assert!(!fixture.data.join("archive-v1").exists());
+    // 没有审计主体的写到一半：没有待投递，也一样不打。
+    let fixture = Fixture::new();
+    let mut broker = fixture.open();
+    notes(&mut broker, 2);
+    fault(&broker, 1);
+    assert!(broker.mutate(note(6)).is_err());
+    assert!(broker.pending_content_audit(64).unwrap().is_empty());
+    assert!(matches!(
+        broker.archive_step(later(), &mut ArchiveCursor::default()),
+        Err(BrokerError::MutationUnresolved)
+    ));
+    assert!(!fixture.data.join("archive-v1").exists());
 }
 
 /// 坏记录不打包，也不跳过：当场报损坏，什么都不删。
@@ -92,6 +104,25 @@ fn a_damaged_record_stops_the_step_and_removes_nothing() {
         );
         assert_eq!(loose_records(&fixture.data), before);
     }
+}
+
+/// 终态说的不是这条描述符的请求（指着同一条母本、路径却换了）：报损坏，不打。
+#[test]
+fn a_terminal_that_tells_another_story_is_not_packed() {
+    let fixture = Fixture::new();
+    let mut broker = fixture.open();
+    notes(&mut broker, 2);
+    let key = sha256(note(0).idempotency_key.as_bytes());
+    let path = fixture.data.join(format!("idempotency/{key}.json"));
+    let text = fs::read_to_string(&path).unwrap();
+    assert_eq!(text.matches("note-0.md").count(), 1);
+    fs::write(&path, text.replace("note-0.md", "note-9.md")).unwrap();
+    let before = loose_records(&fixture.data);
+    assert!(matches!(
+        broker.archive_step(later(), &mut ArchiveCursor::default()),
+        Err(BrokerError::CorruptWriterState)
+    ));
+    assert_eq!(loose_records(&fixture.data), before);
 }
 
 /// 缺一份回执、缺重放的不是一整包：留着不打，别的照打。

@@ -7,7 +7,7 @@ mod scale;
 mod seal;
 mod unpacked;
 
-use super::{Part, loose};
+use super::{Part, format, loose};
 use crate::{
     content_audit::store as events,
     mutation::record::{Outcome, Terminal},

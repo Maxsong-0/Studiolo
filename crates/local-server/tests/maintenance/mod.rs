@@ -1,3 +1,4 @@
+mod archive;
 mod audit_failure;
 mod fixture;
 mod inputs;

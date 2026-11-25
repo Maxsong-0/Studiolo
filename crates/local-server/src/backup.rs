@@ -17,7 +17,7 @@ mod evidence;
 #[cfg(target_os = "linux")]
 mod listener;
 pub mod producer;
-mod queue;
+pub(crate) mod queue;
 #[cfg(target_os = "linux")]
 mod service;
 

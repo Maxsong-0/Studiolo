@@ -1,14 +1,15 @@
 //! 组合根装配健康证据来源：**只如实反映本次装配真正拿到了哪些证据**。
 //!
-//! 健康页的每一节都必须有可指认的证据来源才敢显示"正常"。目前有两个真实证据源：双向 Bridge 平面
-//! （第六节、`sync-transport` 活性、Sync 配额读数，全部经 [`BridgeHealthProbe`]）和备份生产者
-//! （「恢复点年龄」「备份作业」「备份仓库检查」三节，经 [`BackupJobsProbe`] 只读原账本里的备份事件）；
+//! 健康页的每一节都必须有可指认的证据来源才敢显示"正常"。目前有三个真实证据源：双向 Bridge 平面
+//! （第六节、`sync-transport` 活性、Sync 配额读数，全部经 [`BridgeHealthProbe`]）、备份生产者
+//! （「恢复点年龄」「备份作业」「备份仓库检查」三节，经 [`BackupJobsProbe`] 只读原账本里的备份事件）
+//! 和工作台（「写者记录」一节，经 [`RecordUsageProbe`] 只读内存里最近一次量到的用量）；
 //! 其余各节没接上的原因逐条写在 [`AssembledEvidence::snapshot`] 上，一律给出"未知"。
 //! **绝不为了页面好看而假装正常**：`EvidenceSnapshot::unknown` 的每一节都会被只读聚合
 //! 判成 `Unknown`，平面没装配时整体因此永远不是绿。
 //!
 //! 本 Module 不读磁盘、不连网络、不读环境变量，也不持有任何配置或秘密；
-//! 外部输入只有本地墙钟（每次取快照时读）和两个探针各自的只读回答。
+//! 外部输入只有本地墙钟（每次取快照时读）和三个探针各自的只读回答。
 
 use std::{
     sync::Arc,
@@ -17,7 +18,9 @@ use std::{
 
 use studiolo_host_config::sync_transport::ManualQuota;
 use studiolo_local_server::backup::{BackupJobsEvidence, BackupJobsProbe, RepositoryCheckEvidence};
-use studiolo_local_server::health::{EvidenceSnapshot, HealthEvidence};
+use studiolo_local_server::health::{
+    EvidenceSnapshot, HealthEvidence, RecordUsageEvidence, RecordUsageProbe,
+};
 use studiolo_local_server::sync_plane::health::BridgeHealthProbe;
 use studiolo_observability::health::{Instant, RecoveryPointEvidence};
 use studiolo_observability::quota::{QuotaVerdict, SyncQuota, SyncUsage};
@@ -25,12 +28,14 @@ use studiolo_observability::quota::{QuotaVerdict, SyncQuota, SyncUsage};
 /// 本次装配可得的健康证据。
 ///
 /// 只要哪天真有证据源接进组合根，就往这里加字段，加一个字段就多一节能显示真实结论；
-/// 没加的一律留在"未知"。目前有双向 Bridge 平面和备份生产者（各自装配了才有）。
+/// 没加的一律留在"未知"。目前有双向 Bridge 平面、备份生产者和工作台（各自装配了才有）。
 pub(crate) struct AssembledEvidence {
     /// 双向 Bridge 平面的健康探针；平面未装配即 `None`。
     bridge: Option<Arc<dyn BridgeHealthProbe>>,
     /// 备份生产者的作业探针；启动时没有给备份配置即 `None`。
     backup: Option<Arc<dyn BackupJobsProbe>>,
+    /// 写者记录用量的探针；只读服务没有写者即 `None`。
+    records: Option<Arc<dyn RecordUsageProbe>>,
 }
 
 impl HealthEvidence for AssembledEvidence {
@@ -58,6 +63,8 @@ impl HealthEvidence for AssembledEvidence {
     ///   `probe.manual_quota()` 经 [`sync_quota_verdict`] 算 Sync 配额。
     /// - **备份作业**：生产者装配了才有探针，它从启动保留的原账本读备份事件；没装配报「没有启用」，
     ///   装配了但这一次没读到（账本没读完、本地时钟不可用）报「没读到」，都是未知。
+    /// - **写者记录**：工作台每次重扫（30 秒一次，写入之后也会）顺带量一次、记在内存里，这里只读那一份；
+    ///   没有写者报「没有装配」，还没量过或上一次没量成报「没读到」，都是未知。
     fn snapshot(&self) -> EvidenceSnapshot {
         let mut snapshot = EvidenceSnapshot::unknown(now_unix_seconds());
         if let Some(probe) = &self.bridge {
@@ -83,6 +90,12 @@ impl HealthEvidence for AssembledEvidence {
                     RepositoryCheckEvidence::Read(Box::new(checks))
                 }),
         };
+        snapshot.records = match &self.records {
+            None => RecordUsageEvidence::Disabled,
+            Some(probe) => probe
+                .record_usage()
+                .map_or(RecordUsageEvidence::Unreadable, RecordUsageEvidence::Read),
+        };
         snapshot
     }
 }
@@ -91,8 +104,13 @@ impl HealthEvidence for AssembledEvidence {
 pub(crate) fn source(
     bridge: Option<Arc<dyn BridgeHealthProbe>>,
     backup: Option<Arc<dyn BackupJobsProbe>>,
+    records: Option<Arc<dyn RecordUsageProbe>>,
 ) -> Arc<dyn HealthEvidence> {
-    Arc::new(AssembledEvidence { bridge, backup })
+    Arc::new(AssembledEvidence {
+        bridge,
+        backup,
+        records,
+    })
 }
 
 /// 「恢复点年龄」一节的证据和预算（秒），从「备份作业」同一次读到的事实推出。
@@ -173,13 +191,16 @@ mod tests {
     use studiolo_local_server::backup::{
         BackupJobs, BackupJobsProbe, JobMark, RecoveryMark, RepositoryChecks,
     };
-    use studiolo_local_server::health::{HealthBody, HealthEvidence, SectionBody};
+    use studiolo_local_server::health::{
+        HealthBody, HealthEvidence, RecordUsageProbe, SectionBody,
+    };
     use studiolo_local_server::sync_plane::health::{BridgeHealthProbe, OWNER_LABEL};
     use studiolo_observability::health::{
         BACKUP_DISABLED, BatchStamp, BridgeEvidence, ExitClass, Instant, ModeLabel,
         NO_RECOVERY_POINT, OwnerLabel, OwnerLiveness, RecoveryState, ResidueGuard,
     };
     use studiolo_observability::quota::{QuotaVerdict, SyncUsage};
+    use studiolo_vault_broker::{RecordUsage, RecordUsageItem};
 
     const QUOTA: ManualQuota = ManualQuota {
         account_limit_bytes: 10_000,
@@ -299,6 +320,7 @@ mod tests {
         let evidence = AssembledEvidence {
             bridge: Some(probe),
             backup: None,
+            records: None,
         };
 
         let body = HealthBody::from_report(&evidence.snapshot().report());
@@ -326,6 +348,7 @@ mod tests {
             &AssembledEvidence {
                 bridge: None,
                 backup: Some(probe),
+                records: None,
             }
             .snapshot(),
         )
@@ -377,7 +400,7 @@ mod tests {
         assert_eq!(recovery.state, "unknown");
         assert!(recovery.detail.starts_with("恢复点证据不可读"));
 
-        let body = HealthBody::from_snapshot(&source(None, None).snapshot());
+        let body = HealthBody::from_snapshot(&source(None, None, None).snapshot());
         let recovery = section(&body, "recovery-point");
         assert_eq!(recovery.state, "unknown");
         assert_eq!(recovery.detail, BACKUP_DISABLED);
@@ -389,6 +412,7 @@ mod tests {
         let evidence = AssembledEvidence {
             bridge: None,
             backup: Some(probe),
+            records: None,
         };
 
         let body = HealthBody::from_snapshot(&evidence.snapshot());
@@ -419,6 +443,7 @@ mod tests {
             &AssembledEvidence {
                 bridge: None,
                 backup: Some(unread),
+                records: None,
             }
             .snapshot(),
         );
@@ -434,6 +459,7 @@ mod tests {
             &AssembledEvidence {
                 bridge: None,
                 backup: None,
+                records: None,
             }
             .snapshot(),
         );
@@ -503,17 +529,17 @@ mod tests {
 
     #[test]
     fn 组合根尚未接上任何证据源因而健康页整体判未知而不是判正常() {
-        let body = HealthBody::from_report(&source(None, None).snapshot().report());
+        let body = HealthBody::from_report(&source(None, None, None).snapshot().report());
 
         assert_eq!(body.overall, "unknown");
         assert!(!body.evidence_complete);
     }
 
     #[test]
-    fn 九节结论一节不少且全部标为未知() {
-        let body = HealthBody::from_report(&source(None, None).snapshot().report());
+    fn 十节结论一节不少且全部标为未知() {
+        let body = HealthBody::from_report(&source(None, None, None).snapshot().report());
 
-        assert_eq!(body.sections.len(), 9);
+        assert_eq!(body.sections.len(), 10);
         assert!(
             body.sections
                 .iter()
@@ -530,7 +556,7 @@ mod tests {
 
     #[test]
     fn 同一个证据来源连续取两次都给出同样的未知结论() {
-        let evidence = source(None, None);
+        let evidence = source(None, None, None);
 
         let first = HealthBody::from_report(&evidence.snapshot().report());
         let second = HealthBody::from_report(&evidence.snapshot().report());
@@ -538,5 +564,43 @@ mod tests {
         assert_eq!(first.overall, "unknown");
         assert_eq!(second.overall, "unknown");
         assert_eq!(first.sections.len(), second.sections.len());
+    }
+
+    struct FakeRecords(Option<RecordUsage>);
+    impl RecordUsageProbe for FakeRecords {
+        fn record_usage(&self) -> Option<RecordUsage> {
+            self.0
+        }
+    }
+
+    #[test]
+    fn 装配了工作台时写者记录一节来自它最近一次量到的用量() {
+        let item = |used| RecordUsageItem { used, limit: 4_096 };
+        let usage = RecordUsage {
+            descriptors: item(3_277),
+            replays: item(10),
+            ..RecordUsage::default()
+        };
+        for (probe, state, start) in [
+            (
+                Some(usage),
+                "degraded",
+                "正文记录条数 3277／4096，已到上限的 80%",
+            ),
+            (None, "unknown", "这一次没读到"),
+        ] {
+            let probe: Arc<dyn RecordUsageProbe> = Arc::new(FakeRecords(probe));
+            let body =
+                HealthBody::from_report(&source(None, None, Some(probe)).snapshot().report());
+            let records = section(&body, "writer-records");
+            assert_eq!(records.state, state);
+            assert!(records.detail.starts_with(start), "{}", records.detail);
+        }
+        let body = HealthBody::from_report(&source(None, None, None).snapshot().report());
+        assert!(
+            section(&body, "writer-records")
+                .detail
+                .starts_with("没有装配写者")
+        );
     }
 }

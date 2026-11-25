@@ -34,6 +34,8 @@ pub struct EvidenceSnapshot {
     pub backup_jobs: crate::backup::BackupJobsEvidence,
     /// 备份仓库抽查事实；默认同样是「没读到」。
     pub backup_checks: crate::backup::RepositoryCheckEvidence,
+    /// 写者那几处只增不减的记录离上限还有多远（BUG-051）；默认同样是「没读到」。
+    pub records: super::RecordUsageEvidence,
 }
 
 impl EvidenceSnapshot {
@@ -52,6 +54,7 @@ impl EvidenceSnapshot {
             manual_sync_quota: None,
             backup_jobs: crate::backup::BackupJobsEvidence::Unreadable,
             backup_checks: crate::backup::RepositoryCheckEvidence::Unreadable,
+            records: super::RecordUsageEvidence::Unreadable,
         }
     }
 
@@ -101,6 +104,7 @@ impl EvidenceSnapshot {
         ));
         sections.push(super::backup::jobs_section(&self.backup_jobs));
         sections.push(super::backup_check::check_section(&self.backup_checks));
+        sections.push(super::records::records_section(&self.records));
         HealthReport::new(sections)
     }
 }

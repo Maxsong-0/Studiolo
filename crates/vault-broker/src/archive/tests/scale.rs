@@ -68,12 +68,13 @@ fn six_thousand_records_keep_writing_answering_and_sealing() {
     eprintln!("重开核 6005 包 {:?}", started.elapsed());
 }
 
-/// 重放可以先于描述符满：描述符没满、重放满了，封存和新建路径一起拒；打包之后恢复。
+/// 重放可以先于描述符满：描述符没满、重放满了，封存、新建路径和文件操作一起拒；打包之后恢复。
 #[test]
 fn replays_that_fill_up_first_are_relieved_too() {
     let fixture = Fixture::new();
     let mut broker = fixture.open();
     notes(&mut broker, 1);
+    renames::enable(&mut broker);
     bulk(&broker, 0..4000);
     // 没有描述符的旧格式重放（169 现在有 138 条），永远留散件。
     for index in 0..96 {
@@ -102,6 +103,11 @@ fn replays_that_fill_up_first_are_relieved_too() {
         broker.list_history(&logical("brand-new.md"), 10, None),
         Err(BrokerError::WriterLimitExceeded)
     ));
+    let move_it = renames::rename(&broker, "note-0.md", "moved.md", "move");
+    assert!(matches!(
+        broker.prepare_file_operation(move_it.clone(), renames::actor()),
+        Err(BrokerError::WriterLimitExceeded)
+    ));
     assert_eq!(pack(&mut broker, later()), 4001);
     assert_eq!(broker.record_usage().unwrap().replays.used, 96);
     broker
@@ -109,6 +115,7 @@ fn replays_that_fill_up_first_are_relieved_too() {
         .unwrap();
     broker.mutate_recorded(note(60), metadata()).unwrap();
     flush(&mut broker);
+    renames::run(&mut broker, move_it, 20_000);
     let (_, sealed) = checkpoint(&fixture, broker, "relieved");
-    assert_eq!(sealed.unwrap(), 2 * 4002);
+    assert_eq!(sealed.unwrap(), 2 * 4003);
 }

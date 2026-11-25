@@ -1,7 +1,7 @@
 use super::*;
 use crate::file_operation::{disk::Folder, tombstone, usage};
 
-fn actor() -> FileOperationMetadata {
+pub(super) fn actor() -> FileOperationMetadata {
     FileOperationMetadata::new(
         MutationActor::Obsidian,
         FileOperationScopeHash::new("1".repeat(64)).unwrap(),
@@ -9,7 +9,7 @@ fn actor() -> FileOperationMetadata {
     )
     .unwrap()
 }
-fn run(
+pub(super) fn run(
     broker: &mut FsVaultBroker,
     request: FileOperationRequest,
     offset: u64,
@@ -27,7 +27,12 @@ fn run(
     }
     receipt
 }
-fn rename(broker: &FsVaultBroker, from: &str, to: &str, key: &str) -> FileOperationRequest {
+pub(super) fn rename(
+    broker: &FsVaultBroker,
+    from: &str,
+    to: &str,
+    key: &str,
+) -> FileOperationRequest {
     FileOperationRequest::Rename {
         from: logical(from),
         expected: broker.read(&logical(from)).unwrap().revision,
@@ -35,10 +40,7 @@ fn rename(broker: &FsVaultBroker, from: &str, to: &str, key: &str) -> FileOperat
         idempotency_key: key.into(),
     }
 }
-/// 两篇真写的、一次改名、一次删除；回执都落了。
-fn setup(fixture: &Fixture) -> (FsVaultBroker, FileOperationRequest, FileOperationReceipt) {
-    let mut broker = fixture.open();
-    notes(&mut broker, 2);
+pub(super) fn enable(broker: &mut FsVaultBroker) {
     broker
         .enable_file_operations(FileOperationLimits {
             effective_object_limit: crate::blob::OBJECT_LIMIT,
@@ -48,6 +50,12 @@ fn setup(fixture: &Fixture) -> (FsVaultBroker, FileOperationRequest, FileOperati
         })
         .unwrap();
     broker.enable_file_rename().unwrap();
+}
+/// 两篇真写的、一次改名、一次删除；回执都落了。
+fn setup(fixture: &Fixture) -> (FsVaultBroker, FileOperationRequest, FileOperationReceipt) {
+    let mut broker = fixture.open();
+    notes(&mut broker, 2);
+    enable(&mut broker);
     let request = rename(&broker, "note-0.md", "moved.md", "move");
     let receipt = run(&mut broker, request.clone(), 50);
     let delete = FileOperationRequest::Delete {
@@ -179,4 +187,78 @@ fn a_rename_must_also_have_taken_effect_seven_days_ago() {
         ..later()
     };
     assert_eq!(pack(&mut broker, cutoff), 2);
+}
+
+/// 改名没做成（经维护取消）的不打；效果落定还没满 7 天的也不打，哪怕请求早就满了。
+#[test]
+fn only_a_committed_rename_whose_effect_is_old_enough_is_packed() {
+    let fixture = Fixture::new();
+    let mut broker = fixture.open();
+    notes(&mut broker, 2);
+    enable(&mut broker);
+    let request = rename(&broker, "note-0.md", "never.md", "cancelled");
+    let ticket = broker.prepare_file_operation(request, actor()).unwrap();
+    broker
+        .confirm_file_operation_intent(&ticket, 50, HASH)
+        .unwrap();
+    let review = broker.maintenance_inspect(64).unwrap().targets.remove(0);
+    let cancel = broker
+        .prepare_maintenance(
+            &review.review_id,
+            MaintenanceDecision::CancelPrepared,
+            MaintenanceActor::current().unwrap(),
+        )
+        .unwrap();
+    broker
+        .confirm_maintenance_intent(&cancel, 52, HASH)
+        .unwrap();
+    broker.commit_maintenance(cancel).unwrap();
+    for candidate in broker.pending_file_operation_audit(64).unwrap() {
+        broker
+            .confirm_file_operation_audit(candidate, 51, HASH)
+            .unwrap();
+    }
+    for candidate in broker.pending_maintenance_audit(64).unwrap() {
+        broker
+            .confirm_maintenance_audit(candidate, 53, HASH)
+            .unwrap();
+    }
+    assert_eq!(pack(&mut broker, later()), 2);
+    assert_eq!(
+        file_operation::disk::names(&broker, Folder::Records)
+            .unwrap()
+            .len(),
+        1
+    );
+
+    let fixture = Fixture::new();
+    let (mut broker, request, _) = setup(&fixture);
+    let FileOperationRequest::Rename {
+        idempotency_key, ..
+    } = &request
+    else {
+        unreachable!()
+    };
+    let key = sha256(idempotency_key.as_bytes());
+    let path = fixture.data.join(format!("idempotency/{key}.json"));
+    let mut value: serde_json::Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    assert!(value["effect_at_ms"].is_i64());
+    value["effect_at_ms"] = (now() + 5 * DAY).into();
+    fs::write(&path, serde_json::to_vec(&value).unwrap()).unwrap();
+    assert_eq!(pack(&mut broker, later()), 2);
+}
+
+/// 打了包的改名又冒出字节不同的散件：封不成，也开不了库。
+#[test]
+fn a_rename_record_that_differs_from_its_packed_copy_is_refused() {
+    for part in [Part::FileRequest, Part::FileIntentAck, Part::Replay] {
+        let fixture = Fixture::new();
+        let (mut broker, _, _) = setup(&fixture);
+        pack(&mut broker, later());
+        super::seal::put_back(&fixture, part);
+        let (broker, sealed) = checkpoint(&fixture, broker, "seal");
+        assert!(sealed.is_err(), "{part:?}");
+        drop(broker);
+        assert!(fixture.try_reopen().is_err(), "{part:?}");
+    }
 }

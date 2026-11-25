@@ -58,6 +58,7 @@ impl CanonicalWorkbench {
                 content_audit_healthy: std::sync::atomic::AtomicBool::new(true),
                 content_restore_pending: std::sync::atomic::AtomicBool::new(false),
                 file_operation_pending: std::sync::atomic::AtomicBool::new(false),
+                usage: Mutex::new(None),
                 #[cfg(test)]
                 probe: crate::coordinator_tests::Probe::default(),
             }),

@@ -17,6 +17,7 @@ mod backup_check;
 mod bridge;
 mod evidence;
 mod model;
+mod records;
 
 pub use backup::{
     BACKUP_JOBS_CODE, BackupFailureBody, BackupJobsBody, BackupMarkBody, BackupOpenBody,
@@ -26,6 +27,7 @@ pub use backup_check::BACKUP_REPOSITORY_CHECK_CODE;
 pub use bridge::{BatchBody, BridgeBody, MANUAL_QUOTA_MAX_AGE_SECONDS, ManualQuotaBody};
 pub use evidence::{EvidenceSnapshot, HealthEvidence};
 pub use model::{HealthBody, SectionBody};
+pub use records::{RECORD_USAGE_CODE, RecordUsageEvidence, RecordUsageProbe};
 
 use axum::{
     Extension, Json, Router,
