@@ -34,6 +34,8 @@ public struct Message: Equatable, Sendable, Identifiable {
     /// The number of the record it came in.
     public let seq: UInt64
     public internal(set) var state: State
+    /// Kept when it has been answered since.
+    public internal(set) var handedAt: UInt64?
 
     public enum State: Equatable, Sendable {
         case queued
@@ -52,6 +54,42 @@ public struct Message: Equatable, Sendable, Identifiable {
 
     public var isFromUser: Bool { device != nil || from == Session.user }
     public var isToUser: Bool { to == Session.user }
+}
+
+/// An agent's turn: from taking up work to stopping. What went on inside is kept apart (`TurnDetails`).
+public struct Turn: Equatable, Sendable, Identifiable {
+    public let id: String
+    public let session: String
+    public internal(set) var vendor: String?
+    public internal(set) var model: String?
+    public internal(set) var cliVersion: String?
+    /// The letters pushed into it.
+    public internal(set) var messages: [String] = []
+    /// nil when its start was never seen.
+    public internal(set) var startedAt: UInt64?
+    public internal(set) var end: End?
+
+    public struct End: Equatable, Sendable {
+        /// `completed`, `failed`, `stopped`, `process_exited`, `timed_out`, `restarted`…
+        public let outcome: Why
+        public let modelTurns: Int
+        public let tools: [String: Int]
+        public let denied: Int
+        public let text: String?
+        public let at: UInt64
+    }
+
+    public var isRunning: Bool { end == nil }
+
+    init(id: String, session: String) {
+        self.id = id
+        self.session = session
+    }
+
+    func wasRunning(at moment: UInt64) -> Bool {
+        guard let startedAt else { return false }
+        return moment >= startedAt && moment <= end?.at ?? .max
+    }
 }
 
 /// A line: one task chain, named by its first message.

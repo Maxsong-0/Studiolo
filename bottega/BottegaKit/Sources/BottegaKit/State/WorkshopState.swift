@@ -32,6 +32,9 @@ public struct WorkshopState: Sendable {
     public private(set) var asks: [String: Ask] = [:]
     public private(set) var trips: [TripID: Trip] = [:]
     public private(set) var devices: [String: Device] = [:]
+    public private(set) var turns: [String: Turn] = [:]
+    /// Each session's, in the order they were first heard of.
+    public private(set) var turnsBySession: [String: [String]] = [:]
     /// By the intent's digest.
     public private(set) var echoes: [String: Echo] = [:]
 
@@ -75,6 +78,7 @@ public struct WorkshopState: Sendable {
             sessions[event.name, default: Session(name: event.name, role: "", openedAt: event.atMs)].closedAt = event.atMs
         case .messageQueued(let event): queued(event.message, id)
         case .messageHanded(let event):
+            messages[event.id]?.handedAt = event.atMs
             if case .queued = messages[event.id]?.state { messages[event.id]?.state = .handed(at: event.atMs) }
         case .messageFailed(let event): failed(event, id)
         case .cardCreated(let event): created(event, id)
@@ -175,6 +179,21 @@ public struct WorkshopState: Sendable {
                 id: event.device, kind: event.kind, name: event.name, dailyKey: event.dailyKey,
                 approvalKey: event.approvalKey, at: event.atMs)
         case .intentEchoed(let event): echoed(event, id)
+        case .turnStarted(let event):
+            turn(event.turn, of: event.session) {
+                $0.vendor = event.vendor
+                $0.model = event.model
+                $0.cliVersion = event.cliVersion
+                $0.messages = event.messages ?? []
+                $0.startedAt = event.atMs
+            }
+            vendors[event.session] = event.vendor
+        case .turnFinished(let event):
+            turn(event.turn, of: event.session) {
+                $0.end = .init(
+                    outcome: event.outcome, modelTurns: event.modelTurns, tools: event.tools ?? [:],
+                    denied: event.denied, text: event.text, at: event.atMs)
+            }
         case .unreadable(let type, let text):
             // It may have been anything, so it is shown where the user looks first.
             show(Row(id: id, at: log.last?.at ?? 0, kind: .unreadable(type: type, text: text)), thread: nil, dispatcher: true)
@@ -299,6 +318,13 @@ public struct WorkshopState: Sendable {
 
     private func threadOf(test: String) -> String? { tests[test]?.card.flatMap { cards[$0]?.thread } }
     private func threadOf(merge: String) -> String? { merges[merge]?.card.flatMap { cards[$0]?.thread } }
+
+    // MARK: Turns
+
+    private mutating func turn(_ id: String, of session: String, _ change: (inout Turn) -> Void) {
+        if turns[id] == nil { turnsBySession[session, default: []].append(id) }
+        change(&turns[id, default: Turn(id: id, session: session)])
+    }
 
     // MARK: Intents
 

@@ -66,6 +66,8 @@ public enum ServerLine: Equatable, Sendable {
     case record(Record)
     /// Everything up to here has been sent.
     case caughtUp(through: UInt64)
+    /// Something about a turn. Comes apart from the records, in no order with them.
+    case live(Live)
     /// A line of a kind this Bottega does not know. Ignored.
     case unknown
 
@@ -89,6 +91,7 @@ public enum ServerLine: Equatable, Sendable {
         if let error = fields.error { return .error(id: fields.id, error) }
         if fields.ok != nil, let id = fields.id { return .reply(Reply(id: id, line: line)) }
         if let record = fields.record { return .record(record) }
+        if let live = fields.live { return .live(live) }
         if let caughtUp = fields.caughtUp { return .caughtUp(through: caughtUp.through) }
         if let welcome = fields.welcome { return .welcome(welcome) }
         if fields.register != nil { return .registerNow }
@@ -106,6 +109,7 @@ public enum ServerLine: Equatable, Sendable {
         var error: WireError?
         var record: Record?
         var caughtUp: CaughtUp?
+        var live: Live?
         var welcome: Welcome?
         var register: Present?
     }

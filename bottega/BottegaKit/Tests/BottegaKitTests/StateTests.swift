@@ -8,7 +8,7 @@ import Testing
 struct RecordedStateTests {
     @Test func sessions() throws {
         let state = try Fixtures.state()
-        #expect(state.through == 55)
+        #expect(state.through == 59)
         #expect(state.sessions["dispatcher"]?.role == "dispatcher")
         #expect(state.sessions["dispatcher"]?.isOpen == true)
         #expect(state.sessions["coder-card-1"]?.closedAt == 1764000014000)
@@ -122,7 +122,7 @@ struct RecordedStateTests {
         #expect(lanes.letters.map(\.id) == ["msg-1", "msg-2", "msg-3", "msg-8"])
         #expect(lanes.letters.map(\.isReply) == [false, false, true, false])
         // msg-1 is still being worked on; msg-2 was, until msg-3 answered it.
-        #expect(lanes.working == [.init(lane: 1, start: 0, end: nil), .init(lane: 2, start: 1, end: 2)])
+        #expect(lanes.working == [.init(lane: 1, top: 0.5, bottom: nil), .init(lane: 2, top: 1.5, bottom: 2.5)])
     }
 }
 

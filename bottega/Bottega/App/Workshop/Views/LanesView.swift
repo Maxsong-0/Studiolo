@@ -95,10 +95,10 @@ struct LanesView: View {
             path.addLine(to: CGPoint(x: x(lane), y: size.height))
             context.stroke(path, with: .style(.separator), lineWidth: 1)
         }
-        // Busy from the letter that asked until the one that answered.
-        for stretch in lanes.working where index >= stretch.start && index <= (stretch.end ?? .max) {
-            let top = index == stretch.start ? middle : 0
-            let bottom = index == stretch.end ? middle : size.height
+        // Busy: this row's part of it.
+        for stretch in lanes.working {
+            let top = max(0, stretch.top - Double(index)) * size.height
+            let bottom = min(1, (stretch.bottom ?? .infinity) - Double(index)) * size.height
             guard bottom > top else { continue }
             let bar = CGRect(x: x(stretch.lane) - 3.5, y: top, width: 7, height: bottom - top)
             context.fill(Path(bar), with: .style(.tint.opacity(0.35)))

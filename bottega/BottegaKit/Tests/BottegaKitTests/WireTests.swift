@@ -7,7 +7,7 @@ struct WireTests {
     /// Every line of `events.jsonl` is a record this code reads in full, and each follows on from the last.
     @Test func everyRecordedEventIsRead() throws {
         let records = try Fixtures.records()
-        #expect(records.count == 46)
+        #expect(records.count == 50)
         var through: UInt64 = 0
         for record in records {
             #expect(record.seq == through + 1)
@@ -18,7 +18,7 @@ struct WireTests {
                 #expect(event.at != nil)
             }
         }
-        #expect(through == 55)
+        #expect(through == 59)
     }
 
     /// Every `type` in the document is in the recording, and read as its own case.
@@ -31,6 +31,7 @@ struct WireTests {
             "tests_accepted", "tests_finished", "review_started", "review_finished", "review_not_done", "merge_requested",
             "merge_checked", "merge_prepared", "merge_restarted", "merge_landing", "merge_finished", "merge_failed",
             "merge_cleaned", "ask_opened", "ask_answered", "device_registered", "intent_echoed",
+            "turn_started", "turn_finished",
         ])
     }
 
@@ -70,7 +71,7 @@ struct WireTests {
         let record = try record(
             """
             {"record":{"seq":5,"through":9,"later":true,"events":[
-              {"type":"turn_started","session":"coder","text":"开始干活"},
+              {"type":"coffee_made","session":"coder","text":"煮好了"},
               {"type":"card_failed","card":"card-9","why":{"code":"struck_by_lightning","text":"被雷劈了","more":[1]},"at_ms":1,"extra":{}},
               {"type":"session_registered","name":"x","role":"astronaut","at_ms":2},
               {"type":"ask_opened","ask":"a","about":{"kind":"deploy","where":"169"},"by":"d","text":"行不行","at_ms":3},
@@ -79,7 +80,7 @@ struct WireTests {
             ]}}
             """)
         #expect(record.events.count == 6)
-        #expect(record.events[0] == .unreadable(type: "turn_started", text: "开始干活"))
+        #expect(record.events[0] == .unreadable(type: "coffee_made", text: "煮好了"))
         guard case .cardFailed(let failed) = record.events[1] else { Issue.record("card_failed"); return }
         #expect(failed.why == .init(code: "struck_by_lightning", text: "被雷劈了"))
         guard case .intentEchoed(let echo) = record.events[5] else { Issue.record("echo"); return }
@@ -88,7 +89,7 @@ struct WireTests {
         try state.apply(record)
         #expect(state.through == 9)
         #expect(state.log.count == 6)
-        #expect(state.dispatcherRows.contains { $0.kind == .unreadable(type: "turn_started", text: "开始干活") })
+        #expect(state.dispatcherRows.contains { $0.kind == .unreadable(type: "coffee_made", text: "煮好了") })
         #expect(state.asks["a"]?.answer?.word == "shelved")
     }
 

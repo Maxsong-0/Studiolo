@@ -32,6 +32,9 @@ struct CardTile: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
             }
+            if column == .working, let worker = card.work?.worker, let turn = model.state.runningTurn(of: worker) {
+                DoingNow(turn: turn.id)
+            }
             if let branch = card.work?.branch {
                 Label {
                     Text(verbatim: UntrustedText.line(branch, limit: 80)).monospaced().lineLimit(1).truncationMode(.middle)

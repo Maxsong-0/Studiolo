@@ -39,6 +39,9 @@ final class WorkshopModel {
     var showsInspector = false
     var showsLanes = true
 
+    /// The inside of turns, as far as pushed or fetched.
+    private(set) var turns: [String: TurnModel] = [:]
+
     private(set) var drafts = Drafts()
     /// Which composer an outbox item's words came from.
     private var origins: [String: DraftKey] = [:]
@@ -106,6 +109,7 @@ final class WorkshopModel {
         status = nil
         overview = nil
         welcome = nil
+        turns = [:]
         registeredName = nil
         registrationFailure = nil
         outbox = []
@@ -156,8 +160,12 @@ final class WorkshopModel {
             if status == .live { reportSeen() }
         case .reset(let start):
             state = WorkshopState(startingAt: start)
+            turns = [:]
             shown = []
             reportedSeen = 0
+        case .watching(let running):
+            for turn in turns.values where running?.contains(turn.id) != true { turn.details.fellBehind() }
+        case .live(let lines): for line in lines { take(line) }
         case .records(let records): apply(records)
         case .overview(let overview): self.overview = overview
         case .welcome(let welcome): self.welcome = welcome
@@ -180,6 +188,52 @@ final class WorkshopModel {
         }
     }
 
+    // MARK: Turns
+
+    private func take(_ live: Live) {
+        guard !live.turn.isEmpty else { return }
+        turnModel(live.turn).details.take(live.what)
+        if case .ended = live.what { letGoOfOldTurns() }
+    }
+
+    private func turnModel(_ id: String) -> TurnModel {
+        if let turn = turns[id] { return turn }
+        let turn = TurnModel(id: id)
+        turns[id] = turn
+        return turn
+    }
+
+    /// LMAS has them; what is not being looked at is fetched again when it is.
+    private func letGoOfOldTurns() {
+        let over = turns.values.filter { $0.details.completeness != .growing && detail != .turn($0.id) && !$0.isFetching }
+        guard over.count > 12 else { return }
+        for turn in over.sorted(by: { ($0.details.head?.startedAtMs ?? 0) < ($1.details.head?.startedAtMs ?? 0) }).prefix(over.count - 12) {
+            turns[turn.id] = nil
+        }
+    }
+
+    /// What LMAS has of a turn, if it is not all here and nothing more comes by itself.
+    func fetch(turn id: String) {
+        guard let client, isLive else { return }
+        let turn = turnModel(id)
+        guard !turn.isFetching, turn.details.completeness == .behind else { return }
+        turn.isFetching = true
+        Task {
+            do {
+                let pages = try await client.turn(id)
+                turn.details.take(pages)
+                turn.problem = nil
+            } catch let error as WireError {
+                turn.problem = Why(code: error.code, text: error.text)
+            } catch is LinkClient.ConnectionLost {
+                // Asked again once there is a connection.
+            } catch {
+                turn.problem = Why(code: "malformed", text: error.localizedDescription)
+            }
+            turn.isFetching = false
+        }
+    }
+
     // MARK: Recordings
 
     func play(_ url: URL) {
@@ -192,7 +246,11 @@ final class WorkshopModel {
     private func replay(_ url: URL) {
         do {
             for line in try Data(contentsOf: url).split(separator: UInt8(ascii: "\n")) {
-                if case .record(let record) = try ServerLine.read(Data(line)) { apply([record]) }
+                switch try ServerLine.read(Data(line)) {
+                case .record(let record): apply([record])
+                case .live(let live): take(live)
+                default: break
+                }
             }
         } catch {
             notice = Why(code: "recording", text: "Cannot read that recording: \(error.localizedDescription)")

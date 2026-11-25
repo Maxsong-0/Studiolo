@@ -56,6 +56,7 @@ enum Detail: Hashable {
     case card(String)
     case merge(String)
     case test(String)
+    case turn(String)
 
     #if DEBUG
     /// `card:card-1`, `message:msg-1`…
@@ -67,6 +68,7 @@ enum Detail: Hashable {
         case "card": self = .card(parts[1])
         case "merge": self = .merge(parts[1])
         case "test": self = .test(parts[1])
+        case "turn": self = .turn(parts[1])
         default: return nil
         }
     }

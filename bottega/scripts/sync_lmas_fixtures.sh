@@ -13,7 +13,7 @@ commit="$(git -C "$lmas" rev-parse main)"
 new="$(mktemp -d)"
 trap 'rm -rf "$new"' EXIT
 different=0
-for file in vectors.json events.jsonl session.jsonl; do
+for file in vectors.json events.jsonl session.jsonl turns.jsonl; do
   git -C "$lmas" show "$commit:fixtures/bottega/$file" > "$new/$file"
   cmp -s "$new/$file" "$here/$file" && continue
   different=1

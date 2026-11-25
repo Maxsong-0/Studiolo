@@ -256,11 +256,31 @@ struct LetterRow: View {
             if message.isToUser, message.isOpenQuestion {
                 StatusChip(text: "Waiting for you", symbol: "hand.raised.fill", waits: true)
             } else if message.kind == "task", case .handed = message.state, !message.isToUser {
-                WorkingLabel()
+                working
             } else {
                 StatusChip(text: state.text, symbol: state.symbol)
             }
             Text(verbatim: Wording.time(message.at)).font(.caption).foregroundStyle(.tertiary).monospacedDigit()
+        }
+    }
+
+    /// Opens what is being done about it, where LMAS tells.
+    @ViewBuilder private var working: some View {
+        if let turn = model.state.turns(with: message).last {
+            Button {
+                model.detail = .turn(turn.id)
+            } label: {
+                HStack(spacing: 8) {
+                    WorkingLabel()
+                    if turn.isRunning { DoingNow(turn: turn.id) }
+                    Image(systemName: "chevron.right").imageScale(.small).foregroundStyle(.tertiary)
+                }
+                .contentShape(.rect)
+            }
+            .buttonStyle(.plain)
+            .help("Show what goes on inside this turn")
+        } else {
+            WorkingLabel()
         }
     }
 

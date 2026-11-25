@@ -32,6 +32,8 @@ public enum Event: Equatable, Sendable {
     case askAnswered(AskAnswered)
     case deviceRegistered(DeviceRegistered)
     case intentEchoed(IntentEchoed)
+    case turnStarted(TurnStarted)
+    case turnFinished(TurnFinished)
     /// A `type` this Bottega does not know, or one it knows in a shape it cannot read. The record still counts.
     case unreadable(type: String, text: String?)
 
@@ -151,6 +153,27 @@ public enum Event: Equatable, Sendable {
         public var outcome: Outcome
         public var atMs: UInt64
     }
+
+    /// An agent took up work. What goes on inside comes separately (`Live`, `TurnPage`).
+    public struct TurnStarted: Decodable, Equatable, Sendable {
+        public var turn, session, vendor: String
+        public var model, cliVersion: String?
+        /// The letters pushed into it. Those it fetched itself are not here.
+        public var messages: [String]?
+        public var atMs: UInt64
+    }
+    /// Every start has one.
+    public struct TurnFinished: Decodable, Equatable, Sendable {
+        public var turn, session: String
+        public var outcome: Why
+        public var modelTurns: Int
+        /// How often each tool was used, by the vendor's own names.
+        public var tools: [String: Int]?
+        public var denied: Int
+        /// The last it said, its beginning if that is long.
+        public var text: String?
+        public var atMs: UInt64
+    }
 }
 
 /// A message as it travels: `kind` is `task`, `question`, `result` or `notification`; `thread` is the number of
@@ -238,6 +261,8 @@ extension Event: Decodable {
         case "ask_answered": .askAnswered(try .init(from: decoder))
         case "device_registered": .deviceRegistered(try .init(from: decoder))
         case "intent_echoed": .intentEchoed(try .init(from: decoder))
+        case "turn_started": .turnStarted(try .init(from: decoder))
+        case "turn_finished": .turnFinished(try .init(from: decoder))
         default: nil
         }
     }
@@ -276,6 +301,8 @@ extension Event {
         case .askAnswered(let event): event.atMs
         case .deviceRegistered(let event): event.atMs
         case .intentEchoed(let event): event.atMs
+        case .turnStarted(let event): event.atMs
+        case .turnFinished(let event): event.atMs
         case .unreadable: nil
         }
     }

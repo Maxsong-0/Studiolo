@@ -64,6 +64,9 @@ public enum Request: Equatable, Sendable {
     case follow(from: UInt64)
     case seen(through: UInt64)
     case intent(SignedIntent)
+    case watch
+    /// The details of a turn, from its `from`th on.
+    case turn(String, from: Int)
     case register(Registration)
     case ping
 }
@@ -99,6 +102,12 @@ public enum ClientLine {
         case .intent(let intent):
             fields.verb = "intent"
             fields.intent = intent
+        case .watch:
+            fields.verb = "watch"
+        case .turn(let turn, let from):
+            fields.verb = "turn"
+            fields.turn = turn
+            fields.from = UInt64(from)
         case .register(let registration):
             fields.verb = "register"
             fields.registration = registration
@@ -126,10 +135,11 @@ public enum ClientLine {
         var limit: Int?
         var through: UInt64?
         var intent: SignedIntent?
+        var turn: String?
         var registration: Registration?
 
         enum CodingKeys: String, CodingKey {
-            case id, hello, version, device, signature, from, limit, through, intent, registration
+            case id, hello, version, device, signature, from, limit, through, intent, turn, registration
             case verb = "do"
         }
     }

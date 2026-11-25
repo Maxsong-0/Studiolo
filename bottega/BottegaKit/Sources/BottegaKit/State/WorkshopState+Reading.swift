@@ -96,13 +96,14 @@ extension WorkshopState {
         public let isReply: Bool
     }
 
-    /// A stretch of letters during which a member had something to answer.
+    /// A stretch of the lanes during which a member was in a turn. Where LMAS tells no turns (of the Planner, and
+    /// of anyone before LMAS told them), during which it had something to answer.
     public struct Stretch: Equatable, Sendable {
         public let lane: Int
-        /// Positions in `letters`.
-        public let start: Int
+        /// In rows: 0 is the top of the first letter's row, 0.5 its middle, 1 its bottom.
+        public let top: Double
         /// nil while it is still going on.
-        public let end: Int?
+        public let bottom: Double?
     }
 
     public struct Lanes: Equatable, Sendable {
@@ -125,15 +126,58 @@ extension WorkshopState {
                     id: id, from: from, to: to, kind: message.kind,
                     isReply: message.kind == "result" || message.kind == "notification"))
         }
-        for (index, letter) in lanes.letters.enumerated() {
-            guard letter.kind == "task", let message = messages[letter.id] else { continue }
-            switch message.state {
-            case .handed: lanes.working.append(Stretch(lane: letter.to, start: index, end: nil))
-            case .answered(let reply): lanes.working.append(Stretch(lane: letter.to, start: index, end: position[reply] ?? index))
-            case .queued, .failed: break
-            }
+        for (lane, member) in lanes.members.enumerated() {
+            let turns = turns(of: member)
+            lanes.working += answering(lane, lanes.letters, position, before: turns.compactMap(\.startedAt).min())
+            lanes.working += turns.compactMap { stretch(of: $0, lane, lanes.letters, position) }
         }
         return lanes
+    }
+
+    /// From a TASK to what answers it, for those delivered before any turn of the member was told.
+    private func answering(_ lane: Int, _ letters: [Letter], _ position: [String: Int], before first: UInt64?) -> [Stretch] {
+        letters.enumerated().compactMap { index, letter in
+            guard letter.to == lane, letter.kind == "task", let message = messages[letter.id] else { return nil }
+            if let first, message.handedAt ?? first >= first || !turns(with: message).isEmpty { return nil }
+            let top = Double(index) + 0.5
+            return switch message.state {
+            case .handed: Stretch(lane: lane, top: top, bottom: nil)
+            case .answered(let reply): Stretch(lane: lane, top: top, bottom: Double(position[reply] ?? index) + 0.5)
+            case .queued, .failed: nil
+            }
+        }
+    }
+
+    /// Where a turn is beside the letters: after those sent before it, down to those sent before it ended. nil when it
+    /// had nothing to do with this line.
+    private func stretch(of turn: Turn, _ lane: Int, _ letters: [Letter], _ position: [String: Int]) -> Stretch? {
+        let pushed = turn.messages.compactMap { position[$0] }.min()
+        // Most turns of a busy member are over before this line began, or began after it went quiet.
+        if pushed == nil, let first = letters.first.flatMap({ messages[$0.id]?.at }), let end = turn.end?.at, end < first { return nil }
+        let isOnThisLine = pushed != nil || letters.contains { letter in
+            guard let message = messages[letter.id] else { return false }
+            return letter.from == lane && turn.wasRunning(at: message.at)
+                || letter.to == lane && message.handedAt.map(turn.wasRunning(at:)) ?? false
+        }
+        guard isOnThisLine else { return nil }
+        func sent(before moment: UInt64) -> Int { letters.count { messages[$0.id].map { $0.at <= moment } ?? false } }
+        let top = pushed.map { Double($0) + 0.5 } ?? Double(turn.startedAt.map { $0 == 0 ? 0 : sent(before: $0 - 1) } ?? 0)
+        return Stretch(lane: lane, top: top, bottom: turn.end.map { max(Double(sent(before: $0.at)), top + 0.5) })
+    }
+
+    // MARK: Turns
+
+    /// A session's turns, oldest first.
+    public func turns(of session: String) -> [Turn] { (turnsBySession[session] ?? []).compactMap { turns[$0] } }
+
+    /// The turn a session is in.
+    public func runningTurn(of session: String) -> Turn? { turns(of: session).last { $0.isRunning } }
+
+    /// The turns in which a letter was taken in.
+    public func turns(with message: Message) -> [Turn] {
+        turns(of: message.to).filter { turn in
+            turn.messages.contains(message.id) || message.handedAt.map(turn.wasRunning(at:)) ?? false
+        }
     }
 
     // MARK: Seen

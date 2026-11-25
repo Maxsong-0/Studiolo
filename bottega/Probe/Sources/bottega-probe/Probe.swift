@@ -82,6 +82,8 @@ struct Probe {
                     connector.losesNextReply.withLock { $0 = true }
                     print("cut: the answer to the next intent gets lost")
                 case "overview": await client.refreshOverview()
+                case "turns": await ledger.tellTurns()
+                case "turn": await ledger.compare(rest, with: try await client.turn(rest))
                 case "mail": await ledger.tellMail()
                 case "state": await ledger.tell()
                 case "wait": try await Task.sleep(for: .milliseconds(Int(rest) ?? 1000))
@@ -107,6 +109,7 @@ actor Ledger {
     private var events = 0
     private var unreadable = 0
     private var first: UInt64?
+    private var inside: [String: TurnDetails] = [:]
     /// With every letter taken as shown.
     var seenThrough: UInt64? { state.seenThrough(shown: Set(state.messagesToUser)) }
     var lastLine: String { state.messages.values.filter(\.isFromUser).max { $0.seq < $1.seq }?.thread ?? "" }
@@ -123,6 +126,27 @@ actor Ledger {
             print("ask: \(ask.id) \(ask.about.kind) by \(ask.by): \(answer): \(UntrustedText.line(ask.text, limit: 70))")
         }
         for merge in state.merges.values { print("merge: \(merge.id) \(merge.stage)") }
+    }
+
+    func tellTurns() {
+        for turn in state.turns.values.sorted(by: { ($0.startedAt ?? 0) < ($1.startedAt ?? 0) }) {
+            let end = turn.end.map { "\($0.outcome)" } ?? "running"
+            print("turn: \(turn.id) \(turn.session) \(turn.vendor ?? "-"): \(end), \(inside[turn.id]?.items.count ?? 0) things seen")
+        }
+    }
+
+    /// What was pushed and what is fetched should come to the same.
+    func compare(_ id: String, with pages: [TurnPage]) {
+        var fetched = TurnDetails()
+        fetched.take(pages)
+        print("turn: \(id) \(pages.count) pages, \(fetched.completeness), \(fetched.items.count) things")
+        for item in fetched.items {
+            print("  \(item.item.n) \(item.item.kind) \(item.item.status) \(item.text.end) bytes")
+            guard let seen = inside[id]?.items.first(where: { $0.item.n == item.item.n }) else { print("    not pushed"); continue }
+            if seen.item.kind != item.item.kind || seen.item.status != item.item.status || seen.text.end != item.text.end {
+                print("    pushed as \(seen.item.kind) \(seen.item.status) \(seen.text.end) bytes")
+            }
+        }
     }
 
     /// Everything the user said or was told.
@@ -162,6 +186,12 @@ actor Ledger {
         case .settled(let settled): print("settled: \(settled.result), undone \(settled.isUndone)")
         case .notice(let why): print("notice: \(why)")
         case .registrationFailed(let why): print("registration failed: \(why)")
+        case .watching(let running): print("watching: \(running.map { "\($0)" } ?? "no")")
+        case .live(let batch):
+            for live in batch {
+                if inside[live.turn] == nil { print("live: \(live.turn)") }
+                inside[live.turn, default: TurnDetails()].take(live.what)
+            }
         }
     }
 

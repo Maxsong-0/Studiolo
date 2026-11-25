@@ -2,11 +2,19 @@
 import BottegaKit
 import SwiftUI
 
-/// On the right: the letter, card, merge or test run picked in the middle; on a line of its own, its card.
+/// On the right: the letter, card, merge, test run or turn picked elsewhere.
 struct WorkshopInspector: View {
     @Environment(WorkshopModel.self) private var model
 
     var body: some View {
+        if case .turn(let id) = model.detail {
+            TurnDetail(id: id)
+        } else {
+            page
+        }
+    }
+
+    private var page: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
                 switch model.detail {
@@ -18,7 +26,7 @@ struct WorkshopInspector: View {
                     if let merge = model.state.merges[id] { MergeDetail(merge: merge) } else { nothing }
                 case .test(let id):
                     if let test = model.state.tests[id] { TestDetail(test: test) } else { nothing }
-                case nil: nothing
+                case .turn, nil: nothing
                 }
             }
             .padding(16)
@@ -35,7 +43,7 @@ struct WorkshopInspector: View {
     }
 }
 
-private struct DetailHeader: View {
+struct DetailHeader: View {
     let title: String
     let id: String
 
@@ -47,7 +55,7 @@ private struct DetailHeader: View {
     }
 }
 
-private struct Facts: View {
+struct Facts: View {
     let rows: [(name: String, value: String, isCode: Bool)]
 
     init(_ rows: (String, String?, Bool)...) {
@@ -70,7 +78,7 @@ private struct Facts: View {
     }
 }
 
-private struct DetailSection<Content: View>: View {
+struct DetailSection<Content: View>: View {
     let title: String
     @ViewBuilder let content: Content
 
@@ -106,6 +114,7 @@ private struct MessageDetail: View {
                 ForEach(message.files, id: \.self) { FileChip(file: $0) }
             }
         }
+        TurnList(turns: model.state.turns(with: message))
         if let original = message.replyTo { letterLink("Replies to", original) }
         if case .answered(let reply) = message.state { letterLink("Answered by", reply) }
         if case .line(message.thread) = model.page {} else {
@@ -170,6 +179,7 @@ private struct CardDetail: View {
         if case .done(let result, _) = card.end, let letter = model.state.messages[result] {
             DetailSection(title: "Result") { PlainBlock(text: letter.body, limit: 260, monospaced: false) }
         }
+        TurnList(turns: turns)
         block("Instructions", card.instructions)
         block("Acceptance", card.acceptance)
         block("Conventions", card.conventions)
@@ -193,6 +203,12 @@ private struct CardDetail: View {
         if let thread = card.thread, model.state.threads[thread] != nil, model.page != .line(thread) {
             Button("Open Line") { model.page = .line(thread) }.controlSize(.small)
         }
+    }
+
+    /// Of whoever worked on it or reviewed it, oldest first.
+    private var turns: [Turn] {
+        let sessions = [card.work?.worker].compactMap(\.self) + card.reviews.compactMap(\.reviewer)
+        return Set(sessions).flatMap(model.state.turns(of:)).sorted { ($0.startedAt ?? 0, $0.id) < ($1.startedAt ?? 0, $1.id) }
     }
 
     @ViewBuilder private func block(_ title: String, _ text: String?) -> some View {

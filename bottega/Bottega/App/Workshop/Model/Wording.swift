@@ -145,6 +145,107 @@ enum Wording {
         }
     }
 
+    // MARK: Turns
+
+    static func turnOutcome(_ outcome: Why) -> (text: String, symbol: String, isFailure: Bool) {
+        switch outcome.code {
+        case "completed": ("Finished", "checkmark.circle", false)
+        case "stopped": ("Stopped by LMAS", "stop.circle", false)
+        case "session_closed": ("The session was closed", "stop.circle", false)
+        case "superseded": ("Another turn began", "arrow.uturn.right.circle", false)
+        default: (UntrustedText.line(outcome.text, limit: 200), "xmark.octagon", true)
+        }
+    }
+
+    static func took(_ turn: Turn) -> String? {
+        guard let start = turn.startedAt, let end = turn.end?.at, end >= start else { return nil }
+        return duration(end - start)
+    }
+
+    static func tools(_ tools: [String: Int]) -> String? {
+        guard !tools.isEmpty else { return nil }
+        return tools.sorted { ($1.value, $0.key) < ($0.value, $1.key) }
+            .map { "\(UntrustedText.line($0.key, limit: 40)) ×\($0.value)" }.joined(separator: ", ")
+    }
+
+    static func bytes(_ count: UInt64) -> String { Int64(clamping: count).formatted(.byteCount(style: .file)) }
+
+    static func turnProblem(_ why: Why) -> String {
+        switch why.code {
+        case "unknown_request": "This LMAS does not tell what goes on inside a turn."
+        case "no_details": "LMAS did not keep what went on inside this turn."
+        case "no_such_turn": "LMAS has no such turn."
+        default: UntrustedText.line(why.text)
+        }
+    }
+
+    static func turnItem(_ item: TurnItem) -> (text: String, symbol: String, isTrouble: Bool) {
+        let tool = item.tool.map { UntrustedText.line($0, limit: 60) }
+        return switch item.kind {
+        case "text": ("Said", "text.bubble", false)
+        case "reasoning": ("Thought", "brain", false)
+        case "command": ("Command", "terminal", false)
+        case "edit": (item.files.isEmpty ? "Edit" : "Edited \(count(item.files.count, "file", "files"))", "pencil", false)
+        case "read": ("Read", "doc.text", false)
+        case "search": ("Searched", "magnifyingglass", false)
+        case "coordinator": ("LMAS: \(tool ?? "tool")", "gearshape", false)
+        case "tool": (tool ?? "Tool", "wrench.and.screwdriver", false)
+        case "plan": ("Plan", "checklist", false)
+        case "notice":
+            switch item.code {
+            case "denied": ("Denied", "nosign", true)
+            case "too_much": ("Too much to keep", "ellipsis.circle", true)
+            default: ("Error", "exclamationmark.triangle", true)
+            }
+        default: (item.kind.isEmpty ? "Unreadable" : UntrustedText.line(item.kind, limit: 40), "questionmark.square.dashed", false)
+        }
+    }
+
+    /// nil for what went as it should.
+    static func turnItemStatus(_ status: String) -> (text: String, symbol: String)? {
+        switch status {
+        case "done", "": nil
+        case "failed": ("Failed", "xmark.octagon")
+        case "denied": ("Denied", "nosign")
+        case "interrupted": ("Not seen to end", "pause.circle")
+        default: (UntrustedText.line(status, limit: 24), "questionmark.circle")
+        }
+    }
+
+    static func step(_ status: String) -> (text: String, symbol: String) {
+        switch status {
+        case "done": ("Done", "checkmark.circle")
+        case "running": ("Now", "circle.lefthalf.filled")
+        case "pending": ("Not yet", "circle")
+        default: (UntrustedText.line(status, limit: 24), "questionmark.circle")
+        }
+    }
+
+    static func fileChange(_ change: String) -> (text: String, symbol: String) {
+        switch change {
+        case "add": ("Added", "plus.circle")
+        case "modify": ("Changed", "pencil.circle")
+        case "delete": ("Deleted", "minus.circle")
+        case "move": ("Moved", "arrow.right.circle")
+        default: (UntrustedText.line(change, limit: 24), "questionmark.circle")
+        }
+    }
+
+    /// A running item in a few words.
+    static func doing(_ item: TurnItem) -> String {
+        func file(_ path: String) -> String { UntrustedText.line(path.split(separator: "/").last.map(String.init) ?? path, limit: 60) }
+        return switch item.kind {
+        case "text": "Writing"
+        case "reasoning": "Thinking"
+        case "command": "Running \(UntrustedText.line(item.input?.text ?? "a command", limit: 80))"
+        case "edit": "Editing \(item.files.first.map { file($0.path) } ?? "files")"
+        case "read": "Reading \(item.paths.first.map(file) ?? "files")"
+        case "search": "Searching"
+        case "plan": "Planning"
+        default: turnItem(item).text
+        }
+    }
+
     static func outcome(_ outcome: Outcome) -> (text: String, symbol: String) {
         switch outcome {
         case .done(nil): ("Done", "checkmark.circle")

@@ -140,6 +140,16 @@ struct Summary {
             symbol = outcome.symbol
             text = "Intent \(event.number) from \(word(event.device)): \(outcome.text)"
             if case .refused = event.outcome { isFailure = true }
+        case .turnStarted(let event):
+            symbol = "play.circle"
+            text = "\(word(event.session)) began \(word(event.turn))"
+            detail = .turn(event.turn)
+        case .turnFinished(let event):
+            let outcome = Wording.turnOutcome(event.outcome)
+            symbol = outcome.symbol
+            text = "\(word(event.session)) ended \(word(event.turn)): \(outcome.text)"
+            isFailure = outcome.isFailure
+            detail = .turn(event.turn)
         case .unreadable(let type, let body):
             symbol = "questionmark.square.dashed"
             text = Self.unreadable(type, body)

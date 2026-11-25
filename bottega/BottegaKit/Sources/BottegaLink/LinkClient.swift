@@ -24,6 +24,10 @@ public actor LinkClient {
         /// Forget every event so far; history starts again at this number.
         case reset(start: UInt64)
         case records([Record])
+        /// What goes on inside turns is being pushed from here on, and these are running; nil: it is not, or no longer.
+        /// Of a turn that is not among them, nothing more comes.
+        case watching([String]?)
+        case live([Live])
         case overview(Overview)
         case welcome(Welcome)
         /// What this Mac was registered as, or may have been. For registering again under the same name.
@@ -77,6 +81,10 @@ public actor LinkClient {
     private var through: UInt64 = 0
     private var isFresh = true
     private var batch: [Record] = []
+    private var lives: [Live] = []
+    /// The `watch` that has been sent and not answered.
+    private var watchRequest: UInt64?
+    private var isWatching = false
     private var flushing: Task<Void, Never>?
     private var catchUps: [(through: UInt64, resume: CheckedContinuation<Void, any Error>)] = []
     /// What became of this device's intents, for telling a conflict from a repeat.
@@ -204,6 +212,19 @@ public actor LinkClient {
             send(.overview(overview))
         } catch {
             // Not connected; it comes with the next connection.
+        }
+    }
+
+    /// Everything LMAS has about a turn, however many pages it comes in. Throws LMAS's `no_such_turn` and `no_details`.
+    public func turn(_ turn: String) async throws -> [TurnPage] {
+        var pages: [TurnPage] = []
+        var next = 1
+        while true {
+            let page: TurnPage = try await request(.turn(turn, from: next)).read()
+            pages.append(page)
+            if page.through >= page.last { return pages }
+            guard page.through >= next else { throw ServerLine.Malformed() }
+            next = page.through + 1
         }
     }
 
@@ -344,7 +365,9 @@ public actor LinkClient {
         defer { opening.cancel() }
         while let line = try await lines.next(isolation: self) {
             switch try ServerLine.read(line) {
-            case .reply(let reply): replies.removeValue(forKey: reply.id)?.resume(returning: reply)
+            case .reply(let reply):
+                if reply.id == watchRequest { try startWatching(reply) }
+                replies.removeValue(forKey: reply.id)?.resume(returning: reply)
             case .error(let id?, let error): replies.removeValue(forKey: id)?.resume(throwing: error)
             case .error(nil, let error): throw error
             case .record(let record): try take(record)
@@ -354,6 +377,9 @@ public actor LinkClient {
                 failures = 0
                 status(.live)
                 pump()
+            case .live(let live):
+                lives.append(live)
+                flushSoon()
             case .greeting, .welcome, .registerNow, .unknown: break
             }
         }
@@ -374,6 +400,7 @@ public actor LinkClient {
             }
             let overview: Overview = try await request(.overview).read()
             send(.overview(overview))
+            try await watch()
         } catch is CancellationError {
         } catch {
             // Nothing can be shown without following; start over.
@@ -386,6 +413,23 @@ public actor LinkClient {
         let _: Following = try await request(.follow(from: through + 1)).read()
     }
 
+    /// What goes on inside turns is an extra: an LMAS that does not tell is followed all the same.
+    private func watch() async throws {
+        do {
+            _ = try await request(.watch)
+        } catch is WireError {
+            watchRequest = nil
+        }
+    }
+
+    /// Where the answer is read, not where it was waited for: what is pushed comes right behind it.
+    private func startWatching(_ reply: Reply) throws {
+        watchRequest = nil
+        let watching: Watching = try reply.read()
+        isWatching = true
+        send(.watching(watching.turns))
+    }
+
     private func take(_ record: Record) throws {
         let follows = isFresh ? record.seq <= start && record.through >= start : record.seq == through + 1
         guard follows, record.through >= record.seq else { throw broken(expected: through + 1, got: record.seq) }
@@ -395,13 +439,7 @@ public actor LinkClient {
             if case .intentEchoed(let echo) = event, echo.device == keepsake.device { echoes[echo.digest] = echo.outcome }
         }
         batch.append(record)
-        if flushing == nil {
-            let wait = pace.batch
-            flushing = Task {
-                try? await Task.sleep(for: wait)
-                flush()
-            }
-        }
+        flushSoon()
         catchUps.removeAll { waiting in
             guard waiting.through <= through else { return false }
             waiting.resume.resume()
@@ -409,11 +447,21 @@ public actor LinkClient {
         }
     }
 
+    private func flushSoon() {
+        guard flushing == nil else { return }
+        let wait = pace.batch
+        flushing = Task {
+            try? await Task.sleep(for: wait)
+            flush()
+        }
+    }
+
     private func flush() {
         flushing = nil
-        guard !batch.isEmpty else { return }
-        send(.records(batch))
+        if !batch.isEmpty { send(.records(batch)) }
         batch = []
+        if !lives.isEmpty { send(.live(lives)) }
+        lives = []
     }
 
     private func broken(expected: UInt64, got: UInt64) -> Stop {
@@ -426,6 +474,7 @@ public actor LinkClient {
         flushing?.cancel()
         flushing = nil
         batch = []
+        lives = []
         self.start = start
         through = start - 1
         isFresh = true
@@ -438,6 +487,9 @@ public actor LinkClient {
         channel?.close()
         channel = nil
         flush()
+        watchRequest = nil
+        if isWatching { send(.watching(nil)) }
+        isWatching = false
         let lost = replies
         replies = [:]
         for continuation in lost.values { continuation.resume(throwing: ConnectionLost()) }
@@ -457,6 +509,7 @@ public actor LinkClient {
         guard isReady, let channel else { throw ConnectionLost() }
         let id = newRequest()
         let line = try ClientLine.request(id: id, request)
+        if request == .watch { watchRequest = id }
         return try await withCheckedThrowingContinuation { continuation in
             replies[id] = continuation
             Task {

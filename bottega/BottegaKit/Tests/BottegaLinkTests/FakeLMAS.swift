@@ -18,6 +18,10 @@ final class FakeLMAS: Connector, Sendable {
         /// LMAS's clock, as an offset to the real one.
         var clock: Int64 = 0
         var oldest: UInt64 = 1
+        /// What it keeps of turns: JSON of the pages, by turn. nil: an LMAS that does not know `watch` and `turn`.
+        var turns: [String: [String]]?
+        /// Pushed right behind the answer to `watch`: JSON of what is inside `live`.
+        var running: [(turn: String, lines: [String])] = []
     }
 
     private struct Books {
@@ -160,8 +164,34 @@ final class FakeLMAS: Connector, Sendable {
             guard through <= latest else { return channel.fail(id, "ahead", #","latest":\#(latest)"#) }
             channel.ok(id, #"{"through":\#(through)}"#)
         case "intent": intent(json["intent"] as? [String: Any] ?? [:], id, channel)
+        case "watch": watch(id, channel)
+        case "turn": turn(json["turn"] as? String ?? "", json["from"] as? Int ?? 0, id, channel)
         case "ping": channel.ok(id, #"{"now_ms":1}"#)
         default: channel.fail(id, "unknown_request")
+        }
+    }
+
+    private func watch(_ id: UInt64, _ channel: FakeChannel) {
+        let knobs = books.withLock { $0.knobs }
+        guard knobs.turns != nil else { return channel.fail(id, "unknown_request") }
+        guard !channel.isWatching else { return channel.fail(id, "already_watching") }
+        channel.isWatching = true
+        channel.ok(id, #"{"turns":[\#(knobs.running.map { #""\#($0.turn)""# }.joined(separator: ","))]}"#)
+        for running in knobs.running { for line in running.lines { channel.yield(#"{"live":{"turn":"\#(running.turn)",\#(line)}}"#) } }
+    }
+
+    private func turn(_ turn: String, _ from: Int, _ id: UInt64, _ channel: FakeChannel) {
+        guard let turns = books.withLock({ $0.knobs.turns }) else { return channel.fail(id, "unknown_request") }
+        guard let pages = turns[turn] else { return channel.fail(id, "no_such_turn") }
+        guard !pages.isEmpty else { return channel.fail(id, "no_details") }
+        // Every page in the tests has two items.
+        channel.ok(id, pages[min((from - 1) / 2, pages.count - 1)])
+    }
+
+    /// Pushes to everyone watching; `line` is JSON inside `live`, behind the turn.
+    func push(_ turn: String, _ line: String) {
+        for channel in books.withLock({ $0.open }) where channel.isWatching {
+            channel.yield(#"{"live":{"turn":"\#(turn)",\#(line)}}"#)
         }
     }
 
@@ -290,6 +320,12 @@ final class FakeChannel: LineChannel, Sendable {
     private let continuation: AsyncThrowingStream<Data, any Error>.Continuation
     private let following = Mutex(false)
     private let closed = Mutex(false)
+    private let watching = Mutex(false)
+
+    var isWatching: Bool {
+        get { watching.withLock { $0 } }
+        set { watching.withLock { $0 = newValue } }
+    }
 
     var isFollowing: Bool {
         get { following.withLock { $0 } }
@@ -313,6 +349,7 @@ final class FakeChannel: LineChannel, Sendable {
     func close() {
         closed.withLock { $0 = true }
         isFollowing = false
+        isWatching = false
         continuation.finish()
     }
 

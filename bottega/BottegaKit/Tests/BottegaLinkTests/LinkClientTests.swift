@@ -19,6 +19,9 @@ final class Rig {
     private(set) var resets: [UInt64] = []
     private(set) var state = WorkshopState()
     private(set) var brokenSequences = 0
+    /// What `watching` said, and the turns as far as pushed.
+    private(set) var watching: [[String]?] = []
+    private(set) var turns: [String: TurnDetails] = [:]
     private var tasks: [Task<Void, Never>] = []
 
     init(lmas: FakeLMAS = FakeLMAS(), chest: any KeyChest = FakeChest(), store: MemoryStore = MemoryStore()) {
@@ -47,6 +50,11 @@ final class Rig {
         case .registrationFailed(let why): registrationFailures.append(why)
         case .registeredName(let name): registeredNames.append(name)
         case .overview(let overview): self.overview = overview
+        case .watching(let running):
+            watching.append(running)
+            for id in turns.keys where running?.contains(id) != true { turns[id]?.fellBehind() }
+        case .live(let lines):
+            for line in lines { turns[line.turn, default: TurnDetails()].take(line.what) }
         case .welcome, .notice: break
         }
     }
