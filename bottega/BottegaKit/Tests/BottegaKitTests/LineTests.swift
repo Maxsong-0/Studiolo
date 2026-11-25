@@ -108,6 +108,9 @@ struct LineTests {
     @Test func aTitleIsShownAsText() throws {
         let state = try state([letter("m1", from: "x", to: "y")], [arranged("m1", title: "a\u{202E}b")])
         #expect(try state.title(of: #require(state.threads["m1"])) == UntrustedText.line("a\u{202E}b", limit: 80))
+        // One of which nothing can be shown is no name.
+        let blank = try self.state([letter("m1", from: "x", to: "y")], [arranged("m1", title: "\u{202E}")])
+        #expect(try blank.title(of: #require(blank.threads["m1"])) == "m1")
     }
 
     /// The user's talk with a session is all the lines they started with it; what anyone else started is not.

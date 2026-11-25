@@ -57,6 +57,7 @@ struct RecordedStateTests {
         let two = try #require(state.cards["card-2"])
         #expect(two.continues == "card-1")
         #expect(two.work?.freshStart?.named == ["src/settings.rs"])
+        #expect(two.work?.gitDir == "/Users/max/app/.git/worktrees/card-2" && one.work?.gitDir == nil)
         #expect(two.thread == "msg-6")
         guard case .failed(let why, _) = two.end else { Issue.record("card-2"); return }
         #expect(why.code == "worker_stopped")

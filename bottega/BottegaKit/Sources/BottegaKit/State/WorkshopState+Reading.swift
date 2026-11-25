@@ -43,7 +43,7 @@ extension WorkshopState {
     /// The line's name: the one the user gave it, the title of the card it carries, or the first line of its first
     /// letter.
     public func title(of thread: Line) -> String {
-        if let title = arrangement(of: thread.id).title { return UntrustedText.line(title, limit: 80) }
+        if let title = arrangement(of: thread.id).title.map({ UntrustedText.line($0, limit: 80) }), !title.isEmpty { return title }
         if let title = cardsByTask[thread.id].flatMap({ cards[$0]?.title }) {
             return UntrustedText.line(title, limit: 80)
         }

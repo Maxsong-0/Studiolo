@@ -222,7 +222,9 @@ struct IntentTests {
         #expect(problem(named("")) == nil)
         #expect(problem(named(String(repeating: "x", count: 200))) == nil)
         #expect(problem(named(String(repeating: "字", count: 67))) == .badTitle)
-        for bad in ["a\nb", "a\u{7}", "a\u{85}b", "\r\n"] { #expect(problem(named(bad)) == .badTitle, "\(bad.debugDescription)") }
+        // Space around it does not count, whatever it is.
+        for good in [" \r\n", "\n a \u{85}", "\u{3000}" + String(repeating: "x", count: 200) + "\t"] { #expect(problem(named(good)) == nil) }
+        for bad in ["a\nb", " a\r\nb ", "a\u{7}", "a\u{85}b", String(repeating: "x", count: 201)] { #expect(problem(named(bad)) == .badTitle, "\(bad.debugDescription)") }
         func project(_ name: String, _ path: String = "/r") -> IntentDraft { .addProject(name: name, path: path) }
         #expect(problem(project("studio")) == nil)
         #expect(problem(project("两个 字")) == nil)

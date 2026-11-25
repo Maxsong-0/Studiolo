@@ -144,7 +144,13 @@ public enum IntentDraft: Codable, Equatable, Sendable {
         if total > Limit.allFiles { throw .filesTooLong(bytes: total) }
     }
 
-    private static func isTitle(_ text: String) -> Bool { text.utf8.count <= Limit.title && !hasControls(text) }
+    /// LMAS leaves the space around a title out before it looks at the rest.
+    private static func isTitle(_ text: String) -> Bool {
+        let isSpace = { (scalar: Unicode.Scalar) in scalar.properties.isWhitespace }
+        let kept = text.unicodeScalars.drop(while: isSpace).reversed().drop(while: isSpace).reversed()
+        let title = String(String.UnicodeScalarView(kept))
+        return title.utf8.count <= Limit.title && !hasControls(title)
+    }
 
     private static func isProjectName(_ text: String) -> Bool {
         (1...Limit.projectName).contains(text.utf8.count) && !hasControls(text)
