@@ -35,6 +35,13 @@ FREEZE_BUDGET_FLOOR_MILLIS = 1000
 STOP_GRACE_FLOOR_SECONDS = 1
 # 人侧单元 PrivateTmp=yes：宿主这两处事先建好的目录，服务里看不见。
 PRIVATE_TMP = (Path('/tmp'), Path('/var/tmp'))
+# 从标准输入读启动器原文，只跑它的 preflight（只看元数据）；名字不是 __main__，main 不会跑。
+LAUNCHER_PROBE = '''import sys
+scope = {"__name__": "launcher_probe"}
+exec(compile(sys.stdin.buffer.read(), "launch-human.py", "exec"), scope)
+scope["preflight"]()
+'''
+LAUNCHER_PROBE_SECONDS = 20
 
 
 class Operations(SnapshotOperations):
@@ -190,6 +197,27 @@ class Operations(SnapshotOperations):
         grace = budget.get('stop_grace_seconds') if type(budget) is dict else None
         c.require(type(grace) is int and STOP_GRACE_FLOOR_SECONDS <= grace <= a.BRIDGE_STOP_GRACE_SECONDS)
 
+    def launcher_accepts(self, code):
+        """停服之前先在现场跑一遍候选启动器的 preflight（以主服务账号，只看元数据）。
+        此刻人侧在跑，黑板和 HTTP 两个 socket 都在：启动器只看节点的类型、属主、链接数，不看有没有人监听，所以它看到的和人侧
+        被强杀之后一个样。不放行就不停服：r26 的启动器见到 board.sock 就拒绝，真强杀之后人侧起不来才发现（BUG-058）。"""
+        c = self.c
+        account = pwd.getpwnam('maxsong')
+        c.require(account.pw_uid == c.UID == 1000)
+        for path in (self.runtime.SOCKET, self.a.BOARD_SOCKET):
+            c.require(stat.S_ISSOCK(os.lstat(path).st_mode))
+        try:
+            result = subprocess.run(['/usr/bin/python3', '-I', '-B', '-S', '-c', LAUNCHER_PROBE], input=code,
+                stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, user=c.UID, group=account.pw_gid,
+                extra_groups=[], cwd='/', env=self.runtime.ENV, timeout=LAUNCHER_PROBE_SECONDS)
+            reason = None if result.returncode == 0 else result.stderr[-2000:].decode(errors='replace')
+        except subprocess.TimeoutExpired:
+            reason = 'timed out'
+        if reason is not None:
+            # 停在哪一步要看得见：里面只有启动器的行号和固定的路径（preflight 只看元数据，不读内容）。
+            print('candidate launcher rejected:', reason, file=sys.stderr)
+        c.require(reason is None)
+
     def preflight(self):
         c, a = self.c, self.a
         c.require(sys.platform == 'linux' and os.getuid() == os.geteuid() == 0)
@@ -233,6 +261,7 @@ class Operations(SnapshotOperations):
         self.old_human_sha = c.document(old_manifest)['files']['bin/studiolo-local-server']['sha256']
         self.runtime.ready(Path(a.OLD_RELEASE) / 'bin/studiolo-local-server', self.old_human_sha)
         self.agent_ready()
+        self.launcher_accepts(expected)
         self.receipt('preflight', {'before': self.before, 'manifest_sha256': self.manifest_sha,
             'old_units': self.old_shas, 'new_units': self.new_shas,
             'agent_binary_sha256': self.agent_sha, 'board_authorization_accepted': False})

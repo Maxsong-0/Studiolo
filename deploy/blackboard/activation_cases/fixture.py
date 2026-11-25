@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import re
 import signal
+import subprocess
 import sys
 import tempfile
 import types
@@ -112,6 +113,7 @@ class FilesBase(unittest.TestCase):
         self.write(old / 'manifest.json', raw)
         a = types.SimpleNamespace(OLD_RELEASE=str(old), RELEASE=str(new), BUILD=assembly.BUILD,
             R8_MANIFEST_SHA=c.sha(raw), HUMAN_SHA=c.sha(b'old human'), AGENT_SHA=c.sha(b'old agent'),
+            LAUNCHER_SHA=c.sha(b'old launcher'),
             WEB_PREFIX=assembly.WEB_PREFIX, ASSEMBLY=assembly.ASSEMBLY,
             # 夹具默认是「只换网页」的发行；要求一起换人侧程序的版本由用例自己打开。
             REQUIRES_NEW_HUMAN_PROGRAM=False, NEW_HUMAN_PROGRAM_LITERALS=())

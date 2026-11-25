@@ -22,6 +22,12 @@ class SyncReleaseTests(FilesBase):
         (Path(a.RELEASE) / 'manifest.json').write_bytes(raw)
         return c.sha(raw)
 
+    def becomes_previous(self, a, receipt):
+        """把刚出的候选当成上一发行，再往下出一版：钉住的值跟着换（真发行时改 assembly 的常量和 activated/）。"""
+        a.OLD_RELEASE, a.R8_MANIFEST_SHA = a.RELEASE, receipt['manifest_sha256']
+        a.LAUNCHER_SHA = c.sha((Path(a.RELEASE) / 'launch-human.py').read_bytes())
+        a.RELEASE = str(self.root / 'next-release')
+
     def test_prepare_delivers_both_executables_and_their_exact_source(self):
         a, args = self.inputs()
         receipt = self.run_prepare(a, args)
@@ -83,8 +89,7 @@ class SyncReleaseTests(FilesBase):
         a, args = self.inputs()
         first = self.run_prepare(a, args)
         self.check(a, first['manifest_sha256'])
-        a.OLD_RELEASE, a.R8_MANIFEST_SHA = a.RELEASE, first['manifest_sha256']
-        a.RELEASE = str(self.root / 'next-release')
+        self.becomes_previous(a, first)
         for field in ('local_server', 'local_server_sha256', 'human_source_commit',
                       'maintain', 'maintain_sha256', 'sync_launcher', 'sync_launcher_sha256'):
             setattr(args, field, None)
@@ -107,8 +112,7 @@ class SyncReleaseTests(FilesBase):
     def test_next_release_refuses_removing_both_tools_even_with_resigned_manifest(self):
         a, args = self.inputs()
         first = self.run_prepare(a, args)
-        a.OLD_RELEASE, a.R8_MANIFEST_SHA = a.RELEASE, first['manifest_sha256']
-        a.RELEASE = str(self.root / 'next-release')
+        self.becomes_previous(a, first)
         second = self.run_prepare(a, args)
         doc = self.check(a, second['manifest_sha256'])
         del doc['sync_program_source_commit']

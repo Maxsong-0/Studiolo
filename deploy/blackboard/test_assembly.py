@@ -1,55 +1,109 @@
-"""黑板形状发行（当前 r25→r26）的固定变更面；夹具不接触生产或凭据。"""
+"""黑板形状发行（当前 r26→r27）的固定变更面；夹具不接触生产或凭据。"""
 import ast
 import collections
+import contextlib
+import hashlib
 import importlib.util
 import os
 from pathlib import Path
 import re
 import socket
 import tempfile
+import types
 import unittest
-from unittest import mock
 import assembly as a
 
 ROOT = Path(__file__).resolve().parents[2]
 
 
-def board_launcher():
-    """把 r7/r8 那份启动器补成上一发行（r25，接线沿用 r17）的形状：带黑板常量与参数、只读身份目录参数、备份配置参数，
-    RELEASE 指向上一发行。"""
-    text = (ROOT / 'deploy/human/current-v2/launch-human.py').read_text().replace(
-        'm4-t092-20260920-r7', a.OLD_RELEASE.rsplit('/', 1)[1]).replace(
-        '服务器示例库', '正式黑板库 · Obsidian 同步试跑')
-    text = text.replace(
-        'SOCKET = "/run/studiolo-human/http.sock"',
-        'SOCKET = "/run/studiolo-human/http.sock"\n'
-        + '\n'.join(name + ' = ' + repr(value) for name, value in (
-            ('VAULT', a.VAULT), ('WRITER', a.WRITER), ('BOARD', a.BOARD),
-            ('AGENT', a.AGENT), ('BOARD_SOCKET', a.BOARD_SOCKET))))
-    return text.replace('"--factor-socket", SOCKET, "--policy-data", POLICY,',
-                        '"--factor-socket", SOCKET, "--policy-data", POLICY,\n'
-                        '        "--canonical-writer-data", WRITER, "--board-data", BOARD,\n'
-                        '        "--board-agent-data", AGENT, "--agent-data", AGENT, "--board-socket", BOARD_SOCKET,\n'
-                        '        "--sync-transport", "' + a.SYNC_APPROVAL + '",'
-                        ' "--backup-config", "' + a.BACKUP_CONFIG + '",')
+def activated(name):
+    """169 上现装的原文（上一发行激活写下的），逐字节取回放在 activated/，摘要钉在装配里。"""
+    return (Path(__file__).resolve().parent / 'activated' / name).read_bytes().decode()
 
 
-def board_unit():
-    """把 r7/r8 那份人侧单元补成上一发行（r25，接线沿用 r17）的形状：黑板 RuntimeDirectory，黑板五个写根、Bridge 两个写根、
-    备份两个写根，都在 [Service] 节里、顺序和线上一致；停止超时是按预算算出来的那一行，内存上限是 r24 放宽后的 2G。"""
-    text = (ROOT / 'deploy/human/current-v2/studiolo-human.service').read_text().replace(
-        'm4-t092-20260920-r7', a.OLD_RELEASE.rsplit('/', 1)[1])
-    text = text.replace('RuntimeDirectory=studiolo-human\n',
-                        'RuntimeDirectory=studiolo-human studiolo-board\n')
-    assert text.count('TimeoutStopSec=90\n') == 1
-    text = text.replace('TimeoutStopSec=90\n', a.stop_timeout_line(a.STOP_TIMEOUT_SECONDS))
-    assert text.count('MemoryMax=512M\n') == 1
-    text = text.replace('MemoryMax=512M\n', a.MEMORY_LINE)
-    return text.replace('ReadWritePaths=/run/studiolo-human\n',
-                        'ReadWritePaths=/run/studiolo-human\n' + ''.join(
-                            'ReadWritePaths=' + path + '\n'
-                            for path in (a.VAULT, a.WRITER, a.BOARD, a.AGENT, a.BOARD_RUNTIME,
-                                         a.BRIDGE_ROOT, a.TRANSPORT_ROOT, a.BACKUP_RUNTIME, a.BACKUP_STAGING)))
+class RootedOs:
+    """给启动器用的 os：绝对路径都落到假根目录里，相对路径（带目录描述符）照走真的系统调用。
+    只放行 preflight 只看元数据用得到的几样，别的（打开来写、删、改名、建……）一律算错：启动器什么都不改。"""
+
+    def __init__(self, root):
+        self.root, self.opened = root, set()
+        # 这些名字的节点按「别人的」「看不了的」报：跑用例的账号改不了属主，要是 root 又什么都看得了。
+        self.foreign, self.denied = set(), set()
+        self.path = types.SimpleNamespace(lexists=lambda path: os.path.lexists(self.at(path)))
+
+    def __getattr__(self, name):
+        if name in ('fstat', 'geteuid') or name.startswith('O_'):
+            return getattr(os, name)
+        raise AssertionError('preflight must not use os.' + name)
+
+    def at(self, path):
+        return self.root + path if path.startswith('/') else path
+
+    def open(self, path, flags, *, dir_fd=None):
+        if flags & (os.O_WRONLY | os.O_RDWR | os.O_CREAT | os.O_TRUNC | os.O_APPEND):
+            raise AssertionError('preflight must not open for writing')
+        descriptor = os.open(self.at(path), flags, dir_fd=dir_fd)
+        self.opened.add(descriptor)
+        return descriptor
+
+    def close(self, descriptor):
+        os.close(descriptor)
+        self.opened.remove(descriptor)
+
+    def stat(self, path, *, dir_fd=None, follow_symlinks=True):
+        if path in self.denied:
+            raise PermissionError(path)
+        fields = list(os.stat(self.at(path), dir_fd=dir_fd, follow_symlinks=follow_symlinks))
+        fields[4] += path in self.foreign
+        return os.stat_result(fields)
+
+
+def dead_socket(path):
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as listener:
+        listener.bind(str(path))
+        listener.listen()
+
+
+class Installed:
+    """假根目录里照 169 的样子摆好启动器要看的全部目录和文件（路径取启动器自己的常量，权限和现场一样），
+    启动器整份用真的字节，只把它的 os 换成 RootedOs：preflight 的每一步都真的走一遍。"""
+
+    def __init__(self, root, text):
+        self.launcher = {'__name__': 'launcher_under_test'}
+        exec(compile(text, 'launch-human.py', 'exec'), self.launcher)
+        self.os = self.launcher['os'] = RootedOs(root)
+
+        def at(name):
+            return Path(self.os.at(self.launcher[name]))
+        for directory in (at('AUTH'), at('AUDIT'), at('POLICY'), at('VAULT') / '.workbench', at('WRITER'), at('BOARD'),
+                          at('AGENT'), at('CONFIG').parent, at('BINARY').parent, at('RELEASE') / 'web',
+                          at('SOCKET').parent, at('BOARD_SOCKET').parent):
+            directory.mkdir(parents=True)
+        for path in (at('CONFIG'), at('AUTH') / 'auth.sqlite3', at('AUDIT') / 'audit.sqlite3', at('POLICY') / 'policy.sqlite3',
+                     at('AGENT') / 'agent.sqlite3', at('VAULT') / '.workbench/broker-binding.json',
+                     at('WRITER') / 'broker-binding.json', at('BINARY')):
+            path.touch()
+            path.chmod(0o755 if path == at('BINARY') else 0o600)
+        # 人侧在跑时的三个入口；备份那个启动器不看，摆上是为了和被强杀之后的现场一样。
+        self.leftovers = [at('SOCKET'), at('BOARD_SOCKET'), Path(root) / 'run/studiolo-backup/producer.sock']
+        self.leftovers[2].parent.mkdir()
+
+    def preflight(self):
+        try:
+            self.launcher['preflight']()
+        finally:
+            # 放行还是拒绝，打开过的都关了：后面换成产品程序时不带着走。
+            assert not self.os.opened, self.os.opened
+
+
+@contextlib.contextmanager
+def installed(text):
+    mask = os.umask(0o077)
+    try:
+        with tempfile.TemporaryDirectory(prefix='stu-l-', dir='/tmp') as root:
+            yield Installed(root, text)
+    finally:
+        os.umask(mask)
 
 
 def rust_seconds(relative, name):
@@ -88,21 +142,30 @@ def rust_calls(paths, receiver, method=r'\w+'):
 
 
 class AssemblyTests(unittest.TestCase):
-    def test_r26_upgrades_the_activated_r25(self):
-        self.assertEqual(a.BUILD, 'm5m6-board-20260920-r26')
+    def test_r27_upgrades_the_activated_r26(self):
+        self.assertEqual(a.BUILD, 'm5m6-board-20260920-r27')
         self.assertEqual(a.RELEASE.rsplit('/', 1)[1], a.BUILD)
-        self.assertTrue(a.OLD_RELEASE.endswith('/m5m6-board-20260920-r25'))
+        self.assertTrue(a.OLD_RELEASE.endswith('/m5m6-board-20260920-r26'))
         self.assertEqual(a.WEB_PREFIX, 'web/')
 
+    def test_fixtures_are_the_bytes_installed_on_169(self):
+        """BUG-058：以前的夹具拿仓库里更早的模板拼，少了线上那几行。夹具就是现场原文，换发行时忘了换这里就红。"""
+        for name, pinned in (('launch-human.py', a.LAUNCHER_SHA), ('studiolo-human.service', a.HUMAN_SHA)):
+            self.assertEqual(hashlib.sha256(activated(name).encode()).hexdigest(), pinned, name)
+
     def test_launcher_preserves_the_approved_bridge_wiring(self):
-        old = board_launcher()
+        old = activated('launch-human.py')
         new = a.launcher(old)
         backup = ' "--backup-config", "' + a.BACKUP_CONFIG + '",'
-        # 本版只换发行路径和 http.sock 的核对：换回去就是上一发行的那一份，一个字不差。
-        restored = new.replace(a.RELEASE, a.OLD_RELEASE).replace(a.SOCKET_CHECK, a.OLD_SOCKET_CHECK)
+        # 本版只换发行路径和两个残留入口的核对：换回去就是上一发行的那一份，一个字不差。
+        restored = new.replace(a.RELEASE, a.OLD_RELEASE).replace(a.LEFTOVER_CHECKS, a.OLD_LEFTOVER_CHECKS).replace(
+            a.INSPECT_LEFTOVER, '')
         self.assertEqual(restored, old)
-        self.assertEqual((new.count(a.SOCKET_CHECK), new.count(a.OLD_SOCKET_CHECK)), (1, 0))
+        self.assertEqual([new.count(part) for part in (a.LEFTOVER_CHECKS, a.INSPECT_LEFTOVER, a.OLD_LEFTOVER_CHECKS)],
+                         [1, 1, 0])
         self.assertNotIn(a.OLD_RELEASE, new)
+        # 看见残留就拒绝的写法一处不剩。
+        self.assertNotIn('exists(', new)
         self.assertEqual(new.count('"--backup-config"'), 1)
         self.assertEqual(new.count('"--agent-data"'), 1)
         self.assertEqual(new.count('"--sync-transport"'), 1)
@@ -110,13 +173,16 @@ class AssemblyTests(unittest.TestCase):
         self.assertIn('"--sync-transport", "' + a.SYNC_APPROVAL + '",' + backup, new)
         self.assertEqual(Path(a.BACKUP_CONFIG).parent, Path(a.SYNC_APPROVAL).parent)
 
-        # 除了 preflight 里那一处核对，所有函数（含 main）的 AST 不变；模块级只有发行路径不同。
-        def functions(source):
-            return {n.name: ast.dump(n) for n in ast.parse(source).body
-                    if isinstance(n, ast.FunctionDef)}
-        before, after = functions(old), functions(new)
-        self.assertEqual(before.keys(), after.keys())
-        self.assertEqual({name for name in before if before[name] != after[name]}, {'preflight'})
+        # 多一个 inspect_leftover、preflight 换了核对，别的函数（含 main）的 AST 不变；模块级只有发行路径不同。
+        def parts(source):
+            body = ast.parse(source).body
+            return ({n.name: ast.dump(n) for n in body if isinstance(n, ast.FunctionDef)},
+                    [ast.dump(n) for n in body if not isinstance(n, ast.FunctionDef)])
+        (before, module_before), (after, module_after) = parts(old), parts(new)
+        self.assertEqual(after.keys() - before.keys(), {'inspect_leftover'})
+        self.assertEqual({name for name in before if before[name] != after.get(name)}, {'preflight'})
+        release = [ast.dump(ast.parse('RELEASE = ' + repr(path)).body[0]) for path in (a.OLD_RELEASE, a.RELEASE)]
+        self.assertEqual([[x, y] for x, y in zip(module_before, module_after, strict=True) if x != y], [release])
         self.assertIn('"--canonical-writer-data", WRITER', new)
         self.assertIn('"STUDIOLO_TOTP_SEED_HEX": credential()', new)
         # 已转换的启动器不能再过一遍；接线或标签漂移也拒绝；还没带只读身份目录参数的（r15 形状）、
@@ -128,62 +194,108 @@ class AssemblyTests(unittest.TestCase):
                     old.replace(' "--agent-data", AGENT,', ''),
                     old.replace('"--board-socket", BOARD_SOCKET,', ''),
                     old.replace('"--sync-transport"', '"--foreign"'),
-                    # 已经换过核对的、核对被改过的，都不是上一发行的那一份。
-                    old.replace(a.OLD_SOCKET_CHECK, a.SOCKET_CHECK),
-                    old.replace('raise RuntimeError("rejected")\n    finally', 'pass\n    finally'),
+                    # 已经换过核对的、少一行的、多一处的、被改过的，都不是上一发行的那一份。
+                    old.replace(a.OLD_LEFTOVER_CHECKS, a.LEFTOVER_CHECKS),
+                    old.replace('    require(not os.path.lexists(BOARD_SOCKET))\n', ''),
+                    old.replace(' and node.st_uid == os.geteuid()', ''),
+                    old.replace('def main():', a.OLD_LEFTOVER_CHECKS + '\n\ndef main():'),
+                    old.replace('def preflight():', 'def preflight(strict=True):'),
+                    # 两个入口的常量指到别处：核对会看错节点。
+                    old.replace(a.HUMAN_SOCKET, '/foreign/http.sock'),
+                    old.replace(a.BOARD_SOCKET, '/foreign/board.sock'),
                     old.replace(a.SYNC_APPROVAL, '/foreign/approval.json'),
                     old + '\n# "--sync-transport"\n',
                     old.replace('正式黑板库 · Obsidian 同步试跑', '未知标签')):
             with self.assertRaises(ValueError):
                 a.launcher(bad)
 
-    def test_launcher_hands_only_our_own_single_name_socket_to_the_product(self):
-        """T-231：残留的 http.sock 由程序判死；启动器只放过自己的、一个名字的 socket，什么都不删。"""
-        module = {'__name__': 'launcher_under_test'}
-        exec(compile(a.launcher(board_launcher()), 'launch-human.py', 'exec'), module)
-        module['inspect_existing'] = lambda *args, **kwargs: None
-
-        def preflight(directory, uid=None):
-            module['open_directory'] = lambda path, private=False: os.open(
-                directory if path == '/run/studiolo-human' else '/', os.O_RDONLY | os.O_DIRECTORY)
-            with mock.patch.object(os, 'geteuid', return_value=os.getuid() if uid is None else uid):
-                module['preflight']()
-
-        def dead(path):
-            with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as listener:
-                listener.bind(str(path))
-                listener.listen()
-
-        with tempfile.TemporaryDirectory(prefix='stu-l-', dir='/tmp') as root:
-            node = Path(root) / 'http.sock'
-            other = Path(root) / 'other'
-            preflight(root)
-            dead(node)
-            before = node.lstat()
-            preflight(root)
-            self.assertEqual(node.lstat(), before)
-            # 别人的 socket、两个名字的 socket 照旧拒绝，原样留着。
+    def test_launcher_lets_the_human_side_come_back_after_a_kill(self):
+        """BUG-058：被强杀之后三个死 socket 都在，整份 preflight 照样放行，一样不动；现装的 r26 那份在这里拒绝。"""
+        with installed(a.launcher(activated('launch-human.py'))) as site:
+            # 正常停下之后（一个残留都没有）照常起。
+            site.preflight()
+            for path in site.leftovers:
+                dead_socket(path)
+            before = [path.lstat() for path in site.leftovers]
+            site.preflight()
+            self.assertEqual([path.lstat() for path in site.leftovers], before)
+        with installed(activated('launch-human.py')) as site:
+            dead_socket(site.leftovers[0])
+            site.preflight()
+            dead_socket(site.leftovers[1])
             with self.assertRaises(RuntimeError):
-                preflight(root, uid=os.getuid() + 1)
-            os.link(node, other)
-            with self.assertRaises(RuntimeError):
-                preflight(root)
-            self.assertTrue(node.is_socket())
-            node.unlink()
-            # 链接（指着一个合格的 socket 也不行）、普通文件、目录、管道。
-            node.symlink_to(other)
-            with self.assertRaises(RuntimeError):
-                preflight(root)
-            node.unlink()
-            for make, remove in ((node.touch, node.unlink), (node.mkdir, node.rmdir),
-                                 (lambda: os.mkfifo(node), node.unlink)):
-                make()
+                site.preflight()
+
+    def test_launcher_hands_only_our_own_single_name_sockets_to_the_product(self):
+        """T-231、BUG-058：两个残留入口同样严——不是自己的、不止一个名字的、不是 socket 的一律拒绝，原样留着。"""
+        for index in (0, 1):
+            with installed(a.launcher(activated('launch-human.py'))) as site:
+                node = site.leftovers[index]
+                other = node.parent / 'other'
+
+                def refused():
+                    with self.assertRaises(RuntimeError):
+                        site.preflight()
+                dead_socket(node)
+                site.preflight()
+                site.os.foreign.add(node.name)
+                refused()
+                site.os.foreign.clear()
+                # 看不了不等于不在。
+                site.os.denied.add(node.name)
+                with self.assertRaises(PermissionError):
+                    site.preflight()
+                site.os.denied.clear()
+                site.preflight()
+                os.link(node, other)
+                refused()
+                self.assertTrue(node.is_socket())
+                node.unlink()
+                # 另一个名字还在、入口这个名字不在：不是残留。
+                site.preflight()
+                # 链接（指着一个合格的 socket 也不行；指着不存在的也不行）、普通文件、目录、管道。
+                for make, remove in ((lambda: node.symlink_to(other), node.unlink),
+                                     (lambda: node.symlink_to('missing'), node.unlink), (node.touch, node.unlink),
+                                     (node.mkdir, node.rmdir), (lambda: os.mkfifo(node), node.unlink)):
+                    make()
+                    refused()
+                    remove()
+                    site.preflight()
+                # 入口所在的目录别人进得来、不在了：照旧拒绝。
+                node.parent.chmod(0o750)
+                refused()
+                node.parent.chmod(0o700)
+                site.preflight()
+                other.unlink()
+                node.parent.rmdir()
+                with self.assertRaises(FileNotFoundError):
+                    site.preflight()
+
+    def test_launcher_still_refuses_missing_or_open_stores(self):
+        """摆好的现场少一样、权限放宽一样都拒绝：证明上面两条跑的是整份 preflight，不是空的。"""
+        text = a.launcher(activated('launch-human.py'))
+        files = ('CONFIG', ('AUTH', 'auth.sqlite3'), ('AUDIT', 'audit.sqlite3'), ('POLICY', 'policy.sqlite3'),
+                 ('AGENT', 'agent.sqlite3'), ('VAULT', '.workbench/broker-binding.json'), ('WRITER', 'broker-binding.json'),
+                 'BINARY')
+        for name in files:
+            with self.subTest(name=name), installed(text) as site:
+                base, rest = name if isinstance(name, tuple) else (name, '')
+                path = Path(site.os.at(site.launcher[base])) / rest
+                site.preflight()
+                path.chmod(0o640 if base != 'BINARY' else 0o775)
                 with self.assertRaises(RuntimeError):
-                    preflight(root)
-                remove()
+                    site.preflight()
+                path.unlink()
+                with self.assertRaises(FileNotFoundError):
+                    site.preflight()
+        for base in ('AUTH', 'AUDIT', 'POLICY', 'VAULT', 'WRITER', 'BOARD', 'AGENT'):
+            with self.subTest(base=base), installed(text) as site:
+                Path(site.os.at(site.launcher[base])).chmod(0o750)
+                with self.assertRaises(RuntimeError):
+                    site.preflight()
 
     def test_human_unit_only_repoints_the_release(self):
-        old = board_unit()
+        old = activated('studiolo-human.service')
         new_stop = a.stop_timeout_line(a.STOP_TIMEOUT_SECONDS)
         self.assertEqual(old.count(new_stop), 1)
         new = a.human_unit(old)
@@ -318,24 +430,15 @@ class AssemblyTests(unittest.TestCase):
         self.assertEqual(bridge_readme.count(
             '审批 `budget.stop_grace_seconds` 加 %d s' % a.BRIDGE_STOP_MARGIN_SECONDS), 1)
 
-    def test_this_release_requires_the_new_human_program(self):
-        # 本版的修复在人侧程序里，必须换程序（出候选和激活预检靠这两个常量拒绝沿用旧程序）。
-        self.assertIs(a.REQUIRES_NEW_HUMAN_PROGRAM, True)
-        # 每段字节：在哪份源码里、原样写成什么样。每段都从一个字符串字面量的开头引号起，后面紧跟着占位符或结尾引号，
-        # 所以程序里连续的字节就到这里为止（中文按 UTF-8 编码后比）。上一发行的程序里都没有，在 169 上只读核过。
-        pinned = (
-            ('接管上一任留下的', 'crates/local-server/src/unix_ingress/leftover.rs',
-             '"接管上一任留下的{} socket（inode {}，权限 {:04o}，建于 {made}）"'),
-            ('HTTP 入口', 'crates/local-server/src/startup/factor_input.rs', '"HTTP 入口"'),
-            ('备份入口', 'crates/local-server/src/backup/listener.rs', 'label: "备份入口"'),
-        )
-        self.assertEqual(a.NEW_HUMAN_PROGRAM_LITERALS, tuple(literal.encode() for literal, _, _ in pinned))
-        for literal, path, written in pinned:
-            # 只看编进程序的那部分源码（测试模块和注释不算）：原样的字符串字面量，只此一处。
-            code = rust_code(ROOT / path)
-            self.assertEqual(code.count(written), 1, written)
-            self.assertEqual(code.count(literal), 1, written)
-            self.assertTrue(written.split('"' + literal, 1)[1].startswith(('{', '"')), written)
+    def test_this_release_keeps_the_previous_human_program(self):
+        # 本版的修复在启动器里，人侧程序沿用上一发行的：出候选时不给程序三件套，候选里逐字节照抄上一发行。
+        self.assertEqual(a.NEW_HUMAN_PROGRAM_LITERALS, ())
+        self.assertIs(a.REQUIRES_NEW_HUMAN_PROGRAM, False)
+        # 启动器放过去的死 socket 要靠程序接管：三个入口在程序里都走同一处接管（沿用的程序从 87caf70 构建，已经有）。
+        for path, written in (('crates/local-server/src/startup/factor_input.rs', '"HTTP 入口"'),
+                              ('crates/local-server/src/startup/plane_input.rs', '"黑板入口"'),
+                              ('crates/local-server/src/backup/listener.rs', 'label: "备份入口"')):
+            self.assertEqual(rust_code(ROOT / path).count(written), 1, path)
 
     def test_agent_unit_is_carried_over_byte_for_byte(self):
         for quoted in (False, True):
