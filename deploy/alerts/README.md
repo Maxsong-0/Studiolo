@@ -8,7 +8,12 @@
 - 169 的系统 timer 在 `LimitMEMLOCK=infinity` 下查询三个系统单元、对时、内存预算、真实 MCP 握手，并只读人侧的同步状态回执（`docs/contracts/sync-status-receipt.md`），再原子保存回执。MCP 复用私有会话；失效才重新初始化，读取最多 64 KiB、每次八秒。
 - 两次相同故障触发，发送成功后冷却 600 秒（换代号就重新算）；A07、A08 是一天，而且每个代号单独记，中间被别的代号打断、或两者互换再回来都不重新算，看到正常或时钟回拨才清；时钟回拨直接触发。发送前持久化轮次，再由 `studiolo-alert` 先写 Intent 审计后投递。两路都失败、审计不可用、状态损坏时不能报成功；108 停发自身心跳，让外部检测兜底。
 - 两个节点分别向 Healthchecks.io 和 Worker 发空正文。Worker 180 秒没收到就告警；每节点 45 秒发送租约，只有成功才开始 600 秒冷却。超时可能已被供应商接收，跨供应商不承诺恰好一次。
-- A01：远端探针不可用；A02：服务或 MCP 不可用；A03：AI 副本过期；A04：内存达到 80% 或无法确认预算；A06：时钟未同步或回拨；A07：Bridge 同步两边没对上满 6 小时（回执读不到或坏了也算）；A08：远端删了文件、主库没开文件操作，同步整批暂停（删除守卫 1 小时内证明过才算，期间不另报 A07）；A108/A169：对应外部心跳中断。只发代号及可选受登录门禁保护的链接。
+- A01：远端探针不可用；A02：服务或 MCP 不可用；A03：AI 副本过期；A04：内存真的不够用或无法确认预算（判法见下一条）；A06：时钟未同步或回拨；A07：Bridge 同步两边没对上满 6 小时（回执读不到或坏了也算）；A08：远端删了文件、主库没开文件操作，同步整批暂停（删除守卫 1 小时内证明过才算，期间不另报 A07）；A108/A169：对应外部心跳中断。只发代号及可选受登录门禁保护的链接。
+- A04 的判法（T-229）：三个单元各看自己的 cgroup（`systemctl show` 的 `ControlGroup` 下的 `memory.current`、`memory.max`、`memory.stat`、`memory.pressure`），任一单元满足一条就报。
+  ① 回收不掉的内存占上限满 80%。回收不掉的＝`memory.current` 减干净文件缓存（`inactive_file`＋`active_file`－`file_dirty`－`file_writeback`，不足零按零）再减 `slab_reclaimable`；匿名、共享、内核内存、脏页、正在回写的页和没列到的种类都算回收不掉。
+  ② `memory.pressure` 的 `full avg300` 满 10%：最近 5 分钟整组任务因缺内存停住满 30 秒。补的是 ① 每分钟一张快照看不到的突发和反复重读；没有用真实 OOM 校准过，取值按 169 封存时的实测余量。
+  ③ 证据不成立：没有 cgroup、cgroup 不是这个单元的、文件或字段缺失、`memory.max` 无界、坏值、可回收的比总量还多。探针单元因此不能加 `ProtectControlGroups=private`、`InaccessiblePaths=/sys/fs/cgroup` 一类遮住 cgroup 的设置，否则 A04 一直报。
+  文件缓存顶满上限本身不报：封存每次都会把人侧顶到 `MemoryMax`，内核能马上回收。被 OOM 杀掉的单元由 A02 报，不另计 OOM 次数。
 - Critical：Pushover priority 2、retry 60、expire 3000；主通道未确认才转 Bark critical/call。Warning：Pushover 普通、Bark passive。回执表示服务接受，不能称手机已响。
 - Python 运维进程在读秘密前禁 core、禁同 UID 检视、锁定现有和未来内存，输出固定保护回执；Rust 入口使用现有 `studiolo-process-safety`。不给 SSH/systemctl 子进程传告警密钥。源和凭据均不通过第三方监控上传。
 
