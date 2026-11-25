@@ -16,6 +16,17 @@ public struct Welcome: Decodable, Equatable, Sendable {
     /// The number this device's next intent should carry.
     public var nextIntent: UInt64
     public var nowMs: UInt64
+
+    private enum Key: CodingKey { case device, name, latest, nextIntent, nowMs }
+
+    public init(from decoder: any Decoder) throws {
+        let fields = try decoder.container(keyedBy: Key.self)
+        device = try fields.decode(String.self, forKey: .device)
+        name = try fields.decode(String.self, forKey: .name)
+        latest = try fields.decode(UInt64.self, forKey: .latest)
+        nextIntent = try fields.decodeNumber(from: 1, forKey: .nextIntent)
+        nowMs = try fields.decode(UInt64.self, forKey: .nowMs)
+    }
 }
 
 /// Why LMAS did not do what a request asked. Switch on `code`; `text` is for people.
@@ -34,6 +45,18 @@ public struct WireError: Decodable, Equatable, Error, Sendable {
         self.next = next
         self.latest = latest
         self.oldest = oldest
+    }
+
+    private enum Key: CodingKey { case code, text, next, latest, oldest }
+
+    /// With a number that cannot be, it is the same error without it.
+    public init(from decoder: any Decoder) throws {
+        let fields = try decoder.container(keyedBy: Key.self)
+        code = try fields.decode(String.self, forKey: .code)
+        text = try fields.decode(String.self, forKey: .text)
+        next = try? fields.decodeNumber(from: 1, forKey: .next)
+        latest = try? fields.decodeNumber(forKey: .latest)
+        oldest = try? fields.decodeNumber(from: 1, forKey: .oldest)
     }
 }
 

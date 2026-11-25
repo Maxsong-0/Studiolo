@@ -15,13 +15,11 @@ public struct GrownText: Equatable, Sendable {
     /// Kept of a text that does not stop growing: its start, and its end.
     static let keptHead = 64 * 1024
     static let keptTail = 192 * 1024
-    /// Nothing is that long; a place past it is a mistake, and adding to it must not overflow.
-    private static let farthest: UInt64 = 1 << 53
 
     public init() {}
 
     public init(_ text: CutText) {
-        guard let cut = text.cut, cut.bytes <= Self.farthest, let (head, tail) = Self.split(text.text, at: cut.at) else {
+        guard let cut = text.cut, cut.bytes <= Wire.farthest, let (head, tail) = Self.split(text.text, at: cut.at) else {
             append(text.text, at: 0)
             return
         }
@@ -46,7 +44,7 @@ public struct GrownText: Equatable, Sendable {
             guard let (_, rest) = Self.split(text, at: end - at) else { return }
             (text, at) = (rest, end)
         }
-        guard !text.isEmpty, at <= Self.farthest else { return }
+        guard !text.isEmpty, at <= Wire.farthest else { return }
         if let last = pieces.indices.last, pieces[last].end == at {
             pieces[last].text += text
         } else {
@@ -192,7 +190,7 @@ public struct TurnDetails: Equatable, Sendable {
 
     private func index(of n: Int) -> Int? {
         // They count up from 1 without gaps, so the place is known unless something is missing.
-        if items.indices.contains(n - 1), items[n - 1].id == n { return n - 1 }
+        if n > 0, n <= items.count, items[n - 1].id == n { return n - 1 }
         return items.firstIndex { $0.id == n }
     }
 }

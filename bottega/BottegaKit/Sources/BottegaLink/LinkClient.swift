@@ -475,11 +475,11 @@ public actor LinkClient {
         flushing = nil
         batch = []
         lives = []
-        self.start = start
-        through = start - 1
+        self.start = max(1, start)
+        through = self.start - 1
         isFresh = true
         echoes = [:]
-        send(.reset(start: start))
+        send(.reset(start: self.start))
     }
 
     private func hangUp() {

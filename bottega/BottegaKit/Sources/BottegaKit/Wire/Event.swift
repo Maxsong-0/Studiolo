@@ -321,4 +321,13 @@ public struct Record: Decodable, Equatable, Sendable {
         self.through = through
         self.events = events
     }
+
+    private enum Key: CodingKey { case seq, through, events }
+
+    public init(from decoder: any Decoder) throws {
+        let fields = try decoder.container(keyedBy: Key.self)
+        seq = try fields.decodeNumber(from: 1, forKey: .seq)
+        through = try fields.decodeNumber(from: 1, forKey: .through)
+        events = try fields.decode([Event].self, forKey: .events)
+    }
 }

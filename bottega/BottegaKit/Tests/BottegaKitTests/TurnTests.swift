@@ -186,6 +186,25 @@ struct TurnDetailsTests {
             from: Data(#"{"turn":"turn-1","session":"s","vendor":"codex","started_at_ms":1,"state":"\#(state)","items":[\#(items)],"through":\#(through),"last":\#(last)}"#.utf8))
     }
 
+    /// Anything that is no place from 1 on is not taken, whatever it says about itself.
+    @Test(arguments: ["-9223372036854775808", "9223372036854775807", "-1", "0", "18446744073709551616", "1.5"])
+    func aPlaceThatCannotBeIsNoPlace(n: String) throws {
+        func live(_ what: String) throws -> Live {
+            guard case .live(let live) = try ServerLine.read(Data(#"{"live":{"turn":"turn-1",\#(what)}}"#.utf8)) else { throw ServerLine.Malformed() }
+            return live
+        }
+        #expect(try live(#""item":{"n":\#(n),"kind":"text","status":"running"}"#).what == .unknown)
+        #expect(try live(#""append":{"n":\#(n),"at":0,"text":"x"}"#).what == .unknown)
+        #expect(try page("whole", #"{"n":\#(n),"kind":"text","status":"done"}"#, through: 0, last: 0).items == [])
+        var turn = TurnDetails()
+        turn.take(.began(head))
+        turn.take(.item(TurnItem(n: 1, kind: "text", status: "running")))
+        turn.take(.item(TurnItem(n: .min, kind: "text", status: "done")))
+        turn.take(.append(n: .min, at: 0, text: "x"))
+        turn.take(.append(n: .max, at: 0, text: "x"))
+        #expect(turn.items.map(\.id) == [.min, 1])
+    }
+
     @Test func anItemReplacesTheOneBefore() {
         var turn = TurnDetails()
         turn.take(.began(head))

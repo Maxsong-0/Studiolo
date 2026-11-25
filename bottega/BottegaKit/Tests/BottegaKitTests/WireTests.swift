@@ -191,6 +191,23 @@ struct WireTests {
         #expect(try error(#"{"error":{"code":"stopping","text":"LMAS 正在停"}}"#).0 == nil)
     }
 
+    /// One more than these is one too many for the arithmetic, and that would take the app down.
+    @Test(arguments: [
+        #"{"record":{"seq":0,"through":1,"events":[]}}"#,
+        #"{"record":{"seq":1,"through":18446744073709551615,"events":[]}}"#,
+        #"{"record":{"seq":18446744073709551615,"through":18446744073709551615,"events":[]}}"#,
+        #"{"welcome":{"device":"d","name":"n","latest":0,"next_intent":18446744073709551615,"now_ms":1}}"#,
+        #"{"welcome":{"device":"d","name":"n","latest":0,"next_intent":0,"now_ms":1}}"#,
+    ])
+    func numbersThatCannotBeAreNotCountedOn(line: String) {
+        #expect(throws: ServerLine.Malformed.self) { try ServerLine.read(Data(line.utf8)) }
+    }
+
+    @Test func anErrorKeepsItsWordsWithoutANumberThatCannotBe() throws {
+        let line = #"{"id":1,"error":{"code":"gone","text":"t","next":18446744073709551615,"latest":-1,"oldest":0}}"#
+        #expect(try ServerLine.read(Data(line.utf8)) == .error(id: 1, WireError(code: "gone", text: "t")))
+    }
+
     @Test func aLineLMASWouldDisconnectOnIsNeverWritten() throws {
         var intent = try #require(try Fixtures.vectors().intents.first).intent
         intent.body = String(repeating: "x", count: Wire.maxLineBytes)

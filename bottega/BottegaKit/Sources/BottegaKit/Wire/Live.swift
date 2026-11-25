@@ -98,7 +98,7 @@ extension TurnItem: Decodable {
         func read<Value: Decodable>(_ key: Key, _: Value.Type = Value.self) -> Value? {
             (try? fields.decodeIfPresent(Value.self, forKey: key)) ?? nil
         }
-        n = try fields.decode(Int.self, forKey: .n)
+        n = try fields.decodePlace(forKey: .n)
         kind = read(.kind) ?? ""
         status = read(.status) ?? ""
         startedAt = read(.startedAtMs)
@@ -142,7 +142,19 @@ public struct Live: Equatable, Sendable {
 
 extension Live: Decodable {
     private enum Key: CodingKey { case turn, began, item, append, ended }
-    private struct Append: Decodable { var n: Int; var at: UInt64; var text: String }
+    private struct Append: Decodable {
+        var n: Int
+        var at: UInt64
+        var text: String
+
+        private enum Key: CodingKey { case n, at, text }
+        init(from decoder: any Decoder) throws {
+            let fields = try decoder.container(keyedBy: Key.self)
+            n = try fields.decodePlace(forKey: .n)
+            at = try fields.decodeNumber(forKey: .at)
+            text = try fields.decode(String.self, forKey: .text)
+        }
+    }
     private struct Ended: Decodable { var whole: Bool }
 
     /// Never throws: these lines are a preview, and one that cannot be read must not cost the connection.
@@ -190,7 +202,7 @@ public struct TurnPage: Decodable, Equatable, Sendable {
         let fields = try decoder.container(keyedBy: Key.self)
         state = try fields.decode(String.self, forKey: .state)
         items = try fields.decode([Lenient].self, forKey: .items).compactMap(\.item)
-        through = try fields.decode(Int.self, forKey: .through)
-        last = try fields.decode(Int.self, forKey: .last)
+        through = Int(try fields.decodeNumber(forKey: .through))
+        last = Int(try fields.decodeNumber(forKey: .last))
     }
 }
