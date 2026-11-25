@@ -35,8 +35,8 @@ public struct WorkshopState: Sendable {
     /// By the intent's digest.
     public private(set) var echoes: [String: Echo] = [:]
 
-    /// Every event, in order: the activity log.
-    public private(set) var log: [Row] = []
+    /// Every event as it happened, in order: the activity log.
+    public private(set) var log: [Happening] = []
     /// What the dispatcher's page shows: the user's talk with the bus, and what comes of it.
     public private(set) var dispatcherRows: [Row] = []
 
@@ -66,17 +66,16 @@ public struct WorkshopState: Sendable {
     }
 
     private mutating func take(_ event: Event, _ id: RowID) {
+        // What cannot be read has no clock either.
+        log.append(Happening(id: id, at: event.at ?? log.last?.at ?? 0, event: event))
         switch event {
         case .sessionRegistered(let event):
             sessions[event.name] = Session(name: event.name, role: event.role, openedAt: event.atMs)
-            note(Row(id: id, at: event.atMs, kind: .session(name: event.name, opened: true)))
         case .sessionClosed(let event):
             sessions[event.name, default: Session(name: event.name, role: "", openedAt: event.atMs)].closedAt = event.atMs
-            note(Row(id: id, at: event.atMs, kind: .session(name: event.name, opened: false)))
         case .messageQueued(let event): queued(event.message, id)
         case .messageHanded(let event):
             if case .queued = messages[event.id]?.state { messages[event.id]?.state = .handed(at: event.atMs) }
-            note(Row(id: id, at: event.atMs, kind: .message(event.id)))
         case .messageFailed(let event): failed(event, id)
         case .cardCreated(let event): created(event, id)
         case .cardStarted(let event): started(event, id)
@@ -103,16 +102,16 @@ public struct WorkshopState: Sendable {
             show(Row(id: id, at: event.atMs, kind: .test(event.test)), thread: cards[event.card]?.thread)
         case .testsHandedOver(let event):
             test(event.test) { $0.stage = .handedOver(at: event.atMs) }
-            update(Row(id: id, at: event.atMs, kind: .test(event.test)), thread: threadOf(test: event.test))
+            touch(line: threadOf(test: event.test), at: event.atMs)
         case .testsAccepted(let event):
             test(event.test) {
                 $0.stage = .accepted(at: event.atMs)
                 $0.job = event.job
             }
-            update(Row(id: id, at: event.atMs, kind: .test(event.test)), thread: threadOf(test: event.test))
+            touch(line: threadOf(test: event.test), at: event.atMs)
         case .testsFinished(let event):
             test(event.test) { $0.stage = .finished(event.outcome, report: event.report, at: event.atMs) }
-            update(Row(id: id, at: event.atMs, kind: .test(event.test)), thread: threadOf(test: event.test))
+            touch(line: threadOf(test: event.test), at: event.atMs)
         case .reviewStarted(let event):
             touch(event.card) {
                 $0.reviews.append(.init(reviewer: event.reviewer, task: event.task, startedAt: event.atMs))
@@ -155,7 +154,7 @@ public struct WorkshopState: Sendable {
         case .mergeFailed(let event): step(event.merge, .failed(event.why, at: event.atMs), event.atMs, id)
         case .mergeCleaned(let event):
             merge(event.merge) { $0.cleaned = true }
-            update(Row(id: id, at: event.atMs, kind: .merge(event.merge)), thread: threadOf(merge: event.merge))
+            touch(line: threadOf(merge: event.merge), at: event.atMs)
         case .askOpened(let event):
             asks[event.ask] = Ask(
                 id: event.ask, about: event.about, by: event.by, text: event.text,
@@ -171,15 +170,13 @@ public struct WorkshopState: Sendable {
             }
             asks[event.ask]?.answer = .init(word: event.answer, via: event.via, at: event.atMs)
             openAsks.remove(event.ask)
-            note(Row(id: id, at: event.atMs, kind: .ask(event.ask)))
         case .deviceRegistered(let event):
             devices[event.device] = Device(
                 id: event.device, kind: event.kind, name: event.name, dailyKey: event.dailyKey,
                 approvalKey: event.approvalKey, at: event.atMs)
-            note(Row(id: id, at: event.atMs, kind: .device(event.device)))
         case .intentEchoed(let event): echoed(event, id)
         case .unreadable(let type, let text):
-            // It may have been anything, so it is shown where the user looks first. No clock of its own.
+            // It may have been anything, so it is shown where the user looks first.
             show(Row(id: id, at: log.last?.at ?? 0, kind: .unreadable(type: type, text: text)), thread: nil, dispatcher: true)
         }
     }
@@ -213,12 +210,10 @@ public struct WorkshopState: Sendable {
     }
 
     private mutating func failed(_ event: Event.MessageFailed, _ id: RowID) {
-        guard let message = messages[event.id] else {
-            return show(Row(id: id, at: event.atMs, kind: .lostMessage(id: event.id, why: event.why)), thread: nil)
-        }
+        guard let message = messages[event.id] else { return }
         messages[event.id]?.state = .failed(event.why)
         openQuestions.remove(event.id)
-        update(Row(id: id, at: event.atMs, kind: .message(event.id)), thread: message.thread)
+        touch(line: message.thread, at: event.atMs)
     }
 
     // MARK: Cards
@@ -278,8 +273,7 @@ public struct WorkshopState: Sendable {
         if isNew {
             showReview(of: card, at: at, id)
         } else {
-            let index = (cards[card]?.reviews.count ?? 1) - 1
-            update(Row(id: id, at: at, kind: .review(card: card, index: index)), thread: cards[card]?.thread)
+            touch(line: cards[card]?.thread, at: at)
         }
     }
 
@@ -300,7 +294,7 @@ public struct WorkshopState: Sendable {
             $0.stage = stage
             change(&$0)
         }
-        update(Row(id: id, at: at, kind: .merge(name)), thread: threadOf(merge: name))
+        touch(line: threadOf(merge: name), at: at)
     }
 
     private func threadOf(test: String) -> String? { tests[test]?.card.flatMap { cards[$0]?.thread } }
@@ -315,17 +309,12 @@ public struct WorkshopState: Sendable {
         devices[event.device]?.lastIntentAt = event.atMs
         devices[event.device]?.intents += 1
         if case .refused = event.outcome { devices[event.device]?.refusals += 1 }
-        note(Row(id: id, at: event.atMs, kind: .intent(digest: event.digest)))
     }
 
     // MARK: Rows
 
-    /// Only in the activity log.
-    private mutating func note(_ row: Row) { log.append(row) }
-
-    /// In the log and on the pages it belongs to.
+    /// On the pages it belongs to.
     private mutating func show(_ row: Row, thread: String?, dispatcher: Bool = false) {
-        log.append(row)
         if let thread {
             var line = threads[thread] ?? Line(id: thread)
             threads[thread] = nil  // So that appending to its rows does not copy them.
@@ -336,10 +325,9 @@ public struct WorkshopState: Sendable {
         if dispatcher { dispatcherRows.append(row) }
     }
 
-    /// In the log, and the line it belongs to counts as active: the row already there shows the new state.
-    private mutating func update(_ row: Row, thread: String?) {
-        log.append(row)
-        if let thread, let last = threads[thread]?.lastAt { threads[thread]?.lastAt = max(last, row.at) }
+    /// Something on it moved on. The row already there shows the new state.
+    private mutating func touch(line thread: String?, at: UInt64) {
+        if let thread, let last = threads[thread]?.lastAt { threads[thread]?.lastAt = max(last, at) }
     }
 
     // MARK: Waiting for the user

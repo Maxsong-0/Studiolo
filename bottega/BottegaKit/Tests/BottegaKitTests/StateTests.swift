@@ -23,7 +23,7 @@ struct RecordedStateTests {
         #expect(state.messages["msg-8"]?.files.first?.name == "草图.md")
         // msg-6 was never queued as far as this log says; its failure is still on record.
         #expect(state.messages["msg-6"] == nil)
-        #expect(state.log.contains { if case .lostMessage(id: "msg-6", _) = $0.kind { true } else { false } })
+        #expect(state.log.contains { if case .messageFailed(let failed) = $0.event { failed.id == "msg-6" } else { false } })
     }
 
     @Test func linesAndTheirMembers() throws {

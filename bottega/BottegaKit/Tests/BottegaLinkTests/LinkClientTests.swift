@@ -207,15 +207,18 @@ struct LinkClientTests {
 
     /// The log was restored to an older one: what was shown is not its past.
     @Test func aShorterLogIsAnotherLog() async throws {
-        let rig = Rig()
+        let chest = FakeChest()
+        let rig = Rig(chest: chest)
         defer { rig.stop() }
         try await rig.registered()
         rig.lmas.append(#"{"type":"session_registered","name":"a","role":"coder","at_ms":1}"#)
         try await rig.until("a") { rig.state.sessions["a"] != nil }
         rig.lmas.wipe()
         try await rig.until("handshake refused") { if case .stopped(let why) = rig.status { why.code == "handshake" } else { false } }
+        #expect(chest.timesMade == 1)
         try await rig.client.forgetDevice()
         try await rig.registered()
+        #expect(chest.timesMade == 2)
         #expect(rig.state.sessions["a"] == nil)
         #expect(rig.state.through == rig.lmas.through)
     }

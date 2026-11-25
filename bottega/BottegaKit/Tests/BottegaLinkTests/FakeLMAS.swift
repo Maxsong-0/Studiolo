@@ -307,12 +307,15 @@ final class FakeChannel: LineChannel, Sendable {
 final class FakeChest: KeyChest, Sendable {
     private let made: Mutex<(any DeviceKeys)?>
     private let makes: any DeviceKeys
+    private let makings = Mutex(0)
+    var timesMade: Int { makings.withLock { $0 } }
     init(made: (any DeviceKeys)? = nil, makes: any DeviceKeys = SoftwareKeys()) {
         self.made = Mutex(made)
         self.makes = makes
     }
     func keys() throws -> (any DeviceKeys)? { made.withLock { $0 } }
     func makeKeys() throws -> any DeviceKeys {
+        makings.withLock { $0 += 1 }
         made.withLock { $0 = makes }
         return makes
     }

@@ -8,11 +8,13 @@
 
 /* Begin PBXBuildFile section */
 		12E8A9928ADBFF87B16AE019 /* StorageNames.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4C59D7639E8BEC97111AE0EE /* StorageNames.swift */; };
+		65C134EF84B42936D0EAE11B /* BottegaKit in Frameworks */ = {isa = PBXBuildFile; productRef = 81052D4EA631240179AE0E30 /* BottegaKit */; };
 		67975FD65086058D3A16B33C /* TRADEMARK.md in Resources */ = {isa = PBXBuildFile; fileRef = AFBF8BEC22DC876CAE2B6212 /* TRADEMARK.md */; };
 		69C6D2E2AABE980524E092DA /* SwiftTerm in Frameworks */ = {isa = PBXBuildFile; productRef = 78361FE681954CEB65443F08 /* SwiftTerm */; };
 		6E960A2B8E13C620FA2987F0 /* THIRD_PARTY_NOTICES.md in Resources */ = {isa = PBXBuildFile; fileRef = 8C68422EF6B40DED38B755AF /* THIRD_PARTY_NOTICES.md */; };
 		74CDB3275B2F0DE5C1B5A959 /* LICENSE in Resources */ = {isa = PBXBuildFile; fileRef = 9CEFE377695509681A421595 /* LICENSE */; };
 		AC1653A05AD0DBA6E29F8399 /* StorageNames.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4C59D7639E8BEC97111AE0EE /* StorageNames.swift */; };
+		BAD1D11479AE36CAB510B836 /* BottegaLink in Frameworks */ = {isa = PBXBuildFile; productRef = 7463EE17536B9998B2A93CCD /* BottegaLink */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -28,6 +30,7 @@
 /* Begin PBXFileReference section */
 		2B0321B5D75D36B0AE1BC37B /* BottegaTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = BottegaTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		4C59D7639E8BEC97111AE0EE /* StorageNames.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StorageNames.swift; sourceTree = "<group>"; };
+		517A61D27DF0AF10EA93C362 /* BottegaKit */ = {isa = PBXFileReference; lastKnownFileType = folder; name = BottegaKit; path = BottegaKit; sourceTree = SOURCE_ROOT; };
 		8C68422EF6B40DED38B755AF /* THIRD_PARTY_NOTICES.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = THIRD_PARTY_NOTICES.md; sourceTree = "<group>"; };
 		9CEFE377695509681A421595 /* LICENSE */ = {isa = PBXFileReference; path = LICENSE; sourceTree = "<group>"; };
 		ADB8D5EDD0BA45DA23A00CBF /* Bottega.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Bottega.app; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -61,12 +64,22 @@
 			buildActionMask = 2147483647;
 			files = (
 				69C6D2E2AABE980524E092DA /* SwiftTerm in Frameworks */,
+				65C134EF84B42936D0EAE11B /* BottegaKit in Frameworks */,
+				BAD1D11479AE36CAB510B836 /* BottegaLink in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
+		1253A152E886F9BFD05AF173 /* Packages */ = {
+			isa = PBXGroup;
+			children = (
+				517A61D27DF0AF10EA93C362 /* BottegaKit */,
+			);
+			name = Packages;
+			sourceTree = "<group>";
+		};
 		9BA2946B9DA4CF0B86AF99E7 = {
 			isa = PBXGroup;
 			children = (
@@ -75,6 +88,7 @@
 				AFBF8BEC22DC876CAE2B6212 /* TRADEMARK.md */,
 				66CA2D79DE708B894FB3C1F6 /* Bottega */,
 				6CE98C6F57D08428C81845A5 /* BottegaTests */,
+				1253A152E886F9BFD05AF173 /* Packages */,
 				BB1B886172ABA63D19B3399D /* Shared */,
 				D08AE2B2BF9E163A6F8D41D9 /* Products */,
 			);
@@ -118,6 +132,8 @@
 			name = Bottega;
 			packageProductDependencies = (
 				78361FE681954CEB65443F08 /* SwiftTerm */,
+				81052D4EA631240179AE0E30 /* BottegaKit */,
+				7463EE17536B9998B2A93CCD /* BottegaLink */,
 			);
 			productName = Bottega;
 			productReference = ADB8D5EDD0BA45DA23A00CBF /* Bottega.app */;
@@ -173,6 +189,7 @@
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
 				917F5E868D93000B604D20C7 /* XCRemoteSwiftPackageReference "SwiftTerm" */,
+				846DFF69DB935FB781143D02 /* XCLocalSwiftPackageReference "BottegaKit" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = D08AE2B2BF9E163A6F8D41D9 /* Products */;
@@ -482,6 +499,13 @@
 		};
 /* End XCConfigurationList section */
 
+/* Begin XCLocalSwiftPackageReference section */
+		846DFF69DB935FB781143D02 /* XCLocalSwiftPackageReference "BottegaKit" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = BottegaKit;
+		};
+/* End XCLocalSwiftPackageReference section */
+
 /* Begin XCRemoteSwiftPackageReference section */
 		917F5E868D93000B604D20C7 /* XCRemoteSwiftPackageReference "SwiftTerm" */ = {
 			isa = XCRemoteSwiftPackageReference;
@@ -494,10 +518,18 @@
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
+		7463EE17536B9998B2A93CCD /* BottegaLink */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = BottegaLink;
+		};
 		78361FE681954CEB65443F08 /* SwiftTerm */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = 917F5E868D93000B604D20C7 /* XCRemoteSwiftPackageReference "SwiftTerm" */;
 			productName = SwiftTerm;
+		};
+		81052D4EA631240179AE0E30 /* BottegaKit */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = BottegaKit;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

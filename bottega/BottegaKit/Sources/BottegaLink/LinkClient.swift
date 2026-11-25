@@ -63,6 +63,7 @@ public actor LinkClient {
     private var keepsake = Keepsake()
     private var isLoaded = false
     private var keys: (any DeviceKeys)?
+    private var makesNewKeys = false
     /// Asked for and not done yet.
     private var registrationName: String?
 
@@ -137,10 +138,13 @@ public actor LinkClient {
         wake()
     }
 
-    /// Forgets which device this is to that LMAS, so it can be registered again. The keys stay.
+    /// Forgets which device this is to that LMAS, so it can be registered again, with new keys: the old ones may be
+    /// why (enrolling another finger retires the approval key).
     public func forgetDevice() throws {
         keepsake.device = nil
         try store.save(keepsake)
+        keys = nil
+        makesNewKeys = true
         reset(start: 1)
         channel?.close()
         wake()
@@ -261,7 +265,8 @@ public actor LinkClient {
     }
 
     private func register(_ name: String) async throws {
-        let keys = try self.keys ?? chest.keys() ?? chest.makeKeys()
+        let keys = try makesNewKeys ? chest.makeKeys() : self.keys ?? chest.keys() ?? chest.makeKeys()
+        makesNewKeys = false
         self.keys = keys
         let (channel, greeting, iterator) = try await greet()
         var lines = iterator

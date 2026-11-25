@@ -100,19 +100,26 @@ public struct Row: Equatable, Sendable, Identifiable {
         case merge(String)
         case ask(String)
         case trip(TripID)
-        /// The message whose failure arrived without the message itself.
-        case lostMessage(id: String, why: Why)
-        case intent(digest: String)
-        case session(name: String, opened: Bool)
-        case device(String)
         case unreadable(type: String, text: String?)
     }
+}
+
+/// One event of the log.
+public struct Happening: Equatable, Sendable, Identifiable {
+    public let id: RowID
+    public let at: UInt64
+    public let event: Event
 }
 
 /// Where an event stands in the log: its record's number, and which of the record's events it is.
 public struct RowID: Hashable, Comparable, Sendable {
     public let seq: UInt64
     public let index: Int
+
+    public init(seq: UInt64, index: Int) {
+        self.seq = seq
+        self.index = index
+    }
 
     public static func < (one: RowID, other: RowID) -> Bool { (one.seq, one.index) < (other.seq, other.index) }
 }

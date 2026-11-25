@@ -8,6 +8,9 @@ packages:
   SwiftTerm:
     url: https://github.com/migueldeicaza/SwiftTerm
     exactVersion: 1.20.0
+  # What Bottega knows about LMAS, without a window in sight; the P3 iPhone app shares it.
+  BottegaKit:
+    path: BottegaKit
 settings:
   base:
     MARKETING_VERSION: "0.1.0"
@@ -37,6 +40,10 @@ targets:
         buildPhase: resources
     dependencies:
       - package: SwiftTerm
+      - package: BottegaKit
+        product: BottegaKit
+      - package: BottegaKit
+        product: BottegaLink
     settings:
       base:
         PRODUCT_NAME: "Bottega"
@@ -111,5 +118,7 @@ schemes:
       config: Debug
       targets:
         - BottegaTests
+        - package: BottegaKit/BottegaKitTests
+        - package: BottegaKit/BottegaLinkTests
     archive:
       config: Release
