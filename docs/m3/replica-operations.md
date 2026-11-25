@@ -128,6 +128,14 @@ launchctl print "gui/$(id -u)/me.studiolo.agent-sync"
 运行目录的 `state/` 保存互斥锁，`logs/` 保存不含正文和凭据的同步结果与错误。后台认证失败先在用户终端检查 SSH 配置；不要把密码加入任务。
 更新同步器时生成新的独立目录，停止旧任务并更换 plist 链接后再启用；不会因仓库切换分支自动换代码。
 
+**同一时间只许一台 Mac 推**（2026-11-25 起是 Mac Studio，之前是 MacBook）。服务器只核这一轮的基线是不是现代次，不分是哪台推的：
+两台都开着时，一台发布后另一台的基线就对不上，报 `base_mismatch`、清掉基线、下一轮整份推送，来回互相盖。换机器的做法：
+
+1. 新机器上先比清单：取服务器 `control/state.json` 现代次的 `releases/<代次>/manifest.json`，和本机 `replica_capture.capture` 的清单比路径与摘要，
+   少了的逐个说清（Obsidian Sync 默认不带 `.txt`、`.zip` 这类文件，另一台本地有的会从副本里消失）。
+2. 旧机器 `launchctl bootout` 并删掉 LaunchAgent 链接，再在新机器生成新目录、装链接、`bootstrap`。旧机器离线时，它开机后第一件事就停。
+3. 新目录没有基线，第一轮整份推送（约 230 MB）。Mac Studio 用别名 `studiolo-169`（经 108 跳）连 169，108 停机时推不了。
+
 ### T-085：修复 macOS 后台 Python 的局域网权限失败
 
 `sync-agent-vault.sh` 由 **bash 直接启动 SSH**；Python 分阶段完成安全捕获、私有归档和封闭回执校验。
