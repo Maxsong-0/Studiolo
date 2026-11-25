@@ -41,6 +41,7 @@ scope = {"__name__": "launcher_probe"}
 exec(compile(sys.stdin.buffer.read(), "launch-human.py", "exec"), scope)
 scope["preflight"]()
 '''
+LAUNCHER_PROBE_SECONDS = 20
 
 
 class Operations(SnapshotOperations):
@@ -205,10 +206,17 @@ class Operations(SnapshotOperations):
         c.require(account.pw_uid == c.UID == 1000)
         for path in (self.runtime.SOCKET, self.a.BOARD_SOCKET):
             c.require(stat.S_ISSOCK(os.lstat(path).st_mode))
-        result = subprocess.run(['/usr/bin/python3', '-I', '-B', '-S', '-c', LAUNCHER_PROBE], input=code,
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, user=c.UID, group=account.pw_gid,
-            extra_groups=[], cwd='/', env=self.runtime.ENV, timeout=20)
-        c.require(result.returncode == 0)
+        try:
+            result = subprocess.run(['/usr/bin/python3', '-I', '-B', '-S', '-c', LAUNCHER_PROBE], input=code,
+                stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, user=c.UID, group=account.pw_gid,
+                extra_groups=[], cwd='/', env=self.runtime.ENV, timeout=LAUNCHER_PROBE_SECONDS)
+            reason = None if result.returncode == 0 else result.stderr[-2000:].decode(errors='replace')
+        except subprocess.TimeoutExpired:
+            reason = 'timed out'
+        if reason is not None:
+            # 停在哪一步要看得见：里面只有启动器的行号和固定的路径（preflight 只看元数据，不读内容）。
+            print('candidate launcher rejected:', reason, file=sys.stderr)
+        c.require(reason is None)
 
     def preflight(self):
         c, a = self.c, self.a

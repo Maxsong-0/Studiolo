@@ -9,6 +9,7 @@ r27 起的人侧发行（T-231、BUG-058）会自己接管死 socket（r26 只�
 强杀之后要人删 `board.sock` 一个再起；r25 和更早的都不会）：程序握着主库锁、连一下没人监听、
 节点类型属主链接数都对、删之前再核还是同一个，才删那一个，日志里有「接管上一任留下的…入口 socket」。所以强杀之后一般几秒内自己起来，
 先看第 1 节的日志：有这几行、人侧是 `active`，就不用往下做，只在下一次激活之前清一下重启计数（第 2 节末尾）。
+自己起不来的还有两种极窄的情形和 socket 无关，见第 1 节末尾，不要按残留节点处理。
 它判不准（节点不是预期的样子、有人在监听、主库锁在别人手里）照旧拒绝启动，那时、以及 r26 和更早的发行、以及激活或回滚脚本停下的时候，按下面做。
 
 人工恢复就是三件事：看清留下了什么 → 确认它确实是死的 → 只删那一个节点。
@@ -26,6 +27,8 @@ r27 起的人侧发行（T-231、BUG-058）会自己接管死 socket（r26 只�
 - `crates/local-server/src/backup/producer.rs`（回收和封存的日志原文、回收失败不挡封存）、
   `crates/local-server/src/health/backup.rs`（健康页的说法）；
 - `deploy/blackboard/activation_ops.py` 的 `stopped` 和 `backup_ready`；
+- `crates/sync-transport/src/store/publish.rs` 的 `open_existing`（见到 `state.json.publish` 就拒绝）、
+  `crates/vault-broker/src/mutation/run.rs` 和 `writer.rs` 的 `write_status`（保存停在 `Installing` 就不读）；
 - `crates/backup/src/checkpoint/staging/` 下的 `creation.rs`（建目录和登记谁先谁后）、`lifecycle.rs`（`begin` 见到
   `removing-` 就不开始，`finish` 删登记目录）、`housekeeping.rs`、`housekeeping/plan.rs`（回收的先后、哪种残缺报哪个错、
   怎么认删到一半的 `removing-`）、`io/cleanup.rs` 的 `retire`（登记目录先改名、`identity.json` 最后删）、
@@ -55,9 +58,20 @@ ls -la /run/studiolo-human /run/studiolo-board /run/studiolo-backup
 
 单元是 `Restart=on-failure`、隔 3 秒再试、60 秒内最多 3 次：有节点挡着的话，它试满 3 次就停在 `failed`，不会一直转。
 
+日志是下面两句之一、而且刚被强杀或断过电，不是残留节点，第 2、3 节都不管用：什么都不要删，把第 1 节三条命令的输出交给开发会话。
+两种都是程序有意失败关闭（不确定就不开），窗口只有几毫秒，T-231 之前就有，没有现成的处理命令，也没有演练过：
+
+- `双向 Bridge 平面装配失败；审批文档、受控 launcher 或私有存储未就绪，未监听`：可能正好杀在传输库换状态的那一下，
+  传输私有目录里留下了 `state.json.publish`。程序不猜它是不是写全了，一律不认领。
+- `既有canonical写者或完整监视视图不可用；不初始化、不修复、不回退`：可能正好杀在一次保存落盘的中间，
+  写者记录停在「正在装」、没有结局。批量保存和文件操作下次启动会接着做完，单篇保存不会。
+
+这两句也会因为别的原因出现（配置、目录、权限不对），所以先交人看，不先认定是它。
+
 ## 2. 确认节点是死的，再删
 
-对每一个还在的节点，下面四条都成立才删；有一条不成立就停下。
+对每一个还在的节点，下面四条都成立才删；有一条不成立就停下。r26 上只有 `board.sock` 要删：删了它再起，`http.sock`、`producer.sock`
+由程序自己接管（2026-11-24 在 169 上这样恢复过）；r27 起程序三个都自己接管，走到这里说明有一个它判不准。
 
 1. 没有进程在用它（监听着的、刚绑上还没监听的、连着的都算）。把节点的路径填进去，这条**没有输出**才算（有输出说明有活的进程在用，它不是残留）：
 

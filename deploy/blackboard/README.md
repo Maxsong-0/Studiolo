@@ -52,7 +52,7 @@ sudo /usr/bin/python3 -I -B -S /可信工具目录/deploy/blackboard/activate.py
 
 r2 之后每次发行只做「上一发行 → 本发行」：换网页，可选换人侧程序，其余逐字节沿用（`assembly.py` 文件头有沿革，r5→r6 见 T-159）。
 
-1. **改常量**（`assembly.py`）：`OLD_RELEASE`＝上一发行目录、`BUILD`＝新发行号；`HUMAN_SHA`／`AGENT_SHA` 取 169 现场 `/etc/systemd/system/studiolo-{human,agent}.service` 的 sha256；`LAUNCHER_SHA` 取上一发行 `launch-human.py` 的 sha256；`R8_MANIFEST_SHA` 取上一发行 `manifest.json` 的 sha256。**`activated/` 里的 `launch-human.py`、`studiolo-human.service` 两份换成从 169 逐字节取回的原文**（用例照它们跑，摘要和上面两个值对不上就红；不许拿仓库里的模板拼，BUG-058）。`test_assembly.py` 的发行号断言同步。三个变换函数通常不改；本发行要动启动器参数、单元写根或停止超时（如 r17 接备份）时，改对应的变换函数和它的测试，新前置放进激活预检，新参数旧程序不认的，把参数名的字节字面量写进 `NEW_HUMAN_PROGRAM_LITERALS`（`REQUIRES_NEW_HUMAN_PROGRAM` 由它派生，不直接改）；下一发行不再要求换程序时清空它。
+1. **改常量**（`assembly.py`）：`OLD_RELEASE`＝上一发行目录、`BUILD`＝新发行号；`HUMAN_SHA`／`AGENT_SHA` 取 169 现场 `/etc/systemd/system/studiolo-{human,agent}.service` 的 sha256；`LAUNCHER_SHA` 取上一发行 `launch-human.py` 的 sha256；`R8_MANIFEST_SHA` 取上一发行 `manifest.json` 的 sha256。**`activated/` 里的 `launch-human.py`、`studiolo-human.service` 两份换成从 169 逐字节取回的原文**（用例照它们跑，摘要和上面两个值对不上就红；不许拿仓库里的模板拼，BUG-058）。`test_assembly.py` 的发行号断言同步。变换函数里属于某一版的一次性替换（r27 是 `launcher()` 的 `OLD_LEFTOVER_CHECKS`、`LEFTOVER_CHECKS`、`INSPECT_LEFTOVER` 三段和对应的用例）只认它的上一发行，出再下一版时删掉、收回成只换发行路径；忘了删，用例和出候选都会拒绝。其余的变换通常不改；本发行要动启动器参数、单元写根或停止超时（如 r17 接备份）时，改对应的变换函数和它的测试，新前置放进激活预检，新参数旧程序不认的，把参数名的字节字面量写进 `NEW_HUMAN_PROGRAM_LITERALS`（`REQUIRES_NEW_HUMAN_PROGRAM` 由它派生，不直接改）；下一发行不再要求换程序时清空它。
 2. **服务器上验工具**：`scripts/test-linux.sh bash -c 'python3 deploy/blackboard/test_assembly.py && python3 deploy/blackboard/test_freeze.py && python3 deploy/blackboard/test_activation.py'`（本机不跑测试）。
 3. **构建**：人侧程序在 githubci 原生 `cargo --locked build --release -p studiolo-local-server --features studiolo-auth/production`；网页在 108 用同一提交 `npm ci && npm run build`。来源提交须已过 CI。
 4. **暂存**（169，UID1000，0700/0600，程序 0755，不用 `/tmp`）：`bin/studiolo-local-server`、`web-dist/`、本目录 `{activate,activation_ops,assembly,prepare,candidate,binding,snapshot,sync_tools}.py` 与 `deploy/human/release/{activation_ops,release_common,runtime_checks,snapshot_worker}.py`，保持仓库相对布局。
@@ -65,7 +65,7 @@ r2 之后每次发行只做「上一发行 → 本发行」：换网页，可选
 ```
 
    只换网页时省略后三个参数（三件套要么全给要么全不给），程序逐字节沿用上一发行、manifest 照抄其来源；`assembly.REQUIRES_NEW_HUMAN_PROGRAM` 为真的发行（如 r17）必须给，而且给的程序要和上一发行字节不同、字节里有本版新参数的字面量（`NEW_HUMAN_PROGRAM_LITERALS`），否则不出候选。T-132 r10 同时传入 `--maintain <程序> --maintain-sha256 <摘要> --sync-launcher <程序> --sync-launcher-sha256 <摘要>`；四项必须全给，并与上述人侧程序来自同一提交。manifest 新增 `sync_program_source_commit`，两个程序均为 ELF/0755；之后省略四项会原样保留，禁止静默移除、缺一程序或保留来源却换字节。工具随包交付不自动置备、配对或启用 Bridge。输出 `manifest_sha256`、`human_binary_reused`、`services_changed: false`。
-6. **激活**（用户本人 root）：`sudo /usr/bin/python3 -I -B -S <暂存>/deploy/blackboard/activate.py --manifest-sha256 <上一步的摘要>`。已激活后重复执行会在预检被拒（现场已不是上一发行），无副作用。预检在停服之前还会以主服务账号跑一遍候选启动器的 `preflight`（r27 起，BUG-058）：人侧在跑、黑板和 HTTP 两个 socket 都在，启动器看到的和人侧被强杀之后一个样，不放行就不停服。
+6. **激活**（用户本人 root）：`sudo /usr/bin/python3 -I -B -S <暂存>/deploy/blackboard/activate.py --manifest-sha256 <上一步的摘要>`。已激活后重复执行会在预检被拒（现场已不是上一发行），无副作用。预检在停服之前还会以主服务账号跑一遍候选启动器的 `preflight`（r27 起，BUG-058）：人侧在跑、黑板和 HTTP 两个 socket 都在，启动器看到的和人侧被强杀之后一个样，不放行就不停服，终端上会有 `candidate launcher rejected:` 和停在哪一行。
 
 **r15→r16 是单向的**（2026-11-16 部署前复查）。r16 一启动就把控制库（黑板目录里的 `control.sqlite3`）从
 schema 3 升到 4，r15 见到比 3 新的版本拒绝打开；启动时写者若有没收口的操作，写者状态升到格式 8，r15 只认 1～7；
@@ -245,6 +245,7 @@ r26 只放开了 `http.sock` 那处（装配的用例夹具是拿仓库里更早
 （`0fc9d75b…b562`，三个入口都会接管），网页、maintain、sync-launcher、worker 一字不差；`prepare.py` 不给程序参数，网页给 r26 的那一份、
 `--web-source-commit` 仍是 r26 的来源提交。装配和用例改成照现场真字节走（`activated/`、`LAUNCHER_SHA`），激活预检停服之前先在现场跑一遍候选启动器的
 `preflight`。没有改数据库或状态的版本号，激活失败可以退回 r26（退回之后强杀仍要人工删 `board.sock`）。**激活前还要做的**：停封存定时器和 worker、
-确认没有封存在跑，跑 `prereq.py --apply` 把私有备份配置里人侧的部署版本换成 r27（程序摘要都不变，worker 程序不换；上一版留 `.before-r27` 副本），再激活。
+确认没有封存在跑，跑 `prereq.py --apply` 把私有备份配置里人侧的部署版本换成 r27（程序摘要都不变，worker 程序不换；上一版留 `.before-r27` 副本），再激活。人侧被强杀、自己起回来过的（`NRestarts` 不是 0），激活之前先跑
+`sudo systemctl reset-failed studiolo-human.service`，见 r25→r26 一段。
 装配钉的摘要（都是 2026-11-24 从 169 只读回读的现场值）：human 单元 `b7374320…9baf`（r26 激活写下的）、启动器 `514a91e2…a878`、
 r26 manifest `50601ccb…412e`、agent 单元 `394ffe6f…0117`（没变）。

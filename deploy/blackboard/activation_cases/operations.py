@@ -245,18 +245,22 @@ class OperationTests(unittest.TestCase):
         ops.runtime.SOCKET = Path('/run/studiolo-human/http.sock')
         account = types.SimpleNamespace(pw_uid=1000, pw_gid=1000)
 
-        run = Mock()
+        run, said = Mock(), []
 
-        def probe(*, returncode=0, missing=None, regular=None):
+        def probe(*, returncode=0, missing=None, regular=None, error=None):
             def lstat(path):
                 if str(path) == missing:
                     raise FileNotFoundError(path)
                 return types.SimpleNamespace(st_mode=ops_module.stat.S_IFREG if str(path) == regular
                                              else ops_module.stat.S_IFSOCK)
             run.reset_mock()
-            run.return_value = types.SimpleNamespace(returncode=returncode)
+            run.return_value = types.SimpleNamespace(
+                returncode=returncode, stderr=b'x' * 5000 + b'File "launch-human.py", line 104, in preflight\xff')
+            run.side_effect = error
+            said.clear()
             with patch.object(c, 'UID', 1000), patch.object(ops_module.pwd, 'getpwnam', return_value=account), \
-                    patch.object(os, 'lstat', side_effect=lstat), patch.object(ops_module.subprocess, 'run', run):
+                    patch.object(os, 'lstat', side_effect=lstat), patch.object(ops_module.subprocess, 'run', run), \
+                    patch.object(ops_module.sys, 'stderr', types.SimpleNamespace(write=said.append, flush=lambda: None)):
                 ops.launcher_accepts(b'candidate bytes')
         probe()
         call = run.call_args
@@ -264,8 +268,17 @@ class OperationTests(unittest.TestCase):
         self.assertEqual(call.kwargs['input'], b'candidate bytes')
         self.assertEqual((call.kwargs['user'], call.kwargs['group'], call.kwargs['extra_groups']), (1000, 1000, []))
         self.assertEqual((call.kwargs['cwd'], call.kwargs['env'], call.kwargs['timeout']), ('/', ops.runtime.ENV, 20))
+        # 启动器的错误输出要取回来：不放行时停在哪一步看得见；放行时一个字不打。
+        self.assertEqual(call.kwargs['stderr'], subprocess.PIPE)
+        self.assertEqual(said, [])
         with self.assertRaises(ValueError):
             probe(returncode=1)
+        self.assertIn('line 104, in preflight', ''.join(said))
+        self.assertLess(len(''.join(said)), 2100)
+        # 到时限没回来：同样拒绝，说清是超时。
+        with self.assertRaises(ValueError):
+            probe(error=subprocess.TimeoutExpired('python3', 20))
+        self.assertIn('timed out', ''.join(said))
         # 主服务账号的号码对不上：不跑。
         account.pw_uid = 1001
         with self.assertRaises(ValueError):
