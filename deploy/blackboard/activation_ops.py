@@ -173,7 +173,8 @@ class Operations(SnapshotOperations):
                       and stat.S_IMODE(s.st_mode) == 0o750)
         # 上一发行（r17 起每一版）已经在监听备份 socket：此刻它必须是活的那一个（程序建的样子：主服务账号、读取组、0660、
         # 单链接，crates/local-server/src/backup/listener.rs）。不在、或者是别的东西，说明现场不是钉住的上一发行，
-        # 由人看过。「必须不存在」在停服之后核（stopped）：残留的节点程序不清理也不接管。
+        # 由人看过。「必须不存在」在停服之后核（stopped）：停服之后还留着节点，说明关停没走完，停下来等人，
+        # 不靠程序下次启动判死接管（T-231）。
         node = os.lstat(socket)
         c.require(stat.S_ISSOCK(node.st_mode) and (node.st_uid, node.st_gid) == (c.UID, reader)
                   and stat.S_IMODE(node.st_mode) == 0o660 and node.st_nlink == 1)

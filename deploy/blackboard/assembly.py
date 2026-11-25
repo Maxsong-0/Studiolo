@@ -116,8 +116,8 @@ REQUIRES_NEW_HUMAN_PROGRAM = bool(NEW_HUMAN_PROGRAM_LITERALS)
 #
 # 超时不是无害的。systemd 到点强杀时关停链还没走完：人侧 HTTP 入口（/run/studiolo-human/http.sock）和黑板入口
 # （BOARD_SOCKET）要到最后、排空 HTTP 和停黑板之后才删（serving.rs 的 drain、unix_ingress.rs），单元又是
-# RuntimeDirectoryPreserve=yes，两个节点都会留下。留下之后人侧下次启动按设计拒绝，激活脚本停服后的核对
-# （activation_ops.Operations.stopped）也拒绝，激活和回滚都停下来等人看过再删。备份自己这边：socket 在接受循环结束时
+# RuntimeDirectoryPreserve=yes，两个节点都会留下。留下之后人侧自己重启时判死接管（T-231，r26 起；判不准才拒绝），
+# 但激活脚本停服后的核对（activation_ops.Operations.stopped）照旧拒绝，激活和回滚都停下来等人看过再删。备份自己这边：socket 在接受循环结束时
 # 就删了；封存做到一半被杀，留下的原意图下一次 schedule 补失败结果，暂存一般由下次启动的第一轮回收收走，但正好在
 # 「建目录」和「登记落盘」之间被杀的话回收会失败关闭、之后的封存全部失败，也要人处理。
 # 所以这个数宁大勿小；想调小保险余量之前，先看上面没逐项算的那几样。
