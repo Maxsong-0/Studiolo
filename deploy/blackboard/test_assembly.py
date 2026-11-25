@@ -195,6 +195,8 @@ class AssemblyTests(unittest.TestCase):
                     old.replace(a.LEFTOVER_CHECKS, a.LEFTOVER_CHECKS + '    inspect_leftover(BOARD_SOCKET)\n'),
                     old.replace(a.LEFTOVER_CHECKS,
                                 a.LEFTOVER_CHECKS + '    require(not os.path.lexists(BOARD_SOCKET))\n'),
+                    # 核对一个字没改，但挪出了 preflight：启动前就没有谁看残留了。
+                    old.replace(a.LEFTOVER_CHECKS, '').replace('def main():\n', 'def main():\n' + a.LEFTOVER_CHECKS),
                     # 两个入口的常量指到别处：核对会看错节点。
                     old.replace(a.HUMAN_SOCKET, '/foreign/http.sock'),
                     old.replace(a.BOARD_SOCKET, '/foreign/board.sock'),
