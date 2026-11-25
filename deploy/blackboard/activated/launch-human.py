@@ -9,7 +9,7 @@ import stat
 import struct
 import sys
 
-RELEASE = "/home/maxsong/.local/share/studiolo-human-releases/m5m6-board-20260920-r26"
+RELEASE = "/home/maxsong/.local/share/studiolo-human-releases/m5m6-board-20260920-r27"
 BINARY = RELEASE + "/bin/studiolo-local-server"
 CONFIG = "/home/maxsong/.config/studiolo-human/owner.json"
 AUTH = "/home/maxsong/.local/share/studiolo-human-auth"
@@ -87,6 +87,20 @@ def inspect_existing(path, mode, private_parent=True):
         os.close(parent_fd)
 
 
+def inspect_leftover(path):
+    # A dead socket of ours goes to the product, which takes it over or refuses.
+    parent, name = path.rsplit("/", 1)
+    parent_fd = open_directory(parent, private=True)
+    try:
+        node = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
+    except FileNotFoundError:
+        return
+    finally:
+        os.close(parent_fd)
+    require(stat.S_ISSOCK(node.st_mode) and node.st_uid == os.geteuid()
+            and node.st_nlink == 1)
+
+
 def preflight():
     # Metadata only: refuse missing stores before PolicyStore::open can create one.
     inspect_existing(CONFIG, 0o600)
@@ -100,20 +114,8 @@ def preflight():
         os.close(open_directory(directory, private=True))
     inspect_existing(VAULT + "/.workbench/broker-binding.json", 0o600)
     inspect_existing(WRITER + "/broker-binding.json", 0o600)
-    os.close(open_directory("/run/studiolo-board", private=True))
-    require(not os.path.lexists(BOARD_SOCKET))
-    parent_fd = open_directory("/run/studiolo-human", private=True)
-    try:
-        try:
-            node = os.stat("http.sock", dir_fd=parent_fd, follow_symlinks=False)
-        except FileNotFoundError:
-            pass
-        else:
-            # A dead socket of ours goes to the product, which takes it over or refuses.
-            require(stat.S_ISSOCK(node.st_mode) and node.st_uid == os.geteuid()
-                    and node.st_nlink == 1)
-    finally:
-        os.close(parent_fd)
+    for path in (BOARD_SOCKET, SOCKET):
+        inspect_leftover(path)
 
 
 def systemd_credential_metadata(descriptor, directory=False):

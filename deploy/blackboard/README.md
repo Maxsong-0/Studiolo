@@ -52,7 +52,7 @@ sudo /usr/bin/python3 -I -B -S /可信工具目录/deploy/blackboard/activate.py
 
 r2 之后每次发行只做「上一发行 → 本发行」：换网页，可选换人侧程序，其余逐字节沿用（`assembly.py` 文件头有沿革，r5→r6 见 T-159）。
 
-1. **改常量**（`assembly.py`）：`OLD_RELEASE`＝上一发行目录、`BUILD`＝新发行号；`HUMAN_SHA`／`AGENT_SHA` 取 169 现场 `/etc/systemd/system/studiolo-{human,agent}.service` 的 sha256；`LAUNCHER_SHA` 取上一发行 `launch-human.py` 的 sha256；`R8_MANIFEST_SHA` 取上一发行 `manifest.json` 的 sha256。**`activated/` 里的 `launch-human.py`、`studiolo-human.service` 两份换成从 169 逐字节取回的原文**（用例照它们跑，摘要和上面两个值对不上就红；不许拿仓库里的模板拼，BUG-058）。`test_assembly.py` 的发行号断言同步。变换函数里属于某一版的一次性替换（r27 是 `launcher()` 的 `OLD_LEFTOVER_CHECKS`、`LEFTOVER_CHECKS`、`INSPECT_LEFTOVER` 三段和对应的用例）只认它的上一发行，出再下一版时删掉、收回成只换发行路径；忘了删，用例和出候选都会拒绝。其余的变换通常不改；本发行要动启动器参数、单元写根或停止超时（如 r17 接备份）时，改对应的变换函数和它的测试，新前置放进激活预检，新参数旧程序不认的，把参数名的字节字面量写进 `NEW_HUMAN_PROGRAM_LITERALS`（`REQUIRES_NEW_HUMAN_PROGRAM` 由它派生，不直接改）；下一发行不再要求换程序时清空它。
+1. **改常量**（`assembly.py`）：`OLD_RELEASE`＝上一发行目录、`BUILD`＝新发行号；`HUMAN_SHA`／`AGENT_SHA` 取 169 现场 `/etc/systemd/system/studiolo-{human,agent}.service` 的 sha256；`LAUNCHER_SHA` 取上一发行 `launch-human.py` 的 sha256；`R8_MANIFEST_SHA` 取上一发行 `manifest.json` 的 sha256。**`activated/` 里的 `launch-human.py`、`studiolo-human.service` 两份换成从 169 逐字节取回的原文**（用例照它们跑，摘要和上面两个值对不上就红；不许拿仓库里的模板拼，BUG-058）。`test_assembly.py` 的发行号断言同步。变换函数里属于某一版的一次性替换只认它的上一发行，出再下一版时收回成只换发行路径，换进去的新样子改成「原样沿用」的核对（r27 换的 `LEFTOVER_CHECKS`、`INSPECT_LEFTOVER` 在 r28 就是这样收的）；忘了收，用例和出候选都会拒绝。其余的变换通常不改；本发行要动启动器参数、单元写根或停止超时（如 r17 接备份）时，改对应的变换函数和它的测试，新前置放进激活预检，新参数旧程序不认的，把参数名的字节字面量写进 `NEW_HUMAN_PROGRAM_LITERALS`（`REQUIRES_NEW_HUMAN_PROGRAM` 由它派生，不直接改）；下一发行不再要求换程序时清空它。
 2. **服务器上验工具**：`scripts/test-linux.sh bash -c 'python3 deploy/blackboard/test_assembly.py && python3 deploy/blackboard/test_freeze.py && python3 deploy/blackboard/test_activation.py'`（本机不跑测试）。
 3. **构建**：人侧程序在 githubci 原生 `cargo --locked build --release -p studiolo-local-server --features studiolo-auth/production`；网页在 108 用同一提交 `npm ci && npm run build`。来源提交须已过 CI。
 4. **暂存**（169，UID1000，0700/0600，程序 0755，不用 `/tmp`）：`bin/studiolo-local-server`、`web-dist/`、本目录 `{activate,activation_ops,assembly,prepare,candidate,binding,snapshot,sync_tools}.py` 与 `deploy/human/release/{activation_ops,release_common,runtime_checks,snapshot_worker}.py`，保持仓库相对布局。
@@ -239,7 +239,7 @@ worker `107d1d41…4484` → `f636ed9c…e6f1`）换成 r26（上一版各留 `.
 装配钉的摘要（都是 2026-11-24 从 169 只读回读的现场值）：human 单元 `3c89dde4…65b7`（r25 激活写下的）、
 r25 manifest `10749e77…9e21`、agent 单元 `394ffe6f…0117`（没变）。
 
-本版固定 r26→r27（2026-11-24，T-231，BUG-058）：r26 激活后真强杀一次，人侧没有自己起来——现装的启动器另有一处见到 `board.sock` 就拒绝，
+r26→r27（2026-11-24，T-231，BUG-058，已激活，真强杀过了）：r26 激活后真强杀一次，人侧没有自己起来——现装的启动器另有一处见到 `board.sock` 就拒绝，
 r26 只放开了 `http.sock` 那处（装配的用例夹具是拿仓库里更早的启动器拼的，没有那几行）。本版启动器对两个残留入口用同一处核对：不在就过；
 自己的、只有一个名字的 socket 放过去，由程序判死才接管；别的照旧拒绝，什么都不删。**只换启动器和发行路径**：人侧程序沿用 r26 的
 （`0fc9d75b…b562`，三个入口都会接管），网页、maintain、sync-launcher、worker 一字不差；`prepare.py` 不给程序参数，网页给 r26 的那一份、
@@ -249,3 +249,17 @@ r26 只放开了 `http.sock` 那处（装配的用例夹具是拿仓库里更早
 `sudo systemctl reset-failed studiolo-human.service`，见 r25→r26 一段。
 装配钉的摘要（都是 2026-11-24 从 169 只读回读的现场值）：human 单元 `b7374320…9baf`（r26 激活写下的）、启动器 `514a91e2…a878`、
 r26 manifest `50601ccb…412e`、agent 单元 `394ffe6f…0117`（没变）。
+
+本版固定 r27→r28（2026-11-25，T-237、T-239）：人侧程序多了连接器的私有路由 `/internal/connector`（agent 打过来，ADR-046）和驾驶舱读
+「本机会话」的 `GET /api/v1/board/presence`；T-239 让传输库的发布残留核过权威记录之后自己丢、停在 `Prepared` 的运行收成「没执行」。
+程序从 `af83f0e` 构建（**不含** main 上更新的 T-235 写者记录打包，用户 2026-11-25 定）。换人侧程序、maintain、sync-launcher 和网页，
+`prepare.py` 带全部参数（网页的 `--web-source-commit` 也是 `af83f0e`）；候选程序要和 r27 字节不同、字节里有三段新字节
+（`/internal/connector`、`/api/v1/board/presence`、`studiolo_bridge component=transport outcome=unlaunched_run_cancelled`；
+169 上 r27 的程序里各 0 处，2026-11-25 只读核过）。启动器和人侧单元除了发行路径一个字不动（r27 换进去的两处残留核对原样沿用，
+少了、改了都不出候选），agent 单元原样沿用，worker 程序和 r26、r27 一字不差、不换；root 另装的 sync-launcher 照历次不换。
+没有改数据库或状态的版本号，激活失败可以退回 r27。**激活前还要做的**：停封存定时器和 worker、确认没有封存在跑，跑 `prereq.py --apply`
+把私有备份配置（local-server `0fc9d75b…b562` → `7dbc0f12…d408`，maintain `80f3daa0…f95d` → `eddeb003…75ecd`，来源提交 `af83f0e`）换成 r28
+（上一版留 `.before-r28` 副本），再激活；`NRestarts` 不是 0 先清，见 r25→r26 一段。**激活之后才换 T-237 的 agent 发行**：本版钉着换之前的
+agent 单元，agent 先换激活预检会拒；换完 `AGENT_SHA` 变了，下一发行重算。发能力集和令牌又在 agent 之后（旧程序不认新字段）。
+装配钉的摘要（都是 2026-11-25 从 169 只读回读的现场值）：human 单元 `9db0e2fe…3cbd`（r27 激活写下的）、启动器 `e3515ac1…4876`、
+r27 manifest `d5d4a857…488c`、agent 单元 `394ffe6f…0117`（没变）。

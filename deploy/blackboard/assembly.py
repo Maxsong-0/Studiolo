@@ -1,7 +1,7 @@
 """从已激活发行派生候选的固定装配；不读取凭据、不操作服务或数据库。
 
 黑板接线沿用 r2，Bridge 接线与只读身份库参数沿用 r16，备份生产者接线（启动器参数、两个写根、停止超时）沿用 r17
-（r18～r26 原样沿用，已激活）；本版只换发行路径和启动器里对两个残留入口的核对，人侧程序沿用上一发行，单元（含 r24 放宽到 2G 的
+（r18～r27 原样沿用，已激活）；本版只换发行路径和人侧程序、网页，启动器（含 r27 对两个残留入口的核对）、单元（含 r24 放宽到 2G 的
 内存上限）、写根、认证、配对和同步范围保持现场原值。
 变换只接受钉住的上一发行形状；额外差异由现场摘要和逐字变换核验拒绝。
 
@@ -51,15 +51,18 @@ r25→r26（T-231：人侧被强杀后自己再起来——程序握着主库锁
 http.sock 放过去交给程序判；判不准照旧拒绝启动。带上 backup-worker 摘要判断收成一份（T-227，行为不变）。
 换人侧程序和启动器那一处核对，单元只换发行路径。数据库与状态的版本号不变，激活失败可以退回 r25；
 强杀过之后激活或回滚要先清重启计数，见 README「r25→r26」一段。已激活；真强杀没过：启动器另一处见到 board.sock 就拒绝，BUG-058）；
-本版 r26→r27（T-231，BUG-058：启动器对 board.sock、http.sock 两个残留入口用同一处核对，自己的、只有一个名字的 socket 放过去交给程序判，
+r26→r27（T-231，BUG-058：启动器对 board.sock、http.sock 两个残留入口用同一处核对，自己的、只有一个名字的 socket 放过去交给程序判，
 别的照旧拒绝）。只换启动器和发行路径，人侧程序、网页、maintain、sync-launcher、worker 和 r26 一字不差。
-数据库与状态的版本号不变，激活失败可以退回 r26。
+数据库与状态的版本号不变，激活失败可以退回 r26，已激活）；
+本版 r27→r28（T-237：连接器入口 `/internal/connector` 和驾驶舱「本机会话」读口；T-239：传输库发布残留核过权威记录自己丢、
+停在 `Prepared` 的运行收成没执行）。程序从 `af83f0e` 构建，不含 main 上更新的 T-235 写者记录打包（用户 2026-11-25 定）。
+换人侧程序、maintain 和网页，启动器和单元只换发行路径。数据库与状态的版本号不变，激活失败可以退回 r27。
 """
 import shlex
 from pathlib import Path
 
-OLD_RELEASE = '/home/maxsong/.local/share/studiolo-human-releases/m5m6-board-20260920-r26'
-BUILD = 'm5m6-board-20260920-r27'
+OLD_RELEASE = '/home/maxsong/.local/share/studiolo-human-releases/m5m6-board-20260920-r27'
+BUILD = 'm5m6-board-20260920-r28'
 BRIDGE_ROOT = '/var/lib/studiolo-owner/bridge'
 TRANSPORT_ROOT = '/home/maxsong/.local/share/studiolo-sync-transport'
 SYNC_APPROVAL = '/home/maxsong/.config/studiolo-human/sync-transport.json'
@@ -84,9 +87,14 @@ BACKUP_STAGING = '/var/lib/studiolo-backup-staging'
 BACKUP_SOCKET = BACKUP_RUNTIME + '/producer.sock'
 # 本版必须换的人侧程序里才有的字节：非空就表示本版必须换人侧程序。出候选和候选核验（激活预检也跑它）都要求候选程序的
 # 字节和上一发行不同，并且字节里有这些字面量。只看来源提交号不够：号可以填新的、文件却是旧的。
-# 本版（r27）不要求换：修复在启动器里，人侧程序沿用 r26 的（87caf70 构建，摘要 0fc9d75b…b562），它已经会接管三个入口的死 socket。
-# 下一发行的修复要是又在人侧程序里，照 README「改常量」一节把新字节写回来。
-NEW_HUMAN_PROGRAM_LITERALS = ()
+# 本版（r28）的启动器没有新参数，要换程序是因为新东西在程序里。取三段只有新程序才有的字节，都是完整的字符串字面量：
+# agent 打过来的连接器私有路由、驾驶舱读「本机会话」的路由（T-237），停在 Prepared 的运行收成没执行时那一行日志（T-239）。
+# 169 上 r27 的程序（和 r26 一字不差，摘要 0fc9d75b…b562）里三段都没有，2026-11-25 只读核过（按字节数，各 0 处）。
+NEW_HUMAN_PROGRAM_LITERALS = (
+    b'/internal/connector',
+    b'/api/v1/board/presence',
+    b'studiolo_bridge component=transport outcome=unlaunched_run_cancelled',
+)
 REQUIRES_NEW_HUMAN_PROGRAM = bool(NEW_HUMAN_PROGRAM_LITERALS)
 # 人侧停止超时（秒）。关停是串行的两段（crates/local-server/src/startup/serving.rs）：收到退出信号先等备份收尾，
 # 做完才通知 Bridge 停，所以两段要相加。备份段等的是在途的那一个连接整个处理完，再等它起的后台线程
@@ -151,16 +159,17 @@ STOP_TIMEOUT_SECONDS = (BACKUP_CONNECTION_WINDOW_SECONDS + BACKUP_SCAN_BUDGET_SE
 # （放宽后放开之后那一段 280 秒降到 107～132 秒，同日 169 上量过）；本版不动它。
 # 现场必须恰好一行这个值：多一行、少一行、值不对都不出候选。
 MEMORY_LINE = 'MemoryMax=2G\n'
-# 固定摘要防止覆盖其他发布。三个都是 2026-11-24 从 169 只读回读的现场值：human 是 r26 激活写下的单元
-# （已接备份：两个写根、停止超时 300 秒，内存上限 2G；和 r26 发行目录里那份逐字节相同）；agent 是 T-215 部署之后的单元
-# （发布名 t215-116f5d7-20261120），r26 没动它，和上一版钉的一致；启动器是 r26 发行目录里现装的那一份。
+# 固定摘要防止覆盖其他发布。三个都是 2026-11-25 从 169 只读回读的现场值：human 是 r27 激活写下的单元
+# （已接备份：两个写根、停止超时 300 秒，内存上限 2G；和 r27 发行目录里那份逐字节相同）；agent 是 T-215 部署之后的单元
+# （发布名 t215-116f5d7-20261120），r27 没动它，和上一版钉的一致（T-237 的 agent 发行在本版激活之后才换，换完要重算，
+# 留给下一发行）；启动器是 r27 发行目录里现装的那一份。
 # human 单元和启动器的原文放在同目录 activated/：用例的夹具就是现场的真字节，摘要对不上就红。以前的夹具是拿仓库里更早的
 # 模板拼的，少了线上黑板那几行核对，r26 漏改了其中一处（BUG-058）。
-HUMAN_SHA = 'b737432031b20bfa65b3cdcc8b300de45d90dca8a3a90812ebf52e86f6569baf'
+HUMAN_SHA = '9db0e2fedeaefa36b34b50faeaa4dbdebbe692545b37adfdce891b7d51a93cbd'
 AGENT_SHA = '394ffe6f55823e7ac8cf7cad02fcb2c34cbee0d284afd3c706d13afe54f50117'
-LAUNCHER_SHA = '514a91e2313742d142025b386b9b8ce6de1ad6391350e34897b5f0f96666a878'
-# 键名沿用早期协议，内容钉住当前 r26 manifest（2026-11-24 从 169 只读回读）。
-R8_MANIFEST_SHA = '50601ccb02e55cf410259b53ec08c0fe0d011b5d1588e3a8258886b4e4e4412e'
+LAUNCHER_SHA = 'e3515ac1396d042839c75a8722d3a64050124d5de170b3746ff7a5878e864876'
+# 键名沿用早期协议，内容钉住当前 r27 manifest（2026-11-25 从 169 只读回读）。
+R8_MANIFEST_SHA = 'd5d4a857a6f8e1a3ca1d0ba3675c20ddceea36295c56f0674428ef897035488c'
 # 发行目录里属于网页的前缀：本次唯一允许整体更换的部分。
 WEB_PREFIX = 'web/'
 # 沿用黑板装配标识；Bridge 接线仍受固定现场摘要约束。
@@ -191,7 +200,7 @@ def human_unit(text):
     for path in (VAULT, WRITER, BOARD, AGENT, BOARD_RUNTIME, BRIDGE_ROOT, TRANSPORT_ROOT):
         if 'ReadWritePaths=' + path + '\n' not in text:
             raise ValueError('board wiring missing')
-    # 上一发行（r26，接线沿用 r17）已接备份：两个写根各恰好一行、紧跟在 Bridge 传输根后面，别处不再提备份路径；
+    # 上一发行（r27，接线沿用 r17）已接备份：两个写根各恰好一行、紧跟在 Bridge 传输根后面，别处不再提备份路径；
     # 停止超时恰好是按预算算出来的那一行。少了、多了、值不对，都说明现场不是钉住的形状。
     wired = 'ReadWritePaths=' + TRANSPORT_ROOT + '\n' + ''.join(
         'ReadWritePaths=' + path + '\n' for path in (BACKUP_RUNTIME, BACKUP_STAGING))
@@ -224,24 +233,9 @@ def agent_unit(text):
     return text
 
 
-# 启动器对两个残留入口的核对（T-231、BUG-058）：上一任被强杀会留下 board.sock 和 http.sock。r26 只放开了后一个，前一个见到就拒绝。
-# 本版两个走同一处：不在就过；自己的、只有一个名字的 socket 放过去，由程序握着主库锁判死才接管（判不准程序自己拒绝）；
-# 别的节点、看不了的一律拒绝。启动器不删任何东西。备份入口（producer.sock）启动器一直不看，程序自己判。
-OLD_LEFTOVER_CHECKS = '''    os.close(open_directory("/run/studiolo-board", private=True))
-    require(not os.path.lexists(BOARD_SOCKET))
-    parent_fd = open_directory("/run/studiolo-human", private=True)
-    try:
-        try:
-            node = os.stat("http.sock", dir_fd=parent_fd, follow_symlinks=False)
-        except FileNotFoundError:
-            pass
-        else:
-            # A dead socket of ours goes to the product, which takes it over or refuses.
-            require(stat.S_ISSOCK(node.st_mode) and node.st_uid == os.geteuid()
-                    and node.st_nlink == 1)
-    finally:
-        os.close(parent_fd)
-'''
+# 启动器对两个残留入口的核对（T-231、BUG-058，r27 换进去的，已激活）：上一任被强杀会留下 board.sock 和 http.sock，两个走同一处——
+# 不在就过；自己的、只有一个名字的 socket 放过去，由程序握着主库锁判死才接管（判不准程序自己拒绝）；别的节点、看不了的一律拒绝。
+# 启动器不删任何东西。备份入口（producer.sock）启动器一直不看，程序自己判。本版原样沿用，少了、多了、改了都不出候选。
 LEFTOVER_CHECKS = '''    for path in (BOARD_SOCKET, SOCKET):
         inspect_leftover(path)
 '''
@@ -264,10 +258,10 @@ PREFLIGHT = 'def preflight():\n'
 
 
 def launcher(text):
-    """沿用黑板、Bridge、只读身份目录和备份配置的接线，换发行路径和两个残留入口的核对；仅生成候选，不激活。"""
+    """沿用黑板、Bridge、只读身份目录、备份配置的接线和两个残留入口的核对，只换发行路径；仅生成候选，不激活。"""
     if RELEASE in text or text.count('"--sync-transport"') != 1:
         raise ValueError('unrecognized launcher')
-    # 两个入口的核对改成按这两个常量看，所以它们的值也要是写死的那两个。
+    # 两个残留入口的核对（r27 起）按这两个常量看，所以它们的值也要是写死的那两个。
     for fragment in ('"--canonical-writer-data", WRITER', '"--board-socket", BOARD_SOCKET',
                      '\nBOARD_SOCKET = ' + repr(BOARD_SOCKET) + '\n', '\nSOCKET = "' + HUMAN_SOCKET + '"\n',
                      'VAULT = ' + repr(VAULT), 'RELEASE + "/web"'):
@@ -278,15 +272,17 @@ def launcher(text):
         raise ValueError('bridge wiring missing')
     if text.count('"--board-agent-data", AGENT, "--agent-data", AGENT,') != 1 or text.count('"--agent-data"') != 1:
         raise ValueError('agents wiring missing')
-    # 上一发行（r26，接线沿用 r17）已带备份配置参数：恰好一处，紧跟在同步审批后面，路径是写死的那一份。
+    # 上一发行（r27，接线沿用 r17）已带备份配置参数：恰好一处，紧跟在同步审批后面，路径是写死的那一份。
     approval = '"--sync-transport", "' + SYNC_APPROVAL + '",'
     if (text.count(approval + ' "--backup-config", "' + BACKUP_CONFIG + '",') != 1
             or text.count('--backup-config') != 1):
         raise ValueError('backup wiring missing')
+    # 两个残留入口的核对恰好各一处、紧挨着 preflight，没有「见到就拒绝」的写法（BUG-058）。
+    if (text.count(LEFTOVER_CHECKS) != 1 or text.count(INSPECT_LEFTOVER + PREFLIGHT) != 1
+            or text.count('inspect_leftover(') != 2 or 'exists(' in text):
+        raise ValueError('leftover checks changed')
     text = replace_once(text, 'RELEASE = "' + OLD_RELEASE + '"',
                         'RELEASE = "' + RELEASE + '"')
-    text = replace_once(text, OLD_LEFTOVER_CHECKS, LEFTOVER_CHECKS)
-    text = replace_once(text, PREFLIGHT, INSPECT_LEFTOVER + PREFLIGHT)
     if OLD_RELEASE in text:
         raise ValueError('stale release path retained')
     compile(text, str(Path(RELEASE) / 'launch-human.py'), 'exec')
