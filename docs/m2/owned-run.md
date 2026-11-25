@@ -41,6 +41,8 @@ request_stop(&OwnedRun, StopReason)
 wait(&OwnedRun) -> RunObservation
 recover(run_id) -> RunObservation
 stop_recovered(run_id)
+cancel_recovered(run_id) -> RunObservation  // T-239：重开后仍是 Prepared 的旧运行收成「没执行」
+discarded_residue() -> bool                 // T-239：这次打开丢过上次发布的临时文件，装配方留一行日志
 quiescent() -> QuiescentMirror
 verify_quiescent(&QuiescentMirror)          // 新增：让「作废」可被调用方检验
 config_output(run_id) -> String             // T-132 P1：已闭合 InspectConfig／SetMode 的 stdout 正文
@@ -100,6 +102,10 @@ cgroup 前缀及真实对象身份、InvocationID、launcher session、隔离与
   - `PayloadCgroupUnpopulated`：入口已关闭 **且** 实测子组身份与记录一致 **且** `populated=0`；
   - `BootChanged`：boot 已改变，能证明旧 boot 的进程不存在，但**原退出结果永远 `NotObserved`**。
 - `MainPID=0`、`ActiveState=inactive`、读不到 unit、`Child.wait`、PGID、pipe EOF **都不算**。
+- 重开后磁盘上仍是 `Prepared`：`LaunchIssued` 必须先可靠落盘才发启动请求，所以它从没执行过。
+  `recover` 照旧只报 `Prepared`，不改记录；`cancel_recovered` 才把它持久成 `Cancelled`、补上 Outcome 审计。
+  别的阶段由状态机拒绝（`PhaseConflict`，不写任何东西）；重开之前发的票据一律作废。
+  这样闭合的运行静止记 `Unconfirmed`：不发静止票据，封存快照和 `sync-rebind` 要等下一次运行真正闭合。
 - 缺 unit / 换 unit（InvocationID 不同）/ cgroup ABA：保持 `ExitUnconfirmed` 语义 ——
   不取 token、不启新运行、`stop_recovered` 拒绝，并且**不假造原成功**。
 
@@ -120,9 +126,9 @@ OutcomePending 无 Outcome 槽、Closed 未 ACK、已发启动请求却没有 bo
 
 单 state ≤ 64 KiB，编解码两侧都检查；不存任何日志正文。计数一律 `checked_add`。
 
-## 5. 唯一 IO 文件与原子替换
+## 5. 存储 IO 与原子替换
 
-`crates/sync-transport/src/store/publish.rs` 是本 crate **唯一**做真实 IO 的文件，
+本 crate 的真实存储 IO **只在** `crates/sync-transport/src/store/publish.rs` 和它的子模块（`publish/io.rs`、`publish/checkpoint.rs`），
 只写三个固定名字：`transport.lock`、`state.json`、`state.json.publish`。
 
 - 逐段 `openat(NOFOLLOW|NONBLOCK|CLOEXEC)` 走到私有根，要求 0700、本人所有；
@@ -130,8 +136,21 @@ OutcomePending 无 Outcome 槽、Closed 未 ACK、已发启动请求却没有 bo
 - 排他租约用 `try_lock`，第二个 owner 得到 `Busy`。
 - 发布 = 建临时文件 → `write_all` → `fsync` → `renameat` → `fsync` 父目录，
   前后各复验一次根身份与租约对象身份。
-- **残留失败关闭**：`open_existing` 见到 `state.json.publish` 直接 `TemporaryResidue`，
-  必须显式调用 `discard_residue` 才能继续。临时文件任何时候都不会被当成授权状态发布。
+- 发布中途**报错**（盘满、写盘失败、核对不过、改名失败）由发布自己收走刚建的临时文件：
+  只认名字还指着自己手里那个 (dev, ino)，不看形态（报错的原因可能正是权限或链接数不对）；收不掉也不盖住原错误。
+  改名成功之后目录落盘失败不在此列：磁盘上已是新状态、没有临时文件，照报 `Unavailable`，
+  结果未知，调用方重开核验。
+- **强杀或断电**留下的 `state.json.publish` 不是授权状态，任何时候都不会被读成状态或改名发布；
+  丢掉它等于在建它之前一刻被杀。只有两处会丢：
+  - `SyncTransportOwner::open_existing`（人侧启动）：拿到租约 → 残留必须是本人、0600、单链接、不超预算的普通文件
+    （别的一律 `UnsafeStorage`）→ `state.json` 解得开、和当前审批逐项对得上 → 丢。
+  - `sync-rebind`：`TransportRebind::open_existing` 只认下、不动磁盘；主人确认、全部复核过了之后、提交之前，
+    显式 `discard_residue`（先复验一遍）才丢。没丢就提交的，发布照旧撞 `TemporaryResidue` 失败关闭。
+
+  丢的动作是同一处：再核一遍租约、根，和残留还是打开时的那个 inode → `unlinkat` → `fsync` 父目录。
+  前面任何一步不过就拒绝，两个文件一个字节都不动。带残留打开的入口 `open_with_residue` 只在 crate 内可见。
+- `FilePublisher::open_existing` 语义不变：见到残留就是 `TemporaryResidue`，不认领（核封存复制件用它）；
+  封存导出在现任 owner 上做，私有根里有残留照旧拒绝导出。
 - `initialize` 是管理员显式动作：三个名字都不存在才建库，并立刻发布首条完整记录。
 
 ## 6. 审计

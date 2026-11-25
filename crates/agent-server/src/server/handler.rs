@@ -34,7 +34,7 @@ impl AgentSession {
     }
 
     #[tool(
-        description = "黑板：按 project 读取 list/get，或经有效权限 create/claim/heartbeat/handoff/return/number；request 必须是结构化对象，身份与规则版本由服务端绑定"
+        description = "黑板：按 project 读取 list/get/presence（谁的会话在做什么），或经有效权限 create/claim/heartbeat/handoff/return/number；request 必须是结构化对象，身份与规则版本由服务端绑定"
     )]
     async fn board(
         &self,

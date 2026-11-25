@@ -37,10 +37,8 @@ impl From<Refusal> for Failure {
 }
 /// 会改权威状态的操作：成功后要投影，提交后就不能再说成没发生。
 fn writes(operation: &str) -> bool {
-    !matches!(
-        operation,
-        "list" | "get" | "batch.preview" | "memory.preview"
-    )
+    !studiolo_policy::board_read_operation(operation)
+        && !matches!(operation, "batch.preview" | "memory.preview")
 }
 
 pub(super) fn parse<T: DeserializeOwned>(v: &Value) -> Result<T, String> {
@@ -103,7 +101,12 @@ impl BoardPlane {
         };
         self.event(&r, &id, AuditPhase::Intent, "admitted")?;
         let now = jiff::Timestamp::now().as_millisecond();
-        let outcome = self.dispatch(&mut engine, &r, &grant, now);
+        let outcome = if r.operation == "presence" {
+            self.presence_for(&r)
+        } else {
+            self.dispatch(&mut engine, &r, &grant, now)
+                .map_err(Failure::from)
+        };
         // 状态机已提交时，投影失败不能把写入报告成未发生；调用方应刷新权威板。
         if outcome.is_ok()
             && writes(&r.operation)
@@ -126,7 +129,7 @@ impl BoardPlane {
         )?;
         // 返回前再复核：撤权后不泄露内容；已提交的写这时核不了身份，也不能说成没发生。
         match self.authorize(&r) {
-            Ok(_) => outcome.map_err(Failure::from),
+            Ok(_) => outcome,
             Err(Refusal::Unavailable(_)) if outcome.is_ok() && writes(&r.operation) => {
                 Err(COMMITTED_UNCONFIRMED.into())
             }

@@ -16,6 +16,12 @@ mod preserve;
 mod reconcile;
 #[path = "sync_plane_driver/reconcile_support.rs"]
 mod reconcile_support;
+#[path = "sync_plane_driver/settle.rs"]
+mod settle;
+// 真实 owner 只能由 Linux 上的探测应答打开。
+#[cfg(target_os = "linux")]
+#[path = "sync_plane_driver/settle_owner.rs"]
+mod settle_owner;
 #[path = "sync_plane_driver/shutdown.rs"]
 mod shutdown;
 

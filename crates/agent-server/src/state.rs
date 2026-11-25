@@ -1,6 +1,9 @@
 //! 服务共享状态：白名单只读根、当前代次、私有库、审计账本与降级窗口。
 
-use crate::index::{IndexRuntime, IndexStatus};
+use crate::{
+    denials::Denials,
+    index::{IndexRuntime, IndexStatus},
+};
 
 use std::sync::{Arc, Mutex, RwLock};
 
@@ -110,6 +113,10 @@ impl SupplySource {
     }
 }
 
+/// 等备份冻结放行的上限与重试间隔；和同步侧 `enter_operation` 的 5 秒、5 毫秒一致。
+const OPERATION_ADMISSION_WAIT: std::time::Duration = std::time::Duration::from_secs(5);
+const OPERATION_ADMISSION_RETRY: std::time::Duration = std::time::Duration::from_millis(5);
+
 /// 服务共享状态。
 pub struct AppState {
     /// 白名单只读根。
@@ -128,6 +135,8 @@ pub struct AppState {
     pub ledger: SqliteAuditLedger,
     /// 当前代次。
     pub current: RwLock<Arc<Generation>>,
+    /// 没认出类型的拒绝登记到哪了：谁都能触发，按入口和原因限频（`crate::auth`）。
+    pub(crate) unrecognized: Mutex<Denials>,
     /// 当前 outage（审计不可用时）。
     pub outage: Mutex<Option<Outage>>,
     /// 扫描预算。
@@ -216,6 +225,23 @@ impl AppState {
         match self.current.read() {
             Ok(guard) => guard.clone(),
             Err(poisoned) => poisoned.into_inner().clone(),
+        }
+    }
+
+    /// 取一次完整操作的准入许可；备份冻结正占着时最多等 5 秒，取不到是 `None`。
+    ///
+    /// 在异步侧短睡重试，不把等待交给阻塞线程池：进程启动时锁定了全部内存，
+    /// 每多起一条线程，它的栈和堆区就一直常驻（BUG-034），而冻结期间每个请求都会来等。
+    pub(crate) async fn begin_operation(&self) -> Option<studiolo_audit_ledger::OperationPermit> {
+        let deadline = tokio::time::Instant::now() + OPERATION_ADMISSION_WAIT;
+        loop {
+            match self.ledger.try_enter_operation() {
+                Ok(Some(permit)) => return Some(permit),
+                Ok(None) if tokio::time::Instant::now() < deadline => {
+                    tokio::time::sleep(OPERATION_ADMISSION_RETRY).await;
+                }
+                Ok(None) | Err(_) => return None,
+            }
         }
     }
 

@@ -41,7 +41,7 @@ studiolo-human（uid 1000）                      root                          
 | # | 步骤 | 失败即停在哪 | 重开怎么续 |
 |---|---|---|---|
 | 1 | `recovery::PlaneStateStore::open` → `decide(state, 审批模式, now)` | 状态文件撕裂→`Storage`，本轮不跑 | 下一轮重读；撕裂须管理员 `sync-init` 重建（不自动重置） |
-| 2 | `flush_transport_audit`；活动槽存在则 `recover(run_id)`；未闭合→`Transport`。关停标志（`drive_until` 收到停止信号）只在安全停点查：InspectConfig、SetMode、「已启动」之前，RunOnce 回收落盘之后，取票、观察、执行之前 | 保留原槽；关停即 `Stopping`，执行器内部不打断 | 每轮先补审计、再 recover，直到 Closed；关停后不再起新轮 |
+| 2 | `flush_transport_audit`；活动槽存在则 `recover(run_id)`；仍是 `Prepared`（登记了、从没发启动）→ `cancel_recovered` 收成「没执行」再补审计（T-239）；未闭合→`Transport`。关停标志（`drive_until` 收到停止信号）只在安全停点查：InspectConfig、SetMode、「已启动」之前，RunOnce 回收落盘之后，取票、观察、执行之前 | 保留原槽；关停即 `Stopping`，执行器内部不打断 | 每轮先补审计、再 recover，直到 Closed；关停后不再起新轮 |
 | 3 | `run_headless(InspectConfig)` → `config_output` → `headless::classify` 依次核对 ① 审批母本＋应处模式 ② 母本＋另一模式 ③ 母本∪`pending_purge`＋应处模式 ④ 并集＋另一模式（③④ 只在 `pending_purge`＝上次核验集合−审批母本非空时试）；`fileTypes` 含五类等其余项逐项==审批。命中的那份记为 `headless_excluded`，与 `plane-state.json` 所记不同即先落盘（守卫拦住的轮次也留下，供 purge 核对） | 四种都不一致→`ConfigMismatch`，健康降级 | 模式不符走第 5 步；排除项／类型不符只能人改，每轮重核 |
 | 4 | 在 InspectConfig 闭合留下的静止票据下 `recovery::residue_guard(上次核验集合, 审批母本, 视图根)`，读完复验票据；残留已清但 `pending_purge` 非空→`ConfigMismatch`（headless 还排除着审批已去掉的文件夹，安全顺序进行中） | 有残留→`ResidueBlocked`，固定原因「排除项清除前有镜像残留」；票据作废→`Quiescence` | 安全顺序（部署手册第 8 节）：停 human → `sync-purge-residue` → headless 侧清排除 → 起 human，下一轮自动放行 |
 | 5 | 需要时 `run_headless(SetMode(effective_mode))`，回到 3、4 按同样逻辑复核 | SetMode 非干净闭合→`Headless`（owner 关停时被停→`Stopping`） | 下一轮重试；`applied_mode` 只在复核通过后写 |
@@ -89,7 +89,7 @@ studiolo-human（uid 1000）                      root                          
 
 | 固定名 | 所有者／权限 | 预算 | 写者 |
 |---|---|---|---|
-| `<transport_private>/{transport.lock,state.json,state.json.publish}` | owner 0600／根 0700 | 64 KiB | sync-transport `store/publish.rs`（不变） |
+| `<transport_private>/{transport.lock,state.json,state.json.publish}` | owner 0600／根 0700 | 64 KiB | sync-transport `store/publish.rs`；强杀或断电留下的 `.publish` 由下次打开核过权威记录再丢（T-239） |
 | `<plane_root>/plane.lock` | owner 0600 | 4 KiB | `sync_plane/recovery.rs`；flock 按打开文件描述计，租约守卫析构时显式解锁（并发 fork 在 exec 前继承的描述符不延长租约） |
 | `<plane_root>/plane-state.json`（+`.new`） | owner 0600 | 64 KiB，版本 1，校验和；追加字段 `headless_excluded`（headless 最近一次核对报的排除集合）、`conflict_stamps`（冲突身份→首次保全分钟戳，≤512 条）、`pending_purge`（清除审计日记），为空时不写出、非空才进校验和，旧文件照常解码 | `sync_plane/recovery.rs` |
 | `<plane_root>/sync-status.json`（+`.new`） | owner 0600 | 4 KiB，版本 1，闭合五字段 | `sync_plane/recovery.rs`（编解码 `sync_plane/status.rs`）；开平面与每轮收口各写一次，F4 探针读，契约 `docs/contracts/sync-status-receipt.md`（T-224）；不进 `plane-state.json`、备份不导出 |

@@ -80,7 +80,7 @@ async fn identity_store_breaks(at: Breaks) -> Outcome {
                 },
             ))
             .layer(axum::middleware::from_fn_with_state(
-                app,
+                (app, crate::auth::Entrance::Mcp),
                 crate::auth::require_bearer,
             ))
     })

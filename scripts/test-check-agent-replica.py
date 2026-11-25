@@ -54,14 +54,23 @@ class ReplicaProbeTests(unittest.TestCase):
     def run_probe(self, responses, expected="ready", url=fixtures.BASE):
         transport = fixtures.FakeHTTP(responses)
         original_build = urllib.request.build_opener
+        built = []
+
+        def build(*handlers):
+            built.append(handlers)
+            return original_build(*handlers, transport)
+
         output = io.StringIO()
         with mock.patch.object(probe.urllib.request, "build_opener",
-                               side_effect=lambda *handlers: original_build(*handlers, transport)), \
+                               side_effect=build), \
                 mock.patch("builtins.open", mock.mock_open(read_data=fixtures.TOKEN)) as token_open, \
                 contextlib.redirect_stdout(output), contextlib.redirect_stderr(output):
             code = probe.main([url, "/fixture-token-file", "--expected", expected])
         for secret in (fixtures.TOKEN, fixtures.PRIVATE_TEXT, fixtures.SESSION):
             self.assertNotIn(secret, output.getvalue())
+        for handlers in built:
+            self.assertTrue(any(isinstance(handler, urllib.request.ProxyHandler) and handler.proxies == {}
+                                for handler in handlers), "走了环境代理")
         token_open.assert_called_once_with("/fixture-token-file", encoding="utf-8")
         return code, output.getvalue(), transport.requests
 

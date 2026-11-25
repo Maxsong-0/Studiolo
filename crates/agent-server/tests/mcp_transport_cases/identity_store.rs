@@ -54,7 +54,8 @@ async fn an_unreadable_identity_store_answers_503_without_a_challenge_and_keeps_
         .await;
     assert!(!is_error(&read));
     assert!(tool_text(&read).contains("Alpha · 总览"));
-    // 每个 503 记 identity_unavailable（令牌还没认出来，主体匿名），与令牌无效的 unauthenticated 分开。
+    // 503 记 identity_unavailable（令牌还没认出来，主体匿名），与令牌无效的 unauthenticated 分开；
+    // 同一入口同一原因一分钟内只登记一条（T-241）。
     let mut reasons = f
         .ledger()
         .query(&AuditFilter::default().with_action("agent.action_denied"))
@@ -63,17 +64,7 @@ async fn an_unreadable_identity_store_answers_503_without_a_challenge_and_keeps_
         .map(|event| event.event().payload().as_value()["reason"].as_str().unwrap().to_owned())
         .collect::<Vec<_>>();
     reasons.sort();
-    assert_eq!(
-        reasons,
-        [
-            "identity_unavailable",
-            "identity_unavailable",
-            "identity_unavailable",
-            "identity_unavailable",
-            "unauthenticated",
-            "unauthenticated",
-        ]
-    );
+    assert_eq!(reasons, ["identity_unavailable", "unauthenticated"]);
     // 两次回 503 的 initialize 都没铸实例：全程只有最初那次握手登记过一个。
     assert_eq!(f.ledger().query(&AuditFilter::default().with_action("agent_instance.registered")).unwrap().len(), 1);
 }

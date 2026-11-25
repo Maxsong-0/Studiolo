@@ -2,7 +2,9 @@
 
 use super::support::*;
 use crate::linux::{ContainmentGap, IdentityMatch};
+use crate::owned_run::checkpoint::snapshot;
 use crate::owned_run::*;
+use std::time::{Duration, Instant};
 
 /// 把一次运行推进到指定发布次数后中断，返回中断时的活动记录。
 fn cut(fixture: &Fixture, publishes_before_failure: u32) -> RunRecord {
@@ -297,4 +299,189 @@ fn a_cancelled_run_that_later_reports_a_zero_exit_stays_cancelled_across_a_reope
     assert_eq!(observation.phase, RunPhase::Cancelled);
     assert_eq!(observation.exit, ExitObservation::NotObserved);
     assert_eq!(reopened.backend.launches, 0);
+}
+
+/// 重开之后照同步每一轮的做法补完待补审计，直到没有为止。
+fn flush<B: crate::linux::ContainmentBackend>(
+    session: &mut crate::owned_run::session::RunSession<'_, B>,
+) {
+    while session.pending_audit().expect("可以读待补事件").is_some() {
+        acknowledge(session);
+    }
+}
+
+#[test]
+fn a_run_left_prepared_is_closed_as_never_executed_and_the_next_run_can_start() {
+    for intent_acknowledged in [false, true] {
+        let fixture = Fixture::new();
+        {
+            let mut session = fixture.session();
+            session
+                .prepare_once(1, RunOperation::RunOnce, 1)
+                .expect("可以准备一次运行");
+            if intent_acknowledged {
+                acknowledge(&mut session);
+            }
+        }
+        let mut reopened = fixture.session();
+        flush(&mut reopened);
+        let run_id = reopened
+            .inspect()
+            .expect("可以读状态")
+            .active
+            .expect("活动槽仍在")
+            .run_id;
+        let observation = reopened.cancel_recovered(run_id).expect("可以收成没执行");
+        assert_eq!(observation.phase, RunPhase::Cancelled);
+        assert_eq!(observation.exit, ExitObservation::NotObserved);
+        assert_eq!(observation.quiescence, Quiescence::Unconfirmed);
+        flush(&mut reopened);
+
+        let status = reopened.inspect().expect("可以读状态");
+        assert!(status.active.is_none());
+        let terminal = status.last_terminal.expect("已审计闭合摘要");
+        assert_eq!(terminal.run_id, run_id);
+        assert_eq!(terminal.observation.phase, RunPhase::Closed);
+        assert_eq!(terminal.observation.exit, ExitObservation::NotObserved);
+        assert!(terminal.container.is_none());
+        // 没执行过的运行不发静止能力，也没有配置输出。
+        assert_eq!(
+            reopened.quiescent().err(),
+            Some(TransportError::QuiescenceUnconfirmed)
+        );
+        assert!(reopened.config_output(run_id).is_err());
+        assert_eq!(reopened.backend.launches, 0);
+        assert_eq!(reopened.backend.releases, 0);
+
+        let prepared = reopened
+            .prepare_once(status.next_sequence, RunOperation::RunOnce, 2)
+            .expect("下一次运行照常能准备");
+        acknowledge(&mut reopened);
+        let owned = reopened.start(&prepared).expect("下一次运行照常能启动");
+        assert_eq!(reopened.backend.launches, 1);
+        // 真正跑完、审计补齐之后，静止票据和封存快照都照常。
+        reopened.backend.running = false;
+        reopened.backend.populated = false;
+        reopened.backend.exit = ExitObservation::Code(0);
+        reopened.wait(&owned).expect("可以回收");
+        acknowledge(&mut reopened);
+        reopened.quiescent().expect("静止票据照常");
+        let sealed =
+            snapshot(&reopened, Instant::now() + Duration::from_secs(10)).expect("封存快照照常");
+        assert!(sealed.active.is_none());
+        assert_eq!(
+            sealed.last_terminal.expect("闭合摘要").run_id,
+            prepared.run_id()
+        );
+    }
+}
+
+#[test]
+fn closing_a_prepared_run_survives_an_interruption_at_every_publish() {
+    // 收口要发布三次：意图回执、取消、结果回执；每一次之前都断一刀，重开从头再走一遍。
+    for cut in 0..3 {
+        let fixture = Fixture::new();
+        fixture
+            .session()
+            .prepare_once(1, RunOperation::RunOnce, 1)
+            .expect("可以准备一次运行");
+        fixture
+            .slot
+            .fail_replace_after(cut, TransportError::Unavailable);
+        let mut first = fixture.session();
+        assert!(settle(&mut first).is_err(), "第 {cut} 次发布之前断");
+        assert_eq!(first.backend.launches, 0);
+        drop(first);
+
+        let mut second = fixture.session();
+        settle(&mut second).expect("重开从头再走一遍");
+        assert!(second.inspect().expect("可以读状态").active.is_none());
+        assert_eq!(second.backend.launches, 0);
+    }
+}
+
+fn settle<B: crate::linux::ContainmentBackend>(
+    session: &mut crate::owned_run::session::RunSession<'_, B>,
+) -> Result<()> {
+    try_flush(session)?;
+    let Some(active) = session.inspect()?.active else {
+        return Ok(());
+    };
+    if session.recover(active.run_id)?.phase == RunPhase::Prepared {
+        session.cancel_recovered(active.run_id)?;
+    }
+    try_flush(session)
+}
+
+fn try_flush<B: crate::linux::ContainmentBackend>(
+    session: &mut crate::owned_run::session::RunSession<'_, B>,
+) -> Result<()> {
+    while let Some(candidate) = session.pending_audit()? {
+        // 结果回执的偏移必须在意图回执之后，重开以后也一样。
+        let intent = session
+            .load()?
+            .active
+            .and_then(|record| record.intent.receipt);
+        let offset = intent.map_or(1, |receipt| receipt.offset.get() + 1);
+        session.confirm_audit(&candidate, offset, [0xAB; 32])?;
+    }
+    Ok(())
+}
+
+#[test]
+fn only_a_run_that_was_never_launched_can_be_closed_this_way() {
+    // LaunchIssued、Contained、ExecutionIssued：启动请求可能已经发出，一律不许走这条路。
+    for publishes in [1, 2, 3] {
+        let fixture = Fixture::new();
+        let record = if publishes < 3 {
+            cut(&fixture, publishes)
+        } else {
+            let mut session = fixture.session();
+            let prepared = fixture.prepared(&mut session);
+            session.backend.release_gap = Some(ContainmentGap::ManagerUnavailable);
+            assert!(session.start(&prepared).is_err());
+            fixture.slot.state().active.expect("原槽保留")
+        };
+        assert!(record.phase.execution_may_have_started());
+        let before = fixture.slot.bytes();
+        let mut reopened = fixture.session();
+        assert_eq!(
+            reopened.cancel_recovered(record.run_id).err(),
+            Some(TransportError::PhaseConflict),
+            "{:?}",
+            record.phase
+        );
+        assert_eq!(fixture.slot.bytes(), before);
+        assert_eq!(reopened.backend.launches, 0);
+        assert_eq!(reopened.backend.stops, 0);
+    }
+    let fixture = Fixture::new();
+    let mut session = fixture.session();
+    fixture.prepared(&mut session);
+    assert_eq!(
+        session
+            .cancel_recovered(RunId::from_bytes([0x77; 16]))
+            .err(),
+        Some(TransportError::NotFound)
+    );
+    assert_eq!(
+        fixture.slot.state().active.expect("原槽保留").phase,
+        RunPhase::Prepared
+    );
+}
+
+#[test]
+fn a_ticket_from_before_the_close_can_never_start_the_run() {
+    let fixture = Fixture::new();
+    let mut session = fixture.session();
+    let prepared = fixture.prepared(&mut session);
+    session
+        .cancel_recovered(prepared.run_id())
+        .expect("可以收成没执行");
+    assert!(session.start(&prepared).is_err());
+    assert_eq!(session.backend.launches, 0);
+    assert_eq!(
+        fixture.slot.state().active.expect("原槽保留").phase,
+        RunPhase::Cancelled
+    );
 }

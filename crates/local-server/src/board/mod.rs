@@ -1,5 +1,6 @@
 //! M5 黑板组合面：复用 canonical 单写者，身份与策略每次复核，运行正文不进 Control DB。
 mod auth;
+mod connector;
 mod content;
 mod execute;
 mod execution_http;
@@ -7,6 +8,7 @@ mod executor;
 mod http;
 mod overview;
 mod owner;
+mod presence;
 mod replay;
 mod requests;
 pub use executor::{
@@ -60,10 +62,14 @@ pub struct BoardPlane {
     storage: storage::Storage,
     isolated_roots: Vec<std::path::PathBuf>,
     permits: Arc<tokio::sync::Semaphore>,
+    /// 连接器入口另外排的名额：先取这个再取 `permits`，连接器再多也挤不掉网页和 MCP。
+    connectors: Arc<tokio::sync::Semaphore>,
     /// 跨项目汇总上次看到的审计末条偏移；只是倒扫起点的提示，每次使用前都重新核实。
     overview_tail: std::sync::atomic::AtomicU64,
     /// 黑板列表上次为「提交状态没核对出来」记日志的时刻（毫秒），用来限频。
     commit_check_noted_ms: std::sync::atomic::AtomicI64,
+    /// 「在做什么」状态（ADR-046）：只在内存、300 秒过期，不进控制库和备份。
+    presence: connector::PresenceDesk,
 }
 impl BoardPlane {
     /// 交出启动时固定的 Control 源，先复核它还是那一份；不重新开库或执行迁移，也不拿引擎锁：
@@ -171,9 +177,11 @@ impl BoardPlane {
             audit,
             storage,
             isolated_roots,
-            permits: Arc::new(tokio::sync::Semaphore::new(4)),
+            permits: Arc::new(tokio::sync::Semaphore::new(MAX_PERMITS)),
+            connectors: Arc::new(tokio::sync::Semaphore::new(MAX_CONNECTORS)),
             overview_tail: std::sync::atomic::AtomicU64::new(0),
             commit_check_noted_ms: std::sync::atomic::AtomicI64::new(i64::MIN),
+            presence: connector::PresenceDesk::open(jiff::Timestamp::now()),
         }))
     }
     /// 独立租约巡检；关闭时等待本轮控制事务结束，不留下后台写者。
@@ -236,6 +244,8 @@ impl BoardPlane {
         &self,
         runner: Option<&RunnerPlane>,
     ) -> Result<MaintenanceTick, MaintenanceFault> {
+        // 过期和撤权的会话状态照样清：只动内存，不取审计许可，封存冻结时也不留。
+        self.sweep_presence();
         // 冻结中只认这一种「取不到」；准入文件被换、权限被改这类照旧是审计不可用。
         let Some(_operation) = self
             .audit
@@ -281,6 +291,10 @@ impl BoardPlane {
     }
 }
 
+/// 同时做的黑板请求数，网页、MCP、连接器合在一起算。
+const MAX_PERMITS: usize = 4;
+/// 其中连接器最多占一半。
+const MAX_CONNECTORS: usize = MAX_PERMITS / 2;
 /// 租约巡检的间隔。
 const MAINTENANCE_INTERVAL: std::time::Duration = std::time::Duration::from_secs(15);
 /// 巡检连续遇到冻结的封顶时长（BUG-050）。一次封存从开始到放开冻结都在封存预算之内，再加一分钟余量：

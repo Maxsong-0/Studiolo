@@ -91,6 +91,8 @@ python3 -I -B -S deploy/backup-worker/test_units.py
 python3 scripts/tests/test_runner_launch.py
 ( umask 002; python3 scripts/test-sync-agent-vault.py; python3 scripts/test-replica-receiver.py; python3 scripts/test-replica-boundaries.py )
 python3 -I -B deploy/backup-worker/provision/test_provision.py
+python3 scripts/test-check-connector.py
+python3 scripts/test-no-environment-proxy.py
 '''
 timeout_sec = 1800
 

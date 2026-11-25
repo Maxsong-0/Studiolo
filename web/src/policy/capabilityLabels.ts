@@ -30,6 +30,11 @@ export const CAPABILITY_FIELDS: readonly CapabilityField[] = [
     label: '可读的规则',
     note: '规则文件名单，空着就一条规则都读不到',
   },
+  {
+    path: 'read.board_projects',
+    label: '只读黑板的项目（连接器）',
+    note: '列表元数据和单条全文；有它就不能再有别的权限',
+  },
   { path: 'write.board', label: '可写黑板', note: '只限下面列出的项目' },
   {
     path: 'write.board_projects',
@@ -45,6 +50,11 @@ export const CAPABILITY_FIELDS: readonly CapabilityField[] = [
     path: 'write.content_direct',
     label: '可整页覆盖正文',
     note: '永远是「否」',
+  },
+  {
+    path: 'write.presence_projects',
+    label: '可推会话状态的项目（连接器）',
+    note: '只推状态、读不到别的；有它就不能再有别的权限',
   },
   {
     path: 'policy.propose_desired',

@@ -77,7 +77,8 @@ class Client:
         self.headers = {"Content-Type": "application/json", "Accept": "application/json, text/event-stream",
                         "MCP-Protocol-Version": CHECK.PROTOCOL, "Authorization": "Bearer " + token,
                         "User-Agent": "studiolo-replica-check/1"}
-        self.opener = urllib.request.build_opener(CHECK.NoRedirect())
+        # 不走环境代理：代理会看到回环上的明文请求，令牌就交出去了。
+        self.opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), CHECK.NoRedirect())
 
     def rpc(self, method, params, notification=False):
         self.request_id += 1

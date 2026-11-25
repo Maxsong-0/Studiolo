@@ -19,13 +19,13 @@ pub enum TransportError {
     CorruptStore,
     /// `schema_version` 不是已知版本；不得自动迁移或回写降级。
     UnknownSchema,
-    /// 上次发布留下的临时文件仍在；它不是授权状态，必须显式丢弃后才能继续。
+    /// 上次发布留下的临时文件仍在；它不是授权状态，不认领。
     TemporaryResidue,
     /// 私有根、权限、对象身份或真实 UID 不满足存储约束。
     UnsafeStorage,
     /// 另一个进程持有排他租约。
     Busy,
-    /// 底层存储暂时不可用；本次发布没有生效。
+    /// 底层存储暂时不可用；改名之前失败旧记录不变，改名之后目录落盘失败结果未知，重开核验。
     Unavailable,
     /// 请求超过固定预算。
     Budget,
@@ -75,7 +75,7 @@ impl fmt::Display for TransportError {
             Self::AlreadyExists => "传输私有存储已存在",
             Self::CorruptStore => "传输持久记录不完整或自相矛盾",
             Self::UnknownSchema => "传输持久记录的 schema 版本未知",
-            Self::TemporaryResidue => "存在未发布的临时状态文件，必须显式丢弃",
+            Self::TemporaryResidue => "存在未发布的临时状态文件，不认领",
             Self::UnsafeStorage => "传输私有存储的身份或权限不满足约束",
             Self::Busy => "传输排他租约被占用",
             Self::Unavailable => "传输私有存储暂时不可用",

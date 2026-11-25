@@ -6,7 +6,7 @@
 use super::approval::{ApprovedTransport, PinnedRuntime};
 use super::audit::RunAuditCandidate;
 use super::error::{Result, TransportError};
-use super::session::{RunSession, random};
+use super::session::{RunSession, random, verified};
 use super::state::{OwnerIdentity, SCHEMA_VERSION, TransportState, encode};
 use super::tickets::{OwnedRun, PreparedRun, QuiescentMirror};
 use super::types::{RunId, RunObservation, RunOperation, RunStatus, StopReason};
@@ -16,20 +16,27 @@ use crate::store::{FilePublisher, StatePublisher};
 /// 固定 link 的一次一运行 owner。
 pub struct SyncTransportOwner<'scope> {
     pub(super) inner: RunSession<'scope, LinuxContainment>,
+    discarded_residue: bool,
 }
 
 impl<'scope> SyncTransportOwner<'scope> {
-    /// 打开既有槽；不补目录、不补空 state、不认领残留。
+    /// 打开既有槽；不补目录、不补空 state。上次发布被强杀或断电留下的临时文件，
+    /// 权威记录解得开、又和当前审批逐项对得上之后才丢；对不上就拒绝，两个文件都不动。
     ///
     /// # 错误
     /// 受控隔离前置未满足时不会走到这里（`VerifiedLinuxBackend` 拿不到）；
-    /// 存储缺失返回 `MissingStore`，绑定不符返回 `BindingMismatch`。
+    /// 存储缺失返回 `MissingStore`，绑定不符返回 `BindingMismatch`，残留形态不合规返回 `UnsafeStorage`。
     pub fn open_existing(
         approval: &'scope dyn ApprovedTransport,
         runtime: PinnedRuntime,
         backend: VerifiedLinuxBackend,
     ) -> Result<Self> {
-        let publisher = FilePublisher::open_existing(approval.roots().private_root.as_path())?;
+        let mut publisher =
+            FilePublisher::open_with_residue(approval.roots().private_root.as_path())?;
+        if publisher.has_residue() {
+            verified(approval, &runtime, &publisher)?;
+        }
+        let discarded_residue = publisher.discard_residue()?;
         Ok(Self {
             inner: RunSession::open(
                 approval,
@@ -37,7 +44,14 @@ impl<'scope> SyncTransportOwner<'scope> {
                 LinuxContainment::new(backend),
                 Box::new(publisher),
             )?,
+            discarded_residue,
         })
+    }
+
+    /// 这次打开时丢掉过上次发布留下的临时文件；装配方据此留一行日志。
+    #[must_use]
+    pub fn discarded_residue(&self) -> bool {
+        self.discarded_residue
     }
 
     /// 安全逻辑元数据。
@@ -121,6 +135,14 @@ impl<'scope> SyncTransportOwner<'scope> {
     /// 没有对应活动运行返回 `NotFound`。
     pub fn recover(&mut self, run_id: RunId) -> Result<RunObservation> {
         self.inner.recover(run_id)
+    }
+
+    /// 把重开后仍停在 `Prepared`（从没发过启动请求）的旧运行收成「没执行」。
+    ///
+    /// # 错误
+    /// 没有对应活动运行返回 `NotFound`；已发过启动请求返回 `PhaseConflict`。
+    pub fn cancel_recovered(&mut self, run_id: RunId) -> Result<RunObservation> {
+        self.inner.cancel_recovered(run_id)
     }
 
     /// 只在完整匹配旧容器时停止。

@@ -15,7 +15,7 @@ use studiolo_host_config::SyncScope;
 use studiolo_host_config::sync_transport::{ApprovedTransport, SyncTransportApproval};
 use studiolo_local_server::CanonicalWorkbench;
 use studiolo_local_server::sync_plane::{
-    BRIDGE_DIR, PlaneInputs, SyncPlane, bridge_binding, bridge_limits,
+    BRIDGE_DIR, PlaneInputs, SyncPlane, bridge_binding, bridge_limits, publish_residue_discarded,
 };
 use studiolo_sync_bridge::sqlite::BridgeState;
 use studiolo_sync_transport::linux::verify_backend;
@@ -62,6 +62,9 @@ pub(super) fn assemble(
     let backend = verify_backend(approved).map_err(|_| StartupError::SyncPlane)?;
     let transport = SyncTransportOwner::open_existing(approved, runtime, backend)
         .map_err(|_| StartupError::SyncPlane)?;
+    if transport.discarded_residue() {
+        publish_residue_discarded();
+    }
     let roots = approved.roots();
     let mut bridge = BridgeState::open_existing(
         &roots.plane_root().join(BRIDGE_DIR),

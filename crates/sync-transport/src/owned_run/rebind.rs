@@ -30,12 +30,13 @@ pub struct TransportRebind<'scope> {
 
 impl<'scope> TransportRebind<'scope> {
     /// 在新审批路径打开既有槽；旧路径或旧软件不可读并不妨碍读取持久事实。
+    /// 只读：上次发布留下的临时文件只认下、不动，由 [`Self::discard_residue`] 显式丢。
     ///
     /// # 错误
     /// 活动或审计未闭合拒绝；范围、owner 或物理私有根/镜像变更拒绝。
     pub fn open_existing(approval: &'scope dyn ApprovedTransport) -> Result<Self> {
         approval.revalidate()?;
-        let publisher = FilePublisher::open_existing(&approval.roots().private_root)?;
+        let publisher = FilePublisher::open_with_residue(&approval.roots().private_root)?;
         Self::open(approval, Box::new(publisher))
     }
 
@@ -58,6 +59,22 @@ impl<'scope> TransportRebind<'scope> {
         };
         session.revalidate()?;
         Ok(session)
+    }
+
+    /// 有没有上次发布留下的临时文件要丢；确认界面如实展示。
+    #[must_use]
+    pub fn has_residue(&self) -> bool {
+        self.publisher.has_residue()
+    }
+
+    /// 主人确认、全部复核过了之后，提交之前显式丢弃上次发布留下的临时文件；返回是否真的丢了。
+    /// 不调用就提交的，发布照旧撞上残留失败关闭。
+    ///
+    /// # 错误
+    /// 复验不过或残留已不是打开时的那一个即拒绝；权威记录此时一个字节没动。
+    pub fn discard_residue(&mut self) -> Result<bool> {
+        self.revalidate()?;
+        self.publisher.discard_residue()
     }
 
     /// 供确认界面使用的固定元数据。

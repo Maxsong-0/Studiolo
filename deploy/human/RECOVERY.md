@@ -9,7 +9,8 @@ r27 起的人侧发行（T-231、BUG-058）会自己接管死 socket（r26 只�
 强杀之后要人删 `board.sock` 一个再起；r25 和更早的都不会）：程序握着主库锁、连一下没人监听、
 节点类型属主链接数都对、删之前再核还是同一个，才删那一个，日志里有「接管上一任留下的…入口 socket」。所以强杀之后一般几秒内自己起来，
 先看第 1 节的日志：有这几行、人侧是 `active`，就不用往下做，只在下一次激活之前清一下重启计数（第 2 节末尾）。
-自己起不来的还有两种极窄的情形和 socket 无关，见第 1 节末尾，不要按残留节点处理。
+2026-11-24 在 169 上真强杀过一次（没有封存、没有同步在跑的空当）：3.9 秒后自己起来，三个入口都是程序接管的。
+自己起不来的还有两种极窄的情形和 socket 无关（另有一种起得来但同步一直停），见第 1 节末尾，不要按残留节点处理。
 它判不准（节点不是预期的样子、有人在监听、主库锁在别人手里）照旧拒绝启动，那时、以及 r26 和更早的发行、以及激活或回滚脚本停下的时候，按下面做。
 
 人工恢复就是三件事：看清留下了什么 → 确认它确实是死的 → 只删那一个节点。
@@ -27,8 +28,11 @@ r27 起的人侧发行（T-231、BUG-058）会自己接管死 socket（r26 只�
 - `crates/local-server/src/backup/producer.rs`（回收和封存的日志原文、回收失败不挡封存）、
   `crates/local-server/src/health/backup.rs`（健康页的说法）；
 - `deploy/blackboard/activation_ops.py` 的 `stopped` 和 `backup_ready`；
-- `crates/sync-transport/src/store/publish.rs` 的 `open_existing`（见到 `state.json.publish` 就拒绝）、
-  `crates/vault-broker/src/mutation/run.rs` 和 `writer.rs` 的 `write_status`（保存停在 `Installing` 就不读）；
+- `crates/sync-transport/src/store/publish.rs` 的 `open_with_residue`、`discard_residue` 和 `owned_run/owner.rs` 的 `open_existing`
+  （`state.json.publish` 核过权威记录和审批才丢；r27 及更早是见到就拒绝）、
+  `crates/local-server/src/sync_plane/driver/headless.rs` 的 `settle_active`（停在 `Prepared` 的运行收成「没执行」）和同目录 `diagnostics.rs`（日志原文）、
+  `crates/vault-broker/src/mutation/run.rs`、`writer.rs` 的 `write_status`、`crates/local-server/src/coordinator.rs`
+  （保存停在 `Prepared` 或 `Installing` 就起不来）、`crates/local-server/src/maintenance/`（离线命令）；
 - `crates/backup/src/checkpoint/staging/` 下的 `creation.rs`（建目录和登记谁先谁后）、`lifecycle.rs`（`begin` 见到
   `removing-` 就不开始，`finish` 删登记目录）、`housekeeping.rs`、`housekeeping/plan.rs`（回收的先后、哪种残缺报哪个错、
   怎么认删到一半的 `removing-`）、`io/cleanup.rs` 的 `retire`（登记目录先改名、`identity.json` 最后删）、
@@ -59,14 +63,27 @@ ls -la /run/studiolo-human /run/studiolo-board /run/studiolo-backup
 单元是 `Restart=on-failure`、隔 3 秒再试、60 秒内最多 3 次：有节点挡着的话，它试满 3 次就停在 `failed`，不会一直转。
 
 日志是下面两句之一、而且刚被强杀或断过电，不是残留节点，第 2、3 节都不管用：什么都不要删，把第 1 节三条命令的输出交给开发会话。
-两种都是程序有意失败关闭（不确定就不开），窗口只有几毫秒，T-231 之前就有，没有现成的处理命令，也没有演练过：
+两种都是程序有意失败关闭（不确定就不开），窗口很窄（毫秒级，写盘慢时更宽），T-231 之前就有，都没有在真机上演练过：
 
-- `双向 Bridge 平面装配失败；审批文档、受控 launcher 或私有存储未就绪，未监听`：可能正好杀在传输库换状态的那一下，
-  传输私有目录里留下了 `state.json.publish`。程序不猜它是不是写全了，一律不认领。
-- `既有canonical写者或完整监视视图不可用；不初始化、不修复、不回退`：可能正好杀在一次保存落盘的中间，
-  写者记录停在「正在装」、没有结局。批量保存和文件操作下次启动会接着做完，单篇保存不会。
+- `双向 Bridge 平面装配失败；审批文档、受控 launcher 或私有存储未就绪，未监听`：可能正好杀在传输库换状态的那一下（或那一刻写盘报错，比如盘满），
+  传输私有目录里留下了 `state.json.publish`。**r27 及更早**：程序一律不认领，没有现成的处理命令。
+  **带上 T-239 的下一个人侧发行起**（169 上还没有）：启动时核过权威记录和审批就自己丢，日志一行
+  `studiolo_bridge component=transport_store outcome=publish_residue_discarded`，不用人管；
+  残留的形态不对（不是本人、0600、单链接、大小合规的普通文件），或者 `state.json` 缺、坏、和审批对不上，照旧拒绝、等人看，两个文件都不动。
+- `既有canonical写者或完整监视视图不可用；不初始化、不修复、不回退`：可能正好杀在一次单篇保存落盘的中间，
+  写者记录停在 `Prepared`（准备好、还没装）或 `Installing`（正在装、没有结局），停在哪一步都起不来。
+  这一种有离线命令（`docs/m2/writer-maintenance.md`）：人侧停着时 `studiolo-maintain inspect` 看停在哪一步，
+  `Prepared` 用 `cancel-prepared`，`Installing` 用 `preserve-installing`。没在 169 上跑过（要真终端、要锁定内存），
+  由开发会话带着做。文件操作停在半路也用这两条（169 没开文件操作）；批量保存下次启动会接着做完，
+  停机期间那篇文件又被外面改过的除外（没有离线命令）。
 
 这两句也会因为别的原因出现（配置、目录、权限不对），所以先交人看，不先认定是它。
+
+还有一种不挡启动：人侧起来了，但同步每轮都失败（日志每轮一行 `studiolo_bridge step=Inspect error=Transport`）、封存也跟着失败。
+可能正好杀在登记了一次同步运行、还没发启动的那一下，传输记录停在 `Prepared`。**r27 及更早**：没有入口能收掉它，重启机器也不解，
+什么都不要删，把日志交给开发会话。**带上 T-239 的下一个人侧发行起**（169 上还没有）：下一轮同步自己收成「没执行」，
+日志一行 `studiolo_bridge component=transport outcome=unlaunched_run_cancelled`，再跑完一次同步封存就恢复。没有在真机上演练过。
+同步失败也会因为 launcher 等别的原因出现，同样先交人看。
 
 ## 2. 确认节点是死的，再删
 

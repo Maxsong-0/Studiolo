@@ -10,6 +10,7 @@ pub mod checkpoint;
 pub use binding::{bridge_binding, bridge_limits};
 
 pub mod driver;
+pub use driver::diagnostics::publish_residue_discarded;
 pub mod health;
 pub mod job_backend;
 pub mod mirror;

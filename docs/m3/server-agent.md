@@ -25,7 +25,8 @@ T-034：用户于 2026-09-07 指定部署到 `maxsong@192.168.100.169`，把 M3 
   `studiolo-agent.maxsong.me → http://127.0.0.1:4400`，HTTP Host 覆写 `127.0.0.1:4400`。既有 `studiolo.maxsong.me` 规则与 404 兜底不动。
   主机名必须是 `maxsong.me` 的一级子域：Cloudflare 通用证书只覆盖 `*.maxsong.me`，最初试的二级子域 `agent.studiolo.maxsong.me`
   在边缘 TLS 握手即失败（不买 Advanced Certificate 就无法用二级子域），已删除该 DNS 记录并改名。
-- 门禁在应用内：每个请求必须带 `Authorization: Bearer <类型 token>`，缺失/无效 401 并写 `agent.action_denied` 审计。
+- 门禁在应用内：每个请求必须带 `Authorization: Bearer <类型 token>`，缺失/无效 401 并写 `agent.action_denied` 审计
+  （没认出类型的按入口和原因每分钟最多一条，契约 [agent-supply](../contracts/agent-supply.md) 第 2 节）。
   **未加 Cloudflare Access**：服务 token 的秘密只在创建时显示一次，agent 不能经手；主人可在面板自行签发后再挂 Access 应用，见「后续」。
 - 私有库 `~/.local/share/studiolo-agent`（0700，`agent.sqlite3` 与 `audit/audit.sqlite3`）是服务唯一可写路径；
   发布目录与副本目录经 `ProtectHome=read-only` 保持只读。`RestrictSUIDSGID=no` 沿用 T-008 的 openat2 结论。

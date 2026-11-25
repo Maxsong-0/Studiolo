@@ -27,6 +27,8 @@ SCRIPTS = Path(__file__).resolve().parent
 SPEC = importlib.util.spec_from_file_location("agent_check", SCRIPTS / "check-agent.py")
 CHECK = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(CHECK)
+# 不走环境代理：代理会看到回环上的明文请求，令牌就交出去了。
+OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}), CHECK.NoRedirect())
 # 夹具用上线探针的金丝雀项目：它不在 ALLOW 里时捕获不到，下面的四工具读取就会失败，
 # 这条管线因此也守着「探针项目必须在注册表里给 AI 看」（BUG-038）。
 PROJECT = CHECK.PROJECT
@@ -173,7 +175,7 @@ class Pipeline:
             require(time.monotonic() < deadline, "等待隔离 MCP 服务超时")
             time.sleep(0.05)
         try:
-            urllib.request.urlopen(self.url, timeout=5).close()
+            OPENER.open(self.url, timeout=5).close()
         except urllib.error.HTTPError as error:
             require(error.code == 401, "匿名访问未被拒绝")
             error.close()
@@ -214,7 +216,7 @@ class Pipeline:
         if self.session:
             headers["Mcp-Session-Id"] = self.session
         request = urllib.request.Request(self.url, data=json.dumps(body).encode(), headers=headers, method="POST")
-        with urllib.request.urlopen(request, timeout=20) as response:
+        with OPENER.open(request, timeout=20) as response:
             if not self.session:
                 self.session = response.headers.get("Mcp-Session-Id")
             if notification:

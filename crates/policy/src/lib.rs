@@ -23,6 +23,7 @@ mod storage;
 mod store;
 mod validate;
 pub mod view;
+mod visible;
 
 pub use agent::{
     AtEffective, Authorization, CapabilityGrant, CurrentEntries, Denial, PolicyAgentStore,
@@ -32,8 +33,8 @@ pub use diff::{Diff, DiffEntry, DiffOp};
 pub use error::PolicyError;
 pub use model::{
     CapabilitySet, HardBinding, MAX_BODY_BYTES, MAX_PROPOSAL_BYTES, PolicyCaps, PolicyKind,
-    ReadCaps, Skill, WriteCaps, sha256_hex, validate_rules_subject, validate_skill_name,
-    validate_type_name,
+    ReadCaps, Skill, WriteCaps, board_read_operation, sha256_hex, validate_rules_subject,
+    validate_skill_name, validate_type_name,
 };
 pub use proposal::{
     MAX_LISTED_PROPOSALS, Proposal, ProposalInput, ProposalListing, ProposalResult, ProposalSummary,
@@ -44,4 +45,5 @@ pub use store::{
     PolicyStore, RevocationLevel, RevocationRecord, Submitter, TypePolicyState, VersionMeta,
     VersionRecord,
 };
-pub use validate::{Expansion, Problem, Report};
+pub use validate::{Expansion, Problem, Report, connector_project};
+pub use visible::{INVISIBLE, invisible};

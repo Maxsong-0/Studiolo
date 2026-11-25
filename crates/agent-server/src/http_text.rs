@@ -3,7 +3,7 @@ mod input;
 mod sessions;
 
 use crate::{
-    auth::{self, AgentType},
+    auth::{self, AgentType, Entrance},
     server::{AgentSession, ListEntriesArgs, PolicyReadArgs, ReadNoteArgs, SearchArgs},
     shutdown::SERVER_STOPPING,
     state::AppState,
@@ -17,6 +17,7 @@ use axum::{
     response::{IntoResponse, Response},
     routing::any,
 };
+pub(crate) use input::query as strict_query;
 use input::{INSTANCE_HEADER, SESSION_HEADER};
 use rmcp::{ErrorData, model::ErrorCode};
 use sessions::{ReserveError, Sessions};
@@ -44,7 +45,10 @@ pub(crate) fn router(app: Arc<AppState>) -> Router {
         .route("/policy", any(dispatch))
         .fallback(dispatch)
         .with_state(state)
-        .layer(middleware::from_fn_with_state(app, auth::require_bearer))
+        .layer(middleware::from_fn_with_state(
+            (app, Entrance::Read),
+            auth::require_bearer,
+        ))
         .layer(middleware::from_fn(plain_private));
     Router::new().nest("/read", routes)
 }

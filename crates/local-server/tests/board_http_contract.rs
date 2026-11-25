@@ -1,4 +1,6 @@
 //! M5真实Unix入口：策略、实例、claim、批量CAS、回执和父吊销；无生产数据。
+#[path = "board_http/connector.rs"]
+mod connector;
 #[allow(dead_code)]
 #[path = "writer_http/fixture.rs"]
 mod fixture;

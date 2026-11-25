@@ -153,12 +153,24 @@ impl AgentStore {
         agent_type: &str,
         digest: &str,
     ) -> Result<bool, SupplyError> {
-        let connection = self.lock()?;
-        let found: Option<i64> = connection.query_row(
-            "SELECT 1 FROM agent_type WHERE name = ?1 AND token_sha256 = ?2 AND revoked_at IS NULL",
-            params![agent_type, digest], |row| row.get(0),
-        ).optional().map_err(unavailable)?;
-        Ok(found.is_some())
+        Ok(self.credential_issued_at(agent_type, digest)?.is_some())
+    }
+
+    /// 当前 token 的签发时刻；已轮换或类型吊销时是 `None`。「现行」和「哪一次签发」一次查出，中间不会夹着轮换。
+    pub fn credential_issued_at(
+        &self,
+        agent_type: &str,
+        digest: &str,
+    ) -> Result<Option<String>, SupplyError> {
+        self.lock()?
+            .query_row(
+                "SELECT issued_at FROM agent_type \
+                 WHERE name = ?1 AND token_sha256 = ?2 AND revoked_at IS NULL",
+                params![agent_type, digest],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(unavailable)
     }
 }
 

@@ -4,6 +4,7 @@ use super::{MaintenanceError, inputs::Inputs, options::Options, sync, workflow::
 use crate::sync_plane::{
     BRIDGE_DIR, bridge_binding,
     mirror::stage::StageStore,
+    publish_residue_discarded,
     recovery::{PLANE_LOCK, PLANE_STATE_FILE, PlaneStateStore},
 };
 use serde_json::{Value, json};
@@ -21,7 +22,7 @@ pub(super) fn run(
     let approved = sync::approve(&scope, inputs, options)?;
     let plane_root = approved.roots().plane_root();
     // 先完成传输槽全部拒绝项，再打开可能执行 SQLite checkpoint 的 Bridge。
-    let transport =
+    let mut transport =
         TransportRebind::open_existing(&approved).map_err(MaintenanceError::SyncRebind)?;
     // open 的普通启动语义允许首建锁/缺省状态；维护先拒绝缺失固定物，绝不据此初始化。
     for name in [PLANE_LOCK, PLANE_STATE_FILE] {
@@ -48,7 +49,8 @@ pub(super) fn run(
     guard(inputs, check)?;
     confirm(
         &json!({"command":"sync-rebind", "binding":review,
-            "note":"仅更新同一安装的传输安全配置；保留安装身份与序号，废止旧静止事实。不迁移物理镜像，不改变范围，不初始化或清理存储。"}),
+            "discards_publish_residue":transport.has_residue(),
+            "note":"仅更新同一安装的传输安全配置；保留安装身份与序号，废止旧静止事实。不迁移物理镜像，不改变范围；有上次发布留下的临时文件时，确认后一并丢弃；不初始化或清理其余存储。"}),
         "sync-rebind",
     )?;
     guard(inputs, check)?;
@@ -66,6 +68,13 @@ pub(super) fn run(
     transport
         .revalidate()
         .map_err(MaintenanceError::SyncRebind)?;
+    // 丢残留排在确认与全部复核之后；它失败时权威记录还没动，不算结果未知。
+    if transport
+        .discard_residue()
+        .map_err(MaintenanceError::SyncRebind)?
+    {
+        publish_residue_discarded();
+    }
     // 从这里起错误属于结果未知：发布后仍复核所有输入，绝不误报“未写入”。
     let committed = transport
         .commit()

@@ -21,7 +21,7 @@ pub(super) fn session_id(headers: &HeaderMap) -> Result<Option<String>, ()> {
     Ok(Some(id.to_owned()))
 }
 
-pub(super) fn query(
+pub(crate) fn query(
     raw: Option<&str>,
     allowed: &[&str],
     required: &[&str],

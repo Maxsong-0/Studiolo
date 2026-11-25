@@ -9,7 +9,7 @@ use crate::{
     model::{CapabilitySet, validate_rules_subject},
 };
 
-use super::{Context, Expansion, Problem, Report};
+use super::{Context, Expansion, Problem, Report, connector::connector};
 
 pub(super) fn capability_set(report: &mut Report, canonical: &str, context: &Context) {
     let Ok(set) = serde_json::from_str::<CapabilitySet>(canonical) else {
@@ -42,12 +42,7 @@ pub(super) fn capability_set(report: &mut Report, canonical: &str, context: &Con
     }
     let mut write_seen = BTreeSet::new();
     for prefix in &set.write.board_projects {
-        let valid = VaultPath::parse(prefix).is_ok_and(|p| {
-            !p.is_protected()
-                && p.as_str().starts_with("项目/")
-                && p.as_str().split('/').count() == 2
-        });
-        if !valid
+        if !project_path(prefix)
             || !covered(prefix, &set.read.project_whitelist)
             || !write_seen.insert(prefix.clone())
         {
@@ -125,6 +120,7 @@ pub(super) fn capability_set(report: &mut Report, canonical: &str, context: &Con
             .ok()
             .as_ref(),
     );
+    connector(report, &set, previous.as_ref());
     let old_whitelist = previous
         .as_ref()
         .map(|set| set.read.project_whitelist.clone())
@@ -270,6 +266,15 @@ pub(super) fn capability_set(report: &mut Report, canonical: &str, context: &Con
             });
         }
     }
+}
+
+/// 完整项目路径：`项目/<名>` 两段、合法、不在受保护目录里。
+pub(super) fn project_path(value: &str) -> bool {
+    VaultPath::parse(value).is_ok_and(|path| {
+        !path.is_protected()
+            && path.as_str().starts_with("项目/")
+            && path.as_str().split('/').count() == 2
+    })
 }
 
 /// `prefix` 是否已被 `set` 里某个相同或更宽的前缀覆盖。
