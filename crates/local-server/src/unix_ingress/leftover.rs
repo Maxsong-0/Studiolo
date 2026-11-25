@@ -80,6 +80,7 @@ impl Entrance<'_> {
         }
         let sole = workbench.sole_instance().map_err(|_| Refused)?;
         let retired = self.retire_leftover(&sole, unheard)?;
+        drop(sole);
         eprintln!("{}", self.line(&retired));
         Ok(())
     }

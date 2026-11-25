@@ -617,6 +617,9 @@ class MonitorTests(unittest.TestCase):
         result = run(broken)
         self.assertEqual((result["human_restarted"], result["services_ok"], result["memory_high"]), (True, True, False))
         self.assertEqual(len(asked), 4)
+        # 一直读不到就一直是 A09，排在它后面的同步停摆、删除被挡看不到：README 写明的代价，不许悄悄变成「没事」。
+        unread = dict(result, clock_ok=True, mcp_ok=True, replica_stale=True, sync_unaligned=True, sync_deletes_blocked=True)
+        self.assertEqual(STATE.failure_code(unread), "A09")
         # 反过来，服务那一项跑不出来也不牵连它。
         with patch.object(PROBE, "service_metrics", side_effect=TimeoutError()), \
                 patch.object(PROBE, "output", lambda command: shown(0)), \

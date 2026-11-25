@@ -48,9 +48,9 @@ const MENTIONS: [(&str, &str, usize); 17] = [
 
 /// 造凭据之前要核的，按次序；最后一步才交出来。
 const CREDENTIAL: [&str; 6] = [
-    "letowner=self.core.owner.lock()",
+    "letowner=self.core.owner.lock().map_err(|_|LocalError::Unavailable)?;",
     "letbroker=owner.as_ref().ok_or(LocalError::Unavailable)?;",
-    ".closing{returnErr(LocalError::Unavailable);}",
+    "ifself.core.control.lock().map_err(|_|LocalError::Unavailable)?.closing{returnErr(LocalError::Unavailable);}",
     "self.core.roots.revalidate().map_err(|_|LocalError::Configuration)?;",
     "broker.validate_root_identities(self.core.roots.vault_identity(),self.core.roots.writer_data_identity(),)?;",
     "Ok(SoleInstance{_owner:owner})",
@@ -135,6 +135,8 @@ fn leftover_takeover_has_one_remover_one_credential_and_three_entrances() {
     for removed in [
         "let broker = owner.as_ref().ok_or(LocalError::Unavailable)?;",
         ".closing",
+        ".map_err(|_| LocalError::Unavailable)?",
+        ".map_err(|_| LocalError::Unavailable)?\n            .closing",
         ".map_err(|_| LocalError::Configuration)?",
         "broker.validate_root_identities(",
     ] {
@@ -167,10 +169,13 @@ fn leftover_removal_keeps_every_judgement_and_grants_nothing_else() {
         "if !same(&found, &self.candidate()?) {",
         "workbench.sole_instance().map_err(|_| Refused)?",
         "self.retire_leftover(&sole, unheard)?",
+        "drop(sole);",
         "_sole: &SoleInstance<'_>",
         "let found = self.judge(probe)?;",
         "left.st_ctime_nsec == right.st_ctime_nsec",
         "left.st_ino == right.st_ino",
+        "let Ok(address) = SocketAddrUnix::new(path) else {\n        return false;",
+        ") else {\n        return false;",
         "SocketFlags::NONBLOCK",
         "Err(Errno::CONNREFUSED)",
     ] {

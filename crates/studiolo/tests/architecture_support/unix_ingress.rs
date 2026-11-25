@@ -8,10 +8,11 @@ const LEFTOVER: &[&str] = &[
     "ifFileType::from_raw_mode(stat.st_mode)!=FileType::Socket||stat.st_uid!=geteuid().as_raw()||stat.st_nlink!=1||!same(&stat,&by_path){returnErr(Refused);}Ok(stat)",
     "letfound=self.candidate()?;if!probe(self.path){returnErr(Refused);}",
     "if!same(&found,&self.candidate()?){returnErr(Refused);}Ok(found)",
-    "letsole=workbench.sole_instance().map_err(|_|Refused)?;letretired=self.retire_leftover(&sole,unheard)?;",
+    "letsole=workbench.sole_instance().map_err(|_|Refused)?;letretired=self.retire_leftover(&sole,unheard)?;drop(sole);",
     "_sole:&SoleInstance<'_>,probe:implFnOnce(&Path)->bool)->Result<Stat,Refused>{letfound=self.judge(probe)?;unlinkat(self.parent,self.name,AtFlags::empty())",
     "left.st_dev==right.st_dev&&left.st_ino==right.st_ino&&left.st_ctime==right.st_ctime&&left.st_ctime_nsec==right.st_ctime_nsec",
-    "SocketFlags::NONBLOCK|SocketFlags::CLOEXEC",
+    "letOk(address)=SocketAddrUnix::new(path)else{returnfalse;};",
+    "letOk(probe)=socket_with(AddressFamily::UNIX,SocketType::STREAM,SocketFlags::NONBLOCK|SocketFlags::CLOEXEC,None)else{returnfalse;};",
     "matches!(connect(&probe,&address),Err(Errno::CONNREFUSED))",
 ];
 

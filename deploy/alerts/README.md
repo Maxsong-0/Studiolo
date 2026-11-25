@@ -17,7 +17,7 @@
 - A09 的判法（T-231）：人侧被强杀后会自己起来，A02 要连续两轮看到不在才报，多半看不到，于是另看 `systemctl show studiolo-human.service` 的 `NRestarts`、`ActiveEnterTimestampMonotonic`。
   ① `NRestarts` > 0，且这一次起来距今不到 1 小时（和单调时钟比）就报；满 1 小时、或人清了次数（手工启停、`reset-failed`）按恢复正常算。只看 1 小时，是因为看门狗一次只认一个代号，一直挂着会让 A07、A08 等不到「恢复正常」。
   ② 证据不成立也报：读不到、缺项、多项、不是无符号整数、起来的时刻在现在之后、重启过却从没起来过。不牵连 A02、A04 的结论。
-  优先级 A06 > A02 > A09 > A03 > A04 > A08 > A07：A03、A07 能挂好几天，A09 排后面会一直被盖住。代价是它报着的时候盖住后面那几项：一次重启最多 1 小时，反复崩溃则一直盖到不崩满 1 小时；那几项若还在，A09 一停就接着报。
+  优先级 A06 > A02 > A09 > A03 > A04 > A08 > A07：A03、A07 能挂好几天，A09 排后面会一直被盖住。代价是它报着的时候盖住后面那几项：一次重启最多 1 小时，反复崩溃则一直盖到不崩满 1 小时，证据一直读不到则一直盖着（每小时一条 A09，先去看为什么读不到）；那几项若还在，A09 一停就接着报。
   反复崩溃、每次都自己起来时每小时最多一条。只看人侧：agent、隧道同样会自动重启，没有看。
 - Critical：Pushover priority 2、retry 60、expire 3000；主通道未确认才转 Bark critical/call。Warning：Pushover 普通、Bark passive。回执表示服务接受，不能称手机已响。
 - Python 运维进程在读秘密前禁 core、禁同 UID 检视、锁定现有和未来内存，输出固定保护回执；Rust 入口使用现有 `studiolo-process-safety`。不给 SSH/systemctl 子进程传告警密钥。源和凭据均不通过第三方监控上传。
@@ -64,7 +64,7 @@ scripts/check-agent.py
 
 ## 系统单元与 F6
 
-108 使用 `studiolo-alert-watch.service/.timer`，169 使用 `studiolo-alert-heartbeat.service/.timer`，均为系统单元且 `User=maxsong`。A07、A08 依赖人侧 r20 起写的同步状态回执：先上 r20 再装本包，否则 169 会一直报 A07；两台必须装同一个包（旧包的 5 字段、7 字段回执在新包看来是 A01，新包的 8 字段回执在旧包看来也是）。看门狗状态从这一版起是第 3 版（第 2 版多记 A07／A08 的发送时刻，第 3 版多记 A09 的），旧版的状态文件读不进：F4 还没上过生产，没有旧状态要迁。先 `systemd-analyze verify`、现场私有目录/文件预检，再批准安装和启用；不要启动两份同名看门狗。
+108 使用 `studiolo-alert-watch.service/.timer`，169 使用 `studiolo-alert-heartbeat.service/.timer`，均为系统单元且 `User=maxsong`。A07、A08 依赖人侧 r20 起写的同步状态回执：先上 r20 再装本包，否则 169 会一直报 A07；两台必须装同一个包（旧包的 5 字段、7 字段回执在新包看来是 A01，新包的 8 字段回执在旧包看来也是）。看门狗状态从这一版起是第 3 版（第 2 版多记 A07／A08 的发送时刻，第 3 版多记 A09 的），旧版的状态文件读不进：108 的看门狗从没开过、没写过状态文件（2026-11-24 只读核过），没有旧状态要迁；169 的心跳和探针回执已经在跑，换包之后下一轮就写成新的字段，两台没都换完之前不要开看门狗。先 `systemd-analyze verify`、现场私有目录/文件预检，再批准安装和启用；不要启动两份同名看门狗。
 
 169 的 agent、human、tunnel 三个单元各自使用 `10-time-sync.conf` drop-in。它只增加启动排序和真实 `NTPSynchronized=yes` 闸门，不假定 chrony/timesyncd；120 秒仍未对时则拒绝启动，由原服务的重启策略处理。`clock_ready` 日志带 boot ID 和等待秒数，只证明对时，不证明服务健康。随后查看同 boot 的探针回执与 108 检查结果。
 

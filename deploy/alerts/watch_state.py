@@ -16,7 +16,7 @@ KEPT_SENT = {"daily_sent": ("A07", "A08"), "hourly_sent": ("A09",)}
 KEPT_IN = {code: field for field, codes in KEPT_SENT.items() for code in codes}
 PROBE_FIELDS = {"services_ok", "clock_ok", "mcp_ok", "replica_stale", "memory_high", "sync_unaligned", "sync_deletes_blocked",
                 "human_restarted"}
-# 状态第 2 版加了 daily_sent，第 3 版加了 hourly_sent；旧版的状态文件读不进（F4 还没装上生产，没有要迁的旧状态）。
+# 状态第 2 版加了 daily_sent，第 3 版加了 hourly_sent；旧版的状态文件读不进（108 的看门狗从没开过，没有要迁的旧状态）。
 SCHEMA = 3
 FIELDS = {"schema", "observed", "code", "failures", "episode", "round", "sent", *KEPT_SENT}
 

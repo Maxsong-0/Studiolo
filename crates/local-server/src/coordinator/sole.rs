@@ -13,6 +13,7 @@ pub(crate) struct SoleInstance<'a> {
 
 impl CanonicalWorkbench {
     /// 写者已经在关、Broker 已经交出（封存的冻结窗口里）、或者批准的根变了，都借不到。
+    /// 派生扫描正拿着 Broker 时等它放开，不设期限：到期拒绝等于人侧又起不来，扫描自己总会结束。
     pub(crate) fn sole_instance(&self) -> Result<SoleInstance<'_>, LocalError> {
         let owner = self
             .core

@@ -49,8 +49,8 @@ ls -la /run/studiolo-human /run/studiolo-board /run/studiolo-backup
 
 | 日志里的话 | 挡着启动的节点 |
 |---|---|
-| `studiolo-human: startup rejected` | `/run/studiolo-human/http.sock`（启动器别的前置检查没过也是这句：先看这个节点在不在） |
-| `可信Unix入口配置或监听失败；不覆盖既有路径` | `/run/studiolo-board/board.sock`，或者 `/run/studiolo-backup/producer.sock` |
+| `studiolo-human: startup rejected` | `/run/studiolo-human/http.sock`（r26 起只在它不是自己的、只有一个名字的 socket 时；启动器别的前置检查没过也是这句：先看这个节点在不在） |
+| `可信Unix入口配置或监听失败；不覆盖既有路径` | 三个里的任一个：r26 起 `/run/studiolo-human/http.sock` 判不准也是这句；`/run/studiolo-board/board.sock`、`/run/studiolo-backup/producer.sock` 一直是这句 |
 
 单元是 `Restart=on-failure`、隔 3 秒再试、60 秒内最多 3 次：有节点挡着的话，它试满 3 次就停在 `failed`，不会一直转。
 
