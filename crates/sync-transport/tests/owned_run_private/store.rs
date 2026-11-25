@@ -289,6 +289,7 @@ fn discarding_rechecks_that_the_root_and_the_residue_are_still_the_opened_ones()
             }
         };
         assert_eq!(publisher.discard_residue().err(), Some(expected), "{shape}");
+        assert!(publisher.has_residue(), "{shape}：没丢成就还认着");
         match shape {
             "replaced" => assert_eq!(fs::read(&path).expect("别人的原样"), b"replaced"),
             "root" => assert_eq!(
@@ -298,6 +299,31 @@ fn discarding_rechecks_that_the_root_and_the_residue_are_still_the_opened_ones()
             _ => {}
         }
     }
+}
+
+#[test]
+fn a_discard_whose_directory_sync_fails_no_longer_claims_a_residue() {
+    let records = records();
+    let root = Root::new();
+    drop(FilePublisher::initialize(&root.path, &records.first).expect("可以显式初始化"));
+    let path = root.path.join(paths::STATE_PUBLISH_TEMP);
+    fs::write(&path, b"opened").expect("可以摆残留");
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).expect("可以设权限");
+    let mut publisher = FilePublisher::open_with_residue(&root.path).expect("可以带残留打开");
+    publisher.discard_sync_fails = true;
+    assert_eq!(
+        publisher.discard_residue(),
+        Err(TransportError::Unavailable)
+    );
+    // 名字已经没了：不再说还有残留，重试也不报缺文件；权威记录没动过。
+    assert!(!path.exists());
+    assert!(!publisher.has_residue());
+    publisher.discard_sync_fails = false;
+    assert_eq!(publisher.discard_residue(), Ok(false));
+    assert_eq!(publisher.read().expect("可以读回"), records.first);
+    publisher
+        .replace(&records.second)
+        .expect("下一次发布照常能成");
 }
 
 #[test]

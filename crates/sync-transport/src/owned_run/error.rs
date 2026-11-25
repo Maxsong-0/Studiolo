@@ -25,7 +25,7 @@ pub enum TransportError {
     UnsafeStorage,
     /// 另一个进程持有排他租约。
     Busy,
-    /// 底层存储暂时不可用；本次发布没有生效。
+    /// 底层存储暂时不可用；改名之前失败旧记录不变，改名之后目录落盘失败结果未知，重开核验。
     Unavailable,
     /// 请求超过固定预算。
     Budget,

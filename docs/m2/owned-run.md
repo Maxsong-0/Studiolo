@@ -126,9 +126,9 @@ OutcomePending 无 Outcome 槽、Closed 未 ACK、已发启动请求却没有 bo
 
 单 state ≤ 64 KiB，编解码两侧都检查；不存任何日志正文。计数一律 `checked_add`。
 
-## 5. 唯一 IO 文件与原子替换
+## 5. 存储 IO 与原子替换
 
-`crates/sync-transport/src/store/publish.rs` 是本 crate **唯一**做真实 IO 的文件，
+本 crate 的真实存储 IO **只在** `crates/sync-transport/src/store/publish.rs` 和它的子模块（`publish/io.rs`、`publish/checkpoint.rs`），
 只写三个固定名字：`transport.lock`、`state.json`、`state.json.publish`。
 
 - 逐段 `openat(NOFOLLOW|NONBLOCK|CLOEXEC)` 走到私有根，要求 0700、本人所有；
@@ -138,7 +138,8 @@ OutcomePending 无 Outcome 槽、Closed 未 ACK、已发启动请求却没有 bo
   前后各复验一次根身份与租约对象身份。
 - 发布中途**报错**（盘满、写盘失败、核对不过、改名失败）由发布自己收走刚建的临时文件：
   只认名字还指着自己手里那个 (dev, ino)，不看形态（报错的原因可能正是权限或链接数不对）；收不掉也不盖住原错误。
-  改名成功之后目录落盘失败不在此列：磁盘上已是新状态、没有临时文件，照报 `Unavailable`。
+  改名成功之后目录落盘失败不在此列：磁盘上已是新状态、没有临时文件，照报 `Unavailable`，
+  结果未知，调用方重开核验。
 - **强杀或断电**留下的 `state.json.publish` 不是授权状态，任何时候都不会被读成状态或改名发布；
   丢掉它等于在建它之前一刻被杀。只有两处会丢：
   - `SyncTransportOwner::open_existing`（人侧启动）：拿到租约 → 残留必须是本人、0600、单链接、不超预算的普通文件

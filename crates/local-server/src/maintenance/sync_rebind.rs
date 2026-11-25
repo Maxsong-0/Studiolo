@@ -50,7 +50,7 @@ pub(super) fn run(
     confirm(
         &json!({"command":"sync-rebind", "binding":review,
             "discards_publish_residue":transport.has_residue(),
-            "note":"仅更新同一安装的传输安全配置；保留安装身份与序号，废止旧静止事实。不迁移物理镜像，不改变范围，不初始化存储；有上次发布留下的临时文件时，确认后一并丢弃，此外不清理任何东西。"}),
+            "note":"仅更新同一安装的传输安全配置；保留安装身份与序号，废止旧静止事实。不迁移物理镜像，不改变范围；有上次发布留下的临时文件时，确认后一并丢弃；不初始化或清理其余存储。"}),
         "sync-rebind",
     )?;
     guard(inputs, check)?;

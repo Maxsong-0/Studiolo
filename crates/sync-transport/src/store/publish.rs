@@ -1,4 +1,4 @@
-//! 本 crate 唯一做真实 IO 的文件：固定 `transport.lock`、`state.json`
+//! 本 crate 的真实存储 IO 只在本文件和它的子模块：固定 `transport.lock`、`state.json`
 //! 与唯一已登记的发布临时文件 `state.json.publish`。
 //!
 //! 全部普通单链接、0600 私有权限、真实 UID 核验、目录 FD 相对读写，
@@ -66,6 +66,9 @@ pub struct FilePublisher {
     owner: (u32, u32),
     /// 打开时认下的残留；只握着它的身份，从不读它的内容。
     residue: Option<File>,
+    /// 仅测试：丢残留时目录落盘报错。
+    #[cfg(test)]
+    pub(crate) discard_sync_fails: bool,
 }
 
 #[cfg(unix)]
@@ -170,6 +173,8 @@ impl FilePublisher {
             _lease: lease,
             owner,
             residue: None,
+            #[cfg(test)]
+            discard_sync_fails: false,
         };
         publisher.check()?;
         Ok(publisher)
@@ -292,7 +297,7 @@ impl FilePublisher {
     /// 仅测试：带故障注入的发布。
     ///
     /// # 错误
-    /// 注入故障时返回 `Unavailable`，且权威记录必须保持旧版本。
+    /// 按注入的故障报错：改名之前失败权威记录保持旧版本，改名之后目录落盘失败已是新版本。
     #[cfg(test)]
     pub fn replace_faulted(&mut self, bytes: &[u8], fault: PublishFault) -> Result<()> {
         self.publish(bytes, Some(fault))
@@ -362,10 +367,15 @@ impl super::StatePublisher for FilePublisher {
         let current = self.temporary()?.ok_or(TransportError::MissingStore)?;
         same(&current, opened)?;
         unlinkat(&self.root, paths::STATE_PUBLISH_TEMP, AtFlags::empty()).map_err(storage_error)?;
+        // 名字已经没了就不再认：之后落盘失败也不许说还有残留。
+        self.residue = None;
+        #[cfg(test)]
+        if self.discard_sync_fails {
+            return Err(TransportError::Unavailable);
+        }
         self.root
             .sync_all()
             .map_err(|_| TransportError::Unavailable)?;
-        self.residue = None;
         self.check()?;
         Ok(true)
     }

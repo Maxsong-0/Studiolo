@@ -23,7 +23,8 @@ pub trait StatePublisher: Send {
     /// 完整原子替换权威记录。
     ///
     /// # 错误
-    /// 超过预算返回 `Budget`；底层失败返回 `Unavailable`，此时旧记录必须保持不变。
+    /// 超过预算返回 `Budget`；底层失败返回 `Unavailable`：改名之前失败旧记录不变，
+    /// 改名之后目录落盘失败结果未知，调用方重开核验。
     fn replace(&mut self, bytes: &[u8]) -> Result<()>;
 
     /// 复验根身份、租约与固定文件；每次读取前后都要调用。
