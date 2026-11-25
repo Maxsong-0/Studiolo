@@ -167,7 +167,7 @@ class MonitorTests(unittest.TestCase):
     def test_unknown_probe_is_not_healthy_and_priority_is_explicit(self):
         self.assertEqual(STATE.failure_code({}), "A01")
         probe = dict(services_ok=True, clock_ok=True, mcp_ok=True, replica_stale=False, memory_high=False,
-                     sync_unaligned=False, sync_deletes_blocked=False)
+                     sync_unaligned=False, sync_deletes_blocked=False, human_restarted=False)
         self.assertIsNone(STATE.failure_code(probe))
         # 从最低一级往上逐个打开：每打开一项，代号都换成更高的那一个（A08 盖过 A07，A04 盖过 A08）。
         for field, code in (("sync_unaligned", "A07"), ("sync_deletes_blocked", "A08"), ("memory_high", "A04"),
@@ -384,7 +384,7 @@ class MonitorTests(unittest.TestCase):
         flags = PROBE.sync_flags(stuck, now)
         self.assertEqual(flags, (True, False))
         probe = dict(services_ok=True, clock_ok=True, mcp_ok=True, replica_stale=False, memory_high=False,
-                     sync_unaligned=flags[0], sync_deletes_blocked=flags[1])
+                     sync_unaligned=flags[0], sync_deletes_blocked=flags[1], human_restarted=False)
         self.assertEqual(STATE.failure_code(probe), "A07")
 
     def test_probe_folds_sync_status_in_and_fails_closed_when_unreadable(self):
@@ -537,6 +537,198 @@ class MonitorTests(unittest.TestCase):
         with patch.object(PROBE, "output", side_effect=TimeoutError()):
             result = PROBE.probe()
         self.assertEqual((result["services_ok"], result["memory_high"]), (False, True))
+
+    HUMAN_SHOW = ["systemctl", "show", "studiolo-human.service", "--property=NRestarts,ActiveEnterTimestampMonotonic"]
+    UP_AT = 147_665_927_299  # 微秒；169 上 2026-11-24 人侧这一次起来的单调时刻
+    HOUR = 3_600_000_000
+
+    def restarted(self, restarts, entered, now):
+        # 次序照 169 的 systemctl：和要的次序相反。
+        return PROBE.recently_restarted(f"ActiveEnterTimestampMonotonic={entered}\nNRestarts={restarts}", now)
+
+    def test_an_automatic_restart_is_flagged_for_its_first_hour_only(self):
+        up = self.UP_AT
+        for restarts in (1, 3, 4096):
+            for age, flagged in ((0, True), (60_000_000, True), (self.HOUR - 1, True), (self.HOUR, False), (self.HOUR * 24, False)):
+                self.assertIs(self.restarted(restarts, up, up + age), flagged, (restarts, age))
+        # 人手工启停、重启的（次数是 0），刚起来也不报；机器刚开机、单元从没起来过或不存在同样不算。
+        for age in (0, 60_000_000, self.HOUR, self.HOUR * 24):
+            self.assertIs(self.restarted(0, up, up + age), False, age)
+        self.assertIs(self.restarted(0, 0, 60_000_000), False)
+        # 属性次序反过来也认。
+        self.assertIs(PROBE.recently_restarted(f"NRestarts=1\nActiveEnterTimestampMonotonic={up}", up), True)
+
+    def test_unreadable_or_contradictory_restart_evidence_is_flagged(self):
+        up = self.UP_AT
+        later = up + self.HOUR * 24  # 读得出的话早就满 1 小时了
+        for restarts in ("", "-1", "+0", "0.0", "0x1", "x", "[not set]", "０", "1_0", " 0", "9" * 21):
+            self.assertIs(self.restarted(restarts, up, later), True, repr(restarts))
+        for entered in ("", "-1", "x", "[not set]", "１", "1.5", " 1", "9" * 21):
+            for restarts in (0, 1):
+                self.assertIs(self.restarted(restarts, entered, later), True, repr(entered))
+        # 起来的时刻在现在之后；重启过却从没起来过：自相矛盾，不当成正常。
+        for restarts in (0, 1):
+            self.assertIs(self.restarted(restarts, up + 1, up), True, restarts)
+        self.assertIs(self.restarted(1, 0, later), True)
+        # 缺一项、多一项、重复、没有等号：不猜。
+        good = f"ActiveEnterTimestampMonotonic={up}\nNRestarts=0"
+        self.assertIs(PROBE.recently_restarted(good, later), False)
+        for text in ("", "NRestarts=0", f"ActiveEnterTimestampMonotonic={up}", good + "\nNRestarts=0", good + "\nExtra=1",
+                     good + "\nlonely", good.replace("NRestarts=0", "NRestarts"), good.replace("NRestarts", "nrestarts")):
+            self.assertIs(PROBE.recently_restarted(text, later), True, repr(text))
+
+    def test_probe_reads_the_human_unit_and_keeps_the_service_verdict_separate(self):
+        human = "studiolo-human.service"
+        now = [self.UP_AT + 60_000_000]
+        asked = []
+
+        def run(show):
+            # 三个单元都在、内存都宽裕；人侧那条由 show 决定。
+            def systemctl(command):
+                if command == self.HUMAN_SHOW:
+                    asked.append(command)
+                    return show()
+                return f"ActiveState=active\nControlGroup=/system.slice/{command[2]}"
+            with tempfile.TemporaryDirectory() as root:
+                for unit in PROBE.UNITS:
+                    self.memory_unit(root, unit, IDLE_AGENT)
+                with patch.object(PROBE, "output", systemctl), patch.object(PROBE, "CGROUPS", Path(root)), \
+                        patch.object(PROBE.time, "clock_gettime_ns", lambda clock: {PROBE.time.CLOCK_MONOTONIC: now[0] * 1000 + 999}[clock]):
+                    return PROBE.probe()
+
+        shown = lambda restarts: f"ActiveEnterTimestampMonotonic={self.UP_AT}\nNRestarts={restarts}"
+        result = run(lambda: shown(1))
+        self.assertEqual(set(result), STATE.PROBE_FIELDS)
+        self.assertEqual((result["human_restarted"], result["services_ok"], result["memory_high"]), (True, True, False))
+        result = run(lambda: shown(0))
+        self.assertEqual((result["human_restarted"], result["services_ok"], result["memory_high"]), (False, True, False))
+        # 时钟在 systemctl 答完之后才读：答的那一刻人侧刚好起来，不能读成「在现在之后」。
+        def restarted_while_asking():
+            now[0] = self.UP_AT + self.HOUR
+            return shown(1)
+        now[0] = self.UP_AT - 1
+        self.assertIs(run(restarted_while_asking)["human_restarted"], False)
+        # systemctl 跑不出来：只报这一项，不牵连服务在不在、内存够不够。
+        def broken():
+            raise TimeoutError()
+        result = run(broken)
+        self.assertEqual((result["human_restarted"], result["services_ok"], result["memory_high"]), (True, True, False))
+        self.assertEqual(len(asked), 4)
+        # 反过来，服务那一项跑不出来也不牵连它。
+        with patch.object(PROBE, "service_metrics", side_effect=TimeoutError()), \
+                patch.object(PROBE, "output", lambda command: shown(0)), \
+                patch.object(PROBE.time, "clock_gettime_ns", lambda clock: self.UP_AT * 1000):
+            result = PROBE.probe()
+        self.assertEqual((result["human_restarted"], result["services_ok"]), (False, False))
+
+    def test_restart_code_ranks_after_service_loss_and_before_the_lingering_ones(self):
+        healthy = dict(services_ok=True, clock_ok=True, mcp_ok=True, replica_stale=False, memory_high=False,
+                       sync_unaligned=False, sync_deletes_blocked=False, human_restarted=False)
+        self.assertEqual(set(healthy), STATE.PROBE_FIELDS)
+        self.assertIsNone(STATE.failure_code(healthy))
+        restarted = dict(healthy, human_restarted=True)
+        self.assertEqual(STATE.failure_code(restarted), "A09")
+        # 能挂好几天的几项盖不住它：它一次只占 1 小时，反过来就一直看不见。
+        for field in ("replica_stale", "memory_high", "sync_unaligned", "sync_deletes_blocked"):
+            self.assertEqual(STATE.failure_code(dict(restarted, **{field: True})), "A09", field)
+        for field, code in (("services_ok", "A02"), ("mcp_ok", "A02"), ("clock_ok", "A06")):
+            self.assertEqual(STATE.failure_code(dict(restarted, **{field: False})), code, field)
+        # 上一版探针的 7 个字段、非布尔值都不当成正常。
+        self.assertEqual(STATE.failure_code({key: value for key, value in healthy.items() if key != "human_restarted"}), "A01")
+        self.assertEqual(STATE.failure_code(dict(healthy, human_restarted=0)), "A01")
+        self.assertEqual(STATE.failure_code(dict(healthy, extra=False)), "A01")
+        self.assertEqual(STATE.CODES["A09"], "warning")
+
+    def test_restart_code_fires_after_two_rounds_and_repeats_hourly(self):
+        state, fire = STATE.observe(STATE.initial(100), "A09", 100)
+        self.assertFalse(fire)
+        state, fire = STATE.observe(state, "A09", 160)
+        self.assertTrue(fire)
+        before = state
+        state = STATE.delivered(before, 160)
+        self.assertEqual((state["hourly_sent"], state["daily_sent"]), ({"A09": 160}, {"A07": None, "A08": None}))
+        # 记账给出新状态，传进来的那一份不动。
+        self.assertEqual((before["sent"], before["hourly_sent"]), (None, {"A09": None}))
+        # 反复崩溃：一小时内被 A02 打断再回来不重报，一小时到了还在崩才再报。
+        state, fire = self.fire_twice(state, "A02", 220)
+        self.assertTrue(fire)
+        state = STATE.delivered(state, 280)
+        self.assertEqual(state["hourly_sent"], {"A09": 160})
+        state, fire = self.fire_twice(state, "A09", 340)
+        self.assertFalse(fire)
+        state, fire = self.fire_twice(state, "A07", 460)
+        self.assertTrue(fire)
+        state = STATE.delivered(state, 520)
+        self.assertEqual((state["hourly_sent"], state["daily_sent"]), ({"A09": 160}, {"A07": 520, "A08": None}))
+        state, fire = self.fire_twice(state, "A09", 580)
+        self.assertFalse(fire)
+        state, fire = STATE.observe(state, "A09", 160 + 3599)
+        self.assertFalse(fire)
+        state, fire = STATE.observe(state, "A09", 160 + 3600)
+        self.assertTrue(fire)
+        # 没发出去的不记账，下一轮就重试。
+        state, fire = STATE.observe(state, "A09", 160 + 3660)
+        self.assertTrue(fire)
+        state = STATE.delivered(state, 160 + 3660)
+        # 看到正常（起来满 1 小时，或人清了次数）就清：再崩是新的一条，连续两轮就报。
+        state, fire = STATE.observe(state, None, 160 + 3720)
+        self.assertFalse(fire)
+        self.assertEqual((state["hourly_sent"], state["daily_sent"]), ({"A09": None}, {"A07": None, "A08": None}))
+        state, fire = STATE.observe(state, "A09", 160 + 3780)
+        self.assertFalse(fire)
+        state, fire = STATE.observe(state, "A09", 160 + 3840)
+        self.assertTrue(fire)
+        # 时钟回拨同样清。
+        state = STATE.delivered(state, 160 + 3840)
+        state, fire = STATE.observe(state, "A09", 100)
+        self.assertTrue(fire)
+        self.assertEqual((state["code"], state["hourly_sent"]), ("A06", {"A09": None}))
+
+    def test_watch_state_hourly_record_is_closed_and_bounded(self):
+        good = STATE.initial(1000)
+        self.assertEqual((good["schema"], good["hourly_sent"]), (3, {"A09": None}))
+        STATE.validate(dict(good, hourly_sent={"A09": 1000}))
+        STATE.validate(dict(good, hourly_sent={"A09": 0}))
+        for bad in (
+            dict(good, schema=2),
+            dict(good, schema=4),
+            {key: value for key, value in good.items() if key != "hourly_sent"},
+            dict(good, hourly_sent={}),
+            dict(good, hourly_sent={"A09": None, "A07": None}),
+            dict(good, daily_sent={"A07": None, "A08": None, "A09": None}),
+            dict(good, hourly_sent={"A09": True}),
+            dict(good, hourly_sent={"A09": 1001}),
+            dict(good, hourly_sent={"A09": -1}),
+            dict(good, hourly_sent=None),
+        ):
+            with self.assertRaises(ValueError, msg=repr(bad)):
+                STATE.validate(bad)
+        # 上一版的状态文件（没有按小时的记录）读进来就停，不当成刚重置。
+        previous = {key: value for key, value in dict(good, schema=2).items() if key != "hourly_sent"}
+        with self.assertRaises(ValueError):
+            STATE.observe(previous, None, 1060)
+
+    def test_watch_run_hands_the_restart_code_to_the_sender_once_an_hour(self):
+        restarted = dict(services_ok=True, clock_ok=True, mcp_ok=True, replica_stale=False, memory_high=False,
+                         sync_unaligned=False, sync_deletes_blocked=False, human_restarted=True)
+        sent = []
+
+        def sender(command, **kwargs):
+            sent.append(command)
+            return subprocess.CompletedProcess(command, 0, stdout=b"accepted\n")
+
+        with tempfile.TemporaryDirectory() as directory:
+            for now in (1000, 1060, 1120, 1060 + 3600):
+                with patch.object(RUN, "harden"), patch.object(RUN, "remote_probe", return_value=restarted), \
+                        patch.object(RUN, "ping", return_value=[True, True]), patch.object(RUN.subprocess, "run", sender), \
+                        patch.object(RUN.time, "time", return_value=now), patch("builtins.print"):
+                    self.assertEqual(RUN.main(["watch", "--node", "n108", "--deliver", "--state", directory,
+                                               "--audit", "/audit", "--sender", "/sender"]), 0)
+            with IO.locked_state(directory) as state:
+                self.assertEqual(state.load()["hourly_sent"], {"A09": 1060 + 3600})
+        # 等级、代号就是发送端要的那两个参数；第 1、3 轮不发，满一小时再发一次，轮次不重用。
+        self.assertEqual([command[:4] for command in sent], [["/sender", "/audit", "warning", "A09"]] * 2)
+        self.assertNotEqual(sent[0][5], sent[1][5])
 
     def test_heartbeats_are_independent_empty_posts_and_bounded(self):
         environment = {"STUDIOLO_HEALTHCHECKS_URL": "https://hc-ping.com/" + "a" * 36,

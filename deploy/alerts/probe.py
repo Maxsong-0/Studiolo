@@ -1,4 +1,4 @@
-"""169 本机只读探针：固定三个单元、对时、内存水位、复用会话的 MCP 握手与 Bridge 同步状态回执。"""
+"""169 本机只读探针：固定三个单元、人侧自动重启、对时、内存水位、复用会话的 MCP 握手与 Bridge 同步状态回执。"""
 import importlib.util
 import json
 import os
@@ -14,7 +14,8 @@ from private_state import closed_object, locked_state, private_directory, privat
 from bounded_process import output as command_output
 from residency import child_environment
 
-UNITS = ("studiolo-agent.service", "studiolo-human.service", "studiolo-tunnel.service")
+HUMAN_UNIT = "studiolo-human.service"
+UNITS = ("studiolo-agent.service", HUMAN_UNIT, "studiolo-tunnel.service")
 TOKEN = "/home/maxsong/.config/studiolo-alert/agent-token"
 STATE = "/home/maxsong/.local/share/studiolo-alert/probe"
 RECEIPT = "/home/maxsong/.local/share/studiolo-alert/probe-receipt"
@@ -36,6 +37,12 @@ MEMORY_HIGH_PERCENT = 80
 # 最近 5 分钟里整组任务都因缺内存停住的时间满 10%：每分钟一张的快照看不到两次之间的突发，
 # 也看不到没到 80% 却反复重读的抖动，靠这个窗口补。169 封存顶满上限时实测最高 0.15%（2026-11-24，一次完整封存每秒取一次）。
 STALL_HIGH_PERCENT = 10
+# A09（T-231）：人侧被 systemd 自动重启过、这一次起来还不到 1 小时（微秒）。只看 1 小时，不等人清次数：
+# 看门狗一次只认一个代号，一直挂着会让同步的 A07、A08 等不到「恢复正常」。
+RESTART_RECENT_USEC = 3600 * 1_000_000
+RESTART_PROPERTIES = ("NRestarts", "ActiveEnterTimestampMonotonic")
+# systemd 的这两个属性都是无符号整数，最长 20 位；isdecimal 会放过全角数字，这里不用它。
+UNSIGNED = re.compile(r"[0-9]{1,20}")
 STALL_LINE = re.compile(r"full avg10=\S+ avg60=\S+ avg300=([0-9]{1,3}\.[0-9]{2}) total=[0-9]+")
 
 
@@ -138,6 +145,29 @@ def service_metrics():
     return active, memory_high
 
 
+def recently_restarted(text, now_usec):
+    """systemctl show 的两个属性 → 最近 1 小时内自动重启过；读不全、不合格或自相矛盾一律当成重启过。
+
+    NRestarts 只数 systemd 自动拉起的，人手工启停或 reset-failed 之后归零。
+    """
+    fields = [line.partition("=") for line in text.splitlines()]
+    values = {name: value for name, _, value in fields}
+    if len(fields) != len(RESTART_PROPERTIES) or set(values) != set(RESTART_PROPERTIES):
+        return True
+    if not all(UNSIGNED.fullmatch(value) for value in values.values()):
+        return True
+    restarts, entered = (int(values[name]) for name in RESTART_PROPERTIES)
+    if entered > now_usec or (restarts > 0 and entered == 0):
+        return True
+    return restarts > 0 and now_usec - entered < RESTART_RECENT_USEC
+
+
+def human_restarted():
+    text = output(["systemctl", "show", HUMAN_UNIT, "--property=" + ",".join(RESTART_PROPERTIES)])
+    # 先问 systemd 再读钟：反过来，问的那一刻刚起来的会算成「在现在之后」。
+    return recently_restarted(text, time.clock_gettime_ns(time.CLOCK_MONOTONIC) // 1000)
+
+
 def mcp_probe(token_path=TOKEN, state_path=STATE):
     path = Path(__file__).resolve().parents[2] / "scripts/check-agent-replica.py"
     spec = importlib.util.spec_from_file_location("studiolo_replica_probe", path)
@@ -220,9 +250,13 @@ def sync_flags(status, now):
 
 def probe():
     result = dict(services_ok=False, clock_ok=False, mcp_ok=False, replica_stale=True, memory_high=True,
-                  sync_unaligned=True, sync_deletes_blocked=False)
+                  sync_unaligned=True, sync_deletes_blocked=False, human_restarted=True)
     try:
         result["services_ok"], result["memory_high"] = service_metrics()
+    except Exception:
+        pass
+    try:
+        result["human_restarted"] = human_restarted()
     except Exception:
         pass
     try:
