@@ -35,7 +35,9 @@ export function findCaseCollisions(paths: string[]): string[][] {
 function listFiles(dir: string): string[] {
   return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
     if (entry.isDirectory()) {
-      return SKIPPED_DIRS.has(entry.name) ? [] : listFiles(join(dir, entry.name));
+      return SKIPPED_DIRS.has(entry.name)
+        ? []
+        : listFiles(join(dir, entry.name));
     }
     return [relative(WEB, join(dir, entry.name)).split(sep).join('/')];
   });
