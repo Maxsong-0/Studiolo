@@ -164,6 +164,11 @@ fn any_bad_field_refuses_the_whole_snapshot() {
         ("branch", json!("a\nb")),
         ("branch", json!("a\u{202e}b")),
         ("branch", json!("a\u{200b}b")),
+        ("branch", json!("a\u{600}b")),
+        ("branch", json!("a\u{206f}b")),
+        ("branch", json!("a\u{e0041}b")),
+        ("branch", json!("a\u{e007f}b")),
+        ("branch", json!("a\u{1d173}b")),
         ("branch", json!("a..b")),
         ("branch", json!("-a")),
         ("branch", json!("/a")),
@@ -211,6 +216,13 @@ fn any_bad_field_refuses_the_whole_snapshot() {
     let mut alone = session(1, A);
     alone["total"] = json!(3);
     assert!(Snapshot::parse(json!({"seq":1,"sessions":[alone]})).is_none());
+    // 没带 `total` 时 `step` 自己也封顶。
+    for (step, accepted) in [(999, true), (1000, false)] {
+        let mut row = session(1, A);
+        row["step"] = json!(step);
+        let parsed = Snapshot::parse(json!({"seq":1,"sessions":[row]}));
+        assert_eq!(parsed.is_some(), accepted, "{step}");
+    }
     // 编号重复、条数超上限、`seq` 超出精确整数、顶层多字段。
     assert!(Snapshot::parse(json!({"seq":1,"sessions":[session(1, A), session(1, B)]})).is_none());
     let many = (0..=MAX_PER_SOURCE)

@@ -414,3 +414,9 @@ fn unchanged(headers: &HeaderMap, etag: &HeaderValue) -> bool {
             tag.strip_prefix("W/").unwrap_or(tag).as_bytes() == etag.as_bytes()
         })
 }
+
+// 共用的 MCP 夹具里有本模块用不到的方法。
+#[cfg(test)]
+#[allow(dead_code)]
+#[path = "../tests/connector_private/stopping.rs"]
+mod tests;

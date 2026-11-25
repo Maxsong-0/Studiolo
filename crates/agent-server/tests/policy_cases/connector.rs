@@ -417,6 +417,10 @@ async fn malformed_pushes_never_reach_the_authority() {
     )
     .await
     .refused(400, "invalid_request");
+    // 看黑板的列表不收任何查询参数。
+    r.get("/connect/v1/board?project=x", &r.board)
+        .await
+        .refused(400, "invalid_request");
     r.get("/connect/v1/sessions", &r.status)
         .await
         .refused(405, "method_not_allowed");
