@@ -8,6 +8,7 @@ import {
 } from '../../dev/fixturePlugin';
 import { validateDocument, validateWorkbench } from '../validate';
 import { parseBoardOverview } from '../boardOverviewModel';
+import { parsePresence } from '../presenceModel';
 import { validFreshness } from '../freshness';
 import { authentication, sessionList, sessionPair } from '../sessionModel';
 import {
@@ -305,6 +306,13 @@ describe('假数据：协作黑板、汇总、回放与执行', () => {
     expect(get('/api/v1/board/overview?window_hours=0').status).toBe(400);
     expect(get('/api/v1/board/overview?window_hours=169').status).toBe(400);
     expect(get('/api/v1/board/overview?project=x').status).toBe(400);
+  });
+
+  it('本机会话：过解码器，未知参数 400', () => {
+    const { get, read } = setup();
+    const presence = parsePresence(read('/api/v1/board/presence'));
+    expect(presence.sessions.length).toBeGreaterThan(0);
+    expect(get('/api/v1/board/presence?project=x').status).toBe(400);
   });
 
   it('项目时间回放：事件、当日日志与无日期日志计数都过解码器', () => {

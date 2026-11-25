@@ -47,6 +47,7 @@ import {
 } from './fixtures/ids.ts';
 import type { TaskKey } from './fixtures/ids.ts';
 import { projectOperations } from './fixtures/operations.ts';
+import { presenceBody } from './fixtures/presence.ts';
 import {
   activeRevocations,
   blockedBy,
@@ -840,6 +841,10 @@ export function createFixtureApi(options: { now?: () => number } = {}) {
       }
       case '/api/v1/board/overview':
         return overview(query, now);
+      case '/api/v1/board/presence':
+        return only(query, [])
+          ? ok(presenceBody(now))
+          : error(400, '查询参数不合法。', 'invalid_board_presence_query');
       case '/api/v1/board/timeline':
         return timeline(query);
       case '/api/v1/board/replay':
