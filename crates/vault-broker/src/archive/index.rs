@@ -44,6 +44,28 @@ pub(crate) struct PackRef {
     pub id: String,
     pub key: String,
 }
+impl PackRef {
+    /// 这一条按什么记。
+    pub(crate) fn name_of(&self, part: Part) -> &str {
+        part.name_of(&self.id, &self.key)
+    }
+}
+/// 一段核过之后要往索引里加的全部东西；加进去（[`Archive::apply`]）不会失败。
+pub(super) struct Addition {
+    head: Head,
+    segment: (String, u64),
+    slots: HashMap<Key, Slot>,
+    packs: Vec<PackRef>,
+    committed: Vec<VaultPath>,
+    renames: Vec<Rename>,
+    file_bytes: u64,
+}
+impl Addition {
+    /// 加进去之后的段头，存进写者状态的就是它。
+    pub(super) fn head(&self) -> &Head {
+        &self.head
+    }
+}
 /// 核过的段链。没打过包就是空的。
 #[derive(Clone, Default)]
 pub(crate) struct Archive {
@@ -121,14 +143,15 @@ impl Archive {
         }
         Ok(Some(bytes))
     }
-    /// 把核过的一段接在链尾。段内、段间有一条重复就是坏的。
-    pub(super) fn append(
-        &mut self,
+    /// 核一段能不能接在链尾，交回要加的东西，自己不变。段内、段间有一条重复就是坏的。
+    /// 打包先核、再存状态、最后才加：存状态没成，内存里的索引不能先变。
+    pub(super) fn check(
+        &self,
         name: String,
         length: u64,
         segment: &format::Segment,
         pair: VaultUuid,
-    ) -> Result<(), BrokerError> {
+    ) -> Result<Addition, BrokerError> {
         let bad = || BrokerError::CorruptWriterState;
         let (sequence, digest) = format::parse_name(&name).ok_or_else(bad)?;
         let previous = self.head.as_ref().map(|head| head.tail.as_str());
@@ -139,8 +162,20 @@ impl Archive {
         {
             return Err(bad());
         }
-        let tail = digest.to_owned();
         let index = self.segments.len();
+        let mut addition = Addition {
+            head: Head {
+                segments: sequence,
+                packs: (self.packs.len() + segment.packs.len()) as u64,
+                tail: digest.to_owned(),
+            },
+            slots: HashMap::with_capacity(segment.packs.len() * 4),
+            packs: Vec::with_capacity(segment.packs.len()),
+            committed: Vec::new(),
+            renames: Vec::new(),
+            file_bytes: 0,
+            segment: (name, length),
+        };
         for (pack, entries) in &segment.packs {
             for entry in entries {
                 let slot = Slot {
@@ -149,29 +184,33 @@ impl Archive {
                     bytes: entry.bytes,
                     sha256: key(Part::Replay, &entry.sha256)?.1,
                 };
-                if self
-                    .slots
-                    .insert(key(entry.part, &entry.name)?, slot)
-                    .is_some()
-                {
+                let key = key(entry.part, &entry.name)?;
+                if self.slots.contains_key(&key) || addition.slots.insert(key, slot).is_some() {
                     return Err(bad());
                 }
             }
-            self.summarize(pack, pair)?;
-            self.packs.push(PackRef {
+            addition.summarize(pack, pair)?;
+            addition.packs.push(PackRef {
                 kind: pack.kind,
                 id: pack.id.clone(),
                 key: pack.key.clone(),
             });
         }
-        self.segments.push((name, length));
-        self.head = Some(Head {
-            segments: sequence,
-            packs: self.packs.len() as u64,
-            tail,
-        });
-        Ok(())
+        Ok(addition)
     }
+    /// 加进去。只收 [`Archive::check`] 对着现在这条链核出来的。
+    pub(super) fn apply(&mut self, addition: Addition) {
+        self.head = Some(addition.head);
+        self.segments.push(addition.segment);
+        self.slots.extend(addition.slots);
+        self.packs.extend(addition.packs);
+        self.committed.extend(addition.committed);
+        self.renames.extend(addition.renames);
+        self.file_bytes += addition.file_bytes;
+    }
+}
+
+impl Addition {
     /// 一包里四条要说的是同一个请求；顺手记下别处判断要用的几样。
     fn summarize(&mut self, pack: &format::Pack, pair: VaultUuid) -> Result<(), BrokerError> {
         let bad = || BrokerError::CorruptWriterState;
@@ -186,7 +225,7 @@ impl Archive {
                     return Err(bad());
                 }
                 if matches!(terminal.outcome, Outcome::Committed { .. }) {
-                    self.committed.insert(envelope.path);
+                    self.committed.push(envelope.path);
                 }
             }
             (Kind::Rename, Replay::FileOperation(terminal)) => {
@@ -345,7 +384,8 @@ pub(super) fn load(
     let mut archive = Archive::default();
     for name in chain {
         let (length, segment) = read_segment(data, &name, pair, vault)?;
-        archive.append(name, length, &segment, pair)?;
+        let addition = archive.check(name, length, &segment, pair)?;
+        archive.apply(addition);
     }
     if archive.head() != head {
         return Err(bad());

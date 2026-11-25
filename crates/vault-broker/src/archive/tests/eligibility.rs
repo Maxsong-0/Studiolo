@@ -50,7 +50,7 @@ fn nothing_is_packed_while_anything_is_unresolved() {
     broker.mutate_recorded(note(5), metadata()).unwrap();
     let before = loose_records(&fixture.data);
     assert!(matches!(
-        broker.archive_step(later(), &mut ArchiveCursor::default()),
+        round(&mut broker, later(), ArchiveBatch::All),
         Err(BrokerError::MutationUnresolved)
     ));
     assert_eq!(loose_records(&fixture.data), before);
@@ -59,7 +59,7 @@ fn nothing_is_packed_while_anything_is_unresolved() {
     fault(&broker, 1);
     assert!(broker.mutate_recorded(note(6), metadata()).is_err());
     assert!(matches!(
-        broker.archive_step(later(), &mut ArchiveCursor::default()),
+        round(&mut broker, later(), ArchiveBatch::All),
         Err(BrokerError::MutationUnresolved)
     ));
     assert!(!fixture.data.join("archive-v1").exists());
@@ -71,7 +71,7 @@ fn nothing_is_packed_while_anything_is_unresolved() {
     assert!(broker.mutate(note(6)).is_err());
     assert!(broker.pending_content_audit(64).unwrap().is_empty());
     assert!(matches!(
-        broker.archive_step(later(), &mut ArchiveCursor::default()),
+        round(&mut broker, later(), ArchiveBatch::All),
         Err(BrokerError::MutationUnresolved)
     ));
     assert!(!fixture.data.join("archive-v1").exists());
@@ -97,11 +97,7 @@ fn a_damaged_record_stops_the_step_and_removes_nothing() {
         value[field] = "b".repeat(64).into();
         fs::write(&path, serde_json::to_vec(&value).unwrap()).unwrap();
         let before = loose_records(&fixture.data);
-        assert!(
-            broker
-                .archive_step(later(), &mut ArchiveCursor::default())
-                .is_err()
-        );
+        assert!(round(&mut broker, later(), ArchiveBatch::All).is_err());
         assert_eq!(loose_records(&fixture.data), before);
     }
 }
@@ -119,7 +115,7 @@ fn a_terminal_that_tells_another_story_is_not_packed() {
     fs::write(&path, text.replace("note-0.md", "note-9.md")).unwrap();
     let before = loose_records(&fixture.data);
     assert!(matches!(
-        broker.archive_step(later(), &mut ArchiveCursor::default()),
+        round(&mut broker, later(), ArchiveBatch::All),
         Err(BrokerError::CorruptWriterState)
     ));
     assert_eq!(loose_records(&fixture.data), before);
@@ -147,24 +143,28 @@ fn an_incomplete_set_is_left_alone() {
     }
 }
 
-/// 一步最多 64 包，也最多看 256 个；游标接着走，不重不漏。
+/// 一步只做一样：最多看 256 个，或者写最多 64 包；游标接着走，不重不漏。
 #[test]
 fn a_round_is_cut_into_bounded_steps() {
     let fixture = Fixture::new();
     let mut broker = fixture.open();
     notes(&mut broker, 1);
     bulk(&broker, 0..150);
+    let mut steps = Vec::new();
     let mut cursor = ArchiveCursor::default();
-    let mut packed = Vec::new();
     loop {
-        let step = broker.archive_step(later(), &mut cursor).unwrap();
-        assert!(step.examined <= 256);
-        packed.push(step.packed);
+        let step = broker
+            .archive_step(later(), ArchiveBatch::All, &mut cursor)
+            .unwrap();
+        steps.push((step.examined, step.packed));
         if step.done {
             break;
         }
     }
-    assert_eq!(packed, [64, 64, 23]);
+    assert_eq!(
+        steps,
+        [(64, 0), (0, 64), (64, 0), (0, 64), (23, 0), (0, 23)]
+    );
     // 没有一个合格的时候按看过的数分步。
     bulk(&broker, 150..750);
     let none = ArchiveCutoff {
@@ -174,7 +174,9 @@ fn a_round_is_cut_into_bounded_steps() {
     let mut cursor = ArchiveCursor::default();
     let mut examined = Vec::new();
     loop {
-        let step = broker.archive_step(none, &mut cursor).unwrap();
+        let step = broker
+            .archive_step(none, ArchiveBatch::All, &mut cursor)
+            .unwrap();
         assert_eq!(step.packed, 0);
         examined.push(step.examined);
         if step.done {

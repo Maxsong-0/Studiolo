@@ -1,5 +1,5 @@
 //! 散件的读、删和枚举。删之前再核一遍还是读到的那一个（inode 和内容都没变）。
-use super::format::Part;
+use super::format::{Part, Segment};
 use crate::{
     BrokerError, FsVaultBroker,
     writer::{directory, disk},
@@ -41,6 +41,20 @@ pub(super) fn read(data: &Dir, part: Part, name: &str) -> Result<Option<Loose>, 
             },
         ),
     )
+}
+
+/// 段里每一条的散件：都在、都和段里逐字节相同才交回，差一条、差一个字节就是 `None`。
+pub(super) fn matching(data: &Dir, segment: &Segment) -> Result<Option<Vec<Loose>>, BrokerError> {
+    let mut found = Vec::with_capacity(segment.packs.len() * 4);
+    for (pack, _) in &segment.packs {
+        for (part, bytes) in pack.kind.parts().into_iter().zip(&pack.bytes) {
+            match read(data, part, pack.name_of(part))? {
+                Some(loose) if &loose.bytes == bytes => found.push(loose),
+                _ => return Ok(None),
+            }
+        }
+    }
+    Ok(Some(found))
 }
 
 /// 删掉一条散件；目录由调用方最后一起落盘（[`sync`]）。

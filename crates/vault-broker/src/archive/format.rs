@@ -4,11 +4,15 @@ use serde::{Deserialize, Serialize};
 
 pub(crate) const DIRECTORY: &str = "archive-v1";
 const MAGIC: &[u8; 8] = b"SWARCH01";
-/// 一段最多几包；也是打包一步最多做的量，决定一步要持锁多久。
+/// 一段最多几包；也是写段的一步最多做的量，决定一步要持锁多久。
 pub(crate) const SEGMENT_PACKS: usize = 64;
 /// 一段最多几字节。一包最多四条、每条 64 KiB，64 包可以到 16 MiB，凑不下就少装几包。
 pub(crate) const SEGMENT_BYTES: usize = 8 * 1024 * 1024;
-/// 段数上限：65536 包。再往上封存逐条核会先撞预算；离上限八成时健康页预警。
+/// 段头最多占这么多；挑的时候先留出来。
+pub(crate) const HEADER_BYTES: usize = 256 * 1024;
+/// 段数上限。能装多少包看每段装了多少（[`super::ArchiveBatch`]）：都装满是 65536 包，平时最少 32 包一段是 32768 包，
+/// 一直在八成以上、每段只有 8 包是 8192 包；离线命令每跑一次最多另外多一个小段。记录大到按字节装满的段可以少于
+/// 这些（最少约 31 包）。再往上封存逐条核会先撞预算；离上限八成时健康页预警。
 pub(crate) const MAX_SEGMENTS: u32 = 1024;
 
 /// 写在 `writer-state.json` 里的段头：有几段、几包、链尾段的摘要。
@@ -81,6 +85,10 @@ impl Part {
             Self::FileIntentAck | Self::FileOutcomeAck => "file-operations-v1/acks",
         }
     }
+    /// 一条按什么记：重放按幂等键摘要，其余按请求号。
+    pub(crate) fn name_of<'a>(self, id: &'a str, key: &'a str) -> &'a str {
+        if self == Self::Replay { key } else { id }
+    }
     /// 散件的文件名。
     pub(crate) fn file_name(self, id: &str) -> String {
         match self {
@@ -101,13 +109,9 @@ pub(crate) struct Pack {
     pub bytes: [Vec<u8>; 4],
 }
 impl Pack {
-    /// 这一条按什么记：重放按键，其余按请求号。
+    /// 这一条按什么记。
     pub(crate) fn name_of(&self, part: Part) -> &str {
-        if part == Part::Replay {
-            &self.key
-        } else {
-            &self.id
-        }
+        part.name_of(&self.id, &self.key)
     }
 }
 
@@ -277,11 +281,7 @@ pub(crate) fn decode(
             }
             entries.push(Entry {
                 part: entry.part,
-                name: if entry.part == Part::Replay {
-                    pack.key.clone()
-                } else {
-                    pack.id.clone()
-                },
+                name: entry.part.name_of(&pack.id, &pack.key).to_owned(),
                 offset: u32::try_from(offset).map_err(|_| bad())?,
                 bytes: entry.bytes,
                 sha256: entry.sha256,

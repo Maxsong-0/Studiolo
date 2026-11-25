@@ -7,7 +7,8 @@ mod numbering;
 pub use numbering::NumberingScanner;
 mod archive;
 pub use archive::{
-    ArchiveCursor, ArchiveCutoff, ArchiveStep, ArchiveUnpack, RecordUsage, RecordUsageItem,
+    ArchiveBatch, ArchiveCursor, ArchiveCutoff, ArchiveStep, ArchiveUnpack, RecordUsage,
+    RecordUsageItem,
 };
 mod artifact_stage;
 pub use artifact_stage::{ArtifactStager, StagedArtifactCommit};

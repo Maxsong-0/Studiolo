@@ -1,6 +1,6 @@
 //! 写者记录离各自上限还有多远。只看文件名和大小，不读内容；健康页和「要不要打包」都用它。
-use super::format::MAX_SEGMENTS;
 use super::loose;
+use super::{cutoff::ArchiveBatch, format::MAX_SEGMENTS};
 use crate::{
     BrokerError, FsVaultBroker, file_operation::disk::Folder, records::WriterRecords, writer::disk,
 };
@@ -37,9 +37,19 @@ pub struct RecordUsage {
     pub packs: u64,
 }
 impl RecordUsage {
-    /// 打包能腾出来的三处里，用得最满的那处到了一半。
+    /// 现在该按什么批量打包；没有一处散件到一半就不打。
     #[must_use]
-    pub fn half_full(&self) -> bool {
+    pub fn archive_batch(&self) -> Option<ArchiveBatch> {
+        if self.filled(4, 5) {
+            Some(ArchiveBatch::Pressed)
+        } else if self.filled(1, 2) {
+            Some(ArchiveBatch::Usual)
+        } else {
+            None
+        }
+    }
+    /// 打包能腾出来的几处里，有一处用到了上限的 `part / whole`。
+    fn filled(&self, part: u64, whole: u64) -> bool {
         [
             self.descriptors,
             self.descriptor_bytes,
@@ -49,7 +59,7 @@ impl RecordUsage {
             self.file_operation_bytes,
         ]
         .iter()
-        .any(|item| item.used * 2 >= item.limit)
+        .any(|item| item.used * whole >= item.limit * part)
     }
 }
 

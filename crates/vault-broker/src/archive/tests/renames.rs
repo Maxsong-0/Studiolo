@@ -153,12 +153,7 @@ fn packing_renames_resumes_and_unpacks_like_content() {
         let before = all_records(&broker);
         let loose = loose_records(&fixture.data);
         fault(&broker, point);
-        assert!(
-            broker
-                .archive_step(later(), &mut ArchiveCursor::default())
-                .is_err(),
-            "{point}"
-        );
+        interrupted(&mut broker);
         drop(broker);
         let mut broker = fixture.reopen();
         assert_eq!(all_records(&broker), before, "{point}");
@@ -261,4 +256,35 @@ fn a_rename_record_that_differs_from_its_packed_copy_is_refused() {
         drop(broker);
         assert!(fixture.try_reopen().is_err(), "{part:?}");
     }
+}
+
+/// 分在两段里的改名，保留字节、改名表都是两段加起来的。
+#[test]
+fn renames_in_two_segments_add_up() {
+    let fixture = Fixture::new();
+    let mut broker = fixture.open();
+    notes(&mut broker, 2);
+    enable(&mut broker);
+    for (index, offset) in [(0, 50), (1, 60)] {
+        let request = rename(
+            &broker,
+            &format!("note-{index}.md"),
+            &format!("moved-{index}.md"),
+            &format!("move-{index}"),
+        );
+        run(&mut broker, request, offset);
+        pack(&mut broker, later());
+    }
+    let archive = broker.archive().unwrap();
+    assert_eq!((fixture.segments().len(), archive.renames().len()), (2, 2));
+    let mut expected = 0;
+    for pack in archive.packs() {
+        for part in [Part::FileRequest, Part::FileIntentAck, Part::FileOutcomeAck] {
+            if let Some(bytes) = archive.read(&broker.data, part, &pack.id).unwrap() {
+                expected += bytes.len() as u64;
+            }
+        }
+    }
+    assert!(expected > 0);
+    assert_eq!(archive.file_bytes(), expected);
 }

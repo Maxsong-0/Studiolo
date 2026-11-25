@@ -15,7 +15,7 @@ mod settle;
 mod unpack;
 mod usage;
 
-pub use cutoff::{ArchiveCursor, ArchiveCutoff, ArchiveStep};
+pub use cutoff::{ArchiveBatch, ArchiveCursor, ArchiveCutoff, ArchiveStep};
 pub(crate) use format::{Head, Kind, Part};
 pub(crate) use index::Archive;
 pub(crate) use settle::settle;

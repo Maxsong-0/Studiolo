@@ -2,7 +2,9 @@
 //! 不改正文、回执和账本；断在中间散件和段都在，重跑同一条命令续做。
 use super::{MaintenanceError, inputs::Inputs, workflow::guard};
 use serde_json::{Value, json};
-use studiolo_vault_broker::{ArchiveCursor, ArchiveCutoff, BrokerError, MaintenanceActor};
+use studiolo_vault_broker::{
+    ArchiveBatch, ArchiveCursor, ArchiveCutoff, BrokerError, MaintenanceActor,
+};
 
 pub(super) fn pack(
     inputs: &mut Inputs,
@@ -39,11 +41,11 @@ pub(super) fn pack_at(
     let mut cursor = ArchiveCursor::default();
     let mut packed = 0;
     loop {
-        // 每一步都重核批准根和终端；断在步与步之间没有半成品。
+        // 每一步都重核批准根和终端；断在步与步之间没有半成品。也是凑够一段才写，只有最后剩下的可以是小段。
         guard(inputs, check)?;
         let step = inputs
             .broker
-            .archive_step(cutoff, &mut cursor)
+            .archive_step(cutoff, ArchiveBatch::All, &mut cursor)
             .map_err(fault)?;
         packed += step.packed;
         if step.done {

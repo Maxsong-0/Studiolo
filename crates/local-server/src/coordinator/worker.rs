@@ -126,7 +126,7 @@ impl Core {
         self.roots.revalidate().map_err(|_| Failure::Binding)?;
         broker.revalidate_capture(&stamp).map_err(classify)?;
         let writer_status = broker.write_status().map_err(classify)?;
-        self.measure_usage(broker);
+        self.refresh_usage(broker);
         if writer_status.read_blocked {
             return Err(Failure::Unresolved);
         }

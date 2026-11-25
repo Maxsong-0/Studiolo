@@ -1,7 +1,6 @@
 //! 还原：把段里的记录写回散件、状态写回第 8 版、删段。停人侧之后由维护命令调，给退回旧程序用。
 use super::{
     Archive,
-    format::DIRECTORY,
     loose::{self, Loose},
     pack,
 };
@@ -34,9 +33,8 @@ impl FsVaultBroker {
     /// 还原。断在中间可以再跑，也可以正常打开当作打包没删完收口。
     pub fn archive_unpack(&mut self) -> Result<ArchiveUnpack, BrokerError> {
         pack::idle(self)?;
-        if self.archive_dirty.load(Ordering::Acquire) {
-            super::settle(self)?;
-        }
+        // 上次断在「状态已写回、段没删」的，这里接着删完，连空目录一起。
+        super::settle(self)?;
         let archive = self.archive()?;
         let expected = report(self, &archive)?;
         if archive.head().is_none() {
@@ -53,10 +51,6 @@ impl FsVaultBroker {
         // 状态已经写回：段是不在链上的，散件全在，收口会核过再删。
         mutation::fault(self, 108)?;
         super::settle(self)?;
-        self.data
-            .remove_dir(DIRECTORY)
-            .map_err(|e| BrokerError::io("remove writer archive", e))?;
-        FsVaultBroker::sync_directory(&self.data, Path::new("."))?;
         Ok(expected)
     }
 }
@@ -65,11 +59,7 @@ fn restore(broker: &FsVaultBroker, archive: &Archive) -> Result<(), BrokerError>
     let total = archive.packs().len();
     for (index, pack) in archive.packs().iter().enumerate() {
         for part in pack.kind.parts() {
-            let name = if part == super::Part::Replay {
-                &pack.key
-            } else {
-                &pack.id
-            };
+            let name = pack.name_of(part);
             let bytes = archive
                 .read(&broker.data, part, name)?
                 .ok_or(BrokerError::CorruptWriterState)?;

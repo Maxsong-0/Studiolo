@@ -1,4 +1,5 @@
 //! 真实临时目录上的打包契约；账本回执是模拟的，封存水位由用例给。
+mod batches;
 mod crashes;
 mod eligibility;
 mod lifecycle;
@@ -120,17 +121,37 @@ fn flush(broker: &mut FsVaultBroker) {
 fn fault(broker: &FsVaultBroker, point: u8) {
     broker.writer.fault.store(point, Ordering::Release);
 }
-/// 打完一轮，交回一共打了几包。
-fn pack(broker: &mut FsVaultBroker, cutoff: ArchiveCutoff) -> usize {
+/// 打一轮，交回一共打了几包；出错就停在那一步。
+fn round(
+    broker: &mut FsVaultBroker,
+    cutoff: ArchiveCutoff,
+    batch: ArchiveBatch,
+) -> Result<usize, BrokerError> {
     let mut cursor = ArchiveCursor::default();
     let mut packed = 0;
     loop {
-        let step = broker.archive_step(cutoff, &mut cursor).unwrap();
+        let step = broker.archive_step(cutoff, batch, &mut cursor)?;
         packed += step.packed;
         if step.done {
-            return packed;
+            return Ok(packed);
         }
     }
+}
+/// 像离线命令那样打完一轮：剩多少写多少。
+fn pack(broker: &mut FsVaultBroker, cutoff: ArchiveCutoff) -> usize {
+    round(broker, cutoff, ArchiveBatch::All).unwrap()
+}
+/// 打一轮，中途必定断开；交回断在哪个错上。
+fn interrupted(broker: &mut FsVaultBroker) -> BrokerError {
+    round(broker, later(), ArchiveBatch::All).unwrap_err()
+}
+/// `archive-v1/` 里原子写断开留下的临时文件。
+fn residues(fixture: &Fixture) -> Vec<PathBuf> {
+    fixture
+        .segments()
+        .into_iter()
+        .filter(|path| path.file_name().unwrap().to_str().unwrap().starts_with('.'))
+        .collect()
 }
 type Records = BTreeMap<(String, String), Vec<u8>>;
 /// 现在的散件。
@@ -155,11 +176,7 @@ fn all_records(broker: &FsVaultBroker) -> Records {
     let archive = broker.archive().unwrap();
     for pack in archive.packs() {
         for part in pack.kind.parts() {
-            let name = if part == Part::Replay {
-                &pack.key
-            } else {
-                &pack.id
-            };
+            let name = pack.name_of(part);
             let bytes = archive.read(&broker.data, part, name).unwrap().unwrap();
             let key = (part.directory().to_owned(), part.file_name(name));
             if let Some(kept) = result.insert(key, bytes.clone()) {

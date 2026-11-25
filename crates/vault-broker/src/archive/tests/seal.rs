@@ -423,6 +423,35 @@ fn a_segment_has_exactly_one_spelling_and_its_name_is_its_digest() {
     assert!(fixture.try_reopen().is_err());
 }
 
+/// 同一段里一包放了两遍：接不上链。
+#[test]
+fn a_segment_that_repeats_a_pack_is_refused() {
+    let fixture = Fixture::new();
+    let mut broker = fixture.open();
+    notes(&mut broker, 1);
+    pack(&mut broker, later());
+    let (pair, vault) = (broker.writer.binding.pair_id, broker.vault_uuid);
+    let bytes = fs::read(&fixture.segments()[0]).unwrap();
+    let take = || {
+        let mut packs = format::decode(&bytes, pair, vault).unwrap().packs;
+        packs.remove(0).0
+    };
+    let place = format::Place {
+        pair,
+        vault,
+        sequence: 1,
+        previous: None,
+    };
+    for (packs, accepted) in [(vec![take()], true), (vec![take(), take()], false)] {
+        let forged = format::encode(&place, &packs).unwrap();
+        let segment = format::decode(&forged, pair, vault).unwrap();
+        let name = format::file_name(1, &sha256(&forged));
+        let checked =
+            super::super::Archive::default().check(name, forged.len() as u64, &segment, pair);
+        assert_eq!(checked.is_ok(), accepted);
+    }
+}
+
 /// 段头里换一个人、换一个库、换一条记录的位置，都不是这一对写者的段。
 #[test]
 fn a_segment_of_another_store_is_refused() {
@@ -451,10 +480,10 @@ fn a_segment_of_another_store_is_refused() {
     )
     .unwrap();
     let segment = format::decode(&forged, pair, vault).unwrap();
-    let mut archive = super::super::Archive::default();
+    let archive = super::super::Archive::default();
     assert!(
         archive
-            .append(
+            .check(
                 format::file_name(1, &sha256(&forged)),
                 forged.len() as u64,
                 &segment,

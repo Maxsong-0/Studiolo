@@ -125,6 +125,11 @@ pub struct BackupProducer {
     /// 用例用：打包看的「现在」；记录要满 7 天，用例等不了那么久。
     #[cfg(test)]
     pub(crate) archive_clock: Mutex<Option<i64>>,
+    /// 用例用：把打包一轮的时间改短；生产固定 `archive::ROUND_BUDGET`。
+    #[cfg(test)]
+    pub(crate) archive_budget: Mutex<Duration>,
+    /// 写者旧记录打包走到哪了：一轮时间到了，下一轮从这里接着来。
+    archive_cursor: Mutex<studiolo_vault_broker::ArchiveCursor>,
     /// 开始服务的时刻；账本里从没有成功时，逾期从它和第一次尝试里较早的那个起算。
     serving_since_ms: Option<i64>,
 }
@@ -153,6 +158,9 @@ impl BackupProducer {
             idle_budget: Mutex::new(IDLE_BUDGET),
             #[cfg(test)]
             archive_clock: Mutex::new(None),
+            #[cfg(test)]
+            archive_budget: Mutex::new(archive::ROUND_BUDGET),
+            archive_cursor: Mutex::default(),
             serving_since_ms: now_millis().ok(),
         })
     }
@@ -393,7 +401,7 @@ impl BackupProducer {
         Ok((QueueAnswer::Started, Some(key)))
     }
 
-    /// 后台线程：先回收过期暂存，再做这一次封存（如果安排了），没安排就看要不要打包旧记录。
+    /// 后台线程：先回收过期暂存、收口上次没打完的旧记录，再做这一次封存（如果安排了），没安排就看要不要打包。
     fn housekeep(&self, job: Option<JobKey>, sealed_offset: Option<u64>) {
         // 正常返回和 panic 展开都要复位 busy，否则之后的 `schedule` 永远回 `outstanding`。
         let _idle = Idle(&self.state);
@@ -408,8 +416,11 @@ impl BackupProducer {
             // 固定类别，不含路径和正文。
             eprintln!("备份暂存回收未完成：{error:?}");
         }
+        let settled = self.settle_records();
         let Some(key) = job else {
-            self.archive_records(sealed_offset);
+            if settled {
+                self.archive_records(sealed_offset);
+            }
             return;
         };
         if let Err(reason) = self.seal(&key) {
