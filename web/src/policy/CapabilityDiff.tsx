@@ -8,7 +8,7 @@ import {
   type ChangeDirection,
   type JsonScalar,
   type UnreadableReason,
-} from './capabilityDiff';
+} from './compareCapability';
 import { capabilityField } from './capabilityLabels';
 import { CHANGE_TERMS } from './terms';
 import '../styles/policy-tabs.css';

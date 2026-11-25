@@ -13,7 +13,7 @@ import type { DesiredInput, PolicyKind, PolicyStatus } from '../policyModel';
 import { KIND_LABEL } from '../policyModel';
 import { Button, Cell, CellHeader, GridFrame } from '../ui';
 import { CapabilityDiff } from './CapabilityDiff';
-import { compareCapability } from './capabilityDiff';
+import { compareCapability } from './compareCapability';
 import { PolicyFeedback } from './PolicyFeedback';
 import { bodyTemplate, startFromBody, type SubmitDraft } from './submitDraft';
 import { Term } from './Term';

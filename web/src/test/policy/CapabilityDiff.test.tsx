@@ -2,7 +2,7 @@ import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
 import { CapabilityDiff } from '../../policy/CapabilityDiff';
-import { compareCapability } from '../../policy/capabilityDiff';
+import { compareCapability } from '../../policy/compareCapability';
 
 /** 能力差异表（T-198）：模型算出来的每一行怎么写到屏幕上；判定扩大、收窄只照传进来的校验报告。 */
 
