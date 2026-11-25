@@ -70,15 +70,15 @@ KEEP_LAST, KEEP_DAILY = 30, 14
 # 封存副本只在到期后回收：保留期乘上数据量就是暂存区的盘占用（169 上每份约 1.1G，一小时约 8G）。
 RETENTION_MILLIS = 3_600_000
 
-# ---------------------------------------------------------------- 发行相关的值（跟着 r27 候选和 108 的构建走）
-# r27 只换启动器（BUG-058），三个程序沿用 r26 的：108 上从提交 87caf70 构建（2026-11-24，产物 ~/r26-87caf70-20261124-out）。
-# SOURCE_COMMIT 写的是构建提交，不是改这几行的那个提交。私有备份配置里只有人侧的部署版本变；worker 程序不换。
-SOURCE_COMMIT = '87caf70'
-HUMAN_RELEASE = 'm5m6-board-20260920-r27'
+# ---------------------------------------------------------------- 发行相关的值（跟着 r28 候选和 108 的构建走）
+# r28：108 上从提交 af83f0e 构建（2026-11-25，产物 ~/r28-af83f0e-20261125-out）。SOURCE_COMMIT 写的是构建提交，不是改这几行的那个提交。
+# 这一版换的是人侧程序和 maintain（T-237、T-239）；worker 程序和 r26、r27 一字不差，不换，暂存位置仍是 r26 那一份。
+SOURCE_COMMIT = 'af83f0e'
+HUMAN_RELEASE = 'm5m6-board-20260920-r28'
 RELEASE_DIRECTORY = '/home/maxsong/.local/share/studiolo-human-releases'
 PACKAGES = (
-    ('studiolo-local-server', '0fc9d75bf31adcbbbe7d8bff83ebc06ab060cd22a040a90d0fb1b4c1c441b562'),
-    ('studiolo-maintain', '80f3daa0c898a8ba0f8e2683e19c09b8ce882cdf34f1491edba72c435745f95d'),
+    ('studiolo-local-server', '7dbc0f124319b5dc31a2ea39214e8d20fef12de703b9170282e55a636163d408'),
+    ('studiolo-maintain', 'eddeb0030c13262def3f81a5d1ed3f62c1cc4516554d8c589e55a38720e75ecd'),
     ('studiolo-backup-worker', 'f636ed9c95a861dd6d5304b30a79e8ba60758e34abe3ab0f021bd9eb2e5fe6f1'),
 )
 RESTIC_SHA = '20d4142678d0d95ec11a4759def1b73fd9190abc9ca19e4b62d067c0b387e639'
@@ -90,9 +90,9 @@ CA_SOURCE = '/home/maxsong/.config/studiolo-backup/ca.pem'
 # 上一版发行：169 上已经照它置备过的那一组值，键是 commit、release、packages（和上面三个同形）。换发行时把上面
 # 三个值原样搬进来再填新值；没有上一版（第一次置备）就是 None。上一版那份私有备份配置要能照这组值原样生成出来
 # （见 backup_document）：这次要是还改了别的字段，把旧值一起搬进来，不然现场那一份认不出来、会停下。
-# 现在登记的是 r26（提交 87caf70 构建，2026-11-24 在 169 上置备、激活），三个程序和这一版一样。
+# 现在登记的是 r27（程序沿用 r26 的，提交 87caf70 构建；2026-11-24 在 169 上置备、激活）。
 PREVIOUS = {
-    'commit': '87caf70', 'release': 'm5m6-board-20260920-r26',
+    'commit': '87caf70', 'release': 'm5m6-board-20260920-r27',
     'packages': (
         ('studiolo-local-server', '0fc9d75bf31adcbbbe7d8bff83ebc06ab060cd22a040a90d0fb1b4c1c441b562'),
         ('studiolo-maintain', '80f3daa0c898a8ba0f8e2683e19c09b8ce882cdf34f1491edba72c435745f95d'),

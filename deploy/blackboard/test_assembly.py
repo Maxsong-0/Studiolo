@@ -1,4 +1,4 @@
-"""黑板形状发行（当前 r26→r27）的固定变更面；夹具不接触生产或凭据。"""
+"""黑板形状发行（当前 r27→r28）的固定变更面；夹具不接触生产或凭据。"""
 import ast
 import collections
 import contextlib
@@ -142,10 +142,10 @@ def rust_calls(paths, receiver, method=r'\w+'):
 
 
 class AssemblyTests(unittest.TestCase):
-    def test_r27_upgrades_the_activated_r26(self):
-        self.assertEqual(a.BUILD, 'm5m6-board-20260920-r27')
+    def test_r28_upgrades_the_activated_r27(self):
+        self.assertEqual(a.BUILD, 'm5m6-board-20260920-r28')
         self.assertEqual(a.RELEASE.rsplit('/', 1)[1], a.BUILD)
-        self.assertTrue(a.OLD_RELEASE.endswith('/m5m6-board-20260920-r26'))
+        self.assertTrue(a.OLD_RELEASE.endswith('/m5m6-board-20260920-r27'))
         self.assertEqual(a.WEB_PREFIX, 'web/')
 
     def test_fixtures_are_the_bytes_installed_on_169(self):
@@ -157,14 +157,12 @@ class AssemblyTests(unittest.TestCase):
         old = activated('launch-human.py')
         new = a.launcher(old)
         backup = ' "--backup-config", "' + a.BACKUP_CONFIG + '",'
-        # 本版只换发行路径和两个残留入口的核对：换回去就是上一发行的那一份，一个字不差。
-        restored = new.replace(a.RELEASE, a.OLD_RELEASE).replace(a.LEFTOVER_CHECKS, a.OLD_LEFTOVER_CHECKS).replace(
-            a.INSPECT_LEFTOVER, '')
-        self.assertEqual(restored, old)
-        self.assertEqual([new.count(part) for part in (a.LEFTOVER_CHECKS, a.INSPECT_LEFTOVER, a.OLD_LEFTOVER_CHECKS)],
-                         [1, 1, 0])
+        # 本版只换发行路径：换回去就是上一发行的那一份，一个字不差。发行路径恰好一处指到新发行
+        # （只看还原后相等的话，忘了换路径的变换也能过）。
+        self.assertEqual(new.replace(a.RELEASE, a.OLD_RELEASE), old)
+        self.assertEqual(new.count(a.RELEASE), 1)
         self.assertNotIn(a.OLD_RELEASE, new)
-        # 看见残留就拒绝的写法一处不剩。
+        # 看见残留就拒绝的写法一处不剩（r27 起）。
         self.assertNotIn('exists(', new)
         self.assertEqual(new.count('"--backup-config"'), 1)
         self.assertEqual(new.count('"--agent-data"'), 1)
@@ -173,16 +171,10 @@ class AssemblyTests(unittest.TestCase):
         self.assertIn('"--sync-transport", "' + a.SYNC_APPROVAL + '",' + backup, new)
         self.assertEqual(Path(a.BACKUP_CONFIG).parent, Path(a.SYNC_APPROVAL).parent)
 
-        # 多一个 inspect_leftover、preflight 换了核对，别的函数（含 main）的 AST 不变；模块级只有发行路径不同。
-        def parts(source):
-            body = ast.parse(source).body
-            return ({n.name: ast.dump(n) for n in body if isinstance(n, ast.FunctionDef)},
-                    [ast.dump(n) for n in body if not isinstance(n, ast.FunctionDef)])
-        (before, module_before), (after, module_after) = parts(old), parts(new)
-        self.assertEqual(after.keys() - before.keys(), {'inspect_leftover'})
-        self.assertEqual({name for name in before if before[name] != after.get(name)}, {'preflight'})
+        # 语法树上只有模块级的发行路径那一句不同，函数（含 preflight、inspect_leftover、main）一个不变。
+        before, after = ([ast.dump(node) for node in ast.parse(source).body] for source in (old, new))
         release = [ast.dump(ast.parse('RELEASE = ' + repr(path)).body[0]) for path in (a.OLD_RELEASE, a.RELEASE)]
-        self.assertEqual([[x, y] for x, y in zip(module_before, module_after, strict=True) if x != y], [release])
+        self.assertEqual([[x, y] for x, y in zip(before, after, strict=True) if x != y], [release])
         self.assertIn('"--canonical-writer-data", WRITER', new)
         self.assertIn('"STUDIOLO_TOTP_SEED_HEX": credential()', new)
         # 已转换的启动器不能再过一遍；接线或标签漂移也拒绝；还没带只读身份目录参数的（r15 形状）、
@@ -194,23 +186,28 @@ class AssemblyTests(unittest.TestCase):
                     old.replace(' "--agent-data", AGENT,', ''),
                     old.replace('"--board-socket", BOARD_SOCKET,', ''),
                     old.replace('"--sync-transport"', '"--foreign"'),
-                    # 已经换过核对的、少一行的、多一处的、被改过的，都不是上一发行的那一份。
-                    old.replace(a.OLD_LEFTOVER_CHECKS, a.LEFTOVER_CHECKS),
-                    old.replace('    require(not os.path.lexists(BOARD_SOCKET))\n', ''),
-                    old.replace(' and node.st_uid == os.geteuid()', ''),
-                    old.replace('def main():', a.OLD_LEFTOVER_CHECKS + '\n\ndef main():'),
+                    # 两个残留入口的核对少一处、多一处、被改过，或者又写回「见到就拒绝」，都不是上一发行的那一份。
+                    old.replace(a.LEFTOVER_CHECKS, ''), old + '\n\ndef extra():\n' + a.LEFTOVER_CHECKS,
+                    old.replace('(BOARD_SOCKET, SOCKET):', '(SOCKET,):'),
+                    old.replace(a.INSPECT_LEFTOVER, ''), old.replace(' and node.st_uid == os.geteuid()', ''),
+                    old.replace('            and node.st_nlink == 1)', '            )'),
                     old.replace('def preflight():', 'def preflight(strict=True):'),
+                    old.replace(a.LEFTOVER_CHECKS, a.LEFTOVER_CHECKS + '    inspect_leftover(BOARD_SOCKET)\n'),
+                    old.replace(a.LEFTOVER_CHECKS,
+                                a.LEFTOVER_CHECKS + '    require(not os.path.lexists(BOARD_SOCKET))\n'),
                     # 两个入口的常量指到别处：核对会看错节点。
                     old.replace(a.HUMAN_SOCKET, '/foreign/http.sock'),
                     old.replace(a.BOARD_SOCKET, '/foreign/board.sock'),
                     old.replace(a.SYNC_APPROVAL, '/foreign/approval.json'),
                     old + '\n# "--sync-transport"\n',
+                    # 别处还提到上一发行的路径：只换了一处，旧路径会留下。
+                    old + '\n# ' + a.OLD_RELEASE + '\n',
                     old.replace('正式黑板库 · Obsidian 同步试跑', '未知标签')):
             with self.assertRaises(ValueError):
                 a.launcher(bad)
 
     def test_launcher_lets_the_human_side_come_back_after_a_kill(self):
-        """BUG-058：被强杀之后三个死 socket 都在，整份 preflight 照样放行，一样不动；现装的 r26 那份在这里拒绝。"""
+        """BUG-058：被强杀之后三个死 socket 都在，整份 preflight 照样放行，一样不动。"""
         with installed(a.launcher(activated('launch-human.py'))) as site:
             # 正常停下之后（一个残留都没有）照常起。
             site.preflight()
@@ -219,12 +216,6 @@ class AssemblyTests(unittest.TestCase):
             before = [path.lstat() for path in site.leftovers]
             site.preflight()
             self.assertEqual([path.lstat() for path in site.leftovers], before)
-        with installed(activated('launch-human.py')) as site:
-            dead_socket(site.leftovers[0])
-            site.preflight()
-            dead_socket(site.leftovers[1])
-            with self.assertRaises(RuntimeError):
-                site.preflight()
 
     def test_launcher_hands_only_our_own_single_name_sockets_to_the_product(self):
         """T-231、BUG-058：两个残留入口同样严——不是自己的、不止一个名字的、不是 socket 的一律拒绝，原样留着。"""
@@ -430,11 +421,26 @@ class AssemblyTests(unittest.TestCase):
         self.assertEqual(bridge_readme.count(
             '审批 `budget.stop_grace_seconds` 加 %d s' % a.BRIDGE_STOP_MARGIN_SECONDS), 1)
 
-    def test_this_release_keeps_the_previous_human_program(self):
-        # 本版的修复在启动器里，人侧程序沿用上一发行的：出候选时不给程序三件套，候选里逐字节照抄上一发行。
-        self.assertEqual(a.NEW_HUMAN_PROGRAM_LITERALS, ())
-        self.assertIs(a.REQUIRES_NEW_HUMAN_PROGRAM, False)
-        # 启动器放过去的死 socket 要靠程序接管：三个入口在程序里都走同一处接管（沿用的程序从 87caf70 构建，已经有）。
+    def test_this_release_requires_the_program_with_the_connector(self):
+        # 新东西在程序里：出候选和激活预检都要求换程序，而且程序里有这三段字节。
+        self.assertIs(a.REQUIRES_NEW_HUMAN_PROGRAM, True)
+        # 每段字节：在哪份源码里、原样写成什么样。都是一整个字符串字面量，所以程序里是连续的字节；
+        # 上一发行的程序里都没有，在 169 上只读核过。
+        pinned = (
+            ('/internal/connector', 'crates/local-server/src/board/http.rs',
+             '.route("/internal/connector", post(super::connector::command))'),
+            ('/api/v1/board/presence', 'crates/local-server/src/board/http.rs',
+             '.route("/api/v1/board/presence", get(super::connector::presence))'),
+            ('studiolo_bridge component=transport outcome=unlaunched_run_cancelled',
+             'crates/local-server/src/sync_plane/driver/diagnostics.rs',
+             '"studiolo_bridge component=transport outcome=unlaunched_run_cancelled"'),
+        )
+        self.assertEqual(a.NEW_HUMAN_PROGRAM_LITERALS, tuple(literal.encode() for literal, _, _ in pinned))
+        for literal, path, written in pinned:
+            self.assertEqual(rust_code(ROOT / path).count(written), 1, literal)
+
+    def test_program_takes_over_every_leftover_the_launcher_lets_through(self):
+        # 启动器放过去的死 socket 要靠程序接管：三个入口在程序里都走同一处接管（r26 起的程序都有）。
         for path, written in (('crates/local-server/src/startup/factor_input.rs', '"HTTP 入口"'),
                               ('crates/local-server/src/startup/plane_input.rs', '"黑板入口"'),
                               ('crates/local-server/src/backup/listener.rs', 'label: "备份入口"')):

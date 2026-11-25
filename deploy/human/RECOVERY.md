@@ -19,7 +19,7 @@ r27 起的人侧发行（T-231、BUG-058）会自己接管死 socket（r26 只�
 依据的代码（改了它们要回来对这份步骤）：
 
 - 上一发行现装的启动器和人侧单元原文：`deploy/blackboard/activated/` 下的 `launch-human.py`、`studiolo-human.service`
-  （重试几次、`UMask`），和装配换进去的核对 `deploy/blackboard/assembly.py` 的 `INSPECT_LEFTOVER`（`board.sock`、`http.sock` 不在就过；
+  （重试几次、`UMask`），和装配钉着的那一处核对 `deploy/blackboard/assembly.py` 的 `INSPECT_LEFTOVER`（r27 换进去的，之后原样沿用；`board.sock`、`http.sock` 不在就过；
   自己的、只有一个名字的 socket 放过去交给程序判；别的拒绝）；
 - `crates/local-server/src/unix_ingress/leftover.rs`（判死和接管，三个入口共用）、`crates/local-server/src/coordinator/sole.rs`
   （握着主库锁的凭据）、`crates/local-server/src/unix_ingress/layout.rs` 的 `revalidate` 和 `vacant`、
@@ -67,7 +67,7 @@ ls -la /run/studiolo-human /run/studiolo-board /run/studiolo-backup
 
 - `双向 Bridge 平面装配失败；审批文档、受控 launcher 或私有存储未就绪，未监听`：可能正好杀在传输库换状态的那一下（或那一刻写盘报错，比如盘满），
   传输私有目录里留下了 `state.json.publish`。**r27 及更早**：程序一律不认领，没有现成的处理命令。
-  **带上 T-239 的下一个人侧发行起**（169 上还没有）：启动时核过权威记录和审批就自己丢，日志一行
+  **r28 起**（带上 T-239；r28 激活之前 169 上还没有）：启动时核过权威记录和审批就自己丢，日志一行
   `studiolo_bridge component=transport_store outcome=publish_residue_discarded`，不用人管；
   残留的形态不对（不是本人、0600、单链接、大小合规的普通文件），或者 `state.json` 缺、坏、和审批对不上，照旧拒绝、等人看，两个文件都不动。
 - `既有canonical写者或完整监视视图不可用；不初始化、不修复、不回退`：可能正好杀在一次单篇保存落盘的中间，
@@ -81,7 +81,7 @@ ls -la /run/studiolo-human /run/studiolo-board /run/studiolo-backup
 
 还有一种不挡启动：人侧起来了，但同步每轮都失败（日志每轮一行 `studiolo_bridge step=Inspect error=Transport`）、封存也跟着失败。
 可能正好杀在登记了一次同步运行、还没发启动的那一下，传输记录停在 `Prepared`。**r27 及更早**：没有入口能收掉它，重启机器也不解，
-什么都不要删，把日志交给开发会话。**带上 T-239 的下一个人侧发行起**（169 上还没有）：下一轮同步自己收成「没执行」，
+什么都不要删，把日志交给开发会话。**r28 起**（带上 T-239；r28 激活之前 169 上还没有）：下一轮同步自己收成「没执行」，
 日志一行 `studiolo_bridge component=transport outcome=unlaunched_run_cancelled`，再跑完一次同步封存就恢复。没有在真机上演练过。
 同步失败也会因为 launcher 等别的原因出现，同样先交人看。
 
