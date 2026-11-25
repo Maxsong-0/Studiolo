@@ -1,4 +1,4 @@
-"""黑板形状发行（当前 r24→r25）的固定变更面；夹具不接触生产或凭据。"""
+"""黑板形状发行（当前 r25→r26）的固定变更面；夹具不接触生产或凭据。"""
 import ast
 import collections
 import importlib.util
@@ -15,7 +15,7 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 def board_launcher():
-    """把 r7/r8 那份启动器补成上一发行（r24，接线沿用 r17）的形状：带黑板常量与参数、只读身份目录参数、备份配置参数，
+    """把 r7/r8 那份启动器补成上一发行（r25，接线沿用 r17）的形状：带黑板常量与参数、只读身份目录参数、备份配置参数，
     RELEASE 指向上一发行。"""
     text = (ROOT / 'deploy/human/current-v2/launch-human.py').read_text().replace(
         'm4-t092-20260920-r7', a.OLD_RELEASE.rsplit('/', 1)[1]).replace(
@@ -35,7 +35,7 @@ def board_launcher():
 
 
 def board_unit():
-    """把 r7/r8 那份人侧单元补成上一发行（r24，接线沿用 r17）的形状：黑板 RuntimeDirectory，黑板五个写根、Bridge 两个写根、
+    """把 r7/r8 那份人侧单元补成上一发行（r25，接线沿用 r17）的形状：黑板 RuntimeDirectory，黑板五个写根、Bridge 两个写根、
     备份两个写根，都在 [Service] 节里、顺序和线上一致；停止超时是按预算算出来的那一行，内存上限是 r24 放宽后的 2G。"""
     text = (ROOT / 'deploy/human/current-v2/studiolo-human.service').read_text().replace(
         'm4-t092-20260920-r7', a.OLD_RELEASE.rsplit('/', 1)[1])
@@ -88,10 +88,10 @@ def rust_calls(paths, receiver, method=r'\w+'):
 
 
 class AssemblyTests(unittest.TestCase):
-    def test_r25_upgrades_the_activated_r24(self):
-        self.assertEqual(a.BUILD, 'm5m6-board-20260920-r25')
+    def test_r26_upgrades_the_activated_r25(self):
+        self.assertEqual(a.BUILD, 'm5m6-board-20260920-r26')
         self.assertEqual(a.RELEASE.rsplit('/', 1)[1], a.BUILD)
-        self.assertTrue(a.OLD_RELEASE.endswith('/m5m6-board-20260920-r24'))
+        self.assertTrue(a.OLD_RELEASE.endswith('/m5m6-board-20260920-r25'))
         self.assertEqual(a.WEB_PREFIX, 'web/')
 
     def test_launcher_preserves_the_approved_bridge_wiring(self):
@@ -323,11 +323,11 @@ class AssemblyTests(unittest.TestCase):
         self.assertIs(a.REQUIRES_NEW_HUMAN_PROGRAM, True)
         # 每段字节：在哪份源码里、原样写成什么样。每段都从一个字符串字面量的开头引号起，后面紧跟着占位符或结尾引号，
         # 所以程序里连续的字节就到这里为止（中文按 UTF-8 编码后比）。上一发行的程序里都没有，在 169 上只读核过。
-        producer = 'crates/local-server/src/backup/producer.rs'
         pinned = (
-            ('等人侧空闲', 'crates/local-server/src/checkpoint.rs', 'steps.mark("等人侧空闲")'),
-            ('备份封存先等人侧空闲：', producer, 'format!("备份封存先等人侧空闲：{} 毫秒"'),
-            ('正在关停，没开始冻结', producer, 'const CLOSING_DOWN: &str = "正在关停，没开始冻结"'),
+            ('接管上一任留下的', 'crates/local-server/src/unix_ingress/leftover.rs',
+             '"接管上一任留下的{} socket（inode {}，权限 {:04o}，建于 {made}）"'),
+            ('HTTP 入口', 'crates/local-server/src/startup/factor_input.rs', '"HTTP 入口"'),
+            ('备份入口', 'crates/local-server/src/backup/listener.rs', 'label: "备份入口"'),
         )
         self.assertEqual(a.NEW_HUMAN_PROGRAM_LITERALS, tuple(literal.encode() for literal, _, _ in pinned))
         for literal, path, written in pinned:

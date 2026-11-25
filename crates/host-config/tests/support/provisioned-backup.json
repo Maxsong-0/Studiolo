@@ -38,29 +38,29 @@
   "application_packages": [
    {
     "name": "studiolo-local-server",
-    "version": "1570a22",
-    "digest": "202b17186a8b37de4213ab70ca15a6e88a3e594f4ea5d5cf33b55f47dfda30ee"
+    "version": "87caf70",
+    "digest": "0fc9d75bf31adcbbbe7d8bff83ebc06ab060cd22a040a90d0fb1b4c1c441b562"
    },
    {
     "name": "studiolo-maintain",
-    "version": "1570a22",
-    "digest": "4223fd4279f4ca37980920a3469ac7f03890ca47f73930701999fbac9eb69a1f"
+    "version": "87caf70",
+    "digest": "80f3daa0c898a8ba0f8e2683e19c09b8ce882cdf34f1491edba72c435745f95d"
    },
    {
     "name": "studiolo-backup-worker",
-    "version": "1570a22",
-    "digest": "107d1d41abc8303fe1800d577f2874ad20fa1d68ff18d6d75440b57111764484"
+    "version": "87caf70",
+    "digest": "f636ed9c95a861dd6d5304b30a79e8ba60758e34abe3ab0f021bd9eb2e5fe6f1"
    }
   ],
   "restic_digest": "20d4142678d0d95ec11a4759def1b73fd9190abc9ca19e4b62d067c0b387e639",
   "deployment": [
    {
     "unit": "studiolo-human.service",
-    "revision": "m5m6-board-20260920-r25"
+    "revision": "m5m6-board-20260920-r26"
    },
    {
     "unit": "studiolo-backup-worker.service",
-    "revision": "1570a22"
+    "revision": "87caf70"
    }
   ]
  }
