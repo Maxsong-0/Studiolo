@@ -140,6 +140,8 @@ public struct Row: Equatable, Sendable, Identifiable {
         case card(String)
         case cardStarted(String)
         case cardEnded(String)
+        /// Back in the queue after its AI stopped halfway.
+        case cardRequeued(String)
         case test(String)
         /// Index into the card's reviews.
         case review(card: String, index: Int)
@@ -188,11 +190,19 @@ public struct Card: Equatable, Sendable, Identifiable {
     public internal(set) var tests: [String] = []
     public internal(set) var reviews: [Review] = []
     public internal(set) var merges: [String] = []
+    /// Each time its AI stopped halfway and the card went back to wait, oldest first.
+    public internal(set) var requeues: [Requeue] = []
 
     public struct Work: Equatable, Sendable {
         public let worker, worktree, branch, base, task: String
         public let gitDir: String?
         public let freshStart: Event.FreshStart?
+        public let at: UInt64
+    }
+
+    public struct Requeue: Equatable, Sendable {
+        public let action: String
+        public let why: Why
         public let at: UInt64
     }
 
@@ -210,6 +220,8 @@ public struct Card: Equatable, Sendable, Identifiable {
         public enum Outcome: Equatable, Sendable {
             case finished(verdict: String, result: String, at: UInt64)
             case notDone(Why, at: UInt64)
+            /// The reviewer stopped halfway; a fresh one reviews from the start (another `review_started`).
+            case requeued(action: String, Why, at: UInt64)
         }
     }
 

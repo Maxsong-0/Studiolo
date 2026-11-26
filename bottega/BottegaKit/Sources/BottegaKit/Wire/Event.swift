@@ -12,6 +12,7 @@ public enum Event: Equatable, Sendable {
     case cardStarted(CardStarted)
     case cardDone(CardDone)
     case cardFailed(CardFailed)
+    case cardRequeued(Requeued)
     case limitTripped(LimitTripped)
     case testsSubmitted(TestsSubmitted)
     case testsHandedOver(TestsHandedOver)
@@ -20,6 +21,7 @@ public enum Event: Equatable, Sendable {
     case reviewStarted(ReviewStarted)
     case reviewFinished(ReviewFinished)
     case reviewNotDone(ReviewNotDone)
+    case reviewRequeued(Requeued)
     case mergeRequested(MergeRequested)
     case mergeChecked(MergeChecked)
     case mergePrepared(MergePrepared)
@@ -79,6 +81,14 @@ public enum Event: Equatable, Sendable {
     }
     public struct CardDone: Decodable, Equatable, Sendable { public var card, result: String; public var atMs: UInt64 }
     public struct CardFailed: Decodable, Equatable, Sendable { public var card: String; public var why: Why; public var atMs: UInt64 }
+    /// The AI working a card, or reviewing it, stopped halfway; it goes back to wait and a fresh one takes it.
+    /// `action` is how it carries on (`retry`: a new process tries once more).
+    public struct Requeued: Decodable, Equatable, Sendable {
+        public var card: String
+        public var action: String
+        public var why: Why
+        public var atMs: UInt64
+    }
 
     public struct LimitTripped: Decodable, Equatable, Sendable {
         public var limit: String
@@ -261,6 +271,7 @@ extension Event: Decodable {
         case "card_started": .cardStarted(try .init(from: decoder))
         case "card_done": .cardDone(try .init(from: decoder))
         case "card_failed": .cardFailed(try .init(from: decoder))
+        case "card_requeued": .cardRequeued(try .init(from: decoder))
         case "limit_tripped": .limitTripped(try .init(from: decoder))
         case "tests_submitted": .testsSubmitted(try .init(from: decoder))
         case "tests_handed_over": .testsHandedOver(try .init(from: decoder))
@@ -269,6 +280,7 @@ extension Event: Decodable {
         case "review_started": .reviewStarted(try .init(from: decoder))
         case "review_finished": .reviewFinished(try .init(from: decoder))
         case "review_not_done": .reviewNotDone(try .init(from: decoder))
+        case "review_requeued": .reviewRequeued(try .init(from: decoder))
         case "merge_requested": .mergeRequested(try .init(from: decoder))
         case "merge_checked": .mergeChecked(try .init(from: decoder))
         case "merge_prepared": .mergePrepared(try .init(from: decoder))
@@ -316,6 +328,7 @@ extension Event {
         case .cardStarted(let event): event.atMs
         case .cardDone(let event): event.atMs
         case .cardFailed(let event): event.atMs
+        case .cardRequeued(let event), .reviewRequeued(let event): event.atMs
         case .limitTripped(let event): event.atMs
         case .testsSubmitted(let event): event.atMs
         case .testsHandedOver(let event): event.atMs

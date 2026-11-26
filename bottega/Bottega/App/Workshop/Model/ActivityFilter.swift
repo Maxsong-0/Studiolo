@@ -26,7 +26,7 @@ enum ActivityFilter: CaseIterable, Identifiable {
     static func part(of event: Event) -> ActivityFilter {
         switch event {
         case .messageQueued, .messageHanded, .messageFailed, .limitTripped: .letters
-        case .cardCreated, .cardStarted, .cardDone, .cardFailed,
+        case .cardCreated, .cardStarted, .cardDone, .cardFailed, .cardRequeued, .reviewRequeued,
              .testsSubmitted, .testsHandedOver, .testsAccepted, .testsFinished,
              .reviewStarted, .reviewFinished, .reviewNotDone,
              .mergeRequested, .mergeChecked, .mergePrepared, .mergeRestarted, .mergeLanding, .mergeFinished, .mergeFailed,

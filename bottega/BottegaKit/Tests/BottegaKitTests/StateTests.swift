@@ -8,7 +8,7 @@ import Testing
 struct RecordedStateTests {
     @Test func sessions() throws {
         let state = try Fixtures.state()
-        #expect(state.through == 84)
+        #expect(state.through == 91)
         #expect(state.sessions["dispatcher"]?.role == "dispatcher")
         #expect(state.sessions["dispatcher"]?.isOpen == true)
         #expect(state.sessions["coder-card-1"]?.closedAt == 1764000014000)
@@ -51,8 +51,11 @@ struct RecordedStateTests {
         #expect(one.end == .done(result: "msg-3", at: 1764000013000))
         #expect(one.tests == ["test-1", "test-2"])
         #expect(one.merges == ["merge-1"])
-        #expect(one.reviews.map(\.reviewer) == ["reviewer-card-1"])
+        // The review that went back to wait was never seen starting: it stands on its own, after the one that finished.
+        #expect(one.reviews.map(\.reviewer) == ["reviewer-card-1", nil])
         #expect(one.reviews.first?.outcome == .finished(verdict: "approve", result: "msg-5", at: 1764000016000))
+        guard case .requeued(let action, let requeueWhy, _) = one.reviews.last?.outcome else { Issue.record("requeued review"); return }
+        #expect(action == "retry" && requeueWhy.code == "process_ended")
         #expect(state.column(of: one) == .done)
         let two = try #require(state.cards["card-2"])
         #expect(two.continues == "card-1")
@@ -66,6 +69,14 @@ struct RecordedStateTests {
         #expect(state.column(of: two) == .failed)
         #expect(state.vendors["coder-card-1"] == "codex")
         #expect(state.vendors["reviewer-card-1"] == "claude")
+        let three = try #require(state.cards["card-3"])
+        #expect(three.requeues.map(\.action) == ["retry"])
+        #expect(three.requeues.first?.why.code == "service_down")
+        guard case .failed(let threeWhy, _) = three.end else { Issue.record("card-3"); return }
+        #expect(threeWhy.code == "worker_stopped")
+        #expect(state.column(of: three) == .failed)
+        let tenWhy = state.log.lazy.compactMap { if case .messageFailed(let e) = $0.event, e.id == "msg-10" { e.why } else { nil } }.first
+        #expect(tenWhy?.code == "card_requeued")
     }
 
     @Test func testsAndMerges() throws {
@@ -243,6 +254,41 @@ struct StateTests {
             ask: "ask-1", answer: "approved", via: .init(at: "device", name: nil, device: "device-1"), atMs: 8))))
         #expect(column() == .done)
         #expect(state.cards(in: .done).map(\.id) == ["card-1"])
+    }
+
+    /// A card whose AI stopped halfway waits again, and is worked again when a fresh one starts it.
+    @Test func aRequeuedCardWaitsThenRunsAgain() throws {
+        var state = WorkshopState()
+        func column() -> WorkshopState.Column? { state.cards["card-1"].map(state.column(of:)) }
+        try state.apply(record(1, .cardCreated(.init(
+            card: "card-1", author: "dispatcher", title: "t", instructions: "i", acceptance: "a", conventions: nil, vendor: "codex",
+            continues: nil, reviewer: nil, thread: nil, atMs: 1))))
+        try state.apply(record(2, .cardStarted(.init(
+            card: "card-1", worker: "w", worktree: "/w", branch: "b", base: "c", freshStart: nil, task: "m1", atMs: 2))))
+        #expect(column() == .working)
+        try state.apply(record(3, .cardRequeued(.init(card: "card-1", action: "retry", why: .init(code: "rate_limited", text: "限速"), atMs: 3))))
+        #expect(column() == .queued)
+        #expect(state.cards["card-1"]?.requeues.count == 1)
+        #expect(state.cards["card-1"]?.thread == "m1")
+        #expect(state.dispatcherRows.contains { $0.kind == .cardRequeued("card-1") })
+        try state.apply(record(4, .cardStarted(.init(
+            card: "card-1", worker: "w2", worktree: "/w", branch: "b", base: "c", freshStart: nil, task: "m2", atMs: 4))))
+        #expect(column() == .working)
+        #expect(state.cards["card-1"]?.work?.worker == "w2")
+        #expect(state.cards["card-1"]?.requeues.count == 1)
+    }
+
+    /// A review that went back to wait closes the review it was, and the next `review_started` is a new one.
+    @Test func aRequeuedReviewStartsAgain() throws {
+        var state = WorkshopState()
+        try state.apply(record(1, .reviewStarted(.init(card: "card-1", reviewer: "r1", base: "b", tree: "t", task: "t1", atMs: 1))))
+        try state.apply(record(2, .reviewRequeued(.init(card: "card-1", action: "retry", why: .init(code: "process_ended", text: "x"), atMs: 2))))
+        try state.apply(record(3, .reviewStarted(.init(card: "card-1", reviewer: "r2", base: "b", tree: "t", task: "t2", atMs: 3))))
+        let reviews = try #require(state.cards["card-1"]?.reviews)
+        #expect(reviews.map(\.reviewer) == ["r1", "r2"])
+        guard case .requeued(let action, _, let at) = reviews.first?.outcome else { Issue.record("first"); return }
+        #expect(action == "retry" && at == 2)
+        #expect(reviews.last?.outcome == nil)
     }
 
     /// Things the log never introduced: shown from what is said about them, not dropped and not a crash.

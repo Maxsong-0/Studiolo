@@ -7,7 +7,7 @@ struct WireTests {
     /// Every line of `events.jsonl` is a record this code reads in full, and each follows on from the last.
     @Test func everyRecordedEventIsRead() throws {
         let records = try Fixtures.records()
-        #expect(records.count == 66)
+        #expect(records.count == 71)
         var through: UInt64 = 0
         for record in records {
             #expect(record.seq == through + 1)
@@ -18,7 +18,7 @@ struct WireTests {
                 #expect(event.at != nil)
             }
         }
-        #expect(through == 84)
+        #expect(through == 91)
     }
 
     /// Every `type` in the document is in the recording, and read as its own case.
@@ -27,8 +27,8 @@ struct WireTests {
         let types = Set(try Fixtures.lines("events.jsonl").flatMap { try JSONDecoder().decode(Raw.self, from: $0).record.events.map(\.type) })
         #expect(types == [
             "session_registered", "session_closed", "message_queued", "message_handed", "message_failed", "card_created",
-            "card_started", "card_done", "card_failed", "limit_tripped", "tests_submitted", "tests_handed_over",
-            "tests_accepted", "tests_finished", "review_started", "review_finished", "review_not_done", "merge_requested",
+            "card_started", "card_done", "card_failed", "card_requeued", "limit_tripped", "tests_submitted", "tests_handed_over",
+            "tests_accepted", "tests_finished", "review_started", "review_finished", "review_not_done", "review_requeued", "merge_requested",
             "merge_checked", "merge_prepared", "merge_restarted", "merge_landing", "merge_finished", "merge_failed",
             "merge_cleaned", "ask_opened", "ask_answered", "device_registered", "intent_echoed",
             "turn_started", "turn_finished", "turn_stop_requested", "turn_not_stopped", "line_arranged", "line_read",

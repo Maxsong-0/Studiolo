@@ -143,6 +143,15 @@ enum Wording {
         case nil: ("Reviewing", "circle.lefthalf.filled")
         case .finished(let word, _, _): (verdict(word), word == "approve" ? "checkmark.circle" : "pencil.circle")
         case .notDone(let why, _): ("Not reviewed. \(UntrustedText.line(why.text))", "xmark.octagon")
+        case .requeued(let action, let why, _): ("Starts again, \(requeue(action)). \(UntrustedText.line(why.text))", "arrow.counterclockwise")
+        }
+    }
+
+    /// How a card or review that stopped halfway carries on.
+    static func requeue(_ action: String) -> String {
+        switch action {
+        case "retry": "a fresh process tries once more"
+        default: "it carries on (\(UntrustedText.line(action, limit: 30)))"
         }
     }
 

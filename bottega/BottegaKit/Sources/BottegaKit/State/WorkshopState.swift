@@ -100,6 +100,13 @@ public struct WorkshopState: Sendable {
         case .cardFailed(let event):
             touch(event.card) { $0.end = .failed(event.why, at: event.atMs) }
             show(Row(id: id, at: event.atMs, kind: .cardEnded(event.card)), thread: cards[event.card]?.thread, dispatcher: true)
+        case .cardRequeued(let event):
+            // The changes stay in the worktree; the next `card_started` brings the same worktree and a new task.
+            touch(event.card) {
+                $0.requeues.append(.init(action: event.action, why: event.why, at: event.atMs))
+                $0.work = nil
+            }
+            show(Row(id: id, at: event.atMs, kind: .cardRequeued(event.card)), thread: cards[event.card]?.thread, dispatcher: true)
         case .limitTripped(let event):
             trips[id] = Trip(
                 id: id, limit: event.limit, thread: event.thread, from: event.from, to: event.to, kind: event.kind,
@@ -137,6 +144,8 @@ public struct WorkshopState: Sendable {
             endReview(of: event.card, .finished(verdict: event.verdict, result: event.result, at: event.atMs), at: event.atMs, id)
         case .reviewNotDone(let event):
             endReview(of: event.card, .notDone(event.why, at: event.atMs), at: event.atMs, id)
+        case .reviewRequeued(let event):
+            endReview(of: event.card, .requeued(action: event.action, event.why, at: event.atMs), at: event.atMs, id)
         case .mergeRequested(let event):
             merge(event.merge) {
                 $0.card = event.card

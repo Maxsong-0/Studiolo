@@ -173,6 +173,16 @@ private struct CardDetail: View {
                 }
             }
         }
+        if !card.requeues.isEmpty {
+            DetailSection(title: "Went back to wait") {
+                ForEach(Array(card.requeues.enumerated()), id: \.offset) { _, requeue in
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(verbatim: "\(Wording.exactTime(requeue.at)): \(Wording.requeue(requeue.action))").font(.caption).foregroundStyle(.secondary)
+                        Text(verbatim: UntrustedText.clean(requeue.why.text)).font(.callout).textSelection(.enabled)
+                    }
+                }
+            }
+        }
         if case .failed(let why, _) = card.end {
             DetailSection(title: "Failed") { Text(verbatim: UntrustedText.clean(why.text)).font(.callout).textSelection(.enabled) }
         }

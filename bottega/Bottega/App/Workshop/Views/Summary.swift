@@ -51,6 +51,10 @@ struct Summary {
             text = "\(word(event.card)) failed. \(word(event.why.text, 200))"
             isFailure = true
             detail = .card(event.card)
+        case .cardRequeued(let event):
+            symbol = "arrow.counterclockwise"
+            text = "\(word(event.card)) went back to wait: \(Wording.requeue(event.action)). \(word(event.why.text, 200))"
+            detail = .card(event.card)
 
         case .limitTripped(let event):
             symbol = "gauge.with.dots.needle.100percent"
@@ -87,6 +91,10 @@ struct Summary {
             symbol = "xmark.octagon"
             text = "\(word(event.card)) was not reviewed. \(word(event.why.text, 200))"
             isFailure = true
+            detail = .card(event.card)
+        case .reviewRequeued(let event):
+            symbol = "arrow.counterclockwise"
+            text = "The review of \(word(event.card)) starts again: \(Wording.requeue(event.action)). \(word(event.why.text, 200))"
             detail = .card(event.card)
 
         case .mergeRequested(let event):
@@ -222,6 +230,11 @@ struct Summary {
             let work = state.cards[id]?.work
             symbol = "play"
             text = work.map { "\(word($0.worker)) started \(word(id)) on \(word($0.branch, 80))" } ?? "\(word(id)) started"
+            detail = .card(id)
+        case .cardRequeued(let id):
+            let last = state.cards[id]?.requeues.last
+            symbol = "arrow.counterclockwise"
+            text = "\(word(id)) went back to wait" + (last.map { ": \(Wording.requeue($0.action)). \(word($0.why.text, 200))" } ?? "")
             detail = .card(id)
         case .cardEnded(let id):
             switch state.cards[id]?.end {
