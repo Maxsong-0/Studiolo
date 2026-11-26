@@ -78,6 +78,19 @@ struct LineTests {
         #expect(state.turns["turn-2"]?.stop == .failed(at: 1764000150000))
     }
 
+    /// The recording stops the dispatcher's turn (LMAS 5.4): the turn ends as stopped by the user, and the letter it had
+    /// not answered fails the same way. A stopped turn is not running, so there is nothing left to stop.
+    @Test func theRecordedStop() throws {
+        let state = try Fixtures.state()
+        let turn = try #require(state.turns["turn-3"])
+        #expect(turn.session == "dispatcher" && turn.stop == .requested(at: 1764000352000))
+        #expect(turn.isRunning == false && turn.end?.outcome.code == "stopped_by_user")
+        #expect(state.runningTurn(of: "dispatcher") == nil)
+        let why = state.log.lazy.compactMap { if case .messageFailed(let e) = $0.event, e.id == "msg-9" { e.why } else { nil } }.last
+        #expect(why?.code == "stopped_by_user")
+        #expect(!state.isCardAgent("dispatcher"))
+    }
+
     /// Who can be changed and who stopped, as LMAS section 11 has it, on the recording.
     @Test func whoseModelChangesAndWhoseTurnStops() throws {
         let state = try Fixtures.state()
