@@ -78,6 +78,57 @@ struct LineTests {
         #expect(state.turns["turn-2"]?.stop == .failed(at: 1764000150000))
     }
 
+    /// Who can be changed and who stopped, as LMAS section 11 has it, on the recording.
+    @Test func whoseModelChangesAndWhoseTurnStops() throws {
+        let state = try Fixtures.state()
+        // A direct line with a listed vendor; a card's coder too.
+        #expect(state.canChangeModel(of: "line-1"))
+        #expect(state.canChangeModel(of: "coder-card-1"))
+        // Nothing listed for it, or not LMAS's to change.
+        #expect(!state.canChangeModel(of: "line-2"))
+        #expect(!state.canChangeModel(of: "dispatcher") && !state.canChangeModel(of: "planner"))
+        #expect(!state.canChangeModel(of: "nobody"))
+
+        #expect(state.isCardAgent("coder-card-1") && state.isCardAgent("reviewer-card-1"))
+        #expect(!state.isCardAgent("line-1") && !state.isCardAgent("dispatcher"))
+    }
+
+    /// A direct line can be spoken to once it is ready, even when LMAS never registered its session; not before, not
+    /// when it failed, not once it is put away.
+    @Test func aReadyLineCanBeSpokenTo() throws {
+        let opened = Event.lineOpened(
+            .init(line: "line-1", project: "p", vendor: "codex", role: "coder", model: nil, effort: nil, text: nil, files: nil, atMs: 1))
+        let ready = Event.lineReady(.init(line: "line-1", worktree: "/w", gitDir: "/g", branch: "line-1", base: "b", atMs: 2))
+        let letter = letter("m1", from: "user", to: "line-1")
+        let notYet = try state([opened], [letter])
+        #expect(notYet.recipients(for: .line("m1")).isEmpty && !notYet.recipients.map(\.name).contains("line-1"))
+        let open = try state([opened], [ready], [letter])
+        #expect(open.recipients(for: .line("m1")).map(\.name) == ["line-1"])
+        #expect(open.recipients.map(\.name) == ["line-1"])
+        #expect(open.recipients(for: .line("m1")).first?.role == "coder")
+        let away = try state([opened], [ready], [letter], [arranged("line-1", archived: true)])
+        #expect(away.recipients(for: .line("m1")).isEmpty && away.recipients.isEmpty)
+        let failed = Event.lineFailed(.init(line: "line-1", why: .init(code: "setup", text: "x"), atMs: 3))
+        #expect(try state([opened], [ready], [failed], [letter]).recipients.isEmpty)
+        // Registered as well: counted once, as LMAS said.
+        let registered = Event.sessionRegistered(.init(name: "line-1", role: "reviewer", atMs: 4))
+        let both = try state([opened], [ready], [registered], [letter])
+        #expect(both.recipients.map(\.role) == ["reviewer"])
+        #expect(both.recipients(for: .line("m1")).map(\.role) == ["reviewer"])
+    }
+
+    /// The dispatcher's own vendor, if one were listed, still does not make it changeable.
+    @Test func theDispatcherStaysAsItIs() throws {
+        let listed = Event.modelsListed(
+            .init(vendor: "codex", roles: ["coder"], cliVersion: nil, models: [], defaultModel: nil, defaultEffort: nil, atMs: 1))
+        let started = Event.turnStarted(
+            .init(turn: "t", session: "dispatcher", vendor: "codex", model: nil, effort: nil, cliVersion: nil, messages: nil, atMs: 2))
+        let joined = Event.sessionRegistered(.init(name: "dispatcher", role: "dispatcher", atMs: 0))
+        let state = try state([joined], [listed], [started])
+        #expect(state.catalog(for: "dispatcher") != nil)
+        #expect(!state.canChangeModel(of: "dispatcher"))
+    }
+
     // MARK: Arranging
 
     @Test func whatIsNotSaidStaysAsItWas() throws {

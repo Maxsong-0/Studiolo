@@ -55,13 +55,24 @@ extension WorkshopState {
 
     /// Who the user can talk to on a line: its members that are still open, agents only.
     public func recipients(on thread: Line) -> [Session] {
-        thread.members.compactMap { sessions[$0] }.filter { $0.isOpen && canBeSpokenTo($0) }
+        thread.members.compactMap(session(named:)).filter { $0.isOpen && canBeSpokenTo($0) }
     }
 
     /// Who the user can start a line with.
     public var recipients: [Session] {
-        sessions.values.filter { $0.isOpen && canBeSpokenTo($0) }
+        let lines = directLines.keys.filter { sessions[$0] == nil }.compactMap(readyLine)
+        return (Array(sessions.values) + lines).filter { $0.isOpen && canBeSpokenTo($0) }
             .sorted { ($0.role == "dispatcher" ? 0 : 1, $0.name) < ($1.role == "dispatcher" ? 0 : 1, $1.name) }
+    }
+
+    /// A session by name; a direct line is one as soon as it is ready, whether or not LMAS also said so.
+    private func session(named name: String) -> Session? { sessions[name] ?? readyLine(name) }
+
+    /// Section 11: once `line_ready`, the user says things to the line's number. Not when it failed or is put away.
+    private func readyLine(_ name: String) -> Session? {
+        guard let line = directLines[name], let place = line.place, line.failure == nil, !arrangement(of: name).isArchived
+        else { return nil }
+        return Session(name: name, role: line.role ?? "coder", openedAt: place.at)
     }
 
     private func canBeSpokenTo(_ session: Session) -> Bool { session.role != "user" && session.name != Session.user }

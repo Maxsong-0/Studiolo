@@ -15,7 +15,8 @@ struct WorkshopComposer: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             ForEach(model.sending(in: key)) { SendingRow(item: $0) }
-            if canSend || !model[draft: key].isBlank {
+            // A recording shows the box as it would be, with nothing to send to: for looking at the interface.
+            if canSend || !model[draft: key].isBlank || isRecording {
                 box
             } else {
                 Text(verbatim: whyNot)
@@ -42,7 +43,8 @@ struct WorkshopComposer: View {
             if !canSend {
                 Text(verbatim: whyNot).font(.callout).foregroundStyle(.secondary).padding(.horizontal, 10)
             }
-            HStack(alignment: .bottom, spacing: 2) {
+            // The words get a row of their own; what goes with them sits under them, so nothing is squeezed.
+            HStack(alignment: .top, spacing: 2) {
                 Button { isAttaching = true } label: {
                     Image(systemName: "plus")
                         .font(.system(size: 15, weight: .medium))
@@ -58,19 +60,38 @@ struct WorkshopComposer: View {
                     .padding(.horizontal, 8)
                     .padding(.vertical, 8)
                     .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            HStack(spacing: 2) {
                 if case .line = key, isInterjecting {
                     @Bindable var model = model
                     Toggle("Needs a reply", isOn: $model[draft: key].wantsReply)
                         .toggleStyle(.button)
                         .buttonStyle(.plain)
                         .font(.system(size: 12, weight: .medium))
+                        .lineLimit(1)
+                        .fixedSize()
                         .padding(.horizontal, 10)
-                        .frame(height: 34)
+                        .frame(height: 30)
                         .background(model[draft: key].wantsReply ? AnyShapeStyle(.quaternary) : AnyShapeStyle(.clear), in: .capsule)
                         .overlay { Capsule().strokeBorder(.separator) }
                 }
                 RecipientMenu(key: key)
-                SendDraftButton(key: key, title: "Send", isRound: true)
+                Spacer(minLength: 4)
+                ModePill()
+                if let (line, session) = model.modelTarget(of: key), let vendor = model.state.vendors[session] {
+                    let uses = model.state.models[session]
+                    ModelPill(vendor: vendor, current: uses?.current, pending: uses?.requested, refusal: uses?.refusal?.why) {
+                        model.setModel($0, for: session, on: line)
+                    }
+                }
+                ContextPill()
+                DictateButton()
+                // With nothing typed and nothing to read, Send would do nothing: Stop takes its place while a turn runs.
+                if model[draft: key].isBlank, !model.hasAskToRead, let turn = model.runningTurn(for: key) {
+                    StopTurnButton(turn: turn)
+                } else {
+                    SendDraftButton(key: key, title: "Send", isRound: true)
+                }
             }
         }
         .padding(EdgeInsets(top: 8, leading: 10, bottom: 8, trailing: 8))
@@ -78,6 +99,8 @@ struct WorkshopComposer: View {
     }
 
     private var canSend: Bool { model.hasLink && model.target(of: key) != nil }
+
+    private var isRecording: Bool { if case .recording = model.source { model.target(of: key) != nil } else { false } }
 
     private var whyNot: String {
         if case .recording = model.source { return "A recording: nothing can be sent." }

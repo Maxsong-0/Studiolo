@@ -57,6 +57,12 @@ struct WorkshopCommands: Commands {
                 .keyboardShortcut("0", modifiers: .command)
             Button("Devices") { model.page = .devices }
                 .keyboardShortcut("6", modifiers: .command)
+            Button("Projects") { model.page = .projects }
+                .keyboardShortcut("7", modifiers: .command)
+            Divider()
+            Button("Stop This Turn") { if let turn = model.turnToStop { model.stop(turn) } }
+                .keyboardShortcut(".", modifiers: .command)
+                .disabled(model.turnToStop == nil || !model.isLive)
         }
         CommandMenu("LMAS") {
             Button("Reconnect") { model.reconnect() }

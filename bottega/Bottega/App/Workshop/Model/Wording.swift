@@ -188,6 +188,39 @@ enum Wording {
         NumberFormatter.localizedString(from: number as NSNumber, number: .ordinal)
     }
 
+    // MARK: Bots
+
+    /// What an agent can be on a line, as `models_listed` says.
+    static func role(_ role: String) -> String {
+        switch role {
+        case "coder": "Write code"
+        case "reviewer": "Review"
+        default: UntrustedText.line(role, limit: 24)
+        }
+    }
+
+    static func roles(_ roles: [String]) -> String {
+        switch (roles.contains("coder"), roles.contains("reviewer")) {
+        case (true, true): "Writes code and reviews"
+        case (true, false): "Writes code"
+        case (false, true): "Reviews"
+        case (false, false): ""
+        }
+    }
+
+    /// `high` → High. What the vendor calls it, made to read as a name.
+    static func effort(_ effort: String) -> String {
+        let shown = UntrustedText.line(effort, limit: 24).replacingOccurrences(of: "_", with: " ")
+        return shown.prefix(1).uppercased() + shown.dropFirst()
+    }
+
+    static func directLine(_ line: DirectLine) -> (text: String, symbol: String, isTrouble: Bool) {
+        if let failure = line.failure { return ("Did not open. \(UntrustedText.line(failure.why.text, limit: 200))", "xmark.octagon", true) }
+        if line.isBeingSetUp { return ("Being set up", "circle.dotted", false) }
+        guard let worker = line.worker else { return ("Ready", "checkmark.circle", false) }
+        return worker.isUp ? ("Its agent is up", "bolt.circle", false) : ("Its agent is down", "moon.circle", false)
+    }
+
     static func model(_ model: String, _ effort: String?) -> String {
         UntrustedText.line(model, limit: 60) + (effort.map { " · \(UntrustedText.line($0, limit: 24))" } ?? "")
     }

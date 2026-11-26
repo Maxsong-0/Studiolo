@@ -58,7 +58,7 @@ private struct TurnHeader: View {
     }
 }
 
-/// Running, or how it ended. At the top of a turn's details a running turn is the black capsule; in a list, the small dots.
+/// Running, or how it ended. At the top of a turn's details a running turn is its status line; in a list, the small dots.
 struct TurnState: View {
     let turn: Turn
     var isHeading = false
@@ -68,7 +68,7 @@ struct TurnState: View {
             let outcome = Wording.turnOutcome(end.outcome)
             StatusChip(text: outcome.text, symbol: outcome.symbol)
         } else if isHeading {
-            DoingNow(turn: turn.id, inCapsule: true)
+            DoingNow(turn: turn.id, isStatusLine: true)
         } else {
             WorkingLabel()
         }
@@ -325,13 +325,13 @@ struct TurnList: View {
 struct DoingNow: View {
     @Environment(WorkshopModel.self) private var model
     let turn: String
-    /// In the black capsule, as on a conversation; plain words elsewhere.
-    var inCapsule = false
+    /// The dots and the swept words, as at the top of a running turn; plain words elsewhere.
+    var isStatusLine = false
     @State private var words: String?
 
     var body: some View {
-        if inCapsule {
-            WorkingCapsule(text: words ?? "Working")
+        if isStatusLine {
+            WorkingStatus(text: words ?? "Working")
                 .task(id: model.turns[turn].map(ObjectIdentifier.init)) {
                     if let inside = model.turns[turn] { await follow(inside) }
                 }

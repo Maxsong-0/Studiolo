@@ -67,9 +67,13 @@ final class WorkshopModel {
     private(set) var drafts = Drafts()
     /// Which composer an outbox item's words came from.
     private var origins: [String: DraftKey] = [:]
+    /// What the box on each bot's home holds, by vendor: a line not opened yet.
+    var lineDrafts: [String: LineDraft] = [:]
+    /// Which bot's home an `open_line` was sent from, by content id.
+    var openings: [String: String] = [:]
     private(set) var putAway: Set<TripID> = []
 
-    private var client: LinkClient?
+    private(set) var client: LinkClient?
     private var pumps: [Task<Void, Never>] = []
 
     /// Letters to the user that have been on screen while the app was in front.
@@ -369,7 +373,7 @@ final class WorkshopModel {
     // MARK: Sending
 
     /// The one gate in front of everything that gets signed.
-    private func isFromTheUser() -> Bool {
+    func isFromTheUser() -> Bool {
         if HumanInput.take() { return true }
         notice = Why(code: "synthetic", text: "That did not come from the keyboard or the mouse, so nothing was sent.")
         return false
@@ -423,7 +427,7 @@ final class WorkshopModel {
         submit(.decline(ask: id), to: client)
     }
 
-    private func submit(_ intent: IntentDraft, to client: LinkClient, touchIDReason: String = "") {
+    func submit(_ intent: IntentDraft, to client: LinkClient, touchIDReason: String = "") {
         Task {
             do {
                 try await client.submit(intent, touchIDReason: touchIDReason)
@@ -449,6 +453,7 @@ final class WorkshopModel {
     }
 
     private func take(_ settled: Outbox.Settled) {
+        if let vendor = openings.removeValue(forKey: settled.item.id) { return opened(settled, from: vendor) }
         let key = origins.removeValue(forKey: settled.item.id)
         switch settled.result {
         case .done(let message, _):

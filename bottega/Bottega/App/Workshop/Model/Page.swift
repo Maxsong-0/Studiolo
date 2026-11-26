@@ -36,17 +36,21 @@ enum Page: Hashable {
     case board
     case activity
     case devices
+    /// Repositories agents may work on, registered with Touch ID.
+    case projects
     case line(String)
+    /// A bot's home, by vendor: open a line straight to it, see the lines it has.
+    case bot(String)
 
-    /// The section the sidebar shows while this page is up; devices belong to none and leave it as it was.
+    /// The section the sidebar shows while this page is up; devices and projects belong to none and leave it as it was.
     var section: SidebarSection? {
         switch self {
         case .rooms: .rooms
-        case .dispatcher, .line: .bots
+        case .dispatcher, .line, .bot: .bots
         case .waiting: .waiting
         case .board: .cards
         case .activity: .activity
-        case .devices: nil
+        case .devices, .projects: nil
         }
     }
 
@@ -58,7 +62,9 @@ enum Page: Hashable {
         case .board: "Cards"
         case .activity: "Activity"
         case .devices: "Devices"
+        case .projects: "Projects"
         case .line(let id): id
+        case .bot(let vendor): Maker(vendor: vendor)?.title ?? vendor
         }
     }
 
@@ -70,7 +76,9 @@ enum Page: Hashable {
         case .board: "rectangle.split.3x1"
         case .activity: "list.bullet.rectangle"
         case .devices: "macbook.and.iphone"
+        case .projects: "folder"
         case .line: "text.bubble"
+        case .bot: "person.crop.circle"
         }
     }
 
@@ -83,7 +91,9 @@ enum Page: Hashable {
         case "board": self = .board
         case "activity": self = .activity
         case "devices": self = .devices
+        case "projects": self = .projects
         default:
+            if word.hasPrefix("bot:") { self = .bot(String(word.dropFirst(4))); return }
             guard word.hasPrefix("line:") else { return nil }
             self = .line(String(word.dropFirst(5)))
         }

@@ -208,6 +208,18 @@ extension WorkshopState {
     /// The models to choose from for a session, as its vendor lists them. Without, it cannot be changed.
     public func catalog(for session: String) -> Event.ModelsListed? { vendors[session].flatMap { catalogs[$0]?.listed } }
 
+    /// Whether a session's model can be changed (`set_model`): an agent LMAS runs whose vendor has listed its models.
+    /// The dispatcher and the Planner are not LMAS's to change.
+    public func canChangeModel(of session: String) -> Bool {
+        catalog(for: session) != nil && !["dispatcher", "planner"].contains(role(of: session) ?? "")
+    }
+
+    /// A card's own coder or reviewer. Its turns are not the user's to stop (`not_stoppable`): the card would be left
+    /// without a result.
+    public func isCardAgent(_ session: String) -> Bool {
+        cards.values.contains { card in card.work?.worker == session || card.reviews.contains { $0.reviewer == session } }
+    }
+
     /// Names in order.
     public var projectList: [Project] { projects.values.sorted { $0.name < $1.name } }
 

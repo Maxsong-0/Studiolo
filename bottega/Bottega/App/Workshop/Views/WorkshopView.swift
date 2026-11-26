@@ -135,7 +135,7 @@ struct PageView: View {
         return switch model.page {
         case .board, .activity, .rooms: true
         case .line: model.showsLanes
-        case .dispatcher, .waiting, .devices: false
+        case .dispatcher, .waiting, .devices, .projects, .bot: false
         }
     }
 
@@ -156,6 +156,8 @@ struct PageView: View {
             case .board: BoardView()
             case .activity: ActivityView()
             case .devices: DevicesView()
+            case .projects: ProjectsView()
+            case .bot(let vendor): BotHomeView(vendor: vendor).id(vendor)
             case .line(let id):
                 if let line = model.state.threads[id] {
                     LinePage(line: line).id(id)
@@ -180,7 +182,9 @@ struct PageView: View {
         case .line(let id):
             guard let line = model.state.threads[id] else { return "" }
             return "\(Wording.lineKind(model.state.kind(of: line))) · \(UntrustedText.line(id, limit: 40))"
-        case .rooms, .dispatcher, .waiting, .board, .activity, .devices:
+        case .bot(let vendor):
+            return Wording.roles(model.state.catalogs[vendor]?.listed?.roles ?? [])
+        case .rooms, .dispatcher, .waiting, .board, .activity, .devices, .projects:
             if case .recording(let url) = model.source { return "Recording · \(url.lastPathComponent)" }
             return ""
         }

@@ -205,7 +205,8 @@ private struct BotsList: View {
         if !groups.makers.isEmpty || !groups.others.isEmpty { SidebarCaption(text: "Agents") }
         ForEach(groups.makers, id: \.maker) { group in
             let key = group.maker.vendor
-            BotRow(isOpen: isOpen(key), hasLines: !group.lines.isEmpty, isOn: false, toggle: { flip(key) }, select: { flip(key) }) {
+            BotRow(isOpen: isOpen(key), hasLines: !group.lines.isEmpty, isOn: model.page == .bot(key), toggle: { flip(key) },
+                   select: { model.page = .bot(key) }) {
                 MakerTile(maker: group.maker, size: 22)
                 Text(group.maker.title).font(.system(size: 13)).frame(maxWidth: .infinity, alignment: .leading)
             }
@@ -272,8 +273,10 @@ private struct BotGroups {
                 }
             }
         }
-        // Every maker LMAS runs gets a row, with lines or not.
-        let present = Set(configured.compactMap(Maker.init(vendor:)) + state.vendors.values.compactMap(Maker.init(vendor:)) + byMaker.keys)
+        // Every maker LMAS runs or has asked for its models gets a row, with lines or not: its home opens lines.
+        let present = Set(
+            configured.compactMap(Maker.init(vendor:)) + state.vendors.values.compactMap(Maker.init(vendor:))
+                + state.catalogs.keys.compactMap(Maker.init(vendor:)) + byMaker.keys)
         makers = Maker.allCases.filter(present.contains).map { MakerLines(maker: $0, lines: byMaker[$0] ?? []) }
     }
 }
@@ -481,6 +484,7 @@ private struct SidebarFooter: View {
         HStack(spacing: 8) {
             Menu {
                 Button("Devices") { model.page = .devices }
+                Button("Projects") { model.page = .projects }
                 SettingsLink { Text("Settings…") }
             } label: {
                 Image(systemName: "person.fill")
@@ -493,7 +497,7 @@ private struct SidebarFooter: View {
             .buttonStyle(.plain)
             .menuIndicator(.hidden)
             .fixedSize()
-            .help("You: devices and settings")
+            .help("You: devices, projects and settings")
             .accessibilityLabel("You")
             LMASStatusLine()
             Button { showsBackdrop.toggle() } label: {

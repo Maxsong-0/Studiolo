@@ -302,7 +302,7 @@ struct LetterRow: View {
                 model.detail = .turn(turn.id)
             } label: {
                 HStack(spacing: 8) {
-                    if turn.isRunning { DoingNow(turn: turn.id, inCapsule: true) } else { WorkingLabel() }
+                    if turn.isRunning { DoingNow(turn: turn.id, isStatusLine: true) } else { WorkingLabel() }
                     Image(systemName: "chevron.right").imageScale(.small).foregroundStyle(.tertiary)
                 }
                 .contentShape(.rect)
