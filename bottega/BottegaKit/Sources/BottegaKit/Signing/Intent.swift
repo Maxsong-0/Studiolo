@@ -146,15 +146,20 @@ public enum IntentDraft: Codable, Equatable, Sendable {
 
     /// LMAS leaves the space around a title out before it looks at the rest.
     private static func isTitle(_ text: String) -> Bool {
-        let isSpace = { (scalar: Unicode.Scalar) in scalar.properties.isWhitespace }
-        let kept = text.unicodeScalars.drop(while: isSpace).reversed().drop(while: isSpace).reversed()
-        let title = String(String.UnicodeScalarView(kept))
+        let title = trimmed(text)
         return title.utf8.count <= Limit.title && !hasControls(title)
     }
 
+    /// A name with space around it is refused, not trimmed.
     private static func isProjectName(_ text: String) -> Bool {
-        (1...Limit.projectName).contains(text.utf8.count) && !hasControls(text)
-            && text.first?.isWhitespace == false && text.last?.isWhitespace == false
+        (1...Limit.projectName).contains(text.utf8.count) && !hasControls(text) && trimmed(text) == text
+    }
+
+    /// Without what Unicode calls white space at either end, as LMAS (Rust's `trim`) sees it: scalar by scalar.
+    private static func trimmed(_ text: String) -> String {
+        let isSpace = { (scalar: Unicode.Scalar) in scalar.properties.isWhitespace }
+        let kept = text.unicodeScalars.drop(while: isSpace).reversed().drop(while: isSpace).reversed()
+        return String(String.UnicodeScalarView(kept))
     }
 
     private static func hasControls(_ text: String) -> Bool {

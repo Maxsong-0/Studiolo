@@ -229,7 +229,9 @@ struct IntentTests {
         #expect(problem(project("studio")) == nil)
         #expect(problem(project("两个 字")) == nil)
         #expect(problem(project(String(repeating: "x", count: 64))) == nil)
-        for bad in ["", " a", "a ", "a\tb", String(repeating: "x", count: 65)] {
+        // LMAS goes by scalars: a mark after a space ends the name with the mark, not with space.
+        #expect(problem(project("a \u{301}")) == nil)
+        for bad in ["", " a", "a ", "a\tb", "a\u{3000}", "\u{2028}a", String(repeating: "x", count: 65)] {
             #expect(problem(project(bad)) == .badProjectName, "\(bad.debugDescription)")
         }
         #expect(problem(project("studio", "~/r")) == .badProjectPath)
