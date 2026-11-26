@@ -26,6 +26,7 @@ Bottega 在 Studiolo 仓库的 `bottega/` 目录里。Studiolo 仓库根的 `AGE
 - 别人写的字（信、卡、测试输出、会话名、`Why.text`）一律 `Text(verbatim: UntrustedText.clean(…))` 或 `.line(…)`，不渲染 Markdown、不做链接。批准单的 `text` 用 `UntrustedText.revealing(…)`：一字不删，看不见的字符写成 ⟨U+XXXX⟩；签的摘要按原文算。
 - 要签名的动作只从 `WorkshopModel` 发，先过 `HumanInput`；不加环境变量、启动参数一类的绕过。
 - 按当时情形定的意图（`IntentDraft.keeps` 为 false：批、拒、停一轮、换模型、加减项目）只在连上并追平时发：模型里先过 `canDecideNow()`，连接层 `LinkClient.submit` 没追平就当场抛 `ConnectionLost`，不留到重连以后。
+- 连接不是 live 时在等什么（连接、追事件、登记、正在登记、重新登记、别的原因停住）由 `LinkClient.Status.wait(of:)` 判，有测试；界面只给每一种配一句话、一个动作（`Wording.notLive`、`notNow`，`canRegisterAgain`），不在界面里再按状态或 `why.code` 另分一遍。
 - 线上来的数字（`UInt64`）不直接 `Int(x)`、不直接做加减：用来往下数的经 `decodeNumber`（上界 `Wire.farthest`，2^53），只拿来显示的在归约时 `min(…, Wire.farthest)`，界面里 `Int(clamping:)`。超了会当场崩。
 - 不用指纹就能签的钥匙（`SoftwareKeys`）只在 `BottegaTestKeys` 里，给包的测试和 `bottega-probe` 用；`project.yml`、App 的源码、`BottegaKit`、`BottegaLink` 都不引用它（`TestKeysStayOutTests` 看着）。
 - 红色只表示「等你」；失败用图标加橙色或次要色。界面文字英文。

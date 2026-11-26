@@ -297,9 +297,7 @@ final class WorkshopModel {
 
     var hasLink: Bool { client != nil || isOutOfStep }
     /// Stopped for a reason registering again would cure.
-    var canRegisterAgain: Bool {
-        if case .stopped(let why) = status { ["keys", "handshake"].contains(why.code) } else { false }
-    }
+    var canRegisterAgain: Bool { LinkClient.Status.wait(of: status) == .registeringAgain }
     var needsRegistration: Bool { status == .needsRegistration || status == .registering }
     var isLive: Bool { status == .live }
     /// This Mac's device number with the LMAS it is connected to.

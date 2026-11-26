@@ -351,21 +351,38 @@ struct LinkClientTests {
         try await rig.until("live by itself") { rig.isLive }
     }
 
-    /// What goes on inside turns is an extra: an answer to `watch` that cannot be read does not stop the events.
-    @Test func followsAllTheSameWhenWatchCannotBeRead() async throws {
-        let lmas = FakeLMAS()
-        lmas.set { $0.turns = [:]; $0.garblesWatch = true }
-        let rig = Rig(lmas: lmas)
+    /// The first line of all is no different: a greeting that cannot be read stops it too.
+    @Test func stopsAtAGreetingItCannotRead() async throws {
+        let rig = Rig()
         defer { rig.stop() }
         try await rig.registered()
-        rig.lmas.append(#"{"type":"session_registered","name":"a","role":"coder","at_ms":1}"#)
-        try await rig.until("a") { rig.state.sessions["a"] != nil }
-        #expect(rig.isLive)
-        #expect(rig.watching.isEmpty)
-        // With an answer that can be read, it is watching.
-        lmas.set { $0.garblesWatch = false }
+        rig.lmas.set { $0.garblesGreeting = true }
         rig.lmas.dropAll()
-        try await rig.until("watching") { rig.watching.contains { $0 != nil } }
+        try await rig.until("stopped") { if case .stopped(let why) = rig.status { why.code == "malformed" } else { false } }
+        let attempts = rig.lmas.attempts
+        try await Task.sleep(for: .milliseconds(60))
+        #expect(rig.lmas.attempts == attempts)
+        rig.lmas.set { $0.garblesGreeting = false }
+        await rig.client.reconnect()
+        try await rig.until("live") { rig.isLive }
+    }
+
+    /// What a link that is not live waits for, which is what the app says to do: each on its own, and registering
+    /// again only where that is what cures it.
+    @Test func whatALinkThatIsNotLiveWaitsFor() {
+        typealias Status = LinkClient.Status
+        func stopped(_ code: String) -> Status { .stopped(Why(code: code, text: "")) }
+        #expect(Status.wait(of: .live) == nil)
+        #expect(Status.wait(of: nil) == .connection)
+        #expect(Status.wait(of: .connecting) == .connection)
+        #expect(Status.wait(of: .retrying(Why(code: "lost", text: ""))) == .connection)
+        #expect(Status.wait(of: .catchingUp(latest: 3)) == .catchingUp)
+        #expect(Status.wait(of: .needsRegistration) == .registration)
+        #expect(Status.wait(of: .registering) == .registering)
+        for code in ["keys", "handshake"] { #expect(Status.wait(of: stopped(code)) == .registeringAgain, "\(code)") }
+        for code in ["malformed", "too_long", "unreadable", "sequence", "version", "peer_refused", "socket_path"] {
+            #expect(Status.wait(of: stopped(code)) == .stopped, "\(code)")
+        }
     }
 
     /// A kind of line this Bottega does not know is passed over, and what follows is taken as before.

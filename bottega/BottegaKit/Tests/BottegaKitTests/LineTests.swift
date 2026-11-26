@@ -253,6 +253,16 @@ struct LineTests {
             try after.apply(Record(seq: 6, through: 6, events: [read(inside)]))
             #expect(after.unreadThrough(line) == nil, "read through \(inside)")
         }
+        // Another letter in a later record of several numbers: up to the end of the later one, also when the
+        // one before has been read.
+        try state.apply(
+            Record(seq: 6, through: 8, events: [letter("m3", from: "line-1", to: "user", thread: "m1", kind: "question"), arranged("m1", pinned: false)]))
+        let longer = try #require(state.threads["m1"])
+        #expect(state.unreadThrough(longer) == 8)
+        try state.apply(Record(seq: 9, through: 9, events: [read(5)]))
+        #expect(state.unreadThrough(longer) == 8)
+        try state.apply(Record(seq: 10, through: 10, events: [read(6)]))
+        #expect(state.unreadThrough(longer) == nil)
     }
 
     /// Going from one line to another: the one left if something on it is unread, otherwise the one opened.

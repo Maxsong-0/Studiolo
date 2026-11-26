@@ -31,8 +31,10 @@ final class FakeLMAS: Connector, Sendable {
         var followError: String?
         /// Does what an intent asks and then answers with something that is not what the document says.
         var garblesIntent = false
-        /// Answers `watch` with something that is not what the document says.
+        /// Watches as asked, and answers `watch` with something that is not what the document says.
         var garblesWatch = false
+        /// Greets with something that is not what the document says.
+        var garblesGreeting = false
         /// Cannot be connected to, for this reason.
         var connectError: POSIXError.Code?
     }
@@ -171,13 +173,15 @@ final class FakeLMAS: Connector, Sendable {
             books.open.append(channel)
             return channel
         }
-        let refusal = books.withLock { books in
+        let (refusal, garbles) = books.withLock { books in
             defer { books.knobs.refuseNext = nil }
-            return books.knobs.refuseNext
+            return (books.knobs.refuseNext, books.knobs.garblesGreeting)
         }
         if let refusal {
             channel.yield(#"{"error":{"code":"\#(refusal.code)","text":"\#(refusal.text)"}}"#)
             channel.close()
+        } else if garbles {
+            channel.yield(#"{"lmas":"ui","version":"one"}"#)
         } else {
             channel.yield(
                 #"{"lmas":"ui","version":1,"connection":\#(channel.connection),"nonce":"\#(Hex.encode(channel.nonce))","registered":\#(isRegistered)}"#)
@@ -218,10 +222,10 @@ final class FakeLMAS: Connector, Sendable {
     private func watch(_ id: UInt64, _ channel: FakeChannel) {
         let knobs = books.withLock { $0.knobs }
         guard knobs.turns != nil else { return channel.fail(id, "unknown_request") }
-        if knobs.garblesWatch { return channel.ok(id, #"{"turns":"none"}"#) }
         guard !channel.isWatching else { return channel.fail(id, "already_watching") }
         channel.isWatching = true
-        channel.ok(id, #"{"turns":[\#(knobs.running.map { #""\#($0.turn)""# }.joined(separator: ","))]}"#)
+        let turns = knobs.garblesWatch ? #""none""# : "[" + knobs.running.map { #""\#($0.turn)""# }.joined(separator: ",") + "]"
+        channel.ok(id, #"{"turns":\#(turns)}"#)
         for running in knobs.running { for line in running.lines { channel.yield(#"{"live":{"turn":"\#(running.turn)",\#(line)}}"#) } }
     }
 

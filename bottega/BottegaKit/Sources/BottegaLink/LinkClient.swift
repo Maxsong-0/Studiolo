@@ -17,6 +17,36 @@ public actor LinkClient {
         case retrying(Why)
         /// Not connected, and trying again would change nothing. `reconnect` tries anyway.
         case stopped(Why)
+
+        /// What a link that is not live waits for.
+        public enum Wait: Equatable, Sendable {
+            /// A connection: it comes about by itself.
+            case connection
+            /// The events that are still coming.
+            case catchingUp
+            /// This Mac being registered with that LMAS, which someone has to ask for.
+            case registration
+            /// The registration that is under way.
+            case registering
+            /// This Mac being registered again: stopped, and that is what cures it.
+            case registeringAgain
+            /// Someone saying to reconnect or to fetch the events again: stopped for any other reason.
+            case stopped
+        }
+
+        /// What stands between the link as it is and `live`, the only time what is decided about the moment
+        /// (approving, declining, stopping a turn, changing a model) is taken. nil when live. No link at all waits
+        /// for a connection like one that is being made.
+        public static func wait(of status: Status?) -> Wait? {
+            switch status {
+            case .live: nil
+            case nil, .connecting, .retrying: .connection
+            case .catchingUp: .catchingUp
+            case .needsRegistration: .registration
+            case .registering: .registering
+            case .stopped(let why): LinkClient.curedByRegisteringAgain.contains(why.code) ? .registeringAgain : .stopped
+            }
+        }
     }
 
     public enum Update: Sendable {
@@ -427,13 +457,14 @@ public actor LinkClient {
         }
     }
 
-    /// Where the answer is read, not where it was waited for: what is pushed comes right behind it. An answer that
-    /// cannot be read is an LMAS that does not tell, like one that does not know `watch`: the events are followed
-    /// all the same.
+    /// Where the answer is read, not where it was waited for: what is pushed comes right behind it. LMAS said yes,
+    /// so it is watching whatever the answer holds. With one that cannot be read the events are followed all the
+    /// same and what is pushed is taken; only which turns are running is not known until they say so themselves,
+    /// and what was growing falls behind when the connection goes (`hangUp`).
     private func startWatching(_ reply: Reply) {
         watchRequest = nil
-        guard let watching = try? reply.read(Watching.self) else { return }
         isWatching = true
+        guard let watching = try? reply.read(Watching.self) else { return }
         send(.watching(watching.turns))
     }
 
@@ -679,6 +710,9 @@ public actor LinkClient {
 
     /// LMAS's words for what the same connection would only hear again. `unreadable`: it cannot read its own log.
     private static let finalCodes: Set<String> = ["peer_refused", "version", "handshake", "malformed", "too_long", "unreadable"]
+
+    /// What it stops with that registering this Mac again cures: its keys are gone, or LMAS does not know it by them.
+    private static let curedByRegisteringAgain: Set<String> = ["keys", "handshake"]
 
     /// What trying again by itself would not change, as the status to stop in; nil when it might. A line that cannot
     /// be read is never skipped: nothing past it is shown until the user says to reconnect or fetch everything again.

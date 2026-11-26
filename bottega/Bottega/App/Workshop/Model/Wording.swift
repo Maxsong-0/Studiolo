@@ -472,25 +472,29 @@ enum Wording {
 
     /// Why what is decided about how things are now cannot be sent, in a few words: for a tooltip. Empty when it can.
     static func notLive(_ status: LinkClient.Status?) -> String {
-        switch status {
-        case .live: ""
+        switch LinkClient.Status.wait(of: status) {
+        case nil: ""
+        case .connection: "Not connected to LMAS"
         case .catchingUp: "Still catching up with LMAS"
-        case .needsRegistration, .registering: "This Mac is not registered with LMAS"
-        case .stopped: "The link to LMAS is stopped"
-        case nil, .connecting, .retrying: "Not connected to LMAS"
+        case .registration: "This Mac is not registered with LMAS"
+        case .registering: "This Mac is being registered with LMAS"
+        case .registeringAgain, .stopped: "The link to LMAS is stopped"
         }
     }
 
     /// The same for something asked for all the same. Approving, declining, stopping, changing a model go by how
-    /// things are now, so they are not kept for later: what to do before asking again.
+    /// things are now, so they are not kept for later: what to do before asking again, which is what the window
+    /// offers then (`StatusBanner`, the page to register on).
     static func notNow(_ status: LinkClient.Status?) -> Why {
-        let (what, then) = switch status {
+        let (what, then) = switch LinkClient.Status.wait(of: status) {
         // The link said no while this still read live: the connection went a moment ago.
-        case .live: ("The connection to LMAS was just lost", "Do it again once connected.")
+        case nil: ("The connection to LMAS was just lost", "Do it again once connected.")
+        case .connection: (notLive(status), "Do it again once connected.")
         case .catchingUp: (notLive(status), "Do it again in a moment.")
-        case .needsRegistration, .registering: (notLive(status), "Register it first.")
+        case .registration: (notLive(status), "Register it first.")
+        case .registering: (notLive(status), "Do it again once that is done.")
+        case .registeringAgain: (notLive(status), "Register this Mac again first.")
         case .stopped: (notLive(status), "Reconnect or reload the events first.")
-        case nil, .connecting, .retrying: (notLive(status), "Do it again once connected.")
         }
         return Why(code: "offline", text: "\(what), so that was not sent. \(then)")
     }

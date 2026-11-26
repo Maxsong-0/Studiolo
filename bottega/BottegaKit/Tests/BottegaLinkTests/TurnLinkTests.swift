@@ -54,6 +54,33 @@ struct TurnLinkTests {
         await #expect(throws: WireError(code: "unknown_request", text: "unknown_request")) { try await rig.client.turn("turn-1") }
     }
 
+    /// An answer to `watch` that cannot be read does not stop the events, and LMAS watches all the same: what it
+    /// pushes is taken, and what was growing falls behind when the connection goes.
+    @Test func followsAllTheSameWhenWatchCannotBeRead() async throws {
+        let rig = try await rig {
+            $0.turns = [:]
+            $0.garblesWatch = true
+            $0.running = [("turn-7", [Self.began])]
+        }
+        defer { rig.stop() }
+        // Pushed right behind the answer: once it is here, the answer has been read.
+        try await rig.until("pushed behind the answer") { rig.turns["turn-7"]?.completeness == .growing }
+        #expect(rig.isLive)
+        #expect(rig.watching.isEmpty)
+        rig.lmas.append(#"{"type":"session_registered","name":"a","role":"coder","at_ms":1}"#)
+        try await rig.until("a") { rig.state.sessions["a"] != nil }
+        // The turn ends while nobody is connected, and the next answer cannot be read either: nothing says it is
+        // over, and it does not stay growing for ever.
+        rig.lmas.set { $0.running = [] }
+        rig.lmas.dropAll()
+        try await rig.until("behind") { rig.turns["turn-7"]?.completeness == .behind }
+        #expect(rig.watching == [nil])
+        // With an answer that can be read, it says what is running.
+        rig.lmas.set { $0.garblesWatch = false }
+        rig.lmas.dropAll()
+        try await rig.until("watching") { rig.watching.contains { $0 != nil } }
+    }
+
     @Test func aNewConnectionWatchesAgainAndWhatEndedMeanwhileIsBehind() async throws {
         let rig = try await rig {
             $0.turns = [:]
