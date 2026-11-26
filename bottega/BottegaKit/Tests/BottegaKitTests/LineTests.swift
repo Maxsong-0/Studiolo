@@ -38,24 +38,29 @@ struct LineTests {
         }())
         #expect(try state.title(of: #require(state.threads["msg-9"])) == "清空缓存")
         #expect(state.arrangement(of: "dispatcher").readThrough == 120)
-        #expect(state.projectList.isEmpty)
+        #expect(state.projectList.map(\.name) == ["atelier"])
 
         let one = try #require(state.directLines["line-1"])
         #expect(one.project == "studio" && one.vendor == "codex" && one.role == "coder")
         #expect(one.model == .init(model: "gpt-6-luna", effort: "high"))
-        #expect(one.firstText == "看看登录页为什么这么慢。" && one.firstFiles.isEmpty)
+        // The first thing said is a letter from the user, queued in the same record.
+        #expect(state.messages["msg-13"]?.from == "user" && state.messages["msg-13"]?.to == "line-1")
+        #expect(state.threads(with: "line-1").first?.id == "msg-13")
         #expect(
             one.place == .init(
-                worktree: "/Users/max/lmas-lines/line-1", gitDir: "/Users/max/studio/.git/worktrees/line-1", branch: "line-1",
-                base: "3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a", at: 1764000150000))
-        #expect(one.worker == .init(state: "down", run: 1, why: .init(code: "process_exited", text: "CLI 进程退出了"), at: 1764000150000))
+                worktree: "/Users/max/lmas-lines/line-1", gitDir: "/Users/max/studio/.git/worktrees/line-1", branch: "lmas/line-1",
+                base: "3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a3f2a", at: 1764000150400))
+        #expect(one.worker == .init(state: "down", run: 1, why: .init(code: "stopped", text: "进程停了：进程退出，退出码 1"), at: 1764000300000))
         #expect(one.failure == nil && !one.isBeingSetUp)
         #expect(state.arrangement(of: "line-1").isArchived)
         #expect(state.vendors["line-1"] == "codex")
+        // Its session came with it and went when it was put away: nobody to talk to there now.
+        #expect(state.sessions["line-1"]?.role == "coder" && state.sessions["line-1"]?.isOpen == false)
 
         let two = try #require(state.directLines["line-2"])
-        #expect(two.failure?.why.code == "setup" && two.place == nil && two.worker == nil && two.model == nil && !two.isBeingSetUp)
-        #expect(two.firstFiles == [.init(name: "要求.txt", content: "只看 src/。\n")])
+        #expect(two.failure?.why.code == "not_prepared" && two.place == nil && two.worker == nil && two.model == nil && !two.isBeingSetUp)
+        #expect(state.messages["msg-15"]?.files == [.init(name: "要求.txt", content: "只看 src/。\n")])
+        #expect(state.sessions["line-2"]?.isOpen == false && state.recipients.allSatisfy { !$0.name.hasPrefix("line-") })
     }
 
     @Test func theRecordedModels() throws {
@@ -106,28 +111,18 @@ struct LineTests {
         #expect(!state.isCardAgent("line-1") && !state.isCardAgent("dispatcher"))
     }
 
-    /// A direct line can be spoken to once it is ready, even when LMAS never registered its session; not before, not
-    /// when it failed, not once it is put away.
-    @Test func aReadyLineCanBeSpokenTo() throws {
-        let opened = Event.lineOpened(
-            .init(line: "line-1", project: "p", vendor: "codex", role: "coder", model: nil, effort: nil, text: nil, files: nil, atMs: 1))
-        let ready = Event.lineReady(.init(line: "line-1", worktree: "/w", gitDir: "/g", branch: "line-1", base: "b", atMs: 2))
+    /// Section 11: a line's session is registered with it, so it can be spoken to before it is ready (the letter waits);
+    /// putting it away closes the session.
+    @Test func aLineCanBeSpokenToFromTheStart() throws {
+        let opened = Event.lineOpened(.init(line: "line-1", project: "p", vendor: "codex", role: "coder", model: nil, effort: nil, atMs: 1))
+        let registered = Event.sessionRegistered(.init(name: "line-1", role: "coder", atMs: 1))
         let letter = letter("m1", from: "user", to: "line-1")
-        let notYet = try state([opened], [letter])
-        #expect(notYet.recipients(for: .line("m1")).isEmpty && !notYet.recipients.map(\.name).contains("line-1"))
-        let open = try state([opened], [ready], [letter])
+        let open = try state([opened, registered, letter])
         #expect(open.recipients(for: .line("m1")).map(\.name) == ["line-1"])
         #expect(open.recipients.map(\.name) == ["line-1"])
-        #expect(open.recipients(for: .line("m1")).first?.role == "coder")
-        let away = try state([opened], [ready], [letter], [arranged("line-1", archived: true)])
+        #expect(open.directLines["line-1"]?.isBeingSetUp == true)
+        let away = try state([opened, registered, letter], [arranged("line-1", archived: true), .sessionClosed(.init(name: "line-1", atMs: 2))])
         #expect(away.recipients(for: .line("m1")).isEmpty && away.recipients.isEmpty)
-        let failed = Event.lineFailed(.init(line: "line-1", why: .init(code: "setup", text: "x"), atMs: 3))
-        #expect(try state([opened], [ready], [failed], [letter]).recipients.isEmpty)
-        // Registered as well: counted once, as LMAS said.
-        let registered = Event.sessionRegistered(.init(name: "line-1", role: "reviewer", atMs: 4))
-        let both = try state([opened], [ready], [registered], [letter])
-        #expect(both.recipients.map(\.role) == ["reviewer"])
-        #expect(both.recipients(for: .line("m1")).map(\.role) == ["reviewer"])
     }
 
     /// The dispatcher's own vendor, if one were listed, still does not make it changeable.
@@ -293,7 +288,7 @@ struct LineTests {
         let closed = Event.sessionClosed(.init(name: "s", atMs: 2))
         #expect(try state([asked("a")], [closed]).models["s"]?.requested == nil)
         let opened = Event.lineOpened(
-            .init(line: "s", project: "p", vendor: "codex", role: "coder", model: nil, effort: nil, text: nil, files: nil, atMs: 1))
+            .init(line: "s", project: "p", vendor: "codex", role: "coder", model: nil, effort: nil, atMs: 1))
         #expect(try state([opened], [asked("a")], [closed]).models["s"]?.requested == .init(model: "a"))
     }
 

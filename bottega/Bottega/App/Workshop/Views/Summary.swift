@@ -184,7 +184,6 @@ struct Summary {
             symbol = "plus.bubble"
             text = "\(word(event.line)) was opened in \(word(event.project, 80)) with \(word(event.vendor)) as \(word(event.role))"
                 + (event.model.map { ", \(Wording.model($0, event.effort))" } ?? "")
-                + (event.text.map { ": \(word($0, 160))" } ?? "")
         case .lineReady(let event):
             symbol = "checkmark.circle"
             text = "\(word(event.line)) is ready on \(word(event.branch, 80))"

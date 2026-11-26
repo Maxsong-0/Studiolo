@@ -101,6 +101,7 @@ private struct StartLineCard: View {
     private var whyNot: String? {
         if case .recording = model.source { return "A recording: nothing can be sent." }
         if !model.isLive { return "Not connected to LMAS." }
+        if model.overview != nil, model.overview?.lines == nil { return "This LMAS was started without lines straight to an agent (--lines)." }
         if model.state.projectList.isEmpty { return "Register a project first: the line works on its own copy of one." }
         if model.state.catalogs[vendor]?.listed == nil { return "LMAS has not said what this bot can be on a line yet." }
         return nil
@@ -181,7 +182,7 @@ private struct BotLines: View {
 
     var body: some View {
         let lines = model.state.directLineList.filter { $0.vendor == vendor }
-        Panel(title: "Lines") {
+        Panel(title: title) {
             if lines.isEmpty {
                 Text("No line straight to this bot yet.").font(.system(size: 12)).foregroundStyle(.secondary)
             }
@@ -206,9 +207,18 @@ private struct BotLines: View {
         }
     }
 
+    /// Section 11: being set up, or with its agent up, a line takes one of LMAS's places; across all bots.
+    private var title: String {
+        guard let max = model.overview?.lines?.max else { return "Lines" }
+        let taken = model.state.directLineList.filter { line in
+            line.failure == nil && !model.state.arrangement(of: line.id).isArchived && (line.isBeingSetUp || line.worker?.isUp == true)
+        }.count
+        return "Lines · \(taken) of \(max) up across all bots"
+    }
+
     private func title(of line: DirectLine, thread: BottegaKit.Line?) -> String {
         if let thread { return model.state.title(of: thread) }
-        return line.firstText.map { UntrustedText.line($0, limit: 80) } ?? UntrustedText.line(line.id, limit: 40)
+        return UntrustedText.line(line.id, limit: 40)
     }
 }
 

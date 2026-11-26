@@ -28,9 +28,6 @@ public struct DirectLine: Equatable, Sendable, Identifiable {
     public internal(set) var role: String?
     /// What it was opened with; what it uses now is in `WorkshopState.models`.
     public internal(set) var model: ModelChoice?
-    /// The first thing the user said on it. Not a letter until the agent is up.
-    public internal(set) var firstText: String?
-    public internal(set) var firstFiles: [TextFile] = []
     public internal(set) var openedAt: UInt64?
     public internal(set) var place: Place?
     public internal(set) var failure: Failure?
@@ -130,8 +127,6 @@ extension WorkshopState {
             $0.vendor = event.vendor
             $0.role = event.role
             $0.model = event.model.map { ModelChoice(model: $0, effort: event.effort) }
-            $0.firstText = event.text
-            $0.firstFiles = event.files ?? []
             $0.openedAt = event.atMs
         }
         vendors[event.line] = event.vendor

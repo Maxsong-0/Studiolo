@@ -55,7 +55,7 @@ struct VectorTests {
 
     @Test func everyIntent() throws {
         let vectors = try Fixtures.vectors()
-        #expect(vectors.intents.count == 15)
+        #expect(vectors.intents.count == 17)
         for vector in vectors.intents {
             let intent = vector.intent
             #expect(Hex.encode(intent.preimage.bytes) == vector.preimage, "\(intent.kind) \(intent.number)")

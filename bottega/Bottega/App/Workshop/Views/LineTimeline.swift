@@ -206,6 +206,8 @@ struct LetterRow: View {
     @Environment(WorkshopModel.self) private var model
     @Environment(Look.self) private var look
     let message: Message
+    /// LMAS's own note to a direct line's next agent (section 11): background, folded until asked for.
+    @State private var isNoteOpen = false
 
     var body: some View {
         let isSelected = model.detail == .message(message.id)
@@ -247,7 +249,35 @@ struct LetterRow: View {
         .accessibilityElement(children: .contain)
     }
 
-    private var words: some View {
+    private var isLMASNote: Bool { message.from == "coordinator" && message.kind == "notification" }
+
+    @ViewBuilder private var words: some View {
+        if isLMASNote {
+            VStack(alignment: .leading, spacing: 8) {
+                Button { isNoteOpen.toggle() } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 9, weight: .bold))
+                            .rotationEffect(.degrees(isNoteOpen ? 90 : 0))
+                        Text("LMAS left this line's history for the next agent")
+                        if let file = message.files.first {
+                            Text(verbatim: UntrustedText.line(file.name, limit: 60)).foregroundStyle(.tertiary)
+                        }
+                    }
+                    .font(.system(size: 12.5))
+                    .foregroundStyle(.secondary)
+                    .contentShape(.rect)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(isNoteOpen ? "Hide LMAS's note" : "Show LMAS's note")
+                if isNoteOpen { letterBody }
+            }
+        } else {
+            letterBody
+        }
+    }
+
+    private var letterBody: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text(verbatim: UntrustedText.clean(message.body))
                 .font(.system(size: 13.5))

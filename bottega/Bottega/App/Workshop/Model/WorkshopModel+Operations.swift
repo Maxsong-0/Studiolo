@@ -106,8 +106,10 @@ extension WorkshopModel {
     }
 
     /// What came of an `open_line`: refused, its words go back into the box they came from.
+    /// Opened with something said: go to that line, unless the user has moved on from this bot's home.
     func opened(_ settled: Outbox.Settled, from vendor: String) {
         switch settled.result {
+        case .done(let message?, _?): if page == .bot(vendor) { page = .line(message) }
         case .done, .already: break
         case .refused(let why), .notSent(let why): putBack(settled.item.draft.typed?.text, why, for: vendor)
         }

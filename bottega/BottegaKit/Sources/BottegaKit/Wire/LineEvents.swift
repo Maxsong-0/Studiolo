@@ -23,10 +23,8 @@ extension Event {
     public struct LineOpened: Decodable, Equatable, Sendable {
         /// The line's number, and its agent's session name.
         public var line, project, vendor, role: String
+        /// What it was asked to use. The first thing said on it is a letter of its own, in the same record.
         public var model, effort: String?
-        /// The first thing the user says on it. Becomes a letter once the agent is up.
-        public var text: String?
-        public var files: [TextFile]?
         public var atMs: UInt64
     }
     public struct LineReady: Decodable, Equatable, Sendable {

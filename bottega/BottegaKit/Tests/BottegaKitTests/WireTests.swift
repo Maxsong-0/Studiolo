@@ -7,7 +7,7 @@ struct WireTests {
     /// Every line of `events.jsonl` is a record this code reads in full, and each follows on from the last.
     @Test func everyRecordedEventIsRead() throws {
         let records = try Fixtures.records()
-        #expect(records.count == 74)
+        #expect(records.count == 77)
         var through: UInt64 = 0
         for record in records {
             #expect(record.seq == through + 1)
@@ -18,7 +18,7 @@ struct WireTests {
                 #expect(event.at != nil)
             }
         }
-        #expect(through == 96)
+        #expect(through == 111)
     }
 
     /// Every `type` in the document is in the recording, and read as its own case.
@@ -57,10 +57,11 @@ struct WireTests {
             .refused(.init(code: "already_answered", text: "ask-1 已经答过了（approved），一张只答一次")),
             .refused(.init(code: "already_answered", text: "ask-2 已经答过了（withdrawn），一张只答一次")),
             .done(message: nil), .done(message: nil),
-            .done(message: nil), .done(message: nil), .done(message: nil), .done(message: nil, line: "line-1"),
             .done(message: nil), .done(message: nil), .done(message: nil),
-            // Section 11: stopping the dispatcher's turn.
-            .done(message: nil),
+            // Section 11: a line opens with its first letter already queued.
+            .done(message: "msg-13", line: "line-1"),
+            .done(message: nil), .done(message: nil), .done(message: nil), .done(message: nil), .done(message: nil),
+            .done(message: "msg-15", line: "line-2"),
         ])
         let answered = events.compactMap { if case .askAnswered(let e) = $0 { e.via } else { nil } }
         #expect(answered == [.init(at: "dialog", name: nil, device: nil), .init(at: "session", name: "dispatcher", device: nil), .init(at: "device", name: nil, device: "device-1")])
