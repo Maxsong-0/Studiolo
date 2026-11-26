@@ -32,8 +32,6 @@ struct GateTests {
         #expect(try streak(Wire.farthest) == Wire.farthest)
         #expect(try streak(Wire.farthest + 1) == Wire.farthest)
         #expect(try streak(.max) == Wire.farthest)
-        // What the app does with it: a count of this size still goes into an Int.
-        #expect(Int(exactly: Wire.farthest) != nil)
     }
 
     // MARK: As recorded

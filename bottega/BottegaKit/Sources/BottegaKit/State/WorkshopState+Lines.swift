@@ -197,11 +197,25 @@ extension WorkshopState {
     /// Whether anyone else has written on a line since it was read.
     public func hasUnread(_ thread: Line) -> Bool { unreadThrough(thread) != nil }
 
-    /// Up to which event a line counts as read once everything on it now has been (`mark_read`): the latest letter
-    /// anyone else wrote that is not read yet. nil with nothing unread.
+    /// Up to which event a line counts as read once everything on it now has been (`mark_read`): the end of the
+    /// record the latest unread letter from anyone else came in. nil with nothing unread.
+    ///
+    /// Unread goes by where a letter's record begins, what is sent by where it ends: whichever of the record's
+    /// numbers is the letter's own, it is covered, and a record is read whole or not at all.
     public func unreadThrough(_ thread: Line) -> UInt64? {
         let read = readThrough(thread)
-        return thread.messages.lazy.compactMap { messages[$0] }.filter { !$0.isFromUser && $0.seq > read }.map(\.seq).max()
+        return thread.messages.lazy.compactMap { messages[$0] }.filter { !$0.isFromUser && $0.seq > read }
+            .map(\.recordThrough).max()
+    }
+
+    /// Which line going from one page to another marks as read, and up to where: the one left, if something came
+    /// in on it while it was open, otherwise the one opened. One press signs one thing, so the other waits for the
+    /// next move.
+    public func lineToMarkRead(leaving old: String?, opening new: String?) -> (line: String, through: UInt64)? {
+        for id in [old, new] {
+            if let id, let line = threads[id], let through = unreadThrough(line) { return (id, through) }
+        }
+        return nil
     }
 
     /// The models to choose from for a session, as its vendor lists them. Without, it cannot be changed.

@@ -448,7 +448,7 @@ enum Wording {
         case .filesWithoutText: "Files go with something said."
         case .tooLongOnTheWire(let bytes):
             "Too long to send: \(bytes / 1024) KiB once written out as one line, at most \(Wire.maxLineBytes / 1024). "
-                + "Characters that have to be spelled out take up to six times their size."
+                + "Characters that have to be spelled out take up to seven times their size."
         }
         return Why(code: "draft", text: text)
     }
@@ -470,13 +470,35 @@ enum Wording {
         return Why(code: "input", text: text)
     }
 
-    /// What is decided about how things are now (approving, declining, stopping, changing a model) is not kept for later.
-    static let notConnected = Why(code: "offline", text: "Not connected to LMAS, so that was not sent. Do it again once connected.")
+    /// Why what is decided about how things are now cannot be sent, in a few words: for a tooltip. Empty when it can.
+    static func notLive(_ status: LinkClient.Status?) -> String {
+        switch status {
+        case .live: ""
+        case .catchingUp: "Still catching up with LMAS"
+        case .needsRegistration, .registering: "This Mac is not registered with LMAS"
+        case .stopped: "The link to LMAS is stopped"
+        case nil, .connecting, .retrying: "Not connected to LMAS"
+        }
+    }
 
-    /// Why the link did not take something over (`LinkClient.submit`).
-    static func whyNotTaken(_ error: any Error) -> Why {
+    /// The same for something asked for all the same. Approving, declining, stopping, changing a model go by how
+    /// things are now, so they are not kept for later: what to do before asking again.
+    static func notNow(_ status: LinkClient.Status?) -> Why {
+        let (what, then) = switch status {
+        // The link said no while this still read live: the connection went a moment ago.
+        case .live: ("The connection to LMAS was just lost", "Do it again once connected.")
+        case .catchingUp: (notLive(status), "Do it again in a moment.")
+        case .needsRegistration, .registering: (notLive(status), "Register it first.")
+        case .stopped: (notLive(status), "Reconnect or reload the events first.")
+        case nil, .connecting, .retrying: (notLive(status), "Do it again once connected.")
+        }
+        return Why(code: "offline", text: "\(what), so that was not sent. \(then)")
+    }
+
+    /// Why the link did not take something over (`LinkClient.submit`), with the link as `status` says.
+    static func whyNotTaken(_ error: any Error, while status: LinkClient.Status?) -> Why {
         switch error {
-        case is LinkClient.ConnectionLost: notConnected
+        case is LinkClient.ConnectionLost: notNow(status)
         case let problem as IntentDraft.Problem: why(problem)
         default: Why(code: "send", text: error.localizedDescription)
         }

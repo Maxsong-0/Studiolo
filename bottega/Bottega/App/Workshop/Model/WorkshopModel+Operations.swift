@@ -100,7 +100,7 @@ extension WorkshopModel {
             do {
                 openings[try await client.submit(.openLine(line))] = vendor
             } catch {
-                putBack(line.text, Wording.whyNotTaken(error), for: vendor)
+                putBack(line.text, Wording.whyNotTaken(error, while: status), for: vendor)
             }
         }
     }

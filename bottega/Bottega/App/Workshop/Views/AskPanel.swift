@@ -99,7 +99,7 @@ struct AskPanel: View {
                     }
                     .disabled(!model.isLive)
                     .opacity(model.isLive ? 1 : 0.45)
-                    .help(model.isLive ? "" : "Not connected to LMAS")
+                    .help(Wording.notLive(model.status))
                 }
                 Spacer()
                 if ask.onlyDevice {

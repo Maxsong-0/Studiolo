@@ -54,6 +54,9 @@ enum Page: Hashable {
         }
     }
 
+    /// The line this page shows, if it is one.
+    var line: String? { if case .line(let id) = self { id } else { nil } }
+
     var fixedTitle: String {
         switch self {
         case .rooms: "Rooms"

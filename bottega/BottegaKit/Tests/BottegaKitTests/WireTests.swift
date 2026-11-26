@@ -225,6 +225,11 @@ struct WireTests {
         #expect(throws: ServerLine.Malformed.self) { try ServerLine.read(Data(line.utf8)) }
     }
 
+    /// Shown as it is where a turn's inside cannot be read: a sentence, not the name of a Swift type.
+    @Test func aLineThatCannotBeReadSaysSoInWords() {
+        #expect(ServerLine.Malformed().localizedDescription == "LMAS wrote something Bottega cannot read.")
+    }
+
     /// The other side of the same line: the farthest number there can be is taken, one more is not.
     @Test func theFarthestNumberIsTakenAndOneMoreIsNot() throws {
         #expect(Wire.farthest == 9_007_199_254_740_992)

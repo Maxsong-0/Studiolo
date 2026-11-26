@@ -27,12 +27,21 @@ final class FakeLMAS: Connector, Sendable {
         var holdsCaughtUp = false
         /// Answers `follow` with something that is not what the document says.
         var garblesFollow = false
+        /// Answers `follow` with this error.
+        var followError: String?
+        /// Does what an intent asks and then answers with something that is not what the document says.
+        var garblesIntent = false
+        /// Answers `watch` with something that is not what the document says.
+        var garblesWatch = false
+        /// Cannot be connected to, for this reason.
+        var connectError: POSIXError.Code?
     }
 
     private struct Books {
         var knobs = Knobs()
         var connection: UInt64 = 6
         var connections: UInt64 = 0
+        var attempts: UInt64 = 0
         var registration: Registration?
         var log: [String] = []  // JSON of each record
         var through: UInt64 = 0
@@ -74,6 +83,8 @@ final class FakeLMAS: Connector, Sendable {
     var isRegistered: Bool { books.withLock { $0.registration != nil } }
     /// How many times it has been connected to.
     var connections: UInt64 { books.withLock { $0.connections } }
+    /// How many times connecting was tried, whether it came about or not.
+    var attempts: UInt64 { books.withLock { $0.attempts } }
 
     /// Another program using up this device's next number, which must not happen and does.
     func useUpANumber() {
@@ -113,6 +124,17 @@ final class FakeLMAS: Connector, Sendable {
         for channel in books.withLock({ $0.open }) { channel.yield(line) }
     }
 
+    /// What a connection does when LMAS writes a line longer than it takes.
+    func overrun() {
+        // The error itself, as the splitter gives it.
+        var splitter = LineSplitter(limit: 1)
+        do {
+            _ = try splitter.take(Data("no newline".utf8))
+        } catch {
+            for channel in books.withLock({ $0.open }) { channel.end(with: error) }
+        }
+    }
+
     /// Says `caught_up` to those it was held back from (`holdsCaughtUp`).
     func catchUp() {
         let (channels, through) = books.withLock { books in
@@ -140,6 +162,8 @@ final class FakeLMAS: Connector, Sendable {
 
     func connect() async throws -> any LineChannel {
         let channel = try books.withLock { books -> FakeChannel in
+            books.attempts += 1
+            if let code = books.knobs.connectError { throw POSIXError(code) }
             guard books.knobs.isRunning else { throw POSIXError(.ECONNREFUSED) }
             books.connection += 1
             books.connections += 1
@@ -194,6 +218,7 @@ final class FakeLMAS: Connector, Sendable {
     private func watch(_ id: UInt64, _ channel: FakeChannel) {
         let knobs = books.withLock { $0.knobs }
         guard knobs.turns != nil else { return channel.fail(id, "unknown_request") }
+        if knobs.garblesWatch { return channel.ok(id, #"{"turns":"none"}"#) }
         guard !channel.isWatching else { return channel.fail(id, "already_watching") }
         channel.isWatching = true
         channel.ok(id, #"{"turns":[\#(knobs.running.map { #""\#($0.turn)""# }.joined(separator: ","))]}"#)
@@ -254,10 +279,12 @@ final class FakeLMAS: Connector, Sendable {
     }
 
     private func follow(_ from: UInt64, _ id: UInt64, _ channel: FakeChannel) {
-        let (lines, through, oldest, holds, garbles) = books.withLock { books in
+        let (lines, through, oldest, holds, garbles, error) = books.withLock { books in
             books.followedFrom.append(from)
-            return (books.log, books.through, books.knobs.oldest, books.knobs.holdsCaughtUp, books.knobs.garblesFollow)
+            let knobs = books.knobs
+            return (books.log, books.through, knobs.oldest, knobs.holdsCaughtUp, knobs.garblesFollow, knobs.followError)
         }
+        if let error { return channel.fail(id, error) }
         if garbles { return channel.ok(id, #"{"latest":"many"}"#) }
         if from < oldest { return channel.fail(id, "gone", #","oldest":\#(oldest)"#) }
         if from > through + 1 { return channel.fail(id, "ahead", #","latest":\#(through)"#) }
@@ -325,6 +352,7 @@ final class FakeLMAS: Connector, Sendable {
         case .error(let code, let extra): channel.fail(id, code, extra)
         case .echo(let seq, let event, let repeated, let line, let drops):
             if drops { return dropAll() }
+            if books.withLock({ $0.knobs.garblesIntent }) { return channel.ok(id, #"{"seq":"soon"}"#) }
             channel.ok(id, #"{"seq":\#(seq),"event":\#(event)\#(repeated ? #","repeated":true"# : "")}"#)
             if let line {
                 for open in books.withLock({ $0.open }) where open.isFollowing { open.yield(line) }
@@ -375,6 +403,8 @@ final class FakeChannel: LineChannel, Sendable {
     }
 
     func yield(_ line: String) { continuation.yield(Data(line.utf8)) }
+    /// The lines end with an error, as a real connection's do when what comes in cannot be cut into lines.
+    func end(with error: any Error) { continuation.finish(throwing: error) }
     func ok(_ id: UInt64, _ body: String) { yield(#"{"id":\#(id),"ok":\#(body)}"#) }
     func fail(_ id: UInt64?, _ code: String, _ extra: String = "") {
         yield(#"{\#(id.map { #""id":\#($0),"# } ?? "")"error":{"code":"\#(code)","text":"\#(code)"\#(extra)}}"#)

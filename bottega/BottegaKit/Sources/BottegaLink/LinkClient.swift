@@ -370,7 +370,7 @@ public actor LinkClient {
         while let line = try await lines.next(isolation: self) {
             switch try ServerLine.read(line) {
             case .reply(let reply):
-                if reply.id == watchRequest { try startWatching(reply) }
+                if reply.id == watchRequest { startWatching(reply) }
                 replies.removeValue(forKey: reply.id)?.resume(returning: reply)
             case .error(let id?, let error): replies.removeValue(forKey: id)?.resume(throwing: error)
             case .error(nil, let error): throw error
@@ -427,10 +427,12 @@ public actor LinkClient {
         }
     }
 
-    /// Where the answer is read, not where it was waited for: what is pushed comes right behind it.
-    private func startWatching(_ reply: Reply) throws {
+    /// Where the answer is read, not where it was waited for: what is pushed comes right behind it. An answer that
+    /// cannot be read is an LMAS that does not tell, like one that does not know `watch`: the events are followed
+    /// all the same.
+    private func startWatching(_ reply: Reply) {
         watchRequest = nil
-        let watching: Watching = try reply.read()
+        guard let watching = try? reply.read(Watching.self) else { return }
         isWatching = true
         send(.watching(watching.turns))
     }
@@ -483,6 +485,8 @@ public actor LinkClient {
         self.start = max(1, start)
         through = self.start - 1
         isFresh = true
+        // Nothing of what was caught up with is left: what is decided about the moment waits for the next time.
+        isCaughtUp = false
         echoes = [:]
         send(.reset(start: self.start))
     }
@@ -537,7 +541,9 @@ public actor LinkClient {
         isPumping = true
         Task {
             defer { isPumping = false }
-            while isReady, let item = keepsake.outbox.head {
+            // Without a device (`forgetDevice`) `handIn` gives up at once, without ever letting go of the actor:
+            // going round again would keep `run` from hanging up. The next connection starts this again.
+            while isReady, keepsake.device != nil, let item = keepsake.outbox.head {
                 do {
                     try await handIn(item)
                 } catch is ConnectionLost {

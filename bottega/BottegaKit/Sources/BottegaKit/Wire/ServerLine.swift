@@ -99,7 +99,10 @@ public enum ServerLine: Equatable, Sendable {
     /// A line of a kind this Bottega does not know. Ignored.
     case unknown
 
-    public struct Malformed: Error, Equatable { public init() {} }
+    public struct Malformed: LocalizedError, Equatable {
+        public init() {}
+        public var errorDescription: String? { "LMAS wrote something Bottega cannot read." }
+    }
 
     public static func read(_ line: Data) throws -> ServerLine {
         let fields: Fields

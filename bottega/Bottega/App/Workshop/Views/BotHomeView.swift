@@ -98,7 +98,7 @@ private struct StartLineCard: View {
 
     private var whyNot: String? {
         if case .recording = model.source { return "A recording: nothing can be sent." }
-        if !model.isLive { return "Not connected to LMAS." }
+        if !model.isLive { return Wording.notLive(model.status) + "." }
         if model.overview != nil, model.overview?.lines == nil { return "This LMAS was started without lines straight to an agent (--lines)." }
         if model.state.projectList.isEmpty { return "Register a project first: the line works on its own copy of one." }
         if model.state.catalogs[vendor]?.listed == nil { return "LMAS has not said what this bot can be on a line yet." }

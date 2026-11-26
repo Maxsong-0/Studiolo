@@ -35,6 +35,9 @@ public struct Message: Equatable, Sendable, Identifiable {
     public let device: String?
     /// The number of the record it came in.
     public let seq: UInt64
+    /// The last number of that record. LMAS numbers events and a record holds several, so a letter's own number lies
+    /// somewhere from `seq` to here; a record happens all at once, so read, it is read up to here (`mark_read`).
+    public let recordThrough: UInt64
     public internal(set) var state: State
     /// Kept when it has been answered since.
     public internal(set) var handedAt: UInt64?

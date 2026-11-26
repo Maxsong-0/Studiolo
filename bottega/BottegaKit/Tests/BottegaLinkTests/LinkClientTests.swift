@@ -277,6 +277,97 @@ struct LinkClientTests {
         try await rig.until("live") { rig.isLive }
     }
 
+    /// The other things trying again does not cure: a line longer than is taken, LMAS not able to read its own log.
+    @Test func stopsAtALineLongerThanItTakes() async throws {
+        let rig = Rig()
+        defer { rig.stop() }
+        try await rig.registered()
+        rig.lmas.overrun()
+        try await rig.until("stopped") { if case .stopped(let why) = rig.status { why.code == "too_long" } else { false } }
+        let attempts = rig.lmas.attempts
+        try await Task.sleep(for: .milliseconds(60))
+        #expect(rig.lmas.attempts == attempts)
+        await rig.client.reconnect()
+        try await rig.until("live") { rig.isLive }
+    }
+
+    @Test func stopsWhenThePathToTheSocketIsTooLong() async throws {
+        let rig = Rig()
+        defer { rig.stop() }
+        try await rig.registered()
+        rig.lmas.set { $0.connectError = .ENAMETOOLONG }
+        rig.lmas.dropAll()
+        try await rig.until("stopped") { if case .stopped(let why) = rig.status { why.code == "socket_path" } else { false } }
+        let attempts = rig.lmas.attempts
+        try await Task.sleep(for: .milliseconds(60))
+        #expect(rig.lmas.attempts == attempts)
+        rig.lmas.set { $0.connectError = nil }
+        await rig.client.reconnect()
+        try await rig.until("live") { rig.isLive }
+    }
+
+    @Test func stopsWhenLMASCannotReadItsOwnLog() async throws {
+        let rig = Rig()
+        defer { rig.stop() }
+        try await rig.registered()
+        rig.lmas.set { $0.followError = "unreadable" }
+        rig.lmas.dropAll()
+        try await rig.until("stopped") { if case .stopped(let why) = rig.status { why.code == "unreadable" } else { false } }
+        let attempts = rig.lmas.attempts
+        try await Task.sleep(for: .milliseconds(60))
+        #expect(rig.lmas.attempts == attempts)
+        rig.lmas.set { $0.followError = nil }
+        await rig.client.reconnect()
+        try await rig.until("live") { rig.isLive }
+    }
+
+    /// The other side of stopping: what passes by itself is tried again, and comes right without anyone's doing.
+    @Test(arguments: ["busy", "stopping"])
+    func keepsTryingWhileLMASSaysLater(code: String) async throws {
+        let rig = Rig()
+        defer { rig.stop() }
+        try await rig.registered()
+        rig.lmas.set { $0.followError = code }
+        rig.lmas.dropAll()
+        try await rig.until("retrying") { if case .retrying(let why) = rig.status { why.code == code } else { false } }
+        let attempts = rig.lmas.attempts
+        try await rig.until("tries again and again") { rig.lmas.attempts >= attempts + 3 }
+        #expect(!rig.statuses.contains { if case .stopped = $0 { true } else { false } })
+        rig.lmas.set { $0.followError = nil }
+        try await rig.until("live by itself") { rig.isLive }
+    }
+
+    /// The same for a connection that will not come about for a while.
+    @Test func keepsTryingWhileNobodyIsThere() async throws {
+        let rig = Rig()
+        defer { rig.stop() }
+        try await rig.registered()
+        rig.lmas.set { $0.connectError = .ECONNREFUSED }
+        rig.lmas.dropAll()
+        try await rig.until("retrying") { if case .retrying(let why) = rig.status { why.code == "not_running" } else { false } }
+        let attempts = rig.lmas.attempts
+        try await rig.until("tries again and again") { rig.lmas.attempts >= attempts + 3 }
+        rig.lmas.set { $0.connectError = nil }
+        try await rig.until("live by itself") { rig.isLive }
+    }
+
+    /// What goes on inside turns is an extra: an answer to `watch` that cannot be read does not stop the events.
+    @Test func followsAllTheSameWhenWatchCannotBeRead() async throws {
+        let lmas = FakeLMAS()
+        lmas.set { $0.turns = [:]; $0.garblesWatch = true }
+        let rig = Rig(lmas: lmas)
+        defer { rig.stop() }
+        try await rig.registered()
+        rig.lmas.append(#"{"type":"session_registered","name":"a","role":"coder","at_ms":1}"#)
+        try await rig.until("a") { rig.state.sessions["a"] != nil }
+        #expect(rig.isLive)
+        #expect(rig.watching.isEmpty)
+        // With an answer that can be read, it is watching.
+        lmas.set { $0.garblesWatch = false }
+        rig.lmas.dropAll()
+        try await rig.until("watching") { rig.watching.contains { $0 != nil } }
+    }
+
     /// A kind of line this Bottega does not know is passed over, and what follows is taken as before.
     @Test func aKindOfLineItDoesNotKnowIsPassedOver() async throws {
         let rig = Rig()
@@ -538,6 +629,28 @@ struct LinkClientTests {
         #expect(store.keepsake.outbox.isEmpty)
     }
 
+    /// LMAS did it and its answer cannot be read: whether it was done is not known, so it stops with the signed
+    /// bytes kept, and hands in those same bytes again once someone says to go on. Done once.
+    @Test func anAnswerToAnIntentItCannotReadStopsAndIsAskedForAgain() async throws {
+        let rig = Rig()
+        defer { rig.stop() }
+        try await rig.registered()
+        rig.lmas.set { $0.garblesIntent = true }
+        try await rig.client.submit(sayHi)
+        try await rig.until("stopped") { if case .stopped(let why) = rig.status { why.code == "malformed" } else { false } }
+        #expect(rig.settled.isEmpty)
+        let kept = try #require(rig.store.keepsake.outbox.head?.signed)
+        let attempts = rig.lmas.attempts
+        try await Task.sleep(for: .milliseconds(60))
+        #expect(rig.lmas.attempts == attempts)
+        rig.lmas.set { $0.garblesIntent = false }
+        await rig.client.reconnect()
+        try await rig.until("settled") { rig.settled.count == 1 }
+        #expect(rig.settled.first?.result == .done(message: "msg-1"))
+        #expect(rig.lmas.handedIn == [kept, kept])
+        #expect(rig.lmas.executed.count == 1)
+    }
+
     /// What cannot be kept is not sent: a crash after sending could do it twice.
     @Test func nothingGoesOutThatIsNotOnDisk() async throws {
         let rig = Rig()
@@ -625,6 +738,27 @@ struct LinkClientTests {
         try await rig.client.submit(draft, touchIDReason: "x")
         try await rig.until("settled") { rig.settled.count == 1 }
         #expect(rig.lmas.handedIn.map(\.kind) == [draft.kind])
+    }
+
+    /// The other side: what is said, answered, opened, arranged and read is kept while there is no connection.
+    @Test(arguments: [
+        sayHi, .answer(message: "msg-1", text: "yes", files: []),
+        .openLine(.init(project: "p", vendor: "codex", role: "coder", title: nil, text: "go", files: [])),
+        .arrange(line: "msg-1", title: nil, pinned: true, archived: nil), .markRead(line: "msg-1", through: 3),
+    ])
+    func whatIsKeptIsTakenWithoutAConnection(draft: IntentDraft) async throws {
+        #expect(draft.keeps)
+        let rig = Rig()
+        defer { rig.stop() }
+        try await rig.registered()
+        rig.lmas.set { $0.isRunning = false }
+        rig.lmas.dropAll()
+        try await rig.until("retrying") { if case .retrying = rig.status { true } else { false } }
+        try await rig.client.submit(draft)
+        #expect(rig.store.keepsake.outbox.head?.draft == draft)
+        rig.lmas.set { $0.isRunning = true }
+        try await rig.until("settled") { rig.settled.count == 1 }
+        #expect(rig.lmas.executed.map(\.kind) == [draft.kind])
     }
 
     /// Connected is not enough: until everything LMAS has is here, what is shown is how things were.

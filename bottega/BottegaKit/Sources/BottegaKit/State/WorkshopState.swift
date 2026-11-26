@@ -270,7 +270,7 @@ public struct WorkshopState: Sendable {
         let message = Message(
             id: wire.id, from: wire.from, to: wire.to, kind: wire.kind, thread: wire.thread, hop: wire.hop,
             replyTo: wire.replyTo, card: wire.task, body: wire.body, files: wire.files ?? [], at: wire.atMs,
-            device: wire.device, seq: id.seq, state: .queued)
+            device: wire.device, seq: id.seq, recordThrough: through, state: .queued)
         messages[message.id] = message
         if let original = message.replyTo {
             messages[original]?.state = .answered(by: message.id)

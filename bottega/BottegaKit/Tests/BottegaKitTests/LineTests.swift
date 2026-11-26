@@ -231,6 +231,53 @@ struct LineTests {
         #expect(try through(asked, answered, more, [read("line-1", 3)]) == nil)
     }
 
+    /// LMAS numbers events and a record holds several: a letter that is not the first thing in its record has a
+    /// number of its own past the record's first. Read, it is read up to the end of its record.
+    @Test func readingGoesToTheEndOfTheRecordALetterCameIn() throws {
+        func read(_ through: UInt64) -> Event { .lineRead(.init(line: "m1", through: through, atMs: 1)) }
+        var state = WorkshopState()
+        try state.apply(Record(seq: 1, through: 1, events: [letter("m1", from: "user", to: "line-1")]))
+        // Numbers 2 to 5: something else first, then the letter, then numbers nothing shown took.
+        try state.apply(
+            Record(seq: 2, through: 5, events: [arranged("m1", pinned: true), letter("m2", from: "line-1", to: "user", thread: "m1", kind: "result")]))
+        let line = try #require(state.threads["m1"])
+        #expect(state.messages["m2"]?.seq == 2)
+        #expect(state.messages["m2"]?.recordThrough == 5)
+        #expect(state.unreadThrough(line) == 5)
+        // Someone who read only as far as the record before has not read it; anywhere inside the record has.
+        var before = state
+        try before.apply(Record(seq: 6, through: 6, events: [read(1)]))
+        #expect(before.unreadThrough(line) == 5)
+        for inside in UInt64(2)...5 {
+            var after = state
+            try after.apply(Record(seq: 6, through: 6, events: [read(inside)]))
+            #expect(after.unreadThrough(line) == nil, "read through \(inside)")
+        }
+    }
+
+    /// Going from one line to another: the one left if something on it is unread, otherwise the one opened.
+    @Test func leavingALineMarksItBeforeTheOneOpened() throws {
+        func read(_ line: String, _ through: UInt64) -> Event { .lineRead(.init(line: line, through: through, atMs: 1)) }
+        let both = try state(
+            [letter("a1", from: "user", to: "line-1")], [letter("a2", from: "line-1", to: "user", thread: "a1", kind: "result")],
+            [letter("b1", from: "user", to: "line-2")], [letter("b2", from: "line-2", to: "user", thread: "b1", kind: "result")])
+        func marks(_ state: WorkshopState, leaving: String?, opening: String?) -> String? {
+            state.lineToMarkRead(leaving: leaving, opening: opening).map { "\($0.line) through \($0.through)" }
+        }
+        #expect(marks(both, leaving: "a1", opening: "b1") == "a1 through 2")
+        #expect(marks(both, leaving: nil, opening: "b1") == "b1 through 4")
+        #expect(marks(both, leaving: "a1", opening: nil) == "a1 through 2")
+        var leftRead = both
+        try leftRead.apply(Record(seq: 5, through: 5, events: [read("a1", 2)]))
+        #expect(marks(leftRead, leaving: "a1", opening: "b1") == "b1 through 4")
+        var allRead = leftRead
+        try allRead.apply(Record(seq: 6, through: 6, events: [read("b1", 4)]))
+        #expect(marks(allRead, leaving: "a1", opening: "b1") == nil)
+        // A page that is no line, and a line that is not there.
+        #expect(marks(both, leaving: nil, opening: nil) == nil)
+        #expect(marks(both, leaving: "nowhere", opening: "b1") == "b1 through 4")
+    }
+
     @Test func whatTheUserSaysDoesNotCount() throws {
         let state = try state(
             [letter("m1", from: "user", to: "a")], [letter("m2", from: "a", to: "b", thread: "m1")],

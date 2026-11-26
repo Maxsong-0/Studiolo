@@ -402,7 +402,7 @@ final class WorkshopModel {
     /// changing a model, a project) is sent only while what is shown is how things are. The link refuses it too.
     func canDecideNow() -> Bool {
         if isLive { return true }
-        notice = Wording.notConnected
+        notice = Wording.notNow(status)
         return false
     }
 
@@ -421,7 +421,7 @@ final class WorkshopModel {
             do {
                 origins[try await client.submit(intent)] = key
             } catch {
-                drafts.putBack(sent.text, sent.files, Wording.whyNotTaken(error), in: key)
+                drafts.putBack(sent.text, sent.files, Wording.whyNotTaken(error, while: status), in: key)
             }
         }
     }
@@ -460,7 +460,7 @@ final class WorkshopModel {
             do {
                 try await client.submit(intent, touchIDReason: touchIDReason)
             } catch {
-                notice = Wording.whyNotTaken(error)
+                notice = Wording.whyNotTaken(error, while: status)
             }
         }
     }
@@ -545,13 +545,10 @@ final class WorkshopModel {
     /// came in on it while it was open, otherwise the one opened. One press signs one thing, so the other waits for
     /// the next move. A page that changes by itself (a line opening after its first letter went out) marks nothing.
     private func markRead(leaving old: Page, opening new: Page) {
-        guard let client, isLive else { return }
-        for case .line(let id) in [old, new] {
-            guard let line = state.threads[id], let through = state.unreadThrough(line) else { continue }
-            // Quietly: moving about is not something to be told off for.
-            do throws(InputGate.Refusal) { try HumanInput.take() } catch { return }
-            return submit(.markRead(line: id, through: through), to: client)
-        }
+        guard let client, isLive, let (line, through) = state.lineToMarkRead(leaving: old.line, opening: new.line) else { return }
+        // Quietly: moving about is not something to be told off for.
+        do throws(InputGate.Refusal) { try HumanInput.take() } catch { return }
+        submit(.markRead(line: line, through: through), to: client)
     }
 
     // MARK: Seen

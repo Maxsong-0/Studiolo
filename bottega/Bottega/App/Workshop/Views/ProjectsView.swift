@@ -58,7 +58,7 @@ private struct RegisterProject: View {
                     }
                     .buttonStyle(.glassProminent)
                     .disabled(!model.isLive || name.isEmpty || model.isSending("add_project", about: name))
-                    .help(model.isLive ? "LMAS looks at the folder when it gets this" : "Not connected to LMAS")
+                    .help(model.isLive ? "LMAS looks at the folder when it gets this" : Wording.notLive(model.status))
                 }
                 Button(folder == nil ? "Choose a Folder…" : "Choose Another Folder…") { isChoosing = true }
                     .buttonStyle(.borderless)

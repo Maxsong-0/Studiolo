@@ -85,7 +85,7 @@ struct WorkshopComposer: View {
                     }
                     // A model is changed for how things are now: not while LMAS cannot be told.
                     .disabled(!model.isLive)
-                    .help(model.isLive ? "" : "Not connected to LMAS")
+                    .help(Wording.notLive(model.status))
                 }
                 ContextPill()
                 DictateButton()
@@ -107,7 +107,7 @@ struct WorkshopComposer: View {
 
     private var whyNot: String {
         if case .recording = model.source { return "A recording: nothing can be sent." }
-        if !model.isLive { return "Not connected to LMAS." }
+        if !model.isLive { return Wording.notLive(model.status) + "." }
         return switch key {
         case .dispatcher: "Nobody is here to talk to yet."
         case .line: "Everyone on this line has left."
