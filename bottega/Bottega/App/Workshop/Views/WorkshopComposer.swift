@@ -83,6 +83,9 @@ struct WorkshopComposer: View {
                     ModelPill(vendor: vendor, current: uses?.current, pending: uses?.requested, refusal: uses?.refusal?.why) {
                         model.setModel($0, for: session, on: line)
                     }
+                    // A model is changed for how things are now: not while LMAS cannot be told.
+                    .disabled(!model.isLive)
+                    .help(model.isLive ? "" : "Not connected to LMAS")
                 }
                 ContextPill()
                 DictateButton()

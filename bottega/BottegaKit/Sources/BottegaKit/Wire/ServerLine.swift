@@ -70,8 +70,13 @@ public struct Reply: Equatable, Sendable {
         self.line = line
     }
 
-    public func read<Body: Decodable>(_ type: Body.Type = Body.self) throws -> Body {
-        try Wire.decoder.decode(Envelope<Body>.self, from: line).ok
+    /// An answer that is not what was asked for is a line that cannot be read, like any other.
+    public func read<Body: Decodable>(_ type: Body.Type = Body.self) throws(ServerLine.Malformed) -> Body {
+        do {
+            return try Wire.decoder.decode(Envelope<Body>.self, from: line).ok
+        } catch {
+            throw ServerLine.Malformed()
+        }
     }
 
     private struct Envelope<Body: Decodable>: Decodable { var ok: Body }

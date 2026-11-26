@@ -85,6 +85,15 @@ public enum ClientLine {
     }
 
     public static func request(id: UInt64, _ request: Request) throws -> Data {
+        try line(fields(id: id, request))
+    }
+
+    /// How long that line would be, newline not counted; 0 for what cannot be written at all.
+    static func bytes(id: UInt64, _ request: Request) -> Int {
+        (try? Wire.encoder.encode(fields(id: id, request)).count) ?? 0
+    }
+
+    private static func fields(id: UInt64, _ request: Request) -> Fields {
         var fields = Fields(id: id)
         switch request {
         case .overview:
@@ -114,7 +123,7 @@ public enum ClientLine {
         case .ping:
             fields.verb = "ping"
         }
-        return try line(fields)
+        return fields
     }
 
     private static func line(_ fields: Fields) throws -> Data {

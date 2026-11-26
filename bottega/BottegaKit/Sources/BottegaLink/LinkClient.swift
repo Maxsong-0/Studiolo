@@ -74,6 +74,8 @@ public actor LinkClient {
 
     private var channel: (any LineChannel)?
     private var isReady = false
+    /// Everything LMAS had when this connection began is here: what is shown is how things are now.
+    private var isCaughtUp = false
     private var nextRequest: UInt64 = 1
     private var replies: [UInt64: CheckedContinuation<Reply, any Error>] = [:]
 
@@ -97,8 +99,8 @@ public actor LinkClient {
     private var reasons: [String: String] = [:]
     /// Tries in a row that never got as far as following.
     private var failures = 0
-    /// Why following did not start.
-    private var openingFailure: (any Error)?
+    /// Why this side is closing the connection: following did not start, or an answer could not be read.
+    private var closingBecause: (any Error)?
 
     private var wakeUps: [CheckedContinuation<Void, Never>] = []
     private var isWoken = false
@@ -121,14 +123,16 @@ public actor LinkClient {
                     try load()
                     try await connectOnce()
                     // A registration went through: connect again as that device.
-                } catch let stop as Stop {
-                    status(stop.status)
-                    await sleepUntilWoken()
-                    failures = 0
                 } catch {
-                    status(.retrying(Self.why(error)))
-                    await sleepUntilWoken(atMost: pace.retry[min(failures, pace.retry.count - 1)])
-                    failures += 1
+                    if let stopped = Self.stopped(by: error) {
+                        status(stopped)
+                        await sleepUntilWoken()
+                        failures = 0
+                    } else {
+                        status(.retrying(Self.why(error)))
+                        await sleepUntilWoken(atMost: pace.retry[min(failures, pace.retry.count - 1)])
+                        failures += 1
+                    }
                 }
                 hangUp()
             }
@@ -170,12 +174,14 @@ public actor LinkClient {
 
     /// Takes over what the user asked for. Returns its content id, to recognise it by when it settles.
     ///
-    /// An approval only while connected: `touchIDReason` says in the prompt what is being approved.
+    /// What was decided about the moment (`IntentDraft.keeps` false: approving, declining, stopping a turn, changing
+    /// a model, a project) only while connected and caught up: it is refused here and now, not done later when the
+    /// moment is another. `touchIDReason` says in the prompt what is being approved.
     @discardableResult
     public func submit(_ draft: IntentDraft, touchIDReason: String = "") throws -> String {
         try draft.check()
         try load()
-        if draft.key == .approval, !isReady { throw ConnectionLost() }
+        if !draft.keeps, !isCaughtUp { throw ConnectionLost() }
         let id = ContentID.random()
         if !touchIDReason.isEmpty { reasons[id] = touchIDReason }
         var changed = keepsake
@@ -351,16 +357,14 @@ public actor LinkClient {
         guard let line = try await lines.next(isolation: self) else { throw ConnectionLost() }
         let read = try ServerLine.read(line)
         guard case .error(_, let error) = read else { return read }
-        switch error.code {
-        case "peer_refused", "version", "handshake", "malformed", "too_long":
-            throw Stop(status: .stopped(.init(code: error.code, text: error.text)))
-        default: throw error
-        }
+        // Said here, not left to `run`: a registration that fails must not pass for one that may be tried again.
+        if Self.finalCodes.contains(error.code) { throw Stop(status: .stopped(.init(code: error.code, text: error.text))) }
+        throw error
     }
 
     private func follow(_ lines: inout Lines) async throws {
         isReady = true
-        openingFailure = nil
+        closingBecause = nil
         let opening = Task { try await open() }
         defer { opening.cancel() }
         while let line = try await lines.next(isolation: self) {
@@ -375,6 +379,7 @@ public actor LinkClient {
                 guard through == self.through else { throw broken(expected: self.through, got: through) }
                 flush()
                 failures = 0
+                isCaughtUp = true
                 status(.live)
                 pump()
             case .live(let live):
@@ -383,7 +388,7 @@ public actor LinkClient {
             case .greeting, .welcome, .registerNow, .unknown: break
             }
         }
-        throw openingFailure ?? ConnectionLost()
+        throw closingBecause ?? ConnectionLost()
     }
 
     /// Follows first: a client that asks for anything else first would still get every record, only later.
@@ -404,7 +409,7 @@ public actor LinkClient {
         } catch is CancellationError {
         } catch {
             // Nothing can be shown without following; start over.
-            openingFailure = error
+            closingBecause = error
             channel?.close()
         }
     }
@@ -484,6 +489,7 @@ public actor LinkClient {
 
     private func hangUp() {
         isReady = false
+        isCaughtUp = false
         channel?.close()
         channel = nil
         flush()
@@ -537,6 +543,9 @@ public actor LinkClient {
                 } catch is ConnectionLost {
                     // `isReady` again means there is a new connection by now: hand the same bytes in there.
                 } catch {
+                    // LMAS's answer could not be read, so whether it was done is not known. The signed bytes stay
+                    // at the head; `run` decides from the reason whether trying again by itself makes sense.
+                    closingBecause = error
                     channel?.close()
                     break
                 }
@@ -565,7 +574,7 @@ public actor LinkClient {
                 try store.save(keepsake)
             } catch {
                 // Sent without being on disk, a crash could make it a second intent.
- keepsake.outbox.unsign()
+                keepsake.outbox.unsign()
                 finish(keepsake.outbox.notSigned(item.id, .init(code: "disk", text: "Could not be kept on disk, so it was not sent: \(error.localizedDescription)")))
                 return
             }
@@ -581,6 +590,12 @@ public actor LinkClient {
             if let next = error.next { nextNumber = next }
             step = keepsake.outbox.take(error)
             if error.code == "dropped" { Task { await refreshOverview() } }
+        } catch let error as ClientLine.TooLong {
+            // `IntentDraft.check` keeps these out; one that is here all the same (kept by a build that did not check,
+            // a device name longer than any so far) can never go out. Settled, so what waits behind it is not held up.
+            step = keepsake.outbox.take(WireError(
+                code: "too_long",
+                text: "Too long to send: \(error.bytes) bytes as a line, and LMAS takes \(Wire.maxLineBytes)."))
         }
         try await act(on: step, digest: intent.digest)
     }
@@ -656,6 +671,21 @@ public actor LinkClient {
 
     private static func now() -> UInt64 { UInt64(Date.now.timeIntervalSince1970 * 1000) }
 
+    /// LMAS's words for what the same connection would only hear again. `unreadable`: it cannot read its own log.
+    private static let finalCodes: Set<String> = ["peer_refused", "version", "handshake", "malformed", "too_long", "unreadable"]
+
+    /// What trying again by itself would not change, as the status to stop in; nil when it might. A line that cannot
+    /// be read is never skipped: nothing past it is shown until the user says to reconnect or fetch everything again.
+    private static func stopped(by error: any Error) -> Status? {
+        switch error {
+        case let stop as Stop: stop.status
+        case let error as WireError where finalCodes.contains(error.code): .stopped(why(error))
+        case is ServerLine.Malformed, is LineSplitter.LineTooLong: .stopped(why(error))
+        case let error as POSIXError where error.code == .ENAMETOOLONG: .stopped(why(error))
+        default: nil
+        }
+    }
+
     private static func why(_ error: any Error) -> Why {
         switch error {
         case let error as WireError: Why(code: error.code, text: error.text)
@@ -665,7 +695,12 @@ public actor LinkClient {
             case .stopped(let why), .retrying(let why): why
             default: Why(code: "error", text: "\(stop.status)")
             }
-        case is ServerLine.Malformed: Why(code: "malformed", text: "LMAS wrote a line Bottega cannot read.")
+        case is ServerLine.Malformed:
+            Why(code: "malformed", text: "LMAS wrote a line Bottega cannot read. Nothing past it is shown.")
+        case is LineSplitter.LineTooLong:
+            Why(code: "too_long", text: "LMAS wrote a line longer than Bottega takes. Nothing past it is shown.")
+        case let error as POSIXError where error.code == .ENAMETOOLONG:
+            Why(code: "socket_path", text: "The path to LMAS's ui.sock is too long to connect to. Choose a run directory with a shorter path.")
         case let error as POSIXError where error.code == .ENOENT || error.code == .ECONNREFUSED:
             Why(code: "not_running", text: "LMAS is not running there.")
         case let error as SigningRefused: Why(code: "not_signed", text: error.text)

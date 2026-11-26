@@ -54,7 +54,7 @@ struct AskPanel: View {
     }
 
     private func approve() {
-        if read == ask.textDigest { model.approve(ask) }
+        if let read { model.approve(ask.id, read: read) }
     }
 
     /// What the agent says about its own work, kept apart from what LMAS found out for itself.

@@ -303,9 +303,9 @@ struct LetterRow: View {
                 .kerning(0.5)
                 .foregroundStyle(.secondary)
                 .padding(.leading, 4)
-            if message.device != nil, !message.isFromUser {
-                // Should not happen; worth seeing if it does.
+            if message.cameThroughADeviceAsSomeoneElse {
                 Image(systemName: "questionmark.diamond").help("Came through a device but is not from the user")
+                    .accessibilityLabel("Came through a device but is not from the user")
             }
         }
         .font(.system(size: 12))

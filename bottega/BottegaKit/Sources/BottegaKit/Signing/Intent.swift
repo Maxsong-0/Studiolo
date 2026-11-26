@@ -108,6 +108,8 @@ public enum IntentDraft: Codable, Equatable, Sendable {
         case badProjectName
         case badProjectPath
         case filesWithoutText
+        /// Within every limit above as typed, and still more than a line holds once it is written out.
+        case tooLongOnTheWire(bytes: Int)
     }
 
     public enum Limit {
@@ -117,6 +119,8 @@ public enum IntentDraft: Codable, Equatable, Sendable {
         public static let allFiles = 128 * 1024
         public static let title = 200
         public static let projectName = 64
+        /// The longest device number reckoned with when asking whether a line fits. LMAS's are a few bytes.
+        static let device = 64
     }
 
     public func check() throws(Problem) {
@@ -132,16 +136,32 @@ public enum IntentDraft: Codable, Equatable, Sendable {
             if !path.hasPrefix("/") { throw .badProjectPath }
         case .say, .answer, .approve, .decline, .arrange, .markRead, .removeProject, .setModel, .stopTurn: break
         }
-        guard let (text, files) = typed else { return }
-        if text.allSatisfy(\.isWhitespace) { throw .empty }
-        if text.utf8.count > Limit.text { throw .textTooLong(bytes: text.utf8.count) }
-        if files.count > Limit.files { throw .tooManyFiles(files.count) }
-        for file in files {
-            if file.name.allSatisfy(\.isWhitespace) { throw .fileWithoutName }
-            if file.content.utf8.count > Limit.file { throw .fileTooLong(name: file.name) }
+        if let (text, files) = typed {
+            if text.allSatisfy(\.isWhitespace) { throw .empty }
+            if text.utf8.count > Limit.text { throw .textTooLong(bytes: text.utf8.count) }
+            if files.count > Limit.files { throw .tooManyFiles(files.count) }
+            for file in files {
+                if file.name.allSatisfy(\.isWhitespace) { throw .fileWithoutName }
+                if file.content.utf8.count > Limit.file { throw .fileTooLong(name: file.name) }
+            }
+            let total = files.reduce(0) { $0 + $1.content.utf8.count }
+            if total > Limit.allFiles { throw .filesTooLong(bytes: total) }
         }
-        let total = files.reduce(0) { $0 + $1.content.utf8.count }
-        if total > Limit.allFiles { throw .filesTooLong(bytes: total) }
+        // The limits above count what was typed. On the wire the body is JSON inside JSON, where one control
+        // character takes seven bytes, and LMAS hangs up on a line over 1 MiB: signed and kept, such an intent could
+        // never go out and would hold up everything behind it.
+        let bytes = longestLineBytes
+        if bytes > Wire.maxLineBytes { throw .tooLongOnTheWire(bytes: bytes) }
+    }
+
+    /// The most bytes the line carrying this can come to, newline not counted, whatever number it gets and whenever
+    /// it is signed.
+    var longestLineBytes: Int {
+        let longest = SignedIntent(
+            device: String(repeating: "d", count: Limit.device), number: Wire.farthest, createdAt: Wire.farthest,
+            kind: kind, body: (try? body(contentID: String(repeating: "0", count: 32))) ?? "",
+            signature: String(repeating: "0", count: 128))
+        return ClientLine.bytes(id: Wire.farthest, .intent(longest))
     }
 
     /// LMAS leaves the space around a title out before it looks at the rest.

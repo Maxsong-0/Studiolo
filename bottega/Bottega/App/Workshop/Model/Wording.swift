@@ -255,7 +255,7 @@ enum Wording {
             let text = UntrustedText.line(why.text, limit: 200)
             parts.append(text.last.map { "。.!?！？".contains($0) } == true ? text : text + "。")
         }
-        if gate.streak > 0 { parts.append("Ran into its quota \(count(Int(gate.streak), "time", "times")) in a row.") }
+        if gate.streak > 0 { parts.append("Ran into its quota \(count(Int(clamping: gate.streak), "time", "times")) in a row.") }
         if let until = gate.until { parts.append("LMAS looks again \(time(until)).") }
         return parts.filter { !$0.isEmpty }.joined(separator: " ")
     }
@@ -446,7 +446,39 @@ enum Wording {
         case .badProjectName: "A project's name is one line of 1 to 64 bytes, without spaces around it."
         case .badProjectPath: "A project is a folder's whole path."
         case .filesWithoutText: "Files go with something said."
+        case .tooLongOnTheWire(let bytes):
+            "Too long to send: \(bytes / 1024) KiB once written out as one line, at most \(Wire.maxLineBytes / 1024). "
+                + "Characters that have to be spelled out take up to six times their size."
         }
         return Why(code: "draft", text: text)
+    }
+
+    /// Why a press did not count (`HumanInput`), and what to do instead where there is something.
+    static func why(_ refusal: InputGate.Refusal) -> Why {
+        let text = switch refusal {
+        case .notInFront: "Bottega is not in front, so nothing was sent."
+        case .noEvent:
+            "That did not come straight from a key press or a click in the window, so nothing was sent. "
+                + "A menu item picked with the mouse, or a button pressed through an accessibility tool, does not count: "
+                + "use the keyboard shortcut, or click the button in the window."
+        case .notAPress: "That was not one press of a key or of the mouse, so nothing was sent."
+        case .synthetic: "That came from another program, not from the keyboard or the mouse, so nothing was sent."
+        case .stale: "That press was too long ago, so nothing was sent. Press again."
+        case .otherWindow: "That press went to another window, so nothing was sent."
+        case .usedAlready: "One press sends one thing. Press again for the next."
+        }
+        return Why(code: "input", text: text)
+    }
+
+    /// What is decided about how things are now (approving, declining, stopping, changing a model) is not kept for later.
+    static let notConnected = Why(code: "offline", text: "Not connected to LMAS, so that was not sent. Do it again once connected.")
+
+    /// Why the link did not take something over (`LinkClient.submit`).
+    static func whyNotTaken(_ error: any Error) -> Why {
+        switch error {
+        case is LinkClient.ConnectionLost: notConnected
+        case let problem as IntentDraft.Problem: why(problem)
+        default: Why(code: "send", text: error.localizedDescription)
+        }
     }
 }

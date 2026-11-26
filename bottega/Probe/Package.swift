@@ -13,6 +13,7 @@ let package = Package(
             name: "bottega-probe",
             dependencies: [
                 .product(name: "BottegaKit", package: "BottegaKit"), .product(name: "BottegaLink", package: "BottegaKit"),
+                .product(name: "BottegaTestKeys", package: "BottegaKit"),
             ])
     ],
     swiftLanguageModes: [.v6]

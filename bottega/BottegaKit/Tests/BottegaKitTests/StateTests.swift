@@ -158,6 +158,24 @@ struct StateTests {
                     body: id, files: nil, atMs: at, device: device)))
     }
 
+    // MARK: Whose letter
+
+    /// Whose a letter is goes by who it says it is from. One that came through a device under another name is not
+    /// the user's, and is marked as the oddity it is.
+    @Test func aLetterThroughADeviceUnderAnotherNameIsNotTheUsers() throws {
+        var state = WorkshopState()
+        try state.apply(
+            record(
+                1, message("mine", from: "user", to: "a", device: "device-1"), message("back", from: "a", to: "user", thread: "mine"),
+                message("odd", from: "b", to: "a", device: "device-1"), message("old", from: "user", to: "a")))
+        func letter(_ id: String) throws -> Message { try #require(state.messages[id]) }
+        #expect(try letter("mine").isFromUser && !letter("mine").cameThroughADeviceAsSomeoneElse)
+        #expect(try !letter("back").isFromUser && !letter("back").cameThroughADeviceAsSomeoneElse)
+        #expect(try !letter("odd").isFromUser && letter("odd").cameThroughADeviceAsSomeoneElse)
+        // Written before LMAS noted the device: still the user's.
+        #expect(try letter("old").isFromUser && !letter("old").cameThroughADeviceAsSomeoneElse)
+    }
+
     // MARK: Numbers
 
     @Test func recordsMustFollowOn() throws {

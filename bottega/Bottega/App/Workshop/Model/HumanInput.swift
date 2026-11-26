@@ -38,14 +38,13 @@ enum HumanInput {
     private static var gate = InputGate()
     private static let logger = Logger(subsystem: AppInfo.logSubsystem, category: "input")
 
-    /// Uses the press up: one press, one thing signed.
-    static func take() -> Bool {
+    /// Uses the press up: one press, one thing signed. Throws why it does not count.
+    static func take() throws(InputGate.Refusal) {
         do throws(InputGate.Refusal) {
             try gate.admit(current, isInFront: NSApp.isActive, now: ProcessInfo.processInfo.systemUptime)
-            return true
         } catch {
             logger.notice("refused: \(error.rawValue, privacy: .public)")
-            return false
+            throw error
         }
     }
 

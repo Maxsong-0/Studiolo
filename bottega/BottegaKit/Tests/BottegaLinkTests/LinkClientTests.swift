@@ -82,6 +82,14 @@ final class Rig {
 
 private let sayHi = IntentDraft.say(to: "dispatcher", thread: nil, text: "hi", files: [], wantsReply: true)
 
+/// Within every limit as typed, and more than a line holds once written out: an ESC takes seven bytes there.
+private let longOnTheWire: IntentDraft = {
+    let escapes = String(repeating: "\u{1B}", count: 60_000)
+    return .say(
+        to: "dispatcher", thread: nil, text: escapes,
+        files: [TextFile(name: "a.txt", content: escapes), TextFile(name: "b.txt", content: escapes)], wantsReply: true)
+}()
+
 private extension WireError {
     static let peerRefused = WireError(code: "peer_refused", text: "不是认得的程序")
 }
@@ -232,6 +240,54 @@ struct LinkClientTests {
         #expect(rig.state.through == through)
         await rig.client.reload()
         try await rig.until("live") { rig.isLive && rig.state.sessions["b"] != nil }
+    }
+
+    /// A line that cannot be read is not cured by trying again: it stops there, says so, and skips nothing.
+    @Test(arguments: [#"{"record":{"seq":"two"}}"#, #"{"id":1,"error":{"code":5}}"#, "not json"])
+    func stopsAtALineItCannotRead(line: String) async throws {
+        let rig = Rig()
+        defer { rig.stop() }
+        try await rig.registered()
+        let connections = rig.lmas.connections
+        rig.lmas.send(line)
+        try await rig.until("stopped") { if case .stopped(let why) = rig.status { why.code == "malformed" } else { false } }
+        // The retry pace here is 5 ms: left to itself it would have connected several times over by now.
+        try await Task.sleep(for: .milliseconds(60))
+        #expect(rig.lmas.connections == connections)
+        if case .stopped = rig.status {} else { Issue.record("went on by itself: \(String(describing: rig.status))") }
+        rig.lmas.append(#"{"type":"session_registered","name":"b","role":"coder","at_ms":1}"#)
+        await rig.client.reconnect()
+        try await rig.until("live") { rig.isLive && rig.state.sessions["b"] != nil }
+        #expect(rig.brokenSequences == 0)
+    }
+
+    /// An answer that is not what was asked for is a line that cannot be read, like any other.
+    @Test func stopsAtAnAnswerItCannotRead() async throws {
+        let rig = Rig()
+        defer { rig.stop() }
+        try await rig.registered()
+        rig.lmas.set { $0.garblesFollow = true }
+        rig.lmas.dropAll()
+        try await rig.until("stopped") { if case .stopped(let why) = rig.status { why.code == "malformed" } else { false } }
+        let connections = rig.lmas.connections
+        try await Task.sleep(for: .milliseconds(60))
+        #expect(rig.lmas.connections == connections)
+        rig.lmas.set { $0.garblesFollow = false }
+        await rig.client.reconnect()
+        try await rig.until("live") { rig.isLive }
+    }
+
+    /// A kind of line this Bottega does not know is passed over, and what follows is taken as before.
+    @Test func aKindOfLineItDoesNotKnowIsPassedOver() async throws {
+        let rig = Rig()
+        defer { rig.stop() }
+        try await rig.registered()
+        let connections = rig.lmas.connections
+        rig.lmas.send(#"{"coffee":{"cups":2}}"#)
+        rig.lmas.append(#"{"type":"session_registered","name":"a","role":"coder","at_ms":1}"#)
+        try await rig.until("a") { rig.state.sessions["a"] != nil }
+        #expect(rig.isLive)
+        #expect(rig.lmas.connections == connections)
     }
 
     @Test func startsWhereTheLogStarts() async throws {
@@ -448,6 +504,40 @@ struct LinkClientTests {
         #expect(rig.lmas.handedIn.isEmpty)
     }
 
+    /// Too long only once written out: said before anything is kept, like every other limit.
+    @Test func tooLongOnTheWireIsSaidBeforeAnythingIsKept() async throws {
+        let rig = Rig()
+        defer { rig.stop() }
+        try await rig.registered()
+        await #expect(throws: IntentDraft.Problem.self) { try await rig.client.submit(longOnTheWire) }
+        #expect(rig.store.keepsake.outbox.isEmpty)
+        #expect(rig.lmas.handedIn.isEmpty)
+    }
+
+    /// Kept by a build that did not check for it, it can never go out: it is given back, and what waits behind it goes.
+    @Test func whatCanNeverGoOutDoesNotHoldUpTheRest() async throws {
+        let chest = FakeChest(), store = MemoryStore()
+        let first = Rig(chest: chest, store: store)
+        try await first.registered()
+        first.stop()
+        var keepsake = store.keepsake
+        keepsake.outbox.add(longOnTheWire, id: ContentID.random(), at: 1)
+        keepsake.outbox.add(sayHi, id: ContentID.random(), at: 2)
+        try store.save(keepsake)
+        let second = Rig(lmas: first.lmas, chest: chest, store: store)
+        defer { second.stop() }
+        try await second.until("both settled") { second.settled.count == 2 }
+        guard case .notSent(let why) = second.settled[0].result else {
+            Issue.record("settled as \(second.settled[0].result)")
+            return
+        }
+        #expect(why.code == "too_long")
+        #expect(second.settled[0].item.draft == longOnTheWire)
+        #expect(second.lmas.executed.map(\.kind) == ["say"])
+        #expect(second.lmas.handedIn.count == 1)
+        #expect(store.keepsake.outbox.isEmpty)
+    }
+
     /// What cannot be kept is not sent: a crash after sending could do it twice.
     @Test func nothingGoesOutThatIsNotOnDisk() async throws {
         let rig = Rig()
@@ -509,6 +599,52 @@ struct LinkClientTests {
         rig.lmas.set { $0.isRunning = true }
         try await rig.until("live") { rig.isLive }
         #expect(keys.prompted.count == 1)  // The registration's.
+    }
+
+    /// Decided looking at how things were, it is not done later when they are otherwise: given back there and then.
+    @Test(arguments: [
+        IntentDraft.decline(ask: "ask-1"), .stopTurn("turn-1"), .setModel(line: "m1", session: "a", model: "x", effort: nil),
+        .removeProject(name: "p"), .addProject(name: "p", path: "/tmp/p"), .approve(ask: "ask-1", textDigest: "d"),
+    ])
+    func decidingNeedsAConnection(draft: IntentDraft) async throws {
+        #expect(!draft.keeps)
+        let rig = Rig()
+        defer { rig.stop() }
+        try await rig.registered()
+        rig.lmas.set { $0.isRunning = false }
+        rig.lmas.dropAll()
+        try await rig.until("retrying") { if case .retrying = rig.status { true } else { false } }
+        await #expect(throws: LinkClient.ConnectionLost.self) { try await rig.client.submit(draft, touchIDReason: "x") }
+        #expect(rig.store.keepsake.outbox.isEmpty)
+        rig.lmas.set { $0.isRunning = true }
+        try await rig.until("live") { rig.isLive }
+        // Nothing of it was kept to go out now.
+        try await Task.sleep(for: .milliseconds(20))
+        #expect(rig.lmas.handedIn.isEmpty)
+        // Asked again while connected, it goes.
+        try await rig.client.submit(draft, touchIDReason: "x")
+        try await rig.until("settled") { rig.settled.count == 1 }
+        #expect(rig.lmas.handedIn.map(\.kind) == [draft.kind])
+    }
+
+    /// Connected is not enough: until everything LMAS has is here, what is shown is how things were.
+    @Test func decidingWaitsUntilCaughtUp() async throws {
+        let rig = Rig()
+        defer { rig.stop() }
+        try await rig.registered()
+        rig.lmas.set { $0.holdsCaughtUp = true }
+        rig.lmas.dropAll()
+        try await rig.until("catching up") { if case .catchingUp = rig.status { true } else { false } }
+        await #expect(throws: LinkClient.ConnectionLost.self) { try await rig.client.submit(.decline(ask: "ask-1")) }
+        await #expect(throws: LinkClient.ConnectionLost.self) { try await rig.client.submit(.stopTurn("turn-1")) }
+        // What is said is kept all the same.
+        try await rig.client.submit(sayHi)
+        rig.lmas.catchUp()
+        try await rig.until("live") { rig.isLive }
+        try await rig.until("said") { rig.settled.count == 1 }
+        try await rig.client.submit(.decline(ask: "ask-1"))
+        try await rig.until("declined") { rig.settled.count == 2 }
+        #expect(rig.lmas.executed.map(\.kind) == ["say", "decline"])
     }
 }
 

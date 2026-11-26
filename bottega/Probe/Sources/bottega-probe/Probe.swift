@@ -1,6 +1,7 @@
 // Bottega, modified from Droppy Code. Droppy Code by Jordy Spruit (Droppy), https://getdroppycode.app. GNU AGPL v3 with additional terms, see LICENSE.
 import BottegaKit
 import BottegaLink
+import BottegaTestKeys
 import CryptoKit
 import Foundation
 import Synchronization

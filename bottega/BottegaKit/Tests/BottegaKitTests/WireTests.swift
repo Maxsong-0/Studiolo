@@ -225,6 +225,22 @@ struct WireTests {
         #expect(throws: ServerLine.Malformed.self) { try ServerLine.read(Data(line.utf8)) }
     }
 
+    /// The other side of the same line: the farthest number there can be is taken, one more is not.
+    @Test func theFarthestNumberIsTakenAndOneMoreIsNot() throws {
+        #expect(Wire.farthest == 9_007_199_254_740_992)
+        func record(_ through: UInt64) throws -> ServerLine {
+            try ServerLine.read(Data(#"{"record":{"seq":\#(through),"through":\#(through),"events":[]}}"#.utf8))
+        }
+        #expect(try record(Wire.farthest) == .record(Record(seq: Wire.farthest, through: Wire.farthest, events: [])))
+        #expect(throws: ServerLine.Malformed.self) { try record(Wire.farthest + 1) }
+        func welcome(_ next: UInt64) throws -> ServerLine {
+            try ServerLine.read(Data(#"{"welcome":{"device":"d","name":"n","latest":0,"next_intent":\#(next),"now_ms":1}}"#.utf8))
+        }
+        guard case .welcome(let farthest) = try welcome(Wire.farthest) else { Issue.record("not a welcome"); return }
+        #expect(farthest.nextIntent == Wire.farthest)
+        #expect(throws: ServerLine.Malformed.self) { try welcome(Wire.farthest + 1) }
+    }
+
     @Test func anErrorKeepsItsWordsWithoutANumberThatCannotBe() throws {
         let line = #"{"id":1,"error":{"code":"gone","text":"t","next":18446744073709551615,"latest":-1,"oldest":0}}"#
         #expect(try ServerLine.read(Data(line.utf8)) == .error(id: 1, WireError(code: "gone", text: "t")))
@@ -239,8 +255,11 @@ struct WireTests {
         let rest = try ClientLine.request(id: 1, .intent(intent)).count - 1
         intent.body = String(repeating: "x", count: Wire.maxLineBytes - rest)
         #expect(try ClientLine.request(id: 1, .intent(intent)).count == Wire.maxLineBytes + 1)
+        // What `IntentDraft.check` goes by is the same count.
+        #expect(ClientLine.bytes(id: 1, .intent(intent)) == Wire.maxLineBytes)
         intent.body += "x"
         #expect(throws: ClientLine.TooLong.self) { try ClientLine.request(id: 1, .intent(intent)) }
+        #expect(ClientLine.bytes(id: 1, .intent(intent)) == Wire.maxLineBytes + 1)
     }
 
     @Test func namesAreCutToWhatLMASTakes() {

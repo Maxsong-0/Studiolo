@@ -54,7 +54,11 @@ public struct Message: Equatable, Sendable, Identifiable {
         }
     }
 
-    public var isFromUser: Bool { device != nil || from == Session.user }
+    /// By who it says it is from, not by `device`: a letter that came through a device under another name is not the
+    /// user's, and is shown as the oddity it is (`cameThroughADeviceAsSomeoneElse`).
+    public var isFromUser: Bool { from == Session.user }
+    /// Should not happen: LMAS writes what a device signs as the user's. Worth seeing if it does.
+    public var cameThroughADeviceAsSomeoneElse: Bool { device != nil && !isFromUser }
     public var isToUser: Bool { to == Session.user }
 }
 

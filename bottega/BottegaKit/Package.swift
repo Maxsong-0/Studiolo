@@ -4,6 +4,7 @@ import PackageDescription
 
 // The part of Bottega that knows LMAS and nothing about windows: BottegaKit is pure (wire format, what gets
 // signed, events reduced to state), BottegaLink is the connection. The P3 iPhone app builds on BottegaKit too.
+// BottegaTestKeys holds keys that sign without a finger: for the tests and the probe, never for an app.
 let strict: [SwiftSetting] = [
     .enableUpcomingFeature("NonisolatedNonsendingByDefault"),
     .enableUpcomingFeature("InferIsolatedConformances"),
@@ -16,10 +17,12 @@ let package = Package(
     products: [
         .library(name: "BottegaKit", targets: ["BottegaKit"]),
         .library(name: "BottegaLink", targets: ["BottegaLink"]),
+        .library(name: "BottegaTestKeys", targets: ["BottegaTestKeys"]),
     ],
     targets: [
         .target(name: "BottegaKit", swiftSettings: strict),
         .target(name: "BottegaLink", dependencies: ["BottegaKit"], swiftSettings: strict),
+        .target(name: "BottegaTestKeys", dependencies: ["BottegaKit", "BottegaLink"], swiftSettings: strict),
         .testTarget(
             name: "BottegaKitTests",
             dependencies: ["BottegaKit"],
@@ -28,7 +31,7 @@ let package = Package(
         ),
         .testTarget(
             name: "BottegaLinkTests",
-            dependencies: ["BottegaKit", "BottegaLink"],
+            dependencies: ["BottegaKit", "BottegaLink", "BottegaTestKeys"],
             swiftSettings: strict
         ),
     ],

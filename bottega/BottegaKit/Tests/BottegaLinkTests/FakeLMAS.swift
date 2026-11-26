@@ -1,6 +1,7 @@
 // Bottega, modified from Droppy Code. Droppy Code by Jordy Spruit (Droppy), https://getdroppycode.app. GNU AGPL v3 with additional terms, see LICENSE.
 import BottegaKit
 import BottegaLink
+import BottegaTestKeys
 import Foundation
 import Synchronization
 
@@ -22,11 +23,16 @@ final class FakeLMAS: Connector, Sendable {
         var turns: [String: [String]]?
         /// Pushed right behind the answer to `watch`: JSON of what is inside `live`.
         var running: [(turn: String, lines: [String])] = []
+        /// Sends what it has and does not say `caught_up` until `catchUp()`.
+        var holdsCaughtUp = false
+        /// Answers `follow` with something that is not what the document says.
+        var garblesFollow = false
     }
 
     private struct Books {
         var knobs = Knobs()
         var connection: UInt64 = 6
+        var connections: UInt64 = 0
         var registration: Registration?
         var log: [String] = []  // JSON of each record
         var through: UInt64 = 0
@@ -66,6 +72,8 @@ final class FakeLMAS: Connector, Sendable {
     var seen: [UInt64] { books.withLock { $0.seen } }
     var through: UInt64 { books.withLock { $0.through } }
     var isRegistered: Bool { books.withLock { $0.registration != nil } }
+    /// How many times it has been connected to.
+    var connections: UInt64 { books.withLock { $0.connections } }
 
     /// Another program using up this device's next number, which must not happen and does.
     func useUpANumber() {
@@ -98,9 +106,20 @@ final class FakeLMAS: Connector, Sendable {
     }
 
     /// A record whose number does not follow on.
-    func sendBroken() {
-        let channels = books.withLock { $0.open }
-        for channel in channels { channel.yield(#"{"record":{"seq":999,"through":999,"events":[]}}"#) }
+    func sendBroken() { send(#"{"record":{"seq":999,"through":999,"events":[]}}"#) }
+
+    /// A line as it is, to everyone connected: for what LMAS would never write.
+    func send(_ line: String) {
+        for channel in books.withLock({ $0.open }) { channel.yield(line) }
+    }
+
+    /// Says `caught_up` to those it was held back from (`holdsCaughtUp`).
+    func catchUp() {
+        let (channels, through) = books.withLock { books in
+            books.knobs.holdsCaughtUp = false
+            return (books.open.filter(\.isFollowing), books.through)
+        }
+        for channel in channels { channel.yield(#"{"caught_up":{"through":\#(through)}}"#) }
     }
 
     func dropAll() {
@@ -123,6 +142,7 @@ final class FakeLMAS: Connector, Sendable {
         let channel = try books.withLock { books -> FakeChannel in
             guard books.knobs.isRunning else { throw POSIXError(.ECONNREFUSED) }
             books.connection += 1
+            books.connections += 1
             let channel = FakeChannel(lmas: self, connection: books.connection)
             books.open.append(channel)
             return channel
@@ -234,10 +254,11 @@ final class FakeLMAS: Connector, Sendable {
     }
 
     private func follow(_ from: UInt64, _ id: UInt64, _ channel: FakeChannel) {
-        let (lines, through, oldest) = books.withLock { books in
+        let (lines, through, oldest, holds, garbles) = books.withLock { books in
             books.followedFrom.append(from)
-            return (books.log, books.through, books.knobs.oldest)
+            return (books.log, books.through, books.knobs.oldest, books.knobs.holdsCaughtUp, books.knobs.garblesFollow)
         }
+        if garbles { return channel.ok(id, #"{"latest":"many"}"#) }
         if from < oldest { return channel.fail(id, "gone", #","oldest":\#(oldest)"#) }
         if from > through + 1 { return channel.fail(id, "ahead", #","latest":\#(through)"#) }
         channel.ok(id, #"{"latest":\#(through)}"#)
@@ -246,7 +267,7 @@ final class FakeLMAS: Connector, Sendable {
             channel.yield(line)
         }
         channel.isFollowing = true
-        channel.yield(#"{"caught_up":{"through":\#(through)}}"#)
+        if !holds { channel.yield(#"{"caught_up":{"through":\#(through)}}"#) }
     }
 
     private func intent(_ json: [String: Any], _ id: UInt64, _ channel: FakeChannel) {

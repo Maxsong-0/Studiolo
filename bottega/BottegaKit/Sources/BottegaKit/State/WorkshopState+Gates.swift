@@ -20,7 +20,8 @@ public struct Gate: Equatable, Sendable {
     public let why: Why?
     /// When LMAS looks again.
     public let until: UInt64?
-    /// Times in a row it ran into the quota; 0 when LMAS left it out.
+    /// Times in a row it ran into the quota; 0 when LMAS left it out. Never past what the wire counts to
+    /// (`Wire.farthest`), so it can be shown and counted on without overflowing.
     public let streak: UInt64
     public let at: UInt64
 
@@ -33,7 +34,7 @@ public struct Gate: Equatable, Sendable {
         level = event.level
         why = event.why
         until = event.untilMs
-        streak = event.streak ?? 0
+        streak = min(event.streak ?? 0, Wire.farthest)
         at = event.atMs
     }
 }

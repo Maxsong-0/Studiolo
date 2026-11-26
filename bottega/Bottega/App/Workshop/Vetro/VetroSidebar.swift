@@ -374,7 +374,8 @@ private struct LineRow: View {
         }
     }
 
-    /// Red: waiting for you. Amber dots: an AI at work on it. Filled: something you have not read.
+    /// Red: waiting for you. Amber dots: an AI at work on it. Filled: something you have not read; not on the line
+    /// that is open, which is being read and is marked so when it is left (`WorkshopModel.markRead`).
     @ViewBuilder private var dot: some View {
         if waits {
             Circle().fill(.red).frame(width: 9, height: 9)
@@ -382,7 +383,7 @@ private struct LineRow: View {
                 .accessibilityLabel("Waiting for you")
         } else if isWorkedOn {
             WorkingMatrix(side: 3).frame(width: 9, height: 9).accessibilityLabel("Being worked on")
-        } else if model.state.hasUnread(line) {
+        } else if model.page != .line(line.id), model.state.hasUnread(line) {
             Circle().fill(.primary).frame(width: 7, height: 7).frame(width: 9).accessibilityLabel("Unread")
         } else {
             Circle().strokeBorder(.secondary, lineWidth: 1.4).frame(width: 9, height: 9).opacity(0.7)

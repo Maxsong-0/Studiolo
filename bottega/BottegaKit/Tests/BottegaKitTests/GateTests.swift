@@ -20,6 +20,22 @@ struct GateTests {
                 why: level == "open" ? nil : Why(code: "line", text: "过线了"), untilMs: nil, streak: nil, atMs: at))
     }
 
+    /// LMAS counts in 64 bits and the app goes on counting with what it is told: no more is kept than a number can be.
+    @Test func aStreakThatCannotBeIsCutDown() throws {
+        func streak(_ told: UInt64?) throws -> UInt64? {
+            let closed = Event.gateChanged(
+                .init(vendor: "grok", model: nil, level: "closed", why: Why(code: "quota_hit", text: "x"), untilMs: nil, streak: told, atMs: 1))
+            return try state([closed]).gatesNotOpen(of: "grok").first?.streak
+        }
+        #expect(try streak(nil) == 0)
+        #expect(try streak(2) == 2)
+        #expect(try streak(Wire.farthest) == Wire.farthest)
+        #expect(try streak(Wire.farthest + 1) == Wire.farthest)
+        #expect(try streak(.max) == Wire.farthest)
+        // What the app does with it: a count of this size still goes into an Int.
+        #expect(Int(exactly: Wire.farthest) != nil)
+    }
+
     // MARK: As recorded
 
     @Test func theRecordedGates() throws {

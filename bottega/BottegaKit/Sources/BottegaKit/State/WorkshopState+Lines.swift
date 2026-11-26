@@ -195,9 +195,13 @@ extension WorkshopState {
     }
 
     /// Whether anyone else has written on a line since it was read.
-    public func hasUnread(_ thread: Line) -> Bool {
+    public func hasUnread(_ thread: Line) -> Bool { unreadThrough(thread) != nil }
+
+    /// Up to which event a line counts as read once everything on it now has been (`mark_read`): the latest letter
+    /// anyone else wrote that is not read yet. nil with nothing unread.
+    public func unreadThrough(_ thread: Line) -> UInt64? {
         let read = readThrough(thread)
-        return thread.messages.contains { id in messages[id].map { !$0.isFromUser && $0.seq > read } ?? false }
+        return thread.messages.lazy.compactMap { messages[$0] }.filter { !$0.isFromUser && $0.seq > read }.map(\.seq).max()
     }
 
     /// The models to choose from for a session, as its vendor lists them. Without, it cannot be changed.

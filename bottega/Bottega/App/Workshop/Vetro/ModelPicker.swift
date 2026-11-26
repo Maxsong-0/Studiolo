@@ -178,7 +178,7 @@ struct ModelPicker: View {
                         }
                     case .unavailable(let why, _):
                         VStack(alignment: .leading, spacing: 4) {
-                            Text("\(Maker(vendor: vendor)?.title ?? vendor) cannot be asked for its models")
+                            Text(verbatim: "\(Maker(vendor: vendor)?.title ?? UntrustedText.line(vendor, limit: 40)) cannot be asked for its models")
                                 .font(.system(size: 12, weight: .semibold))
                             Text(verbatim: UntrustedText.line(why.text, limit: 200))
                             Text("LMAS asks again in 10 minutes. The other bots are not affected.")

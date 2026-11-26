@@ -36,7 +36,7 @@ extension WorkshopModel {
     }
 
     func setModel(_ choice: ModelChoice, for session: String, on line: String) {
-        guard let client, isFromTheUser() else { return }
+        guard let client, canDecideNow(), isFromTheUser() else { return }
         submit(.setModel(line: line, session: session, model: choice.model, effort: choice.effort), to: client)
     }
 
@@ -63,7 +63,7 @@ extension WorkshopModel {
     }
 
     func stop(_ turn: Turn) {
-        guard let client, canStop(turn), isFromTheUser() else { return }
+        guard let client, canStop(turn), canDecideNow(), isFromTheUser() else { return }
         submit(.stopTurn(turn.id), to: client)
     }
 
@@ -100,7 +100,7 @@ extension WorkshopModel {
             do {
                 openings[try await client.submit(.openLine(line))] = vendor
             } catch {
-                putBack(line.text, Why(code: "send", text: error.localizedDescription), for: vendor)
+                putBack(line.text, Wording.whyNotTaken(error), for: vendor)
             }
         }
     }
@@ -126,7 +126,7 @@ extension WorkshopModel {
 
     /// Both ask for Touch ID: a registered repository is one agents may write in.
     func addProject(name: String, path: String) {
-        guard let client else { return }
+        guard let client, canDecideNow() else { return }
         let intent = IntentDraft.addProject(name: name, path: path)
         do throws(IntentDraft.Problem) {
             try intent.check()
@@ -140,7 +140,7 @@ extension WorkshopModel {
     }
 
     func removeProject(_ name: String) {
-        guard let client, isFromTheUser() else { return }
+        guard let client, canDecideNow(), isFromTheUser() else { return }
         submit(.removeProject(name: name), to: client, touchIDReason: "remove the project “\(UntrustedText.line(name, limit: 64))”")
     }
 

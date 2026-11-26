@@ -34,7 +34,10 @@ final class WorkshopModel {
 
     var page: Page = .dispatcher {
         didSet {
-            if page != oldValue { detail = nil }
+            if page != oldValue {
+                detail = nil
+                markRead(leaving: oldValue, opening: page)
+            }
             if let section = page.section { self.section = section }
             if page.section == .bots { botsPage = page }
         }
@@ -75,6 +78,8 @@ final class WorkshopModel {
 
     private(set) var client: LinkClient?
     private var pumps: [Task<Void, Never>] = []
+    /// The events stopped fitting what is shown (`apply`), and the link was let go of. Only starting over helps.
+    private var isOutOfStep = false
 
     /// Letters to the user that have been on screen while the app was in front.
     private var shown: Set<String> = []
@@ -131,6 +136,7 @@ final class WorkshopModel {
         for pump in pumps { pump.cancel() }
         pumps = []
         client = nil
+        isOutOfStep = false
         state = WorkshopState()
         status = nil
         overview = nil
@@ -180,6 +186,8 @@ final class WorkshopModel {
     }
 
     private func take(_ update: LinkClient.Update) {
+        // Let go of (`apply`): what the old link still had on its way is not shown over the stop.
+        guard !isOutOfStep else { return }
         switch update {
         case .status(let status):
             self.status = status
@@ -208,7 +216,9 @@ final class WorkshopModel {
             for record in records { try state.apply(record) }
         } catch {
             // The link checks the numbers before it passes records on; if they still do not fit, stop all the same.
+            // Reconnect and Reload All Events then start over with a new link (`startOver`).
             client = nil
+            isOutOfStep = true
             for pump in pumps { pump.cancel() }
             status = .stopped(Why(code: "sequence", text: "The events do not follow on: expected \(error.expected), got \(error.got)."))
         }
@@ -285,7 +295,7 @@ final class WorkshopModel {
 
     // MARK: The link
 
-    var hasLink: Bool { client != nil }
+    var hasLink: Bool { client != nil || isOutOfStep }
     /// Stopped for a reason registering again would cure.
     var canRegisterAgain: Bool {
         if case .stopped(let why) = status { ["keys", "handshake"].contains(why.code) } else { false }
@@ -306,8 +316,13 @@ final class WorkshopModel {
     }
 
     func reconnect() {
-        guard let client else { return }
+        guard let client else { return startOver() }
         Task { await client.reconnect() }
+    }
+
+    /// With the link let go of because the events stopped fitting: a new link, from the first event.
+    private func startOver() {
+        if isOutOfStep { begin() }
     }
 
     func refreshOverview() {
@@ -316,7 +331,7 @@ final class WorkshopModel {
     }
 
     func reload() {
-        guard let client else { return }
+        guard let client else { return startOver() }
         Task { await client.reload() }
     }
 
@@ -374,8 +389,20 @@ final class WorkshopModel {
 
     /// The one gate in front of everything that gets signed.
     func isFromTheUser() -> Bool {
-        if HumanInput.take() { return true }
-        notice = Why(code: "synthetic", text: "That did not come from the keyboard or the mouse, so nothing was sent.")
+        do throws(InputGate.Refusal) {
+            try HumanInput.take()
+            return true
+        } catch {
+            notice = Wording.why(error)
+            return false
+        }
+    }
+
+    /// What is decided about how things are now (`IntentDraft.keeps` false: approving, declining, stopping a turn,
+    /// changing a model, a project) is sent only while what is shown is how things are. The link refuses it too.
+    func canDecideNow() -> Bool {
+        if isLive { return true }
+        notice = Wording.notConnected
         return false
     }
 
@@ -394,7 +421,7 @@ final class WorkshopModel {
             do {
                 origins[try await client.submit(intent)] = key
             } catch {
-                drafts.putBack(sent.text, sent.files, Why(code: "send", text: error.localizedDescription), in: key)
+                drafts.putBack(sent.text, sent.files, Wording.whyNotTaken(error), in: key)
             }
         }
     }
@@ -410,20 +437,21 @@ final class WorkshopModel {
         if let firstAsk { askBeingRead = OpenAsk(id: firstAsk) }
     }
 
-    /// `shown` is the ask as it was when it came on screen: that is what gets signed, not what it has become since.
-    func approve(_ shown: Ask) {
-        guard let client, isLive, let ask = state.asks[shown.id], ask.answer == nil else { return }
-        guard ask.textDigest == shown.textDigest else {
-            notice = Why(code: "changed", text: "\(shown.id) has changed. Read it again.")
+    /// `read` is the digest of the text as the user read it. That is what gets signed, and only while the ask still
+    /// says it: a number can come to stand for another ask.
+    func approve(_ id: String, read: String) {
+        guard let client, let ask = state.asks[id], ask.answer == nil, canDecideNow() else { return }
+        guard ask.textDigest == read else {
+            notice = Why(code: "changed", text: "\(UntrustedText.line(id, limit: 40)) has changed. Read it again.")
             return
         }
         guard isFromTheUser() else { return }
-        let reason = "approve: " + UntrustedText.line(UntrustedText.revealing(shown.text).text, limit: 160)
-        submit(.approve(ask: shown.id, textDigest: shown.textDigest), to: client, touchIDReason: reason)
+        let reason = "approve: " + UntrustedText.line(UntrustedText.revealing(ask.text).text, limit: 160)
+        submit(.approve(ask: id, textDigest: read), to: client, touchIDReason: reason)
     }
 
     func decline(_ id: String) {
-        guard let client, let ask = state.asks[id], ask.answer == nil, isFromTheUser() else { return }
+        guard let client, let ask = state.asks[id], ask.answer == nil, canDecideNow(), isFromTheUser() else { return }
         submit(.decline(ask: id), to: client)
     }
 
@@ -432,7 +460,7 @@ final class WorkshopModel {
             do {
                 try await client.submit(intent, touchIDReason: touchIDReason)
             } catch {
-                notice = Why(code: "send", text: error.localizedDescription)
+                notice = Wording.whyNotTaken(error)
             }
         }
     }
@@ -509,6 +537,21 @@ final class WorkshopModel {
             guard parts.count == 2, let seq = UInt64(parts[0]), let index = Int(parts[1]) else { return nil }
             return TripID(seq: seq, index: index)
         })
+    }
+
+    // MARK: Read
+
+    /// Going from one line to another with a key or a click says a line has been read: the one left, if something
+    /// came in on it while it was open, otherwise the one opened. One press signs one thing, so the other waits for
+    /// the next move. A page that changes by itself (a line opening after its first letter went out) marks nothing.
+    private func markRead(leaving old: Page, opening new: Page) {
+        guard let client, isLive else { return }
+        for case .line(let id) in [old, new] {
+            guard let line = state.threads[id], let through = state.unreadThrough(line) else { continue }
+            // Quietly: moving about is not something to be told off for.
+            do throws(InputGate.Refusal) { try HumanInput.take() } catch { return }
+            return submit(.markRead(line: id, through: through), to: client)
+        }
     }
 
     // MARK: Seen

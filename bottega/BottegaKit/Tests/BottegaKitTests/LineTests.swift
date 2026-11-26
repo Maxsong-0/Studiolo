@@ -204,6 +204,33 @@ struct LineTests {
         #expect(try !unread(read("m1", 2), letter("m3", from: "user", to: "line-1", thread: "m1")))
     }
 
+    /// What `mark_read` is sent with: the latest letter someone else wrote that is not read yet.
+    @Test func readingALineGoesUpToItsLatestLetterFromSomeoneElse() throws {
+        func read(_ line: String, _ through: UInt64) -> Event { .lineRead(.init(line: line, through: through, atMs: 1)) }
+        func through(_ records: [Event]...) throws -> UInt64? {
+            var state = WorkshopState()
+            for (index, events) in records.enumerated() {
+                try state.apply(Record(seq: UInt64(index + 1), through: UInt64(index + 1), events: events))
+            }
+            return try state.unreadThrough(#require(state.threads["m1"]))
+        }
+        let asked = [letter("m1", from: "user", to: "line-1")]
+        let answered = [letter("m2", from: "line-1", to: "user", thread: "m1", kind: "result")]
+        let more = [letter("m3", from: "line-1", to: "user", thread: "m1", kind: "question")]
+        let said = [letter("m4", from: "user", to: "line-1", thread: "m1")]
+        // Only what the user wrote: nothing to read.
+        #expect(try through(asked) == nil)
+        #expect(try through(asked, answered) == 2)
+        #expect(try through(asked, answered, more) == 3)
+        // The user's own letter after it does not move it on: reading goes up to what there was to read.
+        #expect(try through(asked, answered, more, said) == 3)
+        #expect(try through(asked, answered, [read("m1", 2)], more) == 4)
+        #expect(try through(asked, answered, more, [read("m1", 2)]) == 3)
+        #expect(try through(asked, answered, more, [read("m1", 3)]) == nil)
+        // Read as part of the talk with the session counts as well.
+        #expect(try through(asked, answered, more, [read("line-1", 3)]) == nil)
+    }
+
     @Test func whatTheUserSaysDoesNotCount() throws {
         let state = try state(
             [letter("m1", from: "user", to: "a")], [letter("m2", from: "a", to: "b", thread: "m1")],

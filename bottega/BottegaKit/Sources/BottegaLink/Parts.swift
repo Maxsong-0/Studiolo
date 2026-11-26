@@ -1,6 +1,5 @@
 // Bottega, modified from Droppy Code. Droppy Code by Jordy Spruit (Droppy), https://getdroppycode.app. GNU AGPL v3 with additional terms, see LICENSE.
 public import BottegaKit
-public import CryptoKit
 public import Foundation
 
 /// One open connection, a line at a time.
@@ -117,28 +116,4 @@ public enum PrivateFile {
     }
 
     private static func lastError() -> POSIXError { POSIXError(.init(rawValue: errno) ?? .EIO) }
-}
-
-/// Keys in memory, no prompt. For tests, and for Debug builds trying out a demo LMAS.
-public struct SoftwareKeys: DeviceKeys {
-    private let dailyKey: P256.Signing.PrivateKey
-    private let approvalKey: P256.Signing.PrivateKey
-
-    public init(daily: P256.Signing.PrivateKey = .init(), approval: P256.Signing.PrivateKey = .init()) {
-        dailyKey = daily
-        approvalKey = approval
-    }
-
-    public var daily: PublicKey { Self.publicKey(dailyKey) }
-    public var approval: PublicKey { Self.publicKey(approvalKey) }
-
-    public func sign(_ preimage: Preimage, with use: KeyUse, reason: String) throws -> String {
-        let key = use == .daily ? dailyKey : approvalKey
-        return Hex.encode(try key.signature(for: preimage.bytes).rawRepresentation)
-    }
-
-    private static func publicKey(_ key: P256.Signing.PrivateKey) -> PublicKey {
-        // A key CryptoKit just made is on the curve and 65 bytes long.
-        PublicKey(x963: key.publicKey.x963Representation)!
-    }
 }

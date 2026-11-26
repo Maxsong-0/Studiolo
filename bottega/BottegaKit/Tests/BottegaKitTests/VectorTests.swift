@@ -210,6 +210,50 @@ struct IntentTests {
         #expect(problem(.decline(ask: "ask-1")) == nil)
     }
 
+    /// The limits count what was typed. LMAS reads a line, and there the body is JSON inside JSON: a control
+    /// character takes seven bytes. What would not fit is refused before it is signed and kept.
+    @Test func whatWouldNotFitOnALineIsRefusedBeforeSigning() throws {
+        func problem(_ draft: IntentDraft) -> IntentDraft.Problem? {
+            do throws(IntentDraft.Problem) { try draft.check() } catch { return error }
+            return nil
+        }
+        func say(_ text: String, _ files: String...) -> IntentDraft {
+            let files = files.enumerated().map { TextFile(name: "f\($0.offset)", content: $0.element) }
+            return .say(to: "dispatcher", thread: nil, text: text, files: files, wantsReply: true)
+        }
+        // Everything the limits allow: plain, and in quotes, which take four bytes each.
+        let plain = String(repeating: "x", count: 64 * 1024), quotes = String(repeating: "\"", count: 64 * 1024)
+        #expect(problem(say(plain, plain, plain)) == nil)
+        #expect(problem(say(quotes, quotes, quotes)) == nil)
+        let escapes = String(repeating: "\u{1B}", count: 64 * 1024)
+        #expect(problem(say(escapes, escapes)) == nil)
+        guard case .tooLongOnTheWire(let bytes)? = problem(say(escapes, escapes, escapes)) else {
+            Issue.record("three times 64 KiB of ESC got through")
+            return
+        }
+        #expect(bytes > Wire.maxLineBytes)
+
+        // To the byte: padded up to what a line holds it goes, with one more it does not.
+        func padded(_ padding: Int) -> IntentDraft {
+            say(escapes, escapes, String(repeating: "\u{1B}", count: 12_000) + String(repeating: "x", count: padding))
+        }
+        let room = Wire.maxLineBytes - padded(0).longestLineBytes
+        try #require((1..<50_000).contains(room), "the padding would run into the file limits: \(room)")
+        #expect(problem(padded(room)) == nil)
+        #expect(problem(padded(room + 1)) == .tooLongOnTheWire(bytes: Wire.maxLineBytes + 1))
+
+        // And what it reckons with is never less than the line really comes to, whatever the device and the number.
+        let draft = padded(room)
+        let signed = SignedIntent(
+            device: "device-1", number: 1, createdAt: 1_764_000_000_000, kind: draft.kind,
+            body: try draft.body(contentID: ContentID.random()), signature: String(repeating: "a", count: 128))
+        #expect(try ClientLine.request(id: 1, .intent(signed)).count - 1 <= draft.longestLineBytes)
+        let longest = SignedIntent(
+            device: String(repeating: "d", count: 64), number: Wire.farthest, createdAt: Wire.farthest, kind: draft.kind,
+            body: try draft.body(contentID: ContentID.random()), signature: String(repeating: "a", count: 128))
+        #expect(try ClientLine.request(id: Wire.farthest, .intent(longest)).count - 1 == draft.longestLineBytes)
+    }
+
     @Test func limitsOfLinesAndProjectsAreCheckedBeforeSigning() {
         func problem(_ draft: IntentDraft) -> IntentDraft.Problem? {
             do throws(IntentDraft.Problem) { try draft.check() } catch { return error }
