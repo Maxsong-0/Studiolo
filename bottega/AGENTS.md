@@ -19,6 +19,14 @@ Bottega 在 Studiolo 仓库的 `bottega/` 目录里。Studiolo 仓库根的 `AGE
 
 四层单向：Core ← Services / UI ← App。Core 文件若需要 provider 注册表、设置或视图，说明放错层了，拆成上层的 extension（范例 `App/CrewCookbook+Resolve.swift`）。
 
+## 新界面（`BottegaKit`、`App/Workshop`）
+
+- 依赖单向：`BottegaKit` ← `BottegaLink` ← `Workshop`。能做成纯逻辑的放 `BottegaKit` 并写测试；App 目标测不到，放进去的逻辑越少越好。`Workshop` 不引用旧的 `AppModel`、provider、Crew。
+- 协议以 LMAS 的 `docs/bottega-protocol.md` 为准，和 `fixtures/bottega/` 对不上时以测试数据为准。这边不改协议，有问题找 LMAS 的会话。序号按事件编：接得上 = `seq` 等于上一条的 `through` 加 1。
+- 别人写的字（信、卡、测试输出、会话名、`Why.text`）一律 `Text(verbatim: UntrustedText.clean(…))` 或 `.line(…)`，不渲染 Markdown、不做链接。批准单的 `text` 用 `UntrustedText.revealing(…)`：一字不删，看不见的字符写成 ⟨U+XXXX⟩；签的摘要按原文算。
+- 要签名的动作只从 `WorkshopModel` 发，先过 `HumanInput`；不加环境变量、启动参数一类的绕过。
+- 红色只表示「等你」；失败用图标加橙色或次要色。界面文字英文。
+
 ## 几条本仓库的坑
 
 - `ThreadTimeline.timelineScroll` 的 ViewBuilder 曾超出类型检查预算，已拆成 `earlierMessagesPill` / `blockStack` / `endSentinel`。**新增行放进子视图，不要往主 builder 里内联。**

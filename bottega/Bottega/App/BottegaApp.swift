@@ -1,7 +1,7 @@
 // Bottega, modified from Droppy Code. Droppy Code by Jordy Spruit (Droppy), https://getdroppycode.app. GNU AGPL v3 with additional terms, see LICENSE.
 import SwiftUI
 
-@main
+/// The app Bottega grew out of; see Launch.swift.
 struct BottegaApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
 

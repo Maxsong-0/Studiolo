@@ -2,7 +2,9 @@
 
 Max 自用的 macOS 原生 App：在本机聊天、管 Agent。Swift 6 + SwiftUI + Liquid Glass，Apple silicon、macOS 26 起。设计在 Studiolo 的 vault `项目/Studiolo-Docs/01-框架/Bottega/`（入口 `Bottega-入口.md`）。
 
-**现在的状态**：代码是从 Tillerwright 原样搬来、只改了名（Studiolo T-225，2026-11-22，来源是冻结的本地仓库 `~/All-Project/1-Max_Workflow` 的 main `cd4cb8b`，历史留在那里）。功能还是 Tillerwright 的：自己起各家 CLI、Crew 多 agent。P1 起改成只当界面、直连本机的 LMAS（vault `Bottega-7-分期.md`），provider 层整层去掉。
+**现在的状态**：代码是从 Tillerwright 原样搬来、只改了名（Studiolo T-225，2026-11-22，来源是冻结的本地仓库 `~/All-Project/1-Max_Workflow` 的 main `cd4cb8b`，历史留在那里）。
+
+**P1（T-240）**：打开 App 默认是新界面，只当 LMAS 的窗口，经 `ui.sock` 直连本机的 LMAS，自己不起任何 CLI（协议在 LMAS 仓库 `docs/bottega-protocol.md`，版本 1）。Tillerwright 那套（自己起各家 CLI、Crew）还在，用启动参数 `-classic` 打开，两套互不引用；旧的那套整层去掉另开任务（vault Bottega-6 第 4 节）。下面「数据」里的项目脚本、「键位与外观」说的是 `-classic` 那套。
 
 ## 出处
 
@@ -29,9 +31,22 @@ scripts/bottega-local run
 ```
 
 - `build`／`test`／`run` 先按 `project.yml` 用 xcodegen 重新生成 `Bottega.xcodeproj`（**不要手改工程**），再编 Debug 版 `Bottega Dev.app`，产物在 `bottega/build.noindex/dev`（每个 worktree 一份）。`run` 编完直接打开它，不装进 `/Applications`。
-- `test` 跑 `BottegaTests`（Swift Testing，宿主是 Debug 版 App）。
+- `test` 跑 `BottegaTests`（不进 App，只看编出来的包）和核心包的 `BottegaKitTests`、`BottegaLinkTests`，都是 Swift Testing。只跑核心包：`scripts/bottega-local swift test --package-path BottegaKit`。
 - 只编 Debug，Debug 用临时签名（ad hoc，不碰钥匙串）。**发布版由用户本人签**：脚本拒绝 Release 和 archive。
 - `scripts/quick_run.sh` 是 Tillerwright 留下的「编完装进 `/Applications/Bottega Dev.app` 并重启」，会退出正在跑的那份，只在 Max 说「装上」时用。
+
+## 连 LMAS
+
+- Settings 里选 LMAS 的运行目录（里面有 `ui.sock` 的那个）。第一次连要登记：在 Secure Enclave 里做两把钥匙（日常、批准），批准那把每次签都要 Touch ID；一个 LMAS 只收一台设备，换钥匙要等 LMAS 片 8。每个 LMAS 各用一套钥匙；回执丢了或设备号丢了，用原来的钥匙再登记一遍拿回同一个号。
+- 事件不落盘，每次连上从头取，断线只在内存里接着取。落盘的只有 Application Support 下 `lmas/`：钥匙的密文（Debug 版；发布版放钥匙串）、这台 Mac 在那个 LMAS 的设备号、还没发出去的话。
+- 凡是要签名的（说话、答、批、拒、登记）只认前台窗口里真键盘、真鼠标的操作，别的程序发来的按键、点击、辅助功能按压都不认，一次按压只算一次，没有绕过的开关。
+- 键位：Return 换行，⌘Return 发送；框空时 ⌘Return 打开等得最久的批准单，看完全文再按一次 ⌘Return 弹 Touch ID。J、K 在时间线、泳道、卡板里移动。⌘1～⌘5 切固定的五页。
+- 批准单：App 连着、在跟事件，Mac 弹窗先让 2 分钟（LMAS 那边定的）；先点的算，后到的写「已经答过了」。签的摘要照 LMAS 发来的字节算，一个字节不改。
+- 连真的 LMAS 试：在 LMAS 仓库里 `scripts/lmas-local demo`（假的 CLI，不花额度；`--dir <短路径>` 停了留着），Bottega 这边 `open --env BOTTEGA_RUN_DIRECTORY=<它打印的 ui.sock 所在的目录> "bottega/build.noindex/dev/Build/Products/Debug/Bottega Dev.app"`。
+- 不用界面、不用指纹地验连接：`scripts/bottega-local swift run --package-path Probe bottega-probe <运行目录> <放钥匙的临时目录> [<把事件和一轮里的细节录成文件>]`，一行一个命令（`register <名字>`、`state`、`reconnect`、`reload`、`forget`、`seen`、`say <会话> <话>`、`interject`／`tell <线|last> <会话> <话>`、`answer <信|last> <话>`、`file <会话> <字节数>`、`asks`、`approve`／`decline <单|last>`、`approve-unread <单|last>`（带错的摘要）、`cut`（下一条意图的答复丢掉）、`flood <会话> <条数>`、`name <线> <标题>`、`pin`／`unpin`／`archive`／`unarchive <线>`、`read <线> [<号>]`、`add-project <名字> <路径>`、`remove-project <名字>`、`open <项目> <哪家> <角色> <模型|-> <强度|-> [<第一句话>]`、`model <线> <会话> <模型> [<强度>]`、`stop <轮>`、`lines`、`models`、`mail`、`overview`、`turns`、`turn <轮>`（取回来的和推来的对一遍，不一样就印出来）、`wait <毫秒>`、`quit`）。`Probe/` 是单独一个包，进不了 App；它登记的钥匙是软件做的，**只对演示用的 LMAS 用**。测试跑不了这件事：测试进程是 Apple 签的，LMAS 不认。
+- LMAS 正式的 `--bottega` 不认带 `get-task-allow`、关了库校验之类 entitlements 的程序（协议第 2 节）。发布版编好后先看一眼：`codesign -d --entitlements - Bottega.app` 里没有这几样；有 `get-task-allow` 就在 `project.yml` 的 Release 里加 `CODE_SIGN_INJECT_BASE_ENTITLEMENTS: NO`。
+- 只看界面、不连 LMAS：Debug 版 File › Open Recording…，开 `samples/waiting.jsonl`、`samples/turns.jsonl`（一轮里的细节，含 `live` 那些行）或 `BottegaKit/Tests/BottegaKitTests/Fixtures/events.jsonl`。只有 Debug 版认这几个环境变量：`BOTTEGA_RECORDING`（事件流文件）、`BOTTEGA_RUN_DIRECTORY`（这一次连哪个运行目录）、`BOTTEGA_PAGE`（`dispatcher`、`waiting`、`board`、`activity`、`devices`、`line:<号>`）、`BOTTEGA_DETAIL`（`card:<号>`、`message:`、`merge:`、`test:`、`turn:`）、`BOTTEGA_LANES=0`。
+- 测试数据是 LMAS `fixtures/bottega/` 的复制品，不手改：`bottega/scripts/sync_lmas_fixtures.sh` 比对，`--apply` 更新。
 
 ## 数据
 
@@ -67,7 +82,17 @@ Debug 与 Release、以及本机若装有上游 Droppy Code，三者的数据完
 
 ## 代码分层
 
-四层单向依赖，Core 不依赖任何上层，Services 与 UI 只依赖 Core，App 依赖全部：
+新界面：
+
+| 目录 | 内容 |
+|---|---|
+| `BottegaKit/Sources/BottegaKit` | 纯逻辑，不碰窗口和网络：线上类型、签名原文和验签、事件归约、发件箱、草稿发给谁、不可信文字的处理。P3 的 iPhone App 共用 |
+| `BottegaKit/Sources/BottegaLink` | 连接：unix socket、握手、登记、跟事件、断线重连、发意图、Secure Enclave 的钥匙 |
+| `Bottega/App/Workshop` | 界面：`Model` 是页面状态和唯一的发送口，`Views` 是各页 |
+
+依赖只有一个方向：`BottegaKit` ← `BottegaLink` ← `Workshop`。`Workshop` 不引用下面那四层（只用 `Core/Support` 的 `AppInfo` 和 `HangWatchdog`）。
+
+旧界面（`-classic`）：四层单向依赖，Core 不依赖任何上层，Services 与 UI 只依赖 Core，App 依赖全部：
 
 | 目录 | 内容 |
 |---|---|

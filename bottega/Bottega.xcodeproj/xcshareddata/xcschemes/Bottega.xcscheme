@@ -65,6 +65,28 @@
                ReferencedContainer = "container:Bottega.xcodeproj">
             </BuildableReference>
          </TestableReference>
+         <TestableReference
+            skipped = "NO"
+            parallelizable = "NO">
+            <BuildableReference
+               BuildableIdentifier = "primary"
+               BlueprintIdentifier = "BottegaKitTests"
+               BuildableName = "BottegaKitTests"
+               BlueprintName = "BottegaKitTests"
+               ReferencedContainer = "container:BottegaKit">
+            </BuildableReference>
+         </TestableReference>
+         <TestableReference
+            skipped = "NO"
+            parallelizable = "NO">
+            <BuildableReference
+               BuildableIdentifier = "primary"
+               BlueprintIdentifier = "BottegaLinkTests"
+               BuildableName = "BottegaLinkTests"
+               BlueprintName = "BottegaLinkTests"
+               ReferencedContainer = "container:BottegaKit">
+            </BuildableReference>
+         </TestableReference>
       </Testables>
       <CommandLineArguments>
       </CommandLineArguments>
