@@ -42,8 +42,7 @@ private struct DroppedIntents: View {
         }
         .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(.background.secondary, in: .rect(cornerRadius: 12))
-        .overlay { RoundedRectangle(cornerRadius: 12).strokeBorder(.separator) }
+        .vetroSurface(cornerRadius: 14)
     }
 }
 
@@ -74,8 +73,7 @@ private struct DeviceBox: View {
         }
         .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(.background.secondary, in: .rect(cornerRadius: 12))
-        .overlay { RoundedRectangle(cornerRadius: 12).strokeBorder(.separator) }
+        .vetroSurface(cornerRadius: 14)
     }
 
     private func fact(_ name: String, _ value: String) -> some View {

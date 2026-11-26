@@ -59,7 +59,6 @@ struct LanesView: View {
             Spacer(minLength: 0)
         }
         .padding(.vertical, 8)
-        .background(.background)
     }
 
     private func row(_ letter: WorkshopState.Letter, _ index: Int, _ lanes: WorkshopState.Lanes) -> some View {

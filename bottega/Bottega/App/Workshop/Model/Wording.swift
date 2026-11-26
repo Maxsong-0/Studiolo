@@ -72,6 +72,15 @@ enum Wording {
         }
     }
 
+    /// One line for something waiting on the user: the heading of its card, and its row in the sidebar.
+    static func waiting(_ item: Waiting, in state: WorkshopState) -> String {
+        switch item.what {
+        case .ask(let id): "Approval for \(UntrustedText.line(state.asks[id]?.by ?? "LMAS", limit: 40))"
+        case .question(let id): "\(UntrustedText.line(state.messages[id]?.from ?? "An agent", limit: 40)) asks you"
+        case .trip(let id): "A letter was held back" + (state.trips[id].map { ": \(limit($0.limit))" } ?? "")
+        }
+    }
+
     static func lineKind(_ kind: WorkshopState.LineKind) -> String {
         switch kind {
         case .dispatcher: "With the dispatcher"

@@ -1,8 +1,36 @@
 // Bottega, modified from Droppy Code. Droppy Code by Jordy Spruit (Droppy), https://getdroppycode.app. GNU AGPL v3 with additional terms, see LICENSE.
 import BottegaKit
 
+/// The five places along the top of the sidebar; each has its own list under the switcher.
+enum SidebarSection: Int, CaseIterable, Identifiable {
+    case rooms, bots, waiting, cards, activity
+
+    var id: Self { self }
+
+    var title: String {
+        switch self {
+        case .rooms: "Rooms"
+        case .bots: "Bots"
+        case .waiting: "Waiting for You"
+        case .cards: "Cards"
+        case .activity: "Activity"
+        }
+    }
+
+    var symbol: String {
+        switch self {
+        case .rooms: "bubble.left.and.bubble.right"
+        case .bots: "square.grid.2x2"
+        case .waiting: "tray"
+        case .cards: "rectangle.split.3x1"
+        case .activity: "waveform.path.ecg"
+        }
+    }
+}
+
 /// What the middle of the window shows.
 enum Page: Hashable {
+    case rooms
     case dispatcher
     case waiting
     case board
@@ -10,10 +38,21 @@ enum Page: Hashable {
     case devices
     case line(String)
 
-    static let fixed: [Page] = [.dispatcher, .waiting, .board, .activity, .devices]
+    /// The section the sidebar shows while this page is up; devices belong to none and leave it as it was.
+    var section: SidebarSection? {
+        switch self {
+        case .rooms: .rooms
+        case .dispatcher, .line: .bots
+        case .waiting: .waiting
+        case .board: .cards
+        case .activity: .activity
+        case .devices: nil
+        }
+    }
 
     var fixedTitle: String {
         switch self {
+        case .rooms: "Rooms"
         case .dispatcher: "Dispatcher"
         case .waiting: "Waiting for You"
         case .board: "Cards"
@@ -25,6 +64,7 @@ enum Page: Hashable {
 
     var symbol: String {
         switch self {
+        case .rooms: SidebarSection.rooms.symbol
         case .dispatcher: "bubble.left.and.text.bubble.right"
         case .waiting: "hand.raised"
         case .board: "rectangle.split.3x1"
@@ -37,6 +77,7 @@ enum Page: Hashable {
     #if DEBUG
     init?(word: String) {
         switch word {
+        case "rooms": self = .rooms
         case "dispatcher": self = .dispatcher
         case "waiting": self = .waiting
         case "board": self = .board

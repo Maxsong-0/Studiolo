@@ -32,7 +32,27 @@ final class WorkshopModel {
     /// What this Mac was registered as, or may have been.
     private(set) var registeredName: String?
 
-    var page: Page = .dispatcher { didSet { if page != oldValue { detail = nil } } }
+    var page: Page = .dispatcher {
+        didSet {
+            if page != oldValue { detail = nil }
+            if let section = page.section { self.section = section }
+            if page.section == .bots { botsPage = page }
+        }
+    }
+    /// Which list the sidebar shows; follows the page, except for pages that belong to no section.
+    private(set) var section: SidebarSection = .bots
+    /// Where Bots goes back to: the line last open there.
+    private var botsPage: Page = .dispatcher
+
+    func show(_ section: SidebarSection) {
+        page = switch section {
+        case .rooms: .rooms
+        case .bots: botsPage
+        case .waiting: .waiting
+        case .cards: .board
+        case .activity: .activity
+        }
+    }
     var detail: Detail? { didSet { if detail != nil { showsInspector = true } } }
     /// The ask whose sheet is up.
     var askBeingRead: OpenAsk?

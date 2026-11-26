@@ -229,6 +229,6 @@ private struct SendingRow: View {
         .foregroundStyle(.secondary)
         .padding(.horizontal, 12)
         .padding(.vertical, 6)
-        .background(.background.secondary, in: .rect(cornerRadius: 10))
+        .vetroSurface(cornerRadius: 10)
     }
 }

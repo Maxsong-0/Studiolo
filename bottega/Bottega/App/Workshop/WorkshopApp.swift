@@ -5,6 +5,7 @@ import SwiftUI
 struct WorkshopApp: App {
     @NSApplicationDelegateAdaptor(WorkshopDelegate.self) private var delegate
     @State private var model = WorkshopModel.forThisLaunch()
+    @State private var look = Look()
 
     init() {
         // Writing to a socket LMAS has closed is an error to handle, not the end of the app.
@@ -16,14 +17,19 @@ struct WorkshopApp: App {
         Window(AppInfo.name, id: "workshop") {
             WorkshopView()
                 .environment(model)
+                .environment(look)
                 .frame(minWidth: 860, minHeight: 520)
                 .task { await model.run() }
         }
-        .defaultSize(width: 1280, height: 820)
+        // The photo runs to the window's edges. The toolbar is empty and clear: it is only there so the window's
+        // buttons sit lower, inside the sidebar, as in the design.
+        .windowToolbarStyle(.unified(showsTitle: false))
+        .windowBackgroundDragBehavior(.enabled)
+        .defaultSize(width: 1280, height: 800)
         .commands { WorkshopCommands(model: model) }
 
         Settings {
-            WorkshopSettings().environment(model)
+            WorkshopSettings().environment(model).environment(look)
         }
     }
 }
@@ -42,10 +48,15 @@ struct WorkshopCommands: Commands {
             #endif
         }
         CommandMenu("Go") {
-            ForEach(Array(Page.fixed.enumerated()), id: \.element) { index, page in
-                Button(page.fixedTitle) { model.page = page }
-                    .keyboardShortcut(KeyEquivalent(Character("\(index + 1)")), modifiers: .command)
+            ForEach(SidebarSection.allCases) { section in
+                Button(section.title) { model.show(section) }
+                    .keyboardShortcut(KeyEquivalent(Character("\(section.rawValue + 1)")), modifiers: .command)
             }
+            Divider()
+            Button("Dispatcher") { model.page = .dispatcher }
+                .keyboardShortcut("0", modifiers: .command)
+            Button("Devices") { model.page = .devices }
+                .keyboardShortcut("6", modifiers: .command)
         }
         CommandMenu("LMAS") {
             Button("Reconnect") { model.reconnect() }

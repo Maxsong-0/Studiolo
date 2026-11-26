@@ -52,17 +52,10 @@ private struct WaitingItem: View {
             content
         }
         .padding(16)
-        .background(.background.secondary, in: .rect(cornerRadius: 12))
-        .overlay { RoundedRectangle(cornerRadius: 12).strokeBorder(.separator) }
+        .vetroSurface(cornerRadius: 14)
     }
 
-    private var title: String {
-        switch item.what {
-        case .ask(let id): "Approval for \(UntrustedText.line(model.state.asks[id]?.by ?? "LMAS", limit: 40))"
-        case .question(let id): "\(UntrustedText.line(model.state.messages[id]?.from ?? "An agent", limit: 40)) asks you"
-        case .trip(let id): "A letter was held back" + (model.state.trips[id].map { ": \(Wording.limit($0.limit))" } ?? "")
-        }
-    }
+    private var title: String { Wording.waiting(item, in: model.state) }
 
     @ViewBuilder private var content: some View {
         switch item.what {

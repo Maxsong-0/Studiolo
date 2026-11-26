@@ -26,29 +26,29 @@ struct MemberGlyph: View {
         .accessibilityLabel(Text(verbatim: UntrustedText.line(name, limit: 60)))
     }
 
-    private struct Look {
+    private struct Glyph {
         var letter = ""
         var symbol: String?
         /// 0 black, 1 white.
         var shade: Double
     }
 
-    private var look: Look {
-        if name == Session.user { return Look(symbol: "person.fill", shade: 0.42) }
-        if name == "coordinator" { return Look(symbol: "gearshape.fill", shade: 0.62) }
+    private var look: Glyph {
+        if name == Session.user { return Glyph(symbol: "person.fill", shade: 0.42) }
+        if name == "coordinator" { return Glyph(symbol: "gearshape.fill", shade: 0.62) }
         switch model.state.vendors[name] {
-        case "claude": return Look(letter: "C", shade: 0.2)
-        case "codex": return Look(letter: "X", shade: 0.36)
-        case "agy": return Look(letter: "A", shade: 0.66)
-        case "grok": return Look(letter: "G", shade: 0.82)
+        case "claude": return Glyph(letter: "C", shade: 0.2)
+        case "codex": return Glyph(letter: "X", shade: 0.36)
+        case "agy": return Glyph(letter: "A", shade: 0.66)
+        case "grok": return Glyph(letter: "G", shade: 0.82)
         default: break
         }
         switch model.state.role(of: name) {
-        case "dispatcher": return Look(letter: "D", shade: 0.05)
-        case "planner": return Look(letter: "P", shade: 0.92)
+        case "dispatcher": return Glyph(letter: "D", shade: 0.05)
+        case "planner": return Glyph(letter: "P", shade: 0.92)
         default:
             let first = UntrustedText.line(name, limit: 1).first.map { String($0).uppercased() } ?? "?"
-            return Look(letter: first, shade: 0.74)
+            return Glyph(letter: first, shade: 0.74)
         }
     }
 
