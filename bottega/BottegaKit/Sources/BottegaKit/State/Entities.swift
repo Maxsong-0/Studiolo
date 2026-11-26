@@ -12,6 +12,8 @@ public struct Session: Equatable, Sendable, Identifiable {
 
     /// The user, as a member of the bus.
     public static let user = "user"
+    /// LMAS itself, when it writes a letter (reminders, a line's history for the next agent).
+    public static let coordinator = "coordinator"
 }
 
 public struct Message: Equatable, Sendable, Identifiable {

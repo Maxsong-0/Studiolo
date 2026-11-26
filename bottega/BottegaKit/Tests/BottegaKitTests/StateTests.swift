@@ -40,7 +40,10 @@ struct RecordedStateTests {
         #expect(try state.kind(of: #require(state.threads["msg-4"])) == .agents)
         #expect(try state.title(of: #require(state.threads["msg-4"])) == "Review of card-1")
         #expect(try state.kind(of: #require(state.threads["msg-9"])) == .dispatcher)
-        #expect(state.threads(of: .dispatcher).map(\.id) == ["msg-9"])
+        // LMAS's reminders to the dispatcher sit with it.
+        #expect(try state.kind(of: #require(state.threads["msg-17"])) == .dispatcher)
+        #expect(try state.kind(of: #require(state.threads["msg-18"])) == .dispatcher)
+        #expect(state.threads(of: .dispatcher).map(\.id) == ["msg-9", "msg-18", "msg-17"])
     }
 
     @Test func cards() throws {
@@ -336,6 +339,25 @@ struct StateTests {
         #expect(state.recipients.map(\.name) == ["boss", "coder"])
         #expect(state.recipients(on: try #require(state.threads["m"])).map(\.name) == ["coder"])
         #expect(state.kind(of: try #require(state.threads["m"])) == .direct)
+    }
+
+    /// A letter LMAS writes starts a line of its own; it sits with whom it went to, and a line an agent starts stays
+    /// between agents even when it is the dispatcher's.
+    @Test func lmasLettersSitWithWhomTheyWentTo() throws {
+        var state = WorkshopState()
+        try state.apply(record(1,
+            .sessionRegistered(.init(name: "dispatcher", role: "dispatcher", atMs: 1)),
+            .sessionRegistered(.init(name: "planner", role: "planner", atMs: 1)),
+            .sessionRegistered(.init(name: "coder-c", role: "coder", atMs: 1)),
+            message("a", from: Session.coordinator, to: "dispatcher", kind: "notification"),
+            message("b", from: Session.coordinator, to: "planner", kind: "notification"),
+            message("c", from: Session.coordinator, to: "coder-c", kind: "notification"),
+            message("d", from: "dispatcher", to: "coder-c")))
+        func kind(_ id: String) throws -> WorkshopState.LineKind { state.kind(of: try #require(state.threads[id])) }
+        #expect(try kind("a") == .dispatcher)
+        #expect(try kind("b") == .planner)
+        #expect(try kind("c") == .agents)
+        #expect(try kind("d") == .agents)
     }
 
     /// LMAS compares bytes: nothing trimmed, no line ending or accent written another way.

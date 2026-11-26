@@ -20,7 +20,7 @@ struct MemberGlyph: View {
     @ViewBuilder private var glyph: some View {
         if name == Session.user {
             symbol("person.fill", circle: true)
-        } else if name == "coordinator" {
+        } else if name == Session.coordinator {
             symbol("gearshape.fill", circle: false)
         } else if let vendor = model.state.vendors[name], let maker = Maker(vendor: vendor) {
             MakerTile(maker: maker, size: size)

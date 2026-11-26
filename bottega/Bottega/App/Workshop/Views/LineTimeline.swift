@@ -249,7 +249,7 @@ struct LetterRow: View {
         .accessibilityElement(children: .contain)
     }
 
-    private var isLMASNote: Bool { message.from == "coordinator" && message.kind == "notification" }
+    private var isLMASNote: Bool { message.from == Session.coordinator && message.kind == "notification" }
 
     @ViewBuilder private var words: some View {
         if isLMASNote {

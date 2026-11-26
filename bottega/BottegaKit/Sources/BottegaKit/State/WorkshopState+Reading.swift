@@ -19,6 +19,14 @@ extension WorkshopState {
     public func kind(of thread: Line) -> LineKind {
         guard let first = thread.messages.first.flatMap({ messages[$0] }) else { return .agents }
         if first.isFromUser { return role(of: first.to) == "dispatcher" ? .dispatcher : .direct }
+        // A letter LMAS writes (a reminder, say) starts a line of its own: it sits with whom it went to.
+        if first.from == Session.coordinator {
+            switch role(of: first.to) {
+            case "dispatcher": return .dispatcher
+            case "planner": return .planner
+            default: return .agents
+            }
+        }
         if role(of: first.from) == "planner" { return .planner }
         return .agents
     }
