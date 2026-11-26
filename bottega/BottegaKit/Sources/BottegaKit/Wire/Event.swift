@@ -51,6 +51,9 @@ public enum Event: Equatable, Sendable {
     case modelRequested(ModelRequested)
     case modelChanged(ModelChanged)
     case modelNotChanged(ModelNotChanged)
+    case gateChanged(GateChanged)
+    case cardReassigned(CardReassigned)
+    case reviewReassigned(ReviewReassigned)
     /// A `type` this Bottega does not know, or one it knows in a shape it cannot read. The record still counts.
     case unreadable(type: String, text: String?)
 
@@ -63,6 +66,8 @@ public enum Event: Equatable, Sendable {
     public struct CardCreated: Decodable, Equatable, Sendable {
         public var card, author, title, instructions, acceptance: String
         public var conventions, vendor, continues, reviewer, thread: String?
+        /// Its writer did not name a vendor (only while LMAS keeps quota gates): it may go to another one.
+        public var vendorFree: Bool?
         public var atMs: UInt64
     }
     public struct CardStarted: Decodable, Equatable, Sendable {
@@ -310,6 +315,9 @@ extension Event: Decodable {
         case "model_requested": .modelRequested(try .init(from: decoder))
         case "model_changed": .modelChanged(try .init(from: decoder))
         case "model_not_changed": .modelNotChanged(try .init(from: decoder))
+        case "gate_changed": .gateChanged(try .init(from: decoder))
+        case "card_reassigned": .cardReassigned(try .init(from: decoder))
+        case "review_reassigned": .reviewReassigned(try .init(from: decoder))
         default: nil
         }
     }
@@ -366,6 +374,9 @@ extension Event {
         case .modelRequested(let event): event.atMs
         case .modelChanged(let event): event.atMs
         case .modelNotChanged(let event): event.atMs
+        case .gateChanged(let event): event.atMs
+        case .cardReassigned(let event): event.atMs
+        case .reviewReassigned(let event): event.atMs
         case .unreadable: nil
         }
     }

@@ -214,6 +214,21 @@ struct Summary {
             text = "\(word(event.session)) was not changed to \(Wording.model(event.model, event.effort)). \(word(event.why.text, 200))"
             isFailure = true
 
+        case .gateChanged(let event):
+            let gate = Gate(event)
+            symbol = Wording.gateSymbol(gate.level)
+            text = Wording.gate(gate)
+            isFailure = gate.level == "closed"
+        case .cardReassigned(let event):
+            symbol = "arrow.triangle.swap"
+            text = Wording.reassignment(
+                of: event.card, .init(what: .card, from: nil, to: event.vendor, reviewer: event.reviewer, at: event.atMs))
+            detail = .card(event.card)
+        case .reviewReassigned(let event):
+            symbol = "arrow.triangle.swap"
+            text = Wording.reassignment(of: event.card, .init(what: .review, from: nil, to: event.vendor, reviewer: nil, at: event.atMs))
+            detail = .card(event.card)
+
         case .unreadable(let type, let body):
             symbol = "questionmark.square.dashed"
             text = Self.unreadable(type, body)
@@ -230,10 +245,10 @@ struct Summary {
             symbol = "play"
             text = work.map { "\(word($0.worker)) started \(word(id)) on \(word($0.branch, 80))" } ?? "\(word(id)) started"
             detail = .card(id)
-        case .cardRequeued(let id):
-            let last = state.cards[id]?.requeues.last
+        case .cardRequeued(let id, let index):
+            let requeue = state.cards[id]?.requeues.indices.contains(index) == true ? state.cards[id]?.requeues[index] : nil
             symbol = "arrow.counterclockwise"
-            text = "\(word(id)) went back to wait" + (last.map { ": \(Wording.requeue($0.action)). \(word($0.why.text, 200))" } ?? "")
+            text = "\(word(id)) went back to wait" + (requeue.map { ": \(Wording.requeue($0.action)). \(word($0.why.text, 200))" } ?? "")
             detail = .card(id)
         case .cardEnded(let id):
             switch state.cards[id]?.end {
@@ -258,6 +273,23 @@ struct Summary {
         case .trip:
             symbol = "gauge.with.dots.needle.100percent"
             text = "A limit was reached"
+        case .reassigned(let id, let index):
+            symbol = "arrow.triangle.swap"
+            if let moves = state.cards[id]?.reassignments, moves.indices.contains(index) {
+                text = Wording.reassignment(of: id, moves[index])
+            } else {
+                text = "\(word(id)) went to another vendor"
+            }
+            detail = .card(id)
+        case .gate(let id):
+            if let gate = state.gateChanges[id] {
+                symbol = Wording.gateSymbol(gate.level)
+                text = Wording.gate(gate)
+                isFailure = gate.level == "closed"
+            } else {
+                symbol = "gauge.with.dots.needle.33percent"
+                text = "A quota gate changed"
+            }
         }
     }
 

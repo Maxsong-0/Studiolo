@@ -47,6 +47,10 @@ public struct WorkshopState: Sendable {
     public internal(set) var catalogs: [String: Catalog] = [:]
     /// By session.
     public internal(set) var models: [String: SessionModel] = [:]
+    /// Each quota gate as LMAS last said it: a vendor's own, or one of its models'.
+    public private(set) var gates: [Gate.Key: Gate] = [:]
+    /// Each change of a gate, by where it is in the log: what a gate row shows.
+    public private(set) var gateChanges: [RowID: Gate] = [:]
 
     /// Every event as it happened, in order: the activity log.
     public private(set) var log: [Happening] = []
@@ -106,7 +110,10 @@ public struct WorkshopState: Sendable {
                 $0.requeues.append(.init(action: event.action, why: event.why, at: event.atMs))
                 $0.work = nil
             }
-            show(Row(id: id, at: event.atMs, kind: .cardRequeued(event.card)), thread: cards[event.card]?.thread, dispatcher: true)
+            let index = (cards[event.card]?.requeues.count ?? 1) - 1
+            show(
+                Row(id: id, at: event.atMs, kind: .cardRequeued(card: event.card, index: index)), thread: cards[event.card]?.thread,
+                dispatcher: true)
         case .limitTripped(let event):
             trips[id] = Trip(
                 id: id, limit: event.limit, thread: event.thread, from: event.from, to: event.to, kind: event.kind,
@@ -227,6 +234,15 @@ public struct WorkshopState: Sendable {
         case .lineReady(let event): ready(event)
         case .lineFailed(let event): directLine(event.line) { $0.failure = .init(why: event.why, at: event.atMs) }
         case .lineWorker(let event): worker(event)
+        case .gateChanged(let event):
+            let gate = Gate(event)
+            gates[gate.key] = gate
+            gateChanges[id] = gate
+            show(Row(id: id, at: event.atMs, kind: .gate(id)), thread: nil, dispatcher: true)
+        case .cardReassigned(let event):
+            reassigned(event.card, .card, to: event.vendor, reviewer: event.reviewer, at: event.atMs, id)
+        case .reviewReassigned(let event):
+            reassigned(event.card, .review, to: event.vendor, reviewer: nil, at: event.atMs, id)
         case .modelsListed(let event): catalogs[event.vendor] = .listed(event)
         case .modelsUnavailable(let event): catalogs[event.vendor] = .unavailable(event.why, at: event.atMs)
         case .modelRequested(let event):
@@ -288,6 +304,7 @@ public struct WorkshopState: Sendable {
             $0.reviewer = event.reviewer
             $0.continues = event.continues
             $0.thread = event.thread
+            $0.isVendorFree = event.vendorFree ?? false
             $0.createdAt = event.atMs
         }
         // A rework without a line of its own yet is shown where the card it reworks is.
@@ -311,6 +328,24 @@ public struct WorkshopState: Sendable {
     private mutating func touch(_ card: String, _ change: (inout Card) -> Void) {
         if cards[card] == nil { cardOrder.append(card) }
         change(&cards[card, default: Card(id: card)])
+    }
+
+    /// Not started yet, it goes to another vendor: a card (with the reviewer picked again with it), or its review.
+    private mutating func reassigned(
+        _ card: String, _ what: Card.Reassignment.What, to vendor: String, reviewer: String?, at: UInt64, _ id: RowID
+    ) {
+        touch(card) {
+            let from = what == .card ? $0.vendor : $0.reviewer
+            $0.reassignments.append(.init(what: what, from: from, to: vendor, reviewer: reviewer, at: at))
+            switch what {
+            case .card:
+                $0.vendor = vendor
+                if let reviewer { $0.reviewer = reviewer }
+            case .review: $0.reviewer = vendor
+            }
+        }
+        let index = (cards[card]?.reassignments.count ?? 1) - 1
+        show(Row(id: id, at: at, kind: .reassigned(card: card, index: index)), thread: cards[card]?.thread, dispatcher: true)
     }
 
     private mutating func showReview(of card: String, at: UInt64, _ id: RowID) {

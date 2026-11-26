@@ -15,9 +15,7 @@ struct BotHomeView: View {
                 LazyVGrid(columns: [GridItem(.flexible(), spacing: 12, alignment: .top), GridItem(.flexible(), alignment: .top)], spacing: 12) {
                     BotLines(vendor: vendor)
                     BotModels(vendor: vendor)
-                    Panel(title: "Usage") {
-                        NotInLMASYet(text: "LMAS does not report usage yet.").padding(.horizontal, -10)
-                    }
+                    BotQuota(vendor: vendor)
                 }
             }
             .frame(maxWidth: 640, alignment: .leading)
@@ -258,5 +256,35 @@ private struct BotModels: View {
             Text(verbatim: value).lineLimit(1)
         }
         .font(.system(size: 12))
+    }
+}
+
+/// Its quota gates as LMAS last said them. How much is used, LMAS does not send.
+private struct BotQuota: View {
+    @Environment(WorkshopModel.self) private var model
+    let vendor: String
+
+    var body: some View {
+        let shut = model.state.gatesNotOpen(of: vendor)
+        Panel(title: "Quota") {
+            if shut.isEmpty {
+                Label("Open: it gets work as usual.", systemImage: Wording.gateSymbol("open"))
+                    .font(.system(size: 12)).foregroundStyle(.secondary)
+            }
+            ForEach(shut, id: \.key) { gate in
+                VStack(alignment: .leading, spacing: 2) {
+                    Label {
+                        Text(verbatim: gate.model.map { "\(UntrustedText.line($0, limit: 40)): \(Wording.gateLevel(gate.level))" }
+                            ?? Wording.gateLevel(gate.level))
+                    } icon: {
+                        Image(systemName: Wording.gateSymbol(gate.level))
+                    }
+                    .font(.system(size: 12.5, weight: .medium))
+                    .foregroundStyle(gate.level == "closed" ? .red : .orange)
+                    Text(verbatim: Wording.gateDetail(gate)).font(.system(size: 11)).foregroundStyle(.secondary)
+                }
+            }
+            NotInLMASYet(text: "LMAS does not send how much is used.").padding(.horizontal, -10)
+        }
     }
 }

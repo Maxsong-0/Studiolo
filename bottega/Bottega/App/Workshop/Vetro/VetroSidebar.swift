@@ -209,6 +209,7 @@ private struct BotsList: View {
                    select: { model.page = .bot(key) }) {
                 MakerTile(maker: group.maker, size: 22)
                 Text(group.maker.title).font(.system(size: 13)).frame(maxWidth: .infinity, alignment: .leading)
+                GateMark(gates: model.state.gatesNotOpen(of: key))
             }
             if isOpen(key) { lines(group.lines) }
         }
@@ -273,11 +274,28 @@ private struct BotGroups {
                 }
             }
         }
-        // Every maker LMAS runs or has asked for its models gets a row, with lines or not: its home opens lines.
+        // Every maker LMAS runs, has asked for its models or keeps a quota gate for gets a row, with lines or not:
+        // its home opens lines.
         let present = Set(
             configured.compactMap(Maker.init(vendor:)) + state.vendors.values.compactMap(Maker.init(vendor:))
-                + state.catalogs.keys.compactMap(Maker.init(vendor:)) + byMaker.keys)
+                + state.catalogs.keys.compactMap(Maker.init(vendor:)) + state.gates.keys.compactMap { Maker(vendor: $0.vendor) }
+                + byMaker.keys)
         makers = Maker.allCases.filter(present.contains).map { MakerLines(maker: $0, lines: byMaker[$0] ?? []) }
+    }
+}
+
+/// A bot whose quota gate (or a model's) is not open: the most shut one, with what it means on hover.
+private struct GateMark: View {
+    let gates: [Gate]
+
+    var body: some View {
+        if let gate = gates.first(where: { $0.level == "closed" }) ?? gates.first {
+            Image(systemName: Wording.gateSymbol(gate.level))
+                .font(.system(size: 11))
+                .foregroundStyle(gate.level == "closed" ? .red : .orange)
+                .help(gates.map(Wording.gate).joined(separator: "\n"))
+                .accessibilityLabel(gates.map(Wording.gate).joined(separator: " "))
+        }
     }
 }
 

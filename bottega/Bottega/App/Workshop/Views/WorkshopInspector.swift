@@ -155,7 +155,7 @@ private struct CardDetail: View {
         StatusChip(text: Wording.column(column), symbol: Wording.columnSymbol(column), waits: column == .needsYou)
         Facts(
             ("Made by", card.author, false),
-            ("For", card.vendor, false),
+            ("For", card.vendor.map { card.isVendorFree ? "\($0) (any vendor will do)" : $0 }, false),
             ("Reviewer", card.reviewer, false),
             ("Reworks", card.continues, true),
             ("Worker", card.work?.worker, false),
@@ -179,6 +179,16 @@ private struct CardDetail: View {
                     VStack(alignment: .leading, spacing: 2) {
                         Text(verbatim: "\(Wording.exactTime(requeue.at)): \(Wording.requeue(requeue.action))").font(.caption).foregroundStyle(.secondary)
                         Text(verbatim: UntrustedText.clean(requeue.why.text)).font(.callout).textSelection(.enabled)
+                    }
+                }
+            }
+        }
+        if !card.reassignments.isEmpty {
+            DetailSection(title: "Went to another vendor") {
+                ForEach(Array(card.reassignments.enumerated()), id: \.offset) { _, move in
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(verbatim: Wording.exactTime(move.at)).font(.caption).foregroundStyle(.secondary)
+                        Text(verbatim: Wording.reassignment(of: card.id, move)).font(.callout)
                     }
                 }
             }

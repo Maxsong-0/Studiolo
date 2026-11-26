@@ -107,6 +107,7 @@ struct Probe {
                 case "stop": try await client.submit(.stopTurn(rest))
                 case "lines": await ledger.tellLines()
                 case "models": await ledger.tellModels()
+                case "gates": await ledger.tellGates()
                 case "cut":
                     connector.losesNextReply.withLock { $0 = true }
                     print("cut: the answer to the next intent gets lost")
@@ -170,6 +171,17 @@ actor Ledger {
             }
         }
         for (session, model) in state.models.sorted(by: { $0.key < $1.key }) { print("uses: \(session) \(model)") }
+    }
+
+    func tellGates() {
+        let gates = state.gates.values.sorted { ($0.vendor, $0.model ?? "") < ($1.vendor, $1.model ?? "") }
+        if gates.isEmpty { print("gates: none said") }
+        for gate in gates {
+            print("gate: \(gate.vendor)\(gate.model.map { "/\($0)" } ?? "") \(gate.level) \(gate.why.map { "\($0.code): \($0.text)" } ?? "-") until \(gate.until.map(String.init) ?? "-") streak \(gate.streak)")
+        }
+        for card in state.cards.values.sorted(by: { $0.id < $1.id }) where !card.reassignments.isEmpty || card.isVendorFree {
+            print("card: \(card.id) \(card.vendor ?? "-") reviewed by \(card.reviewer ?? "-") free \(card.isVendorFree) moves \(card.reassignments.map { "\($0.what) \($0.from ?? "-")→\($0.to)" })")
+        }
     }
 
     func text(of ask: String) -> String { state.asks[ask]?.text ?? "" }

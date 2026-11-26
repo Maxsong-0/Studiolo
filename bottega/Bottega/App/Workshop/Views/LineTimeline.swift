@@ -170,7 +170,7 @@ struct TimelineRow: View {
             if let ask = model.state.asks[id] { AskRow(ask: ask) } else { note }
         case .trip(let id):
             if let trip = model.state.trips[id] { TripRow(trip: trip) } else { note }
-        case .cardStarted, .cardEnded, .cardRequeued, .unreadable:
+        case .cardStarted, .cardEnded, .cardRequeued, .reassigned, .gate, .unreadable:
             note
         }
     }

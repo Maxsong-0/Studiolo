@@ -140,8 +140,13 @@ public struct Row: Equatable, Sendable, Identifiable {
         case card(String)
         case cardStarted(String)
         case cardEnded(String)
-        /// Back in the queue after its AI stopped halfway.
-        case cardRequeued(String)
+        /// Back in the queue after its AI stopped halfway. Index into the card's requeues: a card can go back more than
+        /// once, and each row tells its own time.
+        case cardRequeued(card: String, index: Int)
+        /// The card, or its review, went to another vendor. Index into the card's reassignments.
+        case reassigned(card: String, index: Int)
+        /// A quota gate changed: the key into `gateChanges`.
+        case gate(RowID)
         case test(String)
         /// Index into the card's reviews.
         case review(card: String, index: Int)
@@ -192,6 +197,10 @@ public struct Card: Equatable, Sendable, Identifiable {
     public internal(set) var merges: [String] = []
     /// Each time its AI stopped halfway and the card went back to wait, oldest first.
     public internal(set) var requeues: [Requeue] = []
+    /// Its writer named no vendor: while a gate is not open, it may go to another one.
+    public internal(set) var isVendorFree = false
+    /// Each time it, or its review, went to another vendor before starting, oldest first.
+    public internal(set) var reassignments: [Reassignment] = []
 
     public struct Work: Equatable, Sendable {
         public let worker, worktree, branch, base, task: String
@@ -204,6 +213,25 @@ public struct Card: Equatable, Sendable, Identifiable {
         public let action: String
         public let why: Why
         public let at: UInt64
+    }
+
+    public struct Reassignment: Equatable, Sendable {
+        public enum What: Equatable, Sendable { case card, review }
+        public let what: What
+        /// The vendor it had, if known.
+        public let from: String?
+        public let to: String
+        /// For a card: the reviewer picked again with it.
+        public let reviewer: String?
+        public let at: UInt64
+
+        public init(what: What, from: String?, to: String, reviewer: String?, at: UInt64) {
+            self.what = what
+            self.from = from
+            self.to = to
+            self.reviewer = reviewer
+            self.at = at
+        }
     }
 
     public enum End: Equatable, Sendable {

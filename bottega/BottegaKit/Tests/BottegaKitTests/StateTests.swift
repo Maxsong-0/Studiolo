@@ -8,7 +8,7 @@ import Testing
 struct RecordedStateTests {
     @Test func sessions() throws {
         let state = try Fixtures.state()
-        #expect(state.through == 111)
+        #expect(state.through == 120)
         #expect(state.sessions["dispatcher"]?.role == "dispatcher")
         #expect(state.sessions["dispatcher"]?.isOpen == true)
         #expect(state.sessions["coder-card-1"]?.closedAt == 1764000014000)
@@ -70,7 +70,7 @@ struct RecordedStateTests {
         #expect(state.vendors["coder-card-1"] == "codex")
         #expect(state.vendors["reviewer-card-1"] == "claude")
         let three = try #require(state.cards["card-3"])
-        #expect(three.requeues.map(\.action) == ["retry"])
+        #expect(three.requeues.map(\.action) == ["retry", "hold"])
         #expect(three.requeues.first?.why.code == "service_down")
         guard case .failed(let threeWhy, _) = three.end else { Issue.record("card-3"); return }
         #expect(threeWhy.code == "worker_stopped")
@@ -270,7 +270,7 @@ struct StateTests {
         #expect(column() == .queued)
         #expect(state.cards["card-1"]?.requeues.count == 1)
         #expect(state.cards["card-1"]?.thread == "m1")
-        #expect(state.dispatcherRows.contains { $0.kind == .cardRequeued("card-1") })
+        #expect(state.dispatcherRows.contains { $0.kind == .cardRequeued(card: "card-1", index: 0) })
         try state.apply(record(4, .cardStarted(.init(
             card: "card-1", worker: "w2", worktree: "/w", branch: "b", base: "c", freshStart: nil, task: "m2", atMs: 4))))
         #expect(column() == .working)

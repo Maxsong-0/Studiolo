@@ -151,6 +151,7 @@ enum Wording {
     static func requeue(_ action: String) -> String {
         switch action {
         case "retry": "a fresh process tries once more"
+        case "hold": "it waits for that vendor to be back, then a fresh process carries on (not counted as a try)"
         default: "it carries on (\(UntrustedText.line(action, limit: 30)))"
         }
     }
@@ -212,6 +213,68 @@ enum Wording {
     static func effort(_ effort: String) -> String {
         let shown = UntrustedText.line(effort, limit: 24).replacingOccurrences(of: "_", with: " ")
         return shown.prefix(1).uppercased() + shown.dropFirst()
+    }
+
+    // MARK: Quota gates
+
+    /// How far a quota gate is shut.
+    static func gateLevel(_ level: String) -> String {
+        switch level {
+        case "open": "Open"
+        case "started_only": "No new cards"
+        case "closed": "Stopped"
+        default: UntrustedText.line(level, limit: 30)
+        }
+    }
+
+    static func gateSymbol(_ level: String) -> String {
+        switch level {
+        case "open": "gauge.with.dots.needle.33percent"
+        case "started_only": "gauge.with.dots.needle.67percent"
+        default: "gauge.with.dots.needle.100percent"
+        }
+    }
+
+    /// Whose gate: the vendor's own, or one of its models'.
+    static func gateOwner(_ gate: Gate) -> String {
+        let vendor = Maker(vendor: gate.vendor)?.title ?? UntrustedText.line(gate.vendor, limit: 40)
+        return gate.model.map { "\(vendor) · \(UntrustedText.line($0, limit: 40))" } ?? vendor
+    }
+
+    /// What the gate means for the work, why, and when LMAS looks again.
+    static func gateDetail(_ gate: Gate) -> String {
+        let meaning = switch gate.level {
+        case "open": "Takes work again."
+        case "started_only": "Gets no new cards; what started carries on."
+        case "closed": "Gets no work and no letters once the turn that runs is over."
+        default: ""
+        }
+        var parts = [meaning]
+        if let why = gate.why {
+            // LMAS's reason may end without a stop; the next sentence is Bottega's.
+            let text = UntrustedText.line(why.text, limit: 200)
+            parts.append(text.last.map { "。.!?！？".contains($0) } == true ? text : text + "。")
+        }
+        if gate.streak > 0 { parts.append("Ran into its quota \(count(Int(gate.streak), "time", "times")) in a row.") }
+        if let until = gate.until { parts.append("LMAS looks again \(time(until)).") }
+        return parts.filter { !$0.isEmpty }.joined(separator: " ")
+    }
+
+    static func gate(_ gate: Gate) -> String {
+        "\(gateOwner(gate)): quota gate \(gateLevel(gate.level).lowercased()). \(gateDetail(gate))"
+    }
+
+    static func reassignment(of card: String, _ move: Card.Reassignment) -> String {
+        let card = UntrustedText.line(card, limit: 60)
+        let to = UntrustedText.line(move.to, limit: 40)
+        let from = move.from.map { " instead of \(UntrustedText.line($0, limit: 40))" } ?? ""
+        switch move.what {
+        case .card:
+            let reviewer = move.reviewer.map { ", reviewed by \(UntrustedText.line($0, limit: 40))" } ?? ""
+            return "\(card) goes to \(to)\(from)\(reviewer): the quota gate it had is not open"
+        case .review:
+            return "The review of \(card) goes to \(to)\(from): the quota gate it had is shut"
+        }
     }
 
     static func directLine(_ line: DirectLine) -> (text: String, symbol: String, isTrouble: Bool) {
