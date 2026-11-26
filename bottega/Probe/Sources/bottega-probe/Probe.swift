@@ -179,8 +179,8 @@ actor Ledger {
         for gate in gates {
             print("gate: \(gate.vendor)\(gate.model.map { "/\($0)" } ?? "") \(gate.level) \(gate.why.map { "\($0.code): \($0.text)" } ?? "-") until \(gate.until.map(String.init) ?? "-") streak \(gate.streak)")
         }
-        for card in state.cards.values.sorted(by: { $0.id < $1.id }) where !card.reassignments.isEmpty || card.isVendorFree {
-            print("card: \(card.id) \(card.vendor ?? "-") reviewed by \(card.reviewer ?? "-") free \(card.isVendorFree) moves \(card.reassignments.map { "\($0.what) \($0.from ?? "-")→\($0.to)" })")
+        for card in state.cards.values.sorted(by: { $0.id < $1.id }) where !card.reassignments.isEmpty || card.isVendorFree || !card.after.isEmpty || !card.reminders.isEmpty {
+            print("card: \(card.id) \(card.vendor ?? "-") reviewed by \(card.reviewer ?? "-") free \(card.isVendorFree) moves \(card.reassignments.map { "\($0.what) \($0.from ?? "-")→\($0.to)" }) after \(card.after) reminders \(card.reminders.map { "\($0.question)@\($0.level)" }) started \(card.work != nil) end \(card.end.map { "\($0)" } ?? "-")")
         }
     }
 

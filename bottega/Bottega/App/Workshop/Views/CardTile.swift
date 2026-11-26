@@ -53,6 +53,16 @@ struct CardTile: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
             }
+            // Only before it first starts: after that, what it waited for no longer holds it.
+            if !card.after.isEmpty, card.work == nil, card.end == nil {
+                Label {
+                    Text(verbatim: Wording.after(card.after))
+                } icon: {
+                    Image(systemName: "hourglass")
+                }
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            }
             if let continues = card.continues {
                 Label {
                     Text(verbatim: "Reworks \(UntrustedText.line(continues, limit: 24))")

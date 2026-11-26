@@ -158,6 +158,7 @@ private struct CardDetail: View {
             ("For", card.vendor.map { card.isVendorFree ? "\($0) (any vendor will do)" : $0 }, false),
             ("Reviewer", card.reviewer, false),
             ("Reworks", card.continues, true),
+            ("Waits for", card.after.isEmpty ? nil : card.after.joined(separator: ", "), true),
             ("Worker", card.work?.worker, false),
             ("Branch", card.work?.branch, true),
             ("From", card.work.map { String($0.base.prefix(12)) }, true),
@@ -179,6 +180,17 @@ private struct CardDetail: View {
                     VStack(alignment: .leading, spacing: 2) {
                         Text(verbatim: "\(Wording.exactTime(requeue.at)): \(Wording.requeue(requeue.action))").font(.caption).foregroundStyle(.secondary)
                         Text(verbatim: UntrustedText.clean(requeue.why.text)).font(.callout).textSelection(.enabled)
+                    }
+                }
+            }
+        }
+        if !card.reminders.isEmpty {
+            DetailSection(title: "Questions not answered") {
+                ForEach(Array(card.reminders.enumerated()), id: \.offset) { _, reminder in
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(verbatim: Wording.exactTime(reminder.at)).font(.caption).foregroundStyle(.secondary)
+                        Text(verbatim: Wording.reminder(of: card.id, reminder, to: model.state.messages[reminder.question]?.to))
+                            .font(.callout)
                     }
                 }
             }

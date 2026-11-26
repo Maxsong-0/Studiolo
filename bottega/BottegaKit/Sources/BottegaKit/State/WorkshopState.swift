@@ -243,6 +243,14 @@ public struct WorkshopState: Sendable {
             reassigned(event.card, .card, to: event.vendor, reviewer: event.reviewer, at: event.atMs, id)
         case .reviewReassigned(let event):
             reassigned(event.card, .review, to: event.vendor, reviewer: nil, at: event.atMs, id)
+        case .answerReminded(let event):
+            touch(event.card) { $0.reminders.append(.init(question: event.question, level: event.level, at: event.atMs)) }
+            let index = (cards[event.card]?.reminders.count ?? 1) - 1
+            // Where the question was asked, and with the card's other rows on the dispatcher's timeline; the reminder
+            // letter itself shows where it went.
+            show(
+                Row(id: id, at: event.atMs, kind: .answerReminded(card: event.card, index: index)),
+                thread: messages[event.question]?.thread ?? cards[event.card]?.thread, dispatcher: true)
         case .modelsListed(let event): catalogs[event.vendor] = .listed(event)
         case .modelsUnavailable(let event): catalogs[event.vendor] = .unavailable(event.why, at: event.atMs)
         case .modelRequested(let event):
@@ -305,6 +313,7 @@ public struct WorkshopState: Sendable {
             $0.continues = event.continues
             $0.thread = event.thread
             $0.isVendorFree = event.vendorFree ?? false
+            $0.after = event.after ?? []
             $0.createdAt = event.atMs
         }
         // A rework without a line of its own yet is shown where the card it reworks is.

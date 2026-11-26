@@ -8,7 +8,7 @@ import Testing
 struct RecordedStateTests {
     @Test func sessions() throws {
         let state = try Fixtures.state()
-        #expect(state.through == 120)
+        #expect(state.through == 128)
         #expect(state.sessions["dispatcher"]?.role == "dispatcher")
         #expect(state.sessions["dispatcher"]?.isOpen == true)
         #expect(state.sessions["coder-card-1"]?.closedAt == 1764000014000)
@@ -73,7 +73,8 @@ struct RecordedStateTests {
         #expect(three.requeues.map(\.action) == ["retry", "hold"])
         #expect(three.requeues.first?.why.code == "service_down")
         guard case .failed(let threeWhy, _) = three.end else { Issue.record("card-3"); return }
-        #expect(threeWhy.code == "worker_stopped")
+        // It failed twice: the AI stopped, then (after a rework) its question went unanswered.
+        #expect(threeWhy.code == "unanswered")
         #expect(state.column(of: three) == .failed)
         let tenWhy = state.log.lazy.compactMap { if case .messageFailed(let e) = $0.event, e.id == "msg-10" { e.why } else { nil } }.first
         #expect(tenWhy?.code == "card_requeued")

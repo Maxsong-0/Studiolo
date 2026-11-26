@@ -264,6 +264,23 @@ enum Wording {
         "\(gateOwner(gate)): quota gate \(gateLevel(gate.level).lowercased()). \(gateDetail(gate))"
     }
 
+    /// The cards one waits for before it first starts.
+    static func after(_ cards: [String]) -> String {
+        "Waits for " + cards.map { UntrustedText.line($0, limit: 24) }.joined(separator: ", ")
+    }
+
+    /// A question a card's AI asked that nobody has answered: whom LMAS reminded, and how long it has been.
+    static func reminder(of card: String, _ reminder: Card.Reminder, to: String?) -> String {
+        let since = switch reminder.level {
+        case 1: "an hour"
+        case 2: "12 hours"
+        default: "a long time (reminder \(reminder.level))"
+        }
+        let whom = to.map { $0 == "user" ? "you" : UntrustedText.line($0, limit: 40) } ?? "the one it asked"
+        return "LMAS reminded \(whom): \(UntrustedText.line(card, limit: 40))'s question \(UntrustedText.line(reminder.question, limit: 24)) "
+            + "has had no answer for \(since)"
+    }
+
     static func reassignment(of card: String, _ move: Card.Reassignment) -> String {
         let card = UntrustedText.line(card, limit: 60)
         let to = UntrustedText.line(move.to, limit: 40)

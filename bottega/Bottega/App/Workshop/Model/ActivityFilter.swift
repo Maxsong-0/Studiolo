@@ -27,7 +27,7 @@ enum ActivityFilter: CaseIterable, Identifiable {
         switch event {
         case .messageQueued, .messageHanded, .messageFailed, .limitTripped: .letters
         case .cardCreated, .cardStarted, .cardDone, .cardFailed, .cardRequeued, .reviewRequeued, .gateChanged, .cardReassigned,
-             .reviewReassigned,
+             .reviewReassigned, .answerReminded,
              .testsSubmitted, .testsHandedOver, .testsAccepted, .testsFinished,
              .reviewStarted, .reviewFinished, .reviewNotDone,
              .mergeRequested, .mergeChecked, .mergePrepared, .mergeRestarted, .mergeLanding, .mergeFinished, .mergeFailed,

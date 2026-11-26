@@ -147,6 +147,8 @@ public struct Row: Equatable, Sendable, Identifiable {
         case reassigned(card: String, index: Int)
         /// A quota gate changed: the key into `gateChanges`.
         case gate(RowID)
+        /// LMAS reminded someone of a question the card's AI asked. Index into the card's reminders.
+        case answerReminded(card: String, index: Int)
         case test(String)
         /// Index into the card's reviews.
         case review(card: String, index: Int)
@@ -201,6 +203,10 @@ public struct Card: Equatable, Sendable, Identifiable {
     public internal(set) var isVendorFree = false
     /// Each time it, or its review, went to another vendor before starting, oldest first.
     public internal(set) var reassignments: [Reassignment] = []
+    /// The cards its writer said it waits for before it first starts. Whether they have landed is LMAS's call.
+    public internal(set) var after: [String] = []
+    /// Each reminder LMAS sent about a question its AI asked, oldest first.
+    public internal(set) var reminders: [Reminder] = []
 
     public struct Work: Equatable, Sendable {
         public let worker, worktree, branch, base, task: String
@@ -213,6 +219,19 @@ public struct Card: Equatable, Sendable, Identifiable {
         public let action: String
         public let why: Why
         public let at: UInt64
+    }
+
+    public struct Reminder: Equatable, Sendable {
+        /// The letter that asked.
+        public let question: String
+        public let level: UInt64
+        public let at: UInt64
+
+        public init(question: String, level: UInt64, at: UInt64) {
+            self.question = question
+            self.level = level
+            self.at = at
+        }
     }
 
     public struct Reassignment: Equatable, Sendable {

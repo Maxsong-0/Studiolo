@@ -224,6 +224,12 @@ struct Summary {
             text = Wording.reassignment(
                 of: event.card, .init(what: .card, from: nil, to: event.vendor, reviewer: event.reviewer, at: event.atMs))
             detail = .card(event.card)
+        case .answerReminded(let event):
+            symbol = "bell"
+            text = Wording.reminder(
+                of: event.card, .init(question: event.question, level: event.level, at: event.atMs),
+                to: state.messages[event.question]?.to)
+            detail = .card(event.card)
         case .reviewReassigned(let event):
             symbol = "arrow.triangle.swap"
             text = Wording.reassignment(of: event.card, .init(what: .review, from: nil, to: event.vendor, reviewer: nil, at: event.atMs))
@@ -279,6 +285,15 @@ struct Summary {
                 text = Wording.reassignment(of: id, moves[index])
             } else {
                 text = "\(word(id)) went to another vendor"
+            }
+            detail = .card(id)
+        case .answerReminded(let id, let index):
+            symbol = "bell"
+            if let reminders = state.cards[id]?.reminders, reminders.indices.contains(index) {
+                let reminder = reminders[index]
+                text = Wording.reminder(of: id, reminder, to: state.messages[reminder.question]?.to)
+            } else {
+                text = "LMAS reminded someone of a question from \(word(id))"
             }
             detail = .card(id)
         case .gate(let id):
