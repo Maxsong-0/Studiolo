@@ -43,7 +43,7 @@ private struct TurnHeader: View {
     var body: some View {
         DetailHeader(title: "Turn", id: id)
         if let session = turn?.session ?? head?.session { MemberName(name: session).font(.callout) }
-        if let turn { TurnState(turn: turn) }
+        if let turn { TurnState(turn: turn, isHeading: true) }
         Facts(
             ("Agent", turn?.vendor ?? head?.vendor, false),
             ("Model", turn?.model ?? head?.model, true),
@@ -58,14 +58,17 @@ private struct TurnHeader: View {
     }
 }
 
-/// Running, or how it ended.
+/// Running, or how it ended. At the top of a turn's details a running turn is the black capsule; in a list, the small dots.
 struct TurnState: View {
     let turn: Turn
+    var isHeading = false
 
     var body: some View {
         if let end = turn.end {
             let outcome = Wording.turnOutcome(end.outcome)
             StatusChip(text: outcome.text, symbol: outcome.symbol)
+        } else if isHeading {
+            DoingNow(turn: turn.id, inCapsule: true)
         } else {
             WorkingLabel()
         }
@@ -122,8 +125,11 @@ private struct TurnItemView: View {
     @ViewBuilder private var status: some View {
         if item.item.isOver {
             if let status = Wording.turnItemStatus(item.item.status) { StatusChip(text: status.text, symbol: status.symbol) }
+        } else if item.item.kind == "command" {
+            // A program running, not the AI thinking: the grey spinner stays.
+            HStack(spacing: 6) { ProgressView().controlSize(.mini); Text("Now") }.font(.caption).foregroundStyle(.secondary)
         } else {
-            WorkingLabel(text: "Now")
+            HStack(spacing: 6) { RunningStepDot(); Text("Now") }.font(.caption).foregroundStyle(.secondary)
         }
     }
 
@@ -319,11 +325,18 @@ struct TurnList: View {
 struct DoingNow: View {
     @Environment(WorkshopModel.self) private var model
     let turn: String
+    /// In the black capsule, as on a conversation; plain words elsewhere.
+    var inCapsule = false
     @State private var words: String?
 
     var body: some View {
-        // Nothing is seen of a turn whose inside is not being told: then not even the line is there.
-        if let inside = model.turns[turn] {
+        if inCapsule {
+            WorkingCapsule(text: words ?? "Working")
+                .task(id: model.turns[turn].map(ObjectIdentifier.init)) {
+                    if let inside = model.turns[turn] { await follow(inside) }
+                }
+        } else if let inside = model.turns[turn] {
+            // Nothing is seen of a turn whose inside is not being told: then not even the line is there.
             // Between two things the line stays, so that what is below it does not jump.
             Text(verbatim: words ?? " ")
                 .lineLimit(1)

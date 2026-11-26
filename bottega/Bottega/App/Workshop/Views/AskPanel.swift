@@ -69,30 +69,41 @@ struct AskPanel: View {
         if let answer = ask.answer {
             StatusChip(text: Wording.answer(answer.word, via: answer.via), symbol: answer.word == "approved" ? "checkmark.circle" : "xmark.circle")
         } else {
-            HStack(spacing: 10) {
-                if ask.onlyDevice {
-                    Label("Only Touch ID counts for this one", systemImage: "touchid").font(.caption).foregroundStyle(.secondary)
-                }
-                Spacer()
+            HStack(spacing: 8) {
                 if model.isDeciding(ask.id) {
                     ProgressView().controlSize(.small)
                     Text("Sending…").font(.callout).foregroundStyle(.secondary)
                 } else {
-                    GlassEffectContainer {
-                        HStack(spacing: 8) {
-                            Button("Decline") { model.decline(ask.id) }
-                                .buttonStyle(.glass)
-                            Button {
-                                approve()
-                            } label: {
-                                Label("Approve", systemImage: "touchid")
-                            }
-                            .buttonStyle(.glassProminent)
-                            .keyboardShortcut(hasShortcut ? KeyboardShortcut(.return, modifiers: .command) : nil)
+                    HStack(spacing: 8) {
+                        Button {
+                            approve()
+                        } label: {
+                            Label("Approve with Touch ID", systemImage: "touchid")
+                                .font(.system(size: 12.5, weight: .semibold))
+                                .foregroundStyle(.white)
+                                .padding(.horizontal, 14)
+                                .frame(height: 32)
+                                .background(Color(red: 10 / 255, green: 108 / 255, blue: 1), in: .capsule)
+                                .contentShape(.capsule)
                         }
+                        .buttonStyle(.plain)
+                        .keyboardShortcut(hasShortcut ? KeyboardShortcut(.return, modifiers: .command) : nil)
+                        Button { model.decline(ask.id) } label: {
+                            Text("Decline")
+                                .font(.system(size: 12.5, weight: .semibold))
+                                .padding(.horizontal, 14)
+                                .frame(height: 32)
+                                .contentShape(.capsule)
+                        }
+                        .buttonStyle(.plain)
                     }
                     .disabled(!model.isLive)
+                    .opacity(model.isLive ? 1 : 0.45)
                     .help(model.isLive ? "" : "Not connected to LMAS")
+                }
+                Spacer()
+                if ask.onlyDevice {
+                    Label("Only Touch ID counts for this one", systemImage: "touchid").font(.caption).foregroundStyle(.secondary)
                 }
             }
         }

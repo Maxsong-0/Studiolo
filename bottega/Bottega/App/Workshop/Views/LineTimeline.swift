@@ -54,14 +54,16 @@ struct LineTimeline<Empty: View>: View {
                             .transition(.newRow)
                     }
                 }
-                .frame(maxWidth: 780, alignment: .leading)
+                .frame(maxWidth: 640, alignment: .leading)
                 .frame(maxWidth: .infinity)
-                .padding(.horizontal, 24)
+                .padding(.horizontal, 28)
                 .padding(.top, FloatingTopRoom.reserved)
                 .padding(.bottom, 20)
                 .animation(.smooth(duration: 0.2), value: rows.last?.id)
             }
             .scrollPosition($position)
+            // What scrolls under the header and the composer fades out rather than being cut.
+            .scrollEdgeEffectStyle(.soft, for: [.top, .bottom])
             .defaultScrollAnchor(.bottom, for: .initialOffset)
             .onScrollGeometryChange(for: Bool.self) { geometry in
                 geometry.contentSize.height - geometry.visibleRect.maxY + geometry.contentInsets.bottom < 24
@@ -199,33 +201,45 @@ struct NoteRow: View {
     }
 }
 
-/// A letter. From the user on the right, in the accent; everyone else's on the left, plain.
+/// A letter. The user's on the right in a light bubble; everyone else's on the left with no bubble, their icon beside.
 struct LetterRow: View {
     @Environment(WorkshopModel.self) private var model
+    @Environment(Look.self) private var look
     let message: Message
 
     var body: some View {
         let isSelected = model.detail == .message(message.id)
-        VStack(alignment: message.isFromUser ? .trailing : .leading, spacing: 5) {
-            header
-            VStack(alignment: .leading, spacing: 8) {
-                Text(verbatim: UntrustedText.clean(message.body))
-                    .textSelection(.enabled)
-                    .lineSpacing(2)
-                if !message.files.isEmpty {
-                    ForEach(message.files, id: \.self) { FileChip(file: $0) }
+        Group {
+            if message.isFromUser {
+                VStack(alignment: .trailing, spacing: 5) {
+                    header
+                    words
+                        .padding(.horizontal, 13)
+                        .padding(.vertical, 9)
+                        .background(look.mine, in: .rect(cornerRadius: 15, style: .continuous))
+                        .overlay {
+                            if isSelected { RoundedRectangle(cornerRadius: 15, style: .continuous).strokeBorder(Color.accentColor, lineWidth: 1.5) }
+                        }
+                    footer
                 }
+                .frame(maxWidth: .infinity, alignment: .trailing)
+                .padding(.leading, 60)
+            } else {
+                HStack(alignment: .top, spacing: 10) {
+                    MemberGlyph(name: message.from, size: 22)
+                    VStack(alignment: .leading, spacing: 5) {
+                        header
+                        words
+                        footer
+                    }
+                    .frame(maxWidth: 520, alignment: .leading)
+                }
+                .padding(isSelected ? 8 : 0)
+                .background { if isSelected { RoundedRectangle(cornerRadius: 12, style: .continuous).fill(look.selection) } }
+                .padding(isSelected ? -8 : 0)
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 9)
-            .background(background, in: .rect(cornerRadius: 12))
-            .overlay {
-                RoundedRectangle(cornerRadius: 12).strokeBorder(isSelected ? Color.accentColor : .clear, lineWidth: 1.5)
-            }
-            footer
         }
-        .frame(maxWidth: .infinity, alignment: message.isFromUser ? .trailing : .leading)
-        .padding(message.isFromUser ? .leading : .trailing, 60)
         .contentShape(.rect)
         .onTapGesture { model.detail = .message(message.id) }
         .onAppear { if message.isToUser { model.letter(message.id, isOnScreen: true) } }
@@ -233,13 +247,30 @@ struct LetterRow: View {
         .accessibilityElement(children: .contain)
     }
 
+    private var words: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(verbatim: UntrustedText.clean(message.body))
+                .font(.system(size: 13.5))
+                .textSelection(.enabled)
+                .lineSpacing(3)
+            if !message.files.isEmpty {
+                ForEach(message.files, id: \.self) { FileChip(file: $0) }
+            }
+        }
+    }
+
     private var header: some View {
         HStack(spacing: 5) {
-            MemberName(name: message.from)
-            Image(systemName: "arrow.right").imageScale(.small).foregroundStyle(.tertiary)
-            MemberName(name: message.to)
-            Text(verbatim: "\(Wording.messageKind(message.kind)) \(UntrustedText.line(message.id, limit: 24))")
-                .font(.caption.monospaced())
+            if message.isFromUser {
+                Text("To").foregroundStyle(.secondary)
+            } else {
+                Text(verbatim: UntrustedText.line(message.from, limit: 40)).foregroundStyle(.secondary)
+                Image(systemName: "arrow.right").imageScale(.small).foregroundStyle(.tertiary)
+            }
+            MemberName(name: message.to, size: 14)
+            Text(verbatim: "\(Wording.messageKind(message.kind).uppercased()) · \(UntrustedText.line(message.id, limit: 24).uppercased())")
+                .font(.system(size: 10, design: .monospaced))
+                .kerning(0.5)
                 .foregroundStyle(.secondary)
                 .padding(.leading, 4)
             if message.device != nil, !message.isFromUser {
@@ -247,7 +278,7 @@ struct LetterRow: View {
                 Image(systemName: "questionmark.diamond").help("Came through a device but is not from the user")
             }
         }
-        .font(.callout)
+        .font(.system(size: 12))
     }
 
     private var footer: some View {
@@ -271,8 +302,7 @@ struct LetterRow: View {
                 model.detail = .turn(turn.id)
             } label: {
                 HStack(spacing: 8) {
-                    WorkingLabel()
-                    if turn.isRunning { DoingNow(turn: turn.id) }
+                    if turn.isRunning { DoingNow(turn: turn.id, inCapsule: true) } else { WorkingLabel() }
                     Image(systemName: "chevron.right").imageScale(.small).foregroundStyle(.tertiary)
                 }
                 .contentShape(.rect)
@@ -282,10 +312,6 @@ struct LetterRow: View {
         } else {
             WorkingLabel()
         }
-    }
-
-    private var background: AnyShapeStyle {
-        message.isFromUser ? AnyShapeStyle(Color.accentColor.opacity(0.16)) : AnyShapeStyle(.quaternary.opacity(0.6))
     }
 }
 

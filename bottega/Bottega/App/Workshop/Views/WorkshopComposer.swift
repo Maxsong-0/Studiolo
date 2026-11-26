@@ -3,7 +3,7 @@ import BottegaKit
 import SwiftUI
 import UniformTypeIdentifiers
 
-/// The floating box at the bottom of a conversation.
+/// The capsule floating at the bottom of a conversation (Vetro): attach, the words, who it goes to, send.
 ///
 /// On a line with a question to the user it answers that; choosing someone else interjects instead. Return makes a
 /// new line, ⌘Return sends; ⌘Return in an empty box opens the ask that has waited longest.
@@ -27,9 +27,9 @@ struct WorkshopComposer: View {
                     .glassEffect(.regular, in: .capsule)
             }
         }
-        .frame(maxWidth: 780)
+        .frame(maxWidth: 600)
         .frame(maxWidth: .infinity)
-        .padding(.horizontal, 20)
+        .padding(.horizontal, 28)
         .padding(.bottom, 16)
         .padding(.top, 4)
         .fileImporter(isPresented: $isAttaching, allowedContentTypes: [.text, .sourceCode, .json, .log, .data], allowsMultipleSelection: true) { result in
@@ -39,25 +39,42 @@ struct WorkshopComposer: View {
 
     private var box: some View {
         VStack(alignment: .leading, spacing: 6) {
-            DraftField(key: key, placeholder: placeholder, isPlain: true)
             if !canSend {
-                Text(verbatim: whyNot).font(.callout).foregroundStyle(.secondary)
+                Text(verbatim: whyNot).font(.callout).foregroundStyle(.secondary).padding(.horizontal, 10)
             }
-            HStack(spacing: 10) {
-                RecipientMenu(key: key)
+            HStack(alignment: .bottom, spacing: 2) {
+                Button { isAttaching = true } label: {
+                    Image(systemName: "plus")
+                        .font(.system(size: 15, weight: .medium))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 34, height: 34)
+                        .contentShape(.circle)
+                }
+                .buttonStyle(.plain)
+                .help("Attach text files")
+                .accessibilityLabel("Attach text files")
+                DraftField(key: key, placeholder: placeholder, isPlain: true)
+                    .font(.system(size: 14))
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 8)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 if case .line = key, isInterjecting {
                     @Bindable var model = model
-                    Toggle("Needs a reply", isOn: $model[draft: key].wantsReply).toggleStyle(.checkbox).controlSize(.small)
+                    Toggle("Needs a reply", isOn: $model[draft: key].wantsReply)
+                        .toggleStyle(.button)
+                        .buttonStyle(.plain)
+                        .font(.system(size: 12, weight: .medium))
+                        .padding(.horizontal, 10)
+                        .frame(height: 34)
+                        .background(model[draft: key].wantsReply ? AnyShapeStyle(.quaternary) : AnyShapeStyle(.clear), in: .capsule)
+                        .overlay { Capsule().strokeBorder(.separator) }
                 }
-                Spacer()
-                Button("Attach Text Files", systemImage: "paperclip") { isAttaching = true }
-                    .labelStyle(.iconOnly)
-                    .buttonStyle(.borderless)
-                SendDraftButton(key: key, title: "Send")
+                RecipientMenu(key: key)
+                SendDraftButton(key: key, title: "Send", isRound: true)
             }
         }
-        .padding(12)
-        .glassEffect(.regular, in: .rect(cornerRadius: 20))
+        .padding(EdgeInsets(top: 8, leading: 10, bottom: 8, trailing: 8))
+        .glassEffect(.regular, in: .rect(cornerRadius: 25, style: .continuous))
     }
 
     private var canSend: Bool { model.hasLink && model.target(of: key) != nil }
@@ -107,11 +124,31 @@ private struct RecipientMenu: View {
                 }
             }
         } label: {
-            Text(verbatim: label)
+            HStack(spacing: 7) {
+                if let name = recipient { MemberGlyph(name: name, size: 20) }
+                Text(verbatim: label).lineLimit(1)
+                Image(systemName: "chevron.up.chevron.down").font(.system(size: 9, weight: .semibold)).foregroundStyle(.secondary)
+            }
+            .font(.system(size: 12.5, weight: .medium))
+            .padding(.leading, recipient == nil ? 12 : 6)
+            .padding(.trailing, 9)
+            .frame(height: 34)
+            .overlay { Capsule().strokeBorder(.separator) }
+            .contentShape(.capsule)
         }
-        .menuStyle(.borderlessButton)
+        .menuStyle(.button)
+        .buttonStyle(.plain)
+        .menuIndicator(.hidden)
         .fixedSize()
-        .font(.callout)
+        .help("Who it goes to")
+    }
+
+    private var recipient: String? {
+        switch model.target(of: key) {
+        case .answer(let question): question.from
+        case .interject(let name), .start(let name): name
+        case nil: nil
+        }
     }
 
     private var prefix: String {
@@ -131,14 +168,27 @@ struct SendDraftButton: View {
     @Environment(WorkshopModel.self) private var model
     let key: DraftKey
     let title: String
+    /// The round button at the end of the capsule.
+    var isRound = false
 
     var body: some View {
-        Button(title, systemImage: "arrow.up") { model.send(key) }
-            .labelStyle(.titleAndIcon)
-            .buttonStyle(.glassProminent)
+        button
             .keyboardShortcut(hasShortcut ? KeyboardShortcut(.return, modifiers: .command) : nil)
             .disabled(model[draft: key].isBlank ? !model.hasAskToRead : !model.hasLink || model.target(of: key) == nil)
             .help("⌘Return")
+    }
+
+    @ViewBuilder private var button: some View {
+        if isRound {
+            Button { model.send(key) } label: { SendCircle() }
+            .buttonStyle(.plain)
+            .padding(.leading, 4)
+            .accessibilityLabel(title)
+        } else {
+            Button(title, systemImage: "arrow.up") { model.send(key) }
+                .labelStyle(.titleAndIcon)
+                .buttonStyle(.glassProminent)
+        }
     }
 
     /// Several questions can be listed at once; only the one being answered takes ⌘Return.
@@ -230,5 +280,20 @@ private struct SendingRow: View {
         .padding(.horizontal, 12)
         .padding(.vertical, 6)
         .vetroSurface(cornerRadius: 10)
+    }
+}
+
+/// Dark on light glass, light on dark; faint while there is nothing to send.
+private struct SendCircle: View {
+    @Environment(\.isEnabled) private var isEnabled
+
+    var body: some View {
+        Image(systemName: "arrow.up")
+            .font(.system(size: 14, weight: .semibold))
+            .foregroundStyle(.background)
+            .frame(width: 34, height: 34)
+            .background(.primary, in: .circle)
+            .opacity(isEnabled ? 1 : 0.3)
+            .contentShape(.circle)
     }
 }

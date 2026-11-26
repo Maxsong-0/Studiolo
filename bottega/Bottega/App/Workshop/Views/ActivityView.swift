@@ -7,12 +7,14 @@ struct ActivityView: View {
     @Environment(WorkshopModel.self) private var model
 
     var body: some View {
-        if model.state.log.isEmpty {
-            ContentUnavailableView("No Events Yet", systemImage: Page.activity.symbol)
+        let filter = model.activityFilter
+        let log = filter == .everything ? model.state.log : model.state.log.filter { filter.shows($0.event) }
+        if log.isEmpty {
+            ContentUnavailableView(filter == .everything ? "No Events Yet" : "Nothing of This Kind", systemImage: Page.activity.symbol)
         } else {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 0) {
-                    ForEach(model.state.log) { happening in
+                    ForEach(log) { happening in
                         HStack(alignment: .firstTextBaseline, spacing: 10) {
                             Text(verbatim: "\(happening.id.seq)")
                                 .font(.caption.monospaced())
@@ -24,9 +26,12 @@ struct ActivityView: View {
                         Divider()
                     }
                 }
+                .frame(maxWidth: 760)
+                .frame(maxWidth: .infinity)
                 .padding(.horizontal, 20)
                 .padding(.vertical, 12)
             }
+            .scrollEdgeEffectStyle(.soft, for: [.top, .bottom])
             .defaultScrollAnchor(.bottom, for: .initialOffset)
             .defaultScrollAnchor(.bottom, for: .sizeChanges)
         }

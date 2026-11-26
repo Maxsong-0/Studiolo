@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		0B67D6A26C8E61E6E0FEF270 /* WorkingPattern.swift in Sources */ = {isa = PBXBuildFile; fileRef = D8C55D34EA30FE6407FD4229 /* WorkingPattern.swift */; };
 		12E8A9928ADBFF87B16AE019 /* StorageNames.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4C59D7639E8BEC97111AE0EE /* StorageNames.swift */; };
 		31404D86B08A6A6C6A7DCF41 /* FloatingTop.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4268537DA130217180FC5774 /* FloatingTop.swift */; };
 		65C134EF84B42936D0EAE11B /* BottegaKit in Frameworks */ = {isa = PBXBuildFile; productRef = 81052D4EA631240179AE0E30 /* BottegaKit */; };
@@ -19,6 +20,9 @@
 		AC1653A05AD0DBA6E29F8399 /* StorageNames.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4C59D7639E8BEC97111AE0EE /* StorageNames.swift */; };
 		BAD1D11479AE36CAB510B836 /* BottegaLink in Frameworks */ = {isa = PBXBuildFile; productRef = 7463EE17536B9998B2A93CCD /* BottegaLink */; };
 		C11F34B12823D12011026894 /* Look.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5BB7A8061F74D2DCA2592D4A /* Look.swift */; };
+		C39B11301F904009EAE27984 /* ShortTime.swift in Sources */ = {isa = PBXBuildFile; fileRef = 59116757751B255A51AAF370 /* ShortTime.swift */; };
+		DC59B25B733A0B572FF608D0 /* ShortTime.swift in Sources */ = {isa = PBXBuildFile; fileRef = 59116757751B255A51AAF370 /* ShortTime.swift */; };
+		F0111F3D400FB03891DE4975 /* WorkingPattern.swift in Sources */ = {isa = PBXBuildFile; fileRef = D8C55D34EA30FE6407FD4229 /* WorkingPattern.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -36,11 +40,13 @@
 		4268537DA130217180FC5774 /* FloatingTop.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FloatingTop.swift; sourceTree = "<group>"; };
 		4C59D7639E8BEC97111AE0EE /* StorageNames.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StorageNames.swift; sourceTree = "<group>"; };
 		517A61D27DF0AF10EA93C362 /* BottegaKit */ = {isa = PBXFileReference; lastKnownFileType = folder; name = BottegaKit; path = BottegaKit; sourceTree = SOURCE_ROOT; };
+		59116757751B255A51AAF370 /* ShortTime.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShortTime.swift; sourceTree = "<group>"; };
 		5BB7A8061F74D2DCA2592D4A /* Look.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Look.swift; sourceTree = "<group>"; };
 		8C68422EF6B40DED38B755AF /* THIRD_PARTY_NOTICES.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = THIRD_PARTY_NOTICES.md; sourceTree = "<group>"; };
 		9CEFE377695509681A421595 /* LICENSE */ = {isa = PBXFileReference; path = LICENSE; sourceTree = "<group>"; };
 		ADB8D5EDD0BA45DA23A00CBF /* Bottega.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Bottega.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		AFBF8BEC22DC876CAE2B6212 /* TRADEMARK.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = TRADEMARK.md; sourceTree = "<group>"; };
+		D8C55D34EA30FE6407FD4229 /* WorkingPattern.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkingPattern.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -105,7 +111,9 @@
 			children = (
 				4268537DA130217180FC5774 /* FloatingTop.swift */,
 				5BB7A8061F74D2DCA2592D4A /* Look.swift */,
+				59116757751B255A51AAF370 /* ShortTime.swift */,
 				4C59D7639E8BEC97111AE0EE /* StorageNames.swift */,
+				D8C55D34EA30FE6407FD4229 /* WorkingPattern.swift */,
 			);
 			path = Shared;
 			sourceTree = "<group>";
@@ -237,7 +245,9 @@
 			files = (
 				31404D86B08A6A6C6A7DCF41 /* FloatingTop.swift in Sources */,
 				C11F34B12823D12011026894 /* Look.swift in Sources */,
+				C39B11301F904009EAE27984 /* ShortTime.swift in Sources */,
 				12E8A9928ADBFF87B16AE019 /* StorageNames.swift in Sources */,
+				F0111F3D400FB03891DE4975 /* WorkingPattern.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -247,7 +257,9 @@
 			files = (
 				99A3B53EBAAB9A89502490C3 /* FloatingTop.swift in Sources */,
 				68992E6DF052739716D90C41 /* Look.swift in Sources */,
+				DC59B25B733A0B572FF608D0 /* ShortTime.swift in Sources */,
 				AC1653A05AD0DBA6E29F8399 /* StorageNames.swift in Sources */,
+				0B67D6A26C8E61E6E0FEF270 /* WorkingPattern.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

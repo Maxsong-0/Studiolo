@@ -41,6 +41,8 @@ final class WorkshopModel {
     }
     /// Which list the sidebar shows; follows the page, except for pages that belong to no section.
     private(set) var section: SidebarSection = .bots
+    /// The part of the log the Activity page shows.
+    var activityFilter: ActivityFilter = .everything
     /// Where Bots goes back to: the line last open there.
     private var botsPage: Page = .dispatcher
 

@@ -101,6 +101,9 @@ final class Look {
     /// The selected row and the switcher's pill.
     var selection: Color { .white.opacity(isDark ? 0.12 + 0.06 * strength : 0.16 + 0.18 * strength) }
 
+    /// The user's own letters.
+    var mine: Color { .white.opacity(isDark ? 0.07 + 0.09 * strength : 0.1 + 0.26 * strength) }
+
     var hover: Color { .white.opacity(isDark ? 0.06 + 0.02 * strength : 0.1 + 0.1 * strength) }
 
     /// Thin lines between things.

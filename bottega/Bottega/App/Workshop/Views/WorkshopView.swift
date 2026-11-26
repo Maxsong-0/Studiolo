@@ -46,7 +46,7 @@ struct MainPane: View {
                 PageView()
                     .frame(minWidth: 420)
                 if model.showsInspector {
-                    WorkshopInspector()
+                    SidePanel()
                         .frame(width: 292)
                         .vetroSurface(cornerRadius: 14)
                         .clipShape(.rect(cornerRadius: 14, style: .continuous))

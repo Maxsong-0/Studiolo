@@ -190,22 +190,131 @@ private struct RoomsList: View {
 
 private struct BotsList: View {
     @Environment(WorkshopModel.self) private var model
+    /// Makers folded shut; all start open.
+    @State private var closed: Set<String> = []
 
     var body: some View {
-        VetroRow(isOn: model.page == .dispatcher, action: { model.page = .dispatcher }) {
-            Image(systemName: "d.circle.fill").font(.system(size: 18)).foregroundStyle(.secondary)
+        let groups = BotGroups(model.state, configured: model.overview?.cards?.vendors ?? [])
+        BotRow(isOpen: isOpen("dispatcher"), hasLines: !groups.dispatcher.isEmpty, isOn: model.page == .dispatcher,
+               toggle: { flip("dispatcher") }, select: { model.page = .dispatcher }) {
+            MemberGlyph(name: "dispatcher", size: 22)
             Text("Dispatcher").font(.system(size: 13)).frame(maxWidth: .infinity, alignment: .leading)
             Text("default").font(.system(size: 11)).foregroundStyle(.secondary)
         }
-        ForEach(WorkshopState.LineKind.allCases, id: \.self) { kind in
-            let lines = model.state.threads(of: kind)
-            if !lines.isEmpty {
-                SidebarCaption(text: Wording.lineKind(kind))
-                ForEach(lines) { line in
-                    LineRow(line: line, waits: model.waitingLines.contains(line.id))
+        if isOpen("dispatcher") { lines(groups.dispatcher) }
+        if !groups.makers.isEmpty || !groups.others.isEmpty { SidebarCaption(text: "Agents") }
+        ForEach(groups.makers, id: \.maker) { group in
+            let key = group.maker.vendor
+            BotRow(isOpen: isOpen(key), hasLines: !group.lines.isEmpty, isOn: false, toggle: { flip(key) }, select: { flip(key) }) {
+                MakerTile(maker: group.maker, size: 22)
+                Text(group.maker.title).font(.system(size: 13)).frame(maxWidth: .infinity, alignment: .leading)
+            }
+            if isOpen(key) { lines(group.lines) }
+        }
+        if !groups.others.isEmpty {
+            SidebarCaption(text: "Other agents")
+            lines(groups.others)
+        }
+        if !groups.planner.isEmpty {
+            SidebarCaption(text: "Planner")
+            lines(groups.planner)
+        }
+    }
+
+    private func isOpen(_ key: String) -> Bool { !closed.contains(key) }
+
+    private func flip(_ key: String) {
+        if closed.contains(key) { closed.remove(key) } else { closed.insert(key) }
+    }
+
+    /// Pinned first, archived last, as `threads(of:)` already sorts them; a caption where the kind changes.
+    @ViewBuilder private func lines(_ lines: [BottegaKit.Line]) -> some View {
+        let pinned = lines.filter { model.state.arrangement(of: $0.id).isPinned && !model.state.arrangement(of: $0.id).isArchived }
+        let archived = lines.filter { model.state.arrangement(of: $0.id).isArchived }
+        let rest = lines.filter { line in !pinned.contains { $0.id == line.id } && !archived.contains { $0.id == line.id } }
+        if !pinned.isEmpty {
+            LineCaption(text: "Pinned")
+            ForEach(pinned) { LineRow(line: $0, waits: model.waitingLines.contains($0.id)) }
+        }
+        if !rest.isEmpty {
+            if !pinned.isEmpty { LineCaption(text: "Recent") }
+            ForEach(rest) { LineRow(line: $0, waits: model.waitingLines.contains($0.id)) }
+        }
+        if !archived.isEmpty {
+            LineCaption(text: "Archived")
+            ForEach(archived) { LineRow(line: $0, waits: model.waitingLines.contains($0.id)) }
+        }
+    }
+}
+
+/// Which bot each line sits under: the dispatcher's own, each maker's (by the first agent on it), the Planner's.
+private struct BotGroups {
+    struct MakerLines { let maker: Maker; var lines: [BottegaKit.Line] }
+
+    var dispatcher: [BottegaKit.Line] = []
+    var makers: [MakerLines] = []
+    var others: [BottegaKit.Line] = []
+    var planner: [BottegaKit.Line] = []
+
+    init(_ state: WorkshopState, configured: [String]) {
+        var byMaker: [Maker: [BottegaKit.Line]] = [:]
+        for kind in WorkshopState.LineKind.allCases {
+            for line in state.threads(of: kind) {
+                switch kind {
+                case .dispatcher: dispatcher.append(line)
+                case .planner: planner.append(line)
+                case .direct, .agents:
+                    if let maker = line.members.lazy.compactMap({ state.vendors[$0].flatMap(Maker.init(vendor:)) }).first {
+                        byMaker[maker, default: []].append(line)
+                    } else {
+                        others.append(line)
+                    }
                 }
             }
         }
+        // Every maker LMAS runs gets a row, with lines or not.
+        let present = Set(configured.compactMap(Maker.init(vendor:)) + state.vendors.values.compactMap(Maker.init(vendor:)) + byMaker.keys)
+        makers = Maker.allCases.filter(present.contains).map { MakerLines(maker: $0, lines: byMaker[$0] ?? []) }
+    }
+}
+
+/// A bot: its icon and name, with a chevron when it has lines to fold.
+private struct BotRow<Content: View>: View {
+    let isOpen: Bool
+    let hasLines: Bool
+    let isOn: Bool
+    let toggle: () -> Void
+    let select: () -> Void
+    @ViewBuilder let content: Content
+
+    var body: some View {
+        VetroRow(isOn: isOn, indent: hasLines ? 4 : 10, action: select) {
+            if hasLines {
+                Button(action: toggle) {
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundStyle(.secondary)
+                        .rotationEffect(.degrees(isOpen ? 90 : 0))
+                        .animation(.smooth(duration: 0.18), value: isOpen)
+                        .frame(width: 14, height: 22)
+                        .contentShape(.rect)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(isOpen ? "Fold" : "Unfold")
+            }
+            content
+        }
+    }
+}
+
+private struct LineCaption: View {
+    let text: String
+
+    var body: some View {
+        Text(verbatim: text)
+            .font(.system(size: 11))
+            .foregroundStyle(.secondary)
+            .padding(EdgeInsets(top: 8, leading: 37, bottom: 3, trailing: 10))
     }
 }
 
@@ -214,9 +323,16 @@ private struct LineRow: View {
     let line: BottegaKit.Line
     let waits: Bool
 
+    /// A turn running for one of its latest letters.
+    private var isWorkedOn: Bool {
+        line.messages.suffix(3).contains { id in
+            model.state.messages[id].map { model.state.turns(with: $0).contains(where: \.isRunning) } ?? false
+        }
+    }
+
     var body: some View {
         let arrangement = model.state.arrangement(of: line.id)
-        VetroRow(isOn: model.page == .line(line.id), height: 30, indent: 12, action: { model.page = .line(line.id) }) {
+        VetroRow(isOn: model.page == .line(line.id), height: 30, indent: 22, action: { model.page = .line(line.id) }) {
             dot
             Text(verbatim: model.state.title(of: line))
                 .font(.system(size: 12.5))
@@ -227,19 +343,24 @@ private struct LineRow: View {
             } else if arrangement.isPinned {
                 Image(systemName: "pin.fill").imageScale(.small).foregroundStyle(.secondary).accessibilityLabel("Pinned")
             }
-            Text(verbatim: Wording.time(line.lastAt))
-                .font(.system(size: 11))
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
+            TimelineView(.everyMinute) { context in
+                Text(verbatim: ShortTime.ago(line.lastAt, now: context.date))
+                    .font(.system(size: 11).monospacedDigit())
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+            .fixedSize()
         }
     }
 
-    /// Red: waiting for you. Filled: something you have not read.
+    /// Red: waiting for you. Amber dots: an AI at work on it. Filled: something you have not read.
     @ViewBuilder private var dot: some View {
         if waits {
             Circle().fill(.red).frame(width: 9, height: 9)
                 .background { Circle().fill(.red.opacity(0.2)).frame(width: 15, height: 15) }
                 .accessibilityLabel("Waiting for you")
+        } else if isWorkedOn {
+            WorkingMatrix(side: 3).frame(width: 9, height: 9).accessibilityLabel("Being worked on")
         } else if model.state.hasUnread(line) {
             Circle().fill(.primary).frame(width: 7, height: 7).frame(width: 9).accessibilityLabel("Unread")
         } else {
@@ -279,6 +400,33 @@ private struct WaitingList: View {
                 }
             }
         }
+        DecidedToday()
+    }
+}
+
+/// Approvals answered since midnight, newest first.
+private struct DecidedToday: View {
+    @Environment(WorkshopModel.self) private var model
+
+    var body: some View {
+        let today = Calendar.current.startOfDay(for: .now).timeIntervalSince1970 * 1000
+        let decided = model.state.asks.values
+            .compactMap { ask in ask.answer.map { (ask, $0) } }
+            .filter { Double($0.1.at) >= today }
+            .sorted { $0.1.at > $1.1.at }
+        if !decided.isEmpty {
+            SidebarCaption(text: "Decided today")
+            ForEach(decided, id: \.0.id) { ask, answer in
+                VetroRow(isOn: false, height: 30, action: { model.page = .waiting }) {
+                    Image(systemName: "checkmark").font(.system(size: 10, weight: .bold)).foregroundStyle(.secondary).frame(width: 9)
+                    Text(verbatim: UntrustedText.line(ask.text, limit: 80))
+                        .font(.system(size: 12.5))
+                        .lineLimit(1)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    Text(verbatim: Wording.time(answer.at)).font(.system(size: 11).monospacedDigit()).foregroundStyle(.secondary)
+                }
+            }
+        }
     }
 }
 
@@ -290,6 +438,16 @@ private struct CardsList: View {
             Text("All cards").font(.system(size: 13)).frame(maxWidth: .infinity, alignment: .leading)
             Text(model.state.cards.count, format: .number).font(.system(size: 11).monospacedDigit()).foregroundStyle(.secondary)
         }
+        SidebarCaption(text: "By column")
+        ForEach(WorkshopState.Column.allCases, id: \.self) { column in
+            let count = model.state.cards(in: column).count
+            VetroRow(isOn: false, height: 30, action: { model.page = .board }) {
+                Text(Wording.column(column)).font(.system(size: 12.5)).frame(maxWidth: .infinity, alignment: .leading)
+                Text(count, format: .number)
+                    .font(.system(size: 11).monospacedDigit())
+                    .foregroundStyle(column == .needsYou && count > 0 ? AnyShapeStyle(.red) : AnyShapeStyle(.secondary))
+            }
+        }
     }
 }
 
@@ -297,8 +455,13 @@ private struct ActivityList: View {
     @Environment(WorkshopModel.self) private var model
 
     var body: some View {
-        VetroRow(isOn: model.page == .activity, action: { model.page = .activity }) {
-            Text("Everything").font(.system(size: 13)).frame(maxWidth: .infinity, alignment: .leading)
+        ForEach(ActivityFilter.allCases) { filter in
+            VetroRow(isOn: model.page == .activity && model.activityFilter == filter, action: {
+                model.activityFilter = filter
+                model.page = .activity
+            }) {
+                Text(filter.title).font(.system(size: 13)).frame(maxWidth: .infinity, alignment: .leading)
+            }
         }
         Text("Append-only, kept by LMAS")
             .font(.system(size: 11))
