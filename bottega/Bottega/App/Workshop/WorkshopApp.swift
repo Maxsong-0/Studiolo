@@ -48,6 +48,9 @@ struct WorkshopCommands: Commands {
             #endif
         }
         CommandMenu("Go") {
+            Button("Search…") { model.showsPalette.toggle() }
+                .keyboardShortcut("k", modifiers: .command)
+            Divider()
             ForEach(SidebarSection.allCases) { section in
                 Button(section.title) { model.show(section) }
                     .keyboardShortcut(KeyEquivalent(Character("\(section.rawValue + 1)")), modifiers: .command)

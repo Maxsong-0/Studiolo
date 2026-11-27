@@ -58,6 +58,11 @@ struct MainPane: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .vetroPane(cornerRadius: 20)
+        // Over the main pane only, as in the canvas: the sidebar stays as it is.
+        .overlay {
+            if model.showsPalette { WorkshopPalette() }
+        }
+        .animation(reduceMotion ? .easeOut(duration: 0.16) : .easeOut(duration: 0.2), value: model.showsPalette)
     }
 }
 

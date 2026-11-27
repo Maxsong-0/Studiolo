@@ -63,6 +63,8 @@ final class WorkshopModel {
     /// The ask whose sheet is up.
     var askBeingRead: OpenAsk?
     var showsInspector = false
+    /// ⌘K (`WorkshopPalette`).
+    var showsPalette = false
     var showsLanes = true
 
     /// The cards page as a board or as a list (Bottega-5 §7). Kept on this Mac, so it opens the way it was left.
@@ -119,6 +121,8 @@ final class WorkshopModel {
         if let page = environment["BOTTEGA_PAGE"].flatMap(Page.init(word:)) { model.page = page }
         if let detail = environment["BOTTEGA_DETAIL"].flatMap(Detail.init(word:)) { model.detail = detail }
         if environment["BOTTEGA_LANES"] == "0" { model.showsLanes = false }
+        // `BOTTEGA_PALETTE=<what is typed>`: ⌘K is up, for a screenshot.
+        if environment["BOTTEGA_PALETTE"] != nil { model.showsPalette = true }
         // `BOTTEGA_ARRANGE=header` or `sidebar`: the line's arrange panel is up, for a screenshot.
         if let place = environment["BOTTEGA_ARRANGE"], let line = model.page.line {
             model.arranging = Arranging(line: line, inSidebar: place == "sidebar")

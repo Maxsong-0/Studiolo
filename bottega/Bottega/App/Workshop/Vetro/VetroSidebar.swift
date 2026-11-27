@@ -9,8 +9,13 @@ struct VetroSidebar: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            // The window's own close, minimise and zoom buttons sit over this strip.
-            Color.clear.frame(height: 18).padding(.bottom, 10)
+            // The window's own close, minimise and zoom buttons sit over this strip; ⌘K at its other end.
+            HStack {
+                Spacer()
+                PaletteButton()
+            }
+            .frame(height: 18)
+            .padding(.bottom, 10)
             SectionSwitcher()
                 .padding(.horizontal, 2)
                 .padding(.bottom, 10)
@@ -22,6 +27,24 @@ struct VetroSidebar: View {
         .frame(width: 276)
         .frame(maxHeight: .infinity)
         .vetroPane(cornerRadius: 20, isSidebar: true)
+    }
+}
+
+/// Opens ⌘K, as in the canvas's sidebar.
+private struct PaletteButton: View {
+    @Environment(WorkshopModel.self) private var model
+
+    var body: some View {
+        Button { model.showsPalette.toggle() } label: {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 13))
+                .foregroundStyle(.secondary)
+                .frame(width: 26, height: 26)
+                .contentShape(.rect)
+        }
+        .buttonStyle(.plain)
+        .help("Search and commands (⌘K)")
+        .accessibilityLabel("Search and commands")
     }
 }
 
@@ -250,7 +273,7 @@ private struct BotsList: View {
 }
 
 /// Which bot each line sits under: the dispatcher's own, each maker's (by the first agent on it), the Planner's.
-private struct BotGroups {
+struct BotGroups {
     struct MakerLines { let maker: Maker; var lines: [BottegaKit.Line] }
 
     var dispatcher: [BottegaKit.Line] = []
