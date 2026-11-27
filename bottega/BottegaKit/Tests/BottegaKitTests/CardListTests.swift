@@ -43,6 +43,19 @@ struct CardListTests {
         #expect(state.progress(of: try card(state, "c")) == .merging(.requested))
     }
 
+    /// The size shown is that of the last merge that was checked: a card merged again shows its new change, once
+    /// LMAS has checked it.
+    @Test func theSizeIsTheLastCheckedMerges() throws {
+        var state = WorkshopState()
+        try state.apply(record(1, created("c", at: 1), started("c", at: 2), mergeRequested("m1", card: "c", at: 3)))
+        #expect(state.size(of: try card(state, "c")) == nil)
+        try state.apply(record(4, .mergeChecked(.init(merge: "m1", tree: "t", base: "b", files: 1, insertions: 2, deletions: 3, atMs: 4))))
+        try state.apply(record(5, mergeRequested("m2", card: "c", at: 5)))
+        #expect(state.size(of: try card(state, "c")) == Merge.Size(files: 1, insertions: 2, deletions: 3))
+        try state.apply(record(6, .mergeChecked(.init(merge: "m2", tree: "t", base: "b", files: 4, insertions: 5, deletions: 6, atMs: 6))))
+        #expect(state.size(of: try card(state, "c")) == Merge.Size(files: 4, insertions: 5, deletions: 6))
+    }
+
     /// Asking the user about its merge, and the answer, are things that happened to the card.
     @Test func theUsersSayOnAMergeCountsAsActivity() throws {
         var state = WorkshopState()

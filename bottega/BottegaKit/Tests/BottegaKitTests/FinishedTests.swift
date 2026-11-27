@@ -63,6 +63,9 @@ struct FinishedTests {
         #expect(try counted(asked + [askedToStop], then: [record(4, turnFinished("t1", "dispatcher"))]) == 0)
         // Still running.
         #expect(try counted(asked, then: [record(3, letter("m2", from: "dispatcher", to: "user"))]) == 0)
+        // Over before: told already.
+        let over = asked + [record(3, turnFinished("t1", "dispatcher"))]
+        #expect(try counted(over, then: [record(4, letter("m2", from: "dispatcher", to: "user"))]) == 0)
     }
 
     /// A letter handed over while the turn ran counts as well as one pushed into it.
