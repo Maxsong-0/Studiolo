@@ -134,7 +134,62 @@ launchctl print "gui/$(id -u)/me.studiolo.agent-sync"
 1. 新机器上先比清单：取服务器 `control/state.json` 现代次的 `releases/<代次>/manifest.json`，和本机 `replica_capture.capture` 的清单比路径与摘要，
    少了的逐个说清（Obsidian Sync 默认不带 `.txt`、`.zip` 这类文件，另一台本地有的会从副本里消失）。
 2. 旧机器 `launchctl bootout` 并删掉 LaunchAgent 链接，再在新机器生成新目录、装链接、`bootstrap`。旧机器离线时，它开机后第一件事就停。
-3. 新目录没有基线，第一轮整份推送（约 230 MB）。Mac Studio 用别名 `studiolo-169`（经 108 跳）连 169，108 停机时推不了。
+3. 新目录没有基线，第一轮整份推送（约 230 MB）。Mac Studio 经 108 跳到 169，推送任务用别名 `studiolo-169-push`（走 108 的专用入口，见下一节），108 停机时推不了。
+
+### T-215：经 108 跳的推送走专用入口（2026-11-27）
+
+**为什么**：Mac Studio 连 169 要经 108 跳。108 的 tailnet 地址 22 端口归 Tailscale SSH 管，它是 check 模式，大约每 12 小时要人在浏览器里重新确认一次；
+到期后 launchd 里 `BatchMode=yes` 的推送连不上，一轮轮报 `{"status":"failed","last_error":"transfer_failed","ssh_exit_code":255}`，副本过期、108 看门狗报 A03，
+要等有人交互地 ssh 一次 108 才恢复（2026-11-27 就这样断过一回）。Tailscale SSH 只拦 22 端口，所以让 108 自己的 sshd 在 tailnet 地址另听 22169，推送走这条路；
+人连 108 照旧走 Tailscale SSH（别名 `studiolo-108-ts`），不受影响。
+
+**108 上装了什么**（安装脚本 `deploy/replica-push/install-push-port.sh`，先校验、不过就什么都不改）：
+
+- `/etc/systemd/system/ssh.socket.d/60-studiolo-replica-push.conf`：`ListenStream=100.84.85.68:22169`，只听 tailnet 地址，不在局域网上开。
+- `/etc/ssh/sshd_config.d/60-studiolo-replica-push.conf`：`Match LocalPort 22169` 下只许 `maxsong` 用公钥登录（密码、键盘交互都关），
+  钥匙只认下面那个文件，只许本地转发到 `192.168.100.169:22`（`PermitOpen`），不给终端、不给反向转发、代理转发、X11、隧道，`ForceCommand /usr/sbin/nologin`。
+- `/etc/ssh/studiolo-replica-push/authorized_keys`：一行，`restrict,port-forwarding,permitopen="192.168.100.169:22"` 加上 Mac Studio 的专用钥匙（注释 `studiolo-replica-push@mac-studio`）。
+
+脚本用 `sshd -T -C` 核两件事：22 端口的生效设置改前改后一字不差；22169 上那 12 项限制都在。都过了才 `daemon-reload`、重启 `ssh.socket`，最后核 22169 真的在听。
+
+**装（主人在场）**：
+
+1. Mac Studio 上生成专用钥匙（不设口令，launchd 要用；私钥只在这台 Mac）：
+
+   ```bash
+   ssh-keygen -t ed25519 -N '' -C studiolo-replica-push@mac-studio -f ~/.ssh/studiolo_replica_push
+   ```
+
+2. 公钥传到 108 的 `~/t215-push.pub`，脚本传到 `~/t215-push-port.sh`，由主人敲 `ssh -t studiolo-108-ts 'sudo bash ~/t215-push-port.sh'`，看到「装好了」才算。
+   公钥文件装完会删掉；脚本留在 108 上，撤回要用。
+3. Mac Studio 的 `~/.ssh/config` 加两段，`known_hosts` 另加一行 `studiolo-108-push`，钥匙用 108 现有的 ed25519 主机钥匙：
+
+   ```
+   Host studiolo-108-push
+     HostName 100.84.85.68
+     Port 22169
+     User maxsong
+     HostKeyAlias studiolo-108-push
+     IdentityFile ~/.ssh/studiolo_replica_push
+     IdentitiesOnly yes
+     ForwardAgent no
+
+   Host studiolo-169-push
+     HostName 192.168.100.169
+     User maxsong
+     ProxyJump studiolo-108-push
+     HostKeyAlias studiolo-169
+   ```
+
+4. 试：`ssh -o BatchMode=yes studiolo-169-push true` 要成功；`ssh -o BatchMode=yes studiolo-108-push` 要回「This account is currently not available.」；
+   `ssh -W` 经 `studiolo-108-push` 转到 169 以外的地址（例如 169 的 80 端口、108 自己的 22）要回 `administratively prohibited`；用普通钥匙或密码连 22169 要 `Permission denied`；
+   `ssh studiolo-108-ts` 照旧能进。
+5. 推送任务换主机名：停任务，`plutil -replace EnvironmentVariables.STUDIOLO_HOST -string studiolo-169-push <运行目录>/me.studiolo.agent-sync.plist`，`plutil -lint`，再 `bootstrap`。
+   以后新生成同步包时给 `prepare-agent-sync.py` 传 `--host studiolo-169-push`。基线文件名跟主机名走，换名后第一轮按没有基线算；服务器已经有同一份内容时回 `"reused":true`。
+   换好的判据同上一节：`logs/stdout.log` 连续两轮 `ready`，108 看门狗不再报 A03。
+
+**撤回**：先把推送任务的 `STUDIOLO_HOST` 改回 `studiolo-169` 再 `bootstrap`（之后又会受 12 小时复核影响），再由主人敲 `ssh -t studiolo-108-ts 'sudo bash ~/t215-push-port.sh --rollback'`：
+删掉上面三个文件、重启 `ssh.socket`，核 22169 不再听。Mac 上的两段配置和专用钥匙留着无害，要删就一起删。
 
 ### T-085：修复 macOS 后台 Python 的局域网权限失败
 
