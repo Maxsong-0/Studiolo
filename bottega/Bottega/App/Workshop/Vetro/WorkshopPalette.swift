@@ -184,7 +184,8 @@ struct WorkshopPalette: View {
         let id: String
         let title: String
         var subtitle = ""
-        /// Looked in as the subtitle is, never shown: a card's number, which its glyph shows already.
+        /// Looked in ahead of the title, never shown as text: a card's number, which its glyph shows already. Typing
+        /// one finds that card before a line that only mentions it.
         var terms = ""
         let glyph: Glyph
         var key: String?
@@ -196,7 +197,7 @@ struct WorkshopPalette: View {
         let isTyped = !query.allSatisfy(\.isWhitespace)
         let all = waiting + here + lines(all: isTyped) + cards(all: isTyped) + bots + pages + view
         return Array(
-            PaletteSearch.ranked(all, for: query, title: \.title, subtitle: { "\($0.subtitle) \($0.terms)" })
+            PaletteSearch.ranked(all, for: query, title: { $0.terms.isEmpty ? $0.title : "\($0.terms) \($0.title)" }, subtitle: \.subtitle)
                 .prefix(Metrics.maxRows))
     }
 
@@ -262,7 +263,7 @@ struct WorkshopPalette: View {
         let cards = model.state.cardsByRecentActivity
         return (all ? cards : Array(cards.prefix(Metrics.recentCards))).map { card in
             Row(
-                id: "card:\(card.id)", title: UntrustedText.line(card.title ?? card.id, limit: 80),
+                id: "card:\(card.id)", title: UntrustedText.line(card.title ?? "Untitled", limit: 80),
                 subtitle: Wording.column(model.state.column(of: card)), terms: card.id, glyph: .card(card.id)
             ) {
                 model.page = .board
