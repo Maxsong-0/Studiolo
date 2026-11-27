@@ -112,7 +112,7 @@ private struct PageHeader: View {
             if model.page == .board {
                 @Bindable var model = model
                 // The same kind of control as Chat / Sequence in the canvas.
-                Picker("Layout", selection: $model.cardLayout.animation(reduceMotion ? nil : .smooth(duration: 0.25))) {
+                Picker("Layout", selection: $model.cardLayout.animation(CardsMotion.switching(reduceMotion: reduceMotion))) {
                     Text("Board").tag(WorkshopModel.CardLayout.board)
                     Text("List").tag(WorkshopModel.CardLayout.list)
                 }
@@ -145,9 +145,7 @@ private struct ArrangeButton: View {
 
     var body: some View {
         let here = WorkshopModel.Arranging(line: line.id, inSidebar: false)
-        let isOpen = Binding(
-            get: { model.arranging == here },
-            set: { if !$0, model.arranging == here { model.arranging = nil } })
+        let isOpen = model.arrangePanel(at: here)
         Button { model.arranging = isOpen.wrappedValue ? nil : here } label: {
             Image(systemName: "ellipsis")
                 .font(.system(size: 13))
@@ -201,7 +199,7 @@ struct PageView: View {
             case .waiting: WaitingView()
             case .board:
                 switch model.cardLayout {
-                case .board: BoardView().transition(.opacity)
+                case .board: BoardView(risesIn: model.cardLayoutSwitched).transition(.opacity)
                 case .list: CardListView().transition(.opacity)
                 }
             case .activity: ActivityView()
@@ -329,7 +327,7 @@ struct Banner<Actions: View>: View {
 struct WorkshopSettings: View {
     @Environment(WorkshopModel.self) private var model
     @State private var isChoosing = false
-    @AppStorage(FinishedNotifier.isOnKey) private var notifiesWhenFinished = true
+    @AppStorage(FinishedNotifier.isOnKey) private var notifiesWhenFinished = FinishedNotifier.isOnByDefault
 
     var body: some View {
         Form {

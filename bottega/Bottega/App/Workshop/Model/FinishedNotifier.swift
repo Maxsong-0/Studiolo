@@ -15,7 +15,9 @@ final class FinishedNotifier {
     private var count = 0
     private var hasAsked = false
 
-    static var isOn: Bool { UserDefaults.standard.object(forKey: isOnKey) as? Bool ?? true }
+    static let isOnByDefault = true
+
+    static var isOn: Bool { UserDefaults.standard.object(forKey: isOnKey) as? Bool ?? isOnByDefault }
 
     /// Whether what changes now could be told.
     var isListening: Bool { Self.isOn && !NSApp.isActive }

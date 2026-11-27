@@ -23,7 +23,7 @@ struct CardListView: View {
                     VStack(spacing: 0) {
                         ForEach(Array(cards.enumerated()), id: \.element.id) { index, card in
                             CardListRow(card: card, project: project, now: timeline.date, isFirst: index == 0)
-                                .modifier(RisesIn(index: index, hasRisen: hasRisen, reduceMotion: reduceMotion))
+                                .modifier(RisesIn(delay: CardsMotion.listDelay(row: index), hasRisen: hasRisen, reduceMotion: reduceMotion))
                         }
                     }
                     .padding(.vertical, 2)
@@ -91,7 +91,7 @@ private struct CardListRow: View {
                 .font(.system(size: 11).monospaced())
                 .foregroundStyle(.secondary)
                 .frame(width: 74, alignment: .trailing)
-            Text(verbatim: Elapsed.short(from: model.state.lastActivity(of: card), to: UInt64(max(0, now.timeIntervalSince1970 * 1000))))
+            Text(verbatim: age)
                 .font(.system(size: 11).monospaced())
                 .foregroundStyle(.secondary)
                 .frame(width: 34, alignment: .trailing)
@@ -121,6 +121,12 @@ private struct CardListRow: View {
 
     private var size: String {
         model.state.size(of: card).map { "+\($0.insertions) −\($0.deletions)" } ?? ""
+    }
+
+    /// Blank when nothing says when (`lastActivity` is 0), rather than an age counted from 1970.
+    private var age: String {
+        let at = model.state.lastActivity(of: card)
+        return at == 0 ? "" : Elapsed.short(from: at, to: UInt64(max(0, now.timeIntervalSince1970 * 1000)))
     }
 
     private func label(_ column: WorkshopState.Column, _ progress: CardProgress) -> String {
@@ -171,19 +177,3 @@ private struct ProgressCell: View {
     }
 }
 
-/// The first time the list shows, row after row fades in rising a little, 28 ms apart (the canvas's rich motion);
-/// with less motion they only fade in, together.
-private struct RisesIn: ViewModifier {
-    let index: Int
-    let hasRisen: Bool
-    let reduceMotion: Bool
-
-    func body(content: Content) -> some View {
-        content
-            .opacity(hasRisen ? 1 : 0)
-            .offset(y: hasRisen || reduceMotion ? 0 : 6)
-            .animation(
-                reduceMotion ? .easeOut(duration: 0.2) : .easeOut(duration: 0.3).delay(min(Double(index) * 0.028, 0.28)),
-                value: hasRisen)
-    }
-}

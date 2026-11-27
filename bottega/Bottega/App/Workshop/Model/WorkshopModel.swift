@@ -37,6 +37,7 @@ final class WorkshopModel {
             if page != oldValue {
                 detail = nil
                 arranging = nil
+                cardLayoutSwitched = false
                 markRead(leaving: oldValue, opening: page)
             }
             if let section = page.section { self.section = section }
@@ -77,8 +78,14 @@ final class WorkshopModel {
     /// The cards page as a board or as a list (Bottega-5 §7). Kept on this Mac, so it opens the way it was left.
     enum CardLayout: String { case board, list }
     var cardLayout = WorkshopModel.savedCardLayout {
-        didSet { UserDefaults.standard.set(cardLayout.rawValue, forKey: Self.cardLayoutKey) }
+        didSet {
+            UserDefaults.standard.set(cardLayout.rawValue, forKey: Self.cardLayoutKey)
+            cardLayoutSwitched = true
+        }
     }
+    /// Switched while the cards page is up: the one switched to comes in a card or row at a time (`CardsMotion`).
+    /// Set before the page is drawn again, so the first switch rises too; going to another page clears it.
+    private(set) var cardLayoutSwitched = false
     private static let cardLayoutKey = "cardLayout"
     private static var savedCardLayout: CardLayout {
         UserDefaults.standard.string(forKey: cardLayoutKey).flatMap(CardLayout.init(rawValue:)) ?? .board
@@ -580,6 +587,12 @@ final class WorkshopModel {
     /// Menus only open the panel: a pick in a menu with the mouse is not taken as the user's (`HumanInput`), so what
     /// gets signed is done with the panel's own buttons, or with the keyboard.
     var arranging: Arranging?
+
+    /// Whether the panel hangs from `place`, as a popover wants it. Closing it leaves alone one opened somewhere else
+    /// since (the header's and a sidebar row's are both there).
+    func arrangePanel(at place: Arranging) -> Binding<Bool> {
+        Binding(get: { self.arranging == place }, set: { if !$0, self.arranging == place { self.arranging = nil } })
+    }
 
     /// Return in the panel's name box. Nothing is signed when the name stays as it is. false when it was not taken:
     /// the panel stays up, with the notice saying why.

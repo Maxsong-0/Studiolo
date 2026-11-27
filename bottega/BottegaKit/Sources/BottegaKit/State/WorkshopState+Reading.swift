@@ -51,32 +51,37 @@ extension WorkshopState {
     /// The line's name: the one the user gave it, the title of the card it carries, what LMAS's own letter that
     /// started it is about, or the first line of its first letter.
     public func title(of thread: Line) -> String {
-        if let title = arrangement(of: thread.id).title.map({ UntrustedText.line($0, limit: 80) }), !title.isEmpty { return title }
+        if let title = arrangement(of: thread.id).title.map({ UntrustedText.line($0, limit: Self.titleLimit) }), !title.isEmpty {
+            return title
+        }
         return ownTitle(of: thread)
     }
 
     /// The name a line has of itself, whatever the user renamed it to: what going back to the original name gives.
     public func ownTitle(of thread: Line) -> String {
         if let title = cardsByTask[thread.id].flatMap({ cards[$0]?.title }) {
-            return UntrustedText.line(title, limit: 80)
+            return UntrustedText.line(title, limit: Self.titleLimit)
         }
         guard let first = thread.messages.first.flatMap({ messages[$0] }) else { return thread.id }
         if first.from == Session.coordinator, let title = coordinatorTitle(of: first), !title.isEmpty { return title }
         let line = first.body.split(whereSeparator: \.isNewline).first.map(String.init) ?? ""
-        let title = UntrustedText.line(String(line.drop { $0 == "#" || $0 == " " }), limit: 80)
+        let title = UntrustedText.line(String(line.drop { $0 == "#" || $0 == " " }), limit: Self.titleLimit)
         return title.isEmpty ? thread.id : title
     }
 
     /// A letter LMAS wrote: a reminder named by its card (its first sentence runs to 140 characters and says the
     /// card at the end); anything else by its first sentence, without the "[LMAS coordinator]" tag the line's place
-    /// in the sidebar already says.
+    /// in the sidebar already says. Any other tag in brackets is part of what it says, and stays.
     private func coordinatorTitle(of letter: Message) -> String? {
         if let card = reminderLetters[letter.id] {
-            let name = cards[card]?.title.map { "“\(UntrustedText.line($0, limit: 50))”" } ?? UntrustedText.line(card, limit: 40)
-            return UntrustedText.line("Reminder: \(name) waits for an answer", limit: 80)
+            let (before, after) = ("Reminder: ", " waits for an answer")
+            // The card's name is what gets cut, never the end: a cut one ends in "…", which counts too.
+            let room = Self.titleLimit - before.count - after.count - 1
+            let title = cards[card]?.title.map { UntrustedText.line($0, limit: room) } ?? ""
+            return before + (title.isEmpty ? UntrustedText.line(card, limit: room) : title) + after
         }
         var body = letter.body.drop { $0.isWhitespace }
-        if body.hasPrefix("["), let close = body.firstIndex(of: "]") { body = body[body.index(after: close)...] }
+        if body.hasPrefix(Self.coordinatorTag) { body = body.dropFirst(Self.coordinatorTag.count) }
         body = body.drop { $0.isWhitespace }
         let end = body.indices.first { index in
             let character = body[index]
@@ -85,8 +90,13 @@ extension WorkshopState {
             let next = body.index(after: index)
             return next == body.endIndex || body[next].isWhitespace
         }
-        return UntrustedText.line(String(body[..<(end ?? body.endIndex)]), limit: 80)
+        return UntrustedText.line(String(body[..<(end ?? body.endIndex)]), limit: Self.titleLimit)
     }
+
+    /// How long a line's name is let be.
+    static let titleLimit = 80
+    /// What LMAS starts its own letters with.
+    static let coordinatorTag = "[LMAS coordinator]"
 
     /// Who the user can talk to on a line: its members that are still open, agents only.
     public func recipients(on thread: Line) -> [Session] {

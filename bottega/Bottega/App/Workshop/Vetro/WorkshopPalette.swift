@@ -57,7 +57,8 @@ struct WorkshopPalette: View {
                         removal: .opacity))
         }
         .onAppear { isFocused = Self.takesKeyboard }
-        .onChange(of: query) { chosen = nil }
+        // What is typed picks the first of what it finds, even when that is what was there before.
+        .onChange(of: query) { chosen = self.rows.first?.id }
         // Nothing picked yet: the first row is, by name, from the moment it is shown.
         .onChange(of: rows.map(\.id), initial: true) { _, ids in if chosen == nil { chosen = ids.first } }
     }
@@ -219,10 +220,14 @@ struct WorkshopPalette: View {
     private var here: [Row] {
         var rows: [Row] = []
         if let id = model.page.line, model.state.threads[id] != nil {
-            let arrangement = model.state.arrangement(of: id)
             rows.append(Row(id: "rename:\(id)", title: "Rename line…", glyph: .symbol("character.cursor.ibeam")) {
                 model.arranging = .init(line: id, inSidebar: false)
             })
+        }
+        // Only with a link to send them on (not for a recording): the panel says why its buttons are off, a palette
+        // row would do nothing and say nothing.
+        if let id = model.page.line, model.state.threads[id] != nil, model.client != nil {
+            let arrangement = model.state.arrangement(of: id)
             // Each says what it does, and its name changes with it, so a row lit as Pin never runs as Unpin.
             let pin = !arrangement.isPinned
             rows.append(
@@ -303,7 +308,7 @@ struct WorkshopPalette: View {
         var rows = [
             Row(id: "layout:\(layout.rawValue)", title: isList ? "Show cards as a board" : "Show cards as a list", glyph: .symbol(isList ? "rectangle.split.3x1" : "list.bullet")) {
                 model.page = .board
-                withAnimation(reduceMotion ? nil : .smooth(duration: 0.25)) { model.cardLayout = layout }
+                withAnimation(CardsMotion.switching(reduceMotion: reduceMotion)) { model.cardLayout = layout }
             },
             Row(id: "panel:\(showsInspector)", title: showsInspector ? "Show the panel" : "Hide the panel", glyph: .symbol("sidebar.trailing")) {
                 model.showsInspector = showsInspector

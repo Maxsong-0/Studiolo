@@ -404,9 +404,7 @@ private struct LineRow: View {
 
     private var here: WorkshopModel.Arranging { .init(line: line.id, inSidebar: true) }
 
-    private var isArranging: Binding<Bool> {
-        Binding(get: { model.arranging == here }, set: { if !$0, model.arranging == here { model.arranging = nil } })
-    }
+    private var isArranging: Binding<Bool> { model.arrangePanel(at: here) }
 
     /// Red: waiting for you. Amber dots: an AI at work on it. Filled: something you have not read; not on the line
     /// that is open, which is being read and is marked so when it is left (`WorkshopModel.markRead`).

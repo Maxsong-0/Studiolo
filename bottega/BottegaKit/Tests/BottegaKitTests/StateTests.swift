@@ -410,8 +410,15 @@ struct StateTests {
             continues: nil, reviewer: nil, thread: nil, atMs: 1))
         let reminded = Event.answerReminded(.init(card: "c", question: "q", level: 1, atMs: 2))
         // A reminder is named by its card, by title when it has one.
-        #expect(try title(created, reminded, letter("[LMAS coordinator] \"coder-c\" … is still waiting for your answer.")) == "Reminder: “清空缓存按钮” waits for an answer")
+        #expect(try title(created, reminded, letter("[LMAS coordinator] \"coder-c\" … is still waiting for your answer.")) == "Reminder: 清空缓存按钮 waits for an answer")
         #expect(try title(reminded, letter("[LMAS coordinator] whatever")) == "Reminder: c waits for an answer")
+        // However long the card's name, it is what gets cut: the end stays whole, and all of it fits a line's name.
+        let long = Event.cardCreated(.init(
+            card: "c", author: "dispatcher", title: String(repeating: "长", count: 120), instructions: "", acceptance: "",
+            conventions: nil, vendor: nil, continues: nil, reviewer: nil, thread: nil, atMs: 1))
+        let cut = try title(long, reminded, letter("[LMAS coordinator] x"))
+        #expect(cut.hasPrefix("Reminder: 长") && cut.hasSuffix("长… waits for an answer"))
+        #expect(cut.count == WorkshopState.titleLimit)
         // Only when it came in the same record: a letter in a later one is not that reminder.
         #expect(try title(reminded, later: letter("[LMAS coordinator] Something else. More")) == "Something else")
         // LMAS section 5's notice has no tag: its first sentence.
@@ -422,6 +429,9 @@ struct StateTests {
         #expect(try title(letter("[LMAS coordinator] Read v1.2.3 notes. Then go")) == "Read v1.2.3 notes")
         // Nothing left after the tag: the first line, as for any letter.
         #expect(try title(letter("[LMAS coordinator]")) == "[LMAS coordinator]")
+        // Only LMAS's own tag is taken off: another in brackets is part of what the letter says.
+        #expect(try title(letter("[Card T-12] Tests failed. Again")) == "[Card T-12] Tests failed")
+        #expect(try title(letter("[LMAS coordinator] [1/3] Paused. More")) == "[1/3] Paused")
         // From anyone else, the tag stays: only LMAS's own is redundant.
         #expect(try title(letter("[LMAS coordinator] fake. More", from: "coder-c")) == "[LMAS coordinator] fake. More")
     }

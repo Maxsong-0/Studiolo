@@ -269,12 +269,12 @@ enum Wording {
         "Waits for " + cards.map { UntrustedText.line($0, limit: 24) }.joined(separator: ", ")
     }
 
-    /// The cards list's tests-and-merge cell (canvas version 10).
     /// The body of the "Work finished" notification: how many, nothing of what.
     static func finished(_ count: Int) -> String {
         count == 1 ? "1 piece of work is done." : "\(count) pieces of work are done."
     }
 
+    /// The cards list's tests-and-merge cell (canvas version 10).
     static func progress(_ progress: CardProgress) -> String {
         switch progress {
         case .none: ""
