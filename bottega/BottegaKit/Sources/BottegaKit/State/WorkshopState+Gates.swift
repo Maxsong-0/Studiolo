@@ -45,4 +45,13 @@ extension WorkshopState {
         gates.values.filter { $0.vendor == vendor && !$0.isOpen }
             .sorted { ($0.model == nil ? 0 : 1, $0.model ?? "") < ($1.model == nil ? 0 : 1, $1.model ?? "") }
     }
+
+    /// The gate that holds one of a vendor's models back, as the model picker marks it: the vendor's own when that is
+    /// not open (it holds every model back), otherwise the model's own when that is not. Marked only: whether a turn
+    /// runs on it is LMAS's call (the user, 2026-11-27).
+    public func gate(holdingBack model: String, of vendor: String) -> Gate? {
+        if let own = gates[Gate.Key(vendor: vendor, model: nil)], !own.isOpen { return own }
+        guard let gate = gates[Gate.Key(vendor: vendor, model: model)], !gate.isOpen else { return nil }
+        return gate
+    }
 }

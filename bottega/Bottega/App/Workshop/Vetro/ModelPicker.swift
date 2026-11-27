@@ -133,19 +133,29 @@ struct ModelPicker: View {
                     }
                     .frame(width: 34, height: 34)
                     .background(isThis ? look.selection : .clear, in: .rect(cornerRadius: 9, style: .continuous))
+                    .overlay(alignment: .topTrailing) { if !gates(of: other).isEmpty { QuotaMark(size: 9).offset(x: 2, y: -2) } }
                     .opacity(isThis || switchVendor != nil ? 1 : 0.4)
                     .contentShape(.rect)
                 }
                 .buttonStyle(.plain)
                 .disabled(isThis || switchVendor == nil)
-                .help(isThis ? (Maker(vendor: other)?.title ?? other)
-                    : switchVendor == nil ? "Another maker takes a line of its own: open one from its home" : "Go to \(Maker(vendor: other)?.title ?? other)")
+                .help(railHelp(other, isThis: isThis))
                 .accessibilityLabel(Maker(vendor: other)?.title ?? other)
+                .accessibilityValue(gates(of: other).map(Wording.gate).joined(separator: " "))
                 .accessibilityAddTraits(isThis ? .isSelected : [])
             }
             Spacer(minLength: 0)
         }
         .padding(8)
+    }
+
+    private func gates(of vendor: String) -> [Gate] { model.state.gatesNotOpen(of: vendor) }
+
+    private func railHelp(_ other: String, isThis: Bool) -> String {
+        let name = Maker(vendor: other)?.title ?? other
+        let what = isThis ? name
+            : switchVendor == nil ? "Another maker takes a line of its own: open one from its home" : "Go to \(name)"
+        return ([what] + gates(of: other).map(Wording.gate)).joined(separator: "\n")
     }
 
     /// The makers LMAS has asked, in the design's order.
@@ -214,6 +224,8 @@ struct ModelPicker: View {
     private func row(_ item: Event.ModelsListed.Model, list: Event.ModelsListed) -> some View {
         let isUsed = selection?.model == item.model
         let isFocused = focus == item.model
+        // Marked, still picked like any other (the user, 2026-11-27): whether a turn runs on it is LMAS's call.
+        let gate = model.state.gate(holdingBack: item.model, of: vendor)
         return Button {
             focus = item.model
             // A model whose level cannot be chosen is used as it is; otherwise the level picks it.
@@ -224,6 +236,16 @@ struct ModelPicker: View {
                     Text(verbatim: UntrustedText.line(item.name, limit: 60)).font(.system(size: 12.5)).lineLimit(1)
                     if let about = item.about {
                         Text(verbatim: UntrustedText.line(about, limit: 120)).font(.system(size: 10.5)).foregroundStyle(.secondary).lineLimit(1)
+                    }
+                    if let gate {
+                        Label {
+                            Text(verbatim: "Quota · \(Wording.gateLevel(gate.level))")
+                        } icon: {
+                            Image(systemName: Wording.gateSymbol(gate.level))
+                        }
+                        .font(.system(size: 10.5))
+                        .foregroundStyle(.orange)
+                        .lineLimit(1)
                     }
                 }
                 Spacer(minLength: 0)
@@ -238,7 +260,9 @@ struct ModelPicker: View {
             .contentShape(.rect)
         }
         .buttonStyle(.plain)
+        .help(gate.map(Wording.gate) ?? "")
         .accessibilityAddTraits(isUsed ? .isSelected : [])
+        .accessibilityValue(gate.map(Wording.gate) ?? "")
     }
 
     // MARK: Reasoning
@@ -284,6 +308,18 @@ struct ModelPicker: View {
                 }
             }
             Spacer(minLength: 0)
+            if let focused, let gate = model.state.gate(holdingBack: focused.model, of: vendor) {
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    QuotaMark(size: 10)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(verbatim: "Quota gate · \(Wording.gateLevel(gate.level))").fontWeight(.semibold)
+                        Text(verbatim: Wording.gateDetail(gate)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                .font(.system(size: 11))
+                .padding(.horizontal, 6)
+                .accessibilityElement(children: .combine)
+            }
             Divider().padding(.vertical, 6)
             HStack {
                 Text("Sandbox").foregroundStyle(.secondary)
@@ -298,5 +334,17 @@ struct ModelPicker: View {
 
     private var focused: Event.ModelsListed.Model? {
         catalog?.models.first { $0.model == focus }
+    }
+}
+
+/// A quota gate that is not open, marked in orange: red is only for what waits on the user.
+private struct QuotaMark: View {
+    let size: CGFloat
+
+    var body: some View {
+        Image(systemName: "gauge.with.dots.needle.67percent")
+            .font(.system(size: size, weight: .semibold))
+            .foregroundStyle(.orange)
+            .accessibilityHidden(true)
     }
 }

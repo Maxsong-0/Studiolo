@@ -85,6 +85,27 @@ struct GateTests {
     @Test func anUnknownLevelIsKeptAndNotTakenForOpen() throws {
         let state = try state([gate("agy", "half_closed")])
         #expect(state.gatesNotOpen(of: "agy").first?.level == "half_closed")
+        #expect(state.gate(holdingBack: "any", of: "agy")?.level == "half_closed")
+    }
+
+    /// The picker marks a model by what holds it back: its vendor's gate first (it holds them all), then its own.
+    @Test func whatHoldsAModelBack() throws {
+        var state = try state([gate("codex", model: "big", "started_only")])
+        #expect(state.gate(holdingBack: "big", of: "codex")?.level == "started_only")
+        #expect(state.gate(holdingBack: "big", of: "codex")?.model == "big")
+        #expect(state.gate(holdingBack: "small", of: "codex") == nil)
+        // The same model name under another vendor is another model.
+        #expect(state.gate(holdingBack: "big", of: "claude") == nil)
+        state = try self.state([gate("codex", model: "big", "started_only")], [gate("codex", "closed", at: 2)])
+        #expect(state.gate(holdingBack: "big", of: "codex")?.model == nil)
+        #expect(state.gate(holdingBack: "small", of: "codex")?.level == "closed")
+        state = try self.state([gate("codex", model: "big", "open")], [gate("codex", "open", at: 2)])
+        #expect(state.gate(holdingBack: "big", of: "codex") == nil)
+        // As recorded: claude's own gate opened again, its Fable model's stays half shut.
+        let recorded = try Fixtures.state()
+        #expect(recorded.gate(holdingBack: "Fable", of: "claude")?.level == "started_only")
+        #expect(recorded.gate(holdingBack: "Opus", of: "claude") == nil)
+        #expect(recorded.gate(holdingBack: "anything", of: "grok")?.level == "closed")
     }
 
     @Test func aReassignedCardKeepsItsReviewerWhenNoneIsPickedAgain() throws {
