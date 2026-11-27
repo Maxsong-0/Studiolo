@@ -64,6 +64,16 @@ final class WorkshopModel {
     var showsInspector = false
     var showsLanes = true
 
+    /// The cards page as a board or as a list (Bottega-5 §7). Kept on this Mac, so it opens the way it was left.
+    enum CardLayout: String { case board, list }
+    var cardLayout = WorkshopModel.savedCardLayout {
+        didSet { UserDefaults.standard.set(cardLayout.rawValue, forKey: Self.cardLayoutKey) }
+    }
+    private static let cardLayoutKey = "cardLayout"
+    private static var savedCardLayout: CardLayout {
+        UserDefaults.standard.string(forKey: cardLayoutKey).flatMap(CardLayout.init(rawValue:)) ?? .board
+    }
+
     /// The inside of turns, as far as pushed or fetched.
     private(set) var turns: [String: TurnModel] = [:]
 

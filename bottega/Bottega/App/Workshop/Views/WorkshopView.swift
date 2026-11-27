@@ -65,6 +65,7 @@ struct MainPane: View {
 private struct PageHeader: View {
     @Environment(WorkshopModel.self) private var model
     @Environment(Look.self) private var look
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         HStack(spacing: 10) {
@@ -99,6 +100,18 @@ private struct PageHeader: View {
                 .labelsHidden()
                 .fixedSize()
                 .help("Show this line as a timeline or as letters between agents")
+            }
+            if model.page == .board {
+                @Bindable var model = model
+                // The same kind of control as Chat / Sequence in the canvas.
+                Picker("Layout", selection: $model.cardLayout.animation(reduceMotion ? nil : .smooth(duration: 0.25))) {
+                    Text("Board").tag(WorkshopModel.CardLayout.board)
+                    Text("List").tag(WorkshopModel.CardLayout.list)
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .fixedSize()
+                .help("Show the cards as a board or as a list, most recent first")
             }
             Button { model.showsInspector.toggle() } label: {
                 Image(systemName: "sidebar.trailing")
@@ -153,7 +166,11 @@ struct PageView: View {
             case .dispatcher:
                 TimelinePage(rows: model.state.dispatcherRows, key: .dispatcher, empty: Self.emptyDispatcher)
             case .waiting: WaitingView()
-            case .board: BoardView()
+            case .board:
+                switch model.cardLayout {
+                case .board: BoardView().transition(.opacity)
+                case .list: CardListView().transition(.opacity)
+                }
             case .activity: ActivityView()
             case .devices: DevicesView()
             case .projects: ProjectsView()

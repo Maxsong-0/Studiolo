@@ -269,6 +269,31 @@ enum Wording {
         "Waits for " + cards.map { UntrustedText.line($0, limit: 24) }.joined(separator: ", ")
     }
 
+    /// The cards list's tests-and-merge cell (canvas version 10).
+    static func progress(_ progress: CardProgress) -> String {
+        switch progress {
+        case .none: ""
+        case .waitsFor(let cards): "After " + cards.map { UntrustedText.line($0, limit: 24) }.joined(separator: ", ")
+        case .testsRunning: "Tests running"
+        case .testsPassed: "Tests passed"
+        case .testsFailed(let why): "Tests failed · \(UntrustedText.line(why.text, limit: 120))"
+        case .mergeWaitsForYou: "Merge needs you"
+        case .merging(let stage):
+            switch stage {
+            case .requested: "Merge requested"
+            case .checked: "Merge checked"
+            case .prepared: "Merged on the side, testing"
+            case .restarted: "Merge starting over"
+            case .landing: "Landing"
+            case .finished: "Merged"
+            case .failed(let why, _): "Not merged · \(UntrustedText.line(why.text, limit: 120))"
+            }
+        case .merged: "Merged"
+        case .notMerged(let why): "Not merged · \(UntrustedText.line(why.text, limit: 120))"
+        case .failed(let why): UntrustedText.line(why.text, limit: 120)
+        }
+    }
+
     /// A question a card's AI asked that nobody has answered: whom LMAS reminded, and how long it has been.
     static func reminder(of card: String, _ reminder: Card.Reminder, to: String?) -> String {
         let since = switch reminder.level {

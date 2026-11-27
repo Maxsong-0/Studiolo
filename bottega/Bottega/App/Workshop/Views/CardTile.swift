@@ -44,7 +44,7 @@ struct CardTile: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
             }
-            if let size = lastSize {
+            if let size = model.state.size(of: card) {
                 Label {
                     Text(verbatim: "\(Wording.count(size.files, "file", "files")), +\(size.insertions) −\(size.deletions)").monospacedDigit()
                 } icon: {
@@ -87,10 +87,5 @@ struct CardTile: View {
         .accessibilityElement(children: .combine)
         .accessibilityAddTraits(.isButton)
         .accessibilityAction { model.detail = .card(card.id) }
-    }
-
-    /// Files changed is known once a merge has been checked.
-    private var lastSize: Merge.Size? {
-        card.merges.lazy.reversed().compactMap { model.state.merges[$0]?.size }.first
     }
 }
