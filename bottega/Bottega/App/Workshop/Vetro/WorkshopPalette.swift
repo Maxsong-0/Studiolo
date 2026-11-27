@@ -59,7 +59,9 @@ struct WorkshopPalette: View {
         .onAppear { isFocused = Self.takesKeyboard }
         // What is typed picks the first of what it finds, even when that is what was there before.
         .onChange(of: query) { chosen = self.rows.first?.id }
-        // Nothing picked yet: the first row is, by name, from the moment it is shown.
+        // Nothing picked yet: the first row is, by name, from the moment it is shown. A lit row that an event takes
+        // away (Pin turning into Unpin) leaves nothing lit, on purpose: falling to the first row could light the
+        // opposite of what was meant just as Return goes down. The arrow keys start again from the top.
         .onChange(of: rows.map(\.id), initial: true) { _, ids in if chosen == nil { chosen = ids.first } }
     }
 

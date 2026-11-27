@@ -123,11 +123,7 @@ private struct CardListRow: View {
         model.state.size(of: card).map { "+\($0.insertions) −\($0.deletions)" } ?? ""
     }
 
-    /// Blank when nothing says when (`lastActivity` is 0), rather than an age counted from 1970.
-    private var age: String {
-        let at = model.state.lastActivity(of: card)
-        return at == 0 ? "" : Elapsed.short(from: at, to: UInt64(max(0, now.timeIntervalSince1970 * 1000)))
-    }
+    private var age: String { model.state.age(of: card, now: UInt64(max(0, now.timeIntervalSince1970 * 1000))) }
 
     private func label(_ column: WorkshopState.Column, _ progress: CardProgress) -> String {
         [UntrustedText.line(card.id, limit: 24), UntrustedText.line(card.title ?? "Untitled", limit: 160),

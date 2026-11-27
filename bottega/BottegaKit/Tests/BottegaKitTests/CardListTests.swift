@@ -148,6 +148,14 @@ struct CardListTests {
         #expect(label("/x/a\u{202E}b") == UntrustedText.line("a\u{202E}b", limit: 40))
     }
 
+    @Test func aCardNothingTimesHasNoAge() throws {
+        let minute: UInt64 = 60_000
+        var state = WorkshopState()
+        try state.apply(record(1, created("timed", at: minute), created("untimed", at: 0)))
+        #expect(try state.age(of: card(state, "timed"), now: 3 * minute) == "2m")
+        #expect(try state.age(of: card(state, "untimed"), now: 3 * minute) == "")
+    }
+
     @Test func howLongAgo() {
         let minute: UInt64 = 60_000
         #expect(Elapsed.short(from: 0, to: 59_999) == "now")

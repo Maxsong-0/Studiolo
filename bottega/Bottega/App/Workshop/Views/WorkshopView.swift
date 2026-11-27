@@ -199,7 +199,7 @@ struct PageView: View {
             case .waiting: WaitingView()
             case .board:
                 switch model.cardLayout {
-                case .board: BoardView(risesIn: model.cardLayoutSwitched).transition(.opacity)
+                case .board: BoardView(risesIn: model.cardsRise.isDue).transition(.opacity)
                 case .list: CardListView().transition(.opacity)
                 }
             case .activity: ActivityView()

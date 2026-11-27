@@ -28,7 +28,10 @@ struct BoardView: View {
                 }
             }
             .listMovement(ids: WorkshopState.Column.allCases.flatMap { model.state.cards(in: $0).map(\.id) }, selection: selection)
-            .onAppear { hasRisen = true }
+            .onAppear {
+                hasRisen = true
+                if risesIn { model.boardRose() }
+            }
         }
     }
 

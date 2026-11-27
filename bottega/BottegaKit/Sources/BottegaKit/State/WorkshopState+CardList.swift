@@ -55,6 +55,13 @@ extension WorkshopState {
         return times.compactMap(\.self).max() ?? 0
     }
 
+    /// The list's last column: how long since anything happened to it. Blank when nothing says when, rather than an
+    /// age counted from 1970.
+    public func age(of card: Card, now: UInt64) -> String {
+        let at = lastActivity(of: card)
+        return at == 0 ? "" : Elapsed.short(from: at, to: now)
+    }
+
     /// Every card, the one something last happened to first. Of two that moved at the same moment, the one heard of
     /// later comes first, so the order does not flicker between redraws.
     public var cardsByRecentActivity: [Card] {

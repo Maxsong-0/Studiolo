@@ -37,7 +37,7 @@ final class WorkshopModel {
             if page != oldValue {
                 detail = nil
                 arranging = nil
-                cardLayoutSwitched = false
+                cardsRise.pageChanged()
                 markRead(leaving: oldValue, opening: page)
             }
             if let section = page.section { self.section = section }
@@ -80,12 +80,14 @@ final class WorkshopModel {
     var cardLayout = WorkshopModel.savedCardLayout {
         didSet {
             UserDefaults.standard.set(cardLayout.rawValue, forKey: Self.cardLayoutKey)
-            cardLayoutSwitched = true
+            cardsRise.layoutSwitched()
         }
     }
-    /// Switched while the cards page is up: the one switched to comes in a card or row at a time (`CardsMotion`).
-    /// Set before the page is drawn again, so the first switch rises too; going to another page clears it.
-    private(set) var cardLayoutSwitched = false
+    /// Whether the board comes in a card at a time when it next shows (`CardsMotion.Cue`). Set before the page is
+    /// drawn again, so the first switch rises too.
+    private(set) var cardsRise = CardsMotion.Cue()
+    /// The board came in for the switch: shown again on the same page (the link coming back, say), it is there at once.
+    func boardRose() { cardsRise.boardRose() }
     private static let cardLayoutKey = "cardLayout"
     private static var savedCardLayout: CardLayout {
         UserDefaults.standard.string(forKey: cardLayoutKey).flatMap(CardLayout.init(rawValue:)) ?? .board
