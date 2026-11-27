@@ -65,6 +65,13 @@ final class WorkshopModel {
     var showsInspector = false
     /// ⌘K (`WorkshopPalette`).
     var showsPalette = false
+    @ObservationIgnored let notifier = FinishedNotifier()
+
+    /// The app came to the front: what was on screen is seen, and so is what a notification told.
+    func cameToFront() {
+        notifier.cameToFront()
+        reportSeen()
+    }
     var showsLanes = true
 
     /// The cards page as a board or as a list (Bottega-5 §7). Kept on this Mac, so it opens the way it was left.
@@ -210,7 +217,10 @@ final class WorkshopModel {
         switch update {
         case .status(let status):
             self.status = status
-            if status == .live { reportSeen() }
+            if status == .live {
+                reportSeen()
+                notifier.askPermission()
+            }
         case .reset(let start):
             state = WorkshopState(startingAt: start)
             turns = [:]
@@ -231,8 +241,12 @@ final class WorkshopModel {
     }
 
     private func apply(_ records: [Record]) {
+        // Kept only when what is new could be told: live (not catching up after a reconnect or a reload), and the
+        // app not in front.
+        let earlier = isLive && notifier.isListening ? state : nil
         do {
             for record in records { try state.apply(record) }
+            if let earlier { notifier.tell(state.finished(since: earlier)) }
         } catch {
             // The link checks the numbers before it passes records on; if they still do not fit, stop all the same.
             // Reconnect and Reload All Events then start over with a new link (`startOver`).

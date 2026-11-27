@@ -28,7 +28,7 @@ struct WorkshopView: View {
             AskSheet(id: item.id)
         }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
-            model.reportSeen()
+            model.cameToFront()
         }
     }
 }
@@ -329,6 +329,7 @@ struct Banner<Actions: View>: View {
 struct WorkshopSettings: View {
     @Environment(WorkshopModel.self) private var model
     @State private var isChoosing = false
+    @AppStorage(FinishedNotifier.isOnKey) private var notifiesWhenFinished = true
 
     var body: some View {
         Form {
@@ -344,6 +345,13 @@ struct WorkshopSettings: View {
                 }
             } footer: {
                 Text("The folder LMAS was started with. Bottega connects to ui.sock in it, and has no other way in.")
+                    .foregroundStyle(.secondary)
+            }
+            Section {
+                Toggle("Notify when work finishes", isOn: $notifiesWhenFinished)
+                    .onChange(of: notifiesWhenFinished) { _, isOn in if isOn { model.notifier.askPermission() } }
+            } footer: {
+                Text("Only while Bottega is not in front, and only how many: a card done or failed, or a turn you took part in. No line, card or words.")
                     .foregroundStyle(.secondary)
             }
             if let overview = model.overview {
