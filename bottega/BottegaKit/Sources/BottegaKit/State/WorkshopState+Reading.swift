@@ -52,6 +52,11 @@ extension WorkshopState {
     /// started it is about, or the first line of its first letter.
     public func title(of thread: Line) -> String {
         if let title = arrangement(of: thread.id).title.map({ UntrustedText.line($0, limit: 80) }), !title.isEmpty { return title }
+        return ownTitle(of: thread)
+    }
+
+    /// The name a line has of itself, whatever the user renamed it to: what going back to the original name gives.
+    public func ownTitle(of thread: Line) -> String {
         if let title = cardsByTask[thread.id].flatMap({ cards[$0]?.title }) {
             return UntrustedText.line(title, limit: 80)
         }

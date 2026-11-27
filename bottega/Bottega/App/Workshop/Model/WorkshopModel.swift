@@ -36,6 +36,7 @@ final class WorkshopModel {
         didSet {
             if page != oldValue {
                 detail = nil
+                arranging = nil
                 markRead(leaving: oldValue, opening: page)
             }
             if let section = page.section { self.section = section }
@@ -118,6 +119,10 @@ final class WorkshopModel {
         if let page = environment["BOTTEGA_PAGE"].flatMap(Page.init(word:)) { model.page = page }
         if let detail = environment["BOTTEGA_DETAIL"].flatMap(Detail.init(word:)) { model.detail = detail }
         if environment["BOTTEGA_LANES"] == "0" { model.showsLanes = false }
+        // `BOTTEGA_ARRANGE=header` or `sidebar`: the line's arrange panel is up, for a screenshot.
+        if let place = environment["BOTTEGA_ARRANGE"], let line = model.page.line {
+            model.arranging = Arranging(line: line, inSidebar: place == "sidebar")
+        }
         return model
         #else
         return WorkshopModel(source: chosenSource)
@@ -545,6 +550,50 @@ final class WorkshopModel {
             guard parts.count == 2, let seq = UInt64(parts[0]), let index = Int(parts[1]) else { return nil }
             return TripID(seq: seq, index: index)
         })
+    }
+
+    // MARK: Arranging
+
+    /// The line whose arrange panel is up, and what it hangs from: the page's header or the line's row in the sidebar.
+    struct Arranging: Equatable {
+        let line: String
+        let inSidebar: Bool
+    }
+    /// Menus only open the panel: a pick in a menu with the mouse is not taken as the user's (`HumanInput`), so what
+    /// gets signed is done with the panel's own buttons, or with the keyboard.
+    var arranging: Arranging?
+
+    /// Return in the panel's name box. Nothing is signed when the name stays as it is. false when it was not taken:
+    /// the panel stays up, with the notice saying why.
+    @discardableResult func rename(_ line: String, to text: String) -> Bool {
+        guard let thread = state.threads[line], let intent = state.renaming(thread, to: text) else { return true }
+        return arrange(intent)
+    }
+
+    func togglePin(_ line: String) {
+        arrange(.arrange(line: line, title: nil, pinned: !state.arrangement(of: line).isPinned, archived: nil))
+    }
+
+    func toggleArchive(_ line: String) {
+        arrange(.arrange(line: line, title: nil, pinned: nil, archived: !state.arrangement(of: line).isArchived))
+    }
+
+    /// Kept and sent later while LMAS is out of reach, as a letter is (`IntentDraft.keeps`).
+    @discardableResult private func arrange(_ intent: IntentDraft) -> Bool {
+        guard let client, isFromTheUser() else { return false }
+        do throws(IntentDraft.Problem) {
+            try intent.check()
+        } catch {
+            notice = Wording.why(error)
+            return false
+        }
+        submit(intent, to: client)
+        return true
+    }
+
+    /// Something about the line is on its way to LMAS.
+    func isArranging(_ line: String) -> Bool {
+        outbox.contains { if case .arrange(line, _, _, _) = $0.draft { true } else { false } }
     }
 
     // MARK: Read

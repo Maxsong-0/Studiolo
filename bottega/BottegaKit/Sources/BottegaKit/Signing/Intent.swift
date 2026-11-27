@@ -176,7 +176,8 @@ public enum IntentDraft: Codable, Equatable, Sendable {
     }
 
     /// Without what Unicode calls white space at either end, as LMAS (Rust's `trim`) sees it: scalar by scalar.
-    private static func trimmed(_ text: String) -> String {
+    /// Without the space around it, as LMAS reckons space (Unicode White_Space).
+    static func trimmed(_ text: String) -> String {
         let isSpace = { (scalar: Unicode.Scalar) in scalar.properties.isWhitespace }
         let kept = text.unicodeScalars.drop(while: isSpace).reversed().drop(while: isSpace).reversed()
         return String(String.UnicodeScalarView(kept))

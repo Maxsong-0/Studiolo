@@ -101,6 +101,9 @@ private struct PageHeader: View {
                 .fixedSize()
                 .help("Show this line as a timeline or as letters between agents")
             }
+            if case .line(let id) = model.page, let line = model.state.threads[id] {
+                ArrangeButton(line: line)
+            }
             if model.page == .board {
                 @Bindable var model = model
                 // The same kind of control as Chat / Sequence in the canvas.
@@ -126,6 +129,31 @@ private struct PageHeader: View {
         }
         .padding(3)
         .glassEffect(.clear.tint(look.surface), in: .capsule)
+    }
+}
+
+/// Opens the line's arrange panel; opening it signs nothing.
+private struct ArrangeButton: View {
+    @Environment(WorkshopModel.self) private var model
+    @Environment(Look.self) private var look
+    let line: BottegaKit.Line
+
+    var body: some View {
+        let here = WorkshopModel.Arranging(line: line.id, inSidebar: false)
+        let isOpen = Binding(
+            get: { model.arranging == here },
+            set: { if !$0, model.arranging == here { model.arranging = nil } })
+        Button { model.arranging = isOpen.wrappedValue ? nil : here } label: {
+            Image(systemName: "ellipsis")
+                .font(.system(size: 13))
+                .frame(width: 28, height: 28)
+                .background(isOpen.wrappedValue ? look.selection : .clear, in: .circle)
+                .contentShape(.circle)
+        }
+        .buttonStyle(.plain)
+        .help("Rename, pin or archive this line")
+        .accessibilityLabel("Arrange line")
+        .popover(isPresented: isOpen, arrowEdge: .bottom) { ArrangePanel(line: line) }
     }
 }
 

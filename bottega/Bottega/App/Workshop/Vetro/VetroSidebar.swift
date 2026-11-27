@@ -372,6 +372,17 @@ private struct LineRow: View {
             }
             .fixedSize()
         }
+        // The menu only opens the panel: a pick in a menu with the mouse is not taken as the user's (`HumanInput`).
+        .contextMenu {
+            Button("Arrange…") { model.arranging = here }
+        }
+        .popover(isPresented: isArranging, arrowEdge: .trailing) { ArrangePanel(line: line) }
+    }
+
+    private var here: WorkshopModel.Arranging { .init(line: line.id, inSidebar: true) }
+
+    private var isArranging: Binding<Bool> {
+        Binding(get: { model.arranging == here }, set: { if !$0, model.arranging == here { model.arranging = nil } })
     }
 
     /// Red: waiting for you. Amber dots: an AI at work on it. Filled: something you have not read; not on the line

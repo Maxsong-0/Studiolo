@@ -176,6 +176,19 @@ extension WorkshopState {
 extension WorkshopState {
     public func arrangement(of line: String) -> Arrangement { arrangements[line] ?? Arrangement() }
 
+    /// What Return in a line's name box asks of LMAS; nil when it changes nothing. The box starts with the name as
+    /// shown, which is not always the name as given (it can be cut short or cleaned up), so that is not taken for a
+    /// new one. An empty name, or the line's own, takes the user's away (section 11).
+    public func renaming(_ thread: Line, to text: String) -> IntentDraft? {
+        let name = IntentDraft.trimmed(text)
+        guard name != title(of: thread) else { return nil }
+        let given = arrangement(of: thread.id).title
+        if name.isEmpty || name == ownTitle(of: thread) {
+            return given == nil ? nil : .arrange(line: thread.id, title: "", pinned: nil, archived: nil)
+        }
+        return .arrange(line: thread.id, title: name, pinned: nil, archived: nil)
+    }
+
     /// The session a line is part of the talk with: the one the user started it with. nil for everyone else's lines.
     public func conversation(of thread: Line) -> String? {
         thread.messages.first.flatMap { messages[$0] }.flatMap { $0.isFromUser ? $0.to : nil }

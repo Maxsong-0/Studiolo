@@ -37,6 +37,7 @@ struct LineTests {
             return arrangement
         }())
         #expect(try state.title(of: #require(state.threads["msg-9"])) == "清空缓存")
+        #expect(try state.ownTitle(of: #require(state.threads["msg-9"])) == "给设置页加一个「清空缓存」按钮。")
         #expect(state.arrangement(of: "dispatcher").readThrough == 120)
         #expect(state.projectList.map(\.name) == ["atelier"])
 
@@ -170,6 +171,34 @@ struct LineTests {
         // One of which nothing can be shown is no name.
         let blank = try self.state([letter("m1", from: "x", to: "y")], [arranged("m1", title: "\u{202E}")])
         #expect(try blank.title(of: #require(blank.threads["m1"])) == "m1")
+    }
+
+    /// Return in the name box sends only what changes the name; an empty one, or the line's own, gives that back.
+    @Test func renamingSendsOnlyAChange() throws {
+        func rename(_ line: String, _ title: String) -> IntentDraft { .arrange(line: line, title: title, pinned: nil, archived: nil) }
+        let fresh = try state([letter("m1", from: "x", to: "y")])
+        let line = try #require(fresh.threads["m1"])
+        #expect(fresh.renaming(line, to: "Cache") == rename("m1", "Cache"))
+        #expect(fresh.renaming(line, to: " \tCache \n") == rename("m1", "Cache"))
+        // Its own name (the first line of its first letter, here "m1"), or none, while it has no other.
+        #expect(fresh.renaming(line, to: "m1") == nil)
+        #expect(fresh.renaming(line, to: "  ") == nil)
+
+        let named = try state([letter("m1", from: "x", to: "y")], [arranged("m1", title: "Cache")])
+        let again = try #require(named.threads["m1"])
+        #expect(named.title(of: again) == "Cache" && named.ownTitle(of: again) == "m1")
+        #expect(named.renaming(again, to: "Cache ") == nil)
+        #expect(named.renaming(again, to: "") == rename("m1", ""))
+        #expect(named.renaming(again, to: "m1") == rename("m1", ""))
+        #expect(named.renaming(again, to: "Other") == rename("m1", "Other"))
+
+        // The box shows a name cleaned up; Return on it as it is renames nothing.
+        let odd = try state([letter("m1", from: "x", to: "y")], [arranged("m1", title: "a\u{202E}b")])
+        let oddLine = try #require(odd.threads["m1"])
+        #expect(odd.renaming(oddLine, to: odd.title(of: oddLine)) == nil)
+        let long = try state([letter("m1", from: "x", to: "y")], [arranged("m1", title: String(repeating: "x", count: 120))])
+        let longLine = try #require(long.threads["m1"])
+        #expect(long.renaming(longLine, to: long.title(of: longLine)) == nil)
     }
 
     /// The user's talk with a session is all the lines they started with it; what anyone else started is not.
