@@ -218,7 +218,7 @@ M1 的 `workbench` 只消费内存文档与 M0 索引；`local-server` 按启动
 `testbox --remote testbox@testbox-ctl submit --project studiolo --recipe full --steps ci --arch x86_64 --memory 20G --cpu 8 --wait`（放后台等）。
 它逐步照搬原来 `ci.yml` 的 rust、frontend、alerts-worker 三个作业，命令一字不改，门禁由架构守卫逐行钉住；细则见 `AGENTS.md` 第五节。
 
-**测试与编译在哪跑按机器分**（细则见 `AGENTS.md` 第四、五、七节）：**Mac 一律不在本机跑**（2026-09-23 用户硬约束；唯一例外是 `bottega/` 的原生 Mac App，只在 Mac Studio 上经 `scripts/bottega-local` 跑，见 `CLAUDE.md`），`cargo test`／`fmt`／`clippy`／`build`、Python 契约、
+**测试与编译在哪跑按机器分**（细则见 `AGENTS.md` 第四、五、七节）：**Mac 一律不在本机跑**（2026-09-23 用户硬约束；`bottega/` 的原生 Mac App 也不例外，交测试箱的 Mac 节点 `--arch macos --project bottega`、经 `scripts/bottega-local` 在 Mac Studio 的工作树里原地跑，见 `CLAUDE.md`），`cargo test`／`fmt`／`clippy`／`build`、Python 契约、
 前端检查、真实管线都经测试箱（`testbox --remote testbox@testbox-ctl submit --arch x86_64 …`）或 `scripts/test-linux.sh <命令>`（同步到 `githubci` 原生跑，可带参数跑任意定向命令）；
 DGX（`max-spark`）2026-11-20 起不再用来开发和测试，测试箱只剩 x86_64 节点 108，aarch64 上没有地方跑（`AGENTS.md` 第七节）。
 下面列出的命令是 ci 套执行的内容，供对照与复现，不是让你在 Mac 上跑。

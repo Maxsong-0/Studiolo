@@ -2,18 +2,18 @@
 
 Bottega 在 Studiolo 仓库的 `bottega/` 目录里。Studiolo 仓库根的 `AGENTS.md`、`CLAUDE.md` 和 Max 的全局 CLAUDE.md 照常适用；下面只写这个目录特有的。来源和署名见 `README.md`。
 
-## 编译、测试（Mac Studio 本机的例外）
+## 编译、测试（只经 testbox 的 Mac 节点）
 
-- **Bottega 在 Mac Studio 本机编译、测试，一律经仓库根的 `scripts/bottega-local`**（`generate`、`build`、`test`、`run`、`xcodebuild <参数…>`、`swift <参数…>`），不裸跑 `xcodebuild`、`swift`、`xcodegen`。依据是 Studiolo 的 vault ADR-043 和仓库根 `CLAUDE.md`「Bottega 在 Mac Studio 本机编译、测试」一节；MacBook 和别的机器上脚本自己拒绝，那时如实写「这台编不了」，不改交 108（108 编不了 macOS App）。
+- **Bottega 的编译、测试交 testbox 的 Mac 节点 `macos-1`**（就是 Mac Studio 本机），在 Mac Studio 上站在工作树根目录交，整条放后台等：编 Debug 版 `testbox --remote testbox@testbox-ctl submit --arch macos --project bottega --memory 8G --cpu 8 --wait`，跑全部测试加 `--recipe full`，别的命令用 `--cmd 'scripts/bottega-local …'`。任务在你交的那个目录里原地跑，一律经仓库根的 `scripts/bottega-local`；它的 `build`、`test`、`xcodebuild`、`swift` 在 testbox 任务外拒跑（退 2，印出该交的命令）。不裸跑 `xcodebuild`、`swift`、`xcodegen`。依据是 Studiolo 的 vault ADR-048（取代 ADR-043 的本机直跑）和仓库根 `CLAUDE.md`「Bottega 的编译、测试只经 testbox 的 Mac 节点」一节；MacBook 交会被拒，如实写「这台编不了」，不改交 108（108 编不了 macOS App）。
 - 只编 Debug；发布版签名由 Max 本人做，脚本拒绝 Release。
-- 派出去的代理（Workflow 代理、Crew hand）不编译、不测试，把命令写进回执交主会话跑。全量 `test` 同一时间只许一个会话跑，开跑前在 vault `04-协调/TASKS.md` 登记占用。
+- 派出去的代理（Workflow 代理、Crew hand）不编译、不测试、不交 testbox，把命令写进回执交主会话交。同一目录、同一项目同时只跑一个，testbox 自己排队，不用再在 vault TASKS 登记占用。
 - `** BUILD SUCCEEDED **`、`** TEST SUCCEEDED **` 之前只能报「代码改完·未验证」。`xcodebuild` 日志尾部的 `(N failures)` 不含细节，`grep "error:"` 才看得到真正的错误。
-- 改过 `project.yml` 或增删源文件不用手动 generate：`build`、`test`、`run` 每次都先生成工程。
-- **编过不等于能跑**：`scripts/bottega-local run` 起来后确认进程还在，才算验收。启动即崩先看 `~/Library/Logs/DiagnosticReports/*.ips` 的 `termination` 段。
+- 改过 `project.yml` 或增删源文件不用手动 generate：`build`、`test` 每次都先生成工程。
+- **编过不等于能跑**：testbox 编好后，在任务外 `scripts/bottega-local run` 打开（它不编译；编好以后源码又改过就拒绝打开），起来后确认进程还在，才算验收。启动即崩先看 `~/Library/Logs/DiagnosticReports/*.ips` 的 `termination` 段。
 
 ## 不要擅自重启装好的 App
 
-`scripts/quick_run.sh` 会退出并重启 `/Applications/Bottega Dev.app`。只有 Max 明确说「装上 / 重启」才执行；平时验证用 `scripts/bottega-local run`（打开的是 `build.noindex` 里那份）。
+`scripts/quick_run.sh` 把 testbox 编好的 Debug 版装进 `/Applications/Bottega Dev.app`（它不编译），并退出、重启正在跑的那份。只有 Max 明确说「装上 / 重启」才执行；平时验证用 `scripts/bottega-local run`（打开的是 `build.noindex` 里那份）。
 
 ## 分层
 
@@ -58,7 +58,7 @@ Bottega 在 Studiolo 仓库的 `bottega/` 目录里。Studiolo 仓库根的 `AGE
 
 ## Crew hands
 
-- hand 只改 brief 里点名的文件并报告，**不 build、不测、不跑任何检查**；所有 hand 交回后由主会话经 `scripts/bottega-local` 构建一次。
+- hand 只改 brief 里点名的文件并报告，**不 build、不测、不跑任何检查**；所有 hand 交回后由主会话交 testbox 的 Mac 节点（经 `scripts/bottega-local`）构建一次。
 - delegation 块每个条目带 `files`，两个条目不得共用文件。
 
 ## 提交

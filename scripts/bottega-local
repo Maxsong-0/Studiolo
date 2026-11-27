@@ -1,21 +1,30 @@
 #!/usr/bin/env bash
-# Bottega 在 Mac Studio 上本机编译、测试的入口（vault ADR-043，全局「Mac 上不编译」的例外）。
+# Bottega 的编译、测试入口：只在 testbox 的 Mac 节点 macos-1（就是 Mac Studio 本机）的任务里跑（vault ADR-048，
+# 取代 ADR-043 的「本机直接编译、测试」；用户 2026-11-26「所有测试全部走testbox（可本机）」）。
 #
 # 范围：Bottega（仓库 bottega/），以后的 Bottega 桥和 P3 的 iPhone App 也经这里；网页和 169 那一侧照旧交 108。
-# 这台的本机测试入口登记（~/.claude/max-core/local-test-entry.json 的 allow_commands）按命令名放行 bottega-local，
-# 所以 Bottega 的编译、测试一律经这个脚本，不裸跑 xcodebuild、swift。
+# 编译、测试一律经这个脚本，不裸跑 xcodebuild、swift；这个脚本的 build、test、xcodebuild、swift 又只在 testbox 任务里跑
+# （认环境里的 TESTBOX_TASK_ID），在任务外直接敲就拒绝，并印出该交的 testbox 命令。在工作树根目录交，任务在那个目录里原地跑：
+#   testbox --remote testbox@testbox-ctl submit --arch macos --project bottega --memory 8G --cpu 8 --wait                 跑 build（配方默认）
+#   testbox --remote testbox@testbox-ctl submit --arch macos --project bottega --recipe full --memory 8G --cpu 8 --wait   跑 test
+#   …… --cmd 'scripts/bottega-local swift test --package-path BottegaKit' --wait                                       换别的命令
+# 同一目录、同一项目同时只跑一个，后来的排队（取代原来「全量 test 先在 vault TASKS 登记占用」）。
 #
-# 用法（在仓库根或任何一个 worktree 里）：
-#   scripts/bottega-local generate               按 bottega/project.yml 重新生成 Bottega.xcodeproj（xcodegen）
-#   scripts/bottega-local build                  编 Debug 版（Bottega Dev.app），产物在 bottega/build.noindex/dev
-#   scripts/bottega-local test                   编 Debug 版并跑 BottegaTests；全量跑之前先在 vault TASKS 登记占用
-#   scripts/bottega-local run                    编 Debug 版并打开它（不装进 /Applications）
-#   scripts/bottega-local xcodebuild <参数…>      在 bottega/ 里原样跑 xcodebuild（Release 不许）
-#   scripts/bottega-local swift <参数…>           在 bottega/ 里原样跑 swift（swift test、swift build 这类）；
-#                                                现在 bottega/ 还没有 Package.swift，留给 P3 和 iPhone App 共用的核心包
+# 用法：
+#   scripts/bottega-local generate               按 bottega/project.yml 重新生成 Bottega.xcodeproj（xcodegen；不编译，哪里都能跑）
+#   scripts/bottega-local build                  编 Debug 版（Bottega Dev.app），产物在 bottega/build.noindex/dev    [只在 testbox 任务里]
+#   scripts/bottega-local test                   编 Debug 版并跑 BottegaTests 和核心包的测试                        [只在 testbox 任务里]
+#   scripts/bottega-local xcodebuild <参数…>      在 bottega/ 里原样跑 xcodebuild（Release 不许）                   [只在 testbox 任务里]
+#   scripts/bottega-local swift <参数…>           在 bottega/ 里原样跑 swift（swift test、swift build 这类）          [只在 testbox 任务里]
+#   scripts/bottega-local run                    打开 testbox 编好的 Debug 版给人看，不编译（不装进 /Applications）[只在 testbox 任务外]
+#   scripts/bottega-local built                  查 testbox 编好的 Debug 版在不在、比源码新不新，新就印出它的路径（quick_run.sh 用）
 #
-# 只编 Debug：发布版由用户本人签（ADR-043「不变的」），这里拒绝 Release。
-# 只在 Mac Studio 上放行：换一台机器（比如 MacBook）直接拒绝。例外是这台机器的，不跟着仓库走。
+# run 为什么不编译：编译在 testbox 里做；而 testbox 收不到 open 起的 App（launchd 代起），任务里起 App 要么留下没人管的进程、
+# 要么入口自己马上关掉、人看不到。所以先交 testbox 编（build 或 test 成功时记一个「编好了」的戳），再在任务外 run 打开；
+# 戳之后源码又改过（bottega/ 下除了构建目录、生成的工程和 .md 以外的文件比戳新）就拒绝打开，免得看的是旧版。
+#
+# 只编 Debug：发布版由用户本人签（ADR-043「不变的」，ADR-048 照旧），这里拒绝 Release。
+# 只在 Mac Studio 上放行：换一台机器（比如 MacBook）直接拒绝；testbox 也只有 Mac Studio 这一个 Mac 节点。
 set -euo pipefail
 
 root="$(cd "$(dirname "$0")/.." && pwd)"
@@ -23,22 +32,73 @@ app_dir="$root/bottega"
 project="$app_dir/Bottega.xcodeproj"
 scheme="Bottega"
 derived="$app_dir/build.noindex/dev"
-usage="用法：bottega-local generate | build | test | run | xcodebuild <参数…> | swift <参数…>"
+app="$derived/Build/Products/Debug/Bottega Dev.app"
+# 「编好了」的戳：build、test 在 testbox 里成功后写，内容是那次的任务号；run、built 拿它和源码比新旧。
+stamp="$derived/testbox-built"
+submit="testbox --remote testbox@testbox-ctl submit --arch macos --project bottega --memory 8G --cpu 8"
+usage="用法：bottega-local generate | build | test | xcodebuild <参数…> | swift <参数…> | run | built"
 
 die() {
   printf 'bottega-local: %s\n' "$1" >&2
   exit 2
 }
 
+# 在不在 testbox 任务里：Mac 节点给每个任务设 TESTBOX_TASK_ID。这是防手滑的闸，不是安全边界
+# （自己设这个变量就骗得过）；写死层钩子和全局规则「Mac 上一条都不直接跑」才是硬约束（ADR-048）。
+in_testbox() {
+  [ -n "${TESTBOX_TASK_ID:-}" ]
+}
+
+# 不在 testbox 任务里就拒绝编译、测试，印出该交的那条命令（退出码 2）。
+# 不带参数的 build 就是配方默认（targeted）、不带参数的 test 就是 --recipe full，别的原样放进 --cmd。
+require_testbox() {
+  local mode="$1" cmdline
+  shift
+  in_testbox && return 0
+  if [ "$mode" = build ] && [ "$#" -eq 0 ]; then
+    cmdline="$submit --wait"
+  elif [ "$mode" = test ] && [ "$#" -eq 0 ]; then
+    cmdline="$submit --recipe full --wait"
+  else
+    # %q 逐个转义再拼成一条，交给 --cmd 的是一整个参数，原样还原成这次敲的命令；
+    # 里面没有单引号就用单引号包起来（好读），有就整条再 %q 一遍。
+    cmdline="$(printf '%q ' scripts/bottega-local "$mode" "$@")"
+    cmdline="${cmdline% }"
+    case "$cmdline" in
+      *\'*) cmdline="$submit --cmd $(printf '%q' "$cmdline") --wait" ;;
+      *) cmdline="$submit --cmd '$cmdline' --wait" ;;
+    esac
+  fi
+  printf 'bottega-local: %s 只在 testbox 的 Mac 节点任务里跑（ADR-048）；这里不是 testbox 任务（没有 TESTBOX_TASK_ID），不编译、不测试。\n' "$mode" >&2
+  printf '在这个工作树的根目录（%s）交，整条放后台等：\n  %s\n' "$root" "$cmdline" >&2
+  printf '不带 --cmd 跑 build，--recipe full 跑 test；testbox 里编好以后，在这里用 scripts/bottega-local run 打开看。\n' >&2
+  exit 2
+}
+
+# 编好的 Debug 版比源码新：戳在、App 在，bottega/ 下没有比戳新的源文件。
+# 不算的：构建目录、SwiftPM 的目录、生成的工程（generate 每次重写它）、Xcode 的用户数据、.md 和 .DS_Store。
+fresh_build() {
+  [ -f "$stamp" ] || die "还没有 testbox 编好的 Debug 版（没有 $stamp）。先交：$submit --wait"
+  [ -d "$app" ] || die "戳在、App 却不在（$app）。重新交：$submit --wait"
+  local newer
+  # -print -quit 找到第一个就停：不接 head（pipefail 下 find 挨 SIGPIPE 会让整条判成失败）。
+  newer="$(find "$app_dir" \
+    \( -path "$app_dir/build.noindex" -o -path "$app_dir/build" -o -path "$app_dir/Bottega.xcodeproj" \
+       -o -name .build -o -name .swiftpm -o -name DerivedData -o -name xcuserdata -o -name __pycache__ -o -name -Xcc \) -prune \
+    -o -type f ! -name '*.md' ! -name .DS_Store -newer "$stamp" -print -quit)" \
+    || die "比对源码和 testbox 编好的版本的新旧时出错（find 失败），不打开。"
+  [ -z "$newer" ] || die "testbox 编好以后源码又改过（比如 $newer），打开的会是旧版。重新交：$submit --wait"
+}
+
 # 机器判断：只认 macOS 上 Model Name 是 Mac Studio 的那台。uname、system_profiler 按 PATH 找，
 # 自检时可以在 PATH 前面放假的同名程序，看它是不是被拒（「假装成别的机器」）。
-[ "$(uname -s)" = Darwin ] || die "只在 Mac Studio 上跑（ADR-043）。这台不是 macOS。"
+[ "$(uname -s)" = Darwin ] || die "只在 Mac Studio 上跑（testbox 的 Mac 节点 macos-1 就是它，ADR-048）。这台不是 macOS。"
 # 先整份读进变量再找：直接接 `| grep -q` 时 grep 找到就退出，system_profiler 可能挨 SIGPIPE，
 # pipefail 下整条管道算失败，真的 Mac Studio 也会被偶发判成「不是」。读不到就是空，照样拒绝。
 hardware="$(system_profiler SPHardwareDataType 2>/dev/null || true)"
 case "$hardware" in
   *'Model Name: Mac Studio'*) ;;
-  *) die "只在 Mac Studio 上跑（ADR-043）。这台不是，Bottega 的编译和测试不在这里做。" ;;
+  *) die "只在 Mac Studio 上跑（testbox 的 Mac 节点 macos-1 就是它，ADR-048）。这台不是，Bottega 的编译和测试不在这里做。" ;;
 esac
 [ -f "$app_dir/project.yml" ] || die "$root 不像 Studiolo 的仓库（没有 bottega/project.yml）。"
 
@@ -140,18 +200,29 @@ generate() {
 }
 
 # 一次 Debug 的 xcodebuild：工程先按 project.yml 生成，免得新加的源文件、资源没进工程。
+# 成功了才写「编好了」的戳（时间取开编那一刻：编的过程中又改的源码算比戳新）；开编前先删旧戳，
+# 编失败、被 testbox 停掉时 App 可能只换了一半，没有戳，run 就不打开它。
 debug_build() {
-  local action="$1"
+  local action="$1" status=0
   shift
+  mkdir -p "$derived"
+  rm -f "$stamp"
+  printf '%s\n' "$TESTBOX_TASK_ID" > "$stamp.pending"
   generate
   cd "$app_dir"
   # 跳过插件、宏的「信任」校验：命令行构建没人能点 Xcode 里的信任框，SwiftTerm 的构建插件会让整次构建失败
   # （Tillerwright 的 quick_run.sh 一样这么跑）；依赖版本由 Package.resolved 钉死。
   has_configuration "$@" || set -- -configuration Debug "$@"
-  exec xcodebuild -project "$project" -scheme "$scheme" \
+  xcodebuild -project "$project" -scheme "$scheme" \
     -destination 'platform=macOS' -derivedDataPath "$derived" \
     -clonedSourcePackagesDirPath "$app_dir/build.noindex/spm" \
-    -skipPackagePluginValidation -skipMacroValidation "$@" "$action"
+    -skipPackagePluginValidation -skipMacroValidation "$@" "$action" || status=$?
+  if [ "$status" -eq 0 ]; then
+    mv -f "$stamp.pending" "$stamp"
+  else
+    rm -f "$stamp.pending"
+  fi
+  exit "$status"
 }
 
 mode="${1:-}"
@@ -165,17 +236,25 @@ case "$mode" in
     ;;
   build | test)
     refuse_release "$@"
+    require_testbox "$mode" "$@"
     debug_build "$mode" "$@"
     ;;
   run)
     [ "$#" -eq 0 ] || die "run 不带参数。"
-    (debug_build build -quiet)
-    app="$derived/Build/Products/Debug/Bottega Dev.app"
-    [ -d "$app" ] || die "编完了却找不到 $app。"
+    # testbox 收不到 open 起的 App：任务里起了没人收尾，所以 run 只在任务外、给人看（ADR-048）。
+    ! in_testbox || die "run 是编好以后给人看的，不在 testbox 任务里跑（任务里起的 App 没人收尾）；任务里用 build 或 test。"
+    fresh_build
+    printf 'bottega-local: 打开 testbox 任务 %s 编的 Debug 版：%s\n' "$(head -n 1 "$stamp")" "$app"
     exec open "$app"
+    ;;
+  built)
+    [ "$#" -eq 0 ] || die "built 不带参数。"
+    fresh_build
+    printf '%s\n' "$app"
     ;;
   xcodebuild)
     refuse_release "$@"
+    require_testbox "$mode" "$@"
     cd "$app_dir"
     # 一律钉上 -configuration Debug，不靠工程或 scheme 的默认配置（那可能被改成 Release），也不为哪种参数
     # 跳过：-version、-showsdks、-list、-usage 带着它照常跑（实测），跳过的判断反倒是可钻的口子。
@@ -186,6 +265,7 @@ case "$mode" in
   swift)
     [ "$#" -gt 0 ] || die "swift 要给参数（比如 swift test）。"
     refuse_swift_release "$@"
+    require_testbox "$mode" "$@"
     cd "$app_dir"
     exec swift "$@"
     ;;

@@ -1,9 +1,16 @@
 #!/bin/bash
 # Bottega, modified from Droppy Code. Droppy Code by Jordy Spruit (Droppy), https://getdroppycode.app. GNU AGPL v3 with additional terms, see LICENSE.
-# Dev loop for this build: regenerate the project, build Debug, install it as the
-# single /Applications copy, and relaunch it.
+# Install the Debug build that testbox compiled as the single /Applications copy, and
+# relaunch it. It compiles nothing: Bottega is built and tested only inside testbox tasks
+# on the Mac node (Studiolo vault ADR-048), so build first from the repository root:
 #
-#   scripts/quick_run.sh
+#   testbox --remote testbox@testbox-ctl submit --arch macos --project bottega --memory 8G --cpu 8 --wait
+#   bottega/scripts/quick_run.sh
+#
+# The product is taken from `scripts/bottega-local built`, which refuses when there is no
+# testbox build yet or a source file changed after it (installing a stale build would look
+# like the change did nothing). Run it outside testbox: testbox cannot reap an app that
+# `open` starts.
 #
 # A Debug build is "Bottega Dev" (bundle id me.studiolo.bottega.dev). It
 # runs beside BOTH the upstream Droppy Code installed from getdroppycode.app and
@@ -12,10 +19,7 @@
 # "Bottega" for Release) and AppInfo.stateDirectoryName (~/.bottega-dev for Debug),
 # never on the display name.
 #
-# xcode-select on this Mac points at the Command Line Tools, so DEVELOPER_DIR is set
-# per-invocation (found below) rather than switching the machine's toolchain.
-#
-# Builds under build.noindex (never ~/Library/Developer/Xcode/DerivedData), because
+# testbox builds under build.noindex (never ~/Library/Developer/Xcode/DerivedData), because
 # the ".noindex" suffix keeps Spotlight and Launchpad from listing the build folder
 # as a second copy of the app. There must only ever be one dev app:
 # /Applications/Bottega Dev.app.
@@ -26,55 +30,22 @@
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
-# Xcode is found rather than named: the beta gets renamed to Xcode.app when it goes
-# final, and a hard-coded path broke the build the day that happened. An explicit
-# DEVELOPER_DIR still wins.
-if [ -z "${DEVELOPER_DIR:-}" ]; then
-  for candidate in /Applications/Xcode.app /Applications/Xcode-beta.app /Applications/Xcode*.app; do
-    if [ -d "$candidate/Contents/Developer" ]; then export DEVELOPER_DIR="$candidate/Contents/Developer"; break; fi
-  done
+# Inside a testbox task the relaunched app would outlive the task with nobody to reap it.
+if [ -n "${TESTBOX_TASK_ID:-}" ]; then
+  echo "quick_run.sh installs and relaunches for a person; run it outside testbox (ADR-048)." >&2
+  exit 2
 fi
-[ -n "${DEVELOPER_DIR:-}" ] || { echo "No Xcode found under /Applications; set DEVELOPER_DIR." >&2; exit 1; }
 APP_NAME="Bottega Dev"
 BUNDLE_ID="me.studiolo.bottega.dev"
-DERIVED="build.noindex/dev"
-PRODUCT="$DERIVED/Build/Products/Debug/$APP_NAME.app"
 TARGET="/Applications/$APP_NAME.app"
-LOG="build.noindex/quick_run.log"
 
 step() { printf '\n==> %s\n' "$1"; }
 
-step "Regenerating the project from project.yml"
-# The project is generated, not edited: a source file added since the last run is
-# invisible to xcodebuild until this has run. A failure here (a resource listed in
-# project.yml that is gone from disk, say) used to end the script with two quiet
-# validation lines and the old app still running; say so loudly instead.
-if ! xcodegen generate; then
-  echo
-  echo "xcodegen failed: the project was NOT regenerated, nothing was built or installed,"
-  echo "and the app that is running is still the previous build. Fix the errors above."
-  exit 1
-fi
-
-step "Building $APP_NAME (Debug)"
-# Full output goes to a log and only the tail is shown; on failure the log is
-# grepped for the actual errors, which a bare `tail` would scroll past.
-if ! xcodebuild \
-  -project Bottega.xcodeproj \
-  -scheme Bottega \
-  -configuration Debug \
-  -destination 'platform=macOS' \
-  -derivedDataPath "$DERIVED" \
-  -clonedSourcePackagesDirPath build.noindex/spm \
-  -skipPackagePluginValidation \
-  -skipMacroValidation \
-  build > "$LOG" 2>&1; then
-    echo "Build failed. Errors:"
-    grep "error:" "$LOG" | sort -u | head -n 20
-    echo "(full log: $LOG)"
-    exit 1
-fi
-tail -n 3 "$LOG"
+step "Checking the testbox build of $APP_NAME (Debug)"
+# bottega-local prints the product path, or says why not (no testbox build yet, or sources
+# newer than it) and exits non-zero; set -e stops here and nothing is installed.
+PRODUCT="$(../scripts/bottega-local built)"
+echo "$PRODUCT"
 
 step "Installing the single copy to $TARGET"
 # Atomic swap: move running bundle aside so ditto installs the fresh build immediately
