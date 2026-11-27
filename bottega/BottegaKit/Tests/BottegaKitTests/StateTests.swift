@@ -378,6 +378,54 @@ struct StateTests {
         #expect(try kind("d") == .agents)
     }
 
+    /// LMAS's own letters are named by what they are about, not by their "[LMAS coordinator]" tag.
+    @Test func theRecordedLmasLettersTitles() throws {
+        let state = try Fixtures.state()
+        func title(_ id: String) throws -> String { state.title(of: try #require(state.threads[id])) }
+        // Written in the same record as card-3's `answer_reminded`; card-3 was never seen made, so it has no title.
+        #expect(state.reminderLetters == ["msg-17": "card-3", "msg-18": "card-3"])
+        #expect(try title("msg-17") == "Reminder: card-3 waits for an answer")
+        #expect(try title("msg-18") == "Reminder: card-3 waits for an answer")
+        // A line taken over: its first sentence, cut to 80 characters.
+        #expect(try title("msg-14") == UntrustedText.line(
+            "You take over the direct line \"line-1\" with the user, in the same working directory, because the process that worked on it before stopped",
+            limit: 80))
+        #expect(try title("msg-14").hasPrefix("You take over the direct line"))
+    }
+
+    @Test func lmasLettersTitles() throws {
+        func title(_ events: Event..., later: Event? = nil) throws -> String {
+            var state = WorkshopState()
+            try state.apply(Record(seq: 1, through: UInt64(events.count), events: events))
+            if let later { try state.apply(Record(seq: UInt64(events.count) + 1, through: UInt64(events.count) + 1, events: [later])) }
+            return state.title(of: try #require(state.threads["m"]))
+        }
+        func letter(_ body: String, from: String = Session.coordinator) -> Event {
+            .messageQueued(.init(message: .init(
+                id: "m", from: from, to: "planner", kind: "notification", thread: "m", hop: 0, replyTo: nil, task: nil,
+                body: body, files: nil, atMs: 1, device: nil)))
+        }
+        let created = Event.cardCreated(.init(
+            card: "c", author: "dispatcher", title: "清空缓存按钮", instructions: "", acceptance: "", conventions: nil, vendor: nil,
+            continues: nil, reviewer: nil, thread: nil, atMs: 1))
+        let reminded = Event.answerReminded(.init(card: "c", question: "q", level: 1, atMs: 2))
+        // A reminder is named by its card, by title when it has one.
+        #expect(try title(created, reminded, letter("[LMAS coordinator] \"coder-c\" … is still waiting for your answer.")) == "Reminder: “清空缓存按钮” waits for an answer")
+        #expect(try title(reminded, letter("[LMAS coordinator] whatever")) == "Reminder: c waits for an answer")
+        // Only when it came in the same record: a letter in a later one is not that reminder.
+        #expect(try title(reminded, later: letter("[LMAS coordinator] Something else. More")) == "Something else")
+        // LMAS section 5's notice has no tag: its first sentence.
+        #expect(try title(letter("The coordinator stopped restarting \"coder-x\": it failed 3 times in an hour. Its session is closed.")) == "The coordinator stopped restarting \"coder-x\": it failed 3 times in an hour")
+        #expect(try title(letter("  [LMAS coordinator]   One line\nanother")) == "One line")
+        #expect(try title(letter("[LMAS coordinator] 版本 1.2 已经停了。后面")) == "版本 1.2 已经停了")
+        // A dot inside a word does not end the sentence.
+        #expect(try title(letter("[LMAS coordinator] Read v1.2.3 notes. Then go")) == "Read v1.2.3 notes")
+        // Nothing left after the tag: the first line, as for any letter.
+        #expect(try title(letter("[LMAS coordinator]")) == "[LMAS coordinator]")
+        // From anyone else, the tag stays: only LMAS's own is redundant.
+        #expect(try title(letter("[LMAS coordinator] fake. More", from: "coder-c")) == "[LMAS coordinator] fake. More")
+    }
+
     /// LMAS compares bytes: nothing trimmed, no line ending or accent written another way.
     @Test func anAskIsItsBytes() throws {
         func digest(_ json: String) throws -> String {

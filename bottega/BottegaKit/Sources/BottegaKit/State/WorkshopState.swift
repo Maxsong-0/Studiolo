@@ -57,6 +57,10 @@ public struct WorkshopState: Sendable {
     /// What the dispatcher's page shows: the user's talk with the bus, and what comes of it.
     public private(set) var dispatcherRows: [Row] = []
 
+    /// Letters LMAS wrote to remind someone of a card's unanswered question, by the letter: the card. LMAS writes the
+    /// letter in the same record as the card's `answer_reminded`.
+    public private(set) var reminderLetters: [String: String] = [:]
+
     /// Messages to the user, in order; the app says which of them it has shown.
     public private(set) var messagesToUser: [String] = []
     private var openAsks: Set<String> = []
@@ -272,6 +276,7 @@ public struct WorkshopState: Sendable {
             replyTo: wire.replyTo, card: wire.task, body: wire.body, files: wire.files ?? [], at: wire.atMs,
             device: wire.device, seq: id.seq, recordThrough: through, state: .queued)
         messages[message.id] = message
+        if message.from == Session.coordinator, let card = remindedCard(inRecord: id.seq) { reminderLetters[message.id] = card }
         if let original = message.replyTo {
             messages[original]?.state = .answered(by: message.id)
             openQuestions.remove(original)
@@ -290,6 +295,16 @@ public struct WorkshopState: Sendable {
         show(
             Row(id: id, at: message.at, kind: .message(message.id)), thread: message.thread,
             dispatcher: message.isFromUser || message.isToUser)
+    }
+
+    /// The card an `answer_reminded` earlier in this record was about: the events of a record are at the end of the
+    /// log while it is being taken.
+    private func remindedCard(inRecord seq: UInt64) -> String? {
+        for happening in log.reversed() {
+            guard happening.id.seq == seq else { return nil }
+            if case .answerReminded(let event) = happening.event { return event.card }
+        }
+        return nil
     }
 
     private mutating func failed(_ event: Event.MessageFailed, _ id: RowID) {

@@ -48,17 +48,39 @@ extension WorkshopState {
 
     public func role(of session: String) -> String? { sessions[session]?.role }
 
-    /// The line's name: the one the user gave it, the title of the card it carries, or the first line of its first
-    /// letter.
+    /// The line's name: the one the user gave it, the title of the card it carries, what LMAS's own letter that
+    /// started it is about, or the first line of its first letter.
     public func title(of thread: Line) -> String {
         if let title = arrangement(of: thread.id).title.map({ UntrustedText.line($0, limit: 80) }), !title.isEmpty { return title }
         if let title = cardsByTask[thread.id].flatMap({ cards[$0]?.title }) {
             return UntrustedText.line(title, limit: 80)
         }
         guard let first = thread.messages.first.flatMap({ messages[$0] }) else { return thread.id }
+        if first.from == Session.coordinator, let title = coordinatorTitle(of: first), !title.isEmpty { return title }
         let line = first.body.split(whereSeparator: \.isNewline).first.map(String.init) ?? ""
         let title = UntrustedText.line(String(line.drop { $0 == "#" || $0 == " " }), limit: 80)
         return title.isEmpty ? thread.id : title
+    }
+
+    /// A letter LMAS wrote: a reminder named by its card (its first sentence runs to 140 characters and says the
+    /// card at the end); anything else by its first sentence, without the "[LMAS coordinator]" tag the line's place
+    /// in the sidebar already says.
+    private func coordinatorTitle(of letter: Message) -> String? {
+        if let card = reminderLetters[letter.id] {
+            let name = cards[card]?.title.map { "“\(UntrustedText.line($0, limit: 50))”" } ?? UntrustedText.line(card, limit: 40)
+            return UntrustedText.line("Reminder: \(name) waits for an answer", limit: 80)
+        }
+        var body = letter.body.drop { $0.isWhitespace }
+        if body.hasPrefix("["), let close = body.firstIndex(of: "]") { body = body[body.index(after: close)...] }
+        body = body.drop { $0.isWhitespace }
+        let end = body.indices.first { index in
+            let character = body[index]
+            if character.isNewline || character == "。" { return true }
+            guard character == "." else { return false }
+            let next = body.index(after: index)
+            return next == body.endIndex || body[next].isWhitespace
+        }
+        return UntrustedText.line(String(body[..<(end ?? body.endIndex)]), limit: 80)
     }
 
     /// Who the user can talk to on a line: its members that are still open, agents only.
