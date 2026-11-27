@@ -12,27 +12,34 @@ struct BoardView: View {
     @State private var hasRisen = false
 
     var body: some View {
-        if model.state.cardOrder.isEmpty {
-            ContentUnavailableView(
-                "No Cards", systemImage: Page.board.symbol, description: Text("Cards the dispatcher hands out show up here."))
-        } else {
-            GeometryReader { geometry in
-                ScrollView(.horizontal) {
-                    HStack(alignment: .top, spacing: 14) {
-                        ForEach(Array(WorkshopState.Column.allCases.enumerated()), id: \.element) { index, column in
-                            self.column(column, at: index).frame(width: width(in: geometry.size.width), alignment: .topLeading)
-                        }
-                    }
-                    .padding(20)
-                    .animation(.spring(response: 0.35, dampingFraction: 1), value: placement)
-                }
-            }
-            .listMovement(ids: WorkshopState.Column.allCases.flatMap { model.state.cards(in: $0).map(\.id) }, selection: selection)
-            .onAppear {
-                hasRisen = true
-                if risesIn { model.boardRose() }
+        Group {
+            if model.state.cardOrder.isEmpty {
+                ContentUnavailableView(
+                    "No Cards", systemImage: Page.board.symbol, description: Text("Cards the dispatcher hands out show up here."))
+            } else {
+                board
             }
         }
+        // Empty or not, the board shown for a switch has had it: cards that come in later are there at once.
+        .onAppear {
+            hasRisen = true
+            if risesIn { model.boardRose() }
+        }
+    }
+
+    private var board: some View {
+        GeometryReader { geometry in
+            ScrollView(.horizontal) {
+                HStack(alignment: .top, spacing: 14) {
+                    ForEach(Array(WorkshopState.Column.allCases.enumerated()), id: \.element) { index, column in
+                        self.column(column, at: index).frame(width: width(in: geometry.size.width), alignment: .topLeading)
+                    }
+                }
+                .padding(20)
+                .animation(.spring(response: 0.35, dampingFraction: 1), value: placement)
+            }
+        }
+        .listMovement(ids: WorkshopState.Column.allCases.flatMap { model.state.cards(in: $0).map(\.id) }, selection: selection)
     }
 
     private func column(_ column: WorkshopState.Column, at place: Int) -> some View {

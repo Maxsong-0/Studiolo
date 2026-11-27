@@ -309,6 +309,8 @@ struct WorkshopPalette: View {
         let showsInspector = !model.showsInspector
         var rows = [
             Row(id: "layout:\(layout.rawValue)", title: isList ? "Show cards as a board" : "Show cards as a list", glyph: .symbol(isList ? "rectangle.split.3x1" : "list.bullet")) {
+                // The page first: going to it forgets a switch (`CardsMotion.Cue`), so the other way round the board
+                // would not rise for this one.
                 model.page = .board
                 withAnimation(CardsMotion.switching(reduceMotion: reduceMotion)) { model.cardLayout = layout }
             },
