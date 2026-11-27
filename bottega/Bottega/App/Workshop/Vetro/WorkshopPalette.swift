@@ -11,7 +11,9 @@ struct WorkshopPalette: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     @State private var query = Self.typedFirst
-    @State private var selection = 0
+    /// The row picked, by what it is rather than where: rows come and go as LMAS's events do, and Return must run
+    /// the one that was lit, or nothing.
+    @State private var chosen: Row.ID?
     @FocusState private var isFocused: Bool
 
     #if DEBUG
@@ -55,7 +57,9 @@ struct WorkshopPalette: View {
                         removal: .opacity))
         }
         .onAppear { isFocused = Self.takesKeyboard }
-        .onChange(of: query) { selection = 0 }
+        .onChange(of: query) { chosen = nil }
+        // Nothing picked yet: the first row is, by name, from the moment it is shown.
+        .onChange(of: rows.map(\.id), initial: true) { _, ids in if chosen == nil { chosen = ids.first } }
     }
 
     private func panel(_ rows: [Row]) -> some View {
@@ -68,11 +72,11 @@ struct WorkshopPalette: View {
                     .focused($isFocused)
                     .onSubmit { run(rows) }
                     .onKeyPress(.upArrow) {
-                        selection = max(0, selection - 1)
+                        move(by: -1, in: rows)
                         return .handled
                     }
                     .onKeyPress(.downArrow) {
-                        selection = min(max(0, rows.count - 1), selection + 1)
+                        move(by: 1, in: rows)
                         return .handled
                     }
                     .onKeyPress(.escape) {
@@ -95,14 +99,11 @@ struct WorkshopPalette: View {
                     .padding(.horizontal, 16)
             } else {
                 VStack(spacing: 0) {
-                    ForEach(Array(rows.enumerated()), id: \.element.id) { index, row in
-                        line(row, isSelected: index == selection)
+                    ForEach(rows) { row in
+                        line(row, isSelected: row.id == chosen)
                             // The pointer and the arrow keys never disagree about what Return runs.
-                            .onHover { if $0 { selection = index } }
-                            .onTapGesture {
-                                selection = index
-                                run(rows)
-                            }
+                            .onHover { if $0 { chosen = row.id } }
+                            .onTapGesture { run(row) }
                     }
                 }
                 .padding(.horizontal, 6)
@@ -150,11 +151,22 @@ struct WorkshopPalette: View {
         }
     }
 
+    /// Return: the row lit, if it is still there.
     private func run(_ rows: [Row]) {
-        guard rows.indices.contains(selection) else { return }
-        let row = rows[selection]
+        guard let row = rows.first(where: { $0.id == chosen }) else { return }
+        run(row)
+    }
+
+    private func run(_ row: Row) {
         close()
         row.run()
+    }
+
+    /// From the row lit, or from the top when the one lit has gone.
+    private func move(by step: Int, in rows: [Row]) {
+        guard !rows.isEmpty else { return }
+        let index = rows.firstIndex { $0.id == chosen }.map { min(max(0, $0 + step), rows.count - 1) } ?? 0
+        chosen = rows[index].id
     }
 
     private func close() { model.showsPalette = false }
@@ -192,7 +204,7 @@ struct WorkshopPalette: View {
     private var waiting: [Row] {
         guard let item = model.waiting.first else { return [] }
         return [
-            Row(id: "waiting", title: "Review the oldest request", subtitle: Wording.waiting(item, in: model.state), glyph: .waits) {
+            Row(id: "waiting:\(item.what)", title: "Review the oldest request", subtitle: Wording.waiting(item, in: model.state), glyph: .waits) {
                 switch item.what {
                 case .ask(let id): model.askBeingRead = .init(id: id)
                 case .question(let id): model.page = model.state.messages[id].map { .line($0.thread) } ?? .waiting
@@ -207,21 +219,24 @@ struct WorkshopPalette: View {
         var rows: [Row] = []
         if let id = model.page.line, model.state.threads[id] != nil {
             let arrangement = model.state.arrangement(of: id)
-            rows.append(Row(id: "rename", title: "Rename line…", glyph: .symbol("character.cursor.ibeam")) {
+            rows.append(Row(id: "rename:\(id)", title: "Rename line…", glyph: .symbol("character.cursor.ibeam")) {
                 model.arranging = .init(line: id, inSidebar: false)
             })
+            // Each says what it does, and its name changes with it, so a row lit as Pin never runs as Unpin.
+            let pin = !arrangement.isPinned
             rows.append(
-                Row(id: "pin", title: arrangement.isPinned ? "Unpin line" : "Pin line", glyph: .symbol(arrangement.isPinned ? "pin.slash" : "pin")) {
-                    model.togglePin(id)
+                Row(id: "\(pin ? "pin" : "unpin"):\(id)", title: pin ? "Pin line" : "Unpin line", glyph: .symbol(pin ? "pin" : "pin.slash")) {
+                    model.setPinned(id, pin)
                 })
+            let archive = !arrangement.isArchived
             rows.append(
                 Row(
-                    id: "archive", title: arrangement.isArchived ? "Unarchive line" : "Archive line",
-                    glyph: .symbol(arrangement.isArchived ? "tray.and.arrow.up" : "archivebox")
-                ) { model.toggleArchive(id) })
+                    id: "\(archive ? "archive" : "unarchive"):\(id)", title: archive ? "Archive line" : "Unarchive line",
+                    glyph: .symbol(archive ? "archivebox" : "tray.and.arrow.up")
+                ) { model.setArchived(id, archive) })
         }
         if let turn = model.turnToStop, model.isLive {
-            rows.append(Row(id: "stop", title: "Stop this turn", glyph: .symbol("stop.circle"), key: "⌘.") { model.stop(turn) })
+            rows.append(Row(id: "stop:\(turn.id)", title: "Stop this turn", glyph: .symbol("stop.circle"), key: "⌘.") { model.stop(turn) })
         }
         return rows
     }
@@ -247,7 +262,7 @@ struct WorkshopPalette: View {
         let cards = model.state.cardsByRecentActivity
         return (all ? cards : Array(cards.prefix(Metrics.recentCards))).map { card in
             Row(
-                id: "card:\(card.id)", title: card.title.map { UntrustedText.line($0, limit: 80) } ?? card.id,
+                id: "card:\(card.id)", title: UntrustedText.line(card.title ?? card.id, limit: 80),
                 subtitle: Wording.column(model.state.column(of: card)), terms: card.id, glyph: .card(card.id)
             ) {
                 model.page = .board
@@ -282,13 +297,15 @@ struct WorkshopPalette: View {
 
     private var view: [Row] {
         let isList = model.cardLayout == .list
+        let layout: WorkshopModel.CardLayout = isList ? .board : .list
+        let showsInspector = !model.showsInspector
         var rows = [
-            Row(id: "layout", title: isList ? "Show cards as a board" : "Show cards as a list", glyph: .symbol(isList ? "rectangle.split.3x1" : "list.bullet")) {
+            Row(id: "layout:\(layout.rawValue)", title: isList ? "Show cards as a board" : "Show cards as a list", glyph: .symbol(isList ? "rectangle.split.3x1" : "list.bullet")) {
                 model.page = .board
-                withAnimation(reduceMotion ? nil : .smooth(duration: 0.25)) { model.cardLayout = isList ? .board : .list }
+                withAnimation(reduceMotion ? nil : .smooth(duration: 0.25)) { model.cardLayout = layout }
             },
-            Row(id: "panel", title: model.showsInspector ? "Hide the panel" : "Show the panel", glyph: .symbol("sidebar.trailing")) {
-                model.showsInspector.toggle()
+            Row(id: "panel:\(showsInspector)", title: showsInspector ? "Show the panel" : "Hide the panel", glyph: .symbol("sidebar.trailing")) {
+                model.showsInspector = showsInspector
             },
         ]
         if model.hasLink {

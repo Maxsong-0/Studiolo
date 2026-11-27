@@ -49,12 +49,12 @@ struct ArrangePanel: View {
                 button(
                     arrangement.isPinned ? "Unpin" : "Pin", symbol: arrangement.isPinned ? "pin.slash" : "pin",
                     help: arrangement.isPinned ? "Stop keeping it at the top" : "Keep it at the top of its list"
-                ) { model.togglePin(line.id) }
+                ) { model.setPinned(line.id, !arrangement.isPinned) }
                 button(
                     arrangement.isArchived ? "Unarchive" : "Archive",
                     symbol: arrangement.isArchived ? "tray.and.arrow.up" : "archivebox",
                     help: arrangement.isArchived ? "Put it back with the others" : "Put it away at the bottom of its list"
-                ) { model.toggleArchive(line.id) }
+                ) { model.setArchived(line.id, !arrangement.isArchived) }
             }
             .disabled(!canSend)
             if let note = note(canSend: canSend) {

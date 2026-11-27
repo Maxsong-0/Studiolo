@@ -574,12 +574,14 @@ final class WorkshopModel {
         return arrange(intent)
     }
 
-    func togglePin(_ line: String) {
-        arrange(.arrange(line: line, title: nil, pinned: !state.arrangement(of: line).isPinned, archived: nil))
+    /// What the button said is what is sent, not "the other way round": word from LMAS just before the press would
+    /// turn that around.
+    func setPinned(_ line: String, _ isPinned: Bool) {
+        arrange(.arrange(line: line, title: nil, pinned: isPinned, archived: nil))
     }
 
-    func toggleArchive(_ line: String) {
-        arrange(.arrange(line: line, title: nil, pinned: nil, archived: !state.arrangement(of: line).isArchived))
+    func setArchived(_ line: String, _ isArchived: Bool) {
+        arrange(.arrange(line: line, title: nil, pinned: nil, archived: isArchived))
     }
 
     /// Kept and sent later while LMAS is out of reach, as a letter is (`IntentDraft.keeps`).
