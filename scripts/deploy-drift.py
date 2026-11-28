@@ -111,7 +111,6 @@ MAX_RANGE = 500
 FULL = re.compile("[0-9a-f]{40}")
 SHORT = re.compile("[0-9a-f]{7,40}")
 NAME = re.compile("[A-Za-z0-9][A-Za-z0-9._-]{0,99}")
-REF = re.compile("[A-Za-z0-9][A-Za-z0-9._/-]{0,199}")
 HOST = re.compile("[A-Za-z0-9][A-Za-z0-9._@-]{0,199}")
 MOMENT = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z")
 
@@ -518,16 +517,18 @@ def unplaced(repo, drifts, parts, main):
 # ---- BUG 档 ----
 
 BUG_FILE = re.compile(r"BUG-(\d+)-.*\.md")
+STATUS = re.compile(r"(?:[-*] +)?状态[:：](.*)")
 MERGED = re.compile(r"合(?:入|进|并到|并进|并入)?\s*main")
 NOT_MERGED = re.compile(r"(?:没|未|不|待|等)(?:有|着)?合")
 RANGE = re.compile(r"([0-9a-f]{7,40})\.\.([0-9a-f]{7,40})")
 
 
 class Bug:
-    def __init__(self, number, title, status, note, body):
+    """一份「修复中」的档；`note` 是状态行冒号后面的字，档里没有状态行时是 None。"""
+
+    def __init__(self, number, title, note, body):
         self.number = number
         self.title = title
-        self.status = status
         self.note = note
         self.body = body
         self.reason = ""
@@ -546,26 +547,35 @@ def commit_tokens(text):
     return [one for one in re.findall(r"`([^`\n]+)`", text) if SHORT.fullmatch(one) or RANGE.fullmatch(one)]
 
 
+def status_line(text):
+    """状态行冒号后面的字：有 frontmatter 只认里面的；老档没有 frontmatter，认正文第一处；没有回 None。"""
+    lines = [line.rstrip() for line in text.removeprefix("\ufeff").split("\n")]
+    if lines[0] == "---":
+        lines = lines[1:lines.index("---", 1) if "---" in lines[1:] else len(lines)]
+    found = next(filter(None, map(STATUS.match, lines)), None)
+    return found[1].strip().lstrip("\"'") if found else None
+
+
 def load_bugs(directory):
-    """「修复中」的 BUG 档；读不了就失败关闭。"""
+    """「修复中」的 BUG 档，连同看不出状态的；读不了就失败关闭。"""
     bugs = []
     try:
-        names = sorted(os.listdir(directory))
+        names = [name for name in sorted(os.listdir(directory)) if BUG_FILE.fullmatch(name)]
+        if not names:  # 多半是目录给错了，不能当成没有该验收的
+            raise Bad("06-BUG 里一份 BUG 档都没有")
         for name in names:
-            if not BUG_FILE.fullmatch(name):
-                continue
             with open(os.path.join(directory, name), "rb") as handle:
                 data = handle.read(MAX_NOTE_BYTES + 1)
             if len(data) > MAX_NOTE_BYTES:
                 raise Bad(f"06-BUG 里的 {name[:7]} 太大")
             text = data.decode("utf-8")
-            status = re.search(r"\A﻿?---\r?\n(?:.*\r?\n)*?状态:[ \t]*(\S+)(.*)", text)
+            status = status_line(text)
             heading = re.search(r"^# (.*)$", text, re.M)
             number = int(BUG_FILE.fullmatch(name)[1])
             title = heading[1].strip() if heading else name
             title = "".join(one if one.isprintable() else " " for one in title)
-            if status and status[1].startswith("修复中"):
-                bugs.append(Bug(number, re.sub(r"^BUG-\d+\s*", "", title), status[1], status[2], text))
+            if status is None or status.startswith("修复中"):
+                bugs.append(Bug(number, re.sub(r"^BUG-\d+\s*", "", title), status, text))
     except (OSError, UnicodeDecodeError) as error:
         raise Bad("读不了 06-BUG") from error
     return bugs
@@ -612,6 +622,8 @@ def reached(repo, commit, parts):
 
 def judge(repo, bug, parts, drifts, main):
     """该验收了／还没上线／要人看，连同一句说明。"""
+    if bug.note is None:
+        return "manual", "档里没有状态行"
     commits = fixes(repo, bug)
     if not commits:
         return "manual", bug.reason
@@ -673,7 +685,7 @@ def render_part(repo, drift):
         lines += [f"- {repo.describe(one)}" for one in drift.commits]
     if drift.shared:
         lines.append(f"另有 {drift.shared} 个和人侧程序共有的提交不在线上，见人侧程序那一节。")
-    if drift.merged and not drift.shared:
+    if drift.merged:
         lines.append("合并提交里带的改动（没有普通提交改过这些文件）：")
         lines += [f"- {path}" for path in drift.merged]
     if not drift.drifted:
@@ -709,8 +721,6 @@ def conclude(drifts, lost, bugs):
 def report(arguments):
     record = load_record(arguments.record)
     repo = Repo(os.path.abspath(arguments.repo))
-    if not REF.fullmatch(arguments.main):
-        raise Bad("--main 不是一个引用名")
     main = repo.commit(arguments.main, "main ")
     live = live_from_record(repo, record)
     live[MAC] = live_from_argument(repo, arguments.mac, MAC) if arguments.mac is not None else live_mac(repo)

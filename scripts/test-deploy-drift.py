@@ -78,6 +78,7 @@ class Sandbox:
             files[f"crates/{name}/src/lib.rs"] = "1\n"
         files["crates/local-server/src/alert_main.rs"] = "1\n"
         self.base = self.commit("初始", files)
+        self.bug(999, "已修复")
 
     def git(self, *args):
         environment = {"PATH": os.environ["PATH"], "HOME": str(self.home), "LC_ALL": "C.UTF-8",
@@ -141,6 +142,9 @@ class Sandbox:
     def bug(self, number, status, body=""):
         (self.bugs / f"BUG-{number:03d}-测试.md").write_text(
             f"---\nid: BUG-{number:03d}\n状态: {status}\n严重级: P1\n---\n\n# BUG-{number:03d} 标题{number}\n\n{body}\n")
+
+    def raw_bug(self, number, text):
+        (self.bugs / f"BUG-{number:03d}-测试.md").write_bytes(text.encode())
 
 
 def section(text, title):
@@ -235,6 +239,22 @@ class ReportTests(unittest.TestCase):
         self.assertIn("合并提交里带的改动", text)
         self.assertIn("crates/auth/src/lib.rs", text)
 
+    def test_sharing_commits_with_the_human_program_does_not_hide_a_merge_only_change(self):
+        box = self.box
+        box.git("checkout", "-q", "-b", "side")
+        box.touch("docs", "docs/b.md")
+        box.git("checkout", "-q", "main")
+        box.touch("docs", "docs/a.md")
+        box.git("merge", "-q", "--no-ff", "--no-commit", "side")
+        merge = box.commit("merge", {"crates/auth/src/lib.rs": "合并里夹带的改动\n"})
+        box.touch("fix: 共有", "crates/core/src/lib.rs")
+        # 人侧程序已经到合并那次，随包工具还停在初始提交：合并里夹带的只有随包工具这一节说得出来。
+        _, out, _ = box.report(box.record(human=box.human(human_program_source_commit=merge)))
+        self.assertNotIn("crates/auth/src/lib.rs", section(out, "人侧程序"))
+        text = section(out, "人侧随包工具")
+        self.assertIn("另有 1 个和人侧程序共有的提交", text)
+        self.assertIn("crates/auth/src/lib.rs", text)
+
     def test_a_live_commit_outside_main_is_listed_not_compared(self):
         box = self.box
         box.git("checkout", "-q", "-b", "side")
@@ -320,7 +340,7 @@ class ReportTests(unittest.TestCase):
             "发布名带换行": box.record(agent={"release": "x\n## 假标题", "commit": box.base}),
             "错误不是文字": box.record(alert={"error": 1}),
             "错误带换行": box.record(alert={"error": "a\n## b"}),
-            "超过大小": json.dumps({**good, "collected_at": "x" * 70000}),
+            "超过大小": json.dumps(good) + " " * 70000,
             "不是 UTF-8": b"\xff\xfe",
             "空对象": {},
         }
@@ -336,6 +356,7 @@ class ReportTests(unittest.TestCase):
                             "main 不存在": ["--main", "origin/none"],
                             "main 夹带参数": ["--main=--all"],
                             "06-BUG 不存在": ["--bugs", str(box.root / "none")],
+                            "06-BUG 里没有 BUG 档": ["--bugs", str(box.home)],
                             "仓库不是仓库": ["--repo", str(box.bugs)],
                             "Worker 提交不存在": ["--worker", "0" * 40],
                             "Mac 提交写错": ["--mac", "HEAD"]}.items():
@@ -387,6 +408,7 @@ class ReportTests(unittest.TestCase):
         box.bug(11, f"修复中   # `{box.base[:7]}..{live[:7]}`")
         box.bug(12, f"修复中   # `{live[:7]}..{pending[:7]}`")
         box.bug(13, f"未修复   # `{live[:7]}`")
+        box.bug(14, "修复中", f"基线 `{live[:7]}`，修法在做。")
         (box.bugs / "别的笔记.md").write_text("---\n状态: 修复中\n---\n")
         record = box.record(human=box.human(human_program_source_commit=live, sync_program_source_commit=live))
         code, out, _ = box.report(record)
@@ -395,12 +417,34 @@ class ReportTests(unittest.TestCase):
         waiting = section(out, "修复中、还没上线")
         manual = section(out, "修复中、要人看")
         listed = [set(map(int, re.findall(r"^- BUG-0*(\d+)", text, re.M))) for text in (ready, waiting, manual)]
-        self.assertEqual(listed, [{1, 6, 10, 11}, {2, 12}, {3, 4, 7, 8, 9}], out)
+        self.assertEqual(listed, [{1, 6, 10, 11}, {2, 12}, {3, 4, 7, 8, 9, 14}], out)
         self.assertIn(pending[:7], waiting)
         self.assertIn("人侧程序", waiting)
         for number, reason in ((3, "看不出修复提交"), (4, "不在 main"), (7, "没有碰五个发行"), (8, "不归这五个发行"),
-                               (9, "没有这个提交")):
+                               (9, "没有这个提交"), (14, "看不出修复提交")):
             self.assertRegex(manual, f"BUG-{number:03d}.*{reason}")
+
+    def test_the_status_is_found_however_the_note_writes_it(self):
+        box = self.box
+        live = box.touch("fix: 已上线", "crates/auth/src/lib.rs")
+        # 老档没有 frontmatter：状态写在正文里，用全角冒号，可能是列表项，只认第一处。
+        box.raw_bug(1, f"# BUG-001 老档\n\n状态：修复中。代码已上线（修复提交 `{live[:7]}`）。\n")
+        box.raw_bug(2, f"# BUG-002 老档\n\n- 日期：2026-10-01\n- 状态：修复中（修复提交 `{live[:7]}`）。\n")
+        box.raw_bug(3, f"# BUG-003 老档\n\n- 状态：已修复（`{live[:7]}`）。\n- 状态：修复中\n")
+        # 有 frontmatter 就只认里面的；哪儿都没有状态行的交人看，不悄悄跳过。
+        box.raw_bug(4, f"---\nid: BUG-004\n---\n\n# BUG-004 没有状态\n\n状态：修复中 `{live[:7]}`\n")
+        box.raw_bug(5, "# BUG-005 一个字没写\n")
+        box.raw_bug(6, f"---\r\nid: BUG-006\r\n状态: \"修复中\"   # `{live[:7]}`\r\n---\r\n\r\n# BUG-006 CRLF\r\n")
+        box.raw_bug(7, "---\r\n" + "填充: 1\r\n" * 200 + f"---\r\n\r\n# BUG-007 很长\r\n\r\n状态：修复中 `{live[:7]}`\r\n")
+        box.raw_bug(8, "")
+        human = box.human(human_program_source_commit=live, sync_program_source_commit=live)
+        code, out, _ = box.report(box.record(human=human))
+        self.assertEqual(code, 1, out)
+        listed = [set(map(int, re.findall(r"^- BUG-0*(\d+)", section(out, title), re.M)))
+                  for title in ("该验收了", "修复中、还没上线", "修复中、要人看")]
+        self.assertEqual(listed, [{1, 2, 6}, set(), {4, 5, 7, 8}], out)
+        for number in (4, 5, 7, 8):
+            self.assertRegex(section(out, "修复中、要人看"), f"BUG-{number:03d}.*没有状态行")
 
     def test_a_bug_waiting_for_acceptance_alone_is_worth_a_nonzero_exit(self):
         box = self.box
@@ -411,6 +455,35 @@ class ReportTests(unittest.TestCase):
         self.assertEqual(code, 1, out)
         self.assertIn("结论：五个发行都没有漂移，有 1 个 BUG 该验收了。", out)
         self.assertIn("标题1", section(out, "该验收了"))
+
+    def test_a_bug_only_a_person_can_judge_is_worth_a_nonzero_exit_too(self):
+        self.box.bug(1, "修复中")
+        code, out, _ = self.box.report(self.box.record())
+        self.assertEqual(code, 1, out)
+        self.assertIn("结论：五个发行都没有漂移，没有该验收的 BUG。", out)
+        self.assertIn("BUG-001", section(out, "修复中、要人看"))
+
+    def test_the_merge_that_brought_a_fix_to_main_need_not_be_live_itself(self):
+        box = self.box
+        box.git("checkout", "-q", "-b", "side")
+        fix = box.touch("fix: 分支上发的行", "crates/auth/src/lib.rs")
+        box.git("checkout", "-q", "main")
+        box.touch("docs", "docs/b.md")
+        box.git("merge", "-q", "--no-ff", "-m", "merge", "side")
+        merge = box.git("rev-parse", "HEAD")
+        box.bug(1, f"修复中   # `{fix[:7]}`，合 main `{merge[:7]}`")
+        human = box.human(human_program_source_commit=fix, sync_program_source_commit=fix)
+        _, out, _ = box.report(box.record(human=human))
+        self.assertRegex(section(out, "该验收了"), f"BUG-001.*{fix[:7]}")
+
+    def test_control_characters_never_reach_the_report(self):
+        box = self.box
+        box.touch("fix: 带\x1b[31m控制符", "crates/auth/src/lib.rs")
+        box.raw_bug(1, "---\n状态: 修复中\n---\n\n# BUG-001 带\x1b[31m控制符\n")
+        _, out, _ = box.report(box.record())
+        self.assertIn("带 [31m控制符", section(out, "人侧程序"))
+        self.assertIn("带 [31m控制符", section(out, "修复中、要人看"))
+        self.assertNotIn("\x1b", out)
 
     def test_a_bug_cannot_be_ready_when_a_release_it_touches_is_unknown(self):
         box = self.box
