@@ -17,7 +17,10 @@ pub const TOOLS: &[(&str, &str)] = &[
         "读写黑板：project、operation、request；写入需有效能力集",
     ),
     ("list_entries", "列出一个白名单项目的条目：project"),
-    ("read_note", "读一篇笔记：path"),
+    (
+        "read_note",
+        "读一篇笔记：path[、lines=a-b|heading=标题|outline=true]",
+    ),
     (
         "search",
         "全文或路径搜索：project、text、mode=full_text|path",

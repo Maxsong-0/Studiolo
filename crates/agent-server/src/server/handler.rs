@@ -1,7 +1,7 @@
 //! MCP initialize：实例登记与初次只读路牌。
 use super::{
-    AgentSession, ListEntriesArgs, ListProposalsArgs, PolicyReadArgs, ProposeArgs, ReadNoteArgs,
-    SearchArgs, catalog::SESSION_VERSIONS,
+    AgentSession, ListEntriesArgs, ListProposalsArgs, PolicyReadArgs, ProposeArgs, SearchArgs,
+    args::ReadNoteToolArgs, catalog::SESSION_VERSIONS,
 };
 use crate::auth::AgentType;
 use rmcp::{
@@ -67,15 +67,15 @@ impl AgentSession {
     }
 
     #[tool(
-        description = "读一篇白名单内笔记的当前正文；返回首行 `revision <hex>` 后接正文；越白名单一律拒绝"
+        description = "读一篇白名单内笔记的当前正文；返回首行 `revision <hex>` 后接正文；越白名单一律拒绝。大笔记先 outline=true 看大纲（每行：起-止<TAB>## 标题），再用 lines=a-b 或 heading=标题只读一段；三者一次只能给一个，给了就在正文前多一行 `# 行 a-b · 共 N 行` 或 `# 大纲 · n 节 · 共 N 行`"
     )]
     async fn read_note(
         &self,
-        Parameters(args): Parameters<ReadNoteArgs>,
+        Parameters(args): Parameters<ReadNoteToolArgs>,
     ) -> Result<CallToolResult, McpError> {
         let _work = self.enter_mcp_work()?;
         Ok(text_result(
-            self.finish_mcp(self.text_read_note(args).await?)?,
+            self.finish_mcp(self.text_read_note_part(args).await?)?,
         ))
     }
 

@@ -2,6 +2,10 @@
 //!
 //! 元数据缺一项就整批拒绝，绝不按文件名猜；只要有排除项就必须走专用过滤 staging。
 
+mod normalized;
+
+pub use normalized::{NormalizedPath, PathDefect};
+
 use super::types::{SealError, TransferSource, TransferSourceKind};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -116,10 +120,11 @@ pub struct InclusionPlan {
 }
 
 impl InclusionPlan {
-    /// 组装 plan。任一条记录元数据缺失或 revision 不匹配都整批拒绝。
+    /// 组装 plan。任一条记录元数据缺失或 revision 不匹配、任一个根没有规范化，都整批拒绝。
     pub fn build(request: &InclusionRequest) -> Result<Self, InclusionError> {
+        let ephemeral_root = normalized(&request.ephemeral_root)?;
         for root in &request.source_roots {
-            if is_within(&request.ephemeral_root, root) {
+            if is_within(&ephemeral_root, &normalized(root)?) {
                 return Err(InclusionError::EphemeralInsideSourceRoot);
             }
         }
@@ -199,6 +204,7 @@ impl InclusionPlan {
     }
 
     /// 把 plan 绑定到传输源；有排除项就必须是位于两个保护根之外的专用过滤 staging。
+    /// 三个根都要先规范化：`validate` 同样按字面逐段比。
     pub fn bind_transfer_source(
         &self,
         source: &TransferSource,
@@ -206,6 +212,9 @@ impl InclusionPlan {
         workbench_data_root: &Path,
         shortest_source_retention: InstantMillis,
     ) -> Result<(), InclusionError> {
+        for root in [source.root.as_path(), vault_root, workbench_data_root] {
+            normalized(root)?;
+        }
         source
             .validate(vault_root, workbench_data_root, shortest_source_retention)
             .map_err(InclusionError::Seal)?;
@@ -216,8 +225,13 @@ impl InclusionPlan {
     }
 }
 
-fn is_within(candidate: &Path, root: &Path) -> bool {
-    candidate.starts_with(root)
+fn normalized(root: &Path) -> Result<NormalizedPath, InclusionError> {
+    NormalizedPath::parse(root).map_err(InclusionError::RootNotNormalized)
+}
+
+/// 按段比：`/a/bc` 不在 `/a/b` 里；两边都规范化过，所以字面就是实际的层级。
+fn is_within(candidate: &NormalizedPath, root: &NormalizedPath) -> bool {
+    candidate.as_path().starts_with(root.as_path())
 }
 
 /// 整批拒绝的具体原因。
@@ -241,6 +255,8 @@ pub enum RejectionReason {
 pub enum InclusionError {
     /// ephemeral 根落在某个来源根之内。
     EphemeralInsideSourceRoot,
+    /// 某个根没有规范化，逐分量比较对它不成立；不猜它指到哪里，整批拒绝。
+    RootNotNormalized(PathDefect),
     /// 整批拒绝；不按文件名猜任何一项缺失的元数据。
     BatchRejected {
         /// 触发拒绝的路径。
@@ -265,6 +281,9 @@ impl std::fmt::Display for InclusionError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::EphemeralInsideSourceRoot => formatter.write_str("ephemeral 位于某个来源根之内"),
+            Self::RootNotNormalized(defect) => {
+                write!(formatter, "根路径没有规范化：{defect}")
+            }
             Self::BatchRejected { path, reason } => {
                 write!(formatter, "整批拒绝：{path} 的元数据不完整（{reason:?}）")
             }

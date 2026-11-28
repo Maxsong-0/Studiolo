@@ -105,9 +105,20 @@
 |---|---|---|---|
 | `handshake` | 无 | 路牌文本 | `handshake.served` |
 | `list_entries` | `project`（白名单项） | 路径、revision、字节数、种类（note/attachment） | `content.read`（路径＝项目根） |
-| `read_note` | `path` | 正文（UTF-8）、revision、字节数；上限 4 MiB | `content.read`（路径、revision）|
+| `read_note` | `path`；可选 `lines`／`heading`／`outline` 三选一（见下） | 首行 `revision <hex>`，托管模式再接新鲜度行，然后正文（UTF-8）；上限 4 MiB | `content.read`（路径、revision），只要一段也是同一条 |
 | `search` | `project`、`text`、`mode`（full_text/path） | 命中路径、行号、片段（复用 workbench） | `content.read`（每个命中路径各一条，上限 100） |
 
+- `read_note` 只要一段（T-255；只有 MCP 工具，HTTP `/read/note` 仍只给整篇）：
+  - 都不给（或 `outline` 为 false）：整篇，和没有这三个参数时逐字节一样。
+  - `lines="a-b"`：第 a 到 b 行，从 1 起、两端都含，行号和 `search` 报的是同一套（按 `\n` 切，原来的换行不动）。
+    正文前多一行 `# 行 a-b · 共 N 行`。写法不对、从 0 起、反序、越界都回 `invalid_params`；越界那句带总行数。
+  - `heading="标题"`：该标题到下一个**同级或更高级**标题之前（含子节），头行同上。可以带 `#`（`## 标题`），带了就连级别一起核；
+    同名取第一处，头行写明同名几处。没有这个标题只回固定一句「没有这个标题」，不带别的内容。
+  - `outline=true`：头行 `# 大纲 · n 节 · 共 N 行`，之后每个标题一行 `起-止<TAB>## 标题`，井号个数是级别。行段可以直接交给 `lines`，
+    标题可以直接交给 `heading`，两种读法逐字节一样。标题超过 10000 个的笔记不给大纲和节（大纲会比原文大好几倍），固定一句叫你用 `lines`。
+  - 哪些行算标题和读模型的大纲同一套规则（跳过 frontmatter 和代码围栏，缩进照认，见 `vault-index.md`）；两套不许走岔由契约逐条对照。
+  - 先判路径、取到笔记，再看参数（类型也是这时才核，不交给反序列化）：越白名单、不存在、读不了的拒绝、措辞和审计都不因这三个参数改变。
+    参数写得对才记 `content.read`（整篇的 revision），记了再切，所以「行段越界」「没有这个标题」也各有一条读取记录；参数写得不对不记。
 - 审计**先于**返回：`content.read` 追加失败即拒绝返回，错误 `audit_unavailable`。
 - 白名单外路径、隐藏路径、越界：拒绝并记 `agent.action_denied`（reason=`outside_allowlist` / `unsafe_path`）；不回显宿主路径。
   接入策略平面后，前缀内但不在规则名单的规则文件记 `rule_not_whitelisted`，对外与白名单外同一句（§10）。
@@ -140,6 +151,8 @@
 | `rule_not_whitelisted` | 读能力集规则名单外的规则文件或规则母本（§10） | 与白名单外（`read_note`）或不存在（`policy_read`）同一对外错误，已审计 |
 | `audit_unavailable` | 账本不可用 | 降级握手 / tool 拒绝 |
 | `not_found` | 白名单内路径不存在 | tool 错误，已审计为拒绝 |
+| `read_note` 的参数不对 | `lines` 写法不对／越界、`heading` 是空的、类型不对、三样同时给了两样以上、标题太多给不出大纲 | JSON-RPC `-32602`，固定措辞 |
+| `read_note` 没有这个标题 | `heading` 在这篇里找不到 | JSON-RPC `-32002`「没有这个标题」，读取已审计 |
 
 ## 8. 契约测试清单
 
@@ -183,6 +196,9 @@
   与 `cfg(not(debug_assertions))` 两种写法，这类用例不许写在测试目标的子模块里，测试里不许用运行时 `cfg!(debug_assertions)`）。部署验收在生产主机上原生跑
   运行包里的测试，满额负载不该和线上服务抢内存。
 - 白名单：读 `School/...` 或 `../` → 拒绝＋审计；`list_entries` 只列白名单项目。
+- `read_note` 只要一段（`crates/agent-server/tests/read_note_slice_contract.rs`，T-255）：不给新参数逐字节不变；行段、越界、
+  反序、0 行；标题节的边界、同名、带 `#`；没有标题只回一句；大纲与读模型的大纲逐条一致、区间与 `lines`／`heading` 逐字节一致；
+  五种结果的 `content.read` 与整篇读完全相同；越白名单的拒绝措辞与审计不变；三选一；托管模式新鲜度行仍在前。
 - 审计先于返回：注入失败账本 → `read_note` 拒绝且无正文返回；降级握手不含 vault 内容。
 - 四维查询：两个类型两个实例各读若干路径 → `admin reads` 按类型/实例/时间/路径前缀过滤正确；重建索引与增量一致。
 - 真实 loopback：用 rmcp 客户端跑完整 initialize → handshake → list → read → search。

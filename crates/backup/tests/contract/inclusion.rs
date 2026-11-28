@@ -3,8 +3,8 @@
 
 use std::path::{Path, PathBuf};
 use studiolo_backup::checkpoint::inclusion::{
-    Disposition, InclusionError, InclusionPlan, InclusionRequest, RejectionReason, SourceCategory,
-    SourceRecord,
+    Disposition, InclusionError, InclusionPlan, InclusionRequest, NormalizedPath, PathDefect,
+    RejectionReason, SourceCategory, SourceRecord,
 };
 use studiolo_backup::checkpoint::types::{
     SealError, StagingMaterialization, TransferSource, TransferSourceKind,
@@ -353,4 +353,139 @@ fn an_ephemeral_record_can_never_be_planned_into_the_backup() {
         InclusionPlan::build(&request(records)),
         Err(InclusionError::EphemeralInsideSourceRoot)
     );
+}
+
+/// 没规范化的写法，和它错在哪。
+const NOT_NORMALIZED: [(&str, PathDefect); 14] = [
+    ("", PathDefect::Relative),
+    ("a/b", PathDefect::Relative),
+    ("./a", PathDefect::Relative),
+    ("../a", PathDefect::Relative),
+    ("/", PathDefect::EmptySegment),
+    ("//a", PathDefect::EmptySegment),
+    ("/a//b", PathDefect::EmptySegment),
+    ("/a/b/", PathDefect::EmptySegment),
+    ("/.", PathDefect::CurrentDirectory),
+    ("/a/./b", PathDefect::CurrentDirectory),
+    ("/a/b/.", PathDefect::CurrentDirectory),
+    ("/..", PathDefect::ParentDirectory),
+    ("/a/b/../c", PathDefect::ParentDirectory),
+    ("/a/b/..", PathDefect::ParentDirectory),
+];
+
+#[test]
+fn only_a_normalized_absolute_path_can_be_compared() {
+    for (raw, defect) in NOT_NORMALIZED {
+        assert_eq!(
+            NormalizedPath::parse(Path::new(raw)),
+            Err(defect),
+            "{raw:?}"
+        );
+    }
+    // 名字里带点但不是 . 或 .. 的段、非 ASCII 的段都是普通段。
+    for raw in [
+        "/a", "/a/b", "/a/..b", "/a/.b", "/a/b..", "/a/...", "/源/库",
+    ] {
+        let path = NormalizedPath::parse(Path::new(raw)).expect(raw);
+        assert_eq!(path.as_path(), Path::new(raw));
+    }
+}
+
+#[test]
+fn a_root_that_is_not_normalized_rejects_the_whole_plan() {
+    for (raw, defect) in NOT_NORMALIZED {
+        let records = || {
+            vec![record(
+                "notes/a.md",
+                SourceCategory::Canonical,
+                BackupScope::Full,
+            )]
+        };
+        let mut ephemeral = request(records());
+        ephemeral.ephemeral_root = PathBuf::from(raw);
+        assert_eq!(
+            InclusionPlan::build(&ephemeral),
+            Err(InclusionError::RootNotNormalized(defect)),
+            "ephemeral {raw:?}"
+        );
+        // 排在前面的根合格，不能掩护后面没规范化的。
+        let mut source = request(records());
+        source.source_roots.push(PathBuf::from(raw));
+        assert_eq!(
+            InclusionPlan::build(&source),
+            Err(InclusionError::RootNotNormalized(defect)),
+            "source {raw:?}"
+        );
+    }
+}
+
+#[test]
+fn a_sibling_that_only_shares_a_name_prefix_is_not_inside() {
+    let mut inputs = request(vec![record(
+        "notes/a.md",
+        SourceCategory::Canonical,
+        BackupScope::Full,
+    )]);
+    inputs.source_roots = vec![PathBuf::from("/a/b")];
+    inputs.ephemeral_root = PathBuf::from("/a/bc");
+    InclusionPlan::build(&inputs).expect("/a/bc 不在 /a/b 里");
+    for inside in ["/a/b", "/a/b/c"] {
+        inputs.ephemeral_root = PathBuf::from(inside);
+        assert_eq!(
+            InclusionPlan::build(&inputs),
+            Err(InclusionError::EphemeralInsideSourceRoot),
+            "{inside}"
+        );
+    }
+}
+
+/// `/a/b/../c` 实际是 `/a/c`：当 ephemeral 时按字面会被误判在 `/a/b` 里，当源根时按字面会放过 `/a/c` 里的 ephemeral。
+#[test]
+fn a_parent_segment_neither_hides_nor_fakes_containment() {
+    let mut inputs = request(vec![record(
+        "notes/a.md",
+        SourceCategory::Canonical,
+        BackupScope::Full,
+    )]);
+    inputs.source_roots = vec![PathBuf::from("/a/b")];
+    inputs.ephemeral_root = PathBuf::from("/a/b/../c");
+    let faked = InclusionPlan::build(&inputs);
+    inputs.source_roots = vec![PathBuf::from("/a/b/../c")];
+    inputs.ephemeral_root = PathBuf::from("/a/c/ephemeral");
+    let hidden = InclusionPlan::build(&inputs);
+    let refused = Err(InclusionError::RootNotNormalized(
+        PathDefect::ParentDirectory,
+    ));
+    assert_eq!((&faked, &hidden), (&refused, &refused));
+}
+
+#[test]
+fn binding_a_transfer_source_takes_only_normalized_roots() {
+    let plan = InclusionPlan::build(&request(vec![record(
+        "full.md",
+        SourceCategory::SourceMaterial,
+        BackupScope::Full,
+    )]))
+    .expect("plan");
+    let bind = |root: &str, vault: &str, data: &str| {
+        plan.bind_transfer_source(
+            &TransferSource {
+                root: PathBuf::from(root),
+                kind: TransferSourceKind::DirectExport,
+                materialization: StagingMaterialization::StreamedCopy,
+                expires_at: InstantMillis::from_millis(1_000),
+                budget: studiolo_backup::checkpoint::types::StagingBudget::FIXED,
+            },
+            Path::new(vault),
+            Path::new(data),
+            InstantMillis::from_millis(2_000),
+        )
+    };
+    bind("/srv/staging", "/srv/vault", "/srv/data").expect("三个根都规范化、传输源在外面");
+    for (raw, defect) in NOT_NORMALIZED {
+        let refused = Err(InclusionError::RootNotNormalized(defect));
+        assert_eq!(bind(raw, "/srv/vault", "/srv/data"), refused, "{raw:?}");
+        assert_eq!(bind("/srv/staging", raw, "/srv/data"), refused, "{raw:?}");
+        assert_eq!(bind("/srv/staging", "/srv/vault", raw), refused, "{raw:?}");
+    }
 }
