@@ -15,10 +15,10 @@ fn classified_exits_survive_round_failure_but_transport_failures_do_not_reuse_th
         let health = after_clean_batch();
         health.record_headless(&closed, false);
         let classified = health.bridge().last_exit;
-        health.record_round(11_000, &Err(closed.failure()));
+        health.record_round(span(11_000), &Err(closed.failure()));
         assert_eq!(health.bridge().last_exit, classified);
         assert_ne!(classified, Some(ExitClass::Clean));
-        health.record_round(11_300, &Err(PlaneError::Transport));
+        health.record_round(span(11_300), &Err(PlaneError::Transport));
         assert_eq!(health.bridge().last_exit, Some(ExitClass::Unconfirmed));
     }
 }
@@ -41,7 +41,7 @@ fn persisted_conflicts_survive_reopen_and_disappear_only_after_pruning() {
     assert_eq!(health.bridge().conflict_copies, Some(3));
     // 同一持久集合重复回填不累加；副本尚未写完导致失败也不能回零。
     health.record_conflicts(reopened.state().conflict_stamps.len() as u64);
-    health.record_round(11_000, &Err(PlaneError::Unavailable));
+    health.record_round(span(11_000), &Err(PlaneError::Unavailable));
     assert_eq!(health.bridge().conflict_copies, Some(3));
     let mut state = reopened.state().clone();
     state.conflict_stamps.clear();
