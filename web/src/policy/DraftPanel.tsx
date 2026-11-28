@@ -103,8 +103,6 @@ export function DraftPanel({
                 label,
                 action: `发布 ${label}`,
                 origin,
-                supersedes: superseded.length,
-                remains: remaining.length,
               },
               publishPreview(record, report, status, superseded, remaining),
             );

@@ -119,8 +119,6 @@ const activationFor = (desired: ListedDesired): Activation => ({
   label: TITLE.claude,
   action: `发布 ${TITLE.claude}`,
   origin: reviewOrigin(desired.id),
-  supersedes: 0,
-  remains: 0,
 });
 
 const publishOpen = (desired: ListedDesired): OpenPreview => ({

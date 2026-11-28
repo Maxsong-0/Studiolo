@@ -21,8 +21,8 @@ use crate::{PolicyError, database::Database, storage::CreatePolicy};
 
 pub use types::{
     Activation, DesiredInput, DesiredRecord, DesiredStatus, EffectiveEntry, EffectiveSummary,
-    MAX_PENDING_PER_INSTANCE, MAX_PENDING_PROPOSALS, RevocationLevel, RevocationRecord, Submitter,
-    VersionMeta, VersionRecord,
+    MAX_PENDING_PER_INSTANCE, MAX_PENDING_PER_TYPE, MAX_PENDING_PROPOSALS, RevocationLevel,
+    RevocationRecord, Submitter, VersionMeta, VersionRecord,
 };
 
 // 子模块与接入方句柄（agent.rs）经 `store::` 取用下列内部项。

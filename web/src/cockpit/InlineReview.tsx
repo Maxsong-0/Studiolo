@@ -191,8 +191,6 @@ export function InlineReview({
             label,
             action: `发布 ${label}`,
             origin,
-            supersedes: superseded.length,
-            remains: remaining.length,
           },
           publishPreview(desired, report, status, superseded, remaining, {
             expansionsWhere: '上面已逐条列出',

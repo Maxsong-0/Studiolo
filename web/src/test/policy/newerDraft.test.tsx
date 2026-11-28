@@ -200,7 +200,7 @@ describe('同一对象几份未发布草案（T-181）', () => {
     );
     expect(
       await within(detailCell()).findByText(
-        /已发布为 v3.*同一对象比它早的未发布草案已一并标为已取代/,
+        /已发布为 v3.*同一对象比它早的 1 份未发布草案已一并标为已取代/,
       ),
     ).toHaveAttribute('role', 'status');
   });
@@ -300,7 +300,7 @@ describe('同一对象几份未发布草案（T-181）', () => {
     );
     expect(
       await within(detailCell()).findByText(
-        /已发布为 v3.*；同一对象比它早的未发布草案已一并标为已取代；同一对象更新的 1 份未发布草案照旧待处理/,
+        /已发布为 v3.*；同一对象比它早的 1 份未发布草案已一并标为已取代；同一对象更新的 1 份未发布草案照旧待处理/,
       ),
     ).toHaveAttribute('role', 'status');
   });

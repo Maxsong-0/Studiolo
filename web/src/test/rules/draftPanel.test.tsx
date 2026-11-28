@@ -152,8 +152,6 @@ describe('草案面板的先后（T-181）', () => {
         label: '能力集 claude',
         action: '发布 能力集 claude',
         origin: 'access',
-        supersedes: 0,
-        remains: 1,
       },
       expect.objectContaining({
         facts: expect.arrayContaining([
@@ -194,8 +192,6 @@ describe('草案面板的先后（T-181）', () => {
         label: '能力集 claude',
         action: '发布 能力集 claude',
         origin: 'access',
-        supersedes: 1,
-        remains: 0,
       },
       expect.objectContaining({
         facts: expect.arrayContaining([

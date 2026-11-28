@@ -119,8 +119,6 @@ export function PolicyNow({
                       label: '解除全局撤销',
                       action: '解除全局撤销',
                       origin: 'effective',
-                      supersedes: 0,
-                      remains: 0,
                     },
                     releasePreview(status.effective_hash),
                   )
@@ -292,8 +290,6 @@ export function PolicyNow({
                           label: `回滚到 v${meta.version}`,
                           action: `回滚到 v${meta.version}`,
                           origin: 'versions',
-                          supersedes: 0,
-                          remains: 0,
                         },
                         rollbackPreview(meta, status),
                       )
