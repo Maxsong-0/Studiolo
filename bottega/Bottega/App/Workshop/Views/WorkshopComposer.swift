@@ -229,9 +229,9 @@ struct SendDraftButton: View {
 /// The text, its files, and why it came back if it did.
 struct DraftField: View {
     @Environment(WorkshopModel.self) private var model
-    @Environment(Look.self) private var look
     let key: DraftKey
     let placeholder: String
+    /// Inside the composer, which is the box already. On its own (an answer on the waiting page) it has its own.
     var isPlain = false
     @FocusState private var isFocused: Bool
 
@@ -260,10 +260,7 @@ struct DraftField: View {
                         model.focusedDraft = nil
                     }
                 }
-                .padding(isPlain ? 0 : 8)
-                .background {
-                    if !isPlain { RoundedRectangle(cornerRadius: 8).fill(look.surface) }
-                }
+                .modifier(AnswerBox(isOn: !isPlain, isTypedIn: isFocused))
             ForEach(Array(draft.files.enumerated()), id: \.offset) { index, file in
                 HStack(spacing: 6) {
                     Image(systemName: "doc.text")
@@ -274,6 +271,24 @@ struct DraftField: View {
                 }
                 .font(.callout)
             }
+        }
+    }
+}
+
+/// The box of a field that is not in the composer: a capsule while the answer is one line, as every other field
+/// here is, and a rounded box once it is more.
+private struct AnswerBox: ViewModifier {
+    let isOn: Bool
+    let isTypedIn: Bool
+
+    func body(content: Content) -> some View {
+        if isOn {
+            content
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .glassFieldBox(in: RoundedRectangle(cornerRadius: 16, style: .continuous), isTypedIn: isTypedIn)
+        } else {
+            content
         }
     }
 }

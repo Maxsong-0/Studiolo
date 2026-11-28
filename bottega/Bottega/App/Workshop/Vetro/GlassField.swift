@@ -6,11 +6,16 @@ extension View {
     /// brighter while it is typed in. The system's rounded field is a dark box on dark glass, and nothing in this
     /// window sits on black (T-245).
     func glassField(height: CGFloat = 28) -> some View { modifier(GlassField(height: height)) }
+
+    /// What makes a field on glass one, whatever its shape: the capsule of a one-line field, the box an answer of
+    /// several lines grows into. Without the outline a field is only its fill, and that goes when the glass is
+    /// clear, leaving nothing to say where to type.
+    func glassFieldBox(in shape: some InsettableShape, isTypedIn: Bool) -> some View {
+        modifier(GlassFieldBox(shape: shape, isTypedIn: isTypedIn))
+    }
 }
 
 private struct GlassField: ViewModifier {
-    @Environment(Look.self) private var look
-    @Environment(\.colorSchemeContrast) private var contrast
     @FocusState private var isTypedIn: Bool
     let height: CGFloat
 
@@ -20,14 +25,26 @@ private struct GlassField: ViewModifier {
             .focused($isTypedIn)
             .padding(.horizontal, height * 0.4)
             .frame(height: height)
-            .background(look.surface, in: .capsule)
-            .vetroEdge(in: Capsule())
+            .glassFieldBox(in: Capsule(), isTypedIn: isTypedIn)
+    }
+}
+
+private struct GlassFieldBox<S: InsettableShape>: ViewModifier {
+    @Environment(Look.self) private var look
+    @Environment(\.colorSchemeContrast) private var contrast
+    let shape: S
+    let isTypedIn: Bool
+
+    func body(content: Content) -> some View {
+        content
+            .background(look.surface, in: shape)
+            .vetroEdge(in: shape)
             .overlay {
                 if isTypedIn {
-                    Capsule().strokeBorder(look.focusEdge(increasedContrast: contrast == .increased), lineWidth: 1.5)
+                    shape.strokeBorder(look.focusEdge(increasedContrast: contrast == .increased), lineWidth: 1.5)
                 }
             }
-            .contentShape(.capsule)
+            .contentShape(shape)
             .animation(.easeOut(duration: 0.15), value: isTypedIn)
     }
 }

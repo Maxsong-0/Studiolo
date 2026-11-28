@@ -436,12 +436,16 @@ private struct PanelsForAScreenshot: View {
 /// `BOTTEGA_WINDOW=860x700`: the window opens that size, for a screenshot of a narrow one. Asked through
 /// `setContentSize`, which the window's own narrowest still holds for, as it does for a drag of its edge.
 private enum WindowForAScreenshot {
+    /// The window is put back where it last was a moment after its content appears, and nothing says when. This
+    /// long was enough each time it was tried; it is for screenshots only.
+    static let untilTheWindowIsBack = Duration.milliseconds(600)
+
     @MainActor static func resize() async {
         guard let asked = ProcessInfo.processInfo.environment["BOTTEGA_WINDOW"] else { return }
         let sides = asked.split(separator: "x").compactMap { Double($0) }
         guard sides.count == 2 else { return }
-        // After the window has been put back where it last was, which comes a moment after its content.
-        try? await Task.sleep(for: .milliseconds(600))
+        // A view that has gone does not resize the window after all.
+        guard (try? await Task.sleep(for: untilTheWindowIsBack)) != nil else { return }
         NSApp.windows.first { $0.canBecomeMain }?.setContentSize(NSSize(width: sides[0], height: sides[1]))
     }
 }

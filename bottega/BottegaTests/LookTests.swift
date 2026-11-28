@@ -154,6 +154,9 @@ struct LookTests {
             // Off, they are as they were.
             #expect(Look.outline(look.edgeOpacity, increasedContrast: false) == look.edgeOpacity, "\(appearance)")
             #expect(Look.outline(look.focusEdgeOpacity, increasedContrast: false) == look.focusEdgeOpacity, "\(appearance)")
+            // And the colours the controls are drawn with are the ones that change.
+            #expect(look.edge(increasedContrast: true) != look.edge(increasedContrast: false), "\(appearance)")
+            #expect(look.focusEdge(increasedContrast: true) != look.focusEdge(increasedContrast: false), "\(appearance)")
         }
         // Never past opaque, however strong it was.
         #expect(Look.outline(0.9, increasedContrast: true) == 1)

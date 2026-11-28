@@ -363,9 +363,9 @@ struct FileChip: View {
     }
 }
 
-/// Text as it came, in a box that scrolls once it is long.
+/// Text as it came, in a box that scrolls once it is long. The box is a card's: its fill alone goes when the glass
+/// is clear, and then nothing sets output apart from what is said around it.
 struct PlainBlock: View {
-    @Environment(Look.self) private var look
     let text: String
     var limit: CGFloat = 320
     var monospaced = true
@@ -383,6 +383,6 @@ struct PlainBlock: View {
         .defaultScrollAnchor(.topLeading)
         .frame(maxHeight: limit)
         .fixedSize(horizontal: false, vertical: true)
-        .background(look.surface, in: .rect(cornerRadius: 8))
+        .vetroSurface(cornerRadius: 8)
     }
 }
