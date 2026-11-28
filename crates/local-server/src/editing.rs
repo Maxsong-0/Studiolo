@@ -21,11 +21,7 @@ pub(crate) const MAX_BYTES: usize = 256 * 1024;
 pub(crate) const JSON_LIMIT: usize = MAX_BYTES * 6 + 16 * 1024;
 
 pub(crate) fn digest(bytes: &[u8]) -> String {
-    use sha2::{Digest, Sha256};
-    Sha256::digest(bytes)
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect()
+    studiolo_core::sha256_hex(bytes)
 }
 
 #[derive(Serialize)]

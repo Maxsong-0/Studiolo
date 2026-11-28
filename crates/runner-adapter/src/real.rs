@@ -312,11 +312,7 @@ impl RunnerAdapter for RealRunner {
             }
             hasher.update(&buffer[..size]);
         }
-        let digest: String = hasher
-            .finalize()
-            .iter()
-            .map(|b| format!("{b:02x}"))
-            .collect();
+        let digest = studiolo_core::to_lower_hex(&hasher.finalize());
         if digest != self.config.cli_sha256 || !matches!(self.config.cli_sha256.len(), 64) {
             return Ok(AdapterAvailability::Unavailable {
                 reason: "pinned CLI binary digest mismatch".into(),

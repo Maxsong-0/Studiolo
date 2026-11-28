@@ -6,7 +6,6 @@
 use std::fmt;
 
 use serde::{Deserialize, Serialize};
-use sha2::{Digest as _, Sha256};
 use studiolo_core::VaultPath;
 
 use crate::{PolicyError, validate::Problem};
@@ -161,10 +160,7 @@ pub struct Skill {
 /// SHA-256 十六进制。
 #[must_use]
 pub fn sha256_hex(bytes: &[u8]) -> String {
-    Sha256::digest(bytes)
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect()
+    studiolo_core::sha256_hex(bytes)
 }
 
 /// 类型名只允许小写字母、数字与连字符，1..=32 字符，不以连字符开头（与 supply 一致）。

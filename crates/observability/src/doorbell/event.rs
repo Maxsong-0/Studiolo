@@ -189,13 +189,7 @@ fn message_id(record_hash: &str) -> String {
     let mut digest = Sha256::new();
     digest.update(b"studiolo.doorbell.message.v1\0");
     digest.update(record_hash.as_bytes());
-    let hex = b"0123456789abcdef";
-    let mut id = String::from("msg_");
-    for byte in digest.finalize().iter().take(16) {
-        id.push(char::from(hex[usize::from(byte >> 4)]));
-        id.push(char::from(hex[usize::from(byte & 15)]));
-    }
-    id
+    format!("msg_{}", studiolo_core::to_lower_hex(&digest.finalize()[..16]))
 }
 
 #[cfg(test)]

@@ -43,19 +43,7 @@ impl IdempotencyKey {
             digest.update((part.len() as u64).to_be_bytes());
             digest.update(part.as_bytes());
         }
-        let hex = b"0123456789abcdef";
-        let value = digest
-            .finalize()
-            .iter()
-            .take(16)
-            .flat_map(|byte| {
-                [
-                    char::from(hex[usize::from(byte >> 4)]),
-                    char::from(hex[usize::from(byte & 15)]),
-                ]
-            })
-            .collect();
-        Self(value)
+        Self(studiolo_core::to_lower_hex(&digest.finalize()[..16]))
     }
 
     /// 取回键正文（32 位十六进制）。

@@ -71,10 +71,7 @@ pub(super) struct ManifestEntry {
 }
 
 pub(super) fn hex(value: &str, length: usize) -> bool {
-    value.len() == length
-        && value
-            .bytes()
-            .all(|ch| ch.is_ascii_digit() || (b'a'..=b'f').contains(&ch))
+    value.len() == length && studiolo_core::is_lower_hex(value)
 }
 
 pub(super) fn visible(raw: &str) -> Result<VaultPath, ReplicaError> {

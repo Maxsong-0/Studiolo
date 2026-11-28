@@ -45,17 +45,7 @@ fn checksum(
     digest.update(suppressed_since_alert.to_be_bytes());
     digest.update(episode.to_be_bytes());
     digest.update(dispatch_round.to_be_bytes());
-    let hex = b"0123456789abcdef";
-    digest
-        .finalize()
-        .iter()
-        .flat_map(|byte| {
-            [
-                char::from(hex[usize::from(byte >> 4)]),
-                char::from(hex[usize::from(byte & 15)]),
-            ]
-        })
-        .collect()
+    studiolo_core::to_lower_hex(&digest.finalize())
 }
 
 /// 编码成持久字节；超过预算即失败，不截断。

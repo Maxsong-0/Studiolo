@@ -7,11 +7,7 @@ use super::{MAX_PAYLOAD_BYTES, database_error};
 use crate::SupplyError;
 
 pub(super) fn validate_scope(scope: &str) -> Result<(), SupplyError> {
-    if scope.len() != 64
-        || !scope
-            .bytes()
-            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
-    {
+    if !studiolo_core::is_sha256_hex(scope) {
         return Err(SupplyError::CorruptStore);
     }
     Ok(())

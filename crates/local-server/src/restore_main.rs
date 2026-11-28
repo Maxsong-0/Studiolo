@@ -177,11 +177,7 @@ fn parse(args: &[String]) -> Result<Command, &'static str> {
         Kind::Finish => Ok(Command::Finish(target)),
         Kind::Run => {
             let seal_sha256 = take("--seal-sha256", "缺 --seal-sha256")?;
-            if seal_sha256.len() != 64
-                || !seal_sha256
-                    .bytes()
-                    .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
-            {
+            if !studiolo_core::is_sha256_hex(&seal_sha256) {
                 return Err("--seal-sha256 要恰好 64 位小写十六进制");
             }
             let checkpoint = CheckpointId::parse(take("--checkpoint", "缺 --checkpoint")?)

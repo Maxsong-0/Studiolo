@@ -8,7 +8,7 @@ pub(crate) fn hash(bytes: &[u8]) -> Digest {
     Sha256::digest(bytes).into()
 }
 pub(crate) fn hex(bytes: &[u8]) -> String {
-    bytes.iter().map(|b| format!("{b:02x}")).collect()
+    studiolo_core::to_lower_hex(bytes)
 }
 pub(crate) fn input_hash(input: &crate::Input) -> Result<Digest> {
     Ok(hash(&input_codec::encode(input)?))

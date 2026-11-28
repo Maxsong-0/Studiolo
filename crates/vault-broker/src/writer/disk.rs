@@ -152,9 +152,7 @@ fn parent_dir(dir: &Dir, path: &str) -> Result<Dir, BrokerError> {
     super::directory(dir, parent.to_str().ok_or(BrokerError::CorruptWriterState)?)
 }
 
+/// 64 位小写十六进制（SHA-256 的文本写法）。名字叫 `hex` 但是判断：本包约 70 处调用，名字不改。
 pub(crate) fn hex(value: &str) -> bool {
-    value.len() == 64
-        && value
-            .bytes()
-            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+    studiolo_core::is_sha256_hex(value)
 }

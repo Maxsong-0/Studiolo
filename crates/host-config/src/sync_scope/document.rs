@@ -43,18 +43,7 @@ pub(super) fn object<'de, D: Deserializer<'de>, T: Deserialize<'de>>(
 }
 
 pub(super) fn identity(text: &str) -> Result<[u8; 16], ConfigError> {
-    if text.len() != 32
-        || !text
-            .bytes()
-            .all(|c| c.is_ascii_digit() || (b'a'..=b'f').contains(&c))
-    {
-        return Err(ConfigError);
-    }
-    let mut result = [0; 16];
-    for (index, value) in result.iter_mut().enumerate() {
-        *value =
-            u8::from_str_radix(&text[index * 2..index * 2 + 2], 16).map_err(|_| ConfigError)?;
-    }
+    let result: [u8; 16] = studiolo_core::from_lower_hex(text).ok_or(ConfigError)?;
     if result == [0; 16] {
         return Err(ConfigError);
     }

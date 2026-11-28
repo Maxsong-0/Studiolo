@@ -103,10 +103,7 @@ pub(super) fn validate(state: &PlaneState) -> Result<(), PlaneError> {
     let ascending = |set: &[String]| set.windows(2).all(|pair| pair[0] < pair[1]);
     let stamps = state.conflict_stamps.len() <= MAX_CONFLICT_STAMPS
         && state.conflict_stamps.iter().all(|(key, stamp)| {
-            key.len() == 64
-                && key
-                    .bytes()
-                    .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+            studiolo_core::is_sha256_hex(key)
                 && stamp.len() == 12
                 && stamp.bytes().all(|byte| byte.is_ascii_digit())
         });
