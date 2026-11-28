@@ -30,10 +30,8 @@ struct SidePanel: View {
     }
 
     @Environment(WorkshopModel.self) private var model
-    @Environment(Look.self) private var look
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var tab: Tab = .details
-    @Namespace private var pill
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -59,33 +57,13 @@ struct SidePanel: View {
     }
 
     private var tabs: some View {
-        HStack(spacing: 0) {
-            ForEach(Tab.allCases) { item in
-                let isOn = tab == item
-                Button {
-                    withAnimation(reduceMotion ? nil : .smooth(duration: 0.25)) { tab = item }
-                } label: {
-                    Text(item.title)
-                        .font(.system(size: 12, weight: isOn ? .semibold : .regular))
-                        .foregroundStyle(isOn ? .primary : .secondary)
-                        .lineLimit(1)
-                        .frame(maxWidth: .infinity, minHeight: 26)
-                        .background {
-                            if isOn {
-                                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                    .fill(look.selection)
-                                    .shadow(color: .black.opacity(0.12), radius: 1.5, y: 1)
-                                    .matchedGeometryEffect(id: "tab", in: pill)
-                            }
-                        }
-                        .contentShape(.rect)
-                }
-                .buttonStyle(.plain)
-                .accessibilityAddTraits(isOn ? .isSelected : [])
-            }
+        VetroSegmented<Tab>(
+            label: "Panel pages",
+            items: Tab.allCases.map { .init(value: $0, title: $0.title) },
+            selected: tab, height: 30, fillsWidth: true
+        ) { picked in
+            withAnimation(reduceMotion ? nil : .smooth(duration: 0.25)) { tab = picked }
         }
-        .padding(3)
-        .background(.black.opacity(0.1 * look.strength), in: .rect(cornerRadius: 10, style: .continuous))
     }
 }
 

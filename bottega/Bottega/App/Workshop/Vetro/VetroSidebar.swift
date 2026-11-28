@@ -6,12 +6,16 @@ import SwiftUI
 /// you, the LMAS status and the backdrop.
 struct VetroSidebar: View {
     @Environment(WorkshopModel.self) private var model
+    /// As wide as it is drawn: what its edge was dragged to, or less in a window too narrow for that.
+    let width: Double
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            // The window's own close, minimise and zoom buttons sit over this strip; ⌘K at its other end.
-            HStack {
+            // The window's own close, minimise and zoom buttons sit over this strip; at its other end, putting the
+            // sidebar away and ⌘K.
+            HStack(spacing: 2) {
                 Spacer()
+                SidebarButton()
                 PaletteButton()
             }
             .frame(height: 18)
@@ -24,9 +28,28 @@ struct VetroSidebar: View {
             SidebarFooter()
         }
         .padding(EdgeInsets(top: 12, leading: 8, bottom: 8, trailing: 8))
-        .frame(width: 276)
+        .frame(width: width)
         .frame(maxHeight: .infinity)
         .vetroPane(cornerRadius: 20, isSidebar: true)
+    }
+}
+
+/// Puts the sidebar away, or brings it back from the page's header. Dragging its edge shut and View › Hide Sidebar
+/// do the same.
+struct SidebarButton: View {
+    @Environment(WorkshopModel.self) private var model
+
+    var body: some View {
+        Button { model.showsSidebar.toggle() } label: {
+            Image(systemName: "sidebar.leading")
+                .font(.system(size: 13))
+                .foregroundStyle(.secondary)
+                .frame(width: 26, height: 26)
+                .contentShape(.rect)
+        }
+        .buttonStyle(.plain)
+        .help(model.showsSidebar ? "Hide the sidebar (⌃⌘S)" : "Show the sidebar (⌃⌘S)")
+        .accessibilityLabel(model.showsSidebar ? "Hide the sidebar" : "Show the sidebar")
     }
 }
 
@@ -51,43 +74,20 @@ private struct PaletteButton: View {
 /// Five places in one row; the pill slides to the one picked.
 private struct SectionSwitcher: View {
     @Environment(WorkshopModel.self) private var model
-    @Environment(Look.self) private var look
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @Namespace private var pill
 
     var body: some View {
-        HStack(spacing: 0) {
-            ForEach(SidebarSection.allCases) { section in
-                let isOn = model.section == section
-                Button {
-                    withAnimation(reduceMotion ? nil : .smooth(duration: 0.25)) { model.show(section) }
-                } label: {
-                    Image(systemName: section.symbol)
-                        .font(.system(size: 13, weight: .medium))
-                        .foregroundStyle(isOn ? .primary : .secondary)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        .background {
-                            if isOn {
-                                RoundedRectangle(cornerRadius: 9, style: .continuous)
-                                    .fill(look.selection)
-                                    .shadow(color: .black.opacity(0.12), radius: 1.5, y: 1)
-                                    .matchedGeometryEffect(id: "pill", in: pill)
-                            }
-                        }
-                        .overlay(alignment: .top) {
-                            if section == .waiting { WaitingBadge(count: model.waiting.count).offset(x: 10, y: -4) }
-                        }
-                        .contentShape(.rect)
-                }
-                .buttonStyle(.plain)
-                .help(section.title)
-                .accessibilityLabel(section.title)
-                .accessibilityAddTraits(isOn ? .isSelected : [])
-            }
+        VetroSegmented<SidebarSection>(
+            label: "Sections",
+            items: SidebarSection.allCases.map { section in
+                .init(
+                    value: section, title: section.title, symbol: section.symbol,
+                    waiting: section == .waiting ? model.waiting.count : 0)
+            },
+            selected: model.section, height: 38, fillsWidth: true
+        ) { section in
+            withAnimation(reduceMotion ? nil : .smooth(duration: 0.25)) { model.show(section) }
         }
-        .frame(height: 36)
-        .padding(3)
-        .background(.black.opacity(0.12 * look.strength), in: .rect(cornerRadius: 12, style: .continuous))
     }
 }
 
@@ -612,13 +612,12 @@ struct BackdropPanel: View {
                 Spacer()
                 Text(verbatim: look.photo.title.uppercased()).font(.system(size: 10, design: .monospaced)).foregroundStyle(.secondary)
             }
-            HStack(spacing: 6) {
+            // Six to a row: twelve photos are two rows.
+            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 6), count: 6), spacing: 6) {
                 ForEach(Look.Photo.allCases) { photo in
                     Button { look.photo = photo } label: {
-                        Image(photo.asset)
-                            .resizable()
-                            .scaledToFill()
-                            .frame(width: 52, height: 34)
+                        BackdropPhoto(photo: photo)
+                            .frame(height: 30)
                             .clipShape(.rect(cornerRadius: 7, style: .continuous))
                             .overlay {
                                 RoundedRectangle(cornerRadius: 7, style: .continuous)
@@ -634,10 +633,15 @@ struct BackdropPanel: View {
             slider("Blur", value: $look.blur, in: Look.blurRange, text: "\(Int(look.blur.rounded())) px")
             slider("Grain", value: $look.grain, in: Look.percentRange, text: "\(Int(look.grain.rounded()))%")
             slider("Transparency", value: $look.transparency, in: Look.percentRange, text: "\(Int(look.transparency.rounded()))%")
-            Picker("Appearance", selection: $look.appearance) {
-                ForEach(Look.Appearance.allCases) { Text($0.title).tag($0) }
+            // The same capsule as every other switcher, not the system's pop-up button.
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Appearance").font(.system(size: 12)).foregroundStyle(.secondary)
+                VetroSegmented<Look.Appearance>(
+                    label: "Appearance",
+                    items: Look.Appearance.allCases.map { .init(value: $0, title: $0.title) },
+                    selected: look.appearance, height: 28, fillsWidth: true, fontSize: 11.5
+                ) { look.appearance = $0 }
             }
-            .font(.system(size: 12))
         }
         .padding(14)
         .frame(width: 320)
