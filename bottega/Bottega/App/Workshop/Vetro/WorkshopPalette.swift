@@ -43,12 +43,12 @@ struct WorkshopPalette: View {
     var body: some View {
         let rows = rows
         ZStack(alignment: .top) {
-            RoundedRectangle(cornerRadius: 20, style: .continuous)
-                .fill(.black.opacity(look.isDark ? 0.34 : 0.2))
+            // Nothing is drawn over the page (no dark veil, T-245): the panel's own shadow sets it apart, as
+            // Spotlight's does. A click anywhere off the panel still closes it.
+            Color.clear
                 .contentShape(.rect)
                 .onTapGesture { close() }
                 .accessibilityHidden(true)
-                .transition(.opacity)
             panel(rows)
                 .padding(.top, Metrics.top)
                 .transition(
@@ -115,8 +115,14 @@ struct WorkshopPalette: View {
         .padding(.bottom, 6)
         .frame(width: Metrics.width)
         .background(look.surface, in: .rect(cornerRadius: Metrics.cornerRadius, style: .continuous))
-        .glassEffect(.regular.tint(look.glassTint), in: .rect(cornerRadius: Metrics.cornerRadius, style: .continuous))
-        .shadow(color: .black.opacity(0.28), radius: 30, y: 12)
+        .vetroEdge(in: RoundedRectangle(cornerRadius: Metrics.cornerRadius, style: .continuous))
+        .background {
+            // The shadow is the glass's, not the rows': thrown by what is on the panel it would sit under every
+            // word.
+            Color.clear
+                .glassEffect(.regular.tint(look.glassTint), in: .rect(cornerRadius: Metrics.cornerRadius, style: .continuous))
+                .shadow(color: .black.opacity(0.28), radius: 30, y: 12)
+        }
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Search and commands")
     }
@@ -307,6 +313,7 @@ struct WorkshopPalette: View {
         let isList = model.cardLayout == .list
         let layout: WorkshopModel.CardLayout = isList ? .board : .list
         let showsInspector = !model.showsInspector
+        let showsSidebar = !model.showsSidebar
         var rows = [
             Row(id: "layout:\(layout.rawValue)", title: isList ? "Show cards as a board" : "Show cards as a list", glyph: .symbol(isList ? "rectangle.split.3x1" : "list.bullet")) {
                 // The page first: going to it forgets a switch (`CardsMotion.Cue`), so the other way round the board
@@ -314,9 +321,14 @@ struct WorkshopPalette: View {
                 model.page = .board
                 withAnimation(CardsMotion.switching(reduceMotion: reduceMotion)) { model.cardLayout = layout }
             },
-            Row(id: "panel:\(showsInspector)", title: showsInspector ? "Show the panel" : "Hide the panel", glyph: .symbol("sidebar.trailing")) {
-                model.showsInspector = showsInspector
-            },
+            Row(
+                id: "sidebar:\(showsSidebar)", title: showsSidebar ? "Show the sidebar" : "Hide the sidebar",
+                glyph: .symbol("sidebar.leading"), key: "⌃⌘S"
+            ) { model.showsSidebar = showsSidebar },
+            Row(
+                id: "panel:\(showsInspector)", title: showsInspector ? "Show the panel" : "Hide the panel",
+                glyph: .symbol("sidebar.trailing"), key: "⌥⌘0"
+            ) { model.showsInspector = showsInspector },
         ]
         if model.hasLink {
             rows.append(Row(id: "reconnect", title: "Reconnect to LMAS", glyph: .symbol("arrow.triangle.2.circlepath")) { model.reconnect() })

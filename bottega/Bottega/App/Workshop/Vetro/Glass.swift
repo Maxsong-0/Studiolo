@@ -9,9 +9,7 @@ struct BackdropView: View {
     var body: some View {
         ZStack {
             Color.black
-            Image(look.photo.asset)
-                .resizable()
-                .scaledToFill()
+            BackdropPhoto(photo: look.photo)
                 .blur(radius: look.blur, opaque: true)
                 .id(look.photo)
                 .transition(.opacity)
@@ -25,6 +23,30 @@ struct BackdropView: View {
         .ignoresSafeArea()
         .allowsHitTesting(false)
         .accessibilityHidden(true)
+    }
+}
+
+/// A backdrop photo filling whatever frame it is given, with the part that matters kept in view
+/// (`Look.Photo.focus`): the window, and the small ones in the backdrop panel.
+struct BackdropPhoto: View {
+    let photo: Look.Photo
+
+    var body: some View {
+        GeometryReader { proxy in
+            let focus = photo.focus
+            let frame = proxy.size
+            Image(photo.asset)
+                .resizable()
+                .scaledToFill()
+                .alignmentGuide(HorizontalAlignment.center) { image in
+                    CGFloat(Look.Photo.guide(content: image.width, frame: frame.width, focus: focus.x))
+                }
+                .alignmentGuide(VerticalAlignment.center) { image in
+                    CGFloat(Look.Photo.guide(content: image.height, frame: frame.height, focus: focus.y))
+                }
+                .frame(width: frame.width, height: frame.height)
+                .clipped()
+        }
     }
 }
 
@@ -66,6 +88,16 @@ extension View {
 
     /// Text on glass, kept apart from the photo by a narrow edge rather than a glow.
     func legibleOnGlass() -> some View { modifier(LegibleOnGlass()) }
+
+    /// Liquid Glass behind this, not around it. Glass wrapped around text lights up the shadow under the text into
+    /// a halo the colour of the text (T-245); behind it, the text keeps its narrow edge and nothing more.
+    func glassBehind(_ glass: Glass, in shape: some Shape) -> some View {
+        background { Color.clear.glassEffect(glass, in: shape) }
+    }
+
+    /// The outline every control in the window shares: a capsule, a field, a switcher (`Look.edge`), with light
+    /// along its top. Stronger with Increase Contrast on.
+    func vetroEdge(in shape: some InsettableShape) -> some View { modifier(VetroEdge(shape: shape)) }
 }
 
 private struct VetroPane: ViewModifier {
@@ -88,7 +120,7 @@ private struct VetroPane: ViewModifier {
                 .legibleOnGlass()
                 .background { if isSidebar { shape.fill(look.sidebarShade) } }
                 .clipShape(shape)
-                .glassEffect(.clear.tint(look.glassTint), in: shape)
+                .glassBehind(.clear.tint(look.glassTint), in: shape)
         }
     }
 
@@ -111,6 +143,20 @@ private struct VetroSurface<S: InsettableShape>: ViewModifier {
                 shape.inset(by: 0.5).stroke(
                     LinearGradient(colors: [look.rim, .clear], startPoint: .top, endPoint: .center), lineWidth: 1)
             }
+    }
+}
+
+private struct VetroEdge<S: InsettableShape>: ViewModifier {
+    @Environment(Look.self) private var look
+    @Environment(\.colorSchemeContrast) private var contrast
+    let shape: S
+
+    func body(content: Content) -> some View {
+        content.overlay {
+            shape.strokeBorder(look.edge(increasedContrast: contrast == .increased), lineWidth: 1)
+            shape.inset(by: 1).stroke(
+                LinearGradient(colors: [look.rim.opacity(0.6), .clear], startPoint: .top, endPoint: .center), lineWidth: 1)
+        }
     }
 }
 
