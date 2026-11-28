@@ -53,7 +53,7 @@ struct ModelPill: View {
             .padding(.leading, 7)
             .padding(.trailing, 9)
             .frame(height: 34)
-            .overlay { Capsule().strokeBorder(.separator) }
+            .vetroEdge(in: Capsule())
             .contentShape(.capsule)
         }
         .buttonStyle(.plain)
