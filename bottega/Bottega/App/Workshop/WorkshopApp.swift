@@ -18,7 +18,6 @@ struct WorkshopApp: App {
             WorkshopView()
                 .environment(model)
                 .environment(look)
-                .frame(minWidth: 860, minHeight: 520)
                 .task { await model.run() }
         }
         // The photo runs to the window's edges. The toolbar is empty and clear: it is only there so the window's
@@ -46,6 +45,13 @@ struct WorkshopCommands: Commands {
             #if DEBUG
             Button("Open Recording…") { openRecording() }
             #endif
+        }
+        // In the View menu, where every Mac app keeps these two.
+        CommandGroup(replacing: .sidebar) {
+            Button(model.showsSidebar ? "Hide Sidebar" : "Show Sidebar") { model.showsSidebar.toggle() }
+                .keyboardShortcut("s", modifiers: [.control, .command])
+            Button(model.showsInspector ? "Hide Panel" : "Show Panel") { model.showsInspector.toggle() }
+                .keyboardShortcut("0", modifiers: [.option, .command])
         }
         CommandMenu("Go") {
             Button("Search…") { model.showsPalette.toggle() }

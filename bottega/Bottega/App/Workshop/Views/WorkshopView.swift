@@ -8,14 +8,35 @@ import SwiftUI
 struct WorkshopView: View {
     @Environment(WorkshopModel.self) private var model
     @Environment(Look.self) private var look
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         @Bindable var model = model
-        HStack(spacing: 8) {
-            VetroSidebar()
-            MainPane()
+        // The window's own width, which this is handed whatever is in it. The width of what is in it would not
+        // do: panes that have not given way yet keep that from getting any narrower, so they never would.
+        GeometryReader { proxy in
+            let window = Double(proxy.size.width)
+            let drawn = WindowMeasures.drawn(
+                sidebar: model.showsSidebar ? model.sidebarWidth : nil,
+                panel: model.showsInspector ? model.panelWidth : nil, window: window)
+            HStack(spacing: 0) {
+                if let sidebar = drawn.sidebar {
+                    HStack(spacing: 0) {
+                        VetroSidebar(width: sidebar)
+                        // The gap between the two panes is what drags the sidebar's edge.
+                        PaneHandle(pane: .sidebar, width: sidebar, window: window)
+                    }
+                    .transition(reduceMotion ? .opacity : .move(edge: .leading).combined(with: .opacity))
+                }
+                MainPane(panel: drawn.panel, window: window)
+            }
+            .animation(reduceMotion ? .easeOut(duration: 0.2) : .smooth(duration: 0.36), value: model.showsSidebar)
+            .padding(WindowMeasures.margin)
         }
-        .padding(10)
+        #if DEBUG
+        .overlay(alignment: .top) { if PanelsForAScreenshot.isAsked { PanelsForAScreenshot() } }
+        .task { await WindowForAScreenshot.resize() }
+        #endif
         .background { BackdropView() }
         .ignoresSafeArea()
         .toolbar {
@@ -30,6 +51,10 @@ struct WorkshopView: View {
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             model.cameToFront()
         }
+        // Wide enough for whichever side panes are shown, so that none is pushed past the window's edge.
+        .frame(
+            minWidth: WindowMeasures.narrowestWindow(sidebar: model.showsSidebar, panel: model.showsInspector),
+            minHeight: WindowMeasures.windowShortest)
     }
 }
 
@@ -38,19 +63,26 @@ struct MainPane: View {
     @Environment(WorkshopModel.self) private var model
     @Environment(Look.self) private var look
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    /// How wide the panel is drawn; nil when it is put away.
+    let panel: Double?
+    let window: Double
 
     var body: some View {
         VStack(spacing: 0) {
             PageHeader()
             HStack(spacing: 0) {
                 PageView()
-                    .frame(minWidth: 420)
-                if model.showsInspector {
+                    .frame(minWidth: WindowMeasures.pageNarrowest)
+                if let panel {
                     SidePanel()
-                        .frame(width: 292)
+                        .frame(width: panel)
                         .vetroSurface(cornerRadius: 14)
                         .clipShape(.rect(cornerRadius: 14, style: .continuous))
-                        .padding(EdgeInsets(top: 0, leading: 0, bottom: 10, trailing: 10))
+                        // Astride the panel's left edge.
+                        .overlay(alignment: .leading) {
+                            PaneHandle(pane: .panel, width: panel, window: window).offset(x: -WindowMeasures.handle / 2)
+                        }
+                        .padding(EdgeInsets(top: 0, leading: 0, bottom: 10, trailing: WindowMeasures.panelInset))
                         .transition(reduceMotion ? .opacity : .move(edge: .trailing).combined(with: .opacity))
                 }
             }
@@ -74,6 +106,11 @@ private struct PageHeader: View {
 
     var body: some View {
         HStack(spacing: 10) {
+            if !model.showsSidebar {
+                // The window's own buttons are over this end of the header now; next to them, what brings the
+                // sidebar back.
+                SidebarButton().padding(.leading, WindowMeasures.windowButtons)
+            }
             VStack(alignment: .leading, spacing: 1) {
                 Text(verbatim: PageView.title(model))
                     .font(.system(size: 13.5, weight: .semibold))
@@ -96,30 +133,32 @@ private struct PageHeader: View {
     private var tools: some View {
         HStack(spacing: 2) {
             if case .line = model.page {
-                @Bindable var model = model
-                Picker("View", selection: $model.showsLanes) {
-                    Image(systemName: "text.alignleft").help("Timeline").tag(false)
-                    Image(systemName: "arrow.left.arrow.right").help("Lanes").tag(true)
-                }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-                .fixedSize()
-                .help("Show this line as a timeline or as letters between agents")
+                VetroSegmented<Bool>(
+                    label: "View",
+                    items: [
+                        .init(value: false, title: "Timeline", symbol: "text.alignleft", help: "Show this line as a timeline"),
+                        .init(
+                            value: true, title: "Lanes", symbol: "arrow.left.arrow.right",
+                            help: "Show this line as letters between agents"),
+                    ],
+                    selected: model.showsLanes
+                ) { model.showsLanes = $0 }
             }
             if case .line(let id) = model.page, let line = model.state.threads[id] {
                 ArrangeButton(line: line)
             }
             if model.page == .board {
-                @Bindable var model = model
                 // The same kind of control as Chat / Sequence in the canvas.
-                Picker("Layout", selection: $model.cardLayout.animation(CardsMotion.switching(reduceMotion: reduceMotion))) {
-                    Text("Board").tag(WorkshopModel.CardLayout.board)
-                    Text("List").tag(WorkshopModel.CardLayout.list)
+                VetroSegmented<WorkshopModel.CardLayout>(
+                    label: "Layout",
+                    items: [
+                        .init(value: .board, title: "Board", help: "Show the cards as a board"),
+                        .init(value: .list, title: "List", help: "Show the cards as a list, most recent first"),
+                    ],
+                    selected: model.cardLayout
+                ) { layout in
+                    withAnimation(CardsMotion.switching(reduceMotion: reduceMotion)) { model.cardLayout = layout }
                 }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-                .fixedSize()
-                .help("Show the cards as a board or as a list, most recent first")
             }
             Button { model.showsInspector.toggle() } label: {
                 Image(systemName: "sidebar.trailing")
@@ -133,7 +172,8 @@ private struct PageHeader: View {
             .accessibilityLabel(model.showsInspector ? "Hide the panel" : "Show the panel")
         }
         .padding(3)
-        .glassEffect(.clear.tint(look.surface), in: .capsule)
+        .glassBehind(.clear.tint(look.surface), in: .capsule)
+        .vetroEdge(in: Capsule())
     }
 }
 
@@ -314,7 +354,8 @@ struct Banner<Actions: View>: View {
         .padding(.horizontal, 12)
         .padding(.vertical, 7)
         // Over the page and over the photo, so it carries more body than the panes do.
-        .glassEffect(.regular, in: .rect(cornerRadius: 12))
+        .glassBehind(.regular, in: .rect(cornerRadius: 12))
+        .vetroEdge(in: RoundedRectangle(cornerRadius: 12))
         // A click on it does nothing, and does not reach what is under it.
         .contentShape(.rect)
         .onTapGesture {}
@@ -373,3 +414,39 @@ struct WorkshopSettings: View {
         }
     }
 }
+
+#if DEBUG
+/// `BOTTEGA_PANELS=1`: what the backdrop popover holds, and the arrange popover of the line that is open, drawn in
+/// the window for a screenshot. A popover is a window of its own, which a picture of this one leaves out.
+private struct PanelsForAScreenshot: View {
+    @Environment(WorkshopModel.self) private var model
+    static let isAsked = ProcessInfo.processInfo.environment["BOTTEGA_PANELS"] != nil
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 16) {
+            BackdropPanel().glassBehind(.regular, in: .rect(cornerRadius: 14))
+            if let id = model.page.line, let line = model.state.threads[id] {
+                ArrangePanel(line: line).glassBehind(.regular, in: .rect(cornerRadius: 14))
+            }
+        }
+        .padding(.top, 90)
+    }
+}
+
+/// `BOTTEGA_WINDOW=860x700`: the window opens that size, for a screenshot of a narrow one. Asked through
+/// `setContentSize`, which the window's own narrowest still holds for, as it does for a drag of its edge.
+private enum WindowForAScreenshot {
+    /// The window is put back where it last was a moment after its content appears, and nothing says when. This
+    /// long was enough each time it was tried; it is for screenshots only.
+    static let untilTheWindowIsBack = Duration.milliseconds(600)
+
+    @MainActor static func resize() async {
+        guard let asked = ProcessInfo.processInfo.environment["BOTTEGA_WINDOW"] else { return }
+        let sides = asked.split(separator: "x").compactMap { Double($0) }
+        guard sides.count == 2 else { return }
+        // A view that has gone does not resize the window after all.
+        guard (try? await Task.sleep(for: untilTheWindowIsBack)) != nil else { return }
+        NSApp.windows.first { $0.canBecomeMain }?.setContentSize(NSSize(width: sides[0], height: sides[1]))
+    }
+}
+#endif

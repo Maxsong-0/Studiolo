@@ -42,8 +42,8 @@ private struct RegisterProject: View {
             }
             if let folder {
                 TextField("Name", text: $name, prompt: Text("Name"))
-                    .textFieldStyle(.roundedBorder)
                     .font(.system(size: 14, weight: .semibold))
+                    .glassField(height: 32)
                 Fact(name: "Folder", value: folder.path)
                 Fact(name: "LMAS checks", value: "Repository root · nothing in it runs on checkout")
                 Text("A bot you start a line with gets its own copy of this repository and can write code in it. Nothing is committed, merged or pushed for you.")

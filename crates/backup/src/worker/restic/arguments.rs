@@ -43,10 +43,7 @@ impl JobTag {
     pub fn for_job(key: &crate::worker::state::JobKey) -> Result<Self, ResticError> {
         use sha2::{Digest, Sha256};
         let hash = Sha256::digest(key.checkpoint_id.as_str().as_bytes());
-        let suffix: String = hash[..16]
-            .iter()
-            .map(|byte| format!("{byte:02x}"))
-            .collect();
+        let suffix = studiolo_core::to_lower_hex(&hash[..16]);
         Self::parse(format!("job-{}-{suffix}", key.sequence))
     }
     /// 解析 tag。
@@ -82,10 +79,7 @@ impl SnapshotRef {
     /// 解析快照标识。
     pub fn parse(value: impl Into<String>) -> Result<Self, ResticError> {
         let value = value.into();
-        let shaped = (8..=64).contains(&value.len())
-            && value
-                .bytes()
-                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte));
+        let shaped = (8..=64).contains(&value.len()) && studiolo_core::is_lower_hex(&value);
         if shaped {
             Ok(Self(value))
         } else {

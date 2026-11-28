@@ -90,11 +90,7 @@ pub struct RunnerPlane {
     ingress_thread: Mutex<Option<std::thread::JoinHandle<()>>>,
 }
 pub(super) fn hash(bytes: &[u8]) -> String {
-    use sha2::{Digest, Sha256};
-    Sha256::digest(bytes)
-        .iter()
-        .map(|b| format!("{b:02x}"))
-        .collect()
+    studiolo_core::sha256_hex(bytes)
 }
 fn permissions(mut values: impl Iterator<Item = String>) -> studiolo_core::PermissionSet {
     // 未知的逻辑工具不会借部署字符串被悄悄引入。

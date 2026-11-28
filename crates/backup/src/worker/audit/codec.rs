@@ -1,6 +1,5 @@
 //! 消息编码过程即限额；不先分配无限 Vec 再检查长度。
 use serde::Serialize;
-use sha2::{Digest, Sha256};
 use std::io::Write;
 /// 请求与回执各最多 16KiB，协议不允许正文。
 pub const AUDIT_MESSAGE_MAX_BYTES: usize = 16 * 1024;
@@ -44,8 +43,5 @@ impl Write for Limited {
     }
 }
 pub(super) fn digest(bytes: &[u8]) -> String {
-    Sha256::digest(bytes)
-        .iter()
-        .map(|b| format!("{b:02x}"))
-        .collect()
+    studiolo_core::sha256_hex(bytes)
 }

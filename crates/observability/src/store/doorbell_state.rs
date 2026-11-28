@@ -33,24 +33,11 @@ fn checksum(state: &DoorbellState) -> String {
     digest.update(state.retry_at_ms.to_be_bytes());
     digest.update([u8::from(state.gone)]);
     digest.update(state.endpoint_tag.as_bytes());
-    let hex = b"0123456789abcdef";
-    digest
-        .finalize()
-        .iter()
-        .flat_map(|byte| {
-            [
-                char::from(hex[usize::from(byte >> 4)]),
-                char::from(hex[usize::from(byte & 15)]),
-            ]
-        })
-        .collect()
+    studiolo_core::to_lower_hex(&digest.finalize())
 }
 
 fn valid_tag(tag: &str) -> bool {
-    tag.len() == TAG_LENGTH
-        && tag
-            .bytes()
-            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    tag.len() == TAG_LENGTH && studiolo_core::is_lower_hex(tag)
 }
 
 /// 编码成持久字节；指纹形状不对或超过预算即失败，不截断。

@@ -219,13 +219,7 @@ fn chain(
 }
 
 fn hex(bytes: &[u8]) -> String {
-    let mut output = String::with_capacity(bytes.len() * 2);
-    for byte in bytes {
-        use std::fmt::Write as _;
-        // 写入 String 不会失败；这里不静默吞掉任何真实错误。
-        let _ = write!(&mut output, "{byte:02x}");
-    }
-    output
+    studiolo_core::to_lower_hex(bytes)
 }
 
 /// transcript 的失败模式。

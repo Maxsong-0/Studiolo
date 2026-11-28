@@ -120,9 +120,7 @@ fn derive(
 }
 
 pub(super) fn lower_hex(value: &str) -> bool {
-    value
-        .bytes()
-        .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+    studiolo_core::is_lower_hex(value)
 }
 
 pub(super) fn valid_sequence(value: &str) -> bool {
@@ -161,12 +159,7 @@ pub(super) fn equal(left: &[u8], right: &[u8]) -> bool {
     bool::from(left.ct_eq(right))
 }
 
+/// 秘密（恢复码、TOTP 种子）也走这里：core 那份按长度一次分配、不经 `format!`，不在堆上留临时碎片。
 pub(super) fn hex(bytes: &[u8]) -> String {
-    const DIGITS: &[u8; 16] = b"0123456789abcdef";
-    let mut output = String::with_capacity(bytes.len() * 2);
-    for byte in bytes {
-        output.push(DIGITS[usize::from(byte >> 4)] as char);
-        output.push(DIGITS[usize::from(byte & 15)] as char);
-    }
-    output
+    studiolo_core::to_lower_hex(bytes)
 }

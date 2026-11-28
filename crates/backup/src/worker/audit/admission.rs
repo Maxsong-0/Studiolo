@@ -151,8 +151,8 @@ impl AdmissionFact {
             || self.expires_at <= self.content_cutoff
             || self.audit_offset == 0
             || self.audit_offset > i64::MAX as u64
-            || !digest(&self.source.seal_sha256)
-            || !digest(&self.audit_hash)
+            || !studiolo_core::is_sha256_hex(&self.source.seal_sha256)
+            || !studiolo_core::is_sha256_hex(&self.audit_hash)
         {
             return Err(AuditError::CorruptStore);
         }
@@ -171,10 +171,4 @@ impl AdmissionFact {
         }
         Ok(())
     }
-}
-fn digest(value: &str) -> bool {
-    value.len() == 64
-        && value
-            .bytes()
-            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
 }

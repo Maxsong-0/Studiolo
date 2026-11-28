@@ -1,6 +1,5 @@
 use super::FINAL_MANIFEST_MAX_BYTES;
 use serde::Serialize;
-use sha2::{Digest, Sha256};
 use std::io::Write;
 
 /// 最终记录只返回固定失败分类，不带路径、正文或秘密。
@@ -36,14 +35,8 @@ impl Write for Limited {
     }
 }
 pub(super) fn digest(bytes: &[u8]) -> String {
-    Sha256::digest(bytes)
-        .iter()
-        .map(|b| format!("{b:02x}"))
-        .collect()
+    studiolo_core::sha256_hex(bytes)
 }
 pub(super) fn digest_shaped(value: &str) -> bool {
-    value.len() == 64
-        && value
-            .bytes()
-            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+    studiolo_core::is_sha256_hex(value)
 }

@@ -97,8 +97,7 @@ fn private_stage_event(vault: &Path, event: &Event) -> bool {
         let Some(hash) = name.strip_suffix(".stage") else {
             return false;
         };
-        hash.len() == 64
-            && hash.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+        studiolo_core::is_sha256_hex(hash)
             // 不用Path组件相等：它会折叠`.`或重复分隔符，导致别名被错误忽略。
             && path.as_os_str() == staging.join(name).as_os_str()
     })
