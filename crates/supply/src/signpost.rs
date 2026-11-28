@@ -105,7 +105,7 @@ pub struct Signpost {
 impl Signpost {
     /// 把黑板行放到第 4 节标题下一行并重新计量；`line` 自带结尾换行，只调一次。
     ///
-    /// 放在这一节最前面：派生时只给它留了 [`BOARD_LINE_RESERVE_UTF16`]，更长时被挤出可见段的是待办尾部。
+    /// 派生时给它留了 [`BOARD_LINE_RESERVE_UTF16`]，插进去以后可见段仍在线内。
     pub fn insert_board(&mut self, line: &str) {
         self.text.insert_str(self.board_at, line);
         self.tokens = count_tokens(&self.text);
@@ -123,7 +123,8 @@ pub struct ProjectStatus {
     entries: Vec<(String, String)>,
 }
 
-/// 给黑板行留的可见段余量：没有子项时 28 个单元，子项多到改报条数时约 50 个。
+/// 给黑板行留的可见段余量。会被客户端截的只有握手时的 `instructions`，那时实例刚铸造、名下没有工作项，
+/// 黑板行是固定的 28 个单元（没接黑板时更短）；列子项的长行只出现在 `handshake` 工具的结果里，不受这个上限管。
 const BOARD_LINE_RESERVE_UTF16: usize = 64;
 /// 最深的裁剪等级。
 const MAX_TRIM: u8 = 3;

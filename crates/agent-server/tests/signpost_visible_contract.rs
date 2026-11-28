@@ -5,7 +5,7 @@
 //! 项目数照仓库里的项目登记表（`scripts/project_registry.json`），工具说明用服务端真正发的 `TOOLS`：
 //! 登记表加项目、工具加说明，这里跟着变长，压线时先红。
 
-use std::{fs, path::Path};
+use std::{collections::BTreeSet, fs, path::Path};
 
 use serde_json::Value;
 use studiolo_agent_server::server::TOOLS;
@@ -37,6 +37,9 @@ const PRINCIPLES: [&str; 11] = [
     LAST_PRINCIPLE,
 ];
 
+/// 四条上限都到线的容量提醒（`replica::capacity_notice_for`），最长的一种。
+const CAPACITY: &str = "⚠ 副本快到协议上限：Markdown 合计 33.0 MiB，上限 40.0 MiB 的 82%；文件总量 420.0 MiB，上限 512.0 MiB 的 82%；可见条目 20500，上限 25000 的 82%；清单 3.3 MiB，上限 4.0 MiB 的 82%。涨过任一条上限后 Mac 同步会整批失败、这里的资料停在越线前（vault BUG-039）。请提醒用户趁早调高上限（两端常量，见 docs/m3/replica-freshness.md）或精简白名单。";
+
 /// 登记表里给 AI 看的路径，就是生产白名单。
 fn registered() -> Vec<String> {
     let registry: Value = serde_json::from_str(REGISTRY).unwrap();
@@ -51,10 +54,10 @@ fn registered() -> Vec<String> {
     paths
 }
 
-/// 白名单再多 20 个没有总览的目录（同 `项目/HR系统-Docs`）：只撑长第 3 节，不撑项目清单，把可见段推到上限附近。
-fn near_the_limit() -> Vec<String> {
+/// 白名单再多几个没有总览的目录（同 `项目/HR系统-Docs`）：只撑长第 3 节，不撑项目清单。
+fn with_bare_directories(extra: usize) -> Vec<String> {
     let mut allow = registered();
-    allow.extend((0..20).map(|index| format!("项目/没有总览的目录{index:02}-Docs")));
+    allow.extend((0..extra).map(|index| format!("项目/没有总览的目录{index:02}-Docs")));
     allow
 }
 
@@ -210,7 +213,8 @@ fn assert_front_is_visible(text: &str) {
         "## 4 待我做的事\n黑板实时状态：",
         "完整见各项目 04-协调/TASKS.md）\n",
         "## 2 项目状态\n",
-        " 个可读项目；每行＝",
+        // 可见段的最后一行，核到行尾：只核开头会漏掉被截掉半行的。
+        "，详情读 <项目前缀>/00-总览/INDEX.md\n",
     ] {
         assert!(seen.contains(needed), "线内没有 {needed:?}：\n{seen}");
     }
@@ -268,7 +272,7 @@ fn at_production_scale_everything_but_the_project_list_is_visible() {
 
 #[test]
 fn long_rows_shorten_the_visible_part_and_leave_the_project_list_alone() {
-    let signpost = derive(&near_the_limit(), &long_task(), None);
+    let signpost = derive(&with_bare_directories(20), &long_task(), None);
     assert_front_is_visible(&signpost.text);
     assert!(signpost.trim_level > 0, "夹具没有触发可见段裁剪");
     assert!(
@@ -279,37 +283,43 @@ fn long_rows_shorten_the_visible_part_and_leave_the_project_list_alone() {
 }
 
 #[test]
-fn every_row_length_keeps_the_front_visible_with_the_board_line_in_place() {
-    // 逐字加长待办：可见段会连续扫过上限前后的每一处，黑板行（派生之后才插）的余量留少了在这里红。
-    let mut trimmed = 0;
-    for length in 1..=120 {
-        let signpost = derive(&near_the_limit(), &"长".repeat(length), None);
-        assert_front_is_visible(&signpost.text);
-        trimmed += usize::from(signpost.trim_level > 0);
+fn every_whitelist_size_keeps_the_front_visible_with_the_board_line_in_place() {
+    // 待办写到最长，白名单一个一个加目录（每个约 18 个单元）：可见段连续扫过上限，裁深一级再扫。
+    // 黑板行（派生之后才插）的余量、第 2 节开头两行、待办条数，少算哪一样都在这里红。
+    for capacity in [None, Some(CAPACITY)] {
+        let mut levels = BTreeSet::new();
+        for extra in 0..=85 {
+            let signpost = derive(&with_bare_directories(extra), &long_task(), capacity);
+            assert_front_is_visible(&signpost.text);
+            levels.insert(signpost.trim_level);
+        }
+        assert!(
+            levels.len() >= 2,
+            "没有扫过换级的那一处：{levels:?}（容量提醒 {}）",
+            capacity.is_some()
+        );
     }
-    assert!((1..120).contains(&trimmed), "没有扫过上限：{trimmed}");
 }
 
 #[test]
 fn surrogate_pairs_count_twice_like_the_client_counts_them() {
     // 每条 120 字里一半是 emoji：按字符数放得下、按 UTF-16 单元放不下的那一段。
     let task = "🟡修".repeat(60);
-    let signpost = derive(&near_the_limit(), &task, None);
+    let signpost = derive(&with_bare_directories(20), &task, None);
     assert_front_is_visible(&signpost.text);
     assert!(signpost.trim_level > 0, "夹具没有触发可见段裁剪");
 }
 
 #[test]
 fn the_capacity_notice_stays_visible_even_when_all_four_limits_are_near() {
-    let notice = "⚠ 副本快到协议上限：Markdown 合计 33.0 MiB，上限 40.0 MiB 的 82%；文件总量 420.0 MiB，上限 512.0 MiB 的 82%；可见条目 20500，上限 25000 的 82%；清单 3.3 MiB，上限 4.0 MiB 的 82%。涨过任一条上限后 Mac 同步会整批失败、这里的资料停在越线前（vault BUG-039）。请提醒用户趁早调高上限（两端常量，见 docs/m3/replica-freshness.md）或精简白名单。";
     for (allow, task) in [
         (registered(), SHORT_TASK.to_owned()),
-        (near_the_limit(), long_task()),
+        (with_bare_directories(20), long_task()),
     ] {
-        let text = derive(&allow, &task, Some(notice)).text;
+        let text = derive(&allow, &task, Some(CAPACITY)).text;
         assert_front_is_visible(&text);
         assert!(
-            visible(&text).contains(&format!("## 2 项目状态\n{notice}\n")),
+            visible(&text).contains(&format!("## 2 项目状态\n{CAPACITY}\n")),
             "容量提醒被截：\n{text}"
         );
     }
