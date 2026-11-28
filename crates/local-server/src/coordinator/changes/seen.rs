@@ -267,6 +267,8 @@ pub(super) fn mark(
     )
 }
 #[cfg(test)]
+mod measure;
+#[cfg(test)]
 mod tests {
     use super::*;
     use studiolo_audit_ledger::MemoryAuditLedger;
