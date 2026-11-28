@@ -17,8 +17,8 @@ studiolo-core.workspace = true
 unicode-normalization.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-sha2.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
+sha2.workspace = true
 tempfile.workspace = true

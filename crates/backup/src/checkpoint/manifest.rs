@@ -163,11 +163,7 @@ fn require_digest(
     owner: CheckpointOwner,
     field: &'static str,
 ) -> Result<(), ManifestError> {
-    let is_digest = value.len() == 64
-        && value
-            .bytes()
-            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte));
-    if is_digest {
+    if studiolo_core::is_sha256_hex(value) {
         return Ok(());
     }
     if !value.is_empty() && value.bytes().all(|byte| byte.is_ascii_digit()) {

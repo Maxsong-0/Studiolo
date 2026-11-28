@@ -193,10 +193,7 @@ fn validate_rows(db: &Connection, version: i64) -> Result<(), SessionError> {
 }
 
 pub(super) fn legacy_id(id: &str) -> bool {
-    id.len() == 32
-        && id
-            .bytes()
-            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+    id.len() == 32 && studiolo_core::is_lower_hex(id)
 }
 
 pub(super) fn next_sequence(db: &Connection) -> Result<i64, SessionError> {

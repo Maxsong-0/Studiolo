@@ -33,11 +33,7 @@ pub struct PendingPurge {
 
 impl PendingPurge {
     pub(super) fn valid(&self) -> bool {
-        let hex = self.event_id.len() == 64
-            && self
-                .event_id
-                .bytes()
-                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b));
+        let hex = studiolo_core::is_sha256_hex(&self.event_id);
         let counts = self.planned_files.saturating_add(self.planned_directories) <= 65_569;
         let result = self.result.as_ref().is_none_or(|result| {
             match (result.files, result.directories, result.applied) {

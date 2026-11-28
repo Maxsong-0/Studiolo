@@ -38,12 +38,7 @@ impl Revision {
     /// 返回小写十六进制摘要。
     #[must_use]
     pub fn to_hex(self) -> String {
-        let mut output = String::with_capacity(64);
-        for byte in self.0 {
-            use fmt::Write as _;
-            write!(&mut output, "{byte:02x}").expect("writing to String cannot fail");
-        }
-        output
+        crate::to_lower_hex(&self.0)
     }
 }
 

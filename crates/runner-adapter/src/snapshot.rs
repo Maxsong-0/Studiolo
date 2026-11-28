@@ -1,7 +1,6 @@
 //! 宿主机持有的 git 快照，以及候选补丁的持久保留；绝不更新任何分支。
 use crate::{LaunchStage, RunnerError, git_trust};
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 use std::{
     fs::{self, File},
     io::{Read, Write},
@@ -202,10 +201,7 @@ impl CodeSnapshot {
         let metadata = PatchMetadata {
             base_tree: self.base.clone(),
             after_tree: after,
-            sha256: Sha256::digest(&patch)
-                .iter()
-                .map(|b| format!("{b:02x}"))
-                .collect::<String>(),
+            sha256: studiolo_core::sha256_hex(&patch),
             retained_path: retained.to_path_buf(),
         };
         durable_bytes(retained, &patch)?;

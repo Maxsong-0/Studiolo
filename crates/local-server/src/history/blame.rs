@@ -7,7 +7,6 @@
 mod tests;
 
 use serde_json::{Value, json};
-use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use studiolo_core::{Revision, VaultPath, VaultUuid};
 use studiolo_vault_broker::HistoryLineage;
@@ -234,10 +233,7 @@ pub(crate) fn attribute<E>(
 
 /// 正文的普通 SHA-256（十六进制）。网页用它确认自己手里的原文和这份归属是同一版。
 pub(crate) fn content_digest(content: &str) -> String {
-    Sha256::digest(content.as_bytes())
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect()
+    studiolo_core::sha256_hex(content)
 }
 
 /// 把逐行归属合并成连续的段再投影成 JSON；行号从 1 起，两端都含。

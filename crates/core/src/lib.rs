@@ -8,6 +8,7 @@ mod data_labels;
 mod error;
 mod fence;
 mod flush;
+mod hex;
 mod ids;
 mod permission;
 mod revision;
@@ -22,6 +23,7 @@ pub use data_labels::{BackupScope, Classification, DataLabels, DesktopSync, Mode
 pub use error::{DataLabelError, IdParseError, PathSyntaxError};
 pub use fence::Fence;
 pub use flush::Flush;
+pub use hex::{from_lower_hex, is_lower_hex, is_sha256_hex, sha256_hex, to_lower_hex};
 pub use ids::{AttemptId, TaskId, VaultUuid};
 pub use permission::{PermissionSet, ToolId};
 pub use revision::Revision;

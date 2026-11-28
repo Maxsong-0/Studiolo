@@ -29,6 +29,8 @@ mod factor_http;
 mod file_lock_release;
 #[path = "architecture_cases/flush_points.rs"]
 mod flush_points;
+#[path = "architecture_cases/hex_single_definition.rs"]
+mod hex_single_definition;
 #[path = "architecture_cases/leftover_sockets.rs"]
 mod leftover_sockets;
 #[path = "architecture_cases/maintenance.rs"]

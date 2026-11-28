@@ -59,11 +59,7 @@ pub(super) fn snapshot(db: &Connection) -> Result<OwnerWatermark, Error> {
     if pending != 0 {
         return Err(Error::Invalid);
     }
-    let type_token_digest = digest
-        .finalize()
-        .iter()
-        .map(|b| format!("{b:02x}"))
-        .collect();
+    let type_token_digest = studiolo_core::to_lower_hex(&digest.finalize());
     Ok(OwnerWatermark::AgentStore {
         schema_version: version as u32,
         type_token_digest,
@@ -71,11 +67,7 @@ pub(super) fn snapshot(db: &Connection) -> Result<OwnerWatermark, Error> {
     })
 }
 fn hash(value: &str) -> Result<(), Error> {
-    if value.len() == 64
-        && value
-            .bytes()
-            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
-    {
+    if studiolo_core::is_sha256_hex(value) {
         Ok(())
     } else {
         Err(Error::Invalid)

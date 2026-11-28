@@ -26,10 +26,7 @@ impl RunId {
 
 impl fmt::Display for RunId {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        for byte in self.0 {
-            write!(formatter, "{byte:02x}")?;
-        }
-        Ok(())
+        formatter.write_str(&studiolo_core::to_lower_hex(&self.0))
     }
 }
 

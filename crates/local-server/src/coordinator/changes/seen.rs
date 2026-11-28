@@ -56,11 +56,7 @@ fn payload(event: &AuditEvent) -> Result<Payload, ()> {
         || !crate::changes::scope(p.project.as_ref())
         || !crate::changes::token(&p.snapshot)
         || !crate::changes::token(&p.epoch)
-        || p.actor.len() != 64
-        || !p
-            .actor
-            .bytes()
-            .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
+        || !studiolo_core::is_sha256_hex(&p.actor)
     {
         return Err(());
     }

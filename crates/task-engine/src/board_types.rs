@@ -218,11 +218,7 @@ pub(super) fn valid_pointer(pointer: &ArtifactPointer) -> bool {
 }
 
 pub(super) fn sha256_hex(bytes: &[u8]) -> String {
-    use sha2::{Digest, Sha256};
-    Sha256::digest(bytes)
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect()
+    studiolo_core::sha256_hex(bytes)
 }
 
 pub(super) fn contains_conflict_markers(bytes: &[u8]) -> bool {
