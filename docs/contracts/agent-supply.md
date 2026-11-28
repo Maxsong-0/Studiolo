@@ -158,7 +158,7 @@
 
 - 对象安全与依赖方向：supply 不依赖 axum/rmcp；agent-server 不依赖 FsVaultBroker、ControlDb、auth。
 - 预算二元：构造超预算 INDEX 夹具 → initialize 失败且账本有 `handshake.budget_exceeded`；正常夹具 → instructions ≤8000 且六项齐全。
-- 可见段（`crates/agent-server/tests/signpost_visible_contract.rs`，项目数照 `scripts/project_registry.json`、工具说明用真实 `TOOLS`）：
+- 可见段（`crates/agent-server/tests/signpost_visible_contract.rs`，白名单照生产单元模板的 `--allow`、工具说明用真实 `TOOLS`）：
   生产规模下线内有除项目清单以外的全部内容且不触发裁剪；长待办、半数 emoji 的待办、四条上限都到线的容量提醒下仍在线内，且项目清单不受影响；
   白名单涨到能力段自己放不下时硬约束与续读入口仍整节在线内。4096 在测试里写死，不引产品常量。
 - 身份：无 token 401；错 token 401 且 `agent.action_denied`（匿名的按入口和原因限频，认出类型的逐条，`mcp_cases/unrecognized.rs`、`auth_private/unrecognized.rs`）；正确 token → 实例落库并绑定会话；吊销类型后立即 401。身份库读不出来（测试把私有库文件改成 0640）→ 503 不带 challenge、会话不丢，恢复后同一令牌和会话照常可用（`mcp_transport_cases/identity_store.rs`、`http_text/availability.rs`、`mcp_transport_private/identity_outage.rs`）。

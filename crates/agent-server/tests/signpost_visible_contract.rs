@@ -2,12 +2,11 @@
 //! 后面的换成「… [truncated]」。硬约束、续读入口、能力、待办和第 2 节开头（容量提醒、项目数）必须在线内，
 //! 线外只许剩项目清单；线内放不下时只裁可见段自己，不动项目清单。
 //!
-//! 项目数照仓库里的项目登记表（`scripts/project_registry.json`），工具说明用服务端真正发的 `TOOLS`：
-//! 登记表加项目、工具加说明，这里跟着变长，压线时先红。
+//! 白名单照生产单元模板里的 `--allow`（和项目登记表一致由 `test-project-registry.py` 守着），工具说明用服务端真正发的
+//! `TOOLS`：生产加项目、工具加说明，这里跟着变长，压线时先红。
 
 use std::{collections::BTreeSet, fs, path::Path};
 
-use serde_json::Value;
 use studiolo_agent_server::server::TOOLS;
 use studiolo_core::VaultPath;
 use studiolo_supply::{
@@ -20,7 +19,7 @@ use tempfile::TempDir;
 const CLIENT_LIMIT_UTF16: usize = 4096;
 /// 生产新鲜度机器行的长度和形状（`replica::Freshness::describe`），托管模式自带一个换行。
 const FRESHNESS: &str = "副本状态 ready；stale=false；generation=01JT3STUDIOLO0000000000002；source_digest=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa；source_observed_at_ms=1795894200000；received_at_ms=1795894203000；age_secs=42；max_age_secs=300\n";
-const REGISTRY: &str = include_str!("../../../scripts/project_registry.json");
+const UNIT: &str = include_str!("../../../deploy/agent/studiolo-agent-system.service.in");
 /// 第 5 节最后一条准则：它在线内，前面的都在。
 const LAST_PRINCIPLE: &str = "只管本会话所在的项目";
 const PRINCIPLES: [&str; 11] = [
@@ -40,23 +39,17 @@ const PRINCIPLES: [&str; 11] = [
 /// 四条上限都到线的容量提醒（`replica::capacity_notice_for`），最长的一种。
 const CAPACITY: &str = "⚠ 副本快到协议上限：Markdown 合计 33.0 MiB，上限 40.0 MiB 的 82%；文件总量 420.0 MiB，上限 512.0 MiB 的 82%；可见条目 20500，上限 25000 的 82%；清单 3.3 MiB，上限 4.0 MiB 的 82%。涨过任一条上限后 Mac 同步会整批失败、这里的资料停在越线前（vault BUG-039）。请提醒用户趁早调高上限（两端常量，见 docs/m3/replica-freshness.md）或精简白名单。";
 
-/// 登记表里给 AI 看的路径，就是生产白名单。
-fn registered() -> Vec<String> {
-    let registry: Value = serde_json::from_str(REGISTRY).unwrap();
-    let mut paths = registry["entries"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .filter(|entry| entry["ai_visible"] == true)
-        .map(|entry| entry["path"].as_str().unwrap().to_owned())
-        .collect::<Vec<_>>();
-    paths.sort();
-    paths
+/// 生产白名单：单元模板里逐个 `--allow "<路径>"`。
+fn production() -> Vec<String> {
+    UNIT.split("--allow \"")
+        .skip(1)
+        .map(|rest| rest.split('"').next().unwrap().to_owned())
+        .collect()
 }
 
 /// 白名单再多几个没有总览的目录（同 `项目/HR系统-Docs`）：只撑长第 3 节，不撑项目清单。
 fn with_bare_directories(extra: usize) -> Vec<String> {
-    let mut allow = registered();
+    let mut allow = production();
     allow.extend((0..extra).map(|index| format!("项目/没有总览的目录{index:02}-Docs")));
     allow
 }
@@ -234,7 +227,7 @@ fn long_task() -> String {
 
 #[test]
 fn sections_are_ordered_by_what_a_truncated_reader_needs_first() {
-    let text = derive(&registered(), SHORT_TASK, None).text;
+    let text = derive(&production(), SHORT_TASK, None).text;
     let at = [
         "## 1 我是谁\n",
         "## 5 硬约束\n",
@@ -252,8 +245,8 @@ fn sections_are_ordered_by_what_a_truncated_reader_needs_first() {
 
 #[test]
 fn at_production_scale_everything_but_the_project_list_is_visible() {
-    let allow = registered();
-    assert!(allow.len() >= 20, "登记表读少了：{allow:?}");
+    let allow = production();
+    assert!(allow.len() >= 20, "单元模板读少了：{allow:?}");
     let signpost = derive(&allow, SHORT_TASK, None);
     assert_front_is_visible(&signpost.text);
     // 平常长度的待办不触发任何裁剪：工具说明、项目重点都在。
@@ -313,7 +306,7 @@ fn surrogate_pairs_count_twice_like_the_client_counts_them() {
 #[test]
 fn the_capacity_notice_stays_visible_even_when_all_four_limits_are_near() {
     for (allow, task) in [
-        (registered(), SHORT_TASK.to_owned()),
+        (production(), SHORT_TASK.to_owned()),
         (with_bare_directories(20), long_task()),
     ] {
         let text = derive(&allow, &task, Some(CAPACITY)).text;
@@ -328,7 +321,7 @@ fn the_capacity_notice_stays_visible_even_when_all_four_limits_are_near() {
 #[test]
 fn rules_and_entries_stay_visible_when_the_whitelist_outgrows_the_window() {
     // 白名单涨到能力段自己都放不下：握手照样成功，硬约束和续读入口仍整节在线内。
-    let mut allow = registered();
+    let mut allow = production();
     allow.extend((0..150).map(|index| format!("项目/以后新加的项目{index:03}-Docs")));
     let text = derive(&allow, &long_task(), None).text;
     assert_rules_and_entries_are_visible(&text);
@@ -337,7 +330,7 @@ fn rules_and_entries_stay_visible_when_the_whitelist_outgrows_the_window() {
 
 #[test]
 fn project_claude_files_are_covered_by_the_entry_pattern_instead_of_one_line_each() {
-    let text = derive(&registered(), SHORT_TASK, None).text;
+    let text = derive(&production(), SHORT_TASK, None).text;
     assert!(
         !text
             .lines()
