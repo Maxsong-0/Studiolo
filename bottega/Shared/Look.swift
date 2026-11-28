@@ -38,10 +38,13 @@ final class Look {
             }
         }
 
-        /// How light the window is with this photo behind fully clear glass, 0 black to 1 white: the mean of its
-        /// pixels, measured 2026-11-28 with the blur and grain as they start. Glass tinted against the photo is
-        /// laid over this much light to tell which colour of text can be read on it (T-254). A photo added later
-        /// is measured the same way; a light one comes out above a half, and the tests hold it to that.
+        /// How light the window is with this photo behind fully clear glass, 0 black to 1 white. Measured off the
+        /// window, not the picture file (2026-11-28): the debug build opened at the size it starts, transparency
+        /// at 100, the blur and grain as they start; a screenshot of the window; the mean sRGB grey of all its
+        /// pixels. That comes out lighter than the file does (Coast's own pixels average 0.32): the grain and the
+        /// glass's rim add light. Glass tinted against the photo is laid over this much to tell which colour of
+        /// text can be read on it (T-254). A photo added later is measured the same way; a light one comes out
+        /// above a half, and the tests hold it to that.
         var lightness: Double {
             switch self {
             case .rings: 0.32
@@ -141,7 +144,8 @@ final class Look {
     /// The panes drawn all but solid, which either of the two settings asks for.
     var isSolid: Bool { increasedContrast || reducedTransparency }
 
-    /// How light a pane's glass is at full tint, and how much of a solid pane is its own colour.
+    /// How light a pane's glass is at full tint, and how much of a solid pane is its own colour. 0.06 is the grey
+    /// of the dark `glassTint` below, (12, 14, 20) of 255, and the light one is white: they change with those.
     static let darkGlassLightness = 0.06
     static let lightGlassLightness = 1.0
     static let solidBody = 0.96
@@ -261,6 +265,13 @@ final class Look {
         isDark ? Color(red: 1, green: 106 / 255, blue: 96 / 255) : Color(red: 209 / 255, green: 44 / 255, blue: 44 / 255)
     }
 
+    /// What is written on a fill of the waiting red: the count in the sidebar's badge. White on the deeper red
+    /// of light glass; near black on the brighter red of dark glass, which white cannot be read on (the canvas's
+    /// `--waiti`).
+    static func onWaiting(isDark: Bool) -> Color {
+        isDark ? Color(red: 26 / 255, green: 5 / 255, blue: 4 / 255) : .white
+    }
+
     /// Orange: something went wrong, was held back, or is shut (a quota gate). Never red, however bad. Redder
     /// than the system's orange on either glass: that one sits too near the amber of an AI at work.
     static func trouble(isDark: Bool) -> Color {
@@ -303,4 +314,20 @@ extension ShapeStyle where Self == WaitingRed {
 
 extension ShapeStyle where Self == TroubleOrange {
     static var trouble: TroubleOrange { TroubleOrange() }
+}
+
+/// `.onWaiting`: what is written on a `.waiting` fill.
+struct WaitingInk: ShapeStyle {
+    func resolve(in environment: EnvironmentValues) -> Color { Look.onWaiting(isDark: environment.colorScheme == .dark) }
+}
+
+extension ShapeStyle where Self == WaitingInk {
+    static var onWaiting: WaitingInk { WaitingInk() }
+}
+
+/// `.pressable`: words that can be clicked, in the Mac's accent colour. Besides a main button it is the one thing
+/// in this window that blue is for, and a view asks for it by this name: the accent colour's own name is for
+/// nothing else to borrow (`ColourRulesTests`).
+extension ShapeStyle where Self == TintShapeStyle {
+    static var pressable: TintShapeStyle { TintShapeStyle() }
 }

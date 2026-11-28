@@ -99,7 +99,7 @@ struct WaitingBadge: View {
         if count > 0 {
             Text(count, format: .number)
                 .font(.system(size: 10, weight: .bold).monospacedDigit())
-                .foregroundStyle(.white)
+                .foregroundStyle(.onWaiting)
                 .contentTransition(.numericText(value: Double(count)))
                 .padding(.horizontal, 4)
                 .frame(minWidth: 16, minHeight: 16)

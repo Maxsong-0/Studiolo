@@ -219,13 +219,9 @@ private struct VetroEdge<S: InsettableShape>: ViewModifier {
 private struct LegibleOnGlass: ViewModifier {
     @Environment(Look.self) private var look
 
+    /// Only a glass pane asks for this (`VetroPane`): a solid one has no photo to keep the text apart from.
     func body(content: Content) -> some View {
-        // On a solid pane there is no photo to keep the text apart from.
-        if look.isSolid {
-            content
-        } else {
-            let shadow = look.textShadow
-            content.shadow(color: shadow.color, radius: shadow.radius, y: shadow.y)
-        }
+        let shadow = look.textShadow
+        content.shadow(color: shadow.color, radius: shadow.radius, y: shadow.y)
     }
 }

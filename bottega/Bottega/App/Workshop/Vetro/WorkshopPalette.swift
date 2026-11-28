@@ -351,7 +351,7 @@ private struct Key: View {
             .foregroundStyle(.secondary)
             .padding(.horizontal, 6)
             .padding(.vertical, 2)
-            .background(look.selection, in: .rect(cornerRadius: 5, style: .continuous))
+            .background(look.chip, in: .rect(cornerRadius: 5, style: .continuous))
             .accessibilityHidden(true)
     }
 }

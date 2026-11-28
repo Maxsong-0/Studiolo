@@ -42,7 +42,7 @@ struct ModelPill: View {
                         .foregroundStyle(.secondary)
                         .padding(.horizontal, 5)
                         .padding(.vertical, 1)
-                        .background(look.selection, in: .capsule)
+                        .background(look.chip, in: .capsule)
                 }
                 if refusal != nil {
                     Image(systemName: "exclamationmark.circle.fill").foregroundStyle(.trouble)

@@ -13,6 +13,16 @@ struct LookTests {
         return defaults
     }
 
+    /// WCAG's contrast between two opaque colours, 1 (the same) to 21 (black on white).
+    private func contrast(_ one: Color, _ other: Color) -> Double {
+        func luminance(_ colour: Color) -> Double {
+            let parts = colour.resolve(in: EnvironmentValues())
+            return 0.2126 * Double(parts.linearRed) + 0.7152 * Double(parts.linearGreen) + 0.0722 * Double(parts.linearBlue)
+        }
+        let (lighter, darker) = (max(luminance(one), luminance(other)), min(luminance(one), luminance(other)))
+        return (lighter + 0.05) / (darker + 0.05)
+    }
+
     /// What the user set the backdrop panel to, 2026-11-27 (T-245).
     @Test func startsAsTheUserSetIt() {
         let look = Look(defaults: freshDefaults())
@@ -319,7 +329,13 @@ struct LookTests {
             environment.colorScheme = isDark ? .dark : .light
             #expect(WaitingRed().resolve(in: environment) == Look.waiting(isDark: isDark))
             #expect(TroubleOrange().resolve(in: environment) == Look.trouble(isDark: isDark))
+            // What is written on a red fill, the count in the sidebar's badge, can be read on it: 4.5 to 1, WCAG's
+            // figure for small text. White cannot on the brighter red of dark glass, so there it is near black.
+            #expect(WaitingInk().resolve(in: environment) == Look.onWaiting(isDark: isDark))
+            #expect(contrast(Look.onWaiting(isDark: isDark), Look.waiting(isDark: isDark)) >= 4.5, "\(isDark)")
         }
+        #expect(contrast(.white, Look.waiting(isDark: true)) < 4.5)
+        #expect(abs(contrast(.white, .black) - 21) < 1e-6)
         #expect(Look.waiting(isDark: true) != Look.waiting(isDark: false))
         #expect(Look.trouble(isDark: true) != Look.trouble(isDark: false))
         // Neither is the system's own: those change with the Mac's settings, and red on dark glass is brighter here.

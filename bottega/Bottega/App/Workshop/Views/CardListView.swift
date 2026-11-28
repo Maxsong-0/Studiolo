@@ -80,7 +80,7 @@ private struct CardListRow: View {
                         .foregroundStyle(.secondary)
                         .padding(.horizontal, 7)
                         .frame(height: 18)
-                        .background(look.selection, in: .capsule)
+                        .background(look.chip, in: .capsule)
                         .fixedSize()
                 }
             }

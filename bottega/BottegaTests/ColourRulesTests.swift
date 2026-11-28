@@ -6,19 +6,23 @@ import Testing
 /// colour, a button to press. A view that writes `.red` or `.orange` or the accent colour itself has, three times
 /// now, used one for something else: a shut quota gate in red (T-243), a line that did not open in red, and the
 /// accent colour as the ring round whatever is open (T-254). So the views do not write them. Red is `.waiting`,
-/// orange is `.trouble`, the ring is `vetroRing`, and all three are in `Shared/Look.swift`.
+/// orange is `.trouble`, the ring is `vetroRing`, words to click are `.pressable`, and all four are in
+/// `Shared/Look.swift`.
 struct ColourRulesTests {
-    /// The system colours a view may not name, as they are written where a colour goes.
-    static let banned = ["red", "orange", "blue", "accentColor"]
+    /// The system colours a view may not name, as they are written where a colour goes: SwiftUI's, then AppKit's.
+    static let banned = ["red", "orange", "blue", "accentColor", "systemRed", "systemOrange", "systemBlue", "controlAccentColor"]
 
-    /// Each place in `source` where one of them is named: `.red`, `Color.orange`, `Color.accentColor.opacity(…)`.
-    /// A component of a colour (`Color(red: 1, …)`), a longer name (`.redacted`), and a value's own field that
-    /// happens to be called the same (`pixel.red`, `$0.blue`) are not one.
+    /// Each place in `source` where one of them is named: `.red`, `Color.orange`, `Color.accentColor.opacity(…)`,
+    /// `NSColor.systemRed`. So is the accent colour as a style, `.foregroundStyle(.tint)`: that is how the bar of
+    /// an AI at work and the Touch ID glyph were blue. A component of a colour (`Color(red: 1, …)`), a longer
+    /// name (`.redacted`), a value's own field that happens to be called the same (`pixel.red`, `$0.blue`), and
+    /// the modifier that tints a control with one of `Look`'s colours (`.tint(look.mark)`) are not one.
     static func offences(in source: String) -> [String] {
         let names = banned.joined(separator: "|")
         // The dot either starts the expression (`.red`: nothing before it that a value could end with) or follows
         // a colour type (`Color.red`, `NSColor.red`); then the name, and nothing that would make it a longer one.
-        let pattern = #"(?:(?<![A-Za-z0-9_)\]}?!])|Color)(\.(?:"# + names + #"))(?![A-Za-z0-9_])"#
+        // `.tint` is the style only when no bracket follows it: with one it is the modifier.
+        let pattern = #"(?:(?<![A-Za-z0-9_)\]}?!])|Color)(\.(?:"# + names + #")(?![A-Za-z0-9_])|\.tint(?![A-Za-z0-9_(]))"#
         guard let regex = try? NSRegularExpression(pattern: pattern) else { return ["the pattern does not compile"] }
         var found: [String] = []
         for (number, line) in source.components(separatedBy: "\n").enumerated() {
@@ -39,8 +43,17 @@ struct ColourRulesTests {
         #expect(Self.offences(in: ".tint(.blue)") == ["1: .blue"])
         #expect(Self.offences(in: "Banner(symbol: s, tint: .orange, text: t)") == ["1: .orange"])
         #expect(Self.offences(in: "Color(nsColor: NSColor.blue)") == ["1: .blue"])
+        #expect(Self.offences(in: "Circle().fill(Color(.red))") == ["1: .red"])
         // Alone on its line, as a chain is broken.
         #expect(Self.offences(in: "Circle()\n    .fill(\n        .red\n    )") == ["3: .red"])
+        // AppKit's names for the same colours.
+        #expect(Self.offences(in: "Color(nsColor: .systemRed)") == ["1: .systemRed"])
+        #expect(Self.offences(in: "layer.borderColor = NSColor.systemOrange.cgColor") == ["1: .systemOrange"])
+        #expect(Self.offences(in: "Color(nsColor: NSColor.systemBlue)") == ["1: .systemBlue"])
+        #expect(Self.offences(in: "NSColor.controlAccentColor.withAlphaComponent(0.3)") == ["1: .controlAccentColor"])
+        // The accent colour as a style: how the Touch ID glyph and the bar of an AI at work were blue.
+        #expect(Self.offences(in: "Image(systemName: \"touchid\").foregroundStyle(.tint)") == ["1: .tint"])
+        #expect(Self.offences(in: "context.fill(Path(bar), with: .style(.tint.opacity(0.35)))") == ["1: .tint"])
     }
 
     @Test func theScanLeavesTheRestAlone() {
@@ -58,8 +71,15 @@ struct ColourRulesTests {
         #expect(Self.offences(in: "sample?.red ?? rgb(at: point).blue + grid[0].orange + last!.red").isEmpty)
         // Words, in a comment or a string.
         #expect(Self.offences(in: "/// Red means one thing in this app: waiting for the user. Not orange, not blue.").isEmpty)
-        // Glass is tinted through `Look`, and that is not the accent colour.
+        // Glass is tinted through `Look`, and that is not the accent colour. Nor is a control tinted with one of
+        // `Look`'s colours, on the same line or on its own; nor an argument called tint; nor a longer name.
         #expect(Self.offences(in: ".glassBehind(.clear.tint(look.glassTint), in: shape)").isEmpty)
+        #expect(Self.offences(in: "Slider(value: value, in: range).controlSize(.small).tint(look.mark)").isEmpty)
+        #expect(Self.offences(in: "Slider(value: value, in: range)\n    .tint(look.mark)").isEmpty)
+        #expect(Self.offences(in: "Banner(symbol: s, tint: .trouble, text: t)").isEmpty)
+        #expect(Self.offences(in: "Toggle(isOn: $on) { label }\n    .tinted(with: look.mark)").isEmpty)
+        // Words to click ask for the accent colour by the name `Look` gives it.
+        #expect(Self.offences(in: "Text(\"Use its own name\").foregroundStyle(.pressable)").isEmpty)
         #expect(Self.offences(in: "").isEmpty)
     }
 
@@ -80,6 +100,6 @@ struct ColourRulesTests {
             // It did read them: a folder that moved would otherwise pass by finding nothing.
             #expect(seen >= atLeast, "only \(seen) files were read in \(folder)")
         }
-        #expect(found.isEmpty, "use .waiting (red: waits on the user) or .trouble (orange) from Shared/Look.swift, or vetroRing for what is open: \(found.joined(separator: ", "))")
+        #expect(found.isEmpty, "use .waiting (red: waits on the user), .trouble (orange) or .pressable (words to click) from Shared/Look.swift, or vetroRing for what is open: \(found.joined(separator: ", "))")
     }
 }
