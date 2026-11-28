@@ -22,6 +22,8 @@ pub(crate) fn reserve(broker: &FsVaultBroker, incoming: usize) -> Result<(), Bro
         .map_err(|e| BrokerError::io("enumerate content metadata", e))?
         .enumerate()
     {
+        #[cfg(test)]
+        disk::probe::listed();
         if index >= 3 * disk::REPLAY_COUNT {
             return Err(BrokerError::WriterLimitExceeded);
         }

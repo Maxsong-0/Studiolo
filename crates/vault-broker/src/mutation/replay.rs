@@ -52,6 +52,8 @@ pub(crate) fn scan(
         .entries()
         .map_err(|e| BrokerError::io("enumerate mutation records", e))?
     {
+        #[cfg(test)]
+        disk::probe::listed();
         count += 1;
         if count > disk::REPLAY_COUNT {
             return Err(BrokerError::WriterLimitExceeded);

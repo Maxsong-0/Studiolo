@@ -26,6 +26,8 @@ pub(super) fn load(broker: &FsVaultBroker, path: &VaultPath) -> Result<Vec<Item>
         .map_err(|e| BrokerError::io("enumerate legacy history", e))?
         .enumerate()
     {
+        #[cfg(test)]
+        disk::probe::listed();
         if index >= disk::REPLAY_COUNT {
             return Err(BrokerError::WriterLimitExceeded);
         }

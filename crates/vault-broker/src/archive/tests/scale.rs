@@ -76,25 +76,7 @@ fn replays_that_fill_up_first_are_relieved_too() {
     notes(&mut broker, 1);
     renames::enable(&mut broker);
     bulk(&broker, 0..4000);
-    // 没有描述符的旧格式重放（169 现在有 138 条），永远留散件。
-    for index in 0..96 {
-        fs::write(
-            fixture
-                .data
-                .join(format!("idempotency/{}.json", sha256(format!("legacy-{index}").as_bytes()))),
-            serde_json::to_vec(&serde_json::json!({
-                "fingerprint": "c".repeat(64),
-                "expected_revision": Revision::compute(broker.vault_uuid, &logical("old.md"), b"old"),
-                "receipt": {
-                    "path": "old.md",
-                    "revision": Revision::compute(broker.vault_uuid, &logical("old.md"), b"old"),
-                    "previous_revision": null,
-                },
-            }))
-            .unwrap(),
-        )
-        .unwrap();
-    }
+    legacy_replays(&broker, 0..96);
     let usage = broker.record_usage().unwrap();
     assert_eq!((usage.descriptors.used, usage.replays.used), (4001, 4097));
     let (mut broker, sealed) = checkpoint(&fixture, broker, "full");
@@ -118,4 +100,29 @@ fn replays_that_fill_up_first_are_relieved_too() {
     renames::run(&mut broker, move_it, 20_000);
     let (_, sealed) = checkpoint(&fixture, broker, "relieved");
     assert_eq!(sealed.unwrap(), 2 * 4003);
+}
+
+/// 正文写入不越过封存的上限（T-249 G1）：重放散件到了 4096 就先拒，封存照常成；打包腾出来以后照常写。
+/// 原来正文写入只数描述符，写进去以后重放 4097 条，封存、新建路径、文件操作一起拒。
+#[test]
+fn a_content_write_never_pushes_replays_past_what_a_seal_accepts() {
+    let fixture = Fixture::new();
+    let mut broker = fixture.open();
+    notes(&mut broker, 1);
+    bulk(&broker, 0..3999);
+    legacy_replays(&broker, 0..96);
+    let usage = broker.record_usage().unwrap();
+    assert_eq!((usage.descriptors.used, usage.replays.used), (4000, 4096));
+    assert!(matches!(
+        broker.mutate_recorded(note(70), metadata()),
+        Err(BrokerError::WriterLimitExceeded)
+    ));
+    assert_eq!(broker.record_usage().unwrap().replays.used, 4096);
+    let (mut broker, sealed) = checkpoint(&fixture, broker, "full");
+    assert_eq!(sealed.unwrap(), 2 * 4000);
+    assert_eq!(pack(&mut broker, later()), 4000);
+    broker.mutate_recorded(note(70), metadata()).unwrap();
+    flush(&mut broker);
+    let (_, sealed) = checkpoint(&fixture, broker, "relieved");
+    assert_eq!(sealed.unwrap(), 2 * 4001);
 }

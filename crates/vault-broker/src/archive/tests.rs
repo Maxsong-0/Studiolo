@@ -1,11 +1,15 @@
 //! 真实临时目录上的打包契约；账本回执是模拟的，封存水位由用例给。
 mod batches;
+mod bounded;
+mod burst;
 mod crashes;
 mod eligibility;
+mod file_terminals;
 mod lifecycle;
 mod renames;
 mod scale;
 mod seal;
+mod unaudited;
 mod unpacked;
 
 use super::{Part, format, loose};
@@ -213,12 +217,56 @@ fn bulk_request(index: usize) -> Mutation {
         format!("bulk-{index}"),
     )
 }
+/// 合成的没有审计主体的写入（看板投影那种）：换一个目录和键，免得和有主体的撞。
+fn unaudited_request(index: usize) -> Mutation {
+    Mutation::create(
+        logical(&format!("board/bulk-{index}.md")),
+        format!("任务 {index}").into_bytes(),
+        format!("board-bulk-{index}"),
+    )
+}
+/// 合成记录的样子：写于何时、有没有审计主体。
+#[derive(Clone, Copy)]
+struct Shape {
+    at: i64,
+    audited: bool,
+}
+impl Shape {
+    /// 八天前、有审计主体：和 [`bulk`] 一样。
+    fn old() -> Self {
+        Self {
+            at: now() - 8 * DAY,
+            audited: true,
+        }
+    }
+    /// 八天前、没有审计主体。
+    fn unaudited() -> Self {
+        Self {
+            audited: false,
+            ..Self::old()
+        }
+    }
+    /// 一天前、有审计主体：不满 7 天。
+    fn young() -> Self {
+        Self {
+            at: now() - DAY,
+            ..Self::old()
+        }
+    }
+}
 fn bulk(broker: &FsVaultBroker, range: std::ops::Range<usize>) {
+    bulk_with(broker, range, Shape::old());
+}
+fn bulk_with(broker: &FsVaultBroker, range: std::ops::Range<usize>, shape: Shape) {
     let data = broker_data(broker);
     let requests = data.join("history/meta-v1/requests");
-    let at = now() - 8 * DAY;
+    let at = shape.at;
     for index in range {
-        let request = bulk_request(index);
+        let request = if shape.audited {
+            bulk_request(index)
+        } else {
+            unaudited_request(index)
+        };
         let key_hash = sha256(request.idempotency_key.as_bytes());
         let envelope = Envelope {
             version: 1,
@@ -232,8 +280,8 @@ fn bulk(broker: &FsVaultBroker, range: std::ops::Range<usize>) {
             sha256: sha256(&request.content),
             bytes: request.content.len() as u64,
             requested_at_ms: Some(at),
-            actor: Some(MutationActor::Obsidian),
-            kind: Some(MutationKind::Replace),
+            actor: shape.audited.then_some(MutationActor::Obsidian),
+            kind: shape.audited.then_some(MutationKind::Replace),
             key_hash,
         };
         let terminal = Terminal {
@@ -257,10 +305,16 @@ fn bulk(broker: &FsVaultBroker, range: std::ops::Range<usize>) {
             encode(&envelope).unwrap(),
         )
         .unwrap();
-        for (outcome, offset) in [
-            (None, 2 * index as u64 + 1),
-            (Some(ContentAuditOutcome::Committed), 2 * index as u64 + 2),
-        ] {
+        // 没有审计主体的写入没有回执。
+        let receipts = if shape.audited {
+            vec![
+                (None, 2 * index as u64 + 1),
+                (Some(ContentAuditOutcome::Committed), 2 * index as u64 + 2),
+            ]
+        } else {
+            Vec::new()
+        };
+        for (outcome, offset) in receipts {
             let row = events::row(&envelope, outcome).unwrap();
             let ack = events::Ack {
                 version: 1,
@@ -280,6 +334,30 @@ fn bulk(broker: &FsVaultBroker, range: std::ops::Range<usize>) {
         fs::write(
             data.join(format!("idempotency/{}.json", envelope.key_hash)),
             serde_json::to_vec(&terminal).unwrap(),
+        )
+        .unwrap();
+    }
+}
+/// 没有描述符的旧格式重放（169 现在有 138 条），永远留散件。
+fn legacy_replays(broker: &FsVaultBroker, range: std::ops::Range<usize>) {
+    let data = broker_data(broker);
+    let revision = Revision::compute(broker.vault_uuid, &logical("old.md"), b"old");
+    for index in range {
+        fs::write(
+            data.join(format!(
+                "idempotency/{}.json",
+                sha256(format!("legacy-{index}").as_bytes())
+            )),
+            serde_json::to_vec(&serde_json::json!({
+                "fingerprint": "c".repeat(64),
+                "expected_revision": revision,
+                "receipt": {
+                    "path": "old.md",
+                    "revision": revision,
+                    "previous_revision": null,
+                },
+            }))
+            .unwrap(),
         )
         .unwrap();
     }
