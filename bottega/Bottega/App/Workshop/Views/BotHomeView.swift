@@ -153,7 +153,7 @@ private struct Chip: View {
         .font(.system(size: 12, weight: .medium))
         .padding(.horizontal, 10)
         .frame(height: 28)
-        .overlay { Capsule().strokeBorder(.separator) }
+        .vetroEdge(in: Capsule())
         .contentShape(.capsule)
     }
 }

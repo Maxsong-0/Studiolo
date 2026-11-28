@@ -47,6 +47,13 @@ struct WorkshopCommands: Commands {
             Button("Open Recording…") { openRecording() }
             #endif
         }
+        // In the View menu, where every Mac app keeps these two.
+        CommandGroup(replacing: .sidebar) {
+            Button(model.showsSidebar ? "Hide Sidebar" : "Show Sidebar") { model.showsSidebar.toggle() }
+                .keyboardShortcut("s", modifiers: [.control, .command])
+            Button(model.showsInspector ? "Hide Panel" : "Show Panel") { model.showsInspector.toggle() }
+                .keyboardShortcut("0", modifiers: [.option, .command])
+        }
         CommandMenu("Go") {
             Button("Search…") { model.showsPalette.toggle() }
                 .keyboardShortcut("k", modifiers: .command)

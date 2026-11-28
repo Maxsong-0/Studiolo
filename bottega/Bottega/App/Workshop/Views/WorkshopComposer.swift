@@ -9,6 +9,7 @@ import UniformTypeIdentifiers
 /// new line, ⌘Return sends; ⌘Return in an empty box opens the ask that has waited longest.
 struct WorkshopComposer: View {
     @Environment(WorkshopModel.self) private var model
+    @Environment(Look.self) private var look
     let key: DraftKey
     @State private var isAttaching = false
 
@@ -25,7 +26,8 @@ struct WorkshopComposer: View {
                     .padding(.horizontal, 14)
                     .padding(.vertical, 10)
                     .frame(maxWidth: .infinity)
-                    .glassEffect(.regular, in: .capsule)
+                    .glassBehind(.regular, in: .capsule)
+                    .vetroEdge(in: Capsule())
             }
         }
         .frame(maxWidth: 600)
@@ -72,8 +74,8 @@ struct WorkshopComposer: View {
                         .fixedSize()
                         .padding(.horizontal, 10)
                         .frame(height: 30)
-                        .background(model[draft: key].wantsReply ? AnyShapeStyle(.quaternary) : AnyShapeStyle(.clear), in: .capsule)
-                        .overlay { Capsule().strokeBorder(.separator) }
+                        .background(model[draft: key].wantsReply ? look.selection : .clear, in: .capsule)
+                        .vetroEdge(in: Capsule())
                 }
                 RecipientMenu(key: key)
                 Spacer(minLength: 4)
@@ -98,7 +100,8 @@ struct WorkshopComposer: View {
             }
         }
         .padding(EdgeInsets(top: 8, leading: 10, bottom: 8, trailing: 8))
-        .glassEffect(.regular, in: .rect(cornerRadius: 25, style: .continuous))
+        .glassBehind(.regular, in: .rect(cornerRadius: 25, style: .continuous))
+        .vetroEdge(in: RoundedRectangle(cornerRadius: 25, style: .continuous))
     }
 
     private var canSend: Bool { model.hasLink && model.target(of: key) != nil }
@@ -159,7 +162,7 @@ private struct RecipientMenu: View {
             .padding(.leading, recipient == nil ? 12 : 6)
             .padding(.trailing, 9)
             .frame(height: 34)
-            .overlay { Capsule().strokeBorder(.separator) }
+            .vetroEdge(in: Capsule())
             .contentShape(.capsule)
         }
         .menuStyle(.button)

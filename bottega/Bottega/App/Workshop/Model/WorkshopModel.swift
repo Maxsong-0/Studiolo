@@ -64,6 +64,41 @@ final class WorkshopModel {
     /// The ask whose sheet is up.
     var askBeingRead: OpenAsk?
     var showsInspector = false
+    /// The sidebar; put away, the page has the window to itself. Not kept: the app opens with it.
+    var showsSidebar = true
+    /// How wide the two side panes were last dragged (`SidePane`). Kept on this Mac.
+    var sidebarWidth = SidePane.sidebar.width(in: .standard) {
+        didSet { SidePane.sidebar.keep(sidebarWidth, in: .standard) }
+    }
+    var panelWidth = SidePane.panel.width(in: .standard) {
+        didSet { SidePane.panel.keep(panelWidth, in: .standard) }
+    }
+
+    /// Its edge was dragged to `width`, in a window `window` wide: wider, narrower, or put away. Put away, it keeps
+    /// the width it had when the drag began (`start`), not the narrowest the drag passed through.
+    func drag(_ pane: SidePane, to width: Double, from start: Double, window: Double) {
+        let other: Double? =
+            switch pane {
+            case .sidebar: showsInspector ? panelWidth : nil
+            case .panel: showsSidebar ? sidebarWidth : nil
+            }
+        switch WindowMeasures.dragged(pane, to: width, window: window, other: other) {
+        case .width(let width):
+            switch pane {
+            case .sidebar: sidebarWidth = width
+            case .panel: panelWidth = width
+            }
+        case .closes:
+            switch pane {
+            case .sidebar:
+                sidebarWidth = start
+                showsSidebar = false
+            case .panel:
+                panelWidth = start
+                showsInspector = false
+            }
+        }
+    }
     /// ⌘K (`WorkshopPalette`).
     var showsPalette = false
     @ObservationIgnored let notifier = FinishedNotifier()
@@ -79,6 +114,8 @@ final class WorkshopModel {
     enum CardLayout: String { case board, list }
     var cardLayout = WorkshopModel.savedCardLayout {
         didSet {
+            // Picking the layout it already has is not a switch: nothing is due to rise.
+            guard cardLayout != oldValue else { return }
             UserDefaults.standard.set(cardLayout.rawValue, forKey: Self.cardLayoutKey)
             cardsRise.layoutSwitched()
         }
@@ -137,6 +174,8 @@ final class WorkshopModel {
         if let page = environment["BOTTEGA_PAGE"].flatMap(Page.init(word:)) { model.page = page }
         if let detail = environment["BOTTEGA_DETAIL"].flatMap(Detail.init(word:)) { model.detail = detail }
         if environment["BOTTEGA_LANES"] == "0" { model.showsLanes = false }
+        // `BOTTEGA_SIDEBAR=0`: the sidebar is put away, for a screenshot.
+        if environment["BOTTEGA_SIDEBAR"] == "0" { model.showsSidebar = false }
         // `BOTTEGA_PALETTE=<what is typed>`: ⌘K is up, for a screenshot.
         if environment["BOTTEGA_PALETTE"] != nil { model.showsPalette = true }
         // `BOTTEGA_ARRANGE=header` or `sidebar`: the line's arrange panel is up, for a screenshot.

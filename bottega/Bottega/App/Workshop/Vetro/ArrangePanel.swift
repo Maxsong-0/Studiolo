@@ -26,7 +26,8 @@ struct ArrangePanel: View {
             }
             VStack(alignment: .leading, spacing: 5) {
                 TextField(text: $name, prompt: Text(verbatim: own)) { Text("Name") }
-                    .textFieldStyle(.roundedBorder)
+                    .font(.system(size: 13))
+                    .glassField()
                     .focused($isNaming)
                     .onSubmit { if model.rename(line.id, to: name) { dismiss() } }
                     .disabled(!canSend)

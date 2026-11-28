@@ -123,7 +123,8 @@ struct RegistrationView: View {
                 .foregroundStyle(.secondary)
                 .frame(maxWidth: 420)
             TextField("Name", text: $name)
-                .textFieldStyle(.roundedBorder)
+                .multilineTextAlignment(.center)
+                .glassField(height: 32)
                 .frame(width: 280)
                 .onSubmit(register)
             if let failure = model.registrationFailure {
