@@ -17,6 +17,7 @@ import plistlib
 import re
 import subprocess
 import sys
+import traceback
 
 if sys.version_info < (3, 11):
     print("deploy-drift: 需要 Python 3.11 以上（要用 tomllib 读 Cargo.toml）", file=sys.stderr)
@@ -100,7 +101,7 @@ if __name__ == "__main__":
 
 SCHEMA = 1
 DEFAULT_HOST = "studiolo-169"
-RECORD_PATH = "/tmp/deploy-drift-169.json"
+RECORD_PATH = "~/Library/Caches/studiolo-deploy-drift-169.json"
 LAUNCH_AGENT = "~/Library/LaunchAgents/me.studiolo.agent-sync.plist"
 VAULT = "~/Documents/Max's Secret Place"
 BUGS = "项目/Studiolo-Docs/06-BUG"
@@ -193,8 +194,8 @@ def blank_parts():
         Part(TOOLS, packages=("studiolo-local-server", "studiolo-sync-launcher")),
         Part(AGENT, packages=("studiolo-agent-server",), paths=("deploy/agent/studiolo-agent-system.service.in",)),
         Part(MAC, paths=("scripts/sync-agent-vault.sh", "scripts/replica_")),
-        # studiolo-alert 在 local-server 包里，但只用这两个库。
-        Part(ALERT, packages=("studiolo-audit-ledger", "studiolo-observability"),
+        # studiolo-alert 在 local-server 包里，但只用这三个库（用例拿它的源码核）。
+        Part(ALERT, packages=("studiolo-audit-ledger", "studiolo-observability", "studiolo-process-safety"),
              paths=("crates/local-server/src/alert_main.rs", "deploy/alerts/", "scripts/check-agent.py",
                     "scripts/check-agent-replica.py"), without=("deploy/alerts/worker/",)),
         Part(WORKER, paths=("deploy/alerts/worker/",)),
@@ -301,7 +302,7 @@ class Repo:
     def describe(self, commit):
         """短号、提交日期、标题；标题里的控制字符换成空格，免得搅乱报告。"""
         date, _, subject = self.text("log", "-1", "--no-show-signature", "--format=%cs%x1f%s", commit).strip("\n").partition("\x1f")
-        return f"{commit[:7]} {date} {''.join(one if one.isprintable() else ' ' for one in subject)}"
+        return f"{commit[:7]} {date} {printable(subject)}"
 
     def commits(self, older, newer):
         return self.text("rev-list", "--no-merges", f"{older}..{newer}").split()
@@ -332,7 +333,11 @@ class Repo:
     def manifests(self, commit):
         if commit not in self.manifest_cache:
             paths = [path for path in self.tree(commit, "crates") if re.fullmatch(r"crates/[^/]+/Cargo\.toml", path)]
-            self.manifest_cache[commit] = {path: self.blob(commit, path).decode("utf-8", "replace") for path in paths}
+            blobs = {path: self.blob(commit, path) for path in paths}
+            for path, data in blobs.items():
+                if data is None:
+                    raise Bad(f"读不到 {path}（{commit[:7]}）")
+            self.manifest_cache[commit] = {path: data.decode("utf-8", "replace") for path, data in blobs.items()}
         return self.manifest_cache[commit]
 
 
@@ -516,22 +521,25 @@ def unplaced(repo, drifts, parts, main):
 
 # ---- BUG 档 ----
 
-BUG_FILE = re.compile(r"BUG-(\d+)-.*\.md")
+BUG_FILE = re.compile(r"BUG-(\d+).*\.md")
 STATUS = re.compile(r"(?:[-*] +)?状态[:：](.*)")
+OPEN = "修复中"
+# 不用看的状态（BUG 模板里的其余取值，加老档用过的「已排除」）。别的词一律交人看，不当成没有。
+SETTLED = ("未修复", "已修复", "无法复现", "不修", "已排除")
 MERGED = re.compile(r"合(?:入|进|并到|并进|并入)?\s*main")
 NOT_MERGED = re.compile(r"(?:没|未|不|待|等)(?:有|着)?合")
 RANGE = re.compile(r"([0-9a-f]{7,40})\.\.([0-9a-f]{7,40})")
 
 
 class Bug:
-    """一份「修复中」的档；`note` 是状态行冒号后面的字，档里没有状态行时是 None。"""
+    """一份要看的档；`note` 是状态行冒号后面的字，`reason` 不空就是脚本看不明白、为什么。"""
 
-    def __init__(self, number, title, note, body):
+    def __init__(self, number, title, note, body, reason):
         self.number = number
         self.title = title
         self.note = note
         self.body = body
-        self.reason = ""
+        self.reason = reason
 
     def tokens(self):
         """状态行反引号里的提交号；没有才看正文里说「合 main」的那些句子（说没合的不算）。"""
@@ -556,8 +564,13 @@ def status_line(text):
     return found[1].strip().lstrip("\"'") if found else None
 
 
+def printable(text):
+    """控制字符换成空格，免得搅乱报告。"""
+    return "".join(one if one.isprintable() else " " for one in text)
+
+
 def load_bugs(directory):
-    """「修复中」的 BUG 档，连同看不出状态的；读不了就失败关闭。"""
+    """「修复中」的 BUG 档，连同状态看不明白的；读不了就失败关闭。"""
     bugs = []
     try:
         names = [name for name in sorted(os.listdir(directory)) if BUG_FILE.fullmatch(name)]
@@ -572,10 +585,12 @@ def load_bugs(directory):
             status = status_line(text)
             heading = re.search(r"^# (.*)$", text, re.M)
             number = int(BUG_FILE.fullmatch(name)[1])
-            title = heading[1].strip() if heading else name
-            title = "".join(one if one.isprintable() else " " for one in title)
-            if status is None or status.startswith("修复中"):
-                bugs.append(Bug(number, re.sub(r"^BUG-\d+\s*", "", title), status, text))
+            title = printable(heading[1].strip() if heading else name)
+            if status is not None and status.startswith(SETTLED):
+                continue
+            reason = ("档里没有状态行" if status is None else
+                      "" if status.startswith(OPEN) else f"状态认不出：{printable(status[:20])}")
+            bugs.append(Bug(number, re.sub(r"^BUG-\d+\s*", "", title), status, text, reason))
     except (OSError, UnicodeDecodeError) as error:
         raise Bad("读不了 06-BUG") from error
     return bugs
@@ -622,8 +637,8 @@ def reached(repo, commit, parts):
 
 def judge(repo, bug, parts, drifts, main):
     """该验收了／还没上线／要人看，连同一句说明。"""
-    if bug.note is None:
-        return "manual", "档里没有状态行"
+    if bug.reason:
+        return "manual", bug.reason
     commits = fixes(repo, bug)
     if not commits:
         return "manual", bug.reason
@@ -749,8 +764,9 @@ def report(arguments):
         lines += [*render_bugs(title, bugs[key]), ""]
     if lost:
         lines += ["## 没归类的路径（给 scripts/deploy-drift.py 补归类）", *[f"- {path}" for path in lost], ""]
-    elsewhere = sorted({title for _, title, kind in OUTSIDE if kind == "另装"})
-    lines += ["## 不对账的", "单独部署、这里看不出上没上线：" + "、".join(elsewhere) + "。"]
+    lines.append("## 不对账的")
+    for kind, text in (("另装", "单独部署、这里看不出上没上线"), ("装配", "改了不算漂移、装没装进去要看那次发行")):
+        lines.append(f"{text}：" + "、".join(sorted({title for _, title, one in OUTSIDE if one == kind})) + "。")
     print("\n".join(lines))
     return code
 
@@ -799,6 +815,9 @@ def main(argv=None):
         return arguments.run(arguments)
     except Bad as error:
         print(f"deploy-drift: {error}", file=sys.stderr)
+        return 2
+    except Exception:  # 没想到的错也退 2：解释器自己崩的退出码是 1，会被当成「有漂移」
+        traceback.print_exc()
         return 2
 
 

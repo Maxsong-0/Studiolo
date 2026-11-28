@@ -21,8 +21,8 @@ python3 scripts/deploy-drift.py command
 它印两条命令。第一条在 169 上只读取发行记录，第二条对账：
 
 ```sh
-python3 scripts/deploy-drift.py probe | ssh studiolo-169 'python3 -I -B -S -' > /tmp/deploy-drift-169.json
-python3 scripts/deploy-drift.py report --record /tmp/deploy-drift-169.json
+python3 scripts/deploy-drift.py probe | ssh studiolo-169 'python3 -I -B -S -' > ~/Library/Caches/studiolo-deploy-drift-169.json
+python3 scripts/deploy-drift.py report --record ~/Library/Caches/studiolo-deploy-drift-169.json
 ```
 
 `report` 的参数：
@@ -34,7 +34,7 @@ python3 scripts/deploy-drift.py report --record /tmp/deploy-drift-169.json
 | `--mac` | 读本机 LaunchAgent | Mac 副本包的提交号；不给就从 `me.studiolo.agent-sync.plist` 指到的目录名取，并逐字节核内容 |
 | `--worker` | 无 | Worker 线上那一版的提交号。Worker 没有机器可读的发行记录，不给就报「未知」 |
 
-退出码：0 没有漂移也没有要看的；1 有漂移、看不清，或有该验收、要人看的 BUG；2 输入读不懂，不出结论。
+退出码：0 没有漂移也没有要看的；1 有漂移、看不清，或有该验收、要人看的 BUG；2 输入读不懂或脚本自己出错，不出结论。
 
 ## 线上那一份怎么认
 
@@ -65,16 +65,17 @@ python3 scripts/deploy-drift.py report --record /tmp/deploy-drift-169.json
 
 ## BUG 档怎么认
 
-只看状态行写「修复中」的档：有 frontmatter 认里面的 `状态:`，老档没有 frontmatter 认正文第一处 `状态：`；没有状态行的归「要人看」，目录里一份 BUG 档都没有就退 2。修复提交先认状态行反引号里的提交号（`a..b` 当区间），没有才认正文里说「合 main」的句子（「没合 main」「待合 main」不算）。
+只看状态行写「修复中」的档：有 frontmatter 认里面的 `状态:`，老档没有 frontmatter 认正文第一处 `状态：`；没有状态行的、状态不是模板里那几个词的归「要人看」，目录里一份 BUG 档都没有就退 2。修复提交先认状态行反引号里的提交号（`a..b` 当区间），没有才认正文里说「合 main」的句子（「没合 main」「待合 main」不算）。
 
 - **该验收了**：修复提交都在 main 上，碰到的每个发行线上都已经有。
 - **还没上线**：写明哪个发行还没有哪个提交。
-- **要人看**：没有状态行、看不出修复提交、提交不在 main 或不在仓库里、只碰了五个发行之外的东西、碰了单独部署的东西、碰到的发行线上是哪个提交未知。
+- **要人看**：没有状态行、状态认不出、看不出修复提交、提交不在 main 或不在仓库里、只碰了五个发行之外的东西、碰了单独部署的东西、碰到的发行线上是哪个提交未知。
 
 两处放宽，都在那一行里写明：随包工具和人侧程序共用代码，人侧程序有了、工具还没有时只提醒；改了人侧或 agent 的装配工具时只提醒（装没装进去要看那次发行）。
 
 ## 局限
 
+- 改了装配工具和它带的启动器、单元（`deploy/blackboard/`、`deploy/human/`、`deploy/agent/` 的其余文件）不算漂移：发行记录里没有装配用的是哪个提交。报告末尾「不对账的」列着。
 - 只比源提交，不核线上的二进制是不是真由那个提交构建的（那是发行装配的事）。
 - `crates/core` 这类共用代码动一次，依赖它的每个发行都算有漂移：宁可多列。
 - BUG 档的写法不统一，认不准的都归「要人看」，不猜。

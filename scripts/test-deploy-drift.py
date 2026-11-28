@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """deploy-drift.py 回归：临时 git 仓库、虚构发行记录；不联网、不读真 vault、不碰 169。"""
+import contextlib
 import importlib.util
+import io
 import json
 import os
 from pathlib import Path
@@ -10,6 +12,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 sys.dont_write_bytecode = True
 SCRIPTS = Path(__file__).resolve().parent
@@ -28,7 +31,8 @@ CARGO = {
     "supply": ["core"],
     "auth": ["core"],
     "runner-adapter": ["core"],
-    "local-server": ["auth", "audit-ledger", "observability", "runner-adapter"],
+    "process-safety": [],
+    "local-server": ["auth", "audit-ledger", "observability", "runner-adapter", "process-safety"],
     "sync-launcher": ["core"],
     "agent-server": ["supply", "audit-ledger"],
     "backup-worker": ["core"],
@@ -191,11 +195,13 @@ class ReportTests(unittest.TestCase):
         worker = box.touch("fix: 心跳", "deploy/alerts/worker/src/worker.mjs")
         embedded = box.touch("fix: 内嵌探针", "deploy/runner/rg_probe.py")
         ledger = box.touch("fix: 账本", "crates/audit-ledger/src/lib.rs")
+        safety = box.touch("fix: 驻留加固", "crates/process-safety/src/lib.rs")
         code, out, _ = box.report(box.record())
         self.assertEqual(code, 1, out)
-        expected = {"人侧程序": {auth, embedded, ledger}, "人侧网页": {web}, "人侧随包工具": {launcher},
-                    "agent": {supply, unit, ledger}, "Mac 副本包": {mac}, "告警包": {alert, ledger}, "Worker": {worker}}
-        everything = {auth, web, launcher, supply, unit, mac, alert, worker, embedded, ledger}
+        expected = {"人侧程序": {auth, embedded, ledger, safety}, "人侧网页": {web}, "人侧随包工具": {launcher},
+                    "agent": {supply, unit, ledger}, "Mac 副本包": {mac}, "告警包": {alert, ledger, safety},
+                    "Worker": {worker}}
+        everything = {auth, web, launcher, supply, unit, mac, alert, worker, embedded, ledger, safety}
         for part, commits in expected.items():
             text = section(out, part)
             listed = {commit for commit in everything if re.search("^- " + commit[:7], text, re.M)}
@@ -366,6 +372,22 @@ class ReportTests(unittest.TestCase):
                 self.assertNotIn("结论", out)
                 self.assertNotIn("Traceback", err)
 
+    def test_a_manifest_git_cannot_read_fails_closed(self):
+        box = self.box
+        box.git("update-index", "--add", "--cacheinfo", f"160000,{box.base},crates/ghost/Cargo.toml")
+        box.git("commit", "-q", "-m", "把 Cargo.toml 换成子模块")
+        code, out, err = box.report(box.record())
+        self.assertEqual((code, out), (2, ""))
+        self.assertIn("crates/ghost/Cargo.toml", err)
+        self.assertNotIn("Traceback", err)
+
+    def test_a_crash_is_not_mistaken_for_drift(self):
+        def crash(_):
+            raise RuntimeError("没想到的错")
+        with mock.patch.object(drift, "print_command", crash), contextlib.redirect_stderr(io.StringIO()) as err:
+            self.assertEqual(drift.main(["command"]), 2)
+        self.assertIn("没想到的错", err.getvalue())
+
     def test_a_program_whose_package_cannot_be_found_fails_closed(self):
         box = self.box
         base = box.git("rev-parse", "HEAD")
@@ -437,14 +459,24 @@ class ReportTests(unittest.TestCase):
         box.raw_bug(6, f"---\r\nid: BUG-006\r\n状态: \"修复中\"   # `{live[:7]}`\r\n---\r\n\r\n# BUG-006 CRLF\r\n")
         box.raw_bug(7, "---\r\n" + "填充: 1\r\n" * 200 + f"---\r\n\r\n# BUG-007 很长\r\n\r\n状态：修复中 `{live[:7]}`\r\n")
         box.raw_bug(8, "")
+        # 认不出的状态词、空着的状态不当成「没有」；模板里的终态照旧不列。
+        box.raw_bug(9, "---\n状态: 待验收\n---\n\n# BUG-009 新词\n")
+        box.raw_bug(10, "---\n状态:\n---\n\n# BUG-010 空着\n")
+        for number, status in enumerate(("未修复", "已修复（代码）", "无法复现", "不修", "已排除（误判）"), 11):
+            box.bug(number, f"{status}   # `{live[:7]}`")
+        # 文件名少了短描述、用了下划线的也算。
+        (box.bugs / "BUG-016.md").write_text(f"---\n状态: 修复中 `{live[:7]}`\n---\n")
+        (box.bugs / "BUG-017_下划线.md").write_text(f"---\n状态: 修复中 `{live[:7]}`\n---\n")
         human = box.human(human_program_source_commit=live, sync_program_source_commit=live)
         code, out, _ = box.report(box.record(human=human))
         self.assertEqual(code, 1, out)
         listed = [set(map(int, re.findall(r"^- BUG-0*(\d+)", section(out, title), re.M)))
                   for title in ("该验收了", "修复中、还没上线", "修复中、要人看")]
-        self.assertEqual(listed, [{1, 2, 6}, set(), {4, 5, 7, 8}], out)
+        self.assertEqual(listed, [{1, 2, 6, 16, 17}, set(), {4, 5, 7, 8, 9, 10}], out)
         for number in (4, 5, 7, 8):
             self.assertRegex(section(out, "修复中、要人看"), f"BUG-{number:03d}.*没有状态行")
+        for number in (9, 10):
+            self.assertRegex(section(out, "修复中、要人看"), f"BUG-{number:03d}.*状态认不出")
 
     def test_a_bug_waiting_for_acceptance_alone_is_worth_a_nonzero_exit(self):
         box = self.box
@@ -495,6 +527,14 @@ class ReportTests(unittest.TestCase):
         _, out, _ = box.report(box.record(), worker=fix)
         self.assertIn("BUG-001", section(out, "该验收了"))
 
+    def test_what_is_not_compared_is_said_out_loud(self):
+        self.box.touch("fix: 启动器", "deploy/blackboard/activated/launch-human.py")
+        code, out, _ = self.box.report(self.box.record())
+        self.assertEqual(code, 0, out)
+        text = section(out, "不对账的")
+        for title in ("人侧发行的装配工具", "agent 的安装工具", "备份 worker", "Bottega（Mac App）"):
+            self.assertIn(title, text)
+
     def test_paths_the_script_does_not_know_are_shown(self):
         box = self.box
         box.touch("新的一块", "services/new/main.rs")
@@ -533,6 +573,8 @@ class CommandTests(unittest.TestCase):
                                       r"'python3 -I -B -S -' > \S+\.json$")
         self.assertTrue(commands[1].startswith("python3 scripts/deploy-drift.py report --record "))
         self.assertEqual(commands[0].split("> ")[1], commands[1].split("--record ")[1])
+        # 记录落在用户自己的目录里：别人能先占住的公共目录会让重定向写到别处、或者读到假记录。
+        self.assertTrue(commands[0].split("> ")[1].startswith("~/Library/Caches/"))
         self.assertNotIn("sudo", out)
         _, out, _ = self.box.run("command", "--host", "maxsong@192.168.100.169")
         self.assertIn("ssh maxsong@192.168.100.169 ", out)
@@ -642,6 +684,7 @@ class CoverageTests(unittest.TestCase):
     """拿真仓库核路径归类：每个文件都归得到一处，程序内嵌的仓库外文件一个不漏。"""
 
     def files(self):
+        # 测试箱里的树不带 .git，问不了 git 跟踪了哪些。
         result = []
         skip = {".git", "target", "node_modules", "dist", ".build", "DerivedData", "__pycache__", ".claude"}
         for directory, names, files in os.walk(WORKSPACE):
@@ -650,7 +693,7 @@ class CoverageTests(unittest.TestCase):
             result += [name if base == "." else f"{base}/{name}" for name in files]
         return result
 
-    def test_every_tracked_path_has_a_home(self):
+    def test_every_path_in_the_tree_has_a_home(self):
         manifests = {path: (WORKSPACE / path).read_text() for path in self.files()
                      if re.fullmatch(r"crates/[^/]+/Cargo\.toml", path)}
         parts = drift.parts_for([manifests])
@@ -670,6 +713,14 @@ class CoverageTests(unittest.TestCase):
                     found.add((path.split("/")[1], resolved))
         declared = {(crate, path) for crate, paths in drift.EMBEDDED.items() for path in paths}
         self.assertEqual(found - declared, set())
+
+    def test_the_alert_program_uses_no_crate_the_alert_release_leaves_out(self):
+        source = (WORKSPACE / "crates/local-server/src/alert_main.rs").read_text()
+        used = {"studiolo-" + name.replace("_", "-") for name in re.findall(r"\bstudiolo_(\w+)", source)}
+        alert = next(part for part in drift.blank_parts() if part.title == drift.ALERT)
+        self.assertEqual(used, set(alert.packages))
+        # 这个程序没有别的源文件；哪天拆出模块，也要算进告警包。
+        self.assertEqual(re.findall(r"^(?:pub )?mod (\w+);", source, re.M), [])
 
     def test_the_closure_of_each_program_is_what_cargo_says(self):
         manifests = {path: (WORKSPACE / path).read_text() for path in self.files()
