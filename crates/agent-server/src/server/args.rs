@@ -18,6 +18,8 @@ pub struct ReadNoteArgs {
 
 /// MCP `read_note` 参数：路径，外加三选一的「只要哪一段」；都不给就是整篇。
 /// HTTP 续读入口只按路径读整篇，用 [`ReadNoteArgs`]。
+// 三个可选参数收任意 JSON，类型到取到笔记之后才核：反序列化早于授权，在那里拒就没有越界的拒绝和审计。
+// 给模型看的声明照样写明类型（`schemars(with)`）。
 #[derive(Debug, serde::Deserialize, rmcp::schemars::JsonSchema)]
 #[schemars(crate = "rmcp::schemars")]
 pub struct ReadNoteToolArgs {
@@ -25,13 +27,16 @@ pub struct ReadNoteToolArgs {
     pub path: String,
     /// 只要这几行：`a-b`，从 1 起、两端都含；行号就是 search 和 outline 报的行号。
     #[serde(default)]
-    pub lines: Option<String>,
+    #[schemars(with = "Option<String>")]
+    pub lines: Option<serde_json::Value>,
     /// 只要这个标题的一节（到下一个同级或更高级标题之前）；可以带 `#`，带了就连级别一起核。
     #[serde(default)]
-    pub heading: Option<String>,
+    #[schemars(with = "Option<String>")]
+    pub heading: Option<serde_json::Value>,
     /// 为 true 时只要大纲：每行 `起-止<TAB>## 标题`。
     #[serde(default)]
-    pub outline: Option<bool>,
+    #[schemars(with = "Option<bool>")]
+    pub outline: Option<serde_json::Value>,
 }
 
 /// `search` 参数。

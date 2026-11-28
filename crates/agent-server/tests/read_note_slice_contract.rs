@@ -39,6 +39,7 @@ const TRICKY_BODY: &str = concat!(
     "```js\n# 围栏里不是\n``` 行尾有字不算闭合\n# 还在围栏里\n```\n",
     "~~~~\n## 不是\n~~~\n`````\n## 还不是\n~~~~~  \n",
     "    ## 缩进四格也算\n",
+    "\u{3000}## 全角空格缩进也算\n",
     "\t# 缩进一个制表符也算\n",
     "    ```\n# 四格缩进的反引号不开围栏\n",
     "``\n## 两个反引号不开围栏\n",
@@ -241,7 +242,7 @@ async fn a_range_that_is_malformed_backwards_or_out_of_bounds_is_refused_without
         assert!(message.starts_with("lines 只能写成 a-b"), "{message}");
         assert!(data.is_null());
     }
-    // 写法不对是在取笔记之前拒的：不记读取，也不记越权。
+    // 写法不对是在记读取之前拒的：不记读取，也不记越权。
     assert!(recorded(&f, "content.read").is_empty());
     assert!(recorded(&f, "agent.action_denied").is_empty());
 
@@ -334,7 +335,7 @@ async fn a_heading_that_is_not_there_gets_one_fixed_sentence_and_nothing_else() 
         let (code, message, _) = refusal(&response);
         assert_eq!(
             (code, message.as_str()),
-            (INVALID_PARAMS, "heading 不能为空")
+            (INVALID_PARAMS, "heading 只能是不为空的文字")
         );
     }
 }
@@ -395,7 +396,7 @@ async fn the_outline_agrees_with_the_read_model_and_its_ranges_read_the_same_byt
     // 这一篇确实覆盖到了边角，不是两边都空着对上的。
     let part = text(&f, &session, TRICKY, json!({"outline": true})).await;
     assert!(
-        after_head(&part).0.starts_with("# 大纲 · 11 节 · "),
+        after_head(&part).0.starts_with("# 大纲 · 12 节 · "),
         "{part}"
     );
 }
@@ -453,35 +454,99 @@ async fn paths_outside_the_allowlist_are_refused_in_the_same_words_whatever_the_
         ("项目/Alpha/missing.md", "not_found"),
     ] {
         let plain = refusal(&read(&f, &session, path, json!({})).await);
+        let mut denials = recorded(&f, "agent.action_denied").len();
         for part in [
             json!({"lines": "1-2"}),
             json!({"heading": "私人成绩 秘密内容"}),
             json!({"outline": true}),
+            // 写法不对、类型不对也盖不住越界和不存在：先判路径、取笔记，再看参数。
+            json!({"lines": "x"}),
+            json!({"heading": ""}),
+            json!({"lines": "1-2", "outline": true}),
+            json!({"lines": 3}),
+            json!({"lines": ["1-2"]}),
+            json!({"heading": {"text": "一"}}),
+            json!({"outline": "yes"}),
+            json!({"outline": 1}),
         ] {
             let response = read(&f, &session, path, part.clone()).await;
             assert_eq!(refusal(&response), plain, "{path} {part}");
+            let denied = recorded(&f, "agent.action_denied");
+            denials += 1;
+            assert_eq!(denied.len(), denials, "{path} {part}");
+            let last = denied.last().unwrap();
+            assert_eq!(
+                (&last["action"], &last["reason"]),
+                (&json!("read_note"), &json!(reason)),
+                "{path} {part}"
+            );
         }
-        let denied = recorded(&f, "agent.action_denied");
-        assert!(
-            denied.iter().all(|event| event["action"] == "read_note"),
-            "{denied:?}"
-        );
-        assert_eq!(denied.last().unwrap()["reason"], reason);
     }
-    // 参数写得不对也盖不住越界：先判路径，再看参数。
-    for part in [
-        json!({"lines": "x"}),
-        json!({"heading": ""}),
-        json!({"lines": "1-2", "outline": true}),
+    assert!(recorded(&f, "content.read").is_empty());
+}
+
+#[tokio::test]
+async fn an_argument_of_the_wrong_type_gets_a_fixed_sentence_that_repeats_nothing() {
+    const LINES: &str = "lines 只能写成 a-b（从 1 起，两端都含，a 不大于 b）";
+    let (f, session) = notes().await;
+    for (part, expected) in [
+        (json!({"lines": 31337}), LINES),
+        (json!({"lines": true}), LINES),
+        (json!({"heading": ["canary"]}), "heading 只能是不为空的文字"),
+        (json!({"heading": 31337}), "heading 只能是不为空的文字"),
+        (json!({"outline": "canary"}), "outline 只能是 true 或 false"),
+        (json!({"outline": 1}), "outline 只能是 true 或 false"),
     ] {
-        let response = read(&f, &session, "School/secret.md", part.clone()).await;
+        let response = read(&f, &session, SMALL, part.clone()).await;
         assert_eq!(
-            refusal(&response).1,
-            "路径不在供给白名单内",
+            refusal(&response),
+            (INVALID_PARAMS, expected.to_owned(), Value::Null),
             "{part}: {response}"
         );
     }
     assert!(recorded(&f, "content.read").is_empty());
+    assert!(recorded(&f, "agent.action_denied").is_empty());
+    // null 等于没给。
+    let part = json!({"lines": null, "heading": null, "outline": null});
+    let whole = text(&f, &session, SMALL, part).await;
+    assert_eq!(after_revision(&whole).1, SMALL_BODY);
+}
+
+/// 大纲每个标题一行，能比原文大好几倍；标题多到不像笔记的不给大纲和节，行段照读。
+#[tokio::test]
+async fn a_note_with_too_many_headings_is_only_read_whole_or_by_lines() {
+    const LIMIT: usize = 10_000;
+    let f = fixture_seeded(
+        serve::router,
+        |vault| {
+            write(&vault.join("项目/Alpha/到顶.md"), &"# a\n".repeat(LIMIT));
+            write(
+                &vault.join("项目/Alpha/超了.md"),
+                &"# a\n".repeat(LIMIT + 1),
+            );
+        },
+        &[],
+    )
+    .await;
+    let (session, _) = f.initialize(&f.token).await;
+    let full = text(&f, &session, "项目/Alpha/到顶.md", json!({"outline": true})).await;
+    assert_eq!(after_head(&full).0, "# 大纲 · 10000 节 · 共 10000 行");
+    assert_eq!(after_head(&full).1.lines().count(), LIMIT);
+    for part in [json!({"outline": true}), json!({"heading": "a"})] {
+        let response = read(&f, &session, "项目/Alpha/超了.md", part.clone()).await;
+        assert_eq!(
+            refusal(&response),
+            (
+                INVALID_PARAMS,
+                "这篇的标题超过 10000 个，给不出大纲和节，用 lines 读".to_owned(),
+                Value::Null
+            ),
+            "{part}"
+        );
+    }
+    let last = json!({"lines": "10001-10001"});
+    let part = text(&f, &session, "项目/Alpha/超了.md", last).await;
+    assert_eq!(after_head(&part).1, "# a\n");
 }
 
 #[tokio::test]
@@ -538,6 +603,15 @@ async fn the_tool_schema_offers_the_three_optional_arguments() {
     names.sort();
     assert_eq!(names, ["heading", "lines", "outline", "path"]);
     assert_eq!(tool["inputSchema"]["required"], json!(["path"]));
+    // 类型到路径获准之后才核，但给模型看的声明照样写明。
+    for (name, kind) in [
+        ("lines", "string"),
+        ("heading", "string"),
+        ("outline", "boolean"),
+    ] {
+        let declared = &tool["inputSchema"]["properties"][name]["type"];
+        assert_eq!(*declared, json!([kind, "null"]), "{name}");
+    }
     let handshake = f.call(&f.token, &session, 5, "handshake", json!({})).await;
     assert!(tool_text(&handshake).contains("lines=a-b"));
 }

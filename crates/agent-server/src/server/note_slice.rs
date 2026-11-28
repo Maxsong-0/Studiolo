@@ -4,8 +4,13 @@
 //! 哪些行算标题，和读模型的大纲（vault-index 的 `markdown`、`markdown_scan`）是同一套规则；
 //! 那边没有「不限条数、带节末行」的接口，这里自己扫一遍，两套不许走岔由契约用例逐条对照钉住。
 
+use serde_json::Value;
+
 /// 标题级别最多到 6。
 const MAX_LEVEL: usize = 6;
+
+/// 给大纲和节的笔记最多这么多个标题。大纲一行比短标题长得多，不限的话 4 MiB 的笔记能放大成几十 MiB。
+const MAX_SECTIONS: usize = 10_000;
 
 /// 要哪一段；构造出来的都是写法合格的。
 #[derive(Debug)]
@@ -27,8 +32,12 @@ pub(super) enum PartError {
     MoreThanOne,
     /// 行段不是 `a-b`。
     MalformedLines,
-    /// 标题是空的。
-    EmptyHeading,
+    /// 标题是空的，或者不是文字。
+    MalformedHeading,
+    /// 要不要大纲不是真假值。
+    MalformedOutline,
+    /// 标题太多，给不出大纲和节。
+    TooManyHeadings,
     /// 行段超出这一篇。
     LinesOutOfRange {
         /// 这一篇共几行。
@@ -45,7 +54,12 @@ impl std::fmt::Display for PartError {
             Self::MalformedLines => {
                 formatter.write_str("lines 只能写成 a-b（从 1 起，两端都含，a 不大于 b）")
             }
-            Self::EmptyHeading => formatter.write_str("heading 不能为空"),
+            Self::MalformedHeading => formatter.write_str("heading 只能是不为空的文字"),
+            Self::MalformedOutline => formatter.write_str("outline 只能是 true 或 false"),
+            Self::TooManyHeadings => write!(
+                formatter,
+                "这篇的标题超过 {MAX_SECTIONS} 个，给不出大纲和节，用 lines 读"
+            ),
             Self::LinesOutOfRange { total } => write!(formatter, "行段越界：这篇共 {total} 行"),
             Self::HeadingNotFound => formatter.write_str("没有这个标题"),
         }
@@ -62,12 +76,22 @@ pub(super) struct Slice<'a> {
 }
 
 impl NotePart {
-    /// 从工具参数解析；三样一次只能给一个。
+    /// 从工具参数解析，连类型一起核；三样一次只能给一个。
     pub(super) fn parse(
-        lines: Option<&str>,
-        heading: Option<&str>,
-        outline: bool,
+        lines: Option<&Value>,
+        heading: Option<&Value>,
+        outline: Option<&Value>,
     ) -> Result<Self, PartError> {
+        let lines = lines
+            .map(|value| value.as_str().ok_or(PartError::MalformedLines))
+            .transpose()?;
+        let heading = heading
+            .map(|value| value.as_str().ok_or(PartError::MalformedHeading))
+            .transpose()?;
+        let outline = outline
+            .map(|value| value.as_bool().ok_or(PartError::MalformedOutline))
+            .transpose()?
+            .unwrap_or(false);
         match (lines, heading, outline) {
             (None, None, false) => Ok(Self::Whole),
             (Some(range), None, false) => parse_range(range),
@@ -85,17 +109,17 @@ impl NotePart {
                 body: content,
             }),
             Self::Lines { first, last } => {
-                let (body, total) = lines_between(content, *first, *last);
-                let body = body.ok_or(PartError::LinesOutOfRange { total })?;
+                let (body, total) = lines_between(content, *first, *last)?;
                 Ok(Slice {
                     head: format!("# 行 {first}-{last} · 共 {total} 行\n"),
                     body,
                 })
             }
             Self::Heading(query) => {
-                let outline = Outline::of(content);
+                let outline = Outline::of(content)?;
                 let (section, same_name) = query.find(&outline.sections)?;
-                let (first, last, total) = (section.first, section.last, outline.total);
+                let (first, last) = (section.first, section.last);
+                let (body, total) = lines_between(content, first, last)?;
                 let more = if same_name > 1 {
                     format!(" · 同名标题 {same_name} 处，这是第 1 处，其余用 outline 查行号")
                 } else {
@@ -103,11 +127,11 @@ impl NotePart {
                 };
                 Ok(Slice {
                     head: format!("# 行 {first}-{last} · 共 {total} 行{more}\n"),
-                    body: lines_between(content, first, last).0.unwrap_or_default(),
+                    body,
                 })
             }
             Self::Outline => {
-                let outline = Outline::of(content);
+                let outline = Outline::of(content)?;
                 let mut head = format!(
                     "# 大纲 · {} 节 · 共 {} 行\n",
                     outline.sections.len(),
@@ -143,8 +167,8 @@ fn parse_range(range: &str) -> Result<NotePart, PartError> {
         .ok_or(PartError::MalformedLines)
 }
 
-/// 第 `first` 到 `last` 行的原文（越界是 `None`），和总行数。
-fn lines_between(content: &str, first: usize, last: usize) -> (Option<&str>, usize) {
+/// 第 `first` 到 `last` 行的原文，和总行数。
+fn lines_between(content: &str, first: usize, last: usize) -> Result<(&str, usize), PartError> {
     let (mut start, mut end, mut offset, mut total) = (None, None, 0, 0);
     for line in content.split_inclusive('\n') {
         total += 1;
@@ -156,10 +180,11 @@ fn lines_between(content: &str, first: usize, last: usize) -> (Option<&str>, usi
             end = Some(offset);
         }
     }
-    let body = start
+    start
         .zip(end)
-        .and_then(|(start, end)| content.get(start..end));
-    (body, total)
+        .and_then(|(start, end)| content.get(start..end))
+        .map(|body| (body, total))
+        .ok_or(PartError::LinesOutOfRange { total })
 }
 
 /// 一个标题和它那一节的起止行。
@@ -178,7 +203,7 @@ struct Outline<'a> {
 }
 
 impl<'a> Outline<'a> {
-    fn of(content: &'a str) -> Self {
+    fn of(content: &'a str) -> Result<Self, PartError> {
         let mut sections: Vec<Section<'a>> = Vec::new();
         // 还没遇到下一个同级或更高级标题的节；级别从外到里递增。
         let mut open: Vec<usize> = Vec::new();
@@ -189,6 +214,9 @@ impl<'a> Outline<'a> {
             let Some((level, text)) = scan.visible(total, line).and_then(heading) else {
                 continue;
             };
+            if sections.len() == MAX_SECTIONS {
+                return Err(PartError::TooManyHeadings);
+            }
             while let Some(index) = open.pop() {
                 if sections[index].level < level {
                     open.push(index);
@@ -207,7 +235,7 @@ impl<'a> Outline<'a> {
         for index in open {
             sections[index].last = total;
         }
-        Self { sections, total }
+        Ok(Self { sections, total })
     }
 }
 
@@ -222,7 +250,7 @@ impl HeadingQuery {
     fn parse(query: &str) -> Result<Self, PartError> {
         let query = query.trim();
         if query.is_empty() {
-            return Err(PartError::EmptyHeading);
+            return Err(PartError::MalformedHeading);
         }
         let marks = query.bytes().take_while(|byte| *byte == b'#').count();
         let marked = (1..=MAX_LEVEL).contains(&marks)
