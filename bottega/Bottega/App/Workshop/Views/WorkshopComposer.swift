@@ -229,6 +229,7 @@ struct SendDraftButton: View {
 /// The text, its files, and why it came back if it did.
 struct DraftField: View {
     @Environment(WorkshopModel.self) private var model
+    @Environment(Look.self) private var look
     let key: DraftKey
     let placeholder: String
     var isPlain = false
@@ -261,7 +262,7 @@ struct DraftField: View {
                 }
                 .padding(isPlain ? 0 : 8)
                 .background {
-                    if !isPlain { RoundedRectangle(cornerRadius: 8).fill(.quaternary.opacity(0.5)) }
+                    if !isPlain { RoundedRectangle(cornerRadius: 8).fill(look.surface) }
                 }
             ForEach(Array(draft.files.enumerated()), id: \.offset) { index, file in
                 HStack(spacing: 6) {

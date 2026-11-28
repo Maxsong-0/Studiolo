@@ -82,21 +82,14 @@ final class WorkshopModel {
             case .sidebar: showsInspector ? panelWidth : nil
             case .panel: showsSidebar ? sidebarWidth : nil
             }
-        switch WindowMeasures.dragged(pane, to: width, window: window, other: other) {
-        case .width(let width):
-            switch pane {
-            case .sidebar: sidebarWidth = width
-            case .panel: panelWidth = width
-            }
-        case .closes:
-            switch pane {
-            case .sidebar:
-                sidebarWidth = start
-                showsSidebar = false
-            case .panel:
-                panelWidth = start
-                showsInspector = false
-            }
+        let settled = WindowMeasures.settled(pane, to: width, from: start, window: window, other: other)
+        switch pane {
+        case .sidebar:
+            sidebarWidth = settled.width
+            if !settled.isShown { showsSidebar = false }
+        case .panel:
+            panelWidth = settled.width
+            if !settled.isShown { showsInspector = false }
         }
     }
     /// ⌘K (`WorkshopPalette`).

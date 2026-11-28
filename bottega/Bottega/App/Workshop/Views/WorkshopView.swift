@@ -9,30 +9,33 @@ struct WorkshopView: View {
     @Environment(WorkshopModel.self) private var model
     @Environment(Look.self) private var look
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    /// How wide the window is: what a side pane's edge can be dragged to depends on it.
-    @State private var width = 0.0
 
     var body: some View {
         @Bindable var model = model
-        let drawn = WindowMeasures.drawn(
-            sidebar: model.showsSidebar ? model.sidebarWidth : nil, panel: model.showsInspector ? model.panelWidth : nil,
-            window: width)
-        HStack(spacing: 0) {
-            if let sidebar = drawn.sidebar {
-                HStack(spacing: 0) {
-                    VetroSidebar(width: sidebar)
-                    // The gap between the two panes is what drags the sidebar's edge.
-                    PaneHandle(pane: .sidebar, width: sidebar, window: width)
+        // The window's own width, which this is handed whatever is in it. The width of what is in it would not
+        // do: panes that have not given way yet keep that from getting any narrower, so they never would.
+        GeometryReader { proxy in
+            let window = Double(proxy.size.width)
+            let drawn = WindowMeasures.drawn(
+                sidebar: model.showsSidebar ? model.sidebarWidth : nil,
+                panel: model.showsInspector ? model.panelWidth : nil, window: window)
+            HStack(spacing: 0) {
+                if let sidebar = drawn.sidebar {
+                    HStack(spacing: 0) {
+                        VetroSidebar(width: sidebar)
+                        // The gap between the two panes is what drags the sidebar's edge.
+                        PaneHandle(pane: .sidebar, width: sidebar, window: window)
+                    }
+                    .transition(reduceMotion ? .opacity : .move(edge: .leading).combined(with: .opacity))
                 }
-                .transition(reduceMotion ? .opacity : .move(edge: .leading).combined(with: .opacity))
+                MainPane(panel: drawn.panel, window: window)
             }
-            MainPane(panel: drawn.panel, window: width)
+            .animation(reduceMotion ? .easeOut(duration: 0.2) : .smooth(duration: 0.36), value: model.showsSidebar)
+            .padding(WindowMeasures.margin)
         }
-        .animation(reduceMotion ? .easeOut(duration: 0.2) : .smooth(duration: 0.36), value: model.showsSidebar)
-        .padding(WindowMeasures.margin)
-        .onGeometryChange(for: Double.self) { Double($0.size.width) } action: { width = $0 }
         #if DEBUG
         .overlay(alignment: .top) { if PanelsForAScreenshot.isAsked { PanelsForAScreenshot() } }
+        .task { await WindowForAScreenshot.resize() }
         #endif
         .background { BackdropView() }
         .ignoresSafeArea()
@@ -48,6 +51,10 @@ struct WorkshopView: View {
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             model.cameToFront()
         }
+        // Wide enough for whichever side panes are shown, so that none is pushed past the window's edge.
+        .frame(
+            minWidth: WindowMeasures.narrowestWindow(sidebar: model.showsSidebar, panel: model.showsInspector),
+            minHeight: WindowMeasures.windowShortest)
     }
 }
 
@@ -423,6 +430,19 @@ private struct PanelsForAScreenshot: View {
             }
         }
         .padding(.top, 90)
+    }
+}
+
+/// `BOTTEGA_WINDOW=860x700`: the window opens that size, for a screenshot of a narrow one. Asked through
+/// `setContentSize`, which the window's own narrowest still holds for, as it does for a drag of its edge.
+private enum WindowForAScreenshot {
+    @MainActor static func resize() async {
+        guard let asked = ProcessInfo.processInfo.environment["BOTTEGA_WINDOW"] else { return }
+        let sides = asked.split(separator: "x").compactMap { Double($0) }
+        guard sides.count == 2 else { return }
+        // After the window has been put back where it last was, which comes a moment after its content.
+        try? await Task.sleep(for: .milliseconds(600))
+        NSApp.windows.first { $0.canBecomeMain }?.setContentSize(NSSize(width: sides[0], height: sides[1]))
     }
 }
 #endif

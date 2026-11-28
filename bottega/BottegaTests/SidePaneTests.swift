@@ -74,11 +74,11 @@ struct SidePaneTests {
 
     /// What is left for a pane once the margins, the gap, the other pane and the page's narrowest are taken out.
     @Test func roomIsWhatThePageDoesNotNeed() {
-        #expect(WindowMeasures.pageNarrowest == 420)
-        #expect(WindowMeasures.room(for: .sidebar, window: 1280, other: nil) == 1280 - 20 - 8 - 420)
-        #expect(WindowMeasures.room(for: .sidebar, window: 1280, other: 292) == 1280 - 20 - 8 - 420 - 292 - 10)
-        #expect(WindowMeasures.room(for: .panel, window: 1280, other: nil) == 1280 - 20 - 420 - 10)
-        #expect(WindowMeasures.room(for: .panel, window: 1280, other: 276) == 1280 - 20 - 420 - 10 - 276 - 8)
+        #expect(WindowMeasures.pageNarrowest == 640)
+        #expect(WindowMeasures.room(for: .sidebar, window: 1280, other: nil) == 1280 - 20 - 8 - 640)
+        #expect(WindowMeasures.room(for: .sidebar, window: 1280, other: 292) == 1280 - 20 - 8 - 640 - 292 - 10)
+        #expect(WindowMeasures.room(for: .panel, window: 1280, other: nil) == 1280 - 20 - 640 - 10)
+        #expect(WindowMeasures.room(for: .panel, window: 1280, other: 276) == 1280 - 20 - 640 - 10 - 276 - 8)
     }
 
     @Test func aWideWindowDrawsThemAsAsked() {
@@ -90,42 +90,101 @@ struct SidePaneTests {
         #expect(alone.sidebar == nil)
         #expect(alone.panel == 292)
         #expect(WindowMeasures.drawn(sidebar: 276, panel: nil, window: 1280).panel == nil)
-        // Not measured yet: as asked, rather than both at their narrowest for a frame.
+    }
+
+    /// Before the window has been measured (0) nothing is squeezed: not what is drawn, and not a drag either.
+    @Test func aWindowNotMeasuredYetLimitsNothing() {
+        #expect(WindowMeasures.room(for: .sidebar, window: 0, other: 292) == .infinity)
+        #expect(WindowMeasures.room(for: .panel, window: 0, other: nil) == .infinity)
         let unmeasured = WindowMeasures.drawn(sidebar: 380, panel: 440, window: 0)
         #expect(unmeasured.sidebar == 380)
         #expect(unmeasured.panel == 440)
+        #expect(WindowMeasures.dragged(.sidebar, to: 380, window: 0, other: 440) == .width(380))
+        #expect(WindowMeasures.dragged(.panel, to: 430, window: 0, other: 400) == .width(430))
+        // Its own range and the way it closes are not the window's to lift.
+        #expect(WindowMeasures.dragged(.panel, to: 900, window: 0, other: nil) == .width(440))
+        #expect(WindowMeasures.dragged(.panel, to: 100, window: 0, other: nil) == .closes)
+        // Measured, it limits again.
+        #expect(WindowMeasures.room(for: .panel, window: 1, other: nil) < 0)
     }
 
-    /// The panel gives way first, then the sidebar, and the page keeps its 420.
+    /// The window cannot be made so narrow that a pane would be pushed past its edge: with both shown it stops
+    /// where each is at its narrowest and the page at its own.
+    @Test func theWindowIsNoNarrowerThanWhatItShows() {
+        #expect(WindowMeasures.windowNarrowest == 860)
+        // The page alone needs less than the window's own narrowest.
+        #expect(WindowMeasures.narrowestWindow(sidebar: false, panel: false) == 860)
+        #expect(WindowMeasures.narrowestWindow(sidebar: true, panel: false) == 20 + 220 + 8 + 640)
+        #expect(WindowMeasures.narrowestWindow(sidebar: false, panel: true) == 20 + 640 + 240 + 10)
+        #expect(WindowMeasures.narrowestWindow(sidebar: true, panel: true) == 20 + 220 + 8 + 640 + 240 + 10)
+        // At that width everything is at its narrowest and the page has exactly its own.
+        let narrowest = WindowMeasures.narrowestWindow(sidebar: true, panel: true)
+        let drawn = WindowMeasures.drawn(sidebar: 400, panel: 440, window: narrowest)
+        #expect(drawn.sidebar == 220)
+        #expect(drawn.panel == 240)
+        #expect(narrowest - 20 - (220 + 8) - (240 + 10) == WindowMeasures.pageNarrowest)
+        for (sidebar, panel) in [(true, false), (false, true), (true, true)] {
+            let window = WindowMeasures.narrowestWindow(sidebar: sidebar, panel: panel)
+            let drawn = WindowMeasures.drawn(sidebar: sidebar ? 400 : nil, panel: panel ? 440 : nil, window: window)
+            let taken = (drawn.sidebar.map { $0 + 8 } ?? 0) + (drawn.panel.map { $0 + 10 } ?? 0)
+            #expect(window - 20 - taken >= WindowMeasures.pageNarrowest, "\(sidebar) \(panel)")
+        }
+    }
+
+    /// The panel gives way first, then the sidebar, and the page keeps its 640.
     @Test func aNarrowWindowTakesFromThePanelFirst() {
-        let some = WindowMeasures.drawn(sidebar: 276, panel: 292, window: 1000)
+        // As asked while there is room for it: 276 + 8 and 292 + 10 beside a page of 640, in 20 of margins.
+        let roomy = WindowMeasures.drawn(sidebar: 276, panel: 292, window: 1246)
+        #expect(roomy.sidebar == 276)
+        #expect(roomy.panel == 292)
+        let some = WindowMeasures.drawn(sidebar: 276, panel: 292, window: 1220)
         #expect(some.sidebar == 276)
         #expect(some.panel == 266)
-        let most = WindowMeasures.drawn(sidebar: 276, panel: 292, window: 940)
+        let most = WindowMeasures.drawn(sidebar: 276, panel: 292, window: 1160)
         #expect(most.panel == 240)
         #expect(most.sidebar == 242)
-        let all = WindowMeasures.drawn(sidebar: 400, panel: 440, window: 918)
+        let all = WindowMeasures.drawn(sidebar: 400, panel: 440, window: 1138)
         #expect(all.sidebar == 220)
         #expect(all.panel == 240)
-        for window in stride(from: 918.0, through: 1600, by: 37) {
+        for window in stride(from: 1138.0, through: 1900, by: 37) {
             let drawn = WindowMeasures.drawn(sidebar: 400, panel: 440, window: window)
             let page = window - 20 - (drawn.sidebar! + 8) - (drawn.panel! + 10)
-            #expect(page >= 420, "\(window)")
+            #expect(page >= 640, "\(window)")
         }
     }
 
     /// The sidebar may be dragged until the panel is at its narrowest; the panel only into what the sidebar leaves.
     @Test func aDragKnowsWhichPaneGivesWay() {
-        #expect(WindowMeasures.dragged(.sidebar, to: 390, window: 1000, other: 292) == .width(1000 - 20 - 8 - 420 - 240 - 10))
-        #expect(WindowMeasures.dragged(.sidebar, to: 390, window: 1000, other: nil) == .width(390))
-        #expect(WindowMeasures.dragged(.panel, to: 400, window: 1000, other: 276) == .width(266))
-        #expect(WindowMeasures.dragged(.panel, to: 400, window: 1000, other: nil) == .width(400))
-        #expect(WindowMeasures.dragged(.panel, to: 100, window: 1000, other: 276) == .closes)
+        #expect(WindowMeasures.dragged(.sidebar, to: 390, window: 1220, other: 292) == .width(1220 - 20 - 8 - 640 - 240 - 10))
+        #expect(WindowMeasures.dragged(.sidebar, to: 390, window: 1220, other: nil) == .width(390))
+        #expect(WindowMeasures.dragged(.panel, to: 400, window: 1220, other: 276) == .width(266))
+        #expect(WindowMeasures.dragged(.panel, to: 400, window: 1220, other: nil) == .width(400))
+        #expect(WindowMeasures.dragged(.panel, to: 100, window: 1220, other: 276) == .closes)
+    }
+
+    /// A drag that only changes the width leaves the pane shown at that width; one that closes it leaves the width
+    /// the drag began from, so that showing it again brings back what was there, not its narrowest.
+    @Test func aPanePutAwayKeepsTheWidthTheDragBeganFrom() {
+        let wider = WindowMeasures.settled(.sidebar, to: 340, from: 300, window: 1280, other: nil)
+        #expect(wider.width == 340)
+        #expect(wider.isShown)
+        let squeezed = WindowMeasures.settled(.panel, to: 400, from: 300, window: 1220, other: 276)
+        #expect(squeezed.width == 266)
+        #expect(squeezed.isShown)
+        let closed = WindowMeasures.settled(.sidebar, to: 100, from: 300, window: 1280, other: nil)
+        #expect(closed.width == 300)
+        #expect(!closed.isShown)
+        let panel = WindowMeasures.settled(.panel, to: 120, from: 410, window: 1280, other: 276)
+        #expect(panel.width == 410)
+        #expect(!panel.isShown)
+        // Whatever it began from, what is kept is a width it can have.
+        #expect(WindowMeasures.settled(.sidebar, to: 0, from: 5000, window: 1280, other: nil).width == 400)
+        #expect(WindowMeasures.settled(.sidebar, to: 0, from: .nan, window: 1280, other: nil).width == 220)
     }
 
     /// What a pane was dragged to is what it is then drawn at: it does not jump when the finger lets go.
     @Test func whatWasDraggedIsWhatIsDrawn() {
-        for window in [918.0, 1000, 1100, 1280, 1700] {
+        for window in [1138.0, 1220, 1320, 1500, 1920] {
             for asked in stride(from: 170.0, through: 460, by: 29) {
                 if case .width(let sidebar) = WindowMeasures.dragged(.sidebar, to: asked, window: window, other: 330) {
                     #expect(WindowMeasures.drawn(sidebar: sidebar, panel: 330, window: window).sidebar == sidebar, "\(window) \(asked)")

@@ -18,7 +18,6 @@ struct WorkshopApp: App {
             WorkshopView()
                 .environment(model)
                 .environment(look)
-                .frame(minWidth: 860, minHeight: 520)
                 .task { await model.run() }
         }
         // The photo runs to the window's edges. The toolbar is empty and clear: it is only there so the window's

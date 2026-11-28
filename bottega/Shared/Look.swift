@@ -146,18 +146,30 @@ final class Look {
     var lineOpacity: Double { isDark ? 0.22 : 0.17 }
 
     /// The outline of a control: a capsule, a field, a switcher and its pill. Glass that is fully clear still has
-    /// its edge, so unlike the fills this does not fade with `strength`.
-    var edge: Color { isDark ? .white.opacity(edgeOpacity) : .black.opacity(edgeOpacity) }
+    /// its edge, so unlike the fills this does not fade with `strength`. A control is filled with `surface`, as a
+    /// card is: nothing of its own that would stay when the glass is clear.
+    func edge(increasedContrast: Bool) -> Color {
+        ink(Self.outline(edgeOpacity, increasedContrast: increasedContrast))
+    }
     var edgeOpacity: Double { isDark ? 0.34 : 0.26 }
 
-    /// What a control is filled with under its pill or its text: white, so lighter than the glass around it and
-    /// never a dark box on it. It thins with the glass but does not go.
-    var track: Color { .white.opacity(trackOpacity) }
-    var trackOpacity: Double { isDark ? 0.05 + 0.04 * strength : 0.14 + 0.14 * strength }
-
     /// Around the field being typed in.
-    var focusEdge: Color { isDark ? .white.opacity(0.62) : .black.opacity(0.5) }
+    func focusEdge(increasedContrast: Bool) -> Color {
+        ink(Self.outline(focusEdgeOpacity, increasedContrast: increasedContrast))
+    }
+    var focusEdgeOpacity: Double { isDark ? 0.62 : 0.5 }
 
+    /// How much stronger an outline is drawn with Increase Contrast on.
+    static let contrastGain = 1.8
+
+    /// An outline's opacity as it is drawn. The system's own outlines get stronger with Increase Contrast by
+    /// themselves; ours are plain colours and have to be told.
+    static func outline(_ opacity: Double, increasedContrast: Bool) -> Double {
+        increasedContrast ? min(1, opacity * contrastGain) : opacity
+    }
+
+    /// White on dark glass, black on light.
+    private func ink(_ opacity: Double) -> Color { isDark ? .white.opacity(opacity) : .black.opacity(opacity) }
 
     /// The bright inner edge along the top of a surface.
     var rim: Color { .white.opacity(isDark ? 0.26 : 0.5) }

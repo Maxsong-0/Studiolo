@@ -38,11 +38,11 @@ struct BackdropPhoto: View {
             Image(photo.asset)
                 .resizable()
                 .scaledToFill()
-                .alignmentGuide(HorizontalAlignment.center) { photo in
-                    CGFloat(Look.Photo.guide(content: photo.width, frame: frame.width, focus: focus.x))
+                .alignmentGuide(HorizontalAlignment.center) { image in
+                    CGFloat(Look.Photo.guide(content: image.width, frame: frame.width, focus: focus.x))
                 }
-                .alignmentGuide(VerticalAlignment.center) { photo in
-                    CGFloat(Look.Photo.guide(content: photo.height, frame: frame.height, focus: focus.y))
+                .alignmentGuide(VerticalAlignment.center) { image in
+                    CGFloat(Look.Photo.guide(content: image.height, frame: frame.height, focus: focus.y))
                 }
                 .frame(width: frame.width, height: frame.height)
                 .clipped()
@@ -96,7 +96,7 @@ extension View {
     }
 
     /// The outline every control in the window shares: a capsule, a field, a switcher (`Look.edge`), with light
-    /// along its top.
+    /// along its top. Stronger with Increase Contrast on.
     func vetroEdge(in shape: some InsettableShape) -> some View { modifier(VetroEdge(shape: shape)) }
 }
 
@@ -148,11 +148,12 @@ private struct VetroSurface<S: InsettableShape>: ViewModifier {
 
 private struct VetroEdge<S: InsettableShape>: ViewModifier {
     @Environment(Look.self) private var look
+    @Environment(\.colorSchemeContrast) private var contrast
     let shape: S
 
     func body(content: Content) -> some View {
         content.overlay {
-            shape.strokeBorder(look.edge, lineWidth: 1)
+            shape.strokeBorder(look.edge(increasedContrast: contrast == .increased), lineWidth: 1)
             shape.inset(by: 1).stroke(
                 LinearGradient(colors: [look.rim.opacity(0.6), .clear], startPoint: .top, endPoint: .center), lineWidth: 1)
         }

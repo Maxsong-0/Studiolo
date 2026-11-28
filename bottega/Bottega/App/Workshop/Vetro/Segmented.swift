@@ -38,7 +38,7 @@ struct VetroSegmented<Value: Hashable>: View {
         }
         .padding(VetroSegmentedMetrics.inset)
         .frame(height: height)
-        .background(look.track, in: .capsule)
+        .background(look.surface, in: .capsule)
         .vetroEdge(in: Capsule())
         // The pill slides however the choice was made: a click here, a menu command, ⌘K.
         .animation(reduceMotion ? nil : .smooth(duration: 0.25), value: selected)

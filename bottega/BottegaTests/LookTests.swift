@@ -120,24 +120,43 @@ struct LookTests {
         }
     }
 
-    /// The outline of a control and the lines between things do not fade with the glass, and a control's well
-    /// thins but stays: fully clear glass still shows where its controls are (T-245).
+    /// The outline of a control and the lines between things do not fade with the glass: fully clear glass still
+    /// shows where its controls are, by their edges alone (T-245).
     @Test func edgesStayWhenTheGlassIsClear() {
         let look = Look(defaults: freshDefaults())
         for appearance in [Look.Appearance.dark, .light] {
             look.appearance = appearance
             look.transparency = 0
-            let (edge, line, track) = (look.edgeOpacity, look.lineOpacity, look.trackOpacity)
+            let (edge, focus, line) = (look.edgeOpacity, look.focusEdgeOpacity, look.lineOpacity)
             look.transparency = 100
             #expect(look.strength == 0)
             #expect(look.edgeOpacity == edge, "\(appearance)")
+            #expect(look.focusEdgeOpacity == focus, "\(appearance)")
             #expect(look.lineOpacity == line, "\(appearance)")
-            // A control's outline is plainer than a line between things.
+            // A control's outline is plainer than a line between things, and the field being typed in plainer still.
             #expect(look.edgeOpacity > look.lineOpacity, "\(appearance)")
+            #expect(look.focusEdgeOpacity > look.edgeOpacity, "\(appearance)")
             #expect(look.lineOpacity >= 0.17, "\(appearance)")
-            #expect(look.trackOpacity > 0, "\(appearance)")
-            #expect(look.trackOpacity < track, "\(appearance)")
         }
+    }
+
+    /// With Increase Contrast on, the outlines are stronger, as the system's own get by themselves; the field
+    /// being typed in still stands out from the rest.
+    @Test func outlinesAreStrongerWithIncreasedContrast() {
+        let look = Look(defaults: freshDefaults())
+        for appearance in [Look.Appearance.dark, .light] {
+            look.appearance = appearance
+            let edge = Look.outline(look.edgeOpacity, increasedContrast: true)
+            let focus = Look.outline(look.focusEdgeOpacity, increasedContrast: true)
+            #expect(edge >= look.edgeOpacity * 1.5, "\(appearance)")
+            #expect(focus > edge, "\(appearance)")
+            #expect(focus <= 1, "\(appearance)")
+            // Off, they are as they were.
+            #expect(Look.outline(look.edgeOpacity, increasedContrast: false) == look.edgeOpacity, "\(appearance)")
+            #expect(Look.outline(look.focusEdgeOpacity, increasedContrast: false) == look.focusEdgeOpacity, "\(appearance)")
+        }
+        // Never past opaque, however strong it was.
+        #expect(Look.outline(0.9, increasedContrast: true) == 1)
     }
 
     /// A photo that is not the window's shape is cut where its focus says, and never leaves the window bare.

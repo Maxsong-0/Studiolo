@@ -2,14 +2,15 @@
 import SwiftUI
 
 extension View {
-    /// For a one-line `TextField` on glass: a capsule a shade lighter than the pane, with the outline every control
-    /// has, brighter while it is typed in. The system's rounded field is a dark box on dark glass, and nothing in
-    /// this window sits on black (T-245).
+    /// For a one-line `TextField` on glass: a capsule filled as a card is, with the outline every control has,
+    /// brighter while it is typed in. The system's rounded field is a dark box on dark glass, and nothing in this
+    /// window sits on black (T-245).
     func glassField(height: CGFloat = 28) -> some View { modifier(GlassField(height: height)) }
 }
 
 private struct GlassField: ViewModifier {
     @Environment(Look.self) private var look
+    @Environment(\.colorSchemeContrast) private var contrast
     @FocusState private var isTypedIn: Bool
     let height: CGFloat
 
@@ -19,9 +20,13 @@ private struct GlassField: ViewModifier {
             .focused($isTypedIn)
             .padding(.horizontal, height * 0.4)
             .frame(height: height)
-            .background(look.track, in: .capsule)
+            .background(look.surface, in: .capsule)
             .vetroEdge(in: Capsule())
-            .overlay { if isTypedIn { Capsule().strokeBorder(look.focusEdge, lineWidth: 1.5) } }
+            .overlay {
+                if isTypedIn {
+                    Capsule().strokeBorder(look.focusEdge(increasedContrast: contrast == .increased), lineWidth: 1.5)
+                }
+            }
             .contentShape(.capsule)
             .animation(.easeOut(duration: 0.15), value: isTypedIn)
     }

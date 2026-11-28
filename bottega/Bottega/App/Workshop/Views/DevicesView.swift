@@ -47,6 +47,7 @@ private struct DroppedIntents: View {
 }
 
 private struct DeviceBox: View {
+    @Environment(Look.self) private var look
     let device: Device
     let isThisOne: Bool
 
@@ -56,7 +57,7 @@ private struct DeviceBox: View {
                 Image(systemName: device.kind == "mac" ? "macbook" : "iphone").foregroundStyle(.secondary)
                 Text(verbatim: UntrustedText.line(device.name, limit: 64)).font(.headline)
                 if isThisOne {
-                    Text("This Mac").font(.caption).padding(.horizontal, 6).padding(.vertical, 1).background(.quaternary, in: .capsule)
+                    Text("This Mac").font(.caption).padding(.horizontal, 6).padding(.vertical, 1).background(look.surface, in: .capsule)
                 }
                 Spacer()
                 Text(verbatim: UntrustedText.line(device.id, limit: 24)).font(.caption.monospaced()).foregroundStyle(.secondary)

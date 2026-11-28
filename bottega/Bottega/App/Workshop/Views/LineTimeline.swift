@@ -365,6 +365,7 @@ struct FileChip: View {
 
 /// Text as it came, in a box that scrolls once it is long.
 struct PlainBlock: View {
+    @Environment(Look.self) private var look
     let text: String
     var limit: CGFloat = 320
     var monospaced = true
@@ -382,6 +383,6 @@ struct PlainBlock: View {
         .defaultScrollAnchor(.topLeading)
         .frame(maxHeight: limit)
         .fixedSize(horizontal: false, vertical: true)
-        .background(.quaternary.opacity(0.4), in: .rect(cornerRadius: 8))
+        .background(look.surface, in: .rect(cornerRadius: 8))
     }
 }

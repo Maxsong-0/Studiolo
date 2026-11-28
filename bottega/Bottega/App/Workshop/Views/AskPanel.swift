@@ -111,6 +111,7 @@ struct AskPanel: View {
 }
 
 private struct AgentClaim: View {
+    @Environment(Look.self) private var look
     let letter: Message
     @State private var isOpen = false
 
@@ -124,7 +125,7 @@ private struct AgentClaim: View {
                     .font(.caption)
                     .padding(.horizontal, 6)
                     .padding(.vertical, 1)
-                    .background(.quaternary, in: .capsule)
+                    .background(look.surface, in: .capsule)
             }
             .font(.callout)
         }
