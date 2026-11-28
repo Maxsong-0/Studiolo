@@ -111,7 +111,7 @@ private struct TurnItemView: View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(alignment: .firstTextBaseline, spacing: 8) {
                 let title = Wording.turnItem(what, hasText: item.text.end > 0)
-                Image(systemName: title.symbol).frame(width: 18).foregroundStyle(title.isTrouble ? AnyShapeStyle(.orange) : AnyShapeStyle(.secondary))
+                Image(systemName: title.symbol).frame(width: 18).foregroundStyle(title.isTrouble ? AnyShapeStyle(.trouble) : AnyShapeStyle(.secondary))
                 Text(verbatim: title.text).fontWeight(.medium).lineLimit(2)
                 Spacer(minLength: 6)
                 status

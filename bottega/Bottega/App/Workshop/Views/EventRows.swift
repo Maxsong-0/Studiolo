@@ -26,9 +26,7 @@ struct EventBox<Content: View>: View {
         .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
         .vetroSurface(cornerRadius: 10)
-        .overlay {
-            if isSelected { RoundedRectangle(cornerRadius: 10).strokeBorder(Color.accentColor, lineWidth: 1.5) }
-        }
+        .vetroRing(isSelected, in: RoundedRectangle(cornerRadius: 10))
         .contentShape(.rect)
         .onTapGesture { if let detail { model.detail = detail } }
     }

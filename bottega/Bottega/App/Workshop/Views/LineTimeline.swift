@@ -188,7 +188,7 @@ struct NoteRow: View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
             Image(systemName: summary.symbol)
                 .frame(width: 18)
-                .foregroundStyle(summary.isFailure ? AnyShapeStyle(.orange) : AnyShapeStyle(.secondary))
+                .foregroundStyle(summary.isFailure ? AnyShapeStyle(.trouble) : AnyShapeStyle(.secondary))
             Text(verbatim: summary.text)
                 .frame(maxWidth: .infinity, alignment: .leading)
             Text(verbatim: Wording.time(at)).foregroundStyle(.tertiary).monospacedDigit()
@@ -219,9 +219,7 @@ struct LetterRow: View {
                         .padding(.horizontal, 13)
                         .padding(.vertical, 9)
                         .background(look.mine, in: .rect(cornerRadius: 15, style: .continuous))
-                        .overlay {
-                            if isSelected { RoundedRectangle(cornerRadius: 15, style: .continuous).strokeBorder(Color.accentColor, lineWidth: 1.5) }
-                        }
+                        .vetroRing(isSelected, in: RoundedRectangle(cornerRadius: 15, style: .continuous))
                     footer
                 }
                 .frame(maxWidth: .infinity, alignment: .trailing)
@@ -237,7 +235,7 @@ struct LetterRow: View {
                     .frame(maxWidth: 520, alignment: .leading)
                 }
                 .padding(isSelected ? 8 : 0)
-                .background { if isSelected { RoundedRectangle(cornerRadius: 12, style: .continuous).fill(look.selection) } }
+                .vetroPicked(isSelected, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
                 .padding(isSelected ? -8 : 0)
                 .frame(maxWidth: .infinity, alignment: .leading)
             }

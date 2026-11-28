@@ -38,7 +38,7 @@ struct ArrangePanel: View {
                     if arrangement.title != nil {
                         // A plain or glass button, not AppKit's own: that follows the mouse itself, so the press is
                         // no longer the event being handled when it acts, and the gate turns it away.
-                        Button { model.rename(line.id, to: "") } label: { Text("Use its own name").foregroundStyle(.tint) }
+                        Button { model.rename(line.id, to: "") } label: { Text("Use its own name").foregroundStyle(.pressable) }
                             .buttonStyle(.plain)
                             .disabled(!canSend)
                             .help(Text(verbatim: "Back to “\(own)”"))

@@ -5,7 +5,10 @@ import SwiftUI
 struct WorkshopApp: App {
     @NSApplicationDelegateAdaptor(WorkshopDelegate.self) private var delegate
     @State private var model = WorkshopModel.forThisLaunch()
-    @State private var look = Look()
+    // As the Mac is set when the app opens, so that the first frame is already right; the window keeps it in step.
+    @State private var look = Look(
+        increasedContrast: NSWorkspace.shared.accessibilityDisplayShouldIncreaseContrast,
+        reducedTransparency: NSWorkspace.shared.accessibilityDisplayShouldReduceTransparency)
 
     init() {
         // Writing to a socket LMAS has closed is an error to handle, not the end of the app.

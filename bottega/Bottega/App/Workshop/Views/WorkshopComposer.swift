@@ -246,7 +246,7 @@ struct DraftField: View {
                     Image(systemName: "arrow.uturn.backward.circle")
                 }
                 .font(.callout)
-                .foregroundStyle(.orange)
+                .foregroundStyle(.trouble)
             }
             TextField("", text: $model[draft: key].text, prompt: Text(verbatim: placeholder), axis: .vertical)
                 .textFieldStyle(.plain)
@@ -260,7 +260,7 @@ struct DraftField: View {
                         model.focusedDraft = nil
                     }
                 }
-                .modifier(AnswerBox(isOn: !isPlain, isTypedIn: isFocused))
+                .modifier(AnswerBox(isOn: !isPlain, isTypedIn: isFocused) { isFocused = true })
             ForEach(Array(draft.files.enumerated()), id: \.offset) { index, file in
                 HStack(spacing: 6) {
                     Image(systemName: "doc.text")
@@ -272,6 +272,14 @@ struct DraftField: View {
                 .font(.callout)
             }
         }
+        #if DEBUG
+        // `BOTTEGA_ANSWER=one\ntwo`: an answer already typed, for a screenshot of the box with several lines in it.
+        .onAppear {
+            if case .question = key, model[draft: key].text.isEmpty, let typed = ProcessInfo.processInfo.environment["BOTTEGA_ANSWER"] {
+                model[draft: key].text = typed.replacingOccurrences(of: "\\n", with: "\n")
+            }
+        }
+        #endif
     }
 }
 
@@ -280,13 +288,14 @@ struct DraftField: View {
 private struct AnswerBox: ViewModifier {
     let isOn: Bool
     let isTypedIn: Bool
+    let typeHere: () -> Void
 
     func body(content: Content) -> some View {
         if isOn {
             content
                 .padding(.horizontal, 12)
                 .padding(.vertical, 8)
-                .glassFieldBox(in: RoundedRectangle(cornerRadius: 16, style: .continuous), isTypedIn: isTypedIn)
+                .glassFieldBox(in: RoundedRectangle(cornerRadius: 16, style: .continuous), isTypedIn: isTypedIn, typeHere: typeHere)
         } else {
             content
         }

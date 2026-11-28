@@ -73,7 +73,7 @@ struct LanesView: View {
                 .frame(width: Self.textWidth, alignment: .leading)
             Spacer(minLength: 0)
         }
-        .background(isSelected ? AnyShapeStyle(Color.accentColor.opacity(0.14)) : AnyShapeStyle(.clear), in: .rect(cornerRadius: 6))
+        .vetroPicked(isSelected, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
         .contentShape(.rect)
         .onTapGesture { model.detail = .message(letter.id) }
         .onAppear { report(letter, true) }
@@ -100,7 +100,8 @@ struct LanesView: View {
             let bottom = min(1, (stretch.bottom ?? .infinity) - Double(index)) * size.height
             guard bottom > top else { continue }
             let bar = CGRect(x: x(stretch.lane) - 3.5, y: top, width: 7, height: bottom - top)
-            context.fill(Path(bar), with: .style(.tint.opacity(0.35)))
+            // An AI at work, so amber, as the dots are; not the accent colour.
+            context.fill(Path(bar), with: .color(WorkingAmber.step.opacity(0.5)))
         }
 
         let from = x(letter.from)
@@ -140,10 +141,10 @@ private struct LetterSummary: View {
                     Text(verbatim: Wording.messageKind(message.kind)).fontWeight(.medium)
                     Text(verbatim: UntrustedText.line(id, limit: 24)).font(.caption.monospaced()).foregroundStyle(.secondary)
                     if message.isToUser, message.isOpenQuestion {
-                        Image(systemName: "hand.raised.fill").foregroundStyle(.red).imageScale(.small)
+                        Image(systemName: "hand.raised.fill").foregroundStyle(.waiting).imageScale(.small)
                             .accessibilityLabel("Waiting for you")
                     } else if case .failed = message.state {
-                        Image(systemName: "xmark").foregroundStyle(.orange).imageScale(.small).accessibilityLabel("Not delivered")
+                        Image(systemName: "xmark").foregroundStyle(.trouble).imageScale(.small).accessibilityLabel("Not delivered")
                     }
                 }
                 Text(verbatim: UntrustedText.line(message.body, limit: 120)).font(.callout).foregroundStyle(.secondary).lineLimit(1)

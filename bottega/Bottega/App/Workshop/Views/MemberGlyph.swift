@@ -159,8 +159,9 @@ struct StatusChip: View {
         } icon: {
             Image(systemName: symbol)
         }
-        .font(.caption)
-        .foregroundStyle(waits ? AnyShapeStyle(.red) : AnyShapeStyle(.secondary))
+        // Red words are a weight heavier, as in the canvas: thin red is lost against the photo.
+        .font(.caption.weight(waits ? .semibold : .regular))
+        .foregroundStyle(waits ? AnyShapeStyle(.waiting) : AnyShapeStyle(.secondary))
         .fixedSize(horizontal: false, vertical: true)
     }
 }

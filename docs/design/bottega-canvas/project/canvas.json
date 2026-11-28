@@ -1,0 +1,337 @@
+{
+  "v": 3,
+  "createdOnFiles": {
+    "v": 1,
+    "at": "2026-11-28T18:52:30Z"
+  },
+  "title": "Bottega 前端重设计",
+  "launch": {
+    "view": "canvas"
+  },
+  "pages": [],
+  "boards": {
+    "Vetro.dc.html": {
+      "x": 0,
+      "y": 0,
+      "w": 1280,
+      "h": 800,
+      "title": "B · Vetro 主窗口（亮照片：雾林）",
+      "is_interactive": true,
+      "radius": 14
+    },
+    "VetroDark.dc.html": {
+      "x": 1360,
+      "y": 0,
+      "w": 1280,
+      "h": 800,
+      "title": "B · Vetro 主窗口（暗照片：土星环）",
+      "is_interactive": true,
+      "radius": 14
+    },
+    "Thinking.dc.html": {
+      "x": 2720,
+      "y": 0,
+      "w": 1280,
+      "h": 800,
+      "title": "Thinking · 思考时间线（全部展开）",
+      "is_interactive": true,
+      "radius": 14
+    },
+    "Picker.dc.html": {
+      "x": 4080,
+      "y": 0,
+      "w": 1280,
+      "h": 800,
+      "title": "Model picker · 选模型和 Reasoning 档位",
+      "is_interactive": true,
+      "radius": 14
+    },
+    "Backdrop.dc.html": {
+      "x": 5440,
+      "y": 0,
+      "w": 1280,
+      "h": 800,
+      "title": "Backdrop · 背景：换图、模糊、颗粒、界面透明度",
+      "is_interactive": true,
+      "radius": 14
+    },
+    "Rooms.dc.html": {
+      "x": 0,
+      "y": 1220,
+      "w": 1280,
+      "h": 800,
+      "title": "Rooms · 群聊",
+      "is_interactive": true,
+      "radius": 14
+    },
+    "Waiting.dc.html": {
+      "x": 1360,
+      "y": 1220,
+      "w": 1280,
+      "h": 800,
+      "title": "Waiting for you · 待我审批",
+      "is_interactive": true,
+      "radius": 14
+    },
+    "BotHome.dc.html": {
+      "x": 2720,
+      "y": 1220,
+      "w": 1280,
+      "h": 800,
+      "title": "Bot home · 单个 Bot 的主页（新开线）",
+      "is_interactive": true,
+      "radius": 14
+    },
+    "Cards.dc.html": {
+      "x": 4080,
+      "y": 1220,
+      "w": 1280,
+      "h": 800,
+      "title": "Cards · 任务卡",
+      "is_interactive": true,
+      "radius": 14
+    },
+    "Activity.dc.html": {
+      "x": 0,
+      "y": 2440,
+      "w": 1280,
+      "h": 800,
+      "title": "Activity · 活动",
+      "is_interactive": true,
+      "radius": 14
+    },
+    "Devices.dc.html": {
+      "x": 1360,
+      "y": 2440,
+      "w": 1280,
+      "h": 800,
+      "title": "Devices · 设备和换钥匙",
+      "is_interactive": true,
+      "radius": 14
+    },
+    "Review.dc.html": {
+      "x": 2720,
+      "y": 2440,
+      "w": 1280,
+      "h": 800,
+      "title": "Terminal and undo · 终端与撤回",
+      "is_interactive": true,
+      "radius": 14
+    },
+    "Offline.dc.html": {
+      "x": 4080,
+      "y": 2440,
+      "w": 1280,
+      "h": 800,
+      "title": "Offline · LMAS 没在跑",
+      "is_interactive": true,
+      "radius": 14
+    },
+    "Voice.dc.html": {
+      "x": 0,
+      "y": 4880,
+      "w": 760,
+      "h": 300,
+      "title": "Voice input · 语音输入（自动循环）",
+      "is_interactive": true,
+      "radius": 14
+    },
+    "Main.dc.html": {
+      "x": 0,
+      "y": 5600,
+      "w": 1280,
+      "h": 800,
+      "title": "A · Carta（没选，留档）",
+      "is_interactive": true,
+      "radius": 14
+    },
+    "Inchiostro.dc.html": {
+      "x": 1360,
+      "y": 5600,
+      "w": 1280,
+      "h": 800,
+      "title": "C · Inchiostro（没选，留档）",
+      "is_interactive": true,
+      "radius": 14
+    },
+    "Line.dc.html": {
+      "x": 5440,
+      "y": 1220,
+      "w": 1280,
+      "h": 800,
+      "title": "Direct line · 直连线：停这一轮、AI 重启提示、换模型下一轮生效",
+      "is_interactive": true,
+      "radius": 14
+    },
+    "Projects.dc.html": {
+      "x": 5440,
+      "y": 2440,
+      "w": 1280,
+      "h": 800,
+      "title": "Projects · 登记和去掉项目（Touch ID）",
+      "is_interactive": true,
+      "radius": 14
+    },
+    "PickerOff.dc.html": {
+      "x": 6800,
+      "y": 0,
+      "w": 1280,
+      "h": 800,
+      "title": "Model picker · 一家的模型清单问不出来（Antigravity）",
+      "is_interactive": true,
+      "radius": 14
+    },
+    "Modes.dc.html": {
+      "x": 0,
+      "y": 3660,
+      "w": 1280,
+      "h": 800,
+      "title": "Modes · 权限模式：Ask first / Accept edits / Jev / Full access / Plan（⇧Tab 轮换，全放开除外）",
+      "is_interactive": true,
+      "radius": 14
+    },
+    "Plan.dc.html": {
+      "x": 1360,
+      "y": 3660,
+      "w": 1280,
+      "h": 800,
+      "title": "Plan mode · 计划模式：先出计划，点头再动手",
+      "is_interactive": true,
+      "radius": 14
+    },
+    "Changelog.dc.html": {
+      "x": 2720,
+      "y": 3660,
+      "w": 1280,
+      "h": 800,
+      "title": "Changelog · 右侧：每一轮改了什么（顶上是上下文用量）",
+      "is_interactive": true,
+      "radius": 14
+    },
+    "Files.dc.html": {
+      "x": 4080,
+      "y": 3660,
+      "w": 1280,
+      "h": 800,
+      "title": "Files · 右侧：这条线改过和读过的文件",
+      "is_interactive": true,
+      "radius": 14
+    },
+    "Tasks.dc.html": {
+      "x": 5440,
+      "y": 3660,
+      "w": 1280,
+      "h": 800,
+      "title": "Background tasks · 右侧：后台任务，可以单独停",
+      "is_interactive": true,
+      "radius": 14
+    },
+    "Dispatcher.dc.html": {
+      "x": 6800,
+      "y": 3660,
+      "w": 1280,
+      "h": 800,
+      "title": "Dispatcher · 调度员那条线：右侧面板和 Context（本机模型，窗口 128k）",
+      "is_interactive": true,
+      "radius": 14
+    },
+    "Working.dc.html": {
+      "x": 8160,
+      "y": 0,
+      "w": 1280,
+      "h": 800,
+      "title": "Working · 思考中：琥珀色点阵、暖光扫字",
+      "is_interactive": true,
+      "radius": 14
+    },
+    "CardList.dc.html": {
+      "x": 6800,
+      "y": 1220,
+      "w": 1280,
+      "h": 800,
+      "title": "Cards · List · 任务卡的列表视图（标题栏右边 Board / List 切换）",
+      "is_interactive": true,
+      "radius": 14
+    }
+  },
+  "order": [
+    "Vetro.dc.html",
+    "VetroDark.dc.html",
+    "Thinking.dc.html",
+    "Working.dc.html",
+    "Picker.dc.html",
+    "PickerOff.dc.html",
+    "Backdrop.dc.html",
+    "Rooms.dc.html",
+    "Waiting.dc.html",
+    "BotHome.dc.html",
+    "Cards.dc.html",
+    "CardList.dc.html",
+    "Line.dc.html",
+    "Activity.dc.html",
+    "Devices.dc.html",
+    "Review.dc.html",
+    "Offline.dc.html",
+    "Projects.dc.html",
+    "Modes.dc.html",
+    "Plan.dc.html",
+    "Changelog.dc.html",
+    "Files.dc.html",
+    "Tasks.dc.html",
+    "Dispatcher.dc.html",
+    "Voice.dc.html",
+    "Main.dc.html",
+    "Inchiostro.dc.html"
+  ],
+  "notes": {
+    "t1": {
+      "x": 0,
+      "y": -300,
+      "text": "B · Vetro：主窗口、思考过程、选模型、背景",
+      "kind": "title1",
+      "maxW": 9440
+    },
+    "t2": {
+      "x": 0,
+      "y": 920,
+      "text": "其余界面（都换成 B）",
+      "kind": "title1",
+      "maxW": 6720
+    },
+    "t3": {
+      "x": 0,
+      "y": 2140,
+      "text": "补画的五屏：活动、设备、终端与撤回、断线、项目",
+      "kind": "title1",
+      "maxW": 6720
+    },
+    "t4": {
+      "x": 0,
+      "y": 4580,
+      "text": "语音输入：字符从底下升上去，变成文字",
+      "kind": "title1",
+      "maxW": 5360
+    },
+    "t5": {
+      "x": 0,
+      "y": 5300,
+      "text": "没选的两个方向（留档）",
+      "kind": "title1",
+      "maxW": 5360
+    },
+    "h1": {
+      "x": -480,
+      "y": 0,
+      "w": 400,
+      "text": "每个窗口都能点：先按它的 Play。\n· 左边只有一条侧栏：顶上一行红绿灯和搜索，下面一条分区切换条（群聊、Bots、待我审批、任务卡、活动），中间是这个分区的列表，最底下是设置、LMAS 状态、背景\n· 发送箭头，或标题栏的播放键：重放这一轮（思考时间线一步步出现，做完的折成一行，最后流式回复；在跑的时候，这一轮最上面那行左边是 7×7 琥珀色点阵此起彼伏，字上扫过一道暖光；做完点阵淡掉、换成对勾）\n· 时间线每一步的标题：点开或收起；最上面那行摘要：收起整段\n· 输入框里的模型胶囊：三栏选模型和 Reasoning 档位（星标收藏、搜索、Show more；点外面或按 Esc 关闭）\n· 麦克风：语音输入，字符升上去变成文字\n· 标题栏右侧两个按钮：右侧面板、终端\n· 右侧面板：顶上是上下文用量（点一下看分项：对话、读过的文件、工具、指令和记忆；输入框里麦克风左边也有一颗百分比，点它打开右侧面板看分项）；下面四个页签 Turn（这一轮）、Changelog（每一轮改了什么，可以撤回这一轮）、Files（改过和读过的文件，点 retry.rs 收起或展开差异）、Tasks（后台任务，Stop 只停那一个）\n· 输入框里模型胶囊左边是模式胶囊：Ask first（改文件、跑命令前先问）、Accept edits（在它自己的工作树里改文件不问，命令照问）、Jev（改文件、跑命令都先交给 Jev 判，稳妥的直接做，拿不准的再问你）、Full access（全放开：改文件、跑命令都不问，合并这类批准单照样找你；胶囊是红的；不进 ⇧Tab 轮换，只能在菜单里点；Grok、Antigravity 没有沙盒，这一行是灰的）、Plan（只读，先出计划）。点开选，或在输入框里按 ⇧Tab 轮换；下一轮生效；换模式不用 Touch ID。沙盒照旧由 LMAS 定\n· 计划模式那块：Approve and start 之后回到 Ask first 并开始做；Keep planning 留在计划模式接着改计划\n· 切换条第 3 个图标（带数字的托盘）→ Approve：Touch ID、变绿、卡片离场、数字变化\n· 切换条第 4 个图标：任务卡；标题栏右边 Board / List 切换。List 一行一张卡，最近有动静的在上：阶段（灰圈排队、琥珀点阵在做、红点等你、对勾做完、叉失败）、卡号、标题和项目、测试和合并（灰色转圈是测试箱在跑、叉是测试没过、红字是合并等你批）、谁在做、增删行数（合并核对过才有）、多久以前\n· 切换条第 1 个图标：群聊；标题栏播放键重放讨论，Chat / Sequence 切换\n· 侧栏右上角的放大镜：命令面板（没有遮罩，背后不压暗；选中的那一行带一圈描边）\n· 群聊标题栏的 Pause：暂停这个聊天室（正在写的那封写完，其余的等你点 Resume）\n· 侧栏右下角的图片按钮：背景面板，换图，拖 Blur（照片模糊）、Grain（颗粒）、Transparency（界面透明度：100% 是清玻璃，只剩边缘折射、高光边和阴影；往左拖，底色和玻璃背后的模糊一起加，0% 实心）；点外面或按 Esc 关闭\n· 换一张照片，玻璃的深浅会跟着变：暗的照片配深色玻璃和白字，亮的配浅色玻璃和黑字。Appearance 强制 light / dark、和照片对不上时，字色看玻璃后面实际多亮：玻璃还透就跟照片走，Transparency 往左拖、玻璃真变白或变黑了再换（海岸配 light 在 93% 换成黑字）\n· 玻璃是透明的：照片直接透过来，面板边缘有一圈折射（折射只在 Chrome 类浏览器里有）；侧栏比主区略暗一层；鼠标移过面板，高光跟着走\n· Tweaks：Appearance 选 auto（跟着照片）/ light / dark，Motion 选 rich / calm，Backdrop / Blur / Grain / Transparency 定这块画板的默认背景和透明度\n· 直连线那块：一轮跑着时发送键变成停止键，点它或按 ⌘. 只停这一轮；停了再发一句照常。主窗口是卡的线，重放时停止键是灰的（卡的一轮停不了）\n· 线里换模型：胶囊上标 next turn，下一轮开头才换上；选 Show more 里的 Claude Opus 5 再发一句，看「没换上」的说明\n· Bot 主页的发送键：直连线到上限时 LMAS 拒收的原话；点 studiolo 那个标签去项目页\n· 侧栏左下角的头像 → Projects：Register with Touch ID；Choose another folder 换成不是仓库的目录，看 LMAS 的拒收；Remove with Touch ID\n· 选模型的 Reasoning 栏照每个模型自己的清单：CLI 说了默认档的标 Default；没说的（Antigravity 的全部、Claude 除 Opus 5.5 以外的）最前面多一行 Default · CLI decides，不替它猜；Grok 5 Fast 没有档位可选\n· 「模型清单问不出来」那块：选择器里 Antigravity 一栏换成说明，别家照常；点侧栏的 Antigravity 看它自己的主页，胶囊写 Default model。Tweaks 的 Models 可以换成 grok not found 看另一种原因\n· Claude、Codex、Grok 的头像是真图标（取自 Bottega 自己的资源）；Antigravity 这家走 agy（原来叫 Gemini，型号名照旧是 Gemini），用它自己的图标；调度员、Planner、You 不是厂商，照旧用字母\n· 调度员那条线（侧栏最上面的 Dispatcher）也有右侧面板和 Context 百分比：它是本机模型，窗口按 128k 算；它不改文件只改卡，Changelog 是卡的变化，Tasks 是它派出去还在跑的卡，Open 跳到那条线\n· 上下文用量、权限模式、后台任务这三样 LMAS 现在还没有，画的是目标样子；数字和清单都是样例"
+    },
+    "t6": {
+      "x": 0,
+      "y": 3360,
+      "text": "权限和计划模式；右侧面板：上下文用量、改动记录、文件、后台任务",
+      "kind": "title1",
+      "maxW": 8080
+    }
+  },
+  "designSystems": []
+}

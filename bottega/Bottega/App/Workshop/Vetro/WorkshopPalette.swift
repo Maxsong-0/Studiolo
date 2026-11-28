@@ -139,7 +139,7 @@ struct WorkshopPalette: View {
         }
         .padding(.horizontal, 10)
         .frame(height: Metrics.rowHeight)
-        .background(isSelected ? look.selection : .clear, in: .rect(cornerRadius: 9, style: .continuous))
+        .vetroPicked(isSelected, in: RoundedRectangle(cornerRadius: 9, style: .continuous))
         .contentShape(.rect)
         .accessibilityElement(children: .combine)
         .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
@@ -152,7 +152,7 @@ struct WorkshopPalette: View {
         case .maker(let maker):
             MakerTile(maker: maker, size: 16)
         case .waits:
-            Circle().fill(.red).frame(width: 8, height: 8).accessibilityLabel("Waiting for you")
+            Circle().fill(.waiting).frame(width: 8, height: 8).accessibilityLabel("Waiting for you")
         case .card(let id):
             Text(verbatim: UntrustedText.line(id, limit: 12))
                 .font(.system(size: 11, design: .monospaced))
@@ -351,7 +351,7 @@ private struct Key: View {
             .foregroundStyle(.secondary)
             .padding(.horizontal, 6)
             .padding(.vertical, 2)
-            .background(look.selection, in: .rect(cornerRadius: 5, style: .continuous))
+            .background(look.chip, in: .rect(cornerRadius: 5, style: .continuous))
             .accessibilityHidden(true)
     }
 }
