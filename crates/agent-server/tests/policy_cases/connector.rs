@@ -641,6 +641,7 @@ async fn instance_revocation_works_and_only_one_instance_is_registered_per_type(
         json!({
             "agent_type": kind,
             "agent_instance": instance.id,
+            "parent": null,
             "negotiated_version": "not_negotiated:connector",
             "client_reported": "not_negotiated:connector",
         })

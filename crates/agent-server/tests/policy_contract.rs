@@ -424,6 +424,32 @@ async fn registered_child_metadata_and_ancestor_revocation_are_enforced_in_mcp()
     let chain = f.store().instance_lineage(&child_id).unwrap();
     assert_eq!(chain.len(), 2);
     assert_eq!(chain[1].id, parent_id);
+    let (_, grandchild) = f.initialize_with_parent(Some(&child_id)).await.unwrap();
+    let grandchild_id = Fixture::instance_of(&grandchild);
+    // 登记审计记的是直接的父实例，不是链头；没有父实例的是 null。整条相等，别的什么都不记。
+    let registered = || {
+        f.ledger()
+            .query(&AuditFilter::default().with_action("agent_instance.registered"))
+            .unwrap()
+            .iter()
+            .map(|record| record.event().payload().as_value().clone())
+            .collect::<Vec<_>>()
+    };
+    let expected = [
+        (&parent_id, Value::Null),
+        (&child_id, json!(parent_id)),
+        (&grandchild_id, json!(child_id)),
+    ]
+    .map(|(instance, parent)| {
+        json!({
+            "agent_type": "claude",
+            "agent_instance": instance,
+            "parent": parent,
+            "negotiated_version": "2025-11-25",
+            "client_reported": {"name": "contract", "version": "0"},
+        })
+    });
+    assert_eq!(registered(), expected);
     policy
         .revoke(
             RevocationLevel::Instance,
@@ -444,6 +470,22 @@ async fn registered_child_metadata_and_ancestor_revocation_are_enforced_in_mcp()
     assert!(denied.get("error").is_some(), "{denied}");
     let forbidden = f.initialize_with_parent(Some(&parent_id)).await;
     assert!(forbidden.is_err() || forbidden.is_ok_and(|(_, text)| text.starts_with("策略拒绝：")));
+    // 父实例不存在、已吊销的都没登记成，也就没有登记审计（应答长什么样由传输层定，这里只看账本）。
+    f.request(
+        None,
+        json!({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {
+            "protocolVersion": "2025-11-25", "capabilities": {},
+            "clientInfo": {"name": "contract", "version": "0"},
+            "_meta": {"studiolo.parent_instance": "01T264MISSINGPARENT000000"}
+        }}),
+    )
+    .send()
+    .await
+    .unwrap()
+    .text()
+    .await
+    .unwrap();
+    assert_eq!(registered(), expected);
 }
 
 fn tool_text(response: &Value) -> String {

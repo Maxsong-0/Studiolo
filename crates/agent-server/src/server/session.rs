@@ -120,7 +120,7 @@ impl AgentSession {
         }
         .map_err(|_| McpError::internal_error("实例注册失败", None))?;
         let actor = Actor::instance(&instance.agent_type, &instance.id);
-        let registered = audit::instance_registered(actor, registration)
+        let registered = audit::instance_registered(actor, parent, registration)
             .map_err(|_| McpError::internal_error("审计事件构造失败", None))?;
         let instructions = match self.state.audit(registered) {
             Err(outage) => Err(McpError::internal_error(outage.handshake_refusal(), None)),

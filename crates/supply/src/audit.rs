@@ -1,5 +1,5 @@
 //! 接入方审计事件构造：动作名与「四附」矩阵一致，payload 只含类型、实例、路径、revision、
-//! tool、token 计数、原因、登记走的路；不含正文、token 秘密、会话号或宿主路径。事件 ID 每次唯一。
+//! tool、token 计数、原因、父实例、登记走的路；不含正文、token 秘密、会话号或宿主路径。事件 ID 每次唯一。
 
 use serde_json::json;
 use studiolo_audit_ledger::{AuditError, AuditEvent, AuditEventId, AuditPhase, SanitizedPayload};
@@ -188,10 +188,11 @@ impl<'a> Registration<'a> {
     }
 }
 
-/// `agent_instance.registered`：协商版本与客户端自报名。MCP 的自报名是对象，另外两条路是固定字符串，
-/// 客户端自报什么名字都装不成没有协商的路。
+/// `agent_instance.registered`：直接的父实例（没有就是 null）、协商版本与客户端自报名。MCP 的自报名是对象，
+/// 另外两条路是固定字符串，客户端自报什么名字都装不成没有协商的路。
 pub fn instance_registered(
     actor: Actor<'_>,
+    parent: Option<&str>,
     registration: Registration<'_>,
 ) -> Result<AuditEvent, AuditError> {
     let (negotiated_version, client_reported) = match registration.0 {
@@ -207,6 +208,7 @@ pub fn instance_registered(
         actor,
         INSTANCE_REGISTERED,
         map(json!({
+            "parent": parent,
             "negotiated_version": negotiated_version,
             "client_reported": client_reported,
         })),
@@ -215,7 +217,7 @@ pub fn instance_registered(
 
 /// 连接器的登记。单列一个函数：连接器入口只够得着它（架构守卫按名列着），写不出「协商过」的登记。
 pub fn connector_registered(actor: Actor<'_>) -> Result<AuditEvent, AuditError> {
-    instance_registered(actor, Registration(Route::Connector))
+    instance_registered(actor, None, Registration(Route::Connector))
 }
 
 #[cfg(test)]
@@ -275,9 +277,14 @@ mod tests {
     fn a_registration_says_which_route_it_took_and_never_leaves_the_two_fields_empty() {
         let actor = Actor::instance("claude", "01JT3");
         let payload = |event: AuditEvent| event.payload().as_value().clone();
-        for (event, negotiated_version, client_reported) in [
+        for (event, parent, negotiated_version, client_reported) in [
             (
-                instance_registered(actor, Registration::mcp("2025-06-18", "codex", "0.171.0")),
+                instance_registered(
+                    actor,
+                    Some("01JT2"),
+                    Registration::mcp("2025-06-18", "codex", "0.171.0"),
+                ),
+                json!("01JT2"),
                 "2025-06-18",
                 json!({"name": "codex", "version": "0.171.0"}),
             ),
@@ -285,18 +292,22 @@ mod tests {
             (
                 instance_registered(
                     actor,
+                    None,
                     Registration::mcp("2025-11-25", NOT_NEGOTIATED_CONNECTOR, ""),
                 ),
+                json!(null),
                 "2025-11-25",
                 json!({"name": "not_negotiated:connector", "version": ""}),
             ),
             (
-                instance_registered(actor, Registration::http_text()),
+                instance_registered(actor, None, Registration::http_text()),
+                json!(null),
                 "not_negotiated:http_text",
                 json!("not_negotiated:http_text"),
             ),
             (
                 connector_registered(actor),
+                json!(null),
                 "not_negotiated:connector",
                 json!("not_negotiated:connector"),
             ),
@@ -308,6 +319,7 @@ mod tests {
                 json!({
                     "agent_type": "claude",
                     "agent_instance": "01JT3",
+                    "parent": parent,
                     "negotiated_version": negotiated_version,
                     "client_reported": client_reported,
                 })

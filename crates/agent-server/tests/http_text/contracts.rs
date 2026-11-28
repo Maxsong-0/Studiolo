@@ -120,6 +120,7 @@ async fn four_http_operations_are_budgeted_scoped_and_audited_under_one_instance
         json!({
             "agent_type": "claude",
             "agent_instance": instance,
+            "parent": null,
             "negotiated_version": "not_negotiated:http_text",
             "client_reported": "not_negotiated:http_text",
         })

@@ -1,4 +1,4 @@
-// 实例登记审计的两格（T-264）：服务器实际应答的协议版本，和客户端自报的名字、版本。
+// 实例登记审计（T-264）：服务器实际应答的协议版本，和客户端自报的名字、版本。父实例那一格在 `policy_contract.rs`。
 
 impl Fixture {
     /// 用指定的协议版本和 `clientInfo` 握手。首包照规范不带版本头：带了就得和正文一致，测不了对不上的。
@@ -66,12 +66,13 @@ async fn registration_records_the_version_the_server_answered_not_the_one_the_cl
             .split(' ')
             .next()
             .unwrap();
-        // 整条相等：除了这四格什么都没有，正文、令牌、会话号都不在里面。
+        // 整条相等：除了这五格什么都没有，正文、令牌、会话号都不在里面。
         assert_eq!(
             registered,
             json!({
                 "agent_type": "claude",
                 "agent_instance": instance,
+                "parent": null,
                 "negotiated_version": answered,
                 "client_reported": {"name": "claude-code", "version": "2.1.332"},
             }),
