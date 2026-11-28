@@ -4,6 +4,8 @@
 
 #[path = "sync_plane_driver/delete_gate.rs"]
 mod delete_gate;
+#[path = "sync_plane_driver/evidence.rs"]
+mod evidence;
 #[path = "sync_plane_driver/fake_ports.rs"]
 mod fake_ports;
 #[path = "sync_plane_driver/fixture.rs"]

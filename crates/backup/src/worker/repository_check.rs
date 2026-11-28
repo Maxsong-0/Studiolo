@@ -259,23 +259,13 @@ impl RepositoryDigest {
         let mut hasher = Sha256::new();
         hasher.update(b"studiolo-backup-repository\0");
         hasher.update(repository.as_str().as_bytes());
-        Self(
-            hasher
-                .finalize()
-                .iter()
-                .map(|b| format!("{b:02x}"))
-                .collect(),
-        )
+        Self(studiolo_core::to_lower_hex(&hasher.finalize()))
     }
 
     /// 只认 64 位小写十六进制。
     #[must_use]
     pub fn parse(text: &str) -> Option<Self> {
-        (text.len() == 64
-            && text
-                .bytes()
-                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)))
-        .then(|| Self(text.to_owned()))
+        studiolo_core::is_sha256_hex(text).then(|| Self(text.to_owned()))
     }
 
     /// 摘要文本。

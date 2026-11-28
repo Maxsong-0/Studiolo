@@ -44,3 +44,6 @@ mod file_rename;
 
 #[path = "writer_http/changes.rs"]
 mod changes;
+
+#[path = "writer_http/changes_scan.rs"]
+mod changes_scan;

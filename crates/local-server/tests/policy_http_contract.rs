@@ -220,6 +220,21 @@ impl Fixture {
             .unwrap()
     }
 
+    /// 最近一条发布 Outcome 里记的实际取代、留下的草案号（T-248）；先确认它确实是 Outcome。
+    fn outcome_queue_effect(&self) -> (Value, Value) {
+        let records = self.events("policy.activated");
+        let last = records.last().expect("至少一条发布事件");
+        let payload = last.event().payload().as_value();
+        assert_eq!(
+            payload["decision"], "allow",
+            "最后一条应是 Outcome：{payload}"
+        );
+        (
+            payload["superseded_desired_ids"].clone(),
+            payload["remaining_desired_ids"].clone(),
+        )
+    }
+
     fn request(
         &self,
         method: &str,
@@ -296,6 +311,15 @@ impl Fixture {
             .await
             .json()
     }
+}
+
+/// 发布回执里这次实际取代的、留下的草案号（T-248）。
+fn actual_queue_effect(published: &Value) -> (Value, Value) {
+    let activation = &published["activation"];
+    (
+        activation["superseded_desired_ids"].clone(),
+        activation["remaining_desired_ids"].clone(),
+    )
 }
 
 fn capability(whitelist: &[&str], propose: bool) -> String {
@@ -498,6 +522,8 @@ async fn desired_is_validated_diffed_and_activation_is_gated_behind_l3() {
         .json();
     assert_eq!(v3["activation"]["version"], 3);
     assert_eq!(v3["activation"]["rollback_of"], 1);
+    assert_eq!(actual_queue_effect(&v3), (json!([]), json!([])));
+    assert_eq!(f.outcome_queue_effect(), (json!([]), json!([])));
     let versions = f
         .send(f.request("GET", VERSIONS, Some(&login), ""), 200)
         .await
@@ -617,6 +643,9 @@ async fn an_older_desired_cannot_be_published_while_the_same_submitter_has_a_new
         .await
         .json();
     assert_eq!(published["activation"]["desired_id"], json!(newer));
+    // T-248：回执与同次 Outcome 写的是事务里实际取代、留下的草案号，不是确认时的份数。
+    assert_eq!(actual_queue_effect(&published), (json!([older]), json!([])));
+    assert_eq!(f.outcome_queue_effect(), (json!([older]), json!([])));
     assert_eq!(
         f.policy().desired(older).unwrap().unwrap().status,
         DesiredStatus::Superseded
@@ -690,6 +719,11 @@ async fn an_agents_newer_proposal_neither_blocks_the_owner_nor_gets_superseded()
         .await
         .json();
     assert_eq!(published["activation"]["desired_id"], json!(owner));
+    assert_eq!(
+        actual_queue_effect(&published),
+        (json!([]), json!([proposal.id]))
+    );
+    assert_eq!(f.outcome_queue_effect(), (json!([]), json!([proposal.id])));
     assert!(f.events("policy.activate_denied").is_empty());
     // AI 的提案没被取代，仍是唯一的未发布草案。
     assert_eq!(

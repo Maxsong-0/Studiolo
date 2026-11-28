@@ -234,18 +234,7 @@ fn endpoint_tag(url: &str) -> String {
     let mut digest = Sha256::new();
     digest.update(b"studiolo.doorbell.endpoint.v1\0");
     digest.update(url.as_bytes());
-    let hex = b"0123456789abcdef";
-    digest
-        .finalize()
-        .iter()
-        .take(8)
-        .flat_map(|byte| {
-            [
-                char::from(hex[usize::from(byte >> 4)]),
-                char::from(hex[usize::from(byte & 15)]),
-            ]
-        })
-        .collect()
+    studiolo_core::to_lower_hex(&digest.finalize()[..8])
 }
 
 #[cfg(test)]

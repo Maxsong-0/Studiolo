@@ -28,8 +28,6 @@ const ACTIVATION: Activation = {
   label: '能力集 claude',
   action: '发布 能力集 claude',
   origin: ORIGIN,
-  supersedes: 0,
-  remains: 0,
 };
 
 let uninstall: (() => void) | undefined;

@@ -67,7 +67,10 @@ rules 类的 subject 规则（`.md` 结尾、≤128 字符、不含 `/`、不以
 
 - **提交**（主人 `POST /api/v1/policy/desired`；接入方 MCP `propose_desired`）：入库的是提交原文；同事务内对当前
   effective 做校验与 diff，报告存进该 desired。主人提交记 `validated`／`rejected`，接入方提交记 `pending`（结构无效则
-  `rejected`）；两者都**永不自动生效**。接入方每实例最多 8 条未完成提案、全库 256 条；pending、validated、rejected 都计入，只有发布、被取代或撤回才释放名额。
+  `rejected`）；两者都**永不自动生效**。接入方未完成提案分三层名额：每实例 8 条、每类型 128 条、全库 256 条，任一层满了就不入库；pending、validated、rejected 都计入，只有发布、被取代或撤回才释放名额（主人的草案不占）。
+  每次连接都是新实例，每实例名额换个连接就绕得过；每类型一层让一类 AI 的废提案占不满全库、挡不住别的类型（T-248）。三个数的大小关系
+  （每实例 < `list_proposals` 的 64 份 < 每类型 < 全库）在编译期断言。不按时间窗口或「最近 N 份」算：未发布草案在主人的待处理列表里
+  一份不少地列出，那样算，被拒的又会无上限地堆进库和列表。
 - **接入方断线重提**（T-182）：**本类型**在同一 kind／subject 上**最新**的未发布草案（pending／validated／rejected，按入库
   先后）若正是规范化正文摘要相同、仍待处理（pending／validated）的那份，原样返回它（`deduplicated=true`），不新建、不占名额；
   判定在名额检查之前、与入库同一写事务。否则照常有界入库：本类型之后又提过别的正文，再提旧正文就新建一条，让它重新成为本类型
@@ -155,6 +158,7 @@ rules 类的 subject 规则（`.md` 结尾、≤128 字符、不含 `/`、不以
 - `propose_desired{kind,subject,body}`：需能力集 `policy.propose_desired`；入库 `pending`，记 `policy.desired_submitted`
   （接入方的多一个 `deduplicated`）；返回 id／状态／扩大项计数／`body_sha256`（服务端算的规范化正文摘要，规则母本 CRLF
   换 LF 后；过不了规范化为 `-`）／`deduplicated`／逐条问题；断线重提见 §3；**不改变 effective**。
+  名额（§3）满了返回 -32600，明说校验失败的也占名额、本次没有入库，要等主人发布或撤回（`list_proposals` 不列校验失败的，光看列表想不通为什么满）。
 - `list_proposals{kind?,subject?,desired_id?}`（T-182，只走 MCP）：供断线后核对提案有没有入库。门槛与 `propose_desired` 相同（未接入策略
   平面同样拒绝并记 `policy_plane_absent`，无提案能力记 `capability_denied`）；只列**本类型**仍待处理（pending／validated）的
   接入方提案，新到旧，最多 64 份（超出时首行注明还有更早的）；每行 `desired_id`、`kind`、`subject`、状态、`body_sha256`、
@@ -191,6 +195,11 @@ rules 类的 subject 规则（`.md` 结尾、≤128 字符、不含 `/`、不以
   规则文件判定与路牌库文件兜底按名单裁决。
 - `crates/agent-server/tests/policy_contract.rs`：零权限握手、供给视图求交、路牌 3／5／6 项、`policy_read` 审计与索引、
   `propose_desired` 永不生效与能力否决、三级吊销即刻生效与恢复、HTTP 外壳同一授权、M3 兼容模式。
+- 提案名额、处理结果与列表顺序（T-248 核过 `a7d6bf5` 并补全）：`crates/policy/tests/proposal_lifecycle_contract.rs`（pending、validated、rejected
+  各占每实例名额、撤回放回一个；校验失败的填满全库、主人草案不占；一类 AI 填满本类型名额后换实例也交不进、别的类型照常交、撤回放回一个；
+  按号查结果覆盖六种状态且不回显正文；列表与 `desired_queue` 按入库先后、同一时刻或时间回拨都不乱），`desired_order_contract.rs`（发布回执的
+  实际取代、留下）、`audit_contract.rs`（Outcome 带两项草案号）；`crates/agent-server/tests/proposal_contract.rs`（类型名额满时 MCP 拒绝、
+  说明校验失败的也占名额且本次没入库、别的类型照常、撤回后又能交）；前端 `web/src/test/policy/newerDraft.test.tsx`（成功提示只照回执写取代、留下的份数）。
 - T-182 断线重提：`crates/policy/tests/proposal_contract.rs`（CRLF／LF 与规范 JSON 视为同一份、名额满时重提拿回原提案、
   只有本类型最新的草案接得住重提、主人或别的类型的更新草案不影响重提、rejected（含语义被拒、有真摘要的）／撤回／主人提交的不接、
   跨类型不相认、主人句柄的接入方分支同一规则、多条连接同时重提只留一条、列表的范围／顺序／上限、发布与取代后出列、
@@ -198,7 +207,8 @@ rules 类的 subject 规则（`.md` 结尾、≤128 字符、不含 `/`、不以
   语义被拒也给真摘要且不去重、入库后审计不可用如实说已入库且恢复后重提补记、`list_proposals` 只列本类型、进读取审计与索引、
   审计不可用时失败关闭、无能力／三级吊销／未接入时拒绝、工具说明里的份数与常量一致）。
 - `crates/local-server/tests/policy_http_contract.rs`：真实 Unix 入口＋TOTP：发布挡在 L3 后（用例 36 人侧）、Intent/Outcome
-  同 id、CAS 409、回滚、版本读取、三级吊销 L2 与全局解除 L3、方法与查询封闭、未装配策略平面 404。
+  同 id、CAS 409、回滚、版本读取、三级吊销 L2 与全局解除 L3、方法与查询封闭、未装配策略平面 404；发布回执与同次 Outcome 的
+  `superseded_desired_ids`、`remaining_desired_ids` 写实际取代、留下的草案号（同一提交者取代较早的、别的提交者的留下、回滚两项都空，T-248）。
 - 前端 `web/src/test/policy*`：模型封闭解析、扩大项标红、吊销提交、未接入显示；发布遇 403 `reauthentication_required` 就地弹二次认证窗口，认证通过后**按原 `expected_effective_hash`** 自动重试同一次动作（取消或认证失败都不重试；期间 effective 变了仍按原 hash 提交、由服务端 `hash_mismatch` 挡下；本入口无 One-time Code 路径时窗口直说不能发布）。
 
 ## T-174 规则差异与扩大项完整性

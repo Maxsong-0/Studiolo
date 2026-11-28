@@ -84,14 +84,7 @@ pub(crate) struct Loaded {
 }
 
 fn key(part: Part, name: &str) -> Result<Key, BrokerError> {
-    let mut value = [0u8; 32];
-    if !disk::hex(name) {
-        return Err(BrokerError::CorruptWriterState);
-    }
-    for (index, byte) in value.iter_mut().enumerate() {
-        *byte = u8::from_str_radix(&name[index * 2..index * 2 + 2], 16)
-            .map_err(|_| BrokerError::CorruptWriterState)?;
-    }
+    let value = studiolo_core::from_lower_hex(name).ok_or(BrokerError::CorruptWriterState)?;
     Ok((part, value))
 }
 

@@ -1,6 +1,6 @@
 //! HTTP 只表达原路径条件和重试键；主体、scope、预算及 MustNotExist 均由 owner 固定。
 use serde::Deserialize;
-use studiolo_core::{Revision, VaultPath, VaultUuid};
+use studiolo_core::{Revision, VaultPath, VaultUuid, is_sha256_hex};
 
 pub(crate) struct Input {
     pub vault: VaultUuid,
@@ -82,7 +82,7 @@ pub(crate) fn parse(bytes: &[u8]) -> Result<Input, ()> {
             tombstone_id,
             idempotency_key,
         } => {
-            if !hex(&tombstone_id) {
+            if !is_sha256_hex(&tombstone_id) {
                 return Err(());
             }
             (
@@ -107,13 +107,6 @@ pub(crate) fn parse(bytes: &[u8]) -> Result<Input, ()> {
         kind,
         key,
     })
-}
-
-fn hex(value: &str) -> bool {
-    value.len() == 64
-        && value
-            .bytes()
-            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
 }
 
 #[derive(Deserialize)]

@@ -48,7 +48,8 @@ export function BridgeDetails({
   if (!value) return <p className="health-detail">尚无可核验的同步明细。</p>;
   const rows = [
     [
-      '最近批次',
+      // 后端只在一批闭合时盖序号和时刻，卡住的批次不刷新它（BUG-048）；终态未知、熔断看下面几行。
+      '最近闭合',
       value.lastBatch
         ? `第 ${count(value.lastBatch.sequence)} 批 · ${time(value.lastBatch.closedAt)}`
         : '未知',

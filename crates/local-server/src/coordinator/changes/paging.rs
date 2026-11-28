@@ -173,11 +173,75 @@ pub(super) fn head(
     check(owner, principal)?;
     Ok(json!({"vault_uuid":vault,"through":summary}))
 }
+/// 第一页的快照：在 owner 锁和观测日志锁里定四项水位、取第一批 Broker 行，放锁之后才读已读水位（T-251）。
+///
+/// 已读水位要扫审计尾部至多 8192 条、每条本主体的已读 Outcome 再按事件号查一次，用时随账本和已读次数涨；
+/// 放在锁外，写入、代次发布、标已读、只问水位都不用等它。之后的取行和续页一样：重新持锁、核快照还属于
+/// 本主体本库本范围本 epoch，再按快照固定的上界取，这段空当里新提交的写入和新发布的观察都不会混进这一页。
+/// 先定快照、后读水位：已读事实只增不减，读到的水位只会多覆盖、不会少覆盖快照之前落下的已读；
+/// 扫描期间才落下的已读如果在本次扫到的范围里就算上，没扫到就显示未读，下次读列表就对了，不会把没读过的标成已读。
+fn first(
+    owner: &CanonicalWorkbench,
+    principal: &ContentPrincipal,
+    query: &PageQuery,
+    actor: String,
+) -> Result<Position, Problem> {
+    let mut position = {
+        let guard = owner
+            .core
+            .owner
+            .lock()
+            .map_err(|_| Problem::unavailable())?;
+        let broker = guard.as_ref().ok_or_else(Problem::unavailable)?;
+        check(owner, principal)?;
+        let vault = broker.vault_uuid();
+        if query.vault_uuid.is_some_and(|v| v != vault) {
+            return Err(Problem::forbidden());
+        }
+        let log = owner
+            .core
+            .changes
+            .lock()
+            .map_err(|_| Problem::unavailable())?;
+        let page = broker
+            .list_changes(100, None)
+            .map_err(crate::history::read_error)?;
+        Position {
+            snapshot: Snapshot {
+                actor,
+                vault,
+                project: query.project.clone(),
+                through: page.through_sequence,
+                epoch: log.epoch.clone(),
+                observation: log.last_index,
+                generation: log.generation,
+            },
+            pending: page.entries.into(),
+            next: page.next_cursor,
+            observed_before: log
+                .last_index
+                .checked_add(1)
+                .ok_or_else(Problem::unavailable)?,
+            retention_reported: false,
+            incomplete: page.history_incomplete,
+            retired: page.retired,
+            seen: seen::Watermark::default(),
+        }
+    };
+    position.seen = seen::load(owner.core.content_audit.as_deref(), &position.snapshot);
+    Ok(position)
+}
 pub(super) fn page(
     owner: &CanonicalWorkbench,
     principal: &ContentPrincipal,
     query: PageQuery,
 ) -> Result<Value, Problem> {
+    let actor = crate::changes::actor(principal);
+    let fresh = query
+        .before
+        .is_none()
+        .then(|| first(owner, principal, &query, actor.clone()))
+        .transpose()?;
     let guard = owner
         .core
         .owner
@@ -189,55 +253,29 @@ pub(super) fn page(
     if query.vault_uuid.is_some_and(|v| v != vault) {
         return Err(Problem::forbidden());
     }
-    let actor = crate::changes::actor(principal);
     let log = owner
         .core
         .changes
         .lock()
         .map_err(|_| Problem::unavailable())?;
-    let mut position = if let Some(before) = &query.before {
-        let p = owner
+    let mut position = match fresh {
+        Some(p) => p,
+        // 没有刚定的快照就是续页，`before` 一定在。
+        None => owner
             .core
             .change_pages
             .lock()
             .map_err(|_| Problem::unavailable())?
-            .get(before)?;
-        if p.snapshot.actor != actor
-            || p.snapshot.vault != vault
-            || p.snapshot.project != query.project
-            || p.snapshot.epoch != log.epoch
-        {
-            return Err(expired());
-        }
-        p
-    } else {
-        let page = broker
-            .list_changes(100, None)
-            .map_err(crate::history::read_error)?;
-        let snapshot = Snapshot {
-            actor,
-            vault,
-            project: query.project.clone(),
-            through: page.through_sequence,
-            epoch: log.epoch.clone(),
-            observation: log.last_index,
-            generation: log.generation,
-        };
-        let watermark = seen::load(owner.core.content_audit.as_deref(), &snapshot);
-        Position {
-            snapshot,
-            pending: page.entries.into(),
-            next: page.next_cursor,
-            observed_before: log
-                .last_index
-                .checked_add(1)
-                .ok_or_else(Problem::unavailable)?,
-            retention_reported: false,
-            incomplete: page.history_incomplete,
-            retired: page.retired,
-            seen: watermark,
-        }
+            .get(query.before.as_deref().ok_or_else(Problem::unavailable)?)?,
     };
+    // 第一页放过一次锁，和续页同样核：库、范围、主体、epoch 有一样变了，这份快照就不能接着用。
+    if position.snapshot.actor != actor
+        || position.snapshot.vault != vault
+        || position.snapshot.project != query.project
+        || position.snapshot.epoch != log.epoch
+    {
+        return Err(expired());
+    }
     let mut rows = Vec::new();
     let mut calls = 0;
     let mut scanned = 0;

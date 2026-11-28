@@ -54,11 +54,7 @@ impl JobRecord {
         }
         if let Some(source) = &self.source
             && (source.checkpoint_id != self.key.checkpoint_id
-                || source.seal_sha256.len() != 64
-                || !source
-                    .seal_sha256
-                    .bytes()
-                    .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)))
+                || !studiolo_core::is_sha256_hex(&source.seal_sha256))
         {
             return Err(bad);
         }

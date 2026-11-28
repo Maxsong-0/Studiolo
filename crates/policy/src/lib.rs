@@ -41,9 +41,9 @@ pub use proposal::{
 };
 pub use store::{
     Activation, AgentPolicySnapshot, DesiredInput, DesiredRecord, DesiredStatus, EffectiveEntry,
-    EffectiveSummary, InstancePolicyState, MAX_PENDING_PER_INSTANCE, MAX_PENDING_PROPOSALS,
-    PolicyStore, RevocationLevel, RevocationRecord, Submitter, TypePolicyState, VersionMeta,
-    VersionRecord,
+    EffectiveSummary, InstancePolicyState, MAX_PENDING_PER_INSTANCE, MAX_PENDING_PER_TYPE,
+    MAX_PENDING_PROPOSALS, PolicyStore, RevocationLevel, RevocationRecord, Submitter,
+    TypePolicyState, VersionMeta, VersionRecord,
 };
 pub use validate::{Expansion, Problem, Report, connector_project};
 pub use visible::{INVISIBLE, invisible};

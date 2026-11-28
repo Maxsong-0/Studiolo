@@ -59,9 +59,11 @@ impl AgentSession {
                 PolicyError::Busy => {
                     McpError::internal_error("策略库忙，本次未提交，请稍后重试", None)
                 }
-                PolicyError::TooManyProposals => {
-                    McpError::invalid_request("待处理提案已达上限，请等待主人处理", None)
-                }
+                // 名额按未完成算：list_proposals 不列校验失败的，接入方光看列表会想不通为什么满了。
+                PolicyError::TooManyProposals => McpError::invalid_request(
+                    "未完成提案已达上限（待处理、已校验的之外，校验失败的也占名额），本次没有入库；请等主人发布或撤回后再交",
+                    None,
+                ),
                 PolicyError::HashMismatch { .. } => McpError::internal_error(
                     "策略在本次调用途中发布了新版本，本次拒绝，请重试",
                     None,

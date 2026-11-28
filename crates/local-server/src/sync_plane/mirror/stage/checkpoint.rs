@@ -123,13 +123,7 @@ impl StageStore {
     }
 }
 fn object_id(name: &str) -> Result<ObjectId, PlaneError> {
-    if !io::digest_name(name) {
-        return Err(PlaneError::Storage);
-    }
-    let mut digest = [0; 32];
-    for (index, byte) in digest.iter_mut().enumerate() {
-        *byte = u8::from_str_radix(&name[index * 2..index * 2 + 2], 16)
-            .map_err(|_| PlaneError::Storage)?;
-    }
-    Ok(ObjectId::from_digest(digest))
+    studiolo_core::from_lower_hex(name)
+        .map(ObjectId::from_digest)
+        .ok_or(PlaneError::Storage)
 }

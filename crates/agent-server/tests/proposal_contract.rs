@@ -9,8 +9,8 @@ use serde_json::{Value, json};
 use studiolo_agent_server::{options::ServeOptions, serve};
 use studiolo_audit_ledger::{AuditFilter, AuditLedger, SqliteAuditLedger};
 use studiolo_policy::{
-    DesiredInput, DesiredStatus, MAX_LISTED_PROPOSALS, MAX_PENDING_PER_INSTANCE, PolicyKind,
-    PolicyStore, RevocationLevel, Submitter, sha256_hex,
+    DesiredInput, DesiredStatus, MAX_LISTED_PROPOSALS, MAX_PENDING_PER_INSTANCE,
+    MAX_PENDING_PER_TYPE, PolicyKind, PolicyStore, RevocationLevel, Submitter, sha256_hex,
 };
 use studiolo_supply::{AgentStore, ReadQuery};
 use tempfile::TempDir;
@@ -919,6 +919,64 @@ async fn list_proposals_stops_at_the_listing_bound_and_says_there_are_more() {
         description.contains(&format!("最多 {MAX_LISTED_PROPOSALS} 份")),
         "{description}"
     );
+}
+
+#[tokio::test]
+async fn at_the_type_quota_a_proposal_is_refused_and_says_rejected_ones_take_slots_too() {
+    // T-248：校验失败的提案也占名额，`list_proposals` 又不列它们；名额满时要说清这一点、说清本次
+    // 没有入库，不然接入方只看到几份待处理的，想不通为什么满了。每次连接都是新实例，换实例绕不过类型名额。
+    let f = fixture(true).await;
+    let store = f.policy();
+    let mut first = None;
+    for index in 0..MAX_PENDING_PER_TYPE {
+        let record = store
+            .submit_desired(
+                DesiredInput {
+                    kind: PolicyKind::Rules,
+                    subject: format!("r{index:03}.md"),
+                    body: Some(" ".into()),
+                },
+                Submitter::Agent {
+                    agent_type: "claude".into(),
+                    instance_id: format!(
+                        "01FIXTUREINSTANCE{:03}",
+                        index / MAX_PENDING_PER_INSTANCE
+                    ),
+                },
+                NOW,
+            )
+            .unwrap();
+        assert_eq!(record.status, DesiredStatus::Rejected);
+        first.get_or_insert(record.id);
+    }
+    let before = store.desired_list(None, 1_000).unwrap().len();
+    let (session, _) = f.initialize("claude").await;
+    let refused = f
+        .call(
+            "claude",
+            &session,
+            2,
+            "propose_desired",
+            json!({"kind": "rules", "subject": "提议.md", "body": "# 提议\n"}),
+        )
+        .await;
+    assert_eq!(refused["error"]["code"], -32600, "{refused}");
+    let message = refused["error"]["message"].as_str().unwrap_or_default();
+    assert!(
+        message.contains("校验失败的也占名额") && message.contains("本次没有入库"),
+        "{refused}"
+    );
+    assert_eq!(f.policy().desired_list(None, 1_000).unwrap().len(), before);
+    // 别的类型照常能交。
+    let (other, _) = f.initialize("codex").await;
+    f.propose_rule("codex", &other, 3, "提议.md", "# 提议\n")
+        .await;
+    // 主人撤回一份，本类型就又能交。
+    f.policy()
+        .withdraw_desired(first.as_ref().unwrap(), NOW)
+        .unwrap();
+    f.propose_rule("claude", &session, 4, "提议.md", "# 提议\n")
+        .await;
 }
 
 #[tokio::test]

@@ -32,28 +32,17 @@ pub fn sha256(bytes: &[u8]) -> Digest {
     sha2::Sha256::digest(bytes).into()
 }
 
-/// 解析 64 位小写十六进制摘要；长度或字符不对返回 `None`。
+/// 解析 64 位小写十六进制摘要；长度、大小写或字符不对返回 `None`（T-246 起收紧：以前 `u8::from_str_radix`
+/// 还收大写和前导 `+`）。
 #[must_use]
 pub fn parse_digest(hex: &str) -> Option<Digest> {
-    if hex.len() != 64 {
-        return None;
-    }
-    let mut output = [0u8; 32];
-    for (index, slot) in output.iter_mut().enumerate() {
-        *slot = u8::from_str_radix(hex.get(index * 2..index * 2 + 2)?, 16).ok()?;
-    }
-    Some(output)
+    studiolo_core::from_lower_hex(hex)
 }
 
 /// 小写十六进制。
 #[must_use]
 pub fn hex(bytes: &[u8]) -> String {
-    use std::fmt::Write as _;
-    let mut output = String::with_capacity(bytes.len() * 2);
-    for byte in bytes {
-        let _ = write!(&mut output, "{byte:02x}");
-    }
-    output
+    studiolo_core::to_lower_hex(bytes)
 }
 
 /// 把范围的观察选择投影成 Broker 的读取选择；`max_bytes` 逐规则照抄。

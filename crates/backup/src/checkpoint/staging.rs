@@ -195,11 +195,10 @@ impl Drop for StagingArea {
     }
 }
 pub(crate) fn digest(bytes: &[u8]) -> String {
-    use sha2::{Digest, Sha256};
-    hex(&Sha256::digest(bytes))
+    studiolo_core::sha256_hex(bytes)
 }
 fn hex(bytes: &[u8]) -> String {
-    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+    studiolo_core::to_lower_hex(bytes)
 }
 fn check_deadline(deadline: Instant) -> Result<()> {
     if Instant::now() >= deadline {

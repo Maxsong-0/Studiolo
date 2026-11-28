@@ -116,10 +116,7 @@ fn fit_name(name: &str, stem: &str, suffix: &str) -> Option<String> {
         .take_while(|end| *end <= budget)
         .last()?;
     let digest = Sha256::digest(name.as_bytes());
-    let tag: String = digest[..4]
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect();
+    let tag = studiolo_core::to_lower_hex(&digest[..4]);
     Some(format!("{}~{tag}{suffix}", &stem[..cut]))
 }
 

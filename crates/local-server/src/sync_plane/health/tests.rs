@@ -1,6 +1,6 @@
 //! `PlaneHealth` 的回填契约：每个方法只写它能证明的字段，轮末收口不把失败轮洗成正常。
 
-use super::{BridgeHealthProbe, OWNER_LABEL, PlaneHealth};
+use super::{BridgeHealthProbe, OWNER_LABEL, PlaneHealth, RoundSpan};
 use crate::sync_plane::PlaneError;
 use crate::sync_plane::driver::{HeadlessRun, RoundOutcome};
 use studiolo_host_config::sync_transport::ManualQuota;
@@ -23,6 +23,14 @@ fn usage() -> SyncUsage {
     SyncUsage {
         objects: 12,
         bytes: 4_096,
+    }
+}
+
+/// 开始和结束同一时刻的一轮：只看结论怎么收口、不看两个时刻分别落到哪的用例用它；两个时刻不同的见 `round_times.rs`。
+fn span(unix: i64) -> RoundSpan {
+    RoundSpan {
+        started_unix: unix,
+        ended_unix: unix,
     }
 }
 
@@ -64,7 +72,7 @@ fn fully_reported(health: &PlaneHealth, sequence: u64) {
 fn after_clean_batch() -> PlaneHealth {
     let health = PlaneHealth::new(None);
     fully_reported(&health, 1);
-    health.record_round(10_000, &settled(1));
+    health.record_round(span(10_000), &settled(1));
     health
 }
 
@@ -97,7 +105,7 @@ fn 一批闭合且轮内回填齐全后第六节正常并盖上序号与时刻()
     let health = PlaneHealth::new(None);
     fully_reported(&health, 7);
 
-    health.record_round(10_000, &settled(7));
+    health.record_round(span(10_000), &settled(7));
 
     let evidence = health.bridge();
     let batch = evidence.last_batch.map(|b| (b.sequence, b.unix_seconds));
@@ -131,7 +139,7 @@ fn 每种失败只落到对应字段且任何失败轮都不留静止票据() {
     for (error, hit) in cases {
         let health = after_clean_batch();
 
-        health.record_round(10_300, &Err(error));
+        health.record_round(span(10_300), &Err(error));
 
         let evidence = health.bridge();
         assert!(hit(&evidence), "{error:?}");
@@ -154,7 +162,7 @@ fn 没有专属字段的失败也靠静止票据落到未知而不是保持正�
     for error in errors {
         let health = after_clean_batch();
 
-        health.record_round(10_300, &Err(error));
+        health.record_round(span(10_300), &Err(error));
 
         assert_eq!(state(&health), HealthState::Unknown, "{error:?}");
     }
@@ -164,7 +172,7 @@ fn 没有专属字段的失败也靠静止票据落到未知而不是保持正�
 fn 退避跳过的轮次记为退避等待() {
     let health = after_clean_batch();
 
-    health.record_round(10_300, &Ok(RoundOutcome::Skipped));
+    health.record_round(span(10_300), &Ok(RoundOutcome::Skipped));
 
     assert_eq!(health.bridge().recovery, Some(RecoveryState::Backoff));
     assert_eq!(state(&health), HealthState::Degraded);
@@ -174,14 +182,14 @@ fn 退避跳过的轮次记为退避等待() {
 fn 终态未知的批次至少记一条且执行段报了数就以报的为准() {
     let health = after_clean_batch();
 
-    health.record_round(10_300, &unknown(2));
+    health.record_round(span(10_300), &unknown(2));
     assert_eq!(health.bridge().unknown_jobs, Some(1));
 
     health.record_execution(3, 4, false);
-    health.record_round(10_600, &unknown(3));
+    health.record_round(span(10_600), &unknown(3));
     assert_eq!(health.bridge().unknown_jobs, Some(4));
 
-    health.record_round(10_900, &Err(PlaneError::Unknown));
+    health.record_round(span(10_900), &Err(PlaneError::Unknown));
     assert_eq!(health.bridge().unknown_jobs, Some(4));
     assert_eq!(state(&health), HealthState::Degraded);
 }
@@ -191,14 +199,14 @@ fn 冻结的批次若执行段没报本批就不敢说熔断未生效() {
     let health = after_clean_batch();
     assert_eq!(health.bridge().fused, Some(false));
 
-    health.record_round(10_300, &blocked(2));
+    health.record_round(span(10_300), &blocked(2));
 
     assert_eq!(health.bridge().fused, None);
     assert_eq!(state(&health), HealthState::Unknown);
 
     health.record_conflicts(2);
     health.record_execution(3, 0, true);
-    health.record_round(10_600, &blocked(3));
+    health.record_round(span(10_600), &blocked(3));
 
     assert_eq!(health.bridge().fused, Some(true));
     assert_eq!(health.bridge().conflict_copies, Some(2));
@@ -211,7 +219,7 @@ fn 空转轮次只证明守卫退出与协议状态不碰熔断与终态计数()
     health.record_mode(SyncMode::Bidirectional);
     health.record_usage(usage());
 
-    health.record_round(10_000, &Ok(RoundOutcome::Idle));
+    health.record_round(span(10_000), &Ok(RoundOutcome::Idle));
 
     let evidence = health.bridge();
     assert_eq!(evidence.residue_guard, Some(ResidueGuard::Clear));
@@ -227,12 +235,12 @@ fn 空转轮次只证明守卫退出与协议状态不碰熔断与终态计数()
 #[test]
 fn 熔断与残留在下一批干净闭合前一直压着第六节() {
     let health = after_clean_batch();
-    health.record_round(10_300, &Err(PlaneError::Fused));
-    health.record_round(10_600, &Err(PlaneError::Storage));
+    health.record_round(span(10_300), &Err(PlaneError::Fused));
+    health.record_round(span(10_600), &Err(PlaneError::Storage));
     assert_eq!(health.bridge().fused, Some(true));
 
     fully_reported(&health, 2);
-    health.record_round(10_900, &settled(2));
+    health.record_round(span(10_900), &settled(2));
 
     assert_eq!(health.bridge().fused, Some(false));
     assert_eq!(state(&health), HealthState::Normal);
@@ -286,7 +294,7 @@ fn 删除被挡轮记下个数并让第六节降级即使刚重启() {
     let health = PlaneHealth::new(None);
 
     health.record_delete_gate(3);
-    health.record_round(10_000, &Ok(RoundOutcome::DeletesBlocked { count: 3 }));
+    health.record_round(span(10_000), &Ok(RoundOutcome::DeletesBlocked { count: 3 }));
 
     let evidence = health.bridge();
     assert_eq!(evidence.deletes_blocked, Some(3));
@@ -312,10 +320,10 @@ fn 删除被挡只按守卫回填写而轮末结论不改它() {
     ] {
         let health = after_clean_batch();
         health.record_delete_gate(3);
-        health.record_round(10_100, &Ok(RoundOutcome::DeletesBlocked { count: 3 }));
+        health.record_round(span(10_100), &Ok(RoundOutcome::DeletesBlocked { count: 3 }));
 
         health.record_delete_gate(0);
-        health.record_round(10_400, &outcome);
+        health.record_round(span(10_400), &outcome);
         assert_eq!(
             health.bridge().deletes_blocked,
             Some(0),
@@ -323,7 +331,7 @@ fn 删除被挡只按守卫回填写而轮末结论不改它() {
         );
 
         health.record_delete_gate(5);
-        health.record_round(10_700, &outcome);
+        health.record_round(span(10_700), &outcome);
         assert_eq!(
             health.bridge().deletes_blocked,
             Some(5),
@@ -344,9 +352,9 @@ fn 没走到删除守卫的轮次不动被挡的个数() {
     ] {
         let health = after_clean_batch();
         health.record_delete_gate(3);
-        health.record_round(10_100, &Ok(RoundOutcome::DeletesBlocked { count: 3 }));
+        health.record_round(span(10_100), &Ok(RoundOutcome::DeletesBlocked { count: 3 }));
 
-        health.record_round(10_400, &outcome);
+        health.record_round(span(10_400), &outcome);
 
         assert_eq!(health.bridge().deletes_blocked, Some(3), "{outcome:?}");
     }
@@ -357,3 +365,6 @@ mod restart;
 
 #[path = "../../../tests/sync_plane_health/status.rs"]
 mod status;
+
+#[path = "../../../tests/sync_plane_health/round_times.rs"]
+mod round_times;

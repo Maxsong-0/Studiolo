@@ -4,7 +4,6 @@ use crate::{
     git_trust::{self, GitRepo},
 };
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -125,13 +124,7 @@ pub fn apply_code_patch(plan: &CodeLandingPlan) -> Result<CodeLandingResult, Run
     }
     let bytes =
         fs::read(&plan.patch_path).map_err(|e| RunnerError::io("read retained candidate", e))?;
-    if bytes.len() > 16 * 1024 * 1024
-        || Sha256::digest(&bytes)
-            .iter()
-            .map(|b| format!("{b:02x}"))
-            .collect::<String>()
-            != plan.patch_sha256
-    {
+    if bytes.len() > 16 * 1024 * 1024 || studiolo_core::sha256_hex(&bytes) != plan.patch_sha256 {
         return Err(RunnerError::InvalidExecution);
     }
     // 每次落地都重新校验身份与配置：这是第一个起 git 子进程的地方，之前什么都不会执行。

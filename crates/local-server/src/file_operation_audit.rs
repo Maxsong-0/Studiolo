@@ -7,6 +7,7 @@ pub(crate) use rename::{RenameShape, valid_rename_effects};
 use studiolo_audit_ledger::{
     AuditError, AuditEvent, AuditEventId, AuditLedger, AuditPhase, SanitizedPayload,
 };
+use studiolo_core::is_sha256_hex;
 use studiolo_vault_broker::{
     ContentAuditPhase, FileEffect, FileOperationAuditEvent, FileOperationKind,
     FileOperationOutcome, FilePresence, MutationActor,
@@ -53,10 +54,10 @@ fn validate(value: &FileOperationAuditEvent) -> Result<(), AuditError> {
         1
     };
     if value.schema_version != version
-        || !hex(&value.event_id)
-        || !hex(&value.operation_id)
-        || !hex(&value.request_fingerprint)
-        || !hex(value.scope_hash.as_str())
+        || !is_sha256_hex(&value.event_id)
+        || !is_sha256_hex(&value.operation_id)
+        || !is_sha256_hex(&value.request_fingerprint)
+        || !is_sha256_hex(value.scope_hash.as_str())
         || value.scope_epoch == 0
         || value.requested_at_ms.is_some_and(|time| time < 0)
         || !actor_valid(&value.actor)
@@ -67,7 +68,7 @@ fn validate(value: &FileOperationAuditEvent) -> Result<(), AuditError> {
         return rename::validate(value);
     }
     if let FileOperationKind::RestoreTombstone { tombstone_id } = &value.kind
-        && !hex(tombstone_id)
+        && !is_sha256_hex(tombstone_id)
     {
         return Err(AuditError::Serialization);
     }
@@ -122,7 +123,7 @@ fn validate(value: &FileOperationAuditEvent) -> Result<(), AuditError> {
         (Some(FileOperationOutcome::Indeterminate), FileEffect::Unknown { path }) => {
             path == &value.path
                 && value.tombstone_id.is_none()
-                && value.evidence_id.as_deref().is_some_and(hex)
+                && value.evidence_id.as_deref().is_some_and(is_sha256_hex)
         }
         _ => false,
     };
@@ -136,7 +137,9 @@ fn validate(value: &FileOperationAuditEvent) -> Result<(), AuditError> {
 fn presence_valid(value: &FilePresence) -> bool {
     match value {
         FilePresence::Missing => true,
-        FilePresence::Present { sha256, bytes, .. } => hex(sha256) && *bytes <= 268_435_456,
+        FilePresence::Present { sha256, bytes, .. } => {
+            is_sha256_hex(sha256) && *bytes <= 268_435_456
+        }
     }
 }
 
@@ -152,13 +155,6 @@ fn actor_valid(actor: &MutationActor) -> bool {
 
 fn text(value: &str, limit: usize) -> bool {
     !value.is_empty() && value.len() <= limit && !value.chars().any(char::is_control)
-}
-
-fn hex(value: &str) -> bool {
-    value.len() == 64
-        && value
-            .bytes()
-            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
 }
 
 #[cfg(test)]

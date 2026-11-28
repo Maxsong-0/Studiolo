@@ -26,7 +26,7 @@ pub const CGROUP_ROOT: &str = "/sys/fs/cgroup";
 /// 16 字节的小写十六进制（session 目录名、InvocationID 比对用）。
 #[must_use]
 pub fn hex16(bytes: &[u8; 16]) -> String {
-    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+    studiolo_core::to_lower_hex(bytes)
 }
 
 /// 解析 32 位十六进制；允许 UUID 的连字符（`/proc/sys/kernel/random/boot_id`）。

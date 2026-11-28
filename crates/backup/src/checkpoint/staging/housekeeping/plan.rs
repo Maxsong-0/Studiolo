@@ -63,11 +63,7 @@ fn classify(name: &str) -> Result<Option<(&str, Kind)>> {
     } else {
         return Ok(None);
     };
-    if key.len() != 64
-        || !key
-            .bytes()
-            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
-    {
+    if !studiolo_core::is_sha256_hex(key) {
         return Err(StagingError::CleanupRequired);
     }
     Ok(Some((key, kind)))

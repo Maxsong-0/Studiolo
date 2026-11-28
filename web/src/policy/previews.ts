@@ -1,4 +1,5 @@
 import type {
+  Activation as PublishedActivation,
   DesiredRecord,
   PolicyStatus,
   Report,
@@ -141,11 +142,18 @@ export function publishPreview(
 }
 
 /**
- * 发布成功提示的补充（执行预览里列过）：比它早的已一并标为已取代，比它更新的照旧待处理。
- * 份数是确认时的；之后又有变化，以重读后的列表为准。
+ * 发布成功提示的补充：这次实际取代了比它早的几份、留下了比它更新的几份。份数只照发布回执，
+ * 不照确认时的预览：确认到落库之间可能有别处撤回、别的提交者又交了（T-248）。
  */
-export function publishedNotice(supersedes: number, remains: number): string {
-  return `${supersedes ? '；同一对象比它早的未发布草案已一并标为已取代' : ''}${
+export function publishedNotice(
+  activation: Pick<
+    PublishedActivation,
+    'superseded_desired_ids' | 'remaining_desired_ids'
+  >,
+): string {
+  const supersedes = activation.superseded_desired_ids.length;
+  const remains = activation.remaining_desired_ids.length;
+  return `${supersedes ? `；同一对象比它早的 ${supersedes} 份未发布草案已一并标为已取代` : ''}${
     remains ? `；同一对象更新的 ${remains} 份未发布草案照旧待处理` : ''
   }`;
 }

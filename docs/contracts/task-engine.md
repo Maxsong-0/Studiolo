@@ -155,7 +155,7 @@ outcome 故障以及重复 reconcile，spy Runner 的 start 次数不能增加�
 ## 7. 错误、替身与验收
 
 错误按公开 enum 返回，包括输入/状态拒绝、NotFound、StaleFence、AlreadyTerminal、
-IdempotencyMismatch、AuditUnavailable，以及带来源的 Audit、Broker、CommitFailed、
+IdempotencyMismatch、RequestAlreadyRejected（黑板请求之前已被确定拒绝，§9）、AuditUnavailable，以及带来源的 Audit、Broker、CommitFailed、
 ControlDb、Json、Integrity、InvalidRunnerRef、Projection 和 NeedsReconfirmation。调用方
 不得把任意底层错误吞成重放成功。Control DB 错误到 TaskEngine 错误的映射只按变体进行：
 `DbError::AlreadyTerminal` → `AlreadyTerminal`、`FenceMismatch` → `StaleFence`、
@@ -200,7 +200,8 @@ scanner，外部不能填最大号。`board_detail/board_list` 返回可序列�
 在回滚掉的事务里算出这一轮要做的每一步（撤销，或子任务没终结时先转成取消中，各带原因）；清单是空的就整轮不动
 控制库、也不记审计。清单不空才记 `task.reconcile` 意图，请求里带这一轮的时间、是不是启动和整张清单，再由
 `apply_lease_plan` 在写事务里重做一遍，结果和清单逐条相同才提交，最后记结果。预演之后库变了（多一步、少一步、
-原因不同）就整轮不做、结果记成没成，下一轮重新预演：审计意图里没写的事不做，意图仍先于动作落账。
+原因不同）就整轮不做、结果记成没成，下一轮重新预演：审计意图里没写的事不做，意图仍先于动作落账。执行时控制库
+出错（比如忙）没下结论、不记结果，整轮照旧报错（§9）。
 已经是取消中、只在等子任务终结的 attempt 不算这一轮要做的事，不再每轮重写它的时间戳。以前每轮的结果审计
 顺带补投账本中断留下的运行时结果，现在每轮在对账之前单独补投一次，节奏不变。常驻每 15 秒一轮不再让账本
 空转增长（以前一天约一万一千五百条，2026-11-16 复审 R2-F3）。
@@ -220,9 +221,35 @@ NeedsReview 及 Runner completed 回执拒绝。人工审阅必须引用完整�
 原批准已过期、一篇正文都还没写进 Vault 的提交，周期对账不替主人丢，保持「提交中」并保留暂存；主人调它、
 且 Broker 证实之后才落成 Failed（停止态落成 Cancelled）、记 `task.commit_expired`、丢暂存。证实不了拒绝。
 已经落定过的再调一次只补做审计投递和丢暂存、给回同一个状态（控制库 `expired_commit` 只读判断）。每次调用
-传当前时间：请求摘要就是审计身份。人侧入口是执行命令 `discard_expired`（local-server 每次传服务器当前
+传当前时间：请求摘要就是审计身份，同一个时间重放时被确定拒绝过的照样拒绝（§9）。人侧入口是执行命令 `discard_expired`（local-server 每次传服务器当前
 时间，AI 的黑板入口没有这个操作）。只读的 `commit_awaiting_discard(task)` 用同一步证实回答「这个任务的提交是不是
 已过期、一篇正文都没写、等主人决定」：只看提交中任务的当前 attempt，Broker 说没过期或写过正文是 false，证实
 这一步本身出错（暂存读不出、和 attempt 对不上、Broker 查不了）如实返回错误、不混进 false，黑板列表记作「没核对
 出来」、按「写回中」显示并限频记日志（2026-11-16 第二意见）；答案随时间变，只给人侧黑板列表实时读，不进任务页投影。
 便宜的 `commit_past_deadline(task,now_ms)` 只读控制库里存的原批准期限，列表先用它筛，期限已过的才走上面那一步。
+
+## 9. 黑板请求的审计结论：成功、确定拒绝、没下结论（2026-11-27，BUG-060）
+
+黑板请求（创建、认领、交接、回执、取号、心跳、启动失败、对账、候选暂存与审阅、停止候选、丢过期提交、
+投影提交）的审计身份是 `board:<动作>:<请求摘要>`，账本按「事件号＋阶段」去重，所以同一个请求的 Intent、
+Outcome 各只有一条，记下的结论不能改。结果因此分三态（`crates/task-engine/src/board_audit.rs`）：
+
+| 结论 | 哪些错误 | 账本 | 同一请求再来 |
+|---|---|---|---|
+| 成功 | — | 先补投运行时结果，再记 `succeeded` | 照常重放（控制库按请求幂等，给回原结果） |
+| 确定拒绝 | 引擎读到权威状态、按规则说不：`InvalidTaskSpec`、`NotFound`、`InvalidTransition`、`StaleFence`、`AlreadyTerminal`、`IdempotencyMismatch`、`PathsHeld`、`NeedsReconfirmation`、`InvalidRunnerRef`，以及原样包着的同类控制库错误和 `BoardRejected` | 记 `rejected` | 意图之后先查账本，被拒过就回 `RequestAlreadyRejected`、什么都不做；条件变了（父任务回到排队、路径放开、输入就位）也一样，要重来就换新请求 |
+| 没下结论 | 这一刻做不成或不知道做没做成：控制库 SQLite 出错（忙、锁住、IO）、`Json`、Vault 绑定或结构版本不对、记录损坏，`AuditUnavailable`、`Audit`、`Broker`、`CommitFailed`、`Integrity`、`Projection`、`ProjectionIncomplete` | 不记 Outcome，只留意图 | 可以重试，下了结论的那次补上结果 |
+
+- 以前任何错误都记 `rejected`：控制库忙一次，同一请求重试成功时结果审计和它冲突，动作已经做了（号发出去了、
+  任务建了），调用方却拿到 `IdempotencyMismatch`，之后同一请求永远失败；动作提交后才出错（比如回执已接受、
+  读回详情时库忙）还会记下假的拒绝。取号扫描失败不记结果（BUG-038）原来是单独一处特判，现在归进「没下结论」。
+- 归类穷举每一种 `TaskEngineError` 和 `DbError`，不用通配：新加一种错误时编译不过，逼着先想清楚归哪边。
+  拿不准的归「没下结论」，它最多留一条没有结论的意图，不会记下假的拒绝，也不会挡住之后的成功。
+- 同一请求之前已成功、这次重放没成，不改账本里的成功，调用方拿到这次的错误。账本里某条结果的状态既不是
+  `succeeded` 也不是 `rejected` 时失败关闭（`Integrity`）。
+- 结果载荷和以前逐字相同（`{"request_hash","status"}`，意图只有 `request_hash`），修复前已落账的请求重放时
+  不会和旧记录冲突。不对应请求的「待处理」标记（`task.legacy_reservation_pending`、
+  `task.candidate_recovery_pending`）只有结果、记成没成，同一个 attempt 只记一次，不走这套判断。
+- 调用处只能用 `BoardVerdict::of(&result)`（预演过的对账用 `of_plan`，执行时库变了记成拒绝）从结果推结论，
+  写不出「任何错误都算拒绝」。用例在 `crates/task-engine/tests/board_outcome_contract.rs`：每个动作各一条
+  「控制库忙后重试成功、账本只有一对」，加上 Broker 读不到、账本记结果失败、确定拒绝之后条件变了仍拒绝。

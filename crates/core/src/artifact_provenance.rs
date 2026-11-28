@@ -39,11 +39,7 @@ impl ArtifactProvenance {
             return Err(ArtifactProvenanceError::Retention);
         }
         let approval_sha256 = approval_sha256.into();
-        if approval_sha256.len() != 64
-            || !approval_sha256
-                .bytes()
-                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
-        {
+        if !crate::is_sha256_hex(&approval_sha256) {
             return Err(ArtifactProvenanceError::ApprovalDigest);
         }
         Ok(Self {

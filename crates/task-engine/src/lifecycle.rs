@@ -1,5 +1,6 @@
 //! 显式启动恢复与周期租约对账的撤销规则不同。
 use super::*;
+use crate::board_audit::BoardVerdict;
 use studiolo_control_db::LeaseReconciliation;
 
 impl<B: VaultBroker + ArtifactStager, L: AuditLedger> PersistentTaskEngine<B, L> {
@@ -16,17 +17,12 @@ impl<B: VaultBroker + ArtifactStager, L: AuditLedger> PersistentTaskEngine<B, L>
         now: i64,
     ) -> Result<(), TaskEngineError> {
         let request = (task, attempt, fence, lease_until, tool_calls, edits, now);
-        self.audit_board("task.heartbeat", &request, AuditPhase::Intent, None)?;
+        let audit = self.board_intent("task.heartbeat", &request)?;
         let result = self
             .control_db
             .heartbeat_progress(task, attempt, fence, lease_until, tool_calls, edits, now)
             .map_err(map_db);
-        self.audit_board(
-            "task.heartbeat",
-            &request,
-            AuditPhase::Outcome,
-            Some(result.is_ok()),
-        )?;
+        self.board_outcome(audit, BoardVerdict::of(&result))?;
         result
     }
 
@@ -57,11 +53,9 @@ impl<B: VaultBroker + ArtifactStager, L: AuditLedger> PersistentTaskEngine<B, L>
                     // 只有主人经 `discard_expired_commit` 决定（2026-11-16 用户拍板）。
                     // 同一个 attempt 只记一次（请求里不带时间，账本按幂等键重放）：主人几天不处理时，
                     // 每 15 秒一条会让审计无界增长（复审 A1-F4）。
-                    self.audit_board(
+                    self.board_pending_marker(
                         "task.candidate_recovery_pending",
                         &(attempt.task_id, attempt.attempt_id),
-                        AuditPhase::Outcome,
-                        Some(false),
                     )?;
                 }
                 Err(error) => return Err(error),
@@ -95,14 +89,13 @@ impl<B: VaultBroker + ArtifactStager, L: AuditLedger> PersistentTaskEngine<B, L>
             return Ok(LeaseReconciliation::default());
         }
         let request = (now, startup, &plan);
-        self.audit_board("task.reconcile", &request, AuditPhase::Intent, None)?;
+        let audit = self.board_intent("task.reconcile", &request)?;
         let applied = self
             .control_db
             .apply_lease_plan(now, startup, &plan)
             .map_err(map_db);
-        let done = matches!(applied, Ok(Some(_)));
-        self.audit_board("task.reconcile", &request, AuditPhase::Outcome, Some(done))?;
-        // 预演之后库变了的那一轮什么都没做（结果记成没成），下一轮重新预演。
+        // 预演之后库变了的那一轮什么都没做（结果记成没成），下一轮重新预演；控制库忙这类没下结论的不记结果。
+        self.board_outcome(audit, BoardVerdict::of_plan(&applied))?;
         Ok(applied?.unwrap_or_default())
     }
 
@@ -118,12 +111,7 @@ impl<B: VaultBroker + ArtifactStager, L: AuditLedger> PersistentTaskEngine<B, L>
             .task(task)?
             .ok_or(TaskEngineError::NotFound("task"))?
             .spec;
-        self.audit_board(
-            "task.launch_failed",
-            &(task, attempt, fence, now),
-            AuditPhase::Intent,
-            None,
-        )?;
+        let audit = self.board_intent("task.launch_failed", &(task, attempt, fence, now))?;
         let result = self
             .control_db
             .launch_failed(
@@ -140,12 +128,7 @@ impl<B: VaultBroker + ArtifactStager, L: AuditLedger> PersistentTaskEngine<B, L>
                 now,
             )
             .map_err(map_db);
-        self.audit_board(
-            "task.launch_failed",
-            &(task, attempt, fence, now),
-            AuditPhase::Outcome,
-            Some(result.is_ok()),
-        )?;
+        self.board_outcome(audit, BoardVerdict::of(&result))?;
         result
     }
 }

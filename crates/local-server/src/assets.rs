@@ -54,7 +54,7 @@ fn style_nonce(bytes: Vec<u8>) -> Result<(Vec<u8>, Option<StyleNonce>), ApiError
         1 => {
             let mut random = [0_u8; 32];
             getrandom::fill(&mut random).map_err(|_| ApiError::unavailable())?;
-            let nonce: String = random.iter().map(|byte| format!("{byte:02x}")).collect();
+            let nonce = studiolo_core::to_lower_hex(&random);
             Ok((
                 html.replace(STYLE_NONCE_MARKER, &nonce).into_bytes(),
                 Some(StyleNonce(nonce)),

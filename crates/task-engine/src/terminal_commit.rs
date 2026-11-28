@@ -1,5 +1,6 @@
 //! 终态报告：T1 持久预留、「manifest 最后写入」的 T2 前滚与审计结果补投，以及预留计划的解码。
 use super::*;
+use crate::board_audit::BoardVerdict;
 use studiolo_vault_broker::StagedArtifactCommit;
 
 impl<B, L> PersistentTaskEngine<B, L>
@@ -214,26 +215,15 @@ where
     /// 拒绝，提交和暂存原样保留。成功时停止态的提交落成取消，其余落成失败，并丢掉暂存。
     /// 上一次已经落定、只是审计投递、丢暂存或结果回送没做完的，再调一次就把剩下的做完、给回同一个
     /// 状态，不再要求证实（暂存可能已经丢了）。每次调用传当前时间：请求摘要就是审计身份，同一个时间
-    /// 换了结果会和上一次的审计冲突。组合根绝不能经由 AI 的回执端点暴露此方法。
+    /// 重放时，之前被确定拒绝的照样拒绝、没下结论的照常重做（BUG-060）。组合根绝不能经由 AI 的回执端点暴露此方法。
     pub fn discard_expired_commit(
         &mut self,
         task: TaskId,
         now: i64,
     ) -> Result<TaskStatus, TaskEngineError> {
-        let request = (task, now);
-        self.audit_board(
-            "task.expired_commit_discarded",
-            &request,
-            AuditPhase::Intent,
-            None,
-        )?;
+        let audit = self.board_intent("task.expired_commit_discarded", &(task, now))?;
         let result = self.discard_expired_commit_inner(task, now);
-        self.audit_board(
-            "task.expired_commit_discarded",
-            &request,
-            AuditPhase::Outcome,
-            Some(result.is_ok()),
-        )?;
+        self.board_outcome(audit, BoardVerdict::of(&result))?;
         result
     }
 

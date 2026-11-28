@@ -40,15 +40,10 @@ impl<B: VaultBroker + ArtifactStager, L: AuditLedger> PersistentTaskEngine<B, L>
             sha256_hex(&serde_json::to_vec(&report)?),
             now_ms,
         );
-        self.audit_board("task.runner_candidates", &request, AuditPhase::Intent, None)?;
+        let audit = self.board_intent("task.runner_candidates", &request)?;
         let result = self.stage_board_runner_candidates_inner(&report, &attempt, now_ms);
         self.deliver_runtime_audits()?;
-        self.audit_board(
-            "task.runner_candidates",
-            &request,
-            AuditPhase::Outcome,
-            Some(result.is_ok()),
-        )?;
+        self.board_outcome(audit, BoardVerdict::of(&result))?;
         result
     }
 
@@ -169,19 +164,9 @@ impl<B: VaultBroker + ArtifactStager, L: AuditLedger> PersistentTaskEngine<B, L>
         now: i64,
     ) -> Result<BoardView, TaskEngineError> {
         let request = (task, &receipt, now);
-        self.audit_board(
-            "task.candidates_reviewed",
-            &request,
-            AuditPhase::Intent,
-            None,
-        )?;
+        let audit = self.board_intent("task.candidates_reviewed", &request)?;
         let result = self.review_board_candidates_inner(task, receipt.clone(), now);
-        self.audit_board(
-            "task.candidates_reviewed",
-            &request,
-            AuditPhase::Outcome,
-            Some(result.is_ok()),
-        )?;
+        self.board_outcome(audit, BoardVerdict::of(&result))?;
         result
     }
 

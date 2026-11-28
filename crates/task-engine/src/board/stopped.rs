@@ -64,12 +64,7 @@ impl<B: VaultBroker + ArtifactStager, L: AuditLedger> PersistentTaskEngine<B, L>
             sha256_hex(&serde_json::to_vec(&report)?),
             now,
         );
-        self.audit_board(
-            "task.stopped_candidates",
-            &request,
-            AuditPhase::Intent,
-            None,
-        )?;
+        let audit = self.board_intent("task.stopped_candidates", &request)?;
         let result = self.stage_stopped_inner(
             &report,
             &receipt,
@@ -78,12 +73,7 @@ impl<B: VaultBroker + ArtifactStager, L: AuditLedger> PersistentTaskEngine<B, L>
             now,
         );
         self.deliver_runtime_audits()?;
-        self.audit_board(
-            "task.stopped_candidates",
-            &request,
-            AuditPhase::Outcome,
-            Some(result.is_ok()),
-        )?;
+        self.board_outcome(audit, BoardVerdict::of(&result))?;
         result
     }
 

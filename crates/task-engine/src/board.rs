@@ -4,6 +4,7 @@ mod creation;
 mod handoff;
 mod stopped;
 use super::*;
+use crate::board_audit::BoardVerdict;
 use crate::board_types::{bounded, reject, strings, valid_hash, valid_pointer};
 use studiolo_control_db::BoardDefinition;
 
@@ -17,14 +18,9 @@ impl<B: VaultBroker + ArtifactStager, L: AuditLedger> PersistentTaskEngine<B, L>
         now: i64,
     ) -> Result<TaskId, TaskEngineError> {
         let request = (request_id, &spec, hash);
-        self.audit_board("task.create", &request, AuditPhase::Intent, None)?;
+        let audit = self.board_intent("task.create", &request)?;
         let result = self.create_board_task_inner(request_id, spec.clone(), hash, None, now);
-        self.audit_board(
-            "task.create",
-            &request,
-            AuditPhase::Outcome,
-            Some(result.is_ok()),
-        )?;
+        self.board_outcome(audit, BoardVerdict::of(&result))?;
         result
     }
     /// 冻结经认证的创建者；即使该项之后进入终态也保留。
@@ -40,15 +36,10 @@ impl<B: VaultBroker + ArtifactStager, L: AuditLedger> PersistentTaskEngine<B, L>
             return Err(reject("invalid creator instance"));
         }
         let request = (request_id, &spec, hash, instance);
-        self.audit_board("task.create", &request, AuditPhase::Intent, None)?;
+        let audit = self.board_intent("task.create", &request)?;
         let result =
             self.create_board_task_inner(request_id, spec.clone(), hash, Some(instance), now);
-        self.audit_board(
-            "task.create",
-            &request,
-            AuditPhase::Outcome,
-            Some(result.is_ok()),
-        )?;
+        self.board_outcome(audit, BoardVerdict::of(&result))?;
         result
     }
     /// 经审计地认领单个指定项；过期检查在认领事务内完成。
@@ -60,14 +51,9 @@ impl<B: VaultBroker + ArtifactStager, L: AuditLedger> PersistentTaskEngine<B, L>
         now: i64,
     ) -> Result<BoardClaim, TaskEngineError> {
         let request = (task, instance, lease, now);
-        self.audit_board("task.claim", &request, AuditPhase::Intent, None)?;
+        let audit = self.board_intent("task.claim", &request)?;
         let result = self.claim_board_task_inner(task, instance, lease, now);
-        self.audit_board(
-            "task.claim",
-            &request,
-            AuditPhase::Outcome,
-            Some(result.is_ok()),
-        )?;
+        self.board_outcome(audit, BoardVerdict::of(&result))?;
         result
     }
     /// 当前 fence 下经审计的结构化交接。
@@ -80,14 +66,9 @@ impl<B: VaultBroker + ArtifactStager, L: AuditLedger> PersistentTaskEngine<B, L>
         now: i64,
     ) -> Result<(), TaskEngineError> {
         let request = (task, attempt, fence, &handoff, now);
-        self.audit_board("handoff.created", &request, AuditPhase::Intent, None)?;
+        let audit = self.board_intent("handoff.created", &request)?;
         let result = self.put_handoff_inner(task, attempt, fence, handoff.clone(), now);
-        self.audit_board(
-            "handoff.created",
-            &request,
-            AuditPhase::Outcome,
-            Some(result.is_ok()),
-        )?;
+        self.board_outcome(audit, BoardVerdict::of(&result))?;
         result
     }
     /// 经审计的终态回执；接受前核验全部内容指针。
@@ -100,14 +81,9 @@ impl<B: VaultBroker + ArtifactStager, L: AuditLedger> PersistentTaskEngine<B, L>
         now: i64,
     ) -> Result<BoardView, TaskEngineError> {
         let request = (task, attempt, fence, &receipt, now);
-        self.audit_board("handoff.returned", &request, AuditPhase::Intent, None)?;
+        let audit = self.board_intent("handoff.returned", &request)?;
         let result = self.return_board_receipt_inner(task, attempt, fence, receipt.clone(), now);
-        self.audit_board(
-            "handoff.returned",
-            &request,
-            AuditPhase::Outcome,
-            Some(result.is_ok()),
-        )?;
+        self.board_outcome(audit, BoardVerdict::of(&result))?;
         result
     }
 

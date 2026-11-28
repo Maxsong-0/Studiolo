@@ -88,16 +88,7 @@ pub(crate) fn parse(bytes: &[u8]) -> Result<Replace, ()> {
 }
 
 pub(crate) fn revision(value: &str) -> Result<Revision, ()> {
-    if value.len() != 64
-        || !value
-            .bytes()
-            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
-    {
-        return Err(());
-    }
-    let bytes: Vec<u8> = (0..64)
-        .step_by(2)
-        .map(|i| u8::from_str_radix(&value[i..i + 2], 16).map_err(|_| ()))
-        .collect::<Result<_, _>>()?;
-    serde_json::from_value(serde_json::json!(bytes)).map_err(|_| ())
+    studiolo_core::from_lower_hex(value)
+        .map(Revision::from_bytes)
+        .ok_or(())
 }
