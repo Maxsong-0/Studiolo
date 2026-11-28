@@ -41,7 +41,7 @@
 - 只做任务书里的这一件，不扩范围；任务书没点名的文件非改不可时，最小改动并在回执里说明。
 - 工作树里有别人的未提交改动是正常的：不 stash、不 checkout、不 reset、不 restore、不 clean；不用 `git status`／`git diff` 判断「谁改了什么」。
 - 用**最窄的证明**自检，但测试与编译**在哪跑看你在哪台机器**（对照表见第七节）。**Mac：所有测试与编译检查一律不在本机跑**（2026-09-23 用户硬约束），定向测试、fmt、clippy、build 都用 `scripts/test-linux.sh <命令>`（如 `scripts/test-linux.sh cargo --locked test -p <包> --test <目标>`）在服务器上跑，前端检查以第五节的 ci 套为准。**DGX 2026-11-20 起不再用来开发和测试**（第七节），不在上面跑任何测试与编译。Cursor Cloud VM 见第六节。全量回归留给派发方；全量命令见 `README.md`「开发」段。
-- **例外只有 Bottega**（`bottega/`，原生 Mac App；以后的 Bottega 桥、P3 的 iPhone App 同样，2026-11-22 用户定，vault ADR-043）：只在 Mac Studio 上、一律经 `scripts/bottega-local` 本机编译、测试，108 编不了；细则见 `CLAUDE.md`「Bottega 在 Mac Studio 本机编译、测试」一节和 `bottega/AGENTS.md`。网页、169 那一侧照旧按上一条。
+- **Bottega 另走 testbox 的 Mac 节点**（`bottega/`，原生 Mac App；以后的 Bottega 桥、P3 的 iPhone App 同样；2026-11-26 用户定，vault ADR-048，取代 ADR-043 的本机直跑）：108 编不了，在 Mac Studio 上交 `testbox --remote testbox@testbox-ctl submit --arch macos --project bottega …`，任务在工作树里原地跑、一律经 `scripts/bottega-local`（它在 testbox 任务外拒跑）；细则见 `CLAUDE.md`「Bottega 的编译、测试只经 testbox 的 Mac 节点」一节和 `bottega/AGENTS.md`。网页、169 那一侧照旧按上一条。
 - 被卡就在回执里写明阻塞，不猜、不绕、不伪造闭环。
 - 临时产物放会话 scratchpad，用完清理自己产生的。
 
@@ -54,7 +54,7 @@
   整条放后台等（控制端是 Mac Studio 上的虚拟机 `testbox-ctl`，执行节点只剩 x86_64 的 x86-1，即 108；旧写法 `testbox@max-spark` 也指到控制端，不再用）。一步失败 `--wait` 马上返回并点名那一步，任务照跑完其余步骤（要一次拿全用 `--wait-all`）。
   全量同一时间只许一个会话跑：交之前先看 `testbox status` 有没有别的 studiolo 全量在跑。
 - **ci 套是门槛，不是调试器**：改的过程中用定向命令（`testbox --remote testbox@testbox-ctl submit --project studiolo --arch x86_64 --cmd '…'`）验，攒成一批再交 ci 套。
-  Mac 本机不跑任何测试与编译检查（`cargo test`／`fmt`／`clippy`／`build`、Python 契约、前端 tsc／lint／vitest／build、真实管线都算，2026-09-23 用户硬约束）。唯一的例外是 Bottega（`bottega/`），只在 Mac Studio 上经 `scripts/bottega-local` 本机编译、测试，见第四节；它不在 ci 套里。
+  Mac 本机不跑任何测试与编译检查（`cargo test`／`fmt`／`clippy`／`build`、Python 契约、前端 tsc／lint／vitest／build、真实管线都算，2026-09-23 用户硬约束）。Bottega（`bottega/`）也不在本机直接跑，交 testbox 的 Mac 节点（`--arch macos --project bottega`，见第四节）；它不在 ci 套里。
 - 门禁命令由架构守卫逐行钉住（`crates/studiolo/tests/architecture_cases/ci.rs`）：删掉、注释、改参数、吞失败、关 errexit、换目录、
   改成后台服务都判红；有门禁的那一步第一行必须是对应目录的 `source …testbox-ci-env.sh`，最后一条门禁之前只许有别的门禁和几行版本诊断
   （插 `exit`、`if`、`cd`、改 PATH、同名函数也判红）。新加的回归放在那一步最后一条钉住的行之后，或者先在守卫里钉上。
@@ -91,7 +91,7 @@
 | | Mac（MacBook、Mac Studio） | Cursor Cloud VM（第六节） |
 |---|---|---|
 | 系统 | macOS arm64 | Ubuntu 24.04 x86_64，一次性 |
-| 本机跑测试与编译 | 不跑（2026-09-23）；只有 Bottega 例外：Mac Studio 经 `scripts/bottega-local`（第四节） | 可以；除前端检查外都经 `scripts/test-cursor-cloud.sh` |
+| 本机跑测试与编译 | 不跑（2026-09-23）；Bottega 交 testbox 的 Mac 节点（Mac Studio 本机原地跑，经 `scripts/bottega-local`，第四节） | 可以；除前端检查外都经 `scripts/test-cursor-cloud.sh` |
 | 连得到 `githubci` 与家里 192.168.100.x | 经 Tailscale 子网路由 | 连不到 |
 | Linux 回路入口 | `scripts/test-linux.sh [命令]`（同步到 `githubci` 跑）；测试箱 `testbox --remote testbox@testbox-ctl …`（第五节） | `scripts/test-cursor-cloud.sh <命令>` |
 

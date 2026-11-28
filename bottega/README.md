@@ -16,24 +16,31 @@ Bottega 是 [Droppy Code](https://getdroppycode.app) 1.6.0 的修改版（经 Ti
 
 ## 编译、测试、运行
 
-**只在 Mac Studio 上，一律经仓库根的 `scripts/bottega-local`**（Studiolo 的 vault ADR-043；别的机器上它自己拒绝）。不裸跑 `xcodebuild`、`swift`：
+**编译、测试只交 testbox 的 Mac 节点 `macos-1`（就是 Mac Studio 本机），一律经仓库根的 `scripts/bottega-local`**（Studiolo 的 vault ADR-048）。在 Mac Studio 上站在工作树根目录交，任务在这个目录里原地跑，产物留在原处；`build`、`test`、`xcodebuild`、`swift` 在 testbox 任务外拒跑。不裸跑 `xcodebuild`、`swift`。
+
+编 Debug 版（配方默认 `scripts/bottega-local build`）：
 
 ```bash
-scripts/bottega-local build
+testbox --remote testbox@testbox-ctl submit --arch macos --project bottega --memory 8G --cpu 8 --wait
 ```
 
+编并跑全部测试（`scripts/bottega-local test`）：
+
 ```bash
-scripts/bottega-local test
+testbox --remote testbox@testbox-ctl submit --arch macos --project bottega --memory 8G --cpu 8 --recipe full --wait
 ```
+
+testbox 编好以后，在本机打开看（不编译）：
 
 ```bash
 scripts/bottega-local run
 ```
 
-- `build`／`test`／`run` 先按 `project.yml` 用 xcodegen 重新生成 `Bottega.xcodeproj`（**不要手改工程**），再编 Debug 版 `Bottega Dev.app`，产物在 `bottega/build.noindex/dev`（每个 worktree 一份）。`run` 编完直接打开它，不装进 `/Applications`。
-- `test` 跑 `BottegaTests`（不进 App，只看编出来的包）和核心包的 `BottegaKitTests`、`BottegaLinkTests`，都是 Swift Testing。只跑核心包：`scripts/bottega-local swift test --package-path BottegaKit`。
+- `build`／`test` 先按 `project.yml` 用 xcodegen 重新生成 `Bottega.xcodeproj`（**不要手改工程**），再编 Debug 版 `Bottega Dev.app`，产物在 `bottega/build.noindex/dev`（每个 worktree 一份），成功后记一个「编好了」的戳 `build.noindex/dev/testbox-built`（内容是任务号）。
+- `run` 只在 testbox 任务外跑：不编译，打开 testbox 编好的那份，不装进 `/Applications`；戳之后 `bottega/` 下的源文件又改过就拒绝（`.md`、构建目录、生成的工程不算）。testbox 收不到 `open` 起的 App，所以不在任务里起 App。
+- `test` 跑 `BottegaTests`（不进 App，只看编出来的包）和核心包的 `BottegaKitTests`、`BottegaLinkTests`，都是 Swift Testing。只跑核心包：`testbox --remote testbox@testbox-ctl submit --arch macos --project bottega --memory 8G --cpu 8 --cmd 'scripts/bottega-local swift test --package-path BottegaKit' --wait`。
 - 只编 Debug，Debug 用临时签名（ad hoc，不碰钥匙串）。**发布版由用户本人签**：脚本拒绝 Release 和 archive。
-- `scripts/quick_run.sh` 是 Tillerwright 留下的「编完装进 `/Applications/Bottega Dev.app` 并重启」，会退出正在跑的那份，只在 Max 说「装上」时用。
+- `scripts/quick_run.sh` 把 testbox 编好的 Debug 版装进 `/Applications/Bottega Dev.app` 并重启（它不编译，源码比编好的新就拒绝），会退出正在跑的那份，只在 Max 说「装上」时用。
 
 ## 连 LMAS
 
@@ -43,7 +50,7 @@ scripts/bottega-local run
 - 键位：Return 换行，⌘Return 发送；框空时 ⌘Return 打开等得最久的批准单，看完全文再按一次 ⌘Return 弹 Touch ID。J、K 在时间线、泳道、卡板里移动。⌘1～⌘5 切固定的五页。
 - 批准单：App 连着、在跟事件，Mac 弹窗先让 2 分钟（LMAS 那边定的）；先点的算，后到的写「已经答过了」。签的摘要照 LMAS 发来的字节算，一个字节不改。
 - 连真的 LMAS 试：在 LMAS 仓库里 `scripts/lmas-local demo`（假的 CLI，不花额度；`--dir <短路径>` 停了留着），Bottega 这边 `open --env BOTTEGA_RUN_DIRECTORY=<它打印的 ui.sock 所在的目录> "bottega/build.noindex/dev/Build/Products/Debug/Bottega Dev.app"`。
-- 不用界面、不用指纹地验连接：`scripts/bottega-local swift run --package-path Probe bottega-probe <运行目录> <放钥匙的临时目录> [<把事件和一轮里的细节录成文件>]`，一行一个命令（`register <名字>`、`state`、`reconnect`、`reload`、`forget`、`seen`、`say <会话> <话>`、`interject`／`tell <线|last> <会话> <话>`、`answer <信|last> <话>`、`file <会话> <字节数>`、`asks`、`approve`／`decline <单|last>`、`approve-unread <单|last>`（带错的摘要）、`cut`（下一条意图的答复丢掉）、`flood <会话> <条数>`、`name <线> <标题>`、`pin`／`unpin`／`archive`／`unarchive <线>`、`read <线> [<号>]`、`add-project <名字> <路径>`、`remove-project <名字>`、`open <项目> <哪家> <角色> <模型|-> <强度|-> [<第一句话>]`、`model <线> <会话> <模型> [<强度>]`、`stop <轮>`、`lines`、`models`、`mail`、`overview`、`turns`、`turn <轮>`（取回来的和推来的对一遍，不一样就印出来）、`wait <毫秒>`、`quit`）。`Probe/` 是单独一个包，进不了 App；它登记的钥匙是软件做的，**只对演示用的 LMAS 用**。测试跑不了这件事：测试进程是 Apple 签的，LMAS 不认。
+- 不用界面、不用指纹地验连接（交 testbox：`--cmd 'scripts/bottega-local swift run --package-path Probe bottega-probe …'`）：`scripts/bottega-local swift run --package-path Probe bottega-probe <运行目录> <放钥匙的临时目录> [<把事件和一轮里的细节录成文件>]`，一行一个命令（`register <名字>`、`state`、`reconnect`、`reload`、`forget`、`seen`、`say <会话> <话>`、`interject`／`tell <线|last> <会话> <话>`、`answer <信|last> <话>`、`file <会话> <字节数>`、`asks`、`approve`／`decline <单|last>`、`approve-unread <单|last>`（带错的摘要）、`cut`（下一条意图的答复丢掉）、`flood <会话> <条数>`、`name <线> <标题>`、`pin`／`unpin`／`archive`／`unarchive <线>`、`read <线> [<号>]`、`add-project <名字> <路径>`、`remove-project <名字>`、`open <项目> <哪家> <角色> <模型|-> <强度|-> [<第一句话>]`、`model <线> <会话> <模型> [<强度>]`、`stop <轮>`、`lines`、`models`、`mail`、`overview`、`turns`、`turn <轮>`（取回来的和推来的对一遍，不一样就印出来）、`wait <毫秒>`、`quit`）。`Probe/` 是单独一个包，进不了 App；它登记的钥匙是软件做的，**只对演示用的 LMAS 用**。测试跑不了这件事：测试进程是 Apple 签的，LMAS 不认。
 - LMAS 正式的 `--bottega` 不认带 `get-task-allow`、关了库校验之类 entitlements 的程序（协议第 2 节）。发布版编好后先看一眼：`codesign -d --entitlements - Bottega.app` 里没有这几样；有 `get-task-allow` 就在 `project.yml` 的 Release 里加 `CODE_SIGN_INJECT_BASE_ENTITLEMENTS: NO`。
 - 只看界面、不连 LMAS：Debug 版 File › Open Recording…，开 `samples/waiting.jsonl`、`samples/turns.jsonl`（一轮里的细节，含 `live` 那些行）或 `BottegaKit/Tests/BottegaKitTests/Fixtures/events.jsonl`。只有 Debug 版认这几个环境变量：`BOTTEGA_RECORDING`（事件流文件）、`BOTTEGA_RUN_DIRECTORY`（这一次连哪个运行目录）、`BOTTEGA_PAGE`（`dispatcher`、`waiting`、`board`、`activity`、`devices`、`line:<号>`）、`BOTTEGA_DETAIL`（`card:<号>`、`message:`、`merge:`、`test:`、`turn:`）、`BOTTEGA_LANES=0`。
 - 测试数据是 LMAS `fixtures/bottega/` 的复制品，不手改：`bottega/scripts/sync_lmas_fixtures.sh` 比对，`--apply` 更新。
