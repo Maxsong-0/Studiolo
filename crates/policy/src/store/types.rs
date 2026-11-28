@@ -8,6 +8,17 @@ use crate::{Expansion, PolicyKind, Report};
 pub const MAX_PENDING_PROPOSALS: usize = 256;
 /// 每个实例的未完成提案上限（校验失败仍占名额，撤回／发布／被取代才释放）。
 pub const MAX_PENDING_PER_INSTANCE: usize = 8;
+/// 每类 AI 的未完成提案上限（口径同上）。每次连接都是新实例，换实例就绕得过每实例上限；
+/// 按类型再兜一层，一类 AI 的废提案占不满全库、挡不住别的类型（T-248）。
+pub const MAX_PENDING_PER_TYPE: usize = 128;
+
+// 三层名额的大小关系写死在编译期：类型名额小于全库才兜得住别的类型；大于 `list_proposals` 的 64 份，
+// 「还有更早的」那一行才会出现；大于每实例名额，按类型数才有意义。
+const _: () = assert!(
+    MAX_PENDING_PER_INSTANCE < crate::MAX_LISTED_PROPOSALS
+        && crate::MAX_LISTED_PROPOSALS < MAX_PENDING_PER_TYPE
+        && MAX_PENDING_PER_TYPE < MAX_PENDING_PROPOSALS
+);
 
 /// desired 的生命周期状态。
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
