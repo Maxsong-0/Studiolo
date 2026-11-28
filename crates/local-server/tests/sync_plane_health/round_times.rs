@@ -95,12 +95,12 @@ fn 终态未知和冻结的轮次不让最近闭合的一批前移而下一批�
         (10_600, unknown(2)),
         (10_900, blocked(2)),
     ] {
-        health.record_round(at, &outcome);
+        health.record_round(span(at), &outcome);
         assert_eq!(batch(&health), Some((1, 10_000)), "{outcome:?}");
     }
 
     fully_reported(&health, 2);
-    health.record_round(11_200, &settled(2));
+    health.record_round(span(11_200), &settled(2));
     assert_eq!(batch(&health), Some((2, 11_200)));
 }
 
@@ -109,8 +109,8 @@ fn 终态未知和冻结的轮次不让最近闭合的一批前移而下一批�
 fn 还没有一批闭合过时停住的轮次不盖最近一批() {
     let health = PlaneHealth::new(None);
 
-    health.record_round(10_000, &unknown(11));
-    health.record_round(10_300, &blocked(11));
+    health.record_round(span(10_000), &unknown(11));
+    health.record_round(span(10_300), &blocked(11));
 
     assert_eq!(health.bridge().last_batch, None);
 }
@@ -121,7 +121,7 @@ fn 冻结的批次不会被正文说成已闭合() {
     let health = after_clean_batch();
     fully_reported(&health, 2);
 
-    health.record_round(10_300, &blocked(2));
+    health.record_round(span(10_300), &blocked(2));
 
     let section = bridge_section(Some(&health.bridge())).expect("固定正文必须可构造");
     assert!(

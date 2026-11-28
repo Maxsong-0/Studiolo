@@ -104,7 +104,7 @@ studiolo-human（uid 1000）                      root                          
 
 ## 6 健康证据字段（D11，`observability::health::BridgeEvidence`）
 
-节 `sync-bridge`／「双向 Bridge」：`last_batch{sequence,unix_seconds}`、`fused`、`unknown_jobs`、`quiescence_valid`、
+节 `sync-bridge`／「双向 Bridge」：`last_batch{sequence,unix_seconds}`（最近闭合的一批，时刻取闭合那一轮结束时；终态未知、冻结的轮次不动它，BUG-048）、`fused`、`unknown_jobs`、`quiescence_valid`、
 `conflict_copies`、`mirror_bytes`、`last_exit`（clean／non_zero／signal／deadline_exceeded／owner_stopped／unconfirmed）、
 `recovery`（idle／forced_mirror_remote／backoff）、`residue_guard`（clear／blocked）、`mode`、`config_matches`；
 另有三个不在必备之列的字段 `deletes_blocked`（BUG-046）、`path_usage{used,budget}`（BUG-047：最近一轮三方并集的路径数与同步路径预算）
@@ -116,7 +116,7 @@ studiolo-human（uid 1000）                      root                          
 `conflict_copies`＝最近一次完整观察里两侧命名为冲突副本的路径数（headless 与 `studiolo-canonical` 两种设备名都识别）
 ＋持久 `conflict_stamps` 当前条数（含正在续写副本的冲突，非历史副本文件总数）；`owner_stopped`＝headless 在 owner 关停时被 `request_stop` 停下。
 平面未装配（默认关闭）时本节也是未知：与恢复点、白名单两节同一口径，没启用的能力不显示绿。
-`owner-liveness` 加 `sync-transport`（回执＝最近一轮时刻，周期 600 s）。`sync-quota`：`SyncUsage` 取镜像字节，
+`owner-liveness` 加 `sync-transport`（回执＝最近一轮**结束**时刻，驱动器返回之后另取、不是喂给这一轮的开始时刻，BUG-049；周期 600 s）。`sync-quota`：`SyncUsage` 取镜像字节，
 上限＝`manual_quota.account_limit_bytes`，预警＝七成；detail 固定带「非账号用量」；`manual_quota` 缺→未知。
 前端契约 `docs/contracts/health-sync-bridge.md` 由 W5 写，本轮不改 `web/**`。
 

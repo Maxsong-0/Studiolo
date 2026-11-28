@@ -19,7 +19,7 @@ T-132 P1（ADR-025 D11），2026-09-23；T-205 于 2026-11-13 补齐只读界面
 
 | 字段 | 形状 |
 |---|---|
-| `last_batch` | `null` 或 `{sequence, closed_at}`；序号为 u64 十进制字符串，时刻为 UTC RFC3339 或 `null` |
+| `last_batch` | `null` 或 `{sequence, closed_at}`：最近**闭合**的那一批（BUG-048）——一批闭合（`Settled`）那一轮结束时盖上序号和这一轮结束的时刻；停住（终态未知、冻结）的轮次不动它，本进程还没有一批闭合过就是 `null`。序号为 u64 十进制字符串，时刻为 UTC RFC3339 或 `null`（转不出 RFC3339 时） |
 | `fused` / `quiescence_valid` / `config_matches` | 布尔或 `null` |
 | `unknown_jobs` / `conflict_copies` / `mirror_bytes` / `deletes_blocked` | u64 十进制字符串或 `null`，避免浏览器整数精度丢失 |
 | `last_exit` | `clean` / `non_zero` / `signal` / `deadline_exceeded` / `owner_stopped` / `unconfirmed` / `null` |
@@ -95,7 +95,8 @@ canonical、镜像各算一遍，范围里的内容到上限的三分之一左�
 `冲突副本 <n>` ＝ 最近一次完整观察里两侧命名为冲突副本的路径数（headless 与 studiolo-canonical 两种设备名都识别）
 ＋ 持久 `conflict_stamps` 的当前条数（启动、配戳与回收后覆盖回填；包含已配戳、正在续写副本的冲突，
 不代表 `ops/` 的历史副本文件总数）。模式：`mirror-remote`／
-`bidirectional`，与审批文档 `headless_mode` 同一字面量。`<unix>` 是该批闭合的 Unix 秒整数，前端要显示时刻自行格式化。
+`bidirectional`，与审批文档 `headless_mode` 同一字面量。`<unix>` 是该批闭合那一轮结束的 Unix 秒整数（闭合在轮内完成，
+这时它一定已经闭合；停住的批次不盖，见下表「最近一批」），前端要显示时刻自行格式化。
 
 前端要接的字段：`code` 用于定位与着色分支，`title` 直接显示，`state` 决定颜色，`detail` 整句显示；
 不要解析 `detail` 里的数字做二次判断——数字只供人读，判定以 `state` 为准。
@@ -106,7 +107,7 @@ canonical、镜像各算一遍，范围里的内容到上限的三分之一左�
 
 | 字段 | 来源 |
 |---|---|
-| 最近一批 | 轮末一批闭合或停住（`record_round`） |
+| 最近一批 | 轮末一批闭合（`Settled`）时由 `record_round` 盖上序号与这一轮结束的时刻；终态未知（`Unknown`）、冻结（`Blocked`）的轮次不动它（BUG-048：停住的轮次原来也盖，卡住几十天时刻照样每轮往前走，读的人会以为同步在正常闭合）。卡住的批次看终态未知动作数、删除熔断两项 |
 | 删除熔断、终态未知动作数、冲突副本数 | 执行段回填 `record_execution`（冲突副本数＝`record_observed_copies` 的观察数＋`record_conflicts` 的持久冲突数）；一批闭合的轮末把前两项复位为未生效／0 |
 | 静止证据 | 轮末置位：除退避跳过外的成功轮为有效，任何失败轮为过期 |
 | 镜像字节数 | 观察镜像后 `record_usage` |
@@ -126,7 +127,9 @@ canonical、镜像各算一遍，范围里的内容到上限的三分之一左�
 ## 3. `owner-liveness` 新增 `sync-transport`
 
 平面装配后 `owner-liveness` 的证据里多一个 owner，标签 `sync-transport`：回执时刻＝最近一轮结束时刻
-（无论那轮成功与否），约定周期 600 秒（两倍轮间隔）。一轮没跑过时它是"证据不足"，超过 600 秒没有新一轮即"超期"。
+（无论那轮成功与否），约定周期 600 秒（两倍轮间隔）。结束时刻是驱动器返回之后另取的（`sync_plane::run_and_record`），
+不是喂给这一轮的开始时刻（BUG-049：原来记的是开始时刻，回执年龄多算上一轮的用时）；同步状态回执里「对上」「守卫证明」
+照旧取开始时刻，见 [sync-status-receipt](sync-status-receipt.md)。一轮没跑过时它是"证据不足"，超过 600 秒没有新一轮即"超期"。
 `detail` 仍是既有模板 `活性回执正常 <n> 个，超期 <n> 个，证据不足 <n> 个`；备份 Worker 仍未接线，
 所以平面装配后这一节的 owner 只有它一个，没装配时仍是 `没有任何 owner 活性证据`。
 
@@ -151,6 +154,8 @@ canonical、镜像各算一遍，范围里的内容到上限的三分之一左�
   三组标签、配额后缀、公开摘要。
 - `crates/local-server/src/health/tests/probe.rs`、`src/sync_plane/health/tests.rs`、
   `src/startup/health_input.rs`（`tests`）：探针接线、回填语义、七成预警。
+- `crates/local-server/tests/sync_plane_health/round_times.rs`（挂在 `sync_plane/health/tests.rs`）：一轮的两个时刻各落到哪
+  （活性回执、一批闭合取结束，对上、守卫证明取开始），停住的轮次不让最近一批前移（BUG-048、BUG-049）。
 
 ## 6. 人工账号配额（T-205）
 
