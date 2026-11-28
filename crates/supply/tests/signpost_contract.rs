@@ -117,7 +117,9 @@ fn signpost_has_six_sections_and_is_derived_from_index_tasks_and_rules() {
         !text.contains("快照里的准则"),
         "母本存在时不用 CLAUDE.md 快照的准则"
     );
-    assert!(text.contains("入口：项目/Alpha/CLAUDE.md@"));
+    // 可读项目不止一个时，项目的 CLAUDE.md 由「入口规律」说明，不逐条列（BUG-061）。
+    assert!(!text.contains("入口：项目/Alpha/CLAUDE.md@"));
+    assert!(text.contains("、02-日志/<日期>.md、CLAUDE.md\n"));
     assert!(text.contains("只读；白名单：项目/Alpha、项目/Bare、_规则；写与审批：无（M3）"));
     assert!(text.contains("tools：handshake（重取路牌）"));
     let index = snapshot
@@ -320,11 +322,14 @@ fn capacity_notice_opens_section_two_and_leaves_the_identity_lines_in_place() {
             lines[identity + 1].starts_with("类型 claude · 实例 "),
             "{warned}"
         );
-        assert_eq!(lines[identity + 2], "## 2 项目状态", "{warned}");
-        assert_eq!(lines[identity + 3], capacity, "{warned}");
-        // 前几行和不带提醒时一字不差，只多了第 2 节开头那一行。
-        let plain_lines = plain.split('\n').collect::<Vec<_>>();
-        assert_eq!(lines[..=identity + 2], plain_lines[..=identity + 2]);
-        assert_eq!(lines.len(), plain_lines.len() + 1, "{warned}");
+        // 除了第 2 节标题下多出提醒这一行，和不带提醒时一字不差。
+        let heading = lines
+            .iter()
+            .position(|line| *line == "## 2 项目状态")
+            .unwrap();
+        assert_eq!(lines[heading + 1], capacity, "{warned}");
+        let mut without = lines.clone();
+        without.remove(heading + 1);
+        assert_eq!(without, plain.split('\n').collect::<Vec<_>>(), "{warned}");
     }
 }

@@ -92,13 +92,19 @@
 ## 3. 冷启动路牌（二元验收）
 
 - 交付点：`InitializeResult.instructions` 就是路牌；tool `handshake` 可重取同一内容。
+- **可见段**（T-263，vault BUG-061）：Claude Code 只把 `instructions` 的前 4096 个 UTF-16 单元交给模型（汉字 1、emoji 2），
+  其余换成「… [truncated]」；`handshake` 的结果不受这个上限管。所以节号不变，排列改成 **1、5、6、3、4、2**，第 2 节的项目清单放最后；
+  第 1 节末尾一行写明排法和「末尾出现 [truncated] 就调 handshake 取全文」。可见段＝抬头到第 2 节说明行（含容量提醒），
+  派生时按 `CLIENT_VISIBLE_UTF16` 裁：放不下就从当前等级起只把第 5、6、4 节往深裁，不动项目清单；最深一级仍放不下照发、不失败，
+  硬约束和续读入口排在最前，仍整节在线内。黑板行在第 4 节标题下一行。
 - 六项全部**机器派生**（A1），不读任何人写的「路牌文件」：
   1. 我是谁：类型、实例 id、注册时间；
   2. 白名单内每个项目：`00-总览/INDEX.md` 首表的「当前版本 / 状态 / 最近日志 / 未关闭 BUG」＋「当前重点」首条（截断 200 字）；骨架缺失的字段显示「不可用」；副本用到任一条协议上限的 80% 起，本节第一行是容量提醒（见 §6），机器解析不要把本节首行当成项目数；
   3. 能力摘要：只读；白名单清单；写与审批：无（M3）；
   4. 待我做的事：`04-协调/TASKS.md`「① 进行中」各行（ID / 任务截断 80 字 / 状态）＋「待认领」段落标题；按项目轮流取（第 1 轮每个项目取第 1 条，第 2 轮取第 2 条……），收尾行写明全部项目合计与实际列出的条数；裁剪等级 0～1 时第 2 项的项目行另带该项目的「进行中 n／待认领 m」（T-193）；
   5. 硬约束：白名单内 `通用工作规则.md`（母本）的 `## 准则…` 标题（母本缺失时退回项目 `CLAUDE.md` 快照「准则」节的编号加粗条目）＋ 两处文件里含「一律叠加 / 必叠」的硬绑定句；
-  6. 继续拉：tool 清单 ＋ 入口文件（INDEX、TASKS、最新日志、规则母本）的路径与 revision。
+  6. 继续拉：tool 清单 ＋ 入口文件（INDEX、TASKS、最新日志、规则母本）的路径与 revision；可读项目不止一个时另有「入口规律」一行，
+     各项目的 `CLAUDE.md` 由它说明、不再逐条列（只有一个可读项目时没有这行，`CLAUDE.md` 照旧给入口）。
 - 预算：以 `tiktoken-rs` o200k_base 计量 instructions 文本；派生器先按四级裁剪（当前重点字数、进行中行数、待认领条数、入口条数）逼近内部目标 ≤6000（`TARGET_BUDGET_TOKENS`），**裁剪后仍 > 8000 token（`HARD_BUDGET_TOKENS`）即 initialize 失败**（`budget_exceeded`），记 `handshake.budget_exceeded`。**这是二元验收项**，不得降级为告警。真实库首次验收（2026-09-07）：项目/Studiolo + _规则 的路牌 1583 字符、o200k 931 token（cl100k 参考 1105），裁剪等级 0（见 verify-log）。
 - 成功记 `handshake.served`（类型、实例、路牌版本＝生成代次、实际 token 数）。
 
@@ -161,6 +167,9 @@
 
 - 对象安全与依赖方向：supply 不依赖 axum/rmcp；agent-server 不依赖 FsVaultBroker、ControlDb、auth。
 - 预算二元：构造超预算 INDEX 夹具 → initialize 失败且账本有 `handshake.budget_exceeded`；正常夹具 → instructions ≤8000 且六项齐全。
+- 可见段（`crates/agent-server/tests/signpost_visible_contract.rs`，白名单照生产单元模板的 `--allow`、工具说明用真实 `TOOLS`）：
+  生产规模下线内有除项目清单以外的全部内容且不触发裁剪；长待办、半数 emoji 的待办、四条上限都到线的容量提醒下仍在线内，且项目清单不受影响；
+  白名单涨到能力段自己放不下时硬约束与续读入口仍整节在线内。4096 在测试里写死，不引产品常量。
 - 身份：无 token 401；错 token 401 且 `agent.action_denied`（匿名的按入口和原因限频，认出类型的逐条，`mcp_cases/unrecognized.rs`、`auth_private/unrecognized.rs`）；正确 token → 实例落库并绑定会话；吊销类型后立即 401。身份库读不出来（测试把私有库文件改成 0640）→ 503 不带 challenge、会话不丢，恢复后同一令牌和会话照常可用（`mcp_transport_cases/identity_store.rs`、`http_text/availability.rs`、`mcp_transport_private/identity_outage.rs`）。
 - 类型 token 显示门禁（真实 PTY 驱动实际二进制，`crates/agent-server/tests/admin_terminal_contract.rs`
   ＋ `tests/support/admin_terminal.py`）：真实控制终端上恰好显示一次；无控制终端 / 全管道 /

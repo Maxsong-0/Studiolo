@@ -98,12 +98,7 @@ impl AgentSession {
         match derived {
             Ok(mut signpost) => {
                 let board = self.board_signpost(grant).await?;
-                let at = signpost
-                    .text
-                    .find("## 5 硬约束")
-                    .ok_or_else(|| McpError::internal_error("路牌格式无效", None))?;
-                signpost.text.insert_str(at, &board);
-                signpost.tokens = studiolo_supply::count_tokens(&signpost.text);
+                signpost.insert_board(&board);
                 if signpost.tokens > HARD_BUDGET_TOKENS {
                     let event = audit::handshake_budget_exceeded(
                         actor,
