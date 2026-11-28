@@ -3,7 +3,7 @@ use super::{
     disk::{self, Folder},
     limits, store,
 };
-use crate::{BrokerError, FsVaultBroker, writer::disk as codec};
+use crate::{BrokerError, FsVaultBroker};
 
 pub(crate) fn reserve(
     broker: &FsVaultBroker,
@@ -45,9 +45,12 @@ pub(crate) fn reserve(
     if deleting {
         disk::reserve(broker, Folder::Tombstones, 1, 2 * limits::REQUEST_LIMIT)?;
     }
-    let (_, count, bytes) =
-        crate::mutation::replay::scan(&broker.data, Some(broker.writer.binding.pair_id))?;
-    if count >= codec::REPLAY_COUNT || bytes > codec::REPLAY_BYTES - codec::RECORD_LIMIT {
+    // 和正文写入同一把尺（T-249 G1）；读内存里的散件用量，不全目录扫（G5）。
+    if !crate::recorded::capacity::replay_room(
+        broker
+            .loose_usage()?
+            .tally(crate::loose_usage::LooseFolder::Replays),
+    ) {
         return Err(BrokerError::WriterLimitExceeded);
     }
     free(

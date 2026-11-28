@@ -6,7 +6,7 @@ use super::{
 };
 use crate::{
     BrokerError, FsVaultBroker, MutationActor, Revision, VaultPath, blob::file::ContentProof,
-    records::WriterRecords, writer::disk as codec,
+    writer::disk as codec,
 };
 use serde::{Deserialize, Serialize};
 
@@ -152,46 +152,9 @@ pub(crate) fn protected(
         return Ok(Vec::new());
     }
     let mut result = Vec::new();
-    for name in disk::names(broker, Folder::Records)? {
-        let value = super::request::load(broker, name.trim_end_matches(".json"))?
-            .ok_or(BrokerError::CorruptWriterState)?;
-        if let super::FileOperationKind::Rename { to, .. } = &value.frozen.kind
-            && to == path
-        {
-            if let Some(terminal) = super::terminal::load(broker, &value.frozen)? {
-                if let Some(revision) = terminal.rename.and_then(|r| r.target_revision) {
-                    result.push(revision);
-                }
-            } else {
-                let state = crate::mutation::load(broker)?;
-                let active = state
-                    .file_operation
-                    .as_ref()
-                    .filter(|a| a.frozen == value.frozen)
-                    .ok_or(BrokerError::CorruptWriterState)?;
-                if let Some(revision) = active.rename.as_ref().and_then(|r| r.target_revision) {
-                    result.push(revision);
-                }
-            }
-        }
-        if &value.frozen.path == path {
-            if let FilePresence::Present { revision, .. } = value.observed_before {
-                result.push(revision);
-            }
-            if let super::FileOperationKind::RestoreTombstone { tombstone_id } = &value.frozen.kind
-            {
-                result.push(load(broker, tombstone_id)?.entry()?.revision);
-            }
-        }
-    }
-    // 打了包的改名照样保护：它的目标路径留着目标 revision，源路径留着源 revision。
-    for rename in broker.archive()?.renames() {
-        if &rename.target == path {
-            result.extend(rename.target_revision);
-        }
-        if &rename.source == path {
-            result.extend(rename.source_revision);
-        }
+    // 散件和打了包的同一套判法（T-249）。
+    for record in super::retained::all(broker)? {
+        result.extend(record.protects(broker, path)?);
     }
     result.sort();
     result.dedup();

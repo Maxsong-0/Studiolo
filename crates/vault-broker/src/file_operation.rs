@@ -34,6 +34,7 @@ mod prepared;
 mod query;
 pub(crate) mod record;
 pub(crate) mod request;
+pub(crate) mod retained;
 mod schema;
 mod status_model;
 pub(crate) mod store;

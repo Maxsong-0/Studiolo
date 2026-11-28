@@ -439,5 +439,8 @@ fn the_sealed_offset_only_follows_successful_admitted_jobs_and_never_goes_back()
     succeed(&ledger, &key(5), true);
     assert_eq!(view(&ledger).sealed_offset(), Some(sixth.offset()));
     // 离线命令从头读一遍，结论一样。
-    assert_eq!(sealed_offset(&ledger).unwrap(), Some(sixth.offset()));
+    assert_eq!(
+        seal_mark(&ledger).unwrap().map(|mark| mark.offset),
+        Some(sixth.offset())
+    );
 }

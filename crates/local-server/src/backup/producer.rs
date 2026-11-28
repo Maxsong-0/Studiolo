@@ -318,10 +318,10 @@ impl BackupProducer {
             self.refresh(&mut state.queue)?;
         }
         let (answer, job) = self.decide(&mut state.queue, clock)?;
-        let sealed_offset = state.queue.sealed_offset();
+        let seal = state.queue.seal_mark();
         state.busy = true;
         drop(state);
-        self.launch(job, sealed_offset).map(|()| answer)
+        self.launch(job, seal).map(|()| answer)
     }
 
     /// 只回收过期暂存、顺带打包写者旧记录：不安排封存、不冻结、不读账本。监听循环起来时做一次，
@@ -334,25 +334,25 @@ impl BackupProducer {
             return;
         }
         // 打包的水位用已经读到的：没读到末尾只会偏小，少打几包。
-        let sealed_offset = state.queue.sealed_offset();
+        let seal = state.queue.seal_mark();
         state.busy = true;
         drop(state);
         // 线程没起来时 `launch` 已经复位 busy，下一轮再试。
-        let _ = self.launch(None, sealed_offset);
+        let _ = self.launch(None, seal);
     }
 
     /// 起后台线程（回收；`job` 有值时接着做这一次封存，没有就看要不要打包旧记录）。调用前 busy 已经置上。
     fn launch(
         self: &Arc<Self>,
         job: Option<JobKey>,
-        sealed_offset: Option<u64>,
+        seal: Option<super::queue::SealMark>,
     ) -> Result<(), AuditError> {
         let producer = Arc::clone(self);
         // 线程起来之前置上：关停这时来问，也要等这个线程走过窗口。
         self.window.open();
         let spawned = std::thread::Builder::new()
             .name("backup-producer".to_owned())
-            .spawn(move || producer.housekeep(job, sealed_offset));
+            .spawn(move || producer.housekeep(job, seal));
         match spawned {
             Ok(handle) => {
                 // 上一个线程已经复位过 busy（否则走不到这里），它的句柄直接换掉。
@@ -402,7 +402,7 @@ impl BackupProducer {
     }
 
     /// 后台线程：先回收过期暂存、收口上次没打完的旧记录，再做这一次封存（如果安排了），没安排就看要不要打包。
-    fn housekeep(&self, job: Option<JobKey>, sealed_offset: Option<u64>) {
+    fn housekeep(&self, job: Option<JobKey>, seal: Option<super::queue::SealMark>) {
         // 正常返回和 panic 展开都要复位 busy，否则之后的 `schedule` 永远回 `outstanding`。
         let _idle = Idle(&self.state);
         // 同样：线程不管怎么结束，关停都不能一直等窗口。
@@ -419,7 +419,7 @@ impl BackupProducer {
         let settled = self.settle_records();
         let Some(key) = job else {
             if settled {
-                self.archive_records(sealed_offset);
+                self.archive_records(seal);
             }
             return;
         };

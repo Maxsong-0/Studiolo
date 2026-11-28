@@ -177,9 +177,18 @@ impl Queue {
         self.recovery_point
     }
 
-    /// 最近一次成功封存盖到的人侧账本 offset：写者旧记录打包的水位。失败、未验证的作业不算。
+    /// 最近一次成功封存盖到的人侧账本 offset。失败、未验证的作业不算；生产只用 [`Self::seal_mark`]。
+    #[cfg(test)]
     pub(super) fn sealed_offset(&self) -> Option<u64> {
         self.sealed_offset
+    }
+
+    /// 打包用的整个水位：账本 offset 加上内容截止时刻（T-249）。
+    pub(super) fn seal_mark(&self) -> Option<SealMark> {
+        self.sealed_offset.map(|offset| SealMark {
+            offset,
+            content_cutoff_ms: self.recovery_point.map(|mark| mark.content_cutoff_ms),
+        })
     }
 
     /// 还没收口的作业里序号最小、也就是最早的那条；序号单调递增。
@@ -223,8 +232,28 @@ impl Queue {
     }
 }
 
-/// 从头读一遍账本，交回最近一次成功封存盖到的人侧账本 offset；离线维护命令用，不占生产者的进度。
-pub(crate) fn sealed_offset(ledger: &dyn AuditLedger) -> Result<Option<u64>, AuditError> {
+/// 写者旧记录打包的水位（BUG-051、T-249）：最近一次成功封存盖到的人侧账本 offset，和成功封存里最晚的内容截止时刻。
+/// 两样都只往前走；有审计主体的记录按两份回执的 offset 判，没有的（看板投影）按请求时间早于截止时刻判。
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
+pub(crate) struct SealMark {
+    /// 人侧账本 offset。
+    pub(crate) offset: u64,
+    /// 内容截止时刻（Unix 毫秒）；成功的作业都没有准入时没有。
+    pub(crate) content_cutoff_ms: Option<i64>,
+}
+impl SealMark {
+    /// 现在这一刻的打包判据。
+    pub(crate) fn cutoff(self, now_ms: i64) -> studiolo_vault_broker::ArchiveCutoff {
+        studiolo_vault_broker::ArchiveCutoff {
+            sealed_offset: self.offset,
+            sealed_content_ms: self.content_cutoff_ms,
+            now_ms,
+        }
+    }
+}
+
+/// 从头读一遍账本，交回最近一次成功封存的水位；离线维护命令用，不占生产者的进度。
+pub(crate) fn seal_mark(ledger: &dyn AuditLedger) -> Result<Option<SealMark>, AuditError> {
     const PAGE: usize = 8192;
     let mut queue = Queue::default();
     loop {
@@ -237,7 +266,7 @@ pub(crate) fn sealed_offset(ledger: &dyn AuditLedger) -> Result<Option<u64>, Aud
             queue.absorb(super::producer::TARGET, record);
         }
         if page.len() < PAGE {
-            return Ok(queue.sealed_offset());
+            return Ok(queue.seal_mark());
         }
     }
 }

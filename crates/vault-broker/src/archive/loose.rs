@@ -47,7 +47,7 @@ pub(super) fn read(data: &Dir, part: Part, name: &str) -> Result<Option<Loose>, 
 pub(super) fn matching(data: &Dir, segment: &Segment) -> Result<Option<Vec<Loose>>, BrokerError> {
     let mut found = Vec::with_capacity(segment.packs.len() * 4);
     for (pack, _) in &segment.packs {
-        for (part, bytes) in pack.kind.parts().into_iter().zip(&pack.bytes) {
+        for (part, bytes) in pack.kind.parts().iter().copied().zip(&pack.bytes) {
             match read(data, part, pack.name_of(part))? {
                 Some(loose) if &loose.bytes == bytes => found.push(loose),
                 _ => return Ok(None),
@@ -63,8 +63,26 @@ pub(super) fn remove(broker: &FsVaultBroker, loose: &Loose) -> Result<(), Broker
     let dir = open(&broker.data, loose.part.directory())?.ok_or(BrokerError::CorruptWriterState)?;
     let file_name = loose.part.file_name(&loose.name);
     loose.pin.check(&dir, &file_name, disk::RECORD_LIMIT)?;
-    dir.remove_file(&file_name)
-        .map_err(|e| BrokerError::io("remove archived writer record", e))
+    let removed = dir
+        .remove_file(&file_name)
+        .map_err(|e| BrokerError::io("remove archived writer record", e));
+    touch(broker, loose.part, &file_name);
+    removed
+}
+
+/// 正文请求目录、重放目录里的一条增删过：内存里的散件用量跟着改（T-249 G5）。别的目录不记。
+/// 重放散件变了，旧格式历史索引（只记散件里的）也作废，下次用到重建：打包、还原都不常做，重建一次是一遍散件。
+pub(super) fn touch(broker: &FsVaultBroker, part: Part, file_name: &str) {
+    use crate::loose_usage::LooseFolder;
+    let folder = match part {
+        Part::Descriptor | Part::IntentAck | Part::OutcomeAck => LooseFolder::Requests,
+        Part::Replay => {
+            crate::history::legacy_forget(broker);
+            LooseFolder::Replays
+        }
+        Part::FileRequest | Part::FileIntentAck | Part::FileOutcomeAck => return,
+    };
+    broker.loose_touch(folder, file_name);
 }
 
 /// 删过散件的目录一起落盘。

@@ -40,6 +40,7 @@ pub use gateway_seal::{GatewayCallReceipt, GatewayCallSeal, GatewayPublisher};
 mod history;
 #[cfg(test)]
 mod l0_tests;
+mod loose_usage;
 mod maintenance;
 pub use file_operation::{
     FileEffect, FileOperationAuditCandidate, FileOperationAuditEvent, FileOperationKind,

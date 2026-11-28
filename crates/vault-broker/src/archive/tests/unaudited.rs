@@ -69,3 +69,108 @@ fn six_thousand_unaudited_writes_keep_writing_answering_and_sealing() {
     let broker = fixture.reopen();
     answers(&broker, &board(0));
 }
+
+/// 没有回执的只看时间：请求时间要早于成功封存的内容截止时刻（同一毫秒不算），还没有截止时刻就一条不打；
+/// 有主体的那篇照旧看回执，水位是 0 就不打。
+#[test]
+fn an_unaudited_write_is_packed_only_once_a_seal_cut_off_after_it() {
+    let fixture = Fixture::new();
+    let mut broker = fixture.open();
+    notes(&mut broker, 1);
+    let shape = Shape::unaudited();
+    bulk_with(&broker, 0..1, shape);
+    for (sealed_content_ms, expected) in [
+        (None, 0),
+        (Some(i64::MIN), 0),
+        (Some(shape.at), 0),
+        (Some(shape.at + 1), 1),
+    ] {
+        let cutoff = ArchiveCutoff {
+            sealed_offset: 0,
+            sealed_content_ms,
+            ..later()
+        };
+        assert_eq!(pack(&mut broker, cutoff), expected, "{sealed_content_ms:?}");
+    }
+    answers(&broker, &unaudited_request(0));
+}
+
+/// 没满 7 天的照旧不打，哪怕截止时刻早就过了；满 7 天当天起打。
+#[test]
+fn an_unaudited_write_must_also_be_seven_days_old() {
+    let fixture = Fixture::new();
+    let mut broker = fixture.open();
+    notes(&mut broker, 1);
+    let shape = Shape {
+        at: now() - DAY,
+        audited: false,
+    };
+    bulk_with(&broker, 0..1, shape);
+    for (now_ms, expected) in [(shape.at + 7 * DAY - 1, 0), (shape.at + 7 * DAY, 1)] {
+        let cutoff = ArchiveCutoff {
+            sealed_offset: 0,
+            sealed_content_ms: Some(shape.at + 1),
+            now_ms,
+        };
+        assert_eq!(pack(&mut broker, cutoff), expected, "{now_ms}");
+    }
+}
+
+/// 段里有了新类别，状态升第 10 版：说成第 9 版的不开（旧程序只认到 9，会把新类别的包当坏的）；
+/// 只有老类别的照旧第 9 版。还原之后回到第 8 版、照常开库、旧键照答。
+#[test]
+fn a_new_kind_of_pack_raises_the_format_and_unpack_brings_it_back() {
+    let fixture = Fixture::new();
+    let mut broker = fixture.open();
+    notes(&mut broker, 1);
+    let audited_only = ArchiveCutoff {
+        sealed_content_ms: None,
+        ..later()
+    };
+    assert_eq!(pack(&mut broker, audited_only), 1);
+    assert_eq!(fixture.state()["format_version"], 9);
+    broker.mutate(board(0)).unwrap();
+    assert_eq!(pack(&mut broker, later()), 1);
+    assert_eq!(fixture.state()["format_version"], 10);
+    drop(broker);
+    let packed = fixture.state();
+    let mut downgraded = packed.clone();
+    downgraded["format_version"] = 9.into();
+    fs::write(
+        fixture.data.join("writer-state.json"),
+        serde_json::to_vec(&downgraded).unwrap(),
+    )
+    .unwrap();
+    assert!(fixture.try_reopen().is_err());
+    fs::write(
+        fixture.data.join("writer-state.json"),
+        serde_json::to_vec(&packed).unwrap(),
+    )
+    .unwrap();
+    let mut broker = fixture.reopen();
+    let done = broker.archive_unpack().unwrap();
+    assert_eq!((done.packs, done.descriptors, done.replays), (2, 2, 2));
+    assert_eq!(fixture.state()["format_version"], 8);
+    drop(broker);
+    let broker = fixture.reopen();
+    answers(&broker, &board(0));
+}
+
+/// 只有老类别的段，状态却说第 10 版：也不开（第 10 版当且仅当段里有新类别）。
+#[test]
+fn a_tenth_format_without_a_new_kind_of_pack_is_refused() {
+    let fixture = Fixture::new();
+    let mut broker = fixture.open();
+    notes(&mut broker, 1);
+    assert_eq!(pack(&mut broker, later()), 1);
+    drop(broker);
+    let mut state = fixture.state();
+    assert_eq!(state["format_version"], 9);
+    state["format_version"] = 10.into();
+    fs::write(
+        fixture.data.join("writer-state.json"),
+        serde_json::to_vec(&state).unwrap(),
+    )
+    .unwrap();
+    assert!(fixture.try_reopen().is_err());
+}

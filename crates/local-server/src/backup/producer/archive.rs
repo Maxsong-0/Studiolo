@@ -1,14 +1,14 @@
 //! 写者旧记录打包的触发（BUG-051、T-235）。每一轮都先收口上次没做完的；不做封存的那一轮，回收完暂存之后再看一眼要不要打。
 //!
-//! 水位是最近一次成功作业准入里的人侧账本 offset：还没有成功过的封存就不打。用量到一半才打，
+//! 水位是最近一次成功作业准入里的人侧账本 offset 和内容截止时刻（[`SealMark`]）：还没有成功过的封存就不打。用量到一半才打，
 //! 平时这里只读一次内存里的用量。每一步之间放开写者锁，也在这时看是否在关停：关停最多等手上这一步。
 use super::{BackupProducer, now_millis};
-use crate::LocalError;
+use crate::{LocalError, backup::queue::SealMark};
 use std::{
     sync::PoisonError,
     time::{Duration, Instant},
 };
-use studiolo_vault_broker::{ArchiveCursor, ArchiveCutoff, BrokerError};
+use studiolo_vault_broker::{ArchiveCursor, BrokerError};
 
 /// 一轮最多打这么久；没打完的下一轮从停下的地方接着来。
 pub(super) const ROUND_BUDGET: Duration = Duration::from_secs(5);
@@ -37,18 +37,15 @@ impl BackupProducer {
     }
 
     /// 打一轮。收口没成、在关停都不会走到这里；步与步之间也看关停。
-    pub(crate) fn archive_records(&self, sealed_offset: Option<u64>) {
+    pub(crate) fn archive_records(&self, seal: Option<SealMark>) {
         let workbench = &self.inputs.workbench;
-        let (Some(sealed_offset), Some(batch)) = (sealed_offset, workbench.archive_due()) else {
+        let (Some(seal), Some(batch)) = (seal, workbench.archive_due()) else {
             return;
         };
         let Some(now_ms) = self.archive_now() else {
             return;
         };
-        let cutoff = ArchiveCutoff {
-            sealed_offset,
-            now_ms,
-        };
+        let cutoff = seal.cutoff(now_ms);
         let started = Instant::now();
         let mut cursor = self.take_cursor();
         let mut packed = 0;

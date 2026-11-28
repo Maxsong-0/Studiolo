@@ -49,6 +49,10 @@ pub(crate) fn load(records: &dyn WriterRecords) -> Result<State, BrokerError> {
             BrokerError::CorruptWriterState
         });
     }
+    // 第 10 版当且仅当段里有新种类：说低了，只认第 9 版的旧程序会去读它不认识的包；说高了，是改过或坏了。
+    if records.archive()?.needs_v10() != (state.format_version >= 10) {
+        return Err(BrokerError::CorruptWriterState);
+    }
     crate::file_operation::store::validate_state(records, &state)?;
     if let Some(op) = &state.operation
         && let Some(reference) = &op.recording
@@ -194,10 +198,17 @@ pub(crate) fn save_terminal(
         || broker.writer.check(&broker.root, &broker.data),
     )
     .and_then(|()| broker.writer.check(&broker.root, &broker.data));
+    // 写成没写成都按盘上现在的样子记（T-249 G5）；旧格式历史的索引只在写成之后添这一条。
+    broker.loose_touch(
+        crate::loose_usage::LooseFolder::Replays,
+        &format!("{key_hash}.json"),
+    );
     if result.is_err() {
         broker.writer.poison();
+        crate::history::legacy_forget(broker);
     }
     result?;
+    crate::history::legacy_saved(broker, terminal);
     crate::content_audit::stage_outcome(broker, terminal)
 }
 

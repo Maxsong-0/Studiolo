@@ -36,7 +36,12 @@ fn delete(broker: &FsVaultBroker, path: &str, key: &str) -> FileOperationRequest
 }
 
 /// 四篇真写的；改名、删除、恢复、拒绝（旧版本对不上）、取消各一次。
-fn setup(fixture: &Fixture) -> (FsVaultBroker, Vec<(FileOperationRequest, FileOperationReceipt)>) {
+fn setup(
+    fixture: &Fixture,
+) -> (
+    FsVaultBroker,
+    Vec<(FileOperationRequest, FileOperationReceipt)>,
+) {
     let mut broker = fixture.open();
     notes(&mut broker, 4);
     enable(&mut broker);
@@ -77,8 +82,18 @@ type Observed = (
     Vec<Vec<Revision>>,
     (u64, usize),
 );
-fn observe(broker: &FsVaultBroker, done: &[(FileOperationRequest, FileOperationReceipt)]) -> Observed {
-    let paths = ["note-0.md", "moved.md", "note-1.md", "note-2.md", "note-3.md"].map(logical);
+fn observe(
+    broker: &FsVaultBroker,
+    done: &[(FileOperationRequest, FileOperationReceipt)],
+) -> Observed {
+    let paths = [
+        "note-0.md",
+        "moved.md",
+        "note-1.md",
+        "note-2.md",
+        "note-3.md",
+    ]
+    .map(logical);
     (
         done.iter()
             .map(|(request, _)| {
@@ -149,4 +164,44 @@ fn settled_file_operations_are_packed_and_change_no_answer_or_budget() {
     let restored = broker.archive_unpack().unwrap();
     assert_eq!(restored.packs, 9);
     assert_eq!(loose_records(&fixture.data).len(), loose.len() + 9 * 4);
+}
+
+/// 重放散件被正文占满时，文件操作也在落盘前被拒（和封存同一把尺，T-249 G1）；打包之后照常，
+/// 落定的文件操作跟着进段，旧键照答。真做 6000 次文件操作在用例里是平方级（每次都要读全部文件操作散件算保留），
+/// 所以散件用合成的正文垫满。
+#[test]
+fn file_operations_resume_once_packing_frees_the_replays() {
+    let fixture = Fixture::new();
+    let mut broker = fixture.open();
+    notes(&mut broker, 2);
+    enable(&mut broker);
+    let wrong = broker.read(&logical("note-1.md")).unwrap().revision;
+    let stale = |index: usize| FileOperationRequest::Delete {
+        path: logical("note-0.md"),
+        expected: wrong,
+        idempotency_key: format!("stale-{index}"),
+    };
+    for index in 0..4 {
+        let receipt = finish(&mut broker, stale(index), 100 + 2 * index as u64, false);
+        assert_eq!(receipt.outcome, FileOperationOutcome::Rejected);
+    }
+    // 两篇正文、四次文件操作，再垫 4090 条：重放正好 4096 条。
+    bulk(&broker, 0..4090);
+    assert!(matches!(
+        broker.prepare_file_operation(stale(4), actor()),
+        Err(BrokerError::WriterLimitExceeded)
+    ));
+    assert_eq!(pack(&mut broker, later()), 4096);
+    let receipt = finish(&mut broker, stale(4), 200, false);
+    assert_eq!(receipt.outcome, FileOperationOutcome::Rejected);
+    for index in 0..4 {
+        let answer = broker
+            .file_operation_replay(&stale(index), &actor())
+            .unwrap()
+            .and_then(|status| status.receipt)
+            .map(|receipt| receipt.outcome);
+        assert_eq!(answer, Some(FileOperationOutcome::Rejected), "{index}");
+    }
+    let usage = broker.record_usage().unwrap();
+    assert_eq!((usage.replays.used, usage.file_operations.used), (1, 1));
 }

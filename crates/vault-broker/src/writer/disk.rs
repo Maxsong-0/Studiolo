@@ -39,29 +39,6 @@ impl FilePin {
     }
 }
 
-/// 用例用：数这个线程上读了几个记录文件、枚举了几项记录目录。写入路径每次读多少不该随散件条数涨（T-249）。
-#[cfg(test)]
-pub(crate) mod probe {
-    use std::cell::Cell;
-    thread_local! {
-        static READS: Cell<u64> = const { Cell::new(0) };
-        static LISTED: Cell<u64> = const { Cell::new(0) };
-    }
-    pub(crate) fn read() {
-        READS.with(|count| count.set(count.get() + 1));
-    }
-    pub(crate) fn listed() {
-        LISTED.with(|count| count.set(count.get() + 1));
-    }
-    /// 交回上次取走之后读了几个、枚举了几项，清零。
-    pub(crate) fn take() -> (u64, u64) {
-        (
-            READS.with(|count| count.replace(0)),
-            LISTED.with(|count| count.replace(0)),
-        )
-    }
-}
-
 pub(crate) fn read(dir: &Dir, path: &str, max: usize) -> Result<Option<Vec<u8>>, BrokerError> {
     Ok(read_identified(dir, path, max)?.map(|v| v.0))
 }
@@ -182,4 +159,40 @@ pub(crate) fn hex(value: &str) -> bool {
         && value
             .bytes()
             .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+}
+
+/// 用例用：数这个线程上读了几个记录文件、枚举了几项记录目录。写入路径每次读多少不该随散件条数涨（T-249）。
+#[cfg(test)]
+pub(crate) mod probe {
+    use std::cell::Cell;
+    thread_local! {
+        static READS: Cell<u64> = const { Cell::new(0) };
+        static LISTED: Cell<u64> = const { Cell::new(0) };
+    }
+    pub(crate) fn read() {
+        READS.with(|count| count.set(count.get() + 1));
+    }
+    pub(crate) fn listed() {
+        LISTED.with(|count| count.set(count.get() + 1));
+    }
+    /// 交回上次取走之后读了几个、枚举了几项，清零。
+    pub(crate) fn take() -> (u64, u64) {
+        (
+            READS.with(|count| count.replace(0)),
+            LISTED.with(|count| count.replace(0)),
+        )
+    }
+    /// 把取走的放回去。
+    pub(crate) fn put_back((reads, listed): (u64, u64)) {
+        READS.with(|count| count.set(count.get() + reads));
+        LISTED.with(|count| count.set(count.get() + listed));
+    }
+    /// 做一件不算数的事（用例构建里的自查）：它读的、枚举的丢掉，之前数到的原样留着。
+    pub(crate) fn uncounted<T>(work: impl FnOnce() -> T) -> T {
+        let before = take();
+        let done = work();
+        take();
+        put_back(before);
+        done
+    }
 }

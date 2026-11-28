@@ -26,10 +26,10 @@ pub(crate) fn verify(
         archive
             .packs()
             .iter()
-            .filter(|pack| pack.kind == Kind::Rename)
+            .filter(|pack| matches!(pack.kind, Kind::Rename | Kind::FileOperation))
     };
     if store::open(source)?.is_none() {
-        // 打过改名包的一定启用过文件操作。
+        // 打过文件操作包的一定启用过文件操作。
         return if packed().next().is_some() {
             Err(BrokerError::CorruptWriterState)
         } else {

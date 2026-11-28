@@ -67,7 +67,7 @@ fn setup(fixture: &Fixture) -> (FsVaultBroker, FileOperationRequest, FileOperati
     (broker, request, receipt)
 }
 
-/// 打包改名、不打包删除；改名的答复、最近删除、历史、名额、保留字节、保护的 revision 打包前后都一样。
+/// 改名和删除一起打包（删除从 T-249 G3 起也打）；答复、最近删除、历史、名额、保留字节、保护的 revision 打包前后都一样。
 #[test]
 fn a_packed_rename_changes_no_answer_and_loosens_no_budget() {
     let fixture = Fixture::new();
@@ -96,13 +96,13 @@ fn a_packed_rename_changes_no_answer_and_loosens_no_budget() {
     let before = observe(&broker);
     assert_eq!(before.0, receipt);
     let records = all_records(&broker);
-    assert_eq!(pack(&mut broker, later()), 3);
-    // 删除的请求、两份回执和重放留着；墓碑两个都在。
+    assert_eq!(pack(&mut broker, later()), 4);
+    // 两次文件操作的请求都进了段；墓碑从不打包，两个都在。
     assert_eq!(
         file_operation::disk::names(&broker, Folder::Records)
             .unwrap()
             .len(),
-        1
+        0
     );
     assert_eq!(
         file_operation::disk::names(&broker, Folder::Tombstones)
@@ -160,7 +160,7 @@ fn packing_renames_resumes_and_unpacks_like_content() {
         pack(&mut broker, later());
         assert_eq!(all_records(&broker), before, "{point}");
         let done = broker.archive_unpack().unwrap();
-        assert_eq!((done.packs, done.file_operations), (3, 2));
+        assert_eq!((done.packs, done.file_operations), (4, 2));
         assert_eq!(loose_records(&fixture.data), loose, "{point}");
     }
 }
@@ -173,7 +173,7 @@ fn a_rename_must_also_have_taken_effect_seven_days_ago() {
         sealed_offset: 51,
         ..later()
     };
-    // 删除不打、正文两条打、改名的两份回执是 50 和 51。
+    // 正文两条打；改名的两份回执是 50 和 51；删除的 60、61 在水位外，不打。
     assert_eq!(pack(&mut broker, cutoff), 3);
     let fixture = Fixture::new();
     let (mut broker, _, _) = setup(&fixture);
@@ -184,15 +184,17 @@ fn a_rename_must_also_have_taken_effect_seven_days_ago() {
     assert_eq!(pack(&mut broker, cutoff), 2);
 }
 
-/// 改名没做成（经维护取消）的不打；效果落定还没满 7 天的也不打，哪怕请求早就满了。
+/// 改名经维护取消的照样打包（T-249 G3，打包前后答复一样）；提交了的改名效果落定还没满 7 天的不打，哪怕请求早就满了。
 #[test]
-fn only_a_committed_rename_whose_effect_is_old_enough_is_packed() {
+fn a_cancelled_rename_is_packed_but_a_recent_effect_is_not() {
     let fixture = Fixture::new();
     let mut broker = fixture.open();
     notes(&mut broker, 2);
     enable(&mut broker);
     let request = rename(&broker, "note-0.md", "never.md", "cancelled");
-    let ticket = broker.prepare_file_operation(request, actor()).unwrap();
+    let ticket = broker
+        .prepare_file_operation(request.clone(), actor())
+        .unwrap();
     broker
         .confirm_file_operation_intent(&ticket, 50, HASH)
         .unwrap();
@@ -218,13 +220,28 @@ fn only_a_committed_rename_whose_effect_is_old_enough_is_packed() {
             .confirm_maintenance_audit(candidate, 53, HASH)
             .unwrap();
     }
-    assert_eq!(pack(&mut broker, later()), 2);
+    let answer = |broker: &FsVaultBroker| {
+        broker
+            .file_operation_replay(&request, &actor())
+            .unwrap()
+            .and_then(|status| status.receipt)
+    };
+    let before = answer(&broker);
+    assert!(matches!(
+        &before,
+        Some(receipt) if receipt.outcome == FileOperationOutcome::Cancelled
+    ));
+    assert_eq!(pack(&mut broker, later()), 3);
     assert_eq!(
         file_operation::disk::names(&broker, Folder::Records)
             .unwrap()
             .len(),
-        1
+        0
     );
+    assert_eq!(answer(&broker), before);
+    drop(broker);
+    let broker = fixture.reopen();
+    assert_eq!(answer(&broker), before);
 
     let fixture = Fixture::new();
     let (mut broker, request, _) = setup(&fixture);
@@ -240,7 +257,15 @@ fn only_a_committed_rename_whose_effect_is_old_enough_is_packed() {
     assert!(value["effect_at_ms"].is_i64());
     value["effect_at_ms"] = (now() + 5 * DAY).into();
     fs::write(&path, serde_json::to_vec(&value).unwrap()).unwrap();
-    assert_eq!(pack(&mut broker, later()), 2);
+    forget(&broker);
+    // 正文两条和删除打了，改名留着。
+    assert_eq!(pack(&mut broker, later()), 3);
+    assert_eq!(
+        file_operation::disk::names(&broker, Folder::Records)
+            .unwrap()
+            .len(),
+        1
+    );
 }
 
 /// 打了包的改名又冒出字节不同的散件：封不成，也开不了库。
@@ -276,7 +301,12 @@ fn renames_in_two_segments_add_up() {
         pack(&mut broker, later());
     }
     let archive = broker.archive().unwrap();
-    assert_eq!((fixture.segments().len(), archive.renames().len()), (2, 2));
+    let renames = archive
+        .file_records()
+        .iter()
+        .filter(|record| record.target().is_some())
+        .count();
+    assert_eq!((fixture.segments().len(), renames), (2, 2));
     let mut expected = 0;
     for pack in archive.packs() {
         for part in [Part::FileRequest, Part::FileIntentAck, Part::FileOutcomeAck] {

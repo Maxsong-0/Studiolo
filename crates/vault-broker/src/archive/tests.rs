@@ -86,10 +86,11 @@ fn metadata() -> MutationMetadata {
 fn now() -> i64 {
     crate::history::store::now().unwrap()
 }
-/// 八天之后再看，封存盖到了最后：真写出来的记录全部合格。
+/// 八天之后再看，封存盖到了最后（账本 offset 和内容截止时刻都是）：真写出来的记录全部合格。
 fn later() -> ArchiveCutoff {
     ArchiveCutoff {
         sealed_offset: 1_000_000,
+        sealed_content_ms: Some(now() + 8 * DAY - 1),
         now_ms: now() + 8 * DAY,
     }
 }
@@ -179,7 +180,7 @@ fn all_records(broker: &FsVaultBroker) -> Records {
     let mut result = loose_records(&broker_data(broker));
     let archive = broker.archive().unwrap();
     for pack in archive.packs() {
-        for part in pack.kind.parts() {
+        for part in pack.kind.parts().iter().copied() {
             let name = pack.name_of(part);
             let bytes = archive.read(&broker.data, part, name).unwrap().unwrap();
             let key = (part.directory().to_owned(), part.file_name(name));
@@ -337,6 +338,12 @@ fn bulk_with(broker: &FsVaultBroker, range: std::ops::Range<usize>, shape: Shape
         )
         .unwrap();
     }
+    forget(broker);
+}
+/// 绕过写者直接落了盘：写者内存里的散件用量和旧历史索引作废，下次用到重数。
+fn forget(broker: &FsVaultBroker) {
+    broker.loose_forget();
+    crate::history::legacy_forget(broker);
 }
 /// 没有描述符的旧格式重放（169 现在有 138 条），永远留散件。
 fn legacy_replays(broker: &FsVaultBroker, range: std::ops::Range<usize>) {
@@ -361,6 +368,7 @@ fn legacy_replays(broker: &FsVaultBroker, range: std::ops::Range<usize>) {
         )
         .unwrap();
     }
+    forget(broker);
 }
 fn deadline() -> std::time::Instant {
     std::time::Instant::now() + std::time::Duration::from_secs(120)

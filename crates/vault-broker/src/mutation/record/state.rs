@@ -46,8 +46,9 @@ impl State {
         }
     }
     pub(crate) fn validate(&self, pair: VaultUuid) -> Result<(), BrokerError> {
-        if !matches!(self.format_version, 1..=9)
-            || (self.format_version == 9) != self.archive.is_some()
+        // 9：打过包；10：段里有 T-249 才有的种类（无主体正文、落定的文件操作）。两版都要有段头。
+        if !matches!(self.format_version, 1..=10)
+            || (self.format_version >= 9) != self.archive.is_some()
             || (self.format_version < 4 && (self.format_version == 3) != self.maintenance_enabled)
             || (self.format_version < 7
                 && (self.format_version >= 5) != self.file_operations_enabled)

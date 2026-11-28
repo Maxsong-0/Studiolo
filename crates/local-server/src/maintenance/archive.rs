@@ -2,9 +2,7 @@
 //! 不改正文、回执和账本；断在中间散件和段都在，重跑同一条命令续做。
 use super::{MaintenanceError, inputs::Inputs, workflow::guard};
 use serde_json::{Value, json};
-use studiolo_vault_broker::{
-    ArchiveBatch, ArchiveCursor, ArchiveCutoff, BrokerError, MaintenanceActor,
-};
+use studiolo_vault_broker::{ArchiveBatch, ArchiveCursor, BrokerError, MaintenanceActor};
 
 pub(super) fn pack(
     inputs: &mut Inputs,
@@ -24,20 +22,18 @@ pub(super) fn pack_at(
     check: &impl Fn() -> Result<(), MaintenanceError>,
 ) -> Result<Value, MaintenanceError> {
     let ledger = inputs.audit.as_deref().ok_or(MaintenanceError::Audit)?;
-    let sealed_offset = crate::backup::queue::sealed_offset(ledger)
+    let seal = crate::backup::queue::seal_mark(ledger)
         .map_err(|_| MaintenanceError::Audit)?
         .ok_or(MaintenanceError::ArchiveNoSeal)?;
     let before = inputs.broker.record_usage().map_err(fault)?;
     guard(inputs, check)?;
     confirm(
-        &json!({"command":"archive-pack","operator":actor,"usage":before,"sealed_offset":sealed_offset,
-            "note":"把两份审计回执都在、满 7 天、已在最近一次成功封存之内的正文记录和改名记录整组打包；一条不丢，旧键照答原回执。打过包的库旧程序会拒绝打开，退回旧程序之前先跑 archive-unpack。"}),
+        &json!({"command":"archive-pack","operator":actor,"usage":before,"sealed_offset":seal.offset,
+            "sealed_content_ms":seal.content_cutoff_ms,
+            "note":"把满 7 天、已在最近一次成功封存之内的旧记录整组打包：有审计主体的正文按两份回执的账本位置判，没有的（看板投影）按请求时间早于封存的内容截止时刻判；还有落定的文件操作（改名、删除、恢复、取消、拒绝，终态未知的不打）。散件到 95% 时不满 7 天的也打，没进过成功封存的一条不碰。一条不丢，旧键照答原回执。打过包的库旧程序会拒绝打开，退回旧程序之前先跑 archive-unpack。"}),
         "archive-pack",
     )?;
-    let cutoff = ArchiveCutoff {
-        sealed_offset,
-        now_ms,
-    };
+    let cutoff = seal.cutoff(now_ms);
     let mut cursor = ArchiveCursor::default();
     let mut packed = 0;
     loop {
@@ -54,9 +50,7 @@ pub(super) fn pack_at(
     }
     guard(inputs, check)?;
     let after = inputs.broker.record_usage().map_err(fault)?;
-    Ok(
-        json!({"command":"archive-pack","packed":packed,"sealed_offset":sealed_offset,"usage":after}),
-    )
+    Ok(json!({"command":"archive-pack","packed":packed,"sealed_offset":seal.offset,"usage":after}))
 }
 
 pub(super) fn unpack(

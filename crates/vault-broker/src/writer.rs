@@ -162,6 +162,8 @@ impl FsVaultBroker {
             file_operation_pin: std::sync::Mutex::new(None),
             archive: std::sync::Mutex::default(),
             archive_dirty: AtomicBool::new(false),
+            loose: std::sync::Mutex::new(None),
+            legacy_history: std::sync::Mutex::new(None),
             read_guard: std::sync::Mutex::new(()),
         };
         // 拿到租约之后、任何写入之前：原子写崩溃留下的临时文件挪进隔离区，出错不挡开库（见 `residue`）。

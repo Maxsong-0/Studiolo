@@ -39,7 +39,11 @@ pub struct BrokerCapture {
 }
 impl FsVaultBroker {
     /// 交出完整实例并保留原租约。构造不丢弃 owner；检查失败仍能经 thaw 返还。
+    ///
+    /// 交出之前内存里的散件用量作废，放开之后第一次用到时从盘上重数（T-249）：记账万一漏了一处，
+    /// 最多错到下一次封存；冻结窗口里不用它，也不在窗口里多数一遍。
     pub fn freeze_checkpoint(self, deadline: Instant) -> FrozenBroker {
+        self.loose_forget();
         FrozenBroker {
             broker: self,
             deadline,

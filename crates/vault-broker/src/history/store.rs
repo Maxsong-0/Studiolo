@@ -147,13 +147,24 @@ pub(crate) fn save<T: Serialize>(
     }
     let parent = directory(&dir, folder)?;
     let identity = Identity::directory(&parent)?;
-    FsVaultBroker::atomic_write_dir_checked(&parent, Path::new(basename), &bytes, create, || {
-        open(broker)?.ok_or(BrokerError::CorruptWriterState)?;
-        if Identity::directory(&directory(&dir, folder)?)? != identity {
-            return Err(BrokerError::WriterBindingMismatch);
-        }
-        Ok(())
-    })?;
+    let written = FsVaultBroker::atomic_write_dir_checked(
+        &parent,
+        Path::new(basename),
+        &bytes,
+        create,
+        || {
+            open(broker)?.ok_or(BrokerError::CorruptWriterState)?;
+            if Identity::directory(&directory(&dir, folder)?)? != identity {
+                return Err(BrokerError::WriterBindingMismatch);
+            }
+            Ok(())
+        },
+    );
+    // 写成没写成都按盘上现在的样子记（T-249 G5）。
+    if folder == "requests" {
+        broker.loose_touch(crate::loose_usage::LooseFolder::Requests, basename);
+    }
+    written?;
     open(broker)?;
     Ok(())
 }
@@ -167,9 +178,14 @@ pub(crate) fn remove(broker: &FsVaultBroker, name: &str) -> Result<(), BrokerErr
         return Err(BrokerError::CorruptWriterState);
     }
     let parent = directory(&dir, folder)?;
-    parent
+    let removed = parent
         .remove_file(basename)
-        .map_err(|e| BrokerError::io("remove history metadata", e))?;
+        .map_err(|e| BrokerError::io("remove history metadata", e));
+    // 现在只删外发箱里的；请求目录里的也删时照样记（T-249 G5）。
+    if folder == "requests" {
+        broker.loose_touch(crate::loose_usage::LooseFolder::Requests, basename);
+    }
+    removed?;
     FsVaultBroker::sync_directory(&parent, Path::new("."))?;
     open(broker)?;
     Ok(())

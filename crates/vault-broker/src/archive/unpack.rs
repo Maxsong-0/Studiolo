@@ -48,6 +48,8 @@ impl FsVaultBroker {
         state.format_version = 8;
         mutation::save(self, &state)?;
         super::install(self, Archive::default())?;
+        // 打过包的重放又成了散件：旧格式历史的索引重建（T-249 G5）。
+        crate::history::legacy_forget(self);
         // 状态已经写回：段是不在链上的，散件全在，收口会核过再删。
         mutation::fault(self, 108)?;
         super::settle(self)?;
@@ -58,7 +60,7 @@ impl FsVaultBroker {
 fn restore(broker: &FsVaultBroker, archive: &Archive) -> Result<(), BrokerError> {
     let total = archive.packs().len();
     for (index, pack) in archive.packs().iter().enumerate() {
-        for part in pack.kind.parts() {
+        for part in pack.kind.parts().iter().copied() {
             let name = pack.name_of(part);
             let bytes = archive
                 .read(&broker.data, part, name)?
@@ -72,13 +74,15 @@ fn restore(broker: &FsVaultBroker, archive: &Archive) -> Result<(), BrokerError>
             let dir = loose::open(&broker.data, part.directory())?
                 .ok_or(BrokerError::CorruptWriterState)?;
             let file_name = part.file_name(name);
-            FsVaultBroker::atomic_write_dir_checked(
+            let written = FsVaultBroker::atomic_write_dir_checked(
                 &dir,
                 Path::new(&file_name),
                 &bytes,
                 true,
                 || broker.writer.check(&broker.root, &broker.data),
-            )?;
+            );
+            loose::touch(broker, part, &file_name);
+            written?;
             let logical =
                 VaultPath::parse(&file_name).map_err(|_| BrokerError::CorruptWriterState)?;
             if disk::read(&dir, logical.as_str(), disk::RECORD_LIMIT)?.as_ref() != Some(&bytes) {
@@ -97,7 +101,7 @@ fn report(broker: &FsVaultBroker, archive: &Archive) -> Result<ArchiveUnpack, Br
     let content = archive
         .packs()
         .iter()
-        .filter(|pack| pack.kind == super::format::Kind::Content)
+        .filter(|pack| pack.kind.content())
         .count() as u64;
     let packs = archive.packs().len() as u64;
     let value = ArchiveUnpack {

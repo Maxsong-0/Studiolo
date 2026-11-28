@@ -249,7 +249,12 @@ async fn closing_down_stops_packing_before_the_next_step() {
     assert!(orphan.exists());
     // 收口之后、打包之前才叫停的也一样：一步都不走。
     fs::remove_dir_all(stage.data().join("archive-v1")).unwrap();
-    stage.producer.archive_records(Some(u64::MAX));
+    stage
+        .producer
+        .archive_records(Some(crate::backup::queue::SealMark {
+            offset: u64::MAX,
+            content_cutoff_ms: Some(i64::MAX),
+        }));
     assert!(!stage.data().join("archive-v1").exists());
     stage.assembled.workbench.shutdown().await.unwrap();
 }

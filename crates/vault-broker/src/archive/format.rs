@@ -38,29 +38,48 @@ impl Head {
     }
 }
 
-/// 包的种类，决定里面有哪几条。
+/// 包的种类，决定里面有哪几条。后两种是 T-249 加的：段里有它们的，写者状态是第 10 版。
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum Kind {
+    /// 有审计主体的正文请求：描述符、两份回执、重放。
     Content,
+    /// 已提交的改名：请求、两份回执、重放。
     Rename,
+    /// 没有审计主体的正文请求（看板投影那种）：没有回执，只有描述符和重放。
+    Unaudited,
+    /// 已落定的别的文件操作：提交了的删除和恢复，取消或拒绝的任何一种。
+    FileOperation,
 }
 impl Kind {
-    pub(crate) fn parts(self) -> [Part; 4] {
+    pub(crate) fn parts(self) -> &'static [Part] {
         match self {
-            Self::Content => [
+            Self::Content => &[
                 Part::Descriptor,
                 Part::IntentAck,
                 Part::OutcomeAck,
                 Part::Replay,
             ],
-            Self::Rename => [
+            Self::Rename | Self::FileOperation => &[
                 Part::FileRequest,
                 Part::FileIntentAck,
                 Part::FileOutcomeAck,
                 Part::Replay,
             ],
+            Self::Unaudited => &[Part::Descriptor, Part::Replay],
         }
+    }
+    /// 第一条（散件在哪个目录、按哪个号记）。
+    pub(crate) fn first(self) -> Part {
+        self.parts()[0]
+    }
+    /// 正文请求的包（描述符打头）。
+    pub(crate) fn content(self) -> bool {
+        self.first() == Part::Descriptor
+    }
+    /// T-249 才有的种类：旧程序不认，段里有它就要第 10 版的写者状态。
+    pub(crate) fn needs_v10(self) -> bool {
+        matches!(self, Self::Unaudited | Self::FileOperation)
     }
 }
 
@@ -102,12 +121,12 @@ impl Part {
     }
 }
 
-/// 一包：请求号、幂等键摘要和四条原字节（按 [`Kind::parts`] 的顺序）。
+/// 一包：请求号、幂等键摘要和各条原字节（按 [`Kind::parts`] 的顺序，条数和它一样）。
 pub(crate) struct Pack {
     pub kind: Kind,
     pub id: String,
     pub key: String,
-    pub bytes: [Vec<u8>; 4],
+    pub bytes: Vec<Vec<u8>>,
 }
 impl Pack {
     /// 这一条按什么记。
@@ -132,7 +151,8 @@ struct PackHeader {
     kind: Kind,
     id: String,
     key: String,
-    entries: [EntryHeader; 4],
+    /// 条数由种类定；编成 JSON 和原来的定长数组一字不差。
+    entries: Vec<EntryHeader>,
 }
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -155,7 +175,7 @@ pub(crate) struct Entry {
 pub(crate) struct Segment {
     pub sequence: u32,
     pub previous: Option<String>,
-    pub packs: Vec<(Pack, [Entry; 4])>,
+    pub packs: Vec<(Pack, Vec<Entry>)>,
 }
 
 /// 段文件的身份：第几段、接在谁后面、属于哪一对写者存储。
@@ -174,8 +194,11 @@ pub(crate) fn encode(place: &Place<'_>, packs: &[Pack]) -> Result<Vec<u8>, Broke
     let mut payload = Vec::new();
     let mut headers = Vec::with_capacity(packs.len());
     for pack in packs {
-        let mut entries = Vec::with_capacity(4);
-        for (part, bytes) in pack.kind.parts().into_iter().zip(&pack.bytes) {
+        if pack.bytes.len() != pack.kind.parts().len() {
+            return Err(BrokerError::CorruptWriterState);
+        }
+        let mut entries = Vec::with_capacity(pack.bytes.len());
+        for (part, bytes) in pack.kind.parts().iter().copied().zip(&pack.bytes) {
             if bytes.is_empty() || bytes.len() > disk::RECORD_LIMIT {
                 return Err(BrokerError::WriterLimitExceeded);
             }
@@ -190,9 +213,7 @@ pub(crate) fn encode(place: &Place<'_>, packs: &[Pack]) -> Result<Vec<u8>, Broke
             kind: pack.kind,
             id: pack.id.clone(),
             key: pack.key.clone(),
-            entries: entries
-                .try_into()
-                .map_err(|_| BrokerError::CorruptWriterState)?,
+            entries,
         });
     }
     let header = serde_json::to_vec(&Header {
@@ -265,12 +286,13 @@ pub(crate) fn decode(
     let mut offset = start;
     let mut packs = Vec::with_capacity(header.packs.len());
     for pack in header.packs {
-        if !disk::hex(&pack.id) || !disk::hex(&pack.key) {
+        let parts = pack.kind.parts();
+        if !disk::hex(&pack.id) || !disk::hex(&pack.key) || pack.entries.len() != parts.len() {
             return Err(bad());
         }
-        let mut contents = Vec::with_capacity(4);
-        let mut entries = Vec::with_capacity(4);
-        for (expected, entry) in pack.kind.parts().into_iter().zip(pack.entries) {
+        let mut contents = Vec::with_capacity(parts.len());
+        let mut entries = Vec::with_capacity(parts.len());
+        for (expected, entry) in parts.iter().copied().zip(pack.entries) {
             let end = offset.checked_add(entry.bytes as usize).ok_or_else(bad)?;
             let content = bytes.get(offset..end).ok_or_else(bad)?;
             if entry.part != expected
@@ -295,9 +317,9 @@ pub(crate) fn decode(
                 kind: pack.kind,
                 id: pack.id,
                 key: pack.key,
-                bytes: contents.try_into().map_err(|_| bad())?,
+                bytes: contents,
             },
-            entries.try_into().map_err(|_| bad())?,
+            entries,
         ));
     }
     if offset != bytes.len() {

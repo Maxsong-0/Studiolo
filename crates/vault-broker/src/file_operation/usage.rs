@@ -1,6 +1,5 @@
 //! 实际保全字节与可释放的未决预留分开；只统计固定私有域，不清理任何已发布对象。
 use super::{
-    FileOperationKind, FileOperationOutcome, FilePresence,
     disk::{self, Folder},
     limits,
 };
@@ -18,63 +17,17 @@ pub(crate) fn actual(broker: &FsVaultBroker) -> Result<(u64, usize), BrokerError
     let mut retained = 0u64;
     let mut revisions = BTreeSet::new();
     let mut candidates = 0;
-    for name in disk::names(broker, Folder::Records)? {
-        let request = super::request::load(broker, name.trim_end_matches(".json"))?
-            .ok_or(BrokerError::CorruptWriterState)?;
-        let terminal = super::terminal::load(broker, &request.frozen)?;
-        if matches!(
-            request.frozen.kind,
-            FileOperationKind::Delete { .. } | FileOperationKind::Rename { .. }
-        ) {
-            if !terminal.as_ref().is_some_and(|v| {
-                matches!(
-                    v.receipt.outcome,
-                    FileOperationOutcome::Cancelled | FileOperationOutcome::Rejected
-                )
-            }) {
-                candidates += 1;
-            }
-            if let FilePresence::Present { revision, .. } = request.observed_before {
-                revisions.insert(revision.to_string());
-            }
+    // 散件和打了包的同一套判法：打了包的照样占墓碑名额、照样保护 revision（T-249）。
+    for record in super::retained::all(broker)? {
+        if record.occupies() {
+            candidates += 1;
         }
-        if matches!(request.frozen.kind, FileOperationKind::Rename { .. }) {
-            let revision = if let Some(t) = &terminal {
-                t.rename.as_ref().and_then(|r| r.target_revision)
-            } else {
-                let state = crate::mutation::load(broker)?;
-                let a = state
-                    .file_operation
-                    .as_ref()
-                    .filter(|a| a.frozen == request.frozen)
-                    .ok_or(BrokerError::CorruptWriterState)?;
-                a.rename.as_ref().and_then(|r| r.target_revision)
-            };
-            if let Some(revision) = revision {
-                revisions.insert(revision.to_string());
-            }
-        }
-        if let FileOperationKind::RestoreTombstone { tombstone_id } = &request.frozen.kind {
-            revisions.insert(
-                super::tombstone::load(broker, tombstone_id)?
-                    .entry()?
-                    .revision
-                    .to_string(),
-            );
-        }
-    }
-    // 打了包的改名照样占墓碑名额、照样保护两头的 revision、照样计它请求和回执的字节。
-    let archive = broker.archive()?;
-    for rename in archive.renames() {
-        candidates += 1;
-        for revision in [rename.source_revision, rename.target_revision]
-            .into_iter()
-            .flatten()
-        {
+        for revision in record.revisions(broker)? {
             revisions.insert(revision.to_string());
         }
     }
-    retained = add(retained, archive.file_bytes())?;
+    // 打了包的请求和回执照样计字节。
+    retained = add(retained, broker.archive()?.file_bytes())?;
     let roots = super::store::required(broker)?;
     retained = add(
         retained,

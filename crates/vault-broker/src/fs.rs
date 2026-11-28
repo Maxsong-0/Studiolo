@@ -39,6 +39,10 @@ pub struct FsVaultBroker {
     pub(crate) archive: Mutex<std::sync::Arc<crate::archive::Archive>>,
     /// 打包或还原断在中间（没死进程）：下一步之前先收口。
     pub(crate) archive_dirty: std::sync::atomic::AtomicBool,
+    /// 正文请求目录和重放目录的散件用量；没数过、记不准了是 `None`（见 `loose_usage`）。
+    pub(crate) loose: Mutex<Option<crate::loose_usage::LooseUsage>>,
+    /// 旧格式历史的索引；开库后第一次用到时建（见 `history::legacy`）。
+    pub(crate) legacy_history: Mutex<Option<crate::history::LegacyIndex>>,
     pub(crate) read_guard: Mutex<()>,
 }
 

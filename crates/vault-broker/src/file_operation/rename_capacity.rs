@@ -4,10 +4,7 @@ use super::{
     frozen::Frozen,
     limits,
 };
-use crate::{
-    BrokerError, FsVaultBroker, blob,
-    writer::{directory, disk as codec},
-};
+use crate::{BrokerError, FsVaultBroker, blob, writer::directory};
 use cap_std::fs::{Dir, MetadataExt as _};
 const META: u64 = 16 * limits::REQUEST_LIMIT as u64;
 
@@ -49,9 +46,12 @@ pub(crate) fn reserve(
     ] {
         disk::reserve(broker, folder, count, 4 * limits::REQUEST_LIMIT)?;
     }
-    let (_, count, bytes) =
-        crate::mutation::replay::scan(&broker.data, Some(broker.writer.binding.pair_id))?;
-    if count >= codec::REPLAY_COUNT || bytes > codec::REPLAY_BYTES - codec::RECORD_LIMIT {
+    // 和正文写入同一把尺（T-249 G1）；读内存里的散件用量，不全目录扫（G5）。
+    if !crate::recorded::capacity::replay_room(
+        broker
+            .loose_usage()?
+            .tally(crate::loose_usage::LooseFolder::Replays),
+    ) {
         return Err(BrokerError::WriterLimitExceeded);
     }
     if executable {

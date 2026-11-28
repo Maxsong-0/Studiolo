@@ -27,6 +27,23 @@ use std::{
 /// 一步最多看几个请求：不合格的也要读，读多了占着锁。
 const EXAMINE: usize = 256;
 
+/// 往前挑的两个目录，按顺序：正文请求（看描述符）、文件操作（看请求）。
+const GROUPS: [Part; 2] = [Part::Descriptor, Part::FileRequest];
+
+/// 这一轮用的判据。
+#[derive(Clone, Copy)]
+struct Rules {
+    cutoff: ArchiveCutoff,
+    /// 散件到了 95%：已在封存之内的，不满 7 天也打（用户 2026-11-27 定，T-249 G4）。
+    urgent: bool,
+}
+impl Rules {
+    /// 年限够了；紧急时不看年限。
+    fn old_enough(self, at_ms: Option<i64>) -> bool {
+        self.urgent || self.cutoff.aged(at_ms)
+    }
+}
+
 impl FsVaultBroker {
     /// 走一步：往前挑，或者写一段。有未决写入、维护或没投递完的审计事件就不做（`MutationUnresolved`），
     /// 游标留着下一轮接着来；别的出错游标从头再来。
@@ -54,10 +71,20 @@ fn advance(
     if broker.archive_dirty.load(Ordering::Acquire) {
         super::settle(broker)?;
     }
+    // 紧不紧急在这一轮开头量一次（数一遍散件），一轮里不变：打着打着降下来了，挑好的照样写。
+    let urgent = match cursor.urgent {
+        Some(urgent) => urgent,
+        None => {
+            let urgent = broker.record_usage()?.archive_batch() == Some(ArchiveBatch::All);
+            cursor.urgent = Some(urgent);
+            urgent
+        }
+    };
+    let rules = Rules { cutoff, urgent };
     let (packed, examined) = if cursor.ready(batch) {
-        (write(broker, cutoff, batch, &cursor.take())?, 0)
+        (write(broker, rules, batch, &cursor.take())?, 0)
     } else {
-        (0, scan(broker, cutoff, cursor)?)
+        (0, scan(broker, rules, cursor)?)
     };
     Ok(ArchiveStep {
         packed,
@@ -69,13 +96,13 @@ fn advance(
 /// 把挑好的写成一段：逐个重核、重读，上一步之后变了的不打。掉得凑不够了就这一轮不写，下一轮再挑。
 fn write(
     broker: &FsVaultBroker,
-    cutoff: ArchiveCutoff,
+    rules: Rules,
     batch: ArchiveBatch,
-    held: &[(Kind, String)],
+    held: &[(Part, String)],
 ) -> Result<usize, BrokerError> {
     let mut packs = Vec::with_capacity(held.len());
-    for (kind, id) in held {
-        packs.extend(candidate(broker, *kind, id, cutoff)?);
+    for (group, id) in held {
+        packs.extend(candidate(broker, *group, id, rules)?);
     }
     if packs.len() < held.len() && packs.len() < batch.least() {
         return Ok(0);
@@ -93,109 +120,125 @@ pub(super) fn idle(broker: &FsVaultBroker) -> Result<(), BrokerError> {
     Ok(())
 }
 
-/// 从游标往后挑：先正文、后改名，各按请求号排。凑满一段或看满一步就停，游标停在最后看过的那个；
+/// 从游标往后挑：先正文、后文件操作，各按请求号排。凑满一段或看满一步就停，游标停在最后看过的那个；
 /// 交回看了几个。
 fn scan(
     broker: &FsVaultBroker,
-    cutoff: ArchiveCutoff,
+    rules: Rules,
     cursor: &mut ArchiveCursor,
 ) -> Result<usize, BrokerError> {
     let mut examined = 0;
-    for kind in [Kind::Content, Kind::Rename] {
-        // 已经走到改名的，正文那一类整个跳过。
-        if kind == Kind::Content && matches!(&cursor.after, Some((Kind::Rename, _))) {
+    for group in GROUPS {
+        // 已经走到文件操作的，正文那一组整个跳过。
+        if group == Part::Descriptor && matches!(&cursor.after, Some((Part::FileRequest, _))) {
             continue;
         }
-        let path = kind.parts()[0].directory();
+        let path = group.directory();
         for file_name in loose::names(&broker.data, path)? {
             let Some((part, id)) = loose::identify(path, &file_name) else {
                 continue;
             };
-            if part != kind.parts()[0]
-                || matches!(&cursor.after, Some((seen, after)) if *seen == kind && id <= after.as_str())
+            if part != group
+                || matches!(&cursor.after, Some((seen, after)) if *seen == group && id <= after.as_str())
             {
                 continue;
             }
             if examined >= EXAMINE || cursor.full() {
                 return Ok(examined);
             }
-            if let Some(pack) = candidate(broker, kind, id, cutoff)? {
+            if let Some(pack) = candidate(broker, group, id, rules)? {
                 let bytes = pack.bytes.iter().map(Vec::len).sum();
                 // 这一段装不下：先把装好的写出去，它留到下一段。
-                if !cursor.hold(kind, id, bytes) {
+                if !cursor.hold(group, id, bytes) {
                     return Ok(examined);
                 }
             }
             examined += 1;
-            cursor.after = Some((kind, id.to_owned()));
+            cursor.after = Some((group, id.to_owned()));
         }
     }
     cursor.scanned = true;
     Ok(examined)
 }
 
-/// 合格就交回整包的原字节。
+/// 合格就交回整包的原字节；包的种类由记录本身定。
 fn candidate(
     broker: &FsVaultBroker,
-    kind: Kind,
+    group: Part,
     id: &str,
-    cutoff: ArchiveCutoff,
+    rules: Rules,
 ) -> Result<Option<Pack>, BrokerError> {
-    match kind {
-        Kind::Content => content(broker, id, cutoff),
-        Kind::Rename => rename(broker, id, cutoff),
+    match group {
+        Part::Descriptor => content(broker, id, rules),
+        Part::FileRequest => file(broker, id, rules),
+        _ => Err(BrokerError::CorruptWriterState),
     }
 }
 
-/// 一条正文请求：两份回执都在且在封存水位内、满了年限、有终态、四条都核得过。只看散件，每条只读一遍。
-fn content(
-    broker: &FsVaultBroker,
-    id: &str,
-    cutoff: ArchiveCutoff,
-) -> Result<Option<Pack>, BrokerError> {
+/// 一条正文请求：满了年限、有终态、各条都核得过；有审计主体的两份回执都在封存水位内，
+/// 没有的（看板投影那种）请求早于最近一次成功封存的内容截止时刻。只看散件，每条只读一遍。
+fn content(broker: &FsVaultBroker, id: &str, rules: Rules) -> Result<Option<Pack>, BrokerError> {
     let first = loose::read(&broker.data, Part::Descriptor, id)?
         .ok_or(BrokerError::CaptureChanged)?
         .bytes;
     let envelope = recorded::store::decode_id(broker, id, &first)?;
-    // 没有审计主体的写入没有回执，按退役条件永远不打包。
-    if envelope.actor.is_none() || !cutoff.aged(envelope.requested_at_ms) {
+    if !rules.old_enough(envelope.requested_at_ms) {
         return Ok(None);
     }
-    let Some(pack) = gather(broker, Kind::Content, id, &envelope.key_hash, first)? else {
+    let kind = if envelope.actor.is_some() {
+        Kind::Content
+    } else {
+        Kind::Unaudited
+    };
+    let Some(pack) = gather(broker, kind, id, &envelope.key_hash, first)? else {
         return Ok(None);
     };
-    let [_, intent_ack, outcome_ack, replay] = &pack.bytes;
+    let replay = pack.bytes.last().ok_or(BrokerError::CorruptWriterState)?;
     let replay = mutation::replay::decode(replay, Some(envelope.pair_id))?;
     let terminal = events::own(&envelope, replay)?;
     recorded::bound(&terminal, &envelope)?;
+    if kind == Kind::Unaudited {
+        // 没有回执可核：只能按时间判它进没进过封存。
+        return Ok(rules
+            .cutoff
+            .sealed_before(envelope.requested_at_ms)
+            .then_some(pack));
+    }
+    let [_, intent_ack, outcome_ack, _] = pack.bytes.as_slice() else {
+        return Err(BrokerError::CorruptWriterState);
+    };
     let intent = events::row(&envelope, None)?;
     let outcome = events::row(&envelope, Some(events::outcome(&terminal)))?;
     let offsets = [
         events::decode_ack(broker, &intent, intent_ack)?.offset,
         events::decode_ack(broker, &outcome, outcome_ack)?.offset,
     ];
-    Ok(cutoff.sealed(offsets).then_some(pack))
+    Ok(rules.cutoff.sealed(offsets).then_some(pack))
 }
 
-/// 一次改名：只认已提交的；删除和恢复不打包。
-fn rename(
-    broker: &FsVaultBroker,
-    id: &str,
-    cutoff: ArchiveCutoff,
-) -> Result<Option<Pack>, BrokerError> {
+/// 一次落定的文件操作：已提交的改名、删除、恢复，取消、拒绝的任何一种。终态未知的不打（可能还要人收口）。
+/// 请求满年限；提交了的效果落定也要满年限（请求很早、后来才收口的不算）。两份回执都在封存水位内。
+fn file(broker: &FsVaultBroker, id: &str, rules: Rules) -> Result<Option<Pack>, BrokerError> {
     let first = loose::read(&broker.data, Part::FileRequest, id)?
         .ok_or(BrokerError::CaptureChanged)?
         .bytes;
     let request = file_operation::request::decode(broker, id, &first)?;
-    if !matches!(request.frozen.kind, FileOperationKind::Rename { .. })
-        || !cutoff.aged(request.frozen.requested_at_ms)
-    {
+    if !rules.old_enough(request.frozen.requested_at_ms) {
         return Ok(None);
     }
-    let Some(pack) = gather(broker, Kind::Rename, id, &request.frozen.key_hash, first)? else {
+    let Some(mut pack) = gather(
+        broker,
+        Kind::FileOperation,
+        id,
+        &request.frozen.key_hash,
+        first,
+    )?
+    else {
         return Ok(None);
     };
-    let [_, intent_ack, outcome_ack, replay] = &pack.bytes;
+    let [_, intent_ack, outcome_ack, replay] = pack.bytes.as_slice() else {
+        return Err(BrokerError::CorruptWriterState);
+    };
     let Replay::FileOperation(terminal) =
         mutation::replay::decode(replay, Some(request.frozen.pair_id))?
     else {
@@ -204,9 +247,20 @@ fn rename(
     if terminal.frozen != request.frozen {
         return Err(BrokerError::CorruptWriterState);
     }
-    // 效果落定的时刻也要满年限：请求很早、后来才收口的不算。
-    if terminal.receipt.outcome != FileOperationOutcome::Committed
-        || !cutoff.aged(terminal.effect_at_ms)
+    let kind = match (terminal.receipt.outcome, &request.frozen.kind) {
+        (FileOperationOutcome::Committed, FileOperationKind::Rename { .. }) => Kind::Rename,
+        (
+            FileOperationOutcome::Committed
+            | FileOperationOutcome::Cancelled
+            | FileOperationOutcome::Rejected,
+            _,
+        ) => Kind::FileOperation,
+        (FileOperationOutcome::Indeterminate, _) => return Ok(None),
+    };
+    // 提交了的看效果落定的时刻（一定要有）；取消、拒绝的没有效果就看请求时刻。
+    let committed = terminal.receipt.outcome == FileOperationOutcome::Committed;
+    if (committed && terminal.effect_at_ms.is_none())
+        || !rules.old_enough(terminal.effect_at_ms.or(request.frozen.requested_at_ms))
     {
         return Ok(None);
     }
@@ -216,10 +270,11 @@ fn rename(
         file_operation::audit::decode_ack(&intent, intent_ack)?.0,
         file_operation::audit::decode_ack(&outcome, outcome_ack)?.0,
     ];
-    Ok(cutoff.sealed(offsets).then_some(pack))
+    pack.kind = kind;
+    Ok(rules.cutoff.sealed(offsets).then_some(pack))
 }
 
-/// 配齐另外三条散件的原字节；少一条散件就不是一整包，不打。
+/// 配齐其余几条散件的原字节；少一条散件就不是一整包，不打。
 fn gather(
     broker: &FsVaultBroker,
     kind: Kind,
@@ -227,17 +282,19 @@ fn gather(
     key: &str,
     first: Vec<u8>,
 ) -> Result<Option<Pack>, BrokerError> {
+    let parts = kind.parts();
     let mut pack = Pack {
         kind,
         id: id.to_owned(),
         key: key.to_owned(),
-        bytes: [first, Vec::new(), Vec::new(), Vec::new()],
+        bytes: Vec::with_capacity(parts.len()),
     };
-    for (index, part) in kind.parts().into_iter().enumerate().skip(1) {
+    pack.bytes.push(first);
+    for part in parts.iter().copied().skip(1) {
         let Some(found) = loose::read(&broker.data, part, pack.name_of(part))? else {
             return Ok(None);
         };
-        pack.bytes[index] = found.bytes;
+        pack.bytes.push(found.bytes);
     }
     Ok(Some(pack))
 }
@@ -282,10 +339,12 @@ fn publish(broker: &FsVaultBroker, packs: &[Pack]) -> Result<(), BrokerError> {
     let (length, segment) = index::read_segment(&broker.data, &name, pair, broker.vault_uuid)?;
     let originals = loose::matching(&broker.data, &segment)?.ok_or(BrokerError::CaptureChanged)?;
     let addition = archive.check(name, length, &segment, pair)?;
+    // 段里有 T-249 才有的种类就是第 10 版：旧程序（包括只认第 9 版的）明确拒绝打开，不会读错。
+    let fresh = archive.needs_v10() || packs.iter().any(|pack| pack.kind.needs_v10());
     // 放掉这一份，下面改索引才不用整份复制。
     drop(archive);
     state.archive = Some(addition.head().clone());
-    state.format_version = state.format_version.max(9);
+    state.format_version = state.format_version.max(if fresh { 10 } else { 9 });
     mutation::save(broker, &state)?;
     let mut archive = broker
         .archive

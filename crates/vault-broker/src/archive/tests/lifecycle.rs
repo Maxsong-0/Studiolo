@@ -93,16 +93,24 @@ fn a_store_that_was_never_packed_keeps_its_state_bytes() {
     assert!(!fixture.data.join("archive-v1").exists());
 }
 
-/// 没有审计主体的写入：永远没有回执，按退役条件永远留散件，照样答得出。
+/// 没有审计主体的写入没有回执：成功封存还没有内容截止时刻时留散件，照样答得出；有了、请求早于它才打，
+/// 打了照样答得出（T-249 G2；T-235 时永远不打）。
 #[test]
-fn a_write_without_an_actor_is_never_packed() {
+fn a_write_without_an_actor_waits_for_a_seal_content_cutoff() {
     let fixture = Fixture::new();
     let mut broker = fixture.open();
     broker.mutate(note(9)).unwrap();
     notes(&mut broker, 2);
     let kept = loose_records(&fixture.data).len();
-    assert_eq!(pack(&mut broker, later()), 2);
+    let audited_only = ArchiveCutoff {
+        sealed_content_ms: None,
+        ..later()
+    };
+    assert_eq!(pack(&mut broker, audited_only), 2);
     assert_eq!(loose_records(&fixture.data).len(), kept - 8);
+    assert!(broker.mutation_replay(&note(9)).unwrap().is_some());
+    assert_eq!(pack(&mut broker, later()), 1);
+    assert_eq!(loose_records(&fixture.data).len(), kept - 10);
     assert!(broker.mutation_replay(&note(9)).unwrap().is_some());
 }
 

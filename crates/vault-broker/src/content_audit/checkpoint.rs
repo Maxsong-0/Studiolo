@@ -25,11 +25,7 @@ pub(crate) fn verify(
     let archive = records.archive()?;
     let Some(root) = history::open(records)? else {
         // 打过正文包的一定有历史元数据目录；目录没了不能当成「没有审计历史」。
-        return if archive
-            .packs()
-            .iter()
-            .any(|pack| pack.kind == Kind::Content)
-        {
+        return if archive.packs().iter().any(|pack| pack.kind.content()) {
             Err(BrokerError::CorruptWriterState)
         } else {
             Ok(())
@@ -62,10 +58,15 @@ pub(crate) fn verify(
     }
     for pack in archive.packs() {
         check_deadline(deadline)?;
-        if pack.kind == Kind::Content {
-            for part in [Part::IntentAck, Part::OutcomeAck, Part::Descriptor] {
-                check(records, part, &pack.id, verify)?;
+        match pack.kind {
+            Kind::Content => {
+                for part in [Part::IntentAck, Part::OutcomeAck, Part::Descriptor] {
+                    check(records, part, &pack.id, verify)?;
+                }
             }
+            // 没有审计主体的：只有描述符，没有回执可核（和散件一样，见 `check`）。
+            Kind::Unaudited => check(records, Part::Descriptor, &pack.id, verify)?,
+            Kind::Rename | Kind::FileOperation => {}
         }
     }
     history::open(records)?;

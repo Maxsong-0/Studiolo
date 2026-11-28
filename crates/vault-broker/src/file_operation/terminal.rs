@@ -2,6 +2,7 @@
 use super::{atomic, disk, record::Terminal};
 use crate::{
     BrokerError, FsVaultBroker,
+    loose_usage::LooseFolder,
     mutation::replay::{self, Replay},
     records::WriterRecords,
     writer::{directory, disk as codec},
@@ -28,10 +29,11 @@ pub(crate) fn save(broker: &FsVaultBroker, value: &Terminal) -> Result<(), Broke
         };
     }
     let bytes = serde_json::to_vec(value).map_err(|_| BrokerError::CorruptWriterState)?;
-    let (_, count, total) = replay::scan(&broker.data, Some(value.frozen.pair_id))?;
-    if count >= codec::REPLAY_COUNT
+    // 读内存里的散件用量，不全目录扫（T-249 G5）；动手之前已经按同一把尺留过位置。
+    let replays = broker.loose_usage()?.tally(LooseFolder::Replays);
+    if replays.records >= codec::REPLAY_COUNT
         || bytes.len() > codec::RECORD_LIMIT
-        || total
+        || (replays.bytes as usize)
             .checked_add(bytes.len())
             .is_none_or(|v| v > codec::REPLAY_BYTES)
     {
@@ -41,15 +43,14 @@ pub(crate) fn save(broker: &FsVaultBroker, value: &Terminal) -> Result<(), Broke
     disk::reserve(broker, disk::Folder::Records, 0, bytes.len())?;
     let parent = directory(&broker.data, "idempotency")?;
     let name = format!("{}.json", value.frozen.key_hash);
-    atomic::write(broker, &staging, &name, &bytes, &parent, true, || {
+    let written = atomic::write(broker, &staging, &name, &bytes, &parent, true, || {
         broker.writer.check(&broker.root, &broker.data)?;
-        if replay::scan(&broker.data, Some(value.frozen.pair_id))? != (false, count, total)
-            || codec::read(&parent, &name, codec::RECORD_LIMIT)?.is_some()
-        {
+        if codec::read(&parent, &name, codec::RECORD_LIMIT)?.is_some() {
             return Err(BrokerError::CaptureChanged);
         }
         Ok(())
-    })?;
-    FsVaultBroker::sync_directory(&parent, Path::new("."))?;
-    Ok(())
+    })
+    .and_then(|()| FsVaultBroker::sync_directory(&parent, Path::new(".")));
+    broker.loose_touch(LooseFolder::Replays, &name);
+    written
 }

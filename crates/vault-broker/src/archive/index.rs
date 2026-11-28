@@ -1,10 +1,10 @@
 //! 段的内存索引：打开时沿摘要链整个核一遍，之后读一条只取那一段字节、再核一次摘要。
 //!
-//! 从段内容推出来的几张表也在这里：已提交正文的路径、改名的源和目标。打包不能让依赖它们的判断变松。
+//! 从段内容推出来的几张表也在这里：已提交正文的路径、打了包的文件操作占的名额和保护。打包不能让依赖它们的判断变松。
 use super::format::{self, DIRECTORY, Head, Kind, MAX_SEGMENTS, Part, SEGMENT_BYTES};
 use crate::{
-    BrokerError, FileOperationKind, FileOperationOutcome, FilePresence, FsVaultBroker, Revision,
-    VaultPath, VaultUuid, file_operation,
+    BrokerError, FileOperationKind, FileOperationOutcome, FsVaultBroker, VaultPath, VaultUuid,
+    file_operation::{self, retained::Retained},
     fs::is_exact_temporary_name,
     mutation::{
         record::Outcome,
@@ -29,14 +29,6 @@ struct Slot {
     bytes: u32,
     sha256: [u8; 32],
 }
-/// 打了包的一次改名：两头的路径和当时的 revision。墓碑名额、保留字节和历史清理的保护都按它算。
-#[derive(Clone)]
-pub(crate) struct Rename {
-    pub source: VaultPath,
-    pub target: VaultPath,
-    pub source_revision: Option<Revision>,
-    pub target_revision: Option<Revision>,
-}
 /// 一包是谁；封存逐包核的时候按这个走。
 #[derive(Clone)]
 pub(crate) struct PackRef {
@@ -57,7 +49,7 @@ pub(super) struct Addition {
     slots: HashMap<Key, Slot>,
     packs: Vec<PackRef>,
     committed: Vec<VaultPath>,
-    renames: Vec<Rename>,
+    file_records: Vec<Retained>,
     file_bytes: u64,
 }
 impl Addition {
@@ -74,7 +66,7 @@ pub(crate) struct Archive {
     slots: HashMap<Key, Slot>,
     packs: Vec<PackRef>,
     committed: HashSet<VaultPath>,
-    renames: Vec<Rename>,
+    file_records: Vec<Retained>,
     file_bytes: u64,
 }
 /// 读进来的段，外加目录里不在链上的段文件名（没提交或已经还原、还没清掉的）。
@@ -106,8 +98,13 @@ impl Archive {
     pub(crate) fn packs(&self) -> &[PackRef] {
         &self.packs
     }
-    pub(crate) fn renames(&self) -> &[Rename] {
-        &self.renames
+    /// 打了包的文件操作：墓碑名额、保留字节和历史清理的保护照样按它们算。
+    pub(crate) fn file_records(&self) -> &[Retained] {
+        &self.file_records
+    }
+    /// 有 T-249 才有的种类：写者状态得是第 10 版。
+    pub(crate) fn needs_v10(&self) -> bool {
+        self.packs.iter().any(|pack| pack.kind.needs_v10())
     }
     /// 打了包的文件操作请求和回执一共几字节；保留字节照样算它。
     pub(crate) fn file_bytes(&self) -> u64 {
@@ -172,7 +169,7 @@ impl Archive {
             slots: HashMap::with_capacity(segment.packs.len() * 4),
             packs: Vec::with_capacity(segment.packs.len()),
             committed: Vec::new(),
-            renames: Vec::new(),
+            file_records: Vec::new(),
             file_bytes: 0,
             segment: (name, length),
         };
@@ -205,22 +202,26 @@ impl Archive {
         self.slots.extend(addition.slots);
         self.packs.extend(addition.packs);
         self.committed.extend(addition.committed);
-        self.renames.extend(addition.renames);
+        self.file_records.extend(addition.file_records);
         self.file_bytes += addition.file_bytes;
     }
 }
 
 impl Addition {
-    /// 一包里四条要说的是同一个请求；顺手记下别处判断要用的几样。
+    /// 一包里各条要说的是同一个请求、种类和内容对得上；顺手记下别处判断要用的几样。
     fn summarize(&mut self, pack: &format::Pack, pair: VaultUuid) -> Result<(), BrokerError> {
         let bad = || BrokerError::CorruptWriterState;
-        let [first, _, _, replay] = &pack.bytes;
+        let (Some(first), Some(replay)) = (pack.bytes.first(), pack.bytes.last()) else {
+            return Err(bad());
+        };
         match (pack.kind, replay::decode(replay, Some(pair))?) {
-            (Kind::Content, Replay::Current(terminal)) => {
+            (Kind::Content | Kind::Unaudited, Replay::Current(terminal)) => {
                 let envelope: recorded::store::Envelope = disk::decode(first)?;
+                // 有没有回执由有没有审计主体定：标错了种类，封存就会少核或多核回执。
                 if envelope.id != pack.id
                     || envelope.key_hash != pack.key
                     || terminal.recording.as_ref() != Some(&envelope.reference()?)
+                    || envelope.actor.is_some() != (pack.kind == Kind::Content)
                 {
                     return Err(bad());
                 }
@@ -228,28 +229,32 @@ impl Addition {
                     self.committed.push(envelope.path);
                 }
             }
-            (Kind::Rename, Replay::FileOperation(terminal)) => {
+            (Kind::Rename | Kind::FileOperation, Replay::FileOperation(terminal)) => {
                 let request: file_operation::request::Request = disk::decode(first)?;
-                let FileOperationKind::Rename { to, .. } = &request.frozen.kind else {
-                    return Err(bad());
+                let outcome = terminal.receipt.outcome;
+                let rename = matches!(request.frozen.kind, FileOperationKind::Rename { .. });
+                // 已提交的改名打成改名包；别的落定的打成文件操作包；终态未知的从不打包。
+                let fits = match outcome {
+                    FileOperationOutcome::Committed => rename == (pack.kind == Kind::Rename),
+                    FileOperationOutcome::Cancelled | FileOperationOutcome::Rejected => {
+                        pack.kind == Kind::FileOperation
+                    }
+                    FileOperationOutcome::Indeterminate => false,
                 };
                 if request.frozen.operation_id != pack.id
                     || request.frozen.key_hash != pack.key
                     || terminal.frozen != request.frozen
-                    || terminal.receipt.outcome != FileOperationOutcome::Committed
+                    || !fits
                 {
                     return Err(bad());
                 }
-                self.renames.push(Rename {
-                    source: request.frozen.path.clone(),
-                    target: to.clone(),
-                    source_revision: match &request.observed_before {
-                        FilePresence::Present { revision, .. } => Some(*revision),
-                        FilePresence::Missing => None,
-                    },
-                    target_revision: terminal.rename.as_ref().and_then(|r| r.target_revision),
-                });
-                for bytes in &pack.bytes[..3] {
+                self.file_records.push(Retained::of(
+                    &request,
+                    Some(outcome),
+                    terminal.rename.as_ref().and_then(|r| r.target_revision),
+                ));
+                // 请求和两份回执照样计进保留字节（重放不算，和散件一样）。
+                for bytes in &pack.bytes[..pack.bytes.len() - 1] {
                     self.file_bytes += bytes.len() as u64;
                 }
             }

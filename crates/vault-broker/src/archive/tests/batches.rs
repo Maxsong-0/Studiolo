@@ -185,13 +185,13 @@ fn big_records_fill_a_segment_by_bytes() {
     let biggest = 4 * crate::writer::disk::RECORD_LIMIT;
     let mut cursor = ArchiveCursor::default();
     let held = (0..64)
-        .take_while(|_| cursor.hold(format::Kind::Content, "a", biggest))
+        .take_while(|_| cursor.hold(Part::Descriptor, "a", biggest))
         .count();
     assert_eq!(held, 31);
     assert!(cursor.full() && cursor.ready(ArchiveBatch::Usual));
     assert_eq!(cursor.take().len(), 31);
     assert!(!cursor.ready(ArchiveBatch::All));
-    assert!(cursor.hold(format::Kind::Content, "b", biggest));
+    assert!(cursor.hold(Part::Descriptor, "b", biggest));
     assert!(!cursor.full());
     // 真写：两份回执和重放各垫到 64000 字节（描述符只认唯一写法，垫不了），一包 19 万多，一段装得下 42 包。
     let fixture = Fixture::new();

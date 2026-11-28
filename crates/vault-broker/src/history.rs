@@ -20,6 +20,7 @@ mod schema;
 pub(crate) mod store;
 pub(crate) use catalog::preflight;
 pub(crate) use complete::complete;
+pub(crate) use legacy::{LegacyIndex, forget as legacy_forget, saved as legacy_saved};
 
 use crate::{MutationActor, Revision, VaultPath, VaultUuid};
 use serde::{Deserialize, Serialize};
