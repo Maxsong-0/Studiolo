@@ -66,18 +66,18 @@ fn 最后对上只在空闲和一批闭合时前移() {
         (3_800, Err(PlaneError::Storage)),
         (4_100, Err(PlaneError::Transport)),
     ] {
-        health.record_round(at, &outcome);
+        health.record_round(span(at), &outcome);
         assert_eq!(
             health.status_receipt(at + 1).last_aligned_at,
             Some(1_000),
             "{outcome:?}"
         );
     }
-    health.record_round(5_000, &Ok(RoundOutcome::Idle));
+    health.record_round(span(5_000), &Ok(RoundOutcome::Idle));
     assert_eq!(health.status_receipt(5_001).last_aligned_at, Some(5_000));
-    health.record_round(5_300, &settled(12));
+    health.record_round(span(5_300), &settled(12));
     assert_eq!(health.status_receipt(5_301).last_aligned_at, Some(5_300));
-    health.record_round(5_600, &unknown(13));
+    health.record_round(span(5_600), &unknown(13));
     let receipt = health.status_receipt(5_601);
     assert_eq!(receipt.last_aligned_at, Some(5_300));
     assert_eq!(
@@ -103,7 +103,7 @@ fn 被挡数只在走到守卫的轮次连同那一轮时刻换新且沿用值�
         (NOW + 900, unknown(11)),
         (NOW + 1_200, Err(PlaneError::Observation)),
     ] {
-        health.record_round(at, &outcome);
+        health.record_round(span(at), &outcome);
         assert_eq!(
             gate(health.status_receipt(at + 1)),
             (Some(1309), Some(NOW - 60)),
@@ -116,7 +116,7 @@ fn 被挡数只在走到守卫的轮次连同那一轮时刻换新且沿用值�
         gate(health.status_receipt(NOW + 1_500)),
         (Some(1309), Some(NOW - 60))
     );
-    health.record_round(NOW + 1_500, &Ok(RoundOutcome::Idle));
+    health.record_round(span(NOW + 1_500), &Ok(RoundOutcome::Idle));
     assert_eq!(
         gate(health.status_receipt(NOW + 1_501)),
         (Some(0), Some(NOW + 1_500))
@@ -124,10 +124,10 @@ fn 被挡数只在走到守卫的轮次连同那一轮时刻换新且沿用值�
     assert_eq!(health.bridge().deletes_blocked, Some(0));
     health.record_delete_gate(1310);
     health.record_round(
-        NOW + 1_800,
+        span(NOW + 1_800),
         &Ok(RoundOutcome::DeletesBlocked { count: 1310 }),
     );
-    health.record_round(NOW + 2_100, &Err(PlaneError::Transport));
+    health.record_round(span(NOW + 2_100), &Err(PlaneError::Transport));
     assert_eq!(
         gate(health.status_receipt(NOW + 2_101)),
         (Some(1310), Some(NOW + 1_800))
@@ -244,7 +244,7 @@ fn 写回执不碰持久状态且清掉陈旧暂存件() {
     let health = PlaneHealth::new(None);
     let now = clock();
     resume_status(&store, &health, now - 600);
-    health.record_round(now, &Ok(RoundOutcome::Idle));
+    health.record_round(span(now), &Ok(RoundOutcome::Idle));
     publish_status(&store, &health);
     assert_eq!(fs::read(&plane_state).unwrap(), bytes);
     assert_eq!(on_disk(root.path()).last_aligned_at, Some(now));
