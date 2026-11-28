@@ -63,7 +63,7 @@ fn classify(name: &str) -> Result<Option<(&str, Kind)>> {
     } else {
         return Ok(None);
     };
-    if !studiolo_core::is_sha256_hex(&key) {
+    if !studiolo_core::is_sha256_hex(key) {
         return Err(StagingError::CleanupRequired);
     }
     Ok(Some((key, kind)))

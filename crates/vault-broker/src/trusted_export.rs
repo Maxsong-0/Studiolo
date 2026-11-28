@@ -303,7 +303,7 @@ fn history_catalog_stem(path: &VaultPath) -> Option<&str> {
     path.as_str()
         .strip_prefix(HISTORY_CATALOGS)?
         .strip_suffix(".json")
-        .filter(|stem| studiolo_core::is_sha256_hex(stem))
+        .filter(|stem| studiolo_core::is_sha256_hex(*stem))
 }
 
 /// 批次终态记录只在写者数据根这一层，名字是 `batch-<批次号的 SHA-256>.json`；返回文件名。

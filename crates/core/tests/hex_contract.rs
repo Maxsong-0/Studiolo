@@ -33,7 +33,7 @@ fn sha256_hex_is_plain_sha256_without_a_domain_prefix() {
     assert_eq!(sha256_hex(b"abc"), ABC_SHA256);
     assert_eq!(sha256_hex("abc"), ABC_SHA256);
     let owned = Vec::from("abc");
-    assert_eq!(sha256_hex(&owned), ABC_SHA256);
+    assert_eq!(sha256_hex(owned), ABC_SHA256);
 }
 
 #[test]
