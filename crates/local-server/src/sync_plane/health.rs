@@ -3,7 +3,7 @@
 //! 本文件只累积事实，不读磁盘；`startup/health_input.rs` 经 `BridgeHealthProbe` 取快照。
 //! 每个回填方法只写它能证明的字段：驱动器在轮内调 `record_mode`／`record_headless`／
 //! `record_observed_copies`／`record_conflicts`／`record_delete_gate`／`record_execution`／`record_usage`，轮末由
-//! `SyncPlane::drive_until` 调 `record_round` 收口；没被任何方法证明过的字段保持 `None`，
+//! `SyncPlane::drive_until`（经 `sync_plane::run_and_record`）调 `record_round` 收口；没被任何方法证明过的字段保持 `None`，
 //! 第六节因此判未知而不是判正常。
 //! 同步状态回执（T-224，`status.rs`）的两项事实——两边最后一次对上、删除被挡——也从这里取，不进第六节。
 
@@ -28,12 +28,23 @@ pub const OWNER_LABEL: &str = "sync-transport";
 pub trait BridgeHealthProbe: Send + Sync {
     /// 第六节证据；拿不到的字段一律 `None`。
     fn bridge(&self) -> BridgeEvidence;
-    /// 传输 owner 的活性回执（最近一轮时刻，约定周期 = 两倍轮间隔）。
+    /// 传输 owner 的活性回执（最近一轮结束的时刻，约定周期 = 两倍轮间隔）。
     fn liveness(&self) -> OwnerLiveness;
     /// Studiolo 侧镜像字节数与对象数；不是账号用量。
     fn sync_usage(&self) -> Option<SyncUsage>;
     /// 审批文档里的人工配额；`None` 即该维度未知。
     fn manual_quota(&self) -> Option<ManualQuota>;
+}
+
+/// 一轮的两个时刻（BUG-048、BUG-049）。开始时刻是喂给驱动器的那个，也是同步状态回执里「对上」「守卫证明」
+/// 的时刻（契约 `docs/contracts/sync-status-receipt.md`）；结束时刻在驱动器返回之后另取，是 owner 活性回执
+/// 和一批闭合的时刻（契约 `docs/contracts/health-sync-bridge.md` 第 2、3 节）——闭合在轮内完成，开始那一刻它还没闭合。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RoundSpan {
+    /// 这一轮开始的 Unix 秒。
+    pub started_unix: i64,
+    /// 驱动器返回之后取的 Unix 秒。
+    pub ended_unix: i64,
 }
 
 /// 平面内的健康累积器。
@@ -44,6 +55,7 @@ pub struct PlaneHealth {
 
 #[derive(Default)]
 struct Inner {
+    /// 最近一轮结束的时刻（驱动器返回之后取的）；owner 活性回执用它（BUG-049）。
     last_round_unix: Option<i64>,
     evidence: BridgeEvidence,
     usage: Option<SyncUsage>,
@@ -73,26 +85,27 @@ impl PlaneHealth {
         }
     }
 
-    /// 记录一轮结束，按结论收口第六节证据；时刻同时作为传输 owner 的活性回执。
+    /// 记录一轮结束，按结论收口第六节证据；结束时刻同时作为传输 owner 的活性回执，无论这一轮成功与否。
     ///
-    /// 只写本轮结论能证明的字段：`Settled` 证明整轮干净走完，把熔断、终态计数一并复位；
-    /// `Idle`／`Unknown`／`Blocked` 只证明跑到了执行段（守卫放行、RunOnce 干净回收、协议空闲）；
+    /// 只写本轮结论能证明的字段：`Settled` 证明整轮干净走完，盖上最近闭合的一批（序号＋结束时刻），把熔断、终态计数一并复位；
+    /// `Idle`／`Unknown`／`Blocked` 只证明跑到了执行段（守卫放行、RunOnce 干净回收、协议空闲），
+    /// 停住的批次（`Unknown`／`Blocked`）不碰最近闭合的一批，免得卡住的轮次把「闭合时刻」每轮往前推（BUG-048）；
     /// `DeletesBlocked` 证明的和 `Idle` 一样多；被挡的删除数不由这里写，由轮内 `record_delete_gate` 按守卫结论写（BUG-046）；
     /// 每种 `PlaneError` 只落到它对应的那一个字段，其余保持原值。`quiescence_valid` 按
     /// 「本轮是否取到静止票据」置位：除 `Skipped` 外的 `Ok` 都出现在取票之后，任何 `Err`
     /// 与 `Skipped` 都没有新票据，第六节至少落到未知，失败轮不可能被上一轮的绿盖住。
-    /// 「最后对上」只在 `Idle`／`Settled` 时前移到本轮时刻（`status::aligned`），别的结论不动它；
-    /// 本轮走到了删除守卫，回执的被挡数连同本轮时刻换新，没走到就留着上一次证明的那一对。
-    pub fn record_round(&self, now_unix: i64, outcome: &Result<RoundOutcome, PlaneError>) {
+    /// 「最后对上」只在 `Idle`／`Settled` 时前移到本轮开始时刻（`status::aligned`），别的结论不动它；
+    /// 本轮走到了删除守卫，回执的被挡数连同本轮开始时刻换新，没走到就留着上一次证明的那一对。
+    pub fn record_round(&self, span: RoundSpan, outcome: &Result<RoundOutcome, PlaneError>) {
         let Ok(mut inner) = self.inner.lock() else {
             return;
         };
-        inner.last_round_unix = Some(now_unix);
+        inner.last_round_unix = Some(span.ended_unix);
         if status::aligned(outcome) {
-            inner.last_aligned_unix = Some(now_unix);
+            inner.last_aligned_unix = Some(span.started_unix);
         }
         if let Some(blocked) = inner.pending_gate.take() {
-            inner.deletes_gate = Some((blocked, now_unix));
+            inner.deletes_gate = Some((blocked, span.started_unix));
         }
         let executed = inner.executed_sequence;
         let evidence = &mut inner.evidence;
@@ -106,7 +119,7 @@ impl PlaneHealth {
         ));
         match outcome {
             Ok(RoundOutcome::Settled { sequence, .. }) => {
-                stamp(evidence, *sequence, now_unix);
+                stamp(evidence, *sequence, span.ended_unix);
                 evidence.fused = Some(false);
                 evidence.unknown_jobs = Some(0);
             }
@@ -114,8 +127,9 @@ impl PlaneHealth {
             Ok(RoundOutcome::Idle | RoundOutcome::DeletesBlocked { .. }) => {
                 reached_execution(evidence);
             }
+            // 停住的批次只证明跑到了执行段，不是闭合：最近闭合的一批留着上一次闭合的那一对（BUG-048）。
             Ok(RoundOutcome::Unknown { sequence }) => {
-                stamp(evidence, *sequence, now_unix);
+                reached_execution(evidence);
                 // 执行段报了本批的数就以它为准，没报至少有一条。
                 let reported = evidence
                     .unknown_jobs
@@ -123,7 +137,7 @@ impl PlaneHealth {
                 evidence.unknown_jobs = Some(reported.unwrap_or(0).max(1));
             }
             Ok(RoundOutcome::Blocked { sequence }) => {
-                stamp(evidence, *sequence, now_unix);
+                reached_execution(evidence);
                 // 冻结原因只有执行段知道；它没报本批就不敢说熔断没生效。
                 if executed != Some(*sequence) {
                     evidence.fused = None;
@@ -306,11 +320,11 @@ impl PlaneHealth {
     }
 }
 
-/// 一批闭合或停住：盖上序号与时刻，并记下跑到执行段所证明的事实。
-fn stamp(evidence: &mut BridgeEvidence, sequence: u64, now_unix: i64) {
+/// 一批闭合：盖上序号与闭合那一轮结束的时刻，并记下跑到执行段所证明的事实。只有 `Settled` 调它（BUG-048）。
+fn stamp(evidence: &mut BridgeEvidence, sequence: u64, ended_unix: i64) {
     evidence.last_batch = Some(BatchStamp {
         sequence,
-        unix_seconds: now_unix,
+        unix_seconds: ended_unix,
     });
     reached_execution(evidence);
 }

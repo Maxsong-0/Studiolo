@@ -123,7 +123,7 @@ launcher 把启动事实（固定 pins、镜像根、配置根、操作）预写
 
 ## 7 健康节「双向 Bridge」（`sync-bridge`）
 
-`last_batch{sequence,unix_seconds}`、`fused`（熔断）、`unknown_jobs`（Issued 后未知的动作数）、`quiescence_valid`、
+`last_batch{sequence,unix_seconds}`（最近闭合的一批：一批卡在终态未知或冻结时它停在上一次闭合，不随轮次刷新，BUG-048；健康页明细那一行叫「最近闭合」）、`fused`（熔断）、`unknown_jobs`（Issued 后未知的动作数）、`quiescence_valid`、
 `conflict_copies`、`mirror_bytes`、`last_exit`（clean／non_zero／signal／deadline_exceeded／owner_stopped／unconfirmed）、
 `recovery`（idle／forced_mirror_remote／backoff）、`residue_guard`（clear／blocked）、`mode`、`config_matches`（headless 配置与审批一致）。
 有正证据就降级，不等别的字段齐（T-223）：`path_usage` 超上限、`byte_usage` 超上限、`fused`、`deletes_blocked>0`、`residue_guard=blocked`、`config_matches=false`、`unknown_jobs>0`、
@@ -140,7 +140,7 @@ launcher 把启动事实（固定 pins、镜像根、配置根、操作）预写
 处理：出新版提高预算最稳妥。把范围里不该同步的大文件移出去（附件最占地方）也能降下来，但主库没开文件操作时，
 远端的删除会被删除守卫整批挡住（见上面的 `deletes_blocked`），要等文件操作开好才走得通；不要为此改审批文档的范围。
 平面未装配时整节未知（没启用的能力不显示绿）。`sync-quota`：镜像字节对 `manual_quota.account_limit_bytes`，七成预警。
-`owner-liveness` 多一项 `sync-transport`（最近一轮时刻，周期 600 s）。
+`owner-liveness` 多一项 `sync-transport`（最近一轮结束的时刻，无论那轮成功与否，BUG-049；周期 600 s）。
 `plane-state.json` 新增的 `headless_excluded`、`conflict_stamps`、`pending_purge` 字段向后兼容：旧文件照常读、字段为空时不写出，不需要重建。
 
 ## 8 排除项清除的安全顺序与 `sync-purge-residue`

@@ -14,12 +14,12 @@ pub const RESIDUE_BLOCKED: &str = "排除项清除前有镜像残留";
 /// headless 本地配置与审批文档不一致时的固定中文原因（设计文档第 2 节第 3 步）。
 pub const CONFIG_MISMATCH: &str = "headless 配置与审批文档不一致，本轮未同步";
 
-/// 最近一批的序号与时刻。
+/// 最近闭合的一批：序号与闭合时刻（BUG-048：停住的批次不盖，卡住的轮次也就不会把时刻往前推）。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct BatchStamp {
     /// Bridge 计划序号。
     pub sequence: u64,
-    /// 该批闭合（或停住）的 Unix 秒。
+    /// 该批闭合那一轮结束的 Unix 秒（闭合在轮内完成，这时它一定已经闭合）。
     pub unix_seconds: i64,
 }
 
@@ -82,7 +82,7 @@ pub struct BudgetUsage {
 /// 第六节的全部证据；`None` 一律走「未知」。
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct BridgeEvidence {
-    /// 最近一批序号与时刻。
+    /// 最近闭合的一批的序号与闭合时刻；本进程还没有一批闭合过即 `None`。
     pub last_batch: Option<BatchStamp>,
     /// 删除熔断是否仍生效。
     pub fused: Option<bool>,
