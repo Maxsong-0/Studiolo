@@ -6,7 +6,6 @@
 use std::{collections::BTreeMap, io};
 
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 use studiolo_core::VaultPath;
 
 use crate::{
@@ -108,11 +107,7 @@ impl ParseCache {
         let mut previous = None;
         for entry in &self.data.entries {
             if previous.is_some_and(|path| path >= &entry.path)
-                || entry.content_sha256.len() != 64
-                || !entry
-                    .content_sha256
-                    .bytes()
-                    .all(|ch| matches!(ch, b'0'..=b'9' | b'a'..=b'f'))
+                || !studiolo_core::is_sha256_hex(&entry.content_sha256)
                 || !entry.valid_locations()
             {
                 return Err(CacheError::InvalidRecord);
@@ -208,10 +203,7 @@ impl InMemoryVaultIndex {
 }
 
 fn digest(bytes: &[u8]) -> String {
-    Sha256::digest(bytes)
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect()
+    studiolo_core::sha256_hex(bytes)
 }
 
 #[derive(Default)]

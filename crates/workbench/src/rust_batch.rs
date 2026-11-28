@@ -14,11 +14,5 @@ pub(crate) fn id(inputs: &[&RustSourceInput]) -> String {
         hash.update((input.content.len() as u64).to_be_bytes());
         hash.update(input.content.as_bytes());
     }
-    let digits = b"0123456789abcdef";
-    let mut result = String::with_capacity(64);
-    for &byte in hash.finalize().iter() {
-        result.push(char::from(digits[usize::from(byte >> 4)]));
-        result.push(char::from(digits[usize::from(byte & 15)]));
-    }
-    result
+    studiolo_core::to_lower_hex(&hash.finalize())
 }

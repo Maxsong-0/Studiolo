@@ -35,11 +35,7 @@ impl SourcePolicyRef {
             return Err(SourcePolicyError::InvalidSource);
         }
         let effective_policy_sha256 = effective_policy_sha256.into();
-        if effective_policy_sha256.len() != 64
-            || !effective_policy_sha256
-                .bytes()
-                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
-        {
+        if !crate::is_sha256_hex(&effective_policy_sha256) {
             return Err(SourcePolicyError::InvalidPolicyDigest);
         }
         Ok(Self {

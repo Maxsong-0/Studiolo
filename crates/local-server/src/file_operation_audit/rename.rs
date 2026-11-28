@@ -1,7 +1,7 @@
 //! 复合效果只有目标、源两项；验证历史元数据，不根据当前路径重建成功。
-use super::{hex, presence_valid};
+use super::presence_valid;
 use studiolo_audit_ledger::AuditError;
-use studiolo_core::{Revision, VaultPath};
+use studiolo_core::{Revision, VaultPath, is_sha256_hex};
 use studiolo_vault_broker::{
     ContentAuditPhase, FileEffect, FileOperationAuditEvent, FileOperationKind,
     FileOperationOutcome, FilePresence,
@@ -51,7 +51,7 @@ pub(super) fn validate(value: &FileOperationAuditEvent) -> Result<(), AuditError
                 || accepts(RenameShape::TargetInstalled)
                 || accepts(RenameShape::SourceUnknown))
                 && value.tombstone_id.is_none()
-                && value.evidence_id.as_deref().is_some_and(hex)
+                && value.evidence_id.as_deref().is_some_and(is_sha256_hex)
         }
         _ => false,
     };

@@ -3,7 +3,6 @@ use super::{
     AgentStore, Instance, IssuedToken, SupplyError, TOKEN_PREFIX, unavailable, validate_type_name,
 };
 use rusqlite::{OptionalExtension as _, params};
-use sha2::{Digest as _, Sha256};
 
 impl AgentStore {
     /// 签发（或轮换）一个类型的 token；旧 token 立即失效。明文只返回这一次。
@@ -55,10 +54,7 @@ impl AgentStore {
     /// 用明文 token 认证：返回未吊销的类型名；格式不符、未知或已吊销都返回 `None`。
     pub fn authenticate(&self, token: &str) -> Result<Option<String>, SupplyError> {
         if !token.starts_with(TOKEN_PREFIX)
-            || token.len() != TOKEN_PREFIX.len() + 64
-            || !token[TOKEN_PREFIX.len()..]
-                .bytes()
-                .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
+            || !studiolo_core::is_sha256_hex(&token[TOKEN_PREFIX.len()..])
         {
             return Ok(None);
         }
@@ -178,12 +174,10 @@ fn random_hex_64() -> String {
     let mut bytes = [0u8; 32];
     bytes[..16].copy_from_slice(uuid::Uuid::new_v4().as_bytes());
     bytes[16..].copy_from_slice(uuid::Uuid::new_v4().as_bytes());
-    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+    // 持有者令牌：core 那份按长度一次分配，不像逐字节 `format!` 那样在堆上留临时碎片。
+    studiolo_core::to_lower_hex(&bytes)
 }
 
 pub(super) fn sha256_hex(text: &str) -> String {
-    Sha256::digest(text.as_bytes())
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect()
+    studiolo_core::sha256_hex(text)
 }

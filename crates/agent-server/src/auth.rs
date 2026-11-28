@@ -13,7 +13,6 @@ use axum::{
     middleware::Next,
     response::{IntoResponse, Response},
 };
-use sha2::{Digest as _, Sha256};
 use studiolo_supply::audit::{self, Actor};
 
 use crate::state::AppState;
@@ -127,10 +126,7 @@ pub(crate) fn recognize(
         .authenticate(token)
         .map_err(|_| Unrecognized::Unavailable)?
         .ok_or(Unrecognized::Unauthenticated)?;
-    let digest = Sha256::digest(token.as_bytes())
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect();
+    let digest = studiolo_core::sha256_hex(token);
     Ok((AgentType(agent_type), CredentialDigest(digest)))
 }
 

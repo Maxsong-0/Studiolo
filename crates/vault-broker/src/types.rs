@@ -98,11 +98,7 @@ fn deserialize_snapshot_id<'de, D: serde::Deserializer<'de>>(
     deserializer: D,
 ) -> Result<String, D::Error> {
     let value = String::deserialize(deserializer)?;
-    if value.len() == 64
-        && value
-            .bytes()
-            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
-    {
+    if studiolo_core::is_sha256_hex(&value) {
         Ok(value)
     } else {
         Err(serde::de::Error::custom(
@@ -257,7 +253,7 @@ pub(crate) fn snapshot_identity(
 }
 
 pub(crate) fn sha256(bytes: &[u8]) -> String {
-    hex(&Sha256::digest(bytes))
+    studiolo_core::sha256_hex(bytes)
 }
 
 /// 原样 32 字节的摘要；内存索引里存它，不存十六进制。
@@ -266,10 +262,5 @@ pub(crate) fn digest(bytes: &[u8]) -> [u8; 32] {
 }
 
 pub(crate) fn hex(bytes: &[u8]) -> String {
-    use std::fmt::Write as _;
-    let mut output = String::with_capacity(bytes.len() * 2);
-    for byte in bytes {
-        write!(&mut output, "{byte:02x}").expect("writing to String cannot fail");
-    }
-    output
+    studiolo_core::to_lower_hex(bytes)
 }

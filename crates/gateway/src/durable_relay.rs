@@ -126,7 +126,8 @@ impl DurableRelay {
         }
         let mut nonce = [0u8; 32];
         getrandom::fill(&mut nonce).map_err(|_| RelayError::Storage)?;
-        let token: String = nonce.iter().map(|b| format!("{b:02x}")).collect();
+        // core 那份按长度一次分配，不像逐字节 `format!` 那样在堆上留令牌的临时碎片。
+        let token = studiolo_core::to_lower_hex(&nonce);
         self.store.grant(&token, &grant)?;
         Ok(RelayTicket::new(token))
     }

@@ -18,7 +18,6 @@ studiolo-control-db.workspace = true
 studiolo-vault-broker.workspace = true
 studiolo-audit-ledger.workspace = true
 studiolo-runner-adapter.workspace = true
-sha2.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 serde-saphyr.workspace = true
@@ -27,4 +26,5 @@ ulid.workspace = true
 
 [dev-dependencies]
 rusqlite.workspace = true
+sha2.workspace = true
 tempfile.workspace = true

@@ -137,11 +137,7 @@ pub(super) fn parse(args: Vec<OsString>) -> Result<Option<Options>, MaintenanceE
             }
             Some("--request") if command.needs_request() && request.is_none() => {
                 let value = pair[1].to_str().ok_or(MaintenanceError::Arguments)?;
-                if value.len() != 64
-                    || !value
-                        .bytes()
-                        .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
-                {
+                if !studiolo_core::is_sha256_hex(value) {
                     return Err(MaintenanceError::Arguments);
                 }
                 request = Some(value.to_owned());
@@ -151,11 +147,7 @@ pub(super) fn parse(args: Vec<OsString>) -> Result<Option<Options>, MaintenanceE
                 if command == Command::CancelMaintenance && maintenance.is_none() =>
             {
                 let value = pair[1].to_str().ok_or(MaintenanceError::Arguments)?;
-                if value.len() != 64
-                    || !value
-                        .bytes()
-                        .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
-                {
+                if !studiolo_core::is_sha256_hex(value) {
                     return Err(MaintenanceError::Arguments);
                 }
                 maintenance = Some(value.to_owned());

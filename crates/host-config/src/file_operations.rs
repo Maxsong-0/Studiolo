@@ -93,17 +93,7 @@ impl FileOperationPolicy {
         digest.update(b"studiolo.human-file-operations.private-config.v1\0");
         digest.update((config.file.bytes().len() as u64).to_be_bytes());
         digest.update(config.file.bytes());
-        let hex = b"0123456789abcdef";
-        let hash: String = digest
-            .finalize()
-            .iter()
-            .flat_map(|byte| {
-                [
-                    char::from(hex[usize::from(byte >> 4)]),
-                    char::from(hex[usize::from(byte & 15)]),
-                ]
-            })
-            .collect();
+        let hash = studiolo_core::to_lower_hex(&digest.finalize());
         let generated = sync_generated(config, document.vault_uuid)?;
         let rename = document
             .rename
