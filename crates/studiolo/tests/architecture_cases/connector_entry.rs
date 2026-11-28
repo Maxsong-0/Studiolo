@@ -66,8 +66,8 @@ const AGENT_REACH: [Reach; 4] = [
         ],
         paths: &[
             "audit::action_denied",
+            "audit::connector_registered",
             "audit::content_read",
-            "audit::instance_registered",
             "auth::recognize",
             "collect",
             "get",

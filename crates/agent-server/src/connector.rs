@@ -402,7 +402,7 @@ impl Connect {
             instances.insert(caller.agent_type.clone(), registered);
         };
         remember(false);
-        let event = audit::instance_registered(Actor::instance(&caller.agent_type, &instance))
+        let event = audit::connector_registered(Actor::instance(&caller.agent_type, &instance))
             .map_err(|_| UNAVAILABLE)?;
         self.app.audit(event).map_err(|_| UNAVAILABLE)?;
         remember(true);

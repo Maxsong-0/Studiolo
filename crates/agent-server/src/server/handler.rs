@@ -1,7 +1,9 @@
 //! MCP initialize：实例登记与初次只读路牌。
 use super::{
     AgentSession, ListEntriesArgs, ListProposalsArgs, PolicyReadArgs, ProposeArgs, SearchArgs,
-    args::ReadNoteToolArgs, catalog::SESSION_VERSIONS,
+    args::ReadNoteToolArgs,
+    catalog::{FALLBACK_VERSION, SESSION_VERSIONS, answered_version},
+    client_reported::ClientReported,
 };
 use crate::auth::AgentType;
 use rmcp::{
@@ -137,7 +139,7 @@ impl ServerHandler for AgentSession {
         let mut server_info = Implementation::from_build_env();
         server_info.name = "studiolo-agent".into();
         let mut info = InitializeResult::new(ServerCapabilities::builder().enable_tools().build());
-        info.protocol_version = ProtocolVersion::V_2025_11_25;
+        info.protocol_version = FALLBACK_VERSION;
         info.server_info = server_info;
         info
     }
@@ -148,7 +150,7 @@ impl ServerHandler for AgentSession {
 
     fn initialize(
         &self,
-        _request: InitializeRequestParams,
+        request: InitializeRequestParams,
         context: RequestContext<RoleServer>,
     ) -> impl Future<Output = Result<InitializeResult, McpError>> + Send + '_ {
         // rmcp 在调用本处理器之前，已把请求元数据移进 `RequestContext`。
@@ -169,6 +171,8 @@ impl ServerHandler for AgentSession {
             .get::<http::request::Parts>()
             .and_then(|parts| parts.extensions.get::<AgentType>())
             .map(|agent_type| agent_type.0.clone());
+        let answered = answered_version(&request.protocol_version);
+        let client = ClientReported::new(&request.client_info);
         async move {
             let _work = self.enter_mcp_work()?;
             let parent = parent?;
@@ -184,7 +188,11 @@ impl ServerHandler for AgentSession {
                 return Err(McpError::invalid_request("会话身份不匹配", None));
             }
             let instructions = match self
-                .initialize_with_parent(&agent_type, parent.as_deref())
+                .initialize_with_parent(
+                    &agent_type,
+                    parent.as_deref(),
+                    client.registration(answered.as_str()),
+                )
                 .await
             {
                 Ok(text) => text,

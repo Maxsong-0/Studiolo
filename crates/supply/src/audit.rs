@@ -1,5 +1,5 @@
 //! 接入方审计事件构造：动作名与「四附」矩阵一致，payload 只含类型、实例、路径、revision、
-//! tool、token 计数、原因；不含正文、token 秘密或宿主路径。事件 ID 每次唯一。
+//! tool、token 计数、原因、登记走的路；不含正文、token 秘密、会话号或宿主路径。事件 ID 每次唯一。
 
 use serde_json::json;
 use studiolo_audit_ledger::{AuditError, AuditEvent, AuditEventId, AuditPhase, SanitizedPayload};
@@ -148,9 +148,74 @@ pub fn action_denied(
     )
 }
 
-/// `agent_instance.registered`。
-pub fn instance_registered(actor: Actor<'_>) -> Result<AuditEvent, AuditError> {
-    event(actor, INSTANCE_REGISTERED, map(json!({})))
+/// 没有协商的两条路在两格里都如实写走的哪条路，不留空冒充。
+const NOT_NEGOTIATED_HTTP_TEXT: &str = "not_negotiated:http_text";
+const NOT_NEGOTIATED_CONNECTOR: &str = "not_negotiated:connector";
+
+/// 实例从哪条路登记，连同 MCP 握手时服务器应答的版本和客户端自报名。
+///
+/// 内容只有本模块读得到、只进登记审计：自报名没人验过，授权判断不许读它。
+#[derive(Clone, Copy, Debug)]
+pub struct Registration<'a>(Route<'a>);
+
+#[derive(Clone, Copy, Debug)]
+enum Route<'a> {
+    Mcp {
+        answered: &'a str,
+        name: &'a str,
+        version: &'a str,
+    },
+    HttpText,
+    Connector,
+}
+
+impl<'a> Registration<'a> {
+    /// MCP 握手：服务器实际应答的协议版本（不是客户端要的），和客户端自报的名字、版本；
+    /// 自报的两样由调用方先限长、去控制字符。
+    #[must_use]
+    pub fn mcp(answered: &'a str, name: &'a str, version: &'a str) -> Self {
+        Self(Route::Mcp {
+            answered,
+            name,
+            version,
+        })
+    }
+
+    /// HTTP 文本兜底：没有协商，也没有自报名。
+    #[must_use]
+    pub fn http_text() -> Self {
+        Self(Route::HttpText)
+    }
+}
+
+/// `agent_instance.registered`：协商版本与客户端自报名。MCP 的自报名是对象，另外两条路是固定字符串，
+/// 客户端自报什么名字都装不成没有协商的路。
+pub fn instance_registered(
+    actor: Actor<'_>,
+    registration: Registration<'_>,
+) -> Result<AuditEvent, AuditError> {
+    let (negotiated_version, client_reported) = match registration.0 {
+        Route::Mcp {
+            answered,
+            name,
+            version,
+        } => (answered, json!({"name": name, "version": version})),
+        Route::HttpText => (NOT_NEGOTIATED_HTTP_TEXT, json!(NOT_NEGOTIATED_HTTP_TEXT)),
+        Route::Connector => (NOT_NEGOTIATED_CONNECTOR, json!(NOT_NEGOTIATED_CONNECTOR)),
+    };
+    event(
+        actor,
+        INSTANCE_REGISTERED,
+        map(json!({
+            "negotiated_version": negotiated_version,
+            "client_reported": client_reported,
+        })),
+    )
+}
+
+/// 连接器的登记。单列一个函数：连接器入口只够得着它（架构守卫按名列着），写不出「协商过」的登记。
+pub fn connector_registered(actor: Actor<'_>) -> Result<AuditEvent, AuditError> {
+    instance_registered(actor, Registration(Route::Connector))
 }
 
 #[cfg(test)]
@@ -204,5 +269,49 @@ mod tests {
         let a = handshake_served(actor, 7, 1, Some("ab")).unwrap();
         let b = handshake_served(actor, 7, 1, Some("ab")).unwrap();
         assert_ne!(a.event_id(), b.event_id());
+    }
+
+    #[test]
+    fn a_registration_says_which_route_it_took_and_never_leaves_the_two_fields_empty() {
+        let actor = Actor::instance("claude", "01JT3");
+        let payload = |event: AuditEvent| event.payload().as_value().clone();
+        for (event, negotiated_version, client_reported) in [
+            (
+                instance_registered(actor, Registration::mcp("2025-06-18", "codex", "0.171.0")),
+                "2025-06-18",
+                json!({"name": "codex", "version": "0.171.0"}),
+            ),
+            // 自报成别的路也只落在名字里。
+            (
+                instance_registered(
+                    actor,
+                    Registration::mcp("2025-11-25", NOT_NEGOTIATED_CONNECTOR, ""),
+                ),
+                "2025-11-25",
+                json!({"name": "not_negotiated:connector", "version": ""}),
+            ),
+            (
+                instance_registered(actor, Registration::http_text()),
+                "not_negotiated:http_text",
+                json!("not_negotiated:http_text"),
+            ),
+            (
+                connector_registered(actor),
+                "not_negotiated:connector",
+                json!("not_negotiated:connector"),
+            ),
+        ] {
+            let event = event.unwrap();
+            assert_eq!(event.action(), INSTANCE_REGISTERED);
+            assert_eq!(
+                payload(event),
+                json!({
+                    "agent_type": "claude",
+                    "agent_instance": "01JT3",
+                    "negotiated_version": negotiated_version,
+                    "client_reported": client_reported,
+                })
+            );
+        }
     }
 }

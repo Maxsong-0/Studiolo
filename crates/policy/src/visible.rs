@@ -1,9 +1,9 @@
-//! 看不见的字符：连接器带进来的项目名、分支名里一个都不收（ADR-046）。
+//! 看不见的字符：连接器带进来的项目名、分支名里一个都不收（ADR-046）；MCP 握手里客户端的自报名去掉它们再记审计。
 //!
 //! 网页那边按 Unicode 属性拒（`web/src/presenceModel.ts`），整组读不到；这里少收一个就会出现「服务端收了、
 //! 网页整组读不到」，所以网页用例逐码点读这张表核对「网页拒的，这里都拒」。
 //!
-//! 只管连接器。仓库里别处还有几份（`vault-broker` 与 `host-config` 的 `paths.rs`、`workbench` 的 `rust_paths.rs` 与
+//! 只管这两处。仓库里别处还有几份（`vault-broker` 与 `host-config` 的 `paths.rs`、`workbench` 的 `rust_paths.rs` 与
 //! `operations_parse.rs`、网页 `cargoDependencies.ts` 与 `rustSourceValidation.ts`）：口径、用例各是各的，和这张互有出入
 //! （比如前两份多到 U+13455，并且连控制字符一起拒），没有并过来。改这里不会改到那些，也不能直接拿这张换掉它们。
 

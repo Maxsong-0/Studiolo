@@ -101,6 +101,51 @@ async fn fixture_seeded(
     }
 }
 
+/// 读一个 JSON-RPC 应答，返回（会话 id 头，响应对象）；SSE 按 `data:` 事件解析，读到目标 id 即停。
+async fn read_rpc(
+    mut response: reqwest::Response,
+    id: u64,
+    method: &str,
+) -> (Option<String>, Value) {
+    assert_eq!(response.status(), 200, "{method}");
+    let session_id = response
+        .headers()
+        .get("mcp-session-id")
+        .map(|value| value.to_str().unwrap().to_owned());
+    let content_type = response
+        .headers()
+        .get("content-type")
+        .map(|value| value.to_str().unwrap().to_owned())
+        .unwrap_or_default();
+    let mut buffer = String::new();
+    while let Some(chunk) = response.chunk().await.unwrap() {
+        buffer.push_str(std::str::from_utf8(&chunk).unwrap());
+        if content_type.starts_with("application/json") {
+            if let Ok(value) = serde_json::from_str::<Value>(&buffer) {
+                return (session_id, value);
+            }
+            continue;
+        }
+        for event in buffer.split("\n\n") {
+            let data = event
+                .lines()
+                .filter_map(|line| line.strip_prefix("data:"))
+                .map(str::trim)
+                .collect::<Vec<_>>()
+                .join("");
+            if data.is_empty() {
+                continue;
+            }
+            if let Ok(value) = serde_json::from_str::<Value>(&data)
+                && value.get("id") == Some(&json!(id))
+            {
+                return (session_id, value);
+            }
+        }
+    }
+    panic!("no JSON-RPC response for {method}: {buffer}");
+}
+
 impl Fixture {
     fn request(
         &self,
@@ -124,7 +169,7 @@ impl Fixture {
         request
     }
 
-    /// 发一个 JSON-RPC 请求，返回（会话 id 头，响应对象）；SSE 按 `data:` 事件解析，读到目标 id 即停。
+    /// 发一个 JSON-RPC 请求，返回（会话 id 头，响应对象）。
     async fn rpc(
         &self,
         token: &str,
@@ -133,7 +178,7 @@ impl Fixture {
         method: &str,
         params: Value,
     ) -> (Option<String>, Value) {
-        let mut response = self
+        let response = self
             .request(
                 token.into(),
                 session,
@@ -142,43 +187,7 @@ impl Fixture {
             .send()
             .await
             .unwrap();
-        assert_eq!(response.status(), 200, "{method}");
-        let session_id = response
-            .headers()
-            .get("mcp-session-id")
-            .map(|value| value.to_str().unwrap().to_owned());
-        let content_type = response
-            .headers()
-            .get("content-type")
-            .map(|value| value.to_str().unwrap().to_owned())
-            .unwrap_or_default();
-        let mut buffer = String::new();
-        while let Some(chunk) = response.chunk().await.unwrap() {
-            buffer.push_str(std::str::from_utf8(&chunk).unwrap());
-            if content_type.starts_with("application/json") {
-                if let Ok(value) = serde_json::from_str::<Value>(&buffer) {
-                    return (session_id, value);
-                }
-                continue;
-            }
-            for event in buffer.split("\n\n") {
-                let data = event
-                    .lines()
-                    .filter_map(|line| line.strip_prefix("data:"))
-                    .map(str::trim)
-                    .collect::<Vec<_>>()
-                    .join("");
-                if data.is_empty() {
-                    continue;
-                }
-                if let Ok(value) = serde_json::from_str::<Value>(&data)
-                    && value.get("id") == Some(&json!(id))
-                {
-                    return (session_id, value);
-                }
-            }
-        }
-        panic!("no JSON-RPC response for {method}: {buffer}");
+        read_rpc(response, id, method).await
     }
 
     async fn initialize(&self, token: &str) -> (String, Value) {

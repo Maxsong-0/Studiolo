@@ -7,7 +7,7 @@ use rmcp::ErrorData as McpError;
 use std::sync::{Arc, OnceLock};
 use studiolo_supply::{
     Instance, SupplyError,
-    audit::{self, Actor},
+    audit::{self, Actor, Registration},
 };
 
 /// 策略平面拒绝（吊销／零权限）的固定前缀：握手时像降级握手一样「应答但一项不给」，
@@ -79,15 +79,17 @@ impl AgentSession {
         self.instance.get()
     }
 
-    /// 由外壳在新会话发布前调用一次；注册、策略复核和路牌均先审计后交付。
+    /// HTTP 文本兜底在新会话发布前调用一次；注册、策略复核和路牌均先审计后交付。
     pub(crate) async fn initialize_text(&self, agent_type: &str) -> Result<String, McpError> {
-        self.initialize_with_parent(agent_type, None).await
+        self.initialize_with_parent(agent_type, None, Registration::http_text())
+            .await
     }
 
     pub(crate) async fn initialize_with_parent(
         &self,
         agent_type: &str,
         parent: Option<&str>,
+        registration: Registration<'_>,
     ) -> Result<String, McpError> {
         let _operation = self.begin_operation().await?;
         let instance = if let Some(parent) = parent {
@@ -118,7 +120,7 @@ impl AgentSession {
         }
         .map_err(|_| McpError::internal_error("实例注册失败", None))?;
         let actor = Actor::instance(&instance.agent_type, &instance.id);
-        let registered = audit::instance_registered(actor)
+        let registered = audit::instance_registered(actor, registration)
             .map_err(|_| McpError::internal_error("审计事件构造失败", None))?;
         let instructions = match self.state.audit(registered) {
             Err(outage) => Err(McpError::internal_error(outage.handshake_refusal(), None)),

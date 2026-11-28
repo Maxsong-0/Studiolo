@@ -78,7 +78,16 @@
 - 无 / 错 / 已吊销 token：HTTP 401（`WWW-Authenticate: Bearer`，无正文），**不进入任何内容计算**，记 `agent.action_denied`（reason=`unauthenticated`，主体匿名，限频见下）。
 - 身份库读不出来（SQLite 忙超时、I/O 错、私有存储复核失败）时令牌真假未知：HTTP 503，**不带** `WWW-Authenticate`，正文只给固定类别、不回显底层错误或路径，记 `agent.action_denied`（reason=`identity_unavailable`，认证门这一处主体匿名、限频见下）。不能折成 401：客户端收到 401 会当成令牌失效、转去重新认证（T-180，vault BUG-030）。已建立的会话里任何一处复核读不出来，也只报不可用、不当成吊销：MCP 门禁回 503，tool 返回「身份库不可用」错误（父实例查询同样，不报「父实例无效」），响应流暂停交付，会话保留到下一次再判（POST 响应体的 30 秒期限照旧，见 [MCP 会话边界](../m3/mcp-session-boundaries.md)）。
 - **没认出类型的拒绝限频登记**（T-241，2026-11-25 用户定）：上面两条在认证门就拒的，谁都能触发，所以同一入口同一原因每分钟最多登记一条——入口只分 `mcp.request`（`/mcp`）和 `http.request`（`/read/*`），按路由定，`/read/mcp` 也算 `/read/*`，路径和令牌不进名下；原因就是 `unauthenticated`、`identity_unavailable` 两种。两个入口合计最多每分钟 4 条；`/connect/v1/*` 另算自己那一份（[connector.md](connector.md) 第 6 节）。没登记的那些，状态码、答复头、正文和登记的那次一样。账本写不进也算用掉这一分钟；服务重启后重新起算。**所以匿名拒绝的条数不等于请求次数**，一条只说明「那一分钟里至少有一次」。认出类型之后的拒绝（`session_invalid`、`request_capacity`、会话复核时的 `identity_unavailable` 等）照旧逐次登记。
-- 同一 MCP 会话内所有 tool 调用共享该实例；实例注册记 `agent_instance.registered`；会话结束实例保留记录不删。本片服务端只协商带会话的协议版本（2025-11-25 / 2025-06-18 / 2025-03-26），SEP-2567 无会话模式下的实例身份另行设计。三级吊销属 M4；本片只提供 `admin type-revoke`：类型摘要标记吊销后，**同一会话的下一次调用在门禁处即 401**（记 `unauthenticated`），新握手同样 401；handler 内另有 `type_is_active` 复核作为纵深。
+- 同一 MCP 会话内所有 tool 调用共享该实例；实例注册记 `agent_instance.registered`（内容见下一条）；会话结束实例保留记录不删。本片服务端只协商带会话的协议版本（2025-11-25 / 2025-06-18 / 2025-03-26），SEP-2567 无会话模式下的实例身份另行设计。三级吊销属 M4；本片只提供 `admin type-revoke`：类型摘要标记吊销后，**同一会话的下一次调用在门禁处即 401**（记 `unauthenticated`），新握手同样 401；handler 内另有 `type_is_active` 复核作为纵深。
+- `agent_instance.registered` 的内容是类型、实例，加下面两格（T-264，2026-11-28；之前的记录没有这两格）。只有这四项，不记正文、令牌、会话号。
+  - `negotiated_version`：服务器**实际应答**的协议版本（`InitializeResult.protocolVersion`），不是客户端要的；客户端要的不在上面三个里就是 `2025-11-25`。
+    登记写在应答之前，之后握手失败的（如路牌超预算）这一格是本来会应答的版本。
+  - `client_reported`：客户端自报的 `clientInfo`，对象 `{"name", "version"}`，两样各去掉控制字符和看不见的字符、最多 64 个字符（截断的末位是 `…`）。
+    没人验过，**只当显示，任何授权判断都不读它**；`title` 等其余字段不记。
+  - 没有协商的两条路，两格是同一个固定字符串：HTTP 文本兜底 `not_negotiated:http_text`，连接器 `not_negotiated:connector`。
+    自报名是对象的才是 MCP，客户端自报什么名字都装不成另外两条路。
+  - **只看这一条看不到「只说无会话新版」的客户端**：它不发 `initialize`，在门禁就回 400、没有实例，只留一条 `agent.action_denied`
+    （动作 `mcp.request`，reason=`initialize_invalid`）。
 
 ## 3. 冷启动路牌（二元验收）
 
@@ -187,6 +196,9 @@
   与 `cfg(not(debug_assertions))` 两种写法，这类用例不许写在测试目标的子模块里，测试里不许用运行时 `cfg!(debug_assertions)`）。部署验收在生产主机上原生跑
   运行包里的测试，满额负载不该和线上服务抢内存。
 - 白名单：读 `School/...` 或 `../` → 拒绝＋审计；`list_entries` 只列白名单项目。
+- 登记审计的两格（T-264）：MCP 按客户端要的七种版本逐个核对审计与应答一致、整条相等；自报名超长、恰好 64、为空、带控制字符和看不见的字符；
+  换自报名不改任何读与拒的结果（`crates/agent-server/tests/mcp_cases/registered.rs`）。HTTP 文本兜底、连接器各整条相等
+  （`http_text/contracts.rs`、`policy_cases/connector.rs`）。
 - `read_note` 只要一段（`crates/agent-server/tests/read_note_slice_contract.rs`，T-255）：不给新参数逐字节不变；行段、越界、
   反序、0 行；标题节的边界、同名、带 `#`；没有标题只回一句；大纲与读模型的大纲逐条一致、区间与 `lines`／`heading` 逐字节一致；
   五种结果的 `content.read` 与整篇读完全相同；越白名单的拒绝措辞与审计不变；三选一；托管模式新鲜度行仍在前。

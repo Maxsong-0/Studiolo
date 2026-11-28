@@ -1,5 +1,5 @@
 //! 真实 loopback 契约：raw JSON-RPC over Streamable HTTP（reqwest 0.12，不引入第二个 reqwest）。
-//! 覆盖：401、匿名拒绝限频登记、初始化路牌与硬预算、tools/list、read_note 正反、list_entries、search（含 100 条名额只数所请求项目）、吊销即刻生效、
+//! 覆盖：401、匿名拒绝限频登记、实例登记审计的协商版本与自报名、初始化路牌与硬预算、tools/list、read_note 正反、list_entries、search（含 100 条名额只数所请求项目）、吊销即刻生效、
 //! 审计先于返回与读取索引四维查询、审计不可用时的降级握手。
 
 use std::{
@@ -15,6 +15,7 @@ use tempfile::TempDir;
 // 机械拆分夹具与最长契约，保留原有顶层测试名。
 include!("mcp_contract_support/fixture.rs");
 include!("mcp_cases/read_only.rs");
+include!("mcp_cases/registered.rs");
 include!("mcp_cases/unrecognized.rs");
 
 #[tokio::test]

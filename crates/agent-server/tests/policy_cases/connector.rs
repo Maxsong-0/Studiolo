@@ -630,6 +630,22 @@ async fn instance_revocation_works_and_only_one_instance_is_registered_per_type(
     assert_eq!(r.put(json!({"seq":1,"sessions":[]})).await.status, 200);
     assert_eq!(r.registered(), 2);
     let instances = r.f.store().instances(100).unwrap();
+    // 登记审计：没有协商，两格都如实写走的是连接器；整条相等，别的什么都不记。
+    let mut recorded = r.events("agent_instance.registered");
+    recorded.sort_by_key(|event| event["agent_type"].to_string());
+    let expected = [BOARD, STATUS].map(|kind| {
+        let (instance, _) = instances
+            .iter()
+            .find(|(instance, _)| instance.agent_type == kind)
+            .unwrap();
+        json!({
+            "agent_type": kind,
+            "agent_instance": instance.id,
+            "negotiated_version": "not_negotiated:connector",
+            "client_reported": "not_negotiated:connector",
+        })
+    });
+    assert_eq!(recorded, expected);
     let (board, last_seen) = instances
         .iter()
         .find(|(instance, _)| instance.agent_type == BOARD)

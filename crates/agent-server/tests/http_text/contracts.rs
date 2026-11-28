@@ -109,12 +109,20 @@ async fn four_http_operations_are_budgeted_scoped_and_audited_under_one_instance
             .iter()
             .all(|record| record.event().payload().as_value()["agent_instance"] == instance)
     );
+    // 没有协商：两格都如实写走的是 HTTP 文本兜底；整条相等，别的什么都不记。
+    let registered = f
+        .ledger()
+        .query(&AuditFilter::default().with_action("agent_instance.registered"))
+        .unwrap();
+    assert_eq!(registered.len(), 1);
     assert_eq!(
-        f.ledger()
-            .query(&AuditFilter::default().with_action("agent_instance.registered"))
-            .unwrap()
-            .len(),
-        1
+        *registered[0].event().payload().as_value(),
+        json!({
+            "agent_type": "claude",
+            "agent_instance": instance,
+            "negotiated_version": "not_negotiated:http_text",
+            "client_reported": "not_negotiated:http_text",
+        })
     );
 }
 

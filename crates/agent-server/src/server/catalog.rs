@@ -9,6 +9,21 @@ pub(super) const SESSION_VERSIONS: &[ProtocolVersion] = &[
     ProtocolVersion::V_2025_03_26,
 ];
 
+/// 客户端要的版本不在表里时应答的那一版；`get_info` 报的也是它，rmcp 拿那一格当兜底。
+pub(super) const FALLBACK_VERSION: ProtocolVersion = ProtocolVersion::V_2025_11_25;
+
+/// `initialize` 会应答的版本：要的在表里就是它，否则退到 [`FALLBACK_VERSION`]。
+///
+/// 应答的版本由 rmcp 在处理器返回之后按同一条规则定（那个函数不公开），登记审计写在这之前，所以先算一遍；
+/// 两边不许走岔，由 `mcp_contract` 拿真实应答逐版本对照。
+pub(super) fn answered_version(requested: &ProtocolVersion) -> ProtocolVersion {
+    if SESSION_VERSIONS.contains(requested) {
+        requested.clone()
+    } else {
+        FALLBACK_VERSION
+    }
+}
+
 /// tool 清单与一句说明（进入路牌第 6 项）。
 pub const TOOLS: &[(&str, &str)] = &[
     ("handshake", "重取冷启动路牌"),

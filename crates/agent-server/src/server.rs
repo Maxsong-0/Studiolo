@@ -8,6 +8,7 @@ mod args;
 mod auditing;
 mod board;
 mod catalog;
+mod client_reported;
 mod content;
 mod freshness;
 mod grant;

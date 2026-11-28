@@ -269,15 +269,16 @@ async fn a_parent_lookup_failure_is_reported_as_unavailable_not_as_an_invalid_pa
     let (_temp, data, state) = policy_state();
     let parent = "01T180PARENTINSTANCE000000";
     // 不变行为：身份库好好的、父实例确实不存在，仍是「父实例无效」。
+    let registration = studiolo_supply::audit::Registration::mcp("2025-11-25", "contract", "0");
     let missing = crate::server::AgentSession::new(state.clone())
-        .initialize_with_parent("claude", Some(parent))
+        .initialize_with_parent("claude", Some(parent), registration)
         .await
         .unwrap_err();
     assert_eq!(missing.code, rmcp::model::ErrorCode::INVALID_PARAMS);
     assert!(missing.message.contains("父实例无效"), "{}", missing.message);
     set_identity_store_mode(&data, 0o640);
     let error = crate::server::AgentSession::new(state)
-        .initialize_with_parent("claude", Some(parent))
+        .initialize_with_parent("claude", Some(parent), registration)
         .await
         .unwrap_err();
     set_identity_store_mode(&data, 0o600);
