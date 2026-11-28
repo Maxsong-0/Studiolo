@@ -91,11 +91,10 @@ fn derive(projects: &[Project]) -> Signpost {
     .unwrap()
 }
 
-/// 某一节的全部行（不含标题行）。
-fn section<'a>(text: &'a str, heading: &str, next: &str) -> Vec<&'a str> {
-    let start = text.find(heading).unwrap() + heading.len();
-    let end = start + text[start..].find(next).unwrap();
-    text[start..end]
+/// 某一节的全部行（不含标题行），到下一节标题或文末为止。
+fn section<'a>(text: &'a str, heading: &str) -> Vec<&'a str> {
+    let rest = &text[text.find(heading).unwrap() + heading.len()..];
+    rest[..rest.find("\n## ").unwrap_or(rest.len())]
         .lines()
         .filter(|line| !line.is_empty())
         .collect()
@@ -114,7 +113,7 @@ fn listed_projects<'a>(todo: &[&'a str], label: &str) -> Vec<&'a str> {
 fn in_progress_rows_come_from_as_many_projects_as_the_limit_allows() {
     let signpost = derive(&uniform(10, 3, 0));
     assert_eq!(signpost.trim_level, 0, "{}", signpost.text);
-    let todo = section(&signpost.text, "## 4 待我做的事\n", "## 5 硬约束");
+    let todo = section(&signpost.text, "## 4 待我做的事\n");
     let listed = listed_projects(&todo, "进行中：");
     assert_eq!(listed.len(), 8, "{todo:#?}");
     assert_eq!(
@@ -128,7 +127,7 @@ fn in_progress_rows_come_from_as_many_projects_as_the_limit_allows() {
 fn rounds_take_first_rows_in_project_order_and_the_footer_states_totals() {
     let signpost = derive(&uniform(10, 3, 0));
     let text = &signpost.text;
-    let todo = section(text, "## 4 待我做的事\n", "## 5 硬约束");
+    let todo = section(text, "## 4 待我做的事\n");
     let expected = (0..8)
         .map(|index| format!("进行中：项目/P{index:02} · T-001 P{index:02} 第 1 条（进行中）"))
         .collect::<Vec<_>>();
@@ -139,7 +138,7 @@ fn rounds_take_first_rows_in_project_order_and_the_footer_states_totals() {
         "（共 30 条进行中、0 条待认领，这里列出 8＋0 条；各项目条数见第 2 节，完整见各项目 04-协调/TASKS.md）"
     );
     assert_eq!(todo.len(), 9, "{todo:#?}");
-    let status = section(text, "## 2 项目状态\n", "## 3 能力");
+    let status = section(text, "## 2 项目状态\n");
     let rows = status
         .iter()
         .filter(|line| line.starts_with("- 项目/"))
@@ -158,7 +157,7 @@ fn rounds_take_first_rows_in_project_order_and_the_footer_states_totals() {
 fn unclaimed_titles_also_rotate_across_projects() {
     let signpost = derive(&uniform(4, 0, 2));
     assert_eq!(signpost.trim_level, 0, "{}", signpost.text);
-    let todo = section(&signpost.text, "## 4 待我做的事\n", "## 5 硬约束");
+    let todo = section(&signpost.text, "## 4 待我做的事\n");
     assert_eq!(
         listed_projects(&todo, "待认领："),
         ["项目/P00", "项目/P01", "项目/P02"],
@@ -178,7 +177,7 @@ fn a_single_project_keeps_the_original_row_order() {
         in_progress: 10,
         unclaimed: 0,
     }]);
-    let todo = section(&signpost.text, "## 4 待我做的事\n", "## 5 硬约束");
+    let todo = section(&signpost.text, "## 4 待我做的事\n");
     let expected = (1..=8)
         .map(|row| format!("进行中：项目/Solo · T-{row:03} Solo 第 {row} 条（进行中）"))
         .collect::<Vec<_>>();

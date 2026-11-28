@@ -1,17 +1,21 @@
 //! 冷启动路牌：六项全部从白名单内的结构化 Markdown 派生，不读任何人写的「路牌文件」。
 //!
 //! 只给路牌不给正文（ADR-015 二）。超过内部目标时按固定优先级逐级裁剪，最后由硬预算兜底：
-//! 超出硬预算（`HARD_BUDGET_TOKENS`）即失败，不是告警。
+//! 超出硬预算（`HARD_BUDGET_TOKENS`）即失败，不是告警。另有一条可见段上限（`CLIENT_VISIBLE_UTF16`）：
+//! 要紧的节排在前面，放不下时只裁这一段，不失败（vault BUG-061）。
 
 mod render;
 mod source;
 
-use render::render;
-use source::{principle_titles, project_status, rules_summary};
+use render::{Rendered, Trim, render};
+use source::{RulesSummary, principle_titles, project_status, rules_summary};
 
 use studiolo_core::VaultPath;
 
-use crate::{BudgetExceeded, HARD_BUDGET_TOKENS, Snapshot, TARGET_BUDGET_TOKENS, check_budget};
+use crate::{
+    BudgetExceeded, CLIENT_VISIBLE_UTF16, HARD_BUDGET_TOKENS, Snapshot, TARGET_BUDGET_TOKENS,
+    check_budget, count_tokens,
+};
 
 /// 接入方身份（类型 ＋ 实例）。
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -92,8 +96,20 @@ pub struct Signpost {
     pub text: String,
     /// o200k 计量。
     pub tokens: usize,
-    /// 生效的裁剪等级（0 = 未裁剪）。
+    /// 生效的最深裁剪等级（0 = 未裁剪）；可见段会比项目清单裁得深。
     pub trim_level: u8,
+    /// 黑板行的字节位置，见 [`Signpost::insert_board`]。
+    board_at: usize,
+}
+
+impl Signpost {
+    /// 把黑板行放到第 4 节标题下一行并重新计量；`line` 自带结尾换行，只调一次。
+    ///
+    /// 放在这一节最前面：派生时只给它留了 [`BOARD_LINE_RESERVE_UTF16`]，更长时被挤出可见段的是待办尾部。
+    pub fn insert_board(&mut self, line: &str) {
+        self.text.insert_str(self.board_at, line);
+        self.tokens = count_tokens(&self.text);
+    }
 }
 
 /// 一个白名单项目的派生状态；缺失字段显示「不可用」。
@@ -106,6 +122,11 @@ pub struct ProjectStatus {
     unclaimed: Vec<String>,
     entries: Vec<(String, String)>,
 }
+
+/// 给黑板行留的可见段余量：没有子项时 28 个单元，子项多到改报条数时约 50 个。
+const BOARD_LINE_RESERVE_UTF16: usize = 64;
+/// 最深的裁剪等级。
+const MAX_TRIM: u8 = 3;
 
 const STATUS_KEYS: [&str; 4] = ["当前版本", "状态", "最近日志", "未关闭 BUG"];
 
@@ -155,32 +176,90 @@ fn derive_with_label(
         }
     }
     let mut last = None;
-    for level in 0..=3u8 {
-        let text = render(input, &projects, &rules, level, entry_label);
-        match check_budget(&text) {
-            Ok(tokens) if tokens <= TARGET_BUDGET_TOKENS => {
-                return Ok(Signpost {
-                    text,
+    for level in 0..=MAX_TRIM {
+        let (rendered, trim_level) =
+            render_within_view(input, &projects, &rules, level, entry_label);
+        match check_budget(&rendered.text) {
+            Ok(tokens) => {
+                let signpost = Signpost {
+                    text: rendered.text,
                     tokens,
-                    trim_level: level,
-                });
+                    trim_level,
+                    board_at: rendered.board_at,
+                };
+                if tokens <= TARGET_BUDGET_TOKENS {
+                    return Ok(signpost);
+                }
+                last = Some(signpost);
             }
-            Ok(tokens) => last = Some((text, tokens, level)),
             Err(error) => {
-                if level == 3 {
+                if level == MAX_TRIM {
                     return Err(error);
                 }
             }
         }
     }
-    // 三级裁剪后仍在目标之上但未超硬预算：接受，并记录裁剪等级。
-    let (text, tokens, level) = last.ok_or(BudgetExceeded {
+    // 最深一级仍在目标之上但未超硬预算：接受，并记录裁剪等级。
+    last.ok_or(BudgetExceeded {
         tokens: usize::MAX,
         limit: HARD_BUDGET_TOKENS,
-    })?;
-    Ok(Signpost {
-        text,
-        tokens,
-        trim_level: level,
     })
+}
+
+/// 项目清单按 `level` 裁；可见段从 `level` 起往深裁到客户端看得全为止，返回实际用的可见段等级。
+///
+/// 最深一级仍放不下就照发：硬约束和续读入口排在最前，被截的只会是它们后面的节。
+fn render_within_view(
+    input: &SignpostInput<'_>,
+    projects: &[ProjectStatus],
+    rules: &RulesSummary,
+    level: u8,
+    entry_label: &str,
+) -> (Rendered, u8) {
+    let mut front = level;
+    loop {
+        let trim = Trim {
+            front,
+            projects: level,
+        };
+        let rendered = render(input, projects, rules, trim, entry_label);
+        let fits = rendered.front_utf16 + BOARD_LINE_RESERVE_UTF16 <= CLIENT_VISIBLE_UTF16;
+        if fits || front == MAX_TRIM {
+            return (rendered, front);
+        }
+        front += 1;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 可见段至少裁到 token 预算定的那一级：看得全不等于可以少裁。
+    #[test]
+    fn the_visible_part_is_never_trimmed_less_than_the_token_budget_asks() {
+        let snapshot = Snapshot::default();
+        let principal = Principal {
+            agent_type: "claude".into(),
+            instance_id: "01JT3STUDIOLO0000000000001".into(),
+            registered_at: "2026-11-28T01:00:00Z".into(),
+        };
+        let input = SignpostInput {
+            snapshot: &snapshot,
+            allow: &[],
+            principal: &principal,
+            generation: 1,
+            generated_at: "2026-11-28T01:00:00Z",
+            freshness: None,
+            capacity: None,
+            tools: &[("handshake", "重取路牌")],
+            policy: None,
+            rules_whitelist: None,
+        };
+        for level in 0..=MAX_TRIM {
+            let (_, front) =
+                render_within_view(&input, &[], &RulesSummary::default(), level, "tools");
+            assert_eq!(front, level);
+        }
+    }
 }

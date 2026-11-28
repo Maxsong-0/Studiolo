@@ -17,7 +17,8 @@ pub mod signpost;
 mod storage;
 
 pub use budget::{
-    BudgetExceeded, HARD_BUDGET_TOKENS, TARGET_BUDGET_TOKENS, check_budget, count_tokens,
+    BudgetExceeded, CLIENT_VISIBLE_UTF16, HARD_BUDGET_TOKENS, TARGET_BUDGET_TOKENS, check_budget,
+    count_tokens, utf16_len,
 };
 pub use database::{
     AgentCheckpointAssembly, AgentCheckpointSource, AgentIdentityView, AgentStore,

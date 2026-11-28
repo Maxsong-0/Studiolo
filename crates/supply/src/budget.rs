@@ -11,6 +11,10 @@ pub const HARD_BUDGET_TOKENS: usize = 8000;
 /// 派生器的内部目标；超过它先按优先级裁剪，再由硬上限兜底。
 pub const TARGET_BUDGET_TOKENS: usize = 6000;
 
+/// 客户端交给模型的 MCP `instructions` 上限：Claude Code 超过它就从尾部截掉，单位是 UTF-16 单元
+/// （2.1.296 起 4096，之前 2048；2026-11-28 对 2.1.332 实测，vault BUG-061）。路牌全文可以更长，要紧的节必须在线内。
+pub const CLIENT_VISIBLE_UTF16: usize = 4096;
+
 /// 路牌超出硬预算。
 #[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
 #[error("路牌 {tokens} token 超过硬预算 {limit}")]
@@ -32,6 +36,12 @@ fn encoder() -> &'static CoreBPE {
 #[must_use]
 pub fn count_tokens(text: &str) -> usize {
     encoder().encode_ordinary(text).len()
+}
+
+/// UTF-16 单元数，和客户端同一种数法：汉字 1，emoji 这类增补平面字符 2。
+#[must_use]
+pub fn utf16_len(text: &str) -> usize {
+    text.chars().map(char::len_utf16).sum()
 }
 
 /// 计量并按硬上限判定；返回实际 token 数。
@@ -57,6 +67,15 @@ mod tests {
         let first = count_tokens(sample);
         assert!(first > 5 && first < 60, "unexpected count {first}");
         assert_eq!(first, count_tokens(sample));
+    }
+
+    #[test]
+    fn utf16_length_counts_supplementary_characters_twice() {
+        assert_eq!(utf16_len(""), 0);
+        assert_eq!(utf16_len("测a"), 2);
+        assert_eq!(utf16_len("🟡测"), 3);
+        let mixed = "第 4 节 🟡 进行中\n";
+        assert_eq!(utf16_len(mixed), mixed.encode_utf16().count());
     }
 
     #[test]
