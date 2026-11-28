@@ -45,7 +45,7 @@ struct ModelPill: View {
                         .background(look.selection, in: .capsule)
                 }
                 if refusal != nil {
-                    Image(systemName: "exclamationmark.circle.fill").foregroundStyle(.orange)
+                    Image(systemName: "exclamationmark.circle.fill").foregroundStyle(.trouble)
                 }
                 Image(systemName: "chevron.up.chevron.down").font(.system(size: 9, weight: .semibold)).foregroundStyle(.secondary)
             }
@@ -132,7 +132,7 @@ struct ModelPicker: View {
                         }
                     }
                     .frame(width: 34, height: 34)
-                    .background(isThis ? look.selection : .clear, in: .rect(cornerRadius: 9, style: .continuous))
+                    .vetroPicked(isThis, in: RoundedRectangle(cornerRadius: 9, style: .continuous))
                     .overlay(alignment: .topTrailing) { if !gates(of: other).isEmpty { QuotaMark(size: 9).offset(x: 2, y: -2) } }
                     .opacity(isThis || switchVendor != nil ? 1 : 0.4)
                     .contentShape(.rect)
@@ -244,7 +244,7 @@ struct ModelPicker: View {
                             Image(systemName: Wording.gateSymbol(gate.level))
                         }
                         .font(.system(size: 10.5))
-                        .foregroundStyle(.orange)
+                        .foregroundStyle(.trouble)
                         .lineLimit(1)
                     }
                 }
@@ -256,7 +256,7 @@ struct ModelPicker: View {
             }
             .padding(.horizontal, 8)
             .padding(.vertical, 6)
-            .background(isFocused ? look.selection : .clear, in: .rect(cornerRadius: 7, style: .continuous))
+            .vetroPicked(isFocused, in: RoundedRectangle(cornerRadius: 7, style: .continuous))
             .contentShape(.rect)
         }
         .buttonStyle(.plain)
@@ -293,7 +293,7 @@ struct ModelPicker: View {
                             }
                             .padding(.horizontal, 6)
                             .frame(height: 28)
-                            .background(isUsed ? look.selection : .clear, in: .rect(cornerRadius: 7, style: .continuous))
+                            .vetroPicked(isUsed, in: RoundedRectangle(cornerRadius: 7, style: .continuous))
                             .contentShape(.rect)
                         }
                         .buttonStyle(.plain)
@@ -344,7 +344,7 @@ private struct QuotaMark: View {
     var body: some View {
         Image(systemName: "gauge.with.dots.needle.67percent")
             .font(.system(size: size, weight: .semibold))
-            .foregroundStyle(.orange)
+            .foregroundStyle(.trouble)
             .accessibilityHidden(true)
     }
 }

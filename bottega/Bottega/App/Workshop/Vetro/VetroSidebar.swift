@@ -103,7 +103,7 @@ struct WaitingBadge: View {
                 .contentTransition(.numericText(value: Double(count)))
                 .padding(.horizontal, 4)
                 .frame(minWidth: 16, minHeight: 16)
-                .background(.red, in: .capsule)
+                .background(.waiting, in: .capsule)
                 .animation(.smooth(duration: 0.2), value: count)
                 .accessibilityLabel("\(count) waiting for you")
         }
@@ -158,14 +158,9 @@ struct VetroRow<Content: View>: View {
                 .padding(.trailing, 10)
                 .frame(maxWidth: .infinity, minHeight: height, alignment: .leading)
                 .background {
-                    let shape = RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    if isOn {
-                        shape.fill(look.selection)
-                            .overlay { shape.strokeBorder(LinearGradient(colors: [look.rim, .clear], startPoint: .top, endPoint: .center)) }
-                    } else if isHovered {
-                        shape.fill(look.hover)
-                    }
+                    if !isOn, isHovered { RoundedRectangle(cornerRadius: 10, style: .continuous).fill(look.hover) }
                 }
+                .vetroPicked(isOn, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
                 .contentShape(.rect)
         }
         .buttonStyle(.plain)
@@ -315,7 +310,9 @@ private struct GateMark: View {
         if let gate = gates.first(where: { $0.level == "closed" }) ?? gates.first {
             Image(systemName: Wording.gateSymbol(gate.level))
                 .font(.system(size: 11))
-                .foregroundStyle(gate.level == "closed" ? .red : .orange)
+                // Orange whichever it is, shut or not quite: red is for what waits on the user. The gauge and the
+                // words on hover say how shut.
+                .foregroundStyle(.trouble)
                 .help(gates.map(Wording.gate).joined(separator: "\n"))
                 .accessibilityLabel(gates.map(Wording.gate).joined(separator: " "))
         }
@@ -410,8 +407,8 @@ private struct LineRow: View {
     /// that is open, which is being read and is marked so when it is left (`WorkshopModel.markRead`).
     @ViewBuilder private var dot: some View {
         if waits {
-            Circle().fill(.red).frame(width: 9, height: 9)
-                .background { Circle().fill(.red.opacity(0.2)).frame(width: 15, height: 15) }
+            Circle().fill(.waiting).frame(width: 9, height: 9)
+                .background { Circle().fill(.waiting.opacity(0.2)).frame(width: 15, height: 15) }
                 .accessibilityLabel("Waiting for you")
         } else if isWorkedOn {
             WorkingMatrix(side: 3).frame(width: 9, height: 9).accessibilityLabel("Being worked on")
@@ -432,7 +429,7 @@ private struct WaitingList: View {
             Text(items.count, format: .number)
                 .font(.system(size: 44, weight: .semibold))
                 .kerning(-1.3)
-                .foregroundStyle(items.isEmpty ? Color.secondary : Color.red)
+                .foregroundStyle(items.isEmpty ? AnyShapeStyle(.secondary) : AnyShapeStyle(.waiting))
                 .contentTransition(.numericText(value: Double(items.count)))
             Text(items.count == 1 ? "thing waiting" : "things waiting")
                 .font(.system(size: 12))
@@ -442,7 +439,7 @@ private struct WaitingList: View {
         .accessibilityElement(children: .combine)
         ForEach(items, id: \.what) { item in
             VetroRow(isOn: false, height: 30, action: { model.page = .waiting }) {
-                Circle().fill(.red).frame(width: 9, height: 9)
+                Circle().fill(.waiting).frame(width: 9, height: 9)
                 Text(verbatim: Wording.waiting(item, in: model.state))
                     .font(.system(size: 12.5))
                     .lineLimit(1)
@@ -498,8 +495,8 @@ private struct CardsList: View {
             VetroRow(isOn: false, height: 30, action: { model.page = .board }) {
                 Text(Wording.column(column)).font(.system(size: 12.5)).frame(maxWidth: .infinity, alignment: .leading)
                 Text(count, format: .number)
-                    .font(.system(size: 11).monospacedDigit())
-                    .foregroundStyle(column == .needsYou && count > 0 ? AnyShapeStyle(.red) : AnyShapeStyle(.secondary))
+                    .font(.system(size: 11, weight: column == .needsYou && count > 0 ? .semibold : .regular).monospacedDigit())
+                    .foregroundStyle(column == .needsYou && count > 0 ? AnyShapeStyle(.waiting) : AnyShapeStyle(.secondary))
             }
         }
     }
@@ -650,7 +647,8 @@ struct BackdropPanel: View {
     private func slider(_ title: String, value: Binding<Double>, in range: ClosedRange<Double>, text: String) -> some View {
         HStack(spacing: 10) {
             Text(title).font(.system(size: 12)).foregroundStyle(.secondary).frame(width: 88, alignment: .leading)
-            Slider(value: value, in: range).controlSize(.small)
+            // Filled in the colour of the text, as in the canvas; the accent colour is for a button to press.
+            Slider(value: value, in: range).controlSize(.small).tint(look.mark)
             Text(verbatim: text).font(.system(size: 11).monospacedDigit()).foregroundStyle(.secondary).frame(width: 42, alignment: .trailing)
         }
         .accessibilityElement(children: .combine)

@@ -38,7 +38,7 @@ private struct DroppedIntents: View {
                     .foregroundStyle(.secondary)
             }
         } icon: {
-            Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+            Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.trouble)
         }
         .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -57,7 +57,7 @@ private struct DeviceBox: View {
                 Image(systemName: device.kind == "mac" ? "macbook" : "iphone").foregroundStyle(.secondary)
                 Text(verbatim: UntrustedText.line(device.name, limit: 64)).font(.headline)
                 if isThisOne {
-                    Text("This Mac").font(.caption).padding(.horizontal, 6).padding(.vertical, 1).background(look.surface, in: .capsule)
+                    Text("This Mac").font(.caption).padding(.horizontal, 6).padding(.vertical, 1).background(look.chip, in: .capsule)
                 }
                 Spacer()
                 Text(verbatim: UntrustedText.line(device.id, limit: 24)).font(.caption.monospaced()).foregroundStyle(.secondary)
@@ -117,7 +117,7 @@ struct RegistrationView: View {
 
     var body: some View {
         VStack(spacing: 18) {
-            Image(systemName: "touchid").font(.system(size: 44)).foregroundStyle(.tint)
+            Image(systemName: "touchid").font(.system(size: 44)).foregroundStyle(.secondary)
             Text("Register This Mac").font(.title2.weight(.semibold))
             Text("Bottega makes two keys in this Mac's Secure Enclave: one for what you say, and one for what you approve, which needs your finger every time. An LMAS takes one device.")
                 .multilineTextAlignment(.center)
@@ -131,7 +131,7 @@ struct RegistrationView: View {
             if let failure = model.registrationFailure {
                 Text(verbatim: UntrustedText.line(failure.text, limit: 400))
                     .font(.callout)
-                    .foregroundStyle(.orange)
+                    .foregroundStyle(.trouble)
                     .frame(maxWidth: 420)
             }
             if model.status == .registering {

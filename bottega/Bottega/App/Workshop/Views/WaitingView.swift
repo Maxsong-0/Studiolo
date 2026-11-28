@@ -38,7 +38,7 @@ private struct WaitingItem: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 8) {
-                Image(systemName: "hand.raised.fill").foregroundStyle(.red)
+                Image(systemName: "hand.raised.fill").foregroundStyle(.waiting)
                 Text(verbatim: title).font(.headline)
                 Spacer()
                 TimelineView(.everyMinute) { context in

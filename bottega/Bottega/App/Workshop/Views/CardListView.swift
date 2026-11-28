@@ -99,7 +99,8 @@ private struct CardListRow: View {
         .font(.system(size: 12.5))
         .padding(.horizontal, 14)
         .frame(height: 40)
-        .background(isSelected ? look.selection : isHovered ? look.selection.opacity(0.5) : .clear)
+        .background { if !isSelected, isHovered { look.selection.opacity(0.5) } }
+        .vetroPicked(isSelected, in: Rectangle())
         .overlay(alignment: .top) { if !isFirst { Divider().opacity(0.6) } }
         .contentShape(.rect)
         .onHover { isHovered = $0 }
@@ -140,9 +141,9 @@ private struct Stage: View {
         switch column {
         case .queued: Image(systemName: "circle").font(.system(size: 9)).foregroundStyle(.secondary)
         case .working: WorkingMatrix(side: 3)
-        case .needsYou: Circle().fill(.red).frame(width: 7, height: 7)
+        case .needsYou: Circle().fill(.waiting).frame(width: 7, height: 7)
         case .done: Image(systemName: "checkmark").font(.system(size: 9, weight: .bold)).foregroundStyle(.secondary)
-        case .failed: Image(systemName: "xmark").font(.system(size: 9, weight: .bold)).foregroundStyle(.orange)
+        case .failed: Image(systemName: "xmark").font(.system(size: 9, weight: .bold)).foregroundStyle(.trouble)
         }
     }
 }
@@ -159,7 +160,7 @@ private struct ProgressCell: View {
             Text(verbatim: text).lineLimit(1).truncationMode(.tail)
         }
         .font(.system(size: 11.5, weight: progress.mark == .waitsForYou ? .semibold : .regular))
-        .foregroundStyle(progress.mark == .waitsForYou ? AnyShapeStyle(.red) : AnyShapeStyle(.secondary))
+        .foregroundStyle(progress.mark == .waitsForYou ? AnyShapeStyle(.waiting) : AnyShapeStyle(.secondary))
         .help(Text(verbatim: text))
     }
 
@@ -168,7 +169,7 @@ private struct ProgressCell: View {
         case .none: Color.clear
         case .spinner: ProgressView().controlSize(.mini).scaleEffect(0.8)
         case .cross: Image(systemName: "xmark").font(.system(size: 9, weight: .bold))
-        case .waitsForYou: Circle().fill(.red).frame(width: 8, height: 8)
+        case .waitsForYou: Circle().fill(.waiting).frame(width: 8, height: 8)
         }
     }
 }

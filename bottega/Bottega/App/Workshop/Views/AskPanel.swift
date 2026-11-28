@@ -22,7 +22,7 @@ struct AskText: View {
                     systemImage: "eye.trianglebadge.exclamationmark"
                 )
                 .font(.callout)
-                .foregroundStyle(.orange)
+                .foregroundStyle(.trouble)
             }
         }
     }
@@ -125,7 +125,7 @@ private struct AgentClaim: View {
                     .font(.caption)
                     .padding(.horizontal, 6)
                     .padding(.vertical, 1)
-                    .background(look.surface, in: .capsule)
+                    .background(look.chip, in: .capsule)
             }
             .font(.callout)
         }

@@ -98,21 +98,83 @@ extension View {
     /// The outline every control in the window shares: a capsule, a field, a switcher (`Look.edge`), with light
     /// along its top. Stronger with Increase Contrast on.
     func vetroEdge(in shape: some InsettableShape) -> some View { modifier(VetroEdge(shape: shape)) }
+
+    /// Behind what is picked: the row that is open, a button whose panel is up. The fill is white, and over white
+    /// in the photo it cannot be seen, so what is picked has the outline every control has as well: the pill of
+    /// a switcher always had it, and was the one picked thing that showed on a light photo (T-254).
+    func vetroPicked(_ isPicked: Bool = true, in shape: some InsettableShape) -> some View {
+        modifier(VetroPicked(isPicked: isPicked, shape: shape))
+    }
+
+    /// Around the card or the letter that is open in the panel, and the field being typed in: one ring for "this
+    /// is the one", in the colour of the text. It was the accent colour, which here is for a button to press.
+    func vetroRing(_ isOn: Bool, in shape: some InsettableShape) -> some View {
+        modifier(VetroRing(isOn: isOn, shape: shape))
+    }
+
+    /// Once, on a window's root: keeps `Look` in step with the Mac's Increase Contrast and Reduce Transparency.
+    func mirrorsAccessibility() -> some View { modifier(MirrorsAccessibility()) }
+}
+
+private struct VetroPicked<S: InsettableShape>: ViewModifier {
+    @Environment(Look.self) private var look
+    let isPicked: Bool
+    let shape: S
+
+    func body(content: Content) -> some View {
+        content.background { if isPicked { shape.fill(look.selection).vetroEdge(in: shape) } }
+    }
+}
+
+private struct VetroRing<S: InsettableShape>: ViewModifier {
+    @Environment(Look.self) private var look
+    let isOn: Bool
+    let shape: S
+
+    func body(content: Content) -> some View {
+        content.overlay { if isOn { shape.strokeBorder(look.focusEdge, lineWidth: 1.5) } }
+    }
+}
+
+private struct MirrorsAccessibility: ViewModifier {
+    @Environment(Look.self) private var look
+    @Environment(\.colorSchemeContrast) private var contrast
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+
+    func body(content: Content) -> some View {
+        content
+            .onChange(of: contrast == .increased, initial: true) { _, isOn in
+                look.increasedContrast = isOn || Self.isAsked("BOTTEGA_CONTRAST")
+            }
+            .onChange(of: reduceTransparency, initial: true) { _, isOn in
+                look.reducedTransparency = isOn || Self.isAsked("BOTTEGA_SOLID")
+            }
+    }
+
+    /// `BOTTEGA_CONTRAST=1`, `BOTTEGA_SOLID=1`: what this app draws itself is drawn as with Increase Contrast, or
+    /// Reduce Transparency, for a screenshot. The Mac's own setting is left alone, so what the system draws (its
+    /// buttons, its glass) does not change with these.
+    private static func isAsked(_ name: String) -> Bool {
+        #if DEBUG
+        ProcessInfo.processInfo.environment[name] == "1"
+        #else
+        false
+        #endif
+    }
 }
 
 private struct VetroPane: ViewModifier {
     @Environment(Look.self) private var look
-    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
-    @Environment(\.colorSchemeContrast) private var contrast
     let cornerRadius: CGFloat
     let isSidebar: Bool
 
     func body(content: Content) -> some View {
         let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-        if reduceTransparency || contrast == .increased {
+        if look.isSolid {
             content
-                .background(solid, in: shape)
-                .overlay { shape.strokeBorder(contrast == .increased ? look.line.opacity(3) : look.line) }
+                .background(look.solidPane, in: shape)
+                // `Look.line` is already the stronger one when it is Increase Contrast that made the pane solid.
+                .overlay { shape.strokeBorder(look.line) }
                 .clipShape(shape)
                 .shadow(color: .black.opacity(0.3), radius: 20, y: 12)
         } else {
@@ -122,11 +184,6 @@ private struct VetroPane: ViewModifier {
                 .clipShape(shape)
                 .glassBehind(.clear.tint(look.glassTint), in: shape)
         }
-    }
-
-    private var solid: Color {
-        look.isDark ? Color(red: 22 / 255, green: 24 / 255, blue: 30 / 255).opacity(0.96)
-            : Color(red: 246 / 255, green: 246 / 255, blue: 248 / 255).opacity(0.96)
     }
 }
 
@@ -148,12 +205,11 @@ private struct VetroSurface<S: InsettableShape>: ViewModifier {
 
 private struct VetroEdge<S: InsettableShape>: ViewModifier {
     @Environment(Look.self) private var look
-    @Environment(\.colorSchemeContrast) private var contrast
     let shape: S
 
     func body(content: Content) -> some View {
         content.overlay {
-            shape.strokeBorder(look.edge(increasedContrast: contrast == .increased), lineWidth: 1)
+            shape.strokeBorder(look.edge, lineWidth: 1)
             shape.inset(by: 1).stroke(
                 LinearGradient(colors: [look.rim.opacity(0.6), .clear], startPoint: .top, endPoint: .center), lineWidth: 1)
         }
@@ -162,10 +218,10 @@ private struct VetroEdge<S: InsettableShape>: ViewModifier {
 
 private struct LegibleOnGlass: ViewModifier {
     @Environment(Look.self) private var look
-    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
 
     func body(content: Content) -> some View {
-        if reduceTransparency {
+        // On a solid pane there is no photo to keep the text apart from.
+        if look.isSolid {
             content
         } else {
             let shadow = look.textShadow

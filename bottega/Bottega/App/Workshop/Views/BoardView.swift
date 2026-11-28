@@ -47,11 +47,12 @@ struct BoardView: View {
         return VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 6) {
                 Image(systemName: Wording.columnSymbol(column))
-                Text(Wording.column(column)).fontWeight(.medium)
+                // Red words are a weight heavier, as in the canvas: thin red is lost against the photo.
+                Text(Wording.column(column)).fontWeight(column == .needsYou && !cards.isEmpty ? .semibold : .medium)
                 Text(cards.count, format: .number).foregroundStyle(.secondary).monospacedDigit()
             }
             .font(.callout)
-            .foregroundStyle(column == .needsYou && !cards.isEmpty ? AnyShapeStyle(.red) : AnyShapeStyle(.primary))
+            .foregroundStyle(column == .needsYou && !cards.isEmpty ? AnyShapeStyle(.waiting) : AnyShapeStyle(.primary))
             ScrollView {
                 LazyVStack(spacing: 10) {
                     ForEach(Array(cards.enumerated()), id: \.element.id) { index, card in

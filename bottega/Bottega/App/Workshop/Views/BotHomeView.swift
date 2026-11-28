@@ -58,7 +58,7 @@ private struct StartLineCard: View {
                     Image(systemName: "arrow.uturn.backward.circle")
                 }
                 .font(.callout)
-                .foregroundStyle(.orange)
+                .foregroundStyle(.trouble)
             }
             TextField("", text: $model[lineDraft: vendor].text, prompt: Text("Start a line with \(name)"), axis: .vertical)
                 .textFieldStyle(.plain)
@@ -189,7 +189,8 @@ private struct BotLines: View {
                 let thread = model.state.threads(with: line.id).last
                 Button { if let thread { model.page = .line(thread.id) } } label: {
                     HStack(alignment: .top, spacing: 8) {
-                        Image(systemName: state.symbol).foregroundStyle(state.isTrouble ? .red : .secondary)
+                        // A line that did not open is trouble, not something waiting on the user: orange.
+                        Image(systemName: state.symbol).foregroundStyle(state.isTrouble ? AnyShapeStyle(.trouble) : AnyShapeStyle(.secondary))
                         VStack(alignment: .leading, spacing: 1) {
                             Text(verbatim: title(of: line, thread: thread)).font(.system(size: 12.5)).lineLimit(1)
                             Text(verbatim: "\(state.text) · \(line.project.map { UntrustedText.line($0, limit: 40) } ?? "")")
@@ -280,7 +281,8 @@ private struct BotQuota: View {
                         Image(systemName: Wording.gateSymbol(gate.level))
                     }
                     .font(.system(size: 12.5, weight: .medium))
-                    .foregroundStyle(gate.level == "closed" ? .red : .orange)
+                    // Orange whichever it is, shut or not quite; the gauge and the words say how shut.
+                    .foregroundStyle(.trouble)
                     Text(verbatim: Wording.gateDetail(gate)).font(.system(size: 11)).foregroundStyle(.secondary)
                 }
             }

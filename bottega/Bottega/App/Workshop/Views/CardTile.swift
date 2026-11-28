@@ -79,9 +79,7 @@ struct CardTile: View {
         .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
         .vetroSurface(cornerRadius: 10)
-        .overlay {
-            if isSelected { RoundedRectangle(cornerRadius: 10).strokeBorder(Color.accentColor, lineWidth: 1.5) }
-        }
+        .vetroRing(isSelected, in: RoundedRectangle(cornerRadius: 10))
         .contentShape(.rect)
         .onTapGesture { model.detail = .card(card.id) }
         .accessibilityElement(children: .combine)

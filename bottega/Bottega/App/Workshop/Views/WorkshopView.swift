@@ -45,6 +45,7 @@ struct WorkshopView: View {
         }
         .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
         .preferredColorScheme(look.colorScheme)
+        .mirrorsAccessibility()
         .sheet(item: $model.askBeingRead) { item in
             AskSheet(id: item.id)
         }
@@ -164,7 +165,7 @@ private struct PageHeader: View {
                 Image(systemName: "sidebar.trailing")
                     .font(.system(size: 13))
                     .frame(width: 28, height: 28)
-                    .background(model.showsInspector ? look.selection : .clear, in: .circle)
+                    .vetroPicked(model.showsInspector, in: Circle())
                     .contentShape(.circle)
             }
             .buttonStyle(.plain)
@@ -190,7 +191,7 @@ private struct ArrangeButton: View {
             Image(systemName: "ellipsis")
                 .font(.system(size: 13))
                 .frame(width: 28, height: 28)
-                .background(isOpen.wrappedValue ? look.selection : .clear, in: .circle)
+                .vetroPicked(isOpen.wrappedValue, in: Circle())
                 .contentShape(.circle)
         }
         .buttonStyle(.plain)
@@ -305,7 +306,7 @@ struct StatusBanner: View {
     var body: some View {
         switch model.status {
         case .stopped(let why):
-            Banner(symbol: "exclamationmark.triangle.fill", tint: .orange, text: why.text) {
+            Banner(symbol: "exclamationmark.triangle.fill", tint: AnyShapeStyle(.trouble), text: why.text) {
                 if model.canRegisterAgain {
                     RegisterAgainButton()
                 } else {
@@ -314,7 +315,7 @@ struct StatusBanner: View {
                 Button("Reconnect") { model.reconnect() }
             }
         case .retrying(let why):
-            Banner(symbol: "bolt.horizontal.circle", tint: .secondary, text: "Reconnecting. \(why.text)") {
+            Banner(symbol: "bolt.horizontal.circle", tint: AnyShapeStyle(.secondary), text: "Reconnecting. \(why.text)") {
                 Button("Try Now") { model.reconnect() }
             }
         case nil, .connecting, .needsRegistration, .registering, .catchingUp, .live:
@@ -328,7 +329,7 @@ struct NoticeBanner: View {
 
     var body: some View {
         if let notice = model.notice {
-            Banner(symbol: "info.circle", tint: .secondary, text: notice.text) {
+            Banner(symbol: "info.circle", tint: AnyShapeStyle(.secondary), text: notice.text) {
                 Button("Dismiss") { model.notice = nil }
             }
         }
@@ -338,7 +339,7 @@ struct NoticeBanner: View {
 /// Over the page, not part of it (`FloatingTop`).
 struct Banner<Actions: View>: View {
     let symbol: String
-    let tint: Color
+    let tint: AnyShapeStyle
     let text: String
     @ViewBuilder let actions: Actions
 
