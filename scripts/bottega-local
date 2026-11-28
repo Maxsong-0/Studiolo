@@ -14,6 +14,7 @@
 #   scripts/bottega-local generate               按 bottega/project.yml 重新生成 Bottega.xcodeproj（xcodegen；不编译，哪里都能跑）
 #   scripts/bottega-local build                  编 Debug 版（Bottega Dev.app），产物在 bottega/build.noindex/dev    [只在 testbox 任务里]
 #   scripts/bottega-local test                   编 Debug 版并跑 BottegaTests 和核心包的测试                        [只在 testbox 任务里]
+#                                                先跑 scripts/bottega-local-selftest（拒跑自检），不过就不编
 #   scripts/bottega-local xcodebuild <参数…>      在 bottega/ 里原样跑 xcodebuild（Release 不许）                   [只在 testbox 任务里]
 #   scripts/bottega-local swift <参数…>           在 bottega/ 里原样跑 swift（swift test、swift build 这类）          [只在 testbox 任务里]
 #   scripts/bottega-local run                    打开 testbox 编好的 Debug 版给人看，不编译（不装进 /Applications）[只在 testbox 任务外]
@@ -237,6 +238,8 @@ case "$mode" in
   build | test)
     refuse_release "$@"
     require_testbox "$mode" "$@"
+    # test 开编前先查入口自己的拒跑（整批复查 F24）：拒跑和印出的命令坏了，就不往下编。
+    [ "$mode" != test ] || "$root/scripts/bottega-local-selftest"
     debug_build "$mode" "$@"
     ;;
   run)
