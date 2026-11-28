@@ -37,10 +37,11 @@ const TRICKY_BODY: &str = concat!(
     "---\r\n",
     "# 一 \r\n",
     "```js\n# 围栏里不是\n``` 行尾有字不算闭合\n# 还在围栏里\n```\n",
-    "~~~~\n## 不是\n~~~\n```\n## 还不是\n~~~~~  \n",
+    "~~~~\n## 不是\n~~~\n`````\n## 还不是\n~~~~~  \n",
     "    ## 缩进四格也算\n",
     "\t# 缩进一个制表符也算\n",
     "    ```\n# 四格缩进的反引号不开围栏\n",
+    "``\n## 两个反引号不开围栏\n",
     "#没有空格不是\n",
     "####### 七个井号不是\n",
     "##\n",
@@ -394,7 +395,7 @@ async fn the_outline_agrees_with_the_read_model_and_its_ranges_read_the_same_byt
     // 这一篇确实覆盖到了边角，不是两边都空着对上的。
     let part = text(&f, &session, TRICKY, json!({"outline": true})).await;
     assert!(
-        after_head(&part).0.starts_with("# 大纲 · 10 节 · "),
+        after_head(&part).0.starts_with("# 大纲 · 11 节 · "),
         "{part}"
     );
 }

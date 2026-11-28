@@ -286,8 +286,8 @@ impl Scan {
     /// 这一行若是正文就给出去掉换行的它；frontmatter、围栏和围栏里的行不给。
     /// 没闭合的 frontmatter 一直开到文末：读模型里这样的笔记也没有标题。
     fn visible<'a>(&mut self, number: usize, line: &'a str) -> Option<&'a str> {
+        // 行尾的回车不用管：下面每一处比较都先去掉行尾空白。
         let line = line.strip_suffix('\n').unwrap_or(line);
-        let line = line.strip_suffix('\r').unwrap_or(line);
         if number == 1 {
             let line = line.strip_prefix('\u{feff}').unwrap_or(line);
             if line.trim_end_matches('\r') == "---" {
