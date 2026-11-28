@@ -4,7 +4,6 @@ use crate::{
     relay_types::{RelayError, RelayGrant},
 };
 use rusqlite::{Connection, OptionalExtension, params};
-use sha2::{Digest, Sha256};
 use std::{
     fs::{self, File},
     path::Path,
@@ -13,10 +12,7 @@ use std::{
 };
 
 pub(crate) fn hash(bytes: &[u8]) -> String {
-    Sha256::digest(bytes)
-        .iter()
-        .map(|b| format!("{b:02x}"))
-        .collect()
+    studiolo_core::sha256_hex(bytes)
 }
 pub(crate) struct Store(Mutex<Connection>);
 pub(crate) enum Admission {

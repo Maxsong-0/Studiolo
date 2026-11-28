@@ -59,11 +59,8 @@ fn read_seed(mut input: impl Read) -> Result<TotpSeed, AdminError> {
             Err(_) => return Err(AdminError::RestoreInput),
         }
     }
-    if length != 40
-        || !bytes[..40]
-            .iter()
-            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(byte))
-    {
+    // 字符集由 `TotpSeed::from_hex` 核（只认小写十六进制），拒了同样映射成 `RestoreInput`；这里只核长度。
+    if length != 40 {
         return Err(AdminError::RestoreInput);
     }
     TotpSeed::from_hex(REFERENCE.into(), &bytes[..40]).map_err(|_| AdminError::RestoreInput)

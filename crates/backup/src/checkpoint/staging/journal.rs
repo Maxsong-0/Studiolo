@@ -86,10 +86,7 @@ impl Retained {
     pub fn validate(&self, identity: &Identity, now: InstantMillis) -> Result<()> {
         let hash = &self.reference.seal_sha256;
         if self.reference.checkpoint_id != identity.checkpoint_id
-            || hash.len() != 64
-            || !hash
-                .bytes()
-                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+            || !studiolo_core::is_sha256_hex(hash)
             || self.expires_at()?.millis() < 0
             || self.registered_at < identity.created_at
             || now < self.registered_at

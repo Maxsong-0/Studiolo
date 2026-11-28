@@ -187,11 +187,7 @@ pub(crate) fn check(
     owner.check_changes_access(principal)
 }
 pub(crate) fn actor(principal: &crate::auth_http::ContentPrincipal) -> String {
-    use sha2::{Digest, Sha256};
     let (issuer, subject) = principal.actor();
     let raw = serde_json::to_vec(&(issuer, subject)).expect("主体字符串可编码");
-    Sha256::digest(raw)
-        .iter()
-        .map(|v| format!("{v:02x}"))
-        .collect()
+    studiolo_core::sha256_hex(raw)
 }

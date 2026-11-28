@@ -246,10 +246,7 @@ fn listed<T>(entries: &[T]) -> bool {
 }
 
 fn is_digest(value: &str) -> bool {
-    value.len() == 64
-        && value
-            .bytes()
-            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    studiolo_core::is_sha256_hex(value)
 }
 
 /// 包名、版本、单元名：短的可见 ASCII，不含空白和路径分隔符。

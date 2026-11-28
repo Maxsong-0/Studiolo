@@ -18,11 +18,8 @@ impl TotpSeed {
     /// 编码无效返回 `Rejected`；引用仍由 `new` 检查并返回 `Configuration`。
     /// 自有的 20 字节解码缓冲区会零化；借用的输入仍须由调用者保护和清除。
     pub fn from_hex(reference: String, encoded: &[u8]) -> Result<Self, SessionError> {
-        if encoded.len() != 40
-            || !encoded
-                .iter()
-                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(byte))
-        {
+        // 解码留在下面的零化缓冲区里原地做，不经 `studiolo_core::from_lower_hex`：那个按值返回数组，会留一份没清零的种子副本。
+        if encoded.len() != 40 || !studiolo_core::is_lower_hex(encoded) {
             return Err(SessionError::Rejected);
         }
         let mut bytes = Zeroizing::new([0_u8; 20]);

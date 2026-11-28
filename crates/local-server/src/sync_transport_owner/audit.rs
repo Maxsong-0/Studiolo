@@ -133,15 +133,9 @@ fn confirm(
     Ok(())
 }
 
+/// 只认 64 位小写十六进制（T-246 起收紧：以前 `u8::from_str_radix` 还收大写和前导 `+`）。
 fn hash_bytes(hex: &str) -> Option<[u8; 32]> {
-    if hex.len() != 64 {
-        return None;
-    }
-    let mut output = [0u8; 32];
-    for (index, slot) in output.iter_mut().enumerate() {
-        *slot = u8::from_str_radix(hex.get(index * 2..index * 2 + 2)?, 16).ok()?;
-    }
-    Some(output)
+    studiolo_core::from_lower_hex(hex)
 }
 
 fn payload_value(payload: &AuditPayload) -> Value {
@@ -192,10 +186,5 @@ fn outcome_value(outcome: OutcomeSummary) -> Value {
 }
 
 fn hex(bytes: [u8; 32]) -> String {
-    let mut output = String::with_capacity(64);
-    for byte in bytes {
-        use std::fmt::Write as _;
-        let _ = write!(&mut output, "{byte:02x}");
-    }
-    output
+    studiolo_core::to_lower_hex(&bytes)
 }

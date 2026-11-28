@@ -118,10 +118,7 @@ pub(in crate::sync_plane) fn read(
     Ok(Some((bytes, before)))
 }
 pub(in crate::sync_plane) fn digest_name(name: &str) -> bool {
-    name.len() == 64
-        && name
-            .bytes()
-            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+    studiolo_core::is_sha256_hex(name)
 }
 pub(in crate::sync_plane) fn create(
     root: BorrowedFd<'_>,

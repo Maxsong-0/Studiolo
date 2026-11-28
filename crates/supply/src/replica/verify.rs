@@ -2,7 +2,6 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use sha2::{Digest, Sha256};
 use studiolo_core::VaultPath;
 use studiolo_vault_broker::{ReadEntry, ReadEntryKind, ReadNote, ReadOnlyVault, ScanLimits};
 
@@ -51,10 +50,7 @@ pub(super) fn generation(
 }
 
 fn digest(bytes: &[u8]) -> String {
-    Sha256::digest(bytes)
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect()
+    studiolo_core::sha256_hex(bytes)
 }
 
 /// 核清单的形状与各条上限；顺带交出这一代用了各条上限多少（`manifest_bytes` 是清单原始字节数），供路牌提前提醒。

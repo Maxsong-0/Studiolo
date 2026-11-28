@@ -137,7 +137,7 @@ fn append(
 fn event_id() -> Result<AuditEventId, MaintenanceError> {
     let mut random = [0u8; 32];
     getrandom::fill(&mut random).map_err(|_| MaintenanceError::Audit)?;
-    let hex: String = random.iter().map(|byte| format!("{byte:02x}")).collect();
+    let hex = studiolo_core::to_lower_hex(&random);
     AuditEventId::parse(hex).map_err(|_| MaintenanceError::Audit)
 }
 

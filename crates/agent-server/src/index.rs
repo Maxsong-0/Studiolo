@@ -1,7 +1,6 @@
 //! 验证后的派生模型缓存：无源读取能力，缓存不决定正文、白名单、身份或新鲜度。
 use std::sync::{Arc, Mutex};
 
-use sha2::{Digest, Sha256};
 use studiolo_supply::{
     ParseCache, Snapshot, SupplyError, WorkbenchReadModel,
     index_cache::{IndexCacheStore, validate_isolation},
@@ -77,10 +76,7 @@ impl IndexRuntime {
                 allow,
             ))
             .map_err(|_| "索引范围编码失败".to_owned())?;
-            let scope = Sha256::digest(scope_bytes)
-                .iter()
-                .map(|byte| format!("{byte:02x}"))
-                .collect::<String>();
+            let scope = studiolo_core::sha256_hex(scope_bytes);
             match IndexCacheStore::open(root) {
                 Ok(store) => (Some(store), Persistence::Ready, scope),
                 Err(SupplyError::CorruptStore | SupplyError::StoreUnavailable) => {

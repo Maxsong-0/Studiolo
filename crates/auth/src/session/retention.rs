@@ -11,7 +11,6 @@ mod selection;
 use super::{SessionError, SessionManager, database::required_row, schema};
 use rusqlite::Connection;
 use serde::{Serialize, de::DeserializeOwned};
-use sha2::{Digest, Sha256};
 
 const BATCH: usize = 16;
 const MAX_PLAN_BYTES: usize = 32 * 1024;
@@ -142,14 +141,11 @@ fn decode<T: DeserializeOwned + Serialize>(encoded: &str) -> Result<T, SessionEr
 }
 
 fn digest(bytes: &[u8]) -> String {
-    super::secrets::hex(&Sha256::digest(bytes))
+    studiolo_core::sha256_hex(bytes)
 }
 
 fn valid_hash(value: &str) -> bool {
-    value.len() == 64
-        && value
-            .bytes()
-            .all(|v| v.is_ascii_digit() || (b'a'..=b'f').contains(&v))
+    studiolo_core::is_sha256_hex(value)
 }
 
 fn current_epoch(db: &Connection) -> Result<i64, SessionError> {

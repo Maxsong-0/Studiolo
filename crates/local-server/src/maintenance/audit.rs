@@ -2,6 +2,7 @@
 
 use super::MaintenanceError;
 use studiolo_audit_ledger::{AuditEvent, AuditEventId, AuditLedger, AuditPhase, SanitizedPayload};
+use studiolo_core::is_sha256_hex;
 use studiolo_vault_broker::{
     ContentAuditPhase, MaintenanceAuditEvent, MaintenanceCurrent, MaintenanceDecision,
     MaintenanceOutcome, MaintenanceTargetKind, ReconciliationOutcome,
@@ -60,22 +61,22 @@ fn schema(value: &MaintenanceAuditEvent) -> Result<u32, MaintenanceError> {
         (Some(2), Some(id))
             if target.secondary.is_none()
                 && target.file_operation.is_none()
-                && hex(id)
+                && is_sha256_hex(id)
                 && target.sequence.is_some()
                 && target.kind != MaintenanceTargetKind::RestoreIntent =>
         {
             2
         }
         (Some(3), Some(id))
-            if hex(id) && target.sequence.is_some() && super::rename::valid(target) =>
+            if is_sha256_hex(id) && target.sequence.is_some() && super::rename::valid(target) =>
         {
             3
         }
         _ => return Err(MaintenanceError::Audit),
     };
-    if !hex(&value.event_id)
-        || !hex(&target.review_id)
-        || !hex(&target.request_fingerprint)
+    if !is_sha256_hex(&value.event_id)
+        || !is_sha256_hex(&target.review_id)
+        || !is_sha256_hex(&target.request_fingerprint)
         || target.sequence == Some(0)
         || value.requested_at_ms.is_some_and(|time| time < 0)
         || !matches!(
@@ -101,7 +102,7 @@ fn schema(value: &MaintenanceAuditEvent) -> Result<u32, MaintenanceError> {
         (ContentAuditPhase::Outcome, Some(MaintenanceOutcome::Applied)) => {
             if value.decision == MaintenanceDecision::PreserveInstalling {
                 value.resolution == Some(ReconciliationOutcome::Indeterminate)
-                    && value.evidence_id.as_deref().is_some_and(hex)
+                    && value.evidence_id.as_deref().is_some_and(is_sha256_hex)
             } else {
                 value.resolution == Some(ReconciliationOutcome::Cancelled)
                     && value.evidence_id.is_none()
@@ -118,11 +119,4 @@ fn schema(value: &MaintenanceAuditEvent) -> Result<u32, MaintenanceError> {
     } else {
         Err(MaintenanceError::Audit)
     }
-}
-
-fn hex(value: &str) -> bool {
-    value.len() == 64
-        && value
-            .bytes()
-            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
 }

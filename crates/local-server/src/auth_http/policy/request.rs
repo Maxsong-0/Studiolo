@@ -130,12 +130,7 @@ pub(crate) fn parse(path: &str, bytes: &[u8]) -> Result<Input, Failure> {
         }
         ACTIVATE => {
             let body: ActivateBody = serde_json::from_slice(bytes).map_err(bad)?;
-            if body.expected_effective_hash.len() != 64
-                || !body
-                    .expected_effective_hash
-                    .bytes()
-                    .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
-            {
+            if !studiolo_core::is_sha256_hex(&body.expected_effective_hash) {
                 return Err(Failure::bad_request());
             }
             let request = match (

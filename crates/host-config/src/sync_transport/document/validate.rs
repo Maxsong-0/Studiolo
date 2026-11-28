@@ -156,16 +156,5 @@ pub(super) fn text_field(value: &str, max: usize) -> bool {
 }
 
 pub(super) fn digest32(value: &str) -> Result<[u8; 32], ConfigError> {
-    if value.len() != 64 || !value.bytes().all(|byte| byte.is_ascii_hexdigit()) {
-        return Err(ConfigError);
-    }
-    if value.bytes().any(|byte| byte.is_ascii_uppercase()) {
-        return Err(ConfigError);
-    }
-    let mut output = [0u8; 32];
-    for (index, slot) in output.iter_mut().enumerate() {
-        let pair = value.get(index * 2..index * 2 + 2).ok_or(ConfigError)?;
-        *slot = u8::from_str_radix(pair, 16).map_err(|_| ConfigError)?;
-    }
-    Ok(output)
+    studiolo_core::from_lower_hex(value).ok_or(ConfigError)
 }

@@ -3,7 +3,6 @@
 use crate::{Error, Options, PlanSummary};
 use rustix::fs::{Mode, OFlags, open};
 use serde::Serialize;
-use sha2::{Digest, Sha256};
 use std::{
     fs::{self, File},
     io::Read,
@@ -330,10 +329,7 @@ fn selected(path: &VaultPath, scope: &VaultPath) -> bool {
 }
 
 fn digest(bytes: &[u8]) -> String {
-    Sha256::digest(bytes)
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect()
+    studiolo_core::sha256_hex(bytes)
 }
 
 fn clean_absolute(path: &Path) -> Result<(), Error> {

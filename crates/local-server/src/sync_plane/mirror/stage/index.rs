@@ -127,12 +127,7 @@ impl StageIndex {
 /// 小写十六进制。
 #[must_use]
 pub fn hex(bytes: [u8; 32]) -> String {
-    use std::fmt::Write as _;
-    let mut output = String::with_capacity(64);
-    for byte in bytes {
-        let _ = write!(&mut output, "{byte:02x}");
-    }
-    output
+    studiolo_core::to_lower_hex(&bytes)
 }
 
 fn checksum(preserved: &[PreservedEntry]) -> String {
