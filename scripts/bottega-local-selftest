@@ -1,0 +1,124 @@
+#!/usr/bin/env bash
+# bottega-local 的拒跑自检（T-244，整批复查 F24）：入口「不在 testbox 任务里就拒跑、印出的命令能原样敲」原来只靠手工验收。
+# scripts/bottega-local test（testbox 的 --recipe full）开编之前先跑这一份，失败就不往下编。
+#
+# 查什么：
+#   1. build、test、swift、xcodebuild 在没有 TESTBOX_TASK_ID 时退 2，一行都不编（入口在 require_testbox 里就 exit 了）；
+#   2. 印出的那条 testbox 命令拿 shell 原样解析一遍：--arch macos、--project bottega、--wait 都在；
+#      build 不带 --recipe 和 --cmd（配方默认），test 带 --recipe full、不带 --cmd，别的带 --cmd，
+#      而且 --cmd 的值再解析一遍，正好还原成这次敲的那串参数（含空格、单引号的参数也一样）；
+#   3. run 在 testbox 任务里退 2（任务里起的 App 没人收尾）。
+# 配方里有没有 bottega 项目和 full 档，不在这里查：这份自检本身就是经 --project bottega --recipe full 跑起来的。
+#
+# 只在 testbox 任务里跑（和入口同一条规矩，ADR-048）；它不编译，只调入口看它拒不拒。
+set -euo pipefail
+
+entry="$(cd "$(dirname "$0")" && pwd)/bottega-local"
+failures=0
+
+[ -n "${TESTBOX_TASK_ID:-}" ] || {
+  printf 'bottega-local-selftest: 只在 testbox 的 Mac 节点任务里跑（ADR-048）；交 --recipe full，或 --cmd scripts/bottega-local-selftest。\n' >&2
+  exit 2
+}
+
+fail() {
+  printf 'bottega-local-selftest: 不通过：%s\n' "$1" >&2
+  failures=$((failures + 1))
+}
+
+# 解析印出的命令时用的假 testbox：只记下它收到的参数。
+testbox() {
+  submitted=("$@")
+}
+
+# 解析 --cmd 的值时用：只记下还原出来的参数。
+capture_words() {
+  words=("$@")
+}
+
+# 在 submitted 里找「选项 值」这一对；值为空就只看选项在不在。
+has_option() {
+  local option="$1" value="${2:-}" i
+  for ((i = 0; i < ${#submitted[@]}; i++)); do
+    [ "${submitted[i]}" = "$option" ] || continue
+    [ -z "$value" ] && return 0
+    [ "${submitted[i + 1]:-}" = "$value" ] && return 0
+  done
+  return 1
+}
+
+option_value() {
+  local option="$1" i
+  for ((i = 0; i < ${#submitted[@]}; i++)); do
+    if [ "${submitted[i]}" = "$option" ]; then
+      printf '%s' "${submitted[i + 1]:-}"
+      return 0
+    fi
+  done
+  return 1
+}
+
+# 不在 testbox 任务里跑一次入口，查退出码和印出的那条命令。kind：build（配方默认）、full（--recipe full）、cmd（--cmd）。
+check_refusal() {
+  local kind="$1" label output status=0 line cmd
+  shift
+  label="bottega-local $*"
+  output="$(env -u TESTBOX_TASK_ID "$entry" "$@" 2>&1 >/dev/null)" || status=$?
+  if [ "$status" -ne 2 ]; then
+    fail "「$label」在 testbox 外应退 2，实际退 $status。输出：$output"
+    return
+  fi
+  # 入口印的第二行是两个空格开头的那条命令。
+  line="$(printf '%s\n' "$output" | sed -n 's/^  testbox /testbox /p')"
+  if [ -z "$line" ]; then
+    fail "「$label」被拒了，但没印出该交的 testbox 命令。输出：$output"
+    return
+  fi
+  submitted=()
+  # 印出的命令是给人原样敲的：照 shell 的规矩解析它（testbox 是上面的假函数，什么都不执行）。
+  eval "$line"
+  has_option --arch macos || fail "「$label」印出的命令没有 --arch macos：$line"
+  has_option --project bottega || fail "「$label」印出的命令没有 --project bottega：$line"
+  has_option --wait || fail "「$label」印出的命令没有 --wait：$line"
+  case "$kind" in
+    build)
+      ! has_option --recipe || fail "「$label」应走配方默认，命令里却有 --recipe：$line"
+      ! has_option --cmd || fail "「$label」应走配方默认，命令里却有 --cmd：$line"
+      ;;
+    full)
+      has_option --recipe full || fail "「$label」应走 --recipe full：$line"
+      ! has_option --cmd || fail "「$label」应走 --recipe full，命令里却有 --cmd：$line"
+      ;;
+    cmd)
+      cmd="$(option_value --cmd)" || {
+        fail "「$label」应带 --cmd：$line"
+        return
+      }
+      words=()
+      # testbox 在任务里用 shell 跑 --cmd 的值：同样解析一遍，必须还原成这次敲的参数。
+      eval "capture_words $cmd"
+      local expected=(scripts/bottega-local "$@")
+      if [ "${#words[@]}" -ne "${#expected[@]}" ] || [ "$(printf '%s\0' "${words[@]}" | od -An -tx1)" != "$(printf '%s\0' "${expected[@]}" | od -An -tx1)" ]; then
+        fail "「$label」的 --cmd 还原不回原来的参数：--cmd 是「$cmd」"
+      fi
+      ;;
+  esac
+}
+
+check_refusal build build
+check_refusal full test
+check_refusal cmd swift test --package-path BottegaKit
+check_refusal cmd xcodebuild -showsdks
+check_refusal cmd test -only-testing:BottegaTests/CardsMotionTests
+# 带空格和单引号的参数：入口改用 %q 整条转义的那一支。
+check_refusal cmd swift build -Xswiftc "-DNOTE='a b'"
+
+status=0
+"$entry" run >/dev/null 2>&1 || status=$?
+[ "$status" -eq 2 ] || fail "「bottega-local run」在 testbox 任务里应退 2，实际退 $status。"
+
+if [ "$failures" -ne 0 ]; then
+  printf 'bottega-local-selftest: %d 条不通过。\n' "$failures" >&2
+  exit 1
+fi
+printf 'bottega-local-selftest: 拒跑自检 7 条全过。\n'
