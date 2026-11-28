@@ -2,8 +2,9 @@
 
 use std::{fs, os::unix::fs::PermissionsExt};
 use studiolo_policy::{
-    DesiredInput, DesiredStatus, MAX_PENDING_PER_INSTANCE, MAX_PENDING_PROPOSALS, PolicyAgentStore,
-    PolicyError, PolicyKind, PolicyStore, ProposalInput, Submitter,
+    DesiredInput, DesiredStatus, MAX_PENDING_PER_INSTANCE, MAX_PENDING_PER_TYPE,
+    MAX_PENDING_PROPOSALS, PolicyAgentStore, PolicyError, PolicyKind, PolicyStore, ProposalInput,
+    Submitter,
 };
 use tempfile::TempDir;
 
@@ -100,9 +101,10 @@ fn rejected_proposals_also_fill_the_global_quota_but_owner_drafts_do_not() {
         .unwrap();
     let mut first = None;
     for index in 0..MAX_PENDING_PROPOSALS {
+        // 每类型名额小于全库，分给几类 AI 才填得满全库。
         let result = agent
             .propose(
-                "claude",
+                &format!("type{}", index / MAX_PENDING_PER_TYPE),
                 &format!("instance{}", index / MAX_PENDING_PER_INSTANCE),
                 input(&format!("r{index}.md"), " "),
                 NOW,
@@ -111,6 +113,7 @@ fn rejected_proposals_also_fill_the_global_quota_but_owner_drafts_do_not() {
         assert_eq!(result.record.status, DesiredStatus::Rejected);
         first.get_or_insert(result.record.id);
     }
+    // 全库满了：哪一类都交不进，包括一份都没交过的类型。
     assert_eq!(
         agent.propose("codex", "fresh", input("new.md", "# 新\n"), NOW),
         Err(PolicyError::TooManyProposals)
@@ -121,6 +124,48 @@ fn rejected_proposals_also_fill_the_global_quota_but_owner_drafts_do_not() {
     agent
         .propose("codex", "fresh", input("new.md", "# 新\n"), NOW)
         .unwrap();
+}
+
+#[test]
+fn one_types_unfinished_proposals_fill_only_its_own_type_quota() {
+    // T-248：每次连接都是新实例，换实例就绕得过每实例名额；校验失败的又占名额，一类 AI 出了毛病
+    // 换着实例连交废提案，没有每类型名额就能占满全库、挡住别的类型。
+    let (_temp, owner, agent) = stores();
+    let mut first = None;
+    for index in 0..MAX_PENDING_PER_TYPE {
+        let result = agent
+            .propose(
+                "codex",
+                &format!("instance{}", index / MAX_PENDING_PER_INSTANCE),
+                input(&format!("r{index}.md"), " "),
+                NOW,
+            )
+            .unwrap();
+        assert_eq!(result.record.status, DesiredStatus::Rejected);
+        first.get_or_insert(result.record.id);
+    }
+    // 本类型换一个新实例也交不进，什么都没写。
+    let before = owner.desired_list(None, 1_000).unwrap().len();
+    assert_eq!(
+        agent.propose("codex", "fresh", input("new.md", "# 新\n"), NOW),
+        Err(PolicyError::TooManyProposals)
+    );
+    assert_eq!(owner.desired_list(None, 1_000).unwrap().len(), before);
+    // 别的类型照常能交。
+    agent
+        .propose("claude", "fresh", input("new.md", "# 新\n"), NOW)
+        .unwrap();
+    // 主人撤回本类型的一份，就放回一个名额，只放回一个。
+    owner
+        .withdraw_desired(first.as_ref().unwrap(), NOW)
+        .unwrap();
+    agent
+        .propose("codex", "fresh", input("new.md", "# 新\n"), NOW)
+        .unwrap();
+    assert_eq!(
+        agent.propose("codex", "another", input("more.md", "# 再一份\n"), NOW),
+        Err(PolicyError::TooManyProposals)
+    );
 }
 
 #[test]
@@ -300,6 +345,17 @@ fn draft_listing_uses_insertion_order_even_for_equal_or_reversed_timestamps() {
             .0
             .into_iter()
             .map(|r| r.id)
+            .collect::<Vec<_>>(),
+        ids
+    );
+    // 接入方 `list_proposals` 的「新到旧」也是入库先后（T-248 补）：时间回拨、同一时刻都不乱。
+    assert_eq!(
+        agent
+            .open_proposals("claude", None, None)
+            .unwrap()
+            .proposals
+            .into_iter()
+            .map(|proposal| proposal.id)
             .collect::<Vec<_>>(),
         ids
     );

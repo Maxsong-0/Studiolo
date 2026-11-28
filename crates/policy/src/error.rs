@@ -56,8 +56,8 @@ pub enum PolicyError {
     /// bootstrap 只允许为从未有过版本的 subject 写首版。
     #[error("该 subject 已有版本，bootstrap 只允许首版")]
     AlreadyBootstrapped,
-    /// 提案数量超过有界上限。
-    #[error("待处理提案数量超限")]
+    /// 接入方未完成提案（pending／validated／rejected）超过全库、本类型或本实例的上限。
+    #[error("未完成提案数量超限")]
     TooManyProposals,
     /// 没有处于生效中的全局吊销可解除。
     #[error("当前没有生效中的全局吊销")]
