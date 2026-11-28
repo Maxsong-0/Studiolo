@@ -1,12 +1,27 @@
 //! 内容读取工具族：握手、条目清单、笔记与搜索；每次先授权复核，所有供给先审计后返回。
 
-use super::{AgentSession, ListEntriesArgs, ReadNoteArgs, SearchArgs};
+#[path = "note_slice.rs"]
+mod note_slice;
+
+use super::{AgentSession, ListEntriesArgs, ReadNoteArgs, SearchArgs, args::ReadNoteToolArgs};
 use crate::state::SupplySource;
+use note_slice::{NotePart, PartError};
 use rmcp::ErrorData as McpError;
 use studiolo_core::VaultPath;
 use studiolo_supply::{SearchMode, SearchQuery, SearchScope, SupplyError};
 
 const MAX_NOTE_BYTES: u64 = 4 * 1024 * 1024;
+
+fn refuse_part(error: PartError) -> McpError {
+    let message = error.to_string();
+    match error {
+        PartError::HeadingNotFound => McpError::resource_not_found(message, None),
+        PartError::MoreThanOne
+        | PartError::MalformedLines
+        | PartError::EmptyHeading
+        | PartError::LinesOutOfRange { .. } => McpError::invalid_params(message, None),
+    }
+}
 
 impl AgentSession {
     /// 共用只读握手；由外壳选择已计入预算的续读入口。
@@ -57,8 +72,22 @@ impl AgentSession {
         ))
     }
 
-    /// 共用笔记供给；白名单、版本和审计不依赖传输外壳。
+    /// 整篇笔记；HTTP 续读入口用。
     pub(crate) async fn text_read_note(&self, args: ReadNoteArgs) -> Result<String, McpError> {
+        self.text_read_note_part(ReadNoteToolArgs {
+            path: args.path,
+            lines: None,
+            heading: None,
+            outline: None,
+        })
+        .await
+    }
+
+    /// 共用笔记供给，可以只要一段；白名单、版本和审计不依赖传输外壳，也不看要的是哪一段。
+    pub(super) async fn text_read_note_part(
+        &self,
+        args: ReadNoteToolArgs,
+    ) -> Result<String, McpError> {
         let _operation = self.begin_operation().await?;
         let grant = self.authorize("read_note")?;
         let actor = grant.actor();
@@ -80,6 +109,13 @@ impl AgentSession {
             self.deny(actor, "read_note", reason);
             return Err(McpError::invalid_params("路径不在供给白名单内", None));
         }
+        // 写法在路径获准之后才核：参数写错了也盖不住越界的拒绝和它的审计。
+        let part = NotePart::parse(
+            args.lines.as_deref(),
+            args.heading.as_deref(),
+            args.outline.unwrap_or(false),
+        )
+        .map_err(refuse_part)?;
         let generation = self.generation(&grant.instance, "read_note").await?;
         let read = match &self.state.source {
             SupplySource::Direct(roots) => roots.read_note(&path, MAX_NOTE_BYTES),
@@ -105,11 +141,14 @@ impl AgentSession {
             }
         };
         let revision = note.revision.to_string();
+        // 先审计再切：「共几行」「没有这个标题」也是在说这篇的内容。
         self.audit_read(&grant.instance, path.as_str(), &revision, "read_note")?;
+        let slice = part.cut(&note.content).map_err(refuse_part)?;
         Ok(format!(
-            "revision {revision}\n{}{}",
+            "revision {revision}\n{}{}{}",
             Self::freshness(&generation)?,
-            note.content
+            slice.head,
+            slice.body
         ))
     }
 

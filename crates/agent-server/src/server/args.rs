@@ -16,6 +16,24 @@ pub struct ReadNoteArgs {
     pub path: String,
 }
 
+/// MCP `read_note` 参数：路径，外加三选一的「只要哪一段」；都不给就是整篇。
+/// HTTP 续读入口只按路径读整篇，用 [`ReadNoteArgs`]。
+#[derive(Debug, serde::Deserialize, rmcp::schemars::JsonSchema)]
+#[schemars(crate = "rmcp::schemars")]
+pub struct ReadNoteToolArgs {
+    /// 相对 vault 根的逻辑路径，例如 `项目/Studiolo-Docs/00-总览/INDEX.md`。
+    pub path: String,
+    /// 只要这几行：`a-b`，从 1 起、两端都含；行号就是 search 和 outline 报的行号。
+    #[serde(default)]
+    pub lines: Option<String>,
+    /// 只要这个标题的一节（到下一个同级或更高级标题之前）；可以带 `#`，带了就连级别一起核。
+    #[serde(default)]
+    pub heading: Option<String>,
+    /// 为 true 时只要大纲：每行 `起-止<TAB>## 标题`。
+    #[serde(default)]
+    pub outline: Option<bool>,
+}
+
 /// `search` 参数。
 #[derive(Debug, serde::Deserialize, rmcp::schemars::JsonSchema)]
 #[schemars(crate = "rmcp::schemars")]
