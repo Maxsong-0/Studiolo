@@ -161,11 +161,9 @@ impl<B: VaultBroker + ArtifactStager, L: AuditLedger> PersistentTaskEngine<B, L>
             match self.migrate_terminal_body(attempt) {
                 Ok(()) => migrated += 1,
                 Err(error) if reservation_specific(&error) => {
-                    self.audit_board(
+                    self.board_pending_marker(
                         "task.legacy_reservation_pending",
                         &(attempt.task_id, attempt.attempt_id),
-                        AuditPhase::Outcome,
-                        Some(false),
                     )?;
                 }
                 Err(error) => return Err(error),

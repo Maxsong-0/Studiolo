@@ -110,7 +110,7 @@ impl<
         project: &str,
         current_policy_hash: &str,
     ) -> Result<(), TaskEngineError> {
-        use studiolo_audit_ledger::AuditPhase;
+        use crate::board_audit::BoardVerdict;
         use studiolo_vault_broker::{BatchChange, BatchEdit, BatchRequest, BrokerError, TextPatch};
         let through = self
             .control_db
@@ -161,22 +161,16 @@ impl<
                 .broker
                 .preview_batch(&request)
                 .map_err(TaskEngineError::Broker)?;
-            self.audit_board(
+            let audit = self.board_intent(
                 "task.board_projected",
                 &(request.batch_id.as_str(), preview.fingerprint.as_str()),
-                AuditPhase::Intent,
-                None,
             )?;
             let result = self
                 .broker
                 .commit_batch(request.clone(), &preview)
                 .map_err(TaskEngineError::Broker);
-            self.audit_board(
-                "task.board_projected",
-                &(request.batch_id.as_str(), preview.fingerprint.as_str()),
-                AuditPhase::Outcome,
-                Some(result.is_ok()),
-            )?;
+            // Broker 提交失败不知道写没写进去，不下结论；下一轮换新批次号重来。
+            self.board_outcome(audit, BoardVerdict::of(&result))?;
             result?;
         }
         self.control_db

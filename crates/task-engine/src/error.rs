@@ -27,6 +27,10 @@ pub enum TaskEngineError {
     /// 同一事件或请求标识被以不同内容重放。
     #[error("idempotency identity was reused with different content")]
     IdempotencyMismatch,
+    /// 同一个黑板请求（同一审计身份）之前已被确定拒绝：账本里的结论不改，这次照样拒绝、什么都没做；
+    /// 条件变了要重来就换一个新请求（BUG-060）。
+    #[error("this request was already rejected; send a new request instead of retrying it")]
+    RequestAlreadyRejected,
     /// 权威审计接收端不可用；受保护的副作用已停止。
     #[error("audit ledger is unavailable")]
     AuditUnavailable,
