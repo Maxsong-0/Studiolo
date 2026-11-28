@@ -237,9 +237,9 @@ impl SyncPlane {
             let plane = self.clone();
             let flag = stopping.clone();
             let mut round = tokio::task::spawn_blocking(move || {
-                let now = health::now_unix_seconds();
-                let outcome = driver::run_round(&plane, now, &flag);
-                plane.health.record_round(now, &outcome);
+                run_and_record(&plane.health, health::now_unix_seconds, |now| {
+                    driver::run_round(&plane, now, &flag)
+                });
                 publish_round_status(
                     plane.audit.enter_operation().ok(),
                     &plane.plane_root,
@@ -261,6 +261,17 @@ impl SyncPlane {
             }
         }
     }
+}
+
+/// 跑一轮并收口健康证据：`clock` 取时刻，`round` 是这一轮驱动；时钟和驱动都由调用方注入，用例才测得到取时刻的顺序。
+pub(crate) fn run_and_record(
+    facts: &health::PlaneHealth,
+    clock: impl Fn() -> i64,
+    round: impl FnOnce(i64) -> Result<driver::RoundOutcome, PlaneError>,
+) {
+    let now = clock();
+    let outcome = round(now);
+    facts.record_round(now, &outcome);
 }
 
 /// 一轮收口后写一份同步状态回执（T-224）：`permit` 是调用方刚取的全局操作许可，许可在手才短暂重开平面租约、

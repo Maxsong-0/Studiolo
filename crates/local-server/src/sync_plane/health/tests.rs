@@ -357,3 +357,6 @@ mod restart;
 
 #[path = "../../../tests/sync_plane_health/status.rs"]
 mod status;
+
+#[path = "../../../tests/sync_plane_health/round_times.rs"]
+mod round_times;
