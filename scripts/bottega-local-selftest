@@ -15,6 +15,8 @@ set -euo pipefail
 
 entry="$(cd "$(dirname "$0")" && pwd)/bottega-local"
 failures=0
+# 跑了几条用法：每条 check_refusal 和最后的 run 各算一条；结尾按它报条数，不手数（第 3 轮复查 R3-F12）。
+checks=0
 
 [ -n "${TESTBOX_TASK_ID:-}" ] || {
   printf 'bottega-local-selftest: 只在 testbox 的 Mac 节点任务里跑（ADR-048）；交 --recipe full，或 --cmd scripts/bottega-local-selftest。\n' >&2
@@ -62,6 +64,7 @@ option_value() {
 check_refusal() {
   local kind="$1" label output status=0 line cmd
   shift
+  checks=$((checks + 1))
   label="bottega-local $*"
   output="$(env -u TESTBOX_TASK_ID "$entry" "$@" 2>&1 >/dev/null)" || status=$?
   if [ "$status" -ne 2 ]; then
@@ -113,12 +116,13 @@ check_refusal cmd test -only-testing:BottegaTests/CardsMotionTests
 # 带空格和单引号的参数：入口改用 %q 整条转义的那一支。
 check_refusal cmd swift build -Xswiftc "-DNOTE='a b'"
 
+checks=$((checks + 1))
 status=0
 "$entry" run >/dev/null 2>&1 || status=$?
 [ "$status" -eq 2 ] || fail "「bottega-local run」在 testbox 任务里应退 2，实际退 $status。"
 
 if [ "$failures" -ne 0 ]; then
-  printf 'bottega-local-selftest: %d 条不通过。\n' "$failures" >&2
+  printf 'bottega-local-selftest: %d 条用法里有 %d 处不通过。\n' "$checks" "$failures" >&2
   exit 1
 fi
-printf 'bottega-local-selftest: 拒跑自检 7 条全过。\n'
+printf 'bottega-local-selftest: 拒跑自检 %d 条全过。\n' "$checks"
