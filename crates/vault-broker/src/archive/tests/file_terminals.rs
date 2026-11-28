@@ -124,6 +124,9 @@ fn settled_file_operations_are_packed_and_change_no_answer_or_budget() {
     let fixture = Fixture::new();
     let (mut broker, done) = setup(&fixture);
     let before = observe(&broker, &done);
+    // 占墓碑名额的只有改名和提交了的删除：拒绝、取消的不占，恢复不是删除。打包前后都是两个。
+    let (_, occupied) = before.4;
+    assert_eq!(occupied, 2);
     for ((_, receipt), replayed) in done.iter().zip(&before.0) {
         assert_eq!(receipt, replayed);
     }
@@ -204,4 +207,62 @@ fn file_operations_resume_once_packing_frees_the_replays() {
     }
     let usage = broker.record_usage().unwrap();
     assert_eq!((usage.replays.used, usage.file_operations.used), (1, 1));
+}
+
+/// 终态未知的（提交时断了、维护判成「保留安装中」）留散件：可能还要人收口；同一轮别的照打，答复不变。
+#[test]
+fn an_indeterminate_file_operation_stays_loose() {
+    let fixture = Fixture::new();
+    let mut broker = fixture.open();
+    notes(&mut broker, 1);
+    enable(&mut broker);
+    let request = delete(&broker, "note-0.md", "unknown");
+    let ticket = broker
+        .prepare_file_operation(request.clone(), actor())
+        .unwrap();
+    broker
+        .confirm_file_operation_intent(&ticket, 100, HASH)
+        .unwrap();
+    fault(&broker, 52);
+    assert!(broker.commit_file_operation(&ticket).is_err());
+    drop(broker);
+    let mut broker = fixture.reopen();
+    let target = broker.maintenance_inspect(64).unwrap().targets.remove(0);
+    let decision = broker
+        .prepare_maintenance(
+            &target.review_id,
+            MaintenanceDecision::PreserveInstalling,
+            MaintenanceActor::current().unwrap(),
+        )
+        .unwrap();
+    broker
+        .confirm_maintenance_intent(&decision, 102, HASH)
+        .unwrap();
+    broker.commit_maintenance(decision).unwrap();
+    for candidate in broker.pending_file_operation_audit(64).unwrap() {
+        broker
+            .confirm_file_operation_audit(candidate, 101, HASH)
+            .unwrap();
+    }
+    for candidate in broker.pending_maintenance_audit(64).unwrap() {
+        broker
+            .confirm_maintenance_audit(candidate, 103, HASH)
+            .unwrap();
+    }
+    let outcome = |broker: &FsVaultBroker| {
+        broker
+            .file_operation_replay(&request, &actor())
+            .unwrap()
+            .and_then(|status| status.receipt)
+            .map(|receipt| receipt.outcome)
+    };
+    assert_eq!(outcome(&broker), Some(FileOperationOutcome::Indeterminate));
+    assert_eq!(pack(&mut broker, later()), 1);
+    assert_eq!(
+        file_operation::disk::names(&broker, Folder::Records)
+            .unwrap()
+            .len(),
+        1
+    );
+    assert_eq!(outcome(&broker), Some(FileOperationOutcome::Indeterminate));
 }

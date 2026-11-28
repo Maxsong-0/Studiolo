@@ -48,8 +48,6 @@ impl FsVaultBroker {
         state.format_version = 8;
         mutation::save(self, &state)?;
         super::install(self, Archive::default())?;
-        // 打过包的重放又成了散件：旧格式历史的索引重建（T-249 G5）。
-        crate::history::legacy_forget(self);
         // 状态已经写回：段是不在链上的，散件全在，收口会核过再删。
         mutation::fault(self, 108)?;
         super::settle(self)?;

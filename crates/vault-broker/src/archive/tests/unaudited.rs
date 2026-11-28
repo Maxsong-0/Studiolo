@@ -147,13 +147,18 @@ fn a_new_kind_of_pack_raises_the_format_and_unpack_brings_it_back() {
         serde_json::to_vec(&packed).unwrap(),
     )
     .unwrap();
+    // 还原前后各写一次：还原写回的散件要记进内存用量、旧历史索引要作废，没记上下一次写就会被用例自查拦下。
     let mut broker = fixture.reopen();
+    broker.mutate(board(1)).unwrap();
     let done = broker.archive_unpack().unwrap();
-    assert_eq!((done.packs, done.descriptors, done.replays), (2, 2, 2));
+    assert_eq!((done.packs, done.descriptors, done.replays), (2, 3, 3));
     assert_eq!(fixture.state()["format_version"], 8);
+    broker.mutate(board(2)).unwrap();
     drop(broker);
     let broker = fixture.reopen();
-    answers(&broker, &board(0));
+    for index in 0..3 {
+        answers(&broker, &board(index));
+    }
 }
 
 /// 只有老类别的段，状态却说第 10 版：也不开（第 10 版当且仅当段里有新类别）。
