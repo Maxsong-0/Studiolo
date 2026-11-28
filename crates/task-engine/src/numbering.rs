@@ -1,5 +1,6 @@
 //! 命名空间编号分配始终以 Broker 中真实的文件名为准，从不采信客户端给出的最大值。
 use super::*;
+use crate::board_audit::BoardVerdict;
 use studiolo_vault_broker::NumberingScanner;
 impl<B: VaultBroker + ArtifactStager + NumberingScanner, L: AuditLedger>
     PersistentTaskEngine<B, L>
@@ -26,7 +27,7 @@ impl<B: VaultBroker + ArtifactStager + NumberingScanner, L: AuditLedger>
             return Err(TaskEngineError::NotFound("board task"));
         }
         let request = (request_id, task, scope, prefix);
-        self.audit_board("task.number_reserved", &request, AuditPhase::Intent, None)?;
+        let audit = self.board_intent("task.number_reserved", &request)?;
         let namespace = format!("{}:{}", scope.collision_key(), prefix.to_lowercase());
         // 重放先查登记：发过的号原样返回、不再扫库，库里的范围目录后来没了也不影响。
         let result = match self
@@ -36,24 +37,17 @@ impl<B: VaultBroker + ArtifactStager + NumberingScanner, L: AuditLedger>
         {
             Ok(Some(number)) => Ok(number),
             Err(error) => Err(error),
-            Ok(None) => {
-                // 扫描失败（范围目录不存在、扫描不完整）直接返回、不记 Outcome：条件满足后同一请求还能成功，
-                // 账本按「请求＋阶段」去重，先记一条 rejected 会让那次成功的 Outcome 写不进去。
-                let maximum = self
-                    .broker
-                    .scan_number_max(scope, prefix)
-                    .map_err(TaskEngineError::Broker)?;
-                self.control_db
+            // 扫描失败（范围目录不存在、扫描不完整）和控制库忙一样没下结论、不记 Outcome：
+            // 条件满足后同一请求还能成功（BUG-038、BUG-060）。
+            Ok(None) => match self.broker.scan_number_max(scope, prefix) {
+                Ok(maximum) => self
+                    .control_db
                     .reserve_board_number(request_id, task, &namespace, maximum)
-                    .map_err(map_db)
-            }
+                    .map_err(map_db),
+                Err(error) => Err(TaskEngineError::Broker(error)),
+            },
         };
-        self.audit_board(
-            "task.number_reserved",
-            &request,
-            AuditPhase::Outcome,
-            Some(result.is_ok()),
-        )?;
+        self.board_outcome(audit, BoardVerdict::of(&result))?;
         result
     }
 }
