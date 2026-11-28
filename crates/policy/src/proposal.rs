@@ -116,7 +116,7 @@ pub(crate) fn submit(
             deduplicated: true,
         });
     }
-    enforce_proposal_bounds(tx, instance_id)?;
+    enforce_proposal_bounds(tx, agent_type, instance_id)?;
     let status = if report.ok {
         DesiredStatus::Pending
     } else {

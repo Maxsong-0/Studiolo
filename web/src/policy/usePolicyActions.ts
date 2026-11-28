@@ -30,16 +30,14 @@ import type { PreviewContent } from './previews';
 export type Feedback = { origin: string; text: string };
 /**
  * 一次要二次认证的动作（发布、回滚、解除全局撤销）：请求本体、成功提示里的名字、给人看的动作说明、
- * 发起的那一块，以及执行预览里列出的同一对象其余未发布草案份数：会被一并标为已取代的较早草案、
- * 照旧待处理的更新草案（只有发布草案才可能不是 0）。
+ * 发起的那一块。取代了几份、留下几份不在这里带：确认后可能变（别处撤回、别的提交者又交了），成功提示
+ * 只照服务端发布回执里的实际草案号说（T-248）。
  */
 export type Activation = {
   request: ActivateRequest;
   label: string;
   action: string;
   origin: string;
-  supersedes: number;
-  remains: number;
 };
 /** 被二次认证挡下、等人就地认证后原样重试的那一个动作；`attempt` 只用于措辞。 */
 export type PendingStepUp = Activation & { attempt: number };
@@ -239,7 +237,7 @@ export function usePolicyActions(
           outcome.activation.cleared_type_revocation
             ? '，并解除了该类型的撤销接入'
             : ''
-        }${publishedNotice(outcome.activation.superseded_desired_ids.length, outcome.activation.remaining_desired_ids.length)}${audit}。`;
+        }${publishedNotice(outcome.activation)}${audit}。`;
       } catch (cause) {
         // 403「需要二次认证」不是终点：动作没有发生，只差一次一次性验证码。
         if (needsReauthentication(cause)) {
