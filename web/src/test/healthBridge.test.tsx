@@ -315,6 +315,22 @@ describe('同步健康结构与人工记录', () => {
     expect(screen.getByText('比对内容')).toBeInTheDocument();
     expect(screen.getByText('644.5 MiB / 4.0 GiB（15%）')).toBeInTheDocument();
   });
+  it('明细只说最近闭合的那一批；本进程还没有一批闭合过写未知（BUG-048）', () => {
+    const body = copy();
+    const { unmount } = render(<HealthPanel report={parseHealth(body)} />);
+    fireEvent.click(screen.getByText('查看同步证据'));
+    expect(screen.getByText('最近闭合').nextElementSibling).toHaveTextContent(
+      /^第 18 批 · /,
+    );
+    expect(screen.queryByText('最近批次')).not.toBeInTheDocument();
+    unmount();
+    (body.bridge as Record<string, unknown>).last_batch = null;
+    render(<HealthPanel report={parseHealth(body)} />);
+    fireEvent.click(screen.getByText('查看同步证据'));
+    expect(screen.getByText('最近闭合').nextElementSibling).toHaveTextContent(
+      '未知',
+    );
+  });
   it('比对内容超上限时明细直接说同步停住；没算到过写未知', () => {
     const body = copy();
     body.bridge.byte_usage = { used: '4294967297', budget: '4294967296' };
